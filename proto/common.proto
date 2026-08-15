@@ -1,0 +1,402 @@
+// gPUteer — 공통 타입
+//
+// 규범 문서: docs/protocol/signing.md
+// 설계 근거: gputeer_master_implementation_plan_v5.md
+//
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ 전역 규칙 (docs/protocol/signing.md 규칙 2)                          │
+// │                                                                      │
+// │  1. 부동소수점 타입(float/double)을 사용하지 않는다.                 │
+// │     비율은 ppm(parts per million) 정수, 시간은 밀리초/초 정수.       │
+// │     이유: IEEE-754 표현 차이와 NaN 정규화가 canonical 인코딩을 깬다. │
+// │                                                                      │
+// │  2. 서명 필드는 항상 field number 90을 쓰고, canonical 인코딩에서    │
+// │     제외된다.                                                        │
+// │                                                                      │
+// │  3. 서명 대상 메시지는 반드시 schema_version 을 가진다.              │
+// │                                                                      │
+// │  4. 모든 시각은 Unix epoch 밀리초 (uint64, UTC).                     │
+// │                                                                      │
+// │  5. ID는 별도 명시가 없으면 ULID 26자 문자열(사전순 정렬 가능).      │
+// └──────────────────────────────────────────────────────────────────────┘
+
+syntax = "proto3";
+
+package gputeer.v1;
+
+option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
+
+// ═══════════════════════════════════════════════════════════════════════
+// 1. 해시와 다이제스트
+// ═══════════════════════════════════════════════════════════════════════
+
+enum HashAlgorithm {
+  HASH_ALGORITHM_UNSPECIFIED = 0;
+  // gPUteer 내부 표준. CAS 청킹·서명·매니페스트에 사용한다.
+  HASH_ALGORITHM_BLAKE3_256 = 1;
+  // OCI 레지스트리 호환 목적으로만 허용. 서명에는 절대 사용하지 않는다.
+  HASH_ALGORITHM_SHA256 = 2;
+}
+
+message Digest {
+  HashAlgorithm algo = 1;
+  // BLAKE3_256 / SHA256 모두 32바이트.
+  bytes value = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 2. 보안 등급 — 세 개의 독립 축
+//
+// v4는 "Worker Mode 3단계"라 쓰고 4개를 정의했고, S0–S3와 S0–S5를 혼용했다.
+// v5는 다음 세 축을 분리한다. 하나의 숫자로 합치지 않는다.
+//   IsolationClass  격리의 성격 (정책 판단의 기준)
+//   SecurityTier    격리의 세부 등급 (capability probe 결과)
+//   KeyProtection   개인키 보호 수준
+// ═══════════════════════════════════════════════════════════════════════
+
+// 격리의 "성격". Job은 이 값을 요구한다.
+//
+// 중요: RESTRICTED는 임의 네이티브 코드로부터 호스트를 보호하지 못한다.
+//       "S1 이상이면 안전"이라는 표현을 쓰지 않기 위해 존재하는 축이다.
+enum IsolationClass {
+  ISOLATION_CLASS_UNSPECIFIED = 0;
+  // S0, S1. 실행 제한만 제공. 커널/드라이버 공격을 막지 못한다.
+  ISOLATION_CLASS_RESTRICTED = 1;
+  // S2, S3. 네임스페이스/샌드박스 격리.
+  ISOLATION_CLASS_CONTAINED = 2;
+  // S4, S5. 커널 또는 VM 수준 격리.
+  ISOLATION_CLASS_VIRTUALIZED = 3;
+}
+
+// capability probe 결과로 도출되는 세부 등급. 선언하는 값이 아니다.
+enum SecurityTier {
+  SECURITY_TIER_UNSPECIFIED = 0;
+  SECURITY_TIER_S0 = 1; // 격리 없음. 타인 Job 금지
+  SECURITY_TIER_S1 = 2; // Windows Restricted Token + Job Object + ACL
+  SECURITY_TIER_S2 = 3; // Windows AppContainer (EXPERIMENTAL, P0-02)
+  SECURITY_TIER_S3 = 4; // Linux/WSL2 rootless container
+  SECURITY_TIER_S4 = 5; // gVisor 등 커널 격리
+  SECURITY_TIER_S5 = 6; // Kata microVM / confidential
+}
+
+enum KeyProtection {
+  KEY_PROTECTION_UNSPECIFIED = 0;
+  KEY_PROTECTION_K0 = 1; // 평문 파일. 기본 거부
+  KEY_PROTECTION_K1 = 2; // OS 보호 저장소 (DPAPI / keyring / Keychain)
+  KEY_PROTECTION_K2 = 3; // TPM 2.0 / Secure Enclave. export 불가
+}
+
+enum RuntimeMode {
+  RUNTIME_MODE_UNSPECIFIED = 0;
+  RUNTIME_MODE_LINUX_CONTAINER = 1;
+  RUNTIME_MODE_LINUX_GVISOR = 2;
+  RUNTIME_MODE_LINUX_KATA = 3;
+  RUNTIME_MODE_WSL2_CONTAINER = 4;
+  RUNTIME_MODE_WINDOWS_RESTRICTED = 5;
+  RUNTIME_MODE_WINDOWS_APPCONTAINER = 6; // EXPERIMENTAL
+  RUNTIME_MODE_NATIVE_TRUSTED = 7;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 3. Job 분류
+// ═══════════════════════════════════════════════════════════════════════
+
+enum WorkloadClass {
+  WORKLOAD_CLASS_UNSPECIFIED = 0;
+  WORKLOAD_CLASS_TRAINING = 1;
+  WORKLOAD_CLASS_INFERENCE = 2;
+  WORKLOAD_CLASS_PREPROCESSING = 3;
+  WORKLOAD_CLASS_EVALUATION = 4;
+  WORKLOAD_CLASS_RENDERING = 5;
+  WORKLOAD_CLASS_OTHER = 6;
+}
+
+// 부작용 분류. 계획서 §15.6.
+//
+// 중요: fencing은 gPUteer가 만든 자원(Hub/CAS/canonical pointer)에만 적용된다.
+//       외부 API는 fence_epoch를 모르므로 중복 실행을 막을 수 없다.
+enum SideEffectClass {
+  SIDE_EFFECT_CLASS_UNSPECIFIED = 0;
+  // 외부 상태를 바꾸지 않음. 출력은 artifact뿐.
+  // 실행 단계 egress가 차단되므로 이 선언은 강제된다.
+  SIDE_EFFECT_CLASS_PURE = 1;
+  // 외부 쓰기가 있으나 operation_id를 멱등 키로 사용해 안전.
+  SIDE_EFFECT_CLASS_IDEMPOTENT = 2;
+  // 비멱등 외부 효과. 중복 실행을 억제하되 보장하지 못한다.
+  // acknowledge_duplicate_risk = true 가 필요하다.
+  SIDE_EFFECT_CLASS_SIDE_EFFECTING = 3;
+}
+
+enum ExecutionMode {
+  EXECUTION_MODE_UNSPECIFIED = 0;
+  EXECUTION_MODE_RESILIENT_SINGLE = 1; // Mode A
+  EXECUTION_MODE_PARALLEL_TASK = 2;    // Mode B — WAN에서 유일하게 잘 동작
+  EXECUTION_MODE_DISTRIBUTED_TRAINING = 3; // Mode C — LAN 한정 (ADR-013)
+}
+
+enum Preference {
+  PREFERENCE_UNSPECIFIED = 0;
+  PREFERENCE_COST = 1;     // target_confidence 0.80
+  PREFERENCE_BALANCED = 2; // target_confidence 0.92 (기본)
+  PREFERENCE_SPEED = 3;    // target_confidence 0.98
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 4. 내구성과 파티션 동작
+// ═══════════════════════════════════════════════════════════════════════
+
+// COMMITTED 도달 조건. 계획서 §18.2.
+enum Durability {
+  DURABILITY_UNSPECIFIED = 0;
+  DURABILITY_LOCAL = 1;      // HASH_VERIFIED 로 충분. 워커 디스크 고장 시 유실
+  DURABILITY_MIRRORED = 2;   // REPLICATED(1). 기본값
+  DURABILITY_REPLICATED = 3; // REPLICATED(2), 서로 다른 failure domain
+}
+
+enum PartitionBehavior {
+  PARTITION_BEHAVIOR_UNSPECIFIED = 0;
+  // lease 만료 후에도 계속 실행. pure/idempotent만 허용.
+  PARTITION_BEHAVIOR_CONTINUE = 1;
+  // lease 만료 시 checkpoint 후 PAUSE. side_effecting은 이 값으로 강제된다.
+  PARTITION_BEHAVIOR_PAUSE = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. 자원 요구와 범위
+// ═══════════════════════════════════════════════════════════════════════
+
+enum GpuAllocationMode {
+  GPU_ALLOCATION_MODE_UNSPECIFIED = 0;
+  // 기본값 (ADR-015). 소비자 GPU에는 VRAM quota 강제 수단이 없다.
+  GPU_ALLOCATION_MODE_EXCLUSIVE = 1;
+  // 동일 소유자 Job 간, 또는 Linux+MPS memory limit 확인 시에만.
+  GPU_ALLOCATION_MODE_SHARED = 2;
+  // MIG 지원 GPU.
+  GPU_ALLOCATION_MODE_PARTITIONED = 3;
+}
+
+message CudaRequirement {
+  // 예: 550 (= 550.x 이상)
+  uint32 min_driver_version = 1;
+  // 예: "12.4"
+  string cuda_runtime_version = 2;
+  // 예: ["8.0","8.6","8.9","9.0"]. 빈 목록 = 제약 없음
+  repeated string compute_capabilities = 3;
+}
+
+message GpuRequest {
+  uint64 min_vram_bytes = 1;
+  uint32 min_count = 2; // 기본 1
+  CudaRequirement cuda = 3;
+  GpuAllocationMode allocation_mode = 4; // 미지정 시 EXCLUSIVE
+  // 특정 모델을 요구할 때만. 빈 목록 = 제약 없음
+  repeated string allowed_gpu_models = 5;
+}
+
+message ResourceRequest {
+  GpuRequest gpu = 1;
+  uint32 cpu_cores = 2;
+  uint64 ram_bytes = 3;
+  uint64 workspace_bytes = 4;
+  // 이 Job이 사용할 수 있는 pool 대역폭 상한. 0 = 노드 정책을 따름
+  uint64 max_egress_bps = 5;
+}
+
+// Lease가 부여하는 자원 권한의 범위. 계획서 §20.2.
+message ResourceScope {
+  repeated string gpu_uuids = 1;
+  uint32 cpu_cores = 2;
+  uint64 ram_bytes = 3;
+  uint64 workspace_bytes = 4;
+  // 이 lease로 쓰기가 허용되는 CAS 경로 접두사. 예: "jobs/<job_id>/attempt-3/"
+  repeated string writable_prefixes = 5;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 6. 워크로드 힌트 — 계획서 §15.3 (P0-Fix #7)
+//
+// v5 초안에는 model_params / est_checkpoint_bytes / est_peak_vram_bytes 가
+// 없어서, 첫 실행에서 체크포인트 예산 모델(§18.4)과 VRAM admission(§10.5)이
+// 입력값을 얻지 못했다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message WorkloadHint {
+  WorkloadClass class = 1;
+  uint64 estimated_steps = 2;
+  // 기준 GPU에서의 1 step 소요 시간
+  uint32 ref_step_time_ms = 3;
+  // 기준 GPU 모델. 기본 "RTX4090"
+  string ref_gpu_model = 4;
+
+  // 0 = 미상
+  uint64 model_params = 10;
+  // 0이면 14 × model_params 로 추정 (mixed-precision AdamW, 계획서 §41.1)
+  uint64 est_checkpoint_bytes = 11;
+  // 0이면 파라미터 수와 class로 추정 (계획서 §15.3)
+  uint64 est_peak_vram_bytes = 12;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 7. 실행 환경 — 계획서 §16
+// ═══════════════════════════════════════════════════════════════════════
+
+enum EnvKind {
+  ENV_KIND_UNSPECIFIED = 0;
+  // S2~S5. OCI 이미지.
+  ENV_KIND_OCI_IMAGE = 1;
+  // S0/S1. 컨테이너가 없으므로 이식형 런타임 + 격리 venv.
+  ENV_KIND_PYTHON_LOCK = 2;
+}
+
+message ExecutionEnvironment {
+  EnvKind kind = 1;
+
+  // --- kind == OCI_IMAGE ---
+  // 사람이 읽기 위한 참조. 신뢰의 근거가 아니다.
+  string image_ref = 10;
+  // 실제 검증 대상. gPUteer CAS 기준 BLAKE3.
+  Digest image_digest = 11;
+  // OCI 레지스트리에서 가져올 때의 원본 digest(sha256). 변환 추적용.
+  Digest oci_source_digest = 12;
+
+  // --- kind == PYTHON_LOCK ---
+  // Agent가 관리하는 이식형 런타임 식별자. 예: "python-3.11-cu124"
+  string base_runtime = 20;
+  // requirements.lock 의 BLAKE3. venv 캐시 키이기도 하다.
+  Digest lock_digest = 21;
+  // lock 파일 본문 또는 CAS 참조 중 정확히 하나가 필수.
+  bytes lock_content = 22;
+  Digest lock_cas_ref = 23;
+
+  // --- 공통 ---
+  // 호스트 플랫폼 제약. 예: os="linux", arch="amd64"
+  string os = 30;
+  string arch = 31;
+  // glibc 최소 버전. 예: "2.31". 빈 문자열 = 제약 없음
+  string min_libc_version = 32;
+  CudaRequirement cuda = 33;
+  // 사용자 코드 tarball.
+  Digest code_digest = 34;
+  // tarball 전개 정책. 위반 시 실행 거부.
+  TarballPolicy tarball_policy = 35;
+}
+
+message TarballPolicy {
+  // 기본 true. ".." 경로 성분을 거부한다.
+  bool reject_path_traversal = 1;
+  // 기본 true. symlink/hardlink 엔트리를 거부한다.
+  bool reject_links = 2;
+  // 전개 후 최대 크기. 0 = workspace_bytes 를 따름 (zip bomb 방어)
+  uint64 max_extracted_bytes = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 8. 네트워크 정책 — 계획서 §16.5
+//
+// v5 초안은 STAGING/RUNNING/CHECKPOINT 라는 "단계"로 정책을 나눴다.
+// 그러나 async checkpoint(§18.5)는 RUNNING과 CHECKPOINT를 동시에 만든다.
+// 따라서 "언제"가 아니라 "어디로"를 기준으로 한다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message NetworkPolicy {
+  // 항상 허용되는 대상: Coordinator, Hub, ACL로 승인된 peer.
+  // 아래는 그 위에 추가로 허용할 대상이다.
+
+  // 의존성 설치 단계에서만 허용할 호스트. 예: 사설 PyPI 미러
+  repeated string staging_allow_hosts = 1;
+  // 실행 중에도 허용할 호스트. PURE Job에서는 반드시 비어 있어야 한다.
+  repeated string runtime_allow_hosts = 2;
+  // true면 실행 중 DNS 조회를 Agent가 대행하고 결과를 allowlist로 제한한다.
+  // 기본 true. DoH/DoT 우회를 막기 위해 직접 53/443 아웃바운드는 차단된다.
+  bool mediated_dns = 3;
+}
+
+// Job이 쓰기 가능한 artifact 경로 범위.
+message ArtifactScope {
+  // 기본: "jobs/<job_id>/attempt-<attempt_id>/" 하위만.
+  // 명시적으로 넓히려면 submitter가 선언해야 한다.
+  repeated string writable_prefixes = 1;
+  repeated string readable_prefixes = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 9. 데이터셋 — 계획서 §17
+// ═══════════════════════════════════════════════════════════════════════
+
+enum Sensitivity {
+  SENSITIVITY_UNSPECIFIED = 0;
+  SENSITIVITY_PUBLIC = 1;
+  SENSITIVITY_INTERNAL = 2;
+  // 디스크 암호화 + Job 종료 시 즉시 삭제 + SecurityTier >= S4 필요
+  SENSITIVITY_SENSITIVE = 3;
+}
+
+enum RetentionPolicy {
+  RETENTION_POLICY_UNSPECIFIED = 0;
+  RETENTION_POLICY_KEEP_CACHED = 1;
+  RETENTION_POLICY_DELETE_ON_JOB_END = 2;
+}
+
+message DatasetRef {
+  // 청크 Merkle root (BLAKE3).
+  Digest root_digest = 1;
+  uint64 total_bytes = 2;
+  Sensitivity sensitivity = 3;
+  RetentionPolicy retention = 4;
+  bool encrypted_at_rest = 5;
+  // 사람이 읽기 위한 이름. 신뢰의 근거가 아니다.
+  string display_name = 6;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 10. Peer 힌트와 단기 자격증명
+// ═══════════════════════════════════════════════════════════════════════
+
+message PeerHint {
+  string node_id = 1;
+  string peer_id = 2; // libp2p PeerId
+  repeated string multiaddrs = 3;
+  // 이 peer가 보유한 것으로 알려진 청크/체크포인트. data locality 판단용.
+  repeated Digest known_digests = 4;
+}
+
+message EphemeralCredential {
+  string credential_id = 1;
+  bytes token = 2;
+  uint64 expires_at_unix_ms = 3; // <= lease.expires_at_ms
+  // 이 토큰으로 접근 가능한 대상.
+  repeated string allowed_endpoints = 4;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 11. 비율 표현 — 부동소수점 금지 규칙의 결과
+// ═══════════════════════════════════════════════════════════════════════
+
+// 1_000_000 = 1.0
+message Ppm {
+  uint64 value = 1;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 12. 서명 관련 공통
+// ═══════════════════════════════════════════════════════════════════════
+
+enum SignatureAlgorithm {
+  SIGNATURE_ALGORITHM_UNSPECIFIED = 0;
+  SIGNATURE_ALGORITHM_ED25519 = 1;
+}
+
+// 서명 검증 결과. 조용한 통과를 막기 위해 "검증 불가"를 명시적 상태로 둔다.
+enum VerifyOutcome {
+  VERIFY_OUTCOME_UNSPECIFIED = 0;
+  VERIFY_OUTCOME_VALID = 1;
+  VERIFY_OUTCOME_INVALID_SIGNATURE = 2;
+  VERIFY_OUTCOME_UNKNOWN_SIGNER = 3;
+  VERIFY_OUTCOME_EXPIRED = 4;
+  VERIFY_OUTCOME_CLOCK_SKEW = 5;
+  VERIFY_OUTCOME_REPLAY = 6;
+  VERIFY_OUTCOME_WRONG_DOMAIN = 7;
+  // 검증자의 schema_version이 서명자보다 낮아 canonical을 재구성할 수 없다.
+  // 절대로 VALID로 취급하지 않는다. §24.5 UPGRADE_REQUIRED 경로로 처리한다.
+  VERIFY_OUTCOME_SCHEMA_TOO_NEW = 8;
+}

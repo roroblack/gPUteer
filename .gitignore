@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node / Tauri
+node_modules/
+dist/
+.vite/
+apps/console/src-tauri/target/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 생성물
+/proto/gen/
+*.pb.go
+
+# 환경
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# evidence 원문 첨부는 커밋한다 (증거이므로)
+!docs/evidence/_raw/

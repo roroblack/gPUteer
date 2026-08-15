@@ -1,0 +1,511 @@
+// gPUteer — Control Plane / ControlStore
+//
+// 규범 문서: docs/protocol/signing.md
+// 설계 근거: gputeer_master_implementation_plan_v5.md §33.1 (ADR-012, ADR-024)
+//
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ ControlStore 의미론  (P0-Fix #5)                                     │
+// │                                                                      │
+// │ v5 초안의 trait는 propose/read/watch/is_writable 4개뿐이었고         │
+// │ "성공"이 무엇인지 정의되지 않았다.                                   │
+// │                                                                      │
+// │   SingleNodeStore.propose()  로컬 fsync 하면 성공                    │
+// │   RaftStore.propose()        과반이 동의해야 성공                    │
+// │                                                                      │
+// │ 같은 함수, 같은 "성공", 전혀 다른 의미.                              │
+// │ v0.1에서 "성공 = 확정"이라 믿고 짠 코드가 v0.2에서 조용히 틀린다.    │
+// │                                                                      │
+// │ 해결: ProposeOutcome을 분기시키고,                                   │
+// │       SingleNodeStore는 COMMITTED를 절대 반환하지 않게 한다.         │
+// │       그러면 과반 합의가 필요한 동작이 v0.1에서 타입 수준으로        │
+// │       불가능해진다. 조용히 잘못 동작하지 않는다.                     │
+// └──────────────────────────────────────────────────────────────────────┘
+
+syntax = "proto3";
+
+package gputeer.v1;
+
+import "common.proto";
+import "job.proto";
+import "lease.proto";
+import "artifact.proto";
+
+option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
+
+// ═══════════════════════════════════════════════════════════════════════
+// 1. ControlStore 계약
+// ═══════════════════════════════════════════════════════════════════════
+
+message ProposeRequest {
+  ControlAction action = 1;
+  // 16바이트. (action 종류, 논리적 대상)에서 결정론적으로 파생한다.
+  // 네트워크 타임아웃 후 재시도가 중복 적용을 만들지 않게 한다.
+  // 스토어는 완료된 key의 결과를 최소 10분간 캐시하고 그대로 반환한다.
+  bytes idempotency_key = 2;
+  Precondition precondition = 3;
+  // 호출자가 필요한 보증을 "선언"한다. 스토어가 제공하지 못하면 UNSUPPORTED.
+  DurabilityRequirement requires = 4;
+}
+
+message Precondition {
+  oneof kind {
+    // 이 인덱스 이후로 대상이 변하지 않았을 때만 적용한다.
+    uint64 expected_index = 1;
+    ExpectedValue expected_value = 2;
+    // fence_epoch 하한. 이보다 낮으면 거부한다.
+    uint64 fence_at_least = 3;
+    // 조건 없음.
+    bool none = 4;
+  }
+}
+
+message ExpectedValue {
+  string key = 1;
+  Digest digest = 2;
+}
+
+enum DurabilityRequirement {
+  DURABILITY_REQUIREMENT_UNSPECIFIED = 0;
+  // 과반 합의가 필요하다. SingleNodeStore는 UNSUPPORTED를 반환한다.
+  DURABILITY_REQUIREMENT_COMMITTED = 1;
+  // 로컬 fsync로 충분하다.
+  DURABILITY_REQUIREMENT_DURABLE = 2;
+}
+
+message ProposeOutcome {
+  oneof result {
+    // 과반 합의됨. 되돌릴 수 없다. RaftStore만 반환한다.
+    Committed committed = 1;
+    // 로컬 디스크에 확정. 복제 보장 없음. SingleNodeStore의 최대치.
+    DurableLocal durable = 2;
+    // precondition 불만족 등. 재시도해도 같은 결과.
+    Rejected rejected = 3;
+    // 정족수 상실 / 리더 부재.
+    Unavailable unavailable = 4;
+    // 이 스토어 구현이 요구된 보증을 제공할 수 없다.
+    Unsupported unsupported = 5;
+  }
+}
+
+message Committed {
+  uint64 term = 1;
+  uint64 index = 2;
+}
+
+message DurableLocal {
+  uint64 local_seq = 1;
+}
+
+message Rejected {
+  ProposeRejectReason reason = 1;
+  string detail = 2;
+  // precondition 실패 시 현재 실제 값.
+  uint64 actual_index = 3;
+}
+
+enum ProposeRejectReason {
+  PROPOSE_REJECT_REASON_UNSPECIFIED = 0;
+  PROPOSE_REJECT_REASON_PRECONDITION_FAILED = 1;
+  PROPOSE_REJECT_REASON_INVALID_ACTION = 2;
+  PROPOSE_REJECT_REASON_AUTHORIZATION_DENIED = 3;
+  PROPOSE_REJECT_REASON_FENCE_TOO_LOW = 4;
+}
+
+message Unavailable {
+  bool retryable = 1;
+  // 리더가 다른 노드면 여기로 재시도한다.
+  string redirect_coordinator_id = 2;
+  uint32 retry_after_ms = 3;
+}
+
+message Unsupported {
+  DurabilityRequirement required = 1;
+  // 예: "SingleNodeStore cannot provide COMMITTED; deploy 3-node RaftStore"
+  string detail = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 2. 읽기 일관성
+// ═══════════════════════════════════════════════════════════════════════
+
+enum ReadConsistency {
+  READ_CONSISTENCY_UNSPECIFIED = 0;
+  // 리더 확인 후 읽기. 느리지만 최신 보장.
+  READ_CONSISTENCY_LINEARIZABLE = 1;
+  // 지정 시간 내 최신.
+  READ_CONSISTENCY_BOUNDED = 2;
+  // 로컬 캐시. 가장 빠름.
+  READ_CONSISTENCY_STALE = 3;
+}
+
+message ReadRequest {
+  ControlQuery query = 1;
+  ReadConsistency consistency = 2;
+  // consistency == BOUNDED 일 때만.
+  uint32 max_staleness_ms = 3;
+}
+
+message ReadResult {
+  ControlState state = 1;
+  // 이 읽기가 반영한 시점.
+  uint64 read_index = 2;
+  uint64 as_of_unix_ms = 3;
+  // 실제로 제공된 일관성 수준 (요청보다 약할 수 있다).
+  ReadConsistency effective_consistency = 4;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 3. Watch — 재개 가능한 구독
+//
+// v5 초안에는 cursor가 없어 재연결 시 이벤트 누락을 알 수 없었다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message WatchRequest {
+  WatchFilter filter = 1;
+  // 없으면 현재 시점부터. 있으면 그 이후부터 이어받는다.
+  Cursor from = 2;
+}
+
+message Cursor {
+  uint64 index = 1;
+  uint64 term = 2;
+}
+
+message WatchEvent {
+  oneof kind {
+    ControlEvent event = 1;
+    // 스냅샷 등으로 cursor가 무효화되었다.
+    // 구독자는 반드시 전체 재동기화를 해야 한다. 조용한 누락을 막는다.
+    WatchReset reset = 2;
+  }
+  Cursor cursor = 10;
+}
+
+message WatchReset {
+  string reason = 1;
+  // 재동기화 후 이 cursor부터 이어받는다.
+  Cursor resume_from = 2;
+}
+
+message WatchFilter {
+  repeated ControlEntityKind kinds = 1;
+  repeated string ids = 2;
+}
+
+enum ControlEntityKind {
+  CONTROL_ENTITY_KIND_UNSPECIFIED = 0;
+  CONTROL_ENTITY_KIND_MEMBER = 1;
+  CONTROL_ENTITY_KIND_DEVICE = 2;
+  CONTROL_ENTITY_KIND_NODE = 3;
+  CONTROL_ENTITY_KIND_JOB = 4;
+  CONTROL_ENTITY_KIND_ATTEMPT = 5;
+  CONTROL_ENTITY_KIND_LEASE = 6;
+  CONTROL_ENTITY_KIND_POLICY = 7;
+  CONTROL_ENTITY_KIND_COORDINATOR_SET = 8;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 4. 쓰기 가능 상태
+// ═══════════════════════════════════════════════════════════════════════
+
+message Writability {
+  QuorumState quorum = 1;
+  // 현재 스토어가 제공 가능한 최대 보증.
+  DurabilityRequirement max_guarantee = 2;
+  uint32 alive_coordinators = 3;
+  uint32 total_coordinators = 4;
+  string leader_id = 5;
+  // DEGRADED / LOST 일 때 사용자에게 보여줄 예상 복구 시각.
+  uint64 estimated_recovery_unix_ms = 6;
+}
+
+enum QuorumState {
+  QUORUM_STATE_UNSPECIFIED = 0;
+  QUORUM_STATE_NORMAL = 1;
+  QUORUM_STATE_DEGRADED = 2;
+  QUORUM_STATE_LOCAL_SURVIVAL = 3;
+  // SingleNodeStore 전용. quorum 개념이 없다.
+  QUORUM_STATE_SINGLE_NODE = 4;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. Control Action — 복제 로그에 들어가는 것
+//
+// ADR-011: Heartbeat/telemetry는 여기에 들어가지 않는다.
+//          Node 상태 "전이"만 커밋한다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message ControlAction {
+  oneof action {
+    // --- 멤버십 / 정책 : COMMITTED 필요 ---
+    AddMember add_member = 1;
+    RemoveMember remove_member = 2;
+    ApproveDevice approve_device = 3;
+    RevokeDevice revoke_device = 4;
+    ChangeCoordinatorSet change_coordinator_set = 5;
+    UpdatePolicy update_policy = 6;
+    RotateOwnerKey rotate_owner_key = 7;
+    QuarantineDevice quarantine_device = 8;
+    ReleaseQuarantine release_quarantine = 9;
+
+    // --- Job 수명주기 : COMMITTED 필요 ---
+    SubmitJob submit_job = 20;
+    TransitionJob transition_job = 21;
+    CreateAttempt create_attempt = 22;
+    TransitionAttempt transition_attempt = 23;
+    SetCanonical set_canonical = 24;
+
+    // --- Lease : COMMITTED 필요 (fence_epoch 단조성 때문) ---
+    IssueLease issue_lease = 30;
+    RenewLease renew_lease = 31;
+    RevokeLease revoke_lease = 32;
+
+    // --- 관측 결과 : DURABLE 로 충분 ---
+    TransitionNode transition_node = 40;
+    RecordBenchmark record_benchmark = 41;
+    RecordWorkloadProfile record_workload_profile = 42;
+    RecordDurabilityStatus record_durability = 43;
+  }
+}
+
+// COMMITTED가 필요한 action 목록은 아래 헬퍼로 판정한다.
+// SingleNodeStore는 이들에 대해 반드시 Unsupported를 반환해야 한다.
+//
+//   requires_committed(action) =
+//       action ∈ { AddMember, RemoveMember, ApproveDevice, RevokeDevice,
+//                  ChangeCoordinatorSet, UpdatePolicy, RotateOwnerKey,
+//                  QuarantineDevice, ReleaseQuarantine,
+//                  SubmitJob, TransitionJob, CreateAttempt,
+//                  TransitionAttempt, SetCanonical,
+//                  IssueLease, RenewLease, RevokeLease }
+//
+// 주의: v0.1(SingleNodeStore)에서는 위 action이 전부 불가능하다는 뜻이
+//       아니다. v0.1은 requires = DURABLE 로 요청하며, 그 경우
+//       "이 팀은 단일 Coordinator이므로 복제 보증이 없다"는 사실이
+//       Writability.max_guarantee 로 UI에 드러난다.
+//       requires = COMMITTED 로 요청했을 때만 Unsupported가 반환된다.
+
+message AddMember {
+  string member_id = 1;
+  bytes public_key = 2;
+  string role = 3;
+  bytes owner_signature = 90; // domain_tag = "gputeer/v1/membership"
+}
+
+message RemoveMember {
+  string member_id = 1;
+  bytes owner_signature = 90;
+}
+
+message ApproveDevice {
+  string device_id = 1;
+  string member_id = 2;
+  bytes public_key = 3;
+  string peer_id = 4;
+  KeyProtection key_protection = 5;
+  bool is_ephemeral = 6;
+  bytes owner_signature = 90;
+}
+
+message RevokeDevice {
+  string device_id = 1;
+  string reason = 2;
+  // Owner 또는 2-of-3 Coordinator (계획서 §8.2).
+  repeated bytes signatures = 90;
+}
+
+message ChangeCoordinatorSet {
+  repeated CoordinatorEntry new_set = 1;
+  // 한 번에 한 노드만 교체한다. joint consensus 사용.
+  string added_id = 2;
+  string removed_id = 3;
+  bytes owner_signature = 90;
+}
+
+message CoordinatorEntry {
+  string device_id = 1;
+  bytes public_key = 2;
+  repeated string endpoints = 3;
+  string failure_domain = 4;
+}
+
+message UpdatePolicy {
+  Digest policy_hash = 1;
+  bytes policy_content = 2;
+  // 완화는 Owner 전용, 강화는 2-of-3 허용 (계획서 §8.2).
+  bool is_relaxation = 3;
+  repeated bytes signatures = 90;
+}
+
+message RotateOwnerKey {
+  bytes new_owner_public_key = 1;
+  bytes new_recovery_public_key = 2;
+  // 기존 Owner 키 또는 Recovery 키 서명.
+  bytes authorizing_signature = 90;
+}
+
+// Worker 격리는 2-of-3 Coordinator, Coordinator 격리는 Owner 전용.
+// Coordinator는 자신 및 다른 Coordinator에 대한 투표에서 제외된다 (§8.2).
+message QuarantineDevice {
+  string device_id = 1;
+  repeated RiskSignal signals = 2;
+  bool target_is_coordinator = 3;
+  repeated bytes verdict_signatures = 90;
+}
+
+message ReleaseQuarantine {
+  string device_id = 1;
+  string reason = 2;
+  bytes owner_signature = 90; // Owner 단독 해제 가능
+}
+
+message RiskSignal {
+  string kind = 1;
+  string detail = 2;
+  uint64 observed_at_unix_ms = 3;
+  string observer_coordinator_id = 4;
+}
+
+message SubmitJob { JobManifest manifest = 1; }
+
+message TransitionJob {
+  string job_id = 1;
+  string from_state = 2;
+  string to_state = 3;
+  string reason = 4;
+}
+
+message CreateAttempt {
+  string job_id = 1;
+  string attempt_id = 2;
+  repeated string node_ids = 3;
+  // 이 커밋으로 fence_epoch가 증가한다.
+  uint64 fence_epoch = 4;
+}
+
+message TransitionAttempt {
+  string attempt_id = 1;
+  string from_state = 2;
+  string to_state = 3;
+  string reason = 4;
+}
+
+message SetCanonical { CanonicalDecision decision = 1; }
+
+message IssueLease { Lease lease = 1; }
+message RenewLease { RenewLeaseRequest request = 1; }
+message RevokeLease { RevokeLeaseNotice notice = 1; }
+
+message TransitionNode {
+  string node_id = 1;
+  string from_state = 2;
+  string to_state = 3;
+  // 리더가 자신의 관측 기준으로 판정한다 (ADR-011).
+  string observed_by = 4;
+  uint64 observed_at_unix_ms = 5;
+}
+
+message RecordBenchmark {
+  string node_id = 1;
+  Digest workload_seed = 2;
+  uint64 measured_wall_clock_ms = 3;
+  map<string, uint64> results = 4;
+}
+
+message RecordWorkloadProfile {
+  Digest manifest_hash = 1;
+  WorkloadClass class = 2;
+  uint64 measured_step_time_ms = 3;
+  string measured_on_gpu_model = 4;
+  uint64 measured_checkpoint_bytes = 5;
+  uint64 measured_peak_vram_bytes = 6;
+  uint32 sample_count = 7;
+}
+
+message RecordDurabilityStatus { DurabilityStatus status = 1; }
+
+// ═══════════════════════════════════════════════════════════════════════
+// 6. 조회
+// ═══════════════════════════════════════════════════════════════════════
+
+message ControlQuery {
+  oneof query {
+    string job_id = 1;
+    string node_id = 2;
+    string device_id = 3;
+    string attempt_id = 4;
+    bool all_nodes = 10;
+    bool all_jobs = 11;
+    bool coordinator_set = 12;
+    bool policy = 13;
+  }
+}
+
+message ControlState {
+  repeated JobRecord jobs = 1;
+  repeated NodeRecord nodes = 2;
+  repeated DeviceRecord devices = 3;
+  repeated AttemptRecord attempts = 4;
+  repeated CoordinatorEntry coordinators = 5;
+}
+
+message ControlEvent {
+  ControlEntityKind kind = 1;
+  string id = 2;
+  ControlAction applied = 3;
+  uint64 at_unix_ms = 4;
+}
+
+message JobRecord {
+  string job_id = 1;
+  string submitter_device_id = 2;
+  Digest manifest_hash = 3;
+  string state = 4;
+  string canonical_attempt_id = 5;
+  ExecutionMode mode = 6;
+  SideEffectClass side_effect_class = 7;
+  uint64 deadline_unix_ms = 8;
+}
+
+message AttemptRecord {
+  string attempt_id = 1;
+  string job_id = 2;
+  repeated string node_ids = 3;
+  string state = 4;
+  uint64 last_progress_step = 5;
+  string checkpoint_id = 6;
+  uint64 fence_epoch = 7;
+}
+
+message NodeRecord {
+  string node_id = 1;
+  string device_id = 2;
+  string state = 3;
+  uint64 last_heartbeat_unix_ms = 4;
+  // §14.3. 순위용 점수. 확률이 아니다.
+  uint64 reliability_ppm = 10;
+  // §14.4. 시간당 생존 확률. 이것만 지수화한다.
+  uint64 survival_rate_ppm = 11;
+  uint64 mtbf_hours = 12;
+  uint32 observed_sessions = 13;
+  bool insufficient_data = 14;
+
+  SecurityTier tier = 20;
+  IsolationClass isolation = 21;
+  KeyProtection key_protection = 22;
+  RuntimeMode runtime = 23;
+  string failure_domain = 24;
+}
+
+message DeviceRecord {
+  string device_id = 1;
+  string member_id = 2;
+  string peer_id = 3;
+  bool approved = 4;
+  bool is_ephemeral = 5;
+  string risk_state = 6;
+  KeyProtection key_protection = 7;
+  // Agent 자기 검증 결과 (§24.3).
+  Digest agent_binary_digest = 8;
+  string agent_version = 9;
+}

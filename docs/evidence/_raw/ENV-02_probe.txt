@@ -1,0 +1,27 @@
+=== ssh x600 (10.20.20.1, user <x600-user>) — 2026-08-16 ===
+name, memory.total [MiB], memory.free [MiB], driver_version, compute_cap
+NVIDIA GeForce RTX 4070 SUPER, 12282 MiB, 11832 MiB, 595.79, 8.9
+| NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |
+
+=== 종합 (앞선 조사 결과) ===
+HOST=<x600-hostname>   USER=<x600-user>
+OS=Microsoft Windows 11 Pro build 26200
+GPU: NVIDIA GeForce RTX 4070 SUPER | driver 32.0.15.9579
+GPU: AMD Radeon 760M Graphics (integrated)
+CPU: AMD Ryzen 5 8600G w/ Radeon 760M Graphics
+RAM: 23.1 GB
+HypervisorPresent=True
+Hyper-V Requirements: A hypervisor has been detected.
+wsl --list --verbose : (빈 출력 — 배포판 미설치)
+Python 3.14.2
+DISK  C: NTFS free 8.1/237.5 GB   F: NTFS free 168/953.9 GB
+      D: NTFS free 11.1/60.4 GB   E: NTFS free 74.4/195.3 GB
+TOOLS nvidia-smi => C:\WINDOWS\system32\nvidia-smi.exe
+      python     => C:\Users\<x600-user>\AppData\Local\Programs\Python\Python314\python.exe
+      git        => C:\Program Files\Git\cmd\git.exe
+      wsl        => C:\WINDOWS\system32\wsl.exe
+      cargo/rustc/rustup => NOT FOUND
+      docker     => NOT FOUND
+
+=== ssh runpod-gpu (<external-gpu-public-ip>:<port>) ===
+ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused

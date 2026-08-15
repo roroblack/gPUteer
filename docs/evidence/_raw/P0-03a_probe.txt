@@ -1,0 +1,56 @@
+P0-03a · Windows 파일시스템 원자성 조사
+platform: Windows 11
+python:   3.12.7
+==================================================================
+
+[P5] 테스트가 수행된 파일시스템은 무엇인가
+    결과: NTFS
+    경로: C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer_fsprobe__2iw48pb
+    판정: 정보 — NTFS 외 파일시스템은 별도 검증 필요
+
+[P1a] 동시 독자가 없을 때 rename 확정이 성공하는가
+    결과: 성공 3000 / 3000
+    거부: 0 · 기타 오류: 0
+    판정: PASS
+
+[P1b] 독자가 FILE_SHARE_DELETE 없이 열고 있으면 rename 이 실패하는가
+    결과: 실패 2687회 관측
+    교체 시도 3000 · 성공 313 · **거부 2687** · 기타 0
+      마지막 오류: WinError 5
+      독자 열기 성공 148282 · 열기 실패 442
+    판정: FINDING — POSIX 와 다르다. 재시도 또는 공유 모드 강제가 필요
+
+[P1c] 독자가 FILE_SHARE_DELETE 로 열면 rename 이 원자적인가
+    결과: 문제 관측
+    교체 시도 3000 · 성공 607 · 거부 2393 · 기타 0
+      독자 관측 — 온전한 A: 56898 · 온전한 B: 66691 · **부분 내용: 0** · 열기 실패: 1
+    판정: FAIL — 규범 §18.2 수정 필요
+
+[P1d] POSIX 시맨틱 rename(FileRenameInfoEx)이 열린 파일을 대체하는가
+    결과: 성공 87 / 1000
+    **독자는 FILE_SHARE_DELETE 없이 연 상태 (P1b 와 동일한 최악 조건)**
+      성공 87 · ACCESS_DENIED 0 · 기타 913 (GetLastError=32)
+      독자 관측 — 온전한 A: 16373 · 온전한 B: 22570 · **부분 내용: 0** · 열기 실패: 144
+    판정: FAIL — 이 API 로도 해결되지 않는다
+
+[P2] 디렉터리 fsync 대응물이 Windows 에 있는가
+    결과: POSIX 불가 / Win32 가능
+    POSIX os.open(dir)+os.fsync(): 실패  (PermissionError: [Errno 13] Permission denied: 'C:\\Users\\PLAYDA~1\\AppData\\Local\\Temp\\gputeer_fsprobe__2iw48pb')
+    Win32 CreateFileW(BACKUP_SEMANTICS)+FlushFileBuffers(): 성공
+    판정: PARTIAL — Win32 경로로 대체 가능. 규범에 플랫폼별 구현을 명시해야 함
+
+[P3] 쓰기 도중 강제 종료 시 확정 파일이 생기는가
+    결과: tmp 만 남음
+    남은 파일: ['READY', 'ckpt.bin.tmp']
+      ckpt.bin.tmp 존재: True (5701632 bytes)
+      ckpt.bin(확정) 존재: False
+    판정: PASS — 미완성 데이터가 확정 이름을 갖지 않는다
+
+[P4] 매니페스트 유무로 PARTIAL 을 식별할 수 있는가
+    결과: 식별 가능
+    ckpt-good    -> COMPLETE
+    ckpt-partial -> PARTIAL
+    판정: PASS — 매니페스트-마지막 규칙이 GC 판정 근거로 충분
+
+==================================================================
+probe 8개 · FAIL 2 · PARTIAL 1

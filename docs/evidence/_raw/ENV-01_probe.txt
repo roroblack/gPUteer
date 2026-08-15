@@ -1,0 +1,19 @@
+﻿=== Get-Command ===
+cargo        NOT FOUND
+rustc        NOT FOUND
+rustup       NOT FOUND
+nvidia-smi   NOT FOUND
+nvcc         NOT FOUND
+
+=== Win32_VideoController ===
+Intel(R) Iris(R) Xe Graphics | AdapterRAM=1073741824 | Driver=30.0.100.9805
+
+=== OS ===
+Microsoft Windows 11 Pro build 26200
+
+=== Filesystem ===
+C: NTFS size=222.4GB
+
+=== Python ===
+Python 3.12.7
+blake3 import: ok

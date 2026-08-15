@@ -1,0 +1,269 @@
+// gPUteer — Checkpoint, Artifact, Durability Contract
+//
+// 규범 문서: docs/protocol/signing.md
+// 설계 근거: gputeer_master_implementation_plan_v5.md §18
+//
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ Durability Contract  (계획서 §18.2)                                  │
+// │                                                                      │
+// │   WRITING                                                            │
+// │      ↓ fsync + atomic rename + directory fsync                       │
+// │   LOCAL_WRITTEN     워커 디스크에 원자적으로 확정                    │
+// │      ↓ BLAKE3 계산 및 매니페스트 대조                                │
+// │   HASH_VERIFIED     무결성 검증 통과                                 │
+// │      ↓ 서명된 ReplicaAck 수신                                        │
+// │   REPLICATED(n)     서로 다른 failure domain에 n개                   │
+// │      ↓ Job의 durability 요구 충족                                    │
+// │   COMMITTED         canonical 후보 자격 획득                         │
+// │                                                                      │
+// │ v4는 "Committed checkpoint에서 복구한다"고 하면서 committed의        │
+// │ 정의가 없었다. fsync인지, 복제 완료인지, Raft 커밋인지 불명이었다.   │
+// └──────────────────────────────────────────────────────────────────────┘
+
+syntax = "proto3";
+
+package gputeer.v1;
+
+import "common.proto";
+
+option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
+
+// ═══════════════════════════════════════════════════════════════════════
+// 1. Checkpoint
+// ═══════════════════════════════════════════════════════════════════════
+
+enum DurabilityState {
+  DURABILITY_STATE_UNSPECIFIED = 0;
+  DURABILITY_STATE_WRITING = 1;
+  // 매니페스트 없이 데이터 파일만 존재. 부팅 시 GC 대상.
+  DURABILITY_STATE_PARTIAL = 2;
+  DURABILITY_STATE_LOCAL_WRITTEN = 3;
+  DURABILITY_STATE_HASH_VERIFIED = 4;
+  DURABILITY_STATE_REPLICATED = 5;
+  DURABILITY_STATE_COMMITTED = 6;
+}
+
+message CheckpointManifest {
+  uint32 schema_version = 1;
+  string checkpoint_id = 2;
+  string job_id = 3;
+  string attempt_id = 4;
+  uint64 step = 5;
+  uint64 epoch = 6;
+
+  // 이 체크포인트를 구성하는 파일들. 순서는 유지된다 (정렬하지 않는다).
+  repeated CheckpointFile files = 10;
+  // 전체 내용의 Merkle root. files 전체에 대해 계산한다.
+  Digest root_digest = 11;
+  uint64 total_bytes = 12;
+
+  // 재개에 필요한 상태가 모두 포함되었는지에 대한 생산자의 선언.
+  ResumeCompleteness completeness = 20;
+
+  uint64 created_at_unix_ms = 30;
+  string producer_node_id = 31;
+  uint64 fence_epoch = 32;
+
+  // domain_tag = "gputeer/v1/checkpoint"
+  bytes producer_signature = 90;
+}
+
+message CheckpointFile {
+  // 체크포인트 루트 기준 상대 경로. "..", 절대경로, 심볼릭 링크 금지.
+  string path = 1;
+  Digest digest = 2;
+  uint64 size_bytes = 3;
+  // 청크 단위 delta 동기화용. 없으면 파일 전체가 하나의 청크다.
+  repeated Digest chunk_digests = 4;
+  uint32 chunk_size_bytes = 5; // 기본 4 MiB
+}
+
+// 무엇이 저장되었는가. 재개 가능 여부 판단에 쓴다.
+message ResumeCompleteness {
+  bool model_weights = 1;
+  bool optimizer_state = 2;
+  bool lr_scheduler_state = 3;
+  bool rng_state = 4;
+  bool sampler_position = 5;
+  bool dataloader_position = 6;
+  bool amp_scaler_state = 7;
+  // 위가 모두 true여야 완전 재개가 보장된다. 아니면 근사 재개다.
+  bool full_resume_guaranteed = 10;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 2. Replica ACK — 서명된 복제 증거
+//
+// v5 초안은 "REPLICATED(n)"만 있고 n개가 실제로 durable하다는 증거가
+// 없었다. Hub가 "받았다"고 거짓말하면 그대로 믿었다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message ReplicaAck {
+  uint32 schema_version = 1;
+  string checkpoint_id = 2;
+  Digest root_digest = 3;
+
+  // 복제본을 보유한 주체.
+  string holder_device_id = 10;
+  ReplicaKind kind = 11;
+  // failure domain 식별자. REPLICATED(n)의 n은 서로 다른 domain 수로 센다.
+  // 같은 박스에 2개 = REPLICATED(1) 이다.
+  string failure_domain = 12;
+
+  // 보유자가 실제로 저장하고 fsync 했으며 해시를 검증했음을 선언한다.
+  bool fsynced = 20;
+  bool hash_verified = 21;
+  uint64 stored_bytes = 22;
+
+  uint64 acked_at_unix_ms = 30;
+
+  // domain_tag = "gputeer/v1/replica-ack"
+  // 이 서명이 없으면 replica로 계산하지 않는다.
+  bytes holder_signature = 90;
+}
+
+enum ReplicaKind {
+  REPLICA_KIND_UNSPECIFIED = 0;
+  REPLICA_KIND_WORKER_LOCAL = 1;
+  REPLICA_KIND_SUBMITTER_MIRROR = 2;
+  REPLICA_KIND_HUB = 3;
+  REPLICA_KIND_TRUSTED_PEER = 4;
+  // 외부 object storage 미러. durable하지만 팀 통제 밖.
+  REPLICA_KIND_EXTERNAL_OBJECT_STORE = 5;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 3. Durability 판정
+//
+// 규칙
+//   1. holder_signature 가 유효한 ReplicaAck 만 계산에 넣는다
+//   2. 같은 failure_domain 의 ack 여러 개는 1개로 센다
+//   3. Ephemeral 노드(is_ephemeral)의 로컬 복사본은 세지 않는다
+//   4. submitter와 실행 Worker가 동일 device면 별개 replica로 세지 않는다
+//   5. COMMITTED 도달 후 replica가 유실되어도 상태를 되돌리지 않는다.
+//      대신 복구 작업을 큐에 넣고 경고한다 (canonical 후보 자격은 유지).
+// ═══════════════════════════════════════════════════════════════════════
+
+message DurabilityStatus {
+  string checkpoint_id = 1;
+  DurabilityState state = 2;
+  Durability required = 3;
+  // 규칙 1~4를 적용한 뒤의 유효 replica 수.
+  uint32 effective_replica_count = 4;
+  repeated ReplicaAck acks = 5;
+  // state == COMMITTED 이후 replica가 줄어든 경우 true.
+  bool degraded = 6;
+  uint64 updated_at_unix_ms = 7;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 4. Artifact
+// ═══════════════════════════════════════════════════════════════════════
+
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_CHECKPOINT = 1;
+  ARTIFACT_KIND_FINAL_OUTPUT = 2;
+  ARTIFACT_KIND_LOG = 3;
+  ARTIFACT_KIND_METRIC = 4;
+  ARTIFACT_KIND_INTERMEDIATE = 5;
+}
+
+message ArtifactRef {
+  uint32 schema_version = 1;
+  string artifact_id = 2;
+  string job_id = 3;
+  string attempt_id = 4;
+  ArtifactKind kind = 5;
+
+  Digest digest = 10;
+  uint64 size_bytes = 11;
+  // "jobs/<job_id>/attempt-<n>/..." 형태. immutable.
+  string cas_path = 12;
+
+  repeated ReplicaAck replicas = 20;
+  uint64 created_at_unix_ms = 21;
+  uint64 fence_epoch = 22;
+
+  // domain_tag = "gputeer/v1/artifact"
+  bytes producer_signature = 90;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 5. Attempt 결과 제출 — Reconciliation 입력
+// ═══════════════════════════════════════════════════════════════════════
+
+message AttemptReport {
+  uint32 schema_version = 1;
+  string job_id = 2;
+  string attempt_id = 3;
+  string node_id = 4;
+  uint64 fence_epoch = 5;
+
+  AttemptOutcome outcome = 10;
+  uint64 final_step = 11;
+  uint64 started_at_unix_ms = 12;
+  uint64 finished_at_unix_ms = 13;
+
+  repeated ArtifactRef artifacts = 20;
+  CheckpointManifest final_checkpoint = 21;
+
+  // Job이 스스로 산출한 값. 재실행하지 않는다.
+  // 주의: 위변조는 서명으로 막히지만 "거짓 계산"은 막지 못한다.
+  //       따라서 canonical 선택의 기본 기준이 아니다 (§20.3).
+  repeated ReportedMetric metrics = 30;
+
+  uint64 issued_at_unix_ms = 40;
+  // domain_tag = "gputeer/v1/attempt-report"
+  bytes node_signature = 90;
+}
+
+enum AttemptOutcome {
+  ATTEMPT_OUTCOME_UNSPECIFIED = 0;
+  ATTEMPT_OUTCOME_COMPLETED = 1;
+  ATTEMPT_OUTCOME_FAILED = 2;
+  ATTEMPT_OUTCOME_INTERRUPTED = 3;
+  ATTEMPT_OUTCOME_CANCELLED = 4;
+  // 네트워크 단절 중 계속 실행하다 재접속해 제출.
+  ATTEMPT_OUTCOME_STALE_COMPLETED = 5;
+}
+
+message ReportedMetric {
+  string name = 1;
+  // 부동소수점 금지. 값 × 1e6 으로 표현한다.
+  int64 value_micro = 2;
+  // true면 큰 값이 좋음, false면 작은 값이 좋음.
+  bool higher_is_better = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 6. Canonical 선택 결과
+// ═══════════════════════════════════════════════════════════════════════
+
+message CanonicalDecision {
+  uint32 schema_version = 1;
+  string job_id = 2;
+  string chosen_attempt_id = 3;
+  repeated string superseded_attempt_ids = 4;
+
+  CanonicalCriterion deciding_criterion = 10;
+  string rationale = 11;
+  uint64 fence_epoch = 12;
+  uint64 decided_at_unix_ms = 13;
+
+  // domain_tag = "gputeer/v1/canonical"
+  bytes coordinator_signature = 90;
+}
+
+// §20.3 순위 결정에서 실제로 승부를 가른 기준.
+enum CanonicalCriterion {
+  CANONICAL_CRITERION_UNSPECIFIED = 0;
+  CANONICAL_CRITERION_COMPLETED_OVER_PARTIAL = 1;
+  CANONICAL_CRITERION_HIGHER_STEP = 2;
+  // submitter가 명시 요청한 경우에만 사용된다.
+  CANONICAL_CRITERION_VALIDATION_METRIC = 3;
+  CANONICAL_CRITERION_EARLIER_COMPLETION = 4;
+  CANONICAL_CRITERION_HIGHER_FENCE_EPOCH = 5;
+  // 동점. canonical을 바꾸지 않고 사용자 확인을 요청한다.
+  CANONICAL_CRITERION_TIE_UNRESOLVED = 6;
+}

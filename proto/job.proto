@@ -1,0 +1,230 @@
+// gPUteer — Job Manifest 와 Execution Grant
+//
+// 규범 문서: docs/protocol/signing.md
+// 설계 근거: gputeer_master_implementation_plan_v5.md §15
+//
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ 핵심 설계: 두 개의 문서, 두 개의 수명  (계획서 §15.1, ADR-021)      │
+// │                                                                      │
+// │  JobManifest    "이 사람이 이 작업을 요청했다"                       │
+// │                 서명자 submitter · 수명 김 (기본 7일)                │
+// │                 60초 시계 규칙 적용 안 함 · replay 캐시 대상 아님     │
+// │                 재사용이 정상 (하나의 Manifest → 여러 Attempt)       │
+// │                                                                      │
+// │  ExecutionGrant "지금 이 노드에서 이 attempt를 실행하라"             │
+// │                 서명자 Coordinator · 수명 짧음 (기본 60초)           │
+// │                 60초 시계 규칙 적용 · replay 캐시 대상               │
+// │                 재사용은 공격                                        │
+// │                                                                      │
+// │  v5 초안은 이를 합쳐두고 Manifest에 60초 규칙을 걸었다.              │
+// │  큐에서 수 시간 대기하는 정상 Job이 배치 시점에 100% 거부됐다.       │
+// └──────────────────────────────────────────────────────────────────────┘
+
+syntax = "proto3";
+
+package gputeer.v1;
+
+import "common.proto";
+
+option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
+
+// ═══════════════════════════════════════════════════════════════════════
+// JobManifest — 장수명. submitter가 서명한다.
+//
+// manifest_hash 필드가 없다는 점에 주의.
+//   해시를 메시지 안에 넣으면 "해시 계산 시 자기 자신을 포함하는가"라는
+//   순환이 생긴다. manifest_hash는 signing.md 규칙 3으로 도출되는 값이며
+//   메시지 밖에서 다룬다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message JobManifest {
+  // --- 식별 ---
+  // signing.md 규칙 4. 검증자가 이 값보다 낮으면 SCHEMA_TOO_NEW 를 반환한다.
+  uint32 schema_version = 1; // 현재 1
+  string job_id = 2;
+  string team_id = 3;
+
+  // --- 실행 대상 ---
+  ExecutionEnvironment env = 10;
+  repeated Digest input_artifacts = 11;
+  DatasetRef dataset = 12;
+  string entrypoint = 13;
+  repeated string args = 14;
+  // canonical 인코딩 시 key 바이트 오름차순으로 정렬된다 (signing.md 규칙 2c).
+  map<string, string> env_vars = 15;
+
+  // --- 자원 요구 ---
+  ResourceRequest resources = 20;
+  WorkloadHint workload = 21;
+
+  // --- 성능 ---
+  uint32 deadline_minutes = 30;
+  Preference preference = 31;
+  // 이 시간을 넘겨 큐에 남으면 QUEUED → FAILED. 0 = deadline을 따름
+  uint32 max_queue_minutes = 32;
+
+  // --- 복구 ---
+  // 로컬 체크포인트 주기. 원격 복제 주기는 §18.4 예산 모델이 별도 산출한다.
+  uint32 checkpoint_interval_minutes = 40;
+  Durability durability = 41;
+  PartitionBehavior on_partition = 42;
+  // 이 시간 이상의 진행 손실을 허용하지 않는다. 예산 모델의 상한 입력.
+  uint32 max_data_loss_minutes = 43;
+
+  // --- 보안 ---
+  IsolationClass minimum_isolation_class = 50;
+  SecurityTier minimum_security_tier = 51;
+  KeyProtection minimum_key_protection = 52;
+  SideEffectClass side_effect_class = 53;
+  NetworkPolicy network = 54;
+  ArtifactScope artifact_scope = 55;
+  // side_effect_class == SIDE_EFFECTING 이고 §15.6의 (a)/(b) 경로를
+  // 쓰지 않는 경우 반드시 true 여야 제출이 수락된다.
+  // fencing으로 외부 부작용 중복을 막을 수 없다는 사실의 명시적 수락.
+  bool acknowledge_duplicate_risk = 56;
+
+  // --- 발급 (장수명) ---
+  string submitter_device_id = 60;
+  uint64 issued_at_unix_ms = 61;
+  // 기본 issued_at + 7일. 최대 30일.
+  uint64 expires_at_unix_ms = 62;
+
+  // --- 서명 ---
+  // canonical 인코딩에서 제외된다 (signing.md 규칙 1).
+  // domain_tag = "gputeer/v1/manifest"
+  bytes submitter_signature = 90;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ExecutionGrant — 단수명. Coordinator가 서명한다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message ExecutionGrant {
+  uint32 schema_version = 1; // 현재 1
+  string grant_id = 2;
+
+  // submitter 서명을 포함한 채로 그대로 전달된다. 재서명하지 않는다.
+  JobManifest manifest = 3;
+  // signing.md 규칙 3으로 계산한 값의 사본. 참조용.
+  // Agent는 검증 13단계에서 반드시 재계산해 대조한다 (신뢰하지 않는다).
+  Digest manifest_hash = 4;
+
+  string attempt_id = 5;
+  Lease lease = 6;
+  repeated PeerHint peers = 7;
+  EphemeralCredential creds = 8;
+
+  // 이 Grant로 실행할 때 적용되는 확정 값. Coordinator가 계산해 내려준다.
+  GrantedExecutionPlan plan = 9;
+
+  // --- 발급 (단수명) ---
+  string coordinator_device_id = 20;
+  uint64 coordinator_term = 21;
+  uint64 issued_at_unix_ms = 22;
+  // 기본 issued_at + 60초.
+  uint64 expires_at_unix_ms = 23;
+  // 16바이트. replay 캐시 대상 (§25.4).
+  bytes nonce = 24;
+
+  // domain_tag = "gputeer/v1/grant"
+  bytes coordinator_signature = 90;
+}
+
+// Coordinator가 확정해 내려주는 실행 파라미터.
+// Agent가 스스로 계산하지 않는다 (노드마다 다른 결론이 나오면 안 되므로).
+message GrantedExecutionPlan {
+  ExecutionMode mode = 1;
+  GpuAllocationMode gpu_allocation = 2;
+  repeated string assigned_gpu_uuids = 3;
+
+  // §18.4 예산 모델이 산출한 실제 원격 복제 주기.
+  // manifest.checkpoint_interval_minutes 와 다를 수 있다.
+  uint32 remote_replication_interval_minutes = 10;
+  // 이 Job에 대해 요구되는 COMMITTED 조건.
+  Durability effective_durability = 11;
+
+  // §13.4 배치 근거. 감사와 UI 설명에 사용한다.
+  PlacementRationale rationale = 20;
+}
+
+// "왜 이 GPU가 선택됐는가"를 항상 설명할 수 있어야 한다 (계획서 §26.3).
+// 악성 Coordinator 탐지에도 쓰인다: 다른 Coordinator가 같은 스냅샷으로
+// 재계산해 대조할 수 있다.
+message PlacementRationale {
+  uint64 t_est_seconds = 1;
+  // σ_ln × 1e6. 부동소수점 금지 규칙(signing.md 규칙 2g).
+  uint64 sigma_ln_ppm = 2;
+  // §12.3의 어느 단계에서 나온 추정인지.
+  EstimationStage stage = 3;
+
+  uint64 p_within_estimate_ppm = 10;
+  uint64 p_survival_ppm = 11;
+  uint64 p_success_ppm = 12;
+  uint64 target_confidence_ppm = 13;
+
+  // 이 배치가 exploration budget으로 이뤄졌는지 (§13.4 P0-Fix #3).
+  // true면 target_confidence를 적용하지 않았다는 뜻이다.
+  bool is_exploration = 20;
+
+  // 탈락한 후보와 사유. 공정성 감사용.
+  repeated RejectedCandidate rejected = 30;
+}
+
+enum EstimationStage {
+  ESTIMATION_STAGE_UNSPECIFIED = 0;
+  ESTIMATION_STAGE_DECLARED = 1;   // σ_rel 0.35
+  ESTIMATION_STAGE_CALIBRATED = 2; // σ_rel 0.15
+  ESTIMATION_STAGE_HISTORICAL = 3; // σ_rel 0.08
+}
+
+message RejectedCandidate {
+  string node_id = 1;
+  RejectReason reason = 2;
+  string detail = 3;
+}
+
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  REJECT_REASON_TIER_INSUFFICIENT = 1;
+  REJECT_REASON_ISOLATION_INSUFFICIENT = 2;
+  REJECT_REASON_KEY_PROTECTION_INSUFFICIENT = 3;
+  REJECT_REASON_RESOURCE_INSUFFICIENT = 4;
+  REJECT_REASON_CUDA_INCOMPATIBLE = 5;
+  REJECT_REASON_UNAVAILABLE_WINDOW = 6;
+  REJECT_REASON_UNHEALTHY = 7;
+  REJECT_REASON_WORKLOAD_CLASS_DENIED = 8;
+  REJECT_REASON_THIRD_PARTY_NOT_OPTED_IN = 9;
+  // T_est × (1 + σ_rel) > deadline. 확률 계산 이전에 잘린다 (§13.2).
+  REJECT_REASON_DEADLINE_INFEASIBLE = 10;
+  // §18.4 체크포인트 예산 모델 위반.
+  REJECT_REASON_CHECKPOINT_BUDGET = 11;
+  // 팀 구성이 요구 durability를 만족할 수 없다 (§13.2).
+  REJECT_REASON_DURABILITY_UNSATISFIABLE = 12;
+  // P(성공) < target_confidence.
+  REJECT_REASON_CONFIDENCE_BELOW_TARGET = 13;
+  REJECT_REASON_QUARANTINED = 14;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Job 제출 결과
+// ═══════════════════════════════════════════════════════════════════════
+
+message SubmitJobResult {
+  SubmitOutcome outcome = 1;
+  string job_id = 2;
+  string detail = 3;
+  // outcome == UNAVAILABLE 일 때 예상 복구 시각 (팀 가용성 스케줄 기준).
+  uint64 estimated_available_at_unix_ms = 4;
+}
+
+enum SubmitOutcome {
+  SUBMIT_OUTCOME_UNSPECIFIED = 0;
+  SUBMIT_OUTCOME_ACCEPTED = 1;
+  // quorum 상실. Job은 생성되지 않는다 (계획서 §27.2).
+  SUBMIT_OUTCOME_UNAVAILABLE = 2;
+  // Hard Filter를 만족하는 노드가 팀에 물리적으로 존재하지 않는다.
+  SUBMIT_OUTCOME_INFEASIBLE = 3;
+  // side_effecting인데 acknowledge_duplicate_risk 가 없다 등.
+  SUBMIT_OUTCOME_POLICY_VIOLATION = 4;
+  SUBMIT_OUTCOME_INVALID_MANIFEST = 5;
+}

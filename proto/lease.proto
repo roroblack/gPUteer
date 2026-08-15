@@ -1,0 +1,183 @@
+// gPUteer — Lease 와 Fencing
+//
+// 규범 문서: docs/protocol/signing.md
+// 설계 근거: gputeer_master_implementation_plan_v5.md §20.2
+//
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ fencing의 정직한 경계  (ADR-025)                                     │
+// │                                                                      │
+// │  ✅ 강제 가능 — 우리가 만든 자원이라 watermark 검사를 넣을 수 있다   │
+// │       Artifact Hub 쓰기 / CAS 등록 / canonical pointer / Lease 자체  │
+// │                                                                      │
+// │  ❌ 강제 불가 — 상대가 fence_epoch를 모른다                          │
+// │       임의 외부 HTTP API / 외부 DB / 결제 / 메일 발송                │
+// │       lease 만료 직전에 전송된 요청은 그대로 처리된다.               │
+// │       네트워크 지연과 만료 사이에는 원천적 경합이 있다.              │
+// │                                                                      │
+// │  따라서 SIDE_EFFECTING Job의 중복 실행은 fencing으로 막을 수 없다.   │
+// │  계획서 §15.6의 (a) 멱등키 / (b) 대행 / (c) 명시수락 중 하나를       │
+// │  반드시 선택해야 한다.                                               │
+// └──────────────────────────────────────────────────────────────────────┘
+
+syntax = "proto3";
+
+package gputeer.v1;
+
+import "common.proto";
+
+option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
+
+// ═══════════════════════════════════════════════════════════════════════
+// Lease
+// ═══════════════════════════════════════════════════════════════════════
+
+message Lease {
+  uint32 schema_version = 1; // 현재 1
+  string lease_id = 2;
+  string job_id = 3;
+  string attempt_id = 4;
+
+  // --- fencing ---
+  // 팀 전역 단조 증가. ControlStore 커밋으로만 증가한다.
+  // 새 Attempt 생성 시마다 증가한다. resource별이 아니라 team 전역이다.
+  uint64 fence_epoch = 10;
+  uint64 coordinator_term = 11;
+
+  // --- 보유자 (v5 초안에 없었다) ---
+  // 단일 노드 Job의 실행 노드.
+  string holder_node_id = 20;
+  // 분산 Job(Mode B/C)의 참여 노드 전체. holder_node_id를 포함한다.
+  repeated string member_node_ids = 21;
+  string issuing_coordinator_id = 22;
+
+  // --- 수명 ---
+  uint64 issued_at_unix_ms = 30;
+  // 기본 issued_at + 10분.
+  uint64 expires_at_unix_ms = 31;
+  // 이 시각 이후 갱신 요청 가능. 기본 수명의 50% 지점.
+  uint64 renew_after_unix_ms = 32;
+  // 이 lease_id로 누적 가능한 최대 시간. 기본 24시간.
+  // 초과하면 새 lease_id로 재발급해야 한다 (좀비 lease 방지).
+  uint32 max_total_duration_seconds = 33;
+
+  ResourceScope scope = 40;
+
+  // domain_tag = "gputeer/v1/lease"
+  bytes coordinator_signature = 90;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 갱신 프로토콜 (v5 초안에 없었다)
+// ═══════════════════════════════════════════════════════════════════════
+
+message RenewLeaseRequest {
+  uint32 schema_version = 1;
+  string lease_id = 2;
+  // 현재 보유 중인 epoch. 서버가 단조성을 확인한다.
+  uint64 fence_epoch = 3;
+  string node_id = 4;
+
+  // 진행 상황 보고. Coordinator의 watchdog 판정 입력이 된다.
+  ProgressReport progress = 10;
+
+  uint64 issued_at_unix_ms = 20;
+  bytes nonce = 21;
+  // domain_tag = "gputeer/v1/lease-renew"
+  bytes node_signature = 90;
+}
+
+message ProgressReport {
+  uint64 current_step = 1;
+  uint64 total_steps = 2;
+  uint64 eta_seconds = 3;
+  // 마지막으로 COMMITTED에 도달한 체크포인트의 step.
+  uint64 last_committed_step = 4;
+  // 현재 체크포인트 복제 백로그 바이트. 예산 모델 감시용.
+  uint64 replication_backlog_bytes = 5;
+}
+
+message RenewLeaseResult {
+  RenewOutcome outcome = 1;
+  // outcome == RENEWED 일 때만 채워진다. fence_epoch는 변하지 않는다.
+  Lease lease = 2;
+  string detail = 3;
+  // outcome == UNAVAILABLE 일 때 재시도 권고 지연.
+  uint32 retry_after_ms = 4;
+}
+
+enum RenewOutcome {
+  RENEW_OUTCOME_UNSPECIFIED = 0;
+  RENEW_OUTCOME_RENEWED = 1;
+  // 더 높은 fence_epoch의 lease가 이미 존재한다. 이 노드는 stale이다.
+  // 정상적인 failover 경합이므로 risk signal을 발화하지 않는다.
+  RENEW_OUTCOME_SUPERSEDED = 2;
+  RENEW_OUTCOME_QUARANTINED = 3;
+  RENEW_OUTCOME_JOB_CANCELLED = 4;
+  RENEW_OUTCOME_JOB_COMPLETED = 5;
+  // max_total_duration_seconds 초과. 새 lease를 요청해야 한다.
+  RENEW_OUTCOME_MAX_DURATION_EXCEEDED = 6;
+  // quorum 상실 등. 재시도 가능.
+  RENEW_OUTCOME_UNAVAILABLE = 7;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 명시적 회수
+// ═══════════════════════════════════════════════════════════════════════
+
+message RevokeLeaseNotice {
+  uint32 schema_version = 1;
+  string lease_id = 2;
+  uint64 fence_epoch = 3;
+  RevokeCause cause = 4;
+  uint64 issued_at_unix_ms = 5;
+  // domain_tag = "gputeer/v1/lease-revoke"
+  bytes coordinator_signature = 90;
+}
+
+enum RevokeCause {
+  REVOKE_CAUSE_UNSPECIFIED = 0;
+  REVOKE_CAUSE_QUARANTINE = 1;
+  REVOKE_CAUSE_JOB_CANCELLED = 2;
+  REVOKE_CAUSE_DRAIN = 3;
+  REVOKE_CAUSE_SUPERSEDED = 4;
+  REVOKE_CAUSE_OWNER_PREEMPT = 5; // 노드 소유자가 "지금 비우기" 실행
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Fence Watermark — 영속화 대상 (v5 초안 누락)
+//
+// 자원 측(Agent, Hub, CAS)은 자신이 본 최대 fence_epoch를 유지한다.
+// 이것이 영속화되지 않으면 재시작한 노드가 stale lease를 수락한다.
+//
+// 저장 위치
+//   Agent       로컬 SQLite `fence_watermark` 테이블
+//   Hub         자체 메타데이터 DB
+//   Coordinator ControlStore (복제 대상)
+//
+// 갱신 시점
+//   더 높은 epoch의 유효한 요청을 수락하기 "직전"에 fsync 한다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message FenceWatermark {
+  string team_id = 1;
+  uint64 max_seen_epoch = 2;
+  uint64 updated_at_unix_ms = 3;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Operation ID — 같은 epoch 내 중복 구분
+//
+// fence_epoch만으로는 같은 attempt가 보낸 서로 다른 두 쓰기를 구분할 수 없다.
+//
+//   operation_id = BLAKE3(job_id || attempt_id || uint64_be(operation_seq))
+//
+// Hub / CAS는 (fence_epoch, operation_id)로 중복을 판정한다.
+// 같은 operation_id의 재전송은 멱등하게 처리한다 (재시도 안전).
+// IDEMPOTENT Job은 이 값을 외부 API의 멱등 키로 전달한다.
+// ═══════════════════════════════════════════════════════════════════════
+
+message FencedOperation {
+  uint64 fence_epoch = 1;
+  Digest operation_id = 2;
+  uint64 operation_seq = 3;
+}
