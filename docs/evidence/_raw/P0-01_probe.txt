@@ -1,0 +1,74 @@
+P0-01 · Windows S1 Restricted Native + CUDA
+python: 3.14.2
+====================================================================
+
+[A] 일반 토큰에서 CUDA 가 동작하는가 (대조군)
+    결과: 동작
+    cuda_available True
+    device_count 1
+    device_name NVIDIA GeForce RTX 4070 SUPER
+    matmul_ok True
+    vram_alloc_mb 9.12
+    판정: PASS — 대조군 확보
+
+[B] **Restricted Token 아래에서 CUDA 가 동작하는가** (P0-01 핵심)
+    결과: 마지막 통과 단계: b3_compute
+    workdir=C:\Windows\Temp
+      b0_alive    exit=0  ALIVE
+      b1_import   exit=0  TORCH 2.13.0+cu126
+      b2_avail    exit=0  CUDA_AVAIL True
+      b3_compute  exit=0  cuda_available True | device_count 1 | device_name NVIDIA GeForce RTX 4070 SUPER | matmul_ok True | vram_alloc_mb 9.12
+    판정: PASS — Restricted Token 아래에서 CUDA 연산까지 동작. S1 경로 유지
+
+[C] Job Object 종료 시 프로세스 트리와 VRAM 이 정리되는가
+    결과: 종료 성공 / VRAM 반환 성공
+    AssignProcessToJobObject=True
+    HOLDING 도달=True
+    VRAM used(MiB)  before=168  during=489  after=168
+    VRAM 증가 관측=True
+    판정: PASS
+
+[D] 현재(비제한) 프로세스가 호스트 민감 파일을 읽을 수 있는가
+    결과: 1 / 3 읽힘
+    읽힌 파일:
+      C:\Users\<x600-user>\AppData\Local\Google\Chrome\User Data\Local State
+    
+    ※ 이것은 '제한이 없으면 읽힌다'는 기준선 측정이다.
+       S1 은 NTFS ACL 로 이를 차단해야 하며, 그 차단은 별도 검증이 필요하다.
+    판정: 정보 — S1 ACL 설계의 대상 목록 확보
+
+====================================================================
+probe 4개 · FAIL 0
+
+JSON_BEGIN
+[
+  {
+    "probe": "A",
+    "question": "일반 토큰에서 CUDA 가 동작하는가 (대조군)",
+    "result": "동작",
+    "detail": "cuda_available True\ndevice_count 1\ndevice_name NVIDIA GeForce RTX 4070 SUPER\nmatmul_ok True\nvram_alloc_mb 9.12",
+    "verdict": "PASS — 대조군 확보"
+  },
+  {
+    "probe": "B",
+    "question": "**Restricted Token 아래에서 CUDA 가 동작하는가** (P0-01 핵심)",
+    "result": "마지막 통과 단계: b3_compute",
+    "detail": "workdir=C:\\Windows\\Temp\n  b0_alive    exit=0  ALIVE\n  b1_import   exit=0  TORCH 2.13.0+cu126\n  b2_avail    exit=0  CUDA_AVAIL True\n  b3_compute  exit=0  cuda_available True | device_count 1 | device_name NVIDIA GeForce RTX 4070 SUPER | matmul_ok True | vram_alloc_mb 9.12",
+    "verdict": "PASS — Restricted Token 아래에서 CUDA 연산까지 동작. S1 경로 유지"
+  },
+  {
+    "probe": "C",
+    "question": "Job Object 종료 시 프로세스 트리와 VRAM 이 정리되는가",
+    "result": "종료 성공 / VRAM 반환 성공",
+    "detail": "AssignProcessToJobObject=True\nHOLDING 도달=True\nVRAM used(MiB)  before=168  during=489  after=168\nVRAM 증가 관측=True",
+    "verdict": "PASS"
+  },
+  {
+    "probe": "D",
+    "question": "현재(비제한) 프로세스가 호스트 민감 파일을 읽을 수 있는가",
+    "result": "1 / 3 읽힘",
+    "detail": "읽힌 파일:\n  C:\\Users\\<x600-user>\\AppData\\Local\\Google\\Chrome\\User Data\\Local State\n\n※ 이것은 '제한이 없으면 읽힌다'는 기준선 측정이다.\n   S1 은 NTFS ACL 로 이를 차단해야 하며, 그 차단은 별도 검증이 필요하다.",
+    "verdict": "정보 — S1 ACL 설계의 대상 목록 확보"
+  }
+]
+JSON_END
