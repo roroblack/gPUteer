@@ -30,3 +30,4 @@ Thumbs.db
 
 # evidence 원문 첨부는 커밋한다 (증거이므로)
 !docs/evidence/_raw/
+/target
