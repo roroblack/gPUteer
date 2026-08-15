@@ -2,7 +2,7 @@
 id: ENV-01
 claim: "이 개발 기계의 툴체인·GPU·파일시스템을 실측하고, 어떤 P0 스파이크가 실행 가능한지 확정한다"
 status: PASS
-commit: workdir-uncommitted-2026-08-15
+commit: 2fd847628b4cfec54cbafc41cb5c4b5a9c79f66a
 binary_digests:
   none: "실행 바이너리 없음 — 환경 조사만 수행"
 protocol_versions:

@@ -2,7 +2,7 @@
 id: ENV-02
 claim: "SSH 로 접근 가능한 원격 기계 x600 의 GPU·툴체인·가상화를 실측하고, ENV-01 에서 BLOCKED 로 판정한 P0 스파이크 중 어느 것이 해제되는지 확정한다"
 status: PASS
-commit: workdir-uncommitted-2026-08-16
+commit: 2fd847628b4cfec54cbafc41cb5c4b5a9c79f66a
 binary_digests:
   none: "환경 조사만 수행 — 실행 바이너리 없음"
 protocol_versions:

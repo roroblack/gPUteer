@@ -16,6 +16,21 @@
 
 ---
 
+## 2026-08-16 06:20 — Rust 구현 착수: protocol + checkpoint (31 tests green)
+
+- 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S2 · S4
+- 스트림: Protocol · Checkpoint
+- 수행: Rust 1.97.1 설치(로컬). Cargo workspace + 크레이트 2종 구현.
+  `crates/protocol` — canonical_encode(규칙 a~i) · sig_input · Domain 17종 · merkle · constants
+  `crates/checkpoint` — ADR-026 write_once/replace_with_retry · sync_dir · 상태전이 · ReplicaSet
+- 검증: **cargo test --workspace = 31 passed / 0 failed**
+  canonical 15건이 Python 참조 구현과 **바이트 단위 일치**(BLAKE3 다이제스트까지).
+  checkpoint 16건 중 `adr026_write_once_succeeds_while_readers_hold_files_open` 이
+  P0-03a 에서 313/3000 실패하던 조건에서 **500/500 성공**
+- 결정: signing.md §3 규칙 변경 없음. 다음 공백은 **prost 연동 계층**
+- 리포트: `docs/reports/2026-08-16_0620_Rust구현_protocol_checkpoint.md`
+- evidence: `DoD-01_canonical_encode_교차검증.md`
+
 ## 2026-08-16 05:30 — 원격 GPU 기계(x600) 실측, BLOCKED 7건 중 4건 해제
 
 - 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S0 (재실측)
