@@ -2,7 +2,7 @@
 id: P0-01
 claim: "Windows Restricted Token(특권 전부 제거) 아래에서 CUDA 가 동작하고, Job Object 로 프로세스 트리를 종료하면 VRAM 이 반환된다 — 즉 S1(Restricted Native) 경로가 성립한다"
 status: PASS
-commit: 7dc60e4bf285106088cbae3eaec5a0a56f4c55c8
+commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
 binary_digests:
   probe_script_sha256: "4AFC6DED273D76AE4158F386944353F6DAD9BA6BD63E27BCC404F7271D53CD32"
   probe_path: "tools/probes/p0_01_windows_s1_cuda.py"

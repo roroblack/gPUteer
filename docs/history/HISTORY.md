@@ -16,6 +16,24 @@
 
 ---
 
+## 2026-08-16 07:00 — P0 스파이크 3건 (P0-01 PASS · P0-07 PASS · P0-06 FAIL-SCOPE)
+
+- 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md`
+- 스트림: QA · Runtime
+- 수행: x600 에 Rust 1.97.1 설치. SSH 전달을 base64 -> scp+`-File` 로 교체.
+  P0-01(Windows S1+CUDA) · P0-07(추정 정확도) · P0-06(VRAM 강제) 실측
+- 검증:
+  **P0-01 PASS** — Restricted Token 에서 CUDA 완전 동작. Job Object 종료 시 VRAM 168->489->168 반환
+  **P0-07 PASS** — sigma=0.021 (DoD 0.20). warmup 10->300 으로 오차 9.3%->1.2%
+  **P0-06 FAIL-SCOPE** — 기준선 §10.3 의 "Job Object 는 VRAM 무관" 이 Windows 에서 **틀렸다**.
+  5x5 스윕으로 `VRAM 최대 ~= RAM 제한 - 2000MiB` 확인
+- 결정: ADR-005 유지 · ADR-007 유지 · **ADR-015 유지** · **ADR-027 신설**.
+  기준선 수정 3건 승인 대기 (ADR-026 · ADR-027 · §12.3 warmup)
+- ★ 오판 5건 정정 기록. 특히 "빈 출력 -> CUDA 실패" 오판을 잡지 못했으면
+  ADR-005 를 뒤집고 Windows S1 을 로드맵에서 제거했을 것
+- 리포트: `docs/reports/2026-08-16_0700_P0스파이크_3건_자율세션.md`
+- evidence: `P0-01` · `P0-07` · `P0-06`
+
 ## 2026-08-16 06:20 — Rust 구현 착수: protocol + checkpoint (31 tests green)
 
 - 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S2 · S4

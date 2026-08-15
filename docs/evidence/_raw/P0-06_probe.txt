@@ -1,0 +1,94 @@
+P0-06 · VRAM Enforcement Reality Check
+GPU: NVIDIA GeForce RTX 4070 SUPER
+driver: 595.79
+======================================================================
+
+[A] PyTorch set_per_process_memory_fraction 이 VRAM 을 제한하는가
+    결과: 제한 작동 / 우회 가능
+    total_mib 12282
+    cap_mib 2456
+    OVER_ALLOC_BLOCKED CUDA out of memory. Tried to allocate 3.84 GiB. GPU 0 has a total capacity of 11.99 GiB of which 10.81 GiB is free. 2.40
+    
+    [우회 시도 — 같은 프로세스에서 fraction 을 1.0 으로 되돌림]
+    RESET_BYPASS_OK 6141
+    판정: 협조적 제한만 가능 — 워크로드가 되돌리면 무력화된다 (§10.3 주장 유지)
+
+[B] Job Object 의 메모리 제한이 VRAM 할당을 막는가
+    결과: RAM 제한 4096MiB / VRAM 6144MiB 요청 / 실측 증가 0MiB
+    SetInformationJobObject=True  AssignProcessToJobObject=True
+    HELD 도달=False  exit_code=1
+    VRAM used  before=168  during=168  (증가 0 MiB)
+    자식 프로세스 출력:
+          [W816 06:43:07.000000000 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 6442450944 bytes (free: 11608784896, total: 12878086144).
+          [W816 06:43:07.000000000 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 6442450944 bytes (free: 11608784896, total: 12878086144).
+          Traceback (most recent call last):
+            File "<string>", line 4, in <module>
+              x = torch.empty(mib * 1048576 // 2, dtype=torch.float16, device='cuda')
+          torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 6.00 GiB. GPU 0 has a total capacity of 11.99 GiB of which 10.81 GiB is free. Of the allocated memory 0 bytes is allocated by PyTorch, and 0 bytes is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+    판정: INCONCLUSIVE — 자식이 HELD 에 도달하지 못했다. 'VRAM 이 막힌 것' 인지 '프로세스가 RAM 때문에 죽은 것' 인지 구분되지 않는다 (아래 자식 출력 참조)
+
+[C] 외부 프로세스의 VRAM 사용량을 관측할 수 있는가 (§11.2)
+    결과: PID 목록 보임 / 프로세스별 사용량 **[N/A]**
+    HELD=True
+    VRAM(전체)  before=168  during=2405  after=168  (증가 2237)
+    nvidia-smi --query-compute-apps (대상 pid=26360):
+    34448, [N/A]
+    26360, [N/A]
+    → 전체 사용량(memory.used)은 얻을 수 있으나 프로세스별 분해는 불가능하다 (WDDM 모드 GeForce 제약)
+    판정: PARTIAL — 전체 사용량만 얻을 수 있다. §10.5 의 external_process_vram 은 '전체 - gPUteer 자신의 할당' 으로 간접 산출해야 한다
+
+[D] MIG / MPS 로 하드웨어 수준 분할이 가능한가
+    결과: MIG 미지원 / MPS 없음
+    GPU: NVIDIA GeForce RTX 4070 SUPER
+    nvidia-smi mig.mode.current = '[N/A]'
+    nvidia-cuda-mps-control: 없음
+    (MPS 는 Windows 미지원. MIG 는 데이터센터 GPU 전용)
+    판정: §10.3 주장 확인 — 소비자 GPU 에 하드웨어 분할 수단 없음
+
+======================================================================
+JSON_BEGIN
+[
+  {
+    "probe": "A",
+    "question": "PyTorch set_per_process_memory_fraction 이 VRAM 을 제한하는가",
+    "result": "제한 작동 / 우회 가능",
+    "detail": "total_mib 12282\ncap_mib 2456\nOVER_ALLOC_BLOCKED CUDA out of memory. Tried to allocate 3.84 GiB. GPU 0 has a total capacity of 11.99 GiB of which 10.81 GiB is free. 2.40\n\n[우회 시도 — 같은 프로세스에서 fraction 을 1.0 으로 되돌림]\nRESET_BYPASS_OK 6141",
+    "verdict": "협조적 제한만 가능 — 워크로드가 되돌리면 무력화된다 (§10.3 주장 유지)"
+  },
+  {
+    "probe": "B",
+    "question": "Job Object 의 메모리 제한이 VRAM 할당을 막는가",
+    "result": "RAM 제한 4096MiB / VRAM 6144MiB 요청 / 실측 증가 0MiB",
+    "detail": "SetInformationJobObject=True  AssignProcessToJobObject=True\nHELD 도달=False  exit_code=1\nVRAM used  before=168  during=168  (증가 0 MiB)\n자식 프로세스 출력:\n      [W816 06:43:07.000000000 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 6442450944 bytes (free: 11608784896, total: 12878086144).\n      [W816 06:43:07.000000000 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 6442450944 bytes (free: 11608784896, total: 12878086144).\n      Traceback (most recent call last):\n        File \"<string>\", line 4, in <module>\n          x = torch.empty(mib * 1048576 // 2, dtype=torch.float16, device='cuda')\n      torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 6.00 GiB. GPU 0 has a total capacity of 11.99 GiB of which 10.81 GiB is free. Of the allocated memory 0 bytes is allocated by PyTorch, and 0 bytes is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)",
+    "verdict": "INCONCLUSIVE — 자식이 HELD 에 도달하지 못했다. 'VRAM 이 막힌 것' 인지 '프로세스가 RAM 때문에 죽은 것' 인지 구분되지 않는다 (아래 자식 출력 참조)"
+  },
+  {
+    "probe": "C",
+    "question": "외부 프로세스의 VRAM 사용량을 관측할 수 있는가 (§11.2)",
+    "result": "PID 목록 보임 / 프로세스별 사용량 **[N/A]**",
+    "detail": "HELD=True\nVRAM(전체)  before=168  during=2405  after=168  (증가 2237)\nnvidia-smi --query-compute-apps (대상 pid=26360):\n34448, [N/A]\n26360, [N/A]\n→ 전체 사용량(memory.used)은 얻을 수 있으나 프로세스별 분해는 불가능하다 (WDDM 모드 GeForce 제약)",
+    "verdict": "PARTIAL — 전체 사용량만 얻을 수 있다. §10.5 의 external_process_vram 은 '전체 - gPUteer 자신의 할당' 으로 간접 산출해야 한다"
+  },
+  {
+    "probe": "D",
+    "question": "MIG / MPS 로 하드웨어 수준 분할이 가능한가",
+    "result": "MIG 미지원 / MPS 없음",
+    "detail": "GPU: NVIDIA GeForce RTX 4070 SUPER\nnvidia-smi mig.mode.current = '[N/A]'\nnvidia-cuda-mps-control: 없음\n(MPS 는 Windows 미지원. MIG 는 데이터센터 GPU 전용)",
+    "verdict": "§10.3 주장 확인 — 소비자 GPU 에 하드웨어 분할 수단 없음"
+  }
+]
+JSON_END
+
+########## 대조 실험 1: Job Object 없이 대형 할당 ##########
+free_mib 11071 total_mib 12282
+ALLOC_OK 2048 / ALLOC_OK 4096 / ALLOC_OK 6144 / ALLOC_OK 8192
+
+########## 대조 실험 2: RAM 제한 x VRAM 요청 스윕 ##########
+RAM제한(MiB) x VRAM요청(MiB) -> 결과
+  RAM=무제한     1024:OK  2048:OK  3072:OK  4096:OK  6144:OK
+  RAM=8192    1024:OK  2048:OK  3072:OK  4096:OK  6144:OK
+  RAM=6144    1024:OK  2048:OK  3072:OK  4096:OK  6144:FAIL
+  RAM=4096    1024:OK  2048:OK  3072:FAIL  4096:FAIL  6144:FAIL
+  RAM=3072    1024:OK  2048:FAIL  3072:FAIL  4096:FAIL  6144:FAIL
+
+[{"ram_limit": null, "vram_req": 1024, "result": "OK"}, {"ram_limit": null, "vram_req": 2048, "result": "OK"}, {"ram_limit": null, "vram_req": 3072, "result": "OK"}, {"ram_limit": null, "vram_req": 4096, "result": "OK"}, {"ram_limit": null, "vram_req": 6144, "result": "OK"}, {"ram_limit": 8192, "vram_req": 1024, "result": "OK"}, {"ram_limit": 8192, "vram_req": 2048, "result": "OK"}, {"ram_limit": 8192, "vram_req": 3072, "result": "OK"}, {"ram_limit": 8192, "vram_req": 4096, "result": "OK"}, {"ram_limit": 8192, "vram_req": 6144, "result": "OK"}, {"ram_limit": 6144, "vram_req": 1024, "result": "OK"}, {"ram_limit": 6144, "vram_req": 2048, "result": "OK"}, {"ram_limit": 6144, "vram_req": 3072, "result": "OK"}, {"ram_limit": 6144, "vram_req": 4096, "result": "OK"}, {"ram_limit": 6144, "vram_req": 6144, "result": "FAIL"}, {"ram_limit": 4096, "vram_req": 1024, "result": "OK"}, {"ram_limit": 4096, "vram_req": 2048, "result": "OK"}, {"ram_limit": 4096, "vram_req": 3072, "result": "FAIL"}, {"ram_limit": 4096, "vram_req": 4096, "result": "FAIL"}, {"ram_limit": 4096, "vram_req": 6144, "result": "FAIL"}, {"ram_limit": 3072, "vram_req": 1024, "result": "OK"}, {"ram_limit": 3072, "vram_req": 2048, "result": "FAIL"}, {"ram_limit": 3072, "vram_req": 3072, "result": "FAIL"}, {"ram_limit": 3072, "vram_req": 4096, "result": "FAIL"}, {"ram_limit": 3072, "vram_req": 6144, "result": "FAIL"}]
