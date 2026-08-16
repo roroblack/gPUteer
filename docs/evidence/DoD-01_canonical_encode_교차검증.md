@@ -152,4 +152,35 @@ ADR-026 적용 (Rust, write-once 고유 이름)    500 / 500 성공
 3. `tests/vectors/canonical_v1.json` 을 **QA 스트림 소유**로 유지한다.
    구현자가 자기 구현에 맞춰 고치면 검증이 무의미해진다.
 
+---
+
+## 후속 정정 (2026-08-16 · `DoD-08`)
+
+★ **이 문서의 `raw_output` 에 있는 `vector cross-checks: OK` 는
+당시 실제보다 약한 검사였다.**
+
+독립 검수가 지적했다 — 그때의 `--verify` 는 저장된 `canonical_hex` 끼리
+`MUST_EQUAL`/`MUST_DIFFER` 관계만 확인했고, **저장본이 구현과 어긋나도 통과**했다.
+
+```text
+당시 --verify 가 실제로 한 것    벡터 사이의 관계 검사
+당시 --verify 가 하지 않은 것    build_vectors() 재실행 후 바이트 대조
+```
+
+### 그럼에도 이 evidence 의 주장은 유효하다
+
+교차검증은 `--verify` 가 아니라 **Rust 테스트**가 했다.
+`crates/protocol/tests/canonical_vectors.rs` 가 Python 이 생성해 저장한
+`canonical_hex` 를 읽어 Rust 출력과 직접 대조한다.
+그 경로는 처음부터 지금까지 유효하다.
+
+`--verify` 는 2026-08-16 에 재생성 대조를 하도록 고쳤다 (`DoD-08`).
+
+### 이 문서가 놓쳤던 것
+
+같은 검수에서 **Rust 와 Python 이 동일하게 규범을 어기던 3건**이 발견됐다
+(규칙 i 의 중첩 누출 · map 엔트리 기본값 · 도출 해시 재귀 제외).
+**벡터 대조는 "두 구현이 같은가" 를 증명하지 "옳은가" 를 증명하지 않는다** —
+이 문서가 그 한계를 충분히 적지 않았다. `DoD-08` 참조.
+
 관련: `docs/protocol/signing.md` · `docs/decisions/ADR-026_체크포인트_확정_절차_플랫폼_차이.md`

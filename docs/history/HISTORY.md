@@ -16,6 +16,48 @@
 
 ---
 
+## 2026-08-16 18:20 — ★ 독립 검수(Codex) 지적 7건 시정 (DoD-08 PASS, 167 tests green)
+
+- 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T4 착수 전 계약 정비
+- 스트림: Protocol · Crypto · Checkpoint · QA
+- 배경: 이 세션의 결정(ADR-028 · ADR-029 · canonical 규칙)은 **전부 내가 혼자 판단하고
+  내가 만든 테스트로 검증한 것**이다. 그 테스트가 놓친 것은 그 테스트로 못 찾는다.
+  `CLAUDE.md` §4 대로 Codex CLI 에 **적대적 검토**를 맡겼다 — 동의가 아니라 반박을 요청
+- ★★ **두 구현이 똑같이 틀린 곳 3건 발견** — 벡터 대조로는 원리적으로 못 잡던 것들
+  1. **규칙 i-2** 중첩 메시지가 서명 필드만 가지면 `0a00`(빈 중첩)으로 **출력**됐다.
+     `is_default()` 검사가 field 90 제외보다 먼저 일어나 규칙 i 가 새어나갔다.
+     Python 도 동일 (`manifest={}` → `0801` vs `{90:sig}` → `08011a00`)
+  2. **규칙 c-2** map 엔트리 안의 규칙 b 가 규범에 없었다
+  3. **규칙 i-3** 도출 해시 제외가 **재귀 적용**돼
+     `DatasetRef.retention`(field 4)이 `manifest_hash`(field 4)로 오인돼
+     **데이터셋 삭제 정책이 서명에서 지워졌다**
+- ★★ **검증 도구 자체가 검증하지 않고 있었다.**
+  `--verify` 가 저장된 hex 끼리 관계만 봤다 — **저장본이 구현과 어긋나도 통과**한다.
+  나는 `DoD-01` 이래 "vector cross-checks: OK" 를 검증 근거로 인용해 왔다.
+  -> `build_vectors()` 재실행 대조로 고쳤다. 관계 없는 벡터 변조 뮤테이션으로 실효성 확인.
+  -> **`DoD-01` 에 후속 정정을 추가**했다 (교차검증 자체는 Rust 테스트가 했으므로 유효)
+- ★★ **replay nonce 가 메시지와 결속되지 않았다** (보안 영향 최대)
+  `verify(msg, ..., nonce, ...)` 로 **호출자가 nonce 를 골랐다.**
+  => 서명은 통과하는데 replay 방어만 무력화. 매번 새 값이면 무한 재생 가능
+  -> `Signable::replay_nonce()` — **서명된 메시지 필드**에서 가져온다
+  -> 검수자 조언대로 **SQLite 착수 전에 계약부터 고쳤다** ("지금 SQLite 를 추가하면
+     잘못된 외부 nonce 를 영속 기록하는 구현이 된다")
+- checkpoint (첫 독립 검토):
+  - **K-1** `write_once` 가 "content-addressed 이름" 을 전제했는데 실제는 `shard-0.bin`.
+    같은 이름·다른 내용을 조용히 수락 → **writer 가 "확정했다"고 거짓 보고**
+  - **K-2** `RetryPolicy{max_attempts:0}` 이 `atomic.rs:139` 에서 **panic**.
+    ADR-026 의 "최종 실패는 명시적 오류" 계약 위반 — panic 은 오류가 아니다
+- 부수: `ReplayGuard` → `Result<ReplayDecision, ReplayStoreError>`,
+  `VerifyError` 로 프로토콜 결과와 로컬 장애 분리,
+  §6.1 `manifest_hash` **공식 자체**를 처음으로 검증
+- 검증: **cargo test --workspace = 167 passed / 0 failed** (143 → 167). 빌드 경고 0.
+  ★ **기존 벡터 canonical 변경 0건** — 회귀 없이 규범 구멍만 메웠다.
+  `SCHEMA_FINGERPRINT` 불변(`.proto` 미변경)
+- ★ **시정하지 않은 지적을 숨기지 않았다** — `RevokeLeaseNotice` 반복 전송(미실측),
+  증거 3종 서명자 ID(V-08), `ReplicaAck.fence_epoch`(V-07),
+  §8 5·6단계 순서(규범 수정 여부 별도 판단), `write_once` 메모리 사용(미측정)
+- evidence: `DoD-08_독립검수_시정.md`
+
 ## 2026-08-16 16:40 — T2 증거 메시지 시각 정책 (ADR-029 · DoD-07 PASS, 143 tests green)
 
 - 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T2
