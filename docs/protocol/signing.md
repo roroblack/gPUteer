@@ -378,6 +378,25 @@ python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v
 `prost::Message::encode()`는 §3의 규칙을 보장하지 않는다.
 `canonical_encode`를 **별도로 구현한다(MUST).**
 
+#### 근거 (2026-08-16 실측 · `docs/evidence/DoD-02_prost_연동_계층.md`)
+
+★ **근거를 정확히 적는다. "prost 출력은 canonical 과 다르다"는 틀린 설명이다.**
+
+map 이 없는 단순 메시지에서는 prost 도 필드 번호 오름차순 · 기본값 생략 ·
+최소 varint 를 쓰므로 **두 인코딩이 바이트 단위로 일치한다** (실측: 113B / 113B / 동일).
+
+문제는 **map** 이다. prost 는 map 을 `HashMap` 으로 생성하고 순회 순서대로 쓴다.
+같은 내용의 메시지를 500회 재구축한 실측:
+
+```text
+prost::Message::encode      495 종의 서로 다른 바이트
+canonical_encode              1 종
+```
+
+→ prost 로 서명하면 **같은 매니페스트가 매번 다른 서명을 갖고 검증이 랜덤하게 실패한다.**
+이것이 §3 규칙 c(map key 정렬)가 존재하는 이유이며, 구현에서는
+prost 의 `HashMap` 을 `BTreeMap` 으로 정규화하는 지점이 그 규칙을 보장하는 **유일한 곳**이다.
+
 권장 구조:
 
 ```text
@@ -391,6 +410,28 @@ crates/protocol/src/signing.rs
     fn sign<M: CanonicalEncode>(key: &SigningKey, msg: &M) -> Signature
     fn verify<M: CanonicalEncode>(key: &VerifyingKey, msg: &M) -> VerifyOutcome
 ```
+
+#### 채택한 방식 — 수동 구현 (2026-08-16)
+
+위 두 선택지 중 **수동 구현**을 택했다. 구현은 `crates/protocol/src/to_fields.rs`.
+
+```text
+자동 생성   새 필드가 조용히 서명 대상에 들어가거나 빠지는 것을 숨긴다
+수동 구현   어떤 필드가 서명에 들어가는지 사람이 눈으로 확인할 수 있다   <- 채택
+```
+
+수동 구현의 위험은 **field number 오타**다. 타입 불일치와 없는 필드는 컴파일러가
+잡지만 번호 오타는 못 잡는다 — 코드는 돌고, 서명도 만들어지고, 자기 자신과는
+검증도 통과하며, **다른 구현체와 붙는 순간에만 깨진다.**
+
+→ `crates/protocol/tests/field_number_audit.rs` 가 `.proto` 소스와 구현 소스를
+둘 다 파싱해 번호↔이름을 대조한다. **이 테스트 없이 수동 구현을 하면 안 된다(MUST).**
+
+#### 서명 대상에서 빠진 필드는 명시적으로 선언한다 (MUST)
+
+서명 대상에서 조용히 빠진 필드는 **위조 가능한 필드**다.
+아직 canonical 에 넣지 못한 필드는 `UNIMPLEMENTED_FIELDS` 에 반드시 등록하고,
+테스트가 **선언되지 않은 누락을 실패시킨다.**
 
 ### 13.2 타입 수준 강제
 

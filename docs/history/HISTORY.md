@@ -16,6 +16,31 @@
 
 ---
 
+## 2026-08-16 09:30 — prost 연동 계층 (DoD-02 PASS, 55 tests green)
+
+- 계획: 계획 밖 — `DoD-01` limitations 1·2번을 닫는 작업
+- 스트림: Protocol
+- 수행: `build.rs`(protoc-bin-vendored) · `src/to_fields.rs`(ToCanonicalFields 수동 구현) ·
+  `tests/prost_canonical.rs` 11건 · `tests/field_number_audit.rs` 6건
+- 검증: **cargo test --workspace = 55 passed / 0 failed** (38 -> 55).
+  실제 prost 메시지가 Python 참조 구현과 바이트 일치(BLAKE3 까지).
+  ★ map 500회 재구축에서 **prost 495종 vs canonical 1종** — 비공허성 단언 포함.
+  field_number_audit 은 **뮤테이션 2종**(중복 경로·이름 불일치 경로)으로 실효성 확인
+- 발견:
+  1. `job.proto` 에 `import "lease.proto"` 누락 — **5개 proto 를 한 번도 컴파일한 적이 없었다**
+  2. 내 negative test 주장이 틀렸다. map 없으면 prost==canonical(113B/113B).
+     테스트를 느슨하게 고치지 않고 **근거를 다시 세웠다**
+  3. ★ **서명에서 빠진 필드 6건, 그 중 3건이 보안 필드**
+     (JobManifest 54 network · 55 artifact_scope · Lease 40 scope). 현재 **위조 가능**
+  4. 계획서 §15.2 `bytes submitter_device_id` vs proto `string` 드리프트
+- 결정: `signing.md` §3 규칙 변경 없음. §13.1 **근거 문구 정정**(규범 아님) +
+  수동 구현 채택 명시 + `UNIMPLEMENTED_FIELDS` 선언 의무화.
+  **P0-08 신규 등록** — `SCHEMA_TOO_NEW` × prost unknown-field.
+  `CLAUDE.md` §0.2 와 prost 기본 동작이 정면 충돌한다.
+  D-5 기준선 수정 요청 **3건 -> 4건**
+- 리포트: `docs/reports/2026-08-16_0930_prost_연동계층_자율세션.md`
+- evidence: `DoD-02_prost_연동_계층.md`
+
 ## 2026-08-16 08:10 — P0-03 카오스 테스트 완주 (38 tests green)
 
 - 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S3

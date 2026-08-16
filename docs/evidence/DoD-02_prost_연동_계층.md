@@ -1,0 +1,260 @@
+---
+id: DoD-02
+claim: "실제 prost 생성 메시지에서 canonical 규칙 a~i 가 유지되며, to_fields 변환 계층이 Python 참조 구현과 바이트 단위로 일치한다. 서명 대상에서 빠진 필드는 전부 명시적으로 선언되어 있다"
+status: PASS
+commit: e7b72693e2478b6ab7f7a112e5b44966f793a9ba
+binary_digests:
+  toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / protoc (protoc-bin-vendored)"
+  note: "라이브러리 크레이트라 실행 바이너리 없음. prost-build 가 OUT_DIR 에 gputeer.v1.rs 생성"
+protocol_versions:
+  schema_version: "1"
+  canonical_spec: "docs/protocol/signing.md v1"
+  proto_files: "proto/{common,job,lease,artifact,control}.proto"
+platform: "Microsoft Windows 11 Pro build 26200 / NTFS / x86_64-pc-windows-msvc"
+hardware: "Intel Iris Xe Graphics / GPU 무관 (순수 인코딩 로직)"
+network_profile: "해당 없음 - 로컬 단위 테스트"
+command: |
+  cargo build -p gputeer-protocol
+  cargo test --workspace -- --nocapture
+  cargo test -p gputeer-protocol --test prost_canonical
+  cargo test -p gputeer-protocol --test field_number_audit
+raw_output: |
+  Running tests\canonical_vectors.rs
+  test result: ok. 15 passed; 0 failed; 0 ignored
+
+  Running tests\field_number_audit.rs
+  Digest: proto 2개 필드 중 2개 서명 대상
+  CudaRequirement: proto 3개 필드 중 3개 서명 대상
+  GpuRequest: proto 5개 필드 중 5개 서명 대상
+  ResourceRequest: proto 5개 필드 중 5개 서명 대상
+  WorkloadHint: proto 7개 필드 중 7개 서명 대상
+  Lease: proto 15개 필드 중 13개 서명 대상
+  JobManifest: proto 29개 필드 중 23개 서명 대상
+  test result: ok. 6 passed; 0 failed; 0 ignored
+
+  Running tests\prost_canonical.rs
+  map 없는 매니페스트: prost 113B, canonical 113B, 동일=true
+  500회 재구축 — prost 서로 다른 인코딩 495종 / canonical 1종
+  미구현 서명 필드: JobManifest field 10 — env (ExecutionEnvironment)
+  미구현 서명 필드: JobManifest field 11 — input_artifacts (repeated Digest)
+  미구현 서명 필드: JobManifest field 12 — dataset (DatasetRef)
+  미구현 서명 필드: JobManifest field 54 — network (NetworkPolicy)
+  미구현 서명 필드: JobManifest field 55 — artifact_scope (ArtifactScope)
+  미구현 서명 필드: Lease field 40 — scope (ResourceScope)
+  test result: ok. 11 passed; 0 failed; 0 ignored
+
+  Running tests\durability_chaos.rs
+  test result: ok. 16 passed; 0 failed; 0 ignored
+  Running tests\kill_chaos.rs
+  test result: ok. 7 passed; 0 failed; 0 ignored
+
+  전체: 55 passed / 0 failed
+artifacts:
+  - docs/evidence/_raw/DoD-02_test_output.txt
+  - crates/protocol/build.rs
+  - crates/protocol/src/to_fields.rs
+  - crates/protocol/tests/prost_canonical.rs
+  - crates/protocol/tests/field_number_audit.rs
+negative_tests:
+  - "prost_encode_is_not_deterministic_for_maps: map 을 가진 같은 내용의 메시지를 500회 재구축했을 때 prost::encode 가 495종의 서로 다른 바이트를 냈다. canonical 은 1종. ★ 비공허성 단언 포함 — prost 가 1종만 냈다면 실패시킨다"
+  - "hashmap_canonical_is_stable_across_many_rebuilds: 삽입 순서를 매번 회전시켜 200회 재구축, canonical 1종"
+  - "signature_field_excluded_in_prost_path: 실제 prost 메시지의 submitter_signature 에 0xFF 64바이트를 채워도 canonical 불변"
+  - "default_valued_fields_are_omitted_in_prost_path: 명시적 0/false/빈 vec/빈 map 을 넣어도 미설정과 같은 canonical"
+  - "job_manifest_field_numbers_match_proto / lease_ / common_: to_fields.rs 소스와 .proto 소스를 파싱해 field number-이름 대조. 컴파일러가 잡지 못하는 번호 오타를 잡는다"
+  - "every_unsigned_field_is_declared_in_unimplemented_list: 서명 대상에서 빠진 모든 필드가 UNIMPLEMENTED_FIELDS 에 선언되어 있는지 검사. 조용히 빠진 필드는 위조 가능하다"
+  - "unimplemented_list_has_no_stale_entries: 반대 방향 - 목록에 있는데 이미 구현된 항목 검출"
+  - "parsers_are_not_vacuous: 감사 테스트의 파서 자체가 빈 결과를 내면 위 검사가 전부 공허해지므로 파서를 먼저 검증"
+limitations:
+  - "★ 서명 대상 6개 필드가 아직 canonical 에 들어가지 않는다 (JobManifest 10/11/12/54/55, Lease 40). UNIMPLEMENTED_FIELDS 로 선언하고 테스트로 강제했으나 구현 자체는 미완이다. 이 필드들은 현재 위조 가능하다"
+  - "17종 서명 대상 메시지 중 7종(JobManifest, Lease, Digest, CudaRequirement, GpuRequest, ResourceRequest, WorkloadHint)만 ToCanonicalFields 를 구현했다. artifact.proto / control.proto 의 서명 대상은 미구현이다"
+  - "field_number_audit 는 정규식 파서다. oneof / reserved / 중첩 message 선언을 다루지 않는다. 현 스키마에 해당 구문이 없어 지금은 무해하나 스키마가 커지면 prost-reflect 로 교체해야 한다"
+  - "Ed25519 서명·검증을 여전히 하지 않았다. sig_input 바이트 생성까지만 확인했다"
+  - "SCHEMA_TOO_NEW 경로(signing.md §7.2)는 미구현이다. prost 는 알 수 없는 필드를 조용히 버리는데, 그 동작이 검증을 어떻게 깨는지 미검증이다"
+  - "Windows 단일 플랫폼. Linux/macOS 에서 HashMap 순회 순서가 다를 수 있으나 canonical 은 순서 무관이므로 영향 없을 것으로 보인다 — 그러나 미검증이다"
+  - "prost 생성 코드가 float 필드를 만들 수 있는 경로는 검사하지 않았다. 현재 proto 에 float/double 이 없어서 발생하지 않을 뿐, 누군가 추가하면 to_fields 컴파일 오류로 잡히는지는 미검증이다"
+decision: "signing.md §3 규칙을 변경하지 않는다. prost 경로에서도 규칙이 유지됨이 실증되었다. §13.1 의 'prost 인코더를 서명에 쓰지 말라'는 경고는 근거가 확정되었다 - 단 근거는 '출력이 항상 다르다'가 아니라 'map 이 있으면 prost 가 결정론적이지 않다'이다. 다음: UNIMPLEMENTED_FIELDS 6건 구현 + artifact/control 서명 대상 + Ed25519"
+---
+
+# DoD-02 · prost 연동 계층
+
+## 무엇을 입증하려 했는가
+
+`DoD-01` 이 **자기 자신의 최대 공백**으로 지목한 항목이다.
+
+> prost 연동을 하지 않았다. 지금은 손으로 만든 `Fields`/`Value` 를 쓴다.
+> 실제 protobuf 메시지에서 `Fields` 로 변환하는 계층이 없다.
+> **이 계층에서 규칙이 깨질 수 있으며 그것은 미검증이다.**
+
+`DoD-01` 은 "규칙이 결정론적이다" 를 증명했다. 이 검증은 **"실제 메시지가 그 규칙을
+실제로 통과한다"** 를 증명한다. 둘은 다른 주장이며, 후자가 없으면 전자는 종이 위의 사실이다.
+
+## 발견 1 — proto 가 한 번도 컴파일된 적이 없었다
+
+`prost-build` 를 붙이자마자 컴파일이 실패했다.
+
+```text
+"Lease" is not defined
+```
+
+`proto/job.proto` 에 `import "lease.proto";` 가 없었다.
+**5개 proto 를 작성한 이래 한 번도 컴파일한 적이 없어서** 교차 파일 참조 오류가
+드러나지 않았다. 스키마는 규범 문서인데 문법 검사조차 받지 않고 있었다.
+
+→ 이제 `cargo build` 가 항상 `protoc` 를 돌린다. 회귀할 수 없다.
+
+## 발견 2 — prost 출력과 canonical 이 같을 수 있다
+
+처음 쓴 negative test 는 다음이었고, **실패했다.**
+
+```rust
+assert_ne!(prost_bytes, canon, "prost 인코딩과 canonical 이 같다면 ...");
+```
+
+```text
+map 없는 매니페스트: prost 113B, canonical 113B, 동일=true
+```
+
+prost 역시 필드 번호 오름차순으로 쓰고, 기본값을 생략하고, 최소 varint 를 쓴다.
+**map 이 없는 단순 메시지에서는 두 인코딩이 바이트 단위로 일치한다.**
+
+이것은 내 구현의 결함이 아니라 **테스트의 주장이 틀린 것**이었다.
+`signing.md` §13.1 의 근거를 정확히 다시 세워야 했다.
+
+### 정확한 근거
+
+```text
+틀린 근거   "prost 출력은 canonical 과 다르다"
+맞는 근거   "map 이 있으면 prost 는 실행마다 다른 바이트를 낸다"
+```
+
+같은 내용의 메시지를 500회 재구축해 측정했다.
+
+| 인코더 | 서로 다른 바이트 |
+|---|---|
+| `prost::Message::encode` | **495 종** |
+| `canonical_encode` | **1 종** |
+
+prost 는 map 을 `HashMap` 으로 생성하고 순회 순서대로 쓴다.
+`HashMap` 순회 순서는 인스턴스마다 다르므로, **같은 매니페스트에 서명해도
+매번 다른 서명이 나오고 검증이 랜덤하게 실패한다.** 이것이 v5 검토가 지적한
+바로 그 결함이며, `to_fields.rs::norm_map()` 의 `HashMap → BTreeMap` 변환이
+그것을 막는 단 하나의 지점이다.
+
+★ 이 테스트에는 **비공허성 단언**이 들어 있다. prost 가 500회 전부 같은 바이트를
+냈다면(=이 러너에서 `HashMap` 이 안정적이라면) 테스트는 "canonical 이 안정적이다"만
+보인 것이지 "prost 가 불안정하다"를 보인 게 아니다. 그 경우 조용히 통과시키지 않고
+실패시켜 §13.1 의 근거를 다시 세우게 한다.
+
+## 발견 3 — 컴파일러가 못 잡는 결함이 정확히 하나 있다
+
+`to_fields.rs` 는 손으로 쓴다(`signing.md` §13.1: 어떤 필드가 서명에 들어가는지
+사람이 눈으로 확인할 수 있어야 한다). 손으로 쓰면 실수가 3종류 나온다.
+
+| 실수 | 컴파일러 | 비고 |
+|---|---|---|
+| 타입 불일치 (`put_bytes` 에 `String`) | **잡는다** | 실제로 이번에 잡혔다 |
+| 없는 필드 (`self.nonexistent`) | **잡는다** | |
+| **잘못된 번호** (`put_str(f, 61, &self.entrypoint)`) | ❌ **못 잡는다** | |
+
+3번이 가장 위험하다. 코드는 돌고, 서명도 만들어지고, **자기 자신과는 검증도 통과한다.**
+다른 구현체와 붙는 순간에만 깨지는데, 그때는 이미 서명된 매니페스트가 돌아다닌다.
+
+그래서 `field_number_audit.rs` 가 `.proto` 소스와 `to_fields.rs` 소스를
+**둘 다 파싱해 번호↔이름을 대조**한다.
+
+### 감사 테스트의 실효성 확인
+
+통과하는 테스트는 아무것도 증명하지 않는다. 뮤테이션 2종으로 확인했다.
+
+```text
+뮤테이션 A  issued_at_unix_ms 를 field 61 -> 62
+            -> "field number 62 이 두 번 쓰였다" 로 검출 (중복 경로)
+
+뮤테이션 B  entrypoint 를 field 13 -> 12
+            -> "field 12 이 proto 에서는 `dataset` 인데
+                to_fields 는 `self.entrypoint` 을 넣었다" 로 검출 (이름 불일치 경로)
+```
+
+두 경로 모두 동작한다. 뮤테이션은 검증 후 원복했다.
+
+## 발견 4 — 서명에서 빠진 필드가 6개 있다
+
+가장 중요한 결과다. **서명 대상에서 조용히 빠진 필드는 위조 가능한 필드다.**
+
+| 메시지 | field | 이름 | 위조 시 영향 |
+|---|---|---|---|
+| JobManifest | 10 | `env` (ExecutionEnvironment) | 실행 환경(이미지·런타임) 교체 가능 |
+| JobManifest | 11 | `input_artifacts` | 입력 산출물 바꿔치기 |
+| JobManifest | 12 | `dataset` | 데이터셋 교체 |
+| JobManifest | 54 | `network` (NetworkPolicy) | **네트워크 정책 우회** |
+| JobManifest | 55 | `artifact_scope` | 산출물 접근 범위 확대 |
+| Lease | 40 | `scope` (ResourceScope) | **자원 범위 확대** |
+
+54·55·40 은 보안 필드다. 서명 밖에 있으면 중간자가 고쳐도 검증이 통과한다.
+
+이것들을 `UNIMPLEMENTED_FIELDS` 로 선언하고, `every_unsigned_field_is_declared_in_unimplemented_list`
+가 **선언되지 않은 누락을 실패시킨다.** 즉 지금 이 6건은 "알려진 미구현"이고,
+앞으로 새로 생기는 누락은 **컴파일이 아니라 테스트가 막는다.**
+
+★ 그러나 **선언했다고 안전해지는 것은 아니다.** 구현 전까지 이 필드들은 위조 가능하다.
+v0.1 이전에 반드시 채워야 한다.
+
+## 발견 5 — 계획서와 proto 의 드리프트
+
+```text
+gputeer_master_plan_FINAL.md §15.2   bytes  submitter_device_id = 60
+proto/job.proto:88                   string submitter_device_id = 60
+```
+
+`docs/README.md` 의 우선순위에 따라 **규범 문서인 proto 가 이긴다.**
+`common.proto` 의 "ID 는 ULID 26자 문자열" 규약과도 proto 쪽이 일치한다.
+기준선은 읽기 전용이므로 수정 요청 목록(D-5)에 추가한다.
+
+## 결과
+
+```text
+cargo test --workspace
+  canonical_vectors     15 passed
+  field_number_audit     6 passed   <- 신규
+  prost_canonical       11 passed   <- 신규
+  durability_chaos      16 passed
+  kill_chaos             7 passed
+  전체                  55 passed / 0 failed   (기존 38 -> 55)
+```
+
+### 규칙별 — prost 경로에서 재검증
+
+| signing.md 규칙 | 테스트 | 결과 |
+|---|---|---|
+| a. field number 오름차순 | `prost_message_produces_same_canonical_as_reference` | 참조 구현과 일치 |
+| b. 기본값 생략 | `default_valued_fields_are_omitted_in_prost_path` | 명시적 0 == 미설정 |
+| **c. map key 정렬** | `hashmap_insertion_order_does_not_affect_canonical` | **prost 495종 → canonical 1종** |
+| d. repeated 순서 유지 | `nested_messages_and_enums_round_through_prost` | 유지 |
+| f. 재귀 적용 | 동상 (중첩 3단: ResourceRequest→GpuRequest→CudaRequirement) | 유지 |
+| g. float 금지 | `Value` enum 에 variant 없음 | 타입 수준 강제 (proto 에 float 없음) |
+| i. 서명 필드 제외 | `signature_field_excluded_in_prost_path` | 0xFF 채워도 불변 |
+| §4 sig_input | `prost_message_produces_same_sig_input_and_digest` | BLAKE3 까지 일치 |
+
+## 이 실험이 증명하지 "않는" 것
+
+- **서명 대상 6개 필드가 여전히 빠져 있다.** 선언했을 뿐 구현하지 않았다.
+- **17종 서명 대상 중 7종만** `ToCanonicalFields` 를 구현했다.
+  `artifact.proto` · `control.proto` 의 서명 대상은 손도 대지 않았다.
+- **Ed25519 를 여전히 하지 않았다.** `sig_input` 바이트까지다.
+- **`SCHEMA_TOO_NEW` 미구현.** prost 는 모르는 필드를 조용히 버리는데,
+  그것이 검증을 어떻게 깨는지 검사하지 않았다. `CLAUDE.md` §0.2 가 금지하는
+  "모르는 필드를 조용히 통과" 가 **prost 기본 동작**이라는 점은 별도 스파이크가 필요하다.
+- **Windows 단일 플랫폼.**
+- `field_number_audit` 의 파서는 `oneof` · `reserved` 를 다루지 못한다.
+
+## 결정
+
+1. **`signing.md` §3 을 변경하지 않는다.** prost 경로에서도 규칙이 유지된다.
+2. **§13.1 의 근거 문구를 정정한다** — "출력이 다르다" 가 아니라
+   "map 이 있으면 결정론적이지 않다". 규범 자체는 그대로다.
+3. `UNIMPLEMENTED_FIELDS` 6건을 **v0.1 게이트 항목**으로 올린다.
+   보안 필드(54·55·Lease 40)가 서명 밖에 있는 상태로 v0.1 에 가지 않는다.
+4. **`SCHEMA_TOO_NEW` × prost unknown-field 를 신규 스파이크로 등록한다** (P0-08).
+   `CLAUDE.md` §0.2 와 prost 기본 동작이 정면으로 충돌한다.
+
+관련: `docs/evidence/DoD-01_canonical_encode_교차검증.md` · `docs/protocol/signing.md` §13.1
