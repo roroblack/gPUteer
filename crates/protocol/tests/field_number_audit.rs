@@ -225,6 +225,24 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("lease.proto", "ProgressReport", 90),
     ("lease.proto", "RenewLeaseRequest", 90),
     ("lease.proto", "RevokeLeaseNotice", 90),
+    // T1b (2026-08-16) — grant · membership · policy · quarantine
+    ("common.proto", "PeerHint", 90),
+    ("common.proto", "EphemeralCredential", 90),
+    ("job.proto", "GrantedExecutionPlan", 90),
+    ("job.proto", "ExecutionGrant", 90),
+    ("control.proto", "CoordinatorEntry", 90),
+    ("control.proto", "RiskSignal", 90),
+    ("control.proto", "AddMember", 90),
+    ("control.proto", "RemoveMember", 90),
+    ("control.proto", "ApproveDevice", 90),
+    ("control.proto", "RevokeDevice", 90),
+    ("control.proto", "ChangeCoordinatorSet", 90),
+    ("control.proto", "RotateOwnerKey", 90),
+    ("control.proto", "UpdatePolicy", 90),
+    ("control.proto", "QuarantineDevice", 90),
+    ("control.proto", "ReleaseQuarantine", 90),
+    ("job.proto", "PlacementRationale", 90),
+    ("job.proto", "RejectedCandidate", 90),
 ];
 
 #[test]
@@ -241,6 +259,16 @@ fn common_message_field_numbers_match_proto() {
 fn artifact_and_lease_field_numbers_match_proto() {
     for (file, msg, sig) in AUDITED {
         if *file == "artifact.proto" || *file == "lease.proto" {
+            audit(file, msg, *sig);
+        }
+    }
+}
+
+/// T1b — job.proto(grant) / control.proto(membership · policy · quarantine).
+#[test]
+fn grant_and_control_field_numbers_match_proto() {
+    for (file, msg, sig) in AUDITED {
+        if *file == "control.proto" || (*file == "job.proto" && *msg != "JobManifest") {
             audit(file, msg, *sig);
         }
     }
@@ -263,7 +291,7 @@ fn every_impl_is_audited() {
             impls.push(rest.trim_end_matches(" {").to_string());
         }
     }
-    assert!(impls.len() >= 20, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
+    assert!(impls.len() >= 35, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
 
     let missing: Vec<_> = impls
         .iter()
@@ -294,15 +322,24 @@ fn missing_fields(proto_file: &str, message: &str, signature_field: u32) -> Vec<
 
 #[test]
 fn every_unsigned_field_is_declared_in_unimplemented_list() {
-    use gputeer_protocol::UNIMPLEMENTED_FIELDS;
+    use gputeer_protocol::{DERIVED_HASH_FIELDS, UNIMPLEMENTED_FIELDS};
 
+    // ★ 서명에서 빠진 필드는 두 종류이고, **뜻이 정반대다.**
+    //
+    //   UNIMPLEMENTED_FIELDS   실수로 빠졌다 -> 위조 가능 -> 채워야 한다
+    //   DERIVED_HASH_FIELDS    규칙 i 로 뺐다 -> 검증자가 재계산한다 -> 채우면 안 된다
+    //
+    // 어느 쪽에도 없으면 **아무도 그 필드를 생각해 본 적이 없다는 뜻**이다.
     let mut undeclared = Vec::new();
     for (file, msg, sig) in AUDITED {
         for (num, name) in missing_fields(file, msg, *sig) {
-            let declared = UNIMPLEMENTED_FIELDS
+            let unimplemented = UNIMPLEMENTED_FIELDS
                 .iter()
                 .any(|(m, n, _)| m == msg && *n == num);
-            if !declared {
+            let derived = DERIVED_HASH_FIELDS
+                .iter()
+                .any(|(m, n, _)| m == msg && *n == num);
+            if !unimplemented && !derived {
                 undeclared.push(format!("{msg} field {num} ({name})"));
             }
         }
@@ -310,10 +347,35 @@ fn every_unsigned_field_is_declared_in_unimplemented_list() {
 
     assert!(
         undeclared.is_empty(),
-        "서명 대상에서 빠졌는데 UNIMPLEMENTED_FIELDS 에도 없는 필드가 있다.\n\
-         이 필드들은 **위조 가능**하다. to_fields.rs 에 넣거나 목록에 선언하라:\n  {}",
+        "서명 대상에서 빠졌는데 어느 목록에도 선언되지 않은 필드가 있다.\n\
+         **아무도 이 필드를 생각해 본 적이 없다는 뜻이다.** 셋 중 하나를 하라:\n\
+           1) to_fields.rs 에 넣는다                (서명해야 하는 필드)\n\
+           2) UNIMPLEMENTED_FIELDS 에 선언한다      (아직 못 넣었다 — 위조 가능)\n\
+           3) DERIVED_HASH_FIELDS 에 선언한다       (규칙 i — 검증자가 재계산한다)\n  {}",
         undeclared.join("\n  ")
     );
+}
+
+/// `DERIVED_HASH_FIELDS` 에 선언된 필드가 실제로 서명에서 빠져 있는가.
+///
+/// 반대 방향 검사다. 선언해 놓고 실수로 넣으면
+/// **"서명이 이 값을 보증한다" 는 잘못된 인상**을 주어 재계산을 건너뛰게 만든다.
+#[test]
+fn derived_hash_fields_are_actually_excluded() {
+    use gputeer_protocol::DERIVED_HASH_FIELDS;
+
+    assert!(
+        !DERIVED_HASH_FIELDS.is_empty(),
+        "목록이 비었다면 이 테스트를 제거하라"
+    );
+    for (msg, num, desc) in DERIVED_HASH_FIELDS {
+        let imp = impl_fields(*msg);
+        assert!(
+            !imp.contains_key(num),
+            "{msg} field {num} 은 도출 해시 필드인데 to_fields 에 들어갔다.\n\
+             서명이 이 값을 보증하는 것처럼 보여 검증자가 재계산을 건너뛰게 된다.\n  {desc}"
+        );
+    }
 }
 
 /// 반대 방향 — 목록에 있는데 실은 구현된 필드가 있으면 목록이 낡은 것이다.

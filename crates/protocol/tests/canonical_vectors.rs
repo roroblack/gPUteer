@@ -305,8 +305,12 @@ fn domain_tags_are_32_bytes_and_unique() {
     let domains = [
         Domain::Manifest, Domain::Grant, Domain::Lease, Domain::LeaseRenew,
         Domain::LeaseRevoke, Domain::Checkpoint, Domain::ReplicaAck, Domain::Artifact,
-        Domain::AttemptReport, Domain::Canonical, Domain::Genesis, Domain::Membership,
-        Domain::Policy, Domain::Quarantine, Domain::Audit, Domain::Release, Domain::Invite,
+        Domain::AttemptReport, Domain::Canonical, Domain::Genesis,
+        // ADR-028 — membership/policy/quarantine 3종 -> 9종 분리
+        Domain::MemberAdd, Domain::MemberRemove, Domain::DeviceApprove, Domain::DeviceRevoke,
+        Domain::CoordinatorSet, Domain::OwnerKeyRotate, Domain::PolicyUpdate,
+        Domain::QuarantineDevice, Domain::QuarantineRelease,
+        Domain::Audit, Domain::Release, Domain::Invite,
     ];
     let mut seen = std::collections::HashSet::new();
     for d in domains {
@@ -314,5 +318,9 @@ fn domain_tags_are_32_bytes_and_unique() {
         assert_eq!(t.len(), 32);
         assert!(seen.insert(t), "domain tag 중복: {d:?}");
     }
-    assert_eq!(seen.len(), 17, "signing.md §5 의 domain_tag 17종과 일치해야 한다");
+    assert_eq!(
+        seen.len(),
+        23,
+        "signing.md §5 의 domain_tag 23종과 일치해야 한다 (ADR-028)"
+    );
 }

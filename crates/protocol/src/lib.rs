@@ -24,7 +24,7 @@ pub use signing::{
     signing_input, verify, Lifetime, NoReplayCheck, ReplayGuard, Signable, SignatureVerifier,
     Verified, VerifyOutcome,
 };
-pub use to_fields::{ToCanonicalFields, UNIMPLEMENTED_FIELDS};
+pub use to_fields::{ToCanonicalFields, DERIVED_HASH_FIELDS, UNIMPLEMENTED_FIELDS};
 pub use canonical::{
     blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
     SIGNATURE_FIELD,

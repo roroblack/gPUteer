@@ -405,10 +405,18 @@ fn domain_coverage_is_explicit() {
         (Domain::AttemptReport, Some("AttemptReport"), true),
         (Domain::Canonical, Some("CanonicalDecision"), true),
         // 아직 구현하지 않음 — 메시지는 있다
-        (Domain::Grant, Some("ExecutionGrant"), false),
-        (Domain::Membership, Some("AddMember 외 5종"), false),
-        (Domain::Policy, Some("UpdatePolicy"), false),
-        (Domain::Quarantine, Some("QuarantineDevice 외 1종"), false),
+        (Domain::Grant, Some("ExecutionGrant"), true),
+        // ADR-028 — 메시지별 tag 분리. ToCanonicalFields 는 구현했으나
+        // Signable(§9 시각 정책)이 없어 아직 verify() 는 통과하지 못한다.
+        (Domain::MemberAdd, Some("AddMember"), true),
+        (Domain::MemberRemove, Some("RemoveMember"), true),
+        (Domain::DeviceApprove, Some("ApproveDevice"), true),
+        (Domain::DeviceRevoke, Some("RevokeDevice"), true),
+        (Domain::CoordinatorSet, Some("ChangeCoordinatorSet"), true),
+        (Domain::OwnerKeyRotate, Some("RotateOwnerKey"), true),
+        (Domain::PolicyUpdate, Some("UpdatePolicy"), true),
+        (Domain::QuarantineDevice, Some("QuarantineDevice"), true),
+        (Domain::QuarantineRelease, Some("ReleaseQuarantine"), true),
         // ★ proto 메시지 자체가 없다
         (Domain::Genesis, None, false),
         (Domain::Audit, None, false),
@@ -416,7 +424,7 @@ fn domain_coverage_is_explicit() {
         (Domain::Invite, None, false),
     ];
 
-    assert_eq!(coverage.len(), 17, "domain_tag 는 17종이다 (signing.md §5)");
+    assert_eq!(coverage.len(), 23, "domain_tag 는 23종이다 (signing.md §5, ADR-028)");
 
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
@@ -434,7 +442,7 @@ fn domain_coverage_is_explicit() {
 
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
-    assert_eq!(implemented, 9, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(implemented, 19, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
     assert_eq!(
         no_message, 4,
         "proto 메시지 없는 domain 수가 바뀌었다 — 목록을 갱신하라"

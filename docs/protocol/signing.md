@@ -185,19 +185,65 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `AttemptReport` | `gputeer/v1/attempt-report` |
 | `CanonicalDecision` | `gputeer/v1/canonical` |
 | Genesis Manifest | `gputeer/v1/genesis` |
-| 멤버십 action | `gputeer/v1/membership` |
-| 정책 변경 | `gputeer/v1/policy` |
-| Quarantine verdict | `gputeer/v1/quarantine` |
+| `AddMember` | `gputeer/v1/member-add` |
+| `RemoveMember` | `gputeer/v1/member-remove` |
+| `ApproveDevice` | `gputeer/v1/device-approve` |
+| `RevokeDevice` | `gputeer/v1/device-revoke` |
+| `ChangeCoordinatorSet` | `gputeer/v1/coordinator-set` |
+| `RotateOwnerKey` | `gputeer/v1/owner-key-rotate` |
+| `UpdatePolicy` | `gputeer/v1/policy-update` |
+| `QuarantineDevice` | `gputeer/v1/quarantine-device` |
+| `ReleaseQuarantine` | `gputeer/v1/quarantine-release` |
 | 감사 로그 엔트리 | `gputeer/v1/audit` |
 | Release Manifest | `gputeer/v1/release` |
 | Invite Bundle | `gputeer/v1/invite` |
+
+**총 23종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
+`policy` · `quarantine`(2개 메시지)이 tag 를 공유했다. **ADR-028 로 분리했다** —
+사유는 §5.1.
 
 **한 문맥의 서명을 다른 문맥에서 검증하면 domain_tag가 달라 반드시 실패한다.**
 이것이 없으면 예컨대 Lease 서명을 Manifest 서명으로 재사용하는 공격이 가능하다.
 
 새 서명 대상 메시지를 추가할 때는 **반드시 새 domain_tag를 이 표에 등록해야 한다(MUST).**
 
-### ★ 5.1 4종은 proto 메시지가 없다 (2026-08-16 발견)
+### ★ 5.1 tag 공유가 서명 재사용을 허용했다 — ADR-028 로 시정 (2026-08-16)
+
+2026-08-16 이전 표는 세 tag 를 여러 메시지가 공유했다.
+**§5 자신의 MUST("메시지마다 새 domain_tag 를 등록한다")를 표가 어기고 있었다.**
+
+tag 를 공유하면 §5 의 방어("tag 가 달라 반드시 실패한다")가 사라지고
+**canonical 차이만이 유일한 방어**가 된다. 그런데 규칙 b(기본값 생략) 때문에
+공격자가 필드를 비우면 canonical 이 짧아지고, 서로 다른 메시지가 **같은 바이트**가 된다.
+
+실측 (참조 구현 전수 대조):
+
+| 충돌 쌍 | 공통 필드 | canonical |
+|---|---|---|
+| `AddMember` ↔ `RemoveMember` | `[1]` | **28바이트 동일** |
+| `ApproveDevice` ↔ `RemoveMember` | `[1]` | **28바이트 동일** |
+| `ApproveDevice` ↔ `RevokeDevice` | `[1,2]` | **56바이트 동일** |
+| `RemoveMember` ↔ `RevokeDevice` | `[1]` | **28바이트 동일** |
+| `QuarantineDevice` ↔ `ReleaseQuarantine` | `[1]` | **동일** |
+
+```text
+소유자가 RemoveMember{member_id: X} 에 서명한다
+  -> 그 서명 바이트가 RevokeDevice{device_id: X} 로도 검증된다
+  -> 멤버 탈퇴가 기기 폐기로 바뀐다
+
+Coordinator 들이 QuarantineDevice 에 m-of-n 서명한다
+  -> 그 서명들이 ReleaseQuarantine 으로 검증된다
+  -> ★ 격리 판정이 **격리 해제**로 바뀐다
+```
+
+→ **ADR-028** 로 9개 tag 를 분리했다. canonical bytes 는 하나도 바뀌지 않았다
+(tag 는 `sig_input` 에만 들어간다).
+
+회귀 방지: `crates/protocol/tests/t1b_grant_and_control.rs` 가 같은 domain 을
+공유하는 메시지 쌍의 canonical 이 서로 다른지 검사한다.
+`domain_tags_are_unique` 가 tag 중복을 검사한다.
+
+### ★ 5.2 4종은 proto 메시지가 없다
 
 이 표는 **아직 존재하지 않는 메시지의 domain_tag 를 등록해 두고 있다.**
 
@@ -208,23 +254,8 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `gputeer/v1/release` | **없음** |
 | `gputeer/v1/invite` | **없음** |
 
-나머지 13종은 메시지가 있다. `membership` · `policy` · `quarantine` 은
-단일 메시지가 아니라 `ControlAction` 의 하위 메시지 여러 개에 대응한다.
-
-```text
-membership   AddMember · RemoveMember · ApproveDevice · RevokeDevice
-             · ChangeCoordinatorSet · RotateOwnerKey
-policy       UpdatePolicy
-quarantine   QuarantineDevice · ReleaseQuarantine
-```
-
-★ **한 domain_tag 를 여러 메시지가 공유하면 그 사이에서는 서명 재사용이 가능하다.**
-`AddMember` 서명을 `RemoveMember` 로 재사용할 수 있는지는 canonical 이 달라지므로
-실질적으로 막히지만, **domain 분리가 아니라 필드 차이에 의존하는 방어**다.
-T1 에서 이들을 구현할 때 재검토한다.
-
 현재 커버리지는 `crates/protocol/tests/t1_signing_targets.rs::domain_coverage_is_explicit`
-가 고정한다 — 구현 9종 · 미구현 4종(메시지 있음) · 메시지 없음 4종.
+가 고정한다.
 
 ---
 

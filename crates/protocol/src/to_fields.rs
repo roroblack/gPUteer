@@ -526,6 +526,301 @@ impl ToCanonicalFields for pb::RevokeLeaseNotice {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// T1b (2026-08-16) — grant · membership · policy · quarantine
+//
+// ★ 여기서 처음으로 **다중 서명(m-of-n)** 메시지가 나온다.
+//   RevokeDevice · UpdatePolicy · QuarantineDevice 는
+//   `repeated bytes signatures = 90` 이다. 규칙 i 는 그대로 적용되나
+//   (field 90 제외), **검증 절차는 단일 서명과 다르다** — 아래 주석 참조.
+// ══════════════════════════════════════════════════════════════════
+
+impl ToCanonicalFields for pb::PeerHint {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.node_id);
+        put_str(&mut f, 2, &self.peer_id);
+        put_repeated_str(&mut f, 3, &self.multiaddrs);
+        put_repeated_msg(&mut f, 4, &self.known_digests);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::EphemeralCredential {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.credential_id);
+        // ★ token 은 자격증명 자체다. 서명 대상이어야 다른 토큰으로 바꿔칠 수 없다.
+        put_bytes(&mut f, 2, &self.token);
+        put_uint(&mut f, 3, self.expires_at_unix_ms);
+        put_repeated_str(&mut f, 4, &self.allowed_endpoints);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::RejectedCandidate {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.node_id);
+        put_uint(&mut f, 2, self.reason as u64);
+        put_str(&mut f, 3, &self.detail);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+/// 배치 근거. **감사 목적으로 서명 대상이다.**
+///
+/// 서명 밖이면 Coordinator 가 배치 근거를 사후에 조작할 수 있다 —
+/// "왜 이 노드를 골랐는가" 는 분쟁 시 유일한 기록이다.
+///
+/// ★ `CLAUDE.md` §1 — 관측값에 provenance 를 붙인다. 근거가 위조 가능하면
+///   provenance 가 무의미해진다.
+impl ToCanonicalFields for pb::PlacementRationale {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.t_est_seconds);
+        put_uint(&mut f, 2, self.sigma_ln_ppm);
+        put_uint(&mut f, 3, self.stage as u64);
+        put_uint(&mut f, 10, self.p_within_estimate_ppm);
+        put_uint(&mut f, 11, self.p_survival_ppm);
+        put_uint(&mut f, 12, self.p_success_ppm);
+        put_uint(&mut f, 13, self.target_confidence_ppm);
+        put_bool(&mut f, 20, self.is_exploration);
+        // 규칙 d — 순위 순서가 의미를 갖는다. 정렬하지 않는다.
+        put_repeated_msg(&mut f, 30, &self.rejected);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::GrantedExecutionPlan {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.mode as u64);
+        put_uint(&mut f, 2, self.gpu_allocation as u64);
+        put_repeated_str(&mut f, 3, &self.assigned_gpu_uuids);
+        put_uint(&mut f, 10, self.remote_replication_interval_minutes as u64);
+        put_uint(&mut f, 11, self.effective_durability as u64);
+        // ★ 배치 근거도 서명 대상이다 — 사후 조작을 막는다.
+        put_msg(&mut f, 20, &self.rationale);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ExecutionGrant {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.grant_id);
+
+        // ★ manifest(3) 와 lease(6) 는 **각자 서명된** 메시지다.
+        //   규칙 i 가 재귀 적용되므로 그들의 서명(90)은 이 canonical 에 들어가지 않는다.
+        //   -> Agent 는 manifest 와 lease 를 **각각 독립적으로 검증해야 한다(MUST).**
+        //   -> 하지 않으면 서명이 벗겨진 매니페스트로 Job 을 실행하게 된다.
+        put_msg(&mut f, 3, &self.manifest);
+
+        // ★ manifest_hash(4) 는 넣지 않는다 — 규칙 i 의 도출 해시 필드.
+        //   DERIVED_HASH_FIELDS 참조. Agent 가 재계산해 대조한다(§6.1).
+
+        put_str(&mut f, 5, &self.attempt_id);
+        put_msg(&mut f, 6, &self.lease);
+        put_repeated_msg(&mut f, 7, &self.peers);
+        put_msg(&mut f, 8, &self.creds);
+        put_msg(&mut f, 9, &self.plan);
+
+        put_str(&mut f, 20, &self.coordinator_device_id);
+        put_uint(&mut f, 21, self.coordinator_term);
+        put_uint(&mut f, 22, self.issued_at_unix_ms);
+        put_uint(&mut f, 23, self.expires_at_unix_ms);
+        // ★ nonce 는 서명 대상이다. 서명 밖이면 replay 캐시를 우회할 수 있다.
+        put_bytes(&mut f, 24, &self.nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+// ── control.proto — 멤버십 / 정책 / 격리 ──────────────────────────
+//
+// ★ 이 세 domain(membership · policy · quarantine)은 **여러 메시지가 하나의
+//   domain_tag 를 공유**한다 (`signing.md` §5.1). 즉 그들 사이에서는
+//   domain 분리가 없고, canonical 차이에만 의존해 서명 재사용이 막힌다.
+//   필드 구성이 우연히 같아지면 재사용이 가능해진다 — T1b limitations 참조.
+
+impl ToCanonicalFields for pb::CoordinatorEntry {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.device_id);
+        put_bytes(&mut f, 2, &self.public_key);
+        put_repeated_str(&mut f, 3, &self.endpoints);
+        // ★ failure_domain 이 서명 대상인 것이 중요하다 — quorum 이
+        //   서로 다른 실패 도메인에 분산되었는지 판단하는 입력이다.
+        put_str(&mut f, 4, &self.failure_domain);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::RiskSignal {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.kind);
+        put_str(&mut f, 2, &self.detail);
+        put_uint(&mut f, 3, self.observed_at_unix_ms);
+        put_str(&mut f, 4, &self.observer_coordinator_id);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::AddMember {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.member_id);
+        put_bytes(&mut f, 2, &self.public_key);
+        put_str(&mut f, 3, &self.role);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::RemoveMember {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.member_id);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ApproveDevice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.device_id);
+        put_str(&mut f, 2, &self.member_id);
+        put_bytes(&mut f, 3, &self.public_key);
+        put_str(&mut f, 4, &self.peer_id);
+        put_uint(&mut f, 5, self.key_protection as u64);
+        put_bool(&mut f, 6, self.is_ephemeral);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+/// ★ 다중 서명 — `repeated bytes signatures = 90`.
+///
+/// 규칙 i 는 그대로다(field 90 제외). 다른 것은 **검증 절차**다.
+/// 단일 서명은 "이 키로 검증되는가", 다중 서명은 "**서로 다른** 승인자 m명 이상이
+/// 각자 유효한 서명을 냈는가" 다. 같은 키의 서명 2개를 2표로 세면 안 된다.
+impl ToCanonicalFields for pb::RevokeDevice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.device_id);
+        put_str(&mut f, 2, &self.reason);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ChangeCoordinatorSet {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        // 규칙 d — 순서를 유지한다. 정렬하면 같은 집합의 서로 다른 서명이 충돌한다.
+        put_repeated_msg(&mut f, 1, &self.new_set);
+        put_str(&mut f, 2, &self.added_id);
+        put_str(&mut f, 3, &self.removed_id);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::RotateOwnerKey {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_bytes(&mut f, 1, &self.new_owner_public_key);
+        put_bytes(&mut f, 2, &self.new_recovery_public_key);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+/// 다중 서명 (`repeated bytes signatures = 90`).
+impl ToCanonicalFields for pb::UpdatePolicy {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        // ★ policy_hash 는 policy_content 의 해시지만 **도출 해시 필드로 빼지 않는다.**
+        //   §6 이 도출 해시로 규정한 것은 manifest_hash 뿐이고,
+        //   policy_content(2)가 CAS 참조로 비어 있을 수 있어 hash 가 유일한 식별자가 된다.
+        //   확신이 없으면 서명에 **넣는 쪽**이 안전한 방향이다.
+        put_msg(&mut f, 1, &self.policy_hash);
+        put_bytes(&mut f, 2, &self.policy_content);
+        // ★ is_relaxation 이 서명 밖이면 완화를 강화로 위장할 수 있다.
+        put_bool(&mut f, 3, self.is_relaxation);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+/// 다중 서명 (`repeated bytes verdict_signatures = 90`).
+impl ToCanonicalFields for pb::QuarantineDevice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.device_id);
+        put_repeated_msg(&mut f, 2, &self.signals);
+        // ★ Coordinator 를 격리하는 것과 워커를 격리하는 것은 위험도가 다르다.
+        put_bool(&mut f, 3, self.target_is_coordinator);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ReleaseQuarantine {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.device_id);
+        put_str(&mut f, 2, &self.reason);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // job.proto — JobManifest
 //
 // ★ field number 는 proto/job.proto 와 정확히 일치해야 한다.
@@ -647,6 +942,34 @@ impl ToCanonicalFields for pb::Lease {
 /// 여기에 항목을 추가할 때는 **왜 지금 구현하지 않는지**를 설명에 적는다.
 /// 서명 밖 필드는 위조 가능하다는 뜻이므로 "나중에" 는 사유가 되지 않는다.
 pub const UNIMPLEMENTED_FIELDS: &[(&str, u32, &str)] = &[];
+
+/// 규칙 i 로 **의도적으로** 서명 대상에서 제외한 도출 해시 필드.
+///
+/// # 왜 `UNIMPLEMENTED_FIELDS` 와 분리하는가
+///
+/// 둘 다 "서명에 안 들어간다" 지만 **뜻이 정반대다.**
+///
+/// ```text
+/// UNIMPLEMENTED_FIELDS   실수로 빠졌다 -> 위조 가능 -> 채워야 한다
+/// DERIVED_HASH_FIELDS    규칙 i 로 뺐다 -> 검증자가 재계산한다 -> 채우면 안 된다
+/// ```
+///
+/// 한 목록에 섞으면 "채워야 할 것" 과 "채우면 안 될 것" 을 구분할 수 없다.
+///
+/// # 왜 제외해도 안전한가
+///
+/// 도출 해시는 **검증자가 재계산해 대조하는 값**이다(`signing.md` §6.1).
+/// 서명 안에 넣으면 순환이 생기지는 않지만, **서명이 그 값을 보증하는 것처럼
+/// 보이게 되어 재계산을 건너뛰게 만든다.** 그것이 더 위험하다.
+///
+/// ★ 따라서 이 필드가 위조되어도 상관없다 — **재계산이 필수이기 때문이다.**
+/// 재계산하지 않는 구현이 있다면 그것이 결함이다.
+pub const DERIVED_HASH_FIELDS: &[(&str, u32, &str)] = &[(
+    "ExecutionGrant",
+    4,
+    "manifest_hash — signing.md §6.1. Agent 는 이 값을 신뢰하지 않고 \
+     반드시 재계산해 대조한다(MUST). 계획서 §15.4 검증 13단계",
+)];
 
 // ══════════════════════════════════════════════════════════════════
 // Signable — signing.md §8 검증 순서 · §9 시각 정책

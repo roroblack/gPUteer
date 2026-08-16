@@ -346,6 +346,132 @@ SCHEMAS = {
         (5, "issued_at_unix_ms", "uint", None),
         (90, "coordinator_signature", "bytes", None),
     ],
+    # ══════════════════════════════════════════════════════════════
+    # T1b (2026-08-16) — grant · membership · policy · quarantine
+    #
+    # ★ RevokeDevice · UpdatePolicy · QuarantineDevice 는
+    #   `repeated bytes signatures = 90` — **다중 서명(m-of-n)** 이다.
+    #   규칙 i 는 그대로(90 제외)이나 검증 절차가 다르다.
+    # ══════════════════════════════════════════════════════════════
+    "PeerHint": [
+        (1, "node_id", "string", None),
+        (2, "peer_id", "string", None),
+        (3, "multiaddrs", "repeated_string", None),
+        (4, "known_digests", "repeated_message", "Digest"),
+    ],
+    "EphemeralCredential": [
+        (1, "credential_id", "string", None),
+        (2, "token", "bytes", None),
+        (3, "expires_at_unix_ms", "uint", None),
+        (4, "allowed_endpoints", "repeated_string", None),
+    ],
+    "RejectedCandidate": [
+        (1, "node_id", "string", None),
+        (2, "reason", "enum", None),
+        (3, "detail", "string", None),
+    ],
+    # 배치 근거. ★ 감사 목적으로 서명 대상이다 —
+    # 서명 밖이면 Coordinator 가 "왜 이 노드를 골랐는가" 를 사후에 조작할 수 있다.
+    "PlacementRationale": [
+        (1, "t_est_seconds", "uint", None),
+        (2, "sigma_ln_ppm", "uint", None),
+        (3, "stage", "enum", None),
+        (10, "p_within_estimate_ppm", "uint", None),
+        (11, "p_survival_ppm", "uint", None),
+        (12, "p_success_ppm", "uint", None),
+        (13, "target_confidence_ppm", "uint", None),
+        (20, "is_exploration", "bool", None),
+        (30, "rejected", "repeated_message", "RejectedCandidate"),
+    ],
+    "GrantedExecutionPlan": [
+        (1, "mode", "enum", None),
+        (2, "gpu_allocation", "enum", None),
+        (3, "assigned_gpu_uuids", "repeated_string", None),
+        (10, "remote_replication_interval_minutes", "uint", None),
+        (11, "effective_durability", "enum", None),
+        (20, "rationale", "message", "PlacementRationale"),
+    ],
+    "ExecutionGrant": [
+        (1, "schema_version", "uint", None),
+        (2, "grant_id", "string", None),
+        (3, "manifest", "message", "JobManifest"),
+        # ★ manifest_hash(4) 는 규칙 i 의 도출 해시 필드 — 목록에 두지 않는다
+        (5, "attempt_id", "string", None),
+        (6, "lease", "message", "Lease"),
+        (7, "peers", "repeated_message", "PeerHint"),
+        (8, "creds", "message", "EphemeralCredential"),
+        (9, "plan", "message", "GrantedExecutionPlan"),
+        (20, "coordinator_device_id", "string", None),
+        (21, "coordinator_term", "uint", None),
+        (22, "issued_at_unix_ms", "uint", None),
+        (23, "expires_at_unix_ms", "uint", None),
+        (24, "nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
+    "CoordinatorEntry": [
+        (1, "device_id", "string", None),
+        (2, "public_key", "bytes", None),
+        (3, "endpoints", "repeated_string", None),
+        (4, "failure_domain", "string", None),
+    ],
+    "RiskSignal": [
+        (1, "kind", "string", None),
+        (2, "detail", "string", None),
+        (3, "observed_at_unix_ms", "uint", None),
+        (4, "observer_coordinator_id", "string", None),
+    ],
+    "AddMember": [
+        (1, "member_id", "string", None),
+        (2, "public_key", "bytes", None),
+        (3, "role", "string", None),
+        (90, "owner_signature", "bytes", None),
+    ],
+    "RemoveMember": [
+        (1, "member_id", "string", None),
+        (90, "owner_signature", "bytes", None),
+    ],
+    "ApproveDevice": [
+        (1, "device_id", "string", None),
+        (2, "member_id", "string", None),
+        (3, "public_key", "bytes", None),
+        (4, "peer_id", "string", None),
+        (5, "key_protection", "enum", None),
+        (6, "is_ephemeral", "bool", None),
+        (90, "owner_signature", "bytes", None),
+    ],
+    "RevokeDevice": [
+        (1, "device_id", "string", None),
+        (2, "reason", "string", None),
+        (90, "signatures", "bytes", None),   # ★ 다중 서명. 규칙 i 로 제외되므로 kind 무관
+    ],
+    "ChangeCoordinatorSet": [
+        (1, "new_set", "repeated_message", "CoordinatorEntry"),
+        (2, "added_id", "string", None),
+        (3, "removed_id", "string", None),
+        (90, "owner_signature", "bytes", None),
+    ],
+    "RotateOwnerKey": [
+        (1, "new_owner_public_key", "bytes", None),
+        (2, "new_recovery_public_key", "bytes", None),
+        (90, "authorizing_signature", "bytes", None),
+    ],
+    "UpdatePolicy": [
+        (1, "policy_hash", "message", "Digest"),
+        (2, "policy_content", "bytes", None),
+        (3, "is_relaxation", "bool", None),
+        (90, "signatures", "bytes", None),   # ★ 다중 서명
+    ],
+    "QuarantineDevice": [
+        (1, "device_id", "string", None),
+        (2, "signals", "repeated_message", "RiskSignal"),
+        (3, "target_is_coordinator", "bool", None),
+        (90, "verdict_signatures", "bytes", None),   # ★ 다중 서명
+    ],
+    "ReleaseQuarantine": [
+        (1, "device_id", "string", None),
+        (2, "reason", "string", None),
+        (90, "owner_signature", "bytes", None),
+    ],
 }
 
 # 규칙 i: canonical 인코딩에서 항상 제외되는 필드 번호
@@ -462,9 +588,18 @@ DOMAIN_TAGS = {
     "AttemptReport": b"gputeer/v1/attempt-report",
     "CanonicalDecision": b"gputeer/v1/canonical",
     "Genesis": b"gputeer/v1/genesis",
-    "Membership": b"gputeer/v1/membership",
-    "Policy": b"gputeer/v1/policy",
-    "Quarantine": b"gputeer/v1/quarantine",
+    # ★ ADR-028 (2026-08-16) — membership/policy/quarantine 3종을 9종으로 분리.
+    #   공유하면 RemoveMember{id} 와 RevokeDevice{id} 의 canonical 이 28바이트로
+    #   동일해 서명이 재사용된다.
+    "AddMember": b"gputeer/v1/member-add",
+    "RemoveMember": b"gputeer/v1/member-remove",
+    "ApproveDevice": b"gputeer/v1/device-approve",
+    "RevokeDevice": b"gputeer/v1/device-revoke",
+    "ChangeCoordinatorSet": b"gputeer/v1/coordinator-set",
+    "RotateOwnerKey": b"gputeer/v1/owner-key-rotate",
+    "UpdatePolicy": b"gputeer/v1/policy-update",
+    "QuarantineDevice": b"gputeer/v1/quarantine-device",
+    "ReleaseQuarantine": b"gputeer/v1/quarantine-release",
     "Audit": b"gputeer/v1/audit",
     "Release": b"gputeer/v1/release",
     "Invite": b"gputeer/v1/invite",
@@ -473,9 +608,16 @@ DOMAIN_TAGS = {
 DOMAIN_TAG_LEN = 32
 
 
+# ★ ADR-028 이후 메시지 이름 == domain 키 (1:1).
+#
+# 2026-08-16 이전에는 membership · policy · quarantine 을 여러 메시지가 공유했고,
+# 그 때문에 서명 재사용이 가능했다. 이 표가 비어 있다는 것이 곧 "공유가 없다" 는 뜻이다.
+MESSAGE_DOMAIN = {}
+
+
 def domain_tag(name: str) -> bytes:
     """32바이트, 우측 0x00 패딩."""
-    raw = DOMAIN_TAGS[name]
+    raw = DOMAIN_TAGS[MESSAGE_DOMAIN.get(name, name)]
     if len(raw) > DOMAIN_TAG_LEN:
         raise ValueError("domain tag too long: %s" % name)
     return raw + b"\x00" * (DOMAIN_TAG_LEN - len(raw))
@@ -1083,6 +1225,167 @@ def build_vectors():
             "cause": 5,  # OWNER_PREEMPT — 소유자 주권 (CLAUDE.md §0.1)
             "issued_at_unix_ms": 1_755_103_800_000,
             "coordinator_signature": b"\xCC" * 64,
+        })
+
+    # ══════════════════════════════════════════════════════════════
+    # 25~29 — T1b. grant · membership · policy · quarantine
+    # ══════════════════════════════════════════════════════════════
+
+    # 25. ★ ExecutionGrant — 서명된 메시지를 두 개 중첩하고,
+    #     도출 해시 필드(manifest_hash)를 갖는 유일한 메시지.
+    def _grant(manifest_sig, manifest_hash_val):
+        m = _minimal_manifest()
+        m["submitter_signature"] = manifest_sig
+        return {
+            "schema_version": 1,
+            "grant_id": "01JBXGRANT0000000000000001",
+            "manifest": m,
+            # ★ 이 필드는 SCHEMAS["ExecutionGrant"] 에 없다 — 규칙 i 의 도출 해시 필드.
+            #   여기 값을 넣어도 canonical 에 나타나지 않아야 한다.
+            "manifest_hash": manifest_hash_val,
+            "attempt_id": "01JBXATT00000000000000001",
+            "lease": {
+                "schema_version": 1,
+                "lease_id": "01JBXLEASE0000000000000001",
+                "job_id": "01JBXR7Q0000000000000000AA",
+                "attempt_id": "01JBXATT00000000000000001",
+                "fence_epoch": 42,
+                "coordinator_term": 7,
+                "holder_node_id": "node-1",
+                "issued_at_unix_ms": 1_755_100_800_000,
+                "expires_at_unix_ms": 1_755_100_860_000,
+                "coordinator_signature": b"\xCD" * 64,
+            },
+            "peers": [{
+                "node_id": "node-2",
+                "peer_id": "12D3KooWExample",
+                "multiaddrs": ["/ip4/10.20.20.2/udp/4001/quic-v1"],
+            }],
+            "creds": {
+                "credential_id": "01JBXCRED0000000000000001",
+                "token": b"\xDE\xAD\xBE\xEF" * 4,
+                "expires_at_unix_ms": 1_755_100_860_000,
+                "allowed_endpoints": ["hub.internal:443"],
+            },
+            "plan": {
+                "mode": 1,
+                "gpu_allocation": 1,
+                "assigned_gpu_uuids": ["GPU-11111111-2222-3333-4444-555555555555"],
+                "remote_replication_interval_minutes": 15,
+                "effective_durability": 3,
+                # ★ 배치 근거도 서명 대상이다 (감사 무결성)
+                "rationale": {
+                    "t_est_seconds": 10800,
+                    "sigma_ln_ppm": 150000,
+                    "stage": 2,
+                    "p_within_estimate_ppm": 900000,
+                    "p_survival_ppm": 979700,
+                    "p_success_ppm": 881730,
+                    "target_confidence_ppm": 800000,
+                    "is_exploration": False,
+                    "rejected": [
+                        {"node_id": "node-9", "reason": 2, "detail": "insufficient VRAM"},
+                    ],
+                },
+            },
+            "coordinator_device_id": "01JBXR7Q0000000000000000CC",
+            "coordinator_term": 7,
+            "issued_at_unix_ms": 1_755_100_800_000,
+            "expires_at_unix_ms": 1_755_100_860_000,
+            "nonce": bytes(range(16)),
+            "coordinator_signature": b"\xFE" * 64,
+        }
+
+    c_g1 = add("v25_execution_grant",
+               "ExecutionGrant. 서명된 메시지 2개(manifest·lease)를 중첩하고 "
+               "도출 해시 필드(manifest_hash)를 갖는다",
+               "ExecutionGrant", _grant(b"\xAA" * 64, {"algo": 1, "value": b"\x01" * 32}),
+               ["MUST_EQUAL:v25b_execution_grant_derived_hash_and_nested_sig_swapped"])
+
+    # 25b. ★ 도출 해시와 중첩 서명을 **둘 다** 바꿔도 canonical 이 같아야 한다.
+    #      - manifest_hash: 규칙 i 의 도출 해시 필드 -> 제외
+    #      - manifest.submitter_signature: 규칙 i 재귀 -> 제외
+    #      => Agent 는 manifest 를 독립 검증하고 hash 를 재계산해야 한다(MUST).
+    c_g2 = add("v25b_execution_grant_derived_hash_and_nested_sig_swapped",
+               "manifest_hash 와 중첩 서명을 둘 다 바꾼 것 — v25 와 canonical 이 "
+               "**같아야** 한다. 이것이 Agent 의 독립 검증·재계산이 필수인 이유다",
+               "ExecutionGrant", _grant(b"\xBB" * 64, {"algo": 1, "value": b"\x02" * 32}),
+               ["MUST_EQUAL:v25_execution_grant"])
+    assert c_g1 == c_g2, "규칙 i(도출 해시 · 중첩 서명 제외)가 적용되지 않았다"
+
+    # 25c. 반대로 manifest 의 **내용**은 반영되어야 한다.
+    g3 = _grant(b"\xAA" * 64, {"algo": 1, "value": b"\x01" * 32})
+    g3["manifest"] = dict(g3["manifest"])
+    g3["manifest"]["entrypoint"] = "evil.py"
+    c_g3 = add("v25c_execution_grant_manifest_content_changed",
+               "manifest 의 내용을 바꾼 것 — v25 와 canonical 이 달라야 한다",
+               "ExecutionGrant", g3,
+               ["MUST_DIFFER:v25_execution_grant"])
+    assert c_g3 != c_g1, "중첩 manifest 의 내용이 canonical 에 반영되지 않았다"
+
+    # 26. 멤버십 — 소유자 서명
+    add("v26_add_member",
+        "AddMember (domain gputeer/v1/membership)",
+        "AddMember", {
+            "member_id": "01JBXMEM00000000000000001",
+            "public_key": bytes(range(32)),
+            "role": "member",
+            "owner_signature": b"\x11" * 64,
+        })
+
+    # 26b. ★ 같은 domain_tag 를 공유하는 두 메시지가 서로 다른 canonical 을 내는가.
+    #      §5.1 — membership 은 6개 메시지가 한 tag 를 공유한다.
+    #      domain 분리가 없으므로 canonical 차이가 유일한 방어다.
+    c_rm = add("v26b_remove_member",
+               "RemoveMember — AddMember 와 **같은 domain_tag** 를 쓴다. "
+               "canonical 이 달라야 서명 재사용이 막힌다 (§5.1)",
+               "RemoveMember", {
+                   "member_id": "01JBXMEM00000000000000001",
+                   "owner_signature": b"\x11" * 64,
+               },
+               ["MUST_DIFFER:v26_add_member"])
+
+    # 27. 정책 변경 — 다중 서명
+    add("v27_update_policy",
+        "UpdatePolicy — 다중 서명(repeated bytes signatures = 90). "
+        "is_relaxation 이 서명 대상이어야 완화를 강화로 위장할 수 없다",
+        "UpdatePolicy", {
+            "policy_hash": {"algo": 1, "value": b"\x66" * 32},
+            "policy_content": b"max_egress_bps: 0\n",
+            "is_relaxation": True,
+            "signatures": b"\x22" * 64,
+        })
+
+    # 28. 격리 verdict — 다중 서명
+    add("v28_quarantine_device",
+        "QuarantineDevice — 다중 서명. target_is_coordinator 가 서명 대상이다",
+        "QuarantineDevice", {
+            "device_id": "01JBXR7Q0000000000000000DD",
+            "signals": [
+                {"kind": "hash_mismatch", "detail": "checkpoint digest differs",
+                 "observed_at_unix_ms": 1_755_103_000_000,
+                 "observer_coordinator_id": "coord-a"},
+                {"kind": "lease_violation", "detail": "wrote after revoke",
+                 "observed_at_unix_ms": 1_755_103_100_000,
+                 "observer_coordinator_id": "coord-b"},
+            ],
+            "target_is_coordinator": True,
+            "verdict_signatures": b"\x33" * 64,
+        })
+
+    # 29. Coordinator 집합 변경
+    add("v29_change_coordinator_set",
+        "ChangeCoordinatorSet. new_set 순서는 유지된다 (규칙 d)",
+        "ChangeCoordinatorSet", {
+            "new_set": [
+                {"device_id": "coord-a", "public_key": b"\x01" * 32,
+                 "endpoints": ["10.20.20.1:7000"], "failure_domain": "rack-a"},
+                {"device_id": "coord-b", "public_key": b"\x02" * 32,
+                 "endpoints": ["10.20.20.2:7000"], "failure_domain": "rack-b"},
+            ],
+            "added_id": "coord-b",
+            "removed_id": "",
+            "owner_signature": b"\x44" * 64,
         })
 
     # 10. domain_tag 분리 — 같은 canonical, 다른 tag → 다른 sig_input
