@@ -286,6 +286,10 @@ crates/protocol/tests/schema_fingerprint.rs       대조. 다르면 실패
 (b) 그 외 (주석 · 서식 · 파서 무관 변경) -> 지문만 갱신하고 사유를 커밋에 적는다
 ```
 
+★ **`oneof` 또는 중첩 `message` 선언을 도입하기 전에 `docs/vision/TODO_VISION.md` V-05 를
+반드시 읽는다.** 현재 지문 파서는 정규식이며 `oneof` 안의 필드를 잡지 못한다.
+그 상태로 `oneof` 를 추가하면 그 필드에 대해서만 이 강제 장치가 **조용히 무력해진다.**
+
 ---
 
 ## 8. 검증 순서

@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-08-16 11:30 — P0-08 스키마 진화 (PASS, 78 tests green)
+
+- 계획: 계획 밖 — `DoD-02` 가 제기한 "CLAUDE.md §0.2 vs prost 기본 동작 충돌"
+- 스트림: Protocol
+- 수행: `tests/schema_evolution.rs` 6건(q1~q6) + `tests/schema_fingerprint.rs` 2건 +
+  `proto/SCHEMA_FINGERPRINT.txt`(66 메시지 · 389 필드)
+- 검증: **cargo test --workspace = 78 passed / 0 failed** (70 -> 78)
+  - **prost 는 미지 필드를 조용히 버린다** — 118B -> 148B(주입) -> 118B(재인코딩).
+    오류도 경고도 없다. canonical 에도 흔적이 없다
+  - => 구버전은 본문만 보고는 새 필드의 존재를 알 수 없다. **유일한 신호는 schema_version**
+  - `schema_version` 은 canonical(필드 1)과 sig_input **양쪽**에 묶여 강등은 서명을 깬다
+  - => **§7.2 SCHEMA_TOO_NEW 는 구현 가능하다. 아키텍처 재검토 불필요**
+- ★ 새 발견: **§7.3 "schema_version 증가 없는 필드 추가 금지" 를 프로토콜은 강제하지 못한다.**
+  한 줄짜리 실수가 조용한 보안 우회가 된다 (구버전이 새 보안 제약을 무시한 채 통과)
+  -> `SCHEMA_FINGERPRINT.txt` + 대조 테스트로 **빌드 시점 강제**.
+  뮤테이션(`bool require_attestation = 63` 추가)으로 실효성 확인 —
+  "추가된 줄: 63 bool require_attestation" 을 출력하며 실패
+- 부수 발견: 버전 검사를 서명 검사보다 먼저 해야 하는 이유는 **안전성이 아니라 진단 정확성**.
+  순서를 뒤집으면 "업그레이드 필요" 를 "서명 위조" 로 보고한다
+- 결정: `signing.md` §7.2 변경 없음. §7.3 에 강제 장치 규범 추가. §8 근거 정정.
+  **V-05 등록** — `oneof` 도입 시 지문 파서가 무력해진다.
+  **V-06 등록** — 서명된 정책 필드의 강제 계층 (v0.1 필수)
+- evidence: `P0-08_스키마_진화.md`
+
 ## 2026-08-16 10:40 — 서명 밖 필드 6건 제거 (DoD-03 PASS, 70 tests green)
 
 - 계획: 계획 밖 — `DoD-02` 가 찾은 "위조 가능한 보안 필드 3건" 을 닫는 작업
