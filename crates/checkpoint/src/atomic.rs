@@ -51,16 +51,48 @@ impl Default for RetryPolicy {
 /// 임시 파일에 쓰고 fsync 한 뒤 고유 이름으로 확정한다.
 ///
 /// **대상이 이미 존재하면 rename 을 시도하지 않는다.**
-/// content-addressed 이름이므로 존재한다는 것은 내용이 같다는 뜻이다.
 /// 이것이 ADR-026 의 핵심 — Windows 의 rename 실패를 원천 회피한다.
 ///
-/// 반환값: `true` = 새로 썼음, `false` = 이미 존재해 tmp 를 정리함
+/// # ★ 이미 존재할 때 내용을 대조한다 (2026-08-16 시정)
+///
+/// 처음에는 이렇게 적혀 있었다.
+///
+/// > content-addressed 이름이므로 존재한다는 것은 내용이 같다는 뜻이다.
+///
+/// **그 전제가 지켜지지 않았다.** `writer.rs` 가 넘기는 이름은
+/// `shard-0.bin` 같은 **위치 기반 이름**이지 content-addressed 가 아니다.
+/// 독립 검수(2026-08-16)가 지적했다.
+///
+/// ```text
+/// 1. writer-A 가 ckpt-100/shard-0.bin 을 쓴다
+/// 2. 매니페스트 쓰기 전에 프로세스가 죽는다
+/// 3. writer-B 가 같은 checkpoint_id 로 **다른 내용**을 쓴다
+/// 4. 내용 비교 없이 Ok(false) -> writer-B 의 매니페스트에는 B 의 해시,
+///    디스크에는 A 의 데이터
+/// 5. write_checkpoint 가 **성공을 반환한다**
+/// ```
+///
+/// `find_resume_point` 가 나중에 해시 불일치로 제외하므로 데이터 손상은 아니다.
+/// 그러나 **writer 가 "확정했다" 고 거짓 보고한다** — `CLAUDE.md` §3 위반이다.
+///
+/// 이제 기존 파일을 읽어 대조하고, 다르면 [`CheckpointError::ContentMismatch`] 를 낸다.
+/// **기존 파일은 덮어쓰지 않는다** (write-once 원칙).
+///
+/// 반환값: `true` = 새로 썼음, `false` = 같은 내용이 이미 있어 tmp 를 정리함
 pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, CheckpointError> {
     let final_path = dir.join(name);
 
-    // 이미 존재 = 내용이 같다 (content-addressed). rename 하지 않는다.
+    // 이미 존재하면 **내용을 대조한다.** 이름만으로 같다고 가정하지 않는다.
     if final_path.exists() {
-        return Ok(false);
+        let existing = fs::read(&final_path)?;
+        if existing == data {
+            return Ok(false);
+        }
+        return Err(CheckpointError::ContentMismatch {
+            path: final_path,
+            existing_len: existing.len(),
+            incoming_len: data.len(),
+        });
     }
 
     let tmp_path = dir.join(format!("{name}.tmp"));
@@ -110,6 +142,16 @@ pub fn replace_with_retry(
         f.write_all(data)?;
         f.flush()?;
         f.sync_all()?;
+    }
+
+    // ★ max_attempts == 0 은 panic 이 아니라 오류다 (독립 검수 2026-08-16).
+    //   RetryPolicy 는 공개 구조체이므로 호출자가 0 을 넣을 수 있고,
+    //   그러면 루프가 한 번도 돌지 않아 아래 expect 에서 패닉했다.
+    //   ADR-026 은 "최종 실패는 **명시적 오류**" 를 계약으로 정한다 —
+    //   panic 은 오류가 아니다. 호출자가 처리할 수 없고 데이터 경로에서 프로세스를 죽인다.
+    if policy.max_attempts == 0 {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(CheckpointError::InvalidRetryPolicy);
     }
 
     let mut backoff = policy.initial_backoff;

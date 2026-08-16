@@ -35,6 +35,28 @@ pub enum CheckpointError {
         source: std::io::Error,
     },
 
+    /// ★ write-once 대상이 이미 존재하는데 **내용이 다르다** (2026-08-16 신설).
+    ///
+    /// `write_once` 는 이름이 같으면 내용도 같다고 **가정**했었다.
+    /// 그러나 `writer.rs` 의 이름은 `shard-0.bin` 같은 위치 기반이지
+    /// content-addressed 가 아니다. 가정이 지켜지지 않았다.
+    ///
+    /// 이것을 조용히 통과시키면 **writer 가 "확정했다" 고 거짓 보고한다** —
+    /// 매니페스트에는 새 해시가, 디스크에는 옛 데이터가 남는다.
+    #[error("write-once 내용 불일치 {path:?}: 기존 {existing_len}B, 새 {incoming_len}B —              같은 이름에 다른 내용을 쓰려 했다. 앞선 writer 가 중단됐을 수 있다")]
+    ContentMismatch {
+        path: PathBuf,
+        existing_len: usize,
+        incoming_len: usize,
+    },
+
+    /// ★ `RetryPolicy::max_attempts == 0` (2026-08-16 신설).
+    ///
+    /// ADR-026 은 "최종 실패는 명시적 오류" 를 계약으로 정한다.
+    /// 예전에는 이 경우 `expect` 에서 **패닉**했다 — panic 은 오류가 아니다.
+    #[error("RetryPolicy.max_attempts 가 0이다 — 최소 1회는 시도해야 한다 (ADR-026)")]
+    InvalidRetryPolicy,
+
     #[error("해시 불일치 {path:?}: 기대 {expected}, 실제 {actual}")]
     HashMismatch {
         path: PathBuf,
