@@ -160,7 +160,18 @@ Rust workspace 에서는 **디렉터리 소유권만으로는 충돌을 막지 �
 | Agent | `crates/agent/` | 워커 에이전트 · 텔레메트리 |
 | UI | `apps/console/` | React · Tauri 셸 |
 | Python | `python/gputeer_ml/` | ML 어댑터만 |
-| **QA** | `tests/` 전체 | **독립 검증. 다른 스트림이 수정하지 않는다** |
+| **QA** | `tests/vectors/`, `tools/` | **독립 검증. 다른 스트림이 수정하지 않는다** |
+
+★ **2026-08-16 정정.** 원래 "`tests/` 전체" 라고 적었으나, 실제 테스트는
+`crates/<이름>/tests/` 에 있다 (Rust 관례). 저장소 루트의 `tests/` 에는
+**벡터만** 있다. 독립 검수가 이 불일치를 지적했다 — 규칙대로 따라간 사람이
+테스트 위치를 잘못 찾게 된다.
+
+```text
+tests/vectors/        QA 소유. 구현자가 자기 구현에 맞춰 고치면 검증이 무의미해진다
+tools/canonical/      QA 소유. 참조 구현
+crates/*/tests/       각 스트림이 자기 테스트를 쓴다. QA 는 벡터로 교차검증한다
+```
 
 ### 4.2 ★ 공용 파일 — 어느 스트림도 임의 수정 금지
 
@@ -190,7 +201,7 @@ tests/vectors/*             crates/protocol/src/constants.rs
 좋은 단위 예시 — P0-03 checkpoint durability
   Contract:       checkpoint 상태표 · durability 의미 · 해시 형식
   Implementation: crates/checkpoint/
-  Test:           tests/chaos/checkpoint_kill.rs
+  Test:           crates/checkpoint/tests/kill_chaos.rs
   Evidence:       docs/evidence/P0-03_checkpoint_durability.md
 ```
 

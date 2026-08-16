@@ -9,7 +9,7 @@
 > v4와 v5 초안 모두 상태 기계를 **산문 화살표 나열**로 적었고, 두 번의 검토에서
 > 매번 누락 전이가 발견됐다. 산문으로는 빠진 것을 찾을 수 없다.
 >
-> 이 문서의 표는 **테스트가 직접 파싱한다.** `tests/unit/state_machine_test.rs`가
+> 이 문서의 표는 **테스트가 직접 파싱한다.** `crates/checkpoint/tests/state_table_parity.rs` 가
 > 이 파일을 읽어, 표의 모든 행에 대응하는 테스트가 존재하는지 검사한다.
 > 표에 행을 추가하면 테스트가 하나 늘고, 구현하지 않으면 CI가 실패한다.
 
@@ -276,7 +276,12 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
 
 ## 6. 테스트 계약
 
-`tests/unit/state_machine_test.rs` 는 이 파일을 파싱해 다음을 검사한다.
+`crates/checkpoint/tests/state_table_parity.rs` 는 이 파일을 파싱해 다음을 검사한다.
+
+★ **2026-08-16 정정.** 이 절은 원래 `tests/unit/state_machine_test.rs` 를 가리켰는데
+**그 파일이 존재하지 않았다.** 독립 검수가 찾았다 —
+`durability.rs` 가 전이를 하드코딩하고 있었고, 이 표가 바뀌어도 코드는 그대로였다.
+**문서와 코드가 서로 다른 상태기계를 말해도 테스트는 초록색이었다.**
 
 ```text
 1. 표의 모든 행에 대응하는 전이 함수가 구현되어 있다
@@ -290,6 +295,23 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
 ```
 
 **표를 고치지 않고 전이를 추가하면 CI 가 실패한다.** 이것이 이 문서의 목적이다.
+
+### 현재 검사 범위
+
+★ **위 6개 중 3개만 검사된다.** 나머지는 해당 계층이 미구현이다.
+
+| # | 검사 | 상태 |
+|---|---|---|
+| 1 | 표의 모든 전이가 구현에서 허용된다 | ✅ Checkpoint |
+| 2 | 구현의 모든 전이가 표에 있다 | ✅ Checkpoint |
+| 3 | `COMMITTED` 전이 → SingleNodeStore 는 `Unsupported` | ❌ ControlStore 미구현 |
+| 4 | 도달 불가 상태로의 전이 거부 | 🟡 2번이 부분적으로 덮는다 |
+| 5 | `*` 행을 모든 from 상태에 대해 개별 검증 | ❌ 해당 표(Node/Job/Attempt/Lease) 미구현 |
+| 6 | terminal 상태에서 나가는 전이 없음 | ✅ Checkpoint (`PARTIAL`) |
+
+**Node · Job · Attempt · Lease 상태기계는 구현 자체가 없다.**
+표만 있고 그것을 강제하는 코드가 없으므로, **그 표들은 아직 규범이 아니라 설계 메모다.**
+`unchecked_contract_items_are_declared` 테스트가 이 사실을 고정한다.
 
 ---
 

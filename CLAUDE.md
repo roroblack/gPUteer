@@ -110,7 +110,9 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 - 새 서명 대상 메시지는 `signing.md` §5 의 `domain_tag` 표에 **반드시 등록**한다.
   등록하지 않으면 다른 문맥의 서명을 재사용할 수 있다.
 - **`docs/protocol/state-machines.md` 표에 없는 상태 전이를 구현하지 않는다.**
-  테스트가 이 표를 파싱해 검사한다.
+  `crates/checkpoint/tests/state_table_parity.rs` 가 이 표를 **실제로 파싱해** 양방향 대조한다.
+  ★ 단 **Checkpoint 상태기계만** 검사된다 — Node · Job · Attempt · Lease 는 구현이 없어
+  표만 있고 강제가 없다. `state-machines.md` §6 의 검사 범위표 참조.
 
 ---
 
@@ -140,7 +142,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-16 12:40)
+## 5. 지금 상태 (2026-08-16 20:30)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -152,15 +154,16 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | 서명 규범 | **완료** — `docs/protocol/signing.md`. §7.2·§7.3·§8·§13.1 은 실측 근거 반영됨 |
 | 상태 전이 규범 | **완료** — `docs/protocol/state-machines.md` 5종 |
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
-| 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **20건** |
+| 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — 19파일 5,334줄. **`cargo test --workspace` 100 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — 29파일 9825줄. **`cargo test --workspace` 174 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
-| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 |
+| ├ `crates/crypto` | Ed25519Verifier · InMemoryKeyring (★ 운영 부적합 — §11 미구현) |
+| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 · **경로 탈출 차단** |
 | └ 미착수 | coordinator · agent · scheduler · UI |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 12건** (PASS 11 · FAIL-SCOPE 1). `verify_evidence.py` 스키마 위반 0 |
-| ADR | 2건 — ADR-026(체크포인트 플랫폼 차이) · ADR-027(Windows Job Object VRAM 상한) |
+| **DoD** | 🟡 **evidence 16건** (PASS 15 · FAIL-SCOPE 1). `verify_evidence.py` 스키마 위반 0 |
+| ADR | 4건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · **028 메시지별 domain_tag** · **029 증거 시각 정책** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
 
@@ -176,9 +179,10 @@ replay 방어가 실제로 없다
   §8-8 은 타입으로 강제되지만 구현체는 NoReplayCheck 뿐이다.
   단수명 메시지의 실제 replay 방어는 존재하지 않는다.      -> DoD-04 limitations
 
-단수명 메시지가 하나도 없다
-  Signable 구현이 JobManifest · Lease 둘뿐이고 둘 다 장수명이다.
-  ExecutionGrant · RenewLeaseRequest · Heartbeat 미구현.
+독립 검수가 찾은 것 중 안 고친 게 있다
+  verify() 가 manifest_hash 를 대조하지 않는다 (§6.1 은 MUST 라고 적었다).
+  §8 5·6단계 순서가 규범과 구현이 어긋난다.
+  write_once 가 파일 전체를 메모리로 읽는다 — 수 GB shard 에서 미측정.
 
 Linux 를 한 번도 돌려보지 않았다
   v0.1 주 타깃이 Linux 컨테이너 워커인데 검증 환경이 없다.  -> D-3
@@ -187,11 +191,11 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. artifact.proto / control.proto 서명 대상      17종 중 13종 구현됨
-2. 단수명 메시지 (ExecutionGrant 등)             §9 TTL==skew 문제 재검토 포함
-3. 키 관리 (signing.md §11)                      저장·로딩·회전
-4. replay 저장소 (signing.md §10)                로컬 SQLite + 원자적 트랜잭션
-5. x600 에 WSL2 배포판 -> D-3 해소               Linux 경로 검증
+1. replay 저장소 (signing.md §10)                계약은 고쳤다. 저장소가 없다
+2. 키 관리 (signing.md §11)                      InMemoryKeyring 뿐이다
+3. verify() 의 manifest_hash 대조                §6.1 이 MUST 라고 적은 것
+4. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
+5. 정책 강제 계층 (V-06)                         "서명했다" != "강제한다"
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
