@@ -8,6 +8,11 @@ license.workspace = true
 [dependencies]
 blake3.workspace = true
 thiserror.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protoc-bin-vendored.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

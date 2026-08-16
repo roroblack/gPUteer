@@ -25,6 +25,7 @@ syntax = "proto3";
 package gputeer.v1;
 
 import "common.proto";
+import "lease.proto";   // Lease — ExecutionGrant 가 참조한다
 
 option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
 

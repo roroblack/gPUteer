@@ -9,7 +9,17 @@
 
 pub mod canonical;
 pub mod constants;
+pub mod to_fields;
 
+/// proto/*.proto 에서 생성된 타입.
+///
+/// ★ 생성 코드를 직접 수정하지 않는다 (RULE.md §4.3).
+/// ★ 서명에는 prost 인코더를 쓰지 않는다. `to_fields` + `canonical` 을 쓴다.
+pub mod pb {
+    include!(concat!(env!("OUT_DIR"), "/gputeer.v1.rs"));
+}
+
+pub use to_fields::{ToCanonicalFields, UNIMPLEMENTED_FIELDS};
 pub use canonical::{
     blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
     SIGNATURE_FIELD,
