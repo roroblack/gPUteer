@@ -205,6 +205,29 @@ pub trait Signable {
     /// §8-6. 이 값으로 공개키를 찾는다.
     fn signer_id(&self) -> &str;
 
+    /// ★ §6 — **서명만으로는 보장되지 않는 내부 일관성**을 검사한다.
+    ///
+    /// 도출 해시 필드(규칙 i)는 canonical 에서 제외되므로 **서명이 그 값을
+    /// 보증하지 않는다.** `ExecutionGrant.manifest_hash` 가 유일한 예다.
+    ///
+    /// `signing.md` §6.1 —
+    /// > `ExecutionGrant.manifest_hash` 는 참조용 사본이다.
+    /// > **Agent 는 이 값을 신뢰하지 않고 반드시 재계산해 대조한다(MUST).**
+    ///
+    /// 독립 검수(2026-08-16)가 지적했다 — 규범은 MUST 라고 적었는데
+    /// **그 코드가 어디에도 없었다.** `verify()` 성공만으로는
+    /// Grant 가 올바른 manifest 를 가리킨다는 보장이 없었다.
+    ///
+    /// # ★ 기본 구현은 no-op 이다 — 타입이 강제하지 않는다
+    ///
+    /// 대부분의 메시지에는 도출 해시가 없으므로 기본은 통과다.
+    /// **덮어쓰지 않아도 컴파일된다.** 그것을 잡는 것은 타입이 아니라
+    /// `derived_hash_messages_override_consistency_check` 테스트다 —
+    /// `DERIVED_HASH_FIELDS` 에 있는 메시지가 이 메서드를 덮어썼는지 대조한다.
+    fn check_derived_consistency(&self) -> Result<(), DerivedMismatch> {
+        Ok(())
+    }
+
     /// §8-8 · §10. replay 캐시에 쓸 nonce.
     ///
     /// ★ **반드시 메시지 안의 서명된 필드에서 온다.**
@@ -331,6 +354,26 @@ impl ReplayStoreError {
     }
 }
 
+/// §6 도출 해시 불일치.
+///
+/// ★ `VerifyOutcome` 에 대응하는 값이 **없다.**
+/// `common.proto` 의 `VerifyOutcome` 은 서명·시각·replay 만 다루고
+/// 도출 해시 불일치를 위한 값이 없다.
+///
+/// **없는 값을 만들어 붙이지 않는다** — `InvalidSignature` 로 보고하면
+/// "서명이 위조됐다" 로 읽히는데 실제로는 **서명은 정상이고 참조 해시가 틀린 것**이다
+/// (`CLAUDE.md` §3). 그 둘은 원인도 대응도 다르다.
+///
+/// proto 에 값을 추가하려면 `schema_version` 상향이 필요하다(§7.3).
+/// → `TODO_VISION` V-09.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedMismatch {
+    /// 어느 필드가 어긋났는가 (예: `"ExecutionGrant.manifest_hash"`).
+    pub field: &'static str,
+    /// 사람이 읽을 설명.
+    pub detail: String,
+}
+
 /// [`verify`] 의 실패.
 ///
 /// ★ **프로토콜 결과와 로컬 장애를 분리한다.**
@@ -348,6 +391,10 @@ impl ReplayStoreError {
 pub enum VerifyError {
     Outcome(VerifyOutcome),
     ReplayStore(ReplayStoreError),
+    /// §6 — 서명은 정상인데 도출 해시가 내용과 맞지 않는다.
+    ///
+    /// ★ `VerifyOutcome` 으로 보고할 수 없다 — 대응하는 proto 값이 없다.
+    Derived(DerivedMismatch),
 }
 
 impl From<VerifyOutcome> for VerifyError {
@@ -361,7 +408,7 @@ impl VerifyError {
     pub fn outcome(&self) -> Option<VerifyOutcome> {
         match self {
             Self::Outcome(o) => Some(*o),
-            Self::ReplayStore(_) => None,
+            Self::ReplayStore(_) | Self::Derived(_) => None,
         }
     }
 
@@ -369,6 +416,9 @@ impl VerifyError {
         match self {
             Self::Outcome(o) => o.explain(),
             Self::ReplayStore(e) => e.explain(),
+            Self::Derived(_) => {
+                "도출 해시가 내용과 맞지 않는다 — 서명은 정상이므로 위조가 아니라                  발신자가 잘못된 참조 해시를 넣었거나 중첩 메시지가 바꿔치기됐다"
+            }
         }
     }
 }
@@ -526,6 +576,17 @@ pub fn verify<M: Signable + Clone>(
 
     // 5·6. 서명 검증 + 서명자 신원 (Crypto 스트림에 위임)
     verifier.verify_signature(msg.signer_id(), &input, msg.signature_bytes())?;
+
+    // 6.5 ★ 도출 해시 대조 (§6.1).
+    //
+    //   규칙 i 로 canonical 에서 제외되므로 **서명이 이 값을 보증하지 않는다.**
+    //   §6.1 이 "Agent 는 반드시 재계산해 대조한다(MUST)" 고 적었는데
+    //   그 코드가 어디에도 없었다 (독립 검수 2026-08-16).
+    //
+    //   ★ §8 의 9단계에는 없는 단계다. §6 의 요구를 §8 흐름에 넣은 것이며,
+    //     서명 검증 **뒤**에 둔다 — 서명이 깨진 메시지의 내부 일관성을
+    //     따지는 것은 의미가 없고, 오류 진단만 흐려진다.
+    msg.check_derived_consistency().map_err(VerifyError::Derived)?;
 
     // 7. 시각 (§9)
     match M::LIFETIME {

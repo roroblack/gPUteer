@@ -462,3 +462,127 @@ fn the_three_lifetimes_actually_behave_differently() {
     verify(&c, 1, &r, NOW + 10 * 365 * 24 * 3_600_000, &mut NoReplayCheck)
         .expect("Evidence 가 만료됐다 — LongLived 와 구분되지 않는다");
 }
+
+// ══════════════════════════════════════════════════════════════════
+// ★ §6.1 — verify() 가 manifest_hash 를 실제로 대조하는가
+//
+// 독립 검수(2026-08-16)가 지적했다:
+//   "규범은 Agent 가 재계산해 대조하라고 MUST 로 적었는데 그 코드가 없다.
+//    verify() 성공만으로는 Grant 가 올바른 manifest 를 가리킨다는 보장이 없다."
+// ══════════════════════════════════════════════════════════════════
+
+fn grant_with_manifest(
+    k: &SigningKey,
+    manifest_hash: Option<Vec<u8>>,
+    manifest: Option<pb::JobManifest>,
+) -> pb::ExecutionGrant {
+    let mut g = pb::ExecutionGrant {
+        schema_version: 1,
+        grant_id: "01JBXGRANT0000000000000001".into(),
+        manifest,
+        manifest_hash: manifest_hash.map(|v| pb::Digest { algo: 1, value: v }),
+        coordinator_device_id: COORD.into(),
+        issued_at_unix_ms: NOW,
+        expires_at_unix_ms: NOW + GRANT_TTL_MS,
+        nonce: nonce16(),
+        ..Default::default()
+    };
+    g.coordinator_signature = sign(k, &g).to_vec();
+    g
+}
+
+fn a_manifest() -> pb::JobManifest {
+    pb::JobManifest {
+        schema_version: 1,
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        entrypoint: "train.py".into(),
+        submitter_device_id: "01JBXR7Q0000000000000000DD".into(),
+        issued_at_unix_ms: NOW,
+        expires_at_unix_ms: NOW + 7 * 24 * 3_600_000,
+        submitter_signature: vec![0xAA; 64],
+        ..Default::default()
+    }
+}
+
+fn real_manifest_hash(m: &pb::JobManifest) -> Vec<u8> {
+    gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(m)).to_vec()
+}
+
+/// ★ 틀린 `manifest_hash` 를 가진 Grant 는 거부되어야 한다.
+#[test]
+fn verify_rejects_grant_with_wrong_manifest_hash() {
+    use gputeer_protocol::signing::VerifyError;
+
+    let k = key(1);
+    let r = ring(&[(COORD, &k)]);
+    let m = a_manifest();
+
+    // 명백히 틀린 해시 — 서명 자체는 정상이다
+    let bad = grant_with_manifest(&k, Some(vec![0x01; 32]), Some(m.clone()));
+    let err = verify(&bad, 1, &r, NOW, &mut NoReplayCheck)
+        .expect_err("★ 틀린 manifest_hash 를 가진 Grant 가 통과했다 — §6.1 위반");
+
+    // ★ VerifyOutcome 으로 보고되면 안 된다 — "서명 위조" 로 읽힌다.
+    //   실제로는 서명은 정상이고 참조 해시가 틀린 것이다 (CLAUDE.md §3).
+    assert_eq!(
+        err.outcome(),
+        None,
+        "도출 해시 불일치가 VerifyOutcome 으로 보고됐다 — 원인을 오해하게 만든다"
+    );
+    assert!(matches!(err, VerifyError::Derived(_)), "{err:?}");
+    assert!(err.explain().contains("위조가 아니라"));
+}
+
+/// 올바른 해시면 통과해야 한다 — "무조건 거부" 하는 구현을 막는다.
+#[test]
+fn verify_accepts_grant_with_correct_manifest_hash() {
+    let k = key(1);
+    let m = a_manifest();
+    let good = grant_with_manifest(&k, Some(real_manifest_hash(&m)), Some(m));
+    verify(&good, 1, &ring(&[(COORD, &k)]), NOW, &mut NoReplayCheck)
+        .expect("올바른 manifest_hash 를 가진 Grant 는 통과해야 한다");
+}
+
+/// ★ 중첩 manifest 를 **바꿔치기**하면 잡히는가.
+///
+/// 규칙 i 로 `manifest_hash` 는 canonical 밖이고, 중첩 서명도 밖이다.
+/// 그래서 Grant 서명만으로는 못 잡는다 — **§6.1 대조가 유일한 방어다.**
+#[test]
+fn verify_catches_swapped_nested_manifest() {
+    let k = key(1);
+    let r = ring(&[(COORD, &k)]);
+
+    let original = a_manifest();
+    let hash_of_original = real_manifest_hash(&original);
+
+    // 공격자가 manifest 를 바꿔치기하고 Grant 를 다시 서명한다
+    // (Coordinator 키를 가진 내부자, 또는 Grant 를 중계하는 쪽)
+    let mut evil = a_manifest();
+    evil.entrypoint = "evil.py".into();
+
+    let swapped = grant_with_manifest(&k, Some(hash_of_original), Some(evil));
+    assert!(
+        verify(&swapped, 1, &r, NOW, &mut NoReplayCheck).is_err(),
+        "★ manifest 바꿔치기가 통과했다 — manifest_hash 대조가 유일한 방어인데 작동하지 않는다"
+    );
+}
+
+/// 판정 규칙의 경계 — hash 만 있고 manifest 가 없는 경우.
+#[test]
+fn verify_rejects_hash_without_manifest() {
+    let k = key(1);
+    let orphan = grant_with_manifest(&k, Some(vec![0x01; 32]), None);
+    assert!(
+        verify(&orphan, 1, &ring(&[(COORD, &k)]), NOW, &mut NoReplayCheck).is_err(),
+        "manifest 없이 manifest_hash 만 있는 Grant 가 통과했다 — 없는 것의 해시를 주장한다"
+    );
+}
+
+/// manifest 는 있고 hash 가 없으면 통과한다 — 주장을 안 했으므로.
+#[test]
+fn verify_allows_manifest_without_hash() {
+    let k = key(1);
+    let g = grant_with_manifest(&k, None, Some(a_manifest()));
+    verify(&g, 1, &ring(&[(COORD, &k)]), NOW, &mut NoReplayCheck)
+        .expect("manifest_hash 를 안 넣은 Grant 는 통과해야 한다 (참조용 사본이므로)");
+}

@@ -22,7 +22,8 @@ pub mod pb {
 }
 
 pub use signing::{
-    signing_input, verify, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard, ReplayStoreError,
+    signing_input, verify, DerivedMismatch, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard,
+    ReplayStoreError,
     Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
 };
 pub use to_fields::{ToCanonicalFields, DERIVED_HASH_FIELDS, UNIMPLEMENTED_FIELDS};

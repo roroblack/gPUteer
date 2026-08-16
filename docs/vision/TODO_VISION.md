@@ -124,3 +124,20 @@ RevokeLeaseNotice   lease_id 로 대신
 
 ★ 대체값은 **키 조회 키로 쓰이므로**, 매핑을 모르는 검증자는 유효한 서명도
 `UnknownSigner` 로 거부한다. 지금은 단일 Coordinator 라 무해하다.
+
+
+### V-09 — `VerifyOutcome` 에 도출 해시 불일치 값 추가
+
+| 필드 | 내용 |
+|---|---|
+| **도입 트리거** | 도출 해시 불일치를 **상대에게 보고**해야 하는 시점 — 즉 Coordinator↔Agent RPC 에 `VerifyOutcome` 을 실어 보내기 시작할 때 |
+| 지금 안 하는 이유 | `.proto` 변경 → `schema_version` 상향(§7.3). 아직 RPC 계층이 없어 보고할 상대가 없다. `VerifyError::Derived` 로 **로컬에서는 구분된다** |
+| 예상 비용 | 생성 소(enum 값 1개) / 검증 중 / 대기 없음. **V-07 · V-08 과 함께 하면 상향 1회로 묶인다** |
+| 폐기 조건 | 없음 — RPC 가 생기면 반드시 필요하다 |
+
+★ §6.1 의 `manifest_hash` 대조가 실패했을 때 상대에게 보고할 값이 없다.
+`INVALID_SIGNATURE` 로 보고하면 **"서명 위조" 로 읽히는데 서명은 정상**이다 —
+원인도 대응도 다르다(`CLAUDE.md` §3).
+
+지금은 `VerifyError::Derived` 로 **로컬에서만** 구분한다.
+`err.outcome()` 이 `None` 을 반환하는 것이 "보고할 proto 값이 없다" 는 신호다.

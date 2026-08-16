@@ -30,7 +30,7 @@
 use crate::canonical::{Domain, Fields};
 use crate::constants::GRANT_TTL_MS;
 use crate::pb;
-use crate::signing::{Lifetime, Signable};
+use crate::signing::{signing_input, DerivedMismatch, Lifetime, Signable};
 use crate::ToCanonicalFields;
 
 // ══════════════════════════════════════════════════════════════════
@@ -122,6 +122,54 @@ impl Signable for pb::ExecutionGrant {
     fn replay_nonce(&self) -> Option<&[u8]> {
         Some(&self.nonce)
     }
+
+    /// ★ §6.1 — `manifest_hash` 를 **재계산해 대조한다(MUST).**
+    ///
+    /// 이 필드는 규칙 i 로 canonical 에서 제외되므로 **Grant 서명이 보증하지 않는다.**
+    /// 규범은 "Agent 는 이 값을 신뢰하지 않고 반드시 재계산해 대조한다" 고 적었는데
+    /// **그 코드가 어디에도 없었다** (독립 검수 2026-08-16).
+    ///
+    /// ```text
+    /// manifest_hash = BLAKE3_256( sig_input_of(JobManifest) )
+    /// ```
+    ///
+    /// # 판정 규칙
+    ///
+    /// ```text
+    /// manifest 있음 + hash 있음   -> 대조. 다르면 거부
+    /// manifest 있음 + hash 없음   -> 통과 (주장을 안 했으므로)
+    /// manifest 없음 + hash 있음   -> 거부 (없는 것의 해시를 주장한다)
+    /// 둘 다 없음                  -> 통과
+    /// ```
+    fn check_derived_consistency(&self) -> Result<(), DerivedMismatch> {
+        const FIELD: &str = "ExecutionGrant.manifest_hash";
+        match (&self.manifest, &self.manifest_hash) {
+            (Some(m), Some(h)) => {
+                let expected = crate::canonical::blake3_256(&signing_input(m));
+                if h.value.as_slice() == expected.as_slice() {
+                    Ok(())
+                } else {
+                    Err(DerivedMismatch {
+                        field: FIELD,
+                        detail: format!(
+                            "재계산 {} != 기재 {}",
+                            hex32(&expected),
+                            hex32(&h.value),
+                        ),
+                    })
+                }
+            }
+            (None, Some(_)) => Err(DerivedMismatch {
+                field: FIELD,
+                detail: "manifest 가 없는데 manifest_hash 만 있다".into(),
+            }),
+            _ => Ok(()),
+        }
+    }
+}
+
+fn hex32(b: &[u8]) -> String {
+    b.iter().take(8).map(|x| format!("{x:02x}")).collect::<String>() + ".."
 }
 
 impl Signable for pb::RenewLeaseRequest {

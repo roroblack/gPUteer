@@ -346,6 +346,35 @@ manifest_hash = BLAKE3_256( sig_input_of(JobManifest) )
   **Agent는 이 값을 신뢰하지 않고 반드시 재계산해 대조한다(MUST)** — 계획서 §15.4 검증 13단계.
 - Job 식별, `WorkloadProfile` 키, 실행 이력 조회의 키로 사용한다.
 
+#### ★ 이 MUST 를 `verify()` 가 수행한다 (2026-08-16 추가)
+
+독립 검수가 지적했다 — **규범은 MUST 라고 적었는데 그 코드가 어디에도 없었다.**
+`verify()` 성공만으로는 Grant 가 올바른 manifest 를 가리킨다는 보장이 없었다.
+
+```text
+Signable::check_derived_consistency()   §8 흐름의 6.5 단계로 호출된다
+                                        (서명 검증 뒤 · 시각 검사 앞)
+```
+
+판정 규칙:
+
+```text
+manifest 있음 + hash 있음   대조. 다르면 거부
+manifest 있음 + hash 없음   통과 — 주장을 안 했다
+manifest 없음 + hash 있음   거부 — 없는 것의 해시를 주장한다
+둘 다 없음                  통과
+```
+
+★ **실패는 `VerifyOutcome` 이 아니다.** `common.proto` 에 대응하는 값이 없고,
+`INVALID_SIGNATURE` 로 보고하면 **"서명이 위조됐다" 로 읽히는데 실제로는
+서명은 정상이고 참조 해시가 틀린 것**이다(`CLAUDE.md` §3).
+`VerifyError::Derived` 로 분리했다. proto 값 추가는 `schema_version` 상향이
+필요하므로 `TODO_VISION` V-09 로 등록했다.
+
+★ **기본 구현은 no-op 이다** — 타입이 강제하지 않는다.
+`DERIVED_HASH_FIELDS` 에 있는 메시지가 실제로 덮어썼는지는
+`derived_hash_messages_override_consistency_check` 테스트가 대조한다.
+
 ### 6.2 operation_id
 
 ```text

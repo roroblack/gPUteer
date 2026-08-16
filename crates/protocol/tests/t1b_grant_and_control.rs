@@ -599,3 +599,35 @@ fn grant_manifest_hash_can_be_wrong_without_breaking_signature() {
         "★ manifest_hash 가 canonical 에 들어갔다면 이 테스트를 재검토하라"
     );
 }
+
+// ══════════════════════════════════════════════════════════════════
+// ★ §6.1 manifest_hash 대조 — verify() 가 실제로 하는가
+// ══════════════════════════════════════════════════════════════════
+
+/// `DERIVED_HASH_FIELDS` 에 있는 메시지가 `check_derived_consistency()` 를
+/// **실제로 덮어썼는가.**
+///
+/// ★ 기본 구현은 no-op 이라 **덮어쓰지 않아도 컴파일된다.**
+///   타입이 강제하지 못하므로 이 테스트가 강제한다.
+#[test]
+fn derived_hash_messages_override_consistency_check() {
+    use gputeer_protocol::signing::Signable;
+
+    // 목록에 있는 메시지는 ExecutionGrant 뿐이다
+    let msgs: Vec<&str> = DERIVED_HASH_FIELDS.iter().map(|(m, _, _)| *m).collect();
+    assert_eq!(
+        msgs,
+        vec!["ExecutionGrant"],
+        "DERIVED_HASH_FIELDS 가 바뀌었다 — 새 메시지도 \
+         check_derived_consistency() 를 덮어썼는지 이 테스트에 추가하라"
+    );
+
+    // ★ 덮어썼는지 확인 — 틀린 해시를 넣었을 때 오류가 나야 한다.
+    //   기본 구현(no-op)이 쓰였다면 Ok 가 나온다.
+    let g = grant(0xAA, 0x01); // manifest_hash = [0x01; 32] — 명백히 틀린 값
+    assert!(
+        Signable::check_derived_consistency(&g).is_err(),
+        "★ ExecutionGrant 가 check_derived_consistency() 를 덮어쓰지 않았다 — \
+         기본 no-op 이 조용히 쓰이고 있다"
+    );
+}
