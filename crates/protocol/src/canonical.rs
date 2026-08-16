@@ -96,6 +96,14 @@ pub enum CanonicalError {
 pub enum Value {
     /// uint32 / uint64 / enum
     Uint(u64),
+    /// int32 / int64 (규칙 j).
+    ///
+    /// ★ 2의 보수 u64 로 재해석해 varint 인코딩한다. zigzag 가 **아니다.**
+    /// 음수는 항상 정확히 10바이트다.
+    ///
+    /// `int32` 는 이 variant 에 담기 전에 **반드시 64비트로 부호 확장**한다
+    /// (`v as i64`). protobuf 의 유명한 함정이라 `to_fields` 에서 실수하기 쉽다.
+    Int(i64),
     Bool(bool),
     Str(String),
     Bytes(Vec<u8>),
@@ -115,6 +123,7 @@ impl Value {
     fn is_default(&self) -> bool {
         match self {
             Value::Uint(v) => *v == 0,
+            Value::Int(v) => *v == 0,
             Value::Bool(b) => !*b,
             Value::Str(s) => s.is_empty(),
             Value::Bytes(b) => b.is_empty(),
@@ -175,6 +184,11 @@ fn encode_value(num: u32, value: &Value, derived: &[u32], out: &mut Vec<u8>) {
         Value::Uint(v) => {
             encode_tag(num, WIRETYPE_VARINT, out);
             encode_varint(*v, out); // 규칙 e
+        }
+        Value::Int(v) => {
+            // 규칙 j — 2의 보수 u64 재해석. proto3 int64 의 wire format 과 같다.
+            encode_tag(num, WIRETYPE_VARINT, out);
+            encode_varint(*v as u64, out);
         }
         Value::Bool(_) => {
             // is_default 로 false 는 이미 걸러졌으므로 여기서는 항상 true

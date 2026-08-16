@@ -281,6 +281,250 @@ impl ToCanonicalFields for pb::ResourceScope {
     }
 }
 
+/// 부호 있는 정수 (규칙 j).
+///
+/// ★ `int32` 는 호출부에서 `as i64` 로 **부호 확장한 뒤** 넘긴다.
+/// protobuf 의 유명한 함정이라 여기서 다시 적어 둔다 — `int32` 의 -1 도 10바이트다.
+fn put_int(f: &mut Fields, n: u32, v: i64) {
+    if v != 0 {
+        f.set(n, Value::Int(v));
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// artifact.proto — 체크포인트 · 복제 증거 · 산출물 · 결과 보고
+//
+// ★ 2026-08-16 T1. `signing.md` §5 domain_tag 17종 중 10종을 여기서 채운다.
+// ══════════════════════════════════════════════════════════════════
+
+impl ToCanonicalFields for pb::ReportedMetric {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.name);
+        // ★ 스키마 전체에서 **유일한 부호 있는 필드**다.
+        //   이것 때문에 signing.md 에 규칙 j 를 추가했다 (2026-08-16).
+        put_int(&mut f, 2, self.value_micro);
+        put_bool(&mut f, 3, self.higher_is_better);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::CheckpointFile {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.path);
+        put_msg(&mut f, 2, &self.digest);
+        put_uint(&mut f, 3, self.size_bytes);
+        // 규칙 d — 청크 순서가 곧 파일 내용의 순서다. 정렬하면 안 된다.
+        put_repeated_msg(&mut f, 4, &self.chunk_digests);
+        put_uint(&mut f, 5, self.chunk_size_bytes as u64);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ResumeCompleteness {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_bool(&mut f, 1, self.model_weights);
+        put_bool(&mut f, 2, self.optimizer_state);
+        put_bool(&mut f, 3, self.lr_scheduler_state);
+        put_bool(&mut f, 4, self.rng_state);
+        put_bool(&mut f, 5, self.sampler_position);
+        put_bool(&mut f, 6, self.dataloader_position);
+        put_bool(&mut f, 7, self.amp_scaler_state);
+        put_bool(&mut f, 10, self.full_resume_guaranteed);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::CheckpointManifest {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.checkpoint_id);
+        put_str(&mut f, 3, &self.job_id);
+        put_str(&mut f, 4, &self.attempt_id);
+        put_uint(&mut f, 5, self.step);
+        put_uint(&mut f, 6, self.epoch);
+
+        // 규칙 d — 파일 순서는 유지한다 (proto 주석: "정렬하지 않는다")
+        put_repeated_msg(&mut f, 10, &self.files);
+        put_msg(&mut f, 11, &self.root_digest);
+        put_uint(&mut f, 12, self.total_bytes);
+
+        put_msg(&mut f, 20, &self.completeness);
+
+        put_uint(&mut f, 30, self.created_at_unix_ms);
+        put_str(&mut f, 31, &self.producer_node_id);
+        put_uint(&mut f, 32, self.fence_epoch);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::ReplicaAck {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.checkpoint_id);
+        put_msg(&mut f, 3, &self.root_digest);
+
+        put_str(&mut f, 10, &self.holder_device_id);
+        put_uint(&mut f, 11, self.kind as u64);
+        // ★ failure_domain 이 서명 대상인 것이 중요하다.
+        //   REPLICATED(n) 의 n 은 서로 다른 domain 수로 센다.
+        //   서명 밖이면 같은 박스 2개를 REPLICATED(2) 로 위조할 수 있다.
+        put_str(&mut f, 12, &self.failure_domain);
+
+        put_bool(&mut f, 20, self.fsynced);
+        put_bool(&mut f, 21, self.hash_verified);
+        put_uint(&mut f, 22, self.stored_bytes);
+
+        put_uint(&mut f, 30, self.acked_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::ArtifactRef {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.artifact_id);
+        put_str(&mut f, 3, &self.job_id);
+        put_str(&mut f, 4, &self.attempt_id);
+        put_uint(&mut f, 5, self.kind as u64);
+
+        put_msg(&mut f, 10, &self.digest);
+        put_uint(&mut f, 11, self.size_bytes);
+        put_str(&mut f, 12, &self.cas_path);
+
+        // ★ replicas 는 **각자 서명된** ReplicaAck 들이다.
+        //   규칙 i 가 재귀 적용되므로 중첩 서명(90)은 이 canonical 에 들어가지 않는다.
+        //   즉 중첩 서명을 바꿔치기해도 바깥 서명은 깨지지 않는다.
+        //   -> 검증자는 각 ReplicaAck 를 **독립적으로 검증해야 한다(MUST).**
+        //   벡터 v22 / v22b 가 이 사실을 고정한다.
+        put_repeated_msg(&mut f, 20, &self.replicas);
+        put_uint(&mut f, 21, self.created_at_unix_ms);
+        put_uint(&mut f, 22, self.fence_epoch);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::AttemptReport {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.fence_epoch);
+
+        put_uint(&mut f, 10, self.outcome as u64);
+        put_uint(&mut f, 11, self.final_step);
+        put_uint(&mut f, 12, self.started_at_unix_ms);
+        put_uint(&mut f, 13, self.finished_at_unix_ms);
+
+        put_repeated_msg(&mut f, 20, &self.artifacts);
+        put_msg(&mut f, 21, &self.final_checkpoint);
+        // ★ 규칙 j 가 필요한 지점 — value_micro 는 int64 다.
+        put_repeated_msg(&mut f, 30, &self.metrics);
+
+        put_uint(&mut f, 40, self.issued_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::CanonicalDecision {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.chosen_attempt_id);
+        put_repeated_str(&mut f, 4, &self.superseded_attempt_ids);
+
+        put_uint(&mut f, 10, self.deciding_criterion as u64);
+        put_str(&mut f, 11, &self.rationale);
+        put_uint(&mut f, 12, self.fence_epoch);
+        put_uint(&mut f, 13, self.decided_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// lease.proto — 갱신 · 회수
+// ══════════════════════════════════════════════════════════════════
+
+impl ToCanonicalFields for pb::ProgressReport {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.current_step);
+        put_uint(&mut f, 2, self.total_steps);
+        put_uint(&mut f, 3, self.eta_seconds);
+        put_uint(&mut f, 4, self.last_committed_step);
+        put_uint(&mut f, 5, self.replication_backlog_bytes);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::RenewLeaseRequest {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.lease_id);
+        put_uint(&mut f, 3, self.fence_epoch);
+        put_str(&mut f, 4, &self.node_id);
+        put_msg(&mut f, 10, &self.progress);
+        put_uint(&mut f, 20, self.issued_at_unix_ms);
+        // ★ nonce 는 서명 대상이다. 서명 밖이면 재전송 시 nonce 만 갈아끼울 수 있다.
+        put_bytes(&mut f, 21, &self.nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::RevokeLeaseNotice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.lease_id);
+        put_uint(&mut f, 3, self.fence_epoch);
+        put_uint(&mut f, 4, self.cause as u64);
+        put_uint(&mut f, 5, self.issued_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // job.proto — JobManifest
 //

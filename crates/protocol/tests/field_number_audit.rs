@@ -213,12 +213,34 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("common.proto", "NetworkPolicy", 90),
     ("common.proto", "ArtifactScope", 90),
     ("common.proto", "ResourceScope", 90),
+    // T1 (2026-08-16)
+    ("artifact.proto", "ReportedMetric", 90),
+    ("artifact.proto", "CheckpointFile", 90),
+    ("artifact.proto", "ResumeCompleteness", 90),
+    ("artifact.proto", "CheckpointManifest", 90),
+    ("artifact.proto", "ReplicaAck", 90),
+    ("artifact.proto", "ArtifactRef", 90),
+    ("artifact.proto", "AttemptReport", 90),
+    ("artifact.proto", "CanonicalDecision", 90),
+    ("lease.proto", "ProgressReport", 90),
+    ("lease.proto", "RenewLeaseRequest", 90),
+    ("lease.proto", "RevokeLeaseNotice", 90),
 ];
 
 #[test]
 fn common_message_field_numbers_match_proto() {
     for (file, msg, sig) in AUDITED {
         if *file == "common.proto" {
+            audit(file, msg, *sig);
+        }
+    }
+}
+
+/// T1 — artifact.proto / lease.proto 의 서명 대상.
+#[test]
+fn artifact_and_lease_field_numbers_match_proto() {
+    for (file, msg, sig) in AUDITED {
+        if *file == "artifact.proto" || *file == "lease.proto" {
             audit(file, msg, *sig);
         }
     }
@@ -241,7 +263,7 @@ fn every_impl_is_audited() {
             impls.push(rest.trim_end_matches(" {").to_string());
         }
     }
-    assert!(impls.len() >= 7, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
+    assert!(impls.len() >= 20, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
 
     let missing: Vec<_> = impls
         .iter()

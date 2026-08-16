@@ -62,6 +62,43 @@ Encoding        네트워크 전송은 표준 proto3, 서명 계산만 canonical
 | **g** | **부동소수점 타입을 사용하지 않는다.** 비율은 ppm 정수, 시각은 밀리초 정수 |
 | **h** | **알 수 없는 필드는 포함하지 않는다** (§7 참조) |
 | **i** | 서명 필드(field 90)와 계산으로 도출되는 해시 필드는 **제외**한다 |
+| **j** | 부호 있는 정수(`int32`/`int64`)는 **2의 보수 u64 로 재해석해** varint 인코딩한다. `sint*`/`sfixed*`/`fixed*` 는 **사용하지 않는다(MUST NOT)** |
+
+#### 규칙 j — 부호 있는 정수 (2026-08-16 추가)
+
+★ **이 규칙은 원래 없었다.** T1 구현 중 발견했다.
+
+스키마 전체에서 부호 있는 필드는 **단 하나**인데, 하필 서명 대상 안에 있다.
+
+```text
+proto/artifact.proto:234   int64 value_micro = 2;      (ReportedMetric)
+                           -> AttemptReport.metrics 안 -> domain "gputeer/v1/attempt-report"
+```
+
+규칙이 없으면 구현자마다 다르게 인코딩한다. 특히 세 갈래로 갈릴 수 있다.
+
+```text
+(1) 2의 보수 u64 재해석      -1 -> 0xFFFFFFFFFFFFFFFF -> 10바이트 varint   <- proto3 표준
+(2) zigzag (sint 방식)       -1 -> 1 -> 1바이트 varint
+(3) 음수 거부
+```
+
+**(1) 을 택한다.** canonical 인코딩은 **유효한 protobuf 인코딩의 부분집합**이어야 한다는
+설계 원칙 때문이다(§13.1 — 별도 인코더를 쓰되 wire format 은 벗어나지 않는다).
+`int64` 의 proto3 wire format 이 (1)이므로 다른 선택은 wire format 을 벗어난다.
+
+```text
+음수 int64  항상 정확히 10바이트다. 그것이 u64 재해석 값의 최단 varint 이므로
+            규칙 e(최단 varint)와 모순되지 않는다.
+
+★ int32 의 음수는 **먼저 64비트로 부호 확장한 뒤** 인코딩한다.
+  protobuf 의 유명한 함정이다 — int32 -1 도 10바이트다. 5바이트가 아니다.
+
+기본값 0    규칙 b 로 생략된다. -0 은 존재하지 않으므로 §g 의 -0.0 문제는 없다.
+```
+
+`sint*`(zigzag) · `fixed*` · `sfixed*` 를 **쓰지 않는 이유**는 규칙 e·g 와 같다 —
+같은 값의 표현이 둘 이상 생기거나 바이트 순서가 개입하면 서명 우회 여지가 생긴다.
 
 ### 3.2 왜 이 규칙인가
 
@@ -159,6 +196,35 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 이것이 없으면 예컨대 Lease 서명을 Manifest 서명으로 재사용하는 공격이 가능하다.
 
 새 서명 대상 메시지를 추가할 때는 **반드시 새 domain_tag를 이 표에 등록해야 한다(MUST).**
+
+### ★ 5.1 4종은 proto 메시지가 없다 (2026-08-16 발견)
+
+이 표는 **아직 존재하지 않는 메시지의 domain_tag 를 등록해 두고 있다.**
+
+| domain_tag | proto 메시지 |
+|---|---|
+| `gputeer/v1/genesis` | **없음** |
+| `gputeer/v1/audit` | **없음** |
+| `gputeer/v1/release` | **없음** |
+| `gputeer/v1/invite` | **없음** |
+
+나머지 13종은 메시지가 있다. `membership` · `policy` · `quarantine` 은
+단일 메시지가 아니라 `ControlAction` 의 하위 메시지 여러 개에 대응한다.
+
+```text
+membership   AddMember · RemoveMember · ApproveDevice · RevokeDevice
+             · ChangeCoordinatorSet · RotateOwnerKey
+policy       UpdatePolicy
+quarantine   QuarantineDevice · ReleaseQuarantine
+```
+
+★ **한 domain_tag 를 여러 메시지가 공유하면 그 사이에서는 서명 재사용이 가능하다.**
+`AddMember` 서명을 `RemoveMember` 로 재사용할 수 있는지는 canonical 이 달라지므로
+실질적으로 막히지만, **domain 분리가 아니라 필드 차이에 의존하는 방어**다.
+T1 에서 이들을 구현할 때 재검토한다.
+
+현재 커버리지는 `crates/protocol/tests/t1_signing_targets.rs::domain_coverage_is_explicit`
+가 고정한다 — 구현 9종 · 미구현 4종(메시지 있음) · 메시지 없음 4종.
 
 ---
 
@@ -338,6 +404,48 @@ clock_skew_tolerance = 60초 (프로토콜 상수)
 
 Job은 큐에서 수 시간 대기하는 것이 **정상 동작**이다(계획서 §13.6 aging queue).
 따라서 Manifest에 skew 규칙을 걸면 안 된다.
+
+### ★ 9.1 이 표는 아직 완전하지 않다 (2026-08-16)
+
+T1 구현 중 발견했다. **서명 대상 중 6종이 위 표에 없다.**
+
+```text
+CheckpointManifest    ReplicaAck    ArtifactRef
+AttemptReport         CanonicalDecision    RevokeLeaseNotice
+```
+
+이들은 `expires_at` 필드조차 없다 — **만료 개념이 정의되지 않았다.**
+
+```text
+CheckpointManifest    created_at_unix_ms(30) 만 있다
+ReplicaAck            acked_at_unix_ms(30) 만 있다
+ArtifactRef           created_at_unix_ms(21) 만 있다
+AttemptReport         issued_at_unix_ms(40) 만 있다
+CanonicalDecision     decided_at_unix_ms(13) 만 있다
+RevokeLeaseNotice     issued_at_unix_ms(5) 만 있다
+```
+
+**추측으로 채우지 않는다** (`CLAUDE.md` §1 — "값을 모르면 비워 둔다").
+`Lifetime` 을 잘못 고르면 정상 메시지가 전부 거부되거나(§9 경고),
+반대로 만료된 증거가 영원히 유효해진다.
+
+그래서 이 6종은 `ToCanonicalFields` 만 구현하고 **`Signable` 은 구현하지 않았다.**
+`crates/protocol/tests/t1_signing_targets.rs::domain_coverage_is_explicit` 가
+현재 커버리지를 고정하며, 숫자가 바뀌면 실패한다.
+
+**결정이 필요한 질문:**
+
+```text
+1. 이 6종은 만료되는가?
+   - 체크포인트·산출물 증거는 영구(Perpetual)가 자연스러워 보인다
+     — 3년 전 체크포인트도 여전히 그 내용의 증거다
+   - 그러나 RevokeLeaseNotice 는 단수명이어야 할 것 같다
+     — 오래된 회수 통지를 재전송하면?
+2. 영구라면 replay 는 어떻게 막는가? (§10 은 단수명만 대상이다)
+3. `expires_at` 필드를 추가해야 하면 schema_version 을 올려야 한다 (§7.3)
+```
+
+→ 실행계획 v2 **T2** 에서 결정한다.
 
 ---
 

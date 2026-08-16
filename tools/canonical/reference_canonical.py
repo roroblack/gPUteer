@@ -84,8 +84,11 @@ def encode_len_delimited(field_number: int, payload: bytes) -> bytes:
 # 표와 .proto 가 어긋나면 CI 가 잡도록 tools/canonical/check_schema.py 를 둔다.
 # ═══════════════════════════════════════════════════════════════════════
 
-# kind: uint | bool | enum | string | bytes | message | map_ss
+# kind: uint | int | bool | enum | string | bytes | message | map_ss
 #       repeated_string | repeated_message
+#
+# ★ "int" 는 규칙 j (2026-08-16 추가) — int32/int64.
+#   2의 보수 u64 재해석. zigzag 가 아니다. 음수는 항상 10바이트.
 Field = tuple  # (number, name, kind, nested_schema_or_None)
 
 SCHEMAS = {
@@ -220,6 +223,129 @@ SCHEMAS = {
         (40, "scope", "message", "ResourceScope"),
         (90, "coordinator_signature", "bytes", None),  # 규칙 i
     ],
+    # ══════════════════════════════════════════════════════════════
+    # T1 (2026-08-16) — artifact.proto / lease.proto / job.proto 의 서명 대상.
+    #
+    # ★ ReportedMetric 이 규칙 j(부호 있는 정수)를 도입한 이유다.
+    #   스키마 전체에서 유일한 int64 이고, 하필 서명 대상 안에 있었다.
+    # ══════════════════════════════════════════════════════════════
+    "ReportedMetric": [
+        (1, "name", "string", None),
+        (2, "value_micro", "int", None),   # ★ 규칙 j — 음수 가능
+        (3, "higher_is_better", "bool", None),
+    ],
+    "CheckpointFile": [
+        (1, "path", "string", None),
+        (2, "digest", "message", "Digest"),
+        (3, "size_bytes", "uint", None),
+        (4, "chunk_digests", "repeated_message", "Digest"),
+        (5, "chunk_size_bytes", "uint", None),
+    ],
+    "ResumeCompleteness": [
+        (1, "model_weights", "bool", None),
+        (2, "optimizer_state", "bool", None),
+        (3, "lr_scheduler_state", "bool", None),
+        (4, "rng_state", "bool", None),
+        (5, "sampler_position", "bool", None),
+        (6, "dataloader_position", "bool", None),
+        (7, "amp_scaler_state", "bool", None),
+        (10, "full_resume_guaranteed", "bool", None),
+    ],
+    "CheckpointManifest": [
+        (1, "schema_version", "uint", None),
+        (2, "checkpoint_id", "string", None),
+        (3, "job_id", "string", None),
+        (4, "attempt_id", "string", None),
+        (5, "step", "uint", None),
+        (6, "epoch", "uint", None),
+        (10, "files", "repeated_message", "CheckpointFile"),
+        (11, "root_digest", "message", "Digest"),
+        (12, "total_bytes", "uint", None),
+        (20, "completeness", "message", "ResumeCompleteness"),
+        (30, "created_at_unix_ms", "uint", None),
+        (31, "producer_node_id", "string", None),
+        (32, "fence_epoch", "uint", None),
+        (90, "producer_signature", "bytes", None),
+    ],
+    "ReplicaAck": [
+        (1, "schema_version", "uint", None),
+        (2, "checkpoint_id", "string", None),
+        (3, "root_digest", "message", "Digest"),
+        (10, "holder_device_id", "string", None),
+        (11, "kind", "enum", None),
+        (12, "failure_domain", "string", None),
+        (20, "fsynced", "bool", None),
+        (21, "hash_verified", "bool", None),
+        (22, "stored_bytes", "uint", None),
+        (30, "acked_at_unix_ms", "uint", None),
+        (90, "holder_signature", "bytes", None),
+    ],
+    "ArtifactRef": [
+        (1, "schema_version", "uint", None),
+        (2, "artifact_id", "string", None),
+        (3, "job_id", "string", None),
+        (4, "attempt_id", "string", None),
+        (5, "kind", "enum", None),
+        (10, "digest", "message", "Digest"),
+        (11, "size_bytes", "uint", None),
+        (12, "cas_path", "string", None),
+        (20, "replicas", "repeated_message", "ReplicaAck"),
+        (21, "created_at_unix_ms", "uint", None),
+        (22, "fence_epoch", "uint", None),
+        (90, "producer_signature", "bytes", None),
+    ],
+    "AttemptReport": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "fence_epoch", "uint", None),
+        (10, "outcome", "enum", None),
+        (11, "final_step", "uint", None),
+        (12, "started_at_unix_ms", "uint", None),
+        (13, "finished_at_unix_ms", "uint", None),
+        (20, "artifacts", "repeated_message", "ArtifactRef"),
+        (21, "final_checkpoint", "message", "CheckpointManifest"),
+        (30, "metrics", "repeated_message", "ReportedMetric"),
+        (40, "issued_at_unix_ms", "uint", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "CanonicalDecision": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "chosen_attempt_id", "string", None),
+        (4, "superseded_attempt_ids", "repeated_string", None),
+        (10, "deciding_criterion", "enum", None),
+        (11, "rationale", "string", None),
+        (12, "fence_epoch", "uint", None),
+        (13, "decided_at_unix_ms", "uint", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
+    "ProgressReport": [
+        (1, "current_step", "uint", None),
+        (2, "total_steps", "uint", None),
+        (3, "eta_seconds", "uint", None),
+        (4, "last_committed_step", "uint", None),
+        (5, "replication_backlog_bytes", "uint", None),
+    ],
+    "RenewLeaseRequest": [
+        (1, "schema_version", "uint", None),
+        (2, "lease_id", "string", None),
+        (3, "fence_epoch", "uint", None),
+        (4, "node_id", "string", None),
+        (10, "progress", "message", "ProgressReport"),
+        (20, "issued_at_unix_ms", "uint", None),
+        (21, "nonce", "bytes", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "RevokeLeaseNotice": [
+        (1, "schema_version", "uint", None),
+        (2, "lease_id", "string", None),
+        (3, "fence_epoch", "uint", None),
+        (4, "cause", "enum", None),
+        (5, "issued_at_unix_ms", "uint", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
 }
 
 # 규칙 i: canonical 인코딩에서 항상 제외되는 필드 번호
@@ -232,7 +358,7 @@ def is_default(kind: str, value) -> bool:
     """signing.md 규칙 b — 기본값은 출력하지 않는다."""
     if value is None:
         return True
-    if kind in ("uint", "enum"):
+    if kind in ("uint", "enum", "int"):
         return value == 0
     if kind == "bool":
         return value is False
@@ -273,6 +399,13 @@ def canonical_encode(schema_name: str, msg: dict) -> bytes:
         if kind in ("uint", "enum"):
             out += encode_tag(number, WIRETYPE_VARINT)
             out += encode_varint(int(value))  # 규칙 e
+
+        elif kind == "int":
+            # 규칙 j — 2의 보수 u64 재해석. proto3 int64 의 wire format 과 같다.
+            # 음수는 항상 정확히 10바이트가 되며, 그것이 u64 값의 최단 varint 이므로
+            # 규칙 e 와 모순되지 않는다.
+            out += encode_tag(number, WIRETYPE_VARINT)
+            out += encode_varint(int(value) & 0xFFFFFFFFFFFFFFFF)
 
         elif kind == "bool":
             out += encode_tag(number, WIRETYPE_VARINT)
@@ -782,6 +915,175 @@ def build_vectors():
                          "Lease", lease_scoped,
                          ["MUST_DIFFER:v18_lease_minimal"])
     assert c_lease_scoped != c_lease_min, "Lease.scope 가 canonical 에 반영되지 않았다"
+
+    # ══════════════════════════════════════════════════════════════
+    # 20~24 — T1. 규칙 j(부호 있는 정수) · 중첩 서명 메시지.
+    # ══════════════════════════════════════════════════════════════
+
+    # 20. ★ 규칙 j — 음수 int64.
+    #     스키마 전체에서 유일한 부호 있는 필드이고, 하필 서명 대상 안에 있다.
+    metrics_report = {
+        "schema_version": 1,
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        "outcome": 1,
+        "final_step": 20000,
+        "started_at_unix_ms": 1_755_100_800_000,
+        "finished_at_unix_ms": 1_755_104_400_000,
+        "metrics": [
+            {"name": "loss", "value_micro": 1_234_567, "higher_is_better": False},
+            # ★ 음수 — 규칙 j 가 없으면 여기서 구현이 갈린다
+            {"name": "loss_delta", "value_micro": -456_789, "higher_is_better": False},
+            {"name": "min_i64", "value_micro": -(2**63), "higher_is_better": True},
+            {"name": "max_i64", "value_micro": 2**63 - 1, "higher_is_better": True},
+        ],
+        "issued_at_unix_ms": 1_755_104_400_000,
+        "node_signature": b"\xEF" * 64,
+    }
+    add("v20_signed_integers_rule_j",
+        "int64 음수 (규칙 j). 2의 보수 u64 재해석 — zigzag 가 아니다. "
+        "음수는 항상 정확히 10바이트",
+        "AttemptReport", metrics_report)
+
+    # 20b. 부호만 다른 두 값이 서로 다른 canonical 을 내야 한다.
+    pos = dict(metrics_report)
+    pos["metrics"] = [{"name": "m", "value_micro": 1000, "higher_is_better": True}]
+    neg = dict(metrics_report)
+    neg["metrics"] = [{"name": "m", "value_micro": -1000, "higher_is_better": True}]
+    c_pos = add("v20a_int_positive", "int64 양수 (규칙 j)", "AttemptReport", pos,
+                ["MUST_DIFFER:v20b_int_negative"])
+    c_neg = add("v20b_int_negative",
+                "int64 음수 — v20a 와 canonical 이 달라야 한다 (규칙 j)",
+                "AttemptReport", neg,
+                ["MUST_DIFFER:v20a_int_positive"])
+    assert c_pos != c_neg, "부호가 canonical 에 반영되지 않았다"
+    assert len(c_neg) > len(c_pos), "음수 varint 가 10바이트가 아니다"
+
+    # 21. 체크포인트 매니페스트 — repeated message 3단 중첩
+    ckpt = {
+        "schema_version": 1,
+        "checkpoint_id": "01JBXCKPT0000000000000001",
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "step": 12000,
+        "epoch": 3,
+        "files": [
+            {
+                "path": "model/weights.safetensors",
+                "digest": {"algo": 1, "value": b"\x11" * 32},
+                "size_bytes": 5_368_709_120,
+                "chunk_digests": [
+                    {"algo": 1, "value": b"\x21" * 32},
+                    {"algo": 1, "value": b"\x22" * 32},
+                ],
+                "chunk_size_bytes": 4 * 1024 * 1024,
+            },
+            {
+                "path": "optim/state.pt",
+                "digest": {"algo": 1, "value": b"\x33" * 32},
+                "size_bytes": 10_737_418_240,
+            },
+        ],
+        "root_digest": {"algo": 1, "value": b"\x44" * 32},
+        "total_bytes": 16_106_127_360,
+        "completeness": {
+            "model_weights": True,
+            "optimizer_state": True,
+            "lr_scheduler_state": True,
+            "rng_state": True,
+            "sampler_position": True,
+            "dataloader_position": True,
+            "amp_scaler_state": True,
+            "full_resume_guaranteed": True,
+        },
+        "created_at_unix_ms": 1_755_103_000_000,
+        "producer_node_id": "node-1",
+        "fence_epoch": 42,
+        "producer_signature": b"\x99" * 64,
+    }
+    add("v21_checkpoint_manifest",
+        "CheckpointManifest. repeated message 안의 repeated message (규칙 d·f)",
+        "CheckpointManifest", ckpt)
+
+    # 22. ★ 중첩된 서명 메시지 — 규칙 i 는 재귀 적용된다.
+    #
+    #     ArtifactRef.replicas 는 **각자 서명된** ReplicaAck 들이다.
+    #     규칙 i 가 재귀 적용되므로 **중첩 서명은 바깥 canonical 에 들어가지 않는다.**
+    #     즉 중첩 서명을 바꿔치기해도 바깥 서명은 깨지지 않는다.
+    #     -> 검증자는 중첩 서명 메시지를 **독립적으로 검증해야 한다(MUST).**
+    def _artifact(ack_sig):
+        return {
+            "schema_version": 1,
+            "artifact_id": "01JBXARTF0000000000000001",
+            "job_id": "01JBXR7Q0000000000000000AA",
+            "attempt_id": "01JBXATT00000000000000001",
+            "kind": 1,
+            "digest": {"algo": 1, "value": b"\x55" * 32},
+            "size_bytes": 1_073_741_824,
+            "cas_path": "jobs/01JBXR7Q0000000000000000AA/attempt-3/model.tar",
+            "replicas": [{
+                "schema_version": 1,
+                "checkpoint_id": "01JBXCKPT0000000000000001",
+                "root_digest": {"algo": 1, "value": b"\x44" * 32},
+                "holder_device_id": "01JBXR7Q0000000000000000HH",
+                "kind": 3,
+                "failure_domain": "rack-a",
+                "fsynced": True,
+                "hash_verified": True,
+                "stored_bytes": 1_073_741_824,
+                "acked_at_unix_ms": 1_755_103_500_000,
+                "holder_signature": ack_sig,   # ★ 중첩 서명
+            }],
+            "created_at_unix_ms": 1_755_103_600_000,
+            "fence_epoch": 42,
+            "producer_signature": b"\x77" * 64,
+        }
+
+    c_art = add("v22_artifact_ref_nested_signature",
+                "ArtifactRef. 중첩된 ReplicaAck 의 서명(90)도 규칙 i 로 제외된다 — "
+                "검증자는 중첩 서명 메시지를 독립적으로 검증해야 한다",
+                "ArtifactRef", _artifact(b"\xAA" * 64),
+                ["MUST_EQUAL:v22b_artifact_ref_swapped_nested_signature"])
+    c_art2 = add("v22b_artifact_ref_swapped_nested_signature",
+                 "중첩 서명만 바꾼 것 — v22 와 canonical 이 **같아야** 한다 (규칙 i 재귀). "
+                 "이것이 중첩 독립 검증이 필수인 이유다",
+                 "ArtifactRef", _artifact(b"\xBB" * 64),
+                 ["MUST_EQUAL:v22_artifact_ref_nested_signature"])
+    assert c_art == c_art2, "규칙 i 가 재귀 적용되지 않았다"
+
+    # 23. Lease 갱신 (단수명, nonce 있음)
+    add("v23_renew_lease_request",
+        "RenewLeaseRequest — 단수명 메시지. nonce(21)는 canonical 에 포함된다",
+        "RenewLeaseRequest", {
+            "schema_version": 1,
+            "lease_id": "01JBXLEASE0000000000000001",
+            "fence_epoch": 42,
+            "node_id": "node-1",
+            "progress": {
+                "current_step": 12000,
+                "total_steps": 20000,
+                "eta_seconds": 3400,
+                "last_committed_step": 11500,
+                "replication_backlog_bytes": 2_147_483_648,
+            },
+            "issued_at_unix_ms": 1_755_103_700_000,
+            "nonce": bytes(range(16)),
+            "node_signature": b"\x88" * 64,
+        })
+
+    # 24. Lease 회수
+    add("v24_revoke_lease_notice",
+        "RevokeLeaseNotice",
+        "RevokeLeaseNotice", {
+            "schema_version": 1,
+            "lease_id": "01JBXLEASE0000000000000001",
+            "fence_epoch": 42,
+            "cause": 5,  # OWNER_PREEMPT — 소유자 주권 (CLAUDE.md §0.1)
+            "issued_at_unix_ms": 1_755_103_800_000,
+            "coordinator_signature": b"\xCC" * 64,
+        })
 
     # 10. domain_tag 분리 — 같은 canonical, 다른 tag → 다른 sig_input
     base = _minimal_manifest()
