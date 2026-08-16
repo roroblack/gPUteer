@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-08-16 08:10 — P0-03 카오스 테스트 완주 (38 tests green)
+
+- 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S3
+- 스트림: Checkpoint
+- 수행: `crates/checkpoint/src/writer.rs` (write_checkpoint / find_resume_point / startup_gc),
+  `src/bin/ckpt_writer.rs` 카오스용 바이너리, `tests/kill_chaos.rs` 7건.
+  별도 프로세스를 띄워 8개 고정 시점(40~700ms)에 실제로 kill
+- 검증: **cargo test --workspace = 38 passed / 0 failed** (기존 31 + kill_chaos 7)
+  불변식 4개 전부 통과. ★ 테스트가 공허하지 않음을 별도 검증 —
+  8회 중 7회에서 PARTIAL 발생, `kill@560ms` 에서 **manifest.json.tmp**(매니페스트 쓰는 도중) 포착
+- 결정: **P0-03 PASS.** local-first 원칙(§18.1) 재검토 안 함.
+  단 COMMITTED durability 주장은 **HASH_VERIFIED 까지만 입증** — 복제 계층 미구현.
+  P0-03b(복제) · P0-03c(전원 차단) 신규 등록
+- 리포트: `docs/reports/2026-08-16_0700_P0스파이크_3건_자율세션.md` (§7 갱신)
+- evidence: `P0-03_checkpoint_durability.md`
+
 ## 2026-08-16 07:00 — P0 스파이크 3건 (P0-01 PASS · P0-07 PASS · P0-06 FAIL-SCOPE)
 
 - 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md`

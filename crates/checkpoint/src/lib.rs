@@ -5,9 +5,11 @@
 
 pub mod atomic;
 pub mod durability;
+pub mod writer;
 
 pub use atomic::{gc_partial, replace_with_retry, sync_dir, write_once, RetryPolicy};
 pub use durability::{DurabilityState, Durability, CheckpointManifest, CheckpointFile};
+pub use writer::{find_resume_point, manifest_for, read_pointer, startup_gc, write_checkpoint};
 
 use std::path::PathBuf;
 

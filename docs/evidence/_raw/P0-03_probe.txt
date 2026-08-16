@@ -1,0 +1,74 @@
+########## cargo test --workspace ##########
+     Running unittests src\lib.rs (target\debug\deps\gputeer_checkpoint-4ed6b07947bef5fc.exe)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\ckpt_writer.rs (target\debug\deps\ckpt_writer-a5d7c6c5e8fb90d0.exe)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\durability_chaos.rs (target\debug\deps\durability_chaos-fdadba903309cf54.exe)
+running 16 tests
+test allowed_transitions_follow_normative_table ... ok
+test durability_requirements_match_baseline ... ok
+test negative_partial_can_never_become_canonical_candidate ... ok
+test negative_undefined_transitions_are_rejected ... ok
+test adr026_write_once_is_idempotent_for_same_name ... ok
+test manifest_json_roundtrip ... ok
+test replica_counting_applies_all_normative_rules ... ok
+test gc_removes_orphan_tmp_files ... ok
+test sync_dir_works_on_this_platform ... ok
+test hash_verification_passes_for_intact_files ... ok
+test negative_hash_mismatch_is_detected ... ok
+test pointer_replace_exhaustion_is_explicit_error_not_silent ... ok
+test manifest_last_rule_identifies_partial_checkpoints ... ok
+test pointer_replace_retries_and_eventually_reports_error ... ok
+test write_once_survives_readers_with_no_share_delete ... ok
+test adr026_write_once_succeeds_while_readers_hold_files_open ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.77s
+     Running tests\kill_chaos.rs (target\debug\deps\kill_chaos-8453f17f1de1bf0f.exe)
+running 7 tests
+test startup_gc_removes_partial_but_keeps_committed ... ok
+test negative_pointer_to_nonexistent_checkpoint_does_not_break_resume ... ok
+test negative_tampered_committed_checkpoint_is_rejected_from_resume ... ok
+test negative_missing_data_file_is_rejected_from_resume ... ok
+test resume_point_is_valid_and_monotonic_across_restarts ... ok
+test pointer_always_references_a_valid_checkpoint ... ok
+test kill_during_write_never_produces_corrupt_checkpoint ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.83s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_protocol-6d655b28b79d66bc.exe)
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-7786235804a54401.exe)
+running 15 tests
+test negative_non_minimal_varint_is_rejected ... ok
+test minimal_varint_roundtrip ... ok
+test negative_truncated_varint_is_rejected ... ok
+test domain_tags_are_32_bytes_and_unique ... ok
+test negative_cross_domain_signature_input_differs ... ok
+test v06_explicit_defaults_are_omitted ... ok
+test v08_signature_field_is_excluded ... ok
+test determinism_100_iterations ... ok
+test v01_sig_input_and_digest_match_reference ... ok
+test v04_repeated_order_is_preserved ... ok
+test v01_minimal_manifest_matches_reference ... ok
+test v11_schema_version_separation ... ok
+test v10_domain_separation ... ok
+test v13_merkle_promotion_matches_reference ... ok
+test v03_map_insertion_order_is_irrelevant ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+########## 중간 상태 발생 검증 ##########
+writer: 50 ckpt x 4 files x 64KB, 3ms delay
+  kill@  40ms  확정  0  PARTIAL 1  .tmp 0 예: ckpt-00000100 -> ['shard-0.bin', 'shard-1.bin', 'shard-2.bin']
+  kill@  90ms  확정  1  PARTIAL 1  .tmp 0 예: ckpt-00000200 -> ['shard-0.bin']
+  kill@ 150ms  확정  1  PARTIAL 0  .tmp 0
+  kill@ 230ms  확정  3  PARTIAL 1  .tmp 0 예: ckpt-00000400 -> ['shard-0.bin', 'shard-1.bin']
+  kill@ 310ms  확정  3  PARTIAL 1  .tmp 0 예: ckpt-00000400 -> ['shard-0.bin', 'shard-1.bin', 'shard-2.bin']
+  kill@ 420ms  확정  4  PARTIAL 1  .tmp 1 예: ckpt-00000500 -> ['shard-0.bin', 'shard-1.bin', 'shard-2.bin', 'shard-3.bin.tmp']
+  kill@ 560ms  확정  7  PARTIAL 1  .tmp 1 예: ckpt-00000800 -> ['manifest.json.tmp', 'shard-0.bin', 'shard-1.bin', 'shard-2.bin', 'shard-3.bin']
+  kill@ 700ms  확정  9  PARTIAL 1  .tmp 0 예: ckpt-00001000 -> ['shard-0.bin', 'shard-1.bin']
+
+총 8회: PARTIAL 발생 7회(88%), .tmp 2회, 누적 확정 28개
