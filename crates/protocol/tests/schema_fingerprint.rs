@@ -36,9 +36,33 @@
 //! UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint
 //! ```
 //!
-//! # 한계
+//! # 한계 — 실측으로 확인한 것
 //!
-//! 정규식 파서다. `oneof` · `reserved` · 중첩 message 선언을 다루지 않는다.
+//! ★ 처음에 "정규식 파서라 `oneof` 를 다루지 못한다" 고 적었는데 **틀렸다.**
+//!   `control.proto` 에는 `oneof` 가 5개 있고, 파서는 그 안의 필드를
+//!   **전부 잡는다** (`ControlAction` 의 21개 필드가 지문에 있다).
+//!   뮤테이션으로 확인했다 — `oneof` 안에 `AddMember sneaky_action = 44;` 를
+//!   넣으면 "추가된 줄: 44 AddMember sneaky_action" 을 내며 실패한다.
+//!
+//!   **틀린 한계 서술은 없는 것만큼 나쁘다.** 누군가 불필요하게 파서를 갈아엎거나,
+//!   멀쩡한 가드를 믿지 못하게 된다.
+//!
+//! 실제로 남아 있는 한계:
+//!
+//! ```text
+//! oneof 소속을 기록하지 않는다
+//!     필드를 oneof 안팎으로 옮기면서 번호·타입·이름을 그대로 두면 탐지되지 않는다.
+//!     의미(상호 배타성)가 바뀌는 변경이므로 §7.3 대상인데 지문은 통과한다.
+//!
+//! 중첩 message 선언을 처리하지 못한다
+//!     `message Outer { message Inner { ... } }` 의 Inner 필드는 Outer 것으로
+//!     기록되며, 번호가 겹치면 덮어쓴다.
+//!     -> 현 스키마에 중첩 선언은 **0건**이다 (grep 확인). 도입 시 파서를 고쳐야 한다.
+//!
+//! reserved 를 필드로 오인하지 않는지 미확인
+//!     현 스키마에 reserved 는 **0건**이다. 도입 시 확인이 필요하다.
+//! ```
+//!
 //! 지문은 **필드 집합의 변화**를 잡으며, 주석·공백·필드 선언 순서 변화는 무시한다.
 
 use std::collections::BTreeMap;
