@@ -48,6 +48,72 @@ impl Default for RetryPolicy {
     }
 }
 
+/// ★ 체크포인트 상대 경로 검증 (2026-08-16 신설).
+///
+/// `proto/common.proto` 의 `CheckpointFile.path` 는 이렇게 적혀 있다.
+///
+/// > 체크포인트 루트 기준 상대 경로. `".."`, 절대경로, 심볼릭 링크 금지.
+///
+/// **그런데 아무도 검사하지 않았다.** 독립 검수(2026-08-16)가 찾았다.
+///
+/// ```text
+/// files = [("../../outside.bin", attacker_data)]
+/// => write_once 가 dir.join(name) 을 그대로 해서
+///    체크포인트 디렉터리 **밖**에 파일을 만든다
+/// ```
+///
+/// 파일 이름은 **매니페스트에서 오는 외부 입력**이다.
+/// 서명된 매니페스트라도 서명자가 악의적일 수 있고,
+/// `CLAUDE.md` §0 — "이 시스템은 **남의 개인 PC 에서** 코드를 돌린다."
+///
+/// # 허용하는 것
+///
+/// 하위 디렉터리는 허용한다 — `model/weights.safetensors` 같은 경로가
+/// 실제 체크포인트에 있다.
+///
+/// # 막는 것
+///
+/// ```text
+/// ..              어떤 위치에서든 상위로 올라가는 성분
+/// 절대 경로       /foo  ·  C:oo  ·  \server\share
+/// 루트 성분       Windows 의 드라이브 접두사 포함
+/// 빈 이름
+/// ```
+///
+/// ★ 심볼릭 링크는 **여기서 막지 못한다** — 경로 문자열만으로는 알 수 없다.
+///   `write_once` 는 대상이 이미 존재하면 쓰지 않으므로 링크를 따라가 덮어쓰지는
+///   않지만, 링크를 통해 **읽는** 것은 막지 못한다. 별도 스파이크가 필요하다.
+fn validate_relative_name(name: &str) -> Result<(), CheckpointError> {
+    use std::path::Component;
+
+    if name.is_empty() {
+        return Err(CheckpointError::UnsafePath {
+            name: name.to_string(),
+            reason: "빈 이름",
+        });
+    }
+
+    let p = Path::new(name);
+    for c in p.components() {
+        match c {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(CheckpointError::UnsafePath {
+                    name: name.to_string(),
+                    reason: "상위 디렉터리 성분(..) — 체크포인트 밖으로 나간다",
+                })
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(CheckpointError::UnsafePath {
+                    name: name.to_string(),
+                    reason: "절대 경로 — 상대 경로여야 한다",
+                })
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 임시 파일에 쓰고 fsync 한 뒤 고유 이름으로 확정한다.
 ///
 /// **대상이 이미 존재하면 rename 을 시도하지 않는다.**
@@ -80,6 +146,8 @@ impl Default for RetryPolicy {
 ///
 /// 반환값: `true` = 새로 썼음, `false` = 같은 내용이 이미 있어 tmp 를 정리함
 pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, CheckpointError> {
+    // ★ 무엇보다 먼저 — 경로 탈출을 막는다. tmp 파일을 만들기 전에 거른다.
+    validate_relative_name(name)?;
     let final_path = dir.join(name);
 
     // 이미 존재하면 **내용을 대조한다.** 이름만으로 같다고 가정하지 않는다.
@@ -134,6 +202,15 @@ pub fn replace_with_retry(
     data: &[u8],
     policy: RetryPolicy,
 ) -> Result<(), CheckpointError> {
+    validate_relative_name(name)?;
+
+    // ★ 정책 검증을 **tmp 파일 생성 전에** 한다 (독립 검수 2026-08-16 2차).
+    //   나중에 하면 디렉터리가 없거나 권한이 없을 때
+    //   InvalidRetryPolicy 대신 I/O 오류가 나와 진단이 흐려진다.
+    if policy.max_attempts == 0 {
+        return Err(CheckpointError::InvalidRetryPolicy);
+    }
+
     let final_path = dir.join(name);
     let tmp_path = dir.join(format!("{name}.tmp"));
 
@@ -144,16 +221,7 @@ pub fn replace_with_retry(
         f.sync_all()?;
     }
 
-    // ★ max_attempts == 0 은 panic 이 아니라 오류다 (독립 검수 2026-08-16).
-    //   RetryPolicy 는 공개 구조체이므로 호출자가 0 을 넣을 수 있고,
-    //   그러면 루프가 한 번도 돌지 않아 아래 expect 에서 패닉했다.
-    //   ADR-026 은 "최종 실패는 **명시적 오류**" 를 계약으로 정한다 —
-    //   panic 은 오류가 아니다. 호출자가 처리할 수 없고 데이터 경로에서 프로세스를 죽인다.
-    if policy.max_attempts == 0 {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(CheckpointError::InvalidRetryPolicy);
-    }
-
+    // (max_attempts == 0 검사는 위에서 이미 했다 — tmp 생성 전에 거른다)
     let mut backoff = policy.initial_backoff;
     let mut last_err = None;
 
@@ -167,7 +235,12 @@ pub fn replace_with_retry(
                 last_err = Some(e);
                 if attempt + 1 < policy.max_attempts {
                     std::thread::sleep(backoff);
-                    backoff = (backoff * 2).min(policy.max_backoff);
+                    // ★ Duration 곱셈은 overflow 시 panic 한다. RetryPolicy 가 공개 구조체이므로
+                    //   Duration::MAX 를 넣을 수 있다 (독립 검수 2026-08-16 2차).
+                    backoff = backoff
+                        .checked_mul(2)
+                        .unwrap_or(policy.max_backoff)
+                        .min(policy.max_backoff);
                 }
             }
         }

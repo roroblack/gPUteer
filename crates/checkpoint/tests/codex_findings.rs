@@ -20,6 +20,7 @@
 use std::path::Path;
 
 use gputeer_checkpoint::atomic::{replace_with_retry, write_once, RetryPolicy};
+use gputeer_checkpoint::CheckpointError;
 
 fn tmpdir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("gputeer-codex-{tag}-{}", std::process::id()));
@@ -108,9 +109,24 @@ fn k2_zero_attempts_returns_error_not_panic() {
         ..Default::default()
     };
     let r = replace_with_retry(&d, "LATEST", b"ckpt-1", policy);
+    // ★ 오류 종류까지 확인한다 — is_err() 만 보면 I/O 오류도 통과한다
     assert!(
-        r.is_err(),
-        "★ 코덱스 지적 K-2 — max_attempts=0 이 오류가 아니라 성공/panic 이 됐다: {r:?}"
+        matches!(r, Err(CheckpointError::InvalidRetryPolicy)),
+        "★ 코덱스 지적 K-2 — max_attempts=0 이 InvalidRetryPolicy 가 아니다: {r:?}"
+    );
+
+    // ★ 존재하지 않는 디렉터리에서도 **정책 오류**가 먼저 나와야 한다.
+    //   tmp 생성 뒤에 검사하면 I/O 오류가 나와 진단이 흐려진다 (2차 지적).
+    let missing = d.join("does-not-exist");
+    let r2 = replace_with_retry(
+        &missing,
+        "LATEST",
+        b"x",
+        RetryPolicy { max_attempts: 0, ..Default::default() },
+    );
+    assert!(
+        matches!(r2, Err(CheckpointError::InvalidRetryPolicy)),
+        "정책 검증이 tmp 생성보다 늦다 — I/O 오류가 먼저 나왔다: {r2:?}"
     );
 }
 
@@ -150,10 +166,11 @@ fn k3_documents_rename_then_syncdir_failure_semantics() {
     // 정상 경로에서는 파일이 바뀌고 Ok 가 온다
     assert_eq!(std::fs::read(d.join("LATEST")).unwrap(), b"v1");
 
-    // ★ sync_dir 실패 주입은 하지 못했다. 이 테스트는 다음 사실만 고정한다:
-    //   replace_with_retry 는 rename 성공 후 sync_dir 을 호출하며,
-    //   그 실패를 삼키지 않는다(오류로 전파). 코드 검토로 확인.
-    //   실패 주입 테스트는 별도 스파이크가 필요하다.
+    // ★★ 아래는 **소스 텍스트 검사**이며 동작을 증명하지 않는다.
+    //   독립 검수 2차가 정확히 지적했다 — "구현 동작을 증명하지 않는 소스 텍스트 테스트".
+    //   그럼에도 남겨 두는 이유는 `?` 가 `let _ =` 로 바뀌는 회귀를 잡기 때문이다.
+    //   **실제 실패 주입은 하지 못했다**(권한 조작 필요) — 그 사실을 여기 적어 둔다.
+    //   ENVIRONMENT-BLOCKED 로 남기고 별도 스파이크가 필요하다.
     let src = include_str!("../src/atomic.rs");
     assert!(
         src.contains("sync_dir(dir)?"),
@@ -169,8 +186,17 @@ fn k3_documents_rename_then_syncdir_failure_semantics() {
 #[test]
 fn write_once_leaves_no_tmp_behind() {
     let d = tmpdir("tmpclean");
-    write_once(&d, "a.bin", b"x").unwrap();
-    let _ = write_once(&d, "a.bin", b"x");
+    assert!(write_once(&d, "a.bin", b"x").unwrap(), "첫 쓰기는 true");
+    // ★ 결과를 무시하지 않는다 (2차 지적) — 같은 내용이므로 Ok(false) 여야 한다
+    assert!(
+        !write_once(&d, "a.bin", b"x").unwrap(),
+        "같은 내용 재시도가 Ok(false) 가 아니다"
+    );
+    // 내용이 다르면 오류이고, 그때도 tmp 가 남으면 안 된다
+    assert!(matches!(
+        write_once(&d, "a.bin", b"different"),
+        Err(CheckpointError::ContentMismatch { .. })
+    ));
 
     let leftovers: Vec<_> = std::fs::read_dir(&d)
         .unwrap()
@@ -182,3 +208,76 @@ fn write_once_leaves_no_tmp_behind() {
 }
 
 fn _unused(_p: &Path) {}
+
+// ══════════════════════════════════════════════════════════════════
+// K-4 ★★ 경로 탈출 — 체크포인트 디렉터리 밖에 파일을 만들 수 있는가
+// ══════════════════════════════════════════════════════════════════
+
+/// 코덱스 2차 검토가 찾았다.
+///
+/// `write_once(dir, name, data)` 는 `dir.join(name)` 을 그대로 한다.
+/// `name` 은 `write_checkpoint` 의 `files: &[(String, Vec<u8>)]` 에서 오고,
+/// 그것은 **외부 입력**이다 (매니페스트의 파일 목록).
+///
+/// ```text
+/// files = [("../../outside.bin", attacker_data)]
+/// => 체크포인트 디렉터리 **밖**에 파일이 생긴다
+/// ```
+///
+/// `proto/common.proto` 의 `CheckpointFile.path` 주석은
+/// "`..`, 절대경로, 심볼릭 링크 금지" 라고 적혀 있다.
+/// **그런데 아무도 검사하지 않았다.**
+#[test]
+fn k4_write_once_must_reject_path_traversal() {
+    let root = tmpdir("k4");
+    let inside = root.join("ckpt-1");
+    std::fs::create_dir_all(&inside).unwrap();
+
+    let attacks = [
+        "../escaped.bin",
+        "../../escaped.bin",
+        "sub/../../escaped.bin",
+        "a/../../escaped.bin",
+    ];
+
+    for name in attacks {
+        let r = write_once(&inside, name, b"attacker");
+        assert!(
+            matches!(r, Err(CheckpointError::UnsafePath { .. })),
+            "★ 코덱스 지적 K-4 — 경로 탈출이 UnsafePath 로 거부되지 않았다: {name:?} -> {r:?}"
+        );
+    }
+
+    // 절대 경로도 막아야 한다
+    #[cfg(windows)]
+    let abs = "C:/Windows/Temp/gputeer-escape.bin";
+    #[cfg(not(windows))]
+    let abs = "/tmp/gputeer-escape.bin";
+    assert!(
+        matches!(
+            write_once(&inside, abs, b"attacker"),
+            Err(CheckpointError::UnsafePath { .. })
+        ),
+        "절대 경로가 UnsafePath 로 거부되지 않았다"
+    );
+
+    // ★ 실제로 밖에 파일이 안 생겼는지 확인 — 오류를 냈어도 이미 썼을 수 있다
+    assert!(
+        !root.join("escaped.bin").exists(),
+        "오류를 반환했지만 파일은 이미 만들어졌다"
+    );
+}
+
+/// 정상 이름은 여전히 통과해야 한다 (비공허성).
+///
+/// **하위 디렉터리는 허용한다** — `model/weights.safetensors` 같은 경로가
+/// 실제 벡터에 있다(`v21_checkpoint_manifest`).
+#[test]
+fn k4b_normal_names_including_subdirs_still_work() {
+    let d = tmpdir("k4b");
+    write_once(&d, "shard-0.bin", b"x").expect("평범한 이름");
+
+    std::fs::create_dir_all(d.join("model")).unwrap();
+    write_once(&d, "model/weights.safetensors", b"y").expect("하위 디렉터리 경로");
+    assert!(d.join("model/weights.safetensors").exists());
+}

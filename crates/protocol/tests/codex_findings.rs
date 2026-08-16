@@ -105,6 +105,9 @@ fn c1c_derived_hash_exclusion_is_top_level_only() {
     let mut empty = Fields::new();
     empty.set(1, Value::Message(Fields::new()));
 
+    // ★ 중첩 메시지에 **field 4 만** 넣는다.
+    //   처음엔 field 1 도 함께 넣었는데, 그러면 구버전(재귀 제외) 코드에서도
+    //   field 1 때문에 결과가 달라져 **테스트가 공허했다** (독립 검수 2차 지적).
     let mut nested_field4 = Fields::new();
     let mut inner = Fields::new();
     inner.set(DERIVED, Value::Bytes(vec![0xBB; 32]));
@@ -113,7 +116,8 @@ fn c1c_derived_hash_exclusion_is_top_level_only() {
     assert_ne!(
         canonical_encode(&empty, &[DERIVED]),
         canonical_encode(&nested_field4, &[DERIVED]),
-        "★ 중첩 메시지의 field 4 가 도출 해시로 오인돼 제외됐다 (D-1 회귀).          DatasetRef.retention 같은 진짜 필드가 서명에서 빠진다"
+        "★ 중첩 메시지의 field 4 가 도출 해시로 오인돼 제외됐다 (D-1 회귀).          DatasetRef.retention 같은 진짜 필드가 서명에서 빠진다.
+         구버전이라면 중첩이 비어 규칙 i-2 로 필드가 통째 생략돼 empty 와 같아진다."
     );
 
     // 최상위 field 4 는 여전히 제외된다

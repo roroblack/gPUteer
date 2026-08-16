@@ -57,6 +57,16 @@ pub enum CheckpointError {
     #[error("RetryPolicy.max_attempts 가 0이다 — 최소 1회는 시도해야 한다 (ADR-026)")]
     InvalidRetryPolicy,
 
+    /// ★ 체크포인트 밖을 가리키는 경로 (2026-08-16 신설).
+    ///
+    /// `proto/common.proto` 의 `CheckpointFile.path` 는 `".."` · 절대경로 ·
+    /// 심볼릭 링크를 금지한다고 적어 놓고 **아무도 검사하지 않았다.**
+    ///
+    /// 파일 이름은 매니페스트에서 오는 **외부 입력**이고,
+    /// 이 시스템은 **남의 개인 PC 에서** 돌아간다 (`CLAUDE.md` §0).
+    #[error("안전하지 않은 경로 {name:?}: {reason}")]
+    UnsafePath { name: String, reason: &'static str },
+
     #[error("해시 불일치 {path:?}: 기대 {expected}, 실제 {actual}")]
     HashMismatch {
         path: PathBuf,
