@@ -52,6 +52,9 @@
 use crate::canonical::{canonical_encode, sig_input, Domain, Fields};
 use crate::constants::CLOCK_SKEW_TOLERANCE_MS;
 
+/// §10 — nonce 는 CSPRNG **16바이트**여야 한다(MUST).
+pub const NONCE_LEN: usize = 16;
+
 /// `common.proto` 의 `VerifyOutcome` 과 1:1 대응한다.
 ///
 /// ★ `VALID` 는 여기 없다. 성공은 [`Verified`] 라는 **다른 타입**으로 표현한다.
@@ -185,6 +188,24 @@ pub trait Signable {
     }
     /// §8-6. 이 값으로 공개키를 찾는다.
     fn signer_id(&self) -> &str;
+
+    /// §8-8 · §10. replay 캐시에 쓸 nonce.
+    ///
+    /// ★ **반드시 메시지 안의 서명된 필드에서 온다.**
+    ///
+    /// 처음에는 `verify()` 가 nonce 를 **별도 인자**로 받았다.
+    /// 독립 검수(2026-08-16)가 그것을 지적했다 —
+    /// 호출자가 서명된 nonce 대신 아무 값이나 넘길 수 있고,
+    /// 그러면 **서명은 통과하는데 replay 방어만 무력화**된다.
+    /// 매번 새 값을 넘기면 같은 메시지를 몇 번이든 재생할 수 있다.
+    ///
+    /// 이제 nonce 는 메시지에서 나오므로 **호출자가 고를 수 없다.**
+    ///
+    /// `ShortLived` 메시지는 반드시 `Some` 을 반환해야 한다.
+    /// 그렇지 않으면 `verify()` 가 `Replay` 로 거부한다.
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -227,17 +248,113 @@ pub trait SignatureVerifier {
 /// 저장소 계층이 없어 지금은 [`NoReplayCheck`] 뿐이지만,
 /// 타입에 남겨두면 "빠뜨린 것" 이 아니라 "아직 안 한 것" 으로 보인다.
 pub trait ReplayGuard {
-    /// 이 nonce 를 처음 보는가. 처음이면 기록하고 `true`.
+    /// 이 nonce 를 처음 보는가. 처음이면 **기록까지 확정**하고 `Fresh`.
     ///
     /// §10 — 검사와 삽입은 **단일 트랜잭션**이어야 한다.
     /// 나눠서 하면 그 사이에 창이 열린다.
-    fn check_and_record(&mut self, signer_id: &str, domain: Domain, nonce: &[u8]) -> bool;
+    ///
+    /// `retain_until_ms` 는 이 항목의 보존 시한이다(§10 —
+    /// `expires_at + clock_skew_tolerance`). **미만료 항목을 축출하면 안 된다.**
+    ///
+    /// # 실패를 `Duplicate` 로 뭉뚱그리지 않는다
+    ///
+    /// 저장소 장애 · 락 타임아웃 · 캐시 포화는 "이미 봤다" 와 **다른 사실**이다.
+    /// 뭉뚱그리면 운영자가 원인을 구분할 수 없고(`CLAUDE.md` §3),
+    /// 더 나쁘게는 **장애를 정상 거부로 착각**해 넘어간다.
+    fn check_and_record(
+        &mut self,
+        signer_id: &str,
+        domain: Domain,
+        nonce: &[u8],
+        retain_until_ms: u64,
+    ) -> Result<ReplayDecision, ReplayStoreError>;
 
     /// 이 guard 가 실제로 replay 를 막는가.
     ///
     /// `false` 면 [`Verified::replay_checked`] 가 `false` 가 되고,
     /// 그 사실이 값과 함께 전파된다.
     fn is_effective(&self) -> bool;
+}
+
+/// [`ReplayGuard::check_and_record`] 의 정상 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayDecision {
+    /// 처음 보는 nonce. **기록이 확정되었다.**
+    Fresh,
+    /// 이미 본 nonce.
+    Duplicate,
+}
+
+/// replay 저장소의 **로컬 장애.**
+///
+/// ★ 이것은 `VerifyOutcome` 이 **아니다.**
+/// `VerifyOutcome` 은 상대에게 보고하는 프로토콜 결과이고,
+/// 이것은 우리 쪽 저장소가 답을 못 준 것이다.
+/// 섞으면 "상대가 재전송했다" 와 "우리 디스크가 죽었다" 를 구분할 수 없다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplayStoreError {
+    /// 디스크 I/O 실패.
+    Io(String),
+    /// 다른 프로세스가 잡은 락을 제한 시간 안에 얻지 못했다.
+    LockTimeout,
+    /// §10 상한에 도달했다. **축출이 아니라 거부**가 안전한 방향이다 —
+    /// 미만료 nonce 를 밀어내면 replay 창이 열린다.
+    CacheFull,
+}
+
+impl ReplayStoreError {
+    /// 운영자에게 보여줄 설명.
+    pub fn explain(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "replay 저장소 I/O 실패 — 상대 문제가 아니라 우리 쪽 장애다",
+            Self::LockTimeout => "replay 저장소 락 대기 초과 — 동시 검증이 몰렸거나 락이 걸렸다",
+            Self::CacheFull => {
+                "replay 캐시 포화 — 미만료 nonce 를 축출하지 않고 거부했다. 과부하 신호다"
+            }
+        }
+    }
+}
+
+/// [`verify`] 의 실패.
+///
+/// ★ **프로토콜 결과와 로컬 장애를 분리한다.**
+///
+/// ```text
+/// Outcome(..)      상대 메시지의 문제. common.proto VerifyOutcome 으로 보고 가능
+/// ReplayStore(..)  우리 쪽 저장소가 답을 못 줬다. 보고할 값이 아니다
+/// ```
+///
+/// 둘을 하나로 합치면 "재전송 공격" 과 "디스크 장애" 가 같은 값이 되고,
+/// 운영자는 엉뚱한 곳을 본다(`CLAUDE.md` §3).
+///
+/// ★ 어느 쪽이든 **부작용을 실행하지 않는다.** fail closed 다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyError {
+    Outcome(VerifyOutcome),
+    ReplayStore(ReplayStoreError),
+}
+
+impl From<VerifyOutcome> for VerifyError {
+    fn from(o: VerifyOutcome) -> Self {
+        Self::Outcome(o)
+    }
+}
+
+impl VerifyError {
+    /// 프로토콜 결과라면 그 값. 로컬 장애면 `None`.
+    pub fn outcome(&self) -> Option<VerifyOutcome> {
+        match self {
+            Self::Outcome(o) => Some(*o),
+            Self::ReplayStore(_) => None,
+        }
+    }
+
+    pub fn explain(&self) -> &'static str {
+        match self {
+            Self::Outcome(o) => o.explain(),
+            Self::ReplayStore(e) => e.explain(),
+        }
+    }
 }
 
 /// ★ **replay 를 검사하지 않는 구현체.**
@@ -254,8 +371,16 @@ pub trait ReplayGuard {
 pub struct NoReplayCheck;
 
 impl ReplayGuard for NoReplayCheck {
-    fn check_and_record(&mut self, _signer: &str, _domain: Domain, _nonce: &[u8]) -> bool {
-        true // 검사하지 않으므로 통과시킨다. is_effective() 가 그 사실을 알린다.
+    fn check_and_record(
+        &mut self,
+        _signer: &str,
+        _domain: Domain,
+        _nonce: &[u8],
+        _retain_until_ms: u64,
+    ) -> Result<ReplayDecision, ReplayStoreError> {
+        // 검사하지 않으므로 통과시킨다. is_effective() 가 그 사실을 알리고,
+        // Verified::require_replay_checked() 가 부작용 경로 사용을 막는다.
+        Ok(ReplayDecision::Fresh)
     }
     fn is_effective(&self) -> bool {
         false
@@ -371,14 +496,13 @@ pub fn verify<M: Signable + Clone>(
     max_supported_schema_version: u32,
     verifier: &dyn SignatureVerifier,
     now_unix_ms: u64,
-    nonce: Option<&[u8]>,
     replay: &mut dyn ReplayGuard,
-) -> Result<Verified<M>, VerifyOutcome> {
+) -> Result<Verified<M>, VerifyError> {
     // 1. domain_tag — M::DOMAIN 으로 정적 결정. 메시지에서 읽지 않는다.
 
     // 2. schema_version
     if msg.schema_version() > max_supported_schema_version {
-        return Err(VerifyOutcome::SchemaTooNew);
+        return Err(VerifyOutcome::SchemaTooNew.into());
     }
 
     // 3·4. canonical 재구성 + sig_input 조립
@@ -393,17 +517,17 @@ pub fn verify<M: Signable + Clone>(
         Lifetime::Evidence | Lifetime::Perpetual => {}
         Lifetime::LongLived => {
             if now_unix_ms >= msg.expires_at_unix_ms() {
-                return Err(VerifyOutcome::Expired);
+                return Err(VerifyOutcome::Expired.into());
             }
         }
         Lifetime::ShortLived => {
             if now_unix_ms >= msg.expires_at_unix_ms() {
-                return Err(VerifyOutcome::Expired);
+                return Err(VerifyOutcome::Expired.into());
             }
             let issued = msg.issued_at_unix_ms();
             let skew = now_unix_ms.abs_diff(issued);
             if skew > CLOCK_SKEW_TOLERANCE_MS {
-                return Err(VerifyOutcome::ClockSkew);
+                return Err(VerifyOutcome::ClockSkew.into());
             }
         }
     }
@@ -412,17 +536,29 @@ pub fn verify<M: Signable + Clone>(
     //    JobManifest 는 하나로 여러 Attempt 를 만드는 것이 정상이므로 대상이 아니다.
     let replay_checked = match M::LIFETIME {
         Lifetime::ShortLived => {
-            let n = nonce.ok_or(VerifyOutcome::Replay)?;
+            // ★ nonce 는 **메시지 안의 서명된 필드**에서 온다.
+            //   호출자가 넘기던 예전 설계는 서명은 통과하고 replay 방어만
+            //   무력화되는 구멍이었다 (독립 검수 2026-08-16).
+            let n = msg.replay_nonce().ok_or(VerifyOutcome::Replay)?;
             // §10 — nonce 는 CSPRNG 16바이트여야 한다(MUST).
-            if n.len() != 16 {
-                return Err(VerifyOutcome::Replay);
+            if n.len() != NONCE_LEN {
+                return Err(VerifyOutcome::Replay.into());
             }
-            if !replay.check_and_record(msg.signer_id(), M::DOMAIN, n) {
-                return Err(VerifyOutcome::Replay);
+            // §10 — 보존 시한. 미만료 항목은 축출되면 안 된다.
+            let retain_until = msg
+                .expires_at_unix_ms()
+                .saturating_add(CLOCK_SKEW_TOLERANCE_MS);
+
+            match replay.check_and_record(msg.signer_id(), M::DOMAIN, n, retain_until) {
+                Ok(ReplayDecision::Fresh) => replay.is_effective(),
+                Ok(ReplayDecision::Duplicate) => return Err(VerifyOutcome::Replay.into()),
+                // ★ 저장소 장애를 Replay 로 뭉뚱그리지 않는다.
+                //   어느 쪽이든 부작용은 실행하지 않지만(fail closed),
+                //   운영자가 원인을 구분할 수 있어야 한다.
+                Err(e) => return Err(VerifyError::ReplayStore(e)),
             }
-            replay.is_effective()
         }
-        // 장수명·영구 메시지는 replay 대상이 아니므로 "검사됨" 으로 본다.
+        // 장수명·증거·영구 메시지는 replay 대상이 아니므로 "검사됨" 으로 본다.
         _ => true,
     };
 

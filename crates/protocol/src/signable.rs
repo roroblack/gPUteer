@@ -118,6 +118,10 @@ impl Signable for pb::ExecutionGrant {
     fn signer_id(&self) -> &str {
         &self.coordinator_device_id
     }
+    /// §10 — 서명된 nonce 필드(24). 호출자가 고를 수 없다.
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.nonce)
+    }
 }
 
 impl Signable for pb::RenewLeaseRequest {
@@ -151,6 +155,10 @@ impl Signable for pb::RenewLeaseRequest {
     }
     fn signer_id(&self) -> &str {
         &self.node_id
+    }
+    /// §10 — 서명된 nonce 필드(21). 호출자가 고를 수 없다.
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.nonce)
     }
 }
 

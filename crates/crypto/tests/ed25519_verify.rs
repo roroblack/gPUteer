@@ -14,7 +14,8 @@ use gputeer_protocol::canonical::Domain;
 use gputeer_protocol::constants::CLOCK_SKEW_TOLERANCE_MS;
 use gputeer_protocol::pb;
 use gputeer_protocol::signing::{
-    signing_input, verify, Lifetime, NoReplayCheck, ReplayGuard, Signable, VerifyOutcome,
+    signing_input, verify, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard, ReplayStoreError,
+    Signable, VerifyOutcome,
 };
 
 const NOW: u64 = 1_755_200_000_000;
@@ -76,7 +77,6 @@ fn valid_manifest_verifies() {
         1,
         &ring_with(DEVICE, &k),
         NOW,
-        None,
         &mut NoReplayCheck,
     )
     .expect("정상 매니페스트가 검증을 통과해야 한다");
@@ -110,8 +110,8 @@ fn schema_too_new_is_rejected_and_not_reported_as_signature_failure() {
     m.schema_version = 2;
     m.submitter_signature = sign(&k, &m).to_vec(); // 서명 자체는 완전히 정상이다
 
-    let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
-        .expect_err("구버전은 신버전 메시지를 거부해야 한다");
+    let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
+        .expect_err("구버전은 신버전 메시지를 거부해야 한다").outcome().unwrap();
 
     // ★ P0-08 의 결론 — 이것을 INVALID_SIGNATURE 로 보고하면 며칠 헤맨다
     assert_eq!(out, VerifyOutcome::SchemaTooNew);
@@ -130,8 +130,8 @@ fn version_check_precedes_signature_check() {
     m.schema_version = 2;
     m.submitter_signature = vec![0u8; 64]; // 명백히 틀린 서명
 
-    let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
-        .expect_err("거부되어야 한다");
+    let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
+        .expect_err("거부되어야 한다").outcome().unwrap();
     assert_eq!(
         out,
         VerifyOutcome::SchemaTooNew,
@@ -150,7 +150,7 @@ fn tampered_field_breaks_signature() {
     m.entrypoint = "evil.py".into(); // 서명 후 변조
 
     assert_eq!(
-        verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::InvalidSignature
     );
 }
@@ -229,10 +229,10 @@ fn tampering_security_fields_breaks_signature() {
             "이 변조는 메시지를 바꾸지 않는다 — 테스트가 공허하다: {desc}"
         );
 
-        let out = verify(&m, 1, &ring, NOW, None, &mut NoReplayCheck);
+        let out = verify(&m, 1, &ring, NOW, &mut NoReplayCheck);
         // signer_id 를 바꾼 경우는 키 조회가 먼저 실패한다 (§8-6 이 §8-5 보다 앞이 아니라,
         // 키를 찾아야 서명을 검증할 수 있기 때문이다). 둘 다 "거부" 이므로 함께 허용한다.
-        let err = out.unwrap_err();
+        let err = out.unwrap_err().outcome().expect("프로토콜 결과여야 한다");
         assert!(
             matches!(
                 err,
@@ -252,7 +252,7 @@ fn wrong_length_signature_is_rejected() {
         let mut m = manifest();
         m.submitter_signature = vec![0u8; len];
         assert_eq!(
-            verify(&m, 1, &ring, NOW, None, &mut NoReplayCheck).unwrap_err(),
+            verify(&m, 1, &ring, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
             VerifyOutcome::InvalidSignature,
             "{len}바이트 서명이 거부되지 않았다"
         );
@@ -289,13 +289,13 @@ fn signature_from_another_domain_does_not_verify() {
     m.submitter_signature = lease.coordinator_signature.clone();
 
     assert_eq!(
-        verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::InvalidSignature,
         "도메인 간 서명 재사용이 가능하다"
     );
 
     // Lease 자체는 정상 검증된다 (대조군 — 위 실패가 서명 자체의 문제가 아님을 보인다)
-    verify(&lease, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
+    verify(&lease, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
         .expect("Lease 자체는 검증되어야 한다");
 }
 
@@ -309,7 +309,7 @@ fn unknown_signer_is_rejected() {
     let m = signed_manifest(&k);
     // 키링이 비어 있다 = 팀 멤버가 아니거나 폐기됨
     assert_eq!(
-        verify(&m, 1, &empty_ring(), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &empty_ring(), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::UnknownSigner
     );
 }
@@ -323,7 +323,7 @@ fn signature_by_different_key_is_rejected() {
 
     // 키링은 진짜 소유자의 키를 갖고 있다
     assert_eq!(
-        verify(&m, 1, &ring_with(DEVICE, &key(1)), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring_with(DEVICE, &key(1)), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::InvalidSignature
     );
 }
@@ -340,10 +340,10 @@ fn expired_manifest_is_rejected() {
     let ring = ring_with(DEVICE, &k);
 
     // 만료 직전 통과
-    verify(&m, 1, &ring, expiry - 1, None, &mut NoReplayCheck).expect("만료 1ms 전은 유효");
+    verify(&m, 1, &ring, expiry - 1, &mut NoReplayCheck).expect("만료 1ms 전은 유효");
     // 만료 시점부터 거부
     assert_eq!(
-        verify(&m, 1, &ring, expiry, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring, expiry, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::Expired
     );
 }
@@ -366,7 +366,7 @@ fn long_lived_manifest_ignores_clock_skew() {
         if now >= m.expires_at_unix_ms {
             continue;
         }
-        verify(&m, 1, &ring, now, None, &mut NoReplayCheck).unwrap_or_else(|e| {
+        verify(&m, 1, &ring, now, &mut NoReplayCheck).unwrap_or_else(|e| {
             panic!(
                 "{hours}시간 큐 대기 후 매니페스트가 거부됐다: {e:?}. \
                  §9 의 장수명/단수명 분리가 깨졌다 — 정상 Job 이 전부 거부된다"
@@ -389,6 +389,9 @@ mod short_lived {
         issued_at: u64,
         expires_at: u64,
         signer: String,
+        /// ★ nonce 는 **서명 대상 필드**다 (독립 검수 2026-08-16).
+        ///   호출자가 넘기던 예전 설계는 replay 방어만 무력화되는 구멍이었다.
+        nonce: Vec<u8>,
         sig: Vec<u8>,
     }
 
@@ -405,6 +408,8 @@ mod short_lived {
             f.set(30, Value::Uint(self.issued_at));
             f.set(31, Value::Uint(self.expires_at));
             f.set(60, Value::Str(self.signer.clone()));
+            // nonce 를 canonical 에 넣는다 — 서명 후 갈아끼울 수 없게 한다
+            f.set(70, Value::Bytes(self.nonce.clone()));
             f
         }
         fn signature_bytes(&self) -> &[u8] {
@@ -419,22 +424,30 @@ mod short_lived {
         fn signer_id(&self) -> &str {
             &self.signer
         }
+        fn replay_nonce(&self) -> Option<&[u8]> {
+            Some(&self.nonce)
+        }
     }
 
-    fn grant(k: &SigningKey) -> Grant {
+    fn nonce16() -> Vec<u8> {
+        (0u8..16).collect()
+    }
+
+    fn grant_with_nonce(k: &SigningKey, nonce: Vec<u8>) -> Grant {
         let mut g = Grant {
             schema_version: 1,
             issued_at: NOW,
             expires_at: NOW + 60_000,
             signer: DEVICE.into(),
+            nonce,
             sig: vec![],
         };
         g.sig = sign(k, &g).to_vec();
         g
     }
 
-    fn nonce16() -> Vec<u8> {
-        (0u8..16).collect()
+    fn grant(k: &SigningKey) -> Grant {
+        grant_with_nonce(k, nonce16())
     }
 
     /// ★ 발견 — 기본 TTL(60초)과 skew 허용치(60초)가 같아서
@@ -459,20 +472,20 @@ mod short_lived {
         g.sig = sign(&k, &g).to_vec();
 
         // 경계값 — 허용
-        verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS, Some(&nonce16()), &mut NoReplayCheck)
+        verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS, &mut NoReplayCheck)
             .expect("skew 경계값은 허용된다");
 
         // 경계 바로 밖 — 거부
         assert_eq!(
-            verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS + 1, Some(&nonce16()), &mut NoReplayCheck)
-                .unwrap_err(),
+            verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS + 1, &mut NoReplayCheck)
+                .unwrap_err().outcome().unwrap(),
             VerifyOutcome::ClockSkew
         );
 
         // 과거 방향도 대칭으로 거부 (검증자 시계가 빠른 경우)
         assert_eq!(
-            verify(&g, 1, &ring, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, Some(&nonce16()), &mut NoReplayCheck)
-                .unwrap_err(),
+            verify(&g, 1, &ring, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, &mut NoReplayCheck)
+                .unwrap_err().outcome().unwrap(),
             VerifyOutcome::ClockSkew
         );
     }
@@ -494,16 +507,16 @@ mod short_lived {
 
         // skew 경계와 만료 시각이 같은 지점. 만료가 이긴다.
         assert_eq!(
-            verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS, Some(&nonce16()), &mut NoReplayCheck)
-                .unwrap_err(),
+            verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS, &mut NoReplayCheck)
+                .unwrap_err().outcome().unwrap(),
             VerifyOutcome::Expired,
             "기본 TTL 에서는 미래 방향 skew 경로에 도달할 수 없다"
         );
 
         // 과거 방향은 여전히 도달 가능하다
         assert_eq!(
-            verify(&g, 1, &ring, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, Some(&nonce16()), &mut NoReplayCheck)
-                .unwrap_err(),
+            verify(&g, 1, &ring, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, &mut NoReplayCheck)
+                .unwrap_err().outcome().unwrap(),
             VerifyOutcome::ClockSkew
         );
     }
@@ -515,17 +528,15 @@ mod short_lived {
         let ring = ring_with(DEVICE, &k);
         let g = grant(&k);
 
-        // nonce 없음
-        assert_eq!(
-            verify(&g, 1, &ring, NOW, None, &mut NoReplayCheck).unwrap_err(),
-            VerifyOutcome::Replay
-        );
-        // 길이 위반
+        let _ = &g;
+        // ★ nonce 는 메시지에서 오므로, 길이를 바꾸려면 **메시지를 바꿔 다시 서명**해야 한다.
+        //   호출자가 임의로 넘길 수 없다는 것이 이 설계의 핵심이다.
         for len in [0usize, 8, 15, 17, 32] {
+            let bad = grant_with_nonce(&k, vec![9u8; len]);
             assert_eq!(
-                verify(&g, 1, &ring, NOW, Some(&vec![0u8; len]), &mut NoReplayCheck).unwrap_err(),
+                verify(&bad, 1, &ring, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
                 VerifyOutcome::Replay,
-                "{len}바이트 nonce 가 허용됐다"
+                "{len}바이트 nonce 가 허용됐다 (§10 은 16바이트 MUST)"
             );
         }
     }
@@ -539,7 +550,7 @@ mod short_lived {
     fn no_replay_check_taints_the_verified_value() {
         let k = key(1);
         let g = grant(&k);
-        let v = verify(&g, 1, &ring_with(DEVICE, &k), NOW, Some(&nonce16()), &mut NoReplayCheck)
+        let v = verify(&g, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
             .expect("서명 자체는 정상이다");
 
         assert!(!v.replay_checked(), "NoReplayCheck 인데 검사됨으로 표시됐다");
@@ -559,8 +570,13 @@ mod short_lived {
 
         struct MemGuard(HashSet<(String, u32, Vec<u8>)>);
         impl ReplayGuard for MemGuard {
-            fn check_and_record(&mut self, s: &str, d: Domain, n: &[u8]) -> bool {
-                self.0.insert((s.to_string(), d as u32, n.to_vec()))
+            fn check_and_record(&mut self, s: &str, d: Domain, n: &[u8], _r: u64)
+                -> Result<ReplayDecision, ReplayStoreError> {
+                Ok(if self.0.insert((s.to_string(), d as u32, n.to_vec())) {
+                    ReplayDecision::Fresh
+                } else {
+                    ReplayDecision::Duplicate
+                })
             }
             fn is_effective(&self) -> bool {
                 true
@@ -572,12 +588,12 @@ mod short_lived {
         let g = grant(&k);
         let mut guard = MemGuard(HashSet::new());
 
-        let v = verify(&g, 1, &ring, NOW, Some(&nonce16()), &mut guard).expect("첫 번째는 통과");
+        let v = verify(&g, 1, &ring, NOW, &mut guard).expect("첫 번째는 통과");
         assert!(v.replay_checked());
         assert!(v.require_replay_checked().is_ok());
 
         assert_eq!(
-            verify(&g, 1, &ring, NOW, Some(&nonce16()), &mut guard).unwrap_err(),
+            verify(&g, 1, &ring, NOW, &mut guard).unwrap_err().outcome().unwrap(),
             VerifyOutcome::Replay,
             "같은 nonce 재사용이 통과했다"
         );
@@ -585,7 +601,8 @@ mod short_lived {
         // 다른 nonce 면 통과 — guard 가 무조건 거부하는 게 아님을 확인 (비공허성)
         let mut other = nonce16();
         other[0] = 0xFF;
-        verify(&g, 1, &ring, NOW, Some(&other), &mut guard).expect("다른 nonce 는 통과해야 한다");
+        let g2 = grant_with_nonce(&k, other);
+        verify(&g2, 1, &ring, NOW, &mut guard).expect("다른 nonce 는 통과해야 한다");
     }
 
     /// §10 — nonce 는 **device 별 namespace** 를 가져야 한다.
@@ -595,8 +612,13 @@ mod short_lived {
         use std::collections::HashSet;
         struct MemGuard(HashSet<(String, u32, Vec<u8>)>);
         impl ReplayGuard for MemGuard {
-            fn check_and_record(&mut self, s: &str, d: Domain, n: &[u8]) -> bool {
-                self.0.insert((s.to_string(), d as u32, n.to_vec()))
+            fn check_and_record(&mut self, s: &str, d: Domain, n: &[u8], _r: u64)
+                -> Result<ReplayDecision, ReplayStoreError> {
+                Ok(if self.0.insert((s.to_string(), d as u32, n.to_vec())) {
+                    ReplayDecision::Fresh
+                } else {
+                    ReplayDecision::Duplicate
+                })
             }
             fn is_effective(&self) -> bool {
                 true
@@ -613,7 +635,7 @@ mod short_lived {
             sig: vec![],
             ..g1.clone()
         };
-        g2.sig = sign(&k2, &g2).to_vec();
+        g2.sig = sign(&k2, &g2).to_vec(); // nonce 는 g1 과 같다 — namespace 검증이 목적
 
         let mut kr = InMemoryKeyring::new();
         kr.insert(DEVICE, k1.verifying_key());
@@ -621,9 +643,9 @@ mod short_lived {
         let ring = Ed25519Verifier::new(kr);
         let mut guard = MemGuard(HashSet::new());
 
-        verify(&g1, 1, &ring, NOW, Some(&nonce16()), &mut guard).expect("device A");
+        verify(&g1, 1, &ring, NOW, &mut guard).expect("device A");
         // 같은 nonce 값이지만 다른 device — 통과해야 한다
-        verify(&g2, 1, &ring, NOW, Some(&nonce16()), &mut guard)
+        verify(&g2, 1, &ring, NOW, &mut guard)
             .expect("device 별 namespace 가 없어 다른 device 의 nonce 가 충돌했다");
     }
 }

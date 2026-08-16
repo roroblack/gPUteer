@@ -80,7 +80,6 @@ fn valid_grant_verifies() {
         1,
         &ring(&[(COORD, &k)]),
         NOW,
-        Some(&nonce16()),
         &mut NoReplayCheck,
     )
     .expect("정상 Grant 가 검증을 통과해야 한다");
@@ -105,13 +104,13 @@ fn grant_rejects_message_from_the_future() {
     let g = grant(&k, NOW, GRANT_TTL_MS);
 
     // 경계 안쪽 — 통과해야 한다 (거부하면 안 될 때 거부하지 않는가)
-    verify(&g, 1, &r, NOW - CLOCK_SKEW_TOLERANCE_MS, Some(&nonce16()), &mut NoReplayCheck)
+    verify(&g, 1, &r, NOW - CLOCK_SKEW_TOLERANCE_MS, &mut NoReplayCheck)
         .expect("skew 경계값은 허용된다");
 
     // 경계 밖 — 거부
     assert_eq!(
-        verify(&g, 1, &r, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, Some(&nonce16()), &mut NoReplayCheck)
-            .unwrap_err(),
+        verify(&g, 1, &r, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, &mut NoReplayCheck)
+            .unwrap_err().outcome().unwrap(),
         VerifyOutcome::ClockSkew
     );
 }
@@ -129,8 +128,8 @@ fn default_ttl_masks_forward_skew_for_real_grant() {
     let k = key(1);
     let g = grant(&k, NOW, GRANT_TTL_MS);
     assert_eq!(
-        verify(&g, 1, &ring(&[(COORD, &k)]), NOW + GRANT_TTL_MS, Some(&nonce16()), &mut NoReplayCheck)
-            .unwrap_err(),
+        verify(&g, 1, &ring(&[(COORD, &k)]), NOW + GRANT_TTL_MS, &mut NoReplayCheck)
+            .unwrap_err().outcome().unwrap(),
         VerifyOutcome::Expired,
         "기본 TTL 에서는 미래 방향 skew 경로에 도달할 수 없다"
     );
@@ -144,31 +143,66 @@ fn forward_skew_is_reachable_with_longer_ttl() {
     let k = key(1);
     let g = grant(&k, NOW, 3_600_000); // 1시간 TTL
     assert_eq!(
-        verify(&g, 1, &ring(&[(COORD, &k)]), NOW + CLOCK_SKEW_TOLERANCE_MS + 1, Some(&nonce16()), &mut NoReplayCheck)
-            .unwrap_err(),
+        verify(&g, 1, &ring(&[(COORD, &k)]), NOW + CLOCK_SKEW_TOLERANCE_MS + 1, &mut NoReplayCheck)
+            .unwrap_err().outcome().unwrap(),
         VerifyOutcome::ClockSkew,
         "미래 방향 skew 검사가 동작하지 않는다"
     );
 }
 
+/// ★ nonce 는 **메시지 안의 서명된 필드**에서 온다 (독립 검수 2026-08-16).
+///
+/// 예전에는 `verify()` 가 nonce 를 별도 인자로 받았다. 그러면 호출자가
+/// 서명된 nonce 대신 아무 값이나 넘길 수 있고, **서명은 통과하는데 replay
+/// 방어만 무력화**된다. 매번 새 값을 넘기면 같은 메시지를 몇 번이든 재생할 수 있다.
+///
+/// 이제 nonce 는 메시지에서 나오므로 **호출자가 고를 수 없다.**
+/// 따라서 nonce 를 바꾸려면 메시지를 바꿔야 하고, 그러면 서명이 깨진다.
 #[test]
-fn grant_requires_nonce() {
+fn grant_nonce_comes_from_signed_message_field() {
     let k = key(1);
-    let g = grant(&k, NOW, GRANT_TTL_MS);
     let r = ring(&[(COORD, &k)]);
 
+    // nonce 가 없는 Grant — 서명은 정상이지만 replay 대상 nonce 가 없다
+    let mut no_nonce = pb::ExecutionGrant {
+        schema_version: 1,
+        grant_id: "g".into(),
+        coordinator_device_id: COORD.into(),
+        issued_at_unix_ms: NOW,
+        expires_at_unix_ms: NOW + GRANT_TTL_MS,
+        nonce: vec![],
+        ..Default::default()
+    };
+    no_nonce.coordinator_signature = sign(&k, &no_nonce).to_vec();
     assert_eq!(
-        verify(&g, 1, &r, NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&no_nonce, 1, &r, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::Replay,
-        "단수명 메시지가 nonce 없이 통과했다"
+        "nonce 없는 단수명 메시지가 통과했다"
     );
-    for len in [0usize, 8, 15, 17] {
+
+    // 길이가 틀린 nonce — §10 은 CSPRNG 16바이트를 요구한다(MUST)
+    for len in [1usize, 8, 15, 17, 32] {
+        let mut g = pb::ExecutionGrant {
+            nonce: vec![7u8; len],
+            ..no_nonce.clone()
+        };
+        g.coordinator_signature = sign(&k, &g).to_vec(); // 서명은 정상으로 다시 만든다
         assert_eq!(
-            verify(&g, 1, &r, NOW, Some(&vec![0u8; len]), &mut NoReplayCheck).unwrap_err(),
+            verify(&g, 1, &r, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
             VerifyOutcome::Replay,
-            "{len}바이트 nonce 가 허용됐다 (§10 은 16바이트를 요구한다)"
+            "{len}바이트 nonce 가 허용됐다"
         );
     }
+
+    // ★ nonce 를 서명 후에 바꾸면 **서명이 깨진다** — 이것이 결속의 증거다
+    let good = grant(&k, NOW, GRANT_TTL_MS);
+    let mut swapped = good.clone();
+    swapped.nonce = vec![0xFF; 16];
+    assert_eq!(
+        verify(&swapped, 1, &r, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+        VerifyOutcome::InvalidSignature,
+        "nonce 가 서명 대상이 아니다 — 재전송 시 nonce 만 갈아끼울 수 있다"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -203,11 +237,11 @@ fn renew_lease_expiry_is_derived_from_ttl() {
 
     let ring = ring(&[(NODE, &k)]);
     // 만료 직전 통과
-    verify(&r, 1, &ring, NOW + GRANT_TTL_MS - 1, Some(&nonce16()), &mut NoReplayCheck)
+    verify(&r, 1, &ring, NOW + GRANT_TTL_MS - 1, &mut NoReplayCheck)
         .expect("만료 1ms 전은 유효");
     // 만료 시점 거부
     assert_eq!(
-        verify(&r, 1, &ring, NOW + GRANT_TTL_MS, Some(&nonce16()), &mut NoReplayCheck).unwrap_err(),
+        verify(&r, 1, &ring, NOW + GRANT_TTL_MS, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::Expired
     );
 }
@@ -219,7 +253,7 @@ fn renew_lease_without_issued_at_is_immediately_expired() {
     let k = key(2);
     let r = renew(&k, 0);
     assert_eq!(
-        verify(&r, 1, &ring(&[(NODE, &k)]), NOW, Some(&nonce16()), &mut NoReplayCheck).unwrap_err(),
+        verify(&r, 1, &ring(&[(NODE, &k)]), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::Expired
     );
 }
@@ -267,13 +301,13 @@ fn evidence_does_not_expire() {
     // 3년 뒤에도 통과해야 한다
     for years in [0u64, 1, 3, 10] {
         let later = created + years * 365 * 24 * 3_600_000;
-        verify(&c, 1, &r, later, None, &mut NoReplayCheck).unwrap_or_else(|e| {
+        verify(&c, 1, &r, later, &mut NoReplayCheck).unwrap_or_else(|e| {
             panic!("{years}년 뒤 체크포인트 증거가 거부됐다: {e:?} — 재개가 불가능해진다")
         });
     }
 
     // 발급 시각보다 **이전**에 검증해도 통과한다 (시계가 어긋나도 증거는 증거다)
-    verify(&c, 1, &r, created - 3_600_000, None, &mut NoReplayCheck)
+    verify(&c, 1, &r, created - 3_600_000, &mut NoReplayCheck)
         .expect("증거에 skew 규칙을 걸면 안 된다");
 }
 
@@ -282,7 +316,7 @@ fn evidence_does_not_expire() {
 fn evidence_is_not_replay_checked() {
     let k = key(3);
     let c = ckpt(&k, NOW);
-    let v = verify(&c, 1, &ring(&[(NODE, &k)]), NOW, None, &mut NoReplayCheck).unwrap();
+    let v = verify(&c, 1, &ring(&[(NODE, &k)]), NOW, &mut NoReplayCheck).unwrap();
     assert!(v.replay_checked(), "증거는 replay 대상이 아니므로 검사된 것으로 본다");
     assert!(v.require_replay_checked().is_ok());
 }
@@ -367,7 +401,6 @@ fn replica_ack_stays_valid_forever_even_if_replica_is_gone() {
         1,
         &ring(&[("01JBXR7Q0000000000000000HH", &k)]),
         NOW + 10 * 365 * 24 * 3_600_000,
-        None,
         &mut NoReplayCheck,
     )
     .expect("증거이므로 만료되지 않는다");
@@ -409,23 +442,23 @@ fn the_three_lifetimes_actually_behave_differently() {
     let r = ring(&[(COORD, &k), (NODE, &k)]);
 
     // 6시간 대기 — skew 를 훨씬 넘지만 통과해야 한다
-    verify(&m, 1, &r, NOW + 6 * 3_600_000, None, &mut NoReplayCheck)
+    verify(&m, 1, &r, NOW + 6 * 3_600_000, &mut NoReplayCheck)
         .expect("LongLived 는 skew 를 검사하지 않는다");
     // 만료 후 거부
     assert_eq!(
-        verify(&m, 1, &r, m.expires_at_unix_ms, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &r, m.expires_at_unix_ms, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
         VerifyOutcome::Expired
     );
 
     // 2) ShortLived — 같은 6시간이면 거부된다
     let g = grant(&k, NOW, GRANT_TTL_MS);
     assert!(
-        verify(&g, 1, &r, NOW + 6 * 3_600_000, Some(&nonce16()), &mut NoReplayCheck).is_err(),
+        verify(&g, 1, &r, NOW + 6 * 3_600_000, &mut NoReplayCheck).is_err(),
         "ShortLived 가 6시간 뒤에도 통과했다 — LongLived 와 구분되지 않는다"
     );
 
     // 3) Evidence — 6시간이든 10년이든 통과한다
     let c = ckpt(&k, NOW);
-    verify(&c, 1, &r, NOW + 10 * 365 * 24 * 3_600_000, None, &mut NoReplayCheck)
+    verify(&c, 1, &r, NOW + 10 * 365 * 24 * 3_600_000, &mut NoReplayCheck)
         .expect("Evidence 가 만료됐다 — LongLived 와 구분되지 않는다");
 }

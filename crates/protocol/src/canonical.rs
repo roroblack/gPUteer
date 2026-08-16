@@ -200,6 +200,18 @@ fn encode_value(num: u32, value: &Value, derived: &[u32], out: &mut Vec<u8>) {
         Value::Message(f) => {
             // 규칙 f — 재귀
             let inner = canonical_encode(f, derived);
+            // ★ 규칙 i-2 — 서명/도출해시를 제외한 결과가 비면 **필드 자체를 생략**한다.
+            //
+            //   이 검사가 없으면 `Message({90: sig})` 가 빈 중첩 메시지(`0a 00`)로
+            //   출력되고, `Message({})` 는 생략되어 canonical 이 달라진다.
+            //   즉 "서명 필드가 canonical 에 영향을 주지 않는다" 가 깨진다.
+            //
+            //   ★ 2026-08-16 독립 검수에서 발견. Rust 와 Python 참조 구현이
+            //     **똑같이 틀리고 있어** 벡터 대조로는 잡히지 않았다.
+            //     벡터 대조는 "두 구현이 같은가" 를 증명하지 "옳은가" 를 증명하지 않는다.
+            if inner.is_empty() {
+                return;
+            }
             encode_len_delimited(num, &inner, out);
         }
         Value::RepeatedStr(items) => {
@@ -209,6 +221,9 @@ fn encode_value(num: u32, value: &Value, derived: &[u32], out: &mut Vec<u8>) {
             }
         }
         Value::RepeatedMessage(items) => {
+            // ★ 규칙 d — 원소를 버리지 않는다. 순서가 의미를 가지므로
+            //   빈 원소도 길이 0으로 자리를 지킨다.
+            //   (규칙 i-2 는 **단일** 중첩 메시지에만 적용된다)
             for item in items {
                 let inner = canonical_encode(item, derived);
                 encode_len_delimited(num, &inner, out);
@@ -218,8 +233,13 @@ fn encode_value(num: u32, value: &Value, derived: &[u32], out: &mut Vec<u8>) {
             // 규칙 c — BTreeMap 이므로 이미 key 오름차순
             for (k, v) in map.iter() {
                 let mut entry = Vec::new();
+                // 키의 존재 자체가 정보이므로 field 1 은 항상 출력한다.
                 encode_len_delimited(1, k.as_bytes(), &mut entry);
-                encode_len_delimited(2, v.as_bytes(), &mut entry);
+                // ★ 규칙 c-2 — 엔트리 안에서도 규칙 b 를 적용한다.
+                //   proto3 map 시맨틱에서 "값 없음" 과 "빈 값" 은 같다.
+                if !v.is_empty() {
+                    encode_len_delimited(2, v.as_bytes(), &mut entry);
+                }
                 encode_len_delimited(num, &entry, out);
             }
         }

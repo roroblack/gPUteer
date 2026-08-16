@@ -553,15 +553,27 @@ def canonical_encode(schema_name: str, msg: dict) -> bytes:
             entries = [(k.encode("utf-8"), v.encode("utf-8")) for k, v in value.items()]
             entries.sort(key=lambda kv: kv[0])
             for kb, vb in entries:
-                inner = encode_len_delimited(1, kb) + encode_len_delimited(2, vb)
+                # ★ 규칙 c-2 — 엔트리 안에서도 규칙 b 를 적용한다.
+                #   proto3 map 시맨틱에서 "값 없음" 과 "빈 값" 은 같다.
+                #   키의 존재 자체는 정보이므로 field 1 은 항상 출력한다.
+                inner = encode_len_delimited(1, kb)
+                if vb:
+                    inner += encode_len_delimited(2, vb)
                 out += encode_len_delimited(number, inner)
 
         elif kind == "message":
             # 규칙 f — 재귀 적용
             inner = canonical_encode(nested, value)
+            # ★ 규칙 i-2 — 서명/도출해시 제외 후 비면 필드 자체를 생략한다.
+            #   그렇지 않으면 Message({90: sig}) 가 빈 중첩 메시지로 출력되어
+            #   "서명 필드가 canonical 에 영향을 주지 않는다" 가 깨진다.
+            if not inner:
+                continue
             out += encode_len_delimited(number, inner)
 
         elif kind == "repeated_message":
+            # ★ 규칙 d — 원소를 버리지 않는다. 빈 원소도 길이 0으로 자리를 지킨다.
+            #   (규칙 i-2 는 **단일** 중첩 메시지에만 적용된다)
             for item in value:
                 inner = canonical_encode(nested, item)
                 out += encode_len_delimited(number, inner)
@@ -1387,6 +1399,48 @@ def build_vectors():
             "removed_id": "",
             "owner_signature": b"\x44" * 64,
         })
+
+    # ==============================================================
+    # 30~31 -- 독립 검수(2026-08-16)가 찾은 규칙 i-2 . c-2
+    #
+    # * 이 벡터들이 없으면 두 구현이 **똑같이 틀린 채로** 통과한다.
+    #   실제로 그런 상태였다.
+    # ==============================================================
+
+    # 30. 규칙 i-2 -- 중첩 메시지가 서명 필드만 가지면 필드 자체를 생략한다
+    g_base = _grant(bytes([0xAA]) * 64, {"algo": 1, "value": bytes([0x01]) * 32})
+    g_empty_manifest = dict(g_base)
+    g_empty_manifest["manifest"] = {}
+    g_sig_only = dict(g_base)
+    g_sig_only["manifest"] = {"submitter_signature": bytes([0xAA]) * 64}
+
+    c_e = add("v30a_nested_empty_message_omitted",
+              "중첩 메시지가 비면 필드를 생략한다 (규칙 b)",
+              "ExecutionGrant", g_empty_manifest,
+              ["MUST_EQUAL:v30b_nested_signature_only_message_omitted"])
+    c_s = add("v30b_nested_signature_only_message_omitted",
+              "* 규칙 i-2 -- 중첩 메시지가 **서명 필드만** 가져도 생략한다. "
+              "v30a 와 canonical 이 같아야 한다. 다르면 서명 필드가 canonical 에 "
+              "영향을 준다는 뜻이다",
+              "ExecutionGrant", g_sig_only,
+              ["MUST_EQUAL:v30a_nested_empty_message_omitted"])
+    assert c_e == c_s, "규칙 i-2 위반 -- 서명 필드가 canonical 에 새어나갔다"
+
+    # 31. 규칙 c-2 -- map 엔트리 안에서도 규칙 b 를 적용한다
+    m_empty_val = _minimal_manifest()
+    m_empty_val["env_vars"] = {"EMPTY": "", "SET": "v"}
+    c_map = add("v31_map_entry_empty_value",
+                "* 규칙 c-2 -- map 값이 빈 문자열이면 엔트리 안의 field 2 를 생략한다. "
+                "키의 존재 자체는 정보이므로 엔트리는 남는다",
+                "JobManifest", m_empty_val)
+
+    m_absent = _minimal_manifest()
+    m_absent["env_vars"] = {"SET": "v"}
+    c_absent = add("v31b_map_key_absent",
+                   "빈 값 엔트리와 키 부재는 다르다 -- v31 과 canonical 이 달라야 한다",
+                   "JobManifest", m_absent,
+                   ["MUST_DIFFER:v31_map_entry_empty_value"])
+    assert c_map != c_absent, "빈 값 엔트리가 키 부재와 구분되지 않는다"
 
     # 10. domain_tag 분리 — 같은 canonical, 다른 tag → 다른 sig_input
     base = _minimal_manifest()
