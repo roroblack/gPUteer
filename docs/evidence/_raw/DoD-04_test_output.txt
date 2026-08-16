@@ -1,0 +1,216 @@
+     Running unittests src\lib.rs (target\debug\deps\gputeer_checkpoint-867530c4f391c03b.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\ckpt_writer.rs (target\debug\deps\ckpt_writer-4442f439004f5d03.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\durability_chaos.rs (target\debug\deps\durability_chaos-aa57594d090a059c.exe)
+
+running 16 tests
+test durability_requirements_match_baseline ... ok
+test allowed_transitions_follow_normative_table ... ok
+test negative_partial_can_never_become_canonical_candidate ... ok
+test negative_undefined_transitions_are_rejected ... ok
+test manifest_json_roundtrip ... ok
+test adr026_write_once_is_idempotent_for_same_name ... ok
+test replica_counting_applies_all_normative_rules ... ok
+test gc_removes_orphan_tmp_files ... ok
+test negative_hash_mismatch_is_detected ... ok
+test pointer_replace_exhaustion_is_explicit_error_not_silent ... ok
+test sync_dir_works_on_this_platform ... ok
+test hash_verification_passes_for_intact_files ... ok
+test manifest_last_rule_identifies_partial_checkpoints ... ok
+test pointer_replace_retries_and_eventually_reports_error ... ok
+test write_once_survives_readers_with_no_share_delete ... ok
+test adr026_write_once_succeeds_while_readers_hold_files_open ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.95s
+
+     Running tests\kill_chaos.rs (target\debug\deps\kill_chaos-727f1484af378f28.exe)
+
+running 7 tests
+GC removed 0 partial files, kept 1 valid checkpoints
+test startup_gc_removes_partial_but_keeps_committed ... ok
+test negative_tampered_committed_checkpoint_is_rejected_from_resume ... ok
+test negative_missing_data_file_is_rejected_from_resume ... ok
+test negative_pointer_to_nonexistent_checkpoint_does_not_break_resume ... ok
+test resume_point_is_valid_and_monotonic_across_restarts ... ok
+test pointer_always_references_a_valid_checkpoint ... ok
+test kill_during_write_never_produces_corrupt_checkpoint ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.83s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_protocol-dbcbc0c39f833274.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-69bae504783846b8.exe)
+
+running 15 tests
+test negative_non_minimal_varint_is_rejected ... ok
+test minimal_varint_roundtrip ... ok
+test negative_cross_domain_signature_input_differs ... ok
+test domain_tags_are_32_bytes_and_unique ... ok
+test negative_truncated_varint_is_rejected ... ok
+test determinism_100_iterations ... ok
+test v06_explicit_defaults_are_omitted ... ok
+test v08_signature_field_is_excluded ... ok
+test v01_sig_input_and_digest_match_reference ... ok
+test v01_minimal_manifest_matches_reference ... ok
+test v03_map_insertion_order_is_irrelevant ... ok
+test v13_merkle_promotion_matches_reference ... ok
+test v04_repeated_order_is_preserved ... ok
+test v10_domain_separation ... ok
+test v11_schema_version_separation ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\ed25519_verify.rs (target\debug\deps\ed25519_verify-34f8518278d4fb04.exe)
+
+running 20 tests
+test schema_too_new_is_rejected_and_not_reported_as_signature_failure ... ok
+test short_lived::no_replay_check_taints_the_verified_value ... ok
+test expired_manifest_is_rejected ... ok
+test short_lived::default_ttl_masks_forward_skew_with_expiry ... ok
+test short_lived::replay_key_is_namespaced_by_device ... ok
+test signing_input_is_stable_before_and_after_signing ... ok
+test signature_by_different_key_is_rejected ... ok
+test unknown_signer_is_rejected ... ok
+test short_lived::short_lived_enforces_clock_skew ... ok
+test verify_outcome_matches_proto_enum ... ok
+test tampered_field_breaks_signature ... ok
+test verify_outcome_surface_is_complete ... ok
+test version_check_precedes_signature_check ... ok
+test wrong_length_signature_is_rejected ... ok
+test short_lived::working_replay_guard_rejects_reuse ... ok
+test valid_manifest_verifies ... ok
+test signature_from_another_domain_does_not_verify ... ok
+test long_lived_manifest_ignores_clock_skew ... ok
+test short_lived::short_lived_requires_16_byte_nonce ... ok
+보안 필드 변조 9종 전부 거부됨
+test tampering_security_fields_breaks_signature ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests\field_number_audit.rs (target\debug\deps\field_number_audit-248115115b7f5fef.exe)
+
+running 7 tests
+Digest: proto 2개 필드 중 2개 서명 대상
+test unimplemented_list_has_no_stale_entries ... ok
+CudaRequirement: proto 3개 필드 중 3개 서명 대상
+JobManifest: proto 29개 필드 중 28개 서명 대상
+Lease: proto 15개 필드 중 14개 서명 대상
+test every_impl_is_audited ... ok
+test job_manifest_field_numbers_match_proto ... ok
+test lease_field_numbers_match_proto ... ok
+GpuRequest: proto 5개 필드 중 5개 서명 대상
+test parsers_are_not_vacuous ... ok
+ResourceRequest: proto 5개 필드 중 5개 서명 대상
+WorkloadHint: proto 7개 필드 중 7개 서명 대상
+TarballPolicy: proto 3개 필드 중 3개 서명 대상
+ExecutionEnvironment: proto 14개 필드 중 14개 서명 대상
+DatasetRef: proto 6개 필드 중 6개 서명 대상
+NetworkPolicy: proto 3개 필드 중 3개 서명 대상
+ArtifactScope: proto 2개 필드 중 2개 서명 대상
+ResourceScope: proto 5개 필드 중 5개 서명 대상
+test common_message_field_numbers_match_proto ... ok
+test every_unsigned_field_is_declared_in_unimplemented_list ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\prost_canonical.rs (target\debug\deps\prost_canonical-cb4e6e10a18bd86e.exe)
+
+running 25 tests
+test default_valued_fields_are_omitted_in_prost_path ... ok
+test artifact_scope_is_signed ... ok
+test execution_environment_is_signed ... ok
+test dataset_ref_is_signed ... ok
+test input_artifacts_are_signed_and_order_is_preserved ... ok
+test lease_canonical_is_deterministic_and_excludes_signature ... ok
+test lease_scope_is_signed ... ok
+test input_artifacts_vector_matches_reference ... ok
+test hashmap_insertion_order_does_not_affect_canonical ... ok
+test execution_environment_vector_matches_reference ... ok
+map 없는 매니페스트: prost 113B, canonical 113B, 동일=true
+test dataset_vector_matches_reference ... ok
+test network_policy_is_signed ... ok
+test prost_and_canonical_may_coincide_for_simple_messages ... ok
+test lease_scope_vector_matches_reference ... ok
+test signature_field_excluded_in_prost_path ... ok
+test unimplemented_field_list_is_empty ... ok
+test prost_message_produces_same_canonical_as_reference ... ok
+test nested_messages_and_enums_round_through_prost ... ok
+test prost_message_produces_same_sig_input_and_digest ... ok
+test security_field_vectors_match_reference ... ok
+test v02b_full_lease_matches_reference ... ok
+v02 전 필드: 896 bytes 일치
+test v02_full_manifest_matches_reference ... ok
+전 필드 27개 전부 서명에 반영됨 (+ schema_version 은 sig_input)
+test every_field_in_full_manifest_affects_canonical ... ok
+test hashmap_canonical_is_stable_across_many_rebuilds ... ok
+500회 재구축 — prost 서로 다른 인코딩 498종 / canonical 1종
+test prost_encode_is_not_deterministic_for_maps ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\schema_evolution.rs (target\debug\deps\schema_evolution-282c92dcd54ec185.exe)
+
+running 6 tests
+원본 118B -> 미지 필드 추가 148B -> 재인코딩 118B
+버전 먼저: SCHEMA_TOO_NEW / 서명 먼저: INVALID_SIGNATURE — 둘 다 거부하나 진단이 다르다
+schema_version 상향: 탐지 가능 + 서명에 묶임
+★ schema_version 을 올리지 않은 필드 추가는 프로토콜 수준에서 탐지 불가. 빌드 시점 검사로 막아야 한다
+test q1_prost_accepts_and_drops_unknown_fields ... ok
+test q5_version_check_must_precede_signature_check ... ok
+test q3_version_bump_is_detectable_and_signature_bound ... ok
+test q4_field_addition_without_version_bump_is_undetectable ... ok
+test q2_unknown_fields_are_invisible_to_canonical ... ok
+test q6_version_downgrade_breaks_signature ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\schema_fingerprint.rs (target\debug\deps\schema_fingerprint-b0753bf263b7b94e.exe)
+
+running 2 tests
+test parser_is_not_vacuous ... ok
+test proto_schema_matches_recorded_fingerprint ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_checkpoint
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_protocol
+
+running 2 tests
+error[E0451]: fields `inner`, `signer_id` and `replay_checked` of struct `Verified` are private
+   --> crates\protocol\src\signing.rs:218:5
+    |
+217 | let v: Verified<u32> = Verified {
+    |                        -------- in this type
+218 |     inner: 1,
+    |     ^^^^^ private field
+219 |     signer_id: String::new(),
+    |     ^^^^^^^^^ private field
+220 |     replay_checked: true,
+    |     ^^^^^^^^^^^^^^ private field
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0451`.
+test crates\protocol\src\signing.rs - signing::Verified (line 214) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 225) ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+

@@ -16,6 +16,32 @@
 
 ---
 
+## 2026-08-16 12:40 — Ed25519 서명·검증 + Verified<M> (DoD-04 PASS, 100 tests green)
+
+- 계획: 계획 밖 — `DoD-01`~`DoD-03` 이 모두 limitations 에 남긴 "Ed25519 미구현"
+- 스트림: Protocol
+- 수행: `crates/protocol/src/signing.rs` — `signing.md` §8 검증 순서 · §9 시각 정책 · §13.2.
+  `tests/ed25519_verify.rs` 20건 + 독테스트 2건
+- 검증: **cargo test --workspace = 100 passed / 0 failed** (78 -> 100). 빌드 경고 0건
+  - §8 의 9단계가 **각각 실제로 발동**함을 확인. 발동하지 않는 단계는 없는 것과 같다
+  - 보안 필드 변조 **9종 전부 거부** (DoD-03 이 서명에 넣은 것들이 실제로 지켜지는가)
+  - ★ `Verified<M>` 우회 생성 차단을 `compile_fail` 독테스트로 검증.
+    **필드를 pub 으로 바꾸는 뮤테이션**에서 FAILED, 원복 시 통과
+- 설계 결정: `VerifyOutcome` 에 **`VALID` 를 두지 않았다.** 성공은 다른 타입이다.
+  열거형에 VALID 를 두면 새 실패 값이 조용히 통과한다
+- ★ 발견 2건 (둘 다 테스트가 처음에 실패해서 드러났다):
+  1. `minimum_security_tier = 0` 변조가 **no-op** 이었다 (기준값이 이미 0).
+     -> 모든 변조 케이스에 `assert_ne!(변조본, 원본)` 비공허성 단언 추가
+  2. Grant 기본 TTL(60초) == skew 허용치(60초) 라서
+     **미래 방향 skew 경로가 만료 검사에 가려져 도달 불가능**하다.
+     안전성 문제는 아니나 "skew 검사가 동작한다"고 잘못 믿게 된다
+  3. `compile_fail` 독테스트를 처음에 `tests/` 에 두었는데 **실행되지 않는다.**
+     검증하지 않는 것을 주장하고 있었다 -> `src/` 로 이동
+- 미구현 명시: **§8-8 replay 는 저장소 계층이 없어 실제 방어가 없다.**
+  `NoReplayCheck` 라는 이름으로 사실을 드러내고 `require_replay_checked()` 가
+  미검사 값의 부작용 경로 사용을 막는다. 조용히 빠뜨리지 않았다
+- evidence: `DoD-04_ed25519_검증순서.md`
+
 ## 2026-08-16 11:30 — P0-08 스키마 진화 (PASS, 78 tests green)
 
 - 계획: 계획 밖 — `DoD-02` 가 제기한 "CLAUDE.md §0.2 vs prost 기본 동작 충돌"
