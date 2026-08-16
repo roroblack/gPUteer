@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-08-16 13:30 — 스트림 소유권 위반 시정 + 실행계획 v2 (105 tests green)
+
+- 계획: 이 커밋으로 `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` 착수
+- 스트림: Protocol · Crypto · QA
+- ★ **내가 `RULE.md` §4.1 을 어겼다.** `crates/protocol/src/signing.rs` 가
+  `ed25519-dalek` 을 직접 썼는데 소유권 표는 Ed25519 를 Crypto 스트림 소유로 정한다.
+  **테스트 100건이 전부 통과했고 아무도 알아채지 못했다.**
+  테스트가 통과한다고 규칙을 고치지 않고 **코드를 규칙에 맞췄다** (§4.3 마지막 줄)
+- 수행:
+  - `crates/protocol`: `SignatureVerifier` trait 신설. **암호 라이브러리 의존 0**
+    (blake3 만 예외 — canonical 의 일부)
+  - `crates/crypto` 신설: `Ed25519Verifier` · `sign()` · `InMemoryKeyring`
+    (이름이 "운영에 쓰면 안 됨"을 드러낸다 — §11 K0~K2 미구현)
+  - `crates/protocol/tests/stream_ownership.rs` 5건 — 경계를 **코드로 강제**.
+    뮤테이션(ed25519 재추가)으로 실효성 확인
+  - **실행계획 v2 작성** — v1 범위가 소진됐는데 작업이 계획 밖에서 이어지고 있었다.
+    T1~T6 확정. D-5 를 4건으로 갱신
+  - `CLAUDE.md` §5 상태표를 디스크·빌드 실측으로 갱신
+- 검증: **cargo test --workspace = 105 passed / 0 failed**. 빌드 경고 0. 문서 검사 통과
+- 부수 정정: `UnknownSigner` 와 `InvalidSignature` 를 구분해 반환하도록 trait 계약에 명시.
+  뭉뚱그리면 운영자가 "팀 멤버가 아니다"와 "위조되었다"를 구분할 수 없다
+- 리포트: `docs/reports/2026-08-16_1330_프로토콜_계층_완주_자율세션.md` (세션 종합)
+
 ## 2026-08-16 12:40 — Ed25519 서명·검증 + Verified<M> (DoD-04 PASS, 100 tests green)
 
 - 계획: 계획 밖 — `DoD-01`~`DoD-03` 이 모두 limitations 에 남긴 "Ed25519 미구현"
