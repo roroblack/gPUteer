@@ -1,6 +1,6 @@
 //! T1 — `artifact.proto` / `lease.proto` 서명 대상의 참조 구현 대조.
 //!
-//! `signing.md` §5 domain_tag 17종 중 이 파일이 다루는 것:
+//! `signing.md` §5 domain_tag 23종(ADR-028) 중 이 파일이 다루는 것:
 //! `checkpoint` · `replica-ack` · `artifact` · `attempt-report` · `canonical` ·
 //! `lease-renew` · `lease-revoke`
 //!
@@ -384,7 +384,7 @@ fn revoke_lease_notice_matches_reference() {
 // ★ 도메인 커버리지 감사
 // ══════════════════════════════════════════════════════════════════
 
-/// `signing.md` §5 의 domain_tag 17종 중 실제 proto 메시지가 있는 것과
+/// `signing.md` §5 의 domain_tag 23종 중 실제 proto 메시지가 있는 것과
 /// `ToCanonicalFields` 가 구현된 것을 대조한다.
 ///
 /// ★ **4종은 proto 메시지 자체가 없다** — 규범이 존재하지 않는 메시지의
@@ -429,7 +429,7 @@ fn domain_coverage_is_explicit() {
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
 
-    println!("domain 17종 — 구현 {implemented} · proto 메시지 없음 {no_message}");
+    println!("domain {}종 — 구현 {implemented} · proto 메시지 없음 {no_message}", coverage.len());
     for (d, msg, impl_) in coverage {
         if !impl_ {
             println!(

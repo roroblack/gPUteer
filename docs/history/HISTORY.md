@@ -16,6 +16,47 @@
 
 ---
 
+## 2026-08-16 15:40 — ★ 서명 재사용 취약점 발견·시정 (ADR-028 · DoD-06 PASS, 129 tests green)
+
+- 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T1b
+- 스트림: Protocol · QA(벡터)
+- ★★ **스펙 취약점 발견 — `signing.md` §5 가 자기 MUST 를 어기고 있었다.**
+  §5 는 "메시지마다 새 domain_tag 를 등록해야 한다(MUST)" 라고 적어 놓고
+  membership(6종) · policy · quarantine(2종) 을 **공유**하게 두었다.
+  공유하면 §5 의 방어("tag 가 달라 반드시 실패한다")가 사라지고
+  canonical 차이만 남는데, 규칙 b(기본값 생략) 때문에 **공격자가 필드를 비우면
+  서로 다른 메시지가 같은 바이트가 된다.**
+- 실측 (참조 구현 전수 대조) — **충돌 5쌍**:
+  ```
+  AddMember        == RemoveMember       공통필드[1]    28바이트 동일
+  ApproveDevice    == RemoveMember       공통필드[1]    28바이트 동일
+  ApproveDevice    == RevokeDevice       공통필드[1,2]  56바이트 동일
+  RemoveMember     == RevokeDevice       공통필드[1]    28바이트 동일
+  QuarantineDevice == ReleaseQuarantine  공통필드[1]    동일
+  ```
+  → 소유자의 `RemoveMember` 서명이 `RevokeDevice` 로 통과한다.
+  → ★ **격리 판정 m-of-n 서명이 격리 해제로 재사용된다**
+- 조치: **ADR-028** — 메시지별 domain_tag 분리 (17 → 23종).
+  ★ **canonical bytes 는 하나도 바뀌지 않았다** (tag 는 sig_input 에만 들어간다).
+  `schema_version` 상향 불필요, `SCHEMA_FINGERPRINT` 불변, 기존 벡터 회귀 0건
+- ★ 회귀 방지 테스트는 **canonical 이 아니라 `sig_input`** 을 본다 —
+  ADR-028 이후에도 canonical 은 여전히 같기 때문이다.
+  canonical 을 검사하면 "우연히 필드가 달라서 통과"하는 약한 보증만 얻는다.
+  전제(canonical 동일)도 `assert_eq!` 로 고정해 전제가 바뀌면 근거를 재확인하게 했다
+- 수행: T1b — grant · membership · policy · quarantine. domain 9 → **19/23**.
+  벡터 28 → 36건
+- 부수:
+  - **`DERIVED_HASH_FIELDS` 신설** — 규칙 i 의 의도적 제외(`manifest_hash`)와
+    실수 누락(`UNIMPLEMENTED`)을 분리. 뜻이 정반대인데 섞으면 구분할 수 없다
+  - `ExecutionGrant` 는 규칙 i 가 **두 번** 적용되는 유일한 메시지
+    (도출 해시 + 중첩 manifest/lease 서명) → Agent 의 독립 검증·재계산이 필수
+  - `PlacementRationale` 을 서명 대상에 넣었다. 처음엔 "설명용" 이라며 미뤘는데
+    가드가 "위조 가능" 으로 실패시켰다 — **약화하지 않고 구현했다.**
+    서명 밖이면 Coordinator 가 배치 근거를 사후 조작할 수 있다
+  - `every_impl_is_audited` 가 신규 impl 15종을 잡아 등록을 강제했다
+- 검증: **cargo test --workspace = 129 passed / 0 failed**. 빌드 경고 0
+- evidence: `DoD-06_domain_tag_충돌.md` · ADR: `ADR-028`
+
 ## 2026-08-16 14:30 — T1 서명 대상 확장 + 규칙 j 신설 (DoD-05 PASS, 117 tests green)
 
 - 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T1
