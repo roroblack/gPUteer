@@ -21,7 +21,7 @@ pub mod pb {
 }
 
 pub use signing::{
-    sign, signing_input, verify, KeyResolver, Lifetime, NoReplayCheck, ReplayGuard, Signable,
+    signing_input, verify, Lifetime, NoReplayCheck, ReplayGuard, Signable, SignatureVerifier,
     Verified, VerifyOutcome,
 };
 pub use to_fields::{ToCanonicalFields, UNIMPLEMENTED_FIELDS};

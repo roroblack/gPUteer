@@ -294,15 +294,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gputeer-crypto"
+version = "0.0.1"
+dependencies = [
+ "ed25519-dalek",
+ "gputeer-protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "gputeer-protocol"
 version = "0.0.1"
 dependencies = [
  "blake3",
- "ed25519-dalek",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
- "rand_core",
  "serde_json",
  "thiserror",
 ]

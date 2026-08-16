@@ -140,41 +140,70 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-15)
+## 5. 지금 상태 (2026-08-16 12:40)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
+> 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
 
 | 항목 | 상태 |
 |---|---|
-| 기준선 계획서 | **완료** — `../gputeer_master_plan_FINAL.md` (§1~§44, 5,491줄). v4→v5→FINAL 통합 |
-| proto 스키마 | **완료** — 5개 파일. 검토에서 지적된 미정의 타입 12종 해소 |
-| 서명 규범 | **완료** — `docs/protocol/signing.md`. canonical 규칙 a~i, domain_tag 17종 |
-| 상태 전이 규범 | **완료** — `docs/protocol/state-machines.md`. Node/Job/Attempt/Checkpoint/Lease 5종 |
-| canonical 참조 구현 | **완료** — `tools/canonical/reference_canonical.py`. self-test **12/12 통과** |
-| 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` 12건. blake3 다이제스트 포함, cross-check OK |
-| 저장소 골격 | **완료** — `RULE.md`·`CLAUDE.md`·`docs/` 10개 폴더 |
-| **Rust 구현** | ⬜ **미착수** — crates/ 비어 있음 |
-| **P0 스파이크** | ⬜ **전부 미실행** — P0-01·02·03·04·04b·05·06·07 |
-| **DoD** | ⬜ **evidence 0건** |
+| 기준선 계획서 | **완료** — `../gputeer_master_plan_FINAL.md` (§1~§44, 5,491줄) |
+| proto 스키마 | **완료** — 5개 파일. `cargo build` 가 매번 `protoc` 로 검사한다 |
+| 서명 규범 | **완료** — `docs/protocol/signing.md`. §7.2·§7.3·§8·§13.1 은 실측 근거 반영됨 |
+| 상태 전이 규범 | **완료** — `docs/protocol/state-machines.md` 5종 |
+| canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
+| 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **20건** |
+| 저장소 골격 | **완료** |
+| **Rust 구현** | 🟡 **진행 중** — 19파일 5,334줄. **`cargo test --workspace` 100 passed / 0 failed**, 빌드 경고 0 |
+| ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
+| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 |
+| └ 미착수 | coordinator · agent · scheduler · UI |
+| **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
+| **DoD** | 🟡 **evidence 12건** (PASS 11 · FAIL-SCOPE 1). `verify_evidence.py` 스키마 위반 0 |
+| ADR | 2건 — ADR-026(체크포인트 플랫폼 차이) · ADR-027(Windows Job Object VRAM 상한) |
+
+### ★ 지금 남아 있는 가장 위험한 공백
+
+**"구현했다" 와 "강제한다" 를 혼동하지 않는다.**
+
+```text
+서명은 되지만 강제는 없다
+  network(54) · artifact_scope(55) · Lease.scope(40) 이 서명 대상에 들어갔다.
+  그러나 Agent 가 그 정책을 강제하는 계층은 없다.
+  = 위조를 막은 것이지 정책을 시행한 것이 아니다.        -> TODO_VISION V-06
+
+replay 방어가 실제로 없다
+  §8-8 은 타입으로 강제되지만 구현체는 NoReplayCheck 뿐이다.
+  단수명 메시지의 실제 replay 방어는 존재하지 않는다.      -> DoD-04 limitations
+
+단수명 메시지가 하나도 없다
+  Signable 구현이 JobManifest · Lease 둘뿐이고 둘 다 장수명이다.
+  ExecutionGrant · RenewLeaseRequest · Heartbeat 미구현.
+
+Linux 를 한 번도 돌려보지 않았다
+  v0.1 주 타깃이 Linux 컨테이너 워커인데 검증 환경이 없다.  -> D-3
+```
 
 ### 다음에 할 일
 
 ```text
-1. P0-03 (checkpoint durability)   — 아키텍처 재검토 위험이 가장 큼
-2. P0-07 (runtime estimation)      — 스케줄러 전체의 전제
-3. P0-06 (VRAM enforcement)        — ADR-015 를 뒤집을 수 있음
-4. P0-01 (Windows S1 + CUDA)       — v0.2 게이트
+1. artifact.proto / control.proto 서명 대상      17종 중 13종 구현됨
+2. 단수명 메시지 (ExecutionGrant 등)             §9 TTL==skew 문제 재검토 포함
+3. 키 관리 (signing.md §11)                      저장·로딩·회전
+4. replay 저장소 (signing.md §10)                로컬 SQLite + 원자적 트랜잭션
+5. x600 에 WSL2 배포판 -> D-3 해소               Linux 경로 검증
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
 
 ### 환경 주의사항
 
-- **아직 아무것도 빌드되지 않았다.** `cargo` toolchain · NVIDIA driver · CUDA 버전은
-  P0 착수 시 `docs/manuals/` 에 실측 기록한다.
-- `blake3` Python 패키지는 설치 확인됨 (테스트 벡터 생성에 사용).
-- 개발 기계는 Windows 11. **Linux 검증은 별도 환경이 필요하다** — 확보 전까지
-  Linux 대상 DoD 는 `ENVIRONMENT-BLOCKED` 다.
+- **Rust 1.97.1** 설치됨 (로컬 · x600 양쪽). `protoc` 는 `protoc-bin-vendored` 로 번들.
+- 개발 기계는 Windows 11, GPU 없음(Intel Iris Xe).
+  GPU 검증은 **x600**(RTX 4070 SUPER · driver 595.79 · CUDA 13.2). 작업 디스크 **F:**.
+- `blake3` Python 패키지 설치 확인됨.
+- **Linux 검증 환경이 없다.** 확보 전까지 Linux 대상 DoD 는 `ENVIRONMENT-BLOCKED` 이며
+  **`PASS` 로 계상하지 않는다.**
 
 ---
 

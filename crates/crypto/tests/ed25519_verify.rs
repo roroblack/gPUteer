@@ -9,37 +9,28 @@
 //! §8 의 각 단계가 **실제로 발동하는지** 하나씩 확인한다.
 //! 발동하지 않는 단계는 없는 것과 같다.
 
-use std::collections::HashMap;
-
-use ed25519_dalek::{SigningKey, VerifyingKey};
-
+use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
 use gputeer_protocol::canonical::Domain;
 use gputeer_protocol::constants::CLOCK_SKEW_TOLERANCE_MS;
-use gputeer_protocol::signing::{
-    sign, signing_input, verify, KeyResolver, Lifetime, NoReplayCheck, ReplayGuard, Signable,
-    VerifyOutcome,
-};
 use gputeer_protocol::pb;
+use gputeer_protocol::signing::{
+    signing_input, verify, Lifetime, NoReplayCheck, ReplayGuard, Signable, VerifyOutcome,
+};
 
 const NOW: u64 = 1_755_200_000_000;
 
 // ── 테스트용 키 저장소 ────────────────────────────────────────────
 
-#[derive(Default)]
-struct Keyring(HashMap<String, VerifyingKey>);
+type Ring = Ed25519Verifier<InMemoryKeyring>;
 
-impl Keyring {
-    fn with(id: &str, k: &SigningKey) -> Self {
-        let mut m = HashMap::new();
-        m.insert(id.to_string(), k.verifying_key());
-        Self(m)
-    }
+fn ring_with(id: &str, k: &SigningKey) -> Ring {
+    let mut kr = InMemoryKeyring::new();
+    kr.insert(id, k.verifying_key());
+    Ed25519Verifier::new(kr)
 }
 
-impl KeyResolver for Keyring {
-    fn resolve(&self, signer_id: &str) -> Option<VerifyingKey> {
-        self.0.get(signer_id).copied()
-    }
+fn empty_ring() -> Ring {
+    Ed25519Verifier::new(InMemoryKeyring::new())
 }
 
 /// 결정론적 키. `rand` 를 쓰면 실패 재현이 어려워진다.
@@ -83,7 +74,7 @@ fn valid_manifest_verifies() {
     let v = verify(
         &m,
         1,
-        &Keyring::with(DEVICE, &k),
+        &ring_with(DEVICE, &k),
         NOW,
         None,
         &mut NoReplayCheck,
@@ -119,7 +110,7 @@ fn schema_too_new_is_rejected_and_not_reported_as_signature_failure() {
     m.schema_version = 2;
     m.submitter_signature = sign(&k, &m).to_vec(); // 서명 자체는 완전히 정상이다
 
-    let out = verify(&m, 1, &Keyring::with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
+    let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
         .expect_err("구버전은 신버전 메시지를 거부해야 한다");
 
     // ★ P0-08 의 결론 — 이것을 INVALID_SIGNATURE 로 보고하면 며칠 헤맨다
@@ -139,7 +130,7 @@ fn version_check_precedes_signature_check() {
     m.schema_version = 2;
     m.submitter_signature = vec![0u8; 64]; // 명백히 틀린 서명
 
-    let out = verify(&m, 1, &Keyring::with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
+    let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
         .expect_err("거부되어야 한다");
     assert_eq!(
         out,
@@ -159,7 +150,7 @@ fn tampered_field_breaks_signature() {
     m.entrypoint = "evil.py".into(); // 서명 후 변조
 
     assert_eq!(
-        verify(&m, 1, &Keyring::with(DEVICE, &k), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck).unwrap_err(),
         VerifyOutcome::InvalidSignature
     );
 }
@@ -168,7 +159,7 @@ fn tampered_field_breaks_signature() {
 #[test]
 fn tampering_security_fields_breaks_signature() {
     let k = key(1);
-    let ring = Keyring::with(DEVICE, &k);
+    let ring = ring_with(DEVICE, &k);
 
     let cases: Vec<(&str, Box<dyn Fn(&mut pb::JobManifest)>)> = vec![
         (
@@ -256,7 +247,7 @@ fn tampering_security_fields_breaks_signature() {
 #[test]
 fn wrong_length_signature_is_rejected() {
     let k = key(1);
-    let ring = Keyring::with(DEVICE, &k);
+    let ring = ring_with(DEVICE, &k);
     for len in [0usize, 1, 63, 65, 128] {
         let mut m = manifest();
         m.submitter_signature = vec![0u8; len];
@@ -298,13 +289,13 @@ fn signature_from_another_domain_does_not_verify() {
     m.submitter_signature = lease.coordinator_signature.clone();
 
     assert_eq!(
-        verify(&m, 1, &Keyring::with(DEVICE, &k), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck).unwrap_err(),
         VerifyOutcome::InvalidSignature,
         "도메인 간 서명 재사용이 가능하다"
     );
 
     // Lease 자체는 정상 검증된다 (대조군 — 위 실패가 서명 자체의 문제가 아님을 보인다)
-    verify(&lease, 1, &Keyring::with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
+    verify(&lease, 1, &ring_with(DEVICE, &k), NOW, None, &mut NoReplayCheck)
         .expect("Lease 자체는 검증되어야 한다");
 }
 
@@ -318,7 +309,7 @@ fn unknown_signer_is_rejected() {
     let m = signed_manifest(&k);
     // 키링이 비어 있다 = 팀 멤버가 아니거나 폐기됨
     assert_eq!(
-        verify(&m, 1, &Keyring::default(), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &empty_ring(), NOW, None, &mut NoReplayCheck).unwrap_err(),
         VerifyOutcome::UnknownSigner
     );
 }
@@ -332,7 +323,7 @@ fn signature_by_different_key_is_rejected() {
 
     // 키링은 진짜 소유자의 키를 갖고 있다
     assert_eq!(
-        verify(&m, 1, &Keyring::with(DEVICE, &key(1)), NOW, None, &mut NoReplayCheck).unwrap_err(),
+        verify(&m, 1, &ring_with(DEVICE, &key(1)), NOW, None, &mut NoReplayCheck).unwrap_err(),
         VerifyOutcome::InvalidSignature
     );
 }
@@ -346,7 +337,7 @@ fn expired_manifest_is_rejected() {
     let k = key(1);
     let m = signed_manifest(&k);
     let expiry = m.expires_at_unix_ms;
-    let ring = Keyring::with(DEVICE, &k);
+    let ring = ring_with(DEVICE, &k);
 
     // 만료 직전 통과
     verify(&m, 1, &ring, expiry - 1, None, &mut NoReplayCheck).expect("만료 1ms 전은 유효");
@@ -366,7 +357,7 @@ fn long_lived_manifest_ignores_clock_skew() {
     assert_eq!(pb::JobManifest::LIFETIME, Lifetime::LongLived);
 
     let k = key(1);
-    let ring = Keyring::with(DEVICE, &k);
+    let ring = ring_with(DEVICE, &k);
     let m = signed_manifest(&k); // issued_at = NOW - 1시간
 
     // 60초 skew 허용치를 훨씬 넘는 시간이 흘렀다
@@ -460,7 +451,7 @@ mod short_lived {
     #[test]
     fn short_lived_enforces_clock_skew() {
         let k = key(1);
-        let ring = Keyring::with(DEVICE, &k);
+        let ring = ring_with(DEVICE, &k);
 
         // TTL 을 길게 잡아 만료 검사와 skew 검사를 분리한다
         let mut g = grant(&k);
@@ -498,7 +489,7 @@ mod short_lived {
         );
 
         let k = key(1);
-        let ring = Keyring::with(DEVICE, &k);
+        let ring = ring_with(DEVICE, &k);
         let g = grant(&k); // expires_at = NOW + 60_000
 
         // skew 경계와 만료 시각이 같은 지점. 만료가 이긴다.
@@ -521,7 +512,7 @@ mod short_lived {
     #[test]
     fn short_lived_requires_16_byte_nonce() {
         let k = key(1);
-        let ring = Keyring::with(DEVICE, &k);
+        let ring = ring_with(DEVICE, &k);
         let g = grant(&k);
 
         // nonce 없음
@@ -548,7 +539,7 @@ mod short_lived {
     fn no_replay_check_taints_the_verified_value() {
         let k = key(1);
         let g = grant(&k);
-        let v = verify(&g, 1, &Keyring::with(DEVICE, &k), NOW, Some(&nonce16()), &mut NoReplayCheck)
+        let v = verify(&g, 1, &ring_with(DEVICE, &k), NOW, Some(&nonce16()), &mut NoReplayCheck)
             .expect("서명 자체는 정상이다");
 
         assert!(!v.replay_checked(), "NoReplayCheck 인데 검사됨으로 표시됐다");
@@ -577,7 +568,7 @@ mod short_lived {
         }
 
         let k = key(1);
-        let ring = Keyring::with(DEVICE, &k);
+        let ring = ring_with(DEVICE, &k);
         let g = grant(&k);
         let mut guard = MemGuard(HashSet::new());
 
@@ -624,8 +615,10 @@ mod short_lived {
         };
         g2.sig = sign(&k2, &g2).to_vec();
 
-        let mut ring = Keyring::with(DEVICE, &k1);
-        ring.0.insert(OTHER.to_string(), k2.verifying_key());
+        let mut kr = InMemoryKeyring::new();
+        kr.insert(DEVICE, k1.verifying_key());
+        kr.insert(OTHER, k2.verifying_key());
+        let ring = Ed25519Verifier::new(kr);
         let mut guard = MemGuard(HashSet::new());
 
         verify(&g1, 1, &ring, NOW, Some(&nonce16()), &mut guard).expect("device A");

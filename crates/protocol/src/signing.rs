@@ -37,8 +37,17 @@
 //! **조용히 빠뜨리지 않기 위해** 단수명 메시지는 [`ReplayGuard`] 를 반드시 받도록
 //! 타입으로 강제하고, 미구현 구현체 [`NoReplayCheck`] 는 이름으로 그 사실을 드러낸다.
 //! `Verified<M>` 은 어떤 guard 를 거쳤는지 기억한다.
-
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+//!
+//! # ★ 이 크레이트는 암호 라이브러리에 의존하지 않는다
+//!
+//! `RULE.md` §4.1 이 **Ed25519 를 Crypto 스트림(`crates/crypto/`) 소유**로 정한다.
+//! 그래서 여기에는 [`SignatureVerifier`] **trait 만** 둔다 (§4.3 — 공용 trait 는
+//! `crates/protocol` 에서 먼저 확정하고, 구현 크레이트는 구현만 한다).
+//!
+//! 실제 Ed25519 구현은 `gputeer-crypto` 의 `Ed25519Verifier` 다.
+//!
+//! ★ 처음에는 이 파일이 `ed25519-dalek` 을 직접 썼다. **소유권 위반이었다.**
+//!   테스트가 통과한다고 규칙을 고치지 않고, 코드를 규칙에 맞췄다 (§4.3 마지막 줄).
 
 use crate::canonical::{canonical_encode, sig_input, Domain, Fields};
 use crate::constants::CLOCK_SKEW_TOLERANCE_MS;
@@ -147,12 +156,34 @@ pub trait Signable {
 // 호출자가 제공하는 두 가지 — 신원과 replay
 // ══════════════════════════════════════════════════════════════════
 
-/// §8-6. `signer_id` 로 공개키를 찾는다.
+/// §8-5 · §8-6. 서명자를 찾고 서명을 검증한다.
 ///
-/// **팀 멤버십 · 폐기 여부까지 여기서 판단한다.** 키를 안다는 것과
-/// 그 키가 지금 유효하다는 것은 다르다.
-pub trait KeyResolver {
-    fn resolve(&self, signer_id: &str) -> Option<VerifyingKey>;
+/// ★ **이 crate 는 암호 라이브러리를 알지 못한다** (`RULE.md` §4.1 — Ed25519 는
+/// Crypto 스트림 소유). 그래서 공개키 타입을 노출하지 않고 **결과만** 주고받는다.
+/// 구현은 `gputeer-crypto::Ed25519Verifier`.
+///
+/// # 두 단계를 하나의 trait 에 둔 이유
+///
+/// §8 은 5(서명 검증)를 6(신원 확인)보다 앞에 적지만, **실제로는 키를 찾아야
+/// 서명을 검증할 수 있다.** 순서가 아니라 **결과의 구분**이 중요하다.
+///
+/// ```text
+/// 서명자를 모른다        -> UnknownSigner    "팀 멤버가 아니거나 키가 폐기됐다"
+/// 키는 아는데 안 맞는다  -> InvalidSignature "위조되었거나 변조되었다"
+/// ```
+///
+/// 둘을 뭉뚱그려 하나로 보고하면 운영자가 원인을 구분할 수 없다.
+pub trait SignatureVerifier {
+    /// `signer_id` 의 키로 `message` 에 대한 `signature` 를 검증한다.
+    ///
+    /// **`UnknownSigner` 와 `InvalidSignature` 를 반드시 구분해 반환한다.**
+    /// 그 외의 값을 반환하면 안 된다.
+    fn verify_signature(
+        &self,
+        signer_id: &str,
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<(), VerifyOutcome>;
 }
 
 /// §8-8. replay 검사.
@@ -278,15 +309,10 @@ impl<M> Verified<M> {
 /// `sig_input` 을 조립한다. 서명·검증 양쪽이 이 함수를 쓴다.
 ///
 /// **두 경로가 갈라지면 자기 자신과만 맞는 서명이 만들어진다.**
+/// 서명 쪽(`gputeer-crypto::sign`)도 반드시 이 함수를 통과한다.
 pub fn signing_input<M: Signable + ?Sized>(msg: &M) -> Vec<u8> {
     let canonical = canonical_encode(&msg.to_canonical_fields(), &[]);
     sig_input(M::DOMAIN, msg.schema_version(), &canonical)
-}
-
-/// 메시지에 서명한다. 반환값을 서명 필드(90)에 넣는다.
-pub fn sign<M: Signable + ?Sized>(key: &ed25519_dalek::SigningKey, msg: &M) -> [u8; 64] {
-    use ed25519_dalek::Signer;
-    key.sign(&signing_input(msg)).to_bytes()
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -308,7 +334,7 @@ pub fn sign<M: Signable + ?Sized>(key: &ed25519_dalek::SigningKey, msg: &M) -> [
 pub fn verify<M: Signable + Clone>(
     msg: &M,
     max_supported_schema_version: u32,
-    keys: &dyn KeyResolver,
+    verifier: &dyn SignatureVerifier,
     now_unix_ms: u64,
     nonce: Option<&[u8]>,
     replay: &mut dyn ReplayGuard,
@@ -323,20 +349,8 @@ pub fn verify<M: Signable + Clone>(
     // 3·4. canonical 재구성 + sig_input 조립
     let input = signing_input(msg);
 
-    // 5. Ed25519
-    let sig_bytes = msg.signature_bytes();
-    let sig_array: [u8; 64] = sig_bytes
-        .try_into()
-        .map_err(|_| VerifyOutcome::InvalidSignature)?;
-    let signature = Signature::from_bytes(&sig_array);
-
-    // 6. 서명자 신원 — 키 조회가 곧 멤버십·폐기 확인이다
-    let key = keys
-        .resolve(msg.signer_id())
-        .ok_or(VerifyOutcome::UnknownSigner)?;
-
-    key.verify(&input, &signature)
-        .map_err(|_| VerifyOutcome::InvalidSignature)?;
+    // 5·6. 서명 검증 + 서명자 신원 (Crypto 스트림에 위임)
+    verifier.verify_signature(msg.signer_id(), &input, msg.signature_bytes())?;
 
     // 7. 시각 (§9)
     match M::LIFETIME {

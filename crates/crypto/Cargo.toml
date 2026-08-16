@@ -1,0 +1,13 @@
+[package]
+name = "gputeer-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+gputeer-protocol = { path = "../protocol" }
+ed25519-dalek.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
