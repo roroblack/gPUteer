@@ -294,7 +294,8 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
 
 `crates/checkpoint/tests/state_table_parity.rs` 는 이 파일을 파싱해 다음을 검사한다.
 
-★ **2026-08-16 정정.** 이 절은 원래 `tests/unit/state_machine_test.rs` 를 가리켰는데
+★ **2026-08-16 정정.** 이 절은 원래 tests/unit/state_machine_test.rs (백틱 없이 적는다 —
+존재하지 않는 경로이므로 검사기가 살아 있는 참조로 오인하지 않게 한다) 를 가리켰는데
 **그 파일이 존재하지 않았다.** 독립 검수가 찾았다 —
 `durability.rs` 가 전이를 하드코딩하고 있었고, 이 표가 바뀌어도 코드는 그대로였다.
 **문서와 코드가 서로 다른 상태기계를 말해도 테스트는 초록색이었다.**

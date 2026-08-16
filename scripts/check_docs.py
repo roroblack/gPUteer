@@ -11,6 +11,8 @@
   3. ★ proto 복제 검사 — contracts/ 가 proto 필드를 옮겨 적었는가
   4. ★ 상태 전이표 중복 검사
   5. history 는 추가만 (수정 감지는 git 이 담당. 여기서는 형식만)
+  6. ★ 문서가 가리키는 저장소 경로가 실제로 존재하는가 (2026-08-16 추가)
+  7. ★ HISTORY 가 실제로 append-only 인가 — git 으로 확인 (2026-08-16 추가)
 
 사용법:
     python scripts/check_docs.py
@@ -58,6 +60,88 @@ STATE_TABLE = re.compile(r"^\s*```statetable", re.M)
 
 def rel(p):
     return os.path.relpath(p, ROOT).replace("\\", "/")
+
+
+# ══════════════════════════════════════════════════════════════════
+# ★ 6. 문서가 가리키는 저장소 경로가 실제로 존재하는가 (2026-08-16 추가)
+#
+# 독립 검수 지적 — 규범 문서가 **없는 파일을 가리키고 있었다.**
+#
+#   state-machines.md   "테스트가 파싱한다" 며 tests/unit/state_machine_test.rs 를 지목
+#                       -> 그 디렉터리 자체가 없었다
+#   RULE.md · contracts tests/chaos/checkpoint_kill.rs
+#                       -> 실제는 crates/checkpoint/tests/kill_chaos.rs
+#
+# 규칙대로 따라간 사람이 **없는 파일을 찾게 된다.**
+# ══════════════════════════════════════════════════════════════════
+
+# 백틱 안의 저장소 상대 경로처럼 보이는 것
+PATHLIKE = re.compile(
+    r"`((?:crates|tools|scripts|proto|tests|docs|apps|python)/[A-Za-z0-9_./-]+)`"
+)
+
+# 검사 대상 문서 — 규범·계약만 본다.
+# 리포트·evidence 는 과거 시점의 기록이므로 경로가 낡을 수 있다(그때는 맞았다).
+PATH_CHECKED = [
+    "RULE.md", "CLAUDE.md",
+    "docs/README.md",
+    "docs/protocol/signing.md", "docs/protocol/state-machines.md",
+    "docs/contracts/01_스트림_소유권.md", "docs/contracts/02_변경_제안_절차.md",
+]
+
+
+def check_referenced_paths():
+    errs = []
+    for doc in PATH_CHECKED:
+        full = os.path.join(ROOT, doc)
+        if not os.path.exists(full):
+            continue
+        text = io.open(full, encoding="utf-8").read()
+        seen = set()
+        for m in PATHLIKE.finditer(text):
+            ref = m.group(1)
+            if ref in seen:
+                continue
+            seen.add(ref)
+            # 와일드카드·설명용 표기는 건너뛴다
+            if any(c in ref for c in "*?<>") or ref.endswith("/"):
+                continue
+            if not os.path.exists(os.path.join(ROOT, ref)):
+                errs.append("%s 가 없는 경로를 가리킨다: %s" % (doc, ref))
+    return errs
+
+
+# ══════════════════════════════════════════════════════════════════
+# ★ 7. HISTORY 가 실제로 append-only 인가 (2026-08-16 추가)
+#
+# HISTORY.md 는 "추가만 한다. 기존 기록을 수정하지 않는다" 고 스스로 적어 두었다.
+# 그런데 **아무도 검사하지 않았다.** git 으로 확인한다.
+# ══════════════════════════════════════════════════════════════════
+
+def check_history_append_only():
+    """직전 커밋 대비 HISTORY 에서 **삭제된 줄**이 있는지 본다."""
+    import subprocess
+    hist = "docs/history/HISTORY.md"
+    try:
+        r = subprocess.run(
+            ["git", "diff", "HEAD", "--unified=0", "--", hist],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []  # git 없음 — 검사 불가
+    if r.returncode != 0:
+        return []
+    removed = [
+        ln[1:].strip()
+        for ln in (r.stdout or "").splitlines()
+        if ln.startswith("-") and not ln.startswith("---") and ln[1:].strip()
+    ]
+    if removed:
+        return [
+            "HISTORY.md 에서 %d줄이 **삭제**됐다 — 추가만 해야 한다 (RULE.md 5). 예: %s"
+            % (len(removed), removed[0][:80])
+        ]
+    return []
 
 
 def main():
@@ -130,6 +214,10 @@ def main():
             warns.append("docs/history/HISTORY.md 에 기록이 없다")
 
     # 출력
+    # ★ 2026-08-16 추가 — 독립 검수 지적
+    errors.extend(check_referenced_paths())
+    warns.extend(check_history_append_only())
+
     print("문서 구조 검사 — %s" % ROOT)
     print("=" * 62)
     if not errors and not warns:
