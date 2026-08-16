@@ -1,0 +1,222 @@
+//! 스키마 지문 — `signing.md` §7.3 "schema_version 증가 없는 필드 추가 금지" 의 **강제 장치**.
+//!
+//! # 왜 필요한가 (P0-08 결과)
+//!
+//! P0-08 이 실측으로 확인한 것:
+//!
+//! ```text
+//! prost 는 미지 필드를 조용히 버린다        (118B -> 148B -> 118B)
+//! 미지 필드는 canonical 에 흔적이 없다
+//! -> 구버전 검증자는 메시지 본문만 보고는 새 필드의 존재를 알 수 없다
+//! -> 유일한 신호는 schema_version 이다
+//! ```
+//!
+//! 그래서 `signing.md` §7.3 은 "schema_version 증가 없는 필드 추가" 를 **금지**한다.
+//! 그런데 **프로토콜은 이 금지를 강제하지 못한다.** 누군가 `.proto` 에 필드를
+//! 하나 추가하고 `schema_version` 상수를 그대로 두면, 구버전은 새 보안 제약을
+//! 무시한 채 서명 검증을 통과시킨다. 아무도 알아채지 못한다.
+//!
+//! **규범이 강제할 수 없는 규칙을 두면 그것은 규범이 아니라 희망이다**
+//! (`CLAUDE.md` §0.4 와 같은 정신).
+//!
+//! # 이 테스트가 하는 일
+//!
+//! `.proto` 전체의 지문을 계산해 `proto/SCHEMA_FINGERPRINT.txt` 와 대조한다.
+//! 스키마가 바뀌면 실패하며, 두 가지 중 하나를 하게 만든다.
+//!
+//! ```text
+//! (a) schema_version 을 올린다        새 필드 추가 · 의미 변경
+//! (b) 지문만 갱신한다                 주석 · 서식 · 신규 메시지 추가 등
+//!                                     -> 왜 버전을 올리지 않아도 되는지 커밋에 적는다
+//! ```
+//!
+//! 지문 갱신:
+//!
+//! ```text
+//! UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint
+//! ```
+//!
+//! # 한계
+//!
+//! 정규식 파서다. `oneof` · `reserved` · 중첩 message 선언을 다루지 않는다.
+//! 지문은 **필드 집합의 변화**를 잡으며, 주석·공백·필드 선언 순서 변화는 무시한다.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use gputeer_protocol::blake3_256;
+
+const PROTO_FILES: &[&str] = &[
+    "common.proto",
+    "job.proto",
+    "lease.proto",
+    "artifact.proto",
+    "control.proto",
+];
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// `.proto` 한 파일에서 `message <Name> { <num> <name> <type> }` 를 전부 뽑는다.
+///
+/// 반환: "File::Message" -> (field number -> "type name")
+fn parse_proto(file: &str) -> BTreeMap<String, BTreeMap<u32, String>> {
+    let src = std::fs::read_to_string(repo_root().join("proto").join(file))
+        .unwrap_or_else(|e| panic!("{file} 읽기 실패: {e}"));
+
+    let mut out: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+    let mut current: Option<String> = None;
+    let mut depth = 0usize;
+
+    for raw in src.lines() {
+        let line = raw.split("//").next().unwrap_or("").trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+
+        if current.is_none() {
+            if let Some(rest) = line.strip_prefix("message ") {
+                if let Some(name) = rest.split_whitespace().next() {
+                    current = Some(format!("{file}::{name}"));
+                    depth = line.matches('{').count();
+                    continue;
+                }
+            }
+            continue;
+        }
+
+        depth += line.matches('{').count();
+        depth -= line.matches('}').count().min(depth);
+        if depth == 0 {
+            current = None;
+            continue;
+        }
+
+        if !line.ends_with(';') || line.starts_with("option") {
+            continue;
+        }
+        let body = line.trim_end_matches(';');
+        let Some((lhs, rhs)) = body.rsplit_once('=') else {
+            continue;
+        };
+        let Ok(num) = rhs.trim().parse::<u32>() else {
+            continue;
+        };
+        // "repeated Digest input_artifacts" / "map<string, string> env_vars"
+        let parts: Vec<&str> = lhs.split_whitespace().collect();
+        let Some(name) = parts.last() else { continue };
+        let ty = parts[..parts.len() - 1].join(" ");
+        let key = current.clone().unwrap();
+
+        // reserved 는 필드가 아니다
+        if ty.starts_with("reserved") || lhs.trim().starts_with("reserved") {
+            continue;
+        }
+        out.entry(key).or_default().insert(num, format!("{ty} {name}"));
+    }
+    out
+}
+
+/// 사람이 읽을 수 있는 지문 본문. 이것 자체를 파일로 저장한다.
+///
+/// 해시만 저장하면 "무엇이 바뀌었는지" 를 알 수 없어 리뷰가 불가능하다.
+fn fingerprint_body() -> String {
+    let mut all: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
+    for f in PROTO_FILES {
+        all.extend(parse_proto(f));
+    }
+    assert!(
+        all.len() >= 20,
+        "메시지를 {}개만 파싱했다 — 파서 결함 (파일 5개에 20개 이상 있어야 한다)",
+        all.len()
+    );
+
+    let mut s = String::new();
+    for (msg, fields) in &all {
+        s.push_str(msg);
+        s.push('\n');
+        for (num, decl) in fields {
+            s.push_str(&format!("  {num} {decl}\n"));
+        }
+    }
+    s
+}
+
+fn fingerprint_path() -> PathBuf {
+    repo_root().join("proto/SCHEMA_FINGERPRINT.txt")
+}
+
+const HEADER: &str = "\
+# proto 스키마 지문 — signing.md §7.3 강제 장치
+#
+# ★ 손으로 편집하지 않는다.
+#   갱신: UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint
+#
+# 이 파일이 바뀌었다면 둘 중 하나를 해야 한다.
+#   (a) 필드 추가/의미 변경  -> schema_version 을 올린다 (signing.md §7.3)
+#   (b) 그 외               -> 왜 버전을 올리지 않아도 되는지 커밋 메시지에 적는다
+#
+# P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
+# 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
+";
+
+/// 파서가 조용히 빈 결과를 내면 지문 검사 전체가 공허해진다.
+#[test]
+fn parser_is_not_vacuous() {
+    let job = parse_proto("job.proto");
+    let key = "job.proto::JobManifest".to_string();
+    let m = job.get(&key).unwrap_or_else(|| panic!("JobManifest 를 못 찾았다"));
+    assert!(m.len() >= 25, "JobManifest 필드를 {}개만 뽑았다", m.len());
+    assert_eq!(m.get(&13).map(String::as_str), Some("string entrypoint"));
+    assert_eq!(m.get(&11).map(String::as_str), Some("repeated Digest input_artifacts"));
+    assert_eq!(m.get(&15).map(String::as_str), Some("map<string, string> env_vars"));
+    assert_eq!(m.get(&90).map(String::as_str), Some("bytes submitter_signature"));
+}
+
+#[test]
+fn proto_schema_matches_recorded_fingerprint() {
+    let body = fingerprint_body();
+    let digest = blake3_256(body.as_bytes());
+    let digest_hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let content = format!("{HEADER}#\n# blake3-256: {digest_hex}\n\n{body}");
+
+    let path = fingerprint_path();
+
+    if std::env::var("UPDATE_SCHEMA_FINGERPRINT").is_ok() {
+        std::fs::write(&path, &content).expect("지문 파일 쓰기");
+        println!("지문 갱신: {}\nblake3-256: {digest_hex}", path.display());
+        return;
+    }
+
+    let recorded = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!(
+            "지문 파일이 없다: {}\n\
+             UPDATE_SCHEMA_FINGERPRINT=1 로 생성하라",
+            path.display()
+        )
+    });
+    let recorded = recorded.replace("\r\n", "\n");
+
+    if recorded != content {
+        // 무엇이 달라졌는지 보여준다. "다르다" 만으로는 고칠 수 없다.
+        let old: Vec<&str> = recorded.lines().filter(|l| !l.starts_with('#')).collect();
+        let new: Vec<&str> = content.lines().filter(|l| !l.starts_with('#')).collect();
+        let added: Vec<_> = new.iter().filter(|l| !old.contains(l)).collect();
+        let removed: Vec<_> = old.iter().filter(|l| !new.contains(l)).collect();
+
+        panic!(
+            "★ proto 스키마가 바뀌었다 (signing.md §7.3).\n\n\
+             추가된 줄:\n  {}\n\n\
+             사라진 줄:\n  {}\n\n\
+             필드 추가 · 타입 변경 · 의미 변경이라면 **schema_version 을 올려야 한다.**\n\
+             P0-08 실측대로, 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호가\n\
+             schema_version 이기 때문이다. 올리지 않으면 구버전이 새 보안 제약을\n\
+             무시한 채 서명 검증을 통과시킨다.\n\n\
+             그 외(주석·서식)라면 지문만 갱신하고 사유를 커밋에 적는다:\n  \
+             UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint",
+            if added.is_empty() { "(없음)".to_string() } else { added.iter().map(|s| s.trim()).collect::<Vec<_>>().join("\n  ") },
+            if removed.is_empty() { "(없음)".to_string() } else { removed.iter().map(|s| s.trim()).collect::<Vec<_>>().join("\n  ") },
+        );
+    }
+}

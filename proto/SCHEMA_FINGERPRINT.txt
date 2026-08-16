@@ -1,0 +1,469 @@
+# proto 스키마 지문 — signing.md §7.3 강제 장치
+#
+# ★ 손으로 편집하지 않는다.
+#   갱신: UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint
+#
+# 이 파일이 바뀌었다면 둘 중 하나를 해야 한다.
+#   (a) 필드 추가/의미 변경  -> schema_version 을 올린다 (signing.md §7.3)
+#   (b) 그 외               -> 왜 버전을 올리지 않아도 되는지 커밋 메시지에 적는다
+#
+# P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
+# 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
+#
+# blake3-256: 0a34709f5599658f071ed8ac6df7c0ccca441cba89ce640db9ce061aa7866bcf
+
+artifact.proto::ArtifactRef
+  1 uint32 schema_version
+  2 string artifact_id
+  3 string job_id
+  4 string attempt_id
+  5 ArtifactKind kind
+  10 Digest digest
+  11 uint64 size_bytes
+  12 string cas_path
+  20 repeated ReplicaAck replicas
+  21 uint64 created_at_unix_ms
+  22 uint64 fence_epoch
+  90 bytes producer_signature
+artifact.proto::AttemptReport
+  1 uint32 schema_version
+  2 string job_id
+  3 string attempt_id
+  4 string node_id
+  5 uint64 fence_epoch
+  10 AttemptOutcome outcome
+  11 uint64 final_step
+  12 uint64 started_at_unix_ms
+  13 uint64 finished_at_unix_ms
+  20 repeated ArtifactRef artifacts
+  21 CheckpointManifest final_checkpoint
+  30 repeated ReportedMetric metrics
+  40 uint64 issued_at_unix_ms
+  90 bytes node_signature
+artifact.proto::CanonicalDecision
+  1 uint32 schema_version
+  2 string job_id
+  3 string chosen_attempt_id
+  4 repeated string superseded_attempt_ids
+  10 CanonicalCriterion deciding_criterion
+  11 string rationale
+  12 uint64 fence_epoch
+  13 uint64 decided_at_unix_ms
+  90 bytes coordinator_signature
+artifact.proto::CheckpointFile
+  1 string path
+  2 Digest digest
+  3 uint64 size_bytes
+  4 repeated Digest chunk_digests
+  5 uint32 chunk_size_bytes
+artifact.proto::CheckpointManifest
+  1 uint32 schema_version
+  2 string checkpoint_id
+  3 string job_id
+  4 string attempt_id
+  5 uint64 step
+  6 uint64 epoch
+  10 repeated CheckpointFile files
+  11 Digest root_digest
+  12 uint64 total_bytes
+  20 ResumeCompleteness completeness
+  30 uint64 created_at_unix_ms
+  31 string producer_node_id
+  32 uint64 fence_epoch
+  90 bytes producer_signature
+artifact.proto::DurabilityStatus
+  1 string checkpoint_id
+  2 DurabilityState state
+  3 Durability required
+  4 uint32 effective_replica_count
+  5 repeated ReplicaAck acks
+  6 bool degraded
+  7 uint64 updated_at_unix_ms
+artifact.proto::ReplicaAck
+  1 uint32 schema_version
+  2 string checkpoint_id
+  3 Digest root_digest
+  10 string holder_device_id
+  11 ReplicaKind kind
+  12 string failure_domain
+  20 bool fsynced
+  21 bool hash_verified
+  22 uint64 stored_bytes
+  30 uint64 acked_at_unix_ms
+  90 bytes holder_signature
+artifact.proto::ReportedMetric
+  1 string name
+  2 int64 value_micro
+  3 bool higher_is_better
+artifact.proto::ResumeCompleteness
+  1 bool model_weights
+  2 bool optimizer_state
+  3 bool lr_scheduler_state
+  4 bool rng_state
+  5 bool sampler_position
+  6 bool dataloader_position
+  7 bool amp_scaler_state
+  10 bool full_resume_guaranteed
+common.proto::ArtifactScope
+  1 repeated string writable_prefixes
+  2 repeated string readable_prefixes
+common.proto::CudaRequirement
+  1 uint32 min_driver_version
+  2 string cuda_runtime_version
+  3 repeated string compute_capabilities
+common.proto::DatasetRef
+  1 Digest root_digest
+  2 uint64 total_bytes
+  3 Sensitivity sensitivity
+  4 RetentionPolicy retention
+  5 bool encrypted_at_rest
+  6 string display_name
+common.proto::Digest
+  1 HashAlgorithm algo
+  2 bytes value
+common.proto::EphemeralCredential
+  1 string credential_id
+  2 bytes token
+  3 uint64 expires_at_unix_ms
+  4 repeated string allowed_endpoints
+common.proto::ExecutionEnvironment
+  1 EnvKind kind
+  10 string image_ref
+  11 Digest image_digest
+  12 Digest oci_source_digest
+  20 string base_runtime
+  21 Digest lock_digest
+  22 bytes lock_content
+  23 Digest lock_cas_ref
+  30 string os
+  31 string arch
+  32 string min_libc_version
+  33 CudaRequirement cuda
+  34 Digest code_digest
+  35 TarballPolicy tarball_policy
+common.proto::GpuRequest
+  1 uint64 min_vram_bytes
+  2 uint32 min_count
+  3 CudaRequirement cuda
+  4 GpuAllocationMode allocation_mode
+  5 repeated string allowed_gpu_models
+common.proto::NetworkPolicy
+  1 repeated string staging_allow_hosts
+  2 repeated string runtime_allow_hosts
+  3 bool mediated_dns
+common.proto::PeerHint
+  1 string node_id
+  2 string peer_id
+  3 repeated string multiaddrs
+  4 repeated Digest known_digests
+common.proto::Ppm
+  1 uint64 value
+common.proto::ResourceRequest
+  1 GpuRequest gpu
+  2 uint32 cpu_cores
+  3 uint64 ram_bytes
+  4 uint64 workspace_bytes
+  5 uint64 max_egress_bps
+common.proto::ResourceScope
+  1 repeated string gpu_uuids
+  2 uint32 cpu_cores
+  3 uint64 ram_bytes
+  4 uint64 workspace_bytes
+  5 repeated string writable_prefixes
+common.proto::TarballPolicy
+  1 bool reject_path_traversal
+  2 bool reject_links
+  3 uint64 max_extracted_bytes
+common.proto::WorkloadHint
+  1 WorkloadClass class
+  2 uint64 estimated_steps
+  3 uint32 ref_step_time_ms
+  4 string ref_gpu_model
+  10 uint64 model_params
+  11 uint64 est_checkpoint_bytes
+  12 uint64 est_peak_vram_bytes
+control.proto::AddMember
+  1 string member_id
+  2 bytes public_key
+  3 string role
+  90 bytes owner_signature
+control.proto::ApproveDevice
+  1 string device_id
+  2 string member_id
+  3 bytes public_key
+  4 string peer_id
+  5 KeyProtection key_protection
+  6 bool is_ephemeral
+  90 bytes owner_signature
+control.proto::ChangeCoordinatorSet
+  1 repeated CoordinatorEntry new_set
+  2 string added_id
+  3 string removed_id
+  90 bytes owner_signature
+control.proto::Committed
+  1 uint64 term
+  2 uint64 index
+control.proto::ControlAction
+  1 AddMember add_member
+  2 RemoveMember remove_member
+  3 ApproveDevice approve_device
+  4 RevokeDevice revoke_device
+  5 ChangeCoordinatorSet change_coordinator_set
+  6 UpdatePolicy update_policy
+  7 RotateOwnerKey rotate_owner_key
+  8 QuarantineDevice quarantine_device
+  9 ReleaseQuarantine release_quarantine
+  20 SubmitJob submit_job
+  21 TransitionJob transition_job
+  22 CreateAttempt create_attempt
+  23 TransitionAttempt transition_attempt
+  24 SetCanonical set_canonical
+  30 IssueLease issue_lease
+  31 RenewLease renew_lease
+  32 RevokeLease revoke_lease
+  40 TransitionNode transition_node
+  41 RecordBenchmark record_benchmark
+  42 RecordWorkloadProfile record_workload_profile
+  43 RecordDurabilityStatus record_durability
+control.proto::CoordinatorEntry
+  1 string device_id
+  2 bytes public_key
+  3 repeated string endpoints
+  4 string failure_domain
+control.proto::Cursor
+  1 uint64 index
+  2 uint64 term
+control.proto::DurableLocal
+  1 uint64 local_seq
+control.proto::ExpectedValue
+  1 string key
+  2 Digest digest
+control.proto::Precondition
+  1 uint64 expected_index
+  2 ExpectedValue expected_value
+  3 uint64 fence_at_least
+  4 bool none
+control.proto::ProposeOutcome
+  1 Committed committed
+  2 DurableLocal durable
+  3 Rejected rejected
+  4 Unavailable unavailable
+  5 Unsupported unsupported
+control.proto::ProposeRequest
+  1 ControlAction action
+  2 bytes idempotency_key
+  3 Precondition precondition
+  4 DurabilityRequirement requires
+control.proto::QuarantineDevice
+  1 string device_id
+  2 repeated RiskSignal signals
+  3 bool target_is_coordinator
+  90 repeated bytes verdict_signatures
+control.proto::ReadRequest
+  1 ControlQuery query
+  2 ReadConsistency consistency
+  3 uint32 max_staleness_ms
+control.proto::ReadResult
+  1 ControlState state
+  2 uint64 read_index
+  3 uint64 as_of_unix_ms
+  4 ReadConsistency effective_consistency
+control.proto::Rejected
+  1 ProposeRejectReason reason
+  2 string detail
+  3 uint64 actual_index
+control.proto::ReleaseQuarantine
+  1 string device_id
+  2 string reason
+  90 bytes owner_signature
+control.proto::RemoveMember
+  1 string member_id
+  90 bytes owner_signature
+control.proto::RevokeDevice
+  1 string device_id
+  2 string reason
+  90 repeated bytes signatures
+control.proto::RiskSignal
+  1 string kind
+  2 string detail
+  3 uint64 observed_at_unix_ms
+  4 string observer_coordinator_id
+control.proto::RotateOwnerKey
+  1 bytes new_owner_public_key
+  2 bytes new_recovery_public_key
+  90 bytes authorizing_signature
+control.proto::SubmitJob
+  1 string device_id
+  2 string member_id
+  3 string peer_id
+  4 bool approved
+  5 bool is_ephemeral
+  6 string risk_state
+  7 KeyProtection key_protection
+  8 Digest agent_binary_digest
+  9 string agent_version
+  10 uint64 reliability_ppm
+  11 uint64 survival_rate_ppm
+  12 uint64 mtbf_hours
+  13 uint32 observed_sessions
+  14 bool insufficient_data
+  20 SecurityTier tier
+  21 IsolationClass isolation
+  22 KeyProtection key_protection
+  23 RuntimeMode runtime
+  24 string failure_domain
+control.proto::Unavailable
+  1 bool retryable
+  2 string redirect_coordinator_id
+  3 uint32 retry_after_ms
+control.proto::Unsupported
+  1 DurabilityRequirement required
+  2 string detail
+control.proto::UpdatePolicy
+  1 Digest policy_hash
+  2 bytes policy_content
+  3 bool is_relaxation
+  90 repeated bytes signatures
+control.proto::WatchEvent
+  1 ControlEvent event
+  2 WatchReset reset
+  10 Cursor cursor
+control.proto::WatchFilter
+  1 repeated ControlEntityKind kinds
+  2 repeated string ids
+control.proto::WatchRequest
+  1 WatchFilter filter
+  2 Cursor from
+control.proto::WatchReset
+  1 string reason
+  2 Cursor resume_from
+control.proto::Writability
+  1 QuorumState quorum
+  2 DurabilityRequirement max_guarantee
+  3 uint32 alive_coordinators
+  4 uint32 total_coordinators
+  5 string leader_id
+  6 uint64 estimated_recovery_unix_ms
+job.proto::ExecutionGrant
+  1 uint32 schema_version
+  2 string grant_id
+  3 JobManifest manifest
+  4 Digest manifest_hash
+  5 string attempt_id
+  6 Lease lease
+  7 repeated PeerHint peers
+  8 EphemeralCredential creds
+  9 GrantedExecutionPlan plan
+  20 string coordinator_device_id
+  21 uint64 coordinator_term
+  22 uint64 issued_at_unix_ms
+  23 uint64 expires_at_unix_ms
+  24 bytes nonce
+  90 bytes coordinator_signature
+job.proto::GrantedExecutionPlan
+  1 ExecutionMode mode
+  2 GpuAllocationMode gpu_allocation
+  3 repeated string assigned_gpu_uuids
+  10 uint32 remote_replication_interval_minutes
+  11 Durability effective_durability
+  20 PlacementRationale rationale
+job.proto::JobManifest
+  1 uint32 schema_version
+  2 string job_id
+  3 string team_id
+  10 ExecutionEnvironment env
+  11 repeated Digest input_artifacts
+  12 DatasetRef dataset
+  13 string entrypoint
+  14 repeated string args
+  15 map<string, string> env_vars
+  20 ResourceRequest resources
+  21 WorkloadHint workload
+  30 uint32 deadline_minutes
+  31 Preference preference
+  32 uint32 max_queue_minutes
+  40 uint32 checkpoint_interval_minutes
+  41 Durability durability
+  42 PartitionBehavior on_partition
+  43 uint32 max_data_loss_minutes
+  50 IsolationClass minimum_isolation_class
+  51 SecurityTier minimum_security_tier
+  52 KeyProtection minimum_key_protection
+  53 SideEffectClass side_effect_class
+  54 NetworkPolicy network
+  55 ArtifactScope artifact_scope
+  56 bool acknowledge_duplicate_risk
+  60 string submitter_device_id
+  61 uint64 issued_at_unix_ms
+  62 uint64 expires_at_unix_ms
+  90 bytes submitter_signature
+job.proto::PlacementRationale
+  1 uint64 t_est_seconds
+  2 uint64 sigma_ln_ppm
+  3 EstimationStage stage
+  10 uint64 p_within_estimate_ppm
+  11 uint64 p_survival_ppm
+  12 uint64 p_success_ppm
+  13 uint64 target_confidence_ppm
+  20 bool is_exploration
+  30 repeated RejectedCandidate rejected
+job.proto::RejectedCandidate
+  1 string node_id
+  2 RejectReason reason
+  3 string detail
+job.proto::SubmitJobResult
+  1 SubmitOutcome outcome
+  2 string job_id
+  3 string detail
+  4 uint64 estimated_available_at_unix_ms
+lease.proto::FenceWatermark
+  1 string team_id
+  2 uint64 max_seen_epoch
+  3 uint64 updated_at_unix_ms
+lease.proto::FencedOperation
+  1 uint64 fence_epoch
+  2 Digest operation_id
+  3 uint64 operation_seq
+lease.proto::Lease
+  1 uint32 schema_version
+  2 string lease_id
+  3 string job_id
+  4 string attempt_id
+  10 uint64 fence_epoch
+  11 uint64 coordinator_term
+  20 string holder_node_id
+  21 repeated string member_node_ids
+  22 string issuing_coordinator_id
+  30 uint64 issued_at_unix_ms
+  31 uint64 expires_at_unix_ms
+  32 uint64 renew_after_unix_ms
+  33 uint32 max_total_duration_seconds
+  40 ResourceScope scope
+  90 bytes coordinator_signature
+lease.proto::ProgressReport
+  1 uint64 current_step
+  2 uint64 total_steps
+  3 uint64 eta_seconds
+  4 uint64 last_committed_step
+  5 uint64 replication_backlog_bytes
+lease.proto::RenewLeaseRequest
+  1 uint32 schema_version
+  2 string lease_id
+  3 uint64 fence_epoch
+  4 string node_id
+  10 ProgressReport progress
+  20 uint64 issued_at_unix_ms
+  21 bytes nonce
+  90 bytes node_signature
+lease.proto::RenewLeaseResult
+  1 RenewOutcome outcome
+  2 Lease lease
+  3 string detail
+  4 uint32 retry_after_ms
+lease.proto::RevokeLeaseNotice
+  1 uint32 schema_version
+  2 string lease_id
+  3 uint64 fence_epoch
+  4 RevokeCause cause
+  5 uint64 issued_at_unix_ms
+  90 bytes coordinator_signature
