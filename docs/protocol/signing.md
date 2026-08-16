@@ -424,6 +424,7 @@ crates/protocol/tests/schema_fingerprint.rs       대조. 다르면 실패
 | Heartbeat / RPC | ✅ 적용 | ✅ | 60초 |
 | **`JobManifest`** | **❌ 미적용** | ✅ | **7일** |
 | Invite Bundle | ❌ 미적용 | ✅ | 팀 설정 |
+| **증거 6종** (아래 §9.1) | ❌ 미적용 | **❌ (만료 없음)** | — |
 | Genesis / Release Manifest | ❌ 미적용 | ❌ (무기한) | — |
 
 ```text
@@ -436,47 +437,74 @@ clock_skew_tolerance = 60초 (프로토콜 상수)
 Job은 큐에서 수 시간 대기하는 것이 **정상 동작**이다(계획서 §13.6 aging queue).
 따라서 Manifest에 skew 규칙을 걸면 안 된다.
 
-### ★ 9.1 이 표는 아직 완전하지 않다 (2026-08-16)
+★ **기본 TTL(60초) == skew 허용치(60초)이므로 미래 방향 skew 검사는
+만료 검사에 가려진다** (`DoD-04` 실측). 안전성 문제는 아니다 — 둘 다 거부한다.
+**과거 방향**(검증자 시계가 빠른 경우)은 여전히 도달 가능하며 그것이 skew 검사의
+실질적 역할이다.
 
-T1 구현 중 발견했다. **서명 대상 중 6종이 위 표에 없다.**
+TTL 을 늘려 미래 방향을 "살리는" 것은 **하지 않는다** — 단수명 메시지의 수명을
+늘리면 replay 창이 커진다. 보안 매개변수를 코드 경로 도달성 때문에 바꾸지 않는다.
+
+### ★ 9.1 증거 메시지 — `Lifetime::Evidence` (ADR-029)
+
+**서명 대상 6종은 "권한" 이 아니라 "증거" 다. 시각으로 만료시키지 않는다.**
 
 ```text
 CheckpointManifest    ReplicaAck    ArtifactRef
 AttemptReport         CanonicalDecision    RevokeLeaseNotice
 ```
 
-이들은 `expires_at` 필드조차 없다 — **만료 개념이 정의되지 않았다.**
+이들은 `expires_at` 필드조차 없다. 처음에는 표의 누락으로 보였으나,
+**만료 개념 자체가 없는 것이 옳다.**
+
+#### 과거의 사실은 만료되지 않는다
+
+`CheckpointManifest` 는 "이 체크포인트의 내용이 이것이다" 라는 증거다.
+3년 뒤에도 참이다. 만료시키면 **오래된 체크포인트에서 재개할 수 없게 되고**,
+그것은 이 시스템의 존재 이유를 정면으로 부순다.
+
+#### ★ 그러나 "그 시점의 사실" ≠ "지금의 사실"
+
+`Perpetual` 과 구분하는 이유다.
 
 ```text
-CheckpointManifest    created_at_unix_ms(30) 만 있다
-ReplicaAck            acked_at_unix_ms(30) 만 있다
-ArtifactRef           created_at_unix_ms(21) 만 있다
-AttemptReport         issued_at_unix_ms(40) 만 있다
-CanonicalDecision     decided_at_unix_ms(13) 만 있다
-RevokeLeaseNotice     issued_at_unix_ms(5) 만 있다
+Perpetual   Genesis · Release Manifest. 시스템 상수에 가깝다.
+            "지금도 참인가" 를 물을 필요가 없다.
+
+Evidence    관측 시점의 사실이다. **소비 측이 신선도를 판단해야 한다.**
 ```
 
-**추측으로 채우지 않는다** (`CLAUDE.md` §1 — "값을 모르면 비워 둔다").
-`Lifetime` 을 잘못 고르면 정상 메시지가 전부 거부되거나(§9 경고),
-반대로 만료된 증거가 영원히 유효해진다.
+그래서 `Evidence` 메시지는 **`observed_at` 을 반드시 노출한다(MUST).**
+"언제인지 모르는 증거" 는 증거가 아니다.
 
-그래서 이 6종은 `ToCanonicalFields` 만 구현하고 **`Signable` 은 구현하지 않았다.**
-`crates/protocol/tests/t1_signing_targets.rs::domain_coverage_is_explicit` 가
-현재 커버리지를 고정하며, 숫자가 바뀌면 실패한다.
+#### 신선도는 시각이 아니라 fencing 이 판단한다
 
-**결정이 필요한 질문:**
+6종 중 5종이 `fence_epoch` 을 갖는다. stale 한 증거는 epoch 이 낮아 거부된다.
+**시계는 어긋나지만 epoch 은 어긋나지 않는다.**
+
+#### ★ `ReplicaAck` 만 `fence_epoch` 이 없다
 
 ```text
-1. 이 6종은 만료되는가?
-   - 체크포인트·산출물 증거는 영구(Perpetual)가 자연스러워 보인다
-     — 3년 전 체크포인트도 여전히 그 내용의 증거다
-   - 그러나 RevokeLeaseNotice 는 단수명이어야 할 것 같다
-     — 오래된 회수 통지를 재전송하면?
-2. 영구라면 replay 는 어떻게 막는가? (§10 은 단수명만 대상이다)
-3. `expires_at` 필드를 추가해야 하면 schema_version 을 올려야 한다 (§7.3)
+ReplicaAck 는 REPLICATED(n) 을 세는 근거 = durability 주장의 뿌리인데
+신선도 판단 근거가 acked_at 하나뿐이다.
+
+**복제본이 삭제되어도 ACK 는 영원히 유효하다.**
 ```
 
-→ 실행계획 v2 **T2** 에서 결정한다.
+소비 측은 이것을 "지금 durable 하다" 가 아니라
+**"`acked_at` 시점에 durable 했다"** 로만 읽어야 한다(MUST).
+`CLAUDE.md` §0.3 의 `COMMITTED_DEGRADED` 가 같은 인식이다.
+
+→ `fence_epoch` 추가는 `schema_version` 상향(§7.3)이 필요해 별도 결정이다.
+`TODO_VISION` V-07.
+
+#### `Evidence` 는 replay 대상이 아니다
+
+§10 은 단수명 메시지만 대상으로 한다. `RevokeLeaseNotice` 는 명령이지만
+`fence_epoch` 이 stale 회수를 막는다. 다만 **같은 epoch 의 회수 통지를
+반복 전송하는 것**은 막지 못한다 — 회수는 멱등하므로 무해하다.
+
+근거와 대안 검토는 **ADR-029**.
 
 ---
 

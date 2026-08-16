@@ -9,6 +9,7 @@
 
 pub mod canonical;
 pub mod constants;
+pub mod signable;
 pub mod signing;
 pub mod to_fields;
 

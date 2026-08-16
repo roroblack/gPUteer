@@ -125,7 +125,28 @@ pub enum Lifetime {
     /// `now < expires_at` 만. `issued_at` 은 검사하지 않는다.
     /// JobManifest · Lease · Invite Bundle
     LongLived,
-    /// 만료 검사 없음. Genesis · Release Manifest
+    /// ★ 만료 검사 없음 — **증거(evidence)** 다 (ADR-029).
+    ///
+    /// CheckpointManifest · ReplicaAck · ArtifactRef ·
+    /// AttemptReport · CanonicalDecision · RevokeLeaseNotice
+    ///
+    /// # `Perpetual` 과 무엇이 다른가
+    ///
+    /// 동작은 같다(만료 검사 없음). **의미가 다르다.**
+    ///
+    /// ```text
+    /// Perpetual   시스템 상수에 가깝다. "지금도 참인가" 를 물을 필요가 없다
+    /// Evidence    관측 시점의 사실이다. **소비 측이 신선도를 판단해야 한다**
+    /// ```
+    ///
+    /// 과거의 사실은 만료되지 않는다 — 체크포인트 증거를 시각으로 만료시키면
+    /// 오래된 체크포인트에서 재개할 수 없게 되고, 그것은 이 시스템의 존재 이유를 부순다.
+    ///
+    /// ★ 그러나 **"그 시점의 사실" 은 "지금의 사실" 이 아니다.**
+    /// `ReplicaAck` 가 가장 뚜렷하다 — 복제본이 삭제되어도 ACK 는 영원히 유효하다.
+    /// 그래서 [`Signable::observed_at_unix_ms`] 를 반드시 노출하게 했다.
+    Evidence,
+    /// 만료 검사 없음. Genesis · Release Manifest — 시스템 상수에 가깝다.
     Perpetual,
 }
 
@@ -144,10 +165,24 @@ pub trait Signable {
     fn to_canonical_fields(&self) -> Fields;
     /// 서명 필드(90). 아직 서명하지 않았으면 빈 슬라이스.
     fn signature_bytes(&self) -> &[u8];
-    /// §9. `Perpetual` 이면 무시된다.
+    /// §9. `Evidence`/`Perpetual` 이면 무시된다.
     fn expires_at_unix_ms(&self) -> u64;
     /// §9. `ShortLived` 일 때만 쓰인다.
     fn issued_at_unix_ms(&self) -> u64;
+
+    /// ★ 이 증거가 **언제의 사실인가** (ADR-029).
+    ///
+    /// `Lifetime::Evidence` 메시지는 만료되지 않으므로, 소비 측이
+    /// 신선도를 판단할 근거가 필요하다. 그 근거를 **타입이 강제**한다.
+    ///
+    /// 기본 구현은 `issued_at_unix_ms()` 다. 메시지마다 이름이 다르므로
+    /// (`created_at` · `acked_at` · `decided_at`) 각자 덮어쓴다.
+    ///
+    /// ★ 0 을 반환하면 안 된다 — "언제인지 모르는 증거" 는 증거가 아니다.
+    /// `evidence_must_expose_observation_time` 테스트가 검사한다.
+    fn observed_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms()
+    }
     /// §8-6. 이 값으로 공개키를 찾는다.
     fn signer_id(&self) -> &str;
 }
@@ -354,7 +389,8 @@ pub fn verify<M: Signable + Clone>(
 
     // 7. 시각 (§9)
     match M::LIFETIME {
-        Lifetime::Perpetual => {}
+        // 증거는 만료되지 않는다 (ADR-029). 신선도는 소비 측이 fence_epoch 로 판단한다.
+        Lifetime::Evidence | Lifetime::Perpetual => {}
         Lifetime::LongLived => {
             if now_unix_ms >= msg.expires_at_unix_ms() {
                 return Err(VerifyOutcome::Expired);

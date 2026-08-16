@@ -84,3 +84,43 @@
 
 이것을 "보안 필드를 서명했으니 안전하다" 로 읽으면 `CLAUDE.md` §0.4 위반이다.
 근거: `docs/evidence/DoD-03_서명대상_완전성.md` limitations 마지막 항목.
+
+
+### V-07 — `ReplicaAck` 에 `fence_epoch` 추가
+
+| 필드 | 내용 |
+|---|---|
+| **도입 트리거** | `ReplicaAck` 신선도 오판으로 인한 데이터 손실 **1건**, 또는 `COMMITTED` 선언 후 복제본 부재가 확인된 사례 **1건** |
+| 지금 안 하는 이유 | `.proto` 변경 → `schema_version` 상향 필요(§7.3). 복제 계층 자체가 미구현이라 오판 사례를 관측할 수 없다 |
+| 예상 비용 | 생성 소(필드 1개) / 검증 대(**schema_version 2 도입 = 버전 협상 경로 전체가 처음으로 실행된다**) / 대기 없음 |
+| 폐기 조건 | 복제 계층이 ACK 대신 **주기적 재확인**(challenge-response)으로 durability 를 판정하도록 설계가 바뀌는 경우 |
+
+★ `ReplicaAck` 는 6종 증거 중 **유일하게 `fence_epoch` 이 없다**(ADR-029).
+그런데 `REPLICATED(n)` 을 세는 근거이므로 **durability 주장의 뿌리**다.
+가장 약한 곳이 가장 중요한 곳이다.
+
+**복제본이 삭제되어도 ACK 는 영원히 유효하다.** 지금은 소비 측이
+`acked_at` 만 보고 신선도를 판단해야 하며, 그 규약은 강제되지 않는다.
+
+고정 테스트: `crates/crypto/tests/lifetime_policy.rs::replica_ack_stays_valid_forever_even_if_replica_is_gone`
+— **통과한다는 것이 곧 "프로토콜이 이 상황을 막지 못한다" 는 뜻**이다.
+
+### V-08 — 증거 메시지에 서명자 ID 필드 추가
+
+| 필드 | 내용 |
+|---|---|
+| **도입 트리거** | 검증자가 `signer_id` 대체값으로 키를 찾지 못해 `UnknownSigner` 를 내는 사례 **1건**, 또는 Coordinator 가 2대 이상으로 늘어나는 시점 |
+| 지금 안 하는 이유 | `.proto` 변경 → `schema_version` 상향(§7.3). 단일 Coordinator(v0.1 SingleNodeStore)에서는 대체값으로 충분하다 |
+| 예상 비용 | 생성 소(필드 3개) / 검증 중 / 대기 없음. **V-07 과 함께 하면 schema_version 상향을 1회로 묶을 수 있다** |
+| 폐기 조건 | 없음 — 다중 Coordinator 로 가면 반드시 필요하다 |
+
+세 메시지가 **서명자 ID 필드를 갖지 않는다.**
+
+```text
+ArtifactRef         attempt_id 로 대신 (검증자가 attempt -> node 매핑을 알아야 한다)
+CanonicalDecision   job_id 로 대신     (어느 Coordinator 가 결정했는지 메시지에 없다)
+RevokeLeaseNotice   lease_id 로 대신
+```
+
+★ 대체값은 **키 조회 키로 쓰이므로**, 매핑을 모르는 검증자는 유효한 서명도
+`UnknownSigner` 로 거부한다. 지금은 단일 Coordinator 라 무해하다.
