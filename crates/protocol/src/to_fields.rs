@@ -403,3 +403,61 @@ impl ToCanonicalFields for pb::Lease {
 /// 여기에 항목을 추가할 때는 **왜 지금 구현하지 않는지**를 설명에 적는다.
 /// 서명 밖 필드는 위조 가능하다는 뜻이므로 "나중에" 는 사유가 되지 않는다.
 pub const UNIMPLEMENTED_FIELDS: &[(&str, u32, &str)] = &[];
+
+// ══════════════════════════════════════════════════════════════════
+// Signable — signing.md §8 검증 순서 · §9 시각 정책
+//
+// ★ LIFETIME 을 잘못 고르면 **큐를 통과한 정상 Job 이 100% 거부된다.**
+//   §9 표를 그대로 옮긴다. 추측하지 않는다.
+// ══════════════════════════════════════════════════════════════════
+
+impl crate::signing::Signable for pb::JobManifest {
+    const DOMAIN: crate::canonical::Domain = crate::canonical::Domain::Manifest;
+    // §9 — Job 은 큐에서 수 시간 대기하는 것이 **정상 동작**이다(계획서 §13.6 aging queue).
+    // skew 규칙을 걸면 정상 Job 이 전부 거부된다. 기본 TTL 7일.
+    const LIFETIME: crate::signing::Lifetime = crate::signing::Lifetime::LongLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.submitter_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.expires_at_unix_ms
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.submitter_device_id
+    }
+}
+
+impl crate::signing::Signable for pb::Lease {
+    const DOMAIN: crate::canonical::Domain = crate::canonical::Domain::Lease;
+    // §9 — Lease 는 skew 규칙 미적용, expires_at 만 검사. 기본 TTL 10분.
+    const LIFETIME: crate::signing::Lifetime = crate::signing::Lifetime::LongLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.coordinator_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.expires_at_unix_ms
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.issuing_coordinator_id
+    }
+}

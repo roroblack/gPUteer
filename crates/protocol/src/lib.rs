@@ -9,6 +9,7 @@
 
 pub mod canonical;
 pub mod constants;
+pub mod signing;
 pub mod to_fields;
 
 /// proto/*.proto 에서 생성된 타입.
@@ -19,6 +20,10 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/gputeer.v1.rs"));
 }
 
+pub use signing::{
+    sign, signing_input, verify, KeyResolver, Lifetime, NoReplayCheck, ReplayGuard, Signable,
+    Verified, VerifyOutcome,
+};
 pub use to_fields::{ToCanonicalFields, UNIMPLEMENTED_FIELDS};
 pub use canonical::{
     blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
