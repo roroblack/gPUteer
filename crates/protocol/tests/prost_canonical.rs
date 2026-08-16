@@ -276,34 +276,541 @@ fn lease_canonical_is_deterministic_and_excludes_signature() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn unimplemented_nested_fields_are_declared() {
-    // 현재 미구현으로 선언된 필드가 실제로 canonical 에 없는지 확인한다.
-    // (반대로, 선언되지 않은 필드가 빠져 있으면 이 테스트로는 못 잡는다 —
-    //  그래서 to_fields.rs 를 수동 구현으로 유지한다)
+fn unimplemented_field_list_is_empty() {
+    // 2026-08-16 에 6건을 전부 구현해 비웠다.
+    // 비어 있지 않다면 **서명 밖에 있는 위조 가능한 필드가 있다**는 뜻이다.
+    for (msg, num, desc) in UNIMPLEMENTED_FIELDS {
+        println!("★ 서명 밖 필드: {msg} field {num} — {desc}");
+    }
     assert!(
-        !UNIMPLEMENTED_FIELDS.is_empty(),
-        "미구현 필드가 없다면 이 목록을 비우고 이 테스트를 제거해야 한다"
+        UNIMPLEMENTED_FIELDS.is_empty(),
+        "서명 대상에서 빠진 필드가 {}건 있다. 위조 가능하다",
+        UNIMPLEMENTED_FIELDS.len()
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ 보안 필드가 실제로 서명에 들어가는가
+//
+// 이 테스트들의 요점은 "canonical 이 달라져야 한다" 는 것이다.
+// 같으면 그 필드는 서명에 반영되지 않은 것이고, 곧 위조 가능하다는 뜻이다.
+// ══════════════════════════════════════════════════════════════════
+
+fn changes_canonical(mutate: impl FnOnce(&mut pb::JobManifest)) -> bool {
+    let base = canonical_encode(&minimal_manifest().to_canonical_fields(), &[]);
+    let mut m = minimal_manifest();
+    mutate(&mut m);
+    canonical_encode(&m.to_canonical_fields(), &[]) != base
+}
+
+#[test]
+fn network_policy_is_signed() {
+    assert!(
+        changes_canonical(|m| {
+            m.network = Some(pb::NetworkPolicy {
+                runtime_allow_hosts: vec!["evil.example".into()],
+                mediated_dns: false,
+                ..Default::default()
+            });
+        }),
+        "network(54) 가 서명 밖이다 — 중간자가 네트워크 정책을 고쳐도 검증이 통과한다"
+    );
+}
+
+#[test]
+fn artifact_scope_is_signed() {
+    assert!(
+        changes_canonical(|m| {
+            m.artifact_scope = Some(pb::ArtifactScope {
+                writable_prefixes: vec!["/".into()],
+                ..Default::default()
+            });
+        }),
+        "artifact_scope(55) 가 서명 밖이다 — 산출물 쓰기 범위를 넓힐 수 있다"
+    );
+}
+
+#[test]
+fn execution_environment_is_signed() {
+    assert!(
+        changes_canonical(|m| {
+            m.env = Some(pb::ExecutionEnvironment {
+                image_ref: "registry.evil/backdoor:1".into(),
+                image_digest: Some(pb::Digest {
+                    algo: 1,
+                    value: vec![0xEE; 32],
+                }),
+                ..Default::default()
+            });
+        }),
+        "env(10) 이 서명 밖이다 — 실행 이미지를 통째로 교체할 수 있다"
+    );
+}
+
+#[test]
+fn dataset_ref_is_signed() {
+    assert!(
+        changes_canonical(|m| {
+            m.dataset = Some(pb::DatasetRef {
+                total_bytes: 12345,
+                sensitivity: 3,
+                display_name: "ds".into(),
+                ..Default::default()
+            });
+        }),
+        "dataset(12) 이 서명 밖이다 — SENSITIVE 표시와 삭제 정책을 떼어낼 수 있다"
+    );
+}
+
+#[test]
+fn input_artifacts_are_signed_and_order_is_preserved() {
+    let d = |b: u8| pb::Digest {
+        algo: 1,
+        value: vec![b; 32],
+    };
+    assert!(
+        changes_canonical(|m| m.input_artifacts = vec![d(1), d(2)]),
+        "input_artifacts(11) 가 서명 밖이다 — 입력 산출물을 바꿔칠 수 있다"
     );
 
-    // JobManifest 의 dataset(12) 을 채워도 canonical 이 변하지 않아야 한다
-    // (= 아직 서명 대상이 아니다)
-    let base = minimal_manifest();
-    let mut with_dataset = minimal_manifest();
-    with_dataset.dataset = Some(pb::DatasetRef {
-        total_bytes: 12345,
-        display_name: "ds".into(),
+    // 규칙 d — repeated 는 정렬하지 않는다
+    let mut a = minimal_manifest();
+    a.input_artifacts = vec![d(1), d(2)];
+    let mut b = minimal_manifest();
+    b.input_artifacts = vec![d(2), d(1)];
+    assert_ne!(
+        canonical_encode(&a.to_canonical_fields(), &[]),
+        canonical_encode(&b.to_canonical_fields(), &[]),
+        "repeated message 순서가 canonical 에 반영되지 않았다 (규칙 d)"
+    );
+}
+
+#[test]
+fn lease_scope_is_signed() {
+    let base = pb::Lease {
+        schema_version: 1,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        fence_epoch: 42,
         ..Default::default()
+    };
+    let c0 = canonical_encode(&base.to_canonical_fields(), &[]);
+
+    let mut scoped = base.clone();
+    scoped.scope = Some(pb::ResourceScope {
+        gpu_uuids: vec!["GPU-aaaa".into()],
+        cpu_cores: 64,
+        writable_prefixes: vec!["/".into()],
+        ..Default::default()
+    });
+    assert_ne!(
+        canonical_encode(&scoped.to_canonical_fields(), &[]),
+        c0,
+        "Lease.scope(40) 이 서명 밖이다 — 보유자가 스스로 자원 범위를 넓힐 수 있다"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 신규 벡터 — 참조 구현과 바이트 대조
+// ══════════════════════════════════════════════════════════════════
+
+#[test]
+fn security_field_vectors_match_reference() {
+    let doc = vectors();
+
+    let mut m = minimal_manifest();
+    m.network = Some(pb::NetworkPolicy {
+        staging_allow_hosts: vec!["pypi.internal".into(), "mirror.internal".into()],
+        runtime_allow_hosts: vec![],
+        mediated_dns: true,
+    });
+    m.artifact_scope = Some(pb::ArtifactScope {
+        writable_prefixes: vec!["jobs/01JBXR7Q0000000000000000AA/".into()],
+        readable_prefixes: vec!["datasets/shared/".into()],
     });
 
     assert_eq!(
-        canonical_encode(&base.to_canonical_fields(), &[]),
-        canonical_encode(&with_dataset.to_canonical_fields(), &[]),
-        "dataset 이 UNIMPLEMENTED_FIELDS 에 있는데 canonical 에 반영됐다 — 목록이 낡았다"
+        hex(&canonical_encode(&m.to_canonical_fields(), &[])),
+        find(&doc, "v14_security_fields_are_signed")["canonical_hex"]
+            .as_str()
+            .unwrap(),
+        "보안 필드 canonical 이 참조 구현과 다르다"
+    );
+}
+
+#[test]
+fn dataset_vector_matches_reference() {
+    let doc = vectors();
+    let mut m = minimal_manifest();
+    m.dataset = Some(pb::DatasetRef {
+        root_digest: Some(pb::Digest {
+            algo: 1,
+            value: vec![0xAB; 32],
+        }),
+        total_bytes: 42_949_672_960,
+        sensitivity: 3,
+        retention: 2,
+        encrypted_at_rest: true,
+        display_name: "internal-corpus-v3".into(),
+    });
+    assert_eq!(
+        hex(&canonical_encode(&m.to_canonical_fields(), &[])),
+        find(&doc, "v17_dataset_is_signed")["canonical_hex"]
+            .as_str()
+            .unwrap()
+    );
+}
+
+#[test]
+fn input_artifacts_vector_matches_reference() {
+    let doc = vectors();
+    let d = |b: u8| pb::Digest {
+        algo: 1,
+        value: vec![b; 32],
+    };
+    let mut m = minimal_manifest();
+    m.input_artifacts = vec![d(1), d(2)];
+    assert_eq!(
+        hex(&canonical_encode(&m.to_canonical_fields(), &[])),
+        find(&doc, "v16a_input_artifacts_order_1")["canonical_hex"]
+            .as_str()
+            .unwrap()
+    );
+}
+
+#[test]
+fn execution_environment_vector_matches_reference() {
+    let doc = vectors();
+    let mut m = minimal_manifest();
+    m.env = Some(pb::ExecutionEnvironment {
+        kind: 1,
+        image_ref: "registry.internal/torch:2.4-cu124".into(),
+        image_digest: Some(pb::Digest {
+            algo: 1,
+            value: (0u8..32).collect(),
+        }),
+        os: "linux".into(),
+        arch: "amd64".into(),
+        min_libc_version: "2.31".into(),
+        cuda: Some(pb::CudaRequirement {
+            min_driver_version: 550,
+            cuda_runtime_version: "12.4".into(),
+            compute_capabilities: vec![],
+        }),
+        code_digest: Some(pb::Digest {
+            algo: 1,
+            value: (32u8..64).collect(),
+        }),
+        tarball_policy: Some(pb::TarballPolicy {
+            reject_path_traversal: true,
+            reject_links: true,
+            max_extracted_bytes: 10 * 1024 * 1024 * 1024,
+        }),
+        ..Default::default()
+    });
+    assert_eq!(
+        hex(&canonical_encode(&m.to_canonical_fields(), &[])),
+        find(&doc, "v15_execution_environment_is_signed")["canonical_hex"]
+            .as_str()
+            .unwrap(),
+        "4단 중첩(JobManifest→ExecutionEnvironment→Digest) canonical 이 참조 구현과 다르다"
+    );
+}
+
+#[test]
+fn lease_scope_vector_matches_reference() {
+    let doc = vectors();
+    let l = pb::Lease {
+        schema_version: 1,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        fence_epoch: 42,
+        coordinator_term: 7,
+        holder_node_id: "node-1".into(),
+        member_node_ids: vec!["node-1".into(), "node-2".into()],
+        issuing_coordinator_id: "coord-a".into(),
+        issued_at_unix_ms: 1_755_100_800_000,
+        expires_at_unix_ms: 1_755_100_860_000,
+        renew_after_unix_ms: 1_755_100_830_000,
+        max_total_duration_seconds: 86400,
+        scope: Some(pb::ResourceScope {
+            gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
+            cpu_cores: 8,
+            ram_bytes: 25_769_803_776,
+            workspace_bytes: 85_899_345_920,
+            writable_prefixes: vec!["jobs/01JBXR7Q0000000000000000AA/attempt-3/".into()],
+        }),
+        coordinator_signature: vec![0xCD; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&l.to_canonical_fields(), &[])),
+        find(&doc, "v19_lease_scope_is_signed")["canonical_hex"]
+            .as_str()
+            .unwrap()
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ 전 필드 대조 — 가장 강한 교차검증
+//
+// v02 는 JobManifest 의 **모든 필드**를 채운 896바이트 벡터다.
+// 부분 벡터는 "채우지 않은 필드" 를 검증하지 못한다. 이 테스트가 그 구멍을 메운다.
+// 참조 구현 쪽에서도 `missing_from_full()` 이 "정말 전 필드인가" 를 자동 검사한다.
+// ══════════════════════════════════════════════════════════════════
+
+fn full_manifest() -> pb::JobManifest {
+    let dg = |b: Vec<u8>| Some(pb::Digest { algo: 1, value: b });
+    pb::JobManifest {
+        schema_version: 1,
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        team_id: "01JBXR7Q0000000000000000TT".into(),
+        env: Some(pb::ExecutionEnvironment {
+            kind: 1,
+            image_ref: "registry.internal/torch:2.4-cu124".into(),
+            image_digest: dg((0u8..32).collect()),
+            oci_source_digest: Some(pb::Digest {
+                algo: 2,
+                value: (1u8..33).collect(),
+            }),
+            base_runtime: "python-3.11-cu124".into(),
+            lock_digest: dg((2u8..34).collect()),
+            lock_content: b"torch==2.4.0\n".to_vec(),
+            lock_cas_ref: dg((3u8..35).collect()),
+            os: "linux".into(),
+            arch: "amd64".into(),
+            min_libc_version: "2.31".into(),
+            cuda: Some(pb::CudaRequirement {
+                min_driver_version: 550,
+                cuda_runtime_version: "12.4".into(),
+                compute_capabilities: vec!["8.9".into()],
+            }),
+            code_digest: dg((4u8..36).collect()),
+            tarball_policy: Some(pb::TarballPolicy {
+                reject_path_traversal: true,
+                reject_links: true,
+                max_extracted_bytes: 10 * 1024 * 1024 * 1024,
+            }),
+        }),
+        input_artifacts: vec![
+            pb::Digest {
+                algo: 1,
+                value: vec![1u8; 32],
+            },
+            pb::Digest {
+                algo: 1,
+                value: vec![2u8; 32],
+            },
+        ],
+        dataset: Some(pb::DatasetRef {
+            root_digest: dg(vec![0xABu8; 32]),
+            total_bytes: 42_949_672_960,
+            sensitivity: 3,
+            retention: 2,
+            encrypted_at_rest: true,
+            display_name: "internal-corpus-v3".into(),
+        }),
+        entrypoint: "train.py".into(),
+        args: vec!["--epochs".into(), "3".into(), "--lr".into(), "1e-4".into()],
+        env_vars: [
+            ("OMP_NUM_THREADS", "8"),
+            ("HF_HOME", "/ws/hf"),
+            ("AAA", "1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect(),
+        resources: Some(pb::ResourceRequest {
+            gpu: Some(pb::GpuRequest {
+                min_vram_bytes: 19_327_352_832,
+                min_count: 1,
+                cuda: Some(pb::CudaRequirement {
+                    min_driver_version: 550,
+                    cuda_runtime_version: "12.4".into(),
+                    compute_capabilities: vec!["8.6".into(), "8.9".into(), "9.0".into()],
+                }),
+                allocation_mode: 1,
+                allowed_gpu_models: vec![],
+            }),
+            cpu_cores: 8,
+            ram_bytes: 25_769_803_776,
+            workspace_bytes: 85_899_345_920,
+            max_egress_bps: 0,
+        }),
+        workload: Some(pb::WorkloadHint {
+            class: 1,
+            estimated_steps: 20000,
+            ref_step_time_ms: 420,
+            ref_gpu_model: "RTX4090".into(),
+            model_params: 1_300_000_000,
+            est_checkpoint_bytes: 18_200_000_000,
+            est_peak_vram_bytes: 0,
+        }),
+        deadline_minutes: 180,
+        preference: 2,
+        max_queue_minutes: 60,
+        checkpoint_interval_minutes: 15,
+        durability: 3,
+        on_partition: 2,
+        max_data_loss_minutes: 30,
+        minimum_isolation_class: 2,
+        minimum_security_tier: 3,
+        minimum_key_protection: 2,
+        side_effect_class: 1,
+        network: Some(pb::NetworkPolicy {
+            staging_allow_hosts: vec!["pypi.internal".into(), "mirror.internal".into()],
+            runtime_allow_hosts: vec!["metrics.internal".into()],
+            mediated_dns: true,
+        }),
+        artifact_scope: Some(pb::ArtifactScope {
+            writable_prefixes: vec!["jobs/01JBXR7Q0000000000000000AA/".into()],
+            readable_prefixes: vec!["datasets/shared/".into()],
+        }),
+        acknowledge_duplicate_risk: true,
+        submitter_device_id: "01JBXR7Q0000000000000000DD".into(),
+        issued_at_unix_ms: 1_755_100_800_000,
+        expires_at_unix_ms: 1_755_705_600_000,
+        submitter_signature: vec![0xAA; 64],
+    }
+}
+
+#[test]
+fn v02_full_manifest_matches_reference() {
+    let doc = vectors();
+    let v = find(&doc, "v02_full_manifest");
+    let m = full_manifest();
+    let canon = canonical_encode(&m.to_canonical_fields(), &[]);
+
+    assert_eq!(
+        hex(&canon),
+        v["canonical_hex"].as_str().unwrap(),
+        "전 필드 매니페스트가 참조 구현과 다르다"
+    );
+    assert_eq!(canon.len() as u64, v["canonical_len"].as_u64().unwrap());
+
+    let si = sig_input(Domain::Manifest, 1, &canon);
+    assert_eq!(hex(&si), v["sig_input_hex"].as_str().unwrap());
+    assert_eq!(
+        hex(&blake3_256(&si)),
+        v["sig_input_blake3_256"].as_str().unwrap()
+    );
+    println!("v02 전 필드: {} bytes 일치", canon.len());
+}
+
+#[test]
+fn v02b_full_lease_matches_reference() {
+    let doc = vectors();
+    let v = find(&doc, "v02b_full_lease");
+    let l = pb::Lease {
+        schema_version: 1,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        fence_epoch: 42,
+        coordinator_term: 7,
+        holder_node_id: "node-1".into(),
+        member_node_ids: vec!["node-1".into(), "node-2".into()],
+        issuing_coordinator_id: "coord-a".into(),
+        issued_at_unix_ms: 1_755_100_800_000,
+        expires_at_unix_ms: 1_755_100_860_000,
+        renew_after_unix_ms: 1_755_100_830_000,
+        max_total_duration_seconds: 86400,
+        scope: Some(pb::ResourceScope {
+            gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
+            cpu_cores: 8,
+            ram_bytes: 25_769_803_776,
+            workspace_bytes: 85_899_345_920,
+            writable_prefixes: vec!["jobs/01JBXR7Q0000000000000000AA/attempt-3/".into()],
+        }),
+        coordinator_signature: vec![0xCD; 64],
+    };
+    let canon = canonical_encode(&l.to_canonical_fields(), &[]);
+    assert_eq!(hex(&canon), v["canonical_hex"].as_str().unwrap());
+
+    let si = sig_input(Domain::Lease, 1, &canon);
+    assert_eq!(hex(&si), v["sig_input_hex"].as_str().unwrap());
+    assert_eq!(
+        hex(&blake3_256(&si)),
+        v["sig_input_blake3_256"].as_str().unwrap()
+    );
+}
+
+/// ★ 전 필드 벡터의 **모든 필드**가 실제로 서명에 영향을 주는가.
+///
+/// 어떤 필드든 하나씩 기본값으로 되돌리면 canonical 이 반드시 달라져야 한다.
+/// 달라지지 않는 필드가 있다면 그 필드는 **서명 밖**이고 위조 가능하다.
+///
+/// 벡터 대조만으로는 이것을 못 잡는다 — 참조 구현도 같은 필드를 빠뜨렸다면
+/// 두 구현이 사이좋게 틀린 채로 일치한다.
+#[test]
+fn every_field_in_full_manifest_affects_canonical() {
+    let base = canonical_encode(&full_manifest().to_canonical_fields(), &[]);
+
+    type Mut = Box<dyn Fn(&mut pb::JobManifest)>;
+    let mutations: Vec<(&str, Mut)> = vec![
+        ("job_id(2)", Box::new(|m: &mut pb::JobManifest| m.job_id.clear())),
+        ("team_id(3)", Box::new(|m: &mut pb::JobManifest| m.team_id.clear())),
+        ("env(10)", Box::new(|m: &mut pb::JobManifest| m.env = None)),
+        ("input_artifacts(11)", Box::new(|m: &mut pb::JobManifest| m.input_artifacts.clear())),
+        ("dataset(12)", Box::new(|m: &mut pb::JobManifest| m.dataset = None)),
+        ("entrypoint(13)", Box::new(|m: &mut pb::JobManifest| m.entrypoint.clear())),
+        ("args(14)", Box::new(|m: &mut pb::JobManifest| m.args.clear())),
+        ("env_vars(15)", Box::new(|m: &mut pb::JobManifest| m.env_vars.clear())),
+        ("resources(20)", Box::new(|m: &mut pb::JobManifest| m.resources = None)),
+        ("workload(21)", Box::new(|m: &mut pb::JobManifest| m.workload = None)),
+        ("deadline_minutes(30)", Box::new(|m: &mut pb::JobManifest| m.deadline_minutes = 0)),
+        ("preference(31)", Box::new(|m: &mut pb::JobManifest| m.preference = 0)),
+        ("max_queue_minutes(32)", Box::new(|m: &mut pb::JobManifest| m.max_queue_minutes = 0)),
+        ("checkpoint_interval_minutes(40)", Box::new(|m: &mut pb::JobManifest| m.checkpoint_interval_minutes = 0)),
+        ("durability(41)", Box::new(|m: &mut pb::JobManifest| m.durability = 0)),
+        ("on_partition(42)", Box::new(|m: &mut pb::JobManifest| m.on_partition = 0)),
+        ("max_data_loss_minutes(43)", Box::new(|m: &mut pb::JobManifest| m.max_data_loss_minutes = 0)),
+        ("minimum_isolation_class(50)", Box::new(|m: &mut pb::JobManifest| m.minimum_isolation_class = 0)),
+        ("minimum_security_tier(51)", Box::new(|m: &mut pb::JobManifest| m.minimum_security_tier = 0)),
+        ("minimum_key_protection(52)", Box::new(|m: &mut pb::JobManifest| m.minimum_key_protection = 0)),
+        ("side_effect_class(53)", Box::new(|m: &mut pb::JobManifest| m.side_effect_class = 0)),
+        ("network(54)", Box::new(|m: &mut pb::JobManifest| m.network = None)),
+        ("artifact_scope(55)", Box::new(|m: &mut pb::JobManifest| m.artifact_scope = None)),
+        ("acknowledge_duplicate_risk(56)", Box::new(|m: &mut pb::JobManifest| m.acknowledge_duplicate_risk = false)),
+        ("submitter_device_id(60)", Box::new(|m: &mut pb::JobManifest| m.submitter_device_id.clear())),
+        ("issued_at_unix_ms(61)", Box::new(|m: &mut pb::JobManifest| m.issued_at_unix_ms = 0)),
+        ("expires_at_unix_ms(62)", Box::new(|m: &mut pb::JobManifest| m.expires_at_unix_ms = 0)),
+    ];
+
+    let mut unsigned = Vec::new();
+    for (name, mutate) in &mutations {
+        let mut m = full_manifest();
+        mutate(&mut m);
+        if canonical_encode(&m.to_canonical_fields(), &[]) == base {
+            unsigned.push(*name);
+        }
+    }
+    assert!(
+        unsigned.is_empty(),
+        "지워도 canonical 이 변하지 않는 필드가 있다 = 서명 밖 = 위조 가능:\n  {}",
+        unsigned.join("\n  ")
     );
 
-    for (msg, num, desc) in UNIMPLEMENTED_FIELDS {
-        println!("미구현 서명 필드: {msg} field {num} — {desc}");
-    }
+    // schema_version(1) 은 canonical 이 아니라 sig_input 에 들어간다 (signing.md §4).
+    // canonical 만 보면 놓치므로 여기서 별도로 확인한다.
+    assert_ne!(
+        sig_input(Domain::Manifest, 1, &base),
+        sig_input(Domain::Manifest, 2, &base),
+        "schema_version 이 sig_input 에 반영되지 않았다"
+    );
+
+    // 서명 필드(90)는 반대로 **변하면 안 된다**
+    let mut sig_mut = full_manifest();
+    sig_mut.submitter_signature = vec![0x11; 64];
+    assert_eq!(
+        canonical_encode(&sig_mut.to_canonical_fields(), &[]),
+        base,
+        "서명 필드(90)가 canonical 에 들어갔다"
+    );
+
+    println!(
+        "전 필드 {}개 전부 서명에 반영됨 (+ schema_version 은 sig_input)",
+        mutations.len()
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════

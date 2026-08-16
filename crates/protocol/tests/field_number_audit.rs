@@ -195,13 +195,63 @@ fn lease_field_numbers_match_proto() {
     audit("lease.proto", "Lease", 90);
 }
 
+/// 감사 대상 — `ToCanonicalFields` 를 구현한 모든 메시지.
+///
+/// **새 `impl` 을 추가하면 여기에도 반드시 넣는다.**
+/// 빠뜨리면 그 메시지의 field number 는 아무도 대조하지 않는다.
+const AUDITED: &[(&str, &str, u32)] = &[
+    ("job.proto", "JobManifest", 90),
+    ("lease.proto", "Lease", 90),
+    ("common.proto", "Digest", 90),
+    ("common.proto", "CudaRequirement", 90),
+    ("common.proto", "GpuRequest", 90),
+    ("common.proto", "ResourceRequest", 90),
+    ("common.proto", "WorkloadHint", 90),
+    ("common.proto", "TarballPolicy", 90),
+    ("common.proto", "ExecutionEnvironment", 90),
+    ("common.proto", "DatasetRef", 90),
+    ("common.proto", "NetworkPolicy", 90),
+    ("common.proto", "ArtifactScope", 90),
+    ("common.proto", "ResourceScope", 90),
+];
+
 #[test]
 fn common_message_field_numbers_match_proto() {
-    audit("common.proto", "Digest", 90);
-    audit("common.proto", "CudaRequirement", 90);
-    audit("common.proto", "GpuRequest", 90);
-    audit("common.proto", "ResourceRequest", 90);
-    audit("common.proto", "WorkloadHint", 90);
+    for (file, msg, sig) in AUDITED {
+        if *file == "common.proto" {
+            audit(file, msg, *sig);
+        }
+    }
+}
+
+/// `to_fields.rs` 의 모든 `impl` 이 감사 대상에 등록되어 있는가.
+///
+/// ★ 등록되지 않은 `impl` 은 field number 대조를 받지 않는다.
+///   이 테스트가 없으면 감사망에 조용히 구멍이 생긴다.
+#[test]
+fn every_impl_is_audited() {
+    let src = include_str!("../src/to_fields.rs");
+    let mut impls = Vec::new();
+    for line in src.lines() {
+        let line = line.trim();
+        if line.starts_with("//") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("impl ToCanonicalFields for pb::") {
+            impls.push(rest.trim_end_matches(" {").to_string());
+        }
+    }
+    assert!(impls.len() >= 7, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
+
+    let missing: Vec<_> = impls
+        .iter()
+        .filter(|m| !AUDITED.iter().any(|(_, a, _)| *a == m.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "ToCanonicalFields 를 구현했는데 AUDITED 에 없는 메시지가 있다.\n\
+         field number 대조를 받지 않는다:\n  {missing:?}"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -224,18 +274,8 @@ fn missing_fields(proto_file: &str, message: &str, signature_field: u32) -> Vec<
 fn every_unsigned_field_is_declared_in_unimplemented_list() {
     use gputeer_protocol::UNIMPLEMENTED_FIELDS;
 
-    let targets: &[(&str, &str, u32)] = &[
-        ("job.proto", "JobManifest", 90),
-        ("lease.proto", "Lease", 90),
-        ("common.proto", "Digest", 90),
-        ("common.proto", "CudaRequirement", 90),
-        ("common.proto", "GpuRequest", 90),
-        ("common.proto", "ResourceRequest", 90),
-        ("common.proto", "WorkloadHint", 90),
-    ];
-
     let mut undeclared = Vec::new();
-    for (file, msg, sig) in targets {
+    for (file, msg, sig) in AUDITED {
         for (num, name) in missing_fields(file, msg, *sig) {
             let declared = UNIMPLEMENTED_FIELDS
                 .iter()
@@ -261,7 +301,7 @@ fn unimplemented_list_has_no_stale_entries() {
 
     let mut stale = Vec::new();
     for (msg, num, desc) in UNIMPLEMENTED_FIELDS {
-        let imp = impl_fields(msg);
+        let imp = impl_fields(*msg);
         if imp.contains_key(num) {
             stale.push(format!("{msg} field {num} ({desc})"));
         }

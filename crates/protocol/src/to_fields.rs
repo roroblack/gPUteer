@@ -87,6 +87,16 @@ fn put_msg<T: ToCanonicalFields>(f: &mut Fields, n: u32, v: &Option<T>) {
     }
 }
 
+/// repeated message. **정렬하지 않는다** (규칙 d — 선언 순서가 의미를 갖는다).
+fn put_repeated_msg<T: ToCanonicalFields>(f: &mut Fields, n: u32, v: &[T]) {
+    if !v.is_empty() {
+        f.set(
+            n,
+            Value::RepeatedMessage(v.iter().map(|x| x.to_canonical_fields()).collect()),
+        );
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // common.proto
 // ══════════════════════════════════════════════════════════════════
@@ -164,6 +174,114 @@ impl ToCanonicalFields for pb::WorkloadHint {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// common.proto — 실행 환경 · 데이터셋 · 보안 범위
+//
+// ★ 2026-08-16 추가. DoD-02 가 "서명 대상에서 빠진 필드 6건, 그 중 3건이
+//   보안 필드" 를 찾았고, 그 6건을 서명 안으로 넣기 위한 구현이다.
+//   빠진 채로 두면 중간자가 네트워크 정책 · 산출물 범위 · 자원 범위를
+//   고쳐도 서명 검증이 통과한다.
+// ══════════════════════════════════════════════════════════════════
+
+impl ToCanonicalFields for pb::TarballPolicy {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_bool(&mut f, 1, self.reject_path_traversal);
+        put_bool(&mut f, 2, self.reject_links);
+        put_uint(&mut f, 3, self.max_extracted_bytes);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ExecutionEnvironment {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.kind as u64);
+
+        // kind == OCI_IMAGE
+        put_str(&mut f, 10, &self.image_ref);
+        put_msg(&mut f, 11, &self.image_digest);
+        put_msg(&mut f, 12, &self.oci_source_digest);
+
+        // kind == PYTHON_LOCK
+        put_str(&mut f, 20, &self.base_runtime);
+        put_msg(&mut f, 21, &self.lock_digest);
+        put_bytes(&mut f, 22, &self.lock_content);
+        put_msg(&mut f, 23, &self.lock_cas_ref);
+
+        // 공통
+        put_str(&mut f, 30, &self.os);
+        put_str(&mut f, 31, &self.arch);
+        put_str(&mut f, 32, &self.min_libc_version);
+        put_msg(&mut f, 33, &self.cuda);
+        put_msg(&mut f, 34, &self.code_digest);
+        put_msg(&mut f, 35, &self.tarball_policy);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::DatasetRef {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_msg(&mut f, 1, &self.root_digest);
+        put_uint(&mut f, 2, self.total_bytes);
+        put_uint(&mut f, 3, self.sensitivity as u64);
+        put_uint(&mut f, 4, self.retention as u64);
+        put_bool(&mut f, 5, self.encrypted_at_rest);
+        put_str(&mut f, 6, &self.display_name);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::NetworkPolicy {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_repeated_str(&mut f, 1, &self.staging_allow_hosts);
+        put_repeated_str(&mut f, 2, &self.runtime_allow_hosts);
+        put_bool(&mut f, 3, self.mediated_dns);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ArtifactScope {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_repeated_str(&mut f, 1, &self.writable_prefixes);
+        put_repeated_str(&mut f, 2, &self.readable_prefixes);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ResourceScope {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_repeated_str(&mut f, 1, &self.gpu_uuids);
+        put_uint(&mut f, 2, self.cpu_cores as u64);
+        put_uint(&mut f, 3, self.ram_bytes);
+        put_uint(&mut f, 4, self.workspace_bytes);
+        put_repeated_str(&mut f, 5, &self.writable_prefixes);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
 // job.proto — JobManifest
 //
 // ★ field number 는 proto/job.proto 와 정확히 일치해야 한다.
@@ -180,8 +298,9 @@ impl ToCanonicalFields for pb::JobManifest {
         put_str(&mut f, 3, &self.team_id);
 
         // 실행 대상
-        // env(10) / input_artifacts(11) / dataset(12) 는 중첩 메시지다.
-        // 현재는 미구현 — 구현 시 put_msg 로 추가한다 (아래 TODO).
+        put_msg(&mut f, 10, &self.env);
+        put_repeated_msg(&mut f, 11, &self.input_artifacts);
+        put_msg(&mut f, 12, &self.dataset);
         put_str(&mut f, 13, &self.entrypoint);
         put_repeated_str(&mut f, 14, &self.args);
         put_map(&mut f, 15, &norm_map(&self.env_vars));
@@ -206,7 +325,9 @@ impl ToCanonicalFields for pb::JobManifest {
         put_uint(&mut f, 51, self.minimum_security_tier as u64);
         put_uint(&mut f, 52, self.minimum_key_protection as u64);
         put_uint(&mut f, 53, self.side_effect_class as u64);
-        // network(54) / artifact_scope(55) 중첩 메시지 — TODO
+        // ★ 54·55 는 보안 필드다. 서명 밖에 있으면 중간자가 고쳐도 검증이 통과한다.
+        put_msg(&mut f, 54, &self.network);
+        put_msg(&mut f, 55, &self.artifact_scope);
         put_bool(&mut f, 56, self.acknowledge_duplicate_risk);
 
         // 발급
@@ -250,7 +371,9 @@ impl ToCanonicalFields for pb::Lease {
         put_uint(&mut f, 32, self.renew_after_unix_ms);
         put_uint(&mut f, 33, self.max_total_duration_seconds as u64);
 
-        // scope(40) 중첩 메시지 — TODO
+        // ★ scope 는 보안 필드다. 서명 밖에 있으면 보유자가 스스로 자원 범위를 넓힐 수 있다.
+        put_msg(&mut f, 40, &self.scope);
+
         // field 90 (coordinator_signature) 제외
         f
     }
@@ -272,11 +395,11 @@ impl ToCanonicalFields for pb::Lease {
 /// 아직 canonical 변환에 포함되지 않은 필드 (메시지, field number).
 ///
 /// **이 목록이 비어야 서명이 완전해진다.**
-pub const UNIMPLEMENTED_FIELDS: &[(&str, u32, &str)] = &[
-    ("JobManifest", 10, "env (ExecutionEnvironment)"),
-    ("JobManifest", 11, "input_artifacts (repeated Digest)"),
-    ("JobManifest", 12, "dataset (DatasetRef)"),
-    ("JobManifest", 54, "network (NetworkPolicy)"),
-    ("JobManifest", 55, "artifact_scope (ArtifactScope)"),
-    ("Lease", 40, "scope (ResourceScope)"),
-];
+///
+/// 2026-08-16: JobManifest 와 Lease 의 6건을 전부 구현해 **비웠다**.
+/// 남은 미구현은 목록이 아니라 `ToCanonicalFields` 미구현 메시지 쪽이다
+/// (`artifact.proto` · `control.proto` 의 서명 대상 — DoD-02 limitations 참조).
+///
+/// 여기에 항목을 추가할 때는 **왜 지금 구현하지 않는지**를 설명에 적는다.
+/// 서명 밖 필드는 위조 가능하다는 뜻이므로 "나중에" 는 사유가 되지 않는다.
+pub const UNIMPLEMENTED_FIELDS: &[(&str, u32, &str)] = &[];
