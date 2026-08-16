@@ -1578,10 +1578,47 @@ def self_test():
 
 
 def verify_vectors(path):
+    """
+    저장된 벡터가 **지금 이 구현이 내는 값과 같은지** 확인한다.
+
+    ★ 2026-08-16 시정. 처음에는 MUST_EQUAL/MUST_DIFFER 관계만 검사했다.
+      독립 검수가 지적했다 — 그러면 **저장된 값이 구현과 어긋나도 통과한다.**
+      "cross-checks: OK" 가 실제보다 강한 보증처럼 읽혔다.
+
+    이제 두 가지를 한다.
+      1. 재생성 대조 — build_vectors() 를 다시 돌려 저장본과 바이트 비교
+      2. 관계 검사 — MUST_EQUAL / MUST_DIFFER
+    """
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     ok = True
-    by_name = {v["name"]: v for v in doc["vectors"]}
+
+    # 1. ★ 재생성 대조
+    fresh = {v["name"]: v for v in build_vectors()}
+    stored = {v["name"]: v for v in doc["vectors"]}
+
+    missing = sorted(set(fresh) - set(stored))
+    extra = sorted(set(stored) - set(fresh))
+    if missing:
+        print("FAIL 저장본에 없는 벡터: %s" % ", ".join(missing))
+        ok = False
+    if extra:
+        print("FAIL 구현이 더 이상 내지 않는 벡터: %s" % ", ".join(extra))
+        ok = False
+
+    drift = []
+    for name in sorted(set(fresh) & set(stored)):
+        for field in ("canonical_hex", "sig_input_hex", "sig_input_blake3_256", "roots"):
+            if fresh[name].get(field) != stored[name].get(field):
+                drift.append("%s.%s" % (name, field))
+    if drift:
+        print("FAIL 저장본이 구현과 어긋난다 (재생성 필요): %s" % ", ".join(drift))
+        ok = False
+    else:
+        print("재생성 대조: %d개 벡터 일치" % len(fresh))
+
+    # 2. 관계 검사
+    by_name = stored
     for v in doc["vectors"]:
         for c in v.get("checks", []):
             if c.startswith("MUST_EQUAL:"):

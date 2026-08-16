@@ -91,23 +91,37 @@ fn c1b_top_level_signature_field_is_correctly_excluded() {
     );
 }
 
-/// 도출 해시 필드도 같은 문제를 갖는가.
+/// 도출 해시 필드는 **최상위에만** 적용된다 (D-1 시정 후).
+///
+/// ★ 이 테스트는 원래 "중첩에서도 제외되어야 한다" 고 썼는데 **전제가 틀렸다.**
+///   D-1 수정으로 중첩 field 4 는 더 이상 도출 해시로 취급되지 않는다 —
+///   `DatasetRef.retention` 처럼 **진짜 필드**일 수 있기 때문이다.
+///
+/// 따라서 중첩 메시지가 field 4 만 가지면 그것은 **비어 있지 않다.**
 #[test]
-fn c1c_derived_hash_only_nested_message_has_same_problem() {
+fn c1c_derived_hash_exclusion_is_top_level_only() {
     const DERIVED: u32 = 4;
 
     let mut empty = Fields::new();
     empty.set(1, Value::Message(Fields::new()));
 
-    let mut derived_only = Fields::new();
+    let mut nested_field4 = Fields::new();
     let mut inner = Fields::new();
     inner.set(DERIVED, Value::Bytes(vec![0xBB; 32]));
-    derived_only.set(1, Value::Message(inner));
+    nested_field4.set(1, Value::Message(inner));
 
-    assert_eq!(
+    assert_ne!(
         canonical_encode(&empty, &[DERIVED]),
-        canonical_encode(&derived_only, &[DERIVED]),
-        "도출 해시 필드만 가진 중첩 메시지도 canonical 을 바꾼다 (C-1 과 같은 원인)"
+        canonical_encode(&nested_field4, &[DERIVED]),
+        "★ 중첩 메시지의 field 4 가 도출 해시로 오인돼 제외됐다 (D-1 회귀).          DatasetRef.retention 같은 진짜 필드가 서명에서 빠진다"
+    );
+
+    // 최상위 field 4 는 여전히 제외된다
+    let mut top_only = Fields::new();
+    top_only.set(DERIVED, Value::Bytes(vec![0xBB; 32]));
+    assert!(
+        canonical_encode(&top_only, &[DERIVED]).is_empty(),
+        "최상위 도출 해시 필드가 제외되지 않았다"
     );
 }
 
@@ -195,4 +209,51 @@ fn encoder_always_emits_minimal_varint() {
         assert_eq!(out.len(), 10, "{v} 의 varint 가 10바이트가 아니다");
         assert_ne!(*out.last().unwrap(), 0, "{v} 가 non-minimal 이다");
     }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// D-1 ★ derived_hash_fields 가 재귀 적용되면 안 된다
+// ══════════════════════════════════════════════════════════════════
+
+/// 코덱스 지적 — field number 는 **메시지마다 의미가 다르다.**
+///
+/// ```text
+/// ExecutionGrant.manifest_hash            = field 4   -> 제외해야 한다
+/// DatasetRef.retention (중첩 안)          = field 4   -> 제외하면 안 된다
+/// ```
+///
+/// 번호만으로 재귀 제외하면 **삭제 정책(retention)이 서명에서 조용히 빠진다.**
+#[test]
+fn d1_derived_hash_fields_must_not_apply_to_nested_messages() {
+    const DERIVED_TOP: u32 = 4;
+
+    let build = |nested_field4: u64| {
+        let mut inner = Fields::new();
+        inner.set(1, Value::Str("dataset".into()));
+        inner.set(DERIVED_TOP, Value::Uint(nested_field4)); // DatasetRef.retention
+        let mut top = Fields::new();
+        top.set(3, Value::Message(inner));
+        top.set(DERIVED_TOP, Value::Bytes(vec![0xAB; 32])); // manifest_hash
+        top
+    };
+
+    // 최상위 field 4(도출 해시)는 제외되어야 한다
+    let mut a = build(2);
+    let mut b = build(2);
+    b.set(DERIVED_TOP, Value::Bytes(vec![0xCD; 32]));
+    assert_eq!(
+        canonical_encode(&a, &[DERIVED_TOP]),
+        canonical_encode(&b, &[DERIVED_TOP]),
+        "최상위 도출 해시 필드가 제외되지 않았다"
+    );
+
+    // ★ 중첩 field 4 는 제외되면 **안 된다**
+    let retention_delete = canonical_encode(&build(2), &[DERIVED_TOP]);
+    let retention_keep = canonical_encode(&build(1), &[DERIVED_TOP]);
+    assert_ne!(
+        retention_delete, retention_keep,
+        "★ 코덱스 지적 D-1 — 중첩 메시지의 field 4 가 함께 제외됐다.\n\
+         DatasetRef.retention(삭제 정책)이 서명에서 조용히 빠진다."
+    );
+    let _ = (&mut a, &mut b);
 }

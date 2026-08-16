@@ -512,3 +512,90 @@ fn change_coordinator_set_matches_reference_and_preserves_order() {
     same_rack.new_set[1].failure_domain = "rack-a".into();
     assert_ne!(canon(&same_rack), canon(&c), "failure_domain 이 서명 밖이다");
 }
+
+// ══════════════════════════════════════════════════════════════════
+// 코덱스 지적 — §6.1 manifest_hash 의 **값 자체**는 검증되지 않았다
+// ══════════════════════════════════════════════════════════════════
+
+/// `signing.md` §6.1 — `manifest_hash = BLAKE3_256(sig_input_of(JobManifest))`
+///
+/// 기존 벡터(v25/v25b)는 "manifest_hash 를 바꿔도 canonical 이 같다" 만 확인했다.
+/// 그것은 규칙 i 의 검증이지 **§6.1 공식의 검증이 아니다.**
+///
+/// ★ Agent 는 이 값을 신뢰하지 않고 **재계산해 대조해야 한다(MUST)**
+///   — 계획서 §15.4 검증 13단계. 재계산 공식이 여기 고정된다.
+#[test]
+fn manifest_hash_formula_matches_spec() {
+    use gputeer_protocol::canonical::{blake3_256, sig_input, Domain};
+    use gputeer_protocol::signing::Signable;
+
+    let m = minimal_manifest(0xAA);
+
+    // §6.1 공식
+    let canon = canonical_encode(&ToCanonicalFields::to_canonical_fields(&m), &[]);
+    let si = sig_input(Domain::Manifest, Signable::schema_version(&m), &canon);
+    let expected = blake3_256(&si);
+
+    // signing_input() 이 같은 바이트를 내는가 — 서명 경로와 해시 경로가 갈리면 안 된다
+    assert_eq!(
+        gputeer_protocol::signing::signing_input(&m),
+        si,
+        "signing_input() 과 §6.1 의 sig_input 이 다르다"
+    );
+
+    // ★ 서명 필드를 채워도 manifest_hash 는 변하지 않아야 한다.
+    //   변하면 "서명하려면 해시가 필요하고 해시하려면 서명이 필요한" 순환이 생긴다.
+    let mut signed = minimal_manifest(0xAA);
+    signed.submitter_signature = vec![0xFF; 64];
+    let si2 = gputeer_protocol::signing::signing_input(&signed);
+    assert_eq!(
+        blake3_256(&si2),
+        expected,
+        "서명 필드가 manifest_hash 에 영향을 준다 — 자기참조 순환"
+    );
+
+    // 내용이 바뀌면 해시도 바뀌어야 한다 (비공허성)
+    let mut other = minimal_manifest(0xAA);
+    other.entrypoint = "other.py".into();
+    assert_ne!(
+        blake3_256(&gputeer_protocol::signing::signing_input(&other)),
+        expected
+    );
+
+    println!("manifest_hash = {}", hex(&expected));
+}
+
+/// ★ Grant 안의 `manifest_hash` 가 **실제 매니페스트의 해시가 아닐 수 있다.**
+///
+/// 규칙 i 로 canonical 에서 제외되므로 Grant 서명이 이 값을 보증하지 않는다.
+/// 그래서 §6.1 이 "Agent 는 재계산해 대조한다(MUST)" 를 요구한다.
+///
+/// 이 테스트는 **그 위험을 고정한다** — 통과한다는 것이
+/// "프로토콜이 불일치를 막지 못한다" 는 뜻이다.
+#[test]
+fn grant_manifest_hash_can_be_wrong_without_breaking_signature() {
+    use gputeer_protocol::canonical::blake3_256;
+
+    let g = grant(0xAA, 0x01); // manifest_hash = [0x01; 32] — 명백히 틀린 값
+    let real = blake3_256(&gputeer_protocol::signing::signing_input(
+        g.manifest.as_ref().unwrap(),
+    ));
+
+    assert_ne!(
+        g.manifest_hash.as_ref().unwrap().value.as_slice(),
+        real.as_slice(),
+        "이 테스트의 전제가 깨졌다 — 벡터의 manifest_hash 가 우연히 맞았다"
+    );
+
+    // 그런데 Grant 의 canonical 은 정상이다 — 서명이 이 불일치를 잡지 못한다
+    let mut fixed = grant(0xAA, 0x01);
+    fixed.manifest_hash = Some(pb::Digest {
+        algo: 1,
+        value: real.to_vec(),
+    });
+    assert_eq!(
+        canon(&g),
+        canon(&fixed),
+        "★ manifest_hash 가 canonical 에 들어갔다면 이 테스트를 재검토하라"
+    );
+}

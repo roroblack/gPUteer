@@ -162,6 +162,26 @@ impl Fields {
 /// signing.md §3 의 canonical_encode.
 ///
 /// 서명 필드(90)와 `derived_hash_fields` 는 제외된다 (규칙 i).
+///
+/// # ★ `derived_hash_fields` 는 **최상위에만** 적용된다 (2026-08-16 시정)
+///
+/// 처음에는 이 목록을 재귀로 물려주었다. 독립 검수가 반례를 냈다.
+///
+/// ```text
+/// ExecutionGrant.manifest_hash        = field 4   -> 제외해야 한다
+/// ExecutionGrant.manifest.dataset.retention
+///                     (DatasetRef 의) field 4     -> 제외하면 **안 된다**
+///
+/// canonical_encode(&fields, &[4]) 는 둘 다 지웠다.
+/// => DatasetRef.retention(삭제 정책)이 서명에서 조용히 빠진다.
+/// ```
+///
+/// field number 는 **메시지마다 의미가 다르다.** 번호만으로 재귀 제외하면
+/// 우연히 같은 번호를 쓰는 중첩 필드가 함께 사라진다.
+///
+/// 도출 해시 필드는 **정의상 최상위 메시지의 것**이므로(§6.1 —
+/// `ExecutionGrant.manifest_hash`), 최상위에만 적용하는 것이 옳다.
+/// 중첩 메시지가 자기 도출 해시를 갖게 되면 그때 `(타입, 번호)` 쌍으로 확장한다.
 pub fn canonical_encode(fields: &Fields, derived_hash_fields: &[u32]) -> Vec<u8> {
     let mut out = Vec::new();
     // BTreeMap 순회 = field number 오름차순 (규칙 a)
@@ -174,7 +194,9 @@ pub fn canonical_encode(fields: &Fields, derived_hash_fields: &[u32]) -> Vec<u8>
         if value.is_default() {
             continue;
         }
-        encode_value(num, value, derived_hash_fields, &mut out);
+        // ★ 중첩에는 derived 목록을 물려주지 않는다 (위 설명).
+        //   서명 필드(90)는 모든 메시지에서 같은 의미이므로 재귀 적용된다.
+        encode_value(num, value, &[], &mut out);
     }
     out
 }
