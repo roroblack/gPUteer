@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-16 16:40 — T2 증거 메시지 시각 정책 (ADR-029 · DoD-07 PASS, 143 tests green)
+
+- 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T2
+- 스트림: Protocol · Crypto
+- ★ **결정: `signing.md` §9 표에 없던 6종은 "권한" 이 아니라 "증거" 다.
+  시각으로 만료시키지 않는다.** `Lifetime::Evidence` 신설 (ADR-029)
+  - 과거의 사실은 만료되지 않는다. `CheckpointManifest` 를 만료시키면
+    **오래된 체크포인트에서 재개할 수 없고**, 그것은 시스템의 존재 이유를 부순다
+  - 그러나 "그 시점의 사실" != "지금의 사실" -> `Perpetual` 과 구분한다.
+    `Evidence` 는 **`observed_at` 노출을 타입으로 강제**한다.
+    "언제인지 모르는 증거" 는 증거가 아니다
+  - 신선도는 시각이 아니라 `fence_epoch` 이 판단한다.
+    **시계는 어긋나지만 epoch 은 어긋나지 않는다**
+- ★ **`ReplicaAck` 만 `fence_epoch` 이 없다** — 6종 중 유일하다.
+  그런데 `REPLICATED(n)` 을 세는 근거이므로 **durability 주장의 뿌리**다.
+  **복제본이 삭제되어도 ACK 는 영원히 유효하다.**
+  `replica_ack_stays_valid_forever_even_if_replica_is_gone` 이 이 결함을 고정한다 —
+  **통과한다는 것이 곧 "프로토콜이 막지 못한다" 는 뜻이다.** -> V-07
+- 수행: `Signable` 2종 -> **10종**. `ExecutionGrant` · `RenewLeaseRequest` 를
+  `ShortLived` 로 구현 — **§9 단수명 경로가 실메시지로 처음 검증**되었다
+  (`DoD-04` 는 테스트 전용 타입뿐이었다)
+  - `RenewLeaseRequest` 는 `expires_at` 필드가 없어 `issued_at + GRANT_TTL_MS` 로 도출.
+    값을 지어내는 게 아니라 §9 가 정한 TTL 적용이며 근거를 코드에 적었다
+  - `Signable` 을 `signable.rs` 로 분리 — `to_fields` 는 "어떤 필드",
+    `signable` 은 "어떤 domain·수명". **틀렸을 때의 증상이 달라** 섞으면 리뷰가 흐려진다
+- 검증: **cargo test --workspace = 143 passed / 0 failed** (129 -> 143). 빌드 경고 0
+  ★ `the_three_lifetimes_actually_behave_differently` — 세 정책이 실제로 다른
+  동작을 하는지 확인. 전부 같으면 `Lifetime` 구분이 의미가 없다
+- ★ TTL==skew 문제: **TTL 을 늘려 미래 방향 skew 를 "살리는" 것은 하지 않았다.**
+  단수명 수명을 늘리면 replay 창이 커진다 —
+  보안 매개변수를 코드 경로 도달성 때문에 바꾸지 않는다.
+  대신 두 테스트로 사실을 고정(기본 TTL 에서 가려짐 + TTL 1시간이면 발동)
+- ★ `.proto` 를 건드리지 않았으므로 `schema_version` 상향·벡터 재생성 불필요.
+  `SCHEMA_FINGERPRINT` 불변
+- 신규 등록: **V-07**(`ReplicaAck.fence_epoch`) · **V-08**(증거 메시지 서명자 ID).
+  둘 다 `schema_version` 상향이 필요해 **함께 처리하는 것이 싸다**
+- evidence: `DoD-07_시각정책_실메시지.md` · ADR: `ADR-029`
+
 ## 2026-08-16 15:40 — ★ 서명 재사용 취약점 발견·시정 (ADR-028 · DoD-06 PASS, 129 tests green)
 
 - 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T1b
