@@ -1,6 +1,6 @@
 ---
 id: DoD-07
-claim: "signing.md §9 의 세 시각 정책이 실제 proto 메시지에서 서로 다르게 동작한다. §9 표에 없던 6종은 ADR-029 로 Lifetime::Evidence 를 부여했고, 만료되지 않으면서 observed_at 을 타입 수준에서 강제한다. 단수명 경로가 실메시지(ExecutionGrant · RenewLeaseRequest)로 처음 검증되었다"
+claim: "signing.md §9 의 세 시각 정책이 실제 proto 메시지에서 서로 다르게 동작한다. §9 표에 없던 6종은 ADR-029 로 Lifetime::Evidence 를 부여했고, 만료되지 않으면서 observed_at 을 노출한다(강제는 타입이 아니라 테스트가 한다). 단수명 경로가 실메시지(ExecutionGrant · RenewLeaseRequest)로 처음 검증되었다"
 status: PASS
 commit: 3120688ad3f82c61c3c913d2fc18e2b7207c5932
 binary_digests:
@@ -78,6 +78,7 @@ limitations:
   - "§9 표의 Heartbeat / RPC 는 여전히 미구현이다. 단수명 메시지는 ExecutionGrant · RenewLeaseRequest 둘뿐이다"
   - "replay 캐시(§10)는 여전히 NoReplayCheck 뿐이다. 단수명 메시지가 실제로 생겼으므로 이제 replay 방어의 부재가 실질적 공백이 되었다 — 실행계획 v2 T4"
   - "키 관리(§11)는 여전히 InMemoryKeyring 뿐이다"
+  - "★ 2026-08-16 정정 — 이 문서는 observed_at 노출이 '타입 수준에서 강제된다'고 적었으나 과장이었다. Signable::observed_at_unix_ms() 에 기본 구현이 있어 덮어쓰지 않아도 컴파일된다. 실제 강제는 evidence_must_expose_observation_time 테스트가 하며, 새 Evidence 메시지를 그 테스트에 넣지 않으면 기본 구현이 조용히 쓰인다"
   - "Windows 단일 플랫폼"
 decision: "ADR-029 채택 — Lifetime::Evidence 신설. signing.md §9 표에 증거 행을 추가하고 §9.1 을 재작성했다. .proto 를 건드리지 않았으므로 schema_version 상향과 벡터 재생성이 불필요하다. ReplicaAck 의 fence_epoch 부재는 V-07 로, 서명자 ID 부재는 V-08 로 등록했다 — 둘 다 schema_version 상향이 필요해 함께 처리하는 것이 싸다. 다음: T4(replay 캐시) -> T3(키 관리)"
 ---
@@ -135,8 +136,12 @@ Evidence    관측 시점의 사실이다. 소비 측이 **신선도를 판단�
 동작은 같다(만료 검사 없음). **의미가 다르다.**
 한 이름에 두 의미를 담으면 다음 사람이 `ReplicaAck` 를 시스템 상수처럼 다룬다.
 
-그래서 `Evidence` 는 **`observed_at_unix_ms()` 노출을 타입으로 강제**한다.
+그래서 `Evidence` 는 `observed_at_unix_ms()` 를 노출한다.
 "언제인지 모르는 증거" 는 증거가 아니다.
+
+★ **2026-08-16 정정 (독립 검수).** 원래 "타입으로 강제" 라고 적었는데 **과장이었다** —
+기본 구현이 있어 덮어쓰지 않아도 컴파일된다. 실제 강제는 테스트가 한다
+(`evidence_must_expose_observation_time`). 자세한 것은 ADR-029 정정 항목.
 
 ### 신선도는 시각이 아니라 fencing 이 판단한다
 

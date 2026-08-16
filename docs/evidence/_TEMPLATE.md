@@ -1,6 +1,9 @@
 ---
 id: P0-03
 claim: "체크포인트가 쓰기 중 프로세스 kill 되어도 PARTIAL 로만 남고 COMMITTED 로 승격되지 않는다"
+# ★ PASS 는 **claim 필드가 입증됐다**는 뜻이다 (RULE.md §7).
+#   영역 완료가 아니다. claim 을 이번 실험이 실제로 보인 것만 좁게 적는다.
+#   claim 이 넓으면 PASS 를 쓸 수 없다 — 좁히거나 FAIL-SCOPE 를 쓴다.
 status: PASS
 commit: 0000000000000000000000000000000000000000
 binary_digests:

@@ -42,6 +42,9 @@
 ### 0.3 데이터 손실은 되돌릴 수 없다
 
 - **체크포인트는 `tmp -> fsync -> rename -> dir fsync` 로만 확정한다.**
+  ★ **단 Windows 에서는 이 절차가 그대로 성립하지 않는다** (ADR-026, P0-03a 실측).
+  데이터 파일은 **write-once**(고유 이름)로 쓰고, **포인터만** replace 한다.
+  ADR-026 은 `제안` 상태이나 **구현은 이미 그것을 따른다** — 기준선 수정 승인 대기(D-5).
 - 매니페스트는 **모든 데이터 파일이 확정된 뒤 마지막에** 쓴다.
   매니페스트 없는 데이터 파일은 PARTIAL 이며 부팅 시 GC 한다.
 - **`COMMITTED` 의 정의를 임의로 완화하지 않는다.** durability 정책이 요구하는 replica 수를 채워야 한다.
@@ -51,8 +54,12 @@
 ### 0.4 강제할 수 없는 것을 보장으로 선언하지 않는다
 
 - 소비자 GPU 에는 **VRAM quota 강제 수단이 없다.** MIG 는 데이터센터 전용, MPS 는 Linux 전용,
-  Job Object · cgroup 은 시스템 RAM 만 제한한다.
+  cgroup 은 시스템 RAM 만 제한한다.
   → 그래서 GPU 할당 기본값은 **Exclusive** 다.
+  ★ **2026-08-16 정정 (ADR-027, P0-06 실측).** Windows Job Object 는
+  WDDM 메모리 모델 때문에 **VRAM 을 간접적으로 제한한다** (`VRAM 최대 ≈ RAM 제한 − 2000MiB`).
+  그러나 **quota 가 아니라 총 커밋 상한**이고, 거칠고, Windows 전용이므로
+  **Exclusive 기본값은 유지한다.** ADR-027 은 `제안` 상태 — 기준선 §10.3 수정 승인 대기(D-5).
 - **외부 API 호출은 fencing 으로 막을 수 없다.** 상대가 `fence_epoch` 를 모른다.
   → `side_effecting` Job 의 중복 실행을 "막는다"고 쓰지 않는다. 억제할 뿐이다.
 - **S1(Windows Restricted Native)은 임의 네이티브 코드로부터 호스트를 지키지 못한다.**

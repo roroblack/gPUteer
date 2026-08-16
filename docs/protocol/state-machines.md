@@ -229,6 +229,22 @@ COMMITTED | (deleted) | RETENTION_GC | 더 최신 COMMITTED 존재 AND 보존 �
 
 ### 원자성 규칙 (MUST)
 
+★ **2026-08-16 — 아래 절차는 Windows 에서 그대로 성립하지 않는다 (ADR-026).**
+
+`P0-03a` 실측: Windows `MoveFileEx` 는 **열린 파일 위로 rename 하지 못한다**
+(313/3000 성공). 아래 절차 3번(`rename`)이 데이터 파일에 대해 실패한다.
+
+```text
+현재 구현 (ADR-026 반영)
+  데이터 파일   write-once — 고유 이름으로만 쓴다. rename-over-existing 회피
+  포인터 파일   유일한 replace 대상. bounded retry 후 명시적 오류
+  sync_dir      Windows 는 쓰기 권한 필요 (FILE_FLAG_BACKUP_SEMANTICS)
+```
+
+**ADR-026 은 아직 `제안` 상태다** — 기준선 §18.2 수정 승인 대기(D-5).
+그때까지 이 절의 원문을 남겨 두되, **구현은 ADR-026 을 따른다.**
+독립 검수가 이 불일치를 지적했다.
+
 ```text
 1. <name>.tmp 에 기록 → fsync(file) → rename(name) → fsync(dir)
 2. 매니페스트는 모든 데이터 파일이 확정된 뒤 "마지막에" 쓴다

@@ -225,6 +225,33 @@ def check_file(path):
             "frontmatter 의 raw_output 은 요약이므로 원문 없이는 대조할 수 없다"
         )
 
+    # ★ 2026-08-16 추가 (독립 검수) — negative test 를 **실제로 실행했는가.**
+    #
+    #   전에는 `negative_tests` 가 비어 있지 않은지만 봤다.
+    #   "없음" 한 줄만 적어도 통과했다.
+    #
+    #   이름이 테스트 함수처럼 생겼다면 그 이름이 `raw_output` 이나
+    #   `_raw/` 원문에 나타나야 한다. 나타나지 않으면 **적기만 하고 안 돌렸을** 수 있다.
+    #
+    #   ★ 경고에 그친다 — negative test 를 산문으로 적는 것도 정당하다
+    #     (예: "뮤테이션 2종으로 확인"). 오탐을 오류로 만들면 규칙을 우회하게 된다.
+    haystack = str(fm.get("raw_output") or "")
+    for rel in as_list(fm.get("artifacts")):
+        full = os.path.join(REPO_ROOT, rel)
+        if "/_raw/" in rel and os.path.exists(full):
+            try:
+                haystack += io.open(full, encoding="utf-8", errors="ignore").read()
+            except OSError:
+                pass
+    for entry in as_list(fm.get("negative_tests")):
+        e = entry.lstrip("★ ").strip().strip('"')
+        m = re.match(r"([a-z][a-z0-9_]{6,})", e)
+        if m and m.group(1) not in haystack:
+            warns.append(
+                "negative test %r 의 이름이 실행 원문에 없다 — "
+                "적기만 하고 실행하지 않았을 수 있다" % m.group(1)
+            )
+
     # 본문의 '증명하지 않는 것' 절 확인
     if "증명하지" not in text:
         warns.append("본문에 '이 실험이 증명하지 않는 것' 절이 보이지 않는다")
