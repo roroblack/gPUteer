@@ -50,7 +50,7 @@
 //!   테스트가 통과한다고 규칙을 고치지 않고, 코드를 규칙에 맞췄다 (§4.3 마지막 줄).
 
 use crate::canonical::{canonical_encode, sig_input, Domain, Fields};
-use crate::constants::CLOCK_SKEW_TOLERANCE_MS;
+use crate::constants::{CLOCK_SKEW_TOLERANCE_MS, SCHEMA_VERSION};
 
 /// §10 — nonce 는 CSPRNG **16바이트**여야 한다(MUST).
 pub const NONCE_LEN: usize = 16;
@@ -462,6 +462,18 @@ impl ReplayGuard for NoReplayCheck {
 /// 생성자가 [`verify`] 하나뿐이므로 우회 경로가 없다.
 /// `Deref` 를 구현하지 않는 것도 의도적이다 — `&*msg` 로 새어나가지 않게 한다.
 ///
+/// # ★ `M: Clone` 이 깊은 복사를 보장하지는 않는다 (2026-08-16 기록)
+///
+/// [`verify`] 는 `msg.clone()` 을 저장하므로, 호출자가 원본을 고쳐도
+/// 이 값은 바뀌지 않는다 — **prost 생성 타입은 전부 깊은 복사**이므로 안전하다.
+///
+/// 그러나 누군가 `Arc<Mutex<_>>` 를 담은 타입에 [`Signable`] 을 구현하면
+/// clone 이 상태를 공유해 **원본 수정이 `get()` 에 반영된다.**
+/// 독립 검수가 지적했다. 현재 그런 타입은 없다.
+///
+/// [`Verified::into_inner`] 로 꺼낸 값은 검증 증명을 잃는다 —
+/// 고쳐서 다시 `Verified` 로 감쌀 **공개 경로는 없다**(생성자가 비공개).
+///
 /// # 우회 경로가 없음을 컴파일러가 확인한다
 ///
 /// 필드가 비공개이므로 구조체 리터럴로 만들 수 없다.
@@ -566,8 +578,21 @@ pub fn verify<M: Signable + Clone>(
 ) -> Result<Verified<M>, VerifyError> {
     // 1. domain_tag — M::DOMAIN 으로 정적 결정. 메시지에서 읽지 않는다.
 
+    // ★ 호출자가 `u32::MAX` 를 넘기면 SCHEMA_TOO_NEW 가 **영영 안 나온다**
+    //   (독립 검수 2026-08-16). u32 값은 u32::MAX 보다 클 수 없기 때문이다.
+    //   §7.2 는 "모르면 검증 불가를 선언한다" 를 MUST 로 정하는데,
+    //   그 방어가 호출자 실수 한 번으로 통째로 꺼진다.
+    //
+    //   이 크레이트가 아는 최대 버전을 넘는 값은 **받지 않는다.**
+    //   "무제한 허용" 을 표현할 방법을 남겨 두지 않는다.
+    debug_assert!(
+        max_supported_schema_version <= SCHEMA_VERSION,
+        "max_supported({max_supported_schema_version}) 가 이 빌드가 아는          SCHEMA_VERSION({SCHEMA_VERSION}) 보다 크다"
+    );
+    let max_supported = max_supported_schema_version.min(SCHEMA_VERSION);
+
     // 2. schema_version
-    if msg.schema_version() > max_supported_schema_version {
+    if msg.schema_version() > max_supported {
         return Err(VerifyOutcome::SchemaTooNew.into());
     }
 
