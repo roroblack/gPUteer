@@ -17,10 +17,11 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 
-EVIDENCE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "docs", "evidence")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EVIDENCE_DIR = os.path.join(REPO_ROOT, "docs", "evidence")
 
 REQUIRED = [
     "id", "claim", "status", "commit", "binary_digests", "protocol_versions",
@@ -132,6 +133,35 @@ def is_empty(v):
     return False
 
 
+def commit_exists(h):
+    """이 저장소에 실제로 존재하는 커밋인가.
+
+    ★ 2026-08-16 추가. 전에는 40자 hex 형식만 봤다 —
+      **존재하지 않는 커밋도 통과했다.**
+
+    git 이 없거나 저장소가 아니면 검사를 건너뛴다(경고 없이 통과).
+    검사기 자체가 환경 때문에 실패하면 안 되기 때문이다.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "cat-file", "-t", h],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True  # git 없음 — 검사 불가이므로 통과시킨다
+    if r.returncode != 0 and "not a git repository" in (r.stderr or "").lower():
+        return True
+    return r.stdout.strip() == "commit"
+
+
+def as_list(v):
+    """YAML 리스트/문자열/None 을 문자열 리스트로."""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v]
+    return [str(v).strip()]
+
 def check_file(path):
     """(errors, warnings, data) 반환."""
     text = io.open(path, encoding="utf-8").read()
@@ -160,8 +190,40 @@ def check_file(path):
         errors.append("negative_tests 가 비었다 — 정상 경로만으로는 완료가 아니다")
 
     commit = fm.get("commit")
-    if isinstance(commit, str) and not re.fullmatch(r"[0-9a-f]{7,40}", commit.strip()):
-        errors.append("commit 이 유효한 hash 가 아니다: %r" % commit)
+    if isinstance(commit, str):
+        c = commit.strip()
+        if not re.fullmatch(r"[0-9a-f]{7,40}", c):
+            errors.append("commit 이 유효한 hash 가 아니다: %r" % commit)
+        elif not commit_exists(c):
+            # ★ 2026-08-16 추가 (독립 검수).
+            #   전에는 **형식만** 봤다. 40자 hex 이면 존재하지 않는 커밋도 통과했다.
+            #   "재현 가능한 실험 기록" 이 목적인데 커밋을 못 찾으면 재현할 수 없다.
+            errors.append(
+                "commit %s 이 이 저장소에 없다 — 재현할 수 없는 기록이다" % c
+            )
+
+    # ★ 2026-08-16 추가 (독립 검수) — artifact 가 실제로 존재하는가.
+    #
+    #   전에는 `artifacts` 가 **비어 있지 않은지만** 봤다.
+    #   실제로 `DoD-04` 가 `crates/protocol/tests/ed25519_verify.rs` 를 적어 두었는데
+    #   그 파일은 `crates/crypto/` 로 옮겨져 **존재하지 않았다.** 그래도 PASS 였다.
+    #
+    #   증거의 목적은 "재현 가능한 기록" 이다. 가리키는 파일이 없으면 재현할 수 없다.
+    for rel in as_list(fm.get("artifacts")):
+        if not rel or rel.startswith("("):
+            continue
+        if not os.path.exists(os.path.join(REPO_ROOT, rel)):
+            errors.append("artifact 가 존재하지 않는다: %s" % rel)
+
+    # ★ raw_output 은 **요약**이고 원문은 `_raw/` 에 있다.
+    #   둘의 관계를 검사기가 강제하지 않으면 수기 편집과 실행 원문을 구분할 수 없다.
+    #   최소한 `_raw/` artifact 를 하나는 갖도록 요구한다.
+    raws = [a for a in as_list(fm.get("artifacts")) if "/_raw/" in a or a.startswith("docs/evidence/_raw/")]
+    if not raws:
+        warns.append(
+            "artifacts 에 docs/evidence/_raw/ 원문이 없다 — "
+            "frontmatter 의 raw_output 은 요약이므로 원문 없이는 대조할 수 없다"
+        )
 
     # 본문의 '증명하지 않는 것' 절 확인
     if "증명하지" not in text:
