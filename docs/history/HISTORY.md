@@ -16,6 +16,26 @@
 
 ---
 
+## 2026-08-16 10:40 — 서명 밖 필드 6건 제거 (DoD-03 PASS, 70 tests green)
+
+- 계획: 계획 밖 — `DoD-02` 가 찾은 "위조 가능한 보안 필드 3건" 을 닫는 작업
+- 스트림: Protocol · QA(벡터)
+- 수행: **계약 우선 순서 준수** — 참조 구현 확장 -> 벡터 생성 -> Rust 구현 -> 대조.
+  `reference_canonical.py` SCHEMAS 에 6종 추가 + JobManifest 를 전 필드로 + Lease 신설.
+  벡터 12 -> 20건. `to_fields.rs` 에 6종 impl + JobManifest 10/11/12/54/55 · Lease 40 편입
+- 검증: **cargo test --workspace = 70 passed / 0 failed** (55 -> 70).
+  `v02_full_manifest` **896바이트가 Python 참조 구현과 바이트 일치**(BLAKE3 까지).
+  ★ `every_field_in_full_manifest_affects_canonical` — 27개 필드를 하나씩 지워
+  canonical 이 반드시 변하는지 확인. **27/27 전부 서명 반영**.
+  벡터 대조만으로는 "두 구현이 사이좋게 같은 필드를 빠뜨린" 경우를 못 잡는다
+- 발견: **`v02_full_manifest` 는 "모든 필드" 라고 적혀 있었지만 16개 부분집합이었다.**
+  주장과 실제가 어긋난 만큼은 아무도 검증하지 않는다.
+  -> `missing_from_full()` 로 벡터 생성 시점에 코드가 검사하게 했다
+- 결정: `UNIMPLEMENTED_FIELDS` **비었다**. DoD-02 의 "위조 가능한 보안 필드 3건" 해소.
+  단 **"서명에 들어갔다"와 "Agent 가 그 정책을 강제한다"는 다르다** — 강제 계층 미구현
+- 리포트: `docs/reports/2026-08-16_0930_prost_연동계층_자율세션.md` (§12 갱신)
+- evidence: `DoD-03_서명대상_완전성.md`
+
 ## 2026-08-16 09:30 — prost 연동 계층 (DoD-02 PASS, 55 tests green)
 
 - 계획: 계획 밖 — `DoD-01` limitations 1·2번을 닫는 작업
