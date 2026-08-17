@@ -134,8 +134,14 @@ raw_output_bytes  == 실제 크기            검사기가 강제한다
 ──────────────────────────────────────────────────────────────────────
 write_checkpoint 실패 후 잔여물이 남는다   해결 — .publication-failed 마커로 배제
 startup_gc 가 등록된 .tmp 도 지운다        해결 — 매니페스트 등록분은 보존
-startup_gc 동시 실행 NotFound 경합         해결 — Windows 는 Access Denied 를 내므로
-                                           경로 존재 여부로 경합/오류를 가른다
+startup_gc 동시 실행 NotFound 경합         해결 — ★ 단 두 번 걸렸다. 처음엔
+                                           writer.rs 루프만 고쳤고 atomic.rs::
+                                           gc_partial 내부는 그대로 둬서 8회
+                                           반복 중 5회 재발했다. 두 파일이
+                                           공유하는 재시도 헬퍼(atomic.rs::
+                                           retry_tolerating_race)로 통합한
+                                           뒤 8회 연속 통과로 확인했다
+                                           (커밋 8af8262).
 DurabilityState 가 파일 연산과 무관하다    해결 — 상태별 write-once 사이드카로 기록
 
 LATEST 포인터를 쓰지 않는다                ★ 여전히 미수정 (의도적)
