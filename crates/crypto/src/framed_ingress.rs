@@ -40,6 +40,17 @@
 //! 뿐이고, 그 결과로 나온 `Verified<M>` 는 여전히 독립적으로 검증된 값이다.
 //! 잘못된 파서를 골랐다고 해서 검증되지 않은 값이 새어 나가지 않는다.
 //!
+//! ★ **정정 (독립 검수 2026-08-17).** 위 문단이 "타입을 속이면 실패하는
+//! 이유는 domain_tag 불일치 때문이다" 라고 뭉뚱그렸는데, 실패 이유는
+//! **두 가지**로 갈린다. `AttemptReport` 와 `ArtifactRef` 는 필드 1·2·4·90
+//! (스칼라 타입까지)이 겹쳐서 **한쪽으로 서명된 바이트가 다른 쪽으로도
+//! prost 디코드되고 canonical 필드까지 같아진다** — 그래도 `domain_tag`
+//! 는 타입에서 정적으로 오므로 서명 검증은 그 지점에서 실패한다.
+//! 반면 `Lease` 를 `Grant` 라고 주장하는 경우는 `Grant` 의 필드 3 이
+//! 메시지 타입(`JobManifest`)이라 애초에 **prost decode 단계에서** 실패할
+//! 수 있다 — 그 경우는 domain_tag 방어를 시험하지 못한다. 두 시나리오를
+//! `tests/framed_ingress.rs` 에 각각 이름 붙여 분리했다.
+//!
 //! # 전송 계층은 만들지 않는다
 //!
 //! TCP · Unix socket · Windows named pipe 중 무엇을 쓸지는 여기서 정하지
@@ -183,6 +194,32 @@ pub enum IngressMessage {
 ///   에러 하나를 서명하려면 그 자체가 새 `Signable` 대상이 되어야 하고
 ///   (`RULE.md` §3.5 의 5단계), 지금 소비자가 없는 상태에서 그 계약을
 ///   먼저 만드는 것은 범위를 넘는다.
+///
+/// # ★ 오류 뒤 스트림을 계속 읽어도 되는가 (독립 검수 2026-08-17 · 정정)
+///
+/// **`FrameTooLarge` 는 스트림을 끝낸다.** `claimed_len` 이 상한을 넘으면
+/// 그 바이트를 실제로 읽지 않는다 — 공격자가 주장한 길이(최대 4GiB 근처)
+/// 를 그대로 소비하려 드는 것 자체가 새로운 DoS 경로이기 때문이다.
+/// 그 결과 스트림에는 다 못 읽은 몸통이 그대로 남고, **다음 `read_frame`
+/// 호출은 그 잔여 바이트를 새 헤더로 오해한다.** 이 오류를 받은 호출자는
+/// 연결을 닫아야 한다 — `unusable_stream_state_after_frame_too_large` 가
+/// 그 위험을 실제로 재현해 고정한다.
+///
+/// **`UnknownFrameType` 은 스트림을 끝내지 않는다.** 길이는 이미 상한
+/// 이내로 확인했으므로(8MiB 까지) 몸통을 안전하게 마저 읽어 버릴 수 있다
+/// — 그러면 스트림 위치가 다음 프레임 헤더와 맞아떨어진다.
+///
+/// # DoS — 응답 없는 상대 (독립 검수 2026-08-17 · 알려진 한계)
+///
+/// `claimed_len` 이 상한 이내면 그만큼 즉시 `Vec` 를 할당하고
+/// `read_exact` 로 **타임아웃 없이** 기다린다. 상대가 헤더만 보내고
+/// 몸통을 안 보내면 이 호출은 무기한 블로킹한다.
+///
+/// 이 모듈은 `std::io::Read` 만 요구하고 타임아웃 개념이 없다(모듈
+/// 문서 "전송 계층은 만들지 않는다" 참조) — 그래서 여기서 막을 수 없다.
+/// **호출자가 소켓 수준에서 읽기 타임아웃을 걸어야 한다**
+/// (예: `TcpStream::set_read_timeout`). 이 함수는 그 책임을 대신하지
+/// 않는다는 사실을 감추지 않는다.
 pub fn read_frame<R: Read>(
     stream: &mut R,
     max_supported_schema_version: u32,
@@ -193,16 +230,29 @@ pub fn read_frame<R: Read>(
     let mut header = [0u8; 5];
     read_exact_or_truncated(stream, &mut header)?;
 
-    let frame_type = FrameType::from_u8(header[0]).ok_or(FramingError::UnknownFrameType(header[0]))?;
     let claimed_len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]);
 
-    // ★ 실제로 읽기 전에 상한을 본다. 안 그러면 이 검사가 장식이다.
+    // ★ 타입 유효성보다 **길이 상한을 먼저** 본다 (독립 검수 2026-08-17).
+    //   순서를 바꾼 이유: 타입이 알 수 없어도 길이가 상한 이내면 몸통을
+    //   안전하게 비워 스트림을 맞출 수 있다. 반대로 길이가 상한을 넘으면
+    //   타입이 무엇이든 그 몸통은 읽지 않는다 — 그것이 DoS 경로다.
     if claimed_len > MAX_INGRESS_FRAME_BYTES {
         return Err(FramingError::FrameTooLarge {
             claimed: claimed_len,
             max: MAX_INGRESS_FRAME_BYTES,
         });
     }
+
+    let frame_type = match FrameType::from_u8(header[0]) {
+        Some(t) => t,
+        None => {
+            // ★ 길이는 이미 상한 이내로 확인됐다 — 안전하게 비운다.
+            //   그러지 않으면 이 오류 뒤 스트림이 다음 헤더와 어긋난다.
+            let mut discard = vec![0u8; claimed_len as usize];
+            read_exact_or_truncated(stream, &mut discard)?;
+            return Err(FramingError::UnknownFrameType(header[0]));
+        }
+    };
 
     let mut body = vec![0u8; claimed_len as usize];
     read_exact_or_truncated(stream, &mut body)?;
@@ -243,10 +293,27 @@ fn read_exact_or_truncated<R: Read>(stream: &mut R, buf: &mut [u8]) -> Result<()
 }
 
 /// 프레임 하나를 인코딩한다 (테스트 · 발신 측에서 재사용).
-pub fn write_frame(frame_type: FrameType, body: &[u8]) -> Vec<u8> {
+///
+/// ★ 2026-08-17 정정 (독립 검수). 전에는 `body.len() as u32` 로 **무검사
+/// 캐스팅**했다 — `body` 가 4GiB 를 넘으면 길이 필드가 조용히 잘려
+/// **다른 프레임을 만들었다.** 그리고 [`MAX_INGRESS_FRAME_BYTES`] 도
+/// 검사하지 않아서, 이 함수로 만든 프레임을 `read_frame` 이 그대로
+/// `FrameTooLarge` 로 거부하는 비대칭이 있었다 — 쓰기와 읽기가 같은
+/// 규칙을 안 지켰다.
+pub fn write_frame(frame_type: FrameType, body: &[u8]) -> Result<Vec<u8>, FramingError> {
+    let len: u32 = body.len().try_into().map_err(|_| FramingError::FrameTooLarge {
+        claimed: u32::MAX,
+        max: MAX_INGRESS_FRAME_BYTES,
+    })?;
+    if len > MAX_INGRESS_FRAME_BYTES {
+        return Err(FramingError::FrameTooLarge {
+            claimed: len,
+            max: MAX_INGRESS_FRAME_BYTES,
+        });
+    }
     let mut out = Vec::with_capacity(5 + body.len());
     out.push(frame_type as u8);
-    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(body);
-    out
+    Ok(out)
 }

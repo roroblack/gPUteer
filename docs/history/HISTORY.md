@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-17 20:10 — framed_ingress 독립 검수 반영 (283 tests green)
+
+- 계획: 사용자 지시 — "코덱스로 ㄱㄱ"
+- 스트림: Crypto
+- 수행: framed_ingress.rs 를 독립 검수에 맡겼다(코덱스, read-only). 실제
+  검증 우회는 못 찾았지만 문서·테스트의 과장과 진짜 결함 3건을 찾았다.
+- 발견과 조치:
+  1. [중대] AttemptReport·ArtifactRef 는 필드 1·2·4·90 의 와이어 타입이
+     겹쳐 서명된 바이트가 양쪽으로 유효 디코드되고 canonical 도 같아질
+     수 있다. domain_tag 로는 막히지만, 기존 테스트(Lease→Grant 위장)는
+     사실 **nested-message decode 실패**로 막힌 것이라 이 방어를 실제로
+     시험하지 못했다. distinct_types_with_colliding_wire_fields_are_
+     rejected_by_domain_tag 를 신설해 진짜 시나리오로 domain_tag 방어를
+     시험한다. 기존 테스트는 frame_type_mismatch_fails_at_nested_message_
+     decode 로 이름을 바로잡았다.
+  2. [중대] FrameTooLarge/UnknownFrameType 이 몸통을 안 읽어 다음
+     read_frame 호출이 잔여 바이트를 헤더로 오인했다. UnknownFrameType 은
+     길이가 이미 상한 이내로 확인된 뒤라 안전하게 비울 수 있어 그렇게
+     고쳤다. FrameTooLarge 는 상한을 넘는 길이를 실제로 읽는 것 자체가
+     DoS 이므로 비우지 않는다 — 대신 "이 오류 뒤 스트림은 못 쓴다" 를
+     문서화하고 그 위험을 재현하는 테스트로 고정했다.
+  3. [경미] write_frame 이 자기 상한을 검사하지 않고 usize->u32 를
+     무검사 캐스팅했다 — 4GiB 넘는 body 는 길이 필드가 잘려 다른 프레임이
+     됐다. Result 를 반환하도록 바꾸고 모든 호출부를 고쳤다.
+  4. [문서] 모듈 문서가 "타입 위조 실패는 domain_tag 때문" 이라고
+     뭉뚱그렸다 — 실제로는 nested-decode 실패와 domain_tag 실패 두
+     경로가 있다는 것을 검수자가 지적해 정정했다.
+  5. [알려진 한계, 미수정] claimed_len 이 상한 이내면 read_exact 에
+     타임아웃이 없어 상대가 몸통을 안 보내면 무기한 블로킹한다.
+     std::io::Read 에는 타임아웃이 없어 이 계층에서 못 막는다 —
+     호출자가 소켓 타임아웃을 걸어야 한다. 전송 계층이 없어 아직
+     아무도 그 책임을 안 진다.
+- 검증: `cargo test --workspace` **283 passed / 0 failed**, 빌드 경고 0
+  (4회 연속). framed_ingress 자체 16건(6건 신설).
+- DoD-09 도 재발 경위를 반영해 재정정했다 (GC 경합 수정이 처음엔
+  writer.rs 만 고쳐 8회 중 5회 재발했던 것).
+- 리포트: 이 이력 항목 · CLAUDE.md 공백 목록에 DoS 한계 추가
+
 ## 2026-08-17 18:40 — 프레이밍·디스패치 · 정책 강제 계층 (278 tests green)
 
 - 계획: 사용자 지시 — "코덱스로 이어서 작업"

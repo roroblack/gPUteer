@@ -356,7 +356,7 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
         use std::io::Cursor;
 
         let g2 = grant(&signing_key, 20, NOW + 60_000);
-        let frame = write_frame(FrameType::Grant, &g2.encode_to_vec());
+        let frame = write_frame(FrameType::Grant, &g2.encode_to_vec()).unwrap();
         r.note(&format!("Grant 프레임: {} 바이트 (헤더 5 + 몸통)", frame.len()));
 
         let mut stream = Cursor::new(frame);
@@ -391,7 +391,7 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
             m.coordinator_signature = gputeer_crypto::sign(&signing_key, &m).to_vec();
             m
         };
-        let disguised = write_frame(FrameType::Grant, &l.encode_to_vec());
+        let disguised = write_frame(FrameType::Grant, &l.encode_to_vec()).unwrap();
         let mut stream = Cursor::new(disguised);
         let result = read_frame(
             &mut stream,

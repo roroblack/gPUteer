@@ -163,7 +163,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 278 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 283 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치** |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · **실패 마커 · 상태 사이드카 · 동시 GC 경합** |
@@ -192,6 +192,13 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
   ★ 그러나 **네트워크 전송 · coordinator · scheduler · 실제 시스템 호출이 없다.**
     runtime-policy 는 "무엇을 강제할 수 있는가" 를 판정할 뿐,
     OS 방화벽을 실제로 호출하거나 커널 경로를 잠그지 않는다.
+
+★ framed_ingress 에 타임아웃 없는 블로킹 read DoS 가 있다 (독립 검수 실측)
+  claimed_len 이 상한(8MiB) 이내면 read_exact 로 몸통을 기다리는데
+  타임아웃이 없다. 상대가 헤더만 보내고 몸통을 안 보내면 무기한 블로킹한다.
+  std::io::Read 에는 타임아웃 개념이 없어 이 계층에서 막을 수 없다 —
+  호출자가 소켓 수준에서 걸어야 한다(TcpStream::set_read_timeout).
+  전송 계층이 아직 없어 아무도 이 책임을 지지 않는다.
 
 키 보관이 Windows 전용이다
   §11 K1 은 DPAPI 다. Linux 는 UnsupportedPlatform 으로 **명시적으로 실패**한다
