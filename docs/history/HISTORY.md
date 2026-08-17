@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-08-17 14:10 — 영속 replay 저장소 · 키 관리 · 두 구현의 계약 일치 (DoD-10, 229 tests green)
+
+- 계획: 사용자 지시 — "같이 할 수 있는 코드 작업을 코덱스에 의뢰해서 진행"
+- 스트림: Crypto
+- 수행:
+  1. **DurableReplayGuard** (§10 3단계) — 코덱스에 초안 의뢰, SQLite(rusqlite bundled) 채택.
+     ★ 의존성을 **먼저 측정**했다 — 14.55초, SQLite 3.46.0. 추정으로 고르지 않았다.
+  2. **PersistentKeyring** (§11 K0/K1) — K1 은 Windows DPAPI.
+     Linux 는 조용히 K0 로 내려가지 않고 `UnsupportedPlatform` 으로 실패한다.
+  3. **replay_contract.rs** — 두 구현이 같은 답을 내는지 검사하는 계약 테스트 9건.
+- 검증: `cargo test --workspace` **229 passed / 0 failed**, 빌드 경고 0
+- 코덱스 코드에서 내가 찾은 것:
+  - `is_durable()` 이 **없었다.** 만들고 나서 `true` 를 하드코딩했더니
+    영속성 제거 뮤테이션에도 `true` 였다 — **거짓말을 했다.**
+    `Connection::path()` 에서 도출하도록 고쳤다.
+  - "동시 프로세스 지원" 을 문서가 주장했는데 테스트가 없었다.
+  - `let _ = now_sql;` 로 미사용 경고를 눌러 놨다 (`CLAUDE.md` §3 위반).
+  - 회전 grace 종료 후 구 키를 `InvalidSignature`(위조)로 보고했다 —
+    서명은 진짜다. `lookup_retired()` 로 구분한다.
+  - 개인키 유출 테스트가 hex 한 가지만 봤다. Debug 는 10진수 배열로 찍는다.
+- 검수(codex15)가 찾은 것 — **두 구현이 같은 계약을 만족하지 않았다** (4건).
+  각 구현을 따로 시험하면 영원히 안 보인다. 계약 테스트로 닫았다.
+  ★ 그 계약 테스트가 **내 기댓값의 오류도 잡았다.**
+- 안 고친 것 (`DoD-10` limitations):
+  소비 측 미착수(아무도 안 쓴다) · 실제 다중 프로세스 경쟁 미측정 ·
+  torn write 미검증 · LockTimeout 재시도 정책 없음 · WAL 비교 근거 없음 ·
+  ★ 검수자가 이 코드의 초안을 썼다 (완전한 독립 검수가 아니다)
+- evidence: `docs/evidence/DoD-10_영속_replay_저장소.md` (schema v2)
+- 리포트: 이 이력 항목으로 갈음
+
 ## 2026-08-17 12:40 — ★ 독립 검수 강제(schema v2) · replay 방어 4건 · 재개 선택 필터 (203 tests green)
 
 - 계획: 사용자 지시 — "해결 안 된 4가지를 코덱스와 논의해" + 코덱스 쿼터 소진

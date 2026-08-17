@@ -479,9 +479,16 @@ fn crash_child_writes_uncommitted_record() {
 /// 두 연결이 같은 파일을 열고 **같은 nonce** 를 기록하면
 /// 정확히 하나만 `Fresh` 여야 한다.
 ///
-/// 이것이 깨지면 replay 방어가 다중 프로세스에서 무의미하다.
+/// ★ **이름을 고쳤다** (독립 검수 2026-08-17).
+///   원래 이름은 `two_connections_race_on_the_same_nonce` 였는데
+///   **경쟁 테스트가 아니다** — 두 연결을 만들지만 호출은 순차적이다.
+///   실제 락 경쟁 · `busy_timeout` · `LockTimeout` 은 검증하지 않는다.
+///   이름이 사실을 잘못 말하면 "동시성을 검증했다" 고 오해하게 된다.
+///
+/// 이 테스트가 실제로 보는 것: **두 연결이 같은 파일 상태를 공유하는가.**
+/// 진짜 경쟁 테스트는 별도 작업이다 (DoD-10 limitations).
 #[test]
-fn two_connections_race_on_the_same_nonce() {
+fn two_connections_share_state_sequentially() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("replay.sqlite3");
 

@@ -1,0 +1,185 @@
+$ cargo test --workspace
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_checkpoint-6e2831152b7b5d64.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\ckpt_writer.rs (target\debug\deps\ckpt_writer-16546dde41cd4083.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-7237ea022caded88.exe)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests\durability_chaos.rs (target\debug\deps\durability_chaos-a713e07b32812796.exe)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.37s
+     Running tests\kill_chaos.rs (target\debug\deps\kill_chaos-414ddd6c2f1e6b88.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+     Running tests\resume_selection.rs (target\debug\deps\resume_selection-09c66652405d62bc.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+     Running tests\state_table_parity.rs (target\debug\deps\state_table_parity-d33aee69174e1dfb.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_crypto-82a1054b19dc4765.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\durable_replay.rs (target\debug\deps\durable_replay-604b5b6725977d55.exe)
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.68s
+     Running tests\ed25519_verify.rs (target\debug\deps\ed25519_verify-2b3e71fe1f8613ed.exe)
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests\keyring.rs (target\debug\deps\keyring-85e4e22291438fbc.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests\lifetime_policy.rs (target\debug\deps\lifetime_policy-7681c18ccdeed8c6.exe)
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests\replay_binding.rs (target\debug\deps\replay_binding-89ca6721b49d6817.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests\replay_contract.rs (target\debug\deps\replay_contract-e576893711d16600.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+     Running tests\replay_guard.rs (target\debug\deps\replay_guard-95f3d49f226d09b0.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_protocol-e25ac8386b1db788.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-d2b65a360e6ffb85.exe)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-808d13e2ac83c480.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\field_number_audit.rs (target\debug\deps\field_number_audit-2d63f6f20abd888b.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\lifetime_consistency.rs (target\debug\deps\lifetime_consistency-4330534577bbc283.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\prost_canonical.rs (target\debug\deps\prost_canonical-0a67e78bf4c73906.exe)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests\schema_evolution.rs (target\debug\deps\schema_evolution-c532004f8faeb6a0.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\schema_fingerprint.rs (target\debug\deps\schema_fingerprint-7eeb2c2e56c7e330.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\stream_ownership.rs (target\debug\deps\stream_ownership-8ef8e85cc61be3c3.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\t1_signing_targets.rs (target\debug\deps\t1_signing_targets-945aa85a3831c11c.exe)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests\t1b_grant_and_control.rs (target\debug\deps\t1b_grant_and_control-80e715c433306932.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+합계: 229 passed / 0 failed / 빌드 경고 0
+
+==========================================================================
+의존성 실측 — rusqlite bundled 가 이 환경에서 빌드되는가
+==========================================================================
+
+$ cargo run   (probe: rusqlite 0.32 features=["bundled"])
+
+   Compiling libsqlite3-sys v0.30.1
+   Compiling hashbrown v0.14.5
+   Compiling hashlink v0.9.1
+   Compiling rusqlite v0.32.1
+   Compiling probe v0.0.1
+    Finished dev profile [unoptimized + debuginfo] target(s) in 14.55s
+     Running target/debug/probe.exe
+sqlite 3.46.0
+
+-> 추정이 아니라 측정으로 의존성을 골랐다. Windows 11 · Rust 1.97.1 에서
+   C 컴파일러 문제 없이 14.55초에 빌드된다.
+
+==========================================================================
+비공허성 증명 — 뮤테이션 (RULE.md §6)
+==========================================================================
+
+D1  Connection::open(path) -> Connection::open_in_memory()   (영속성을 없앤다)
+
+    test first_use_is_fresh_and_restart_is_duplicate ... FAILED
+    test clock_state_survives_restart_and_blocks_bad_gc ... FAILED
+    test two_connections_share_state_sequentially ... FAILED
+    test crash_recovery_discards_uncommitted_partial_record ... FAILED
+    test result: FAILED. 7 passed; 4 failed
+
+    * 처음에 is_durable() 이 true 를 하드코딩하고 있어서 이 뮤테이션에도
+      계속 true 를 반환했다 - 거짓말을 했다.
+      Connection::path() 에서 도출하도록 고친 뒤:
+
+    test durable_guard_says_it_is_durable ... FAILED
+    영속 저장소가 is_durable() 로 false 를 반환한다
+
+K1  SecretSigningKey 의 Debug 가 "REDACTED" 뒤에 바이트 배열을 붙이게 한다
+
+    test private_key_never_appears_in_debug_or_display_output ... FAILED
+    * SecretSigningKey Debug 에 개인키 바이트가 들어갔다 (표기: [165, 165, 165, ...)
+
+    * 옛 테스트는 hex("a5a5...") 한 가지만 검사했다.
+      Debug 파생은 10진수 배열로 찍으므로 그 뮤테이션을 통과했다.
+      4가지 표기(소문자 hex · 대문자 hex · 배열 · 쉼표 나열)를 전부 본다.
+
+==========================================================================
+계약 적합성 — 두 구현이 같은 답을 내는가
+==========================================================================
+
+$ cargo test -p gputeer-crypto --test replay_contract
+
+test fresh_then_duplicate_agrees ... ok
+test namespacing_agrees ... ok
+test short_nonce_is_rejected_by_both ... ok
+test extreme_retain_until_agrees ... ok
+test extreme_gc_time_agrees ... ok
+test zero_capacity_is_rejected_by_both ... ok
+test signer_quota_agrees ... ok
+test cache_full_agrees_and_never_evicts ... ok
+test gc_expiry_and_rollback_agree ... ok
+test result: ok. 9 passed; 0 failed
+
+  이 9건은 시나리오 한 벌을 두 구현에 똑같이 먹인다.
+  검수 전에는 네 가지 입력에서 답이 갈렸다.
+
+==========================================================================
+개별 테스트 실행 (이름이 실제로 돌았음을 남긴다)
+==========================================================================
+
+$ cargo test -p gputeer-crypto --test durable_replay
+
+test crash_child_writes_uncommitted_record ... ignored
+test durable_guard_says_it_is_durable ... ok
+test invalid_nonce_does_not_consume_a_valid_nonce_slot ... ok
+test crash_recovery_discards_uncommitted_partial_record ... ok
+test cache_full_does_not_evict_unexpired_entries ... ok
+test first_use_is_fresh_and_restart_is_duplicate ... ok
+test key_contains_device_domain_and_nonce ... ok
+test gc_releases_quota_only_after_expiration ... ok
+test clock_state_survives_restart_and_blocks_bad_gc ... ok
+test two_connections_share_state_sequentially ... ok
+test signer_quota_does_not_starve_other_signers ... ok
+test two_connections_with_different_nonces_both_succeed ... ok
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.94s
+
+$ cargo test -p gputeer-crypto --test keyring
+
+test plaintext_storage_is_rejected_without_explicit_opt_in ... ok
+test quarantine_is_distinguishable_in_directory_but_rejects_verification ... ok
+test private_key_never_appears_in_debug_or_display_output ... ok
+test corrupted_key_file_is_rejected_instead_of_silently_loaded ... ok
+test revoked_key_rejects_a_message_signed_before_revocation ... ok
+test rotation_accepts_both_keys_during_grace_and_rejects_old_key_afterward ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+$ cargo test -p gputeer-crypto --test replay_contract
+
+test short_nonce_is_rejected_by_both ... ok
+test extreme_retain_until_agrees ... ok
+test fresh_then_duplicate_agrees ... ok
+test cache_full_agrees_and_never_evicts ... ok
+test namespacing_agrees ... ok
+test signer_quota_agrees ... ok
+test extreme_gc_time_agrees ... ok
+test gc_expiry_and_rollback_agree ... ok
+test zero_capacity_is_rejected_by_both ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+$ cargo test -p gputeer-crypto --test replay_guard
+
+test cache_full_never_evicts_unexpired_entries ... ok
+test gc_clamps_forward_clock_jumps ... ok
+test first_use_is_fresh_and_reuse_is_duplicate ... ok
+test default_capacity_matches_spec ... ok
+test gc_resumes_after_clock_recovers ... ok
+test gc_removes_only_expired_entries ... ok
+test gc_refuses_to_delete_while_clock_goes_backwards ... ok
+test key_is_namespaced_by_device_and_domain ... ok
+test one_device_cannot_starve_others ... ok
+test repeated_bogus_gc_still_drains_the_cache ... ok
+test restart_opens_a_replay_window ... ok
+test signer_quota_is_released_by_gc ... ok
+test failed_verification_does_not_touch_the_guard ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s

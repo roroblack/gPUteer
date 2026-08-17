@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-17 12:40)
+## 5. 지금 상태 (2026-08-17 14:10)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -163,13 +163,13 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 203 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 229 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
-| ├ `crates/crypto` | Ed25519Verifier · InMemoryKeyring (★ 운영 부적합 — §11 미구현) · InMemoryReplayGuard (서명자별 quota · 시계 양방향 방어) |
+| ├ `crates/crypto` | Ed25519Verifier · **DurableReplayGuard(SQLite §10)** · **PersistentKeyring(§11 K0/K1)** · 두 replay 구현의 **계약 적합성 테스트** |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 · 경로 탈출 차단 · **재개 job/attempt 필터** |
 | └ 미착수 | coordinator · agent · scheduler · UI |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 17건** (PASS 16 · FAIL-SCOPE 1). 스키마 위반 0. ★ **schema v2 독립 검수 강제** (ADR-030). 검수 기록 없는 P0/DoD PASS **13건** 유예 중 |
+| **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). 검수 기록 없는 v1 **13건** 유예 중 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
@@ -182,10 +182,15 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
   그러나 Agent 가 그 정책을 강제하는 계층은 없다.
   = 위조를 막은 것이지 정책을 시행한 것이 아니다.        -> TODO_VISION V-06
 
-replay 방어가 재시작을 못 견딘다
-  InMemoryReplayGuard 는 프로세스가 죽으면 캐시가 빈다.
-  **재시작 직후 replay 창이 열린다.** is_durable() 이 false 인 것이 그 신호다.
-  영속 저장소(§10 3단계)가 없다.                          -> 다음 작업 1
+★ 영속 replay 저장소를 **아무도 쓰지 않는다**
+  DurableReplayGuard 를 만들었고 재시작·크래시 테스트도 통과한다.
+  그런데 검증 경로(coordinator·agent)가 미착수라 **어디에도 연결되어 있지 않다.**
+  "영속 저장소가 있다" 는 "재시작 후 replay 창이 닫혔다" 가 아니다. -> DoD-10 limitations
+
+키 보관이 Windows 전용이다
+  §11 K1 은 DPAPI 다. Linux 는 UnsupportedPlatform 으로 **명시적으로 실패**한다
+  (조용히 K0 로 내려가지 않는다). K2(TPM)는 미구현이다.
+  DPAPI 가 풀린 뒤 프로세스 메모리·크래시 덤프는 보호하지 않는다.
 
 장수명·증거 메시지에는 replay 방어가 아예 없다
   ReplayStatus::NotApplicable 로 **보고는 한다** (2026-08-17).
@@ -209,8 +214,8 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. replay 영속 저장소 (signing.md §10 3단계)     재시작 시 replay 창이 열린다
-2. 키 관리 (signing.md §11)                      InMemoryKeyring 뿐이다
+1. 소비 측(coordinator·agent) 착수              ★ 만든 방어를 아무도 안 쓴다
+2. 다중 프로세스 replay 경쟁 실측                순차 호출만 검증했다
 3. 체크포인트 쓰기 실패 경로 정리                DoD-09 limitations 4건
 4. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 5. 정책 강제 계층 (V-06)                         "서명했다" != "강제한다"
