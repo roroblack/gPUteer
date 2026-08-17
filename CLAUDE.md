@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 08:20)
+## 5. 지금 상태 (2026-08-18 08:30)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -171,7 +171,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함 |
 | └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS **16** · FAIL-SCOPE 1 · **INCONCLUSIVE 1**(P0-07, 2026-08-18 정정)). 스키마 위반 0. schema v2 **2건**(DoD-09·10). ★ **`RULE.md` §7.3 review-required v1 evidence 14건(`DoD-01`~`08`, `P0-01`·`03`·`03a`·`06`·`07`·`08`) 전부 addendum 독립 재검수 `ACCEPTED`** — 34라운드 누적, frontmatter 는 `P0-07` 의 `status` 필드 하나만 실제로 고쳤다(나머지는 append-only). ACCEPTED 는 정정 절(addendum)에 한정 — v1 → schema v2 실제 승격(frontmatter 전체 교체)은 별도 작업으로 남아 있다. `ENV-01`·`02` 는 review-required 대상이 아니라 미착수. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `PASS` 로 복원했다(2026-08-18 06:48) — 이 재실측 자체는 아직 독립 재검수 전이다 |
+| **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). ★ **v1 evidence 16건(`DoD-01`~`08`, `P0-01`·`03`·`03a`·`06`·`07`·`08`, `ENV-01`·`02`) 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원했으며 그 재실측 addendum 도 4라운드 끝에 ACCEPTED 받았다 — 이 사이클에서 frontmatter 를 실제로 고친 유일한 필드다(나머지는 전부 append-only). ACCEPTED 는 정정 절(addendum)에 한정 — v1 → schema v2 실제 승격(frontmatter 전체 교체·정식 executor/reviewer 메타데이터)은 별도 작업으로 남아 있다 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
@@ -239,8 +239,8 @@ Linux 를 한 번도 돌려보지 않았다
 2. runtime-policy 판정을 실제 시스템 호출로 연결  OS 방화벽 · 커널 경로 강제 미구현
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 4. 별도 **프로세스** replay 경쟁 실측            스레드로만 측정했다
-5. v1 evidence — review-required 14건은 전부 addendum ACCEPTED(2026-08-18).
-   남은 것: ENV-01·02(review-required 아님) · v1→schema v2 실제 승격(frontmatter 교체)
+5. v1 evidence — ★ **16건 전부(review-required 14건 + ENV-01·02) addendum ACCEPTED**(2026-08-18).
+   남은 것: v1→schema v2 실제 승격(frontmatter 전체 교체·정식 executor/reviewer 메타데이터)
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

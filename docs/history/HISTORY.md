@@ -16,6 +16,35 @@
 
 ---
 
+## 2026-08-18 08:30 — ENV-02 도 ACCEPTED — 이 저장소의 v1 evidence 16건 전부 addendum 재검수 완료
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속).
+- 스트림: —
+- 결과: **`ACCEPTED`.** `:158` 이 정확히 D-1 문장을 가리킴을
+  확인했고, 앞선 두 라운드 지적이 전부 해소됐다고 확인했다.
+- **★ 이로써 이 저장소의 v1 evidence 16건(review-required 14건 +
+  ENV-01·02) 전부가 addendum 독립 재검수 `ACCEPTED` 를 받았다.**
+  `python scripts/verify_evidence.py` 는 17/18 을 PASS 로 계상하고
+  (P0-06 은 FAIL-SCOPE 로 원래도 PASS 가 아니다), 스키마 위반은
+  0건이다.
+- 이 사이클 전체에서 반복적으로 확인된 것: (1) 코덱스는 정말
+  형식적 승인을 하지 않고 매번 파일:줄을 직접 열어 검증했다 —
+  라운드당 평균 2~4회. (2) 구현자(이 세션) 스스로도 정정하다가
+  새 오류를 만든 사례가 여러 번 있었고(oneof 구현 개수 과장,
+  HISTORY.md 줄 번호 자연 붕괴 2회, 통계량 계산 오류, 인용 줄
+  번호 오류 다수) 전부 다음 라운드가 잡았다 — **재검수 사이클
+  자체가 스스로를 검증하는 도구로 기능했다.**
+- 남은 것: v1 → schema v2 실제 승격(frontmatter 전체 교체·정식
+  executor/reviewer 메타데이터·raw_output digest)은 여전히 별도
+  작업이다. addendum ACCEPTED 는 "정정 내용이 맞다"는 뜻이지
+  "이 evidence 가 schema v2 다"가 아니다.
+- 검증: `scripts/verify_evidence.py` 스키마 위반 0. `cargo test
+  --workspace` 293/0/0.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 08:20 — ENV-01 ACCEPTED, ENV-02 인용 오류 1건 더 정정
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
