@@ -262,7 +262,7 @@ $ python -c "import json; print(len(json.load(open('tests/vectors/canonical_v1.j
 
 > `JobManifest` 최상위 27개 필드 전부와 `Lease.scope` 는 mutation 으로
 > 직접 확인됐다. `Lease` 의 나머지 최상위 필드와 모든 중첩 메시지
-> 내부 필드는 `field_number_audit`(번호-이름 대조, `crates/protocol/tests/field_number_audit.rs:282`)
+> 내부 필드는 `field_number_audit`(번호-이름 대조, `crates/protocol/tests/field_number_audit.rs:249-274`)
 > 으로 **필드 자체가 빠지지 않았음**만 확인됐다 — "canonical 에 들어는
 > 갔는데 값이 반영 안 되는" 결함까지는 중첩 내부에서 검증되지 않는다.
 
@@ -270,21 +270,39 @@ $ python -c "import json; print(len(json.load(open('tests/vectors/canonical_v1.j
 
 - negative_tests 이름은 실재를 확인했다(`prost_canonical.rs:307,321,334,351,366,745`,
   `field_number_audit.rs:282`, `prost_canonical.rs:279,852`).
-- limitation "17종 중 13종만 구현"(`DoD-03:72`)도 stale — 지금
-  `ToCanonicalFields` 구현은 41개, domain coverage 는 23종 중 19종이다
-  (`crates/protocol/src/to_fields.rs`, `crates/protocol/tests/t1_signing_targets.rs:397-445`).
-- "Ed25519 를 하지 않았다"(`:74`) 는 **이 evidence 자체가 실행하지
-  않았다**는 뜻으로 좁혀야 한다 — Ed25519 구현 자체는 이미 존재한다
-  (`crates/crypto/src/lib.rs:58-64`, `DoD-04`).
-- "SCHEMA_TOO_NEW 미구현"(`:75`) 도 stale — 지금 구현되어 있다
-  (`crates/protocol/src/signing.rs:741-744`).
-- "강제 계층 미구현"(`:78`) 은 "판정은 있으나 실제 OS 강제 연결은
-  없다"로 고친다 — `runtime-policy` 크레이트가 판정 계층을 추가했지만
-  (`docs/history/HISTORY.md` "2026-08-17 21:30" 항목), OS 방화벽·커널
-  경로 잠금 호출은 여전히 없다.
+- limitation "17종 중 13종만 구현"(`DoD-03:72`)은 **틀린 숫자가 됐다**
+  — 지금 `ToCanonicalFields` 구현은 41개, domain coverage 는 23종 중
+  19종이다(`crates/protocol/src/to_fields.rs`,
+  `crates/protocol/tests/t1_signing_targets.rs:397-445`).
+- "Ed25519 를 하지 않았다"(`:74`) — ★ 여기서 "하지 않았다"는 두 가지로
+  읽힐 수 있다: "구현이 없다"(거짓 — `crates/crypto/src/lib.rs:58-64`
+  에 `sign()` 이 있다, `DoD-04` 가 그 검증 경로까지 확인했다) 와
+  "**이 evidence(DoD-03) 가 Ed25519 를 실행하지 않았다**"(참 — 위
+  `raw_output`(`DoD-03:16-25`)은 canonical/sig_input 생성까지만
+  본다, Ed25519 서명·검증 호출은 없다). limitation 은 후자로 좁혀
+  읽는다 — DoD-03 자체가 Ed25519 를 실행했다는 근거는 없다.
+- "SCHEMA_TOO_NEW 미구현"(`:75`) — 구현 자체는 지금 존재한다
+  (`crates/protocol/src/signing.rs:741-744`). 다만 이것도 위와 같은
+  구분이 필요하다: DoD-03 자체가 이 경로를 실행해 확인한 것은 아니다
+  (그 검증은 `P0-08`·`DoD-04` 범위다).
+- "강제 계층 미구현"(`:78`) 은 **여전히 대체로 참이지만 절반만** —
+  `runtime-policy` 크레이트가 판정 계층을 추가했다
+  (`crates/runtime-policy/src/network.rs:22-25` `OsFirewallBackend`
+  trait, `:85-99` `NetworkPolicyCheck::decide`), 그러나 실제 OS 방화벽
+  호출·커널 경로 잠금은 여전히 없다(`docs/history/HISTORY.md`
+  "2026-08-17 21:30" 항목). "미구현" 을 "**판정 계층은 있으나 실제
+  강제는 없다**" 로 좁힌다 — "완전히 미구현" 은 이제 부정확하다.
 
 ### review_outcome
 
-`CHANGES_REQUESTED` → 위 정정으로 claim 범위와 stale limitations 를
-좁혔다. 원본 YAML 은 당시 기록이므로 고치지 않는다. **이 정정 자체는
-아직 재검수를 거치지 않았다.**
+★ 2026-08-17 22:40 최초 정정에 이어, `agent:codex-cli` 의 4건 일괄
+최종 재검수가 다음을 지적했다: (a) `field_number_audit.rs:282` 인용은
+필드번호 대조 테스트가 아니라 감사망 등록 여부만 확인하는
+`every_impl_is_audited` 라며, 실제 필드번호 대조는 `:249-274` 라고
+지적 — 위 "claim 을 이렇게 좁혀 읽는다" 절의 인용을 고쳤다. (b)
+Ed25519/SCHEMA_TOO_NEW/runtime-policy limitation 정정이 "구현이
+존재한다" 와 "이 evidence 가 실행해 확인했다" 를 충분히 구분하지
+않아 과장으로 읽힐 수 있다고 지적 — 위 세 항목을 그 구분을 명시하도록
+다시 썼다. `CHANGES_REQUESTED` 는 유지됐다. 원본 YAML 은 당시
+기록이므로 고치지 않는다. **이 두 번째 정정 자체는 아직 재검수를
+거치지 않았다.**

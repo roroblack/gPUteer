@@ -270,6 +270,34 @@ feature 전용). 시간 스윕이 아니라 **코드 순서**로 겨냥한다:
 "review_outcome" 은 이 확인이 반영되기 전(2026-08-17 22:40) 판정이다 —
 재검수가 이 절을 확인한 뒤에야 최종 ACCEPTED 여부가 정해진다.
 
+★ 2026-08-17 23:20 추가 — `agent:codex-cli` 의 4건 일괄 최종 재검수가
+이 addendum 을 `ACCEPTED` 로 판정했다. 코드에서 직접 확인한 것:
+`chaos-hooks` 는 `default` feature 에 없다(`Cargo.toml:8-15`), self-kill
+함수는 `replace_with_retry` 성공 **직후** · `Committed` 기록 **이전**에
+정확히 위치한다(`writer.rs:129-139` → `writer.rs:141-145` 사이),
+새 테스트의 단언들이 LATEST·HashVerified·Committed 부재·재개 반환을
+전부 검사한다(`kill_chaos.rs:216-262`). 다만 이 세션이 주장한 "8회
+연속 실행" 결과 자체는 검수자의 read-only 샌드박스에서 재실행하지
+않았으므로 **독립 재현은 확인 안 됨** — 코드 구조와 단언 로직의
+정확성만 ACCEPTED 의 근거다.
+
+```text
+executor_id:      agent:claude-code
+executor_tool:    claude-code (PowerShell + cargo)
+reviewer_id:      agent:codex-cli
+reviewer_tool:    codex exec --sandbox read-only -c model_reasoning_effort=high
+review_context:   fresh-read-only
+review_outcome:   ACCEPTED (이 addendum 에 한정 — 원본 P0-03 v1 claim 전체를
+                   ACCEPTED 로 재분류하는 것이 아니다)
+review_scope:     writer.rs 의 chaos_kill_after_latest 호출 위치,
+                   Cargo.toml 의 chaos-hooks feature 격리,
+                   kill_chaos.rs 의 새 테스트 단언 논리
+```
+
+이 addendum 은 독립 검수를 통과했지만, `P0-03` 문서 전체를 schema v2
+로 승격하려면 원본 claim·나머지 limitations 도 같은 수준으로 재검수
+받아야 한다 — 그 작업은 아직 하지 않았다.
+
 ### 추가 limitation
 
 - ★ `find_resume_point()`(job/attempt 필터 없는 구 API)가 `kill_chaos.rs`

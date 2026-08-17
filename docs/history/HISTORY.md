@@ -16,6 +16,41 @@
 
 ---
 
+## 2026-08-17 23:20 — v1 evidence 4건 재검수 완료 라운드 — P0-03 addendum 최초 ACCEPTED
+
+- 계획: 사용자 지시 — "코덱스로 다음 작업들 진행해" 의 연장. 직전 정정본
+  (DoD-03·04·06, P0-03)이 실제로 지적을 해소했는지 코덱스(read-only)에게
+  최종 재검수를 맡겼다.
+- 스트림: Checkpoint · Protocol
+- 결과: **P0-03 의 새 addendum(HASH_VERIFIED~COMMITTED 결정적 kill
+  테스트) 은 `ACCEPTED`** — 이 저장소에서 독립 검수가 명시적으로
+  ACCEPTED 를 준 첫 v1-evidence 정정이다. 나머지 셋은 다시
+  `CHANGES_REQUESTED`(이번엔 훨씬 작은 흠):
+  - DoD-04: K2/Linux limitation 의 파일:줄 인용이 틀렸다
+    (`lib.rs:11-16,47-48` → 실제는 `lib.rs:28-32`). 고쳤다.
+  - DoD-06: frontmatter 의 vectors 수(36)가 지금 파일(40)과
+    불일치한다는 것을 짚었다 — DoD-03 이 같은 파일을 20→40 으로 이미
+    정정한 사실과 연결해 명시했다.
+  - DoD-03: (a) `field_number_audit.rs:282` 인용이 실제 필드번호
+    대조(`:249-274`)가 아니라 감사망 등록 테스트를 가리켰다. (b)
+    Ed25519/SCHEMA_TOO_NEW/runtime-policy limitation 정정이 "구현이
+    존재한다"와 "이 evidence 가 직접 실행해 확인했다"를 충분히
+    구분하지 않아 과장으로 읽힐 수 있었다 — 세 항목 모두 그 구분을
+    명시하도록 다시 썼다.
+  - P0-03 의 addendum 자체는 코드에서 직접 확인됐다: `chaos-hooks` 가
+    `default` feature 밖에 있고, self-kill 훅이 `replace_with_retry`
+    성공 직후·`Committed` 기록 이전에 정확히 있고, 새 테스트 단언이
+    필요한 사후 상태를 전부 검사한다는 것. 다만 "8회 연속 실행"
+    결과 자체는 검수자가 재실행하지 않아 그 수치는 확인 안 됨으로
+    남았다.
+- 세 건(DoD-03·04·06)은 이번 라운드에서 지적된 것만 다시 고쳤고,
+  **재재검수는 아직 하지 않았다** — CLAUDE.md 에 명시.
+- 검증: 이번 라운드는 문서 전용 수정이라 `cargo test --workspace`
+  293/0/0 재확인만 했다(코드 변경 없음).
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-17 23:10 — v1 evidence 4건 독립 재검수(코덱스), HASH_VERIFIED~COMMITTED 결정적 kill 테스트 신설
 
 - 계획: 사용자 지시 — "코덱스로 다음 작업들 진행해" (v1 evidence 부채

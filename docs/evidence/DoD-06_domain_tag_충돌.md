@@ -313,9 +313,22 @@ evidence 의 negative_tests 목록에 `change_coordinator_set` 이라고
 genesis/audit/release/invite 4종 proto 부재 limitation(`:84`)은 지금도
 유효하다(`t1_signing_targets.rs:420-424`).
 
+### vectors 메타데이터도 지금은 stale — DoD-03 과 같은 파일이다
+
+frontmatter(`DoD-06:12`)는 "36건" 이라고 적었다. `tests/vectors/canonical_v1.json`
+은 `DoD-03`(20 → 40 정정)과 `DoD-06`(28 → 36) 이 함께 늘려 온 **같은
+파일**이다 — 그 뒤 다른 작업이 더 늘려 지금은 **40건**이다(직접 파싱해
+셈, `DoD-03` 의 "이후 변경" 절 참조). "36건" 은 이 evidence 를 쓴
+시점(commit `e5ac1ff3`)의 정확한 스냅샷이므로 원본 YAML 은 고치지
+않는다 — 지금 schema v2 승격의 근거로 쓰려면 **40** 을 현재 값으로
+읽어야 한다.
+
 ### review_outcome
 
-`CHANGES_REQUESTED` → claim 은 유지하되, 위 이름 불일치·stale
-limitations·"모든 타입 혼동을 domain_tag 가 막는다"는 확장 해석
-금지를 반영했다. 원본 YAML 은 당시 기록이므로 고치지 않는다. **이
-정정 자체는 아직 재검수를 거치지 않았다.**
+★ 2026-08-17 22:40 최초 정정에 대해 `agent:codex-cli` 의 추가
+재검수(4건 일괄 최종 재검수)가 응답했다: claim 범위·테스트명·stale
+limitations 정정은 실질적으로 해소됐다고 확인했지만, vectors
+메타데이터(위 절)가 현재 파일과 불일치한다는 것을 새로 지적해
+`CHANGES_REQUESTED` 를 유지했다. 위 절로 그 불일치를 명시했다.
+원본 YAML 은 당시 기록이므로 고치지 않는다. **이 두 번째 정정 자체는
+아직 재검수를 거치지 않았다.**
