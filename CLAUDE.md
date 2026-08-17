@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 02:15)
+## 5. 지금 상태 (2026-08-18 02:30)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -171,7 +171,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함 |
 | └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ⚠️**INCONCLUSIVE**(2026-08-18 정정 — raw_output/artifact 수치 불일치, 재실측 전까지) · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS **16** · FAIL-SCOPE 1 · **INCONCLUSIVE 1**(P0-07, 2026-08-18 정정)). 스키마 위반 0. schema v2 **2건**(DoD-09·10). v1 **16건** 중 — `DoD-` 8건 전부 + `P0-01`·`P0-03`·`P0-03a`·`P0-08` = **12건 addendum ACCEPTED**, `P0-06`·`P0-07` 2라운드 정정 후 **재검수 진행 중**(review-required 대상 중 마지막 2건). ACCEPTED 는 정정 절(addendum)에 한정 — frontmatter 를 schema v2 로 올리는 작업은 아직 안 함. ★ `P0-07` 은 raw_output 요약과 `_raw` 원문의 **수치 불일치**로 `status` 를 `PASS`→`INCONCLUSIVE` 로 정정했다 — 이 세션에서 frontmatter 를 실제로 고친 유일한 사례. 재실측(x600, GPU 필요) 전까지 미해결(아래 공백 목록 참조) |
+| **DoD** | 🟡 **evidence 18건** (PASS **16** · FAIL-SCOPE 1 · **INCONCLUSIVE 1**(P0-07, 2026-08-18 정정)). 스키마 위반 0. schema v2 **2건**(DoD-09·10). ★ **`RULE.md` §7.3 review-required v1 evidence 14건(`DoD-01`~`08`, `P0-01`·`03`·`03a`·`06`·`07`·`08`) 전부 addendum 독립 재검수 `ACCEPTED`** — 34라운드 누적, frontmatter 는 `P0-07` 의 `status` 필드 하나만 실제로 고쳤다(나머지는 append-only). ACCEPTED 는 정정 절(addendum)에 한정 — v1 → schema v2 실제 승격(frontmatter 전체 교체)은 별도 작업으로 남아 있다. `ENV-01`·`02` 는 review-required 대상이 아니라 미착수. ★ `P0-07` 은 raw_output 요약과 `_raw` 원문의 **수치 불일치**로 재실측(x600, GPU 필요) 전까지 미해결(아래 공백 목록 참조) |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백

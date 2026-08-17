@@ -16,6 +16,45 @@
 
 ---
 
+## 2026-08-18 02:30 — P0-06·P0-07 도 ACCEPTED — RULE.md §7.3 review-required v1 evidence 전체(14건) 재검수 완료
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프). 이 사이클의 마지막 2건.
+- 스트림: Runtime
+- 결과: **둘 다 `ACCEPTED`.** `python scripts/verify_evidence.py --json`
+  exit 0 과 PyYAML `safe_load` 로 `P0-07` 의 `status='INCONCLUSIVE'`
+  파싱을 재검수가 직접 재현해 확인했다. "관측값을 고친 것이 아니라
+  판정만 바꾼 것이므로 evidence 철학과 충돌하지 않는다."
+- **★ 이로써 `RULE.md` §7.3 review-required v1 evidence(14건:
+  `DoD-01`~`08`, `P0-01`·`03`·`03a`·`06`·`07`·`08`) 전부가 독립
+  재검수 `ACCEPTED` 를 받았다.** 라운드 수 합계 34회(문서당
+  1~4라운드). 그 과정에서:
+  - 실질적 stale limitation·claim 범위 초과·negative_tests 이름
+    오류를 수십 건 찾아 고쳤다.
+  - **frontmatter 를 실제로 고친 것은 `P0-07` 의 `status` 필드
+    단 하나** — 나머지는 전부 append-only 절로 처리했다.
+  - 구현자(이 세션) 스스로 정정하다가 새 오류를 만든 사례가
+    최소 3번 있었다(`ControlAction` oneof 구현 개수 과장,
+    `HISTORY.md` 줄 번호 자연 붕괴 2회, "frontmatter 에 반영했다"
+    는 거짓 문장) — 전부 다음 라운드가 잡았다.
+  - `P0-01b`·`P0-07b` 등 "후속 스파이크로 분리한다"고 decision 에
+    적었지만 실제로는 한 번도 실행되지 않은 약속이 최소 2건 있었다.
+  - `docs/history/HISTORY.md` 처럼 계속 자라는 append-only 파일에
+    줄 번호로 인용하면 그 인용이 세션 안에서도 저절로 틀려진다는
+    것을 배웠다 — 이후 제목 기반 인용으로 전환했다.
+  - **v1 → schema v2 승격(frontmatter 전체 교체·정식
+    executor/reviewer 메타데이터·raw_output digest)은 여전히
+    별도 작업으로 남아 있다** — addendum ACCEPTED 는 "정정 내용이
+    맞다"는 뜻이지 "이 evidence 가 schema v2 다"가 아니다.
+    `verify_evidence.py` 는 지금도 이 14건을 v1 로 계상한다.
+  - `ENV-01`·`02` 는 `RULE.md` §7.3 의 강제 대상이 아니라 이번
+    사이클에서 다루지 않았다.
+- 검증: `scripts/verify_evidence.py` 스키마 위반 0. `cargo test
+  --workspace` 293/0/0.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 02:15 — P0-07 의 status 를 PASS → INCONCLUSIVE 로 정정
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"

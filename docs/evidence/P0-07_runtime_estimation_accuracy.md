@@ -285,3 +285,13 @@ decision 이 "노드 간 외삽 오차는 P0-07b 로 분리한다"고 적었지�
 17→16건으로 줄었다). 이 세 번째 수정 자체는 아직 재검수를 거치지
 않았다. raw_output 수치 불일치는 재실측 전까지 미해결로 남는다 —
 GPU 하드웨어(x600) 접근이 필요하다.
+
+★ 2026-08-18 02:30 세 번째(최종) 재검수 — `agent:codex-cli` 가
+**`ACCEPTED`** 로 판정했다. `python scripts/verify_evidence.py --json`
+exit 0, PyYAML `safe_load` 로 `status='INCONCLUSIVE'` 파싱 성공을
+직접 재현해 확인했다. "관측값을 고친 것이 아니라 판정만
+INCONCLUSIVE 로 바꾼 것이므로 evidence 철학과 충돌하지 않는다."
+`decision` 의 과거 `PASS` 문구도 당시 기록으로 명시되어 있음을
+확인했다. raw_output 수치 불일치 자체는 재실측(GPU 필요) 전까지
+여전히 미해결이다 — 이 addendum 은 그 사실을 정직하게 남기는
+것이 목적이었고, 그 목적은 달성됐다.
