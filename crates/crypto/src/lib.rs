@@ -17,8 +17,13 @@
 //!
 //! # 아직 하지 않은 것
 //!
-//! `signing.md` §11(키 보관 K0~K2) · §10(nonce 캐시 저장소) 는 미구현이다.
-//! [`InMemoryKeyring`] 은 **테스트와 초기 통합용**이며 운영에 쓰면 안 된다.
+//! `signing.md` §11(키 보관 K0~K2)은 미구현이다.
+//! [`InMemoryKeyring`] 과 [`InMemoryReplayGuard`] 는 **테스트와 초기 통합용**이며
+//! 운영에 쓰면 안 된다 — 둘 다 프로세스가 죽으면 사라진다.
+
+pub mod replay;
+
+pub use replay::{InMemoryReplayGuard, DEFAULT_CAPACITY};
 
 use std::collections::HashMap;
 
