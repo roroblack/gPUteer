@@ -16,6 +16,27 @@
 
 ---
 
+## 2026-08-17 23:45 — DoD-03 도 4라운드 만에 ACCEPTED — evidence 4건 재검수 사이클 종료
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). DoD-03 의 마지막 남은 지적(인용 모호함)을 고친
+  버전을 네 번째로 재검수했다.
+- 스트림: Protocol
+- 결과: **`ACCEPTED`.** `field_number_audit.rs:249/259/269`(번호-이름
+  대조)와 `:282`(`every_impl_is_audited`)의 구분이 정확한지, claim
+  범위·vectors 40건·Ed25519 등 구분까지 문서 전체를 다시 훑어 "확인
+  안 됨: 없음" 으로 마무리했다.
+- **이로써 이번 v1-evidence 재검수 사이클(`DoD-03`·`DoD-04`·`DoD-06`·
+  `P0-03`) 4건 모두 addendum 이 `ACCEPTED` 를 받았다** — `DoD-03` 은
+  4라운드, `P0-03` 은 2라운드, `DoD-04`·`DoD-06` 은 3라운드 만에.
+  문서 전체를 schema v2(frontmatter 승격 · executor/reviewer 정식
+  메타데이터)로 올리는 것은 여전히 별도 작업으로 남아 있다 — addendum
+  ACCEPTED 와 frontmatter v2 승격을 혼동하지 않는다.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-17 23:35 — v1 evidence 3라운드 재검수 완료 — DoD-04·DoD-06 ACCEPTED, DoD-03 만 잔류
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"

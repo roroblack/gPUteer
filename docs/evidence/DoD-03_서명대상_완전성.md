@@ -320,6 +320,18 @@ Ed25519/SCHEMA_TOO_NEW/runtime-policy limitation 정정이 "구현이
 — 실제로는 서로 다른, 둘 다 진짜인 함수를 가리키고 있었을 뿐이다
 (`every_impl_is_audited` vs `common_message_field_numbers_match_proto`
 류). 두 인용을 명시적으로 구분해 고쳤다(위 "negative_tests 이름은
-실재를 확인했다" 절 참조). 이 마지막 수정 자체는 아직 재검수를
-거치지 않았다 — `DoD-03` 은 세 라운드째 `CHANGES_REQUESTED` 상태로
-남아 있다.
+실재를 확인했다" 절 참조).
+
+★ 2026-08-17 23:45 네 번째(최종) 재검수 — `agent:codex-cli` 가
+**`ACCEPTED`** 로 판정했다. `field_number_audit.rs:249,259,269` 가
+번호-이름 대조 진입점, `:282` 가 `every_impl_is_audited` 라는 구분이
+정확한지 소스를 직접 열어(`grep -n '^fn '`) 확인했고, claim 범위·
+vectors 40건·Ed25519/SCHEMA_TOO_NEW/runtime-policy 구분까지 이
+문서의 처음부터 끝까지 다시 훑어 더 남은 문제가 없다고 판정했다.
+"확인 안 됨: 없음."
+
+이로써 `DoD-03`·`DoD-04`·`DoD-06`·`P0-03` 4건 모두 addendum 이
+독립 재검수 `ACCEPTED` 를 받았다 — `DoD-03` 은 4라운드, 나머지는
+1~3라운드 만에. 문서 전체를 schema v2 로 승격하는 것은 여전히 별도
+작업이다(frontmatter 를 v1 → v2 로 바꾸고 executor/reviewer 메타데이터
+· raw_output digest 를 정식으로 채우는 일) — 아직 하지 않았다.
