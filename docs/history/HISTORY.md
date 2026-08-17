@@ -16,6 +16,32 @@
 
 ---
 
+## 2026-08-17 18:40 — 프레이밍·디스패치 · 정책 강제 계층 (278 tests green)
+
+- 계획: 사용자 지시 — "코덱스로 이어서 작업"
+- 스트림: Crypto · Runtime(신설)
+- 수행:
+  1. `crates/crypto/src/framed_ingress.rs` — [type][len][body] 프레이밍,
+     헤더 타입으로 decode_and_verify<M> 디스패치. 헤더는 서명 대상이
+     아니므로 위조 가능하다는 전제로 다룬다 — 타입을 속이면 실제 서명의
+     domain_tag 가 달라 검증이 반드시 실패한다는 성질에 기댄다.
+  2. `crates/runtime-policy` (신설, Runtime 스트림) — 서명된 정책 필드가
+     Enforceable/Suppressible/Unenforceable 중 어디인지 판정하는 순수
+     함수 계층(V-06). artifact_scope(문자열 검사, TOCTOU는 못 막음) ·
+     network(OS 백엔드 없으면 항상 거부) · Lease.scope(소유 자원은
+     watermark, 외부 API는 억제뿐) · VRAM/S1(CLAUDE.md §0.4 그대로 고정).
+- ★ 코덱스에 이 두 작업을 설계로 맡겼는데 **둘 다 read-only 샌드박스라
+  파일을 못 썼다** — 설계 논의만 돌아왔다. 설계 자체는 타당해서 그대로
+  구현했다(코덱스 원안: [u32_be len][body] 프레이밍 · YAGNI로 tokio 배제 ·
+  3분류 강제성 체계 · 8개 negative test 이름).
+- 검증: `cargo test --workspace` **278 passed / 0 failed**, 빌드 경고 0
+  뮤테이션(상한 검사 제거 · 경로 탈출 검사 제거 · stale epoch 검사 제거)
+  모두 의도한 테스트에서만 실패.
+- `gputeer selftest` 에 4b(프레이밍) · 4c(정책) 단계 추가. 통과 18 -> 22.
+- 안 남은 것: OS 방화벽 호출 · 커널 경로 강제(openat2 등) · 실제 시스템
+  조작 — runtime-policy 는 판정만 하고 아무것도 강제로 실행하지 않는다.
+- 리포트: 이 이력 항목 · TODO_VISION V-06 갱신 · 소유권 표에 runtime-policy 등록
+
 ## 2026-08-17 16:20 — 검증 진입점 · 체크포인트 실패 경로 (248 tests green)
 
 - 계획: 사용자 지시 — "코덱스로 ㄱ"

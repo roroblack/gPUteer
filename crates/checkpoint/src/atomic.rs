@@ -293,16 +293,65 @@ pub fn sync_dir(_dir: &Path) -> Result<(), CheckpointError> {
 ///
 /// 매니페스트에 등록된 `weights.tmp` 는 정상 데이터 파일일 수 있다.
 /// 따라서 `.tmp`라는 접미사만으로 삭제하지 않는다.
+/// 이 오류가 **정상적인 동시 실행 경합**의 흔적인가.
+///
+/// # ★ Windows 는 `NotFound` 만 내지 않는다 (2026-08-17, 두 번 실측으로 정정)
+///
+/// 두 프로세스(또는 `--workspace` 부하에서의 두 테스트)가 같은 파일/디렉터리를
+/// 동시에 건드리면 Windows 는 `NotFound` 가 아니라
+/// **`액세스가 거부되었습니다`(os error 5)** 를 낼 수 있다. 다른 쪽이
+/// 마지막 핸들을 닫을 때까지 대상이 "삭제 중" 으로 여전히 보이기 때문이다.
+///
+/// ```text
+/// 1차  NotFound 만 경합으로 봤다                    -> 부하에서 실패
+/// 2차  오류 뒤 path.exists() 로 판별 (한 번만)       -> 5회 중 1회 여전히 실패
+///      (writer.rs 의 startup_gc 루프만 고치고,
+///       atomic.rs 의 gc_partial 은 못 고쳤다 — 결함이 두 곳에 나뉘어 있었다)
+/// 3차  이 함수로 **재시도**하고, 두 파일이 공유한다 (지금)
+/// ```
+///
+/// **한 번의 확인은 추측이고, 재시도는 사실이다.** 예산(약 200ms)을 넘기면
+/// `CLAUDE.md` §3 에 따라 오류를 조용히 삼키지 않고 그대로 올린다.
+pub(crate) fn is_windows_delete_race(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+        || error.raw_os_error() == Some(5) // ERROR_ACCESS_DENIED
+}
+
+/// I/O 연산 하나를 **경합을 견디며** 재시도한다.
+///
+/// `NotFound` 는 즉시 "없다" 로 본다(더 기다릴 이유가 없다).
+/// 그 외 오류는 [`is_windows_delete_race`] 로 보이면 짧게 재시도하고,
+/// 예산을 다 쓰면 마지막 오류를 그대로 올린다.
+pub(crate) fn retry_tolerating_race<T>(
+    mut op: impl FnMut() -> io::Result<T>,
+) -> io::Result<Option<T>> {
+    const ATTEMPTS: usize = 10;
+    const WAIT: Duration = Duration::from_millis(20);
+
+    let mut last = None;
+    for attempt in 0..ATTEMPTS {
+        match op() {
+            Ok(v) => return Ok(Some(v)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if is_windows_delete_race(&e) => {
+                last = Some(e);
+                if attempt + 1 < ATTEMPTS {
+                    std::thread::sleep(WAIT);
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.expect("ATTEMPTS 가 0이 아니면 마지막 오류가 있다"))
+}
+
 pub fn gc_partial(
     checkpoint_dir: &Path,
     manifest_name: &str,
 ) -> Result<Vec<PathBuf>, CheckpointError> {
-    let metadata = match fs::symlink_metadata(checkpoint_dir) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(error.into()),
+    let metadata = match retry_tolerating_race(|| fs::symlink_metadata(checkpoint_dir))? {
+        Some(m) => m,
+        None => return Ok(Vec::new()), // 경합 — 이미 사라졌다
     };
 
     if !metadata.is_dir() {
@@ -311,15 +360,13 @@ pub fn gc_partial(
 
     let manifest_path = checkpoint_dir.join(manifest_name);
 
-    let manifest_exists = match fs::symlink_metadata(&manifest_path) {
-        Ok(metadata) => metadata.is_file(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-        Err(error) => return Err(error.into()),
-    };
+    let manifest_exists = retry_tolerating_race(|| fs::symlink_metadata(&manifest_path))?
+        .map(|m| m.is_file())
+        .unwrap_or(false);
 
     let registered_tmp = if manifest_exists {
-        match fs::read(&manifest_path) {
-            Ok(data) => match crate::durability::CheckpointManifest::from_json(&data) {
+        match retry_tolerating_race(|| fs::read(&manifest_path))? {
+            Some(data) => match crate::durability::CheckpointManifest::from_json(&data) {
                 Ok(manifest) => manifest
                     .files
                     .iter()
@@ -327,8 +374,7 @@ pub fn gc_partial(
                     .collect::<Vec<_>>(),
                 Err(_) => Vec::new(),
             },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
+            None => Vec::new(), // 경합 — 그 사이 매니페스트가 사라졌다
         }
     } else {
         Vec::new()
@@ -336,12 +382,9 @@ pub fn gc_partial(
 
     let mut removed = Vec::new();
 
-    let entries = match fs::read_dir(checkpoint_dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(error.into()),
+    let entries = match retry_tolerating_race(|| fs::read_dir(checkpoint_dir))? {
+        Some(entries) => entries,
+        None => return Ok(Vec::new()),
     };
 
     for entry in entries {
@@ -353,10 +396,9 @@ pub fn gc_partial(
 
         let path = entry.path();
 
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
+        let metadata = match retry_tolerating_race(|| fs::symlink_metadata(&path))? {
+            Some(m) => m,
+            None => continue, // 경합 — 그 사이 사라졌다
         };
 
         if !metadata.is_file() {
@@ -376,13 +418,10 @@ pub fn gc_partial(
             continue;
         }
 
-        match fs::remove_file(&path) {
-            Ok(()) => removed.push(path),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                // 다른 GC가 먼저 제거한 정상 경합이다.
-            }
-            Err(error) => return Err(error.into()),
-        }
+        // ★ 삭제도 재시도한다 — 다른 쪽이 같은 파일을 동시에 지우면
+        //   Windows 가 NotFound 대신 Access Denied 를 낼 수 있다.
+        retry_tolerating_race(|| fs::remove_file(&path))?;
+        removed.push(path);
     }
 
     Ok(removed)

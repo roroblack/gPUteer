@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::atomic::{gc_partial, replace_with_retry, write_once, RetryPolicy};
+use crate::atomic::{
+    gc_partial, replace_with_retry, retry_tolerating_race, write_once, RetryPolicy,
+};
 use crate::durability::{
     publication_failed, record_initial_state, record_publication_failure,
     record_state_transition, CheckpointFile, CheckpointManifest,
@@ -16,58 +18,6 @@ pub const POINTER_FILENAME: &str = "LATEST";
 
 fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
-}
-
-/// 경합을 견디며 빈 디렉터리를 지운다.
-///
-/// # ★ 왜 "확인" 이 아니라 "재시도" 인가 (2026-08-17, 두 번 고쳤다)
-///
-/// 두 프로세스가 같은 디렉터리를 동시에 지우면 Windows 는 `NotFound` 가 아니라
-/// **`액세스가 거부되었습니다`(os error 5)** 를 낸다.
-///
-/// ```text
-/// 1차 시도  NotFound 만 경합으로 봤다        -> 부하에서 실패
-/// 2차 시도  오류 뒤 path.exists() 로 판별    -> 여전히 5회 중 1회 실패
-///           Windows 는 삭제를 **지연**한다. 다른 쪽이 핸들을 닫을 때까지
-///           디렉터리는 "삭제 예정" 상태로 **여전히 보인다.**
-///           25ms 안에 안 사라지는 경우가 부하에서 실제로 나왔다.
-/// 3차       삭제 자체를 재시도한다 (지금)
-/// ```
-///
-/// **확인은 추측이고 재시도는 사실이다.** 결국 없어지면(성공 또는 `NotFound`)
-/// 경합이었고, 예산을 다 써도 안 되면 진짜 문제다.
-///
-/// # 조용한 스킵을 만들지 않는다
-///
-/// `CLAUDE.md` §3 — 예산(약 200ms)을 넘기면 **오류를 그대로 올린다.**
-/// GC 는 부팅 시 한 번 도는 작업이고 경합은 드물다.
-fn remove_dir_tolerating_race(dir: &Path) -> Result<(), std::io::Error> {
-    const ATTEMPTS: usize = 10;
-    const WAIT: std::time::Duration = std::time::Duration::from_millis(20);
-
-    let mut last = None;
-    for attempt in 0..ATTEMPTS {
-        match fs::remove_dir(dir) {
-            Ok(()) => return Ok(()),
-            // 다른 쪽이 먼저 지웠다. 목적은 달성됐다.
-            Err(e) if is_not_found(&e) => return Ok(()),
-            Err(e) => {
-                last = Some(e);
-                if attempt + 1 < ATTEMPTS {
-                    std::thread::sleep(WAIT);
-                }
-            }
-        }
-    }
-    Err(last.expect("ATTEMPTS 가 0이 아니면 마지막 오류가 있다"))
-}
-
-/// 읽기 연산이 **정상적인 동시 실행 경합**을 만난 것인가.
-///
-/// 삭제와 달리 읽기는 재시도해도 의미가 없다 — 대상이 사라졌으면 건너뛰면 된다.
-/// 그래서 여기서는 "없어졌는가" 만 본다.
-fn is_read_race(error: &std::io::Error, path: &Path) -> bool {
-    is_not_found(error) || !path.exists()
 }
 
 /// 실패 마커를 남긴 뒤 원래 오류를 반환한다.
@@ -428,10 +378,14 @@ pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
 
         let dir = entry.path();
 
-        let metadata = match fs::symlink_metadata(&dir) {
-            Ok(metadata) => metadata,
-            Err(error) if is_read_race(&error, &dir) => continue,
-            Err(error) => return Err(error.into()),
+        // ★ 2026-08-17 — 이 세 지점 모두 atomic.rs 의 재시도 헬퍼를 쓴다.
+        //   전에는 이 파일만 고쳤고 atomic.rs::gc_partial 은 못 고쳐서
+        //   결함이 두 곳에 나뉘어 있었다. 부하 테스트에서 5회 중 3회
+        //   실패하는 걸로 드러났다 — gc_partial 내부의 read_dir/remove_file
+        //   이 여전히 NotFound 만 경합으로 봤다.
+        let metadata = match retry_tolerating_race(|| fs::symlink_metadata(&dir))? {
+            Some(m) => m,
+            None => continue, // 경합 — 이미 사라졌다
         };
 
         if !metadata.is_dir() {
@@ -441,10 +395,9 @@ pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
         dirs += 1;
         removed += gc_partial(&dir, MANIFEST_FILENAME)?.len();
 
-        let mut children = match fs::read_dir(&dir) {
-            Ok(children) => children,
-            Err(error) if is_read_race(&error, &dir) => continue,
-            Err(error) => return Err(error.into()),
+        let mut children = match retry_tolerating_race(|| fs::read_dir(&dir))? {
+            Some(children) => children,
+            None => continue,
         };
 
         let empty = match children.next() {
@@ -455,7 +408,7 @@ pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
         };
 
         if empty {
-            remove_dir_tolerating_race(&dir)?;
+            retry_tolerating_race(|| fs::remove_dir(&dir))?;
         }
     }
 

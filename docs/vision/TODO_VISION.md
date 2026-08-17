@@ -85,6 +85,25 @@
 이것을 "보안 필드를 서명했으니 안전하다" 로 읽으면 `CLAUDE.md` §0.4 위반이다.
 근거: `docs/evidence/DoD-03_서명대상_완전성.md` limitations 마지막 항목.
 
+★ **2026-08-17 부분 착수.** `crates/runtime-policy/` — 정책 필드가
+`Enforceable` / `Suppressible` / `Unenforceable` 중 어디에 속하는지
+판정하는 **순수 함수 계층**을 먼저 만들었다. 시스템 호출(OS 방화벽 ·
+커널 경로 강제)은 여전히 없다 — `runtime-windows`/`runtime-container`
+가 생기면 그쪽이 이 크레이트의 판정을 받아 실제로 시스템을 조작한다.
+
+```text
+artifact_scope   Enforceable(문자열)  경로 접두사 검사. TOCTOU 는 못 막는다
+network          Unenforceable        OS 방화벽 백엔드가 없어 실행을 거부한다
+Lease.scope      Enforceable(소유 자원) / Suppressible(외부 API)
+VRAM quota       Unenforceable         (ADR-027 실측 그대로)
+S1 호스트 보호   Unenforceable         (CLAUDE.md §0.4 그대로)
+```
+
+Agent 실행 계층이 아직 없다는 트리거 조건은 **여전히 유효하다** —
+이 크레이트는 판정 로직만이고, 판정 결과를 받아 프로세스를 실제로
+격리·차단하는 소비자가 없다. `gputeer selftest` §4c 에서 판정 로직만
+실행해 본다.
+
 
 ### V-07 — `ReplicaAck` 에 `fence_epoch` 추가
 

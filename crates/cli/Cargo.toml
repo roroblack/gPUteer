@@ -13,5 +13,6 @@ path = "src/main.rs"
 gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
 gputeer-checkpoint = { path = "../checkpoint" }
+gputeer-runtime-policy = { path = "../runtime-policy" }
 prost.workspace = true
 tempfile.workspace = true

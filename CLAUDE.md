@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-17 16:20)
+## 5. 지금 상태 (2026-08-17 18:40)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -163,11 +163,13 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 248 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 278 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
-| ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard(SQLite §10) · PersistentKeyring(§11 K0/K1) · replay 계약 적합성 · **`ingress` 검증 진입점** |
+| ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치** |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · **실패 마커 · 상태 사이드카 · 동시 GC 경합** |
-| └ 미착수 | coordinator · agent · scheduler · UI |
+| ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류 |
+| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 22개 검사로 통과 |
+| └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
 | **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). 검수 기록 없는 v1 **13건** 유예 중 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
@@ -177,16 +179,19 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 **"구현했다" 와 "강제한다" 를 혼동하지 않는다.**
 
 ```text
-서명은 되지만 강제는 없다
-  network(54) · artifact_scope(55) · Lease.scope(40) 이 서명 대상에 들어갔다.
-  그러나 Agent 가 그 정책을 강제하는 계층은 없다.
-  = 위조를 막은 것이지 정책을 시행한 것이 아니다.        -> TODO_VISION V-06
+서명은 되지만 시스템 호출까지는 강제가 없다
+  network(54) · artifact_scope(55) · Lease.scope(40) 이 서명 대상에 들어갔고,
+  이제 runtime-policy 가 그 필드를 Enforceable/Suppressible/Unenforceable
+  로 판정한다. ★ 그러나 판정과 실제 OS 강제(방화벽 호출 · 커널 경로
+  잠금)는 다르다. 판정 결과를 받아 시스템을 조작하는 소비자가 아직
+  없다 (runtime-windows/runtime-container 미착수).        -> TODO_VISION V-06
 
-방어 계층이 **경계 하나까지만** 연결됐다
-  crates/crypto/src/ingress.rs 가 raw bytes -> Verified<M> 를 조립한다.
-  keyring · replay 저장소 · Clock 이 실제로 물려 있다.
-  ★ 그러나 **네트워크 전송 · coordinator · scheduler 가 없다.**
-    진입점은 있는데 그 진입점을 부르는 서비스가 없다.
+방어 계층이 **프로세스 안까지만** 연결됐다
+  raw bytes -> framed_ingress -> ingress -> Verified<M> -> runtime-policy 판정
+  까지 gputeer selftest 로 실제로 돈다.
+  ★ 그러나 **네트워크 전송 · coordinator · scheduler · 실제 시스템 호출이 없다.**
+    runtime-policy 는 "무엇을 강제할 수 있는가" 를 판정할 뿐,
+    OS 방화벽을 실제로 호출하거나 커널 경로를 잠그지 않는다.
 
 키 보관이 Windows 전용이다
   §11 K1 은 DPAPI 다. Linux 는 UnsupportedPlatform 으로 **명시적으로 실패**한다
@@ -209,8 +214,8 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ingress 를 부르는 것이 없다
-2. 정책 강제 계층 (V-06)                         "서명했다" != "강제한다"
+1. 네트워크 전송 · coordinator 골격             프로세스 밖으로 나가는 것이 없다
+2. runtime-policy 판정을 실제 시스템 호출로 연결  OS 방화벽 · 커널 경로 강제 미구현
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 4. 별도 **프로세스** replay 경쟁 실측            스레드로만 측정했다
 5. v1 evidence 13건에 독립 검수                  유예 목록을 줄인다

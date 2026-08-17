@@ -324,6 +324,7 @@ dependencies = [
  "gputeer-checkpoint",
  "gputeer-crypto",
  "gputeer-protocol",
+ "gputeer-runtime-policy",
  "prost",
  "tempfile",
 ]
@@ -352,6 +353,14 @@ dependencies = [
  "protoc-bin-vendored",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "gputeer-runtime-policy"
+version = "0.0.1"
+dependencies = [
+ "gputeer-protocol",
+ "tempfile",
 ]
 
 [[package]]

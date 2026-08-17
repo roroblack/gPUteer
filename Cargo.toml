@@ -5,6 +5,7 @@ members = [
     "crates/protocol",
     "crates/checkpoint",
     "crates/cli",
+    "crates/runtime-policy",
 ]
 
 [workspace.package]

@@ -407,6 +407,52 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
         );
     }
 
+    // ── 4c. 정책 강제 계층 (V-06) ────────────────────────────────
+    r.section("4c. 정책 강제 계층 (TODO_VISION V-06)");
+
+    {
+        use gputeer_runtime_policy::{
+            ArtifactPolicy, ArtifactViolation, FenceWatermark, LeaseScopeViolation,
+            NetworkDecision, NetworkPolicyCheck, NoFirewallBackend,
+        };
+
+        // artifact_scope — Enforceable(문자열 검사)
+        let scope = ArtifactPolicy::new(vec![format!("jobs/{JOB}/attempt-{ATTEMPT}")]);
+        r.check(
+            "허용 범위 안 경로는 통과한다",
+            scope.check(&format!("jobs/{JOB}/attempt-{ATTEMPT}/model.bin")).is_ok(),
+            "정상 경로가 거부됐다",
+        );
+        let traversal = scope.check(&format!(
+            "jobs/{JOB}/attempt-{ATTEMPT}/../../../etc/passwd"
+        ));
+        r.check(
+            "경로 탈출이 거부된다",
+            matches!(traversal, Err(ArtifactViolation::PathTraversal { .. })),
+            &format!("{traversal:?}"),
+        );
+
+        // network — 백엔드가 없으므로 항상 거부(정직한 기본값)
+        let backend = NoFirewallBackend;
+        let allow = vec!["pypi.internal.example".to_string()];
+        let net = NetworkPolicyCheck::new(&allow, &backend);
+        r.check(
+            "OS 방화벽 백엔드가 없으면 network 강제를 '모른다' 로 답한다",
+            net.decide("pypi.internal.example") == NetworkDecision::NoEnforcementBackend,
+            "백엔드 없이 허용/거부를 판정했다 — 강제 못 하는 것을 강제한다고 주장한 것이다",
+        );
+
+        // Lease.scope — 우리가 소유한 자원은 Enforceable
+        let mut watermark = FenceWatermark::new();
+        watermark.check_and_advance("cas://jobs/1", 5).unwrap();
+        let stale = watermark.check_and_advance("cas://jobs/1", 3);
+        r.check(
+            "stale fence_epoch 이 거부된다",
+            matches!(stale, Err(LeaseScopeViolation::StaleEpoch { .. })),
+            &format!("{stale:?}"),
+        );
+    }
+
     // ── 5. 체크포인트 ─────────────────────────────────────────────
     r.section("5. 체크포인트 쓰기와 재개 (ADR-026)");
 
