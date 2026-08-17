@@ -223,3 +223,68 @@ python reference_canonical.py --verify      vector cross-checks: OK
 4. **중첩 메시지 필드별 영향 검사**를 다음 작업에 포함한다 (limitations 2번).
 
 관련: `docs/evidence/DoD-02_prost_연동_계층.md` · `docs/protocol/signing.md` §13.1
+
+---
+
+## ★ 이후 변경 (2026-08-17 22:40) — claim 범위가 넓게 읽혔다
+
+독립 검수(`agent:codex-cli`, read-only)가 이 evidence 를 재검수해
+`CHANGES_REQUESTED` 로 판정했다. DoD-04·P0-03 과 달리 이번엔 코드
+결함이 아니라 **claim 문장이 지금 검사 범위보다 넓게 읽힌다**는
+지적이다. 직접 대조해 확인했다.
+
+### 1. vectors 메타데이터가 stale — 재현해 확인
+
+frontmatter(`DoD-03:12`)는 "20 벡터" 라고 적었다. 지금 파일을 직접
+파싱해 세었다.
+
+```text
+$ python -c "import json; print(len(json.load(open('tests/vectors/canonical_v1.json'))['vectors']))"
+40
+```
+
+`DoD-06`(20→36)과 다른 후속 작업들이 벡터를 계속 늘렸는데 이 문서만
+20에 머물러 있었다. 20 → **40** 으로 고친다.
+
+### 2. claim의 "각 필드가 실제로 서명 결과에 영향을 준다" 는 최상위 필드에만 확인됐다
+
+`every_field_in_full_manifest_affects_canonical`(`crates/protocol/tests/prost_canonical.rs:745`)
+은 `JobManifest` 최상위 27개 필드를 하나씩 지워 canonical 이 변하는지
+본다. `Lease` 는 `lease_scope_is_signed`(`prost_canonical.rs:389`) 하나로
+`scope` 필드만 개별 확인한다 — `Lease` 의 나머지 최상위 필드나,
+두 메시지의 **중첩 메시지 내부 필드**(예: `ExecutionEnvironment` 의
+14개) 각각이 서명에 영향을 주는지는 개별 mutation 검사가 없다. 이
+한계는 이 문서의 limitations 2번(`DoD-03:73`)이 이미 정직하게
+적어 두었다 — **새로 발견된 것이 아니라, claim 문장 자체가 그 한계를
+반영할 만큼 좁지 않았다**는 지적이다.
+
+### claim 을 이렇게 좁혀 읽는다
+
+> `JobManifest` 최상위 27개 필드 전부와 `Lease.scope` 는 mutation 으로
+> 직접 확인됐다. `Lease` 의 나머지 최상위 필드와 모든 중첩 메시지
+> 내부 필드는 `field_number_audit`(번호-이름 대조, `crates/protocol/tests/field_number_audit.rs:282`)
+> 으로 **필드 자체가 빠지지 않았음**만 확인됐다 — "canonical 에 들어는
+> 갔는데 값이 반영 안 되는" 결함까지는 중첩 내부에서 검증되지 않는다.
+
+### 그 외 확인
+
+- negative_tests 이름은 실재를 확인했다(`prost_canonical.rs:307,321,334,351,366,745`,
+  `field_number_audit.rs:282`, `prost_canonical.rs:279,852`).
+- limitation "17종 중 13종만 구현"(`DoD-03:72`)도 stale — 지금
+  `ToCanonicalFields` 구현은 41개, domain coverage 는 23종 중 19종이다
+  (`crates/protocol/src/to_fields.rs`, `crates/protocol/tests/t1_signing_targets.rs:397-445`).
+- "Ed25519 를 하지 않았다"(`:74`) 는 **이 evidence 자체가 실행하지
+  않았다**는 뜻으로 좁혀야 한다 — Ed25519 구현 자체는 이미 존재한다
+  (`crates/crypto/src/lib.rs:58-64`, `DoD-04`).
+- "SCHEMA_TOO_NEW 미구현"(`:75`) 도 stale — 지금 구현되어 있다
+  (`crates/protocol/src/signing.rs:741-744`).
+- "강제 계층 미구현"(`:78`) 은 "판정은 있으나 실제 OS 강제 연결은
+  없다"로 고친다 — `runtime-policy` 크레이트가 판정 계층을 추가했지만
+  (`docs/history/HISTORY.md` "2026-08-17 21:30" 항목), OS 방화벽·커널
+  경로 잠금 호출은 여전히 없다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 범위와 stale limitations 를
+좁혔다. 원본 YAML 은 당시 기록이므로 고치지 않는다. **이 정정 자체는
+아직 재검수를 거치지 않았다.**

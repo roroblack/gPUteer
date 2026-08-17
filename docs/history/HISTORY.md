@@ -16,6 +16,59 @@
 
 ---
 
+## 2026-08-17 23:10 — v1 evidence 4건 독립 재검수(코덱스), HASH_VERIFIED~COMMITTED 결정적 kill 테스트 신설
+
+- 계획: 사용자 지시 — "코덱스로 다음 작업들 진행해" (v1 evidence 부채
+  축소를 계속한다).
+- 스트림: Checkpoint · Protocol
+- 수행: 코덱스(read-only) 3개 태스크 — (1) DoD-04·P0-03 수정본 재검수,
+  (2) DoD-03·DoD-06 신규 검수, (3) P0-03 이 지적한 "HASH_VERIFIED~
+  COMMITTED 구간을 직접 겨냥한 kill 테스트가 없다"는 공백을 메우는
+  설계. 넷 다 최초 라운드에서 `CHANGES_REQUESTED`.
+- 발견과 조치:
+  1. [실제 결함, 자체 재현] DoD-04 재검수가 지적: 앞선 수정에서 붙인
+     raw receipt 가 재현되지 않은 옛 실행 그대로였다. 새로 실행해
+     `docs/evidence/_raw/DoD-04_replay_status_doctest_2026-08-17.txt` 로
+     교체(sha256 digest 포함). `HISTORY.md` 인용에 전체 경로·줄
+     번호가 없었던 것도 소스 파일:줄 직접 인용으로 바꾸고, "단수명
+     검증 경로가 매 실행된다"를 `ExecutionGrant` 로 좁혔다.
+  2. [설계+구현] P0-03 재검수가 지적한 공백 — `write_checkpoint()` 의
+     `LATEST` 교체 직후·`COMMITTED` 마커 기록 직전이라는 좁은 구간을
+     기존 8개 시간 기반 kill 시점이 겨냥한 적이 없었다. 코덱스 설계를
+     받아 `chaos-hooks` feature(비기본)로 `writer.rs::chaos_kill_after_latest()`
+     self-kill 훅을 추가했다 — `replace_with_retry` 성공 뒤 `abort()`
+     로 그 자리에서 프로세스를 끝내 코드 순서로 그 구간을 결정적으로
+     겨냥한다(race 없음). 새 테스트
+     `kill_after_latest_before_committed_is_resume_candidate` 가
+     "COMMITTED 마커 없이도 재개된다"를 8/8 연속 직접 관측했고,
+     훅 위치를 Committed 뒤로 옮기는 뮤테이션으로 비공허성을 확인했다.
+     기본 빌드·`cargo test --workspace` 에는 포함되지 않는다.
+  3. `writer.rs:157` 의 stale한 주석("포인터 또는 COMMITTED 마커로
+     공개된") 도 함께 고쳤다 — 실제로는 COMMITTED 를 요구하지 않는다.
+  4. [claim 범위 정정] DoD-03: vectors 메타데이터가 20 인데 실제는
+     40(`python -c "..."` 로 재현). claim 의 "각 필드가 실제로
+     영향을 준다"는 `JobManifest` 최상위 필드 전부와 `Lease.scope`
+     로 좁혀 읽어야 한다(나머지는 field_number_audit 의 번호-이름
+     대조만 있다). Ed25519/SchemaTooNew/runtime-policy 관련 stale
+     limitation 3건도 정정.
+  5. [claim 범위 정정] DoD-06: claim 자체는 유지되나 "framed ingress
+     의 모든 타입 혼동을 domain_tag 가 막는다"로 확장해 읽으면 안
+     된다 — Lease→Grant 위장은 nested-message decode 단계에서
+     먼저 실패한다(domain_tag 이전). negative_tests 의
+     `change_coordinator_set` 은 실제로는
+     `change_coordinator_set_matches_reference_and_preserves_order`.
+     stale limitation 3건 정정.
+- 네 evidence 모두 원본 YAML(claim/status/limitations)은 고치지 않고
+  append-only "이후 변경" 절로 정정했다. **네 건 다 이 정정 자체는
+  아직 재검수를 거치지 않은 상태로 남아 있다** — 다음 라운드 대상.
+- 검증: `cargo test --workspace` 293/0/0 (변화 없음). `cargo test -p
+  gputeer-checkpoint --features chaos-hooks --test kill_chaos` 8/8.
+  새 kill 테스트 단독 8회 연속 실행 8/8. 뮤테이션 2건(훅 위치 이동,
+  DoD-04 doctest 필드명)으로 비공허성 확인 후 원복.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-17 22:20 — gputeer selftest 에 127.0.0.1 루프백 TCP 왕복 추가, 종료 코드 결함 자체 발견·수정 (293 tests green, selftest 25개 검사)
 
 - 계획: 사용자 지시 — "코덱스로 다음 작업들 진행해". 코덱스(read-only)에게

@@ -228,11 +228,47 @@ COMMITTED 마커 하나 때문에 버리지 않는다는 의도적 설계다).
 LATEST 교체 한 번과 상태 마커 기록 한 번 사이의 좁은 창이라, 40~700ms
 간격의 고정 스윕이 우연히 맞히지 못했을 수 있다.
 
-**추가로 필요한 것**(미수행 — 다음 작업으로 등록): `HASH_VERIFIED` 직후
-`LATEST` 교체 직후 시점을 정확히 겨냥하는 kill 지점(현재의 시간 기반
-스윕이 아니라 상태 전이 신호 기반 kill)을 만들어, "마커만 없는 온전한
-체크포인트가 실제로 재개된다"를 직접 관측해야 이 절의 새 claim이
-DoD-09 수준의 실측 근거를 갖는다.
+★ **위 문단을 쓴 지 얼마 지나지 않아 그 구간을 직접 겨냥하는 테스트를
+추가했다** — `crates/checkpoint/tests/kill_chaos.rs` 의
+`kill_after_latest_before_committed_is_resume_candidate` (`chaos-hooks`
+feature 전용). 시간 스윕이 아니라 **코드 순서**로 겨냥한다:
+`crates/checkpoint/src/writer.rs` 의 `replace_with_retry` 성공 직후 ·
+`Committed` 상태 기록 직전에만 켜지는 `chaos_kill_after_latest()` 훅이
+`std::process::abort()` 로 그 자리에서 프로세스를 끝낸다(코드 순서상
+그 이후로는 `Committed` 기록 경로에 도달할 수 없다 — race 가 없다).
+
+```text
+명령: cargo test -p gputeer-checkpoint --features chaos-hooks \
+        --test kill_chaos kill_after_latest_before_committed_is_resume_candidate \
+        -- --exact --nocapture
+결과: 8회 연속 실행 — 8/8 통과 (2026-08-17)
+
+검증한 사후 상태:
+  CHAOS_AFTER_LATEST ckpt-00000100  stdout 에서 관측(신호가 실제로 왔다)
+  COMMITTED ...                     stdout 에 없음(self-kill 이 그 전에 끝냈다)
+  LATEST                            ckpt-00000100 을 가리킴
+  manifest.json                     존재, verify_files() 통과
+  .durability.hash-verified         존재
+  .durability.committed             ★ 없음 — 이것이 이 테스트의 핵심 관측
+  .publication-failed               없음
+  find_resume_point_for(root, "job-chaos", "att-1")
+                                     ckpt-00000100 / step 100 반환 — COMMITTED
+                                     마커 없이도 재개된다
+```
+
+**뮤테이션으로 비공허성 확인**: `chaos_kill_after_latest(&dir)` 호출을
+`record_state_transition(..., Committed)` **뒤로** 옮기면(= 훅이 늦게
+발동하는 결함을 흉내낸다), `!state_recorded(&dir, DurabilityState::Committed)`
+단언이 정확히 실패로 뒤집힌다("self-kill 전에 이미 Committed 가
+기록됐다"). 원복 후 8/8 재확인.
+
+이제 이 절 서두의 "claim의 정확한 의미" 문단은 관측으로 뒷받침된다 —
+더 이상 코드 주석과 설계 의도만 가리키는 것이 아니라, 그 정확한 구간을
+직접 만들어 재개가 실제로 되는 것을 본 것이다.
+
+**아직 남은 것**: 이 테스트 자체가 독립 검수를 거치지 않았다. 아래
+"review_outcome" 은 이 확인이 반영되기 전(2026-08-17 22:40) 판정이다 —
+재검수가 이 절을 확인한 뒤에야 최종 ACCEPTED 여부가 정해진다.
 
 ### 추가 limitation
 

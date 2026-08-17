@@ -1,0 +1,59 @@
+##### 재검수 반영 — replay_status 필드명 수정 후 재실행 (2026-08-17) #####
+
+명령: cargo test -p gputeer-protocol --doc
+
+##### 수정 전 (참고용 재현 — 이 실행은 커밋되지 않은 임시 되돌리기로 만들었다) #####
+Verified<M> 의 세 필드를 rename 전 상태(replay_status 대신 옛 이름을
+쓰는 doctest)로 되돌리면, pub 뮤테이션을 걸어도 doctest 는 여전히
+"그런 필드가 없어서" compile_fail 로 남는다. 이 세션 안에서 재현하고
+버렸다 — 아래 "수정 후" 결과만 저장소에 반영됐다.
+
+##### 수정 후 — 정상 실행 (필드 비공개 상태) #####
+
+   Compiling gputeer-protocol v0.0.1
+    Finished `test` profile [unoptimized + debuginfo] target(s)
+   Doc-tests gputeer_protocol
+
+running 2 tests
+test crates\protocol\src\signing.rs - signing::Verified (line 606) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 618) ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+##### 뮤테이션 — Verified<M> 의 세 필드를 전부 pub 으로 변경 #####
+
+   Compiling gputeer-protocol v0.0.1
+    Finished `test` profile [unoptimized + debuginfo] target(s)
+   Doc-tests gputeer_protocol
+
+running 2 tests
+test crates\protocol\src\signing.rs - signing::Verified (line 606) - compile fail ... FAILED
+test crates\protocol\src\signing.rs - signing::Verified (line 618) ... ok
+
+failures:
+
+---- crates\protocol\src\signing.rs - signing::Verified (line 606) stdout ----
+Test compiled successfully, but it's marked `compile_fail`.
+
+failures:
+    crates\protocol\src\signing.rs - signing::Verified (line 606)
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+error: doctest failed, to rerun pass `-p gputeer-protocol --doc`
+
+##### 원복 후 재확인 #####
+
+running 2 tests
+test crates\protocol\src\signing.rs - signing::Verified (line 606) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 618) ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+##### 결론 #####
+
+수정 전에는 pub 뮤테이션을 걸어도 doctest 가 "필드명이 없어서" 여전히
+compile_fail 로 남아 비공허성 증거가 되지 못했다(별도로 재현, 위 참조).
+필드명을 replay_status 로 고친 뒤에는 pub 뮤테이션이 정확히 doctest 를
+FAILED 로 뒤집는다 — 지금은 이 doctest 가 실제로 "필드 비공개" 를
+검증한다.

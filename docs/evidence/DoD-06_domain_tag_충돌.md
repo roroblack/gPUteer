@@ -273,3 +273,49 @@ DERIVED_HASH_FIELDS    규칙 i 로 뺐다 -> 검증자가 재계산한다 -> �
 
 관련: `docs/decisions/ADR-028_메시지별_domain_tag_분리.md` ·
 `docs/evidence/DoD-05_T1_서명대상_확장.md` · `docs/protocol/signing.md` §5 · §5.1
+
+---
+
+## ★ 이후 변경 (2026-08-17 22:40) — claim 은 유지, limitations 와 이름 하나가 stale
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수했다. **claim 문장
+자체는 지금도 참**이라고 확인했다 — 23개 domain 이 개별 등록되어
+있고(`docs/protocol/signing.md:249-282`), canonical 은 불변인 채
+`sig_input` 에만 tag 가 들어가며(`crates/protocol/src/canonical.rs:350-366`),
+23종 중복 검사(`crates/protocol/tests/t1b_grant_and_control.rs:397-420`)와
+domain coverage 19/23(`crates/protocol/tests/t1_signing_targets.rs:397-445`)
+모두 지금 코드가 그대로 고정하고 있다. 다만 이 claim 을 **"framed
+ingress 의 모든 타입 혼동을 domain_tag 가 막는다"** 로 확장해 읽으면
+안 된다는 지적을 받았다 — `crates/crypto/tests/framed_ingress.rs:251-286`
+의 `Lease → Grant` 위장은 domain_tag 가 아니라 **nested-message
+decode 단계**에서 먼저 실패한다(`Lease` 필드 3은 문자열, `ExecutionGrant`
+필드 3은 중첩 `JobManifest` 라 타입이 안 맞는다). domain_tag 방어를
+실제로 시험하는 것은 wire field 가 겹치는 `AttemptReport ↔ ArtifactRef`
+쌍이다(`framed_ingress.rs:288-339`). 이 구분은 이미 `framed_ingress`
+모듈 문서(2026-08-17 독립 검수 반영분)가 정확히 적어 두었다 — 이
+evidence 쪽이 그 구분을 언급하지 않아 넓게 읽힐 여지가 있었다.
+
+### 이름 불일치
+
+evidence 의 negative_tests 목록에 `change_coordinator_set` 이라고
+적었는데, 실제 함수명은
+`change_coordinator_set_matches_reference_and_preserves_order`
+(`crates/protocol/tests/t1b_grant_and_control.rs:490`, 재현 확인함).
+
+### stale limitations
+
+| 원래 서술 | 지금 |
+|---|---|
+| "Ed25519 실제 서명으로 재사용 공격을 실행하지 않았다"(`:82`) | ★ 부분적으로 거짓이다. `framed_ingress` 테스트가 실제 `SigningKey` 로 서명하고 다른 메시지 타입으로 보내 검증 거부를 확인한다(`framed_ingress.rs:306-339`). 다만 그 확인은 `AttemptReport`/`ArtifactRef` 한 쌍뿐이다 — 이 evidence(DoD-06) 자체의 프로브는 여전히 sig_input 바이트 수준이다 |
+| "19/23 중 Signable 을 가진 것은 JobManifest·Lease 둘뿐"(`:83`) | ★ 거짓이다. 지금 `Signable` 구현은 10종이다(`crates/protocol/src/signable.rs:40,66,98,175,227,262,289,320,347,381`) |
+| 충돌 탐지 프로브 한계(`:87`) | string/bytes 전수 프로브의 한계 자체는 남아 있지만, 지금은 실제 framed 계층에서 `AttemptReport`·`ArtifactRef` 의 wire-호환 충돌을 domain_tag 로 막는 것까지 확인됐다(`docs/history/HISTORY.md` "2026-08-17 20:10" 항목, `framed_ingress.rs:288-339`) |
+
+genesis/audit/release/invite 4종 proto 부재 limitation(`:84`)은 지금도
+유효하다(`t1_signing_targets.rs:420-424`).
+
+### review_outcome
+
+`CHANGES_REQUESTED` → claim 은 유지하되, 위 이름 불일치·stale
+limitations·"모든 타입 혼동을 domain_tag 가 막는다"는 확장 해석
+금지를 반영했다. 원본 YAML 은 당시 기록이므로 고치지 않는다. **이
+정정 자체는 아직 재검수를 거치지 않았다.**
