@@ -348,6 +348,65 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
         ),
     );
 
+    // ── 4b. 프레이밍 계층 ─────────────────────────────────────────
+    r.section("4b. 프레이밍 · 디스패치 (crates/crypto/src/framed_ingress.rs)");
+
+    {
+        use gputeer_crypto::{read_frame, write_frame, FrameType, FramingError};
+        use std::io::Cursor;
+
+        let g2 = grant(&signing_key, 20, NOW + 60_000);
+        let frame = write_frame(FrameType::Grant, &g2.encode_to_vec());
+        r.note(&format!("Grant 프레임: {} 바이트 (헤더 5 + 몸통)", frame.len()));
+
+        let mut stream = Cursor::new(frame);
+        let dispatched = read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Persistent(&keyring),
+            &mut reopened,
+            &FixedClock(NOW),
+        );
+        r.check(
+            "프레임이 헤더 타입대로 디스패치된다",
+            matches!(
+                &dispatched,
+                Ok(gputeer_crypto::IngressMessage::Grant(_))
+            ),
+            &format!("{dispatched:?}"),
+        );
+
+        // 헤더가 주장하는 타입과 실제 서명 타입이 다르면 거부되는가
+        // (framed_ingress 모듈 문서의 핵심 성질).
+        let l = {
+            let mut m = pb::Lease {
+                schema_version: 1,
+                lease_id: "01JBXLEASE00000000000000002".into(),
+                job_id: JOB.into(),
+                attempt_id: ATTEMPT.into(),
+                issuing_coordinator_id: DEVICE.into(),
+                expires_at_unix_ms: NOW + 600_000,
+                ..Default::default()
+            };
+            m.coordinator_signature = gputeer_crypto::sign(&signing_key, &m).to_vec();
+            m
+        };
+        let disguised = write_frame(FrameType::Grant, &l.encode_to_vec());
+        let mut stream = Cursor::new(disguised);
+        let result = read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Persistent(&keyring),
+            &mut reopened,
+            &FixedClock(NOW),
+        );
+        r.check(
+            "헤더 타입을 속인 프레임(Lease를 Grant로 위장)이 거부된다",
+            matches!(result, Err(FramingError::Verify(_))),
+            &format!("{result:?}"),
+        );
+    }
+
     // ── 5. 체크포인트 ─────────────────────────────────────────────
     r.section("5. 체크포인트 쓰기와 재개 (ADR-026)");
 

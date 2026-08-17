@@ -32,11 +32,13 @@
 //!   (조용히 K0 로 내려가면 보호 등급이 낮아진 것을 아무도 모른다)
 
 pub mod durable_replay;
+pub mod framed_ingress;
 pub mod ingress;
 pub mod keyring;
 pub mod replay;
 
 pub use durable_replay::DurableReplayGuard;
+pub use framed_ingress::{read_frame, write_frame, FrameType, FramingError, IngressMessage};
 pub use ingress::{decode_and_verify, Clock, IngressError, KeyDirectorySource, SystemClock};
 pub use keyring::{
     KeyDirectoryStatus, KeyDirectoryView, KeyProtection, KeyringError, PersistentKeyring,
