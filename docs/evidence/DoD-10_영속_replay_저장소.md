@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-10
 claim: "DurableReplayGuard 는 프로세스 재시작 후에도 이미 본 nonce 를 Duplicate 으로 거부하고, 미커밋 트랜잭션을 rollback 하며, InMemoryReplayGuard 와 replay_contract.rs 의 9개 시나리오에서 같은 답을 낸다."
 status: PASS
-commit: e188cce41bd7b223812804d6bac8f69ffaa95377
+commit: f4f16e2f7e7c7d69c4a502817cc574211313c28d
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -20,8 +20,8 @@ review_scope: "§10 MUST/MUST NOT · 트랜잭션 원자성 · 시계 방어 · 
 review_artifact: "docs/evidence/_raw/DoD-10_review.txt"
 
 raw_output_artifact: "docs/evidence/_raw/DoD-10_durable_replay.txt"
-raw_output_digest: "sha256:1b91a428ca31d8978109cc94831b1777582de1e59c00ac18d9364d9293efd1c1"
-raw_output_bytes: 11136
+raw_output_digest: "sha256:62fda333fd6c50317aabce2ec88b369203f8c5e113a33e366742d754b76aab8a"
+raw_output_bytes: 13116
 
 binary_digests:
   gputeer-crypto: "cargo test 프로필 (unoptimized + debuginfo) — 배포 바이너리 아님"
@@ -49,6 +49,7 @@ artifacts:
   - crates/crypto/src/durable_replay.rs
   - crates/crypto/tests/durable_replay.rs
   - crates/crypto/tests/replay_contract.rs
+  - crates/crypto/tests/durable_replay_race.rs
   - crates/crypto/src/replay.rs
   - docs/evidence/_raw/DoD-10_durable_replay.txt
   - docs/evidence/_raw/DoD-10_review.txt
@@ -61,6 +62,9 @@ negative_tests:
   - short_nonce_is_rejected_by_both
   - extreme_gc_time_agrees
   - zero_capacity_is_rejected_by_both
+  - concurrent_same_nonce_yields_exactly_one_fresh
+  - concurrent_gc_never_drops_unexpired_entries
+  - "뮤테이션 R3(중복 검사 무력화)에서 Fresh 가 8개 — 동시성 테스트가 공허하지 않다"
   - "뮤테이션 D1(Connection::open -> open_in_memory) 에서 4건 FAILED — 공허하지 않다"
   - "뮤테이션 K1(Debug 가 바이트 유출) 에서 개인키 테스트 FAILED"
 limitations:
@@ -72,7 +76,8 @@ limitations:
   - "★ 검수자가 이 코드의 **초안을 작성했다.** 프롬프트에 그 사실을 명시하고 '초안을 옹호하지 말라' 고 지시했으며 실제로 결함을 찾았지만, 완전한 독립 검수는 아니다. 다른 모델을 쓸 수 있게 되면 다시 받아야 한다."
   - "성능을 측정하지 않았다. synchronous=FULL 의 쓰기 비용, 대량 GC 의 지연을 모른다."
   - "Linux 에서 한 번도 실행하지 않았다 (D-3). K1(DPAPI)은 Windows 전용이며 Linux 는 UnsupportedPlatform 으로 실패한다."
-  - "다중 **프로세스** 동시 접근을 실측하지 않았다. SQLite 가 직렬화한다는 것은 문헌 지식이지 이 환경의 측정이 아니다."
+  - "★ 동시 접근은 **스레드**로 측정했다(8스레드 · 연결 각자 · Barrier 동시 출발). 별도 **프로세스**는 여전히 측정하지 않았다. SQLite 락은 파일 단위이므로 같은 메커니즘이지만, 그것을 측정한 것은 아니다."
+  - "★ 동시성 측정이 **우리 코드와 SQLite 의 기여를 분리하지 못한다.** 중복 검사를 무력화하는 뮤테이션(R3)에서는 Fresh 가 8개 나오므로 공허하지는 않지만, 트랜잭션 모드를 Deferred 로 바꾸는 뮤테이션(R1)은 PRIMARY KEY 가 뒤를 받쳐 드러나지 않는다."
 decision: "DurableReplayGuard 를 §10 3단계의 구현으로 채택한다. 소비 측이 생기면 InMemoryReplayGuard 대신 이것을 wiring 한다. 위 미수정 4건은 소비 측 착수와 함께 다룬다."
 ---
 

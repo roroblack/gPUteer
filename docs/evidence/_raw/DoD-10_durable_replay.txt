@@ -183,3 +183,43 @@ test restart_opens_a_replay_window ... ok
 test signer_quota_is_released_by_gc ... ok
 test failed_verification_does_not_touch_the_guard ... ok
 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+==========================================================================
+동시 접근 실측 (2026-08-17 추가 — 원래 limitations 였던 항목)
+==========================================================================
+
+$ cargo test -p gputeer-crypto --test durable_replay_race
+
+test concurrent_same_nonce_yields_exactly_one_fresh ... ok
+test concurrent_distinct_nonces_all_succeed ... ok
+test concurrent_gc_never_drops_unexpired_entries ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s
+
+8스레드가 Barrier 로 같은 순간 출발한다. 스레드마다 자기 연결을 연다.
+
+공허성 확인 — 두 번 실패한 뒤 성공했다:
+
+R1  TransactionBehavior::Immediate -> Deferred
+    3건 전부 통과. PRIMARY KEY 가 뒤를 받쳐서 결함이 드러나지 않는다.
+
+R2  PRIMARY KEY 제거 + Deferred
+    3건 실패. 그러나 **잘못된 이유**다 —
+    WITHOUT ROWID 테이블이 PK 를 요구해 연결 자체가 실패했다.
+    setup 실패를 결함 검출로 세면 안 된다.
+
+R3  중복 검사 무력화(if false) + INSERT OR REPLACE
+    (스키마는 그대로. 우리 로직만 깨진다)
+
+    test concurrent_same_nonce_yields_exactly_one_fresh ... FAILED
+    assertion `left == right` failed:
+      * 같은 nonce 에 Fresh 가 8개 나왔다 - 동시 접근에서 replay 방어가 없다
+        (duplicate=0, lock_timeout=0)
+    test concurrent_distinct_nonces_all_succeed ... ok
+    test concurrent_gc_never_drops_unexpired_entries ... ok
+    test result: FAILED. 2 passed; 1 failed
+
+    -> 의도한 단언에서, 의도한 이유로 실패했다. 공허하지 않다.
+    -> 나머지 2건이 통과하는 것도 맞다. 그것들은 중복 제거를 검사하지 않는다.
+
+* 이 측정이 분리해 내지 **못하는 것**: 불변식을 지키는 것이 우리 코드인지
+  SQLite 인지. 측정한 것은 "이 환경에서 합성 결과가 불변식을 지킨다" 이다.
