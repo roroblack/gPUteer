@@ -307,7 +307,7 @@ Python 참조 구현과 **바이트 단위로 일치한다**")은 마치 전체 
 
 | 원래 서술 | 지금 |
 |---|---|
-| "6개 필드가 아직 canonical 에 들어가지 않는다"(`:68`) | ★ 거짓이다. `docs/history/HISTORY.md:629-645`("2026-08-16 10:40 — 서명 밖 필드 6건 제거") 에서 이미 해소됐다 |
+| "6개 필드가 아직 canonical 에 들어가지 않는다"(`:68`) | ★ 거짓이다. `docs/history/HISTORY.md` 의 "2026-08-16 10:40 — 서명 밖 필드 6건 제거" 항목에서 이미 해소됐다. ★ 이 항목의 **줄 번호는 세션마다 바뀐다** — `HISTORY.md` 는 최신 항목을 맨 위에 추가하는 append 방식이라, 이 정정 시점(2026-08-17 23:55)엔 `:629-645` 였지만 그 뒤 이 세션이 새 항목을 더 추가하면서 지금은 `:651-667` 로 밀렸다(재검수가 실제로 이 어긋남을 잡았다). 그래서 이 항목은 줄 번호 대신 **제목으로** 인용한다 — append-only 파일에서 줄 번호 인용은 그 자체로 불안정하다 |
 | "17종 중 7종만 구현"(`:69`) | ★ 거짓이다. 지금 `ToCanonicalFields` 구현 41개, domain 23종 중 19종(`crates/protocol/tests/t1_signing_targets.rs:387-445`) |
 | "현재 스키마에 oneof/reserved 가 없어 무해하다"(`:70`) | ★ 절반만 거짓이다. `control.proto` 에 지금 `ControlAction` oneof 가 실재하고, 21개 arm 을 갖는다(`proto/control.proto:238-269`). 정규식 감사기가 oneof 를 못 다루는 한계 자체는 남아 있으나, "지금 스키마에 없다"는 더 이상 참이 아니다. **★ 2026-08-17 23:55 최초 정정 시 "oneof 하위 메시지들은 각각 구현되어 있다"고 적었는데 틀렸다** — 재검수가 직접 세어 지적했다: `crates/protocol/src/to_fields.rs:694-818` 에는 21개 arm 중 **9개**(멤버십·정책 그룹 — `AddMember`·`RemoveMember`·`ApproveDevice`·`RevokeDevice`·`ChangeCoordinatorSet`·`RotateOwnerKey`·`UpdatePolicy`·`QuarantineDevice`·`ReleaseQuarantine`)만 구현되어 있다. 나머지 **12개**(Job 수명주기 5종·Lease 3종·관측 결과 4종 — `SubmitJob`·`TransitionJob`·`CreateAttempt`·`TransitionAttempt`·`SetCanonical`·`IssueLease`·`RenewLease`·`RevokeLease`·`TransitionNode`·`RecordBenchmark`·`RecordWorkloadProfile`·`RecordDurabilityStatus`)는 `ToCanonicalFields` 구현이 **없다**(grep 으로 0건 확인). `ControlAction` wrapper 자체도 미구현이다 |
 | "SCHEMA_TOO_NEW 미구현"(`:72`) | ★ 거짓이다. 지금 `verify()` 는 스키마 버전 초과 시 `SchemaTooNew` 를 반환한다(`crates/protocol/src/signing.rs:741-744`). 다만 prost 가 unknown field 를 조용히 버리는 현상 자체는 여전히 사실이다(`crates/protocol/tests/schema_evolution.rs:76-124`) — "경로 미구현"이 아니라 "버전을 안 올린 unknown-field 추가는 여전히 탐지 못 한다"로 좁힌다 |
@@ -335,5 +335,16 @@ stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고�
 구현되어 있다"는 서술이 **과장이 아니라 틀린 사실**이었다. 재검수가
 직접 세어 21개 arm 중 9개만 구현됨을 밝혔고, 이 세션도 grep 으로
 재확인했다(나머지 12개는 0건) — 위 표를 정정했다. (c)
-`HISTORY.md` 인용에 줄 번호가 없었다 — `:629-645` 로 추가했다. 이
-세 번째 수정 자체는 아직 재검수를 거치지 않았다.
+`HISTORY.md` 인용에 줄 번호가 없었다 — `:629-645` 로 추가했다.
+
+★ 2026-08-18 00:20 세 번째 재검수 — `agent:codex-cli` 가
+`ControlAction` 9/21 수치와 `Lease` 인용은 정확하다고 확인했지만,
+방금 추가한 `HISTORY.md:629-645` 인용이 **이미 틀렸다는 것**을
+잡았다 — 그 사이 이 세션이 새 `HISTORY.md` 항목을 여러 개 더
+추가하면서(append-at-top 방식) 대상 항목이 `:651-667` 로 밀려나 있었다.
+줄 번호를 다시 맞추는 대신, 위 표의 인용을 **제목 기반**으로
+바꿨다 — `HISTORY.md` 처럼 세션 안에서 계속 자라는 append-only
+파일은 애초에 줄 번호 인용이 위험하다는 것을 이번에 두 번째로
+확인했다(같은 문제가 이 재검수 사이클 동안 두 번 발생했다). 이
+네 번째 수정 자체는 아직 재검수를 거치지 않았다 — `DoD-05` 는
+이번 라운드에서 `ACCEPTED` 를 받았다.
