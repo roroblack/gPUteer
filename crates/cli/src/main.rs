@@ -50,11 +50,26 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("selftest") => match selftest::run(args.get(1).map(String::as_str)) {
             Ok(report) => {
-                print!("{report}");
-                if report.contains("실패") {
+                print!("{}", report.text);
+                if report.blocked > 0 {
+                    eprintln!(
+                        "\n★ 환경 제약으로 건너뛴 검사가 {}개 있다 — 실패가 아니라 \
+                         이 환경의 한계다 (RULE.md §7.1).",
+                        report.blocked
+                    );
+                }
+                if report.failed > 0 {
                     // ★ 보고서에 실패가 있으면 종료 코드도 실패여야 한다.
                     //   사람이 읽는 글과 기계가 읽는 코드가 다르면
                     //   자동화가 조용히 통과시킨다.
+                    //
+                    //   ★ 2026-08-17 정정. 전에는 `report.contains("실패")`
+                    //   로 텍스트를 검색했다 — 그런데 요약 줄이 항상
+                    //   "실패 {count}" 를 적기 때문에, count 가 0이어도
+                    //   그 검색어가 항상 존재해서 **정상 실행도 종료 코드
+                    //   1이었다.** `SelftestReport::failed` 를 직접 보는
+                    //   것으로 고쳤다 — 사람이 읽는 텍스트를 기계가
+                    //   파싱하지 않는다.
                     ExitCode::FAILURE
                 } else {
                     ExitCode::SUCCESS

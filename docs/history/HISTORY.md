@@ -16,6 +16,48 @@
 
 ---
 
+## 2026-08-17 22:20 — gputeer selftest 에 127.0.0.1 루프백 TCP 왕복 추가, 종료 코드 결함 자체 발견·수정 (293 tests green, selftest 25개 검사)
+
+- 계획: 사용자 지시 — "코덱스로 다음 작업들 진행해". 코덱스(read-only)에게
+  전송 계층 설계를 맡겼다(§4c까지는 프로세스 안에서만 꿰어져 있었다 —
+  CLAUDE.md 가 스스로 적어 둔 공백).
+- 스트림: CLI · Crypto
+- 수행:
+  1. 코덱스 설계를 받아 `selftest.rs` §5 로 구현: `TcpListener::bind(("127.0.0.1", 0))`
+     로 커널이 고른 포트를 얻고, 서버 스레드가 `read_frame` 으로 검증,
+     클라이언트가 `write_frame` 으로 전송. 서버는 **개인키 없이 공개키만
+     가진 InMemoryKeyring** 을 쓴다 — 검증자 역할을 흉내낸다.
+  2. 정상 Grant 는 실제 소켓을 왕복해도 검증 통과(grant_id 에코 확인),
+     위조 서명은 실제 소켓을 왕복해도 거부됨을 확인 — 양쪽 모두
+     `set_read_timeout`/`set_write_timeout` 을 걸어, framed_ingress 모듈
+     문서가 명시한 "타임아웃은 호출자 책임" 경고를 실제 코드로 재확인했다.
+  3. [자체 발견, 코덱스 아님] `main.rs` 가 `report.contains("실패")` 로
+     종료 코드를 정하고 있었는데, 요약 줄이 항상 `"통과 X · 실패 Y"` 를
+     적기 때문에 **Y=0 이어도 그 문자열이 항상 존재해서 정상 실행도
+     종료 코드 1이었다.** `cargo run -- selftest` 를 직접 실행해 exit
+     code 1 을 재현하고서야 발견했다 — 이전까지는 사람이 눈으로 "실패 0"
+     을 읽고 통과로 판단했을 뿐, 자동화가 실제로 그 신호를 쓴 적이 없었다.
+     `SelftestReport { text, failed, blocked }` 로 리팩터해 사람이 읽는
+     텍스트와 기계가 읽는 상태를 분리했다.
+  4. `RULE.md` §7.1 ENVIRONMENT-BLOCKED != FAIL 을 selftest 에도 반영 —
+     `Report::blocked()` 신설(루프백 바인드 자체가 막힌 환경을 실패와
+     구분). 지금 실행 환경에서는 0건.
+- 검증:
+  - `cargo test --workspace` 293 passed / 0 failed (변화 없음 — 새 검사는
+    `#[test]` 가 아니라 selftest 런타임 체크라 이 카운트에 안 잡힌다).
+  - `gputeer selftest` 8회 연속 25/0/0, exit code 0.
+  - 뮤테이션 테스트 2건으로 새 검사의 비공허성 증명: (a) 위조 코드를
+    빼면 "위조 서명 거부" 검사가 정확히 실패로 뒤집힘(exit 1). (b) 서버
+    keyring 에 엉뚱한 공개키를 넣으면 "정상 Grant 검증" 이 정확히
+    실패로 뒤집힘(exit 1, InvalidSignature 로 보고됨). 두 뮤테이션 모두
+    되돌린 뒤 25/0/0 재확인.
+  - 종료 코드 수정 자체도 위 뮤테이션 실행에서 함께 검증됐다 — `failed>0`
+    일 때 실제로 `ExitCode::FAILURE` 가 나오는지 그 실행들이 증명한다.
+- 이것이 증명하지 않는 것: coordinator·agent·scheduler 는 여전히 없다.
+  서버 쪽은 같은 프로세스 안 스레드 하나가 여는 소켓이다 — 별도 프로세스
+  간, 하물며 별도 기계 간 통신은 실측하지 않았다.
+- 리포트: 이 이력 항목
+
 ## 2026-08-17 21:30 — runtime-policy 독립 검수 반영 (293 tests green)
 
 - 계획: 사용자 지시 — "코덱스로 ㄱ" (앞 세션에서 중단된 runtime-policy 검수 확인)

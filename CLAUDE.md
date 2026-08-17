@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-17 18:40)
+## 5. 지금 상태 (2026-08-17 22:20)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -168,7 +168,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치** |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · **실패 마커 · 상태 사이드카 · 동시 GC 경합** |
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류 |
-| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 23개 검사로 통과 |
+| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함 |
 | └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
 | **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). 검수 기록 없는 v1 **13건** 유예 중 |
@@ -186,19 +186,27 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
   잠금)는 다르다. 판정 결과를 받아 시스템을 조작하는 소비자가 아직
   없다 (runtime-windows/runtime-container 미착수).        -> TODO_VISION V-06
 
-방어 계층이 **프로세스 안까지만** 연결됐다
+방어 계층이 이제 **실제 OS 소켓** 까지는 연결됐다 — 그 이상은 아니다
   raw bytes -> framed_ingress -> ingress -> Verified<M> -> runtime-policy 판정
-  까지 gputeer selftest 로 실제로 돈다.
-  ★ 그러나 **네트워크 전송 · coordinator · scheduler · 실제 시스템 호출이 없다.**
+  까지, 그리고 2026-08-17부터는 **127.0.0.1 실제 TCP 소켓**을 왕복하며
+  `gputeer selftest` §5 가 실제로 돈다. 정상 Grant 는 소켓을 거쳐도
+  검증되고, 위조 서명은 소켓을 거쳐도 거부된다 — 두 검사 모두 뮤테이션
+  테스트로 공허하지 않음을 확인했다.
+  ★ 그러나 이것은 **같은 프로세스 안에서 스레드 하나가 여는 소켓**이다.
+    coordinator · agent · scheduler 는 여전히 없다. 서버 쪽은 검증자
+    역할만 흉내냈다(공개키만 가짐, 자체 서명 못 함) — 진짜 Agent
+    프로세스가 이 소켓을 여는지는 검증하지 않았다.
     runtime-policy 는 "무엇을 강제할 수 있는가" 를 판정할 뿐,
     OS 방화벽을 실제로 호출하거나 커널 경로를 잠그지 않는다.
 
-★ framed_ingress 에 타임아웃 없는 블로킹 read DoS 가 있다 (독립 검수 실측)
+framed_ingress 의 타임아웃 없는 블로킹 read DoS — **호출자 책임임을 실측으로 확인**
   claimed_len 이 상한(8MiB) 이내면 read_exact 로 몸통을 기다리는데
-  타임아웃이 없다. 상대가 헤더만 보내고 몸통을 안 보내면 무기한 블로킹한다.
-  std::io::Read 에는 타임아웃 개념이 없어 이 계층에서 막을 수 없다 —
-  호출자가 소켓 수준에서 걸어야 한다(TcpStream::set_read_timeout).
-  전송 계층이 아직 없어 아무도 이 책임을 지지 않는다.
+  `framed_ingress` 자체엔 타임아웃이 없다. `gputeer selftest` §5 는 이
+  경고가 사실임을 실제로 보여준다 — 소켓을 연 뒤 양쪽에
+  `set_read_timeout`/`set_write_timeout` 을 걸어야만 안전하고,
+  안 걸면 상대가 헤더만 보내고 멈췄을 때 무기한 블로킹한다는 계약을
+  코드로 재확인했다. `framed_ingress` 모듈 자체는 여전히 바뀌지 않았다
+  — 책임 분담이 실측으로 검증됐을 뿐이다.
 
 키 보관이 Windows 전용이다
   §11 K1 은 DPAPI 다. Linux 는 UnsupportedPlatform 으로 **명시적으로 실패**한다

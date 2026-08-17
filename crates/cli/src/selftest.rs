@@ -51,11 +51,23 @@ impl Clock for FixedClock {
     }
 }
 
+/// `run()` 이 돌려주는 결과. 사람이 읽는 텍스트와 기계가 읽는 상태를
+/// **같은 값에서** 뽑는다 — 텍스트를 문자열 검색해서 종료 코드를
+/// 정하면 그 검색어가 요약 줄에도 항상 등장해서(예: "실패 0") 검사가
+/// 무의미해진다. 이전에 그 결함이 실제로 있었다: `failed == 0` 인
+/// 정상 실행도 종료 코드가 1이었다.
+pub struct SelftestReport {
+    pub text: String,
+    pub failed: usize,
+    pub blocked: usize,
+}
+
 /// 한 항목의 결과. **세지 않고 버리지 않는다** (`CLAUDE.md` §3).
 struct Report {
     lines: String,
     passed: usize,
     failed: usize,
+    blocked: usize,
 }
 
 impl Report {
@@ -64,6 +76,7 @@ impl Report {
             lines: String::new(),
             passed: 0,
             failed: 0,
+            blocked: 0,
         }
     }
 
@@ -76,6 +89,15 @@ impl Report {
             self.failed += 1;
             let _ = writeln!(self.lines, "  실패  {label}\n          {detail}");
         }
+    }
+
+    /// 환경이 그 자체로 이 검사를 할 수 없게 막았다 — **실패가 아니다**
+    /// (`RULE.md` §7.1, ENVIRONMENT-BLOCKED != FAIL). 통과로 세지도
+    /// 않는다 — 조용히 사라지면 "확인했다" 와 "확인 못 했다" 가
+    /// 구분되지 않는다.
+    fn blocked(&mut self, label: &str, detail: &str) {
+        self.blocked += 1;
+        let _ = writeln!(self.lines, "  환경차단  {label}\n          {detail}");
     }
 
     fn note(&mut self, text: &str) {
@@ -132,7 +154,7 @@ impl Workspace {
     }
 }
 
-pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
+pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Error>> {
     let ws = match dir {
         Some(d) => {
             std::fs::create_dir_all(d)?;
@@ -463,8 +485,153 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
         );
     }
 
-    // ── 5. 체크포인트 ─────────────────────────────────────────────
-    r.section("5. 체크포인트 쓰기와 재개 (ADR-026)");
+    // ── 5. 로컬 루프백 TCP 왕복 ───────────────────────────────────
+    r.section("5. 로컬 루프백 TCP 왕복 (127.0.0.1, 실제 OS 소켓)");
+
+    {
+        use gputeer_crypto::{
+            read_frame, write_frame, FrameType, InMemoryKeyring, InMemoryReplayGuard,
+            IngressMessage,
+        };
+        use std::io::{Read as _, Write as _};
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        use std::time::Duration;
+
+        const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+        // 서버 -> 클라이언트 확인 응답. 서명하지 않은 임시 프로토콜이다 —
+        // 검증자(서버)는 공개키만 갖고 있어 애초에 서명할 수 없다.
+        // 그 자체가 아래에서 확인하는 성질이다.
+        fn write_ack(stream: &mut TcpStream, ok: bool, text: &str) -> std::io::Result<()> {
+            let body = text.as_bytes();
+            let len = body.len() as u32;
+            stream.write_all(&[u8::from(ok)])?;
+            stream.write_all(&len.to_be_bytes())?;
+            stream.write_all(body)?;
+            stream.flush()
+        }
+
+        fn read_ack(stream: &mut TcpStream) -> std::io::Result<(bool, String)> {
+            let mut head = [0u8; 5];
+            stream.read_exact(&mut head)?;
+            let ok = head[0] == 1;
+            let len = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
+            let mut body = vec![0u8; len];
+            stream.read_exact(&mut body)?;
+            Ok((ok, String::from_utf8_lossy(&body).into_owned()))
+        }
+
+        match TcpListener::bind(("127.0.0.1", 0)) {
+            Err(e) => {
+                r.blocked(
+                    "127.0.0.1 루프백 소켓 왕복",
+                    &format!(
+                        "이 환경에서 루프백 바인드가 막혀 있다: {e} — FAIL 이 아니라 \
+                         환경 제약이다."
+                    ),
+                );
+            }
+            Ok(listener) => {
+                let addr = listener.local_addr()?;
+                r.note(&format!("리스너: {addr} (커널이 고른 임시 포트)"));
+
+                // 서버는 개인키를 갖지 않는다 — 검증자는 공개키만 있으면
+                // 충분하다. Agent 역할을 흉내낸다.
+                let mut server_keys = InMemoryKeyring::new();
+                server_keys.insert(DEVICE, signing_key.verifying_key());
+
+                let server = std::thread::spawn(move || -> Result<(), String> {
+                    let mut replay = InMemoryReplayGuard::new();
+                    // bind() 시점에 이미 listen() 이 걸린다 — accept() 를
+                    // 부르기 전에 클라이언트가 connect() 해도 커널 backlog
+                    // 가 큐잉한다. 그래서 connect-before-accept 순서가
+                    // 안전하다.
+                    for _ in 0..2u8 {
+                        let (mut stream, _) =
+                            listener.accept().map_err(|e| format!("accept 실패: {e}"))?;
+                        stream
+                            .set_read_timeout(Some(IO_TIMEOUT))
+                            .map_err(|e| e.to_string())?;
+                        stream
+                            .set_write_timeout(Some(IO_TIMEOUT))
+                            .map_err(|e| e.to_string())?;
+
+                        let outcome = read_frame(
+                            &mut stream,
+                            1,
+                            gputeer_crypto::KeyDirectorySource::Provided(&server_keys),
+                            &mut replay,
+                            &FixedClock(NOW),
+                        );
+                        let ack_result = match &outcome {
+                            Ok(IngressMessage::Grant(v)) => {
+                                write_ack(&mut stream, true, &v.get().grant_id)
+                            }
+                            Ok(other) => write_ack(&mut stream, false, &format!("{other:?}")),
+                            Err(e) => write_ack(&mut stream, false, &format!("{e}")),
+                        };
+                        let _ = stream.shutdown(Shutdown::Both);
+                        ack_result.map_err(|e| format!("ack 쓰기 실패: {e}"))?;
+                    }
+                    Ok(())
+                });
+
+                let roundtrip = |body: Vec<u8>| -> std::io::Result<(bool, String)> {
+                    let mut stream = TcpStream::connect(addr)?;
+                    stream.set_read_timeout(Some(IO_TIMEOUT))?;
+                    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+                    let frame = write_frame(FrameType::Grant, &body)
+                        .expect("테스트 body 는 8MiB 상한 이내다");
+                    stream.write_all(&frame)?;
+                    read_ack(&mut stream)
+                };
+
+                // (a) 정상 Grant — 실제 소켓을 왕복해도 검증이 통과하는가.
+                let g3 = grant(&signing_key, 30, NOW + 60_000);
+                let sent_id = g3.grant_id.clone();
+                match roundtrip(g3.encode_to_vec()) {
+                    Ok((ok, echoed)) => r.check(
+                        "실제 TCP 소켓을 왕복한 정상 Grant 가 서버에서 검증된다",
+                        ok && echoed == sent_id,
+                        &format!("ok={ok} echoed={echoed:?} expected={sent_id:?}"),
+                    ),
+                    Err(e) => r.check(
+                        "실제 TCP 소켓을 왕복한 정상 Grant 가 서버에서 검증된다",
+                        false,
+                        &format!("소켓 왕복 자체가 실패했다: {e}"),
+                    ),
+                }
+
+                // (b) 위조 서명 — 실제 소켓을 거쳐도 거부되는가
+                //     (타임아웃 없이 걸려있지 않고, 거부 응답이 실제로 온다).
+                let mut forged2 = grant(&signing_key, 31, NOW + 60_000);
+                forged2.coordinator_signature[0] ^= 0xFF;
+                match roundtrip(forged2.encode_to_vec()) {
+                    Ok((ok, detail)) => r.check(
+                        "위조 서명은 실제 소켓을 거쳐도 서버에서 거부된다",
+                        !ok,
+                        &format!("서버가 위조 서명을 accept 로 보고했다: {detail}"),
+                    ),
+                    Err(e) => r.check(
+                        "위조 서명은 실제 소켓을 거쳐도 서버에서 거부된다",
+                        false,
+                        &format!("거부 응답을 못 받았다(소켓 왕복 실패): {e}"),
+                    ),
+                }
+
+                match server.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(msg)) => r.check("서버 스레드가 정상 종료했다", false, &msg),
+                    Err(_) => {
+                        r.check("서버 스레드가 정상 종료했다", false, "서버 스레드가 패닉했다")
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 6. 체크포인트 ─────────────────────────────────────────────
+    r.section("6. 체크포인트 쓰기와 재개 (ADR-026)");
 
     let ckpt_root = root.join("checkpoints");
     std::fs::create_dir_all(&ckpt_root)?;
@@ -509,22 +676,28 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
     // ── 마무리 ────────────────────────────────────────────────────
     let _ = writeln!(
         r.lines,
-        "\n{}\n통과 {} · 실패 {}",
+        "\n{}\n통과 {} · 실패 {} · 환경차단 {}",
         "=".repeat(70),
         r.passed,
-        r.failed
+        r.failed,
+        r.blocked
     );
 
     if r.failed == 0 {
         let _ = writeln!(
             r.lines,
             "\n★ 이것이 증명하지 않는 것\n\
-             \x20 - 서비스가 돌아간다  네트워크 수신도 데몬도 없다\n\
+             \x20 - 서비스가 돌아간다  coordinator 도 daemon 도 없다. 이 실행 하나가\n\
+             \x20                     열고 닫는 소켓일 뿐이다\n\
              \x20 - Job 이 실행된다    runtime 계층이 미착수다\n\
              \x20 - 성능              한 번씩만 돌렸다. 숫자가 아니라 동작만 봤다\n\
              \x20 - Linux 에서 된다   이 실행은 이 기계에서만 한 것이다 (D-3)"
         );
     }
 
-    Ok(r.lines)
+    Ok(SelftestReport {
+        text: r.lines,
+        failed: r.failed,
+        blocked: r.blocked,
+    })
 }
