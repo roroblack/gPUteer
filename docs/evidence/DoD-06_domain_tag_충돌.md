@@ -330,5 +330,13 @@ frontmatter(`DoD-06:12`)는 "36건" 이라고 적었다. `tests/vectors/canonica
 limitations 정정은 실질적으로 해소됐다고 확인했지만, vectors
 메타데이터(위 절)가 현재 파일과 불일치한다는 것을 새로 지적해
 `CHANGES_REQUESTED` 를 유지했다. 위 절로 그 불일치를 명시했다.
-원본 YAML 은 당시 기록이므로 고치지 않는다. **이 두 번째 정정 자체는
-아직 재검수를 거치지 않았다.**
+원본 YAML 은 당시 기록이므로 고치지 않는다.
+
+★ 2026-08-17 23:35 세 번째(마지막) 재검수 — `agent:codex-cli` 가 위
+vectors 불일치 설명 절을 확인하고 **`ACCEPTED`** 로 판정했다.
+`tests/vectors/canonical_v1.json` 을 직접 파싱해(Python·PowerShell
+둘 다) 지금 40건임을 재확인했고, 그 사실을 이 절이 정확히 설명한다고
+봤다. 다만 문서 전체 schema v2 승격은 별도 판단이 필요하다고 남겼다
+— frontmatter 가 여전히 schema v1·"36건" 으로 남아 있어, 그 자체를
+현재 값으로 잘못 읽으면 안 된다는 점은 이 addendum 이 이미 명시하고
+있다.

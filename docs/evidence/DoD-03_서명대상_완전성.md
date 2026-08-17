@@ -269,7 +269,13 @@ $ python -c "import json; print(len(json.load(open('tests/vectors/canonical_v1.j
 ### 그 외 확인
 
 - negative_tests 이름은 실재를 확인했다(`prost_canonical.rs:307,321,334,351,366,745`,
-  `field_number_audit.rs:282`, `prost_canonical.rs:279,852`).
+  `every_impl_is_audited`(`field_number_audit.rs:282`) — ★ 이 인용은
+  바로 위 "claim 을 이렇게 좁혀 읽는다" 절의 `field_number_audit.rs:249-274`
+  (번호-이름 대조)와 **다른 함수를 가리킨다.** 헷갈리지 않도록 명시한다:
+  `:249-274` 는 `common_message_field_numbers_match_proto` 류의
+  번호-이름 대조 테스트, `:282` 는 `every_impl_is_audited`(감사망
+  등록 누락 검사) 다. 둘 다 negative_tests 목록에 실재한다.
+  `prost_canonical.rs:279,852`).
 - limitation "17종 중 13종만 구현"(`DoD-03:72`)은 **틀린 숫자가 됐다**
   — 지금 `ToCanonicalFields` 구현은 41개, domain coverage 는 23종 중
   19종이다(`crates/protocol/src/to_fields.rs`,
@@ -304,5 +310,16 @@ Ed25519/SCHEMA_TOO_NEW/runtime-policy limitation 정정이 "구현이
 존재한다" 와 "이 evidence 가 실행해 확인했다" 를 충분히 구분하지
 않아 과장으로 읽힐 수 있다고 지적 — 위 세 항목을 그 구분을 명시하도록
 다시 썼다. `CHANGES_REQUESTED` 는 유지됐다. 원본 YAML 은 당시
-기록이므로 고치지 않는다. **이 두 번째 정정 자체는 아직 재검수를
-거치지 않았다.**
+기록이므로 고치지 않는다.
+
+★ 2026-08-17 23:35 세 번째(마지막) 재검수 — `agent:codex-cli` 가
+`DoD-04`·`DoD-06` 은 이번 라운드에서 `ACCEPTED` 를 줬지만, `DoD-03`
+은 여전히 `CHANGES_REQUESTED` 를 유지했다. 남은 지적: 위 "그 외
+확인" 절의 `field_number_audit.rs:282` 인용이, 바로 앞 문단의
+`:249-274` 인용과 나란히 있어 **같은 결함이 또 남은 것처럼 읽혔다**
+— 실제로는 서로 다른, 둘 다 진짜인 함수를 가리키고 있었을 뿐이다
+(`every_impl_is_audited` vs `common_message_field_numbers_match_proto`
+류). 두 인용을 명시적으로 구분해 고쳤다(위 "negative_tests 이름은
+실재를 확인했다" 절 참조). 이 마지막 수정 자체는 아직 재검수를
+거치지 않았다 — `DoD-03` 은 세 라운드째 `CHANGES_REQUESTED` 상태로
+남아 있다.

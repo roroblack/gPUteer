@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-08-17 23:35 — v1 evidence 3라운드 재검수 완료 — DoD-04·DoD-06 ACCEPTED, DoD-03 만 잔류
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프, 코덱스 위주). 직전 라운드에서 남은 인용 오류를 고친
+  버전을 세 번째로 재검수했다.
+- 스트림: Protocol
+- 결과: **`DoD-04`·`DoD-06` 이 이번 라운드에서 `ACCEPTED`.** 인용
+  교정(각각 K2/Linux limitation 인용, vectors 40건 대조)이 정확했다고
+  확인됐다. `DoD-03` 은 세 라운드째 `CHANGES_REQUESTED` — 이번엔
+  실질적 결함이 아니라 **표현의 모호함**이었다: "claim 을 좁혀 읽는다"
+  절의 `field_number_audit.rs:249-274` 인용과 "그 외 확인" 절의
+  `field_number_audit.rs:282` 인용이 나란히 있어 **같은 결함이 또
+  남은 것처럼 읽혔다** — 실제로는 둘 다 진짜인, 서로 다른 함수
+  (`common_message_field_numbers_match_proto` 류 vs
+  `every_impl_is_audited`) 를 가리키고 있었다. 함수명을 명시해
+  구분했다.
+- 세 evidence 모두 문서 전체를 schema v2 로 승격하는 것은 별도
+  판단이 필요하다고 검수자가 남겼다 — frontmatter 가 여전히 v1 이고,
+  ACCEPTED 는 이번 addendum(정정 절)에 한정된다.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-17 23:20 — v1 evidence 4건 재검수 완료 라운드 — P0-03 addendum 최초 ACCEPTED
 
 - 계획: 사용자 지시 — "코덱스로 다음 작업들 진행해" 의 연장. 직전 정정본
