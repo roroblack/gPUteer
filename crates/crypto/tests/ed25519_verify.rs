@@ -13,7 +13,7 @@ use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
 use gputeer_protocol::canonical::Domain;
 use gputeer_protocol::constants::CLOCK_SKEW_TOLERANCE_MS;
 use gputeer_protocol::pb;
-use gputeer_protocol::signing::{
+use gputeer_protocol::signing::{ReplayStatus, 
     signing_input, verify, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard, ReplayStoreError,
     Signable, VerifyOutcome,
 };
@@ -83,9 +83,25 @@ fn valid_manifest_verifies() {
 
     assert_eq!(v.signer_id(), DEVICE);
     assert_eq!(v.get().job_id, "01JBXR7Q0000000000000000AA");
-    // 장수명 메시지는 replay 대상이 아니므로 검사된 것으로 본다
-    assert!(v.replay_checked());
-    assert!(v.require_replay_checked().is_ok());
+    // ★ 2026-08-17 정정 (독립 검수).
+    //
+    //   전에는 여기서 `assert!(v.replay_checked())` 를 했다 —
+    //   "장수명은 replay 대상이 아니므로 검사된 것으로 본다" 는 이유였다.
+    //   **그 테스트가 틀렸다.** JobManifest 는 만료 전까지 무제한 재전송된다.
+    //   그것을 "검사됨" 으로 보고하면 부작용 게이트가 열린다.
+    assert_eq!(
+        v.replay_status(),
+        ReplayStatus::NotApplicable,
+        "장수명 메시지에 replay 방어가 있는 것처럼 보고하면 안 된다"
+    );
+    assert!(!v.replay_checked());
+    assert_eq!(
+        v.require_replay_checked().unwrap_err(),
+        VerifyOutcome::Replay,
+        "★ replay 방어가 없는 메시지로 부작용을 실행하게 두면 안 된다"
+    );
+    // 값 자체는 읽을 수 있다 — 부작용 없는 사용까지 막지는 않는다.
+    assert_eq!(v.get().job_id, "01JBXR7Q0000000000000000AA");
 }
 
 /// 서명 필드가 canonical 에 들어가지 않으므로, 서명 전후의 sig_input 이 같아야 한다.
@@ -466,9 +482,13 @@ mod short_lived {
         let k = key(1);
         let ring = ring_with(DEVICE, &k);
 
-        // TTL 을 길게 잡아 만료 검사와 skew 검사를 분리한다
+        // TTL 을 길게 잡아 만료 검사와 skew 검사를 분리한다.
+        //
+        // ★ 2026-08-17 — 전에는 1시간(3_600_000)이었다.
+        //   MAX_SHORTLIVED_TTL_MS(15분)가 생기면서 그 값 자체가 거부된다.
+        //   10분은 상한 안이면서 skew 허용치(60초)보다 충분히 길다.
         let mut g = grant(&k);
-        g.expires_at = NOW + 3_600_000;
+        g.expires_at = NOW + 600_000;
         g.sig = sign(&k, &g).to_vec();
 
         // 경계값 — 허용

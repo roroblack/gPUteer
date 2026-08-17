@@ -1,0 +1,26 @@
+# evidence schema v1 유예 목록 — **추가 금지.**
+#
+# ★ 이 목록에 있는 파일만 schema_version 1 로 남을 수 있다.
+#   여기 없는 새 evidence 는 schema_version: 2 여야 한다 (RULE.md §7.3).
+#
+# 왜 목록인가: "새 evidence 부터 v2" 는 기계가 "새 것" 을 모른다.
+#   유예를 **명시적 부채 목록**으로 만들면 늘어나는 것이 눈에 보인다.
+#
+# 여기 있는 16건은 **독립 검수 기록이 없다.** 그 사실이 이 파일의 존재 이유다.
+# 목록이 줄어드는 것은 진전이고, 늘어나는 것은 규칙 위반이다.
+DoD-01_canonical_encode_교차검증.md
+DoD-02_prost_연동_계층.md
+DoD-03_서명대상_완전성.md
+DoD-04_ed25519_검증순서.md
+DoD-05_T1_서명대상_확장.md
+DoD-06_domain_tag_충돌.md
+DoD-07_시각정책_실메시지.md
+DoD-08_독립검수_시정.md
+ENV-01_개발환경_실측.md
+ENV-02_원격_GPU_기계_실측.md
+P0-01_windows_s1_restricted_cuda.md
+P0-03_checkpoint_durability.md
+P0-03a_windows_fs_atomicity.md
+P0-06_vram_enforcement.md
+P0-07_runtime_estimation_accuracy.md
+P0-08_스키마_진화.md

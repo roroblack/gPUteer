@@ -30,6 +30,57 @@ use gputeer_protocol::signing::{ReplayDecision, ReplayGuard, ReplayStoreError};
 /// **아직 유효한 nonce 가 밀려나면 replay 창이 열린다.**
 pub const DEFAULT_CAPACITY: usize = 100_000;
 
+/// ★ **한 서명자가 쓸 수 있는 몫** (독립 검수 2026-08-17).
+///
+/// 전역 상한만 있으면 한 device 가 nonce 를 상한만큼 만들어
+/// **다른 모든 device 를 차단**할 수 있다.
+/// 그것은 replay 방어가 아니라 DoS 통로다.
+///
+/// 기본값은 전역 상한의 1/10 이다. 근거는 측정이 아니라 정책이다 —
+/// "한 device 가 전체의 10% 를 넘게 쓰면 비정상" 이라는 판단이다.
+/// 팀 규모가 10명 미만이면 이 값이 너무 빡빡할 수 있다. 조정 가능하다.
+pub const DEFAULT_PER_SIGNER_CAPACITY: usize = DEFAULT_CAPACITY / 10;
+
+/// ★ GC 가 한 번에 앞으로 갈 수 있는 최대 시간 (독립 검수 2026-08-17).
+///
+/// # 왜 필요한가
+///
+/// 되감김만 막는 것으로는 부족하다. **앞으로 튀는** 시각도 위험하다.
+///
+/// ```text
+/// 1. (A, Grant, n1) 을 retain_until = 20_000 으로 기록
+/// 2. GC 가 잘못된 미래 시각 1_000_000 으로 호출된다
+/// 3. retain_until <= now 이므로 n1 이 지워진다
+/// 4. 시각이 10_000 으로 돌아오면 같은 메시지가 Fresh 가 된다
+/// ```
+///
+/// # 값의 근거 — **최대 보존 시한보다 짧아야 한다**
+///
+/// ★ 처음에 1시간으로 잡았다가 **테스트가 잡아냈다.**
+///
+/// 단수명 메시지의 보존 시한은 최대
+/// `MAX_SHORTLIVED_TTL_MS`(15분) + `CLOCK_SKEW_TOLERANCE_MS`(1분) = 16분이다.
+/// 상한이 1시간이면 한 번의 잘못된 GC 가 **여전히 캐시 전체를 지운다.**
+/// 자르는 시늉만 하고 아무것도 막지 못한 것이다.
+///
+/// 5분으로 잡으면 잘못된 GC 한 번이 지울 수 있는 것은
+/// "5분 안에 어차피 만료될 항목" 뿐이다.
+///
+/// # ★ 이것이 막지 못하는 것
+///
+/// **지속적으로 틀린 시계**는 막지 못한다.
+/// 잘못된 GC 를 4번 연달아 부르면 `last_seen_ms` 가 5분씩 전진해
+/// 결국 캐시가 빈다. 이 상한은 **한 번의 잘못된 읽기**를 묶을 뿐이다.
+///
+/// 제대로 막으려면 단조 시계(monotonic clock)를 함께 써야 한다.
+/// 그것은 영속 저장소와 함께 할 일이다 (§10 3단계, 미구현).
+///
+/// # 정상 동작에 미치는 영향
+///
+/// 오래 쉰 프로세스는 GC 한 번에 5분씩만 전진한다.
+/// §10 이 정한 1분 주기 GC 라면 1시간 공백도 12분 안에 따라잡는다.
+pub const MAX_GC_ADVANCE_MS: u64 = 5 * 60 * 1_000;
+
 type Key = (String, u32, Vec<u8>);
 
 /// 메모리 replay 캐시 — **참조 구현이다. 영속되지 않는다.**
@@ -58,6 +109,9 @@ pub struct InMemoryReplayGuard {
     /// key -> retain_until_ms
     seen: HashMap<Key, u64>,
     capacity: usize,
+    /// ★ 서명자별 사용량. 한 device 가 전체를 삼키지 못하게 한다.
+    per_signer: HashMap<String, usize>,
+    per_signer_capacity: usize,
     /// ★ 마지막으로 본 시각. **시계 되감김 감지용.**
     ///
     /// 시계가 앞으로 튄 뒤 GC 로 항목을 지우고 다시 뒤로 돌아오면
@@ -65,6 +119,8 @@ pub struct InMemoryReplayGuard {
     last_seen_ms: u64,
     /// 되감김을 감지한 횟수. 운영 신호로 쓴다.
     clock_rollbacks: u64,
+    /// ★ 앞으로 과도하게 튄 것을 잘라낸 횟수. 운영 신호로 쓴다.
+    clock_jumps: u64,
 }
 
 impl Default for InMemoryReplayGuard {
@@ -79,12 +135,39 @@ impl InMemoryReplayGuard {
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
+        // 서명자 몫도 전역 상한에 비례해 줄인다.
+        // 그러지 않으면 `with_capacity(3)` 같은 테스트에서
+        // 서명자 몫(10_000)이 전역 상한보다 커져 아무 의미가 없어진다.
+        let per = (capacity / 10).max(1);
+        Self::with_capacities(capacity, per)
+    }
+
+    /// 전역 상한과 서명자별 상한을 따로 정한다.
+    pub fn with_capacities(capacity: usize, per_signer_capacity: usize) -> Self {
         Self {
             seen: HashMap::new(),
             capacity,
+            per_signer: HashMap::new(),
+            per_signer_capacity,
             last_seen_ms: 0,
             clock_rollbacks: 0,
+            clock_jumps: 0,
         }
+    }
+
+    /// 서명자 한 명의 몫.
+    pub fn per_signer_capacity(&self) -> usize {
+        self.per_signer_capacity
+    }
+
+    /// 이 서명자가 지금 몇 개를 쓰고 있는가.
+    pub fn signer_usage(&self, signer_id: &str) -> usize {
+        self.per_signer.get(signer_id).copied().unwrap_or(0)
+    }
+
+    /// 시각이 앞으로 과도하게 튀어 잘라낸 횟수. 0이 아니면 운영 신호다.
+    pub fn clock_jumps(&self) -> u64 {
+        self.clock_jumps
     }
 
     /// ★ 이 guard 가 **재시작을 견디는가.**
@@ -124,9 +207,45 @@ impl InMemoryReplayGuard {
             self.clock_rollbacks += 1;
             return 0;
         }
-        self.last_seen_ms = now_unix_ms;
+
+        // ★ 앞으로 튀는 것도 막는다 (독립 검수 2026-08-17).
+        //   되감김만 막으면, 한 번의 엉뚱한 미래 시각으로 캐시를 통째로
+        //   비운 뒤 시각이 돌아왔을 때 replay 창이 열린다.
+        //
+        //   첫 호출(last_seen_ms == 0)은 기준선이 없으므로 자르지 않는다.
+        //   자르면 실제 unix 시각(약 1.7e12)이 항상 상한을 넘어 GC 가 영영 안 돈다.
+        let effective = if self.last_seen_ms == 0 {
+            now_unix_ms
+        } else {
+            let bound = self.last_seen_ms.saturating_add(MAX_GC_ADVANCE_MS);
+            if now_unix_ms > bound {
+                self.clock_jumps += 1;
+                bound
+            } else {
+                now_unix_ms
+            }
+        };
+
+        self.last_seen_ms = effective;
         let before = self.seen.len();
-        self.seen.retain(|_, retain_until| *retain_until > now_unix_ms);
+        let mut removed: Vec<String> = Vec::new();
+        self.seen.retain(|k, retain_until| {
+            let keep = *retain_until > effective;
+            if !keep {
+                removed.push(k.0.clone());
+            }
+            keep
+        });
+        // 서명자별 사용량도 함께 줄인다.
+        // 이것을 빠뜨리면 만료 뒤에도 그 서명자가 영영 막힌다.
+        for signer in removed {
+            if let Some(n) = self.per_signer.get_mut(&signer) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    self.per_signer.remove(&signer);
+                }
+            }
+        }
         before - self.seen.len()
     }
 }
@@ -148,6 +267,17 @@ impl ReplayGuard for InMemoryReplayGuard {
             return Ok(ReplayDecision::Duplicate);
         }
 
+        // ★ 서명자 몫을 **전역 상한보다 먼저** 본다 (독립 검수 2026-08-17).
+        //   순서가 반대면, 한 서명자가 캐시를 채운 뒤에는 모든 요청이
+        //   CacheFull 로 보고되어 **누가 원인인지 알 수 없다.**
+        let used = self.per_signer.get(signer_id).copied().unwrap_or(0);
+        if used >= self.per_signer_capacity {
+            return Err(ReplayStoreError::SignerQuotaExceeded {
+                signer_id: signer_id.to_string(),
+                quota: self.per_signer_capacity,
+            });
+        }
+
         // ★ 상한 도달 시 **축출하지 않는다.** 거부가 안전한 실패 방향이다(§10).
         //   미만료 nonce 를 밀어내면 replay 창이 열린다.
         if self.seen.len() >= self.capacity {
@@ -155,6 +285,7 @@ impl ReplayGuard for InMemoryReplayGuard {
         }
 
         self.seen.insert(key, retain_until_ms);
+        *self.per_signer.entry(signer_id.to_string()).or_insert(0) += 1;
         Ok(ReplayDecision::Fresh)
     }
 

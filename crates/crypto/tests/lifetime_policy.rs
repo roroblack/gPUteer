@@ -23,7 +23,9 @@
 use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
 use gputeer_protocol::constants::{CLOCK_SKEW_TOLERANCE_MS, GRANT_TTL_MS};
 use gputeer_protocol::pb;
-use gputeer_protocol::signing::{verify, Lifetime, NoReplayCheck, Signable, VerifyOutcome};
+use gputeer_protocol::signing::{
+    verify, Lifetime, NoReplayCheck, ReplayStatus, Signable, VerifyOutcome,
+};
 
 const NOW: u64 = 1_755_200_000_000;
 const COORD: &str = "01JBXR7Q0000000000000000CC";
@@ -311,14 +313,44 @@ fn evidence_does_not_expire() {
         .expect("증거에 skew 규칙을 걸면 안 된다");
 }
 
-/// 증거는 replay 대상이 아니다 — `nonce` 없이도 `require_replay_checked` 가 통과한다.
+/// 증거는 replay **대상이 아니다** — 그리고 그 사실이 보고에 드러나야 한다.
+///
+/// # ★ 2026-08-17 정정 (독립 검수)
+///
+/// 전에는 이 테스트가 `require_replay_checked().is_ok()` 를 주장했다.
+/// 이유는 "증거는 replay 대상이 아니므로 검사된 것으로 본다" 였다.
+///
+/// **틀렸다.** `require_replay_checked()` 는 부작용 게이트다.
+/// 증거를 재전송하면 매번 통과한다 — 그것으로 과금이나 기여도 집계를 하면
+/// 중복 계상된다. "대상이 아니다" 는 "안전하다" 가 아니다.
+///
+/// 지금은 [`ReplayStatus::NotApplicable`] 로 보고하고 게이트는 **막는다.**
+/// 증거로 부작용을 실행해야 하는 소비자는 `get()` 을 쓰고
+/// 자기 멱등성을 갖춰야 한다 — 그 선택이 코드에 보이게 된다.
 #[test]
-fn evidence_is_not_replay_checked() {
+fn evidence_has_no_replay_defense_and_says_so() {
     let k = key(3);
     let c = ckpt(&k, NOW);
     let v = verify(&c, 1, &ring(&[(NODE, &k)]), NOW, &mut NoReplayCheck).unwrap();
-    assert!(v.replay_checked(), "증거는 replay 대상이 아니므로 검사된 것으로 본다");
-    assert!(v.require_replay_checked().is_ok());
+
+    assert_eq!(
+        v.replay_status(),
+        ReplayStatus::NotApplicable,
+        "증거에 replay 방어가 있는 것처럼 보고하면 안 된다"
+    );
+    assert!(!v.replay_checked());
+    assert_eq!(
+        v.require_replay_checked().unwrap_err(),
+        VerifyOutcome::Replay,
+        "★ 증거는 무제한 재전송된다 — 부작용 게이트를 열어 주면 중복 계상된다"
+    );
+
+    // 값 자체는 읽을 수 있다. 막는 것은 **부작용 경로**뿐이다.
+    let _ = v.get();
+
+    // 같은 증거를 두 번 검증해도 둘 다 통과한다 — 그것이 재전송 가능하다는 뜻이다.
+    let v2 = verify(&c, 1, &ring(&[(NODE, &k)]), NOW + 1, &mut NoReplayCheck).unwrap();
+    assert_eq!(v2.replay_status(), ReplayStatus::NotApplicable);
 }
 
 /// ★ 증거는 **언제의 사실인가** 를 반드시 노출해야 한다 (ADR-029).

@@ -1,0 +1,89 @@
+$ cargo test -p gputeer-checkpoint --test resume_selection
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests\resume_selection.rs (target\debug\deps\resume_selection-b67e69891fe806e5.exe)
+
+running 7 tests
+test no_candidates_returns_none ... ok
+test w3_manifest_id_must_match_directory_name ... ok
+test w2_empty_manifest_must_not_be_a_resume_candidate ... ok
+test w1_resume_must_not_pick_another_job ... ok
+test unfiltered_api_documents_its_danger ... ok
+test w1b_resume_must_not_pick_another_attempt ... ok
+test normal_resume_still_picks_highest_step ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+
+
+==========================================================================
+비공허성 증명 — 뮤테이션 (RULE.md §6)
+==========================================================================
+
+crates/checkpoint/src/writer.rs 의 find_resume_point_for 에서 세 검사를
+동시에 무력화(if <조건> -> if false)한 뒤 같은 테스트를 돌렸다.
+
+  M1  job_id / attempt_id 필터 제거
+  M2  files.is_empty() 검사 제거
+  M3  checkpoint_id != dir_name 검사 제거
+
+$ cargo test -p gputeer-checkpoint --test resume_selection   # 뮤테이션 상태
+
+test no_candidates_returns_none ... ok
+test w3_manifest_id_must_match_directory_name ... FAILED
+test w2_empty_manifest_must_not_be_a_resume_candidate ... FAILED
+test unfiltered_api_documents_its_danger ... ok
+test w1b_resume_must_not_pick_another_attempt ... FAILED
+test w1_resume_must_not_pick_another_job ... FAILED
+test normal_resume_still_picks_highest_step ... ok
+
+assertion `left == right` failed: 
+  checkpoint_id(dir-B) 와 디렉터리 이름이 다른 매니페스트를 골랐다
+assertion `left == right` failed: 
+  파일이 하나도 없는 매니페스트를 재개 후보로 골랐다 (id=ckpt-empty)
+assertion `left == right` failed: 
+  다른 attempt 의 체크포인트를 골랐다
+assertion `left == right` failed: 
+  다른 job 의 체크포인트에서 재개하려 한다
+
+test result: FAILED. 3 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out
+
+-> 부정 테스트 4건이 결함을 실제로 잡는다. 공허하지 않다.
+-> 비공허성 테스트 3건(normal / none / unfiltered)은 뮤테이션에도 통과한다.
+   이들은 결함 검출용이 아니라 '정상 경로가 안 깨졌는가' 를 본다.
+
+뮤테이션 되돌린 뒤:
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+$ cargo test --workspace
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.55s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.81s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+   Doc-tests gputeer_checkpoint
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests gputeer_crypto
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests gputeer_protocol
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+합계: 200 passed / 0 failed

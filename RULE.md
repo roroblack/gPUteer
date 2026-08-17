@@ -372,6 +372,74 @@ evidence 에 `platform` · `hardware` 를 반드시 적는다.
 | Linux container | S3 | cgroup quota · seccomp · GPU allowlist |
 | Linux gVisor | S4 | nvproxy · syscall 인터셉트 |
 
+### 7.3 schema v2 — 독립 검수는 **선택이 아니다** (2026-08-17, ADR-030)
+
+`docs/runbooks/ai-workflow.md` 가 스스로 적어 둔 공백이 있었다.
+
+```text
+검수자가 한 모델뿐이다        evidence 에 검증자 신원이 없다
+raw_output 이 요약이다        검수 자체가 선택적이다
+```
+
+★ 넷 다 같은 병이다 — **규범은 있는데 강제 장치가 없다.**
+
+`schema_version: 2` 를 쓰는 evidence 는 아래를 추가로 채운다.
+`P0-*` · `DoD-*` 의 `status: PASS` 는 **반드시** v2 여야 한다.
+
+```yaml
+schema_version: 2
+
+executor_id / executor_tool / executor_model / executed_at
+reviewer_id / reviewer_tool / reviewer_model
+review_required / review_context / review_outcome / review_scope / review_artifact
+raw_output_artifact / raw_output_digest / raw_output_bytes
+```
+
+| 규칙 | 기계가 강제한다 |
+|---|---|
+| `executor_id != reviewer_id` | ✅ 자기 검수는 독립 검수가 아니다 |
+| `review_context == fresh-read-only` | ✅ 같은 세션의 자기 승인을 막는다 |
+| `review_outcome == ACCEPTED` | ✅ 미수용을 `PASS` 로 셀 수 없다 |
+| `review_artifact` 가 `_raw/` 아래 존재 | ✅ 소스 파일을 receipt 로 쓰던 우회를 막는다 |
+| receipt 에 실재하는 `파일:줄` 인용 | ✅ 형식적 LGTM 을 막는다 |
+| `raw_output_digest` = 실제 sha256 | ✅ 원문 사후 변조를 잡는다 |
+| id 와 파일명 일치 | ✅ 파일명을 `ENV-` 로 바꿔 검수를 피하는 것을 막는다 |
+| 신원 필드의 제로폭·비ASCII 문자 | ✅ 눈으로 같은 두 신원을 막는다 |
+
+★ **강제 대상은 `P0-*` 와 `DoD-*` 의 `PASS` 뿐이다.**
+`ENV-*` 같은 단순 환경 기록까지 검수시키면 과하다 —
+**규칙이 과하면 우회하게 되고, 그러면 규칙이 없는 것보다 나쁘다.**
+
+#### 유예
+
+2026-08-17 이전 evidence 16건은 `docs/evidence/_schema_v1_grandfathered.txt` 에
+**이름으로** 적혀 있다. 그 목록에 없는 v1 evidence 는 오류다.
+
+목록 파일의 SHA-256 이 `verify_evidence.py` 에 상수로 박혀 있다.
+**유예를 늘리려면 코드도 고쳐야 하고, 그러면 diff 에 드러난다.**
+
+검사기는 매번 남은 부채를 출력한다.
+그 숫자가 **줄어드는 것이 진전이고, 늘어나는 것은 규칙 위반이다.**
+
+#### ★ 이것이 보장하지 **않는** 것
+
+```text
+명령이 실제로 실행됐는가       원문은 손으로 만들 수 있다
+원문이 그 명령의 출력인가      digest 는 무결성이지 진실성이 아니다
+raw_output 요약이 정직한가     요약과 원문의 의미 일치는 기계가 못 본다
+검수자가 정직했는가            반례를 알고도 숨기면 알 수 없다
+두 모델이 정말 독립인가        같은 학습 편향을 공유할 수 있다
+```
+
+**여기부터는 사람의 책임이다.** 기계가 보는 것을 사람이 보는 것으로 착각하지 않는다.
+
+#### 검사기 자체의 검증
+
+`scripts/test_verify_evidence.py` 가 정상 evidence 를 **한 군데씩 망가뜨려**
+검사기가 그것을 잡는지 확인한다. 잡지 못하면 그 검사는 존재하지 않는 것이다.
+
+★ 검사기를 고쳤으면 **이 부정 테스트를 함께 늘린다.**
+
 ---
 
 ## 8. ★ P0 스파이크 실패 시 절차

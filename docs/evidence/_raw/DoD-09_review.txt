@@ -1,0 +1,148 @@
+독립 검수 receipt — DoD-09
+==========================================================================
+evidence_id      DoD-09
+reviewed_commit  (아래 evidence frontmatter 의 commit)
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only  (새 세션 · 저장소 쓰기 권한 없음)
+session_id       01a00d56-c738-7111-a6ce-f305d0ad5a4d
+executed_at      2026-08-17T01:29:45Z
+
+검수 범위
+  crates/checkpoint/src/writer.rs
+  crates/checkpoint/src/durability.rs
+  (필요 시 crates/checkpoint/src/atomic.rs)
+
+공격 질문 4개 (구체적 반례를 요구했다)
+  1. find_resume_point 가 잘못된 체크포인트를 고를 수 있는가?
+     해시 검증을 통과하지만 재개할 수 없는 것을 고르는 경로가 있는가?
+  2. startup_gc 가 지워서는 안 될 것을 지우는가? 두 프로세스 동시 실행 시?
+  3. write_checkpoint 의 실패 경로 — 포인터 갱신 실패 시 무엇이 남는가?
+  4. DurabilityState 전이가 실제 파일 상태와 연결되어 있는가?
+
+--------------------------------------------------------------------------
+검수자 원문 (그대로)
+--------------------------------------------------------------------------
+
+결론: 1~3은 “예”, 4는 “연결되어 있지 않다”입니다.
+
+1. `find_resume_point`가 잘못된 체크포인트를 고를 수 있는가? — 예
+
+- `root` 아래 모든 디렉터리의 매니페스트를 검사하고, `job_id`·`attempt_id`를 필터링하지 않습니다. 가장 큰 `step`을 선택합니다.  
+  `writer.rs:102-133`
+
+  반례: 다른 job의 `step=100` 체크포인트와 현재 job의 `step=10` 체크포인트가 같은 `root`에 있으면 다른 job 것을 선택합니다.
+
+- `LATEST` 포인터도 사용하지 않습니다.  
+  `writer.rs:137-142`와 `writer.rs:102-133`
+
+- `files: []`인 매니페스트는 `verify_files`의 반복문을 통과합니다. 따라서 데이터 파일이 하나도 없어도 후보가 됩니다.  
+  `durability.rs:127-140`
+
+- `checkpoint_id`와 실제 디렉터리 이름이 같은지도 검증하지 않습니다. 디렉터리 `dir-A`에 `checkpoint_id: "dir-B"`인 매니페스트를 두면 해시 검증은 통과하지만, 반환된 ID로 재개하려 할 때 파일 위치가 어긋날 수 있습니다.  
+  `writer.rs:110-129`, `durability.rs:106-119`
+
+2. `startup_gc`가 지워서는 안 될 것을 지우는가? — 예
+
+PARTIAL 판정은 사실상 다음뿐입니다.
+
+- 매니페스트가 없으면 해당 디렉터리의 모든 일반 파일 삭제
+- 이름이 `.tmp`로 끝나면 매니페스트가 있어도 삭제
+
+`atomic.rs:303-323`
+
+반례:
+
+- `manifest.json`이 일시적으로 사라졌거나 이름이 바뀐 동안 실행되면 정상 데이터 파일도 삭제됩니다.
+- `payload.tmp`가 실제 체크포인트 데이터 파일이고 매니페스트에도 등록되어 있어도 무조건 삭제됩니다.
+- 매니페스트가 존재하지만 손상됐거나, 매니페스트가 가리키는 데이터 파일이 없어도 삭제하지 않습니다. 즉 false negative도 있습니다.
+- root 아래의 임의 디렉터리도 모두 체크포인트로 간주합니다.  
+  `writer.rs:153-164`
+
+동시 실행 시:
+
+- 두 프로세스가 같은 `.tmp`를 보면 한쪽이 먼저 삭제하고, 다른 쪽의 `remove_file`이 `NotFound`로 실패할 수 있습니다.  
+  `atomic.rs:319-321`
+- 한 프로세스가 디렉터리를 삭제한 뒤 다른 프로세스가 `read_dir`하면 `NotFound`가 반환될 수 있습니다.  
+  `writer.rs:162-164`
+
+3. `write_checkpoint` 실패 경로 — 문제 있음
+
+파일과 매니페스트를 먼저 쓰고, 마지막에 포인터를 갱신합니다. 포인터 갱신 실패 시 앞서 쓴 데이터와 매니페스트를 되돌리지 않습니다.  
+`writer.rs:37-55`
+
+반례:
+
+1. `ckpt-10`의 데이터 파일 작성 성공
+2. `manifest.json` 작성 성공
+3. `LATEST` 교체 실패
+4. 호출자는 `Err` 수신
+5. 디스크에는 완전한 `ckpt-10`이 남음
+
+`replace_with_retry`도 실패 시 포인터용 임시 파일만 지우며 체크포인트 디렉터리는 정리하지 않습니다.  
+`atomic.rs:214-255`
+
+재시작하면 현재 구현에서는 그 체크포인트에서 재개할 수 있습니다. `find_resume_point`가 `LATEST`를 무시하고 모든 유효 매니페스트를 스캔하기 때문입니다.  
+`writer.rs:102-133`
+
+즉 호출자는 “실패”를 받았지만, 재시작 시 실패한 것으로 보였던 체크포인트가 선택될 수 있습니다.
+
+4. `DurabilityState` 전이가 실제 파일 상태와 연결되어 있는가? — 연결 코드를 못 찾았다
+
+- `DurabilityState::transition`은 메모리상 enum 값만 반환합니다.  
+  `durability.rs:55-81`
+- `CheckpointManifest`에는 `DurabilityState` 필드가 없습니다.  
+  `durability.rs:106-119`
+- `write_checkpoint`는 상태 전이를 호출하지 않고, 데이터·매니페스트·포인터만 씁니다.  
+  `writer.rs:28-57`
+
+따라서 `Writing → LocalWritten → HashVerified → ...` 전이가 실제 파일 생성·검증·포인터 갱신과 기록상 연결되어 있지 않습니다.
+
+34,496
+
+--------------------------------------------------------------------------
+구현자 시정 (2026-08-17)
+--------------------------------------------------------------------------
+
+발견 1 (find_resume_point) — 수용. 전부 재현 확인 후 수정.
+  writer.rs 에 find_resume_point_for(root, job_id, attempt_id) 신설.
+    - job_id / attempt_id 불일치 후보 제외
+    - files 가 빈 매니페스트 제외
+    - checkpoint_id != 디렉터리명 제외
+  검증: crates/checkpoint/tests/resume_selection.rs 7건
+    w1_resume_must_not_pick_another_job
+    w1b_resume_must_not_pick_another_attempt
+    w2_empty_manifest_must_not_be_a_resume_candidate
+    w3_manifest_id_must_match_directory_name
+    normal_resume_still_picks_highest_step   (비공허성)
+    no_candidates_returns_none               (비공허성)
+    unfiltered_api_documents_its_danger      (옛 API 동작 고정)
+  옛 find_resume_point 는 남긴다 — 삭제하면 호출부가 조용히 깨진다.
+  대신 문서에 위험을 명시하고, 위 테스트가 그 동작을 고정한다.
+
+발견 1 중 'LATEST 포인터를 쓰지 않는다' — **수용하되 이번에 고치지 않았다.**
+  LATEST 를 신뢰하려면 발견 3(포인터 갱신 실패 시 잔여물)을 먼저 풀어야 한다.
+  현재는 LATEST 를 무시하고 스캔하는 편이 오히려 안전한 방향이다.
+  limitations 에 남긴다.
+
+발견 2 (startup_gc) — 수용. **이번에 고치지 않았다.**
+  매니페스트에 등록된 .tmp 를 무조건 지우는 문제,
+  동시 실행 시 NotFound 경합 문제 모두 재현 가능하다고 판단한다.
+  범위를 넘어서므로 limitations 와 다음 작업으로 남긴다.
+
+발견 3 (write_checkpoint 실패 경로) — 수용. **이번에 고치지 않았다.**
+  호출자가 Err 를 받았는데 디스크에는 완전한 체크포인트가 남는다.
+  단 find_resume_point_for 의 job/attempt 필터가 이 위험을 **줄이지는 않는다** —
+  같은 job 의 것이기 때문이다. limitations 에 남긴다.
+
+발견 4 (DurabilityState 미연결) — 수용. **이번에 고치지 않았다.**
+  state_table_parity.rs 가 표와 enum 의 일치는 검사하지만,
+  enum 전이가 실제 파일 연산과 연결되어 있지 않다는 지적은 맞다.
+  state-machines.md §6 의 '검사되지 않는 항목' 에 이미 3건이 선언되어 있고
+  이 지적은 그 중 하나에 해당한다.
+
+review_outcome  ACCEPTED
+  범위 내 발견 1건을 코드로 시정했고,
+  범위 밖 발견 3건을 limitations 에 명시했다.
+  ★ '전부 고쳤다' 가 아니다. 고치지 않은 것을 숨기지 않았다는 뜻이다.

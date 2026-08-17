@@ -45,3 +45,22 @@ pub const REPLAY_CACHE_MAX_ENTRIES: usize = 100_000;
 
 /// 현재 프로토콜 스키마 버전.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// ★ 단수명 메시지의 **TTL 상한** (독립 검수 2026-08-17).
+///
+/// # 왜 상한이 필요한가
+///
+/// replay nonce 의 보존 시한은 `expires_at + skew` 다.
+/// `expires_at` 이 아주 먼 미래인 유효 서명이 들어오면
+/// 그 nonce 는 **영원히 GC 되지 않는다.**
+/// 그런 nonce 를 캐시 상한만큼 만들면 다른 모든 검증이 거부된다.
+///
+/// # 값의 근거
+///
+/// 단수명 메시지 중 가장 긴 것은 Lease 다:
+/// `LEASE_DURATION_MS`(10분) + `LEASE_GRACE_MS`(1분) = 11분.
+/// 여기에 여유를 둬 **15분**으로 잡았다.
+///
+/// ★ 이것은 측정값이 아니라 **정책값**이다.
+///   실제 Lease 갱신 주기를 측정하면 조정해야 할 수 있다.
+pub const MAX_SHORTLIVED_TTL_MS: u64 = 15 * 60 * 1_000;

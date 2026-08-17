@@ -50,7 +50,7 @@
 //!   테스트가 통과한다고 규칙을 고치지 않고, 코드를 규칙에 맞췄다 (§4.3 마지막 줄).
 
 use crate::canonical::{canonical_encode, sig_input, Domain, Fields};
-use crate::constants::{CLOCK_SKEW_TOLERANCE_MS, SCHEMA_VERSION};
+use crate::constants::{CLOCK_SKEW_TOLERANCE_MS, MAX_SHORTLIVED_TTL_MS, SCHEMA_VERSION};
 
 /// §10 — nonce 는 CSPRNG **16바이트**여야 한다(MUST).
 pub const NONCE_LEN: usize = 16;
@@ -324,6 +324,92 @@ pub enum ReplayDecision {
     Duplicate,
 }
 
+/// ★ replay 검사가 **실제로 무엇을 했는가.**
+///
+/// # 왜 bool 이 아닌가 (독립 검수 2026-08-17)
+///
+/// 전에는 `replay_checked: bool` 하나였고, 단수명이 아닌 메시지에는
+/// `_ => true` 를 넣었다. 그래서 **"검사했다" 와 "검사 대상이 아니다" 가
+/// 같은 값**이었다.
+///
+/// 결과: `require_replay_checked()` 가 `LongLived` 메시지를 통과시켰다.
+/// 그 메시지는 만료 전까지 **무제한 재전송이 가능하다.**
+/// 부작용 게이트로 쓰라고 문서에 적어 둔 함수가 방어를 안 한 것이다.
+///
+/// ```text
+/// Checked        guard 에 물어봤고 Fresh 였다        -> 부작용 허용
+/// NotApplicable  LIFETIME 이 ShortLived 가 아니다    -> ★ replay 방어가 **없다**
+/// Ineffective    guard 가 NoReplayCheck 였다         -> 방어가 없다
+/// ```
+///
+/// `NotApplicable` 은 "안전하다" 가 아니라 **"이 계층은 막지 않는다"** 이다.
+/// 그 메시지로 부작용을 실행하려면 소비 측이 자기 멱등성을 갖춰야 한다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayStatus {
+    /// replay guard 에 물어봤고 처음 보는 nonce 였다.
+    Checked,
+    /// `LIFETIME` 이 `ShortLived` 가 아니다 — 이 계층에 replay 방어가 없다.
+    NotApplicable,
+    /// guard 가 [`NoReplayCheck`] 였다 — 물어봤지만 아무것도 기억하지 않는다.
+    Ineffective,
+}
+
+impl ReplayStatus {
+    /// 부작용을 실행해도 되는가. `Checked` 만 참이다.
+    pub fn permits_side_effects(self) -> bool {
+        matches!(self, Self::Checked)
+    }
+
+    pub fn explain(self) -> &'static str {
+        match self {
+            Self::Checked => "replay 저장소가 처음 보는 nonce 라고 답했다",
+            Self::NotApplicable => {
+                "단수명 메시지가 아니어서 replay 검사를 하지 않았다 —                  이 계층은 재전송을 막지 않는다"
+            }
+            Self::Ineffective => {
+                "replay guard 가 아무것도 기억하지 않는 구현이다 — 방어가 없다"
+            }
+        }
+    }
+}
+
+/// ★ 프로토콜 결과가 아니라 **로컬 정책 위반.**
+///
+/// `VerifyOutcome` 에 대응하는 값이 없다 — `common.proto` 의 enum 은
+/// 서명·시각·replay 만 다룬다. `VerifyError::Derived` 와 같은 처지다.
+///
+/// ★ **알려진 공백**: 상대에게 이 사유를 그대로 보고할 수단이 없다.
+///   proto enum 에 값을 추가하려면 `RULE.md` §3.5 의 5단계를 밟아야 한다.
+///   지금은 로컬 거부 + 로그로만 다룬다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyViolation {
+    /// 단수명 메시지의 TTL 이 상한을 넘었다.
+    ///
+    /// # 왜 막는가 (독립 검수 2026-08-17)
+    ///
+    /// `retain_until = expires_at + skew` 이므로, `expires_at` 이 아주 먼
+    /// 미래면 그 nonce 는 **영원히 GC 되지 않는다.**
+    /// 그런 nonce 를 capacity 만큼 만들면 캐시가 영구히 차서
+    /// 다른 모든 검증이 `CacheFull` 로 거부된다.
+    ///
+    /// ★ `retain_until` 만 잘라내는 방법은 쓰지 않았다 —
+    ///   메시지가 아직 유효한데 nonce 를 지우면 §10 이 금지한
+    ///   "미만료 항목 축출" 이 되어 replay 창이 열린다.
+    ///   DoS 를 replay 구멍으로 바꾸는 것은 거래가 아니다.
+    ShortLivedTtlTooLong { ttl_ms: u64, max_ms: u64 },
+}
+
+impl PolicyViolation {
+    pub fn explain(&self) -> String {
+        match self {
+            Self::ShortLivedTtlTooLong { ttl_ms, max_ms } => format!(
+                "단수명 메시지의 TTL {}ms 가 상한 {}ms 를 넘었다 —                  replay 캐시를 영구 점유할 수 있어 거부한다",
+                ttl_ms, max_ms
+            ),
+        }
+    }
+}
+
 /// replay 저장소의 **로컬 장애.**
 ///
 /// ★ 이것은 `VerifyOutcome` 이 **아니다.**
@@ -339,6 +425,12 @@ pub enum ReplayStoreError {
     /// §10 상한에 도달했다. **축출이 아니라 거부**가 안전한 방향이다 —
     /// 미만료 nonce 를 밀어내면 replay 창이 열린다.
     CacheFull,
+    /// ★ 한 서명자가 자기 몫을 다 썼다 (독립 검수 2026-08-17).
+    ///
+    /// 전역 상한만 있으면 **한 device 가 캐시를 다 차지해 다른 모든
+    /// device 를 차단**할 수 있다. 그것은 replay 방어가 아니라 DoS 통로다.
+    /// 이 오류는 **그 서명자만** 막고 나머지는 계속 통과시킨다.
+    SignerQuotaExceeded { signer_id: String, quota: usize },
 }
 
 impl ReplayStoreError {
@@ -349,6 +441,9 @@ impl ReplayStoreError {
             Self::LockTimeout => "replay 저장소 락 대기 초과 — 동시 검증이 몰렸거나 락이 걸렸다",
             Self::CacheFull => {
                 "replay 캐시 포화 — 미만료 nonce 를 축출하지 않고 거부했다. 과부하 신호다"
+            }
+            Self::SignerQuotaExceeded { .. } => {
+                "이 서명자가 replay 캐시 할당량을 다 썼다 — 다른 서명자는 영향받지 않는다"
             }
         }
     }
@@ -391,6 +486,8 @@ pub struct DerivedMismatch {
 pub enum VerifyError {
     Outcome(VerifyOutcome),
     ReplayStore(ReplayStoreError),
+    /// 로컬 정책 위반 — 프로토콜 결과가 아니다. [`PolicyViolation`] 참조.
+    Policy(PolicyViolation),
     /// §6 — 서명은 정상인데 도출 해시가 내용과 맞지 않는다.
     ///
     /// ★ `VerifyOutcome` 으로 보고할 수 없다 — 대응하는 proto 값이 없다.
@@ -408,7 +505,9 @@ impl VerifyError {
     pub fn outcome(&self) -> Option<VerifyOutcome> {
         match self {
             Self::Outcome(o) => Some(*o),
-            Self::ReplayStore(_) | Self::Derived(_) => None,
+            // ★ 로컬 사유는 프로토콜 결과가 없다. 상대에게 보고할 값이 없다는 뜻이며,
+            //   그것을 임의의 VerifyOutcome 으로 채우면 오류가 사실을 잘못 전한다.
+            Self::ReplayStore(_) | Self::Derived(_) | Self::Policy(_) => None,
         }
     }
 
@@ -418,6 +517,9 @@ impl VerifyError {
             Self::ReplayStore(e) => e.explain(),
             Self::Derived(_) => {
                 "도출 해시가 내용과 맞지 않는다 — 서명은 정상이므로 위조가 아니라                  발신자가 잘못된 참조 해시를 넣었거나 중첩 메시지가 바꿔치기됐다"
+            }
+            Self::Policy(PolicyViolation::ShortLivedTtlTooLong { .. }) => {
+                "단수명 메시지의 TTL 이 상한을 넘었다 — replay 캐시를 영구 점유할 수 있어 거부했다"
             }
         }
     }
@@ -500,7 +602,7 @@ impl ReplayGuard for NoReplayCheck {
 pub struct Verified<M> {
     inner: M,
     signer_id: String,
-    replay_checked: bool,
+    replay_status: ReplayStatus,
 }
 
 impl<M> Verified<M> {
@@ -518,19 +620,42 @@ impl<M> Verified<M> {
         &self.signer_id
     }
 
-    /// replay 검사를 실제로 거쳤는가.
-    ///
-    /// [`NoReplayCheck`] 를 썼다면 `false` 다.
-    pub fn replay_checked(&self) -> bool {
-        self.replay_checked
+    /// replay 검사가 **실제로 무엇을 했는가.**
+    pub fn replay_status(&self) -> ReplayStatus {
+        self.replay_status
     }
 
-    /// replay 검사를 거친 경우에만 값을 내준다.
+    /// replay 검사를 실제로 거쳤는가.
+    ///
+    /// ★ 2026-08-17 의미가 **좁아졌다** (독립 검수).
+    /// 전에는 단수명이 아닌 메시지에도 `true` 였다 —
+    /// "검사 대상이 아니다" 를 "검사했다" 로 보고한 것이다.
+    /// 지금은 [`ReplayStatus::Checked`] 일 때만 참이다.
+    pub fn replay_checked(&self) -> bool {
+        self.replay_status.permits_side_effects()
+    }
+
+    /// replay 검사를 **실제로 거친** 경우에만 값을 내준다.
     ///
     /// **부작용이 있는 동작(외부 API 호출 · 과금 · Job 실행 시작)은 이것을 쓴다.**
-    /// `get()` 을 쓰면 replay 미검사 상태로 실행될 수 있다.
+    ///
+    /// # 무엇이 막히는가
+    ///
+    /// ```text
+    /// Checked        통과
+    /// Ineffective    거부 — guard 가 아무것도 기억하지 않는다
+    /// NotApplicable  거부 — ★ 이 계층에 replay 방어가 **없다**
+    /// ```
+    ///
+    /// ★ `NotApplicable` 을 막는 것이 2026-08-17 의 변경이다.
+    ///   `LongLived` 메시지는 만료 전까지 **무제한 재전송**된다.
+    ///   그것으로 과금이나 Job 실행을 하면 중복 실행된다.
+    ///
+    /// 그 메시지로 부작용을 실행해야 한다면 [`Verified::get`] 을 쓰고
+    /// **소비 측이 자기 멱등성을 갖춘다.** 그 선택을 눈에 보이게 만드는 것이
+    /// 이 함수의 목적이다.
     pub fn require_replay_checked(&self) -> Result<&M, VerifyOutcome> {
-        if self.replay_checked {
+        if self.replay_status.permits_side_effects() {
             Ok(&self.inner)
         } else {
             // replay 를 확인하지 못했으므로 "안 봤다" 가 아니라 "막는다".
@@ -636,7 +761,7 @@ pub fn verify<M: Signable + Clone>(
 
     // 8. replay (§10) — 단수명 메시지만 대상이다.
     //    JobManifest 는 하나로 여러 Attempt 를 만드는 것이 정상이므로 대상이 아니다.
-    let replay_checked = match M::LIFETIME {
+    let replay_status = match M::LIFETIME {
         Lifetime::ShortLived => {
             // ★ nonce 는 **메시지 안의 서명된 필드**에서 온다.
             //   호출자가 넘기던 예전 설계는 서명은 통과하고 replay 방어만
@@ -646,13 +771,36 @@ pub fn verify<M: Signable + Clone>(
             if n.len() != NONCE_LEN {
                 return Err(VerifyOutcome::Replay.into());
             }
+            // ★ TTL 상한 (독립 검수 2026-08-17).
+            //   `retain_until` 이 아주 먼 미래면 그 nonce 는 **영원히 GC 되지 않는다.**
+            //   그런 서명을 capacity 만큼 만들면 캐시가 영구히 찬다.
+            //
+            //   `retain_until` 만 잘라내는 방법은 쓰지 않았다 —
+            //   미만료 nonce 를 지우면 §10 이 금지한 축출이 되어 replay 창이 열린다.
+            //   **DoS 를 replay 구멍으로 바꾸는 것은 거래가 아니다.**
+            let ttl = msg
+                .expires_at_unix_ms()
+                .saturating_sub(msg.issued_at_unix_ms());
+            if ttl > MAX_SHORTLIVED_TTL_MS {
+                return Err(VerifyError::Policy(PolicyViolation::ShortLivedTtlTooLong {
+                    ttl_ms: ttl,
+                    max_ms: MAX_SHORTLIVED_TTL_MS,
+                }));
+            }
+
             // §10 — 보존 시한. 미만료 항목은 축출되면 안 된다.
             let retain_until = msg
                 .expires_at_unix_ms()
                 .saturating_add(CLOCK_SKEW_TOLERANCE_MS);
 
             match replay.check_and_record(msg.signer_id(), M::DOMAIN, n, retain_until) {
-                Ok(ReplayDecision::Fresh) => replay.is_effective(),
+                Ok(ReplayDecision::Fresh) => {
+                    if replay.is_effective() {
+                        ReplayStatus::Checked
+                    } else {
+                        ReplayStatus::Ineffective
+                    }
+                }
                 Ok(ReplayDecision::Duplicate) => return Err(VerifyOutcome::Replay.into()),
                 // ★ 저장소 장애를 Replay 로 뭉뚱그리지 않는다.
                 //   어느 쪽이든 부작용은 실행하지 않지만(fail closed),
@@ -660,14 +808,16 @@ pub fn verify<M: Signable + Clone>(
                 Err(e) => return Err(VerifyError::ReplayStore(e)),
             }
         }
-        // 장수명·증거·영구 메시지는 replay 대상이 아니므로 "검사됨" 으로 본다.
-        _ => true,
+        // ★ 장수명·증거·영구 메시지는 replay 대상이 **아니다.**
+        //   전에는 이것을 `true`(검사됨)로 보고했다 — 사실이 아니다.
+        //   이 계층은 그 메시지들의 재전송을 막지 않는다.
+        _ => ReplayStatus::NotApplicable,
     };
 
     // 9. 여기서부터 필드 값을 신뢰한다
     Ok(Verified {
         inner: msg.clone(),
         signer_id: msg.signer_id().to_string(),
-        replay_checked,
+        replay_status,
     })
 }

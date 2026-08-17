@@ -20,6 +20,8 @@
 //!
 //! 여기에 **시계 되감김**을 추가했다 — 검수자가 "확신 없음" 으로 남긴 부분이다.
 
+use gputeer_crypto::replay::MAX_GC_ADVANCE_MS;
+use gputeer_protocol::constants::{CLOCK_SKEW_TOLERANCE_MS, MAX_SHORTLIVED_TTL_MS};
 use gputeer_crypto::{InMemoryReplayGuard, DEFAULT_CAPACITY};
 use gputeer_protocol::canonical::Domain;
 use gputeer_protocol::signing::{ReplayDecision, ReplayGuard, ReplayStoreError};
@@ -76,22 +78,150 @@ fn key_is_namespaced_by_device_and_domain() {
     );
 }
 
-/// ★ 한 device 가 다른 device 의 nonce 공간을 소진시킬 수 없는가.
+/// ★ 한 device 가 다른 device 의 nonce 공간을 소진시킬 수 **없다.**
 ///
-/// 지금 구현은 **전역 상한**을 쓰므로 **막지 못한다.**
-/// 이 테스트는 그 사실을 고정한다 — 통과가 곧 "아직 못 막는다" 는 뜻이다.
+/// # 이력
+///
+/// 2026-08-16 까지 이 테스트는 **반대**를 고정했다 —
+/// `global_capacity_lets_one_device_starve_others`.
+/// 전역 상한만 있었고, 시끄러운 device 하나가 캐시를 채우면
+/// 조용한 device 도 전부 `CacheFull` 로 거부됐다.
+///
+/// 그 테스트는 스스로 이렇게 적어 뒀다:
+/// "이 테스트가 실패했다면 device 별 quota 가 생겼다는 뜻이다 —
+///  그 사실을 §10 과 이 주석에 반영하라."
+///
+/// 독립 검수(2026-08-17)가 같은 결함을 **중대**로 지적했고 quota 를 만들었다.
+/// 지금은 그 지시대로 이 테스트가 반대 방향을 고정한다.
 #[test]
-fn global_capacity_lets_one_device_starve_others() {
-    let mut g = InMemoryReplayGuard::with_capacity(3);
+fn one_device_cannot_starve_others() {
+    // 전역 6, 서명자별 3
+    let mut g = InMemoryReplayGuard::with_capacities(6, 3);
+
     for i in 0..3 {
         assert_eq!(rec(&mut g, "noisy", i).unwrap(), ReplayDecision::Fresh);
     }
-    // 다른 device 가 전혀 쓰지 않았는데도 거부된다
+
+    // 시끄러운 쪽은 **자기 몫에서** 막힌다 — 전역이 아직 남았는데도.
+    match rec(&mut g, "noisy", 99).unwrap_err() {
+        ReplayStoreError::SignerQuotaExceeded { signer_id, quota } => {
+            assert_eq!(signer_id, "noisy");
+            assert_eq!(quota, 3);
+        }
+        other => panic!("서명자 몫이 아니라 {other:?} 로 거부됐다"),
+    }
+
+    // ★ 조용한 device 는 영향받지 않는다. 이것이 이 변경의 전부다.
     assert_eq!(
-        rec(&mut g, "quiet", 99).unwrap_err(),
-        ReplayStoreError::CacheFull,
-        "★ 이 테스트가 실패했다면 device 별 quota 가 생겼다는 뜻이다 — \
-         그 사실을 §10 과 이 주석에 반영하라"
+        rec(&mut g, "quiet", 1).unwrap(),
+        ReplayDecision::Fresh,
+        "★ 한 device 가 다른 device 를 굶겼다 — replay 방어가 DoS 통로가 됐다"
+    );
+}
+
+/// 만료로 항목이 빠지면 그 서명자의 몫도 돌아와야 한다.
+///
+/// ★ 이것을 빠뜨리면 **한 번 몫을 채운 device 는 영원히 막힌다.**
+/// quota 를 만들면서 같이 만들기 쉬운 결함이다.
+#[test]
+fn signer_quota_is_released_by_gc() {
+    let mut g = InMemoryReplayGuard::with_capacities(10, 2);
+    g.check_and_record("a", Domain::Grant, &n(1), 5_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(2), 5_000).unwrap();
+    assert_eq!(g.signer_usage("a"), 2);
+
+    assert!(matches!(
+        g.check_and_record("a", Domain::Grant, &n(3), 5_000),
+        Err(ReplayStoreError::SignerQuotaExceeded { .. })
+    ));
+
+    // 첫 GC 가 기준선을 세운다 (last_seen_ms == 0 이므로 자르지 않는다)
+    assert_eq!(g.gc(6_000), 2, "만료 항목이 지워지지 않았다");
+    assert_eq!(
+        g.signer_usage("a"),
+        0,
+        "★ 몫이 반환되지 않아 서명자가 영구히 막힌다"
+    );
+
+    assert_eq!(
+        g.check_and_record("a", Domain::Grant, &n(3), 20_000).unwrap(),
+        ReplayDecision::Fresh
+    );
+}
+
+/// ★ 시각이 **앞으로 튀어도** 캐시를 통째로 비우지 못한다.
+///
+/// 되감김만 막는 것으로는 부족하다는 독립 검수(2026-08-17) 지적:
+///
+/// ```text
+/// 1. retain_until = 20_000 으로 기록
+/// 2. GC 가 잘못된 미래 시각으로 호출된다 -> 지워진다
+/// 3. 시각이 돌아오면 같은 메시지가 Fresh 가 된다  <- replay 창
+/// ```
+#[test]
+fn gc_clamps_forward_clock_jumps() {
+    // 실제 값에 맞춘다: 보존 시한은 now + (TTL 상한 15분 + skew 1분).
+    let now = T;
+    let retain = now + MAX_SHORTLIVED_TTL_MS + CLOCK_SKEW_TOLERANCE_MS;
+
+    let mut g = InMemoryReplayGuard::with_capacities(10, 10);
+    g.check_and_record("a", Domain::Grant, &n(1), retain).unwrap();
+
+    // 기준선을 세운다
+    assert_eq!(g.gc(now), 0);
+    assert_eq!(g.len(), 1);
+
+    // ★ 상한을 훨씬 넘는 미래 시각 — 잘라내야 한다
+    let removed = g.gc(now + MAX_GC_ADVANCE_MS * 100);
+    assert_eq!(removed, 0, "★ 엉뚱한 미래 시각 한 번으로 캐시가 비었다");
+    assert_eq!(g.clock_jumps(), 1, "앞으로 튄 것을 세지 않았다");
+
+    // 그 nonce 는 여전히 막힌다 — replay 창이 열리지 않았다
+    assert_eq!(
+        g.check_and_record("a", Domain::Grant, &n(1), retain).unwrap(),
+        ReplayDecision::Duplicate,
+        "★ replay 창이 열렸다"
+    );
+
+    // ★ 상한이 최대 보존 시한보다 짧아야 의미가 있다.
+    //   길면 한 번의 잘못된 GC 가 여전히 전부 지운다 —
+    //   자르는 시늉만 하고 아무것도 막지 못한다.
+    assert!(
+        MAX_GC_ADVANCE_MS < MAX_SHORTLIVED_TTL_MS + CLOCK_SKEW_TOLERANCE_MS,
+        "★ GC 전진 상한({MAX_GC_ADVANCE_MS})이 최대 보존 시한보다 길다 — 방어가 무의미하다"
+    );
+
+    // 비공허성 — 상한 안의 정상적인 전진은 실제로 지운다
+    let mut h = InMemoryReplayGuard::with_capacities(10, 10);
+    h.check_and_record("a", Domain::Grant, &n(1), now + 10_000).unwrap();
+    assert_eq!(h.gc(now), 0);
+    assert_eq!(h.gc(now + 20_000), 1, "정상 전진에서도 GC 가 안 돈다");
+    assert_eq!(h.clock_jumps(), 0);
+}
+
+/// ★ 이 방어가 **막지 못하는 것**을 고정한다.
+///
+/// 지속적으로 틀린 시계는 막지 못한다. 잘못된 GC 를 여러 번 부르면
+/// `last_seen_ms` 가 상한씩 전진해 결국 캐시가 빈다.
+///
+/// 이 테스트가 통과한다는 것은 **취약점이 남아 있다**는 뜻이다.
+/// 통과를 성과로 읽지 않기 위해 이름과 주석에 남긴다.
+#[test]
+fn repeated_bogus_gc_still_drains_the_cache() {
+    let now = T;
+    let retain = now + MAX_SHORTLIVED_TTL_MS + CLOCK_SKEW_TOLERANCE_MS;
+    let mut g = InMemoryReplayGuard::with_capacities(10, 10);
+    g.check_and_record("a", Domain::Grant, &n(1), retain).unwrap();
+    assert_eq!(g.gc(now), 0);
+
+    // 상한씩 전진하며 반복 호출
+    let mut total = 0;
+    for _ in 0..8 {
+        total += g.gc(now + MAX_GC_ADVANCE_MS * 100);
+    }
+    assert_eq!(
+        total, 1,
+        "★ 반복 호출로 캐시가 비지 않았다면 단조 시계가 도입된 것이다 —          replay.rs 의 MAX_GC_ADVANCE_MS 문서와 이 테스트를 갱신하라"
     );
 }
 
@@ -101,7 +231,9 @@ fn global_capacity_lets_one_device_starve_others() {
 
 #[test]
 fn cache_full_never_evicts_unexpired_entries() {
-    let mut g = InMemoryReplayGuard::with_capacity(2);
+    // ★ 서명자 몫을 전역과 같게 둬서 **전역 상한만** 검사한다.
+    //   서명자 몫을 전역보다 크게 둬야 SignerQuotaExceeded 가 먼저 나지 않는다.
+    let mut g = InMemoryReplayGuard::with_capacities(2, 10);
     rec(&mut g, "a", 1).unwrap();
     rec(&mut g, "a", 2).unwrap();
 
