@@ -16,6 +16,39 @@
 
 ---
 
+## 2026-08-17 23:55 — 다음 v1 evidence 2건(DoD-02·DoD-05) 재검수 착수
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속, dynamic 모드). 앞선 4건 사이클이 끝나 다음 v1
+  evidence 로 넘어갔다.
+- 스트림: Protocol
+- 수행: 코덱스(read-only) 1개 태스크로 `DoD-02`(prost 연동 계층)와
+  `DoD-05`(T1 서명대상 확장)를 함께 재검수시켰다. 둘 다 첫 라운드에서
+  `CHANGES_REQUESTED`.
+- 발견과 조치:
+  - DoD-02: claim("Python 참조 구현과 바이트 단위로 일치한다")이
+    전수 비교가 있는 것처럼 넓게 읽혔다 — 실제 바이트 대조는
+    `JobManifest` 중심이고 나머지는 필드 번호·이름 감사뿐이라고
+    좁혔다. negative_tests 이름 오류(`common_` → 실제
+    `common_message_field_numbers_match_proto`) 1건, stale
+    limitation 5건(필드 6개 미구현·17종 중 7종·oneof 없음·SCHEMA_TOO_NEW
+    미구현·Ed25519 미구현 — 전부 코드가 이미 해소했거나 범위를
+    좁혀야 함) 정정.
+  - DoD-05: claim 의 "17종 중 9종" 자체가 stale — 지금은 §5 domain
+    이 23종이고 그 중 19종이 구현되어 있다(ADR-028 이 17→23으로
+    늘렸다). negative_tests 이름 오류 2건(`renew_lease_request`,
+    `revoke_lease_notice` — 실제로는 `_matches_reference` 접미사가
+    붙는다), stale limitation 5건(6종 Signable 미구현·domain tag
+    공유·ControlAction oneof 서술·17종 중 9종·Ed25519 미구현) 정정.
+    vectors 메타데이터도 28건에서 지금 40건으로 정정.
+  - 두 문서 모두 원본 YAML(claim/status/limitations)은 당시 기록이므로
+    고치지 않고 append-only "이후 변경" 절로 정정했다. **재검수는
+    아직 진행 중** — 다음 라운드 대상.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-17 23:45 — DoD-03 도 4라운드 만에 ACCEPTED — evidence 4건 재검수 사이클 종료
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"

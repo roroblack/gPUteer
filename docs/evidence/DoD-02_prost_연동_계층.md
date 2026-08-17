@@ -258,3 +258,68 @@ cargo test --workspace
    `CLAUDE.md` §0.2 와 prost 기본 동작이 정면으로 충돌한다.
 
 관련: `docs/evidence/DoD-01_canonical_encode_교차검증.md` · `docs/protocol/signing.md` §13.1
+
+---
+
+## ★ 이후 변경 (2026-08-17 23:55) — claim 이 넓게 읽혔다, limitations 다수 stale
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. 핵심 구현 자체는 지금도 유효하지만, claim 문장과
+limitations 여러 곳이 현재 코드를 정확히 반영하지 않았다.
+
+### claim 을 이렇게 좁혀 읽는다
+
+원래 claim("실제 prost 생성 메시지에서... to_fields 변환 계층이
+Python 참조 구현과 **바이트 단위로 일치한다**")은 마치 전체 메시지에
+대한 전수 참조 비교가 있는 것처럼 읽힌다. 실제로는:
+
+- `JobManifest`/`Lease` 의 당시 누락 필드(10·11·12·54·55, Lease 40)는
+  지금 구현되어 있고 `UNIMPLEMENTED_FIELDS` 는 빈 배열이다
+  (`crates/protocol/src/to_fields.rs:830-869`,`893-915`,`934-944`).
+- 그러나 canonical bytes 를 Python 참조 구현과 **바이트 단위로
+  직접 대조**하는 대표 테스트는 `JobManifest` 중심이다
+  (`crates/protocol/tests/prost_canonical.rs:55-85`). `field_number_audit`
+  는 필드 번호·이름 대조이지 바이트 대조가 아니다(`field_number_audit.rs:161-185`).
+
+> claim 은 "`JobManifest`(그리고 `Lease`) 는 참조 구현과 바이트
+> 단위로 일치하고, 나머지 서명 대상 메시지는 필드 번호·이름 감사로
+> 누락이 없음만 확인됐다" 로 좁혀 읽는다.
+
+### negative_tests 이름 정정
+
+`common_` 은 함수명이 아니다 — 실제로는
+`common_message_field_numbers_match_proto`(`field_number_audit.rs:249`).
+나머지 이름은 실재를 확인했다: `prost_encode_is_not_deterministic_for_maps`(`prost_canonical.rs:852`),
+`hashmap_canonical_is_stable_across_many_rebuilds`(`:126`),
+`signature_field_excluded_in_prost_path`(`:150`),
+`default_valued_fields_are_omitted_in_prost_path`(`:220`),
+`job_manifest_field_numbers_match_proto`(`field_number_audit.rs:189`),
+`lease_field_numbers_match_proto`(`:194`),
+`every_unsigned_field_is_declared_in_unimplemented_list`(`:324`),
+`unimplemented_list_has_no_stale_entries`(`:383`),
+`parsers_are_not_vacuous`(`:146`).
+
+### stale limitations
+
+| 원래 서술 | 지금 |
+|---|---|
+| "6개 필드가 아직 canonical 에 들어가지 않는다"(`:68`) | ★ 거짓이다. `HISTORY.md` "2026-08-16" 항목에서 이미 해소됐다 |
+| "17종 중 7종만 구현"(`:69`) | ★ 거짓이다. 지금 `ToCanonicalFields` 구현 41개, domain 23종 중 19종(`crates/protocol/tests/t1_signing_targets.rs:387-445`) |
+| "현재 스키마에 oneof/reserved 가 없어 무해하다"(`:70`) | ★ 절반만 거짓이다. `control.proto` 에 지금 `ControlAction` oneof 가 실재한다(`proto/control.proto:238-249`). 정규식 감사기가 oneof 를 못 다루는 한계 자체는 남아 있으나, "지금 스키마에 없다"는 더 이상 참이 아니다 — `ControlAction` wrapper 자체는 `ToCanonicalFields` 미구현이지만 oneof 하위 메시지들은 각각 구현되어 있다(`crates/protocol/src/to_fields.rs:694-818`) |
+| "SCHEMA_TOO_NEW 미구현"(`:72`) | ★ 거짓이다. 지금 `verify()` 는 스키마 버전 초과 시 `SchemaTooNew` 를 반환한다(`crates/protocol/src/signing.rs:741-744`). 다만 prost 가 unknown field 를 조용히 버리는 현상 자체는 여전히 사실이다(`crates/protocol/tests/schema_evolution.rs:76-124`) — "경로 미구현"이 아니라 "버전을 안 올린 unknown-field 추가는 여전히 탐지 못 한다"로 좁힌다 |
+| "Ed25519 를 저장소 전체에서 아직 하지 않았다"(`:71`) | ★ 부분적으로 거짓이다. Ed25519 verifier·ingress 경로는 지금 존재한다(`crates/crypto/src/lib.rs:120-125`, `crates/crypto/src/ingress.rs:211-215`). "이 evidence(DoD-02) 자체가 Ed25519 를 실행하지 않았다"로 좁힌다 |
+
+Windows 단일 플랫폼·float 경로 미검증 limitation 은 지금도 유효하다.
+
+### 메타데이터
+
+`raw_output` 의 "55 tests"·"15 벡터"는 당시(commit `e7b7269`) 실행
+기록이다 — 지금 `tests/vectors/canonical_v1.json` 은 40건이고
+`reference_canonical.py --verify` 도 40건 전부 통과한다. 과거 기록과
+지금 상태를 혼동하지 않는다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 범위·negative_tests 이름·
+stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**

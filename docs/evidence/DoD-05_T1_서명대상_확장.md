@@ -254,3 +254,73 @@ domain 커버리지     2 -> 9 / 17
 관련: `docs/evidence/DoD-03_서명대상_완전성.md` · `docs/evidence/DoD-04_ed25519_검증순서.md` ·
 `docs/protocol/signing.md` §3.1(j) · §5.1 · §9.1 ·
 `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` §7
+
+---
+
+## ★ 이후 변경 (2026-08-17 23:55) — claim 의 수치가 stale, 이름·limitations 다수 정정
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. claim 첫 문장의 수치 자체가 지금 코드와 어긋난다.
+
+### claim 을 이렇게 좁혀 읽는다
+
+원래 claim: "signing.md §5 domain_tag **17종 중 9종**이 구현됐다."
+지금은:
+
+- §5 domain tag 는 17종이 아니라 **23종**이다(`docs/protocol/signing.md:245-276`,
+  ADR-028 이 17→23 으로 늘렸다).
+- 그 중 proto 메시지가 있고 `ToCanonicalFields` 가 구현된 domain 은
+  **19종**이다(`crates/protocol/tests/t1_signing_targets.rs:387-445`).
+- `Signable` 구현은 **10종**이다(`crates/protocol/src/signable.rs:40-407`).
+
+claim 첫 문장을 "23종 중 19종이 구현되었다"로 정정해 읽는다. 규칙 j
+(부호 있는 정수)와 중첩 서명 재귀 부분은 지금도 코드로 확인된다
+(`crates/protocol/src/canonical.rs:95-106`,`210-213`,
+`crates/protocol/tests/t1_signing_targets.rs:84-154`,`198-238`).
+
+### negative_tests 이름 정정
+
+| 원래 표기 | 실제 함수명 |
+|---|---|
+| `renew_lease_request` | `renew_lease_request_matches_reference`(`t1_signing_targets.rs:326`) |
+| `revoke_lease_notice` | `revoke_lease_notice_matches_reference`(`:359`) |
+| "field_number_audit 11개 메시지 확장" | 함수명이 아니다 — 지금은 `artifact_and_lease_field_numbers_match_proto` 와 `grant_and_control_field_numbers_match_proto` 로 분리되어 있다(`field_number_audit.rs:257-275`) |
+
+나머지는 실재를 확인했다: `rule_j_sign_affects_canonical`(`:102`),
+`rule_j_handles_i64_min_without_panic`(`:146`),
+`rule_j_zero_is_omitted`(`:127`),
+`nested_signature_is_excluded_from_outer_canonical`(`:198`),
+`nested_message_content_does_affect_outer_canonical`(`:217`),
+`checkpoint_file_order_is_preserved`(`:303`),
+`domain_coverage_is_explicit`(`:393`).
+
+### stale limitations
+
+| 원래 서술 | 지금 |
+|---|---|
+| "17종 중 9종만 구현"(`:76`) | ★ 거짓이다. 23종 중 19종 |
+| "6종이 Signable 미구현이라 verify() 를 통과할 수 없다"(`:78`) | ★ 거짓이다. 6종 모두 `Lifetime::Evidence` 로 `Signable` 구현되어 있다(`crates/protocol/src/signable.rs:229,264,291,322,349,383` — 정확히 6개 `Lifetime::Evidence` 선언 확인). `verify()` 도 Evidence 타입은 만료 검사를 생략하는 경로를 갖는다(`crates/protocol/src/signing.rs:763-767`) |
+| "membership/policy/quarantine 이 domain tag 를 공유한다"(`:79`) | ★ 거짓이다. ADR-028 이후 domain 이 분리됐고 canonical.rs 의 enum 에도 별도 variant 가 있다(`crates/protocol/src/canonical.rs:297-305`) |
+| "ControlAction 의 oneof 하위 메시지들은 대상이 아니다"(`:81`) | ★ 부정확하다. `ControlAction` wrapper 자체는 `ToCanonicalFields` 미구현이지만(`proto/control.proto:238-249`), oneof 하위 메시지들은 각각 개별 구현되어 있다(`crates/protocol/src/to_fields.rs:694-818`). "wrapper 는 대상 밖, 하위 메시지들은 각자 구현됨"으로 정정 |
+| "Ed25519 를 이 9종에 대해 실행하지 않았다"(`:82`) | "이 evidence(DoD-05) 자체가 Ed25519 를 직접 실행하지 않았다"로 좁힌다 — Ed25519 verifier 자체는 지금 존재한다(`crates/crypto/src/lib.rs:120-125`) |
+
+genesis/audit/release/invite proto 부재(`:77`), int32 경로 미실행(`:80`,
+지금도 유효 — 실제 signed 정수 필드는 `ReportedMetric.value_micro`
+하나뿐이다, `crates/protocol/src/to_fields.rs:284-312`), Windows
+단일 플랫폼(`:83`) limitation 은 지금도 유효하다.
+
+결정문의 "다음 T1b(나머지 4종) → T2"·"6종 Signable 미구현" 서술도
+위 정정에 맞춰 stale 로 읽는다.
+
+### 메타데이터
+
+`vectors: 28건`(`:12`)은 지금 40건과 다르다 — `DoD-06`(28→36)과
+`DoD-03`(→40) 이 같은 파일을 계속 늘려 왔다. schema fingerprint
+(`:13`)는 지금 `proto/SCHEMA_FINGERPRINT.txt` 와 일치해 유효하다.
+`raw_output` 의 117 tests 는 당시(commit `8ca2799`) 실행 기록이다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 수치·negative_tests 이름·
+stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**

@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-17 23:45)
+## 5. 지금 상태 (2026-08-17 23:55)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -171,7 +171,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함 |
 | └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). v1 **13건** 유예 중 — **`DoD-03`·`DoD-04`·`DoD-06`·`P0-03` 4건 모두 addendum 이 독립 재검수 `ACCEPTED`**(1~4라운드). ACCEPTED 는 정정 절(addendum)에 한정 — frontmatter 를 schema v2 로 올리는 작업(executor/reviewer 정식 메타데이터·raw_output digest)은 아직 안 함. 남은 v1 **9건**은 아직 재검수 안 함 |
+| **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). v1 **13건** 유예 중 — **`DoD-03`·`DoD-04`·`DoD-06`·`P0-03` 4건 addendum ACCEPTED**. `DoD-02`·`DoD-05` 는 1라운드 정정 후 **재검수 진행 중**. ACCEPTED 는 정정 절(addendum)에 한정 — frontmatter 를 schema v2 로 올리는 작업은 아직 안 함. 남은 v1 **7건**은 아직 착수 안 함 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
