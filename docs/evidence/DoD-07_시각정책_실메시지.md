@@ -305,3 +305,48 @@ evidence_is_not_replay_checked              evidence_has_no_replay_defense_and_s
 그 선택이 코드에 보이게 하는 것이 목적이다.
 
 관련: `docs/evidence/DoD-10_영속_replay_저장소.md` · `crates/protocol/src/signing.rs`
+
+---
+
+## ★ 이후 변경 (2026-08-18 00:40) — 벡터 수치·테스트명·limitation 2건 stale
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. **claim 핵심은 지금도 참**이다 — `Lifetime` 세 정책
+구분, `verify()` 가 Evidence 에 만료·skew 검사를 생략하는 것,
+Evidence 6종·`observed_at`·`ExecutionGrant`/`RenewLeaseRequest` 단수명
+경로 전부 지금 코드로 확인됐다(`crates/protocol/src/signing.rs:124,763`,
+`crates/protocol/src/signable.rs:98,175,227,262,289,320,347,381`).
+
+### vectors 메타데이터
+
+`36건`(`:12`)은 지금과 다르다 — `tests/vectors/canonical_v1.json`
+을 직접 파싱하면 지금 **40건**이다.
+
+### negative_tests 이름 정정
+
+`evidence_is_not_replay_checked` 는 실재하지 않는다. 지금 함수명은
+`evidence_has_no_replay_defense_and_says_so`(`crates/crypto/tests/lifetime_policy.rs:331`,
+재현 확인함).
+
+### stale limitations
+
+| 원래 서술 | 지금 |
+|---|---|
+| "§10 은 여전히 NoReplayCheck 뿐"(`:79`) | ★ 거짓이다. `DurableReplayGuard` 가 지금 존재한다(`crates/crypto/src/durable_replay.rs:147`). 다만 Evidence 메시지 자체는 replay 방어를 받지 않는다는 현재 claim 은 그대로 유효하다 — `ReplayStatus::NotApplicable` 로 확인된다(`lifetime_policy.rs:331`) |
+| "InMemoryKeyring 뿐"(`:80`) | ★ 거짓이다. `PersistentKeyring` 의 load·revoke·rotate·save 가 구현되어 있다(`crates/crypto/src/keyring.rs:209,245,456,502,575`) |
+
+`ReplicaAck.fence_epoch` 부재(`proto/artifact.proto:101` 로 재확인),
+서명자 ID 대체·소비 측 신선도 판단 미구현·RevokeLeaseNotice 반복
+전송 미측정·Windows 단일 플랫폼 limitation 은 지금도 유효하다.
+
+### claim 을 읽을 때 주의
+
+이 문서 자체가 위 "이후 변경 (2026-08-17)" 절에서 밝히듯 replay
+동작이 그 뒤 한 번 뒤집혔다 — claim 을 "당시 관측"이 아니라 "지금
+코드 상태"로 읽으려면 그 절과 위 표를 함께 봐야 한다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 vectors·negative_tests 이름·
+stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**

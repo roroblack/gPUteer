@@ -290,3 +290,30 @@ SCHEMA_FINGERPRINT 불변         <- .proto 를 건드리지 않았다
 관련: `docs/protocol/signing.md` §3.1(i-2 · i-3 · c-2) ·
 `docs/evidence/DoD-01_canonical_encode_교차검증.md` ·
 `docs/decisions/ADR-026_체크포인트_확정_절차_플랫폼_차이.md`
+
+---
+
+## ★ 이후 변경 (2026-08-18 00:40) — 독립 재검수 ACCEPTED (1라운드)
+
+독립 검수(`agent:codex-cli`, read-only)가 이 문서를 재검수해
+`ACCEPTED` 로 판정했다 — 이 재검수 사이클에서 첫 라운드에 바로
+통과한 evidence 다. Rust/Python 공통 canonical 결함 3종(중첩
+signature-only 메시지·map 빈 값·nested derived-hash 제외)이 지금
+테스트·구현과 대응함을 확인했다(`crates/protocol/tests/codex_findings.rs:51,146,231`).
+`--verify` 가 지금도 `build_vectors()` 를 재실행해 저장값과 실제로
+대조함을 확인했고(`tools/canonical/reference_canonical.py:1596,1618`),
+직접 실행해 40개 벡터가 전부 일치함도 확인했다. vectors 메타데이터
+"40건"(`:12`)도 지금과 일치한다.
+
+한 가지만 참고 사항으로 남겼다: negative_tests 의 `--verify 뮤테이션`
+항목(`:79`)은 함수명이 아니라 시나리오 서술이다 — 별도 `fn` 이름은
+확인 안 됨. raw_output 에 변조 후 실패·원복 후 성공이 기록되어
+있어(`:39`) 시나리오 자체는 실재하지만, 추적성을 위해 실제 테스트
+함수로 대체하면 더 좋다는 제안이다 — review_outcome 을 바꾸는
+문제는 아니다.
+
+원래 Codex 검수(이 evidence 의 주제 자체)의 실행자 독립성은 코드로
+증명할 수 없고 `docs/history/HISTORY.md` 의 "2026-08-16 18:20 — ★
+독립 검수(Codex) 지적 7건 시정" 항목(제목 기반 인용 — 줄 번호는
+세션 안에서도 바뀐다) 으로만 뒷받침된다는 점은 재검수도 "확인
+안 됨"으로 남겼다 — 이 문서의 claim 범위 밖이다.

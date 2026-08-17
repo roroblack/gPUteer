@@ -16,6 +16,23 @@
 
 ---
 
+## 2026-08-18 00:40 — DoD-08 1라운드 만에 ACCEPTED, DoD-07 1라운드 정정
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). 다음 v1 evidence 2건 착수.
+- 스트림: Protocol · Crypto
+- 결과: `DoD-08`(독립검수 시정)이 **1라운드 만에 `ACCEPTED`** — 이
+  사이클에서 첫 즉시 통과 사례다. `DoD-07`(시각정책 실메시지)은
+  `CHANGES_REQUESTED`: vectors 36→40 정정, negative_tests 이름 오류
+  1건(`evidence_is_not_replay_checked` → 실제
+  `evidence_has_no_replay_defense_and_says_so`), stale limitation
+  2건(§10 replay·키 관리 — 둘 다 그 뒤 실제로 구현된 것을 "미구현"
+  으로 남겨둔 채였다) 정정.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 00:30 — DoD-02 도 4라운드 만에 ACCEPTED — v1 evidence 6건 재검수 사이클 종료
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
