@@ -200,10 +200,14 @@ a~i 를 모두 만족한다"로 읽힌다. 실제로는:
 
 - canonical 인코더 자체는 지금도 규칙 a~i 를 구현한다(`crates/protocol/src/canonical.rs:6,185,204`).
 - Python 참조 구현엔 지금 `JobManifest` 전 필드 표가 있다(`tools/canonical/reference_canonical.py:175`).
-- 벡터는 지금 **40건**이다(`tests/vectors/canonical_v1.json:2`) — 이
-  evidence 가 쓰인 시점의 **12건**은 초기 스냅샷이었다. `HISTORY.md`
-  의 "2026-08-16 09:30 — prost 연동 계층" 항목에서 12→20 으로 늘어난
-  기록이 확인된다(제목 기반 인용).
+- 벡터는 지금 **40건**이다 — `tests/vectors/canonical_v1.json:7`
+  부터 시작하는 `vectors` 배열을 직접 파싱해 확인했다(`:2` 는
+  `spec` 선언일 뿐 개수를 보여주지 않는다 — 재검수가 지적했다).
+  이 evidence 가 쓰인 시점의 **12건**은 초기 스냅샷이었다. `HISTORY.md`
+  의 "2026-08-16 10:40 — 서명 밖 필드 6건 제거" 항목(제목 기반 인용
+  — 재검수가 원래 인용한 "09:30 — prost 연동 계층" 항목이 아니라
+  이 항목에 12→20 증가 기록이 있음을 잡았다)에서 그 증가가
+  확인된다.
 - 그러나 `crates/protocol/tests/canonical_vectors.rs` 는 40개 벡터
   **전체를 순회**하지 않고 수동 구성한 `JobManifest` 부분집합을
   쓴다(`:35,40`). prost 참조 대조도 최소 메시지 중심이다(`prost_canonical.rs:55`).
@@ -250,4 +254,12 @@ float/prost 우회 가능성(`:63`, 직접적인 float 우회 negative test 는
 
 `CHANGES_REQUESTED` → 위 정정으로 claim 범위·domain 수치·stale
 limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
-않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
+않는다.
+
+★ 2026-08-18 01:10 두 번째 재검수 — `agent:codex-cli` 가 claim 범위
+축소·domain 17→23·stale limitation 4건 정정은 원문과 대조해 확인했지만,
+벡터 40건 인용이 `:2`(spec 선언)를 가리켜 실제로 개수를 입증하지
+못했고, `HISTORY.md` 제목 인용도 틀렸다("09:30 — prost 연동 계층"
+에는 12→20 기록이 없다 — 실제로는 "10:40 — 서명 밖 필드 6건 제거")고
+지적했다. 둘 다 위에서 고쳤다. 여전히 `CHANGES_REQUESTED` — 이 세
+번째 수정 자체는 아직 재검수를 거치지 않았다.
