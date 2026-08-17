@@ -16,6 +16,32 @@
 
 ---
 
+## 2026-08-17 12:40 — ★ 독립 검수 강제(schema v2) · replay 방어 4건 · 재개 선택 필터 (203 tests green)
+
+- 계획: 사용자 지시 — "해결 안 된 4가지를 코덱스와 논의해" + 코덱스 쿼터 소진
+- 스트림: Crypto · Checkpoint · 프로세스(공용)
+- 수행:
+  1. **재개 지점 필터** — 검수자가 `writer.rs:102-133` 에서 반례 4건 제시.
+     `find_resume_point` 가 job/attempt 를 안 걸러 **남의 체크포인트에서 재개**할 수 있었다.
+     `find_resume_point_for()` 신설 (job/attempt · 빈 매니페스트 · id≠디렉터리명 제외).
+  2. **replay 방어 4건** — `require_replay_checked()` 가 replay 검사를 **안 한** 메시지를
+     통과시켰다(`_ => true`). `ReplayStatus` 3상태로 갈랐다.
+     `MAX_SHORTLIVED_TTL_MS`(15분) · 서명자별 quota · `MAX_GC_ADVANCE_MS`(5분) 추가.
+  3. **evidence schema v2** (ADR-030 · `RULE.md` §7.3) — 미해결 4항목을 검수자와 논의해
+     기계가 막을 것과 사람 책임을 갈랐다. `scripts/test_verify_evidence.py` 40건 신설.
+- 검증:
+  - `cargo test --workspace` **203 passed / 0 failed**, 빌드 경고 0
+  - 뮤테이션 M1+M2+M3 -> 부정 테스트 4건 FAILED (공허하지 않음)
+  - `MAX_GC_ADVANCE_MS` 를 1시간으로 잡았다가 **테스트가 잡아냈다** —
+    최대 보존 시한(16분)보다 길면 아무것도 못 막는다. 5분으로 고쳤다.
+  - 구현 직후 **2차 검수**에서 우회 7건(치명 1 · 중대 6)을 실제로 통과당했다. 전부 고쳤다.
+  - 검수자가 내 부정 테스트의 **공허성 5건**도 지적했다. 전부 고쳤다.
+- 안 고친 것 (`DoD-09` limitations):
+  `LATEST` 포인터 미사용 · `write_checkpoint` 실패 후 잔여물 ·
+  `startup_gc` 가 등록된 `.tmp` 삭제 · `DurabilityState` 미연결
+- evidence: `docs/evidence/DoD-09_재개선택_필터.md` (**schema v2 최초 적용**)
+- 리포트: 이 이력 항목과 ADR-030 · `docs/runbooks/ai-workflow.md` 갱신으로 갈음
+
 ## 2026-08-16 18:20 — ★ 독립 검수(Codex) 지적 7건 시정 (DoD-08 PASS, 167 tests green)
 
 - 계획: `docs/plans/2026-08-16_1330_프로토콜_완성_실행계획_v2.md` T4 착수 전 계약 정비

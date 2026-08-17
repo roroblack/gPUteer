@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-16 20:30)
+## 5. 지금 상태 (2026-08-17 12:40)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -163,14 +163,14 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — 29파일 9825줄. **`cargo test --workspace` 174 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 203 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
-| ├ `crates/crypto` | Ed25519Verifier · InMemoryKeyring (★ 운영 부적합 — §11 미구현) |
-| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 · **경로 탈출 차단** |
+| ├ `crates/crypto` | Ed25519Verifier · InMemoryKeyring (★ 운영 부적합 — §11 미구현) · InMemoryReplayGuard (서명자별 quota · 시계 양방향 방어) |
+| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 · 경로 탈출 차단 · **재개 job/attempt 필터** |
 | └ 미착수 | coordinator · agent · scheduler · UI |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 16건** (PASS 15 · FAIL-SCOPE 1). `verify_evidence.py` 스키마 위반 0 |
-| ADR | 4건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · **028 메시지별 domain_tag** · **029 증거 시각 정책** |
+| **DoD** | 🟡 **evidence 17건** (PASS 16 · FAIL-SCOPE 1). 스키마 위반 0. ★ **schema v2 독립 검수 강제** (ADR-030). 검수 기록 없는 P0/DoD PASS **13건** 유예 중 |
+| ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
 
@@ -182,14 +182,25 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
   그러나 Agent 가 그 정책을 강제하는 계층은 없다.
   = 위조를 막은 것이지 정책을 시행한 것이 아니다.        -> TODO_VISION V-06
 
-replay 방어가 실제로 없다
-  §8-8 은 타입으로 강제되지만 구현체는 NoReplayCheck 뿐이다.
-  단수명 메시지의 실제 replay 방어는 존재하지 않는다.      -> DoD-04 limitations
+replay 방어가 재시작을 못 견딘다
+  InMemoryReplayGuard 는 프로세스가 죽으면 캐시가 빈다.
+  **재시작 직후 replay 창이 열린다.** is_durable() 이 false 인 것이 그 신호다.
+  영속 저장소(§10 3단계)가 없다.                          -> 다음 작업 1
 
-독립 검수가 찾은 것 중 안 고친 게 있다
-  verify() 가 manifest_hash 를 대조하지 않는다 (§6.1 은 MUST 라고 적었다).
-  §8 5·6단계 순서가 규범과 구현이 어긋난다.
-  write_once 가 파일 전체를 메모리로 읽는다 — 수 GB shard 에서 미측정.
+장수명·증거 메시지에는 replay 방어가 아예 없다
+  ReplayStatus::NotApplicable 로 **보고는 한다** (2026-08-17).
+  require_replay_checked() 가 막으므로 조용히 통과하지는 않는다.
+  그러나 그 메시지로 부작용을 실행하려면 소비 측이 멱등성을 갖춰야 한다.
+
+체크포인트 쓰기 실패 경로에 잔여물이 남는다
+  포인터 갱신에 실패하면 호출자는 Err 를 받지만
+  디스크에는 완전한 체크포인트가 남는다.                  -> DoD-09 limitations
+  startup_gc 가 매니페스트에 등록된 .tmp 도 지운다.
+  DurabilityState 전이가 실제 파일 연산과 연결되어 있지 않다.
+
+evidence 13건에 독립 검수 기록이 없다
+  schema v2 유예 목록에 있다. verify_evidence.py 가 매번 그 숫자를 출력한다.
+  "검수를 통과했다" 가 아니라 "검수하지 않았다" 이다.      -> RULE.md §7.3
 
 Linux 를 한 번도 돌려보지 않았다
   v0.1 주 타깃이 Linux 컨테이너 워커인데 검증 환경이 없다.  -> D-3
@@ -198,11 +209,12 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. replay 저장소 (signing.md §10)                계약은 고쳤다. 저장소가 없다
+1. replay 영속 저장소 (signing.md §10 3단계)     재시작 시 replay 창이 열린다
 2. 키 관리 (signing.md §11)                      InMemoryKeyring 뿐이다
-3. verify() 의 manifest_hash 대조                §6.1 이 MUST 라고 적은 것
+3. 체크포인트 쓰기 실패 경로 정리                DoD-09 limitations 4건
 4. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 5. 정책 강제 계층 (V-06)                         "서명했다" != "강제한다"
+6. v1 evidence 13건에 독립 검수                  유예 목록을 줄인다
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
