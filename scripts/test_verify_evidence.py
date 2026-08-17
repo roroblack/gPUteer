@@ -40,6 +40,16 @@ PILOT = "DoD-09_재개선택_필터.md"
 FAILURES = []
 
 
+def real_sources():
+    """진짜 저장소의 소스 전문. `VE.REPO_ROOT` 가 바뀌어도 이것을 쓴다."""
+    saved = VE.REPO_ROOT
+    VE.REPO_ROOT = REPO_ROOT
+    try:
+        return VE.repo_sources()
+    finally:
+        VE.REPO_ROOT = saved
+
+
 def check(text, raw_files, grandfathered=frozenset({PILOT}), filename=None):
     """망가뜨린 evidence 를 검사기에 통과시킨다. (errors, warnings) 반환.
 
@@ -69,6 +79,11 @@ def check(text, raw_files, grandfathered=frozenset({PILOT}), filename=None):
 
         old_root, old_ev = VE.REPO_ROOT, VE.EVIDENCE_DIR
         VE.REPO_ROOT, VE.EVIDENCE_DIR = tmp, ev
+        # ★ 소스 스캔은 **진짜 저장소**를 봐야 한다.
+        #   임시 저장소에는 빈 스텁 파일뿐이라 모든 테스트 이름이
+        #   "함수 정의를 찾지 못했다" 가 된다 — 실제로 그렇게 만들었다가
+        #   부정 테스트가 전부 오탐이 됐다.
+        VE._SOURCE_CACHE[tmp] = real_sources()
         try:
             # 임시 저장소는 git 저장소가 아니므로 commit 검사는 자동으로 건너뛴다.
             errors, warns, _ = VE.check_file(path, grandfathered)
@@ -338,6 +353,28 @@ def main():
                errors, "review_outcome", want=False)
     finally:
         VE.REVIEW_REQUIRED_PREFIX = saved
+
+    # ── 12b. 사라진 negative test 이름 ────────────────────────────
+    #   ★ 실제로 있었던 일: DoD-07 이 `evidence_is_not_replay_checked` 를
+    #     적어 뒀는데 그 테스트는 이름이 바뀌었고 **동작도 뒤집혔다.**
+    #     evidence 는 그대로 "이 테스트가 이것을 보장한다" 고 말하고 있었다.
+    m = base.replace("  - w1_resume_must_not_pick_another_job",
+                     "  - this_test_does_not_exist_anywhere: 없는 테스트")
+    assert m != base
+    _errors, warns = check(m, raw_files)
+    if any("함수 정의를 찾지 못했다" in w for w in warns):
+        print("  ok   사라진 negative test 이름 -> 경고")
+    else:
+        FAILURES.append("사라진 negative test 에 경고가 없다: %s" % warns)
+        print("  FAIL 사라진 negative test 이름 -> 경고")
+
+    # 비공허성 — 실재하는 이름은 경고하지 않는다
+    _errors, warns = check(base, raw_files)
+    if any("함수 정의를 찾지 못했다" in w for w in warns):
+        FAILURES.append("실재하는 negative test 에 경고가 났다: %s" % warns)
+        print("  FAIL 실재하는 이름은 경고하지 않는다")
+    else:
+        print("  ok   실재하는 이름은 경고하지 않는다")
 
     # ── 13. 유예 목록 자체를 손대는 경우 ──────────────────────────
     #   ★ 독립 검수(2026-08-17)가 **치명**으로 지적한 우회다.

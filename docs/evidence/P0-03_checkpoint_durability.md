@@ -56,7 +56,7 @@ negative_tests:
   - "negative_tampered_committed_checkpoint_is_rejected_from_resume: 확정된 체크포인트의 1바이트를 XOR 변조하면 재개 후보에서 제외되고 더 낮은 step 으로 내려가는 것을 확인"
   - "negative_missing_data_file_is_rejected_from_resume: 매니페스트는 있으나 데이터 파일이 삭제된 체크포인트가 재개 후보에서 제외됨"
   - "negative_pointer_to_nonexistent_checkpoint_does_not_break_resume: 포인터를 존재하지 않는 id 로 덮어써도 디렉터리 스캔으로 유효 지점을 찾음 — 포인터는 힌트일 뿐 신뢰의 근거가 아님을 확인"
-  - "resume_point_is_valid_and_monotonic: 같은 디렉터리에서 kill->재시작을 5회 반복해 재개 지점이 뒤로 가지 않음을 확인"
+  - "resume_point_is_valid_and_monotonic_across_restarts: 같은 디렉터리에서 kill->재시작을 5회 반복해 재개 지점이 뒤로 가지 않음을 확인"
   - "★ 테스트가 공허하지 않음을 별도 검증: 8회 중 7회에서 실제 PARTIAL 이 발생했고, kill@560ms 에서는 manifest.json.tmp(매니페스트 쓰기 도중) 상태까지 포착됨"
 limitations:
   - "★ 전원 차단(power loss)을 검증하지 않았다. 프로세스 kill 만 측정했으므로 OS 캐시가 살아 있는 상태다. 물리적 내구성은 증명되지 않았다"

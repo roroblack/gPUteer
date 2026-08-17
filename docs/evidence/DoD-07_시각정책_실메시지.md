@@ -63,13 +63,13 @@ negative_tests:
   - "grant_rejects_message_from_the_future: 과거 방향 skew 경계값은 통과하고 경계 밖은 ClockSkew. **거부해야 할 때 거부하는가**와 **거부하면 안 될 때 거부하지 않는가**를 둘 다 본다"
   - "default_ttl_masks_forward_skew_for_real_grant: 기본 TTL(60s)==skew(60s)라 미래 방향 skew 가 만료 검사에 가려짐을 실메시지로 고정. §9 TTL 을 바꾸면 실패한다"
   - "forward_skew_is_reachable_with_longer_ttl: TTL 을 1시간으로 늘리면 미래 방향 skew 경로가 실제로 발동. 위 테스트만 있으면 '미래 방향 검사가 아예 없는' 구현과 구분되지 않는다"
-  - "grant_requires_nonce: nonce 없음 · 0/8/15/17바이트 전부 거부 (§10 은 16바이트 MUST)"
+  - "grant_nonce_comes_from_signed_message_field: nonce 없음 · 0/8/15/17바이트 전부 거부 (§10 은 16바이트 MUST) — ★ 2026-08-17 이름 정정. 당시 원문의 grant_requires_nonce 는 그 뒤 이 이름으로 바뀌었다"
   - "valid_grant_verifies: 단수명이므로 NoReplayCheck 로는 require_replay_checked() 가 Replay 를 반환. replay 미검사 Grant 로 Job 을 실행하면 안 된다"
   - "renew_lease_expiry_is_derived_from_ttl: expires_at 필드가 없는 메시지의 도출 만료가 경계값에서 정확한지 (만료 1ms 전 통과 / 만료 시점 거부)"
   - "renew_lease_without_issued_at_is_immediately_expired: issued_at=0 이면 즉시 만료. '시각 없는 갱신 요청은 무효'라는 올바른 동작임을 고정"
   - "evidence_must_expose_observation_time: 6종 전부가 각자의 observed_at(created_at · acked_at · decided_at · issued_at)을 정확히 노출하는지. 0 을 반환하면 '언제인지 모르는 증거'이고 그것은 증거가 아니다"
   - "★ replica_ack_stays_valid_forever_even_if_replica_is_gone: **결함을 고정하는 테스트다.** 통과한다는 것이 곧 '프로토콜이 이 상황을 막지 못한다'는 뜻이다. 10년 뒤에도 ACK 가 유효하며 fence_epoch 이 없음을 함께 단언한다"
-  - "evidence_is_not_replay_checked: 증거는 §10 replay 대상이 아니므로 nonce 없이도 require_replay_checked() 가 통과"
+  - "evidence_is_not_replay_checked: 증거는 §10 replay 대상이 아니므로 nonce 없이도 require_replay_checked() 가 통과 — ★ 2026-08-17 이 동작이 뒤집혔다. 아래 '이후 변경' 참조"
 limitations:
   - "★ `ReplicaAck` 에 `fence_epoch` 이 없다는 결함을 **고치지 않았다.** 기록하고 테스트로 고정했을 뿐이다. 복제본이 삭제되어도 ACK 는 영원히 유효하며, 소비 측이 `acked_at` 만 보고 신선도를 판단해야 한다. **그 규약은 강제되지 않는다** — TODO_VISION V-07"
   - "★ 세 메시지(ArtifactRef · CanonicalDecision · RevokeLeaseNotice)에 서명자 ID 필드가 없어 attempt_id · job_id · lease_id 를 대체값으로 쓴다. 대체값은 키 조회 키이므로, 매핑을 모르는 검증자는 유효한 서명도 UnknownSigner 로 거부한다. 단일 Coordinator 에서만 무해하다 — TODO_VISION V-08"
@@ -276,3 +276,32 @@ SCHEMA_FINGERPRINT  불변
 관련: `docs/decisions/ADR-029_증거_메시지의_시각_정책.md` ·
 `docs/evidence/DoD-04_ed25519_검증순서.md` · `docs/evidence/DoD-05_T1_서명대상_확장.md` ·
 `docs/protocol/signing.md` §9 · §9.1
+
+---
+
+## ★ 이후 변경 (2026-08-17) — 이 기록의 한 줄이 더 이상 사실이 아니다
+
+> 이 evidence 는 **그 커밋에서 관측한 것**을 남긴 기록이므로 관측 자체는 고치지 않는다.
+> 그러나 그 뒤 동작이 바뀐 부분을 표시하지 않으면 **읽는 사람을 오도한다.**
+
+```text
+당시                                        지금 (DoD-10 · 커밋 e188cce 이후)
+──────────────────────────────────────────────────────────────────────────
+evidence_is_not_replay_checked              evidence_has_no_replay_defense_and_says_so
+증거는 require_replay_checked() 를 통과한다  ★ 거부한다
+```
+
+### 왜 뒤집혔나
+
+독립 검수(2026-08-17)가 지적했다.
+`replay_checked: bool` 이 **"검사했다" 와 "검사 대상이 아니다" 를 같은 값**으로 뭉갰다.
+
+`require_replay_checked()` 는 부작용 게이트다.
+증거를 재전송하면 매번 통과한다 — 그것으로 과금이나 기여도 집계를 하면 **중복 계상된다.**
+"replay 대상이 아니다" 는 "안전하다" 가 아니다.
+
+지금은 [`ReplayStatus::NotApplicable`] 로 **보고하고 게이트는 막는다.**
+증거로 부작용을 실행해야 하는 소비자는 `get()` 을 쓰고 자기 멱등성을 갖춰야 한다 —
+그 선택이 코드에 보이게 하는 것이 목적이다.
+
+관련: `docs/evidence/DoD-10_영속_replay_저장소.md` · `crates/protocol/src/signing.rs`

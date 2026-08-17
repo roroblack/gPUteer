@@ -274,6 +274,36 @@ def as_list(v):
         return [str(x).strip() for x in v]
     return [str(v).strip()]
 
+_SOURCE_CACHE = {}
+
+
+def repo_sources():
+    """`crates` · `tools` · `scripts` 의 소스 전문. `REPO_ROOT` 별로 캐시한다.
+
+    ★ 테스트 하니스가 `REPO_ROOT` 를 임시 디렉터리로 바꾸므로
+      캐시를 전역 하나로 두면 **엉뚱한 저장소를 스캔한 결과**를 재사용한다.
+      (실제로 그렇게 만들었다가 부정 테스트가 전부 오탐이 됐다.)
+    """
+    if REPO_ROOT in _SOURCE_CACHE:
+        return _SOURCE_CACHE[REPO_ROOT]
+    blob = []
+    for sub in ("crates", "tools", "scripts"):
+        base = os.path.join(REPO_ROOT, sub)
+        for root, _dirs, files in os.walk(base):
+            if "target" in root or "__pycache__" in root:
+                continue
+            for f in files:
+                if f.endswith((".rs", ".py")):
+                    try:
+                        blob.append(io.open(os.path.join(root, f),
+                                            encoding="utf-8",
+                                            errors="ignore").read())
+                    except OSError:
+                        pass
+    _SOURCE_CACHE[REPO_ROOT] = chr(10).join(blob)
+    return _SOURCE_CACHE[REPO_ROOT]
+
+
 def load_grandfathered():
     """schema v1 로 남을 수 있는 파일 목록. `(집합, 오류목록)` 반환.
 
@@ -672,6 +702,43 @@ def check_file(path, grandfathered=frozenset()):
             warns.append(
                 "negative test %r 의 이름이 실행 원문에 없다 — "
                 "적기만 하고 실행하지 않았을 수 있다" % m.group(1)
+            )
+
+    # ★ 2026-08-17 추가 — negative test 가 **아직 존재하는가.**
+    #
+    #   실제로 있었던 일: DoD-07 이 `evidence_is_not_replay_checked` 를 적어 뒀는데
+    #   그 테스트는 이름이 바뀌었고 **동작도 뒤집혔다.**
+    #   evidence 는 그대로 "이 테스트가 이것을 보장한다" 고 말하고 있었다.
+    #
+    #   ★ 스테일한 evidence 는 없는 것보다 나쁘다 —
+    #     읽는 사람이 그것을 근거로 판단하기 때문이다.
+    #
+    #   경고에 그친다. 이름을 바꾸는 것은 정당하고, evidence 는 **그 시점의
+    #   관측 기록**이므로 자동으로 틀렸다고 단정할 수 없다.
+    #   다만 "확인해 보라" 는 신호는 있어야 한다.
+    sources = repo_sources()
+
+    for entry in as_list(fm.get("negative_tests")):
+        e = entry.lstrip("★ ").strip().strip('"')
+        # ★ `이름: 설명` 형태만 본다.
+        #   evidence 는 `- "test_name: 무엇을 확인했는가"` 규약을 쓴다.
+        #   그 형태가 아니면 산문이거나 여러 이름을 나열한 것이므로 건너뛴다 —
+        #   오탐이 많으면 경고 전체를 무시하게 되고, 그러면 검사가 없는 것과 같다.
+        m = re.match(r"([a-z][a-z0-9_]{6,})\s*(?::|$)", e)
+        if not m:
+            continue
+        name = m.group(1)
+        # ★ **함수 정의**로만 찾는다 (2026-08-17 자체 수정).
+        #   처음엔 이름이 소스 어디에든 있으면 통과시켰다.
+        #   그랬더니 **이 검사기 자신의 주석**에 적어 둔 예시 이름
+        #   (`evidence_is_not_replay_checked`)과 매칭돼 오탐을 놓쳤다.
+        #   검사기가 자기 주석 때문에 눈이 머는 것은 우스운 실패다.
+        if not re.search(r"(?:fn|def)\s+" + re.escape(name) + r"\s*[(<]", sources):
+            warns.append(
+                "negative test %r 의 함수 정의를 찾지 못했다 — "
+                "이름이 바뀌었거나 지워졌을 수 있다. "
+                "테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다"
+                % name
             )
 
     # 본문의 '증명하지 않는 것' 절 확인
