@@ -18,8 +18,12 @@ use std::time::Duration;
 use gputeer_checkpoint::writer::{
     find_resume_point, read_pointer, startup_gc, POINTER_FILENAME,
 };
+#[cfg(feature = "chaos-hooks")]
+use gputeer_checkpoint::writer::find_resume_point_for;
 use gputeer_checkpoint::CheckpointManifest;
 use gputeer_checkpoint::durability::MANIFEST_FILENAME;
+#[cfg(feature = "chaos-hooks")]
+use gputeer_checkpoint::durability::{publication_failed, state_recorded, DurabilityState};
 
 fn writer_bin() -> PathBuf {
     // cargo 가 통합 테스트 실행 시 deps 옆에 바이너리를 둔다
@@ -148,6 +152,113 @@ fn run_and_kill(root: &Path, kill_after: Duration) -> (usize, String) {
     // ★ 최소 1개는 있어야 재개·GC 검사가 의미를 갖는다.
     //   그 1개를 못 보면 hard timeout(원래 값의 20배)까지 기다린다.
     run_and_kill_after(root, 1, kill_after * 20)
+}
+
+/// ★ 시간이 아니라 **코드 순서**로 kill 지점을 겨냥한다 (2026-08-17,
+/// 독립 검수의 P0-03 재검수가 지적한 공백을 메운다).
+///
+/// 위 `run_and_kill*` 는 전부 "밖에서 stdout 을 세다가 죽인다" — 그래서
+/// `LATEST` 교체 직후 · `COMMITTED` 마커 기록 직전이라는 좁은 구간을
+/// 실제로 맞혔는지 알 수 없다. 이 헬퍼는 `ckpt_writer` 프로세스
+/// 자신이 `writer.rs::chaos_kill_after_latest` 에서 그 지점에 도달한
+/// 순간 스스로 `abort()` 하게 만든다 — 밖에서 타이밍을 맞출 필요가
+/// 없다.
+///
+/// `chaos-hooks` feature 로 빌드된 `ckpt_writer` 만 이 환경 변수에 반응한다.
+#[cfg(feature = "chaos-hooks")]
+fn run_and_kill_after_latest(root: &Path) -> String {
+    let output = Command::new(writer_bin())
+        .arg(root)
+        .args(["1", "2", "4096", "0"])
+        .env("GPUTEER_CHECKPOINT_CHAOS_KILL_AFTER_LATEST", "1")
+        .output()
+        .expect("ckpt_writer 실행 실패 — --features chaos-hooks 로 빌드했는지 확인하라");
+
+    assert!(
+        !output.status.success(),
+        "self-kill 훅이 실행되지 않았거나 ckpt_writer가 정상 종료했다 \
+         (chaos-hooks feature 없이 빌드됐을 가능성): {:?}",
+        output.status
+    );
+
+    String::from_utf8(output.stdout).expect("ckpt_writer stdout가 UTF-8이 아니다")
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ HASH_VERIFIED ~ COMMITTED 구간 — 결정적 kill (2026-08-17)
+//
+// P0-03 evidence 의 독립 재검수가 지적했다: 아래 시간 기반 스윕은
+// "LATEST 교체 직후 · COMMITTED 마커 기록 직전" 이라는 정확한 구간을
+// 겨냥하지 않는다 — 우연히 맞혔을 수도, 아닐 수도 있다. 이 테스트는
+// `cargo test --features chaos-hooks` 로만 켜지고, self-kill 훅이
+// 코드 순서로 그 구간을 정확히 겨냥한다(`writer.rs::chaos_kill_after_latest`
+// 참조). `--features chaos-hooks` 없이는 이 테스트 자체가 컴파일되지
+// 않는다 — 기본 `cargo test --workspace` 에는 포함되지 않는다.
+// ══════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "chaos-hooks")]
+#[test]
+fn kill_after_latest_before_committed_is_resume_candidate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let stdout = run_and_kill_after_latest(root);
+
+    let checkpoint_id = "ckpt-00000100";
+    let expected_signal = format!("CHAOS_AFTER_LATEST {checkpoint_id}");
+
+    assert!(
+        stdout.lines().any(|line| line == expected_signal),
+        "LATEST 직후 훅 신호를 관측하지 못했다 — self-kill 이 의도한 지점에서 \
+         일어나지 않았을 수 있다:\n{stdout}"
+    );
+
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("COMMITTED ")),
+        "self-kill 전에 COMMITTED stdout 가 출력됐다 — 훅이 record_state_transition \
+         이후에 불렸다는 뜻이다:\n{stdout}"
+    );
+
+    assert_eq!(
+        read_pointer(root).as_deref(),
+        Some(checkpoint_id),
+        "LATEST 가 이 체크포인트를 가리켜야 한다 — chaos_kill_after_latest 는 \
+         replace_with_retry 성공 '이후' 에만 호출된다"
+    );
+
+    let dir = root.join(checkpoint_id);
+    assert!(
+        dir.join(MANIFEST_FILENAME).is_file(),
+        "LATEST 대상에 manifest.json 이 없다"
+    );
+
+    let manifest_data = std::fs::read(dir.join(MANIFEST_FILENAME)).unwrap();
+    let manifest = CheckpointManifest::from_json(&manifest_data).unwrap();
+    manifest
+        .verify_files(&dir)
+        .expect("LATEST 대상의 데이터 파일 또는 해시가 유효하지 않다");
+
+    assert!(
+        state_recorded(&dir, DurabilityState::HashVerified).unwrap(),
+        "HashVerified 마커가 없다 — chaos_kill_after_latest 호출 위치가 잘못됐을 수 있다"
+    );
+    assert!(
+        !state_recorded(&dir, DurabilityState::Committed).unwrap(),
+        "★ 이 단언이 실패하면 가장 위험하다 — self-kill 전에 이미 Committed 가 \
+         기록됐다는 뜻이고, 이 테스트가 겨냥하려던 구간을 놓쳤다는 뜻이다"
+    );
+    assert!(
+        !publication_failed(&dir).unwrap(),
+        "정상적인 LATEST 교체 뒤 publication-failed 가 기록됐다 — 있으면 안 된다"
+    );
+
+    // 핵심 주장 — P0-03 이 그동안 직접 관측한 적 없는 것: COMMITTED
+    // 마커가 없어도 이 체크포인트가 실제로 재개된다.
+    let resumed = find_resume_point_for(root, "job-chaos", "att-1")
+        .unwrap()
+        .expect("HashVerified 상태의 온전한 체크포인트가 재개 후보로 선택되지 않았다");
+    assert_eq!(resumed.checkpoint_id, checkpoint_id);
+    assert_eq!(resumed.step, 100);
 }
 
 // ══════════════════════════════════════════════════════════════════

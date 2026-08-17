@@ -5,6 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# ★ 프로덕션 경로에 없다. write_checkpoint() 안에 결정적 self-kill 훅을
+#   켠다 — HASH_VERIFIED 이후 · COMMITTED 이전이라는 정확한 지점을
+#   시간(sleep) 이 아니라 코드 순서로 겨냥하기 위해서다.
+#   `kill_chaos.rs` 의 kill_after_latest_before_committed_is_resume_candidate
+#   테스트에서만 켠다. 기본 빌드·`cargo test --workspace` 에는 포함되지 않는다.
+chaos-hooks = []
+
 [dependencies]
 gputeer-protocol = { path = "../protocol" }
 blake3.workspace = true

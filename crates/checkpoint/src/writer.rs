@@ -3,6 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "chaos-hooks")]
+use std::io::Write as _;
+
 use crate::atomic::{
     gc_partial, replace_with_retry, retry_tolerating_race, write_once, RetryPolicy,
 };
@@ -35,6 +38,40 @@ fn fail_after_materialization(
              실패 마커 기록도 실패하여 재개 배제를 보장할 수 없다: {marker_error}"
         )),
     }
+}
+
+/// ★ 카오스 테스트 전용 self-kill 훅. `chaos-hooks` feature 없이는
+/// 컴파일조차 되지 않는다 — 프로덕션 바이너리에는 이 함수 자체가 없다.
+///
+/// `LATEST` 교체가 성공한 직후, `COMMITTED` 마커를 쓰기 **직전**에만
+/// 호출된다. 환경 변수가 정확히 `"1"` 이 아니면 그냥 반환한다 — 그래서
+/// `chaos-hooks` 로 빌드해도 이 환경 변수를 켜지 않는 한 평소처럼 동작한다.
+///
+/// `abort()` 는 되돌아오지 않고 destructor 도 돌지 않는다 — 그래서
+/// "코드 순서상 이 지점 이후로는 `Committed` 기록에 절대 도달하지 않는다"
+/// 를 race 없이 보장한다. `kill_chaos.rs` 의
+/// `kill_after_latest_before_committed_is_resume_candidate` 가 이 지점을
+/// 직접 겨냥한다 — 종전의 시간 기반 8개 kill 지점은 이 좁은 구간을
+/// 우연히 맞혔는지 아닌지 알 수 없었다.
+#[cfg(feature = "chaos-hooks")]
+fn chaos_kill_after_latest(dir: &Path) {
+    if std::env::var("GPUTEER_CHECKPOINT_CHAOS_KILL_AFTER_LATEST")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return;
+    }
+
+    let checkpoint_id = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<non-utf8-checkpoint-id>");
+
+    println!("CHAOS_AFTER_LATEST {checkpoint_id}");
+    let _ = std::io::stdout().flush();
+
+    std::process::abort();
 }
 
 /// 체크포인트 하나를 확정한다.
@@ -98,6 +135,9 @@ pub fn write_checkpoint(
         return Err(fail_after_materialization(&dir, error));
     }
 
+    #[cfg(feature = "chaos-hooks")]
+    chaos_kill_after_latest(&dir);
+
     if let Err(error) = record_state_transition(
         &dir,
         DurabilityState::HashVerified,
@@ -154,7 +194,12 @@ pub fn manifest_for(
     }
 }
 
-/// 포인터 또는 COMMITTED 상태 마커로 공개된 체크포인트인지 확인한다.
+/// 재개 후보인지 확인한다.
+///
+/// ★ 2026-08-17 정정(독립 재검수). 이 첫 줄이 한때 "포인터 또는
+/// COMMITTED 상태 마커로 공개된 체크포인트인지" 였는데, 실제로는
+/// `COMMITTED` 마커를 요구하지 않는다 — 아래 doc comment 가 이미 그
+/// 이유를 설명하고 있었는데 첫 줄만 낡은 채 남아 있었다.
 ///
 /// `.publication-failed` 가 있으면 포인터가 우연히 새 체크포인트를 가리켜도
 /// 호출자가 Err를 받은 쓰기를 재개 후보로 되살리지 않는다.
