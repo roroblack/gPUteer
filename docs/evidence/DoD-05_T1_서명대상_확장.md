@@ -301,7 +301,7 @@ claim 첫 문장을 "23종 중 19종이 구현되었다"로 정정해 읽는다.
 | "17종 중 9종만 구현"(`:76`) | ★ 거짓이다. 23종 중 19종 |
 | "6종이 Signable 미구현이라 verify() 를 통과할 수 없다"(`:78`) | ★ 거짓이다. 6종 모두 `Lifetime::Evidence` 로 `Signable` 구현되어 있다(`crates/protocol/src/signable.rs:229,264,291,322,349,383` — 정확히 6개 `Lifetime::Evidence` 선언 확인). `verify()` 도 Evidence 타입은 만료 검사를 생략하는 경로를 갖는다(`crates/protocol/src/signing.rs:763-767`) |
 | "membership/policy/quarantine 이 domain tag 를 공유한다"(`:79`) | ★ 거짓이다. ADR-028 이후 domain 이 분리됐고 canonical.rs 의 enum 에도 별도 variant 가 있다(`crates/protocol/src/canonical.rs:297-305`) |
-| "ControlAction 의 oneof 하위 메시지들은 대상이 아니다"(`:81`) | ★ 부정확하다. `ControlAction` wrapper 자체는 `ToCanonicalFields` 미구현이지만(`proto/control.proto:238-249`), oneof 하위 메시지들은 각각 개별 구현되어 있다(`crates/protocol/src/to_fields.rs:694-818`). "wrapper 는 대상 밖, 하위 메시지들은 각자 구현됨"으로 정정 |
+| "ControlAction 의 oneof 하위 메시지들은 대상이 아니다"(`:81`) | ★ 2026-08-17 최초 정정 시 "하위 메시지들은 각자 구현됨"이라고 썼는데 **틀렸다** — 재검수가 직접 세어 지적했다. `ControlAction` 은 21개 oneof arm 을 갖고(`proto/control.proto:238-269`), 그 중 **9개**(멤버십·정책 그룹)만 `ToCanonicalFields` 가 구현되어 있다(`crates/protocol/src/to_fields.rs:694-818`). 나머지 **12개**(Job 수명주기·Lease·관측 결과)는 미구현이다(grep 0건 확인). 원래 limitation("개별 구현이 필요하다")이 실제로는 더 정확했다 — 지금은 "9/21 구현, 12개 미구현"으로 정정한다 |
 | "Ed25519 를 이 9종에 대해 실행하지 않았다"(`:82`) | "이 evidence(DoD-05) 자체가 Ed25519 를 직접 실행하지 않았다"로 좁힌다 — Ed25519 verifier 자체는 지금 존재한다(`crates/crypto/src/lib.rs:120-125`) |
 
 genesis/audit/release/invite proto 부재(`:77`), int32 경로 미실행(`:80`,
@@ -314,13 +314,28 @@ genesis/audit/release/invite proto 부재(`:77`), int32 경로 미실행(`:80`,
 
 ### 메타데이터
 
-`vectors: 28건`(`:12`)은 지금 40건과 다르다 — `DoD-06`(28→36)과
-`DoD-03`(→40) 이 같은 파일을 계속 늘려 왔다. schema fingerprint
-(`:13`)는 지금 `proto/SCHEMA_FINGERPRINT.txt` 와 일치해 유효하다.
-`raw_output` 의 117 tests 는 당시(commit `8ca2799`) 실행 기록이다.
+`vectors: 28건`(`:12`)은 지금과 다르다 — `tests/vectors/canonical_v1.json`
+을 직접 파싱하면 지금 **40건**이다(`:7` 부터 시작하는 `vectors`
+배열, `python -c "import json; print(len(json.load(open(...))['vectors']))"`
+로 재확인). 이 세션에서 파일을 늘린 정확한 커밋 이력(어느 라운드가
+몇 건씩 늘렸는지)까지는 추적하지 않았다 — "지금 40건" 이라는 사실만
+확인된 것이고, 그 증가 과정의 파일:줄 근거는 **확인 안 됨**이다.
+schema fingerprint(`:13`)는 지금 `proto/SCHEMA_FINGERPRINT.txt` 와
+일치해 유효하다. `raw_output` 의 117 tests 는 당시(commit `8ca2799`)
+실행 기록이다.
 
 ### review_outcome
 
 `CHANGES_REQUESTED` → 위 정정으로 claim 수치·negative_tests 이름·
 stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
-않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
+않는다.
+
+★ 2026-08-18 00:10 두 번째 재검수 — `agent:codex-cli` 가 여전히
+`CHANGES_REQUESTED` 를 냈다. **가장 중요한 지적**: "ControlAction
+의 oneof 하위 메시지들은 각각 개별 구현되어 있다"는 서술이 틀린
+사실이었다 — 재검수가 21개 arm 중 9개만 구현됨을 직접 세어 밝혔고,
+이 세션도 grep 으로 재확인했다. 원래 evidence 의 limitation(`:81`,
+"개별 구현이 필요하다")이 오히려 더 정확했다 — "9/21 구현, 12개
+미구현"으로 다시 정정했다. vectors 메타데이터도 "40건" 이라는
+사실만 재확인 가능하고 그 증가 이력은 확인 안 됨으로 명시했다. 이
+세 번째 수정 자체는 아직 재검수를 거치지 않았다.

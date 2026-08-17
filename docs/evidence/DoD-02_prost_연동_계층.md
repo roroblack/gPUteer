@@ -276,10 +276,14 @@ Python 참조 구현과 **바이트 단위로 일치한다**")은 마치 전체 
 - `JobManifest`/`Lease` 의 당시 누락 필드(10·11·12·54·55, Lease 40)는
   지금 구현되어 있고 `UNIMPLEMENTED_FIELDS` 는 빈 배열이다
   (`crates/protocol/src/to_fields.rs:830-869`,`893-915`,`934-944`).
-- 그러나 canonical bytes 를 Python 참조 구현과 **바이트 단위로
-  직접 대조**하는 대표 테스트는 `JobManifest` 중심이다
-  (`crates/protocol/tests/prost_canonical.rs:55-85`). `field_number_audit`
-  는 필드 번호·이름 대조이지 바이트 대조가 아니다(`field_number_audit.rs:161-185`).
+- canonical bytes 를 Python 참조 구현과 **바이트 단위로 직접
+  대조**하는 전 필드 테스트는 `JobManifest`(`prost_canonical.rs:55-85`
+  최소 벡터, `:677-699` `v02_full_manifest_matches_reference` 전
+  필드)와 `Lease`(`:700-735` `v02b_full_lease_matches_reference`
+  전 필드) 둘 다 있다. ★ 2026-08-17 23:55 최초 정정 시 `Lease` 쪽
+  전 필드 테스트 인용을 빠뜨렸었다 — 재검수가 지적해 추가했다.
+  `field_number_audit` 는 나머지 메시지들의 필드 번호·이름 대조이지
+  바이트 대조가 아니다(`field_number_audit.rs:161-185`).
 
 > claim 은 "`JobManifest`(그리고 `Lease`) 는 참조 구현과 바이트
 > 단위로 일치하고, 나머지 서명 대상 메시지는 필드 번호·이름 감사로
@@ -303,9 +307,9 @@ Python 참조 구현과 **바이트 단위로 일치한다**")은 마치 전체 
 
 | 원래 서술 | 지금 |
 |---|---|
-| "6개 필드가 아직 canonical 에 들어가지 않는다"(`:68`) | ★ 거짓이다. `HISTORY.md` "2026-08-16" 항목에서 이미 해소됐다 |
+| "6개 필드가 아직 canonical 에 들어가지 않는다"(`:68`) | ★ 거짓이다. `docs/history/HISTORY.md:629-645`("2026-08-16 10:40 — 서명 밖 필드 6건 제거") 에서 이미 해소됐다 |
 | "17종 중 7종만 구현"(`:69`) | ★ 거짓이다. 지금 `ToCanonicalFields` 구현 41개, domain 23종 중 19종(`crates/protocol/tests/t1_signing_targets.rs:387-445`) |
-| "현재 스키마에 oneof/reserved 가 없어 무해하다"(`:70`) | ★ 절반만 거짓이다. `control.proto` 에 지금 `ControlAction` oneof 가 실재한다(`proto/control.proto:238-249`). 정규식 감사기가 oneof 를 못 다루는 한계 자체는 남아 있으나, "지금 스키마에 없다"는 더 이상 참이 아니다 — `ControlAction` wrapper 자체는 `ToCanonicalFields` 미구현이지만 oneof 하위 메시지들은 각각 구현되어 있다(`crates/protocol/src/to_fields.rs:694-818`) |
+| "현재 스키마에 oneof/reserved 가 없어 무해하다"(`:70`) | ★ 절반만 거짓이다. `control.proto` 에 지금 `ControlAction` oneof 가 실재하고, 21개 arm 을 갖는다(`proto/control.proto:238-269`). 정규식 감사기가 oneof 를 못 다루는 한계 자체는 남아 있으나, "지금 스키마에 없다"는 더 이상 참이 아니다. **★ 2026-08-17 23:55 최초 정정 시 "oneof 하위 메시지들은 각각 구현되어 있다"고 적었는데 틀렸다** — 재검수가 직접 세어 지적했다: `crates/protocol/src/to_fields.rs:694-818` 에는 21개 arm 중 **9개**(멤버십·정책 그룹 — `AddMember`·`RemoveMember`·`ApproveDevice`·`RevokeDevice`·`ChangeCoordinatorSet`·`RotateOwnerKey`·`UpdatePolicy`·`QuarantineDevice`·`ReleaseQuarantine`)만 구현되어 있다. 나머지 **12개**(Job 수명주기 5종·Lease 3종·관측 결과 4종 — `SubmitJob`·`TransitionJob`·`CreateAttempt`·`TransitionAttempt`·`SetCanonical`·`IssueLease`·`RenewLease`·`RevokeLease`·`TransitionNode`·`RecordBenchmark`·`RecordWorkloadProfile`·`RecordDurabilityStatus`)는 `ToCanonicalFields` 구현이 **없다**(grep 으로 0건 확인). `ControlAction` wrapper 자체도 미구현이다 |
 | "SCHEMA_TOO_NEW 미구현"(`:72`) | ★ 거짓이다. 지금 `verify()` 는 스키마 버전 초과 시 `SchemaTooNew` 를 반환한다(`crates/protocol/src/signing.rs:741-744`). 다만 prost 가 unknown field 를 조용히 버리는 현상 자체는 여전히 사실이다(`crates/protocol/tests/schema_evolution.rs:76-124`) — "경로 미구현"이 아니라 "버전을 안 올린 unknown-field 추가는 여전히 탐지 못 한다"로 좁힌다 |
 | "Ed25519 를 저장소 전체에서 아직 하지 않았다"(`:71`) | ★ 부분적으로 거짓이다. Ed25519 verifier·ingress 경로는 지금 존재한다(`crates/crypto/src/lib.rs:120-125`, `crates/crypto/src/ingress.rs:211-215`). "이 evidence(DoD-02) 자체가 Ed25519 를 실행하지 않았다"로 좁힌다 |
 
@@ -322,4 +326,14 @@ Windows 단일 플랫폼·float 경로 미검증 limitation 은 지금도 유효
 
 `CHANGES_REQUESTED` → 위 정정으로 claim 범위·negative_tests 이름·
 stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
-않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
+않는다.
+
+★ 2026-08-18 00:10 두 번째 재검수 — `agent:codex-cli` 가 여전히
+`CHANGES_REQUESTED` 를 냈다. 남은 지적 셋: (a) `Lease` 전 필드
+바이트 대조 테스트 인용이 빠졌었다(`prost_canonical.rs:700-735`) —
+추가했다. (b) **가장 중요한 지적** — "oneof 하위 메시지들은 각각
+구현되어 있다"는 서술이 **과장이 아니라 틀린 사실**이었다. 재검수가
+직접 세어 21개 arm 중 9개만 구현됨을 밝혔고, 이 세션도 grep 으로
+재확인했다(나머지 12개는 0건) — 위 표를 정정했다. (c)
+`HISTORY.md` 인용에 줄 번호가 없었다 — `:629-645` 로 추가했다. 이
+세 번째 수정 자체는 아직 재검수를 거치지 않았다.
