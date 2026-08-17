@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-09
 claim: "find_resume_point_for 는 job_id·attempt_id 가 다른 체크포인트, files 가 빈 매니페스트, checkpoint_id 가 디렉터리명과 다른 매니페스트를 재개 후보에서 제외한다."
 status: PASS
-commit: 2c8c316a80a27816a712d814fd59a9ba9d21af7d
+commit: 78c39323b9a73795ff09cfe2579ee23113242c7a
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -20,7 +20,7 @@ review_scope: "writer.rs 재개 선택 · startup_gc · write_checkpoint 실패 
 review_artifact: "docs/evidence/_raw/DoD-09_review.txt"
 
 raw_output_artifact: "docs/evidence/_raw/DoD-09_resume_selection.txt"
-raw_output_digest: "sha256:e525d3d3858fee940b628271b67ace0c923de997c6d133a1b3ab83f6643122ee"
+raw_output_digest: "sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee"
 raw_output_bytes: 5138
 
 binary_digests:
@@ -34,7 +34,7 @@ network_profile: "해당 없음 (단일 프로세스 · 로컬 디스크)"
 command: "cargo test -p gputeer-checkpoint --test resume_selection && cargo test --workspace"
 raw_output: |
   resume_selection  7 passed / 0 failed
-  workspace 전체   200 passed / 0 failed
+  workspace 전체   203 passed / 0 failed
 
   뮤테이션(M1 job/attempt 필터 제거 · M2 빈 매니페스트 검사 제거 ·
   M3 id/디렉터리명 검사 제거) 상태에서: 3 passed / 4 failed.
@@ -114,7 +114,7 @@ root/
 executor_id != reviewer_id                검사기가 강제한다
 review_outcome == ACCEPTED                검사기가 강제한다 (PASS 인 경우)
 review_artifact 존재 · artifacts 에 포함   검사기가 강제한다
-review_artifact 에 파일:줄 위치           없으면 경고
+review_artifact 에 실재하는 파일:줄 인용    검사기가 강제한다
 raw_output_digest == 실제 sha256          검사기가 강제한다
 raw_output_bytes  == 실제 크기            검사기가 강제한다
 ```

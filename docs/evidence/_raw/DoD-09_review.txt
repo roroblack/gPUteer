@@ -1,7 +1,7 @@
 독립 검수 receipt — DoD-09
 ==========================================================================
 evidence_id      DoD-09
-reviewed_commit  (아래 evidence frontmatter 의 commit)
+reviewed_commit  검수 시점 2c8c316 (writer.rs 수정 전) / 시정 후 78c39323b9a73795ff09cfe2579ee23113242c7a
 reviewer_id      agent:codex-cli
 reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
 reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
