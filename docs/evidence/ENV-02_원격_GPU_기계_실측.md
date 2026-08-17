@@ -158,3 +158,55 @@ ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused
 5. **D-1(Rust 툴체인)은 미해결로 남는다.** 양쪽 기계 모두 없다.
 
 관련: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` §5 · `docs/evidence/ENV-01_개발환경_실측.md`
+
+---
+
+## ★ 이후 변경 (2026-08-18 08:10) — x600 재접속으로 재확인, "Rust 없음" 은 stale
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수했다 — 검수자의
+샌드박스는 네트워크가 막혀 있어 x600 에 직접 접속하지 못했고,
+그래서 "현재 x600 상태는 확인 안 됨"으로 판정했다. 이 세션은
+`~/.ssh/config` 의 `x600` 접속을 이미 이번 세션 중(P0-07 재실측)
+써 봤으므로, 재검수가 못 한 실제 재접속 재확인을 직접 했다.
+
+```text
+명령: ssh x600 "systeminfo | findstr ..."
+      ssh x600 "nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv"
+      ssh x600 "rustc --version" / "cargo --version"  (PATH 상)
+      ssh x600 "C:\Users\<x600-user>\.cargo\bin\cargo.exe --version"  (직접 경로)
+
+결과 (2026-08-18 08:10):
+  OS               Microsoft Windows 11 Pro, 10.0.26200 Build 26200  (evidence 기록과 일치)
+  GPU              NVIDIA GeForce RTX 4070 SUPER, driver 595.79, 12282 MiB  (evidence 기록과 일치)
+  cargo/rustc(PATH)  미검출
+  cargo(.cargo\bin 직접 경로)  cargo 1.97.1 (c980f4866 2026-06-30)  ★ 존재한다
+```
+
+### 정정
+
+**"Rust 없음"(`:41`,`:104`) 은 지금 거짓이다** — 그리고 `ENV-01`
+과 똑같은 패턴이다: PATH 에 없다는 관측을 "설치 안 됨"으로
+잘못 결론지었다. 실제로는 `C:\Users\<x600-user>\.cargo\bin\cargo.exe`
+에 cargo 1.97.1 이 있다. `HISTORY.md` 의 "2026-08-16 07:00 — P0
+스파이크 3건" 항목이 x600 에서 실제 cargo 빌드·테스트를 수행했다고
+기록하는 것과도 일치한다 — 이 evidence 가 그 사실을 반영하지
+못한 채 stale 로 남아 있었다.
+
+`:60` 의 "D-1(Rust 툴체인)은 미해결로 남는다. 양쪽 기계 모두 없다"
+도 같은 이유로 stale — 양쪽 다 PATH 미등록일 뿐 설치되어 있다.
+
+OS·GPU·드라이버 스펙(`:10`-`:12`)은 지금 재확인해도 그대로다 —
+이 evidence 가 쓰인 시점(2026-08-16)과 지금(2026-08-18) 사이에
+바뀐 것이 없다.
+
+`base64` 방식 관련 limitation(`:54`)도 stale 이다 — 그 뒤
+`scp` 로 파일을 직접 전송하는 방식으로 바뀌었다(이 세션의
+P0-07 재실측이 실제로 `scp` 를 썼다, `docs/history/HISTORY.md`
+"2026-08-18 06:48" 항목 참조). RunPod 접속정보 재사용 불가
+limitation(`:59`)은 지금도 유효하다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 Rust 상태·D-1 결정·base64
+limitation 을 반영했다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**

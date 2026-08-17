@@ -116,3 +116,46 @@ decision: "GPU 를 요구하는 P0-01/02/06/07 을 ENVIRONMENT-BLOCKED 로 판�
    미확보 시 v0.1 게이트를 통과할 수 없다.
 
 관련 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md`
+
+---
+
+## ★ 이후 변경 (2026-08-18 08:10) — "Rust 툴체인 없음" 이 stale, PATH 미등록과 미설치를 혼동했었다
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. **"Rust 툴체인 없음"(`:43`,`:80`)은 지금 거짓이다** —
+그리고 사실 이 evidence 를 쓴 시점부터도 부정확했을 가능성이
+크다: 재검수가 지적하고 이 세션이 직접 재현했다.
+
+```text
+PATH 상의 cargo/rustc/rustup       미검출 (evidence 원래 관측과 같음)
+C:\Users\playdata2\.cargo\bin\     cargo 1.97.1 / rustc 1.97.1 / rustup 1.29.0 실재
+```
+
+원래 evidence 는 "PATH 에 없다" 를 "설치되지 않았다" 로 잘못
+결론지었다 — **PATH 등록 여부와 설치 여부는 다른 질문**인데
+그 둘을 구분하지 않았다. 이 세션이 이번 결과를 반영해 실제로
+`$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"` 를 매번
+앞에 붙여 `cargo`/`rustc` 를 호출해 왔다(`docs/history/HISTORY.md`
+전체에서 확인 가능) — 그 실무 방식 자체가 이 stale limitation 의
+증거였다.
+
+### 정정
+
+- Rust 상태: "**설치됨, 시스템 PATH 에는 미등록**(사용자 프로필
+  `.cargo\bin` 에 있음)" — `:43`,`:80` 의 "Rust 툴체인 없음" 을
+  이렇게 좁혀 읽는다.
+- `:50` 의 "Rust 설치를 사용자 결정으로 상신한다"(D-1) 는 stale
+  이다 — 이미 설치되어 있었다. D-1 이 "설치할지 말지"가 아니라
+  "PATH 등록을 표준화할지, 매 호출마다 경로를 붙일지"로 좁혀야
+  한다면 그것은 새로운 결정 사항이다.
+- WSL2·eGPU·Linux·타 기계 관련 limitation(`:46`-`:49`)은 지금도
+  유효하다.
+- NVIDIA GPU 없음(Intel Iris Xe 만)은 지금도 유효하다. 정확한
+  AdapterRAM·드라이버 버전은 이 재검수에서 다시 재지 않아 **확인
+  안 됨**으로 남긴다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 Rust 상태·D-1 결정을 반영했다.
+원본 YAML 은 당시 기록이므로 고치지 않는다. **이 정정 자체는
+아직 재검수를 거치지 않았다.**

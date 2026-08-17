@@ -16,6 +16,31 @@
 
 ---
 
+## 2026-08-18 08:10 — ENV-01·ENV-02 재검수: "Rust 없음" 이 둘 다 stale — PATH 미등록과 미설치 혼동
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). review-required 대상은 아니지만 완결성을 위해
+  남은 v1 evidence 2건 착수.
+- 스트림: —(환경 기록)
+- 결과: 둘 다 `CHANGES_REQUESTED` — 같은 패턴의 stale 이었다.
+  둘 다 "Rust 툴체인이 없다"고 적었는데, 실제로는 **PATH 에
+  없을 뿐 `.cargo\bin` 에 설치되어 있었다.** 이 개발 기계는
+  `C:\Users\playdata2\.cargo\bin` 에, x600 은
+  `C:\Users\<x600-user>\.cargo\bin` 에 각각 cargo 1.97.1 이 실재함을
+  직접 확인했다 — 코덱스의 read-only 샌드박스는 네트워크가
+  막혀 x600 재접속을 못 했지만, 이 세션은 이미 써 온 SSH 접속으로
+  직접 재확인했다. D-1("Rust 설치를 사용자 결정으로 상신") 결정도
+  둘 다 stale — 설치는 이미 되어 있었고, 남은 문제는 PATH
+  등록이다. ENV-02 는 GPU/드라이버 스펙(RTX 4070 SUPER, driver
+  595.79)도 다시 재서 evidence 기록과 일치함을 재확인했다.
+  base64 전송 방식 limitation 도 그 뒤 `scp` 로 바뀌어 stale —
+  이 세션의 P0-07 재실측이 실제로 `scp` 를 썼다.
+- 검증: `scripts/verify_evidence.py` 재확인. `cargo test --workspace`
+  293/0/0.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 08:00 — coordinator/agent 최소 핸드셰이크 계획서 작성
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
