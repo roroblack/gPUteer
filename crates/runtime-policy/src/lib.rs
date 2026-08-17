@@ -52,16 +52,19 @@ pub use lease_scope::{FenceWatermark, LeaseScopeViolation};
 pub use network::{NetworkDecision, NetworkPolicyCheck, NoFirewallBackend, OsFirewallBackend};
 pub use vram::{HostProtectionClaim, VramEnforcement};
 
-/// 이 계층이 한 정책 필드에 대해 낼 수 있는 세 가지 판정.
-///
-/// ★ 이름 자체가 진실을 말해야 한다 — `CLAUDE.md` §0.4.
-///   "허용" 이 아니라 "이 계층이 그것을 강제할 수 있는가" 를 답한다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnforcementClass {
-    /// 이 프로세스가 스스로 판정하고 실제로 막을 수 있다.
-    Enforceable,
-    /// 정직한 경로에서는 억제하지만 완전히 막지는 못한다.
-    Suppressible,
-    /// 이 계층은 판정할 수 없다.
-    Unenforceable,
-}
+// ══════════════════════════════════════════════════════════════════
+// ★ 2026-08-17 — `EnforcementClass` 를 지웠다 (독립 검수)
+// ══════════════════════════════════════════════════════════════════
+//
+// 처음에는 위 문서의 Enforceable/Suppressible/Unenforceable 3분류를
+// 이 타입 하나로 통일하려 했다. 검수자가 지적했다: 어떤 함수도 이
+// 타입을 반환하거나 갖고 있지 않다 — artifact 는 `Result<(), Violation>`,
+// network 는 `NetworkDecision`, lease 는 `ExternalFencingClass`,
+// vram 은 `VramEnforcement` 를 **각자** 쓴다. 중앙 분류가 실제 판정과
+// 타입으로 연결된 적이 없었다.
+//
+// `CLAUDE.md` §3.3(YAGNI) — 쓰이지 않는 추상화는 세 개의 비슷한
+// enum 보다 나쁘다. 나중에 정말 통일이 필요해지면(예: 모든 판정을
+// 한 로그 포맷으로 내보내야 할 때) 그때 각 모듈의 실제 타입을 보고
+// 다시 설계한다. 3분류 **개념**은 모듈 문서에 남겨 뒀다 — 사라진 것은
+// 그것을 흉내만 내던 죽은 타입이다.

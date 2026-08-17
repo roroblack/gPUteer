@@ -15,6 +15,15 @@
 //! S1(Windows Restricted   임의 네이티브 코드로부터 호스트를 지키지 못한다.
 //!  Native)                "S1 이상이면 안전" 이라는 표현을 쓰지 않는다.
 //! ```
+//!
+//! ★ **이 모듈은 판정 결과를 아무데도 연결하지 않는다** (독립 검수 2026-08-17).
+//!   `guarantees_hard_limit()` 을 실제로 부르는 코드는 이 파일의 테스트
+//!   뿐이다 — Job Object 를 실제로 설정하는 코드는 없다. `windows_commit_cap()`
+//!   도 값만 계산할 뿐 어디에도 적용하지 않는다. **"강제 계층" 이라는
+//!   이름에 속지 않는다** — 지금은 "판단 근거를 코드로 고정해 둔 것"이지
+//!   실행 중인 프로세스에 아무 영향도 주지 않는다.
+//!   `runtime-windows` 가 생기면 그쪽이 이 판정을 부르고 실제로
+//!   `CreateJobObject`/`SetInformationJobObject` 를 호출해야 한다.
 
 /// VRAM 을 실제로 제한할 수 있는가.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

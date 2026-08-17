@@ -2,8 +2,9 @@
 //!
 //! # 강제 가능성 (실측 기반)
 //!
-//! `EnforcementClass::Enforceable` — **OS 방화벽 백엔드가 실제로 있을 때만.**
-//! 백엔드가 없으면 `Unenforceable` 로 떨어지고 **실행을 거부한다.**
+//! **Enforceable — OS 방화벽 백엔드가 실제로 있을 때만.**
+//! 백엔드가 없으면 [`NetworkDecision::NoEnforcementBackend`] 로 떨어지고
+//! **실행을 거부한다** ([`NetworkDecision::permits_execution`] 참조).
 //!
 //! ```text
 //! Windows   프로세스별 방화벽 규칙은 별도 OS 백엔드(WFP/netsh)가 필요하다.
@@ -56,6 +57,23 @@ pub enum NetworkDecision {
     ///   "일단 허용" 이 아니라 실행을 거부하는 것이 안전한 방향이다 —
     ///   CLAUDE.md §0.4, 강제 못 하는 것을 강제한다고 쓰지 않는다.
     NoEnforcementBackend,
+}
+
+impl NetworkDecision {
+    /// ★ 2026-08-17 추가 (독립 검수).
+    ///
+    /// 검수자가 지적했다: `match decision { Denied {..} => reject(), _ => run() }`
+    /// 처럼 `Denied` 만 특별 취급하고 나머지를 catch-all 로 실행 허용하면
+    /// **`NoEnforcementBackend` 도 조용히 실행으로 이어진다.** enum 이름이
+    /// 아무리 정직해도 호출부의 와일드카드 패턴을 막지는 못한다.
+    ///
+    /// 이 메서드는 **`Allowed` 일 때만 `true`** 를 반환한다. 호출부가
+    /// `if decision.permits_execution() { run() } else { reject() }` 형태로
+    /// 쓰면, 새 variant 가 추가돼도(예: 부분 허용) 기본값이 거부 쪽으로
+    /// 안전하게 떨어진다 — `match` 의 catch-all보다 이 형태를 권장한다.
+    pub fn permits_execution(self) -> bool {
+        matches!(self, Self::Allowed)
+    }
 }
 
 pub struct NetworkPolicyCheck<'a> {
@@ -136,5 +154,20 @@ mod tests {
                 host: "evil.example".to_string()
             }
         );
+    }
+
+    /// ★ `permits_execution()` 은 `Allowed` 만 `true` 다 — 독립 검수 반영.
+    #[test]
+    fn only_allowed_permits_execution() {
+        let backend = NoFirewallBackend;
+        let allow = vec!["x".to_string()];
+        let check = NetworkPolicyCheck::new(&allow, &backend);
+
+        assert!(!check.decide("x").permits_execution(), "백엔드 없이도 실행을 허용했다");
+
+        let enforcing = FakeEnforcingBackend;
+        let check2 = NetworkPolicyCheck::new(&allow, &enforcing);
+        assert!(check2.decide("x").permits_execution());
+        assert!(!check2.decide("evil").permits_execution());
     }
 }

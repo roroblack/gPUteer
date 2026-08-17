@@ -16,6 +16,42 @@
 
 ---
 
+## 2026-08-17 21:30 — runtime-policy 독립 검수 반영 (293 tests green)
+
+- 계획: 사용자 지시 — "코덱스로 ㄱ" (앞 세션에서 중단된 runtime-policy 검수 확인)
+- 스트림: Runtime
+- 수행: crates/runtime-policy 5개 파일을 독립 검수(코덱스, read-only)에 맡겼다.
+  "정책 강제 계층이라기보다 일부 문자열 판정과 메모리상 상태 판정" 이라는
+  총평과 함께 **중대 6건**을 찾았다.
+- 발견과 조치:
+  1. [중대] ArtifactPolicy::check() 실제 우회 5종을 검수자가 직접 만들었다 —
+     전각 마침표(U+FF0E) 두 개로 ".." 위장, 키릴 동형 문자, Windows 예약
+     장치명(NUL·CON 등), trailing dot/space. ASCII 전용 강제 + 예약어
+     차단 + trailing dot/space 차단을 추가했다. 뮤테이션(ASCII 검사 제거)
+     이 정확히 그 2건에서만 실패해 공허하지 않음을 확인했다.
+  2. [중대] 빈 문자열/"." 접두사가 check("")·check(".") 를 통과시켰다.
+     생성자에서 의미 없는 접두사를 걸러내고, 빈 요청은 어떤 접두사로도
+     정당화되지 않게 했다.
+  3. [중대] NetworkDecision 의 catch-all 매치가 NoEnforcementBackend 를
+     조용히 "실행 허용" 으로 흘려보낼 수 있었다. permits_execution() 을
+     추가해 Allowed 일 때만 true 를 반환하게 했다 — 이름이 아니라 타입이
+     실수를 막게 한다.
+  4. [중대] FenceWatermark 가 재시작 후 stale epoch 를 통과시키는 정확한
+     시나리오를 검수자가 재현했다. 이미 문서화된 한계였지만 재현 테스트가
+     없었다 — restart_resets_watermark_and_lets_stale_epoch_through 로
+     "이 위험이 아직 존재한다" 를 통과가 곧 그 뜻이 되도록 고정했다.
+     같은 epoch 재사용(<vs<=) 이 의도적임도 별도 테스트로 명시했다.
+  5. [중대] VramEnforcement::guarantees_hard_limit() 을 부르는 곳이
+     테스트 말고 없다 — 죽은 API 라는 지적. 모듈 문서에 "판정만 하고
+     아무데도 연결 안 됐다" 를 명시했다(수정 아님, 정직한 표시).
+  6. [중대] EnforcementClass 를 어떤 모듈도 실제로 안 썼다(각자 자기
+     enum 을 씀) — 문서화되지 않은 사문화. YAGNI 원칙에 따라 **삭제**하고
+     lib.rs 에 삭제 이유를 남겼다.
+- gputeer selftest 4c 절도 permits_execution() 사용으로 갱신. 23개 검사.
+- 검증: `cargo test --workspace` **293 passed / 0 failed**, 빌드 경고 0
+  (3회 연속). runtime-policy 자체 29건(11건 신설).
+- 리포트: 이 이력 항목
+
 ## 2026-08-17 20:10 — framed_ingress 독립 검수 반영 (283 tests green)
 
 - 계획: 사용자 지시 — "코덱스로 ㄱㄱ"

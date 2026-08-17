@@ -436,10 +436,20 @@ pub fn run(dir: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
         let backend = NoFirewallBackend;
         let allow = vec!["pypi.internal.example".to_string()];
         let net = NetworkPolicyCheck::new(&allow, &backend);
+        let decision = net.decide("pypi.internal.example");
         r.check(
             "OS 방화벽 백엔드가 없으면 network 강제를 '모른다' 로 답한다",
-            net.decide("pypi.internal.example") == NetworkDecision::NoEnforcementBackend,
+            decision == NetworkDecision::NoEnforcementBackend,
             "백엔드 없이 허용/거부를 판정했다 — 강제 못 하는 것을 강제한다고 주장한 것이다",
+        );
+        // ★ 2026-08-17 추가 (독립 검수). NoEnforcementBackend 를 checking
+        //   하는 것만으로는 부족하다 — 호출부가 그 값을 catch-all 로
+        //   "실행 허용" 취급할 수 있다는 지적이 있었다. permits_execution()
+        //   이 그 값을 false 로 보고하는지도 함께 확인한다.
+        r.check(
+            "NoEnforcementBackend 는 permits_execution() 이 false 다",
+            !decision.permits_execution(),
+            "강제 불가 상태인데 permits_execution() 이 true 를 반환했다",
         );
 
         // Lease.scope — 우리가 소유한 자원은 Enforceable

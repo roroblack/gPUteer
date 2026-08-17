@@ -163,12 +163,12 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 283 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 293 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치** |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · **실패 마커 · 상태 사이드카 · 동시 GC 경합** |
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류 |
-| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 22개 검사로 통과 |
+| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 23개 검사로 통과 |
 | └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
 | **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). 검수 기록 없는 v1 **13건** 유예 중 |

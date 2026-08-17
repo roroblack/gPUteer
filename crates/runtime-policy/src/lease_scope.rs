@@ -73,6 +73,13 @@ impl FenceWatermark {
     ///
     /// 통과하면 watermark 를 그 값으로 올린다 — 더 높은 epoch 가 낮은
     /// epoch 의 재사용을 막는다. **단조 증가만 허용**한다.
+    ///
+    /// ★ **같은 epoch 재사용은 통과한다** (`<` 비교, `<=` 가 아니다).
+    ///   `signing.md` 의 `fence_epoch` 는 "새 Attempt 생성 시마다 증가"
+    ///   한다 — 즉 **같은 Attempt 의 lease 갱신은 같은 epoch 를 유지한다.**
+    ///   `<=` 로 막으면 정상적인 lease 갱신까지 거부하게 된다.
+    ///   `signer_quota_is_released_by_gc` 류의 replay(같은 요청을
+    ///   반복 전송)는 이 계층이 아니라 replay guard(§10)의 책임이다.
     pub fn check_and_advance(
         &mut self,
         resource: &str,
@@ -161,5 +168,42 @@ mod tests {
     #[test]
     fn watermark_is_not_durable() {
         assert!(!FenceWatermark::new().is_durable());
+    }
+
+    /// ★ 재시작 직후 stale lease 가 통과하는 정확한 시나리오를 고정한다
+    /// (독립 검수 2026-08-17).
+    ///
+    /// 통과가 곧 **"이 위험이 아직 존재한다"** 는 뜻이다 —
+    /// `watermark_is_not_durable` 과 같은 정신으로, 위험을 감추지 않고
+    /// 재현 가능한 반례로 남긴다. 영속 저장소가 생기면 이 테스트는
+    /// (재시작을 실제로 흉내 내는 형태로 바뀌어) 실패해야 정상이다.
+    #[test]
+    fn restart_resets_watermark_and_lets_stale_epoch_through() {
+        // 프로세스 A: epoch 10 을 기록한다.
+        let mut process_a = FenceWatermark::new();
+        process_a.check_and_advance("cas://jobs/1", 10).unwrap();
+        drop(process_a); // 재시작을 흉내 낸다 — 메모리 상태가 사라진다.
+
+        // 프로세스 B: 새 FenceWatermark 는 watermark=0 에서 시작한다.
+        let mut process_b = FenceWatermark::new();
+        let result = process_b.check_and_advance("cas://jobs/1", 3);
+
+        assert!(
+            result.is_ok(),
+            "★ 이 테스트가 실패했다면 재시작을 견디는 저장소가 생겼다는 뜻이다 — \
+             모듈 문서의 '영속화되지 않는다' 절을 갱신하라: {result:?}"
+        );
+    }
+
+    /// 같은 epoch 재사용은 **의도적으로** 통과한다 — lease 갱신이 같은
+    /// epoch 를 유지하기 때문이다. `<=` 로 막으면 정상 갱신이 거부된다.
+    #[test]
+    fn same_epoch_reuse_is_allowed_by_design() {
+        let mut w = FenceWatermark::new();
+        w.check_and_advance("cas://jobs/1", 5).unwrap();
+        assert!(
+            w.check_and_advance("cas://jobs/1", 5).is_ok(),
+            "같은 epoch 재사용(lease 갱신)이 거부됐다 — 의도와 다르다"
+        );
     }
 }
