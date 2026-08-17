@@ -201,3 +201,57 @@ nvidia-smi --query-compute-apps=pid,used_memory
 
 관련: `docs/decisions/ADR-027_windows_jobobject_vram_상한.md`
 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md`
+
+---
+
+## ★ 이후 변경 (2026-08-18 02:00) — claim 정밀화, runtime-policy 와의 관계 명시
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. ★ 이 evidence 는 실제 GPU 하드웨어(x600) 실측이라 이
+세션(Intel Iris Xe, NVIDIA GPU 없음)은 재실측할 수 없다 — 아래
+정정은 코드·문서의 내적 일관성만으로 확인한 것이다.
+
+### claim 을 이렇게 정밀화한다
+
+원래 claim ("소비자 GPU 에는 VRAM quota 를 강제할 수단이 없다")
+은 이 evidence 자신이 뒤에서 찾은 사실(Windows WDDM Job Object 가
+간접적인 총 커밋 상한으로 VRAM 에 영향을 준다, `:116-149`)과
+표면적으로 충돌하는 것처럼 읽힐 수 있다. 실제로는 evidence 본문이
+이미 정밀하게 구분해 뒀다 — "이것은 VRAM quota 가 아니라 총
+커밋 상한이다"(`:169-178`). claim 을 다음처럼 명시한다:
+
+> "**정밀한(hard) VRAM quota 를 강제할 수단은 없다.** Windows
+> WDDM 에서는 Job Object 의 총 커밋 상한으로 **간접** 제한이
+> 가능하지만, 그 상한은 VRAM 전용이 아니라 시스템 RAM 사용량에
+> 따라 흔들리는 코스한(±2GB) 총 커밋 상한이다."
+
+이것은 원래 claim 을 뒤집는 것이 아니라, evidence 본문 자체가
+이미 이렇게 정밀하게 결론 내렸다는 것을 frontmatter `claim` 필드에도
+반영하는 것이다.
+
+### negative_tests/프로브 이름은 실재 확인됨
+
+`tools/probes/p0_06_vram_enforcement.py:99,172,263,323` 와
+`tools/probes/p0_06b_jobobject_vram_sweep.py:38-68`(5×5 sweep) 전부
+확인했다.
+
+### runtime-policy 크레이트와의 관계 (새 limitation)
+
+이 evidence 이후 `crates/runtime-policy` 크레이트가 신설되어
+VRAM 판정을 `VramEnforcement`/`HostProtectionClaim` 으로 분류한다
+(`crates/runtime-policy/src/vram.rs`). ★ **그 크레이트는 판정만
+하고 실제 Job Object 를 생성·설정하지 않는다** — 이 evidence 의
+OS 호출(`CreateJobObject`/`SetInformationJobObject`)은 여전히
+독립 Python probe 에서만 수행됐고, Rust 코드에는 연결된 적이
+없다(`crates/runtime-policy/src/vram.rs:19-26`,
+`crates/runtime-policy/src/lib.rs:36-43`). 이 limitation 을
+추가한다.
+
+기존 limitation(코스한 상한·Windows 전용·VRAM quota 아닌 총 커밋
+상한 등, `:65-73`)은 지금도 유효하다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 정밀화와 runtime-policy
+관계를 반영했다. 원본 YAML 은 당시 기록이므로 고치지 않는다.
+**이 정정 자체는 아직 재검수를 거치지 않았다.**

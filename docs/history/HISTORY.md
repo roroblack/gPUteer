@@ -16,6 +16,37 @@
 
 ---
 
+## 2026-08-18 02:00 — P0-06·P0-07 1라운드 정정 — P0-07 에서 raw_output/artifact 수치 불일치 발견
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). `RULE.md` §7.3 review-required v1 evidence 의
+  **마지막 2건**.
+- 스트림: Runtime
+- 결과: 둘 다 `CHANGES_REQUESTED`.
+  - P0-06: claim("VRAM quota 강제 수단이 없다")이 evidence 본문
+    자신이 찾은 사실(Windows Job Object 의 간접 총 커밋 상한)과
+    표면적으로 충돌하는 것처럼 읽혔다 — "정밀한 hard VRAM quota
+    는 없지만 코스한 간접 제한은 가능하다"로 명시했다.
+    `runtime-policy` 크레이트가 VRAM 판정을 분류하지만 실제
+    Job Object 를 생성·설정하지는 않는다는 limitation 을 추가했다.
+  - P0-07: ★ **claim 범위 문제보다 심각한 것을 찾았다** — 이
+    문서의 frontmatter `raw_output` 요약과 링크된
+    `docs/evidence/_raw/P0-07_probe.txt` 원문의 **숫자가 서로
+    다르다**(σ=0.0208 vs 0.0184, RUN2 최대오차 9.3% vs 6.1% 등).
+    둘 다 DoD(σ<=0.20) 는 통과해 최종 판정(PASS)은 안 바뀌지만,
+    이 문서에 적힌 구체적 수치를 그대로 신뢰할 수 없다는 뜻이다.
+    재실측 없이는 어느 쪽이 맞는지 판별할 수 없어 **불일치 사실
+    자체를 정직하게 기록**했다 — 임의로 하나를 골라 조용히
+    통일하지 않았다. `P0-07b`(노드 간 외삽) 후속 검증도
+    `P0-01b` 와 마찬가지로 저장소에 실제로 존재하지 않는다는
+    것을 확인했다.
+  - 둘 다 원본 YAML 은 당시 기록이므로 고치지 않고 append-only
+    로 정정했다.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 01:50 — P0-03a 도 3라운드 만에 ACCEPTED — v1 evidence 12건 addendum ACCEPTED 누적
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
