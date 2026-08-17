@@ -16,6 +16,23 @@
 
 ---
 
+## 2026-08-18 00:50 — DoD-07 도 2라운드 만에 ACCEPTED — v1 evidence 8건 addendum ACCEPTED 누적
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속).
+- 스트림: Crypto
+- 결과: **`ACCEPTED`.** vectors 40건·`evidence_has_no_replay_defense_and_says_so`
+  함수명·`DurableReplayGuard`/`PersistentKeyring` 인용을 전부 직접
+  열어 재확인했다. `HISTORY.md` 인용도 제목 기반으로 바뀌어 문제
+  없었다.
+- 누적: 지금까지 `DoD-02`·`DoD-03`·`DoD-04`·`DoD-05`·`DoD-06`·`DoD-07`·
+  `DoD-08`·`P0-03` **8건**의 addendum 이 독립 재검수 `ACCEPTED` 를
+  받았다. 나머지 v1 evidence 는 **5건**.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 00:40 — DoD-08 1라운드 만에 ACCEPTED, DoD-07 1라운드 정정
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"

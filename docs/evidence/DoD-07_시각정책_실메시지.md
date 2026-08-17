@@ -349,4 +349,10 @@ Evidence 6종·`observed_at`·`ExecutionGrant`/`RenewLeaseRequest` 단수명
 
 `CHANGES_REQUESTED` → 위 정정으로 vectors·negative_tests 이름·
 stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
-않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
+않는다.
+
+★ 2026-08-18 00:50 두 번째(최종) 재검수 — `agent:codex-cli` 가
+**`ACCEPTED`** 로 판정했다. vectors 40건, `evidence_has_no_replay_defense_and_says_so`
+함수명, `DurableReplayGuard`·`PersistentKeyring` 인용을 전부 직접
+열어 재확인했다. `HISTORY.md` 인용도 이번엔 줄 번호가 아니라 제목
+기반이라 문제없다고 확인했다.
