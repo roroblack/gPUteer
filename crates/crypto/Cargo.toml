@@ -8,6 +8,15 @@ license.workspace = true
 [dependencies]
 gputeer-protocol = { path = "../protocol" }
 ed25519-dalek.workspace = true
+rusqlite.workspace = true
+blake3.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+] }
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true

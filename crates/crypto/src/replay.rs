@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use gputeer_protocol::canonical::Domain;
-use gputeer_protocol::signing::{ReplayDecision, ReplayGuard, ReplayStoreError};
+use gputeer_protocol::signing::{ReplayDecision, ReplayGuard, ReplayStoreError, NONCE_LEN};
 
 /// §10 — 기본 상한. 도달하면 **축출이 아니라 거부**한다.
 ///
@@ -143,7 +143,32 @@ impl InMemoryReplayGuard {
     }
 
     /// 전역 상한과 서명자별 상한을 따로 정한다.
+    /// ★ 상한이 0이면 **거부한다** (독립 검수 2026-08-17).
+    ///
+    /// 영속 구현은 `open_with_capacities` 에서 0을 오류로 거부한다.
+    /// 메모리 구현만 조용히 받아들이면 **두 구현이 다른 계약**을 갖는다.
+    /// 같은 입력에 다른 답을 내는 guard 는 계약이 아니다.
+    pub fn try_with_capacities(
+        capacity: usize,
+        per_signer_capacity: usize,
+    ) -> Result<Self, ReplayStoreError> {
+        if capacity == 0 || per_signer_capacity == 0 {
+            return Err(ReplayStoreError::Io(
+                "replay 캐시 상한은 1 이상이어야 한다".into(),
+            ));
+        }
+        Ok(Self::with_capacities(capacity, per_signer_capacity))
+    }
+
+    /// # Panics
+    ///
+    /// 상한이 0이면 패닉한다. 프로그래밍 오류이므로 조용히 넘기지 않는다.
+    /// 오류로 다루려면 [`Self::try_with_capacities`] 를 쓴다.
     pub fn with_capacities(capacity: usize, per_signer_capacity: usize) -> Self {
+        assert!(
+            capacity > 0 && per_signer_capacity > 0,
+            "replay 캐시 상한은 1 이상이어야 한다 (capacity={capacity}, per_signer={per_signer_capacity})"
+        );
         Self {
             seen: HashMap::new(),
             capacity,
@@ -258,6 +283,14 @@ impl ReplayGuard for InMemoryReplayGuard {
         nonce: &[u8],
         retain_until_ms: u64,
     ) -> Result<ReplayDecision, ReplayStoreError> {
+        // ★ §10 — nonce 는 CSPRNG 16바이트여야 한다 (독립 검수 2026-08-17).
+        //   전에는 메모리 구현만 이 검사가 **없었다.**
+        //   15바이트 nonce 를 영속 구현은 거부하고 메모리 구현은 Fresh 로 받았다.
+        //   같은 입력에 다른 답을 내면 그것은 계약이 아니다.
+        if nonce.len() != NONCE_LEN {
+            return Err(ReplayStoreError::InvalidNonce { len: nonce.len() });
+        }
+
         // §10 — 키는 (sender_device_id, domain_tag, nonce).
         // device 별 namespace 가 없으면 한 device 가 다른 device 의
         // nonce 공간을 소진시킬 수 있다.

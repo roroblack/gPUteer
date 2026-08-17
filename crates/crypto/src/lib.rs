@@ -15,14 +15,31 @@
 //! **`crates/protocol` 은 암호 라이브러리에 의존하지 않는다.**
 //! 그래야 서명 알고리즘을 바꿔도 프로토콜 규범이 흔들리지 않는다.
 //!
-//! # 아직 하지 않은 것
+//! # 영속 구현과 메모리 구현
 //!
-//! `signing.md` §11(키 보관 K0~K2)은 미구현이다.
-//! [`InMemoryKeyring`] 과 [`InMemoryReplayGuard`] 는 **테스트와 초기 통합용**이며
-//! 운영에 쓰면 안 된다 — 둘 다 프로세스가 죽으면 사라진다.
+//! ```text
+//! InMemoryReplayGuard   프로세스가 죽으면 캐시가 빈다 — is_durable() == false
+//! DurableReplayGuard    SQLite. 재시작을 견딘다 — is_durable() 이 실제 경로에서 도출된다
+//!
+//! InMemoryKeyring       프로세스가 죽으면 사라진다. 폐기·회전 개념이 없다
+//! FileKeyring           §11 K0/K1. ★ K1(DPAPI)은 **Windows 전용**이다
+//! ```
+//!
+//! # ★ 아직 하지 않은 것
+//!
+//! - §11 K2 (TPM 2.0 / Secure Enclave 비수출 키) — 미구현
+//! - Linux 의 OS 보호 저장소 — 미구현. `UnsupportedPlatform` 으로 **명시적으로 실패**한다
+//!   (조용히 K0 로 내려가면 보호 등급이 낮아진 것을 아무도 모른다)
 
+pub mod durable_replay;
+pub mod keyring;
 pub mod replay;
 
+pub use durable_replay::DurableReplayGuard;
+pub use keyring::{
+    KeyDirectoryStatus, KeyDirectoryView, KeyProtection, KeyringError, PersistentKeyring,
+    PlaintextPolicy, SecretSigningKey,
+};
 pub use replay::{InMemoryReplayGuard, DEFAULT_CAPACITY};
 
 use std::collections::HashMap;
@@ -49,6 +66,40 @@ pub fn sign<M: Signable + ?Sized>(key: &SigningKey, msg: &M) -> [u8; 64] {
 /// `None` 을 반환하면 `UnknownSigner` 가 된다.
 pub trait KeyDirectory {
     fn lookup(&self, signer_id: &str) -> Option<VerifyingKey>;
+
+    /// ★ 회전 grace period 처럼 **한 signer_id 에 여러 키가 동시에 유효**할 때 쓴다.
+    ///
+    /// `lookup()` 하나로는 회전을 표현할 수 없다 —
+    /// 옛 키로 서명된 메시지가 아직 도착 중일 수 있기 때문이다.
+    ///
+    /// 기본 구현은 `lookup()` 결과 하나만 반환한다.
+    /// 회전을 모르는 구현체는 그대로 동작한다.
+    fn lookup_candidates(&self, signer_id: &str) -> Vec<VerifyingKey> {
+        self.lookup(signer_id).into_iter().collect()
+    }
+
+    /// ★ **더 이상 유효하지 않은** 키들 (폐기됨 · 회전으로 물러남 · 만료).
+    ///
+    /// # 왜 필요한가 (2026-08-17)
+    ///
+    /// 회전 grace period 가 끝난 뒤 구 키로 서명된 메시지가 도착하면,
+    /// 활성 키로는 검증이 안 되므로 `InvalidSignature` 가 나온다.
+    /// 그 오류의 뜻은 **"위조되었거나 전송 중 변조되었다"** 이다.
+    ///
+    /// **사실이 아니다.** 서명은 진짜고, 키가 물러났을 뿐이다.
+    /// `CLAUDE.md` §3 — "오류 메시지가 사실을 잘못 전하지 않게 한다."
+    /// (stale lease 를 "서명 실패" 로 보고해 한참 헤맨 전례가 있다.)
+    ///
+    /// 이 목록에서 검증되면 `UnknownSigner` 로 보고한다 —
+    /// 그 설명이 "팀 멤버가 아니거나 **키가 폐기되었다**" 이기 때문이다.
+    ///
+    /// ★ **여전히 정확하지 않다.** "이 키는 물러났다" 를 그대로 말하는
+    ///   `VerifyOutcome` 값이 없다. 추가하려면 `RULE.md` §3.5 의 5단계
+    ///   (proto 수정 -> schema_version 증가 -> 벡터 재생성 -> 구현 -> negative test)를
+    ///   밟아야 한다. 지금은 가장 덜 틀린 값을 쓰고 이 사실을 적어 둔다.
+    fn lookup_retired(&self, _signer_id: &str) -> Vec<VerifyingKey> {
+        Vec::new()
+    }
 }
 
 /// `signing.md` §8-5 · §8-6 의 Ed25519 구현.
@@ -75,13 +126,31 @@ impl<D: KeyDirectory> SignatureVerifier for Ed25519Verifier<D> {
             .try_into()
             .map_err(|_| VerifyOutcome::InvalidSignature)?;
 
-        let key = self
-            .directory
-            .lookup(signer_id)
-            .ok_or(VerifyOutcome::UnknownSigner)?;
+        // ★ 회전 중에는 후보가 둘일 수 있다 (구 키 · 신 키).
+        //   하나만 보면 회전 중 도착한 옛 서명을 InvalidSignature 로 오보한다 —
+        //   `CLAUDE.md` §3, "오류 메시지가 사실을 잘못 전하지 않게 한다."
+        let keys = self.directory.lookup_candidates(signer_id);
+        if keys.is_empty() {
+            return Err(VerifyOutcome::UnknownSigner);
+        }
 
-        key.verify(message, &Signature::from_bytes(&sig_array))
-            .map_err(|_| VerifyOutcome::InvalidSignature)
+        let signature = Signature::from_bytes(&sig_array);
+        if keys.iter().any(|k| k.verify(message, &signature).is_ok()) {
+            return Ok(());
+        }
+
+        // ★ 물러난 키로 서명된 것인가 — 위조와 구분한다.
+        //   구분하지 않으면 정상적인 회전 지연을 "위조" 로 보고하게 된다.
+        if self
+            .directory
+            .lookup_retired(signer_id)
+            .iter()
+            .any(|k| k.verify(message, &signature).is_ok())
+        {
+            return Err(VerifyOutcome::UnknownSigner);
+        }
+
+        Err(VerifyOutcome::InvalidSignature)
     }
 }
 
@@ -129,5 +198,13 @@ impl KeyDirectory for InMemoryKeyring {
 impl<T: KeyDirectory + ?Sized> KeyDirectory for &T {
     fn lookup(&self, signer_id: &str) -> Option<VerifyingKey> {
         (**self).lookup(signer_id)
+    }
+
+    fn lookup_candidates(&self, signer_id: &str) -> Vec<VerifyingKey> {
+        (**self).lookup_candidates(signer_id)
+    }
+
+    fn lookup_retired(&self, signer_id: &str) -> Vec<VerifyingKey> {
+        (**self).lookup_retired(signer_id)
     }
 }

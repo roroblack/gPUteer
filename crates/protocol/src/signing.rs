@@ -425,6 +425,17 @@ pub enum ReplayStoreError {
     /// §10 상한에 도달했다. **축출이 아니라 거부**가 안전한 방향이다 —
     /// 미만료 nonce 를 밀어내면 replay 창이 열린다.
     CacheFull,
+    /// ★ nonce 가 §10 이 요구하는 길이가 아니다 (독립 검수 2026-08-17).
+    ///
+    /// # 왜 `Io` 가 아닌가
+    ///
+    /// 초안은 이것을 `Io` 로 보고했다. `Io` 의 뜻은
+    /// **"상대 문제가 아니라 우리 쪽 장애다"** 이다.
+    ///
+    /// 길이가 틀린 nonce 는 **디스크 장애가 아니라 입력 위반**이다.
+    /// 둘을 섞으면 운영자가 malformed request 를 디스크 고장으로 읽는다 —
+    /// `CLAUDE.md` §3, "오류 메시지가 사실을 잘못 전하지 않게 한다."
+    InvalidNonce { len: usize },
     /// ★ 한 서명자가 자기 몫을 다 썼다 (독립 검수 2026-08-17).
     ///
     /// 전역 상한만 있으면 **한 device 가 캐시를 다 차지해 다른 모든
@@ -441,6 +452,9 @@ impl ReplayStoreError {
             Self::LockTimeout => "replay 저장소 락 대기 초과 — 동시 검증이 몰렸거나 락이 걸렸다",
             Self::CacheFull => {
                 "replay 캐시 포화 — 미만료 nonce 를 축출하지 않고 거부했다. 과부하 신호다"
+            }
+            Self::InvalidNonce { .. } => {
+                "nonce 길이가 §10 규정과 다르다 — 저장소 장애가 아니라 입력 위반이다"
             }
             Self::SignerQuotaExceeded { .. } => {
                 "이 서명자가 replay 캐시 할당량을 다 썼다 — 다른 서명자는 영향받지 않는다"
