@@ -1,7 +1,7 @@
 ---
 id: P0-07
 claim: "기준선 §12.3 Stage-2 의 50-step calibration 이 전체 실행시간을 상대오차 σ <= 0.20 으로 예측한다"
-status: PASS
+status: INCONCLUSIVE
 commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
 binary_digests:
   probe_path: "tools/probes/p0_07_runtime_estimation.py"
@@ -224,11 +224,28 @@ RUN3 종합 최대|오차|     1.2%                     4.0%
 ### 이 절이 하는 일과 하지 않는 일
 
 - **하는 일**: 불일치가 존재한다는 사실을 정직하게 기록한다.
-  `decision`(PASS, σ=0.021, ADR-007 유지)은 두 수치 집합 중
-  **어느 쪽을 써도 결론이 바뀌지 않으므로** 그대로 둔다.
 - **하지 않는 일**: 어느 수치가 "맞는" 것인지 임의로 고르거나
   조용히 하나로 통일하지 않는다. 재실측 없이 그렇게 하면 새로운
   거짓 정확성을 만드는 것이다.
+
+★ 2026-08-18 02:15 정정 — 처음엔 "두 수치 집합 다 DoD 를 통과하니
+`decision`(PASS) 은 그대로 둔다"고 적었다. 재검수가 이것을
+지적했다: `RULE.md` §7.1 은 `INCONCLUSIVE` 를 "측정은 했으나 판정
+불가"로 정의한다 — 지금 이 evidence 가 정확히 그 상태다. 어느
+숫자가 실제 측정값인지 판별할 수 없다면, 그 판별 불가 자체가 곧
+"판정 불가"이지 "결론이 안 바뀌니 PASS 유지"가 아니다. **frontmatter
+의 `status` 필드를 `PASS` 에서 `INCONCLUSIVE` 로 정정했다** — 이
+문서에서 원본 YAML 을 건드린 유일한 경우다. `claim`·`raw_output`·
+`decision`·`negative_tests`·`limitations` 등 나머지 필드는 당시
+기록 그대로 보존한다. `status` 는 관측이 아니라 그 관측에 대한
+판정이므로, 판정 근거(raw_output 신뢰성)가 무너지면 판정도 같이
+정정하는 것이 옳다고 판단했다 — `claim` 이나 `raw_output` 자체를
+고치는 것과는 다르다.
+
+이 정정 이후 `decision`(PASS 유지, ADR-007 불변)도 재검토가
+필요하다 — **다만 그 재검토는 실제 재실측 뒤에 하는 것이 맞다.**
+지금 이 세션은 GPU 하드웨어가 없어 재실측할 수 없으므로, decision
+텍스트 자체는 당시 기록으로 남겨 두고 이 사실만 명시한다.
 
 ### claim 을 이렇게 좁혀 읽는다
 
@@ -256,7 +273,15 @@ decision 이 "노드 간 외삽 오차는 P0-07b 로 분리한다"고 적었지�
 
 ### review_outcome
 
-`CHANGES_REQUESTED` → 위 정정으로 claim 범위를 좁히고, raw_output
-불일치와 P0-07b 미착수를 정직하게 기록했다. 원본 YAML 은 당시
-기록이므로 고치지 않는다. **이 정정 자체는 아직 재검수를 거치지
-않았다. raw_output 수치 불일치는 재실측 전까지 미해결로 남는다.**
+★ 2026-08-18 02:00 최초 정정에는 `CHANGES_REQUESTED` — claim 범위를
+좁히고 raw_output 불일치·P0-07b 미착수를 기록했지만, "두 수치
+모두 DoD 통과이니 PASS 유지"라고 판단한 것 자체가 `RULE.md` §7.1
+기준으로 틀렸다는 지적을 받았다.
+
+★ 2026-08-18 02:15 두 번째 재검수 대비 정정 — `status` 를 `PASS`
+에서 `INCONCLUSIVE` 로 바꿨다(위 "하는 일과 하지 않는 일" 절 참조).
+`scripts/verify_evidence.py` 로 프론트매터가 여전히 유효하게
+파싱되고 `INCONCLUSIVE` 로 정확히 집계됨을 확인했다(PASS 계상
+17→16건으로 줄었다). 이 세 번째 수정 자체는 아직 재검수를 거치지
+않았다. raw_output 수치 불일치는 재실측 전까지 미해결로 남는다 —
+GPU 하드웨어(x600) 접근이 필요하다.

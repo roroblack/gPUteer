@@ -225,9 +225,14 @@ nvidia-smi --query-compute-apps=pid,used_memory
 > 가능하지만, 그 상한은 VRAM 전용이 아니라 시스템 RAM 사용량에
 > 따라 흔들리는 코스한(±2GB) 총 커밋 상한이다."
 
-이것은 원래 claim 을 뒤집는 것이 아니라, evidence 본문 자체가
-이미 이렇게 정밀하게 결론 내렸다는 것을 frontmatter `claim` 필드에도
-반영하는 것이다.
+★ 2026-08-18 02:15 정정 — 처음엔 "frontmatter `claim` 필드에도
+반영한다"고 적었는데 **거짓이었다**(재검수가 지적했다) — frontmatter
+의 `claim` 은 실제로 고치지 않았다. 정확히 말하면: 이것은 원래
+claim 을 뒤집는 것이 아니라, evidence 본문 자체가 이미 이렇게
+정밀하게 결론 내렸다는 것을 **이 addendum 이 명시적으로 해석해
+보여주는 것**이다 — frontmatter `claim`(`:3`)은 당시 기록 그대로
+남아 있고, 이 addendum 이 그것을 어떻게 좁혀 읽어야 하는지를
+알려줄 뿐이다.
 
 ### negative_tests/프로브 이름은 실재 확인됨
 
@@ -252,6 +257,14 @@ OS 호출(`CreateJobObject`/`SetInformationJobObject`)은 여전히
 
 ### review_outcome
 
-`CHANGES_REQUESTED` → 위 정정으로 claim 정밀화와 runtime-policy
-관계를 반영했다. 원본 YAML 은 당시 기록이므로 고치지 않는다.
-**이 정정 자체는 아직 재검수를 거치지 않았다.**
+★ 2026-08-18 02:00 최초 정정 `CHANGES_REQUESTED` → claim 정밀화와
+runtime-policy 관계를 반영했다. 원본 YAML 은 당시 기록이므로
+고치지 않는다.
+
+★ 2026-08-18 02:15 두 번째 재검수 — `agent:codex-cli` 가 인용은
+전부 실재를 확인했지만 "frontmatter 에도 반영했다"는 문장이
+거짓이라고 지적했다(실제로는 addendum 의 해석일 뿐, `claim` 필드
+자체는 안 고쳤다). 위에서 "이 addendum 이 명시적으로 해석해
+보여주는 것"으로 고쳤다. `status: FAIL-SCOPE` 는 본문 결론과
+이미 일치하므로 바꾸지 않는다(재검수도 이 점은 동의했다). 이
+세 번째 수정 자체는 아직 재검수를 거치지 않았다.

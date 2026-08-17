@@ -16,6 +16,39 @@
 
 ---
 
+## 2026-08-18 02:15 — P0-07 의 status 를 PASS → INCONCLUSIVE 로 정정
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). 2라운드 재검수 반영.
+- 스트림: Runtime
+- 결과: 둘 다 여전히 `CHANGES_REQUESTED` — 이번 라운드는 더
+  근본적인 지적이었다.
+  - **P0-07**: 재검수가 raw_output 불일치 표 자체는 정확하다고
+    확인했지만, "두 수치 다 DoD 통과이니 PASS 유지"라는 판단이
+    `RULE.md` §7.1 기준으로 틀렸다고 지적했다 — `INCONCLUSIVE`
+    ("측정은 했으나 판정 불가")가 정확히 이 상황을 위한 상태값이다.
+    ★ **`status` 필드를 `PASS` 에서 `INCONCLUSIVE` 로 정정했다** —
+    이번 v1-evidence 재검수 사이클 전체에서 frontmatter 를 실제로
+    고친 유일한 경우다. `claim`·`raw_output`·`decision` 등 나머지는
+    당시 기록 그대로 보존했다 — `status` 는 관측이 아니라 그
+    관측에 대한 판정이므로, 판정 근거(raw_output 신뢰성)가
+    무너지면 판정도 정정하는 것이 옳다고 판단했다. YAML 안에
+    inline 주석(`#`)을 달았다가 `verify_evidence.py` 의 최소
+    파서가 그것까지 값으로 먹어버릴 뻔한 것을 스스로 잡아
+    수정했다 — 설명은 frontmatter 밖(본문 addendum)으로 옮겼다.
+    `scripts/verify_evidence.py` 로 재확인: PASS 계상 17→16건,
+    파싱 오류 없음.
+  - **P0-06**: "frontmatter claim 에도 반영했다"는 문장이 거짓이었다
+    (재검수가 지적 — 실제로는 addendum 의 해석일 뿐 `claim` 필드는
+    안 고쳤다). "이 addendum 이 명시적으로 해석해 보여주는 것"으로
+    정정했다.
+- 검증: `scripts/verify_evidence.py` 로 두 evidence 파일의 frontmatter
+  가 여전히 유효 파싱됨을 확인. `cargo test --workspace` 293/0/0
+  재확인(코드 변경 없음).
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 02:00 — P0-06·P0-07 1라운드 정정 — P0-07 에서 raw_output/artifact 수치 불일치 발견
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"

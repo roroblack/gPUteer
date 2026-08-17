@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 02:00)
+## 5. 지금 상태 (2026-08-18 02:15)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -170,8 +170,8 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류 |
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함 |
 | └ 미착수 | coordinator · agent · scheduler · UI · 실제 시스템 호출(OS 방화벽 등) |
-| **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). v1 **16건** 중 — `DoD-` 8건 전부 + `P0-01`·`P0-03`·`P0-03a`·`P0-08` = **12건 addendum ACCEPTED**, `P0-06`·`P0-07` 1라운드 정정 후 **재검수 진행 중**(review-required 대상 중 마지막 2건). ACCEPTED 는 정정 절(addendum)에 한정 — frontmatter 를 schema v2 로 올리는 작업은 아직 안 함. ★ `P0-07` 에서 raw_output 요약과 `_raw` 원문의 **수치 불일치** 발견 — 재실측 전까지 미해결(아래 공백 목록 참조) |
+| **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ⚠️**INCONCLUSIVE**(2026-08-18 정정 — raw_output/artifact 수치 불일치, 재실측 전까지) · 08 ✅ / 02·04·04b·05 미실행 |
+| **DoD** | 🟡 **evidence 18건** (PASS **16** · FAIL-SCOPE 1 · **INCONCLUSIVE 1**(P0-07, 2026-08-18 정정)). 스키마 위반 0. schema v2 **2건**(DoD-09·10). v1 **16건** 중 — `DoD-` 8건 전부 + `P0-01`·`P0-03`·`P0-03a`·`P0-08` = **12건 addendum ACCEPTED**, `P0-06`·`P0-07` 2라운드 정정 후 **재검수 진행 중**(review-required 대상 중 마지막 2건). ACCEPTED 는 정정 절(addendum)에 한정 — frontmatter 를 schema v2 로 올리는 작업은 아직 안 함. ★ `P0-07` 은 raw_output 요약과 `_raw` 원문의 **수치 불일치**로 `status` 를 `PASS`→`INCONCLUSIVE` 로 정정했다 — 이 세션에서 frontmatter 를 실제로 고친 유일한 사례. 재실측(x600, GPU 필요) 전까지 미해결(아래 공백 목록 참조) |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
@@ -227,9 +227,12 @@ evidence 16건 중 12건은 addendum 이 독립 재검수 ACCEPTED 를 받았지
 
 ★ P0-07 evidence 문서의 raw_output 요약과 _raw 원문 artifact 의
   **숫자가 서로 다르다** (2026-08-18 재검수에서 발견). σ=0.0208 vs
-  0.0184 등 — 둘 다 DoD 통과라 최종 판정은 안 바뀌지만, 이 문서에
-  적힌 구체적 수치는 신뢰할 수 없다. GPU 하드웨어(x600) 재실측
-  전까지는 해결할 수 없다 — 이 개발 기계엔 NVIDIA GPU 가 없다.
+  0.0184 등. `status` 를 `PASS` 에서 `INCONCLUSIVE` 로 정정했다 —
+  "둘 다 DoD 통과니 결론은 안 바뀐다"는 처음 판단 자체가 틀렸었다
+  (RULE.md §7.1: 판정 불가는 INCONCLUSIVE 다, PASS 유지가 아니다).
+  GPU 하드웨어(x600) 재실측 전까지는 해결할 수 없다 — 이 개발
+  기계엔 NVIDIA GPU 가 없다. **다음 세션에서 x600 SSH 로 재실측하고
+  σ 를 재산출해야 한다.**
 
 Linux 를 한 번도 돌려보지 않았다
   v0.1 주 타깃이 Linux 컨테이너 워커인데 검증 환경이 없다.  -> D-3
