@@ -167,3 +167,63 @@ fsync(dir)    플랫폼별 구현 (POSIX: fsync / Windows: BACKUP_SEMANTICS + �
 
 관련: `docs/decisions/ADR-026_체크포인트_확정_절차_플랫폼_차이.md`
 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S1
+
+---
+
+## ★ 이후 변경 (2026-08-18 01:30) — claim 을 "원래 절차 실패 확인 + ADR-026 도출"로 명시, limitation 1건 정정
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수했다. **문자
+그대로의 조사 claim(원래 절차를 실측했다)은 참**이지만, "원래
+절차가 Windows 에서 성립한다"는 뜻으로 읽으면 거짓이다 — 이
+evidence 자체가 P1b/P1c/P1d 에서 열린 대상 파일의 replace 가
+실패하고, P2 는 쓰기 권한을 추가해야만 `FlushFileBuffers` 가
+성공했음을 실측으로 보였다(`P0-03a:16-52`). 그래서 claim 은
+아래처럼 명시적으로 읽는다:
+
+> "Windows/NTFS 실측에서 기존 확정 파일의 replace 는 실패할 수
+> 있고, 디렉터리 flush 에는 쓰기 권한이 필요함을 확인했다. 이에
+> ADR-026 의 write-once 데이터·재시도 가능한 포인터 replace·
+> 플랫폼별 `sync_dir` 수정안을 도출했다."
+
+### ADR-026 수정안이 지금 코드에 반영되어 있다
+
+- 데이터 파일: `write_once` — tmp 기록·`sync_all`·기존 대상 없는
+  rename·`sync_dir`(`crates/checkpoint/src/atomic.rs:117-191`)
+- 포인터 파일: `replace_with_retry` 지수 백오프(`atomic.rs:194-255`)
+- Windows `sync_dir`: `GENERIC_READ|WRITE` + `FILE_FLAG_BACKUP_SEMANTICS`(`atomic.rs:258-283`)
+- writer 경로도 데이터·매니페스트엔 `write_once`, 포인터엔
+  replace 를 쓴다(`crates/checkpoint/src/writer.rs:100-135`)
+
+### negative_tests/프로브 이름은 전부 실재 확인됨
+
+`P1b`·`P1d`·`P2`·`P3` 전부 evidence·현재 Python 프로브·raw
+artifact 에서 확인했다(`tools/probes/windows_fs_atomicity.py:148-183,225-344,356-428,455-478`,
+`docs/evidence/_raw/P0-03a_probe.txt:11-56`).
+
+### stale limitation
+
+"Rust `std::fs` 의 공유 모드 기본값은 별도 확인이 필요하다"(`:63`)
+는 ★ stale 이다. 그 뒤 실제로 확인됐다 — Rust `File::open` 은
+Windows 에서 `FILE_SHARE_DELETE` 를 **포함**한다(`crates/checkpoint/tests/write_failure.rs:5-20`
+모듈 문서). 이 사실은 처음에 **역방향으로** 발견됐다 — 옛 실패
+주입 테스트가 "핸들을 점유하면 rename 이 실패한다"는 가정에
+기댔는데, 그 가정 자체가 틀려서 실패 주입이 무효였다(테스트가
+스스로 "성공하면 실패 주입이 무효하다" 단언을 넣어 뒀던 덕에
+잡혔다). 지금은 `LATEST` 를 디렉터리로 만들어 플랫폼 독립적으로
+실패를 주입한다. 이 재확인 자체가 **당시 P0-03a 가 "별도 확인이
+필요하다"고 정직하게 남겨 둔 미검증 항목이 나중에 실제로 뒤집힌
+사례**다 — 원래 문서에 적혔던 "문서상 FILE_SHARE_DELETE 를 포함하나
+실측하지 않았다"는 추측이 맞았던 것으로 확인됐다.
+
+★ 이 후속 확인 자체를 이 세션이 다시 재현하지는 않았다 — `crates/checkpoint/tests/durability_chaos.rs:29-86,361-384`
+와 `write_failure.rs` 가 그 재확인을 담은 테스트라는 것만
+소스에서 확인했다. fresh 재실행은 확인 안 됨.
+
+나머지 limitation(NTFS 한정·P1c 원인 미규명·전원 차단 미검증·단일
+기계 측정·durability contract 범위 제외)은 지금도 유효하다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 명시·stale limitation·
+ADR-026 반영 사실을 담았다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**

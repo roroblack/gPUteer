@@ -169,3 +169,52 @@ x600 에는 `~/.ssh` 가 없어 SSH 키는 대상에서 빠졌다.
 
 관련: `docs/decisions/ADR-026_...md` 는 무관. ADR-005 는 기준선 §38 참조.
 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md`
+
+---
+
+## ★ 이후 변경 (2026-08-18 01:30) — claim 범위 초과, 후속 검증(P0-01b) 미완
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. ★ 이 evidence 는 실제 NVIDIA GPU 하드웨어 실측이라
+**이 세션(개발 기계는 Intel Iris Xe, NVIDIA GPU 없음)은 재실측할
+수 없다** — 아래 정정은 코드·문서의 내적 일관성만으로 확인한
+것이고, 하드웨어 재현은 확인 안 됨으로 명시한다.
+
+### claim 을 이렇게 좁혀 읽는다
+
+원래 claim 은 "S1(Restricted Native) 격리가 성립한다"로 넓게
+읽힌다. 실제로 시험한 것은:
+
+- 토큰: `CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)` 만 적용했다
+  (`tools/probes/p0_01_windows_s1_cuda.py:142-156`). 관리자 SID
+  비활성·제한 SID(restricted SID) 는 시험하지 않았다.
+- 프로세스: Job Object 에 **단일** Python 프로세스만 넣었다
+  (`tools/probes/p0_01_windows_s1_cuda.py:281-289`). 자식·손자
+  프로세스 트리는 검증하지 않았다.
+
+> claim 은 "시험한 단일 호스트에서, privilege-strip 토큰 하나
+> (`DISABLE_MAX_PRIVILEGE`)를 적용한 **단일** CUDA 프로세스의
+> 초기화·연산과 Job Object 종료 후 VRAM 회수가 관측됐다"로 좁혀
+> 읽는다. "완전한 S1 경로가 성립한다"는 더 넓은 주장이다.
+
+### negative_tests 분류 정정
+
+`A`·`B`·`C`·`b0_alive`~`b3_compute` 는 실재하는 프로브 단계다
+(`tools/probes/p0_01_windows_s1_cuda.py:127-135,194-252,271-333`,
+`docs/evidence/_raw/P0-01_probe.txt:5-28`). ★ "1차 실행에서
+OpenProcessToken err=6" 은 재실행 가능한 negative test 이름이
+아니라 **과거의 오판 서술**이다 — 지금 코드엔 수정된 `restype` 만
+남아 있다(`tools/probes/p0_01_windows_s1_cuda.py:45-68`).
+
+### P0-01b 후속 검증은 아직 없다
+
+이 문서의 decision 이 "P0-01b 로 분리해 후속 검증한다"고 적었지만,
+지금 저장소에 `P0-01b` evidence 나 probe 가 **없다** — 약속된
+후속 검증이 완료됐다고 볼 근거가 없다. 관리자 SID 비활성·제한
+SID·프로세스 트리 검증은 여전히 미착수로 남는다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 범위·negative_tests 분류·
+P0-01b 미완 사실을 반영했다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
