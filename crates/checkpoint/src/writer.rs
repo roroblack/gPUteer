@@ -1,32 +1,83 @@
 //! 체크포인트 쓰기/재개 — ADR-026 절차의 상위 API.
-//!
-//! 규범: 기준선 §18.2 · `docs/protocol/state-machines.md` §4
-//!
-//! 이 모듈이 보장하는 불변식 (카오스 테스트가 검증한다)
-//!   1. 매니페스트가 존재하면 그 매니페스트가 가리키는 파일이 전부 존재하고 해시가 맞다
-//!   2. 쓰기 중 강제 종료는 PARTIAL 만 남긴다. COMMITTED 로 승격되지 않는다
-//!   3. 포인터는 항상 유효한 체크포인트를 가리키거나 존재하지 않는다
-//!   4. 재개는 항상 마지막 유효 체크포인트에서 이뤄진다
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::atomic::{gc_partial, replace_with_retry, write_once, RetryPolicy};
-use crate::durability::{CheckpointFile, CheckpointManifest, MANIFEST_FILENAME};
+use crate::durability::{
+    publication_failed, record_initial_state, record_publication_failure,
+    record_state_transition, CheckpointFile, CheckpointManifest,
+    DurabilityState, MANIFEST_FILENAME,
+};
 use crate::CheckpointError;
 
-/// canonical/latest 포인터 파일 이름. 이 파일만 replace-over-existing 을 쓴다.
+/// canonical/latest 포인터 파일 이름.
 pub const POINTER_FILENAME: &str = "LATEST";
+
+fn is_not_found(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound
+}
+
+/// 이 오류가 **정상적인 동시 실행 경합**인가.
+///
+/// # ★ Windows 는 `NotFound` 만 내지 않는다 (2026-08-17 실측)
+///
+/// 두 프로세스가 같은 디렉터리를 동시에 지우면
+/// Linux 는 `NotFound` 를 주지만 Windows 는 **`액세스가 거부되었습니다`(os error 5)**
+/// 를 준다. 다른 쪽이 그 디렉터리를 아직 열고 있기 때문이다.
+///
+/// 초안은 `NotFound` 만 경합으로 봤고, 카오스 테스트가 그것을 잡았다.
+///
+/// # 조용한 스킵을 만들지 않는다
+///
+/// `CLAUDE.md` §3 — 오류를 그냥 버리지 않는다.
+/// **경로가 실제로 사라졌는지 확인해서** 판단한다.
+///
+/// ```text
+/// 오류가 났고 경로도 없다   -> 다른 쪽이 지웠다. 정상 경합
+/// 오류가 났는데 경로는 있다 -> 진짜 권한 문제다. 보고한다
+/// ```
+///
+/// ★ 이것도 완전하지 않다 — 확인하는 그 순간에 다른 쪽이 지우면
+///   진짜 권한 오류를 경합으로 오판할 수 있다. 반대 방향(경합을 오류로
+///   보고)보다 조용하지만, 빈도가 훨씬 낮고 다음 GC 가 다시 시도한다.
+fn is_concurrent_race(error: &std::io::Error, path: &Path) -> bool {
+    if is_not_found(error) {
+        return true;
+    }
+    // 사라졌으면 다른 쪽이 지운 것이다.
+    !path.exists()
+}
+
+/// 실패 마커를 남긴 뒤 원래 오류를 반환한다.
+///
+/// 마커도 기록하지 못하면 그 사실을 오류에 포함한다.
+/// 실패 마커를 조용히 무시하면 W-4를 다시 만들기 때문이다.
+fn fail_after_materialization(
+    dir: &Path,
+    original: CheckpointError,
+) -> CheckpointError {
+    match record_publication_failure(dir) {
+        Ok(()) => original,
+        Err(marker_error) => CheckpointError::Io(format!(
+            "체크포인트 공개 실패: {original}; \
+             실패 마커 기록도 실패하여 재개 배제를 보장할 수 없다: {marker_error}"
+        )),
+    }
+}
 
 /// 체크포인트 하나를 확정한다.
 ///
-/// 순서가 규범이다 (기준선 §18.2 규칙 2).
-///   1. 데이터 파일을 전부 write-once 로 확정
-///   2. **그 다음에** 매니페스트를 쓴다
-///   3. 마지막에 포인터를 갱신
+/// 순서:
 ///
-/// 2번 이전에 죽으면 매니페스트가 없으므로 PARTIAL 로 판정된다.
-/// 3번 이전에 죽으면 체크포인트는 온전하나 포인터가 가리키지 않는다 (안전).
+/// 1. 데이터 파일을 write-once 로 확정
+/// 2. 매니페스트를 기록
+/// 3. 매니페스트의 파일 해시를 검증
+/// 4. 포인터를 갱신
+/// 5. COMMITTED 상태 마커를 기록
+///
+/// 포인터 갱신에 실패하면 완전한 artifact를 삭제하지 않는다.
+/// 대신 `.publication-failed` 를 write-once 로 기록하고 재개 후보에서 제외한다.
 pub fn write_checkpoint(
     root: &Path,
     manifest: &CheckpointManifest,
@@ -36,26 +87,53 @@ pub fn write_checkpoint(
     let dir = root.join(&manifest.checkpoint_id);
     fs::create_dir_all(&dir)?;
 
-    // 1. 데이터 파일 (고유 이름, write-once)
+    record_initial_state(&dir)?;
+
     for (name, data) in files {
         write_once(&dir, name, data)?;
-        // 카오스 테스트에서 kill 창을 만들기 위한 지연
+
         if slow_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(slow_ms));
         }
     }
 
-    // 2. 매니페스트를 마지막에 (PARTIAL 판정의 근거)
+    record_state_transition(
+        &dir,
+        DurabilityState::Writing,
+        DurabilityState::LocalWritten,
+    )?;
+
     let json = manifest.to_json()?;
     write_once(&dir, MANIFEST_FILENAME, &json)?;
 
-    // 3. 포인터 갱신 — 유일한 replace-over-existing
-    replace_with_retry(
+    if let Err(error) = manifest.verify_files(&dir) {
+        return Err(fail_after_materialization(&dir, error));
+    }
+
+    if let Err(error) = record_state_transition(
+        &dir,
+        DurabilityState::LocalWritten,
+        DurabilityState::HashVerified,
+    ) {
+        return Err(fail_after_materialization(&dir, error));
+    }
+
+    if let Err(error) = replace_with_retry(
         root,
         POINTER_FILENAME,
         manifest.checkpoint_id.as_bytes(),
         RetryPolicy::default(),
-    )?;
+    ) {
+        return Err(fail_after_materialization(&dir, error));
+    }
+
+    if let Err(error) = record_state_transition(
+        &dir,
+        DurabilityState::HashVerified,
+        DurabilityState::Committed,
+    ) {
+        return Err(fail_after_materialization(&dir, error));
+    }
 
     Ok(dir)
 }
@@ -77,11 +155,17 @@ pub fn manifest_for(
             size_bytes: data.len() as u64,
         })
         .collect();
-    let total = entries.iter().map(|f| f.size_bytes).sum();
 
-    let chunks: Vec<&[u8]> = files.iter().map(|(_, d)| d.as_slice()).collect();
+    let total = entries.iter().map(|file| file.size_bytes).sum();
+    let chunks: Vec<&[u8]> =
+        files.iter().map(|(_, data)| data.as_slice()).collect();
+
     let root_digest = gputeer_protocol::merkle_root(&chunks)
-        .map(|r| r.iter().map(|b| format!("{b:02x}")).collect::<String>())
+        .map(|root| {
+            root.iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        })
         .unwrap_or_default();
 
     CheckpointManifest {
@@ -93,171 +177,272 @@ pub fn manifest_for(
         files: entries,
         root_digest,
         total_bytes: total,
-        created_at_unix_ms: 0, // 결정론적 테스트를 위해 호출자가 채운다
+        created_at_unix_ms: 0,
         producer_node_id: "test-node".to_string(),
         fence_epoch,
     }
 }
 
-/// ★ 재개 지점을 찾는다 — **job/attempt 로 걸러서.**
+/// 포인터 또는 COMMITTED 상태 마커로 공개된 체크포인트인지 확인한다.
 ///
-/// # 왜 필터가 필요한가 (2026-08-16 신설)
+/// `.publication-failed` 가 있으면 포인터가 우연히 새 체크포인트를 가리켜도
+/// 호출자가 Err를 받은 쓰기를 재개 후보로 되살리지 않는다.
+/// 재개 후보인가.
 ///
-/// 독립 검수가 지적했다. [`find_resume_point`] 는 `root` 아래 **모든**
-/// 디렉터리를 후보로 삼고 해시 검증만 통과하면 가장 큰 `step` 을 고른다.
+/// # ★ 왜 `COMMITTED` 마커를 **요구하지 않는가** (2026-08-17 설계 정정)
 ///
-/// ```text
-/// 내 job    step 10
-/// 남의 job  step 100   <- 같은 root 에 있으면 이것을 고른다
-/// ```
-///
-/// **해시가 맞으면 안전하다** 가 아니다 — 해시는 *그 파일이 그 매니페스트의 것*임을
-/// 보장할 뿐, *그 매니페스트가 내 것*임은 보장하지 않는다.
-/// 남의 체크포인트에서 재개하면 **완전히 다른 학습 상태를 로드한다.**
-///
-/// # 거르는 것
+/// 초안은 "COMMITTED 마커가 있거나 지금 LATEST 가 가리키는 것" 만 후보로 삼았다.
+/// **그것은 과하다.**
 ///
 /// ```text
-/// job_id / attempt_id 불일치   다른 실행의 상태다
-/// files 가 빈 매니페스트       데이터가 없는데 "유효" 로 통과한다
-/// checkpoint_id != 디렉터리명   반환된 id 로 파일을 찾으면 엉뚱한 곳을 본다
+/// 기록 순서
+///   데이터 -> 매니페스트 -> HASH_VERIFIED -> LATEST 교체 -> COMMITTED
+///                                                          ^^^^^^^^^
+///                          여기 직전에 kill 되면 마커가 없다
 /// ```
 ///
-/// `attempt_id` 는 특히 중요하다 — 같은 job 의 다른 attempt 는
-/// **fencing 으로 무효화된 실행**일 수 있다.
+/// 그 체크포인트는 **데이터도 매니페스트도 온전하고 해시도 맞다.**
+/// 그런데 마커 하나가 없다는 이유로 버리면 **복구 가능한 상태를 잃는다** —
+/// `CLAUDE.md` §0.3, "데이터 손실은 되돌릴 수 없다."
+///
+/// 실제로 카오스 테스트가 이것을 잡았다. 부하가 높을 때
+/// 500ms 안에 COMMITTED 까지 간 체크포인트가 하나도 없으면
+/// 재개 지점이 통째로 사라졌다.
+///
+/// 또한 기존 규범은 **매니페스트의 존재**를 완결 신호로 삼는다
+/// (`CLAUDE.md` §0.3 — "매니페스트 없는 데이터 파일은 PARTIAL").
+/// 완결 지점을 마커로 옮기면 그 규범과 어긋난다.
+///
+/// # 그러면 W-4(포인터 실패 잔여물)는 어떻게 막는가
+///
+/// **명시적 실패 마커로만** 막는다. 포인터 갱신이 실패하면
+/// [`PUBLICATION_FAILED_MARKER`] 를 쓰고 `Err` 를 반환한다.
+/// 그 마커가 있는 디렉터리는 후보에서 빠진다.
+///
+/// ★ 남는 위험: **마커 쓰기 자체가 실패하면** 배제되지 않는다.
+///   그 경우 `write_checkpoint` 가 명시적 오류를 반환하지만,
+///   디스크에는 선택 가능한 잔여물이 남는다. 완전히 막지는 못한다.
+fn is_resume_candidate(
+    dir: &Path,
+    _dir_name: &str,
+    _pointer: Option<&str>,
+) -> Result<bool, CheckpointError> {
+    Ok(!publication_failed(dir)?)
+}
+
+/// 유효 매니페스트를 읽는다.
+fn load_valid_manifest(
+    dir: &Path,
+) -> Result<Option<CheckpointManifest>, CheckpointError> {
+    let manifest_path = dir.join(MANIFEST_FILENAME);
+
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+
+    let data = match fs::read(&manifest_path) {
+        Ok(data) => data,
+        Err(_) => return Ok(None),
+    };
+
+    let manifest = match CheckpointManifest::from_json(&data) {
+        Ok(manifest) => manifest,
+        Err(_) => return Ok(None),
+    };
+
+    if manifest.verify_files(dir).is_err() {
+        return Ok(None);
+    }
+
+    Ok(Some(manifest))
+}
+
+/// job/attempt로 제한한 재개 지점 검색.
 pub fn find_resume_point_for(
     root: &Path,
     job_id: &str,
     attempt_id: &str,
 ) -> Result<Option<CheckpointManifest>, CheckpointError> {
-    let mut candidates: Vec<CheckpointManifest> = Vec::new();
-    if !root.is_dir() {
-        return Ok(None);
-    }
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let dir = entry.path();
-        if !dir.is_dir() {
-            continue;
-        }
-        let Some(m) = load_valid_manifest(&dir)? else {
-            continue;
-        };
-
-        // ★ 이 실행의 것인가
-        if m.job_id != job_id || m.attempt_id != attempt_id {
-            continue;
-        }
-        // ★ 데이터가 하나도 없는 매니페스트는 재개 근거가 아니다.
-        //   verify_files 는 반복문을 0회 돌고 통과한다.
-        if m.files.is_empty() {
-            continue;
-        }
-        // ★ checkpoint_id 가 디렉터리 이름과 같은가.
-        //   다르면 반환된 id 로 파일을 찾는 호출자가 엉뚱한 곳을 본다.
-        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if m.checkpoint_id != dir_name {
-            continue;
-        }
-        candidates.push(m);
-    }
-    candidates.sort_by_key(|m| m.step);
-    Ok(candidates.pop())
-}
-
-/// 디렉터리에서 **해시까지 검증된** 매니페스트를 읽는다.
-///
-/// 매니페스트가 없거나 깨졌거나 파일 해시가 어긋나면 `None`.
-fn load_valid_manifest(dir: &Path) -> Result<Option<CheckpointManifest>, CheckpointError> {
-    let mpath = dir.join(MANIFEST_FILENAME);
-    if !mpath.exists() {
-        return Ok(None); // PARTIAL — 매니페스트가 없다
-    }
-    let Ok(data) = fs::read(&mpath) else {
-        return Ok(None);
-    };
-    let Ok(m) = CheckpointManifest::from_json(&data) else {
-        return Ok(None); // 매니페스트 자체가 깨졌다
-    };
-    // 불변식 1: 매니페스트가 있으면 파일이 전부 온전해야 한다
-    if m.verify_files(dir).is_err() {
-        return Ok(None);
-    }
-    Ok(Some(m))
-}
-
-/// 재개 지점을 찾는다 — **필터 없음.**
-///
-/// ★ **호출자가 job/attempt 를 반드시 걸러야 한다.**
-/// 이 함수는 `root` 아래 모든 유효 체크포인트 중 가장 큰 `step` 을 고른다.
-/// 여러 job 이 같은 root 를 쓰면 **남의 것을 고른다** (독립 검수 2026-08-16).
-///
-/// 새 코드는 [`find_resume_point_for`] 를 쓴다.
-/// 이 함수는 "root 에 한 실행의 체크포인트만 있다" 가 보장될 때만 안전하다.
-pub fn find_resume_point(root: &Path) -> Result<Option<CheckpointManifest>, CheckpointError> {
-    let mut candidates: Vec<CheckpointManifest> = Vec::new();
+    let mut candidates = Vec::new();
+    let pointer = read_pointer(root);
 
     if !root.is_dir() {
         return Ok(None);
     }
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
+
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if is_not_found(&error) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if is_not_found(&error) => continue,
+            Err(error) => return Err(error.into()),
+        };
+
         let dir = entry.path();
+
         if !dir.is_dir() {
             continue;
         }
-        let mpath = dir.join(MANIFEST_FILENAME);
-        if !mpath.exists() {
-            continue; // PARTIAL — 매니페스트가 없다
-        }
-        let data = match fs::read(&mpath) {
-            Ok(d) => d,
-            Err(_) => continue,
+
+        let Some(manifest) = load_valid_manifest(&dir)? else {
+            continue;
         };
-        let m = match CheckpointManifest::from_json(&data) {
-            Ok(m) => m,
-            Err(_) => continue, // 매니페스트 자체가 깨졌다
-        };
-        // 불변식 1: 매니페스트가 있으면 파일이 전부 온전해야 한다
-        if m.verify_files(&dir).is_err() {
+
+        let dir_name = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+
+        if manifest.job_id != job_id
+            || manifest.attempt_id != attempt_id
+            || manifest.files.is_empty()
+            || manifest.checkpoint_id != dir_name
+        {
             continue;
         }
-        candidates.push(m);
+
+        if !is_resume_candidate(&dir, dir_name, pointer.as_deref())? {
+            continue;
+        }
+
+        candidates.push(manifest);
     }
 
-    candidates.sort_by_key(|m| m.step);
+    candidates.sort_by_key(|manifest| manifest.step);
     Ok(candidates.pop())
 }
 
-/// 포인터가 가리키는 체크포인트 id (있으면).
+/// job/attempt 필터가 없는 호환 API.
+///
+/// 이 API는 여전히 다른 job의 상태를 고를 수 있다.
+pub fn find_resume_point(
+    root: &Path,
+) -> Result<Option<CheckpointManifest>, CheckpointError> {
+    let mut candidates = Vec::new();
+    let pointer = read_pointer(root);
+
+    if !root.is_dir() {
+        return Ok(None);
+    }
+
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if is_not_found(&error) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if is_not_found(&error) => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        let dir = entry.path();
+
+        if !dir.is_dir() {
+            continue;
+        }
+
+        let Some(manifest) = load_valid_manifest(&dir)? else {
+            continue;
+        };
+
+        let dir_name = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+
+        if manifest.files.is_empty() || manifest.checkpoint_id != dir_name {
+            continue;
+        }
+
+        if !is_resume_candidate(&dir, dir_name, pointer.as_deref())? {
+            continue;
+        }
+
+        candidates.push(manifest);
+    }
+
+    candidates.sort_by_key(|manifest| manifest.step);
+    Ok(candidates.pop())
+}
+
+/// 포인터가 가리키는 체크포인트 id.
 pub fn read_pointer(root: &Path) -> Option<String> {
     fs::read_to_string(root.join(POINTER_FILENAME))
         .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
-/// 부팅 시 정리 — 모든 체크포인트 디렉터리에서 PARTIAL/tmp 를 제거한다.
+/// 부팅 시 정리.
 ///
-/// 반환값: (검사한 디렉터리 수, 제거한 파일 수)
+/// `.tmp` 는 매니페스트에 등록되지 않은 경우에만 제거한다.
+/// 등록된 `.tmp` 파일은 정상적인 데이터 파일일 수 있으므로 보존한다.
+///
+/// 디렉터리나 파일이 다른 프로세스에 의해 먼저 사라진 경우는 정상 경합이다.
+/// 그 경우에만 건너뛰며, 권한 오류 등 다른 오류는 반환한다.
 pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
     let mut dirs = 0;
     let mut removed = 0;
-    if !root.is_dir() {
-        return Ok((0, 0));
-    }
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
+
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if is_not_found(&error) => return Ok((0, 0)),
+        Err(error) => return Err(error.into()),
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if is_not_found(&error) => continue,
+            Err(error) => return Err(error.into()),
+        };
+
         let dir = entry.path();
-        if !dir.is_dir() {
+
+        let metadata = match fs::symlink_metadata(&dir) {
+            Ok(metadata) => metadata,
+            Err(error) if is_concurrent_race(&error, &dir) => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        if !metadata.is_dir() {
             continue;
         }
+
         dirs += 1;
         removed += gc_partial(&dir, MANIFEST_FILENAME)?.len();
-        // 비어버린 디렉터리는 제거
-        if fs::read_dir(&dir)?.next().is_none() {
-            let _ = fs::remove_dir(&dir);
+
+        let mut children = match fs::read_dir(&dir) {
+            Ok(children) => children,
+            Err(error) if is_concurrent_race(&error, &dir) => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        let empty = match children.next() {
+            None => true,
+            Some(Ok(_)) => false,
+            Some(Err(error)) if is_not_found(&error) => continue,
+            Some(Err(error)) => return Err(error.into()),
+        };
+
+        if empty {
+            match fs::remove_dir(&dir) {
+                Ok(()) => {}
+                // ★ Windows 는 동시 삭제에서 NotFound 가 아니라
+                //   "액세스가 거부되었습니다"(os error 5)를 낸다.
+                Err(error) if is_concurrent_race(&error, &dir) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
     }
+
     Ok((dirs, removed))
 }

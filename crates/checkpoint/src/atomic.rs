@@ -288,39 +288,103 @@ pub fn sync_dir(_dir: &Path) -> Result<(), CheckpointError> {
     Ok(())
 }
 
-/// 매니페스트 없이 남은 데이터 파일과 `.tmp` 를 정리한다.
+/// 매니페스트에 등록되지 않은 `.tmp` 와
+/// 매니페스트가 없는 체크포인트의 파일을 정리한다.
 ///
-/// 기준선 §18.2 규칙 3 — 매니페스트가 마지막에 쓰이므로,
-/// 매니페스트가 없으면 그 체크포인트는 PARTIAL 이다.
-///
-/// 반환값: 삭제한 파일 경로
-pub fn gc_partial(checkpoint_dir: &Path, manifest_name: &str) -> Result<Vec<PathBuf>, CheckpointError> {
-    let mut removed = Vec::new();
-    if !checkpoint_dir.is_dir() {
-        return Ok(removed);
+/// 매니페스트에 등록된 `weights.tmp` 는 정상 데이터 파일일 수 있다.
+/// 따라서 `.tmp`라는 접미사만으로 삭제하지 않는다.
+pub fn gc_partial(
+    checkpoint_dir: &Path,
+    manifest_name: &str,
+) -> Result<Vec<PathBuf>, CheckpointError> {
+    let metadata = match fs::symlink_metadata(checkpoint_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    if !metadata.is_dir() {
+        return Ok(Vec::new());
     }
 
-    let manifest_exists = checkpoint_dir.join(manifest_name).exists();
+    let manifest_path = checkpoint_dir.join(manifest_name);
 
-    for entry in fs::read_dir(checkpoint_dir)? {
-        let entry = entry?;
+    let manifest_exists = match fs::symlink_metadata(&manifest_path) {
+        Ok(metadata) => metadata.is_file(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+
+    let registered_tmp = if manifest_exists {
+        match fs::read(&manifest_path) {
+            Ok(data) => match crate::durability::CheckpointManifest::from_json(&data) {
+                Ok(manifest) => manifest
+                    .files
+                    .iter()
+                    .map(|file| file.path.clone())
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        Vec::new()
+    };
+
+    let mut removed = Vec::new();
+
+    let entries = match fs::read_dir(checkpoint_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+
         let path = entry.path();
-        if !path.is_file() {
+
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        if !metadata.is_file() {
             continue;
         }
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
 
-        // .tmp 는 항상 미완성이다
+        let name = entry.file_name().to_string_lossy().to_string();
         let is_tmp = name.ends_with(".tmp");
-        // 매니페스트가 없으면 전체가 PARTIAL
-        let orphan = !manifest_exists;
 
-        if is_tmp || orphan {
-            fs::remove_file(&path)?;
-            removed.push(path);
+        let is_registered = registered_tmp.iter().any(|registered| {
+            registered == &name
+        });
+
+        let should_remove = !manifest_exists || (is_tmp && !is_registered);
+
+        if !should_remove {
+            continue;
+        }
+
+        match fs::remove_file(&path) {
+            Ok(()) => removed.push(path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // 다른 GC가 먼저 제거한 정상 경합이다.
+            }
+            Err(error) => return Err(error.into()),
         }
     }
+
     Ok(removed)
 }
 
