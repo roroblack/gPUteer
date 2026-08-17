@@ -835,3 +835,55 @@ pub fn verify<M: Signable + Clone>(
         replay_status,
     })
 }
+
+// ══════════════════════════════════════════════════════════════════
+// ★ 오류 타입을 `std::error::Error` 로 만든다 (2026-08-17)
+//
+//   `gputeer selftest` 바이너리를 처음 쓰면서 드러났다 —
+//   `DurableReplayGuard::open(...)?` 가 컴파일되지 않았다.
+//   `ReplayStoreError` 가 `std::error::Error` 를 구현하지 않아
+//   `Box<dyn Error>` 로 올라가지 못한 것이다.
+//
+//   ★ **공개 오류 타입인데 호출자가 `?` 를 못 쓰는 것은 결함이다.**
+//     테스트는 전부 `unwrap()`/`matches!` 를 써서 이 문제를 못 봤다.
+//     실제로 쓰는 코드를 하나 쓰니 바로 나왔다.
+// ══════════════════════════════════════════════════════════════════
+
+impl core::fmt::Display for VerifyOutcome {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}: {}", self, self.explain())
+    }
+}
+
+impl std::error::Error for VerifyOutcome {}
+
+impl core::fmt::Display for ReplayStoreError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Io(detail) => write!(f, "{} ({detail})", self.explain()),
+            Self::SignerQuotaExceeded { signer_id, quota } => {
+                write!(f, "{} (signer={signer_id}, quota={quota})", self.explain())
+            }
+            Self::InvalidNonce { len } => write!(f, "{} (len={len})", self.explain()),
+            _ => f.write_str(self.explain()),
+        }
+    }
+}
+
+impl std::error::Error for ReplayStoreError {}
+
+impl core::fmt::Display for PolicyViolation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.explain())
+    }
+}
+
+impl std::error::Error for PolicyViolation {}
+
+impl core::fmt::Display for VerifyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.explain())
+    }
+}
+
+impl std::error::Error for VerifyError {}

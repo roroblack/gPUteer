@@ -318,6 +318,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gputeer-cli"
+version = "0.0.1"
+dependencies = [
+ "gputeer-checkpoint",
+ "gputeer-crypto",
+ "gputeer-protocol",
+ "prost",
+ "tempfile",
+]
+
+[[package]]
 name = "gputeer-crypto"
 version = "0.0.1"
 dependencies = [

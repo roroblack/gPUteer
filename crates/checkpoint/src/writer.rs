@@ -18,35 +18,56 @@ fn is_not_found(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotFound
 }
 
-/// 이 오류가 **정상적인 동시 실행 경합**인가.
+/// 경합을 견디며 빈 디렉터리를 지운다.
 ///
-/// # ★ Windows 는 `NotFound` 만 내지 않는다 (2026-08-17 실측)
+/// # ★ 왜 "확인" 이 아니라 "재시도" 인가 (2026-08-17, 두 번 고쳤다)
 ///
-/// 두 프로세스가 같은 디렉터리를 동시에 지우면
-/// Linux 는 `NotFound` 를 주지만 Windows 는 **`액세스가 거부되었습니다`(os error 5)**
-/// 를 준다. 다른 쪽이 그 디렉터리를 아직 열고 있기 때문이다.
+/// 두 프로세스가 같은 디렉터리를 동시에 지우면 Windows 는 `NotFound` 가 아니라
+/// **`액세스가 거부되었습니다`(os error 5)** 를 낸다.
 ///
-/// 초안은 `NotFound` 만 경합으로 봤고, 카오스 테스트가 그것을 잡았다.
+/// ```text
+/// 1차 시도  NotFound 만 경합으로 봤다        -> 부하에서 실패
+/// 2차 시도  오류 뒤 path.exists() 로 판별    -> 여전히 5회 중 1회 실패
+///           Windows 는 삭제를 **지연**한다. 다른 쪽이 핸들을 닫을 때까지
+///           디렉터리는 "삭제 예정" 상태로 **여전히 보인다.**
+///           25ms 안에 안 사라지는 경우가 부하에서 실제로 나왔다.
+/// 3차       삭제 자체를 재시도한다 (지금)
+/// ```
+///
+/// **확인은 추측이고 재시도는 사실이다.** 결국 없어지면(성공 또는 `NotFound`)
+/// 경합이었고, 예산을 다 써도 안 되면 진짜 문제다.
 ///
 /// # 조용한 스킵을 만들지 않는다
 ///
-/// `CLAUDE.md` §3 — 오류를 그냥 버리지 않는다.
-/// **경로가 실제로 사라졌는지 확인해서** 판단한다.
-///
-/// ```text
-/// 오류가 났고 경로도 없다   -> 다른 쪽이 지웠다. 정상 경합
-/// 오류가 났는데 경로는 있다 -> 진짜 권한 문제다. 보고한다
-/// ```
-///
-/// ★ 이것도 완전하지 않다 — 확인하는 그 순간에 다른 쪽이 지우면
-///   진짜 권한 오류를 경합으로 오판할 수 있다. 반대 방향(경합을 오류로
-///   보고)보다 조용하지만, 빈도가 훨씬 낮고 다음 GC 가 다시 시도한다.
-fn is_concurrent_race(error: &std::io::Error, path: &Path) -> bool {
-    if is_not_found(error) {
-        return true;
+/// `CLAUDE.md` §3 — 예산(약 200ms)을 넘기면 **오류를 그대로 올린다.**
+/// GC 는 부팅 시 한 번 도는 작업이고 경합은 드물다.
+fn remove_dir_tolerating_race(dir: &Path) -> Result<(), std::io::Error> {
+    const ATTEMPTS: usize = 10;
+    const WAIT: std::time::Duration = std::time::Duration::from_millis(20);
+
+    let mut last = None;
+    for attempt in 0..ATTEMPTS {
+        match fs::remove_dir(dir) {
+            Ok(()) => return Ok(()),
+            // 다른 쪽이 먼저 지웠다. 목적은 달성됐다.
+            Err(e) if is_not_found(&e) => return Ok(()),
+            Err(e) => {
+                last = Some(e);
+                if attempt + 1 < ATTEMPTS {
+                    std::thread::sleep(WAIT);
+                }
+            }
+        }
     }
-    // 사라졌으면 다른 쪽이 지운 것이다.
-    !path.exists()
+    Err(last.expect("ATTEMPTS 가 0이 아니면 마지막 오류가 있다"))
+}
+
+/// 읽기 연산이 **정상적인 동시 실행 경합**을 만난 것인가.
+///
+/// 삭제와 달리 읽기는 재시도해도 의미가 없다 — 대상이 사라졌으면 건너뛰면 된다.
+/// 그래서 여기서는 "없어졌는가" 만 본다.
+fn is_read_race(error: &std::io::Error, path: &Path) -> bool {
+    is_not_found(error) || !path.exists()
 }
 
 /// 실패 마커를 남긴 뒤 원래 오류를 반환한다.
@@ -409,7 +430,7 @@ pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
 
         let metadata = match fs::symlink_metadata(&dir) {
             Ok(metadata) => metadata,
-            Err(error) if is_concurrent_race(&error, &dir) => continue,
+            Err(error) if is_read_race(&error, &dir) => continue,
             Err(error) => return Err(error.into()),
         };
 
@@ -422,7 +443,7 @@ pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
 
         let mut children = match fs::read_dir(&dir) {
             Ok(children) => children,
-            Err(error) if is_concurrent_race(&error, &dir) => continue,
+            Err(error) if is_read_race(&error, &dir) => continue,
             Err(error) => return Err(error.into()),
         };
 
@@ -434,13 +455,7 @@ pub fn startup_gc(root: &Path) -> Result<(usize, usize), CheckpointError> {
         };
 
         if empty {
-            match fs::remove_dir(&dir) {
-                Ok(()) => {}
-                // ★ Windows 는 동시 삭제에서 NotFound 가 아니라
-                //   "액세스가 거부되었습니다"(os error 5)를 낸다.
-                Err(error) if is_concurrent_race(&error, &dir) => {}
-                Err(error) => return Err(error.into()),
-            }
+            remove_dir_tolerating_race(&dir)?;
         }
     }
 

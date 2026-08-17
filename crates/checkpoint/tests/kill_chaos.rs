@@ -71,7 +71,30 @@ fn audit(root: &Path) -> (usize, usize, Vec<String>) {
     (valid, corrupt, broken)
 }
 
-fn run_and_kill(root: &Path, kill_after: Duration) -> (usize, String) {
+/// 쓰기 도중 kill 한다.
+///
+/// # ★ 고정 sleep 을 쓰지 않는다 (2026-08-17 정정)
+///
+/// 전에는 `sleep(kill_after)` 후 kill 했다. **부하에 취약했다** —
+/// `cargo test --workspace` 를 연속으로 돌리면 500ms 안에 완료된
+/// 체크포인트가 **0개**가 되어, 재개 지점을 요구하는 테스트가 무너졌다.
+/// 3회 반복 중 1회 실패했다.
+///
+/// ★ 부하에 따라 초록/빨강이 바뀌는 테스트는 **아무것도 말하지 않는다.**
+///
+/// 지금은 자식의 stdout 을 읽어 **`COMMITTED` 를 `min_committed` 개 볼 때까지**
+/// 기다린 뒤 kill 한다. "쓰기 도중에 죽인다" 라는 의도는 그대로다 —
+/// 남은 46개는 아직 쓰는 중이다.
+///
+/// `hard_timeout` 은 자식이 영영 멈춰 있을 때를 위한 안전장치다.
+fn run_and_kill_after(
+    root: &Path,
+    min_committed: usize,
+    hard_timeout: Duration,
+) -> (usize, String) {
+    use std::io::{BufRead, BufReader};
+    use std::sync::mpsc;
+
     let mut child = Command::new(writer_bin())
         .arg(root)
         .arg("50") // 체크포인트 50개
@@ -83,12 +106,48 @@ fn run_and_kill(root: &Path, kill_after: Duration) -> (usize, String) {
         .spawn()
         .expect("ckpt_writer 실행 실패 — cargo build 를 먼저 해야 한다");
 
-    std::thread::sleep(kill_after);
+    let stdout = child.stdout.take().expect("stdout 파이프");
+    let (tx, rx) = mpsc::channel::<String>();
+    let reader = std::thread::spawn(move || {
+        let mut collected = String::new();
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            collected.push_str(&line);
+            collected.push('\n');
+            // 보낸 뒤 끊겨도 계속 모은다 — 세지 않고 버리지 않는다.
+            let _ = tx.send(line);
+        }
+        collected
+    });
+
+    let deadline = std::time::Instant::now() + hard_timeout;
+    let mut seen = 0usize;
+    while seen < min_committed {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(left) {
+            Ok(line) if line.starts_with("COMMITTED") => seen += 1,
+            Ok(_) => {}
+            Err(_) => break, // 자식이 끝났거나 시간이 다 됐다
+        }
+    }
+
     let _ = child.kill();
-    let out = child.wait_with_output().expect("wait");
-    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    let committed = stdout.lines().filter(|l| l.starts_with("COMMITTED")).count();
-    (committed, stdout)
+    let _ = child.wait();
+    let collected = reader.join().unwrap_or_default();
+    let committed = collected
+        .lines()
+        .filter(|l| l.starts_with("COMMITTED"))
+        .count();
+    (committed, collected)
+}
+
+/// 옛 시그니처 — 시간만 주면 "그 시간 안에 최소 1개" 로 해석한다.
+fn run_and_kill(root: &Path, kill_after: Duration) -> (usize, String) {
+    // ★ 최소 1개는 있어야 재개·GC 검사가 의미를 갖는다.
+    //   그 1개를 못 보면 hard timeout(원래 값의 20배)까지 기다린다.
+    run_and_kill_after(root, 1, kill_after * 20)
 }
 
 // ══════════════════════════════════════════════════════════════════

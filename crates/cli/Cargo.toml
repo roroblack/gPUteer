@@ -1,0 +1,17 @@
+[package]
+name = "gputeer-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "gputeer"
+path = "src/main.rs"
+
+[dependencies]
+gputeer-protocol = { path = "../protocol" }
+gputeer-crypto = { path = "../crypto" }
+gputeer-checkpoint = { path = "../checkpoint" }
+prost.workspace = true
+tempfile.workspace = true

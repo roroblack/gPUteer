@@ -149,7 +149,10 @@ fn protocol_is_a_leaf_crate() {
 /// `field_number_audit` 의 `every_impl_is_audited` 와 같은 이유다.
 #[test]
 fn every_crate_is_covered_by_ownership_rules() {
-    const KNOWN: &[&str] = &["protocol", "crypto", "checkpoint"];
+    // ★ 2026-08-17 `cli` 추가. 소유권 표(`docs/contracts/01_스트림_소유권.md`)에
+    //   이미 `CLI | crates/cli/ | gputeer 명령` 으로 선언되어 있다.
+    //   이 가드가 새 크레이트를 실제로 잡았다 — 등록 없이 통과하지 않았다.
+    const KNOWN: &[&str] = &["protocol", "crypto", "checkpoint", "cli"];
 
     let dir = repo_root().join("crates");
     let mut found: Vec<String> = std::fs::read_dir(&dir)
