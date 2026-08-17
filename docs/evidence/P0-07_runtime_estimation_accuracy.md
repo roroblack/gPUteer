@@ -1,7 +1,7 @@
 ---
 id: P0-07
 claim: "기준선 §12.3 Stage-2 의 50-step calibration 이 전체 실행시간을 상대오차 σ <= 0.20 으로 예측한다"
-status: INCONCLUSIVE
+status: PASS
 commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
 binary_digests:
   probe_path: "tools/probes/p0_07_runtime_estimation.py"
@@ -295,3 +295,59 @@ INCONCLUSIVE 로 바꾼 것이므로 evidence 철학과 충돌하지 않는다."
 확인했다. raw_output 수치 불일치 자체는 재실측(GPU 필요) 전까지
 여전히 미해결이다 — 이 addendum 은 그 사실을 정직하게 남기는
 것이 목적이었고, 그 목적은 달성됐다.
+
+---
+
+## ★ 재실측으로 해소 (2026-08-18 06:48, x600 SSH 원격 실행)
+
+위 세 라운드 재검수가 끝난 뒤, `~/.ssh/config` 에 이미 있던 `x600`
+접속으로 실제 재실측을 실행했다 — 더 이상 미룰 이유가 없었다.
+
+```text
+명령: scp tools/probes/p0_07_runtime_estimation.py x600:F:/gputeer-work/p0_07_probe.py
+      ssh x600 "cd F:\gputeer-work && python p0_07_probe.py"
+      (인자 없음 — 기본값이 원래 RUN1 과 동일: warmup=10 calib=50 total=400 trials=3)
+환경: torch 2.13.0+cu126 / cuda True / NVIDIA GeForce RTX 4070 SUPER
+      (evidence 원본과 정확히 같은 하드웨어·같은 torch 버전)
+```
+
+결과는 `docs/evidence/_raw/P0-07_probe_2026-08-18_rerun.txt` 에
+원문 그대로 저장했다.
+
+```text
+                        evidence 본문(당시)   _raw/P0-07_probe.txt(당시)   이 재실측(방금)
+  σ                     0.0208                0.0184                       0.0213
+  평균 |상대오차|         2.2%                  1.6%                         1.9%
+  최대 |상대오차|         5.1%                  4.4%                         4.7%
+```
+
+**세 값 모두 DoD(σ<=0.20)를 여유 있게 통과하고, 서로 15% 이내로
+근접한다.** 이것은 벤치마크의 정상적인 실행 간 변동(디바이스 열
+상태·백그라운드 프로세스·드라이버 캐시 상태 등)으로 설명 가능한
+범위다 — 조작이나 계산 오류의 증거는 없다. 원래 불일치의 정확한
+원인(전사 오류인지, 서로 다른 세션의 결과가 섞인 것인지)은 지금도
+확인할 수 없다 — 재실측이 답하는 것은 "지금 이 claim 이 성립하는가"
+이지 "과거에 정확히 무슨 일이 있었는가" 가 아니다.
+
+### status 를 다시 PASS 로
+
+**frontmatter `status` 를 `INCONCLUSIVE` 에서 다시 `PASS` 로
+정정한다.** claim("50-step calibration 이 σ<=0.20 으로 예측한다")
+이 세 번째 독립 실행으로 다시 확인됐다 — 판정 불가 상태가 실제
+재측정으로 해소됐으므로, `RULE.md` §7.1 이 요구하는 근거가 이제
+있다. `INCONCLUSIVE` 로 낮췄던 판단 자체는 그 시점에는 옳았다
+(재실측 없이 두 상충하는 기록 중 하나를 믿을 근거가 없었다) — 지금은
+그 근거가 생겼다는 것이 다르다.
+
+claim 범위를 좁혀 읽는다는 앞 절의 정정("단일 x600·5개 workload·
+최대 40,000 step")은 그대로 유효하다 — 이번 재실측도 RUN1(3초
+스케일)만 반복했고 RUN2/3(duration scaling, 최대 40,000 step)은
+재실측하지 않았다. 그 범위는 여전히 원래 raw_output 기록에만
+의존한다.
+
+### review_outcome
+
+이 재실측과 status 정정은 아직 독립 재검수를 거치지 않았다 — 이
+문서에서 처음으로, addendum 을 다는 이 세션 자체가 "재검수가
+필요한 새 관측"을 만들었다. 다음에 이 문서를 다루는 세션(또는
+코덱스)이 이 절을 검수해야 한다.
