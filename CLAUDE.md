@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 07:55)
+## 5. 지금 상태 (2026-08-18 08:00)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -232,11 +232,15 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             프로세스 밖으로 나가는 것이 없다
+1. 네트워크 전송 · coordinator 골격             ★ 최소 계획 있음(2026-08-18) — 아직 미구현
+   docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
+   "완전한 coordinator" 아님 — 별도 PID 2개가 signed Grant 를 왕복하고
+   위조/replay 를 거부하는 것까지만. 구현 시작 전 계획서의 "확인 안 됨" 3건부터 검증.
 2. runtime-policy 판정을 실제 시스템 호출로 연결  OS 방화벽 · 커널 경로 강제 미구현
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 4. 별도 **프로세스** replay 경쟁 실측            스레드로만 측정했다
-5. v1 evidence 13건에 독립 검수                  유예 목록을 줄인다
+5. v1 evidence — review-required 14건은 전부 addendum ACCEPTED(2026-08-18).
+   남은 것: ENV-01·02(review-required 아님) · v1→schema v2 실제 승격(frontmatter 교체)
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

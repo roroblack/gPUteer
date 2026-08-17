@@ -16,6 +16,35 @@
 
 ---
 
+## 2026-08-18 08:00 — coordinator/agent 최소 핸드셰이크 계획서 작성
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). evidence 재검수 사이클이 끝난 뒤 다음 작업
+  단위로 CLAUDE.md 가 반복해서 지적한 가장 큰 공백(coordinator·
+  agent 미착수)에 착수했다.
+- 스트림: — (계획 문서, 아직 코드 없음)
+- 수행: 코덱스(read-only)에게 "완전한 coordinator/agent 가 아니라
+  다음 한 걸음만" 설계하도록 요청했다. 결과를
+  `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`
+  로 정리했다 — `gputeer coordinator-stub`/`agent-stub` 을
+  `Command::current_exe()` 로 별도 PID 로 띄우고, 전용
+  `AgentGrantAck` 서명 메시지(`ReplicaAck` 재사용 불가 — Evidence
+  lifetime 이라 replay 검사가 없다)로 signed Grant 왕복 +
+  위조/replay 거부를 증명하는 최소 설계다.
+- ★ **이 계획은 아직 구현하지 않았다.** 새 crate(`crates/coordinator`,
+  `crates/agent`) 신설과 proto 스키마 변경(`AgentGrantAck` 추가,
+  domain_tag 23→24)은 이번 세션의 다른 작업들(문서 정정·기존
+  코드에 대한 검증)보다 훨씬 큰 아키텍처 결정이라, 사용자가 깨어난
+  뒤 방향을 확인받는 것이 맞다고 판단해 계획 문서로만 남겼다.
+  설계 자체가 스스로 "확인 안 됨"이라 표시한 3가지(PersistentKeyring
+  서명 핸들 API, AgentGrantAck 컴파일 여부, domain 개수 하드코딩
+  갱신 필요)도 계획 문서에 그대로 옮겼다.
+- 검증: 문서만 추가, 코드 변경 없음. `cargo test --workspace`
+  293/0/0(불변).
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 07:55 — P0-07 재실측 addendum ACCEPTED (4라운드) — 이번 세션의 evidence 작업 마무리
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
