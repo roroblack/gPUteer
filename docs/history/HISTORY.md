@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-08-18 07:55 — P0-07 재실측 addendum ACCEPTED (4라운드) — 이번 세션의 evidence 작업 마무리
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속).
+- 스트림: Runtime
+- 결과: **`ACCEPTED`.** 제목·통계 수치를 PowerShell 로 독립
+  재계산해 전부 일치함을 확인했고, `verify_evidence.py` 로
+  `status: PASS`·스키마 위반 0 을 재확인했다.
+- 이로써 P0-07 재실측 작업(x600 SSH 원격 실행 → 통계 정정 3라운드
+  → 최종 ACCEPTED)이 끝났다. 4라운드에 걸쳐 이 addendum 자체에서
+  스스로 만든 오류 3건을 순서대로 잡았다: (1) "재확인"과 "불일치
+  해소"의 혼동, (2) 통계량 계산 오류(평균 대비 편차와 최솟값-최댓값
+  상대차를 섞어 씀), (3) 절 제목이 본문 결론과 모순.
+- ★ 이번 세션의 v1 evidence 재검수 작업은 여기서 일단락한다.
+  `RULE.md` §7.3 review-required 14건 전부 addendum ACCEPTED,
+  그 중 P0-07 은 실제 GPU 재실측까지 거쳐 원래 상태(PASS)로
+  돌아왔다. 남은 것: `ENV-01`·`02`(review-required 아님, 미착수),
+  v1 → schema v2 실제 승격(frontmatter 전체 교체) 작업.
+- 검증: `scripts/verify_evidence.py` 스키마 위반 0. `cargo test
+  --workspace` 293/0/0.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 07:45 — P0-07 재실측 addendum 3라운드: 절 제목이 본문과 모순됐다
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
