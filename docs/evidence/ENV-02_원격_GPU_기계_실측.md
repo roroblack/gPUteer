@@ -192,8 +192,11 @@ ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused
 기록하는 것과도 일치한다 — 이 evidence 가 그 사실을 반영하지
 못한 채 stale 로 남아 있었다.
 
-`:60` 의 "D-1(Rust 툴체인)은 미해결로 남는다. 양쪽 기계 모두 없다"
-도 같은 이유로 stale — 양쪽 다 PATH 미등록일 뿐 설치되어 있다.
+★ 2026-08-18 08:20 재검수가 지적: 이 인용이 원래 `:60`(frontmatter
+`decision` 필드)을 가리켰는데 틀렸다 — 실제 D-1 문장은 `:158`
+(limitations 목록)에 있다. `:158` 의 "D-1(Rust 툴체인)은 미해결로
+남는다. 양쪽 기계 모두 없다"도 같은 이유로 stale — 양쪽 다 PATH
+미등록일 뿐 설치되어 있다.
 
 OS·GPU·드라이버 스펙(`:10`-`:12`)은 지금 재확인해도 그대로다 —
 이 evidence 가 쓰인 시점(2026-08-16)과 지금(2026-08-18) 사이에
@@ -209,4 +212,12 @@ limitation(`:59`)은 지금도 유효하다.
 
 `CHANGES_REQUESTED` → 위 정정으로 Rust 상태·D-1 결정·base64
 limitation 을 반영했다. 원본 YAML 은 당시 기록이므로 고치지
-않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
+않는다.
+
+★ 2026-08-18 08:20 두 번째 재검수 — `agent:codex-cli` 의 샌드박스는
+네트워크가 막혀 x600 접속을 재현하지 못했다(hostname resolution
+실패) — 그 사실 자체는 이 문서가 이미 명시하고 있다고 확인했다.
+남은 실제 결함은 인용 오류 하나였다: D-1 문장을 `:60`(frontmatter
+`decision` 필드)으로 잘못 짚었다 — 실제는 `:158`(limitations
+목록). 위에서 고쳤다. 이 세 번째 수정 자체는 아직 재검수를
+거치지 않았다.

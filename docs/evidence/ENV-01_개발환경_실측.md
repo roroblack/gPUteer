@@ -157,5 +157,12 @@ C:\Users\playdata2\.cargo\bin\     cargo 1.97.1 / rustc 1.97.1 / rustup 1.29.0 �
 ### review_outcome
 
 `CHANGES_REQUESTED` → 위 정정으로 Rust 상태·D-1 결정을 반영했다.
-원본 YAML 은 당시 기록이므로 고치지 않는다. **이 정정 자체는
-아직 재검수를 거치지 않았다.**
+원본 YAML 은 당시 기록이므로 고치지 않는다.
+
+★ 2026-08-18 08:20 두 번째(최종) 재검수 — `agent:codex-cli` 가
+**`ACCEPTED`** 로 판정했다. `C:\Users\playdata2\.cargo\bin\cargo.exe --version`
+을 직접 실행해 `cargo 1.97.1` 을 확인했고, `Get-Command cargo` 가
+PATH 에서는 여전히 못 찾음을 재현해 "PATH 미등록·설치는 됨"
+구분이 정확함을 확인했다. GPU 세부 정보 재확인은 CIM 접근 거부로
+확인 안 됨으로 남았지만, 문서 스스로 그 한계를 이미 명시하고
+있었다.
