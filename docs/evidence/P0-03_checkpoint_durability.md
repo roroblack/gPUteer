@@ -179,3 +179,74 @@ GC removed 3 partial files, kept 4 valid checkpoints
 
 관련: `docs/decisions/ADR-026_체크포인트_확정_절차_플랫폼_차이.md` · `docs/evidence/P0-03a_windows_fs_atomicity.md`
 계획: `docs/plans/2026-08-15_1330_P0_스파이크_실행계획_v1.md` S3
+
+---
+
+## ★ 이후 변경 (2026-08-17 22:40) — 재개 정책이 이 문서 이후 바뀌었다
+
+독립 검수(`agent:codex-cli`, read-only, P0-03 재검수 목적)가 위 claim의
+2번째 절("마지막 유효 체크포인트에서 재개할 수 있다")이 **지금의
+재개 정책과 어긋난다**고 지적했다. 재현했다 — 맞았다.
+
+### 무엇이 바뀌었나
+
+이 문서를 쓴 시점(commit `45c1b43`)의 재개 판정은 이 문서가 관측한
+그대로였다. 그 뒤 `writer.rs::is_resume_candidate()` 가 재설계됐다
+(2026-08-17, 별도 세션 — DoD-04/P0-03 재검수와 무관하게 카오스 테스트가
+부하 아래서 재개 지점을 통째로 잃는 문제를 잡아서 고친 것).
+
+```text
+기록 순서
+  데이터 -> 매니페스트 -> HASH_VERIFIED -> LATEST 교체 -> COMMITTED
+                                                           ^^^^^^^^^
+                          여기 직전에 kill 되면 COMMITTED 마커가 없다
+```
+
+**이 문서 위쪽의 불변식 2번("kill ⇒ PARTIAL 만 남는다, COMMITTED 로
+승격 안 된다")은 문자 그대로는 지금도 참이다** — kill 은 지금도
+COMMITTED 마커를 만들지 않는다. 그러나 이 문서는 "PARTIAL"과
+"COMMITTED" 두 상태만 다뤘다. **세 번째 상태가 있다**: 데이터·매니페스트·
+해시가 전부 온전한데 COMMITTED 마커만 없는 상태. 지금의
+`is_resume_candidate()` 는 `.publication-failed` 마커만 없으면 이
+상태도 재개 후보로 받아들인다(마커를 요구하지 않는 이유는
+`writer.rs:163` 이하 문서 주석 참조 — `CLAUDE.md` §0.3, 완결된 데이터를
+COMMITTED 마커 하나 때문에 버리지 않는다는 의도적 설계다).
+
+즉 claim의 정확한 의미는 지금 이렇게 좁혀 읽어야 한다:
+
+> kill 은 COMMITTED 승격을 만들지 않는다. 재개는 "COMMITTED 된
+> 체크포인트" 가 아니라 **"해시가 유효한 가장 높은 체크포인트"** 에서
+> 이뤄진다 — 그 체크포인트가 COMMITTED 마커까지 받았는지는 재개
+> 판정에 관여하지 않는다.
+
+### 이 문서의 kill 스윕이 그 경계를 실제로 때렸는지는 확인되지 않았다
+
+위 "테스트가 공허하지 않은지" 절의 8개 표본은 전부 **데이터 파일이
+빠졌거나(`shard-N` 누락) `.tmp` 상태**였다 — `HASH_VERIFIED` 이후,
+`COMMITTED` 이전의 **온전한** 상태(파일 다 있고 매니페스트도 완결,
+마커만 없음)를 잡은 표본은 raw_output 에 없다. 그 구간은 기록 순서상
+LATEST 교체 한 번과 상태 마커 기록 한 번 사이의 좁은 창이라, 40~700ms
+간격의 고정 스윕이 우연히 맞히지 못했을 수 있다.
+
+**추가로 필요한 것**(미수행 — 다음 작업으로 등록): `HASH_VERIFIED` 직후
+`LATEST` 교체 직후 시점을 정확히 겨냥하는 kill 지점(현재의 시간 기반
+스윕이 아니라 상태 전이 신호 기반 kill)을 만들어, "마커만 없는 온전한
+체크포인트가 실제로 재개된다"를 직접 관측해야 이 절의 새 claim이
+DoD-09 수준의 실측 근거를 갖는다.
+
+### 추가 limitation
+
+- ★ `find_resume_point()`(job/attempt 필터 없는 구 API)가 `kill_chaos.rs`
+  의 negative test 대부분에서 여전히 쓰인다. 필터가 있는 새 기본 API는
+  `find_resume_point_for()` 다 — 이 문서의 negative_tests 는 구 API
+  기준이므로 `DoD-09_재개선택_필터.md` 가 다루는 job/attempt 교차 오염
+  위험을 이 문서 범위에서는 검증하지 않은 것으로 읽어야 한다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 내용으로 claim 의 두 번째 절을 좁혀 읽는다는
+정정과, HASH_VERIFIED~COMMITTED 구간을 직접 겨냥한 테스트가 아직
+없다는 사실을 반영해 재검수를 요청했다. 원본 YAML `claim`·`status`·
+`limitations` 는 당시 기록이므로 고치지 않는다.
+
+관련: `docs/evidence/DoD-09_재개선택_필터.md`

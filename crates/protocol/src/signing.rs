@@ -596,12 +596,20 @@ impl ReplayGuard for NoReplayCheck {
 /// 누군가 필드를 `pub` 으로 열거나 `pub fn new()` 를 추가하면 **이 doctest 가 통과해
 /// 실패한다** (`compile_fail` 이므로 컴파일에 성공하면 테스트 실패다).
 ///
+/// ★ 2026-08-17 정정 (독립 검수 · DoD-04 재검수). 이 doctest 는
+/// `replay_checked: bool` 필드로 쓰였는데, 그 필드는 이미 `replay_status:
+/// ReplayStatus` 로 이름이 바뀌어 있었다 — 없는 필드 이름이므로 필드를
+/// 전부 `pub` 으로 열어도 여전히 컴파일에 실패해(unknown field) 이
+/// doctest 가 **비공허하게 보였을 뿐 실제로는 사문화되어 있었다.**
+/// `pub` 뮤테이션으로 재확인한 뒤 실제 필드명으로 고쳤다.
+///
 /// ```compile_fail
 /// use gputeer_protocol::Verified;
+/// use gputeer_protocol::signing::ReplayStatus;
 /// let v: Verified<u32> = Verified {
 ///     inner: 1,
 ///     signer_id: String::new(),
-///     replay_checked: true,
+///     replay_status: ReplayStatus::Checked,
 /// };
 /// ```
 ///
