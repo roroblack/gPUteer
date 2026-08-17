@@ -16,6 +16,34 @@
 
 ---
 
+## 2026-08-17 16:20 — 검증 진입점 · 체크포인트 실패 경로 (248 tests green)
+
+- 계획: 사용자 지시 — "코덱스로 ㄱ"
+- 스트림: Crypto · Checkpoint
+- 수행:
+  1. **`crates/crypto/src/ingress.rs`** — raw bytes -> `Verified<M>` 단일 진입점.
+     ★ 만든 방어(verify · keyring · replay 저장소)를 **처음으로 실제 연결**했다.
+     Clock 주입 · decode 실패 분리 · LockTimeout 은 재시도 없이 거부(fail-open 금지).
+  2. **체크포인트 실패 경로 4건** — `.publication-failed` 불변 마커로 배제,
+     등록된 `.tmp` 보존, 동시 GC 경합 판별, DurabilityState 사이드카 기록.
+  3. **스테일 evidence 탐지** — `verify_evidence.py` 가 negative test 의
+     함수 정의가 아직 있는지 본다.
+- 검증: `cargo test --workspace` **248 passed / 0 failed**, 빌드 경고 0 (3회 반복 동일)
+- ★ 코덱스 설계를 그대로 받지 않은 것:
+  초안은 "COMMITTED 마커 또는 현재 LATEST" 만 재개 후보로 삼았다. **과하다** —
+  마커 직전에 kill 된 온전한 체크포인트를 버린다. 카오스 테스트가
+  `--workspace` 부하에서 이것을 잡았다(단독 실행은 통과해 부하 의존이었다).
+  완결 신호는 **매니페스트의 존재**로 남기고, 실패는 마커로만 배제한다.
+- ★ 코덱스 자신의 테스트 2건이 실패했고 둘 다 진짜 발견이었다:
+  실패 주입이 무효했다(Rust `File::open` 은 Windows 에서 `FILE_SHARE_DELETE` 를
+  포함해 연다) · 동시 GC 가 Windows 에서 `Access Denied` 를 낸다.
+- ★ 내가 만든 검사에서 세 번 틀렸다: 자기 주석과 매칭 · raw string 아님(`` 가
+  백스페이스) · 소스 캐시가 임시 저장소를 스캔. 셋 다 부정 테스트가 잡았다.
+- 안 고친 것: 네트워크 전송·coordinator 없음(진입점을 부르는 것이 없다) ·
+  별도 프로세스 replay 경쟁 미측정 · LATEST 포인터 미사용(의도적)
+- evidence: `DoD-09` · `DoD-10` 에 '이후 변경' 절 추가 (스테일 방지)
+- 리포트: 이 이력 항목으로 갈음
+
 ## 2026-08-17 14:10 — 영속 replay 저장소 · 키 관리 · 두 구현의 계약 일치 (DoD-10, 229 tests green)
 
 - 계획: 사용자 지시 — "같이 할 수 있는 코드 작업을 코덱스에 의뢰해서 진행"

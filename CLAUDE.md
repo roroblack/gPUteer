@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-17 14:10)
+## 5. 지금 상태 (2026-08-17 16:20)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -163,10 +163,10 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 229 passed / 0 failed**, 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 248 passed / 0 failed**, 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** |
-| ├ `crates/crypto` | Ed25519Verifier · **DurableReplayGuard(SQLite §10)** · **PersistentKeyring(§11 K0/K1)** · 두 replay 구현의 **계약 적합성 테스트** |
-| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · durability 상태전이 · kill 카오스 · 경로 탈출 차단 · **재개 job/attempt 필터** |
+| ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard(SQLite §10) · PersistentKeyring(§11 K0/K1) · replay 계약 적합성 · **`ingress` 검증 진입점** |
+| ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · **실패 마커 · 상태 사이드카 · 동시 GC 경합** |
 | └ 미착수 | coordinator · agent · scheduler · UI |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅ · 08 ✅ / 02·04·04b·05 미실행 |
 | **DoD** | 🟡 **evidence 18건** (PASS 17 · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). 검수 기록 없는 v1 **13건** 유예 중 |
@@ -182,10 +182,11 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
   그러나 Agent 가 그 정책을 강제하는 계층은 없다.
   = 위조를 막은 것이지 정책을 시행한 것이 아니다.        -> TODO_VISION V-06
 
-★ 영속 replay 저장소를 **아무도 쓰지 않는다**
-  DurableReplayGuard 를 만들었고 재시작·크래시 테스트도 통과한다.
-  그런데 검증 경로(coordinator·agent)가 미착수라 **어디에도 연결되어 있지 않다.**
-  "영속 저장소가 있다" 는 "재시작 후 replay 창이 닫혔다" 가 아니다. -> DoD-10 limitations
+방어 계층이 **경계 하나까지만** 연결됐다
+  crates/crypto/src/ingress.rs 가 raw bytes -> Verified<M> 를 조립한다.
+  keyring · replay 저장소 · Clock 이 실제로 물려 있다.
+  ★ 그러나 **네트워크 전송 · coordinator · scheduler 가 없다.**
+    진입점은 있는데 그 진입점을 부르는 서비스가 없다.
 
 키 보관이 Windows 전용이다
   §11 K1 은 DPAPI 다. Linux 는 UnsupportedPlatform 으로 **명시적으로 실패**한다
@@ -196,12 +197,6 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
   ReplayStatus::NotApplicable 로 **보고는 한다** (2026-08-17).
   require_replay_checked() 가 막으므로 조용히 통과하지는 않는다.
   그러나 그 메시지로 부작용을 실행하려면 소비 측이 멱등성을 갖춰야 한다.
-
-체크포인트 쓰기 실패 경로에 잔여물이 남는다
-  포인터 갱신에 실패하면 호출자는 Err 를 받지만
-  디스크에는 완전한 체크포인트가 남는다.                  -> DoD-09 limitations
-  startup_gc 가 매니페스트에 등록된 .tmp 도 지운다.
-  DurabilityState 전이가 실제 파일 연산과 연결되어 있지 않다.
 
 evidence 13건에 독립 검수 기록이 없다
   schema v2 유예 목록에 있다. verify_evidence.py 가 매번 그 숫자를 출력한다.
@@ -214,12 +209,11 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 소비 측(coordinator·agent) 착수              ★ 만든 방어를 아무도 안 쓴다
-2. 다중 프로세스 replay 경쟁 실측                순차 호출만 검증했다
-3. 체크포인트 쓰기 실패 경로 정리                DoD-09 limitations 4건
-4. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
-5. 정책 강제 계층 (V-06)                         "서명했다" != "강제한다"
-6. v1 evidence 13건에 독립 검수                  유예 목록을 줄인다
+1. 네트워크 전송 · coordinator 골격             ingress 를 부르는 것이 없다
+2. 정책 강제 계층 (V-06)                         "서명했다" != "강제한다"
+3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
+4. 별도 **프로세스** replay 경쟁 실측            스레드로만 측정했다
+5. v1 evidence 13건에 독립 검수                  유예 목록을 줄인다
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

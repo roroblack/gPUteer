@@ -121,3 +121,37 @@ raw_output_bytes  == 실제 크기            검사기가 강제한다
 
 ★ **이것이 보장하지 않는 것**: 명령이 실제로 실행됐는가, 검수자가 정직했는가,
 작성자가 원문과 digest 를 **함께** 고쳤는가. 그건 기계가 볼 수 없다.
+
+---
+
+## ★ 이후 변경 (2026-08-17) — 미수정 4건 중 3건이 해결됐다
+
+> 관측 기록은 고치지 않는다. 그러나 `limitations` 가 스테일해지면
+> **없는 것보다 나쁜 기록**이 된다.
+
+```text
+당시 limitations                          지금 (커밋 7e57538)
+──────────────────────────────────────────────────────────────────────
+write_checkpoint 실패 후 잔여물이 남는다   해결 — .publication-failed 마커로 배제
+startup_gc 가 등록된 .tmp 도 지운다        해결 — 매니페스트 등록분은 보존
+startup_gc 동시 실행 NotFound 경합         해결 — Windows 는 Access Denied 를 내므로
+                                           경로 존재 여부로 경합/오류를 가른다
+DurabilityState 가 파일 연산과 무관하다    해결 — 상태별 write-once 사이드카로 기록
+
+LATEST 포인터를 쓰지 않는다                ★ 여전히 미수정 (의도적)
+```
+
+### `LATEST` 를 여전히 쓰지 않는 이유
+
+포인터를 **완결 신호로 삼지 않기로** 했다.
+
+기록 순서는 `데이터 → 매니페스트 → HASH_VERIFIED → LATEST 교체 → COMMITTED` 다.
+포인터나 `COMMITTED` 마커를 완결 신호로 요구하면, 그 직전에 kill 된
+**온전한 체크포인트**(데이터·매니페스트·해시 전부 정상)를 버리게 된다.
+
+카오스 테스트가 실제로 이것을 잡았다 — 부하가 높을 때 재개 지점이 통째로 사라졌다.
+
+완결 신호는 **매니페스트의 존재**로 남긴다 (`CLAUDE.md` §0.3 과 일치).
+포인터는 힌트이고, 실패한 것은 `.publication-failed` 마커로만 배제한다.
+
+관련: `crates/checkpoint/tests/write_failure.rs` · `crates/checkpoint/src/writer.rs`
