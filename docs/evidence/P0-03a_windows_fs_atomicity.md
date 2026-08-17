@@ -215,9 +215,20 @@ Windows 에서 `FILE_SHARE_DELETE` 를 **포함**한다(`crates/checkpoint/tests
 사례**다 — 원래 문서에 적혔던 "문서상 FILE_SHARE_DELETE 를 포함하나
 실측하지 않았다"는 추측이 맞았던 것으로 확인됐다.
 
-★ 이 후속 확인 자체를 이 세션이 다시 재현하지는 않았다 — `crates/checkpoint/tests/durability_chaos.rs:29-86,361-384`
-와 `write_failure.rs` 가 그 재확인을 담은 테스트라는 것만
-소스에서 확인했다. fresh 재실행은 확인 안 됨.
+★ 2026-08-18 01:40 재검수가 이 문단의 근거 과장을 잡았다. 원래
+"`durability_chaos.rs:29-86,361-384` 와 `write_failure.rs` 가 그
+재확인을 담은 테스트"라고 적었는데 **틀렸다** — `FILE_SHARE_DELETE`
+포함 사실은 `write_failure.rs:5-20` **모듈 문서**(주석)에 서술만
+되어 있을 뿐, 그것을 독립적으로 검증하는 테스트는 아니다.
+`durability_chaos.rs:371-373` 은 공유 모드와 무관하게 동작하도록
+설계됐고(`:374-384` 도 기존 파일 대체가 아니라 다른 이름의
+write-once 만 검사), `write_failure.rs` 의 현재 실패 주입도 공유
+모드가 아니라 **디렉터리 rename** 이다(`:52-66`). 그래서 정확히는:
+
+> "Rust `File::open` 이 Windows 에서 `FILE_SHARE_DELETE` 를
+> 포함한다"는 사실은 `write_failure.rs:5-20` 모듈 문서에 **서술로만**
+> 기록되어 있다. 그 사실 자체를 독립적으로 재검증하는 테스트는
+> 이 저장소에 없다 — fresh 재실측도, 재검증 테스트도 확인 안 됨이다.
 
 나머지 limitation(NTFS 한정·P1c 원인 미규명·전원 차단 미검증·단일
 기계 측정·durability contract 범위 제외)은 지금도 유효하다.
@@ -226,4 +237,15 @@ Windows 에서 `FILE_SHARE_DELETE` 를 **포함**한다(`crates/checkpoint/tests
 
 `CHANGES_REQUESTED` → 위 정정으로 claim 명시·stale limitation·
 ADR-026 반영 사실을 담았다. 원본 YAML 은 당시 기록이므로 고치지
-않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
+않는다.
+
+★ 2026-08-18 01:40 두 번째 재검수 — `agent:codex-cli` 가 claim
+명시·ADR-026 반영 확인은 정확하다고 인정했지만, `FILE_SHARE_DELETE`
+재확인 근거를 과장했다고 지적했다 — `durability_chaos.rs`/
+`write_failure.rs` 를 "재확인 테스트"라고 적었는데, 실제로는 그
+사실이 `write_failure.rs` **모듈 문서에 서술로만** 남아 있을 뿐
+독립적으로 검증하는 테스트가 아니었다(`durability_chaos.rs:371-373`
+은 공유 모드와 무관하게 설계됐고, `write_failure.rs` 의 지금 실패
+주입은 디렉터리 rename 이다). 위에서 "서술로만 기록되어 있고,
+재검증 테스트는 없다"로 다시 좁혔다. 이 세 번째 수정 자체는 아직
+재검수를 거치지 않았다.
