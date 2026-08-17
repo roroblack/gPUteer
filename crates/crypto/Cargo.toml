@@ -10,6 +10,7 @@ gputeer-protocol = { path = "../protocol" }
 ed25519-dalek.workspace = true
 rusqlite.workspace = true
 blake3.workspace = true
+prost.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
