@@ -16,6 +16,32 @@
 
 ---
 
+## 2026-08-18 01:00 — DoD-01·P0-08 1라운드 정정
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). 이 저장소에서 가장 오래된 evidence(DoD-01)와
+  P0-08 착수.
+- 스트림: Protocol
+- 결과: 둘 다 `CHANGES_REQUESTED`.
+  - DoD-01: claim("두 구현이 모든 범위에서 바이트 단위로 일치")이
+    넓게 읽혔다 — `canonical_vectors.rs` 가 40개 벡터 전체가 아니라
+    수동 구성한 부분집합만 순회한다고 좁혔다. domain 수치 17→23
+    정정, stale limitation 4건(JobManifest 부분집합·prost 미구현·
+    Ed25519 미검증·SCHEMA_TOO_NEW 미구현 — 전부 그 뒤 해소됨) 정정.
+    이 evidence 당시 12건이던 벡터와 지금 40건을 명시적으로
+    구분했다.
+  - P0-08: claim 핵심은 유지. "SCHEMA_TOO_NEW 반환 경로 미구현"
+    limitation 이 stale(지금 구현되어 있다). "지문 가드 뮤테이션"
+    항목이 named test 가 아니라 수동 뮤테이션 실험이라는 분류
+    정정. q4·q5·q6 이 실제 Ed25519 가 아니라 sig_input 비교라는
+    범위 명시.
+  - 둘 다 원본 YAML 은 당시 기록이므로 고치지 않고 append-only 로
+    정정했다.
+- 검증: 문서 전용 수정, `cargo test --workspace` 293/0/0 재확인.
+- 리포트: 이 이력 항목
+
+---
+
 ## 2026-08-18 00:50 — DoD-07 도 2라운드 만에 ACCEPTED — v1 evidence 8건 addendum ACCEPTED 누적
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"

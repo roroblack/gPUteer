@@ -184,3 +184,70 @@ ADR-026 적용 (Rust, write-once 고유 이름)    500 / 500 성공
 이 문서가 그 한계를 충분히 적지 않았다. `DoD-08` 참조.
 
 관련: `docs/protocol/signing.md` · `docs/decisions/ADR-026_체크포인트_확정_절차_플랫폼_차이.md`
+
+---
+
+## ★ 이후 변경 (2026-08-18 01:00) — claim 범위 초과, domain 수치·limitation 4건 stale
+
+독립 검수(`agent:codex-cli`, read-only)가 재검수해 `CHANGES_REQUESTED`
+로 판정했다. 이 저장소에서 가장 오래된 evidence 라 stale 이 가장
+많이 쌓여 있었다.
+
+### claim 을 이렇게 좁혀 읽는다
+
+원래 claim은 "두 구현이 모든 범위에서 바이트 단위로 일치하고
+a~i 를 모두 만족한다"로 읽힌다. 실제로는:
+
+- canonical 인코더 자체는 지금도 규칙 a~i 를 구현한다(`crates/protocol/src/canonical.rs:6,185,204`).
+- Python 참조 구현엔 지금 `JobManifest` 전 필드 표가 있다(`tools/canonical/reference_canonical.py:175`).
+- 벡터는 지금 **40건**이다(`tests/vectors/canonical_v1.json:2`) — 이
+  evidence 가 쓰인 시점의 **12건**은 초기 스냅샷이었다. `HISTORY.md`
+  의 "2026-08-16 09:30 — prost 연동 계층" 항목에서 12→20 으로 늘어난
+  기록이 확인된다(제목 기반 인용).
+- 그러나 `crates/protocol/tests/canonical_vectors.rs` 는 40개 벡터
+  **전체를 순회**하지 않고 수동 구성한 `JobManifest` 부분집합을
+  쓴다(`:35,40`). prost 참조 대조도 최소 메시지 중심이다(`prost_canonical.rs:55`).
+
+> claim 은 "canonical 인코더가 규칙 a~i 를 구현하고, 대표 벡터들에서
+> Python 참조 구현과 바이트 단위로 일치한다 — 그러나 40개 벡터
+> 전체와 `Signable` 10종 전체를 순회하는 전수 대조는 아니다"로
+> 좁혀 읽는다.
+
+### negative_tests 이름은 실재 확인됨, 단 설명 문구 하나가 stale
+
+`negative_non_minimal_varint_is_rejected`(`canonical_vectors.rs:259`),
+`negative_truncated_varint_is_rejected`(`:271`),
+`negative_cross_domain_signature_input_differs`(`:289`),
+`v08_signature_field_is_excluded`(`:173`),
+`v04_repeated_order_is_preserved`(`:125`),
+`domain_tags_are_32_bytes_and_unique`(`:304`) 전부 실재한다. 다만
+`domain_tags_are_32_bytes_and_unique` 의 원래 서술("17종 domain_tag")
+은 stale — 지금 이 테스트는 **23종**을 검사하고 `assert_eq!(seen.len(), 23, ...)`
+로 고정한다(`:321`). `Domain` enum 도 지금 23종이다(`canonical.rs:282`).
+
+### stale limitations
+
+| 원래 서술 | 지금 |
+|---|---|
+| "JobManifest 16개 필드 부분집합"(`:59`) | ★ 거짓이다. 지금 전 필드가 구현되어 있고 `UNIMPLEMENTED_FIELDS` 는 비어 있다(`to_fields.rs:830,944`) |
+| "prost 연동 미구현"(`:60`) | ★ 거짓이다. `ToCanonicalFields` 와 prost 경로 테스트가 지금 존재한다(`to_fields.rs:27`, `prost_canonical.rs:55`) |
+| "Ed25519 서명 자체 미검증"(`:61`) | ★ 거짓이다. Crypto 스트림에 지금 구현되어 있다 — `HISTORY.md` 의 "2026-08-16 12:40 — Ed25519 서명·검증 + Verified<M>" 항목(제목 기반 인용) |
+| "SCHEMA_TOO_NEW 미구현"(`:62`) | ★ 거짓이다. 지금 반환 경로가 있다(`crates/protocol/src/signing.rs:741-743`) |
+
+float/prost 우회 가능성(`:63`, 직접적인 float 우회 negative test 는
+확인 안 됨) 과 Windows 단일 플랫폼(`:64`) limitation 은 지금도
+유효하다.
+
+### DoD-08 이 이후에 canonical 결함 3건을 더 찾았다
+
+이 문서 자체가 위쪽 "이후 변경" 절에서 이미 "벡터 대조는 '같은가'
+를 증명하지 '옳은가' 를 증명하지 않는다"고 적어 뒀다 — `DoD-08`
+이 실제로 Rust/Python 이 **똑같이** 규범을 어기던 3건(규칙 i 중첩
+누출·map 엔트리 기본값·도출 해시 재귀 제외)을 찾아 시정했다. 이
+사실은 이미 이 문서에 반영되어 있다.
+
+### review_outcome
+
+`CHANGES_REQUESTED` → 위 정정으로 claim 범위·domain 수치·stale
+limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
+않는다. **이 정정 자체는 아직 재검수를 거치지 않았다.**
