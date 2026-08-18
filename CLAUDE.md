@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 19:00)
+## 5. 지금 상태 (2026-08-18 19:20)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -247,7 +247,7 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크(단계 1~6) + Lease 최소 조각 완료(2026-08-18)
+1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크(단계 1~6) + Lease 최소 조각 완료(2026-08-18, 코덱스 검수 ACCEPTED)
    docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
    docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md
    `gputeer coordinator-agent-selftest` 가 별도 PID 2개(coordinator-stub·

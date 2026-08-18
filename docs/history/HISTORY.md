@@ -16,6 +16,28 @@
 
 ---
 
+## 2026-08-18 19:20 — Lease 최소 조각 코덱스 검수 `ACCEPTED`
+
+- 계획: `0be82e8`(Lease 최소 조각)에 대한 코덱스 독립 검수(`p69`
+  프롬프트, 1라운드).
+- 스트림: —
+- 결과: **`ACCEPTED`.** 검증 순서(서명 확인 → 상관관계 검사),
+  nested Lease 위조가 outer Grant 서명을 안 깨는 이유(규칙 i —
+  서명 필드 90 은 canonical 에서 제외되지만 메시지 자체는 포함),
+  `FenceWatermark` 가 매 프로세스 새로 생성되고 계획의 "Out" 범위와
+  일치하는지, replay guard 공유가 안전한지(`Lease` 는 `LongLived`
+  라 replay 대상이 아님), 시나리오 5 의 Agent-only 판정 기준,
+  뮤테이션 인과관계, `crates/agent` 가 `gputeer-runtime-policy` 를
+  의존해도 스트림 소유권 위반이 아닌지 — 전부 파일:줄로 확인받았다.
+  발견 사항 없음.
+- 검증: 코덱스는 `cargo test`/selftest 재실행이나 뮤테이션 재현은
+  하지 않았다(코드 대조로만 논리 검증) — 실행 기반 확인은 이
+  세션이 앞서 이미 5회 연속 수행했다.
+- 리포트: 이 이력 항목. Lease 최소 조각도 이제 구현·실측·독립
+  검수까지 완전히 끝났다.
+
+---
+
 ## 2026-08-18 19:00 — coordinator/agent 에 Lease 최소 조각 추가 (테스트+개발 병행)
 
 - 계획: `docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md`
