@@ -209,7 +209,17 @@ stdout·stderr 를 처음부터 끝까지 직접 읽는다. 고친 뒤 5회 연�
 `coordinator-agent-selftest` 에 아직 없다 — 현재는 정상 경로 1회만
 증명한다.
 
-### 단계 6 — 코덱스 독립 검수 1라운드 (2026-08-18) ✅ `ACCEPTED`(수정 후)
+### 단계 6 — 코덱스 독립 검수 (2026-08-18) ✅ 단계 3·4 라운드: `ACCEPTED`(수정 후) · 단계 5 라운드: `ACCEPTED`(1라운드)
+
+**단계 5 커밋(`d7aacdc`) 검수** — `p57` 프롬프트, 1라운드 만에 `ACCEPTED`.
+위조 시점(서명 후 변조인지 확인), replay wire bytes 동일성(재인코딩
+없이 `frame` 재사용), replay 판정 근거(`signing.rs:826` 인용의
+정확성), 위조 ACK 판정 기준의 정직성, 뮤테이션 주장의 논리적 타당성,
+기존 정상 경로 판정 보존 여부를 전부 코드 대조로 확인받았다 —
+결함 없음. (코덱스는 `cargo test`/`selftest` 재실행이나 뮤테이션
+재현 자체는 하지 않았다 — 코드만으로 논리 검증했다고 명시했다.)
+
+### 단계 3·4 코덱스 검수 — 아래는 그 당시 기록
 
 첫 라운드는 `CHANGES_REQUESTED` — `crates/cli/src/coordinator_agent_selftest.rs`
 가 coordinator 의 stderr 를 메인 흐름과 동시에 비우지 않아, coordinator 가
