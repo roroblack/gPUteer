@@ -16,6 +16,31 @@
 
 ---
 
+## 2026-08-18 15:05 — `runtime-windows` 수정 재검수 `ACCEPTED`
+
+- 계획: `23e77fd`(quote_command_line·TerminateProcess 수정)에 대한
+  코덱스 재검수(`p60` 프롬프트).
+- 스트림: —
+- 결과: **`ACCEPTED`.** `2n+1`(따옴표 직전)·`2n`(문자열 끝) 백슬래시
+  규칙이 코드에 정확히 구현됐는지 손으로 재계산해 확인, 회귀
+  테스트 2개의 기대값 자체가 옳은지도(테스트 통과 자체가 아니라)
+  검증, `TerminateProcess` 수정이 1차 오류 반환 흐름을 깨지 않았는지,
+  이전 라운드에서 `ACCEPTED` 받은 부분(핸들 정리 순서·`CREATE_SUSPENDED`
+  경합 제거·`wide()` 쓰기 가능 버퍼·`guarantees_hard_limit()` 정직성·
+  evidence append-only)이 이번 수정으로 회귀하지 않았는지 전부
+  확인받았다. 발견 사항 없음.
+- **이로써 `crates/runtime-windows`(VRAM Job Object 커밋 상한 연결)
+  는 구현·실측·코덱스 독립 검수(2라운드: 1차 CHANGES_REQUESTED →
+  수정 → 2차 ACCEPTED)까지 완전히 끝났다.** CLAUDE.md 백로그 2번의
+  VRAM 부분은 완료 — network.rs(OS 방화벽, 사용자 승인 필요)와
+  artifact.rs(TOCTOU, 추가 조사 필요)만 남는다.
+- 검증: 코덱스 자신은 Windows 환경이 아니라 실제 빌드/테스트 재실행은
+  하지 않았다(코드 대조로만 검증) — 실행 기반 확인은 이 세션이
+  앞서 이미 여러 차례 했다(단위 테스트 4/4, 통합 테스트 3회 연속).
+- 리포트: 이 이력 항목.
+
+---
+
 ## 2026-08-18 14:50 — `runtime-windows` 코덱스 검수: 명령줄 인용 버그 2건 + `TerminateProcess` 미확인 수정
 
 - 계획: `cb2d7c2`(VRAM Job Object 연결)에 대한 코덱스 독립 검수(`p59`

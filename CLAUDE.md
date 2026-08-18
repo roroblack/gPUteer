@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 14:50)
+## 5. 지금 상태 (2026-08-18 15:05)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -255,10 +255,12 @@ Linux 를 한 번도 돌려보지 않았다
    coordinator" 아님, lease·스케줄링·다중 Agent·운영용 key protection·
    TLS 는 계획 자체가 처음부터 범위 밖으로 명시했다. 다음 네트워크
    단계(스케줄링·다중 Agent 등)는 새 계획 문서가 필요하다.
-2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM 부분 완료(2026-08-18) — 방화벽·경로는 남음
+2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM 완료(2026-08-18, 코덱스 검수 2라운드 ACCEPTED) — 방화벽·경로는 남음
    crates/runtime-windows 신설, Job Object 커밋 상한 실제 연결·실측
    완료(뮤테이션 테스트 포함). 소프트 제한임을 실측으로 확인
    (오버슈트 700~850KiB) — guarantees_hard_limit()==false 와 일치.
+   코덱스 검수 1라운드에서 명령줄 인용 버그 2건(MSVC 백슬래시 규칙)
+   + TerminateProcess 미확인을 잡아 수정, 2라운드 ACCEPTED.
    남은 것: network.rs(OS 방화벽) — 시스템 전역 보안 설정 변경이라
    사용자 명시적 승인 필요. artifact.rs(TOCTOU 커널 경로 강제) —
    Windows 재분석 지점 차단 등 추가 조사 필요, 아직 미착수.
