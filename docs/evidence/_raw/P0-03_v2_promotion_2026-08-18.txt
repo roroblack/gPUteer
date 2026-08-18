@@ -1,0 +1,22 @@
+$ cargo test -p gputeer-checkpoint --test kill_chaos
+test result: ok. 7 passed; 0 failed; 0 ignored
+
+$ cargo test -p gputeer-checkpoint --features chaos-hooks --test kill_chaos kill_after_latest_before_committed_is_resume_candidate -- --exact --nocapture (3회 반복)
+1회차: test result: ok. 1 passed; 0 failed; 0 ignored
+2회차: test result: ok. 1 passed; 0 failed; 0 ignored
+3회차: test result: ok. 1 passed; 0 failed; 0 ignored
+
+$ cargo test --workspace
+합계: 307 passed / 0 failed (전 크레이트)
+
+이 파일은 P0-03 을 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 45c1b43
+무렵 기록, docs/evidence/_raw/P0-03_probe.txt)은 문서 본문에 이미
+보존돼 있으며 고치지 않는다.
+
+참고: 2026-08-17 22:40/23:20 addendum 은 이미 claim 의 재개 정책
+관련 절을 좁혀 읽고, chaos-hooks 새 테스트에 대해서만 독립 검수를
+받았다("이 addendum 에 한정, 원본 P0-03 v1 claim 전체를 ACCEPTED
+로 재분류하는 것이 아니다" — addendum 자신이 명시). 이번 v2
+승격은 문서 전체(원본 claim·negative_tests·limitations 8건)를
+처음부터 다시 검수 대상으로 삼는다.

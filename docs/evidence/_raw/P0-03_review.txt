@@ -1,0 +1,64 @@
+독립 검수 receipt — P0-03 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      P0-03
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/P0-03_checkpoint_durability.md 문서 전체(원본 YAML
+  claim·negative_tests·limitations·decision + 2026-08-17 22:40/23:20
+  addendum 포함) — 2026-08-17 addendum 자신이 "원본 claim·나머지
+  limitations 는 아직 재검수 안 받았다"고 명시했으므로, 이번이 그
+  작업이다.
+  crates/checkpoint/src/writer.rs
+  crates/checkpoint/tests/kill_chaos.rs
+  crates/checkpoint/src/durability.rs
+  crates/checkpoint/src/bin/ckpt_writer.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p87 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+| 항목 | 판정 |
+|---|---|
+| claim(2026-08-17 좁힌 읽기) | 실재 확인됨 |
+| negative_tests 5건 | 실재 확인됨 |
+| 새 HASH_VERIFIED~COMMITTED 테스트 | 실재 확인됨 |
+| 구 API(find_resume_point) 관찰 | 실재 확인됨 |
+| limitations 7건(전원 차단·복제·NTFS·단일 writer·소형·delta·PyTorch) | 실재 확인됨 |
+| "kill 시점 8개 고정값" | ★ stale — 실제는 이벤트 기반(첫 COMMITTED 관측 직후 kill), ms 는 hard_timeout 상한일 뿐 |
+| 명령 재실행 | 확인 안 됨(샌드박스 .cargo-build-lock 권한 거부) |
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+P0-03 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) — 문서
+전체 재검수, kill 메커니즘이 시간 기반에서 이벤트 기반으로
+바뀌었다" 를 추가해 claim 재확인, kill 메커니즘 변화 설명(원본
+raw_output 의 "PARTIAL 7/8" 표는 역사적 기록이며 지금 이벤트 기반
+구현이 재현하는 것이 아님), negative_tests·limitations 8건 재확인
+을 기록했다. frontmatter 원문과 2026-08-17 addendum 원문(원본
+raw_output 표 포함)은 append-only 원칙에 따라 손대지 않았다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p88 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- kill 메커니즘 서술 정확: run_and_kill() 은 min_committed=1,
+  hard_timeout=kill_after*20 전달(kill_chaos.rs:150-154).
+  run_and_kill_after() 는 COMMITTED stdout 관측을 기다린 뒤
+  child.kill() 호출(kill_chaos.rs:126-146). ms 는 실제 kill 시각이
+  아니라 timeout 상한임을 확인.
+- 손상 없음 불변식은 계속 검증됨: 매 kill 마다 corrupt==0,
+  valid>=committed assert(kill_chaos.rs:269-293).
+- append-only 준수: frontmatter 와 기존 raw output 의 "PARTIAL
+  7/8" 기록 그대로 남아 있음(P0-03 문서:1-70), 2026-08-17
+  addendum 도 유지됨(:172-262). git diff 삭제 없이 98줄 추가만
+  확인.
+- v2 receipt 존재, 인용과 일치: kill_chaos 7 passed, chaos-hooks
+  3회 연속 통과, workspace 307/0(P0-03_v2_promotion_2026-08-18.txt:1-10).
+추가 정정 불필요.

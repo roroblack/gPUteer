@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: P0-03
 claim: "체크포인트가 쓰기 도중 프로세스 강제 종료되어도 PARTIAL 로만 남고 COMMITTED 로 승격되지 않으며, 마지막 유효 체크포인트에서 재개할 수 있다"
 status: PASS
 commit: 45c1b43c94a7668be9bfb29e5de30d2b8defb289
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "문서 전체(원본 claim·negative_tests·limitations 8건) 재검수 · kill 메커니즘이 시간 기반→이벤트 기반으로 바뀐 것 정밀화 · 손상 없음 불변식 재확인 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/P0-03_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/P0-03_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:b2778486c55b71b726d0030b7d2f259c04889f076719b9d5ae68018373b4eddc"
+raw_output_bytes: 1235
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 (8bab26f4f 2026-07-14)"
   writer_bin: "target/debug/ckpt_writer.exe (dev profile, 이 커밋에서 빌드)"
@@ -51,6 +71,8 @@ artifacts:
   - crates/checkpoint/tests/kill_chaos.rs
   - crates/checkpoint/src/bin/ckpt_writer.rs
   - crates/checkpoint/src/writer.rs
+  - docs/evidence/_raw/P0-03_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/P0-03_review.txt
 negative_tests:
   - "kill_during_write_never_produces_corrupt_checkpoint: kill 시점 8개를 고정 스윕(40~700ms). 매니페스트가 존재하는데 파일 해시가 틀린 경우가 0건임을 확인"
   - "negative_tampered_committed_checkpoint_is_rejected_from_resume: 확정된 체크포인트의 1바이트를 XOR 변조하면 재개 후보에서 제외되고 더 낮은 step 으로 내려가는 것을 확인"
@@ -297,6 +319,104 @@ review_scope:     writer.rs 의 chaos_kill_after_latest 호출 위치,
 이 addendum 은 독립 검수를 통과했지만, `P0-03` 문서 전체를 schema v2
 로 승격하려면 원본 claim·나머지 limitations 도 같은 수준으로 재검수
 받아야 한다 — 그 작업은 아직 하지 않았다.
+
+---
+
+## ★ 이후 변경 (2026-08-18) — 문서 전체 재검수, kill 메커니즘이 시간 기반에서 이벤트 기반으로 바뀌었다
+
+위 문단이 예고한 "문서 전체 재검수"를 이번에 했다. 새로운 독립
+검수(`agent:codex-cli`, read-only, `p87` 프롬프트, 원본 YAML
+claim·negative_tests·limitations 전부를 대상)가 `CHANGES_REQUESTED`
+로 판정했다 — 2026-08-17 addendum 이 이미 좁힌 claim 읽기는
+정확하다고 재확인했지만, **원본 raw_output 의 "kill@40~700ms,
+PARTIAL 7/8" 표가 지금의 테스트 구현과 더 이상 대응하지 않는다**
+는 새 지적을 받았다.
+
+### 1. claim — 2026-08-17 좁힌 읽기가 재확인됐다
+
+`write_checkpoint()` 는 `LATEST` 교체 후 `Committed` 를 기록한다
+(`crates/checkpoint/src/writer.rs:129,141`). 그 사이 kill 되면
+데이터·매니페스트·해시는 온전한데 `.durability.committed` 만
+없다. `is_resume_candidate()` 는 그 마커를 요구하지 않고
+`.publication-failed` 만 배제한다(`writer.rs:241,246`), 유효
+매니페스트를 해시 검증해 가장 높은 step 을 고른다(`writer.rs:264,332`).
+정확한 claim: **"kill 은 COMMITTED 기록을 만들지 않으며, 재개는
+COMMITTED 여부와 무관하게 해시가 유효한 가장 높은 체크포인트에서
+이뤄진다"** — 2026-08-17 addendum 의 읽기와 동일, 재확인됐다.
+원본 YAML `claim`(`P0-03:3`)은 그대로 두고 고치지 않는다
+(append-only 원칙).
+
+### 2. [새 지적] "kill 시점 8개 고정값" — 테스트 메커니즘이 그 사이 바뀌었다
+
+`crates/checkpoint/tests/kill_chaos.rs` 는 여전히
+`[40, 90, 150, 230, 310, 420, 560, 700]` 8개 값을 순회한다
+(`kill_chaos.rs:271`). 그러나 그 값을 쓰는 방식이 원래 evidence를
+쓴 시점(commit `45c1b43`)과 지금은 다르다:
+
+```text
+당시(원본 raw_output)   각 ms 값을 실제 대기 시간으로 써서
+                        그 시각에 프로세스를 kill 했다 —
+                        kill@40ms, kill@90ms ... 마다 다른
+                        진행 상태에서 죽었다(PARTIAL 7/8 관측).
+
+지금(kill_chaos.rs:150-154,126-140)
+                        run_and_kill() -> run_and_kill_after(root,
+                        min_committed=1, hard_timeout=ms*20) 로 바뀌었다.
+                        ms 값은 이제 "실제 kill 시각"이 아니라
+                        hard_timeout 상한(ms*20)을 정할 뿐이고,
+                        진짜 kill 시점은 stdout 에서 "COMMITTED"
+                        를 1회 관측한 직후다 — 8개 반복 전부
+                        사실상 같은 이른 시점(첫 확정 직후)에서
+                        죽는다.
+```
+
+**이것은 결함이 아니다** — 이 리팩터(2026-08-17, 다른 세션)는 카오스
+테스트가 부하 아래서 재개 지점을 통째로 잃는 문제를 잡으려고
+시간 대신 이벤트로 동기화하도록 바꾼 것이다(위 "무엇이 바뀌었나"
+절 참조). 두 불변식(손상 0건, `valid >= committed`)은 지금도
+매 kill 마다 확인된다(`kill_chaos.rs:280-292`). **그러나 원본
+raw_output 의 "총 8회: PARTIAL 발생 7회(88%)" 통계와 개별 kill 시점
+표(`P0-03:38-48`)는 당시 시간 기반 구현의 관측이지, 지금 이벤트
+기반 구현이 재현하는 것이 아니다.**
+
+→ 그 표는 **역사적 기록**으로 원문 그대로 둔다(append-only) —
+지금 그 정확한 88% 수치나 개별 kill 지점 상태를 재현한다고
+주장하지 않는다. "테스트가 공허하지 않은가"(kill 이 실제로 쓰기
+도중 걸리는가)라는 원래 질문 자체는 지금도 유효한 질문이고,
+`valid >= committed` 부등식 검사와 `corrupt == 0` 단언이 그
+공허하지-않음을 지금 방식대로 계속 보증한다 — 다만 "몇 %가
+PARTIAL 이었는가"는 더 이상 이 테스트가 answer 하지 않는다.
+
+### 3. negative_tests, limitations 8건 — 재확인, 전부 실재/유효
+
+negative_tests 5개 함수 전부 실재 확인(`kill_chaos.rs:269,329,
+385,411,430`). addendum 이 이미 지적한 "구 API(`find_resume_point`,
+job/attempt 필터 없음) 를 대부분의 negative test 가 쓴다"도
+재확인(`kill_chaos.rs:342,390,399,416,420,440`, 구 API 자체는
+`writer.rs:336,339`) — `DoD-09` 가 다루는 교차 오염 위험이 이
+문서 범위에서 검증되지 않았다는 좁힌 읽기는 여전히 정확하다.
+
+limitations 8건(전원 차단 미검증·복제 계층 자료구조 수준뿐
+(`durability.rs:260,286`)·NTFS 단일·단일 writer(`kill_chaos.rs:102`)·
+소형 체크포인트(`kill_chaos.rs:104,106`)·delta 청크 미검증
+(`ckpt_writer.rs:31,35`)·PyTorch 실학습 아님(`ckpt_writer.rs:31,39`)·
+kill 시점 8개 고정값) 전부 지금도 실재/유효함을 재확인했다 — 마지막
+항목은 위 2번 절이 이미 "값의 의미가 바뀌었다"로 정밀화했다.
+
+### Rust 재실행 — 이 세션에서 직접 확인, Codex 샌드박스에서는 못함
+
+Codex read-only 샌드박스는 `.cargo-build-lock` 접근이 거부돼 세
+명령을 하나도 실행하지 못했다(샌드박스 제약이지 코드 결함이
+아니다). 이 세션은 이미 로컬에서 직접 실행해 확인했다 —
+`docs/evidence/_raw/P0-03_v2_promotion_2026-08-18.txt` 가 그
+receipt 다: `kill_chaos` 7 passed, chaos-hooks 대상 테스트 3회
+연속 통과, `cargo test --workspace` 307 passed / 0 failed.
+
+### review_outcome
+
+`CHANGES_REQUESTED` — 위 2번(kill 메커니즘 변화 명시)을 이
+addendum으로 반영했다. 좁은 범위의 후속 확인을 별도로 요청해
+`ACCEPTED` 를 받은 뒤에만 schema v2 로 승격한다.
 
 ### 추가 limitation
 

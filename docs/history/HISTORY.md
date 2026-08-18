@@ -16,6 +16,50 @@
 
 ---
 
+## 2026-08-19 01:35 — P0-03 schema v1 → v2 승격 완료 — kill_chaos 카오스 메커니즘이 시간 기반→이벤트 기반으로 바뀐 것을 정밀화
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-01` 에
+  이은 두 번째. 2026-08-17 addendum 이 이미 "원본 claim·나머지
+  limitations 는 아직 재검수 안 받았다"고 예고한 그 작업.
+- 스트림: Checkpoint.
+- 수행: `cargo test -p gputeer-checkpoint --test kill_chaos`(7) +
+  `--features chaos-hooks` 대상 테스트 3회 연속(3/3) + `cargo test
+  --workspace`(307)를 직접 실행해
+  `docs/evidence/_raw/P0-03_v2_promotion_2026-08-18.txt` 에 저장했다.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p87` 프롬프트,
+  원본 YAML claim·negative_tests·limitations 전부 대상) —
+  `CHANGES_REQUESTED`.
+- 2026-08-17 addendum이 이미 좁힌 claim 읽기("재개는 COMMITTED
+  가 아니라 해시 유효 최고 체크포인트에서")는 재확인됐지만, **새
+  지적**을 받았다 — "kill 시점 8개 고정값" limitation 이 stale
+  하다. `crates/checkpoint/tests/kill_chaos.rs` 의 카오스 메커니즘
+  자체가 이 evidence 를 쓴 시점(commit `45c1b43`) 이후 **시간
+  기반에서 이벤트 기반으로 리팩터**됐다 — `[40,90,...,700]` 배열은
+  여전히 있지만 그 값은 이제 실제 kill 시각이 아니라 `hard_timeout`
+  상한(`ms*20`)일 뿐이고, 진짜 kill 은 stdout 에서 "COMMITTED" 를
+  1회 관측한 직후 일어난다. 원본 raw_output 의 "총 8회: PARTIAL
+  발생 7회(88%)" 표는 지금 이 구현이 재현하는 수치가 아니다 —
+  결함은 아니다(다른 세션이 카오스 테스트의 부하 아래 재개 지점
+  유실 문제를 잡으려고 의도적으로 바꾼 것), 다만 원래 evidence 의
+  구체적 관측 통계는 지금 더 이상 유효하지 않다. 새
+  addendum(2026-08-18 01:20 경)으로 이 변화를 정밀화하고, "손상
+  없음"·"valid >= committed" 불변식은 지금도 매 kill 마다 검증됨을
+  확인했다 — 원본 YAML 과 2026-08-17 addendum 원문(원본 raw_output
+  표 포함)은 손대지 않았다. 좁은 후속 재검수(`p88` 프롬프트) —
+  **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가, `artifacts:` 에 raw/review
+  파일 2개 추가. `_schema_v1_grandfathered.txt` 에서 P0-03
+  제거(6→5건), `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **4 → 3건**(`P0-03a·07·08`). `cargo test
+  --workspace` 전체 재실행 — 307 passed / 0 failed(회귀 없음),
+  디스크 18GB 여유 안정적으로 유지 확인.
+- 리포트: 이 이력 항목. 다음은 `P0-03a·07·08` — 이 셋만 남으면
+  review-강제 대상 evidence 부채가 완전히 해소된다(`ENV-01·02` 는
+  비강제라 별개).
+
+---
+
 ## 2026-08-19 00:55 — P0-01 schema v1 → v2 승격 완료 — 하드웨어 재실측 없이, 디스크 100% 소진 사고 정리
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-01`~`08`
