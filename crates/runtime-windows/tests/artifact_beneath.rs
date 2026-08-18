@@ -21,11 +21,17 @@ use std::process::Command;
 
 use gputeer_runtime_windows::open_beneath;
 
-/// `mklink /J` 로 디렉터리 junction 을 만든다. 실패하면(권한 문제 등)
-/// 테스트를 건너뛴다 — 이 저장소가 실측으로 확인한 바로는 이 개발
-/// 기계에서 승격 없이 성공하지만, 다른 환경에서는 정책이 다를 수
-/// 있다(예: 그룹 정책으로 junction 생성을 막은 조직망).
-fn make_junction(link: &Path, target: &Path) -> bool {
+/// `mklink /J` 로 디렉터리 junction 을 만든다.
+///
+/// ★ 2026-08-18 정정(코덱스 독립 검수 · `p62` 프롬프트). 초안은 이
+/// 실패하면 조용히 `return` 해서 테스트를 "통과"로 보고했다 —
+/// junction 생성이 이 환경에서 막히면(그룹 정책 등) 이 테스트는
+/// **아무것도 검증하지 않고도 초록불**을 켰다. 이 개발 기계에서는
+/// junction 생성이 승격 없이 성공함을 이미 실측으로 확인했으므로
+/// (모듈 문서 참조), 실패는 "정상적으로 건너뛸 상황"이 아니라
+/// **panic 으로 크게 알려야 할 이례적인 상황**이다 — 조용한 거짓
+/// 통과보다 시끄러운 실패가 낫다.
+fn make_junction(link: &Path, target: &Path) {
     let status = Command::new("cmd")
         .args(["/c", "mklink", "/J"])
         .arg(link)
@@ -34,7 +40,12 @@ fn make_junction(link: &Path, target: &Path) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .expect("mklink 프로세스 스폰 실패");
-    status.success()
+    assert!(
+        status.success(),
+        "mklink /J 실패({link:?} -> {target:?}) — 이 개발 기계에서는 \
+         승격 없이 성공함을 실측으로 확인했다(모듈 문서 참조). 실패했다면 \
+         환경이 바뀐 것이니 원인을 확인해야 한다 — 조용히 건너뛰지 않는다"
+    );
 }
 
 /// ★ 핵심 실측 — allowed 디렉터리 안의 junction 이 허용 영역 밖을
@@ -54,10 +65,7 @@ fn junction_inside_allowed_dir_pointing_outside_is_rejected() {
     fs::write(&marker, b"original").unwrap();
 
     let junction = allowed.join("escape");
-    if !make_junction(&junction, &outside) {
-        eprintln!("junction 생성 실패 — 이 환경의 권한 정책으로 건너뛴다");
-        return;
-    }
+    make_junction(&junction, &outside);
 
     // ★ 비공허성 — 문자열 검사(ArtifactPolicy)가 이 경로를 실제로
     //   "허용"으로 판정한다는 것을 먼저 확인한다. 그러지 않으면 아래
@@ -97,10 +105,7 @@ fn junction_as_intermediate_directory_is_rejected() {
     fs::create_dir_all(outside.join("sub")).unwrap();
 
     let junction = allowed.join("link_to_outside");
-    if !make_junction(&junction, &outside) {
-        eprintln!("junction 생성 실패 — 이 환경의 권한 정책으로 건너뛴다");
-        return;
-    }
+    make_junction(&junction, &outside);
 
     let result = open_beneath(&root, Path::new("allowed/link_to_outside/sub/file.txt"));
     assert!(result.is_err(), "중간 디렉터리 junction 을 거부하지 못했다");

@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 15:45)
+## 5. 지금 상태 (2026-08-18 16:10)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -255,7 +255,7 @@ Linux 를 한 번도 돌려보지 않았다
    coordinator" 아님, lease·스케줄링·다중 Agent·운영용 key protection·
    TLS 는 계획 자체가 처음부터 범위 밖으로 명시했다. 다음 네트워크
    단계(스케줄링·다중 Agent 등)는 새 계획 문서가 필요하다.
-2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 완료(2026-08-18) — 방화벽만 남음
+2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 의 primitive 완료(2026-08-18) — 방화벽만 남음
    crates/runtime-windows 신설:
    - VRAM: Job Object 커밋 상한 실제 연결·실측(뮤테이션 테스트 포함).
      소프트 제한임을 실측으로 확인(오버슈트 700~850KiB) —
@@ -266,6 +266,13 @@ Linux 를 한 번도 돌려보지 않았다
      실측(이 개발 기계는 symlink 생성에 관리자 권한이 필요해 junction
      사용), 뮤테이션 테스트로 비공허성 확인. 일반 Win32 API 한계상
      Linux openat2(RESOLVE_BENEATH) 와 동등한 원자적 보장은 아니다.
+   ★ 코덱스 독립 검수(2026-08-18)가 지적 — **두 mechanism 모두 아직
+   실제 쓰기/실행 경로에 연결되지 않았다.** 이 저장소는 아직 Job 을
+   실행하지 않으므로(scheduler·crates/agent Job 실행 미착수) 연결할
+   실제 호출부 자체가 없다 — `windows_commit_cap()` 이 `runtime-windows`
+   신설 전까지 같은 처지였던 것과 정확히 같은 상황이다. "완료"는
+   primitive 구현·실측·검수가 끝났다는 뜻이지, 지금 당장 어떤 실제
+   Job 실행을 강제하고 있다는 뜻이 아니다.
    남은 것: network.rs(OS 방화벽) — 시스템 전역 보안 설정 변경이라
    사용자 명시적 승인 필요, 아직 미착수.
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ 시도했으나 **사용자 승인 필요로 보류**(2026-08-18)

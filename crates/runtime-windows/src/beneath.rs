@@ -20,6 +20,19 @@
 //! 승격해야 한다 — 미구현). 그래도 이 구현은 가장 흔한 공격("검사
 //! 통과 후 심볼릭 링크로 통째로 바꿔치기")은 실제로 막는다 — reparse
 //! point 자체를 열기 시점에 발견해 거부하기 때문이다.
+//!
+//! # ★ 이 모듈은 아직 아무 실제 쓰기 경로에도 연결되지 않았다 (독립 검수 2026-08-18 지적)
+//!
+//! `crates/runtime-policy/src/vram.rs` 가 `runtime-windows` 신설
+//! 전까지 같은 처지였던 것과 정확히 같은 이유다 — 이 저장소는
+//! **아직 Job 을 실행하지 않는다**(`CLAUDE.md` §5 "미착수" —
+//! scheduler·`crates/agent` 의 Job 실행). 그래서 "artifact_scope
+//! 로 통제되는 임의 경로에 실제로 쓰는" 코드 경로 자체가 이 저장소에
+//! 없다 — `ArtifactPolicy::check()` 를 호출하는 곳도
+//! `crates/cli/src/selftest.rs` 의 합성 문자열 검사(파일시스템을
+//! 건드리지 않는다) 하나뿐이다. `open_beneath`/`open_artifact` 는
+//! **미래의 실행 계층이 쓸 준비가 된 primitive** 이지, 지금 당장
+//! 어떤 실제 쓰기를 대체한 것이 아니다 — 이 사실을 감추지 않는다.
 
 use std::ffi::OsStr;
 use std::fs::File;

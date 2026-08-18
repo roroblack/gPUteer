@@ -16,6 +16,51 @@
 
 ---
 
+## 2026-08-18 16:10 — `artifact_beneath` 코덱스 검수: 미연결 primitive 명시 + 침묵 스킵 제거
+
+- 계획: `07151e1`(artifact_scope TOCTOU 방어)에 대한 코덱스 독립
+  검수(`p62` 프롬프트). 사용자 지시 — 자율 루프 계속.
+- 스트림: Runtime.
+- 결과: `CHANGES_REQUESTED`. 핵심 unsafe 코드(핸들 정리·
+  `FILE_FLAG_OPEN_REPARSE_POINT` 사용법·방어 순서·junction 대체
+  타당성·뮤테이션 인과관계·정상 경로 테스트 유의미성)는 전부
+  문제없음을 확인받았지만, 두 가지를 지적했다:
+  1. **[높음] `open_artifact()`/`open_beneath()` 가 실제 artifact 쓰기
+     경로 어디에도 연결돼 있지 않다.** Explore 서브에이전트로 직접
+     확인했다 — `ArtifactPolicy::check()` 호출부는
+     `crates/cli/src/selftest.rs` 의 합성 문자열 검사(파일시스템
+     안 건드림) 하나뿐이고, `crates/checkpoint` 의 실제 파일 쓰기는
+     모두 내부 root 아래 고정 경로만 쓴다 — job/attempt 가 통제하는
+     임의 경로에 쓰는 코드 자체가 이 저장소에 아직 없다(scheduler·
+     `crates/agent` Job 실행이 CLAUDE.md 에 여전히 미착수로 남아
+     있다). 즉 이건 이 커밋의 결함이 아니라 **`runtime-windows`
+     신설 전 `windows_commit_cap()` 이 처했던 것과 똑같은 상황**
+     (primitive 는 있지만 부를 caller 가 아직 없다) — 다만 그 사실을
+     모듈 문서에 명시하지 않은 것은 실제 정정 대상이었다.
+  2. **[중간] junction 생성 실패 시 테스트가 조용히 "통과"로 끝났다.**
+     환경이 바뀌어 junction 생성이 막히면 이 방어 테스트가 **아무것도
+     검증하지 않고도 초록불**을 켤 수 있었다.
+- 수행: `crates/runtime-windows/src/beneath.rs` 모듈 문서에 "이 모듈은
+  아직 아무 실제 쓰기 경로에도 연결되지 않았다" 절 추가 —
+  `windows_commit_cap()` 의 선례와 명시적으로 비교해 정직하게
+  적었다. `CLAUDE.md` 백로그 2번도 "VRAM·artifact_scope 완료" 를
+  "primitive 완료"로 정정하고, 두 mechanism 모두 실제 Job 실행
+  경로에 아직 연결 안 됐다는 설명을 추가했다(VRAM 도 같은 처지임을
+  이번에 알아챘다 — 코덱스는 artifact_scope 만 지적했지만 VRAM 도
+  똑같이 미연결이다). `artifact_beneath.rs` 의 `make_junction()` 이
+  생성 실패 시 조용히 `return` 하던 것을 `assert!` 로 바꿔 — 실패하면
+  테스트가 크게 panic 한다("조용한 거짓 통과보다 시끄러운 실패가
+  낫다"). 이 개발 기계에서는 이미 junction 생성이 승격 없이 성공함을
+  실측으로 확인했으므로, 실패는 "정상적으로 건너뛸 상황"이 아니라
+  환경이 바뀐 이례적 상황이다.
+- 검증: `cargo build --workspace` 경고 0. `cargo test --workspace`
+  306/0/1(ignored) 유지(로직만 바뀌고 테스트 개수는 그대로) — 3개
+  전부 재통과 확인.
+- 리포트: 이 이력 항목 + `beneath.rs` 모듈 문서 + CLAUDE.md 백로그
+  2번 갱신.
+
+---
+
 ## 2026-08-18 15:45 — `artifact_scope` TOCTOU 방어 실제 구현 — Windows reparse point 차단
 
 - 계획: CLAUDE.md "다음에 할 일" 2번 나머지 절반(artifact.rs TOCTOU
