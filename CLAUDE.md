@@ -255,7 +255,14 @@ Linux 를 한 번도 돌려보지 않았다
    TLS 는 계획 자체가 처음부터 범위 밖으로 명시했다. 다음 네트워크
    단계(스케줄링·다중 Agent 등)는 새 계획 문서가 필요하다.
 2. runtime-policy 판정을 실제 시스템 호출로 연결  OS 방화벽 · 커널 경로 강제 미구현
-3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
+3. x600 에 WSL2 배포판 -> D-3 해소               ★ 시도했으나 **사용자 승인 필요로 보류**(2026-08-18)
+   `ssh x600 "wsl --status"` -> "설치 안 됨, wsl --install 로 설치하라"는
+   메시지 확인. `wsl --install` 은 Windows 선택적 기능 활성화 + 재부팅을
+   요구하는 시스템 설정 변경이다 — 세션 안전 규칙상 "시스템/보안 설정
+   변경"은 자율 실행 대상이 아니라 채팅에서 명시적 승인이 필요한
+   항목이다("사용자는 자고 있으니 질문하지 말고 계속 진행" 지시보다
+   이 규칙이 우선한다). 사용자가 깨어나면 직접 승인하거나 실행해야
+   한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
 5. v1 evidence — ★ **16건 전부(review-required 14건 + ENV-01·02) addendum ACCEPTED**(2026-08-18).
