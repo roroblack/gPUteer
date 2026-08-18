@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-18 09:10 — `DurableReplayGuard` 별도 프로세스 replay 경쟁 실측 추가
+
+- 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
+  (자율 루프 계속). CLAUDE.md "다음에 할 일" 백로그 항목 — 별도
+  **프로세스** replay 경쟁은 지금까지 스레드로만 측정했다는 공백.
+- 스트림: 저장소 신뢰성 실측 (`crates/crypto`).
+- 수행: 코덱스에게 설계를 시켰다(스크래치패드 `p53.md`) —
+  `crates/crypto/tests/durable_replay_race.rs` 가 같은 프로세스
+  내 스레드로만 경쟁을 만들던 공백을 지적하고, 별도 OS 프로세스로
+  경쟁을 강제하는 fixture+테스트 구조를 설계받았다. 그 설계대로:
+  - `crates/crypto/src/bin/durable_replay_process_fixture.rs`
+    (신규) — `worker`/`holder` 두 서브커맨드. `holder` 는 별도
+    `rusqlite::Connection` 으로 `BEGIN IMMEDIATE` 를 잡고, 모든
+    worker 가 `check_and_record` 호출 직전 마커 파일을 남길 때까지
+    기다린 뒤에만(파일 마커 barrier) 락을 놓거나(정상 경로) 1300ms
+    쥐고 있다가(LockTimeout 경로, `BUSY_TIMEOUT`=1000ms 초과) 푼다.
+  - `crates/crypto/tests/durable_replay_process.rs` (신규) — 8개
+    worker 프로세스를 스폰해 (1) 같은 nonce → 정확히 1개만 Fresh,
+    나머지 Duplicate, (2) 서로 다른 nonce → 전부 Fresh(비공허성),
+    (3) holder 가 1300ms 락을 쥐면 → Duplicate 로 위장되지 않고
+    LockTimeout 을 받는다, 3가지를 검증. 모든 worker 의
+    `start_ns` 가 holder 의 `locked_ns`~`released_ns` 구간
+    안이었는지 타임스탬프로 재확인해 "우연히 안 겹쳤을 수도
+    있다"는 반례를 차단한다.
+- 검증(뮤테이션 테스트로 비공허성 증명): `durable_replay.rs` 의
+  중복 검사(`if duplicate.is_some() { ... Duplicate }`)를
+  `if false && duplicate.is_some()` 로 무력화 → 예상대로
+  `separate_processes_same_nonce_have_exactly_one_fresh` 가
+  실패(`Duplicate` 개수 0, 기대 7) → 즉시 `.bak` 백업에서 원복 →
+  재빌드 후 3개 테스트 재통과 확인. `cargo test --workspace`
+  296/0/0(이전 293 + 신규 3), 스키마 위반 0.
+- 리포트: 이 이력 항목. 별도 evidence 문서는 만들지 않았다 — 이
+  테스트는 RULE.md §7.3 이 요구하는 "evidence 파일"이 아니라
+  일반 회귀 테스트이며, Phase 3 `chaos-hooks` kill 테스트와 같은
+  선례를 따라 코덱스 독립 리뷰는 선택 사항으로 남겨 뒀다.
+
+---
+
 ## 2026-08-18 08:30 — ENV-02 도 ACCEPTED — 이 저장소의 v1 evidence 16건 전부 addendum 재검수 완료
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
