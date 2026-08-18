@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-02
 claim: "실제 prost 생성 메시지에서 canonical 규칙 a~i 가 유지되며, to_fields 변환 계층이 Python 참조 구현과 바이트 단위로 일치한다. 서명 대상에서 빠진 필드는 전부 명시적으로 선언되어 있다"
 status: PASS
 commit: e7b72693e2478b6ab7f7a112e5b44966f793a9ba
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T18:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 범위 · negative_tests 실재성과 domain 수치(24/20) · limitations stale 여부 · ControlAction 9/21 재확인 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-02_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-02_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:de28ab70469d3f6e17384f5c8d58b3bdca5ddab3e427e038d35b005d25642d84"
+raw_output_bytes: 1646
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / protoc (protoc-bin-vendored)"
   note: "라이브러리 크레이트라 실행 바이너리 없음. prost-build 가 OUT_DIR 에 gputeer.v1.rs 생성"
@@ -55,6 +75,8 @@ artifacts:
   - crates/protocol/src/to_fields.rs
   - crates/protocol/tests/prost_canonical.rs
   - crates/protocol/tests/field_number_audit.rs
+  - docs/evidence/_raw/DoD-02_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-02_review.txt
 negative_tests:
   - "prost_encode_is_not_deterministic_for_maps: map 을 가진 같은 내용의 메시지를 500회 재구축했을 때 prost::encode 가 495종의 서로 다른 바이트를 냈다. canonical 은 1종. ★ 비공허성 단언 포함 — prost 가 1종만 냈다면 실패시킨다"
   - "hashmap_canonical_is_stable_across_many_rebuilds: 삽입 순서를 매번 회전시켜 200회 재구축, canonical 1종"
@@ -363,3 +385,90 @@ stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고�
 `P0-03` 2회, `DoD-04`·`DoD-05`·`DoD-06` 각 3회. 문서 전체를 schema
 v2 로 승격하는 것(frontmatter 교체·정식 executor/reviewer 메타데이터
 ·raw_output digest)은 여전히 별도 작업으로 남아 있다.
+
+## ★ 이후 변경 (2026-08-18 18:00) — domain 수치 재차 stale + 실제 코드 결함 발견, schema v2 승격을 위한 재검수
+
+이 evidence 를 schema v1 -> v2(RULE.md §7.3, ADR-030)로 승격하기
+위해 새 독립 검수를 받았다(`agent:codex-cli`, fresh-read-only,
+`p66` 프롬프트) — `CHANGES_REQUESTED`.
+
+### domain 수치가 또 stale — 이번엔 진짜 코드 결함이었다
+
+바로 위 addendum(2026-08-18 00:10 무렵)이 "23종 중 19종"으로
+정정했는데, `DoD-01` 의 같은 날 재검수와 똑같은 이유로 이미 또
+stale 이었다 — 같은 세션 안에서 `Domain::GrantAck` 가 추가됐다.
+지금은 **24종 중 20종**이다.
+
+다만 이번엔 evidence 문서만의 문제가 아니었다 — **실제 회귀 방지
+테스트 자체에 결함이 있었다.**
+`crates/protocol/tests/t1_signing_targets.rs::domain_coverage_is_explicit`
+가 domain 목록을 `Domain` enum 에서 자동으로 뽑지 않고 손으로 나열한
+배열(`coverage`)을 쓰는데, `Domain::GrantAck` 를 추가했을 때 이
+배열을 갱신하지 않았다 — 그런데도 `assert_eq!(coverage.len(), 23,
+...)` 가 계속 통과했다. 왜냐하면 이 assert 는 **그 손으로 쓴 배열
+자신의 길이**를 세지, `Domain` enum 의 실제 variant 개수를 세지
+않기 때문이다 — enum 에 새 variant 가 추가돼도 이 테스트는 그
+사실을 전혀 모른다. `canonical_vectors.rs::domain_tags_are_32_bytes_and_unique`
+는 실제 `Domain` 값들을 순회하므로 새 variant 를 빠뜨리면 그 자체로
+개수가 안 맞아 잡히지만, 이 테스트는 그런 자동 대조 장치가 없었다.
+
+이 세션이 코드를 고쳤다 — `coverage` 배열에
+`(Domain::GrantAck, Some("AgentGrantAck"), true)` 를 추가하고,
+`assert_eq!(coverage.len(), 24, ...)` 와
+`assert_eq!(implemented, 20, ...)` 로 갱신했다. `cargo test -p
+gputeer-protocol --test t1_signing_targets domain_coverage_is_explicit`
+로 직접 확인 — `domain 24종 — 구현 20 · proto 메시지 없음 4`.
+`cargo test --workspace` 도 재실행해 회귀 없음을 확인했다(306/0/1
+유지 — 이 테스트는 이미 있던 테스트라 개수가 늘지 않는다).
+
+### negative_tests — 이름은 실재, 약칭 표기가 혼동을 줄 수 있다
+
+frontmatter 의 `"job_manifest_field_numbers_match_proto /
+lease_ / common_"`(`:63`) 는 세 함수를 `/` 로 묶은 약칭이다 —
+`lease_field_numbers_match_proto`(`field_number_audit.rs:194`),
+`common_message_field_numbers_match_proto`(`field_number_audit.rs:251`)
+가 온전한 이름이다. 원문 약칭을 append-only 원칙에 따라 고치지
+않는다 — 여기 명시하는 것으로 충분하다.
+
+### limitations 4건 재확인 — 지금도 전부 stale(이전 addendum 대로)
+
+- "6개 필드 미구현"(`:68`) — 지금도 거짓. `UNIMPLEMENTED_FIELDS` 는
+  비어 있다(`to_fields.rs:953-963`).
+- "17종 중 7종만 구현"(`:69`) — 지금은 **24종 중 20종**(위 절 참조,
+  이전 addendum 의 "23종 중 19종"도 이미 stale 이었다).
+- `ControlAction` oneof "9/21 구현"은 **지금도 정확하다** —
+  `to_fields.rs:694,707,718,739,751,765,778,797,811` 9곳을 직접
+  세어 재확인했다. `AgentGrantAck` 는 `ControlAction` oneof 의
+  일부가 아니라 `control.proto` 의 독립 top-level 메시지다
+  (`control.proto:377-390`) — 9/21 수치에 포함시키면 안 된다는
+  점도 확인했다.
+- Ed25519·`SCHEMA_TOO_NEW` 관련 stale 정정은 이전 addendum 그대로
+  지금도 유효하다.
+
+### cargo test — 확인 안 됨(검수자) → 이 세션이 직접 실행해 해소
+
+검수자의 read-only 샌드박스는 `.cargo-build-lock` 접근 거부로
+`cargo test` 를 직접 돌리지 못했다. 이 세션이 승격 직전
+`cargo test -p gputeer-protocol --test prost_canonical --test
+field_number_audit --test canonical_vectors` 를 직접 실행해
+50/50 통과를 확인했다(`docs/evidence/_raw/DoD-02_v2_promotion_2026-08-18.txt`).
+
+### review_outcome
+
+`CHANGES_REQUESTED` → domain 24/20 갱신(evidence 본문 + 실제 코드
+`t1_signing_targets.rs` 둘 다) + cargo test 재실행 결과 첨부로 해소.
+
+## ★ 이후 변경 (2026-08-18 18:10) — schema v1 → v2 승격
+
+좁은 후속 확인 재검수(`agent:codex-cli`, fresh-read-only)에서
+**`ACCEPTED`** 를 받았다 — 두 지적(domain 24/20, cargo test 미확인)
+모두 해소됐음을 확인했다. 전문은 `docs/evidence/_raw/DoD-02_review.txt`
+참조.
+
+이 검수를 근거로 이 문서를 `schema_version: 1`(유예 목록)에서
+`schema_version: 2`(RULE.md §7.3, ADR-030)로 승격했다. frontmatter
+에 `executor_*`·`reviewer_*`·`review_*`·`raw_output_artifact`/
+`digest`/`bytes` 필드를 새로 추가했고(기존 필드는 위 "정정" 절과
+같은 이유로 손대지 않았다), `docs/evidence/_schema_v1_grandfathered.txt`
+에서 이 파일명을 지우고 `scripts/verify_evidence.py` 의
+`GRANDFATHER_DIGEST` 상수를 갱신했다.

@@ -1,0 +1,116 @@
+독립 검수 receipt — DoD-02 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      DoD-02
+reviewed_commit  33eb855 (검수 시점 HEAD 근처)
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-02_prost_연동_계층.md (frontmatter + 본문 전체,
+  기존 addendum 4라운드 포함) 을 처음부터 다시 검수 — 기존 addendum 의
+  ACCEPTED 판정을 그대로 믿지 않고 파일:줄을 직접 재확인했다. 특히
+  domain 수치가 DoD-01 재검수와 같은 이유(Domain::GrantAck 추가)로
+  또 stale 인지 확인했다.
+  crates/protocol/src/to_fields.rs
+  crates/protocol/src/canonical.rs
+  crates/protocol/tests/t1_signing_targets.rs
+  crates/protocol/tests/prost_canonical.rs
+  crates/protocol/tests/field_number_audit.rs
+  proto/control.proto
+
+--------------------------------------------------------------------------
+검수자 원문 (재구성 — 원본은 절대경로 markdown 링크 형식이었고,
+이 receipt 는 이 저장소의 관례(파일명:줄 인용)에 맞춰 다시 정리했다.
+판정·근거·인용 내용 자체는 원본과 동일하다.)
+--------------------------------------------------------------------------
+
+최종 판정: CHANGES_REQUESTED
+
+1. claim — 실재 확인됨, addendum 의 좁힌 해석에서만
+   JobManifest 의 누락 필드 10/11/12/54/55는 현재 구현됨:
+   to_fields.rs:859-888. Lease.scope field 40도 구현됨:
+   to_fields.rs:912-934. 두 메시지의 Python 참조 벡터 대조 테스트도
+   존재함: prost_canonical.rs:677-735. 나머지는 byte-level 전수
+   대조가 아니라 field number/name audit 범위임:
+   field_number_audit.rs:202-247.
+
+2. domain 수치 — stale, 실제는 24종 중 20종
+   현재 Domain enum은 24종이다: canonical.rs:282-315. 기존 테스트는
+   여전히 23종을 assert한다: t1_signing_targets.rs:427(당시). 기존
+   구현 수치도 여전히 19로 고정돼 있다: t1_signing_targets.rs:445
+   (당시). 실제 ToCanonicalFields 구현 수는 42개이며, AgentGrantAck
+   의 Signable 구현도 존재한다: signable.rs:178-204. proto 메시지도
+   실제 존재한다: control.proto:377-390. 23종 중 19종은 24종 중
+   20종으로 고쳐야 하며, domain_coverage_is_explicit 에
+   Domain::GrantAck 항목을 추가해야 한다.
+
+3. negative_tests 목록 — 이름은 실재, 약칭 표기 stale
+   job_manifest_field_numbers_match_proto / lease_ / common_ 이
+   실제 함수명 약칭이다 — lease_field_numbers_match_proto
+   (field_number_audit.rs:194), common_message_field_numbers_match_proto
+   (field_number_audit.rs:251) 가 온전한 이름.
+
+4. limitations — stale 4건 재확인
+   "6개 필드 미구현"은 거짓 — UNIMPLEMENTED_FIELDS 비어 있음
+   (to_fields.rs:953-963). "17종 중 7종만 구현"은 24종 중 20종으로
+   갱신 필요. ControlAction oneof "9/21 구현"은 지금도 정확함 —
+   to_fields.rs:694,707,718,739,751,765,778,797,811 9곳 확인.
+   AgentGrantAck 는 ControlAction oneof 의 일부가 아니라 독립
+   top-level 메시지이므로 9/21 수치에 포함시키면 안 됨.
+   Ed25519/SCHEMA_TOO_NEW 관련 정정은 지금도 유효.
+
+5. cargo test — 확인 안 됨
+   read-only 샌드박스가 .cargo-build-lock 접근 거부로 직접 실행
+   못 함. 소스상 테스트 함수 수는 25+10+15=50개.
+
+필요한 정정: domain 수치 24/20 갱신, t1_signing_targets.rs coverage
+에 AgentGrantAck 추가, negative_tests 의 common_ 을 실제 함수명으로
+설명, stale limitations 갱신, cargo test 재실행 결과 첨부.
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+- domain 24/20 은 evidence addendum(2026-08-18 18:00)에 반영했을 뿐
+  아니라, 실제 코드 결함(t1_signing_targets.rs::domain_coverage_is_explicit
+  가 손으로 쓴 배열이라 Domain enum 크기 변화를 못 잡는 구조적 문제)
+  을 발견해 crates/protocol/tests/t1_signing_targets.rs 자체를
+  고쳤다 — coverage 배열에 (Domain::GrantAck, Some("AgentGrantAck"),
+  true) 추가, assert_eq!(coverage.len(), 24, ...),
+  assert_eq!(implemented, 20, ...) 로 갱신.
+  cargo test -p gputeer-protocol --test t1_signing_targets
+  domain_coverage_is_explicit 직접 실행 확인: "domain 24종 — 구현
+  20 · proto 메시지 없음 4". cargo test --workspace 전체도 재실행해
+  회귀 없음 확인(306/0/1 유지).
+- cargo test 미확인(4번)은 claude-code 세션이 직접 실행해 해소 —
+  docs/evidence/_raw/DoD-02_v2_promotion_2026-08-18.txt 참조
+  (cargo test -p gputeer-protocol --test prost_canonical --test
+  field_number_audit --test canonical_vectors: 50 passed / 0 failed,
+  2026-08-18 실행).
+- negative_tests/limitations 원문 문구는 append-only 원칙에 따라
+  손대지 않고 addendum 본문에서만 정정했다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p68 프롬프트)
+--------------------------------------------------------------------------
+
+판정: ACCEPTED
+
+두 지적 모두 해소됐다.
+
+- coverage 배열에 Domain::GrantAck 가 실제로 추가됨:
+  t1_signing_targets.rs:397-428.
+- 수치가 24 및 20으로 수정됨: t1_signing_targets.rs:430,448.
+- 2026-08-18 18:00 addendum이 존재하며, 손으로 쓴 배열이 enum
+  variant 증가를 감지하지 못하는 구조적 결함을 정확히 설명함:
+  DoD-02 문서:367-398.
+- raw 결과 파일이 존재하고 지정 명령 및 "50 passed / 0 failed"가
+  기록됨: DoD-02_v2_promotion_2026-08-18.txt:1.
+
+다만 read-only 샌드박스에서 cargo test -p gputeer-protocol --test
+t1_signing_targets 직접 실행 결과는 .cargo-build-lock 접근 거부로
+확인 안 됨 — raw artifact 의 기존 50/50 기록으로 해당 지적은
+해소된 것으로 판단.

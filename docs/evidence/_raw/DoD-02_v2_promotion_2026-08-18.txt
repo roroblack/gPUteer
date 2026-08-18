@@ -1,0 +1,33 @@
+$ cargo test -p gputeer-protocol --test prost_canonical --test field_number_audit --test canonical_vectors
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.29s
+
+Running tests\canonical_vectors.rs
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Running tests\field_number_audit.rs
+running 10 tests
+test derived_hash_fields_are_actually_excluded ... ok
+test lease_field_numbers_match_proto ... ok
+test job_manifest_field_numbers_match_proto ... ok
+test every_impl_is_audited ... ok
+test unimplemented_list_has_no_stale_entries ... ok
+test parsers_are_not_vacuous ... ok
+test artifact_and_lease_field_numbers_match_proto ... ok
+test common_message_field_numbers_match_proto ... ok
+test grant_and_control_field_numbers_match_proto ... ok
+test every_unsigned_field_is_declared_in_unimplemented_list ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+Running tests\prost_canonical.rs
+running 25 tests
+(전부 나열 — 25개 전부 ok)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+합계: 50 passed / 0 failed (canonical_vectors 15 + field_number_audit 10 + prost_canonical 25)
+
+이 파일은 DoD-02 를 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit e7b7269 무렵
+기록, docs/evidence/_raw/DoD-02_test_output.txt)은 문서 본문에 이미
+보존돼 있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라,
+v2 승격 시점의 독립적 재확인이다.

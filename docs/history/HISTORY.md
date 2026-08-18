@@ -16,6 +16,53 @@
 
 ---
 
+## 2026-08-18 18:20 — DoD-02 schema v1 → v2 승격 + 진짜 코드 결함 발견·수정
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격), DoD-01 에 이은
+  두 번째 사례. 사용자 지시 — "코덱스 검수 결과 확인해서 DoD-01
+  승격 마무리해줘. 그리고 코덱스 쿼터로 다음 작업 이어서 가봐.
+  테스트와 동시에 개발할 수 있는 부분은 개발하면서 가야지."
+- 스트림: Protocol.
+- 수행: DoD-01 과 같은 절차(오늘 재실행 + 오늘 새 독립 검수를 v2
+  근거로 삼는다)를 DoD-02 에 적용했다. `cargo test -p
+  gputeer-protocol --test prost_canonical --test field_number_audit
+  --test canonical_vectors`(50/50) 를 직접 실행해
+  `docs/evidence/_raw/DoD-02_v2_promotion_2026-08-18.txt` 에 저장.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p66` 프롬프트) —
+  `CHANGES_REQUESTED`.
+- **이번엔 evidence 문서만의 문제가 아니라 진짜 코드 결함이었다.**
+  `DoD-01` 과 같은 이유(같은 세션 안에서 `Domain::GrantAck` 추가)로
+  domain 수치가 "23종 중 19종"에서 "24종 중 20종"으로 stale 됐는데,
+  이번엔 그 stale 을 실제로 만든 원인이 코드 자체에 있었다 —
+  `crates/protocol/tests/t1_signing_targets.rs::domain_coverage_is_explicit`
+  가 `Domain` enum 을 순회하지 않고 **손으로 쓴 배열**을 쓴다.
+  `assert_eq!(coverage.len(), 23, ...)` 는 그 배열 자신의 길이를
+  셀 뿐이라, `Domain::GrantAck` 를 추가했을 때 이 배열을 갱신하지
+  않아도 테스트가 계속 통과했다 — `canonical_vectors.rs` 의 같은
+  종류 테스트는 실제 enum 값을 순회해 이런 결함이 구조적으로 불가능한
+  것과 대조된다. `coverage` 배열에
+  `(Domain::GrantAck, Some("AgentGrantAck"), true)` 를 추가하고
+  `assert_eq!(coverage.len(), 24, ...)` /
+  `assert_eq!(implemented, 20, ...)` 로 고쳤다.
+  `cargo test -p gputeer-protocol --test t1_signing_targets
+  domain_coverage_is_explicit` 직접 실행 확인: "domain 24종 — 구현
+  20 · proto 메시지 없음 4". `cargo test --workspace` 재실행해
+  회귀 없음 확인.
+- addendum(2026-08-18 18:00)으로 이 결함과 수정 내용을 기록. 좁은
+  후속 확인 재검수(`p68` 프롬프트) — **`ACCEPTED`**.
+  `docs/evidence/_raw/DoD-02_review.txt` 작성 후 frontmatter 에
+  `schema_version: 2` + v2 필드 추가(기존 필드는 손대지 않음),
+  `artifacts:` 에 새 raw 파일 2개 추가, 그랜드파더 목록에서 DoD-02
+  제거 + `GRANDFATHER_DIGEST` 갱신.
+- 검증: `python scripts/verify_evidence.py` — DoD-02 PASS(스키마
+  위반 0). 독립 검수 기록 없는 P0/DoD PASS 부채 **12건 → 11건**.
+  `cargo test --workspace` 306/0/1(ignored) 유지(코드 결함 수정은
+  기존 테스트를 고친 것이라 개수 불변).
+- 리포트: 이 이력 항목 + `DoD-02_prost_연동_계층.md` 의 "schema v1
+  → v2 승격" addendum. 다음 후보는 `DoD-03`.
+
+---
+
 ## 2026-08-18 17:20 — DoD-01 schema v1 → v2 첫 승격 (사용자 승인 후 재개)
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). 사용자가 채팅에서

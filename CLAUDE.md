@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 17:20)
+## 5. 지금 상태 (2026-08-18 18:20)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -174,7 +174,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/agent` | **신규**(2026-08-18) — `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`expect_replay`). Job 실행 미착수 |
 | └ 미착수 | scheduler · UI · OS 방화벽 강제(network.rs). **핸드셰이크 단계 1~6 전부 완료**(2026-08-18) — 남은 것은 `docs/evidence/` schema v2 정식 기록뿐, 계획 자체의 범위(lease·다중 Agent·운영용 key protection·TLS)는 여전히 밖 |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **3건**(DoD-09·10·**01**, 2026-08-18). ★ **v1 evidence 16건 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원. ★ **v1→v2 실제 승격 착수**(2026-08-18, 사용자 승인) — `DoD-01` 이 첫 사례. 과거 executor/reviewer 메타데이터를 지어내지 않고, 오늘 새로 실행한 재검증(`cargo test` 15/15)+새 독립 검수(2라운드: CHANGES_REQUESTED→ACCEPTED)를 v2 근거로 삼았다. `_schema_v1_grandfathered.txt`·`GRANDFATHER_DIGEST` 갱신. 독립 검수 기록 없는 P0/DoD PASS 부채 **13→12건**. 남은 12건(+ENV-01·02)은 이후 사이클에서 같은 절차로 승격 |
+| **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **4건**(DoD-09·10·**01**·**02**, 2026-08-18). ★ **v1 evidence 16건 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원. ★ **v1→v2 실제 승격 진행 중**(2026-08-18, 사용자 승인) — `DoD-01`·`DoD-02` 완료. 과거 executor/reviewer 메타데이터를 지어내지 않고, 오늘 새로 실행한 재검증+새 독립 검수(각 2라운드: CHANGES_REQUESTED→ACCEPTED)를 v2 근거로 삼는 절차 확립. `DoD-02` 승격 중 **진짜 코드 결함**도 하나 찾아 고쳤다 — `t1_signing_targets.rs::domain_coverage_is_explicit` 가 `Domain` enum 을 순회하지 않고 손으로 쓴 배열을 써서 `GrantAck` 추가를 놓치고 있었다. `_schema_v1_grandfathered.txt`·`GRANDFATHER_DIGEST` 갱신. 독립 검수 기록 없는 P0/DoD PASS 부채 **13→11건**. 다음 후보 `DoD-03` |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
@@ -293,14 +293,15 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 착수** — DoD-01 완료(같은 날, 사용자 승인 후)
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·DoD-02 완료
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
-   v2 근거로 쓴다(`docs/evidence/DoD-01_canonical_encode_교차검증.md`
-   "schema v1 → v2 승격" addendum 참조). `_schema_v1_grandfathered.txt`
-   + `scripts/verify_evidence.py::GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→12건. 남은 12건(+ENV-01·02,
-   review 비강제)은 같은 절차로 이어간다 — DoD-02 가 다음 후보.
+   v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
+   코드 결함(손으로 쓴 domain 배열이 enum 크기 변화를 못 잡음)도
+   찾아 고쳤다 — evidence 재검수가 실제 버그를 잡은 사례.
+   `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
+   독립 검수 없는 P0/DoD PASS 부채 13→11건. 남은 11건(+ENV-01·02,
+   review 비강제)은 같은 절차로 이어간다 — DoD-03 이 다음 후보.
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

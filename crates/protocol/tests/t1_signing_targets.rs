@@ -384,7 +384,7 @@ fn revoke_lease_notice_matches_reference() {
 // ★ 도메인 커버리지 감사
 // ══════════════════════════════════════════════════════════════════
 
-/// `signing.md` §5 의 domain_tag 23종 중 실제 proto 메시지가 있는 것과
+/// `signing.md` §5 의 domain_tag 24종 중 실제 proto 메시지가 있는 것과
 /// `ToCanonicalFields` 가 구현된 것을 대조한다.
 ///
 /// ★ **4종은 proto 메시지 자체가 없다** — 규범이 존재하지 않는 메시지의
@@ -422,9 +422,12 @@ fn domain_coverage_is_explicit() {
         (Domain::Audit, None, false),
         (Domain::Release, None, false),
         (Domain::Invite, None, false),
+        // coordinator/agent 최소 핸드셰이크 (2026-08-18) — 메시지도
+        // 있고 ToCanonicalFields·Signable 둘 다 구현되어 있다.
+        (Domain::GrantAck, Some("AgentGrantAck"), true),
     ];
 
-    assert_eq!(coverage.len(), 23, "domain_tag 는 23종이다 (signing.md §5, ADR-028)");
+    assert_eq!(coverage.len(), 24, "domain_tag 는 24종이다 (signing.md §5, ADR-028 + GrantAck)");
 
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
@@ -442,7 +445,7 @@ fn domain_coverage_is_explicit() {
 
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
-    assert_eq!(implemented, 19, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(implemented, 20, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
     assert_eq!(
         no_message, 4,
         "proto 메시지 없는 domain 수가 바뀌었다 — 목록을 갱신하라"
