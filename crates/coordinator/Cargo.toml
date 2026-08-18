@@ -9,3 +9,7 @@ license.workspace = true
 gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
 prost.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -7,7 +7,7 @@
 - **선행 게이트:** 없음. `docs/plans/2026-08-19_2330_같은_연결_반복_lease_갱신_v1.md`
   (반복 갱신)과는 독립적이나, 구현 순서는 반복 갱신을 먼저 진행한다
   (범위가 더 작고 의존성이 적다).
-- **상태:** 설계 완료(코덱스 `p106`), **구현 착수 전.**
+- **상태:** 구현·뮤테이션 테스트 완료. 코덱스 독립 검수 대기 중.
 
 ★ 이 문서는 코덱스(`agent:codex-cli`, read-only 샌드박스)의 설계
 응답(`p106` 프롬프트)을 정리한 것이다.
@@ -127,16 +127,37 @@ CLI 값과 충돌**시켜야 저장소 사용 여부가 실제로 판별된다 �
 아닌 conflict, 없는 `lease_id` 갱신은 `NotFound`, `:memory:`/open
 실패는 fail closed, `BUSY`/`LOCKED` 와 일반 I/O 오류 구분.
 
-## 단계(초안 — 구현 착수 시 반복 갱신 조각과의 상호작용을 재확인)
+## 단계
 
-| # | 단계 | 완료 기준 |
-|---|---|---|
-| 1 | `CoordinatorLeaseStore` 신설(`crates/coordinator` 또는 별도 모듈) + SQLite 스키마 | open/조회/삽입 단위 테스트 |
-| 2 | 최초 발급 경로 전환(레코드 없으면 CLI 값, 있으면 저장값 우선 + conflict 거부) | 재발급 없이 기존 레코드 보존 확인 |
-| 3 | 갱신 경로 전환(저장소 조회 → identity·epoch 대조 → expires 갱신) | 저장된 epoch 로 결과 구성 |
-| 4 | fail closed(`:memory:`, open 실패, lock timeout) | 단위 테스트 |
-| 5 | selftest 시나리오 1·2 추가 | 5회 연속 통과 |
-| 6 | 뮤테이션 테스트 + 코덱스 독립 검수 + evidence 기록(DoD-16, 반복 갱신이 DoD-15 를 먼저 쓴다는 전제) | `ACCEPTED` |
+| # | 단계 | 완료 기준 | 상태 |
+|---|---|---|---|
+| 1 | `CoordinatorLeaseStore` 신설(`crates/coordinator/src/lease_store.rs`) + SQLite 스키마 | open/조회/삽입 단위 테스트 | ✅ (7개 단위 테스트) |
+| 2 | 최초 발급 경로 전환(레코드 없으면 CLI 값, 있으면 저장값 우선 + conflict 거부) | 재발급 없이 기존 레코드 보존 확인 | ✅ |
+| 3 | 갱신 경로 전환(저장소 조회 → identity·epoch 대조 → expires 갱신) | 저장된 epoch 로 결과 구성 | ✅ |
+| 4 | fail closed(`:memory:`, open 실패, lock timeout) | 단위 테스트 | ✅ `is_durable()` 검사(Agent 와 같은 관례) — 단, Coordinator 는 `--lease-db` 자체가 optional 이라 아래 "설계와 다른 점" 참조 |
+| 5 | selftest 시나리오 20·21 추가 | 5회 연속 통과 | ✅ (21개 시나리오 전체 5회 연속) |
+| 6 | 뮤테이션 테스트 + 코덱스 독립 검수 + evidence 기록(DoD-16) | `ACCEPTED` | 🟡 뮤테이션 완료(2건), 검수 진행 중 |
+
+## ★ 구현이 설계와 다른 점 — `--lease-db` 는 필수가 아니라 선택이다
+
+설계(`p106`)는 Agent 의 `--fence-db`(필수, 안 주면 임시 파일 자동
+생성)와 대칭으로 Coordinator 도 항상 저장소를 쓰는 모델을 암시했다.
+구현 단계에서 **의도적으로 다르게** 했다 — `lease_db_path:
+Option<PathBuf>` 로 두고, `None`(기본값, `--lease-db` 안 줌)이면
+**이 조각 이전과 완전히 같은 레거시 경로**(`config.fence_epoch` 를
+그 실행 동안만 신뢰)를 그대로 쓴다.
+
+이유: Agent 의 `--fence-db` 는 필수로 만들어도 기존 시나리오들이
+자동 임시 파일로 회귀 없이 동작했다(매 프로세스가 빈 watermark 에서
+시작하는 것이 기존 동작 그 자체였으므로). 그러나 Coordinator 는
+**이미 기존 시나리오 19개가 `config.fence_epoch` 정적 비교라는
+레거시 계약에 의존**하고 있었다 — 강제로 항상 저장소를 쓰게 하면
+이 계약 자체가 사라져 기존 negative test(11·15·16번 등)의 의미가
+바뀌거나, 그 시나리오들도 전부 `--lease-db` 를 받도록 다시 손봐야
+했다. `Option` 으로 두어 **기존 19개 시나리오는 단 한 줄도 안
+건드리고**, 새 시나리오(20·21)만 명시적으로 `--lease-db` 를 켜는
+쪽을 선택했다 — 범위를 좁게 유지한다는 이 저장소 전체의 원칙과
+일치한다.
 
 ## 기준선과 다른 점
 

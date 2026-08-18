@@ -17,6 +17,7 @@
 
 use std::io::Write;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gputeer_crypto::{
@@ -25,6 +26,9 @@ use gputeer_crypto::{
 };
 use gputeer_protocol::pb;
 use prost::Message;
+
+pub mod lease_store;
+use lease_store::{CoordinatorLeaseStore, StoredLease};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -118,6 +122,14 @@ pub struct CoordinatorConfig {
     /// false` 면 무시된다. 기본값 1은 기존(단일 왕복) 시나리오와
     /// 완전히 같게 동작한다.
     pub renew_rounds: u32,
+
+    // ── Coordinator 영속 Lease 저장소 (2026-08-19, `docs/plans/2026-08-19_2300_...`) ──
+    /// SQLite 파일에 발급한 Lease 의 신원(identity)과 epoch 를
+    /// 영속한다 — 재시작 후에도 자신이 무엇을 발급했는지 기억한다.
+    /// `None` 이면(기존 시나리오 전부) **이 조각 이전과 완전히 같은
+    /// 동작** — `config.fence_epoch`/`config.lease_id` 등을 그 실행
+    /// 동안만 쓰는 기존 레거시 경로를 그대로 쓴다(회귀 없음).
+    pub lease_db_path: Option<PathBuf>,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -129,6 +141,24 @@ pub struct CoordinatorConfig {
 /// 성공하면 `stdout` 에 `RESULT ok=true ...` 를 찍고 `Ok(())`,
 /// 실패하면 그 이유를 담아 `Err` 를 반환한다(호출자가 exit code 로 매핑).
 pub fn run(config: CoordinatorConfig) -> Result<(), String> {
+    // ★ fail closed — lease store 를 **listener bind 보다 먼저** 연다.
+    //   `--lease-db` 를 안 주면(기존 전부) `None` 이라 이 단계는
+    //   아무것도 하지 않는다(`docs/plans/2026-08-19_2300_...v1.md`).
+    let mut lease_store = match &config.lease_db_path {
+        Some(path) => {
+            let store = CoordinatorLeaseStore::open(path)
+                .map_err(|e| format!("lease store 저장소 열기 실패: {e}"))?;
+            if !store.is_durable() {
+                return Err(format!(
+                    "lease store 저장소가 영속이 아니다(lease_db_path={path:?}) — \
+                     재시작을 넘는 Lease 복원이 조용히 무력화된다"
+                ));
+            }
+            Some(store)
+        }
+        None => None,
+    };
+
     let listener = TcpListener::bind(&config.listen).map_err(|e| format!("bind 실패: {e}"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
 
@@ -151,7 +181,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let now = clock.now_unix_ms();
-    let mut grant = issue_grant(&config, &signing_key, now);
+    let mut grant = issue_grant(&config, &mut lease_store, &signing_key, now)?;
 
     if config.corrupt_own_signature {
         let last = grant
@@ -285,19 +315,42 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         }
         // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — 이전에는
         //   `renew_req.fence_epoch` 를 아무것도와 대조하지 않았다.
-        //   이 stub 은 별도 Lease 저장소가 없으므로, 처음 발급한
-        //   `config.fence_epoch` 를 "Coordinator 가 기억하는 현재
-        //   epoch" 로 삼는다 — 그 값과 다르면 요청 자체를 거부한다.
-        if renew_req.fence_epoch != config.fence_epoch {
+        //   `lease_store` 가 있으면(2026-08-19,
+        //   `docs/plans/2026-08-19_2300_...`) 저장된 fence_epoch 와
+        //   대조한다 — 재시작을 넘어도 정확한 값이다. 없으면(레거시
+        //   경로) 처음 발급한 `config.fence_epoch` 를 그 실행 동안만
+        //   "Coordinator 가 기억하는 현재 epoch" 로 삼는다.
+        let expected_epoch = match &lease_store {
+            Some(store) => {
+                let stored = store
+                    .get(&renew_req.lease_id)
+                    .map_err(|e| format!("lease store 조회 실패: {e}"))?
+                    .ok_or_else(|| {
+                        format!(
+                            "RenewLeaseRequest.lease_id({}) 가 lease store 에 없다",
+                            renew_req.lease_id
+                        )
+                    })?;
+                stored.fence_epoch
+            }
+            None => config.fence_epoch,
+        };
+        if renew_req.fence_epoch != expected_epoch {
             return Err(format!(
                 "RenewLeaseRequest.fence_epoch 불일치: 기대값 {} != {}",
-                config.fence_epoch, renew_req.fence_epoch
+                expected_epoch, renew_req.fence_epoch
             ));
         }
 
         let renew_now = clock.now_unix_ms();
-        let result =
-            build_renew_result(&config, &signing_key, renew_now, renew_req.nonce.clone());
+        let result = build_renew_result(
+            &config,
+            &mut lease_store,
+            &signing_key,
+            renew_now,
+            &renew_req.lease_id,
+            renew_req.nonce.clone(),
+        )?;
 
         let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec())
             .map_err(|e| format!("RenewLeaseResult 프레임 인코딩 실패: {e}"))?;
@@ -323,14 +376,23 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 ///
 /// `renew_outcome_override` 가 있으면 그 값을 그대로 쓰고 새 Lease 를
 /// 담지 않는다(서명된 정책 거부 시나리오). 없으면 `RENEW_OUTCOME_RENEWED`
-/// 와 함께 `renewed_fence_epoch` 를 가진 새 Lease 를 독립적으로 서명해
-/// 담는다(규칙 i — nested 서명은 outer 서명과 별개다).
+/// 와 함께 새 Lease 를 독립적으로 서명해 담는다(규칙 i — nested 서명은
+/// outer 서명과 별개다).
+///
+/// ★ Coordinator 영속 Lease 저장소(2026-08-19) — `lease_store` 가
+///   `Some` 이면 `renew_existing()` 으로 **저장된** fence_epoch 를
+///   그대로 쓰고 `expires_at`/`renew_after` 만 갱신한다(`renewed_fence_epoch`
+///   CLI 값은 store 모드에서는 쓰이지 않는다 — 저장소가 epoch 의
+///   권위를 갖는다). `None` 이면(레거시 경로) 기존과 동일하게
+///   `config.renewed_fence_epoch` 를 쓴다.
 fn build_renew_result(
     config: &CoordinatorConfig,
+    lease_store: &mut Option<CoordinatorLeaseStore>,
     key: &SigningKey,
     now: u64,
+    lease_id: &str,
     request_nonce: Vec<u8>,
-) -> pb::RenewLeaseResult {
+) -> Result<pb::RenewLeaseResult, String> {
     let request_nonce = if config.corrupt_renew_result_nonce {
         request_nonce.iter().map(|b| b ^ 0xFF).collect()
     } else {
@@ -348,20 +410,39 @@ fn build_renew_result(
             ..Default::default()
         },
         None => {
+            let resolved = match lease_store {
+                None => StoredLease {
+                    lease_id: config.lease_id.clone(),
+                    job_id: config.job_id.clone(),
+                    attempt_id: config.attempt_id.clone(),
+                    holder_node_id: config.agent_device_id.clone(),
+                    fence_epoch: config.renewed_fence_epoch,
+                    expires_at_unix_ms: now + 60_000,
+                    issuing_coordinator_id: config.coordinator_device_id.clone(),
+                    coordinator_term: 1,
+                    issued_at_unix_ms: now,
+                    renew_after_unix_ms: now + 30_000,
+                    max_total_duration_seconds: 86_400,
+                },
+                Some(store) => store
+                    .renew_existing(lease_id, now + 60_000, now + 30_000)
+                    .map_err(|e| format!("lease store 갱신 실패: {e}"))?,
+            };
+
             let mut lease = pb::Lease {
                 schema_version: 1,
-                lease_id: config.lease_id.clone(),
-                job_id: config.job_id.clone(),
-                attempt_id: config.attempt_id.clone(),
-                fence_epoch: config.renewed_fence_epoch,
-                coordinator_term: 1,
-                holder_node_id: config.agent_device_id.clone(),
-                member_node_ids: vec![config.agent_device_id.clone()],
-                issuing_coordinator_id: config.coordinator_device_id.clone(),
-                issued_at_unix_ms: now,
-                expires_at_unix_ms: now + 60_000,
-                renew_after_unix_ms: now + 30_000,
-                max_total_duration_seconds: 86_400,
+                lease_id: resolved.lease_id,
+                job_id: resolved.job_id,
+                attempt_id: resolved.attempt_id,
+                fence_epoch: resolved.fence_epoch,
+                coordinator_term: resolved.coordinator_term,
+                holder_node_id: resolved.holder_node_id.clone(),
+                member_node_ids: vec![resolved.holder_node_id],
+                issuing_coordinator_id: resolved.issuing_coordinator_id,
+                issued_at_unix_ms: resolved.issued_at_unix_ms,
+                expires_at_unix_ms: resolved.expires_at_unix_ms,
+                renew_after_unix_ms: resolved.renew_after_unix_ms,
+                max_total_duration_seconds: resolved.max_total_duration_seconds as u32,
                 ..Default::default()
             };
             lease.coordinator_signature = sign(key, &lease).to_vec();
@@ -397,11 +478,16 @@ fn build_renew_result(
         *last ^= 0x01;
     }
 
-    result
+    Ok(result)
 }
 
-fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::ExecutionGrant {
-    let lease = issue_lease(config, key, now);
+fn issue_grant(
+    config: &CoordinatorConfig,
+    lease_store: &mut Option<CoordinatorLeaseStore>,
+    key: &SigningKey,
+    now: u64,
+) -> Result<pb::ExecutionGrant, String> {
+    let lease = issue_lease(config, lease_store, key, now)?;
 
     let mut grant = pb::ExecutionGrant {
         schema_version: 1,
@@ -416,7 +502,7 @@ fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Ex
         ..Default::default()
     };
     grant.coordinator_signature = sign(key, &grant).to_vec();
-    grant
+    Ok(grant)
 }
 
 /// `ExecutionGrant.lease` 에 실어 보낼 `Lease` 를 만들어 서명한다.
@@ -426,27 +512,75 @@ fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Ex
 ///   서명 대상 필드(§6 규칙 i, 중첩 메시지는 각자 서명된다)이므로,
 ///   여기서 위조하면 outer Grant 서명은 여전히 유효한 채로 남는다 —
 ///   `corrupt_lease_signature` 시나리오가 정확히 이 성질을 시험한다.
-fn issue_lease(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Lease {
+///
+/// ★ Coordinator 영속 Lease 저장소(2026-08-19,
+///   `docs/plans/2026-08-19_2300_...`) — `lease_store` 가 `Some` 이면
+///   CLI 값을 후보로 저장소에 `get_or_issue()` 한다. `lease_id` 가
+///   저장소에 **없으면** 후보가 그대로 최초 발급이 되고, **있으면**
+///   identity 가 일치하는 한 **저장된 값이 CLI 값을 덮는다** — 재시작
+///   후에도 같은 `lease_id` 는 항상 같은 epoch/expires_at 를 받는다.
+///   `lease_store` 가 `None` 이면(기존 시나리오) CLI 값을 그대로
+///   쓰는 레거시 경로 그대로다.
+fn issue_lease(
+    config: &CoordinatorConfig,
+    lease_store: &mut Option<CoordinatorLeaseStore>,
+    key: &SigningKey,
+    now: u64,
+) -> Result<pb::Lease, String> {
     let expires_at = if config.expire_lease {
         now.saturating_sub(1)
     } else {
         now + 60_000
     };
 
+    let resolved = match lease_store {
+        None => StoredLease {
+            lease_id: config.lease_id.clone(),
+            job_id: config.job_id.clone(),
+            attempt_id: config.attempt_id.clone(),
+            holder_node_id: config.agent_device_id.clone(),
+            fence_epoch: config.fence_epoch,
+            expires_at_unix_ms: expires_at,
+            issuing_coordinator_id: config.coordinator_device_id.clone(),
+            coordinator_term: 1,
+            issued_at_unix_ms: now,
+            renew_after_unix_ms: now + 30_000,
+            max_total_duration_seconds: 86_400,
+        },
+        Some(store) => {
+            let candidate = StoredLease {
+                lease_id: config.lease_id.clone(),
+                job_id: config.job_id.clone(),
+                attempt_id: config.attempt_id.clone(),
+                holder_node_id: config.agent_device_id.clone(),
+                fence_epoch: config.fence_epoch,
+                expires_at_unix_ms: expires_at,
+                issuing_coordinator_id: config.coordinator_device_id.clone(),
+                coordinator_term: 1,
+                issued_at_unix_ms: now,
+                renew_after_unix_ms: now + 30_000,
+                max_total_duration_seconds: 86_400,
+            };
+            store
+                .get_or_issue(&candidate)
+                .map_err(|e| format!("lease store 최초 발급 실패: {e}"))?
+        }
+    };
+
     let mut lease = pb::Lease {
         schema_version: 1,
-        lease_id: config.lease_id.clone(),
-        job_id: config.job_id.clone(),
-        attempt_id: config.attempt_id.clone(),
-        fence_epoch: config.fence_epoch,
-        coordinator_term: 1,
-        holder_node_id: config.agent_device_id.clone(),
-        member_node_ids: vec![config.agent_device_id.clone()],
-        issuing_coordinator_id: config.coordinator_device_id.clone(),
-        issued_at_unix_ms: now,
-        expires_at_unix_ms: expires_at,
-        renew_after_unix_ms: now + 30_000,
-        max_total_duration_seconds: 86_400,
+        lease_id: resolved.lease_id,
+        job_id: resolved.job_id,
+        attempt_id: resolved.attempt_id,
+        fence_epoch: resolved.fence_epoch,
+        coordinator_term: resolved.coordinator_term,
+        holder_node_id: resolved.holder_node_id.clone(),
+        member_node_ids: vec![resolved.holder_node_id],
+        issuing_coordinator_id: resolved.issuing_coordinator_id,
+        issued_at_unix_ms: resolved.issued_at_unix_ms,
+        expires_at_unix_ms: resolved.expires_at_unix_ms,
+        renew_after_unix_ms: resolved.renew_after_unix_ms,
+        max_total_duration_seconds: resolved.max_total_duration_seconds as u32,
         ..Default::default()
     };
 
@@ -460,7 +594,7 @@ fn issue_lease(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Le
         *last ^= 0x01;
     }
 
-    lease
+    Ok(lease)
 }
 
 /// `grant_id`(호출자가 시나리오마다 다르게 준다)에서 16바이트 nonce 를
@@ -512,6 +646,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_renewed_lease_signature: flags.bool_flag("--corrupt-renewed-lease-signature"),
         corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+        lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
     };
 
     run(config)

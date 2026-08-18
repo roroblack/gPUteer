@@ -859,6 +859,207 @@ pub fn run() -> Result<String, String> {
          Duplicate 거부를 피한다 — 성공 자체가 증거다)\n",
     );
 
+    // ══════════════════════════════════════════════════════════════
+    // Coordinator 영속 Lease 저장소 (2026-08-19, `docs/plans/2026-08-19_2300_...`)
+    //
+    // 지금까지의 시나리오는 `--lease-db` 를 안 주므로 Coordinator 가
+    // 매번 CLI 인자만으로 상태를 구성하는 레거시 경로를 쓴다. 아래는
+    // **같은 SQLite 파일**을 서로 다른 `coordinator-stub` 프로세스가
+    // 순서대로 열어, 저장된 Lease 신원·epoch 가 CLI 인자보다
+    // 우선하는지 확인한다. Agent 쪽 durable FenceWatermark 설계 때
+    // 겪은 함정(갱신 전용 시나리오가 실제로는 최초 검증에 의해 이미
+    // 결정돼 판별력이 없었던 문제)을 참고해, 두 시나리오 모두
+    // **Coordinator 가 스토어를 무시했다면 관측 가능한 방식으로
+    // 실패해야 한다**는 조건을 명시적으로 설계했다.
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 20. 발급 상태 복원 ────────────────────────────────────────────
+    //
+    // 1차(별도 프로세스): epoch 5 로 정상 발급 + 같은 epoch 갱신 —
+    //   lease store 에 epoch=5 가 저장되고, Agent 의 durable
+    //   watermark 에도 5 가 남는다(같은 --fence-db 재사용).
+    // 2차(★ 별도 프로세스, 같은 두 DB): Coordinator 를 **의도적으로
+    //   틀린 epoch=3** 으로 실행한다. Coordinator 가 스토어를 쓰면
+    //   `get_or_issue()` 가 저장된 값(5)을 그대로 반환해 Grant 도
+    //   epoch=5 로 나간다 — Agent 의 watermark(5)와 일치해 성공한다.
+    //   반대로 스토어를 무시하고 CLI 값(3)을 그대로 썼다면 Agent 의
+    //   watermark(5)가 3 을 거부해 **관측 가능하게** 실패한다.
+    let lease_dir_20 = tempfile::tempdir()
+        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(20): {e}"))?;
+    let lease_db_path_20 = lease_dir_20.path().join("leases.sqlite3");
+    let lease_db_20 = lease_db_path_20
+        .to_str()
+        .ok_or_else(|| "lease store 경로가 UTF-8 이 아니다".to_string())?;
+    let fence_dir_20 = tempfile::tempdir()
+        .map_err(|e| format!("fence watermark 임시 디렉터리 생성 실패(20): {e}"))?;
+    let fence_db_path_20 = fence_dir_20.path().join("fence.sqlite3");
+    let fence_db_20 = fence_db_path_20
+        .to_str()
+        .ok_or_else(|| "fence watermark 경로가 UTF-8 이 아니다".to_string())?;
+
+    let issue_first = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_20,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+        ],
+        &["--fence-db", fence_db_20, "--do-renew", "true"],
+    )?;
+    if !issue_first.coordinator_success || !issue_first.agent_success {
+        return Err(format!(
+            "발급 상태 복원 시나리오 1차 실행이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_first.coordinator_success,
+            issue_first.coordinator_stdout,
+            issue_first.coordinator_stderr,
+            issue_first.agent_success,
+            issue_first.agent_stdout,
+            issue_first.agent_stderr
+        ));
+    }
+
+    let issue_second = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_20,
+            "--fence-epoch",
+            "3",
+            "--do-renew",
+            "false",
+        ],
+        &["--fence-db", fence_db_20, "--do-renew", "false"],
+    )?;
+    if issue_second.coordinator_pid == issue_first.coordinator_pid {
+        return Err(format!(
+            "발급 상태 복원 시나리오의 2차 coordinator PID 가 1차와 같다 — 별도 프로세스가 \
+             아니다.\n1차 coordinator_pid={} 2차 coordinator_pid={}",
+            issue_first.coordinator_pid, issue_second.coordinator_pid
+        ));
+    }
+    if !issue_second.coordinator_success || !issue_second.agent_success {
+        return Err(format!(
+            "lease store 가 재시작(별도 프로세스)을 넘어 저장된 epoch(5)를 CLI 의 틀린 \
+             값(3)보다 우선시키지 못했다 — Coordinator 가 스토어를 무시하고 CLI 값을 그대로 \
+             썼다면 Agent 의 durable watermark(5) 가 epoch=3 을 거부해 이렇게 실패한다.\n\
+             1차 coordinator_pid={} 2차 coordinator_pid={}\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_first.coordinator_pid,
+            issue_second.coordinator_pid,
+            issue_second.coordinator_success,
+            issue_second.coordinator_stdout,
+            issue_second.coordinator_stderr,
+            issue_second.agent_success,
+            issue_second.agent_stdout,
+            issue_second.agent_stderr
+        ));
+    }
+    report.push_str(
+        "20) Coordinator 영속 Lease 저장소 — 발급 상태 복원 확인 (별도 프로세스가 SQLite \
+         파일로 저장된 epoch 를 CLI 의 틀린 값보다 우선시킨다)\n",
+    );
+
+    // ── 21. 재시작 후 갱신 대조 ────────────────────────────────────────
+    //
+    // 1차(별도 프로세스): epoch 5 로 발급만 한다(갱신 없음) — lease
+    //   store 에 epoch=5, Agent watermark 에도 5 가 남는다.
+    // 2차(★ 별도 프로세스, 같은 두 DB): Coordinator 를 **의도적으로
+    //   틀린 epoch=6** 으로 실행하고 갱신까지 수행한다.
+    //   `get_or_issue()` 가 최초 Grant 를 저장된 epoch=5 로 자동
+    //   교정하므로, Agent 는 held_lease.fence_epoch=5 로 갱신 요청을
+    //   만든다. 이 요청을 Coordinator 가 **저장소의 epoch(5)와 대조**
+    //   하면 일치해 갱신이 성공한다 — 만약 여전히 `config.fence_epoch`
+    //   (틀린 값 6)과 비교했다면 5 != 6 으로 **정당한 갱신을 잘못
+    //   거부**했을 것이다. 이 시나리오는 그 회귀를 정확히 잡는다.
+    let lease_dir_21 = tempfile::tempdir()
+        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(21): {e}"))?;
+    let lease_db_path_21 = lease_dir_21.path().join("leases.sqlite3");
+    let lease_db_21 = lease_db_path_21
+        .to_str()
+        .ok_or_else(|| "lease store 경로가 UTF-8 이 아니다".to_string())?;
+    let fence_dir_21 = tempfile::tempdir()
+        .map_err(|e| format!("fence watermark 임시 디렉터리 생성 실패(21): {e}"))?;
+    let fence_db_path_21 = fence_dir_21.path().join("fence.sqlite3");
+    let fence_db_21 = fence_db_path_21
+        .to_str()
+        .ok_or_else(|| "fence watermark 경로가 UTF-8 이 아니다".to_string())?;
+
+    let renew_first = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_21,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "false",
+        ],
+        &["--fence-db", fence_db_21, "--do-renew", "false"],
+    )?;
+    if !renew_first.coordinator_success || !renew_first.agent_success {
+        return Err(format!(
+            "재시작 후 갱신 대조 시나리오 1차 실행이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            renew_first.coordinator_success,
+            renew_first.coordinator_stdout,
+            renew_first.coordinator_stderr,
+            renew_first.agent_success,
+            renew_first.agent_stdout,
+            renew_first.agent_stderr
+        ));
+    }
+
+    let renew_second = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_21,
+            "--fence-epoch",
+            "6",
+            "--do-renew",
+            "true",
+        ],
+        &["--fence-db", fence_db_21, "--do-renew", "true"],
+    )?;
+    if renew_second.coordinator_pid == renew_first.coordinator_pid {
+        return Err(format!(
+            "재시작 후 갱신 대조 시나리오의 2차 coordinator PID 가 1차와 같다 — 별도 \
+             프로세스가 아니다.\n1차 coordinator_pid={} 2차 coordinator_pid={}",
+            renew_first.coordinator_pid, renew_second.coordinator_pid
+        ));
+    }
+    if !renew_second.coordinator_success || !renew_second.agent_success {
+        return Err(format!(
+            "lease store 가 재시작을 넘어 갱신 요청의 fence_epoch 대조에 저장된 값을 \
+             쓰지 못했다 — 여전히 그 실행의 CLI 값(6)과 비교했다면 저장된 값(5)과 달라 \
+             정당한 갱신을 잘못 거부했을 것이다.\n\
+             1차 coordinator_pid={} 2차 coordinator_pid={}\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            renew_first.coordinator_pid,
+            renew_second.coordinator_pid,
+            renew_second.coordinator_success,
+            renew_second.coordinator_stdout,
+            renew_second.coordinator_stderr,
+            renew_second.agent_success,
+            renew_second.agent_stdout,
+            renew_second.agent_stderr
+        ));
+    }
+    report.push_str(
+        "21) Coordinator 영속 Lease 저장소 — 재시작 후 갱신 대조 확인 (별도 프로세스가 \
+         갱신 요청의 fence_epoch 을 저장된 값과 대조한다, 그 실행의 CLI 값이 아니라)\n",
+    );
+
     Ok(report)
 }
 

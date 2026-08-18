@@ -348,6 +348,8 @@ dependencies = [
  "gputeer-crypto",
  "gputeer-protocol",
  "prost",
+ "rusqlite",
+ "tempfile",
 ]
 
 [[package]]
