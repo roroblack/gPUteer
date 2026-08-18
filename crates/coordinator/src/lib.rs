@@ -429,6 +429,8 @@ fn build_renew_result(
                     .map_err(|e| format!("lease store 갱신 실패: {e}"))?,
             };
 
+            let max_total_duration_seconds =
+                u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
             let mut lease = pb::Lease {
                 schema_version: 1,
                 lease_id: resolved.lease_id,
@@ -442,7 +444,7 @@ fn build_renew_result(
                 issued_at_unix_ms: resolved.issued_at_unix_ms,
                 expires_at_unix_ms: resolved.expires_at_unix_ms,
                 renew_after_unix_ms: resolved.renew_after_unix_ms,
-                max_total_duration_seconds: resolved.max_total_duration_seconds as u32,
+                max_total_duration_seconds,
                 ..Default::default()
             };
             lease.coordinator_signature = sign(key, &lease).to_vec();
@@ -567,6 +569,8 @@ fn issue_lease(
         }
     };
 
+    let max_total_duration_seconds =
+        u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
     let mut lease = pb::Lease {
         schema_version: 1,
         lease_id: resolved.lease_id,
@@ -580,7 +584,7 @@ fn issue_lease(
         issued_at_unix_ms: resolved.issued_at_unix_ms,
         expires_at_unix_ms: resolved.expires_at_unix_ms,
         renew_after_unix_ms: resolved.renew_after_unix_ms,
-        max_total_duration_seconds: resolved.max_total_duration_seconds as u32,
+        max_total_duration_seconds,
         ..Default::default()
     };
 
@@ -609,6 +613,22 @@ fn issue_lease(
 /// 저장소와 함께 쓰면, 재시작 후 같은 `grant_id` 를 다시 발급했을 때
 /// 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate` 로 오판될 수
 /// 있다(코덱스 독립 검수 2026-08-18 지적).
+/// 저장소의 `u64` 값을 `pb::Lease.max_total_duration_seconds`(`u32`)
+/// 로 변환한다.
+///
+/// ★ 코덱스 독립 검수(2026-08-19, p108) 지적 — 전에는 `as u32` 로
+///   무검사 캐스팅했다. `CoordinatorLeaseStore` 는 스키마상 임의의
+///   `u64` 를 저장할 수 있으므로(지금 발급 경로는 항상 `86_400` 을
+///   쓰지만, 그것은 호출부의 우연한 사실이지 저장소의 계약이 아니다),
+///   `u32::MAX` 를 넘는 값이 들어오면 조용히 잘려 다른 의미의 값이
+///   전송될 수 있었다 — 진짜 데이터 무결성 결함이다. fail closed 로
+///   바꾼다.
+fn u32_from_stored(value: u64, field: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| {
+        format!("lease store 의 {field} 값({value})이 u32 범위를 넘는다 — 저장소 손상 의심")
+    })
+}
+
 fn derive_nonce(tag: &str, id: &str) -> Vec<u8> {
     let mut input = Vec::with_capacity(tag.len() + 1 + id.len());
     input.extend_from_slice(tag.as_bytes());
@@ -736,4 +756,34 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ★ 코덱스 독립 검수(2026-08-19, p108) 지적 — `u32_from_stored()`
+    /// 가 실제로 fail closed 하는지(무검사 `as u32` 캐스팅으로
+    /// 되돌아가지 않는지) 경계값으로 고정한다.
+    #[test]
+    fn u32_from_stored_accepts_max_total_duration_seconds_default() {
+        assert_eq!(u32_from_stored(86_400, "max_total_duration_seconds"), Ok(86_400));
+    }
+
+    #[test]
+    fn u32_from_stored_accepts_u32_max() {
+        assert_eq!(
+            u32_from_stored(u64::from(u32::MAX), "x"),
+            Ok(u32::MAX)
+        );
+    }
+
+    #[test]
+    fn u32_from_stored_rejects_values_above_u32_max_instead_of_truncating() {
+        let result = u32_from_stored(u64::from(u32::MAX) + 1, "x");
+        assert!(
+            result.is_err(),
+            "u32::MAX 를 넘는 값이 조용히 잘리지 않고 거부돼야 한다: {result:?}"
+        );
+    }
 }
