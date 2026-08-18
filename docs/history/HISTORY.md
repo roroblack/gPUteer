@@ -16,6 +16,63 @@
 
 ---
 
+## 2026-08-19 04:20 — DoD-11·DoD-12 신규 작성 — coordinator/agent 핸드셰이크·Lease 최소 조각의 정식 evidence 기록 완료
+
+- 계획: CLAUDE.md 백로그 1번의 남은 항목(RULE.md §8 이 요구하는
+  정식 `docs/evidence/` 기록). `2026-08-18_0800`(핸드셰이크)과
+  `2026-08-18_1800`(Lease 최소 조각) 두 계획 문서 모두 구현·Codex
+  독립 검수(당일, p57/p59/p69)까지 끝났지만 정식 evidence 문서가
+  없었다.
+- 스트림: Coordinator · Agent · CLI.
+- 수행: `cargo build -p gputeer-cli` 로 오늘 HEAD 에서 바이너리를
+  새로 빌드하고 `coordinator-agent-selftest` 를 5회 연속 실행 —
+  6개 시나리오(정상·위조 Grant·위조 ACK·replay·위조 Lease·만료된
+  Lease) 전부 매번 통과, 매번 다른 PID 3개 확인. `cargo test
+  --workspace` 308 passed / 0 failed. 이 결과를
+  `docs/evidence/_raw/DoD-11_selftest_2026-08-19.txt` 에 저장하고,
+  **`DoD-11`(핸드셰이크 자체)과 `DoD-12`(Lease 최소 조각)** 두 새
+  evidence 문서를 schema v2 로 직접 작성했다(신규 작성이라 v1
+  단계 없이 바로 v2).
+- 각 문서의 첫 라운드 독립 검수(`agent:codex-cli`, fresh-read-only,
+  `p93`/`p94`)가 진짜 문제를 잡았다: **DoD-11** — (1) 존재하지
+  않는 `review_artifact`, (2) `commit`(핸드셰이크 완성 시점)과
+  `cli_bin`(오늘 빌드된, Lease 까지 반영된 바이너리) provenance
+  혼동, (3) 뮤테이션 비공허성 주장에 오늘 재현한 로그가 없었음.
+  **DoD-12** — `job_id` 를 "상관관계 검사"로 잘못 적음(실제로는
+  단순 비공백 검사, watermark 키라서).
+- 세 번째 지적(뮤테이션 미재현)은 실제로 오늘 다시
+  재현했다 — `crates/coordinator/src/lib.rs` 의
+  `corrupt_own_signature` 적용 분기를 `if false && ...` 로
+  무력화 → selftest 가 정확히 예상대로 실패("위조된
+  coordinator_signature 가 거부되지 않았다") → 원복 후 6개 시나리오
+  재통과·`cargo test --workspace` 회귀 없음 재확인. `cli_bin`
+  provenance 는 "오늘 HEAD(Lease commit `0be82e8` 까지 반영)에서
+  빌드 — `commit` 필드는 핸드셰이크 완성 시점을 가리킬 뿐"로
+  명확히 구분해 정정했다.
+- `DoD-12` 의 `job_id` 정정은 한 번 더 라운드가 필요했다 — 처음
+  고친 문구가 `holder_node_id` 를 "Grant 의 값과 일치"로 잘못
+  묶었는데(실제로는 Agent 자신의 `config.agent_device_id` 와
+  비교), 두 번째 재검수(`p96`)가 이를 잡았다. 세 번째 재검수
+  (`p97`)에서 최종 `ACCEPTED`.
+- v2 frontmatter 를 신규 작성(schema_version 2 부터 직접 시작,
+  v1 유예 목록에 올릴 필요가 없었다), `review_artifact` 두 개
+  (`DoD-11_review.txt`, `DoD-12_review.txt`)를 새로 만들었다 —
+  최초 작성 시 파일:줄 인용 형식이 `verify_evidence.py` 의 비허위
+  검사(`.txt` 확장자가 인용 정규식에 없어 "raw 로그:N" 류 인용이
+  거부됨)에 걸려, 실제 `.rs` 소스 파일:줄 인용으로 다시 썼다.
+  `docs/plans/2026-08-18_0800_...md`·`2026-08-18_1800_...md` 의
+  DoD 체크박스도 완료로 갱신했다.
+- 검증: `python scripts/verify_evidence.py` — 파일 20개(18→20),
+  스키마 위반 0, PASS 19/20(`P0-06` 은 여전히 `FAIL-SCOPE`).
+  `cargo test --workspace` 308 passed / 0 failed(회귀 없음),
+  디스크 7.4GB 여유 유지 확인.
+- 리포트: 이 이력 항목. CLAUDE.md 백로그 1번(coordinator/agent
+  핸드셰이크 + Lease 최소 조각)의 evidence 기록 항목이 완전히
+  해소됐다 — 다음 후보(`RenewLeaseRequest` 왕복 등)는 새 계획
+  문서가 필요하다.
+
+---
+
 ## 2026-08-19 03:40 — `AgentGrantAck` Python 참조 구현 교차검증 공백 해소, 부수 flaky 테스트 안정화
 
 - 계획: CLAUDE.md 백로그 6번(DoD-05 v2 승격 재검수 중 발견한 공백,

@@ -1,0 +1,78 @@
+$ cargo build -p gputeer-cli
+(경고 0건, 오류 0건)
+
+$ ./target/debug/gputeer.exe coordinator-agent-selftest   (5회 연속)
+
+=== run 1 ===
+1) 정상 handshake 성공 (self=27516 coordinator=22596 agent=23648, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+exit=0
+
+=== run 2 ===
+1) 정상 handshake 성공 (self=23960 coordinator=19608 agent=20988, grant_id=01JGRANTSELFTEST000000001)
+2)~6) 동일 — 전부 통과
+exit=0
+
+=== run 3 ===
+1) 정상 handshake 성공 (self=21872 coordinator=25188 agent=20584, grant_id=01JGRANTSELFTEST000000001)
+2)~6) 동일 — 전부 통과
+exit=0
+
+=== run 4 ===
+1) 정상 handshake 성공 (self=20804 coordinator=24612 agent=19440, grant_id=01JGRANTSELFTEST000000001)
+2)~6) 동일 — 전부 통과
+exit=0
+
+=== run 5 ===
+1) 정상 handshake 성공 (self=25940 coordinator=10420 agent=5588, grant_id=01JGRANTSELFTEST000000001)
+2)~6) 동일 — 전부 통과
+exit=0
+
+5회 연속 전부 exit=0, 매번 서로 다른 PID 3개(self/coordinator/agent) 확인.
+
+$ cargo test --workspace
+합계: 308 passed / 0 failed (전 크레이트, Doc-tests 포함)
+
+이 파일은 2026-08-19 에 새로 실행한 재확인 원문이다. 이 기능
+(coordinator/agent 최소 핸드셰이크 + Lease 최소 조각)은 2026-08-18
+당일 구현·Codex 독립 검수까지 이미 마쳤다(아래 review_artifact
+참조) — 이 실행은 그 결과를 오늘 다시 재현해 evidence 문서의
+raw_output 근거로 삼기 위한 것이다.
+
+★ 이 binary(target/debug/gputeer.exe)는 오늘(2026-08-19) HEAD —
+즉 Lease 최소 조각(commit 0be82e8)까지 반영된 소스 — 에서 빌드한
+것이다. DoD-11 frontmatter 의 commit 필드(d7aacdc)는 "핸드셰이크
+자체가 완성된 시점"을 가리키는 것이지 "이 raw_output 을 낸
+바이너리의 빌드 시점"이 아니다 — 이 두 개념을 혼동하면 안 된다는
+지적을 독립 검수(p93)가 정확히 했다.
+
+=== 뮤테이션 재현(2026-08-19, 오늘 다시 실행) ===
+
+crates/coordinator/src/lib.rs 의 corrupt_own_signature 적용 분기를
+`if false && config.corrupt_own_signature { ... }` 로 무력화한 뒤
+빌드·실행:
+
+$ ./target/debug/gputeer.exe coordinator-agent-selftest
+coordinator-agent-selftest 실패: 위조된 coordinator_signature 가
+거부되지 않았다 — Agent 가 ACK 를 발급했다.
+agent exit=true stdout=RESULT ok=true grant_id=01JGRANTSELFTEST000000001
+attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+stderr=
+exit=1
+
+기대한 대로 실패했다(위조 Grant negative test 가 실제로 무언가를
+검사하고 있다는 뜻 — 공허하지 않다). 원복(`git checkout` 상당,
+실제로는 백업본으로 복원) 후 재빌드해 6개 시나리오 전부 재통과
+확인:
+
+$ ./target/debug/gputeer.exe coordinator-agent-selftest
+1) 정상 handshake 성공 (self=11928 coordinator=21836 agent=8548, grant_id=01JGRANTSELFTEST000000001)
+2)~6) 전부 통과
+exit=0
+
+$ cargo test --workspace
+합계: 308 passed / 0 failed (전 크레이트, 뮤테이션 원복 후 회귀 없음)

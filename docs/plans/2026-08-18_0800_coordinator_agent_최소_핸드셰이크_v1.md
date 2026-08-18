@@ -305,7 +305,7 @@ guard 구현과 무관하지만, "재시작을 견딘다" 는 별개 성질까�
 - [x] **negative test**: 위조된 `agent_signature` 1바이트 변조 시 Coordinator 가 성공 처리하지 않는다 (2026-08-18)
 - [x] **negative test**: 동일 Grant wire bytes 를 두 번 보내면 두 번째는 replay guard 가 거부한다 (2026-08-18, `InMemoryReplayGuard` — 아래 "단계 5 수행 메모" 의 범위 설명 참조)
 - [x] Coordinator·Agent 가 실제 별도 OS 프로세스(PID)임을 자동 검증에서 확인한다 (2026-08-18, `assert` 3개 PID 상호 비교)
-- [ ] `docs/evidence/` 에 schema v2 형식으로 기록(이 계획 자체가 이미 독립 검수 설계이므로, 구현 후 실행자/검수자를 분리한 재검수를 거친다)
+- [x] `docs/evidence/` 에 schema v2 형식으로 기록 — `docs/evidence/DoD-11_coordinator_agent_핸드셰이크.md`(2026-08-19, 독립 검수 `ACCEPTED`)
 
 ## 확인 안 됨 — 구현 전에 반드시 검증할 것
 

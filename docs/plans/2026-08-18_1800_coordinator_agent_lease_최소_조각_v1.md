@@ -58,9 +58,7 @@
       잡는다는 것을 뮤테이션 테스트로 증명했다.
 - [x] **negative test**: 만료된 `Lease` 를 Agent 가 거부한다
       (`Lease::LIFETIME == LongLived` 의 만료 검사).
-- [ ] `docs/evidence/` 에 schema v2 형식으로 기록 — 아직 안 함(이
-      계획 자체는 이미 코덱스 설계 검토 + 실행 세션의 직접 실측을
-      거쳤지만, 별도 evidence 문서로 정식 기록하는 것은 다음 작업).
+- [x] `docs/evidence/` 에 schema v2 형식으로 기록 — `docs/evidence/DoD-12_coordinator_agent_lease_최소_조각.md`(2026-08-19, 독립 검수 `ACCEPTED`)
 
 ## 실제 구현 메모 (2026-08-18)
 

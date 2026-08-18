@@ -1,0 +1,79 @@
+독립 검수 receipt — DoD-11 (신규 evidence, RULE.md §8 정식 기록)
+==========================================================================
+evidence_id      DoD-11
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-19 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-11_coordinator_agent_핸드셰이크.md — 이 기능
+  (coordinator/agent 최소 핸드셰이크)은 2026-08-18 당일 구현·Codex
+  독립 검수(p57·p59)까지 이미 마쳤으나 RULE.md §8 이 요구하는 정식
+  docs/evidence/ 기록이 없었다. 이 문서로 처음 정식 기록한다.
+  crates/coordinator/src/lib.rs
+  crates/agent/src/lib.rs
+  crates/cli/src/coordinator_agent_selftest.rs
+  crates/crypto/src/framed_ingress.rs, ingress.rs
+  crates/protocol/tests/{field_number_audit,lifetime_consistency,
+    schema_fingerprint,canonical_vectors,stream_ownership}.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p93 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+claim·negative_tests 4/5·limitations 7건·안전망 5종은 전부 실재
+확인됨. 지적 3건:
+1. review_artifact(DoD-11_review.txt, 이 파일)가 아직 없음 — 검수
+   전이라 당연함, 그러나 문서가 이미 그것을 가리키고 있었음.
+2. commit(d7aacdc)과 cli_bin provenance 불일치 — raw_output 이
+   Lease 시나리오 5·6 을 포함하는데 그 시나리오는 d7aacdc 시점에
+   없었다. raw binary 는 Lease 추가 이후 소스에서 빌드된 것으로
+   보임.
+3. 뮤테이션 비공허성 주장에 오늘 재현한 실행 로그/artifact 가
+   없음 — 코드 구조상 논리적으로는 타당하나 이번 검수에서
+   재현하지 않았고, 수동 실행 주장만 있었음.
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+- crates/coordinator/src/lib.rs 의 corrupt_own_signature 적용
+  분기를 실제로 if false && ... 로 무력화하고 빌드·실행해 selftest
+  가 예상대로 실패하는지 2026-08-19 오늘 직접 재현했다("위조된
+  coordinator_signature 가 거부되지 않았다 — Agent 가 ACK 를
+  발급했다", exit=1). 원복 후 6개 시나리오 재통과와 cargo test
+  --workspace 회귀 없음(308/0)도 재확인했다. 그 로그를
+  docs/evidence/_raw/DoD-11_selftest_2026-08-19.txt 에 추가하고
+  frontmatter 의 raw_output_digest/bytes 를 갱신했다.
+- cli_bin 필드를 "이 커밋에서 빌드"가 아니라 "오늘 HEAD(Lease
+  최소 조각 commit 0be82e8 까지 반영)에서 빌드 — commit 필드는
+  핸드셰이크가 완성된 시점을 가리킬 뿐"로 정정했다.
+- negative_tests 의 뮤테이션 항목과 본문 절에 "2026-08-19 오늘
+  재현"임을 명시했다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p95 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- 뮤테이션 재현이 충분히 구체적임을 확인 — 위조 적용 분기는
+  crates/coordinator/src/lib.rs:110 (corrupt_own_signature), 오늘
+  if false 로 무력화한 지점도 같은 줄. if false 무력화, RESULT
+  ok=true, 예상된 exit=1, 원복 후 6개 시나리오 통과·workspace
+  재통과 전부 raw artifact 에 기록됨.
+- raw_output_digest/bytes 를 직접 계산해 frontmatter 값과 정확히
+  일치함을 확인(sha256:914903..., 3533 bytes).
+- cli_bin 문구가 정직함을 확인 — 오늘 HEAD 빌드, Lease commit
+  0be82e8 까지 반영, d7aacdc 는 빌드 시점이 아니라 핸드셰이크
+  완성 시점임을 명시.
+- commit(d7aacdc)을 "핸드셰이크 자체가 완성된 시점"의 provenance
+  로 유지하는 것이 타당함을 확인 — Lease 조각은 별도 DoD-12 로
+  분리했고 cli_bin 이 두 의미를 명확히 구분했기 때문.
+- 1차 검수(p93)가 확인한 claim 근거: 위조 coordinator_signature
+  변조는 crates/coordinator/src/lib.rs:110, selftest 판정은
+  crates/cli/src/coordinator_agent_selftest.rs:264. replay 판정
+  근거는 crates/protocol/src/signing.rs:826 의
+  ReplayDecision::Duplicate 처리. 세 PID 상호 비교는
+  crates/cli/src/coordinator_agent_selftest.rs:187.
+추가 정정 불필요.

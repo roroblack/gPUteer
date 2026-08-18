@@ -247,20 +247,20 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크(단계 1~6) + Lease 최소 조각 완료(2026-08-18, 코덱스 검수 ACCEPTED)
+1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크+Lease 최소 조각 완료 + evidence 정식 기록 완료(2026-08-19)
    docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
    docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md
    `gputeer coordinator-agent-selftest` 가 별도 PID 2개(coordinator-stub·
    agent-stub)로 실제 handshake 에 성공하고, 거부 경로 5종(위조 Grant·
    위조 ACK·replay wire bytes·위조 nested Lease 서명·만료된 Lease)도
    프로세스 경계에서 자동 검증한다(6/6, 5회 연속 확인, 뮤테이션
-   테스트로 비공허성 증명). 코덱스 독립 검수 통과(핸드셰이크는
-   stderr 파이프 교착 위험 1건 수정; Lease 조각은 API 를 미리 코드로
-   검증한 뒤 구현해 1회 실행에 바로 통과). 남은 것: 둘 다
-   `docs/evidence/` schema v2 정식 기록 안 함 — "완전한 coordinator"
-   아님, lease **갱신**(`RenewLeaseRequest` 왕복)·스케줄링·다중
-   Agent·운영용 key protection·TLS 는 여전히 범위 밖. 다음 후보는
-   Lease 계획 문서의 "Out" 절 참조 — 새 계획 문서가 각각 필요하다.
+   테스트로 비공허성 증명 — 2026-08-19 오늘도 재현). `docs/evidence/DoD-11_coordinator_agent_핸드셰이크.md`·
+   `DoD-12_coordinator_agent_lease_최소_조각.md` 로 schema v2 정식
+   기록 완료(각 2~3라운드 재검수 끝에 `ACCEPTED`). "완전한
+   coordinator" 아님, lease **갱신**(`RenewLeaseRequest` 왕복)·
+   스케줄링·다중 Agent·운영용 key protection·TLS 는 여전히 범위
+   밖. 다음 후보는 Lease 계획 문서의 "Out" 절 참조 — 새 계획
+   문서가 각각 필요하다.
 2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 의 primitive 완료(2026-08-18) — 방화벽만 남음
    crates/runtime-windows 신설:
    - VRAM: Job Object 커밋 상한 실제 연결·실측(뮤테이션 테스트 포함).

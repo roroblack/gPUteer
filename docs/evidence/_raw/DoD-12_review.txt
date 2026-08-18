@@ -1,0 +1,82 @@
+독립 검수 receipt — DoD-12 (신규 evidence, RULE.md §8 정식 기록)
+==========================================================================
+evidence_id      DoD-12
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-19 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-12_coordinator_agent_lease_최소_조각.md — 이
+  기능(coordinator/agent Lease 최소 조각)은 2026-08-18 당일 구현·
+  Codex 독립 검수(p69)까지 이미 마쳤으나 RULE.md §8 이 요구하는
+  정식 docs/evidence/ 기록이 없었다. DoD-11(핸드셰이크 자체)의
+  후속 조각으로 이 문서를 처음 정식 기록한다.
+  crates/coordinator/src/lib.rs
+  crates/agent/src/lib.rs
+  crates/cli/src/coordinator_agent_selftest.rs
+  crates/runtime-policy/src/lease_scope.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p94 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+claim·negative_tests 5개·limitations 8건·뮤테이션 비공허성 전부
+실재/논리적으로 타당함 확인. 지적 2건:
+1. "job_id 상관관계 검사" 서술이 부정확 — 실제 코드
+   (crates/agent/src/lib.rs:206 근방)는 다른 값과 비교하지 않고
+   비어 있지 않은지만 검사한다(watermark 키).
+2. review_artifact(DoD-12_review.txt, 이 파일)가 아직 없음.
+
+--------------------------------------------------------------------------
+정정 반영 1 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+negative_tests 항목과 본문 절의 job_id 서술을 "attempt_id·
+issuing_coordinator_id·holder_node_id 는 상관관계 검사, job_id
+는 단순 비공백 검사(다른 값과의 비교가 아니다)"로 구분해
+정정했다. 이때 holder_node_id 를 "Grant 의 값과 일치"로 잘못
+묶어 적는 새 오류를 만들었다(아래 2차 검수가 잡음).
+
+--------------------------------------------------------------------------
+후속 확인 재검수 1 (agent:codex-cli, fresh-read-only, p96 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+job_id 정정은 정확함을 확인(crates/agent/src/lib.rs:206 의
+is_empty() 검사와 문서 서술 일치). 그러나 holder_node_id 를
+"Grant 의 값과 일치"라고 적은 것이 부정확하다고 새로 지적 —
+실제로는 Grant 의 필드가 아니라 Agent 자신의
+config.agent_device_id 와 비교한다(crates/agent/src/lib.rs:203).
+
+--------------------------------------------------------------------------
+정정 반영 2 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+negative_tests 항목과 본문 절을 다시 고쳐 "attempt_id·
+issuing_coordinator_id 는 Grant 의 값과, holder_node_id 는 Agent
+자신의 config.agent_device_id 와 비교한다(비교 대상이 서로
+다르다), job_id 는 단순 비공백 검사"로 세 가지를 정확히 구분했다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 2 (agent:codex-cli, fresh-read-only, p97 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- crates/agent/src/lib.rs:197 — attempt_id 를 grant.attempt_id 와
+  비교함을 확인.
+- crates/agent/src/lib.rs:200 — issuing_coordinator_id 를
+  grant.coordinator_device_id 와 비교함을 확인.
+- crates/agent/src/lib.rs:203 — holder_node_id 를 Grant 필드가
+  아닌 config.agent_device_id 와 비교함을 확인.
+- 문서의 정정된 서술이 이 세 비교 대상 구분을 정확히 반영함을
+  확인.
+추가 정정 불필요.
+
+--------------------------------------------------------------------------
+raw_output 공유 인용 참고
+--------------------------------------------------------------------------
+
+이 문서는 DoD-11 과 같은 selftest 실행(docs/evidence/_raw/DoD-11_selftest_2026-08-19.txt)
+을 raw_output_artifact 로 공유 인용한다 — 6개 시나리오 중 5·6번
+(위조 nested Lease·만료된 Lease)이 이 문서의 claim 범위다. digest
+갱신 이력은 DoD-11_review.txt 참조.
