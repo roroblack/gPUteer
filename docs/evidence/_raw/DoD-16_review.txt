@@ -1,0 +1,85 @@
+DoD-16 독립 검수 기록 — Coordinator 영속 Lease 저장소
+(docs/plans/2026-08-19_2300_coordinator_영속_lease_저장소_v1.md)
+
+검수자: agent:codex-cli (codex exec --sandbox read-only -c
+model_reasoning_effort=high)
+프롬프트: p108.md(1라운드) → CHANGES_REQUESTED → 코드 수정 →
+p109.md(2라운드, 좁은 후속 검수) → ACCEPTED
+
+=== 1라운드 (p108) — CHANGES_REQUESTED ===
+
+실재 확인된 항목(파일:줄 인용, 코덱스가 직접 확인):
+- CoordinatorLeaseStore 가 별도 타입이며 DurableFenceWatermark 를
+  재사용하지 않음 — 스키마·PRAGMA·파일 영속성 검사:
+  crates/coordinator/src/lease_store.rs:108-152
+- get_or_issue() 가 기존 레코드의 identity 를 확인한 뒤 candidate
+  가 아닌 stored 를 반환함 — lease_store.rs:169-192
+- identity 비교 대상(job_id·attempt_id·holder_node_id·
+  issuing_coordinator_id)만 검사하고 fence_epoch/expires_at 은
+  저장소가 권위를 가지므로 비교 대상에서 제외됨(의도와 일치) —
+  lease_store.rs:273-305
+- renew_existing() 의 미존재 경로가 레코드를 삽입하지 않고
+  NotFound 반환 — lease_store.rs:225-266
+- u64 BLOB 8바이트 big-endian 보존, u64::MAX 테스트 존재 —
+  lease_store.rs:97-105, :472-482
+- lease_db_path 가 Option<PathBuf>, 저장소가 TcpListener::bind()
+  보다 먼저 열림 — crates/coordinator/src/lib.rs:124-142
+- 갱신 요청 epoch 대조가 read_frame 검증·require_replay_checked()
+  뒤에 일어남 — lib.rs:258-312
+- lease_db_path==None 경로가 기준 커밋과 값이 동일함(레거시 회귀
+  없음, plumbing/Result 전파만 변경) — lib.rs:450-471, :498-546
+- 시나리오 20·21 이 Lease DB 와 Fence DB 를 각각 만들고 두 번째
+  프로세스에도 같은 경로를 전달함 — selftest.rs:840-891, :933-982
+- Agent 가 held Lease 에서 갱신 요청 epoch 을 만들어 판별력이 있음
+  — agent/lib.rs:136-143, :200-207
+- 뮤테이션 실패 논리가 정적으로 타당함(코드에 흔적 없음, 실행 자체는
+  코드만으로 확인 불가라고 정직하게 명시)
+
+지적된 결함:
+- StoredLease.max_total_duration_seconds 가 u64 로 저장되지만
+  pb::Lease 의 같은 필드는 uint32(proto/lease.proto:61) —
+  lease_store.rs:30-41
+- 복원 시 as u32 로 무검사 캐스팅해 조용히 잘릴 수 있었음 —
+  (당시) lib.rs:411, :545
+- 현재 발급 경로는 항상 86_400 을 쓰므로 즉시 재현되지는 않지만,
+  저장소 API 는 임의의 u64 를 저장할 수 있으므로 실제 데이터
+  무결성 결함으로 판단.
+
+수정 권고: u32::try_from(...).map_err(...) 로 fail closed 처리하고
+경계값 테스트를 추가할 것.
+
+실행 검증: 확인 안 됨(코덱스 read-only 샌드박스에 cargo 없음, 기존
+target/debug/gputeer.exe 도 HEAD 보다 이전 산출물이라 사용 안 함).
+
+=== 대응 (claude-code, 같은 세션) ===
+
+- u32_from_stored(value: u64, field: &str) -> Result<u32, String>
+  헬퍼 추가 — u32::try_from() 사용, 실패 시 fail-closed 오류.
+- issue_lease()·build_renew_result() 두 호출부 모두 as u32 캐스팅을
+  이 헬퍼 호출로 교체.
+- 경계값 단위 테스트 3건 추가(86_400 통과, u32::MAX 통과,
+  u32::MAX+1 거부 — 잘리지 않고 명시적으로 실패).
+- 21개 시나리오 5회 연속 통과, cargo test --workspace 재실행(회귀
+  없음).
+
+=== 2라운드 (p109, 좁은 후속 검수) — ACCEPTED ===
+
+지적 사항 해소 확인(파일:줄 인용, 코덱스가 직접 확인):
+- u32_from_stored() 가 u32::try_from() 사용, 실패 시 map_err 로
+  Err 반환 확인 — lib.rs:626, :628
+- issue_lease()·build_renew_result() 모두 헬퍼 호출 + ? 오류 전파로
+  수정됨 확인 — lib.rs:433, :573
+- as u32 실행 코드 캐스팅이 완전히 사라짐 확인(검색 결과는 과거
+  결함을 설명하는 주석뿐) — lib.rs:619, :766
+- 경계 테스트 3건이 86_400·u32::MAX·u32::MAX+1 거부를 각각 확인함
+  확인 — lib.rs:769, :774, :782
+- 변환 실패가 Lease 생성·서명 및 corrupt_* 처리 **전에** Err 로
+  전파됨, 기존 서명 흐름 유지 확인 — lib.rs:450, :591
+
+실행 검증: 확인 안 됨(코덱스 read-only 샌드박스에 cargo 없음). 실행
+검증은 claude-code 세션이 직접 수행했다
+(docs/evidence/_raw/DoD-16_selftest_2026-08-19.txt).
+
+수정 요청: 없음.
+
+최종 판정: ACCEPTED (2라운드).

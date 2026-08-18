@@ -136,7 +136,7 @@ CLI 값과 충돌**시켜야 저장소 사용 여부가 실제로 판별된다 �
 | 3 | 갱신 경로 전환(저장소 조회 → identity·epoch 대조 → expires 갱신) | 저장된 epoch 로 결과 구성 | ✅ |
 | 4 | fail closed(`:memory:`, open 실패, lock timeout) | 단위 테스트 | ✅ `is_durable()` 검사(Agent 와 같은 관례) — 단, Coordinator 는 `--lease-db` 자체가 optional 이라 아래 "설계와 다른 점" 참조 |
 | 5 | selftest 시나리오 20·21 추가 | 5회 연속 통과 | ✅ (21개 시나리오 전체 5회 연속) |
-| 6 | 뮤테이션 테스트 + 코덱스 독립 검수 + evidence 기록(DoD-16) | `ACCEPTED` | 🟡 1라운드(`p108`) `CHANGES_REQUESTED` — `max_total_duration_seconds` 를 `u64`(저장소) → `u32`(`pb::Lease`) 로 `as u32` 무검사 캐스팅하던 결함 지적, `u32_from_stored()` fail-closed 변환으로 수정 + 경계값 단위 테스트 3건 추가. 좁은 후속 검수 진행 중 |
+| 6 | 뮤테이션 테스트 + 코덱스 독립 검수 + evidence 기록(DoD-16) | `ACCEPTED` | ✅ 1라운드(`p108`) `CHANGES_REQUESTED` → 수정 → 2라운드(`p109`) `ACCEPTED`. `docs/evidence/DoD-16_coordinator_영속_lease_저장소.md` 기록 완료 |
 
 ## ★ 구현이 설계와 다른 점 — `--lease-db` 는 필수가 아니라 선택이다
 
