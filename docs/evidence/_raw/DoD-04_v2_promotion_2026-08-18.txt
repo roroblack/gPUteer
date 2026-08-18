@@ -1,0 +1,25 @@
+$ cargo test -p gputeer-crypto --test ed25519_verify
+test result: ok. 20 passed; 0 failed; 0 ignored
+
+$ cargo test -p gputeer-protocol --doc
+test crates\protocol\src\signing.rs - signing::Verified (line 606) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 618) ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored
+
+$ cargo test --workspace
+합계: 306 passed / 0 failed (전 크레이트)
+
+$ cargo build --workspace --all-targets
+경고 0건, 오류 0건
+
+이 파일은 DoD-04 를 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 8b45de5 무렵
+기록, docs/evidence/_raw/DoD-04_test_output.txt)과 2026-08-17 추가
+검증(_raw/DoD-04_replay_status_doctest_2026-08-17.txt)은 문서 본문에
+이미 보존돼 있으며 고치지 않는다 — 이것은 그것들을 대체하는 것이
+아니라, v2 승격 시점의 독립적 재확인이다.
+
+참고: crates/protocol/src/signable.rs 의 impl Signable for 개수는
+지금 11개다(grep 직접 집계) — 2026-08-17 addendum(DoD-04:360)이
+"10종"이라 적은 뒤 이 세션 안에서 AgentGrantAck 가 추가되어 다시
+하나 늘었다. DoD-01~03 재검수에서 반복된 것과 같은 패턴이다.

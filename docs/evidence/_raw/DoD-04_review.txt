@@ -1,0 +1,85 @@
+독립 검수 receipt — DoD-04 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      DoD-04
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-04_ed25519_검증순서.md (frontmatter + 본문 전체,
+  기존 addendum 3라운드 포함) 을 처음부터 다시 검수 — 기존 addendum 의
+  ACCEPTED 판정을 그대로 믿지 않고 파일:줄을 직접 재확인했다. 특히
+  "Signable 구현 10종" 수치가 DoD-01·02·03 재검수와 같은 이유
+  (Domain::GrantAck 추가)로 또 stale 인지 확인했다.
+  crates/protocol/src/signable.rs
+  crates/protocol/src/signing.rs
+  crates/crypto/tests/ed25519_verify.rs
+  crates/crypto/src/keyring.rs
+  crates/cli/src/selftest.rs
+  crates/cli/src/coordinator_agent_selftest.rs
+  crates/coordinator/src/lib.rs
+  crates/agent/src/lib.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p72 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+| 항목 | 판정 |
+|---|---|
+| §8 9단계 검증 순서 | 실재 확인됨 |
+| §13.2 Verified<M> 타입 강제 | 실재 확인됨 |
+| §9 장수명/단수명 분리 | 실재 확인됨 |
+| negative_tests 목록 | 실재 확인됨 |
+| Signable 구현 수 "10종" | stale — 실제는 11종 |
+| selftest가 ExecutionGrant만 검증 | stale — 범위를 좁혀야 함(coordinator-agent-selftest는 AgentGrantAck도 검증) |
+| replay 저장소 "아무도 사용하지 않음" | stale — CLI selftest는 DurableReplayGuard 사용, coordinator/agent만 InMemoryReplayGuard |
+| PersistentKeyring limitation 정정 | 실재 확인됨 |
+| 지정 cargo 명령 | 확인 안 됨(샌드박스 .cargo-build-lock 권한 거부) |
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+- DoD-04 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) — schema
+  v2 승격 전 재확인, 수치·replay 서술 재정정" 을 추가해 Signable
+  11종 실측치, gputeer selftest(ExecutionGrant만) vs
+  coordinator-agent-selftest(AgentGrantAck도) 범위 구분, CLI
+  selftest(DurableReplayGuard) vs coordinator/agent
+  handshake(InMemoryReplayGuard) 구분을 새로 기록했다. frontmatter
+  원문과 2026-08-17 addendum 원문("10종" 등)은 append-only 원칙에
+  따라 손대지 않았다.
+- Rust 20/2/306/0 은 claude-code 세션이 이미 로컬에서 직접 실행해
+  확인함 — docs/evidence/_raw/DoD-04_v2_promotion_2026-08-18.txt 참조.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 1 (agent:codex-cli, fresh-read-only, p73 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+내용 자체는 맞으나 파일:줄 인용 4곳이 코드와 어긋남을 지적:
+- coordinator/lib.rs:124-140 → 실제 :135-150
+- coordinator_agent_selftest.rs:223-290 → 위조 ACK 판정 포함하려면 :230-299
+- coordinator/lib.rs:82-87 → 실제 :96-97
+- agent/lib.rs:49-57 → 실제 :64-65
+append-only 준수는 확인됨(git diff 상 401행 이후 addendum만 추가,
+이전 "10종" 원문도 그대로 보존).
+
+--------------------------------------------------------------------------
+정정 반영 2 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+위 4곳 줄 번호를 지적대로 고쳤다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 2 (agent:codex-cli, fresh-read-only, p74 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+네 인용 모두 현재 코드와 일치함을 확인:
+- coordinator/lib.rs:135-150 — read_frame으로 ACK를 받고
+  require_replay_checked() 호출.
+- coordinator_agent_selftest.rs:230-299 — 정상 실행 검증과 위조
+  ACK 실행 경로 포함(위조 ACK 판정은 :272-283).
+- coordinator/lib.rs:96-97 — InMemoryReplayGuard::new() 사용 확인.
+- agent/lib.rs:64-65 — InMemoryReplayGuard::new() 사용 확인.
+추가 수정 불필요.

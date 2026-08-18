@@ -16,6 +16,48 @@
 
 ---
 
+## 2026-08-18 21:10 — DoD-04 schema v1 → v2 승격 완료 (DoD-01·02·03 에 이은 네 번째)
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격), DoD-01·02·03 에
+  이은 네 번째 사례. 자율 루프 계속(사용자 지시 — "테스트와 동시에
+  개발할 수 있는 부분은 개발하면서 가야지" 의 연장, DoD-03·04·06
+  3라운드 재검수 사이클의 다음 항목).
+- 스트림: Protocol · Crypto.
+- 수행: 같은 절차를 DoD-04 에 적용했다. `cargo test -p gputeer-crypto
+  --test ed25519_verify`(20) + `-p gputeer-protocol --doc`(2) +
+  `cargo test --workspace`(306) + `cargo build --workspace
+  --all-targets`(경고 0건)를 직접 실행해
+  `docs/evidence/_raw/DoD-04_v2_promotion_2026-08-18.txt` 에 저장했다.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p72` 프롬프트) —
+  `CHANGES_REQUESTED`.
+- **DoD-01~03 와 같은 패턴이 네 번째로 반복됐다** — 2026-08-17
+  addendum 의 "Signable 구현 10종" 이 `Domain::GrantAck` 추가로
+  11종이 됐다. 추가로 두 서술이 stale 했다: (a) "단수명 검증 경로가
+  ExecutionGrant 로 한정된다" — 이제 `coordinator-agent-selftest`
+  가 `AgentGrantAck` 도 매 실행 검증한다, (b) "아무도 replay 저장소를
+  안 쓴다" — `gputeer selftest` 는 이미 `DurableReplayGuard` 를
+  쓰고, **coordinator/agent handshake 만** 여전히
+  `InMemoryReplayGuard` 다. 새 addendum(2026-08-18 21:00 경)으로
+  세 가지를 다 정정했다 — 원본 frontmatter 와 2026-08-17 addendum
+  원문은 손대지 않았다.
+- 좁은 후속 재검수 1회차(`p73`) — 내용은 맞으나 새 addendum 의
+  파일:줄 인용 4곳이 틀렸다는 지적(예: `coordinator/lib.rs:124-140`
+  → 실제 `:135-150`). 지적대로 고친 뒤 2회차 재검수(`p74`) —
+  **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가, `artifacts:` 에 raw/review
+  파일 2개 추가. `_schema_v1_grandfathered.txt` 에서 DoD-04
+  제거(13→12건), `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **10 → 9건**. `cargo test --workspace` 전체
+  재실행 — 전 항목 0 failed(회귀 없음).
+- 리포트: 이 이력 항목. 다음은 계획대로 `DoD-06` — 이미 addendum 은
+  1라운드 만에 `ACCEPTED` 를 받아 두었으므로 같은 v2 승격 절차만
+  남았다. `DoD-03·04·06` 3라운드 재검수 사이클이 끝나면 CLAUDE.md
+  백로그의 나머지 v1 evidence(DoD-05·07·08, P0-01·03·03a·07·08)로
+  이어간다.
+
+---
+
 ## 2026-08-18 20:15 — DoD-03 schema v1 → v2 승격 완료 (DoD-01·DoD-02 에 이은 세 번째)
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격), DoD-01·DoD-02 에
