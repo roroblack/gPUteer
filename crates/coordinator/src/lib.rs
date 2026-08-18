@@ -404,6 +404,17 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 ///   판정 자체를 하지 않는다 — 그 경로는 매 요청마다
 ///   `issued_at_unix_ms` 를 즉석에서 재구성해 실제 경과시간을 추적
 ///   하지 못하기 때문이다(legacy enforcement bypass).
+///
+/// ★ 코덱스 독립 검수(2026-08-19, p114) 지적 — 처음 구현은
+///   `lease_store=Some` 이고 override 도 있을 때 초과 여부와 무관하게
+///   먼저 `renew_existing_within_duration()` 을 호출해 만료시각을
+///   연장한 **뒤에** override 를 적용했다. 그러면 "거부 응답인데
+///   저장소는 갱신됨" 이라는 상태 불일치가 생긴다(override 는
+///   `lease_store=None` 경로에서 저장소를 전혀 안 건드리는 것과
+///   대칭이어야 한다). 고친 뒤에는 override 가 있으면 읽기 전용
+///   `get()` 으로 초과 여부만 먼저 확인하고(초과 시엔 여전히
+///   outcome=6 이 이긴다), 저장소를 바꾸는 건 override 가 없을 때
+///   `renew_existing_within_duration()` 하나뿐이다.
 fn build_renew_result(
     config: &CoordinatorConfig,
     lease_store: &mut Option<CoordinatorLeaseStore>,
@@ -428,23 +439,44 @@ fn build_renew_result(
         ..Default::default()
     };
 
+    let max_duration_exceeded_result = |request_nonce: Vec<u8>| pb::RenewLeaseResult {
+        outcome: 6, // RENEW_OUTCOME_MAX_DURATION_EXCEEDED
+        detail: "max total duration exceeded".into(),
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce,
+        ..Default::default()
+    };
+
     let mut result = match lease_store {
-        Some(store) => match store
-            .renew_existing_within_duration(lease_id, now, now + 60_000, now + 30_000)
-            .map_err(|e| format!("lease store 갱신 실패: {e}"))?
-        {
-            RenewDecision::MaxDurationExceeded(_) => pb::RenewLeaseResult {
-                outcome: 6, // RENEW_OUTCOME_MAX_DURATION_EXCEEDED
-                detail: "max total duration exceeded".into(),
-                schema_version: 1,
-                coordinator_id: config.coordinator_device_id.clone(),
-                issued_at_unix_ms: now,
-                request_nonce,
-                ..Default::default()
-            },
-            RenewDecision::Renewed(resolved) => match config.renew_outcome_override {
-                Some(outcome) => policy_override(outcome, request_nonce),
-                None => build_renewed_lease_result(config, key, now, resolved, request_nonce)?,
+        // ★ 코덱스 독립 검수(2026-08-19, p114) 지적 — override 가
+        //   있으면 저장소를 **전혀 건드리지 않는다**(레거시 `None`
+        //   경로와 같은 계약: "거부 응답인데 저장소는 갱신됨" 이라는
+        //   상태 불일치를 만들지 않는다). 다만 실제 초과는 override
+        //   보다 여전히 우선해야 하므로, 읽기 전용 `get()` 으로
+        //   먼저 확인만 한다 — 저장소를 바꾸는 건 override 가 없을
+        //   때 `renew_existing_within_duration()` 하나뿐이다.
+        Some(store) => match config.renew_outcome_override {
+            Some(outcome) => {
+                let stored = store
+                    .get(lease_id)
+                    .map_err(|e| format!("lease store 조회 실패: {e}"))?
+                    .ok_or_else(|| format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다"))?;
+                if stored.is_max_duration_exceeded(now) {
+                    max_duration_exceeded_result(request_nonce)
+                } else {
+                    policy_override(outcome, request_nonce)
+                }
+            }
+            None => match store
+                .renew_existing_within_duration(lease_id, now, now + 60_000, now + 30_000)
+                .map_err(|e| format!("lease store 갱신 실패: {e}"))?
+            {
+                RenewDecision::MaxDurationExceeded(_) => max_duration_exceeded_result(request_nonce),
+                RenewDecision::Renewed(resolved) => {
+                    build_renewed_lease_result(config, key, now, resolved, request_nonce)?
+                }
             },
         },
         None => match config.renew_outcome_override {

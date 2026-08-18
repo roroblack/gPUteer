@@ -1270,6 +1270,125 @@ pub fn run() -> Result<String, String> {
         "23) max_total_duration_seconds 대조군 — 한도 안에서는 여전히 RENEWED 확인 (오탐 없음)\n",
     );
 
+    // ── 24. lease_store=Some 에서 override — 저장소 불변 확인 ──────────
+    //
+    // 코덱스 독립 검수(2026-08-19, p114)가 찾은 결함의 회귀 방지 —
+    // 처음 구현은 `lease_store=Some` 이고 `--renew-outcome-override`
+    // 도 있을 때, 초과 여부와 무관하게 먼저 저장소를 갱신(만료시각
+    // 연장)한 **뒤에** override 를 적용했다 — "거부 응답인데 저장소는
+    // 갱신됨" 이라는 상태 불일치였다. override 는 저장소를 **전혀**
+    // 건드리지 않아야 한다(레거시 `None` 경로와 같은 계약).
+    let lease_dir_24 = tempfile::tempdir()
+        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(24): {e}"))?;
+    let lease_db_path_24 = lease_dir_24.path().join("leases.sqlite3");
+    let lease_db_24 = lease_db_path_24
+        .to_str()
+        .ok_or_else(|| "lease store 경로가 UTF-8 이 아니다".to_string())?;
+
+    let issue_24 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_24,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "3600",
+            "--do-renew",
+            "false",
+        ],
+        &["--do-renew", "false"],
+    )?;
+    if !issue_24.coordinator_success || !issue_24.agent_success {
+        return Err(format!(
+            "override·저장소 불변 시나리오 1차(최초 발급) 실행이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_24.coordinator_success,
+            issue_24.coordinator_stdout,
+            issue_24.coordinator_stderr,
+            issue_24.agent_success,
+            issue_24.agent_stdout,
+            issue_24.agent_stderr
+        ));
+    }
+
+    let expires_before_24 = {
+        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_24)
+            .map_err(|e| format!("lease store 재조회 열기 실패(24, 사전): {e}"))?;
+        store
+            .get(fixture.lease_id)
+            .map_err(|e| format!("lease store 재조회 실패(24, 사전): {e}"))?
+            .ok_or_else(|| "lease store 에 24번 시나리오 lease 가 없다(사전)".to_string())?
+            .expires_at_unix_ms
+    };
+
+    // 2차(별도 프로세스): 한도(3600초) 안인데 override=SUPERSEDED(2) 를
+    // 강제 주입한다. 초과가 아니므로 override 값 그대로 나가야 하고,
+    // 저장소는 전혀 갱신되지 않아야 한다.
+    let override_24 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_24,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "3600",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--renew-outcome-override",
+            "2",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if override_24.coordinator_pid == issue_24.coordinator_pid {
+        return Err(format!(
+            "override·저장소 불변 시나리오의 2차 coordinator PID 가 1차와 같다 — 별도 \
+             프로세스가 아니다.\n1차 coordinator_pid={} 2차 coordinator_pid={}",
+            issue_24.coordinator_pid, override_24.coordinator_pid
+        ));
+    }
+    if override_24.agent_success
+        || !override_24.agent_stderr.contains("RENEW_REFUSED:SUPERSEDED")
+    {
+        return Err(format!(
+            "lease_store=Some 에서 override(SUPERSEDED) 가 서명된 정상 정책 거부로 \
+             분류되지 않았다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            override_24.coordinator_success,
+            override_24.coordinator_stdout,
+            override_24.coordinator_stderr,
+            override_24.agent_success,
+            override_24.agent_stdout,
+            override_24.agent_stderr
+        ));
+    }
+
+    let expires_after_24 = {
+        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_24)
+            .map_err(|e| format!("lease store 재조회 열기 실패(24, 사후): {e}"))?;
+        store
+            .get(fixture.lease_id)
+            .map_err(|e| format!("lease store 재조회 실패(24, 사후): {e}"))?
+            .ok_or_else(|| "lease store 에 24번 시나리오 lease 가 없다(사후)".to_string())?
+            .expires_at_unix_ms
+    };
+    if expires_after_24 != expires_before_24 {
+        return Err(format!(
+            "override(SUPERSEDED) 로 거부했는데도 저장소의 expires_at_unix_ms 가 갱신됐다 \
+             — override 는 저장소를 전혀 건드리지 않아야 한다.\n\
+             이전={expires_before_24} 이후={expires_after_24}"
+        ));
+    }
+    report.push_str(
+        "24) lease_store=Some + override — 서명된 정책 거부는 그대로이고 저장소는 \
+         전혀 갱신되지 않음을 확인 (코덱스 p114 지적의 회귀 방지)\n",
+    );
+
     Ok(report)
 }
 

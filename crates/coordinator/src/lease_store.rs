@@ -48,6 +48,26 @@ pub struct StoredLease {
     pub max_total_duration_seconds: u64,
 }
 
+impl StoredLease {
+    /// `now_unix_ms` 기준으로 `max_total_duration_seconds` 누적 시간을
+    /// 초과했는지 판정하는 순수 함수 — 저장소를 바꾸지 않는다.
+    /// `renew_existing_within_duration()` 이 트랜잭션 안에서 쓰고,
+    /// 호출자가 저장소를 건드리지 않고 미리 판정만 하고 싶을 때도
+    /// (예: override 가 저장소를 건드리기 전에 실제 초과가 우선하는지
+    /// 확인) 쓸 수 있다.
+    ///
+    /// `now_unix_ms < issued_at_unix_ms`(clock rollback) 는 경과시간을
+    /// 0 으로 취급해 계속 허용하지 않고, **초과로 취급해 fail closed**
+    /// 한다.
+    pub fn is_max_duration_exceeded(&self, now_unix_ms: u64) -> bool {
+        let max_duration_ms = self.max_total_duration_seconds.saturating_mul(1_000);
+        match now_unix_ms.checked_sub(self.issued_at_unix_ms) {
+            Some(elapsed_ms) => elapsed_ms > max_duration_ms,
+            None => true,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum LeaseStoreError {
     /// 요청한 `lease_id` 가 저장소에 없다 — 갱신 경로에서 새 Lease 를
@@ -315,13 +335,7 @@ impl CoordinatorLeaseStore {
             return Err(LeaseStoreError::NotFound);
         };
 
-        let max_duration_ms = stored.max_total_duration_seconds.saturating_mul(1_000);
-        let exceeded = match now_unix_ms.checked_sub(stored.issued_at_unix_ms) {
-            Some(elapsed_ms) => elapsed_ms > max_duration_ms,
-            None => true,
-        };
-
-        if exceeded {
+        if stored.is_max_duration_exceeded(now_unix_ms) {
             // ★ 판정만 하고 아무것도 쓰지 않는다 — expires_at 을
             //   연장하지 않아야 다음 요청에서도 같은 issued_at 기준으로
             //   다시 초과 판정된다.
