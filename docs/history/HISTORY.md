@@ -16,6 +16,56 @@
 
 ---
 
+## 2026-08-18 15:45 — `artifact_scope` TOCTOU 방어 실제 구현 — Windows reparse point 차단
+
+- 계획: CLAUDE.md "다음에 할 일" 2번 나머지 절반(artifact.rs TOCTOU
+  강제). 사용자 지시 — 자율 루프 계속 + "코덱스 최대한 쿼터 써서".
+- 스트림: Runtime.
+- 수행: `crates/runtime-policy/src/artifact.rs` 모듈 문서가 적어 둔
+  한계 — "진짜 강제는 ... Windows 재분석 지점 차단 핸들이 필요하다
+  — 이 크레이트에는 없다" — 를 코덱스 설계(`p61` 프롬프트)를 따라
+  `crates/runtime-windows` 에 구현했다.
+  - `crates/runtime-windows/src/beneath.rs`(신규) — `open_beneath(root,
+    relative)`: 경로 컴포넌트를 하나씩 `CreateFileW(FILE_FLAG_OPEN_REPARSE_POINT)`
+    로 열어 각 구성요소(중간 디렉터리 포함)가 reparse point(symlink·
+    junction·mount point) 인지 열기 시점에 직접 확인한다. `open_artifact()`
+    는 `ArtifactPolicy::check()`(문자열 검사) 와 이 함수를 순서대로
+    적용하는 편의 함수.
+  - 코덱스가 명시한 한계를 그대로 반영: 일반 Win32 API 로는 Linux
+    `openat2(RESOLVE_BENEATH|NO_SYMLINKS)` 와 동등한 원자적 보장이
+    없다 — 컴포넌트 확인과 다음 컴포넌트 open 사이에 짧은 경합 창이
+    남는다(`NtCreateFile` 의 `RootDirectory` 상대 open 으로 승격하면
+    더 강해지지만 미구현).
+- **실측 전 확인이 실제로 설계를 바꿨다.** 착수 전
+  `New-Item -ItemType SymbolicLink` 를 이 개발 기계에서 직접 시도해
+  "Administrator privilege required" 로 실패함을 확인했고,
+  `New-Item -ItemType Junction` 은 승격 없이 성공함을 확인했다 —
+  그래서 테스트는 symlink 대신 **junction** 으로 방어를 실측한다.
+  junction 도 `FILE_ATTRIBUTE_REPARSE_POINT` 를 가지므로 방어 대상과
+  정확히 일치한다.
+  - `crates/runtime-windows/tests/artifact_beneath.rs` — 3개 테스트:
+    (1) allowed 디렉터리 안 junction 이 허용 밖을 가리키면 최종
+    컴포넌트에서 거부, (2) junction 이 **중간** 디렉터리인 경우도
+    거부(다른 코드 경로 — 루프 안 검사 vs 마지막 컴포넌트 검사),
+    (3) 정상 경로(reparse point 없음)는 실제로 열림(비공허성).
+    (1)은 `ArtifactPolicy::check()` 가 이 경로를 문자열상 "허용"으로
+    먼저 판정한다는 것까지 재확인해, "문자열 검사가 이미 다 걸렀다"
+    는 우연을 배제한다.
+- 뮤테이션 테스트로 비공허성 증명: reparse point 거부 조건을
+  `if false && ...` 로 무력화 → junction 시나리오 2개 모두 예상대로
+  실패("junction 을 통한 허용 영역 밖 접근이 open_beneath 를
+  통과했다", "중간 디렉터리 junction 을 거부하지 못했다") → 원복 후
+  3개 전부 재통과 확인.
+- `crates/runtime-policy/src/artifact.rs` 모듈 문서에 이 연결을
+  기록하되, "일반 Win32 API 만으로는 Linux 와 동등한 원자적 보장이
+  없다"는 결론은 바꾸지 않았다 — 과장하지 않는다.
+- 검증: `cargo build --workspace` 경고 0. `cargo test --workspace`
+  306/0/1(ignored) — 이전 303 + `artifact_beneath.rs` 신규 3건.
+- 리포트: 이 이력 항목 + `crates/runtime-windows/src/beneath.rs` 모듈
+  문서 + `crates/runtime-policy/src/artifact.rs` 갱신.
+
+---
+
 ## 2026-08-18 15:05 — `runtime-windows` 수정 재검수 `ACCEPTED`
 
 - 계획: `23e77fd`(quote_command_line·TerminateProcess 수정)에 대한

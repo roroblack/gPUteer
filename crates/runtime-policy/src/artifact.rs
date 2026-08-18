@@ -22,6 +22,21 @@
 //!
 //! `check()` 를 "안전하다" 의 증명으로 쓰지 않는다. **명백히 잘못된 요청을
 //! 조기에 거부하는 문자열 필터**로만 쓴다.
+//!
+//! ★ 2026-08-18 — `crates/runtime-windows::open_beneath`/`open_artifact`
+//! 가 이 문서가 요구한 "Windows 재분석 지점 차단 핸들"을 실제로
+//! 구현했다. `CreateFileW(FILE_FLAG_OPEN_REPARSE_POINT)` 로 경로
+//! 컴포넌트를 하나씩 열어 reparse point(symlink·junction·mount point)
+//! 를 열기 시점에 발견해 거부한다 — 실제로 junction 을 만들어
+//! `open_beneath` 가 거부하는지 실측했다(`crates/runtime-windows/tests/artifact_beneath.rs`).
+//! **그래도 이 문단의 결론은 바뀌지 않는다** — 일반 Win32 API 만으로는
+//! Linux `openat2(RESOLVE_BENEATH|NO_SYMLINKS)` 와 동등한 원자적
+//! 보장이 없다(컴포넌트 확인과 다음 컴포넌트를 여는 시점 사이에
+//! 짧은 경합 창이 남는다 — `crates/runtime-windows/src/beneath.rs`
+//! 모듈 문서 참조). 이 모듈(`artifact.rs`)의 문자열 검사는 여전히
+//! **명백히 잘못된 요청을 조기에 거르는 1차 방어**일 뿐이고, 실제
+//! 파일시스템 방어는 `runtime-windows` 가 담당한다 — 이 파일 자체는
+//! 바뀌지 않았다.
 
 use std::path::Path;
 

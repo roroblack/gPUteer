@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 15:05)
+## 5. 지금 상태 (2026-08-18 15:45)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -163,12 +163,12 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 303 passed / 0 failed**(1 ignored), 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 306 passed / 0 failed**(1 ignored), 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** |
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류. 실제 연결은 `crates/runtime-windows` 가 시작함 |
-| ├ `crates/runtime-windows` | **신규**(2026-08-18) — VRAM 판정을 실제 `CreateJobObjectW`/`SetInformationJobObject` 로 연결한 **첫 실제 시스템 강제**. 실측 결과 소프트 제한(오버슈트 700~850KiB)임을 확인 — `guarantees_hard_limit()==false` 재확인. network(방화벽)·artifact_scope(TOCTOU)는 아직 미착수(각각 시스템 설정 승인 필요·추가 조사 필요) |
+| ├ `crates/runtime-windows` | **신규**(2026-08-18) — VRAM 판정을 실제 `CreateJobObjectW`/`SetInformationJobObject` 로 연결(소프트 제한 실측, 오버슈트 700~850KiB — `guarantees_hard_limit()==false` 재확인). **`open_beneath`/`open_artifact`** — `artifact_scope` TOCTOU 방어, reparse point(symlink·junction) 를 열기 시점에 실제로 거부(junction 으로 실측, 뮤테이션 테스트 포함). network(방화벽)만 미착수(시스템 설정 승인 필요) |
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함. **`gputeer coordinator-agent-selftest`**(신규, 2026-08-18) — 별도 프로세스 2개(coordinator-stub·agent-stub)가 실제 handshake + **거부 경로 3종(위조 Grant·위조 ACK·replay) 자동 검증** |
 | ├ `crates/coordinator` | **신규**(2026-08-18) — `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`send_grant_twice`). lease·스케줄링·다중 Agent 미착수 |
 | ├ `crates/agent` | **신규**(2026-08-18) — `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`expect_replay`). Job 실행 미착수 |
@@ -255,15 +255,19 @@ Linux 를 한 번도 돌려보지 않았다
    coordinator" 아님, lease·스케줄링·다중 Agent·운영용 key protection·
    TLS 는 계획 자체가 처음부터 범위 밖으로 명시했다. 다음 네트워크
    단계(스케줄링·다중 Agent 등)는 새 계획 문서가 필요하다.
-2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM 완료(2026-08-18, 코덱스 검수 2라운드 ACCEPTED) — 방화벽·경로는 남음
-   crates/runtime-windows 신설, Job Object 커밋 상한 실제 연결·실측
-   완료(뮤테이션 테스트 포함). 소프트 제한임을 실측으로 확인
-   (오버슈트 700~850KiB) — guarantees_hard_limit()==false 와 일치.
-   코덱스 검수 1라운드에서 명령줄 인용 버그 2건(MSVC 백슬래시 규칙)
-   + TerminateProcess 미확인을 잡아 수정, 2라운드 ACCEPTED.
+2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 완료(2026-08-18) — 방화벽만 남음
+   crates/runtime-windows 신설:
+   - VRAM: Job Object 커밋 상한 실제 연결·실측(뮤테이션 테스트 포함).
+     소프트 제한임을 실측으로 확인(오버슈트 700~850KiB) —
+     guarantees_hard_limit()==false 와 일치. 코덱스 검수 2라운드 ACCEPTED
+     (1라운드에서 명령줄 인용 버그 2건 + TerminateProcess 미확인 발견→수정).
+   - artifact_scope: open_beneath/open_artifact — reparse point(symlink·
+     junction) 를 열기 시점에 실제로 거부하는 TOCTOU 방어. junction 으로
+     실측(이 개발 기계는 symlink 생성에 관리자 권한이 필요해 junction
+     사용), 뮤테이션 테스트로 비공허성 확인. 일반 Win32 API 한계상
+     Linux openat2(RESOLVE_BENEATH) 와 동등한 원자적 보장은 아니다.
    남은 것: network.rs(OS 방화벽) — 시스템 전역 보안 설정 변경이라
-   사용자 명시적 승인 필요. artifact.rs(TOCTOU 커널 경로 강제) —
-   Windows 재분석 지점 차단 등 추가 조사 필요, 아직 미착수.
+   사용자 명시적 승인 필요, 아직 미착수.
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ 시도했으나 **사용자 승인 필요로 보류**(2026-08-18)
    `ssh x600 "wsl --status"` -> "설치 안 됨, wsl --install 로 설치하라"는
    메시지 확인. `wsl --install` 은 Windows 선택적 기능 활성화 + 재부팅을

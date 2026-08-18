@@ -44,6 +44,11 @@
 //! ```
 
 #[cfg(windows)]
+mod beneath;
+#[cfg(windows)]
+pub use beneath::{open_artifact, open_beneath};
+
+#[cfg(windows)]
 mod windows_impl {
     use std::ffi::{OsStr, OsString};
     use std::mem::size_of;
