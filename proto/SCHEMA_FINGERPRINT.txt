@@ -10,7 +10,7 @@
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 #
-# blake3-256: 0a34709f5599658f071ed8ac6df7c0ccca441cba89ce640db9ce061aa7866bcf
+# blake3-256: 9638aba3ebad28c912dfac06f4367e7d451aae086504cf7eafb4a1b795964389
 
 artifact.proto::ArtifactRef
   1 uint32 schema_version
@@ -187,6 +187,16 @@ control.proto::AddMember
   2 bytes public_key
   3 string role
   90 bytes owner_signature
+control.proto::AgentGrantAck
+  1 uint32 schema_version
+  2 string grant_id
+  3 string attempt_id
+  4 string agent_device_id
+  5 uint64 issued_at_unix_ms
+  6 uint64 expires_at_unix_ms
+  7 bytes nonce
+  8 bool accepted
+  90 bytes agent_signature
 control.proto::ApproveDevice
   1 string device_id
   2 string member_id

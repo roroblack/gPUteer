@@ -91,6 +91,7 @@ pub enum FrameType {
     Checkpoint = 7,
     Artifact = 8,
     ReplicaAck = 9,
+    GrantAck = 10,
 }
 
 impl FrameType {
@@ -105,6 +106,7 @@ impl FrameType {
             7 => Self::Checkpoint,
             8 => Self::Artifact,
             9 => Self::ReplicaAck,
+            10 => Self::GrantAck,
             _ => return None,
         })
     }
@@ -171,6 +173,7 @@ pub enum IngressMessage {
     Checkpoint(Verified<pb::CheckpointManifest>),
     Artifact(Verified<pb::ArtifactRef>),
     ReplicaAck(Verified<pb::ReplicaAck>),
+    GrantAck(Verified<pb::AgentGrantAck>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -281,6 +284,7 @@ pub fn read_frame<R: Read>(
         FrameType::Checkpoint => verify_as!(Checkpoint, pb::CheckpointManifest),
         FrameType::Artifact => verify_as!(Artifact, pb::ArtifactRef),
         FrameType::ReplicaAck => verify_as!(ReplicaAck, pb::ReplicaAck),
+        FrameType::GrantAck => verify_as!(GrantAck, pb::AgentGrantAck),
     }
 }
 

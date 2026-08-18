@@ -820,6 +820,25 @@ impl ToCanonicalFields for pb::ReleaseQuarantine {
     }
 }
 
+impl ToCanonicalFields for pb::AgentGrantAck {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.grant_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.agent_device_id);
+        put_uint(&mut f, 5, self.issued_at_unix_ms);
+        put_uint(&mut f, 6, self.expires_at_unix_ms);
+        // ★ nonce 는 서명 대상이다. 서명 밖이면 replay 캐시를 우회할 수 있다.
+        put_bytes(&mut f, 7, &self.nonce);
+        put_bool(&mut f, 8, self.accepted);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // job.proto — JobManifest
 //

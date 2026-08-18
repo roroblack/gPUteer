@@ -311,6 +311,8 @@ fn domain_tags_are_32_bytes_and_unique() {
         Domain::CoordinatorSet, Domain::OwnerKeyRotate, Domain::PolicyUpdate,
         Domain::QuarantineDevice, Domain::QuarantineRelease,
         Domain::Audit, Domain::Release, Domain::Invite,
+        // coordinator/agent 최소 핸드셰이크 (2026-08-18)
+        Domain::GrantAck,
     ];
     let mut seen = std::collections::HashSet::new();
     for d in domains {
@@ -320,7 +322,7 @@ fn domain_tags_are_32_bytes_and_unique() {
     }
     assert_eq!(
         seen.len(),
-        23,
-        "signing.md §5 의 domain_tag 23종과 일치해야 한다 (ADR-028)"
+        24,
+        "signing.md §5 의 domain_tag 24종과 일치해야 한다 (ADR-028 + GrantAck)"
     );
 }

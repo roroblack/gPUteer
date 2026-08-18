@@ -366,6 +366,30 @@ message RiskSignal {
   string observer_coordinator_id = 4;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Coordinator/Agent 최소 핸드셰이크 (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Coordinator 가 발급한 ExecutionGrant 에 대한 Agent 의 서명된 응답.
+// ReplicaAck(checkpoint durability 증거용, Lifetime::Evidence, replay 미검사)를
+// 재사용하지 않는다 — "ACK 가 이 Grant 에 대응하는가" 와 "ACK replay 를
+// DurableReplayGuard 가 거부하는가" 둘 다 이 전용 메시지로만 증명할 수 있다.
+message AgentGrantAck {
+  uint32 schema_version = 1; // 현재 1
+  string grant_id = 2;
+  string attempt_id = 3;
+  string agent_device_id = 4;
+
+  uint64 issued_at_unix_ms = 5;
+  uint64 expires_at_unix_ms = 6;
+  // 16바이트. replay 캐시 대상.
+  bytes nonce = 7;
+  bool accepted = 8;
+
+  // domain_tag = "gputeer/v1/grant-ack"
+  bytes agent_signature = 90;
+}
+
 message SubmitJob { JobManifest manifest = 1; }
 
 message TransitionJob {

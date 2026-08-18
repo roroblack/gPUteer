@@ -113,12 +113,44 @@ crates/
 
 | # | 단계 | 스트림 | 완료 기준 | 상태 |
 |---|---|---|---|---|
-| 1 | `AgentGrantAck` proto 추가 + `ToCanonicalFields`/`Signable` 구현 | Protocol | `cargo build -p gputeer-protocol` 통과, field_number_audit 에 등록됨 | ⬜ |
-| 2 | `framed_ingress` 에 `FrameType::GrantAck`/`IngressMessage::GrantAck` 추가 | Crypto | 기존 framed_ingress 테스트 전부 green + 새 타입 round-trip 테스트 | ⬜ |
+| 1 | `AgentGrantAck` proto 추가 + `ToCanonicalFields`/`Signable` 구현 | Protocol | `cargo build -p gputeer-protocol` 통과, field_number_audit 에 등록됨 | ✅ 2026-08-18 |
+| 2 | `framed_ingress` 에 `FrameType::GrantAck`/`IngressMessage::GrantAck` 추가 | Crypto | 기존 framed_ingress 테스트 전부 green + 새 타입 round-trip 테스트 | ✅ 2026-08-18 |
 | 3 | `crates/coordinator`·`crates/agent` 신설, 최소 handshake 구현 | Coordinator/Agent(신규 스트림) | 정상 경로 1회 성공 | ⬜ |
 | 4 | `gputeer coordinator-stub`/`agent-stub`/`coordinator-agent-selftest` CLI 배선 | CLI | 별도 PID 확인(`assert_ne!` on process id), exit code 0 | ⬜ |
 | 5 | 거부 경로 3종(위조 Grant·위조 ACK·replay) 을 selftest 에 추가 | CLI/Coordinator/Agent | 셋 다 명시적으로 거부됨을 자동 검증 | ⬜ |
 | 6 | 코덱스 독립 검수 1라운드 이상 | — | `ACCEPTED` | ⬜ |
+
+### 단계 1·2 수행 메모 (2026-08-18)
+
+"확인 안 됨" 3건을 구현 착수 전에 실측으로 검증했다(계획서 §"확인 안 됨" 참조):
+
+1. **`PersistentKeyring` 서명키 재획득 API 없음 — 확인됨, 그러나 막지 않는다.**
+   `keys: BTreeMap<...>` 와 `KeyVersion.private` 필드는 비공개이고, `insert_private`
+   이후 `SecretSigningKey` 를 다시 꺼내는 공개 API가 없다(`crates/crypto/src/keyring.rs`).
+   그러나 기존 `crates/cli/src/selftest.rs:198` 가 이미 같은 상황을 쓰고 있다 —
+   `SigningKey` 를 호출자 스코프에 **별도로** 보관해 서명에 쓰고, `PersistentKeyring`
+   에는 검증/키 디렉터리 부기용으로만 등록한다. coordinator/agent 구현도 이 패턴을
+   그대로 따르면 새 keyring API가 필요 없다.
+2. **`AgentGrantAck` 컴파일 — 확인됨, 충돌 없음.** 새 message 이므로 필드 번호는
+   message-scope 라 다른 메시지와 충돌하지 않는다. 실제로 `proto/control.proto` 에
+   추가하고 `cargo build -p gputeer-protocol` 로 확인했다 — 통과.
+3. **domain_tag 23→24종, `canonical_vectors.rs` 하드코딩 — 확인됨, 정확한 위치.**
+   `crates/protocol/tests/canonical_vectors.rs:304-324` 의
+   `domain_tags_are_32_bytes_and_unique` 가 배열과 `23` 을 하드코딩하고 있었다.
+   `Domain::GrantAck` 를 배열에 추가하고 `24` 로 갱신했다.
+
+구현 중 계획서에 없던 **4번째 안전망**도 걸렸다 — `field_number_audit.rs::AUDITED`,
+`lifetime_consistency.rs` 의 `declared_lifetime_matches_message_capability`/
+`every_signable_is_covered`, `schema_fingerprint.rs`(P0-08 스키마 진화 가드) 전부
+새 메시지를 빠뜨리면 실패하도록 설계되어 있었다 — 넷 다 걸렸고, 순서대로 채웠다.
+`schema_fingerprint.rs` 는 `UPDATE_SCHEMA_FINGERPRINT=1` 로 갱신했다(새 message
+추가는 필드 추가와 달리 schema_version 상향이 필요 없다 — 그 메시지는 태어날 때부터
+schema_version=1 이므로 "구버전 검증자가 새 필드를 모른다" 는 위험이 없다).
+
+`cargo test --workspace` 297/0/1(ignored) — 이전 296 + 신규 GrantAck round-trip 1건.
+(`gputeer-checkpoint::write_failure::concurrent_startup_gc_treats_not_found_as_normal_race`
+가 병렬 실행에서 1회 우연히 실패했다 — `--test-threads=1` 단독 재실행 시 통과. 이
+계획과 무관한 기존 테스트의 타이밍 취약성으로 보이며 별도 조사가 필요하다.)
 
 ## 완료 기준 (DoD)
 

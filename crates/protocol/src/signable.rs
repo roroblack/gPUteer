@@ -168,6 +168,42 @@ impl Signable for pb::ExecutionGrant {
     }
 }
 
+/// Coordinator 가 발급한 `ExecutionGrant` 에 대한 Agent 의 서명된 응답
+/// (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md).
+///
+/// `ReplicaAck` 를 재사용하지 않는다 — `ReplicaAck` 는
+/// `Lifetime::Evidence` 라 replay nonce 를 검사하지 않으므로
+/// (§262-264 `impl Signable for pb::ReplicaAck` 참조), 빌려 쓰면
+/// "ACK replay 를 `DurableReplayGuard` 가 거부하는가" 를 증명할 수 없다.
+impl Signable for pb::AgentGrantAck {
+    const DOMAIN: Domain = Domain::GrantAck;
+    /// Grant 와 대칭 — 정상 handshake 창 안에서만 유효한 응답이다.
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.agent_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.expires_at_unix_ms
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.agent_device_id
+    }
+    /// 서명된 nonce 필드(7). 호출자가 고를 수 없다.
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.nonce)
+    }
+}
+
 fn hex32(b: &[u8]) -> String {
     b.iter().take(8).map(|x| format!("{x:02x}")).collect::<String>() + ".."
 }

@@ -306,6 +306,12 @@ pub enum Domain {
     Audit,
     Release,
     Invite,
+    // ★ 2026-08-18 — coordinator/agent 최소 핸드셰이크
+    //   (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md).
+    //   ReplicaAck 의 domain 을 공유하지 않는다 — ReplicaAck 는
+    //   Lifetime::Evidence 라 replay nonce 를 검사하지 않으므로,
+    //   공유하면 AgentGrantAck 의 replay 방어를 증명할 수 없다.
+    GrantAck,
 }
 
 impl Domain {
@@ -334,6 +340,7 @@ impl Domain {
             Domain::Audit => "gputeer/v1/audit",
             Domain::Release => "gputeer/v1/release",
             Domain::Invite => "gputeer/v1/invite",
+            Domain::GrantAck => "gputeer/v1/grant-ack",
         }
     }
 

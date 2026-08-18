@@ -61,6 +61,22 @@ fn lease(k: &SigningKey) -> pb::Lease {
     m
 }
 
+fn grant_ack(k: &SigningKey, nonce_seed: u8) -> pb::AgentGrantAck {
+    let mut m = pb::AgentGrantAck {
+        schema_version: 1,
+        grant_id: "01JBXGRANT000000000000001".into(),
+        attempt_id: "01JBXATTEMPT00000000000001".into(),
+        agent_device_id: DEVICE.into(),
+        issued_at_unix_ms: NOW,
+        expires_at_unix_ms: NOW + 60_000,
+        nonce: (0u8..16).map(|i| i.wrapping_add(nonce_seed)).collect(),
+        accepted: true,
+        ..Default::default()
+    };
+    m.agent_signature = sign(k, &m).to_vec();
+    m
+}
+
 fn directory(k: &SigningKey) -> InMemoryKeyring {
     let mut d = InMemoryKeyring::new();
     d.insert(DEVICE, k.verifying_key());
@@ -110,6 +126,32 @@ fn normal_lease_frame_dispatches_to_the_right_variant() {
     .expect("정상 Lease 프레임이 통과해야 한다");
 
     assert!(matches!(msg, IngressMessage::Lease(_)), "잘못된 variant 로 디스패치됐다");
+}
+
+/// `AgentGrantAck` 도 같은 스트림 구조에서 정상 동작하는가 — 비공허성.
+///
+/// coordinator/agent 최소 핸드셰이크(2026-08-18)가 추가한 10번째
+/// `FrameType`. 이 테스트가 없으면 `framed_ingress` 의 dispatch 배선이
+/// 컴파일만 되고 실제로 왕복하는지는 아무도 확인하지 않는다.
+#[test]
+fn normal_grant_ack_frame_dispatches_to_the_right_variant() {
+    let k = key(3);
+    let dir = directory(&k);
+    let a = grant_ack(&k, 0);
+    let frame = write_frame(FrameType::GrantAck, &a.encode_to_vec()).unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let msg = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    )
+    .expect("정상 GrantAck 프레임이 통과해야 한다");
+
+    assert!(matches!(msg, IngressMessage::GrantAck(_)), "잘못된 variant 로 디스패치됐다");
 }
 
 /// ★ 프레임 상한 초과 — 상한을 **주장된 길이만으로** 거부해야 한다.

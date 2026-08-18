@@ -16,6 +16,54 @@
 
 ---
 
+## 2026-08-18 10:05 — coordinator/agent 핸드셰이크 단계 1·2: `AgentGrantAck` 서명 대상 메시지 + framed_ingress 배선
+
+- 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md` 단계 1·2.
+  사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지" (자율 루프 계속).
+- 스트림: Protocol, Crypto.
+- 수행: 계획서 자신이 요구한 "확인 안 됨" 3건부터 실측 검증(계획 문서의
+  "단계 1·2 수행 메모" 절 참조 — 요약: `PersistentKeyring` 은 서명키를
+  나중에 다시 꺼내는 API가 없지만 `selftest.rs:198` 의 기존 패턴(호출자가
+  `SigningKey` 를 별도 보관)으로 충분함을 확인, 새 message 필드 번호
+  충돌 없음을 빌드로 확인, `canonical_vectors.rs:304-324` 가 domain_tag
+  개수를 하드코딩하는 정확한 위치를 특정). 그 다음 실제 구현:
+  - `proto/control.proto` — `AgentGrantAck`(필드 1~8 + 서명 90) 추가
+  - `crates/protocol/src/canonical.rs` — `Domain::GrantAck`
+    (`gputeer/v1/grant-ack`) 추가. `ReplicaAck` 재사용 안 함 — Evidence
+    lifetime 이라 replay 를 검사하지 않으므로 재사용하면 ACK replay
+    방어를 증명할 수 없다(계획서 "왜 ReplicaAck 를 재사용하지 않는가").
+  - `crates/protocol/src/to_fields.rs` — `ToCanonicalFields for
+    pb::AgentGrantAck` (필드 1~8, nonce=7 포함 — 서명 밖이면 replay
+    캐시 우회 가능)
+  - `crates/protocol/src/signable.rs` — `Signable for pb::AgentGrantAck`
+    (`Lifetime::ShortLived`, replay_nonce = Some(&self.nonce))
+  - `crates/crypto/src/framed_ingress.rs` — `FrameType::GrantAck = 10`,
+    `IngressMessage::GrantAck`, dispatch 배선
+  - `crates/crypto/tests/framed_ingress.rs` — `grant_ack()` 헬퍼 +
+    `normal_grant_ack_frame_dispatches_to_the_right_variant` round-trip
+  - `docs/protocol/signing.md` §5 — domain_tag 표 23→24종 갱신
+- 구현 중 계획서가 예상 못 한 안전망 4개가 순서대로 걸렸다 — 이 저장소가
+  스스로 만들어 둔 회귀 방지 그물이 실제로 동작함을 보여준다:
+  `field_number_audit.rs::every_impl_is_audited`,
+  `lifetime_consistency.rs::every_signable_is_covered`,
+  `canonical_vectors.rs::domain_tags_are_32_bytes_and_unique`,
+  `schema_fingerprint.rs::proto_schema_matches_recorded_fingerprint`(P0-08
+  스키마 진화 가드 — `UPDATE_SCHEMA_FINGERPRINT=1` 로 정당하게 갱신. 필드
+  추가가 아니라 **새 메시지 추가**라 schema_version 상향은 불필요).
+- 검증: `cargo build --workspace` 성공. `cargo test -p gputeer-protocol`
+  · `cargo test -p gputeer-crypto` 각각 전부 green. `cargo test
+  --workspace` 297/0/1(ignored) — 이전 296 + GrantAck round-trip 1건.
+  ★ `gputeer-checkpoint::write_failure::
+  concurrent_startup_gc_treats_not_found_as_normal_race` 가 병렬 실행
+  중 1회 우연히 실패 → `--test-threads=1` 단독 재실행 시 통과 확인 →
+  이 작업과 무관한 기존 테스트의 타이밍 취약성으로 판단, 별도 조사
+  과제로 남긴다(원인은 조사하지 않았다 — 추측하지 않는다).
+- 리포트: 이 이력 항목 + 계획 문서 자체("단계 1·2 수행 메모" 절).
+  남은 단계(3~6: coordinator/agent crate 신설·CLI 배선·거부 경로·
+  독립 검수)는 계획서에 남긴 대로 별도 작업.
+
+---
+
 ## 2026-08-18 09:10 — `DurableReplayGuard` 별도 프로세스 replay 경쟁 실측 추가
 
 - 계획: 사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지"
