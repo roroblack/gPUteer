@@ -1,0 +1,86 @@
+독립 검수 receipt — P0-01 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      P0-01
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  이 evidence 는 원격 NVIDIA GPU 하드웨어(x600) 실측이라 이 세션은
+  재실측할 자율 권한이 없다(SSH 원격 접근은 세션 안전 정책이 막는
+  범주). 따라서 이번 v2 승격은 하드웨어 재실측이 아니라 **소스
+  일치성 확인**만을 근거로 삼는다 — probe 스크립트가 이전
+  addendum(2026-08-18 01:30/01:40)이 인용한 파일:줄과 지금도
+  일치하는지만 확인했다.
+  docs/evidence/P0-01_windows_s1_restricted_cuda.md
+  tools/probes/p0_01_windows_s1_cuda.py
+  RULE.md §7.3
+  docs/decisions/ADR-030_evidence_독립검수_강제.md
+  scripts/verify_evidence.py
+
+--------------------------------------------------------------------------
+검수 (p85 프롬프트) — 판정: CHANGES_REQUESTED (v2 필수 필드 누락, 접근 자체는 수용)
+--------------------------------------------------------------------------
+
+핵심 판단: **"재실측 없이 provenance 를 정직하게 기록한다"는 접근
+자체는 수용 가능하다.** RULE.md §7.3 은 v2 에 provenance·독립 검수
+필드를 요구하지만 명령 실행이나 결과의 진실성을 보장하라고 하지
+않는다(RULE.md:386-405,424-430). 재실측 불가를 명시한 addendum 은
+정직하다(P0-01 문서:230-255).
+
+확인 결과:
+- probe 인용은 실제 코드와 일치: restype 지정(p0_01_windows_s1_cuda.py:45-68),
+  CreateRestrictedToken(DISABLE_MAX_PRIVILEGE)(:142-156), 단일
+  Popen 프로세스의 AssignProcessToJobObject(:281-289).
+- raw 기록도 같은 내용을 인용(_raw/P0-01_v2_promotion_2026-08-18.txt:18-29).
+- 현재 probe SHA-256 도 기존 frontmatter 의 digest 와 일치
+  (P0-01 문서:6-8).
+- git diff 상 원본 frontmatter 와 01:30/01:40 addendum 은 수정되지
+  않았고 새 내용만 파일 끝에 추가됨(append-only 준수 확인).
+- raw 파일 실재, addendum 서술과 일치(_raw/...txt:11-16,31-37).
+
+다만 **실제 v2 승격 메커니즘이 아직 완료되지 않았다**고 지적:
+1. frontmatter 에 schema_version: 2 없음(여전히 v1 로 해석됨).
+2. ADR-030 이 요구하는 executor/reviewer 신원·review_context·
+   review_outcome·review_artifact·raw digest/bytes 가 YAML
+   frontmatter 에 없음.
+3. 새 raw 파일이 artifacts 목록에 추가되지 않음, review_artifact
+   로 연결되지 않음.
+4. verify_evidence.py 는 이 문서를 여전히 v1 유예로 집계.
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+지적대로 frontmatter 에 schema_version: 2 및 executor/reviewer
+provenance 필드를 additive 하게 추가하고, artifacts 목록에
+P0-01_v2_promotion_2026-08-18.txt · P0-01_review.txt(이 파일) 를
+추가했다. _schema_v1_grandfathered.txt 에서 P0-01 을 제거하고
+GRANDFATHER_DIGEST 를 재계산했다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p86 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+frontmatter 필드 보완이 실제로 이뤄졌는지 좁게 재검수했다.
+
+- v2 필드가 전부 존재함을 확인: P0-01 문서:2, :8-24. RULE.md §7.3
+  요구사항과 ADR-030 필드 목록에 빠진 항목 없음.
+- 두 raw 파일 모두 artifacts: 에 들어 있음을 확인: 문서:70,71.
+- raw_output_artifact(P0-01_v2_promotion_2026-08-18.txt) 의 실제
+  SHA-256 이 sha256:5464b5da3e631f4d7d07e6d70edb8665f3be73f88213c17b6a231ae51c5f8d9a,
+  바이트 수 2326 으로 frontmatter(:23-24)와 일치함을 직접 계산해
+  확인.
+- 원본 claim·status·commit·binary_digests 등은 git diff 상 삭제
+  없이 additive 변경만 확인됨(append-only 준수).
+
+1차 결과는 "CHANGES_REQUESTED"(frontmatter 필드 누락)였으나, 위
+정정(schema_version: 2 + provenance 필드 전체 + artifacts 2건
+추가)으로 완전히 해소됐다고 판정. raw_output_digest·raw_output_bytes
+는 이 receipt 자신에도 명시한다(위 참조: sha256:5464b5da...,
+2326 bytes) — 이전 초안이 이 receipt 안에 그 값을 직접 적지 않아
+"채워질 예정" 상태로 남아 있던 것을 이번에 채웠다.
+
+추가 정정 불필요.

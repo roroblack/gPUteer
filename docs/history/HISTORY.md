@@ -16,6 +16,49 @@
 
 ---
 
+## 2026-08-19 00:55 — P0-01 schema v1 → v2 승격 완료 — 하드웨어 재실측 없이, 디스크 100% 소진 사고 정리
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-01`~`08`
+  에 이어 `P0-*` 부채로 넘어간 첫 항목.
+- 스트림: —.
+- 수행: `P0-01` 은 원격 NVIDIA GPU 하드웨어(x600) 실측이라 `DoD`
+  류에 쓴 절차("오늘 cargo test/python 재실행")를 그대로 쓸 수
+  없었다 — 이 세션은 x600 에 SSH 로 접근할 자율 권한이 없고(원격
+  시스템 접근은 세션 안전 정책이 막는 범주), 개발 기계에도 NVIDIA
+  GPU 가 없다. **하드웨어 재실측을 지어내지 않고**, probe
+  스크립트(`tools/probes/p0_01_windows_s1_cuda.py`)가 이전
+  addendum(2026-08-18 01:30/01:40)이 인용한 파일:줄과 지금도
+  일치하는지(소스 불변 확인)만으로 v2 승격 근거를 삼았다 — 그
+  한계를 addendum 에 명시했다. 이 접근 자체의 타당성을 먼저
+  Codex 에 검수시켰다(`p85` 프롬프트) — "재실측 없이 정직하게
+  기록하는 접근은 수용 가능하나 실제 v2 frontmatter 필드가 아직
+  없다"는 `CHANGES_REQUESTED`. frontmatter(`schema_version: 2` +
+  executor/reviewer provenance)를 채우고 `artifacts:` 를 갱신한 뒤
+  좁은 후속 재검수(`p86`) — 처음엔 receipt 파일 자체에
+  `raw_output_digest`/`bytes` 가 빠져 있어 다시 `CHANGES_REQUESTED`,
+  receipt 를 보완해 최종 **`ACCEPTED`.**
+- `_schema_v1_grandfathered.txt` 에서 P0-01 제거(7→6건),
+  `GRANDFATHER_DIGEST` 재계산·갱신.
+- ★ **작업 도중 디스크가 100% 소진되는 사고가 있었다.** `cargo
+  test --workspace` 가 `durability_chaos::adr026_write_once_succeeds_while_readers_hold_files_open`
+  에서 실패했는데, 원인은 코드 회귀가 아니라 `rustc` 컴파일 중
+  "디스크 공간이 부족합니다(os error 112)" — C: 드라이브가 223GB
+  중 223GB 사용(가용 0)이었다. `cargo clean` 으로 target/ 6.2GiB
+  를 정리해 19GB 여유를 확보했고, 그 뒤 `cargo test --workspace`
+  가 다시 307 passed / 0 failed 로 통과함을 확인해 **코드 결함이
+  아니었음을 확정**했다. 디스크 전체(사용자 홈 디렉터리만 약
+  122GB — Documents 51GB·AppData 27GB·.cache 13GB·anaconda3
+  12GB·VirtualBox VMs 6GB 등)의 근본 원인은 이 세션의 작업 범위
+  밖이라 추가 정리는 하지 않았다 — 사용자가 깨어나면 직접 확인이
+  필요하다.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **5 → 4건**(전부 `P0-*`). `cargo test
+  --workspace` 전체 재실행(디스크 여유 확보 후) — 307 passed / 0
+  failed(회귀 없음).
+- 리포트: 이 이력 항목. 다음은 `P0-03·03a·07·08`.
+
+---
+
 ## 2026-08-19 00:10 — DoD-08 schema v1 → v2 승격 완료 (여덟 번째, DoD 전체 완료) — write_once 경쟁 분기의 진짜 잔여 결함 발견·수정
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-01`~`07`

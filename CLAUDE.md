@@ -299,7 +299,7 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08 전부 완료(DoD 문서는 끝)
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08·P0-01 완료(DoD 문서는 끝)
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
@@ -333,10 +333,19 @@ Linux 를 한 번도 돌려보지 않았다
    `write_once` 의 실제 호출부는 순차 시나리오만 상정하므로 범위
    밖으로 판단.
    `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→7→6→**5건**(전부
-   `P0-*`). **`DoD-01`~`08` 8건 전부 schema v2 승격 완료.** 다음은
-   `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02` 는 비강제)
-   — 같은 절차로 이어간다.
+   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→7→6→5→**4건**(전부
+   `P0-*`). **`DoD-01`~`08` 8건 전부 schema v2 승격 완료.**
+   `P0-01` 도 완료 — 원격 GPU 하드웨어 실측이라 이 세션이 재실측할
+   수 없어(x600 SSH 접근은 세션 안전 정책이 막음) **하드웨어 결과를
+   지어내지 않고** probe 소스 불변 확인만으로 승격했다(Codex 가
+   이 접근 자체를 먼저 승인한 뒤 frontmatter 를 채웠다). 이 승격
+   작업 도중 **C: 드라이브가 100% 소진되는 사고**가 있었다 —
+   `cargo clean` 으로 즉시 해소(target/ 6.2GiB 정리, 19GB 확보)
+   했고 재실행으로 코드 결함이 아님을 확정했다. 근본 원인(사용자
+   홈 디렉터리 약 122GB — Documents 51GB 등)은 이 세션 범위 밖이라
+   추가 정리는 하지 않았다 — **사용자가 깨어나면 디스크 정리가
+   필요하다.** 다음은 `P0-03·03a·07·08`(review 강제 대상, `ENV-01·02`
+   는 비강제) — 같은 절차로 이어간다.
 6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
    `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의
    `SCHEMAS` 에도, `tests/vectors/canonical_v1.json` 벡터에도 없다.

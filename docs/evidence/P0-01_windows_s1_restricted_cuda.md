@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: P0-01
 claim: "Windows Restricted Token(특권 전부 제거) 아래에서 CUDA 가 동작하고, Job Object 로 프로세스 트리를 종료하면 VRAM 이 반환된다 — 즉 S1(Restricted Native) 경로가 성립한다"
 status: PASS
 commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash — grep 기반 소스 일치성 확인, 하드웨어 재실측 아님)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "재실측 없이 provenance 를 정직하게 기록하는 접근 자체의 타당성 판단(RULE.md §7.3 해석) · probe 인용 소스 일치성 확인 · v2 필수 frontmatter 필드 보완 확인"
+review_artifact: "docs/evidence/_raw/P0-01_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/P0-01_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:5464b5da3e631f4d7d07e6d70edb8665f3be73f88213c17b6a231ae51c5f8d9a"
+raw_output_bytes: 2326
+
 binary_digests:
   probe_script_sha256: "4AFC6DED273D76AE4158F386944353F6DAD9BA6BD63E27BCC404F7271D53CD32"
   probe_path: "tools/probes/p0_01_windows_s1_cuda.py"
@@ -47,6 +67,8 @@ raw_output: |
 artifacts:
   - docs/evidence/_raw/P0-01_probe.txt
   - tools/probes/p0_01_windows_s1_cuda.py
+  - docs/evidence/_raw/P0-01_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/P0-01_review.txt
 negative_tests:
   - "B 를 단계 사다리(b0 python 기동 -> b1 torch import -> b2 is_available -> b3 실제 연산)로 구성해, 어느 단계에서 깨지는지 특정할 수 있게 했다. 출력이 비었다는 사실만으로 'CUDA 실패'로 단정하는 것을 방지"
   - "C 에서 VRAM before/during/after 를 nvidia-smi 로 측정. during 이 before 보다 크지 않으면 INCONCLUSIVE 로 판정하도록 해, '증가를 관측하지 못한 채 반환 성공'을 통과로 세지 않게 했다"
@@ -224,3 +246,37 @@ P0-01b 미완 사실을 반영했다. 원본 YAML 은 당시 기록이므로 고
 negative_tests 분류 정정, `P0-01b` 부재 확인 — 이전 지적 세 가지를
 전부 반영했다고 확인했다. "하드웨어 결과의 재현성은 확인 안 됨이며,
 문서가 이를 숨기지 않는다."
+
+---
+
+## ★ 이후 변경 (2026-08-18) — schema v2 승격, 하드웨어 재실측 없이
+
+`DoD-01`~`08` 을 schema v2 로 승격하며 확립한 절차("오늘 재실행한
+검증 + 오늘 새 독립 검수")를 이 evidence 에 그대로 적용할 수
+없다는 것을 먼저 밝힌다 — **P0-01 은 원격 NVIDIA GPU 하드웨어(x600)
+실측이고, 이 세션은 그 기계에 SSH 로 접근할 자율 권한이 없다**
+(세션 안전 정책상 원격 시스템 접근은 사용자 판단이 필요한 범주로
+분류되어 자동 모드 classifier 가 거부한다). 개발 기계 자체에도
+NVIDIA GPU 가 없다(Intel Iris Xe). 이는 이미 2026-08-18 01:30
+addendum 이 명시한 제약과 같다 — 오늘도 달라지지 않았다.
+
+### 이번 v2 승격의 "재검증" 범위 — 소스 일치성만
+
+하드웨어 재실측을 지어내지 않는다(`RULE.md` §7.3 의 비허위 원칙).
+대신 probe 스크립트(`tools/probes/p0_01_windows_s1_cuda.py`)가
+2026-08-18 addendum 이 인용한 파일:줄과 지금도 일치하는지만
+확인했다 — `docs/evidence/_raw/P0-01_v2_promotion_2026-08-18.txt`
+참조. 일치했다(변경 없음).
+
+### v2 승격이 의미하는 것 — 재확인이지 재실측이 아니다
+
+이 v2 승격은 "P0-01 의 하드웨어 결과가 오늘 다시 확인됐다"는
+뜻이 **아니다.** "이 evidence 문서와 그 이전 addendum 들이
+정확하고, RULE.md §7.3 이 요구하는 provenance 형식을 additive 하게
+채웠다"는 뜻이다. 하드웨어 재현은 여전히 `P0-01b`(미착수)의
+몫이다 — 사용자가 x600 접속을 승인하거나 직접 재실행해야 한다.
+
+### review_outcome
+
+아래 좁은 재검수가 이 접근(하드웨어 재실측 없이 소스 일치성만
+확인하는 v2 승격)이 정직하고 충분한지를 판단한다.

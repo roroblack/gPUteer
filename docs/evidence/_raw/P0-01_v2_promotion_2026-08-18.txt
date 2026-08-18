@@ -1,0 +1,37 @@
+P0-01 은 실제 NVIDIA GPU 하드웨어(x600, RTX 4070 SUPER)에서 실행한
+실측이다. 이 세션의 개발 기계는 Intel Iris Xe(NVIDIA GPU 없음)이고,
+x600 은 SSH 로만 접근 가능한 원격 기계다.
+
+이 세션은 원격 기계에 대한 비대화식 SSH 연결을 자율적으로 실행할
+권한이 없다(세션 안전 정책상 원격 시스템 접근은 사용자 판단이
+필요한 범주로 분류된다 — 자동 모드 classifier 가 거부함, 다른
+DoD 평가 때 확인된 "시스템/보안 설정 변경" 범주와는 다른 이유지만
+같은 방향: 이 세션이 자율적으로 처리할 수 없는 행동이다).
+
+따라서 **이 v2 승격은 하드웨어 재실측을 근거로 삼지 않는다.**
+2026-08-18 01:30/01:40 addendum 이 이미 이 사실을 명시했고
+("이 세션은 재실측할 수 없다"), 그 판단이 지금도 유효하다.
+
+대신 이번 v2 승격의 "오늘 재검증"은 다음으로 한정한다 — probe
+스크립트와 evidence 문서 인용의 **소스 일치성 확인**:
+
+$ grep -n "DISABLE_MAX_PRIVILEGE\|CreateRestrictedToken\|AssignProcessToJobObject\|restype" tools/probes/p0_01_windows_s1_cuda.py
+45: restype 미지정 시 HANDLE 절단 관련 주석
+49,51,52: GetCurrentProcess/CreateJobObjectW/OpenProcess restype = HANDLE
+54: AssignProcessToJobObject argtypes
+61,68,69: OpenProcessToken/CreateRestrictedToken/CreateProcessAsUserW restype
+76: DISABLE_MAX_PRIVILEGE = 0x1
+150-155: CreateRestrictedToken(cur, DISABLE_MAX_PRIVILEGE, ...) 호출
+288: AssignProcessToJobObject 호출(단일 프로세스)
+
+위 결과는 2026-08-18 addendum 이 인용한 파일:줄
+(`tools/probes/p0_01_windows_s1_cuda.py:142-156,281-289,45-68`)과
+합치한다 — 스크립트가 그 뒤 변경되지 않았음을 확인했다.
+
+이 파일은 P0-01 을 schema v1 -> v2 로 승격하기 위한 2026-08-18
+재확인 원문이다. 원래 v1 raw_output(commit 5dba36e 무렵 기록,
+docs/evidence/_raw/P0-01_probe.txt)은 문서 본문에 이미 보존돼
+있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라, 소스
+일치성만 확인한 것이다. "cargo test 재실행" 류의 실행 기반 재확인은
+이 evidence 에는 해당하지 않는다(라이브러리 크레이트가 아니라
+원격 하드웨어 프로브이므로).

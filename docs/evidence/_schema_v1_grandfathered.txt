@@ -6,14 +6,13 @@
 # 왜 목록인가: "새 evidence 부터 v2" 는 기계가 "새 것" 을 모른다.
 #   유예를 **명시적 부채 목록**으로 만들면 늘어나는 것이 눈에 보인다.
 #
-# 여기 있는 8건은 **독립 검수 기록이 없다.** 그 사실이 이 파일의 존재 이유다.
+# 여기 있는 7건은 **독립 검수 기록이 없다.** 그 사실이 이 파일의 존재 이유다.
 # 목록이 줄어드는 것은 진전이고, 늘어나는 것은 규칙 위반이다.
 #
-# ★ 2026-08-18 — DoD-01~08 을 schema v2 로 승격해 이 목록에서 뺐다
+# ★ 2026-08-18 — DoD-01~08·P0-01 을 schema v2 로 승격해 이 목록에서 뺐다
 #   (각 문서의 "schema v1 → v2 승격" addendum 참조).
 ENV-01_개발환경_실측.md
 ENV-02_원격_GPU_기계_실측.md
-P0-01_windows_s1_restricted_cuda.md
 P0-03_checkpoint_durability.md
 P0-03a_windows_fs_atomicity.md
 P0-06_vram_enforcement.md
