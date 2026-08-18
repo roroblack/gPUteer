@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 11:55)
+## 5. 지금 상태 (2026-08-18 12:40)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -168,10 +168,10 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** |
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류 |
-| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함. **`gputeer coordinator-agent-selftest`**(신규, 2026-08-18) — 별도 프로세스 2개(coordinator-stub·agent-stub)가 실제 handshake |
-| ├ `crates/coordinator` | **신규**(2026-08-18) — `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증. 정상 경로만. lease·스케줄링·다중 Agent 미착수 |
-| ├ `crates/agent` | **신규**(2026-08-18) — `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. 정상 경로만. Job 실행 미착수 |
-| └ 미착수 | scheduler · UI · 실제 시스템 호출(OS 방화벽 등). **핸드셰이크 단계 1~4 완료, 단계 5(거부 경로 3종)·6(독립 검수) 남음** |
+| ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함. **`gputeer coordinator-agent-selftest`**(신규, 2026-08-18) — 별도 프로세스 2개(coordinator-stub·agent-stub)가 실제 handshake + **거부 경로 3종(위조 Grant·위조 ACK·replay) 자동 검증** |
+| ├ `crates/coordinator` | **신규**(2026-08-18) — `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`send_grant_twice`). lease·스케줄링·다중 Agent 미착수 |
+| ├ `crates/agent` | **신규**(2026-08-18) — `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`expect_replay`). Job 실행 미착수 |
+| └ 미착수 | scheduler · UI · 실제 시스템 호출(OS 방화벽 등). **핸드셰이크 단계 1~6 전부 완료**(2026-08-18) — 남은 것은 `docs/evidence/` schema v2 정식 기록뿐, 계획 자체의 범위(lease·다중 Agent·운영용 key protection·TLS)는 여전히 밖 |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
 | **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). ★ **v1 evidence 16건(`DoD-01`~`08`, `P0-01`·`03`·`03a`·`06`·`07`·`08`, `ENV-01`·`02`) 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원했으며 그 재실측 addendum 도 4라운드 끝에 ACCEPTED 받았다 — 이 사이클에서 frontmatter 를 실제로 고친 유일한 필드다(나머지는 전부 append-only). ACCEPTED 는 정정 절(addendum)에 한정 — v1 → schema v2 실제 승격(frontmatter 전체 교체·정식 executor/reviewer 메타데이터)은 별도 작업으로 남아 있다 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
@@ -198,11 +198,16 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
     이다. 그러나 2026-08-18부터 `gputeer coordinator-agent-selftest`
     가 그 다음 단계를 증명한다 — `crates/coordinator`·`crates/agent`
     가 신설됐고, 별도 OS 프로세스 2개가 실제 127.0.0.1 TCP 로 서명된
-    `ExecutionGrant`/`AgentGrantAck` 를 주고받는 정상 경로가 5회
-    연속 성공했다. **그러나 이것도 여전히 최소 조각이다** — 거부
-    경로(위조 Grant·위조 ACK·replay)는 아직 이 selftest 에 없고,
-    scheduler 는 여전히 없으며, 운영용 key protection·lease 발급·
-    다중 Agent 동시 처리는 범위 밖이다.
+    `ExecutionGrant`/`AgentGrantAck` 를 주고받는다. **정상 경로뿐
+    아니라 거부 경로 3종(위조 Grant·위조 ACK·replay wire bytes)도
+    프로세스 경계에서 자동 검증한다** — 5회 연속 4개 시나리오 전부
+    통과, 대표 시나리오는 뮤테이션 테스트로 비공허성까지 확인했다.
+    **그래도 여전히 최소 조각이다** — scheduler 는 여전히 없고,
+    운영용 key protection·lease 발급·다중 Agent 동시 처리·TLS 는
+    범위 밖이다. replay 방어는 `InMemoryReplayGuard` 기준(같은
+    프로세스 수명 안)이지 재시작을 넘는 방어가 아니다 — 재시작을
+    넘는 replay 는 `durable_replay_process.rs`(같은 날 별도 작업)가
+    증명했다.
     runtime-policy 는 "무엇을 강제할 수 있는가" 를 판정할 뿐,
     OS 방화벽을 실제로 호출하거나 커널 경로를 잠그지 않는다.
 
@@ -239,14 +244,16 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ★ 단계 1~4·6 완료(2026-08-18) — 단계 5 남음
+1. 네트워크 전송 · coordinator 골격             ★ 단계 1~6 전부 완료(2026-08-18)
    docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
    `gputeer coordinator-agent-selftest` 가 별도 PID 2개(coordinator-stub·
-   agent-stub)로 실제 handshake 에 성공한다 — 정상 경로만. 코덱스
-   독립 검수 1라운드에서 stderr 파이프 교착 위험을 잡아 수정,
-   재검수 통과(단계 6). 남은 것: 거부 경로 3종(위조 Grant·위조 ACK·
-   replay, 단계 5). "완전한 coordinator" 아님 — lease·스케줄링·
-   다중 Agent·운영용 key protection 은 여전히 범위 밖.
+   agent-stub)로 실제 handshake 에 성공하고, 거부 경로 3종(위조 Grant·
+   위조 ACK·replay wire bytes)도 프로세스 경계에서 자동 검증한다.
+   코덱스 독립 검수 통과(stderr 파이프 교착 위험 1건 수정). 남은 것:
+   DoD 마지막 항목(`docs/evidence/` schema v2 정식 기록)뿐 — "완전한
+   coordinator" 아님, lease·스케줄링·다중 Agent·운영용 key protection·
+   TLS 는 계획 자체가 처음부터 범위 밖으로 명시했다. 다음 네트워크
+   단계(스케줄링·다중 Agent 등)는 새 계획 문서가 필요하다.
 2. runtime-policy 판정을 실제 시스템 호출로 연결  OS 방화벽 · 커널 경로 강제 미구현
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.

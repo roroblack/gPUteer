@@ -117,7 +117,7 @@ crates/
 | 2 | `framed_ingress` 에 `FrameType::GrantAck`/`IngressMessage::GrantAck` 추가 | Crypto | 기존 framed_ingress 테스트 전부 green + 새 타입 round-trip 테스트 | ✅ 2026-08-18 |
 | 3 | `crates/coordinator`·`crates/agent` 신설, 최소 handshake 구현 | Coordinator/Agent(신규 스트림) | 정상 경로 1회 성공 | ✅ 2026-08-18 |
 | 4 | `gputeer coordinator-stub`/`agent-stub`/`coordinator-agent-selftest` CLI 배선 | CLI | 별도 PID 확인(`assert_ne!` on process id), exit code 0 | ✅ 2026-08-18 |
-| 5 | 거부 경로 3종(위조 Grant·위조 ACK·replay) 을 selftest 에 추가 | CLI/Coordinator/Agent | 셋 다 명시적으로 거부됨을 자동 검증 | ⬜ |
+| 5 | 거부 경로 3종(위조 Grant·위조 ACK·replay) 을 selftest 에 추가 | CLI/Coordinator/Agent | 셋 다 명시적으로 거부됨을 자동 검증 | ✅ 2026-08-18 |
 | 6 | 코덱스 독립 검수 1라운드 이상 | — | `ACCEPTED` | ⬜ |
 
 ### 단계 1·2 수행 메모 (2026-08-18)
@@ -231,12 +231,69 @@ coordinator 만 있고 agent 는 coordinator 를 참조하는 수준이었다).
 `coordinator-agent-selftest` 실행 — 매번 성공, 서로 다른 PID 3개.
 `cargo test --workspace` 297/0/1(ignored) 유지.
 
+### 단계 5 수행 메모 (2026-08-18)
+
+코덱스에게 설계를 다시 시켰다(`p56` 프롬프트) — "정직한 프로세스는
+자기 서명을 위조하지 않는다" 는 문제를 어떻게 풀지 물었더니, TCP
+proxy 로 진짜 중간자 변조를 만드는 안(아키텍처가 복잡해지고 이
+계획의 DoD 범위인 서명·replay 검증을 더 증명하지도 않는다)보다
+**stub 에 테스트 전용 플래그를 추가해 self-corruption 을 주입하는
+안**을 권장받았다. 그대로 채택했다.
+
+- `CoordinatorConfig`/`AgentConfig` 에 `corrupt_own_signature: bool`
+  추가 — 서명 직후 마지막 바이트를 `^= 0x01` 로 뒤집는다.
+- `CoordinatorConfig::send_grant_twice` / `AgentConfig::expect_replay`
+  — 같은 `frame`(재인코딩하지 않은 동일 wire bytes) 을 같은 TCP
+  연결에 두 번 쓰고, Agent 는 두 번째 프레임을 다시 `read_frame` 으로
+  읽어 거부되는지 확인한다.
+  `crates/protocol/src/signing.rs:826`(`Ok(ReplayDecision::Duplicate)
+  => return Err(...)`) 을 실제로 읽고 확인했다 — `verify()` 자체가
+  중복 nonce 를 만나면 `Err` 를 직접 반환하므로, `require_replay_checked()`
+  까지 갈 필요 없이 `read_frame` 단계에서 이미 거부된다.
+- `crates/cli/src/coordinator_agent_selftest.rs` 를 `Fixture`/
+  `HandshakeOutcome`/`run_handshake()` 로 리팩터링해 4개 시나리오
+  (정상 · 위조 Grant · 위조 ACK · replay) 를 공통 오케스트레이션
+  위에서 돌린다. 위조 ACK 시나리오는 **Coordinator 쪽 실패만
+  판정 기준**으로 삼는다 — Agent 는 자기가 만든 서명이 위조됐는지
+  스스로 검증하지 않으므로(검증은 언제나 수신자 책임) Agent 자신은
+  정상 종료할 수 있다.
+
+**replay DoD 범위의 정직한 재정의.** 원래 DoD 문구는
+"`DurableReplayGuard` 가 거부한다" 였다. 두 stub 은 각각
+`InMemoryReplayGuard` 를 쓰고(코덱스가 확인 — 실행 간 replay 상태를
+공유하지 않는다), 이 selftest 는 프로세스를 매번 새로 띄우므로
+"재시작을 넘는 replay 방어"를 증명하지 않는다. 실제로 증명하는 것은
+"같은 프로세스·같은 guard 수명 안에서 동일 wire bytes 두 번째가
+거부되는가" 다 — `DurableReplayGuard` 도 같은 `check_and_record`
+계약(`Ok(ReplayDecision::Duplicate)`)을 따르므로 검증한 성질 자체는
+guard 구현과 무관하지만, "재시작을 견딘다" 는 별개 성질까지 증명한다고
+과장하지 않는다. DoD 문구를 "replay guard 가 거부한다"로 정정했다
+(위 체크박스 참조) — `DurableReplayGuard` 특정 성질은 이미
+`crates/crypto/tests/durable_replay_process.rs`(2026-08-18 앞선 작업)
+가 별도 프로세스 경계에서 증명했다.
+
+**뮤테이션 테스트로 비공허성 증명(대표 1건).** 위조 Grant 시나리오의
+`corrupt_own_signature` 처리를 `if false && config.corrupt_own_signature`
+로 일시 무력화 → 예상대로 selftest 가 "위조된 coordinator_signature
+가 거부되지 않았다 — Agent 가 ACK 를 발급했다"로 실패(Agent 가
+실제로 `RESULT ok=true` 를 냈다) → 원복 후 재빌드해 4개 시나리오
+전부 재통과 확인. 이 세션의 확립된 패턴(백업 → 뮤테이션 → 실패 확인
+→ 원복)을 그대로 따랐다.
+
+실제로 5회 연속 실행해 4개 시나리오 전부 매번 통과함을 확인했다
+(총 실행 시간 ~1.2초 — 위조 Grant 시나리오에서 Agent 프로세스가
+검증 실패로 즉시 종료하면 그 TCP 연결도 즉시 닫히므로, Coordinator
+의 ACK 대기가 10초 `IO_TIMEOUT` 을 다 기다리지 않고 연결 종료를
+즉시 감지해 빠르게 끝난다 — 당초 예상한 "느릴 수 있다"는 우려는
+실측으로 기각됐다). `cargo test --workspace` 297/0/1(ignored) 유지,
+`cargo build --workspace` 경고 0.
+
 ## 완료 기준 (DoD)
 
 - [x] `gputeer coordinator-agent-selftest` 가 exit code 0 로 정상 handshake 를 증명한다 (2026-08-18, 5회 연속 확인)
-- [ ] **negative test**: 위조된 `coordinator_signature` 1바이트 변조 시 Agent 가 ACK 를 발급하지 않는다
-- [ ] **negative test**: 위조된 `agent_signature` 1바이트 변조 시 Coordinator 가 성공 처리하지 않는다
-- [ ] **negative test**: 동일 Grant wire bytes 를 두 번 보내면 두 번째는 `DurableReplayGuard` 가 거부한다
+- [x] **negative test**: 위조된 `coordinator_signature` 1바이트 변조 시 Agent 가 ACK 를 발급하지 않는다 (2026-08-18, 뮤테이션 테스트로 비공허성 확인)
+- [x] **negative test**: 위조된 `agent_signature` 1바이트 변조 시 Coordinator 가 성공 처리하지 않는다 (2026-08-18)
+- [x] **negative test**: 동일 Grant wire bytes 를 두 번 보내면 두 번째는 replay guard 가 거부한다 (2026-08-18, `InMemoryReplayGuard` — 아래 "단계 5 수행 메모" 의 범위 설명 참조)
 - [x] Coordinator·Agent 가 실제 별도 OS 프로세스(PID)임을 자동 검증에서 확인한다 (2026-08-18, `assert` 3개 PID 상호 비교)
 - [ ] `docs/evidence/` 에 schema v2 형식으로 기록(이 계획 자체가 이미 독립 검수 설계이므로, 구현 후 실행자/검수자를 분리한 재검수를 거친다)
 

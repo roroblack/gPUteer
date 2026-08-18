@@ -31,6 +31,18 @@ pub struct AgentConfig {
     pub coordinator_verifying_key: VerifyingKey,
     pub coordinator_device_id: String,
     pub agent_device_id: String,
+    /// ★ 테스트 전용 — `crates/coordinator/src/lib.rs::CoordinatorConfig::corrupt_own_signature`
+    ///   와 대칭. 서명 직후 `agent_signature` 의 마지막 바이트를 뒤집어
+    ///   전송한다 — "위조된 ACK 가 도착했을 때 Coordinator 가 실제로
+    ///   거부하는가" 를 프로세스 경계에서 확인한다.
+    pub corrupt_own_signature: bool,
+    /// ★ 테스트 전용 — 첫 ACK 를 보낸 뒤 같은 연결에서 프레임을 하나 더
+    ///   읽는다. Coordinator 가 같은 Grant wire bytes 를 두 번 보낸
+    ///   경우(`CoordinatorConfig::send_grant_twice`), 이 두 번째 읽기는
+    ///   그 replay 된 Grant 다 — `verify()` 가 `Duplicate` 를 만나면
+    ///   `Err` 를 직접 반환한다(`crates/protocol/src/signing.rs:826`).
+    ///   여기서 `Err` 가 나오는 것이 **기대한 결과**다.
+    pub expect_replay: bool,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -92,12 +104,44 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     };
     ack.agent_signature = sign(&signing_key, &ack).to_vec();
 
+    if config.corrupt_own_signature {
+        let last = ack
+            .agent_signature
+            .last_mut()
+            .ok_or_else(|| "agent_signature 가 비어 있다".to_string())?;
+        *last ^= 0x01;
+    }
+
     let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
         .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
     stream
         .write_all(&frame)
         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
     stream.flush().map_err(|e| e.to_string())?;
+
+    // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
+    //   찍지 않는다.** 두 번째로 도착하는 프레임은 Coordinator 가
+    //   `send_grant_twice` 로 다시 보낸 같은 Grant wire bytes 다.
+    //   `require_replay_checked()` 까지 갈 필요도 없다 — `verify()`
+    //   자체가 `Duplicate` 를 만나면 `read_frame` 단계에서 이미 `Err`
+    //   를 반환한다.
+    if config.expect_replay {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .map_err(|e| e.to_string())?;
+        return match read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&coordinator_keys),
+            &mut replay,
+            &clock,
+        ) {
+            Err(error) => Err(format!("REPLAY_REJECTED: {error}")),
+            Ok(message) => Err(format!(
+                "REPLAY_NOT_REJECTED: 두 번째 Grant 가 거부되지 않고 {message:?} 로 검증됐다"
+            )),
+        };
+    }
 
     println!(
         "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
@@ -142,6 +186,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
         coordinator_device_id: flags.require("--coordinator-device-id")?,
         agent_device_id: flags.require("--agent-device-id")?,
+        corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
+        expect_replay: flags.bool_flag("--expect-replay"),
     };
 
     run(config)
@@ -155,6 +201,12 @@ impl Flags {
             .get(key)
             .cloned()
             .ok_or_else(|| format!("필수 인자 누락: {key}"))
+    }
+
+    /// `crates/coordinator/src/lib.rs::Flags::bool_flag` 와 동일 — 값이
+    /// 있는 boolean 플래그(`--flag true`). 안 주면 `false`.
+    fn bool_flag(&self, key: &str) -> bool {
+        self.0.get(key).map(|v| v == "true").unwrap_or(false)
     }
 }
 

@@ -37,6 +37,21 @@ pub struct CoordinatorConfig {
     pub agent_device_id: String,
     pub grant_id: String,
     pub attempt_id: String,
+    /// ★ 테스트 전용 — 단계 5 거부 경로 검증(`coordinator-agent-selftest`).
+    ///   서명 직후 `coordinator_signature` 의 마지막 바이트를 뒤집어
+    ///   전송한다. 정직한 Coordinator 는 절대 자기 서명을 위조하지
+    ///   않는다 — 이 플래그는 "위조된 Grant 가 도착했을 때 Agent 가
+    ///   실제로 거부하는가" 를 프로세스 경계에서 확인하기 위한
+    ///   자기 타락(self-corruption) 주입이다.
+    pub corrupt_own_signature: bool,
+    /// ★ 테스트 전용 — 같은 Grant wire bytes 를 같은 연결에 두 번
+    ///   보낸다. 두 번째 전송은 `grant.encode_to_vec()` 을 다시 부르지
+    ///   않고 **첫 번째와 동일한 `frame` 바이트**를 재사용한다 — 그래야
+    ///   "논리적으로 같은 재발급" 이 아니라 "같은 wire bytes 의 replay"
+    ///   를 시험한다. 이 모드에서는 Agent 의 두 번째 ACK 를 기다리지
+    ///   않는다 — 대신 replay 가 확실히 거부됐는지 확인한 뒤 `Err` 로
+    ///   끝난다(정상 `RESULT ok=true` 를 절대 찍지 않는다).
+    pub send_grant_twice: bool,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -70,13 +85,31 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let now = clock.now_unix_ms();
-    let grant = issue_grant(&config, &signing_key, now);
+    let mut grant = issue_grant(&config, &signing_key, now);
+
+    if config.corrupt_own_signature {
+        let last = grant
+            .coordinator_signature
+            .last_mut()
+            .ok_or_else(|| "coordinator_signature 가 비어 있다".to_string())?;
+        *last ^= 0x01;
+    }
 
     let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
         .map_err(|e| format!("Grant 프레임 인코딩 실패: {e}"))?;
     stream
         .write_all(&frame)
         .map_err(|e| format!("Grant 전송 실패: {e}"))?;
+
+    // ★ replay 시나리오 — **똑같은 wire bytes** 를 다시 쓴다. `grant` 를
+    //   다시 인코딩하지 않는다 — 그러면 "논리적으로 같은 재발급" 이지
+    //   "같은 프레임의 replay" 가 아니게 된다. 검증 대상은 "같은 서명
+    //   바이트가 두 번 오면 두 번째가 거부되는가" 다.
+    if config.send_grant_twice {
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("replay Grant 전송 실패: {e}"))?;
+    }
     stream.flush().map_err(|e| e.to_string())?;
 
     let received = read_frame(
@@ -118,6 +151,31 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             "agent_device_id 불일치: 기대값 {} != ACK 값 {}",
             config.agent_device_id, ack.agent_device_id
         ));
+    }
+
+    // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
+    //   찍지 않는다.** Agent 는 첫 번째(정상) Grant 에만 ACK 를 보내고
+    //   두 번째(replay) Grant 는 거부해야 하므로, 이 연결에 더 이상
+    //   올 것이 없다는 사실 자체가 검증 대상이다. `REPLAY_TIMEOUT`
+    //   짧은 타임아웃으로 "그 이상 아무것도 안 온다" 를 빠르게 확정한다.
+    if config.send_grant_twice {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|e| e.to_string())?;
+        return match read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&agent_keys),
+            &mut replay,
+            &clock,
+        ) {
+            Err(error) => Err(format!(
+                "REPLAY_SCENARIO_NO_EXTRA_MESSAGE: 연결에 더 이상 아무것도 오지 않았다(기대한 결과) — {error}"
+            )),
+            Ok(message) => Err(format!(
+                "REPLAY_SCENARIO_UNEXPECTED_EXTRA_MESSAGE: {message:?}"
+            )),
+        };
     }
 
     println!(
@@ -178,6 +236,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         agent_device_id: flags.require("--agent-device-id")?,
         grant_id: flags.require("--grant-id")?,
         attempt_id: flags.require("--attempt-id")?,
+        corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
+        send_grant_twice: flags.bool_flag("--send-grant-twice"),
     };
 
     run(config)
@@ -191,6 +251,13 @@ impl Flags {
             .get(key)
             .cloned()
             .ok_or_else(|| format!("필수 인자 누락: {key}"))
+    }
+
+    /// 값이 있는 boolean 플래그(`--flag true`). 안 주면 `false`.
+    /// 테스트 전용 거부 경로 플래그(단계 5)에만 쓴다 — 다른 모든
+    /// 플래그는 여전히 필수 값을 가진다(`require`).
+    fn bool_flag(&self, key: &str) -> bool {
+        self.0.get(key).map(|v| v == "true").unwrap_or(false)
     }
 }
 

@@ -16,6 +16,54 @@
 
 ---
 
+## 2026-08-18 12:40 — coordinator/agent 핸드셰이크 단계 5: 거부 경로 3종 완료 — 계획 전 단계 종료
+
+- 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`
+  단계 5(마지막 남은 단계). 사용자 지시 — 자율 루프 계속 + "코덱스
+  최대한 쿼터 써서" 재확인.
+- 스트림: Coordinator, Agent, CLI.
+- 수행: 코덱스에게 "정직한 프로세스는 자기 서명을 위조 못 한다" 는
+  문제의 설계를 다시 맡겼다(`p56` 프롬프트) — TCP proxy 로 진짜
+  중간자 변조를 만드는 안보다 **stub 자체에 테스트 전용
+  self-corruption 플래그를 넣는 안**을 권장받아 채택했다.
+  - `CoordinatorConfig`/`AgentConfig` 에 `corrupt_own_signature: bool`
+    — 서명 직후 마지막 바이트를 뒤집는다.
+  - `CoordinatorConfig::send_grant_twice`/`AgentConfig::expect_replay`
+    — 같은 wire bytes(재인코딩 없이 동일 `frame`)를 한 TCP 연결에
+    두 번 써서 실제 replay 를 재현한다. `signing.rs:826` 을 직접
+    읽어 `verify()` 가 `Duplicate` 를 만나면 `read_frame` 단계에서
+    이미 `Err` 를 반환함을 확인하고 그 성질에 기대 설계했다.
+  - `coordinator_agent_selftest.rs` 를 `Fixture`/`HandshakeOutcome`/
+    `run_handshake()` 로 리팩터링해 4개 시나리오(정상·위조 Grant·
+    위조 ACK·replay)를 공통 오케스트레이션으로 돌린다.
+- **replay DoD 문구를 정직하게 정정**: 원래 "`DurableReplayGuard` 가
+  거부한다" 였으나, 두 stub 은 `InMemoryReplayGuard` 를 쓴다(실행
+  간 replay 상태 비공유) — 이 selftest 가 증명하는 것은 "같은
+  프로세스·같은 guard 수명 안에서 동일 wire bytes 두 번째가
+  거부되는가" 이지 "재시작을 넘는 replay 방어" 가 아니다. 후자는
+  이미 별도로 `durable_replay_process.rs`(같은 날 앞선 작업)가
+  증명했다. 과장하지 않고 DoD 문구를 "replay guard 가 거부한다"로
+  고쳤다.
+- 뮤테이션 테스트로 비공허성 증명(대표 1건): 위조 Grant 시나리오의
+  `corrupt_own_signature` 처리를 `if false && ...` 로 무력화 →
+  selftest 가 예상대로 실패("Agent 가 ACK 를 발급했다") → 원복 →
+  4개 시나리오 전부 재통과 확인. 이 세션 내내 쓴 패턴(백업→뮤테이션
+  →실패 확인→원복) 그대로.
+- 검증: 5회 연속 `coordinator-agent-selftest` 실행 — 4개 시나리오
+  전부 매번 통과, 총 실행 시간 ~1.2초(위조 Grant 시나리오에서 Agent
+  가 검증 실패로 즉시 종료 → TCP 연결도 즉시 닫혀 Coordinator 의
+  ACK 대기가 10초 타임아웃을 다 기다리지 않는다 — 당초 "느릴 수
+  있다"는 우려를 실측으로 기각). `cargo test --workspace`
+  297/0/1(ignored) 유지. `cargo build --workspace` 경고 0.
+- **이로써 이 계획의 단계 1~6 전부 완료됐다.** 남은 것은 계획
+  문서 자체가 명시한 DoD 마지막 항목(`docs/evidence/` 에 schema v2
+  형식으로 정식 기록) 뿐이며, 이는 이 계획이 처음부터 "완전한
+  coordinator/agent 가 아니다" 라고 명시한 범위(lease·스케줄링·
+  다중 Agent·운영용 key protection·TLS 등)와는 무관하다.
+- 리포트: 이 이력 항목 + 계획 문서 "단계 5 수행 메모" 절.
+
+---
+
 ## 2026-08-18 11:55 — coordinator-agent-selftest 코덱스 검수: stderr 파이프 교착 위험 수정
 
 - 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`
