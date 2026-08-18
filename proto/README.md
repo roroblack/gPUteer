@@ -95,6 +95,6 @@ Rust 구현은 `tests/vectors/canonical_v1.json` 에 대해 대조 검증한다.
 
 ⬜ prost-build 연동 (M1-01)
 ⬜ canonical_encode Rust 구현 (M1-02)
-⬜ check_schema.py — 필드 표와 .proto 정합성 검사 (M1-02)
+✅ check_schema.py — 필드 표와 .proto 정합성 검사 (M1-02, 2026-08-20)
 ⬜ 임계 서명 방식 확정 (signing.md §14 항목 1)
 ```
