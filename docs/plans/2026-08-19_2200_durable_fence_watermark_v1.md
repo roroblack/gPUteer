@@ -238,7 +238,7 @@ A 의 2차 프로세스는 최초 Grant(epoch 5)와 갱신(epoch 3) 을 **같은
 | 5 | `DurableFenceError` 추가(Stale/Io/LockTimeout 분리) | runtime-policy | 오류별 fail-closed 테스트 | ✅ |
 | 6 | Agent 에 `--fence-db`/`fence_db_path` 추가, `FenceWatermark::new()` -> durable open 으로 교체(두 호출부 모두) | Agent · CLI | `cargo build -p gputeer-agent` 통과 | ✅ |
 | 7 | `coordinator-agent-selftest` 에 재시작 시나리오 추가(별도 `agent-stub` 재실행) | CLI | 시나리오 통과, 5회 연속 확인 | ✅(시나리오 A 는 뮤테이션 테스트로 거짓양성임이 드러나 폐기, 시나리오 B 하나로 재구성 — 위 "구현 중 정정" 절 참조) |
-| 8 | 뮤테이션 테스트 + 코덱스 독립 검수 + `docs/evidence/` schema v2 기록(DoD-14) | — | `ACCEPTED`, evidence PASS | 🟡 1라운드 검수(`p102`) `CHANGES_REQUESTED` — `:memory:` 미검증·오류 메시지 미분리 2건 지적, 코드로 수정(fail-closed `is_durable()` 검사 추가, `Stale`/저장소 장애 오류 메시지 분리, 시나리오 17 강화 + 시나리오 18 신규) + 뮤테이션 테스트로 비공허성 확인. 좁은 후속 검수 진행 중 |
+| 8 | 뮤테이션 테스트 + 코덱스 독립 검수 + `docs/evidence/` schema v2 기록(DoD-14) | — | `ACCEPTED`, evidence PASS | ✅ 1라운드(`p102`) `CHANGES_REQUESTED` → 수정 → 2라운드(`p103`) `ACCEPTED`. `docs/evidence/DoD-14_durable_fence_watermark.md` 기록 완료 |
 
 ## 완료 기준 (DoD)
 
@@ -252,7 +252,7 @@ A 의 2차 프로세스는 최초 Grant(epoch 5)와 갱신(epoch 3) 을 **같은
 - [x] 서로 다른 `job_id` 가 서로의 watermark 를 침범하지 않는다(단위 테스트).
 - [x] `coordinator-agent-selftest` 확장 시나리오가 5회 연속 통과한다(17개
       시나리오 전체).
-- [ ] `docs/evidence/` 에 schema v2 형식(DoD-14)으로 기록.
+- [x] `docs/evidence/` 에 schema v2 형식(DoD-14)으로 기록.
 
 ## 기준선과 다른 점
 

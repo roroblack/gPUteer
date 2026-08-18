@@ -1,0 +1,96 @@
+DoD-14 독립 검수 기록 — durable FenceWatermark
+(docs/plans/2026-08-19_2200_durable_fence_watermark_v1.md)
+
+검수자: agent:codex-cli (codex exec --sandbox read-only -c
+model_reasoning_effort=high)
+프롬프트: p102.md(1라운드) → CHANGES_REQUESTED → 코드 수정 →
+p103.md(2라운드, 좁은 후속 검수) → ACCEPTED
+
+=== 1라운드 (p102) — CHANGES_REQUESTED ===
+
+실재 확인된 항목 (파일:줄 인용, 코덱스가 직접 확인):
+- "구현 중 정정"(갱신 경로 전용 재시작 시나리오가 거짓양성이라는
+  결론) — 코드로 재확인됨. 최초 검증: crates/agent/src/lib.rs:132,
+  :373. 갱신 블록: crates/agent/src/lib.rs:197. 동일 job_id 사용:
+  crates/agent/src/lib.rs:274, :311. 계획서 정정 기록:
+  docs/plans/2026-08-19_2200_durable_fence_watermark_v1.md:169.
+  → 최초 Grant 검증이 항상 갱신보다 먼저 실행되고 둘 다 같은
+  fence_watermark 인스턴스·job_id 키를 쓰므로, "갱신 경로만으로
+  프로세스 경계를 입증할 수 없다"는 결론이 타당함을 확인.
+- DurableFenceWatermark 구현 — 실재 확인됨. DurableReplayGuard 를
+  재사용하지 않고 별도 타입으로 구현. 조회·비교·기록·commit 모두
+  BEGIN IMMEDIATE 트랜잭션 안에 있음 — durable_lease_scope.rs:46,
+  :67(에러 매핑), :137-176(트랜잭션), :181, :303(BLOB 인코딩·
+  u64::MAX 테스트), :278(재오픈 영속성 테스트). is_durable() 도
+  하드코딩된 true 가 아니라 Connection::path() 를 실제로 검사함
+  (durable_lease_scope.rs:118).
+- 기본 DB 경로 — 실재 확인됨. --fence-db 없으면 PID+나노초 timestamp
+  임시 파일 사용(crates/agent/src/lib.rs:420, :433) — 기존 selftest
+  프로세스 간 watermark 공유를 피함.
+
+stale/결함으로 지적된 항목:
+1. 오류 취급 — Stale/Io/LockTimeout 타입은 분리돼 있지만 Agent 가
+   두 호출부(crates/agent/src/lib.rs:310, :372) 모두 {e:?} 하나로
+   뭉뚱그려 "LEASE_REJECTED: fence_epoch 검사 실패"로 동일하게
+   표시했다. 안전성 측면(fail-closed)은 유지되지만 저장소 장애를
+   정책 거부로 오인함.
+2. fail-closed 미완성 — DB open 은 네트워크 연결보다 먼저 실행되고
+   실패 시 즉시 반환하지만(crates/agent/src/lib.rs:95-99),
+   --fence-db :memory: 나 빈 경로는 거부하지 않았다. is_durable() 이
+   false 를 반환할 수 있지만 Agent 가 그 값을 검사하지 않아, 명시적
+   인자로 비영속 watermark 를 쓸 수 있는 상태였다.
+3. selftest 시나리오 17 의 판정 조건이 "LEASE_REJECTED: fence_epoch
+   검사 실패" 공통 접두사만 봐서, DB 손상·I/O·락 타임아웃도 같은
+   접두사를 낼 수 있어 false positive 가능성이 있었다
+   (crates/cli/src/coordinator_agent_selftest.rs:724-746 당시 기준).
+
+수정 요청 2건:
+1. open() 직후 is_durable() 이 false 면 오류 반환할 것.
+2. Agent 가 Stale 과 Io/LockTimeout 을 서로 다른 오류 문자열로
+   출력하고, 시나리오 17 은 StaleEpoch 의 구체적 수치(incoming=3,
+   watermark=5)까지 확인할 것.
+
+실행 검증: 확인 안 됨(코덱스 read-only 샌드박스에 cargo 없음).
+
+=== 대응 (claude-code, 같은 세션) ===
+
+- crates/agent/src/lib.rs::run() 에 is_durable() fail-closed 검사
+  추가(open() 직후, TcpStream::connect() 이전).
+- fence_error_message(prefix, error) 헬퍼 추가 — Stale 은
+  "{prefix}: fence_epoch 검사 실패(정책 거부) — {violation}"(기존
+  접두사와 호환), Io/LockTimeout 은 "{prefix}: FENCE_STORAGE_ERROR:
+  ..."로 완전히 다른 접두사. 두 호출부(최초 Grant·Lease 갱신) 모두
+  이 헬퍼 사용.
+- 시나리오 17 판정을 "(정책 거부)" 표시 + "fence_epoch 3 은 기록된
+  watermark 5 보다 낮다"까지 확인하도록 강화.
+- 시나리오 18(신규) — --fence-db :memory: fail closed 확인. Agent
+  단독 프로세스(Coordinator 불필요)로 실행 — is_durable() 검사가
+  TcpStream::connect() 보다 먼저라 연결 시도 자체가 없음.
+- 두 게이트 모두 뮤테이션 테스트로 비공허성 확인(무력화→실패 확인→
+  원복→재통과). 18개 시나리오 5회 연속 통과, cargo test --workspace
+  재실행(회귀 없음).
+
+=== 2라운드 (p103, 좁은 후속 검수) — ACCEPTED ===
+
+두 지적 사항 해소 확인(파일:줄 인용, 코덱스가 직접 확인):
+- is_durable() 검사가 open() 직후·TcpStream::connect() 이전에 있음
+  확인 — crates/agent/src/lib.rs:95, :105, :113.
+- Stale 은 정책 거부 문자열, Io/LockTimeout 은 FENCE_STORAGE_ERROR
+  문자열로 분리됨 확인 — crates/agent/src/lib.rs:421. 최초 Grant·
+  갱신 경로 모두 헬퍼 사용 확인 — crates/agent/src/lib.rs:327, :389.
+- 시나리오 17 이 정책 접두사와 fence_epoch 3/watermark 5 를 모두
+  검사함 확인 — crates/cli/src/coordinator_agent_selftest.rs:703.
+- 시나리오 18 이 Coordinator 없이 Agent 단독을 실행하고 :memory:
+  거부 문자열을 검사함 확인 — coordinator_agent_selftest.rs:785,
+  :807. 기존 바이너리 직접 실행도 약 200ms 내 fail closed 확인.
+- 시나리오 11 의 "RENEW_REJECTED: fence_epoch 검사 실패" 매칭이 새
+  문자열의 접두사와 호환됨(회귀 없음) 확인 —
+  coordinator_agent_selftest.rs:498.
+
+실행 검증: 부분 확인됨 — 코덱스 read-only 샌드박스에 cargo 는 없지만
+기존 바이너리를 직접 실행해 :memory: 시나리오(~200ms fail closed)는
+확인했다. 18개 시나리오 전체 순차 실행은 60초 내에 끝나지 않아
+중단했다고 명시 — 전체 5회 연속 통과는 claude-code 세션이 직접
+실행해 확인했다(docs/evidence/_raw/DoD-14_selftest_2026-08-19.txt).
+
+최종 판정: ACCEPTED (2라운드).

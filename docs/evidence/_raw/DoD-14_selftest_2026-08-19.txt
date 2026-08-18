@@ -1,0 +1,248 @@
+=== gputeer coordinator-agent-selftest (durable FenceWatermark 시나리오 17~18 포함) — DoD-14 ===
+실행 시각: 2026-08-18T13:16:22Z UTC
+commit: 90d5da9ba56e08ccba472d8c7b2611eb0831add2
+
+--- round 1 ---
+1) 정상 handshake 성공 (self=9748 coordinator=21036 agent=28224, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)
+18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)
+exit code: 0
+
+--- round 2 ---
+1) 정상 handshake 성공 (self=7416 coordinator=18676 agent=22172, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)
+18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)
+exit code: 0
+
+--- round 3 ---
+1) 정상 handshake 성공 (self=26432 coordinator=21984 agent=27996, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)
+18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)
+exit code: 0
+
+--- round 4 ---
+1) 정상 handshake 성공 (self=24628 coordinator=14080 agent=19308, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)
+18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)
+exit code: 0
+
+--- round 5 ---
+1) 정상 handshake 성공 (self=20144 coordinator=28484 agent=22840, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)
+18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)
+exit code: 0
+
+
+=== cargo test --workspace (같은 commit, 회귀 확인) ===
+     Running unittests src\lib.rs (target\debug\deps\gputeer_agent-e3b59d2959c5da99.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_checkpoint-282b3b969f277054.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\ckpt_writer.rs (target\debug\deps\ckpt_writer-22349fe19abb9020.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-7cb56a920644c59e.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests\durability_chaos.rs (target\debug\deps\durability_chaos-f8648dfb0fe54f12.exe)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.17s
+     Running tests\kill_chaos.rs (target\debug\deps\kill_chaos-8905f8b6e165a546.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.07s
+     Running tests\resume_selection.rs (target\debug\deps\resume_selection-f8ff6efd1c9c063a.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+     Running tests\state_table_parity.rs (target\debug\deps\state_table_parity-693b8eb9251e377a.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\write_failure.rs (target\debug\deps\write_failure-d5bfae88eed366a0.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+     Running unittests src\main.rs (target\debug\deps\gputeer-9fc1e1171f36a38f.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_coordinator-2eeec3f1c606c199.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_crypto-646427ddcc6ec139.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\durable_replay_process_fixture.rs (target\debug\deps\durable_replay_process_fixture-fb19975539ed6cf5.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\durable_replay.rs (target\debug\deps\durable_replay-647528041684a4b6.exe)
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.77s
+     Running tests\durable_replay_process.rs (target\debug\deps\durable_replay_process-7ed5b8fd786746a1.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.18s
+     Running tests\durable_replay_race.rs (target\debug\deps\durable_replay_race-d50da7b71d8bc005.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+     Running tests\ed25519_verify.rs (target\debug\deps\ed25519_verify-b31b31e3e78e53be.exe)
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running tests\framed_ingress.rs (target\debug\deps\framed_ingress-856bd90f1995dc1b.exe)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests\keyring.rs (target\debug\deps\keyring-79404f3b229acc3c.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests\lifetime_policy.rs (target\debug\deps\lifetime_policy-19bb225beeb684f8.exe)
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests\replay_binding.rs (target\debug\deps\replay_binding-12acfa79e3de6aeb.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests\replay_contract.rs (target\debug\deps\replay_contract-dc96d2bfd028a18e.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+     Running tests\replay_guard.rs (target\debug\deps\replay_guard-1802ead4b2446bac.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests\verification_ingress.rs (target\debug\deps\verification_ingress-4e39254fa1df03a0.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_protocol-e25ac8386b1db788.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-d2b65a360e6ffb85.exe)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-808d13e2ac83c480.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\field_number_audit.rs (target\debug\deps\field_number_audit-2d63f6f20abd888b.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests\lifetime_consistency.rs (target\debug\deps\lifetime_consistency-4330534577bbc283.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\prost_canonical.rs (target\debug\deps\prost_canonical-0a67e78bf4c73906.exe)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests\schema_evolution.rs (target\debug\deps\schema_evolution-c532004f8faeb6a0.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\schema_fingerprint.rs (target\debug\deps\schema_fingerprint-7eeb2c2e56c7e330.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\stream_ownership.rs (target\debug\deps\stream_ownership-8ef8e85cc61be3c3.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\t1_signing_targets.rs (target\debug\deps\t1_signing_targets-945aa85a3831c11c.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\t1b_grant_and_control.rs (target\debug\deps\t1b_grant_and_control-80e715c433306932.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_runtime_policy-6c32c7b67143c125.exe)
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_runtime_windows-9bcee5ec18513064.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\alloc_fixture.rs (target\debug\deps\alloc_fixture-f706186b22b4cb2c.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\artifact_beneath.rs (target\debug\deps\artifact_beneath-4401a48dd236b20a.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests\commit_cap.rs (target\debug\deps\commit_cap-4037029543bc621a.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== durable_lease_scope 단위 테스트 (runtime-policy) ===
+
+running 7 tests
+test durable_lease_scope::tests::is_durable_reports_true_for_file_backed_db ... ok
+test durable_lease_scope::tests::stale_lease_is_rejected ... ok
+test durable_lease_scope::tests::reopening_the_same_file_preserves_the_watermark ... ok
+test durable_lease_scope::tests::u64_max_epoch_round_trips_without_truncation ... ok
+test durable_lease_scope::tests::same_epoch_reuse_is_allowed_by_design ... ok
+test durable_lease_scope::tests::higher_epoch_advances_watermark ... ok
+test durable_lease_scope::tests::watermark_is_per_resource ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.15s
+
+
+=== 무관한 flaky 테스트 관측 기록(투명성 목적, 이 evidence 의 claim 과 무관) ===
+이 raw 를 준비하는 과정에서 cargo test --workspace 를 여러 번 돌렸는데,
+그중 한 번 crates/checkpoint/tests/write_failure.rs 가 "4 passed; 1
+failed"로 실패했다(어느 함수인지는 그 시점 상세 로그가 안 남아
+특정 못함). 직후 단독 재실행 3회는 전부 5/5 통과했다 — checkpoint
+크레이트는 이번 durable FenceWatermark 작업에서 손대지 않았고,
+당시 codex CLI 프로세스 2개가 동시에 돌고 있어 시스템 부하가
+높았다. 이 evidence 의 claim(durable FenceWatermark)과는 무관한
+별개의 flaky 로 판단해 조사 태스크로 따로 남겼다 — 조용히 덮지
+않기 위해 여기 기록한다. 이 raw 파일의 최종 cargo test --workspace
+캡처(위)는 깨끗한 재실행 결과다.
+
+=== 뮤테이션 테스트 로그 (오늘 재현, 코드에는 흔적 남기지 않음) ===
+1) crates/runtime-policy/src/durable_lease_scope.rs — open() 을 "주어진
+   경로를 무시하고 매번 새 임시 파일을 연다"로 무력화 → 시나리오
+   17(재시작 방어)이 정확히 예상대로 실패: "durable watermark 가
+   재시작(별도 프로세스)을 넘어 낮은 epoch 의 최초 Grant 를 거부하지
+   못했다." → 원복 → 재통과.
+   ★ 이 과정에서 원래 설계했던 "갱신 경로 전용" 시나리오(당시 17번)가
+   같은 무력화에서 계속 "통과"하는 거짓양성임을 발견 — Agent 의 제어
+   흐름상 갱신은 항상 같은 프로세스의 최초 Grant 검증 뒤에 오므로,
+   그 프로세스 자신의 최초 Grant 검증이 이미 로컬 watermark 를 채워
+   놓아 durable 저장소와 무관하게 거부를 설명할 수 있었다. 시나리오를
+   하나(최초 Grant 경로)로 재구성해 해소했다
+   (docs/plans/2026-08-19_2200_...v1.md "★ 구현 중 정정" 절 참조).
+2) crates/agent/src/lib.rs — is_durable() fail-closed 검사를
+   `if false && !fence_watermark.is_durable()` 로 무력화 → 시나리오
+   18(:memory: fail closed)이 정확히 예상대로 실패: 검사가 없으니
+   실제로 TcpStream::connect() 까지 진행돼 "Coordinator 연결 실패"
+   (연결 거부, os error 10061)로 실패했다 — 기대한 "fence watermark
+   저장소가 영속이 아니다" 메시지가 아니었으므로 시나리오가 이를
+   정확히 잡아냈다. → 원복 → 재통과.
+모든 무력화는 백업(cp)→edit→cargo build→selftest 실행→원복(mv)→touch
+(mtime 갱신)→재빌드→재통과 순서로 진행했다. 마지막 재통과 확인은 위
+5회 연속 실행(정상 상태)이 대표한다.
