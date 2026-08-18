@@ -254,9 +254,16 @@ fn normal_revoke_lease_notice_frame_dispatches_to_the_right_variant() {
     )
     .expect("정상 RevokeLeaseNotice 프레임이 통과해야 한다");
 
-    assert!(
-        matches!(msg, IngressMessage::LeaseRevoke(_)),
-        "잘못된 variant 로 디스패치됐다"
+    let IngressMessage::LeaseRevoke(verified) = msg else {
+        panic!("잘못된 variant 로 디스패치됐다: {msg:?}");
+    };
+    let got = verified.get();
+    assert_eq!(got.lease_id, REVOKE_LEASE_ID, "lease_id 가 원본과 다르다");
+    assert_eq!(got.fence_epoch, 7, "fence_epoch 가 원본과 다르다");
+    assert_eq!(got.cause, 1, "cause 가 원본과 다르다");
+    assert_eq!(
+        got.issued_at_unix_ms, NOW,
+        "issued_at_unix_ms 가 원본과 다르다"
     );
 }
 
