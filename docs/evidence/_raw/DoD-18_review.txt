@@ -1,0 +1,74 @@
+=== p114 (1라운드, CHANGES_REQUESTED) ===
+# CHANGES_REQUESTED
+
+핵심 만료 판정 구현은 대체로 설계와 일치하지만, `lease_store=Some`에서 `renew_outcome_override`가 있는 경우 저장소 상태와 응답 outcome이 불일치할 수 있습니다.
+
+1. 판정 순서·원자성
+
+`TransactionBehavior::Immediate` 트랜잭션 안에서 조회→판정→UPDATE가 수행됩니다([lease_store.rs:300](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:300>), [lease_store.rs:305](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:305>)).
+
+초과 시에는 `UPDATE` 없이 커밋하고 `MaxDurationExceeded`를 반환합니다([lease_store.rs:324](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:324>), [lease_store.rs:333](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/lease_store.rs:333>)).
+
+2. 비교식·시간 안전성
+
+`elapsed_ms > max_duration_ms`로 정확한 경계값은 허용합니다([lease_store.rs:318](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:318>), [lease_store.rs:320](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:320>)).
+
+`saturating_mul(1_000)`은 곱셈 overflow를 포화 처리하고, `checked_sub`의 `None`은 clock rollback으로 fail-closed 처리합니다([lease_store.rs:318](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:318>), [lease_store.rs:319](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:319>), [lease_store.rs:321](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:321>)).
+
+경계·초과·rollback 단위 테스트도 존재합니다([lease_store.rs:595](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:595>), [lease_store.rs:625](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:625>), [lease_store.rs:645](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:645>)).
+
+3. override 우선순위
+
+실제 초과 시 `MaxDurationExceeded` 분기가 override보다 먼저 처리되어 outcome=6이 나갑니다([lib.rs:431](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:431>), [lib.rs:436](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:436>)).
+
+다만 비초과 시에는 `renew_existing_within_duration()`이 먼저 UPDATE를 수행한 뒤 override를 적용합니다([lib.rs:433](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:433>), [lib.rs:445](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:445>)).
+
+따라서 override=2/3/6으로 거부 응답을 보내도 `expires_at_unix_ms`는 연장될 수 있습니다. 테스트 전용 override라 해도 “거부 응답인데 저장소는 갱신됨”이라는 상태 불일치입니다. 저장소 모드 override 경로를 별도로 검증하거나, 비-RENEWED override에서는 UPDATE를 하지 않도록 수정해야 합니다.
+
+4. `lease_store=None`
+
+저장소가 없으면 만료 판정 자체를 건너뛰고, override가 없을 때 매번 `RENEWED` 결과를 구성합니다([lib.rs:450](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:450>), [lib.rs:453](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:453>), [lib.rs:466](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:466>)). 이는 설계의 documented legacy enforcement bypass와 일치합니다.
+
+5. Agent outcome=6
+
+outcome=6은 `held_lease`를 변경하지 않고 즉시 `Err`로 종료합니다([agent/lib.rs:350](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:350>), [agent/lib.rs:354](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:354>)). 기존 outcome=2/3과 같은 거부 패턴입니다([agent/lib.rs:348](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:348>)).
+
+6. selftest 22·23
+
+시나리오 22는 2초 한도에 대해 2,200ms sleep을 수행합니다([selftest.rs:1122](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1122>), [selftest.rs:1124](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1124>)).
+
+`run_handshake()`는 Coordinator와 Agent를 각각 `spawn()`하고 세 PID가 모두 다른지 확인합니다([selftest.rs:130](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:130>), [selftest.rs:180](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:180>), [selftest.rs:192](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:192>)).
+
+시나리오 22는 사전·사후 저장소를 재조회하고 `expires_at_unix_ms` 불변을 직접 비교합니다([selftest.rs:1112](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1112>), [selftest.rs:1174](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1174>), [selftest.rs:1183](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1183>)).
+
+시나리오 23은 3,600초 한도에서 별도 갱신을 수행하고 양쪽 프로세스 성공을 요구하므로 오탐 대조군으로 적절합니다([selftest.rs:1230](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1230>), [selftest.rs:1253](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1253>)).
+
+7. 기존 안전장치
+
+헬퍼로 분리된 뒤에도 `u32_from_stored()` 검사가 그대로 유지됩니다([lib.rs:495](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:495>), [lib.rs:496](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:496>)). 최초 발급 경로에도 동일 검사가 있습니다([lib.rs:621](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:621>), [lib.rs:622](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:622>)).
+
+8. 설계 맹점·호환성
+
+- 다중 Agent/Coordinator 동시 처리, HA, scheduler 등은 설계 Out 절에 이미 명시되어 있으므로 이번 판정의 결함으로 보지 않습니다.
+- `--renew-rounds` 상호작용과 sleep 부재도 설계에서 이미 다뤘고, 시나리오 22/23이 별도 프로세스 방식으로 보완합니다.
+- `max_total_duration_seconds`와 outcome=6은 원래 proto에 이미 존재하며([lease.proto:61](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/proto/lease.proto:61>), [lease.proto:132](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/proto/lease.proto:132>)), 이번 커밋에서 wire schema 변경은 없습니다.
+
+`cargo`가 없으므로 실행 검증 확인 안 됨. 위 판정은 정적 코드 검토만으로 내렸습니다.
+
+=== p115 (2라운드, 수정 반영 후 재검수, ACCEPTED) ===
+판정: **ACCEPTED**
+
+근거:
+
+- `StoredLease::is_max_duration_exceeded()`는 `checked_sub`와 비교만 수행하는 순수 함수이며 저장소 변경이 없습니다. `renew_existing_within_duration()`도 이를 재사용합니다.  
+  (`crates/coordinator/src/lease_store.rs:53-59`, `:318-322`)
+
+- `build_renew_result()`에서 `lease_store=Some` 및 override가 있으면 `store.get()`만 호출하고, `renew_existing_within_duration()`은 호출하지 않습니다. 초과 판정은 override보다 먼저 수행되어 초과 시 outcome 6이 우선합니다.  
+  (`crates/coordinator/src/lib.rs:418-437`)
+
+- 시나리오 24는 최초 발급과 override 갱신을 서로 다른 Coordinator 프로세스로 실행하고, 전후에 저장소를 직접 `get()`하여 `expires_at_unix_ms` 불변을 검사합니다.  
+  (`crates/cli/src/coordinator_agent_selftest.rs:1234-1331`)
+
+- TOCTOU 가능성은 이론적으로 있습니다. `get()` 직후 다른 정상 갱신이 발생하면 override 판정이 해당 시점 스냅샷 기준이 될 수 있습니다. 다만 override가 테스트 전용이고 이 경로 자체는 저장소를 쓰지 않으므로, 현재 변경을 거부할 정도의 실질적 결함은 아닙니다.
+
+- `cargo`가 설치되어 있지 않아 **실행 검증 확인 안 됨**. 따라서 판정은 코드 흐름과 정적 검토에 근거합니다.
