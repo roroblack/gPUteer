@@ -16,6 +16,51 @@
 
 ---
 
+## 2026-08-19 00:10 — DoD-08 schema v1 → v2 승격 완료 (여덟 번째, DoD 전체 완료) — write_once 경쟁 분기의 진짜 잔여 결함 발견·수정
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-01`~`07`
+  에 이은 여덟 번째이자 **DoD 문서 전체의 마지막** 승격.
+- 스트림: Checkpoint · Protocol · Crypto.
+- 수행: 같은 절차를 DoD-08 에 적용했다. Python self-test/verify +
+  `cargo test -p gputeer-protocol/-checkpoint --test codex_findings`
+  + `cargo test -p gputeer-crypto --test replay_binding` + `cargo
+  test --workspace` + `cargo build --workspace --all-targets` 를
+  직접 실행해 `docs/evidence/_raw/DoD-08_v2_promotion_2026-08-18.txt`
+  에 저장했다. 전체 재검수(`agent:codex-cli`, fresh-read-only, `p83`
+  프롬프트) — `CHANGES_REQUESTED`.
+- **`DoD-02`·`DoD-06` 에 이은 세 번째 "재검수가 진짜 코드 결함을
+  잡은" 사례다.** `write_once`(`crates/checkpoint/src/atomic.rs`)
+  는 `final_path.exists()` 를 두 번 확인한다 — 함수 시작 시(K-1
+  이 2026-08-16 에 이미 고침)와, tmp 파일을 쓴 뒤 다시 한번(경쟁
+  분기). **두 번째는 여전히 내용 비교 없이 `Ok(false)` 를
+  반환하고 있었다** — K-1 이 고쳐지기 전과 똑같은 결함이 다른
+  코드 경로에 남아 있었다. 그 분기에서도 `final_path` 를 읽어
+  대조하고 다르면 `ContentMismatch` 를 반환하도록 고쳤다.
+  이 수정을 검증하려고 진짜 다중 스레드 동시 호출 테스트
+  (`k1c_concurrent_same_name_writers_are_not_actually_safe`)를
+  짜다가 **더 넓은, 더 근본적인 문제**를 발견했다 — 같은 이름에
+  대한 동시 호출은 전부 같은 tmp 파일 이름을 공유해 근본적으로
+  안전하지 않다(8스레드 동시 호출 중 3회 `Ok(true)` 관측, Windows
+  `fs::rename` 이 기존 대상을 대체하는 시맨틱이라 발생). 이번엔
+  고치지 않고 **결함을 고정하는 테스트**로만 등록했다 — 실제
+  호출부(`writer.rs`)가 순차적 재시작 시나리오만 상정한다는 것을
+  확인해 범위 축소가 정당함을 뒷받침했다. 새 addendum(2026-08-19
+  00:00 경)으로 전부 기록 — 원본 frontmatter 와 이전 addendum
+  원문은 손대지 않았다. 좁은 후속 재검수(`p84` 프롬프트) —
+  **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가, `artifacts:` 에 raw/review
+  파일 2개 추가. `_schema_v1_grandfathered.txt` 에서 DoD-08
+  제거(6→5건), `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **6 → 5건**(전부 `P0-*`). `cargo test
+  --workspace` 전체 재실행(k1c 신설로 306→307) — 전 항목 0 failed
+  (회귀 없음).
+- 리포트: 이 이력 항목. **`DoD-01`~`DoD-08` 8건 전부 schema v2
+  승격 완료** — 남은 부채 5건(`P0-01·03·03a·07·08`)만 같은 절차로
+  이어가면 review-강제 대상 evidence 부채가 전부 해소된다.
+
+---
+
 ## 2026-08-18 23:20 — DoD-07 schema v1 → v2 승격 완료 (일곱 번째) — coordinator/agent 신설로 stale 해진 limitation 5건 정정
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-05` 에

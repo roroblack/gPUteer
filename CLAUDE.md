@@ -299,7 +299,7 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~07 완료
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08 전부 완료(DoD 문서는 끝)
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
@@ -322,11 +322,21 @@ Linux 를 한 번도 돌려보지 않았다
    `DoD-07` 은 domain 수치가 아니라 **이 세션 중 새로 생긴
    coordinator/agent 로 인해 stale 해진 5건**(단수명 메시지 셋으로
    증가·소비 측 존재하나 Evidence 미처리·replay/keyring limitation
-   좁히기·negative_tests 19건)을 addendum 으로 정정했다.
+   좁히기·negative_tests 19건)을 addendum 으로 정정했다. `DoD-08`
+   승격 중 **세 번째로 진짜 코드 결함**을 찾았다 — `write_once`
+   (`crates/checkpoint/src/atomic.rs`)가 tmp 파일을 쓴 뒤 다시
+   `final_path.exists()` 를 확인하는 경쟁 분기가, K-1 이 이미 고친
+   "이미 존재할 때" 분기와 달리 여전히 내용 비교 없이 `Ok(false)`
+   를 반환했다(고쳤다). 검증하다가 더 넓은 문제(같은 이름 동시
+   호출은 tmp 이름 공유로 근본적으로 안전하지 않음)도 발견해
+   결함을 고정하는 테스트로 등록만 하고 이번엔 고치지 않았다 —
+   `write_once` 의 실제 호출부는 순차 시나리오만 상정하므로 범위
+   밖으로 판단.
    `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→7→**6건**. 다음은
-   `DoD-08`, `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02`
-   는 비강제) — 같은 절차로 이어간다.
+   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→7→6→**5건**(전부
+   `P0-*`). **`DoD-01`~`08` 8건 전부 schema v2 승격 완료.** 다음은
+   `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02` 는 비강제)
+   — 같은 절차로 이어간다.
 6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
    `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의
    `SCHEMAS` 에도, `tests/vectors/canonical_v1.json` 벡터에도 없다.

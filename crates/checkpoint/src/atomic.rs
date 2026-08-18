@@ -173,9 +173,23 @@ pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, Checkpoin
     }
 
     // 경쟁: 우리가 쓰는 사이에 다른 쪽이 확정했을 수 있다.
+    //
+    // ★ 여기도 내용을 대조한다(2026-08-18, DoD-08 schema v2 승격 재검수
+    //   에서 발견 — 위 "이미 존재할 때" 분기만 고치고 이 분기는
+    //   그대로 뒀었다. 같은 위치 기반 이름 문제가 경쟁 경로에서
+    //   그대로 재현된다: 승자의 내용을 확인하지 않고 Ok(false) 를
+    //   반환하면, 패자가 다른 내용을 썼다는 사실이 조용히 사라진다).
     if final_path.exists() {
+        let winner = fs::read(&final_path)?;
         let _ = fs::remove_file(&tmp_path);
-        return Ok(false);
+        if winner == data {
+            return Ok(false);
+        }
+        return Err(CheckpointError::ContentMismatch {
+            path: final_path,
+            existing_len: winner.len(),
+            incoming_len: data.len(),
+        });
     }
 
     fs::rename(&tmp_path, &final_path).map_err(|e| {

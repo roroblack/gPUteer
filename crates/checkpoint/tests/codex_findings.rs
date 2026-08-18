@@ -91,6 +91,66 @@ fn k1b_write_once_is_idempotent_for_identical_content() {
     );
 }
 
+/// ★ K-1c — 경쟁 경로(`write_once` 가 자기 tmp 파일을 쓴 **뒤에** 다시
+/// `final_path.exists()` 를 확인하는 분기)도 내용을 대조하는지 —
+/// **직접 이 분기를 재현하지는 않는다.** 진짜 스레드 경쟁으로
+/// 재현을 시도했더니(2026-08-18, DoD-08 schema v2 승격 재검수)
+/// 이 분기보다 **더 근본적인 문제**가 먼저 드러났다: 여러 호출자가
+/// 같은 `name` 으로 동시에 `write_once` 를 부르면 전부 **같은 tmp
+/// 파일 이름**(`{name}.tmp`)을 공유해 서로의 tmp 쓰기를 덮어쓰고,
+/// `fs::rename` 이 Windows 에서 기존 대상을 대체하는 시맨틱이라
+/// 하나가 아니라 **여러 호출이 각각 `Ok(true)` 를 반환**하는 것을
+/// 실측으로 확인했다(8스레드 동시 호출 시 `Ok(true)` 3회 관측).
+///
+/// 이것은 이번에 고친 "내용 비교 누락" 과는 **다른, 더 넓은 결함**
+/// 이다 — `write_once` 는 애초에 **같은 이름에 대한 동시 다중 호출**
+/// 을 지원하도록 설계되지 않았다(tmp 이름이 `name` 하나로 고정).
+/// 이 저장소의 실제 호출부(`writer.rs`)는 순차적 재시작 시나리오
+/// (프로세스 A 가 죽은 **뒤** 프로세스 B 가 재개)만 상정하며, 지금
+/// 은 Job 실행 자체가 미착수라 동시 호출 경로가 없다 — 그래도
+/// 함수 자체의 계약으로 "동시 호출 안전" 을 주장한 적은 없으므로
+/// 이 test 는 **그 사실을 고정**한다.
+///
+/// 방금 고친 내용 비교(위 `write_once` 소스의 "경쟁: 우리가 쓰는
+/// 사이에..." 분기)는 **여전히 유효하고 안전을 개선한다** — 진짜
+/// 다중 호출자 안전은 tmp 이름을 호출마다 고유하게 만들고 재확인
+/// 절차를 다시 설계해야 하며, 그것은 이 evidence 의 원래 범위(K-1
+/// 의 "이미 존재할 때" 분기)를 넘는 별도 작업이다. 새 limitation
+/// 으로 등록한다 — CLAUDE.md 백로그 참조.
+#[test]
+fn k1c_concurrent_same_name_writers_are_not_actually_safe() {
+    let d = std::sync::Arc::new(tmpdir("k1c"));
+    let n = 8;
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
+
+    let handles: Vec<_> = (0..n)
+        .map(|i| {
+            let d = d.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let data = format!("writer-{i} data").into_bytes();
+                write_once(&d, "shard-race.bin", &data)
+            })
+        })
+        .collect();
+
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let ok_true = results.iter().filter(|r| matches!(r, Ok(true))).count();
+
+    // ★ 결함을 고정하는 테스트다(`lease_scope.rs` 의
+    //   `restart_resets_watermark_and_lets_stale_epoch_through` 와
+    //   같은 정신). **통과(ok_true > 1)가 곧 "이 위험이 아직
+    //   존재한다" 는 뜻이다.** 언젠가 tmp 이름을 호출마다 고유하게
+    //   만들어 이 문제를 고치면 이 assert 가 실패해야 정상이다 —
+    //   그때 이 test 와 관련 limitation 서술을 갱신하라.
+    assert!(
+        ok_true > 1,
+        "write_once 가 동시 다중 호출에서 정확히 1회만 성공했다 — \
+         tmp 이름 충돌 문제가 해소된 것으로 보인다: {results:?}"
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // K-2 ★ max_attempts == 0 이면 panic 한다
 // ══════════════════════════════════════════════════════════════════

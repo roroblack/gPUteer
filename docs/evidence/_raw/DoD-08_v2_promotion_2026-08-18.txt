@@ -1,0 +1,48 @@
+$ python tools/canonical/reference_canonical.py --self-test
+all checks passed (12/12 규칙)
+
+$ python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+재생성 대조: 40개 벡터 일치
+vector cross-checks: OK
+
+$ cargo test -p gputeer-protocol --test codex_findings
+test result: ok. 6 passed; 0 failed; 0 ignored
+
+$ cargo test -p gputeer-checkpoint --test codex_findings
+test result: ok. 9 passed; 0 failed; 0 ignored
+(원래 v1 raw_output 은 6 passed — k4/k4b path-traversal 관련 2건 +
+이번에 새로 추가한 k1c 1건이 늘어 지금은 9개다)
+
+$ cargo test -p gputeer-crypto --test replay_binding
+test result: ok. 10 passed; 0 failed; 0 ignored
+
+$ cargo test --workspace
+합계: 307 passed / 0 failed (전 크레이트, k1c 신설로 306->307)
+
+$ cargo build --workspace --all-targets
+경고 0건, 오류 0건
+
+이 파일은 DoD-08 을 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 44ce31a 무렵
+기록, docs/evidence/_raw/DoD-08_test_output.txt)은 문서 본문에 이미
+보존돼 있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라,
+v2 승격 시점의 독립적 재확인이다.
+
+=== 이번 재검수에서 발견·수정한 진짜 결함(K-1 잔여) ===
+
+Codex 재검수(p83)가 지적: K-1 은 "이미 존재할 때" 분기(atomic.rs
+:153-164)만 내용을 대조하도록 고쳤을 뿐, tmp 파일을 쓴 뒤 다시
+final_path.exists() 를 확인하는 별도 경쟁 분기(원래 :175-179)는
+여전히 내용 비교 없이 Ok(false) 를 반환했다.
+
+수정: 그 분기에서도 final_path 를 읽어 우리 data 와 비교하고,
+다르면 ContentMismatch 를 반환하도록 고쳤다(crates/checkpoint/src/atomic.rs).
+
+부수 발견(더 넓은 문제, 이번엔 고치지 않음): 새로 추가한 동시성
+테스트(k1c_concurrent_same_name_writers_are_not_actually_safe)가
+같은 이름에 대한 진짜 다중 스레드 동시 호출은 tmp 파일 이름 충돌
+(모든 호출이 같은 "{name}.tmp" 를 공유)로 인해 여전히 안전하지
+않음을 실측으로 확인했다(8스레드 중 3회 Ok(true) 관측) — write_once
+는 애초에 동시 다중 호출을 지원한 적이 없고, 이 저장소의 실제
+호출부는 순차적 재시작 시나리오만 상정한다. 결함을 고정하는
+테스트로 등록했고, CLAUDE.md 백로그에 별도 항목으로 남겼다.

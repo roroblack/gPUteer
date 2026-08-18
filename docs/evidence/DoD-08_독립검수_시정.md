@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-08
 claim: "독립 적대적 검수(Codex CLI, 2026-08-16)가 지적한 결함 7건을 실측으로 확인하고 시정했다. 그 중 3건은 Rust 와 Python 참조 구현이 동일하게 틀려 벡터 대조로는 잡히지 않던 것이다. 검증 도구 자체의 결함 1건(--verify 가 재생성 대조를 하지 않음)도 시정했다"
 status: PASS
 commit: 44ce31a6ea75508adc2688416fc370e81c25f6c6
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 재확인(C-1/C-3/D-1·--verify·replay nonce 결속·K-2) · K-1 잔여 결함(경쟁 분기 내용 비교 누락) 발견·수정 · 동시 호출 안전성 한계 신규 테스트 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-08_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-08_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:282c2211dc17d37c09cc42eac56b87d6a38a28a2f40b1b0f9a32b1a33a33a70c"
+raw_output_bytes: 2467
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / python 3.12.7 / codex-cli 0.144.1"
   note: "라이브러리 크레이트라 실행 바이너리 없음"
@@ -59,6 +79,8 @@ artifacts:
   - crates/protocol/src/signing.rs
   - crates/checkpoint/src/atomic.rs
   - tools/canonical/reference_canonical.py
+  - docs/evidence/_raw/DoD-08_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-08_review.txt
 negative_tests:
   - "★ c1_signature_only_nested_message_leaks_into_canonical: 중첩 메시지가 서명 필드만 가질 때 canonical 이 달라지는지. 시정 전 0a00(2B) vs 생략(0B)로 실패했다"
   - "c1b_top_level_signature_field_is_correctly_excluded: 최상위는 원래 정상이었음을 고정 — 중첩만 문제였다는 사실을 남긴다"
@@ -317,3 +339,90 @@ signature-only 메시지·map 빈 값·nested derived-hash 제외)이 지금
 독립 검수(Codex) 지적 7건 시정" 항목(제목 기반 인용 — 줄 번호는
 세션 안에서도 바뀐다) 으로만 뒷받침된다는 점은 재검수도 "확인
 안 됨"으로 남겼다 — 이 문서의 claim 범위 밖이다.
+
+---
+
+## ★ 이후 변경 (2026-08-18) — schema v2 승격 전 재검수, K-1 잔여 결함 발견·수정
+
+새로운 독립 검수(`agent:codex-cli`, read-only, v2 승격용 재검수,
+`p83` 프롬프트)가 이 evidence 를 다시 검토해 `CHANGES_REQUESTED`
+로 판정했다. claim 대부분은 지금도 정확하다고 확인했지만, **K-1
+이 완전히 고쳐지지 않았다**는, 이번 세션에서 두 번째로 심각한
+지적을 받았다.
+
+### [진짜 잔여 결함] K-1 은 "이미 존재할 때" 분기만 고쳐졌다
+
+`write_once`(`crates/checkpoint/src/atomic.rs`)는 검사를 두 번
+한다:
+
+```text
+1. 함수 시작 시 final_path.exists() 확인 -> 존재하면 내용 대조
+   (K-1 로 이미 고쳐짐, atomic.rs:153-164)
+2. tmp 파일을 쓴 뒤 다시 final_path.exists() 확인 -> "경쟁: 우리가
+   쓰는 사이에 다른 쪽이 확정했을 수 있다" 분기 (atomic.rs:175-179,
+   당시엔 내용 비교 없이 Ok(false) 반환)
+```
+
+2번 분기는 **1번과 정확히 같은 문제**를 갖고 있었다 — 위치 기반
+이름(`shard-0.bin`)을 쓰는 다른 쪽이 다른 내용으로 먼저 확정했어도
+비교 없이 `Ok(false)` 를 반환했다. K-1 원래 시정(2026-08-16)이
+1번만 고치고 2번을 놓쳤다.
+
+**고쳤다.** 2번 분기에서도 `final_path` 를 읽어 우리 `data` 와
+비교하고, 다르면 `ContentMismatch` 를 반환한다
+(`crates/checkpoint/src/atomic.rs`, 2026-08-18 수정).
+
+### [발견했으나 고치지 않은 더 넓은 결함] 동시 다중 호출은 여전히 안전하지 않다
+
+이 수정을 검증하려고 진짜 다중 스레드 동시 호출 테스트를 짰다가
+**더 근본적인 문제**를 발견했다 — 같은 이름으로 동시에 `write_once`
+를 부르는 모든 호출자가 **같은 tmp 파일 이름**(`{name}.tmp`)을
+공유한다. 서로의 tmp 쓰기를 덮어쓰고, `fs::rename` 이 Windows 에서
+기존 대상을 대체하는 시맨틱이라 **하나가 아니라 여러 호출이 각각
+`Ok(true)` 를 반환**할 수 있다 — 8스레드 동시 호출에서 실제로 3회
+`Ok(true)` 를 관측했다.
+
+이것은 이번에 고친 것(경쟁 분기의 내용 비교 누락)과는 **다른, 더
+넓은 결함**이다 — `write_once` 는 애초에 같은 이름에 대한 동시
+다중 호출을 지원하도록 설계된 적이 없다. 이 저장소의 실제
+호출부(`writer.rs`)는 순차적 재시작 시나리오(프로세스 A 가 죽은
+**뒤** 프로세스 B 가 재개)만 상정하고, 지금은 Job 실행 자체가
+미착수라 동시 호출 경로가 없다 — 그래도 함수 자체가 "동시 호출
+안전" 을 주장한 적은 없으므로, **결함을 고정하는 테스트**로
+등록했다: `crates/checkpoint/tests/codex_findings.rs::k1c_concurrent_same_name_writers_are_not_actually_safe`.
+통과가 곧 이 위험이 아직 존재한다는 뜻이다(`lease_scope.rs` 의
+`restart_resets_watermark_and_lets_stale_epoch_through` 와 같은
+정신). 진짜 동시 호출 안전(호출마다 고유한 tmp 이름 + 재설계)은
+이 evidence 의 원래 범위를 넘는 별도 작업으로 CLAUDE.md 백로그에
+등록한다.
+
+### 그 외 재확인 — 대부분 실재 확인됨
+
+C-1·C-3·D-1(canonical 인코딩 결함 3건), `--verify` 재생성 대조,
+replay nonce 결속(`AgentGrantAck` 도 포함해 재확인), K-2(max_attempts=0)
+는 전부 코드로 재확인됐다. negative_tests 목록도 실재 확인됐다.
+시정하지 않은 지적 5건(RevokeLeaseNotice 반복 전송·서명자 ID
+대체값·`ReplicaAck.fence_epoch` 부재·§8 5·6단계 순서·`write_once`
+메모리 사용)은 지금도 전부 유효하다 — coordinator/agent 신설이
+이 다섯 항목을 해소하지 않았음도 재확인됐다(새 경로는 Grant/Lease/
+GrantAck 만 처리하고 Evidence 메시지를 다루지 않는다). vectors
+40건도 재확인됐다.
+
+### Rust/Python 재실행 — 이 세션에서 직접 확인, Codex 샌드박스에서는 못함
+
+Codex read-only 샌드박스는 `.cargo-build-lock` 접근이 거부돼
+cargo 명령을 실행하지 못했다(샌드박스 제약이지 코드 결함이
+아니다) — Python 명령은 직접 실행해 확인했다. 이 세션은 이미
+로컬에서 cargo 전체도 K-1 수정을 반영해 직접 실행했다 —
+`docs/evidence/_raw/DoD-08_v2_promotion_2026-08-18.txt` 가 그
+receipt 다: `codex_findings`(protocol) 6, `codex_findings`(checkpoint)
+9(k1c 신설 포함), `replay_binding` 10, `cargo test --workspace`
+307 passed / 0 failed(k1c 신설로 306→307), `cargo build
+--all-targets` 경고 0건.
+
+### review_outcome
+
+`CHANGES_REQUESTED` — K-1 잔여 결함을 실제로 고치고(atomic.rs),
+동시성 negative test 를 추가하고(k1c), 이 addendum 으로 기록했다.
+좁은 범위의 후속 확인을 별도로 요청해 `ACCEPTED` 를 받은 뒤에만
+schema v2 로 승격한다.

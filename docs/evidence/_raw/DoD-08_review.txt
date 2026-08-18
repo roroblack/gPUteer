@@ -1,0 +1,74 @@
+독립 검수 receipt — DoD-08 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      DoD-08
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-08_독립검수_시정.md (frontmatter + 본문 전체,
+  기존 addendum 1라운드 포함) 을 처음부터 다시 검수.
+  crates/protocol/tests/codex_findings.rs
+  crates/checkpoint/tests/codex_findings.rs
+  crates/checkpoint/src/atomic.rs
+  crates/crypto/tests/replay_binding.rs
+  tools/canonical/reference_canonical.py
+  crates/coordinator/src/lib.rs, crates/agent/src/lib.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p83 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+claim(C-1/C-3/D-1 canonical 결함 시정·--verify 재생성 대조·replay
+nonce 결속·K-2)는 전부 실재 확인됨. negative_tests·limitations
+5건·vectors 40건도 실재 확인됨. coordinator/agent 신설이 replay
+nonce 결속 claim 을 stale 하게 만들지는 않는다고 확인(단, 별도
+limitation 으로 InMemoryReplayGuard 비영속성은 남는다고 언급).
+
+★ 진짜 잔여 결함 발견: K-1 은 "이미 존재할 때" 분기(atomic.rs:153-164)
+만 내용을 대조했다. tmp 파일을 쓴 뒤 다시 final_path.exists() 를
+확인하는 경쟁 분기(원래 atomic.rs:175-179)는 여전히 내용 비교 없이
+Ok(false) 를 반환했다 — K-1 이 고쳐지기 전과 같은 결함이 다른 코드
+경로에 남아 있었다.
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날) — 진짜 코드 결함 실제 수정 포함
+--------------------------------------------------------------------------
+
+- crates/checkpoint/src/atomic.rs 의 경쟁 분기를 고쳤다 — final_path
+  를 읽어 data 와 비교, 같으면 Ok(false), 다르면 ContentMismatch.
+- 이 수정을 검증하려고 진짜 다중 스레드 동시 호출 테스트를 짜다가
+  더 넓은 문제(같은 이름에 대한 동시 호출은 tmp 파일 이름 공유로
+  근본적으로 안전하지 않음, 8스레드 중 3회 Ok(true) 관측)를 발견
+  했다 — 이번엔 고치지 않고 결함을 고정하는 테스트
+  k1c_concurrent_same_name_writers_are_not_actually_safe 로 등록.
+  write_once 의 실제 호출부(writer.rs)가 순차적 재시작 시나리오만
+  상정한다는 것도 확인해, 이 범위 축소가 정당함을 뒷받침했다.
+- DoD-08 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) —
+  schema v2 승격 전 재검수, K-1 잔여 결함 발견·수정" 을 추가했다.
+  원본 frontmatter 와 2026-08-18 00:40 addendum 원문은 append-only
+  원칙에 따라 손대지 않았다.
+- cargo test --workspace 전체 재실행(307 passed / 0 failed, k1c
+  신설로 306→307) — docs/evidence/_raw/DoD-08_v2_promotion_2026-08-18.txt
+  참조.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p84 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- 경쟁 분기가 이제 final_path 를 읽고 data 와 비교함을 확인:
+  atomic.rs:182,183,185,188.
+- k1c_concurrent_same_name_writers_are_not_actually_safe 존재 확인,
+  로직상 "동시 호출 안전을 보장하지 않는다"는 결함을 고정하는
+  테스트로 일치함을 확인(codex_findings.rs:121,130,148). 플랫폼·
+  스케줄링 의존적 관측 테스트라는 점도 주석에 명시되어 있다고
+  확인.
+- append-only 준수 확인(:296 기존 addendum, :323 새 addendum).
+- raw receipt 존재, checkpoint codex_findings 9개·workspace 307개
+  수치 일치 확인.
+- 범위 축소(동시 호출 안전은 범위 밖) 정당성 확인 — writer.rs·
+  ckpt_writer.rs 가 순차 호출만 함, CLAUDE.md 의 write-once·고유
+  이름 원칙과도 일치.
+추가 정정 불필요.
