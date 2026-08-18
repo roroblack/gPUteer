@@ -566,6 +566,73 @@ mod tests {
         assert_eq!(fetched.job_id, "job-1");
     }
 
+    // ★ 코덱스 감사(2026-08-19, p116)가 지적 — check_identity_conflict()
+    //   는 네 필드(job_id·attempt_id·holder_node_id·issuing_coordinator_id)
+    //   를 검사하지만(`:404-437` 부근), 위 테스트는 job_id 충돌만
+    //   확인했다. 나머지 세 필드도 각각 확인한다.
+    #[test]
+    fn conflicting_attempt_id_is_rejected_without_overwrite() {
+        let (mut s, _dir) = open_temp();
+        let record = sample("lease-1");
+        s.get_or_issue(&record).unwrap();
+
+        let mut conflicting = sample("lease-1");
+        conflicting.attempt_id = "different-attempt".into();
+        let result = s.get_or_issue(&conflicting);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::IdentityConflict {
+                field: "attempt_id",
+                ..
+            })
+        ));
+
+        let fetched = s.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.attempt_id, "attempt-1");
+    }
+
+    #[test]
+    fn conflicting_holder_node_id_is_rejected_without_overwrite() {
+        let (mut s, _dir) = open_temp();
+        let record = sample("lease-1");
+        s.get_or_issue(&record).unwrap();
+
+        let mut conflicting = sample("lease-1");
+        conflicting.holder_node_id = "different-agent".into();
+        let result = s.get_or_issue(&conflicting);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::IdentityConflict {
+                field: "holder_node_id",
+                ..
+            })
+        ));
+
+        let fetched = s.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.holder_node_id, "agent-1");
+    }
+
+    #[test]
+    fn conflicting_issuing_coordinator_id_is_rejected_without_overwrite() {
+        let (mut s, _dir) = open_temp();
+        let record = sample("lease-1");
+        s.get_or_issue(&record).unwrap();
+
+        let mut conflicting = sample("lease-1");
+        conflicting.issuing_coordinator_id = "different-coordinator".into();
+        let result = s.get_or_issue(&conflicting);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::IdentityConflict {
+                field: "issuing_coordinator_id",
+                ..
+            })
+        ));
+
+        let fetched = s.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.issuing_coordinator_id, "coord-1");
+    }
+
     #[test]
     fn same_identity_reissue_returns_stored_value_not_candidate() {
         let (mut s, _dir) = open_temp();

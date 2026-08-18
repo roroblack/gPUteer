@@ -313,6 +313,16 @@ fn domain_tags_are_32_bytes_and_unique() {
         Domain::Audit, Domain::Release, Domain::Invite,
         // coordinator/agent 최소 핸드셰이크 (2026-08-18)
         Domain::GrantAck,
+        // Lease 갱신 최소 조각 (2026-08-19) — RenewLeaseResult 를 새
+        // 서명 대상 domain 으로 승격(docs/plans/2026-08-19_0500_...).
+        // ★ 코덱스 감사(2026-08-19, p116)가 지적 — 이 배열이 손으로
+        //   쓰여 있어 실제 Domain enum 이 25종으로 늘어난 뒤에도 이
+        //   테스트는 계속 24종으로 통과하고 있었다(누락된 25번째
+        //   domain 의 tag 가 32바이트인지·중복 없는지 한 번도 검사
+        //   되지 않았다) — t1_signing_targets.rs::domain_coverage_is_explicit
+        //   와 t1b_grant_and_control.rs::all_domain_tags_are_distinct
+        //   는 이미 올바르게 25종을 나열하고 있었다.
+        Domain::LeaseRenewResult,
     ];
     let mut seen = std::collections::HashSet::new();
     for d in domains {
@@ -322,7 +332,7 @@ fn domain_tags_are_32_bytes_and_unique() {
     }
     assert_eq!(
         seen.len(),
-        24,
-        "signing.md §5 의 domain_tag 24종과 일치해야 한다 (ADR-028 + GrantAck)"
+        25,
+        "signing.md §5 의 domain_tag 25종과 일치해야 한다 (ADR-028 + GrantAck + LeaseRenewResult)"
     );
 }

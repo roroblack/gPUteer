@@ -207,6 +207,7 @@ fn normal_renew_lease_result_frame_dispatches_to_the_right_variant() {
     let k = key(4);
     let dir = directory(&k);
     let r = renew_result(&k, 0);
+    let expected_nonce: Vec<u8> = (0u8..16).collect();
     let frame = write_frame(FrameType::LeaseRenewResult, &r.encode_to_vec()).unwrap();
     let mut stream = Cursor::new(frame);
     let mut replay = InMemoryReplayGuard::new();
@@ -220,9 +221,25 @@ fn normal_renew_lease_result_frame_dispatches_to_the_right_variant() {
     )
     .expect("정상 RenewLeaseResult 프레임이 통과해야 한다");
 
-    assert!(
-        matches!(msg, IngressMessage::LeaseRenewResult(_)),
-        "잘못된 variant 로 디스패치됐다"
+    // ★ 코덱스 감사(2026-08-19, p116)가 지적 — 예전에는 variant 만
+    //   확인하고 payload 필드값은 검증하지 않았다(DoD-17 이 고친
+    //   RevokeLeaseNotice 테스트와 같은 얕음). Verified::get() 으로
+    //   내부 값을 꺼내 원본 renew_result() 가 채운 값과 대조한다.
+    let IngressMessage::LeaseRenewResult(verified) = msg else {
+        panic!("잘못된 variant 로 디스패치됐다: {msg:?}");
+    };
+    let got = verified.get();
+    assert_eq!(got.outcome, 1, "outcome 이 원본과 다르다");
+    assert_eq!(got.detail, "ok", "detail 이 원본과 다르다");
+    assert_eq!(got.schema_version, 1, "schema_version 이 원본과 다르다");
+    assert_eq!(got.coordinator_id, DEVICE, "coordinator_id 가 원본과 다르다");
+    assert_eq!(
+        got.issued_at_unix_ms, NOW,
+        "issued_at_unix_ms 가 원본과 다르다"
+    );
+    assert_eq!(
+        got.request_nonce, expected_nonce,
+        "request_nonce 가 원본과 다르다"
     );
 }
 
