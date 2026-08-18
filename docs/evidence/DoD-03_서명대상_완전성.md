@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-03
 claim: "JobManifest 와 Lease 의 서명 필드를 제외한 전 필드가 canonical 서명 대상에 포함되며, 각 필드가 실제로 서명 결과에 영향을 준다. Rust 와 Python 참조 구현이 전 필드 메시지에서 바이트 단위로 일치한다"
 status: PASS
 commit: 13795c604c74c5c9bb5bd0104a5338407d03f3d7
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 범위 · negative_tests 실재성과 domain 수치(24종 중 20개 구현·ToCanonicalFields 42개) 재확인 · coverage 테스트 자동성 한계 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-03_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-03_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:bc914c401f7f54ba27d2552a5e134f994fc80f344964dda819c583ef604a42b1"
+raw_output_bytes: 884
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / protoc (protoc-bin-vendored) / python 3.12.7"
   note: "라이브러리 크레이트라 실행 바이너리 없음"
@@ -58,6 +78,8 @@ artifacts:
   - crates/protocol/src/to_fields.rs
   - crates/protocol/tests/prost_canonical.rs
   - crates/protocol/tests/field_number_audit.rs
+  - docs/evidence/_raw/DoD-03_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-03_review.txt
 negative_tests:
   - "★ every_field_in_full_manifest_affects_canonical: 27개 필드를 하나씩 기본값으로 되돌려 canonical 이 반드시 변하는지 확인. 변하지 않는 필드는 서명 밖이며 위조 가능하다. 벡터 대조만으로는 '두 구현이 사이좋게 같은 필드를 빠뜨린' 경우를 못 잡으므로 이 테스트가 별도로 필요하다"
   - "network_policy_is_signed / artifact_scope_is_signed / lease_scope_is_signed: 보안 필드 3건이 각각 canonical 을 바꾸는지 개별 확인"
@@ -335,3 +357,65 @@ vectors 40건·Ed25519/SCHEMA_TOO_NEW/runtime-policy 구분까지 이
 1~3라운드 만에. 문서 전체를 schema v2 로 승격하는 것은 여전히 별도
 작업이다(frontmatter 를 v1 → v2 로 바꾸고 executor/reviewer 메타데이터
 · raw_output digest 를 정식으로 채우는 일) — 아직 하지 않았다.
+
+---
+
+## ★ 이후 변경 (2026-08-18) — schema v2 승격 전 재확인, 수치 재정정
+
+`DoD-01`·`DoD-02` 를 schema v1 → v2 로 승격하며 이미 두 번 겪은
+패턴이 `DoD-03` 에도 그대로 나타났다. 새로운 독립 검수
+(`agent:codex-cli`, read-only, v2 승격용 재검수)가 `CHANGES_REQUESTED`
+로 판정했다 — 바로 위 2026-08-17 addendum이 정정한 "41개·23종·19종"
+수치가 세션 중 `Domain::GrantAck` 추가로 다시 stale 해졌다는 지적이다.
+
+### 현재(2026-08-18) 실측치
+
+- `Domain` enum: **24종** (`crates/protocol/src/canonical.rs:282-315`)
+- `domain_coverage_is_explicit`: **24종 중 20개 구현**
+  (`crates/protocol/tests/t1_signing_targets.rs:397-448`)
+- `ToCanonicalFields` impl: **42개 선언** (`crates/protocol/src/to_fields.rs`
+  직접 grep 결과)
+
+frontmatter limitations 1번(`DoD-03:72` 의 "17종 중 13종")과 2026-08-17
+addendum(`DoD-03:279-282` 의 "41개·23종·19종")은 원문 그대로 두고
+고치지 않는다(append-only 원칙, `P0-07` 선례) — **진짜 현재 값은
+위 실측치**다. 이 문서를 읽는 사람은 항상 가장 최근 addendum 의
+수치를 신뢰해야 한다.
+
+### coverage 테스트의 자동성 한계 — 새로 명시
+
+`domain_coverage_is_explicit` 은 `Domain` enum 을 순회하지 않고 손으로
+쓴 `coverage` 배열을 쓴다(`t1_signing_targets.rs:397-428`). 새
+enum variant 가 추가돼도 이 배열에 반영하는 것을 잊으면 테스트가
+조용히 stale 해질 수 있다 — 실제로 `DoD-02` 재검수 때 이 결함으로
+숫자가 어긋나 있었던 적이 있다(그때 고쳤다; 지금은 24/20 으로
+맞다). 이 자동성 한계 자체는 이전까지 이 문서에 명시된 적이
+없었으므로 여기 새로 기록한다. `canonical_vectors.rs` 의 동급
+테스트는 실제 enum 값을 순회해 이 문제가 없다 — 구조적으로 다르다.
+
+### Rust 50/50 재실행 — 이 세션에서 직접 확인, Codex 샌드박스에서는 못함
+
+Codex read-only 샌드박스는 `.cargo-build-lock` 생성 권한이 없어
+`cargo test` 를 실행하지 못했다(샌드박스 제약이지 코드 결함이
+아니다). 이 세션은 이미 로컬에서 직접 실행해 확인했다 —
+`docs/evidence/_raw/DoD-03_v2_promotion_2026-08-18.txt:1-5` 가 그
+receipt 다: `canonical_vectors`/`field_number_audit`/`prost_canonical`
+합계 50 passed / 0 failed, Python self-test 8/8, 벡터 40개 교차
+일치.
+
+### 그 외 재확인 결과 (요약, 전부 실재 확인됨)
+
+- claim(JobManifest 28/29·Lease 14/15 필드 완전성, 두 구현 바이트
+  일치): 실재 확인됨.
+- negative_tests 아홉 항목: 전부 실재 확인됨(`prost_canonical.rs`,
+  `field_number_audit.rs`, `reference_canonical.py` 내 정확한
+  줄 인용까지 확인).
+- limitations 나머지 3건(중첩 메시지 미검증 / Ed25519 미실행 /
+  `SCHEMA_TOO_NEW` 미실행)의 2026-08-17 정밀화: 여전히 유효.
+- vectors 40건: 2026-08-17 addendum 과 일치, 재확인됨.
+
+### review_outcome
+
+`CHANGES_REQUESTED` — 위 수치 재정정(이 addendum)으로 반영했다.
+좁은 범위의 후속 확인을 별도로 요청해 `ACCEPTED` 를 받은 뒤에만
+schema v2 로 승격한다.

@@ -16,6 +16,49 @@
 
 ---
 
+## 2026-08-18 20:15 — DoD-03 schema v1 → v2 승격 완료 (DoD-01·DoD-02 에 이은 세 번째)
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격), DoD-01·DoD-02 에
+  이은 세 번째 사례. 사용자 지시 — "코덱스 검수 결과 확인해서 DoD-01
+  승격 마무리해줘. 그리고 코덱스 쿼터로 다음 작업 이어서 가봐.
+  테스트와 동시에 개발할 수 있는 부분은 개발하면서 가야지." 의
+  연장(자율 루프, DoD-03·04·06 3라운드 재검수 사이클의 다음 항목).
+- 스트림: Protocol.
+- 수행: 같은 절차(오늘 재실행 + 오늘 새 독립 검수를 v2 근거로 삼는다)
+  를 DoD-03 에 적용했다. `cargo test -p gputeer-protocol --test
+  canonical_vectors --test field_number_audit --test prost_canonical`
+  (50/50) + Python self-test(8/8) + 벡터 40개 교차 일치를 직접
+  실행해 `docs/evidence/_raw/DoD-03_v2_promotion_2026-08-18.txt` 에
+  저장했다. 전체 재검수(`agent:codex-cli`, fresh-read-only, `p70`
+  프롬프트) — `CHANGES_REQUESTED`.
+- **DoD-01·DoD-02 와 같은 패턴이 세 번째로 반복됐다** — `Domain::GrantAck`
+  추가로 domain 수치가 다시 stale 해졌다. 다만 이번엔 코드 결함이
+  아니라(`t1_signing_targets.rs` 는 DoD-02 승격 때 이미 고쳐져
+  24종/20개를 정확히 보고하고 있었다) evidence 문서 수치만 stale
+  했다 — frontmatter limitations 1번의 "17종 중 13종"과 2026-08-17
+  addendum 의 "41개·23종·19종" 이 둘 다 낡아 있었다(실제: Domain
+  24종, `ToCanonicalFields` 42개 선언, coverage 24종 중 20개 구현).
+  새 addendum(2026-08-18 20:00 경)으로 실측치를 기록하고, coverage
+  테스트가 여전히 손으로 쓴 배열이라 새 enum variant 를 자동으로
+  못 잡는다는 한계를 새로 명시했다 — 원본 frontmatter 와 이전
+  addendum 의 원문 수치는 append-only 원칙(`P0-07` 선례)에 따라
+  손대지 않았다. 좁은 후속 재검수(`p71` 프롬프트) — **`ACCEPTED`.**
+- v2 frontmatter(`schema_version: 2`, executor/reviewer 메타데이터,
+  `review_context: fresh-read-only`, `review_outcome: ACCEPTED`,
+  raw_output digest/bytes)를 추가(순수 additive, 기존 필드는
+  안 건드림). `artifacts:` 에 `DoD-03_v2_promotion_2026-08-18.txt`·
+  `DoD-03_review.txt` 추가. `docs/evidence/_schema_v1_grandfathered.txt`
+  에서 DoD-03 제거(14→13건), `scripts/verify_evidence.py` 의
+  `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **11 → 10건**. `cargo test --workspace` 전체
+  재실행 — 전 항목 0 failed(회귀 없음).
+- 리포트: 이 이력 항목. 다음은 계획대로 `DoD-04`·`DoD-06` — 이미
+  addendum 은 각 1라운드·1라운드 만에 `ACCEPTED` 를 받아 두었으므로
+  같은 v2 승격 절차만 남았다.
+
+---
+
 ## 2026-08-18 19:20 — Lease 최소 조각 코덱스 검수 `ACCEPTED`
 
 - 계획: `0be82e8`(Lease 최소 조각)에 대한 코덱스 독립 검수(`p69`

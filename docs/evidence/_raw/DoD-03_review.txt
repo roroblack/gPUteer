@@ -1,0 +1,80 @@
+독립 검수 receipt — DoD-03 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      DoD-03
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-03_서명대상_완전성.md (frontmatter + 본문 전체,
+  기존 addendum 4라운드 포함) 을 처음부터 다시 검수 — 기존 addendum 의
+  ACCEPTED 판정을 그대로 믿지 않고 파일:줄을 직접 재확인했다. 특히
+  "17종 중 13종" limitation 수치가 DoD-01·DoD-02 재검수와 같은 이유
+  (Domain::GrantAck 추가)로 또 stale 인지 확인했다.
+  crates/protocol/src/canonical.rs
+  crates/protocol/src/to_fields.rs
+  crates/protocol/tests/t1_signing_targets.rs
+  crates/protocol/tests/prost_canonical.rs
+  crates/protocol/tests/field_number_audit.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p70 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| Domain 개수 | stale — 실제 24종 | canonical.rs:282-315 |
+| coverage 테스트 | 실재 확인됨 — 24종 중 20개 구현 | t1_signing_targets.rs:397-448 |
+| coverage 테스트의 자동성 | 확인 안 됨 / 결함 잔존 | 수기 배열, enum 순회 아님(t1_signing_targets.rs:397-428) |
+| ToCanonicalFields 개수 | stale — 실제 42개 선언 | to_fields.rs grep 결과 |
+| JobManifest 필드 완전성 | 실재 확인됨 | proto/job.proto:44-96, to_fields.rs:853-900, field_number_audit.rs:188-195,316-358 |
+| Lease 필드 완전성 | 실재 확인됨 | proto/lease.proto:35-66, to_fields.rs:912-936 |
+| 필드 mutation 영향 | 부분 확인됨 | JobManifest 27개 직접 검사(prost_canonical.rs:745-813), Lease 는 scope 만(:388-410) |
+| Rust/Python 바이트 일치 | 확인 안 됨(샌드박스) | .cargo-build-lock 권한 거부로 cargo test 미실행 |
+| Python self-test/verify | 실재 확인됨 | _raw/DoD-03_v2_promotion_2026-08-18.txt:7-12 |
+| negative_tests 목록 | 실재 확인됨 | prost_canonical.rs / field_number_audit.rs / reference_canonical.py 각 인용 확인 |
+| 중첩 메시지 개별 검증 limitation | 실재 확인됨 | DoD-03:206-210, prost_canonical.rs:745-777 |
+| Ed25519 limitation | 정밀화 유효 | crypto/src/lib.rs:58-64,110-158 |
+| SCHEMA_TOO_NEW limitation | 정밀화 유효, 원문 bullet 은 stale | signing.rs:741-744 |
+
+필요한 정정: limitation 1번의 "17종 중 13종" 및 2026-08-17 addendum
+의 "41개·23종·19종" 수치를 24종/20개/42개로 재정정, coverage 테스트
+의 수기 배열 한계를 명시.
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+- DoD-03 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) — schema
+  v2 승격 전 재확인, 수치 재정정" 을 추가해 24종/20개/42개 실측치를
+  기록하고, coverage 테스트의 수기 배열 한계를 새로 명시했다.
+  frontmatter 원문(`DoD-03:72`)과 2026-08-17 addendum 원문
+  (`DoD-03:279-282`)은 append-only 원칙(`P0-07` 선례)에 따라 손대지
+  않았다.
+- Rust 50/50 은 claude-code 세션이 이미 로컬에서 직접 실행해 확인함
+  — docs/evidence/_raw/DoD-03_v2_promotion_2026-08-18.txt 참조.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p71 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+새 addendum은 추가 정정 없이 schema v2 승격을 진행할 수 있을 정도로
+정정되었다.
+
+- Domain enum은 24개: canonical.rs:282-315.
+- coverage 배열은 24개 항목이며 true 20개·false 4개, 테스트가 직접
+  assert: t1_signing_targets.rs:397-448.
+- ToCanonicalFields for pb::* 선언은 직접 집계 결과 42개(첫 선언
+  to_fields.rs:104, 마지막 to_fields.rs:912).
+- 원본 수치 "17종 중 13종"(DoD-03:72)과 2026-08-17 수치
+  "41개·23종·19종"(DoD-03:279-282)은 그대로 남아 있음 — append-only
+  준수 확인.
+- coverage 는 enum 순회가 아니라 수기 배열(t1_signing_targets.rs:397-428)
+  이므로 새 variant 누락 시 조용히 stale 될 수 있다는 한계 서술은
+  정확함.
+- raw 증거 파일 존재, 50 passed / 0 failed·Python 8/8·벡터 40개가
+  addendum 인용과 일치: DoD-03_v2_promotion_2026-08-18.txt:1-12.
+
+확인 안 됨: 없음(이번 좁은 재검수 범위 안에서는).

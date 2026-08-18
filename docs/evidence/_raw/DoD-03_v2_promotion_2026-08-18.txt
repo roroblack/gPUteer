@@ -1,0 +1,18 @@
+$ cargo test -p gputeer-protocol --test prost_canonical --test field_number_audit --test canonical_vectors
+canonical_vectors: 15 passed / 0 failed
+field_number_audit: 10 passed / 0 failed
+prost_canonical: 25 passed / 0 failed
+합계: 50 passed / 0 failed
+
+$ python tools/canonical/reference_canonical.py --self-test
+all checks passed (8/8 규칙)
+
+$ python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+재생성 대조: 40개 벡터 일치
+vector cross-checks: OK
+
+이 파일은 DoD-03 을 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 13795c6 무렵
+기록, docs/evidence/_raw/DoD-03_test_output.txt)은 문서 본문에 이미
+보존돼 있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라,
+v2 승격 시점의 독립적 재확인이다.

@@ -299,15 +299,19 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·DoD-02 완료
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·DoD-02·DoD-03 완료
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
    코드 결함(손으로 쓴 domain 배열이 enum 크기 변화를 못 잡음)도
-   찾아 고쳤다 — evidence 재검수가 실제 버그를 잡은 사례.
+   찾아 고쳤다 — evidence 재검수가 실제 버그를 잡은 사례. `DoD-03`
+   은 그 결함이 이미 고쳐진 뒤라 코드 결함 없이 evidence 문서 수치만
+   (같은 `Domain::GrantAck` 원인으로) 다시 stale 했다 — addendum
+   재정정만으로 1차 CHANGES_REQUESTED → 2차 ACCEPTED.
    `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→11건. 남은 11건(+ENV-01·02,
-   review 비강제)은 같은 절차로 이어간다 — DoD-03 이 다음 후보.
+   독립 검수 없는 P0/DoD PASS 부채 13→11→**10건**. DoD-04·DoD-06 은
+   이미 addendum 이 각 1라운드 만에 ACCEPTED 를 받아 두었으므로
+   다음 후보 — 같은 v2 frontmatter 승격 절차만 남았다.
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
