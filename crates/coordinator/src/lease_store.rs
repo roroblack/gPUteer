@@ -280,6 +280,86 @@ impl CoordinatorLeaseStore {
         stored.renew_after_unix_ms = new_renew_after_unix_ms;
         Ok(stored)
     }
+
+    /// `renew_existing` 과 같은 갱신 경로지만, UPDATE 전에
+    /// `max_total_duration_seconds` 누적 시간 초과 여부를 판정한다.
+    /// 조회→판정→조건부 UPDATE 를 트랜잭션 하나로 묶어 TOCTOU 없이
+    /// 판정한다 — 초과했으면 저장소를 전혀 바꾸지 않는다(만료시각을
+    /// 연장해버리면 다음 판정 시각이 밀려 정책이 무력화된다).
+    ///
+    /// `now_unix_ms < stored.issued_at_unix_ms`(clock rollback) 는
+    /// 경과시간을 0 으로 취급해 갱신을 계속 허용하지 않고, **초과로
+    /// 취급해 fail closed** 한다.
+    pub fn renew_existing_within_duration(
+        &mut self,
+        lease_id: &str,
+        now_unix_ms: u64,
+        new_expires_at_unix_ms: u64,
+        new_renew_after_unix_ms: u64,
+    ) -> Result<RenewDecision, LeaseStoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+
+        let existing = transaction
+            .query_row(SELECT_LEASE_SQL, rusqlite::params![lease_id], row_to_raw)
+            .optional()
+            .map_err(map_sql_error)?
+            .map(RawLeaseRow::into_stored)
+            .transpose()?;
+
+        let Some(stored) = existing else {
+            // ★ 아무것도 쓰지 않았다 — commit 은 no-op.
+            transaction.commit().map_err(map_sql_error)?;
+            return Err(LeaseStoreError::NotFound);
+        };
+
+        let max_duration_ms = stored.max_total_duration_seconds.saturating_mul(1_000);
+        let exceeded = match now_unix_ms.checked_sub(stored.issued_at_unix_ms) {
+            Some(elapsed_ms) => elapsed_ms > max_duration_ms,
+            None => true,
+        };
+
+        if exceeded {
+            // ★ 판정만 하고 아무것도 쓰지 않는다 — expires_at 을
+            //   연장하지 않아야 다음 요청에서도 같은 issued_at 기준으로
+            //   다시 초과 판정된다.
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(RenewDecision::MaxDurationExceeded(stored));
+        }
+
+        transaction
+            .execute(
+                "UPDATE coordinator_leases
+                 SET expires_at_unix_ms = ?2, renew_after_unix_ms = ?3
+                 WHERE lease_id = ?1",
+                rusqlite::params![
+                    lease_id,
+                    encode_u64(new_expires_at_unix_ms),
+                    encode_u64(new_renew_after_unix_ms),
+                ],
+            )
+            .map_err(map_sql_error)?;
+
+        transaction.commit().map_err(map_sql_error)?;
+
+        let mut renewed = stored;
+        renewed.expires_at_unix_ms = new_expires_at_unix_ms;
+        renewed.renew_after_unix_ms = new_renew_after_unix_ms;
+        Ok(RenewDecision::Renewed(renewed))
+    }
+}
+
+/// [`CoordinatorLeaseStore::renew_existing_within_duration`] 의 결과 —
+/// 저장소가 실제로 만료시각을 갱신했는지, 누적 시간 초과로 갱신하지
+/// 않았는지를 호출자에게 구분해 알려준다. 두 variant 모두 판정 시점의
+/// `StoredLease` 값을 담는다(`Renewed` 는 새 만료시각 반영, `MaxDurationExceeded`
+/// 는 저장된 값 그대로).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenewDecision {
+    Renewed(StoredLease),
+    MaxDurationExceeded(StoredLease),
 }
 
 /// 저장된 레코드와 새로 발급하려는 값의 identity 가 일치하는지
@@ -483,6 +563,113 @@ mod tests {
 
         let result = s.get_or_issue(&candidate_with_different_epoch).unwrap();
         assert_eq!(result.fence_epoch, 5, "저장된 값이 우선해야 한다");
+    }
+
+    #[test]
+    fn renew_within_duration_extends_expiry_when_not_exceeded() {
+        let (mut s, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.issued_at_unix_ms = 1_000;
+        record.max_total_duration_seconds = 3_600; // 1시간
+        s.get_or_issue(&record).unwrap();
+
+        // issued_at + 30분 경과 — 아직 한도(1시간) 안이다.
+        let now = 1_000 + 30 * 60 * 1_000;
+        let result = s
+            .renew_existing_within_duration("lease-1", now, now + 60_000, now + 30_000)
+            .unwrap();
+
+        match result {
+            RenewDecision::Renewed(renewed) => {
+                assert_eq!(renewed.expires_at_unix_ms, now + 60_000);
+                assert_eq!(renewed.renew_after_unix_ms, now + 30_000);
+            }
+            other => panic!("한도 안인데 Renewed 가 아니다: {other:?}"),
+        }
+        // 저장소에도 실제로 반영됐다.
+        let fetched = s.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.expires_at_unix_ms, now + 60_000);
+    }
+
+    #[test]
+    fn renew_within_duration_refuses_and_does_not_extend_when_exceeded() {
+        let (mut s, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.issued_at_unix_ms = 1_000;
+        record.expires_at_unix_ms = 5_000;
+        record.renew_after_unix_ms = 3_000;
+        record.max_total_duration_seconds = 3_600; // 1시간
+        s.get_or_issue(&record).unwrap();
+
+        // issued_at + 1시간 + 1ms — 정확히 한도를 넘겼다.
+        let now = 1_000 + 3_600 * 1_000 + 1;
+        let result = s
+            .renew_existing_within_duration("lease-1", now, now + 60_000, now + 30_000)
+            .unwrap();
+
+        match result {
+            RenewDecision::MaxDurationExceeded(stored) => {
+                // 만료시각이 원본 그대로다 — 연장되지 않았다.
+                assert_eq!(stored.expires_at_unix_ms, 5_000);
+                assert_eq!(stored.renew_after_unix_ms, 3_000);
+            }
+            other => panic!("한도를 넘겼는데 MaxDurationExceeded 가 아니다: {other:?}"),
+        }
+        // 저장소도 실제로 바뀌지 않았다.
+        let fetched = s.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.expires_at_unix_ms, 5_000);
+        assert_eq!(fetched.renew_after_unix_ms, 3_000);
+    }
+
+    #[test]
+    fn renew_within_duration_boundary_is_inclusive_of_the_limit() {
+        let (mut s, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.issued_at_unix_ms = 1_000;
+        record.max_total_duration_seconds = 3_600;
+        s.get_or_issue(&record).unwrap();
+
+        // issued_at + 정확히 1시간 — 한도와 같다(아직 허용, `>` 만 거부).
+        let now = 1_000 + 3_600 * 1_000;
+        let result = s
+            .renew_existing_within_duration("lease-1", now, now + 60_000, now + 30_000)
+            .unwrap();
+
+        assert!(
+            matches!(result, RenewDecision::Renewed(_)),
+            "경계값(정확히 한도)은 아직 허용해야 한다: {result:?}"
+        );
+    }
+
+    #[test]
+    fn renew_within_duration_treats_clock_rollback_as_exceeded() {
+        let (mut s, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.issued_at_unix_ms = 10_000;
+        record.expires_at_unix_ms = 20_000;
+        record.max_total_duration_seconds = 3_600;
+        s.get_or_issue(&record).unwrap();
+
+        // now < issued_at — 시계가 뒤로 갔다. elapsed=0 으로 보고
+        // 계속 허용하면 안 된다 — fail closed 로 초과 취급해야 한다.
+        let now = 5_000;
+        let result = s
+            .renew_existing_within_duration("lease-1", now, now + 60_000, now + 30_000)
+            .unwrap();
+
+        match result {
+            RenewDecision::MaxDurationExceeded(stored) => {
+                assert_eq!(stored.expires_at_unix_ms, 20_000, "연장되지 않았다");
+            }
+            other => panic!("clock rollback 은 fail closed(초과 취급)여야 한다: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn renew_within_duration_missing_lease_id_is_not_found() {
+        let (mut s, _dir) = open_temp();
+        let result = s.renew_existing_within_duration("no-such-lease", 1_000, 2_000, 1_800);
+        assert!(matches!(result, Err(LeaseStoreError::NotFound)));
     }
 
     #[test]

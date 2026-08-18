@@ -1060,6 +1060,216 @@ pub fn run() -> Result<String, String> {
          갱신 요청의 fence_epoch 을 저장된 값과 대조한다, 그 실행의 CLI 값이 아니라)\n",
     );
 
+    // ══════════════════════════════════════════════════════════════
+    // max_total_duration_seconds 갱신 차단 (2026-08-19, `docs/plans/2026-08-19_2350_...`)
+    //
+    // 실제로 시간을 흘려보내야 판별력이 생긴다 — 짧은 한도
+    // (`--max-total-duration-seconds 2`)를 CLI 로 주고, 이 selftest
+    // 프로세스가 실제로 2.2초 넘게 sleep 한 뒤 **별도** Coordinator/
+    // Agent 프로세스로 갱신을 시도한다. `--renew-rounds` 만 늘리는
+    // 것으로는 판별할 수 없다 — 현재 반복 요청 사이에 sleep 이 없어
+    // 모든 라운드가 한도 안에서 끝난다(설계 p111).
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 22. 누적 시간 초과 — 서명된 MAX_DURATION_EXCEEDED 로 갱신 거부 ──
+    let lease_dir_22 = tempfile::tempdir()
+        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(22): {e}"))?;
+    let lease_db_path_22 = lease_dir_22.path().join("leases.sqlite3");
+    let lease_db_22 = lease_db_path_22
+        .to_str()
+        .ok_or_else(|| "lease store 경로가 UTF-8 이 아니다".to_string())?;
+
+    let issue_22 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_22,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "2",
+            "--do-renew",
+            "false",
+        ],
+        &["--do-renew", "false"],
+    )?;
+    if !issue_22.coordinator_success || !issue_22.agent_success {
+        return Err(format!(
+            "누적 시간 초과 시나리오 1차(최초 발급) 실행이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_22.coordinator_success,
+            issue_22.coordinator_stdout,
+            issue_22.coordinator_stderr,
+            issue_22.agent_success,
+            issue_22.agent_stdout,
+            issue_22.agent_stderr
+        ));
+    }
+
+    // 저장소에 실제로 기록된 만료시각을 미리 읽어둔다 — 초과 판정
+    // 뒤에도 이 값이 그대로인지 나중에 직접 대조한다.
+    let expires_before_22 = {
+        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_22)
+            .map_err(|e| format!("lease store 재조회 열기 실패(22, 사전): {e}"))?;
+        store
+            .get(fixture.lease_id)
+            .map_err(|e| format!("lease store 재조회 실패(22, 사전): {e}"))?
+            .ok_or_else(|| "lease store 에 22번 시나리오 lease 가 없다(사전)".to_string())?
+            .expires_at_unix_ms
+    };
+
+    // 실제로 한도(2초)를 넘긴다 — 이 sleep 이 짧은 한도를 CLI 로 준
+    // 것을 실측 가능하게 만든다(설계 p111 "두 프로세스 + sleep" 권장안).
+    std::thread::sleep(std::time::Duration::from_millis(2_200));
+
+    let renew_22 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_22,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "2",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if renew_22.coordinator_pid == issue_22.coordinator_pid {
+        return Err(format!(
+            "누적 시간 초과 시나리오의 2차 coordinator PID 가 1차와 같다 — 별도 프로세스가 \
+             아니다.\n1차 coordinator_pid={} 2차 coordinator_pid={}",
+            issue_22.coordinator_pid, renew_22.coordinator_pid
+        ));
+    }
+    if !renew_22.coordinator_success
+        || renew_22.agent_success
+        || !renew_22
+            .agent_stderr
+            .contains("RENEW_REFUSED:MAX_DURATION_EXCEEDED")
+    {
+        return Err(format!(
+            "누적 시간(2초)을 넘겼는데 서명된 MAX_DURATION_EXCEEDED 로 거부되지 않았다.\n\
+             1차 coordinator_pid={} 2차 coordinator_pid={}\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_22.coordinator_pid,
+            renew_22.coordinator_pid,
+            renew_22.coordinator_success,
+            renew_22.coordinator_stdout,
+            renew_22.coordinator_stderr,
+            renew_22.agent_success,
+            renew_22.agent_stdout,
+            renew_22.agent_stderr
+        ));
+    }
+
+    // 저장소의 만료시각이 연장되지 않았는지 직접 재조회로 확인한다 —
+    // 초과 판정에서 UPDATE 를 아예 실행하지 않아야 다음 판정 시각도
+    // 밀리지 않는다(연장해버리면 정책이 스스로 무력화된다).
+    let expires_after_22 = {
+        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_22)
+            .map_err(|e| format!("lease store 재조회 열기 실패(22, 사후): {e}"))?;
+        store
+            .get(fixture.lease_id)
+            .map_err(|e| format!("lease store 재조회 실패(22, 사후): {e}"))?
+            .ok_or_else(|| "lease store 에 22번 시나리오 lease 가 없다(사후)".to_string())?
+            .expires_at_unix_ms
+    };
+    if expires_after_22 != expires_before_22 {
+        return Err(format!(
+            "MAX_DURATION_EXCEEDED 로 거부했는데도 저장소의 expires_at_unix_ms 가 연장됐다 \
+             — 초과 시 UPDATE 를 실행하지 않아야 한다.\n이전={expires_before_22} 이후={expires_after_22}"
+        ));
+    }
+    report.push_str(
+        "22) max_total_duration_seconds 초과 — 서명된 MAX_DURATION_EXCEEDED 로 갱신 거부 확인 \
+         (저장소 만료시각 불변)\n",
+    );
+
+    // ── 23. 대조군 — 한도 안에서는 여전히 RENEWED (오탐 없음) ──────────
+    let lease_dir_23 = tempfile::tempdir()
+        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(23): {e}"))?;
+    let lease_db_path_23 = lease_dir_23.path().join("leases.sqlite3");
+    let lease_db_23 = lease_db_path_23
+        .to_str()
+        .ok_or_else(|| "lease store 경로가 UTF-8 이 아니다".to_string())?;
+
+    let issue_23 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_23,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "3600",
+            "--do-renew",
+            "false",
+        ],
+        &["--do-renew", "false"],
+    )?;
+    if !issue_23.coordinator_success || !issue_23.agent_success {
+        return Err(format!(
+            "대조군 시나리오 1차(최초 발급) 실행이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_23.coordinator_success,
+            issue_23.coordinator_stdout,
+            issue_23.coordinator_stderr,
+            issue_23.agent_success,
+            issue_23.agent_stdout,
+            issue_23.agent_stderr
+        ));
+    }
+
+    let renew_23 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_23,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "3600",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if renew_23.coordinator_pid == issue_23.coordinator_pid {
+        return Err(format!(
+            "대조군 시나리오의 2차 coordinator PID 가 1차와 같다 — 별도 프로세스가 아니다.\n\
+             1차 coordinator_pid={} 2차 coordinator_pid={}",
+            issue_23.coordinator_pid, renew_23.coordinator_pid
+        ));
+    }
+    if !renew_23.coordinator_success || !renew_23.agent_success {
+        return Err(format!(
+            "한도(3600초) 안인데 갱신이 실패했다 — 오탐(false positive)이다.\n\
+             1차 coordinator_pid={} 2차 coordinator_pid={}\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_23.coordinator_pid,
+            renew_23.coordinator_pid,
+            renew_23.coordinator_success,
+            renew_23.coordinator_stdout,
+            renew_23.coordinator_stderr,
+            renew_23.agent_success,
+            renew_23.agent_stdout,
+            renew_23.agent_stderr
+        ));
+    }
+    report.push_str(
+        "23) max_total_duration_seconds 대조군 — 한도 안에서는 여전히 RENEWED 확인 (오탐 없음)\n",
+    );
+
     Ok(report)
 }
 

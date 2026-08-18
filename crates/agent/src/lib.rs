@@ -347,6 +347,11 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             }
             2 => return Err("RENEW_REFUSED:SUPERSEDED".into()),
             3 => return Err("RENEW_REFUSED:QUARANTINED".into()),
+            // ★ max_total_duration_seconds 갱신 차단(2026-08-19,
+            //   docs/plans/2026-08-19_2350_...) — 이 lease_id 로 누적
+            //   가능한 최대 시간을 넘었다. 새 lease_id 재발급은 이
+            //   조각의 범위 밖이다 — 여기서는 명시적으로 거부만 한다.
+            6 => return Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
             other => return Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
         }
     }

@@ -28,7 +28,7 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 pub mod lease_store;
-use lease_store::{CoordinatorLeaseStore, StoredLease};
+use lease_store::{CoordinatorLeaseStore, RenewDecision, StoredLease};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -130,6 +130,14 @@ pub struct CoordinatorConfig {
     /// 동작** — `config.fence_epoch`/`config.lease_id` 등을 그 실행
     /// 동안만 쓰는 기존 레거시 경로를 그대로 쓴다(회귀 없음).
     pub lease_db_path: Option<PathBuf>,
+
+    // ── max_total_duration_seconds 갱신 차단 (2026-08-19, `docs/plans/2026-08-19_2350_...`) ──
+    /// 최초 발급 시 후보값으로만 쓰인다 — 이미 저장소에 있는 Lease 의
+    /// 값은 저장소가 권위를 갖는다(`get_or_issue()` 와 같은 원칙).
+    /// `lease_store` 가 `None`(레거시)이면 이 값은 저장은 되지만 갱신
+    /// 판정에는 쓰이지 않는다 — 그 경로는 매 요청마다 `issued_at_unix_ms`
+    /// 를 즉석에서 재구성해 실제 경과시간을 추적하지 못한다.
+    pub max_total_duration_seconds: u64,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -380,11 +388,22 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 /// outer 서명과 별개다).
 ///
 /// ★ Coordinator 영속 Lease 저장소(2026-08-19) — `lease_store` 가
-///   `Some` 이면 `renew_existing()` 으로 **저장된** fence_epoch 를
-///   그대로 쓰고 `expires_at`/`renew_after` 만 갱신한다(`renewed_fence_epoch`
-///   CLI 값은 store 모드에서는 쓰이지 않는다 — 저장소가 epoch 의
-///   권위를 갖는다). `None` 이면(레거시 경로) 기존과 동일하게
-///   `config.renewed_fence_epoch` 를 쓴다.
+///   `Some` 이면 `renew_existing_within_duration()` 으로 **저장된**
+///   fence_epoch 를 그대로 쓰고 `expires_at`/`renew_after` 만 갱신한다
+///   (`renewed_fence_epoch` CLI 값은 store 모드에서는 쓰이지 않는다 —
+///   저장소가 epoch 의 권위를 갖는다). `None` 이면(레거시 경로) 기존과
+///   동일하게 `config.renewed_fence_epoch` 를 쓴다.
+///
+/// ★ `max_total_duration_seconds` 갱신 차단(2026-08-19,
+///   `docs/plans/2026-08-19_2350_...`) — `lease_store` 가 `Some` 일
+///   때만 저장된 `issued_at_unix_ms` 기준 누적 시간을 판정한다.
+///   초과했으면 `renew_outcome_override` 와 **무관하게** 서명된
+///   `RENEW_OUTCOME_MAX_DURATION_EXCEEDED` 를 반환한다 — 실제 만료
+///   정책이 테스트용 override 보다 우선해야, override 가 이 정책
+///   검증을 가릴 수 없다. `lease_store` 가 `None` 이면(레거시) 이
+///   판정 자체를 하지 않는다 — 그 경로는 매 요청마다
+///   `issued_at_unix_ms` 를 즉석에서 재구성해 실제 경과시간을 추적
+///   하지 못하기 때문이다(legacy enforcement bypass).
 fn build_renew_result(
     config: &CoordinatorConfig,
     lease_store: &mut Option<CoordinatorLeaseStore>,
@@ -399,19 +418,39 @@ fn build_renew_result(
         request_nonce
     };
 
-    let mut result = match config.renew_outcome_override {
-        Some(outcome) => pb::RenewLeaseResult {
-            outcome,
-            detail: "policy override".into(),
-            schema_version: 1,
-            coordinator_id: config.coordinator_device_id.clone(),
-            issued_at_unix_ms: now,
-            request_nonce,
-            ..Default::default()
+    let policy_override = |outcome: i32, request_nonce: Vec<u8>| pb::RenewLeaseResult {
+        outcome,
+        detail: "policy override".into(),
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce,
+        ..Default::default()
+    };
+
+    let mut result = match lease_store {
+        Some(store) => match store
+            .renew_existing_within_duration(lease_id, now, now + 60_000, now + 30_000)
+            .map_err(|e| format!("lease store 갱신 실패: {e}"))?
+        {
+            RenewDecision::MaxDurationExceeded(_) => pb::RenewLeaseResult {
+                outcome: 6, // RENEW_OUTCOME_MAX_DURATION_EXCEEDED
+                detail: "max total duration exceeded".into(),
+                schema_version: 1,
+                coordinator_id: config.coordinator_device_id.clone(),
+                issued_at_unix_ms: now,
+                request_nonce,
+                ..Default::default()
+            },
+            RenewDecision::Renewed(resolved) => match config.renew_outcome_override {
+                Some(outcome) => policy_override(outcome, request_nonce),
+                None => build_renewed_lease_result(config, key, now, resolved, request_nonce)?,
+            },
         },
-        None => {
-            let resolved = match lease_store {
-                None => StoredLease {
+        None => match config.renew_outcome_override {
+            Some(outcome) => policy_override(outcome, request_nonce),
+            None => {
+                let resolved = StoredLease {
                     lease_id: config.lease_id.clone(),
                     job_id: config.job_id.clone(),
                     attempt_id: config.attempt_id.clone(),
@@ -422,52 +461,11 @@ fn build_renew_result(
                     coordinator_term: 1,
                     issued_at_unix_ms: now,
                     renew_after_unix_ms: now + 30_000,
-                    max_total_duration_seconds: 86_400,
-                },
-                Some(store) => store
-                    .renew_existing(lease_id, now + 60_000, now + 30_000)
-                    .map_err(|e| format!("lease store 갱신 실패: {e}"))?,
-            };
-
-            let max_total_duration_seconds =
-                u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
-            let mut lease = pb::Lease {
-                schema_version: 1,
-                lease_id: resolved.lease_id,
-                job_id: resolved.job_id,
-                attempt_id: resolved.attempt_id,
-                fence_epoch: resolved.fence_epoch,
-                coordinator_term: resolved.coordinator_term,
-                holder_node_id: resolved.holder_node_id.clone(),
-                member_node_ids: vec![resolved.holder_node_id],
-                issuing_coordinator_id: resolved.issuing_coordinator_id,
-                issued_at_unix_ms: resolved.issued_at_unix_ms,
-                expires_at_unix_ms: resolved.expires_at_unix_ms,
-                renew_after_unix_ms: resolved.renew_after_unix_ms,
-                max_total_duration_seconds,
-                ..Default::default()
-            };
-            lease.coordinator_signature = sign(key, &lease).to_vec();
-
-            if config.corrupt_renewed_lease_signature {
-                let last = lease
-                    .coordinator_signature
-                    .last_mut()
-                    .expect("Lease coordinator_signature 는 비어 있지 않다");
-                *last ^= 0x01;
+                    max_total_duration_seconds: config.max_total_duration_seconds,
+                };
+                build_renewed_lease_result(config, key, now, resolved, request_nonce)?
             }
-
-            pb::RenewLeaseResult {
-                outcome: 1, // RENEW_OUTCOME_RENEWED
-                lease: Some(lease),
-                detail: "ok".into(),
-                schema_version: 1,
-                coordinator_id: config.coordinator_device_id.clone(),
-                issued_at_unix_ms: now,
-                request_nonce,
-                ..Default::default()
-            }
-        }
+        },
     };
 
     result.coordinator_signature = sign(key, &result).to_vec();
@@ -481,6 +479,57 @@ fn build_renew_result(
     }
 
     Ok(result)
+}
+
+/// 정상 갱신(`RENEW_OUTCOME_RENEWED`) 결과를 만든다 — 새 `Lease` 를
+/// 독립적으로 서명해 담는다(규칙 i, nested 서명은 outer 서명과 별개).
+/// `build_renew_result` 의 두 정상 경로(레거시·저장소 갱신 성공)가
+/// 공유한다.
+fn build_renewed_lease_result(
+    config: &CoordinatorConfig,
+    key: &SigningKey,
+    now: u64,
+    resolved: StoredLease,
+    request_nonce: Vec<u8>,
+) -> Result<pb::RenewLeaseResult, String> {
+    let max_total_duration_seconds =
+        u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
+    let mut lease = pb::Lease {
+        schema_version: 1,
+        lease_id: resolved.lease_id,
+        job_id: resolved.job_id,
+        attempt_id: resolved.attempt_id,
+        fence_epoch: resolved.fence_epoch,
+        coordinator_term: resolved.coordinator_term,
+        holder_node_id: resolved.holder_node_id.clone(),
+        member_node_ids: vec![resolved.holder_node_id],
+        issuing_coordinator_id: resolved.issuing_coordinator_id,
+        issued_at_unix_ms: resolved.issued_at_unix_ms,
+        expires_at_unix_ms: resolved.expires_at_unix_ms,
+        renew_after_unix_ms: resolved.renew_after_unix_ms,
+        max_total_duration_seconds,
+        ..Default::default()
+    };
+    lease.coordinator_signature = sign(key, &lease).to_vec();
+
+    if config.corrupt_renewed_lease_signature {
+        let last = lease
+            .coordinator_signature
+            .last_mut()
+            .expect("Lease coordinator_signature 는 비어 있지 않다");
+        *last ^= 0x01;
+    }
+
+    Ok(pb::RenewLeaseResult {
+        outcome: 1, // RENEW_OUTCOME_RENEWED
+        lease: Some(lease),
+        detail: "ok".into(),
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce,
+        ..Default::default()
+    })
 }
 
 fn issue_grant(
@@ -547,7 +596,7 @@ fn issue_lease(
             coordinator_term: 1,
             issued_at_unix_ms: now,
             renew_after_unix_ms: now + 30_000,
-            max_total_duration_seconds: 86_400,
+            max_total_duration_seconds: config.max_total_duration_seconds,
         },
         Some(store) => {
             let candidate = StoredLease {
@@ -561,7 +610,7 @@ fn issue_lease(
                 coordinator_term: 1,
                 issued_at_unix_ms: now,
                 renew_after_unix_ms: now + 30_000,
-                max_total_duration_seconds: 86_400,
+                max_total_duration_seconds: config.max_total_duration_seconds,
             };
             store
                 .get_or_issue(&candidate)
@@ -667,6 +716,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
+        max_total_duration_seconds: flags
+            .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
     };
 
     run(config)
@@ -705,6 +756,15 @@ impl Flags {
         match self.0.get(key) {
             None => Ok(default),
             Some(v) => v.parse::<u32>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
+    }
+
+    /// `max_total_duration_seconds`(2026-08-19) — 안 주면 `default`
+    /// (기존 하드코딩 값 86,400초 = 24시간과 동일, 회귀 없음).
+    fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+        match self.0.get(key) {
+            None => Ok(default),
+            Some(v) => v.parse::<u64>().map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 
