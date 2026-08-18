@@ -152,7 +152,23 @@ fn every_crate_is_covered_by_ownership_rules() {
     // ★ 2026-08-17 `cli` 추가. 소유권 표(`docs/contracts/01_스트림_소유권.md`)에
     //   이미 `CLI | crates/cli/ | gputeer 명령` 으로 선언되어 있다.
     //   이 가드가 새 크레이트를 실제로 잡았다 — 등록 없이 통과하지 않았다.
-    const KNOWN: &[&str] = &["protocol", "crypto", "checkpoint", "cli", "runtime-policy"];
+    //
+    // ★ 2026-08-18 `coordinator`·`agent` 추가
+    //   (`docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`).
+    //   소유권 표에도 이미 `Coordinator | crates/coordinator/`,
+    //   `Agent | crates/agent/` 로 선언되어 있었다 — 아직 크레이트가
+    //   없던 시점부터 자리를 예약해 둔 것이다(같은 문서의
+    //   "★ 5.2 4종은 proto 메시지가 없다"와 같은 성격).
+    //   이 가드가 이번에도 실제로 잡았다.
+    const KNOWN: &[&str] = &[
+        "protocol",
+        "crypto",
+        "checkpoint",
+        "cli",
+        "runtime-policy",
+        "coordinator",
+        "agent",
+    ];
 
     let dir = repo_root().join("crates");
     let mut found: Vec<String> = std::fs::read_dir(&dir)

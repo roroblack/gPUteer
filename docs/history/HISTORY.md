@@ -16,6 +16,47 @@
 
 ---
 
+## 2026-08-18 11:20 — coordinator/agent 핸드셰이크 단계 3·4: 별도 프로세스 실제 handshake 성공
+
+- 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md` 단계 3·4.
+  사용자 지시 — "코덱스 시켜서 작업 계속 하라고 나 일어날때까지" (자율 루프 계속).
+- 스트림: Coordinator(신규), Agent(신규), CLI.
+- 수행: `crates/coordinator`·`crates/agent` 신설, `gputeer
+  coordinator-stub`/`agent-stub`/`coordinator-agent-selftest` 배선.
+  단계 1·2 검증 결과를 그대로 따라 `PersistentKeyring` 대신
+  `InMemoryKeyring`(검증용) + 호출자가 직접 쥔 `SigningKey`(서명용)
+  패턴을 썼다 — `selftest.rs:540` 이미 쓰는 패턴, 새 keyring API
+  불필요. 두 stub 은 서로 다른 OS 프로세스이므로 키를 hex 인자로
+  주고받는다(`--own-seed`/`--peer-pubkey`) — 실제 키 프로비저닝은
+  범위 밖(계획 "Out" 절). 자세한 내용은 계획 문서 "단계 3·4 수행 메모".
+- 실제로 `gputeer coordinator-agent-selftest` 를 실행해 보고서야 잡은
+  결함: `coordinator.stdout.take()` 로 READY 줄을 읽은 뒤
+  `wait_with_output()` 을 또 부르면 이미 소비된 stdout 핸들 때문에
+  RESULT 줄이 조용히 빈 문자열이 된다. `wait()` + 직접 읽기로 고쳤다.
+  고친 뒤 5회 연속 실행해 매번 서로 다른 PID 3개(자기 자신·
+  coordinator·agent)로 성공을 확인 — 타이밍 경합 없음.
+- 구현 중 계획서에 없던 안전망(`stream_ownership.rs::
+  every_crate_is_covered_by_ownership_rules`)이 새 크레이트를 감지해
+  걸렸다 — `docs/contracts/01_스트림_소유권.md`·`RULE.md` §4.1 에는
+  Coordinator/Agent 자리가 이미 예약돼 있었지만 이 테스트의 `KNOWN`
+  목록엔 없었다. 추가해 해소.
+- 이 단계가 실제로 증명하는 것: Coordinator·Agent 가 진짜 별도 PID다 ·
+  127.0.0.1 실제 TCP 연결이 성립한다 · Coordinator 가 canonical
+  `ExecutionGrant` 를 서명한다 · Agent 가 `framed_ingress::read_frame`
+  으로 Grant 를 검증하고 `require_replay_checked()` 를 통과한 뒤에만
+  ACK 를 만든다 · Coordinator 가 ACK 를 검증하고 grant_id/attempt_id/
+  agent_device_id 를 대조한다. **증명하지 않는 것**: 거부 경로(위조
+  Grant·위조 ACK·replay — 단계 5), Job 실행·스케줄링·lease·다중 Agent·
+  운영용 key protection(계획 "Out" 절 그대로).
+- 검증: `cargo build --workspace` 경고 0. `cargo test --workspace`
+  297/0/1(ignored) — 이전과 동일(coordinator/agent 크레이트에는 아직
+  자체 단위 테스트가 없다. 검증은 `coordinator-agent-selftest` 5회
+  연속 실행으로 했다). `gputeer coordinator-agent-selftest` exit 0.
+- 리포트: 이 이력 항목 + 계획 문서 "단계 3·4 수행 메모" 절. 남은
+  단계(5: 거부 경로 3종, 6: 코덱스 독립 검수)는 계획서에 남겨 뒀다.
+
+---
+
 ## 2026-08-18 10:05 — coordinator/agent 핸드셰이크 단계 1·2: `AgentGrantAck` 서명 대상 메시지 + framed_ingress 배선
 
 - 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md` 단계 1·2.

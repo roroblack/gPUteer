@@ -306,6 +306,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gputeer-agent"
+version = "0.0.1"
+dependencies = [
+ "gputeer-crypto",
+ "gputeer-protocol",
+ "prost",
+]
+
+[[package]]
 name = "gputeer-checkpoint"
 version = "0.0.1"
 dependencies = [
@@ -321,12 +330,23 @@ dependencies = [
 name = "gputeer-cli"
 version = "0.0.1"
 dependencies = [
+ "gputeer-agent",
  "gputeer-checkpoint",
+ "gputeer-coordinator",
  "gputeer-crypto",
  "gputeer-protocol",
  "gputeer-runtime-policy",
  "prost",
  "tempfile",
+]
+
+[[package]]
+name = "gputeer-coordinator"
+version = "0.0.1"
+dependencies = [
+ "gputeer-crypto",
+ "gputeer-protocol",
+ "prost",
 ]
 
 [[package]]

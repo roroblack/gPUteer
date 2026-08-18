@@ -14,5 +14,7 @@ gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
 gputeer-checkpoint = { path = "../checkpoint" }
 gputeer-runtime-policy = { path = "../runtime-policy" }
+gputeer-coordinator = { path = "../coordinator" }
+gputeer-agent = { path = "../agent" }
 prost.workspace = true
 tempfile.workspace = true

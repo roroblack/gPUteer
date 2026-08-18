@@ -115,8 +115,8 @@ crates/
 |---|---|---|---|---|
 | 1 | `AgentGrantAck` proto 추가 + `ToCanonicalFields`/`Signable` 구현 | Protocol | `cargo build -p gputeer-protocol` 통과, field_number_audit 에 등록됨 | ✅ 2026-08-18 |
 | 2 | `framed_ingress` 에 `FrameType::GrantAck`/`IngressMessage::GrantAck` 추가 | Crypto | 기존 framed_ingress 테스트 전부 green + 새 타입 round-trip 테스트 | ✅ 2026-08-18 |
-| 3 | `crates/coordinator`·`crates/agent` 신설, 최소 handshake 구현 | Coordinator/Agent(신규 스트림) | 정상 경로 1회 성공 | ⬜ |
-| 4 | `gputeer coordinator-stub`/`agent-stub`/`coordinator-agent-selftest` CLI 배선 | CLI | 별도 PID 확인(`assert_ne!` on process id), exit code 0 | ⬜ |
+| 3 | `crates/coordinator`·`crates/agent` 신설, 최소 handshake 구현 | Coordinator/Agent(신규 스트림) | 정상 경로 1회 성공 | ✅ 2026-08-18 |
+| 4 | `gputeer coordinator-stub`/`agent-stub`/`coordinator-agent-selftest` CLI 배선 | CLI | 별도 PID 확인(`assert_ne!` on process id), exit code 0 | ✅ 2026-08-18 |
 | 5 | 거부 경로 3종(위조 Grant·위조 ACK·replay) 을 selftest 에 추가 | CLI/Coordinator/Agent | 셋 다 명시적으로 거부됨을 자동 검증 | ⬜ |
 | 6 | 코덱스 독립 검수 1라운드 이상 | — | `ACCEPTED` | ⬜ |
 
@@ -151,6 +151,63 @@ schema_version=1 이므로 "구버전 검증자가 새 필드를 모른다" 는 
 (`gputeer-checkpoint::write_failure::concurrent_startup_gc_treats_not_found_as_normal_race`
 가 병렬 실행에서 1회 우연히 실패했다 — `--test-threads=1` 단독 재실행 시 통과. 이
 계획과 무관한 기존 테스트의 타이밍 취약성으로 보이며 별도 조사가 필요하다.)
+
+### 단계 3·4 수행 메모 (2026-08-18)
+
+설계 초안(`coordinator_agent_design_clean.md`, 코덱스 `p49` 프롬프트 응답)은
+`PersistentKeyring::load`/`save` 로 키를 영속화하는 것을 전제했지만,
+단계 1·2 수행 메모의 "확인 안 됨" 1번 검증 결과를 그대로 따라 **더 단순한
+경로**를 택했다 — `InMemoryKeyring`(검증 전용, `crates/cli/src/selftest.rs:540`
+이 이미 쓰는 패턴)과 호출자가 직접 쥔 `SigningKey` 만 쓰고 `PersistentKeyring`
+은 아예 쓰지 않는다. Coordinator/Agent 는 서로 다른 OS 프로세스라 키를
+공유할 방법이 필요했는데, 파일 기반 keyring 저장/로드를 새로 검증하는 대신
+`coordinator-agent-selftest` 가 두 시드를 결정적으로(라벨 문자열의
+BLAKE3-256) 만들어 각 stub 에 `--own-seed`/`--peer-pubkey` hex 인자로
+넘긴다. 실제 키 프로비저닝은 이 단계의 범위가 아니다(계획 "Out" 절).
+
+구현 결과:
+- `crates/coordinator/src/lib.rs` — `run()`: 리스닝 시작 시 `stdout` 에
+  `READY <addr>` 를 찍고, accept 후 `ExecutionGrant` 를 서명해 전송,
+  `AgentGrantAck` 를 `read_frame` + `require_replay_checked()` 로 검증해
+  `grant_id`/`attempt_id`/`agent_device_id` 를 대조한다.
+- `crates/agent/src/lib.rs` — `run()`: connect 후 `read_frame` +
+  `require_replay_checked()` 로 Grant 를 검증한 뒤에만 그 값으로
+  `AgentGrantAck` 를 만들어 서명해 돌려준다 — 검증되지 않은 값으로
+  부작용(ACK 발급)을 만들지 않는다.
+- `crates/cli/src/coordinator_agent_selftest.rs` — 두 stub 을
+  `Command::current_exe()` 로 별도 프로세스로 띄우고, PID 3개(자기 자신·
+  coordinator·agent)가 서로 다른지 확인하고, 양쪽 `RESULT` 줄이 같은
+  `grant_id`/`attempt_id`/`agent_device_id` 를 가리키는지 대조한다.
+- `crates/cli/src/main.rs` — `coordinator-stub`/`agent-stub`/
+  `coordinator-agent-selftest` 세 서브커맨드 배선.
+
+**실제로 실행해서 잡은 결함 (설계 문서에는 없던 것).** 처음 구현에서
+`coordinator.stdout.take()` 로 `READY` 줄을 읽은 뒤, 나중에
+`coordinator.wait_with_output()` 을 또 불러 나머지 출력(RESULT 줄)을
+얻으려 했다 — 그러나 stdout 핸들은 이미 `take()` 로 소비된 뒤라
+`wait_with_output()` 은 빈 stdout 을 돌려준다. 실제로 `gputeer
+coordinator-agent-selftest` 를 실행해 보고서야 발견했다("RESULT 줄이
+기대한 상관관계와 다르다 ... coordinator stdout: " 빈 문자열로 실패).
+고친 방법: coordinator 는 `wait_with_output()` 대신 `wait()` 만 쓰고,
+stdout·stderr 를 처음부터 끝까지 직접 읽는다. 고친 뒤 5회 연속 실행해
+매번 서로 다른 PID 3개로 성공함을 확인했다(타이밍 경합으로 인한
+플레이키니스 없음).
+
+구현 중 계획서에 없던 **5번째 안전망**도 걸렸다 —
+`crates/protocol/tests/stream_ownership.rs::every_crate_is_covered_by_ownership_rules`
+가 새 크레이트 `coordinator`/`agent` 를 감지하고 실패했다(소유권 표
+`docs/contracts/01_스트림_소유권.md`·`RULE.md` §4.1 에는 두 스트림이
+이미 있었지만, 이 테스트의 `KNOWN` 목록에는 없었다). `KNOWN` 에 추가해
+해소했다.
+
+`cargo test --workspace` 297/0/1(ignored) — 프로토콜/크립토 테스트 개수는
+변하지 않았다(coordinator/agent 크레이트에는 아직 자체 단위 테스트가
+없다 — 검증은 `coordinator-agent-selftest` 실행으로 했다). `cargo build
+--workspace` 경고 0.
+
+**남은 것(단계 5·6)**: 거부 경로 3종(위조 Grant·위조 ACK·replay)은
+`coordinator-agent-selftest` 에 아직 없다 — 현재는 정상 경로 1회만
+증명한다. 코덱스 독립 검수도 아직.
 
 ## 완료 기준 (DoD)
 

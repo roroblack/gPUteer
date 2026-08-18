@@ -25,9 +25,16 @@
 //!
 //! coordinator · agent · scheduler · runtime 은 여전히 **미착수**다.
 //! 이 바이너리는 "지금까지 만든 것이 실제로 맞물리는가" 만 답한다.
+//!
+//! ★ 2026-08-18 추가 — `coordinator-stub`/`agent-stub`/
+//!   `coordinator-agent-selftest`. "완전한 coordinator/agent" 가 아니다
+//!   — 별도 OS 프로세스 두 개가 서명된 `ExecutionGrant`/`AgentGrantAck`
+//!   를 주고받는 최소 핸드셰이크만 증명한다
+//!   (`docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`).
 
 use std::process::ExitCode;
 
+mod coordinator_agent_selftest;
 mod selftest;
 
 const USAGE: &str = "\
@@ -35,13 +42,22 @@ gputeer — gPUteer CLI
 
 사용법:
     gputeer selftest [작업디렉터리]
+    gputeer coordinator-agent-selftest
+    gputeer coordinator-stub --listen <addr> --own-seed <hex32> --peer-pubkey <hex32> \\
+        --coordinator-device-id <id> --agent-device-id <id> --grant-id <id> --attempt-id <id>
+    gputeer agent-stub --connect <addr> --own-seed <hex32> --peer-pubkey <hex32> \\
+        --coordinator-device-id <id> --agent-device-id <id>
 
-    selftest    지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
-                작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
+    selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
+                                  작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
+    coordinator-agent-selftest   coordinator-stub/agent-stub 을 별도 프로세스로 띄워
+                                  실제 프로세스 경계를 넘는 handshake 를 증명한다.
+    coordinator-stub/agent-stub  coordinator-agent-selftest 가 내부적으로 띄우는
+                                  하위 프로세스다 — 직접 부를 수도 있지만 사람이 쓰라고
+                                  만든 인터페이스는 아니다.
 
-★ 이 CLI 는 아직 selftest 하나뿐이다.
-  coordinator · agent · scheduler 가 미착수이므로 그것들을 부르는
-  명령도 없다. 없는 것을 있는 것처럼 적지 않는다.
+★ scheduler · runtime-container/windows 는 여전히 미착수다.
+  없는 것을 있는 것처럼 적지 않는다.
 ";
 
 fn main() -> ExitCode {
@@ -77,6 +93,30 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("selftest 실행 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("coordinator-agent-selftest") => match coordinator_agent_selftest::run() {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("coordinator-agent-selftest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("coordinator-stub") => match gputeer_coordinator::run_from_args(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("coordinator-stub 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("agent-stub") => match gputeer_agent::run_from_args(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("agent-stub 실패: {e}");
                 ExitCode::FAILURE
             }
         },

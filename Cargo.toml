@@ -6,6 +6,8 @@ members = [
     "crates/checkpoint",
     "crates/cli",
     "crates/runtime-policy",
+    "crates/coordinator",
+    "crates/agent",
 ]
 
 [workspace.package]
