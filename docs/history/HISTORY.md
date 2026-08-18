@@ -16,6 +16,46 @@
 
 ---
 
+## 2026-08-19 03:40 — `AgentGrantAck` Python 참조 구현 교차검증 공백 해소, 부수 flaky 테스트 안정화
+
+- 계획: CLAUDE.md 백로그 6번(DoD-05 v2 승격 재검수 중 발견한 공백,
+  2026-08-18). v1→v2 승격 사이클 완료 직후 다음 백로그 항목으로
+  자율 진행.
+- 스트림: Protocol · Checkpoint.
+- 수행: `tools/canonical/reference_canonical.py` 의 `SCHEMAS`·
+  `DOMAIN_TAGS` 에 `AgentGrantAck` 추가(필드 1~8 + 서명 90,
+  domain_tag `"gputeer/v1/grant-ack"`). 벡터 2건 생성 —
+  `v32_agent_grant_ack`(전 필드, `missing_from_full` 로 완전성
+  검사), `v32b_agent_grant_ack_different_nonce`(nonce 만 다름,
+  canonical 이 달라야 함을 `MUST_DIFFER` 로 고정). `--emit-vectors`
+  로 `tests/vectors/canonical_v1.json` 재생성(40→42건), `--verify`
+  로 재생성 대조 통과 확인. Rust 쪽에
+  `crates/protocol/tests/t1_signing_targets.rs::agent_grant_ack_matches_reference`
+  를 추가해 Rust `to_canonical_fields()` 인코딩을 그 벡터와 바이트
+  단위로 대조 — **통과**. Rust 와 Python 참조 구현이 `AgentGrantAck`
+  에서도 일치함을 이번에 처음 확인했다(이전까지 이 메시지는
+  참조 대조를 받은 적이 없었다 — 코드 결함은 아니었음이 확인됨).
+- 부수 발견: `cargo test --workspace` 재실행 중
+  `k1c_concurrent_same_name_writers_are_not_actually_safe`(P0-08
+  승격 때 추가한 `write_once` 동시 호출 결함 고정 테스트)가 우연히
+  `FAILED` 로 나왔다 — 재실행하니 다시 통과했다. 원인은 코드 회귀가
+  아니라 **테스트 자체의 설계 결함**: 8스레드 단일 라운드 진짜
+  경쟁에 의존하다 보니, 디스크 여유가 부족해 시스템 부하가 높을
+  때 스케줄링이 우연히 직렬화돼 `ok_true==1` 이 나올 수 있었다.
+  10라운드까지 반복해 **한 번이라도** 경합이 관측되면 통과하도록
+  고쳐 재현 신뢰도를 높였다(3회 연속 재실행으로 안정성 확인) —
+  경합 자체(더 넓은 결함)는 여전히 존재하며 이 수정은 그것을
+  더 안정적으로 검출할 뿐이다.
+- 검증: `cargo test --workspace` — 308 passed / 0 failed(신규
+  `agent_grant_ack_matches_reference` 로 307→308). `python
+  scripts/verify_evidence.py` — 스키마 위반 0, PASS 17/18 유지.
+- ★ **디스크가 다시 타이트해졌다**(8.7GB → 7.4GB, 97% 사용,
+  repo 밖 원인 계속 진행 중으로 추정). 이후 무거운 작업은 더욱
+  신중하게 페이싱한다.
+- 리포트: 이 이력 항목. CLAUDE.md 백로그 6번 완료 표시.
+
+---
+
 ## 2026-08-19 03:05 — P0-08 schema v1 → v2 승격 완료 — ★ review-강제 대상 v1 evidence 부채 0건 달성
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-07` 에

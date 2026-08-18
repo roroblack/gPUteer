@@ -355,6 +355,43 @@ fn renew_lease_request_matches_reference() {
     );
 }
 
+/// ★ `AgentGrantAck` 는 coordinator/agent 핸드셰이크(2026-08-18)가
+/// 추가한 뒤로 참조 구현(Python) 대조를 한 번도 받은 적이 없었다 —
+/// `DoD-05` schema v2 승격 재검수에서 발견된 공백(CLAUDE.md 백로그
+/// 6번). `tools/canonical/reference_canonical.py` 에 `v32`·`v32b`
+/// 벡터를 추가하고 여기서 대조한다.
+#[test]
+fn agent_grant_ack_matches_reference() {
+    let a = pb::AgentGrantAck {
+        schema_version: 1,
+        grant_id: "01JBXGRANT0000000000000001".into(),
+        attempt_id: "01JBXATTEMPT000000000000001".into(),
+        agent_device_id: "agent-1".into(),
+        issued_at_unix_ms: 1_755_103_900_000,
+        expires_at_unix_ms: 1_755_103_960_000,
+        nonce: (0u8..16).collect(),
+        accepted: true,
+        agent_signature: vec![0x99; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&a.to_canonical_fields(), &[])),
+        expect_hex("v32_agent_grant_ack")
+    );
+
+    // ★ nonce 는 서명 대상이어야 한다 — RenewLeaseRequest 와 같은 이유.
+    let mut other = a.clone();
+    other.nonce = (16u8..32).collect();
+    assert_eq!(
+        hex(&canonical_encode(&other.to_canonical_fields(), &[])),
+        expect_hex("v32b_agent_grant_ack_different_nonce")
+    );
+    assert_ne!(
+        canonical_encode(&other.to_canonical_fields(), &[]),
+        canonical_encode(&a.to_canonical_fields(), &[]),
+        "nonce 가 서명 밖이다 — replay 캐시를 우회할 수 있다"
+    );
+}
+
 #[test]
 fn revoke_lease_notice_matches_reference() {
     let n = pb::RevokeLeaseNotice {

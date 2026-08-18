@@ -374,19 +374,21 @@ Linux 를 한 번도 돌려보지 않았다
    `cargo clean` 으로 1.4GiB 추가 정리했으나 repo 밖 근본 원인은
    세션 범위 밖이다. 이후 무거운 빌드/테스트는 자제하고 디스크를
    계속 관찰한다.
-6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
-   `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의
-   `SCHEMAS` 에도, `tests/vectors/canonical_v1.json` 벡터에도 없다.
-   `crates/crypto/tests/framed_ingress.rs` 는 Rust 내부에서
-   서명·검증·dispatch(`sign()` → `write_frame`/`read_frame`)만
-   확인할 뿐, canonical/sig_input 바이트가 **독립적인 Python 참조
-   구현과 일치하는지는 한 번도 대조되지 않았다.** 다른 도메인
-   메시지들이 전부 이 참조 벡터 교차검증을 거친 것과 다른 상태다.
-   코드 결함은 아니다(Rust 구현이 틀렸다는 근거는 없다) — 순수
-   테스트 커버리지 공백. 절차: `reference_canonical.py` 의 `SCHEMAS`
-   에 `AgentGrantAck` 추가 → 참조 벡터 생성 → `canonical_v1.json`
-   에 편입 → Rust 쪽 대조 테스트 추가(`prost_canonical.rs` 류).
-   아직 미착수.
+6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 완료(2026-08-19)
+   `tools/canonical/reference_canonical.py` 의 `SCHEMAS`·`DOMAIN_TAGS`
+   에 `AgentGrantAck` 를 추가하고 벡터 2건(`v32_agent_grant_ack`·
+   `v32b_agent_grant_ack_different_nonce`, nonce 가 canonical 에
+   반영됨을 확인하는 대조쌍)을 생성해 `tests/vectors/canonical_v1.json`
+   에 편입했다(40→42건). `crates/protocol/tests/t1_signing_targets.rs::agent_grant_ack_matches_reference`
+   가 Rust 인코딩을 그 벡터와 바이트 단위로 대조 — **통과**, Rust와
+   Python 참조 구현이 `AgentGrantAck` 에서도 일치함을 처음으로
+   확인했다(코드 결함 없었음이 확인됨).
+   부수적으로 `crates/checkpoint/tests/codex_findings.rs::k1c_concurrent_same_name_writers_are_not_actually_safe`
+   (P0-08 승격 때 추가한 결함 고정 테스트)가 단일 라운드 진짜
+   스레드 경쟁에 의존해 시스템 부하가 높을 때(디스크 여유 부족 등)
+   가끔 `ok_true==1` 로 우연히 실패하는 것을 발견 — 10라운드 중
+   한 번이라도 경합이 관측되면 통과하도록 고쳐 안정화했다(경합
+   자체가 사라진 게 아니라 재현 신뢰도만 올린 것).
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

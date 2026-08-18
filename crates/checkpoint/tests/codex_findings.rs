@@ -117,37 +117,60 @@ fn k1b_write_once_is_idempotent_for_identical_content() {
 /// 절차를 다시 설계해야 하며, 그것은 이 evidence 의 원래 범위(K-1
 /// 의 "이미 존재할 때" 분기)를 넘는 별도 작업이다. 새 limitation
 /// 으로 등록한다 — CLAUDE.md 백로그 참조.
+///
+/// ★ 한 라운드는 OS 스레드 스케줄링에 좌우되는 진짜 경쟁이라 —
+///   시스템 부하가 높을 때(디스크 여유 부족 등) 우연히 한 스레드가
+///   나머지를 다 제치고 먼저 끝나 `ok_true == 1` 이 나올 수 있다
+///   (2026-08-19, `cargo test --workspace` 재실행 중 실제로 1회
+///   관측됨 — 재실행하니 다시 재현됐다). 그래서 여러 라운드를
+///   돌려 **한 번이라도** 경합이 관측되면 통과시킨다 — "이 결함이
+///   존재한다" 를 입증하는 데는 한 번의 재현으로 충분하고, 매
+///   라운드 재현을 요구하는 것은 이 test 를 카오스 스윕이 아니라
+///   타이밍 도박으로 만든다.
 #[test]
 fn k1c_concurrent_same_name_writers_are_not_actually_safe() {
-    let d = std::sync::Arc::new(tmpdir("k1c"));
+    let rounds = 10;
     let n = 8;
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
+    let mut race_observed = false;
+    let mut last_results = Vec::new();
 
-    let handles: Vec<_> = (0..n)
-        .map(|i| {
-            let d = d.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                let data = format!("writer-{i} data").into_bytes();
-                write_once(&d, "shard-race.bin", &data)
+    for round in 0..rounds {
+        let d = std::sync::Arc::new(tmpdir(&format!("k1c-{round}")));
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
+
+        let handles: Vec<_> = (0..n)
+            .map(|i| {
+                let d = d.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let data = format!("writer-{i} data").into_bytes();
+                    write_once(&d, "shard-race.bin", &data)
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-    let ok_true = results.iter().filter(|r| matches!(r, Ok(true))).count();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let ok_true = results.iter().filter(|r| matches!(r, Ok(true))).count();
+        if ok_true > 1 {
+            race_observed = true;
+            break;
+        }
+        last_results = results;
+    }
 
     // ★ 결함을 고정하는 테스트다(`lease_scope.rs` 의
     //   `restart_resets_watermark_and_lets_stale_epoch_through` 와
-    //   같은 정신). **통과(ok_true > 1)가 곧 "이 위험이 아직
+    //   같은 정신). **통과(race_observed)가 곧 "이 위험이 아직
     //   존재한다" 는 뜻이다.** 언젠가 tmp 이름을 호출마다 고유하게
-    //   만들어 이 문제를 고치면 이 assert 가 실패해야 정상이다 —
-    //   그때 이 test 와 관련 limitation 서술을 갱신하라.
+    //   만들어 이 문제를 고치면 `rounds` 회 전부 `ok_true == 1` 이
+    //   되어 이 assert 가 실패해야 정상이다 — 그때 이 test 와 관련
+    //   limitation 서술을 갱신하라.
     assert!(
-        ok_true > 1,
-        "write_once 가 동시 다중 호출에서 정확히 1회만 성공했다 — \
-         tmp 이름 충돌 문제가 해소된 것으로 보인다: {results:?}"
+        race_observed,
+        "write_once 가 {rounds}라운드 동안 단 한 번도 동시 다중 성공을 \
+         내지 않았다 — tmp 이름 충돌 문제가 해소된 것으로 보인다. \
+         마지막 라운드: {last_results:?}"
     );
 }
 

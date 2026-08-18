@@ -346,6 +346,23 @@ SCHEMAS = {
         (5, "issued_at_unix_ms", "uint", None),
         (90, "coordinator_signature", "bytes", None),
     ],
+    # ★ 2026-08-19 — coordinator/agent 핸드셰이크(2026-08-18)가 추가한
+    #   AgentGrantAck 는 그동안 이 참조 구현(Python)과 canonical_v1.json
+    #   양쪽에 없었다 — Rust 구현(crates/protocol/src/to_fields.rs)의
+    #   canonical/sig_input 바이트가 독립 참조 구현과 대조된 적이
+    #   없는 공백이었다(DoD-05 schema v2 승격 재검수에서 발견,
+    #   CLAUDE.md 백로그 6번). 여기서 그 공백을 메운다.
+    "AgentGrantAck": [
+        (1, "schema_version", "uint", None),
+        (2, "grant_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "agent_device_id", "string", None),
+        (5, "issued_at_unix_ms", "uint", None),
+        (6, "expires_at_unix_ms", "uint", None),
+        (7, "nonce", "bytes", None),
+        (8, "accepted", "bool", None),
+        (90, "agent_signature", "bytes", None),
+    ],
     # ══════════════════════════════════════════════════════════════
     # T1b (2026-08-16) — grant · membership · policy · quarantine
     #
@@ -594,6 +611,7 @@ DOMAIN_TAGS = {
     "Lease": b"gputeer/v1/lease",
     "RenewLeaseRequest": b"gputeer/v1/lease-renew",
     "RevokeLeaseNotice": b"gputeer/v1/lease-revoke",
+    "AgentGrantAck": b"gputeer/v1/grant-ack",
     "CheckpointManifest": b"gputeer/v1/checkpoint",
     "ReplicaAck": b"gputeer/v1/replica-ack",
     "ArtifactRef": b"gputeer/v1/artifact",
@@ -1441,6 +1459,39 @@ def build_vectors():
                    "JobManifest", m_absent,
                    ["MUST_DIFFER:v31_map_entry_empty_value"])
     assert c_map != c_absent, "빈 값 엔트리가 키 부재와 구분되지 않는다"
+
+    # 32. AgentGrantAck — coordinator/agent 핸드셰이크(2026-08-18)가 추가한
+    #   단수명 메시지. nonce(7)는 replay 캐시 대상이라 canonical 에 포함돼야
+    #   한다. 이전까지 이 메시지는 참조 구현 대조를 한 번도 받은 적이 없었다
+    #   (CLAUDE.md 백로그 6번, DoD-05 schema v2 승격 재검수에서 발견).
+    _agent_grant_ack_full = {
+        "schema_version": 1,
+        "grant_id": "01JBXGRANT0000000000000001",
+        "attempt_id": "01JBXATTEMPT000000000000001",
+        "agent_device_id": "agent-1",
+        "issued_at_unix_ms": 1_755_103_900_000,
+        "expires_at_unix_ms": 1_755_103_960_000,
+        "nonce": bytes(range(16)),
+        "accepted": True,
+        "agent_signature": b"\x99" * 64,
+    }
+    _gap_ack = missing_from_full("AgentGrantAck", _agent_grant_ack_full)
+    assert not _gap_ack, "v32 가 전 필드를 채우지 않았다: %s" % ", ".join(_gap_ack)
+    add("v32_agent_grant_ack",
+        "AgentGrantAck. 모든 필드(서명 제외) — field number 오름차순 (규칙 a). "
+        "nonce(7)는 canonical 에 포함된다. 서명 필드(90)는 규칙 i 로 제외된다",
+        "AgentGrantAck", _agent_grant_ack_full)
+
+    # 32b. nonce 를 바꾸면 canonical 이 달라야 한다 — 서명 밖이면
+    #   재전송 시 nonce 만 갈아끼워 replay 캐시를 우회할 수 있다
+    #   (RenewLeaseRequest 의 negative_tests 항목과 같은 이유).
+    _agent_grant_ack_diff_nonce = dict(_agent_grant_ack_full, nonce=bytes(range(16, 32)))
+    c_ack1 = add("v32b_agent_grant_ack_different_nonce",
+                 "v32 와 nonce 만 다르다 — canonical 이 달라야 한다",
+                 "AgentGrantAck", _agent_grant_ack_diff_nonce,
+                 ["MUST_DIFFER:v32_agent_grant_ack"])
+    c_ack0 = canonical_encode("AgentGrantAck", _agent_grant_ack_full)
+    assert c_ack0 != c_ack1, "AgentGrantAck.nonce 가 canonical 에 반영되지 않는다"
 
     # 10. domain_tag 분리 — 같은 canonical, 다른 tag → 다른 sig_input
     base = _minimal_manifest()
