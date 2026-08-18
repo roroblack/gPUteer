@@ -1,0 +1,36 @@
+=== p112 (1라운드, CHANGES_REQUESTED) ===
+판정: **CHANGES_REQUESTED**
+
+정상 경로 자체는 실제 framed ingress 왕복을 검증합니다. 헬퍼가 서명하고(`crates/crypto/tests/framed_ingress.rs:101-111`), `LeaseRevoke` 프레임으로 보내며(`:240-255`), 본체 dispatch도 `IngressMessage::LeaseRevoke`로 연결됩니다(`crates/crypto/src/framed_ingress.rs:262-285`).
+
+다만 핵심 결함은 정상 테스트가 payload 필드를 검증하지 않는다는 점입니다.
+
+- `matches!(msg, IngressMessage::LeaseRevoke(_))`로 variant만 확인합니다(`crates/crypto/tests/framed_ingress.rs:257-260`).
+- `REVOKE_LEASE_ID`, `fence_epoch == 7`, `cause == 1`, `issued_at_unix_ms == NOW` 등의 값은 assert하지 않습니다.
+- 따라서 payload가 잘못 디코드되거나 필드가 사라져도 테스트가 통과할 수 있습니다.
+- `RenewLeaseResult` 테스트도 동일하게 variant만 검사합니다(`:223-226`). 기존 패턴과는 일관되지만, 요청한 검수 기준에는 부족합니다.
+
+위조 서명 테스트는 올바릅니다.
+
+- 실제 서명 바이트를 변조합니다(`:268-270`).
+- 키링은 동일한 `lease_id`와 동일한 공개키를 등록합니다(`:117-120`).
+- `signer_id()`가 실제로 `lease_id`를 반환합니다(`crates/protocol/src/signable.rs:489-491`).
+- 따라서 “키가 없어서 실패”가 아니라 변조된 서명이 검증에서 거부되는 구조입니다. 검증기는 키 조회 후 서명을 검증합니다(`crates/crypto/src/lib.rs:129-143`).
+
+`revoke_directory()`도 필요합니다. 기존 `directory()`는 `DEVICE`를 등록하지만(`crates/crypto/tests/framed_ingress.rs:123-127`), `RevokeLeaseNotice`의 signer ID는 `lease_id`이므로 별도 디렉터리가 맞습니다.
+
+Replay 테스트는 이 두 테스트의 범위 밖으로 봐도 됩니다. `RevokeLeaseNotice`는 `Evidence` 수명이고(`crates/protocol/src/signable.rs:467-469`), replay 검사는 `ShortLived`에만 적용됩니다(`crates/protocol/src/signing.rs:784-826`). 같은 fence epoch의 반복 회수는 의도적으로 멱등 처리된다는 설명도 있습니다(`crates/protocol/src/signable.rs:462-466`).
+
+변경된 테스트 자체에서 별도의 프로덕션 코드 문제는 발견하지 못했습니다. 다만 정상 테스트에 payload 필드 assert를 추가해야 하므로 최종 판정은 **CHANGES_REQUESTED**입니다.
+
+**실행 검증 확인 안 됨** — `cargo`를 실행하지 않고 정적 검토만 수행했습니다.
+
+=== p113 (2라운드, 수정 반영 후 재검수, ACCEPTED) ===
+판정: `ACCEPTED`
+
+- 테스트가 `LeaseRevoke(verified)`를 명시적으로 분기하고, `verified.get()`을 통해 검증된 내부 메시지에 접근합니다: [framed_ingress.rs:257-260](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:257)
+- `revoke_notice()` 원본 값과 네 필드가 정확히 일치합니다: `lease_id`, `fence_epoch=7`, `cause=1`, `issued_at_unix_ms=NOW` ([framed_ingress.rs:101-110](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:101), [framed_ingress.rs:261-267](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:261)).
+- `schema_version`은 직접 assert하지 않지만, `read_frame`에 최대 버전 `1`을 전달하고 ([framed_ingress.rs:248-255](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:248)), 검증 로직이 지원 버전 초과를 거부하며 서명 입력에도 schema version을 포함합니다 ([signing.rs:741-750](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signing.rs:741)). 따라서 p112 지적을 추가로 막는 필수 assert는 아닙니다.
+- `Verified<M>::get()`은 공개 API이며 실제 검증된 `inner`를 `&M`으로 반환합니다 ([signing.rs:623-634](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signing.rs:623)).
+
+`cargo`가 없어 실행 검증은 확인하지 못했습니다.

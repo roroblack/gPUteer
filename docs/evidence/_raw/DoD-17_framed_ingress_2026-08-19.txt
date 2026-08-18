@@ -1,0 +1,647 @@
+=== cargo test -p gputeer-crypto --test framed_ingress (commit 06766d5) ===
+   Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\crypto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.49s
+     Running tests\framed_ingress.rs (target\debug\deps\framed_ingress-0f8f378f198f1e6a.exe)
+
+running 20 tests
+test frame_too_large_leaves_the_stream_desynced_by_design ... ok
+test frame_exactly_at_the_limit_is_not_rejected_for_size ... ok
+test frame_type_mismatch_fails_at_nested_message_decode ... ok
+test forged_signature_is_rejected_through_the_framing_layer ... ok
+test oversized_frame_is_rejected_before_reading_body ... ok
+test forged_revoke_lease_notice_signature_is_rejected ... ok
+test distinct_types_with_colliding_wire_fields_are_rejected_by_domain_tag ... ok
+test normal_renew_lease_result_frame_dispatches_to_the_right_variant ... ok
+test normal_grant_ack_frame_dispatches_to_the_right_variant ... ok
+test normal_grant_frame_dispatches_to_the_right_variant ... ok
+test truncated_header_is_rejected ... ok
+test truncated_body_is_rejected ... ok
+test write_frame_accepts_bodies_within_the_limit ... ok
+test unknown_frame_type_is_rejected ... ok
+test write_frame_rejects_bodies_over_the_limit ... ok
+test zero_length_frame_does_not_panic ... ok
+test normal_revoke_lease_notice_frame_dispatches_to_the_right_variant ... ok
+test normal_lease_frame_dispatches_to_the_right_variant ... ok
+test unknown_frame_type_does_not_desync_the_stream ... ok
+test two_consecutive_frames_are_read_independently ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+=== cargo test --workspace (commit 06766d5) ===
+   Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\crypto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.35s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_agent-e3b59d2959c5da99.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_checkpoint-282b3b969f277054.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\ckpt_writer.rs (target\debug\deps\ckpt_writer-22349fe19abb9020.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-7cb56a920644c59e.exe)
+
+running 9 tests
+test k2_zero_attempts_returns_error_not_panic ... ok
+test k4_write_once_must_reject_path_traversal ... ok
+test k1b_write_once_is_idempotent_for_identical_content ... ok
+test k1_write_once_must_detect_content_mismatch ... ok
+test k3_documents_rename_then_syncdir_failure_semantics ... ok
+test k2b_normal_policy_still_works ... ok
+test k4b_normal_names_including_subdirs_still_work ... ok
+test write_once_leaves_no_tmp_behind ... ok
+test k1c_concurrent_same_name_writers_are_not_actually_safe ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests\durability_chaos.rs (target\debug\deps\durability_chaos-f8648dfb0fe54f12.exe)
+
+running 16 tests
+test durability_requirements_match_baseline ... ok
+test allowed_transitions_follow_normative_table ... ok
+test negative_partial_can_never_become_canonical_candidate ... ok
+test negative_undefined_transitions_are_rejected ... ok
+test manifest_json_roundtrip ... ok
+test adr026_write_once_is_idempotent_for_same_name ... ok
+test replica_counting_applies_all_normative_rules ... ok
+test gc_removes_orphan_tmp_files ... ok
+test negative_hash_mismatch_is_detected ... ok
+test sync_dir_works_on_this_platform ... ok
+test hash_verification_passes_for_intact_files ... ok
+test pointer_replace_exhaustion_is_explicit_error_not_silent ... ok
+test manifest_last_rule_identifies_partial_checkpoints ... ok
+test pointer_replace_retries_and_eventually_reports_error ... ok
+test write_once_survives_readers_with_no_share_delete ... ok
+test adr026_write_once_succeeds_while_readers_hold_files_open ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.36s
+
+     Running tests\kill_chaos.rs (target\debug\deps\kill_chaos-8905f8b6e165a546.exe)
+
+running 7 tests
+test startup_gc_removes_partial_but_keeps_committed ... ok
+test negative_missing_data_file_is_rejected_from_resume ... ok
+test negative_tampered_committed_checkpoint_is_rejected_from_resume ... ok
+test negative_pointer_to_nonexistent_checkpoint_does_not_break_resume ... ok
+test resume_point_is_valid_and_monotonic_across_restarts ... ok
+test pointer_always_references_a_valid_checkpoint ... ok
+test kill_during_write_never_produces_corrupt_checkpoint ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.68s
+
+     Running tests\resume_selection.rs (target\debug\deps\resume_selection-f8ff6efd1c9c063a.exe)
+
+running 7 tests
+test no_candidates_returns_none ... ok
+test w3_manifest_id_must_match_directory_name ... ok
+test w2_empty_manifest_must_not_be_a_resume_candidate ... ok
+test w1b_resume_must_not_pick_another_attempt ... ok
+test unfiltered_api_documents_its_danger ... ok
+test w1_resume_must_not_pick_another_job ... ok
+test normal_resume_still_picks_highest_step ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+     Running tests\state_table_parity.rs (target\debug\deps\state_table_parity-693b8eb9251e377a.exe)
+
+running 5 tests
+test every_documented_transition_is_allowed_by_implementation ... ok
+test every_implemented_transition_is_documented ... ok
+test partial_never_gets_promoted ... ok
+test parser_is_not_vacuous ... ok
+test unchecked_contract_items_are_declared ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\write_failure.rs (target\debug\deps\write_failure-d5bfae88eed366a0.exe)
+
+running 5 tests
+test concurrent_startup_gc_treats_not_found_as_normal_race ... ok
+test unregistered_tmp_suffix_is_removed ... ok
+test registered_tmp_suffix_is_preserved ... ok
+test successful_write_records_file_operation_states ... ok
+test pointer_failure_leaves_residue_marked_and_unselectable ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+     Running unittests src\main.rs (target\debug\deps\gputeer-36ff5e71b26d2c3e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_coordinator-cedd690e4f408dc2.exe)
+
+running 10 tests
+test tests::u32_from_stored_accepts_max_total_duration_seconds_default ... ok
+test tests::u32_from_stored_accepts_u32_max ... ok
+test tests::u32_from_stored_rejects_values_above_u32_max_instead_of_truncating ... ok
+test lease_store::tests::renew_missing_lease_id_is_not_found_and_creates_nothing ... ok
+test lease_store::tests::is_durable_reports_true_for_file_backed_db ... ok
+test lease_store::tests::conflicting_identity_is_rejected_without_overwrite ... ok
+test lease_store::tests::open_insert_reopen_get_preserves_all_fields ... ok
+test lease_store::tests::u64_max_fields_round_trip_without_truncation ... ok
+test lease_store::tests::same_identity_reissue_returns_stored_value_not_candidate ... ok
+test lease_store::tests::renew_existing_updates_only_expiry_fields ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_crypto-646427ddcc6ec139.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\durable_replay_process_fixture.rs (target\debug\deps\durable_replay_process_fixture-fb19975539ed6cf5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\durable_replay.rs (target\debug\deps\durable_replay-647528041684a4b6.exe)
+
+running 12 tests
+test crash_child_writes_uncommitted_record ... ignored
+test durable_guard_says_it_is_durable ... ok
+test invalid_nonce_does_not_consume_a_valid_nonce_slot ... ok
+
+running 1 test
+test cache_full_does_not_evict_unexpired_entries ... ok
+test first_use_is_fresh_and_restart_is_duplicate ... ok
+test key_contains_device_domain_and_nonce ... ok
+test crash_recovery_discards_uncommitted_partial_record ... ok
+test clock_state_survives_restart_and_blocks_bad_gc ... ok
+test gc_releases_quota_only_after_expiration ... ok
+test two_connections_share_state_sequentially ... ok
+test two_connections_with_different_nonces_both_succeed ... ok
+test signer_quota_does_not_starve_other_signers ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.79s
+
+     Running tests\durable_replay_process.rs (target\debug\deps\durable_replay_process-7ed5b8fd786746a1.exe)
+
+running 3 tests
+test separate_processes_same_nonce_have_exactly_one_fresh ... ok
+test separate_processes_distinct_nonces_are_all_fresh ... ok
+test separate_process_lock_timeout_is_not_duplicate ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.81s
+
+     Running tests\durable_replay_race.rs (target\debug\deps\durable_replay_race-d50da7b71d8bc005.exe)
+
+running 3 tests
+test concurrent_same_nonce_yields_exactly_one_fresh ... ok
+test concurrent_distinct_nonces_all_succeed ... ok
+test concurrent_gc_never_drops_unexpired_entries ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+
+     Running tests\ed25519_verify.rs (target\debug\deps\ed25519_verify-b31b31e3e78e53be.exe)
+
+running 20 tests
+test schema_too_new_is_rejected_and_not_reported_as_signature_failure ... ok
+test short_lived::no_replay_check_taints_the_verified_value ... ok
+test expired_manifest_is_rejected ... ok
+test short_lived::default_ttl_masks_forward_skew_with_expiry ... ok
+test signing_input_is_stable_before_and_after_signing ... ok
+test short_lived::replay_key_is_namespaced_by_device ... ok
+test short_lived::short_lived_enforces_clock_skew ... ok
+test signature_by_different_key_is_rejected ... ok
+test unknown_signer_is_rejected ... ok
+test tampered_field_breaks_signature ... ok
+test verify_outcome_matches_proto_enum ... ok
+test verify_outcome_surface_is_complete ... ok
+test version_check_precedes_signature_check ... ok
+test wrong_length_signature_is_rejected ... ok
+test short_lived::working_replay_guard_rejects_reuse ... ok
+test long_lived_manifest_ignores_clock_skew ... ok
+test valid_manifest_verifies ... ok
+test signature_from_another_domain_does_not_verify ... ok
+test short_lived::short_lived_requires_16_byte_nonce ... ok
+test tampering_security_fields_breaks_signature ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests\framed_ingress.rs (target\debug\deps\framed_ingress-856bd90f1995dc1b.exe)
+
+running 20 tests
+test frame_too_large_leaves_the_stream_desynced_by_design ... ok
+test frame_exactly_at_the_limit_is_not_rejected_for_size ... ok
+test frame_type_mismatch_fails_at_nested_message_decode ... ok
+test normal_grant_ack_frame_dispatches_to_the_right_variant ... ok
+test forged_revoke_lease_notice_signature_is_rejected ... ok
+test normal_grant_frame_dispatches_to_the_right_variant ... ok
+test distinct_types_with_colliding_wire_fields_are_rejected_by_domain_tag ... ok
+test oversized_frame_is_rejected_before_reading_body ... ok
+test truncated_header_is_rejected ... ok
+test normal_lease_frame_dispatches_to_the_right_variant ... ok
+test normal_renew_lease_result_frame_dispatches_to_the_right_variant ... ok
+test unknown_frame_type_is_rejected ... ok
+test write_frame_accepts_bodies_within_the_limit ... ok
+test truncated_body_is_rejected ... ok
+test zero_length_frame_does_not_panic ... ok
+test write_frame_rejects_bodies_over_the_limit ... ok
+test forged_signature_is_rejected_through_the_framing_layer ... ok
+test normal_revoke_lease_notice_frame_dispatches_to_the_right_variant ... ok
+test unknown_frame_type_does_not_desync_the_stream ... ok
+test two_consecutive_frames_are_read_independently ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\keyring.rs (target\debug\deps\keyring-79404f3b229acc3c.exe)
+
+running 6 tests
+test plaintext_storage_is_rejected_without_explicit_opt_in ... ok
+test private_key_never_appears_in_debug_or_display_output ... ok
+test quarantine_is_distinguishable_in_directory_but_rejects_verification ... ok
+test revoked_key_rejects_a_message_signed_before_revocation ... ok
+test corrupted_key_file_is_rejected_instead_of_silently_loaded ... ok
+test rotation_accepts_both_keys_during_grace_and_rejects_old_key_afterward ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\lifetime_policy.rs (target\debug\deps\lifetime_policy-19bb225beeb684f8.exe)
+
+running 19 tests
+test all_six_evidence_messages_are_marked_evidence ... ok
+test execution_grant_is_short_lived ... ok
+test evidence_must_expose_observation_time ... ok
+test default_ttl_masks_forward_skew_for_real_grant ... ok
+test forward_skew_is_reachable_with_longer_ttl ... ok
+test evidence_has_no_replay_defense_and_says_so ... ok
+test grant_rejects_message_from_the_future ... ok
+test replica_ack_stays_valid_forever_even_if_replica_is_gone ... ok
+test renew_lease_expiry_is_derived_from_ttl ... ok
+test renew_lease_without_issued_at_is_immediately_expired ... ok
+test valid_grant_verifies ... ok
+test verify_allows_manifest_without_hash ... ok
+test verify_accepts_grant_with_correct_manifest_hash ... ok
+test verify_catches_swapped_nested_manifest ... ok
+test verify_rejects_grant_with_wrong_manifest_hash ... ok
+test verify_rejects_hash_without_manifest ... ok
+test evidence_does_not_expire ... ok
+test the_three_lifetimes_actually_behave_differently ... ok
+test grant_nonce_comes_from_signed_message_field ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\replay_binding.rs (target\debug\deps\replay_binding-12acfa79e3de6aeb.exe)
+
+running 10 tests
+test caller_cannot_choose_a_different_nonce ... ok
+test same_message_verified_twice_is_rejected ... ok
+test retain_until_is_expiry_plus_skew ... ok
+test nonce_namespace_is_per_device ... ok
+test storage_failure_fails_closed ... ok
+test signer_can_issue_a_new_grant_with_a_fresh_nonce ... ok
+test no_replay_check_and_working_guard_differ ... ok
+test failed_verification_does_not_consume_the_nonce ... ok
+test cache_full_rejects_instead_of_evicting ... ok
+test storage_failure_is_distinguishable_from_replay ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\replay_contract.rs (target\debug\deps\replay_contract-dc96d2bfd028a18e.exe)
+
+running 9 tests
+test extreme_retain_until_agrees ... ok
+test cache_full_agrees_and_never_evicts ... ok
+test short_nonce_is_rejected_by_both ... ok
+test fresh_then_duplicate_agrees ... ok
+test namespacing_agrees ... ok
+test signer_quota_agrees ... ok
+test extreme_gc_time_agrees ... ok
+test gc_expiry_and_rollback_agree ... ok
+test zero_capacity_is_rejected_by_both ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests\replay_guard.rs (target\debug\deps\replay_guard-1802ead4b2446bac.exe)
+
+running 13 tests
+test default_capacity_matches_spec ... ok
+test gc_clamps_forward_clock_jumps ... ok
+test cache_full_never_evicts_unexpired_entries ... ok
+test gc_resumes_after_clock_recovers ... ok
+test gc_removes_only_expired_entries ... ok
+test gc_refuses_to_delete_while_clock_goes_backwards ... ok
+test first_use_is_fresh_and_reuse_is_duplicate ... ok
+test key_is_namespaced_by_device_and_domain ... ok
+test repeated_bogus_gc_still_drains_the_cache ... ok
+test one_device_cannot_starve_others ... ok
+test signer_quota_is_released_by_gc ... ok
+test restart_opens_a_replay_window ... ok
+test failed_verification_does_not_touch_the_guard ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\verification_ingress.rs (target\debug\deps\verification_ingress-4e39254fa1df03a0.exe)
+
+running 9 tests
+test system_clock_is_available_but_the_entrypoint_accepts_injected_clock ... ok
+test protobuf_decode_failure_is_not_a_verify_outcome ... ok
+test forged_signature_is_rejected ... ok
+test lock_timeout_is_rejected_without_retry ... ok
+test not_applicable_is_visible_and_does_not_permit_side_effects ... ok
+test expired_message_is_rejected ... ok
+test valid_bytes_become_verified_with_effective_replay_guard ... ok
+test replay_is_rejected_on_the_second_ingress ... ok
+test persistent_keyring_and_durable_replay_are_wired_at_the_boundary ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_protocol-e25ac8386b1db788.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-d2b65a360e6ffb85.exe)
+
+running 15 tests
+test minimal_varint_roundtrip ... ok
+test negative_non_minimal_varint_is_rejected ... ok
+test negative_cross_domain_signature_input_differs ... ok
+test negative_truncated_varint_is_rejected ... ok
+test domain_tags_are_32_bytes_and_unique ... ok
+test determinism_100_iterations ... ok
+test v08_signature_field_is_excluded ... ok
+test v06_explicit_defaults_are_omitted ... ok
+test v01_minimal_manifest_matches_reference ... ok
+test v03_map_insertion_order_is_irrelevant ... ok
+test v04_repeated_order_is_preserved ... ok
+test v01_sig_input_and_digest_match_reference ... ok
+test v10_domain_separation ... ok
+test v11_schema_version_separation ... ok
+test v13_merkle_promotion_matches_reference ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-808d13e2ac83c480.exe)
+
+running 6 tests
+test c1_signature_only_nested_message_leaks_into_canonical ... ok
+test c1b_top_level_signature_field_is_correctly_excluded ... ok
+test c3_map_entry_with_empty_value_is_preserved ... ok
+test c1c_derived_hash_exclusion_is_top_level_only ... ok
+test d1_derived_hash_fields_must_not_apply_to_nested_messages ... ok
+test encoder_always_emits_minimal_varint ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\field_number_audit.rs (target\debug\deps\field_number_audit-2d63f6f20abd888b.exe)
+
+running 10 tests
+test derived_hash_fields_are_actually_excluded ... ok
+test every_impl_is_audited ... ok
+test job_manifest_field_numbers_match_proto ... ok
+test lease_field_numbers_match_proto ... ok
+test unimplemented_list_has_no_stale_entries ... ok
+test parsers_are_not_vacuous ... ok
+test common_message_field_numbers_match_proto ... ok
+test artifact_and_lease_field_numbers_match_proto ... ok
+test grant_and_control_field_numbers_match_proto ... ok
+test every_unsigned_field_is_declared_in_unimplemented_list ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\lifetime_consistency.rs (target\debug\deps\lifetime_consistency-4330534577bbc283.exe)
+
+running 3 tests
+test declared_lifetime_matches_message_capability ... ok
+test evidence_and_shortlived_differ_in_what_they_check ... ok
+test every_signable_is_covered ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\prost_canonical.rs (target\debug\deps\prost_canonical-0a67e78bf4c73906.exe)
+
+running 25 tests
+test default_valued_fields_are_omitted_in_prost_path ... ok
+test dataset_ref_is_signed ... ok
+test artifact_scope_is_signed ... ok
+test execution_environment_is_signed ... ok
+test input_artifacts_are_signed_and_order_is_preserved ... ok
+test lease_canonical_is_deterministic_and_excludes_signature ... ok
+test lease_scope_is_signed ... ok
+test execution_environment_vector_matches_reference ... ok
+test hashmap_insertion_order_does_not_affect_canonical ... ok
+test dataset_vector_matches_reference ... ok
+test network_policy_is_signed ... ok
+test input_artifacts_vector_matches_reference ... ok
+test prost_and_canonical_may_coincide_for_simple_messages ... ok
+test nested_messages_and_enums_round_through_prost ... ok
+test lease_scope_vector_matches_reference ... ok
+test signature_field_excluded_in_prost_path ... ok
+test unimplemented_field_list_is_empty ... ok
+test prost_message_produces_same_canonical_as_reference ... ok
+test every_field_in_full_manifest_affects_canonical ... ok
+test prost_message_produces_same_sig_input_and_digest ... ok
+test security_field_vectors_match_reference ... ok
+test v02b_full_lease_matches_reference ... ok
+test v02_full_manifest_matches_reference ... ok
+test hashmap_canonical_is_stable_across_many_rebuilds ... ok
+test prost_encode_is_not_deterministic_for_maps ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\schema_evolution.rs (target\debug\deps\schema_evolution-c532004f8faeb6a0.exe)
+
+running 6 tests
+test q2_unknown_fields_are_invisible_to_canonical ... ok
+test q1_prost_accepts_and_drops_unknown_fields ... ok
+test q3_version_bump_is_detectable_and_signature_bound ... ok
+test q6_version_downgrade_breaks_signature ... ok
+test q4_field_addition_without_version_bump_is_undetectable ... ok
+test q5_version_check_must_precede_signature_check ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\schema_fingerprint.rs (target\debug\deps\schema_fingerprint-7eeb2c2e56c7e330.exe)
+
+running 2 tests
+test parser_is_not_vacuous ... ok
+test proto_schema_matches_recorded_fingerprint ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\stream_ownership.rs (target\debug\deps\stream_ownership-8ef8e85cc61be3c3.exe)
+
+running 5 tests
+test protocol_does_not_depend_on_crypto_libraries ... ok
+test protocol_is_a_leaf_crate ... ok
+test crypto_depends_on_protocol_not_the_reverse ... ok
+test parser_is_not_vacuous ... ok
+test every_crate_is_covered_by_ownership_rules ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\t1_signing_targets.rs (target\debug\deps\t1_signing_targets-945aa85a3831c11c.exe)
+
+running 13 tests
+test domain_coverage_is_explicit ... ok
+test checkpoint_file_order_is_preserved ... ok
+test nested_message_content_does_affect_outer_canonical ... ok
+test rule_j_handles_i64_min_without_panic ... ok
+test checkpoint_manifest_matches_reference ... ok
+test rule_j_zero_is_omitted ... ok
+test revoke_lease_notice_matches_reference ... ok
+test renew_lease_request_matches_reference ... ok
+test rule_j_signed_integers_match_reference ... ok
+test nested_signature_is_excluded_from_outer_canonical ... ok
+test rule_j_sign_affects_canonical ... ok
+test agent_grant_ack_matches_reference ... ok
+test renew_lease_result_matches_reference ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\t1b_grant_and_control.rs (target\debug\deps\t1b_grant_and_control-80e715c433306932.exe)
+
+running 13 tests
+test all_domain_tags_are_distinct ... ok
+test derived_hash_messages_override_consistency_check ... ok
+test manifest_hash_formula_matches_spec ... ok
+test grant_manifest_hash_can_be_wrong_without_breaking_signature ... ok
+test every_grant_field_affects_canonical ... ok
+test signatures_do_not_transfer_between_control_messages ... ok
+test change_coordinator_set_matches_reference_and_preserves_order ... ok
+test derived_hash_and_nested_signature_are_both_excluded ... ok
+test execution_grant_matches_reference ... ok
+test multi_signature_field_is_excluded ... ok
+test nested_manifest_content_does_affect_grant_canonical ... ok
+test quarantine_verdict_matches_reference ... ok
+test membership_messages_have_distinct_canonicals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_runtime_policy-6c32c7b67143c125.exe)
+
+running 36 tests
+test artifact::tests::artifact_cyrillic_homoglyph_is_rejected ... ok
+test artifact::tests::artifact_absolute_path_is_rejected ... ok
+test artifact::tests::artifact_fullwidth_dots_do_not_bypass_traversal_check ... ok
+test artifact::tests::artifact_ntfs_ads_is_rejected ... ok
+test artifact::tests::artifact_path_traversal_is_rejected ... ok
+test artifact::tests::artifact_outside_prefix_is_rejected ... ok
+test artifact::tests::artifact_trailing_dot_or_space_is_rejected ... ok
+test artifact::tests::artifact_invisible_chars_are_rejected ... ok
+test artifact::tests::artifact_windows_reserved_device_names_are_rejected ... ok
+test artifact::tests::artifact_within_prefix_is_allowed ... ok
+test artifact::tests::dot_prefix_is_filtered_out_at_construction ... ok
+test artifact::tests::empty_prefix_no_longer_allows_empty_or_dot_requests ... ok
+test artifact::tests::normal_ascii_filenames_with_dots_still_work ... ok
+test artifact::tests::string_check_alone_cannot_see_symlink_targets ... ok
+test lease_scope::tests::external_api_is_not_fenced_by_epoch ... ok
+test lease_scope::tests::higher_epoch_advances_watermark ... ok
+test lease_scope::tests::restart_resets_watermark_and_lets_stale_epoch_through ... ok
+test lease_scope::tests::same_epoch_reuse_is_allowed_by_design ... ok
+test lease_scope::tests::stale_lease_is_rejected ... ok
+test lease_scope::tests::watermark_is_not_durable ... ok
+test lease_scope::tests::watermark_is_per_resource ... ok
+test network::tests::network_without_os_backend_is_rejected ... ok
+test network::tests::only_allowed_permits_execution ... ok
+test network::tests::with_enforcing_backend_allow_list_actually_filters ... ok
+test vram::tests::commit_cap_does_not_underflow_when_ram_limit_is_tiny ... ok
+test vram::tests::commit_cap_subtracts_measured_reservation ... ok
+test vram::tests::restricted_native_does_not_protect_host ... ok
+test vram::tests::vram_quota_is_not_enforceable_on_consumer_gpu ... ok
+test vram::tests::windows_commit_cap_is_not_a_hard_quota_either ... ok
+test durable_lease_scope::tests::is_durable_reports_true_for_file_backed_db ... ok
+test durable_lease_scope::tests::same_epoch_reuse_is_allowed_by_design ... ok
+test durable_lease_scope::tests::stale_lease_is_rejected ... ok
+test durable_lease_scope::tests::reopening_the_same_file_preserves_the_watermark ... ok
+test durable_lease_scope::tests::u64_max_epoch_round_trips_without_truncation ... ok
+test durable_lease_scope::tests::higher_epoch_advances_watermark ... ok
+test durable_lease_scope::tests::watermark_is_per_resource ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running unittests src\lib.rs (target\debug\deps\gputeer_runtime_windows-9bcee5ec18513064.exe)
+
+running 4 tests
+test windows_impl::tests::empty_arg_is_wrapped_in_quotes ... ok
+test windows_impl::tests::backslash_before_embedded_quote_uses_2n_plus_1_rule ... ok
+test windows_impl::tests::simple_args_are_not_quoted ... ok
+test windows_impl::tests::trailing_backslash_before_closing_quote_is_doubled ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\alloc_fixture.rs (target\debug\deps\alloc_fixture-f706186b22b4cb2c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\artifact_beneath.rs (target\debug\deps\artifact_beneath-4401a48dd236b20a.exe)
+
+running 3 tests
+test normal_path_without_reparse_point_opens_successfully ... ok
+test junction_as_intermediate_directory_is_rejected ... ok
+test junction_inside_allowed_dir_pointing_outside_is_rejected ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\commit_cap.rs (target\debug\deps\commit_cap-4037029543bc621a.exe)
+
+running 2 tests
+test constrained_child_is_capped_near_the_limit ... ok
+test unconstrained_child_allocates_far_more_than_the_cap ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+   Doc-tests gputeer_agent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_checkpoint
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_coordinator
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_crypto
+
+running 2 tests
+test crates\crypto\src\ingress.rs - ingress::decode_and_verify (line 143) - compile fail ... ok
+test crates\crypto\src\ingress.rs - ingress::decode_and_verify (line 155) ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+   Doc-tests gputeer_protocol
+
+running 2 tests
+test crates\protocol\src\signing.rs - signing::Verified (line 606) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 618) ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+   Doc-tests gputeer_runtime_policy
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_runtime_windows
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
