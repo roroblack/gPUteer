@@ -1,0 +1,37 @@
+## 판정: ACCEPTED
+
+정적 검수 결과 문제 없습니다.
+
+1. `Domain` 검증
+
+- 실제 enum은 25종입니다: 기본 11종 + ADR-028 9종 + `Audit/Release/Invite` 3종 + `GrantAck` + `LeaseRenewResult` = 25종.  
+  ([canonical.rs:282](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/canonical.rs:282), [canonical.rs:320](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/canonical.rs:320))
+- 테스트 배열도 동일한 25종을 모두 포함하며 중복이 없습니다. `tag_bytes()` 길이 32 검사, `HashSet` 중복 검사, 최종 개수 25 검사가 모두 있습니다.  
+  ([canonical_vectors.rs:305](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/canonical_vectors.rs:305), [canonical_vectors.rs:329](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/canonical_vectors.rs:329), [canonical_vectors.rs:335](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/canonical_vectors.rs:335))
+
+2. lease identity 충돌 테스트
+
+검사 순서는 실제로 `job_id → attempt_id → holder_node_id → issuing_coordinator_id`입니다.  
+([lease_store.rs:359](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:359), [lease_store.rs:363](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:363), [lease_store.rs:370](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:370), [lease_store.rs:377](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:377), [lease_store.rs:384](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:384))
+
+신규 세 테스트는 각각 `sample("lease-1")` 원본을 사용한 뒤 해당 필드 하나만 변경합니다.
+
+- `attempt_id`: [lease_store.rs:548](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:548)
+- `holder_node_id`: [lease_store.rs:569](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:569)
+- `issuing_coordinator_id`: [lease_store.rs:590](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:590)
+
+각 테스트는 기대한 필드명으로 거부되는지와 저장값이 원본인지 확인합니다.
+
+3. `RenewLeaseResult` payload 검증
+
+`renew_result(..., 0)`은 `outcome=1`, `detail="ok"`, `schema_version=1`, `coordinator_id=DEVICE`, `issued_at_unix_ms=NOW`, `request_nonce=(0u8..16).map(|i| i.wrapping_add(0)).collect()`을 채웁니다.  
+([framed_ingress.rs:80](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:80), [framed_ingress.rs:87](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:87))
+
+테스트의 기대 nonce `(0u8..16).collect()`은 `wrapping_add(0)`과 정확히 동일하며, 여섯 payload 필드를 `Verified::get()`으로 대조합니다.  
+([framed_ingress.rs:210](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:210), [framed_ingress.rs:231](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:231), [framed_ingress.rs:241](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/tests/framed_ingress.rs:241))
+
+4. 변경 범위
+
+`canonical.rs`와 `framed_ingress.rs` 본체는 변경되지 않았고, `lease_store.rs`도 테스트 모듈만 추가되었습니다. 관련 production dispatch도 `LeaseRenewResult`에 올바르게 연결되어 있습니다. 별도 숨은 production 문제는 발견하지 못했습니다.
+
+`cargo`가 설치되어 있지 않아 **실행 검증 확인 안 됨**.
