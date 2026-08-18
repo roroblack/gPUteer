@@ -1,0 +1,96 @@
+DoD-13 독립 검수 기록 — Lease 갱신 최소 조각
+(docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md)
+
+검수자: agent:codex-cli (codex exec --sandbox read-only -c
+model_reasoning_effort=high)
+프롬프트: p99.md(1라운드) → CHANGES_REQUESTED → 코드 수정 →
+p100.md(2라운드, 좁은 후속 검수) → ACCEPTED
+
+=== 1라운드 (p99) — CHANGES_REQUESTED ===
+
+실재 확인된 항목 (파일:줄 인용, 코덱스가 직접 확인):
+- Protocol 인증 필드·domain·Signable — proto/lease.proto:103-119,
+  crates/protocol/src/canonical.rs:315-350,
+  crates/protocol/src/signable.rs:255-296
+- nested Lease 서명이 outer canonical 에서 제외됨 — put_msg 가
+  nested to_canonical_fields() 를 호출: crates/protocol/src/to_fields.rs:81-88,
+  517-537. Rust/Python 벡터 대조: crates/protocol/tests/t1_signing_targets.rs:395-455
+- Crypto frame type 11 및 dispatch — crates/crypto/src/framed_ingress.rs:84-96,
+  280-291; round-trip 테스트 crates/crypto/tests/framed_ingress.rs:173-198
+- Agent 의 outer 서명→nonce→nested Lease 검증 순서 —
+  crates/agent/src/lib.rs:205-228(검증/replay 후 nonce 대조),
+  242-250(별도 Lease verify())
+- 같은 job_id 를 watermark key 로 사용 — crates/agent/src/lib.rs:270-277
+- SUPERSEDED/QUARANTINED 가 test-only 주입일 뿐 실제 정책 결정이
+  아님 — crates/coordinator/src/lib.rs:92-99, 318-327
+- 서명 검증 전 필드를 신뢰하는 순서상 결함 없음 —
+  crates/crypto/src/framed_ingress.rs:266-291(dispatch),
+  crates/protocol/src/signing.rs:746-750(서명 검증), :784-810(replay 검사)
+- 범위 이탈 없음(epoch 계약 위반 제외) —
+  crates/coordinator/src/lib.rs:245-291(1회 왕복), lease_scope.rs:67-69(비영속 watermark)
+
+stale/결함으로 지적된 항목:
+1. "Coordinator가 요청 epoch을 검증" — stale, 실제로 검증하지 않음.
+   crates/coordinator/src/lib.rs:263-278(당시) 는 node_id·lease_id 만
+   검사, renew_req.fence_epoch 미사용.
+2. "높은 epoch 거부" — stale, 실제로 허용됨.
+   crates/agent/src/lib.rs:273-275(당시) 는 FenceWatermark 만 호출.
+   runtime-policy/src/lease_scope.rs:83-97 는 낮은 epoch 만 거부한다.
+   계획서(docs/plans/2026-08-19_0500_...v1.md:86-89)는 높은 epoch 을
+   범위 밖 정책 거부로 명시.
+3. "negative tests 8건" — stale, 실제는 시나리오 8~14 의 7건.
+   coordinator_agent_selftest.rs:386-583(당시). 시나리오 8 은 성공
+   여부만 확인, ingress 서명 검증 오류 자체를 특정하지 않음(:397-409 당시).
+
+수정 요청 3건:
+1. crates/coordinator/src/lib.rs:263-278 에서 renew_req.fence_epoch 을
+   현재 Lease/config epoch 과 비교할 것.
+2. crates/agent/src/lib.rs:270-275 에서 새 Lease 의 epoch 이 요청/보유
+   epoch 보다 높으면 RENEW_REJECTED 로 거부할 것.
+3. 높은 epoch·Coordinator 요청 epoch 불일치 negative test 추가, 시나리오
+   8 을 실제 ingress 검증 실패 원인 검사로 강화할 것.
+
+실행 검증: 확인 안 됨(코덱스 read-only 샌드박스에 cargo 없음).
+
+=== 대응 (claude-code, 같은 세션) ===
+
+- crates/coordinator/src/lib.rs 에 renew_req.fence_epoch !=
+  config.fence_epoch 검사 추가(서명 검증 뒤, lease_id 검사와 같은 블록).
+- crates/agent/src/lib.rs 에 new_lease.fence_epoch > held_lease.fence_epoch
+  검사 추가(nested 상관관계 확인 뒤, FenceWatermark.check_and_advance()
+  호출 앞).
+- crates/cli/src/coordinator_agent_selftest.rs 시나리오 15(epoch 상승
+  거부)·16(Coordinator epoch 불일치 거부) 추가, 시나리오 8 판정에
+  coordinator_stderr.contains("RenewLeaseRequest 프레임 읽기/검증 실패")
+  추가.
+- 신규 게이트 2건(15·16) 각각 뮤테이션 테스트로 비공허성 확인(무력화→
+  실패→원복→재통과).
+- cargo test --workspace 재실행(회귀 없음), coordinator-agent-selftest
+  5회 연속 16개 시나리오 전부 통과.
+
+=== 2라운드 (p100, 좁은 후속 검수) — ACCEPTED ===
+
+세 지적 사항 해소 확인(파일:줄 인용, 코덱스가 직접 확인):
+- Coordinator: read_frame/서명 검증 후 lease_id 검사와 같은 블록에서
+  fence_epoch 대조. crates/coordinator/src/lib.rs:246-285
+- Agent: new_lease.fence_epoch > held_lease.fence_epoch 검사, 정확히
+  check_and_advance() 보다 앞에 위치. crates/agent/src/lib.rs:277-297
+- 정상 갱신(7번, epoch ==)과 강등(11번, epoch <) 이 새 > 검사에
+  잘못 걸리지 않음을 확인 —
+  crates/cli/src/coordinator_agent_selftest.rs:357-374, 463-479
+- 시나리오 8·15·16 이 성공 여부와 지정 오류 메시지를 함께 검사함 확인 —
+  crates/cli/src/coordinator_agent_selftest.rs:397-405, 604-607, 634-638
+- config.fence_epoch 를 "Coordinator 가 기억하는 현재 epoch"으로 쓰는
+  근거가 코드에 문서화됨 확인 —
+  crates/coordinator/src/lib.rs:275-285, 최초 Lease 반영 :425-430
+- 소스에 `if false &&` 같은 뮤테이션 잔여 흔적 없음(확인됨 — 전부 원복됨).
+
+잔여 지적(문서만): 계획서 완료 기록이 "14개 시나리오"로 stale — 실제
+16개(시나리오 15·16 추가 후). → docs/plans/2026-08-19_0500_...v1.md
+단계 5 행 갱신으로 해소(같은 세션에서 즉시 반영).
+
+실행 검증: 확인 안 됨(코덱스 read-only 샌드박스에 cargo 없음) — 이
+raw 실행은 claude-code 세션이 직접 수행해
+docs/evidence/_raw/DoD-13_selftest_2026-08-19.txt 에 남겼다.
+
+최종 판정: ACCEPTED (2라운드).

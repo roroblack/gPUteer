@@ -1,0 +1,211 @@
+=== gputeer coordinator-agent-selftest (Lease 갱신 시나리오 7~16 포함) — DoD-13 ===
+실행 시각: 2026-08-18T08:30:29Z UTC
+commit: b67e678
+
+--- round 1 ---
+1) 정상 handshake 성공 (self=12144 coordinator=20304 agent=4812, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+exit code: 0
+
+--- round 2 ---
+1) 정상 handshake 성공 (self=23876 coordinator=25596 agent=21776, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+exit code: 0
+
+--- round 3 ---
+1) 정상 handshake 성공 (self=27000 coordinator=19992 agent=25640, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+exit code: 0
+
+--- round 4 ---
+1) 정상 handshake 성공 (self=27300 coordinator=25788 agent=25276, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+exit code: 0
+
+--- round 5 ---
+1) 정상 handshake 성공 (self=27092 coordinator=18612 agent=27276, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+exit code: 0
+
+
+=== cargo test --workspace (같은 commit, 회귀 확인) ===
+     Running unittests src\lib.rs (target\debug\deps\gputeer_agent-e90abd7845c04402.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_checkpoint-282b3b969f277054.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\ckpt_writer.rs (target\debug\deps\ckpt_writer-22349fe19abb9020.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-7cb56a920644c59e.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests\durability_chaos.rs (target\debug\deps\durability_chaos-f8648dfb0fe54f12.exe)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.78s
+     Running tests\kill_chaos.rs (target\debug\deps\kill_chaos-8905f8b6e165a546.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.06s
+     Running tests\resume_selection.rs (target\debug\deps\resume_selection-f8ff6efd1c9c063a.exe)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+     Running tests\state_table_parity.rs (target\debug\deps\state_table_parity-693b8eb9251e377a.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\write_failure.rs (target\debug\deps\write_failure-d5bfae88eed366a0.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+     Running unittests src\main.rs (target\debug\deps\gputeer-efc93630c8176630.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_coordinator-2eeec3f1c606c199.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_crypto-646427ddcc6ec139.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\durable_replay_process_fixture.rs (target\debug\deps\durable_replay_process_fixture-fb19975539ed6cf5.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\durable_replay.rs (target\debug\deps\durable_replay-647528041684a4b6.exe)
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.83s
+     Running tests\durable_replay_process.rs (target\debug\deps\durable_replay_process-7ed5b8fd786746a1.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s
+     Running tests\durable_replay_race.rs (target\debug\deps\durable_replay_race-d50da7b71d8bc005.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.85s
+     Running tests\ed25519_verify.rs (target\debug\deps\ed25519_verify-b31b31e3e78e53be.exe)
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests\framed_ingress.rs (target\debug\deps\framed_ingress-856bd90f1995dc1b.exe)
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests\keyring.rs (target\debug\deps\keyring-79404f3b229acc3c.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests\lifetime_policy.rs (target\debug\deps\lifetime_policy-19bb225beeb684f8.exe)
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests\replay_binding.rs (target\debug\deps\replay_binding-12acfa79e3de6aeb.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests\replay_contract.rs (target\debug\deps\replay_contract-dc96d2bfd028a18e.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+     Running tests\replay_guard.rs (target\debug\deps\replay_guard-1802ead4b2446bac.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests\verification_ingress.rs (target\debug\deps\verification_ingress-4e39254fa1df03a0.exe)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_protocol-e25ac8386b1db788.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-d2b65a360e6ffb85.exe)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\codex_findings.rs (target\debug\deps\codex_findings-808d13e2ac83c480.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\field_number_audit.rs (target\debug\deps\field_number_audit-2d63f6f20abd888b.exe)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\lifetime_consistency.rs (target\debug\deps\lifetime_consistency-4330534577bbc283.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\prost_canonical.rs (target\debug\deps\prost_canonical-0a67e78bf4c73906.exe)
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests\schema_evolution.rs (target\debug\deps\schema_evolution-c532004f8faeb6a0.exe)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\schema_fingerprint.rs (target\debug\deps\schema_fingerprint-7eeb2c2e56c7e330.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\stream_ownership.rs (target\debug\deps\stream_ownership-8ef8e85cc61be3c3.exe)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\t1_signing_targets.rs (target\debug\deps\t1_signing_targets-945aa85a3831c11c.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests\t1b_grant_and_control.rs (target\debug\deps\t1b_grant_and_control-80e715c433306932.exe)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_runtime_policy-956510ae6f389f8a.exe)
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_runtime_windows-a9d688d6a75cdf34.exe)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src\bin\alloc_fixture.rs (target\debug\deps\alloc_fixture-1e40fecf6da9074e.exe)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests\artifact_beneath.rs (target\debug\deps\artifact_beneath-80fe7723c8a3301b.exe)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests\commit_cap.rs (target\debug\deps\commit_cap-3e4dbfc69c5fcfa3.exe)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== 뮤테이션 테스트 로그 (오늘 재현, 코드에는 흔적 남기지 않음) ===
+1) crates/agent/src/lib.rs — nested Lease 독립 검증(verify(&new_lease, ...))을
+   `let new_lease = &new_lease;` 로 무력화 → 시나리오 10 이 정확히 예상대로
+   실패: "위조된 nested Lease 서명(갱신)이 거부되지 않았다 — outer 결과
+   검증만으로는 이 결함을 잡지 못한다는 뜻이다." → 원복 → 재빌드(mtime 갱신
+   위해 touch) → 16개 시나리오 전부 재통과.
+2) crates/agent/src/lib.rs — request_nonce 대조 검사를
+   `if false && result.request_nonce != renew_req.nonce` 로 무력화 → 시나리오
+   14 가 정확히 예상대로 실패: "RenewLeaseResult.request_nonce 가 echo 되지
+   않았는데 Agent 가 거부하지 않았다." → 원복 → 재통과.
+3) crates/agent/src/lib.rs — epoch 상승 거부 검사를
+   `if false && new_lease.fence_epoch > held_lease.fence_epoch` 로 무력화 →
+   시나리오 15 가 정확히 예상대로 실패: "epoch 상승(0 -> 5) 갱신을 Agent 가
+   거부하지 않았다 — 계획서는 이를 범위 밖 정책 거부로 명시했다." → 원복 →
+   재통과.
+4) crates/coordinator/src/lib.rs — 요청 fence_epoch 대조 검사를
+   `if false && renew_req.fence_epoch != config.fence_epoch` 로 무력화 →
+   시나리오 16 이 정확히 예상대로 실패: "요청의 fence_epoch(99) 이
+   Coordinator 가 기억하는 값(0)과 다른데 거부되지 않았다." → 원복 → 재통과.
+모든 무력화는 백업(cp)→edit→cargo build→selftest 실행→원복(mv)→touch(mtime
+갱신)→재빌드→재통과 순서로 진행했다. 마지막 재통과 확인은 위 5회 연속
+실행(정상 상태)이 대표한다.

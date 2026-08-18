@@ -163,7 +163,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 19:20)
+## 5. 지금 상태 (2026-08-19)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -177,18 +177,18 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 306 passed / 0 failed**(1 ignored), 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 310 passed / 0 failed**(1 ignored, 2026-08-19 실측), 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** |
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류. 실제 연결은 `crates/runtime-windows` 가 시작함 |
 | ├ `crates/runtime-windows` | **신규**(2026-08-18) — VRAM 판정을 실제 `CreateJobObjectW`/`SetInformationJobObject` 로 연결(소프트 제한 실측, 오버슈트 700~850KiB — `guarantees_hard_limit()==false` 재확인). **`open_beneath`/`open_artifact`** — `artifact_scope` TOCTOU 방어, reparse point(symlink·junction) 를 열기 시점에 실제로 거부(junction 으로 실측, 뮤테이션 테스트 포함). network(방화벽)만 미착수(시스템 설정 승인 필요) |
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함. **`gputeer coordinator-agent-selftest`**(신규, 2026-08-18) — 별도 프로세스 2개(coordinator-stub·agent-stub)가 실제 handshake + **거부 경로 3종(위조 Grant·위조 ACK·replay) 자동 검증** |
-| ├ `crates/coordinator` | `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증. **`Lease` 도 서명해 Grant 에 실어 보낸다**(2026-08-18, `issue_lease()`). 테스트 전용 self-corruption 플래그 5개. 갱신·다중 Agent 미착수 |
-| ├ `crates/agent` | `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. **nested `Lease` 를 outer Grant 와 독립 검증 + `FenceWatermark` 기록**(2026-08-18, `verify_and_record_lease()`, `gputeer-runtime-policy` 신규 의존). Job 실행 미착수 |
-| └ 미착수 | scheduler · UI · OS 방화벽 강제(network.rs) · lease 갱신(`RenewLeaseRequest` 왕복) · 다중 Agent. **핸드셰이크 단계 1~6 전부 완료**(2026-08-18) + **Lease 최소 조각 완료**(같은 날, `docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md`, 6/6 시나리오·뮤테이션 테스트 확인). `docs/evidence/` schema v2 정식 기록은 둘 다 아직 |
+| ├ `crates/coordinator` | `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증, `Lease` 를 Grant 에 실어 보낸다(2026-08-18, `issue_lease()`). **Lease 갱신 왕복도 처리**(2026-08-19) — 같은 연결에 이어서 `RenewLeaseRequest` 를 받아 검증(요청의 `fence_epoch` 을 자신이 기억하는 값과 대조 포함)하고 서명된 `RenewLeaseResult` 로 응답한다(`build_renew_result()`). 테스트 전용 self-corruption 플래그 다수(위조 서명·epoch 불일치·request_nonce 오염·SUPERSEDED/QUARANTINED 강제 주입). 반복 갱신·다중 Agent·실제 재발급 정책·영속 Lease 저장소는 미착수 |
+| ├ `crates/agent` | `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답, nested `Lease` 를 outer Grant 와 독립 검증 + `FenceWatermark` 기록(2026-08-18, `verify_and_record_lease()`). **Lease 갱신도 처리**(2026-08-19) — `RenewLeaseRequest` 서명·송신, `RenewLeaseResult` 를 서명·`request_nonce` echo·nested 새 Lease 독립 서명·epoch 단조성(낮은 epoch 거부 + **높은 epoch 도 이 조각 범위에서는 명시적으로 거부**, `FenceWatermark` 만으로는 `>` 를 못 잡는다는 것을 코덱스 검수가 지적해 추가)까지 전부 확인한 뒤에만 보유 Lease 를 교체한다. Job 실행 미착수 |
+| └ 미착수 | scheduler · UI · OS 방화벽 강제(network.rs) · 반복 갱신·재접속(failover) · durable `FenceWatermark` · Coordinator 의 실제 Lease 재발급 정책·영속 저장소 · 다중 Agent. **핸드셰이크**(2026-08-18) + **Lease 최소 조각**(2026-08-18) + **Lease 갱신 최소 조각**(2026-08-19, `docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md`, 16/16 시나리오·뮤테이션 테스트 확인) 전부 완료, `docs/evidence/` schema v2 정식 기록(DoD-11·12·13)도 전부 완료 |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **4건**(DoD-09·10·**01**·**02**, 2026-08-18). ★ **v1 evidence 16건 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원. ★ **v1→v2 실제 승격 진행 중**(2026-08-18, 사용자 승인) — `DoD-01`·`DoD-02` 완료. 과거 executor/reviewer 메타데이터를 지어내지 않고, 오늘 새로 실행한 재검증+새 독립 검수(각 2라운드: CHANGES_REQUESTED→ACCEPTED)를 v2 근거로 삼는 절차 확립. `DoD-02` 승격 중 **진짜 코드 결함**도 하나 찾아 고쳤다 — `t1_signing_targets.rs::domain_coverage_is_explicit` 가 `Domain` enum 을 순회하지 않고 손으로 쓴 배열을 써서 `GrantAck` 추가를 놓치고 있었다. `_schema_v1_grandfathered.txt`·`GRANDFATHER_DIGEST` 갱신. 독립 검수 기록 없는 P0/DoD PASS 부채 **13→11건**. 다음 후보 `DoD-03` |
+| **DoD** | 🟡 **evidence 21건** (PASS **20** · FAIL-SCOPE 1, 2026-08-19 `verify_evidence.py` 실측). 스키마 위반 0. ★ v1 evidence 전부(DoD-01~08·P0-01·03·03a·07·08 13건) schema v2 승격 완료, 독립 검수 없는 P0/DoD PASS 부채 **0건**. `DoD-09`~`13` 은 신규 작성부터 v2. **`DoD-13`(2026-08-19)** — Lease 갱신 최소 조각(`RenewLeaseRequest`/`RenewLeaseResult` 왕복, `RenewLeaseResult` 신규 서명화 포함). 코덱스 1라운드 검수(`p99`)가 완료 보고 전에 실제 설계 결함 2건을 찾아냈다 — Coordinator 가 요청의 `fence_epoch` 을 검증하지 않던 문제, `FenceWatermark` 가 `<` 만 거부하고 `>`(epoch 상승)는 통과시키는데 계획서는 상승을 이 조각 범위에서 정책상 거부하라고 명시했던 문제. 둘 다 코드로 고치고 2라운드 좁은 후속 검수(`p100`)에서 `ACCEPTED`. 신규 검증 게이트 4건(nested Lease 독립 검증·request_nonce 대조·epoch 상승 거부·Coordinator epoch 대조)을 뮤테이션 테스트로 비공허성 확인 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
@@ -261,25 +261,38 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크+Lease 최소 조각 완료 + evidence 정식 기록 완료(2026-08-19)
+1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크+Lease 최소 조각+Lease 갱신 최소 조각 전부 완료 + evidence 정식 기록 완료(2026-08-19)
    docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
    docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md
+   docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md
    `gputeer coordinator-agent-selftest` 가 별도 PID 2개(coordinator-stub·
-   agent-stub)로 실제 handshake 에 성공하고, 거부 경로 5종(위조 Grant·
-   위조 ACK·replay wire bytes·위조 nested Lease 서명·만료된 Lease)도
-   프로세스 경계에서 자동 검증한다(6/6, 5회 연속 확인, 뮤테이션
-   테스트로 비공허성 증명 — 2026-08-19 오늘도 재현). `docs/evidence/DoD-11_coordinator_agent_핸드셰이크.md`·
-   `DoD-12_coordinator_agent_lease_최소_조각.md` 로 schema v2 정식
-   기록 완료(각 2~3라운드 재검수 끝에 `ACCEPTED`). "완전한
-   coordinator" 아님, lease **갱신**(`RenewLeaseRequest` 왕복)·
-   스케줄링·다중 Agent·운영용 key protection·TLS 는 여전히 범위
-   밖. **Lease 갱신(`RenewLeaseRequest` 왕복) 계획 수립 완료
-   (2026-08-19)** — `docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md`.
-   설계 실측이 진짜 공백을 찾았다: `RenewLeaseResult` 는 서명 필드도
-   `Signable` 구현도 없다 — 위조된 정책 거부(`SUPERSEDED`/
-   `QUARANTINED`)를 아무나 끼워 넣을 수 있는 상태다. 이 조각의
-   In 범위에 `RenewLeaseResult` 서명화를 포함시켰다. 구현은 아직
-   착수 전(단계 1~8, 8단계 계획표 참조).
+   agent-stub)로 실제 handshake 에 성공하고, 이제 **16개 시나리오**
+   (정상 1 + 핸드셰이크/Lease 거부 5 + 갱신 정상 1 + 갱신 거부 9)를
+   프로세스 경계에서 자동 검증한다(5회+ 연속 확인, 뮤테이션 테스트로
+   비공허성 증명 — 2026-08-19 오늘 재현). `docs/evidence/DoD-11_coordinator_agent_핸드셰이크.md`·
+   `DoD-12_coordinator_agent_lease_최소_조각.md`·
+   `DoD-13_coordinator_agent_lease_갱신_최소_조각.md` 로 schema v2
+   정식 기록 완료(각 2~3라운드 재검수 끝에 `ACCEPTED`).
+
+   **Lease 갱신 최소 조각**(2026-08-19) — 설계가 찾은 공백대로
+   `RenewLeaseResult` 를 새 서명 대상 메시지로 승격(domain_tag
+   `gputeer/v1/lease-renew-result`, Python 참조 구현 교차검증 포함)
+   하고, 같은 TCP 연결에 `RenewLeaseRequest`/`RenewLeaseResult` 왕복을
+   추가했다. Agent 는 결과 서명·`request_nonce` echo·nested 새 Lease
+   독립 서명·epoch 단조성(낮은 epoch 거부 + 높은 epoch 도 이 조각
+   범위에서는 명시적 정책 거부)을 전부 확인한 뒤에만 보유 Lease 를
+   교체한다. ★ 코덱스 1라운드 검수(`p99`)가 완료 보고 전에 **실제
+   설계 결함 2건**을 잡아냈다 — Coordinator 가 요청의 `fence_epoch`
+   을 검증하지 않던 문제, `FenceWatermark` 가 `<` 만 거부하고 `>`
+   (epoch 상승)는 통과시키는데 계획서는 상승을 이 조각에서 정책상
+   거부하라고 명시했던 문제(watermark 하나만으로는 그 계약을 강제
+   못 한다). 둘 다 코드로 고치고(Coordinator 에 요청 epoch 대조,
+   Agent 에 epoch 상승 명시적 거부 추가) 2라운드 좁은 후속
+   검수(`p100`)에서 `ACCEPTED`. 신규 검증 게이트 4건을 뮤테이션
+   테스트로 비공허성 확인. "완전한 coordinator" 아님 — 반복 갱신·
+   재접속(failover)·durable `FenceWatermark`·Coordinator 의 실제
+   Lease 재발급 정책·영속 저장소·스케줄링·다중 Agent·운영용 key
+   protection·TLS 는 여전히 범위 밖(각각 새 계획 문서 필요).
 2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 의 primitive 완료(2026-08-18) — 방화벽만 남음
    crates/runtime-windows 신설:
    - VRAM: Job Object 커밋 상한 실제 연결·실측(뮤테이션 테스트 포함).
