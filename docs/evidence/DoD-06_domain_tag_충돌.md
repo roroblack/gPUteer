@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-06
 claim: "signing.md §5 가 세 domain_tag 를 여러 메시지에 공유시켜 서명 재사용이 가능했음을 실측으로 확인했다. ADR-028 로 tag 를 분리해 시정했고, canonical bytes 는 하나도 바뀌지 않았다. domain 커버리지가 19/23 이 되었다"
 status: PASS
 commit: e5ac1ff319a3c130c13a29c2dc10beeddb6ffa4c
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 범위(§5 domain_tag 분리) · negative_tests 실재성 · domain/Signable 수치(20/24·11종) 재확인 · all_domain_tags_are_distinct 의 진짜 코드 결함(GrantAck 누락) 발견·수정 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-06_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-06_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:e55edc4de558d5d214170b764f331525c182b07ca08619807d5459e9b599dcca"
+raw_output_bytes: 1539
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / prost 0.14 / python 3.12.7"
   note: "라이브러리 크레이트라 실행 바이너리 없음"
@@ -67,6 +87,8 @@ artifacts:
   - crates/protocol/tests/t1b_grant_and_control.rs
   - crates/protocol/src/to_fields.rs
   - crates/protocol/src/canonical.rs
+  - docs/evidence/_raw/DoD-06_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-06_review.txt
 negative_tests:
   - "★ signatures_do_not_transfer_between_control_messages: 같은 domain 을 공유하던 메시지들의 sig_input 이 서로 다른지 확인. ★ canonical 이 아니라 sig_input 을 본다 — canonical 은 **여전히 같기 때문이다**. canonical 을 검사하면 '우연히 필드가 달라서 통과'하는 약한 보증밖에 못 얻는다. 전제(canonical 동일)를 assert_eq 로 함께 고정해, 전제가 바뀌면 ADR-028 근거를 재확인하도록 했다"
   - "all_domain_tags_are_distinct: 23종 tag 가 전부 서로 다른지 확인. 오타로 두 tag 가 같아지면 그 두 메시지 사이의 방어가 조용히 사라진다"
@@ -340,3 +362,85 @@ vectors 불일치 설명 절을 확인하고 **`ACCEPTED`** 로 판정했다.
 — frontmatter 가 여전히 schema v1·"36건" 으로 남아 있어, 그 자체를
 현재 값으로 잘못 읽으면 안 된다는 점은 이 addendum 이 이미 명시하고
 있다.
+
+---
+
+## ★ 이후 변경 (2026-08-18) — schema v2 승격 전 재확인, 수치 재정정 + 진짜 코드 결함 발견·수정
+
+`DoD-01`~`DoD-04` 를 schema v1 → v2 로 승격하며 겪은 패턴이 `DoD-06`
+에도 반복됐다. 새로운 독립 검수(`agent:codex-cli`, read-only, v2
+승격용 재검수)가 `CHANGES_REQUESTED` 로 판정했다 — claim 의
+"19/23"·2026-08-17 addendum 의 "Signable 10종" 이 이 세션 중 생긴
+`Domain::GrantAck` 추가로 다시 stale 해졌다는 지적과 함께, **진짜
+코드 결함**도 하나 찾았다.
+
+### 1. domain/Signable 수치 — stale, 실제는 20/24·11종
+
+- `Domain` enum: **24종**(`crates/protocol/src/canonical.rs:282-315`,
+  `GrantAck` 는 `:309-314`).
+- `domain_coverage_is_explicit`: **24종 중 20개 구현**
+  (`crates/protocol/tests/t1_signing_targets.rs:397-452`).
+- `Signable` 구현: **11종**(`crates/protocol/src/signable.rs:40,66,
+  98,178,211,263,298,325,356,383,417`).
+
+frontmatter claim(`DoD-06:3` 의 "19/23")과 2026-08-17 addendum
+(`DoD-06:310` 의 "10종")은 원문 그대로 두고 고치지 않는다
+(append-only 원칙) — **진짜 현재 값은 20/24·11종**이다.
+
+### 2. [진짜 결함] `all_domain_tags_are_distinct` 가 `GrantAck` 를 빼먹고 있었다
+
+`crates/protocol/tests/t1b_grant_and_control.rs::all_domain_tags_are_distinct`
+는 `Domain` enum 을 순회하지 않고 **손으로 쓴 23개 배열**을 쓴다 —
+`domain_coverage_is_explicit`(`DoD-02` 승격 때 고친 것)과 같은
+구조적 결함이다. `Domain::GrantAck` 가 이 배열에 없었으므로, 이
+테스트는 `GrantAck` 의 tag 가 다른 23종과 실제로 겹치지 않는지
+**한 번도 확인하지 않은 채** `assert_eq!(seen.len(), 23, ...)` 로
+계속 통과하고 있었다 — enum 이 24종으로 늘어난 사실 자체를 이
+테스트가 알 방법이 없었다.
+
+```text
+수정 전: all 배열 23개(GrantAck 없음), assert_eq!(seen.len(), 23, ...)
+수정 후: all 배열 24개(GrantAck 추가), assert_eq!(seen.len(), 24, ...)
+직접 실행 확인: all_domain_tags_are_distinct ... ok (13개 중 1개,
+  t1b_grant_and_control.rs 전체 13 passed / 0 failed)
+```
+
+`GrantAck` 의 tag(`"gputeer/v1/grant-ack"`)가 실제로 나머지 23종과
+겹치지 않는다는 것이 이제 이 테스트로 직접 보증된다 — 수정 전에는
+`canonical_vectors.rs` 의 별도 테스트(24종 전체를 순회하는 구조)만
+이 사실을 우연히 보증하고 있었다.
+
+### 3. Ed25519 재사용 limitation, vectors 40건, `change_coordinator_set` 이름 — 재확인, 2026-08-17 정정 그대로 유효
+
+- Ed25519 실제 서명 재사용 확인 범위(`AttemptReport`/`ArtifactRef`
+  한 쌍뿐)는 `crates/crypto/tests/framed_ingress.rs:28-43,348-380`
+  로 재확인됐다 — 2026-08-17 addendum(`DoD-06:309`)의 정정이 여전히
+  정확하다.
+- `tests/vectors/canonical_v1.json` 은 지금도 40건 —
+  2026-08-17 addendum(`DoD-06:316-324`)의 정정이 여전히 정확하다.
+  frontmatter 원문의 "36건"(`DoD-06:12`)은 append-only 원칙에 따라
+  그대로 둔다.
+- `change_coordinator_set` → 실제 함수명
+  `change_coordinator_set_matches_reference_and_preserves_order`
+  (`t1b_grant_and_control.rs:490` 근방, 현재는 재배치로
+  `crates/protocol/tests/t1b_grant_and_control.rs` 내 위치가 달라질
+  수 있으나 함수명 자체는 그대로)는 2026-08-17 addendum
+  (`DoD-06:300-303`)의 정정이 여전히 정확하다.
+
+### Rust/Python 재실행 — 이 세션에서 직접 확인, Codex 샌드박스에서는 못함
+
+Codex read-only 샌드박스는 `.cargo-build-lock` 접근이 거부돼
+`cargo test`/`cargo build` 를 실행하지 못했다(샌드박스 제약이지
+코드 결함이 아니다) — Python 명령 둘(`--self-test` 12/12,
+`--verify` 40/40)은 직접 실행해 확인했다. 이 세션은 이미 로컬에서
+cargo 전체도 직접 실행해 확인했다 —
+`docs/evidence/_raw/DoD-06_v2_promotion_2026-08-18.txt` 가 그
+receipt 다: `t1_signing_targets` 11 passed, `t1b_grant_and_control`
+13 passed(이번 수정 반영해 재실행 완료), `cargo test --workspace`
+306 passed / 0 failed, `cargo build --all-targets` 경고 0건.
+
+### review_outcome
+
+`CHANGES_REQUESTED` — 위 1~2 를 이 addendum과 코드 수정
+(`t1b_grant_and_control.rs`)으로 반영했다. 좁은 범위의 후속 확인을
+별도로 요청해 `ACCEPTED` 를 받은 뒤에만 schema v2 로 승격한다.

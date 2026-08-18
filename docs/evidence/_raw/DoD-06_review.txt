@@ -1,0 +1,72 @@
+독립 검수 receipt — DoD-06 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      DoD-06
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-06_domain_tag_충돌.md (frontmatter + 본문 전체,
+  기존 addendum 3라운드 포함) 을 처음부터 다시 검수 — 기존 addendum 의
+  ACCEPTED 판정을 그대로 믿지 않고 파일:줄을 직접 재확인했다. 특히
+  "19/23"·"Signable 10종" 수치가 DoD-01·02·03·04 재검수와 같은 이유
+  (Domain::GrantAck 추가)로 또 stale 인지 확인했다.
+  crates/protocol/src/canonical.rs
+  crates/protocol/src/signable.rs
+  crates/protocol/tests/t1_signing_targets.rs
+  crates/protocol/tests/t1b_grant_and_control.rs
+  crates/crypto/tests/framed_ingress.rs
+
+--------------------------------------------------------------------------
+1차 검수 (p75 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+| 항목 | 판정 |
+|---|---|
+| Domain enum | stale — 실제 24종 |
+| domain_coverage_is_explicit | stale — 실제 24종 중 20개 구현 |
+| Signable 구현 | stale — 실제 11종 |
+| claim(19/23) | stale — 실제 20/24, 핵심 보안 내용은 실재 확인됨 |
+| negative_tests 목록 | 대부분 실재 확인됨, change_coordinator_set 이름은 이미 addendum이 정정(재확인) |
+| all_domain_tags_are_distinct | ★ 23종만 열거(GrantAck 누락) — 진짜 코드 결함 |
+| Ed25519 재사용 limitation | 실재 확인됨(2026-08-17 정정 유효) |
+| vectors 40건 | 실재 확인됨(2026-08-17 정정 유효), frontmatter 원문 36건은 append-only로 보존 |
+| 명령 재실행 | python 12/12·40/40 실재 확인됨, cargo 는 샌드박스 제약으로 확인 안 됨 |
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날) — 코드 결함 실제 수정 포함
+--------------------------------------------------------------------------
+
+- `crates/protocol/tests/t1b_grant_and_control.rs::all_domain_tags_are_distinct`
+  가 `Domain` enum 을 순회하지 않고 손으로 쓴 23개 배열을 써서,
+  `Domain::GrantAck` 의 tag 중복 여부를 한 번도 확인하지 않은 채
+  `assert_eq!(seen.len(), 23, ...)` 로 계속 통과하던 진짜 결함을
+  발견해 고쳤다 — 배열에 `Domain::GrantAck` 추가, assert 를 24로
+  갱신. 직접 실행 확인: 13 passed / 0 failed(수정 전후 모두 통과 —
+  회귀 아님, 검사 범위가 넓어진 것).
+- DoD-06 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) — schema
+  v2 승격 전 재확인, 수치 재정정 + 진짜 코드 결함 발견·수정" 을
+  추가해 20/24·11종 실측치와 위 코드 수정을 기록했다. frontmatter
+  원문("19/23")과 2026-08-17 addendum 원문("10종")은 append-only
+  원칙에 따라 손대지 않았다.
+- cargo test --workspace 전체 재실행(306 passed / 0 failed, 회귀
+  없음) — docs/evidence/_raw/DoD-06_v2_promotion_2026-08-18.txt 참조.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p76 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- 테스트 수정 확인: GrantAck 가 배열에 포함됨
+  (t1b_grant_and_control.rs:410-420), assert_eq!(seen.len(), 24, ...)
+  확인(:421-427).
+- 수치 확인: Domain enum 24개(canonical.rs:282-315), coverage
+  24개·구현 20개(t1_signing_targets.rs:397-448), Signable 구현
+  11개(signable.rs:40,66,98,178,211,263,298,325,356,383,417).
+- append-only 확인: frontmatter 원문 "19/23"(DoD-06:3)과 2026-08-17
+  addendum 원문 "10종"(DoD-06:310) 모두 그대로 남아 있음. 새 addendum
+  은 별도 append됨(DoD-06:346-366).
+- raw receipt 존재, domain 24·구현 20·Signable 11 및 관련 테스트
+  결과가 addendum 인용과 일치(DoD-06_v2_promotion_2026-08-18.txt:8-22).
+추가 변경 요청 없음.

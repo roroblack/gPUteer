@@ -299,25 +299,24 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·02·03·04 완료
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·02·03·04·06 완료, "DoD-03·04·06 3라운드 재검수" 사이클 종료
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
-   코드 결함(손으로 쓴 domain 배열이 enum 크기 변화를 못 잡음)도
-   찾아 고쳤다 — evidence 재검수가 실제 버그를 잡은 사례. `DoD-03`·
-   `DoD-04` 는 그 결함이 이미 고쳐진 뒤라 코드 결함 없이 evidence
-   문서 수치만(같은 `Domain::GrantAck` 원인으로) 다시 stale 했다 —
-   `DoD-04` 는 추가로 "단수명 경로가 ExecutionGrant 로 한정된다"·
-   "아무도 replay 저장소를 안 쓴다"(실제로는 CLI selftest 만 쓰고
-   coordinator/agent 는 안 씀) 두 서술도 stale 이었다. 두 건 다
-   addendum 재정정 → 인용 오류 지적 → 재정정 → ACCEPTED 순으로
-   마무리.
+   코드 결함(손으로 쓴 domain 배열이 enum 크기 변화를 못 잡음)을
+   찾아 고쳤고, `DoD-06` 승격 중 **같은 종류의 결함을 두 번째로**
+   찾았다 — `t1b_grant_and_control.rs::all_domain_tags_are_distinct`
+   도 손으로 쓴 domain 배열이라 `Domain::GrantAck` 의 tag 중복
+   여부를 한 번도 검사하지 않은 채 통과하고 있었다(고쳤다). `DoD-03`·
+   `DoD-04` 는 코드 결함 없이 evidence 문서 수치만(같은
+   `Domain::GrantAck` 원인으로) stale 했다 — `DoD-04` 는 추가로
+   "단수명 경로가 ExecutionGrant 로 한정된다"·"아무도 replay
+   저장소를 안 쓴다" 두 서술도 stale 이었다(둘 다 addendum
+   재정정 → 인용 오류 지적 → 재정정 → ACCEPTED 순으로 마무리).
    `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→11→10→**9건**. `DoD-06` 은
-   이미 addendum 이 1라운드 만에 ACCEPTED 를 받아 두었으므로 다음
-   후보 — 같은 v2 frontmatter 승격 절차만 남았다. 그 다음은
+   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→**8건**. 다음은
    `DoD-05·07·08`, `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02`
-   는 비강제).
+   는 비강제) — 같은 절차로 이어간다.
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

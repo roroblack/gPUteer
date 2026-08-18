@@ -394,10 +394,18 @@ fn signatures_do_not_transfer_between_control_messages() {
     }
 }
 
-/// domain_tag 가 실제로 23종 전부 서로 다른가.
+/// domain_tag 가 실제로 24종 전부 서로 다른가.
 ///
-/// ADR-028 이 6종을 추가했다. 오타로 두 tag 가 같아지면
+/// ADR-028 이 6종을 추가했다(17→23). `GrantAck` 가 그 뒤 7번째로
+/// 추가됐다(23→24, 2026-08-18). 오타로 두 tag 가 같아지면
 /// 그 두 메시지 사이의 방어가 조용히 사라진다.
+///
+/// ★ 이 배열은 `Domain` enum 을 순회하지 않고 손으로 쓴 목록이다 —
+///   `domain_coverage_is_explicit`(`t1_signing_targets.rs`)와 같은
+///   구조적 한계를 안고 있다. 새 variant 를 추가할 때 여기 갱신을
+///   잊으면 그 variant 의 중복 여부가 이 테스트로는 검출되지
+///   않는다(2026-08-18, DoD-06 schema v2 승격 재검수에서 stale
+///   수치와 함께 지적됨).
 #[test]
 fn all_domain_tags_are_distinct() {
     use gputeer_protocol::canonical::Domain;
@@ -408,7 +416,7 @@ fn all_domain_tags_are_distinct() {
         Domain::MemberAdd, Domain::MemberRemove, Domain::DeviceApprove, Domain::DeviceRevoke,
         Domain::CoordinatorSet, Domain::OwnerKeyRotate, Domain::PolicyUpdate,
         Domain::QuarantineDevice, Domain::QuarantineRelease,
-        Domain::Audit, Domain::Release, Domain::Invite,
+        Domain::Audit, Domain::Release, Domain::Invite, Domain::GrantAck,
     ];
     let mut seen = std::collections::HashMap::new();
     for d in all {
@@ -416,7 +424,7 @@ fn all_domain_tags_are_distinct() {
             panic!("domain_tag 중복: {prev:?} 와 {d:?} 가 같은 tag 를 쓴다");
         }
     }
-    assert_eq!(seen.len(), 23, "signing.md §5 는 23종이다 (ADR-028)");
+    assert_eq!(seen.len(), 24, "signing.md §5 는 24종이다 (ADR-028 + GrantAck)");
 }
 
 // ══════════════════════════════════════════════════════════════════

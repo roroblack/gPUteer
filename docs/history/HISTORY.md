@@ -16,6 +16,45 @@
 
 ---
 
+## 2026-08-18 21:55 — DoD-06 schema v1 → v2 승격 완료 — DoD-03·04·06 3라운드 재검수 사이클 종료, 진짜 코드 결함 또 발견
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격) + 자율 루프가
+  명시적으로 지정한 "DoD-03·04·06 3라운드 재검수" 사이클의 마지막
+  항목. DoD-01·02·03·04 에 이은 다섯 번째 v2 승격.
+- 스트림: Protocol.
+- 수행: 같은 절차를 DoD-06 에 적용했다. `python
+  reference_canonical.py --self-test`(12/12) + `--verify`(40/40) +
+  `cargo test -p gputeer-protocol --test t1_signing_targets --test
+  t1b_grant_and_control` + `cargo test --workspace`(306) + `cargo
+  build --workspace --all-targets`(경고 0건)를 직접 실행해
+  `docs/evidence/_raw/DoD-06_v2_promotion_2026-08-18.txt` 에 저장했다.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p75` 프롬프트) —
+  `CHANGES_REQUESTED`.
+- **DoD-01~04 와 같은 domain 수치 stale 패턴(19/23→20/24, Signable
+  10→11종)에 더해, `DoD-02` 이후 두 번째로 진짜 코드 결함을 찾았다.**
+  `crates/protocol/tests/t1b_grant_and_control.rs::all_domain_tags_are_distinct`
+  가 `domain_coverage_is_explicit`(DoD-02 때 고친 것)와 똑같은
+  구조적 결함을 갖고 있었다 — `Domain` enum 을 순회하지 않고 손으로
+  쓴 23개 배열을 써서, `Domain::GrantAck` 의 tag 중복 여부를 **한
+  번도 확인하지 않은 채** `assert_eq!(seen.len(), 23, ...)` 로 계속
+  통과하고 있었다. 배열에 `GrantAck` 추가, assert 를 24로 갱신 —
+  수정 전후 모두 테스트는 통과했다(회귀가 아니라 검사 범위 확장).
+  새 addendum(2026-08-18 21:45 경)으로 20/24·11종 실측치와 이 코드
+  수정을 기록했다 — 원본 frontmatter 와 이전 addendum 원문은
+  손대지 않았다. 좁은 후속 재검수(`p76` 프롬프트) — **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가, `artifacts:` 에 raw/review
+  파일 2개 추가. `_schema_v1_grandfathered.txt` 에서 DoD-06
+  제거(12→11건), `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **9 → 8건**. `cargo test --workspace` 전체
+  재실행(코드 수정 반영) — 전 항목 0 failed(회귀 없음).
+- 리포트: 이 이력 항목. **`DoD-03·04·06` 3라운드 재검수 사이클
+  종료** — 셋 다 addendum ACCEPTED + schema v2 승격까지 완료. 자율
+  루프의 다음 지시(CLAUDE.md 백로그)에 따라 나머지 v1 evidence
+  (`DoD-05·07·08`, `P0-01·03·03a·07·08`)로 이어간다.
+
+---
+
 ## 2026-08-18 21:10 — DoD-04 schema v1 → v2 승격 완료 (DoD-01·02·03 에 이은 네 번째)
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격), DoD-01·02·03 에
