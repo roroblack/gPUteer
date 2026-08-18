@@ -96,6 +96,10 @@ message ProgressReport {
   uint64 replication_backlog_bytes = 5;
 }
 
+// ★ 2026-08-19 — 인증 메타데이터 추가(docs/plans/2026-08-19_0500_...md).
+//   원래 outcome/lease/detail/retry_after_ms 넷뿐이었고 서명이 없었다.
+//   서명이 없으면 SUPERSEDED/QUARANTINED 같은 "정상 정책 거부"를
+//   누구나 위조해 정당한 Agent 의 작업을 강제 중단시킬 수 있었다.
 message RenewLeaseResult {
   RenewOutcome outcome = 1;
   // outcome == RENEWED 일 때만 채워진다. fence_epoch는 변하지 않는다.
@@ -103,6 +107,16 @@ message RenewLeaseResult {
   string detail = 3;
   // outcome == UNAVAILABLE 일 때 재시도 권고 지연.
   uint32 retry_after_ms = 4;
+
+  uint32 schema_version = 5;
+  string coordinator_id = 6;
+  uint64 issued_at_unix_ms = 7;
+  // 요청 RenewLeaseRequest.nonce 를 그대로 echo 한다 — 결과가 다른
+  // 갱신 요청에 재사용되는 것을 Agent 가 거부할 수 있게 한다.
+  bytes request_nonce = 8;
+
+  // domain_tag = "gputeer/v1/lease-renew-result"
+  bytes coordinator_signature = 90;
 }
 
 enum RenewOutcome {

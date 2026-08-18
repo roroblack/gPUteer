@@ -45,6 +45,21 @@ pub struct AgentConfig {
     ///   `Err` 를 직접 반환한다(`crates/protocol/src/signing.rs:826`).
     ///   여기서 `Err` 가 나오는 것이 **기대한 결과**다.
     pub expect_replay: bool,
+
+    // ── Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_0500_...`) ──
+    /// ACK 를 보낸 뒤 같은 연결에 이어서 `RenewLeaseRequest` 를 보내고
+    /// `RenewLeaseResult` 를 기다린다. `false` 면 이 단계를 건너뛴다
+    /// (기존 핸드셰이크 전용 시나리오와 완전히 같게 동작).
+    pub do_renew: bool,
+    /// ★ 테스트 전용 — `RenewLeaseRequest.node_signature` 의 마지막
+    ///   바이트를 뒤집는다. Coordinator 가 ingress 단계에서 거부해야
+    ///   한다(`CoordinatorConfig::corrupt_own_signature` 와 대칭).
+    pub corrupt_renew_request_signature: bool,
+    /// ★ 테스트 전용 — `RenewLeaseRequest.fence_epoch` 을 보유 중인
+    ///   Lease 의 실제 epoch 대신 이 값으로 채운다. Coordinator 가
+    ///   자신이 기억하는 epoch(`CoordinatorConfig::fence_epoch`)와
+    ///   대조해 거부해야 한다.
+    pub renew_request_epoch_override: Option<u64>,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -99,7 +114,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   독립적으로 검증해야 한다(MUST)" 를 실제로 이행한다
     //   (2026-08-18, 코덱스 설계 · `p67` 프롬프트).
     let mut fence_watermark = FenceWatermark::new();
-    verify_and_record_lease(
+    let mut held_lease = verify_and_record_lease(
         &grant,
         &config,
         &coordinator_keys,
@@ -159,6 +174,138 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                 "REPLAY_NOT_REJECTED: 두 번째 Grant 가 거부되지 않고 {message:?} 로 검증됐다"
             )),
         };
+    }
+
+    // ★ Lease 갱신 (2026-08-19) — ACK 를 보낸 뒤 같은 연결에 이어서
+    //   `RenewLeaseRequest` 를 보내고 서명된 `RenewLeaseResult` 를
+    //   기다린다. `do_renew == false` 면 건너뛴다.
+    if config.do_renew {
+        let renew_now = clock.now_unix_ms();
+        let mut renew_req = pb::RenewLeaseRequest {
+            schema_version: 1,
+            lease_id: held_lease.lease_id.clone(),
+            fence_epoch: config
+                .renew_request_epoch_override
+                .unwrap_or(held_lease.fence_epoch),
+            node_id: config.agent_device_id.clone(),
+            issued_at_unix_ms: renew_now,
+            nonce: derive_nonce("lease-renew", &held_lease.lease_id),
+            ..Default::default()
+        };
+        renew_req.node_signature = sign(&signing_key, &renew_req).to_vec();
+
+        if config.corrupt_renew_request_signature {
+            let last = renew_req
+                .node_signature
+                .last_mut()
+                .ok_or_else(|| "node_signature 가 비어 있다".to_string())?;
+            *last ^= 0x01;
+        }
+
+        let frame = write_frame(FrameType::LeaseRenew, &renew_req.encode_to_vec())
+            .map_err(|e| format!("RenewLeaseRequest 프레임 인코딩 실패: {e}"))?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("RenewLeaseRequest 전송 실패: {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+
+        let result_msg = read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&coordinator_keys),
+            &mut replay,
+            &clock,
+        )
+        .map_err(|e| format!("RenewLeaseResult 프레임 읽기/검증 실패: {e}"))?;
+
+        // ★ `require_replay_checked()` — Grant 와 같은 이유(§10).
+        let result = match &result_msg {
+            IngressMessage::LeaseRenewResult(verified) => verified
+                .require_replay_checked()
+                .map_err(|e| format!("RenewLeaseResult replay 검사 실패: {e:?}"))?
+                .clone(),
+            other => return Err(format!("예상하지 못한 갱신 응답 타입: {other:?}")),
+        };
+
+        // ★ 서명은 이미 검증됐다 — 그 뒤에 상관관계를 확인한다.
+        //   request_nonce 가 우리가 보낸 요청과 다르면, 이 결과가 다른
+        //   갱신 요청에 대한 응답이 재사용되고 있다는 뜻이다.
+        if result.request_nonce != renew_req.nonce {
+            return Err(
+                "RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다".into(),
+            );
+        }
+        if result.coordinator_id != config.coordinator_device_id {
+            return Err(format!(
+                "RENEW_REJECTED: coordinator_id 불일치: 기대값 {} != {}",
+                config.coordinator_device_id, result.coordinator_id
+            ));
+        }
+
+        match result.outcome {
+            1 => {
+                // RENEW_OUTCOME_RENEWED — nested Lease 는 outer 결과
+                // 서명과 **무관하게** 독립적으로 검증한다(규칙 i).
+                let new_lease = result
+                    .lease
+                    .clone()
+                    .ok_or_else(|| "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string())?;
+
+                let verifier = Ed25519Verifier::new(&coordinator_keys);
+                let verified_lease = verify(&new_lease, 1, &verifier, clock.now_unix_ms(), &mut replay)
+                    .map_err(|e| format!("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패: {e:?}"))?;
+                let new_lease = verified_lease.get();
+
+                if new_lease.lease_id != held_lease.lease_id {
+                    return Err("RENEW_REJECTED: 갱신된 Lease.lease_id 가 기존과 다르다".into());
+                }
+                if new_lease.job_id != held_lease.job_id {
+                    return Err("RENEW_REJECTED: 갱신된 Lease.job_id 가 기존과 다르다".into());
+                }
+                if new_lease.attempt_id != held_lease.attempt_id {
+                    return Err("RENEW_REJECTED: 갱신된 Lease.attempt_id 가 기존과 다르다".into());
+                }
+                if new_lease.issuing_coordinator_id != config.coordinator_device_id {
+                    return Err(
+                        "RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다".into(),
+                    );
+                }
+                if new_lease.holder_node_id != config.agent_device_id {
+                    return Err("RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into());
+                }
+
+                // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — epoch **상승**은
+                //   이 조각의 범위 밖이라 정책상 거부해야 한다(계획서 §범위
+                //   "이 조각이 결정하지 않는 것" — "높으면 이 조각에서는
+                //   정책상 거부"). `FenceWatermark.check_and_advance()` 는
+                //   `<` 만 거부하고 `>` 는 **통과시키므로**(그것이 정상적인
+                //   epoch 전진의 정의다), 그것만으로는 이 계약을 강제하지
+                //   못한다 — 여기서 명시적으로 막는다.
+                if new_lease.fence_epoch > held_lease.fence_epoch {
+                    return Err(format!(
+                        "RENEW_REJECTED: 갱신된 Lease.fence_epoch({}) 이 기존({}) 보다 높다 \
+                         — epoch 상승은 이 조각의 범위 밖이라 정책상 거부한다",
+                        new_lease.fence_epoch, held_lease.fence_epoch
+                    ));
+                }
+
+                // ★ **같은 job_id 를 resource key 로 재사용한다** —
+                //   `lease_id` 를 새 키로 쓰면 기존 watermark 와 분리되어
+                //   강등 방어가 깨진다(계획서 "FenceWatermark 재사용" 절).
+                fence_watermark
+                    .check_and_advance(&new_lease.job_id, new_lease.fence_epoch)
+                    .map_err(|e| format!("RENEW_REJECTED: fence_epoch 검사 실패: {e:?}"))?;
+
+                held_lease = new_lease.clone();
+                println!(
+                    "RENEW_RESULT ok=true outcome=RENEWED lease_id={} fence_epoch={}",
+                    held_lease.lease_id, held_lease.fence_epoch
+                );
+            }
+            2 => return Err("RENEW_REFUSED:SUPERSEDED".into()),
+            3 => return Err("RENEW_REFUSED:QUARANTINED".into()),
+            other => return Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
+        }
     }
 
     println!(
@@ -252,6 +399,9 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         agent_device_id: flags.require("--agent-device-id")?,
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
         expect_replay: flags.bool_flag("--expect-replay"),
+        do_renew: flags.bool_flag("--do-renew"),
+        renew_request_epoch_override: flags.u64_opt_flag("--renew-request-epoch-override")?,
+        corrupt_renew_request_signature: flags.bool_flag("--corrupt-renew-request-signature"),
     };
 
     run(config)
@@ -271,6 +421,18 @@ impl Flags {
     /// 있는 boolean 플래그(`--flag true`). 안 주면 `false`.
     fn bool_flag(&self, key: &str) -> bool {
         self.0.get(key).map(|v| v == "true").unwrap_or(false)
+    }
+
+    /// ★ 테스트 전용 — 갱신 요청 epoch 강제 주입(단계 5). 안 주면
+    ///   `None`(보유 중인 Lease 의 실제 epoch 을 그대로 쓴다).
+    fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+        match self.0.get(key) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
     }
 }
 

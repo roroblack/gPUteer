@@ -312,6 +312,12 @@ pub enum Domain {
     //   Lifetime::Evidence 라 replay nonce 를 검사하지 않으므로,
     //   공유하면 AgentGrantAck 의 replay 방어를 증명할 수 없다.
     GrantAck,
+    // ★ 2026-08-19 — Lease 갱신 최소 조각
+    //   (docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md).
+    //   LeaseRenew(요청)와 domain 을 공유하지 않는다 — 요청·응답이
+    //   같은 domain_tag 를 쓰면 요청 서명을 응답으로 재사용하는
+    //   교차 재생 공격을 배제할 근거가 사라진다.
+    LeaseRenewResult,
 }
 
 impl Domain {
@@ -341,6 +347,7 @@ impl Domain {
             Domain::Release => "gputeer/v1/release",
             Domain::Invite => "gputeer/v1/invite",
             Domain::GrantAck => "gputeer/v1/grant-ack",
+            Domain::LeaseRenewResult => "gputeer/v1/lease-renew-result",
         }
     }
 

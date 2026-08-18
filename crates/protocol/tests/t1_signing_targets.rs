@@ -393,6 +393,70 @@ fn agent_grant_ack_matches_reference() {
 }
 
 #[test]
+fn renew_lease_result_matches_reference() {
+    let lease = pb::Lease {
+        schema_version: 1,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        fence_epoch: 43,
+        coordinator_term: 7,
+        holder_node_id: "node-1".into(),
+        issued_at_unix_ms: 1_755_103_900_000,
+        expires_at_unix_ms: 1_755_103_960_000,
+        coordinator_signature: vec![0xCD; 64],
+        ..Default::default()
+    };
+    let r = pb::RenewLeaseResult {
+        outcome: 1, // RENEW_OUTCOME_RENEWED
+        lease: Some(lease.clone()),
+        detail: "ok".into(),
+        retry_after_ms: 0,
+        schema_version: 1,
+        coordinator_id: "coord-1".into(),
+        issued_at_unix_ms: 1_755_103_900_000,
+        request_nonce: (0u8..16).collect(),
+        coordinator_signature: vec![0x77; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&r.to_canonical_fields(), &[])),
+        expect_hex("v33_renew_lease_result")
+    );
+
+    // ★ request_nonce 는 서명 대상이어야 한다 — 재전송 시 갈아끼워 replay
+    //   캐시를 우회하지 못하게 한다.
+    let mut other_nonce = r.clone();
+    other_nonce.request_nonce = (16u8..32).collect();
+    assert_eq!(
+        hex(&canonical_encode(&other_nonce.to_canonical_fields(), &[])),
+        expect_hex("v33b_renew_lease_result_different_nonce")
+    );
+    assert_ne!(
+        canonical_encode(&other_nonce.to_canonical_fields(), &[]),
+        canonical_encode(&r.to_canonical_fields(), &[]),
+        "request_nonce 가 서명 밖이다 — replay 캐시를 우회할 수 있다"
+    );
+
+    // ★ 규칙 i — nested Lease 의 서명은 outer canonical 에서 제외된다.
+    //   outer 서명이 유효해도 nested Lease 서명은 독립적으로 위조될 수
+    //   있으므로 검증자가 별도로 검증해야 한다(MUST).
+    let mut other_lease_sig = r.clone();
+    other_lease_sig.lease = Some(pb::Lease {
+        coordinator_signature: vec![0xEE; 64],
+        ..lease.clone()
+    });
+    assert_eq!(
+        hex(&canonical_encode(&other_lease_sig.to_canonical_fields(), &[])),
+        expect_hex("v33c_renew_lease_result_nested_signature_excluded")
+    );
+    assert_eq!(
+        canonical_encode(&other_lease_sig.to_canonical_fields(), &[]),
+        canonical_encode(&r.to_canonical_fields(), &[]),
+        "규칙 i 위반 — nested Lease 서명 필드가 outer canonical 에 새어나갔다"
+    );
+}
+
+#[test]
 fn revoke_lease_notice_matches_reference() {
     let n = pb::RevokeLeaseNotice {
         schema_version: 1,
@@ -462,9 +526,12 @@ fn domain_coverage_is_explicit() {
         // coordinator/agent 최소 핸드셰이크 (2026-08-18) — 메시지도
         // 있고 ToCanonicalFields·Signable 둘 다 구현되어 있다.
         (Domain::GrantAck, Some("AgentGrantAck"), true),
+        // Lease 갱신 최소 조각 (2026-08-19) — RenewLeaseResult 를
+        // 서명 대상으로 승격. ToCanonicalFields·Signable 둘 다 구현됨.
+        (Domain::LeaseRenewResult, Some("RenewLeaseResult"), true),
     ];
 
-    assert_eq!(coverage.len(), 24, "domain_tag 는 24종이다 (signing.md §5, ADR-028 + GrantAck)");
+    assert_eq!(coverage.len(), 25, "domain_tag 는 25종이다 (signing.md §5, ADR-028 + GrantAck + LeaseRenewResult)");
 
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
@@ -482,7 +549,7 @@ fn domain_coverage_is_explicit() {
 
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
-    assert_eq!(implemented, 20, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(implemented, 21, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
     assert_eq!(
         no_message, 4,
         "proto 메시지 없는 domain 수가 바뀌었다 — 목록을 갱신하라"

@@ -191,6 +191,15 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    check(
+        "RenewLeaseResult",
+        &pb::RenewLeaseResult {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            request_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
 }
 
 /// ★ `Signable` 을 구현한 메시지가 위 테스트에 **전부** 있는가.

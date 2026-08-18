@@ -510,6 +510,37 @@ impl ToCanonicalFields for pb::RenewLeaseRequest {
     }
 }
 
+// ★ 2026-08-19 — Lease 갱신 최소 조각
+//   (docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md).
+//   원래 RenewLeaseResult 는 서명 대상이 아니었다 — 결과(특히
+//   SUPERSEDED/QUARANTINED 같은 정책 거부)를 위조할 수 있었다.
+impl ToCanonicalFields for pb::RenewLeaseResult {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.outcome as u64);
+        // ★ outcome == RENEWED 일 때만 채워지는 nested Lease 다.
+        //   Lease 는 그 자체로 **독립 서명된** 메시지다(규칙 i) —
+        //   이 결과 서명이 유효해도 nested Lease 서명은 별도로
+        //   위조될 수 있으므로, 수신자(Agent)가 반드시 독립
+        //   검증해야 한다. put_msg 는 여기서 Lease 의 서명 필드(90)
+        //   를 포함하지 않는다(규칙 i 재귀 — Lease::to_canonical_fields
+        //   자체가 이미 서명 필드를 뺀다).
+        put_msg(&mut f, 2, &self.lease);
+        put_str(&mut f, 3, &self.detail);
+        put_uint(&mut f, 4, self.retry_after_ms as u64);
+        put_uint(&mut f, 5, self.schema_version as u64);
+        put_str(&mut f, 6, &self.coordinator_id);
+        put_uint(&mut f, 7, self.issued_at_unix_ms);
+        // ★ 요청 nonce 를 echo 하는 필드다 — 서명 밖이면 오래된
+        //   결과를 새 요청의 응답인 것처럼 재사용할 수 있다.
+        put_bytes(&mut f, 8, &self.request_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 impl ToCanonicalFields for pb::RevokeLeaseNotice {
     fn to_canonical_fields(&self) -> Fields {
         let mut f = Fields::new();

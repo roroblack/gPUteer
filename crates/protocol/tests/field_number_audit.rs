@@ -245,6 +245,8 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("job.proto", "RejectedCandidate", 90),
     // coordinator/agent 최소 핸드셰이크 (2026-08-18)
     ("control.proto", "AgentGrantAck", 90),
+    // Lease 갱신 최소 조각 (2026-08-19)
+    ("lease.proto", "RenewLeaseResult", 90),
 ];
 
 #[test]

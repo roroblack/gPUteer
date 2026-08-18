@@ -363,6 +363,21 @@ SCHEMAS = {
         (8, "accepted", "bool", None),
         (90, "agent_signature", "bytes", None),
     ],
+    # ★ 2026-08-19 — Lease 갱신 최소 조각(docs/plans/2026-08-19_0500_...)이
+    #   RenewLeaseResult 를 서명 대상으로 승격했다. RenewLeaseRequest(agent
+    #   가 서명하는 요청)와 domain_tag 를 공유하지 않는다 — 공유하면 요청
+    #   서명이 응답 검증도 통과해 교차 재생이 가능해진다(§5.1 과 같은 이유).
+    "RenewLeaseResult": [
+        (1, "outcome", "enum", None),
+        (2, "lease", "message", "Lease"),
+        (3, "detail", "string", None),
+        (4, "retry_after_ms", "uint", None),
+        (5, "schema_version", "uint", None),
+        (6, "coordinator_id", "string", None),
+        (7, "issued_at_unix_ms", "uint", None),
+        (8, "request_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
     # ══════════════════════════════════════════════════════════════
     # T1b (2026-08-16) — grant · membership · policy · quarantine
     #
@@ -612,6 +627,7 @@ DOMAIN_TAGS = {
     "RenewLeaseRequest": b"gputeer/v1/lease-renew",
     "RevokeLeaseNotice": b"gputeer/v1/lease-revoke",
     "AgentGrantAck": b"gputeer/v1/grant-ack",
+    "RenewLeaseResult": b"gputeer/v1/lease-renew-result",
     "CheckpointManifest": b"gputeer/v1/checkpoint",
     "ReplicaAck": b"gputeer/v1/replica-ack",
     "ArtifactRef": b"gputeer/v1/artifact",
@@ -1492,6 +1508,70 @@ def build_vectors():
                  ["MUST_DIFFER:v32_agent_grant_ack"])
     c_ack0 = canonical_encode("AgentGrantAck", _agent_grant_ack_full)
     assert c_ack0 != c_ack1, "AgentGrantAck.nonce 가 canonical 에 반영되지 않는다"
+
+    # 33. RenewLeaseResult — Lease 갱신 최소 조각(2026-08-19)이 추가한
+    #   단수명 메시지. nested Lease 를 담는다 — outer 서명이 유효해도
+    #   nested Lease 서명은 독립 검증 대상이다(규칙 i, signing.md §3).
+    #   request_nonce(8)는 RenewLeaseRequest.nonce 를 echo 한다 — replay
+    #   캐시 네임스페이스가 signer 별로 분리되므로(§10) 안전하게 재사용된다.
+    _renew_result_lease = {
+        "schema_version": 1,
+        "lease_id": "01JBXLEASE0000000000000001",
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "fence_epoch": 43,
+        "coordinator_term": 7,
+        "holder_node_id": "node-1",
+        "issued_at_unix_ms": 1_755_103_900_000,
+        "expires_at_unix_ms": 1_755_103_960_000,
+        "coordinator_signature": b"\xCD" * 64,
+    }
+    _renew_result_full = {
+        "outcome": 1,  # RENEW_OUTCOME_RENEWED
+        "lease": _renew_result_lease,
+        "detail": "ok",
+        "retry_after_ms": 0,
+        "schema_version": 1,
+        "coordinator_id": "coord-1",
+        "issued_at_unix_ms": 1_755_103_900_000,
+        "request_nonce": bytes(range(16)),
+        "coordinator_signature": b"\x77" * 64,
+    }
+    # retry_after_ms(4) 는 규칙 b 로 0 이면 생략되므로 "전 필드" 검사에서
+    # 제외한다 — outcome == RENEWED 에서는 실제로도 항상 0(§4 UNAVAILABLE 전용).
+    _gap_renew = [g for g in missing_from_full("RenewLeaseResult", _renew_result_full)
+                  if not g.startswith("retry_after_ms(")]
+    assert not _gap_renew, "v33 이 전 필드를 채우지 않았다: %s" % ", ".join(_gap_renew)
+    add("v33_renew_lease_result",
+        "RenewLeaseResult. 모든 필드(서명·retry_after_ms=0 제외) — field number "
+        "오름차순 (규칙 a). nested Lease(2)는 자신의 coordinator_signature 를 "
+        "포함해 독립적으로 서명된다 — outer 서명과 무관하다(규칙 i)",
+        "RenewLeaseResult", _renew_result_full)
+
+    # 33b. request_nonce 를 바꾸면 canonical 이 달라야 한다 — 서명 밖이면
+    #   재전송 시 nonce 만 갈아끼워 replay 캐시를 우회할 수 있다.
+    _renew_result_diff_nonce = dict(_renew_result_full, request_nonce=bytes(range(16, 32)))
+    c_rr1 = add("v33b_renew_lease_result_different_nonce",
+                "v33 과 request_nonce 만 다르다 — canonical 이 달라야 한다",
+                "RenewLeaseResult", _renew_result_diff_nonce,
+                ["MUST_DIFFER:v33_renew_lease_result"])
+    c_rr0 = canonical_encode("RenewLeaseResult", _renew_result_full)
+    assert c_rr0 != c_rr1, "RenewLeaseResult.request_nonce 가 canonical 에 반영되지 않는다"
+
+    # 33c. nested Lease 의 서명만 바꿔도 outer canonical 은 바뀌지 않는다
+    #   (규칙 i — 서명 필드는 canonical 에서 제외되고, 그 배제는 재귀적으로
+    #   nested message 에도 적용된다). outer RenewLeaseResult 서명이 유효
+    #   해도 nested Lease 서명은 별도로 위조될 수 있다는 사실의 근거.
+    _renew_result_diff_lease_sig = dict(
+        _renew_result_full,
+        lease=dict(_renew_result_lease, coordinator_signature=b"\xEE" * 64),
+    )
+    c_rr2 = add("v33c_renew_lease_result_nested_signature_excluded",
+                "v33 과 nested Lease.coordinator_signature 만 다르다 — 규칙 i 로 "
+                "제외되므로 outer canonical 은 v33 과 같아야 한다",
+                "RenewLeaseResult", _renew_result_diff_lease_sig,
+                ["MUST_EQUAL:v33_renew_lease_result"])
+    assert c_rr0 == c_rr2, "규칙 i 위반 -- nested Lease 서명 필드가 outer canonical 에 새어나갔다"
 
     # 10. domain_tag 분리 — 같은 canonical, 다른 tag → 다른 sig_input
     base = _minimal_manifest()

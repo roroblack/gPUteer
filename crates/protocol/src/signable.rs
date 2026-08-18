@@ -246,6 +246,56 @@ impl Signable for pb::RenewLeaseRequest {
     }
 }
 
+/// ★ 2026-08-19 — Lease 갱신 최소 조각
+/// (docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md).
+///
+/// 원래 `RenewLeaseResult` 는 서명 대상이 아니었다 — Coordinator 가
+/// 낸 `SUPERSEDED`/`QUARANTINED` 같은 정책 거부를 아무나 위조해
+/// 정당한 Agent 의 작업을 강제 중단시킬 수 있는 상태였다.
+impl Signable for pb::RenewLeaseResult {
+    const DOMAIN: Domain = Domain::LeaseRenewResult;
+    /// §9 — `RenewLeaseRequest` 와 같은 이유로 단수명이다. 결과는
+    /// 발급 즉시 소비되고 오래 보관될 이유가 없다.
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.coordinator_signature
+    }
+
+    /// `RenewLeaseRequest` 와 같은 이유로 `expires_at` 필드가 없다 —
+    /// `issued_at + GRANT_TTL_MS` 로 도출한다.
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS)
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.coordinator_id
+    }
+    /// §10 — 요청의 `nonce`(필드 21)를 그대로 echo 한 필드(8)를
+    /// 그대로 replay nonce 로 쓴다. `RenewLeaseRequest` 는 Agent 가
+    /// 서명해 `signer_id = node_id` 이고 이 결과는 Coordinator 가
+    /// 서명해 `signer_id = coordinator_id` 다 — signer 가 다르므로
+    /// replay guard 네임스페이스가 자동으로 분리된다
+    /// (`nonce_namespace_is_per_device`). 같은 값을 재사용해도
+    /// 요청 쪽 replay 기록과 충돌하지 않는다.
+    ///
+    /// 오래된(유효했던) 결과를 나중에 재전송해 Agent 의 상태를
+    /// 되돌리려는 시도를 이 replay 검사가 막는다 — 예: 이미 처리한
+    /// `RENEWED` 결과를 다시 보내 낮은 epoch 의 Lease 로 되돌리려는
+    /// 시도.
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.request_nonce)
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // 증거 (ADR-029) — 6종
 //

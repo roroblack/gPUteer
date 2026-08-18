@@ -72,6 +72,46 @@ pub struct CoordinatorConfig {
     ///   과거로 만든다. `Lease::LIFETIME == LongLived` 라 `verify()`
     ///   가 만료 시각을 검사해야 거부된다.
     pub expire_lease: bool,
+
+    // ── Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_0500_...`) ──
+    //
+    // 정상 handshake(Grant/ACK) 뒤, **같은 TCP 연결**에 이어서
+    // Agent 가 보낸 `RenewLeaseRequest` 를 받고 서명된
+    // `RenewLeaseResult` 로 응답한다. `do_renew == false` 면 이 단계
+    // 전체를 건너뛴다 — 기존 핸드셰이크 전용 시나리오와 완전히 같게
+    // 동작한다(회귀 없음).
+    /// 갱신 왕복을 수행할지 여부.
+    pub do_renew: bool,
+    /// 정상 갱신 시 새로 발급할 Lease 의 fence_epoch.
+    ///
+    /// ★ 기본 시나리오는 요청의 `fence_epoch` 와 같은 값을 준다
+    ///   (`same_epoch_reuse_is_allowed_by_design` 과 일관). 이 값을
+    ///   요청보다 **낮게** 주면 "낮은 fence_epoch" 강등 시나리오를
+    ///   만들 수 있다 — Agent 쪽 `FenceWatermark` 가 거부해야 한다.
+    pub renewed_fence_epoch: u64,
+    /// ★ 테스트 전용 — `RenewOutcome` 을 강제로 주입한다(예:
+    ///   `SUPERSEDED`=2, `QUARANTINED`=3). `None` 이면 정상 판정
+    ///   (`RENEWED`=1, 새 Lease 를 담아 응답)을 쓴다.
+    ///
+    ///   실제 Coordinator 가 언제 SUPERSEDED/QUARANTINED 를 내리는지
+    ///   정하는 정책은 범위 밖이다(계획서 "Out" 절) — 여기서는
+    ///   "서명된 정책 거부가 전송·검증·분류되는가" 만 증명한다.
+    pub renew_outcome_override: Option<i32>,
+    /// ★ 테스트 전용 — `RenewLeaseResult.coordinator_signature` 의
+    ///   마지막 바이트를 뒤집는다. Agent 가 결과 서명 검증으로
+    ///   거부해야 한다.
+    pub corrupt_renew_result_signature: bool,
+    /// ★ 테스트 전용 — `RenewLeaseResult.lease` 안의 nested
+    ///   `Lease.coordinator_signature` 만 뒤집는다. outer 결과
+    ///   서명은 정상이므로, Agent 가 nested Lease 를 **독립
+    ///   검증**해야만 잡히는 시나리오다.
+    pub corrupt_renewed_lease_signature: bool,
+    /// ★ 테스트 전용 — `RenewLeaseResult.request_nonce` 를 요청의
+    ///   nonce 를 echo 하지 않고 다른 값으로 채운다(서명은 정상).
+    ///   Agent 가 이 값을 자신이 보낸 요청의 nonce 와 대조해 거부해야
+    ///   한다 — 안 그러면 다른 갱신 요청에 대한 결과가 재사용될 수
+    ///   있다(계획서 "In" 절 — `request_nonce` 의 목적).
+    pub corrupt_renew_result_nonce: bool,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -198,11 +238,155 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         };
     }
 
+    // ★ Lease 갱신 (2026-08-19) — 같은 연결에 이어서 Agent 가 보낸
+    //   `RenewLeaseRequest` 를 받고 서명된 `RenewLeaseResult` 로
+    //   응답한다. `do_renew == false` 면 건너뛴다(기존 핸드셰이크
+    //   전용 시나리오와 완전히 같게 동작).
+    if config.do_renew {
+        let renew_msg = read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&agent_keys),
+            &mut replay,
+            &clock,
+        )
+        .map_err(|e| format!("RenewLeaseRequest 프레임 읽기/검증 실패: {e}"))?;
+
+        // ★ `require_replay_checked()` — ACK 와 같은 이유(§10).
+        let renew_req = match &renew_msg {
+            IngressMessage::LeaseRenew(verified) => verified
+                .require_replay_checked()
+                .map_err(|e| format!("RenewLeaseRequest replay 검사 실패: {e:?}"))?,
+            other => return Err(format!("예상하지 못한 갱신 요청 타입: {other:?}")),
+        };
+
+        if renew_req.node_id != config.agent_device_id {
+            return Err(format!(
+                "RenewLeaseRequest.node_id 불일치: 기대값 {} != {}",
+                config.agent_device_id, renew_req.node_id
+            ));
+        }
+        if renew_req.lease_id != config.lease_id {
+            return Err(format!(
+                "RenewLeaseRequest.lease_id 불일치: 기대값 {} != {}",
+                config.lease_id, renew_req.lease_id
+            ));
+        }
+        // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — 이전에는
+        //   `renew_req.fence_epoch` 를 아무것도와 대조하지 않았다.
+        //   이 stub 은 별도 Lease 저장소가 없으므로, 처음 발급한
+        //   `config.fence_epoch` 를 "Coordinator 가 기억하는 현재
+        //   epoch" 로 삼는다 — 그 값과 다르면 요청 자체를 거부한다.
+        if renew_req.fence_epoch != config.fence_epoch {
+            return Err(format!(
+                "RenewLeaseRequest.fence_epoch 불일치: 기대값 {} != {}",
+                config.fence_epoch, renew_req.fence_epoch
+            ));
+        }
+
+        let renew_now = clock.now_unix_ms();
+        let result =
+            build_renew_result(&config, &signing_key, renew_now, renew_req.nonce.clone());
+
+        let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec())
+            .map_err(|e| format!("RenewLeaseResult 프레임 인코딩 실패: {e}"))?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("RenewLeaseResult 전송 실패: {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+
+        println!(
+            "RENEW_RESULT ok=true outcome={} lease_id={}",
+            result.outcome, config.lease_id
+        );
+    }
+
     println!(
         "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
         grant.grant_id, grant.attempt_id, ack.agent_device_id
     );
     Ok(())
+}
+
+/// `RenewLeaseRequest` 에 대한 응답을 만들어 서명한다.
+///
+/// `renew_outcome_override` 가 있으면 그 값을 그대로 쓰고 새 Lease 를
+/// 담지 않는다(서명된 정책 거부 시나리오). 없으면 `RENEW_OUTCOME_RENEWED`
+/// 와 함께 `renewed_fence_epoch` 를 가진 새 Lease 를 독립적으로 서명해
+/// 담는다(규칙 i — nested 서명은 outer 서명과 별개다).
+fn build_renew_result(
+    config: &CoordinatorConfig,
+    key: &SigningKey,
+    now: u64,
+    request_nonce: Vec<u8>,
+) -> pb::RenewLeaseResult {
+    let request_nonce = if config.corrupt_renew_result_nonce {
+        request_nonce.iter().map(|b| b ^ 0xFF).collect()
+    } else {
+        request_nonce
+    };
+
+    let mut result = match config.renew_outcome_override {
+        Some(outcome) => pb::RenewLeaseResult {
+            outcome,
+            detail: "policy override".into(),
+            schema_version: 1,
+            coordinator_id: config.coordinator_device_id.clone(),
+            issued_at_unix_ms: now,
+            request_nonce,
+            ..Default::default()
+        },
+        None => {
+            let mut lease = pb::Lease {
+                schema_version: 1,
+                lease_id: config.lease_id.clone(),
+                job_id: config.job_id.clone(),
+                attempt_id: config.attempt_id.clone(),
+                fence_epoch: config.renewed_fence_epoch,
+                coordinator_term: 1,
+                holder_node_id: config.agent_device_id.clone(),
+                member_node_ids: vec![config.agent_device_id.clone()],
+                issuing_coordinator_id: config.coordinator_device_id.clone(),
+                issued_at_unix_ms: now,
+                expires_at_unix_ms: now + 60_000,
+                renew_after_unix_ms: now + 30_000,
+                max_total_duration_seconds: 86_400,
+                ..Default::default()
+            };
+            lease.coordinator_signature = sign(key, &lease).to_vec();
+
+            if config.corrupt_renewed_lease_signature {
+                let last = lease
+                    .coordinator_signature
+                    .last_mut()
+                    .expect("Lease coordinator_signature 는 비어 있지 않다");
+                *last ^= 0x01;
+            }
+
+            pb::RenewLeaseResult {
+                outcome: 1, // RENEW_OUTCOME_RENEWED
+                lease: Some(lease),
+                detail: "ok".into(),
+                schema_version: 1,
+                coordinator_id: config.coordinator_device_id.clone(),
+                issued_at_unix_ms: now,
+                request_nonce,
+                ..Default::default()
+            }
+        }
+    };
+
+    result.coordinator_signature = sign(key, &result).to_vec();
+
+    if config.corrupt_renew_result_signature {
+        let last = result
+            .coordinator_signature
+            .last_mut()
+            .expect("RenewLeaseResult coordinator_signature 는 비어 있지 않다");
+        *last ^= 0x01;
+    }
+
+    result
 }
 
 fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::ExecutionGrant {
@@ -310,6 +494,12 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         fence_epoch: flags.u64_flag("--fence-epoch")?,
         corrupt_lease_signature: flags.bool_flag("--corrupt-lease-signature"),
         expire_lease: flags.bool_flag("--expire-lease"),
+        do_renew: flags.bool_flag("--do-renew"),
+        renewed_fence_epoch: flags.u64_flag("--renewed-fence-epoch")?,
+        renew_outcome_override: flags.i32_opt_flag("--renew-outcome-override")?,
+        corrupt_renew_result_signature: flags.bool_flag("--corrupt-renew-result-signature"),
+        corrupt_renewed_lease_signature: flags.bool_flag("--corrupt-renewed-lease-signature"),
+        corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
     };
 
     run(config)
@@ -339,6 +529,18 @@ impl Flags {
         match self.0.get(key) {
             None => Ok(0),
             Some(v) => v.parse::<u64>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
+    }
+
+    /// ★ 테스트 전용 — `RenewOutcome` 강제 주입(단계 5). 안 주면 `None`
+    ///   (정상 판정 사용).
+    fn i32_opt_flag(&self, key: &str) -> Result<Option<i32>, String> {
+        match self.0.get(key) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<i32>()
+                .map(Some)
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 }

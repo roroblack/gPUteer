@@ -272,14 +272,20 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | Release Manifest | `gputeer/v1/release` |
 | Invite Bundle | `gputeer/v1/invite` |
 | `AgentGrantAck` | `gputeer/v1/grant-ack` |
+| `RenewLeaseResult` | `gputeer/v1/lease-renew-result` |
 
-**총 24종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
+**총 25종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
 `policy` · `quarantine`(2개 메시지)이 tag 를 공유했다. **ADR-028 로 분리했다** —
 사유는 §5.1. `AgentGrantAck` 는 coordinator/agent 최소 핸드셰이크
 (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md, 2026-08-18)로
 23→24 종째 추가됐다 — `ReplicaAck` 를 재사용하지 않는다. `ReplicaAck` 는
 `Lifetime::Evidence` 라 replay nonce 를 검사하지 않으므로, 공유하면
 "ACK replay 를 `DurableReplayGuard` 가 거부하는가" 를 증명할 수 없다.
+`RenewLeaseResult` 는 Lease 갱신 최소 조각
+(docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md, 2026-08-19)으로
+24→25 종째 추가됐다 — `RenewLeaseRequest`(agent 가 서명하는 요청)와
+tag 를 공유하지 않는다. 공유하면 요청 서명이 응답 검증도 통과해
+교차 재생(cross-message replay)이 가능해진다.
 
 **한 문맥의 서명을 다른 문맥에서 검증하면 domain_tag가 달라 반드시 실패한다.**
 이것이 없으면 예컨대 Lease 서명을 Manifest 서명으로 재사용하는 공격이 가능하다.

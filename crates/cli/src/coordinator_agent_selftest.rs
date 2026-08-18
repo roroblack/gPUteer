@@ -350,6 +350,306 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)\n");
 
+    // ══════════════════════════════════════════════════════════════
+    // Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_0500_...`)
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 7. 정상 Lease 갱신 (같은 epoch 유지) ─────────────────────────
+    let renew_ok = run_handshake(
+        &fixture,
+        &["--do-renew", "true", "--renewed-fence-epoch", "0"],
+        &["--do-renew", "true"],
+    )?;
+    if !renew_ok.coordinator_success || !renew_ok.agent_success {
+        return Err(format!(
+            "정상 Lease 갱신이 실패했다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            renew_ok.coordinator_success,
+            renew_ok.coordinator_stdout,
+            renew_ok.coordinator_stderr,
+            renew_ok.agent_success,
+            renew_ok.agent_stdout,
+            renew_ok.agent_stderr
+        ));
+    }
+    if !renew_ok.agent_stdout.contains("RENEW_RESULT ok=true outcome=RENEWED") {
+        return Err(format!(
+            "정상 Lease 갱신인데 Agent 가 RENEW_RESULT 를 찍지 않았다.\nagent stdout: {}",
+            renew_ok.agent_stdout
+        ));
+    }
+    report.push_str(
+        "7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)\n",
+    );
+
+    // ── 8. 위조 RenewLeaseRequest.node_signature — Coordinator ingress 검증 실패 ──
+    let forged_renew_req = run_handshake(
+        &fixture,
+        &["--do-renew", "true", "--renewed-fence-epoch", "0"],
+        &[
+            "--do-renew",
+            "true",
+            "--corrupt-renew-request-signature",
+            "true",
+        ],
+    )?;
+    if forged_renew_req.coordinator_success
+        || forged_renew_req.coordinator_stdout.contains(RESULT_OK_MARKER)
+        // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — 실패 여부만 보지
+        //   말고 **왜** 실패했는지 특정한다. 그러지 않으면 이 시나리오가
+        //   무관한 이유(예: 다른 버그로 인한 크래시)로도 우연히 통과할
+        //   수 있다.
+        || !forged_renew_req
+            .coordinator_stderr
+            .contains("RenewLeaseRequest 프레임 읽기/검증 실패")
+    {
+        return Err(format!(
+            "위조된 RenewLeaseRequest.node_signature 가 거부되지 않았다 — coordinator 가 성공을 주장했거나 \
+             기대한 이유(RenewLeaseRequest 프레임 읽기/검증 실패)로 거부하지 않았다.\n\
+             coordinator exit={} stdout={} stderr={}",
+            forged_renew_req.coordinator_success,
+            forged_renew_req.coordinator_stdout,
+            forged_renew_req.coordinator_stderr
+        ));
+    }
+    report.push_str(
+        "8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)\n",
+    );
+
+    // ── 9. 위조 RenewLeaseResult.coordinator_signature — Agent 결과 서명 검증 실패 ──
+    let forged_renew_result = run_handshake(
+        &fixture,
+        &[
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--corrupt-renew-result-signature",
+            "true",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if forged_renew_result.agent_success
+        || !forged_renew_result
+            .agent_stderr
+            .contains("RenewLeaseResult 프레임 읽기/검증 실패")
+    {
+        return Err(format!(
+            "위조된 RenewLeaseResult.coordinator_signature 가 거부되지 않았다.\n\
+             agent exit={} stdout={} stderr={}",
+            forged_renew_result.agent_success,
+            forged_renew_result.agent_stdout,
+            forged_renew_result.agent_stderr
+        ));
+    }
+    report.push_str(
+        "9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)\n",
+    );
+
+    // ── 10. 위조 nested 새 Lease 서명 — outer 결과 서명은 정상, Agent 독립 검증으로 거부 ──
+    let forged_renewed_lease = run_handshake(
+        &fixture,
+        &[
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--corrupt-renewed-lease-signature",
+            "true",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if forged_renewed_lease.agent_success
+        || !forged_renewed_lease
+            .agent_stderr
+            .contains("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패")
+    {
+        return Err(format!(
+            "위조된 nested Lease 서명(갱신)이 거부되지 않았다 — outer 결과 검증만으로는 \
+             이 결함을 잡지 못한다는 뜻이다.\n\
+             agent exit={} stdout={} stderr={}",
+            forged_renewed_lease.agent_success,
+            forged_renewed_lease.agent_stdout,
+            forged_renewed_lease.agent_stderr
+        ));
+    }
+    report.push_str(
+        "10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 \
+         독립적으로 검증한다)\n",
+    );
+
+    // ── 11. epoch 강등 — Agent 의 FenceWatermark 가 거부 ────────────
+    let downgrade = run_handshake(
+        &fixture,
+        &[
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "3",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if downgrade.agent_success
+        || !downgrade
+            .agent_stderr
+            .contains("RENEW_REJECTED: fence_epoch 검사 실패")
+    {
+        return Err(format!(
+            "낮은 fence_epoch 로 갱신했는데 Agent watermark 가 거부하지 않았다.\n\
+             agent exit={} stdout={} stderr={}",
+            downgrade.agent_success, downgrade.agent_stdout, downgrade.agent_stderr
+        ));
+    }
+    report.push_str(
+        "11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)\n",
+    );
+
+    // ── 12. RENEW_OUTCOME_SUPERSEDED — 서명된 정상 정책 거부로 분류 ──
+    let superseded = run_handshake(
+        &fixture,
+        &[
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--renew-outcome-override",
+            "2",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if superseded.agent_success || !superseded.agent_stderr.contains("RENEW_REFUSED:SUPERSEDED") {
+        return Err(format!(
+            "RENEW_OUTCOME_SUPERSEDED 가 서명된 정상 정책 거부로 분류되지 않았다.\n\
+             agent exit={} stdout={} stderr={}",
+            superseded.agent_success, superseded.agent_stdout, superseded.agent_stderr
+        ));
+    }
+    report.push_str(
+        "12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)\n",
+    );
+
+    // ── 13. RENEW_OUTCOME_QUARANTINED — 서명된 정상 정책 거부로 분류 ──
+    let quarantined = run_handshake(
+        &fixture,
+        &[
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--renew-outcome-override",
+            "3",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if quarantined.agent_success
+        || !quarantined.agent_stderr.contains("RENEW_REFUSED:QUARANTINED")
+    {
+        return Err(format!(
+            "RENEW_OUTCOME_QUARANTINED 가 서명된 정상 정책 거부로 분류되지 않았다.\n\
+             agent exit={} stdout={} stderr={}",
+            quarantined.agent_success, quarantined.agent_stdout, quarantined.agent_stderr
+        ));
+    }
+    report.push_str(
+        "13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)\n",
+    );
+
+    // ── 14. RenewLeaseResult.request_nonce 를 echo 하지 않음 — Agent 거부 ──
+    //
+    // ★ 계획서 "6종" 표에는 없지만, "In" 절이 request_nonce 의 목적으로
+    //   든 것과 정확히 같은 공격이다 — 서명은 정상인 결과를 **다른**
+    //   갱신 요청에 재사용하는 시나리오. 구현 중 발견한 별도 게이트라
+    //   여기 추가한다.
+    let wrong_nonce = run_handshake(
+        &fixture,
+        &[
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--corrupt-renew-result-nonce",
+            "true",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if wrong_nonce.agent_success
+        || !wrong_nonce
+            .agent_stderr
+            .contains("RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다")
+    {
+        return Err(format!(
+            "RenewLeaseResult.request_nonce 가 echo 되지 않았는데 Agent 가 거부하지 않았다.\n\
+             agent exit={} stdout={} stderr={}",
+            wrong_nonce.agent_success, wrong_nonce.agent_stdout, wrong_nonce.agent_stderr
+        ));
+    }
+    report.push_str(
+        "14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)\n",
+    );
+
+    // ── 15. epoch 상승 — 계획서가 명시적으로 범위 밖(정책상 거부)이라고 정한 경우 ──
+    //
+    // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — `FenceWatermark` 는
+    //   `<` 만 거부하고 `>` 는 정상적인 전진으로 통과시킨다. 계획서는
+    //   "높으면 이 조각에서는 정책상 거부"라고 명시했으므로, Agent 가
+    //   watermark 와 별개로 명시적으로 막아야 한다.
+    let upgrade = run_handshake(
+        &fixture,
+        &["--do-renew", "true", "--renewed-fence-epoch", "5"],
+        &["--do-renew", "true"],
+    )?;
+    if upgrade.agent_success
+        || !upgrade
+            .agent_stderr
+            .contains("epoch 상승은 이 조각의 범위 밖이라 정책상 거부한다")
+    {
+        return Err(format!(
+            "epoch 상승(0 -> 5) 갱신을 Agent 가 거부하지 않았다 — 계획서는 이를 범위 밖 정책 거부로 \
+             명시했다.\n\
+             agent exit={} stdout={} stderr={}",
+            upgrade.agent_success, upgrade.agent_stdout, upgrade.agent_stderr
+        ));
+    }
+    report.push_str(
+        "15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)\n",
+    );
+
+    // ── 16. Coordinator 가 요청의 fence_epoch 을 자신이 기억하는 값과 대조 ──
+    //
+    // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — 이전에는
+    //   `renew_req.fence_epoch` 를 아무것도와 비교하지 않았다.
+    let epoch_mismatch = run_handshake(
+        &fixture,
+        &["--do-renew", "true", "--renewed-fence-epoch", "0"],
+        &[
+            "--do-renew",
+            "true",
+            "--renew-request-epoch-override",
+            "99",
+        ],
+    )?;
+    if epoch_mismatch.coordinator_success
+        || epoch_mismatch.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || !epoch_mismatch
+            .coordinator_stderr
+            .contains("RenewLeaseRequest.fence_epoch 불일치")
+    {
+        return Err(format!(
+            "요청의 fence_epoch(99) 이 Coordinator 가 기억하는 값(0)과 다른데 거부되지 않았다.\n\
+             coordinator exit={} stdout={} stderr={}",
+            epoch_mismatch.coordinator_success,
+            epoch_mismatch.coordinator_stdout,
+            epoch_mismatch.coordinator_stderr
+        ));
+    }
+    report.push_str(
+        "16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 \
+         기억하는 값과 대조한다)\n",
+    );
+
     Ok(report)
 }
 

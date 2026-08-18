@@ -92,6 +92,7 @@ pub enum FrameType {
     Artifact = 8,
     ReplicaAck = 9,
     GrantAck = 10,
+    LeaseRenewResult = 11,
 }
 
 impl FrameType {
@@ -107,6 +108,7 @@ impl FrameType {
             8 => Self::Artifact,
             9 => Self::ReplicaAck,
             10 => Self::GrantAck,
+            11 => Self::LeaseRenewResult,
             _ => return None,
         })
     }
@@ -174,6 +176,7 @@ pub enum IngressMessage {
     Artifact(Verified<pb::ArtifactRef>),
     ReplicaAck(Verified<pb::ReplicaAck>),
     GrantAck(Verified<pb::AgentGrantAck>),
+    LeaseRenewResult(Verified<pb::RenewLeaseResult>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -285,6 +288,7 @@ pub fn read_frame<R: Read>(
         FrameType::Artifact => verify_as!(Artifact, pb::ArtifactRef),
         FrameType::ReplicaAck => verify_as!(ReplicaAck, pb::ReplicaAck),
         FrameType::GrantAck => verify_as!(GrantAck, pb::AgentGrantAck),
+        FrameType::LeaseRenewResult => verify_as!(LeaseRenewResult, pb::RenewLeaseResult),
     }
 }
 

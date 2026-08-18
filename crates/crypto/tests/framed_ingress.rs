@@ -77,6 +77,20 @@ fn grant_ack(k: &SigningKey, nonce_seed: u8) -> pb::AgentGrantAck {
     m
 }
 
+fn renew_result(k: &SigningKey, nonce_seed: u8) -> pb::RenewLeaseResult {
+    let mut m = pb::RenewLeaseResult {
+        outcome: 1, // RENEW_OUTCOME_RENEWED
+        detail: "ok".into(),
+        schema_version: 1,
+        coordinator_id: DEVICE.into(),
+        issued_at_unix_ms: NOW,
+        request_nonce: (0u8..16).map(|i| i.wrapping_add(nonce_seed)).collect(),
+        ..Default::default()
+    };
+    m.coordinator_signature = sign(k, &m).to_vec();
+    m
+}
+
 fn directory(k: &SigningKey) -> InMemoryKeyring {
     let mut d = InMemoryKeyring::new();
     d.insert(DEVICE, k.verifying_key());
@@ -152,6 +166,35 @@ fn normal_grant_ack_frame_dispatches_to_the_right_variant() {
     .expect("정상 GrantAck 프레임이 통과해야 한다");
 
     assert!(matches!(msg, IngressMessage::GrantAck(_)), "잘못된 variant 로 디스패치됐다");
+}
+
+/// `RenewLeaseResult` 도 같은 스트림 구조에서 정상 동작하는가 — 비공허성.
+///
+/// Lease 갱신 최소 조각(2026-08-19)이 추가한 11번째 `FrameType`. 이
+/// 테스트가 없으면 dispatch 배선이 컴파일만 되고 실제로 왕복하는지는
+/// 아무도 확인하지 않는다.
+#[test]
+fn normal_renew_lease_result_frame_dispatches_to_the_right_variant() {
+    let k = key(4);
+    let dir = directory(&k);
+    let r = renew_result(&k, 0);
+    let frame = write_frame(FrameType::LeaseRenewResult, &r.encode_to_vec()).unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let msg = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    )
+    .expect("정상 RenewLeaseResult 프레임이 통과해야 한다");
+
+    assert!(
+        matches!(msg, IngressMessage::LeaseRenewResult(_)),
+        "잘못된 variant 로 디스패치됐다"
+    );
 }
 
 /// ★ 프레임 상한 초과 — 상한을 **주장된 길이만으로** 거부해야 한다.

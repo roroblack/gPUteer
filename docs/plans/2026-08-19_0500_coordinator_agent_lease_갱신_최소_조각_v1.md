@@ -174,13 +174,13 @@ selftest 전용이다 — `derive_nonce()` 의 기존 경고(같은 `grant_id`
 
 | # | 단계 | 스트림 | 완료 기준 | 상태 |
 |---|---|---|---|---|
-| 1 | `RenewLeaseResult` 인증 메타데이터 + `ToCanonicalFields`/`Signable`/새 domain 구현 | Protocol | `cargo build -p gputeer-protocol` 통과, field_number_audit·lifetime_consistency·schema_fingerprint 전부 등록됨, canonical vector 추가 | ⬜ |
-| 2 | `framed_ingress` 에 `FrameType::LeaseRenewResult`/`IngressMessage::LeaseRenewResult` 추가 | Crypto | 기존 framed_ingress 테스트 전부 green + 새 타입 round-trip 테스트 | ⬜ |
-| 3 | Coordinator 에 같은 연결 위 갱신 왕복 추가(Request 검증 → 동일 epoch 새 Lease 발급 → Result 서명·송신) | Coordinator | `cargo build -p gputeer-coordinator` 통과 | ⬜ |
-| 4 | Agent 에 갱신 처리 추가(Result 서명·nonce echo 검증 → nested Lease 독립 검증 → watermark 적용 → 보유 Lease 교체) | Agent | `cargo build -p gputeer-agent` 통과, `FenceWatermark` 재사용 확인 | ⬜ |
-| 5 | `coordinator-agent-selftest` 시나리오 확장(정상 갱신·Request 위조·Result 위조·nested Lease 위조·epoch 강등·SUPERSEDED·QUARANTINED) | CLI | 시나리오 전부 자동 판정, 5회 연속 통과 | ⬜ |
-| 6 | 뮤테이션 테스트로 비공허성 증명(각 검증 gate 최소 1건) | — | 무력화 시 대응 시나리오가 실제로 실패, 원복 후 재통과 | ⬜ |
-| 7 | 코덱스 독립 검수 1라운드 이상 | — | `ACCEPTED` | ⬜ |
+| 1 | `RenewLeaseResult` 인증 메타데이터 + `ToCanonicalFields`/`Signable`/새 domain 구현 | Protocol | `cargo build -p gputeer-protocol` 통과, field_number_audit·lifetime_consistency·schema_fingerprint 전부 등록됨, canonical vector 추가 | ✅ |
+| 2 | `framed_ingress` 에 `FrameType::LeaseRenewResult`/`IngressMessage::LeaseRenewResult` 추가 | Crypto | 기존 framed_ingress 테스트 전부 green + 새 타입 round-trip 테스트 | ✅ |
+| 3 | Coordinator 에 같은 연결 위 갱신 왕복 추가(Request 검증 → 동일 epoch 새 Lease 발급 → Result 서명·송신) | Coordinator | `cargo build -p gputeer-coordinator` 통과 | ✅ |
+| 4 | Agent 에 갱신 처리 추가(Result 서명·nonce echo 검증 → nested Lease 독립 검증 → watermark 적용 → 보유 Lease 교체) | Agent | `cargo build -p gputeer-agent` 통과, `FenceWatermark` 재사용 확인 | ✅ |
+| 5 | `coordinator-agent-selftest` 시나리오 확장(정상 갱신·Request 위조·Result 위조·nested Lease 위조·epoch 강등·SUPERSEDED·QUARANTINED) | CLI | 시나리오 전부 자동 판정, 5회 연속 통과 | ✅ (16개 시나리오 — 계획한 7개 + 구현 중 발견한 request_nonce 불일치(14)·epoch 상승(15)·Coordinator epoch 대조(16) 게이트 3개, 코덱스 검수 2라운드에서 15·16 을 요구받아 추가함. 5회+ 연속 통과) |
+| 6 | 뮤테이션 테스트로 비공허성 증명(각 검증 gate 최소 1건) | — | 무력화 시 대응 시나리오가 실제로 실패, 원복 후 재통과 | ✅ (nested Lease 독립 검증·request_nonce 불일치·epoch 상승 거부·Coordinator epoch 대조 4건, 각각 무력화→실패 확인→원복→재통과) |
+| 7 | 코덱스 독립 검수 1라운드 이상 | — | `ACCEPTED` | ✅ (2라운드 — 1라운드 `CHANGES_REQUESTED`: Coordinator 가 요청 fence_epoch 미검증·Agent 가 epoch 상승 미거부·negative test 서술 부정확 3건 지적, 전부 코드로 수정 후 좁은 후속 검수(p100)에서 `ACCEPTED`. 실행 검증은 코덱스 샌드박스에 cargo 가 없어 "확인 안 됨" — claude-code 세션이 직접 `cargo test --workspace`·`coordinator-agent-selftest` 16개 시나리오 5회+ 연속 통과를 실행해 확인함) |
 | 8 | `docs/evidence/` 에 schema v2 형식으로 기록 | — | 독립 검수 `ACCEPTED` (DoD-11/12 와 같은 절차 — 신규 작성이니 v1 단계 없이 바로 v2) | ⬜ |
 
 ## 완료 기준 (DoD)
