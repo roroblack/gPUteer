@@ -6,6 +6,7 @@ members = [
     "crates/checkpoint",
     "crates/cli",
     "crates/runtime-policy",
+    "crates/runtime-windows",
     "crates/coordinator",
     "crates/agent",
 ]

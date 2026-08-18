@@ -160,12 +160,18 @@ fn every_crate_is_covered_by_ownership_rules() {
     //   없던 시점부터 자리를 예약해 둔 것이다(같은 문서의
     //   "★ 5.2 4종은 proto 메시지가 없다"와 같은 성격).
     //   이 가드가 이번에도 실제로 잡았다.
+    //
+    // ★ 2026-08-18 `runtime-windows` 추가 — VRAM 판정
+    //   (`crates/runtime-policy/src/vram.rs`)을 실제 Windows Job Object
+    //   커밋 상한 호출로 연결한다. 소유권 표(`RULE.md:159`)에도 이미
+    //   `Runtime | crates/runtime-windows/` 로 예약되어 있었다.
     const KNOWN: &[&str] = &[
         "protocol",
         "crypto",
         "checkpoint",
         "cli",
         "runtime-policy",
+        "runtime-windows",
         "coordinator",
         "agent",
     ];

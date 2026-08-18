@@ -272,3 +272,42 @@ runtime-policy 관계를 반영했다. 원본 YAML 은 당시 기록이므로
 **`ACCEPTED`** 로 판정했다. frontmatter `claim`(`:3`)·`status`(`:4`)
 가 그대로 보존되어 있고, 거짓 문장을 명시적으로 철회한 것을
 확인했다. "남은 변경 요청은 없다."
+
+## ★ 이후 변경 (2026-08-18 14:15) — `crates/runtime-windows` 신설로 limitation 부분 해소
+
+위 "runtime-policy 크레이트와의 관계" 절이 적어 둔 limitation —
+"`crates/runtime-policy` 는 판정만 하고 실제 Job Object 를
+생성·설정하지 않는다" — 이 부분적으로 해소됐다.
+
+`crates/runtime-windows`(신규)가 `windows_commit_cap()` 의 판정을
+실제 `CreateJobObjectW`/`SetInformationJobObject`/
+`AssignProcessToJobObject` 호출로 연결했고,
+`crates/runtime-windows/tests/commit_cap.rs` 가 이 저장소(로컬
+개발 기계, Windows 11, GPU 없음)에서 실제로 자식 프로세스를
+`VirtualAlloc` 루프로 돌려 커밋 상한이 걸리는지, negative
+control(Job Object 없이 돌린 같은 fixture)과 대조해 확인했다.
+뮤테이션 테스트(`AssignProcessToJobObject` 호출을 일시 무력화)로
+이 실측 테스트 자체가 공허하지 않음도 확인했다.
+
+**중요한 실측 발견 — 이 evidence 의 "이것은 VRAM quota 가 아니라
+총 커밋 상한이다"(`:177-178`) 라는 결론이 Rust 구현에서도 다시
+확인됐다.** `JOB_OBJECT_LIMIT_JOB_MEMORY` 는 딱딱한 상한이 아니라
+**소프트** 제한이다 — `PeakJobMemoryUsed` 가 설정한 `JobMemoryLimit`
+을 5회 연속 측정 모두에서 약 700~850KiB 만큼 넘었다(64MiB 상한
+기준). `crates/runtime-policy/src/vram.rs::guarantees_hard_limit()`
+가 `WindowsCommitCap` 에도 `false` 를 반환하도록 미리 정해 둔
+판단이 옳았다는 것을 이번에는 **Rust/Win32 직접 호출**로도
+재확인한 것이다.
+
+**여전히 해소되지 않은 부분**: 이 evidence 자체(x600 실제 GPU
+하드웨어, torch+CUDA, WDDM VRAM 간접 상한)는 재실측하지 않았다 —
+이번 실측은 **로컬 개발 기계에서 RAM 커밋만** 확인했다(GPU 가
+없다). "RAM 커밋 상한이 VRAM 에도 간접적으로 적용된다"는 이
+evidence 의 핵심 발견(WDDM 메모리 모델 추론, `:146-149`)은 여전히
+x600 실측(2026-08-15)에만 근거한다. `limitations` 목록(`:65-73`)
+중 나머지(정밀 상한 미특정·다중 프로세스 미검증·TCC 모드 미검증
+등)도 전부 그대로 유효하다.
+
+관련: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`
+와 같은 세션의 `crates/runtime-windows` 신설 작업.
+`docs/history/HISTORY.md` 2026-08-18 14:15 항목 참조.

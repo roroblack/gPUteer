@@ -16,6 +16,65 @@
 
 ---
 
+## 2026-08-18 14:15 — `crates/runtime-windows` 신설 — VRAM 판정을 실제 Job Object 로 연결
+
+- 계획: CLAUDE.md "다음에 할 일" 2번(runtime-policy 판정을 실제
+  시스템 호출로 연결). 사용자 지시 — 자율 루프 계속 + "코덱스 최대한
+  쿼터 써서" 재확인.
+- 스트림: Runtime.
+- 수행: `crates/runtime-policy/src/vram.rs` 모듈 문서가 스스로
+  "`runtime-windows` 가 생기면 그쪽이 이 판정을 부르고 실제로
+  `CreateJobObject`/`SetInformationJobObject` 를 호출해야 한다"고
+  적어 둔 것을 그대로 이행했다. 착수 전 안전 판단: 이 작업은 시스템
+  전역 설정(방화벽 규칙·OS 기능 활성화)이 아니라 **프로세스/세션
+  범위** Win32 API(Job Object)라 사용자 명시적 승인 없이 자율 실행
+  가능하다고 판단 — 코덱스에게도 이 전제를 검토시켰다(`p58`
+  프롬프트, "동의" 판정, 근거: 이름 없는 Job 은 시스템 전역에 영향
+  없고 마지막 프로세스가 끝나면 사라진다).
+  - `crates/runtime-windows/src/lib.rs` — `create_constrained_child`:
+    `CreateProcessW(CREATE_SUSPENDED)` → `CreateJobObjectW` →
+    `SetInformationJobObject(JobMemoryLimit)` →
+    `AssignProcessToJobObject` → `ResumeThread` 순서로 자식을 만든다.
+    `std::process::Command` 대신 `CreateProcessW` 를 직접 부른 이유:
+    안정 Rust 에는 자식의 주 스레드를 나중에 재개할 공개 API가 없다
+    (`ChildExt::main_thread_handle()` 은 nightly 전용) — `CREATE_SUSPENDED`
+    로 "자식이 Job 할당 전에 이미 메모리를 커밋하는" 경합을 없앤다.
+  - `crates/runtime-windows/src/bin/alloc_fixture.rs` — 실측 테스트용
+    fixture. `VirtualAlloc(MEM_COMMIT)` 를 청크 단위로 반복해 실패할
+    때까지 커밋하고 결과를 파일에 적는다(stdout 파이프 상속을 신뢰할
+    수 없어서 파일로 뺐다).
+  - `crates/runtime-windows/tests/commit_cap.rs` — 제약된 자식과
+    negative control(제약 없는 자식)을 비교하는 실측 테스트 2개.
+- **실측으로 발견한 것**: `JOB_OBJECT_LIMIT_JOB_MEMORY` 는 딱딱한
+  상한이 아니라 **소프트** 제한이다 — `PeakJobMemoryUsed` 가
+  `JobMemoryLimit` 을 5회 연속 측정 모두에서 약 700~850KiB 만큼
+  넘었다(64MiB 상한 기준, 4MiB 청크 크기보다 작은 오버슈트라 "청크
+  하나가 더 통과했다"가 아니다). 이것이 바로
+  `VramEnforcement::guarantees_hard_limit()` 가 `WindowsCommitCap`
+  에도 미리 `false` 를 못박아 둔 판단을 실측으로 재확인한 것이다.
+  테스트는 이 실측 여유(2MiB 허용치)를 문서화해 반영했다.
+- 뮤테이션 테스트로 비공허성 증명: `AssignProcessToJobObject` 호출을
+  일시 무력화 → 제약된 자식이 안전 상한(4096MiB)까지 아무 제약 없이
+  전부 할당(negative control 과 동일 거동) → selftest 가 정확히 이
+  결함을 잡음(할당 실패 없음을 감지) → 원복 후 재통과 확인.
+- `docs/evidence/P0-06_vram_enforcement.md` 에 append-only addendum
+  추가 — 이 evidence 가 이미 적어 둔 limitation("runtime-policy 는
+  판정만 하고 실제 Job Object 를 생성·설정하지 않는다")이 부분적으로
+  해소됐음을 기록. x600 실제 GPU 하드웨어 재실측은 아니다(로컬
+  개발 기계는 GPU 가 없다) — "RAM 커밋 상한이 VRAM 에도 적용된다"는
+  이 evidence 의 핵심 발견은 여전히 x600 실측에만 근거한다는 점을
+  명시했다.
+- `crates/protocol/tests/stream_ownership.rs::every_crate_is_covered_by_ownership_rules`
+  의 `KNOWN` 목록에 `runtime-windows` 추가(이전 세션들과 같은 패턴 —
+  안전망이 새 크레이트를 실제로 잡았다).
+- 검증: `cargo build --workspace` 경고 0. `cargo test --workspace`
+  299/0/1(ignored) — 이전 297 + `commit_cap.rs` 신규 2건.
+  `python scripts/verify_evidence.py` 스키마 위반 0.
+- 리포트: 이 이력 항목 + `crates/runtime-windows/src/lib.rs` 모듈
+  문서 + P0-06 evidence addendum.
+
+---
+
 ## 2026-08-18 13:05 — x600 WSL2 시도 — 시스템 설정 변경이라 자율 실행 보류
 
 - 계획: CLAUDE.md "다음에 할 일" 3번(D-3 — Linux 검증 환경 확보).

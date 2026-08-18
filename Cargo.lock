@@ -384,6 +384,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gputeer-runtime-windows"
+version = "0.0.1"
+dependencies = [
+ "gputeer-runtime-policy",
+ "tempfile",
+ "thiserror",
+ "windows-sys",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

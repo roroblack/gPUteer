@@ -16,14 +16,20 @@
 //!  Native)                "S1 이상이면 안전" 이라는 표현을 쓰지 않는다.
 //! ```
 //!
-//! ★ **이 모듈은 판정 결과를 아무데도 연결하지 않는다** (독립 검수 2026-08-17).
-//!   `guarantees_hard_limit()` 을 실제로 부르는 코드는 이 파일의 테스트
-//!   뿐이다 — Job Object 를 실제로 설정하는 코드는 없다. `windows_commit_cap()`
-//!   도 값만 계산할 뿐 어디에도 적용하지 않는다. **"강제 계층" 이라는
-//!   이름에 속지 않는다** — 지금은 "판단 근거를 코드로 고정해 둔 것"이지
-//!   실행 중인 프로세스에 아무 영향도 주지 않는다.
-//!   `runtime-windows` 가 생기면 그쪽이 이 판정을 부르고 실제로
-//!   `CreateJobObject`/`SetInformationJobObject` 를 호출해야 한다.
+//! ★ **이 모듈 자체는 여전히 판정만 한다** (독립 검수 2026-08-17 지적,
+//!   2026-08-18 부분 해소). `crates/runtime-windows` 가 신설되어
+//!   `windows_commit_cap()` 을 실제로 불러 `CreateJobObjectW`/
+//!   `SetInformationJobObject` 를 호출하고, 그 강제가 진짜인지
+//!   `crates/runtime-windows/tests/commit_cap.rs` 가 자식 프로세스에
+//!   실제로 메모리를 할당시켜 확인한다(negative control 포함, 뮤테이션
+//!   테스트로 비공허성도 확인). **그러나 이 모듈(`runtime-policy`) 안의
+//!   `windows_commit_cap()`/`guarantees_hard_limit()` 을 부르는 코드는
+//!   여전히 이 파일의 테스트뿐이다** — 판정 로직과 그것을 실제로 쓰는
+//!   `crates/runtime-windows` 는 별개 크레이트이고, 이 문서는 그 경계를
+//!   흐리지 않는다. 그리고 실측 결과 `JOB_OBJECT_LIMIT_JOB_MEMORY`
+//!   자체가 딱딱한 상한이 아니라 소프트 제한이었다(관측 오버슈트
+//!   약 700~850KiB) — 아래 `guarantees_hard_limit()` 이 `false` 라고
+//!   미리 못박아 둔 판단이 실측으로 확인됐다.
 
 /// VRAM 을 실제로 제한할 수 있는가.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
