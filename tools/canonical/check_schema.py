@@ -34,7 +34,7 @@ import tempfile
 from pathlib import Path
 
 try:
-    from google.protobuf import descriptor_pb2
+    from google.protobuf import descriptor_pb2, message
 except ImportError:
     print(
         "google.protobuf 가 설치돼 있지 않다 — pip install protobuf",
@@ -89,35 +89,61 @@ def find_protoc() -> str:
 def build_descriptor_set(protoc: str) -> descriptor_pb2.FileDescriptorSet:
     """`protoc --descriptor_set_out` 으로 실제 .proto 를 컴파일해
     구조적 표현을 얻는다. 실패하면 exit(2) — schema mismatch(exit 1)
-    와 실행 환경 오류를 구분한다."""
-    with tempfile.NamedTemporaryFile(suffix=".pb", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        result = subprocess.run(
-            [
-                protoc,
-                f"--proto_path={PROTO_DIR}",
-                "--include_imports",
-                f"--descriptor_set_out={tmp_path}",
-                *PROTO_FILES,
-            ],
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        print(f"protoc 실행 실패: {protoc} 를 실행할 수 없다", file=sys.stderr)
-        sys.exit(2)
+    와 실행 환경 오류를 구분한다.
 
-    if result.returncode != 0:
-        print(f"protoc 컴파일 실패:\n{result.stderr}", file=sys.stderr)
-        tmp_path.unlink(missing_ok=True)
+    ★ 코덱스 독립 검수(2026-08-20, p120) 지적 — 처음 구현은 임시
+      파일 생성(`NamedTemporaryFile`)이 바깥의 `try` 밖에 있었고,
+      `read_bytes()`/`MergeFromString()` 의 `OSError`·디코드 오류도
+      전혀 잡지 않았다. 이 경로들이 실패하면(예: 샌드박스가 임시
+      디렉터리 쓰기를 막는 경우) 처리되지 않은 예외가 그대로 새어나가
+      **exit(1)** 로 끝났다 — schema mismatch(정상적으로 exit 1) 와
+      환경 오류를 구분할 수 없게 되는, 이 함수 docstring 이 약속한
+      계약 위반이었다. descriptor 생성·읽기·파싱 전 구간을 감싸
+      `OSError`/`message.DecodeError` 를 모두 exit(2) 로 통일했다.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pb", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+    except OSError as e:
+        print(f"임시 descriptor 파일을 만들 수 없다: {e}", file=sys.stderr)
         sys.exit(2)
 
     try:
+        try:
+            result = subprocess.run(
+                [
+                    protoc,
+                    f"--proto_path={PROTO_DIR}",
+                    "--include_imports",
+                    f"--descriptor_set_out={tmp_path}",
+                    *PROTO_FILES,
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as e:
+            print(f"protoc 실행 실패: {protoc} — {e}", file=sys.stderr)
+            sys.exit(2)
+
+        if result.returncode != 0:
+            print(f"protoc 컴파일 실패:\n{result.stderr}", file=sys.stderr)
+            sys.exit(2)
+
+        try:
+            data = tmp_path.read_bytes()
+        except OSError as e:
+            print(f"descriptor 파일을 읽을 수 없다: {e}", file=sys.stderr)
+            sys.exit(2)
+
         fds = descriptor_pb2.FileDescriptorSet()
-        fds.MergeFromString(tmp_path.read_bytes())
+        try:
+            fds.MergeFromString(data)
+        except message.DecodeError as e:
+            print(f"descriptor 파싱 실패 — protoc 출력이 손상됐다: {e}", file=sys.stderr)
+            sys.exit(2)
     finally:
         tmp_path.unlink(missing_ok=True)
+
     return fds
 
 
