@@ -16,7 +16,33 @@
 
 ---
 
-## 2026-08-19 04:20 — DoD-11·DoD-12 신규 작성 — coordinator/agent 핸드셰이크·Lease 최소 조각의 정식 evidence 기록 완료
+## 2026-08-19 05:00 — Lease 갱신 최소 조각 계획 수립 — `RenewLeaseResult` 미서명 공백 발견
+
+- 계획: CLAUDE.md 백로그 1번의 다음 후보(Lease **갱신**,
+  `RenewLeaseRequest` 왕복) — `2026-08-18_1800`(Lease 최소 조각)
+  의 "Out" 절이 이미 예고한 항목.
+- 스트림: —(계획 단계, 구현 아직 착수 안 함).
+- 수행: 코덱스에게 설계를 요청했다(`p98` 프롬프트) — 1차 시도는
+  `codex exec` 자체가 exit code 1 로 중간에 끊겼다(출력 파일 미생성,
+  로그에 PowerShell `Get-Content` 로 읽은 한글 소스가 mojibake 로
+  깨진 상태로 남음 — 원인은 확인 안 됨, 세션 스스로의 결함이
+  아니라 codex 실행 환경 쪽 문제로 추정). 같은 프롬프트로 재시도해
+  성공했다.
+- ★ 설계 실측이 진짜 프로토콜 공백을 찾았다 — `RenewLeaseRequest`
+  는 이미 `Signable` 이지만 **`RenewLeaseResult` 는 서명 필드도
+  `Signable` 구현도 없다.** 결과 메시지(`RENEWED`/`SUPERSEDED`/
+  `QUARANTINED` 판정과 새 Lease)가 인증되지 않으면, 공격자가 정상
+  갱신 요청에 가짜 `QUARANTINED` 응답을 끼워 넣어 정당한 Agent 의
+  작업을 강제 중단시킬 수 있다 — 이 조각의 In 범위에
+  `RenewLeaseResult` 를 `Signable` 로 만드는 작업을 포함시켰다.
+- `docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md`
+  로 정리했다 — 같은 TCP 연결에 이어 붙이는 왕복(별도 연결 안 씀),
+  거부/공격 경로 6종(위조 Request·위조 Result·nested Lease 위조·
+  epoch 강등·SUPERSEDED·QUARANTINED), `FenceWatermark` 재사용
+  (같은 epoch 허용은 이미 `same_epoch_reuse_is_allowed_by_design`
+  이 보장), 키/시드는 새로 필요 없음, 8단계 계획표.
+- 검증: 아직 없음 — 이 턴은 계획 수립까지다. 구현은 다음 단계.
+- 리포트: 이 이력 항목 + 계획 문서 자체.
 
 - 계획: CLAUDE.md 백로그 1번의 남은 항목(RULE.md §8 이 요구하는
   정식 `docs/evidence/` 기록). `2026-08-18_0800`(핸드셰이크)과

@@ -273,8 +273,13 @@ Linux 를 한 번도 돌려보지 않았다
    기록 완료(각 2~3라운드 재검수 끝에 `ACCEPTED`). "완전한
    coordinator" 아님, lease **갱신**(`RenewLeaseRequest` 왕복)·
    스케줄링·다중 Agent·운영용 key protection·TLS 는 여전히 범위
-   밖. 다음 후보는 Lease 계획 문서의 "Out" 절 참조 — 새 계획
-   문서가 각각 필요하다.
+   밖. **Lease 갱신(`RenewLeaseRequest` 왕복) 계획 수립 완료
+   (2026-08-19)** — `docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md`.
+   설계 실측이 진짜 공백을 찾았다: `RenewLeaseResult` 는 서명 필드도
+   `Signable` 구현도 없다 — 위조된 정책 거부(`SUPERSEDED`/
+   `QUARANTINED`)를 아무나 끼워 넣을 수 있는 상태다. 이 조각의
+   In 범위에 `RenewLeaseResult` 서명화를 포함시켰다. 구현은 아직
+   착수 전(단계 1~8, 8단계 계획표 참조).
 2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 의 primitive 완료(2026-08-18) — 방화벽만 남음
    crates/runtime-windows 신설:
    - VRAM: Job Object 커밋 상한 실제 연결·실측(뮤테이션 테스트 포함).
