@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-01
 claim: "Rust 구현 canonical_encode 가 Python 참조 구현과 바이트 단위로 일치하며, signing.md §3 의 규칙 a~i 를 모두 만족한다"
 status: PASS
 commit: f2ec00e25313bf56ea4782616af19e118999f5a0
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T16:40:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 범위 · negative_tests 실재성과 domain 수치 · limitations 4건 stale 여부 · decision 절 정합성 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-01_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-01_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:294248cc7f10757ff205c3993b8ae07105ce55d318e61380074a46b2cecb8959"
+raw_output_bytes: 1694
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1"
   note: "라이브러리 크레이트라 실행 바이너리 없음. 테스트 바이너리는 cargo 가 생성"
@@ -48,6 +68,8 @@ artifacts:
   - docs/evidence/_raw/M1-02_test_output.txt
   - crates/protocol/tests/canonical_vectors.rs
   - tests/vectors/canonical_v1.json
+  - docs/evidence/_raw/DoD-01_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-01_review.txt
 negative_tests:
   - "negative_non_minimal_varint_is_rejected: 0 을 2바이트(0x80 0x00)로 인코딩한 non-minimal varint 를 거부. 같은 값의 복수 표현은 서명 우회 여지를 만든다"
   - "negative_truncated_varint_is_rejected: 연속 비트가 켜진 채 끝난 varint 를 거부"
@@ -268,3 +290,80 @@ limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고치지
 `vectors` 배열 시작임을 확인했고 40건도 재확인했다. `HISTORY.md`
 의 "2026-08-16 10:40 — 서명 밖 필드 6건 제거" 제목에 "벡터 12 ->
 20건" 기록이 실제로 있음도 확인했다. "잔여 사항 없음."
+
+## ★ 이후 변경 (2026-08-18 16:40) — domain 수치 재차 stale, schema v2 승격을 위한 재검수
+
+이 evidence 를 schema v1 -> v2(RULE.md §7.3, ADR-030)로 승격하기
+위해 새 독립 검수를 받았다(`agent:codex-cli`, fresh-read-only,
+`p64` 프롬프트) — `CHANGES_REQUESTED`.
+
+### domain 수치가 또 stale — 17 -> 23 -> 24
+
+바로 위 addendum(2026-08-18 01:00)이 "17종" 원본 서술을 "23종"으로
+정정했는데, **그 정정 자체가 이 재검수 시점에는 이미 stale 이었다.**
+같은 세션(2026-08-18) 안에서 coordinator/agent 핸드셰이크 작업의
+일부로 `Domain::GrantAck` 를 새로 추가했기 때문이다
+(`crates/protocol/src/canonical.rs`). 지금
+`domain_tags_are_32_bytes_and_unique` 는 **24종**을 검사하고
+`assert_eq!(seen.len(), 24, ...)` 로 고정한다
+(`crates/protocol/tests/canonical_vectors.rs:305,315,323`).
+
+이 stale 은 검수 지적이 틀려서가 아니라, **원본 평가와 재검수
+사이에 이 evidence 가 다루는 코드 자체가 실제로 바뀌었기 때문**
+이다 — canonical evidence 의 근본적 한계(살아 있는 코드베이스를
+한 시점의 스냅샷으로 기록한다)를 그대로 보여준다.
+
+### 나머지 항목은 전부 재확인됨
+
+- claim(대표 벡터 대조이며 40개 전수 대조는 아니라는 좁힌 해석)은
+  지금도 정확함 — `canonical.rs:6,185,204`,
+  `reference_canonical.py:504,511,564`,
+  `canonical_vectors.rs:26,40` 대조 확인.
+- negative_tests 6개 이름 전부 실재(`canonical_vectors.rs:259,271,289,173,125,304`).
+- stale limitations 4건(JobManifest 부분집합·prost 미구현·Ed25519
+  미구현·SCHEMA_TOO_NEW 미구현) 정정은 지금도 유효함을
+  `to_fields.rs:849,899,963`, `prost_canonical.rs:56`,
+  `crypto/src/lib.rs:62,120`, `signing.rs:741,743` 로 재확인.
+- `cargo test -p gputeer-protocol --test canonical_vectors` 는
+  검수자의 read-only 샌드박스가 `.cargo-build-lock` 접근 거부로
+  직접 실행하지 못했다 — 이 세션이 이 문서의 v2 승격 직전에
+  **직접 실행해 15/15 통과를 확인**했다(아래 v2 frontmatter 의
+  `raw_output_artifact` 참조).
+
+### 정정 — frontmatter 원문은 손대지 않는다
+
+★ 처음에는 frontmatter `negative_tests` 의
+`domain_tags_are_32_bytes_and_unique` 설명 문구("17종")를 직접
+"24종"으로 고쳤는데, 이 저장소의 append-only 원칙("관측 기록은
+고치지 않는다")과 이 문서 자신의 앞선 addendum 들이 이미 세운
+관례(원본 frontmatter 프로즈는 그대로 두고 addendum 본문에서만
+정정한다 — `P0-07` 이 그 관례의 유일한 예외였고, 그 이유(status 는
+관측이 아니라 분류 필드)를 명시했다)를 어긴 것임을 깨닫고 원복했다.
+`negative_tests`/`limitations`/`decision` 의 원문 문자열은 v1 그대로
+"17종"으로 **남긴다** — 정정은 여기, addendum 본문에만 있다. 실제
+숫자는 24종이다(위 절 참조). schema v2 승격 시 frontmatter 에 새로
+추가한 필드(`schema_version`·`executor_*`·`reviewer_*`·`review_*`·
+`raw_output_artifact`/`digest`/`bytes`)와 `artifacts:` 리스트에 새
+raw 파일 2개를 추가한 것은 예외다 — v2 스키마 자체가 요구하는
+**새 필드 추가**이지 기존 프로즈의 **수정**이 아니기 때문이다.
+
+### review_outcome
+
+★ 첫 라운드 `CHANGES_REQUESTED` → 이 addendum 에 domain 24종 정정과
+직접 실행한 `cargo test` 결과(`DoD-01_v2_promotion_2026-08-18.txt`)
+첨부로 대응 → 좁은 후속 확인 재검수(`agent:codex-cli`,
+fresh-read-only, `p65` 프롬프트)에서 **`ACCEPTED`**. 두 지적(domain
+수치, cargo test 미확인) 모두 해소됐음을 확인했다. 전문은
+`docs/evidence/_raw/DoD-01_review.txt` 참조.
+
+### schema v1 → v2 승격
+
+이 검수를 근거로 이 문서를 `schema_version: 1`(유예 목록,
+`docs/evidence/_schema_v1_grandfathered.txt`)에서 `schema_version: 2`
+(RULE.md §7.3, ADR-030)로 승격했다. frontmatter 에 `executor_*`·
+`reviewer_*`·`review_*`·`raw_output_artifact`/`digest`/`bytes` 필드를
+새로 추가했고(기존 필드는 위 "정정" 절에서 설명한 대로 손대지
+않았다), `docs/evidence/_schema_v1_grandfathered.txt` 에서 이 파일명을
+지우고 `scripts/verify_evidence.py` 의 `GRANDFATHER_DIGEST` 상수를
+갱신했다(그 diff 자체가 검토 대상이라는 것이 RULE.md §7.3 의 설계
+의도다).

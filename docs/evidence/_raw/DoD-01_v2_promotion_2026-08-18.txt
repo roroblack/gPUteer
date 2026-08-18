@@ -1,0 +1,35 @@
+$ cargo test -p gputeer-protocol --test canonical_vectors
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s
+     Running tests\canonical_vectors.rs (target\debug\deps\canonical_vectors-21a0c1a00d048200.exe)
+
+running 15 tests
+test domain_tags_are_32_bytes_and_unique ... ok
+test minimal_varint_roundtrip ... ok
+test negative_non_minimal_varint_is_rejected ... ok
+test negative_cross_domain_signature_input_differs ... ok
+test negative_truncated_varint_is_rejected ... ok
+test v08_signature_field_is_excluded ... ok
+test v06_explicit_defaults_are_omitted ... ok
+test determinism_100_iterations ... ok
+test v01_minimal_manifest_matches_reference ... ok
+test v01_sig_input_and_digest_match_reference ... ok
+test v04_repeated_order_is_preserved ... ok
+test v13_merkle_promotion_matches_reference ... ok
+test v10_domain_separation ... ok
+test v03_map_insertion_order_is_irrelevant ... ok
+test v11_schema_version_separation ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+$ python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+재생성 대조: 40개 벡터 일치
+vector cross-checks: OK
+
+$ cargo test --workspace
+(요약) 306 passed / 0 failed / 1 ignored (전체 워크스페이스, 같은 커밋 기준)
+
+이 파일은 DoD-01 을 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(2026-08-15 무렵 기록,
+docs/evidence/_raw/M1-02_test_output.txt)은 문서 본문에 이미 보존돼
+있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라, v2 승격
+시점의 독립적 재확인이다.

@@ -16,6 +16,62 @@
 
 ---
 
+## 2026-08-18 17:20 — DoD-01 schema v1 → v2 첫 승격 (사용자 승인 후 재개)
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). 사용자가 채팅에서
+  직접 승인("승인해줄게 코덱스쿼터로 계속 진행해")한 뒤, 시스템 설정
+  변경(WSL2·방화벽)은 여전히 자율 실행 금지 대상임을 설명하고 대신
+  이 항목으로 방향을 틀었다.
+- 스트림: —
+- 수행: **DoD-01 을 실제로 schema v2 로 승격한 첫 사례.** 착수 전
+  확인한 것 — v1 evidence 16건 중 어느 것도 `_raw/` 에 독립 검수
+  receipt 파일이 없었다(이번 세션의 40+ 회 addendum 재검수는 결과를
+  문서 본문에만 요약했지 receipt 를 별도 저장하지 않았다). 그래서
+  과거 시점의 executor/reviewer 메타데이터를 **지어내지 않고**,
+  오늘 새로 실행한 재검증 + 새로 받은 독립 검수를 v2 의
+  executor/reviewer 로 삼기로 했다.
+  1. `cargo test -p gputeer-protocol --test canonical_vectors`(15/15)
+     와 `python tools/canonical/reference_canonical.py --verify`
+     를 직접 실행해 `docs/evidence/_raw/DoD-01_v2_promotion_2026-08-18.txt`
+     에 저장(sha256 계산).
+  2. DoD-01 전체를 처음부터 다시 검수시켰다(`agent:codex-cli`,
+     fresh-read-only, `p64` 프롬프트) — `CHANGES_REQUESTED`.
+     domain_tag 개수가 이 **같은 세션 안에서** `Domain::GrantAck`
+     추가로 17→23→**24**로 또 stale 이 됐음을 잡았다(원본 정정도
+     검수 시점엔 이미 낡아 있었다 — canonical evidence 의 근본적
+     한계). `cargo test` 는 검수자의 read-only 샌드박스가
+     `.cargo-build-lock` 접근 거부로 직접 실행 못 함.
+  3. 새 addendum(2026-08-18 16:40)으로 domain 24 를 반영하고 직접
+     실행한 test 결과를 첨부.
+  4. **처음에는 frontmatter `negative_tests` 원문 문구를 직접 "17종"
+     에서 "24종"으로 고쳤는데, append-only 원칙(관측 기록은 고치지
+     않는다)과 이 문서 자신의 기존 관례(P0-07 의 `status` 만 유일한
+     예외)를 어긴 것임을 스스로 발견해 즉시 원복했다** — 정정은
+     addendum 본문에만 남기고 원문 "17종"은 그대로 뒀다.
+  5. 좁은 후속 확인 재검수(`p65` 프롬프트) — **`ACCEPTED`**. 두
+     지적 다 해소 확인.
+  6. `docs/evidence/_raw/DoD-01_review.txt` 에 검수 receipt 작성(이
+     저장소 관례대로 파일명:줄 인용, `DoD-09_review.txt` 형식 참고).
+  7. frontmatter 에 `schema_version: 2` + `executor_*`/`reviewer_*`/
+     `review_*`/`raw_output_artifact`/`digest`/`bytes` **추가**(기존
+     필드는 손대지 않음), `artifacts:` 리스트에 새 raw 파일 2개
+     **추가**(v2 스키마 자체가 요구하는 구조적 필수 사항이라 append-only
+     예외로 취급).
+  8. `docs/evidence/_schema_v1_grandfathered.txt` 에서 DoD-01 을 빼고
+     "16건" → "15건"으로 갱신.
+  9. `scripts/verify_evidence.py` 의 `GRANDFATHER_DIGEST` 상수를 새
+     목록의 실제 sha256 로 갱신(RULE.md §7.3 이 설계한 대로 — 유예
+     축소가 diff 에 드러난다).
+- 검증: `python scripts/verify_evidence.py` — DoD-01 PASS(스키마
+  위반 0), "독립 검수 기록이 없는 P0/DoD PASS" 부채가 **13건 → 12건**
+  으로 줄었다(RULE.md §7.3: "줄어드는 것이 진전이다"). `cargo test
+  --workspace` 306/0/1(ignored) 유지.
+- 리포트: 이 이력 항목 + `DoD-01_canonical_encode_교차검증.md` 의
+  "schema v1 → v2 승격" addendum. 남은 v1 evidence 12건(review-required)
+  + ENV-01·02(review 비강제)는 이후 사이클에서 같은 절차로 이어간다.
+
+---
+
 ## 2026-08-18 16:25 — `artifact_beneath` 재검수: 표현 정밀화 후 코덱스 `ACCEPTED` 흐름 마무리
 
 - 계획: `86340ad`(미연결 primitive 명시 + 침묵 스킵 제거)에 대한

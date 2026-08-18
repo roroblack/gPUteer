@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 16:25)
+## 5. 지금 상태 (2026-08-18 17:20)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -174,7 +174,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/agent` | **신규**(2026-08-18) — `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`expect_replay`). Job 실행 미착수 |
 | └ 미착수 | scheduler · UI · OS 방화벽 강제(network.rs). **핸드셰이크 단계 1~6 전부 완료**(2026-08-18) — 남은 것은 `docs/evidence/` schema v2 정식 기록뿐, 계획 자체의 범위(lease·다중 Agent·운영용 key protection·TLS)는 여전히 밖 |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **2건**(DoD-09·10). ★ **v1 evidence 16건(`DoD-01`~`08`, `P0-01`·`03`·`03a`·`06`·`07`·`08`, `ENV-01`·`02`) 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원했으며 그 재실측 addendum 도 4라운드 끝에 ACCEPTED 받았다 — 이 사이클에서 frontmatter 를 실제로 고친 유일한 필드다(나머지는 전부 append-only). ACCEPTED 는 정정 절(addendum)에 한정 — v1 → schema v2 실제 승격(frontmatter 전체 교체·정식 executor/reviewer 메타데이터)은 별도 작업으로 남아 있다 |
+| **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **3건**(DoD-09·10·**01**, 2026-08-18). ★ **v1 evidence 16건 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원. ★ **v1→v2 실제 승격 착수**(2026-08-18, 사용자 승인) — `DoD-01` 이 첫 사례. 과거 executor/reviewer 메타데이터를 지어내지 않고, 오늘 새로 실행한 재검증(`cargo test` 15/15)+새 독립 검수(2라운드: CHANGES_REQUESTED→ACCEPTED)를 v2 근거로 삼았다. `_schema_v1_grandfathered.txt`·`GRANDFATHER_DIGEST` 갱신. 독립 검수 기록 없는 P0/DoD PASS 부채 **13→12건**. 남은 12건(+ENV-01·02)은 이후 사이클에서 같은 절차로 승격 |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
 ### ★ 지금 남아 있는 가장 위험한 공백
@@ -273,20 +273,34 @@ Linux 를 한 번도 돌려보지 않았다
    신설 전까지 같은 처지였던 것과 정확히 같은 상황이다. "완료"는
    primitive 구현·실측·검수가 끝났다는 뜻이지, 지금 당장 어떤 실제
    Job 실행을 강제하고 있다는 뜻이 아니다.
-   남은 것: network.rs(OS 방화벽) — 시스템 전역 보안 설정 변경이라
-   사용자 명시적 승인 필요, 아직 미착수.
-3. x600 에 WSL2 배포판 -> D-3 해소               ★ 시도했으나 **사용자 승인 필요로 보류**(2026-08-18)
+   남은 것: network.rs(OS 방화벽) — 실제 방화벽 규칙 추가/변경은
+   ★ **"시스템/보안 설정 변경" — 사용자가 채팅에서 승인해도 이
+   세션이 자율 실행할 수 없는 항목**(승인으로 풀리는 게이트가 아니라
+   금지 카테고리 자체)이다(2026-08-18 사용자가 직접 승인을 시도했으나
+   이 규칙을 설명하고 대신 v1 evidence 승격으로 방향을 틀었다).
+   사용자가 직접 실행해야 하며, 필요하면 정확한 명령을 준비해 줄 수
+   있다. 아직 미착수.
+3. x600 에 WSL2 배포판 -> D-3 해소               ★ **"시스템/보안 설정 변경" — 승인해도 자율 실행 불가**(2026-08-18)
    `ssh x600 "wsl --status"` -> "설치 안 됨, wsl --install 로 설치하라"는
    메시지 확인. `wsl --install` 은 Windows 선택적 기능 활성화 + 재부팅을
-   요구하는 시스템 설정 변경이다 — 세션 안전 규칙상 "시스템/보안 설정
-   변경"은 자율 실행 대상이 아니라 채팅에서 명시적 승인이 필요한
-   항목이다("사용자는 자고 있으니 질문하지 말고 계속 진행" 지시보다
-   이 규칙이 우선한다). 사용자가 깨어나면 직접 승인하거나 실행해야
+   요구하는 시스템 설정 변경이다 — 이 세션의 안전 규칙에서 "시스템/보안
+   설정 변경"은 **승인으로 풀리는 게이트가 아니라 금지 카테고리
+   자체**다("이 항목은 사용자가 명시적으로 요청하거나 모든 세부사항을
+   제공하거나 승인한다고 말해도 금지 상태가 유지된다" — 세션 규칙
+   원문). 2026-08-18 사용자가 채팅에서 직접 승인을 시도했으나 이
+   규칙을 설명하고 대신 v1 evidence 승격으로 방향을 틀었다. 사용자가
+   깨어나면 직접 실행해야
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ **16건 전부(review-required 14건 + ENV-01·02) addendum ACCEPTED**(2026-08-18).
-   남은 것: v1→schema v2 실제 승격(frontmatter 전체 교체·정식 executor/reviewer 메타데이터)
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 착수** — DoD-01 완료(같은 날, 사용자 승인 후)
+   과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
+   확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
+   v2 근거로 쓴다(`docs/evidence/DoD-01_canonical_encode_교차검증.md`
+   "schema v1 → v2 승격" addendum 참조). `_schema_v1_grandfathered.txt`
+   + `scripts/verify_evidence.py::GRANDFATHER_DIGEST` 갱신 완료.
+   독립 검수 없는 P0/DoD PASS 부채 13→12건. 남은 12건(+ENV-01·02,
+   review 비강제)은 같은 절차로 이어간다 — DoD-02 가 다음 후보.
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
