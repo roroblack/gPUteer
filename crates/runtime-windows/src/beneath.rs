@@ -28,11 +28,14 @@
 //! **아직 Job 을 실행하지 않는다**(`CLAUDE.md` §5 "미착수" —
 //! scheduler·`crates/agent` 의 Job 실행). 그래서 "artifact_scope
 //! 로 통제되는 임의 경로에 실제로 쓰는" 코드 경로 자체가 이 저장소에
-//! 없다 — `ArtifactPolicy::check()` 를 호출하는 곳도
-//! `crates/cli/src/selftest.rs` 의 합성 문자열 검사(파일시스템을
-//! 건드리지 않는다) 하나뿐이다. `open_beneath`/`open_artifact` 는
-//! **미래의 실행 계층이 쓸 준비가 된 primitive** 이지, 지금 당장
-//! 어떤 실제 쓰기를 대체한 것이 아니다 — 이 사실을 감추지 않는다.
+//! 없다 — `ArtifactPolicy::check()` 를 **운영 코드에서** 호출하는
+//! 곳도 `crates/cli/src/selftest.rs` 의 합성 문자열 검사(파일시스템을
+//! 건드리지 않는다) 하나뿐이다(이 크레이트 자신의 테스트도 검증용
+//! 으로 부르지만, 그것은 이 문장이 말하는 "실제 쓰기 경로"가 아니다
+//! — 코덱스 독립 검수 2026-08-18 이 부정확한 표현을 지적했다).
+//! `open_beneath`/`open_artifact` 는 **미래의 실행 계층이 쓸 준비가
+//! 된 primitive** 이지, 지금 당장 어떤 실제 쓰기를 대체한 것이
+//! 아니다 — 이 사실을 감추지 않는다.
 
 use std::ffi::OsStr;
 use std::fs::File;

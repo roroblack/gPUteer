@@ -16,6 +16,35 @@
 
 ---
 
+## 2026-08-18 16:25 — `artifact_beneath` 재검수: 표현 정밀화 후 코덱스 `ACCEPTED` 흐름 마무리
+
+- 계획: `86340ad`(미연결 primitive 명시 + 침묵 스킵 제거)에 대한
+  코덱스 재검수(`p63` 프롬프트).
+- 스트림: Runtime.
+- 결과: `CHANGES_REQUESTED`(경미) — 두 원래 지적(모듈 문서 추가,
+  `make_junction` 의 조용한 스킵 제거)은 실질적으로 고쳐졌다고
+  확인했지만, 모듈 문서의 "`ArtifactPolicy::check()` 를 호출하는
+  곳도 ... 하나뿐이다" 라는 문장이 부정확하다고 지적했다 — 이
+  크레이트 자신의 테스트(`artifact_beneath.rs:60-63`)도 검증용으로
+  그 함수를 부른다. "운영 코드에서 호출하는 곳은 selftest 뿐"으로
+  한정해야 정확하다.
+- 수행: `crates/runtime-windows/src/beneath.rs` 의 해당 문장에
+  "**운영 코드에서**" 를 명시하고, 테스트 호출은 "실제 쓰기 경로"가
+  아니라는 괄호 설명을 덧붙였다.
+- 코덱스가 이번 라운드에서도 확인한 것(회귀 없음, junction 조용한
+  스킵 제거 타당성, VRAM/artifact_scope 둘 다 미연결이라는 CLAUDE.md
+  설명의 정확성)은 전부 문제없다고 재확인했다 — 남은 지적은 이
+  표현 정밀화 하나뿐이었다.
+- 검증: `cargo build --workspace` 경고 0. 문서 문자열만 바뀐 변경이라
+  `cargo test --workspace` 재실행은 생략(코드 로직 변경 없음).
+- 리포트: 이 이력 항목. 이로써 `open_beneath`/`open_artifact` 관련
+  전체 사이클(구현 → 검수 → 미연결 사실 명시 → 표현 정밀화)이
+  실질적으로 마무리됐다 — 남은 것은 실제 Job 실행 계층이 생겼을 때
+  이 primitive 를 호출하도록 연결하는 것뿐이며, 그것은 이 작업의
+  범위가 아니라 scheduler/agent Job 실행 자체가 생길 때의 일이다.
+
+---
+
 ## 2026-08-18 16:10 — `artifact_beneath` 코덱스 검수: 미연결 primitive 명시 + 침묵 스킵 제거
 
 - 계획: `07151e1`(artifact_scope TOCTOU 방어)에 대한 코덱스 독립
