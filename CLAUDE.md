@@ -299,7 +299,7 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·02·03·04·05·06 완료
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~07 완료
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
@@ -319,9 +319,13 @@ Linux 를 한 번도 돌려보지 않았다
    테스트 커버리지 공백). `crates/crypto/tests/framed_ingress.rs` 는
    서명·검증·dispatch 만 확인할 뿐 참조 구현 대조는 하지 않는다 —
    **다음에 할 일 6번으로 등록.**
+   `DoD-07` 은 domain 수치가 아니라 **이 세션 중 새로 생긴
+   coordinator/agent 로 인해 stale 해진 5건**(단수명 메시지 셋으로
+   증가·소비 측 존재하나 Evidence 미처리·replay/keyring limitation
+   좁히기·negative_tests 19건)을 addendum 으로 정정했다.
    `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→**7건**. 다음은
-   `DoD-07·08`, `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02`
+   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→7→**6건**. 다음은
+   `DoD-08`, `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02`
    는 비강제) — 같은 절차로 이어간다.
 6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
    `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의

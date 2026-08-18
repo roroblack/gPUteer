@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-07
 claim: "signing.md §9 의 세 시각 정책이 실제 proto 메시지에서 서로 다르게 동작한다. §9 표에 없던 6종은 ADR-029 로 Lifetime::Evidence 를 부여했고, 만료되지 않으면서 observed_at 을 노출한다(강제는 타입이 아니라 테스트가 한다). 단수명 경로가 실메시지(ExecutionGrant · RenewLeaseRequest)로 처음 검증되었다"
 status: PASS
 commit: 3120688ad3f82c61c3c913d2fc18e2b7207c5932
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 범위(세 Lifetime 정책) 재확인 · coordinator/agent 신설로 stale 해진 limitation 5건(단수명 셋·소비 측 존재·replay/keyring 좁히기·negative_tests 19건) 정정 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-07_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-07_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:9c9ebf031338ee616b7b2d9a9301e561d0aa6f28a1b12a785e850f0865247cd5"
+raw_output_bytes: 1256
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / ed25519-dalek 2 / prost 0.14"
   note: "라이브러리 크레이트라 실행 바이너리 없음"
@@ -57,6 +77,8 @@ artifacts:
   - crates/protocol/src/signable.rs
   - crates/protocol/src/signing.rs
   - crates/crypto/tests/lifetime_policy.rs
+  - docs/evidence/_raw/DoD-07_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-07_review.txt
 negative_tests:
   - "★ the_three_lifetimes_actually_behave_differently: 같은 6시간 경과에 대해 LongLived 는 통과 · ShortLived 는 거부 · Evidence 는 10년 뒤에도 통과함을 확인. 전부 같은 동작이면 Lifetime 구분 자체가 의미가 없다"
   - "★ evidence_does_not_expire: 0·1·3·10년 뒤에도 통과. 발급 시각보다 **이전**에 검증해도 통과. 만료시키면 오래된 체크포인트에서 재개할 수 없게 되고 그것은 시스템의 존재 이유를 부순다"
@@ -356,3 +378,99 @@ stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고�
 함수명, `DurableReplayGuard`·`PersistentKeyring` 인용을 전부 직접
 열어 재확인했다. `HISTORY.md` 인용도 이번엔 줄 번호가 아니라 제목
 기반이라 문제없다고 확인했다.
+
+---
+
+## ★ 이후 변경 (2026-08-18) — schema v2 승격 전 재확인, coordinator/agent 등장으로 5건 재정정
+
+`DoD-01`~`06` 을 schema v1 → v2 로 승격하며 겪은 domain 수치 stale
+패턴과 달리, `DoD-07` 은 domain_tag 개수를 직접 인용하지 않아 그
+패턴에는 해당하지 않는다. 대신 새로운 독립 검수(`agent:codex-cli`,
+read-only, v2 승격용 재검수)가 **이 세션 중 새로 생긴
+`crates/coordinator`·`crates/agent`(coordinator/agent 핸드셰이크)로
+인해 stale 해진 다섯 곳**을 지적해 `CHANGES_REQUESTED` 로 판정했다.
+
+### 1. "단수명 메시지는 ExecutionGrant·RenewLeaseRequest 둘뿐" — stale, 실제는 셋
+
+`AgentGrantAck` 도 `ShortLived` 이다(`crates/protocol/src/signable.rs:178-181`).
+"claim 이 두 경로로 **처음** 검증됐다"는 역사적 서술(당시 시점)
+자체는 그대로 정확하지만, limitation(`DoD-07:78` 의 "단수명
+메시지는 ExecutionGrant·RenewLeaseRequest 둘뿐")은 지금은 부정확
+하다 — **지금은 `AgentGrantAck` 를 포함해 셋**이고, 실제 핸드셰이크
+에서 ACK 가 전송·검증된다(`crates/agent/src/lib.rs:111-138`,
+`crates/coordinator/src/lib.rs:135-140`).
+
+### 2. "소비 측(Coordinator·Agent)이 없다" — stale, 이제는 있지만 Evidence 를 처리하지 않는다
+
+Coordinator/Agent stub 은 이제 존재하고 Grant/ACK/Lease 핸드셰이크를
+수행한다(`crates/coordinator/src/lib.rs:1-7`, `crates/agent/src/lib.rs:1-6`).
+"Evidence 신선도 판단 로직이 구현되지 않았다"는 결론 자체는
+유지되지만, 이유는 "소비 측이 없어서" 가 아니라 **"현재 소비
+경로(coordinator/agent 핸드셰이크)가 Evidence 메시지를 아예
+다루지 않아서"** 로 고쳐 읽는다 — 핸드셰이크는 Grant/Lease/ACK
+만 주고받을 뿐 `CheckpointManifest`·`ReplicaAck` 등 6종을 전혀
+취급하지 않는다.
+
+### 3. replay limitation — CLI/crypto ingress 와 coordinator/agent 를 구분해야 한다
+
+`DoD-04` v2 승격 재검수가 이미 정리한 구분과 같다 —
+`DurableReplayGuard` 는 실재하고 CLI selftest·crypto ingress 경로가
+쓴다(`crates/crypto/src/durable_replay.rs:146-178`,
+`crates/cli/src/selftest.rs:216-220`). 반면 **coordinator/agent
+핸드셰이크는 각자 `InMemoryReplayGuard` 를 쓴다**(`crates/coordinator/src/lib.rs:93-97`,
+`crates/agent/src/lib.rs:58-65`). 정확한 limitation:
+
+> **CLI/crypto ingress 경로는 durable guard 를 쓰지만, coordinator/agent
+> 운영 경로에는 durable wiring 이 없다.** Evidence 메시지 자체는
+> 여전히 `ReplayStatus::NotApplicable` 로 replay 검사 대상이
+> 아니다(`crates/crypto/tests/lifetime_policy.rs:325-347`).
+
+### 4. keyring limitation — 저장소 전체가 아니라 coordinator/agent stub 의 선택이다
+
+`PersistentKeyring` 의 생성·load·revoke·rotate·save 는 이미 구현돼
+있다(`crates/crypto/src/keyring.rs:209-245,456-475,502-575`,
+2026-08-18 00:40 addendum 이 이미 정정). Coordinator/Agent stub 이
+`InMemoryKeyring` 을 쓰는 것은 사실이지만, 그것은 **"전체 시스템이
+InMemory 뿐"이 아니라 "그 stub 경로가 InMemory 를 선택했다"**는
+뜻으로 좁혀 읽는다 — `crates/coordinator/src/lib.rs`,
+`crates/agent/src/lib.rs` 모듈 문서가 이미 그 이유(테스트 전용,
+`PersistentKeyring` 은 등록된 키를 다시 꺼내는 API 가 없음)를
+명시하고 있다.
+
+### 5. negative_tests 목록 — 테스트 파일이 14→19건으로 늘었다
+
+`crates/crypto/tests/lifetime_policy.rs` 는 지금 `#[test]` 19개를
+갖는다(원래 v1 raw_output 14건). 늘어난 5건은 `manifest_hash` 관련
+테스트(`verify_accepts_grant_with_correct_manifest_hash` 등,
+`:544-615` 근방)로 이 evidence 의 claim(Lifetime 정책)과 직접
+관련은 없다 — DoD-07 의 negative_tests 목록에 포함되지 않은 것은
+누락이 아니라 **범위 밖**이다(그 5건은 `ExecutionGrant.manifest_hash`
+검증을 다루며, `DoD-06` 의 "규칙 i 가 두 번 적용되는 유일한
+메시지" 범위에 더 가깝다). 원래 14건 negative_tests 목록은 여전히
+전부 실재한다.
+
+### 그 외 재확인 — 실재 확인됨
+
+claim 핵심(세 `Lifetime` 정책 차이, Evidence 6종·`observed_at`,
+만료 생략)은 `crates/protocol/src/signing.rs:763-781`,
+`crates/crypto/tests/lifetime_policy.rs:453-488,276-307` 로
+재확인됐다. vectors 40건, `evidence_has_no_replay_defense_and_says_so`
+이름 정정도 재확인됐다(`lifetime_policy.rs:324-347`).
+`ReplicaAck.fence_epoch` 부재, 세 메시지 서명자 ID 대체값,
+`observed_at` 이 타입 강제가 아니라 테스트 강제라는 정정은 전부
+지금도 유효하다.
+
+### Rust 재실행 — 이 세션에서 직접 확인, Codex 샌드박스에서는 못함
+
+Codex read-only 샌드박스는 `.cargo-build-lock` 접근이 거부돼 세
+명령을 하나도 실행하지 못했다(샌드박스 제약이지 코드 결함이
+아니다). 이 세션은 이미 로컬에서 직접 실행해 확인했다 —
+`docs/evidence/_raw/DoD-07_v2_promotion_2026-08-18.txt` 가 그
+receipt 다: `lifetime_policy` 19 passed, `cargo test --workspace`
+306 passed / 0 failed, `cargo build --all-targets` 경고 0건.
+
+### review_outcome
+
+`CHANGES_REQUESTED` — 위 1~5 를 이 addendum으로 반영했다. 좁은
+범위의 후속 확인을 별도로 요청해 `ACCEPTED` 를 받은 뒤에만 schema
+v2 로 승격한다.

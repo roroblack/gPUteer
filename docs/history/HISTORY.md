@@ -16,6 +16,46 @@
 
 ---
 
+## 2026-08-18 23:20 — DoD-07 schema v1 → v2 승격 완료 (일곱 번째) — coordinator/agent 신설로 stale 해진 limitation 5건 정정
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-05` 에
+  이어 나머지 v1 evidence 처리의 두 번째 항목.
+- 스트림: Protocol · Crypto.
+- 수행: 같은 절차를 DoD-07 에 적용했다. `cargo test -p
+  gputeer-crypto --test lifetime_policy`(19) + `cargo test
+  --workspace`(306) + `cargo build --workspace --all-targets`(경고
+  0건)를 직접 실행해
+  `docs/evidence/_raw/DoD-07_v2_promotion_2026-08-18.txt` 에 저장했다.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p80` 프롬프트) —
+  `CHANGES_REQUESTED`.
+- **이 evidence 는 domain_tag 개수를 직접 인용하지 않아 DoD-01~06
+  의 stale 패턴과는 다른 원인으로 걸렸다** — 이 세션 중 새로 만든
+  `crates/coordinator`·`crates/agent`(coordinator/agent 핸드셰이크)
+  가 DoD-07 의 limitation 5건을 stale 하게 만들었다: (1) "단수명
+  메시지는 ExecutionGrant·RenewLeaseRequest 둘뿐" → 이제
+  `AgentGrantAck` 포함 셋, (2) "소비 측(Coordinator·Agent)이 없다"
+  → 이제 존재하나 Evidence 6종을 아예 다루지 않는다, (3) replay
+  limitation → CLI/crypto ingress 는 `DurableReplayGuard`, 새로
+  생긴 coordinator/agent 는 `InMemoryReplayGuard`(DoD-04 승격 때
+  정리한 구분과 같다), (4) keyring limitation → `PersistentKeyring`
+  은 실재하고 coordinator/agent stub 만 InMemory 를 택했다, (5)
+  negative_tests 테스트 파일이 14→19건으로 늘었다(manifest_hash
+  관련 5건 추가, DoD-07 범위 밖이라 목록 미포함은 정상).
+  새 addendum(2026-08-18 23:00 경)으로 5건을 전부 정정 — 원본
+  frontmatter 와 이전 addendum 원문은 손대지 않았다. 좁은 후속
+  재검수 1회차(`p81`) — 인용 1곳(`agent/src/lib.rs:111-123` →
+  실제 전송까지 포함하려면 `:111-138`)만 지적. 고친 뒤 2회차
+  재검수(`p82`) — **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가, `artifacts:` 에 raw/review
+  파일 2개 추가. `_schema_v1_grandfathered.txt` 에서 DoD-07
+  제거(7→6건), `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **7 → 6건**. `cargo test --workspace` 전체
+  재실행 — 전 항목 0 failed(회귀 없음).
+- 리포트: 이 이력 항목. 다음은 `DoD-08`, `P0-01·03·03a·07·08`.
+
+---
+
 ## 2026-08-18 22:40 — DoD-05 schema v1 → v2 승격 완료 (DoD-01·02·03·04·06 에 이은 여섯 번째) — 남은 참조 구현 공백 1건 발견
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-03·04·06`

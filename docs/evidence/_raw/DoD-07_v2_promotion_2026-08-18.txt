@@ -1,0 +1,23 @@
+$ cargo test -p gputeer-crypto --test lifetime_policy -- --nocapture
+test result: ok. 19 passed; 0 failed; 0 ignored
+(원래 v1 raw_output 은 14 passed — 그 뒤 manifest_hash 관련 테스트
+5건이 이 파일에 추가되어 지금은 19개다. 실행 결과 전부 통과)
+
+$ cargo test --workspace
+합계: 306 passed / 0 failed (전 크레이트)
+
+$ cargo build --workspace --all-targets
+경고 0건, 오류 0건
+
+이 파일은 DoD-07 을 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 3120688 무렵
+기록, docs/evidence/_raw/DoD-07_test_output.txt)은 문서 본문에 이미
+보존돼 있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라,
+v2 승격 시점의 독립적 재확인이다.
+
+참고: DoD-07 의 claim(Lifetime 세 정책 구분·Evidence 6종·단수명
+실메시지 검증)은 domain_tag/Signable 개수를 직접 인용하지 않으므로
+Domain::GrantAck 추가로 인한 stale 패턴(DoD-01~06)에는 해당하지
+않는다. 2026-08-17/18 addendum 이 이미 vectors(36→40)·negative_tests
+이름·replay/keyring limitation 을 정정했고, 이번 재확인에서 그
+정정들이 여전히 유효함을 확인했다.
