@@ -14,6 +14,7 @@
 
 use std::io::Write;
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gputeer_crypto::{
@@ -22,7 +23,7 @@ use gputeer_crypto::{
     VerifyingKey,
 };
 use gputeer_protocol::{pb, verify};
-use gputeer_runtime_policy::FenceWatermark;
+use gputeer_runtime_policy::DurableFenceWatermark;
 use prost::Message;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -60,6 +61,15 @@ pub struct AgentConfig {
     ///   자신이 기억하는 epoch(`CoordinatorConfig::fence_epoch`)와
     ///   대조해 거부해야 한다.
     pub renew_request_epoch_override: Option<u64>,
+
+    // ── durable FenceWatermark (2026-08-19, `docs/plans/2026-08-19_2200_...`) ──
+    /// `FenceWatermark` 를 SQLite 파일에 영속한다 — 재시작을 넘어
+    /// epoch 강등 방어를 유지한다(`docs/plans/2026-08-19_2200_durable_fence_watermark_v1.md`).
+    /// 최초 Grant 의 Lease 검증과 Lease 갱신 검증 **둘 다** 같은 파일을
+    /// 쓴다. 안 주면(selftest 기본 경로) 매 프로세스마다 고유한 임시
+    /// 파일을 새로 만든다 — 기존 시나리오와 동일하게 항상 빈
+    /// watermark 에서 시작한다.
+    pub fence_db_path: PathBuf,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -78,6 +88,12 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
 
     let mut replay = InMemoryReplayGuard::new();
     let clock = SystemClock;
+
+    // ★ fail closed — fence watermark 저장소를 **네트워크 연결보다
+    //   먼저** 연다. 열 수 없는 저장소로 epoch 를 검증하는 척하지
+    //   않는다(`docs/plans/2026-08-19_2200_durable_fence_watermark_v1.md`).
+    let mut fence_watermark = DurableFenceWatermark::open(&config.fence_db_path)
+        .map_err(|e| format!("fence watermark 저장소 열기 실패: {e}"))?;
 
     let mut stream = TcpStream::connect(&config.coordinator_addr)
         .map_err(|e| format!("Coordinator 연결 실패: {e}"))?;
@@ -113,7 +129,6 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   검증한다 — `to_fields.rs` 의 "manifest 와 lease 는 각자
     //   독립적으로 검증해야 한다(MUST)" 를 실제로 이행한다
     //   (2026-08-18, 코덱스 설계 · `p67` 프롬프트).
-    let mut fence_watermark = FenceWatermark::new();
     let mut held_lease = verify_and_record_lease(
         &grant,
         &config,
@@ -328,7 +343,7 @@ fn verify_and_record_lease(
     coordinator_keys: &InMemoryKeyring,
     now: u64,
     replay: &mut InMemoryReplayGuard,
-    watermark: &mut FenceWatermark,
+    watermark: &mut DurableFenceWatermark,
 ) -> Result<pb::Lease, String> {
     let lease = grant
         .lease
@@ -402,9 +417,26 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         do_renew: flags.bool_flag("--do-renew"),
         renew_request_epoch_override: flags.u64_opt_flag("--renew-request-epoch-override")?,
         corrupt_renew_request_signature: flags.bool_flag("--corrupt-renew-request-signature"),
+        fence_db_path: match flags.0.get("--fence-db") {
+            Some(v) => PathBuf::from(v),
+            None => default_fence_db_path(),
+        },
     };
 
     run(config)
+}
+
+/// `--fence-db` 를 안 주면 매 프로세스마다 고유한 임시 SQLite 파일을
+/// 만든다 — 기존(재시작 시나리오가 아닌) selftest 시나리오는 항상
+/// 빈 watermark 에서 시작해야 하므로, PID 를 재사용해도 안전하도록
+/// 발급 시각(나노초)도 섞는다.
+fn default_fence_db_path() -> PathBuf {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("gputeer-fence-{pid}-{nanos}.sqlite3"))
 }
 
 struct Flags(std::collections::HashMap<String, String>);

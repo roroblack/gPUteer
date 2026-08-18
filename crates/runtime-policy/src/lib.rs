@@ -43,11 +43,13 @@
 //!   그 사실을 [`ArtifactPolicy::check`] 문서에 명시한다.
 
 pub mod artifact;
+pub mod durable_lease_scope;
 pub mod lease_scope;
 pub mod network;
 pub mod vram;
 
 pub use artifact::{ArtifactPolicy, ArtifactViolation};
+pub use durable_lease_scope::{DurableFenceError, DurableFenceWatermark};
 pub use lease_scope::{FenceWatermark, LeaseScopeViolation};
 pub use network::{NetworkDecision, NetworkPolicyCheck, NoFirewallBackend, OsFirewallBackend};
 pub use vram::{HostProtectionClaim, VramEnforcement};

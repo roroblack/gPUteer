@@ -650,6 +650,119 @@ pub fn run() -> Result<String, String> {
          기억하는 값과 대조한다)\n",
     );
 
+    // ══════════════════════════════════════════════════════════════
+    // durable FenceWatermark (2026-08-19, `docs/plans/2026-08-19_2200_...`)
+    //
+    // 지금까지의 시나리오는 매번 새 `--fence-db` 임시 파일(기본값)을
+    // 쓰므로 매 프로세스가 빈 watermark 에서 시작한다 — "재시작을
+    // 넘는 방어"를 증명하지 않는다. 아래는 **같은 SQLite 파일**을
+    // 서로 다른 `agent-stub` **프로세스**(별도 PID)가 순서대로 열어,
+    // 앞선 프로세스가 기록한 watermark 가 실제로 남아 있는지 확인한다.
+    //
+    // ★ 설계 당시엔 "최초 Grant 경로"·"갱신 경로" 두 개를 따로
+    //   시험하려 했다(`docs/plans/2026-08-19_2200_...v1.md` §재시작
+    //   selftest 설계). **뮤테이션 테스트로 실제로 만들어보니 그 둘은
+    //   분리되지 않는다** — Agent 의 제어 흐름상 갱신은 항상 같은
+    //   프로세스의 최초 Grant 검증 **뒤에** 오고, 최초 Grant 검증
+    //   자체가 이미 그 프로세스의 watermark 로컬 뷰를 durable 값으로
+    //   채운다. 그래서 "최초 Grant 는 낮은 epoch 로 통과시키고 그
+    //   프로세스의 갱신만 거부하는" 조합을 만들면, 그 거부는 진짜
+    //   프로세스 경계를 넘는 영속성이 아니라 **그 프로세스 자신의
+    //   최초 Grant 호출이 방금 쓴 값**만으로도 똑같이 재현된다 —
+    //   `DurableFenceWatermark::open()` 이 주어진 경로를 무시하고 매번
+    //   새 파일을 열도록 무력화해봤더니, "최초 Grant 경로" 거부는
+    //   실패했지만 "갱신 경로" 거부는 **속아서 계속 통과했다**(그
+    //   프로세스 자신의 최초 Grant 가 이미 watermark=5 를 로컬에
+    //   써 놓았기 때문). 즉 진짜 재시작 방어의 유일한 관측 지점은
+    //   **최초 Grant 검증 호출부 하나뿐**이다 — 그것이 durable 하면
+    //   그 위에 올라타는 갱신도 자동으로 안전하고, 그것이 durable 하지
+    //   않으면 갱신 검증이 아무리 정확해도 프로세스 경계를 넘는 방어는
+    //   전혀 없다. 그래서 시나리오를 하나로 정리했다 — 존재하지 않는
+    //   구분을 존재하는 것처럼 보고하지 않는다.
+
+    let fence_dir = tempfile::tempdir()
+        .map_err(|e| format!("fence watermark 임시 디렉터리 생성 실패: {e}"))?;
+    let fence_db_path = fence_dir.path().join("fence.sqlite3");
+    let fence_db = fence_db_path
+        .to_str()
+        .ok_or_else(|| "fence watermark 경로가 UTF-8 이 아니다".to_string())?;
+
+    // ── 17. durable FenceWatermark 재시작 방어 ───────────────────────
+    //
+    // 1차(별도 프로세스): epoch 5 로 정상 발급 — durable watermark 가
+    //   5 로 기록된 채 프로세스가 종료된다.
+    // 2차(★ 별도 프로세스, 같은 DB): 최초 Grant 자체가 epoch=3(durable
+    //   watermark 보다 낮다)을 담아 발급된다 — `verify_and_record_lease()`
+    //   의 최초 검증 호출부가 거부해야 한다. **1차 프로세스의 메모리가
+    //   2차 프로세스에 전달되지 않았다는 것**은 PID 가 다르고 각 실행이
+    //   독립적으로 종료된다는 사실이 보장한다 — DB 파일만 상태를
+    //   전달한다.
+    let restart_first = run_handshake(
+        &fixture,
+        &["--fence-epoch", "5", "--do-renew", "false"],
+        &["--do-renew", "false", "--fence-db", fence_db],
+    )?;
+    if !restart_first.coordinator_success || !restart_first.agent_success {
+        return Err(format!(
+            "재시작 방어 시나리오 1차 실행이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            restart_first.coordinator_success,
+            restart_first.coordinator_stdout,
+            restart_first.coordinator_stderr,
+            restart_first.agent_success,
+            restart_first.agent_stdout,
+            restart_first.agent_stderr
+        ));
+    }
+
+    let restart_second = run_handshake(
+        &fixture,
+        &["--fence-epoch", "3", "--do-renew", "false"],
+        &["--do-renew", "false", "--fence-db", fence_db],
+    )?;
+    if restart_second.agent_pid == restart_first.agent_pid {
+        return Err(format!(
+            "재시작 방어 시나리오의 2차 agent PID 가 1차와 같다 — 별도 프로세스가 \
+             아니다.\n1차 agent_pid={} 2차 agent_pid={}",
+            restart_first.agent_pid, restart_second.agent_pid
+        ));
+    }
+    if restart_second.agent_success
+        || !restart_second
+            .agent_stderr
+            .contains("LEASE_REJECTED: fence_epoch 검사 실패")
+    {
+        return Err(format!(
+            "durable watermark 가 재시작(별도 프로세스)을 넘어 낮은 epoch 의 최초 Grant 를 \
+             거부하지 못했다.\n\
+             1차 agent_pid={} 2차 agent_pid={}\n\
+             2차 agent exit={} stdout={} stderr={}",
+            restart_first.agent_pid,
+            restart_second.agent_pid,
+            restart_second.agent_success,
+            restart_second.agent_stdout,
+            restart_second.agent_stderr
+        ));
+    }
+    if restart_second.coordinator_success
+        || restart_second.coordinator_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "Agent 가 최초 Grant 를 거부해 ACK 를 보내지 않았는데 coordinator 가 성공을 \
+             주장했다.\n\
+             coordinator exit={} stdout={} stderr={}",
+            restart_second.coordinator_success,
+            restart_second.coordinator_stdout,
+            restart_second.coordinator_stderr
+        ));
+    }
+    report.push_str(
+        "17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 \
+         watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 \
+         대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)\n",
+    );
+
     Ok(report)
 }
 

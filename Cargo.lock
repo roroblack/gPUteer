@@ -381,6 +381,7 @@ name = "gputeer-runtime-policy"
 version = "0.0.1"
 dependencies = [
  "gputeer-protocol",
+ "rusqlite",
  "tempfile",
 ]
 
