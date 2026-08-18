@@ -1,0 +1,62 @@
+DoD-15 독립 검수 기록 — 같은 연결에서 반복 Lease 갱신
+(docs/plans/2026-08-19_2330_같은_연결_반복_lease_갱신_v1.md)
+
+검수자: agent:codex-cli (codex exec --sandbox read-only -c
+model_reasoning_effort=high)
+프롬프트: p107.md — 1라운드 ACCEPTED (추가 후속 검수 불필요)
+
+=== 판정: ACCEPTED (1라운드) ===
+
+실재 확인된 항목(파일:줄 인용, 코덱스가 직접 확인):
+- Agent renew_rounds 설정·CLI 기본값 1 — crates/agent/src/lib.rs:67-78, :453
+- do_renew==false 일 때 0회 실행(명시적으로 0..0) — crates/agent/src/lib.rs:221
+- Agent nonce 에 round 포함(0x00 구분자 + round.to_be_bytes()) —
+  crates/agent/src/lib.rs:423-430
+- 기존 derive_nonce 미변경 — crates/agent/src/lib.rs:407-412
+- 서로 다른 round 의 nonce 입력 분리(고정 8바이트 big-endian, 필드
+  경계 모호성 없음) — 확인됨
+- Coordinator 반복 횟수·off-by-one 없음(동일하게 0..config.renew_rounds,
+  do_renew=false 면 0..0) — crates/coordinator/src/lib.rs:120, :256
+- Coordinator 가 nonce 를 그대로 echo — crates/coordinator/src/lib.rs:263-272, :302-307
+- Agent 의 held_lease 교체 및 다음 회차 요청에 반영 —
+  crates/agent/src/lib.rs:313-320, :202-207
+- 시나리오 19 의 3회 왕복(양쪽에 --renew-rounds 3 전달) —
+  crates/cli/src/coordinator_agent_selftest.rs:767-780
+- 최종 RESULT 카운터의 부분 문자열 문제 수정
+  (.lines().filter(starts_with)) — coordinator_agent_selftest.rs:803-807
+- 반복 결과 카운터(Agent/Coordinator 각각 기대값 3 검사) —
+  coordinator_agent_selftest.rs:794-815
+- 기존 시나리오 1~18 기본값 회귀 없음(기존 호출부는 --renew-rounds
+  생략, 양쪽 CLI 기본값 1) — 확인됨
+- 시나리오 20 생략이 계획서가 허용한 선택지임 — 계획서:122-127
+- 뮤테이션 실패 논리 타당함 — round 를 항상 0 으로 만들면 2회차
+  요청의 (signer, LeaseRenew domain, nonce) 가 1회차와 같아져
+  replay 검증에서 Duplicate — crates/crypto/src/replay.rs:294-301
+- fence_epoch 반복 검사 — Coordinator 가 매 회차 config.fence_epoch
+  와 비교, 시나리오 19 는 양쪽 모두 epoch 5 사용 —
+  crates/coordinator/src/lib.rs:263-268
+
+경계 동작 검토(결함 아님, 참고 사항으로 기록):
+- renew_rounds = 0: 정확히 0회 왕복 후 최종 RESULT ok=true 로 종료.
+- u32::MAX 근처: range 계산·round as u64 변환에서 overflow 없음.
+  실제로 수십억 회 왕복은 비현실적이지만 현재 범위에 상한 검증
+  요구는 없다고 판단 — 변경 요청 사유 아님.
+- Lease nonce 충돌 우려는 실제 결함 아님 — Lease 는 LongLived 라
+  replay 검사 자체가 적용되지 않음(ShortLived 한정) —
+  crates/protocol/src/signable.rs:66-69, crates/protocol/src/signing.rs:784-836.
+
+기타 참고:
+- "뮤테이션 흔적 없음" 항목은 코덱스가 "stale — 실제는 현재 코드가
+  원복된 상태"로 표시했다 — 이는 결함이 아니라, 코드만 보고는 과거에
+  실행됐던 뮤테이션 자체를 독립적으로 증명할 수 없다는 정직한 한계
+  기술이다(현재 소스가 원복 상태임은 정확히 확인함,
+  crates/agent/src/lib.rs:213 의 round as u64 사용).
+
+실행 검증: 확인 안 됨(코덱스 read-only 샌드박스에 cargo 없음, 기존
+target/debug/gputeer.exe 도 현재 커밋보다 이전 산출물이라 검증에
+쓰지 않았다고 명시). 실행 검증은 claude-code 세션이 직접 수행했다
+(docs/evidence/_raw/DoD-15_selftest_2026-08-19.txt).
+
+수정 요청: 없음.
+
+최종 판정: ACCEPTED (1라운드).
