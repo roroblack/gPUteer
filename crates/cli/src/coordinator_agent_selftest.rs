@@ -728,14 +728,25 @@ pub fn run() -> Result<String, String> {
             restart_first.agent_pid, restart_second.agent_pid
         ));
     }
+    // ★ 코덱스 독립 검수(2026-08-19, p102) 지적 — 접두사
+    //   "LEASE_REJECTED: fence_epoch 검사 실패" 만으로는 진짜 정책
+    //   거부(`Stale`)와 저장소 장애(`Io`/`LockTimeout`)를 구분하지
+    //   못한다(둘 다 그 접두사를 낼 수 있었다 — 지금은 갈라졌지만,
+    //   회귀를 대비해 여기서 구체적인 값까지 확인한다). "(정책 거부)"
+    //   표시와 `StaleEpoch` 의 실제 수치(incoming=3, watermark=5)까지
+    //   본다 — 저장소 장애였다면 이 문구가 나올 수 없다.
     if restart_second.agent_success
         || !restart_second
             .agent_stderr
-            .contains("LEASE_REJECTED: fence_epoch 검사 실패")
+            .contains("LEASE_REJECTED: fence_epoch 검사 실패(정책 거부)")
+        || !restart_second
+            .agent_stderr
+            .contains("fence_epoch 3 은 기록된 watermark 5 보다 낮다")
     {
         return Err(format!(
             "durable watermark 가 재시작(별도 프로세스)을 넘어 낮은 epoch 의 최초 Grant 를 \
-             거부하지 못했다.\n\
+             거부하지 못했다(또는 거부 이유가 정책 거부가 아니다 — 저장소 장애와 혼동됐을 \
+             수 있다).\n\
              1차 agent_pid={} 2차 agent_pid={}\n\
              2차 agent exit={} stdout={} stderr={}",
             restart_first.agent_pid,
@@ -763,7 +774,57 @@ pub fn run() -> Result<String, String> {
          대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)\n",
     );
 
+    // ── 18. `--fence-db :memory:` 는 fail closed — 코덱스 독립 검수(2026-08-19, p102) 지적 ──
+    //
+    // ★ 전에는 `is_durable() == false` 인 채로도 계속 진행했다 — 이
+    //   조각 전체의 목적(재시작을 넘는 방어)이 겉으로는 durable
+    //   타입을 쓰는 것처럼 보이면서 조용히 거짓이 될 수 있었다.
+    //   Coordinator 조차 필요 없다 — Agent 의 fail-closed 검사가
+    //   `TcpStream::connect()` 보다 먼저 실행되므로, 연결 대상 주소가
+    //   실재하지 않아도 절대 도달하지 않는다.
+    let (memory_ok, _memory_stdout, memory_stderr) = run_agent_alone(&fixture, &["--fence-db", ":memory:"])?;
+    if memory_ok || !memory_stderr.contains("fence watermark 저장소가 영속이 아니다") {
+        return Err(format!(
+            "--fence-db :memory: 가 fail closed 되지 않았다.\nexit ok={memory_ok} stderr={memory_stderr}"
+        ));
+    }
+    report.push_str(
+        "18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)\n",
+    );
+
     Ok(report)
+}
+
+/// 시나리오 18 전용 — Agent 하나만 단독으로 띄워 `--fence-db :memory:`
+/// 가 네트워크 연결조차 시도하기 전에 fail closed 하는지 확인한다.
+/// Coordinator 는 필요 없다 — `DurableFenceWatermark::is_durable()`
+/// 검사가 `TcpStream::connect()` 보다 먼저 실행되므로(`crates/agent/src/lib.rs`),
+/// `--connect` 주소가 실제로 열려 있지 않아도 상관없다.
+fn run_agent_alone(
+    fixture: &Fixture,
+    extra_agent_args: &[&str],
+) -> Result<(bool, String, String), String> {
+    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:1", "--own-seed"];
+    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+    agent_args.push(&agent_own_seed_hex);
+    agent_args.push("--peer-pubkey");
+    agent_args.push(&fixture.coordinator_pub_hex);
+    agent_args.push("--coordinator-device-id");
+    agent_args.push(fixture.coordinator_device_id);
+    agent_args.push("--agent-device-id");
+    agent_args.push(fixture.agent_device_id);
+    agent_args.extend_from_slice(extra_agent_args);
+
+    let output = Command::new(&fixture.exe)
+        .args(&agent_args)
+        .output()
+        .map_err(|e| format!("agent-stub 단독 실행 실패: {e}"))?;
+
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
 }
 
 fn seed_from_label(label: &str) -> [u8; 32] {

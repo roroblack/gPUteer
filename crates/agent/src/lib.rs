@@ -23,7 +23,7 @@ use gputeer_crypto::{
     VerifyingKey,
 };
 use gputeer_protocol::{pb, verify};
-use gputeer_runtime_policy::DurableFenceWatermark;
+use gputeer_runtime_policy::{DurableFenceError, DurableFenceWatermark};
 use prost::Message;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -94,6 +94,21 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   않는다(`docs/plans/2026-08-19_2200_durable_fence_watermark_v1.md`).
     let mut fence_watermark = DurableFenceWatermark::open(&config.fence_db_path)
         .map_err(|e| format!("fence watermark 저장소 열기 실패: {e}"))?;
+
+    // ★ 코덱스 독립 검수(2026-08-19, p102) 지적 — `--fence-db :memory:`
+    //   같은 비영속 경로를 아무 검사 없이 받아들이고 있었다.
+    //   `is_durable() == false` 인 채로 계속 진행하면, 이 조각 전체의
+    //   목적(재시작을 넘는 방어)이 조용히 거짓이 된다 — 겉으로는
+    //   `DurableFenceWatermark` 를 쓰는 것처럼 보이지만 실제로는
+    //   재시작 한 번에 사라진다. 열 수 없는 경우와 같은 이유로
+    //   fail closed 한다.
+    if !fence_watermark.is_durable() {
+        return Err(format!(
+            "fence watermark 저장소가 영속이 아니다(fence_db_path={:?}) — \
+             재시작을 넘는 epoch 강등 방어가 조용히 무력화된다",
+            config.fence_db_path
+        ));
+    }
 
     let mut stream = TcpStream::connect(&config.coordinator_addr)
         .map_err(|e| format!("Coordinator 연결 실패: {e}"))?;
@@ -309,7 +324,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                 //   강등 방어가 깨진다(계획서 "FenceWatermark 재사용" 절).
                 fence_watermark
                     .check_and_advance(&new_lease.job_id, new_lease.fence_epoch)
-                    .map_err(|e| format!("RENEW_REJECTED: fence_epoch 검사 실패: {e:?}"))?;
+                    .map_err(|e| fence_error_message("RENEW_REJECTED", e))?;
 
                 held_lease = new_lease.clone();
                 println!(
@@ -371,7 +386,7 @@ fn verify_and_record_lease(
 
     watermark
         .check_and_advance(&lease.job_id, lease.fence_epoch)
-        .map_err(|e| format!("LEASE_REJECTED: fence_epoch 검사 실패: {e:?}"))?;
+        .map_err(|e| fence_error_message("LEASE_REJECTED", e))?;
 
     Ok(lease.clone())
 }
@@ -391,6 +406,27 @@ fn verify_and_record_lease(
 /// 이 nonce 선택을 같이 쓰면, 재시작 후 같은 `grant_id` 를 다시
 /// 발급했을 때 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate`
 /// 로 오판될 수 있다(코덱스 독립 검수 2026-08-18 지적).
+/// `DurableFenceWatermark::check_and_advance()` 의 오류를 사람이 읽는
+/// 문자열로 바꾼다.
+///
+/// ★ 코덱스 독립 검수(2026-08-19, p102) 지적 — 전에는 `{e:?}` 하나로
+///   뭉뚱그렸다. `Stale`(정책상 정상 거부)과 `Io`/`LockTimeout`(저장소
+///   장애)이 **다른 접두사**를 갖지 않으면, negative test 가 진짜
+///   epoch 거부를 확인하는지 우연한 저장소 장애를 확인하는지 구분할
+///   수 없다 — 후자로도 문자열이 우연히 일치해 시험이 "통과"할 수
+///   있다. `Stale` 은 `{prefix}: fence_epoch 검사 실패(정책 거부)` 로
+///   시작해 기존 negative test 의 접두사 문자열과 **호환**되고,
+///   저장소 장애는 `FENCE_STORAGE_ERROR` 로 명확히 갈라 그 접두사와
+///   절대 겹치지 않는다.
+fn fence_error_message(prefix: &str, error: DurableFenceError) -> String {
+    match error {
+        DurableFenceError::Stale(violation) => {
+            format!("{prefix}: fence_epoch 검사 실패(정책 거부) — {violation}")
+        }
+        other => format!("{prefix}: FENCE_STORAGE_ERROR: fence watermark 저장소 오류 — {other}"),
+    }
+}
+
 fn derive_nonce(tag: &str, id: &str) -> Vec<u8> {
     let mut input = Vec::with_capacity(tag.len() + 1 + id.len());
     input.extend_from_slice(tag.as_bytes());
