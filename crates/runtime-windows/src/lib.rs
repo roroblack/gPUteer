@@ -145,49 +145,66 @@ mod windows_impl {
     /// `CreateProcessW` 의 `lpCommandLine` 에 넣을 명령줄을 MSVC 인자
     /// 분해 규칙에 맞게 조립한다(`exe` 가 첫 토큰). `std::process::Command`
     /// 는 이 조립을 내부적으로 해 주지만 공개 API 가 아니다 — 여기서는
-    /// `CreateProcessW` 를 직접 부르므로 우리가 직접 만든다. 공백·따옴표가
-    /// 없는 인자만 다루는 테스트 픽스처 호출이 대상이라 규칙을 전부
-    /// 구현하지는 않지만, 공백/빈 문자열은 안전하게 감싼다.
+    /// `CreateProcessW` 를 직접 부르므로 우리가 직접 만든다.
+    ///
+    /// ★ 2026-08-18 수정(코덱스 독립 검수 · `p59` 프롬프트).
+    ///   초안은 문자당 백슬래시 개수를 `n+1`/`n`(각각 따옴표 앞·끝)로
+    ///   출력했다 — MSVC 규칙은 **따옴표 바로 앞의 백슬래시를 2배로
+    ///   만든 뒤 하나를 더** 붙여야 한다(`2n+1`), 문자열 끝에서 닫는
+    ///   따옴표 앞이면 **그냥 2배**(`2n`)다. 예를 들어 인자가
+    ///   `C:\foo\` 로 끝나면 초안은 백슬래시를 원래 개수 그대로
+    ///   출력해 닫는 따옴표를 이스케이프해 버렸다(명령줄이 깨진다).
+    ///   `OsStr::to_string_lossy()` 로 UTF-16 을 문자로 왕복하던 것도
+    ///   비정상 서로게이트 페어가 있는 경로/인자를 손상시킬 수 있어
+    ///   그만두고, UTF-16 코드 유닛 위에서 직접 조립한다.
     pub fn quote_command_line(exe: &OsStr, args: &[&OsStr]) -> OsString {
-        let mut out = OsString::new();
+        use std::os::windows::ffi::OsStringExt;
+
+        const SPACE: u16 = b' ' as u16;
+        const TAB: u16 = b'\t' as u16;
+        const QUOTE: u16 = b'"' as u16;
+        const BACKSLASH: u16 = b'\\' as u16;
+
+        let mut out: Vec<u16> = Vec::new();
         for (i, part) in std::iter::once(exe).chain(args.iter().copied()).enumerate() {
             if i > 0 {
-                out.push(" ");
+                out.push(SPACE);
             }
-            let needs_quotes = part.is_empty()
-                || part.to_string_lossy().chars().any(|c| c == ' ' || c == '\t' || c == '"');
+            let units: Vec<u16> = part.encode_wide().collect();
+            let needs_quotes =
+                units.is_empty() || units.iter().any(|&c| c == SPACE || c == TAB || c == QUOTE);
             if !needs_quotes {
-                out.push(part);
+                out.extend_from_slice(&units);
                 continue;
             }
-            out.push("\"");
-            let text = part.to_string_lossy();
+
+            out.push(QUOTE);
             let mut backslashes = 0usize;
-            for ch in text.chars() {
-                match ch {
-                    '\\' => backslashes += 1,
-                    '"' => {
-                        for _ in 0..=backslashes {
-                            out.push("\\");
-                        }
-                        backslashes = 0;
-                        out.push("\\\"");
-                    }
-                    _ => {
-                        for _ in 0..backslashes {
-                            out.push("\\");
-                        }
-                        backslashes = 0;
-                        out.push(ch.to_string());
-                    }
+            for &c in &units {
+                if c == BACKSLASH {
+                    backslashes += 1;
+                    continue;
                 }
+                if c == QUOTE {
+                    // ★ 따옴표를 실제로 출력하기 직전 — 앞선 백슬래시를
+                    //   2배로 만들어야(2n) 그 백슬래시들이 따옴표를 먹지
+                    //   않고, 그 뒤에 이스케이프용 백슬래시 하나를 더
+                    //   붙여야(+1) 이 따옴표 자체가 문자로 살아남는다.
+                    out.extend(std::iter::repeat(BACKSLASH).take(backslashes * 2 + 1));
+                    out.push(QUOTE);
+                } else {
+                    out.extend(std::iter::repeat(BACKSLASH).take(backslashes));
+                    out.push(c);
+                }
+                backslashes = 0;
             }
-            for _ in 0..backslashes {
-                out.push("\\");
-            }
-            out.push("\"");
+            // ★ 인자 끝에 남은 백슬래시는 그 뒤에 우리가 붙일 **닫는**
+            //   따옴표를 이스케이프하지 않도록 2배로 만든다(2n) —
+            //   문자로서의 따옴표가 아니므로 +1 은 붙이지 않는다.
+            out.extend(std::iter::repeat(BACKSLASH).take(backslashes * 2));
+            out.push(QUOTE);
         }
-        out
+        OsString::from_wide(&out)
     }
 
     /// `windows_commit_cap()` 의 RAM 정책 판정을 실제 Job Object 커밋
@@ -265,8 +282,25 @@ mod windows_impl {
 
         // ★ 이 지점부터는 프로세스가 이미 존재한다(정지 상태). 뒤이은
         //   단계 중 하나라도 실패하면 좀비로 남기지 않고 반드시 죽인다.
+        //
+        // ★ 2026-08-18 수정(코덱스 독립 검수 · `p59` 프롬프트) —
+        //   초안은 `TerminateProcess` 의 반환값을 확인하지 않고 바로
+        //   핸들을 닫았다. 그러면 종료가 실제로 실패해도(예: 다른
+        //   프로세스가 이미 그 PID 에 대한 디버그 권한을 쥐고 있는
+        //   드문 경우) **정지 상태 프로세스가 영구히 남는다** — 핸들을
+        //   닫아도 프로세스 자체는 안 죽는다. 여기서는 실패를 최소한
+        //   눈에 보이게(`eprintln!`) 남긴다 — `create_constrained_child`
+        //   는 이미 다른 1차 오류를 반환하는 중이라 두 오류를 하나의
+        //   `io::Error` 로 합칠 표준 방법이 없다.
         let kill_and_close = || unsafe {
-            TerminateProcess(process_info.hProcess, 1);
+            if TerminateProcess(process_info.hProcess, 1) == 0 {
+                eprintln!(
+                    "gputeer-runtime-windows: TerminateProcess 실패(pid={}, error={}) — \
+                     정지 상태 프로세스가 남아 있을 수 있다",
+                    process_info.dwProcessId,
+                    std::io::Error::last_os_error()
+                );
+            }
             CloseHandle(process_info.hProcess);
         };
 
@@ -327,6 +361,72 @@ mod windows_impl {
             process: process_info.hProcess,
             job,
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 공백 없는 짧은 인자는 그대로 통과한다 — 불필요한 따옴표를
+        /// 붙이지 않는다.
+        #[test]
+        fn simple_args_are_not_quoted() {
+            let out = quote_command_line(
+                OsStr::new("C:\\bin\\gputeer.exe"),
+                &[OsStr::new("selftest")],
+            );
+            assert_eq!(out.to_str().unwrap(), "C:\\bin\\gputeer.exe selftest");
+        }
+
+        /// ★ 코덱스 독립 검수(2026-08-18, `p59`)가 잡은 버그의 회귀
+        /// 테스트 — 인자가 백슬래시로 끝나고 공백을 포함하면(따옴표가
+        /// 필요해진다), 그 trailing 백슬래시를 **2배**로 만들어야 닫는
+        /// 따옴표를 이스케이프하지 않는다. 초안은 원래 개수 그대로
+        /// 출력해 명령줄이 깨졌다.
+        #[test]
+        fn trailing_backslash_before_closing_quote_is_doubled() {
+            let out = quote_command_line(
+                OsStr::new("exe"),
+                &[OsStr::new("C:\\Program Files\\")],
+            );
+            // 기대: 여는 따옴표 + "C:\Program Files" + 백슬래시 2개 + 닫는 따옴표.
+            let mut expected = String::from("exe \"C:\\Program Files");
+            expected.push('\\');
+            expected.push('\\');
+            expected.push('"');
+            assert_eq!(out.to_str().unwrap(), expected);
+        }
+
+        /// ★ 같은 버그의 두 번째 회귀 테스트 — 인자 **중간**에 있는
+        /// 리터럴 따옴표 앞의 백슬래시는 `2n+1` 개여야 한다(그 백슬래시들
+        /// 자체를 이스케이프하면서, 뒤따르는 따옴표도 문자로 살려야
+        /// 하므로 하나를 더 붙인다). 초안은 `n+1` 개만 출력했다.
+        #[test]
+        fn backslash_before_embedded_quote_uses_2n_plus_1_rule() {
+            // 리터럴 인자: a \ " b  (공백을 포함시켜 강제로 따옴표 처리시킨다)
+            let mut arg = String::from("a ");
+            arg.push('\\');
+            arg.push('"');
+            arg.push('b');
+            let out = quote_command_line(OsStr::new("exe"), &[OsStr::new(&arg)]);
+
+            let mut expected = String::from("exe \"a ");
+            expected.push('\\'); // backslashes*2+1 = 1*2+1 = 3개
+            expected.push('\\');
+            expected.push('\\');
+            expected.push('"'); // 이스케이프된 리터럴 따옴표
+            expected.push('b');
+            expected.push('"'); // 닫는 따옴표
+            assert_eq!(out.to_str().unwrap(), expected);
+        }
+
+        /// 빈 문자열 인자는 빈 채로 사라지면 안 된다 — `""` 로 감싸야
+        /// 자식이 "인자가 있지만 비어 있다"를 알 수 있다.
+        #[test]
+        fn empty_arg_is_wrapped_in_quotes() {
+            let out = quote_command_line(OsStr::new("exe"), &[OsStr::new("")]);
+            assert_eq!(out.to_str().unwrap(), "exe \"\"");
+        }
     }
 }
 

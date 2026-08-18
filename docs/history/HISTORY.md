@@ -16,6 +16,53 @@
 
 ---
 
+## 2026-08-18 14:50 — `runtime-windows` 코덱스 검수: 명령줄 인용 버그 2건 + `TerminateProcess` 미확인 수정
+
+- 계획: `cb2d7c2`(VRAM Job Object 연결)에 대한 코덱스 독립 검수(`p59`
+  프롬프트). 사용자 지시 — 자율 루프 계속 + "코덱스 최대한 쿼터
+  써서" 재확인.
+- 스트림: Runtime.
+- 결과: `CHANGES_REQUESTED`(1라운드). unsafe FFI 코드라 특히 꼼꼼히
+  봐 달라고 요청했는데, 실제로 진짜 결함 2건(P1)과 과장 주석 1건(P2)
+  을 잡았다:
+  1. **`quote_command_line` 의 백슬래시 이스케이프가 MSVC 규칙과
+     다르다.** 따옴표 직전 백슬래시는 `2n+1` 개가 맞는데 초안은
+     `n+1` 개만 출력했다(부족하거나 과다). 문자열 끝(닫는 따옴표
+     직전) 백슬래시는 `2n` 개가 맞는데 초안은 `n` 개만 출력했다 —
+     예를 들어 `C:\Program Files\` 처럼 공백을 포함하고 백슬래시로
+     끝나는 인자는 닫는 따옴표를 이스케이프해 명령줄이 깨진다.
+  2. **`TerminateProcess` 반환값을 확인하지 않고 바로 핸들을 닫았다.**
+     종료가 실제로 실패하면 정지 상태 프로세스가 영구히 남을 수
+     있는데 그 사실을 아무도 몰랐다.
+  3. (P2) `alloc_fixture.rs` 의 주석이 "첫 바이트를 건드려 페이지를
+     물리적으로 커밋시킨다"고 과장했다 — `JOB_OBJECT_LIMIT_JOB_MEMORY`
+     는 애초에 물리 RSS 가 아니라 virtual commit 총량을 본다.
+  검증 순서(성공/실패 각 분기의 핸들 정리), `CREATE_SUSPENDED` 경합
+  제거, `wide()`/`lpCommandLine` 의 쓰기 가능 버퍼 요구사항, 뮤테이션
+  테스트의 타당성, `guarantees_hard_limit()` 정직성, evidence
+  append-only 준수는 전부 문제없음을 확인받았다.
+- 수행: `quote_command_line` 을 UTF-16 코드 유닛 위에서 직접 조립하도록
+  다시 짰다(`OsStr::to_string_lossy()` 를 거치던 것도 비정상 서로게이트
+  손상 위험이 있어 제거) — 따옴표 앞은 `2n+1`, 문자열 끝은 `2n` 규칙을
+  정확히 구현했다. 회귀 테스트 4개 추가(`simple_args_are_not_quoted`,
+  `trailing_backslash_before_closing_quote_is_doubled`,
+  `backslash_before_embedded_quote_uses_2n_plus_1_rule`,
+  `empty_arg_is_wrapped_in_quotes`) — 뒤 두 개가 정확히 코덱스가
+  잡은 버그 패턴이다. `kill_and_close` 클로저가 이제
+  `TerminateProcess` 반환값을 확인하고 실패 시 `eprintln!` 으로
+  PID·오류를 남긴다(두 개의 `io::Error` 를 표준 방법으로 합칠 수
+  없어 최소한 눈에 보이게는 만들었다). `alloc_fixture.rs` 주석을
+  정정해 "virtual commit 상한을 재는 것이지 물리 메모리 압박이
+  아니다"라고 정확히 적었다.
+- 검증: `cargo build --workspace` 경고 0. `cargo test -p
+  gputeer-runtime-windows --lib` 4/4 통과. `commit_cap.rs` 통합
+  테스트 3회 연속 통과(제약된 자식·negative control 둘 다). `cargo
+  test --workspace` 303/0/1(ignored) — 이전 299 + 신규 단위 테스트 4건.
+- 리포트: 이 이력 항목 + `crates/runtime-windows/src/lib.rs` 코드
+  주석(수정 사유 명시).
+
+---
+
 ## 2026-08-18 14:15 — `crates/runtime-windows` 신설 — VRAM 판정을 실제 Job Object 로 연결
 
 - 계획: CLAUDE.md "다음에 할 일" 2번(runtime-policy 판정을 실제

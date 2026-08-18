@@ -58,9 +58,14 @@ fn main() {
             last_error = Some(unsafe { windows_sys::Win32::Foundation::GetLastError() });
             break;
         }
-        // ★ 커밋만으로는 페이지가 실제로 물리적으로 붙는지(vs. 그냥
-        //   장부상 커밋) 의심할 수 있어, 각 청크의 첫 바이트를 실제로
-        //   건드려 페이지 폴트를 강제한다.
+        // ★ 이 테스트가 실제로 측정하는 것은 **virtual commit 상한**이지
+        //   물리 메모리(RSS) 압박이 아니다 — `JOB_OBJECT_LIMIT_JOB_MEMORY`
+        //   자체가 committed 가상 메모리 총량을 본다(코덱스 독립 검수
+        //   2026-08-18 지적 — 초안 주석이 "물리적으로 붙는다"고 과장했다).
+        //   첫 바이트를 건드리는 이유는 청크 전체를 물리적으로 백킹하기
+        //   위해서가 아니라, `VirtualAlloc(MEM_COMMIT)` 이 완전히 지연
+        //   커밋으로 처리되는 경로가 있더라도 최소 한 페이지는 실제
+        //   접근됐다는 것을 보장하기 위해서다.
         unsafe {
             std::ptr::write_volatile(ptr as *mut u8, 0xAB);
         }
