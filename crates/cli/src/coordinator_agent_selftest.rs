@@ -15,6 +15,7 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
+use std::thread;
 
 /// 두 stub 을 별도 프로세스로 띄우고 정상 handshake 가 성립하는지
 /// 확인한다. 실패하면 사람이 읽을 이유를 담아 반환한다.
@@ -66,7 +67,20 @@ pub fn run() -> Result<String, String> {
     //   사라지는 결함이 있었다 — 실제로 이 서브커맨드를 실행해서 잡았다.
     let mut coordinator_stdout_reader =
         BufReader::new(coordinator.stdout.take().expect("piped stdout"));
-    let mut coordinator_stderr_reader = coordinator.stderr.take().expect("piped stderr");
+    let coordinator_stderr_reader = coordinator.stderr.take().expect("piped stderr");
+
+    // ★ 코덱스 독립 검수(2026-08-18)가 지적한 결함 — stderr 를 메인
+    //   흐름과 동시에 비우지 않으면, coordinator 가 OS 파이프 버퍼를
+    //   채울 만큼 stderr 에 쓰다가 블로킹되고, agent 는 coordinator 의
+    //   TCP 응답을 기다리느라 블로킹되어 이 selftest 전체가 교착할 수
+    //   있다. stdout 은 READY/RESULT 줄을 순서대로 읽어야 하므로 메인
+    //   스레드에 남기고, stderr 만 별도 스레드에서 끝까지 비운다.
+    let stderr_drain = thread::spawn(move || -> Result<String, std::io::Error> {
+        let mut buf = String::new();
+        let mut reader = coordinator_stderr_reader;
+        reader.read_to_string(&mut buf)?;
+        Ok(buf)
+    });
 
     let mut ready_line = String::new();
     coordinator_stdout_reader
@@ -118,9 +132,9 @@ pub fn run() -> Result<String, String> {
         .map_err(|e| format!("coordinator 나머지 stdout 읽기 실패: {e}"))?;
     let coordinator_stdout = format!("{ready_line}{coordinator_stdout_rest}");
 
-    let mut coordinator_stderr = String::new();
-    coordinator_stderr_reader
-        .read_to_string(&mut coordinator_stderr)
+    let coordinator_stderr = stderr_drain
+        .join()
+        .map_err(|_| "coordinator stderr 배수 스레드가 패닉했다".to_string())?
         .map_err(|e| format!("coordinator stderr 읽기 실패: {e}"))?;
 
     let coordinator_status = coordinator

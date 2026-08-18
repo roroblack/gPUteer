@@ -147,6 +147,14 @@ fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Ex
 /// 결정적으로 뽑는다. 실제 운영에서는 CSPRNG 를 쓰지만, 이 stub 은
 /// 재현 가능한 selftest 시나리오가 목적이라 결정적 유도로 충분하다 —
 /// 서로 다른 시나리오는 서로 다른 `grant_id` 를 쓰므로 nonce 도 갈린다.
+///
+/// ★ **운영 코드는 이 패턴을 쓰면 안 된다.** 같은 `grant_id` 로 다시
+/// 부르면 같은 nonce 가 나온다. 이 stub 이 안전한 이유는 매 실행이
+/// 새 OS 프로세스·새 `InMemoryReplayGuard` 를 쓰기 때문이다(실행 간
+/// replay 상태가 없다) — `DurableReplayGuard` 처럼 재시작을 견디는
+/// 저장소와 함께 쓰면, 재시작 후 같은 `grant_id` 를 다시 발급했을 때
+/// 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate` 로 오판될 수
+/// 있다(코덱스 독립 검수 2026-08-18 지적).
 fn derive_nonce(tag: &str, id: &str) -> Vec<u8> {
     let mut input = Vec::with_capacity(tag.len() + 1 + id.len());
     input.extend_from_slice(tag.as_bytes());

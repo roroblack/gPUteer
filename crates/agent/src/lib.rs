@@ -112,6 +112,15 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
 /// Coordinator->Agent 방향과 Agent->Coordinator 방향의 nonce 가 같아지면
 /// `nonce_namespace_is_per_device` 가 보장하는 sender 별 분리에 기대게
 /// 되어 이 stub 자체의 nonce 선택이 우연히 안전해 보일 수 있다).
+///
+/// ★ **운영 코드는 이 패턴을 쓰면 안 된다.** 같은 `grant_id` 로 다시
+/// 부르면 같은 nonce 가 나온다 — CSPRNG 가 아니라 결정적 해시이기
+/// 때문이다. 이 stub 이 안전한 이유는 매 selftest 실행이 새 OS
+/// 프로세스·새 `InMemoryReplayGuard` 를 쓰기 때문이다(실행 간 replay
+/// 상태가 없다). `DurableReplayGuard` 처럼 재시작을 견디는 저장소와
+/// 이 nonce 선택을 같이 쓰면, 재시작 후 같은 `grant_id` 를 다시
+/// 발급했을 때 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate`
+/// 로 오판될 수 있다(코덱스 독립 검수 2026-08-18 지적).
 fn derive_nonce(tag: &str, id: &str) -> Vec<u8> {
     let mut input = Vec::with_capacity(tag.len() + 1 + id.len());
     input.extend_from_slice(tag.as_bytes());

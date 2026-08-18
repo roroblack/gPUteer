@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-08-18 11:55 — coordinator-agent-selftest 코덱스 검수: stderr 파이프 교착 위험 수정
+
+- 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`
+  단계 6(코덱스 독립 검수). 사용자 지시 — 자율 루프 계속.
+- 스트림: CLI, Coordinator, Agent.
+- 결과: 1라운드 `CHANGES_REQUESTED`. 코덱스가
+  `crates/cli/src/coordinator_agent_selftest.rs` 를 지적했다 —
+  coordinator 의 stderr 를 메인 흐름과 **동시에** 비우지 않아서,
+  coordinator 가 OS 파이프 버퍼를 채울 만큼 stderr 에 쓰면(에러 메시지가
+  길어지는 경우 등) coordinator 가 쓰기에서 블로킹되고, agent 는
+  coordinator 의 TCP 응답을 기다리느라 블로킹되어 이 selftest 전체가
+  교착할 수 있다는 지적 — 정상 경로에서는 coordinator 가 stderr 에
+  아무것도 안 쓰므로 지금까지 5회 연속 실행에서는 드러나지 않았지만,
+  구조적으로는 진짜 결함이었다. 검증 순서·키 배분·PID 검사·
+  `InMemoryReplayGuard` 사용·`derive_nonce` 안전성은 전부 문제없음을
+  코드 대조로 확인받았다.
+- 수행: coordinator 의 stderr 를 `thread::spawn` 으로 만든 별도
+  스레드가 처음부터 끝까지 비우도록 고쳤다(`read_to_string`), 메인
+  흐름은 `.join()` 으로 나중에 결과를 받는다. stdout 은 READY/RESULT
+  줄을 순서대로 읽어야 하므로 메인 스레드에 남겼다 — stdout·stderr
+  를 분리한 이유가 서로 다르다(하나는 순서 의존, 하나는 그냥 비우면
+  됨). 부가로 `derive_nonce` 의 "운영 코드가 이 패턴을 쓰면 안 되는
+  이유" 경고를 `coordinator`·`agent` 양쪽에 대칭적으로 명시했다.
+- 검증: `cargo build --workspace` 경고 0. 수정 후 5회 연속
+  `coordinator-agent-selftest` 재실행 — 매번 성공, 매번 다른 PID 3개.
+  `cargo test --workspace` 297/0/1(ignored) 유지.
+- 리포트: 이 이력 항목 + 계획 문서 "단계 6" 절.
+
+---
+
 ## 2026-08-18 11:20 — coordinator/agent 핸드셰이크 단계 3·4: 별도 프로세스 실제 handshake 성공
 
 - 계획: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md` 단계 3·4.

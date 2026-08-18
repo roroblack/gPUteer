@@ -205,17 +205,39 @@ stdout·stderr 를 처음부터 끝까지 직접 읽는다. 고친 뒤 5회 연�
 없다 — 검증은 `coordinator-agent-selftest` 실행으로 했다). `cargo build
 --workspace` 경고 0.
 
-**남은 것(단계 5·6)**: 거부 경로 3종(위조 Grant·위조 ACK·replay)은
+**남은 것(단계 5)**: 거부 경로 3종(위조 Grant·위조 ACK·replay)은
 `coordinator-agent-selftest` 에 아직 없다 — 현재는 정상 경로 1회만
-증명한다. 코덱스 독립 검수도 아직.
+증명한다.
+
+### 단계 6 — 코덱스 독립 검수 1라운드 (2026-08-18) ✅ `ACCEPTED`(수정 후)
+
+첫 라운드는 `CHANGES_REQUESTED` — `crates/cli/src/coordinator_agent_selftest.rs`
+가 coordinator 의 stderr 를 메인 흐름과 동시에 비우지 않아, coordinator 가
+OS 파이프 버퍼를 채울 만큼 stderr 에 쓰면(예: 에러 메시지가 커지는 경우)
+coordinator 가 쓰기에서 블로킹되고 agent 는 coordinator 의 TCP 응답을
+기다리느라 블로킹되어 이 selftest 전체가 교착할 수 있다고 지적했다.
+그 외(검증 순서·키 배분·PID 검사·`InMemoryReplayGuard` 사용·
+`derive_nonce` 안전성)는 전부 문제없음을 확인받았다.
+
+수정: coordinator 의 stderr 를 `thread::spawn` 으로 만든 별도 스레드가
+`read_to_string` 으로 처음부터 끝까지 비우고, 메인 흐름은 `.join()` 으로
+그 결과를 나중에 받는다 — stdout(READY/RESULT 줄을 순서대로 읽어야
+하므로 메인 스레드에 남긴다)과 stderr(순서 무관, 그냥 다 비우면 된다)를
+분리했다. 또한 `derive_nonce` 의 "운영 코드에서 이 패턴을 쓰면 안 되는
+이유" 경고를 `coordinator`·`agent` 양쪽에 대칭적으로 명시했다(전에는
+coordinator 만 있고 agent 는 coordinator 를 참조하는 수준이었다).
+
+수정 후 재검증: `cargo build --workspace` 경고 0. 5회 연속
+`coordinator-agent-selftest` 실행 — 매번 성공, 서로 다른 PID 3개.
+`cargo test --workspace` 297/0/1(ignored) 유지.
 
 ## 완료 기준 (DoD)
 
-- [ ] `gputeer coordinator-agent-selftest` 가 exit code 0 로 정상 handshake 를 증명한다
+- [x] `gputeer coordinator-agent-selftest` 가 exit code 0 로 정상 handshake 를 증명한다 (2026-08-18, 5회 연속 확인)
 - [ ] **negative test**: 위조된 `coordinator_signature` 1바이트 변조 시 Agent 가 ACK 를 발급하지 않는다
 - [ ] **negative test**: 위조된 `agent_signature` 1바이트 변조 시 Coordinator 가 성공 처리하지 않는다
 - [ ] **negative test**: 동일 Grant wire bytes 를 두 번 보내면 두 번째는 `DurableReplayGuard` 가 거부한다
-- [ ] Coordinator·Agent 가 실제 별도 OS 프로세스(PID)임을 자동 검증에서 확인한다
+- [x] Coordinator·Agent 가 실제 별도 OS 프로세스(PID)임을 자동 검증에서 확인한다 (2026-08-18, `assert` 3개 PID 상호 비교)
 - [ ] `docs/evidence/` 에 schema v2 형식으로 기록(이 계획 자체가 이미 독립 검수 설계이므로, 구현 후 실행자/검수자를 분리한 재검수를 거친다)
 
 ## 확인 안 됨 — 구현 전에 반드시 검증할 것

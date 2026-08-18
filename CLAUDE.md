@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 11:20)
+## 5. 지금 상태 (2026-08-18 11:55)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -239,13 +239,14 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ★ 단계 1~4 완료(2026-08-18) — 단계 5·6 남음
+1. 네트워크 전송 · coordinator 골격             ★ 단계 1~4·6 완료(2026-08-18) — 단계 5 남음
    docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
    `gputeer coordinator-agent-selftest` 가 별도 PID 2개(coordinator-stub·
-   agent-stub)로 실제 handshake 에 성공한다 — 정상 경로만. 남은 것:
-   거부 경로 3종(위조 Grant·위조 ACK·replay, 단계 5) · 코덱스 독립 검수
-   (단계 6). "완전한 coordinator" 아님 — lease·스케줄링·다중 Agent·
-   운영용 key protection 은 여전히 범위 밖.
+   agent-stub)로 실제 handshake 에 성공한다 — 정상 경로만. 코덱스
+   독립 검수 1라운드에서 stderr 파이프 교착 위험을 잡아 수정,
+   재검수 통과(단계 6). 남은 것: 거부 경로 3종(위조 Grant·위조 ACK·
+   replay, 단계 5). "완전한 coordinator" 아님 — lease·스케줄링·
+   다중 Agent·운영용 key protection 은 여전히 범위 밖.
 2. runtime-policy 판정을 실제 시스템 호출로 연결  OS 방화벽 · 커널 경로 강제 미구현
 3. x600 에 WSL2 배포판 -> D-3 해소               ★ Linux 를 한 번도 안 돌려봤다
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
