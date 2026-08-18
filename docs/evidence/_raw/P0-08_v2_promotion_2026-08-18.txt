@@ -1,0 +1,29 @@
+$ cargo test -p gputeer-protocol --test schema_evolution -- --nocapture
+q1_prost_accepts_and_drops_unknown_fields ... ok
+q2_unknown_fields_are_invisible_to_canonical ... ok
+q3_version_bump_is_detectable_and_signature_bound ... ok
+q4_field_addition_without_version_bump_is_undetectable ... ok
+q5_version_check_must_precede_signature_check ... ok
+q6_version_downgrade_breaks_signature ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored
+
+$ cargo test -p gputeer-protocol --test schema_fingerprint -- --nocapture
+parser_is_not_vacuous ... ok
+proto_schema_matches_recorded_fingerprint ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored
+
+$ cargo test --workspace
+합계: 307 passed / 0 failed (전 크레이트)
+
+이 파일은 P0-08 을 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 7d47f9b
+무렵 기록, docs/evidence/_raw/P0-08_test_output.txt)은 문서 본문에
+이미 보존돼 있으며 고치지 않는다.
+
+참고: P0-08 의 claim(SCHEMA_TOO_NEW 구현 가능성, schema_version
+증가 없는 필드 추가는 프로토콜 수준에서 강제 불가)은 domain_tag/
+Signable 개수를 직접 인용하지 않으므로 DoD-01~07 재검수에서
+반복된 stale 패턴에는 해당하지 않는다. 2026-08-18 01:00/01:10/01:20
+addendum 이 이미 stale limitation(SCHEMA_TOO_NEW 구현 여부)과
+negative_tests 분류(수동 뮤테이션 vs named test)를 3라운드에 걸쳐
+정밀화했고 최종 ACCEPTED 를 받았다.

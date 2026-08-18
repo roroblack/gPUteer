@@ -1,0 +1,65 @@
+독립 검수 receipt — P0-08 (schema v2 승격용 재검수) — 이 저장소의 마지막 v1 evidence
+==========================================================================
+evidence_id      P0-08
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/P0-08_스키마_진화.md 문서 전체(원본 YAML claim·
+  negative_tests·limitations + 2026-08-18 01:00/01:10/01:20
+  addendum 3라운드 포함) 를 처음부터 다시 검수했다.
+  crates/protocol/tests/schema_evolution.rs
+  crates/protocol/tests/schema_fingerprint.rs
+  crates/protocol/src/signing.rs
+  proto/SCHEMA_FINGERPRINT.txt
+  Cargo.toml, Cargo.lock
+
+--------------------------------------------------------------------------
+1차 검수 (p91 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+claim(SCHEMA_TOO_NEW 규범·구현, q4 프로토콜 수준 탐지 불가)은
+실재 확인됨. negative_tests 8개(q1~q6 + fingerprint 2개) 전부
+실재 확인됨, "지문 가드 뮤테이션은 named test 아님" 분류도
+재확인됨. limitations 대부분 실재 확인됨.
+
+★ 새로 stale 해진 것: (1) prost 버전 — limitation 은 "0.13 한
+버전"이라 적지만 실제는 0.14(lockfile 0.14.4). (2) schema
+fingerprint — frontmatter/본문은 "0a34709f...·66개 메시지·389개
+필드"라 적지만 실제 지금은 "9638aba3...·67개 메시지·398개 필드"
+(이 세션 중 AgentGrantAck 등 메시지 추가로 자연스럽게 늘어남).
+
+--------------------------------------------------------------------------
+정정 반영 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+P0-08 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) — schema
+v2 승격 전 재확인, prost·지문 수치 재정정" 을 추가해 prost 0.14.4
+와 지문 67/398·새 해시값을 기록하고, q1·q4 를 이 버전에서
+재실행해 통과를 확인했다. claim 자체는 지문의 구체적 값과 무관
+하게 성립함을 명시했다. frontmatter 원문과 이전 addendum 원문
+(옛 지문 값·66/389 포함)은 append-only 원칙에 따라 손대지 않았다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 (agent:codex-cli, fresh-read-only, p92 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- prost 버전 인용 정확(Cargo.toml:23-24, lockfile 0.14.4,
+  Cargo.lock:555-558).
+- 지문 값 정확: SCHEMA_FINGERPRINT.txt:13 의
+  9638aba3ebad28c912dfac06f4367e7d451aae086504cf7eafb4a1b795964389.
+  직접 집계 67개 메시지·398개 필드, 현재 proto 재구성본과 일치,
+  BLAKE3 값도 재현됨.
+- schema_fingerprint.rs:202-206 이 현재 proto 파싱·해시,
+  :216-225 가 기록 파일과 정확히 대조함을 코드 논리로 확인. raw
+  receipt 의 2/2 통과 기록과 일치.
+- append-only 준수: 원래 지문(0a34709f...)과 "66개·389개"가
+  frontmatter/본문에 그대로 보존됨(:12,188,336). 이전 addendum
+  (:243,296,305)도 그대로. git diff 상 문서 맨 끝 72줄 추가만
+  확인.
+- raw 파일 실재, schema_evolution 6/6·schema_fingerprint 2/2·
+  workspace 307/0 인용 일치.
+추가 정정 불필요.

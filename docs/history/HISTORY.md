@@ -16,6 +16,55 @@
 
 ---
 
+## 2026-08-19 03:05 — P0-08 schema v1 → v2 승격 완료 — ★ review-강제 대상 v1 evidence 부채 0건 달성
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-07` 에
+  이은 다섯 번째이자 **이 저장소의 마지막 v1 evidence**.
+- 스트림: Protocol.
+- 수행: `cargo test -p gputeer-protocol --test schema_evolution`(6)
+  + `--test schema_fingerprint`(2) + `cargo test --workspace`(307)
+  를 직접 실행해 `docs/evidence/_raw/P0-08_v2_promotion_2026-08-18.txt`
+  에 저장했다. 전체 재검수(`agent:codex-cli`, fresh-read-only, `p91`
+  프롬프트, 원본 claim·negative_tests·limitations + 이전 addendum
+  3라운드 전부 대상) — `CHANGES_REQUESTED`.
+- **DoD 시리즈의 domain 수치 stale 패턴과 같은 뿌리(세션 중 계속된
+  프로토콜 스키마 성장)가 이번엔 다른 지표에서 나타났다** — prost
+  버전(limitation 의 "0.13 한 버전" → 실제 0.14, lockfile 0.14.4)
+  과 schema fingerprint(frontmatter 의 "0a34709f...·66개 메시지·
+  389개 필드" → 실제 "9638aba3...·67개 메시지·398개 필드", 이 세션
+  중 `AgentGrantAck` 등 메시지 추가로 자연스럽게 늘어난 것). 새
+  addendum(2026-08-18 03:00 경)으로 두 수치를 정정하고 q1·q4 를
+  현재 prost 버전에서 재실행해 통과를 확인 — claim 자체는 지문의
+  구체적 값과 무관하게 성립함을 명시했다. 원본 frontmatter 와
+  이전 addendum 원문(옛 지문 값 포함)은 손대지 않았다. 좁은 후속
+  재검수(`p92` 프롬프트) — **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가, `artifacts:` 에 raw/review
+  파일 2개 추가. `_schema_v1_grandfathered.txt` 에서 P0-08
+  제거(3→2건, 이제 `ENV-01·02`(review 비강제)와
+  `P0-06`(`status: FAIL-SCOPE`, 애초에 §7.3 대상 아님)만 남음).
+  `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0,
+  **"독립 검수 기록이 없는 P0/DoD PASS" 목록 자체가 완전히
+  사라졌다(0건)** — DoD-01 부터 시작한 이 사이클의 목표가
+  달성됐다(부채 13→11→10→9→8→7→6→5→4→3→2→1→**0**). `cargo test
+  --workspace` 전체 재실행 — 307 passed / 0 failed(회귀 없음).
+- ★ **디스크 여유가 다시 줄었다**(18GB → 8.7GB, 97% 사용) — 이
+  repo 밖 어딘가에서 계속 공간을 소모하고 있다. `cargo clean` 으로
+  1.4GiB 를 추가로 정리했으나 근본 원인은 여전히 세션 범위 밖이다.
+  이후 작업은 무거운 빌드/테스트 사이클을 자제하고 디스크를 계속
+  관찰하며 진행한다.
+- 리포트: 이 이력 항목. **v1→v2 evidence 승격 사이클 전체가
+  완료됐다** — DoD-01~08(8건) · P0-01·03·03a·07·08(5건), 총 13건
+  전부 schema v2 로 승격됐고 전부 독립 검수 `ACCEPTED` 를 받았다.
+  진짜 코드 결함 3건(DoD-02 도메인 커버리지 테스트·DoD-06
+  all_domain_tags_are_distinct·DoD-08 write_once 경쟁 분기)을
+  이 과정에서 찾아 고쳤다. 다음은 CLAUDE.md 백로그의 나머지 항목
+  (예: `AgentGrantAck` Python 참조 구현 교차검증 공백, coordinator
+  /agent 다음 확장 — Lease 갱신 등)으로 자율적으로 이어간다 —
+  다만 디스크 여유를 먼저 확인하고 무거운 작업은 조절한다.
+
+---
+
 ## 2026-08-19 02:35 — P0-07 schema v1 → v2 승격 완료 (기존 재실측 근거 재사용, 1라운드 ACCEPTED)
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-03a` 에
