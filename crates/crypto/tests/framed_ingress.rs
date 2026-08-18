@@ -91,6 +91,35 @@ fn renew_result(k: &SigningKey, nonce_seed: u8) -> pb::RenewLeaseResult {
     m
 }
 
+const REVOKE_LEASE_ID: &str = "01JBXLEASE0000000000000001";
+
+/// ★ `RevokeLeaseNotice` 에는 발급자 ID 필드가 없다 —
+/// `signer_id()` 가 `lease_id` 를 대체값으로 쓴다(`TODO_VISION`
+/// V-08, `crates/protocol/src/signable.rs:489-491`). 그래서 이
+/// 메시지만 유일하게 `lease_id` 를 키 디렉터리 조회 키로 쓴다 —
+/// `directory()` 가 등록하는 `DEVICE` 가 아니다.
+fn revoke_notice(k: &SigningKey) -> pb::RevokeLeaseNotice {
+    let mut m = pb::RevokeLeaseNotice {
+        schema_version: 1,
+        lease_id: REVOKE_LEASE_ID.into(),
+        fence_epoch: 7,
+        cause: 1,
+        issued_at_unix_ms: NOW,
+        ..Default::default()
+    };
+    m.coordinator_signature = sign(k, &m).to_vec();
+    m
+}
+
+/// `revoke_notice()` 의 서명자 ID(`lease_id`)로 검증 키를 등록한
+/// 별도 디렉터리 — `directory()` 는 `DEVICE` 로 등록하므로 이
+/// 메시지 검증에는 쓸 수 없다.
+fn revoke_directory(k: &SigningKey) -> InMemoryKeyring {
+    let mut d = InMemoryKeyring::new();
+    d.insert(REVOKE_LEASE_ID, k.verifying_key());
+    d
+}
+
 fn directory(k: &SigningKey) -> InMemoryKeyring {
     let mut d = InMemoryKeyring::new();
     d.insert(DEVICE, k.verifying_key());
@@ -194,6 +223,65 @@ fn normal_renew_lease_result_frame_dispatches_to_the_right_variant() {
     assert!(
         matches!(msg, IngressMessage::LeaseRenewResult(_)),
         "잘못된 variant 로 디스패치됐다"
+    );
+}
+
+/// `RevokeLeaseNotice` 도 같은 스트림 구조에서 정상 동작하는가 —
+/// 비공허성.
+///
+/// ★ 오래된 커버리지 공백(2026-08-19, 코덱스 감사 `p110` 이 지적) —
+///   `FrameType::LeaseRevoke`/`IngressMessage::LeaseRevoke` 배선
+///   자체는 이미 있었지만(`crates/crypto/src/framed_ingress.rs:89,
+///   105, 173, 285`), 실제로 서명해 프레임으로 왕복하는 테스트가
+///   한 번도 없었다 — `RenewLeaseResult`(11번째 타입)는 있는데
+///   `RevokeLeaseNotice`(5번째 타입, 훨씬 먼저 추가됨)는 빠져
+///   있었다.
+#[test]
+fn normal_revoke_lease_notice_frame_dispatches_to_the_right_variant() {
+    let k = key(6);
+    let dir = revoke_directory(&k);
+    let n = revoke_notice(&k);
+    let frame = write_frame(FrameType::LeaseRevoke, &n.encode_to_vec()).unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let msg = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    )
+    .expect("정상 RevokeLeaseNotice 프레임이 통과해야 한다");
+
+    assert!(
+        matches!(msg, IngressMessage::LeaseRevoke(_)),
+        "잘못된 variant 로 디스패치됐다"
+    );
+}
+
+/// `RevokeLeaseNotice` 의 위조된 서명이 프레이밍 계층에서 거부되는가.
+#[test]
+fn forged_revoke_lease_notice_signature_is_rejected() {
+    let k = key(7);
+    let dir = revoke_directory(&k);
+    let mut n = revoke_notice(&k);
+    n.coordinator_signature[0] ^= 0xFF;
+    let frame = write_frame(FrameType::LeaseRevoke, &n.encode_to_vec()).unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let result = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    );
+
+    assert!(
+        matches!(result, Err(FramingError::Verify(_))),
+        "위조된 RevokeLeaseNotice 서명이 프레이밍 계층을 통과했다: {result:?}"
     );
 }
 
