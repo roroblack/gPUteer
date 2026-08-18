@@ -792,6 +792,73 @@ pub fn run() -> Result<String, String> {
         "18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)\n",
     );
 
+    // ══════════════════════════════════════════════════════════════
+    // 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`)
+    //
+    // 설계(`p105`)가 코드 경로로 확정한 핵심 위험 — 갱신 요청의
+    // nonce 가 lease_id 에서만 결정적으로 유도되면, 회차마다 같은
+    // nonce 가 나와 두 번째 요청부터 replay guard 가 Duplicate 로
+    // 거부한다. round 를 nonce 입력에 섞지 않았다면 이 시나리오는
+    // round 1(0-based)에서 즉시 실패한다 — **성공 자체가 그 결함이
+    // 고쳐졌다는 증거**다.
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 19. 같은 연결에서 3회 정상 갱신 ──────────────────────────────
+    let repeated = run_handshake(
+        &fixture,
+        &[
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+            "--renew-rounds",
+            "3",
+        ],
+        &["--do-renew", "true", "--renew-rounds", "3"],
+    )?;
+    if !repeated.coordinator_success || !repeated.agent_success {
+        return Err(format!(
+            "같은 연결에서 3회 반복 갱신이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            repeated.coordinator_success,
+            repeated.coordinator_stdout,
+            repeated.coordinator_stderr,
+            repeated.agent_success,
+            repeated.agent_stdout,
+            repeated.agent_stderr
+        ));
+    }
+    let agent_renewed_count = repeated
+        .agent_stdout
+        .matches("RENEW_RESULT ok=true outcome=RENEWED")
+        .count();
+    let coordinator_renewed_count = repeated
+        .coordinator_stdout
+        .matches("RENEW_RESULT ok=true outcome=")
+        .count();
+    // ★ "RESULT ok=true" 는 "RENEW_RESULT ok=true" 의 부분 문자열이다
+    //   — 줄 단위로 정확히 그 접두사로 시작하는 줄만 센다.
+    let agent_result_count = repeated
+        .agent_stdout
+        .lines()
+        .filter(|line| line.starts_with(RESULT_OK_MARKER))
+        .count();
+    if agent_renewed_count != 3 || coordinator_renewed_count != 3 || agent_result_count != 1 {
+        return Err(format!(
+            "3회 반복 갱신의 출력 횟수가 기대와 다르다 — agent RENEWED={agent_renewed_count}(기대 3), \
+             coordinator RENEW_RESULT={coordinator_renewed_count}(기대 3), agent 최종 RESULT={agent_result_count}(기대 1).\n\
+             agent stdout={}\ncoordinator stdout={}",
+            repeated.agent_stdout, repeated.coordinator_stdout
+        ));
+    }
+    report.push_str(
+        "19) 같은 연결에서 3회 정상 갱신 확인 (회차별 nonce 분리로 replay guard 의 \
+         Duplicate 거부를 피한다 — 성공 자체가 증거다)\n",
+    );
+
     Ok(report)
 }
 

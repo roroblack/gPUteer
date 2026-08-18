@@ -112,6 +112,12 @@ pub struct CoordinatorConfig {
     ///   한다 — 안 그러면 다른 갱신 요청에 대한 결과가 재사용될 수
     ///   있다(계획서 "In" 절 — `request_nonce` 의 목적).
     pub corrupt_renew_result_nonce: bool,
+
+    // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
+    /// 같은 연결에서 갱신 왕복을 이 횟수만큼 반복한다. `do_renew ==
+    /// false` 면 무시된다. 기본값 1은 기존(단일 왕복) 시나리오와
+    /// 완전히 같게 동작한다.
+    pub renew_rounds: u32,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -241,8 +247,13 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     // ★ Lease 갱신 (2026-08-19) — 같은 연결에 이어서 Agent 가 보낸
     //   `RenewLeaseRequest` 를 받고 서명된 `RenewLeaseResult` 로
     //   응답한다. `do_renew == false` 면 건너뛴다(기존 핸드셰이크
-    //   전용 시나리오와 완전히 같게 동작).
-    if config.do_renew {
+    //   전용 시나리오와 완전히 같게 동작). 반복 갱신(2026-08-19,
+    //   `docs/plans/2026-08-19_2330_...`)이 추가되면서 왕복을
+    //   `renew_rounds` 만큼 반복한다 — 기본값 1이면 기존 단일
+    //   왕복과 동일하다. Coordinator 는 매 회차 요청의 nonce 를
+    //   그대로 echo 할 뿐 스스로 회차를 유도하지 않는다 — 회차별
+    //   nonce 분리는 Agent 가 요청을 만들 때 책임진다.
+    for _round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
         let renew_msg = read_frame(
             &mut stream,
             1,
@@ -500,6 +511,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_renew_result_signature: flags.bool_flag("--corrupt-renew-result-signature"),
         corrupt_renewed_lease_signature: flags.bool_flag("--corrupt-renewed-lease-signature"),
         corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
+        renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
     };
 
     run(config)
@@ -529,6 +541,15 @@ impl Flags {
         match self.0.get(key) {
             None => Ok(0),
             Some(v) => v.parse::<u64>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
+    }
+
+    /// 반복 Lease 갱신(2026-08-19) — 안 주면 `default`(왕복 횟수).
+    /// 기본값 1은 기존 단일 왕복 시나리오와 동일하게 동작한다.
+    fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+        match self.0.get(key) {
+            None => Ok(default),
+            Some(v) => v.parse::<u32>().map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 

@@ -70,6 +70,12 @@ pub struct AgentConfig {
     /// 파일을 새로 만든다 — 기존 시나리오와 동일하게 항상 빈
     /// watermark 에서 시작한다.
     pub fence_db_path: PathBuf,
+
+    // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
+    /// 같은 연결에서 `RenewLeaseRequest`/`RenewLeaseResult` 왕복을 이
+    /// 횟수만큼 반복한다. `do_renew == false` 면 무시된다. 기본값 1은
+    /// 기존(단일 왕복) 시나리오와 완전히 같게 동작한다.
+    pub renew_rounds: u32,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -208,8 +214,11 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
 
     // ★ Lease 갱신 (2026-08-19) — ACK 를 보낸 뒤 같은 연결에 이어서
     //   `RenewLeaseRequest` 를 보내고 서명된 `RenewLeaseResult` 를
-    //   기다린다. `do_renew == false` 면 건너뛴다.
-    if config.do_renew {
+    //   기다린다. `do_renew == false` 면 건너뛴다. 반복 갱신
+    //   (2026-08-19, `docs/plans/2026-08-19_2330_...`)이 추가되면서
+    //   왕복을 `renew_rounds` 만큼 반복한다 — 기본값 1이면 기존
+    //   단일 왕복과 동일하다.
+    for round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
         let renew_now = clock.now_unix_ms();
         let mut renew_req = pb::RenewLeaseRequest {
             schema_version: 1,
@@ -219,7 +228,11 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                 .unwrap_or(held_lease.fence_epoch),
             node_id: config.agent_device_id.clone(),
             issued_at_unix_ms: renew_now,
-            nonce: derive_nonce("lease-renew", &held_lease.lease_id),
+            // ★ round 를 nonce 입력에 섞는다 — lease_id 만으로는
+            //   회차마다 같은 nonce 가 나와 두 번째 요청부터
+            //   replay guard 가 Duplicate 로 거부한다(설계 `p105`
+            //   가 코드 경로로 확정한 결함).
+            nonce: derive_renew_nonce(&held_lease.lease_id, round as u64),
             ..Default::default()
         };
         renew_req.node_signature = sign(&signing_key, &renew_req).to_vec();
@@ -391,21 +404,6 @@ fn verify_and_record_lease(
     Ok(lease.clone())
 }
 
-/// `crates/coordinator/src/lib.rs::derive_nonce` 와 같은 방식 —
-/// 결정적 유도로 재현 가능한 selftest 시나리오를 만든다. `tag` 로
-/// Grant nonce 와 네임스페이스를 분리한다(같은 grant_id 라도
-/// Coordinator->Agent 방향과 Agent->Coordinator 방향의 nonce 가 같아지면
-/// `nonce_namespace_is_per_device` 가 보장하는 sender 별 분리에 기대게
-/// 되어 이 stub 자체의 nonce 선택이 우연히 안전해 보일 수 있다).
-///
-/// ★ **운영 코드는 이 패턴을 쓰면 안 된다.** 같은 `grant_id` 로 다시
-/// 부르면 같은 nonce 가 나온다 — CSPRNG 가 아니라 결정적 해시이기
-/// 때문이다. 이 stub 이 안전한 이유는 매 selftest 실행이 새 OS
-/// 프로세스·새 `InMemoryReplayGuard` 를 쓰기 때문이다(실행 간 replay
-/// 상태가 없다). `DurableReplayGuard` 처럼 재시작을 견디는 저장소와
-/// 이 nonce 선택을 같이 쓰면, 재시작 후 같은 `grant_id` 를 다시
-/// 발급했을 때 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate`
-/// 로 오판될 수 있다(코덱스 독립 검수 2026-08-18 지적).
 /// `DurableFenceWatermark::check_and_advance()` 의 오류를 사람이 읽는
 /// 문자열로 바꾼다.
 ///
@@ -427,11 +425,45 @@ fn fence_error_message(prefix: &str, error: DurableFenceError) -> String {
     }
 }
 
+/// `crates/coordinator/src/lib.rs::derive_nonce` 와 같은 방식 —
+/// 결정적 유도로 재현 가능한 selftest 시나리오를 만든다. `tag` 로
+/// Grant nonce 와 네임스페이스를 분리한다(같은 grant_id 라도
+/// Coordinator->Agent 방향과 Agent->Coordinator 방향의 nonce 가 같아지면
+/// `nonce_namespace_is_per_device` 가 보장하는 sender 별 분리에 기대게
+/// 되어 이 stub 자체의 nonce 선택이 우연히 안전해 보일 수 있다).
+///
+/// ★ **운영 코드는 이 패턴을 쓰면 안 된다.** 같은 `grant_id` 로 다시
+/// 부르면 같은 nonce 가 나온다 — CSPRNG 가 아니라 결정적 해시이기
+/// 때문이다. 이 stub 이 안전한 이유는 매 selftest 실행이 새 OS
+/// 프로세스·새 `InMemoryReplayGuard` 를 쓰기 때문이다(실행 간 replay
+/// 상태가 없다). `DurableReplayGuard` 처럼 재시작을 견디는 저장소와
+/// 이 nonce 선택을 같이 쓰면, 재시작 후 같은 `grant_id` 를 다시
+/// 발급했을 때 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate`
+/// 로 오판될 수 있다(코덱스 독립 검수 2026-08-18 지적).
 fn derive_nonce(tag: &str, id: &str) -> Vec<u8> {
     let mut input = Vec::with_capacity(tag.len() + 1 + id.len());
     input.extend_from_slice(tag.as_bytes());
     input.push(0);
     input.extend_from_slice(id.as_bytes());
+    gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+}
+
+/// 반복 Lease 갱신(2026-08-19,
+/// `docs/plans/2026-08-19_2330_같은_연결_반복_lease_갱신_v1.md`) 전용
+/// nonce 유도 — `lease_id` 만으로는 회차마다 같은 값이 나와
+/// replay guard 가 두 번째 요청을 `Duplicate` 로 거부한다(코덱스
+/// 설계 `p105` 가 코드 경로로 확정한 결함). `round` 를 입력에 섞어
+/// 회차별로 분리한다.
+///
+/// ★ `derive_nonce()` 와 별도 함수로 둔다 — 기존 호출부(grant-ack 등)
+///   의 nonce 유도 방식을 바꾸지 않기 위해서다.
+fn derive_renew_nonce(lease_id: &str, round: u64) -> Vec<u8> {
+    let mut input = Vec::with_capacity(b"lease-renew".len() + 1 + lease_id.len() + 1 + 8);
+    input.extend_from_slice(b"lease-renew");
+    input.push(0);
+    input.extend_from_slice(lease_id.as_bytes());
+    input.push(0);
+    input.extend_from_slice(&round.to_be_bytes());
     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
 }
 
@@ -457,6 +489,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             Some(v) => PathBuf::from(v),
             None => default_fence_db_path(),
         },
+        renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
     };
 
     run(config)
@@ -489,6 +522,15 @@ impl Flags {
     /// 있는 boolean 플래그(`--flag true`). 안 주면 `false`.
     fn bool_flag(&self, key: &str) -> bool {
         self.0.get(key).map(|v| v == "true").unwrap_or(false)
+    }
+
+    /// 반복 Lease 갱신(2026-08-19) — 안 주면 `default`(왕복 횟수).
+    /// 기본값 1은 기존 단일 왕복 시나리오와 동일하게 동작한다.
+    fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+        match self.0.get(key) {
+            None => Ok(default),
+            Some(v) => v.parse::<u32>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
     }
 
     /// ★ 테스트 전용 — 갱신 요청 epoch 강제 주입(단계 5). 안 주면
