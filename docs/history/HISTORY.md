@@ -16,6 +16,57 @@
 
 ---
 
+## 2026-08-18 22:40 — DoD-05 schema v1 → v2 승격 완료 (DoD-01·02·03·04·06 에 이은 여섯 번째) — 남은 참조 구현 공백 1건 발견
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `DoD-03·04·06`
+  사이클 종료 후 자율 루프가 다음으로 지정한 나머지 v1 evidence
+  (`DoD-05·07·08`, `P0-01·03·03a·07·08`) 처리의 첫 항목.
+- 스트림: Protocol.
+- 수행: 같은 절차를 DoD-05 에 적용했다. `python
+  reference_canonical.py --self-test`(12/12) + `--verify`(40/40) +
+  `cargo test -p gputeer-protocol --test t1_signing_targets --test
+  field_number_audit` + `cargo test --workspace`(306) + `cargo
+  build --workspace --all-targets`(경고 0건) + `ControlAction` 21개
+  arm 대 `to_fields.rs` 구현 직접 대조(9/21, 변화 없음)를 실행해
+  `docs/evidence/_raw/DoD-05_v2_promotion_2026-08-18.txt` 에 저장했다.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p77` 프롬프트) —
+  `CHANGES_REQUESTED`.
+- **domain 수치가 여섯 번째로 stale 해진 패턴(23/19→24/20, Signable
+  10→11종)에 더해, 새로운 종류의 지적을 받았다** — claim("참조
+  구현과 바이트 단위로 일치한다")이 실제로는 `AgentGrantAck` 를
+  검증하지 않는데도 그렇게 읽힐 여지가 있다는 지적이다. 확인해보니
+  `tests/vectors/canonical_v1.json`(40건) 에 `AgentGrantAck` 벡터가
+  **0건**이었다 — `GrantAck` 는 Python 참조 구현(`reference_canonical.py`
+  의 `SCHEMAS`)에도 없다. `framed_ingress.rs` 가 서명·검증·dispatch
+  는 확인하지만 **외부 Python 참조 구현과의 canonical/sig_input
+  바이트 대조까지는 하지 않는다** — `AgentGrantAck` 의 참조 구현
+  교차검증은 이 저장소 어디에도 없는 진짜 공백으로 남았다(코드
+  결함이 아니라 **테스트 커버리지 공백** — 백로그에 등록).
+  새 addendum(2026-08-18 22:20 경)으로 24/20·11종 실측치와 이
+  claim 축소를 기록 — 원본 frontmatter 와 이전 addendum 원문은
+  손대지 않았다. 좁은 후속 재검수 1회차(`p78`) — claim 축소 문구의
+  구체적 숫자("벡터를 생성해 대조한 20종")가 부정확하다는 지적(40개
+  벡터의 고유 message_type 은 14종이지 20이 아니다). 다시 고친 뒤
+  2회차 재검수(`p79`) — **`ACCEPTED`.**
+- v2 frontmatter(순수 additive) 추가 도중 `verify_evidence.py` 가
+  `review_artifact`(`DoD-05_review.txt`) 의 file:line 인용이 저장소에
+  하나도 없다며 **스키마 위반**을 잡았다 — receipt 를 요약 위주로
+  쓰면서 구체적 `파일:줄` 인용을 충분히 박아 넣지 않은 내 실수였다
+  (DoD-03/04/06 receipt 와 다른 형식). receipt 에 실제 검수
+  결과(`canonical.rs:282-315` 등)의 파일:줄 인용을 추가해 재확인
+  통과시켰다 — raw_output_artifact 파일 자체는 건드리지 않아
+  digest 는 그대로 유효하다.
+- `artifacts:` 에 raw/review 파일 2개 추가. `_schema_v1_grandfathered.txt`
+  에서 DoD-05 제거(11→10건), `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **8 → 7건**. `cargo test --workspace` 전체
+  재실행 — 전 항목 0 failed(회귀 없음).
+- 리포트: 이 이력 항목. `AgentGrantAck` 의 Python 참조 구현 교차검증
+  공백은 별도 후속 작업 후보로 CLAUDE.md 백로그에 기록한다. 다음은
+  `DoD-07·08`, `P0-01·03·03a·07·08`.
+
+---
+
 ## 2026-08-18 21:55 — DoD-06 schema v1 → v2 승격 완료 — DoD-03·04·06 3라운드 재검수 사이클 종료, 진짜 코드 결함 또 발견
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격) + 자율 루프가

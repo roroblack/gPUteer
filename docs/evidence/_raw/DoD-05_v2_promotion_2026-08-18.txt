@@ -1,0 +1,45 @@
+$ python tools/canonical/reference_canonical.py --self-test
+all checks passed (12/12 규칙)
+
+$ python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+재생성 대조: 40개 벡터 일치
+vector cross-checks: OK
+
+$ cargo test -p gputeer-protocol --test t1_signing_targets -- --nocapture
+domain 24종 — 구현 20 · proto 메시지 없음 4
+test result: ok. 11 passed; 0 failed; 0 ignored
+
+$ cargo test -p gputeer-protocol --test field_number_audit
+test result: ok. 10 passed; 0 failed; 0 ignored
+
+$ cargo test --workspace
+합계: 306 passed / 0 failed (전 크레이트)
+
+$ cargo build --workspace --all-targets
+경고 0건, 오류 0건
+
+$ grep -c "^impl Signable for" crates/protocol/src/signable.rs
+11
+
+ControlAction oneof 21개 arm 중 ToCanonicalFields 구현 개수(직접 대조,
+proto/control.proto:238-269 vs crates/protocol/src/to_fields.rs):
+  AddMember·RemoveMember·ApproveDevice·RevokeDevice·ChangeCoordinatorSet·
+  UpdatePolicy·RotateOwnerKey·QuarantineDevice·ReleaseQuarantine = 9개 구현
+  SubmitJob·TransitionJob·CreateAttempt·TransitionAttempt·SetCanonical·
+  IssueLease·RenewLease·RevokeLease·TransitionNode·RecordBenchmark·
+  RecordWorkloadProfile·RecordDurabilityStatus = 12개 미구현
+  => 9/21, 2026-08-17 addendum 의 수치와 변화 없음(GrantAck 는
+     ControlAction oneof 의 일부가 아니라 독립 top-level 메시지)
+
+이 파일은 DoD-05 를 schema v1 -> v2 로 승격하기 위해 2026-08-18 에
+새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit 8ca2799 무렵
+기록, docs/evidence/_raw/DoD-05_test_output.txt)은 문서 본문에 이미
+보존돼 있으며 고치지 않는다 — 이것은 그것을 대체하는 것이 아니라,
+v2 승격 시점의 독립적 재확인이다.
+
+참고: 2026-08-17 23:55 및 2026-08-18 00:10/00:20 addendum(DoD-05
+문서 내)이 "domain 23종 중 19종 구현", "Signable 10종" 이라 적은 뒤
+이 세션 안에서 Domain::GrantAck 가 추가되어 지금은 domain 24종 ·
+구현 20 · Signable 11종이다 — DoD-01~04·06 재검수에서 반복된 것과
+같은 패턴이다. ControlAction 9/21 수치는 GrantAck 의 영향을 받지
+않아 그대로다.

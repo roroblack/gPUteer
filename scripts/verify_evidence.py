@@ -39,7 +39,7 @@ GRANDFATHER_LIST = os.path.join(EVIDENCE_DIR, "_schema_v1_grandfathered.txt")
 #   그러면 유예 확대가 **코드 diff 에 드러난다.**
 #   (완전한 위조 방지는 아니다 — 둘 다 고치면 통과한다.
 #    목적은 '조용히 늘어나는 것' 을 막는 것이다.)
-GRANDFATHER_DIGEST = "sha256:6264c983158220bce270d21ff5afdb846882d01f526643823b745b58059919c6"
+GRANDFATHER_DIGEST = "sha256:6ba70422a560181af9b4c4c68d1979287eb0671eb85ae9e0628c3c267afe0544"
 
 REQUIRED = [
     "id", "claim", "status", "commit", "binary_digests", "protocol_versions",

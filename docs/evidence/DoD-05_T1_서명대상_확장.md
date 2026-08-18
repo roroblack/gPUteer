@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: DoD-05
 claim: "signing.md §5 domain_tag 17종 중 9종이 ToCanonicalFields 로 구현되었고 참조 구현과 바이트 단위로 일치한다. 규칙 j(부호 있는 정수)가 신설되어 기존 벡터를 바꾸지 않고 int64 를 결정론적으로 인코딩한다. 중첩 서명 메시지의 규칙 i 재귀 적용 결과가 테스트로 고정되었다"
 status: PASS
 commit: 8ca27992e840b8aa64221615ecb5faf3524f435e
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + cargo)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "claim 범위(규칙 j·중첩 서명 재귀) · domain/Signable 수치(20/24·11종) 재확인 · ControlAction 9/21 불변 확인 · claim 을 AgentGrantAck(참조 벡터 없음) 제외로 축소 · cargo test 재실행 확인"
+review_artifact: "docs/evidence/_raw/DoD-05_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/DoD-05_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:12d7698288868b32dde158ba750a4dad7b7427b0e5f1a405c8a24d86a8c0afd5"
+raw_output_bytes: 2217
+
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 / prost 0.14 / python 3.12.7"
   note: "라이브러리 크레이트라 실행 바이너리 없음"
@@ -61,6 +81,8 @@ artifacts:
   - crates/protocol/src/to_fields.rs
   - tools/canonical/reference_canonical.py
   - tests/vectors/canonical_v1.json
+  - docs/evidence/_raw/DoD-05_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/DoD-05_review.txt
 negative_tests:
   - "★ rule_j_sign_affects_canonical: 같은 절대값의 +1000 / -1000 이 서로 다른 canonical 을 내는지 확인. 반영되지 않으면 지표의 부호를 뒤집어도 서명이 통과한다. 추가로 음수가 정확히 8바이트 더 긴지 검사 — zigzag 로 인코딩됐다면 길이가 같았을 것이다"
   - "rule_j_handles_i64_min_without_panic: i64::MIN 은 절대값을 취할 수 없다. 순진한 구현이 여기서 패닉한다. MIN/MIN+1/-1/1/MAX 전부 확인"
@@ -345,3 +367,85 @@ stale limitations 를 반영했다. 원본 YAML 은 당시 기록이므로 고�
 재확인했고, 나머지 12개가 저장소 전체에서 exact grep 으로도 0건임을
 확인했다. vectors 40건과 그 범위 제한 서술도 정확하다고 판정했다.
 "지정 범위에서 추가 수정 사항을 확인하지 못했다."
+
+---
+
+## ★ 이후 변경 (2026-08-18) — schema v2 승격 전 재확인, 수치 재정정 + claim 범위 추가 축소
+
+`DoD-01`~`04`·`06` 을 schema v1 → v2 로 승격하며 겪은 패턴이 `DoD-05`
+에도 반복됐다. 새로운 독립 검수(`agent:codex-cli`, read-only, v2
+승격용 재검수)가 `CHANGES_REQUESTED` 로 판정했다 — 2026-08-17 23:55
+addendum 의 "23종 중 19종 구현"·"Signable 10종" 이 이 세션 중 생긴
+`Domain::GrantAck` 추가로 다시 stale 해졌다는 지적과, **claim 을
+한 겹 더 좁혀야 한다**는 새 지적이다.
+
+### 1. domain/Signable 수치 — stale, 실제는 20/24·11종
+
+- `Domain` enum: **24종**(`crates/protocol/src/canonical.rs:282-315`).
+- `domain_coverage_is_explicit`: **24종 중 20개 구현, proto 부재
+  4종**(`crates/protocol/tests/t1_signing_targets.rs:393-452`).
+- `Signable` 구현: **11종**(`crates/protocol/src/signable.rs:40,66,
+  98,178,211,263,298,325,356,383,417`).
+
+frontmatter claim(`DoD-05:3`)과 2026-08-17 addendum(`DoD-05:270-274`)
+원문의 "23종 중 19종"·"10종"은 그대로 두고 고치지 않는다
+(append-only 원칙) — **진짜 현재 값은 24종 중 20종·11종**이다.
+
+### 2. ControlAction 9/21 — 재확인, 변화 없음
+
+`AgentGrantAck` 는 `ControlAction` oneof 의 일부가 아니라 독립
+top-level 메시지다(`proto/control.proto:377-390`, 구현은
+`to_fields.rs:823-847`). `ControlAction` oneof 21개 arm 중 구현은
+여전히 **9개**(`proto/control.proto:238-269` vs `to_fields.rs:694-821`
+직접 대조, 재확인됨) — `GrantAck` 추가는 이 수치에 영향을 주지
+않는다.
+
+### 3. [claim 을 한 겹 더 좁혀 읽는다] GrantAck 는 이 evidence 의 참조 벡터 교차검증 범위 밖이다
+
+이 evidence 의 claim("참조 구현과 바이트 단위로 일치한다")은
+`tests/vectors/canonical_v1.json` 의 벡터 교차검증에 근거한다. 그
+벡터 파일은 지금 40건이지만(2026-08-17 addendum 이 이미 정정),
+**`AgentGrantAck` 에 대한 벡터는 0건이다** — `GrantAck` 는 이
+evidence 가 아니라 이후 별도 작업(coordinator/agent 핸드셰이크,
+`crates/crypto/tests/framed_ingress.rs`)이 다른 경로(프레이밍 테스트)
+로 검증했다.
+
+→ claim 을 이렇게 좁혀 읽는다: **"참조 구현과 바이트 단위로
+일치한다"는 `tests/vectors/canonical_v1.json` 에 실제로 포함된
+벡터 대상 message type 에만 적용하며, `AgentGrantAck` 는 제외한다.**
+`AgentGrantAck` 는 이 evidence 의 참조 구현(Python) 교차검증
+범위 밖이다 — `framed_ingress` 는 서명 생성·수신 검증·dispatch
+경로만 확인할 뿐, **외부 참조 구현과의 canonical/sig_input 바이트
+일치까지 독립 증명하지는 않는다**(`crates/crypto/tests/framed_ingress.rs:64,76,137,154`).
+`AgentGrantAck` 의 참조 구현 대조는 아직 어느 evidence 도 다루지
+않은 공백으로 남는다(2026-08-18 재검수에서 지적됨).
+
+### 4. negative_tests 이름, vectors 40건, limitations 정정 — 재확인, 2026-08-17/18 정정 그대로 유효
+
+- negative_tests 이름 3건 정정(`renew_lease_request_matches_reference`
+  등)은 `t1_signing_targets.rs:326,359`, `field_number_audit.rs:261-275`
+  로 재확인됐다 — frontmatter 원문(`DoD-05:71,74`)의 옛 이름은
+  append-only 원칙에 따라 그대로 둔다.
+- vectors "지금 40건"은 재확인됐다 — frontmatter 원문(`DoD-05:12`
+  의 "28건")은 그대로 둔다.
+- "6종 Signable 미구현" limitation 정정("실제로는 `Lifetime::Evidence`
+  로 전부 구현됨")은 `signable.rs:263-419`, `signing.rs:763-766` 로
+  재확인됐다.
+
+### Rust/Python 재실행 — 이 세션에서 직접 확인, Codex 샌드박스에서는 못함
+
+Codex read-only 샌드박스는 `.cargo-build-lock` 접근이 거부돼
+`cargo test`/`cargo build` 를 실행하지 못했다(샌드박스 제약이지
+코드 결함이 아니다) — Python 명령은 직접 실행해 확인했다
+(`--self-test` 12/12, `--verify` 40/40). 이 세션은 이미 로컬에서
+cargo 전체도 직접 실행해 확인했다 —
+`docs/evidence/_raw/DoD-05_v2_promotion_2026-08-18.txt` 가 그
+receipt 다: `t1_signing_targets` 11 passed, `field_number_audit` 10
+passed, `cargo test --workspace` 306 passed / 0 failed, `cargo build
+--all-targets` 경고 0건.
+
+### review_outcome
+
+`CHANGES_REQUESTED` — 위 1·3 을 이 addendum으로 반영했다. 좁은
+범위의 후속 확인을 별도로 요청해 `ACCEPTED` 를 받은 뒤에만 schema
+v2 로 승격한다.

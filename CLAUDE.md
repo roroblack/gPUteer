@@ -299,7 +299,7 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·02·03·04·06 완료, "DoD-03·04·06 3라운드 재검수" 사이클 종료
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01·02·03·04·05·06 완료
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
@@ -311,12 +311,31 @@ Linux 를 한 번도 돌려보지 않았다
    `DoD-04` 는 코드 결함 없이 evidence 문서 수치만(같은
    `Domain::GrantAck` 원인으로) stale 했다 — `DoD-04` 는 추가로
    "단수명 경로가 ExecutionGrant 로 한정된다"·"아무도 replay
-   저장소를 안 쓴다" 두 서술도 stale 이었다(둘 다 addendum
-   재정정 → 인용 오류 지적 → 재정정 → ACCEPTED 순으로 마무리).
+   저장소를 안 쓴다" 두 서술도 stale 이었다. `DoD-05` 승격 중에는
+   ★ **새로운 종류의 진짜 공백**을 찾았다 — `AgentGrantAck` 는
+   `tests/vectors/canonical_v1.json`·`tools/canonical/reference_canonical.py`
+   양쪽 어디에도 없어, **Python 참조 구현과의 canonical/sig_input
+   바이트 교차검증을 한 번도 받은 적이 없다**(코드 결함이 아니라
+   테스트 커버리지 공백). `crates/crypto/tests/framed_ingress.rs` 는
+   서명·검증·dispatch 만 확인할 뿐 참조 구현 대조는 하지 않는다 —
+   **다음에 할 일 6번으로 등록.**
    `_schema_v1_grandfathered.txt` + `GRANDFATHER_DIGEST` 갱신 완료.
-   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→**8건**. 다음은
-   `DoD-05·07·08`, `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02`
+   독립 검수 없는 P0/DoD PASS 부채 13→11→10→9→8→**7건**. 다음은
+   `DoD-07·08`, `P0-01·03·03a·07·08`(review 강제 대상, `ENV-01·02`
    는 비강제) — 같은 절차로 이어간다.
+6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
+   `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의
+   `SCHEMAS` 에도, `tests/vectors/canonical_v1.json` 벡터에도 없다.
+   `crates/crypto/tests/framed_ingress.rs` 는 Rust 내부에서
+   서명·검증·dispatch(`sign()` → `write_frame`/`read_frame`)만
+   확인할 뿐, canonical/sig_input 바이트가 **독립적인 Python 참조
+   구현과 일치하는지는 한 번도 대조되지 않았다.** 다른 도메인
+   메시지들이 전부 이 참조 벡터 교차검증을 거친 것과 다른 상태다.
+   코드 결함은 아니다(Rust 구현이 틀렸다는 근거는 없다) — 순수
+   테스트 커버리지 공백. 절차: `reference_canonical.py` 의 `SCHEMAS`
+   에 `AgentGrantAck` 추가 → 참조 벡터 생성 → `canonical_v1.json`
+   에 편입 → Rust 쪽 대조 테스트 추가(`prost_canonical.rs` 류).
+   아직 미착수.
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.

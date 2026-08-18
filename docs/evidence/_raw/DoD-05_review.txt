@@ -1,0 +1,88 @@
+독립 검수 receipt — DoD-05 (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      DoD-05
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/DoD-05_T1_서명대상_확장.md (frontmatter + 본문 전체,
+  기존 addendum 3라운드 포함) 을 처음부터 다시 검수 — 기존 addendum 의
+  ACCEPTED 판정을 그대로 믿지 않고 파일:줄을 직접 재확인했다. 특히
+  "23종 중 19종"·"Signable 10종" 수치가 DoD-01·02·03·04·06 재검수와
+  같은 이유(Domain::GrantAck 추가)로 또 stale 인지 확인했다.
+  crates/protocol/src/canonical.rs
+  crates/protocol/src/signable.rs
+  crates/protocol/tests/t1_signing_targets.rs
+  proto/control.proto
+  crates/protocol/src/to_fields.rs
+  tests/vectors/canonical_v1.json
+  crates/crypto/tests/framed_ingress.rs
+  tools/canonical/reference_canonical.py
+
+--------------------------------------------------------------------------
+1차 검수 (p77 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| Domain enum | stale — 실제 24종 | canonical.rs:282-315 |
+| domain coverage | stale — 실제 24종 중 20종 구현 | t1_signing_targets.rs:393-452 |
+| Signable 구현 | stale — 실제 11종 | signable.rs:40,66,98,178,211,263,298,325,356,383,417 |
+| ControlAction 9/21 | 실재 확인됨, GrantAck 무관 | control.proto:238-269, to_fields.rs:694-821 |
+| 규칙 j·중첩 서명 규칙 i | 실재 확인됨 | canonical.rs:99-106,210-213,188-200,222-251, t1_signing_targets.rs:102-154,198-237 |
+| negative_tests 정정명 | 실재 확인됨(2026-08-17 정정 유효) | t1_signing_targets.rs:326,359, field_number_audit.rs:261-275 |
+| limitations(17/9, Signable 6종 미구현) | stale — 실제 24/20, 6종 모두 Evidence Signable 구현 | signable.rs:263-419, signing.rs:763-766 |
+| vectors 메타데이터 | stale — 실제 40건 | canonical_v1.json:7 |
+| GrantAck 참조 벡터 | ★ 확인 안 됨 → claim 범위를 좁혀야 함(벡터 0건) | canonical_v1.json 전수 검색 0건 |
+| 명령 재실행 | python 12/12·40/40 실재 확인됨, cargo 는 샌드박스 제약으로 확인 안 됨 | — |
+
+--------------------------------------------------------------------------
+정정 반영 1 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+DoD-05 문서 맨 끝에 새 addendum "★ 이후 변경 (2026-08-18) — schema
+v2 승격 전 재확인, 수치 재정정 + claim 범위 추가 축소" 를 추가해
+24/20·11종 실측치와 claim 축소("AgentGrantAck 는 이 evidence 의
+참조 벡터 교차검증 범위 밖")를 기록했다. frontmatter 원문과 이전
+addendum 원문은 append-only 원칙에 따라 손대지 않았다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 1 (agent:codex-cli, fresh-read-only, p78 프롬프트) — 판정: CHANGES_REQUESTED
+--------------------------------------------------------------------------
+
+수치·append-only 는 모두 정확하다고 확인했으나, claim 축소 문구의
+"벡터를 생성해 대조한 20종" 이 부정확하다고 지적 — 40개 벡터의
+서로 다른 message_type 은 14종이고, "20" 은 domain coverage 구현
+수치를 잘못 가져온 것. 또한 framed_ingress 는 서명 생성·수신
+검증·dispatch 만 확인할 뿐 외부 참조 구현과의 바이트 일치까지는
+증명하지 않는다고 지적.
+
+--------------------------------------------------------------------------
+정정 반영 2 (claude-code, 같은 날)
+--------------------------------------------------------------------------
+
+claim 축소 문단을 다시 써서 "canonical_v1.json 에 실제 포함된 벡터
+대상 message type 에만 적용하며 AgentGrantAck 는 제외한다.
+AgentGrantAck 의 참조 구현 대조는 아직 어느 evidence 도 다루지
+않은 공백으로 남는다" 로 정정했다.
+
+--------------------------------------------------------------------------
+후속 확인 재검수 2 (agent:codex-cli, fresh-read-only, p79 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+- canonical_v1.json: 40개 벡터, 고유 message_type 14종
+  (JobManifest 18·ExecutionGrant 5·Lease 3·AttemptReport 3·
+  ArtifactRef 2·나머지 9종 각 1개). AgentGrantAck/GrantAck 벡터
+  0건 확인 — claim 축소 정확.
+- framed_ingress.rs:64-76,141-151,154 는 Rust sign()으로 서명 후
+  write_frame/read_frame 검증·dispatch 만 확인. Python 참조 구현/
+  canonical_v1.json 대조 코드 없음 — "외부 참조 구현과의 바이트
+  일치까지는 증명하지 않는다" 서술 정확.
+- reference_canonical.py:94 의 SCHEMAS 에 AgentGrantAck/GrantAck
+  없음(전체 파일에서도 확인 안 됨) — "참조 구현 대조 공백" 서술도
+  좁은 의미에서 정확. (참고: reference_canonical.py 는 tools/canonical/
+  아래에 있으며 검수 범위 절에 전체 경로로 이미 명시했다.)
+추가 정정 불필요.
