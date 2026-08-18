@@ -17,10 +17,12 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use gputeer_crypto::{
-    read_frame, sign, write_frame, Clock, FrameType, InMemoryKeyring, InMemoryReplayGuard,
-    IngressMessage, KeyDirectorySource, SigningKey, SystemClock, VerifyingKey,
+    read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, InMemoryKeyring,
+    InMemoryReplayGuard, IngressMessage, KeyDirectorySource, SigningKey, SystemClock,
+    VerifyingKey,
 };
-use gputeer_protocol::pb;
+use gputeer_protocol::{pb, verify};
+use gputeer_runtime_policy::FenceWatermark;
 use prost::Message;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -90,6 +92,22 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         other => return Err(format!("예상하지 못한 요청 타입: {other:?}")),
     };
 
+    // ★ `Lease` 는 outer `Grant` 와 **별도로 서명된** 메시지다(§6 규칙
+    //   i — 중첩 메시지는 각자 서명된다). outer Grant 서명이 유효해도
+    //   nested Lease 서명이 위조됐을 수 있으므로 반드시 독립적으로
+    //   검증한다 — `to_fields.rs` 의 "manifest 와 lease 는 각자
+    //   독립적으로 검증해야 한다(MUST)" 를 실제로 이행한다
+    //   (2026-08-18, 코덱스 설계 · `p67` 프롬프트).
+    let mut fence_watermark = FenceWatermark::new();
+    verify_and_record_lease(
+        &grant,
+        &config,
+        &coordinator_keys,
+        clock.now_unix_ms(),
+        &mut replay,
+        &mut fence_watermark,
+    )?;
+
     let now = clock.now_unix_ms();
     let mut ack = pb::AgentGrantAck {
         schema_version: 1,
@@ -148,6 +166,52 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         grant.grant_id, grant.attempt_id, ack.agent_device_id
     );
     Ok(())
+}
+
+/// `ExecutionGrant.lease` 에 실린 `Lease` 를 독립적으로 검증하고
+/// `fence_epoch` 를 `watermark` 에 기록한다.
+///
+/// 서명 검증(`verify()`) 전에 필드 값을 신뢰하지 않는다 — 상관관계
+/// 검사(attempt_id·issuing_coordinator·holder_node_id·job_id)는
+/// **서명 검증 뒤에** 한다. 서명 안 된 필드를 먼저 믿고 분기하면
+/// 위조된 Lease 로도 조기 반환을 유도할 수 있다.
+fn verify_and_record_lease(
+    grant: &pb::ExecutionGrant,
+    config: &AgentConfig,
+    coordinator_keys: &InMemoryKeyring,
+    now: u64,
+    replay: &mut InMemoryReplayGuard,
+    watermark: &mut FenceWatermark,
+) -> Result<pb::Lease, String> {
+    let lease = grant
+        .lease
+        .clone()
+        .ok_or_else(|| "LEASE_REJECTED: Grant 에 Lease 가 없다".to_string())?;
+
+    let verifier = Ed25519Verifier::new(coordinator_keys);
+    let verified = verify(&lease, 1, &verifier, now, replay)
+        .map_err(|e| format!("LEASE_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
+    let lease = verified.get();
+
+    // ★ 서명이 유효하다고 확인한 **뒤에만** 상관관계를 검사한다.
+    if lease.attempt_id != grant.attempt_id {
+        return Err("LEASE_REJECTED: attempt_id 가 Grant 와 다르다".into());
+    }
+    if lease.issuing_coordinator_id != grant.coordinator_device_id {
+        return Err("LEASE_REJECTED: issuing_coordinator_id 가 Grant 와 다르다".into());
+    }
+    if lease.holder_node_id != config.agent_device_id {
+        return Err("LEASE_REJECTED: holder_node_id 가 이 Agent 가 아니다".into());
+    }
+    if lease.job_id.is_empty() {
+        return Err("LEASE_REJECTED: job_id 가 비어 있다".into());
+    }
+
+    watermark
+        .check_and_advance(&lease.job_id, lease.fence_epoch)
+        .map_err(|e| format!("LEASE_REJECTED: fence_epoch 검사 실패: {e:?}"))?;
+
+    Ok(lease.clone())
 }
 
 /// `crates/coordinator/src/lib.rs::derive_nonce` 와 같은 방식 —

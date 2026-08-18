@@ -16,6 +16,59 @@
 
 ---
 
+## 2026-08-18 19:00 — coordinator/agent 에 Lease 최소 조각 추가 (테스트+개발 병행)
+
+- 계획: `docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md`
+  (신규). 사용자 지시 — "코덱스 검수 결과 확인해서 DoD-01 승격
+  마무리해줘. 그리고 코덱스 쿼터로 다음 작업 이어서 가봐. 테스트와
+  동시에 개발할 수 있는 부분은 개발하면서 가야지." — DoD-02 v2
+  승격(evidence 검수)과 이 기능 개발(코드)을 코덱스 두 인스턴스로
+  병렬 진행했다.
+- 스트림: Coordinator, Agent, CLI.
+- 수행: 기존 coordinator/agent 최소 핸드셰이크 계획의 "Out" 절이
+  예고해 둔 다음 한 걸음 — Coordinator 가 `ExecutionGrant.lease`
+  에 서명된 `Lease` 를 채워 보내고, Agent 가 그것을 outer Grant 와
+  **독립적으로** 검증해(§6 규칙 i) `fence_epoch` 를
+  `crates/runtime-policy::FenceWatermark` 에 기록한다. 코덱스에게
+  범위 후보 3개(Grant+Lease / Renew 왕복 / 다중 Agent)를 비교시켜
+  가장 작은 것을 추천받았다(`p67` 프롬프트).
+  - `crates/coordinator/src/lib.rs::issue_lease()` — `Lease` 를
+    독립적으로 서명. `corrupt_lease_signature` 는 서명 **후**
+    마지막 바이트를 뒤집는다(outer Grant 서명 계산에 nested
+    서명이 안 들어가므로 outer 는 안 깨진다 — 정확히 이 성질을
+    시험하기 위해서다).
+  - `crates/agent/src/lib.rs::verify_and_record_lease()` — Grant
+    replay 검사 통과 **후에만** 호출. `gputeer_protocol::verify()`
+    로 nested Lease 를 독립 검증하고, 서명 검증이 끝난 뒤에만
+    상관관계(attempt_id·issuing_coordinator_id·holder_node_id·
+    job_id)를 검사한다. `gputeer-runtime-policy` 를 Agent 의 신규
+    의존성으로 추가(`FenceWatermark` 사용, 계획 설계 당시 "확인
+    안 됨"으로 남겼던 것을 실제로 추가해 보니 자연스러웠다).
+  - `crates/cli/src/coordinator_agent_selftest.rs` — 시나리오
+    5(위조 nested Lease 서명)·6(만료된 Lease) 추가, 6개 시나리오
+    체제로 확장.
+- **실제로 처음 실행에서 6개 시나리오 전부 한 번에 통과했다** —
+  API 를 코드로 미리 하나하나 검증(`Lease` proto 필드,
+  `Signable` impl, `verify()` 시그니처, `Ed25519Verifier::new()`,
+  `FenceWatermark::check_and_advance()`)한 뒤 구현했기 때문으로
+  보인다. 5회 연속 재실행 — 매번 통과.
+- 뮤테이션 테스트로 비공허성 증명: `verify_and_record_lease()` 호출을
+  `if false { }` 로 무력화 → 시나리오 5 가 정확히 예상대로 실패
+  ("위조된 nested Lease 서명이 거부되지 않았다") → 원복 후 6개
+  전부 재통과 확인.
+- 검증: `cargo build --workspace` 경고 0. `cargo test --workspace`
+  306/0/1(ignored) 유지(coordinator/agent 는 selftest 실행으로
+  검증하지, 자체 단위 테스트를 아직 추가하지 않았다 — 기존
+  패턴과 동일). `gputeer coordinator-agent-selftest` 5회 연속
+  6/6 시나리오 통과.
+- 리포트: 이 이력 항목 +
+  `docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md`
+  "실제 구현 메모" 절. `docs/evidence/` 정식 기록은 아직 남은 작업.
+  다음 단계 후보(RenewLeaseRequest 왕복, 다중 Agent)는 계획서
+  "Out" 절에 명시.
+
+---
+
 ## 2026-08-18 18:20 — DoD-02 schema v1 → v2 승격 + 진짜 코드 결함 발견·수정
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격), DoD-01 에 이은

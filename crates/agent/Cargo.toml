@@ -8,4 +8,5 @@ license.workspace = true
 [dependencies]
 gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
+gputeer-runtime-policy = { path = "../runtime-policy" }
 prost.workspace = true

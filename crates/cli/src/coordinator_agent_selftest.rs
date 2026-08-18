@@ -36,6 +36,8 @@ struct Fixture {
     agent_device_id: &'static str,
     grant_id: &'static str,
     attempt_id: &'static str,
+    lease_id: &'static str,
+    job_id: &'static str,
 }
 
 impl Fixture {
@@ -64,6 +66,8 @@ impl Fixture {
             agent_device_id: "01JAGENTSELFTEST00000000001",
             grant_id: "01JGRANTSELFTEST000000001",
             attempt_id: "01JATTEMPTSELFTEST00000001",
+            lease_id: "01JLEASESELFTEST000000001",
+            job_id: "01JJOBSELFTEST00000000001",
         })
     }
 
@@ -117,6 +121,10 @@ fn run_handshake(
     coordinator_args.push(fixture.grant_id);
     coordinator_args.push("--attempt-id");
     coordinator_args.push(fixture.attempt_id);
+    coordinator_args.push("--lease-id");
+    coordinator_args.push(fixture.lease_id);
+    coordinator_args.push("--job-id");
+    coordinator_args.push(fixture.job_id);
     coordinator_args.extend_from_slice(extra_coordinator_args);
 
     let mut coordinator = Command::new(&fixture.exe)
@@ -311,6 +319,36 @@ pub fn run() -> Result<String, String> {
         ));
     }
     report.push_str("4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)\n");
+
+    // ── 5. 위조 nested Lease 서명 — outer Grant 는 정상인데 Agent 가
+    //    Lease 를 독립적으로 검증해야만 잡힌다 ──────────────────────
+    // ★ Coordinator 는 이 시나리오에서 outer Grant 를 정상 서명하므로
+    //   자기 자신은 "성공"을 주장할 수 있다(outer 검증만 보면 다
+    //   맞다) — 판정은 Agent 가 LEASE_REJECTED 로 거부했는지로만 한다.
+    let forged_lease = run_handshake(&fixture, &["--corrupt-lease-signature", "true"], &[])?;
+    if forged_lease.agent_success || !forged_lease.agent_stderr.contains("LEASE_REJECTED:") {
+        return Err(format!(
+            "위조된 nested Lease 서명이 거부되지 않았다 — outer Grant 검증만으로는 \
+             이 결함을 잡지 못한다는 뜻이다.\n\
+             agent exit={} stdout={} stderr={}",
+            forged_lease.agent_success, forged_lease.agent_stdout, forged_lease.agent_stderr
+        ));
+    }
+    report.push_str(
+        "5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 \
+         독립적으로 검증한다)\n",
+    );
+
+    // ── 6. 만료된 Lease ────────────────────────────────────────────
+    let expired_lease = run_handshake(&fixture, &["--expire-lease", "true"], &[])?;
+    if expired_lease.agent_success || !expired_lease.agent_stderr.contains("LEASE_REJECTED:") {
+        return Err(format!(
+            "만료된 Lease 가 거부되지 않았다.\n\
+             agent exit={} stdout={} stderr={}",
+            expired_lease.agent_success, expired_lease.agent_stdout, expired_lease.agent_stderr
+        ));
+    }
+    report.push_str("6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)\n");
 
     Ok(report)
 }

@@ -149,7 +149,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-18 18:20)
+## 5. 지금 상태 (2026-08-18 19:00)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -170,9 +170,9 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/runtime-policy` | **정책 강제 판정** (V-06) — artifact_scope · network · Lease.scope · VRAM/S1 분류. 실제 연결은 `crates/runtime-windows` 가 시작함 |
 | ├ `crates/runtime-windows` | **신규**(2026-08-18) — VRAM 판정을 실제 `CreateJobObjectW`/`SetInformationJobObject` 로 연결(소프트 제한 실측, 오버슈트 700~850KiB — `guarantees_hard_limit()==false` 재확인). **`open_beneath`/`open_artifact`** — `artifact_scope` TOCTOU 방어, reparse point(symlink·junction) 를 열기 시점에 실제로 거부(junction 으로 실측, 뮤테이션 테스트 포함). network(방화벽)만 미착수(시스템 설정 승인 필요) |
 | ├ `crates/cli` | **`gputeer selftest`** — 계층을 끝에서 끝까지 25개 검사로 통과. **127.0.0.1 실제 TCP 소켓 왕복** 포함. **`gputeer coordinator-agent-selftest`**(신규, 2026-08-18) — 별도 프로세스 2개(coordinator-stub·agent-stub)가 실제 handshake + **거부 경로 3종(위조 Grant·위조 ACK·replay) 자동 검증** |
-| ├ `crates/coordinator` | **신규**(2026-08-18) — `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`send_grant_twice`). lease·스케줄링·다중 Agent 미착수 |
-| ├ `crates/agent` | **신규**(2026-08-18) — `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. 정상 경로 + 테스트 전용 self-corruption 플래그(`corrupt_own_signature`·`expect_replay`). Job 실행 미착수 |
-| └ 미착수 | scheduler · UI · OS 방화벽 강제(network.rs). **핸드셰이크 단계 1~6 전부 완료**(2026-08-18) — 남은 것은 `docs/evidence/` schema v2 정식 기록뿐, 계획 자체의 범위(lease·다중 Agent·운영용 key protection·TLS)는 여전히 밖 |
+| ├ `crates/coordinator` | `ExecutionGrant` 서명 발급, `AgentGrantAck` 검증. **`Lease` 도 서명해 Grant 에 실어 보낸다**(2026-08-18, `issue_lease()`). 테스트 전용 self-corruption 플래그 5개. 갱신·다중 Agent 미착수 |
+| ├ `crates/agent` | `ExecutionGrant` 검증, `AgentGrantAck` 서명 응답. **nested `Lease` 를 outer Grant 와 독립 검증 + `FenceWatermark` 기록**(2026-08-18, `verify_and_record_lease()`, `gputeer-runtime-policy` 신규 의존). Job 실행 미착수 |
+| └ 미착수 | scheduler · UI · OS 방화벽 강제(network.rs) · lease 갱신(`RenewLeaseRequest` 왕복) · 다중 Agent. **핸드셰이크 단계 1~6 전부 완료**(2026-08-18) + **Lease 최소 조각 완료**(같은 날, `docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md`, 6/6 시나리오·뮤테이션 테스트 확인). `docs/evidence/` schema v2 정식 기록은 둘 다 아직 |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
 | **DoD** | 🟡 **evidence 18건** (PASS **17** · FAIL-SCOPE 1). 스키마 위반 0. schema v2 **4건**(DoD-09·10·**01**·**02**, 2026-08-18). ★ **v1 evidence 16건 전부 addendum 독립 재검수 `ACCEPTED`** — 40+ 라운드 누적. `P0-07` 은 x600 SSH 로 실제 재실측해 σ=0.0213(DoD 통과)을 확인하고 `status` 를 `INCONCLUSIVE`→`PASS` 로 복원. ★ **v1→v2 실제 승격 진행 중**(2026-08-18, 사용자 승인) — `DoD-01`·`DoD-02` 완료. 과거 executor/reviewer 메타데이터를 지어내지 않고, 오늘 새로 실행한 재검증+새 독립 검수(각 2라운드: CHANGES_REQUESTED→ACCEPTED)를 v2 근거로 삼는 절차 확립. `DoD-02` 승격 중 **진짜 코드 결함**도 하나 찾아 고쳤다 — `t1_signing_targets.rs::domain_coverage_is_explicit` 가 `Domain` enum 을 순회하지 않고 손으로 쓴 배열을 써서 `GrantAck` 추가를 놓치고 있었다. `_schema_v1_grandfathered.txt`·`GRANDFATHER_DIGEST` 갱신. 독립 검수 기록 없는 P0/DoD PASS 부채 **13→11건**. 다음 후보 `DoD-03` |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
@@ -199,13 +199,15 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
     이다. 그러나 2026-08-18부터 `gputeer coordinator-agent-selftest`
     가 그 다음 단계를 증명한다 — `crates/coordinator`·`crates/agent`
     가 신설됐고, 별도 OS 프로세스 2개가 실제 127.0.0.1 TCP 로 서명된
-    `ExecutionGrant`/`AgentGrantAck` 를 주고받는다. **정상 경로뿐
-    아니라 거부 경로 3종(위조 Grant·위조 ACK·replay wire bytes)도
-    프로세스 경계에서 자동 검증한다** — 5회 연속 4개 시나리오 전부
-    통과, 대표 시나리오는 뮤테이션 테스트로 비공허성까지 확인했다.
+    `ExecutionGrant`/`AgentGrantAck`/**`Lease`**(2026-08-18 추가)를
+    주고받는다. **정상 경로뿐 아니라 거부 경로 5종(위조 Grant·위조
+    ACK·replay wire bytes·위조 nested Lease 서명·만료된 Lease)도
+    프로세스 경계에서 자동 검증한다** — 5회 연속 6개 시나리오 전부
+    통과, 대표 시나리오들은 뮤테이션 테스트로 비공허성까지 확인했다.
     **그래도 여전히 최소 조각이다** — scheduler 는 여전히 없고,
-    운영용 key protection·lease 발급·다중 Agent 동시 처리·TLS 는
-    범위 밖이다. replay 방어는 `InMemoryReplayGuard` 기준(같은
+    운영용 key protection·lease **갱신**(`RenewLeaseRequest` 왕복,
+    발급은 이제 있다)·다중 Agent 동시 처리·TLS 는 범위 밖이다.
+    replay 방어는 `InMemoryReplayGuard` 기준(같은
     프로세스 수명 안)이지 재시작을 넘는 방어가 아니다 — 재시작을
     넘는 replay 는 `durable_replay_process.rs`(같은 날 별도 작업)가
     증명했다.
@@ -245,16 +247,20 @@ Linux 를 한 번도 돌려보지 않았다
 ### 다음에 할 일
 
 ```text
-1. 네트워크 전송 · coordinator 골격             ★ 단계 1~6 전부 완료(2026-08-18)
+1. 네트워크 전송 · coordinator 골격             ★ 핸드셰이크(단계 1~6) + Lease 최소 조각 완료(2026-08-18)
    docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md
+   docs/plans/2026-08-18_1800_coordinator_agent_lease_최소_조각_v1.md
    `gputeer coordinator-agent-selftest` 가 별도 PID 2개(coordinator-stub·
-   agent-stub)로 실제 handshake 에 성공하고, 거부 경로 3종(위조 Grant·
-   위조 ACK·replay wire bytes)도 프로세스 경계에서 자동 검증한다.
-   코덱스 독립 검수 통과(stderr 파이프 교착 위험 1건 수정). 남은 것:
-   DoD 마지막 항목(`docs/evidence/` schema v2 정식 기록)뿐 — "완전한
-   coordinator" 아님, lease·스케줄링·다중 Agent·운영용 key protection·
-   TLS 는 계획 자체가 처음부터 범위 밖으로 명시했다. 다음 네트워크
-   단계(스케줄링·다중 Agent 등)는 새 계획 문서가 필요하다.
+   agent-stub)로 실제 handshake 에 성공하고, 거부 경로 5종(위조 Grant·
+   위조 ACK·replay wire bytes·위조 nested Lease 서명·만료된 Lease)도
+   프로세스 경계에서 자동 검증한다(6/6, 5회 연속 확인, 뮤테이션
+   테스트로 비공허성 증명). 코덱스 독립 검수 통과(핸드셰이크는
+   stderr 파이프 교착 위험 1건 수정; Lease 조각은 API 를 미리 코드로
+   검증한 뒤 구현해 1회 실행에 바로 통과). 남은 것: 둘 다
+   `docs/evidence/` schema v2 정식 기록 안 함 — "완전한 coordinator"
+   아님, lease **갱신**(`RenewLeaseRequest` 왕복)·스케줄링·다중
+   Agent·운영용 key protection·TLS 는 여전히 범위 밖. 다음 후보는
+   Lease 계획 문서의 "Out" 절 참조 — 새 계획 문서가 각각 필요하다.
 2. runtime-policy 판정을 실제 시스템 호출로 연결  ★ VRAM·artifact_scope 의 primitive 완료(2026-08-18) — 방화벽만 남음
    crates/runtime-windows 신설:
    - VRAM: Job Object 커밋 상한 실제 연결·실측(뮤테이션 테스트 포함).

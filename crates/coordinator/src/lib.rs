@@ -52,6 +52,26 @@ pub struct CoordinatorConfig {
     ///   않는다 — 대신 replay 가 확실히 거부됐는지 확인한 뒤 `Err` 로
     ///   끝난다(정상 `RESULT ok=true` 를 절대 찍지 않는다).
     pub send_grant_twice: bool,
+
+    // ── Lease (2026-08-18, 코덱스 설계 · `p67` 프롬프트) ──────────
+    //
+    // `ExecutionGrant.lease` 는 proto 에 이미 있었지만 지금까지 이
+    // stub 은 채우지 않았다. `Lease` 는 이미 `Signable`(독립 서명
+    // 대상)이므로, 여기서 채우고 Agent 가 독립적으로 검증하는 것까지가
+    // "Grant 가 유효한 Lease 를 운반한다" 는 최소 한 걸음이다 — lease
+    // 발급·갱신 전체나 다중 Agent 는 여전히 범위 밖(계획 문서 "Out" 절).
+    pub lease_id: String,
+    pub job_id: String,
+    pub fence_epoch: u64,
+    /// ★ 테스트 전용 — nested `Lease` 서명 직후 마지막 바이트를
+    ///   뒤집는다. outer `Grant` 서명은 정상이므로, 이 시나리오는
+    ///   "outer 검증만으로는 안 잡히고 Agent 가 nested Lease 를
+    ///   **독립적으로** 검증해야만 잡히는가"를 시험한다.
+    pub corrupt_lease_signature: bool,
+    /// ★ 테스트 전용 — `Lease.expires_at_unix_ms` 를 발급 시각보다
+    ///   과거로 만든다. `Lease::LIFETIME == LongLived` 라 `verify()`
+    ///   가 만료 시각을 검사해야 거부된다.
+    pub expire_lease: bool,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -186,6 +206,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 }
 
 fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::ExecutionGrant {
+    let lease = issue_lease(config, key, now);
+
     let mut grant = pb::ExecutionGrant {
         schema_version: 1,
         grant_id: config.grant_id.clone(),
@@ -195,10 +217,55 @@ fn issue_grant(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Ex
         issued_at_unix_ms: now,
         expires_at_unix_ms: now + 60_000,
         nonce: derive_nonce("grant", &config.grant_id),
+        lease: Some(lease),
         ..Default::default()
     };
     grant.coordinator_signature = sign(key, &grant).to_vec();
     grant
+}
+
+/// `ExecutionGrant.lease` 에 실어 보낼 `Lease` 를 만들어 서명한다.
+///
+/// ★ **독립적으로 서명한다** — `Lease::coordinator_signature` 는
+///   outer `Grant::coordinator_signature` 의 계산에 들어가지 않는
+///   서명 대상 필드(§6 규칙 i, 중첩 메시지는 각자 서명된다)이므로,
+///   여기서 위조하면 outer Grant 서명은 여전히 유효한 채로 남는다 —
+///   `corrupt_lease_signature` 시나리오가 정확히 이 성질을 시험한다.
+fn issue_lease(config: &CoordinatorConfig, key: &SigningKey, now: u64) -> pb::Lease {
+    let expires_at = if config.expire_lease {
+        now.saturating_sub(1)
+    } else {
+        now + 60_000
+    };
+
+    let mut lease = pb::Lease {
+        schema_version: 1,
+        lease_id: config.lease_id.clone(),
+        job_id: config.job_id.clone(),
+        attempt_id: config.attempt_id.clone(),
+        fence_epoch: config.fence_epoch,
+        coordinator_term: 1,
+        holder_node_id: config.agent_device_id.clone(),
+        member_node_ids: vec![config.agent_device_id.clone()],
+        issuing_coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        expires_at_unix_ms: expires_at,
+        renew_after_unix_ms: now + 30_000,
+        max_total_duration_seconds: 86_400,
+        ..Default::default()
+    };
+
+    lease.coordinator_signature = sign(key, &lease).to_vec();
+
+    if config.corrupt_lease_signature {
+        let last = lease
+            .coordinator_signature
+            .last_mut()
+            .expect("Lease coordinator_signature 는 비어 있지 않다");
+        *last ^= 0x01;
+    }
+
+    lease
 }
 
 /// `grant_id`(호출자가 시나리오마다 다르게 준다)에서 16바이트 nonce 를
@@ -238,6 +305,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         attempt_id: flags.require("--attempt-id")?,
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
         send_grant_twice: flags.bool_flag("--send-grant-twice"),
+        lease_id: flags.require("--lease-id")?,
+        job_id: flags.require("--job-id")?,
+        fence_epoch: flags.u64_flag("--fence-epoch")?,
+        corrupt_lease_signature: flags.bool_flag("--corrupt-lease-signature"),
+        expire_lease: flags.bool_flag("--expire-lease"),
     };
 
     run(config)
@@ -258,6 +330,16 @@ impl Flags {
     /// 플래그는 여전히 필수 값을 가진다(`require`).
     fn bool_flag(&self, key: &str) -> bool {
         self.0.get(key).map(|v| v == "true").unwrap_or(false)
+    }
+
+    /// 정수 플래그. 안 주면 `0`(fence_epoch 의 첫 발급 기본값 —
+    /// `FenceWatermark` 는 0 에서 시작하므로 `0` 은 항상 유효한 첫
+    /// epoch 다).
+    fn u64_flag(&self, key: &str) -> Result<u64, String> {
+        match self.0.get(key) {
+            None => Ok(0),
+            Some(v) => v.parse::<u64>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
     }
 }
 
