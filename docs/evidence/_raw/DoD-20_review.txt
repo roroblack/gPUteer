@@ -1,0 +1,367 @@
+=== p119 (설계) ===
+## In/Out 범위
+
+In:
+
+- `proto/common.proto`, `job.proto`, `control.proto`, `artifact.proto`, `lease.proto`
+- `tools/canonical/reference_canonical.py`의 `SCHEMAS`, `DOMAIN_TAGS`
+- `crates/protocol/build.rs`
+- `scripts/verify_evidence.py`의 실행/출력 관례
+
+Out:
+
+- 코드 수정 및 새 파일 생성
+- `DOMAIN_TAGS`의 의미 자체 변경
+- canonical 인코딩 규칙 변경
+
+`reference_canonical.py`는 `SCHEMAS`를 직접 정의하고 있으며, “실제 `.proto`를 파싱하지 않고 필드 표를 손으로 둔다”고 명시합니다 (`reference_canonical.py:80-84`). `proto/README.md`는 없는 `check_schema.py`를 실행하도록 안내합니다 (`proto/README.md:69-70`).
+
+## 실측 결과
+
+현재 다음을 확인했습니다.
+
+- `.proto` 메시지 선언: 85개
+- `SCHEMAS` 메시지: 43개
+- `SCHEMAS`에만 있는 메시지: 0개
+- `.proto`에만 있는 메시지: 42개
+- `SCHEMAS`에 포함된 메시지들의 필드 번호·이름 불일치: 없음
+- 실제 타입 표기 불일치: 3건
+- 의도된 derived-field 예외: 1건
+
+### 표본 손 대조
+
+`Digest`는 표와 `.proto`가 일치합니다.
+
+- `reference_canonical.py:95-97`
+- `proto/common.proto:41-44`
+
+`JobManifest`도 필드 번호·이름·map 표기가 일치합니다.
+
+- `reference_canonical.py:177-206`
+- `proto/job.proto:42-97`
+
+예를 들어 `env_vars`는 표의 `map_ss`와 `.proto`의 `map<string, string>`이 대응합니다 (`reference_canonical.py:186`, `proto/job.proto:55-56`).
+
+`Lease`도 일치합니다.
+
+- `reference_canonical.py:209-224`
+- `proto/lease.proto:34-66`
+
+`RenewLeaseResult`도 일치합니다.
+
+- `reference_canonical.py:370-379`
+- `proto/lease.proto:103-119`
+
+### 실제 타입 drift 3건
+
+표에서는 모두 `bytes`로 되어 있지만 `.proto`에서는 `repeated bytes`입니다.
+
+| 메시지 | 표 | `.proto` |
+|---|---|---|
+| `RevokeDevice.signatures` | `reference_canonical.py:474-477`의 `bytes` | `proto/control.proto:310-315`의 `repeated bytes` |
+| `UpdatePolicy.signatures` | `reference_canonical.py:490-494`의 `bytes` | `proto/control.proto:332-338`의 `repeated bytes` |
+| `QuarantineDevice.verdict_signatures` | `reference_canonical.py:496-500`의 `bytes` | `proto/control.proto:349-354`의 `repeated bytes` |
+
+참조 구현도 이 세 필드가 다중 서명임을 알고 있습니다 (`reference_canonical.py:384-386`). 현재는 모두 field number 90이라 canonical 인코딩에서 제외되므로 실행 벡터에는 영향이 없지만, “필드 표와 `.proto` 정합성” 기준으로는 실제 drift입니다.
+
+### 의도된 필드 생략 1건
+
+`ExecutionGrant.manifest_hash`는 `.proto`에 있습니다.
+
+- `proto/job.proto:103-111`
+
+그러나 `SCHEMAS`에서는 의도적으로 제외되어 있습니다.
+
+- `reference_canonical.py:426-431`
+- `reference_canonical.py:511-512`
+
+이는 derived hash field이므로 일반 누락 오류가 아니라 명시적인 예외로 취급해야 합니다. 검사기는 단순히 “표에 없으면 전부 오류”로 구현하면 안 됩니다.
+
+### `.proto`에만 있는 메시지
+
+대표적으로 다음은 `SCHEMAS`에 없습니다.
+
+- `Ppm`: `proto/common.proto:376-377`
+- `DurabilityStatus`: `proto/artifact.proto:147-156`
+- `SubmitJobResult`: `proto/job.proto:213-218`
+- `FenceWatermark`, `FencedOperation`: `proto/lease.proto:175-196`
+- `ControlAction`: `proto/control.proto:238-268`
+- `ProposeRequest`, `ReadRequest`, `WatchRequest`, `ControlState` 등: `proto/control.proto:39-534`
+
+이는 현재 `SCHEMAS`가 모든 protobuf 메시지가 아니라 canonical/signing 대상과 그 nested helper만 보유하기 때문으로 보입니다. 따라서 기본 모드에서는 경고가 적절합니다.
+
+## 최소 구현 설계
+
+### 핵심 함수
+
+```python
+def load_reference() -> tuple[dict, dict, set]:
+    # reference_canonical.py를 import
+    # SCHEMAS, DOMAIN_TAGS, DERIVED_HASH_FIELDS 반환
+
+def build_descriptor_set(proto_dir: Path) -> descriptor_pb2.FileDescriptorSet:
+    # protoc --descriptor_set_out
+    # --include_imports
+    # --include_source_info
+
+def normalize_field(
+    owner: DescriptorProto,
+    field: FieldDescriptorProto,
+) -> tuple[int, str, str, str | None]:
+    # (number, name, normalized_kind, nested_ref)
+
+def compare_schema(
+    schemas: dict,
+    descriptors: descriptor_pb2.FileDescriptorSet,
+) -> Result:
+    # 메시지, 번호, 이름, 타입 비교
+
+def main() -> int:
+    # human 또는 --json 출력
+```
+
+### descriptor 생성
+
+```python
+subprocess.run(
+    [
+        protoc,
+        "--proto_path=.",
+        "--include_imports",
+        "--include_source_info",
+        f"--descriptor_set_out={temp_descriptor}",
+        "common.proto",
+        "job.proto",
+        "lease.proto",
+        "artifact.proto",
+        "control.proto",
+    ],
+    cwd=proto_dir,
+    check=True,
+)
+```
+
+이 방식은 `build.rs`의 입력 파일과 include 경로를 그대로 따르는 것이 좋습니다. `build.rs`는 동일한 5개 파일을 사용하고 `../../proto`를 include path로 지정합니다 (`crates/protocol/build.rs:13-25`).
+
+### 타입 매핑
+
+| protobuf descriptor 타입 | `SCHEMAS` kind |
+|---|---|
+| `uint32`, `uint64` | `uint` |
+| `int32`, `int64` | `int` |
+| `bool` | `bool` |
+| `string` | `string` |
+| `bytes` | `bytes` |
+| enum | `enum` |
+| message | `message` |
+| repeated string | `repeated_string` |
+| repeated message | `repeated_message` |
+| `map<string,string>` | `map_ss` |
+| repeated bytes | `repeated_bytes` |
+
+현재 kind 목록에는 `repeated_bytes`가 없으므로, 최소 구현에서는 세 서명 필드를 오류로 보고하는 것이 맞습니다. 장기적으로는 표를 `repeated_bytes`로 고치거나, 별도 canonical kind를 추가해야 합니다.
+
+Map은 descriptor에서 synthetic `map_entry` nested message로 나타나므로, 정규식보다 descriptor 방식이 특히 유리합니다.
+
+## 검사 항목과 심각도
+
+### 오류
+
+- `SCHEMAS` 메시지가 `.proto`에 없음
+- 같은 field number인데 이름이 다름
+- 같은 field name인데 번호가 다름
+- field type 또는 repeated 여부가 다름
+- nested message 참조가 다름
+- `SCHEMAS`에 있는 필드가 `.proto`에 없음
+- derived-field 예외로 허용된 필드가 실제로 존재하지 않거나 번호/타입이 예상과 다름
+
+### 경고
+
+- `.proto` 메시지가 `SCHEMAS`에 없음  
+  현재 42개가 여기에 해당합니다.
+- `DOMAIN_TAGS` 키가 `SCHEMAS`와 `.proto` 양쪽에 없음
+
+`DOMAIN_TAGS`는 필드 비교의 입력은 아닙니다. 다만 canonical 대상 메시지 coverage를 별도로 점검할 때 사용할 수 있습니다. 현재 `Audit`, `Genesis`, `Invite`, `Release`는 `DOMAIN_TAGS`에는 있지만 `SCHEMAS`나 `.proto` 메시지에는 없습니다 (`reference_canonical.py:624-651`). 따라서 이를 기본 오류로 만들면 현재 저장소가 즉시 실패합니다. 기본은 경고, 별도 `--strict-domain-tags`에서 오류가 적절합니다.
+
+## `.proto` 파서 대안 비교
+
+### descriptor 방식 — 권장
+
+장점:
+
+- 주석과 문자열 내부의 `message`, `=`를 무시함
+- import, enum, map, oneof, nested message를 구조적으로 해석함
+- `uint32`와 `uint64`, enum과 message를 정확히 구분함
+- `FileDescriptorSet`과 `descriptor_pb2`는 protoc의 정규 출력 형식임
+- `--include_source_info`로 `proto/control.proto:314` 같은 위치를 출력할 수 있음
+
+단점:
+
+- `protoc` 실행 파일이 필요함
+- 임시 descriptor 파일 생성이 필요함
+- protoc 버전 관리가 필요함
+
+### 정규식 파싱
+
+장점:
+
+- 외부 실행 파일이 필요 없음
+- 구현이 작음
+
+단점:
+
+- multiline 선언, 주석, map synthetic entry, oneof, nested message에 취약함
+- enum인지 message인지 별도 symbol table이 필요함
+- protobuf 문법이 확장될 때 계속 parser를 고쳐야 함
+
+따라서 정규식은 오류 메시지 보조용으로도 권장하지 않고, descriptor 방식을 정식 구현으로 삼는 것이 맞습니다.
+
+## `reference_canonical.py`와의 조합
+
+`check_schema.py`는 독립 실행 가능한 CLI여야 하지만, `SCHEMAS`를 복사해서 가지면 안 됩니다.
+
+권장 구조:
+
+```text
+check_schema.py
+  ├─ protoc로 descriptor 생성
+  ├─ reference_canonical.py import
+  ├─ SCHEMAS와 descriptor 비교
+  └─ 결과/종료 코드 출력
+```
+
+`reference_canonical.py`는 import 시 CLI를 실행하지 않고, 실제 CLI 진입점은 하단의 `if __name__ == "__main__"`입니다 (`reference_canonical.py:1769-1809`). 따라서 `SCHEMAS`, `DOMAIN_TAGS`, `DERIVED_HASH_FIELDS`를 import하는 것은 안전합니다.
+
+두 검사는 역할이 다릅니다.
+
+```text
+check_schema.py
+    field number/name/type ↔ proto 구조 정합성
+
+reference_canonical.py --self-test
+    canonical encoding 규칙 검증
+
+reference_canonical.py --verify vectors.json
+    저장된 테스트 벡터와 현재 구현 대조
+```
+
+CI에서는 다음 순서를 권장합니다.
+
+```text
+python tools/canonical/check_schema.py
+python tools/canonical/reference_canonical.py --self-test
+python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+```
+
+`check_schema.py`가 `--self-test`나 `--verify`를 내부 호출할 필요는 없습니다. 실패 원인을 분리하는 편이 낫습니다.
+
+## 종료 코드와 출력
+
+`verify_evidence.py`의 human/JSON 이중 출력과 `0/1` 성공·실패 관례를 따르는 것이 적절합니다 (`scripts/verify_evidence.py:753-801`, `:803-846`).
+
+권장 종료 코드:
+
+- `0`: schema 오류 없음. 경고는 허용
+- `1`: schema mismatch
+- `2`: 실행 환경 오류  
+  예: `protoc` 없음, descriptor 생성 실패, Python import 실패
+
+Human 출력 예시:
+
+```text
+schema 검사 — C:\...\proto
+==============================================================
+  FAIL field-type  proto/control.proto:314
+        RevokeDevice.signatures #90: proto=repeated bytes, schema=bytes
+  INFO derived-field proto/job.proto:111
+        ExecutionGrant.manifest_hash #4: intentionally excluded
+  ~ WARN proto-only-message proto/control.proto:39 ProposeRequest
+--------------------------------------------------------------
+오류 3건, 경고 42건
+schema 검사 실패
+```
+
+`--json`은 다음 정도면 충분합니다.
+
+```json
+{
+  "ok": false,
+  "errors": [
+    {
+      "kind": "field-type",
+      "file": "proto/control.proto",
+      "line": 314,
+      "message": "RevokeDevice.signatures",
+      "proto": "repeated bytes",
+      "schema": "bytes"
+    }
+  ],
+  "warnings": [],
+  "counts": {
+    "schema_messages": 43,
+    "proto_messages": 85
+  }
+}
+```
+
+## 이 개발 기계에서 완결 가능한가
+
+부분적으로는 가능하지만, “현재 read-only 감사 환경에서 descriptor 생성까지 완주했다”고 말할 수는 없습니다.
+
+확인된 환경:
+
+- `protoc`: `C:\Users\playdata2\anaconda3\Library\bin\protoc.exe`
+- 버전: `libprotoc 25.3`
+- Python: `C:\Users\playdata2\anaconda3\python.exe`
+- `google.protobuf`: `7.35.1`
+- `descriptor_pb2.FileDescriptorSet` import 가능
+
+`protoc --descriptor_set_out`와 `--include_imports`, `--include_source_info` 옵션도 존재합니다. 다만 현재 샌드박스는 read-only라 descriptor 출력 파일을 만들 수 없었습니다. `--descriptor_set_out=NUL` 시도도 파일 권한 오류로 끝났습니다. 이는 `.proto` 문법 오류가 아니라 감사 환경의 쓰기 제한입니다.
+
+추가 함정은 protoc 이중화입니다.
+
+- `check_schema.py`는 PATH의 system/anaconda `protoc 25.3`를 사용할 수 있음
+- Rust `build.rs`는 `protoc_bin_vendored`로 별도 vendored protoc를 사용함 (`crates/protocol/build.rs:9-11`)
+
+따라서 모든 환경에서 동일한 compiler를 쓴다고 보장할 수는 없습니다. 다만 검사 대상이 descriptor의 메시지·field number·name·type뿐이고, descriptor 출력에서 source info와 순서를 정규화하면 protoc 버전 차이의 영향은 작습니다. CI에서는 `protoc --version`을 출력하고, 최소 지원 버전을 명시하는 것이 안전합니다.
+
+결론적으로 설계와 구현은 저장소 코드만으로 완결 가능하지만, 현재 read-only 세션에서는 descriptor 파일 생성·파싱의 end-to-end 실행만 외부 writable 환경에서 한 번 더 검증해야 합니다.
+
+=== p120 (1라운드, CHANGES_REQUESTED) ===
+판정: **CHANGES_REQUESTED**
+
+핵심 결함은 실행 환경 오류가 exit(2)로 일관되게 변환되지 않는다는 점입니다.
+
+- `find_protoc()` 자체는 누락 시 exit(2)입니다([check_schema.py:81-86](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:81)).
+- `protoc` 실행 실패·컴파일 실패도 exit(2) 처리됩니다([check_schema.py:93-114](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:93)).
+- 그러나 `NamedTemporaryFile()`가 `try` 바깥에 있습니다([check_schema.py:93-94](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:93)). 실제 실행 결과 샌드박스의 임시 디렉터리 사용 불가로 처리되지 않은 `FileNotFoundError`가 발생했고, 의도한 exit(2)가 아닌 exit 1이었습니다.
+- `tmp_path.read_bytes()`/`MergeFromString()`의 `OSError`·protobuf decode 오류, `subprocess.run()`의 `PermissionError` 등도 현재는 exit(2)로 변환되지 않습니다.
+
+요구사항별 검토 결과:
+
+1. `find_protoc`/컴파일 오류 분리는 정상이나, 위의 임시 파일 및 기타 `OSError` 예외 누락으로 완전하지 않습니다.
+2. `nested_type` 재귀 인덱싱은 올바릅니다([check_schema.py:129-151](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:129)). `EnvVarsEntry`가 인덱싱되고, `real_messages` 필터에서 `map_entry` synthetic 메시지가 제외됩니다([check_schema.py:320-328](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:320)).
+3. `map_entry`와 string key/value 검사 로직은 정확합니다([check_schema.py:161-179](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:161)). 다른 map은 `map_?`가 되어 `map_ss`와 불일치합니다. 합성 descriptor 테스트에서도 확인했습니다.
+4. field 90은 번호와 이름을 먼저 검사하고 타입만 건너뜁니다([check_schema.py:225-241](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:225)). `manifest_hash`는 `DERIVED_HASH_FIELDS`를 통해 INFO로만 처리됩니다([check_schema.py:266-288](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:266)).
+5. 참조 구현은 field number 90을 조건 없이 건너뜁니다([reference_canonical.py:543-549](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/reference_canonical.py:543)). 예외의 근거는 충분합니다.
+6. `protoc`와 `google.protobuf`는 있었고 `cargo`는 없었습니다. 하지만 `check_schema.py`의 정상 실행은 **실행 검증 확인 안 됨**입니다. 임시 파일 생성 실패로 descriptor 비교까지 도달하지 못했습니다. 정적 대조상 예상되는 schema mismatch는 0건이며, 알려진 세 건의 `repeated bytes` 차이는 모두 field 90 예외 대상입니다.
+7. 반환 객체 구조는 `ok/errors/infos/warnings/counts`로 문서와 일치합니다([check_schema.py:338-347](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:338)).
+8. `field.type_name == ""` 자체는 크래시하지 않지만 빈 nested reference로 처리됩니다. 더 중요한 문제는 예외 처리가 부족하고, 짧은 이름 인덱스가 충돌하면 후자가 앞을 덮어쓴다는 점입니다([check_schema.py:138-140](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:138).
+
+최소 수정 방향은 descriptor 임시 파일 생성부터 읽기/파싱까지를 실행 환경 오류 처리 범위에 포함하고, `OSError` 및 descriptor decode 실패를 명시적으로 exit(2)로 변환하는 것입니다.
+
+=== p121 (2라운드, ACCEPTED) ===
+판정: **ACCEPTED**
+
+근거:
+
+- 임시 파일 생성 실패는 `OSError`를 잡아 `exit(2)`로 변환합니다: [check_schema.py:93-98](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:93)
+- `protoc` 실행, 비정상 종료, descriptor 읽기, `MergeFromString()`의 `DecodeError`가 모두 `exit(2)`입니다: [check_schema.py:100-132](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:100)
+- 생성 성공 이후 모든 정상·조기 종료 경로가 `finally`를 통과하며 `unlink(missing_ok=True)`를 호출합니다: [check_schema.py:133-136](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:133)
+
+검증 결과:
+
+- `google.protobuf 7.35.1`, `protoc 25.3` 확인.
+- 실제 실행은 샌드박스의 임시 디렉터리 생성 제한으로 exit 2가 됐습니다. 따라서 실제 정상경로 실행 검증은 확인되지 않았습니다.
+- 읽기 전용 모킹으로 정상 경로와 모든 지정된 오류 경로를 재현했고, descriptor 생성 후 조기 종료 시 임시 파일 정리 호출도 확인했습니다.
+- 짧은 이름 인덱스 충돌 시 후자가 덮어쓰는 알려진 한계는 여전히 문서화되어 있으며, 이번 판정을 막을 사유는 아닙니다: [check_schema.py:144-163](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/check_schema.py:144)
