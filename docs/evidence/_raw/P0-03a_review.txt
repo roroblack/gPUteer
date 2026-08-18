@@ -1,0 +1,40 @@
+독립 검수 receipt — P0-03a (schema v2 승격용 재검수)
+==========================================================================
+evidence_id      P0-03a
+reviewer_id      agent:codex-cli
+reviewer_tool    codex exec --sandbox read-only -c model_reasoning_effort=high
+reviewer_model   gpt-5.6-luna (OpenAI Codex v0.144.1)
+review_context   fresh-read-only (새 세션 · 저장소 쓰기 권한 없음)
+executed_at      2026-08-18 (KST, 정확한 타임스탬프는 codex 세션 로그 없음 — 확인 안 됨)
+
+검수 범위
+  docs/evidence/P0-03a_windows_fs_atomicity.md 문서 전체(원본 YAML
+  claim·negative_tests·limitations + 2026-08-18 01:30/01:40/01:50
+  addendum 3라운드 포함) 를 처음부터 다시 검수했다.
+  tools/probes/windows_fs_atomicity.py
+  crates/checkpoint/src/atomic.rs
+  crates/checkpoint/src/writer.rs
+  crates/checkpoint/tests/write_failure.rs
+  crates/checkpoint/tests/durability_chaos.rs
+
+--------------------------------------------------------------------------
+검수 (p89 프롬프트) — 판정: ACCEPTED
+--------------------------------------------------------------------------
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| claim(2026-08-18 01:30 좁힌 읽기) + ADR-026 반영 | 실재 확인됨 | write_once(atomic.rs:117), replace_with_retry(atomic.rs:213), Windows sync_dir(atomic.rs:285), writer 경로(writer.rs:100) 전부 현재 코드에 반영 |
+| P1b·P1c·P1d·P2·P3 프로브 구현 | 실재 확인됨 | windows_fs_atomicity.py:148,185,225,348,455 |
+| FILE_SHARE_DELETE limitation(서술로만 있고 독립 검증 테스트 없음) | 실재 확인됨 | write_failure.rs:5-20(모듈 문서 주석뿐), durability_chaos.rs:371(공유 모드 무관 설계), 저장소 전체 검색해도 독립 검증 테스트 없음 |
+| 축소 규모(--iterations 300) 재확인 패턴 | 실재 확인됨 | PASS/FINDING/FAIL/FAIL/PARTIAL/PASS/PASS, FAIL 2·PARTIAL 1, P1c·P1d 모두 부분 내용 0건 — 원본과 정성적으로 동일. 정확한 카운트가 아니라 패턴 재현이 목적이라는 설명도 타당 |
+| 이번 세션 직접 재실행 | 확인 안 됨 | 명령 실행 시도했으나 tempfile.mkdtemp() 단계에서 샌드박스에 사용 가능한 임시 디렉터리가 없어 중단(probe:566) — 샌드박스 제약이지 코드 결함 아님 |
+
+참고: P1c 가 negative_tests bullet 에 별도 항목으로 적혀 있지 않지만
+프로브 구현과 raw 결과에는 정상적으로 존재함 — claim 이나 raw
+패턴의 오류는 아니라고 판단.
+
+v2 승격 시 원본 frontmatter 의 넓은 claim(문서:3)이 아니라
+addendum 의 좁힌 claim(문서:183)을 근거로 삼아야 한다는 점을
+review_scope 에 명시할 것을 권고.
+
+추가 정정 불필요.

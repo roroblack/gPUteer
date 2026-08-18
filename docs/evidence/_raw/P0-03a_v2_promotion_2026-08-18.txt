@@ -1,0 +1,34 @@
+$ python tools/probes/windows_fs_atomicity.py --iterations 300
+(원래 v1 raw_output 은 --iterations 기본값 3000 으로 실행됐다.
+디스크가 이 세션 중 한 번 100% 소진된 적이 있어(P0-01 promotion
+항목 참조) 안정적 여유 확보를 우선해, 이번 재확인은 축소 규모
+--iterations 300 으로 실행했다 — 정성적 판정(PASS/FINDING/FAIL/
+PARTIAL 패턴)이 재현되는지만 확인하는 것이 목적이며, 정확한
+카운트(3000/3000 등)를 재현하는 것이 목적이 아니다.)
+
+[P5] 파일시스템: NTFS
+
+[P1a] 동시 독자 없음 — 성공 300/300, 거부 0. 판정: PASS
+[P1b] FILE_SHARE_DELETE 없는 독자 — 성공 33/300, 거부 267,
+      WinError 5(ACCESS_DENIED). 판정: FINDING(POSIX 와 다르다)
+[P1c] FILE_SHARE_DELETE 있는 독자 — 성공 56/300, 거부 244,
+      부분 내용 0건. 판정: FAIL
+[P1d] POSIX 시맨틱 rename(FileRenameInfoEx) — 성공 30/300,
+      GetLastError=32(SHARING_VIOLATION) 270건, 부분 내용 0건.
+      판정: FAIL
+[P2] 디렉터리 fsync — POSIX os.fsync(dir) 실패(Errno 13),
+      Win32 CreateFileW(BACKUP_SEMANTICS)+FlushFileBuffers 성공.
+      판정: PARTIAL
+[P3] 강제 종료 시 tmp 만 남음(READY, ckpt.bin.tmp), 확정 파일
+      없음. 판정: PASS
+[P4] 매니페스트 유무로 PARTIAL 식별 가능. 판정: PASS
+
+합계: probe 8개 · FAIL 2 · PARTIAL 1 — 원본 raw_output(FAIL 2 ·
+PARTIAL 1)과 정성적으로 동일한 패턴. "부분 내용 0건"(찢어진 쓰기
+없음, 원자성 자체는 유지)도 P1c·P1d 양쪽에서 재확인됨 — 이것이
+claim 의 핵심 결과(원자성은 유지되나 가용성 위험)를 뒷받침한다.
+
+이 파일은 P0-03a 를 schema v1 -> v2 로 승격하기 위해 2026-08-18
+에 새로 실행한 재검증 원문이다. 원래 v1 raw_output(commit
+2fd8476 무렵 기록, docs/evidence/_raw/P0-03a_probe.txt)은 문서
+본문에 이미 보존돼 있으며 고치지 않는다.

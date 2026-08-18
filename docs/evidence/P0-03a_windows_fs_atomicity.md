@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: P0-03a
 claim: "기준선 §18.2 의 체크포인트 확정 절차(tmp -> fsync -> rename -> fsync(dir))가 Windows/NTFS 에서 성립하는지 실측하고, 성립하지 않으면 수정안을 도출한다"
 status: PASS
 commit: 2fd847628b4cfec54cbafc41cb5c4b5a9c79f66a
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (Bash + python)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T00:00:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "★ 원본 claim(넓게 읽힐 수 있는 문장, 문서:3)이 아니라 2026-08-18 01:30 addendum 의 좁힌 claim(문서:183)을 근거로 삼는다 · ADR-026 반영 확인 · 프로브 구현 실재성 · FILE_SHARE_DELETE limitation 정밀화 재확인 · 축소 규모(--iterations 300) 재확인 패턴 검증"
+review_artifact: "docs/evidence/_raw/P0-03a_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/P0-03a_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:e449afeb83dc47f55f87d928823a80dd59f82c84e9d58c4cced804dbff34bf60"
+raw_output_bytes: 1973
+
 binary_digests:
   probe_script: "tools/probes/windows_fs_atomicity.py (Python, 미컴파일)"
 protocol_versions:
@@ -53,6 +73,8 @@ raw_output: |
 artifacts:
   - docs/evidence/_raw/P0-03a_probe.txt
   - tools/probes/windows_fs_atomicity.py
+  - docs/evidence/_raw/P0-03a_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/P0-03a_review.txt
 negative_tests:
   - "P1b: 독자가 FILE_SHARE_DELETE 없이 파일을 연 최악 조건에서 rename 이 2687/3000 실패하는 것을 확인 (정상 경로만 봤다면 놓쳤을 것)"
   - "P1d: POSIX 시맨틱 API 로도 SHARING_VIOLATION(32) 로 913/1000 실패 - '대안 API 를 쓰면 된다'는 가설을 반증"

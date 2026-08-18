@@ -299,7 +299,7 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08·P0-01·P0-03 완료(DoD 문서는 끝)
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08·P0-01·P0-03·P0-03a 완료(DoD 문서는 끝)
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
@@ -350,9 +350,14 @@ Linux 를 한 번도 돌려보지 않았다
    발견했다 — 원본 raw_output 의 "PARTIAL 7/8(88%)" 통계는 지금
    구현이 재현하는 수치가 아니다(결함은 아니고, 다른 세션이 카오스
    테스트의 부하 아래 재개 지점 유실 문제를 잡으려고 바꾼 것).
-   addendum 으로 정밀화했다. 독립 검수 없는 P0/DoD PASS 부채
-   13→...→4→**3건**(`P0-03a·07·08` 만 남음). 다음은 이 셋(review
-   강제 대상, `ENV-01·02` 는 비강제) — 같은 절차로 이어간다.
+   addendum 으로 정밀화했다. `P0-03a` 는 로컬에서 재실행 가능한
+   순수 파일시스템 조사라 실제로 다시 돌렸다 — 다만 원본 기본값
+   (`--iterations 3000`, 약 1만회 파일 연산)은 디스크 사고를
+   감안해 축소 규모(`--iterations 300`)로, 정확한 카운트가 아니라
+   정성적 패턴 재현을 목적으로 재실행했다. 1라운드 만에
+   `ACCEPTED`. 독립 검수 없는 P0/DoD PASS 부채
+   13→...→3→**2건**(`P0-07·08` 만 남음). 다음은 이 둘(review 강제
+   대상, `ENV-01·02` 는 비강제) — 같은 절차로 이어간다.
 6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
    `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의
    `SCHEMAS` 에도, `tests/vectors/canonical_v1.json` 벡터에도 없다.

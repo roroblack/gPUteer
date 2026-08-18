@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-19 02:05 — P0-03a schema v1 → v2 승격 완료 (축소 규모 재확인)
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-03` 에
+  이은 세 번째.
+- 스트림: —.
+- 수행: `tools/probes/windows_fs_atomicity.py` 는 로컬에서 재실행
+  가능한 순수 파일시스템 조사라 `P0-01`(원격 GPU) 과 달리 실제로
+  다시 돌렸다 — 다만 원본 기본값(`--iterations 3000`, 약 10000회
+  파일 연산)은 이 세션 중 있었던 디스크 100% 소진 사고를 감안해
+  **축소 규모(`--iterations 300`)로 재실행**했다. 정확한 카운트
+  재현이 아니라 정성적 패턴(PASS/FINDING/FAIL/FAIL/PARTIAL/PASS/
+  PASS, "부분 내용 0건") 재현이 목적임을 명시하고
+  `docs/evidence/_raw/P0-03a_v2_promotion_2026-08-18.txt` 에 저장했다.
+  전체 재검수(`agent:codex-cli`, fresh-read-only, `p89` 프롬프트,
+  원본 claim·negative_tests·limitations + 2026-08-18 addendum 3라운드
+  전부 대상) — **`ACCEPTED`**(1라운드 만에 통과, 이 promotion
+  사이클에서 두 번째로 1라운드 통과).
+- claim·ADR-026 반영(`write_once`/`replace_with_retry`/Windows
+  `sync_dir`)·프로브 구현·`FILE_SHARE_DELETE` limitation 정밀화가
+  전부 재확인됐고, 축소 규모 재확인도 원본과 정성적으로 동일한
+  패턴임이 확인됐다. Codex 자신의 read-only 샌드박스는
+  `tempfile.mkdtemp()` 단계에서 쓸 수 있는 임시 디렉터리가 없어
+  직접 재실행은 못 했다(샌드박스 제약) — 이 세션이 이미 로컬에서
+  실행한 결과를 근거로 판단했다.
+- v2 frontmatter(순수 additive, `review_scope` 에 "원본 넓은 claim
+  이 아니라 addendum 의 좁힌 claim 을 근거로 삼는다"를 명시) 추가,
+  `artifacts:` 에 raw/review 파일 2개 추가.
+  `_schema_v1_grandfathered.txt` 에서 P0-03a 제거(5→4건),
+  `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **3 → 2건**(`P0-07·08` 만 남음). `cargo test
+  --workspace` 전체 재실행 — 307 passed / 0 failed(회귀 없음),
+  디스크 18GB 여유 유지 확인.
+- 리포트: 이 이력 항목. 다음은 `P0-07·08` — 이 둘만 남으면
+  review-강제 대상 evidence 부채가 완전히 해소된다.
+
+---
+
 ## 2026-08-19 01:35 — P0-03 schema v1 → v2 승격 완료 — kill_chaos 카오스 메커니즘이 시간 기반→이벤트 기반으로 바뀐 것을 정밀화
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-01` 에
