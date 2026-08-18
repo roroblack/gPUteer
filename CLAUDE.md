@@ -299,7 +299,7 @@ Linux 를 한 번도 돌려보지 않았다
    한다. Linux 를 여전히 한 번도 안 돌려봤다.
 4. 별도 **프로세스** replay 경쟁 실측            ★ **완료**(2026-08-18) — 8프로세스, 뮤테이션 테스트로 비공허성 확인.
    `crates/crypto/tests/durable_replay_process.rs` + `src/bin/durable_replay_process_fixture.rs`
-5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08·P0-01·P0-03·P0-03a 완료(DoD 문서는 끝)
+5. v1 evidence — ★ 16건 전부 addendum ACCEPTED(2026-08-18). **v1→v2 승격 진행 중** — DoD-01~08·P0-01·P0-03·P0-03a·P0-07 완료(DoD 문서는 끝)
    과거 시점 executor/reviewer 메타데이터를 지어내지 않는 절차를
    확립했다 — 오늘 새로 실행한 재검증 + 오늘 새로 받은 독립 검수를
    v2 근거로 쓴다. `DoD-02` 승격 중 `t1_signing_targets.rs` 의 진짜
@@ -355,9 +355,14 @@ Linux 를 한 번도 돌려보지 않았다
    (`--iterations 3000`, 약 1만회 파일 연산)은 디스크 사고를
    감안해 축소 규모(`--iterations 300`)로, 정확한 카운트가 아니라
    정성적 패턴 재현을 목적으로 재실행했다. 1라운드 만에
-   `ACCEPTED`. 독립 검수 없는 P0/DoD PASS 부채
-   13→...→3→**2건**(`P0-07·08` 만 남음). 다음은 이 둘(review 강제
-   대상, `ENV-01·02` 는 비강제) — 같은 절차로 이어간다.
+   `ACCEPTED`. `P0-07` 은 이미 이 세션 안에서 두 번 addendum
+   시퀀스(raw_output 수치 불일치 → status PASS→INCONCLUSIVE 정정
+   → 실제 x600 SSH 재실측 → claim 재확인 → status 다시 PASS)를
+   거쳤으므로, 그 기존 재실측을 근거로 재사용하고 문서 전체를
+   세 번째로 재검수만 시켰다 — 1라운드 만에 `ACCEPTED`. 독립 검수
+   없는 P0/DoD PASS 부채 13→...→2→**1건**(`P0-08` 만 남음). 승격
+   완료하면 review-강제 대상 부채가 **0건**이 된다(`ENV-01·02` 는
+   비강제라 별개).
 6. `AgentGrantAck` 의 Python 참조 구현 교차검증 공백           ★ 신규(2026-08-18, DoD-05 v2 승격 재검수 중 발견)
    `AgentGrantAck` 는 `tools/canonical/reference_canonical.py` 의
    `SCHEMAS` 에도, `tests/vectors/canonical_v1.json` 벡터에도 없다.

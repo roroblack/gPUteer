@@ -1,8 +1,28 @@
 ---
+schema_version: 2
 id: P0-07
 claim: "기준선 §12.3 Stage-2 의 50-step calibration 이 전체 실행시간을 상대오차 σ <= 0.20 으로 예측한다"
 status: PASS
 commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
+
+executor_id: "agent:claude-code"
+executor_tool: "claude-code (SSH x600 재실측 + Bash)"
+executor_model: "claude-sonnet-5"
+executed_at: "2026-08-18T06:48:00+09:00"
+
+review_required: true
+reviewer_id: "agent:codex-cli"
+reviewer_tool: "codex exec --sandbox read-only -c model_reasoning_effort=high"
+reviewer_model: "gpt-5.6-luna (OpenAI Codex v0.144.1)"
+review_context: "fresh-read-only"
+review_outcome: "ACCEPTED"
+review_scope: "status PASS/INCONCLUSIVE 왕복 일관성 · claim 범위(재실측이 RUN1만 반복) · raw_output 수치 불일치 미해결 상태 정직성 · x600 실행 진정성 한계 인정 · verify_evidence.py 재확인"
+review_artifact: "docs/evidence/_raw/P0-07_review.txt"
+
+raw_output_artifact: "docs/evidence/_raw/P0-07_v2_promotion_2026-08-18.txt"
+raw_output_digest: "sha256:555c8c1ad5294af679170220d169b1d406a246c0359a9cc68ebcb3c19ad6cda5"
+raw_output_bytes: 1527
+
 binary_digests:
   probe_path: "tools/probes/p0_07_runtime_estimation.py"
   torch: "2.13.0+cu126"
@@ -54,6 +74,9 @@ raw_output: |
 artifacts:
   - docs/evidence/_raw/P0-07_probe.txt
   - tools/probes/p0_07_runtime_estimation.py
+  - docs/evidence/_raw/P0-07_probe_2026-08-18_rerun.txt
+  - docs/evidence/_raw/P0-07_v2_promotion_2026-08-18.txt
+  - docs/evidence/_raw/P0-07_review.txt
 negative_tests:
   - "지속시간 스케일링(400 -> 40,000 step)을 측정해 '짧은 구간에서 정확하다'가 '긴 구간을 보장한다'가 아님을 확인. RUN 1(총 3초)의 σ=0.021 이 RUN 2(총 5분)에서 9.3% 오차로 악화되는 것을 관측"
   - "step drift 를 오차와 분리 측정해 오차의 원인이 '드리프트 누적'이 아니라 'calibration 구간 편향'임을 특정 (drift -10.2% vs error -9.3% 로 거의 일치)"

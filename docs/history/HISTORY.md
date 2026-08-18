@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-19 02:35 — P0-07 schema v1 → v2 승격 완료 (기존 재실측 근거 재사용, 1라운드 ACCEPTED)
+
+- 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-03a` 에
+  이은 네 번째, `P0-08` 하나만 남기는 마지막 P0 승격.
+- 스트림: —.
+- 수행: `P0-07` 은 이미 같은 세션 안에서 두 번의 addendum 시퀀스
+  (총 8라운드 재검수 — raw_output 수치 불일치 발견→status를
+  PASS→INCONCLUSIVE 로 정정, 이어서 실제 x600 SSH 재실측→claim
+  재확인→status 를 다시 PASS 로 복귀)를 거쳤다. 이번 v2 승격은
+  그 기존 재실측(`_raw/P0-07_probe_2026-08-18_rerun.txt`, 2026-08-18
+  06:48 실행)을 근거로 재사용하고 중복 실행하지 않았다 — 대신
+  문서 전체(원본 YAML + 두 addendum 시퀀스 전부)를 v2 승격
+  관점에서 세 번째로 처음부터 재검수시켰다(`agent:codex-cli`,
+  fresh-read-only, `p90` 프롬프트) — **`ACCEPTED`**(1라운드 만에
+  통과, 이 promotion 사이클에서 세 번째로 1라운드 통과).
+- status(PASS)의 두 번 왕복이 일관되게 기록됐는지, claim 범위
+  축소(재실측이 RUN1 만 반복했다는 제한 포함)가 정직한지,
+  raw_output 수치 불일치가 "미해결로 남아 있다"는 구분이 얼버무려
+  지지 않았는지, x600 원격 실행 자체의 진정성을 이 evidence
+  스키마가 보장 못한다는 자기 인정이 `RULE.md` §7.3/`ADR-030` 의
+  실제 요구사항과 맞는지 — 전부 재확인됐다. `python
+  scripts/verify_evidence.py` 를 직접 실행해 exit 0·`status: PASS`
+  집계·스키마 위반 0 도 재확인했다.
+- v2 frontmatter(순수 additive, `executed_at` 을 실제 재실측
+  시각인 2026-08-18 06:48 로 기록) 추가, `artifacts:` 에 기존
+  rerun 파일 + 새 raw/review 파일 3개 추가.
+  `_schema_v1_grandfathered.txt` 에서 P0-07 제거(4→3건),
+  `GRANDFATHER_DIGEST` 재계산·갱신.
+- 검증: `python scripts/verify_evidence.py` — 스키마 위반 0, 독립
+  검수 없는 PASS 부채 **2 → 1건**(`P0-08` 만 남음). `cargo test
+  --workspace` 전체 재실행 — 307 passed / 0 failed(회귀 없음),
+  디스크 18GB 여유 유지 확인.
+- 리포트: 이 이력 항목. 다음은 `P0-08` 하나 — 승격하면 review-강제
+  대상 evidence 부채가 **완전히 0건**이 된다(`ENV-01·02` 는 비강제
+  라 별개로 남을 수 있다).
+
+---
+
 ## 2026-08-19 02:05 — P0-03a schema v1 → v2 승격 완료 (축소 규모 재확인)
 
 - 계획: CLAUDE.md 백로그 5번(v1→schema v2 실제 승격). `P0-03` 에

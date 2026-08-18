@@ -1,0 +1,24 @@
+P0-07 은 이미 이 세션 안에서 2026-08-18 06:48 에 x600 SSH 원격
+재실측을 실제로 수행했다 — 그 결과는
+docs/evidence/_raw/P0-07_probe_2026-08-18_rerun.txt 에 원문 그대로
+저장돼 있고, 문서 본문의 "★ 재실측으로 claim 재확인" addendum
+(2026-08-18 06:48~07:55, 4라운드 재검수 끝에 최종 ACCEPTED)이 그
+결과를 이미 상세히 다뤘다.
+
+이번 schema v2 승격의 "오늘 재검증"은 그 기존 재실측을 근거로
+삼는다 — 같은 날 이미 실행한 것을 중복 실행하지 않는다. 대신
+이번에는 문서 전체(원본 YAML claim·negative_tests·limitations +
+지금까지의 두 addendum 시퀀스, 총 8라운드 재검수 이력)를 v2 승격
+관점에서 처음부터 다시 검수해 달라고 요청한다 — 특히 최종
+frontmatter 상태(status: PASS, claim 이 좁혀 읽혀야 한다는 점,
+raw_output 수치 불일치가 미해결로 남아 있다는 점)가 서로 모순
+없이 정리되어 있는지가 핵심이다.
+
+$ python scripts/verify_evidence.py 로 이 문서가 스키마 위반 없이
+파싱되는지도 확인했다(2026-08-18, 이 세션):
+  ok   P0-07_runtime_estimation_accuracy.md     PASS
+
+참고: 이 evidence 는 실제 GPU 하드웨어 실측이라 cargo test 류의
+재실행 대상이 아니다. Rust/Python 코드 자체의 변경도 없으므로
+cargo test --workspace 재확인은 이 승격과 무관하다(이미 다른
+evidence 들의 v2 승격에서 반복 확인됨, 306→307 passed 안정).
