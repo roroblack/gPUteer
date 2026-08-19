@@ -227,7 +227,7 @@ fn run_handshake(
     })
 }
 
-/// 32가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
+/// 34가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
 /// 이유를 담아 반환한다.
 pub fn run() -> Result<String, String> {
     let fixture = Fixture::new()?;
@@ -1745,6 +1745,154 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str(
         "32) renew_rounds=2의 첫 회차 SUPERSEDED 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
+    );
+
+    // ══════════════════════════════════════════════════════════════
+    // Active Lease process-restart rehydration (2026-08-19)
+    //
+    // 기존 Grant/ACK handshake를 그대로 재사용한다. 첫 번째 프로세스
+    // 쌍은 ACK를 실제로 받은 뒤 Coordinator가 의도적으로 연결을 닫고,
+    // 두 번째 새 프로세스 쌍은 같은 lease/fence DB를 열어 저장된 Lease를
+    // 복원한다. 새 proto 메시지나 자동 재접속은 이 조각에 없다.
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 33. ACK 뒤 단절 후 새 프로세스 쌍의 active Lease 복원 ───────
+    let reconnect_dir_33 = tempfile::tempdir()
+        .map_err(|e| format!("재접속 시나리오 임시 디렉터리 생성 실패(33): {e}"))?;
+    let lease_db_path_33 = reconnect_dir_33.path().join("lease.sqlite3");
+    let fence_db_path_33 = reconnect_dir_33.path().join("fence.sqlite3");
+    let lease_db_33 = lease_db_path_33
+        .to_str()
+        .ok_or_else(|| "재접속 lease store 경로가 UTF-8이 아니다(33)".to_string())?;
+    let fence_db_33 = fence_db_path_33
+        .to_str()
+        .ok_or_else(|| "재접속 fence watermark 경로가 UTF-8이 아니다(33)".to_string())?;
+
+    let disconnected_33 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_33,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--disconnect-after-ack",
+            "true",
+        ],
+        &["--fence-db", fence_db_33, "--do-renew", "true"],
+    )?;
+    if !disconnected_33.coordinator_success
+        || !disconnected_33
+            .coordinator_stdout
+            .contains("DISCONNECT_AFTER_ACK coordinator_acknowledged=true")
+        || disconnected_33.agent_success
+        || disconnected_33.agent_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "ACK 뒤 의도적 연결 단절이 정상적으로 관측되지 않았다(33) — Coordinator는 ACK 후 종료하고 Agent는 기존 오류 전파로 종료해야 한다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            disconnected_33.coordinator_success,
+            disconnected_33.coordinator_stdout,
+            disconnected_33.coordinator_stderr,
+            disconnected_33.agent_success,
+            disconnected_33.agent_stdout,
+            disconnected_33.agent_stderr
+        ));
+    }
+
+    let rehydrated_33 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_33,
+            "--fence-epoch",
+            "3",
+            "--do-renew",
+            "false",
+        ],
+        &["--fence-db", fence_db_33, "--do-renew", "false"],
+    )?;
+    if rehydrated_33.coordinator_pid == disconnected_33.coordinator_pid
+        || rehydrated_33.agent_pid == disconnected_33.agent_pid
+        || !rehydrated_33.coordinator_success
+        || !rehydrated_33.agent_success
+        || !rehydrated_33.agent_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "연결 단절 뒤 새 Coordinator/Agent 프로세스 쌍이 저장된 Lease를 복원하지 못했다(33) — \
+             새 PID, 같은 DB, CLI fence_epoch=3이어도 저장된 epoch=5 Grant/ACK가 성공해야 한다.\n\
+             1차 coordinator_pid={} agent_pid={}\n\
+             2차 coordinator_pid={} agent_pid={}\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            disconnected_33.coordinator_pid,
+            disconnected_33.agent_pid,
+            rehydrated_33.coordinator_pid,
+            rehydrated_33.agent_pid,
+            rehydrated_33.coordinator_success,
+            rehydrated_33.coordinator_stdout,
+            rehydrated_33.coordinator_stderr,
+            rehydrated_33.agent_success,
+            rehydrated_33.agent_stdout,
+            rehydrated_33.agent_stderr
+        ));
+    }
+    report.push_str(
+        "33) ACK 직후 의도적 연결 단절 후 새 프로세스 쌍이 같은 lease/fence DB에서 active Lease를 복원하고, 잘못된 CLI fence_epoch=3 대신 저장된 epoch=5로 Grant/ACK 성공\n",
+    );
+
+    // ── 34. 같은 lease_id를 다른 holder identity로 주장 ─────────────
+    // `get_or_issue()`의 기존 holder_node_id IdentityConflict가 실제
+    // Coordinator 발급 호출부에서 동작하는지 확인한다. 새 Agent도 같은
+    // 잘못된 identity를 사용해 Grant의 holder 검증에서 먼저 가려지지
+    // 않도록 한다 — 거부 주체가 Coordinator임을 확인하는 시나리오다.
+    let wrong_holder_id = "01JOTHERAGENTSELFTEST00000001";
+    let wrong_holder_34 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_33,
+            "--fence-epoch",
+            "5",
+            "--agent-device-id",
+            wrong_holder_id,
+            "--do-renew",
+            "false",
+        ],
+        &[
+            "--fence-db",
+            fence_db_33,
+            "--agent-device-id",
+            wrong_holder_id,
+            "--do-renew",
+            "false",
+        ],
+    )?;
+    if wrong_holder_34.coordinator_success
+        || !wrong_holder_34
+            .coordinator_stderr
+            .contains("holder_node_id")
+        || !wrong_holder_34
+            .coordinator_stderr
+            .contains("lease store 최초 발급 실패")
+        || wrong_holder_34.agent_success
+    {
+        return Err(format!(
+            "같은 lease_id의 다른 holder_node_id가 Coordinator에서 거부되지 않았다(34).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            wrong_holder_34.coordinator_success,
+            wrong_holder_34.coordinator_stdout,
+            wrong_holder_34.coordinator_stderr,
+            wrong_holder_34.agent_success,
+            wrong_holder_34.agent_stdout,
+            wrong_holder_34.agent_stderr
+        ));
+    }
+    report.push_str(
+        "34) 같은 lease_id를 다른 holder_node_id로 재접속 주장 시 Coordinator의 기존 IdentityConflict 거부 확인\n",
     );
 
     Ok(report)

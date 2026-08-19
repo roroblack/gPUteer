@@ -1,0 +1,276 @@
+########## p142 (설계 조사, read-only) — 재접속 최소 조각 범위 설계 ##########
+결론부터 말하면, 전체적인 “재접속 프로토콜”은 오늘 조각보다 큽니다. 다만 첫 단계로 `활성 Lease를 가진 Agent 프로세스를 끊고, 새 Coordinator/Agent 프로세스가 같은 DB에서 같은 Lease를 복원하는 것`은 하루 규모로 가능합니다.
+
+권장 순서는 다음입니다.
+
+1. 프로세스 재시작 후 Lease 복원
+2. 같은 프로세스 안의 자동 재연결·backoff
+3. revoke/만료/동시 Agent까지 포함한 완전한 failover
+
+## 현재 코드 실측
+
+Coordinator는 영속 저장소를 먼저 열고, TCP listener를 bind한 뒤, `accept()`를 정확히 한 번만 호출합니다. 이후 Grant를 발급하고 ACK를 받고, 같은 연결에서 선택적으로 renew를 처리합니다.
+
+- [`coordinator/src/lib.rs:187`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:187) — `TcpListener::bind`
+- [`coordinator/src/lib.rs:200`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:200) — 단일 `accept`
+- [`agent/src/lib.rs:128`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:128) — 단일 `TcpStream::connect`
+
+현재 연결이 끊기면 재시도하지 않고 `?` 전파로 `run()`이 종료됩니다.
+
+- EOF/정상적인 peer 종료: `프레임이 완결되기 전에 스트림이 끊겼다`
+- timeout/강제 단절: `FramingError::Io` 또는 TCP write 오류
+- Agent 쪽에는 `Coordinator 연결 실패`, `Grant 프레임 읽기/검증 실패`, `RenewLeaseResult 프레임 읽기/검증 실패` 같은 래핑 오류가 발생합니다.
+- Coordinator 쪽에는 `ACK 프레임 읽기/검증 실패`, `RenewLeaseRequest 프레임 읽기/검증 실패` 등이 발생합니다.
+
+프레임 계층은 EOF를 [`FramingError::Truncated`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/framed_ingress.rs:120)로 변환합니다.
+
+## 이미 재사용 가능한 것
+
+`CoordinatorLeaseStore`는 다음을 이미 보존합니다.
+
+- `lease_id`
+- `job_id`
+- `attempt_id`
+- `holder_node_id`
+- `fence_epoch`
+- `expires_at_unix_ms`
+- `issuing_coordinator_id`
+- `coordinator_term`
+- `issued_at_unix_ms`
+- `renew_after_unix_ms`
+- `max_total_duration_seconds`
+
+스키마는 [`lease_store.rs:144-156`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:144)에 있고, `get_or_issue()`는 같은 `lease_id`가 이미 있으면 identity를 검사한 뒤 저장된 레코드를 그대로 반환합니다([`lease_store.rs:187`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:187)).
+
+따라서 현재 발급 경로는 이미 다음 동작을 합니다.
+
+```text
+새 Coordinator
+  -> 같은 lease-db에서 lease_id 조회
+  -> 기존 Lease identity/epoch/시각 복원
+  -> 새 coordinator_signature 생성
+  -> 기존 Lease를 Grant에 넣어 전송
+```
+
+즉, 활성 Lease의 “재발급이 아닌 재수화(rehydration)”에는 새 DB 개념이 필요하지 않습니다.
+
+단, 이 저장소에는 다음이 없습니다.
+
+- 연결/session ID
+- reconnect token
+- Agent의 마지막 Lease 전체 상태
+- revoked 상태
+- active connection owner
+- Coordinator signing key 자체
+
+## Agent의 절반은 이미 해결됨
+
+`DurableFenceWatermark`는 Agent가 `job_id -> 최대 fence_epoch`를 SQLite에 저장합니다.
+
+- 낮은 epoch: 거부
+- 같은 epoch: 허용
+- 높은 epoch: watermark 전진
+
+구현은 [`durable_lease_scope.rs:119-163`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-policy/src/durable_lease_scope.rs:119)에 있습니다. Agent는 네트워크 연결보다 먼저 이 DB를 열고, Grant의 Lease를 검증할 때 watermark를 갱신합니다.
+
+따라서 새 Agent 프로세스가 오래된 epoch의 Grant를 받아도 재시작 후 통과하지 못합니다.
+
+다만 watermark는 “이 Agent가 어떤 `lease_id`를 보유했는가”를 저장하지 않습니다. 그래서 fencing 안전은 절반 해결됐지만, Lease identity와 revoke 상태의 복원은 아직 아닙니다.
+
+## 권장 최소 조각
+
+### 이름
+
+`Active Lease process-restart rehydration`
+
+### 핵심 결정
+
+이번 조각에서는 새 메시지를 만들지 않고, 기존 Grant/ACK handshake를 재사용합니다.
+
+재접속을 다음처럼 정의합니다.
+
+```text
+연결 단절
+  -> 기존 Coordinator/Agent 프로세스 종료
+  -> 새 Coordinator/Agent 프로세스 시작
+  -> 같은 --lease-db, 같은 --fence-db 사용
+  -> 기존 Lease를 Grant로 재수화
+```
+
+Agent가 새 연결의 첫 메시지로 `RenewLeaseRequest`를 보내는 방식은 다음 조각으로 미루는 것이 좋습니다.
+
+이유는 다음과 같습니다.
+
+- 현재 Coordinator는 항상 Grant를 먼저 보냅니다.
+- 새 Agent의 watermark에는 `job_id`, `attempt_id`, 만료시각이 없습니다.
+- `RenewLeaseRequest`는 재접속인지 정상 갱신인지 구분하지 않습니다.
+- `RENEWED` 응답은 만료시각을 연장하므로, 재접속과 갱신 정책을 결합하게 됩니다.
+- 같은 프로세스에서 재연결하면 현재 결정적 nonce와 `InMemoryReplayGuard`가 충돌할 수 있습니다.
+
+따라서 첫 조각에서는 “재접속했다”는 별도 wire 의미를 만들지 않고, “Coordinator가 저장된 활성 Lease를 다시 Grant한다”고 정의하는 편이 가장 작고 안전합니다.
+
+### 의사코드
+
+```rust
+// 첫 번째 프로세스 쌍
+first = run_handshake_with_disconnect(
+    coordinator: {
+        lease_db: L,
+        fence_epoch: 5,
+        disconnect_after_ack: true,
+    },
+    agent: {
+        fence_db: F,
+    },
+);
+
+// 연결 단절은 의도된 장애이므로 실패 또는 DISCONNECT_INJECTED를 기대
+assert_expected_disconnect(first);
+
+// 두 번째 프로세스 쌍
+second = run_handshake(
+    coordinator: {
+        lease_db: L,
+        fence_epoch: 3, // 저장소보다 일부러 낮게 지정
+    },
+    agent: {
+        fence_db: F,
+    },
+);
+
+assert!(second.coordinator_success);
+assert!(second.agent_success);
+assert_ne!(first.coordinator_pid, second.coordinator_pid);
+assert_ne!(first.agent_pid, second.agent_pid);
+
+stored = CoordinatorLeaseStore::open(L).get(lease_id);
+assert_eq!(stored.fence_epoch, 5);
+assert_eq!(stored.lease_id, lease_id);
+assert_eq!(stored.issued_at_unix_ms, original_issued_at);
+```
+
+두 번째 Coordinator가 저장소를 무시하면 epoch 3을 Grant에 넣게 되고, 두 번째 Agent의 durable watermark가 이를 거부합니다. 이 한 가지 조합으로 Coordinator 저장소 복원과 Agent fencing을 함께 관찰할 수 있습니다.
+
+## 범위
+
+### In
+
+- 활성·미만료 Lease의 프로세스 재시작 후 복원
+- 같은 `lease_id`, `job_id`, `attempt_id`, `holder_node_id`
+- 같은 `--lease-db`와 `--fence-db`
+- Coordinator CLI epoch보다 저장된 epoch가 우선하는지 확인
+- 기존 Grant/ACK 서명 및 Agent watermark 검증 재사용
+- 의도적인 연결 단절 주입
+- 잘못된 holder identity에 대한 fail-closed negative test
+
+### Out
+
+- Agent 내부 자동 reconnect loop
+- backoff, retry, jitter, cancellation
+- 같은 Coordinator 프로세스가 여러 연결을 계속 받는 구조
+- 명시적인 `ResumeLeaseRequest`
+- reconnect token/session ID
+- 만료된 Lease의 재발급
+- revoke 상태의 재접속 보존
+- 여러 Agent가 같은 `lease_id`를 동시에 주장하는 경쟁
+- 다중 Coordinator HA, TLS, key rotation
+
+특히 revoke는 반드시 Out으로 남겨야 합니다. 현재 `revoked`는 Agent 메모리 상태이고 `CoordinatorLeaseStore`에는 revoked 필드가 없습니다. revoke 후 프로세스가 끊기면 새 Agent가 같은 Lease를 다시 받을 수 있습니다. 이는 DoD-22가 이미 명시한 제한입니다.
+
+## Proto 변경 여부
+
+권장 첫 조각에는 변경이 없습니다.
+
+기존 메시지로 충분합니다.
+
+```text
+Coordinator -> signed ExecutionGrant{Lease}
+Agent       -> signed AgentGrantAck
+```
+
+다만 이것은 Agent가 “나는 lease_id X를 복구하러 왔다”고 wire에서 주장하는 프로토콜은 아닙니다. Coordinator가 동일한 `lease_id`와 DB 경로를 구성으로 알고 있어야 합니다.
+
+향후 동적 복구가 필요하면 다음 중 하나가 필요합니다.
+
+- 명시적인 `ResumeLeaseRequest`
+- 기존 `RenewLeaseRequest`의 첫 프레임 사용
+- Agent에 durable LeaseHandle 저장
+
+그 작업부터는 단순 재연결이 아니라 새 handshake phase와 만료·revoke·unknown lease 정책을 설계하는 일입니다.
+
+## Selftest 규모
+
+현재 `run_handshake()`와 시나리오 20·21의 별도 프로세스/공유 SQLite 패턴을 그대로 재사용할 수 있습니다.
+
+권장 추가 수:
+
+- 시나리오 33: 연결 단절 후 새 프로세스 쌍이 활성 Lease 복원
+- 시나리오 34: 같은 `lease_id`지만 잘못된 holder identity 거부
+- 선택적으로 시나리오 35: 만료 후 복원 거부
+
+예상 규모는 다음 정도입니다.
+
+- CLI/selftest: 약 100~200줄
+- test-only disconnect 제어: 약 30~80줄
+- 단위 테스트 및 mutation 검증: 약 50~100줄
+- 계획/evidence 문서: 기존 형식 재사용
+- 새 proto 없음
+
+즉, 활성 Lease에 한정하면 오늘 조각들과 비슷한 하루 규모입니다.
+
+반대로 “연결이 끊기면 같은 Coordinator 프로세스 안에서 Agent가 자동 재접속하고, Agent가 Lease claim을 보내며, revoke/만료/동시 Agent까지 안전하게 처리”하는 요구는 하루 조각을 넘습니다. 그 경우에는 별도 `ResumeLease` 프로토콜과 Agent의 durable LeaseHandle이 필요합니다.
+
+참고로 `QUARANTINED` 실제 트리거는 위험도·신뢰도 인프라가 아직 없으므로, 현재 시점의 더 작은 대안으로는 적절하지 않습니다. 가장 가치 있는 다음 조각은 먼저 위의 “활성 Lease process-restart rehydration”입니다.
+
+########## p143 (구현자, workspace-write, 코덱스 solo) — 구현 완료 보고 ##########
+구현 및 검증을 완료했습니다. 커밋·push는 하지 않았습니다.
+
+변경 파일:
+
+- [coordinator/src/lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:63)
+- [coordinator_agent_selftest.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1750)
+- [재접속 계획서](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-19_1814_lease_재접속_최소_조각_v1.md)
+- [세션 리포트](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/2026-08-19_1814_lease_재접속_최소_조각.md)
+- `docs/history/HISTORY.md`
+
+핵심 결정:
+
+- 새 proto 메시지·필드는 추가하지 않았습니다.
+- `--disconnect-after-ack`를 추가해 ACK 검증 직후 Coordinator가 연결을 닫습니다.
+- 새 프로세스 쌍이 동일한 `--lease-db`·`--fence-db`에서 저장된 Lease를 복원합니다.
+- `holder_node_id` 검사는 이미 `get_or_issue()`와 단위 테스트에 존재했습니다. 구현은 변경하지 않고 selftest 시나리오 34만 추가했습니다.
+
+검증:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` — 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows` — exit 0, 실패 0, ignored 1
+- selftest 34개 시나리오 — 5회 연속 성공, 각 실행 60초 하드 타임아웃
+- `git diff --check` — 성공
+
+뮤테이션 테스트:
+
+- 단절 분기를 `if false`로 무력화
+- 시나리오 33이 예상대로 exit 1 실패
+- 원복 후 재빌드 및 34/34 재통과
+
+미확인 사항은 rustfmt입니다. 설치된 stable toolchain에 `rustfmt` component가 없어 자동 포맷은 실행하지 못했습니다. 만료 Lease 복원 거부 시나리오는 다음 조각으로 이월했습니다.
+
+########## p144 (독립 검수자, read-only, 다른 인스턴스) — ACCEPTED (1라운드) ##########
+**ACCEPTED**
+
+검수 결과, 변경 범위와 계획이 일치하며 수정 요청 사항은 없습니다.
+
+- `disconnect_after_ack`는 ACK 검증 직후, renew loop보다 앞에서 `Ok(())`로 반환합니다. 따라서 `do_renew`/`renew_rounds`와 무관하며, Rust 스코프 종료로 `TcpStream`, `lease_store`, listener가 정리됩니다.  
+  [`lib.rs:282`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:282), [`lib.rs:334`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:334)
+
+- 시나리오 33에서 Agent는 ACK flush 후 renew 요청을 쓰고, 쓰기가 실패하거나 결과 frame read에서 닫힌 연결의 EOF를 `Truncated` 오류로 받아 종료합니다. 무한 대기 loop는 없고 소켓 timeout도 설정되어 있습니다.  
+  [`agent/lib.rs:257`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:257), [`agent/lib.rs:295`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:295), [`framed_ingress.rs:278`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/framed_ingress.rs:278)
+
+- `rehydrated_33`은 동일 DB와 `--fence-epoch 3`을 사용하지만, `get_or_issue()`가 기존 레코드를 반환하므로 저장된 epoch 5가 우선합니다.  
+  [`selftest.rs:1805`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1805), [`lib.rs:842`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:842), [`lease_store.rs:223`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:223)
+
+- holder identity 충돌 검사는 기존 코드입니다. `get_or_issue()` 호출과 `holder_node_id` 비교가 존재하며, 해당 저장소 파일은 이번 diff에서 변경되지 않았습니다.  
+  [`lease_store.rs:401`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:401), [`lease_store.rs:595`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:595)
+
+- 계획 문서는 revoke 상태가 프로세스 재접속에서 보존되지 않는다는 DoD-22 한계를 명시적으로 유지하고 있습니다.  
+  [`계획서:51`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-19_1814_lease_재접속_최소_조각_v1.md:51)

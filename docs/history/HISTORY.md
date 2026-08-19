@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-19 18:30 — Lease 재접속 최소 조각 — 독립 검수 1라운드 + evidence 기록 (`DoD-24`)
+- 계획: `docs/plans/2026-08-19_1814_lease_재접속_최소_조각_v1.md`
+  (구현은 18:14 항목 참조 — 이 항목은 그 뒤의 독립 검수·기록).
+- 스트림: Coordinator · CLI(selftest) · QA.
+- 수행: 18:14 항목의 결과물(설계 조사 `p142` → 구현 `p143`)을 이
+  세션이 독립적으로(빌드·테스트·`coordinator-agent-selftest` 5회
+  반복, 각 60초 하드 타임아웃) 재검증했다. 오늘 이미 두 번(Lease
+  revoke·SUPERSEDED 조각) "한쪽은 끝났는데 다른 쪽은 계속 기다리는"
+  교착 버그가 나왔던 걸 감안해, 이번에도 같은 패턴이 있는지 특히
+  의심하며 대화 기록이 없는 새 코덱스 인스턴스(read-only)에게 독립
+  검수를 요청했다. 이번 설계는 애초에 그 위험 구조를 피했음을
+  확인(Coordinator 가 연결을 끊으면 Agent 의 쓰기/읽기는 무한
+  대기가 아니라 즉시 EOF 오류로 끝난다) — 1라운드(`p144`)에서
+  `ACCEPTED`.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(42개 스위트, 0 failed). `coordinator-agent-selftest`
+  5회 연속 34개 시나리오 전부 exit=0. `python scripts/verify_evidence.py`
+  스키마 위반 없음(PASS 32/33).
+- 리포트: `docs/reports/2026-08-19_1814_lease_재접속_최소_조각.md`
+  (구현자가 작성 — 이 세션은 별도 리포트를 새로 쓰지 않고 이
+  HISTORY 항목과 `DoD-24` evidence 로 검수·기록 단계를 남긴다).
+
+---
+
+## 2026-08-19 18:14 — Active Lease process-restart rehydration 최소 조각
+
+- 계획: `docs/plans/2026-08-19_1814_lease_재접속_최소_조각_v1.md`
+- 스트림: Coordinator · CLI(selftest)
+- 수행: ACK 직후 연결 단절 주입(`--disconnect-after-ack`), 동일 Lease/Fence DB를
+  사용하는 새 프로세스 쌍의 Lease 복원 시나리오 33, 다른 holder identity 거부
+  시나리오 34 추가. 기존 `holder_node_id` 검사는 변경하지 않음.
+- 검증: build exit 0, workspace test exit 0, 60초 하드 타임아웃 selftest 5회 연속
+  34/34 통과. 단절 분기 mutation은 시나리오 33에서 exit 1, 원복 후 재통과.
+- 리포트: `docs/reports/2026-08-19_1814_lease_재접속_최소_조각.md`
+- evidence: `DoD-24_lease_재접속_최소_조각.md`(이 세션이 독립 검수 후 기록)
+
+---
+
 ## 2026-08-19 18:00 — Coordinator SUPERSEDED 정책 — 독립 검수 2라운드 + evidence 기록 (`DoD-23`)
 - 계획: `docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md`
   (구현은 17:25 항목 참조 — 이 항목은 그 뒤의 독립 검수·수정·기록).

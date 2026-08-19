@@ -1,0 +1,12 @@
+=== 최종 cargo test --workspace --exclude gputeer-runtime-windows ===
+test result: ok 라인 수: 42
+FAILED/error[ 검색 결과: (없음)
+
+=== coordinator-agent-selftest 독립 반복 실행 (5회) ===
+5회 연속(각 60초 하드 타임아웃), 34개 시나리오 전부 exit=0, 매번 34줄 출력
+(타임아웃 근처까지 간 적 없음 — 시나리오 33의 의도적 연결 단절 후
+Agent 는 즉시 EOF 오류로 종료함을 확인)
+
+=== 뮤테이션 테스트(코덱스 자체 보고) ===
+disconnect_after_ack 분기를 `if false` 로 무력화 -> 시나리오 33 이 예측대로
+exit=1 로 실패. 원복 후 재빌드, 34/34 재통과 확인.

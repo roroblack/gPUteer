@@ -56,6 +56,11 @@ pub struct CoordinatorConfig {
     ///   않는다 — 대신 replay 가 확실히 거부됐는지 확인한 뒤 `Err` 로
     ///   끝난다(정상 `RESULT ok=true` 를 절대 찍지 않는다).
     pub send_grant_twice: bool,
+    /// ★ 테스트 전용 — Agent의 ACK를 검증한 직후 연결을 의도적으로
+    ///   닫는다. 재접속 조각의 첫 번째 프로세스 쌍이 실제로 끊긴
+    ///   뒤 종료되는지 확인하기 위한 주입이며, 운영 재시도는 만들지
+    ///   않는다.
+    pub disconnect_after_ack: bool,
 
     // ── Lease (2026-08-18, 코덱스 설계 · `p67` 프롬프트) ──────────
     //
@@ -272,6 +277,14 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             "agent_device_id 불일치: 기대값 {} != ACK 값 {}",
             config.agent_device_id, ack.agent_device_id
         ));
+    }
+
+    if config.disconnect_after_ack {
+        println!(
+            "DISCONNECT_AFTER_ACK coordinator_acknowledged=true grant_id={}",
+            grant.grant_id
+        );
+        return Ok(());
     }
 
     // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
@@ -916,6 +929,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         attempt_id: flags.require("--attempt-id")?,
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
         send_grant_twice: flags.bool_flag("--send-grant-twice"),
+        disconnect_after_ack: flags.bool_flag("--disconnect-after-ack"),
         lease_id: flags.require("--lease-id")?,
         job_id: flags.require("--job-id")?,
         fence_epoch: flags.u64_flag("--fence-epoch")?,
