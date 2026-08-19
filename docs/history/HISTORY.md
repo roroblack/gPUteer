@@ -16,6 +16,33 @@
 
 ---
 
+## 2026-08-19 11:05 — `remote5090` 원격 Linux+GPU 기계 실측 — D-3 부분 해소 (`ENV-03`)
+
+- 계획: (사용자가 직접 원격 기계 접속 정보를 제공 — 별도 계획 문서
+  없이 즉시 실측으로 진행).
+- 스트림: QA · Checkpoint(addendum) · Tooling(신규 프로브).
+- 수행: 사용자 소유의 임시 원격 기계(Ubuntu 24.04.3, RTX 5090)에
+  Rust 를 사용자 권한으로 설치하고 `git bundle` 로 저장소를 옮겨
+  이 저장소를 처음으로 Linux 에서 빌드·테스트했다
+  (`gputeer-runtime-windows` 제외, k1c 한 건만 플랫폼 차이로 FAILED).
+  `tools/probes/linux_cgroup_probe.py` 신설 — `sudo` 없이
+  `systemd-run --user --scope` 로 위임된 cgroup v2(memory/CPU/PID/
+  freeze) 강제를 실측했다.
+- 검증: 코덱스 검수 3라운드(`p124` CHANGES_REQUESTED — cgroup 수치
+  오기재·디스크 용량 오기재·다른 로그인 사용자 과장 등 7건 →
+  raw 로그 재수집·문서 정정 → `p125` CHANGES_REQUESTED — 잔여 3건
+  (freeze/thaw 과장·who/ps 시점·rustup 설치 로그 구분) → 정정 →
+  `p126` **ACCEPTED**). `docs/evidence/P0-06_vram_enforcement.md` 에
+  cgroup 결과 addendum, `docs/evidence/DoD-08_독립검수_시정.md` 에
+  k1c 크로스플랫폼 관측 addendum(코드/테스트는 변경하지 않음) 추가.
+  `CLAUDE.md`·`docs/plans/2026-08-15_1330_...v1.md` 의 D-3 상태를
+  "미해결 — 최대 차단 요인" → "부분 해소 — 임시 접근(확보 아님)"
+  으로 갱신.
+- 리포트: (다음 세션 종료 리포트에 포함 예정 — 이 항목은 작업 직후
+  즉시 기록해 §3.4 재발을 막는다).
+
+---
+
 ## 2026-08-19 01:10 — 자율 세션 종료 리포트 제출 (`DoD-13`~`DoD-20`, 8건 소급)
 
 - 계획: 아래 8개 항목 전체.
