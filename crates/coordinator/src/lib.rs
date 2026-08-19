@@ -168,6 +168,8 @@ pub struct CoordinatorConfig {
     pub lease_ttl_ms: u64,
     /// ★ 테스트 전용 — revoke 전 실제 시간을 흘려보낸다.
     pub revoke_delay_ms: u64,
+    /// Test-only delay after Grant/ACK and before reading a renewal request.
+    pub renew_delay_ms: u64,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -371,6 +373,9 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     //   그대로 echo 할 뿐 스스로 회차를 유도하지 않는다 — 회차별
     //   nonce 분리는 Agent 가 요청을 만들 때 책임진다.
     if !revoked_after_grant {
+        if config.do_renew && config.renew_delay_ms != 0 {
+            std::thread::sleep(Duration::from_millis(config.renew_delay_ms));
+        }
         for _round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
         let renew_msg = read_frame(
             &mut stream,
@@ -721,6 +726,13 @@ fn build_renew_result(
                     .ok_or_else(|| format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다"))?;
                 if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
                     revoked_result(request_nonce, revoked_at_unix_ms)
+                } else if stored.expires_at_unix_ms <= now {
+                    return Err(format!(
+                        "lease store expired during renewal: {}",
+                        LeaseStoreError::Expired {
+                            expires_at_unix_ms: stored.expires_at_unix_ms,
+                        }
+                    ));
                 } else if stored.is_max_duration_exceeded(now) {
                     max_duration_exceeded_result(request_nonce)
                 } else {
@@ -735,6 +747,12 @@ fn build_renew_result(
             ) {
                 Err(LeaseStoreError::Revoked { revoked_at_unix_ms }) => {
                     revoked_result(request_nonce, revoked_at_unix_ms)
+                }
+                Err(LeaseStoreError::Expired { expires_at_unix_ms }) => {
+                    return Err(format!(
+                        "lease store expired during renewal: {}",
+                        LeaseStoreError::Expired { expires_at_unix_ms }
+                    ));
                 }
                 Err(error) => return Err(format!("lease store 갱신 실패: {error}")),
                 Ok(RenewDecision::MaxDurationExceeded(_)) => {
@@ -1028,6 +1046,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),
         lease_ttl_ms: flags.u64_flag_with_default("--lease-ttl-ms", 60_000)?,
         revoke_delay_ms: flags.u64_flag_with_default("--revoke-delay-ms", 0)?,
+        renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
     };
 
     run(config)

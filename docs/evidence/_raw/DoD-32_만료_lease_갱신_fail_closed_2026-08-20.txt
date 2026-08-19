@@ -1,0 +1,40 @@
+구현 완료했습니다. 커밋/푸시는 하지 않았습니다.
+
+- [lease_store.rs:384](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:384)  
+  `renew_existing_within_duration()`에서 revoke 검사 뒤 `expires_at_unix_ms <= now_unix_ms`를 추가했습니다. 트랜잭션을 commit하고 `LeaseStoreError::Expired`를 반환하며 UPDATE하지 않습니다. variant 주석도 재발급·갱신 모두 포함하도록 수정했습니다.
+- [lib.rs:667](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:667)  
+  `build_renew_result()`의 override 읽기 경로와 일반 갱신 경로에 만료 검사를 추가했습니다. 만료 시 signed outcome 없이 raw error로 연결 종료됩니다.
+- [coordinator_agent_selftest.rs:2636](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:2636)  
+  짧은 TTL 후 실제 renew 경로에서 만료를 유도하는 47번 시나리오를 추가했습니다. 이를 위해 Coordinator에 테스트 전용 `renew_delay_ms`를 추가했습니다.
+
+기존 fixture는 정상 갱신, MaxDurationExceeded, max-duration 경계 테스트의 만료시각을 미래로 조정했습니다. 테스트 의도는 유지했습니다.
+
+신규 단위 테스트:
+
+- `expires_at == now`: `Expired` 반환 및 저장 레코드 전체 불변 확인
+- `expires_at == now + 1`: 다른 정책에 걸리지 않으면 정상 갱신 및 UPDATE 확인
+
+검증:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` 통과
+- `cargo test --workspace --exclude gputeer-runtime-windows` 통과
+- selftest 47개 시나리오: 90초 제한으로 5회 연속 exit=0
+- Mutation: 만료 검사 제거 후 신규 경계 단위 테스트 실패, 재빌드한 selftest 47번도 `RENEWED`로 통과해 실패 확인
+- 검사 원복 후 build/test/selftest 5회를 다시 통과
+- `git diff --check` 통과
+
+`rustfmt`는 설치되지 않은 환경이라 실행하지 못했지만, 컴파일과 전체 테스트는 통과했습니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+cargo test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+  (coordinator 유닛 테스트 27→29건 — 신규 경계 테스트 2건 반영)
+
+.\target\debug\gputeer.exe coordinator-agent-selftest 5회 연속 실행:
+run 1: exit=0 elapsed_ms=13832 scenarios=47
+run 2: exit=0 elapsed_ms=13762 scenarios=47
+run 3: exit=0 elapsed_ms=13758 scenarios=47
+run 4: exit=0 elapsed_ms=13717 scenarios=47
+run 5: exit=0 elapsed_ms=13796 scenarios=47
+
+5회 전부 exit=0, 47개 시나리오 전부 완료(약 14초/회).

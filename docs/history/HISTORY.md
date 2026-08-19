@@ -16,6 +16,40 @@
 
 ---
 
+## 2026-08-20 06:47 — 만료된 Lease 갱신 경로 fail-closed — 설계 조사 + 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-32`)
+- 계획: 백로그 재조사(`p167`) 2순위 후보 — 설계 조사(`p171`, 별도
+  plan 문서 없이 evidence 문서에 직접 기록).
+- 스트림: Coordinator · QA · 문서.
+- 수행: 설계 조사(`p171`, read-only)가 실제 안전 공백을 확인했다
+  — `renew_existing_within_duration()` 이 revoke·max-duration만
+  검사하고 저장된 `expires_at_unix_ms` 가 이미 지났는지는 검사
+  안 한 채 즉시 새 만료시각으로 `UPDATE` 했다(정상 Agent 도
+  checkpoint/ACK 지연·시계 어긋남으로 도달 가능한 공백). 구현
+  (`p172`, 코덱스 workspace-write)이 revoke 검사 뒤·max-duration
+  검사 전에 `expires_at_unix_ms <= now_unix_ms`(`DoD-26` 과 동일
+  경계 규칙)를 추가하고, 기존 `LeaseStoreError::Expired` 를
+  재사용해 raw error 로 거부한다(signed outcome 새로 안 만듦,
+  `DoD-27` 이 REVOKED 만 다뤘던 것과 같은 범위 판단). override·
+  일반 갱신 경로 양쪽 다 적용, 기존 fixture 만료시각을 미래로
+  보정(원래 판정 조건 유지), 새 경계 단위 테스트 2건·selftest
+  시나리오 47 신설. 독립 검수(`p173`, 대화 기록 없는 새 코덱스
+  인스턴스, read-only)가 경계 규칙·검사 순서·`UPDATE` 미실행·
+  fixture 보정 타당성·범위 제한(`renew_existing()`·Agent·proto
+  무변경)까지 전부 코드로 확인하고 **1라운드 만에 `ACCEPTED`**.
+  감독자(claude-code)가 검수 완료 **후**(`DoD-31` 의 동시 조작
+  오탐 교훈을 반영해 순차 진행) `cargo build`/`test`·selftest
+  5회 연속으로 독립 재확인.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(coordinator 유닛 테스트 27→29건), `coordinator-agent-selftest`
+  (코덱스 구현 시 5회 + 감독자 재검증 5회) 전부 exit=0·47개
+  시나리오, 뮤테이션(만료 검사 제거 시 신규 테스트·시나리오 47
+  모두 실패 재현 후 원복) 통과, `python scripts/verify_evidence.py`
+  스키마 위반 없음(PASS 40/41).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-32_만료_lease_갱신_fail_closed.md`).
+
+---
+
 ## 2026-08-20 06:11 — terminal outcome 다회차 교착 회귀 테스트 보강 — 구현 + 독립 검수 2라운드 + evidence 기록 (`DoD-31`)
 - 계획: 백로그 재조사(`p167`, 오늘 새벽 완료) 1순위 후보 — 별도
   plan 문서 없이 evidence 문서에 직접 기록.

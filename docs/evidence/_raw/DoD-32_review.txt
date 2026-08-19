@@ -1,0 +1,13 @@
+ACCEPTED
+
+검수 결과:
+
+- `lease_store.rs:394-400`에서 정확히 `expires_at_unix_ms <= now_unix_ms`를 revoke 검사 뒤, max-duration 검사 전에 수행한다.
+- 만료 시 `transaction.commit()` 후 `Expired`를 반환하며, `UPDATE`는 이후 분기에만 존재한다(`:409-422`). 새 테스트(`:937-974`)도 DB 레코드 불변과 실제 갱신을 각각 검증한다.
+- `lib.rs:664-706`에서 override·일반 갱신 경로 모두 만료를 처리한다. `build_renew_result()`의 서명·전송 경로(`:731` 이후)에 도달하기 전에 raw error로 탈출한다.
+- 기존 정상 갱신·max-duration·경계 fixture는 미래 만료시각으로 보정됐고, 각 테스트의 원래 판정 조건은 유지된다.
+- selftest 시나리오 47(`crates/cli/src/coordinator_agent_selftest.rs:2632-2676`)은 `--lease-ttl-ms 500`, `--renew-delay-ms 1000`으로 ACK 이후 실제 renew 요청이 만료 뒤 도달하도록 하며, coordinator stderr의 `expired`, 실패 exit, `RENEW_RESULT` 부재를 확인한다.
+- `renew_delay_ms`는 해당 테스트 지연 용도로만 사용된다.
+- `renew_existing()`는 변경되지 않았다. `crates/agent/src/lib.rs`와 proto 파일도 diff가 없다.
+- `git diff --stat` 기준 변경 파일은 정확히 3개다. 실제 selftest 파일 경로는 요청에 적힌 경로가 아니라 `crates/cli/src/coordinator_agent_selftest.rs`다.
+- `cargo test -p gputeer-coordinator`는 환경에 `cargo` 실행 파일이 없어 실행하지 못했다. 이는 판정 근거로 사용하지 않았으며, `git diff --check`는 통과했다.

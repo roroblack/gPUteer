@@ -85,7 +85,7 @@ pub enum LeaseStoreError {
     },
     /// The lease was durably revoked and cannot be reissued or renewed.
     Revoked { revoked_at_unix_ms: u64 },
-    /// The stored Lease had already expired when reissuance was attempted.
+    /// The stored Lease had already expired when reissuance or renewal was attempted.
     Expired { expires_at_unix_ms: u64 },
     /// 저장소 I/O 오류 — 공격이 아니라 우리 쪽 문제다.
     Io(String),
@@ -409,6 +409,14 @@ impl CoordinatorLeaseStore {
         if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
             transaction.commit().map_err(map_sql_error)?;
             return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
+        }
+
+        if stored.expires_at_unix_ms <= now_unix_ms {
+            // Commit the read-only transaction and fail closed without updating.
+            transaction.commit().map_err(map_sql_error)?;
+            return Err(LeaseStoreError::Expired {
+                expires_at_unix_ms: stored.expires_at_unix_ms,
+            });
         }
 
         if stored.is_max_duration_exceeded(now_unix_ms) {
@@ -821,6 +829,7 @@ mod tests {
         let (mut s, _dir) = open_temp();
         let mut record = sample("lease-1");
         record.issued_at_unix_ms = 1_000;
+        record.expires_at_unix_ms = 4_000_000;
         record.max_total_duration_seconds = 3_600; // 1시간
         s.get_or_issue(&record, 0).unwrap();
 
@@ -847,7 +856,7 @@ mod tests {
         let (mut s, _dir) = open_temp();
         let mut record = sample("lease-1");
         record.issued_at_unix_ms = 1_000;
-        record.expires_at_unix_ms = 5_000;
+        record.expires_at_unix_ms = 4_000_000;
         record.renew_after_unix_ms = 3_000;
         record.max_total_duration_seconds = 3_600; // 1시간
         s.get_or_issue(&record, 0).unwrap();
@@ -861,14 +870,14 @@ mod tests {
         match result {
             RenewDecision::MaxDurationExceeded(stored) => {
                 // 만료시각이 원본 그대로다 — 연장되지 않았다.
-                assert_eq!(stored.expires_at_unix_ms, 5_000);
+                assert_eq!(stored.expires_at_unix_ms, 4_000_000);
                 assert_eq!(stored.renew_after_unix_ms, 3_000);
             }
             other => panic!("한도를 넘겼는데 MaxDurationExceeded 가 아니다: {other:?}"),
         }
         // 저장소도 실제로 바뀌지 않았다.
         let fetched = s.get("lease-1").unwrap().unwrap();
-        assert_eq!(fetched.expires_at_unix_ms, 5_000);
+        assert_eq!(fetched.expires_at_unix_ms, 4_000_000);
         assert_eq!(fetched.renew_after_unix_ms, 3_000);
     }
 
@@ -877,6 +886,7 @@ mod tests {
         let (mut s, _dir) = open_temp();
         let mut record = sample("lease-1");
         record.issued_at_unix_ms = 1_000;
+        record.expires_at_unix_ms = 4_000_000;
         record.max_total_duration_seconds = 3_600;
         s.get_or_issue(&record, 0).unwrap();
 
@@ -921,6 +931,46 @@ mod tests {
         let (mut s, _dir) = open_temp();
         let result = s.renew_existing_within_duration("no-such-lease", 1_000, 2_000, 1_800);
         assert!(matches!(result, Err(LeaseStoreError::NotFound)));
+    }
+
+    #[test]
+    fn renew_expiry_at_now_returns_expired_without_update() {
+        let (mut s, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.expires_at_unix_ms = 1_000;
+        s.get_or_issue(&record, 0).unwrap();
+
+        let result = s
+            .renew_existing_within_duration("lease-1", 1_000, 2_000, 1_500);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::Expired {
+                expires_at_unix_ms: 1_000
+            })
+        ));
+        assert_eq!(s.get("lease-1").unwrap().unwrap(), record);
+    }
+
+    #[test]
+    fn renew_expiry_one_millisecond_after_now_succeeds() {
+        let (mut s, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.expires_at_unix_ms = 1_001;
+        s.get_or_issue(&record, 0).unwrap();
+
+        let result = s
+            .renew_existing_within_duration("lease-1", 1_000, 2_000, 1_500)
+            .unwrap();
+        match result {
+            RenewDecision::Renewed(renewed) => {
+                assert_eq!(renewed.expires_at_unix_ms, 2_000);
+                assert_eq!(renewed.renew_after_unix_ms, 1_500);
+            }
+            other => panic!("expiry one millisecond in the future must renew: {other:?}"),
+        }
+        let fetched = s.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.expires_at_unix_ms, 2_000);
+        assert_eq!(fetched.renew_after_unix_ms, 1_500);
     }
 
     #[test]

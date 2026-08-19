@@ -2629,6 +2629,53 @@ pub fn run() -> Result<String, String> {
         "46) renew_rounds=2의 첫 회차 MAX_DURATION_EXCEEDED(--max-total-duration-seconds 2, 2.2초 경과) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
     );
 
+    // ── 47. 만료된 Lease의 renew 경로는 signed outcome 없이 raw error로 종료 ──
+    // A short TTL plus the Coordinator's test-only post-ACK delay makes the
+    // first renewal request arrive after the stored lease has expired. This
+    // keeps the test on the actual renew path instead of the reissue path.
+    let expired_renew_dir_47 = tempfile::tempdir()
+        .map_err(|e| format!("expired renew scenario temp dir creation failed (47): {e}"))?;
+    let expired_renew_lease_db_47 = expired_renew_dir_47.path().join("lease.sqlite3");
+    let expired_renew_lease_db_47 = expired_renew_lease_db_47
+        .to_str()
+        .ok_or_else(|| "expired renew lease store path was not UTF-8 (47)".to_string())?;
+    let expired_renew_47 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            expired_renew_lease_db_47,
+            "--lease-ttl-ms",
+            "500",
+            "--renew-delay-ms",
+            "1000",
+            "--do-renew",
+            "true",
+        ],
+        &["--do-renew", "true"],
+    )?;
+    if expired_renew_47.coordinator_success
+        || !expired_renew_47.coordinator_stderr.contains("expired")
+        || expired_renew_47
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true")
+        || expired_renew_47.agent_success
+    {
+        return Err(format!(
+            "expired Lease renewal was not rejected as a raw error (47).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            expired_renew_47.coordinator_success,
+            expired_renew_47.coordinator_stdout,
+            expired_renew_47.coordinator_stderr,
+            expired_renew_47.agent_success,
+            expired_renew_47.agent_stdout,
+            expired_renew_47.agent_stderr
+        ));
+    }
+    report.push_str(
+        "47) 짧은 TTL로 실제 renew 경로에서 Lease 만료를 유도하고 signed outcome 없이 raw error로 연결 종료 확인\n",
+    );
+
     Ok(report)
 }
 
