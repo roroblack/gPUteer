@@ -19,7 +19,7 @@
 
 use std::path::Path;
 
-use gputeer_checkpoint::atomic::{replace_with_retry, write_once, RetryPolicy};
+use gputeer_checkpoint::atomic::{gc_partial, replace_with_retry, write_once, RetryPolicy};
 use gputeer_checkpoint::CheckpointError;
 
 fn tmpdir(tag: &str) -> std::path::PathBuf {
@@ -91,87 +91,268 @@ fn k1b_write_once_is_idempotent_for_identical_content() {
     );
 }
 
-/// ★ K-1c — 경쟁 경로(`write_once` 가 자기 tmp 파일을 쓴 **뒤에** 다시
-/// `final_path.exists()` 를 확인하는 분기)도 내용을 대조하는지 —
-/// **직접 이 분기를 재현하지는 않는다.** 진짜 스레드 경쟁으로
-/// 재현을 시도했더니(2026-08-18, DoD-08 schema v2 승격 재검수)
-/// 이 분기보다 **더 근본적인 문제**가 먼저 드러났다: 여러 호출자가
-/// 같은 `name` 으로 동시에 `write_once` 를 부르면 전부 **같은 tmp
-/// 파일 이름**(`{name}.tmp`)을 공유해 서로의 tmp 쓰기를 덮어쓰고,
-/// `fs::rename` 이 Windows 에서 기존 대상을 대체하는 시맨틱이라
-/// 하나가 아니라 **여러 호출이 각각 `Ok(true)` 를 반환**하는 것을
-/// 실측으로 확인했다(8스레드 동시 호출 시 `Ok(true)` 3회 관측).
+/// ★ K-1c — 동시 동일-이름 호출은 **지원하지 않고 명시적으로
+/// 거부한다**(2026-08-19,
+/// `docs/plans/2026-08-19_1200_write_once_동시_호출_계약_v1.md`).
 ///
-/// 이것은 이번에 고친 "내용 비교 누락" 과는 **다른, 더 넓은 결함**
-/// 이다 — `write_once` 는 애초에 **같은 이름에 대한 동시 다중 호출**
-/// 을 지원하도록 설계되지 않았다(tmp 이름이 `name` 하나로 고정).
-/// 이 저장소의 실제 호출부(`writer.rs`)는 순차적 재시작 시나리오
-/// (프로세스 A 가 죽은 **뒤** 프로세스 B 가 재개)만 상정하며, 지금
-/// 은 Job 실행 자체가 미착수라 동시 호출 경로가 없다 — 그래도
-/// 함수 자체의 계약으로 "동시 호출 안전" 을 주장한 적은 없으므로
-/// 이 test 는 **그 사실을 고정**한다.
+/// 이 test 는 원래 "여러 호출자가 같은 `name` 으로 동시에
+/// `write_once` 를 부르면 전부 같은 tmp 파일 이름(`{name}.tmp`)을
+/// 공유해 여러 개가 각각 `Ok(true)` 를 반환한다"는 **결함을
+/// 고정하는 테스트**였다(Windows 8스레드 동시 호출에서 `Ok(true)`
+/// 3회 관측, `DoD-08`). Linux 에서는 같은 조건이 재현되지 않았다
+/// (`ENV-03`, `rename` 시맨틱 차이로 증상만 달랐을 뿐 근본 원인은
+/// 그대로였다).
 ///
-/// 방금 고친 내용 비교(위 `write_once` 소스의 "경쟁: 우리가 쓰는
-/// 사이에..." 분기)는 **여전히 유효하고 안전을 개선한다** — 진짜
-/// 다중 호출자 안전은 tmp 이름을 호출마다 고유하게 만들고 재확인
-/// 절차를 다시 설계해야 하며, 그것은 이 evidence 의 원래 범위(K-1
-/// 의 "이미 존재할 때" 분기)를 넘는 별도 작업이다. 새 limitation
-/// 으로 등록한다 — CLAUDE.md 백로그 참조.
-///
-/// ★ 한 라운드는 OS 스레드 스케줄링에 좌우되는 진짜 경쟁이라 —
-///   시스템 부하가 높을 때(디스크 여유 부족 등) 우연히 한 스레드가
-///   나머지를 다 제치고 먼저 끝나 `ok_true == 1` 이 나올 수 있다
-///   (2026-08-19, `cargo test --workspace` 재실행 중 실제로 1회
-///   관측됨 — 재실행하니 다시 재현됐다). 그래서 여러 라운드를
-///   돌려 **한 번이라도** 경합이 관측되면 통과시킨다 — "이 결함이
-///   존재한다" 를 입증하는 데는 한 번의 재현으로 충분하고, 매
-///   라운드 재현을 요구하는 것은 이 test 를 카오스 스윕이 아니라
-///   타이밍 도박으로 만든다.
+/// ★ 2026-08-19 재설계(코덱스 독립 검수 `p128` 반영) — 처음엔 이
+/// 테스트가 "패자 7개는 전부 정확히 `WriteInProgress`" 를 주장했다.
+/// **그건 이 test 방식으로는 보장되지 않는 주장이었다.** `Barrier`
+/// 는 8스레드가 **같은 순간에 출발**하는 것만 보장하지, **같은
+/// 순간에 도착**하는 것은 보장하지 않는다 — 느린 스레드가 승자의
+/// `write_once` 호출이 이미 끝나 락을 놓은 **뒤**에야 자기 차례가
+/// 오면, 락은 이미 비어 있어 그 스레드도 락을 얻고, `final_path`
+/// 를 읽어 내용을 대조해 `ContentMismatch` 를 받는다(각 writer 가
+/// 서로 다른 내용을 쓰므로 `Ok(false)` 는 나올 수 없다) —
+/// `WriteInProgress` 가 아니다. 둘 다 **안전하다**(승자를 덮어쓰지
+/// 않는다) — 다만 "패자는 반드시 `WriteInProgress`" 라는 주장은
+/// 스케줄링에 따라 우연히 성립할 뿐인 결정론적이지 않은 주장이었다.
+/// 그 정확한 경로("A 가 락을 쥔 동안 B 가 반드시 `WriteInProgress`
+/// 를 받는다")는 타이밍에 기대지 않는 [`k1d_lock_is_released_when_holder_is_dropped_so_next_writer_proceeds`]
+/// 가 결정론적으로 증명한다. 이 test 는 그 대신 **항상 참인 더 약한
+/// 불변식**만 확인한다 — 승자는 정확히 하나, 나머지는 전부 오류
+/// (`WriteInProgress` 또는 `ContentMismatch`)이고 **절대로 두 번째
+/// 성공이나 데이터 손상은 없다.**
 #[test]
-fn k1c_concurrent_same_name_writers_are_not_actually_safe() {
-    let rounds = 10;
+fn k1c_concurrent_same_name_writers_only_one_writer_wins() {
+    let d = std::sync::Arc::new(tmpdir("k1c"));
     let n = 8;
-    let mut race_observed = false;
-    let mut last_results = Vec::new();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
 
-    for round in 0..rounds {
-        let d = std::sync::Arc::new(tmpdir(&format!("k1c-{round}")));
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(n));
-
-        let handles: Vec<_> = (0..n)
-            .map(|i| {
-                let d = d.clone();
-                let barrier = barrier.clone();
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    let data = format!("writer-{i} data").into_bytes();
-                    write_once(&d, "shard-race.bin", &data)
-                })
+    let handles: Vec<_> = (0..n)
+        .map(|i| {
+            let d = d.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let data = format!("writer-{i} data").into_bytes();
+                write_once(&d, "shard-race.bin", &data)
             })
-            .collect();
+        })
+        .collect();
 
-        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        let ok_true = results.iter().filter(|r| matches!(r, Ok(true))).count();
-        if ok_true > 1 {
-            race_observed = true;
-            break;
-        }
-        last_results = results;
-    }
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
-    // ★ 결함을 고정하는 테스트다(`lease_scope.rs` 의
-    //   `restart_resets_watermark_and_lets_stale_epoch_through` 와
-    //   같은 정신). **통과(race_observed)가 곧 "이 위험이 아직
-    //   존재한다" 는 뜻이다.** 언젠가 tmp 이름을 호출마다 고유하게
-    //   만들어 이 문제를 고치면 `rounds` 회 전부 `ok_true == 1` 이
-    //   되어 이 assert 가 실패해야 정상이다 — 그때 이 test 와 관련
-    //   limitation 서술을 갱신하라.
-    assert!(
-        race_observed,
-        "write_once 가 {rounds}라운드 동안 단 한 번도 동시 다중 성공을 \
-         내지 않았다 — tmp 이름 충돌 문제가 해소된 것으로 보인다. \
-         마지막 라운드: {last_results:?}"
+    let ok_true = results.iter().filter(|r| matches!(r, Ok(true))).count();
+    let write_in_progress = results
+        .iter()
+        .filter(|r| matches!(r, Err(CheckpointError::WriteInProgress { .. })))
+        .count();
+    let content_mismatch = results
+        .iter()
+        .filter(|r| matches!(r, Err(CheckpointError::ContentMismatch { .. })))
+        .count();
+    let other: Vec<_> = results
+        .iter()
+        .filter(|r| {
+            !matches!(
+                r,
+                Ok(true)
+                    | Err(CheckpointError::WriteInProgress { .. })
+                    | Err(CheckpointError::ContentMismatch { .. })
+            )
+        })
+        .collect();
+
+    assert_eq!(ok_true, 1, "정확히 하나만 성공해야 한다: {results:?}");
+    assert_eq!(
+        write_in_progress + content_mismatch,
+        n - 1,
+        "나머지는 전부 WriteInProgress 또는 ContentMismatch 여야 한다 \
+         (도착 순서에 따라 둘 중 무엇이 될지는 달라지지만, 어느 쪽이든 \
+         승자를 덮어쓰지 않는다는 뜻이다): {results:?}"
     );
+    assert!(
+        other.is_empty(),
+        "예상 밖의 결과가 섞였다 — 두 번째 성공(Ok(true)) 이나 Ok(false) \
+         가 있으면 승자가 아닌 쪽이 조용히 통과했거나 데이터가 손상됐다는 \
+         뜻이다 — {other:?}"
+    );
+}
+
+/// ★ K-1d — 락은 **crash-safe** 해야 한다: 이전 호출이 잠금을
+/// 쥔 채로 죽어도(파일 핸들이 사라지면) OS 가 자동으로 풀어야
+/// 다음 정당한 호출이 영구히 막히지 않는다. `File::try_lock` 이
+/// 파일 핸들에 묶인 잠금(`flock`/`LockFileEx`)이라 handle 이 drop
+/// 되면 잠금도 풀린다는 계약을 실측으로 확인한다 — 실제 crash 를
+/// 낼 수는 없으므로, "락 파일을 쥔 핸들을 drop 하면 다음 호출이
+/// 통과하는가"로 그 계약의 핵심을 확인한다.
+#[test]
+fn k1d_lock_is_released_when_holder_is_dropped_so_next_writer_proceeds() {
+    let d = tmpdir("k1d");
+    let lock_path = d.join("shard-lock.bin.write_once.lock");
+
+    // writer-A 역할 — 락을 쥐고 있는 상태를 흉내낸다.
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    held.try_lock().expect("첫 번째 잠금은 성공해야 한다");
+
+    // writer-B 가 같은 순간에 부르면 즉시 거부돼야 한다.
+    let result = write_once(&d, "shard-lock.bin", b"writer-B data");
+    assert!(
+        matches!(result, Err(CheckpointError::WriteInProgress { .. })),
+        "락이 쥐어진 동안에는 WriteInProgress 여야 한다: {result:?}"
+    );
+
+    // writer-A 가 죽는다(핸들 drop) — OS 가 잠금을 자동 해제한다.
+    drop(held);
+
+    // writer-C 가 이제는 정상적으로 성공해야 한다 — 영구히 막히지 않는다.
+    let result = write_once(&d, "shard-lock.bin", b"writer-C data");
+    assert!(
+        matches!(result, Ok(true)),
+        "락 보유자가 사라진 뒤에는 정상적으로 성공해야 한다: {result:?}"
+    );
+    assert_eq!(
+        std::fs::read(d.join("shard-lock.bin")).unwrap(),
+        b"writer-C data"
+    );
+}
+
+/// ★ K-1e — `gc_partial` 의 `.write_once.lock` 처리 (2단계, 계획 문서
+/// §범위/In, 코덱스 독립 검수 `p128` 반영해 2026-08-19 재설계).
+///
+/// 규칙은 "무조건 보존" 이 아니라 **"지금 쥐고 있으면 보존, 아무도
+/// 안 쥐고 있으면 결국 지운다"** 다.
+///
+/// - 무조건 보존하면(첫 구현) 죽은 프로세스가 남긴 락 파일이 영원히
+///   남아 그 디렉터리를 `startup_gc` 가 절대 청소하지 못한다(코덱스
+///   `p128` 이 지적한 실제 회귀).
+/// - 무조건 지우면 활성 writer 의 상호 배제가 깨진다(첫 설계가
+///   막으려던 문제, `atomic.rs` 주석 참조).
+/// - 그래서 GC 자신이 `try_lock` 으로 "지금 아무도 안 쥐고 있다" 를
+///   직접 확인한 뒤에만 지운다.
+///
+/// 세 경우를 확인한다.
+///
+/// 1. 매니페스트 없음(PARTIAL) + **아무도 안 쥔** 락 파일 -> 지워진다
+///    (디렉터리가 결국 청소될 수 있어야 한다).
+/// 2. 매니페스트 없음(PARTIAL) + **지금 쥐고 있는** 락 파일 -> 보존된다
+///    (활성 writer 를 방해하지 않는다).
+/// 3. 매니페스트 있음 + 등록 안 된 `.tmp`(회귀 확인용) + 아무도 안 쥔
+///    락 파일 -> `.tmp` 는 지워지고, 락 파일도 지워진다(매니페스트
+///    유무와 무관하게 "쥐고 있는가" 만으로 판단한다).
+#[test]
+fn k1e_gc_partial_reclaims_dead_locks_but_preserves_held_ones() {
+    // 경우 1 — PARTIAL + 아무도 안 쥔 락.
+    let d1 = tmpdir("k1e-dead-no-manifest");
+    let lock1 = d1.join("shard-0.bin.write_once.lock");
+    std::fs::write(&lock1, b"").unwrap();
+    let removed1 = gc_partial(&d1, "manifest.json").unwrap();
+    assert!(
+        !lock1.exists(),
+        "아무도 안 쥔 락 파일은 매니페스트가 없으면 결국 지워져야 한다 \
+         — 안 그러면 이 디렉터리가 영원히 청소되지 않는다"
+    );
+    assert!(removed1.iter().any(|p| p == &lock1));
+
+    // 경우 2 — PARTIAL + 지금 쥐고 있는 락.
+    let d2 = tmpdir("k1e-held-no-manifest");
+    let lock2 = d2.join("shard-0.bin.write_once.lock");
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock2)
+        .unwrap();
+    held.try_lock().expect("첫 번째 잠금은 성공해야 한다");
+
+    let removed2 = gc_partial(&d2, "manifest.json").unwrap();
+    assert!(
+        lock2.exists(),
+        "지금 쥐고 있는 락 파일은 매니페스트가 없어도 보존돼야 한다 \
+         — 활성 writer 의 상호 배제를 깨면 안 된다"
+    );
+    assert!(!removed2.iter().any(|p| p == &lock2));
+    drop(held);
+
+    // 경우 3 — 매니페스트 있음 + 등록 안 된 .tmp + 아무도 안 쥔 락.
+    let d3 = tmpdir("k1e-with-manifest");
+    let manifest = gputeer_checkpoint::CheckpointManifest {
+        schema_version: 1,
+        checkpoint_id: "ckpt-k1e".to_string(),
+        job_id: "job-k1e".to_string(),
+        attempt_id: "attempt-k1e".to_string(),
+        step: 0,
+        files: Vec::new(),
+        root_digest: String::new(),
+        total_bytes: 0,
+        created_at_unix_ms: 0,
+        producer_node_id: "node-k1e".to_string(),
+        fence_epoch: 0,
+    };
+    std::fs::write(d3.join("manifest.json"), manifest.to_json().unwrap()).unwrap();
+    let lock3 = d3.join("shard-0.bin.write_once.lock");
+    let orphan_tmp = d3.join("shard-0.bin.tmp");
+    std::fs::write(&lock3, b"").unwrap();
+    std::fs::write(&orphan_tmp, b"orphan").unwrap();
+
+    let removed3 = gc_partial(&d3, "manifest.json").unwrap();
+    assert!(
+        !orphan_tmp.exists(),
+        "등록 안 된 .tmp 는 여전히 지워져야 한다 — 회귀 확인"
+    );
+    assert!(
+        !lock3.exists(),
+        "아무도 안 쥔 락은 매니페스트가 있어도 결국 지워져야 한다"
+    );
+    assert!(removed3.iter().any(|p| p == &orphan_tmp));
+    assert!(removed3.iter().any(|p| p == &lock3));
+}
+
+/// ★ K-1f — 이름이 우연히 `.write_once.lock` 로 끝나는 **등록된 데이터
+/// 파일**을 GC 가 가짜 락 파일로 오인해 지우면 안 된다(2026-08-19,
+/// 코덱스 독립 검수 `p129` 지적).
+///
+/// `validate_relative_name` 은 이 접미사를 예약하지 않는다. 파일
+/// 이름은 매니페스트에서 오는 **외부 입력**이다(`CLAUDE.md` §0) —
+/// 매니페스트가 실제로 이 접미사로 끝나는 이름을 등록했다면, 그건
+/// 가짜 락이 아니라 진짜 데이터다. `.tmp` 접미사도 같은 이름 충돌
+/// 위험이 있어서 `registered_tmp` 로 "등록됐으면 보존" 을 이미
+/// 검사한다(`write_failure.rs::registered_tmp_suffix_is_preserved`
+/// 참조) — 이 test 는 `.write_once.lock` 도 같은 방어를 받는지
+/// 확인한다.
+#[test]
+fn k1f_registered_file_named_like_a_lock_file_is_preserved() {
+    let d = tmpdir("k1f");
+    let weird_name = "shard-0.bin.write_once.lock";
+    std::fs::write(d.join(weird_name), b"real-data").unwrap();
+
+    let manifest = gputeer_checkpoint::CheckpointManifest {
+        schema_version: 1,
+        checkpoint_id: "ckpt-k1f".to_string(),
+        job_id: "job-k1f".to_string(),
+        attempt_id: "attempt-k1f".to_string(),
+        step: 0,
+        files: vec![gputeer_checkpoint::CheckpointFile {
+            path: weird_name.to_string(),
+            digest: blake3::hash(b"real-data").to_hex().to_string(),
+            size_bytes: 9,
+        }],
+        root_digest: String::new(),
+        total_bytes: 9,
+        created_at_unix_ms: 0,
+        producer_node_id: "node-k1f".to_string(),
+        fence_epoch: 0,
+    };
+    std::fs::write(d.join("manifest.json"), manifest.to_json().unwrap()).unwrap();
+
+    let removed = gc_partial(&d, "manifest.json").unwrap();
+    assert!(
+        d.join(weird_name).exists(),
+        "이름이 락 파일과 같아도 매니페스트에 등록된 데이터는 보존돼야 한다"
+    );
+    assert!(!removed.iter().any(|p| p == &d.join(weird_name)));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -363,4 +544,48 @@ fn k4b_normal_names_including_subdirs_still_work() {
     std::fs::create_dir_all(d.join("model")).unwrap();
     write_once(&d, "model/weights.safetensors", b"y").expect("하위 디렉터리 경로");
     assert!(d.join("model/weights.safetensors").exists());
+}
+
+/// ★ K-4c — `.write_once.lock` 로 끝나는 이름은 데이터 파일로 쓸 수
+/// 없다(2026-08-19, 코덱스 독립 검수 `p130`·`p131` 이 발견한 근본
+/// 원인).
+///
+/// `write_once(dir, "foo", ..)` 의 락 파일은 정확히
+/// `dir/foo.write_once.lock` 이다. 이 이름을 데이터 파일 이름으로도
+/// 허용하면, `write_once(dir, "foo.write_once.lock", data)` 로 만든
+/// **진짜 데이터 파일**과 `write_once(dir, "foo", ..)` 의 **락 파일**
+/// 이 정확히 같은 경로를 가리키게 된다 — `.tmp` 접미사처럼 GC 의
+/// "등록됐으면 보존" 검사로는 못 막는다(경로 자체가 같아지는
+/// 문제이지, GC 오인 문제가 아니다). 그래서 이름 자체를 금지한다.
+///
+/// `p131` 이 지적한 대로, 원래(대소문자를 구분하는) 검사만으로는
+/// 안 끝난다 — NTFS 는 대소문자를 구분하지 않고(`...LOCK` 도 같은
+/// 파일), Win32 파일 API 는 마지막 경로 성분의 후행 점·공백을
+/// 자동으로 잘라낸다(`...lock.` 도 결국 같은 파일). 세 변형(정확한
+/// 대소문자, 대문자, 후행 점) 을 전부 거부하는지 확인하고, 그
+/// 접미사가 없는 정상적인 형제 이름(`foo`)은 여전히 정상 동작해
+/// 그 락 파일이 실제로 만들어지는지도 확인한다(진짜 충돌 시나리오의
+/// 두 재료가 각자 예상대로 동작하는지 확인).
+#[test]
+fn k4c_data_file_named_like_a_lock_file_is_rejected() {
+    let d = tmpdir("k4c");
+
+    for variant in [
+        "foo.write_once.lock",
+        "foo.write_once.LOCK",
+        "foo.write_once.lock.",
+        "foo.write_once.lock ",
+    ] {
+        let result = write_once(&d, variant, b"data");
+        assert!(
+            matches!(result, Err(CheckpointError::UnsafePath { .. })),
+            "'{variant}' 는 거부돼야 한다: {result:?}"
+        );
+    }
+    assert!(!d.join("foo.write_once.lock").exists());
+
+    // 접미사 없는 정상 이름은 여전히 동작하고, 그 락 파일이 바로
+    // 방금 거부한 그 경로다 — 왜 이 이름을 예약해야 하는지 증명한다.
+    write_once(&d, "foo", b"real data").expect("정상 이름은 여전히 동작해야 한다");
+    assert_eq!(std::fs::read(d.join("foo")).unwrap(), b"real data");
 }

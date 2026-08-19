@@ -93,6 +93,37 @@ fn validate_relative_name(name: &str) -> Result<(), CheckpointError> {
         });
     }
 
+    // ★ `.write_once.lock` 접미사는 예약돼 있다(2026-08-19, 코덱스
+    //   독립 검수 `p130` 이 지적한 근본 원인). `write_once(dir, "foo", ..)`
+    //   의 락 파일은 `dir/foo.write_once.lock` 이다 — 이 이름 자체를
+    //   **데이터 파일 이름**으로 허용하면, `write_once(dir,
+    //   "foo.write_once.lock", data)` 로 만든 진짜 데이터 파일과
+    //   `write_once(dir, "foo", ..)` 의 락 파일이 **정확히 같은
+    //   경로**를 가리키게 된다. 그러면 "foo" 쓰기가 성공할 때 자기
+    //   락 파일을 정리하는 코드가 그 데이터 파일을 그대로 지워버린다
+    //   — 이름공간이 진짜로 충돌한다. `.tmp` 접미사는 GC 쪽에서
+    //   "등록됐으면 보존" 으로 방어하지만, 이건 애초에 경로 자체가
+    //   같아지는 문제라 등록 여부로는 못 막는다 — 이름을 아예
+    //   금지한다.
+    //
+    //   ★ 대소문자 · 후행 점/공백 무시(2026-08-19, 코덱스 독립 검수
+    //   `p131` 이 지적) — NTFS 는 대소문자를 구분하지 않고
+    //   (`foo.write_once.LOCK` 도 같은 파일), Win32 파일 API 는 레거시
+    //   DOS 호환을 위해 마지막 경로 성분의 **후행 점·공백을 자동으로
+    //   잘라낸다**(`foo.write_once.lock.` 이나 `foo.write_once.lock `
+    //   도 결국 `foo.write_once.lock` 을 가리킨다). 둘 다 문자열
+    //   비교만으로는 안 보이므로, 검사 전에 정규화한다 — Linux(둘 다
+    //   구분하는 파일시스템)에서는 과잉 차단이지만, 그쪽에서 이 이름을
+    //   추가로 예약하는 비용은 거의 0이다.
+    let normalized = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    if normalized.ends_with(".write_once.lock") {
+        return Err(CheckpointError::UnsafePath {
+            name: name.to_string(),
+            reason: "'.write_once.lock' 접미사(대소문자·후행 점/공백 무관)는 write_once() \
+                     자신의 락 파일 전용으로 예약돼 있다",
+        });
+    }
+
     let p = Path::new(name);
     for c in p.components() {
         match c {
@@ -145,15 +176,64 @@ fn validate_relative_name(name: &str) -> Result<(), CheckpointError> {
 /// **기존 파일은 덮어쓰지 않는다** (write-once 원칙).
 ///
 /// 반환값: `true` = 새로 썼음, `false` = 같은 내용이 이미 있어 tmp 를 정리함
+///
+/// ★ **동시 동일-이름 호출은 지원하지 않는다** — 명시적으로 거부한다
+///   (2026-08-19, `docs/plans/2026-08-19_1200_write_once_동시_호출_계약_v1.md`).
+///   과거에 이 계약이 없어 여러 호출자가 같은 `{name}.tmp` 를 공유해
+///   경쟁했다(`DoD-08` 의 "발견했으나 고치지 않은 더 넓은 결함" 절,
+///   `ENV-03` 이 Linux 에서 증상만 다르게 재확인). 실제 in-tree
+///   호출부(`writer.rs`)는 전부 순차 호출이고, 이 프로젝트의
+///   Lease/fencing 은 파일 쓰기 상호 배제를 보장하지 않는다
+///   (`proto/lease.proto:12-18` 가 이미 그렇게 명시한다) — 그래서
+///   "지원 안 함을 명시하고 강제"하는 쪽을 택했다. `flock`/`LockFileEx`
+///   기반 프로세스 간 파일 잠금(`std::fs::File::try_lock`, Rust
+///   1.89+ 안정화)으로 강제한다 — 잠금은 프로세스가 죽으면 OS 가
+///   자동 해제하므로 crash 후에도 영구히 막히지 않는다. 인메모리
+///   뮤텍스는 다중 프로세스 시나리오를 못 막으므로 쓰지 않았다.
 pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, CheckpointError> {
     // ★ 무엇보다 먼저 — 경로 탈출을 막는다. tmp 파일을 만들기 전에 거른다.
     validate_relative_name(name)?;
     let final_path = dir.join(name);
 
+    // ★ 락은 첫 존재 검사보다 먼저 잡는다 — 그래야 동시 호출자
+    //   전체(존재 검사 -> tmp 쓰기 -> rename)가 직렬화된다.
+    //   `try_lock()` 은 즉시 실패한다 — 무기한 대기는 장애를 숨긴다.
+    let lock_path = dir.join(format!("{name}.write_once.lock"));
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+    if let Err(e) = lock_file.try_lock() {
+        return match e {
+            fs::TryLockError::WouldBlock => {
+                Err(CheckpointError::WriteInProgress { path: final_path })
+            }
+            fs::TryLockError::Error(source) => Err(CheckpointError::Io(source.to_string())),
+        };
+    }
+    // `lock_file` 은 함수가 반환할 때(모든 경로에서) drop 되며 OS 가
+    // 잠금을 자동 해제한다 — 명시적 unlock 이 필요 없다.
+    //
+    // ★ **성공** 경로에서는 락 파일 자체도 정리한다(아래 `cleanup_lock`
+    //   클로저, 2026-08-19 — 첫 구현은 락 파일을 영원히 남겼는데,
+    //   코덱스 독립 검수 `p128` 이 그 결과로 완결된(매니페스트까지
+    //   있는) 체크포인트 디렉터리에도 락 파일이 계속 쌓인다는 걸
+    //   지적했다. **실패**(`ContentMismatch`, `?` 로 전파되는 I/O
+    //   오류) 경로에서는 정리하지 않는다 — 그 경우 이 디렉터리는
+    //   매니페스트를 절대 못 받아 PARTIAL 로 남고, `gc_partial` 이
+    //   나중에(아무도 안 쥔 락만) 정리한다. 성공 시 여기서 먼저
+    //   지우면 완결된 체크포인트에는 애초에 락 파일이 남지 않는다.
+    let cleanup_lock = |lock_file: File| {
+        drop(lock_file);
+        let _ = fs::remove_file(&lock_path);
+    };
+
     // 이미 존재하면 **내용을 대조한다.** 이름만으로 같다고 가정하지 않는다.
     if final_path.exists() {
         let existing = fs::read(&final_path)?;
         if existing == data {
+            cleanup_lock(lock_file);
             return Ok(false);
         }
         return Err(CheckpointError::ContentMismatch {
@@ -183,6 +263,7 @@ pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, Checkpoin
         let winner = fs::read(&final_path)?;
         let _ = fs::remove_file(&tmp_path);
         if winner == data {
+            cleanup_lock(lock_file);
             return Ok(false);
         }
         return Err(CheckpointError::ContentMismatch {
@@ -202,6 +283,7 @@ pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, Checkpoin
     })?;
 
     sync_dir(dir)?;
+    cleanup_lock(lock_file);
     Ok(true)
 }
 
@@ -359,6 +441,33 @@ pub(crate) fn retry_tolerating_race<T>(
     Err(last.expect("ATTEMPTS 가 0이 아니면 마지막 오류가 있다"))
 }
 
+/// ★ 알려진 한계 — 이 함수는 **디렉터리 전체를 보호하지 않는다**
+/// (2026-08-19, 코덱스 독립 검수 `p129` 이 지적, 의도적으로 고치지
+/// 않음).
+///
+/// `write_once()` 의 락은 그 호출이 쓰고 있는 **한 파일**만 보호한다.
+/// 그런데 매니페스트가 없는 디렉터리(PARTIAL)에서는 이 함수가
+/// "락이 걸려 있지 않은" 다른 모든 파일 — 활성 writer 가 지금 막
+/// 쓰고 있는 `.tmp` 파일까지 포함해서 — 을 무조건 지운다. 즉 GC 가
+/// 활성 writer 와 같은 디렉터리에서 동시에 돌면, writer 가 쓰고 있는
+/// 중인 `.tmp` 를 GC 가 지워버릴 수 있다 — writer 의 최종 파일 락은
+/// 안전하지만, **그 writer 의 다른 파일까지는 안전하지 않다.**
+///
+/// 이건 이번 조각(`write_once()` 자체의 동시-동일-이름 계약)의 범위
+/// 밖이다 — 계획 문서(`docs/plans/2026-08-19_1200_write_once_동시_호출_계약_v1.md`)
+/// 가 이미 "`write_checkpoint()` 전체를 하나의 락으로 감싸는 것은
+/// 범위 밖" 이라고 명시했는데, 이 finding 은 정확히 그 더 넓은
+/// 문제의 한 증상이다. 진짜 해법은 checkpoint 디렉터리 단위 락(GC
+/// 시작 시 그 락을 잡고, `write_checkpoint()` 도 시작 시 잡는 것)
+/// 이지 `write_once()` 하나만 고쳐서 될 일이 아니다.
+///
+/// 지금 실제 호출부(`startup_gc`)는 **프로세스 부팅 시 한 번만**
+/// 돈다 — 이 프로세스가 아직 아무것도 쓰기 전이다. 다른 프로세스가
+/// 같은 루트에 동시에 쓰는 시나리오는 다중 Agent 실행이 아직
+/// 없어 실제 호출 경로가 없다(같은 논리로 이 계획 문서가 "진짜
+/// 동시 쓰기 지원" 도 범위 밖으로 미뤘다). 다중 Agent/다중 프로세스가
+/// 같은 checkpoint 루트에 동시 접근하기 시작하는 시점이 이 문제를
+/// 다시 열어야 할 트리거다.
 pub fn gc_partial(
     checkpoint_dir: &Path,
     manifest_name: &str,
@@ -420,6 +529,57 @@ pub fn gc_partial(
         }
 
         let name = entry.file_name().to_string_lossy().to_string();
+
+        // ★ 락 파일은 무조건 지우지 않는다 — 그러나 **영원히** 남기지도
+        //   않는다(2026-08-19, 코덱스 독립 검수 `p128` 이 지적).
+        //
+        //   처음에는 이 분기에서 무조건 `continue` 했다. 이유:
+        //   매니페스트가 없는 디렉터리(PARTIAL)는 아래에서 내용물을
+        //   전부 지우는데, 그 순간에도 다른 프로세스가 `write_once()`
+        //   로 같은 디렉터리에 쓰는 중이라 락을 쥐고 있을 수 있다.
+        //   락 파일을 지우면(inode unlink) 그 파일을 쥔 잠금은 그대로
+        //   남지만 경로는 사라지고, 다음 호출자가 같은 경로를 다시
+        //   `create` 하면 **새 inode** 에 새로 락을 걸 수 있어 상호
+        //   배제가 깨진다.
+        //
+        //   그런데 그렇게 하면 **죽은 프로세스가 남긴 락 파일**(쓰다가
+        //   죽어 매니페스트도 데이터도 없이 락 파일 하나만 남은 경우)
+        //   때문에 그 디렉터리가 절대 청소되지 않는다 — `startup_gc`
+        //   가 "디렉터리가 비었으면 지운다" 를 검사하는데, 락 파일이
+        //   영원히 남아 있으니 절대 비지 않는다.
+        //
+        //   해법: GC 자신이 먼저 `try_lock` 을 시도해 "지금 아무도
+        //   쥐고 있지 않다" 를 **직접 확인한 뒤에만** 지운다. GC 가
+        //   락을 쥔 채로 지우므로, 그 사이 진짜 writer 가 같은 경로를
+        //   열어 잠그려 해도 (아직 존재하는 같은 inode 라서)
+        //   `WouldBlock` 으로 정상 거부된다 — 새 inode 로 도망칠 틈이
+        //   없다. 반대로 누군가 이미 쥐고 있으면 GC 의 `try_lock` 도
+        //   실패하므로 그 락은 건드리지 않는다.
+        //
+        //   ★ 이름 충돌 방어(2026-08-19, 코덱스 독립 검수 `p129` 이
+        //   지적) — `validate_relative_name` 은 `.write_once.lock`
+        //   접미사를 예약하지 않는다. 매니페스트가 **실제로 이
+        //   접미사로 끝나는 이름을 등록**했다면(파일 이름은
+        //   매니페스트에서 오는 외부 입력이다 — `CLAUDE.md` §0), 그건
+        //   가짜 락 파일이 아니라 **진짜 데이터**다. `.tmp` 접미사도
+        //   같은 문제가 있어서 이미 `registered_tmp` 로 "등록됐으면
+        //   보존" 을 검사한다 — 여기도 같은 검사를 먼저 한다.
+        if name.ends_with(".write_once.lock") {
+            let is_registered = registered_tmp.iter().any(|registered| registered == &name);
+            if manifest_exists && is_registered {
+                continue; // 이름만 겹치는 등록된 데이터 파일 — 보존한다.
+            }
+            let opened = retry_tolerating_race(|| OpenOptions::new().write(true).open(&path))?;
+            if let Some(lock_file) = opened {
+                if lock_file.try_lock().is_ok() {
+                    retry_tolerating_race(|| fs::remove_file(&path))?;
+                    removed.push(path);
+                }
+                // try_lock 실패 = 누군가 지금 쥐고 있다 -> 건드리지 않는다.
+            }
+            continue;
+        }
+
         let is_tmp = name.ends_with(".tmp");
 
         let is_registered = registered_tmp.iter().any(|registered| {

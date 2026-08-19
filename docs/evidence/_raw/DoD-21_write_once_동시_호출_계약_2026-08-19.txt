@@ -1,0 +1,115 @@
+=== 최종 cargo test -p gputeer-checkpoint (전체) ===
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 13 tests
+test k2_zero_attempts_returns_error_not_panic ... ok
+test k1f_registered_file_named_like_a_lock_file_is_preserved ... ok
+test k4_write_once_must_reject_path_traversal ... ok
+test k1_write_once_must_detect_content_mismatch ... ok
+test k1d_lock_is_released_when_holder_is_dropped_so_next_writer_proceeds ... ok
+test k1b_write_once_is_idempotent_for_identical_content ... ok
+test k3_documents_rename_then_syncdir_failure_semantics ... ok
+test k1c_concurrent_same_name_writers_only_one_writer_wins ... ok
+test k1e_gc_partial_reclaims_dead_locks_but_preserves_held_ones ... ok
+test k2b_normal_policy_still_works ... ok
+test k4c_data_file_named_like_a_lock_file_is_rejected ... ok
+test k4b_normal_names_including_subdirs_still_work ... ok
+test write_once_leaves_no_tmp_behind ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 16 tests
+test durability_requirements_match_baseline ... ok
+test allowed_transitions_follow_normative_table ... ok
+test negative_partial_can_never_become_canonical_candidate ... ok
+test negative_undefined_transitions_are_rejected ... ok
+test adr026_write_once_is_idempotent_for_same_name ... ok
+test pointer_replace_exhaustion_is_explicit_error_not_silent ... ok
+test replica_counting_applies_all_normative_rules ... ok
+test manifest_json_roundtrip ... ok
+test gc_removes_orphan_tmp_files ... ok
+test hash_verification_passes_for_intact_files ... ok
+test sync_dir_works_on_this_platform ... ok
+test negative_hash_mismatch_is_detected ... ok
+test manifest_last_rule_identifies_partial_checkpoints ... ok
+test pointer_replace_retries_and_eventually_reports_error ... ok
+test write_once_survives_readers_with_no_share_delete ... ok
+test adr026_write_once_succeeds_while_readers_hold_files_open ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.50s
+
+
+running 7 tests
+test negative_missing_data_file_is_rejected_from_resume ... ok
+test negative_pointer_to_nonexistent_checkpoint_does_not_break_resume ... ok
+test startup_gc_removes_partial_but_keeps_committed ... ok
+test negative_tampered_committed_checkpoint_is_rejected_from_resume ... ok
+test resume_point_is_valid_and_monotonic_across_restarts ... ok
+test pointer_always_references_a_valid_checkpoint ... ok
+test kill_during_write_never_produces_corrupt_checkpoint ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
+
+
+running 7 tests
+test no_candidates_returns_none ... ok
+test w3_manifest_id_must_match_directory_name ... ok
+test w2_empty_manifest_must_not_be_a_resume_candidate ... ok
+test unfiltered_api_documents_its_danger ... ok
+test w1b_resume_must_not_pick_another_attempt ... ok
+test w1_resume_must_not_pick_another_job ... ok
+test normal_resume_still_picks_highest_step ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+
+running 5 tests
+test every_documented_transition_is_allowed_by_implementation ... ok
+test every_implemented_transition_is_documented ... ok
+test parser_is_not_vacuous ... ok
+test partial_never_gets_promoted ... ok
+test unchecked_contract_items_are_declared ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test concurrent_startup_gc_treats_not_found_as_normal_race ... ok
+test successful_write_records_file_operation_states ... ok
+test unregistered_tmp_suffix_is_removed ... ok
+test registered_tmp_suffix_is_preserved ... ok
+test pointer_failure_leaves_residue_marked_and_unselectable ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.22s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+=== 최종 cargo test --workspace --exclude gputeer-runtime-windows (요약: FAILED/error 검색 결과 없음, 42개 스위트 전부 test result: ok) ===
+42
+FAILED/error[ 검색 결과:
+(없음)
+
+=== 뮤테이션 테스트 6건 요약 ===
+1. write_once() 의 try_lock 검사 무력화 -> k1c, k1d 만 예측대로 FAILED. 원복 후 5회 연속 통과.
+2. gc_partial 의 락 파일 제외 분기를 무조건 continue 로 되돌림(1차 설계) -> k1e 의 "쥐고 있는 락 보존" 케이스만 FAILED. 원복 후 재통과.
+3. gc_partial 의 try_lock 결과를 무시하고 항상 삭제하도록 변경 -> k1e 의 "쥐고 있는 락 보존" 케이스만 FAILED. 원복 후 재통과.
+4. write_once() 의 cleanup_lock 을 무력화(락 파일 삭제 안 함) -> durability_chaos.rs::manifest_last_rule_identifies_partial_checkpoints, gc_removes_orphan_tmp_files 정확히 2건만 FAILED. 원복 후 재통과.
+5. gc_partial 의 등록 여부(registered_tmp) 검사를 무력화 -> k1f 만 FAILED. 원복 후 재통과.
+6. validate_relative_name 의 대소문자·후행 점/공백 정규화를 원래 대소문자 구분 비교로 되돌림 -> k4c 만 FAILED("foo.write_once.LOCK" 케이스). 원복 후 재통과.
+
+=== 플레이키 재확인 — write_failure.rs::concurrent_startup_gc_treats_not_found_as_normal_race 단독 15회 ===
+15/15 통과 (이번 조각과 무관한 기존 Windows 삭제 경합 패턴으로 판단, 코덱스 p132 가 동의).

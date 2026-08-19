@@ -50,6 +50,15 @@ pub enum CheckpointError {
         incoming_len: usize,
     },
 
+    /// ★ 동일 `(dir, name)` 에 대한 동시 `write_once` 호출 (2026-08-19 신설).
+    ///
+    /// `write_once` 는 동시 동일-이름 호출을 지원하지 않는다는 계약을
+    /// 명시적으로 강제한다(`docs/plans/2026-08-19_1200_write_once_동시_호출_계약_v1.md`).
+    /// 다른 호출자가 이미 같은 파일을 쓰는 중이면 대기하지 않고
+    /// 즉시 이 오류를 반환한다 — 무기한 대기는 장애를 숨긴다.
+    #[error("write-once 진행 중 {path:?}: 다른 호출자가 이미 같은 파일을 쓰고 있다")]
+    WriteInProgress { path: PathBuf },
+
     /// ★ `RetryPolicy::max_attempts == 0` (2026-08-16 신설).
     ///
     /// ADR-026 은 "최종 실패는 명시적 오류" 를 계약으로 정한다.

@@ -1,0 +1,62 @@
+########## p128 (1라운드) — CHANGES_REQUESTED ##########
+**CHANGES_REQUESTED**
+
+- [Cargo.toml:17](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/Cargo.toml:17) declares Rust 1.85, but [atomic.rs:176](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:176) uses `File::try_lock()`, stabilized in Rust 1.89. MSRV를 올리거나 호환 구현이 필요합니다.
+
+- [codex_findings.rs:115-153](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/codex_findings.rs:115)의 `k1c`는 `Barrier`만 사용합니다. 설계 문서가 요구한 “락을 잡은 writer-A를 대기시키는 결정론적 테스트”가 아니므로, 빠른 스케줄링에서는 승자 완료 후 다른 스레드가 락을 얻어 `ContentMismatch`/`Ok(false)`가 될 수 있습니다.
+
+- [atomic.rs:468-486](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:468)의 락 제외 자체는 모든 파일 삭제 분기보다 먼저 평가되어 올바릅니다. 그러나 영구 보존된 락 파일 때문에 [writer.rs:443-456](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/writer.rs:443)의 `startup_gc`가 매니페스트 없는 PARTIAL 디렉터리를 절대 비우거나 제거하지 못합니다. `k1e`는 파일 보존만 검사하고 이 GC 회귀를 놓칩니다.
+
+확인 결과, 락 획득 순서·`try_lock` 사용·경로 검증 순서·자동 해제와 `WriteInProgress` 정의는 적절합니다. `writer.rs`/`durability.rs`의 `?` 전파도 계약상 맞으며, `selftest.rs`와 `ckpt_writer.rs`는 직접 `write_once` 호출자가 아니라 상위 `write_checkpoint` 호출자입니다.
+
+########## p129 (2라운드) — CHANGES_REQUESTED ##########
+CHANGES_REQUESTED
+
+1. `gc_partial`이 락 파일만 보존하고, 같은 PARTIAL 디렉터리의 `.tmp`/데이터 파일은 계속 삭제합니다. 활성 writer가 락을 쥔 상태에서도 `manifest`가 없으면 `should_remove`가 참이므로 writer의 `.tmp`를 삭제할 수 있습니다. 디렉터리 전체를 건너뛰거나 GC 범위 락이 필요합니다.
+
+- [atomic.rs:500-509](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:500)
+- [atomic.rs:512-526](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:512)
+
+2. 실제 데이터 파일명이 `.write_once.lock`으로 끝나면 GC가 이를 락 파일로 오인해, 매니페스트에 등록된 완결 데이터도 삭제합니다. `validate_relative_name`에는 해당 접미사 예약이 없습니다.
+
+- [atomic.rs:86-114](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:86)
+- [atomic.rs:170](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:170)
+- [atomic.rs:500-509](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:500)
+
+확인된 수정 사항은 타당합니다. MSRV 상속은 해결됐고, `k1c`의 약화된 불변식과 `k1d`의 직접 락 보유 검증도 적절합니다. `sync_dir()` 실패 시 락 파일이 남는 것은 기존 K-3 의미와 일관되며, rename 이후 새 호출자가 락을 재획득해도 이미 final 파일이 존재하므로 두 번째 성공은 발생하지 않습니다.
+
+########## p130 (3라운드) — CHANGES_REQUESTED ##########
+CHANGES_REQUESTED
+
+1. **Finding #1의 범위 밖 판단은 타당합니다.**  
+`gc_partial`은 디렉터리 전체를 잠그지 않고, 현재 주 호출부도 부팅 시 GC입니다([atomic.rs:413](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:413), [writer.rs:407](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/writer.rs:407)). 최소 수정은 `write_once()`가 아니라 `write_checkpoint()`와 GC가 공유하는 checkpoint-directory lock입니다. 이번 조각의 범위 밖으로 둔 결정은 수용 가능합니다.
+
+2. **k1f 수정은 정확한 이름이 매니페스트에 등록된 정상 상태에서는 동작합니다.**  
+매니페스트 등록 목록을 읽고([atomic.rs:459](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:459)), 락 분기 전에 동일 문자열이면 보존합니다([atomic.rs:536](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:536)). 새 테스트도 그 경로를 검증합니다([codex_findings.rs:326](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/codex_findings.rs:326)).
+
+   매니페스트가 없으면 등록 개념이 없으므로 `registered_tmp`가 비고, PARTIAL의 파일은 삭제 대상이 되는 것이 현재 GC 계약상 맞습니다. 다만 활성 writer와 GC가 동시에 같은 디렉터리를 다루면 여전히 기존 Finding #1의 위험입니다.
+
+3. **차단 사유: 락 이름 공간과 데이터 이름 공간이 충돌합니다.**  
+`validate_relative_name`은 `.write_once.lock` 접미사를 허용하고([atomic.rs:86](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:86)), `write_once("foo")`는 실제 락으로 `foo.write_once.lock`을 사용합니다([atomic.rs:170](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:170)). 따라서 합법적인 데이터 파일 `foo.write_once.lock`이 존재하면, 다른 호출의 락 파일로 열리고, 성공 경로의 정리 코드가 그 데이터 파일을 삭제할 수 있습니다([atomic.rs:196](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:196)).
+
+최소 수정은 `validate_relative_name`에서 정규화된 이름의 `.write_once.lock` 접미사를 예약해 거부하는 것입니다. 이를 추가하고, `write_once("foo")`와 `write_once("foo.write_once.lock")` 조합의 회귀 테스트를 넣어야 합니다. 따라서 최종 판정은 **CHANGES_REQUESTED**입니다.
+
+########## p131 (4라운드) — CHANGES_REQUESTED ##########
+CHANGES_REQUESTED
+
+`validate_relative_name()`의 검사가 대소문자를 구분합니다: [atomic.rs:108-113](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:108).
+
+Windows에서는 `foo.write_once.LOCK`와 `foo.write_once.lock`가 같은 파일이므로, 다음 충돌이 여전히 가능합니다.
+
+1. `write_once(dir, "foo.write_once.LOCK", data)`가 데이터 파일을 생성
+2. `write_once(dir, "foo", ...)`가 같은 파일을 락으로 열고
+3. [atomic.rs:217](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:217)의 정리 코드가 데이터를 삭제
+
+Windows의 대소문자 비구분 및 후행 점/공백 정규화까지 고려해 예약 이름을 검사해야 합니다. 회귀 테스트 [codex_findings.rs:568-578](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/codex_findings.rs:568)도 대소문자 변형을 추가로 검증해야 합니다.
+
+########## p132 (5라운드) — ACCEPTED ##########
+ACCEPTED
+
+- 정규화가 예약 접미사 검사 직전에 적용됐다: [atomic.rs:118](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:118)
+- 테스트가 정확한 대소문자, `LOCK`, 후행 점, 후행 공백 변형을 모두 거부한다: [codex_findings.rs:573](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/codex_findings.rs:573)
+- 플레이키 테스트의 판단도 맞다. 64개 디렉터리는 비어 있어 `gc_partial`의 `.write_once.lock` 분기([atomic.rs:567](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:567))에 진입하지 않는다. 해당 테스트의 경합은 이후 `read_dir`/`remove_dir` 처리([writer.rs:443](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/writer.rs:443))와 관련된 기존 Windows 삭제 경합으로 보는 것이 타당하다.

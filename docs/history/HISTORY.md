@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-08-19 13:00 — `write_once()` 동시 호출 계약 — 락 강제 + GC 조정 (`DoD-21`)
+
+- 계획: `docs/plans/2026-08-19_1200_write_once_동시_호출_계약_v1.md`
+  전체 5단계.
+- 스트림: Checkpoint.
+- 수행: `crates/checkpoint/src/atomic.rs::write_once()` 에
+  `std::fs::File::try_lock()` 기반 프로세스 간 파일 잠금을 추가해
+  같은 `(dir, name)` 동시 호출을 `CheckpointError::WriteInProgress`
+  로 명시적으로 거부하도록 강제했다(정책 A, 코덱스 설계 `p127`).
+  성공 시 락 파일을 자가 정리하고, `gc_partial()` 은 자신이
+  `try_lock` 을 직접 시도해 아무도 안 쥔 죽은 락만 회수한다.
+  `.write_once.lock` 접미사(대소문자·후행 점/공백 무관)를
+  `validate_relative_name()` 에서 예약해 락 경로와 데이터 파일
+  경로의 이름공간 충돌을 원천 차단했다. `k1c` 를 결정론적 테스트로
+  재설계하고 `k1d`·`k1e`·`k1f`·`k4c` 4개를 신규 추가했다.
+- 검증: 코덱스 독립 검수 5라운드(`p128`~`p132`) — 매 라운드가 실제
+  결함을 찾았다: MSRV 불일치(`Cargo.toml` 1.85 vs `try_lock` 요구
+  1.89) → GC 죽은 락 영구 보존으로 PARTIAL 디렉터리 청소 불능
+  → 이름공간 충돌로 등록 데이터 파일 삭제 가능성(1차 부분 수정)
+  → 그 근본 원인(락/데이터 경로 자체 충돌) → 대소문자·후행 점/공백
+  우회. 전부 코드로 고치고 `p132` 에서 **ACCEPTED**. 뮤테이션
+  테스트 6건 전부 정확히 예측한 테스트만 실패 확인 후 원복.
+  `cargo test -p gputeer-checkpoint` 5회 연속 통과(53개),
+  `cargo test --workspace --exclude gputeer-runtime-windows` 회귀
+  없음(42개 스위트). `python scripts/verify_evidence.py` 스키마
+  위반 없음.
+- 리포트: `docs/reports/2026-08-19_1300_write_once_동시_호출_계약.md`
+
+---
+
 ## 2026-08-19 11:05 — `remote5090` 원격 Linux+GPU 기계 실측 — D-3 부분 해소 (`ENV-03`)
 
 - 계획: (사용자가 직접 원격 기계 접속 정보를 제공 — 별도 계획 문서
