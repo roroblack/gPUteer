@@ -1,0 +1,13 @@
+**ACCEPTED**
+
+- `gc_partial()`은 실제로 [`atomic.rs:471`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:471)에 있으며, 판정식은 [`atomic.rs:589`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:589)의 `!manifest_exists || (is_tmp && !is_registered)`와 정확히 일치합니다. `startup_gc()`는 [`writer.rs:407`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/writer.rs:407)에서 이를 호출합니다.
+
+- Agent는 [`lib.rs:582-602`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:582)에서 `root/<checkpoint_id>/`를 만들고, `record_initial_state()`로 `.durability.writing`만 생성합니다. 마커명은 [`durability.rs:115`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/durability.rs:115) 및 [`durability.rs:141`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/durability.rs:141)과 일치합니다.
+
+- 새 테스트 [`durability_chaos.rs:179-197`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/durability_chaos.rs:179)는 marker-only 디렉터리 삭제와 manifest/data 디렉터리 보존을 실제 `exists()`, `is_dir()`, `is_file()`로 검증합니다.
+
+- 조건을 반전하면 marker 파일이 남아 디렉터리 삭제 assert가 실패하고, 완결 디렉터리도 삭제 대상이 되어 보존 assert가 실패하므로 mutation 주장도 논리적으로 타당합니다.
+
+- `git diff --stat` 결과 변경 파일은 `crates/checkpoint/tests/durability_chaos.rs` 하나뿐입니다. `writer.rs`와 `agent/src/lib.rs`는 변경되지 않았습니다.
+
+- `cargo test -p gputeer-checkpoint --test durability_chaos`는 실행했으나 환경에 `cargo`가 없어 시작되지 않았습니다. 이는 코드 판정 근거로 사용하지 않았습니다.

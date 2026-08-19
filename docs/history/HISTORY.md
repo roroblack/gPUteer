@@ -16,6 +16,39 @@
 
 ---
 
+## 2026-08-20 07:09 — marker-only checkpoint GC 회귀 테스트 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-33`)
+- 계획: 백로그 재조사(`p167`) 3순위 후보 — 별도 plan 문서 없이
+  evidence 문서에 직접 기록.
+- 스트림: 체크포인트 · QA · 문서.
+- 수행: `DoD-30`(Job 시작 WRITING 마커) evidence 문서가 "WRITING
+  마커만 있는 디렉터리는 기존 `gc_partial()` 규칙상 PARTIAL 로
+  취급돼 GC 대상"이라고 문서로만 주장했던 것을 실제 회귀 테스트로
+  고정했다(`p174`, 코덱스 workspace-write) — `crates/checkpoint/tests/durability_chaos.rs`
+  에 `startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint`
+  신설, `.durability.writing` 마커만 있는 디렉터리가 GC 후 실제로
+  삭제되고 완결된(manifest+데이터) 디렉터리는 보존됨을 파일시스템
+  상태로 확인. GC 알고리즘 자체와 `crates/agent/src/lib.rs` 는
+  전혀 안 바꿨다(순수 테스트 파일 1건만 변경). 독립 검수(`p175`,
+  대화 기록 없는 새 코덱스 인스턴스, read-only)가 `gc_partial()`
+  판정식(`atomic.rs:589`)과 Agent 의 실제 마커 생성 코드(`agent/lib.rs:582-602`)
+  가 정확히 일치하는지, 새 assert 가 실제 파일시스템 상태를
+  확인하는지, 뮤테이션 논리 타당성까지 전부 코드로 확인하고
+  **1라운드 만에 `ACCEPTED`**. 감독자(claude-code)가 검수 완료
+  후 `cargo build`·`cargo test -p gputeer-checkpoint --test
+  durability_chaos`(17개 전부 통과)·워크스페이스 전체 테스트로
+  독립 재확인. 이로써 오늘 새벽 백로그 재조사(`p167`)가 찾은
+  3개 후보(교착 회귀·만료 갱신 fail-closed·marker-only GC) 전부
+  완료.
+- 검증: `cargo build --workspace --exclude gputeer-runtime-windows`
+  성공, `cargo test -p gputeer-checkpoint --test durability_chaos`
+  17개 전부 통과, `cargo test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음, `python scripts/verify_evidence.py` 스키마 위반
+  없음(PASS 41/42).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-33_marker_only_checkpoint_gc_회귀.md`).
+
+---
+
 ## 2026-08-20 06:47 — 만료된 Lease 갱신 경로 fail-closed — 설계 조사 + 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-32`)
 - 계획: 백로그 재조사(`p167`) 2순위 후보 — 설계 조사(`p171`, 별도
   plan 문서 없이 evidence 문서에 직접 기록).

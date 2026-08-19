@@ -1,0 +1,27 @@
+구현 완료했습니다. GC 알고리즘은 변경하지 않았습니다.
+
+- `gc_partial()`은 checkpoint 디렉터리가 존재하고 `manifest.json`이 없으면 일반 파일을 제거합니다. 이후 `startup_gc()`가 빈 디렉터리도 제거합니다. 핵심 조건은 `!manifest_exists || (is_tmp && !is_registered)`입니다.
+- Agent는 `root/<checkpoint_id>/.durability.writing`만 생성하고 manifest는 생성하지 않습니다. 레이아웃이 GC 기대 구조와 일치합니다.
+
+추가한 테스트:
+
+- [durability_chaos.rs:179](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/durability_chaos.rs:179)
+- 함수: `startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint`
+- `.durability.writing`만 있는 디렉터리가 GC 후 삭제되는지 assert
+- 유효한 `manifest.json`과 `model.bin`이 있는 디렉터리가 보존되는지 assert
+
+검증 결과:
+
+- Mutation: GC 조건을 임시로 반전했을 때 테스트 실패(exit 101) 확인
+- 원복 후 `durability_chaos` 17개 테스트 통과
+- `cargo build --workspace --exclude gputeer-runtime-windows` 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows` 성공
+- 최종 변경 파일은 테스트 파일 하나뿐이며, Agent/docs/history는 수정하지 않았습니다.
+
+`rustfmt`는 현재 toolchain에 설치되어 있지 않아 `cargo fmt --check`만 실행 불가했습니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+cargo test -p gputeer-checkpoint --test durability_chaos: 17개 전부 통과
+  (신규 startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint 포함)
+cargo test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건

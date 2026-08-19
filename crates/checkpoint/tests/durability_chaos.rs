@@ -11,10 +11,10 @@ use std::thread;
 use std::time::Duration;
 
 use gputeer_checkpoint::{
-    gc_partial, replace_with_retry, sync_dir, write_once, CheckpointError, CheckpointFile,
-    CheckpointManifest, Durability, DurabilityState, RetryPolicy,
+    gc_partial, replace_with_retry, startup_gc, sync_dir, write_once, CheckpointError,
+    CheckpointFile, CheckpointManifest, Durability, DurabilityState, RetryPolicy,
 };
-use gputeer_checkpoint::durability::{ReplicaSet, MANIFEST_FILENAME};
+use gputeer_checkpoint::durability::{record_initial_state, ReplicaSet, MANIFEST_FILENAME};
 
 // ═══════════════════════════════════════════════════════════════════
 // ADR-026 핵심 검증
@@ -173,6 +173,35 @@ fn manifest_last_rule_identifies_partial_checkpoints() {
     let removed_partial = gc_partial(&partial, MANIFEST_FILENAME).unwrap();
     assert_eq!(removed_partial.len(), 1, "매니페스트 없는 데이터는 GC 대상이다");
     assert!(!partial.join("model.bin").exists());
+}
+
+#[test]
+fn startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint() {
+    let root = tempfile::tempdir().unwrap();
+
+    // Match Agent::record_start_checkpoint(): create the checkpoint directory,
+    // then write only the initial durability marker.
+    let marker_only = root.path().join("start-checkpoint");
+    fs::create_dir(&marker_only).unwrap();
+    record_initial_state(&marker_only).unwrap();
+    assert!(marker_only.join(".durability.writing").is_file());
+    assert!(!marker_only.join(MANIFEST_FILENAME).exists());
+
+    // A complete checkpoint has a data file and a manifest in the same
+    // checkpoint directory, which is the layout startup_gc expects.
+    let complete = root.path().join("complete-checkpoint");
+    fs::create_dir(&complete).unwrap();
+    let manifest = manifest_for(&complete, &[("model.bin", b"weights")]);
+    write_once(&complete, MANIFEST_FILENAME, &manifest.to_json().unwrap()).unwrap();
+
+    let (dirs, removed) = startup_gc(root.path()).unwrap();
+
+    assert_eq!(dirs, 2, "startup_gc must inspect both checkpoint directories");
+    assert_eq!(removed, 1, "the marker-only checkpoint contributes one removed marker");
+    assert!(!marker_only.exists(), "marker-only checkpoint directory must be removed");
+    assert!(complete.is_dir(), "manifest checkpoint directory must be preserved");
+    assert!(complete.join("model.bin").is_file());
+    assert!(complete.join(MANIFEST_FILENAME).is_file());
 }
 
 #[test]
