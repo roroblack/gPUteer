@@ -1,0 +1,16 @@
+=== 최종 cargo test --workspace --exclude gputeer-runtime-windows ===
+test result: ok 라인 수: 42
+FAILED/error[ 검색 결과:
+(없음)
+
+=== coordinator-agent-selftest 독립 반복 실행(2라운드에 걸쳐 총 15회) ===
+1차(1차 구현 직후): 5회 연속, 31개 시나리오, exit=0
+2차(break 수정 직후, 각 30초 하드 타임아웃): 5회 연속, 32개 시나리오, exit=0
+3차(최종 재확인): 5회 연속, 32개 시나리오, exit=0
+
+=== 뮤테이션 테스트(내가 직접 재현, codex 자체 보고와 별개) ===
+시나리오 32(SUPERSEDED가 renew_rounds=2의 첫 회차에서 발생)를 보호하는
+`break`를 `continue`로 되돌려 재빌드 -> coordinator-agent-selftest 가
+정확히 exit=1 로 실패("프레임이 완결되기 전에 스트림이 끊겼다" —
+Agent 는 이미 RENEW_REFUSED:SUPERSEDED 로 종료해 있었다). 원복 후
+재빌드, 5회 연속 재통과 확인.

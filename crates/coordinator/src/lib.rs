@@ -370,14 +370,41 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             }
             None => config.fence_epoch,
         };
+        let renew_now = clock.now_unix_ms();
         if renew_req.fence_epoch != expected_epoch {
+            // 영속 저장소가 있는 경우에만 저장된 더 높은 epoch의 존재를
+            // 재시작을 넘어 확인할 수 있다. 낮은 epoch는 정상적인
+            // failover 경합에서 도착할 수 있으므로 연결을 끊지 않고,
+            // 서명된 SUPERSEDED 정책 결과로 Agent가 스스로 물러나게
+            // 한다. 레거시(None)와 높은 epoch는 기존 hard error를
+            // 유지한다 — 새 epoch 발급 정책을 이 조각에서 만들지 않는다.
+            if renew_req.fence_epoch < expected_epoch && lease_store.is_some() {
+                let result = build_signed_policy_renew_result(
+                    &config,
+                    &signing_key,
+                    renew_now,
+                    2, // RENEW_OUTCOME_SUPERSEDED
+                    "a higher fence epoch already exists",
+                    renew_req.nonce.clone(),
+                )?;
+                let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec())
+                    .map_err(|e| format!("RenewLeaseResult 프레임 인코딩 실패: {e}"))?;
+                stream
+                    .write_all(&frame)
+                    .map_err(|e| format!("RenewLeaseResult 전송 실패: {e}"))?;
+                stream.flush().map_err(|e| e.to_string())?;
+                println!(
+                    "RENEW_RESULT ok=true outcome={} lease_id={}",
+                    result.outcome, config.lease_id
+                );
+                break;
+            }
             return Err(format!(
                 "RenewLeaseRequest.fence_epoch 불일치: 기대값 {} != {}",
                 expected_epoch, renew_req.fence_epoch
             ));
         }
 
-        let renew_now = clock.now_unix_ms();
         let result = build_renew_result(
             &config,
             &mut lease_store,
@@ -398,6 +425,14 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             "RENEW_RESULT ok=true outcome={} lease_id={}",
             result.outcome, config.lease_id
         );
+
+        // Agent는 정상 정책 거부(outcome=2/3/6)를 받으면 즉시
+        // 갱신 함수를 종료하므로, 다음 회차의 요청을 기다리지 않는다.
+        // Coordinator도 같은 회차에서 갱신 루프를 끝내야 교착/EOF 오류를
+        // 만들지 않는다.
+        if matches!(result.outcome, 2 | 3 | 6) {
+            break;
+        }
 
             if config.revoke_after_round == Some(_round + 1) {
                 send_revoke_notice(&config, &grant, &signing_key, &mut stream)?;
@@ -483,6 +518,47 @@ fn build_revoke_notice(
         *last ^= 0x01;
     }
     Ok(notice)
+}
+
+/// 저장된 더 높은 epoch에 의해 갱신이 대체된 경우의 정책 결과를 만든다.
+///
+/// 이 결과도 일반 갱신 결과와 같은 domain/signature 경로를 사용한다.
+/// 특히 `lease=None`인 정책 거부는 nested Lease 검증으로 대체할 수 없으므로
+/// Coordinator 서명이 없으면 Agent가 정상 failover 경합과 위조된 강제 중단을
+/// 구별할 수 없다.
+fn build_signed_policy_renew_result(
+    config: &CoordinatorConfig,
+    key: &SigningKey,
+    now: u64,
+    outcome: i32,
+    detail: &str,
+    request_nonce: Vec<u8>,
+) -> Result<pb::RenewLeaseResult, String> {
+    let request_nonce = if config.corrupt_renew_result_nonce {
+        request_nonce.iter().map(|b| b ^ 0xFF).collect()
+    } else {
+        request_nonce
+    };
+    let mut result = pb::RenewLeaseResult {
+        outcome,
+        detail: detail.into(),
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce,
+        ..Default::default()
+    };
+    result.coordinator_signature = sign(key, &result).to_vec();
+
+    if config.corrupt_renew_result_signature {
+        let last = result
+            .coordinator_signature
+            .last_mut()
+            .ok_or_else(|| "RenewLeaseResult coordinator_signature가 비어 있다".to_string())?;
+        *last ^= 0x01;
+    }
+
+    Ok(result)
 }
 
 /// `RenewLeaseRequest` 에 대한 응답을 만들어 서명한다.

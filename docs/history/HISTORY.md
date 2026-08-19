@@ -16,6 +16,54 @@
 
 ---
 
+## 2026-08-19 18:00 — Coordinator SUPERSEDED 정책 — 독립 검수 2라운드 + evidence 기록 (`DoD-23`)
+- 계획: `docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md`
+  (구현은 17:25 항목 참조 — 이 항목은 그 뒤의 독립 검수·수정·기록).
+- 스트림: Coordinator · Agent · CLI(selftest) · QA.
+- 수행: 17:25 항목의 결과물을 이 세션이 독립적으로 재검증(빌드·
+  테스트·`coordinator-agent-selftest` 5회 반복)한 뒤, 대화 기록이
+  없는 새 코덱스 인스턴스(read-only)에게 독립 검수를 받았다. 코드를
+  직접 읽던 중 이 세션 스스로도 의심스러운 지점(SUPERSEDED 응답 후
+  `continue` — 오늘 이미 Lease revoke 조각에서 같은 부류의 결함이
+  나왔었다)을 먼저 포착해, 미리 알리지 않고 블라인드로 독립 검수를
+  돌려 교차 확인했다. 1라운드(`p139`)가 정확히 그 지점을 지적 —
+  `renew_rounds > 1` 이고 SUPERSEDED 가 마지막이 아닌 회차에서
+  발생하면 Coordinator 가 오지 않을 프레임을 기다리는 교착. 기존
+  시나리오 25·26 은 renew_rounds 기본값 1 이라 이 조합을 우연히
+  피해가 안 드러났었다. 워크스페이스에 write 권한을 준 다른 코덱스
+  인스턴스가 `continue` 를 `break` 로 고치고, Agent 가 즉시 종료하는
+  다른 outcome(QUARANTINED·MAX_DURATION_EXCEEDED)도 같은 위험이
+  있음을 확인해 공통으로 일반화했다(`p140`) — 이전 조각들부터
+  잠재했을 수 있는 위험을 부수적으로 닫은 것이다. 이 세션이 그
+  수정을 직접 되돌려 뮤테이션을 재현해(정확히 시나리오 32 에서
+  exit=1, 스트림 끊김) 코덱스의 자체 보고와 별개로 결함의 실재를
+  재확인했다. 2라운드(`p141`)에서 `ACCEPTED`.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(42개 스위트, 0 failed). `coordinator-agent-selftest`
+  총 3세트(1차 5회 31개 시나리오 + 수정 후 5회 32개 시나리오 + 최종
+  재확인 5회 32개 시나리오) 전부 exit=0. `python scripts/verify_evidence.py`
+  스키마 위반 없음(PASS 31/32).
+- 리포트: `docs/reports/2026-08-19_1725_lease_재발급_정책_superseded.md`
+  (구현자가 작성 — 이 세션은 별도 리포트를 새로 쓰지 않고 이
+  HISTORY 항목과 `DoD-23` evidence 로 검수·기록 단계를 남긴다).
+
+---
+
+## 2026-08-19 17:25 — 영속 Lease lower epoch SUPERSEDED 정책
+- 계획: `docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md`
+- 스트림: Coordinator · Agent · CLI(selftest)
+- 수행: `lease_store=Some`에서 저장 epoch보다 낮은 `RenewLeaseRequest.fence_epoch`를
+  연결 종료 없이 signed `RENEW_OUTCOME_SUPERSEDED`로 응답. Agent 기존 정책 거부
+  경로를 계산 결과에도 적용 확인. selftest 31개(새 lower epoch 및 same epoch 대조군).
+- 결정: `lease_store=None`과 높은 epoch는 기존 hard error 유지. QUARANTINED 실제
+  판정은 위험도/신뢰도 인프라가 없어 TODO_VISION V-11로 등록. 높은 epoch의 새
+  재발급 정책은 후속 범위.
+- 검증: build 성공, workspace test exit 0, selftest 5회 연속 31/31 성공.
+  lower-epoch 분기와 outcome 값을 각각 무력화한 mutation test가 시나리오 25에서
+  실패했고 두 변경 모두 원복.
+- 리포트: `docs/reports/2026-08-19_1725_lease_재발급_정책_superseded.md`
+- evidence: 사용자 지시에 따라 이번 세션에서는 작성하지 않음(독립 검수 이관)
+
 ## 2026-08-19 16:10 — Lease revoke 최소 조각 — 독립 검수 3라운드 + evidence 기록 (`DoD-22`)
 - 계획: `docs/plans/2026-08-19_1517_lease_revoke_최소_조각_v1.md` 5단계
   (구현은 15:32 항목 참조 — 이 항목은 그 뒤의 독립 검수·수정·기록).

@@ -227,7 +227,7 @@ fn run_handshake(
     })
 }
 
-/// 29가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
+/// 32가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
 /// 이유를 담아 반환한다.
 pub fn run() -> Result<String, String> {
     let fixture = Fixture::new()?;
@@ -1390,10 +1390,164 @@ pub fn run() -> Result<String, String> {
     );
 
     // ══════════════════════════════════════════════════════════════
+    // Coordinator의 실제 SUPERSEDED 정책 (2026-08-19)
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 25. 저장된 epoch보다 낮은 요청 — signed SUPERSEDED, 연결 유지 ──
+    // 최초 Grant는 저장된 epoch=5로 기록하고, 별도 Coordinator 프로세스에서
+    // 같은 DB를 다시 연다. Agent가 Grant를 먼저 같은 durable watermark에
+    // 기록한 뒤 요청 epoch=4를 보내므로, Coordinator가 raw error로 연결을
+    // 끊었다면 coordinator 성공/RENEW_RESULT가 남을 수 없다.
+    let superseded_dir_25 = tempfile::tempdir()
+        .map_err(|e| format!("SUPERSEDED 시나리오 임시 디렉터리 생성 실패(25): {e}"))?;
+    let lease_db_25 = superseded_dir_25.path().join("lease.sqlite3");
+    let fence_db_25 = superseded_dir_25.path().join("fence.sqlite3");
+    let lease_db_25 = lease_db_25
+        .to_str()
+        .ok_or_else(|| "SUPERSEDED lease store 경로가 UTF-8이 아니다(25)".to_string())?;
+    let fence_db_25 = fence_db_25
+        .to_str()
+        .ok_or_else(|| "SUPERSEDED fence watermark 경로가 UTF-8이 아니다(25)".to_string())?;
+
+    let issue_25 = run_handshake(
+        &fixture,
+        &["--lease-db", lease_db_25, "--fence-epoch", "5", "--do-renew", "false"],
+        &["--fence-db", fence_db_25, "--do-renew", "false"],
+    )?;
+    if !issue_25.coordinator_success || !issue_25.agent_success {
+        return Err(format!(
+            "SUPERSEDED 시나리오 1차 발급이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_25.coordinator_success,
+            issue_25.coordinator_stdout,
+            issue_25.coordinator_stderr,
+            issue_25.agent_success,
+            issue_25.agent_stdout,
+            issue_25.agent_stderr
+        ));
+    }
+
+    let superseded_25 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_25,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+        ],
+        &[
+            "--fence-db",
+            fence_db_25,
+            "--do-renew",
+            "true",
+            "--renew-request-epoch-override",
+            "4",
+        ],
+    )?;
+    if !superseded_25.coordinator_success
+        || !superseded_25
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=2")
+        || !superseded_25.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || superseded_25.agent_success
+        || !superseded_25
+            .agent_stderr
+            .contains("RENEW_REFUSED:SUPERSEDED")
+        || superseded_25
+            .agent_stderr
+            .contains("RenewLeaseResult 프레임 읽기/검증 실패")
+    {
+        return Err(format!(
+            "영속 저장소의 낮은 epoch 요청이 signed SUPERSEDED로 정상 응답되지 않았다 — raw 연결 종료가 아니어야 한다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            superseded_25.coordinator_success,
+            superseded_25.coordinator_stdout,
+            superseded_25.coordinator_stderr,
+            superseded_25.agent_success,
+            superseded_25.agent_stdout,
+            superseded_25.agent_stderr
+        ));
+    }
+    report.push_str(
+        "25) 영속 stored epoch(5)보다 낮은 renew 요청(4)을 연결 종료 없이 signed SUPERSEDED로 응답하고 Agent가 정상 정책 거부로 분류함\n",
+    );
+
+    // ── 26. 저장된 epoch와 같은 요청 — 기존 signed RENEWED 대조군 ──
+    let same_epoch_dir_26 = tempfile::tempdir()
+        .map_err(|e| format!("same epoch 시나리오 임시 디렉터리 생성 실패(26): {e}"))?;
+    let lease_db_26 = same_epoch_dir_26.path().join("lease.sqlite3");
+    let fence_db_26 = same_epoch_dir_26.path().join("fence.sqlite3");
+    let lease_db_26 = lease_db_26
+        .to_str()
+        .ok_or_else(|| "same epoch lease store 경로가 UTF-8이 아니다(26)".to_string())?;
+    let fence_db_26 = fence_db_26
+        .to_str()
+        .ok_or_else(|| "same epoch fence watermark 경로가 UTF-8이 아니다(26)".to_string())?;
+
+    let issue_26 = run_handshake(
+        &fixture,
+        &["--lease-db", lease_db_26, "--fence-epoch", "7", "--do-renew", "false"],
+        &["--fence-db", fence_db_26, "--do-renew", "false"],
+    )?;
+    if !issue_26.coordinator_success || !issue_26.agent_success {
+        return Err(format!(
+            "same epoch 시나리오 1차 발급이 실패했다(정상이어야 한다).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_26.coordinator_success,
+            issue_26.coordinator_stdout,
+            issue_26.coordinator_stderr,
+            issue_26.agent_success,
+            issue_26.agent_stdout,
+            issue_26.agent_stderr
+        ));
+    }
+    let same_epoch_26 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_26,
+            "--fence-epoch",
+            "0",
+            "--do-renew",
+            "true",
+        ],
+        &["--fence-db", fence_db_26, "--do-renew", "true"],
+    )?;
+    if !same_epoch_26.coordinator_success
+        || !same_epoch_26
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=1")
+        || !same_epoch_26.agent_success
+        || !same_epoch_26
+            .agent_stdout
+            .contains("RENEW_RESULT ok=true outcome=RENEWED")
+    {
+        return Err(format!(
+            "저장된 epoch와 같은 epoch의 기본 renew가 RENEWED가 아니었다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            same_epoch_26.coordinator_success,
+            same_epoch_26.coordinator_stdout,
+            same_epoch_26.coordinator_stderr,
+            same_epoch_26.agent_success,
+            same_epoch_26.agent_stdout,
+            same_epoch_26.agent_stderr
+        ));
+    }
+    report.push_str("26) 저장된 epoch와 같은 epoch의 기본 renew가 signed RENEWED임을 확인\n");
+
+    // ══════════════════════════════════════════════════════════════
     // Lease revoke 최소 조각 (2026-08-19)
     // ══════════════════════════════════════════════════════════════
 
-    // ── 25. ACK 직후 revoke + 양쪽 renew 활성화의 교착 방지 ─────────
+    // ── 27. ACK 직후 revoke + 양쪽 renew 활성화의 교착 방지 ─────────
     let revoke_ok = run_handshake(
         &fixture,
         &[
@@ -1435,7 +1589,7 @@ pub fn run() -> Result<String, String> {
         ));
     }
     report.push_str(
-        "25) ACK 직후 revoke + 양쪽 renew=true 정상 종료 및 Agent의 revoke 후 renew 미생성 경로 확인 \
+        "27) ACK 직후 revoke + 양쪽 renew=true 정상 종료 및 Agent의 revoke 후 renew 미생성 경로 확인 \
          (Coordinator/Agent stub이 즉시 종료하므로 wire상 추가 프레임 부재 자체는 이 selftest가 직접 증명하지 않음)\n",
     );
 
@@ -1457,7 +1611,7 @@ pub fn run() -> Result<String, String> {
             forged_revoke.agent_success, forged_revoke.agent_stdout, forged_revoke.agent_stderr
         ));
     }
-    report.push_str("26) 위조 RevokeLeaseNotice 서명 거부 확인\n");
+    report.push_str("28) 위조 RevokeLeaseNotice 서명 거부 확인\n");
 
     let wrong_revoke_lease_id = "01JWRONGREVOKELEASE00000001";
     let wrong_id_revoke = run_handshake(
@@ -1485,7 +1639,7 @@ pub fn run() -> Result<String, String> {
             wrong_id_revoke.agent_success, wrong_id_revoke.agent_stdout, wrong_id_revoke.agent_stderr
         ));
     }
-    report.push_str("27) 잘못된 revoke lease_id 거부 확인\n");
+    report.push_str("29) 잘못된 revoke lease_id 거부 확인\n");
 
     let wrong_epoch_revoke = run_handshake(
         &fixture,
@@ -1502,7 +1656,7 @@ pub fn run() -> Result<String, String> {
             wrong_epoch_revoke.agent_stderr
         ));
     }
-    report.push_str("28) 잘못된 revoke fence_epoch 거부 확인\n");
+    report.push_str("30) 잘못된 revoke fence_epoch 거부 확인\n");
 
     // Grant 시점에는 아직 유효하지만, Coordinator가 실제로 2.2초
     // 기다린 뒤 revoke를 보내므로 Agent의 보유 Lease는 이미 만료된다.
@@ -1528,7 +1682,70 @@ pub fn run() -> Result<String, String> {
             expired_revoke.agent_stderr
         ));
     }
-    report.push_str("29) 이미 만료된 Lease에 대한 revoke 거부 확인\n");
+    report.push_str("31) 이미 만료된 Lease에 대한 revoke 거부 확인\n");
+
+    // ── 32. SUPERSEDED가 다회차 갱신의 첫 회차에 발생하면 즉시 종료 ──
+    // Agent의 정책 거부는 함수 자체를 끝내므로 Coordinator도 다음
+    // RenewLeaseRequest를 기다리지 않고 같은 회차에서 루프를 끝내야 한다.
+    // 이 시나리오는 renew_rounds=2로 첫 회차에서만 SUPERSEDED를 유도하고,
+    // 두 번째 회차의 RENEW_RESULT가 없으며 양쪽 프로세스가 정상적으로
+    // 수렴하는지를 확인한다.
+    let superseded_multi_round = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_25,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+            "--renew-rounds",
+            "2",
+        ],
+        &[
+            "--fence-db",
+            fence_db_25,
+            "--do-renew",
+            "true",
+            "--renew-request-epoch-override",
+            "4",
+            "--renew-rounds",
+            "2",
+        ],
+    )?;
+    if !superseded_multi_round.coordinator_success
+        || !superseded_multi_round
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=2")
+        || superseded_multi_round
+            .coordinator_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 1
+        || !superseded_multi_round.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || superseded_multi_round.agent_success
+        || !superseded_multi_round
+            .agent_stderr
+            .contains("RENEW_REFUSED:SUPERSEDED")
+        || superseded_multi_round.agent_stdout.contains("RENEW_RESULT ok=true")
+    {
+        return Err(format!(
+            "다회차 SUPERSEDED가 첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            superseded_multi_round.coordinator_success,
+            superseded_multi_round.coordinator_stdout,
+            superseded_multi_round.coordinator_stderr,
+            superseded_multi_round.agent_success,
+            superseded_multi_round.agent_stdout,
+            superseded_multi_round.agent_stderr
+        ));
+    }
+    report.push_str(
+        "32) renew_rounds=2의 첫 회차 SUPERSEDED 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
+    );
 
     Ok(report)
 }

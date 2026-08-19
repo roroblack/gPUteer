@@ -177,3 +177,15 @@ RevokeLeaseNotice   lease_id 로 대신
 점수를 단일 스칼라로 합칠지 사전조건(hard filter)과 우선순위(soft rank)를
 분리할지, 신뢰도 점수의 시간 감쇠(decay) 규칙, 점수 조작(자기 자신에게
 유리하게 이력을 세탁) 방지 — 전부 scheduler 설계 착수 시점에 다시 판단한다.
+
+### V-11 — Coordinator의 QUARANTINED 실제 판정 정책
+
+| 필드 | 내용 |
+|---|---|
+| **도입 트리거** | Coordinator 입력에 서명된 기기 위험도/신뢰도 관측값과 분류 이유가 생기고, selftest가 그 입력으로 `QUARANTINED` 결과를 재현할 수 있는 시점. 최소 1개의 관측 가능한 위험 이벤트 종류와 그 발생 횟수/시각이 저장되어야 한다 |
+| 지금 안 하는 이유 | 현재 저장소에는 기기 위험도·신뢰도 이력, 위험 이벤트 수집기, 다중 Agent 선택 계층이 없다. `QUARANTINED`를 임의 epoch 비교나 CLI override로 트리거하면 정상 failover 경합(`SUPERSEDED`)과 위험 판정을 혼동하고, 근거 없는 Agent 작업 중단을 만든다 |
+| 예상 비용 | 생성: 위험 이벤트 입력·영속 이력·판정 함수 / 검증·통합: 서명된 reason·관측 시각·오탐/재현성·다중 Agent selftest / 대기: scheduler와 다중 Agent 착수. 병목은 신뢰도 입력의 provenance를 먼저 확보하는 것 |
+| 폐기 조건 | 기기 격리/정책 설계에서 `QUARANTINED` outcome을 제거하고 다른 서명된 상태 전이로 대체하는 결정이 기준선과 proto에서 확정되는 경우 |
+
+이번 Lease 재발급 정책 조각에서는 위 트리거가 아직 오지 않았으므로 실제
+`QUARANTINED` 계산을 만들지 않는다.

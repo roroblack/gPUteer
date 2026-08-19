@@ -1,0 +1,70 @@
+########## p138 (구현자, workspace-write, 코덱스 solo) — 1차 구현 완료 보고 ##########
+구현 완료했습니다. 커밋/푸시는 하지 않았습니다.
+
+변경 파일:
+
+- [crates/coordinator/src/lib.rs](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:381)
+- [crates/cli/src/coordinator_agent_selftest.rs](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1402)
+- [docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md)
+- [docs/vision/TODO_VISION.md](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/vision/TODO_VISION.md:181)
+- 세션 report/history 추가
+
+설계:
+
+- `lease_store=Some`에서 요청 epoch가 저장 epoch보다 낮으면 signed `SUPERSEDED`, `lease=None` 응답.
+- 같은 epoch는 기존 signed `RENEWED`.
+- `lease_store=None` 및 높은 epoch는 기존 hard error 유지.
+- Agent의 기존 `RENEW_REFUSED:SUPERSEDED` 처리가 계산된 결과에도 그대로 적용됨을 확인했습니다.
+- `QUARANTINED` 실제 트리거는 위험도/신뢰도 인프라가 없어 V-11로 등록하고 보류했습니다.
+- epoch 상승 정책도 실제 재발급/할당 정책 범위로 미뤘습니다.
+
+검증:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` — 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows` — 성공, 실패 0, ignored 1
+- selftest — 하드 타임아웃 120초, 31/31 시나리오 5회 연속 성공
+- mutation test 2건 — 분기/outcome 무력화 시 시나리오 25 실패 확인 후 원복, 재검증 성공
+- `git diff --check` — 성공
+
+`cargo fmt`는 rustfmt 컴포넌트 미설치로 실행하지 못했습니다. 사용자 지시에 따라 `docs/evidence/DoD-NN_*.md`는 작성하지 않았으며, 독립 검수와 evidence 기록은 남아 있습니다.
+
+########## p139 (독립 검수자, read-only, 다른 인스턴스) — 1라운드 CHANGES_REQUESTED ##########
+CHANGES_REQUESTED
+
+- Coordinator는 낮은 epoch에 signed `SUPERSEDED`를 보낸 뒤 `continue`합니다: [crates/coordinator/src/lib.rs:381-400](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:381). 따라서 `renew_rounds > 1`이면 다음 요청을 기다립니다.
+- 그러나 Agent는 outcome=2 수신 즉시 `Err`로 종료합니다: [crates/agent/src/lib.rs:332-400](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:332), 특히 [392행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:392). 두 구현의 회차 진행이 맞물리지 않아 다회차에서는 Coordinator가 timeout/error가 됩니다.
+
+시나리오 25·26은 `--renew-rounds`를 생략해 양쪽 기본값 1([coordinator lib.rs:922](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:922), [agent lib.rs:611](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:611))입니다. 따라서 25번은 `continue`가 사실상 마지막 회차 종료처럼 작동해 결함을 가립니다([coordinator_agent_selftest.rs:1431-1463](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1431)).
+
+`TODO_VISION.md`의 V-11은 관측 가능한 트리거·이유·비용/병목·폐기조건을 모두 갖춰 등록 규칙을 충족합니다([TODO_VISION.md:181-190](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/vision/TODO_VISION.md:181)).
+
+########## p140 (구현자, workspace-write, 다른 인스턴스) — 교착 결함 수정 완료 보고 ##########
+수정 완료했습니다. 커밋·푸시는 하지 않았습니다.
+
+- `SUPERSEDED` 응답 후 Coordinator 루프를 `continue` → `break`로 수정.
+- Agent가 즉시 종료하는 `QUARANTINED`(3), `MAX_DURATION_EXCEEDED`(6)도 Coordinator가 `break`하도록 수정.
+- [selftest](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\cli\src\coordinator_agent_selftest.rs:1687)에 `renew_rounds=2`, 첫 회차 `SUPERSEDED` 시나리오 32 추가.
+- [계획 문서](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\docs\plans\2026-08-19_1725_lease_재발급_정책_superseded_v1.md:108) 개정 이력 추가.
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows`: 통과
+- `cargo test --workspace --exclude gputeer-runtime-windows`: 전체 통과, 실패 0
+- `coordinator-agent-selftest`: 30초 hard timeout으로 5회 연속 통과
+- 뮤테이션 테스트: `break`를 `continue`로 변경 후 재빌드했을 때 scenario 32가 30초 내 exit 1로 실패. Coordinator의 두 번째 요청 대기/EOF 오류가 확인됨.
+- 원복 후 재빌드 및 selftest 재실행: 통과
+
+참고로 `cargo fmt --check`는 환경에 `rustfmt` 컴포넌트가 설치되지 않아 실행하지 못했으며, `git diff --check`는 통과했습니다.
+
+########## p141 (독립 검수자, read-only, 또 다른 인스턴스) — 2라운드 ACCEPTED ##########
+**ACCEPTED**
+
+1. Coordinator 흐름이 정확합니다. 낮은 `fence_epoch`의 signed `SUPERSEDED` 경로는 전송 후 `break`합니다 ([lib.rs:381](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:381), [lib.rs:365](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:365)). 일반 결과도 `build_renew_result` 반환 직후 outcome `2|3|6`이면 `break`합니다 ([lib.rs:408](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:408), [lib.rs:433](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:433)). 이후 `revoke_after_round`보다 앞서므로 종료된 Agent에게 다음 요청이나 revoke를 기다리지 않습니다.
+
+2. 두 `break`는 중복 충돌하지 않습니다. 전자는 fence 불일치 전용, 후자는 정상 epoch의 정책 결과 전용입니다. 반복 루프 구조도 `renew_rounds`를 즉시 탈출합니다 ([lib.rs:321](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:321), [lib.rs:437](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:437)).
+
+3. Agent는 실제로 outcome `2`, `3`, `6` 모두 즉시 종료합니다 ([agent/lib.rs:392](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:392), [agent/lib.rs:398](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:398)). 따라서 QUARANTINED/MAX_DURATION_EXCEEDED도 다회차에서 동일한 교착 위험이 있었고, 새 일반 분기가 둘 다 포괄합니다. 기존 selftest에는 각각 단회차 조합만 있으며 ([selftest.rs:535](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:535), [selftest.rs:1074](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1074)), 별도 다회차 시나리오가 필수적으로 누락된 결함은 아닙니다. 공통 제어 흐름으로 직접 커버됩니다.
+
+4. 시나리오 32는 첫 회차 `SUPERSEDED`, `renew_rounds=2`, 이후 결과 0건을 명시적으로 검사합니다 ([selftest.rs:1687](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1687), [selftest.rs:1718](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1718)).
+
+5. 계획서 개정 이력에도 이번 수정과 시나리오 32가 명시되어 있어 정직하게 반영됐습니다 ([계획서:102](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md:102), [계획서:108](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-19_1725_lease_재발급_정책_superseded_v1.md:108)).
