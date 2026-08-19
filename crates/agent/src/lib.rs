@@ -12,11 +12,13 @@
 //! 를 메모리에만 들고, Coordinator 공개키는 [`InMemoryKeyring`] 에 담아
 //! 검증에만 쓴다.
 
+use std::fs;
 use std::io::Write;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use gputeer_checkpoint::durability::record_initial_state;
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, InMemoryKeyring,
     InMemoryReplayGuard, IngressMessage, KeyDirectorySource, SigningKey, SystemClock,
@@ -71,6 +73,9 @@ pub struct AgentConfig {
     /// watermark 에서 시작한다.
     pub fence_db_path: PathBuf,
 
+    /// Job 시작 `WRITING` 마커를 기록할 checkpoint root.
+    pub checkpoint_root: PathBuf,
+
     // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
     /// 같은 연결에서 `RenewLeaseRequest`/`RenewLeaseResult` 왕복을 이
     /// 횟수만큼 반복한다. `do_renew == false` 면 무시된다. 기본값 1은
@@ -91,8 +96,13 @@ pub struct AgentConfig {
 ///
 /// Coordinator 에 연결해 `ExecutionGrant` 를 받아 검증하고, 서명된
 /// `AgentGrantAck` 를 돌려준다. 성공하면 `stdout` 에
-/// `RESULT ok=true ...` 를 찍고 `Ok(())`, 실패하면 그 이유를 담아
+/// `JOB_STARTED ... state=WRITING` 및 `RESULT ok=true ...` 를 찍고
+/// `Ok(())`, 실패하면 그 이유를 담아
 /// `Err` 를 반환한다(호출자가 exit code 로 매핑).
+///
+/// `RESULT ok=true` 는 Job 완료가 아니다. 이 stub은 entrypoint를 실행하지
+/// 않으며, 시작 디렉터리에는 데이터 파일과 `manifest.json`도 없으므로
+/// 이 마커만으로 resume 후보나 `COMMITTED` 근거를 만들 수 없다.
 pub fn run(config: AgentConfig) -> Result<(), String> {
     let signing_key = SigningKey::from_bytes(&config.own_seed);
     let mut coordinator_keys = InMemoryKeyring::new();
@@ -167,6 +177,22 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         &mut replay,
         &mut fence_watermark,
     )?;
+
+    // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
+    // 시작 사실을 durable artifact로 남긴다. 디렉터리 생성 또는
+    // record_initial_state()가 실패하면 여기서 fail-closed하여 ACK를
+    // 보내지 않는다. record_initial_state()는 내부 write_once()의
+    // 동일 내용 Ok(false) 멱등 동작을 그대로 상속한다.
+    let checkpoint_id = record_start_checkpoint(
+        &config.checkpoint_root,
+        &held_lease.job_id,
+        &grant.attempt_id,
+        &grant.grant_id,
+    )?;
+    println!(
+        "JOB_STARTED checkpoint_id={} job_id={} attempt_id={} grant_id={} state=WRITING",
+        checkpoint_id, held_lease.job_id, grant.attempt_id, grant.grant_id
+    );
 
     // RevokeLeaseNotice는 coordinator_device_id가 아닌 lease_id를
     // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
@@ -524,6 +550,60 @@ fn verify_and_record_lease(
     Ok(lease.clone())
 }
 
+/// 시작 마커 전용 checkpoint 디렉터리를 만들고 `WRITING`을 기록한다.
+///
+/// ID는 Job ID를 경로 성분으로 직접 사용하지 않는다. 대신 domain tag와
+/// 세 문자열을 각각 u64 big-endian 길이 접두사로 구분한 바이트열에
+/// BLAKE3-256을 적용하고, 64자리 hex digest 앞에 `start-`를 붙인다.
+/// 길이 접두사는 필드 경계가 모호해지는 충돌을 막고, 전체 digest는
+/// 예측 가능한 Job ID 경로와 임의 문자열 충돌을 피한다.
+pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> String {
+    let mut input = Vec::with_capacity(
+        b"gputeer/job-start-checkpoint/v1\0".len()
+            + 3 * std::mem::size_of::<u64>()
+            + job_id.len()
+            + attempt_id.len()
+            + grant_id.len(),
+    );
+    input.extend_from_slice(b"gputeer/job-start-checkpoint/v1\0");
+    for value in [job_id, attempt_id, grant_id] {
+        input.extend_from_slice(&(value.len() as u64).to_be_bytes());
+        input.extend_from_slice(value.as_bytes());
+    }
+
+    let digest = gputeer_protocol::canonical::blake3_256(&input);
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("start-{hex}")
+}
+
+fn record_start_checkpoint(
+    checkpoint_root: &std::path::Path,
+    job_id: &str,
+    attempt_id: &str,
+    grant_id: &str,
+) -> Result<String, String> {
+    let checkpoint_id = start_checkpoint_id(job_id, attempt_id, grant_id);
+    let checkpoint_dir = checkpoint_root.join(&checkpoint_id);
+
+    fs::create_dir_all(&checkpoint_dir).map_err(|error| {
+        format!(
+            "Grant 실패: 시작 checkpoint 디렉터리 생성 실패(root={:?}, checkpoint_id={}): {}",
+            checkpoint_root, checkpoint_id, error
+        )
+    })?;
+    record_initial_state(&checkpoint_dir).map_err(|error| {
+        format!(
+            "Grant 실패: WRITING 시작 마커 기록 실패(checkpoint_id={}): {}",
+            checkpoint_id, error
+        )
+    })?;
+
+    Ok(checkpoint_id)
+}
+
 /// `DurableFenceWatermark::check_and_advance()` 의 오류를 사람이 읽는
 /// 문자열로 바꾼다.
 ///
@@ -609,6 +689,10 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             Some(v) => PathBuf::from(v),
             None => default_fence_db_path(),
         },
+        checkpoint_root: match flags.0.get("--checkpoint-root") {
+            Some(v) => PathBuf::from(v),
+            None => default_checkpoint_root(),
+        },
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
         revoke_signer_id_override: flags.0.get("--revoke-signer-id").cloned(),
@@ -628,6 +712,18 @@ fn default_fence_db_path() -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!("gputeer-fence-{pid}-{nanos}.sqlite3"))
+}
+
+/// `--checkpoint-root`를 생략한 기존 호출도 안전하게 동작하도록
+/// 프로세스별 임시 root를 만든다. selftest가 root를 검사해야 하는 경우에는
+/// 명시적인 `--checkpoint-root`를 전달한다.
+fn default_checkpoint_root() -> PathBuf {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("gputeer-checkpoints-{pid}-{nanos}"))
 }
 
 struct Flags(std::collections::HashMap<String, String>);

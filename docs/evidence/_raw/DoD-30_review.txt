@@ -1,0 +1,25 @@
+ACCEPTED
+
+- 순서 정확: `crates/agent/src/lib.rs:152-169`에서 Lease 검증·fence 검사를 끝낸 뒤 marker를 기록하고, ACK 전송은 `:186-212`에서 수행한다.
+- ID 규칙 정확: `:521-540`에 정확한 domain, 세 개의 `u64` big-endian 길이 프리픽스, BLAKE3-256이 구현됐다.
+- 거부·fail-closed: `:490-513`, `:552-563`; selftest `crates/cli/src/coordinator_agent_selftest.rs:2333-2415`가 실제 디렉터리 상태와 성공/실패 결과를 확인한다.
+- 멱등성: `crates/cli/src/coordinator_agent_selftest.rs:2410-2448`가 동일 root에서 동일 호출을 두 번 수행하며, 기존 `write_once()`의 동일 내용 검사는 `crates/checkpoint/src/atomic.rs:233-243`에 있다.
+- `RESULT ok=true`가 Job 완료가 아님은 `crates/agent/src/lib.rs:103-105`에 명시됐다.
+- `git diff --stat` 변경 파일은 예상된 5개 범위와 일치하며, entrypoint·manifest·scheduler·Coordinator 시작 wire 메시지는 건드리지 않았다.
+- 기본 root는 `crates/agent/src/lib.rs:720-724`에서 OS 임시 디렉터리 아래 PID+nanos별 경로를 사용해 Agent 인스턴스 간 공유 충돌을 피한다.
+
+참고로 read-only 환경에서 기존 selftest 바이너리 실행은 30초 제한에 걸렸지만, 이는 코드 판정 근거로 사용하지 않았습니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+.\target\debug\gputeer.exe coordinator-agent-selftest 를 5회 연속 실행:
+
+run 1: exit=0 elapsed_ms=10297 scenarios=44
+run 2: exit=0 elapsed_ms=10082 scenarios=44
+run 3: exit=0 elapsed_ms=10199 scenarios=44
+run 4: exit=0 elapsed_ms=10103 scenarios=44
+run 5: exit=0 elapsed_ms=10196 scenarios=44
+
+5회 전부 exit=0, 44개 시나리오 전부 완료(약 10초/회). 검수자가 관측한
+30초 제한 이슈는 DoD-28·DoD-29 에서 이미 확인된 것과 같은 종류의
+코덱스 read-only 샌드박스 프로세스 스폰 제약으로 보이며, 실제 실행
+환경에서는 재현되지 않는다.

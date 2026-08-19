@@ -16,6 +16,43 @@
 
 ---
 
+## 2026-08-20 05:30 — Job 시작 WRITING 마커 — 구현 + 독립 검수 1라운드 + 감독자 재검증 + evidence 기록 (`DoD-30`)
+- 계획: `docs/plans/2026-08-20_0310_job_시작_마커_최소_조각_v1.md`
+  (설계는 `p154`, 오늘 새벽 백로그 정리 때 이미 완료 — 오늘 실제
+  구현).
+- 스트림: Agent · 문서.
+- 수행: `crates/agent` 가 Grant/Lease 검증 → `AgentGrantAck` 전송
+  → `RESULT ok=true` 출력 후 종료, 여기서 멈추던 것에 Job 실행을
+  향한 가장 작은 첫 걸음을 붙였다 — 유효한 Grant/Lease 검증 성공
+  직후·`AgentGrantAck` 전송 전에, 결정적 `checkpoint_id`(BLAKE3-256,
+  domain + 길이-프리픽스된 job_id/attempt_id/grant_id)로 checkpoint
+  디렉터리를 만들고 `WRITING` 마커를 `write_once()`(`DoD-21` 의
+  동시 호출 거부 계약을 그대로 상속)로 기록한다(`p165`, 코덱스
+  workspace-write). 위조/만료/revoked Lease 는 마커 미생성·ACK
+  미전송, checkpoint root 생성 자체가 실패하면 fail-closed, 동일
+  attempt 재시도는 `write_once()` 의 기존 idempotent 동작에 의존한다.
+  `RESULT ok=true` 가 여전히 Job 완료를 뜻하지 않는다는 것을 코드
+  주석으로 명시했다. `coordinator-agent-selftest` 시나리오 39~44
+  신설(38→44개). 독립 검수(`p166`, 대화 기록 없는 새 코덱스
+  인스턴스, read-only)가 실행 순서·`checkpoint_id` 의 길이 프리픽스
+  인코딩(canonical encoding 결함 방지)·거부 경로의 파일시스템 수준
+  확인·fail-closed·멱등성·범위 제한(entrypoint/manifest/wire
+  메시지/scheduler 미포함)까지 전부 코드로 확인하고 **1라운드 만에
+  `ACCEPTED`**. 검수 환경(read-only 샌드박스)의 selftest 30초 제한은
+  `DoD-28`·`DoD-29` 와 같은 종류의 프로세스 스폰 제약으로 보고 판정
+  근거로 쓰지 않았고, 이 세션(감독자)이 샌드박스 밖에서 5회 연속
+  재실행해(전부 exit=0, 44개 시나리오, 약 10초/회) 재확인했다.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음, `coordinator-agent-selftest`(코덱스 구현 시 5회
+  + 감독자 재검증 5회) 전부 exit=0·44개 시나리오, 뮤테이션
+  (`record_initial_state()` 호출 제거 시 시나리오 39 실패 재현 후
+  원복) 통과, `python scripts/verify_evidence.py` 스키마 위반
+  없음(PASS 38/39).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-30_job_시작_writing_마커.md`).
+
+---
+
 ## 2026-08-20 04:37 — 레거시 lease 경로 명시적 opt-in — 구현 2라운드 + 독립 검수 3라운드 + 감독자 재검증 + evidence 기록 (`DoD-29`)
 - 계획: `docs/plans/2026-08-20_0437_레거시_lease_경로_명시적_opt_in_v1.md`.
 - 스트림: Coordinator · CLI · QA · 문서.

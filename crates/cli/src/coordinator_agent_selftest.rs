@@ -21,6 +21,7 @@
 //! 이므로 범위를 넘는다고 판단했다.
 
 use std::io::{BufRead, BufReader, Read};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 
@@ -237,6 +238,61 @@ fn run_handshake(
         agent_stdout: String::from_utf8_lossy(&agent_output.stdout).into_owned(),
         agent_stderr: String::from_utf8_lossy(&agent_output.stderr).into_owned(),
     })
+}
+
+fn run_handshake_with_checkpoint_root(
+    fixture: &Fixture,
+    checkpoint_root: &Path,
+    extra_coordinator_args: &[&str],
+    extra_agent_args: &[&str],
+) -> Result<HandshakeOutcome, String> {
+    let root = checkpoint_root
+        .to_str()
+        .ok_or_else(|| format!("checkpoint root가 UTF-8이 아니다: {checkpoint_root:?}"))?;
+    let mut agent_args = extra_agent_args.to_vec();
+    agent_args.extend_from_slice(&["--checkpoint-root", root]);
+    run_handshake(fixture, extra_coordinator_args, &agent_args)
+}
+
+fn checkpoint_entries(root: &Path) -> Result<Vec<std::fs::DirEntry>, String> {
+    let entries = std::fs::read_dir(root)
+        .map_err(|error| format!("checkpoint root 읽기 실패({root:?}): {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("checkpoint root 항목 읽기 실패({root:?}): {error}"))?;
+    Ok(entries)
+}
+
+fn started_checkpoint_id(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        line.strip_prefix("JOB_STARTED ")?.split_whitespace().find_map(|field| {
+            field.strip_prefix("checkpoint_id=").map(ToOwned::to_owned)
+        })
+    })
+}
+
+fn assert_no_agent_ack_or_marker(
+    outcome: &HandshakeOutcome,
+    root: &Path,
+    label: &str,
+) -> Result<(), String> {
+    let entries = checkpoint_entries(root)?;
+    if !entries.is_empty()
+        || outcome.agent_success
+        || outcome.agent_stdout.contains("JOB_STARTED ")
+        || outcome.coordinator_success
+        || outcome.coordinator_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "{label}: 거부 경로에서 marker 또는 ACK/성공 결과가 관측됐다. entries={} coordinator_success={} agent_success={} coordinator_stdout={} agent_stdout={} agent_stderr={}",
+            entries.len(),
+            outcome.coordinator_success,
+            outcome.agent_success,
+            outcome.coordinator_stdout,
+            outcome.agent_stdout,
+            outcome.agent_stderr
+        ));
+    }
+    Ok(())
 }
 
 /// 37가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
@@ -2215,6 +2271,213 @@ pub fn run() -> Result<String, String> {
         legacy_rejected.agent_elapsed_ms,
         legacy_rejected.agent_exit_code.unwrap_or(-1),
     ));
+
+    // ── 39. 정상 Grant 뒤 실제 WRITING marker 생성 ──────────────────
+    let checkpoint_root_39 = tempfile::tempdir()
+        .map_err(|e| format!("정상 시작 marker root 생성 실패(39): {e}"))?;
+    let started_39 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_39.path(),
+        &[],
+        &[],
+    )?;
+    if !started_39.coordinator_success
+        || !started_39.agent_success
+        || !started_39.agent_stdout.contains("state=WRITING")
+    {
+        return Err(format!(
+            "정상 Grant의 WRITING 시작 경로가 실패했다(39). coordinator={} agent={} stdout={} stderr={}",
+            started_39.coordinator_success,
+            started_39.agent_success,
+            started_39.agent_stdout,
+            started_39.agent_stderr
+        ));
+    }
+    let expected_checkpoint_id = gputeer_agent::start_checkpoint_id(
+        fixture.job_id,
+        fixture.attempt_id,
+        fixture.grant_id,
+    );
+    let started_id_39 = started_checkpoint_id(&started_39.agent_stdout)
+        .ok_or_else(|| "JOB_STARTED checkpoint_id가 없다(39)".to_string())?;
+    if started_id_39 != expected_checkpoint_id {
+        return Err(format!(
+            "checkpoint_id 생성 규칙이 다르다(39): expected={} actual={}",
+            expected_checkpoint_id, started_id_39
+        ));
+    }
+    let entries_39 = checkpoint_entries(checkpoint_root_39.path())?;
+    if entries_39.len() != 1
+        || entries_39[0].file_name().to_string_lossy() != expected_checkpoint_id
+    {
+        return Err(format!(
+            "정상 Grant 뒤 checkpoint 디렉터리가 정확히 하나 생성되지 않았다(39): entries={:?}",
+            entries_39.iter().map(|entry| entry.file_name()).collect::<Vec<_>>()
+        ));
+    }
+    let marker_39 = checkpoint_root_39
+        .path()
+        .join(&expected_checkpoint_id)
+        .join(".durability.writing");
+    if std::fs::read(&marker_39).map_err(|e| format!("WRITING marker 읽기 실패(39): {e}"))?
+        != b"Writing\n"
+        || marker_39.with_file_name("manifest.json").exists()
+    {
+        return Err("정상 시작 marker의 내용 또는 범위가 잘못됐다(39)".into());
+    }
+    report.push_str(
+        "39) 정상 Grant 뒤 checkpoint_root/<digest>와 .durability.writing(WRITING) 생성 및 manifest 미생성 확인\n",
+    );
+
+    // ── 40. 위조 Lease는 marker/ACK 전에 거부 ────────────────────────
+    let checkpoint_root_40 = tempfile::tempdir()
+        .map_err(|e| format!("위조 Lease marker root 생성 실패(40): {e}"))?;
+    let forged_lease_40 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_40.path(),
+        &["--corrupt-lease-signature", "true"],
+        &[],
+    )?;
+    if forged_lease_40.agent_success
+        || !forged_lease_40.agent_stderr.contains("LEASE_REJECTED:")
+    {
+        return Err(format!(
+            "위조 Lease가 marker 이전에 거부되지 않았다(40): agent={} stderr={}",
+            forged_lease_40.agent_success, forged_lease_40.agent_stderr
+        ));
+    }
+    assert_no_agent_ack_or_marker(&forged_lease_40, checkpoint_root_40.path(), "위조 Lease(40)")?;
+    report.push_str("40) 위조 Lease 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
+
+    // ── 41. 만료 Lease는 marker/ACK 전에 거부 ────────────────────────
+    let checkpoint_root_41 = tempfile::tempdir()
+        .map_err(|e| format!("만료 Lease marker root 생성 실패(41): {e}"))?;
+    let expired_lease_41 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_41.path(),
+        &["--expire-lease", "true"],
+        &[],
+    )?;
+    if expired_lease_41.agent_success
+        || !expired_lease_41.agent_stderr.contains("LEASE_REJECTED:")
+    {
+        return Err(format!(
+            "만료 Lease가 marker 이전에 거부되지 않았다(41): agent={} stderr={}",
+            expired_lease_41.agent_success, expired_lease_41.agent_stderr
+        ));
+    }
+    assert_no_agent_ack_or_marker(&expired_lease_41, checkpoint_root_41.path(), "만료 Lease(41)")?;
+    report.push_str("41) 만료 Lease 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
+
+    // ── 42. 영속 store에 revoke된 Lease는 재발급되지 않으며 marker/ACK 없음 ──
+    let revoked_dir_42 = tempfile::tempdir()
+        .map_err(|e| format!("revoked Lease 시나리오 디렉터리 생성 실패(42): {e}"))?;
+    let lease_db_42 = revoked_dir_42.path().join("lease.sqlite3");
+    let lease_db_42_str = lease_db_42
+        .to_str()
+        .ok_or_else(|| "revoked Lease lease-db 경로가 UTF-8이 아니다(42)".to_string())?;
+    let first_root_42 = tempfile::tempdir()
+        .map_err(|e| format!("revoke 준비 marker root 생성 실패(42): {e}"))?;
+    let first_42 = run_handshake_with_checkpoint_root(
+        &fixture,
+        first_root_42.path(),
+        &["--lease-db", lease_db_42_str, "--revoke-after-round", "0"],
+        &["--expect-revoke-after-round", "0"],
+    )?;
+    if !first_42.coordinator_success || !first_42.agent_success {
+        return Err(format!(
+            "revoke 상태를 준비하는 첫 handshake가 실패했다(42): coordinator={} stdout={} stderr={} agent={} stdout={} stderr={}",
+            first_42.coordinator_success,
+            first_42.coordinator_stdout,
+            first_42.coordinator_stderr,
+            first_42.agent_success,
+            first_42.agent_stdout,
+            first_42.agent_stderr
+        ));
+    }
+    let checkpoint_root_42 = tempfile::tempdir()
+        .map_err(|e| format!("revoked Lease 거부 marker root 생성 실패(42): {e}"))?;
+    let revoked_42 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_42.path(),
+        &["--lease-db", lease_db_42_str],
+        &[],
+    )?;
+    assert_no_agent_ack_or_marker(&revoked_42, checkpoint_root_42.path(), "revoked Lease(42)")?;
+    report.push_str("42) 영속 store에서 revoked Lease 재발급 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
+
+    // ── 43. 동일 attempt 재시도는 같은 digest 디렉터리에 멱등 기록 ────
+    let checkpoint_root_43 = tempfile::tempdir()
+        .map_err(|e| format!("동일 attempt retry marker root 생성 실패(43): {e}"))?;
+    let retry_first_43 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_43.path(),
+        &[],
+        &[],
+    )?;
+    let retry_second_43 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_43.path(),
+        &[],
+        &[],
+    )?;
+    let first_id_43 = started_checkpoint_id(&retry_first_43.agent_stdout)
+        .ok_or_else(|| "첫 retry에서 JOB_STARTED가 없다(43)".to_string())?;
+    let second_id_43 = started_checkpoint_id(&retry_second_43.agent_stdout)
+        .ok_or_else(|| "두 번째 retry에서 JOB_STARTED가 없다(43)".to_string())?;
+    let entries_43 = checkpoint_entries(checkpoint_root_43.path())?;
+    let marker_43 = checkpoint_root_43.path().join(&first_id_43).join(".durability.writing");
+    if !retry_first_43.agent_success
+        || !retry_second_43.agent_success
+        || !retry_first_43.coordinator_success
+        || !retry_second_43.coordinator_success
+        || first_id_43 != second_id_43
+        || entries_43.len() != 1
+        || std::fs::read(&marker_43).map_err(|e| format!("retry marker 읽기 실패(43): {e}"))?
+            != b"Writing\n"
+    {
+        return Err(format!(
+            "동일 attempt retry가 멱등 처리되지 않았다(43): first_id={} second_id={} entries={} first_agent={} second_agent={}",
+            first_id_43,
+            second_id_43,
+            entries_43.len(),
+            retry_first_43.agent_success,
+            retry_second_43.agent_success
+        ));
+    }
+    report.push_str("43) 동일 attempt 재시도에서 같은 checkpoint_id와 단일 WRITING marker만 유지되어 write_once 멱등 경로가 확인됨\n");
+
+    // ── 44. marker 생성 실패는 fail-closed ───────────────────────────
+    let failed_root_dir_44 = tempfile::tempdir()
+        .map_err(|e| format!("fail-closed 시나리오 디렉터리 생성 실패(44): {e}"))?;
+    let failed_root_44 = failed_root_dir_44.path().join("not-a-directory");
+    std::fs::write(&failed_root_44, b"regular file")
+        .map_err(|e| format!("fail-closed용 root 파일 생성 실패(44): {e}"))?;
+    let marker_failure_44 = run_handshake_with_checkpoint_root(
+        &fixture,
+        &failed_root_44,
+        &[],
+        &[],
+    )?;
+    if marker_failure_44.agent_success
+        || !marker_failure_44
+            .agent_stderr
+            .contains("시작 checkpoint 디렉터리 생성 실패")
+        || marker_failure_44.coordinator_success
+        || marker_failure_44.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || marker_failure_44.agent_stdout.contains("JOB_STARTED ")
+        || !failed_root_44.is_file()
+    {
+        return Err(format!(
+            "marker 생성 실패가 fail-closed가 아니다(44): coordinator={} agent={} coordinator_stdout={} agent_stdout={} agent_stderr={}",
+            marker_failure_44.coordinator_success,
+            marker_failure_44.agent_success,
+            marker_failure_44.coordinator_stdout,
+            marker_failure_44.agent_stdout,
+            marker_failure_44.agent_stderr
+        ));
+    }
+    report.push_str("44) checkpoint root가 일반 파일인 디스크 오류에서 marker/AgentGrantAck/JOB_STARTED 없이 fail-closed 확인\n");
 
     Ok(report)
 }
