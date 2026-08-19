@@ -1,0 +1,11 @@
+=== 최종 검증 명령들 ===
+python tools/canonical/reference_canonical.py --self-test: all checks passed
+python tools/canonical/check_schema.py: 오류 0건, 경고 42건
+cargo test --workspace --exclude gputeer-runtime-windows: test result: ok 라인 수 42, FAILED/error[ 없음
+
+=== coordinator-agent-selftest 독립 반복 실행 (5회, 각 60초 하드 타임아웃) ===
+5회 연속, 37개 시나리오 전부 exit=0
+
+=== 뮤테이션 테스트(코덱스 자체 보고) ===
+outcome 8 break 제거 시 시나리오 37 실패 + Coordinator 교착 재현
+(오늘 이미 두 번 나온 것과 같은 부류), 원복 후 재검증 PASS.

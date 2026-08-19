@@ -396,6 +396,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             //   가능한 최대 시간을 넘었다. 새 lease_id 재발급은 이
             //   조각의 범위 밖이다 — 여기서는 명시적으로 거부만 한다.
             6 => return Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
+            8 => return Err("RENEW_REFUSED:REVOKED".into()),
             other => return Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
         }
 

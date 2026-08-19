@@ -132,6 +132,8 @@ enum RenewOutcome {
   RENEW_OUTCOME_MAX_DURATION_EXCEEDED = 6;
   // quorum 상실 등. 재시도 가능.
   RENEW_OUTCOME_UNAVAILABLE = 7;
+  // Coordinator가 영속적으로 revoke한 Lease. 새 Lease를 요청해야 한다.
+  RENEW_OUTCOME_REVOKED = 8;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

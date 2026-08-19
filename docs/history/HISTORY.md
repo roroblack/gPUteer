@@ -16,6 +16,40 @@
 
 ---
 
+## 2026-08-20 04:15 — 백로그 정리 + 자동 재접속 루프·Job 시작 마커 설계 + REVOKED signed outcome (`DoD-27`)
+- 계획: `docs/plans/2026-08-20_0357_revoked_signed_outcome_v1.md`
+  (구현), `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`·
+  `docs/plans/2026-08-20_0310_job_시작_마커_최소_조각_v1.md`(설계
+  전용, 구현 미착수).
+- 스트림: Coordinator · Agent · QA · 문서.
+- 수행: 사용자가 취침 전 "가능한 문서 작업 포함해서 코덱스 쿼터를
+  최대한 태워라" 고 지시해, 세 갈래로 동시에 진행했다. (1) 백로그
+  전체 조사(`p152`)가 오늘 조각들의 "Out" 절과 evidence
+  limitations 를 전부 모아 우선순위를 매겼다 — 1순위
+  `REVOKED` signed outcome, 2순위 레거시 경로 fail-closed, 3순위
+  `check_schema.py` CI 연결. (2) 두 개의 read-only 설계 조사를
+  병렬로 돌려(코드 충돌 없음) 큰 항목들을 문서화만 했다 — 자동
+  재접속 루프 전체 설계(`p153`, 결론: 최소 6~7개 조각·6~8일 규모,
+  proto 변경 필요, 로드맵만 저장)와 Job 실행을 향한 최소 첫 걸음
+  설계(`p154`, 결론: `WRITING` 마커 후보가 하루 규모로 가능, 구현은
+  다음 조각으로 등록만). (3) 1순위 후보 `REVOKED` signed outcome
+  을 실제로 구현했다(`p155`, 코덱스 workspace-write) — proto 에
+  `RENEW_OUTCOME_REVOKED=8` 순수 추가, Coordinator 가 갱신 경로의
+  revoked 거부를 raw error 대신 서명된 결과로 응답, 구현자가 오늘
+  이미 두 번(`DoD-22`·`DoD-23`) 나온 outcome-분기 교착 패턴을 스스로
+  의식해 처음부터 올바르게 구현. 독립 검수(`p157`, 대화 기록 없는
+  새 코덱스 인스턴스)가 1라운드 만에 `ACCEPTED`.
+- 검증: `reference_canonical.py --self-test` PASS, `check_schema.py`
+  오류 0건, `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(42개 스위트), `coordinator-agent-selftest` 5회
+  연속 37개 시나리오 전부 exit=0, 뮤테이션(outcome 8 break 제거)이
+  정확히 예상한 교착을 재현. `python scripts/verify_evidence.py`
+  스키마 위반 없음(PASS 35/36).
+- 리포트: `docs/reports/2026-08-20_0357_revoked_signed_outcome.md`
+  (구현자가 작성).
+
+---
+
 ## 2026-08-20 02:00 — 만료된 Lease 재접속 거부 — 구현 + 독립 검수 2라운드 + evidence 기록 (`DoD-26`)
 - 계획: `docs/plans/2026-08-20_0136_만료_lease_재접속_거부_v1.md` 전체
   단계.

@@ -28,7 +28,7 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 pub mod lease_store;
-use lease_store::{CoordinatorLeaseStore, RenewDecision, StoredLease};
+use lease_store::{CoordinatorLeaseStore, LeaseStoreError, RenewDecision, StoredLease};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -148,6 +148,10 @@ pub struct CoordinatorConfig {
     /// 완료된 갱신 회차가 이 값에 도달하면 같은 연결로
     /// `RevokeLeaseNotice` 를 보낸다. `Some(0)` 은 Grant/ACK 직후다.
     pub revoke_after_round: Option<u32>,
+    /// ★ 테스트 전용 — ACK 직후 저장소에만 revoke를 확정하고 통지는
+    /// 보내지 않는다. Agent가 같은 연결에서 갱신 요청을 보내면
+    /// Coordinator의 signed `REVOKED` outcome 경로를 직접 시험한다.
+    pub revoke_before_renew: bool,
     /// ★ 테스트 전용 — 통지의 lease_id 를 바꿔 Agent identity 검증을
     ///   확인한다. 서명은 바뀐 payload 에 대해 다시 만든다.
     pub revoke_lease_id_override: Option<String>,
@@ -312,6 +316,24 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         };
     }
 
+    if config.revoke_before_renew {
+        let lease = grant
+            .lease
+            .as_ref()
+            .ok_or_else(|| "갱신 전 revoke 대상 Grant에 Lease가 없다".to_string())?;
+        let store = lease_store
+            .as_mut()
+            .ok_or_else(|| "갱신 전 revoke 시나리오에는 --lease-db가 필요하다".to_string())?;
+        let revoked_at = SystemClock.now_unix_ms();
+        store
+            .mark_revoked(&lease.lease_id, revoked_at)
+            .map_err(|e| format!("갱신 전 revoke 저장 실패: {e}"))?;
+        println!(
+            "REVOKE_STORE ok=true lease_id={} revoked_at_unix_ms={revoked_at}",
+            lease.lease_id
+        );
+    }
+
     // 현재 stub 프로토콜에는 비동기 이벤트 multiplexing 이 없으므로,
     // Agent가 이 옵션을 알고 있는 고정 순차 경로로 revoke를 받는다.
     let revoked_after_grant = if config.revoke_after_round == Some(0) {
@@ -439,11 +461,11 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             result.outcome, config.lease_id
         );
 
-        // Agent는 정상 정책 거부(outcome=2/3/6)를 받으면 즉시
+        // Agent는 정상 정책 거부(outcome=2/3/6/8)를 받으면 즉시
         // 갱신 함수를 종료하므로, 다음 회차의 요청을 기다리지 않는다.
         // Coordinator도 같은 회차에서 갱신 루프를 끝내야 교착/EOF 오류를
         // 만들지 않는다.
-        if matches!(result.outcome, 2 | 3 | 6) {
+        if matches!(result.outcome, 2 | 3 | 6 | 8) {
             break;
         }
 
@@ -653,6 +675,18 @@ fn build_renew_result(
         ..Default::default()
     };
 
+    let revoked_result = |request_nonce: Vec<u8>, revoked_at_unix_ms: u64| {
+        pb::RenewLeaseResult {
+            outcome: 8, // RENEW_OUTCOME_REVOKED
+            detail: format!("lease revoked at unix ms: {revoked_at_unix_ms}"),
+            schema_version: 1,
+            coordinator_id: config.coordinator_device_id.clone(),
+            issued_at_unix_ms: now,
+            request_nonce,
+            ..Default::default()
+        }
+    };
+
     let mut result = match lease_store {
         // ★ 코덱스 독립 검수(2026-08-19, p114) 지적 — override 가
         //   있으면 저장소를 **전혀 건드리지 않는다**(레거시 `None`
@@ -668,21 +702,27 @@ fn build_renew_result(
                     .map_err(|e| format!("lease store 조회 실패: {e}"))?
                     .ok_or_else(|| format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다"))?;
                 if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
-                    return Err(format!(
-                        "lease store 갱신 거부: lease revoked at unix ms: {revoked_at_unix_ms}"
-                    ));
+                    revoked_result(request_nonce, revoked_at_unix_ms)
                 } else if stored.is_max_duration_exceeded(now) {
                     max_duration_exceeded_result(request_nonce)
                 } else {
                     policy_override(outcome, request_nonce)
                 }
             }
-            None => match store
-                .renew_existing_within_duration(lease_id, now, now + 60_000, now + 30_000)
-                .map_err(|e| format!("lease store 갱신 실패: {e}"))?
-            {
-                RenewDecision::MaxDurationExceeded(_) => max_duration_exceeded_result(request_nonce),
-                RenewDecision::Renewed(resolved) => {
+            None => match store.renew_existing_within_duration(
+                lease_id,
+                now,
+                now + 60_000,
+                now + 30_000,
+            ) {
+                Err(LeaseStoreError::Revoked { revoked_at_unix_ms }) => {
+                    revoked_result(request_nonce, revoked_at_unix_ms)
+                }
+                Err(error) => return Err(format!("lease store 갱신 실패: {error}")),
+                Ok(RenewDecision::MaxDurationExceeded(_)) => {
+                    max_duration_exceeded_result(request_nonce)
+                }
+                Ok(RenewDecision::Renewed(resolved)) => {
                     build_renewed_lease_result(config, key, now, resolved, request_nonce)?
                 }
             },
@@ -963,6 +1003,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         max_total_duration_seconds: flags
             .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
         revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
+        revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         revoke_lease_id_override: flags.0.get("--revoke-lease-id").cloned(),
         revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
         corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),

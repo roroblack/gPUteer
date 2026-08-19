@@ -227,7 +227,7 @@ fn run_handshake(
     })
 }
 
-/// 36가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
+/// 37가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
 /// 이유를 담아 반환한다.
 pub fn run() -> Result<String, String> {
     let fixture = Fixture::new()?;
@@ -2093,6 +2093,80 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str(
         "36) 짧은 TTL Lease를 실제로 만료시킨 뒤 새 프로세스 쌍의 재접속 복원 거부(Expired) 확인\n",
+    );
+
+    // ── 37. revoke된 Lease 갱신의 signed REVOKED outcome ─────────────
+    // ACK 뒤 Coordinator 저장소에 revoke를 먼저 확정하고, revoke notice는
+    // 보내지 않는다. 따라서 같은 프로세스 쌍의 Agent가 다음 갱신 요청을
+    // 실제로 만들고, 연결을 끊지 않은 signed outcome=8을 받아 즉시
+    // RENEW_REFUSED:REVOKED로 종료한다. 이 경로는 초기 Grant 발급
+    // 거부(DoD-25 시나리오 35)와 의도적으로 분리돼 있다.
+    let revoked_renew_dir_37 = tempfile::tempdir()
+        .map_err(|e| format!("revoked renew 시나리오 임시 디렉터리 생성 실패(37): {e}"))?;
+    let lease_db_path_37 = revoked_renew_dir_37.path().join("lease.sqlite3");
+    let fence_db_path_37 = revoked_renew_dir_37.path().join("fence.sqlite3");
+    let lease_db_37 = lease_db_path_37
+        .to_str()
+        .ok_or_else(|| "revoked renew lease store 경로가 UTF-8이 아니다(37)".to_string())?;
+    let fence_db_37 = fence_db_path_37
+        .to_str()
+        .ok_or_else(|| "revoked renew fence watermark 경로가 UTF-8이 아니다(37)".to_string())?;
+
+    let revoked_renew_37 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_37,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renew-rounds",
+            "2",
+            "--revoke-before-renew",
+            "true",
+        ],
+        &[
+            "--fence-db",
+            fence_db_37,
+            "--do-renew",
+            "true",
+            "--renew-rounds",
+            "2",
+        ],
+    )?;
+    if !revoked_renew_37.coordinator_success
+        || !revoked_renew_37
+            .coordinator_stdout
+            .contains("REVOKE_STORE ok=true")
+        || !revoked_renew_37
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=8")
+        || revoked_renew_37
+            .coordinator_stderr
+            .contains("lease store 갱신 거부")
+        || revoked_renew_37.agent_success
+        || !revoked_renew_37
+            .agent_stderr
+            .contains("RENEW_REFUSED:REVOKED")
+        || revoked_renew_37
+            .agent_stderr
+            .contains("RenewLeaseResult 프레임 읽기/검증 실패")
+    {
+        return Err(format!(
+            "revoked Lease 갱신이 signed REVOKED outcome으로 종료되지 않았다(37).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            revoked_renew_37.coordinator_success,
+            revoked_renew_37.coordinator_stdout,
+            revoked_renew_37.coordinator_stderr,
+            revoked_renew_37.agent_success,
+            revoked_renew_37.agent_stdout,
+            revoked_renew_37.agent_stderr
+        ));
+    }
+    report.push_str(
+        "37) 같은 연결에서 revoke 후 갱신 요청을 보내 signed RENEW_OUTCOME_REVOKED(8)를 받고 즉시 종료 확인\n",
     );
 
     Ok(report)
