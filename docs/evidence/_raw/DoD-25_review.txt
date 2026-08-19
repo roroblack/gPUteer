@@ -1,0 +1,331 @@
+########## p145 (설계 조사, read-only) — revoke 영속화 최소 조각 범위 설계 ##########
+실측 결론부터 말하면, 이 작업은 하루 규모의 최소 조각으로 가능하다. 다만 기존 SQLite 파일 호환을 위해 `CREATE TABLE IF NOT EXISTS`만 수정해서는 안 되고, 명시적인 `ALTER TABLE` 보정이 필요하다. 코드는 수정하지 않았고 설계만 제안한다.
+
+## 실측 결과
+
+현재 [`StoredLease`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lease_store.rs:37)는 다음 11개 필드를 가진다.
+
+- `lease_id`
+- `job_id`
+- `attempt_id`
+- `holder_node_id`
+- `fence_epoch`
+- `expires_at_unix_ms`
+- `issuing_coordinator_id`
+- `coordinator_term`
+- `issued_at_unix_ms`
+- `renew_after_unix_ms`
+- `max_total_duration_seconds`
+
+모든 `u64`는 8바이트 big-endian `BLOB`로 저장된다. `revoked` 관련 필드는 없다.
+
+테이블 정의는 [`lease_store.rs:157`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lease_store.rs:157)의 `CREATE TABLE IF NOT EXISTS coordinator_leases`다. 현재 코드에는 `PRAGMA user_version`, `ALTER TABLE`, 별도 schema migration helper가 없다.
+
+따라서:
+
+- 새 DB: 새 `CREATE TABLE`에 컬럼을 추가하면 된다.
+- 기존 DB: `CREATE TABLE IF NOT EXISTS`는 기존 테이블을 변경하지 않으므로 반드시 `ALTER TABLE ... ADD COLUMN`이 필요하다.
+
+[`get_or_issue()`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lease_store.rs:202)는 `BEGIN IMMEDIATE` 후 `lease_id`로 조회한다. 기존 레코드가 있으면 identity 충돌을 확인하고 commit한 뒤 저장된 레코드를 반환한다. 새 레코드일 때만 candidate를 INSERT한다. 따라서 revoked 검사는 기존 레코드를 조회한 직후, identity 확인 및 commit 전에 넣는 것이 정확하다.
+
+현재 [`send_revoke_notice()`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lib.rs:470)는 `CoordinatorLeaseStore`를 받지 않으며, notice 생성·서명·TCP 전송만 한다. 현재 revoke 발생 시 `lease_store`에는 아무것도 기록되지 않는다.
+
+Agent의 [`revoked`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\agent\src\lib.rs:211)는 프로세스 메모리의 bool이다. 검증된 `RevokeLeaseNotice`를 받은 뒤 true가 되고, 다음 renew 요청 생성 전에 [`RENEW_BLOCKED`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\agent\src\lib.rs:258)를 출력하며 갱신을 막는다.
+
+## 제안 조각
+
+제목:
+
+`2026-08-20_coordinator_lease_revoke_영속화_최소_조각_v1`
+
+기준선은 DoD-22 revoke와 DoD-24 재접속 조각이다.
+
+### 1. 스키마
+
+`revoked` bool보다 다음 필드를 권장한다.
+
+```sql
+revoked_at_unix_ms BLOB NULL
+```
+
+의미는 다음과 같다.
+
+- `NULL`: revoke되지 않음
+- 8바이트 timestamp: revoke됨
+- revoke 해제 API는 만들지 않음
+
+새 테이블 정의에는 이 컬럼을 포함한다.
+
+기존 DB를 열 때는 다음 보정 절차를 둔다.
+
+```text
+CREATE TABLE IF NOT EXISTS ...
+PRAGMA table_info(coordinator_leases)
+revoked_at_unix_ms 컬럼이 없으면:
+    ALTER TABLE coordinator_leases
+    ADD COLUMN revoked_at_unix_ms BLOB
+```
+
+기존 행은 자동으로 `NULL`이 되므로 active Lease로 해석된다. migration은 `open()` 과정에서, 기존 SQLite `busy_timeout`과 같은 fail-closed 정책으로 수행한다.
+
+`StoredLease`에는 다음을 추가한다.
+
+```rust
+pub revoked_at_unix_ms: Option<u64>
+```
+
+`SELECT_LEASE_SQL`, `RawLeaseRow`, `row_to_raw()`, INSERT 경로도 함께 확장한다.
+
+### 2. revoke 저장 API
+
+`CoordinatorLeaseStore`에 다음 성격의 메서드를 추가한다.
+
+```rust
+pub fn mark_revoked(
+    &mut self,
+    lease_id: &str,
+    revoked_at_unix_ms: u64,
+) -> Result<StoredLease, LeaseStoreError>
+```
+
+동작은 다음과 같다.
+
+1. `BEGIN IMMEDIATE`
+2. `lease_id` 조회
+3. 없으면 `NotFound`
+4. 이미 revoked면 기존 timestamp를 유지하고 성공
+5. 아니면 `revoked_at_unix_ms` UPDATE
+6. commit 성공 후 revoked 레코드 반환
+
+이미 revoked인 경우에도 성공시키는 idempotent 동작이 적절하다.
+
+### 3. `send_revoke_notice()` 순서
+
+현재 두 호출 지점:
+
+- ACK 직후 `revoke_after_round == 0`
+- renew 회차 완료 후 `revoke_after_round == round + 1`
+
+두 곳 모두 다음 형태로 바꾼다.
+
+```text
+send_revoke_notice(
+    config,
+    grant,
+    lease_store,
+    signing_key,
+    stream
+)
+```
+
+함수 내부 순서는 반드시 다음이어야 한다.
+
+```text
+1. Grant의 실제 lease_id로 mark_revoked() 실행
+2. SQLite commit 성공
+3. RevokeLeaseNotice 생성·서명
+4. TCP 전송
+```
+
+wire 전송과 SQLite commit을 하나의 원자적 트랜잭션으로 묶을 수는 없다. 따라서 네트워크 전송 전에 DB commit을 완료하는 것이 최선의 fail-closed 순서다.
+
+- DB commit 실패: notice를 보내지 않고 Coordinator 오류 종료
+- DB commit 성공 후 전송 실패: Lease는 계속 revoked 상태
+- 전송 실패 때문에 DB revoke를 되돌리지는 않음
+
+notice의 `lease_id` override가 있는 테스트에서도 저장소에는 override 값이 아니라 Grant의 실제 `lease_id`를 기록해야 한다.
+
+`lease_store == None`인 기존 레거시 경로는 그대로 둔다. 이 경로는 원래 재시작 영속성을 약속하지 않았으므로 revoke 영속성도 보장하지 않는다고 문서화한다.
+
+### 4. `get_or_issue()` 거부
+
+기존 레코드 처리 부분에 다음 검사를 추가한다.
+
+```text
+existing 조회
+identity conflict 확인
+existing.revoked_at_unix_ms.is_some() 이면
+    LeaseStoreError::Revoked 반환
+commit 후 저장 레코드 반환
+```
+
+새 오류 유형은 다음 정도면 충분하다.
+
+```rust
+LeaseStoreError::Revoked {
+    revoked_at_unix_ms: u64,
+}
+```
+
+그러면 [`issue_lease()`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lib.rs:801)의 기존 오류 전파를 통해 Coordinator는 다음처럼 종료한다.
+
+```text
+lease store 최초 발급 실패: lease가 revoke 됨 ...
+```
+
+새 Grant는 생성·서명·전송되지 않는다.
+
+추가로 안전성을 위해 `renew_existing_within_duration()`에서도 revoked 레코드를 거부하는 것이 좋다. 그렇지 않으면 notice 전송이 끊긴 기존 Agent가 renew를 재시도할 때 Coordinator가 revoked Lease를 다시 갱신할 수 있다. 이 경우 새 서명된 정책 outcome을 추가하지 않고 기존 raw error 방식으로 연결을 종료한다.
+
+`RenewLeaseResult`에는 현재 revoked 전용 outcome이 없으므로 proto 변경이나 새 signed denial은 이 조각에서 하지 않는다.
+
+## Agent 변경 여부
+
+Agent의 기존 `revoked` 로직은 그대로 둔다.
+
+새 프로세스 쌍의 경우:
+
+```text
+새 Coordinator
+  -> get_or_issue()에서 Revoked 오류
+  -> Grant 미전송, 연결 종료
+
+새 Agent
+  -> Grant 읽기 실패
+  -> 기존 "Grant 프레임 읽기/검증 실패"로 종료
+```
+
+Agent가 “이 Lease는 이미 revoke됐다”는 별도 메시지를 알 필요가 없다. Coordinator가 Grant 발급 자체를 거부하는 것이 이 단계의 fail-closed 정책이다.
+
+따라서 이번 조각에는 다음이 없다.
+
+- Agent의 `revoked` 영속화
+- `fence-db` 스키마 변경
+- 새 proto 메시지
+- 새 `RenewOutcome`
+- signed revoke-denial response
+
+## Selftest 시나리오
+
+현재 DoD-24가 34번까지 있으므로 새 시나리오는 35번으로 잡는다.
+
+### 35) revoke 후 새 프로세스 재접속 거부
+
+1차 프로세스 쌍:
+
+```text
+Coordinator:
+  --lease-db <lease.sqlite3>
+  --revoke-after-round 0
+  --do-renew false
+
+Agent:
+  --fence-db <fence.sqlite3>
+  --expect-revoke-after-round 0
+  --do-renew false
+```
+
+검증:
+
+- Coordinator/Agent 모두 정상 종료
+- Agent가 `REVOKE_RESULT ok=true` 출력
+- 저장소를 재조회해 `revoked_at_unix_ms.is_some()`
+
+2차 완전히 새 프로세스 쌍:
+
+```text
+Coordinator:
+  같은 --lease-db
+  같은 lease_id/holder_node_id
+  --fence-epoch 3
+
+Agent:
+  같은 --fence-db
+```
+
+기대 결과:
+
+- Coordinator PID와 Agent PID가 1차와 다름
+- Coordinator는 성공하지 않음
+- Coordinator stderr에 `lease store 최초 발급 실패`와 `revoked` 포함
+- Grant가 전송되지 않음
+- Agent는 성공하지 않고 기존 `Grant 프레임 읽기/검증 실패`로 종료
+- `RESULT ok=true` 없음
+
+추가 단위 테스트:
+
+- 구 schema DB를 열었을 때 migration 후 기존 Lease가 `revoked_at = NULL`로 보존됨
+- `mark_revoked()` 후 재조회 시 timestamp 보존
+- 이미 revoked인 Lease를 다시 `mark_revoked()`해도 최초 timestamp 유지
+- revoked Lease의 `get_or_issue()`가 `Revoked`로 거부되고 저장값을 덮어쓰지 않음
+- revoked Lease의 renew가 거부됨
+- mutation test:
+  - `mark_revoked()` 호출 제거 시 시나리오 35 실패
+  - `get_or_issue()` revoked 검사 제거 시 시나리오 35 실패
+
+기존 34개와 새 35개를 5회 연속 실행한다.
+
+## 범위
+
+### In
+
+- `CoordinatorLeaseStore`에 `revoked_at_unix_ms` 추가
+- 기존 SQLite DB migration
+- `StoredLease` 조회/삽입/변환 갱신
+- revoke 시 durable 상태 기록
+- revoked Lease의 신규 Grant 거부
+- revoked Lease의 renew 거부
+- 시나리오 35 추가
+- 저장소 단위 테스트와 mutation test
+- 계획 문서 및 DoD evidence 기록
+
+### Out
+
+- proto 변경
+- 새 signed `REVOKED` outcome
+- Agent의 revoke 상태 별도 영속화
+- 자동 재접속·retry/backoff
+- 만료 Lease 재접속 정책
+- Job 취소·scheduler·HA·다중 Coordinator
+- revoke 해제 정책
+- `--lease-db` 없는 레거시 경로의 영속 보장
+
+## 비용 판단
+
+이 범위는 하루 규모로 판단한다.
+
+예상 변경량은 대략 다음 정도다.
+
+- `lease_store.rs`: migration, 필드, API, 오류, 테스트
+- Coordinator `lib.rs`: revoke 호출부와 renew 방어
+- selftest: 시나리오 35 및 저장소 대조
+- 계획/evidence 문서
+
+전체적으로 코드 수백 줄 이내이며 proto 변경이나 새로운 프로토콜 협상은 없다.
+
+다만 자동 failover, signed revoked denial, 여러 Coordinator 간 동시성까지 포함하면 하루 조각이 아니다. 그 경우 가장 작은 첫 단계는 `lease_store` migration + `get_or_issue()` 거부 + 저장소 단위 테스트만 먼저 구현하는 것이다.
+
+########## p146 (구현자, workspace-write, 코덱스 solo) — 구현 완료 보고 ##########
+구현 완료했습니다. 커밋/푸시는 하지 않았습니다.
+
+변경 파일:
+
+- [lease_store.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs)
+- [coordinator lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs)
+- [coordinator_agent_selftest.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs)
+- [계획 문서](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-19_0110_coordinator_lease_revoke_영속화_v1.md)
+
+확인 결과:
+
+- 구 schema SQLite 파일을 수동 생성한 뒤 `open()`으로 migration하고 기존 Lease가 `revoked_at_unix_ms == None`으로 보존되는 단위 테스트 통과.
+- `mark_revoked()` 저장·idempotency·재발급 거부·갱신 거부 테스트 통과.
+- `cargo build --workspace --exclude gputeer-runtime-windows` 통과.
+- `cargo test --workspace --exclude gputeer-runtime-windows` 통과, 실패 0건.
+- selftest 시나리오 35를 70초 하드 타임아웃으로 5회 연속 실행, 모두 exit 0.
+- 뮤테이션 테스트:
+  - `mark_revoked()` 무력화 → 시나리오 35가 `revoked_at_unix_ms NULL`로 실패.
+  - `get_or_issue()` revoked 검사 무력화 → 2차 프로세스가 성공해 시나리오 35가 실패.
+  - 두 변경 모두 원복 후 최종 재검증 통과.
+
+`cargo fmt --all`은 환경에 `rustfmt` 컴포넌트가 없어 실행되지 않았지만, `git diff --check`는 통과했습니다.
+
+########## p147 (독립 검수자, read-only, 다른 인스턴스) — ACCEPTED (1라운드) ##########
+ACCEPTED
+
+- `lease_store.rs:524-556`의 마이그레이션은 `BEGIN IMMEDIATE` 내부에서 `PRAGMA → ALTER → commit`을 수행하며, `lib.rs:154-169`에서 listener bind 전에 실행됩니다.
+- `get_or_issue()` 및 두 갱신 경로 모두 revoked 검사를 포함합니다. `build_renew_result()`의 override 분기도 `lib.rs:611-625`에서 읽기 전용 검사 후 차단합니다.
+- `send_revoke_notice()`는 실제 `lease.lease_id`로 `mark_revoked()`를 먼저 호출하고(`lib.rs:437-448`), delay·wire 생성·전송은 그 뒤에 수행합니다. 두 호출부도 수정됐습니다(`lib.rs:318`, `451`).
+- 구 스키마 수동 생성 마이그레이션 테스트가 실제로 컬럼 없이 테이블을 만들고 있습니다(`lease_store.rs:850-897`).
+- 시나리오 35는 revoke 성공 → 저장소 재조회 → 새 프로세스 쌍의 revoked 발급 거부를 검증합니다(`coordinator_agent_selftest.rs:1837-1943`).
+
+참고로 현재 파일 기준 “만료 Lease revoke 거부”는 29번이 아니라 31번(`coordinator_agent_selftest.rs:1603-1626`)입니다.

@@ -315,7 +315,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     // 현재 stub 프로토콜에는 비동기 이벤트 multiplexing 이 없으므로,
     // Agent가 이 옵션을 알고 있는 고정 순차 경로로 revoke를 받는다.
     let revoked_after_grant = if config.revoke_after_round == Some(0) {
-        send_revoke_notice(&config, &grant, &signing_key, &mut stream)?;
+        send_revoke_notice(&config, &grant, &mut lease_store, &signing_key, &mut stream)?;
         true
     } else {
         false
@@ -448,7 +448,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         }
 
             if config.revoke_after_round == Some(_round + 1) {
-                send_revoke_notice(&config, &grant, &signing_key, &mut stream)?;
+                send_revoke_notice(&config, &grant, &mut lease_store, &signing_key, &mut stream)?;
                 break;
             }
         }
@@ -470,17 +470,27 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 fn send_revoke_notice(
     config: &CoordinatorConfig,
     grant: &pb::ExecutionGrant,
+    lease_store: &mut Option<CoordinatorLeaseStore>,
     key: &SigningKey,
     stream: &mut std::net::TcpStream,
 ) -> Result<(), String> {
-    if config.revoke_delay_ms != 0 {
-        std::thread::sleep(Duration::from_millis(config.revoke_delay_ms));
-    }
-
     let lease = grant
         .lease
         .as_ref()
         .ok_or_else(|| "revoke 대상 Grant에 Lease가 없다".to_string())?;
+
+    // Persist the actual Grant lease id before constructing or sending any
+    // wire notice. Test-only notice overrides must never change this key.
+    if let Some(store) = lease_store {
+        store
+            .mark_revoked(&lease.lease_id, SystemClock.now_unix_ms())
+            .map_err(|e| format!("lease store revoke 저장 실패: {e}"))?;
+    }
+
+    if config.revoke_delay_ms != 0 {
+        std::thread::sleep(Duration::from_millis(config.revoke_delay_ms));
+    }
+
     let notice = build_revoke_notice(
         lease,
         config.revoke_lease_id_override.as_deref(),
@@ -657,7 +667,11 @@ fn build_renew_result(
                     .get(lease_id)
                     .map_err(|e| format!("lease store 조회 실패: {e}"))?
                     .ok_or_else(|| format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다"))?;
-                if stored.is_max_duration_exceeded(now) {
+                if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
+                    return Err(format!(
+                        "lease store 갱신 거부: lease revoked at unix ms: {revoked_at_unix_ms}"
+                    ));
+                } else if stored.is_max_duration_exceeded(now) {
                     max_duration_exceeded_result(request_nonce)
                 } else {
                     policy_override(outcome, request_nonce)
@@ -688,6 +702,7 @@ fn build_renew_result(
                     issued_at_unix_ms: now,
                     renew_after_unix_ms: now + 30_000,
                     max_total_duration_seconds: config.max_total_duration_seconds,
+                    revoked_at_unix_ms: None,
                 };
                 build_renewed_lease_result(config, key, now, resolved, request_nonce)?
             }
@@ -823,6 +838,7 @@ fn issue_lease(
             issued_at_unix_ms: now,
             renew_after_unix_ms: now + 30_000,
             max_total_duration_seconds: config.max_total_duration_seconds,
+            revoked_at_unix_ms: None,
         },
         Some(store) => {
             let candidate = StoredLease {
@@ -837,6 +853,7 @@ fn issue_lease(
                 issued_at_unix_ms: now,
                 renew_after_unix_ms: now + 30_000,
                 max_total_duration_seconds: config.max_total_duration_seconds,
+                revoked_at_unix_ms: None,
             };
             store
                 .get_or_issue(&candidate)

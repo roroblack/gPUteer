@@ -16,6 +16,37 @@
 
 ---
 
+## 2026-08-19 19:15 — Coordinator Lease revoke 영속화 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-25`)
+- 계획: `docs/plans/2026-08-19_0110_coordinator_lease_revoke_영속화_v1.md`
+  전체 단계.
+- 스트림: Coordinator · QA.
+- 수행: `DoD-24` 가 명시적으로 남긴 안전 공백("revoke 된 Lease 가
+  재접속으로 되살아난다")을 닫았다. 설계 조사(코덱스 `p145`,
+  read-only)가 `CoordinatorLeaseStore` 스키마·`get_or_issue()`·
+  `send_revoke_notice()` 를 실측해 SQLite `ALTER TABLE` 마이그레이션이
+  필요함을 짚었다. 구현(`p146`, 코덱스 workspace-write)이
+  `revoked_at_unix_ms` 컬럼 추가(기존 DB 파일도 `open()` 시점에
+  `PRAGMA table_info`+`ALTER TABLE` 로 보정), `mark_revoked()`(idempotent),
+  `get_or_issue()`·갱신 경로 양쪽(정상 경로 + `renew_outcome_override`
+  읽기 전용 경로) 의 revoked 거부, `send_revoke_notice()` 가 wire
+  전송 전에 커밋을 먼저 확정하는 순서를 구현했다. 이번엔 구현자가
+  evidence·CLAUDE.md·HISTORY 를 건드리지 않아 구현자/검수자 경계가
+  이전 조각들보다 깔끔했다. 이 세션이 독립적으로 재검증(빌드·테스트·
+  `coordinator-agent-selftest` 5회 반복, 각 90초 하드 타임아웃)한 뒤,
+  대화 기록이 없는 새 코덱스 인스턴스(read-only)에게 독립 검수를
+  요청했다 — 마이그레이션·두 갱신 경로·override 시 실제 lease_id
+  기록 여부까지 전부 확인하고 1라운드(`p147`)에서 `ACCEPTED`(유일한
+  지적은 코드가 아니라 검수 프롬프트의 시나리오 번호 오기였다).
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(42개 스위트, 0 failed, coordinator 유닛 테스트
+  20→24개). `coordinator-agent-selftest` 5회 연속 35개 시나리오
+  전부 exit=0. `python scripts/verify_evidence.py` 스키마 위반
+  없음(PASS 33/34).
+- 리포트: (구현자가 리포트를 작성하지 않았다 — 이 조각은 규모가
+  작아 HISTORY 항목과 `DoD-25` evidence 로 기록을 갈음한다).
+
+---
+
 ## 2026-08-19 18:30 — Lease 재접속 최소 조각 — 독립 검수 1라운드 + evidence 기록 (`DoD-24`)
 - 계획: `docs/plans/2026-08-19_1814_lease_재접속_최소_조각_v1.md`
   (구현은 18:14 항목 참조 — 이 항목은 그 뒤의 독립 검수·기록).

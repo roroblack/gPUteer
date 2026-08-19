@@ -46,6 +46,7 @@ pub struct StoredLease {
     pub issued_at_unix_ms: u64,
     pub renew_after_unix_ms: u64,
     pub max_total_duration_seconds: u64,
+    pub revoked_at_unix_ms: Option<u64>,
 }
 
 impl StoredLease {
@@ -82,6 +83,8 @@ pub enum LeaseStoreError {
         stored: String,
         requested: String,
     },
+    /// The lease was durably revoked and cannot be reissued or renewed.
+    Revoked { revoked_at_unix_ms: u64 },
     /// 저장소 I/O 오류 — 공격이 아니라 우리 쪽 문제다.
     Io(String),
     /// `busy_timeout` 안에 락을 얻지 못했다.
@@ -100,6 +103,9 @@ impl std::fmt::Display for LeaseStoreError {
                 f,
                 "identity 충돌: {field} 저장값={stored} 요청값={requested}"
             ),
+            Self::Revoked { revoked_at_unix_ms } => {
+                write!(f, "lease revoked at unix ms: {revoked_at_unix_ms}")
+            }
             Self::Io(msg) => write!(f, "lease store 저장소 I/O 오류: {msg}"),
             Self::LockTimeout => write!(f, "lease store 저장소 락 획득 시간 초과"),
         }
@@ -143,7 +149,7 @@ impl CoordinatorLeaseStore {
     /// SQLite 파일을 열거나 만든다. **fail closed** — 이 호출이
     /// 실패하면 호출자는 handshake 를 계속 진행하면 안 된다.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, LeaseStoreError> {
-        let connection = Connection::open(path).map_err(map_sql_error)?;
+        let mut connection = Connection::open(path).map_err(map_sql_error)?;
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(map_sql_error)?;
@@ -165,11 +171,14 @@ impl CoordinatorLeaseStore {
                     coordinator_term BLOB NOT NULL,
                     issued_at_unix_ms BLOB NOT NULL,
                     renew_after_unix_ms BLOB NOT NULL,
-                    max_total_duration_seconds BLOB NOT NULL
+                    max_total_duration_seconds BLOB NOT NULL,
+                    revoked_at_unix_ms BLOB
                 );
                 "#,
             )
             .map_err(map_sql_error)?;
+
+        migrate_revoked_at_column(&mut connection)?;
 
         Ok(Self { connection })
     }
@@ -221,6 +230,10 @@ impl CoordinatorLeaseStore {
 
         if let Some(stored) = existing {
             check_identity_conflict(&stored, candidate)?;
+            if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
+                transaction.commit().map_err(map_sql_error)?;
+                return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
+            }
             transaction.commit().map_err(map_sql_error)?;
             return Ok(stored);
         }
@@ -230,8 +243,9 @@ impl CoordinatorLeaseStore {
                 "INSERT INTO coordinator_leases(
                     lease_id, job_id, attempt_id, holder_node_id, fence_epoch,
                     expires_at_unix_ms, issuing_coordinator_id, coordinator_term,
-                    issued_at_unix_ms, renew_after_unix_ms, max_total_duration_seconds
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                     issued_at_unix_ms, renew_after_unix_ms, max_total_duration_seconds,
+                     revoked_at_unix_ms
+                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
                 rusqlite::params![
                     candidate.lease_id,
                     candidate.job_id,
@@ -250,6 +264,46 @@ impl CoordinatorLeaseStore {
 
         transaction.commit().map_err(map_sql_error)?;
         Ok(candidate.clone())
+    }
+
+    /// Durably mark a lease revoked. Repeating the operation preserves the
+    /// first revocation timestamp and succeeds idempotently.
+    pub fn mark_revoked(
+        &mut self,
+        lease_id: &str,
+        revoked_at_unix_ms: u64,
+    ) -> Result<StoredLease, LeaseStoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+
+        let Some(mut stored) = transaction
+            .query_row(SELECT_LEASE_SQL, rusqlite::params![lease_id], row_to_raw)
+            .optional()
+            .map_err(map_sql_error)?
+            .map(RawLeaseRow::into_stored)
+            .transpose()?
+        else {
+            transaction.commit().map_err(map_sql_error)?;
+            return Err(LeaseStoreError::NotFound);
+        };
+
+        let timestamp = stored.revoked_at_unix_ms.unwrap_or(revoked_at_unix_ms);
+        if stored.revoked_at_unix_ms.is_none() {
+            transaction
+                .execute(
+                    "UPDATE coordinator_leases
+                     SET revoked_at_unix_ms = ?2
+                     WHERE lease_id = ?1",
+                    rusqlite::params![lease_id, encode_u64(timestamp)],
+                )
+                .map_err(map_sql_error)?;
+        }
+
+        transaction.commit().map_err(map_sql_error)?;
+        stored.revoked_at_unix_ms = Some(timestamp);
+        Ok(stored)
     }
 
     /// 갱신 경로 — `lease_id` 가 저장소에 **없으면**
@@ -280,6 +334,11 @@ impl CoordinatorLeaseStore {
             transaction.commit().map_err(map_sql_error)?;
             return Err(LeaseStoreError::NotFound);
         };
+
+        if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
+            transaction.commit().map_err(map_sql_error)?;
+            return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
+        }
 
         transaction
             .execute(
@@ -334,6 +393,11 @@ impl CoordinatorLeaseStore {
             transaction.commit().map_err(map_sql_error)?;
             return Err(LeaseStoreError::NotFound);
         };
+
+        if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
+            transaction.commit().map_err(map_sql_error)?;
+            return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
+        }
 
         if stored.is_max_duration_exceeded(now_unix_ms) {
             // ★ 판정만 하고 아무것도 쓰지 않는다 — expires_at 을
@@ -431,6 +495,7 @@ struct RawLeaseRow {
     issued_at_unix_ms: Vec<u8>,
     renew_after_unix_ms: Vec<u8>,
     max_total_duration_seconds: Vec<u8>,
+    revoked_at_unix_ms: Option<Vec<u8>>,
 }
 
 impl RawLeaseRow {
@@ -450,13 +515,18 @@ impl RawLeaseRow {
                 &self.max_total_duration_seconds,
                 "max_total_duration_seconds",
             )?,
+            revoked_at_unix_ms: self
+                .revoked_at_unix_ms
+                .as_deref()
+                .map(|bytes| decode_u64(bytes, "revoked_at_unix_ms"))
+                .transpose()?,
         })
     }
 }
 
 const SELECT_LEASE_SQL: &str = "SELECT lease_id, job_id, attempt_id, holder_node_id, fence_epoch, \
      expires_at_unix_ms, issuing_coordinator_id, coordinator_term, issued_at_unix_ms, \
-     renew_after_unix_ms, max_total_duration_seconds \
+     renew_after_unix_ms, max_total_duration_seconds, revoked_at_unix_ms \
      FROM coordinator_leases WHERE lease_id = ?1";
 
 fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawLeaseRow> {
@@ -472,7 +542,42 @@ fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawLeaseRow> {
         issued_at_unix_ms: row.get(8)?,
         renew_after_unix_ms: row.get(9)?,
         max_total_duration_seconds: row.get(10)?,
+        revoked_at_unix_ms: row.get(11)?,
     })
+}
+
+fn migrate_revoked_at_column(connection: &mut Connection) -> Result<(), LeaseStoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sql_error)?;
+
+    let has_revoked_at_column = {
+        let mut statement = transaction
+            .prepare("PRAGMA table_info(coordinator_leases)")
+            .map_err(map_sql_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(map_sql_error)?;
+        let mut found = false;
+        for row in rows {
+            if row.map_err(map_sql_error)? == "revoked_at_unix_ms" {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+
+    if !has_revoked_at_column {
+        transaction
+            .execute(
+                "ALTER TABLE coordinator_leases ADD COLUMN revoked_at_unix_ms BLOB",
+                [],
+            )
+            .map_err(map_sql_error)?;
+    }
+
+    transaction.commit().map_err(map_sql_error)
 }
 
 #[cfg(test)]
@@ -492,6 +597,7 @@ mod tests {
             issued_at_unix_ms: 500,
             renew_after_unix_ms: 800,
             max_total_duration_seconds: 3600,
+            revoked_at_unix_ms: None,
         }
     }
 
@@ -764,5 +870,123 @@ mod tests {
         let fetched = s.get("lease-1").unwrap().unwrap();
         assert_eq!(fetched.fence_epoch, u64::MAX);
         assert_eq!(fetched.expires_at_unix_ms, u64::MAX);
+    }
+
+    #[test]
+    fn opens_old_schema_and_preserves_existing_lease_as_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old-leases.sqlite3");
+        let record = sample("old-lease");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE coordinator_leases (
+                        lease_id TEXT PRIMARY KEY,
+                        job_id TEXT NOT NULL,
+                        attempt_id TEXT NOT NULL,
+                        holder_node_id TEXT NOT NULL,
+                        fence_epoch BLOB NOT NULL,
+                        expires_at_unix_ms BLOB NOT NULL,
+                        issuing_coordinator_id TEXT NOT NULL,
+                        coordinator_term BLOB NOT NULL,
+                        issued_at_unix_ms BLOB NOT NULL,
+                        renew_after_unix_ms BLOB NOT NULL,
+                        max_total_duration_seconds BLOB NOT NULL
+                    );",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO coordinator_leases VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    rusqlite::params![
+                        record.lease_id,
+                        record.job_id,
+                        record.attempt_id,
+                        record.holder_node_id,
+                        encode_u64(record.fence_epoch),
+                        encode_u64(record.expires_at_unix_ms),
+                        record.issuing_coordinator_id,
+                        encode_u64(record.coordinator_term),
+                        encode_u64(record.issued_at_unix_ms),
+                        encode_u64(record.renew_after_unix_ms),
+                        encode_u64(record.max_total_duration_seconds),
+                    ],
+                )
+                .unwrap();
+        }
+
+        let store = CoordinatorLeaseStore::open(&path).unwrap();
+        let fetched = store.get("old-lease").unwrap().unwrap();
+        assert_eq!(fetched.revoked_at_unix_ms, None);
+        assert_eq!(fetched.lease_id, "old-lease");
+    }
+
+    #[test]
+    fn mark_revoked_persists_and_is_idempotent() {
+        let (mut store, _dir) = open_temp();
+        store.get_or_issue(&sample("lease-1")).unwrap();
+
+        let revoked = store.mark_revoked("lease-1", 1_234).unwrap();
+        assert_eq!(revoked.revoked_at_unix_ms, Some(1_234));
+        assert_eq!(
+            store.get("lease-1").unwrap().unwrap().revoked_at_unix_ms,
+            Some(1_234)
+        );
+
+        let repeated = store.mark_revoked("lease-1", 9_999).unwrap();
+        assert_eq!(repeated.revoked_at_unix_ms, Some(1_234));
+        assert_eq!(
+            store.get("lease-1").unwrap().unwrap().revoked_at_unix_ms,
+            Some(1_234)
+        );
+    }
+
+    #[test]
+    fn revoked_lease_cannot_be_reissued_or_overwritten() {
+        let (mut store, _dir) = open_temp();
+        let record = sample("lease-1");
+        store.get_or_issue(&record).unwrap();
+        store.mark_revoked("lease-1", 7_000).unwrap();
+
+        let mut candidate = record.clone();
+        candidate.fence_epoch = 999;
+        candidate.expires_at_unix_ms = 999_999;
+        let result = store.get_or_issue(&candidate);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::Revoked {
+                revoked_at_unix_ms: 7_000
+            })
+        ));
+
+        let fetched = store.get("lease-1").unwrap().unwrap();
+        assert_eq!(fetched.fence_epoch, record.fence_epoch);
+        assert_eq!(fetched.expires_at_unix_ms, record.expires_at_unix_ms);
+        assert_eq!(fetched.revoked_at_unix_ms, Some(7_000));
+    }
+
+    #[test]
+    fn revoked_lease_cannot_be_renewed() {
+        let (mut store, _dir) = open_temp();
+        store.get_or_issue(&sample("lease-1")).unwrap();
+        store.mark_revoked("lease-1", 8_000).unwrap();
+
+        let result = store.renew_existing_within_duration(
+            "lease-1",
+            1_000,
+            2_000,
+            1_500,
+        );
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::Revoked {
+                revoked_at_unix_ms: 8_000
+            })
+        ));
+        assert_eq!(
+            store.get("lease-1").unwrap().unwrap().expires_at_unix_ms,
+            1_000
+        );
     }
 }

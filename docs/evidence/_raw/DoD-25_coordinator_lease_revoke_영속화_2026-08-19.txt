@@ -1,0 +1,11 @@
+=== 최종 cargo test --workspace --exclude gputeer-runtime-windows ===
+test result: ok 라인 수: 42
+FAILED/error[ 검색 결과: (없음)
+
+=== coordinator-agent-selftest 독립 반복 실행 (5회, 각 90초 하드 타임아웃) ===
+5회 연속, 35개 시나리오 전부 exit=0, 매번 35줄 출력
+
+=== 뮤테이션 테스트(코덱스 자체 보고) ===
+1. mark_revoked() 호출 무력화 -> 시나리오 35 가 revoked_at_unix_ms NULL 로 실패
+2. get_or_issue() 의 revoked 검사 무력화 -> 2차 프로세스가 성공해버려 시나리오 35 실패
+두 변경 모두 원복 후 재빌드, 최종 재검증 통과.

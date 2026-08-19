@@ -1895,6 +1895,114 @@ pub fn run() -> Result<String, String> {
         "34) 같은 lease_id를 다른 holder_node_id로 재접속 주장 시 Coordinator의 기존 IdentityConflict 거부 확인\n",
     );
 
+    // ── 35. revoke 상태의 Coordinator 영속화와 재시작 거부 ─────────────
+    let revoke_persistence_dir = tempfile::tempdir()
+        .map_err(|e| format!("revoke 영속화 시나리오 임시 디렉터리 생성 실패(35): {e}"))?;
+    let lease_db_35 = revoke_persistence_dir.path().join("lease.sqlite3");
+    let fence_db_35 = revoke_persistence_dir.path().join("fence.sqlite3");
+    let lease_db_35 = lease_db_35
+        .to_str()
+        .ok_or_else(|| "revoke 영속화 lease store 경로가 UTF-8이 아니다(35)".to_string())?;
+    let fence_db_35 = fence_db_35
+        .to_str()
+        .ok_or_else(|| "revoke 영속화 fence watermark 경로가 UTF-8이 아니다(35)".to_string())?;
+
+    let revoked_first_35 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_35,
+            "--fence-epoch",
+            "5",
+            "--revoke-after-round",
+            "0",
+            "--do-renew",
+            "false",
+        ],
+        &[
+            "--fence-db",
+            fence_db_35,
+            "--do-renew",
+            "false",
+            "--expect-revoke-after-round",
+            "0",
+        ],
+    )?;
+    if !revoked_first_35.coordinator_success
+        || !revoked_first_35.agent_success
+        || !revoked_first_35.agent_stdout.contains("REVOKE_RESULT ok=true")
+    {
+        return Err(format!(
+            "revoke 영속화 시나리오 1차 프로세스 쌍이 정상 종료하지 않았다(35).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            revoked_first_35.coordinator_success,
+            revoked_first_35.coordinator_stdout,
+            revoked_first_35.coordinator_stderr,
+            revoked_first_35.agent_success,
+            revoked_first_35.agent_stdout,
+            revoked_first_35.agent_stderr
+        ));
+    }
+
+    let stored_revoked_35 = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(
+        lease_db_35,
+    )
+    .map_err(|e| format!("revoke 영속화 lease store 재조회 열기 실패(35): {e}"))?
+    .get(fixture.lease_id)
+    .map_err(|e| format!("revoke 영속화 lease store 재조회 실패(35): {e}"))?
+    .ok_or_else(|| "revoke 영속화 lease store에 Lease가 없다(35)".to_string())?;
+    if stored_revoked_35.revoked_at_unix_ms.is_none() {
+        return Err(
+            "revoke 통지 성공 뒤 lease store의 revoked_at_unix_ms가 NULL이다(35)".to_string(),
+        );
+    }
+
+    let revoked_second_35 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_35,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "false",
+        ],
+        &[
+            "--fence-db",
+            fence_db_35,
+            "--do-renew",
+            "false",
+        ],
+    )?;
+    if revoked_second_35.coordinator_success
+        || !revoked_second_35
+            .coordinator_stderr
+            .contains("lease store 최초 발급 실패")
+        || !revoked_second_35.coordinator_stderr.contains("revoked")
+        || revoked_second_35.agent_success
+        || !revoked_second_35
+            .agent_stderr
+            .contains("Grant 프레임 읽기/검증 실패")
+        || revoked_second_35.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || revoked_second_35.agent_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "revoke 상태가 새 프로세스 쌍에서 거부되지 않았다(35).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            revoked_second_35.coordinator_success,
+            revoked_second_35.coordinator_stdout,
+            revoked_second_35.coordinator_stderr,
+            revoked_second_35.agent_success,
+            revoked_second_35.agent_stdout,
+            revoked_second_35.agent_stderr
+        ));
+    }
+    report.push_str(
+        "35) revoke 통지 후 revoked_at_unix_ms 영속화 및 새 Coordinator의 revoked Lease 최초 발급 거부 확인\n",
+    );
+
     Ok(report)
 }
 
