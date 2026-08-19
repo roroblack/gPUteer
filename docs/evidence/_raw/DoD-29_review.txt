@@ -1,0 +1,68 @@
+########## p161 (독립 검수 1라운드, read-only, 새 인스턴스) — CHANGES_REQUESTED ##########
+판정: **CHANGES_REQUESTED**
+
+1. `--lease-db` 시나리오 분류가 틀렸습니다.
+
+`run_handshake()`는 `--lease-db`가 없으면 자동으로 opt-in 플래그를 추가합니다([coordinator_agent_selftest.rs:129-133](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:129)).
+
+그런데 27~31번 시나리오는 `--lease-db` 없이 실행됩니다.
+
+- 27번: [coordinator_agent_selftest.rs:1557](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1557)
+- 28번: [coordinator_agent_selftest.rs:1605](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1605)
+- 29번: [coordinator_agent_selftest.rs:1623](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1623)
+- 30번: [coordinator_agent_selftest.rs:1650](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1650)
+- 31번: [coordinator_agent_selftest.rs:1669](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1669)
+
+따라서 이들은 저장소 경로가 아니라 opt-in된 레거시 경로를 검증합니다. 32번부터는 다시 `--lease-db`가 있습니다([coordinator_agent_selftest.rs:1699](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:1699)). 27~31번에 저장소 인자를 추가하거나, 해당 시나리오들이 의도적으로 레거시라면 요구사항 분류를 명시적으로 수정해야 합니다.
+
+2. 시나리오 38은 Coordinator만 실행합니다([coordinator_agent_selftest.rs:2205](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:2205), [coordinator_agent_selftest.rs:2230](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:2230)). 따라서 하드 타임아웃은 Coordinator에 대해서만 검증하며, 요청한 Agent 프로세스의 종료 여부는 검증하지 않습니다.
+
+참고로 Coordinator의 핵심 guard, 비영 종료, bind 이전 순서, opt-in 경고 및 CLI 기본값 자체는 올바릅니다([coordinator/lib.rs:182-214](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:182)).
+
+########## p163 (독립 검수 2라운드, read-only, 새 인스턴스 — p162 수정 확인) — CHANGES_REQUESTED(코드 지적은 해소, 환경 문제만 남음) ##########
+CHANGES_REQUESTED
+
+- 지적 1은 해소됨: 27~31 주석과 legacy opt-in 자동 추가 로직이 있습니다 (`coordinator_agent_selftest.rs:100-105`, `1563-1683`). `--lease-db`도 추가되지 않았습니다.
+- 지적 2의 시나리오 38도 구현됨: Coordinator와 Agent 모두 5초 `try_wait()` 하드 타임아웃이 있고, Agent의 non-zero 종료를 검사합니다 (`coordinator_agent_selftest.rs:2192-2217`, `2203-2224`, `2239-2268`).
+- 그러나 현재 `git diff --stat`는 selftest 한 파일이 아니라 3개 파일입니다. `crates/cli/src/main.rs`, `crates/coordinator/src/lib.rs`도 변경되어 있습니다. 추적되지 않은 문서도 추가되어 있습니다.
+- `cargo build --workspace --exclude gputeer-runtime-windows`는 read-only 권한으로 `target/debug/.cargo-build-lock` 접근 거부되어 실행되지 않았습니다.
+- 기존 바이너리로 selftest를 실행했지만 60초 안에 종료되지 않아 exit=0 및 38개 완료를 확인하지 못했습니다.
+
+따라서 변경 범위와 selftest 실행 결과가 요구사항을 충족하지 않아 `CHANGES_REQUESTED`입니다.
+
+########## p164 (독립 검수 3라운드, read-only, 새 인스턴스 — 우려 A/B/C 각각 재확인 요청) — CHANGES_REQUESTED(우려 C 만 재현) ##########
+판정: **CHANGES_REQUESTED**
+
+- **A 해소:** 최신 커밋은 `53e6836`이며, 기능 조각은 아직 미커밋 상태입니다. 현재 diff의 변경 파일 3개는 `selftest.rs`, `main.rs`, `lib.rs`로 확인됐고, `main.rs`·`lib.rs`는 해당 초기 구현 변경으로 보입니다.
+- **B 해소:** `cargo build`는 실행하지 않았습니다. 기존 바이너리 `target\debug\gputeer.exe`가 존재했습니다.
+- **C 재현:** 바이너리를 직접 실행했으나 60초 내 종료되지 않았고, 70초 실행 제한에 도달했습니다. exit code 0이나 38개 시나리오 출력은 확인되지 않았습니다.
+
+정확한 마지막 stdout 줄은 **없음**입니다. stdout은 성공적으로 `run()`이 반환된 뒤 출력되며([main.rs:101](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/main.rs:101)), 프로세스 관찰상 첫 시나리오의 첫 handshake에서 Coordinator만 생성되고 Agent는 생성되지 않았습니다. 따라서 [coordinator_agent_selftest.rs:249](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:249)의 시나리오 1 실행 중, [coordinator_agent_selftest.rs:173](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:173)의 `READY` 읽기 단계에서 멈춘 것으로 판단됩니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+p164가 재현한 "60초 내 미완료" 현상(coordinator_agent_selftest.rs:249
+시나리오 1의 READY 읽기 단계, coordinator_agent_selftest.rs:173 에서
+Coordinator만 생성되고 Agent 프로세스는 생성되지 않은 채 멈춤)을
+코덱스 read-only 샌드박스 밖(이 세션의 실제 PowerShell 환경)에서
+직접 재현 시도했다.
+
+.\target\debug\gputeer.exe coordinator-agent-selftest 를 총 16회
+연속 실행(1회 단독 + 5회 연속 + 10회 연속, 매회 별도 프로세스,
+10회차는 30초 하드 타임아웃 포함):
+
+run 1  (단독):        exit=0, elapsed=9050ms,  38 scenarios
+run 2~6 (5회 연속):    exit=0, elapsed=8935~9010ms, 매회 38 scenarios
+run 7~16 (10회 연속):  30초 하드 타임아웃 내 전부 완료(TIMEOUT 없음),
+                       매회 stdout 마지막 줄이 "38) ...exit=1로
+                       비정상 종료함" 로 정상 종료, stderr 0줄
+
+16회 전부 성공 — 단 한 번도 재현되지 않았다. 코드 자체(주석 보강,
+시나리오 38의 Agent 스폰·5초 하드 타임아웃 로직)는 p163·p164
+양쪽 검수가 소스 코드 읽기로 이미 확인했으므로, 이 "미완료" 는
+코덱스 read-only 샌드박스의 프로세스 스폰 제약(Coordinator 는
+스폰됐지만 Agent 서브프로세스가 스폰되지 않았다는 p164의 관찰과
+일치 — read-only 샌드박스가 특정 조건에서 두 번째 자식 프로세스
+스폰을 막거나 지연시키는 것으로 보인다)에 의한 환경 문제로
+결론짓는다. DoD-28 검수에서 이미 한 번 관측된 것과 같은 종류의
+read-only 샌드박스 제약 패턴이다(check_schema.py 의 임시 파일
+쓰기 제약과 유사).

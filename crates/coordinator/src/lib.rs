@@ -135,6 +135,10 @@ pub struct CoordinatorConfig {
     /// 동작** — `config.fence_epoch`/`config.lease_id` 등을 그 실행
     /// 동안만 쓰는 기존 레거시 경로를 그대로 쓴다(회귀 없음).
     pub lease_db_path: Option<PathBuf>,
+    /// `lease_db_path == None` 인 레거시 경로를 의도적으로 선택했음을
+    /// 호출자가 확인했는지 여부. 기본값은 `false`이며, 위험을 명시적으로
+    /// 수락하지 않으면 Coordinator는 시작하지 않는다.
+    pub allow_unsafe_legacy_mode: bool,
 
     // ── max_total_duration_seconds 갱신 차단 (2026-08-19, `docs/plans/2026-08-19_2350_...`) ──
     /// 최초 발급 시 후보값으로만 쓰인다 — 이미 저장소에 있는 Lease 의
@@ -175,6 +179,20 @@ pub struct CoordinatorConfig {
 /// 성공하면 `stdout` 에 `RESULT ok=true ...` 를 찍고 `Ok(())`,
 /// 실패하면 그 이유를 담아 `Err` 를 반환한다(호출자가 exit code 로 매핑).
 pub fn run(config: CoordinatorConfig) -> Result<(), String> {
+    if config.lease_db_path.is_none() && !config.allow_unsafe_legacy_mode {
+        return Err(
+            "--lease-db 없이 실행하는 레거시 모드는 revoke/만료/max-duration 보호가 없다; \
+             의도적으로 이 위험한 호환 모드를 사용하려면 \
+             --i-understand-legacy-mode-is-unsafe true 를 지정하라"
+                .to_string(),
+        );
+    }
+    if config.lease_db_path.is_none() {
+        eprintln!(
+            "경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다"
+        );
+    }
+
     // ★ fail closed — lease store 를 **listener bind 보다 먼저** 연다.
     //   `--lease-db` 를 안 주면(기존 전부) `None` 이라 이 단계는
     //   아무것도 하지 않는다(`docs/plans/2026-08-19_2300_...v1.md`).
@@ -1000,6 +1018,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
+        allow_unsafe_legacy_mode: flags.bool_flag("--i-understand-legacy-mode-is-unsafe"),
         max_total_duration_seconds: flags
             .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
         revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,

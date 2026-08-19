@@ -45,7 +45,8 @@ gputeer — gPUteer CLI
     gputeer coordinator-agent-selftest
     gputeer coordinator-stub --listen <addr> --own-seed <hex32> --peer-pubkey <hex32> \\
         --coordinator-device-id <id> --agent-device-id <id> --grant-id <id> --attempt-id <id> \\
-        --lease-id <id> --job-id <id>
+        --lease-id <id> --job-id <id> [--lease-db <path> | \\
+        --i-understand-legacy-mode-is-unsafe true]
     gputeer agent-stub --connect <addr> --own-seed <hex32> --peer-pubkey <hex32> \\
         --coordinator-device-id <id> --agent-device-id <id>
 

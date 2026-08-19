@@ -97,6 +97,12 @@ struct HandshakeOutcome {
 /// coordinator-stub/agent-stub 을 별도 프로세스로 한 번 띄워 끝까지
 /// 실행하고 결과를 모은다. `extra_coordinator_args`/`extra_agent_args`
 /// 로 단계 5 의 거부 경로 플래그를 얹는다(정상 경로는 빈 슬라이스).
+/// This selftest intentionally has two lanes: scenarios with `--lease-db`
+/// exercise the persisted lease-store path, while scenarios without it
+/// exercise storage-independent contracts. In the latter lane,
+/// `run_handshake()` automatically adds
+/// `--i-understand-legacy-mode-is-unsafe true`; that opt-in is deliberate when
+/// the contract under test must work independently of a lease-store path.
 fn run_handshake(
     fixture: &Fixture,
     extra_coordinator_args: &[&str],
@@ -126,6 +132,12 @@ fn run_handshake(
     coordinator_args.push("--job-id");
     coordinator_args.push(fixture.job_id);
     coordinator_args.extend_from_slice(extra_coordinator_args);
+    if !extra_coordinator_args.contains(&"--lease-db") {
+        coordinator_args.extend_from_slice(&[
+            "--i-understand-legacy-mode-is-unsafe",
+            "true",
+        ]);
+    }
 
     let mut coordinator = Command::new(&fixture.exe)
         .args(&coordinator_args)
@@ -1548,6 +1560,10 @@ pub fn run() -> Result<String, String> {
     // ══════════════════════════════════════════════════════════════
 
     // ── 27. ACK 직후 revoke + 양쪽 renew 활성화의 교착 방지 ─────────
+    // Scenarios 27-31 intentionally omit `--lease-db`; run_handshake() adds
+    // the legacy-mode opt-in above. This deliberately tests the
+    // storage-independent, signature-based RevokeLeaseNotice contract itself.
+    // 27: intentionally uses that no-`--lease-db` contract lane.
     let revoke_ok = run_handshake(
         &fixture,
         &[
@@ -1596,6 +1612,7 @@ pub fn run() -> Result<String, String> {
     // 공통으로 ACK 직후 revoke를 받는 단일 왕복 negative 시나리오다.
     // V-08 때문에 잘못된 target id도 selftest 전용 키 alias를 등록해
     // 서명 검증을 통과시킨 뒤 Agent identity 게이트를 실제로 밟게 한다.
+    // 28: intentionally uses that no-`--lease-db` contract lane.
     let forged_revoke = run_handshake(
         &fixture,
         &["--revoke-after-round", "0", "--corrupt-revoke-signature", "true"],
@@ -1613,6 +1630,7 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("28) 위조 RevokeLeaseNotice 서명 거부 확인\n");
 
+    // 29: intentionally uses that no-`--lease-db` contract lane.
     let wrong_revoke_lease_id = "01JWRONGREVOKELEASE00000001";
     let wrong_id_revoke = run_handshake(
         &fixture,
@@ -1641,6 +1659,7 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("29) 잘못된 revoke lease_id 거부 확인\n");
 
+    // 30: intentionally uses that no-`--lease-db` contract lane.
     let wrong_epoch_revoke = run_handshake(
         &fixture,
         &["--revoke-after-round", "0", "--revoke-fence-epoch", "6"],
@@ -1660,6 +1679,7 @@ pub fn run() -> Result<String, String> {
 
     // Grant 시점에는 아직 유효하지만, Coordinator가 실제로 2.2초
     // 기다린 뒤 revoke를 보내므로 Agent의 보유 Lease는 이미 만료된다.
+    // 31: intentionally uses that no-`--lease-db` contract lane.
     let expired_revoke = run_handshake(
         &fixture,
         &[
@@ -2169,7 +2189,159 @@ pub fn run() -> Result<String, String> {
         "37) 같은 연결에서 revoke 후 갱신 요청을 보내 signed RENEW_OUTCOME_REVOKED(8)를 받고 즉시 종료 확인\n",
     );
 
+    // Scenario 38: a Coordinator without a lease DB must require explicit
+    // opt-in and must terminate before binding or waiting in accept().
+    let legacy_rejected = run_coordinator_without_legacy_opt_in(&fixture)?;
+    if legacy_rejected.success
+        || !legacy_rejected.stderr.contains("max-duration")
+        || legacy_rejected.agent_success
+        || legacy_rejected.agent_exit_code.unwrap_or(0) == 0
+    {
+        return Err(format!(
+            "legacy opt-in 없는 Coordinator가 즉시 거부되지 않았거나 Agent가 비정상 종료하지 않았다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={:?} elapsed_ms={} stdout={} stderr={}",
+            legacy_rejected.success,
+            legacy_rejected.stdout,
+            legacy_rejected.stderr,
+            legacy_rejected.agent_exit_code,
+            legacy_rejected.agent_elapsed_ms,
+            legacy_rejected.agent_stdout,
+            legacy_rejected.agent_stderr
+        ));
+    }
+    report.push_str(&format!(
+        "38) --lease-db 및 legacy opt-in 없는 Coordinator가 bind 전에 즉시 실패하고, Agent도 비리스닝 주소 연결 후 {}ms 안에 exit={}로 비정상 종료함\n",
+        legacy_rejected.agent_elapsed_ms,
+        legacy_rejected.agent_exit_code.unwrap_or(-1),
+    ));
+
     Ok(report)
+}
+
+struct CoordinatorOnlyOutcome {
+    success: bool,
+    stdout: String,
+    stderr: String,
+    agent_success: bool,
+    agent_exit_code: Option<i32>,
+    agent_elapsed_ms: u128,
+    agent_stdout: String,
+    agent_stderr: String,
+}
+
+/// Negative test helper with independent hard timeouts so a regression that
+/// binds, waits for accept, or makes Agent retry forever cannot hang the
+/// complete selftest.
+fn run_coordinator_without_legacy_opt_in(
+    fixture: &Fixture,
+) -> Result<CoordinatorOnlyOutcome, String> {
+    let coordinator_own_seed_hex = to_hex(&fixture.coordinator_seed);
+    let args = [
+        "coordinator-stub",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        coordinator_own_seed_hex.as_str(),
+        "--peer-pubkey",
+        fixture.agent_pub_hex.as_str(),
+        "--coordinator-device-id",
+        fixture.coordinator_device_id,
+        "--agent-device-id",
+        fixture.agent_device_id,
+        "--grant-id",
+        fixture.grant_id,
+        "--attempt-id",
+        fixture.attempt_id,
+        "--lease-id",
+        fixture.lease_id,
+        "--job-id",
+        fixture.job_id,
+    ];
+    let mut coordinator = Command::new(&fixture.exe)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("legacy negative test Coordinator spawn 실패: {e}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if coordinator
+            .try_wait()
+            .map_err(|e| format!("legacy negative test Coordinator 상태 확인 실패: {e}"))?
+            .is_some()
+        {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = coordinator.kill();
+            let _ = coordinator.wait();
+            return Err(
+                "legacy opt-in negative test가 5초 하드 타임아웃 안에 종료되지 않았다".to_string(),
+            );
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let output = coordinator
+        .wait_with_output()
+        .map_err(|e| format!("legacy negative test Coordinator 출력 수집 실패: {e}"))?;
+
+    // The Coordinator rejected the legacy configuration before binding, so
+    // this is deliberately an unbound address. Agent must fail closed rather
+    // than retrying or waiting forever when connect() is refused.
+    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:0", "--own-seed"];
+    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+    agent_args.push(&agent_own_seed_hex);
+    agent_args.push("--peer-pubkey");
+    agent_args.push(&fixture.coordinator_pub_hex);
+    agent_args.push("--coordinator-device-id");
+    agent_args.push(fixture.coordinator_device_id);
+    agent_args.push("--agent-device-id");
+    agent_args.push(fixture.agent_device_id);
+
+    let mut agent = Command::new(&fixture.exe)
+        .args(&agent_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("legacy negative test Agent spawn 실패: {e}"))?;
+    let agent_started = std::time::Instant::now();
+    let agent_deadline = agent_started + std::time::Duration::from_secs(5);
+    loop {
+        if agent
+            .try_wait()
+            .map_err(|e| format!("legacy negative test Agent 상태 확인 실패: {e}"))?
+            .is_some()
+        {
+            break;
+        }
+        if std::time::Instant::now() >= agent_deadline {
+            let _ = agent.kill();
+            let _ = agent.wait();
+            return Err(
+                "legacy opt-in negative test Agent가 5초 하드 타임아웃 안에 종료되지 않았다"
+                    .to_string(),
+            );
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let agent_elapsed_ms = agent_started.elapsed().as_millis();
+    let agent_output = agent
+        .wait_with_output()
+        .map_err(|e| format!("legacy negative test Agent 출력 수집 실패: {e}"))?;
+
+    Ok(CoordinatorOnlyOutcome {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        agent_success: agent_output.status.success(),
+        agent_exit_code: agent_output.status.code(),
+        agent_elapsed_ms,
+        agent_stdout: String::from_utf8_lossy(&agent_output.stdout).into_owned(),
+        agent_stderr: String::from_utf8_lossy(&agent_output.stderr).into_owned(),
+    })
 }
 
 /// 시나리오 18 전용 — Agent 하나만 단독으로 띄워 `--fence-db :memory:`

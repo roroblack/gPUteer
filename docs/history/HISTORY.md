@@ -16,6 +16,44 @@
 
 ---
 
+## 2026-08-20 04:37 — 레거시 lease 경로 명시적 opt-in — 구현 2라운드 + 독립 검수 3라운드 + 감독자 재검증 + evidence 기록 (`DoD-29`)
+- 계획: `docs/plans/2026-08-20_0437_레거시_lease_경로_명시적_opt_in_v1.md`.
+- 스트림: Coordinator · CLI · QA · 문서.
+- 수행: `p152` 백로그 조사 2순위 — `--lease-db` 없이(레거시 경로,
+  `lease_store=None`) Coordinator 를 시작하면 revoke·만료·
+  `max_total_duration_seconds` 보호가 전부 조용히 우회되던 위험한
+  기본값을 닫았다. 설계 조사(`p158`, read-only)가 명시적 opt-in
+  플래그를 권장. 구현 1라운드(`p160`, 코덱스 workspace-write) —
+  새 플래그 `--i-understand-legacy-mode-is-unsafe`(기본값 false),
+  없으면 TCP bind 전에 즉시 종료. 독립 검수 1라운드(`p161`)가
+  `CHANGES_REQUESTED` — 시나리오 27~31(`DoD-22` 저장소 무관 revoke
+  notice 계약)의 legacy opt-in 자동 적용 의도가 주석에 없음,
+  시나리오 38 이 Agent 쪽 종료를 검증 안 함. 구현 2라운드(`p162`,
+  `coordinator_agent_selftest.rs` 만 수정)가 두 지적을 반영 —
+  `--lease-db` 는 27~31에 추가하지 않고(검증 대상이 바뀌므로) 주석만
+  보강, 시나리오 38 에 Agent 스폰+5초 하드 타임아웃 추가. 독립 검수
+  2라운드(`p163`)가 코드 지적 두 가지는 해소를 확인하면서도 검수
+  환경(read-only 샌드박스)의 selftest 60초 미완료를 추가 지적,
+  3라운드(`p164`)가 `cargo build` 락 실패·`git diff` 3파일은 정상
+  임을 확인했지만 selftest 미완료(Coordinator 만 스폰되고 Agent
+  서브프로세스는 안 뜸)는 재현해 `CHANGES_REQUESTED`. 이 세션
+  (감독자, claude-code)이 같은 바이너리를 코덱스 read-only 샌드박스
+  **밖**(실제 PowerShell 환경)에서 16회 연속(1+5+10, 마지막 10회는
+  프로세스별 30초 하드 타임아웃) 실행해 **전부 exit=0, 38개 시나리오
+  전부, 약 9초/회**로 단 한 번도 재현되지 않음을 확인 — 코드 결함이
+  아니라 `DoD-28` 에서 이미 관측된 것과 같은 종류의 코덱스 read-only
+  샌드박스 프로세스 스폰 제약으로 결론짓고 최종 `ACCEPTED` 로 판단.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음, `coordinator-agent-selftest`(코덱스 구현 시 5회
+  + 감독자 재검증 16회) 전부 exit=0·38개 시나리오, 뮤테이션 2건
+  (opt-in 검사 비활성화·Agent 종료 검사 무력화) 모두 정확한 실패
+  재현 후 원복 재검증 통과, `python scripts/verify_evidence.py`
+  스키마 위반 없음(PASS 37/38).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-29_레거시_lease_경로_명시적_opt_in.md`).
+
+---
+
 ## 2026-08-20 04:24 — check_schema.py CI 연결 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-28`)
 - 계획: `docs/plans/2026-08-20_0424_check_schema_ci_연결_v1.md`.
 - 스트림: QA · 문서 · 인프라.

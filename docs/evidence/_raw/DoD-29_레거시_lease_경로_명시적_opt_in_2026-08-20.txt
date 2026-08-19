@@ -1,0 +1,53 @@
+########## p160 (구현자 1차, workspace-write, 코덱스 solo) ##########
+구현 완료했습니다. commit/push는 하지 않았습니다.
+
+변경 파일:
+
+- [crates/coordinator/src/lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:141)
+- [crates/cli/src/main.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/main.rs:49)
+- [crates/cli/src/coordinator_agent_selftest.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:131)
+- [계획 문서](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-20_0437_레거시_lease_경로_명시적_opt_in_v1.md)
+
+정책:
+
+- 새 플래그: `--i-understand-legacy-mode-is-unsafe true`
+- 기본값: `false`
+- `--lease-db`도 없고 플래그도 없으면 TCP bind 전에 종료
+- 오류 메시지: `--lease-db 없이 실행하는 레거시 모드는 revoke/만료/max-duration 보호가 없다`
+- opt-in 시 동일 레거시 동작을 유지하며 경고 로그 출력
+
+selftest:
+
+- 기존: 37개
+- 변경 후: 38개
+- 신규 38번 시나리오가 opt-in 없는 Coordinator의 non-zero 즉시 종료와 5초 하드 타임아웃을 확인
+- 최종 5회 연속 실행: 모두 `exit=0`, 매회 38 scenarios
+
+검증:
+
+- `cargo build ...`: 통과
+- `cargo test ...`: 통과
+- `python scripts/verify_evidence.py`: exit 0
+- Mutation test: opt-in 검사를 비활성화하자 negative test가 `exit=1`로 실패했고, 5초 하드 타임아웃을 감지함. 이후 원복 완료
+- `git diff --check`: 통과
+
+참고로 `cargo fmt --check`는 환경에 `rustfmt` component가 설치되지 않아 실행하지 못했습니다.
+
+########## p162 (구현자 2차 수정, workspace-write, 코덱스 solo — p161 지적 반영) ##########
+구현 완료했습니다. 변경 파일은 [coordinator_agent_selftest.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs) 하나입니다.
+
+- 100행: selftest의 `--lease-db` 저장소 경로와 저장소 없는 계약 검증 경로 설명 추가.
+- 1563, 1615, 1633, 1662, 1682행: 시나리오 27~31이 의도적으로 `--lease-db` 없이 legacy opt-in 경로를 사용한다는 주석 추가. `--lease-db`는 추가하지 않음.
+- 2195~2217행: 시나리오 38에 Agent 스폰, non-zero exit 검증 및 결과 보고 추가.
+- 2233행 이후: Coordinator와 Agent 각각 5초 하드 타임아웃 추가.
+- 2294행: 비리스닝 주소 `127.0.0.1:0` 연결 검사.
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows`: 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows`: 성공
+- selftest 5회: 모두 exit=0
+- 시나리오 38 Agent: 5초 제한 내 실측 30~32ms, 모두 exit=1
+- Mutation test: Agent 연결 거부를 임시로 exit=0처럼 변경했을 때 selftest가 exit=1로 실패하여 검출. 이후 원복하고 최종 재검증 완료.
+
+`cargo fmt`는 환경에 `rustfmt` 컴포넌트가 없어 실행하지 못했습니다.
