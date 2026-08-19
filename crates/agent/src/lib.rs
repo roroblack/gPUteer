@@ -81,6 +81,9 @@ pub struct AgentConfig {
     /// 횟수만큼 반복한다. `do_renew == false` 면 무시된다. 기본값 1은
     /// 기존(단일 왕복) 시나리오와 완전히 같게 동작한다.
     pub renew_rounds: u32,
+    /// Test-only delay before constructing each renewal request. This makes
+    /// short-TTL expiry deterministic in the process-boundary selftest.
+    pub renew_delay_ms: u64,
 
     // ── Lease revoke (2026-08-19) ───────────────────────────────────
     /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
@@ -289,7 +292,16 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             break;
         }
 
+        if config.renew_delay_ms != 0 {
+            std::thread::sleep(Duration::from_millis(config.renew_delay_ms));
+        }
         let renew_now = clock.now_unix_ms();
+        if lease_is_expired(&held_lease, renew_now) {
+            return Err(format!(
+                "RENEW_REFUSED:LOCAL_EXPIRED: expires_at_unix_ms={} now={renew_now}",
+                held_lease.expires_at_unix_ms
+            ));
+        }
         let mut renew_req = pb::RenewLeaseRequest {
             schema_version: 1,
             lease_id: held_lease.lease_id.clone(),
@@ -495,13 +507,17 @@ fn validate_revoke_notice(
             held_lease.fence_epoch, notice.fence_epoch
         ));
     }
-    if held_lease.expires_at_unix_ms <= now_unix_ms {
+    if lease_is_expired(held_lease, now_unix_ms) {
         return Err(format!(
             "REVOKE_REJECTED: held Lease가 이미 만료됐다: expires_at_unix_ms={} now={now_unix_ms}",
             held_lease.expires_at_unix_ms
         ));
     }
     Ok(())
+}
+
+fn lease_is_expired(lease: &pb::Lease, now_unix_ms: u64) -> bool {
+    lease.expires_at_unix_ms <= now_unix_ms
 }
 
 /// `ExecutionGrant.lease` 에 실린 `Lease` 를 독립적으로 검증하고
@@ -694,6 +710,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             None => default_checkpoint_root(),
         },
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+        renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
         revoke_signer_id_override: flags.0.get("--revoke-signer-id").cloned(),
     };
@@ -753,6 +770,13 @@ impl Flags {
 
     /// ★ 테스트 전용 — 갱신 요청 epoch 강제 주입(단계 5). 안 주면
     ///   `None`(보유 중인 Lease 의 실제 epoch 을 그대로 쓴다).
+    fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+        match self.0.get(key) {
+            None => Ok(default),
+            Some(v) => v.parse::<u64>().map_err(|e| format!("{key} parse failed: {e}")),
+        }
+    }
+
     fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
         match self.0.get(key) {
             None => Ok(None),

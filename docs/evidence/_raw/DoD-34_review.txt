@@ -1,0 +1,16 @@
+**ACCEPTED**
+
+교착 위험은 확인되지 않았습니다.
+
+- Coordinator는 연결 직후 10초 read timeout을 설정합니다: [coordinator/src/lib.rs:202-208](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:202)
+- 다음 `RenewLeaseRequest`는 [coordinator/src/lib.rs:343-351](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:343)에서 `read_frame()`으로 읽습니다. TCP EOF는 `read_exact()`의 `UnexpectedEof`를 [framed_ingress.rs:277-282](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/framed_ingress.rs:277)에서 `Truncated`로 바꾸고 즉시 전파합니다. 살아 있는 연결에서 프레임이 없으면 10초 timeout으로 종료됩니다.
+- Agent는 만료 확인 후에야 `RenewLeaseRequest`를 생성합니다: [agent/src/lib.rs:270-277](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:270)
+- selftest 48은 TTL 500ms, Agent 지연 1000ms를 사용해 해당 상황을 재현합니다: [coordinator_agent_selftest.rs:2656-2682](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:2656)
+- 90초 timeout은 형식적 검사만이 아니라 deadline 초과 시 실제 `kill()`/`wait()`를 수행합니다: [coordinator_agent_selftest.rs:25-64](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:25)
+- `lease_is_expired()`는 `<=`를 사용하며, revoke 경로에 적용된 기존 조건과 동일합니다: [agent/src/lib.rs:476-487](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:476)
+- Grant 최초 검증의 기존 규칙도 `now >= expires_at`이므로 동일합니다: [signing.rs:763-775](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signing.rs:763)
+- mutation 주장도 타당합니다. 검사를 무력화하면 Coordinator 저장소의 `expires_at <= now` 검사가 `lease store expired during renewal` raw error를 반환합니다: [coordinator/src/lib.rs:672-698](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:672)
+
+범위도 정확히 두 파일만 변경됐고 Coordinator/proto 변경은 없습니다.
+
+요청한 빌드 명령은 실행했으나 이 환경에 `cargo`가 설치되어 있지 않아 실행 자체가 불가능했습니다. 이는 코드 판정 근거로 사용하지 않았습니다.

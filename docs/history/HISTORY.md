@@ -16,6 +16,39 @@
 
 ---
 
+## 2026-08-20 07:26 — Agent 쪽 갱신 직전 만료 재확인 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-34`)
+- 계획: 마지막 백로그 재조사(`p176`) 유일 후보 — 별도 plan 문서
+  없이 evidence 문서에 직접 기록.
+- 스트림: Agent · QA · 문서.
+- 수행: `p176` 이 확인했다 — Agent 가 갱신 루프에서 `revoked` 만
+  확인하고 만료는 재확인 안 해 이미 만료된 Lease 로 갱신 요청을
+  보낼 수 있었다(`DoD-32` 가 Coordinator 쪽에서 이미 방어해
+  Lease 부활 결함은 아니었으나 Agent 쪽 낭비/관측 공백). 구현
+  (`p177`, 코덱스 workspace-write)이 `RenewLeaseRequest` 생성
+  직전에 새 `lease_is_expired()` 헬퍼(`DoD-26`/`DoD-32` 와 동일
+  `<=` 경계)로 재확인해, 만료 시 요청 자체를 안 보내고
+  `RENEW_REFUSED:LOCAL_EXPIRED` 로 종료하도록 고쳤다. Coordinator
+  코드는 전혀 안 건드렸다. ★ 오늘 밤 이미 세 번(`DoD-22`·`DoD-23`·
+  `DoD-27`) 나온 교착 패턴의 **반대 방향**(Agent 가 요청을 안
+  보내 Coordinator 가 무한 대기)이 재현되는지가 최우선 검증
+  대상이었다 — 구현자·독립 검수(`p178`, 대화 기록 없는 새 코덱스
+  인스턴스)·감독자(claude-code) 3단계 모두 `read_frame()` 이 TCP
+  EOF 를 즉시 오류로 전파함을 코드로 확인하고 selftest 5회
+  연속(매회 약 16초, 90초 하드 타임아웃 근처에도 안 감)으로
+  실측 재확인했다. 독립 검수 **1라운드 만에 `ACCEPTED`**. 이로써
+  오늘 밤 백로그 재조사(`p167`·`p176`)가 찾은 모든 하루 규모
+  후보를 마쳤다.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음, `coordinator-agent-selftest`(코덱스 구현 시
+  5회 + 감독자 재검증 5회) 전부 exit=0·48개 시나리오, 뮤테이션
+  (만료 검사 무력화 시 Coordinator 의 `DoD-32` 방어가 대신 거부함을
+  확인 후 원복) 통과, `python scripts/verify_evidence.py` 스키마
+  위반 없음(PASS 42/43).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-34_agent_갱신_전_만료_재확인.md`).
+
+---
+
 ## 2026-08-20 07:09 — marker-only checkpoint GC 회귀 테스트 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-33`)
 - 계획: 백로그 재조사(`p167`) 3순위 후보 — 별도 plan 문서 없이
   evidence 문서에 직접 기록.

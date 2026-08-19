@@ -22,10 +22,53 @@
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
+use std::time::{Duration, Instant};
 
 const RESULT_OK_MARKER: &str = "RESULT ok=true";
+const HANDSHAKE_HARD_TIMEOUT: Duration = Duration::from_secs(90);
+
+trait ChildTimeoutExt {
+    fn wait_with_output_until(self, deadline: Instant) -> std::io::Result<Output>;
+    fn wait_until(&mut self, deadline: Instant) -> std::io::Result<ExitStatus>;
+}
+
+impl ChildTimeoutExt for Child {
+    fn wait_with_output_until(mut self, deadline: Instant) -> std::io::Result<Output> {
+        loop {
+            if self.try_wait()?.is_some() {
+                return self.wait_with_output();
+            }
+            if Instant::now() >= deadline {
+                let _ = self.kill();
+                let _ = self.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "child process exceeded hard timeout",
+                ));
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn wait_until(&mut self, deadline: Instant) -> std::io::Result<ExitStatus> {
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() >= deadline {
+                let _ = self.kill();
+                let _ = self.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "child process exceeded hard timeout",
+                ));
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
 
 struct Fixture {
     exe: std::path::PathBuf,
@@ -109,6 +152,7 @@ fn run_handshake(
     extra_coordinator_args: &[&str],
     extra_agent_args: &[&str],
 ) -> Result<HandshakeOutcome, String> {
+    let handshake_deadline = Instant::now() + HANDSHAKE_HARD_TIMEOUT;
     let mut coordinator_args: Vec<&str> = vec![
         "coordinator-stub",
         "--listen",
@@ -209,7 +253,7 @@ fn run_handshake(
     }
 
     let agent_output = agent
-        .wait_with_output()
+        .wait_with_output_until(handshake_deadline)
         .map_err(|e| format!("agent-stub 대기 실패: {e}"))?;
 
     let mut coordinator_stdout_rest = String::new();
@@ -224,7 +268,7 @@ fn run_handshake(
         .map_err(|e| format!("coordinator stderr 읽기 실패: {e}"))?;
 
     let coordinator_status = coordinator
-        .wait()
+        .wait_until(handshake_deadline)
         .map_err(|e| format!("coordinator-stub 대기 실패: {e}"))?;
 
     Ok(HandshakeOutcome {
@@ -2675,6 +2719,66 @@ pub fn run() -> Result<String, String> {
     report.push_str(
         "47) 짧은 TTL로 실제 renew 경로에서 Lease 만료를 유도하고 signed outcome 없이 raw error로 연결 종료 확인\n",
     );
+
+    // ── 48. Agent가 갱신 직전에 만료를 감지하면 요청을 만들지 않음 ──
+    // Agent-only delay로 짧은 TTL을 갱신 요청 생성 직전에 만료시킨다.
+    // Agent는 LOCAL_EXPIRED로 종료하고 소켓을 닫으므로 Coordinator는
+    // 다음 RenewLeaseRequest를 기다리지 않고 EOF 오류로 즉시 종료해야 한다.
+    let local_expired_renew_dir_48 = tempfile::tempdir()
+        .map_err(|e| format!("local expired renew scenario temp dir creation failed (48): {e}"))?;
+    let local_expired_renew_lease_db_48 = local_expired_renew_dir_48.path().join("lease.sqlite3");
+    let local_expired_renew_lease_db_48 = local_expired_renew_lease_db_48
+        .to_str()
+        .ok_or_else(|| "local expired renew lease store path was not UTF-8 (48)".to_string())?;
+    let local_expired_started_48 = Instant::now();
+    let local_expired_renew_48 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            local_expired_renew_lease_db_48,
+            "--lease-ttl-ms",
+            "500",
+            "--do-renew",
+            "true",
+        ],
+        &[
+            "--do-renew",
+            "true",
+            "--renew-delay-ms",
+            "1000",
+        ],
+    )?;
+    let local_expired_elapsed_48 = local_expired_started_48.elapsed();
+    if local_expired_elapsed_48 >= HANDSHAKE_HARD_TIMEOUT
+        || local_expired_renew_48.agent_success
+        || !local_expired_renew_48
+            .agent_stderr
+            .contains("RENEW_REFUSED:LOCAL_EXPIRED")
+        || local_expired_renew_48
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true")
+        || !local_expired_renew_48
+            .coordinator_stderr
+            .contains("RenewLeaseRequest")
+        || local_expired_renew_48.coordinator_success
+    {
+        return Err(format!(
+            "Agent local expiry did not fail closed in scenario 48. elapsed={:?}\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            local_expired_elapsed_48,
+            local_expired_renew_48.coordinator_success,
+            local_expired_renew_48.coordinator_stdout,
+            local_expired_renew_48.coordinator_stderr,
+            local_expired_renew_48.agent_success,
+            local_expired_renew_48.agent_stdout,
+            local_expired_renew_48.agent_stderr
+        ));
+    }
+    report.push_str(&format!(
+        "48) Agent가 expires_at_unix_ms <= now를 갱신 직전에 감지해 LOCAL_EXPIRED로 종료하고 RenewLeaseRequest 없이 Coordinator도 EOF 오류로 종료 (hard timeout=90s, elapsed={:?})\n",
+        local_expired_elapsed_48
+    ));
 
     Ok(report)
 }

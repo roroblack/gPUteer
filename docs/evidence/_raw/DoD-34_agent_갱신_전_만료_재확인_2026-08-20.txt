@@ -1,0 +1,70 @@
+구현 및 검증을 완료했습니다. 커밋/푸시는 하지 않았습니다.
+
+1. 변경 파일
+
+- [crates/agent/src/lib.rs:295](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:295)
+  - 갱신 요청 생성 직전 `expires_at_unix_ms <= now` 재확인.
+  - 만료 시 `RENEW_REFUSED:LOCAL_EXPIRED` 반환.
+  - `RenewLeaseRequest`는 생성·전송하지 않음.
+  - 공통 `lease_is_expired()` 헬퍼를 revoke 경로에도 적용.
+  - selftest용 `--renew-delay-ms` 추가.
+- [crates/cli/src/coordinator_agent_selftest.rs:2726](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:2726)
+  - 시나리오 48 추가.
+  - 프로세스 대기 하드 타임아웃 90초 추가.
+
+Coordinator 코드는 변경하지 않았습니다.
+
+2. Coordinator 연결 종료 확인
+
+`read_frame()`은 TCP EOF를 즉시 `Truncated` 오류로 반환합니다. Coordinator의 갱신 루프도 해당 오류를 감싼 뒤 종료합니다. 살아 있는 연결에서 프레임을 기다리는 경우에만 기존 10초 read timeout이 적용됩니다. 무한 대기 경로는 확인되지 않았습니다.
+
+3. 신규 시나리오 48
+
+- Lease TTL: 500ms
+- Agent 갱신 직전 테스트 지연: 1000ms
+- Agent가 `RENEW_REFUSED:LOCAL_EXPIRED`로 종료
+- Coordinator에는 `RENEW_RESULT`가 없어야 함
+- Coordinator는 EOF 오류로 종료
+- 프로세스 전체 하드 타임아웃: 90초
+
+4. 뮤테이션 결과
+
+만료 검사 조건을 임시로 항상 거짓으로 변경했습니다.
+
+- selftest: exit=1
+- Agent가 실제 `RenewLeaseRequest` 전송
+- Coordinator가 `lease store expired during renewal` raw error로 거부
+
+검증 후 로직은 원복했습니다.
+
+5. 검증 결과
+
+- `cargo build --workspace --exclude gputeer-runtime-windows`: 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows`: 성공, 실패 0건
+- selftest 5회: 모두 exit=0, 모두 90초 제한 이내
+
+소요 시간:
+
+- 1회: 16.252초
+- 2회: 15.793초
+- 3회: 15.755초
+- 4회: 15.752초
+- 5회: 15.815초
+
+신규 시나리오 48 자체는 각 회차 약 1.12~1.16초에 완료됐습니다.
+
+현재 변경 사항은 위 두 소스 파일뿐이며, `git diff --check`도 통과했습니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+cargo test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+
+.\target\debug\gputeer.exe coordinator-agent-selftest 5회 연속 실행:
+run 1: exit=0 elapsed_ms=15775 scenarios=48
+run 2: exit=0 elapsed_ms=15665 scenarios=48
+run 3: exit=0 elapsed_ms=15690 scenarios=48
+run 4: exit=0 elapsed_ms=15867 scenarios=48
+run 5: exit=0 elapsed_ms=15738 scenarios=48
+
+5회 전부 exit=0, 48개 시나리오 전부 완료(약 16초/회). 교착(90초
+하드 타임아웃 초과) 재현 없음.
