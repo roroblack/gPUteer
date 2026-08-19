@@ -163,7 +163,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-19)
+## 5. 지금 상태 (2026-08-20)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -177,7 +177,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 310 passed / 0 failed**(1 ignored, 2026-08-19 실측), 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 348 passed / 0 failed**(1 ignored, 2026-08-20 실측), 빌드 경고 0 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** · **`write_once()` 동시 동일-이름 호출 명시적 거부(2026-08-19, `DoD-21`)** — 프로세스 간 파일 잠금 + 성공 시 자가 정리 + GC 의 죽은 락 회수 |
@@ -807,6 +807,60 @@ Linux 검증 — 부분 해소, 완전 해소 아님(2026-08-19, `ENV-03`)
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
+
+### ★ 2026-08-19 밤 ~ 2026-08-20 새벽 자율 작업 세션 요약
+
+사용자가 취침 중 "코덱스 쿼터를 최대한 태워서 자율로 진행하라"는
+지시에 따라, 이 세션(감독자, `agent:claude-code`)이 코덱스 CLI
+(`agent:codex-cli`, gpt-5.6-luna)에 구현을 위임하고 대화 기록이
+없는 새 코덱스 인스턴스로 독립 검수를 받는 사이클을 반복해
+`DoD-21`부터 `DoD-34`까지 **14개 조각**을 완료했다(전부 위 표와
+"다음에 할 일" 7~20번에 상세 기록). `coordinator-agent-selftest`
+가 24개 → **48개 시나리오**로, `docs/evidence/` 의 schema 검사
+대상 문서가 29건 → **43건(PASS 42)**으로, `cargo test --workspace`
+가 310개 → **348개**로 늘었다. 전 조각이 로컬 커밋됐다(원격 push 없음, 최신 커밋
+`b3cba58`).
+
+**패턴으로 남길 만한 것들**:
+
+- 같은 부류의 교착 버그(Coordinator 가 정책 거부 outcome 을 보낸
+  뒤 Agent 는 즉시 종료하는데 Coordinator 는 다음 프레임을 계속
+  기다림)가 오늘 밤 **세 번**(`DoD-22`·`DoD-23`·`DoD-27`) 독립적
+  으로 발견됐다 — 이후 조각(`DoD-31`·`DoD-34`)마다 이 패턴을
+  명시적으로 경계하며 검증했다.
+- 코덱스 read-only 샌드박스 안에서 `coordinator-agent-selftest`
+  가 프로세스 스폰 문제로 완주하지 못하는 현상이 여러 조각
+  (`DoD-28`~`DoD-33`)에서 반복 관측됐다 — 감독자가 매번 샌드박스
+  밖 실제 환경에서 재현해 코드 결함이 아님을 확인했다. 이건 이
+  세션의 검수 인프라 자체의 알려진 한계로 남는다.
+- 독립 검수가 진행 중일 때 감독자가 같은 파일을 직접 조작(뮤테이션
+  재현 등)하면 오탐이 날 수 있다(`DoD-31` 에서 실제로 발생) —
+  이후 감독자의 직접 파일 조작은 검수와 시점이 겹치지 않도록
+  순차 진행했다.
+- 백로그 재조사를 세 번(`p152`·`p158`류 → `p167` → `p176`) 반복
+  하며 매번 "억지로 후보를 만들지 말고 정직하게 판단하라"고
+  지시했다 — 세 번째 재조사(`p176`)는 진짜 후보 1개(`DoD-34`)만
+  찾고 나머지는 전부 "후보 아님"으로 명시적으로 분류했다.
+
+**남은 것 — 이 세션이 자율로 진행할 수 없는 것들**:
+
+- **트리거 자체가 없음**: scheduler·다중 Agent·Coordinator 다중
+  HA·TLS·QUARANTINED 실제 판정(`TODO_VISION` V-11)·Job↔Agent
+  자동 매칭(V-10).
+- **설계상 하루 규모를 넘음**: 자동 재접속 루프 전체(설계 문서가
+  6~8일 규모로 명시, `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`)·
+  실제 Job 실행(entrypoint·GPU 확인·runtime 격리·scheduler 필요).
+- **시스템/보안 설정 변경이라 이 세션이 자율 실행 불가**: OS
+  방화벽 강제(network.rs)·x600 의 WSL2 설치 — 둘 다 사용자가
+  직접 실행해야 한다.
+- **사용자 승인만 남음(구현은 이미 그 결정을 따름)**: `ADR-026`
+  (체크포인트 확정 절차 플랫폼 차이)·`ADR-027`(Windows Job Object
+  VRAM 상한) — 둘 다 상태는 "제안" 이지만 기준선 문서 수정 승인
+  만 남았다.
+
+사용자가 깨어나면 위 "남은 것" 중 시스템 설정 변경 항목(WSL2·
+방화벽)부터 직접 처리하거나, `crates/scheduler` 같은 새 서브시스템
+착수 여부를 판단하면 된다.
 
 ### 환경 주의사항
 
