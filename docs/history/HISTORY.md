@@ -16,6 +16,36 @@
 
 ---
 
+## 2026-08-20 04:24 — check_schema.py CI 연결 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-28`)
+- 계획: `docs/plans/2026-08-20_0424_check_schema_ci_연결_v1.md`.
+- 스트림: QA · 문서 · 인프라.
+- 수행: `p152` 백로그 조사가 3순위로 꼽은 "`check_schema.py`
+  CI 연결"(`DoD-20` 이 limitations 절에 명시적으로 남긴 공백)을
+  구현했다(`p156`, 코덱스 workspace-write) —
+  `.github/workflows/canonical-schema-check.yml` 신설, `main` 대상
+  `push`·`pull_request` 트리거로 canonical 참조 self-test·벡터
+  대조·`check_schema.py`·워크스페이스 build/test(`gputeer-runtime-windows`
+  제외)·`verify_evidence.py` 를 순서대로 실행한다. Rust 1.89
+  (`Cargo.toml` 의 `rust-version` 과 일치), apt `protobuf-compiler`
+  설치가 Cargo 의 `protoc-bin-vendored` 와 별개로 실제 필요함을
+  `check_schema.py` 소스로 확인 후 포함시켰다. 이 저장소는 원격이
+  없어 워크플로 자체는 아직 실제로 실행된 적이 없다 — 로컬에서
+  동일 명령 순서 실행 성공으로 검증을 대신했다. 독립 검수(`p159`,
+  대화 기록 없는 새 코덱스 인스턴스, read-only)가 YAML 문법·트리거·
+  경로 정확성(`--exclude` 이름이 `crates/runtime-windows/Cargo.toml`
+  의 package name 과 일치하는지)·Rust 버전·apt 설치 필요성·최소
+  권한(`contents: read`)·미커밋 상태·evidence/CLAUDE.md/HISTORY
+  무변경까지 전부 코드로 재확인하고 1라운드 만에 `ACCEPTED`.
+- 검증: `reference_canonical.py --self-test` PASS(12개),
+  `reference_canonical.py --verify` PASS(45개 벡터), `check_schema.py`
+  오류 0건, `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음, `verify_evidence.py` 스키마 위반 없음(PASS 36/37),
+  PyYAML 로 워크플로 YAML 파싱 성공.
+- 리포트: 없음(순수 CI 설정 파일 추가 — `docs/evidence/DoD-28_check_schema_ci_연결.md`
+  로 대신 기록).
+
+---
+
 ## 2026-08-20 04:15 — 백로그 정리 + 자동 재접속 루프·Job 시작 마커 설계 + REVOKED signed outcome (`DoD-27`)
 - 계획: `docs/plans/2026-08-20_0357_revoked_signed_outcome_v1.md`
   (구현), `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`·

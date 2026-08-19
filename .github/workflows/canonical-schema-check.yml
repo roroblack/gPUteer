@@ -1,0 +1,50 @@
+name: Canonical schema and workspace checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.89 toolchain
+        uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install schema-check dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y protobuf-compiler
+          python -m pip install --upgrade pip
+          python -m pip install protobuf blake3
+
+      - name: Run canonical reference self-test
+        run: python tools/canonical/reference_canonical.py --self-test
+
+      - name: Verify canonical vectors
+        run: python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+
+      - name: Check canonical schema against proto definitions
+        run: python tools/canonical/check_schema.py
+
+      - name: Build workspace excluding Windows runtime
+        run: cargo build --workspace --exclude gputeer-runtime-windows
+
+      - name: Test workspace excluding Windows runtime
+        run: cargo test --workspace --exclude gputeer-runtime-windows
+
+      - name: Verify evidence schema
+        run: python scripts/verify_evidence.py

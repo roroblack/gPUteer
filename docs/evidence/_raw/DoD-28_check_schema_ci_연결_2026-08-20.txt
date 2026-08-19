@@ -1,0 +1,29 @@
+구현 완료했습니다. 커밋·푸시는 하지 않았습니다.
+
+추가한 파일:
+
+- [canonical-schema-check.yml](<C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\.github\workflows\canonical-schema-check.yml>)
+  - `main` 대상 `push`·`pull_request`
+  - Ubuntu 최신 러너
+  - Rust 1.89, Python 3
+  - `protobuf-compiler`, Python `protobuf`·`blake3` 설치
+  - Windows 전용 크레이트 제외 build/test
+  - 지정된 검증 명령을 순서대로 실행
+- [2026-08-20_0424_check_schema_ci_연결_v1.md](<C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\docs\plans\2026-08-20_0424_check_schema_ci_연결_v1.md>)
+
+로컬 검증 결과:
+
+- `reference_canonical.py --self-test`: 성공, 12개 PASS
+- `--verify canonical_v1.json`: 성공, 45개 벡터 일치
+- `check_schema.py`: 성공, 오류 0건·경고 42건
+- `cargo build ...`: 성공
+- `cargo test ...`: 성공, 실패 0건·ignored 1건
+- `verify_evidence.py`: 종료 코드 0, PASS 35/36·FAIL-SCOPE 1
+- YAML PyYAML 파싱: 성공
+- `git diff --check`: 성공
+
+현재 셸 PATH에 `cargo`가 없어 절대 경로의 설치된 Cargo 1.97.1로 동일 build/test 명령을 실행했습니다. CI에서는 Rust 액션이 Cargo를 PATH에 제공합니다.
+
+Linux 러너는 ENV-03에서 Ubuntu 24.04.3 기반으로 `cargo build --workspace --exclude gputeer-runtime-windows` 성공이 확인되었고, Windows 전용 크레이트는 의도대로 `compile_error!()`로 거부됩니다. [ENV-03 기록](<C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\docs\evidence\ENV-03_remote5090_리눅스_GPU_기계_실측.md:147>) 다만 해당 기록에는 Linux에서 `k1c` 테스트 1건이 실패한 이력도 있어, 실제 GitHub Linux CI의 테스트 통과 여부는 아직 원격 실행으로 확인하지 못했습니다.
+
+`act`는 설치되어 있지 않았고, GitHub API 호출도 하지 않았습니다.

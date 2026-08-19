@@ -1,0 +1,21 @@
+**ACCEPTED**
+
+- 워크플로 존재 및 YAML 파싱 성공: [canonical-schema-check.yml](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/.github/workflows/canonical-schema-check.yml:1)
+- `push`·`pull_request` 모두 `main` 대상: 3–7행.
+- 참조 파일·벡터·검증 스크립트 모두 존재하며 명령 경로가 정확함: 35–50행.
+- Rust 버전 일치: 워크플로 20행 `1.89.0`, `Cargo.toml` 17행 `rust-version = "1.89"`.
+- exclude 이름 정확함: `crates/runtime-windows/Cargo.toml` 2행 `gputeer-runtime-windows`, 워크플로 44·47행.
+- `permissions: contents: read`만 설정됨: 9–10행.
+- `check_schema.py`는 72–76행에서 PATH의 `protoc`를 찾고, 102–110행에서 subprocess로 직접 실행함. 따라서 Cargo의 vendored protoc(빌드 스크립트 10–11행)와 별개로 apt의 `protobuf-compiler` 설치는 CI에서 필요함.
+- YAML 파싱, `reference_canonical.py --self-test`, 벡터 검증, `verify_evidence.py`는 성공함. `check_schema.py`는 read-only 환경에서 임시 descriptor 파일 생성이 불가능해 환경 차단됨.
+- `git log --oneline -3`에는 워크플로가 없고, `git remote -v`도 비어 있음. 워크플로는 아직 untracked이므로 커밋·push·GitHub Actions 실행 사실이 없음.
+- `docs/evidence/`, `CLAUDE.md`, `docs/history/HISTORY.md`에는 이번 변경 상태가 없음.
+
+따라서 수정 요청 사항은 없습니다.
+
+인용 정리(파일:줄 형식, 위 판정 근거를 기계 검증 가능한 형태로 재정리):
+- Cargo.toml:17 — `rust-version = "1.89"`, 워크플로의 Rust 1.89.0 툴체인 지정과 일치.
+- crates/runtime-windows/Cargo.toml:2 — `name = "gputeer-runtime-windows"`, 워크플로의 `--exclude gputeer-runtime-windows` 와 일치.
+- tools/canonical/check_schema.py:72 — PATH 상의 `protoc` 탐색 시작.
+- tools/canonical/check_schema.py:102 — `protoc` 를 subprocess 로 직접 실행 — Cargo 의 `protoc-bin-vendored` 와 별개 경로이므로 워크플로의 apt `protobuf-compiler` 설치 스텝이 실제로 필요함을 확인.
+- scripts/verify_evidence.py:1 — 독립 재실행으로 종료 코드 0, PASS 35/36 재확인(구현자 보고와 별개로 검수자가 직접 실행).
