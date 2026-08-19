@@ -160,3 +160,20 @@ RevokeLeaseNotice   lease_id 로 대신
 
 지금은 `VerifyError::Derived` 로 **로컬에서만** 구분한다.
 `err.outcome()` 이 `None` 을 반환하는 것이 "보고할 proto 값이 없다" 는 신호다.
+
+### V-10 — Job↔Agent 자동 매칭 (신뢰도 · 하드웨어 티어 반영)
+
+| 필드 | 내용 |
+|---|---|
+| **도입 트리거** | 같은 Job 의 자격 조건(`GpuRequest`/`ResourceRequest`)을 동시에 만족하는 Agent 후보가 **2대 이상**인 상황이 처음 발생하는 시점 |
+| 지금 안 하는 이유 | scheduler 자체가 미착수 — Agent 가 Job 을 아직 하나도 실행하지 않아 "여러 후보 중 고른다" 는 상황 자체가 없다. 신뢰도 입력으로 쓸 이력(`QuarantineDevice`/`DeviceRevoke` 이벤트)도 아직 쌓인 게 없다 |
+| 예상 비용 | 생성 중(스코어링 함수 자체는 순수 함수로 작지만, 노드별 신뢰도 이력 저장소 + 하드웨어 프로파일 조회가 선행돼야 한다) / 검증 대(공정성·기아 방지·점수 조작 저항성은 실제 다중 노드 환경 없이는 실측 불가) / 대기 — scheduler 착수(§ "미착수" 목록)에 의존 |
+| 폐기 조건 | 없음 — 여러 Agent 를 동시에 운용하기 시작하면 결국 필요해진다(신뢰도 낮거나 노후 하드웨어인 노드가 섞이면 임의 배정은 곧 문제가 된다) |
+
+★ 재미있는 확장 아이디어로 제안됨(2026-08-20, 사용자). 지금 스키마에 이미
+있는 조각들을 엮으면 된다 — `GpuRequest`(`min_vram_bytes`·`cuda_runtime_version`·
+`allowed_gpu_models`)가 하드웨어 티어 쪽 자격 조건이고, `QuarantineDevice`/
+`DeviceRevoke`(ADR-028)가 신뢰도 쪽 신호 후보다. **아직 결정 안 된 것**:
+점수를 단일 스칼라로 합칠지 사전조건(hard filter)과 우선순위(soft rank)를
+분리할지, 신뢰도 점수의 시간 감쇠(decay) 규칙, 점수 조작(자기 자신에게
+유리하게 이력을 세탁) 방지 — 전부 scheduler 설계 착수 시점에 다시 판단한다.

@@ -16,6 +16,127 @@
 
 ---
 
+## 2026-08-19 01:10 — 자율 세션 종료 리포트 제출 (`DoD-13`~`DoD-20`, 8건 소급)
+
+- 계획: 아래 8개 항목 전체.
+- 스트림: Coordinator · Agent · Protocol · CLI(selftest) · Tooling.
+- 수행: `RULE.md` §3.4 가 요구하는 세션 종료 리포트를 8개 조각 모두
+  제출하지 않고 진행해 왔던 것을 뒤늦게 발견 — 종합 리포트 1건과
+  이 이력 항목들을 소급 작성했다.
+- 검증: `git status --short` 클린, `verify_evidence.py` 스키마 위반 0(28건,
+  PASS 27 · FAIL-SCOPE 1).
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-19 01:02 — `check_schema.py` — 실행 환경 오류를 `exit(2)` 로 통일 (`DoD-20`)
+
+- 계획: `docs/plans/2026-08-20_0000_check_schema_py_v1.md`.
+- 스트림: Tooling.
+- 수행: 코덱스 1라운드 검수(`p120`)가 자기 샌드박스에서 실제로
+  실행해보다가 임시 파일 생성 실패가 처리되지 않은 예외로 새어나가
+  `exit(1)` 이 되는 것을 재현. `build_descriptor_set()` 전 구간을
+  `OSError`/`message.DecodeError` 로 감싸 `exit(2)` 로 통일.
+- 검증: 수정 전/후 버전 대조로 재현·해소 확인. `python check_schema.py`
+  정상 경로 오류 0건, `cargo test --workspace`·`coordinator-agent-selftest`
+  24/24 회귀 없음. 2라운드(`p121`) `ACCEPTED`.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-19 00:53 — `tools/canonical/check_schema.py` 신규 구현 (`DoD-20`)
+
+- 계획: `docs/plans/2026-08-20_0000_check_schema_py_v1.md`.
+- 스트림: Tooling.
+- 수행: `proto/README.md` 가 오래전부터 안내·전제해온 스키마 표
+  정합성 검사기가 실제로는 없었다(코덱스 최종 확인 감사 `p118` 이
+  발견). `protoc --descriptor_set_out` → `google.protobuf.descriptor_pb2`
+  구조 파싱으로 `reference_canonical.py` 의 `SCHEMAS` 와 `.proto` 를
+  대조. field 90(서명 필드)은 `canonical_encode()` 가 번호로만
+  무조건 건너뛰므로 타입 비교에서 명시적으로 제외.
+- 검증: 설계 실측(`p119`)이 실제 drift 3건(전부 field 90, 인코딩엔
+  무영향) 발견. 뮤테이션 4건(타입/번호/이름/field-90-예외 무력화)
+  전부 예측대로 검출. 현재 저장소 상태 오류 0건.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-19 00:33 — 오래된 테스트 공백 3건 보강 (`DoD-19`)
+
+- 계획: (코덱스 감사 `p116` 이 직접 찾은 후보 — 별도 계획 문서 없이
+  소규모 수정으로 진행).
+- 스트림: Protocol · Coordinator · Crypto.
+- 수행: `canonical_vectors.rs` 의 손으로 쓴 domain 배열이 24종으로
+  뒤처져 있던 것(실제 25종, `DoD-13` 의 `LeaseRenewResult` 반영 안 됨),
+  `CoordinatorLeaseStore::check_identity_conflict()` 의 4개 필드 중
+  `job_id` 만 테스트되던 것, `RenewLeaseResult` framed 정상 테스트가
+  payload 필드를 검증 안 하던 것(`DoD-17` 과 같은 패턴) — 3건 전부
+  수정.
+- 검증: 뮤테이션 2건(identity conflict 검사 제거, `detail` 기대값
+  오염) 전부 예측대로 검출. 1라운드(`p117`) `ACCEPTED`.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-19 00:13 — `max_total_duration_seconds` 갱신 차단 정책 (`DoD-18`)
+
+- 계획: `docs/plans/2026-08-19_2350_max_total_duration_seconds_갱신_차단_v1.md`.
+- 스트림: Coordinator · Agent · CLI(selftest).
+- 수행: 오래전부터 스키마에만 있던 `max_total_duration_seconds`/
+  `RENEW_OUTCOME_MAX_DURATION_EXCEEDED` 를 처음으로 실제 판정하게
+  만듦. `CoordinatorLeaseStore::renew_existing_within_duration()`
+  이 조회→판정→조건부 UPDATE 를 트랜잭션 하나로 묶는다. selftest
+  시나리오 22~24 추가(24개 시나리오 도달).
+- 검증: 코덱스 1라운드(`p114`)가 `lease_store=Some`+override 조합의
+  저장소 상태 불일치 결함 발견 → 수정 → 2라운드(`p115`) `ACCEPTED`.
+  뮤테이션 4건 전부 예측대로 실패·원복.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-18 23:20 — `RevokeLeaseNotice` framed ingress 커버리지 (`DoD-17`)
+
+- 계획: (코덱스 감사 `p110` 이 직접 찾은 오래된 커버리지 공백 —
+  별도 계획 문서 없이 소규모 테스트 추가로 진행).
+- 스트림: Crypto.
+- 수행: `FrameType::LeaseRevoke` 배선은 있었지만 실제 서명 왕복
+  테스트가 한 번도 없었다. 정상/위조 서명 테스트 2건 신설.
+- 검증: 코덱스 1라운드(`p112`)가 정상 테스트를 payload 필드 미검증
+  으로 지적 → 필드 assert 추가 → 2라운드(`p113`) `ACCEPTED`.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-18 22:39 — Coordinator 영속 Lease 저장소 (`DoD-16`)
+
+- 계획: `docs/plans/2026-08-19_2300_coordinator_영속_lease_저장소_v1.md`.
+- 스트림: Coordinator.
+- 수행: `CoordinatorLeaseStore`(SQLite) 신설 — 재시작 후에도 발급한
+  Lease 의 신원·epoch 를 기억한다(`--lease-db`, optional). selftest
+  시나리오 20·21 로 별도 프로세스 재시작 경계에서 실측.
+- 검증: 코덱스 1라운드(`p108`)가 `max_total_duration_seconds` 의
+  `u64`→`u32` 무검사 캐스팅(silent truncation) 발견 → `u32_from_stored()`
+  fail-closed 헬퍼로 수정 → 2라운드(`p109`) `ACCEPTED`.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-18 22:20 — 같은 연결에서 반복 Lease 갱신 (`DoD-15`)
+
+- 계획: `docs/plans/2026-08-19_2330_같은_연결_반복_lease_갱신_v1.md`.
+- 스트림: Coordinator · Agent · CLI(selftest).
+- 수행: `derive_renew_nonce(lease_id, round)` 로 회차별 nonce 분리,
+  `--renew-rounds` CLI 플래그. 설계 단계(`p105`, **코드 작성 전**)가
+  "회차마다 nonce 가 같아 2회차부터 Replay 로 100% 거부된다" 는
+  결함을 코드 경로 재확인만으로 미리 찾아 재작업을 막았다.
+- 검증: 뮤테이션(`round` 고정)으로 그 실패가 예측대로 재현됨을 확인.
+  코덱스 1라운드(`p107`)만에 `ACCEPTED` — 이 세션에서 유일하게
+  1라운드 만에 추가 결함 없이 통과한 조각 중 하나.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+## 2026-08-18 17:36 — Agent 쪽 durable FenceWatermark (`DoD-14`)
+
+- 계획: `docs/plans/2026-08-19_2200_durable_fence_watermark_v1.md`.
+- 스트림: runtime-policy · Agent · CLI(selftest).
+- 수행: `crates/runtime-policy::DurableFenceWatermark`(SQLite) 신설 —
+  최초 Grant·갱신 검증 두 호출부 모두 재시작을 넘는 epoch 강등
+  방어를 갖춘다. `--fence-db :memory:` 는 fail closed.
+- 검증: **자체 발견** — "갱신 경로 전용" restart-defense 시나리오가
+  같은 프로세스의 최초 Grant 검증 때문에 저장소 진위와 무관하게
+  공허하게 통과하는 함정을 뮤테이션 테스트로 스스로 잡아내
+  시나리오를 다시 설계(§2.1). 코덱스 1라운드(`p102`)가 `:memory:`
+  fail-open · 에러 메시지 접두사 충돌 2건 발견 → 수정 → 2라운드
+  (`p103`) `ACCEPTED`.
+- 리포트: `docs/reports/2026-08-19_0110_lease_영속화와_스키마_검사기_자율세션.md`
+
+---
+
 ## 2026-08-19 05:00 — Lease 갱신 최소 조각 계획 수립 — `RenewLeaseResult` 미서명 공백 발견
 
 - 계획: CLAUDE.md 백로그 1번의 다음 후보(Lease **갱신**,
