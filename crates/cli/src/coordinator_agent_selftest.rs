@@ -2479,6 +2479,156 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("44) checkpoint root가 일반 파일인 디스크 오류에서 marker/AgentGrantAck/JOB_STARTED 없이 fail-closed 확인\n");
 
+    // ── 45. QUARANTINED가 다회차 갱신의 첫 회차에 발생하면 즉시 종료 ──
+    // 기존 단일 회차의 --renew-outcome-override 3 트리거를 그대로
+    // 재사용한다. Agent는 signed QUARANTINED를 받은 즉시 갱신 함수를
+    // 끝내므로 Coordinator도 두 번째 RenewLeaseRequest를 기다리지
+    // 않아야 한다.
+    let quarantine_multi_dir_45 = tempfile::tempdir()
+        .map_err(|e| format!("QUARANTINED 다회차 시나리오 임시 디렉터리 생성 실패(45): {e}"))?;
+    let quarantine_lease_db_45 = quarantine_multi_dir_45.path().join("lease.sqlite3");
+    let quarantine_lease_db_45 = quarantine_lease_db_45
+        .to_str()
+        .ok_or_else(|| "QUARANTINED 다회차 lease store 경로가 UTF-8이 아니다(45)".to_string())?;
+    let quarantined_multi_round = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            quarantine_lease_db_45,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+            "--renew-outcome-override",
+            "3",
+            "--renew-rounds",
+            "2",
+        ],
+        &["--do-renew", "true", "--renew-rounds", "2"],
+    )?;
+    if !quarantined_multi_round.coordinator_success
+        || !quarantined_multi_round
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=3")
+        || quarantined_multi_round
+            .coordinator_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 1
+        || !quarantined_multi_round.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || quarantined_multi_round.agent_success
+        || !quarantined_multi_round
+            .agent_stderr
+            .contains("RENEW_REFUSED:QUARANTINED")
+        || quarantined_multi_round.agent_stdout.contains("RENEW_RESULT ok=true")
+    {
+        return Err(format!(
+            "다회차 QUARANTINED가 첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            quarantined_multi_round.coordinator_success,
+            quarantined_multi_round.coordinator_stdout,
+            quarantined_multi_round.coordinator_stderr,
+            quarantined_multi_round.agent_success,
+            quarantined_multi_round.agent_stdout,
+            quarantined_multi_round.agent_stderr
+        ));
+    }
+    report.push_str(
+        "45) renew_rounds=2의 첫 회차 QUARANTINED(--renew-outcome-override 3) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
+    );
+
+    // ── 46. MAX_DURATION_EXCEEDED가 다회차 갱신의 첫 회차에 발생하면 즉시 종료 ──
+    // 기존 22번의 --max-total-duration-seconds 2 + 실제 2.2초 경과
+    // 트리거를 그대로 재사용한다. 먼저 Lease를 발급하고 한도를 넘긴
+    // 뒤, renew_rounds=2 갱신을 시작해 첫 응답이 outcome=6이 되게 한다.
+    let max_duration_multi_dir_46 = tempfile::tempdir()
+        .map_err(|e| format!("MAX_DURATION_EXCEEDED 다회차 시나리오 임시 디렉터리 생성 실패(46): {e}"))?;
+    let max_duration_lease_db_46 = max_duration_multi_dir_46.path().join("lease.sqlite3");
+    let max_duration_lease_db_46 = max_duration_lease_db_46
+        .to_str()
+        .ok_or_else(|| "MAX_DURATION_EXCEEDED 다회차 lease store 경로가 UTF-8이 아니다(46)".to_string())?;
+    let issue_max_duration_46 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            max_duration_lease_db_46,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "2",
+            "--do-renew",
+            "false",
+        ],
+        &["--do-renew", "false"],
+    )?;
+    if !issue_max_duration_46.coordinator_success || !issue_max_duration_46.agent_success {
+        return Err(format!(
+            "MAX_DURATION_EXCEEDED 다회차 시나리오 최초 발급이 실패했다(46).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issue_max_duration_46.coordinator_success,
+            issue_max_duration_46.coordinator_stdout,
+            issue_max_duration_46.coordinator_stderr,
+            issue_max_duration_46.agent_success,
+            issue_max_duration_46.agent_stdout,
+            issue_max_duration_46.agent_stderr
+        ));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(2_200));
+
+    let max_duration_multi_round = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            max_duration_lease_db_46,
+            "--fence-epoch",
+            "5",
+            "--max-total-duration-seconds",
+            "2",
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "5",
+            "--renew-rounds",
+            "2",
+        ],
+        &["--do-renew", "true", "--renew-rounds", "2"],
+    )?;
+    if !max_duration_multi_round.coordinator_success
+        || !max_duration_multi_round
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=6")
+        || max_duration_multi_round
+            .coordinator_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 1
+        || !max_duration_multi_round.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || max_duration_multi_round.agent_success
+        || !max_duration_multi_round
+            .agent_stderr
+            .contains("RENEW_REFUSED:MAX_DURATION_EXCEEDED")
+        || max_duration_multi_round.agent_stdout.contains("RENEW_RESULT ok=true")
+    {
+        return Err(format!(
+            "다회차 MAX_DURATION_EXCEEDED가 첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            max_duration_multi_round.coordinator_success,
+            max_duration_multi_round.coordinator_stdout,
+            max_duration_multi_round.coordinator_stderr,
+            max_duration_multi_round.agent_success,
+            max_duration_multi_round.agent_stdout,
+            max_duration_multi_round.agent_stderr
+        ));
+    }
+    report.push_str(
+        "46) renew_rounds=2의 첫 회차 MAX_DURATION_EXCEEDED(--max-total-duration-seconds 2, 2.2초 경과) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
+    );
+
     Ok(report)
 }
 

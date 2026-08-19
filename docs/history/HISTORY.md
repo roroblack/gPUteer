@@ -16,6 +16,43 @@
 
 ---
 
+## 2026-08-20 06:11 — terminal outcome 다회차 교착 회귀 테스트 보강 — 구현 + 독립 검수 2라운드 + evidence 기록 (`DoD-31`)
+- 계획: 백로그 재조사(`p167`, 오늘 새벽 완료) 1순위 후보 — 별도
+  plan 문서 없이 evidence 문서에 직접 기록.
+- 스트림: QA · 문서.
+- 수행: 오늘 밤 세 번(`DoD-22`·`DoD-23`·`DoD-27`) 나온 교착 버그
+  패턴 — Coordinator 가 다회차 갱신 루프 중 정책 거부 outcome
+  (`SUPERSEDED=2`·`QUARANTINED=3`·`MAX_DURATION_EXCEEDED=6`·
+  `REVOKED=8`)을 마지막이 아닌 회차에서 보내면 Agent 는 즉시
+  종료하는데 Coordinator 는 계속 기다리는 교착 — 에 대해,
+  `SUPERSEDED`·`REVOKED` 만 다회차 회귀 시나리오가 있고
+  `QUARANTINED`·`MAX_DURATION_EXCEEDED` 는 단일 회차뿐이던 공백을
+  닫았다. `coordinator_agent_selftest.rs` 에 시나리오 45·46
+  신설(프로덕션 코드는 전혀 안 바꿈, `p168` 코덱스 workspace-write).
+  독립 검수 1라운드(`p169`)가 `crates/coordinator/src/lib.rs` 가
+  HEAD 와 다르다며 `CHANGES_REQUESTED` 를 냈으나, 조사 결과 이건
+  검수가 진행되던 바로 그 시간대에 감독자(claude-code)가 코덱스의
+  뮤테이션 보고를 독립 재확인하려고 `matches!` 를 순차 뮤테이션
+  (3 제거→재현→원복→6 제거→재현→원복)하던 중간 상태를 읽은
+  것이었다 — 실제 결함이 아니라 감독자 자신의 검증 작업과 겹친
+  오탐. 감독자가 두 뮤테이션 모두 정확히 예측된 교착으로 재현하고
+  완전히 원복(`git diff --stat` 무변경)한 뒤, 안정된 상태로
+  2라운드(`p170`)를 요청 — `git diff --stat` 단일 파일·`matches!`
+  4개 값 전부 존재·시나리오 45·46 의 정확한 assert·신규 CLI 플래그
+  없음까지 전부 코드로 확인하고 **`ACCEPTED`**. 프로세스 교훈:
+  독립 검수 진행 중 감독자가 같은 파일을 직접 조작하는 뮤테이션
+  재현은 순차적으로 진행하기로 함.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음, `coordinator-agent-selftest`(코덱스 구현 시 5회
+  + 감독자 재검증 5회) 전부 exit=0·46개 시나리오, 뮤테이션 2건
+  (outcome=3·outcome=6 각각 제거) 모두 정확한 실패 재현 후 원복
+  재검증 통과, `python scripts/verify_evidence.py` 스키마 위반
+  없음(PASS 39/40).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-31_terminal_outcome_다회차_교착_회귀.md`).
+
+---
+
 ## 2026-08-20 05:30 — Job 시작 WRITING 마커 — 구현 + 독립 검수 1라운드 + 감독자 재검증 + evidence 기록 (`DoD-30`)
 - 계획: `docs/plans/2026-08-20_0310_job_시작_마커_최소_조각_v1.md`
   (설계는 `p154`, 오늘 새벽 백로그 정리 때 이미 완료 — 오늘 실제

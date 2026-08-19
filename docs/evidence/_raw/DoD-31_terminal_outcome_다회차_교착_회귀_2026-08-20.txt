@@ -1,0 +1,49 @@
+구현 완료했습니다. 변경 파일은 [coordinator_agent_selftest.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs) 하나입니다.
+
+- 시나리오 45: `QUARANTINED`, `--renew-outcome-override 3`, `--renew-rounds 2`
+- 시나리오 46: `MAX_DURATION_EXCEEDED`, `--max-total-duration-seconds 2` + 2.2초 대기, `--renew-rounds 2`
+
+각각 첫 회차 결과 1건만 전송되고 두 번째 `RENEW_RESULT`가 없음을 검증합니다.
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows`: 통과
+- `cargo test --workspace --exclude gputeer-runtime-windows`: 통과
+- selftest 46개 시나리오, 90초 제한 5회: 모두 `exit=0`
+- mutation:
+  - outcome `3` 제거: 시나리오 45에서 Coordinator가 EOF/교착 오류로 실패
+  - outcome `6` 제거: 시나리오 45는 통과하고 시나리오 46에서 EOF/교착 오류로 실패
+- 원복 후 `matches!(result.outcome, 2 | 3 | 6 | 8)` 확인
+- 원복 후 빌드·전체 테스트·selftest 5회 재검증 모두 통과
+
+`cargo fmt --check`는 환경에 rustfmt component이 없어 실행하지 못했으며, `git diff --check`는 통과했습니다.
+
+########## 감독자(Claude Code) 직접 뮤테이션 재현 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+crates/coordinator/src/lib.rs:486 의 `if matches!(result.outcome, 2 | 3 | 6 | 8) { break; }`
+를 감독자가 직접 두 번 뮤테이션하고 원복했다.
+
+[뮤테이션 1] `2 | 3 | 6 | 8` -> `2 | 6 | 8`(outcome=3, QUARANTINED 제거):
+  cargo build --workspace --exclude gputeer-runtime-windows: 성공
+  .\target\debug\gputeer.exe coordinator-agent-selftest: exit=1
+  실패 메시지: "coordinator-agent-selftest 실패: 다회차 QUARANTINED가
+    첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다."
+  coordinator stderr: "coordinator-stub 실패: RenewLeaseRequest 프레임
+    읽기/검증 실패: 프레임이 완결되기 전에 스트림이 끊겼다"
+  agent stderr: "agent-stub 실패: RENEW_REFUSED:QUARANTINED"
+  -> 정확히 예측된 교착(Coordinator가 오지 않을 다음 프레임을 기다림) 재현.
+
+[뮤테이션 2] `2 | 3 | 6 | 8` -> `2 | 3 | 8`(outcome=6, MAX_DURATION_EXCEEDED 제거):
+  cargo build --workspace --exclude gputeer-runtime-windows: 성공
+  .\target\debug\gputeer.exe coordinator-agent-selftest: exit=1
+  실패 메시지: "coordinator-agent-selftest 실패: 다회차
+    MAX_DURATION_EXCEEDED가 첫 회차에서 정상 종료되지 않았거나 이후
+    RENEW_RESULT가 발생했다."
+  coordinator stderr: "coordinator-stub 실패: RenewLeaseRequest 프레임
+    읽기/검증 실패: 프레임이 완결되기 전에 스트림이 끊겼다"
+  agent stderr: "agent-stub 실패: RENEW_REFUSED:MAX_DURATION_EXCEEDED"
+  -> 정확히 예측된 교착 재현.
+
+[원복] `2 | 3 | 6 | 8` 로 되돌린 뒤 git diff --stat crates/coordinator/src/lib.rs
+  결과: 변경 없음(완전 원복 확인). cargo build 성공, coordinator-agent-selftest
+  5회 연속 실행: 전부 exit=0, 46개 시나리오, 약 13초/회
+  (run1=13399ms run2=13896ms run3=12753ms run4=12697ms run5=12953ms)
