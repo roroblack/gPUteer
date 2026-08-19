@@ -85,6 +85,8 @@ pub enum LeaseStoreError {
     },
     /// The lease was durably revoked and cannot be reissued or renewed.
     Revoked { revoked_at_unix_ms: u64 },
+    /// The stored Lease had already expired when reissuance was attempted.
+    Expired { expires_at_unix_ms: u64 },
     /// 저장소 I/O 오류 — 공격이 아니라 우리 쪽 문제다.
     Io(String),
     /// `busy_timeout` 안에 락을 얻지 못했다.
@@ -105,6 +107,9 @@ impl std::fmt::Display for LeaseStoreError {
             ),
             Self::Revoked { revoked_at_unix_ms } => {
                 write!(f, "lease revoked at unix ms: {revoked_at_unix_ms}")
+            }
+            Self::Expired { expires_at_unix_ms } => {
+                write!(f, "lease expired at unix ms: {expires_at_unix_ms}")
             }
             Self::Io(msg) => write!(f, "lease store 저장소 I/O 오류: {msg}"),
             Self::LockTimeout => write!(f, "lease store 저장소 락 획득 시간 초과"),
@@ -211,6 +216,7 @@ impl CoordinatorLeaseStore {
     pub fn get_or_issue(
         &mut self,
         candidate: &StoredLease,
+        now_unix_ms: u64,
     ) -> Result<StoredLease, LeaseStoreError> {
         let transaction = self
             .connection
@@ -233,6 +239,12 @@ impl CoordinatorLeaseStore {
             if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
                 transaction.commit().map_err(map_sql_error)?;
                 return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
+            }
+            if stored.expires_at_unix_ms <= now_unix_ms {
+                transaction.commit().map_err(map_sql_error)?;
+                return Err(LeaseStoreError::Expired {
+                    expires_at_unix_ms: stored.expires_at_unix_ms,
+                });
             }
             transaction.commit().map_err(map_sql_error)?;
             return Ok(stored);
@@ -622,7 +634,7 @@ mod tests {
 
         {
             let mut s = CoordinatorLeaseStore::open(&path).expect("open 1");
-            let issued = s.get_or_issue(&record).expect("issue");
+            let issued = s.get_or_issue(&record, 0).expect("issue");
             assert_eq!(issued, record);
         } // 드롭 — 재시작을 흉내 낸다.
 
@@ -635,7 +647,7 @@ mod tests {
     fn renew_existing_updates_only_expiry_fields() {
         let (mut s, _dir) = open_temp();
         let record = sample("lease-1");
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let renewed = s.renew_existing("lease-1", 2_000, 1_800).unwrap();
         assert_eq!(renewed.expires_at_unix_ms, 2_000);
@@ -657,11 +669,11 @@ mod tests {
     fn conflicting_identity_is_rejected_without_overwrite() {
         let (mut s, _dir) = open_temp();
         let record = sample("lease-1");
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let mut conflicting = sample("lease-1");
         conflicting.job_id = "different-job".into();
-        let result = s.get_or_issue(&conflicting);
+        let result = s.get_or_issue(&conflicting, 0);
         assert!(matches!(
             result,
             Err(LeaseStoreError::IdentityConflict { field: "job_id", .. })
@@ -680,11 +692,11 @@ mod tests {
     fn conflicting_attempt_id_is_rejected_without_overwrite() {
         let (mut s, _dir) = open_temp();
         let record = sample("lease-1");
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let mut conflicting = sample("lease-1");
         conflicting.attempt_id = "different-attempt".into();
-        let result = s.get_or_issue(&conflicting);
+        let result = s.get_or_issue(&conflicting, 0);
         assert!(matches!(
             result,
             Err(LeaseStoreError::IdentityConflict {
@@ -701,11 +713,11 @@ mod tests {
     fn conflicting_holder_node_id_is_rejected_without_overwrite() {
         let (mut s, _dir) = open_temp();
         let record = sample("lease-1");
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let mut conflicting = sample("lease-1");
         conflicting.holder_node_id = "different-agent".into();
-        let result = s.get_or_issue(&conflicting);
+        let result = s.get_or_issue(&conflicting, 0);
         assert!(matches!(
             result,
             Err(LeaseStoreError::IdentityConflict {
@@ -722,11 +734,11 @@ mod tests {
     fn conflicting_issuing_coordinator_id_is_rejected_without_overwrite() {
         let (mut s, _dir) = open_temp();
         let record = sample("lease-1");
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let mut conflicting = sample("lease-1");
         conflicting.issuing_coordinator_id = "different-coordinator".into();
-        let result = s.get_or_issue(&conflicting);
+        let result = s.get_or_issue(&conflicting, 0);
         assert!(matches!(
             result,
             Err(LeaseStoreError::IdentityConflict {
@@ -743,13 +755,65 @@ mod tests {
     fn same_identity_reissue_returns_stored_value_not_candidate() {
         let (mut s, _dir) = open_temp();
         let record = sample("lease-1");
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let mut candidate_with_different_epoch = sample("lease-1");
         candidate_with_different_epoch.fence_epoch = 999; // CLI 가 다른 값을 줘도
 
-        let result = s.get_or_issue(&candidate_with_different_epoch).unwrap();
+        let result = s
+            .get_or_issue(&candidate_with_different_epoch, 0)
+            .unwrap();
         assert_eq!(result.fence_epoch, 5, "저장된 값이 우선해야 한다");
+    }
+
+    #[test]
+    fn unexpired_existing_lease_is_reissued() {
+        let (mut s, _dir) = open_temp();
+        let record = sample("lease-1");
+        s.get_or_issue(&record, 0).unwrap();
+
+        let result = s.get_or_issue(&record, 999).unwrap();
+        assert_eq!(result, record);
+    }
+
+    #[test]
+    fn expiry_boundary_is_inclusive() {
+        let (mut s, _dir) = open_temp();
+        let record = sample("lease-1");
+        s.get_or_issue(&record, 0).unwrap();
+
+        let before_expiry = s.get_or_issue(&record, 999).unwrap();
+        assert_eq!(before_expiry, record);
+
+        let result = s.get_or_issue(&record, 1_000);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::Expired {
+                expires_at_unix_ms: 1_000
+            })
+        ));
+    }
+
+    #[test]
+    fn expired_existing_lease_is_rejected_without_overwrite() {
+        let (mut s, _dir) = open_temp();
+        let record = sample("lease-1");
+        s.get_or_issue(&record, 0).unwrap();
+
+        let mut candidate = record.clone();
+        candidate.fence_epoch = 999;
+        let result = s.get_or_issue(&candidate, 1_001);
+        assert!(matches!(
+            result,
+            Err(LeaseStoreError::Expired {
+                expires_at_unix_ms: 1_000
+            })
+        ));
+        assert_eq!(
+            s.get("lease-1").unwrap().unwrap(),
+            record,
+            "만료 거부가 저장값을 덮어쓰지 않아야 한다"
+        );
     }
 
     #[test]
@@ -758,7 +822,7 @@ mod tests {
         let mut record = sample("lease-1");
         record.issued_at_unix_ms = 1_000;
         record.max_total_duration_seconds = 3_600; // 1시간
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         // issued_at + 30분 경과 — 아직 한도(1시간) 안이다.
         let now = 1_000 + 30 * 60 * 1_000;
@@ -786,7 +850,7 @@ mod tests {
         record.expires_at_unix_ms = 5_000;
         record.renew_after_unix_ms = 3_000;
         record.max_total_duration_seconds = 3_600; // 1시간
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         // issued_at + 1시간 + 1ms — 정확히 한도를 넘겼다.
         let now = 1_000 + 3_600 * 1_000 + 1;
@@ -814,7 +878,7 @@ mod tests {
         let mut record = sample("lease-1");
         record.issued_at_unix_ms = 1_000;
         record.max_total_duration_seconds = 3_600;
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         // issued_at + 정확히 1시간 — 한도와 같다(아직 허용, `>` 만 거부).
         let now = 1_000 + 3_600 * 1_000;
@@ -835,7 +899,7 @@ mod tests {
         record.issued_at_unix_ms = 10_000;
         record.expires_at_unix_ms = 20_000;
         record.max_total_duration_seconds = 3_600;
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         // now < issued_at — 시계가 뒤로 갔다. elapsed=0 으로 보고
         // 계속 허용하면 안 된다 — fail closed 로 초과 취급해야 한다.
@@ -865,7 +929,7 @@ mod tests {
         let mut record = sample("lease-1");
         record.fence_epoch = u64::MAX;
         record.expires_at_unix_ms = u64::MAX;
-        s.get_or_issue(&record).unwrap();
+        s.get_or_issue(&record, 0).unwrap();
 
         let fetched = s.get("lease-1").unwrap().unwrap();
         assert_eq!(fetched.fence_epoch, u64::MAX);
@@ -925,7 +989,7 @@ mod tests {
     #[test]
     fn mark_revoked_persists_and_is_idempotent() {
         let (mut store, _dir) = open_temp();
-        store.get_or_issue(&sample("lease-1")).unwrap();
+        store.get_or_issue(&sample("lease-1"), 0).unwrap();
 
         let revoked = store.mark_revoked("lease-1", 1_234).unwrap();
         assert_eq!(revoked.revoked_at_unix_ms, Some(1_234));
@@ -946,13 +1010,13 @@ mod tests {
     fn revoked_lease_cannot_be_reissued_or_overwritten() {
         let (mut store, _dir) = open_temp();
         let record = sample("lease-1");
-        store.get_or_issue(&record).unwrap();
+        store.get_or_issue(&record, 0).unwrap();
         store.mark_revoked("lease-1", 7_000).unwrap();
 
         let mut candidate = record.clone();
         candidate.fence_epoch = 999;
         candidate.expires_at_unix_ms = 999_999;
-        let result = store.get_or_issue(&candidate);
+        let result = store.get_or_issue(&candidate, 0);
         assert!(matches!(
             result,
             Err(LeaseStoreError::Revoked {
@@ -969,7 +1033,7 @@ mod tests {
     #[test]
     fn revoked_lease_cannot_be_renewed() {
         let (mut store, _dir) = open_temp();
-        store.get_or_issue(&sample("lease-1")).unwrap();
+        store.get_or_issue(&sample("lease-1"), 0).unwrap();
         store.mark_revoked("lease-1", 8_000).unwrap();
 
         let result = store.renew_existing_within_duration(

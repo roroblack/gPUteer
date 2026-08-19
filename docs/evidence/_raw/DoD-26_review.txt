@@ -1,0 +1,72 @@
+########## p148 (구현자, workspace-write, 코덱스 solo) — 1차 구현 완료 보고 ##########
+구현을 완료했습니다. 커밋·푸시는 하지 않았습니다.
+
+변경 파일:
+
+- [lease_store.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs)
+- [lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs)
+- [coordinator_agent_selftest.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs)
+- [계획 문서](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-20_0136_만료_lease_재접속_거부_v1.md)
+- [실행 리포트](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/2026-08-20_0136_만료_lease_재접속_거부.md)
+
+핵심 변경:
+
+- `LeaseStoreError::Expired` 및 `Display` 추가
+- `get_or_issue(candidate, now_unix_ms)`에 만료 검사 추가
+- 만료 시 Grant 서명·전송 전 handshake를 raw 오류로 종료
+- 저장소 단위 테스트: 만료 거부와 미만료 정상 복원
+- selftest 시나리오 36 추가
+
+시간 흐름은 250ms TTL 발급 후 실제 `thread::sleep(400ms)`를 사용했습니다.
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows` 성공, 실패 0
+- selftest 60초 하드 타임아웃으로 5회 연속 실행: 매회 36/36 성공
+- 뮤테이션: 만료 조건을 무력화하자 시나리오 36 실패 확인 후 원복 및 재검증 성공
+
+`cargo fmt --check`는 현재 Rust toolchain에 `rustfmt` component가 없어 실행하지 못했습니다.
+
+########## p149 (독립 검수자, read-only, 다른 인스턴스) — 1라운드 CHANGES_REQUESTED ##########
+CHANGES_REQUESTED
+
+`get_or_issue()`의 경계 처리가 다른 Lease 검증 경로와 불일치합니다.
+
+- [`lease_store.rs:243`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:243)은 `stored.expires_at_unix_ms < now_unix_ms`라서 정확히 같은 시각에는 Lease를 반환합니다.
+- 그러나 Lease는 `LongLived`이고 [`signable.rs:66-69`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signable.rs:66), 검증기는 [`signing.rs:767-770`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signing.rs:767)에서 `now >= expires_at`를 만료로 거부합니다. Agent의 revoke 검사도 [`agent/src/lib.rs:471`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:471)에서 `<=`를 사용합니다.
+- 따라서 동일한 Lease가 Coordinator에서는 재발급되고 Agent에서는 즉시 만료 거부됩니다. `<=`로 통일하거나, 명시적인 경계 계약과 테스트를 추가해야 합니다. 현재 테스트도 [`lease_store.rs:780-798`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:780)에서 `1001`만 검사하고 정확히 `1000`인 경계는 검사하지 않습니다.
+
+그 외 검수 결과는 양호합니다.
+
+- revoked 검사가 expired보다 먼저 실행되어, 둘 다 해당하면 `Revoked`가 반환됩니다([`lease_store.rs:239-247`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:239)). 의미상 타당합니다.
+- `issue_lease()`의 동일한 `now`가 정확히 전달됩니다([`lib.rs:213-214`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:213), [`lib.rs:859`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:859)).
+- 시나리오 36의 250ms TTL 후 400ms sleep([`coordinator_agent_selftest.rs:2058-2059`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:2058))은 느린 CI에서 시간이 더 흐르는 방향이라 타이밍 플레이키 위험은 낮습니다.
+- 저장소 테스트는 변경된 candidate와 원본 전체를 비교해 덮어쓰지 않았음을 확인합니다([`lease_store.rs:785-798`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:785)).
+- Rust 소스 내 모든 `get_or_issue()` 호출부는 새 인자를 전달하고 있습니다.
+
+########## p150 (구현자, workspace-write, 다른 인스턴스) — 경계 수정 완료 보고 ##########
+수정 완료했습니다.
+
+- [`lease_store.rs`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:243)의 만료 판정을 `<`에서 `<=`로 변경했습니다.
+- `now=999` 정상 재발급 및 `expires_at=now=1_000`에서 `Expired`가 되는 경계값 테스트를 추가했습니다.
+- 계획 문서 개정 이력에 수정 사항을 추가했습니다.
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows` 전체 통과
+- 저장소 targeted 테스트: 22 passed
+- `coordinator-agent-selftest`: 5회 연속 `exit=0`, 모두 scenario 36 통과
+- `git diff --check` 통과
+
+추가로 `cargo fmt --check`는 환경에 `cargo-fmt` 컴포넌트가 없어 실행하지 못했습니다. 기능 검증상 남은 불확실성은 없습니다. 커밋/푸시는 하지 않았습니다.
+
+########## p151 (독립 검수자, read-only, 또 다른 인스턴스) — 2라운드 ACCEPTED ##########
+ACCEPTED
+
+- `crates/coordinator/src/lease_store.rs:243`에서 `stored.expires_at_unix_ms <= now_unix_ms`로 경계 포함 만료를 판정한다.
+- `lease_store.rs:744-750`은 `now=999` 정상 재발급을, `:754-768`은 `now=1_000`에서 `Expired`를 검증한다.
+- Protocol은 `signing.rs:768-775`에서 `now >= expires`(동일한 경계 규칙), Agent는 `agent/src/lib.rs:471`에서 `expires <= now`를 사용한다.
+- 시나리오 36은 `coordinator_agent_selftest.rs:2029-2032`의 250ms TTL 후 `:2059`에서 400ms sleep하고, `:2073-2080`에서 Coordinator `Expired` 및 Grant 미전송을 확인한다. 변경 후에도 충분히 만료된 시각이므로 영향 없다.
+- 계획 문서 개정 이력에도 `docs/plans/2026-08-20_0136_만료_lease_재접속_거부_v1.md:36`에 `<`→`<=`, `999`/`1_000` 테스트가 반영되어 있다.

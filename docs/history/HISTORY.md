@@ -16,6 +16,34 @@
 
 ---
 
+## 2026-08-20 02:00 — 만료된 Lease 재접속 거부 — 구현 + 독립 검수 2라운드 + evidence 기록 (`DoD-26`)
+- 계획: `docs/plans/2026-08-20_0136_만료_lease_재접속_거부_v1.md` 전체
+  단계.
+- 스트림: Coordinator · QA.
+- 수행: `DoD-24` 가 명시적으로 이월한 "만료된 Lease 의 재접속 복원
+  거부" 시나리오를 구현했다. `CoordinatorLeaseStore::get_or_issue()`
+  에 만료 검사(`LeaseStoreError::Expired`)를 추가하고, 짧은 TTL 로
+  Lease 를 실제로 만료시킨 뒤 재접속하면 거부되는 selftest 시나리오
+  36 을 신설했다(구현 `p148`, 코덱스 workspace-write). 이 세션이
+  독립 재검증 후 대화 기록이 없는 새 코덱스 인스턴스에게 독립
+  검수를 요청했는데, 1라운드(`p149`)가 진짜 계층 간 결함을 찾아냈다
+  — Coordinator 의 만료 판정이 엄격한 `<` 를 써서, 이미 이 저장소가
+  정착시킨 "경계 포함"(`<=`) 만료 규칙(`crates/protocol/src/signing.rs`
+  의 Lease 서명 검증, `crates/agent/src/lib.rs` 의 revoke 검사)과
+  어긋났다 — 정확히 만료 시각과 같은 순간에 Coordinator 는 재발급을
+  허용하는데 Agent 는 같은 Lease 를 즉시 거부하는 모순이 생길 뻔
+  했다. `<` 를 `<=` 로 고치고 경계값 테스트 2건을 추가한 뒤(`p150`)
+  2라운드(`p151`)에서 `ACCEPTED`.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(42개 스위트, 0 failed, coordinator 유닛 테스트
+  24→27개). `coordinator-agent-selftest` 2세트 x 5회(구현 직후 +
+  경계 수정 직후, 각 60초 하드 타임아웃) 전부 36개 시나리오 exit=0.
+  `python scripts/verify_evidence.py` 스키마 위반 없음(PASS 34/35).
+- 리포트: `docs/reports/2026-08-20_0136_만료_lease_재접속_거부.md`
+  (구현자가 작성).
+
+---
+
 ## 2026-08-19 19:15 — Coordinator Lease revoke 영속화 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-25`)
 - 계획: `docs/plans/2026-08-19_0110_coordinator_lease_revoke_영속화_v1.md`
   전체 단계.

@@ -1,0 +1,10 @@
+=== 최종 cargo test --workspace --exclude gputeer-runtime-windows ===
+test result: ok 라인 수: 42
+FAILED/error[ 검색 결과: (없음)
+
+=== coordinator-agent-selftest 독립 반복 실행 (2세트, 각 5회, 각 60초 하드 타임아웃) ===
+1차(구현 직후): 5회 연속, 36개 시나리오 전부 exit=0
+2차(경계 수정 직후): 5회 연속, 36개 시나리오 전부 exit=0
+
+=== 뮤테이션 테스트(코덱스 자체 보고) ===
+만료 조건을 무력화하자 시나리오 36 실패 확인, 원복 후 재검증 통과.

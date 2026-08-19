@@ -227,7 +227,7 @@ fn run_handshake(
     })
 }
 
-/// 34가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
+/// 36가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
 /// 이유를 담아 반환한다.
 pub fn run() -> Result<String, String> {
     let fixture = Fixture::new()?;
@@ -2001,6 +2001,98 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str(
         "35) revoke 통지 후 revoked_at_unix_ms 영속화 및 새 Coordinator의 revoked Lease 최초 발급 거부 확인\n",
+    );
+
+    // ── 36. 만료된 Lease의 재접속 복원 거부 ───────────────────────
+    // 첫 번째 프로세스 쌍은 짧은 TTL 안에 정상 ACK를 끝내고 종료한다.
+    // 실제 시간이 TTL을 지난 뒤 완전히 새 프로세스 쌍이 같은 저장소로
+    // 재접속하면 CoordinatorLeaseStore가 저장된 expires_at을 확인해
+    // 새 Grant를 만들지 않고 Expired raw error로 handshake를 끝내야 한다.
+    let expired_reconnect_dir_36 = tempfile::tempdir()
+        .map_err(|e| format!("만료 Lease 재접속 시나리오 임시 디렉터리 생성 실패(36): {e}"))?;
+    let lease_db_path_36 = expired_reconnect_dir_36.path().join("lease.sqlite3");
+    let fence_db_path_36 = expired_reconnect_dir_36.path().join("fence.sqlite3");
+    let lease_db_36 = lease_db_path_36
+        .to_str()
+        .ok_or_else(|| "만료 Lease 재접속 lease store 경로가 UTF-8이 아니다(36)".to_string())?;
+    let fence_db_36 = fence_db_path_36
+        .to_str()
+        .ok_or_else(|| "만료 Lease 재접속 fence watermark 경로가 UTF-8이 아니다(36)".to_string())?;
+
+    let issued_short_36 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_36,
+            "--fence-epoch",
+            "5",
+            "--lease-ttl-ms",
+            "250",
+            "--disconnect-after-ack",
+            "true",
+            "--do-renew",
+            "false",
+        ],
+        &["--fence-db", fence_db_36, "--do-renew", "false"],
+    )?;
+    if !issued_short_36.coordinator_success
+        || !issued_short_36
+            .coordinator_stdout
+            .contains("DISCONNECT_AFTER_ACK coordinator_acknowledged=true")
+        || !issued_short_36.agent_success
+        || !issued_short_36.agent_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "짧은 TTL Lease의 최초 발급/ACK가 정상 종료되지 않았다(36).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            issued_short_36.coordinator_success,
+            issued_short_36.coordinator_stdout,
+            issued_short_36.coordinator_stderr,
+            issued_short_36.agent_success,
+            issued_short_36.agent_stdout,
+            issued_short_36.agent_stderr
+        ));
+    }
+
+    // 실제 벽시계가 저장된 250ms 만료시각을 지나도록 기다린다.
+    thread::sleep(std::time::Duration::from_millis(400));
+
+    let expired_reconnect_36 = run_handshake(
+        &fixture,
+        &[
+            "--lease-db",
+            lease_db_36,
+            "--fence-epoch",
+            "3",
+            "--do-renew",
+            "false",
+        ],
+        &["--fence-db", fence_db_36, "--do-renew", "false"],
+    )?;
+    if expired_reconnect_36.coordinator_success
+        || !expired_reconnect_36
+            .coordinator_stderr
+            .contains("lease store 최초 발급 실패")
+        || !expired_reconnect_36.coordinator_stderr.contains("expired")
+        || expired_reconnect_36.agent_success
+        || expired_reconnect_36.agent_stdout.contains(RESULT_OK_MARKER)
+        || expired_reconnect_36.coordinator_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "만료된 Lease 재접속이 Coordinator에서 Expired로 거부되지 않았다(36).\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            expired_reconnect_36.coordinator_success,
+            expired_reconnect_36.coordinator_stdout,
+            expired_reconnect_36.coordinator_stderr,
+            expired_reconnect_36.agent_success,
+            expired_reconnect_36.agent_stdout,
+            expired_reconnect_36.agent_stderr
+        ));
+    }
+    report.push_str(
+        "36) 짧은 TTL Lease를 실제로 만료시킨 뒤 새 프로세스 쌍의 재접속 복원 거부(Expired) 확인\n",
     );
 
     Ok(report)

@@ -856,7 +856,7 @@ fn issue_lease(
                 revoked_at_unix_ms: None,
             };
             store
-                .get_or_issue(&candidate)
+                .get_or_issue(&candidate, now)
                 .map_err(|e| format!("lease store 최초 발급 실패: {e}"))?
         }
     };
