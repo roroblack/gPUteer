@@ -311,3 +311,55 @@ x600 실측(2026-08-15)에만 근거한다. `limitations` 목록(`:65-73`)
 관련: `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md`
 와 같은 세션의 `crates/runtime-windows` 신설 작업.
 `docs/history/HISTORY.md` 2026-08-18 14:15 항목 참조.
+
+---
+
+## ★ 이후 변경 (2026-08-19) — Linux cgroup v2 강제 실측 추가 (`ENV-03`)
+
+사용자가 임시로 제공한 원격 Linux+GPU 기계(`remote5090`)에서
+`docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md` 가 이 문서의
+"Linux" 미해결 항목 일부를 처음으로 실측했다. `tools/probes/linux_cgroup_probe.py`
+로 **`sudo` 없이** `systemd-run --user --scope` 로 위임된 cgroup v2
+컨트롤러를 측정했다.
+
+```text
+memory   50MB 한도, 200MB 할당 시도 -> SIGKILL                     강제됨
+cpu      20% quota, 2초 busy-loop -> usage_usec=421,896(~21%),
+         nr_throttled=21회                                         강제됨
+pids     TasksMax=5, 15회 fork 시도 -> 정확히 4개 성공(부모+4=5)    강제됨
+freezer  freeze 중 CPU tick 불변(99->99)                           강제됨
+```
+
+**기존 결론은 그대로 유지된다.** `:171-172` 의 "Linux 는 전용 VRAM
+모델이고 cgroup 은 VRAM 에 관여하지 않는다"는 서술은 이번 실측으로도
+반박되지 않았다 — cgroup 이 강제하는 건 CPU·RAM·PID·freeze 뿐이고
+**GPU VRAM 세분 할당(MPS 등)은 이번에도 미실측**이다(CUDA 개발
+도구가 없고, 공유 기계에 무거운 패키지를 새로 설치하지 않기로
+했다).
+
+**새로 채워진 것**: 기준선 §32 P0-06 의 Linux 체크리스트
+("CPU quota / RAM hard limit / PID limit / workspace quota",
+"MPS memory limit 실제 강제 여부 확인", "cgroup freezer + kill 로
+프로세스 트리 종료" — `gputeer_master_plan_FINAL.md` P0-06)
+3개 항목군 중 다음을 실측으로 채웠다:
+
+```text
+CPU quota / RAM hard limit / PID limit / workspace quota
+  -> CPU quota·RAM hard limit·PID limit 3개는 강제됨을 확인.
+     workspace quota(디스크 사용량 제한)는 이번에 측정하지 않았다.
+MPS memory limit 실제 강제 여부 확인
+  -> 미실측(CUDA 개발 도구 없음)
+cgroup freezer + kill 로 프로세스 트리 종료
+  -> freeze 는 강제됨을 확인(§ 위 표). kill(cgroup.kill 로 프로세스
+     트리 전체 종료)까지는 시도하지 않았다 — freeze 만 확인했다.
+```
+
+단, `sudo` 없는 rootless 위임 경로 하나만 확인했고, gPUteer 런타임에
+실제로 연결된 것은 아니다(Job 실행 계층 자체가 아직 없다,
+`TODO_VISION` V-06 과 같은 한계).
+
+**이 실측이 §10.4 Shared 허용 조건의 "(B) Linux+MPS" 경로를 뒷받침
+하지는 않는다** — MPS 를 측정하지 않았으므로 그 경로는 여전히
+미검증이다.
+
+상세: `docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md`

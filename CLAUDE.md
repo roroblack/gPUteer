@@ -254,8 +254,13 @@ evidence 16건 중 12건은 addendum 이 독립 재검수 ACCEPTED 를 받았지
   남은 4건: `P0-06`·`P0-07`(재검수 중), `ENV-01`·`02`(review-required
   아님, 미착수).                                          -> RULE.md §7.3
 
-Linux 를 한 번도 돌려보지 않았다
-  v0.1 주 타깃이 Linux 컨테이너 워커인데 검증 환경이 없다.  -> D-3
+Linux 검증 — 부분 해소, 완전 해소 아님(2026-08-19, `ENV-03`)
+  사용자가 임시로 빌려준 원격 기계(remote5090, Ubuntu 24.04 + RTX 5090)에서
+  이 저장소가 처음으로 Linux 빌드·테스트를 통과했고(gputeer-runtime-windows
+  제외 전부 ok, k1c 하나만 플랫폼 차이로 FAILED), sudo 없이 cgroup v2 로
+  memory/CPU/PID/freezer 4종 강제를 확인했다. 그러나 이 기계는 사용자
+  소유의 공유·비영구 기계라 "확보"가 아니라 "임시 접근"이다 — 반복
+  가능한 접근성과 GPU VRAM 세분 할당(MPS) 검증은 여전히 없다.  -> D-3
 ```
 
 ### 다음에 할 일
@@ -440,12 +445,18 @@ Linux 를 한 번도 돌려보지 않았다
 
 ### 환경 주의사항
 
-- **Rust 1.97.1** 설치됨 (로컬 · x600 양쪽). `protoc` 는 `protoc-bin-vendored` 로 번들.
+- **Rust 1.97.1** 설치됨 (로컬 · x600 · remote5090 전부). `protoc` 는 `protoc-bin-vendored` 로 번들.
 - 개발 기계는 Windows 11, GPU 없음(Intel Iris Xe).
-  GPU 검증은 **x600**(RTX 4070 SUPER · driver 595.79 · CUDA 13.2). 작업 디스크 **F:**.
+  GPU 검증은 **x600**(RTX 4070 SUPER · driver 595.79 · CUDA 13.2, Windows). 작업 디스크 **F:**.
 - `blake3` Python 패키지 설치 확인됨.
-- **Linux 검증 환경이 없다.** 확보 전까지 Linux 대상 DoD 는 `ENVIRONMENT-BLOCKED` 이며
-  **`PASS` 로 계상하지 않는다.**
+- **Linux 검증 — 부분 해소(2026-08-19, `ENV-03`).** 사용자 소유의 원격 기계
+  **remote5090**(Ubuntu 24.04.3, RTX 5090 32GB, sudo 불가)를 임시로 빌려 이
+  저장소를 처음으로 Linux 에서 빌드·테스트했다. **하지만 이 기계는
+  "확보"가 아니라 "임시 접근"이다** — 사용자 소유의 공유·비영구
+  기계이고, 다른 사용자·서비스가 이미 돌고 있다. 반복 가능한 접근성이
+  보장되지 않으므로, Linux 대상 DoD 를 이 기계 하나에 의존해 정기적으로
+  검증할 수는 없다 — 필요할 때마다 접근 가능 여부를 다시 확인해야 한다.
+  `ENV-03_remote5090_리눅스_GPU_기계_실측.md` 참조.
 
 ---
 

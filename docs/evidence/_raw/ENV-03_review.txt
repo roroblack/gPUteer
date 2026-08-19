@@ -1,0 +1,57 @@
+=== p124 (1라운드, CHANGES_REQUESTED) ===
+판정: **CHANGES_REQUESTED**
+
+핵심 결론은 대체로 균형 잡혀 있지만, 원시 로그와 직접 불일치하는 수치와 내부 모순이 있습니다.
+
+- GPU 사실은 일치합니다. 원시 로그의 RTX 5090, 32607MiB, driver 580.173.02, CUDA 13.0은 [raw:27,33–34](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:27)와 [ENV-03:31,44–45](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:31)에 일치합니다. digest와 15782 bytes도 frontmatter와 실제 파일이 일치합니다.
+
+- cgroup CPU 수치가 틀렸습니다. 원시 로그는 4초 probe, `usage_usec=416310`, `nr_throttled=20`입니다([raw:216–225](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:216)). 문서는 2초, `422182`, `21`로 기록했고([ENV-03:67,173–174](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:67)), [P0-06 addendum:325–328](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/P0-06_vram_enforcement.md:325)도 같은 잘못된 수치를 반복합니다. memory, pids(`forked=4 errors=11`), freezer 결과는 원시 로그와 일치합니다.
+
+- 디스크 여유도 불일치합니다. raw는 `406G`([raw:8–9](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:8))인데 문서는 `409GB`로 적었습니다([ENV-03:31,132](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:31)).
+
+- `cargo/rustc 1.97.1`, Ubuntu 24.04.3, 로컬 버전 동일이라는 frontmatter/본문 주장은 이 raw에 직접 출력되어 있지 않습니다. raw에는 초기 `rustc`/`cargo` 부재만 보입니다([raw:15–22](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:15)). 별도 측정 근거를 추가하거나 “이 raw로는 확인 불가”로 낮춰야 합니다.
+
+- “다른 로그인 사용자 2명(remote5090, <remote5090-user2>)”은 과장입니다. raw의 `who` 출력에는 `<remote5090-user>`만 직접 보이고([raw:50–53](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:50)), `ps`에는 `<remote5090-user2>`의 `next-server`가 보이며([raw:54–60](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:54)), 마지막에는 3 users라고만 나옵니다([raw:239–242](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:239)). “다른 프로세스/서비스가 실행 중”은 근거가 있지만, 두 사용자 이름의 로그인 상태를 직접 확인했다고 쓰면 안 됩니다.
+
+`k1c_concurrent_same_name_writers_are_not_actually_safe`에 대한 핵심 서술은 적절합니다. 테스트는 8개 스레드가 같은 이름으로 10회 경쟁하고, `ok_true > 1`일 때만 `race_observed`를 세운 뒤 이를 assert합니다([test:131–160](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/codex_findings.rs:131), [test:162–174](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/tests/codex_findings.rs:162)). 구현도 호출마다 동일한 `{name}.tmp`를 사용합니다([atomic.rs:148–166](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/checkpoint/src/atomic.rs:148)). 따라서 Linux에서 이 테스트가 실패했다는 사실만으로 버그가 고쳐졌다고 결론 내리지 않은 것은 맞습니다.
+
+다만 “Linux에서는 대부분 `ContentMismatch`”라는 구체적 관측은 raw에 결과 목록이 남아 있지 않고, 테스트 실패 위치만 기록돼 있습니다([raw:84–87](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:84)). 코드상 `ContentMismatch` 가능성은 확인되지만, 실제 관측으로 쓰려면 해당 결과를 raw에 남기거나 추론임을 명시해야 합니다.
+
+limitations에는 두 핵심 제약이 명시되어 있습니다. 기계가 임시 공유 기계라는 점([ENV-03:80–83](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:80))과 GPU VRAM 세분 할당/MPS 미측정([ENV-03:179,183–186](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:179))은 정직하게 포함되어 있습니다. 반복 접근성, 실제 gPUteer Job 연결, 장시간 안정성 제한도 과도한 겸손으로 보이지 않습니다. 다만 `nvcc·torch가 없다`는 근거는 이 raw에 직접 남아 있지 않습니다.
+
+P0-06과의 질적 결론은 모순되지 않습니다. “Linux cgroup은 GPU VRAM에 관여하지 않는다”는 기존 결론을 유지하고([P0-06:333–349](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/P0-06_vram_enforcement.md:333)), ENV-03도 MPS/VRAM 검증을 하지 않았다고 명시합니다. 단, P0-06 addendum이 실측된 네 가지를 “CPU/RAM/PID/workspace quota”라고 부르는 부분은 실제 probe의 네 번째 항목인 `freezer`와 불일치합니다([P0-06:340–345](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/P0-06_vram_enforcement.md:340), [raw:232–235](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:232)).
+
+마지막으로 D-3을 완전 해소로 선언하지 않고 “부분 해소”로 둔 판단은 적절합니다([ENV-03:206–207](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:206)). 그러나 본문 결정 목록의 “runtime-windows 제외 전부 통과”는 바로 앞의 “1건만 FAILED”와 모순됩니다([ENV-03:140–142](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:140), [ENV-03:197–200](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:197)). “k1c 한 건을 제외한 나머지 테스트 통과”로 수정해야 합니다.
+
+=== p125 (2라운드, CHANGES_REQUESTED) ===
+판정: **CHANGES_REQUESTED**
+
+직전 7개 지적은 다음과 같이 대부분 반영되었습니다.
+
+- cgroup CPU: `usage_usec=421896`, `nr_throttled=21`이 문서와 raw에서 일치합니다. [ENV-03:68](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:68>), [raw:307](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:307>)
+- 디스크 여유 406GB가 일치합니다. [ENV-03:133](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:133>), [raw:9](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:9>)
+- `uptime` 3명, `who`의 `<remote5090-user>`, `ps`의 `<remote5090-user2>`/`mysql`을 구분해 서술했습니다. [ENV-03:136](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:136>), [raw:59](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:59>)
+- rustc/cargo 로컬 대조, nvcc·torch 부재가 raw에 추가됐습니다. [raw:21](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:21>), [raw:24](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:24>), [raw:27](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:27>)
+- k1c의 `ContentMismatch`는 “마지막 라운드” qualifier와 함께 raw 4회분에 반영됐습니다. [ENV-03:165](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:165>), [raw:193](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:193>), [raw:277](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:277>)
+- P0-06 addendum은 workspace quota를 디스크 quota로 분리하고, MPS 미실측, freezer 확인, kill 미실행을 명시합니다. [P0-06:347](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/P0-06_vram_enforcement.md:347>), [P0-06:350](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/P0-06_vram_enforcement.md:350>), [P0-06:352](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/P0-06_vram_enforcement.md:352>)
+- “전부 통과” 모순은 `runtime-windows 제외`, `k1c 하나 FAILED`로 정정됐습니다. [ENV-03:141](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:141>), [ENV-03:206](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:206>)
+
+Digest와 바이트 수도 정확히 일치합니다: `23312` bytes, SHA-256 `62cfbb...0db87`. [ENV-03:23](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:23>), [ENV-03:24](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:24>)
+
+다만 새 불일치가 남아 있습니다.
+
+1. ENV-03 frontmatter는 “thaw 후 정상 진행”까지 주장하지만 raw는 freeze 중 tick 불변만 출력합니다. 프로브 코드도 thaw 후 진행량을 측정하지 않습니다. [ENV-03:70](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:70>), [raw:317](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:317>)
+
+2. 본문은 `who`/`ps`를 작업 전후로 확인했다고 쓰지만 raw에는 `who`/`ps`가 한 번만 있고, 마지막에는 `uptime`과 GPU 상태만 있습니다. [ENV-03:118](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md:118>), [raw:56](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:56>), [raw:325](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:325>)
+
+3. rustc/cargo 대조는 확인되지만, raw에는 `rustup --version` 또는 설치 경로 등 rustup 설치 자체의 직접 출력이 없습니다. 현재는 섹션 제목과 문서 서술에 의존합니다. [raw:15](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt:15>)
+
+P0-06 체크리스트 자체는 기준선의 `CPU/RAM/PID/workspace`, `MPS`, `freezer+kill` 항목과 정확히 대응합니다. [master plan:3551](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer_master_plan_FINAL.md:3551>), [master plan:3553](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer_master_plan_FINAL.md:3553>) 그러나 위 3개 잔여 사항 때문에 최종 판정은 **CHANGES_REQUESTED**입니다.
+
+=== p126 (3라운드, ACCEPTED) ===
+ACCEPTED
+
+- freeze/thaw: 문서가 raw의 `before=99 after=99`만 근거로 freeze 강제를 기록하고, thaw 후 재개는 측정하지 않았다고 명시합니다. [문서:70-71], [raw:315-318]
+- who/ps: 작업 전 확인만 했고 종료 시에는 `nvidia-smi`/`uptime`만 재확인했으며 who/ps는 재실행하지 않았다고 명확히 정정했습니다. [문서:121-124], [raw:56-67]
+- rustup: 설치 로그 자체는 raw에 없고, 설치 후 `rustc`/`cargo --version` 출력만 있다는 구분이 명확합니다. [문서:107-110], [raw:15-25]
+- frontmatter `decision`: `k1c` 한 건의 예외를 명시한 “k1c 한 건만 제외하고 전부 통과”로 정정되어, 무조건적인 “전부 통과” 모순이 제거되었습니다. [문서:89]

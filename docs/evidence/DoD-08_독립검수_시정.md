@@ -396,6 +396,20 @@ signature-only 메시지·map 빈 값·nested derived-hash 제외)이 지금
 이 evidence 의 원래 범위를 넘는 별도 작업으로 CLAUDE.md 백로그에
 등록한다.
 
+★ **이후 변경 (2026-08-19) — Linux 에서는 이 테스트가 증상을
+재현하지 못했다(`ENV-03`).** 이 저장소가 처음으로 Linux 에서
+빌드·테스트됐을 때, `k1c_concurrent_same_name_writers_are_not_actually_safe`
+가 5회 반복(8스레드 x 10라운드) 전부 `FAILED` 했다 — 즉 이 조건에서
+여러 스레드가 동시에 `Ok(true)` 를 반환하는 증상이 단 한 번도
+관측되지 않았다. **이것을 "결함이 고쳐졌다"로 읽으면 안 된다.**
+tmp 파일 이름을 공유한다는 코드 사실(`atomic.rs:166`)은 전혀
+바뀌지 않았다 — POSIX `rename()` 의 원자적 교체 시맨틱이 Windows
+`MoveFileEx` 와 달라, **같은 결함이 플랫폼마다 다른 증상으로
+관측되는 것**으로 보인다(Linux 에서는 대부분 `ContentMismatch`
+로 끝났다). 코드나 테스트를 지금 당장 고치지 않는다 — 먼저 "동시
+동일-이름 쓰기를 지원할지" 부터 계약으로 정해야 한다. 상세:
+`docs/evidence/ENV-03_remote5090_리눅스_GPU_기계_실측.md`.
+
 ### 그 외 재확인 — 대부분 실재 확인됨
 
 C-1·C-3·D-1(canonical 인코딩 결함 3건), `--verify` 재생성 대조,
