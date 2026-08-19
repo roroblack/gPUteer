@@ -138,6 +138,23 @@ pub struct CoordinatorConfig {
     /// 판정에는 쓰이지 않는다 — 그 경로는 매 요청마다 `issued_at_unix_ms`
     /// 를 즉석에서 재구성해 실제 경과시간을 추적하지 못한다.
     pub max_total_duration_seconds: u64,
+
+    // ── Lease revoke (2026-08-19) ───────────────────────────────────
+    /// 완료된 갱신 회차가 이 값에 도달하면 같은 연결로
+    /// `RevokeLeaseNotice` 를 보낸다. `Some(0)` 은 Grant/ACK 직후다.
+    pub revoke_after_round: Option<u32>,
+    /// ★ 테스트 전용 — 통지의 lease_id 를 바꿔 Agent identity 검증을
+    ///   확인한다. 서명은 바뀐 payload 에 대해 다시 만든다.
+    pub revoke_lease_id_override: Option<String>,
+    /// ★ 테스트 전용 — 통지의 fence_epoch 을 바꿔 Agent fencing 검증을
+    ///   확인한다. 서명은 바뀐 payload 에 대해 다시 만든다.
+    pub revoke_fence_epoch_override: Option<u64>,
+    /// ★ 테스트 전용 — 정상 서명 뒤 coordinator_signature 를 변조한다.
+    pub corrupt_revoke_signature: bool,
+    /// ★ 테스트 전용 — Grant 안의 Lease 만료시각을 짧게 만든다.
+    pub lease_ttl_ms: u64,
+    /// ★ 테스트 전용 — revoke 전 실제 시간을 흘려보낸다.
+    pub revoke_delay_ms: u64,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -282,6 +299,15 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         };
     }
 
+    // 현재 stub 프로토콜에는 비동기 이벤트 multiplexing 이 없으므로,
+    // Agent가 이 옵션을 알고 있는 고정 순차 경로로 revoke를 받는다.
+    let revoked_after_grant = if config.revoke_after_round == Some(0) {
+        send_revoke_notice(&config, &grant, &signing_key, &mut stream)?;
+        true
+    } else {
+        false
+    };
+
     // ★ Lease 갱신 (2026-08-19) — 같은 연결에 이어서 Agent 가 보낸
     //   `RenewLeaseRequest` 를 받고 서명된 `RenewLeaseResult` 로
     //   응답한다. `do_renew == false` 면 건너뛴다(기존 핸드셰이크
@@ -291,7 +317,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     //   왕복과 동일하다. Coordinator 는 매 회차 요청의 nonce 를
     //   그대로 echo 할 뿐 스스로 회차를 유도하지 않는다 — 회차별
     //   nonce 분리는 Agent 가 요청을 만들 때 책임진다.
-    for _round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
+    if !revoked_after_grant {
+        for _round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
         let renew_msg = read_frame(
             &mut stream,
             1,
@@ -371,6 +398,12 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             "RENEW_RESULT ok=true outcome={} lease_id={}",
             result.outcome, config.lease_id
         );
+
+            if config.revoke_after_round == Some(_round + 1) {
+                send_revoke_notice(&config, &grant, &signing_key, &mut stream)?;
+                break;
+            }
+        }
     }
 
     println!(
@@ -378,6 +411,78 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         grant.grant_id, grant.attempt_id, ack.agent_device_id
     );
     Ok(())
+}
+
+/// 이미 발급한 Grant 안의 Lease를 대상으로 revoke 통지를 만들고
+/// 서명해 같은 연결로 보낸다.
+///
+/// `RevokeLeaseNotice::signer_id()`는 현재 프로토콜 계약상 `lease_id`를
+/// 반환한다(V-08). 따라서 테스트용 target override도 바뀐 payload에
+/// 대해 정상 서명해, Agent의 identity 검증과 서명 검증을 분리한다.
+fn send_revoke_notice(
+    config: &CoordinatorConfig,
+    grant: &pb::ExecutionGrant,
+    key: &SigningKey,
+    stream: &mut std::net::TcpStream,
+) -> Result<(), String> {
+    if config.revoke_delay_ms != 0 {
+        std::thread::sleep(Duration::from_millis(config.revoke_delay_ms));
+    }
+
+    let lease = grant
+        .lease
+        .as_ref()
+        .ok_or_else(|| "revoke 대상 Grant에 Lease가 없다".to_string())?;
+    let notice = build_revoke_notice(
+        lease,
+        config.revoke_lease_id_override.as_deref(),
+        config.revoke_fence_epoch_override,
+        key,
+        SystemClock.now_unix_ms(),
+        config.corrupt_revoke_signature,
+    )?;
+
+    let frame = write_frame(FrameType::LeaseRevoke, &notice.encode_to_vec())
+        .map_err(|e| format!("RevokeLeaseNotice 프레임 인코딩 실패: {e}"))?;
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("RevokeLeaseNotice 전송 실패: {e}"))?;
+    stream.flush().map_err(|e| e.to_string())?;
+    println!(
+        "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+        notice.lease_id, notice.fence_epoch, notice.cause
+    );
+    Ok(())
+}
+
+fn build_revoke_notice(
+    lease: &pb::Lease,
+    lease_id_override: Option<&str>,
+    fence_epoch_override: Option<u64>,
+    key: &SigningKey,
+    now_unix_ms: u64,
+    corrupt_signature: bool,
+) -> Result<pb::RevokeLeaseNotice, String> {
+    let mut notice = pb::RevokeLeaseNotice {
+        schema_version: 1,
+        lease_id: lease_id_override
+            .map(str::to_owned)
+            .unwrap_or_else(|| lease.lease_id.clone()),
+        fence_epoch: fence_epoch_override.unwrap_or(lease.fence_epoch),
+        cause: pb::RevokeCause::Quarantine as i32,
+        issued_at_unix_ms: now_unix_ms,
+        ..Default::default()
+    };
+    notice.coordinator_signature = sign(key, &notice).to_vec();
+
+    if corrupt_signature {
+        let last = notice
+            .coordinator_signature
+            .last_mut()
+            .ok_or_else(|| "RevokeLeaseNotice coordinator_signature가 비어 있다".to_string())?;
+        *last ^= 0x01;
+    }
+    Ok(notice)
 }
 
 /// `RenewLeaseRequest` 에 대한 응답을 만들어 서명한다.
@@ -613,7 +718,7 @@ fn issue_lease(
     let expires_at = if config.expire_lease {
         now.saturating_sub(1)
     } else {
-        now + 60_000
+        now + config.lease_ttl_ms
     };
 
     let resolved = match lease_store {
@@ -750,6 +855,12 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
         max_total_duration_seconds: flags
             .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
+        revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
+        revoke_lease_id_override: flags.0.get("--revoke-lease-id").cloned(),
+        revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
+        corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),
+        lease_ttl_ms: flags.u64_flag_with_default("--lease-ttl-ms", 60_000)?,
+        revoke_delay_ms: flags.u64_flag_with_default("--revoke-delay-ms", 0)?,
     };
 
     run(config)
@@ -782,6 +893,16 @@ impl Flags {
         }
     }
 
+    fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+        match self.0.get(key) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
+    }
+
     /// 반복 Lease 갱신(2026-08-19) — 안 주면 `default`(왕복 횟수).
     /// 기본값 1은 기존 단일 왕복 시나리오와 동일하게 동작한다.
     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
@@ -807,6 +928,16 @@ impl Flags {
             None => Ok(None),
             Some(v) => v
                 .parse::<i32>()
+                .map(Some)
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
+    }
+
+    fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+        match self.0.get(key) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<u32>()
                 .map(Some)
                 .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
@@ -876,6 +1007,42 @@ mod tests {
         assert!(
             result.is_err(),
             "u32::MAX 를 넘는 값이 조용히 잘리지 않고 거부돼야 한다: {result:?}"
+        );
+    }
+
+    #[test]
+    fn revoke_notice_uses_issued_lease_identity_and_epoch() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let lease = pb::Lease {
+            lease_id: "lease-a".into(),
+            fence_epoch: 7,
+            ..Default::default()
+        };
+        let notice = build_revoke_notice(&lease, None, None, &key, 123, false)
+            .expect("revoke notice가 만들어져야 한다");
+        assert_eq!(notice.lease_id, "lease-a");
+        assert_eq!(notice.fence_epoch, 7);
+        assert_eq!(notice.issued_at_unix_ms, 123);
+        assert_eq!(notice.cause, pb::RevokeCause::Quarantine as i32);
+        assert!(!notice.coordinator_signature.is_empty());
+    }
+
+    #[test]
+    fn revoke_notice_test_overrides_are_signed_payload_values() {
+        let key = SigningKey::from_bytes(&[8u8; 32]);
+        let lease = pb::Lease {
+            lease_id: "lease-a".into(),
+            fence_epoch: 7,
+            ..Default::default()
+        };
+        let notice = build_revoke_notice(&lease, Some("lease-b"), Some(6), &key, 456, false)
+            .expect("override revoke notice가 만들어져야 한다");
+        assert_eq!(notice.lease_id, "lease-b");
+        assert_eq!(notice.fence_epoch, 6);
+        assert_eq!(
+            notice.coordinator_signature,
+            sign(&key, &notice).to_vec(),
+            "override가 적용된 최종 payload에 대한 서명이어야 한다"
         );
     }
 }

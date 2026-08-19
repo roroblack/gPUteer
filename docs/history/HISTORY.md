@@ -16,6 +16,48 @@
 
 ---
 
+## 2026-08-19 16:10 — Lease revoke 최소 조각 — 독립 검수 3라운드 + evidence 기록 (`DoD-22`)
+- 계획: `docs/plans/2026-08-19_1517_lease_revoke_최소_조각_v1.md` 5단계
+  (구현은 15:32 항목 참조 — 이 항목은 그 뒤의 독립 검수·수정·기록).
+- 스트림: Coordinator · Agent · CLI(selftest) · QA.
+- 수행: 사용자 요청("코덱스 cli 에 5.6 솔로 작업")에 따라 구현
+  자체를 workspace-write 코덱스 인스턴스에 위임했던 15:32 항목의
+  결과물을, 이 세션이 독립적으로(빌드·테스트·`coordinator-agent-selftest`
+  5회 반복) 재검증한 뒤, 대화 기록을 공유하지 않는 새 코덱스
+  인스턴스(read-only)에게 3라운드 독립 검수를 받았다. 1라운드
+  (`p134`)가 진짜 교착 결함(`--revoke-after-round 0` + 양쪽
+  `do_renew=true` 조합에서 Coordinator 가 오지 않을 프레임을 기다림)
+  을 포함해 4건을 찾아 workspace-write 코덱스가 전부 수정했고
+  (`p135`), 이 세션이 그 교착 방지 가드를 직접 되돌려 뮤테이션을
+  재현해(정확히 시나리오 25 에서 exit=1) 코덱스의 자체 보고와
+  별개로 결함의 실재를 재확인했다. 2라운드(`p136`)는 계획 문서
+  개정 이력 누락만 지적해 이 세션이 직접 고쳤고, 3라운드(`p137`)
+  에서 `ACCEPTED`.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  전체 회귀 없음(42개 스위트, 0 failed). `coordinator-agent-selftest`
+  총 2세트(구현 직후 5회 + 수정 직후 5회, 각 15~20초 하드 타임아웃)
+  전부 exit=0, 29/29 시나리오. `python scripts/verify_evidence.py`
+  스키마 위반 없음(PASS 30/31).
+- 리포트: `docs/reports/2026-08-19_1532_lease_revoke_최소_조각.md`
+  (구현자가 작성 — 이 세션은 별도 리포트를 새로 쓰지 않고 이
+  HISTORY 항목과 `DoD-22` evidence 로 검수·기록 단계를 남긴다).
+
+---
+
+## 2026-08-19 15:32 — Lease revoke 최소 조각
+- 계획: `docs/plans/2026-08-19_1517_lease_revoke_최소_조각_v1.md` 전체 단계.
+- 스트림: Coordinator · Agent · CLI(selftest).
+- 수행: Coordinator가 서명한 `RevokeLeaseNotice`를 같은 연결로 보내고,
+  Agent가 서명·lease_id·fence_epoch·만료 상태를 검증한 뒤 revoked 상태로
+  전이하도록 구현했다. revoke 뒤 다음 renew 회차를 요청 전에 차단하고
+  selftest 시나리오 25~29를 추가했다.
+- 검증: `cargo build --workspace --exclude gputeer-runtime-windows` 성공,
+  `cargo test --workspace --exclude gputeer-runtime-windows` exit 0,
+  `coordinator-agent-selftest` 29/29 5회 연속 성공. lease_id 검사와
+  revoke 서명 변조 분기 각각을 임시 무력화한 뮤테이션이 해당 negative
+  시나리오를 예상대로 실패시킨 뒤 원복했다.
+- 리포트: `docs/reports/2026-08-19_1532_lease_revoke_최소_조각.md`
+
 ## 2026-08-19 13:00 — `write_once()` 동시 호출 계약 — 락 강제 + GC 조정 (`DoD-21`)
 
 - 계획: `docs/plans/2026-08-19_1200_write_once_동시_호출_계약_v1.md`

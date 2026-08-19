@@ -1,0 +1,16 @@
+=== 최종 cargo test --workspace --exclude gputeer-runtime-windows ===
+test result: ok 라인 수: 42
+FAILED/error[ 검색 결과:
+(없음)
+
+=== coordinator-agent-selftest 독립 반복 실행 (2라운드에 걸쳐 총 10회) ===
+1차(1라운드 구현 직후): 5회 연속, 29개 시나리오, exit=0
+2차(2라운드 수정 직후, 각 15~20초 하드 타임아웃): 5회 연속, 29개 시나리오, exit=0
+
+=== 뮤테이션 테스트(내가 직접 재현, codex 의 자체 보고와 별개로) ===
+`if !revoked_after_grant { for _round in ... }` 가드를 `if true { ... }` 로
+되돌려 재빌드 -> coordinator-agent-selftest 가 정확히 시나리오 25 에서
+exit=1 로 실패(Agent 가 먼저 정상 종료해 연결을 닫으면서 Coordinator 의
+블로킹 read 가 "스트림이 끊겼다" 오류로 끝남 - 무한 행은 아니지만 이
+조합이 실질적으로 고장난 상태임을 보여준다). 원복 후 재빌드,
+5회 연속 재통과 확인.

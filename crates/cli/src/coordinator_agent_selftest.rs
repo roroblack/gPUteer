@@ -227,8 +227,8 @@ fn run_handshake(
     })
 }
 
-/// 4가지 시나리오(정상 1 + 거부 경로 3)를 차례로 돌린다. 하나라도
-/// 기대와 다르면 그 자리에서 이유를 담아 반환한다.
+/// 29가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
+/// 이유를 담아 반환한다.
 pub fn run() -> Result<String, String> {
     let fixture = Fixture::new()?;
     let mut report = String::new();
@@ -1388,6 +1388,147 @@ pub fn run() -> Result<String, String> {
         "24) lease_store=Some + override — 서명된 정책 거부는 그대로이고 저장소는 \
          전혀 갱신되지 않음을 확인 (코덱스 p114 지적의 회귀 방지)\n",
     );
+
+    // ══════════════════════════════════════════════════════════════
+    // Lease revoke 최소 조각 (2026-08-19)
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 25. ACK 직후 revoke + 양쪽 renew 활성화의 교착 방지 ─────────
+    let revoke_ok = run_handshake(
+        &fixture,
+        &[
+            "--do-renew",
+            "true",
+            "--renewed-fence-epoch",
+            "0",
+            "--revoke-after-round",
+            "0",
+            "--renew-rounds",
+            "2",
+        ],
+        &[
+            "--do-renew",
+            "true",
+            "--renew-rounds",
+            "2",
+            "--expect-revoke-after-round",
+            "0",
+        ],
+    )?;
+    if !revoke_ok.coordinator_success
+        || !revoke_ok.agent_success
+        || !revoke_ok.agent_stdout.contains("REVOKE_RESULT ok=true")
+        || !revoke_ok.agent_stdout.contains("RENEW_BLOCKED: lease revoked")
+        || revoke_ok.agent_stdout.matches("RENEW_RESULT ok=true").count() != 0
+        || revoke_ok.coordinator_stdout.matches("RENEW_RESULT ok=true").count() != 0
+    {
+        return Err(format!(
+            "ACK 직후 revoke 교착 방지 또는 revoke 뒤 renew 차단이 실패했다.\n\
+             coordinator exit={} stdout={} stderr={}\n\
+             agent exit={} stdout={} stderr={}",
+            revoke_ok.coordinator_success,
+            revoke_ok.coordinator_stdout,
+            revoke_ok.coordinator_stderr,
+            revoke_ok.agent_success,
+            revoke_ok.agent_stdout,
+            revoke_ok.agent_stderr
+        ));
+    }
+    report.push_str(
+        "25) ACK 직후 revoke + 양쪽 renew=true 정상 종료 및 Agent의 revoke 후 renew 미생성 경로 확인 \
+         (Coordinator/Agent stub이 즉시 종료하므로 wire상 추가 프레임 부재 자체는 이 selftest가 직접 증명하지 않음)\n",
+    );
+
+    // 공통으로 ACK 직후 revoke를 받는 단일 왕복 negative 시나리오다.
+    // V-08 때문에 잘못된 target id도 selftest 전용 키 alias를 등록해
+    // 서명 검증을 통과시킨 뒤 Agent identity 게이트를 실제로 밟게 한다.
+    let forged_revoke = run_handshake(
+        &fixture,
+        &["--revoke-after-round", "0", "--corrupt-revoke-signature", "true"],
+        &["--do-renew", "false", "--expect-revoke-after-round", "0"],
+    )?;
+    if forged_revoke.agent_success
+        || !forged_revoke
+            .agent_stderr
+            .contains("RevokeLeaseNotice 프레임 읽기/검증 실패")
+    {
+        return Err(format!(
+            "위조된 revoke 서명이 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+            forged_revoke.agent_success, forged_revoke.agent_stdout, forged_revoke.agent_stderr
+        ));
+    }
+    report.push_str("26) 위조 RevokeLeaseNotice 서명 거부 확인\n");
+
+    let wrong_revoke_lease_id = "01JWRONGREVOKELEASE00000001";
+    let wrong_id_revoke = run_handshake(
+        &fixture,
+        &[
+            "--revoke-after-round",
+            "0",
+            "--revoke-lease-id",
+            wrong_revoke_lease_id,
+        ],
+        &[
+            "--do-renew",
+            "false",
+            "--expect-revoke-after-round",
+            "0",
+            "--revoke-signer-id",
+            wrong_revoke_lease_id,
+        ],
+    )?;
+    if wrong_id_revoke.agent_success
+        || !wrong_id_revoke.agent_stderr.contains("REVOKE_REJECTED: lease_id 불일치")
+    {
+        return Err(format!(
+            "잘못된 revoke lease_id가 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+            wrong_id_revoke.agent_success, wrong_id_revoke.agent_stdout, wrong_id_revoke.agent_stderr
+        ));
+    }
+    report.push_str("27) 잘못된 revoke lease_id 거부 확인\n");
+
+    let wrong_epoch_revoke = run_handshake(
+        &fixture,
+        &["--revoke-after-round", "0", "--revoke-fence-epoch", "6"],
+        &["--do-renew", "false", "--expect-revoke-after-round", "0"],
+    )?;
+    if wrong_epoch_revoke.agent_success
+        || !wrong_epoch_revoke.agent_stderr.contains("REVOKE_REJECTED: fence_epoch 불일치")
+    {
+        return Err(format!(
+            "잘못된 revoke fence_epoch이 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+            wrong_epoch_revoke.agent_success,
+            wrong_epoch_revoke.agent_stdout,
+            wrong_epoch_revoke.agent_stderr
+        ));
+    }
+    report.push_str("28) 잘못된 revoke fence_epoch 거부 확인\n");
+
+    // Grant 시점에는 아직 유효하지만, Coordinator가 실제로 2.2초
+    // 기다린 뒤 revoke를 보내므로 Agent의 보유 Lease는 이미 만료된다.
+    let expired_revoke = run_handshake(
+        &fixture,
+        &[
+            "--revoke-after-round",
+            "0",
+            "--lease-ttl-ms",
+            "2000",
+            "--revoke-delay-ms",
+            "2200",
+        ],
+        &["--do-renew", "false", "--expect-revoke-after-round", "0"],
+    )?;
+    if expired_revoke.agent_success
+        || !expired_revoke.agent_stderr.contains("REVOKE_REJECTED: held Lease가 이미 만료됐다")
+    {
+        return Err(format!(
+            "이미 만료된 Lease에 대한 revoke가 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+            expired_revoke.agent_success,
+            expired_revoke.agent_stdout,
+            expired_revoke.agent_stderr
+        ));
+    }
+    report.push_str("29) 이미 만료된 Lease에 대한 revoke 거부 확인\n");
 
     Ok(report)
 }

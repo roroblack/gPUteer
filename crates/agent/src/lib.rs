@@ -76,6 +76,15 @@ pub struct AgentConfig {
     /// 횟수만큼 반복한다. `do_renew == false` 면 무시된다. 기본값 1은
     /// 기존(단일 왕복) 시나리오와 완전히 같게 동작한다.
     pub renew_rounds: u32,
+
+    // ── Lease revoke (2026-08-19) ───────────────────────────────────
+    /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
+    /// `Some(0)`은 Grant/ACK 직후다. 현재 stub에는 비동기 이벤트
+    /// multiplexing이 없으므로 순차 selftest 경로가 명시적으로 지정한다.
+    pub expect_revoke_after_round: Option<u32>,
+    /// ★ 테스트 전용 — V-08(`signer_id() == lease_id`) 때문에 잘못된
+    ///   target lease_id에도 검증 키를 등록해 identity 검증까지 도달한다.
+    pub revoke_signer_id_override: Option<String>,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -159,6 +168,17 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         &mut fence_watermark,
     )?;
 
+    // RevokeLeaseNotice는 coordinator_device_id가 아닌 lease_id를
+    // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
+    // 보유 Lease id 아래에서 같은 Coordinator 키로 검증한다.
+    coordinator_keys.insert(
+        held_lease.lease_id.clone(),
+        config.coordinator_verifying_key,
+    );
+    if let Some(test_signer_id) = &config.revoke_signer_id_override {
+        coordinator_keys.insert(test_signer_id.clone(), config.coordinator_verifying_key);
+    }
+
     let now = clock.now_unix_ms();
     let mut ack = pb::AgentGrantAck {
         schema_version: 1,
@@ -187,6 +207,22 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         .write_all(&frame)
         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
     stream.flush().map_err(|e| e.to_string())?;
+
+    let mut revoked = false;
+    if config.expect_revoke_after_round == Some(0) {
+        let notice = receive_and_validate_revoke(
+            &mut stream,
+            &coordinator_keys,
+            &mut replay,
+            &clock,
+            &held_lease,
+        )?;
+        println!(
+            "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+            notice.lease_id, notice.fence_epoch, notice.cause
+        );
+        revoked = true;
+    }
 
     // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
     //   찍지 않는다.** 두 번째로 도착하는 프레임은 Coordinator 가
@@ -219,6 +255,14 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   왕복을 `renew_rounds` 만큼 반복한다 — 기본값 1이면 기존
     //   단일 왕복과 동일하다.
     for round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
+        if revoked {
+            // revoke 뒤에는 request 생성·서명·전송보다 먼저 로컬에서
+            // 멈춘다. Coordinator가 다음 frame을 기다리지 않도록
+            // 이 연결의 작업도 여기서 정상 종료한다.
+            println!("RENEW_BLOCKED: lease revoked lease_id={}", held_lease.lease_id);
+            break;
+        }
+
         let renew_now = clock.now_unix_ms();
         let mut renew_req = pb::RenewLeaseRequest {
             schema_version: 1,
@@ -354,12 +398,82 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             6 => return Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
             other => return Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
         }
+
+        if config.expect_revoke_after_round == Some(round + 1) {
+            let notice = receive_and_validate_revoke(
+                &mut stream,
+                &coordinator_keys,
+                &mut replay,
+                &clock,
+                &held_lease,
+            )?;
+            println!(
+                "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+                notice.lease_id, notice.fence_epoch, notice.cause
+            );
+            revoked = true;
+        }
     }
 
     println!(
         "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
         grant.grant_id, grant.attempt_id, ack.agent_device_id
     );
+    Ok(())
+}
+
+/// revoke 프레임을 서명 검증한 뒤 현재 보유 Lease에 적용한다.
+///
+/// `read_frame()`이 반환한 `Verified` 내부 값만 이 함수에 들어오므로,
+/// identity·만료 판정은 서명 검증 이후에만 수행된다. 반환된 통지는
+/// 호출자가 `revoked` 상태를 세우고 다음 갱신 회차를 차단하는 데 쓴다.
+fn receive_and_validate_revoke(
+    stream: &mut TcpStream,
+    coordinator_keys: &InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    held_lease: &pb::Lease,
+) -> Result<pb::RevokeLeaseNotice, String> {
+    let message = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(coordinator_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| format!("RevokeLeaseNotice 프레임 읽기/검증 실패: {e}"))?;
+    let notice = match message {
+        IngressMessage::LeaseRevoke(verified) => verified.get().clone(),
+        other => return Err(format!("예상하지 못한 revoke 응답 타입: {other:?}")),
+    };
+    validate_revoke_notice(held_lease, &notice, clock.now_unix_ms())?;
+    Ok(notice)
+}
+
+/// 검증된 revoke 통지가 현재 보유 Lease에 적용 가능한지 판정한다.
+fn validate_revoke_notice(
+    held_lease: &pb::Lease,
+    notice: &pb::RevokeLeaseNotice,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if notice.lease_id != held_lease.lease_id {
+        return Err(format!(
+            "REVOKE_REJECTED: lease_id 불일치: 기대값 {} != {}",
+            held_lease.lease_id, notice.lease_id
+        ));
+    }
+    if notice.fence_epoch != held_lease.fence_epoch {
+        return Err(format!(
+            "REVOKE_REJECTED: fence_epoch 불일치: 기대값 {} != {}",
+            held_lease.fence_epoch, notice.fence_epoch
+        ));
+    }
+    if held_lease.expires_at_unix_ms <= now_unix_ms {
+        return Err(format!(
+            "REVOKE_REJECTED: held Lease가 이미 만료됐다: expires_at_unix_ms={} now={now_unix_ms}",
+            held_lease.expires_at_unix_ms
+        ));
+    }
     Ok(())
 }
 
@@ -495,6 +609,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             None => default_fence_db_path(),
         },
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+        expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
+        revoke_signer_id_override: flags.0.get("--revoke-signer-id").cloned(),
     };
 
     run(config)
@@ -549,6 +665,16 @@ impl Flags {
                 .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
+
+    fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+        match self.0.get(key) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<u32>()
+                .map(Some)
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
+        }
+    }
 }
 
 fn parse_flags(args: &[String]) -> Result<Flags, String> {
@@ -586,4 +712,49 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn held_lease() -> pb::Lease {
+        pb::Lease {
+            lease_id: "lease-a".into(),
+            fence_epoch: 7,
+            expires_at_unix_ms: 10_000,
+            ..Default::default()
+        }
+    }
+
+    fn revoke(lease_id: &str, fence_epoch: u64) -> pb::RevokeLeaseNotice {
+        pb::RevokeLeaseNotice {
+            lease_id: lease_id.into(),
+            fence_epoch,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn revoke_notice_matching_lease_and_epoch_is_applicable() {
+        assert!(validate_revoke_notice(&held_lease(), &revoke("lease-a", 7), 9_999).is_ok());
+    }
+
+    #[test]
+    fn revoke_notice_with_wrong_lease_id_is_rejected() {
+        let result = validate_revoke_notice(&held_lease(), &revoke("lease-b", 7), 9_999);
+        assert!(result.unwrap_err().contains("lease_id 불일치"));
+    }
+
+    #[test]
+    fn revoke_notice_with_wrong_fence_epoch_is_rejected() {
+        let result = validate_revoke_notice(&held_lease(), &revoke("lease-a", 6), 9_999);
+        assert!(result.unwrap_err().contains("fence_epoch 불일치"));
+    }
+
+    #[test]
+    fn revoke_notice_for_expired_lease_is_rejected() {
+        let result = validate_revoke_notice(&held_lease(), &revoke("lease-a", 7), 10_000);
+        assert!(result.unwrap_err().contains("이미 만료됐다"));
+    }
 }
