@@ -403,6 +403,131 @@ fn assert_no_agent_ack_or_marker(
     Ok(())
 }
 
+fn seed_resume_lease(
+    fixture: &Fixture,
+    lease_db: &Path,
+    fence_db: &Path,
+    fence_epoch: u64,
+    lease_ttl_ms: u64,
+) -> Result<(), String> {
+    let lease_db = lease_db
+        .to_str()
+        .ok_or_else(|| format!("lease DB path is not UTF-8: {lease_db:?}"))?;
+    let fence_db = fence_db
+        .to_str()
+        .ok_or_else(|| format!("fence DB path is not UTF-8: {fence_db:?}"))?;
+    let fence_epoch = fence_epoch.to_string();
+    let lease_ttl_ms = lease_ttl_ms.to_string();
+    let seeded = run_handshake(
+        fixture,
+        &[
+            "--lease-db",
+            lease_db,
+            "--fence-epoch",
+            &fence_epoch,
+            "--lease-ttl-ms",
+            &lease_ttl_ms,
+            "--do-renew",
+            "false",
+        ],
+        &["--fence-db", fence_db, "--do-renew", "false"],
+    )?;
+    if !seeded.coordinator_success || !seeded.agent_success {
+        return Err(format!(
+            "resume seed handshake failed: coordinator={} stdout={} stderr={}; agent={} stdout={} stderr={}",
+            seeded.coordinator_success,
+            seeded.coordinator_stdout,
+            seeded.coordinator_stderr,
+            seeded.agent_success,
+            seeded.agent_stdout,
+            seeded.agent_stderr
+        ));
+    }
+    Ok(())
+}
+
+fn run_resume_case(
+    fixture: &Fixture,
+    lease_db: &Path,
+    fence_db: &Path,
+    session_id: &str,
+    lease_id: &str,
+    job_id: &str,
+    attempt_id: &str,
+    fence_epoch: u64,
+    unavailable_without_store: bool,
+) -> Result<HandshakeOutcome, String> {
+    let lease_db = lease_db
+        .to_str()
+        .ok_or_else(|| format!("lease DB path is not UTF-8: {lease_db:?}"))?;
+    let fence_db = fence_db
+        .to_str()
+        .ok_or_else(|| format!("fence DB path is not UTF-8: {fence_db:?}"))?;
+    let epoch = fence_epoch.to_string();
+    let mut coordinator_args = vec![
+        "--resume-protocol".to_string(),
+        "true".to_string(),
+        "--session-id".to_string(),
+        session_id.to_string(),
+        "--max-connections".to_string(),
+        "1".to_string(),
+        "--accept-timeout-ms".to_string(),
+        "5000".to_string(),
+    ];
+    if !unavailable_without_store {
+        coordinator_args.extend([
+            "--lease-db".to_string(),
+            lease_db.to_string(),
+        ]);
+    }
+    let coordinator_refs: Vec<&str> = coordinator_args.iter().map(String::as_str).collect();
+    let agent_args = vec![
+        "--resume-protocol".to_string(),
+        "true".to_string(),
+        "--session-id".to_string(),
+        session_id.to_string(),
+        "--resume-lease-id".to_string(),
+        lease_id.to_string(),
+        "--resume-job-id".to_string(),
+        job_id.to_string(),
+        "--resume-attempt-id".to_string(),
+        attempt_id.to_string(),
+        "--resume-fence-epoch".to_string(),
+        epoch,
+        "--fence-db".to_string(),
+        fence_db.to_string(),
+    ];
+    let agent_refs: Vec<&str> = agent_args.iter().map(String::as_str).collect();
+    run_handshake(fixture, &coordinator_refs, &agent_refs)
+}
+
+fn assert_resume_outcome(
+    outcome: &HandshakeOutcome,
+    scenario: u32,
+    expected_outcome: u32,
+    agent_should_succeed: bool,
+) -> Result<(), String> {
+    let marker = format!("RESULT ok=true resume_outcome={expected_outcome}");
+    if !outcome.coordinator_success
+        || !outcome.coordinator_stdout.contains(&marker)
+        || outcome.agent_success != agent_should_succeed
+        || (agent_should_succeed && !outcome.agent_stdout.contains(&marker))
+        || (!agent_should_succeed && outcome.agent_stdout.contains("RESULT ok=true"))
+    {
+        return Err(format!(
+            "{scenario}) Resume outcome mismatch: expected={} coordinator_success={} coordinator_stdout={} coordinator_stderr={} agent_success={} agent_stdout={} agent_stderr={}",
+            expected_outcome,
+            outcome.coordinator_success,
+            outcome.coordinator_stdout,
+            outcome.coordinator_stderr,
+            outcome.agent_success,
+            outcome.agent_stdout,
+            outcome.agent_stderr
+        ));
+    }
+    Ok(())
+}
+
 /// 37가지 시나리오를 차례로 돌린다. 하나라도 기대와 다르면 그 자리에서
 /// 이유를 담아 반환한다.
 pub fn run() -> Result<String, String> {
@@ -2951,6 +3076,109 @@ pub fn run() -> Result<String, String> {
         return Err(format!("52) reconnect expiry failed: coordinator={:?} agent={:?}", expire_52.coordinator_stderr, expire_52.agent_stderr));
     }
     report.push_str("52) 2초 TTL과 2500ms next-accept 대기로 재접속 시 expired 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
+
+    // 53–60. Explicit opt-in Hello-first Resume lane. Every case owns a
+    // separate temporary directory/database; the legacy 1–52 cases above do
+    // not share this state.
+    let resume_dir_53 = tempfile::tempdir()
+        .map_err(|e| format!("resume success tempdir failed (53): {e}"))?;
+    let lease_db_53 = resume_dir_53.path().join("lease.sqlite3");
+    let fence_db_53 = resume_dir_53.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_53, &fence_db_53, 7, 60_000)?;
+    let resumed_53 = run_resume_case(
+        &fixture, &lease_db_53, &fence_db_53, "resume-session-53",
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false,
+    )?;
+    assert_resume_outcome(&resumed_53, 53, 1, true)?;
+    report.push_str("53) 명시적 --resume-protocol Hello-first Resume 성공(RESUMED), 저장된 expires_at 유지\n");
+
+    let unknown_dir_54 = tempfile::tempdir()
+        .map_err(|e| format!("resume unknown tempdir failed (54): {e}"))?;
+    let lease_db_54 = unknown_dir_54.path().join("lease.sqlite3");
+    let fence_db_54 = unknown_dir_54.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_54, &fence_db_54, 7, 60_000)?;
+    let unknown_54 = run_resume_case(
+        &fixture, &lease_db_54, &fence_db_54, "resume-session-54",
+        "unknown-lease-id", fixture.job_id, fixture.attempt_id, 7, false,
+    )?;
+    assert_resume_outcome(&unknown_54, 54, 5, false)?;
+    report.push_str("54) 존재하지 않는 lease_id를 UNKNOWN_LEASE로 거부\n");
+
+    let identity_dir_55 = tempfile::tempdir()
+        .map_err(|e| format!("resume identity tempdir failed (55): {e}"))?;
+    let lease_db_55 = identity_dir_55.path().join("lease.sqlite3");
+    let fence_db_55 = identity_dir_55.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_55, &fence_db_55, 7, 60_000)?;
+    let identity_55 = run_resume_case(
+        &fixture, &lease_db_55, &fence_db_55, "resume-session-55",
+        fixture.lease_id, "wrong-job-id", fixture.attempt_id, 7, false,
+    )?;
+    assert_resume_outcome(&identity_55, 55, 6, false)?;
+    report.push_str("55) job_id 불일치 identity conflict를 IDENTITY_CONFLICT로 거부\n");
+
+    let revoked_dir_56 = tempfile::tempdir()
+        .map_err(|e| format!("resume revoked tempdir failed (56): {e}"))?;
+    let lease_db_56 = revoked_dir_56.path().join("lease.sqlite3");
+    let fence_db_56 = revoked_dir_56.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_56, &fence_db_56, 7, 60_000)?;
+    gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_56)
+        .map_err(|e| format!("resume revoked store open failed (56): {e}"))?
+        .mark_revoked(fixture.lease_id, 1)
+        .map_err(|e| format!("resume revoke mutation failed (56): {e}"))?;
+    let revoked_56 = run_resume_case(
+        &fixture, &lease_db_56, &fence_db_56, "resume-session-56",
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false,
+    )?;
+    assert_resume_outcome(&revoked_56, 56, 2, false)?;
+    report.push_str("56) durable revoke 상태를 REVOKED로 판정\n");
+
+    let expired_dir_57 = tempfile::tempdir()
+        .map_err(|e| format!("resume expired tempdir failed (57): {e}"))?;
+    let lease_db_57 = expired_dir_57.path().join("lease.sqlite3");
+    let fence_db_57 = expired_dir_57.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_57, &fence_db_57, 7, 2_000)?;
+    thread::sleep(Duration::from_millis(2_200));
+    let expired_57 = run_resume_case(
+        &fixture, &lease_db_57, &fence_db_57, "resume-session-57",
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false,
+    )?;
+    assert_resume_outcome(&expired_57, 57, 3, false)?;
+    report.push_str("57) expires_at_unix_ms <= now 경계로 EXPIRED 판정\n");
+
+    let superseded_dir_58 = tempfile::tempdir()
+        .map_err(|e| format!("resume superseded tempdir failed (58): {e}"))?;
+    let lease_db_58 = superseded_dir_58.path().join("lease.sqlite3");
+    let fence_db_58 = superseded_dir_58.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_58, &fence_db_58, 7, 60_000)?;
+    let superseded_58 = run_resume_case(
+        &fixture, &lease_db_58, &fence_db_58, "resume-session-58",
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 6, false,
+    )?;
+    assert_resume_outcome(&superseded_58, 58, 4, false)?;
+    report.push_str("58) 요청 epoch < 저장 epoch 방향을 SUPERSEDED로 고정\n");
+
+    let ahead_dir_59 = tempfile::tempdir()
+        .map_err(|e| format!("resume epoch-ahead tempdir failed (59): {e}"))?;
+    let lease_db_59 = ahead_dir_59.path().join("lease.sqlite3");
+    let fence_db_59 = ahead_dir_59.path().join("fence.sqlite3");
+    seed_resume_lease(&fixture, &lease_db_59, &fence_db_59, 7, 60_000)?;
+    let ahead_59 = run_resume_case(
+        &fixture, &lease_db_59, &fence_db_59, "resume-session-59",
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 8, false,
+    )?;
+    assert_resume_outcome(&ahead_59, 59, 8, false)?;
+    report.push_str("59) 요청 epoch > 저장 epoch을 EPOCH_AHEAD(enum 값 8)로 고정\n");
+
+    let unavailable_dir_60 = tempfile::tempdir()
+        .map_err(|e| format!("resume unavailable tempdir failed (60): {e}"))?;
+    let lease_db_60 = unavailable_dir_60.path().join("lease.sqlite3");
+    let fence_db_60 = unavailable_dir_60.path().join("fence.sqlite3");
+    let unavailable_60 = run_resume_case(
+        &fixture, &lease_db_60, &fence_db_60, "resume-session-60",
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, true,
+    )?;
+    assert_resume_outcome(&unavailable_60, 60, 7, false)?;
+    report.push_str("60) 명시적 durable store 없이 Resume을 요청해 서명된 UNAVAILABLE(재시도 가능)를 반환\n");
 
     Ok(report)
 }

@@ -296,6 +296,42 @@ impl Signable for pb::RenewLeaseResult {
     }
 }
 
+impl Signable for pb::AgentSessionHello {
+    const DOMAIN: Domain = Domain::SessionHello;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+    fn schema_version(&self) -> u32 { self.schema_version }
+    fn to_canonical_fields(&self) -> Fields { <Self as ToCanonicalFields>::to_canonical_fields(self) }
+    fn signature_bytes(&self) -> &[u8] { &self.node_signature }
+    fn expires_at_unix_ms(&self) -> u64 { self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS) }
+    fn issued_at_unix_ms(&self) -> u64 { self.issued_at_unix_ms }
+    fn signer_id(&self) -> &str { &self.node_id }
+    fn replay_nonce(&self) -> Option<&[u8]> { Some(&self.nonce) }
+}
+
+impl Signable for pb::ResumeLeaseRequest {
+    const DOMAIN: Domain = Domain::LeaseResume;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+    fn schema_version(&self) -> u32 { self.schema_version }
+    fn to_canonical_fields(&self) -> Fields { <Self as ToCanonicalFields>::to_canonical_fields(self) }
+    fn signature_bytes(&self) -> &[u8] { &self.node_signature }
+    fn expires_at_unix_ms(&self) -> u64 { self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS) }
+    fn issued_at_unix_ms(&self) -> u64 { self.issued_at_unix_ms }
+    fn signer_id(&self) -> &str { &self.node_id }
+    fn replay_nonce(&self) -> Option<&[u8]> { Some(&self.request_nonce) }
+}
+
+impl Signable for pb::ResumeLeaseResult {
+    const DOMAIN: Domain = Domain::LeaseResumeResult;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+    fn schema_version(&self) -> u32 { self.schema_version }
+    fn to_canonical_fields(&self) -> Fields { <Self as ToCanonicalFields>::to_canonical_fields(self) }
+    fn signature_bytes(&self) -> &[u8] { &self.coordinator_signature }
+    fn expires_at_unix_ms(&self) -> u64 { self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS) }
+    fn issued_at_unix_ms(&self) -> u64 { self.issued_at_unix_ms }
+    fn signer_id(&self) -> &str { &self.coordinator_id }
+    fn replay_nonce(&self) -> Option<&[u8]> { Some(&self.request_nonce) }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // 증거 (ADR-029) — 6종
 //

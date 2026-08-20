@@ -323,6 +323,7 @@ fn domain_tags_are_32_bytes_and_unique() {
         //   와 t1b_grant_and_control.rs::all_domain_tags_are_distinct
         //   는 이미 올바르게 25종을 나열하고 있었다.
         Domain::LeaseRenewResult,
+        Domain::SessionHello, Domain::LeaseResume, Domain::LeaseResumeResult,
     ];
     let mut seen = std::collections::HashSet::new();
     for d in domains {
@@ -332,7 +333,7 @@ fn domain_tags_are_32_bytes_and_unique() {
     }
     assert_eq!(
         seen.len(),
-        25,
+        28,
         "signing.md §5 의 domain_tag 25종과 일치해야 한다 (ADR-028 + GrantAck + LeaseRenewResult)"
     );
 }

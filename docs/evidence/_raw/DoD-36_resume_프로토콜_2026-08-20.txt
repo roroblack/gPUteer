@@ -1,0 +1,79 @@
+########## p188 (구현자 1차, workspace-write) — Resume 프로토콜 전체 구현 ##########
+구현 완료했습니다. `git commit/push`는 하지 않았습니다.
+
+변경 파일:
+
+- `proto/lease.proto` — Resume enum/message 4종 추가
+- `proto/SCHEMA_FINGERPRINT.txt` — fingerprint 갱신
+- `Cargo.toml`, `Cargo.lock`, `crates/agent/Cargo.toml` — CSPRNG `getrandom` 추가
+- `crates/protocol/src/canonical.rs` — domain 3종 추가
+- `crates/protocol/src/to_fields.rs` — 새 메시지 canonical 필드
+- `crates/protocol/src/signable.rs` — 새 메시지 Signable 구현
+- `crates/protocol/tests/{field_number_audit,lifetime_consistency,t1_signing_targets,t1b_grant_and_control,canonical_vectors}.rs` — 감사·domain·lifetime 갱신
+- `crates/crypto/src/framed_ingress.rs` — FrameType 12~14 및 dispatch
+- `crates/crypto/tests/framed_ingress.rs` — 왕복·payload·위조서명 테스트
+- `crates/coordinator/src/lease_store.rs` — 읽기 전용 `classify_resume`
+- `crates/coordinator/src/lib.rs` — 명시적 Resume wire dispatch/result signing
+- `crates/agent/src/lib.rs` — `--resume-protocol` 및 Hello/Request 경로
+- `crates/cli/src/coordinator_agent_selftest.rs` — 시나리오 53~60
+- `tools/canonical/reference_canonical.py` — schema/domain/reference vectors
+- `tests/vectors/canonical_v1.json` — vector 재생성
+- `docs/protocol/signing.md` — domain tag 3종 및 총 28종 반영
+- [Resume 설계 문서](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-20_1200_resume_프로토콜_v1.md)
+
+Canonical vector는 3개 추가되어 총 48개입니다. domain count는 정확히 25→28입니다.
+
+selftest 신규 시나리오:
+
+- 53 `RESUMED`
+- 54 `UNKNOWN_LEASE`
+- 55 `IDENTITY_CONFLICT`
+- 56 `REVOKED`
+- 57 `EXPIRED`
+- 58 `SUPERSEDED`
+- 59 `EPOCH_AHEAD`
+- 60 `UNAVAILABLE`
+
+`UNAVAILABLE`은 durable store 미제공 경로로 서명된 retryable 결과를 재현했습니다. 실제 SQLite lock 장애 fault-injection은 구현하지 않았습니다.
+
+검증 결과:
+
+- canonical self-test: 통과
+- canonical verify: 48개 일치
+- schema check: 오류 0건
+- workspace build: 통과, 2.528초
+- workspace test: 통과, 57.672초
+- selftest 5회 연속 exit=0:
+  - 31.621초
+  - 30.694초
+  - 30.509초
+  - 30.710초
+  - 30.438초
+- 기존 1~52 시나리오: 전부 그대로 통과
+- 신규 53~60: 전부 통과
+
+Mutation 검증도 완료했습니다.
+
+- revoke 판정을 expiry보다 뒤로 이동: 대응 테스트 실패
+- epoch 비교 방향 반전: 대응 테스트 실패
+- 두 변경 모두 원복 완료
+
+참고로 첫 예비 selftest 1회에서 기존 51번이 일시적인 accept timeout으로 실패했지만, 즉시 재실행 및 요구된 연속 5회는 모두 성공했습니다.
+
+########## p190 (구현자 2차 수정, workspace-write — p189 지적 반영: canonical 교차검증 테스트 추가) ##########
+구현 완료했습니다. 커밋/푸시는 하지 않았습니다.
+
+- 추가 함수: [`resume_protocol_messages_match_reference`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:460)
+- 기존 `expect_hex()` 헬퍼로 `v34`·`v35`·`v36`을 로드하고, 세 protobuf 객체의 `canonical_encode()` 결과를 hex 단위로 정확히 assert합니다.
+- 필드값은 [`reference_canonical.py`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/reference_canonical.py:1614)의 생성값 및 JSON 벡터와 대조해 동일하게 구성했습니다. `ResumeLeaseResult`의 중첩 `Lease`와 `ResourceScope`도 동일합니다.
+
+검증 결과:
+
+- Python self-test: 통과
+- Python vector verify: 48개 벡터 일치
+- Cargo build: 통과
+- Cargo workspace test: 통과
+- Mutation test: `ResumeLeaseRequest` 필드 번호를 10→11로 변경하자 새 테스트가 실패했고, 원복 후 다시 통과
+- `coordinator-agent-selftest`: 5회 연속 모두 `EXIT=0`, `SCENARIOS=60`
+
+참고로 작업 트리는 원래부터 여러 변경이 있었으며, `to_fields.rs`의 구현 변경은 뮤테이션 후 원복되어 이번 작업의 순수 변경으로 남지 않았습니다. `cargo fmt`는 환경에 rustfmt 컴포넌트가 없어 실행하지 못했지만 컴파일과 전체 테스트는 통과했습니다.

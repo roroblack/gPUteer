@@ -49,6 +49,28 @@ pub struct StoredLease {
     pub revoked_at_unix_ms: Option<u64>,
 }
 
+/// Identity and fencing fields carried by an explicit Resume request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeRequestIdentity {
+    pub lease_id: String,
+    pub node_id: String,
+    pub job_id: String,
+    pub attempt_id: String,
+    pub fence_epoch: u64,
+}
+
+/// Read-only classification of an explicit Resume request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumeDecision {
+    Resumed(StoredLease),
+    UnknownLease,
+    IdentityConflict { field: &'static str, stored: String, requested: String },
+    Revoked { stored: StoredLease },
+    Expired { stored: StoredLease },
+    Superseded { stored: StoredLease },
+    EpochAhead { stored: StoredLease },
+}
+
 impl StoredLease {
     /// `now_unix_ms` 기준으로 `max_total_duration_seconds` 누적 시간을
     /// 초과했는지 판정하는 순수 함수 — 저장소를 바꾸지 않는다.
@@ -205,6 +227,55 @@ impl CoordinatorLeaseStore {
             .map_err(map_sql_error)?
             .map(RawLeaseRow::into_stored)
             .transpose()
+    }
+
+    /// Classify an explicit Resume without issuing or mutating a lease.
+    ///
+    /// The order is part of the wire contract: identity, revoke, expiry, then
+    /// epoch direction. In particular, a revoked-and-expired lease is REVOKED.
+    pub fn classify_resume(
+        &self,
+        request_identity: &ResumeRequestIdentity,
+        now_unix_ms: u64,
+    ) -> Result<ResumeDecision, LeaseStoreError> {
+        let Some(stored) = self.get(&request_identity.lease_id)? else {
+            return Ok(ResumeDecision::UnknownLease);
+        };
+
+        if stored.holder_node_id != request_identity.node_id {
+            return Ok(ResumeDecision::IdentityConflict {
+                field: "node_id",
+                stored: stored.holder_node_id.clone(),
+                requested: request_identity.node_id.clone(),
+            });
+        }
+        if stored.job_id != request_identity.job_id {
+            return Ok(ResumeDecision::IdentityConflict {
+                field: "job_id",
+                stored: stored.job_id.clone(),
+                requested: request_identity.job_id.clone(),
+            });
+        }
+        if stored.attempt_id != request_identity.attempt_id {
+            return Ok(ResumeDecision::IdentityConflict {
+                field: "attempt_id",
+                stored: stored.attempt_id.clone(),
+                requested: request_identity.attempt_id.clone(),
+            });
+        }
+        if stored.revoked_at_unix_ms.is_some() {
+            return Ok(ResumeDecision::Revoked { stored });
+        }
+        if stored.expires_at_unix_ms <= now_unix_ms {
+            return Ok(ResumeDecision::Expired { stored });
+        }
+        if request_identity.fence_epoch < stored.fence_epoch {
+            return Ok(ResumeDecision::Superseded { stored });
+        }
+        if request_identity.fence_epoch > stored.fence_epoch {
+            return Ok(ResumeDecision::EpochAhead { stored });
+        }
+        Ok(ResumeDecision::Resumed(stored))
     }
 
     /// 최초 발급 경로 — `lease_id` 가 저장소에 **없을 때만** `candidate`
@@ -1102,5 +1173,70 @@ mod tests {
             store.get("lease-1").unwrap().unwrap().expires_at_unix_ms,
             1_000
         );
+    }
+
+    #[test]
+    fn classify_resume_obeys_identity_revoke_expiry_and_epoch_order() {
+        let (mut store, _dir) = open_temp();
+        let mut record = sample("lease-1");
+        record.expires_at_unix_ms = 10_000;
+        record.fence_epoch = 7;
+        store.get_or_issue(&record, 0).unwrap();
+
+        let identity = |epoch| ResumeRequestIdentity {
+            lease_id: "lease-1".into(),
+            node_id: "agent-1".into(),
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            fence_epoch: epoch,
+        };
+
+        assert!(matches!(
+            store.classify_resume(&identity(7), 9_999).unwrap(),
+            ResumeDecision::Resumed(ref returned) if returned.expires_at_unix_ms == 10_000
+        ));
+        assert!(matches!(
+            store.classify_resume(&identity(6), 9_999).unwrap(),
+            ResumeDecision::Superseded { .. }
+        ));
+        assert!(matches!(
+            store.classify_resume(&identity(8), 9_999).unwrap(),
+            ResumeDecision::EpochAhead { .. }
+        ));
+
+        let mut wrong_node = identity(7);
+        wrong_node.node_id = "other-node".into();
+        assert!(matches!(
+            store.classify_resume(&wrong_node, 9_999).unwrap(),
+            ResumeDecision::IdentityConflict { field: "node_id", .. }
+        ));
+        let mut missing = identity(7);
+        missing.lease_id = "missing".into();
+        assert!(matches!(
+            store.classify_resume(&missing, 9_999).unwrap(),
+            ResumeDecision::UnknownLease
+        ));
+
+        store.mark_revoked("lease-1", 9_000).unwrap();
+        assert!(matches!(
+            store.classify_resume(&identity(7), 10_000).unwrap(),
+            ResumeDecision::Revoked { .. }
+        ), "revoke must win over the expiry boundary");
+
+        let (mut expired_store, _expired_dir) = open_temp();
+        let mut expired = sample("expired");
+        expired.expires_at_unix_ms = 10_000;
+        expired_store.get_or_issue(&expired, 0).unwrap();
+        let expired_identity = ResumeRequestIdentity {
+            lease_id: "expired".into(),
+            node_id: expired.holder_node_id.clone(),
+            job_id: expired.job_id.clone(),
+            attempt_id: expired.attempt_id.clone(),
+            fence_epoch: expired.fence_epoch,
+        };
+        assert!(matches!(
+            expired_store.classify_resume(&expired_identity, 10_000).unwrap(),
+            ResumeDecision::Expired { .. }
+        ));
     }
 }

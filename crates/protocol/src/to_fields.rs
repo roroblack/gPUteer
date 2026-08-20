@@ -541,6 +541,55 @@ impl ToCanonicalFields for pb::RenewLeaseResult {
     }
 }
 
+impl ToCanonicalFields for pb::AgentSessionHello {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_uint(&mut f, 2, self.mode as i32 as u64);
+        put_str(&mut f, 3, &self.session_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.connection_attempt as u64);
+        put_uint(&mut f, 6, self.issued_at_unix_ms);
+        put_bytes(&mut f, 7, &self.nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 { self.schema_version }
+}
+
+impl ToCanonicalFields for pb::ResumeLeaseRequest {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.lease_id);
+        put_str(&mut f, 3, &self.job_id);
+        put_str(&mut f, 4, &self.attempt_id);
+        put_str(&mut f, 5, &self.node_id);
+        put_uint(&mut f, 6, self.fence_epoch);
+        put_str(&mut f, 7, &self.session_id);
+        put_uint(&mut f, 8, self.connection_attempt as u64);
+        put_uint(&mut f, 9, self.issued_at_unix_ms);
+        put_bytes(&mut f, 10, &self.request_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 { self.schema_version }
+}
+
+impl ToCanonicalFields for pb::ResumeLeaseResult {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.outcome as i32 as u64);
+        put_msg(&mut f, 2, &self.lease);
+        put_str(&mut f, 3, &self.detail);
+        put_uint(&mut f, 4, self.retry_after_ms as u64);
+        put_uint(&mut f, 5, self.schema_version as u64);
+        put_str(&mut f, 6, &self.coordinator_id);
+        put_uint(&mut f, 7, self.issued_at_unix_ms);
+        put_bytes(&mut f, 8, &self.request_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 { self.schema_version }
+}
+
 impl ToCanonicalFields for pb::RevokeLeaseNotice {
     fn to_canonical_fields(&self) -> Fields {
         let mut f = Fields::new();

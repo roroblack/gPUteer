@@ -28,7 +28,10 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 pub mod lease_store;
-use lease_store::{CoordinatorLeaseStore, LeaseStoreError, RenewDecision, StoredLease};
+use lease_store::{
+    CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision,
+    ResumeRequestIdentity, StoredLease,
+};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -175,6 +178,10 @@ pub struct CoordinatorConfig {
     pub revoke_delay_ms: u64,
     /// Test-only delay after Grant/ACK and before reading a renewal request.
     pub renew_delay_ms: u64,
+    /// Explicit opt-in Hello-first Resume lane. The default remains the
+    /// historical server-first Grant/ACK lane.
+    pub resume_protocol: bool,
+    pub session_id: String,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -260,6 +267,26 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let now = clock.now_unix_ms();
+    if config.resume_protocol {
+        let resume_result = serve_resume_connection(
+            &config,
+            &mut stream,
+            &mut lease_store,
+            &signing_key,
+            &agent_keys,
+            &mut replay,
+            &clock,
+            connection_attempt,
+        );
+        if resume_result.is_err() || connection_count >= config.max_connections {
+            return resume_result;
+        }
+        // The explicit Resume lane may be used by the Agent's reconnect
+        // budget. A completed terminal result never waits for another frame
+        // on the same stream; only the outer accept loop handles the next
+        // explicitly opted-in connection.
+        continue;
+    }
     let mut grant = issue_grant(
         &config,
         &mut lease_store,
@@ -587,6 +614,147 @@ fn accept_with_deadline(
     }
 }
 
+/// Hello-first dispatcher for the explicit Resume lane. This is deliberately
+/// separate from the legacy Grant-first path so a caller cannot accidentally
+/// make the two wire orderings ambiguous on one port.
+fn serve_resume_connection(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    lease_store: &mut Option<CoordinatorLeaseStore>,
+    signing_key: &SigningKey,
+    agent_keys: &InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    connection_attempt: u32,
+) -> Result<(), String> {
+    let hello_message = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| format!("AgentSessionHello 프레임 읽기/검증 실패: {e}"))?;
+    let hello = match hello_message {
+        IngressMessage::SessionHello(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("AgentSessionHello replay 검사 실패: {e:?}"))?
+            .clone(),
+        other => return Err(format!("Resume lane에서 Hello가 아닌 프레임 수신: {other:?}")),
+    };
+    if hello.mode != 2 {
+        return Err(format!("AgentSessionHello.mode must be RESUME, got {}", hello.mode));
+    }
+    if hello.node_id != config.agent_device_id {
+        return Err(format!(
+            "AgentSessionHello.node_id 불일치: 기대값 {} != {}",
+            config.agent_device_id, hello.node_id
+        ));
+    }
+    if hello.connection_attempt != connection_attempt {
+        return Err(format!(
+            "AgentSessionHello.connection_attempt 불일치: 기대값 {} != {}",
+            connection_attempt, hello.connection_attempt
+        ));
+    }
+    if hello.session_id.is_empty() {
+        return Err("AgentSessionHello.session_id가 비어 있다".into());
+    }
+
+    let request_message = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| format!("ResumeLeaseRequest 프레임 읽기/검증 실패: {e}"))?;
+    let request = match request_message {
+        IngressMessage::LeaseResume(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("ResumeLeaseRequest replay 검사 실패: {e:?}"))?
+            .clone(),
+        other => return Err(format!("Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {other:?}")),
+    };
+    if request.node_id != hello.node_id
+        || request.session_id != hello.session_id
+        || request.connection_attempt != hello.connection_attempt
+    {
+        return Err("ResumeLeaseRequest와 AgentSessionHello 상관관계가 일치하지 않는다".into());
+    }
+
+    let now = clock.now_unix_ms();
+    let mut result = pb::ResumeLeaseResult {
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce: request.request_nonce.clone(),
+        ..Default::default()
+    };
+    let decision = match lease_store.as_ref() {
+        Some(store) => store.classify_resume(
+            &ResumeRequestIdentity {
+                lease_id: request.lease_id.clone(),
+                node_id: request.node_id.clone(),
+                job_id: request.job_id.clone(),
+                attempt_id: request.attempt_id.clone(),
+                fence_epoch: request.fence_epoch,
+            },
+            now,
+        ),
+        None => Err(LeaseStoreError::Io("resume requires a durable lease store".into())),
+    };
+    match decision {
+        Ok(ResumeDecision::Resumed(stored)) => {
+            result.outcome = 1;
+            result.detail = "resume accepted; lease expiry was not extended".into();
+            result.lease = Some(stored_to_signed_lease(config, signing_key, stored)?);
+        }
+        Ok(ResumeDecision::UnknownLease) => {
+            result.outcome = 5;
+            result.detail = "lease_id is not present in the durable store".into();
+        }
+        Ok(ResumeDecision::IdentityConflict { field, stored, requested }) => {
+            result.outcome = 6;
+            result.detail = format!("identity conflict in {field}: stored={stored} requested={requested}");
+        }
+        Ok(ResumeDecision::Revoked { stored }) => {
+            result.outcome = 2;
+            result.detail = format!("lease revoked at {:?}", stored.revoked_at_unix_ms);
+        }
+        Ok(ResumeDecision::Expired { stored }) => {
+            result.outcome = 3;
+            result.detail = format!("lease expired at {}", stored.expires_at_unix_ms);
+        }
+        Ok(ResumeDecision::Superseded { stored }) => {
+            result.outcome = 4;
+            result.detail = format!("request epoch is below stored epoch {}", stored.fence_epoch);
+        }
+        Ok(ResumeDecision::EpochAhead { stored }) => {
+            result.outcome = 8;
+            result.detail = format!("request epoch is above stored epoch {}", stored.fence_epoch);
+        }
+        Err(error) => {
+            result.outcome = 7;
+            result.retry_after_ms = 100;
+            result.detail = format!("resume store temporarily unavailable: {error}");
+        }
+    }
+    result.coordinator_signature = sign(signing_key, &result).to_vec();
+    let frame = write_frame(FrameType::LeaseResumeResult, &result.encode_to_vec())
+        .map_err(|e| format!("ResumeLeaseResult 프레임 인코딩 실패: {e}"))?;
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("ResumeLeaseResult 전송 실패: {e}"))?;
+    stream.flush().map_err(|e| e.to_string())?;
+    println!(
+        "RESUME_RESULT ok=true outcome={} lease_id={} connection_attempt={}",
+        result.outcome, request.lease_id, connection_attempt
+    );
+    println!("RESULT ok=true resume_outcome={} lease_id={}", result.outcome, request.lease_id);
+    Ok(())
+}
+
 fn send_revoke_notice(
     config: &CoordinatorConfig,
     grant: &pb::ExecutionGrant,
@@ -877,6 +1045,33 @@ fn build_renew_result(
 /// 독립적으로 서명해 담는다(규칙 i, nested 서명은 outer 서명과 별개).
 /// `build_renew_result` 의 두 정상 경로(레거시·저장소 갱신 성공)가
 /// 공유한다.
+fn stored_to_signed_lease(
+    _config: &CoordinatorConfig,
+    key: &SigningKey,
+    resolved: StoredLease,
+) -> Result<pb::Lease, String> {
+    let max_total_duration_seconds =
+        u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
+    let mut lease = pb::Lease {
+        schema_version: 1,
+        lease_id: resolved.lease_id,
+        job_id: resolved.job_id,
+        attempt_id: resolved.attempt_id,
+        fence_epoch: resolved.fence_epoch,
+        coordinator_term: resolved.coordinator_term,
+        holder_node_id: resolved.holder_node_id.clone(),
+        member_node_ids: vec![resolved.holder_node_id],
+        issuing_coordinator_id: resolved.issuing_coordinator_id,
+        issued_at_unix_ms: resolved.issued_at_unix_ms,
+        expires_at_unix_ms: resolved.expires_at_unix_ms,
+        renew_after_unix_ms: resolved.renew_after_unix_ms,
+        max_total_duration_seconds,
+        ..Default::default()
+    };
+    lease.coordinator_signature = sign(key, &lease).to_vec();
+    Ok(lease)
+}
+
 fn build_renewed_lease_result(
     config: &CoordinatorConfig,
     key: &SigningKey,
@@ -1134,6 +1329,12 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         lease_ttl_ms: flags.u64_flag_with_default("--lease-ttl-ms", 60_000)?,
         revoke_delay_ms: flags.u64_flag_with_default("--revoke-delay-ms", 0)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
+        resume_protocol: flags.bool_flag("--resume-protocol"),
+        session_id: flags
+            .0
+            .get("--session-id")
+            .cloned()
+            .unwrap_or_else(|| "legacy-session".into()),
     };
 
     run(config)

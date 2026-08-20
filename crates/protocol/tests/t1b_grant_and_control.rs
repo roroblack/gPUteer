@@ -418,6 +418,7 @@ fn all_domain_tags_are_distinct() {
         Domain::QuarantineDevice, Domain::QuarantineRelease,
         Domain::Audit, Domain::Release, Domain::Invite, Domain::GrantAck,
         Domain::LeaseRenewResult,
+        Domain::SessionHello, Domain::LeaseResume, Domain::LeaseResumeResult,
     ];
     let mut seen = std::collections::HashMap::new();
     for d in all {
@@ -425,7 +426,7 @@ fn all_domain_tags_are_distinct() {
             panic!("domain_tag 중복: {prev:?} 와 {d:?} 가 같은 tag 를 쓴다");
         }
     }
-    assert_eq!(seen.len(), 25, "signing.md §5 는 25종이다 (ADR-028 + GrantAck + LeaseRenewResult)");
+    assert_eq!(seen.len(), 28, "signing.md §5 는 28종이다");
 }
 
 // ══════════════════════════════════════════════════════════════════

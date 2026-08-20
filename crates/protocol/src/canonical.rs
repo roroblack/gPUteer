@@ -318,6 +318,9 @@ pub enum Domain {
     //   같은 domain_tag 를 쓰면 요청 서명을 응답으로 재사용하는
     //   교차 재생 공격을 배제할 근거가 사라진다.
     LeaseRenewResult,
+    SessionHello,
+    LeaseResume,
+    LeaseResumeResult,
 }
 
 impl Domain {
@@ -348,6 +351,9 @@ impl Domain {
             Domain::Invite => "gputeer/v1/invite",
             Domain::GrantAck => "gputeer/v1/grant-ack",
             Domain::LeaseRenewResult => "gputeer/v1/lease-renew-result",
+            Domain::SessionHello => "gputeer/v1/session-hello",
+            Domain::LeaseResume => "gputeer/v1/lease-resume",
+            Domain::LeaseResumeResult => "gputeer/v1/lease-resume-result",
         }
     }
 

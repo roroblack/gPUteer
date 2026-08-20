@@ -247,6 +247,9 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("control.proto", "AgentGrantAck", 90),
     // Lease 갱신 최소 조각 (2026-08-19)
     ("lease.proto", "RenewLeaseResult", 90),
+    ("lease.proto", "AgentSessionHello", 90),
+    ("lease.proto", "ResumeLeaseRequest", 90),
+    ("lease.proto", "ResumeLeaseResult", 90),
 ];
 
 #[test]

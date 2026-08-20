@@ -91,6 +91,53 @@ fn renew_result(k: &SigningKey, nonce_seed: u8) -> pb::RenewLeaseResult {
     m
 }
 
+fn session_hello(k: &SigningKey) -> pb::AgentSessionHello {
+    let mut m = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: 2,
+        session_id: "session-1".into(),
+        node_id: DEVICE.into(),
+        connection_attempt: 2,
+        issued_at_unix_ms: NOW,
+        nonce: (0u8..16).collect(),
+        ..Default::default()
+    };
+    m.node_signature = sign(k, &m).to_vec();
+    m
+}
+
+fn resume_request(k: &SigningKey) -> pb::ResumeLeaseRequest {
+    let mut m = pb::ResumeLeaseRequest {
+        schema_version: 1,
+        lease_id: "lease-1".into(),
+        job_id: "job-1".into(),
+        attempt_id: "attempt-1".into(),
+        node_id: DEVICE.into(),
+        fence_epoch: 4,
+        session_id: "session-1".into(),
+        connection_attempt: 2,
+        issued_at_unix_ms: NOW,
+        request_nonce: (16u8..32).collect(),
+        ..Default::default()
+    };
+    m.node_signature = sign(k, &m).to_vec();
+    m
+}
+
+fn resume_result(k: &SigningKey) -> pb::ResumeLeaseResult {
+    let mut m = pb::ResumeLeaseResult {
+        outcome: 1,
+        detail: "resumed".into(),
+        schema_version: 1,
+        coordinator_id: DEVICE.into(),
+        issued_at_unix_ms: NOW,
+        request_nonce: (16u8..32).collect(),
+        ..Default::default()
+    };
+    m.coordinator_signature = sign(k, &m).to_vec();
+    m
+}
+
 const REVOKE_LEASE_ID: &str = "01JBXLEASE0000000000000001";
 
 /// ★ `RevokeLeaseNotice` 에는 발급자 ID 필드가 없다 —
@@ -241,6 +288,61 @@ fn normal_renew_lease_result_frame_dispatches_to_the_right_variant() {
         got.request_nonce, expected_nonce,
         "request_nonce 가 원본과 다르다"
     );
+}
+
+#[test]
+fn resume_frames_round_trip_and_preserve_payloads() {
+    let k = key(12);
+    let dir = directory(&k);
+
+    let cases = vec![
+        (FrameType::SessionHello, session_hello(&k).encode_to_vec()),
+        (FrameType::LeaseResume, resume_request(&k).encode_to_vec()),
+        (FrameType::LeaseResumeResult, resume_result(&k).encode_to_vec()),
+    ];
+    for (frame_type, body) in cases {
+        let frame = write_frame(frame_type, &body).unwrap();
+        let mut stream = Cursor::new(frame);
+        let mut replay = InMemoryReplayGuard::new();
+        let message = read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&dir),
+            &mut replay,
+            &FixedClock(NOW),
+        )
+        .expect("Resume frame should verify");
+        match message {
+            IngressMessage::SessionHello(v) => {
+                assert_eq!(v.get().session_id, "session-1");
+                assert_eq!(v.get().mode, 2);
+            }
+            IngressMessage::LeaseResume(v) => {
+                assert_eq!(v.get().lease_id, "lease-1");
+                assert_eq!(v.get().fence_epoch, 4);
+            }
+            IngressMessage::LeaseResumeResult(v) => {
+                assert_eq!(v.get().outcome, 1);
+                assert_eq!(v.get().detail, "resumed");
+            }
+            other => panic!("unexpected Resume dispatch variant: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn forged_resume_signature_is_rejected() {
+    let k = key(13);
+    let dir = directory(&k);
+    let mut message = resume_request(&k);
+    message.node_signature[0] ^= 1;
+    let frame = write_frame(FrameType::LeaseResume, &message.encode_to_vec()).unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+    assert!(matches!(
+        read_frame(&mut stream, 1, KeyDirectorySource::Provided(&dir), &mut replay, &FixedClock(NOW)),
+        Err(FramingError::Verify(_))
+    ));
 }
 
 /// `RevokeLeaseNotice` 도 같은 스트림 구조에서 정상 동작하는가 —

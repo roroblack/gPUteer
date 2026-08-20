@@ -119,6 +119,61 @@ message RenewLeaseResult {
   bytes coordinator_signature = 90;
 }
 
+enum SessionMode {
+  SESSION_MODE_UNSPECIFIED = 0;
+  SESSION_MODE_FRESH = 1;
+  SESSION_MODE_RESUME = 2;
+}
+
+message AgentSessionHello {
+  uint32 schema_version = 1;
+  SessionMode mode = 2;
+  string session_id = 3;
+  string node_id = 4;
+  uint32 connection_attempt = 5;
+  uint64 issued_at_unix_ms = 6;
+  bytes nonce = 7;
+  bytes node_signature = 90;
+}
+
+message ResumeLeaseRequest {
+  uint32 schema_version = 1;
+  string lease_id = 2;
+  string job_id = 3;
+  string attempt_id = 4;
+  string node_id = 5;
+  uint64 fence_epoch = 6;
+  string session_id = 7;
+  uint32 connection_attempt = 8;
+  uint64 issued_at_unix_ms = 9;
+  bytes request_nonce = 10;
+  bytes node_signature = 90;
+}
+
+message ResumeLeaseResult {
+  ResumeOutcome outcome = 1;
+  Lease lease = 2;
+  string detail = 3;
+  uint32 retry_after_ms = 4;
+  uint32 schema_version = 5;
+  string coordinator_id = 6;
+  uint64 issued_at_unix_ms = 7;
+  bytes request_nonce = 8;
+  bytes coordinator_signature = 90;
+}
+
+enum ResumeOutcome {
+  RESUME_OUTCOME_UNSPECIFIED = 0;
+  RESUME_OUTCOME_RESUMED = 1;
+  RESUME_OUTCOME_REVOKED = 2;
+  RESUME_OUTCOME_EXPIRED = 3;
+  RESUME_OUTCOME_SUPERSEDED = 4;
+  RESUME_OUTCOME_UNKNOWN_LEASE = 5;
+  RESUME_OUTCOME_IDENTITY_CONFLICT = 6;
+  RESUME_OUTCOME_UNAVAILABLE = 7;
+  RESUME_OUTCOME_EPOCH_AHEAD = 8;
+}
+
 enum RenewOutcome {
   RENEW_OUTCOME_UNSPECIFIED = 0;
   RENEW_OUTCOME_RENEWED = 1;

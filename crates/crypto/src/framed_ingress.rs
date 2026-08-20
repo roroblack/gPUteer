@@ -93,6 +93,9 @@ pub enum FrameType {
     ReplicaAck = 9,
     GrantAck = 10,
     LeaseRenewResult = 11,
+    SessionHello = 12,
+    LeaseResume = 13,
+    LeaseResumeResult = 14,
 }
 
 impl FrameType {
@@ -109,6 +112,9 @@ impl FrameType {
             9 => Self::ReplicaAck,
             10 => Self::GrantAck,
             11 => Self::LeaseRenewResult,
+            12 => Self::SessionHello,
+            13 => Self::LeaseResume,
+            14 => Self::LeaseResumeResult,
             _ => return None,
         })
     }
@@ -177,6 +183,9 @@ pub enum IngressMessage {
     ReplicaAck(Verified<pb::ReplicaAck>),
     GrantAck(Verified<pb::AgentGrantAck>),
     LeaseRenewResult(Verified<pb::RenewLeaseResult>),
+    SessionHello(Verified<pb::AgentSessionHello>),
+    LeaseResume(Verified<pb::ResumeLeaseRequest>),
+    LeaseResumeResult(Verified<pb::ResumeLeaseResult>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -289,6 +298,9 @@ pub fn read_frame<R: Read>(
         FrameType::ReplicaAck => verify_as!(ReplicaAck, pb::ReplicaAck),
         FrameType::GrantAck => verify_as!(GrantAck, pb::AgentGrantAck),
         FrameType::LeaseRenewResult => verify_as!(LeaseRenewResult, pb::RenewLeaseResult),
+        FrameType::SessionHello => verify_as!(SessionHello, pb::AgentSessionHello),
+        FrameType::LeaseResume => verify_as!(LeaseResume, pb::ResumeLeaseRequest),
+        FrameType::LeaseResumeResult => verify_as!(LeaseResumeResult, pb::ResumeLeaseResult),
     }
 }
 

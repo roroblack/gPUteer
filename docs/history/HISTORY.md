@@ -16,6 +16,50 @@
 
 ---
 
+## 2026-08-20 12:00 — Resume 프로토콜 — 구현 2라운드 + 독립 검수 3라운드 + evidence 기록 (`DoD-36`)
+- 계획: `docs/plans/2026-08-20_1200_resume_프로토콜_v1.md`
+  (기준 로드맵: `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`
+  조각 3).
+- 스트림: Coordinator · Agent · Protocol · Crypto · QA · 문서.
+- 수행: 사용자가 "코덱스 쿼터만 써서 다 진행 최대한 시켜봐" 라고
+  지시했다 — `DoD-35`(로드맵 조각 1+2)에 이어 조각 3(명시적
+  Resume 프로토콜)을 시작했다. 설계 조사(`p187`)가 범위를 확정한
+  뒤, 구현 1라운드(`p188`, 코덱스 workspace-write)가
+  `proto/lease.proto` 에 `SessionMode`·`AgentSessionHello`·
+  `ResumeLeaseRequest`·`ResumeOutcome`·`ResumeLeaseResult` 를
+  순수 추가하고 canonical/signing 체인 전체(domain 25→28)를
+  갱신, `crates/coordinator/src/lease_store.rs` 에 읽기 전용
+  `classify_resume()` 신설(`get_or_issue()`/
+  `renew_existing_within_duration()` 재사용 안 함), Agent 에
+  `--resume-protocol` opt-in 플래그 추가(기본값은 기존 handshake
+  그대로), selftest 시나리오 53~60 신설. 독립 검수 1라운드
+  (`p189`)가 대부분 통과시키면서도 새 canonical 벡터
+  `v34`/`v35`/`v36` 이 Rust 쪽에서 실제로 대조되는 테스트가 없다는
+  진짜 공백(`DoD-05` 와 같은 종류)을 찾아 `CHANGES_REQUESTED`.
+  구현 2라운드(`p190`)가 `t1_signing_targets.rs` 에 교차검증
+  테스트를 추가하고 뮤테이션(필드 번호 10→11)으로 검증. 독립 검수
+  2라운드(`p191`)가 그 내용은 이미 문제없다고 확인하면서도 아직
+  커밋 전인 조각 전체의 `git diff --stat` 범위를 오해해
+  `CHANGES_REQUESTED` — `DoD-31` 과 같은 종류의 오탐. 감독자가
+  나머지 21개 파일의 변경이 1라운드 이후 불변임을 직접 확인한 뒤
+  3라운드(`p192`)를 요청해 최종 **`ACCEPTED`**. 감독자가 매
+  라운드 canonical self-test/verify·check_schema·cargo build/test·
+  `coordinator-agent-selftest` 5~8회 연속(전부 exit=0, 60개
+  시나리오, 약 30초/회)으로 독립 재확인했다. 로드맵 7조각 중 1~3
+  완료 — 남은 4(dispatcher 정교화)·5(durable ledger)·6(Agent
+  Resume 통합)·7(다중 Agent selftest)은 후속 조각.
+- 검증: `python tools/canonical/reference_canonical.py --self-test`/
+  `--verify` 3라운드 전부 PASS(48개 벡터), `check_schema.py` 오류
+  0건, `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  3라운드 전부 성공(실패 0건), `coordinator-agent-selftest` 8회+
+  5회 연속 exit=0·60개 시나리오, 뮤테이션 3건(revoke/만료 순서·
+  epoch 방향·canonical 필드 번호) 모두 정확한 실패 재현 후 원복,
+  `python scripts/verify_evidence.py` 스키마 위반 없음(PASS 44/45).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-36_resume_프로토콜.md`).
+
+---
+
 ## 2026-08-20 10:01 — 자동 재접속 최소 경로 — 구현 3라운드 + 독립 검수 3라운드 + evidence 기록 (`DoD-35`)
 - 계획: `docs/plans/2026-08-20_1001_자동_재접속_최소_경로_v1.md`
   (기준 로드맵: `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`,

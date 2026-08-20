@@ -39,7 +39,7 @@ enum SessionError {
 
 impl From<String> for SessionError {
     fn from(value: String) -> Self {
-        if value.contains("RETRYABLE_CONNECTION") {
+        if value.contains("RETRYABLE_CONNECTION") || value.contains("RETRYABLE_RESUME") {
             Self::Retryable(value)
         } else if value.contains("AMBIGUOUS_RENEW") {
             Self::AmbiguousRenew(value)
@@ -168,6 +168,13 @@ pub struct AgentConfig {
     pub retry_cap_ms: u64,
     pub connection_attempt: u32,
     pub reconnect_enabled: bool,
+    /// Explicit opt-in Resume lane; false preserves Grant-first behavior.
+    pub resume_protocol: bool,
+    pub session_id: String,
+    pub resume_lease_id: String,
+    pub resume_job_id: String,
+    pub resume_attempt_id: String,
+    pub resume_fence_epoch: u64,
 }
 
 /// 정상 handshake 한 번을 실행한다.
@@ -287,6 +294,132 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     Err("ReconnectExhausted: no attempts configured".into())
 }
 
+fn run_resume_connection(
+    config: &AgentConfig,
+    mut stream: TcpStream,
+    signing_key: &SigningKey,
+    coordinator_keys: &mut InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    budget: &mut RetryBudget,
+    policy: &RetryPolicy,
+) -> Result<(), String> {
+    if config.session_id.is_empty()
+        || config.resume_lease_id.is_empty()
+        || config.resume_job_id.is_empty()
+        || config.resume_attempt_id.is_empty()
+    {
+        return Err("resume protocol requires session_id, lease_id, job_id, and attempt_id".into());
+    }
+    let now = clock.now_unix_ms();
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: 2,
+        session_id: config.session_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        connection_attempt: config.connection_attempt,
+        issued_at_unix_ms: now,
+        nonce: fresh_nonce()?,
+        ..Default::default()
+    };
+    hello.node_signature = sign(signing_key, &hello).to_vec();
+    let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+        .map_err(|e| format!("AgentSessionHello 프레임 인코딩 실패: {e}"))?;
+    stream
+        .write_all(&hello_frame)
+        .map_err(|e| format!("AgentSessionHello 전송 실패: {e}"))?;
+    stream.flush().map_err(|e| e.to_string())?;
+
+    let mut request = pb::ResumeLeaseRequest {
+        schema_version: 1,
+        lease_id: config.resume_lease_id.clone(),
+        job_id: config.resume_job_id.clone(),
+        attempt_id: config.resume_attempt_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        fence_epoch: config.resume_fence_epoch,
+        session_id: config.session_id.clone(),
+        connection_attempt: config.connection_attempt,
+        issued_at_unix_ms: clock.now_unix_ms(),
+        request_nonce: fresh_nonce()?,
+        ..Default::default()
+    };
+    request.node_signature = sign(signing_key, &request).to_vec();
+    let request_frame = write_frame(FrameType::LeaseResume, &request.encode_to_vec())
+        .map_err(|e| format!("ResumeLeaseRequest 프레임 인코딩 실패: {e}"))?;
+    stream
+        .write_all(&request_frame)
+        .map_err(|e| format!("ResumeLeaseRequest 전송 실패: {e}"))?;
+    stream.flush().map_err(|e| e.to_string())?;
+
+    let result_message = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(coordinator_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| format!("ResumeLeaseResult 프레임 읽기/검증 실패: {e}"))?;
+    let result = match result_message {
+        IngressMessage::LeaseResumeResult(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("ResumeLeaseResult replay 검사 실패: {e:?}"))?
+            .clone(),
+        other => return Err(format!("ResumeLeaseResult가 아닌 프레임 수신: {other:?}")),
+    };
+    if result.request_nonce != request.request_nonce {
+        return Err("RESUME_REJECTED: request_nonce가 echo되지 않았다".into());
+    }
+    if result.coordinator_id != config.coordinator_device_id {
+        return Err(format!(
+            "RESUME_REJECTED: coordinator_id 불일치 {} != {}",
+            config.coordinator_device_id, result.coordinator_id
+        ));
+    }
+
+    match result.outcome {
+        1 => {
+            let lease = result
+                .lease
+                .clone()
+                .ok_or_else(|| "RESUME_REJECTED: RESUMED 결과에 Lease가 없다".to_string())?;
+            let verified_lease = verify(&lease, 1, &Ed25519Verifier::new(&*coordinator_keys), clock.now_unix_ms(), replay)
+                .map_err(|e| format!("RESUME_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
+            if verified_lease.get().lease_id != request.lease_id
+                || verified_lease.get().job_id != request.job_id
+                || verified_lease.get().attempt_id != request.attempt_id
+                || verified_lease.get().holder_node_id != config.agent_device_id
+                || verified_lease.get().fence_epoch != request.fence_epoch
+            {
+                return Err("RESUME_REJECTED: returned Lease identity/epoch mismatch".into());
+            }
+            budget.update_lease_deadline(
+                verified_lease.get().expires_at_unix_ms,
+                clock.now_unix_ms(),
+                policy,
+            );
+            println!(
+                "RESUME_RESULT ok=true outcome=1 lease_id={} connection_attempt={}",
+                request.lease_id, request.connection_attempt
+            );
+            println!("RESULT ok=true resume_outcome=1 lease_id={}", request.lease_id);
+            Ok(())
+        }
+        7 => Err(format!(
+            "RETRYABLE_RESUME: coordinator unavailable retry_after_ms={} detail={}",
+            result.retry_after_ms, result.detail
+        )),
+        outcome => Err(format!(
+            "RESUME_REJECTED: outcome={} detail={}", outcome, result.detail
+        )),
+    }
+}
+
+fn fresh_nonce() -> Result<Vec<u8>, String> {
+    let mut nonce = [0u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(|e| format!("CSPRNG nonce 생성 실패: {e}"))?;
+    Ok(nonce.to_vec())
+}
+
 fn run_one_connection(
     config: AgentConfig,
     mut stream: TcpStream,
@@ -326,6 +459,19 @@ fn run_one_connection(
     stream
         .set_write_timeout(Some(IO_TIMEOUT))
         .map_err(|e| e.to_string())?;
+
+    if config.resume_protocol {
+        return run_resume_connection(
+            &config,
+            stream,
+            signing_key,
+            coordinator_keys,
+            replay,
+            clock,
+            budget,
+            policy,
+        );
+    }
 
     let received = read_frame(
         &mut stream,
@@ -1018,6 +1164,16 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         retry_cap_ms: flags.u64_flag_with_default("--retry-cap-ms", 5_000)?,
         connection_attempt: 0,
         reconnect_enabled: !flags.bool_flag("--disable-reconnect"),
+        resume_protocol: flags.bool_flag("--resume-protocol"),
+        session_id: flags
+            .0
+            .get("--session-id")
+            .cloned()
+            .unwrap_or_else(|| "resume-session".into()),
+        resume_lease_id: flags.0.get("--resume-lease-id").cloned().unwrap_or_default(),
+        resume_job_id: flags.0.get("--resume-job-id").cloned().unwrap_or_default(),
+        resume_attempt_id: flags.0.get("--resume-attempt-id").cloned().unwrap_or_default(),
+        resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
     };
 
     run(config)
@@ -1193,6 +1349,12 @@ mod tests {
             retry_cap_ms: 100,
             connection_attempt: 0,
             reconnect_enabled: true,
+            resume_protocol: false,
+            session_id: "test-session".into(),
+            resume_lease_id: String::new(),
+            resume_job_id: String::new(),
+            resume_attempt_id: String::new(),
+            resume_fence_epoch: 0,
         };
 
         let agent_thread = thread::spawn(move || run(agent_config));

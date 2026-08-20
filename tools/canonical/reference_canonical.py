@@ -378,6 +378,40 @@ SCHEMAS = {
         (8, "request_nonce", "bytes", None),
         (90, "coordinator_signature", "bytes", None),
     ],
+    "AgentSessionHello": [
+        (1, "schema_version", "uint", None),
+        (2, "mode", "enum", None),
+        (3, "session_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "connection_attempt", "uint", None),
+        (6, "issued_at_unix_ms", "uint", None),
+        (7, "nonce", "bytes", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "ResumeLeaseRequest": [
+        (1, "schema_version", "uint", None),
+        (2, "lease_id", "string", None),
+        (3, "job_id", "string", None),
+        (4, "attempt_id", "string", None),
+        (5, "node_id", "string", None),
+        (6, "fence_epoch", "uint", None),
+        (7, "session_id", "string", None),
+        (8, "connection_attempt", "uint", None),
+        (9, "issued_at_unix_ms", "uint", None),
+        (10, "request_nonce", "bytes", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "ResumeLeaseResult": [
+        (1, "outcome", "enum", None),
+        (2, "lease", "message", "Lease"),
+        (3, "detail", "string", None),
+        (4, "retry_after_ms", "uint", None),
+        (5, "schema_version", "uint", None),
+        (6, "coordinator_id", "string", None),
+        (7, "issued_at_unix_ms", "uint", None),
+        (8, "request_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
     # ══════════════════════════════════════════════════════════════
     # T1b (2026-08-16) — grant · membership · policy · quarantine
     #
@@ -628,6 +662,9 @@ DOMAIN_TAGS = {
     "RevokeLeaseNotice": b"gputeer/v1/lease-revoke",
     "AgentGrantAck": b"gputeer/v1/grant-ack",
     "RenewLeaseResult": b"gputeer/v1/lease-renew-result",
+    "AgentSessionHello": b"gputeer/v1/session-hello",
+    "ResumeLeaseRequest": b"gputeer/v1/lease-resume",
+    "ResumeLeaseResult": b"gputeer/v1/lease-resume-result",
     "CheckpointManifest": b"gputeer/v1/checkpoint",
     "ReplicaAck": b"gputeer/v1/replica-ack",
     "ArtifactRef": b"gputeer/v1/artifact",
@@ -1574,6 +1611,34 @@ def build_vectors():
     assert c_rr0 == c_rr2, "규칙 i 위반 -- nested Lease 서명 필드가 outer canonical 에 새어나갔다"
 
     # 10. domain_tag 분리 — 같은 canonical, 다른 tag → 다른 sig_input
+    _hello = {
+        "schema_version": 1, "mode": 2,
+        "session_id": "01JBXSESSION00000000000001", "node_id": "node-1",
+        "connection_attempt": 2, "issued_at_unix_ms": 1_755_103_900_000,
+        "nonce": bytes(range(16)), "node_signature": b"\x11" * 64,
+    }
+    add("v34_agent_session_hello", "AgentSessionHello RESUME canonical vector", "AgentSessionHello", _hello)
+
+    _resume_request = {
+        "schema_version": 1,
+        "lease_id": "01JBXLEASE0000000000000001",
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1", "fence_epoch": 42,
+        "session_id": "01JBXSESSION00000000000001", "connection_attempt": 2,
+        "issued_at_unix_ms": 1_755_103_900_000,
+        "request_nonce": bytes(range(16, 32)), "node_signature": b"\x22" * 64,
+    }
+    add("v35_resume_lease_request", "ResumeLeaseRequest canonical vector", "ResumeLeaseRequest", _resume_request)
+
+    _resume_result = {
+        "outcome": 1, "lease": _full_lease(), "detail": "resumed",
+        "retry_after_ms": 0, "schema_version": 1, "coordinator_id": "coord-a",
+        "issued_at_unix_ms": 1_755_103_900_000,
+        "request_nonce": bytes(range(16, 32)), "coordinator_signature": b"\x33" * 64,
+    }
+    add("v36_resume_lease_result", "ResumeLeaseResult RESUMED canonical vector", "ResumeLeaseResult", _resume_result)
+
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)
     si_manifest = sig_input("JobManifest", 1, canon)

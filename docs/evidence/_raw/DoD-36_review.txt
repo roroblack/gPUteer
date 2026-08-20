@@ -1,0 +1,78 @@
+########## p189 (독립 검수 1라운드, read-only, 새 인스턴스) — CHANGES_REQUESTED(canonical 교차검증 공백 1건, 그 외 전부 통과) ##########
+# CHANGES_REQUESTED
+
+필수 수정 사항은 1건입니다.
+
+- 새 canonical 벡터 3개가 Rust 구현과 실제 대조되지 않습니다.  
+  Python 생성기와 JSON에는 `v34/v35/v36`가 있지만, Rust 테스트에는 해당 벡터를 읽어 `to_fields.rs` 결과와 비교하는 테스트가 없습니다. [`reference_canonical.py:1620`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/reference_canonical.py:1620), [`canonical_v1.json:482`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tests/vectors/canonical_v1.json:482)  
+  [`t1_signing_targets.rs`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:395)는 기존 `RenewLeaseResult`까지만 대조하고, 이후에는 domain 목록만 추가합니다. [`canonical_vectors.rs:303`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/canonical_vectors.rs:303)도 domain uniqueness만 검사합니다.  
+  `AgentSessionHello`, `ResumeLeaseRequest`, `ResumeLeaseResult`를 실제 protobuf 객체로 구성해 `v34/v35/v36`의 `canonical_hex`와 비교하는 Rust 테스트를 추가해야 합니다.
+
+확인된 통과 항목:
+
+- `proto/lease.proto`는 기존 필드 번호 변경 없이 새 enum/message만 추가됐습니다. [`lease.proto:122`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/proto/lease.proto:122)
+- 28개 domain과 새 3개 tag는 목록상 고유합니다. [`t1b_grant_and_control.rs:418`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1b_grant_and_control.rs:418)
+- 세 메시지는 `ShortLived`, `field_number_audit`에 모두 등록됐습니다. [`lifetime_consistency.rs:203`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:203), [`field_number_audit.rs:250`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/field_number_audit.rs:250)
+- 기본 Agent/Coordinator 경로는 `--resume-protocol` 조건문 뒤에 그대로 보존돼 있습니다. [`agent/src/lib.rs:463`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:463), [`coordinator/src/lib.rs:270`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:270)
+- `classify_resume()`는 읽기 전용이며 identity → revoke → `<=` 만료 → epoch 순서와 만료시각 불변을 지킵니다. [`lease_store.rs:236`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:236)
+- `EPOCH_AHEAD = 8`도 실제 enum에 존재합니다.
+- 변경 범위는 추적 파일 22개와 계획 문서 1개이며, durable request ledger나 다중 Agent 경쟁 코드는 추가되지 않았습니다.
+- 직접 실행: `reference_canonical.py --self-test` 통과, vector verify 48개 일치. `check_schema.py`는 구현 오류가 아니라 샌드박스에 사용 가능한 임시 디렉터리가 없어 실행되지 않았습니다.
+- `UNAVAILABLE` 시나리오 60은 SQLite lock 장애가 아니라 durable store 미제공을 fail-closed unavailable로 흉내 낸 것입니다. 이는 근사로는 정직하지만 실제 일시적 저장소 장애의 검증은 아닙니다.
+
+########## p191 (독립 검수 2라운드, read-only, 새 인스턴스 — 수정 확인) — CHANGES_REQUESTED(내용은 통과, git diff 범위 오해) ##########
+CHANGES_REQUESTED
+
+새 테스트 자체는 통과합니다.
+
+- [t1_signing_targets.rs:460-537](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:460): 세 protobuf 객체를 각각 직접 구성하고, `v34`/`v35`/`v36`의 `canonical_hex`와 직접 비교합니다.
+- [reference_canonical.py:1614-1640](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/reference_canonical.py:1614): 필드값이 모두 일치합니다.
+- [to_fields.rs:559-572](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/to_fields.rs:559): canonical 매핑을 10→11로 바꾸면 출력 키가 달라져 테스트가 실패하는 구조입니다.
+
+하지만 현재 `git diff --stat`는 `t1_signing_targets.rs`만이 아니라 22개 tracked 파일을 보고합니다. 예: [proto/lease.proto:128](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/proto/lease.proto:128), [reference_canonical.py:1614](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/tools/canonical/reference_canonical.py:1614). 또한 untracked 계획 문서도 존재합니다. 따라서 “이번 라운드에는 한 파일만 변경” 조건을 현재 작업 트리에서 확인할 수 없습니다.
+
+########## 감독자(Claude Code) 경위 설명 ##########
+p191이 "git diff --stat이 t1_signing_targets.rs 외 22개 파일을
+더 보고한다"는 이유로 CHANGES_REQUESTED를 냈다 — 실제로는 Resume
+프로토콜 조각 전체(p188의 21개 파일 + p190의 1개 파일)가 아직 한
+번도 git 커밋되지 않아 diff에 전부 남아있는 당연한 결과였다
+(DoD-31에서 겪은 것과 같은 종류의 오해). 감독자가
+git diff --stat -- . ':!crates/protocol/tests/t1_signing_targets.rs'
+로 나머지 21개 파일의 변경 줄 수가 p188 직후와 정확히 동일함을
+직접 확인한 뒤, 이 경위를 설명하는 재확인 라운드를 요청했다.
+
+########## p192 (독립 검수 3라운드, read-only, 새 인스턴스 — 오해 해소 재확인) — ACCEPTED ##########
+**ACCEPTED**
+
+- `git diff --stat -- . ':!crates/protocol/tests/t1_signing_targets.rs'` 결과는 21개 파일이며, 이는 커밋되지 않은 1차 라운드 변경분과 일치합니다.
+- 대상 파일 diff는 새 테스트 함수 [`resume_protocol_messages_match_reference`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:459) 1개 추가가 핵심입니다.
+- 기존 테스트 본문은 건드리지 않았고, [`domain_coverage_is_explicit`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:574)의 도메인 목록·카운트만 새 메시지 반영을 위해 갱신되었습니다.
+- `git diff --check`도 문제없이 통과했습니다.
+
+따라서 직전 반려 사유는 오해였으며, 이번 라운드는 **ACCEPTED**입니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경, 각 라운드마다 ##########
+[1차 구현 후] python tools/canonical/reference_canonical.py --self-test: PASS
+  --verify tests/vectors/canonical_v1.json: 48개 벡터 일치
+  python tools/canonical/check_schema.py: 오류 0건
+  cargo build/test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+  coordinator-agent-selftest 8회 연속: exit=0 elapsed_ms=30400/30044/30147/
+    29950/29892/30053/29986/29868, 매회 60개 시나리오
+    (구현자가 보고한 예비 실행 중 1회 시나리오 51 일시적 accept timeout은
+    감독자의 8회 연속 재현에서 전혀 재현 안 됨 — 일시적 부하로 판단)
+
+[2차 수정 후] python tools/canonical/reference_canonical.py --self-test/--verify: PASS
+  cargo test -p gputeer-protocol resume_protocol_messages_match_reference: 1개 통과
+  cargo build/test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+  coordinator-agent-selftest 5회 연속: exit=0 elapsed_ms=30299/30573/30740/
+    30412/30588, 매회 60개 시나리오
+
+[3차 재확인] git diff --stat -- . ':!crates/protocol/tests/t1_signing_targets.rs'
+  결과가 21개 파일이며 각 파일의 변경 줄 수가 1차 구현 직후와 정확히 동일함을 확인
+  (proto/lease.proto +55, coordinator/lib.rs +203, agent/lib.rs +164,
+  coordinator_agent_selftest.rs +228, lease_store.rs +136,
+  framed_ingress.rs +12/+102, canonical.rs +6, signable.rs +36,
+  to_fields.rs +49, canonical_vectors.rs +3/-1, field_number_audit.rs +3,
+  lifetime_consistency.rs +18, t1b_grant_and_control.rs +3/-1,
+  signing.md +9/-1, SCHEMA_FINGERPRINT.txt +33/-1,
+  reference_canonical.py +65, canonical_v1.json +30 — 전부 불변)

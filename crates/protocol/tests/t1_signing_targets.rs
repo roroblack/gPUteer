@@ -457,6 +457,86 @@ fn renew_lease_result_matches_reference() {
 }
 
 #[test]
+fn resume_protocol_messages_match_reference() {
+    let hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: 2, // SESSION_MODE_RESUME
+        session_id: "01JBXSESSION00000000000001".into(),
+        node_id: "node-1".into(),
+        connection_attempt: 2,
+        issued_at_unix_ms: 1_755_103_900_000,
+        nonce: (0u8..16).collect(),
+        node_signature: vec![0x11; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&hello.to_canonical_fields(), &[])),
+        expect_hex("v34_agent_session_hello"),
+        "AgentSessionHello canonical 이 Python 참조 구현과 다르다"
+    );
+
+    let request = pb::ResumeLeaseRequest {
+        schema_version: 1,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        node_id: "node-1".into(),
+        fence_epoch: 42,
+        session_id: "01JBXSESSION00000000000001".into(),
+        connection_attempt: 2,
+        issued_at_unix_ms: 1_755_103_900_000,
+        request_nonce: (16u8..32).collect(),
+        node_signature: vec![0x22; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&request.to_canonical_fields(), &[])),
+        expect_hex("v35_resume_lease_request"),
+        "ResumeLeaseRequest canonical 이 Python 참조 구현과 다르다"
+    );
+
+    let lease = pb::Lease {
+        schema_version: 1,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        fence_epoch: 42,
+        coordinator_term: 7,
+        holder_node_id: "node-1".into(),
+        member_node_ids: vec!["node-1".into(), "node-2".into()],
+        issuing_coordinator_id: "coord-a".into(),
+        issued_at_unix_ms: 1_755_100_800_000,
+        expires_at_unix_ms: 1_755_100_860_000,
+        renew_after_unix_ms: 1_755_100_830_000,
+        max_total_duration_seconds: 86_400,
+        scope: Some(pb::ResourceScope {
+            gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
+            cpu_cores: 8,
+            ram_bytes: 25_769_803_776,
+            workspace_bytes: 85_899_345_920,
+            writable_prefixes: vec![
+                "jobs/01JBXR7Q0000000000000000AA/attempt-3/".into(),
+            ],
+        }),
+        coordinator_signature: vec![0xCD; 64],
+    };
+    let result = pb::ResumeLeaseResult {
+        outcome: 1, // RESUME_OUTCOME_RESUMED
+        lease: Some(lease),
+        detail: "resumed".into(),
+        retry_after_ms: 0,
+        schema_version: 1,
+        coordinator_id: "coord-a".into(),
+        issued_at_unix_ms: 1_755_103_900_000,
+        request_nonce: (16u8..32).collect(),
+        coordinator_signature: vec![0x33; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&result.to_canonical_fields(), &[])),
+        expect_hex("v36_resume_lease_result"),
+        "ResumeLeaseResult canonical 이 Python 참조 구현과 다르다"
+    );
+}
+
+#[test]
 fn revoke_lease_notice_matches_reference() {
     let n = pb::RevokeLeaseNotice {
         schema_version: 1,
@@ -529,9 +609,12 @@ fn domain_coverage_is_explicit() {
         // Lease 갱신 최소 조각 (2026-08-19) — RenewLeaseResult 를
         // 서명 대상으로 승격. ToCanonicalFields·Signable 둘 다 구현됨.
         (Domain::LeaseRenewResult, Some("RenewLeaseResult"), true),
+        (Domain::SessionHello, Some("AgentSessionHello"), true),
+        (Domain::LeaseResume, Some("ResumeLeaseRequest"), true),
+        (Domain::LeaseResumeResult, Some("ResumeLeaseResult"), true),
     ];
 
-    assert_eq!(coverage.len(), 25, "domain_tag 는 25종이다 (signing.md §5, ADR-028 + GrantAck + LeaseRenewResult)");
+    assert_eq!(coverage.len(), 28, "domain_tag 는 28종이다");
 
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
@@ -549,7 +632,7 @@ fn domain_coverage_is_explicit() {
 
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
-    assert_eq!(implemented, 21, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(implemented, 24, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
     assert_eq!(
         no_message, 4,
         "proto 메시지 없는 domain 수가 바뀌었다 — 목록을 갱신하라"
