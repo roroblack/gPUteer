@@ -327,7 +327,7 @@ impl Domain {
     pub fn as_str(self) -> &'static str {
         match self {
             Domain::Manifest => "gputeer/v1/manifest",
-            Domain::Grant => "gputeer/v1/grant",
+            Domain::Grant => "gputeer/v2/grant",
             Domain::Lease => "gputeer/v1/lease",
             Domain::LeaseRenew => "gputeer/v1/lease-renew",
             Domain::LeaseRevoke => "gputeer/v1/lease-revoke",

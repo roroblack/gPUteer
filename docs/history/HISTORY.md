@@ -16,6 +16,43 @@
 
 ---
 
+## 2026-08-20 16:40 — Ambiguous Renew 복구 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-39`)
+- 계획: `docs/plans/2026-08-20_1615_ambiguous_renew_복구_v1.md`
+  (로드맵 조각 5, 원안 "durable request ledger" 를 정직하게 재범위).
+- 스트림: Agent · Coordinator · protocol · QA · 문서.
+- 수행: 사용자가 "코덱스한테 ㄱ" 로 조각 5 진행을 지시. 설계
+  조사(`p201`, read-only)가 실제 공백은 "정확히 한 번 처리"가
+  아니라 가용성 공백임을 코드로 확인했다 — Agent 가
+  `RenewLeaseRequest` 전송 뒤 결과를 못 받으면(`AmbiguousRenew`)
+  즉시 fatal 종료하던 것을, 새 게이트가 켜졌을 때만 bounded
+  reconnect 후 기존 Grant/ACK 경로(`get_or_issue()`)로 최신 저장
+  Lease 를 재조회하고 새 nonce 로 새 Renew 를 보내도록 재범위(구현
+  `p202`). 독립 검수 1라운드(`p203`)가 진짜 안전 결함을 찾았다 —
+  durable 복구 게이트가 Coordinator 의 실제 `--lease-db` 설정과
+  검증 가능하게 결합되지 않아, legacy Coordinator + 이 게이트
+  오조합 시 재접속이 "상태 재조회"가 아니라 "그 순간 새로 조작된
+  Lease 발급"이 되는 결함. 구현 2라운드(`p204`)가 `proto/job.proto`
+  의 `ExecutionGrant` 를 schema v2 로 승격해 서명 대상 필드
+  `lease_from_durable_store` 를 순수 추가하고, Coordinator 는
+  `lease_store.is_some()` 일 때만 true 로 서명, Agent 는 이 비트가
+  true 가 아니면 ACK·checkpoint·Renew 전에 fatal 거부하도록 근본
+  수정. 독립 검수 2라운드(`p205`)가 서명 결합·Coordinator 정직성·
+  Agent 거부 순서·기존 경로 회귀 없음까지 전부 확인하고 최종
+  `ACCEPTED`. **로드맵 7조각 중 1·2·3·4·5·6 완료** — 남은 7(다중
+  Agent selftest)만 후속 조각.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  각 라운드 성공(실패 0건), canonical self-test/`--verify` 48개
+  벡터 일치, `coordinator-agent-selftest` 5회+10회+5회 연속(72개
+  시나리오, 약 39.0~39.9초/회), 뮤테이션 2건(1라운드
+  `AmbiguousRenew` fatal 복원·2라운드 durable 방어 조건 제거)
+  모두 정확한 실패 재현 후 원복,
+  `python scripts/verify_evidence.py` 스키마 위반 없음(PASS
+  47/48).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-39_ambiguous_renew_복구.md`).
+
+---
+
 ## 2026-08-20 14:10 — Agent Resume 통합 — 구현 1라운드 + 독립 검수 1라운드 + evidence 기록 (`DoD-38`)
 - 계획: `docs/plans/2026-08-20_1410_agent_resume_통합_v1.md`
   (기준 로드맵 조각 6).

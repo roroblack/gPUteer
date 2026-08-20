@@ -61,7 +61,7 @@ fn minimal_manifest(sig: u8) -> pb::JobManifest {
 
 fn grant(manifest_sig: u8, manifest_hash: u8) -> pb::ExecutionGrant {
     pb::ExecutionGrant {
-        schema_version: 1,
+        schema_version: 2,
         grant_id: "01JBXGRANT0000000000000001".into(),
         manifest: Some(minimal_manifest(manifest_sig)),
         manifest_hash: Some(pb::Digest {
@@ -122,6 +122,7 @@ fn grant(manifest_sig: u8, manifest_hash: u8) -> pb::ExecutionGrant {
         issued_at_unix_ms: 1_755_100_800_000,
         expires_at_unix_ms: 1_755_100_860_000,
         nonce: (0u8..16).collect(),
+        lease_from_durable_store: true,
         coordinator_signature: vec![0xFE; 64],
     }
 }
@@ -213,6 +214,10 @@ fn every_grant_field_affects_canonical() {
         ("expires_at(23)", Box::new(|g: &mut pb::ExecutionGrant| g.expires_at_unix_ms = 0)),
         // ★ nonce 가 서명 밖이면 replay 캐시를 우회할 수 있다
         ("nonce(24)", Box::new(|g: &mut pb::ExecutionGrant| g.nonce.clear())),
+        (
+            "lease_from_durable_store(25)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.lease_from_durable_store = false),
+        ),
     ];
 
     let mut unsigned = Vec::new();

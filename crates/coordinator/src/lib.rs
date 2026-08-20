@@ -129,6 +129,12 @@ pub struct CoordinatorConfig {
     ///   한다 — 안 그러면 다른 갱신 요청에 대한 결과가 재사용될 수
     ///   있다(계획서 "In" 절 — `request_nonce` 의 목적).
     pub corrupt_renew_result_nonce: bool,
+    /// Test-only: after `build_renew_result()` has durably committed a renewed
+    /// Lease, drop the first connection before encoding or sending the result.
+    pub drop_after_renew_commit_before_result_once: bool,
+    /// Renewal lifetime used by the stub.  The default remains 60 seconds;
+    /// short values make expiry-after-ambiguous-commit tests deterministic.
+    pub renew_extension_ms: u64,
 
     // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
     /// 같은 연결에서 갱신 왕복을 이 횟수만큼 반복한다. `do_renew ==
@@ -737,6 +743,34 @@ fn serve_one_connection_impl(
                 renew_req.nonce.clone(),
             )?;
 
+            if config.drop_after_renew_commit_before_result_once && connection_attempt == 0 {
+                let committed_lease = result.lease.as_ref().ok_or_else(|| {
+                    "drop-after-renew-commit hook requires a RENEWED result with Lease"
+                        .to_string()
+                })?;
+                if lease_store.is_none() {
+                    return Err(
+                        "drop-after-renew-commit hook requires durable --lease-db"
+                            .to_string()
+                            .into(),
+                    );
+                }
+                if config.revoke_before_drop {
+                    lease_store
+                        .as_mut()
+                        .expect("durable store checked above")
+                        .mark_revoked(&renew_req.lease_id, clock.now_unix_ms())
+                        .map_err(|e| format!("lease store revoke after renew commit failed: {e}"))?;
+                }
+                println!(
+                    "DROP_AFTER_RENEW_COMMIT_BEFORE_RESULT_ONCE durable_commit=true lease_id={} expires_at_unix_ms={} request_nonce={}",
+                    renew_req.lease_id,
+                    committed_lease.expires_at_unix_ms,
+                    hex_bytes(&renew_req.nonce)
+                );
+                return Ok(());
+            }
+
             let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec())
                 .map_err(|e| format!("RenewLeaseResult 프레임 인코딩 실패: {e}"))?;
             stream
@@ -745,8 +779,10 @@ fn serve_one_connection_impl(
             stream.flush().map_err(|e| e.to_string())?;
 
             println!(
-                "RENEW_RESULT ok=true outcome={} lease_id={}",
-                result.outcome, config.lease_id
+                "RENEW_RESULT ok=true outcome={} lease_id={} request_nonce={}",
+                result.outcome,
+                config.lease_id,
+                hex_bytes(&result.request_nonce)
             );
 
             // Agent는 정상 정책 거부(outcome=2/3/6/8)를 받으면 즉시
@@ -1181,8 +1217,8 @@ fn build_renew_result(
             None => match store.renew_existing_within_duration(
                 lease_id,
                 now,
-                now + 60_000,
-                now + 30_000,
+                now + config.renew_extension_ms,
+                now + config.renew_extension_ms / 2,
             ) {
                 Err(LeaseStoreError::Revoked { revoked_at_unix_ms }) => {
                     revoked_result(request_nonce, revoked_at_unix_ms)
@@ -1325,7 +1361,7 @@ fn issue_grant(
     let lease = issue_lease(config, lease_store, key, now)?;
 
     let mut grant = pb::ExecutionGrant {
-        schema_version: 1,
+        schema_version: 2,
         grant_id: config.grant_id.clone(),
         attempt_id: config.attempt_id.clone(),
         coordinator_device_id: config.coordinator_device_id.clone(),
@@ -1333,6 +1369,9 @@ fn issue_grant(
         issued_at_unix_ms: now,
         expires_at_unix_ms: now + 60_000,
         nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
+        // This bit is part of the v2 Grant signature.  It reports the store
+        // actually used for this issue_lease() call, not the legacy opt-in.
+        lease_from_durable_store: lease_store.is_some(),
         lease: Some(lease),
         ..Default::default()
     };
@@ -1475,6 +1514,10 @@ fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// `--flag value` 쌍으로 이루어진 CLI 인자를 [`CoordinatorConfig`] 로
 /// 파싱해 [`run`] 을 부른다. `crates/cli` 는 이 함수를 호출하기만 하고
 /// 인자 의미는 여기(Coordinator 스트림)가 정의한다
@@ -1512,6 +1555,9 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_renew_result_signature: flags.bool_flag("--corrupt-renew-result-signature"),
         corrupt_renewed_lease_signature: flags.bool_flag("--corrupt-renewed-lease-signature"),
         corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
+        drop_after_renew_commit_before_result_once: flags
+            .bool_flag("--drop-after-renew-commit-before-result-once"),
+        renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
         allow_unsafe_legacy_mode: flags.bool_flag("--i-understand-legacy-mode-is-unsafe"),

@@ -402,6 +402,23 @@ fn started_checkpoint_id(stdout: &str) -> Option<String> {
     })
 }
 
+fn output_field<'a>(output: &'a str, marker: &str, field: &str) -> Option<&'a str> {
+    output.lines().find_map(|line| {
+        if !line.contains(marker) {
+            return None;
+        }
+        line.split_whitespace()
+            .find_map(|part| part.strip_prefix(field))
+    })
+}
+
+fn output_u64_field(output: &str, marker: &str, field: &str) -> Result<u64, String> {
+    output_field(output, marker, field)
+        .ok_or_else(|| format!("missing {field} on output line containing {marker:?}: {output}"))?
+        .parse::<u64>()
+        .map_err(|error| format!("invalid u64 {field} on {marker:?}: {error}"))
+}
+
 fn assert_no_agent_ack_or_marker(
     outcome: &HandshakeOutcome,
     root: &Path,
@@ -3434,6 +3451,428 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("64) 정상 startup 뒤 열린 lease DB를 Resume 요청 직전에 손상시켜 kind=storage 분류·UNAVAILABLE 미서명·다음 accept 없는 즉시 run 종료를 검증\n");
 
+    // 65. The first renewal is committed to SQLite but its result is dropped.
+    // The same Agent process reconnects through the ordinary Grant/ACK lane,
+    // observes exactly that committed Lease, and sends a fresh renewal nonce.
+    let ambiguous_dir_65 = tempfile::tempdir()
+        .map_err(|e| format!("ambiguous renew recovery tempdir failed (65): {e}"))?;
+    let lease_db_path_65 = ambiguous_dir_65.path().join("lease.sqlite3");
+    let fence_db_path_65 = ambiguous_dir_65.path().join("fence.sqlite3");
+    let lease_db_65 = lease_db_path_65
+        .to_str()
+        .ok_or_else(|| "lease db 65 is not UTF-8".to_string())?;
+    let fence_db_65 = fence_db_path_65
+        .to_str()
+        .ok_or_else(|| "fence db 65 is not UTF-8".to_string())?;
+    let recovered_65 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_65, "--max-connections", "2",
+            "--accept-timeout-ms", "5000",
+            "--drop-after-renew-commit-before-result-once", "true",
+            "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_65, "--do-renew", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    let committed_expiry_65 = output_u64_field(
+        &recovered_65.coordinator_stdout,
+        "DROP_AFTER_RENEW_COMMIT_BEFORE_RESULT_ONCE",
+        "expires_at_unix_ms=",
+    )
+    .map_err(|error| format!("65) committed expiry observation failed: {error}"))?;
+    let regranted_expiry_65 = output_u64_field(
+        &recovered_65.agent_stdout,
+        "LEASE_ACCEPTED connection_attempt=1",
+        "expires_at_unix_ms=",
+    )
+    .map_err(|error| format!("65) regranted expiry observation failed: {error}"))?;
+    let first_nonce_65 = output_field(
+        &recovered_65.coordinator_stdout,
+        "DROP_AFTER_RENEW_COMMIT_BEFORE_RESULT_ONCE",
+        "request_nonce=",
+    )
+    .ok_or_else(|| "65) missing first committed renewal nonce".to_string())?;
+    let second_nonce_65 = output_field(
+        &recovered_65.coordinator_stdout,
+        "RENEW_RESULT ok=true outcome=1",
+        "request_nonce=",
+    )
+    .ok_or_else(|| "65) missing second successful renewal nonce".to_string())?;
+    if !recovered_65.coordinator_success
+        || !recovered_65.agent_success
+        || recovered_65
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 2
+        || recovered_65.agent_stdout.matches("LEASE_ACCEPTED").count() != 2
+        || recovered_65.agent_stdout.matches("RENEW_RESULT ok=true").count() != 1
+        || committed_expiry_65 != regranted_expiry_65
+        || first_nonce_65 == second_nonce_65
+    {
+        return Err(format!(
+            "65) ambiguous renew recovery failed: committed_expiry={} regranted_expiry={} first_nonce={} second_nonce={} coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
+            committed_expiry_65,
+            regranted_expiry_65,
+            first_nonce_65,
+            second_nonce_65,
+            recovered_65.coordinator_success,
+            recovered_65.coordinator_stdout,
+            recovered_65.coordinator_stderr,
+            recovered_65.agent_success,
+            recovered_65.agent_stdout,
+            recovered_65.agent_stderr,
+        ));
+    }
+    report.push_str("65) Renew SQLite commit 직후 결과 전송 전 drop; 동일 Agent가 bounded reconnect 후 기존 Grant/ACK get_or_issue 경로에서 정확히 committed expiry를 받고 새 nonce Renew 성공\n");
+
+    // 66. Revocation committed after the ambiguous renewal must make the
+    // second get_or_issue fail closed; reconnect cannot resurrect the Lease.
+    let revoke_dir_66 = tempfile::tempdir()
+        .map_err(|e| format!("ambiguous renew revoke tempdir failed (66): {e}"))?;
+    let lease_db_path_66 = revoke_dir_66.path().join("lease.sqlite3");
+    let fence_db_path_66 = revoke_dir_66.path().join("fence.sqlite3");
+    let lease_db_66 = lease_db_path_66
+        .to_str()
+        .ok_or_else(|| "lease db 66 is not UTF-8".to_string())?;
+    let fence_db_66 = fence_db_path_66
+        .to_str()
+        .ok_or_else(|| "fence db 66 is not UTF-8".to_string())?;
+    let revoked_66 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_66, "--max-connections", "2",
+            "--accept-timeout-ms", "5000",
+            "--drop-after-renew-commit-before-result-once", "true",
+            "--revoke-before-drop", "true", "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_66, "--do-renew", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    let revoked_record_66 = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(
+        &lease_db_path_66,
+    )
+    .map_err(|e| format!("66) reopen lease store failed: {e}"))?
+    .get(fixture.lease_id)
+    .map_err(|e| format!("66) read revoked lease failed: {e}"))?
+    .ok_or_else(|| "66) revoked lease disappeared".to_string())?;
+    if revoked_66.agent_success
+        || revoked_66.coordinator_success
+        || revoked_record_66.revoked_at_unix_ms.is_none()
+        || !revoked_66.coordinator_stderr.contains("revoked")
+        || !revoked_66.agent_stderr.contains("ReconnectExhausted")
+        || revoked_66.agent_stdout.contains("RENEW_RESULT ok=true")
+    {
+        return Err(format!(
+            "66) revoke bypassed ambiguous recovery: record={:?} coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+            revoked_record_66,
+            revoked_66.coordinator_stdout,
+            revoked_66.coordinator_stderr,
+            revoked_66.agent_stdout,
+            revoked_66.agent_stderr,
+        ));
+    }
+    report.push_str("66) ambiguous commit 뒤 durable revoke를 확정한 경우 두 번째 get_or_issue가 revoked로 fail-closed; Agent는 bounded ReconnectExhausted로 종료\n");
+
+    // 67. A deliberately short committed renewal expires while the
+    // Coordinator pauses before accepting the reconnect.
+    let expiry_dir_67 = tempfile::tempdir()
+        .map_err(|e| format!("ambiguous renew expiry tempdir failed (67): {e}"))?;
+    let lease_db_path_67 = expiry_dir_67.path().join("lease.sqlite3");
+    let fence_db_path_67 = expiry_dir_67.path().join("fence.sqlite3");
+    let lease_db_67 = lease_db_path_67
+        .to_str()
+        .ok_or_else(|| "lease db 67 is not UTF-8".to_string())?;
+    let fence_db_67 = fence_db_path_67
+        .to_str()
+        .ok_or_else(|| "fence db 67 is not UTF-8".to_string())?;
+    let expired_67 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_67, "--max-connections", "2",
+            "--accept-timeout-ms", "5000",
+            "--drop-after-renew-commit-before-result-once", "true",
+            "--renew-extension-ms", "300", "--pause-before-next-accept-ms", "600",
+            "--lease-ttl-ms", "5000", "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_67, "--do-renew", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    if expired_67.agent_success
+        || expired_67.coordinator_success
+        || !expired_67.coordinator_stderr.contains("expired")
+        || !expired_67.agent_stderr.contains("ReconnectExhausted")
+        || expired_67.agent_stdout.contains("LEASE_ACCEPTED connection_attempt=1")
+    {
+        return Err(format!(
+            "67) expiry bypassed ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+            expired_67.coordinator_stdout,
+            expired_67.coordinator_stderr,
+            expired_67.agent_stdout,
+            expired_67.agent_stderr,
+        ));
+    }
+    report.push_str("67) 300ms로 연장된 committed Lease를 next-accept 600ms 지연 중 만료시켜 두 번째 get_or_issue의 <= expiry 거부 확인\n");
+
+    // 68. The original issued_at remains authoritative after recovery.  Once
+    // max duration elapses, the fresh heartbeat is signed as policy refusal.
+    let max_dir_68 = tempfile::tempdir()
+        .map_err(|e| format!("ambiguous renew max-duration tempdir failed (68): {e}"))?;
+    let lease_db_path_68 = max_dir_68.path().join("lease.sqlite3");
+    let fence_db_path_68 = max_dir_68.path().join("fence.sqlite3");
+    let lease_db_68 = lease_db_path_68
+        .to_str()
+        .ok_or_else(|| "lease db 68 is not UTF-8".to_string())?;
+    let fence_db_68 = fence_db_path_68
+        .to_str()
+        .ok_or_else(|| "fence db 68 is not UTF-8".to_string())?;
+    let maxed_68 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_68, "--max-connections", "2",
+            "--accept-timeout-ms", "5000",
+            "--drop-after-renew-commit-before-result-once", "true",
+            "--max-total-duration-seconds", "1", "--pause-before-next-accept-ms", "1200",
+            "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_68, "--do-renew", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    if !maxed_68.coordinator_success
+        || maxed_68.agent_success
+        || !maxed_68
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=6")
+        || !maxed_68
+            .agent_stderr
+            .contains("RENEW_REFUSED:MAX_DURATION_EXCEEDED")
+        || maxed_68
+            .agent_stderr
+            .contains("ReconnectExhausted")
+    {
+        return Err(format!(
+            "68) max-duration bypassed ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+            maxed_68.coordinator_stdout,
+            maxed_68.coordinator_stderr,
+            maxed_68.agent_stdout,
+            maxed_68.agent_stderr,
+        ));
+    }
+    report.push_str("68) ambiguous recovery 후에도 최초 issued_at 기준 1초 max-duration이 유지되어 새 heartbeat를 signed MAX_DURATION_EXCEEDED로 즉시 종료\n");
+
+    // 69. Deliberately reusing the old nonce proves this is not response
+    // replay/idempotency: the in-memory guard still rejects the duplicate.
+    let replay_dir_69 = tempfile::tempdir()
+        .map_err(|e| format!("ambiguous renew replay tempdir failed (69): {e}"))?;
+    let lease_db_path_69 = replay_dir_69.path().join("lease.sqlite3");
+    let fence_db_path_69 = replay_dir_69.path().join("fence.sqlite3");
+    let lease_db_69 = lease_db_path_69
+        .to_str()
+        .ok_or_else(|| "lease db 69 is not UTF-8".to_string())?;
+    let fence_db_69 = fence_db_path_69
+        .to_str()
+        .ok_or_else(|| "fence db 69 is not UTF-8".to_string())?;
+    let replayed_69 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_69, "--max-connections", "2",
+            "--accept-timeout-ms", "5000",
+            "--drop-after-renew-commit-before-result-once", "true", "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_69, "--do-renew", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--reuse-renew-nonce-after-reconnect", "true",
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    let replay_error_69 = replayed_69.coordinator_stderr.to_ascii_lowercase();
+    if replayed_69.coordinator_success
+        || replayed_69.agent_success
+        || !(replay_error_69.contains("duplicate") || replay_error_69.contains("replay"))
+        || replayed_69
+            .coordinator_stdout
+            .contains("RENEW_RESULT ok=true outcome=1")
+        || !replayed_69.agent_stderr.contains("ReconnectExhausted")
+    {
+        return Err(format!(
+            "69) same nonce was not rejected: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+            replayed_69.coordinator_stdout,
+            replayed_69.coordinator_stderr,
+            replayed_69.agent_stdout,
+            replayed_69.agent_stderr,
+        ));
+    }
+    report.push_str("69) 재접속 뒤 old Renew nonce를 강제로 재사용하면 Coordinator InMemoryReplayGuard가 Duplicate/replay로 거부; 이전 응답 재생이 아님을 확인\n");
+
+    // 70. Legacy mode has no durable authority.  An Agent-side drop after the
+    // flushed request creates the same ambiguity, but the recovery gate is
+    // absent and therefore no second connection is attempted.
+    let legacy_dir_70 = tempfile::tempdir()
+        .map_err(|e| format!("legacy ambiguous gate tempdir failed (70): {e}"))?;
+    let fence_db_path_70 = legacy_dir_70.path().join("fence.sqlite3");
+    let fence_db_70 = fence_db_path_70
+        .to_str()
+        .ok_or_else(|| "fence db 70 is not UTF-8".to_string())?;
+    let legacy_70 = run_reconnect_case(
+        &fixture,
+        &[
+            "--max-connections", "1", "--accept-timeout-ms", "5000",
+            "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_70, "--do-renew", "true",
+            "--drop-after-renew-request-once", "true",
+            "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    if legacy_70.agent_success
+        || !legacy_70
+            .agent_stderr
+            .contains("AMBIGUOUS_RENEW_RECOVERY_DISABLED")
+        || legacy_70.agent_stderr.contains("ReconnectExhausted")
+        || legacy_70
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 1
+    {
+        return Err(format!(
+            "70) unsafe legacy mode entered ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+            legacy_70.coordinator_stdout,
+            legacy_70.coordinator_stderr,
+            legacy_70.agent_stdout,
+            legacy_70.agent_stderr,
+        ));
+    }
+    report.push_str("70) 명시적 unsafe legacy(--lease-db 없음)에서 request flush 뒤 결과 유실을 만들어도 durable recovery gate가 꺼져 connection_attempt=0 한 번만 실행\n");
+
+    // 71. If the Coordinator consumed max-connections while dropping the
+    // committed result, all later connects are refused.  The Agent must leave
+    // through its bounded retry budget rather than waiting forever.
+    let exhausted_dir_71 = tempfile::tempdir()
+        .map_err(|e| format!("ambiguous max-connections tempdir failed (71): {e}"))?;
+    let lease_db_path_71 = exhausted_dir_71.path().join("lease.sqlite3");
+    let fence_db_path_71 = exhausted_dir_71.path().join("fence.sqlite3");
+    let lease_db_71 = lease_db_path_71
+        .to_str()
+        .ok_or_else(|| "lease db 71 is not UTF-8".to_string())?;
+    let fence_db_71 = fence_db_path_71
+        .to_str()
+        .ok_or_else(|| "fence db 71 is not UTF-8".to_string())?;
+    let exhausted_started_71 = Instant::now();
+    let exhausted_71 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_71, "--max-connections", "1",
+            "--accept-timeout-ms", "5000",
+            "--drop-after-renew-commit-before-result-once", "true", "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_71, "--do-renew", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "3",
+            "--retry-base-ms", "10", "--retry-cap-ms", "25",
+        ],
+    )?;
+    let exhausted_elapsed_71 = exhausted_started_71.elapsed();
+    if !exhausted_71.coordinator_success
+        || exhausted_71.agent_success
+        || !exhausted_71.agent_stderr.contains("ReconnectExhausted")
+        || exhausted_elapsed_71 >= Duration::from_secs(10)
+        || exhausted_71
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 1
+    {
+        return Err(format!(
+            "71) max-connections exhaustion was not bounded: elapsed={:?} coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
+            exhausted_elapsed_71,
+            exhausted_71.coordinator_success,
+            exhausted_71.coordinator_stdout,
+            exhausted_71.coordinator_stderr,
+            exhausted_71.agent_success,
+            exhausted_71.agent_stdout,
+            exhausted_71.agent_stderr,
+        ));
+    }
+    report.push_str(&format!(
+        "71) commit/result 사이 drop과 함께 Coordinator max-connections=1 소진; Agent가 무한 대기 없이 ReconnectExhausted ({:?}, hard timeout=120s)\n",
+        exhausted_elapsed_71
+    ));
+
+    // 72. The local opt-in must not turn a legacy Coordinator into a durable
+    // authority.  The first request is deliberately made ambiguous, then the
+    // recovery connection receives a correctly signed v2 Grant whose durable
+    // bit is false.  The Agent must reject it before ACK or another renewal.
+    let legacy_dir_72 = tempfile::tempdir()
+        .map_err(|e| format!("legacy durable attestation tempdir failed (72): {e}"))?;
+    let fence_db_path_72 = legacy_dir_72.path().join("fence.sqlite3");
+    let fence_db_72 = fence_db_path_72
+        .to_str()
+        .ok_or_else(|| "fence db 72 is not UTF-8".to_string())?;
+    let legacy_recovery_72 = run_reconnect_case(
+        &fixture,
+        &[
+            "--max-connections", "2", "--accept-timeout-ms", "5000",
+            "--do-renew", "true",
+        ],
+        &[
+            "--fence-db", fence_db_72, "--do-renew", "true",
+            "--drop-after-renew-request-once", "true",
+            "--recover-ambiguous-renew-from-durable-lease", "true",
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
+            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+        ],
+    )?;
+    if legacy_recovery_72.agent_success
+        || legacy_recovery_72.coordinator_success
+        || !legacy_recovery_72
+            .agent_stderr
+            .contains("DURABLE_LEASE_RECOVERY_REFUSED")
+        || legacy_recovery_72.agent_stderr.contains("ReconnectExhausted")
+        || legacy_recovery_72
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 2
+        || legacy_recovery_72
+            .agent_stdout
+            .contains("LEASE_ACCEPTED connection_attempt=1")
+        || legacy_recovery_72.agent_stdout.matches("RENEW_RESULT ok=true").count() != 0
+    {
+        return Err(format!(
+            "72) legacy Coordinator was accepted as durable recovery authority: coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
+            legacy_recovery_72.coordinator_success,
+            legacy_recovery_72.coordinator_stdout,
+            legacy_recovery_72.coordinator_stderr,
+            legacy_recovery_72.agent_success,
+            legacy_recovery_72.agent_stdout,
+            legacy_recovery_72.agent_stderr,
+        ));
+    }
+    report.push_str("72) recovery=true 오조합에서도 legacy Coordinator의 signed durable=false Grant를 ACK·새 Renew 전에 fatal 거부\n");
+
     Ok(report)
 }
 
@@ -3594,7 +4033,7 @@ fn run_wire_agent_client(
     let clock = gputeer_crypto::SystemClock;
     let received = gputeer_crypto::read_frame(
         &mut stream,
-        1,
+        2,
         gputeer_crypto::KeyDirectorySource::Provided(&coordinator_keys),
         &mut replay,
         &clock,

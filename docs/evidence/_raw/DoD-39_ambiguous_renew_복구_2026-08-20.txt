@@ -1,0 +1,88 @@
+=== 구현 1라운드 (p202, 코덱스 workspace-write) 보고 ===
+
+구현과 검증을 완료했습니다. 기존 64개 시나리오를 포함한 총 71개 시나리오가 5회 연속 통과했습니다.
+
+변경 파일:
+- crates/agent/src/lib.rs — AmbiguousRenew를 durable 복구 게이트가 켜졌을 때 bounded reconnect 대상으로 변경. 재접속 후 기존 Grant/ACK 경로를 그대로 재실행하고 최신 Lease를 검증. 새 connection_attempt 기반 nonce로 Renew 재전송(696행). flush() 실패도 AMBIGUOUS_RENEW로 통일(722행). durable 복구용 명시적 게이트 추가(175행, 1213행).
+- crates/coordinator/src/lib.rs — build_renew_result()의 SQLite commit 직후, frame 인코딩·전송 전에 한 번 끊는 --drop-after-renew-commit-before-result-once hook 추가. 짧은 expiry 회귀 테스트용 --renew-extension-ms 추가(기본 60,000ms로 기존 동작 불변). lease_store.rs, 프로토콜, SQLite 스키마는 변경하지 않음.
+- crates/cli/src/coordinator_agent_selftest.rs — 신규 시나리오 65~71 추가.
+
+교착 안전성: 두 방향 모두 bounded. Coordinator 다음 연결 대기는 accept_with_deadline()으로 제한. Agent는 연결별 3초 timeout, 최대 시도 수, 전체 재접속 시간과 Lease deadline을 모두 적용, 소진 시 ReconnectExhausted로 종료(시나리오 71에서 max-connections=1 이후 약 4.26초 만에 확인).
+
+Legacy unsafe 모드: --recover-ambiguous-renew-from-durable-lease를 명시해야만 복구. 기본값 false이므로 legacy opt-in에서는 AMBIGUOUS_RENEW_RECOVERY_DISABLED로 즉시 종료(시나리오 70).
+
+검증 결과:
+- cargo build/test --workspace --exclude gputeer-runtime-windows: PASS
+- coordinator-agent-selftest: 71/71 × 5회 연속 PASS (39.8~41.2초/회, 120초 hard timeout)
+- 뮤테이션: AmbiguousRenew를 fatal로 복원 → 시나리오 65 실패 확인 → 원복 후 71/71 PASS 재확인
+
+=== 감독자(claude-code) 직접 재확인 ===
+
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+cargo test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+
+coordinator-agent-selftest 10회 실행(첫 배치 5회 연속, 배경 빌드 직후):
+run 1: exit=0 (71 시나리오)
+run 2: exit=0
+run 3: exit=1 — 시나리오 51(재접속 중 revoke, DoD-35부터 있던 기존 시나리오) accept timeout exceeded
+run 4: exit=0
+run 5: exit=0
+
+부하 없는 상태에서 추가 5회 연속: 전부 exit=0, 시나리오 51 재현 안 됨.
+→ run 3 실패는 배경 cargo build/test 직후의 시스템 부하로 인한 타이밍 플레이키로 판단(9/10 통과, 재현율 0/5).
+
+=== 독립 검수 1라운드 (p203) — CHANGES_REQUESTED ===
+
+차단 결함 1건: durable 복구 게이트가 Coordinator의 실제 durable 상태와 결합되지 않아 legacy 모드에서도 자동 복구를 활성화할 수 있음. Agent는 로컬 boolean만 검사(agent/lib.rs:301, 1213). Coordinator의 --lease-db 유무는 별개 설정(coordinator/lib.rs:1560). legacy Coordinator + recovery=true 오조합 시, 재접속 Coordinator는 durable get_or_issue()가 아니라 None => StoredLease 경로로 현재 시각 기준 Lease를 새로 조작(coordinator/lib.rs:1408, 1417) — "재조회"가 아니라 legacy 상태에서 새 발급.
+
+시나리오 70은 게이트 생략(기본값 false)만 검증, 오조합 자체는 미검증.
+
+그 외: 재접속은 동일 run_one_connection() 재호출, 시도 횟수·deadline 제한 확인. Grant 검증·ACK 기존 경로, 새 Renew도 기존 반복 루프, outcome 2|3|6|8 즉시 종료·Coordinator break 유지 확인. durable 경로 commit→hook 순서 확인. flush() 통일 정확함. diff 범위 확인(lease_store.rs·proto·SQLite 스키마 무변경). 시나리오 65~71 assert 확인. 직접 재실행은 read-only 샌드박스 제약으로 미완료(판정 근거로 안 씀).
+
+=== 구현 2라운드 (p204, 코덱스 workspace-write) — 결함 수정 ===
+
+옵션 B 선택(옵션 A는 정상 durable 갱신도 expires_at 변경, issued_at 비교는 동일 millisecond·시계 rollback을 안전하게 배제 못함).
+
+- proto/job.proto:104,133 — ExecutionGrant schema v2, 서명 대상 필드 25 lease_from_durable_store 추가.
+- coordinator/lib.rs:1364,1374 — v2 Grant 발급, lease_store.is_some()일 때만 durable=true로 서명.
+- agent/lib.rs:245,530 — 복구 Grant가 signed durable=true가 아니면 ACK·checkpoint·Renew 전에 DURABLE_LEASE_RECOVERY_REFUSED fatal 종료.
+- coordinator_agent_selftest.rs:3824 — 신규 시나리오 72.
+- to_fields.rs:732, canonical.rs:330, constants.rs:47 — canonical 필드, gputeer/v2/grant, schema 지원 갱신.
+- t1b_grant_and_control.rs:218 — durable 비트가 canonical 서명 입력에 실제로 영향을 주는지 검증하는 테스트 추가.
+- reference_canonical.py, canonical_v1.json, SCHEMA_FINGERPRINT.txt — 독립 canonical 벡터·schema 지문 갱신(48개 벡터).
+
+시나리오 72: legacy Coordinator(--lease-db 없음) + Agent recovery=true + 첫 Renew 결과 유실 + 재접속 Grant의 signed durable=false + Agent fatal 종료(두 번째 LEASE_ACCEPTED·ACK·새 Renew 모두 없음) 검증. 방어 조건을 임시로 false로 제거 → 시나리오 72 exit=1 실패(원래 결함 재현: legacy가 새 issued_at/expires_at Lease 발급, 두 번째 Renew까지 성공) → 원복 후 72/72 PASS 재확인.
+
+검증 결과(구현자 보고):
+- cargo build/test --workspace --exclude gputeer-runtime-windows: PASS, 실패 0
+- 독립 canonical 벡터 48개 재생성 대조: PASS
+- coordinator-agent-selftest 72개 × 5회 연속 PASS (39.0~41.3초/회, 120초 hard timeout, timeout 0)
+- 뮤테이션 원복 후 추가 72/72: PASS
+- git diff --check: PASS
+
+=== 감독자(claude-code) 독립 재확인 (2라운드 이후) ===
+
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+python tools/canonical/reference_canonical.py --self-test: all checks passed
+python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json: 48개 벡터 일치, cross-checks OK
+cargo test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+
+coordinator-agent-selftest 5회 연속 재실행:
+run 1: exit=0 elapsed_ms=39219 (72 시나리오)
+run 2: exit=0 elapsed_ms=38998
+run 3: exit=0 elapsed_ms=39312
+run 4: exit=0 elapsed_ms=38996
+run 5: exit=0 elapsed_ms=39973
+매회 시나리오 72("recovery=true 오조합에서도 legacy Coordinator의 signed durable=false Grant를 ACK·새 Renew 전에 fatal 거부") 확인.
+
+=== 독립 검수 2라운드 (p205) — ACCEPTED ===
+
+차단 결함 없음. 원래 legacy Coordinator 오조합 취약점이 닫혔음을 확인:
+- 서명 결합: field 25가 job.proto:133에 추가, to_fields.rs:732에서 canonical 입력에 포함. 공통 signing_input()을 서명·검증 양쪽이 사용하므로 값 변조 시 서명 실패. t1b_grant_and_control.rs:199의 새 테스트가 이 canonical 변화를 검사함을 확인.
+- Coordinator 정직성: 파일-backed store만 Some으로 허용(coordinator/lib.rs:288). 최초 발급·기존 Lease 조회 모두 SQLite transaction commit 성공 후 반환(lease_store.rs:287), 그 후에만 durable 비트 설정·Grant 서명(coordinator/lib.rs:1354) — "store는 Some이지만 특정 Lease는 미커밋" 경로 없음.
+- Agent 순서: 서명·replay 검증 직후 agent/lib.rs:530에서 거부, checkpoint 기록(550행)·ACK(572·595행)·Renew(651행 이후) 전부 거부 뒤. Fatal 분류로 재시도 안 됨.
+- 회귀: durable Coordinator는 모든 Grant에 true 서명. legacy false는 ambiguous recovery 중에만 거부되므로 recovery=false 기존 legacy handshake는 무영향. 시나리오 65~69·71과 일치.
+- v2 호환성: field 25는 field 24와 signature field 90 사이 순수 추가, fingerprint 정확히 반영(SCHEMA_FINGERPRINT.txt:357). v1과 서명 수준 비호환·fail-closed이지만 저장소는 배포 전(git remote -v 비어있음, ADR-028:93).
+- 시나리오 72 뮤테이션 주장 타당함 확인.
+- 범위: lease_store.rs diff 없음, lease_requests는 계획 문서에만 있고 실제 코드 없음.
+- 직접 재실행: python -B reference_canonical.py --verify exit 0, 48개 벡터 일치. cargo 미설치 샌드박스라 Rust 테스트는 판정 근거로 안 씀.

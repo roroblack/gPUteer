@@ -249,7 +249,7 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | 메시지 | domain_tag (패딩 전) |
 |---|---|
 | `JobManifest` | `gputeer/v1/manifest` |
-| `ExecutionGrant` | `gputeer/v1/grant` |
+| `ExecutionGrant` | `gputeer/v2/grant` |
 | `Lease` | `gputeer/v1/lease` |
 | `RenewLeaseRequest` | `gputeer/v1/lease-renew` |
 | `RevokeLeaseNotice` | `gputeer/v1/lease-revoke` |

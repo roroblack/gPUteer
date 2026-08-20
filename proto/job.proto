@@ -101,7 +101,7 @@ message JobManifest {
 // ═══════════════════════════════════════════════════════════════════════
 
 message ExecutionGrant {
-  uint32 schema_version = 1; // 현재 1
+  uint32 schema_version = 1; // 현재 2
   string grant_id = 2;
 
   // submitter 서명을 포함한 채로 그대로 전달된다. 재서명하지 않는다.
@@ -127,7 +127,12 @@ message ExecutionGrant {
   // 16바이트. replay 캐시 대상 (§25.4).
   bytes nonce = 24;
 
-  // domain_tag = "gputeer/v1/grant"
+  // 이 Grant의 Lease가 Coordinator의 durable Lease store에서
+  // get_or_issue()로 해석됐음을 나타낸다. Agent는 Ambiguous Renew
+  // 복구 재접속에서 이 서명된 값이 true인 경우에만 새 Renew를 보낸다.
+  bool lease_from_durable_store = 25;
+
+  // domain_tag = "gputeer/v2/grant"
   bytes coordinator_signature = 90;
 }
 

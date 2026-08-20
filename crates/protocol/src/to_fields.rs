@@ -727,6 +727,9 @@ impl ToCanonicalFields for pb::ExecutionGrant {
         put_uint(&mut f, 23, self.expires_at_unix_ms);
         // ★ nonce 는 서명 대상이다. 서명 밖이면 replay 캐시를 우회할 수 있다.
         put_bytes(&mut f, 24, &self.nonce);
+        // Ambiguous Renew 복구의 durable 권위 증명. 이 값이 서명 밖이면
+        // legacy Grant를 durable Grant로 바꿔 복구를 강제할 수 있다.
+        put_bool(&mut f, 25, self.lease_from_durable_store);
         f
     }
     fn schema_version(&self) -> u32 {

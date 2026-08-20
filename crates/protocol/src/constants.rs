@@ -44,7 +44,7 @@ pub const NONCE_LEN: usize = 16;
 pub const REPLAY_CACHE_MAX_ENTRIES: usize = 100_000;
 
 /// 현재 프로토콜 스키마 버전.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// ★ 단수명 메시지의 **TTL 상한** (독립 검수 2026-08-17).
 ///

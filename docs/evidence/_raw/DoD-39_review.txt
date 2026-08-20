@@ -1,0 +1,30 @@
+=== 독립 검수 1라운드 (p203) — CHANGES_REQUESTED ===
+
+차단 결함이 1건 있습니다.
+
+- [High] durable 복구 게이트가 Coordinator의 실제 durable 상태와 결합되지 않아 legacy 모드에서도 자동 복구를 활성화할 수 있습니다. Agent는 로컬 boolean만 검사하고 true면 즉시 재시도합니다(agent/lib.rs:301, agent/lib.rs:1213). Coordinator의 --lease-db 유무는 별개의 설정입니다(coordinator/lib.rs:1560). 따라서 사용자가 legacy Coordinator와 --recover-ambiguous-renew-from-durable-lease true를 잘못 조합하면, 재접속 후 Coordinator는 durable get_or_issue()가 아니라 None => StoredLease 경로로 현재 시각 기준 Lease를 새로 구성합니다(coordinator/lib.rs:1408, coordinator/lib.rs:1417). 이는 최신 committed Lease를 재조회하는 복구가 아니며, legacy 상태에서 issued_at·만료 권위를 새로 만들어 자동 복구합니다.
+
+시나리오 70은 게이트를 생략한 기본값 false만 검증합니다(coordinator_agent_selftest.rs:3735, coordinator_agent_selftest.rs:3742). 잘못된 조합인 legacy Coordinator + recovery=true를 검증하지 않습니다. 요구된 fail-closed 성질을 만족하려면 signed Coordinator capability 등 실제 durable 설정과 검증 가능하게 결합하거나, 검증할 수 없을 때 복구를 금지해야 하며 해당 오조합 회귀 테스트도 필요합니다.
+
+그 외 확인 결과:
+- 재접속은 동일 run_one_connection()을 재호출하며(agent/lib.rs:277), 시도 횟수와 deadline으로 제한되어 ReconnectExhausted로 끝납니다(agent/lib.rs:262, agent/lib.rs:308).
+- Grant 검증과 ACK는 기존 함수 경로이며, 새 Renew도 기존 반복 루프를 탑니다(agent/lib.rs:503, agent/lib.rs:663). Agent의 outcome 2|3|6|8 즉시 종료와 Coordinator의 대응 break도 유지됩니다(agent/lib.rs:823, coordinator/lib.rs:792).
+- durable 경로에서는 갱신 UPDATE가 line 514에서 commit되고, hook은 그 이후 결과 인코딩 전에 실행됩니다(lease_store.rs:514, coordinator/lib.rs:746). 재접속 get_or_issue()는 저장된 Lease를 그대로 반환합니다(lease_store.rs:308, lease_store.rs:321).
+- flush()는 변경 전 e.to_string()이라 fatal이었고, 현재는 AMBIGUOUS_RENEW로 분류되는 것이 맞습니다.
+- diff는 Agent 51+/3-, selftest 387+/0-, Coordinator 47+/4-뿐입니다. lease_store.rs, proto, SQLite 스키마 변경 및 lease_requests 테이블은 없습니다.
+- 시나리오 65~71은 대체로 주장한 관측을 assert합니다. 특히 71은 120초 hard timeout 외에도 실제 경과시간 <10초를 검사합니다(coordinator_agent_selftest.rs:3797, coordinator_agent_selftest.rs:3801).
+- 직접 재실행은 read-only 환경 때문에 완료하지 못했습니다(cargo access denied, 기존 바이너리는 임시 fence SQLite 생성 실패). 코드 실패로 판정하지 않았습니다.
+
+=== 독립 검수 2라운드 (p205) — ACCEPTED ===
+
+차단할 결함을 발견하지 못했다. 원래의 legacy Coordinator 오조합 취약점은 닫혔다.
+
+- 서명 결합: field 25가 job.proto:133에 추가되고, to_fields.rs:732에서 canonical 입력에 포함된다. 공통 signing_input()을 서명·검증 양쪽이 사용하므로 값을 true→false로 변조하면 서명이 실패한다. 새 테스트도 바로 그 canonical 변화를 검사한다(t1b_grant_and_control.rs:199).
+- Coordinator 정직성: 파일-backed store만 Some으로 허용한다(coordinator/lib.rs:288). 최초 발급과 기존 Lease 조회 모두 SQLite transaction commit 성공 후 반환하며(lease_store.rs:287), 그 후에만 durable 비트를 설정하고 Grant를 서명한다(coordinator/lib.rs:1354). "store는 Some이지만 특정 Lease는 미커밋"인 경로는 없다.
+- Agent 순서: 서명 및 replay 검증 직후 agent/lib.rs:530에서 거부한다. checkpoint 기록은 550행, ACK 생성·전송은 572·595행, Renew는 651행 이후이므로 모두 거부 뒤에 있다. 오류도 Fatal로 분류되어 재시도되지 않는다.
+- 회귀: durable Coordinator는 모든 Grant에 true를 서명한다. legacy Coordinator의 false는 ambiguous recovery 중에만 거부되므로 recovery=false인 기존 legacy handshake에는 영향을 주지 않는다. 시나리오 65~69·71과 이 분기가 일치한다.
+- v2 호환성: field 25는 기존 field 24와 signature field 90 사이의 순수 추가이며 fingerprint도 정확히 반영됐다(SCHEMA_FINGERPRINT.txt:357). 다만 v2/domain-tag 변경은 기존 v1 바이너리와 서명 수준에서 호환되지 않고 fail-closed한다. 저장소는 이를 배포 전 변경으로 명시하고 있으며(ADR-028:93), git remote -v도 비어 있었다.
+- 시나리오 72: 방어 조건을 제거하면 두 번째 legacy Grant가 통과해 LEASE_ACCEPTED, ACK, 새 Renew 경로로 진입하므로 현재 assertion들이 실패한다(coordinator_agent_selftest.rs:3824). 보고된 뮤테이션 결과는 코드상 타당하다.
+- 범위: lease_store.rs diff는 없으며, lease_requests는 계획 문서에만 있고 실제 테이블·코드는 없다.
+
+직접 실행한 python -B tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json은 exit 0, 48개 벡터 일치 및 cross-check OK였다. 이 샌드박스 PATH에는 cargo가 없어 Rust 테스트는 재실행하지 못했으며 판정 근거로 사용하지 않았다.

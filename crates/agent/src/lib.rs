@@ -168,6 +168,16 @@ pub struct AgentConfig {
     pub retry_cap_ms: u64,
     pub connection_attempt: u32,
     pub reconnect_enabled: bool,
+    /// Local opt-in for ambiguous renewal recovery.  This flag alone is not
+    /// authority: the recovery connection must also carry a signed v2 Grant
+    /// with `lease_from_durable_store == true`.
+    pub recover_ambiguous_renew_from_durable_lease: bool,
+    /// Test-only: close this Agent's first connection immediately after the
+    /// first renewal request is flushed, before reading its result.
+    pub drop_after_renew_request_once: bool,
+    /// Test-only mutation of nonce derivation: reuse connection attempt zero
+    /// after reconnect so the Coordinator's replay guard must reject it.
+    pub reuse_renew_nonce_after_reconnect: bool,
     /// Explicit opt-in Resume lane; false preserves Grant-first behavior.
     pub resume_protocol: bool,
     pub session_id: String,
@@ -220,6 +230,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         return run_one_connection(
             config,
             stream,
+            false,
             &signing_key,
             &mut coordinator_keys,
             &mut replay,
@@ -231,6 +242,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     }
 
     let mut connection_attempt = 0u32;
+    let mut recovering_ambiguous_renew = false;
     for attempt in 0..config.max_reconnect_attempts {
         if attempt > 0 {
             let exponent = (attempt - 1).min(31);
@@ -266,6 +278,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                 run_one_connection(
                     attempt_config,
                     stream,
+                    recovering_ambiguous_renew,
                     &signing_key,
                     &mut coordinator_keys,
                     &mut replay,
@@ -287,7 +300,18 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                     continue;
                 }
                 SessionError::Fatal(reason) => return Err(reason),
-                SessionError::AmbiguousRenew(reason) => return Err(reason),
+                SessionError::AmbiguousRenew(reason) => {
+                    if !config.recover_ambiguous_renew_from_durable_lease {
+                        return Err(format!(
+                            "AMBIGUOUS_RENEW_RECOVERY_DISABLED: durable Lease recovery was not enabled: {reason}"
+                        ));
+                    }
+                    if attempt + 1 >= policy.max_attempts {
+                        return Err(format!("ReconnectExhausted: {reason}"));
+                    }
+                    recovering_ambiguous_renew = true;
+                    continue;
+                }
             },
         }
     }
@@ -429,6 +453,7 @@ fn fresh_nonce() -> Result<Vec<u8>, String> {
 fn run_one_connection(
     config: AgentConfig,
     mut stream: TcpStream,
+    recovering_ambiguous_renew: bool,
     signing_key: &SigningKey,
     coordinator_keys: &mut InMemoryKeyring,
     mut replay: &mut InMemoryReplayGuard,
@@ -481,7 +506,7 @@ fn run_one_connection(
 
     let received = read_frame(
         &mut stream,
-        1,
+        2,
         KeyDirectorySource::Provided(coordinator_keys),
         replay,
         clock,
@@ -497,6 +522,17 @@ fn run_one_connection(
             .clone(),
         other => return Err(format!("예상하지 못한 요청 타입: {other:?}")),
     };
+    // The local recovery flag only expresses operator intent.  A legacy
+    // Coordinator can mint a fresh in-memory Lease on reconnect, so recovery
+    // is safe only when the verified Grant itself attests that issue_lease()
+    // resolved the Lease through the durable store.  Missing v2 fields decode
+    // as false and therefore fail closed before ACK/checkpoint/new Renew.
+    if recovering_ambiguous_renew && !grant.lease_from_durable_store {
+        return Err(
+            "DURABLE_LEASE_RECOVERY_REFUSED: signed ExecutionGrant does not attest a durable Lease store"
+                .into(),
+        );
+    }
     if grant.nonce != derive_nonce("grant", &grant.grant_id, config.connection_attempt) {
         return Err("GRANT_REJECTED: nonce does not match connection attempt".into());
     }
@@ -519,6 +555,13 @@ fn run_one_connection(
         held_lease.expires_at_unix_ms,
         clock.now_unix_ms(),
         policy,
+    );
+    println!(
+        "LEASE_ACCEPTED connection_attempt={} lease_id={} issued_at_unix_ms={} expires_at_unix_ms={}",
+        config.connection_attempt,
+        held_lease.lease_id,
+        held_lease.issued_at_unix_ms,
+        held_lease.expires_at_unix_ms
     );
 
     // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
@@ -614,7 +657,7 @@ fn run_one_connection(
             .map_err(|e| e.to_string())?;
         return match read_frame(
             &mut stream,
-            1,
+            2,
             KeyDirectorySource::Provided(coordinator_keys),
             replay,
             clock,
@@ -665,7 +708,11 @@ fn run_one_connection(
             //   가 코드 경로로 확정한 결함).
             nonce: derive_renew_nonce(
                 &held_lease.lease_id,
-                config.connection_attempt,
+                if config.reuse_renew_nonce_after_reconnect && config.connection_attempt > 0 {
+                    0
+                } else {
+                    config.connection_attempt
+                },
                 round as u64,
             ),
             ..Default::default()
@@ -685,7 +732,15 @@ fn run_one_connection(
         stream
             .write_all(&frame)
             .map_err(|e| format!("AMBIGUOUS_RENEW: RenewLeaseRequest 전송 실패: {e}"))?;
-        stream.flush().map_err(|e| e.to_string())?;
+        stream
+            .flush()
+            .map_err(|e| format!("AMBIGUOUS_RENEW: RenewLeaseRequest flush 실패: {e}"))?;
+        if config.drop_after_renew_request_once && config.connection_attempt == 0 && round == 0 {
+            return Err(
+                "AMBIGUOUS_RENEW: test hook dropped connection after RenewLeaseRequest flush"
+                    .into(),
+            );
+        }
 
         let result_msg = read_frame(
             &mut stream,
@@ -1170,6 +1225,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         retry_cap_ms: flags.u64_flag_with_default("--retry-cap-ms", 5_000)?,
         connection_attempt: 0,
         reconnect_enabled: !flags.bool_flag("--disable-reconnect"),
+        recover_ambiguous_renew_from_durable_lease: flags
+            .bool_flag("--recover-ambiguous-renew-from-durable-lease"),
+        drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
+        reuse_renew_nonce_after_reconnect: flags
+            .bool_flag("--reuse-renew-nonce-after-reconnect"),
         resume_protocol: flags.bool_flag("--resume-protocol"),
         session_id: flags
             .0
@@ -1355,6 +1415,9 @@ mod tests {
             retry_cap_ms: 100,
             connection_attempt: 0,
             reconnect_enabled: true,
+            recover_ambiguous_renew_from_durable_lease: false,
+            drop_after_renew_request_once: false,
+            reuse_renew_nonce_after_reconnect: false,
             resume_protocol: false,
             session_id: "test-session".into(),
             resume_lease_id: String::new(),

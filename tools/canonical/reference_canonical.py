@@ -472,6 +472,7 @@ SCHEMAS = {
         (22, "issued_at_unix_ms", "uint", None),
         (23, "expires_at_unix_ms", "uint", None),
         (24, "nonce", "bytes", None),
+        (25, "lease_from_durable_store", "bool", None),
         (90, "coordinator_signature", "bytes", None),
     ],
     "CoordinatorEntry": [
@@ -656,7 +657,7 @@ def canonical_encode(schema_name: str, msg: dict) -> bytes:
 
 DOMAIN_TAGS = {
     "JobManifest": b"gputeer/v1/manifest",
-    "ExecutionGrant": b"gputeer/v1/grant",
+    "ExecutionGrant": b"gputeer/v2/grant",
     "Lease": b"gputeer/v1/lease",
     "RenewLeaseRequest": b"gputeer/v1/lease-renew",
     "RevokeLeaseNotice": b"gputeer/v1/lease-revoke",
@@ -1320,7 +1321,7 @@ def build_vectors():
         m = _minimal_manifest()
         m["submitter_signature"] = manifest_sig
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "grant_id": "01JBXGRANT0000000000000001",
             "manifest": m,
             # ★ 이 필드는 SCHEMAS["ExecutionGrant"] 에 없다 — 규칙 i 의 도출 해시 필드.
@@ -1376,6 +1377,7 @@ def build_vectors():
             "issued_at_unix_ms": 1_755_100_800_000,
             "expires_at_unix_ms": 1_755_100_860_000,
             "nonce": bytes(range(16)),
+            "lease_from_durable_store": True,
             "coordinator_signature": b"\xFE" * 64,
         }
 
