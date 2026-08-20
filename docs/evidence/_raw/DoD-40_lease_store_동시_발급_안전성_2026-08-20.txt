@@ -1,0 +1,61 @@
+=== 설계 조사 (p206, read-only) 결론 요약 ===
+
+로드맵 조각 7("다중 Agent selftest")의 진짜 "다중 Agent 동시 경쟁"은 현재 Coordinator 아키텍처로 표현 자체가 불가능하다:
+- Coordinator run()은 accept_with_deadline() → serve_one_connection() 동기 호출 → 완료 후 다음 accept()로, 의도적으로 순차 처리(coordinator/lib.rs:315,331,419에 "deliberately sequential" 명시).
+- Coordinator 설정에는 agent_device_id·Agent 검증 키가 각각 하나뿐(coordinator/lib.rs:38,321) — 두 번째 독립 Agent는 identity/key 계약에서 먼저 막힘.
+- connection_attempt가 Agent별이 아니라 Coordinator 전체 accept 순번(coordinator/lib.rs:343)이라 여러 Agent 동시 접속 자체가 지금 계약 밖.
+- 동일 identity 복제 Agent의 active-session owner 선정도 별도 설계 필요(classify_resume()은 session_id를 durable owner로 저장 안 함).
+
+DoD-24 시나리오 34(IdentityConflict)는 "순차 실행된 별도 프로세스 쌍이 같은 lease_id를 다른 holder로 주장하면 거부"만 증명 — "비어 있는 DB를 두 연결이 거의 동시에 보고 INSERT 경쟁"은 검증 안 됨.
+
+권장 최소 조각: CoordinatorLeaseStore::get_or_issue()에 별도 SQLite 연결 두 개가 동시에 같은 lease_id·다른 holder_node_id를 최초 발급하려 할 때, 정확히 한 후보만 저장되고 다른 후보는 fail-closed되며 저장값을 덮어쓰지 못한다는 storage-level 경쟁 테스트로 좁힘. 로드맵 조각 7 원안 전체는 scheduler/다중 Agent 아키텍처 단계까지 명시적으로 이월.
+
+=== 구현 1라운드 (p207, 코덱스 workspace-write) 보고 ===
+
+새 통합 테스트: crates/coordinator/tests/lease_store_concurrent_issue.rs
+- 파일 기반 SQLite, 16개 서로 다른 lease_id 라운드
+- 각 라운드마다 같은 lease_id·job_id·attempt_id·issuing_coordinator_id, holder_node_id만 다른 두 후보를 별도 스레드에서 Barrier로 동시 출발
+- 정확히 하나만 Ok, 패자는 IdentityConflict 또는 LockTimeout(timeout이면 순차 재시도로 IdentityConflict 수렴 확인)
+- 저장된 최종 행의 12개 필드를 raw SQLite 쿼리로 승자와 비교
+- 프로덕션 코드 무변경
+
+뮤테이션: get_or_issue()의 Immediate를 Deferred로 임시 변경 → 첫 라운드에서 두 요청 모두 LockTimeout(성공 0건) → "정확히 한 최초 발급 성공" 불변식이 깨짐 확인 → 즉시 원복.
+
+검증(구현자 보고): 신규 테스트 10회 연속 PASS(총 160라운드, flake 0), cargo build/test 성공(349 passed), coordinator-agent-selftest 시나리오 1~72 전부 확인.
+
+=== 감독자(claude-code) 직접 재확인 (1라운드) ===
+
+cargo build/test --workspace --exclude gputeer-runtime-windows: 성공
+coordinator-agent-selftest 1회: exit=0, 72개 시나리오
+
+=== 독립 검수 1라운드 (p208) — CHANGES_REQUESTED ===
+
+차단 결함: 두 후보가 holder_node_id만 다르고 fence_epoch·모든 시각 필드·coordinator_term·max_total_duration_seconds는 전부 같은 값이라, 최종 assert_eq!(stored, winner)에서 패자의 동일한 값과 승자 값을 구별할 방법이 없음 — 패자 경로가 실수로 expires_at_unix_ms나 coordinator_term을 덮어써도 테스트가 통과함. "패자 값의 부분 덮어쓰기 없이 승자 전체가 남는다"는 주장이 실제로는 입증되지 않았음.
+
+그 외 확인: Barrier는 유효(실제 경쟁 조건 생성), 뮤테이션은 실질적(TransactionBehavior::Immediate가 실제 BEGIN IMMEDIATE로 변환됨을 rusqlite 0.32.1 기준 확인), 프로덕션 코드 무변경(git diff --stat HEAD 비어있음), 문서는 로드맵 조각 7 완료를 주장하지 않고 storage-level 범위와 scheduler 단계 이월을 명확히 밝힘.
+
+=== 구현 2라운드 (p209, 코덱스 workspace-write) — 결함 수정 ===
+
+후보 A/B를 holder_node_id 외에도 fence_epoch(1000+round/2000+round)·issuing_coordinator_id(coordinator-a/coordinator-b)·coordinator_term(101/202)·issued/renew/expires 시각(1000/2000 오프셋)·max_total_duration_seconds(60/61) 전부 서로 다른 값으로 구별. lease_id·job_id·attempt_id는 동일하게 유지(identity 비교 순서 job_id → attempt_id → holder_node_id → issuing_coordinator_id를 코드로 직접 확인).
+
+assert_complete_winner 강화 — raw SQLite 행 전체가 승자와 assert_eq!, 구별 가능한 8개 필드가 패자와 각각 assert_ne!. self-check 추가 — 승자 복제본의 각 필드를 하나씩 패자 값으로 바꿔서 최종 helper가 8번 모두 실제 panic하는지 검증.
+
+검증(구현자 보고): Immediate→Deferred 뮤테이션 여전히 의도대로 실패. lease_store.rs 작업 파일과 HEAD 객체 해시 동일(df9c9716...). 신규 테스트 5회 연속 PASS(총 80라운드, flake 0). cargo build/test PASS(351 passed). coordinator-agent-selftest 시나리오 1~72 확인.
+
+=== 감독자(claude-code) 독립 재확인 (2라운드 이후) ===
+
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+cargo test --workspace --exclude gputeer-runtime-windows: 성공
+신규 테스트 5회 반복(cargo test -p gputeer-coordinator --test lease_store_concurrent_issue): 전부 test result: ok, 각 1.5~1.7초, flake 없음
+coordinator-agent-selftest 1회: exit=0, 72개 시나리오(시나리오 72 확인)
+
+=== 독립 검수 2라운드 (p210) — ACCEPTED ===
+
+중대한 결함이나 수정 요청 사항 없음.
+- 후보 A/B는 lease_id·job_id·attempt_id 동일, 요청된 8개 필드는 모두 서로 다름을 확인.
+- 실제 identity 비교 순서 job_id → attempt_id → holder_node_id → issuing_coordinator_id 확인(lease_store.rs:538) — 충돌이 의도대로 holder_node_id에서 먼저 발생.
+- self-check가 #[test] 실행 경로에 포함되어 있고 8개 필드 전부 바꾸는 호출 존재, 직접 실행 시 8번 모두 정확히 assert_eq!(stored, winner)에서 panic 확인, self-check 자체는 exit 0.
+- 최종 raw SQLite 검증에서 전체 assert_eq! 후 8개 assert_ne!가 순차 실행, dead code·조건부 우회 없음.
+- 추적 파일 diff 0건 — lease_store.rs 현재 객체 해시와 HEAD 객체 해시(df9c9716...) 동일.
+- Immediate→Deferred 뮤테이션 논리 타당성 재확인.
+- 전체 재실행은 read-only 샌드박스 임시 디렉터리 생성 거부로 중단(판정 근거로 안 씀), 기존 바이너리로 필터 실행한 self-check는 1 passed, exit 0.

@@ -1,0 +1,29 @@
+=== 독립 검수 1라운드 (p208) — CHANGES_REQUESTED ===
+
+차단 사유는 저장 행의 "완전한 승자 값" 검증이 실제로는 부분 덮어쓰기를 충분히 탐지하지 못한다는 점입니다.
+
+- 두 후보는 candidate()에서 holder_node_id만 다르고, epoch·만료/발급/갱신 시각·coordinator term·최대 기간은 모두 같습니다.
+- raw 쿼리는 12개 컬럼을 전부 읽지만, 최종 assert_eq!(stored, winner)(line 211)에서 패자의 동일한 값을 구별할 방법이 없습니다.
+- 예를 들어 패자 경로가 실수로 expires_at_unix_ms, issued_at_unix_ms 또는 coordinator_term을 덮어써도 현재 테스트는 통과합니다. 따라서 "패자 값의 부분 덮어쓰기 없이 승자 전체가 남는다"는 주석과 계획서 주장은 입증되지 않았습니다.
+
+후보별로 fence_epoch, 모든 시각 필드, coordinator_term, max_total_duration_seconds 등에 서로 다른 표식 값을 넣어야 합니다. holder_node_id 충돌을 유지하기 위해 그보다 먼저 검사되는 identity 필드는 동일하게 둘 수 있습니다.
+
+그 외 검수 결과:
+- Barrier는 유효합니다. 각 스레드는 별도 연결을 준비하고, calls_start.wait() 직후 바로 get_or_issue()를 호출합니다. 메인 스레드의 blocker는 두 후보를 동일한 RESERVED lock 뒤에 세운 뒤 함께 해제하며, 어느 후보가 먼저 승자 lock을 얻을지 미리 정하지 않습니다.
+- 뮤테이션은 실질적입니다. 프로덕션은 TransactionBehavior::Immediate를 사용하며, 설치된 rusqlite 0.32.1에서 이것은 실제 BEGIN IMMEDIATE로 변환됩니다. Deferred에서는 두 reader가 동시에 미존재 행을 읽고 lock upgrade가 교착성 BUSY로 끝나 둘 다 LockTimeout이 될 수 있으므로 보고된 실패는 논리적으로 타당합니다. 다만 이것은 lock timing/가용성 비공허성만 증명하며 위 완전성 공백을 해결하지는 않습니다.
+- git diff --stat HEAD는 비어 있었고 git status에는 신규 테스트와 문서 두 개만 있었습니다. lease_store.rs, coordinator/src/lib.rs, selftest 소스의 working-tree hash도 HEAD와 일치했습니다. 프로덕션 변경은 없습니다.
+- 문서는 로드맵 조각 7 완료를 주장하지 않습니다. 계획서 49–52행과 보고서 34–37행은 storage-level 범위와 scheduler 단계 이월을 명확히 밝힙니다.
+- selftest 관련 소스가 HEAD와 동일하고 새 통합 테스트는 실행 파일에 포함되지 않으므로, 감독자의 기존 72개 시나리오 재확인 결과는 이 변경과 양립하며 타당합니다.
+- 신규 테스트 명령을 직접 재실행했지만 read-only 환경에서 target/debug/.cargo-build-lock 생성이 거부됐습니다. 기존 테스트 바이너리 직접 실행도 tempfile 생성 권한 거부로 중단됐습니다. 알려진 샌드박스 제약이므로 반려 근거에는 포함하지 않았습니다.
+
+=== 독립 검수 2라운드 (p210) — ACCEPTED ===
+
+중대한 결함이나 수정 요청 사항을 발견하지 못했습니다.
+
+- 후보 A/B는 lease_id·job_id·attempt_id가 동일하고, 요청된 8개 필드는 모두 서로 다릅니다.
+- 실제 identity 비교 순서는 job_id → attempt_id → holder_node_id → issuing_coordinator_id가 맞습니다. 따라서 충돌은 의도대로 holder_node_id에서 먼저 발생합니다(lease_store.rs:538).
+- self-check는 #[test] 실행 경로에 포함되어 있으며, 8개 필드를 하나씩 바꾸는 호출이 모두 존재합니다. 직접 실행 시 8번 모두 정확히 assert_eq!(stored, winner)에서 panic했고 self-check는 exit 0으로 통과했습니다.
+- 최종 raw SQLite 검증에서 전체 assert_eq! 후 8개 assert_ne!가 순차 실행됩니다. dead code나 조건부 우회는 없습니다.
+- 추적 파일 diff는 0건입니다. 변경 범위는 untracked 테스트 1개와 계획서·보고서 각 1개뿐입니다. lease_store.rs의 현재 객체 해시와 HEAD 객체 해시도 df9c9716...로 동일했습니다.
+- get_or_issue()는 현재 TransactionBehavior::Immediate를 사용하며, Deferred 뮤테이션이 SELECT 전 직렬화를 제거해 "정확히 한 성공" 검사를 실패시킨다는 설명은 코드 구조상 타당합니다.
+- 전체 동시성 테스트 재실행은 read-only 환경의 임시 디렉터리 생성 거부로 중단됐습니다. Cargo도 build-lock 생성 권한이 없어 실행되지 않았습니다. 이는 명시된 환경 제약이며 판정 근거로 사용하지 않았습니다. 기존 최신 바이너리로 필터 실행한 self-check는 1 passed, exit 0이었습니다.

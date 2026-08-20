@@ -16,6 +16,47 @@
 
 ---
 
+## 2026-08-20 18:00 — Lease store 동시 최초 발급 안전성 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-40`, 로드맵 조각 7 재정의·자동 재접속 루프 로드맵 마무리)
+- 계획: `docs/plans/2026-08-20_1732_lease_store_동시_발급_안전성_v1.md`
+  (로드맵 조각 7, 원안 "다중 Agent selftest" 를 정직하게 재범위).
+- 스트림: Coordinator · QA · 문서.
+- 수행: 사용자가 "코덱스로 다음 작업 ㄱ" 로 조각 7 진행을 지시.
+  설계 조사(`p206`, read-only)가 진짜 "다중 Agent 동시 경쟁"은
+  지금 Coordinator 아키텍처(의도적 순차 처리, Agent identity/key
+  1개만 등록, `connection_attempt` 가 Coordinator 전체 accept
+  순번)로는 표현 자체가 안 되고, 가능하게 하려면 최소 2~4일짜리
+  아키텍처 변경이 필요하다고 정직하게 판정했다. 대신 진짜 검증
+  안 된 위험 — `CoordinatorLeaseStore::get_or_issue()` 가
+  `BEGIN IMMEDIATE` 로 TOCTOU 를 막는다고 코드는 주장하지만
+  실제 동시 호출로 측정된 적이 없던 것 — 을 새 통합 테스트로
+  좁혔다(구현 `p207`). 독립 검수 1라운드(`p208`)가 테스트 자체의
+  판별력 결함을 찾았다 — 경쟁 후보가 `holder_node_id` 외 모든
+  필드가 같아서 부분 덮어쓰기를 실제로 못 잡는 문제. 구현
+  2라운드(`p209`)가 후보 8개 필드를 전부 구별되게 만들고
+  self-check(승자 필드를 하나씩 패자 값으로 바꿔 assert 가 8번
+  모두 실제 panic 하는지 직접 실행 증명)를 추가해 수정. 독립
+  검수 2라운드(`p210`)가 identity 비교 순서·self-check 실행
+  경로·프로덕션 코드 무변경(객체 해시 동일)까지 확인하고 최종
+  `ACCEPTED`. 프로덕션 코드는 두 라운드 모두 전혀 안 건드렸다
+  (순수 테스트 추가). **로드맵 조각 7 원안은 완료가 아니라
+  scheduler/다중 Agent 아키텍처 도입 단계로 명시적으로 이월** —
+  이 조각은 훨씬 좁은 "Lease store 동시 최초 발급 안전성"으로
+  기록한다. **이로써 2026-08-20 자동 재접속 루프 로드맵(7조각)
+  작업을 마무리한다** — 조각 1~6 원안 완료(`DoD-35`~`39`), 조각
+  7 은 재범위된 하위 조각만 완료(`DoD-40`).
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  각 라운드 성공(실패 0건, 351 passed), 신규 테스트 5+10회
+  반복 전부 flake 없음, `coordinator-agent-selftest` 회귀 없음
+  (72개 시나리오), 뮤테이션 2건(1라운드 `Immediate→Deferred`·
+  2라운드 self-check 8개 필드 각각) 모두 정확한 실패 재현 후
+  원복, `python scripts/verify_evidence.py` 스키마 위반 없음
+  (PASS 48/49).
+- 리포트: `docs/reports/2026-08-20_1732_lease_store_동시_발급_안전성.md`
+  + evidence 문서 —
+  `docs/evidence/DoD-40_lease_store_동시_발급_안전성.md`.
+
+---
+
 ## 2026-08-20 16:40 — Ambiguous Renew 복구 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-39`)
 - 계획: `docs/plans/2026-08-20_1615_ambiguous_renew_복구_v1.md`
   (로드맵 조각 5, 원안 "durable request ledger" 를 정직하게 재범위).
