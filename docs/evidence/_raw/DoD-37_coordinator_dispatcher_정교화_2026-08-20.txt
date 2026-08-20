@@ -1,0 +1,96 @@
+########## p194 (구현자 1차, workspace-write) — session dispatcher + 오류 격리 구현 ##########
+구현 완료했습니다. commit/push는 하지 않았습니다.
+
+변경 파일:
+
+- [`crates/coordinator/src/lib.rs`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lib.rs:193)
+  - `CoordinatorSessionError` 신설
+  - `serve_one_connection()` 및 `serve_one_connection_impl()` 추출
+  - `run()` dispatcher 오류 격리·일관 로그 추가
+  - `connection_attempt`는 accept 성공 시도 횟수로 유지
+- [`crates/cli/src/coordinator_agent_selftest.rs`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\cli\src\coordinator_agent_selftest.rs:3188)
+  - 시나리오 61~63 추가
+  - reader thread와 120초 deadline 기반 하네스 추가
+- [`docs/plans/2026-08-20_1310_coordinator_dispatcher_정교화_v1.md`](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\docs\plans\2026-08-20_1310_coordinator_dispatcher_정교화_v1.md)
+
+`CoordinatorSessionError` variant:
+
+- `Transport(String)`: EOF/truncated, stream I/O, reset/aborted, broken pipe, timeout, 전송·flush 실패
+- `Protocol(String)`: framing/decode, 서명·replay 검증, frame type, identity/correlation/nonce 오류
+- `Storage(String)`: SQLite/lease-store open, 발급, 조회, revoke, renew 오류
+
+`--max-connections`는 성공 수가 아니라 accept 성공한 연결 시도 수를 셉니다. 실패한 연결도 카운트해 무한 재시도를 방지했습니다.
+
+신규 selftest:
+
+- 61: truncated transport 연결 후 다음 연결 정상 handshake
+- 62: 위조 ACK 서명 protocol 오류 후 다음 연결 정상 handshake
+- 63: 존재하지 않는 lease DB 부모 경로에서 storage fail-closed
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` 통과
+- `cargo test --workspace --exclude gputeer-runtime-windows` 통과
+- selftest 63개 시나리오, 120초 hard deadline, 5회 연속 `EXIT=0`
+- 기존 1~60 시나리오 모두 회귀 없이 통과
+- Storage를 임시로 Transport로 분류하자 시나리오 63이 실패함을 확인 후 원복
+- rustfmt는 환경에 rustfmt 컴포넌트가 없어 실행하지 못했습니다. `cargo check`와 `git diff --check`는 통과했습니다.
+
+신규 시나리오 61·62는 attempt=1 nonce를 검증해야 하므로 Agent production 코드를 변경하지 않고 최소 wire-level Agent client를 사용했습니다.
+
+########## p196 (구현자 2차 수정, workspace-write — p195 지적 반영: Resume 경로 storage fail-closed) ##########
+구현 완료했습니다. commit/push는 하지 않았습니다.
+
+1. Resume 수정
+
+- [lib.rs:227](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:227)에 typed `SessionHandlerError`를 추가했습니다.
+- [lib.rs:238](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:238)의 `LeaseStoreError` 분류:
+  - `Io`, `LockTimeout` → `CoordinatorSessionError::Storage`
+  - `NotFound`, `IdentityConflict`, `Revoked`, `Expired`는 Resume의 정상 정책 결과가 아니므로 예기치 않게 유입되면 보수적으로 `Storage`
+- [lib.rs:933](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:933)에서 storage 오류를 더 이상 `UNAVAILABLE(7)`로 서명하지 않고 즉시 dispatcher로 반환합니다.
+- 정상적인 `UNKNOWN_LEASE`, `IDENTITY_CONFLICT`, `REVOKED`, `EXPIRED`, `SUPERSEDED`, `EPOCH_AHEAD`, `RESUMED`는 기존대로 서명 응답합니다.
+
+2. Grant/renew/revoke 재점검
+
+문제 없이 이미 fail-closed 되어 있어 수정하지 않았습니다.
+
+- Grant 발급: [lib.rs:1403](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1403)
+- renew 조회/갱신: [lib.rs:1164](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1164), [lib.rs:1196](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1196)
+- revoke 저장: [lib.rs:971](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:971)
+
+lease-store 장애 문자열이 dispatcher에서 `Storage`로 분류되며, `Revoked` 같은 명시적 정책 결과만 signed policy response로 처리됩니다.
+
+3. 신규 selftest 64
+
+[coordinator_agent_selftest.rs:532](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:532)에서:
+
+- 정상 lease DB로 startup
+- `READY` 직후 열린 SQLite 파일을 `"not a sqlite database"`로 덮어씀
+- Resume 요청 전송
+- `kind=storage`
+- signed `UNAVAILABLE` 및 `RESULT ok=true` 없음
+- `CONNECTION_ATTEMPT` 1회만 확인
+- Coordinator 즉시 종료 확인
+
+기존 시나리오 60도 새 fail-closed 계약에 맞게 갱신했습니다.
+
+4. 뮤테이션
+
+Resume 오류 매핑을 일시적으로 예전 동작으로 되돌렸습니다.
+
+- 결과: 시나리오 64 실패
+- `RESUME_RESULT outcome=7`
+- `RESULT ok=true resume_outcome=7`
+- 즉, 신규 시나리오가 실제 분류 로직을 검증함을 확인했습니다.
+- 뮤테이션은 원복 후 재검증했습니다.
+
+5. 최종 검증
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows` 성공
+- `coordinator-agent-selftest` 5회 연속 성공
+  - 매회 전체 64개 시나리오 통과
+  - 각 회차 exit=0
+  - 각 회차 120초 하드 타임아웃 이내
+
+분류상 애매한 부분은 없습니다. `classify_resume()` 자체는 정책 결과를 `ResumeDecision`으로 반환하고, `LeaseStoreError`는 실제 저장소 오류 경로로만 사용됩니다.

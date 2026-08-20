@@ -1,0 +1,43 @@
+########## p195 (독립 검수 1라운드, read-only, 새 인스턴스) — CHANGES_REQUESTED(진짜 storage fail-closed 결함) ##########
+CHANGES_REQUESTED
+
+핵심 반려 사유는 Resume 저장소 오류가 fail-closed 되지 않는다는 점입니다.
+
+- `classify_resume()`는 SQLite 조회 오류를 `Err(LeaseStoreError)`로 반환합니다([lib.rs:797](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:797), [lease_store.rs:222](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lease_store.rs:222)).
+- 그러나 `Err(error)`를 `outcome = 7`로 응답한 뒤 함수가 `Ok(())`로 종료합니다([lib.rs:840](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:840), [lib.rs:858](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:858)).
+- 따라서 dispatcher의 `Storage => 즉시 Err` 분기([lib.rs:333](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:333))에 도달하지 않습니다. 실제 Resume DB I/O/손상 오류가 발생해도 다음 accept 또는 성공 종료로 진행할 수 있습니다.
+
+그 외 검수 결과:
+
+- startup open 실패는 bind 전에 명시적으로 storage 로그 후 종료합니다([lib.rs:251](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:251)).
+- Grant 발급, renew 조회/갱신, revoke 오류는 대부분 `lease store` 문맥을 붙여 문자열 분류합니다([lib.rs:647](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:647), [lib.rs:1147](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1147), [lib.rs:1354](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1354)).
+- transport/protocol 실패는 accept 성공 횟수를 증가시킨 뒤([lib.rs:305](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:305), [lib.rs:308](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:308)) `max-connections`에 도달하므로 무한루프 위험은 보이지 않습니다.
+- `accept_with_deadline()`의 nonblocking polling/deadline 로직은 유지되어 있습니다([lib.rs:745](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:745)).
+- selftest nonce 계산은 Agent production 코드와 일치합니다([agent/lib.rs:1047](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1047), [selftest.rs:3434](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:3434)).
+- 시나리오 63은 존재하지 않는 부모 경로의 SQLite open 실패를 유도하므로 startup storage 오류 검증으로는 타당합니다([selftest.rs:3183](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:3183)). 다만 dispatcher의 `CoordinatorSessionError::Storage` 분류 자체는 검증하지 않습니다.
+- mutation 주장은 startup 로그 문자열을 바꾼 경우에만 유효하며, Resume/session storage 분류 mutation을 검증하는 증거로는 부족합니다.
+- 변경 범위는 `coordinator/src/lib.rs`, `coordinator_agent_selftest.rs`, 계획 문서이며 `agent`와 `protocol`은 변경되지 않았습니다.
+- `cargo build --workspace --exclude gputeer-runtime-windows`는 직접 실행했으나 환경에 `cargo`가 없어 실행되지 않았습니다. 따라서 런타임 테스트 결과는 판정 근거로 사용하지 않았습니다.
+
+Resume의 실제 lease-store 오류를 `CoordinatorSessionError::Storage`로 전파하고 dispatcher가 즉시 종료하도록 수정해야 합니다.
+
+########## p197 (독립 검수 2라운드, read-only, 새 인스턴스 — 수정 확인 + 시나리오 60 의미 변경 검토) — ACCEPTED ##########
+**ACCEPTED**
+
+검수 결과 storage fail-closed 누수는 확인되지 않았습니다.
+
+- Resume의 `None` store도 `LeaseStoreError::Io`로 만들고, `Io`/`LockTimeout`은 `CoordinatorSessionError::Storage`로 변환합니다. [lib.rs:238](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:238), [lib.rs:901](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:901)
+- 해당 오류는 서명·프레임 전송 전에 즉시 반환됩니다. [lib.rs:933](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:933)
+- dispatcher의 `Storage` 분기는 로그 후 즉시 `run()`을 `Err`로 종료하며 다음 `accept()`로 진행하지 않습니다. [lib.rs:339](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:339)
+- Grant 발급, renew 조회/갱신, revoke 저장 오류도 모두 `lease store` 문맥으로 분류되어 storage fail-closed 됩니다. [lib.rs:1339](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1339), [lib.rs:1103](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1103), [lib.rs:924](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:924)
+
+시나리오 60 변경도 타당합니다. Durable store 없이 Resume은 복구할 권위 있는 상태 자체가 없는 구성 오류이므로, retryable `UNAVAILABLE`을 반환하면 영구적인 설정 오류를 일시 장애처럼 재시도하게 됩니다. 즉시 종료가 현재 fail-closed 원칙과 일관됩니다. 시나리오 64는 기존 outcome 7 매핑을 복원하면 `resume_outcome=7` 또는 잘못된 성공 흐름을 검출하므로 뮤테이션도 유효합니다. [selftest.rs:3180](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:3180), [selftest.rs:3305](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:3305)
+
+범위는 수정된 두 추적 파일과 untracked 계획 문서 하나뿐입니다. `git diff --check`도 통과했습니다. `cargo test`는 이 환경에 `cargo`가 없어 실행할 수 없었고, 기존 바이너리 selftest는 fence DB open 환경 오류로 실패했으므로 판정 근거로 사용하지 않았습니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경, 각 라운드마다 ##########
+[1차 구현 후] cargo build/test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+coordinator-agent-selftest 5회 연속: exit=0 elapsed_ms=31025/30400/30480/30436/30403, 매회 63개 시나리오
+
+[2차 수정 후] cargo build/test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+coordinator-agent-selftest 5회 연속: exit=0 elapsed_ms=34340/31674/31154/31127/31270, 매회 64개 시나리오

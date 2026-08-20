@@ -16,6 +16,41 @@
 
 ---
 
+## 2026-08-20 13:10 — Coordinator dispatcher 정교화 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-37`)
+- 계획: `docs/plans/2026-08-20_1310_coordinator_dispatcher_정교화_v1.md`
+  (기준 로드맵 조각 4).
+- 스트림: Coordinator · QA · 문서.
+- 수행: 설계 조사(`p193`)가 "조각 4 의 반복 accept 기반은 `DoD-35`
+  가 이미 만들었지만, `serve_one_connection()` 함수 분리와
+  transport/protocol/storage 오류 차등 처리 계약은 진짜 남은 하루
+  규모 작업"이라고 정직하게 판정했다. 구현 1라운드(`p194`, 코덱스
+  workspace-write)가 인라인 Grant 처리를 함수로 추출하고
+  `CoordinatorSessionError{Transport, Protocol, Storage}` 를
+  신설했다 — transport/protocol 오류는 로그 후 다음 accept, storage
+  오류는 fail-closed. 독립 검수 1라운드(`p195`)가 진짜 안전 결함을
+  찾았다 — Resume 처리 경로(`classify_resume()`)에서 SQLite 조회
+  오류가 서명된 `UNAVAILABLE` 로 응답된 뒤 함수가 정상 종료해
+  dispatcher 의 fail-closed 분기에 절대 도달 못했다. 감독자가 코드로
+  직접 재확인해 실재함을 확인. 구현 2라운드(`p196`)가
+  `LeaseStoreError` 를 정책 판정(정상 서명 응답)과 진짜 저장소
+  장애(`Io`/`LockTimeout` → `Storage` fail-closed)로 명확히
+  구분해 닫았다. ★ 이 과정에서 `DoD-36` 이 기록한 시나리오 60
+  (durable store 없이 Resume 시 서명된 `UNAVAILABLE`)의 기대
+  동작이 "구성 오류로 보고 fail-closed 즉시 종료"로 의도적으로
+  강화됐다 — 독립 검수 2라운드(`p197`)가 이 방향이 fail-closed
+  원칙과 일관됨을 확인하고 최종 **`ACCEPTED`**. 감독자가 두
+  라운드 모두 `coordinator-agent-selftest` 5회 연속(전부 exit=0,
+  63→64개 시나리오)으로 독립 재확인했다.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  2라운드 전부 성공(실패 0건), `coordinator-agent-selftest`
+  5회+5회 연속 exit=0, 뮤테이션 2건(Storage→Transport 오분류·
+  Resume 오류 매핑 원복) 모두 정확한 실패 재현 후 원복,
+  `python scripts/verify_evidence.py` 스키마 위반 없음(PASS 45/46).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-37_coordinator_dispatcher_정교화.md`).
+
+---
+
 ## 2026-08-20 12:00 — Resume 프로토콜 — 구현 2라운드 + 독립 검수 3라운드 + evidence 기록 (`DoD-36`)
 - 계획: `docs/plans/2026-08-20_1200_resume_프로토콜_v1.md`
   (기준 로드맵: `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`

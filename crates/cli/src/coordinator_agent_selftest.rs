@@ -27,6 +27,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use prost::Message;
+
 const RESULT_OK_MARKER: &str = "RESULT ok=true";
 const HANDSHAKE_HARD_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -183,6 +185,24 @@ fn run_handshake_internal(
     hard_timeout: Duration,
     disable_reconnect: bool,
 ) -> Result<HandshakeOutcome, String> {
+    run_handshake_internal_with_ready_hook(
+        fixture,
+        extra_coordinator_args,
+        extra_agent_args,
+        hard_timeout,
+        disable_reconnect,
+        None,
+    )
+}
+
+fn run_handshake_internal_with_ready_hook(
+    fixture: &Fixture,
+    extra_coordinator_args: &[&str],
+    extra_agent_args: &[&str],
+    hard_timeout: Duration,
+    disable_reconnect: bool,
+    ready_hook: Option<&dyn Fn(&str) -> Result<(), String>>,
+) -> Result<HandshakeOutcome, String> {
     let handshake_deadline = Instant::now() + hard_timeout;
     let mut coordinator_args: Vec<&str> = vec![
         "coordinator-stub",
@@ -275,6 +295,10 @@ fn run_handshake_internal(
         .strip_prefix("READY ")
         .ok_or_else(|| format!("coordinator 가 READY 대신 이걸 찍었다: {ready_line:?}"))?
         .to_string();
+
+    if let Some(ready_hook) = ready_hook {
+        ready_hook(&address)?;
+    }
 
     let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", &address, "--own-seed"];
     let agent_own_seed_hex = to_hex(&fixture.agent_seed);
@@ -499,6 +523,50 @@ fn run_resume_case(
     ];
     let agent_refs: Vec<&str> = agent_args.iter().map(String::as_str).collect();
     run_handshake(fixture, &coordinator_refs, &agent_refs)
+}
+
+/// Start a healthy Resume Coordinator, wait until it has opened and bound the
+/// lease DB, then corrupt the already-open SQLite file before the request is
+/// sent. This exercises the dispatcher classification during Resume rather
+/// than the startup-open failure covered by scenario 63.
+fn run_resume_storage_failure_case(
+    fixture: &Fixture,
+    lease_db: &Path,
+    fence_db: &Path,
+) -> Result<HandshakeOutcome, String> {
+    let lease_db = lease_db
+        .to_str()
+        .ok_or_else(|| format!("resume storage-failure lease DB path is not UTF-8: {lease_db:?}"))?;
+    let fence_db = fence_db
+        .to_str()
+        .ok_or_else(|| format!("resume storage-failure fence DB path is not UTF-8: {fence_db:?}"))?;
+    let session_id = "resume-session-64";
+    let coordinator_args = [
+        "--resume-protocol", "true", "--session-id", session_id,
+        "--max-connections", "2", "--accept-timeout-ms", "5000",
+        "--lease-db", lease_db,
+    ];
+    let agent_args = [
+        "--resume-protocol", "true", "--session-id", session_id,
+        "--resume-lease-id", fixture.lease_id,
+        "--resume-job-id", fixture.job_id,
+        "--resume-attempt-id", fixture.attempt_id,
+        "--resume-fence-epoch", "7", "--fence-db", fence_db,
+        "--disable-reconnect", "true",
+    ];
+    let lease_db_path = lease_db.to_owned();
+    let corrupt_after_ready = move |_address: &str| {
+        std::fs::write(&lease_db_path, b"not a sqlite database")
+            .map_err(|error| format!("resume storage-failure DB corruption failed: {error}"))
+    };
+    run_handshake_internal_with_ready_hook(
+        fixture,
+        &coordinator_args,
+        &agent_args,
+        Duration::from_secs(120),
+        true,
+        Some(&corrupt_after_ready),
+    )
 }
 
 fn assert_resume_outcome(
@@ -3177,10 +3245,457 @@ pub fn run() -> Result<String, String> {
         &fixture, &lease_db_60, &fence_db_60, "resume-session-60",
         fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, true,
     )?;
-    assert_resume_outcome(&unavailable_60, 60, 7, false)?;
-    report.push_str("60) 명시적 durable store 없이 Resume을 요청해 서명된 UNAVAILABLE(재시도 가능)를 반환\n");
+    if unavailable_60.coordinator_success
+        || !unavailable_60.coordinator_stderr.contains("kind=storage")
+        || unavailable_60.coordinator_stdout.contains("resume_outcome=7")
+        || unavailable_60.coordinator_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "60) Resume without durable store did not fail closed: coordinator_success={} stdout={:?} stderr={:?} agent_success={} agent_stderr={:?}",
+            unavailable_60.coordinator_success,
+            unavailable_60.coordinator_stdout,
+            unavailable_60.coordinator_stderr,
+            unavailable_60.agent_success,
+            unavailable_60.agent_stderr,
+        ));
+    }
+    report.push_str("60) durable store 없이 Resume을 요청한 구성 오류(Io)를 kind=storage로 분류하고 UNAVAILABLE 없이 fail-closed 종료\n");
+
+    // 61. A truncated first connection is transport-scoped. The same
+    // Coordinator must accept and complete a second, valid Agent session.
+    let transport_dir_61 = tempfile::tempdir()
+        .map_err(|e| format!("transport dispatcher tempdir failed (61): {e}"))?;
+    let transport_lease_db_61 = transport_dir_61.path().join("lease.sqlite3");
+    let transport_lease_db_61 = transport_lease_db_61
+        .to_str()
+        .ok_or_else(|| "transport lease db 61 is not UTF-8".to_string())?;
+    let transport_61 = run_two_connection_case(
+        &fixture,
+        &[
+            "--lease-db", transport_lease_db_61, "--max-connections", "2",
+            "--accept-timeout-ms", "5000", "--do-renew", "false",
+        ],
+        true,
+    )?;
+    if !transport_61.coordinator_success
+        || !transport_61.second_agent_success
+        || transport_61.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 2
+        || !transport_61.coordinator_stderr.contains("kind=transport")
+        || transport_61.coordinator_stdout.matches(RESULT_OK_MARKER).count() != 1
+        || transport_61.second_agent_stdout.matches(RESULT_OK_MARKER).count() != 1
+    {
+        return Err(format!(
+            "61) transport isolation failed: coordinator={:?} stderr={:?} agent={:?}",
+            transport_61.coordinator_stdout,
+            transport_61.coordinator_stderr,
+            transport_61.second_agent_stderr
+        ));
+    }
+    report.push_str("61) 첫 연결의 truncated EOF를 transport 오류로 로그하고 connection_attempt=1의 두 번째 정상 Agent를 같은 Coordinator가 수락\n");
+
+    // 62. A forged Agent ACK is a protocol error. It must not poison the
+    // accept loop; a second valid Agent session still completes.
+    let protocol_dir_62 = tempfile::tempdir()
+        .map_err(|e| format!("protocol dispatcher tempdir failed (62): {e}"))?;
+    let protocol_lease_db_62 = protocol_dir_62.path().join("lease.sqlite3");
+    let protocol_lease_db_62 = protocol_lease_db_62
+        .to_str()
+        .ok_or_else(|| "protocol lease db 62 is not UTF-8".to_string())?;
+    let protocol_62 = run_two_connection_case(
+        &fixture,
+        &[
+            "--lease-db", protocol_lease_db_62, "--max-connections", "2",
+            "--accept-timeout-ms", "5000", "--do-renew", "false",
+        ],
+        false,
+    )?;
+    if !protocol_62.coordinator_success
+        || protocol_62.first_agent_success
+        || !protocol_62.second_agent_success
+        || protocol_62.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 2
+        || !protocol_62.coordinator_stderr.contains("kind=protocol")
+        || protocol_62.coordinator_stdout.matches(RESULT_OK_MARKER).count() != 1
+        || protocol_62.second_agent_stdout.matches(RESULT_OK_MARKER).count() != 1
+    {
+        return Err(format!(
+            "62) protocol isolation failed: coordinator={:?} stderr={:?} first={:?} second={:?}",
+            protocol_62.coordinator_stdout,
+            protocol_62.coordinator_stderr,
+            protocol_62.first_agent_stderr,
+            protocol_62.second_agent_stderr
+        ));
+    }
+    report.push_str("62) 첫 연결의 위조 Agent 서명을 protocol 오류로 로그하고 다음 정상 Agent 연결까지 accept 계속\n");
+
+    // 63. Opening a lease DB below a missing parent is a storage failure before
+    // bind. It must fail closed and must never enter the accept loop.
+    let storage_dir_63 = tempfile::tempdir()
+        .map_err(|e| format!("storage dispatcher tempdir failed (63): {e}"))?;
+    let missing_parent_63 = storage_dir_63.path().join("missing-parent");
+    let missing_lease_db_63 = missing_parent_63.join("lease.sqlite3");
+    let missing_lease_db_63 = missing_lease_db_63
+        .to_str()
+        .ok_or_else(|| "storage lease db 63 is not UTF-8".to_string())?;
+    let storage_63 = run_coordinator_startup_case(
+        &fixture,
+        &["--lease-db", missing_lease_db_63, "--max-connections", "2"],
+    )?;
+    if storage_63.success
+        || !storage_63.stderr.contains("kind=storage")
+        || storage_63.stdout.contains("READY ")
+    {
+        return Err(format!(
+            "63) storage fail-closed failed: stdout={:?} stderr={:?}",
+            storage_63.stdout, storage_63.stderr
+        ));
+    }
+    report.push_str("63) 존재하지 않는 --lease-db 부모 경로의 SQLite open 오류를 storage로 로그하고 bind/accept 전에 fail-closed 종료\n");
+
+    // 64. Startup succeeds, then the open lease DB is corrupted before a
+    // Resume request. The storage classification must terminate run()
+    // immediately instead of signing UNAVAILABLE and accepting again.
+    let resume_storage_dir_64 = tempfile::tempdir()
+        .map_err(|e| format!("resume storage dispatcher tempdir failed (64): {e}"))?;
+    let resume_storage_lease_db_64 = resume_storage_dir_64.path().join("lease.sqlite3");
+    let resume_storage_fence_db_64 = resume_storage_dir_64.path().join("fence.sqlite3");
+    seed_resume_lease(
+        &fixture,
+        &resume_storage_lease_db_64,
+        &resume_storage_fence_db_64,
+        7,
+        60_000,
+    )?;
+    let resume_storage_64 = run_resume_storage_failure_case(
+        &fixture,
+        &resume_storage_lease_db_64,
+        &resume_storage_fence_db_64,
+    )?;
+    if resume_storage_64.coordinator_success
+        || !resume_storage_64.coordinator_stderr.contains("kind=storage")
+        || resume_storage_64.coordinator_stdout.contains("resume_outcome=7")
+        || resume_storage_64.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 1
+        || resume_storage_64.coordinator_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "64) Resume storage fail-closed failed: coordinator_success={} stdout={:?} stderr={:?} agent_success={} agent_stderr={:?}",
+            resume_storage_64.coordinator_success,
+            resume_storage_64.coordinator_stdout,
+            resume_storage_64.coordinator_stderr,
+            resume_storage_64.agent_success,
+            resume_storage_64.agent_stderr,
+        ));
+    }
+    report.push_str("64) 정상 startup 뒤 열린 lease DB를 Resume 요청 직전에 손상시켜 kind=storage 분류·UNAVAILABLE 미서명·다음 accept 없는 즉시 run 종료를 검증\n");
 
     Ok(report)
+}
+
+struct TwoConnectionOutcome {
+    coordinator_success: bool,
+    coordinator_stdout: String,
+    coordinator_stderr: String,
+    first_agent_success: bool,
+    first_agent_stderr: String,
+    second_agent_success: bool,
+    second_agent_stdout: String,
+    second_agent_stderr: String,
+}
+
+/// Run two sequential clients against one Coordinator. The first client can
+/// be a deliberately truncated raw TCP connection, which exercises the real
+/// transport EOF path without changing the Agent crate.
+fn run_two_connection_case(
+    fixture: &Fixture,
+    extra_coordinator_args: &[&str],
+    first_is_truncated_transport: bool,
+) -> Result<TwoConnectionOutcome, String> {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let coordinator_seed_hex = to_hex(&fixture.coordinator_seed);
+    let mut coordinator_args: Vec<String> = vec![
+        "coordinator-stub", "--listen", "127.0.0.1:0", "--own-seed",
+        coordinator_seed_hex.as_str(), "--peer-pubkey", fixture.agent_pub_hex.as_str(),
+        "--coordinator-device-id", fixture.coordinator_device_id,
+        "--agent-device-id", fixture.agent_device_id, "--grant-id", fixture.grant_id,
+        "--attempt-id", fixture.attempt_id, "--lease-id", fixture.lease_id,
+        "--job-id", fixture.job_id,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    coordinator_args.extend(extra_coordinator_args.iter().map(|arg| (*arg).to_owned()));
+    if !extra_coordinator_args.contains(&"--lease-db") {
+        coordinator_args.extend([
+            "--i-understand-legacy-mode-is-unsafe".to_owned(),
+            "true".to_owned(),
+        ]);
+    }
+
+    let mut coordinator = Command::new(&fixture.exe)
+        .args(&coordinator_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("two-connection Coordinator spawn failed: {e}"))?;
+    let stdout_pipe = coordinator.stdout.take().expect("piped coordinator stdout");
+    let stderr_pipe = coordinator.stderr.take().expect("piped coordinator stderr");
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let stdout_reader = thread::spawn(move || -> Result<String, std::io::Error> {
+        let mut reader = BufReader::new(stdout_pipe);
+        let mut ready_line = String::new();
+        reader.read_line(&mut ready_line)?;
+        ready_sender.send(ready_line.clone()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "READY receiver dropped")
+        })?;
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest)?;
+        Ok(format!("{ready_line}{rest}"))
+    });
+    let stderr_reader = thread::spawn(move || -> Result<String, std::io::Error> {
+        let mut reader = BufReader::new(stderr_pipe);
+        let mut output = String::new();
+        reader.read_to_string(&mut output)?;
+        Ok(output)
+    });
+    let ready_line = match ready_receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(line) => line,
+        Err(error) => {
+            let _ = coordinator.kill();
+            let _ = coordinator.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err(format!("two-connection Coordinator READY timeout: {error}"));
+        }
+    };
+    let address = ready_line
+        .trim()
+        .strip_prefix("READY ")
+        .ok_or_else(|| format!("two-connection Coordinator READY invalid: {ready_line:?}"))?
+        .to_owned();
+
+    let first_wire = if first_is_truncated_transport {
+        let socket = std::net::TcpStream::connect(&address)
+            .map_err(|e| format!("truncated transport client connect failed: {e}"))?;
+        drop(socket);
+        WireClientOutcome {
+            success: false,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    } else {
+        run_wire_agent_client(&address, fixture, 0, true)?
+    };
+    let second_wire = run_wire_agent_client(&address, fixture, 1, false)?;
+    let coordinator_status = coordinator
+        .wait_until(deadline)
+        .map_err(|e| format!("two-connection Coordinator wait failed: {e}"))?;
+    let coordinator_stdout = stdout_reader
+        .join()
+        .map_err(|_| "two-connection Coordinator stdout reader panicked".to_string())?
+        .map_err(|e| format!("two-connection Coordinator stdout read failed: {e}"))?;
+    let coordinator_stderr = stderr_reader
+        .join()
+        .map_err(|_| "two-connection Coordinator stderr reader panicked".to_string())?
+        .map_err(|e| format!("two-connection Coordinator stderr read failed: {e}"))?;
+
+    Ok(TwoConnectionOutcome {
+        coordinator_success: coordinator_status.success(),
+        coordinator_stdout,
+        coordinator_stderr,
+        first_agent_success: first_wire.success,
+        first_agent_stderr: first_wire.stderr,
+        second_agent_success: second_wire.success,
+        second_agent_stdout: second_wire.stdout,
+        second_agent_stderr: second_wire.stderr,
+    })
+}
+
+struct WireClientOutcome {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// Minimal wire-level Agent used only by the dispatcher scenarios. It follows
+/// the existing Grant/ACK fields and nonce/signature rules, but lets the test
+/// deliberately corrupt only the first ACK while still sending attempt=1 on
+/// the second connection. No Agent production code is changed for this fault
+/// injection.
+fn run_wire_agent_client(
+    address: &str,
+    fixture: &Fixture,
+    connection_attempt: u32,
+    corrupt_signature: bool,
+) -> Result<WireClientOutcome, String> {
+    use std::io::Write;
+    use std::time::Duration;
+    use gputeer_crypto::Clock;
+
+    let mut stream = std::net::TcpStream::connect(address)
+        .map_err(|e| format!("wire Agent connect failed: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("wire Agent read timeout setup failed: {e}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("wire Agent write timeout setup failed: {e}"))?;
+
+    let coordinator_key = gputeer_crypto::SigningKey::from_bytes(&fixture.coordinator_seed)
+        .verifying_key();
+    let mut coordinator_keys = gputeer_crypto::InMemoryKeyring::new();
+    coordinator_keys.insert(fixture.coordinator_device_id.to_owned(), coordinator_key);
+    let mut replay = gputeer_crypto::InMemoryReplayGuard::new();
+    let clock = gputeer_crypto::SystemClock;
+    let received = gputeer_crypto::read_frame(
+        &mut stream,
+        1,
+        gputeer_crypto::KeyDirectorySource::Provided(&coordinator_keys),
+        &mut replay,
+        &clock,
+    )
+    .map_err(|e| format!("wire Agent Grant read failed: {e}"))?;
+    let grant = match &received {
+        gputeer_crypto::IngressMessage::Grant(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("wire Agent Grant replay failed: {e:?}"))?
+            .clone(),
+        other => return Err(format!("wire Agent expected Grant, got {other:?}")),
+    };
+    if grant.nonce != derive_selftest_nonce("grant", &grant.grant_id, connection_attempt) {
+        return Err(format!(
+            "wire Agent Grant nonce mismatch at attempt {connection_attempt}"
+        ));
+    }
+
+    let now = clock.now_unix_ms();
+    let mut ack = gputeer_protocol::pb::AgentGrantAck {
+        schema_version: 1,
+        grant_id: grant.grant_id.clone(),
+        attempt_id: grant.attempt_id.clone(),
+        agent_device_id: fixture.agent_device_id.to_owned(),
+        issued_at_unix_ms: now,
+        expires_at_unix_ms: now + 60_000,
+        nonce: derive_selftest_nonce("grant-ack", &grant.grant_id, connection_attempt),
+        accepted: true,
+        ..Default::default()
+    };
+    let agent_key = gputeer_crypto::SigningKey::from_bytes(&fixture.agent_seed);
+    ack.agent_signature = gputeer_crypto::sign(&agent_key, &ack).to_vec();
+    if corrupt_signature {
+        let last = ack
+            .agent_signature
+            .last_mut()
+            .ok_or_else(|| "wire Agent signature is empty".to_string())?;
+        *last ^= 0x01;
+    }
+    let frame = gputeer_crypto::write_frame(
+        gputeer_crypto::FrameType::GrantAck,
+        &ack.encode_to_vec(),
+    )
+    .map_err(|e| format!("wire Agent ACK encode failed: {e}"))?;
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("wire Agent ACK write failed: {e}"))?;
+    stream
+        .flush()
+        .map_err(|e| format!("wire Agent ACK flush failed: {e}"))?;
+
+    Ok(WireClientOutcome {
+        success: !corrupt_signature,
+        stdout: if corrupt_signature {
+            String::new()
+        } else {
+            format!("{RESULT_OK_MARKER} wire_agent=true\n")
+        },
+        stderr: if corrupt_signature {
+            "wire Agent intentionally sent a corrupt signature".to_string()
+        } else {
+            String::new()
+        },
+    })
+}
+
+fn derive_selftest_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
+    let mut input = Vec::with_capacity(tag.len() + 1 + id.len() + 4);
+    input.extend_from_slice(tag.as_bytes());
+    input.push(0);
+    input.extend_from_slice(id.as_bytes());
+    if connection_attempt != 0 {
+        input.extend_from_slice(&connection_attempt.to_be_bytes());
+    }
+    gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+}
+
+fn wait_child_with_drain(mut child: Child, deadline: Instant) -> Result<Output, String> {
+    let stdout = child.stdout.take().expect("piped child stdout");
+    let stderr = child.stderr.take().expect("piped child stderr");
+    let stdout_reader = thread::spawn(move || -> Result<Vec<u8>, std::io::Error> {
+        let mut output = Vec::new();
+        let mut reader = stdout;
+        reader.read_to_end(&mut output)?;
+        Ok(output)
+    });
+    let stderr_reader = thread::spawn(move || -> Result<Vec<u8>, std::io::Error> {
+        let mut output = Vec::new();
+        let mut reader = stderr;
+        reader.read_to_end(&mut output)?;
+        Ok(output)
+    });
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| format!("child wait failed: {e}"))? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("child exceeded 120-second hard deadline".to_string());
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "child stdout reader panicked".to_string())?
+        .map_err(|e| format!("child stdout read failed: {e}"))?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "child stderr reader panicked".to_string())?
+        .map_err(|e| format!("child stderr read failed: {e}"))?;
+    Ok(Output { status, stdout, stderr })
+}
+
+fn run_coordinator_startup_case(
+    fixture: &Fixture,
+    extra_coordinator_args: &[&str],
+) -> Result<CoordinatorOnlyOutcome, String> {
+    let coordinator_seed_hex = to_hex(&fixture.coordinator_seed);
+    let mut args: Vec<String> = vec![
+        "coordinator-stub", "--listen", "127.0.0.1:0", "--own-seed",
+        coordinator_seed_hex.as_str(), "--peer-pubkey", fixture.agent_pub_hex.as_str(),
+        "--coordinator-device-id", fixture.coordinator_device_id,
+        "--agent-device-id", fixture.agent_device_id, "--grant-id", fixture.grant_id,
+        "--attempt-id", fixture.attempt_id, "--lease-id", fixture.lease_id,
+        "--job-id", fixture.job_id,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    args.extend(extra_coordinator_args.iter().map(|arg| (*arg).to_owned()));
+    let coordinator = Command::new(&fixture.exe)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("startup storage Coordinator spawn failed: {e}"))?;
+    let output = wait_child_with_drain(coordinator, Instant::now() + Duration::from_secs(120))?;
+    Ok(CoordinatorOnlyOutcome {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        agent_success: false,
+        agent_exit_code: None,
+        agent_elapsed_ms: 0,
+        agent_stdout: String::new(),
+        agent_stderr: String::new(),
+    })
 }
 
 struct CoordinatorOnlyOutcome {
