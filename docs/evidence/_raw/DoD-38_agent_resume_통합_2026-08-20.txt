@@ -1,0 +1,45 @@
+구현 완료했습니다. commit/push는 하지 않았습니다.
+
+변경 파일:
+
+- [crates/agent/src/lib.rs:411](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:411)
+  - `REVOKED` → `RESUME_REFUSED:REVOKED`
+  - `EXPIRED` → `RESUME_REFUSED:EXPIRED`
+  - `SUPERSEDED` → `RESUME_REFUSED:SUPERSEDED`
+  - `UNKNOWN_LEASE` → `RESUME_REFUSED:UNKNOWN_LEASE`
+  - `IDENTITY_CONFLICT` → `RESUME_REFUSED:IDENTITY_CONFLICT`
+  - `EPOCH_AHEAD` → `RESUME_REFUSED:EPOCH_AHEAD`
+  - `RESUMED`와 `UNAVAILABLE/RETRYABLE_RESUME` 경로는 변경하지 않았습니다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:596](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:596)
+  - 시나리오 53~59가 Agent stdout/stderr의 기대 오류 문자열을 확인합니다.
+  - `CONNECTION_ATTEMPT`가 정확히 1회인지 확인합니다.
+  - retryable 오분류 시 나타나는 `ReconnectExhausted`도 거부하도록 강화했습니다.
+  - 호출부는 [3203](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:3203) 부근입니다.
+
+- [docs/plans/2026-08-20_1410_agent_resume_통합_v1.md](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-08-20_1410_agent_resume_통합_v1.md>)
+  - 구현 계획 및 검증 내용을 기록했습니다.
+
+재시도 안전성은 변경되지 않았습니다. `RETRYABLE_RESUME` 분기는 그대로 유지했고, terminal outcome은 여전히 즉시 실패합니다. selftest 53~59는 reconnect를 활성화한 상태에서 검증하여 두 번째 연결 및 `ReconnectExhausted`가 없는지 직접 확인합니다.
+
+검증 결과:
+
+- `cargo build --workspace --exclude gputeer-runtime-windows`: 성공
+- `cargo test --workspace --exclude gputeer-runtime-windows`: 성공, exit=0
+- `coordinator-agent-selftest`: 최종 코드로 5회 연속 성공, 매회 64개 시나리오 exit=0
+- 뮤테이션 테스트: `REVOKED` 문자열을 generic 오류로 임시 변경하자 시나리오 56이 실패했으며, 원복 후 재빌드 완료
+- `git diff --check`: 성공
+- `cargo fmt --check`: 설치된 toolchain에 rustfmt component가 없어 실행하지 못했습니다. 코드 검증에는 영향이 없고 build/test는 모두 통과했습니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경 ##########
+cargo build --workspace --exclude gputeer-runtime-windows: 성공
+cargo test --workspace --exclude gputeer-runtime-windows: 성공, 실패 0건
+
+.\target\debug\gputeer.exe coordinator-agent-selftest 5회 연속 실행:
+run 1: exit=0 elapsed_ms=30699 scenarios=64
+run 2: exit=0 elapsed_ms=30536 scenarios=64
+run 3: exit=0 elapsed_ms=30655 scenarios=64
+run 4: exit=0 elapsed_ms=31155 scenarios=64
+run 5: exit=0 elapsed_ms=31403 scenarios=64
+
+5회 전부 exit=0, 64개 시나리오 전부 완료(약 31초/회).

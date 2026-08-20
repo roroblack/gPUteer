@@ -408,6 +408,12 @@ fn run_resume_connection(
             "RETRYABLE_RESUME: coordinator unavailable retry_after_ms={} detail={}",
             result.retry_after_ms, result.detail
         )),
+        2 => Err("RESUME_REFUSED:REVOKED".into()),
+        3 => Err("RESUME_REFUSED:EXPIRED".into()),
+        4 => Err("RESUME_REFUSED:SUPERSEDED".into()),
+        5 => Err("RESUME_REFUSED:UNKNOWN_LEASE".into()),
+        6 => Err("RESUME_REFUSED:IDENTITY_CONFLICT".into()),
+        8 => Err("RESUME_REFUSED:EPOCH_AHEAD".into()),
         outcome => Err(format!(
             "RESUME_REJECTED: outcome={} detail={}", outcome, result.detail
         )),

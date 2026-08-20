@@ -480,6 +480,7 @@ fn run_resume_case(
     attempt_id: &str,
     fence_epoch: u64,
     unavailable_without_store: bool,
+    disable_reconnect: bool,
 ) -> Result<HandshakeOutcome, String> {
     let lease_db = lease_db
         .to_str()
@@ -505,7 +506,7 @@ fn run_resume_case(
         ]);
     }
     let coordinator_refs: Vec<&str> = coordinator_args.iter().map(String::as_str).collect();
-    let agent_args = vec![
+    let mut agent_args = vec![
         "--resume-protocol".to_string(),
         "true".to_string(),
         "--session-id".to_string(),
@@ -521,8 +522,31 @@ fn run_resume_case(
         "--fence-db".to_string(),
         fence_db.to_string(),
     ];
+    if disable_reconnect {
+        agent_args.extend([
+            "--disable-reconnect".to_string(),
+            "true".to_string(),
+        ]);
+    } else {
+        agent_args.extend([
+            "--max-reconnect-attempts".to_string(),
+            "2".to_string(),
+            "--max-reconnect-duration-seconds".to_string(),
+            "5".to_string(),
+            "--retry-base-ms".to_string(),
+            "1".to_string(),
+            "--retry-cap-ms".to_string(),
+            "1".to_string(),
+        ]);
+    }
     let agent_refs: Vec<&str> = agent_args.iter().map(String::as_str).collect();
-    run_handshake(fixture, &coordinator_refs, &agent_refs)
+    run_handshake_internal(
+        fixture,
+        &coordinator_refs,
+        &agent_refs,
+        HANDSHAKE_HARD_TIMEOUT,
+        disable_reconnect,
+    )
 }
 
 /// Start a healthy Resume Coordinator, wait until it has opened and bound the
@@ -576,15 +600,38 @@ fn assert_resume_outcome(
     agent_should_succeed: bool,
 ) -> Result<(), String> {
     let marker = format!("RESULT ok=true resume_outcome={expected_outcome}");
+    let expected_refusal = match expected_outcome {
+        2 => Some("RESUME_REFUSED:REVOKED"),
+        3 => Some("RESUME_REFUSED:EXPIRED"),
+        4 => Some("RESUME_REFUSED:SUPERSEDED"),
+        5 => Some("RESUME_REFUSED:UNKNOWN_LEASE"),
+        6 => Some("RESUME_REFUSED:IDENTITY_CONFLICT"),
+        8 => Some("RESUME_REFUSED:EPOCH_AHEAD"),
+        _ => None,
+    };
+    let agent_output = format!("{}\n{}", outcome.agent_stdout, outcome.agent_stderr);
+    let refusal_matches = expected_refusal
+        .is_none_or(|expected| agent_output.contains(expected));
+    let retried_to_exhaustion = agent_output.contains("ReconnectExhausted:");
+    let accepted_connection_count = outcome
+        .coordinator_stdout
+        .matches("CONNECTION_ATTEMPT")
+        .count();
     if !outcome.coordinator_success
         || !outcome.coordinator_stdout.contains(&marker)
         || outcome.agent_success != agent_should_succeed
         || (agent_should_succeed && !outcome.agent_stdout.contains(&marker))
         || (!agent_should_succeed && outcome.agent_stdout.contains("RESULT ok=true"))
+        || !refusal_matches
+        || retried_to_exhaustion
+        || accepted_connection_count != 1
     {
         return Err(format!(
-            "{scenario}) Resume outcome mismatch: expected={} coordinator_success={} coordinator_stdout={} coordinator_stderr={} agent_success={} agent_stdout={} agent_stderr={}",
+            "{scenario}) Resume outcome mismatch: expected={} expected_refusal={:?} retried_to_exhaustion={} accepted_connection_count={} coordinator_success={} coordinator_stdout={} coordinator_stderr={} agent_success={} agent_stdout={} agent_stderr={}",
             expected_outcome,
+            expected_refusal,
+            retried_to_exhaustion,
+            accepted_connection_count,
             outcome.coordinator_success,
             outcome.coordinator_stdout,
             outcome.coordinator_stderr,
@@ -3155,7 +3202,7 @@ pub fn run() -> Result<String, String> {
     seed_resume_lease(&fixture, &lease_db_53, &fence_db_53, 7, 60_000)?;
     let resumed_53 = run_resume_case(
         &fixture, &lease_db_53, &fence_db_53, "resume-session-53",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false,
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false, false,
     )?;
     assert_resume_outcome(&resumed_53, 53, 1, true)?;
     report.push_str("53) 명시적 --resume-protocol Hello-first Resume 성공(RESUMED), 저장된 expires_at 유지\n");
@@ -3167,7 +3214,7 @@ pub fn run() -> Result<String, String> {
     seed_resume_lease(&fixture, &lease_db_54, &fence_db_54, 7, 60_000)?;
     let unknown_54 = run_resume_case(
         &fixture, &lease_db_54, &fence_db_54, "resume-session-54",
-        "unknown-lease-id", fixture.job_id, fixture.attempt_id, 7, false,
+        "unknown-lease-id", fixture.job_id, fixture.attempt_id, 7, false, false,
     )?;
     assert_resume_outcome(&unknown_54, 54, 5, false)?;
     report.push_str("54) 존재하지 않는 lease_id를 UNKNOWN_LEASE로 거부\n");
@@ -3179,7 +3226,7 @@ pub fn run() -> Result<String, String> {
     seed_resume_lease(&fixture, &lease_db_55, &fence_db_55, 7, 60_000)?;
     let identity_55 = run_resume_case(
         &fixture, &lease_db_55, &fence_db_55, "resume-session-55",
-        fixture.lease_id, "wrong-job-id", fixture.attempt_id, 7, false,
+        fixture.lease_id, "wrong-job-id", fixture.attempt_id, 7, false, false,
     )?;
     assert_resume_outcome(&identity_55, 55, 6, false)?;
     report.push_str("55) job_id 불일치 identity conflict를 IDENTITY_CONFLICT로 거부\n");
@@ -3195,7 +3242,7 @@ pub fn run() -> Result<String, String> {
         .map_err(|e| format!("resume revoke mutation failed (56): {e}"))?;
     let revoked_56 = run_resume_case(
         &fixture, &lease_db_56, &fence_db_56, "resume-session-56",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false,
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false, false,
     )?;
     assert_resume_outcome(&revoked_56, 56, 2, false)?;
     report.push_str("56) durable revoke 상태를 REVOKED로 판정\n");
@@ -3208,7 +3255,7 @@ pub fn run() -> Result<String, String> {
     thread::sleep(Duration::from_millis(2_200));
     let expired_57 = run_resume_case(
         &fixture, &lease_db_57, &fence_db_57, "resume-session-57",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false,
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false, false,
     )?;
     assert_resume_outcome(&expired_57, 57, 3, false)?;
     report.push_str("57) expires_at_unix_ms <= now 경계로 EXPIRED 판정\n");
@@ -3220,7 +3267,7 @@ pub fn run() -> Result<String, String> {
     seed_resume_lease(&fixture, &lease_db_58, &fence_db_58, 7, 60_000)?;
     let superseded_58 = run_resume_case(
         &fixture, &lease_db_58, &fence_db_58, "resume-session-58",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 6, false,
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 6, false, false,
     )?;
     assert_resume_outcome(&superseded_58, 58, 4, false)?;
     report.push_str("58) 요청 epoch < 저장 epoch 방향을 SUPERSEDED로 고정\n");
@@ -3232,7 +3279,7 @@ pub fn run() -> Result<String, String> {
     seed_resume_lease(&fixture, &lease_db_59, &fence_db_59, 7, 60_000)?;
     let ahead_59 = run_resume_case(
         &fixture, &lease_db_59, &fence_db_59, "resume-session-59",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 8, false,
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 8, false, false,
     )?;
     assert_resume_outcome(&ahead_59, 59, 8, false)?;
     report.push_str("59) 요청 epoch > 저장 epoch을 EPOCH_AHEAD(enum 값 8)로 고정\n");
@@ -3243,7 +3290,7 @@ pub fn run() -> Result<String, String> {
     let fence_db_60 = unavailable_dir_60.path().join("fence.sqlite3");
     let unavailable_60 = run_resume_case(
         &fixture, &lease_db_60, &fence_db_60, "resume-session-60",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, true,
+        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, true, true,
     )?;
     if unavailable_60.coordinator_success
         || !unavailable_60.coordinator_stderr.contains("kind=storage")

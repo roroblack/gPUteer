@@ -16,6 +16,41 @@
 
 ---
 
+## 2026-08-20 14:10 — Agent Resume 통합 — 구현 1라운드 + 독립 검수 1라운드 + evidence 기록 (`DoD-38`)
+- 계획: `docs/plans/2026-08-20_1410_agent_resume_통합_v1.md`
+  (기준 로드맵 조각 6).
+- 스트림: Agent · QA · 문서.
+- 수행: 설계 조사(`p198`, read-only)가 로드맵 조각 6 의 상태를
+  "부분 완료"로 정직하게 판정했다 — Agent 는 이미 실제로
+  `AgentSessionHello`/`ResumeLeaseRequest` 를 보내고
+  `ResumeLeaseResult` 를 검증하며, 재시도 여부(안전 동작)는 이미
+  올바르다(terminal outcome 은 전부 즉시 종료, `UNAVAILABLE` 만
+  재시도 가능). 부족했던 건 outcome 별 **명시적 구분**뿐이었다.
+  구현(`p199`, 코덱스 workspace-write)이 `agent/lib.rs:411`
+  부근에 `RESUME_REFUSED:REVOKED`·`EXPIRED`·`SUPERSEDED`·
+  `UNKNOWN_LEASE`·`IDENTITY_CONFLICT`·`EPOCH_AHEAD` 6종 오류
+  문자열을 추가(`DoD-27` 의 `RENEW_REFUSED:REVOKED` 패턴 재사용,
+  `RESUMED`/`UNAVAILABLE` 경로는 안 건드림)하고,
+  `coordinator_agent_selftest.rs` 의 기존 시나리오 53~59 가
+  outcome 별 정확한 문자열·`CONNECTION_ATTEMPT` 1회·
+  `ReconnectExhausted` 미발생을 실제로 assert 하도록 보강했다.
+  독립 검수(`p200`, 대화 기록 없는 새 코덱스 인스턴스, read-only)
+  가 재시도 안전 동작 불변(`Retryable`/`Fatal` 분류)을 코드로
+  직접 추적해 확인하고, selftest 보강·뮤테이션 타당성·범위(2개
+  파일 + 계획 문서만, Coordinator/proto 무변경)까지 전부 확인한
+  뒤 **1라운드 만에 `ACCEPTED`**. **로드맵 7조각 중 1·2·3·4·6
+  완료** — 남은 5(durable request ledger)·7(다중 Agent
+  selftest, 조각 5 이후 유의미)만 후속 조각으로 남는다.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  성공(실패 0건), `coordinator-agent-selftest` 5회 연속 exit=0
+  (64개 시나리오, 약 30.5~31.4초/회), 뮤테이션(`REVOKED` 문자열을
+  generic 으로 임시 변경 → 시나리오 56 실패 확인 → 원복) 검증,
+  `python scripts/verify_evidence.py` 스키마 위반 없음(PASS 46/47).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-38_agent_resume_통합.md`).
+
+---
+
 ## 2026-08-20 13:10 — Coordinator dispatcher 정교화 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-37`)
 - 계획: `docs/plans/2026-08-20_1310_coordinator_dispatcher_정교화_v1.md`
   (기준 로드맵 조각 4).

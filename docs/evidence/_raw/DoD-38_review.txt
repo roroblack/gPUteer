@@ -1,0 +1,8 @@
+**ACCEPTED**
+
+- [agent/lib.rs:39-47](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:39)에서 `RETRYABLE_CONNECTION`·`RETRYABLE_RESUME`만 `Retryable`입니다. 새 6개 `RESUME_REFUSED:*`는 [411-416](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:411)에서 `Fatal`로 남습니다.
+- `UNAVAILABLE` outcome 7은 [391-394](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:391)의 `RETRYABLE_RESUME` 경로를 유지합니다.
+- 시나리오 53~59의 outcome별 기대 문자열, 연결 1회, `ReconnectExhausted` 금지가 [coordinator_agent_selftest.rs:590-613](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:590)에서 실제 assert됩니다. 호출부 매핑도 [3135-3216](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:3135)에서 정확합니다.
+- `REVOKED` 문자열을 generic 오류로 바꾸면 시나리오 56의 `refusal_matches`가 실패하므로 mutation 주장도 타당합니다.
+- 범위는 두 tracked 파일과 계획 문서 1개뿐이며 Coordinator/proto 변경은 없습니다. `git diff --check`도 통과했습니다.
+- `cargo test --workspace --exclude gputeer-runtime-windows`는 이 환경에 `cargo`가 없어 실행되지 않았지만, 환경 제약으로 판정 근거에는 반영하지 않았습니다.
