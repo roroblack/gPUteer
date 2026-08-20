@@ -314,6 +314,7 @@ dependencies = [
  "gputeer-protocol",
  "gputeer-runtime-policy",
  "prost",
+ "tempfile",
 ]
 
 [[package]]

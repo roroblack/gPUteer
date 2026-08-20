@@ -1,0 +1,135 @@
+########## p181 (구현자 1차, workspace-write) — 초기 구현 ##########
+구현 완료했습니다. commit/push는 하지 않았습니다.
+
+변경 파일:
+
+- [crates/agent/src/lib.rs](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\agent\src\lib.rs:184)
+  - `SessionError`, `RetryPolicy`, `RetryBudget`
+  - `run_one_connection`
+  - `connect_with_timeout`
+  - `classify_framing_error`
+  - `classify_renew_result_error`
+  - ACK 후 연결 감지
+  - Grant/ACK/Renew nonce에 `connection_attempt` 반영
+  - replay guard/fence watermark를 연결 간 유지
+- [crates/coordinator/src/lib.rs](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator\src\lib.rs:188)
+  - 반복 accept loop
+  - `--max-connections`
+  - `--accept-timeout-ms`
+  - `--drop-connection-after-ack-once`
+  - `accept_with_deadline`
+  - 연결별 Grant nonce
+- [coordinator_agent_selftest.rs](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\cli\src\coordinator_agent_selftest.rs:164)
+  - `run_reconnect_case`
+  - 신규 시나리오 49–52
+  - timeout 시 Agent/Coordinator kill 후 수집
+- [최소 경로 설계 문서](C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\docs\plans\2026-08-20_1001_자동_재접속_최소_경로_v1.md)
+
+검증:
+
+- 기존 시나리오 1–48: 전부 통과
+- 49: 정상 재접속 성공
+- 50: 최대 2회/3초 retry 소진
+- 51: revoke 후 재접속 거부
+- 52: TTL 2초, 다음 accept 2500ms 지연 후 expired 거부
+- 각 케이스 hard timeout: 120초
+- Coordinator accept timeout: 5000ms
+- mutation retry 제거: 시나리오 49 실패 확인
+- mutation max-connections 설정 무시: 시나리오 49 실패 확인
+- 최종 selftest 5회: 모두 exit=0  
+  `26.085s, 25.891s, 25.494s, 25.771s, 25.655s`
+- 최종 build: 성공, 3.186초
+- 최종 workspace test: 성공, 20.661초
+
+Windows에서는 nonblocking listener가 accepted stream에 전파되어 `10035`가 발생하던 플랫폼 특이점을 발견했고, accepted stream을 blocking 모드로 되돌려 해결했습니다. `git diff --check`도 통과했습니다.
+
+########## p183 (구현자 2차 수정, workspace-write — p182 지적 2건 반영) ##########
+수정 완료했습니다. commit/push는 하지 않았습니다.
+
+1. 지적 1 — attempt 카운터
+
+- Agent가 TCP 연결 성공 시에만 `connection_attempt`를 증가시키도록 분리했습니다.
+- 실패한 `connect()`는 nonce 카운터를 소비하지 않습니다.
+- `run_one_connection()`에는 성공한 연결의 카운터를 전달합니다.
+
+  - [agent/src/lib.rs:226](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:226>)
+  - [agent/src/lib.rs:258](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:258>)
+  - [agent/src/lib.rs:290](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:290>)
+
+실제 `127.0.0.1:1` refused 연결을 수행한 단위 테스트도 추가했고 통과했습니다([agent/src/lib.rs:1153](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1153>)).
+
+2. 지적 2 — selftest 하드 타임아웃
+
+Coordinator stdout을 별도 reader thread에서 읽고 READY만 channel로 전달합니다. Agent가 종료한 뒤에는 stdout 전체를 읽기 전에 Coordinator `wait_until(deadline)`을 먼저 실행하여, accept loop 정지 시에도 kill됩니다.
+
+- [selftest.rs:236](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:236>)
+- [selftest.rs:261](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:261>)
+- [selftest.rs:324](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:324>)
+- [selftest.rs:329](<C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:329>)
+
+검증용으로 Coordinator를 120초 accept 대기에 묶고 Agent를 reconnect-disabled로 종료시키는 뮤테이션을 실행했습니다. 가속된 2초 deadline 안에 Coordinator가 kill되고 selftest가 정상 반환됨을 확인했으며, 뮤테이션 코드는 제거했습니다.
+
+3. 지적 3 판단
+
+기존 `run_handshake()`의 `--disable-reconnect` 주입은 유지했습니다. 기존 1~48 시나리오의 의미를 보존하고, 재접속 시나리오 49~52만 `run_reconnect_case()`를 사용하게 하는 편이 안전합니다. attempt=0에서는 nonce 유도에 카운터 바이트를 추가하지 않으므로 기존 nonce 값도 바이트 단위로 동일합니다.
+
+검증 결과
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` 통과
+- `cargo test --workspace --exclude gputeer-runtime-windows` 통과
+- `coordinator-agent-selftest` 5회 연속 통과
+  - 매회 전체 52개 시나리오
+  - 모두 exit=0
+- 최종 smoke test도 52번 시나리오까지 exit=0
+- `git diff --check` 통과
+
+현재 남은 제한은 첫 TCP 실패 후 다른 포트로 전환하는 단일 end-to-end selftest 대신, 실제 refused 연결과 카운터 동작을 결합한 단위 테스트로 검증했다는 점입니다.
+
+########## p185 (구현자 3차 수정, workspace-write — p184 지적 반영, 회귀 테스트 보강) ##########
+구현 완료했습니다. 커밋/푸시는 하지 않았습니다.
+
+1. 방법 A 선택
+
+`Agent::run()` 전체를 실제 실행하는 통합 테스트를 선택했습니다. 기존 헬퍼 직접 호출 방식의 한계를 피하고, 실제 재접속 루프와 `run_one_connection()`을 통과시키기 위해서입니다.
+
+2. 테스트 내용
+
+[crates/agent/src/lib.rs:1151](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1151)의 테스트가 다음을 검증합니다.
+
+- 실제 loopback 포트를 닫아 `TcpStream::connect()` 거부 발생
+- Agent가 fence DB 초기화 후 재시도 루프에 진입할 때까지 대기
+- 5초 동안 해당 포트를 거부 상태로 유지
+- 이후 같은 포트에 테스트 Coordinator 리스너를 열어 성공 연결 수락
+- 실제 Grant nonce와 Agent가 전송한 ACK nonce가 모두 `connection_attempt=0`과 일치하는지 검증
+- 새 proto 메시지는 추가하지 않음
+
+테스트 전용 `tempfile` 의존성도 추가했습니다.
+
+3. 변이 검증
+
+임시로 production 경로를 다음처럼 변경했습니다.
+
+```rust
+attempt_config.connection_attempt = attempt;
+```
+
+실제 결과:
+
+- TCP connect 실패 `attempt=0`
+- TCP connect 실패 `attempt=1`
+- TCP connect 성공 `attempt=2`
+- Agent가 `GRANT_REJECTED: nonce does not match connection attempt`로 실패
+- 테스트 exit code 1
+
+즉 새 테스트가 과거 버그를 실제로 잡는 것을 확인했습니다. 이후 production 호출부를 `next_connection_attempt(&mut connection_attempt)`로 원복했고, 테스트도 다시 통과했습니다.
+
+4. 검증 결과
+
+- `cargo build --workspace --exclude gputeer-runtime-windows` — 통과
+- `cargo test --workspace --exclude gputeer-runtime-windows` — 통과
+- `coordinator-agent-selftest` — 5회 연속 통과
+  - 매회 52개 시나리오까지 도달
+  - 각 실행 120초 하드 타임아웃 이내
+  - 실행 래퍼 exit=0
+
+`rustfmt`는 환경에 rustfmt 컴포넌트가 설치되지 않아 실행하지 못했습니다. 그 외 검증에는 문제가 없었습니다.

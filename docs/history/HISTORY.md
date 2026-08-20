@@ -16,6 +16,47 @@
 
 ---
 
+## 2026-08-20 10:01 — 자동 재접속 최소 경로 — 구현 3라운드 + 독립 검수 3라운드 + evidence 기록 (`DoD-35`)
+- 계획: `docs/plans/2026-08-20_1001_자동_재접속_최소_경로_v1.md`
+  (기준 로드맵: `docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md`,
+  7조각·6~8일 규모 — 이번 조각은 조각 1+2 의 축소판).
+- 스트림: Agent · Coordinator · QA · 문서.
+- 수행: 사용자가 기상 후 "코덱스로 더 할 거 체크해서 작업
+  이어가" 라고 직접 지시했다. 재조사(`p179`)가 자동 재접속 루프를
+  최우선 후보로 꼽았고, 후속 설계 조사(`p180`)가 "proto 변경 없이
+  Agent bounded retry + Coordinator 반복 accept" 로 범위를 좁히며
+  정직한 규모를 1.5~2일로 재산정했다 — 사용자가 "그대로 한 번에
+  진행" 을 선택했다. 구현 1라운드(`p181`, 코덱스 workspace-write)
+  가 `SessionError`/`RetryPolicy`/`RetryBudget`(Agent)와 반복
+  accept 루프(Coordinator)를 만들고, Windows `WSAEWOULDBLOCK`
+  (10035) 플랫폼 버그도 발견해 고쳤다. 독립 검수 1라운드(`p182`)
+  가 **진짜 결함 2건**을 찾았다 — Agent/Coordinator 간 nonce
+  attempt 카운터 불일치(TCP `connect()` 레벨 실패 후 재접속이
+  `GRANT_REJECTED` 로 실패), selftest 하드 타임아웃이 Coordinator
+  반복 accept 상황에서 무력화될 수 있음. 감독자가 코드로 직접
+  재확인해 둘 다 실재함을 확인. 구현 2라운드(`p183`)가 nonce
+  카운터를 TCP 연결 실제 성공 시에만 증가하도록 분리하고 selftest
+  reader thread 를 도입해 고쳤다. 독립 검수 2라운드(`p184`)가
+  **프로덕션 로직 자체는 올바르다** 고 코드로 확인했으나, 새 회귀
+  테스트가 실제 프로덕션 경로를 안 타서 증명력이 없다고 지적.
+  구현 3라운드(`p185`)가 실제 TCP `connect()` 거부→`run()` 스레드
+  실행→재시도→성공까지 타는 통합 테스트로 재작성하고 뮤테이션
+  으로 원래 버그 재현까지 확인. 독립 검수 3라운드(`p186`)가
+  **`ACCEPTED`**. 감독자가 3라운드 각각 `coordinator-agent-selftest`
+  5회 연속(전부 exit=0, 52개 시나리오, 약 25.4~26.7초/회, 120초
+  하드 타임아웃 대비 여유)으로 독립 재확인했다.
+- 검증: `cargo build`/`test --workspace --exclude gputeer-runtime-windows`
+  3라운드 전부 성공(실패 0건), `cargo test -p gputeer-agent` 5개
+  전부 통과(신규 통합 테스트 포함), `coordinator-agent-selftest`
+  기존 48개 시나리오 전부 회귀 없음 + 신규 49~52 정상, 뮤테이션
+  (nonce 카운터 로직을 원래 버그로 되돌리면 통합 테스트가 실제
+  실패) 통과, `python scripts/verify_evidence.py` 스키마 위반
+  없음(PASS 43/44).
+- 리포트: 없음(evidence 문서로 대신 기록 —
+  `docs/evidence/DoD-35_자동_재접속_최소_경로.md`).
+
+---
+
 ## 2026-08-20 07:26 — Agent 쪽 갱신 직전 만료 재확인 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-34`)
 - 계획: 마지막 백로그 재조사(`p176`) 유일 후보 — 별도 plan 문서
   없이 evidence 문서에 직접 기록.

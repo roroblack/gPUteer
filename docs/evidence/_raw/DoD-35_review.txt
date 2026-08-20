@@ -1,0 +1,72 @@
+########## p182 (독립 검수 1라운드, read-only, 새 인스턴스) — CHANGES_REQUESTED(진짜 결함 2건) ##########
+## CHANGES_REQUESTED
+
+1. **재접속 attempt nonce가 Agent/Coordinator 간 어긋날 수 있습니다.**
+
+   Agent는 모든 retryable 오류마다 `attempt`를 증가시킵니다([agent/src/lib.rs:207](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:207)-[231](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:231)). 반면 Coordinator는 실제 `accept()`된 연결에 대해서만 카운트를 증가시킵니다([coordinator/src/lib.rs:218](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:218)-[226](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:226)).
+
+   따라서 연결 거부/accept 전 실패가 한 번 발생하면 다음 연결에서 Agent는 `attempt=1`을 기대하지만 Coordinator는 `attempt=0` nonce를 발급할 수 있습니다. Agent가 Grant를 `GRANT_REJECTED`로 거부해 재접속이 실패합니다([agent/src/lib.rs:314](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:314)-[315](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:315)).
+
+2. **selftest hard timeout이 Coordinator stdout blocking read에 의해 무력화됩니다.**
+
+   Agent가 먼저 종료하면 Coordinator stdout을 무제한 `read_to_string()`으로 읽습니다([coordinator_agent_selftest.rs:286](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:286)-[289](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:289)). Coordinator timeout을 감시하는 `wait_until()`은 그 뒤에 호출됩니다([coordinator_agent_selftest.rs:297](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:297)-[299](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:299)).
+
+   Coordinator가 두 번째 accept에서 멈추면 kill이 먼저 실행되지 않아 120초 hard timeout이 보장되지 않습니다. timeout 분기([277](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:277)-[282](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:277))는 Agent timeout에만 적용됩니다.
+
+3. **`run_handshake()`는 변경되었습니다.**
+
+   기존 helper가 wrapper로 바뀌었고([coordinator_agent_selftest.rs:142](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:142)-[154](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:154)), 기존 1~48 시나리오에도 새 `--disable-reconnect` 플래그를 주입합니다([255](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:255)-[257](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:257)). 동작 보존 의도는 이해되지만 “기존 helper 불변, 신규 helper만 신규 플래그 사용” 조건에는 맞지 않습니다.
+
+확인된 사항:
+
+- attempt 0의 Grant/ACK/Renew nonce 입력은 이전 코드와 바이트 단위로 동일합니다.
+- 기본 `max-connections=1`은 완료 후 두 번째 accept를 시도하지 않습니다.
+- accepted stream을 blocking으로 되돌리고 listener는 nonblocking으로 유지하는 Windows 수정은 타당합니다([coordinator/src/lib.rs:222](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:222)-[224](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:224)).
+- `AmbiguousRenew` 읽기 경로는 retry하지 않습니다([agent/src/lib.rs:243](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:243)-[251](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:251)). 다만 `flush()` 오류는 Ambiguous marker 없이 Fatal 처리됩니다([487](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:487)-[492](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:492)).
+- 변경 범위는 소스 3개와 계획 문서 1개이며 proto/evidence/CLAUDE/HISTORY 변경은 없습니다.
+- `cargo test --workspace --exclude gputeer-runtime-windows`는 현재 셸에 `cargo`가 없어 실행되지 않았습니다. 판정 근거로 사용하지 않았습니다.
+
+########## p184 (독립 검수 2라운드, read-only, 새 인스턴스 — 결함 수정 확인) — CHANGES_REQUESTED(로직은 정상, 테스트 증명력 부족) ##########
+**CHANGES_REQUESTED**
+
+핵심 런타임 로직은 대체로 올바릅니다.
+
+- Agent의 `connection_attempt`는 재시도 변수 `attempt`와 분리되어 있고, TCP `connect()` 성공 분기에서만 증가합니다([agent/lib.rs:226-258](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:226)).
+- Coordinator 카운터도 `accept_with_deadline()` 성공 뒤에만 증가합니다([coordinator/lib.rs:245-254](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:245)).
+- 양쪽 nonce 유도 규칙과 `attempt=0` 바이트 생략도 일치합니다([agent/lib.rs:948-956](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:948), [coordinator/lib.rs:1076-1084](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1076)).
+- selftest는 stdout 전체 `read_to_string()` 전에 Coordinator `wait_until()`을 실행하며, reader thread가 READY·RESULT·stderr를 계속 캡처합니다([selftest.rs:236-245](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:236), [selftest.rs:314-336](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:314)).
+
+그러나 새 테스트는 요구사항을 충족하지 못합니다.
+
+- [agent/lib.rs:1148-1161](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1148)의 `nonce_attempt_counter_ignores_failed_connects`는 실패한 `connect()` 후 실제 성공 연결을 수행하지 않습니다.
+- `run()`의 재접속 루프나 `derive_nonce()`를 호출하지 않고, `next_connection_attempt()`를 직접 두 번 호출할 뿐입니다.
+- 따라서 production 코드가 실패한 연결에서 별도 카운터를 증가시키거나, Agent/Coordinator nonce가 어긋나도 이 테스트는 계속 통과할 수 있습니다.
+
+실행 검증도 이 환경에서는 `cargo` 자체가 설치되지 않아 수행하지 못했습니다.
+
+범위는 작업 트리 기준 소스 3개와 untracked 계획 문서 1개뿐이며, `proto/evidence/CLAUDE.md/HISTORY` 변경은 없습니다. 다만 위 테스트를 실제 성공 연결 또는 최소한 production 재접속 경로·nonce 비교까지 검증하도록 보강해야 합니다.
+
+########## p186 (독립 검수 3라운드, read-only, 새 인스턴스 — 테스트 보강 확인) — ACCEPTED ##########
+ACCEPTED
+
+- `crates/agent/src/lib.rs:1151` 테스트는 listener를 닫은 뒤 실제 `run()`을 스레드로 실행하고, 같은 포트에 listener를 재개방해 성공 연결을 받습니다.
+- 실제 Grant를 전송하고 `read_frame()`으로 Agent ACK를 읽은 뒤, `crates/agent/src/lib.rs:1299`에서 ACK nonce가 `connection_attempt=0` 유도값인지 검증합니다.
+- 버그 상태라면 실패 연결 후 `attempt >= 1`이 되어 Grant nonce 검증에서 거부되므로 mutation 주장도 타당합니다.
+- `tempfile`은 `crates/agent/Cargo.toml:15-16`의 `[dev-dependencies]`에만 추가됐고, lockfile 변경도 Agent 패키지 항목의 추가 1줄뿐입니다.
+- 프로덕션 경로는 `run()`의 성공 연결 전용 카운터 증가(`:226-258`)와 `run_one_connection()` nonce 검증(`:290`, `:348`, `:407`) 구조를 유지합니다.
+- `git diff --stat` 변경 파일은 허용된 5개이며, 별도 untracked 계획 문서도 예상 범위 안입니다.
+
+########## 감독자(Claude Code) 직접 재검증 — 코덱스 read-only 샌드박스 밖 실제 실행 환경, 각 라운드마다 ##########
+[1차 구현 후] cargo build 성공, cargo test 성공, coordinator-agent-selftest
+5회 연속: exit=0 elapsed_ms=26555/26051/26122/25843/26148, 52개 시나리오
+
+[2차 수정 후] cargo build 성공, cargo test 성공(신규 단위 테스트
+nonce_attempt_counter_ignores_failed_connects 포함), coordinator-agent-selftest
+5회 연속: exit=0 elapsed_ms=25540/25452/25987/25765/25732, 52개 시나리오
+
+[3차 수정 후] cargo build 성공, cargo test -p gputeer-agent 5개 전부 통과
+(신규 통합 테스트 5.36초 — 실제 TCP connect 거부 후 재시도 성공까지
+포함하는 실측 시간), cargo test --workspace 전체 통과, coordinator-agent-selftest
+5회 연속: exit=0 elapsed_ms=26687/25757/25906/26192/25387, 52개 시나리오
+
+3라운드 전부 90~120초 하드 타임아웃 대비 25~27초로 완주 — 교착 징후 없음.

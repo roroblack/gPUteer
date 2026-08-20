@@ -23,6 +23,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -152,7 +153,37 @@ fn run_handshake(
     extra_coordinator_args: &[&str],
     extra_agent_args: &[&str],
 ) -> Result<HandshakeOutcome, String> {
-    let handshake_deadline = Instant::now() + HANDSHAKE_HARD_TIMEOUT;
+    run_handshake_internal(
+        fixture,
+        extra_coordinator_args,
+        extra_agent_args,
+        HANDSHAKE_HARD_TIMEOUT,
+        true,
+    )
+}
+
+fn run_reconnect_case(
+    fixture: &Fixture,
+    extra_coordinator_args: &[&str],
+    extra_agent_args: &[&str],
+) -> Result<HandshakeOutcome, String> {
+    run_handshake_internal(
+        fixture,
+        extra_coordinator_args,
+        extra_agent_args,
+        Duration::from_secs(120),
+        false,
+    )
+}
+
+fn run_handshake_internal(
+    fixture: &Fixture,
+    extra_coordinator_args: &[&str],
+    extra_agent_args: &[&str],
+    hard_timeout: Duration,
+    disable_reconnect: bool,
+) -> Result<HandshakeOutcome, String> {
+    let handshake_deadline = Instant::now() + hard_timeout;
     let mut coordinator_args: Vec<&str> = vec![
         "coordinator-stub",
         "--listen",
@@ -196,9 +227,23 @@ fn run_handshake(
     //   coordinator 는 `wait()` 만 쓰고, stdout·stderr 는 끝까지 직접
     //   읽는다. 처음엔 이걸 놓쳐서 coordinator 의 RESULT 줄이 조용히
     //   사라지는 결함이 있었다 — 실제로 이 서브커맨드를 실행해서 잡았다.
-    let mut coordinator_stdout_reader =
-        BufReader::new(coordinator.stdout.take().expect("piped stdout"));
+    let coordinator_stdout_pipe = coordinator.stdout.take().expect("piped stdout");
     let coordinator_stderr_reader = coordinator.stderr.take().expect("piped stderr");
+
+    // Publish READY from a reader thread, then drain stdout independently so
+    // the parent can enforce the process deadline before joining it.
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let coordinator_stdout_reader = thread::spawn(move || -> Result<String, std::io::Error> {
+        let mut reader = BufReader::new(coordinator_stdout_pipe);
+        let mut ready_line = String::new();
+        reader.read_line(&mut ready_line)?;
+        ready_sender.send(ready_line.clone()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "READY receiver dropped")
+        })?;
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest)?;
+        Ok(format!("{ready_line}{rest}"))
+    });
 
     // ★ 코덱스 독립 검수(2026-08-18)가 지적한 결함 — stderr 를 메인
     //   흐름과 동시에 비우지 않으면, coordinator 가 OS 파이프 버퍼를
@@ -213,10 +258,18 @@ fn run_handshake(
         Ok(buf)
     });
 
-    let mut ready_line = String::new();
-    coordinator_stdout_reader
-        .read_line(&mut ready_line)
-        .map_err(|e| format!("coordinator READY 줄 읽기 실패: {e}"))?;
+    let ready_line = match ready_receiver.recv_timeout(
+        handshake_deadline.saturating_duration_since(Instant::now()),
+    ) {
+        Ok(line) => line,
+        Err(error) => {
+            let _ = coordinator.kill();
+            let _ = coordinator.wait();
+            let _ = coordinator_stdout_reader.join();
+            let _ = stderr_drain.join();
+            return Err(format!("coordinator READY deadline exceeded: {error}"));
+        }
+    };
     let address = ready_line
         .trim()
         .strip_prefix("READY ")
@@ -233,6 +286,12 @@ fn run_handshake(
     agent_args.push("--agent-device-id");
     agent_args.push(fixture.agent_device_id);
     agent_args.extend_from_slice(extra_agent_args);
+    // Preserve the historical DoD-24 meaning: this hook is a deliberate
+    // successful ACK-then-close test, not a reconnect scenario. The new
+    // reconnect helper does not go through run_handshake().
+    if disable_reconnect {
+        agent_args.extend_from_slice(&["--disable-reconnect", "true"]);
+    }
 
     let agent: Child = Command::new(&fixture.exe)
         .args(&agent_args)
@@ -252,24 +311,29 @@ fn run_handshake(
         ));
     }
 
-    let agent_output = agent
-        .wait_with_output_until(handshake_deadline)
-        .map_err(|e| format!("agent-stub 대기 실패: {e}"))?;
-
-    let mut coordinator_stdout_rest = String::new();
-    coordinator_stdout_reader
-        .read_to_string(&mut coordinator_stdout_rest)
-        .map_err(|e| format!("coordinator 나머지 stdout 읽기 실패: {e}"))?;
-    let coordinator_stdout = format!("{ready_line}{coordinator_stdout_rest}");
-
-    let coordinator_stderr = stderr_drain
-        .join()
-        .map_err(|_| "coordinator stderr 배수 스레드가 패닉했다".to_string())?
-        .map_err(|e| format!("coordinator stderr 읽기 실패: {e}"))?;
+    let agent_output = match agent.wait_with_output_until(handshake_deadline) {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = coordinator.kill();
+            let _ = coordinator.wait();
+            return Err(format!("agent-stub wait failed: {error}"));
+        }
+    };
 
     let coordinator_status = coordinator
         .wait_until(handshake_deadline)
         .map_err(|e| format!("coordinator-stub 대기 실패: {e}"))?;
+
+    // Enforce the process deadline before joining either full-output reader.
+    // This remains bounded when Coordinator is stuck in accept().
+    let coordinator_stdout = coordinator_stdout_reader
+        .join()
+        .map_err(|_| "coordinator stdout reader panicked".to_string())?
+        .map_err(|e| format!("coordinator stdout read failed: {e}"))?;
+    let coordinator_stderr = stderr_drain
+        .join()
+        .map_err(|_| "coordinator stderr reader panicked".to_string())?
+        .map_err(|e| format!("coordinator stderr read failed: {e}"))?;
 
     Ok(HandshakeOutcome {
         self_pid,
@@ -2779,6 +2843,114 @@ pub fn run() -> Result<String, String> {
         "48) Agent가 expires_at_unix_ms <= now를 갱신 직전에 감지해 LOCAL_EXPIRED로 종료하고 RenewLeaseRequest 없이 Coordinator도 EOF 오류로 종료 (hard timeout=90s, elapsed={:?})\n",
         local_expired_elapsed_48
     ));
+
+    // 49. Same-process reconnect: the first accepted connection is dropped
+    // after ACK, then the same Agent/Coordinator PIDs complete attempt 1.
+    let reconnect_dir_49 = tempfile::tempdir()
+        .map_err(|e| format!("reconnect success tempdir failed (49): {e}"))?;
+    let lease_db_49 = reconnect_dir_49.path().join("lease.sqlite3");
+    let fence_db_49 = reconnect_dir_49.path().join("fence.sqlite3");
+    let lease_db_49 = lease_db_49.to_str().ok_or_else(|| "lease db 49 is not UTF-8".to_string())?;
+    let fence_db_49 = fence_db_49.to_str().ok_or_else(|| "fence db 49 is not UTF-8".to_string())?;
+    let reconnect_ok_49 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_49, "--max-connections", "2",
+            "--accept-timeout-ms", "5000", "--drop-connection-after-ack-once", "true",
+            "--do-renew", "false",
+        ],
+        &[
+            "--fence-db", fence_db_49, "--do-renew", "false",
+        ],
+    )?;
+    if !reconnect_ok_49.coordinator_success
+        || !reconnect_ok_49.agent_success
+        || reconnect_ok_49.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 2
+        || reconnect_ok_49.coordinator_stdout.matches(RESULT_OK_MARKER).count() != 1
+        || reconnect_ok_49.agent_stdout.matches(RESULT_OK_MARKER).count() != 1
+    {
+        return Err(format!("49) reconnect success failed: coordinator={:?} agent={:?}", reconnect_ok_49.coordinator_stdout, reconnect_ok_49.agent_stderr));
+    }
+    report.push_str("49) 동일 Agent/Coordinator PID에서 ACK 후 1회 drop, connection_attempt=1의 새 Grant/ACK nonce로 bounded reconnect 성공; RESULT ok=true 각 1회 (hard timeout=120s, accept-timeout=5000ms)\n");
+
+    // 50. The coordinator drops once and then reaches max-connections=1;
+    // the Agent must exhaust its deliberately short retry budget.
+    let exhausted_50 = run_reconnect_case(
+        &fixture,
+        &[
+            "--max-connections", "1", "--accept-timeout-ms", "5000",
+            "--disconnect-after-ack", "true", "--do-renew", "false",
+        ],
+        &[
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3",
+            "--retry-base-ms", "10", "--retry-cap-ms", "25", "--do-renew", "false",
+        ],
+    )?;
+    if exhausted_50.agent_success
+        || exhausted_50.agent_stdout.contains(RESULT_OK_MARKER)
+        || exhausted_50.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || !exhausted_50.agent_stderr.contains("ReconnectExhausted")
+    {
+        return Err(format!("50) reconnect exhaustion failed: coordinator={:?} agent={:?}", exhausted_50.coordinator_stderr, exhausted_50.agent_stderr));
+    }
+    report.push_str("50) max-reconnect-attempts=2/max-duration=3s로 재접속 예산 소진; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
+
+    // 51. Revoke is persisted after the first ACK and before the drop; the
+    // second get_or_issue must fail closed.
+    let revoke_51 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_49, "--max-connections", "2",
+            "--accept-timeout-ms", "5000", "--drop-connection-after-ack-once", "true",
+            "--revoke-before-drop", "true", "--do-renew", "false",
+        ],
+        &[
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3",
+            "--retry-base-ms", "10", "--retry-cap-ms", "25", "--fence-db", fence_db_49,
+            "--do-renew", "false",
+        ],
+    )?;
+    if revoke_51.coordinator_success
+        || revoke_51.agent_success
+        || revoke_51.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || revoke_51.agent_stdout.contains(RESULT_OK_MARKER)
+        || !revoke_51.coordinator_stderr.contains("revoked")
+    {
+        return Err(format!("51) reconnect revoke failed: coordinator={:?} agent={:?}", revoke_51.coordinator_stderr, revoke_51.agent_stderr));
+    }
+    report.push_str("51) 첫 ACK 직후 durable revoke 후 재접속 get_or_issue가 revoked로 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
+
+    // 52. A short lease expires while the Coordinator deliberately pauses
+    // before its second accept.
+    let expire_dir_52 = tempfile::tempdir()
+        .map_err(|e| format!("reconnect expiry tempdir failed (52): {e}"))?;
+    let lease_db_52 = expire_dir_52.path().join("lease.sqlite3");
+    let fence_db_52 = expire_dir_52.path().join("fence.sqlite3");
+    let lease_db_52 = lease_db_52.to_str().ok_or_else(|| "lease db 52 is not UTF-8".to_string())?;
+    let fence_db_52 = fence_db_52.to_str().ok_or_else(|| "fence db 52 is not UTF-8".to_string())?;
+    let expire_52 = run_reconnect_case(
+        &fixture,
+        &[
+            "--lease-db", lease_db_52, "--max-connections", "2",
+            "--accept-timeout-ms", "5000", "--drop-connection-after-ack-once", "true",
+            "--lease-ttl-ms", "2000", "--pause-before-next-accept-ms", "2500",
+            "--do-renew", "false",
+        ],
+        &[
+            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3",
+            "--retry-base-ms", "10", "--retry-cap-ms", "25", "--fence-db", fence_db_52,
+            "--do-renew", "false",
+        ],
+    )?;
+    if expire_52.coordinator_success
+        || expire_52.agent_success
+        || expire_52.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || expire_52.agent_stdout.contains(RESULT_OK_MARKER)
+        || !expire_52.coordinator_stderr.contains("expired")
+    {
+        return Err(format!("52) reconnect expiry failed: coordinator={:?} agent={:?}", expire_52.coordinator_stderr, expire_52.agent_stderr));
+    }
+    report.push_str("52) 2초 TTL과 2500ms next-accept 대기로 재접속 시 expired 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
 
     Ok(report)
 }

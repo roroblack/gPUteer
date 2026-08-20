@@ -15,7 +15,7 @@
 //! 메모리에만 들고, 상대의 공개키는 [`InMemoryKeyring`] 에 담아 검증에만
 //! 쓴다 — `crates/cli/src/selftest.rs:540-541` 이 이미 쓰는 패턴 그대로다.
 
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -61,6 +61,11 @@ pub struct CoordinatorConfig {
     ///   뒤 종료되는지 확인하기 위한 주입이며, 운영 재시도는 만들지
     ///   않는다.
     pub disconnect_after_ack: bool,
+    pub drop_connection_after_ack_once: bool,
+    pub max_connections: u32,
+    pub accept_timeout_ms: u64,
+    pub revoke_before_drop: bool,
+    pub pause_before_next_accept_ms: u64,
 
     // ── Lease (2026-08-18, 코덱스 설계 · `p67` 프롬프트) ──────────
     //
@@ -226,7 +231,27 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     let mut replay = InMemoryReplayGuard::new();
     let clock = SystemClock;
 
-    let (mut stream, _) = listener.accept().map_err(|e| format!("accept 실패: {e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("listener nonblocking failed: {e}"))?;
+    let mut connection_count = 0u32;
+    loop {
+        if connection_count >= config.max_connections {
+            return Err("max-connections reached before completed session".into());
+        }
+        if connection_count > 0 && config.pause_before_next_accept_ms != 0 {
+            std::thread::sleep(Duration::from_millis(config.pause_before_next_accept_ms));
+        }
+        let (mut stream, _) = accept_with_deadline(
+            &listener,
+            Duration::from_millis(config.accept_timeout_ms),
+        )?;
+        stream
+            .set_nonblocking(false)
+            .map_err(|e| format!("accepted stream blocking mode failed: {e}"))?;
+        let connection_attempt = connection_count;
+        connection_count += 1;
+        println!("CONNECTION_ATTEMPT {}", connection_attempt);
     stream
         .set_read_timeout(Some(IO_TIMEOUT))
         .map_err(|e| e.to_string())?;
@@ -235,7 +260,13 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let now = clock.now_unix_ms();
-    let mut grant = issue_grant(&config, &mut lease_store, &signing_key, now)?;
+    let mut grant = issue_grant(
+        &config,
+        &mut lease_store,
+        &signing_key,
+        now,
+        connection_attempt,
+    )?;
 
     if config.corrupt_own_signature {
         let last = grant
@@ -301,6 +332,27 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             "agent_device_id 불일치: 기대값 {} != ACK 값 {}",
             config.agent_device_id, ack.agent_device_id
         ));
+    }
+    if ack.nonce != derive_nonce("grant-ack", &grant.grant_id, connection_attempt) {
+        return Err("ACK nonce does not match connection attempt".into());
+    }
+
+    if config.drop_connection_after_ack_once
+        && config.max_connections > 1
+        && connection_attempt == 0
+    {
+        if config.revoke_before_drop {
+            if let Some(store) = lease_store.as_mut() {
+                store
+                    .mark_revoked(&grant.lease.as_ref().expect("Grant lease").lease_id, clock.now_unix_ms())
+                    .map_err(|e| format!("lease store revoke before drop failed: {e}"))?;
+            }
+        }
+        println!(
+            "DROP_CONNECTION_AFTER_ACK_ONCE coordinator_acknowledged=true grant_id={}",
+            grant.grant_id
+        );
+        continue;
     }
 
     if config.disconnect_after_ack {
@@ -503,7 +555,11 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
         grant.grant_id, grant.attempt_id, ack.agent_device_id
     );
-    Ok(())
+    // Give an ACK-only Agent enough time to distinguish a completed session
+    // from the deliberate drop-after-ACK test hook.
+    std::thread::sleep(Duration::from_millis(100));
+    return Ok(());
+}
 }
 
 /// 이미 발급한 Grant 안의 Lease를 대상으로 revoke 통지를 만들고
@@ -512,6 +568,25 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 /// `RevokeLeaseNotice::signer_id()`는 현재 프로토콜 계약상 `lease_id`를
 /// 반환한다(V-08). 따라서 테스트용 target override도 바뀐 payload에
 /// 대해 정상 서명해, Agent의 identity 검증과 서명 검증을 분리한다.
+fn accept_with_deadline(
+    listener: &TcpListener,
+    timeout: Duration,
+) -> Result<(std::net::TcpStream, std::net::SocketAddr), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok(connection) => return Ok(connection),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if std::time::Instant::now() >= deadline {
+                    return Err("accept timeout exceeded".into());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(format!("accept failed: {error}")),
+        }
+    }
+}
+
 fn send_revoke_notice(
     config: &CoordinatorConfig,
     grant: &pb::ExecutionGrant,
@@ -854,6 +929,7 @@ fn issue_grant(
     lease_store: &mut Option<CoordinatorLeaseStore>,
     key: &SigningKey,
     now: u64,
+    connection_attempt: u32,
 ) -> Result<pb::ExecutionGrant, String> {
     let lease = issue_lease(config, lease_store, key, now)?;
 
@@ -865,7 +941,7 @@ fn issue_grant(
         coordinator_term: 1,
         issued_at_unix_ms: now,
         expires_at_unix_ms: now + 60_000,
-        nonce: derive_nonce("grant", &config.grant_id),
+        nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
         lease: Some(lease),
         ..Default::default()
     };
@@ -997,11 +1073,14 @@ fn u32_from_stored(value: u64, field: &str) -> Result<u32, String> {
     })
 }
 
-fn derive_nonce(tag: &str, id: &str) -> Vec<u8> {
-    let mut input = Vec::with_capacity(tag.len() + 1 + id.len());
+fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
+    let mut input = Vec::with_capacity(tag.len() + 1 + id.len() + 4);
     input.extend_from_slice(tag.as_bytes());
     input.push(0);
     input.extend_from_slice(id.as_bytes());
+    if connection_attempt != 0 {
+        input.extend_from_slice(&connection_attempt.to_be_bytes());
+    }
     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
 }
 
@@ -1023,6 +1102,14 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
         send_grant_twice: flags.bool_flag("--send-grant-twice"),
         disconnect_after_ack: flags.bool_flag("--disconnect-after-ack"),
+        drop_connection_after_ack_once: flags.bool_flag("--drop-connection-after-ack-once"),
+        max_connections: flags.u32_flag_with_default("--max-connections", 1)?,
+        accept_timeout_ms: flags.u64_flag_with_default("--accept-timeout-ms", 30_000)?,
+        revoke_before_drop: flags.bool_flag("--revoke-before-drop"),
+        pause_before_next_accept_ms: flags.u64_flag_with_default(
+            "--pause-before-next-accept-ms",
+            0,
+        )?,
         lease_id: flags.require("--lease-id")?,
         job_id: flags.require("--job-id")?,
         fence_epoch: flags.u64_flag("--fence-epoch")?,

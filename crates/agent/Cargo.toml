@@ -11,3 +11,6 @@ gputeer-crypto = { path = "../crypto" }
 gputeer-checkpoint = { path = "../checkpoint" }
 gputeer-runtime-policy = { path = "../runtime-policy" }
 prost.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
