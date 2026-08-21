@@ -1,0 +1,123 @@
+=== 독립 검수 1라운드 — CHANGES_REQUESTED ===
+
+판정: CHANGES_REQUESTED
+
+검수 범위는 새 `crates/scheduler`의 적격 판정 계약, negative test의
+판별력, workspace/소유권 등록, 계획·보고서가 주장하는 비범위였다.
+
+차단 결함 1 — 제3자 정책의 판단 축 오류
+
+- 1라운드 구현은 제3자 opt-in·pure·sensitivity 제한을
+  `security_tier == S1`에 결합했다.
+- 마스터 플랜 §8.4는 tier/isolation/key/risk를 하나의 신뢰 점수나
+  대체 축으로 합치지 않으며, §13.2 및 Agent 재검증 규칙의 제한
+  환경 판정 축은 `isolation_class == Restricted`다.
+- 따라서 S2이면서 Restricted인 후보는 동일한 제3자 제한을 받아야
+  하지만 1라운드 분기는 이를 우회할 수 있었다. 이는 단순 명칭 문제가
+  아니라 opt-in·pure·sensitive-data gate를 건너뛰는 보안 결함이다.
+- 현재 2라운드 수정 위치는 `crates/scheduler/src/filter.rs:271`의 S0
+  독립 gate와 `crates/scheduler/src/filter.rs:274`의 Restricted 축,
+  이어지는 opt-in·pure·sensitivity 검사
+  `crates/scheduler/src/filter.rs:278`~`crates/scheduler/src/filter.rs:297`이다.
+
+차단 결함 2 — 빈 identity의 MissingFact 우회
+
+- 1라운드 구현은 owner/submitter가 `None`인지 확인했지만
+  `Some("")`를 사실이 있는 identity처럼 취급했다.
+- 이 경우 빈 owner와 빈 submitter가 같다고 보거나 다른 값과 비교해
+  제3자 정책 분기를 잘못 결정할 수 있으며, “필요한 사실이 없으면
+  `MissingFact`로 fail-closed” 계약을 어긴다.
+- 현재 수정 위치는 owner의 `None | Some("")`를 거부하는
+  `crates/scheduler/src/filter.rs:253`~`crates/scheduler/src/filter.rs:259`,
+  submitter의 동일 처리인 `crates/scheduler/src/filter.rs:260`~
+  `crates/scheduler/src/filter.rs:266`이다.
+
+범위 지적 — 다른 스트림 테스트의 불필요한 수정
+
+- 새 크레이트가 ownership 검사망을 빠져나가지 않으려면
+  `every_crate_is_covered_by_ownership_rules()`의 `KNOWN`에
+  `scheduler`를 넣어야 한다. 이 가드는
+  `crates/protocol/tests/stream_ownership.rs:151`에서 시작하고 실제
+  등록은 현재 `crates/protocol/tests/stream_ownership.rs:177`이다.
+- 그러나 그 필수 1줄 이외의 1라운드 변경은 Scheduler 스트림 범위를
+  넘어섰고 기능 완료에 필요하지 않았다. 해당 부분을 원복하고 등록
+  1줄만 남길 것을 요청했다.
+
+요청 사항:
+
+1. 제3자 제한 진입 축을 `IsolationClass::Restricted`로 근본 수정할 것.
+2. 빈 owner/submitter도 `MissingFact`로 fail-closed할 것.
+3. S2+Restricted와 빈 identity 회귀 테스트를 추가하고 뮤테이션으로
+   각 테스트의 판별력을 확인할 것.
+4. `stream_ownership.rs`는 신규 크레이트 등록 필수 1줄만 남길 것.
+
+=== 독립 검수 2라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+1차 요청을 다시 공격적으로 확인했으며 중대한 결함이나 잔여 수정
+요청을 발견하지 못했다.
+
+판단 축 확인
+
+- S0 제3자 금지는 `crates/scheduler/src/filter.rs:271`~
+  `crates/scheduler/src/filter.rs:273`에 독립적으로 남아 있다.
+- 제3자 opt-in·pure·sensitivity 제한은 현재
+  `candidate.isolation_class != Some(IsolationClass::Restricted)`일 때만
+  조기 반환한다(`crates/scheduler/src/filter.rs:274`). 즉 제한 적용의
+  축이 SecurityTier가 아니라 IsolationClass다.
+- S2+Restricted 반례가 opt-in 없음, non-pure, sensitive data 각각을
+  거부하는 테스트로 고정됐다
+  (`crates/scheduler/tests/hard_filter.rs:370`,
+  `crates/scheduler/tests/hard_filter.rs:381`,
+  `crates/scheduler/tests/hard_filter.rs:394`).
+
+빈 identity 확인
+
+- owner와 submitter 모두 비어 있지 않은 `Some(value)`만 사실로 받고,
+  `None | Some("")`는 각 `MissingFact`를 추가한 뒤 `None`으로 둔다
+  (`crates/scheduler/src/filter.rs:253`,
+  `crates/scheduler/src/filter.rs:260`).
+- 빈 owner와 빈 submitter를 직접 넣는 회귀 테스트가 각각
+  `MissingFact::OwnerMemberId`와
+  `MissingFact::JobSubmitterMemberId`를 요구한다
+  (`crates/scheduler/tests/hard_filter.rs:281`,
+  `crates/scheduler/tests/hard_filter.rs:292`).
+
+ownership guard 필수성·범위 확인
+
+- workspace에 실제 `crates/scheduler`가 추가됐다(`Cargo.toml:12`).
+- ownership 검사는 `crates/`의 모든 Cargo 크레이트를 열거하고 KNOWN과
+  대조하며, 미등록 크레이트가 있거나 개수가 어긋나면 실패한다
+  (`crates/protocol/tests/stream_ownership.rs:180`~
+  `crates/protocol/tests/stream_ownership.rs:198`). 따라서
+  `crates/protocol/tests/stream_ownership.rs:177`의 `"scheduler",` 한 줄은
+  신규 크레이트 등록에 필수다.
+- 해당 파일의 diff는 이 1줄뿐이며, 1라운드의 나머지 변경은 원복됐다.
+  확인된 기능 범위는 `crates/scheduler`, workspace 등록
+  (`Cargo.toml`·`Cargo.lock`), 소유권 계약·변경 제안·계획·보고서,
+  ownership guard 1줄이다. Coordinator·Agent·CLI·proto 업무 코드는
+  포함되지 않는다.
+
+뮤테이션 비공허성 확인
+
+- `IsolationClass::Restricted` 분기를 과거 `SecurityTier::S1` 축으로
+  되돌리면 S2+Restricted 회귀 테스트 3개가 모두 실패했고 원복 후
+  통과했다. 이 테스트들은 단지 S1만 재확인하는 동어반복이 아니다.
+- 빈 owner/submitter 검사를 제거하면 두 `MissingFact` 회귀 테스트가
+  모두 실패했고 원복 후 통과했다. 빈 문자열 검사가 실제 assertion에
+  연결되어 있다.
+
+순수 kernel·비범위 확인
+
+- `evaluate_eligibility()`는 전달된 snapshot/job/policy만 순회하고
+  결과를 정렬·중복 제거한 뒤 0/1/복수 적격을 구분한다
+  (`crates/scheduler/src/filter.rs:7`~`crates/scheduler/src/filter.rs:34`).
+- 복수 적격은 winner를 고르지 않고 `RankingRequired`이며 테스트가 이를
+  고정한다(`crates/scheduler/tests/hard_filter.rs:448`~
+  `crates/scheduler/tests/hard_filter.rs:481`). Coordinator 연결, 실제
+  자동 매칭, 예약·Grant dispatch는 이 변경에 없다.
+
+최종 결론: 판단 축, 빈 identity fail-closed, ownership guard 1줄의
+필수성, 두 뮤테이션의 판별력, 제한된 변경 범위를 모두 확인했다.
+`ACCEPTED`.

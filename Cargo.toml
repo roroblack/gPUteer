@@ -9,6 +9,7 @@ members = [
     "crates/runtime-windows",
     "crates/coordinator",
     "crates/agent",
+    "crates/scheduler",
 ]
 
 [workspace.package]

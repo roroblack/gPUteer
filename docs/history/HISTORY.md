@@ -16,6 +16,35 @@
 
 ---
 
+## 2026-08-21 10:27 — scheduler 순수 hard-filter kernel — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-41`, scheduler 로드맵 조각 1)
+- 계획: `docs/plans/2026-08-21_1002_scheduler_hard_filter_v1.md`
+  (상위 9단계 로드맵 조각 1).
+- 스트림: Scheduler · QA · 문서.
+- 수행: `crates/scheduler`를 신설하고 고정 `PoolSnapshot`·
+  `JobRequirements`·`Policy`만 받는 순수 `evaluate_eligibility()`
+  hard-filter kernel과 28개 테스트를 구현했다. 독립 검수 1라운드가
+  실제 보안 결함 2건을 찾아 `CHANGES_REQUESTED` — 제3자
+  opt-in·pure·sensitivity 제한이 `isolation_class==Restricted`가
+  아니라 `security_tier==S1`에 결합된 축 오류와, 빈 owner/submitter
+  identity `Some("")`가 `MissingFact`를 우회하는 문제였다. 구현
+  2라운드가 Restricted isolation 축으로 바로잡고 빈 문자열도
+  fail-closed 처리했으며, S2+Restricted 3건·빈 identity 2건을
+  추가해 총 33개 테스트로 보강했다. `stream_ownership.rs`는 신규
+  크레이트 등록 필수 1줄만 남기고 나머지를 원복했다. 두 회귀
+  뮤테이션이 각각 예상 테스트를 실패시키는 것을 확인하고 원복.
+  독립 검수 2라운드가 판단 축·빈 identity·ownership guard 필수성·
+  뮤테이션 비공허성·제한된 변경 범위를 확인해 최종 `ACCEPTED`.
+  **scheduler 9단계 로드맵 중 조각 1만 완료**했으며 Coordinator
+  연결·실제 자동 매칭은 하지 않았다. 남은 8단계는 후속 조각이다.
+- 검증: 감독자가 `cargo test -p gputeer-scheduler`를 직접 실행해
+  33 passed / 0 failed 확인. `python scripts/verify_evidence.py`
+  스키마 위반 없음(`DoD-41` PASS, PASS 49/50).
+- 리포트: `docs/reports/2026-08-21_1002_scheduler_hard_filter_v1.md`
+  + evidence 문서 —
+  `docs/evidence/DoD-41_scheduler_hard_filter.md`.
+
+---
+
 ## 2026-08-20 18:00 — Lease store 동시 최초 발급 안전성 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-40`, 로드맵 조각 7 재정의·자동 재접속 루프 로드맵 마무리)
 - 계획: `docs/plans/2026-08-20_1732_lease_store_동시_발급_안전성_v1.md`
   (로드맵 조각 7, 원안 "다중 Agent selftest" 를 정직하게 재범위).

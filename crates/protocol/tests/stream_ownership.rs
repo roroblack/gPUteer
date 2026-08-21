@@ -174,6 +174,7 @@ fn every_crate_is_covered_by_ownership_rules() {
         "runtime-windows",
         "coordinator",
         "agent",
+        "scheduler",
     ];
 
     let dir = repo_root().join("crates");

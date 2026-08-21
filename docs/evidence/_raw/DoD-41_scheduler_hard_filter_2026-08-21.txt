@@ -1,0 +1,85 @@
+=== 구현 1라운드 보고 ===
+
+`crates/scheduler`를 신설하고 외부 I/O·clock·random을 읽지 않는
+`evaluate_eligibility()` 순수 hard-filter 함수를 구현했다.
+
+- 입력: 고정 `PoolSnapshot`, `JobRequirements`, `Policy`
+- 출력: 적격 후보, 후보별 전체 탈락 사유, 0/1/복수 적격 해석
+- 복수 적격: winner를 임의로 뽑지 않고 `RankingRequired`
+- hard gate: Node/Risk/freshness, tier/isolation/key protection,
+  GPU count·health·VRAM·model, CPU/RAM/workspace, owner workload
+  allowlist, S0 제3자 금지, 제한 환경 제3자 정책, 필요한 사실의
+  `MissingFact` fail-closed
+- 결과 안정성: 후보·탈락 사유 정렬 및 중복 제거
+- 근거: 마스터 플랜 §8.4, §9.1~§9.3, §10.1, §11.5, §13.2,
+  §13.8, §27.1, §28, §30, §31, §33.2
+- 테스트: 정상·경계·negative·결정성 28개
+
+이 라운드에는 독립 검수에서 드러난 결함이 남아 있었다.
+
+1. 제3자 opt-in·pure·sensitivity 판단을
+   `isolation_class == Restricted`가 아니라 `security_tier == S1`에
+   결합했다.
+2. owner/submitter identity가 `Some("")`이면 `None`이 아니므로
+   `MissingFact`를 우회했다.
+3. 새 크레이트 등록에 필요한 ownership guard 1줄 이외에도
+   `crates/protocol/tests/stream_ownership.rs`를 불필요하게 수정했다.
+
+=== 독립 검수 1라운드 — CHANGES_REQUESTED ===
+
+검수자는 위 1·2번을 보안상 차단 결함으로 판정했다. 마스터 플랜
+§13.2와 Agent 재검증 규칙은 제3자 제한의 축을 보안 tier 하나로
+합치지 않고 `IsolationClass::Restricted`로 가르며, 빈 identity는
+확인된 사실이 아니므로 fail-closed해야 한다. ownership guard의
+신규 `scheduler` 등록 1줄은 필수지만 그 밖의 변경은 범위 밖이라고
+지적했다. 상세 전문은 `docs/evidence/_raw/DoD-41_review.txt`에 있다.
+
+=== 구현 2라운드 보고 ===
+
+1차 검수 지적을 근본 수정했다.
+
+- 제3자 opt-in·pure·sensitivity 제한 진입 조건을
+  `candidate.isolation_class == Some(IsolationClass::Restricted)`로
+  변경했다. S0 제3자 무조건 거부는 별도 gate로 유지했다.
+- owner/submitter가 `None`뿐 아니라 빈 문자열 `Some("")`인 경우에도
+  각각 `MissingFact::OwnerMemberId`와
+  `MissingFact::JobSubmitterMemberId`를 추가하고 제3자 비교를
+  진행하지 않도록 했다.
+- `crates/protocol/tests/stream_ownership.rs`는 새 크레이트를 검사망에
+  등록하는 `"scheduler",` 1줄만 남기고 나머지는 원복했다.
+- S2+Restricted에서도 opt-in·pure·non-sensitive 제한이 적용되는
+  회귀 테스트 3개와 빈 owner/submitter identity 회귀 테스트 2개를
+  추가했다. 총 테스트는 28개에서 33개가 됐다.
+
+뮤테이션 2건으로 새 검사의 비공허성을 확인하고 모두 원복했다.
+
+1. 제한 진입 조건을 `IsolationClass::Restricted`에서 과거의
+   `SecurityTier::S1`로 되돌리면 S2+Restricted 회귀 테스트 3개가
+   실패했다.
+2. 빈 owner/submitter 검사를 제거하면 identity 회귀 테스트 2개가
+   실패했다.
+
+=== 독립 검수 2라운드 — ACCEPTED ===
+
+검수자는 판단 축, 빈 문자열 fail-closed, ownership guard 1줄의
+필수성, 두 뮤테이션의 비공허성, 변경 범위가 scheduler + workspace
+등록 + 문서 + `stream_ownership.rs` 1줄뿐임을 확인하고 잔여 지적 없이
+`ACCEPTED`했다. 상세 전문은 `docs/evidence/_raw/DoD-41_review.txt`에
+있다.
+
+=== 감독자 직접 확인 ===
+
+실행 명령:
+
+  cargo test -p gputeer-scheduler
+
+결과:
+
+  PASS — 33 passed / 0 failed
+
+=== 범위 결론 ===
+
+완료한 것은 scheduler 9단계 로드맵의 조각 1, 즉 합성 snapshot을
+입력으로 받는 순수 hard-filter kernel이다. Coordinator 연결, live
+PoolSnapshot 생산, 실제 winner 선택·자동 매칭·Grant dispatch·Agent
+entrypoint 실행은 수행하지 않았다.

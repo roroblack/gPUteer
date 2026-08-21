@@ -401,6 +401,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "gputeer-scheduler"
+version = "0.0.1"
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
