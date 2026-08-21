@@ -1,0 +1,91 @@
+=== 구현 보고 — scheduler 로드맵 조각 2a ===
+
+상위 scheduler 로드맵 조각 2의 원안은 durable Job/Attempt/Queue,
+Attempt/fence 할당, Lease/Grant 결합과 전체 ControlStore까지 포함한 3~5일
+규모였다. 이번 구현은 하루 조각으로 전부 끝냈다고 주장하지 않고
+**durable Job/Queue truth**로 범위를 줄였다.
+
+`crates/coordinator/src/job_store.rs`를 신설해 SQLite 기반
+`CoordinatorJobStore`를 구현했다.
+
+- `submit_accepted()`는 상위 계층에서 검증을 마친 submit만 원자 저장한다.
+- `start_planning()`과 `enqueue()`는
+  `SUBMITTED -> PLANNING -> QUEUED` 전이만 허용한다.
+- `fail_queued()`는 `DEADLINE_PASSED`, `QUEUE_TIMEOUT`,
+  `PERMANENTLY_INFEASIBLE`를 서로 다른 durable 실패 사유로 보존한다.
+- `list_queued()`는 `(queued_at_unix_ms, job_id)` 순으로 결정적인 queue
+  snapshot을 반환한다.
+- 16바이트 idempotency key의 동일 payload 재시도는 기존 Job을 반환하고,
+  payload 변경은 `IdempotencyConflict`, 다른 key의 기존 `job_id` 재사용은
+  `JobIdConflict`로 거부한다.
+- SQLite는 `synchronous=FULL`, 1초 `busy_timeout`을 사용하고 모든
+  read-check-write를 `BEGIN IMMEDIATE` transaction에 묶는다.
+- u64 시각은 SQLite signed integer 절단을 피하도록 8바이트 big-endian
+  BLOB으로 저장한다.
+
+Attempt는 만들지 않았다. 규범상 Attempt 생성은 Job의 `STAGING` 진입,
+fence epoch 증가, 선택 노드 Lease 발급과 같은 효과로 묶여야 한다. 이를
+별도 transaction으로 앞당기면 Job/Attempt/Lease 사이 split authority가
+생기므로 조각 2b의 단일 권위 연산으로 이월했다.
+
+=== 자체 재검토 — 수정 2건 ===
+
+구현 후 규범·손상 처리·경계값을 다시 대조해 두 건을 고쳤다.
+
+1. 초기 구현은 16/32바이트 값이 모두 0이라는 이유만으로 idempotency
+   key와 manifest digest를 거부했다. 규범에는 all-zero 금지가 없으므로
+   과잉 검증을 제거하고 all-zero 고정폭 값이 정상 round-trip하는 테스트를
+   추가했다(`job_store.rs:880`).
+2. 초기 손상 검사는 FAILED row의 실패 사유만 집중적으로 확인했다.
+   이를 각 상태가 허용하는 timestamp·plan·failure 컬럼 조합 전체를
+   검사하는 row-shape 검증으로 강화했다(`job_store.rs:670`).
+
+=== negative·경계·동시성 검증 ===
+
+- 동일 key/동일 payload replay와 동일 key/변경 payload conflict,
+  다른 key/동일 job ID conflict를 고정했다.
+- `SUBMITTED -> QUEUED` 건너뛰기, 잘못된 source state, clock rollback,
+  enqueue 재시도의 plan 변경, terminal 실패 사유 덮어쓰기를 거부했다.
+- deadline은 `now > deadline`, queue timeout은
+  `elapsed > max_queue_duration`일 때만 실패한다. 정확한 경계는 아직
+  유효하고 +1ms에서 실패한다.
+- 독립 timeout이 없는 `None`을 0ms timeout으로 해석하지 않는다.
+- unknown state, 잘린 u64 BLOB, 상태별 컬럼 shape 손상을 변경 없이
+  fail-closed한다.
+- 두 SQLite connection과 실제 `Barrier`를 쓰는 경쟁 테스트에서 동일
+  submit은 한 번 생성·한 번 replay, 동일 key/다른 payload는 한 승자·한
+  conflict가 되고 패자 Job은 생성되지 않음을 확인했다.
+
+=== 뮤테이션 테스트 ===
+
+1. queue timeout guard의 정확한 경계를 실패시키도록 바꾸자
+   `queue_timeout_boundary_is_strict_and_one_millisecond_after_fails`가
+   assertion 실패했다. 원복했다.
+2. 동일 idempotency key의 payload 대조를 무력화하자
+   `changed_payload_with_same_idempotency_key_is_rejected_without_overwrite`가
+   assertion 실패했다. 원복했다.
+
+=== 독립 검수 — ACCEPTED ===
+
+독립 검수자는 `BEGIN IMMEDIATE` transaction과 barrier 기반 경쟁 테스트,
+idempotency 계약, 상태 전이 거부, deadline/queue-timeout 경계, 두
+뮤테이션의 타당성, 자체 수정 2건의 실제 반영, 변경 범위를 코드와 테스트로
+대조했다. 1라운드 만에 잔여 수정 요청 없이 `ACCEPTED`했다. 상세 전문은
+`docs/evidence/_raw/DoD-42_review.txt`에 있다.
+
+=== 감독자 직접 확인 ===
+
+실행 명령:
+
+  cargo test -p gputeer-coordinator
+
+결과:
+
+  PASS — unit 47 + job concurrency 2 + lease concurrency 2, 0 failed
+
+=== 범위 결론 ===
+
+완료한 것은 scheduler 9단계 로드맵의 조각 2 전체가 아니라 조각 2a,
+즉 로컬 SQLite의 durable Job/Queue truth다. 실제 submit producer·RPC,
+분산 `COMMITTED` 보증, Attempt/fence/Lease 원자 결합, `QUEUED -> STAGING`,
+plan/rationale 계산과 Grant dispatch는 수행하지 않았다.

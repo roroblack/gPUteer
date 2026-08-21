@@ -1,0 +1,75 @@
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+검수 범위는 `CoordinatorJobStore`의 SQLite transaction 경계, submit
+멱등성·동시성, 상태 전이, queue 실패 경계, 손상 fail-closed, 테스트의
+판별력, 그리고 scheduler 로드맵 조각 2a로 제한한 범위의 정직성이었다.
+
+동시성 안전성 확인
+
+- 모든 read-check-write가 `BEGIN IMMEDIATE` transaction으로 시작하고
+  guard 확인과 insert/update 뒤에만 commit한다
+  (`crates/coordinator/src/job_store.rs:327`, `:563`).
+- 통합 테스트는 같은 프로세스의 단일 connection을 순차 호출하는 흉내가
+  아니라, 별도 SQLite connection을 연 worker들을 실제 `Barrier`로 동시에
+  출발시킨다
+  (`crates/coordinator/tests/job_store_concurrent_submit.rs:31`, `:63`).
+- 동일 submit 경쟁은 정확히 한 created와 한 replay로 수렴하고, 동일
+  key/다른 payload 경쟁은 한 승자와 한 `IdempotencyConflict`로 수렴하며
+  패자 job_id의 row는 남지 않는다.
+
+idempotency 계약 확인
+
+- immutable submit 비교는 job ID, submitter, manifest digest, deadline,
+  queue duration을 모두 포함한다(`job_store.rs:124`).
+- 동일 key가 이미 있으면 transaction 안에서 저장 row를 읽고 전체 payload를
+  대조하며, 다르면 overwrite 없이 `IdempotencyConflict`를 반환한다
+  (`job_store.rs:332`). 다른 key의 기존 job ID 재사용도 별도로 거부한다.
+
+상태 전이와 실패 경계 확인
+
+- `start_planning()`, `enqueue()`, `fail_queued()`는 transaction 안에서 현재
+  상태를 읽어 각각 허용 source state만 받으며, 건너뛰기와 terminal 변경을
+  거부한다(`job_store.rs:422`, `:454`, `:503`).
+- deadline은 `now <= deadline`이면 guard 실패, queue timeout은
+  `elapsed <= limit`이면 guard 실패이므로 규범의 엄격한 `>` 경계와 일치한다
+  (`job_store.rs:518`, `:526`). 정확한 경계와 +1ms, timeout `None`을
+  `0ms`로 오해하지 않는 테스트가 이를 고정한다
+  (`job_store.rs:934`, `:949`, `:963`).
+
+뮤테이션 판별력 확인
+
+- queue timeout 경계를 `elapsed < limit`로 약화하면 정확한 경계 테스트가
+  실패한다. 실제 guard와 해당 테스트의 연결 위치는
+  `job_store.rs:536`, `:949`다.
+- 동일 key payload 대조를 무력화하면 변경 payload 거부 테스트가 실패한다.
+  비교 분기와 회귀 테스트는 `job_store.rs:347`, `:832`에 있다.
+- 두 뮤테이션 모두 예상 assertion 실패를 낸 뒤 원복됐고 전체 coordinator
+  테스트가 다시 통과했다.
+
+자체 재검토 수정 확인
+
+- 규범에 없는 all-zero idempotency key/manifest digest 거부가 제거됐고,
+  고정폭 all-zero 값의 정상 수용 테스트가 있다(`job_store.rs:574`, `:880`).
+- 상태별 timestamp·plan·failure 컬럼 전체 조합을 검사하는 row-shape
+  검증이 적용돼 손상 row가 fail-closed한다(`job_store.rs:670`).
+
+범위 확인
+
+- 기능 변경은 Coordinator 크레이트 안의 신규
+  `crates/coordinator/src/job_store.rs`, 신규 경쟁 테스트
+  `crates/coordinator/tests/job_store_concurrent_submit.rs`, 모듈 노출을 위한
+  `crates/coordinator/src/lib.rs` 1줄뿐이며 나머지는 계획·evidence·이력
+  문서다.
+- `Attempt` 저장이나 `QUEUED -> STAGING`은 구현하지 않았다. 규범상 Attempt
+  생성은 fence epoch 증가와 Lease 발급에 결합돼야 하므로, 조각 2b에서
+  한 권위 있는 연산으로 구현한다는 이월 사유가 split authority를 피하는
+  타당한 범위 결정이다.
+- 이 저장소는 로컬 SQLite `DURABLE`을 제공할 뿐 Raft 과반 합의의
+  `COMMITTED`, 실제 submit RPC, plan/rationale 계산, Grant dispatch를
+  주장하지 않는다.
+
+최종 결론: `BEGIN IMMEDIATE` 동시성 안전성, 실제 barrier 경쟁 테스트,
+idempotency·상태 전이·경계값 계약, 두 뮤테이션의 판별력, 자체 수정 2건,
+제한된 변경 범위를 모두 확인했다. 잔여 수정 요청 없이 `ACCEPTED`.

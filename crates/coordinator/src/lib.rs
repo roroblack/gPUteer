@@ -28,6 +28,7 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 pub mod lease_store;
+pub mod job_store;
 use lease_store::{
     CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision,
     ResumeRequestIdentity, StoredLease,

@@ -16,6 +16,37 @@
 
 ---
 
+## 2026-08-21 11:02 — scheduler durable Job/Queue truth — 구현 + 독립 검수 + evidence 기록 (`DoD-42`, scheduler 로드맵 조각 2a)
+- 계획: `docs/plans/2026-08-21_1049_scheduler_durable_job_v1.md`
+  (상위 9단계 로드맵 조각 2를 durable Job/Queue truth인 2a로 축소).
+- 스트림: Coordinator · QA · 문서.
+- 수행: `crates/coordinator/src/job_store.rs`를 신설해 SQLite
+  `CoordinatorJobStore`를 구현했다. 검증이 끝난 submit만
+  `submit_accepted()`로 원자 저장하고, `start_planning()`·`enqueue()`·
+  `fail_queued()`로 `SUBMITTED -> PLANNING -> QUEUED`와 서로 다른
+  queue 실패 사유를 durable하게 보존한다. 모든 read-check-write를
+  `BEGIN IMMEDIATE`에 묶고 동일 idempotency key replay·payload conflict·
+  다른 key의 job ID 충돌을 원자 처리하며, `list_queued()`는
+  `(queued_at_unix_ms, job_id)` 순으로 결정적이다. 자체 재검토에서
+  규범에 없는 all-zero idempotency key/manifest digest 거부를 제거하고,
+  손상 검사를 상태별 timestamp·plan·failure 컬럼 전체 shape 검사로
+  강화했다. 독립 검수는 transaction 경계·실제 Barrier 경쟁 테스트·
+  멱등성·전이 거부·deadline/timeout 경계·뮤테이션 2건·자체 수정
+  2건·제한된 변경 범위를 확인해 1라운드 만에 `ACCEPTED`. 원안 조각
+  2 전체의 Attempt/fence는 `STAGING` 진입과 Lease 발급에 한 권위로
+  결합해야 하므로 조각 2b로 이월했다. **scheduler 9단계 로드맵 중
+  조각 1·2a 완료** — 남은 durable Attempt/Lease 결합(2b)과 이후
+  7단계는 후속 조각이다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 실행해
+  unit 47 + job concurrency 2 + lease concurrency 2, 0 failed 확인.
+  `python scripts/verify_evidence.py` 스키마 위반 없음(`DoD-42` PASS,
+  PASS 50/51).
+- 리포트: `docs/plans/2026-08-21_1049_scheduler_durable_job_v1.md`의
+  구현 결과 + evidence 문서 —
+  `docs/evidence/DoD-42_scheduler_durable_job.md`.
+
+---
+
 ## 2026-08-21 10:27 — scheduler 순수 hard-filter kernel — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-41`, scheduler 로드맵 조각 1)
 - 계획: `docs/plans/2026-08-21_1002_scheduler_hard_filter_v1.md`
   (상위 9단계 로드맵 조각 1).
