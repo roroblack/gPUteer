@@ -1,0 +1,137 @@
+=== 구현·검증 기록 — scheduler 로드맵 조각 5 ===
+
+완료 범위는 **crate-internal 로컬 placement-to-staging orchestration kernel**이다.
+`crates/coordinator/src/orchestrate.rs`를 신설하고 비공개 module 안에
+`pub(crate) orchestrate_placement_to_staging()`을 구현했다.
+
+이 함수는 호출자가 제공한 `PlacementToStagingInput`과
+`StagingIssuanceInput`을 사용해 다음 경로만 조합한다.
+
+  CoordinatorInventoryStore::pool_snapshot(evaluated_at_unix_ms)
+    -> evaluate_eligibility(pool, requirements, hard_filter_policy)
+    -> 0 / 1 / N 후보 분기
+         0: QUEUED 유지, NoEligible 반환
+         1: ranking을 호출하지 않고 유일한 node_id 선택
+         N: rank_best_fit(...).winner.node_id 선택
+    -> CoordinatorStagingStore::stage_queued_with_lease(request)
+
+snapshot은 호출당 한 번 읽고 같은 pool을 eligibility와 ranking에 사용한다. 선택이
+필요한 경우에만 staging을 한 번 호출하며 inventory/ranking/staging 오류는 원래 typed
+error를 보존해 fail closed한다. ID, coordinator term, 발급·갱신·만료 시각과 Lease
+최대 수명은 kernel이 생성하지 않고 caller-supplied issuance input으로 받는다.
+
+=== 설계 조사에서 미리 찾은 계약 불일치 7건 ===
+
+1. 해결: `EligibilityResolution`의 0/1/N을 명시적으로 분기하고 N에서만
+   `rank_best_fit()`을 호출했다.
+2. 해결: scheduler가 만들지 않는 operation/attempt/lease/coordinator ID와 term,
+   발급·갱신·만료 시각, 최대 수명을 caller-supplied input으로 받는다.
+3. 범위 밖: best-fit이 선택 GPU UUID를 반환하지 않아 GPU scope,
+   `GrantedExecutionPlan`, `PlacementRationale`을 만들지 않는다.
+4. 범위 밖: 원본 Manifest 보관과 `JobRequirements` adapter가 없어 이미 검증·정규화된
+   `JobRequirements`를 입력으로 받고 Grant를 만들지 않는다.
+5. 범위 밖: node/device/session routing을 구현하지 않았다. stage에는 선택한 node ID만
+   넣고 ACK identity나 live socket을 추론하지 않는다.
+6. 범위 밖이며 production 미노출로 격리: inventory revision/allocation CAS reservation이
+   없다. inventory가 변하지 않으면 서로 다른 Job을 순차 호출해도 같은 GPU를 다시
+   선택할 수 있어 resource reservation과 multi-Job admission 안전성을 보장하지 않는다.
+7. 범위 밖: accept-loop, wire Grant, ACK/거부/timeout, rollback/requeue와
+   Lease/allocation 정리를 변경하지 않았다.
+
+이 중 0/1/N 분기와 caller-supplied issuance lifetime/identity 계약을 구현해 세 경계를
+해결했고, 나머지 네 묶음은 명시적으로 범위 밖에 두었다. 특히 6번 위험을 숨기지
+않고 module을 private으로 유지했다. 저장소 전체의 유일한 함수 호출은
+`#[cfg(test)]` fixture이며, production `run()`/accept-loop는 기존 `issue_grant()`를
+계속 사용한다.
+
+=== 구현 테스트 7건 ===
+
+- `zero_candidates_preserves_queued_job_and_creates_no_attempt`
+- `one_candidate_bypasses_ranking_and_stages_that_node`
+- `multiple_candidates_stage_the_best_fit_winner`
+- `operation_replay_returns_the_original_durable_staging_result`
+- `invalid_ranking_policy_fails_closed_before_staging`
+- `staging_validation_error_does_not_claim_success_or_consume_epoch`
+- `corrupt_inventory_fails_closed_before_staging`
+
+실제 임시 파일의 같은 control DB를 Job/Inventory/Staging store가 함께 열어 검증했다.
+0 후보는 QUEUED와 epoch를 유지하고, 1 후보는 ranking을 우회하며, N 후보만 best-fit
+winner를 stage한다. ranking/storage/corrupt inventory 오류는 성공으로 가장하지 않는다.
+
+=== 뮤테이션 판별력 ===
+
+1. 단일 후보에서도 `rank_best_fit()`을 호출하도록 바꾸면
+   `ResolutionNotRankingRequired`로 단일 후보 테스트가 실패했다.
+2. 복수 후보에서 ranking winner 대신 첫 eligible node를 고르면 기대 `node-b`, 실제
+   `node-a`가 되어 best-fit 테스트가 실패했다.
+
+두 뮤테이션은 원복했고 최종 suite를 다시 통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+검수자는 `lib.rs:34`의 private module 선언, `orchestrate.rs:121`의 `pub(crate)` 함수,
+`orchestrate.rs:290`의 `#[cfg(test)]` fixture 호출을 대조해 production 미연결을
+확인했다. `run()`/accept-loop는 여전히 별도 `issue_grant()`(`lib.rs:487`)를 쓴다.
+
+또한 inventory read와 staging write가 별도 transaction이고 allocation row나 revision
+CAS가 없다는 점(`inventory_store.rs:780`, `staging_store.rs:125,218`)을 추적했다.
+따라서 이 함수를 연결하면 순차 호출도 unchanged inventory에서 같은 GPU를 중복
+선택할 수 있다는 위험 보고가 정확하며, 현재는 미연결이므로 실제 production 동작에는
+영향이 없다고 판정했다.
+
+0/1/N 분기(`orchestrate.rs:134,137,139`), 두 뮤테이션의 판별력
+(`rank.rs:20`, `orchestrate.rs:373`), replay 검증 범위도 확인했다. replay 테스트는
+동일 scheduler 입력과 unchanged inventory에서 staging store의 exact-request replay만
+검증한다(`staging_store.rs:438`, `orchestrate.rs:384`). retry 전에 inventory가 바뀐
+경우 선택보다 먼저 operation을 조회하지 않으므로 changed-inventory orchestration
+replay는 보장하지 않는다는 자기 보고가 정확하다.
+
+변경 범위는 `orchestrate.rs`, `lib.rs`의 private module 선언 2줄, 계획·리포트 문서뿐임을
+확인했고 잔여 수정 요청 없이 1라운드에서 `ACCEPTED`했다.
+
+=== 감독자 직접 재확인 ===
+
+실행 시각: 2026-08-21T15:24:31+09:00
+기준 HEAD: a210eac8e0e4228c0d48ab1b68732161143b7366
+실행 명령:
+
+  C:\Users\playdata2\.cargo\bin\cargo.exe test -p gputeer-coordinator
+
+실행 출력:
+
+  warn: could not canonicalize path C:\Users\playdata2
+      Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+       Running unittests src\lib.rs
+
+  running 74 tests
+  [inventory_store, job_store, lease_store, staging_store 기존 단위 테스트 전부 ok]
+  test orchestrate::tests::zero_candidates_preserves_queued_job_and_creates_no_attempt ... ok
+  test orchestrate::tests::corrupt_inventory_fails_closed_before_staging ... ok
+  test orchestrate::tests::one_candidate_bypasses_ranking_and_stages_that_node ... ok
+  test orchestrate::tests::staging_validation_error_does_not_claim_success_or_consume_epoch ... ok
+  test orchestrate::tests::invalid_ranking_policy_fails_closed_before_staging ... ok
+  test orchestrate::tests::multiple_candidates_stage_the_best_fit_winner ... ok
+  test orchestrate::tests::operation_replay_returns_the_original_durable_staging_result ... ok
+  test result: ok. 74 passed; 0 failed; 0 ignored
+
+       Running tests\job_store_concurrent_submit.rs
+  running 2 tests
+  test result: ok. 2 passed; 0 failed; 0 ignored
+
+       Running tests\lease_store_concurrent_issue.rs
+  running 2 tests
+  test result: ok. 2 passed; 0 failed; 0 ignored
+
+     Doc-tests gputeer_coordinator
+  running 0 tests
+  test result: ok. 0 passed; 0 failed; 0 ignored
+
+결론: coordinator unit 74 + integration 4 = 78 passed, 0 failed.
+
+=== 범위 결론 ===
+
+scheduler 로드맵 조각 5를 production Grant dispatch가 아니라 로컬 orchestration
+kernel로 완료했다. inventory revision/CAS reservation이 없어 같은 자원의 중복 선택을
+막지 못하므로 production에는 연결하지 않았다. 조각 3의 실제 다중 연결·heartbeat·
+session owner/fencing, inventory CAS reservation, Manifest/plan/routing, wire/ACK/rollback과
+조각 6~9는 후속이다.

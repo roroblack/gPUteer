@@ -16,6 +16,32 @@
 
 ---
 
+## 2026-08-21 15:24 — scheduler 로컬 placement-to-staging orchestration kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-46`, scheduler 로드맵 조각 5)
+- 계획: `docs/plans/2026-08-21_1502_scheduler_grant_dispatch_v1.md`
+  (상위 로드맵 조각 5를 crate-internal 로컬 orchestration kernel로 제한).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: `crates/coordinator/src/orchestrate.rs`를 신설해 `pool_snapshot()` →
+  `evaluate_eligibility()` → 0/1/N 분기 → N에서만 `rank_best_fit()` →
+  `stage_queued_with_lease()`를 조합했다. ID·coordinator term·시각·Lease 수명은
+  caller-supplied input으로 받는다. 설계 조사에서 미리 찾은 계약 불일치 7건 중
+  분기와 issuance input 경계를 해결하고, selected GPU UUID/Grant scope·Manifest
+  adapter·node/device/session routing·inventory revision/CAS reservation·wire/ACK/
+  rollback은 범위 밖에 뒀다. 특히 CAS reservation 부재로 서로 다른 Job의 순차
+  호출도 unchanged inventory에서 같은 GPU를 중복 선택할 수 있어 private module의
+  test fixture 외 production 경로에는 연결하지 않았다. 독립 검수는 이 격리와 기존
+  `run()`/accept-loop의 별도 `issue_grant()` 유지, 0/1/N 분기, 뮤테이션 2건,
+  unchanged-inventory에 한정된 replay 의미와 변경 범위를 확인해 1라운드 만에
+  `ACCEPTED`. **scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a·4·5 완료
+  (5는 production 미연결 kernel만)** — 조각 3 나머지·inventory CAS reservation·
+  실제 wire 연결·조각 6~9는 후속이다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 실행해 unit 74 +
+  integration 4 = 78 passed, 0 failed 확인. `python scripts/verify_evidence.py`로
+  `DoD-46` schema v2 PASS를 확인.
+- 리포트: `docs/reports/2026-08-21_1514_scheduler_local_orchestration.md` + evidence 문서 —
+  `docs/evidence/DoD-46_scheduler_local_orchestration.md`.
+
+---
+
 ## 2026-08-21 13:26 — scheduler 순수 deterministic resource best-fit kernel — 구현 + 독립 검수 3라운드 + evidence 기록 (`DoD-45`, scheduler 로드맵 조각 4)
 - 계획: `docs/plans/2026-08-21_1253_scheduler_best_fit_v1.md`
   (상위 9단계 로드맵 조각 4를 순수 resource best-fit kernel로 제한).

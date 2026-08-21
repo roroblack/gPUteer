@@ -1,0 +1,58 @@
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+검수 범위는 `crates/coordinator/src/orchestrate.rs`의 local placement-to-staging
+orchestration kernel이 설계된 0/1/N 계약을 정확히 조합하는지, inventory CAS
+reservation 부재에 따른 자원 중복 선택 위험을 숨기지 않는지, production 경로에서
+격리됐는지, 테스트와 뮤테이션이 주장을 실제로 판별하는지였다.
+
+production 미연결 확인
+
+- `crates/coordinator/src/lib.rs:34`는 `mod orchestrate;`로 module을 비공개 등록한다.
+- `crates/coordinator/src/orchestrate.rs:121`의 함수는 `pub(crate)`다.
+- 저장소 전체에서 `orchestrate_placement_to_staging()`의 유일한 호출은
+  `crates/coordinator/src/orchestrate.rs:290`의 `#[cfg(test)]` fixture다.
+- Coordinator `run()`/accept-loop는 이 함수를 호출하지 않고 기존 별도
+  `issue_grant()` 경로(`crates/coordinator/src/lib.rs:487`)를 계속 쓴다.
+
+자원 중복 선택 위험 보고 확인
+
+- `pool_snapshot()`의 inventory read와 `stage_queued_with_lease()`의 staging write는
+  별도 SQLite transaction이다(`inventory_store.rs:780`, `staging_store.rs:125,218`).
+- staging 요청에는 inventory revision이나 allocation row/GPU UUID가 없으며,
+  resource CAS reservation도 없다.
+- 따라서 production에 연결하면 inventory가 바뀌지 않는 한 서로 다른 Job의 순차
+  호출도 같은 node/GPU를 다시 선택할 수 있다는 구현자의 보고가 정확하다.
+- 현재는 private module의 test-only 호출뿐이므로 이 위험이 기존 production 동작에
+  새로 영향을 주지는 않는다.
+
+분기·오류·뮤테이션 확인
+
+- `orchestrate.rs:134,137,139`는 `NoEligibleCandidates`, `SingleEligible`,
+  `RankingRequired`를 각각 분기하며 N에서만 `rank_best_fit()`을 호출한다.
+- 0 후보는 Job을 QUEUED로 유지하고 staging을 호출하지 않는다. 1 후보는 ranking을
+  우회하고, N 후보는 ranking winner를 stage한다.
+- inventory/ranking/staging typed error를 보존하며 실패를 staged outcome으로 바꾸지 않는다.
+- 단일 후보에도 ranking을 호출하는 뮤테이션은 `ResolutionNotRankingRequired`로
+  targeted test를 실패시켰다(`rank.rs:20`).
+- 복수 후보에서 first eligible을 고르는 뮤테이션은 기대 `node-b` 대신 `node-a`를
+  stage해 targeted test를 실패시켰다(`orchestrate.rs:373`).
+
+replay 의미와 범위 확인
+
+- `operation_replay_returns_the_original_durable_staging_result`는 동일 scheduler 입력과
+  unchanged inventory에서 최초 durable staging 결과가 재사용되고 epoch가 다시
+  소비되지 않음을 검증한다(`orchestrate.rs:384`).
+- staging store의 exact-request replay 계약은 유지된다(`staging_store.rs:438`).
+- retry 전에 inventory가 바뀐 경우 기존 operation을 선택보다 먼저 조회하는 API는
+  없으므로 changed-inventory orchestration replay까지 보장하지 않는다는 자기 보고가
+  정확하다.
+
+변경 범위와 최종 판정
+
+변경 범위는 신규 `crates/coordinator/src/orchestrate.rs`, `lib.rs`의 private module
+선언 2줄, 계획·리포트 문서뿐이다. Manifest adapter, selected GPU UUID/Grant scope,
+node/device/session routing, inventory revision/CAS reservation, wire/ACK/rollback은
+들어오지 않았다. 특히 CAS 부재를 이유로 production entrypoint 연결을 하지 않은
+제한이 코드와 문서 모두에서 일치한다. 잔여 수정 요청 없이 1라운드에서 `ACCEPTED`다.
