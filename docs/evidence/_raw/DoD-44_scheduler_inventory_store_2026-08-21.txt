@@ -1,0 +1,120 @@
+=== 구현·검증 기록 — scheduler 로드맵 조각 3a ===
+
+완료 범위는 scheduler 로드맵 조각 3 전체가 아니라
+**single-Coordinator durable Agent inventory repository kernel(3a)**이다.
+실제 다중 연결, heartbeat wire, enrollment/signature 검증, active-session
+owner/fencing, Raft/ControlStore, reservation/dispatch는 구현하거나 입증하지 않았다.
+
+`crates/coordinator/src/inventory_store.rs`를 신설해
+`CoordinatorInventoryStore`를 구현했다. `register_agent()`는 동일한 정규화
+registry payload만 멱등 처리하고 node/device/key/owner 충돌을 기존 행 무변경으로
+거부한다. `update_inventory()`는 한 `BEGIN IMMEDIATE` transaction에서 parent와
+GPU/workload child 전체를 교체한다. 낮은 revision과 같은 revision의 다른 payload는
+fail closed하고, 같은 revision의 byte-equivalent normalized payload만 멱등 성공한다.
+`pool_snapshot()`은 한 read snapshot을 기존 `gputeer_scheduler::PoolSnapshot`으로
+투영하고 node ID 순으로 Rust `sort_by()` 한 곳에서만 정렬한다.
+
+=== 자체 재검토 — 수정·확인 5건 ===
+
+1. 공개키 입력을 `[u8; 32]`에서 `Vec<u8>`로 바꾸고 API 경계와 DB read에서
+   정확히 32-byte인지 명시 검사했다. 31-byte 입력과 손상 DB key는 fail closed한다.
+2. 두 connection 경쟁 후보의 GPU/workload/third-party opt-in을 포함한 모든 필드를
+   서로 다르게 만들어 parent/child 혼합을 최종 구조체 전체 비교로 잡도록 보강했다.
+3. registry SQL의 중복 `ORDER BY`를 없애고 projection의 Rust sort 한 곳만 node
+   결정성의 권위로 남겼다. 이 sort 제거 뮤테이션이 실제 테스트를 깨뜨린다.
+4. 최대 revision/time/resource, stale/future 관측 시각, unknown 대 명시적 zero,
+   손상 enum/key/revision/child row와 기존 Coordinator/Agent/Lease API 회귀를 재확인했다.
+5. write는 `BEGIN IMMEDIATE`, snapshot은 upgrade 없는 read transaction이고 wire/session
+   대기 루프를 추가하지 않았음을 추적해 새 교착 경로가 없음을 확인했다.
+
+=== negative·경계·경쟁 검증 ===
+
+- Agent 2개 저장·reopen과 삽입 순서 무관 node/GPU 결정 정렬.
+- registry 10회 멱등 retry, node/device/key/owner 충돌과 기존 행 무변경.
+- 동일 revision normalized payload 멱등, payload 차이와 낮은 revision 거부.
+- parent 기록 뒤·GPU child 교체 중·workload child 교체 중 오류 주입 시 이전
+  parent/GPU/workload 전체 rollback.
+- 공백 identity, 31-byte key, 빈/중복 GPU ID, 공백 GPU model, 미등록 node 거부.
+- unknown과 명시적 zero/empty/false 구분, stale/future 시각 보존과 scheduler 거부.
+- 별도 SQLite connection 두 개의 같은 next revision 경쟁에서 정확히 한 완전 payload.
+- 손상 enum/key/revision/GPU child/redundant payload/marker boolean을 `CorruptData`로 거부.
+
+=== 뮤테이션 검증 ===
+
+1. `pool_snapshot()`의 유일한 node 정렬을 제거하면
+   `multiple_agents_reopen_and_project_in_node_order`가 실제 `[node-b, node-a]`,
+   기대 `[node-a, node-b]`로 실패했다. 원복했다.
+2. revision 비교를 `<`에서 `<=`로 바꾸면 동일 revision 멱등 테스트가
+   `LowerRevision { stored: 8, requested: 8 }`로 실패했다. 원복했다.
+
+=== 독립 검수 — ACCEPTED ===
+
+독립 검수는 단일 transaction 원자성(`inventory_store.rs:223`, rollback test
+`inventory_store.rs:1213`), register 멱등성·충돌 검사(`inventory_store.rs:147`,
+conflict test `inventory_store.rs:1132`), 정확한 revision 비교
+(`inventory_store.rs:232`), 결정성(`inventory_store.rs:366,588`, test
+`inventory_store.rs:1090`), key 길이 검사(`inventory_store.rs:425`), 경쟁 후보
+판별력(`inventory_store.rs:1404`)을 코드와 테스트로 확인했다. 범위 밖 파일이
+바뀌지 않았고 추적된 변경이 dependency/module 3줄과 Cargo.lock 1줄뿐이며,
+`inventory_store.rs` 1,514줄에서 production/test 경계의 자기 보고 1행 차이가
+경계 기준 차이일 뿐임도 확인해 1라운드 만에 `ACCEPTED`했다.
+
+=== 감독자 직접 재확인 ===
+
+실행 시각: 2026-08-21T12:45:54+09:00
+실행 명령:
+
+  C:\Users\playdata2\.cargo\bin\cargo.exe test -p gputeer-coordinator
+
+실행 출력:
+
+  warn: could not canonicalize path C:\Users\playdata2
+      Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+       Running unittests src\lib.rs (target\debug\deps\gputeer_coordinator-95749db4d13a3872.exe)
+
+  running 67 tests
+  test inventory_store::tests::registry_retry_is_idempotent_and_every_identity_conflict_preserves_row ... ok
+  test inventory_store::tests::maximum_revision_timestamp_and_resource_values_round_trip ... ok
+  test inventory_store::tests::invalid_registry_and_inventory_inputs_have_no_side_effects ... ok
+  test inventory_store::tests::same_revision_requires_byte_equivalent_normalized_payload ... ok
+  test inventory_store::tests::multiple_agents_reopen_and_project_in_node_order ... ok
+  test inventory_store::tests::unknown_and_explicit_zero_facts_remain_distinct_in_projection ... ok
+  test inventory_store::tests::stale_and_future_observation_times_are_preserved_and_rejected_by_scheduler ... ok
+  test inventory_store::tests::two_connections_competing_for_one_revision_leave_one_complete_payload ... ok
+  test inventory_store::tests::every_replacement_fault_rolls_back_parent_and_all_children ... ok
+  test inventory_store::tests::corrupt_payload_and_observation_markers_fail_closed ... ok
+  test inventory_store::tests::corrupted_enum_key_revision_and_gpu_child_fail_closed_after_reopen ... ok
+  [기존 job_store·lease_store·staging_store·coordinator tests 56건도 모두 ok]
+
+  test result: ok. 67 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.46s
+
+       Running tests\job_store_concurrent_submit.rs
+
+  running 2 tests
+  test concurrent_key_reuse_with_changed_payload_has_one_winner_and_no_overwrite ... ok
+  test concurrent_identical_submit_creates_once_and_replays_once ... ok
+
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+       Running tests\lease_store_concurrent_issue.rs
+
+  running 2 tests
+  test complete_winner_assertion_rejects_each_loser_marker ... ok
+  test concurrent_first_issue_has_one_complete_winner ... ok
+
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+
+     Doc-tests gputeer_coordinator
+
+  running 0 tests
+
+  test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+결론: unit 67 + integration 4 = 71 passed, 0 failed.
+
+=== 범위 결론 ===
+
+scheduler 로드맵 조각 3을 전부 완료한 것이 아니다. 완료한 것은 검증·정규화가
+끝난 복수 Agent inventory를 single-Coordinator SQLite에 원자·영속 기록하고 기존
+`PoolSnapshot`으로 결정 투영하는 저장소 kernel(3a)이다. 실제 다중 연결·heartbeat
+wire·session owner/fencing과 조각 4~9는 후속이다.

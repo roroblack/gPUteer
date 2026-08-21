@@ -16,6 +16,31 @@
 
 ---
 
+## 2026-08-21 12:45 — scheduler durable Agent inventory 저장소 kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-44`, scheduler 로드맵 조각 3a)
+- 계획: `docs/plans/2026-08-21_1208_scheduler_inventory_v1.md`
+  (상위 9단계 로드맵 조각 3을 durable Agent inventory 저장소 kernel인 3a로 축소).
+- 스트림: Coordinator · QA · 문서.
+- 수행: `crates/coordinator/src/inventory_store.rs`를 신설해
+  `CoordinatorInventoryStore`를 구현했다. `register_agent()`는 동일 normalized
+  registry만 멱등 처리하고 node/device/key/owner 충돌을 무변경으로 거부한다.
+  `update_inventory()`는 한 `BEGIN IMMEDIATE` transaction에서 revision을 비교하고
+  parent/GPU/workload 전체를 원자 교체하며, `pool_snapshot()`은 저장된 사실을
+  node ID 순의 기존 scheduler `PoolSnapshot`으로 결정 투영한다. 자체 재검토로
+  key를 `Vec<u8>`+명시적 32-byte 검사로 바꾸고, 경쟁 후보 전 필드 판별력을
+  보강하고, SQL/Rust 이중 정렬을 Rust sort 한 곳으로 통일했으며, fail-closed
+  경계·기존 API·교착 경로를 재확인했다. 독립 검수는 transaction 원자성,
+  register 멱등/충돌, revision 뮤테이션, 결정성, 자체 수정 5건, 제한된 변경
+  범위와 1,514줄 자기 보고를 확인해 1라운드 만에 `ACCEPTED`. **scheduler
+  9단계 로드맵 중 조각 1·2a·2b-1·3a 완료** — 남은 조각 3의 실제 다중
+  연결·heartbeat wire·session owner/fencing과 조각 4~9는 후속이다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 실행해 unit 67 +
+  integration 4, 0 failed 확인. `python scripts/verify_evidence.py`로 `DoD-44`
+  schema v2 PASS를 확인.
+- 리포트: `docs/plans/2026-08-21_1208_scheduler_inventory_v1.md`의 구현 결과 +
+  evidence 문서 — `docs/evidence/DoD-44_scheduler_inventory_store.md`.
+
+---
+
 ## 2026-08-21 11:58 — scheduler single-node local atomic STAGING kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-43`, scheduler 로드맵 조각 2b-1)
 - 계획: `docs/plans/2026-08-21_1123_scheduler_attempt_lease_v1.md`
   (상위 9단계 로드맵 조각 2b를 single-node local atomic STAGING kernel인

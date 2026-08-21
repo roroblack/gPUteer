@@ -1,0 +1,72 @@
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+검수 범위는 durable Agent inventory 저장소 kernel의 transaction 원자성,
+registry 멱등성·identity 충돌, revision 규칙, 결정적 projection, 자체 재검토 수정
+5건, 변경 범위와 줄 수 자기 보고의 정직성이었다.
+
+단일 transaction 원자성
+
+- `update_inventory()`는 `crates/coordinator/src/inventory_store.rs:223`에서
+  `TransactionBehavior::Immediate` transaction을 열고 parent inventory와 GPU 및
+  workload child 전체를 같은 transaction handle로 교체한다.
+- parent 기록 직후, GPU child 교체 중, workload child 교체 중의 세 오류 주입은
+  `crates/coordinator/src/inventory_store.rs:1213`의 rollback 테스트가 이전
+  parent/GPU/workload 전체 보존을 검사한다. 별도 commit 경로는 없다.
+
+registry 멱등성과 충돌 방지
+
+- `register_agent()`의 진입점은
+  `crates/coordinator/src/inventory_store.rs:147`이며, 기존 node/device/key의
+  identity를 읽어 byte-identical normalized payload만 멱등 성공시킨다.
+- `crates/coordinator/src/inventory_store.rs:1132`의 conflict 테스트는 같은 node의
+  device/key/owner 변경과 다른 node의 device/key 재사용을 각각 거부하고 기존 행의
+  모든 필드가 그대로인지 확인한다.
+
+revision 규칙과 뮤테이션 판별력
+
+- 저장 revision과 요청 revision의 비교는
+  `crates/coordinator/src/inventory_store.rs:232`에서 낮은 값만 거부하고 동일 값은
+  normalized payload 비교로 넘긴다. `<`를 `<=`로 바꾼 뮤테이션이 동일 revision
+  멱등 테스트를 실제로 깨뜨렸으므로 경계 판별력이 있다.
+- 동일 revision의 GPU 입력 순서만 다른 정규화 동등 payload는 멱등이고 payload
+  차이는 원본을 바꾸지 않고 거부한다.
+
+결정적 projection
+
+- registry SQL read인 `crates/coordinator/src/inventory_store.rs:588`에는
+  `ORDER BY`가 없으며, node 결정성의 유일한 정렬은 projection의 Rust
+  `sort_by()`인 `crates/coordinator/src/inventory_store.rs:366`이다.
+- 이 정렬을 제거한 뮤테이션은
+  `crates/coordinator/src/inventory_store.rs:1090`의 역순 삽입 테스트를 실제로
+  실패시켰다. SQL/Rust 이중 정렬 때문에 생기는 공허한 뮤테이션 통과가 없다.
+
+자체 재검토 수정 5건
+
+- key 입력은 `Vec<u8>`이며 `crates/coordinator/src/inventory_store.rs:425`의
+  validation에서 정확히 32-byte인지 명시 검사한다. 31-byte API 입력과 손상 DB
+  key가 모두 fail closed하는 테스트가 있다.
+- 두 connection 경쟁 후보는
+  `crates/coordinator/src/inventory_store.rs:1404`에서 parent, GPU, workload,
+  third-party opt-in을 전부 다르게 구성한다. 따라서 child 혼합도 최종 구조체 전체
+  동등성 검사로 식별한다.
+- enum/key/revision/GPU child 및 redundant payload·marker 손상, 최대값,
+  stale/future 관측 시각, unknown 대 명시적 zero를 검사하고 default 복구하지 않는다.
+- write transaction과 read snapshot 외 wire/session wait loop가 추가되지 않아 새
+  교착 경로가 없다. 실제 별도 SQLite connection 경쟁도 종료된다.
+
+변경 범위와 줄 수
+
+- `job_store.rs`, `lease_store.rs`, `staging_store.rs`, scheduler, agent, CLI에는
+  변경이 없다. 프로덕션 추적 변경은 coordinator의 scheduler dependency/module
+  등록 3줄과 `Cargo.lock` dependency 1줄뿐이고, 핵심 구현은 신설 파일 하나다.
+- `inventory_store.rs`는 물리 1,514줄이다. production을 1~1,027행으로 세면
+  1,027줄이고 test module 경계 포함 방식이면 약 1,028줄이라는 자기 보고와 1행
+  차이뿐이다. 계획의 production 350~600줄 상한을 넘었다는 보고도 숨기지 않았다.
+
+결론
+
+계획이 정한 3a 저장소 kernel의 불변식과 negative tests가 구현·테스트에 반영돼
+있고, 실제 다중 연결·heartbeat wire·session owner/fencing·Raft·reservation/dispatch를
+완료했다고 과장하지 않는다. 잔여 수정 요청 없이 1라운드 `ACCEPTED`다.

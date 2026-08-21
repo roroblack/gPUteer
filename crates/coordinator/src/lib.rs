@@ -28,6 +28,7 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 pub mod job_store;
+pub mod inventory_store;
 pub mod lease_store;
 pub mod staging_store;
 use lease_store::{

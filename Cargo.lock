@@ -350,6 +350,7 @@ version = "0.0.1"
 dependencies = [
  "gputeer-crypto",
  "gputeer-protocol",
+ "gputeer-scheduler",
  "prost",
  "rusqlite",
  "tempfile",

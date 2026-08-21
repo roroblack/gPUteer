@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
+gputeer-scheduler = { path = "../scheduler" }
 prost.workspace = true
 rusqlite.workspace = true
 
