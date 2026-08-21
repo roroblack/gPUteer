@@ -1,0 +1,93 @@
+=== 독립 검수 1라운드 — CHANGES_REQUESTED ===
+
+판정: CHANGES_REQUESTED
+
+검수 범위는 `crates/scheduler/src/rank.rs:13`의 `rank_best_fit()`이 입력 순서에
+독립적인 total order를 만드는지, resource-tight 비교와 fail-closed 경계가 테스트로
+실제로 판별되는지, 범위 밖 reservation/Grant를 주장하지 않는지였다.
+
+확인한 구현
+
+- `crates/scheduler/src/rank.rs:43`은 계산된 후보를 정책 comparator로 정렬하고,
+  `crates/scheduler/src/rank.rs:256`은 모든 정책 축이 동점일 때 `node_id` 오름차순을
+  최종 비교한다.
+- `crates/scheduler/src/rank.rs:163`은 matching GPU의 VRAM을 정렬한 뒤 요구 개수만큼
+  tight subset을 선택한다. 이 정렬이 GPU 입력 순서 독립성의 핵심이다.
+- `crates/scheduler/tests/best_fit.rs:225`의 기존 결정성 테스트는 pool 후보와 report
+  후보 순서를 뒤집지만 각 candidate의 GPU 벡터 순서는 바꾸지 않는다.
+
+변경 요청
+
+완료 조건은 GPU inventory의 입력 순서가 달라도 같은 ranking을 내야 한다. 그러나
+현재 테스트는 후보/report 순서만 순열화해 `matching_vram.sort_unstable()`의 필요성을
+직접 검증하지 않는다. 이 정렬을 제거한 뮤테이션이 기존 suite에서 검출된다는 근거도
+없다. 각 candidate의 GPU 벡터 자체를 reverse 또는 순열화한 두 pool을 만들고, 각각의
+report로 얻은 `BestFitRanking` 전체를 동등 비교하는 테스트를 추가하라. 그 뒤 VRAM
+정렬 제거 뮤테이션이 새 테스트를 실제로 실패시키는지 관측하라.
+
+나머지 resource axis, 완전 동점, malformed 입력 검사는 현재 범위에서 적절하지만
+핵심 결정성 주장이 직접 증명되지 않았으므로 이 라운드는 `CHANGES_REQUESTED`다.
+
+---
+
+=== 독립 검수 2라운드 — CHANGES_REQUESTED ===
+
+판정: CHANGES_REQUESTED
+
+1라운드 지적에 대한 수정으로 `crates/scheduler/tests/best_fit.rs:174`의
+`gpu_inventory_permutations_produce_identical_ranking`이 추가된 것을 확인했다. 이
+테스트는 후보별 GPU 벡터를 reverse하고 정방향/역방향의 `BestFitRanking` 전체를
+`assert_eq!`로 비교하므로 요구한 assertion 형태를 충족한다. VRAM 정렬 제거 시
+정방향 `node-b`, 역방향 `node-a`로 winner가 달라졌다는 뮤테이션 관측도 지적의
+판별력을 뒷받침한다.
+
+다만 현재 `git diff`에는 테스트 파일 외에 `crates/scheduler/src/lib.rs`와
+`crates/scheduler/src/model.rs:232` 이후의 production 변경도 함께 보인다. 이번
+후속 수정의 요청 범위는 GPU 순열 테스트 보강이었으므로 이 production 변경이 새로
+들어온 것인지, 1차 구현부터 있던 미커밋 산출물인지 현재 전달된 diff만으로 구분되지
+않는다. 변경 범위를 명확히 하지 않은 상태에서는 수용할 수 없어
+`CHANGES_REQUESTED`다.
+
+요청: 기준 HEAD와 조각 4 전체 미커밋 상태를 명확히 하고, `lib.rs`/`model.rs`가
+1차 구현 산출물인지 이번 후속 수정에서 추가된 범위 확장인지 구분 가능한 근거를
+제시하라.
+
+---
+
+=== 독립 검수 3라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+감독자가 직접 제시한 `git rev-parse HEAD` 결과는
+`187776033ec5bdb99c8ca1fa5607d643d22987f5`이며 이 커밋은 DoD-44 기준점이다.
+조각 4 전체가 아직 미커밋이어서 `git diff`가 1차 구현과 2차 테스트 보강을 함께
+표시한다는 설명을 실제 변경 내용과 대조했다.
+
+scope 오탐 명확화
+
+- `crates/scheduler/src/lib.rs:1` 부근의 변경은 신규 `rank` module 연결과 public API
+  export다. `rank_best_fit()`을 신설한 1차 구현에 필수인 산출물이다.
+- `crates/scheduler/src/model.rs:232`~`crates/scheduler/src/model.rs:282`는
+  `FitAxis`, `BestFitPolicy`, `FitKey`, `RankedCandidate`, `BestFitRanking`,
+  `RankingError`의 신규 타입 정의다. 이것도 1차 구현 범위에 계획부터 명시돼 있다.
+- 2차 구현의 실질 변경은 `crates/scheduler/tests/best_fit.rs:174`의 GPU vector
+  permutation 테스트 보강이다. 따라서 2라운드의 production scope 확대 지적은
+  미커밋 조각 전체를 후속 수정분으로 오인한 git-diff-scope 오탐이다.
+
+1라운드 지적 종결
+
+- 새 테스트는 각 후보의 GPU vector를 `reverse()`하고 두 pool에서 각각
+  eligibility report를 다시 생성한다.
+- 정방향과 역방향 호출의 `BestFitRanking` 전체를 `assert_eq!`로 비교한다.
+- `crates/scheduler/src/rank.rs:163`의 VRAM 정렬을 제거한 뮤테이션은 정방향
+  winner `node-b`, 역방향 winner `node-a`를 만들어 새 테스트를 실제 실패시켰고,
+  원복 뒤 scheduler 전체 테스트가 통과했다.
+
+최종 범위와 판정
+
+`crates/scheduler/src/rank.rs:13`의 순수 함수와 `model.rs` 타입, `lib.rs` export,
+`crates/scheduler/tests/best_fit.rs`만 구현 범위다. Coordinator 배선, inventory
+revision/CAS, allocation, reservation, staging, Grant는 들어오지 않았다. resource
+best-fit 계산 결과를 reservation 성공으로 과장하지도 않는다. 1라운드 지적은 직접
+테스트와 비공허 뮤테이션으로 닫혔고 2라운드 scope 우려는 기준 HEAD 확인으로
+해소됐다. 잔여 수정 요청 없이 최종 `ACCEPTED`다.

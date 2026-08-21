@@ -1,0 +1,126 @@
+=== 구현·검증 기록 — scheduler 로드맵 조각 4 ===
+
+완료 범위는 **순수 deterministic resource best-fit kernel**이다.
+Coordinator 배선, inventory revision/CAS, allocation, reservation,
+`stage_queued_with_lease()`, Grant dispatch는 구현하거나 입증하지 않았다.
+
+`crates/scheduler/src/rank.rs`를 신설해 순수 함수
+`rank_best_fit(pool, job, report, policy)`를 구현했다. `model.rs`에는
+`FitAxis`, `BestFitPolicy`, `FitKey`, `RankedCandidate`, `BestFitRanking`,
+`RankingError`를 추가했고 `lib.rs`에서 module과 API를 공개했다.
+
+hard-filter가 만든 복수 적격 후보마다 healthy·model·최소 VRAM을 만족하는 GPU를
+VRAM 오름차순으로 정렬한 뒤 요구 개수만큼 가장 tight한 subset을 고른다. 정책이
+명시한 다섯 축의 완전 순열에 따라 VRAM 잔여 합, GPU 수 잔여, CPU/RAM/workspace
+잔여를 작은 값 우선으로 lexicographic 비교한다. 모든 축이 같을 때만 `node_id`
+오름차순으로 동점을 해소한다.
+
+=== 구현 1라운드 검증 ===
+
+- 각 resource 축의 작은 non-negative 잔여 우선과 정책 축 순서 변경을 확인했다.
+- 가장 tight한 적격 GPU 요구 개수 선택과 GPU 수 잔여를 확인했다.
+- pool/report 후보 순서 역전 결과와 debug byte 표현 동등성을 확인했다.
+- 완전 동점의 `node_id` 오름차순, hard-filter 탈락 후보 배제를 확인했다.
+- 0/1 후보, duplicate/missing/mismatched candidate, rank fact 누락, stale report의
+  GPU·CPU 부족, VRAM 합 overflow를 fail closed하는 negative test를 확인했다.
+- CPU 비교 방향 반전과 `node_id` tie-break 반전 뮤테이션이 각각 targeted test를
+  실제로 실패시킴을 확인하고 원복했다.
+
+=== 독립 검수 1라운드 — CHANGES_REQUESTED ===
+
+검수자는 구현의 `matching_vram.sort_unstable()`이 GPU 입력 순서 독립성의 핵심인데,
+기존 결정성 테스트는 pool 후보 순서와 report 적격 후보 순서만 뒤집었을 뿐 각
+`CandidateSnapshot.gpus` 벡터 자체의 순열을 비교하지 않았다고 지적했다. 따라서
+정렬을 제거해도 기존 suite가 통과할 수 있어 완료 조건의 직접 증명이 아니며,
+GPU 벡터를 실제로 순열화한 두 입력의 전체 `BestFitRanking` 동등성 테스트와 해당
+정렬 제거 뮤테이션의 실패 관측을 요구했다.
+
+=== 구현 2라운드 ===
+
+`crates/scheduler/tests/best_fit.rs`에
+`gpu_inventory_permutations_produce_identical_ranking`을 추가했다. 동일 후보들의 GPU
+벡터를 전부 `reverse()`한 pool을 만들고 정방향/역방향 각각에서 새 report를 만든
+뒤 두 `BestFitRanking` 전체를 `assert_eq!`로 비교한다.
+
+적격 GPU VRAM 정렬을 제거하는 뮤테이션에서는 정방향 winner가 `node-b`, 역방향
+winner가 `node-a`로 실제로 달라져 새 테스트가 실패했다. 정렬을 원복한 뒤 targeted
+test와 scheduler 전체 테스트가 다시 통과했다.
+
+=== 독립 검수 2라운드 — CHANGES_REQUESTED ===
+
+검수자는 `git diff`에 `crates/scheduler/src/lib.rs`와
+`crates/scheduler/src/model.rs`가 함께 보인다는 이유로, GPU 순열 테스트 추가라는
+2라운드 수정 범위를 넘어 production code가 바뀌었다고 판단했다. 그러나 이 판단은
+조각 4 전체가 아직 미커밋 상태라는 사실을 반영하지 못한 git-diff-scope 오탐이었다.
+두 파일은 2라운드에서 새로 확장된 변경이 아니라 1차 구현부터 존재한 module 연결과
+신규 best-fit 타입 산출물이었다.
+
+=== 독립 검수 3라운드 — ACCEPTED ===
+
+감독자가 직접 `git rev-parse HEAD`와 `git diff`를 제시해 기준 HEAD가 DoD-44의
+`187776033ec5bdb99c8ca1fa5607d643d22987f5`이고 조각 4 전체가 아직 미커밋임을
+명확히 했다. 검수자는 `lib.rs`의 module/export와 `model.rs`의 best-fit 신규 타입이
+순수 1차 구현 산출물일 뿐 2라운드 범위 확장이 아님을 확인했다.
+
+이어 새 GPU 벡터 reverse 테스트가 정방향/역방향 `BestFitRanking` 전체를 비교하고,
+VRAM 정렬 제거 뮤테이션에서 실제 winner가 `node-b`/`node-a`로 갈라지는 것을
+재확인했다. 1라운드 지적이 닫혔고 범위 밖 Coordinator·reservation·Grant 변경이
+없음을 확인해 최종 `ACCEPTED`했다.
+
+=== 감독자 직접 재확인 ===
+
+실행 시각: 2026-08-21T13:26:28+09:00
+기준 HEAD: 187776033ec5bdb99c8ca1fa5607d643d22987f5
+실행 명령:
+
+  C:\Users\playdata2\.cargo\bin\cargo.exe test -p gputeer-scheduler
+
+실행 출력:
+
+  warn: could not canonicalize path C:\Users\playdata2
+      Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+       Running unittests src\lib.rs
+
+  running 0 tests
+  test result: ok. 0 passed; 0 failed
+
+       Running tests\best_fit.rs
+
+  running 15 tests
+  test duplicate_policy_axis_fails_closed ... ok
+  test hard_filter_rejections_never_enter_the_ranking ... ok
+  test complete_tie_is_broken_only_by_node_id_ascending ... ok
+  test gpu_inventory_permutations_produce_identical_ranking ... ok
+  test gpu_subset_uses_the_tightest_adequate_required_count ... ok
+  test every_resource_axis_prefers_the_smaller_non_negative_remainder ... ok
+  test missing_job_and_candidate_rank_facts_fail_closed ... ok
+  test duplicate_pool_and_report_ids_fail_closed ... ok
+  test policy_axis_order_changes_which_tradeoff_wins ... ok
+  test pool_and_report_permutations_produce_byte_equal_debug_output ... ok
+  test report_only_and_pool_only_candidate_ids_fail_closed ... ok
+  test report_from_resource_incompatible_snapshot_fails_closed ... ok
+  test stale_report_cannot_underflow_a_non_gpu_resource_remainder ... ok
+  test vram_remainder_overflow_fails_closed ... ok
+  test zero_or_one_candidate_report_is_not_misrepresented_as_a_ranking ... ok
+
+  test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+       Running tests\hard_filter.rs
+
+  running 33 tests
+  [기존 hard-filter tests 33건 모두 ok]
+
+  test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Doc-tests gputeer_scheduler
+
+  running 0 tests
+  test result: ok. 0 passed; 0 failed
+
+결론: best-fit 15 + hard-filter 33 = 48 passed, 0 failed.
+
+=== 범위 결론 ===
+
+scheduler 로드맵 조각 4를 순수 resource best-fit kernel로 완료했다. 선택은 고정
+snapshot에 대한 계산일 뿐 자원을 예약하지 않는다. 남은 조각 3의 실제 다중 연결·
+heartbeat wire·session owner/fencing과 조각 5~9는 후속이다.

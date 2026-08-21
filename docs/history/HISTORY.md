@@ -16,6 +16,35 @@
 
 ---
 
+## 2026-08-21 13:26 — scheduler 순수 deterministic resource best-fit kernel — 구현 + 독립 검수 3라운드 + evidence 기록 (`DoD-45`, scheduler 로드맵 조각 4)
+- 계획: `docs/plans/2026-08-21_1253_scheduler_best_fit_v1.md`
+  (상위 9단계 로드맵 조각 4를 순수 resource best-fit kernel로 제한).
+- 스트림: Scheduler · QA · 문서.
+- 수행: `crates/scheduler/src/rank.rs`를 신설해 순수 `rank_best_fit()`을 구현하고,
+  `model.rs`에 `FitAxis`·`BestFitPolicy`·`FitKey`·`RankedCandidate`·
+  `BestFitRanking`·`RankingError`를 추가했다. hard-filter 적격 후보 중 가장 tight한
+  GPU 요구 개수를 고른 뒤 정책이 명시한 VRAM 잔여 합→GPU 수 잔여→CPU/RAM/
+  workspace 잔여를 lexicographic 비교하고 완전 동점은 `node_id` 오름차순으로
+  해소한다. Coordinator 배선·inventory revision/CAS·allocation·reservation·Grant는
+  범위 밖이다. 독립 검수 1라운드는 기존 테스트가 후보/report 순서만 뒤집고 GPU
+  벡터 자체의 순열 동등성을 검증하지 않은 공백을 찾아 `CHANGES_REQUESTED`했다.
+  구현 2라운드에서 GPU 벡터를 reverse한 정방향/역방향 `BestFitRanking` 전체
+  동등성 테스트를 추가하고, VRAM 정렬 제거 시 winner가 실제 `node-b`/`node-a`로
+  갈리는 뮤테이션을 확인했다. 검수 2라운드는 조각 4 전체가 미커밋인 상태의
+  `git diff`에서 `lib.rs`·`model.rs` 1차 산출물을 이번 후속 수정으로 오인해
+  `CHANGES_REQUESTED`한 git-diff-scope 오탐이었다. 감독자가 HEAD가 DoD-44의
+  `1877760`임과 전체 diff를 직접 명확히 한 3라운드에서 두 파일이 module 연결·
+  신규 타입인 순수 1차 구현 산출물임을 확인하고 새 테스트·뮤테이션을 재검증해
+  최종 `ACCEPTED`. **scheduler 9단계 로드맵 중 조각 1·2a·2b-1·3a·4 완료** —
+  남은 조각 3 나머지와 조각 5~9는 후속이다.
+- 검증: 감독자가 `cargo test -p gputeer-scheduler`를 직접 실행해 best-fit 15 +
+  hard-filter 33 = 48 passed, 0 failed 확인. `python scripts/verify_evidence.py`로
+  `DoD-45` schema v2 PASS를 확인.
+- 리포트: `docs/reports/2026-08-21_1308_scheduler_best_fit_kernel.md` + evidence 문서 —
+  `docs/evidence/DoD-45_scheduler_best_fit.md`.
+
+---
+
 ## 2026-08-21 12:45 — scheduler durable Agent inventory 저장소 kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-44`, scheduler 로드맵 조각 3a)
 - 계획: `docs/plans/2026-08-21_1208_scheduler_inventory_v1.md`
   (상위 9단계 로드맵 조각 3을 durable Agent inventory 저장소 kernel인 3a로 축소).

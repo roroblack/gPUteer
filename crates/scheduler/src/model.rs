@@ -226,3 +226,58 @@ pub struct EligibilityReport {
     pub rejected: Vec<RejectedCandidate>,
     pub resolution: EligibilityResolution,
 }
+
+/// resource-tight best-fit에서 비교할 자원 축.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum FitAxis {
+    Vram,
+    GpuCount,
+    Cpu,
+    Ram,
+    Workspace,
+}
+
+/// 마스터 플랜에는 v0.1 자원 축의 고정 우선순위가 없으므로 기본값을 두지 않는다.
+/// 호출자는 다섯 축을 중복 없이 모두 나열해야 한다.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BestFitPolicy {
+    pub axis_order: [FitAxis; 5],
+}
+
+/// Job을 배치한 뒤 남는 자원량. 각 값은 작을수록 더 tight한 fit이다.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FitKey {
+    pub vram_remaining_bytes: u64,
+    pub gpu_count_remaining: u32,
+    pub cpu_cores_remaining: u32,
+    pub ram_remaining_bytes: u64,
+    pub workspace_remaining_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RankedCandidate {
+    pub node_id: String,
+    pub fit_key: FitKey,
+}
+
+/// `winner`는 `ranked[0]`과 항상 같다. 이 결과는 reservation이나 Grant가 아니다.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BestFitRanking {
+    pub winner: RankedCandidate,
+    pub ranked: Vec<RankedCandidate>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RankingError {
+    InvalidPolicyAxisOrder,
+    ResolutionNotRankingRequired,
+    EligibleCandidateCountNotMultiple { actual: usize },
+    EmptyNodeId,
+    DuplicatePoolNodeId { node_id: String },
+    DuplicateReportNodeId { node_id: String },
+    ReportCandidateMissingFromPool { node_id: String },
+    PoolCandidateMissingFromReport { node_id: String },
+    MissingRankFact { node_id: Option<String>, fact: MissingFact },
+    EligibleCandidateMismatch { node_id: String, axis: FitAxis },
+    FitOverflow { node_id: String, axis: FitAxis },
+}
