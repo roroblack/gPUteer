@@ -1,0 +1,69 @@
+=== 독립 검수 receipt — DoD-47 scheduler inventory CAS ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 결론을 전제로 삼지 않고 계획, diff, production 코드, 테스트와
+뮤테이션 기록을 대조했다.
+
+1. 단일 transaction 원자성
+
+- 내부 진입점은 `crates/coordinator/src/staging_store.rs:301`의 `reserve_and_stage()`다.
+- 하나의 `BEGIN IMMEDIATE` transaction 안에서 reservation을 포함한 admission 쓰기를
+  진행하고 `crates/coordinator/src/staging_store.rs:370`의 staging 처리 뒤
+  `crates/coordinator/src/staging_store.rs:373`에서 commit한다.
+- fault injection 경로와 `crates/coordinator/src/staging_store.rs:1159`의 검증은
+  rollback 뒤 reservation·Attempt·Lease·operation·Job 전이가 남지 않고,
+  `crates/coordinator/src/staging_store.rs:929`의 counter 확인으로 fence epoch도
+  소비되지 않음을 보여 준다.
+
+2. CAS와 node-exclusive 점유의 선형화
+
+- `crates/coordinator/src/staging_store.rs:344`에서 같은 transaction으로 현재 inventory
+  revision을 읽고 `crates/coordinator/src/staging_store.rs:348`에서 expected revision과
+  비교한다.
+- `crates/coordinator/src/staging_store.rs:221`의 reservation table은 `node_id`를
+  PRIMARY KEY로 두고, `crates/coordinator/src/staging_store.rs:355`의 기존 점유 검사와
+  함께 같은 transaction에서 충돌을 강제한다.
+- `crates/coordinator/src/orchestrate.rs:189`는 선택 후보의 snapshot revision을 새 API에
+  넘기며 해당 API 호출은 한 번뿐이다. CAS 충돌을 자동 rerank/retry하는 경로는 없다.
+
+3. 실제 동시성 판별력
+
+- `crates/coordinator/src/staging_store.rs:1031`의 테스트는 서로 다른 SQLite connection
+  두 개를 만들고 `crates/coordinator/src/staging_store.rs:1041`의 `Barrier`로 동시
+  진입시킨다.
+- `crates/coordinator/src/staging_store.rs:1059`에서 정확히 한 reservation/staging만
+  성공하고 loser Job은 QUEUED에 남음을 확인한다.
+- 전체 orchestration 경쟁도 `crates/coordinator/src/orchestrate.rs:417`에서 같은 성질을
+  재검증한다.
+
+4. 뮤테이션 판별력
+
+- revision predicate를 제거하면
+  `crates/coordinator/src/staging_store.rs:948`의 stale test가 실패하고
+  `crates/coordinator/src/staging_store.rs:348`을 우회한 stale 요청이 STAGING한다.
+- `crates/coordinator/src/staging_store.rs:221`의 node PRIMARY KEY와
+  `crates/coordinator/src/staging_store.rs:355`의 점유 검사를 함께 제거하면 Barrier
+  경쟁의 성공 수가 2로 늘어나 테스트가 실패한다.
+- 두 뮤테이션은 원복됐고 최종 suite가 재통과했다.
+
+5. DoD-43 무회귀와 범위
+
+- 기존 reservation 없는 `stage_queued_with_lease()`는
+  `crates/coordinator/src/staging_store.rs:256`의 시그니처와 동작을 유지한다.
+- `crates/coordinator/src/staging_store.rs:1241`부터의 기존 success/replay/fault/
+  concurrency 회귀 테스트가 재통과했다.
+- production 의미 변경은 `crates/scheduler/src/model.rs`,
+  `crates/coordinator/src/inventory_store.rs`, `crates/coordinator/src/staging_store.rs`,
+  `crates/coordinator/src/orchestrate.rs`에 한정되고, scheduler 테스트 fixture 두 곳은
+  새 optional 필드의 `None` 초기화만 추가됐다. protocol/wire/Agent 코드는 바뀌지 않았다.
+- node-exclusive이므로 같은 node의 서로 다른 GPU도 동시에 쓸 수 없고 release가 없다.
+  `crates/coordinator/src/orchestrate.rs`는 계속 비공개 module이며 production `run()`에는
+  연결되지 않았다.
+
+판정: inventory revision 비교, node-exclusive reservation, Attempt/Lease/fence,
+Job STAGING과 operation 기록이 한 `BEGIN IMMEDIATE` transaction에 결합됐고, rollback,
+동시 경쟁, 뮤테이션, 기존 API 무회귀와 제한 사항이 충분히 검증됐다. 수정 요청 없이
+1라운드 `ACCEPTED`.

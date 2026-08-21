@@ -1,11 +1,9 @@
 //! Crate-internal local placement-to-staging orchestration.
 //!
-//! This seam deliberately is **not** resource reservation, Grant construction,
-//! network dispatch, or safe concurrent multi-Job admission. It must remain
-//! disconnected from production entrypoints until inventory revision plus an
-//! allocation CAS/reservation is made authoritative with staging. Serial calls
-//! for distinct Jobs are not a substitute: unchanged inventory can still select
-//! the same node/GPU more than once.
+//! This seam performs local node-exclusive inventory-CAS admission together
+//! with durable staging. It deliberately is **not** per-GPU/partial resource
+//! allocation, release/requeue, Grant construction, network dispatch, or a
+//! production entrypoint.
 
 use gputeer_scheduler::{
     evaluate_eligibility, rank_best_fit, BestFitPolicy, BestFitRanking, EligibilityReport,
@@ -15,7 +13,7 @@ use gputeer_scheduler::{
 use crate::{
     inventory_store::{CoordinatorInventoryStore, InventoryStoreError},
     staging_store::{
-        CoordinatorStagingStore, StageQueuedRequest, StageQueuedResult, StagingStoreError,
+        CoordinatorStagingStore, ReservedStageError, StageQueuedRequest, StageQueuedResult,
     },
 };
 
@@ -70,7 +68,9 @@ pub(crate) enum PlacementToStagingOutcome {
 pub(crate) enum PlacementToStagingError {
     Inventory(InventoryStoreError),
     Ranking(RankingError),
-    Staging(StagingStoreError),
+    SelectedCandidateNotUnique { node_id: String, matches: usize },
+    SelectedCandidateMissingInventoryRevision { node_id: String },
+    Staging(ReservedStageError),
 }
 
 impl std::fmt::Display for PlacementToStagingError {
@@ -78,6 +78,14 @@ impl std::fmt::Display for PlacementToStagingError {
         match self {
             Self::Inventory(error) => write!(f, "inventory projection failed: {error}"),
             Self::Ranking(error) => write!(f, "best-fit ranking failed: {error:?}"),
+            Self::SelectedCandidateNotUnique { node_id, matches } => write!(
+                f,
+                "selected node is not unique in its PoolSnapshot: node={node_id}, matches={matches}"
+            ),
+            Self::SelectedCandidateMissingInventoryRevision { node_id } => write!(
+                f,
+                "selected node has no inventory revision in its PoolSnapshot: {node_id}"
+            ),
             Self::Staging(error) => write!(f, "durable staging failed: {error}"),
         }
     }
@@ -88,6 +96,8 @@ impl std::error::Error for PlacementToStagingError {
         match self {
             Self::Inventory(error) => Some(error),
             Self::Ranking(_) => None,
+            Self::SelectedCandidateNotUnique { .. }
+            | Self::SelectedCandidateMissingInventoryRevision { .. } => None,
             Self::Staging(error) => Some(error),
         }
     }
@@ -105,8 +115,8 @@ impl From<RankingError> for PlacementToStagingError {
     }
 }
 
-impl From<StagingStoreError> for PlacementToStagingError {
-    fn from(error: StagingStoreError) -> Self {
+impl From<ReservedStageError> for PlacementToStagingError {
+    fn from(error: ReservedStageError) -> Self {
         Self::Staging(error)
     }
 }
@@ -116,8 +126,9 @@ impl From<StagingStoreError> for PlacementToStagingError {
 ///
 /// `NoEligibleCandidates` leaves the Job QUEUED. `SingleEligible` bypasses
 /// ranking. Only `RankingRequired` invokes best-fit. The inventory read and
-/// staging write remain separate SQLite transactions, so this function is not
-/// safe for concurrent admission and is intentionally crate-internal.
+/// staging write begin as separate snapshot and write transactions, but the
+/// selected revision comparison, node reservation, and staging commit share
+/// the staging store's single `BEGIN IMMEDIATE` linearization point.
 pub(crate) fn orchestrate_placement_to_staging(
     inventory_store: &mut CoordinatorInventoryStore,
     staging_store: &mut CoordinatorStagingStore,
@@ -159,7 +170,25 @@ pub(crate) fn orchestrate_placement_to_staging(
         expires_at_unix_ms: input.issuance.expires_at_unix_ms,
         max_total_duration_seconds: input.issuance.max_total_duration_seconds,
     };
-    let stage = staging_store.stage_queued_with_lease(&request)?;
+    let matching_candidates = pool
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.node_id == selected_node_id)
+        .collect::<Vec<_>>();
+    if matching_candidates.len() != 1 {
+        return Err(PlacementToStagingError::SelectedCandidateNotUnique {
+            node_id: selected_node_id,
+            matches: matching_candidates.len(),
+        });
+    }
+    let expected_inventory_revision = matching_candidates[0]
+        .inventory_revision
+        .ok_or_else(|| PlacementToStagingError::SelectedCandidateMissingInventoryRevision {
+            node_id: selected_node_id.clone(),
+        })?;
+    let stage = staging_store
+        .reserve_node_and_stage_queued_with_lease(&request, expected_inventory_revision)?
+        .stage;
 
     Ok(PlacementToStagingOutcome::Staged {
         eligibility,
@@ -171,7 +200,10 @@ pub(crate) fn orchestrate_placement_to_staging(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::{
+        collections::BTreeSet,
+        sync::{Arc, Barrier},
+    };
 
     use gputeer_scheduler::{
         FitAxis, IsolationClass, KeyProtection, NodeState, RiskState, SecurityTier, Sensitivity,
@@ -183,6 +215,7 @@ mod tests {
     use crate::{
         inventory_store::{AgentInventory, AgentRegistry, GpuInventory},
         job_store::{AcceptedJobSubmission, CoordinatorJobStore, JobState},
+        staging_store::StagingStoreError,
     };
 
     struct Fixture {
@@ -219,34 +252,7 @@ mod tests {
                 job_store,
                 inventory_store: CoordinatorInventoryStore::open(&path).unwrap(),
                 staging_store: CoordinatorStagingStore::open(&path).unwrap(),
-                input: PlacementToStagingInput {
-                    job_id: "job-1".into(),
-                    job_requirements: requirements(),
-                    hard_filter_policy: Policy {
-                        maximum_snapshot_age_ms: 20,
-                    },
-                    best_fit_policy: BestFitPolicy {
-                        axis_order: [
-                            FitAxis::Vram,
-                            FitAxis::GpuCount,
-                            FitAxis::Cpu,
-                            FitAxis::Ram,
-                            FitAxis::Workspace,
-                        ],
-                    },
-                    evaluated_at_unix_ms: 100,
-                    issuance: StagingIssuanceInput {
-                        operation_key: [3; 16],
-                        attempt_id: "attempt-1".into(),
-                        lease_id: "lease-1".into(),
-                        issuing_coordinator_id: "coordinator-1".into(),
-                        coordinator_term: 7,
-                        issued_at_unix_ms: 100,
-                        renew_after_unix_ms: 120,
-                        expires_at_unix_ms: 160,
-                        max_total_duration_seconds: 1,
-                    },
-                },
+                input: placement_input("job-1", 1),
             }
         }
 
@@ -313,6 +319,37 @@ mod tests {
         }
     }
 
+    fn placement_input(job_id: &str, ordinal: u8) -> PlacementToStagingInput {
+        PlacementToStagingInput {
+            job_id: job_id.into(),
+            job_requirements: requirements(),
+            hard_filter_policy: Policy {
+                maximum_snapshot_age_ms: 20,
+            },
+            best_fit_policy: BestFitPolicy {
+                axis_order: [
+                    FitAxis::Vram,
+                    FitAxis::GpuCount,
+                    FitAxis::Cpu,
+                    FitAxis::Ram,
+                    FitAxis::Workspace,
+                ],
+            },
+            evaluated_at_unix_ms: 100,
+            issuance: StagingIssuanceInput {
+                operation_key: [ordinal + 2; 16],
+                attempt_id: format!("attempt-{ordinal}"),
+                lease_id: format!("lease-{ordinal}"),
+                issuing_coordinator_id: "coordinator-1".into(),
+                coordinator_term: 7,
+                issued_at_unix_ms: 100,
+                renew_after_unix_ms: 120,
+                expires_at_unix_ms: 160,
+                max_total_duration_seconds: 1,
+            },
+        }
+    }
+
     #[test]
     fn zero_candidates_preserves_queued_job_and_creates_no_attempt() {
         let mut fixture = Fixture::new();
@@ -374,6 +411,122 @@ mod tests {
         assert_eq!(selected_node_id, "node-b");
         assert_eq!(stage.attempt.node_ids, ["node-b"]);
         assert_eq!(stage.lease.holder_node_id, "node-b");
+    }
+
+    #[test]
+    fn concurrent_orchestration_of_one_gpu_stages_exactly_one_job() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("control.db");
+        let mut jobs = CoordinatorJobStore::open(&path).unwrap();
+        for ordinal in 1..=2u8 {
+            let job_id = format!("job-{ordinal}");
+            jobs.submit_accepted(
+                &AcceptedJobSubmission {
+                    idempotency_key: [ordinal; 16],
+                    job_id: job_id.clone(),
+                    submitter_device_id: "submitter-device".into(),
+                    manifest_hash: [ordinal; 32],
+                    deadline_unix_ms: None,
+                    max_queue_duration_ms: None,
+                },
+                10,
+            )
+            .unwrap();
+            jobs.start_planning(&job_id, 20).unwrap();
+            jobs.enqueue(&job_id, "plan-1", 30).unwrap();
+        }
+        drop(jobs);
+        let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+        inventory
+            .register_agent(&AgentRegistry {
+                node_id: "node-a".into(),
+                device_id: "device-node-a".into(),
+                owner_member_id: "member-1".into(),
+                verifying_key: vec![1; 32],
+                node_state: Some(NodeState::Online),
+                risk_state: Some(RiskState::Normal),
+                security_tier: Some(SecurityTier::S2),
+                isolation_class: Some(IsolationClass::Contained),
+                key_protection: Some(KeyProtection::K1),
+            })
+            .unwrap();
+        inventory
+            .update_inventory(&AgentInventory {
+                node_id: "node-a".into(),
+                inventory_revision: 1,
+                observed_at_unix_ms: 90,
+                gpus: Some(vec![GpuInventory {
+                    gpu_id: "gpu-node-a".into(),
+                    model: Some("model-a".into()),
+                    healthy: Some(true),
+                    available_vram_bytes: Some(12),
+                }]),
+                available_cpu_cores: Some(8),
+                available_ram_bytes: Some(64),
+                available_workspace_bytes: Some(64),
+                allowed_workload_classes: Some(BTreeSet::from([
+                    WorkloadClass::Training,
+                ])),
+                third_party_workloads_opt_in: None,
+            })
+            .unwrap();
+        drop(inventory);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (1..=2u8)
+            .map(|ordinal| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+                    let mut staging = CoordinatorStagingStore::open(&path).unwrap();
+                    let input = placement_input(&format!("job-{ordinal}"), ordinal);
+                    barrier.wait();
+                    orchestrate_placement_to_staging(&mut inventory, &mut staging, &input)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Ok(PlacementToStagingOutcome::Staged { .. })))
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(PlacementToStagingError::Staging(
+                        ReservedStageError::NodeAlreadyReserved { .. }
+                    ))
+                ))
+                .count(),
+            1
+        );
+        let jobs = CoordinatorJobStore::open(&path).unwrap();
+        let states = ["job-1", "job-2"]
+            .map(|job_id| jobs.get(job_id).unwrap().unwrap().state);
+        assert_eq!(
+            states
+                .iter()
+                .filter(|state| **state == JobState::Staging)
+                .count(),
+            1
+        );
+        assert_eq!(
+            states
+                .iter()
+                .filter(|state| **state == JobState::Queued)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -458,7 +611,7 @@ mod tests {
         assert_eq!(
             fixture.run(),
             Err(PlacementToStagingError::Staging(
-                StagingStoreError::InvalidLeaseLifetime
+                ReservedStageError::Staging(StagingStoreError::InvalidLeaseLifetime)
             ))
         );
         assert_eq!(fixture.job_store.get("job-1").unwrap().unwrap().state, JobState::Queued);

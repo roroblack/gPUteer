@@ -2,9 +2,11 @@
 //!
 //! One file, one SQLite connection, and one `BEGIN IMMEDIATE` transaction own
 //! the Job transition, Attempt/node creation, team-global fence allocation,
-//! Lease insertion, and operation idempotency record. This is local durable
-//! state only; it is not a Raft/ControlStore `COMMITTED` transition and does
-//! not reserve resources or dispatch a Grant.
+//! Lease insertion, and operation idempotency record. The reservation-aware
+//! entrypoint additionally compares the selected Agent inventory revision and
+//! inserts a node-exclusive reservation in that same transaction. This is
+//! local durable state only; it is not a Raft/ControlStore `COMMITTED`
+//! transition and does not dispatch a Grant.
 
 use std::path::Path;
 
@@ -56,6 +58,21 @@ pub struct StageQueuedResult {
     pub created: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredNodeReservation {
+    pub node_id: String,
+    pub job_id: String,
+    pub attempt_id: String,
+    pub inventory_revision: u64,
+    pub reserved_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservedStageResult {
+    pub reservation: StoredNodeReservation,
+    pub stage: StageQueuedResult,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum StagingStoreError {
     InvalidInput(&'static str),
@@ -100,6 +117,66 @@ impl std::fmt::Display for StagingStoreError {
 
 impl std::error::Error for StagingStoreError {}
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReservedStageError {
+    InventoryMissing {
+        node_id: String,
+    },
+    InventoryRevisionMismatch {
+        node_id: String,
+        expected: u64,
+        actual: u64,
+    },
+    NodeAlreadyReserved {
+        node_id: String,
+        owning_job_id: String,
+        owning_attempt_id: String,
+    },
+    Staging(StagingStoreError),
+}
+
+impl std::fmt::Display for ReservedStageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InventoryMissing { node_id } => {
+                write!(f, "inventory is missing for selected node: {node_id}")
+            }
+            Self::InventoryRevisionMismatch {
+                node_id,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "inventory revision CAS conflict for {node_id}: expected={expected}, actual={actual}"
+            ),
+            Self::NodeAlreadyReserved {
+                node_id,
+                owning_job_id,
+                owning_attempt_id,
+            } => write!(
+                f,
+                "node is already reserved: node={node_id}, job={owning_job_id}, attempt={owning_attempt_id}"
+            ),
+            Self::Staging(error) => write!(f, "durable staging failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ReservedStageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Staging(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<StagingStoreError> for ReservedStageError {
+    fn from(error: StagingStoreError) -> Self {
+        Self::Staging(error)
+    }
+}
+
 pub struct CoordinatorStagingStore {
     connection: Connection,
 }
@@ -141,6 +218,16 @@ impl CoordinatorStagingStore {
                     request_payload BLOB NOT NULL,
                     fence_epoch BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS coordinator_node_reservations (
+                    node_id TEXT PRIMARY KEY
+                        REFERENCES coordinator_agent_inventory(node_id),
+                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                    attempt_id TEXT NOT NULL UNIQUE
+                        REFERENCES coordinator_attempts(attempt_id)
+                        DEFERRABLE INITIALLY DEFERRED,
+                    inventory_revision BLOB NOT NULL,
+                    reserved_at_unix_ms BLOB NOT NULL
+                );
                 "#,
             )
             .map_err(map_sql_error)?;
@@ -159,11 +246,26 @@ impl CoordinatorStagingStore {
         read_counter(&self.connection)
     }
 
+    pub fn get_node_reservation(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<StoredNodeReservation>, StagingStoreError> {
+        fetch_node_reservation(&self.connection, node_id)
+    }
+
     pub fn stage_queued_with_lease(
         &mut self,
         request: &StageQueuedRequest,
     ) -> Result<StageQueuedResult, StagingStoreError> {
         self.stage(request, None)
+    }
+
+    pub fn reserve_node_and_stage_queued_with_lease(
+        &mut self,
+        request: &StageQueuedRequest,
+        expected_inventory_revision: u64,
+    ) -> Result<ReservedStageResult, ReservedStageError> {
+        self.reserve_and_stage(request, expected_inventory_revision, None)
     }
 
     fn stage(
@@ -172,6 +274,7 @@ impl CoordinatorStagingStore {
         fault: Option<TestFault>,
     ) -> Result<StageQueuedResult, StagingStoreError> {
         validate_request(request)?;
+        let request_payload = encode_request(request);
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -181,7 +284,7 @@ impl CoordinatorStagingStore {
             if operation.job_id != request.job_id
                 || operation.attempt_id != request.attempt_id
                 || operation.lease_id != request.lease_id
-                || operation.request_payload != encode_request(request)
+                || operation.request_payload != request_payload
             {
                 return Err(StagingStoreError::OperationConflict);
             }
@@ -190,61 +293,156 @@ impl CoordinatorStagingStore {
             return Ok(StageQueuedResult { created: false, ..result });
         }
 
-        let mut job = job_store::fetch_job(&transaction, &request.job_id)
-            .map_err(map_job_error)?
-            .ok_or(StagingStoreError::JobNotFound)?;
-        if job.state != JobState::Queued {
-            return Err(StagingStoreError::JobNotQueued(job.state));
-        }
-        let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
-            StagingStoreError::CorruptData("QUEUED Job has no queued timestamp".into())
-        })?;
-        if request.issued_at_unix_ms < queued_at {
-            return Err(StagingStoreError::ClockRollback {
-                issued_at_unix_ms: request.issued_at_unix_ms,
-                queued_at_unix_ms: queued_at,
+        let result = stage_new_in_transaction(&transaction, request, &request_payload, fault)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(result)
+    }
+
+    fn reserve_and_stage(
+        &mut self,
+        request: &StageQueuedRequest,
+        expected_inventory_revision: u64,
+        fault: Option<TestFault>,
+    ) -> Result<ReservedStageResult, ReservedStageError> {
+        validate_request(request)?;
+        let request_payload = encode_reserved_request(request, expected_inventory_revision);
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+
+        if let Some(operation) = fetch_operation(&transaction, &request.operation_key)? {
+            if operation.job_id != request.job_id
+                || operation.attempt_id != request.attempt_id
+                || operation.lease_id != request.lease_id
+                || operation.request_payload != request_payload
+            {
+                return Err(StagingStoreError::OperationConflict.into());
+            }
+            let stage = load_result(&transaction, request, operation.fence_epoch)?;
+            let reservation = fetch_node_reservation(&transaction, &request.node_id)?
+                .ok_or_else(|| {
+                    StagingStoreError::CorruptData(
+                        "reserved staging operation points to missing reservation".into(),
+                    )
+                })?;
+            validate_replayed_reservation(
+                &reservation,
+                request,
+                expected_inventory_revision,
+            )?;
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(ReservedStageResult {
+                reservation,
+                stage: StageQueuedResult {
+                    created: false,
+                    ..stage
+                },
             });
         }
-        if fetch_attempt(&transaction, &request.attempt_id)?.is_some() {
-            return Err(StagingStoreError::AttemptIdConflict(request.attempt_id.clone()));
+
+        let actual_inventory_revision = fetch_inventory_revision(&transaction, &request.node_id)?
+            .ok_or_else(|| ReservedStageError::InventoryMissing {
+                node_id: request.node_id.clone(),
+            })?;
+        if actual_inventory_revision != expected_inventory_revision {
+            return Err(ReservedStageError::InventoryRevisionMismatch {
+                node_id: request.node_id.clone(),
+                expected: expected_inventory_revision,
+                actual: actual_inventory_revision,
+            });
         }
-        if lease_store::fetch_lease(&transaction, &request.lease_id)
-            .map_err(map_lease_error)?
-            .is_some()
-        {
-            return Err(StagingStoreError::LeaseIdConflict(request.lease_id.clone()));
+        if let Some(existing) = fetch_node_reservation(&transaction, &request.node_id)? {
+            return Err(ReservedStageError::NodeAlreadyReserved {
+                node_id: existing.node_id,
+                owning_job_id: existing.job_id,
+                owning_attempt_id: existing.attempt_id,
+            });
         }
 
-        let epoch = allocate_epoch(&transaction)?;
-        let attempt = StoredAttempt {
-            attempt_id: request.attempt_id.clone(),
+        let reservation = StoredNodeReservation {
+            node_id: request.node_id.clone(),
             job_id: request.job_id.clone(),
-            state: AttemptState::Created,
-            node_ids: vec![request.node_id.clone()],
-            fence_epoch: epoch,
-            lease_id: request.lease_id.clone(),
-            created_at_unix_ms: request.issued_at_unix_ms,
-            revision: 0,
+            attempt_id: request.attempt_id.clone(),
+            inventory_revision: expected_inventory_revision,
+            reserved_at_unix_ms: request.issued_at_unix_ms,
         };
-        insert_attempt(&transaction, &attempt)?;
-        fail_at(fault, TestFault::AfterAttemptInsert)?;
-
-        let lease = request.to_lease(epoch);
-        lease_store::insert_lease(&transaction, &lease).map_err(map_lease_error)?;
-        fail_at(fault, TestFault::AfterLeaseInsert)?;
-        fail_at(fault, TestFault::BeforeJobUpdate)?;
-
-        job.state = JobState::Staging;
-        job.staging_at_unix_ms = Some(request.issued_at_unix_ms);
-        job.revision = job
-            .revision
-            .checked_add(1)
-            .ok_or_else(|| StagingStoreError::CorruptData("job revision overflow".into()))?;
-        job_store::update_job(&transaction, &job).map_err(map_job_error)?;
-        insert_operation(&transaction, request, epoch)?;
+        insert_node_reservation(&transaction, &reservation)?;
+        fail_at(fault, TestFault::AfterReservationInsert)?;
+        let stage = stage_new_in_transaction(&transaction, request, &request_payload, fault)?;
         transaction.commit().map_err(map_sql_error)?;
-        Ok(StageQueuedResult { job, attempt, lease, created: true })
+        Ok(ReservedStageResult { reservation, stage })
     }
+}
+
+fn stage_new_in_transaction(
+    connection: &Connection,
+    request: &StageQueuedRequest,
+    request_payload: &[u8],
+    fault: Option<TestFault>,
+) -> Result<StageQueuedResult, StagingStoreError> {
+    let mut job = job_store::fetch_job(connection, &request.job_id)
+        .map_err(map_job_error)?
+        .ok_or(StagingStoreError::JobNotFound)?;
+    if job.state != JobState::Queued {
+        return Err(StagingStoreError::JobNotQueued(job.state));
+    }
+    let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
+        StagingStoreError::CorruptData("QUEUED Job has no queued timestamp".into())
+    })?;
+    if request.issued_at_unix_ms < queued_at {
+        return Err(StagingStoreError::ClockRollback {
+            issued_at_unix_ms: request.issued_at_unix_ms,
+            queued_at_unix_ms: queued_at,
+        });
+    }
+    if fetch_attempt(connection, &request.attempt_id)?.is_some() {
+        return Err(StagingStoreError::AttemptIdConflict(
+            request.attempt_id.clone(),
+        ));
+    }
+    if lease_store::fetch_lease(connection, &request.lease_id)
+        .map_err(map_lease_error)?
+        .is_some()
+    {
+        return Err(StagingStoreError::LeaseIdConflict(
+            request.lease_id.clone(),
+        ));
+    }
+
+    let epoch = allocate_epoch(connection)?;
+    let attempt = StoredAttempt {
+        attempt_id: request.attempt_id.clone(),
+        job_id: request.job_id.clone(),
+        state: AttemptState::Created,
+        node_ids: vec![request.node_id.clone()],
+        fence_epoch: epoch,
+        lease_id: request.lease_id.clone(),
+        created_at_unix_ms: request.issued_at_unix_ms,
+        revision: 0,
+    };
+    insert_attempt(connection, &attempt)?;
+    fail_at(fault, TestFault::AfterAttemptInsert)?;
+
+    let lease = request.to_lease(epoch);
+    lease_store::insert_lease(connection, &lease).map_err(map_lease_error)?;
+    fail_at(fault, TestFault::AfterLeaseInsert)?;
+    fail_at(fault, TestFault::BeforeJobUpdate)?;
+
+    job.state = JobState::Staging;
+    job.staging_at_unix_ms = Some(request.issued_at_unix_ms);
+    job.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| StagingStoreError::CorruptData("job revision overflow".into()))?;
+    job_store::update_job(connection, &job).map_err(map_job_error)?;
+    insert_operation(connection, request, request_payload, epoch)?;
+    Ok(StageQueuedResult {
+        job,
+        attempt,
+        lease,
+        created: true,
+    })
 }
 
 impl StageQueuedRequest {
@@ -424,13 +622,18 @@ fn fetch_operation(connection: &Connection, key: &[u8; 16]) -> Result<Option<Sto
         .transpose()
 }
 
-fn insert_operation(connection: &Connection, request: &StageQueuedRequest, epoch: u64) -> Result<(), StagingStoreError> {
+fn insert_operation(
+    connection: &Connection,
+    request: &StageQueuedRequest,
+    request_payload: &[u8],
+    epoch: u64,
+) -> Result<(), StagingStoreError> {
     connection.execute(
         "INSERT INTO staging_operation_idempotency(
             operation_key, job_id, attempt_id, lease_id, request_payload, fence_epoch
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![request.operation_key.as_slice(), request.job_id, request.attempt_id,
-            request.lease_id, encode_request(request), encode_u64(epoch)],
+            request.lease_id, request_payload, encode_u64(epoch)],
     ).map_err(map_sql_error)?;
     Ok(())
 }
@@ -448,6 +651,108 @@ fn encode_request(request: &StageQueuedRequest) -> Vec<u8> {
         payload.extend_from_slice(&value.to_be_bytes());
     }
     payload
+}
+
+fn encode_reserved_request(
+    request: &StageQueuedRequest,
+    expected_inventory_revision: u64,
+) -> Vec<u8> {
+    let mut payload = encode_request(request);
+    payload.extend_from_slice(&expected_inventory_revision.to_be_bytes());
+    payload
+}
+
+fn fetch_inventory_revision(
+    connection: &Connection,
+    node_id: &str,
+) -> Result<Option<u64>, StagingStoreError> {
+    connection
+        .query_row(
+            "SELECT inventory_revision FROM coordinator_agent_inventory WHERE node_id = ?1",
+            rusqlite::params![node_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?
+        .map(|bytes| decode_u64(&bytes, "inventory_revision"))
+        .transpose()
+}
+
+fn fetch_node_reservation(
+    connection: &Connection,
+    node_id: &str,
+) -> Result<Option<StoredNodeReservation>, StagingStoreError> {
+    let raw = connection
+        .query_row(
+            "SELECT node_id, job_id, attempt_id, inventory_revision, reserved_at_unix_ms
+             FROM coordinator_node_reservations WHERE node_id = ?1",
+            rusqlite::params![node_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    let Some((node_id, job_id, attempt_id, revision, reserved_at)) = raw else {
+        return Ok(None);
+    };
+    if node_id.trim().is_empty() || job_id.trim().is_empty() || attempt_id.trim().is_empty() {
+        return Err(StagingStoreError::CorruptData(
+            "node reservation owner identity is blank".into(),
+        ));
+    }
+    Ok(Some(StoredNodeReservation {
+        node_id,
+        job_id,
+        attempt_id,
+        inventory_revision: decode_u64(&revision, "reservation inventory_revision")?,
+        reserved_at_unix_ms: decode_u64(&reserved_at, "reservation reserved_at_unix_ms")?,
+    }))
+}
+
+fn insert_node_reservation(
+    connection: &Connection,
+    reservation: &StoredNodeReservation,
+) -> Result<(), StagingStoreError> {
+    connection
+        .execute(
+            "INSERT INTO coordinator_node_reservations(
+                node_id, job_id, attempt_id, inventory_revision, reserved_at_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                reservation.node_id,
+                reservation.job_id,
+                reservation.attempt_id,
+                encode_u64(reservation.inventory_revision),
+                encode_u64(reservation.reserved_at_unix_ms),
+            ],
+        )
+        .map_err(map_sql_error)?;
+    Ok(())
+}
+
+fn validate_replayed_reservation(
+    reservation: &StoredNodeReservation,
+    request: &StageQueuedRequest,
+    expected_inventory_revision: u64,
+) -> Result<(), StagingStoreError> {
+    if reservation.node_id != request.node_id
+        || reservation.job_id != request.job_id
+        || reservation.attempt_id != request.attempt_id
+        || reservation.inventory_revision != expected_inventory_revision
+        || reservation.reserved_at_unix_ms != request.issued_at_unix_ms
+    {
+        return Err(StagingStoreError::CorruptData(
+            "reserved staging operation result is inconsistent".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn load_result(connection: &Connection, request: &StageQueuedRequest, epoch: u64) -> Result<StageQueuedResult, StagingStoreError> {
@@ -512,12 +817,18 @@ fn map_lease_error(error: lease_store::LeaseStoreError) -> StagingStoreError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TestFault { AfterAttemptInsert, AfterLeaseInsert, BeforeJobUpdate }
+enum TestFault {
+    AfterReservationInsert,
+    AfterAttemptInsert,
+    AfterLeaseInsert,
+    BeforeJobUpdate,
+}
 
 #[cfg(test)]
 fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), StagingStoreError> {
     if fault == Some(point) {
         let name = match point {
+            TestFault::AfterReservationInsert => "after node reservation insert",
             TestFault::AfterAttemptInsert => "after Attempt insert",
             TestFault::AfterLeaseInsert => "after Lease insert",
             TestFault::BeforeJobUpdate => "before Job update",
@@ -537,6 +848,9 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     use super::*;
+    use crate::inventory_store::{
+        AgentInventory, AgentRegistry, CoordinatorInventoryStore, GpuInventory,
+    };
     use crate::job_store::{AcceptedJobSubmission, CoordinatorJobStore};
     use crate::lease_store::CoordinatorLeaseStore;
 
@@ -557,6 +871,43 @@ mod tests {
             .unwrap();
         store.start_planning(job_id, 110).unwrap();
         store.enqueue(job_id, "plan-1", 120).unwrap();
+    }
+
+    fn prepare_inventory(path: &Path, node_id: &str, revision: u64, seed: u8) {
+        let mut store = CoordinatorInventoryStore::open(path).unwrap();
+        if store.get_agent(node_id).unwrap().is_none() {
+            store
+                .register_agent(&AgentRegistry {
+                    node_id: node_id.into(),
+                    device_id: format!("device-{seed}"),
+                    owner_member_id: "owner-1".into(),
+                    verifying_key: vec![seed; 32],
+                    node_state: None,
+                    risk_state: None,
+                    security_tier: None,
+                    isolation_class: None,
+                    key_protection: None,
+                })
+                .unwrap();
+        }
+        store
+            .update_inventory(&AgentInventory {
+                node_id: node_id.into(),
+                inventory_revision: revision,
+                observed_at_unix_ms: revision,
+                gpus: Some(vec![GpuInventory {
+                    gpu_id: format!("gpu-{node_id}"),
+                    model: Some("model-a".into()),
+                    healthy: Some(true),
+                    available_vram_bytes: Some(16),
+                }]),
+                available_cpu_cores: Some(8),
+                available_ram_bytes: Some(64),
+                available_workspace_bytes: Some(64),
+                allowed_workload_classes: None,
+                third_party_workloads_opt_in: None,
+            })
+            .unwrap();
     }
 
     fn request(job_id: &str, operation: u8) -> StageQueuedRequest {
@@ -591,6 +942,299 @@ mod tests {
         assert!(fetch_operation(&store.connection, &request.operation_key)
             .unwrap()
             .is_none());
+        assert_eq!(store.get_node_reservation(&request.node_id).unwrap(), None);
+    }
+
+    #[test]
+    fn stale_or_missing_inventory_fails_before_any_staging_side_effect() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-stale", 1);
+        prepare_queued(&path, "job-missing", 2);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let expected = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory.pool_snapshot(7).unwrap().candidates[0]
+                .inventory_revision
+                .unwrap()
+        };
+        prepare_inventory(&path, "node-1", 8, 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        let stale = request("job-stale", 1);
+        assert_eq!(
+            store.reserve_node_and_stage_queued_with_lease(&stale, expected),
+            Err(ReservedStageError::InventoryRevisionMismatch {
+                node_id: "node-1".into(),
+                expected: 7,
+                actual: 8,
+            })
+        );
+        assert_queued_and_no_side_effects(&store, &stale);
+
+        let mut missing = request("job-missing", 2);
+        missing.node_id = "node-missing".into();
+        assert_eq!(
+            store.reserve_node_and_stage_queued_with_lease(&missing, 1),
+            Err(ReservedStageError::InventoryMissing {
+                node_id: "node-missing".into(),
+            })
+        );
+        assert_queued_and_no_side_effects(&store, &missing);
+    }
+
+    #[test]
+    fn sequential_distinct_jobs_cannot_reserve_the_same_node_gpu() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_queued(&path, "job-2", 2);
+        prepare_inventory(&path, "node-1", 5, 1);
+        let expected = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory.pool_snapshot(5).unwrap().candidates[0]
+                .inventory_revision
+                .unwrap()
+        };
+        let first = request("job-1", 1);
+        let second = request("job-2", 2);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        let winner = store
+            .reserve_node_and_stage_queued_with_lease(&first, expected)
+            .unwrap();
+        assert_eq!(winner.reservation.job_id, "job-1");
+        assert_eq!(
+            store.reserve_node_and_stage_queued_with_lease(&second, expected),
+            Err(ReservedStageError::NodeAlreadyReserved {
+                node_id: "node-1".into(),
+                owning_job_id: "job-1".into(),
+                owning_attempt_id: "attempt-1".into(),
+            })
+        );
+        assert_eq!(
+            job_store::fetch_job(&store.connection, "job-2")
+                .unwrap()
+                .unwrap()
+                .state,
+            JobState::Queued
+        );
+        assert_eq!(store.get_attempt("attempt-2").unwrap(), None);
+        assert_eq!(
+            lease_store::fetch_lease(&store.connection, "lease-2").unwrap(),
+            None
+        );
+        assert_eq!(store.fence_epoch().unwrap(), Some(1));
+    }
+
+    #[test]
+    fn concurrent_distinct_jobs_reserving_one_gpu_commit_exactly_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_queued(&path, "job-2", 2);
+        prepare_inventory(&path, "node-1", 5, 1);
+        let stores = [
+            CoordinatorStagingStore::open(&path).unwrap(),
+            CoordinatorStagingStore::open(&path).unwrap(),
+        ];
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = stores
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut store)| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let request = request(&format!("job-{}", index + 1), index as u8 + 1);
+                    barrier.wait();
+                    store.reserve_node_and_stage_queued_with_lease(&request, 5)
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(ReservedStageError::NodeAlreadyReserved { .. })))
+                .count(),
+            1
+        );
+        let winner = results
+            .iter()
+            .find_map(|result| result.as_ref().ok())
+            .unwrap();
+        let loser_job = if winner.reservation.job_id == "job-1" {
+            "job-2"
+        } else {
+            "job-1"
+        };
+        let store = CoordinatorStagingStore::open(&path).unwrap();
+        assert_eq!(
+            store.get_node_reservation("node-1").unwrap(),
+            Some(winner.reservation.clone())
+        );
+        assert_eq!(
+            job_store::fetch_job(&store.connection, loser_job)
+                .unwrap()
+                .unwrap()
+                .state,
+            JobState::Queued
+        );
+        for table in [
+            "coordinator_node_reservations",
+            "coordinator_attempts",
+            "coordinator_leases",
+            "staging_operation_idempotency",
+        ] {
+            let count: u64 = store
+                .connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 1, "loser must leave no row in {table}");
+        }
+        assert_eq!(store.fence_epoch().unwrap(), Some(1));
+    }
+
+    #[test]
+    fn distinct_nodes_do_not_share_a_global_reservation_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_queued(&path, "job-2", 2);
+        prepare_inventory(&path, "node-1", 5, 1);
+        prepare_inventory(&path, "node-2", u64::MAX, 2);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let first = store
+            .reserve_node_and_stage_queued_with_lease(&request("job-1", 1), 5)
+            .unwrap();
+        let mut second_request = request("job-2", 2);
+        second_request.node_id = "node-2".into();
+        let second = store
+            .reserve_node_and_stage_queued_with_lease(&second_request, u64::MAX)
+            .unwrap();
+
+        assert_eq!(first.reservation.node_id, "node-1");
+        assert_eq!(second.reservation.node_id, "node-2");
+        assert_eq!(second.reservation.inventory_revision, u64::MAX);
+        assert_eq!(first.stage.lease.fence_epoch, 1);
+        assert_eq!(second.stage.lease.fence_epoch, 2);
+    }
+
+    #[test]
+    fn exact_reserved_replay_survives_inventory_refresh_but_changed_revision_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_inventory(&path, "node-1", 5, 1);
+        let request = request("job-1", 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let first = store
+            .reserve_node_and_stage_queued_with_lease(&request, 5)
+            .unwrap();
+        drop(store);
+        prepare_inventory(&path, "node-1", 6, 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        let replay = store
+            .reserve_node_and_stage_queued_with_lease(&request, 5)
+            .unwrap();
+        assert!(!replay.stage.created);
+        assert_eq!(replay.reservation, first.reservation);
+        assert_eq!(replay.stage.lease.fence_epoch, first.stage.lease.fence_epoch);
+        assert_eq!(
+            store.reserve_node_and_stage_queued_with_lease(&request, 6),
+            Err(ReservedStageError::Staging(
+                StagingStoreError::OperationConflict
+            ))
+        );
+        assert_eq!(store.fence_epoch().unwrap(), Some(1));
+    }
+
+    #[test]
+    fn failure_after_reservation_insert_rolls_back_reservation_and_all_staging_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_inventory(&path, "node-1", 5, 1);
+        let request = request("job-1", 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        assert!(matches!(
+            store.reserve_and_stage(&request, 5, Some(TestFault::AfterReservationInsert)),
+            Err(ReservedStageError::Staging(
+                StagingStoreError::InjectedFailure("after node reservation insert")
+            ))
+        ));
+        assert_queued_and_no_side_effects(&store, &request);
+
+        let result = store
+            .reserve_node_and_stage_queued_with_lease(&request, 5)
+            .unwrap();
+        assert_eq!(result.stage.lease.fence_epoch, 1);
+    }
+
+    #[test]
+    fn corrupt_inventory_and_reservation_revision_or_owner_fail_closed() {
+        for corruption in ["inventory-revision", "reservation-revision", "reservation-owner"] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("control.sqlite3");
+            prepare_queued(&path, "job-1", 1);
+            prepare_inventory(&path, "node-1", 5, 1);
+            let request = request("job-1", 1);
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            if corruption == "inventory-revision" {
+                store
+                    .connection
+                    .execute(
+                        "UPDATE coordinator_agent_inventory SET inventory_revision = x'01' WHERE node_id = 'node-1'",
+                        [],
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    store.reserve_node_and_stage_queued_with_lease(&request, 5),
+                    Err(ReservedStageError::Staging(
+                        StagingStoreError::CorruptData(_)
+                    ))
+                ));
+                assert_queued_and_no_side_effects(&store, &request);
+                continue;
+            }
+
+            store
+                .reserve_node_and_stage_queued_with_lease(&request, 5)
+                .unwrap();
+            if corruption == "reservation-revision" {
+                store
+                    .connection
+                    .execute(
+                        "UPDATE coordinator_node_reservations SET inventory_revision = x'01' WHERE node_id = 'node-1'",
+                        [],
+                    )
+                    .unwrap();
+            } else {
+                store.connection.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+                store
+                    .connection
+                    .execute(
+                        "UPDATE coordinator_node_reservations SET job_id = ' ' WHERE node_id = 'node-1'",
+                        [],
+                    )
+                    .unwrap();
+                store.connection.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+            }
+            assert!(matches!(
+                store.reserve_node_and_stage_queued_with_lease(&request, 5),
+                Err(ReservedStageError::Staging(
+                    StagingStoreError::CorruptData(_)
+                ))
+            ));
+            assert_eq!(store.fence_epoch().unwrap(), Some(1));
+        }
     }
 
     #[test]

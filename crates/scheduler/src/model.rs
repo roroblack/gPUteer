@@ -93,6 +93,9 @@ pub struct GpuSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidateSnapshot {
     pub node_id: String,
+    /// Agent inventory generation used to build this candidate. This is an
+    /// admission CAS token, not a filtering or ranking input.
+    pub inventory_revision: Option<u64>,
     pub owner_member_id: Option<String>,
     pub node_state: Option<NodeState>,
     pub risk_state: Option<RiskState>,

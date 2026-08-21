@@ -16,6 +16,25 @@
 
 ---
 
+## 2026-08-21 16:04 — scheduler inventory revision 기반 CAS reservation — evidence 기록 (`DoD-47`, scheduler 로드맵 조각 5b)
+- 계획: `docs/plans/2026-08-21_1537_scheduler_inventory_cas_v1.md`
+  (조각 5b: 로컬 node-exclusive inventory revision CAS admission).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: `CandidateSnapshot.inventory_revision`을 inventory projection부터 선택까지
+  보존하고, `reserve_node_and_stage_queued_with_lease()`가 operation replay → revision
+  비교 → `node_id` PRIMARY KEY reservation → Attempt/Lease/fence → Job STAGING →
+  operation 기록을 하나의 `BEGIN IMMEDIATE` transaction에서 원자 처리하도록 한 구현의
+  evidence를 작성했다. CAS·점유 충돌은 자동 재시도 없이 실패하고, 기존 DoD-43
+  `stage_queued_with_lease()`는 그대로 유지된다. 독립 검수는 원자성·rollback fence
+  미소비·같은 transaction의 CAS/점유 강제·실제 Barrier 경쟁에서 정확히 1건 성공과
+  loser QUEUED·뮤테이션 2건·DoD-43 무회귀·범위를 확인해 1라운드 `ACCEPTED`.
+  node-exclusive라 같은 node의 다른 GPU도 동시에 쓸 수 없고 release가 없으며,
+  private orchestration kernel은 production `run()`에 여전히 연결되지 않았다.
+- 검증: `C:\Users\playdata2\.cargo\bin\cargo.exe test -p gputeer-coordinator`
+  PASS — unit 82 + integration 4 = 86 passed, 0 failed. `python scripts/verify_evidence.py`
+  로 `DoD-47_scheduler_inventory_cas.md` schema v2 PASS 확인.
+- 리포트: `docs/reports/2026-08-21_1553_scheduler_inventory_cas.md`
+
 ## 2026-08-21 15:24 — scheduler 로컬 placement-to-staging orchestration kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-46`, scheduler 로드맵 조각 5)
 - 계획: `docs/plans/2026-08-21_1502_scheduler_grant_dispatch_v1.md`
   (상위 로드맵 조각 5를 crate-internal 로컬 orchestration kernel로 제한).

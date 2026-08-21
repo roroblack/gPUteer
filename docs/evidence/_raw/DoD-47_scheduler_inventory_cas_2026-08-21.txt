@@ -1,0 +1,124 @@
+=== 구현·검증 기록 — scheduler 로드맵 조각 5b ===
+
+완료 범위는 로컬 node-exclusive inventory revision 기반 CAS reservation kernel이다.
+`crates/scheduler/src/model.rs`의 `CandidateSnapshot`에 admission token인
+`inventory_revision: Option<u64>`를 추가했고, `CoordinatorInventoryStore`가 저장된
+Agent inventory revision을 `PoolSnapshot` 후보에 `Some(revision)`으로 투영한다.
+inventory가 없는 후보는 `None`을 유지한다.
+
+`CoordinatorStagingStore::reserve_node_and_stage_queued_with_lease()`와 내부
+`reserve_and_stage()`는 같은 control DB의 단일 `BEGIN IMMEDIATE` transaction에서
+다음을 이 순서로 전부 처리한다.
+
+  operation replay 조회
+    -> 선택 node의 현재 inventory revision 조회·expected revision 비교
+    -> coordinator_node_reservations 삽입(node_id PRIMARY KEY)
+    -> fence epoch 채번
+    -> Attempt와 Lease 삽입
+    -> Job QUEUED -> STAGING
+    -> operation idempotency 기록
+    -> COMMIT
+
+어느 단계에서든 실패하면 reservation을 포함한 모든 쓰기가 rollback되고 fence epoch도
+소비되지 않는다. revision mismatch와 node 점유 충돌은 typed error로 즉시 실패하며
+orchestration 계층에서 자동 재시도하지 않는다. reservation은 node-exclusive이므로 같은
+node의 다른 GPU도 동시에 사용할 수 없고 release API가 없어 row는 계속 active다.
+
+`crates/coordinator/src/orchestrate.rs`는 한 `PoolSnapshot`에서 선택된 node의 revision을
+찾아 새 reservation-aware API를 정확히 한 번 호출한다. 기존 DoD-43 API인
+`stage_queued_with_lease()`의 시그니처와 reservation 없는 동작은 바꾸지 않았다.
+
+=== 구현 테스트와 negative test ===
+
+- `stale_or_missing_inventory_fails_before_any_staging_side_effect`
+  stale 또는 missing revision은 reservation·Attempt·Lease·operation·Job 전이 없이
+  거부되고 Job은 QUEUED에 남는다.
+- `sequential_distinct_jobs_cannot_reserve_the_same_node_gpu`
+  먼저 예약된 node를 다른 Job이 순차 예약할 수 없다.
+- `concurrent_distinct_jobs_reserving_one_gpu_commit_exactly_once`
+  별도 SQLite connection 두 개와 `Barrier`로 동시에 경쟁시켜 정확히 한 건만 성공하고
+  loser Job은 QUEUED에 남는다.
+- `concurrent_orchestration_of_one_gpu_stages_exactly_one_job`
+  전체 snapshot→filter/rank→CAS staging orchestration도 정확히 한 Job만 STAGING한다.
+- `failure_after_reservation_insert_rolls_back_reservation_and_all_staging_state`
+  reservation insert 직후 fault에서 reservation과 staging 쓰기 전부 rollback되고 다음
+  정상 요청이 fence epoch 1로 성공한다.
+- `exact_reserved_replay_survives_inventory_refresh_but_changed_revision_conflicts`
+  exact operation replay는 원래 durable 결과를 반환하고 payload의 revision 변경은
+  operation conflict로 fail closed한다.
+- `distinct_nodes_do_not_share_a_global_reservation_lock`
+  서로 다른 node는 각각 예약할 수 있다.
+- `corrupt_inventory_and_reservation_revision_or_owner_fail_closed`
+  잘못된 revision BLOB과 빈 reservation owner는 손상으로 거부된다.
+- 기존 `stage_queued_with_lease()`의 success/replay/fault/concurrency 테스트를 포함한
+  DoD-43 회귀 suite가 모두 통과했다.
+
+=== 뮤테이션 판별력 ===
+
+1. inventory revision mismatch predicate를 제거했을 때
+   `stale_or_missing_inventory_fails_before_any_staging_side_effect`가 실패했고 stale 요청이
+   실제로 STAGING까지 진행했다.
+2. `coordinator_node_reservations.node_id PRIMARY KEY`와 기존 점유 검사를 함께 제거했을 때
+   `concurrent_distinct_jobs_reserving_one_gpu_commit_exactly_once`가 실패했고 성공 수가
+   1에서 2로 늘었다.
+
+두 뮤테이션은 원복했고 targeted 테스트와 전체 suite를 다시 통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 단일 transaction의 시작·reservation 삽입·commit, rollback 시 fence
+미소비, revision CAS와 node 점유 경쟁의 동일 transaction 강제, 실제 `Barrier` 경쟁의
+정확히 1건 성공과 loser QUEUED 유지, 두 뮤테이션의 판별력, 기존 DoD-43 API 무회귀,
+제한된 변경 범위를 확인했다. 잔여 수정 요청 없이 1라운드에서 `ACCEPTED`했다.
+
+세부 receipt: `docs/evidence/_raw/DoD-47_review.txt`
+
+=== 감독자 직접 재확인 ===
+
+실행 시각: 2026-08-21T16:04:20+09:00
+기준 commit: 68518647b26d60f0526438009928461ebe52cab7
+실행 명령:
+
+  C:\Users\playdata2\.cargo\bin\cargo.exe test -p gputeer-coordinator
+
+실행 결과:
+
+  warn: could not canonicalize path C:\Users\playdata2
+      Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+       Running unittests src\lib.rs
+
+  running 82 tests
+  test orchestrate::tests::concurrent_orchestration_of_one_gpu_stages_exactly_one_job ... ok
+  test staging_store::tests::concurrent_distinct_jobs_reserving_one_gpu_commit_exactly_once ... ok
+  test staging_store::tests::distinct_nodes_do_not_share_a_global_reservation_lock ... ok
+  test staging_store::tests::exact_reserved_replay_survives_inventory_refresh_but_changed_revision_conflicts ... ok
+  test staging_store::tests::failure_after_reservation_insert_rolls_back_reservation_and_all_staging_state ... ok
+  test staging_store::tests::sequential_distinct_jobs_cannot_reserve_the_same_node_gpu ... ok
+  test staging_store::tests::stale_or_missing_inventory_fails_before_any_staging_side_effect ... ok
+  test staging_store::tests::corrupt_inventory_and_reservation_revision_or_owner_fail_closed ... ok
+  [나머지 coordinator 단위 테스트 전부 ok]
+  test result: ok. 82 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.62s
+
+       Running tests\job_store_concurrent_submit.rs
+  running 2 tests
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+       Running tests\lease_store_concurrent_issue.rs
+  running 2 tests
+  test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+     Doc-tests gputeer_coordinator
+  running 0 tests
+  test result: ok. 0 passed; 0 failed; 0 ignored
+
+  exit code: 0
+
+결론: coordinator unit 82 + integration 4 = 86 passed, 0 failed.
+
+=== 범위 결론 ===
+
+DoD-46이 명시적으로 남긴 snapshot-to-stage TOCTOU와 서로 다른 Job의 같은 자원 중복
+선택 위험을 로컬 node-exclusive CAS reservation으로 닫았다. 다만 per-GPU allocation,
+부분 자원 공유, reservation release/requeue, Grant/outbox/wire/ACK, Raft/HA는 구현하지
+않았다. `orchestrate.rs`는 계속 비공개 module이고 production `run()`/accept-loop에는
+연결되지 않았다.

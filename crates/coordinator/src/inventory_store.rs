@@ -781,8 +781,9 @@ fn project_candidate(
     registry: AgentRegistry,
     inventory: Option<AgentInventory>,
 ) -> CandidateSnapshot {
-    let (observed_at, gpus, cpu, ram, workspace, workloads, third_party) = match inventory {
+    let (revision, observed_at, gpus, cpu, ram, workspace, workloads, third_party) = match inventory {
         Some(inventory) => (
+            Some(inventory.inventory_revision),
             Some(inventory.observed_at_unix_ms),
             inventory.gpus.map(|gpus| {
                 gpus.into_iter()
@@ -800,10 +801,11 @@ fn project_candidate(
             inventory.allowed_workload_classes,
             inventory.third_party_workloads_opt_in,
         ),
-        None => (None, None, None, None, None, None, None),
+        None => (None, None, None, None, None, None, None, None),
     };
     CandidateSnapshot {
         node_id: registry.node_id,
+        inventory_revision: revision,
         owner_member_id: Some(registry.owner_member_id),
         node_state: registry.node_state,
         risk_state: registry.risk_state,
@@ -1116,6 +1118,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["node-a", "node-b"]
         );
+        assert_eq!(snapshot.candidates[0].inventory_revision, Some(7));
+        assert_eq!(snapshot.candidates[1].inventory_revision, Some(4));
         assert_eq!(
             snapshot.candidates[0]
                 .gpus
@@ -1294,6 +1298,7 @@ mod tests {
         unknown.key_protection = None;
         store.register_agent(&unknown).unwrap();
         let missing = store.pool_snapshot(50).unwrap().candidates.remove(0);
+        assert_eq!(missing.inventory_revision, None);
         assert_eq!(missing.node_state, None);
         assert_eq!(missing.observed_at_unix_ms, None);
         assert_eq!(missing.gpus, None);
@@ -1313,6 +1318,7 @@ mod tests {
         };
         store.update_inventory(&zero).unwrap();
         let explicit = store.pool_snapshot(50).unwrap().candidates.remove(0);
+        assert_eq!(explicit.inventory_revision, Some(0));
         assert_eq!(explicit.observed_at_unix_ms, Some(0));
         assert_eq!(explicit.gpus, Some(vec![]));
         assert_eq!(explicit.available_cpu_cores, Some(0));
