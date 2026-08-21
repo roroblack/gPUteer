@@ -1,12 +1,10 @@
 //! Durable Job/Queue control truth for the scheduler roadmap's slice 2a.
 //!
-//! This store deliberately stops at `QUEUED`. The normative state machine
-//! creates an Attempt only when a Job enters `STAGING`, in the same committed
-//! operation that increments the fence epoch and issues a Lease. Pretending
-//! that can happen before reservation/dispatch exists would create split
-//! authority. This module therefore owns only accepted submission persistence,
+//! The standalone API owns accepted submission persistence,
 //! `SUBMITTED -> PLANNING -> QUEUED`, queue ordering, queue terminal reasons,
-//! and retry idempotency.
+//! and retry idempotency. `QUEUED -> STAGING` is intentionally absent here:
+//! [`crate::staging_store`] owns that transition together with Attempt creation,
+//! fence allocation, and Lease insertion in one transaction.
 
 use std::path::Path;
 
@@ -21,6 +19,7 @@ pub enum JobState {
     Submitted,
     Planning,
     Queued,
+    Staging,
     Failed,
 }
 
@@ -30,6 +29,7 @@ impl JobState {
             Self::Submitted => "SUBMITTED",
             Self::Planning => "PLANNING",
             Self::Queued => "QUEUED",
+            Self::Staging => "STAGING",
             Self::Failed => "FAILED",
         }
     }
@@ -39,6 +39,7 @@ impl JobState {
             "SUBMITTED" => Ok(Self::Submitted),
             "PLANNING" => Ok(Self::Planning),
             "QUEUED" => Ok(Self::Queued),
+            "STAGING" => Ok(Self::Staging),
             "FAILED" => Ok(Self::Failed),
             other => Err(JobStoreError::CorruptData(format!(
                 "unknown job state in durable store: {other}"
@@ -113,6 +114,7 @@ pub struct StoredJob {
     pub submitted_at_unix_ms: u64,
     pub planning_at_unix_ms: Option<u64>,
     pub queued_at_unix_ms: Option<u64>,
+    pub staging_at_unix_ms: Option<u64>,
     pub deadline_unix_ms: Option<u64>,
     pub max_queue_duration_ms: Option<u64>,
     pub plan_id: Option<String>,
@@ -207,7 +209,7 @@ impl std::fmt::Display for JobStoreError {
 
 impl std::error::Error for JobStoreError {}
 
-fn map_sql_error(error: SqlError) -> JobStoreError {
+pub(crate) fn map_sql_error(error: SqlError) -> JobStoreError {
     match error {
         SqlError::SqliteFailure(code, _)
             if matches!(
@@ -222,7 +224,7 @@ fn map_sql_error(error: SqlError) -> JobStoreError {
     }
 }
 
-fn encode_u64(value: u64) -> Vec<u8> {
+pub(crate) fn encode_u64(value: u64) -> Vec<u8> {
     value.to_be_bytes().to_vec()
 }
 
@@ -243,45 +245,79 @@ pub struct CoordinatorJobStore {
     connection: Connection,
 }
 
+pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), JobStoreError> {
+    connection
+        .execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            PRAGMA journal_mode = DELETE;
+            PRAGMA synchronous = FULL;
+
+            CREATE TABLE IF NOT EXISTS coordinator_jobs (
+                job_id TEXT PRIMARY KEY,
+                submitter_device_id TEXT NOT NULL,
+                manifest_hash BLOB NOT NULL,
+                state TEXT NOT NULL,
+                submitted_at_unix_ms BLOB NOT NULL,
+                planning_at_unix_ms BLOB,
+                queued_at_unix_ms BLOB,
+                staging_at_unix_ms BLOB,
+                deadline_unix_ms BLOB,
+                max_queue_duration_ms BLOB,
+                plan_id TEXT,
+                queue_failure_kind TEXT,
+                queue_failure_detail TEXT,
+                failed_at_unix_ms BLOB,
+                revision BLOB NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS job_submission_idempotency (
+                idempotency_key BLOB PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id)
+            );
+            "#,
+        )
+        .map_err(map_sql_error)?;
+
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sql_error)?;
+    let has_staging_column = {
+        let mut statement = transaction
+            .prepare("PRAGMA table_info(coordinator_jobs)")
+            .map_err(map_sql_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(map_sql_error)?;
+        let mut found = false;
+        for row in rows {
+            if row.map_err(map_sql_error)? == "staging_at_unix_ms" {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+    if !has_staging_column {
+        transaction
+            .execute(
+                "ALTER TABLE coordinator_jobs ADD COLUMN staging_at_unix_ms BLOB",
+                [],
+            )
+            .map_err(map_sql_error)?;
+    }
+    transaction.commit().map_err(map_sql_error)
+}
+
 impl CoordinatorJobStore {
     /// Opens a file-backed SQLite control store. Callers must reject
     /// `!is_durable()` in production, as the existing Lease store does.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, JobStoreError> {
-        let connection = Connection::open(path).map_err(map_sql_error)?;
+        let mut connection = Connection::open(path).map_err(map_sql_error)?;
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(map_sql_error)?;
-        connection
-            .execute_batch(
-                r#"
-                PRAGMA foreign_keys = ON;
-                PRAGMA journal_mode = DELETE;
-                PRAGMA synchronous = FULL;
-
-                CREATE TABLE IF NOT EXISTS coordinator_jobs (
-                    job_id TEXT PRIMARY KEY,
-                    submitter_device_id TEXT NOT NULL,
-                    manifest_hash BLOB NOT NULL,
-                    state TEXT NOT NULL,
-                    submitted_at_unix_ms BLOB NOT NULL,
-                    planning_at_unix_ms BLOB,
-                    queued_at_unix_ms BLOB,
-                    deadline_unix_ms BLOB,
-                    max_queue_duration_ms BLOB,
-                    plan_id TEXT,
-                    queue_failure_kind TEXT,
-                    queue_failure_detail TEXT,
-                    failed_at_unix_ms BLOB,
-                    revision BLOB NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS job_submission_idempotency (
-                    idempotency_key BLOB PRIMARY KEY,
-                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id)
-                );
-                "#,
-            )
-            .map_err(map_sql_error)?;
+        initialize_schema(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -371,6 +407,7 @@ impl CoordinatorJobStore {
             submitted_at_unix_ms,
             planning_at_unix_ms: None,
             queued_at_unix_ms: None,
+            staging_at_unix_ms: None,
             deadline_unix_ms: submission.deadline_unix_ms,
             max_queue_duration_ms: submission.max_queue_duration_ms,
             plan_id: None,
@@ -383,10 +420,10 @@ impl CoordinatorJobStore {
             .execute(
                 "INSERT INTO coordinator_jobs(
                     job_id, submitter_device_id, manifest_hash, state,
-                    submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms,
+                    submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms,
                     deadline_unix_ms, max_queue_duration_ms, plan_id,
                     queue_failure_kind, queue_failure_detail, failed_at_unix_ms, revision
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, NULL, NULL, NULL, NULL, ?8)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7, NULL, NULL, NULL, NULL, ?8)",
                 rusqlite::params![
                     stored.job_id,
                     stored.submitter_device_id,
@@ -595,7 +632,10 @@ fn ensure_not_before(event: u64, prior: u64) -> Result<(), JobStoreError> {
     }
 }
 
-fn fetch_job(connection: &Connection, job_id: &str) -> Result<Option<StoredJob>, JobStoreError> {
+pub(crate) fn fetch_job(
+    connection: &Connection,
+    job_id: &str,
+) -> Result<Option<StoredJob>, JobStoreError> {
     connection
         .query_row(SELECT_JOB_SQL, rusqlite::params![job_id], row_to_raw)
         .optional()
@@ -604,7 +644,10 @@ fn fetch_job(connection: &Connection, job_id: &str) -> Result<Option<StoredJob>,
         .transpose()
 }
 
-fn update_job(connection: &Connection, job: &StoredJob) -> Result<(), JobStoreError> {
+pub(crate) fn update_job(
+    connection: &Connection,
+    job: &StoredJob,
+) -> Result<(), JobStoreError> {
     let (failure_kind, failure_detail) = match &job.queue_failure {
         Some(failure) => (Some(failure.code()), failure.detail()),
         None => (None, None),
@@ -613,14 +656,15 @@ fn update_job(connection: &Connection, job: &StoredJob) -> Result<(), JobStoreEr
         .execute(
             "UPDATE coordinator_jobs SET
                 state = ?2, planning_at_unix_ms = ?3, queued_at_unix_ms = ?4,
-                plan_id = ?5, queue_failure_kind = ?6, queue_failure_detail = ?7,
-                failed_at_unix_ms = ?8, revision = ?9
+                staging_at_unix_ms = ?5, plan_id = ?6, queue_failure_kind = ?7,
+                queue_failure_detail = ?8, failed_at_unix_ms = ?9, revision = ?10
              WHERE job_id = ?1",
             rusqlite::params![
                 job.job_id,
                 job.state.as_str(),
                 job.planning_at_unix_ms.map(encode_u64),
                 job.queued_at_unix_ms.map(encode_u64),
+                job.staging_at_unix_ms.map(encode_u64),
                 job.plan_id,
                 failure_kind,
                 failure_detail,
@@ -646,6 +690,7 @@ struct RawJobRow {
     submitted_at_unix_ms: Vec<u8>,
     planning_at_unix_ms: Option<Vec<u8>>,
     queued_at_unix_ms: Option<Vec<u8>>,
+    staging_at_unix_ms: Option<Vec<u8>>,
     deadline_unix_ms: Option<Vec<u8>>,
     max_queue_duration_ms: Option<Vec<u8>>,
     plan_id: Option<String>,
@@ -671,6 +716,7 @@ impl RawJobRow {
             JobState::Submitted => {
                 self.planning_at_unix_ms.is_none()
                     && self.queued_at_unix_ms.is_none()
+                    && self.staging_at_unix_ms.is_none()
                     && self.plan_id.is_none()
                     && queue_failure.is_none()
                     && self.failed_at_unix_ms.is_none()
@@ -678,6 +724,7 @@ impl RawJobRow {
             JobState::Planning => {
                 self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_none()
+                    && self.staging_at_unix_ms.is_none()
                     && self.plan_id.is_none()
                     && queue_failure.is_none()
                     && self.failed_at_unix_ms.is_none()
@@ -685,14 +732,33 @@ impl RawJobRow {
             JobState::Queued => {
                 self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_some()
-                    && self.plan_id.is_some()
+                    && self.staging_at_unix_ms.is_none()
+                    && self
+                        .plan_id
+                        .as_deref()
+                        .is_some_and(|plan_id| !plan_id.trim().is_empty())
+                    && queue_failure.is_none()
+                    && self.failed_at_unix_ms.is_none()
+            }
+            JobState::Staging => {
+                self.planning_at_unix_ms.is_some()
+                    && self.queued_at_unix_ms.is_some()
+                    && self.staging_at_unix_ms.is_some()
+                    && self
+                        .plan_id
+                        .as_deref()
+                        .is_some_and(|plan_id| !plan_id.trim().is_empty())
                     && queue_failure.is_none()
                     && self.failed_at_unix_ms.is_none()
             }
             JobState::Failed => {
                 self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_some()
-                    && self.plan_id.is_some()
+                    && self.staging_at_unix_ms.is_none()
+                    && self
+                        .plan_id
+                        .as_deref()
+                        .is_some_and(|plan_id| !plan_id.trim().is_empty())
                     && queue_failure.is_some()
                     && self.failed_at_unix_ms.is_some()
             }
@@ -722,6 +788,11 @@ impl RawJobRow {
                 .as_deref()
                 .map(|bytes| decode_u64(bytes, "queued_at_unix_ms"))
                 .transpose()?,
+            staging_at_unix_ms: self
+                .staging_at_unix_ms
+                .as_deref()
+                .map(|bytes| decode_u64(bytes, "staging_at_unix_ms"))
+                .transpose()?,
             deadline_unix_ms: self
                 .deadline_unix_ms
                 .as_deref()
@@ -745,12 +816,12 @@ impl RawJobRow {
 }
 
 const SELECT_JOB_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
-    submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, deadline_unix_ms, \
+    submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms, deadline_unix_ms, \
     max_queue_duration_ms, plan_id, queue_failure_kind, queue_failure_detail, \
     failed_at_unix_ms, revision FROM coordinator_jobs WHERE job_id = ?1";
 
 const SELECT_QUEUED_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
-    submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, deadline_unix_ms, \
+    submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms, deadline_unix_ms, \
     max_queue_duration_ms, plan_id, queue_failure_kind, queue_failure_detail, \
     failed_at_unix_ms, revision FROM coordinator_jobs WHERE state = 'QUEUED'";
 
@@ -763,13 +834,14 @@ fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawJobRow> {
         submitted_at_unix_ms: row.get(4)?,
         planning_at_unix_ms: row.get(5)?,
         queued_at_unix_ms: row.get(6)?,
-        deadline_unix_ms: row.get(7)?,
-        max_queue_duration_ms: row.get(8)?,
-        plan_id: row.get(9)?,
-        queue_failure_kind: row.get(10)?,
-        queue_failure_detail: row.get(11)?,
-        failed_at_unix_ms: row.get(12)?,
-        revision: row.get(13)?,
+        staging_at_unix_ms: row.get(7)?,
+        deadline_unix_ms: row.get(8)?,
+        max_queue_duration_ms: row.get(9)?,
+        plan_id: row.get(10)?,
+        queue_failure_kind: row.get(11)?,
+        queue_failure_detail: row.get(12)?,
+        failed_at_unix_ms: row.get(13)?,
+        revision: row.get(14)?,
     })
 }
 
@@ -814,6 +886,46 @@ mod tests {
         assert_eq!(job.state, JobState::Queued);
         assert_eq!(job.revision, 2);
         assert_eq!(job.plan_id.as_deref(), Some("plan-1"));
+    }
+
+    #[test]
+    fn opens_pre_staging_schema_and_preserves_existing_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite3");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE coordinator_jobs (
+                        job_id TEXT PRIMARY KEY, submitter_device_id TEXT NOT NULL,
+                        manifest_hash BLOB NOT NULL, state TEXT NOT NULL,
+                        submitted_at_unix_ms BLOB NOT NULL, planning_at_unix_ms BLOB,
+                        queued_at_unix_ms BLOB, deadline_unix_ms BLOB,
+                        max_queue_duration_ms BLOB, plan_id TEXT,
+                        queue_failure_kind TEXT, queue_failure_detail TEXT,
+                        failed_at_unix_ms BLOB, revision BLOB NOT NULL
+                     );
+                     CREATE TABLE job_submission_idempotency (
+                        idempotency_key BLOB PRIMARY KEY,
+                        job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id)
+                     );",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO coordinator_jobs(
+                        job_id, submitter_device_id, manifest_hash, state,
+                        submitted_at_unix_ms, revision
+                     ) VALUES ('old-job', 'submitter', ?1, 'SUBMITTED', ?2, ?3)",
+                    rusqlite::params![[4u8; 32].as_slice(), encode_u64(100), encode_u64(0)],
+                )
+                .unwrap();
+        }
+
+        let store = CoordinatorJobStore::open(&path).unwrap();
+        let job = store.get("old-job").unwrap().unwrap();
+        assert_eq!(job.state, JobState::Submitted);
+        assert_eq!(job.staging_at_unix_ms, None);
     }
 
     #[test]
@@ -1066,6 +1178,14 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(store.get("job-1"), Err(JobStoreError::CorruptData(_))));
+
+        let second = submission("job-2", 2);
+        queued(&mut store, &second);
+        store
+            .connection
+            .execute("UPDATE coordinator_jobs SET plan_id = ' ' WHERE job_id = 'job-2'", [])
+            .unwrap();
+        assert!(matches!(store.get("job-2"), Err(JobStoreError::CorruptData(_))));
     }
 
     #[test]

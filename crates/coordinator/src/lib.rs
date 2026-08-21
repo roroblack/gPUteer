@@ -27,8 +27,9 @@ use gputeer_crypto::{
 use gputeer_protocol::pb;
 use prost::Message;
 
-pub mod lease_store;
 pub mod job_store;
+pub mod lease_store;
+pub mod staging_store;
 use lease_store::{
     CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision,
     ResumeRequestIdentity, StoredLease,

@@ -1,0 +1,862 @@
+//! Single-node local atomic `QUEUED -> STAGING` storage kernel.
+//!
+//! One file, one SQLite connection, and one `BEGIN IMMEDIATE` transaction own
+//! the Job transition, Attempt/node creation, team-global fence allocation,
+//! Lease insertion, and operation idempotency record. This is local durable
+//! state only; it is not a Raft/ControlStore `COMMITTED` transition and does
+//! not reserve resources or dispatch a Grant.
+
+use std::path::Path;
+
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
+
+use crate::job_store::{self, JobState, StoredJob};
+use crate::lease_store::{self, StoredLease};
+
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageQueuedRequest {
+    pub operation_key: [u8; 16],
+    pub job_id: String,
+    pub attempt_id: String,
+    pub lease_id: String,
+    pub node_id: String,
+    pub issuing_coordinator_id: String,
+    pub coordinator_term: u64,
+    pub issued_at_unix_ms: u64,
+    pub renew_after_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+    pub max_total_duration_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptState {
+    Created,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredAttempt {
+    pub attempt_id: String,
+    pub job_id: String,
+    pub state: AttemptState,
+    pub node_ids: Vec<String>,
+    pub fence_epoch: u64,
+    pub lease_id: String,
+    pub created_at_unix_ms: u64,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageQueuedResult {
+    pub job: StoredJob,
+    pub attempt: StoredAttempt,
+    pub lease: StoredLease,
+    /// `false` means the operation key replayed its original durable result.
+    pub created: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StagingStoreError {
+    InvalidInput(&'static str),
+    JobNotFound,
+    JobNotQueued(JobState),
+    OperationConflict,
+    AttemptIdConflict(String),
+    LeaseIdConflict(String),
+    ClockRollback { issued_at_unix_ms: u64, queued_at_unix_ms: u64 },
+    InvalidLeaseLifetime,
+    FenceEpochOverflow,
+    CorruptData(String),
+    Io(String),
+    LockTimeout,
+    #[cfg(test)]
+    InjectedFailure(&'static str),
+}
+
+impl std::fmt::Display for StagingStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput(field) => write!(f, "invalid staging input: {field}"),
+            Self::JobNotFound => write!(f, "job_id is not present in the control DB"),
+            Self::JobNotQueued(state) => write!(f, "Job is not QUEUED: {state:?}"),
+            Self::OperationConflict => write!(f, "staging operation key payload conflict"),
+            Self::AttemptIdConflict(id) => write!(f, "attempt_id already exists: {id}"),
+            Self::LeaseIdConflict(id) => write!(f, "lease_id already exists: {id}"),
+            Self::ClockRollback { issued_at_unix_ms, queued_at_unix_ms } => write!(
+                f,
+                "staging clock moved backwards: issued={issued_at_unix_ms}, queued={queued_at_unix_ms}"
+            ),
+            Self::InvalidLeaseLifetime => write!(f, "invalid Lease lifetime ordering"),
+            Self::FenceEpochOverflow => write!(f, "team-global fence epoch overflow"),
+            Self::CorruptData(message) => write!(f, "staging store corruption: {message}"),
+            Self::Io(message) => write!(f, "staging store I/O error: {message}"),
+            Self::LockTimeout => write!(f, "staging store lock acquisition timed out"),
+            #[cfg(test)]
+            Self::InjectedFailure(point) => write!(f, "injected staging failure: {point}"),
+        }
+    }
+}
+
+impl std::error::Error for StagingStoreError {}
+
+pub struct CoordinatorStagingStore {
+    connection: Connection,
+}
+
+impl CoordinatorStagingStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, StagingStoreError> {
+        let mut connection = Connection::open(path).map_err(map_sql_error)?;
+        connection.busy_timeout(BUSY_TIMEOUT).map_err(map_sql_error)?;
+        job_store::initialize_schema(&mut connection).map_err(map_job_error)?;
+        lease_store::initialize_schema(&mut connection).map_err(map_lease_error)?;
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS coordinator_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                    state TEXT NOT NULL,
+                    fence_epoch BLOB NOT NULL,
+                    lease_id TEXT NOT NULL,
+                    created_at_unix_ms BLOB NOT NULL,
+                    revision BLOB NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS coordinator_attempt_nodes (
+                    attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
+                    node_id TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL,
+                    PRIMARY KEY(attempt_id, ordinal),
+                    UNIQUE(attempt_id, node_id)
+                );
+                CREATE TABLE IF NOT EXISTS coordinator_fence_state (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    max_issued_epoch BLOB NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS staging_operation_idempotency (
+                    operation_key BLOB PRIMARY KEY CHECK(length(operation_key) = 16),
+                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                    attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
+                    lease_id TEXT NOT NULL REFERENCES coordinator_leases(lease_id),
+                    request_payload BLOB NOT NULL,
+                    fence_epoch BLOB NOT NULL
+                );
+                "#,
+            )
+            .map_err(map_sql_error)?;
+        Ok(Self { connection })
+    }
+
+    pub fn is_durable(&self) -> bool {
+        matches!(self.connection.path(), Some(path) if !path.is_empty() && path != ":memory:")
+    }
+
+    pub fn get_attempt(&self, attempt_id: &str) -> Result<Option<StoredAttempt>, StagingStoreError> {
+        fetch_attempt(&self.connection, attempt_id)
+    }
+
+    pub fn fence_epoch(&self) -> Result<Option<u64>, StagingStoreError> {
+        read_counter(&self.connection)
+    }
+
+    pub fn stage_queued_with_lease(
+        &mut self,
+        request: &StageQueuedRequest,
+    ) -> Result<StageQueuedResult, StagingStoreError> {
+        self.stage(request, None)
+    }
+
+    fn stage(
+        &mut self,
+        request: &StageQueuedRequest,
+        fault: Option<TestFault>,
+    ) -> Result<StageQueuedResult, StagingStoreError> {
+        validate_request(request)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+
+        if let Some(operation) = fetch_operation(&transaction, &request.operation_key)? {
+            if operation.job_id != request.job_id
+                || operation.attempt_id != request.attempt_id
+                || operation.lease_id != request.lease_id
+                || operation.request_payload != encode_request(request)
+            {
+                return Err(StagingStoreError::OperationConflict);
+            }
+            let result = load_result(&transaction, request, operation.fence_epoch)?;
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(StageQueuedResult { created: false, ..result });
+        }
+
+        let mut job = job_store::fetch_job(&transaction, &request.job_id)
+            .map_err(map_job_error)?
+            .ok_or(StagingStoreError::JobNotFound)?;
+        if job.state != JobState::Queued {
+            return Err(StagingStoreError::JobNotQueued(job.state));
+        }
+        let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
+            StagingStoreError::CorruptData("QUEUED Job has no queued timestamp".into())
+        })?;
+        if request.issued_at_unix_ms < queued_at {
+            return Err(StagingStoreError::ClockRollback {
+                issued_at_unix_ms: request.issued_at_unix_ms,
+                queued_at_unix_ms: queued_at,
+            });
+        }
+        if fetch_attempt(&transaction, &request.attempt_id)?.is_some() {
+            return Err(StagingStoreError::AttemptIdConflict(request.attempt_id.clone()));
+        }
+        if lease_store::fetch_lease(&transaction, &request.lease_id)
+            .map_err(map_lease_error)?
+            .is_some()
+        {
+            return Err(StagingStoreError::LeaseIdConflict(request.lease_id.clone()));
+        }
+
+        let epoch = allocate_epoch(&transaction)?;
+        let attempt = StoredAttempt {
+            attempt_id: request.attempt_id.clone(),
+            job_id: request.job_id.clone(),
+            state: AttemptState::Created,
+            node_ids: vec![request.node_id.clone()],
+            fence_epoch: epoch,
+            lease_id: request.lease_id.clone(),
+            created_at_unix_ms: request.issued_at_unix_ms,
+            revision: 0,
+        };
+        insert_attempt(&transaction, &attempt)?;
+        fail_at(fault, TestFault::AfterAttemptInsert)?;
+
+        let lease = request.to_lease(epoch);
+        lease_store::insert_lease(&transaction, &lease).map_err(map_lease_error)?;
+        fail_at(fault, TestFault::AfterLeaseInsert)?;
+        fail_at(fault, TestFault::BeforeJobUpdate)?;
+
+        job.state = JobState::Staging;
+        job.staging_at_unix_ms = Some(request.issued_at_unix_ms);
+        job.revision = job
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| StagingStoreError::CorruptData("job revision overflow".into()))?;
+        job_store::update_job(&transaction, &job).map_err(map_job_error)?;
+        insert_operation(&transaction, request, epoch)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(StageQueuedResult { job, attempt, lease, created: true })
+    }
+}
+
+impl StageQueuedRequest {
+    fn to_lease(&self, fence_epoch: u64) -> StoredLease {
+        StoredLease {
+            lease_id: self.lease_id.clone(),
+            job_id: self.job_id.clone(),
+            attempt_id: self.attempt_id.clone(),
+            holder_node_id: self.node_id.clone(),
+            fence_epoch,
+            expires_at_unix_ms: self.expires_at_unix_ms,
+            issuing_coordinator_id: self.issuing_coordinator_id.clone(),
+            coordinator_term: self.coordinator_term,
+            issued_at_unix_ms: self.issued_at_unix_ms,
+            renew_after_unix_ms: self.renew_after_unix_ms,
+            max_total_duration_seconds: self.max_total_duration_seconds,
+            revoked_at_unix_ms: None,
+        }
+    }
+}
+
+fn validate_request(request: &StageQueuedRequest) -> Result<(), StagingStoreError> {
+    for (name, value) in [
+        ("job_id", &request.job_id),
+        ("attempt_id", &request.attempt_id),
+        ("lease_id", &request.lease_id),
+        ("node_id", &request.node_id),
+        ("issuing_coordinator_id", &request.issuing_coordinator_id),
+    ] {
+        if value.trim().is_empty() {
+            return Err(StagingStoreError::InvalidInput(name));
+        }
+    }
+    let max_duration_ms = request
+        .max_total_duration_seconds
+        .checked_mul(1_000)
+        .ok_or(StagingStoreError::InvalidLeaseLifetime)?;
+    let lifetime_ms = request
+        .expires_at_unix_ms
+        .checked_sub(request.issued_at_unix_ms)
+        .ok_or(StagingStoreError::InvalidLeaseLifetime)?;
+    if request.max_total_duration_seconds == 0
+        || request.renew_after_unix_ms <= request.issued_at_unix_ms
+        || request.renew_after_unix_ms >= request.expires_at_unix_ms
+        || lifetime_ms > max_duration_ms
+    {
+        return Err(StagingStoreError::InvalidLeaseLifetime);
+    }
+    Ok(())
+}
+
+fn allocate_epoch(connection: &Connection) -> Result<u64, StagingStoreError> {
+    let mut base = read_counter(connection)?.unwrap_or(0);
+    let mut statement = connection
+        .prepare("SELECT fence_epoch FROM coordinator_leases")
+        .map_err(map_sql_error)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(map_sql_error)?;
+    for row in rows {
+        base = base.max(decode_u64(&row.map_err(map_sql_error)?, "lease fence_epoch")?);
+    }
+    let epoch = base.checked_add(1).ok_or(StagingStoreError::FenceEpochOverflow)?;
+    connection
+        .execute(
+            "INSERT INTO coordinator_fence_state(singleton, max_issued_epoch) VALUES (1, ?1)
+             ON CONFLICT(singleton) DO UPDATE SET max_issued_epoch = excluded.max_issued_epoch",
+            rusqlite::params![encode_u64(epoch)],
+        )
+        .map_err(map_sql_error)?;
+    Ok(epoch)
+}
+
+fn read_counter(connection: &Connection) -> Result<Option<u64>, StagingStoreError> {
+    connection
+        .query_row(
+            "SELECT max_issued_epoch FROM coordinator_fence_state WHERE singleton = 1",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?
+        .map(|bytes| decode_u64(&bytes, "max_issued_epoch"))
+        .transpose()
+}
+
+fn insert_attempt(connection: &Connection, attempt: &StoredAttempt) -> Result<(), StagingStoreError> {
+    connection
+        .execute(
+            "INSERT INTO coordinator_attempts(
+                attempt_id, job_id, state, fence_epoch, lease_id, created_at_unix_ms, revision
+             ) VALUES (?1, ?2, 'CREATED', ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                attempt.attempt_id,
+                attempt.job_id,
+                encode_u64(attempt.fence_epoch),
+                attempt.lease_id,
+                encode_u64(attempt.created_at_unix_ms),
+                encode_u64(attempt.revision),
+            ],
+        )
+        .map_err(map_sql_error)?;
+    connection
+        .execute(
+            "INSERT INTO coordinator_attempt_nodes(attempt_id, node_id, ordinal) VALUES (?1, ?2, 0)",
+            rusqlite::params![attempt.attempt_id, attempt.node_ids[0]],
+        )
+        .map_err(map_sql_error)?;
+    Ok(())
+}
+
+fn fetch_attempt(connection: &Connection, attempt_id: &str) -> Result<Option<StoredAttempt>, StagingStoreError> {
+    let raw = connection
+        .query_row(
+            "SELECT attempt_id, job_id, state, fence_epoch, lease_id, created_at_unix_ms, revision
+             FROM coordinator_attempts WHERE attempt_id = ?1",
+            rusqlite::params![attempt_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                row.get::<_, Vec<u8>>(3)?, row.get::<_, String>(4)?, row.get::<_, Vec<u8>>(5)?,
+                row.get::<_, Vec<u8>>(6)?)),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    let Some((attempt_id, job_id, state, epoch, lease_id, created_at, revision)) = raw else {
+        return Ok(None);
+    };
+    if state != "CREATED" {
+        return Err(StagingStoreError::CorruptData(format!("unknown Attempt state: {state}")));
+    }
+    let mut statement = connection
+        .prepare("SELECT node_id, ordinal FROM coordinator_attempt_nodes WHERE attempt_id = ?1 ORDER BY ordinal")
+        .map_err(map_sql_error)?;
+    let nodes = statement
+        .query_map(rusqlite::params![attempt_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .map_err(map_sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sql_error)?;
+    if nodes.len() != 1 || nodes[0].1 != 0 || nodes[0].0.trim().is_empty() {
+        return Err(StagingStoreError::CorruptData("single-node Attempt row shape is invalid".into()));
+    }
+    Ok(Some(StoredAttempt {
+        attempt_id,
+        job_id,
+        state: AttemptState::Created,
+        node_ids: vec![nodes[0].0.clone()],
+        fence_epoch: decode_u64(&epoch, "Attempt fence_epoch")?,
+        lease_id,
+        created_at_unix_ms: decode_u64(&created_at, "Attempt created_at_unix_ms")?,
+        revision: decode_u64(&revision, "Attempt revision")?,
+    }))
+}
+
+#[derive(Debug)]
+struct StoredOperation {
+    job_id: String,
+    attempt_id: String,
+    lease_id: String,
+    request_payload: Vec<u8>,
+    fence_epoch: u64,
+}
+
+fn fetch_operation(connection: &Connection, key: &[u8; 16]) -> Result<Option<StoredOperation>, StagingStoreError> {
+    connection
+        .query_row(
+            "SELECT job_id, attempt_id, lease_id, request_payload, fence_epoch
+             FROM staging_operation_idempotency WHERE operation_key = ?1",
+            rusqlite::params![key.as_slice()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?, row.get::<_, Vec<u8>>(3)?, row.get::<_, Vec<u8>>(4)?)),
+        )
+        .optional()
+        .map_err(map_sql_error)?
+        .map(|(job_id, attempt_id, lease_id, request_payload, epoch)| {
+            Ok(StoredOperation { job_id, attempt_id, lease_id, request_payload,
+                fence_epoch: decode_u64(&epoch, "operation fence_epoch")? })
+        })
+        .transpose()
+}
+
+fn insert_operation(connection: &Connection, request: &StageQueuedRequest, epoch: u64) -> Result<(), StagingStoreError> {
+    connection.execute(
+        "INSERT INTO staging_operation_idempotency(
+            operation_key, job_id, attempt_id, lease_id, request_payload, fence_epoch
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![request.operation_key.as_slice(), request.job_id, request.attempt_id,
+            request.lease_id, encode_request(request), encode_u64(epoch)],
+    ).map_err(map_sql_error)?;
+    Ok(())
+}
+
+fn encode_request(request: &StageQueuedRequest) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for value in [&request.job_id, &request.attempt_id, &request.lease_id, &request.node_id,
+        &request.issuing_coordinator_id] {
+        payload.extend_from_slice(&(value.len() as u64).to_be_bytes());
+        payload.extend_from_slice(value.as_bytes());
+    }
+    for value in [request.coordinator_term, request.issued_at_unix_ms,
+        request.renew_after_unix_ms, request.expires_at_unix_ms,
+        request.max_total_duration_seconds] {
+        payload.extend_from_slice(&value.to_be_bytes());
+    }
+    payload
+}
+
+fn load_result(connection: &Connection, request: &StageQueuedRequest, epoch: u64) -> Result<StageQueuedResult, StagingStoreError> {
+    let job = job_store::fetch_job(connection, &request.job_id).map_err(map_job_error)?
+        .ok_or_else(|| StagingStoreError::CorruptData("operation points to missing Job".into()))?;
+    let attempt = fetch_attempt(connection, &request.attempt_id)?
+        .ok_or_else(|| StagingStoreError::CorruptData("operation points to missing Attempt".into()))?;
+    let current_lease = lease_store::fetch_lease(connection, &request.lease_id).map_err(map_lease_error)?
+        .ok_or_else(|| StagingStoreError::CorruptData("operation points to missing Lease".into()))?;
+    let original_lease = request.to_lease(epoch);
+    if job.state != JobState::Staging || job.staging_at_unix_ms != Some(request.issued_at_unix_ms)
+        || attempt.job_id != request.job_id || attempt.lease_id != request.lease_id
+        || attempt.node_ids != [request.node_id.clone()] || attempt.fence_epoch != epoch
+        || attempt.created_at_unix_ms != request.issued_at_unix_ms
+        || current_lease.lease_id != original_lease.lease_id
+        || current_lease.job_id != original_lease.job_id
+        || current_lease.attempt_id != original_lease.attempt_id
+        || current_lease.holder_node_id != original_lease.holder_node_id
+        || current_lease.fence_epoch != original_lease.fence_epoch
+        || current_lease.issuing_coordinator_id != original_lease.issuing_coordinator_id
+        || current_lease.coordinator_term != original_lease.coordinator_term
+        || current_lease.issued_at_unix_ms != original_lease.issued_at_unix_ms
+        || current_lease.max_total_duration_seconds != original_lease.max_total_duration_seconds
+        || read_counter(connection)?.is_none_or(|counter| counter < epoch)
+    {
+        return Err(StagingStoreError::CorruptData("staging operation result is inconsistent".into()));
+    }
+    Ok(StageQueuedResult { job, attempt, lease: original_lease, created: false })
+}
+
+fn encode_u64(value: u64) -> Vec<u8> { value.to_be_bytes().to_vec() }
+
+fn decode_u64(bytes: &[u8], field: &str) -> Result<u64, StagingStoreError> {
+    let value: [u8; 8] = bytes.try_into().map_err(|_| {
+        StagingStoreError::CorruptData(format!("{field} must contain exactly 8 bytes"))
+    })?;
+    Ok(u64::from_be_bytes(value))
+}
+
+fn map_sql_error(error: SqlError) -> StagingStoreError {
+    match error {
+        SqlError::SqliteFailure(code, _) if matches!(code.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StagingStoreError::LockTimeout,
+        SqlError::SqliteFailure(code, _) => StagingStoreError::Io(code.to_string()),
+        other => StagingStoreError::Io(other.to_string()),
+    }
+}
+
+fn map_job_error(error: job_store::JobStoreError) -> StagingStoreError {
+    match error {
+        job_store::JobStoreError::LockTimeout => StagingStoreError::LockTimeout,
+        job_store::JobStoreError::CorruptData(message) => StagingStoreError::CorruptData(message),
+        other => StagingStoreError::Io(other.to_string()),
+    }
+}
+
+fn map_lease_error(error: lease_store::LeaseStoreError) -> StagingStoreError {
+    match error {
+        lease_store::LeaseStoreError::LockTimeout => StagingStoreError::LockTimeout,
+        lease_store::LeaseStoreError::Io(message) => StagingStoreError::CorruptData(message),
+        other => StagingStoreError::Io(other.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestFault { AfterAttemptInsert, AfterLeaseInsert, BeforeJobUpdate }
+
+#[cfg(test)]
+fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), StagingStoreError> {
+    if fault == Some(point) {
+        let name = match point {
+            TestFault::AfterAttemptInsert => "after Attempt insert",
+            TestFault::AfterLeaseInsert => "after Lease insert",
+            TestFault::BeforeJobUpdate => "before Job update",
+        };
+        return Err(StagingStoreError::InjectedFailure(name));
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn fail_at(_fault: Option<TestFault>, _point: TestFault) -> Result<(), StagingStoreError> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+    use crate::job_store::{AcceptedJobSubmission, CoordinatorJobStore};
+    use crate::lease_store::CoordinatorLeaseStore;
+
+    fn prepare_queued(path: &Path, job_id: &str, key: u8) {
+        let mut store = CoordinatorJobStore::open(path).unwrap();
+        store
+            .submit_accepted(
+                &AcceptedJobSubmission {
+                    idempotency_key: [key; 16],
+                    job_id: job_id.into(),
+                    submitter_device_id: "submitter-1".into(),
+                    manifest_hash: [key; 32],
+                    deadline_unix_ms: Some(10_000),
+                    max_queue_duration_ms: Some(5_000),
+                },
+                100,
+            )
+            .unwrap();
+        store.start_planning(job_id, 110).unwrap();
+        store.enqueue(job_id, "plan-1", 120).unwrap();
+    }
+
+    fn request(job_id: &str, operation: u8) -> StageQueuedRequest {
+        StageQueuedRequest {
+            operation_key: [operation; 16],
+            job_id: job_id.into(),
+            attempt_id: format!("attempt-{operation}"),
+            lease_id: format!("lease-{operation}"),
+            node_id: "node-1".into(),
+            issuing_coordinator_id: "coordinator-1".into(),
+            coordinator_term: 7,
+            issued_at_unix_ms: 200,
+            renew_after_unix_ms: 500,
+            expires_at_unix_ms: 900,
+            max_total_duration_seconds: 1,
+        }
+    }
+
+    fn assert_queued_and_no_side_effects(
+        store: &CoordinatorStagingStore,
+        request: &StageQueuedRequest,
+    ) {
+        let job = job_store::fetch_job(&store.connection, &request.job_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Queued);
+        assert_eq!(job.revision, 2);
+        assert_eq!(job.staging_at_unix_ms, None);
+        assert_eq!(store.get_attempt(&request.attempt_id).unwrap(), None);
+        assert_eq!(lease_store::fetch_lease(&store.connection, &request.lease_id).unwrap(), None);
+        assert_eq!(store.fence_epoch().unwrap(), None);
+        assert!(fetch_operation(&store.connection, &request.operation_key)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn success_is_consistent_and_identical_retry_does_not_consume_epoch() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        let request = request("job-1", 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        let first = store.stage_queued_with_lease(&request).unwrap();
+        assert!(first.created);
+        assert_eq!(first.job.state, JobState::Staging);
+        assert_eq!(first.job.staging_at_unix_ms, Some(request.issued_at_unix_ms));
+        assert_eq!(first.job.revision, 3);
+        assert_eq!(first.attempt.state, AttemptState::Created);
+        assert_eq!(first.attempt.node_ids, [request.node_id.clone()]);
+        assert_eq!(first.attempt.job_id, request.job_id);
+        assert_eq!(first.attempt.attempt_id, request.attempt_id);
+        assert_eq!(first.attempt.lease_id, request.lease_id);
+        assert_eq!(first.attempt.fence_epoch, first.lease.fence_epoch);
+        assert_eq!(first.lease.job_id, first.job.job_id);
+        assert_eq!(first.lease.attempt_id, first.attempt.attempt_id);
+        assert_eq!(first.lease.holder_node_id, first.attempt.node_ids[0]);
+        assert_eq!(store.fence_epoch().unwrap(), Some(first.lease.fence_epoch));
+
+        let retry = store.stage_queued_with_lease(&request).unwrap();
+        assert!(!retry.created);
+        assert_eq!(retry.lease.fence_epoch, first.lease.fence_epoch);
+        assert_eq!(store.fence_epoch().unwrap(), Some(first.lease.fence_epoch));
+    }
+
+    #[test]
+    fn every_injected_write_failure_rolls_back_job_attempt_lease_counter_and_operation() {
+        for (index, fault) in [
+            TestFault::AfterAttemptInsert,
+            TestFault::AfterLeaseInsert,
+            TestFault::BeforeJobUpdate,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("control.sqlite3");
+            let job_id = format!("job-{index}");
+            prepare_queued(&path, &job_id, index as u8 + 1);
+            let request = request(&job_id, index as u8 + 1);
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            assert!(matches!(
+                store.stage(&request, Some(fault)),
+                Err(StagingStoreError::InjectedFailure(_))
+            ));
+            assert_queued_and_no_side_effects(&store, &request);
+
+            let result = store.stage_queued_with_lease(&request).unwrap();
+            assert_eq!(result.lease.fence_epoch, 1, "rollback must not consume epoch");
+        }
+    }
+
+    #[test]
+    fn two_connections_stage_one_queued_job_exactly_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-race", 1);
+        let stores = [
+            CoordinatorStagingStore::open(&path).unwrap(),
+            CoordinatorStagingStore::open(&path).unwrap(),
+        ];
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = stores
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut store)| {
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let request = request("job-race", index as u8 + 1);
+                    request_assert_distinct(&request, index);
+                    barrier.wait();
+                    store.stage_queued_with_lease(&request)
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(StagingStoreError::JobNotQueued(JobState::Staging))))
+                .count(),
+            1
+        );
+
+        let store = CoordinatorStagingStore::open(&path).unwrap();
+        let connection = &store.connection;
+        for table in ["coordinator_attempts", "coordinator_attempt_nodes", "coordinator_leases", "staging_operation_idempotency"] {
+            let count: u64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 1, "loser must leave no row in {table}");
+        }
+        assert_eq!(store.fence_epoch().unwrap(), Some(1));
+    }
+
+    fn request_assert_distinct(request: &StageQueuedRequest, index: usize) {
+        assert_eq!(request.operation_key[0], index as u8 + 1);
+        assert_eq!(request.attempt_id, format!("attempt-{}", index + 1));
+        assert_eq!(request.lease_id, format!("lease-{}", index + 1));
+    }
+
+    #[test]
+    fn changed_operation_payload_and_reused_attempt_or_lease_ids_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        for (index, job_id) in ["job-1", "job-2", "job-3"].into_iter().enumerate() {
+            prepare_queued(&path, job_id, index as u8 + 1);
+        }
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let first = request("job-1", 1);
+        store.stage_queued_with_lease(&first).unwrap();
+
+        let mut changed = first.clone();
+        changed.node_id = "node-2".into();
+        assert_eq!(
+            store.stage_queued_with_lease(&changed),
+            Err(StagingStoreError::OperationConflict)
+        );
+
+        let mut attempt_conflict = request("job-2", 2);
+        attempt_conflict.attempt_id = first.attempt_id.clone();
+        assert_eq!(
+            store.stage_queued_with_lease(&attempt_conflict),
+            Err(StagingStoreError::AttemptIdConflict(first.attempt_id.clone()))
+        );
+        let mut lease_conflict = request("job-3", 3);
+        lease_conflict.lease_id = first.lease_id.clone();
+        assert_eq!(
+            store.stage_queued_with_lease(&lease_conflict),
+            Err(StagingStoreError::LeaseIdConflict(first.lease_id.clone()))
+        );
+        assert_eq!(store.fence_epoch().unwrap(), Some(1));
+        assert_eq!(store.get_attempt(&attempt_conflict.attempt_id).unwrap().unwrap().job_id, "job-1");
+        assert_eq!(job_store::fetch_job(&store.connection, "job-2").unwrap().unwrap().state, JobState::Queued);
+        assert_eq!(job_store::fetch_job(&store.connection, "job-3").unwrap().unwrap().state, JobState::Queued);
+    }
+
+    #[test]
+    fn invalid_state_identity_lifetime_and_clock_leave_state_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut jobs = CoordinatorJobStore::open(&path).unwrap();
+        jobs.submit_accepted(&AcceptedJobSubmission { idempotency_key: [9; 16], job_id: "submitted".into(),
+            submitter_device_id: "s".into(), manifest_hash: [9; 32], deadline_unix_ms: None,
+            max_queue_duration_ms: None }, 100).unwrap();
+        drop(jobs);
+        prepare_queued(&path, "queued", 8);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        assert_eq!(store.stage_queued_with_lease(&request("submitted", 9)), Err(StagingStoreError::JobNotQueued(JobState::Submitted)));
+
+        let base = request("queued", 8);
+        let mut invalids = Vec::new();
+        let mut blank = base.clone(); blank.job_id = " ".into(); invalids.push(blank);
+        let mut blank = base.clone(); blank.attempt_id = " ".into(); invalids.push(blank);
+        let mut blank = base.clone(); blank.lease_id = " ".into(); invalids.push(blank);
+        let mut blank = base.clone(); blank.node_id = " ".into(); invalids.push(blank);
+        let mut blank = base.clone(); blank.issuing_coordinator_id = " ".into(); invalids.push(blank);
+        let mut rollback = base.clone(); rollback.issued_at_unix_ms = 119; rollback.renew_after_unix_ms = 500; invalids.push(rollback);
+        let mut ordering = base.clone(); ordering.renew_after_unix_ms = ordering.expires_at_unix_ms; invalids.push(ordering);
+        let mut over_max = base.clone(); over_max.expires_at_unix_ms = 1_201; invalids.push(over_max);
+        for invalid in invalids {
+            assert!(store.stage_queued_with_lease(&invalid).is_err());
+            assert_queued_and_no_side_effects(&store, &base);
+        }
+    }
+
+    #[test]
+    fn existing_lease_watermark_is_used_and_corrupt_or_max_epoch_rolls_back() {
+        for (epoch_bytes, expected) in [
+            (41u64.to_be_bytes().to_vec(), Ok(42)),
+            (vec![1, 2, 3], Err("corrupt")),
+            (u64::MAX.to_be_bytes().to_vec(), Err("overflow")),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("control.sqlite3");
+            prepare_queued(&path, "job-1", 1);
+            let store = CoordinatorStagingStore::open(&path).unwrap();
+            store.connection.execute(
+                "INSERT INTO coordinator_leases(lease_id, job_id, attempt_id, holder_node_id,
+                 fence_epoch, expires_at_unix_ms, issuing_coordinator_id, coordinator_term,
+                 issued_at_unix_ms, renew_after_unix_ms, max_total_duration_seconds, revoked_at_unix_ms)
+                 VALUES ('old', 'old-job', 'old-attempt', 'old-node', ?1, ?2, 'old-coordinator', ?2, ?2, ?3, ?3, NULL)",
+                rusqlite::params![epoch_bytes, encode_u64(1), encode_u64(2)],
+            ).unwrap();
+            drop(store);
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            let request = request("job-1", 1);
+            match expected {
+                Ok(epoch) => assert_eq!(store.stage_queued_with_lease(&request).unwrap().lease.fence_epoch, epoch),
+                Err("corrupt") => {
+                    assert!(matches!(store.stage_queued_with_lease(&request), Err(StagingStoreError::CorruptData(_))));
+                    assert_queued_and_no_side_effects(&store, &request);
+                }
+                Err("overflow") => {
+                    assert_eq!(store.stage_queued_with_lease(&request), Err(StagingStoreError::FenceEpochOverflow));
+                    assert_queued_and_no_side_effects(&store, &request);
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn corrupt_or_max_counter_fails_without_partial_state() {
+        for counter in [vec![1, 2, 3], u64::MAX.to_be_bytes().to_vec()] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("control.sqlite3");
+            prepare_queued(&path, "job-1", 1);
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            store.connection.execute(
+                "INSERT INTO coordinator_fence_state(singleton, max_issued_epoch) VALUES (1, ?1)",
+                rusqlite::params![counter.clone()],
+            ).unwrap();
+            let request = request("job-1", 1);
+            assert!(store.stage_queued_with_lease(&request).is_err());
+            assert_eq!(job_store::fetch_job(&store.connection, "job-1").unwrap().unwrap().state, JobState::Queued);
+            assert_eq!(store.get_attempt(&request.attempt_id).unwrap(), None);
+            assert_eq!(lease_store::fetch_lease(&store.connection, &request.lease_id).unwrap(), None);
+            let persisted: Vec<u8> = store.connection.query_row(
+                "SELECT max_issued_epoch FROM coordinator_fence_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            ).unwrap();
+            assert_eq!(persisted, counter, "failed allocation must not rewrite the counter");
+        }
+    }
+
+    #[test]
+    fn reopen_preserves_all_state_and_standalone_stores_read_and_mutate_the_lease() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        let request = request("job-1", 1);
+        let issued = {
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            store.stage_queued_with_lease(&request).unwrap()
+        };
+        let reopened = CoordinatorStagingStore::open(&path).unwrap();
+        assert_eq!(reopened.fence_epoch().unwrap(), Some(issued.lease.fence_epoch));
+        assert_eq!(reopened.get_attempt(&request.attempt_id).unwrap(), Some(issued.attempt.clone()));
+        drop(reopened);
+
+        let jobs = CoordinatorJobStore::open(&path).unwrap();
+        assert_eq!(jobs.get(&request.job_id).unwrap().unwrap(), issued.job);
+        drop(jobs);
+        let mut leases = CoordinatorLeaseStore::open(&path).unwrap();
+        assert_eq!(leases.get(&request.lease_id).unwrap(), Some(issued.lease.clone()));
+        let renewed = leases.renew_existing(&request.lease_id, 950, 600).unwrap();
+        assert_eq!(renewed.fence_epoch, issued.lease.fence_epoch);
+        leases.mark_revoked(&request.lease_id, 700).unwrap();
+        drop(leases);
+        let leases = CoordinatorLeaseStore::open(&path).unwrap();
+        assert_eq!(leases.get(&request.lease_id).unwrap().unwrap().revoked_at_unix_ms, Some(700));
+        drop(leases);
+
+        let mut staging = CoordinatorStagingStore::open(&path).unwrap();
+        let retry = staging.stage_queued_with_lease(&request).unwrap();
+        assert!(!retry.created);
+        assert_eq!(retry.lease, issued.lease, "retry returns the original operation result");
+    }
+}

@@ -141,7 +141,7 @@ impl std::fmt::Display for LeaseStoreError {
 
 impl std::error::Error for LeaseStoreError {}
 
-fn map_sql_error(error: SqlError) -> LeaseStoreError {
+pub(crate) fn map_sql_error(error: SqlError) -> LeaseStoreError {
     match error {
         SqlError::SqliteFailure(code, _) => {
             if matches!(
@@ -157,7 +157,7 @@ fn map_sql_error(error: SqlError) -> LeaseStoreError {
     }
 }
 
-fn encode_u64(v: u64) -> Vec<u8> {
+pub(crate) fn encode_u64(v: u64) -> Vec<u8> {
     v.to_be_bytes().to_vec()
 }
 
@@ -172,6 +172,34 @@ pub struct CoordinatorLeaseStore {
     connection: Connection,
 }
 
+pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), LeaseStoreError> {
+    connection
+        .execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            PRAGMA journal_mode = DELETE;
+            PRAGMA synchronous = FULL;
+
+            CREATE TABLE IF NOT EXISTS coordinator_leases (
+                lease_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                holder_node_id TEXT NOT NULL,
+                fence_epoch BLOB NOT NULL,
+                expires_at_unix_ms BLOB NOT NULL,
+                issuing_coordinator_id TEXT NOT NULL,
+                coordinator_term BLOB NOT NULL,
+                issued_at_unix_ms BLOB NOT NULL,
+                renew_after_unix_ms BLOB NOT NULL,
+                max_total_duration_seconds BLOB NOT NULL,
+                revoked_at_unix_ms BLOB
+            );
+            "#,
+        )
+        .map_err(map_sql_error)?;
+    migrate_revoked_at_column(connection)
+}
+
 impl CoordinatorLeaseStore {
     /// SQLite 파일을 열거나 만든다. **fail closed** — 이 호출이
     /// 실패하면 호출자는 handshake 를 계속 진행하면 안 된다.
@@ -181,31 +209,7 @@ impl CoordinatorLeaseStore {
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(map_sql_error)?;
 
-        connection
-            .execute_batch(
-                r#"
-                PRAGMA journal_mode = DELETE;
-                PRAGMA synchronous = FULL;
-
-                CREATE TABLE IF NOT EXISTS coordinator_leases (
-                    lease_id TEXT PRIMARY KEY,
-                    job_id TEXT NOT NULL,
-                    attempt_id TEXT NOT NULL,
-                    holder_node_id TEXT NOT NULL,
-                    fence_epoch BLOB NOT NULL,
-                    expires_at_unix_ms BLOB NOT NULL,
-                    issuing_coordinator_id TEXT NOT NULL,
-                    coordinator_term BLOB NOT NULL,
-                    issued_at_unix_ms BLOB NOT NULL,
-                    renew_after_unix_ms BLOB NOT NULL,
-                    max_total_duration_seconds BLOB NOT NULL,
-                    revoked_at_unix_ms BLOB
-                );
-                "#,
-            )
-            .map_err(map_sql_error)?;
-
-        migrate_revoked_at_column(&mut connection)?;
+        initialize_schema(&mut connection)?;
 
         Ok(Self { connection })
     }
@@ -221,12 +225,7 @@ impl CoordinatorLeaseStore {
 
     /// `lease_id` 로 저장된 레코드를 조회한다. 없으면 `Ok(None)`.
     pub fn get(&self, lease_id: &str) -> Result<Option<StoredLease>, LeaseStoreError> {
-        self.connection
-            .query_row(SELECT_LEASE_SQL, rusqlite::params![lease_id], row_to_raw)
-            .optional()
-            .map_err(map_sql_error)?
-            .map(RawLeaseRow::into_stored)
-            .transpose()
+        fetch_lease(&self.connection, lease_id)
     }
 
     /// Classify an explicit Resume without issuing or mutating a lease.
@@ -294,16 +293,7 @@ impl CoordinatorLeaseStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sql_error)?;
 
-        let existing = transaction
-            .query_row(
-                SELECT_LEASE_SQL,
-                rusqlite::params![candidate.lease_id],
-                row_to_raw,
-            )
-            .optional()
-            .map_err(map_sql_error)?
-            .map(RawLeaseRow::into_stored)
-            .transpose()?;
+        let existing = fetch_lease(&transaction, &candidate.lease_id)?;
 
         if let Some(stored) = existing {
             check_identity_conflict(&stored, candidate)?;
@@ -321,29 +311,7 @@ impl CoordinatorLeaseStore {
             return Ok(stored);
         }
 
-        transaction
-            .execute(
-                "INSERT INTO coordinator_leases(
-                    lease_id, job_id, attempt_id, holder_node_id, fence_epoch,
-                    expires_at_unix_ms, issuing_coordinator_id, coordinator_term,
-                     issued_at_unix_ms, renew_after_unix_ms, max_total_duration_seconds,
-                     revoked_at_unix_ms
-                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
-                rusqlite::params![
-                    candidate.lease_id,
-                    candidate.job_id,
-                    candidate.attempt_id,
-                    candidate.holder_node_id,
-                    encode_u64(candidate.fence_epoch),
-                    encode_u64(candidate.expires_at_unix_ms),
-                    candidate.issuing_coordinator_id,
-                    encode_u64(candidate.coordinator_term),
-                    encode_u64(candidate.issued_at_unix_ms),
-                    encode_u64(candidate.renew_after_unix_ms),
-                    encode_u64(candidate.max_total_duration_seconds),
-                ],
-            )
-            .map_err(map_sql_error)?;
+        insert_lease(&transaction, candidate)?;
 
         transaction.commit().map_err(map_sql_error)?;
         Ok(candidate.clone())
@@ -619,6 +587,48 @@ const SELECT_LEASE_SQL: &str = "SELECT lease_id, job_id, attempt_id, holder_node
      expires_at_unix_ms, issuing_coordinator_id, coordinator_term, issued_at_unix_ms, \
      renew_after_unix_ms, max_total_duration_seconds, revoked_at_unix_ms \
      FROM coordinator_leases WHERE lease_id = ?1";
+
+pub(crate) fn fetch_lease(
+    connection: &Connection,
+    lease_id: &str,
+) -> Result<Option<StoredLease>, LeaseStoreError> {
+    connection
+        .query_row(SELECT_LEASE_SQL, rusqlite::params![lease_id], row_to_raw)
+        .optional()
+        .map_err(map_sql_error)?
+        .map(RawLeaseRow::into_stored)
+        .transpose()
+}
+
+pub(crate) fn insert_lease(
+    connection: &Connection,
+    candidate: &StoredLease,
+) -> Result<(), LeaseStoreError> {
+    connection
+        .execute(
+            "INSERT INTO coordinator_leases(
+                lease_id, job_id, attempt_id, holder_node_id, fence_epoch,
+                expires_at_unix_ms, issuing_coordinator_id, coordinator_term,
+                issued_at_unix_ms, renew_after_unix_ms, max_total_duration_seconds,
+                revoked_at_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+            rusqlite::params![
+                candidate.lease_id,
+                candidate.job_id,
+                candidate.attempt_id,
+                candidate.holder_node_id,
+                encode_u64(candidate.fence_epoch),
+                encode_u64(candidate.expires_at_unix_ms),
+                candidate.issuing_coordinator_id,
+                encode_u64(candidate.coordinator_term),
+                encode_u64(candidate.issued_at_unix_ms),
+                encode_u64(candidate.renew_after_unix_ms),
+                encode_u64(candidate.max_total_duration_seconds),
+            ],
+        )
+        .map_err(map_sql_error)?;
+    Ok(())
+}
 
 fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawLeaseRow> {
     Ok(RawLeaseRow {

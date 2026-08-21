@@ -1,0 +1,76 @@
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+검수 범위는 single-node local atomic STAGING kernel의 transaction 원자성,
+rollback과 fence epoch, operation idempotency, 기존 Lease API 무회귀, 손상 검사,
+동시성 테스트, 뮤테이션 판별력, 변경 범위와 계획 상한 초과 보고의 정직성이었다.
+
+단일 transaction 원자성 확인
+
+- `stage_queued_with_lease()`는 한 connection에서
+  `TransactionBehavior::Immediate`를 열고
+  (`crates/coordinator/src/staging_store.rs:175`), 그 transaction handle로
+  epoch를 채번한다(`crates/coordinator/src/staging_store.rs:218`). Attempt·node,
+  Lease, Job STAGING 전이, operation 결과를 모두 기록한 뒤 한 곳에서만
+  commit한다(`crates/coordinator/src/staging_store.rs:245`).
+- 오류 주입은 Attempt 삽입 뒤, Lease 삽입 뒤, Job update 직전 세 지점을 모두
+  공격한다. 실패 뒤 상태가 전부 비어 있고 바로 재시도한 epoch가 1임을
+  `crates/coordinator/src/staging_store.rs:627`에서 검사하므로 rollback된 epoch가
+  소비되지 않는다.
+- commit 전 transaction 밖에 별도 store public write를 호출하는 경로가 없어
+  부분 commit 경로가 없다.
+
+기존 Lease API 무회귀 확인
+
+- 공개 `get_or_issue()` 본문은 기존 read-check-write와 commit 흐름을 유지한다
+  (`crates/coordinator/src/lease_store.rs:281`,
+  `crates/coordinator/src/lease_store.rs:299`). renew/revoke/resume의 공개 계약은
+  바꾸지 않고 transaction을 받는 내부 조회·삽입 helper만 복합 staging 경로가
+  재사용한다.
+- staging으로 발급한 Lease를 standalone store가 read·renew·revoke·reopen한 뒤
+  동일 operation retry까지 수행하는 테스트가
+  `crates/coordinator/src/staging_store.rs:829`에 있다.
+
+retry 손상 검사 확인
+
+- operation payload와 최초 epoch로 최초 Lease 결과를 재구성한다
+  (`crates/coordinator/src/staging_store.rs:460`). 현재 Lease에서는
+  lease/job/attempt/node/coordinator identity, epoch, issued 시각과 max duration
+  같은 불변 필드를 계속 대조한다. 합법적으로 바뀌는 expiry·renew-after·revoked
+  필드만 비교에서 제외됐다(`crates/coordinator/src/staging_store.rs:465`).
+- 따라서 완화된 것은 정상 가변 필드뿐이고 identity/epoch 손상은 여전히
+  fail-closed한다. renew+revoke 뒤 retry가 최초 operation 결과를 반환하는 실제
+  회귀 테스트는 `crates/coordinator/src/staging_store.rs:829`에 있다.
+
+동시성·뮤테이션 판별력 확인
+
+- 별도 SQLite connection 두 개와 실제 `Barrier`를 쓰는 경쟁 테스트가
+  `crates/coordinator/src/staging_store.rs:654`에 있다. 성공 1건과
+  `JobNotQueued(STAGING)` 1건, Attempt/node/Lease/operation 각 1행과 counter=1을
+  직접 assert한다.
+- fence 증가 뮤테이션은 rollback 뒤 최초 epoch=1 assertion
+  (`crates/coordinator/src/staging_store.rs:648`)을 실패시키고, STAGING 전이
+  뮤테이션은 성공 상태 assertion(`crates/coordinator/src/staging_store.rs:604`)
+  을 실패시킨다. 두 뮤테이션은 실제 프로덕션 분기에 연결돼 있으며 원복 뒤
+  coordinator 전체 테스트가 다시 통과했다.
+
+자체 재검토와 범위 확인
+
+- renew/revoke 뒤 retry의 가변 필드 오판을 고쳤고, 최초 결과 반환과 불변
+  identity/epoch 대조를 분리했다. 공백 plan row-shape 검사, 조각 2a 이전 schema
+  migration 회귀 테스트, 부분 commit 경로 재확인도 반영됐다.
+- 프로덕션 변경은 Coordinator의 `staging_store.rs`, `job_store.rs`,
+  `lease_store.rs`, `lib.rs` 네 파일이며 나머지는 계획·evidence·history 문서다.
+- `crates/coordinator/src/staging_store.rs`는 실제 862줄로 계획의 production 추정
+  상한 360줄을 넘는다. 구현자가 이를 숨기지 않았고, 초과분은 상세 손상 검사,
+  retry 결과 검증, schema/error surface와 단위 테스트가 같은 파일에 들어간
+  결과다. wire/CLI/reservation/dispatch/proto/Raft로 기능 범위를 넓힌 정황은 없다.
+- 이 조각은 로컬 SQLite `DURABLE`만 주장한다. resource reservation, Grant
+  dispatch, multi-node Attempt, canonical control DB migration, compound action,
+  Raft `COMMITTED`를 완료했다고 주장하지 않는다.
+
+최종 결론: 단일 `BEGIN IMMEDIATE` transaction의 all-or-none, rollback 시 epoch
+미소비, 최초 결과 idempotency, 불변 identity/epoch 손상 검출, 기존 Lease API
+무회귀, 실제 connection 경쟁, 뮤테이션 판별력과 제한된 범위를 모두 확인했다.
+잔여 수정 요청 없이 1라운드 `ACCEPTED`다.

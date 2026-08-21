@@ -1,0 +1,96 @@
+=== 구현 보고 — scheduler 로드맵 조각 2b-1 ===
+
+상위 scheduler 로드맵 조각 2의 남은 Attempt/Lease 결합을 한 번에 끝냈다고
+주장하지 않고, 이번 구현은 **single-node local atomic STAGING kernel**로
+범위를 한정했다. 실제 scheduler winner 선택, 자원 reservation, Grant 전송,
+Coordinator 실행 경로 연결, multi-node Attempt, Raft `COMMITTED`는 수행하지
+않았다.
+
+`crates/coordinator/src/staging_store.rs`를 신설해
+`CoordinatorStagingStore::stage_queued_with_lease()`를 구현했다. 한 control DB
+파일의 한 connection에서 `BEGIN IMMEDIATE` transaction을 열고 다음 효과를
+한 번만 commit한다.
+
+- singleton fence counter와 기존 Lease epoch의 최댓값에서 새 epoch를 채번한다.
+- Attempt `CREATED` 행과 ordinal 0의 단일 node 결합을 삽입한다.
+- 같은 job/attempt/node/epoch의 Lease를 삽입한다.
+- Job을 `QUEUED -> STAGING`으로 바꾸고 revision을 증가시킨다.
+- 16-byte operation key와 입력 payload·최초 epoch를 idempotency 행에 저장한다.
+
+caller-provided epoch는 API에 없다. Attempt 삽입 뒤, Lease 삽입 뒤, Job update
+직전의 오류 주입에서 transaction 전체가 rollback되고, 재시도한 최초 epoch가
+1이어서 rollback된 epoch가 소비되지 않음을 확인했다. 동일 operation retry는
+새 epoch를 소비하지 않고 최초 결과를 반환한다.
+
+`job_store.rs`에는 `JobState::Staging`과 `staging_at_unix_ms` row shape를
+추가했다. 기존 조각 2a schema에는 반복 안전한 migration을 적용했다.
+`lease_store.rs`에서는 transaction을 받는 내부 조회·삽입 helper만 추출했고,
+공개 `get_or_issue`·`renew`·`revoke`·`resume` API 본문의 계약과 호출 형태는
+유지했다.
+
+=== 자체 재검토 — 수정 5건 ===
+
+1. 첫 구현은 동일 operation retry에서 현재 Lease의 가변 필드까지 최초 값과
+   비교해, 합법적인 renew/revoke 뒤 재시도를 손상으로 오인했다.
+2. operation payload와 최초 epoch로 최초 Lease 결과를 재구성해 반환하고,
+   현재 Lease에서는 불변 identity와 epoch만 대조하도록 고쳤다.
+3. `QUEUED`/`STAGING` row의 plan이 공백이어도 존재한다고 세던 row-shape 검사를
+   강화했다.
+4. 조각 2a 이전 schema를 실제로 열어 migration하는 회귀 테스트를 추가했다.
+5. 오류 주입 세 지점과 commit 위치를 다시 추적해 부분 commit 경로가 없음을
+   재확인했다.
+
+=== negative·경계·동시성 검증 ===
+
+- 성공 후 Job=`STAGING`, Attempt=`CREATED`, Lease와 Attempt의
+  job/attempt/node/epoch 일치 및 counter 일치를 검사했다.
+- 세 오류 주입 모두 Job/Attempt/Lease/counter/operation 행을 전부 rollback하고
+  epoch를 소비하지 않음을 검사했다.
+- 같은 파일의 별도 connection 두 개를 실제 `Barrier` 뒤 동시에 실행해 정확히
+  한 staging만 commit되고 패자 Attempt/Lease/operation 행이 남지 않음을
+  검사했다.
+- 동일 key 변경 payload, attempt/lease ID 재사용, non-QUEUED Job, 공백 identity,
+  수명 순서·max-duration 위반, clock rollback을 상태 불변으로 거부했다.
+- 기존 Lease epoch 41 뒤에는 42를 발급하고, 잘린 epoch BLOB과 `u64::MAX`는
+  부분 상태 없이 실패했다.
+- reopen 뒤 Job/Attempt/Lease/counter 보존과 기존 Lease store의
+  read/renew/revoke/reopen을 검사했다.
+
+=== 뮤테이션 테스트 ===
+
+1. fence 채번의 `checked_add(1)`을 `checked_add(0)`으로 바꾸자
+   `every_injected_write_failure_rolls_back_job_attempt_lease_counter_and_operation`
+   이 `left: 0, right: 1`로 실패했다. 원복했다.
+2. commit 직전 Job 상태 대입을 `STAGING`에서 `QUEUED`로 바꾸자
+   `success_is_consistent_and_identical_retry_does_not_consume_epoch`이
+   `left: Queued, right: Staging`으로 실패했다. 원복했다.
+
+=== 독립 검수 — ACCEPTED ===
+
+독립 검수자는 단일 `BEGIN IMMEDIATE` transaction의 원자성, rollback 시 epoch
+미소비, 공개 Lease API 무회귀, retry 손상 검사가 불변 identity/epoch를 계속
+대조하는지, 두 뮤테이션의 타당성, 실제 `Barrier` 경쟁 동시성, 변경 범위와
+862줄의 계획 상한 초과 자기 보고까지 코드와 테스트로 대조했다. 1라운드 만에
+잔여 수정 요청 없이 `ACCEPTED`했다. 상세 전문은
+`docs/evidence/_raw/DoD-43_review.txt`에 있다.
+
+=== 감독자 직접 확인 ===
+
+실행 명령:
+
+  cargo test -p gputeer-coordinator
+
+결과:
+
+  PASS — unit 56 + integration 4, 0 failed
+
+제공된 작업 이력에 따라 감독자가 위 명령을 직접 재확인했다. 이 evidence 작성
+환경에서는 `cargo`가 PATH에 없어 별도 재실행 결과를 추가하지 않았으며, 기존
+감독자 확인을 실행 원문으로 가장하지 않는다.
+
+=== 범위 결론 ===
+
+완료한 것은 scheduler 로드맵 조각 2 전체가 아니라 조각 2b-1, 즉 한 노드에
+대한 로컬 SQLite `DURABLE` STAGING 원자 kernel이다. 실제 reservation, Grant
+dispatch, Coordinator wire/CLI 연결, multi-node, canonical control DB migration,
+compound `ControlAction`, Raft `COMMITTED`는 후속이다.

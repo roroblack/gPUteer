@@ -16,6 +16,37 @@
 
 ---
 
+## 2026-08-21 11:58 — scheduler single-node local atomic STAGING kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-43`, scheduler 로드맵 조각 2b-1)
+- 계획: `docs/plans/2026-08-21_1123_scheduler_attempt_lease_v1.md`
+  (상위 9단계 로드맵 조각 2b를 single-node local atomic STAGING kernel인
+  2b-1로 축소).
+- 스트림: Coordinator · QA · 문서.
+- 수행: `crates/coordinator/src/staging_store.rs`를 신설해
+  `CoordinatorStagingStore::stage_queued_with_lease()`를 구현했다. 한 control
+  DB 파일의 한 connection에서 `BEGIN IMMEDIATE` transaction 하나로 fence
+  epoch 채번, Attempt/node/Lease 삽입, `QUEUED -> STAGING` 전이와 operation
+  idempotency 기록을 전부-or-none 처리한다. `job_store.rs`에는
+  `JobState::Staging`과 반복 안전 migration을 추가하고, `lease_store.rs`는
+  transaction을 받는 내부 조회·삽입 helper만 추출해 공개
+  get-or-issue/renew/revoke/resume API 본문을 유지했다. 자체 재검토에서
+  renew/revoke 뒤 retry가 정상 가변 Lease 필드를 손상으로 오인하던 결합
+  버그를 고쳐 최초 결과 반환과 불변 identity/epoch 대조를 분리하고, 공백
+  plan row-shape·조각 2a 이전 migration·부분 commit 경로를 보강했다. 독립
+  검수는 단일 transaction 원자성·rollback epoch 미소비·Lease API 무회귀·
+  identity/epoch 손상 대조·실제 Barrier 경쟁·뮤테이션 2건·프로덕션 4개 파일
+  범위와 `staging_store.rs` 862줄의 계획 상한 360줄 초과 자기 보고를 확인해
+  1라운드 만에 `ACCEPTED`. **scheduler 9단계 로드맵 중 조각 1·2a·2b-1
+  완료** — 남은 조각 2의 다중 노드 결합·Raft `COMMITTED`와 조각 3~9는
+  후속이다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 실행해
+  unit 56 + integration 4, 0 failed 확인. `python scripts/verify_evidence.py`
+  스키마 위반 없음(`DoD-43` PASS, PASS 51/52).
+- 리포트: `docs/plans/2026-08-21_1123_scheduler_attempt_lease_v1.md`의 구현
+  결과 + evidence 문서 —
+  `docs/evidence/DoD-43_scheduler_staging_kernel.md`.
+
+---
+
 ## 2026-08-21 11:02 — scheduler durable Job/Queue truth — 구현 + 독립 검수 + evidence 기록 (`DoD-42`, scheduler 로드맵 조각 2a)
 - 계획: `docs/plans/2026-08-21_1049_scheduler_durable_job_v1.md`
   (상위 9단계 로드맵 조각 2를 durable Job/Queue truth인 2a로 축소).
