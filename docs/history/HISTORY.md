@@ -16,6 +16,27 @@
 
 ---
 
+## 2026-08-24 12:57 — verified terminal AttemptReport durable binding — evidence 기록 (`DoD-51`)
+- 계획: `docs/plans/2026-08-24_1238_terminal_attempt_report_binding_v1.md`
+  (verified terminal AttemptReport durable Attempt/reservation binding 선행 조각).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: 신규 `CoordinatorAttemptReportStore`의 공개 저장 API를
+  `&Verified<pb::AttemptReport>` 전용으로 제한하고 `Verified::get()` 뒤에만 report 필드를
+  읽도록 한 구현을 기록했다. signature 포함 protobuf body와 저장소가 직접 계산한 BLAKE3
+  hash를 first-write fact로 저장하며, 하나의 `BEGIN IMMEDIATE` 안에서 report↔durable Attempt의
+  job/attempt, single node, verified signer, fence와 현재 reservation job/attempt/node owner를
+  5중 대조한다. reservation 부재·owner 불일치·non-terminal outcome은 row 없이 거부하고,
+  exact replay는 전체 protobuf 의미와 signer가 같은 기존 행만 변경 없이 반환한다. load는
+  의도적으로 raw binding이며 현재 authoritative key directory 재검증 전 terminal/release에
+  쓸 수 없다. 자체 재검토에서 미사용 fixture 필드 경고와 오류 문자열을 정리했고 독립 검수는
+  type gate·5중 대조·replay 비우회성·outcome 5종·rollback/상태 무변경·corruption fail-closed·
+  staging helper 무회귀를 확인해 1라운드 `ACCEPTED`했다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 재실행해 unit 104 +
+  integration 4 = 108 passed, 0 failed를 확인했다. `python scripts/verify_evidence.py`로
+  `DoD-51_scheduler_terminal_attempt_report_binding.md` schema v2 PASS를 확인한다.
+- 리포트: `docs/reports/2026-08-24_1257_terminal_attempt_report_binding.md` +
+  `docs/evidence/DoD-51_scheduler_terminal_attempt_report_binding.md`.
+
 ## 2026-08-24 12:19 — verified signed JobManifest durable binding — evidence 기록 (`DoD-50`)
 - 계획: `docs/plans/2026-08-24_1142_scheduler_verified_manifest_durable_binding_v1.md`
   (verified signed Manifest durable binding 선행 조각).

@@ -1,0 +1,160 @@
+=== 구현·검증 기록 — verified terminal AttemptReport durable binding ===
+
+커밋 대상 HEAD: ee5a8367b8215760a126cd17b897e064988ed559 (`DoD-50`)
+계획: docs/plans/2026-08-24_1238_terminal_attempt_report_binding_v1.md
+구현:
+  crates/coordinator/src/attempt_report_store.rs
+  crates/coordinator/src/staging_store.rs
+  crates/coordinator/src/lib.rs
+
+=== 설계 조사와 범위 결정 ===
+
+설계 조사는 authoritative device→member 해석, 기본 `MIRRORED` durability 소비와
+Job terminal 전이를 각각 이 조각보다 큰 작업으로 판정했다.
+
+- authoritative device→member 해석은 committed member/device 상태, action authorization,
+  revision-consistent key/membership view와 control-store가 없어 1일을 넘는다.
+- `MIRRORED` 기본값 정규화만으로는 replica 목적지, failure domain, 저장·전송 상태를
+  판정할 수 없다. 실제 admission 소비 경로까지 닫으려면 1일을 넘는다.
+- Job terminal 전이는 enum/column만 추가할 수 있는 일이 아니다. 규범상 Job은 먼저
+  `RUNNING`이어야 하고 canonical Attempt와 final artifact `COMMITTED` guard를 거쳐야 한다.
+  현재 durable Job은 `STAGING`, Attempt는 `CREATED`까지만 표현하므로 곧바로 terminal로
+  바꾸면 상태기계를 건너뛴 거짓 truth가 된다.
+
+반면 signed terminal `AttemptReport` protocol과 durable Attempt의
+`(job_id, attempt_id, node_id, fence_epoch)`, 동일 owner reservation은 이미 있었다.
+따라서 Job/Attempt 상태를 바꾸거나 reservation을 해제하지 않고, 현재 owner가 제출한
+검증된 terminal evidence를 durable first-write fact로 보존하는 조각을 선택했다. 이는
+재시작 때 evidence가 사라지는 공백과 stale/wrong-attempt report가 향후 terminal/release
+입력에 섞이는 공백을 닫는다.
+
+=== 구현 ===
+
+- 신규 `CoordinatorAttemptReportStore`와
+  `store_verified_terminal_report(&Verified<pb::AttemptReport>)`를 추가했다.
+- 공개 저장 API는 raw `pb::AttemptReport`가 아니라 `&Verified<...>`만 받는다.
+  report 필드는 `Verified::get()` 뒤에만 처음 읽는다.
+- `get_report_binding()`은 raw `StoredAttemptReportBinding`을 반환한다. 의도적으로
+  `Verified<AttemptReport>`가 아니며 terminal 결정 전에 authoritative key directory로
+  서명을 다시 검증해야 한다.
+- 신규 `coordinator_attempt_reports` schema는 PK `(attempt_id, node_id)`, `job_id`,
+  big-endian BLOB `fence_epoch`, `verified_signer_id`, signature를 포함한 protobuf
+  `report_body`, 저장소가 body에서 직접 계산한 BLAKE3 `report_hash`를 저장한다.
+- `staging_store.rs`의 schema 초기화와 Attempt/reservation read helper 두 개를
+  `pub(crate)`로 추출해 같은 coordinator crate의 transaction에서 재사용했다. 기존 공개
+  API와 SQL 의미는 바꾸지 않았다.
+
+=== stale report 혼입 방지 5중 대조 ===
+
+모든 대조는 하나의 `BEGIN IMMEDIATE` transaction 안에서 INSERT 전에 수행된다.
+
+1. report의 `(job_id, attempt_id)`가 durable Attempt의 `(job_id, attempt_id)`와 같다.
+2. report의 `node_id`가 single-node durable Attempt의 유일한 node와 같다.
+3. `Verified::signer_id()`가 report node와 Attempt node 양쪽 모두와 같다.
+4. report의 `fence_epoch`가 durable Attempt의 fence epoch와 같다.
+5. 현재 node reservation의 `(job_id, attempt_id, node_id)`가 report의 세 identity와 같다.
+
+reservation이 없거나 owner identity가 다르면 report row를 만들지 않는다. caller가 준
+hash는 받지 않고 signature를 포함한 `report_body`에서 BLAKE3를 직접 계산해 저장한다.
+
+=== terminal outcome과 replay ===
+
+허용 outcome은 `COMPLETED`, `FAILED`, `INTERRUPTED`, `CANCELLED`,
+`STALE_COMPLETED` 다섯 가지뿐이다. `UNSPECIFIED`와 알려지지 않은 enum 값은 INSERT 전에
+거부한다.
+
+PK가 같은 exact replay는 기존 row의 protobuf 전체 의미와 submission-time signer를
+대조한 뒤 최초 binding을 `created=false`로 반환한다. 기존 행을 생성하거나 변경하지
+않으며 Attempt/reservation 재대조를 건너뛰어 stale row를 새로 넣는 경로가 아니다.
+body 또는 signature가 달라지면 conflict로 거부한다.
+
+=== rollback, load corruption과 상태 무변경 ===
+
+- report INSERT 직후 injected fault는 transaction 전체를 rollback한다.
+- production 저장 경로에는 Job, Attempt, Lease, reservation UPDATE/DELETE가 없다.
+- 성공, 거부, injected fault 모두 Job/Attempt/Lease/reservation 상태를 바꾸거나
+  reservation을 해제하지 않는다.
+- load는 empty/undecodable body, hash, job/attempt/node identity, signer, fence encoding과
+  fence mismatch, missing/different Attempt를 typed corruption으로 fail closed한다.
+- load 결과를 검증 없이 terminal state 또는 release에 사용하는 production consumer는
+  없다.
+
+=== 자체 재검토 ===
+
+자체 재검토에서 fixture의 미사용 필드 경고를 제거하고 오류 문자열을 실제 실패 의미에
+맞게 정리했다. compiler warning 없이 coordinator suite를 통과하는 상태를 확인했다.
+
+=== negative test와 뮤테이션 판별력 ===
+
+- `all_five_known_terminal_outcomes_are_stored`: 허용 terminal outcome 5종을 모두 저장한다.
+- `unspecified_and_unknown_outcomes_create_no_row`: unspecified/미지 enum이 row를 만들지 않는다.
+- `wrong_job_attempt_and_stale_fence_create_no_row`: wrong job/attempt와 stale fence가 row를
+  만들지 않는다.
+- `attempt_node_and_verified_signer_are_bound_to_durable_owner`: report node, Attempt node와
+  verified signer의 일치를 강제한다.
+- `missing_or_different_reservation_owner_creates_no_row`: reservation 부재/다른 owner를
+  fail closed한다.
+- `exact_replay_returns_first_row_and_changed_body_or_signature_conflicts`: exact replay만 최초
+  row를 반환하고 changed protobuf body/signature는 conflict다.
+- `signature_and_binding_survive_reopen_without_state_or_release_side_effects`: 재시작 뒤
+  signature 포함 body와 binding이 복원되고 control state/release side effect가 없다.
+- `failure_after_insert_rolls_back_report_and_preserves_control_state`: INSERT 뒤 fault가 report를
+  rollback하고 기존 control state를 보존한다.
+- `corrupt_body_hash_identity_signer_and_fence_fail_closed`: durable 손상 전부가 fail closed한다.
+- 뮤테이션 1: node/signer binding guard 제거 시 지정 negative test가 실패(exit 101).
+- 뮤테이션 2: fence guard 제거 시 지정 negative test가 실패(exit 101).
+- 두 뮤테이션은 즉시 원복했고 suite가 다시 통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 공개 API가 `&Verified<...>`만 받고 raw 저장 API나 다른 production INSERT
+경로가 없음을 `attempt_report_store.rs:137,184`에서 확인했다. report 필드 최초 관찰은
+`:196`의 `verified.get()` 뒤다. 5중 대조는 같은 `BEGIN IMMEDIATE` 안의
+`:204,225,300,329`에서 모두 수행된다.
+
+`:209`의 exact replay는 기존 행을 만들거나 바꾸지 않고 protobuf 전체 의미와 signer를
+대조하므로 stale 우회가 아니다. `:171,431`의 load 결과는 `Verified`가 아니며 검증 없이
+쓰는 production consumer가 없다. terminal outcome 5종 제한은 `:287`, fault 전체 rollback과
+Job/Attempt/Lease/reservation UPDATE 부재는 `:239,256`, 손상 fail-closed는 `:386`, replay의
+protobuf 전체 의미·signer 대조는 `:209`에서 확인했다. `staging_store.rs:198,616,770`의
+변경도 기존 공개 API와 SQL 의미를 바꾸지 않았다. 수정 요청 없이 1라운드에서 ACCEPTED했다.
+
+세부 receipt: docs/evidence/_raw/DoD-51_review.txt
+
+=== 감독자 직접 재확인 ===
+
+감독자가 직접 실행한 명령:
+
+  cargo test -p gputeer-coordinator
+
+결과:
+
+  unit tests:        104 passed, 0 failed
+  integration tests:  4 passed, 0 failed
+  total:             108 passed, 0 failed
+  exit code:           0
+
+추가 구현 세션 확인:
+
+  cargo build --workspace --exclude gputeer-runtime-windows
+    PASS
+  cargo test --workspace --exclude gputeer-runtime-windows --no-fail-fast
+    PASS (기존 crypto crash-child fixture 1건 ignored)
+
+`rustfmt` component 미설치로 `cargo fmt --check`는 실행하지 못했다. Rust compiler warning은
+없었다. Cargo가 기존 환경의 `could not canonicalize path C:\Users\playdata2` 경고를
+출력했으나 테스트 결과에는 영향을 주지 않았다.
+
+=== 범위 밖 ===
+
+- load 시 서명을 재검증하지 않는 것은 의도된 설계다. terminal consumer가 당시
+  authoritative key directory로 다시 검증해야 한다.
+- Job/Attempt terminal 상태 전이와 그에 필요한 RUNNING/canonical guard
+- nested artifact/checkpoint validity와 durability 검증
+- runtime-stop 증명
+- Lease revoke와 reservation release
+- production wire routing
+- authoritative device→member 해석, `JobRequirements` projection, 기본 `MIRRORED` 소비
+
+판정: PASS — verified terminal AttemptReport durable Attempt/reservation binding 조각을
+구현하고 독립 검수 1라운드 ACCEPTED와 감독자 coordinator 108 passed로 확인했다.

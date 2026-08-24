@@ -195,64 +195,68 @@ pub struct CoordinatorStagingStore {
     connection: Connection,
 }
 
+pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), StagingStoreError> {
+    job_store::initialize_schema(connection).map_err(map_job_error)?;
+    lease_store::initialize_schema(connection).map_err(map_lease_error)?;
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS coordinator_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                state TEXT NOT NULL,
+                fence_epoch BLOB NOT NULL,
+                lease_id TEXT NOT NULL,
+                created_at_unix_ms BLOB NOT NULL,
+                revision BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS coordinator_attempt_nodes (
+                attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
+                node_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                PRIMARY KEY(attempt_id, ordinal),
+                UNIQUE(attempt_id, node_id)
+            );
+            CREATE TABLE IF NOT EXISTS coordinator_fence_state (
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                max_issued_epoch BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS staging_operation_idempotency (
+                operation_key BLOB PRIMARY KEY CHECK(length(operation_key) = 16),
+                job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
+                lease_id TEXT NOT NULL REFERENCES coordinator_leases(lease_id),
+                request_payload BLOB NOT NULL,
+                fence_epoch BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS coordinator_node_reservations (
+                node_id TEXT PRIMARY KEY
+                    REFERENCES coordinator_agent_inventory(node_id),
+                job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                attempt_id TEXT NOT NULL UNIQUE
+                    REFERENCES coordinator_attempts(attempt_id)
+                    DEFERRABLE INITIALLY DEFERRED,
+                inventory_revision BLOB NOT NULL,
+                reserved_at_unix_ms BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS coordinator_node_reservation_gpus (
+                node_id TEXT NOT NULL
+                    REFERENCES coordinator_node_reservations(node_id),
+                gpu_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                PRIMARY KEY(node_id, ordinal),
+                UNIQUE(node_id, gpu_id)
+            );
+            "#,
+        )
+        .map_err(map_sql_error)
+}
+
 impl CoordinatorStagingStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StagingStoreError> {
         let mut connection = Connection::open(path).map_err(map_sql_error)?;
         connection.busy_timeout(BUSY_TIMEOUT).map_err(map_sql_error)?;
-        job_store::initialize_schema(&mut connection).map_err(map_job_error)?;
-        lease_store::initialize_schema(&mut connection).map_err(map_lease_error)?;
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS coordinator_attempts (
-                    attempt_id TEXT PRIMARY KEY,
-                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
-                    state TEXT NOT NULL,
-                    fence_epoch BLOB NOT NULL,
-                    lease_id TEXT NOT NULL,
-                    created_at_unix_ms BLOB NOT NULL,
-                    revision BLOB NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS coordinator_attempt_nodes (
-                    attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
-                    node_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL,
-                    PRIMARY KEY(attempt_id, ordinal),
-                    UNIQUE(attempt_id, node_id)
-                );
-                CREATE TABLE IF NOT EXISTS coordinator_fence_state (
-                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-                    max_issued_epoch BLOB NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS staging_operation_idempotency (
-                    operation_key BLOB PRIMARY KEY CHECK(length(operation_key) = 16),
-                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
-                    attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
-                    lease_id TEXT NOT NULL REFERENCES coordinator_leases(lease_id),
-                    request_payload BLOB NOT NULL,
-                    fence_epoch BLOB NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS coordinator_node_reservations (
-                    node_id TEXT PRIMARY KEY
-                        REFERENCES coordinator_agent_inventory(node_id),
-                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
-                    attempt_id TEXT NOT NULL UNIQUE
-                        REFERENCES coordinator_attempts(attempt_id)
-                        DEFERRABLE INITIALLY DEFERRED,
-                    inventory_revision BLOB NOT NULL,
-                    reserved_at_unix_ms BLOB NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS coordinator_node_reservation_gpus (
-                    node_id TEXT NOT NULL
-                        REFERENCES coordinator_node_reservations(node_id),
-                    gpu_id TEXT NOT NULL,
-                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-                    PRIMARY KEY(node_id, ordinal),
-                    UNIQUE(node_id, gpu_id)
-                );
-                "#,
-            )
-            .map_err(map_sql_error)?;
+        initialize_schema(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -609,7 +613,7 @@ fn insert_attempt(connection: &Connection, attempt: &StoredAttempt) -> Result<()
     Ok(())
 }
 
-fn fetch_attempt(connection: &Connection, attempt_id: &str) -> Result<Option<StoredAttempt>, StagingStoreError> {
+pub(crate) fn fetch_attempt(connection: &Connection, attempt_id: &str) -> Result<Option<StoredAttempt>, StagingStoreError> {
     let raw = connection
         .query_row(
             "SELECT attempt_id, job_id, state, fence_epoch, lease_id, created_at_unix_ms, revision
@@ -763,7 +767,7 @@ fn validate_selected_gpus_exist(
     Ok(())
 }
 
-fn fetch_node_reservation(
+pub(crate) fn fetch_node_reservation(
     connection: &Connection,
     node_id: &str,
 ) -> Result<Option<StoredNodeReservation>, StagingStoreError> {

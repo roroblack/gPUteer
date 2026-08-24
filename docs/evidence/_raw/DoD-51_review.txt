@@ -1,0 +1,77 @@
+=== 독립 검수 receipt — DoD-51 verified terminal AttemptReport durable binding ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 완료 결론을 전제로 삼지 않고 계획, production 저장 API/INSERT 경로,
+`Verified` 필드 관찰 순서, transaction 안의 Attempt/reservation binding, replay, load 경계,
+outcome 제한, rollback·상태 무변경, corruption 처리와 staging helper 변경 범위를 대조했다.
+
+1. 미검증 report 저장 차단과 필드 관찰 순서
+
+- `attempt_report_store.rs:137,184`에서 production 공개 저장 API는 raw
+  `pb::AttemptReport`가 아니라 `&Verified<pb::AttemptReport>`만 받는다.
+- fault injection을 받는 inner 함수는 private이다. raw 저장 API가 없고
+  `coordinator_attempt_reports` production INSERT도 이 경로 하나뿐이다.
+- report 필드의 최초 관찰은 `attempt_report_store.rs:196`의 `verified.get()` 뒤다.
+  따라서 서명 검증을 통과한 타입 경계 전에 job/attempt/node/fence/outcome을 쓰지 않는다.
+
+2. 단일 transaction 안의 stale report 방지 5중 대조
+
+- `attempt_report_store.rs:204`에서 `BEGIN IMMEDIATE` transaction을 연 뒤 기존 replay를
+  먼저 판정하고, 신규 row에 대해서는 같은 transaction 안에서 durable Attempt와 현재
+  reservation을 읽는다.
+- `:225,300`은 report `(job_id, attempt_id)`와 durable Attempt identity를 대조한다.
+- `:300`은 report node가 single-node Attempt의 유일한 node인지 대조한다.
+- `:300`은 `Verified::signer_id()`가 report node와 Attempt node 양쪽 모두와 같은지
+  대조한다.
+- `:300`은 report fence epoch와 durable Attempt fence epoch를 대조한다.
+- `:225,329`는 현재 reservation의 `(job_id, attempt_id, node_id)`가 report와 같은지
+  대조한다. reservation이 없거나 owner가 다르면 INSERT 전에 오류가 나고 row가 없다.
+
+따라서 job/attempt, single node, verified signer, fence, reservation owner의 다섯 경계가
+하나의 write lock 아래 함께 고정된다.
+
+3. exact replay가 stale 우회가 아닌 이유
+
+- `attempt_report_store.rs:209`의 exact replay는 기존 PK row가 있을 때 protobuf report의
+  전체 의미와 submission-time signer를 비교한다.
+- 동일하면 기존 binding을 `created=false`로 반환할 뿐 행을 생성하거나 변경하지 않는다.
+- body 또는 signature가 다르면 `ReportConflict`다. replay branch는 stale owner가 새 report
+  row를 삽입하거나 기존 row를 덮어쓰는 production 경로가 아니다.
+
+4. raw load 경계와 terminal outcome 제한
+
+- `attempt_report_store.rs:171,431`의 load 결과는 raw
+  `StoredAttemptReportBinding`이고 `Verified<AttemptReport>`가 아니다.
+- production call graph에는 load 결과를 서명 재검증 없이 Job/Attempt terminal 전이나
+  reservation release에 소비하는 경로가 없다.
+- `attempt_report_store.rs:287`은 `COMPLETED`, `FAILED`, `INTERRUPTED`, `CANCELLED`,
+  `STALE_COMPLETED`만 허용한다. `UNSPECIFIED`와 unknown enum은 row 생성 전에 거부한다.
+
+5. rollback, 상태 무변경과 corruption fail-closed
+
+- `attempt_report_store.rs:239,256`에서 report INSERT 뒤 fault는 transaction 전체를
+  rollback한다.
+- production 경로에는 Job, Attempt, Lease, reservation UPDATE 또는 DELETE가 없다.
+  저장 성공/실패가 terminal state를 만들거나 reservation을 해제하지 않는다.
+- `attempt_report_store.rs:386`의 load는 body decode/hash, row/report identity, signer,
+  big-endian fence encoding과 Attempt 재대조 손상을 fail closed한다.
+- report hash는 caller 값이 아니라 signature 포함 `report_body`에서 저장소가 직접 계산한다.
+
+6. staging helper 변경과 범위
+
+- `staging_store.rs:198,616,770`은 schema 초기화와 transaction read helper 두 개를
+  `pub(crate)`로 추출했을 뿐 기존 공개 API와 SQL 의미를 바꾸지 않았다.
+- Job/Attempt terminal 상태 전이, nested artifact 검증, runtime-stop 증명, Lease revoke,
+  reservation release와 production wire routing은 구현하지 않았다.
+- 자체 재검토의 미사용 fixture 필드 경고 제거와 오류 문자열 정리도 production safety
+  계약을 완화하지 않았다.
+
+판정: 공개 API의 `Verified` type gate와 필드 관찰 순서가 맞고, 신규 INSERT 전에 현재
+durable Attempt와 reservation을 다섯 경계로 한 transaction 안에서 대조한다. replay는
+전체 protobuf 의미와 signer가 같은 기존 first-write fact만 반환하며 overwrite가 아니다.
+raw load, terminal outcome 제한, rollback·상태 무변경, corruption fail-closed와 staging
+helper 무회귀도 확인했다. 범위를 terminal 전이/release/production 연결로 과장하지 않았으므로
+수정 요청 없이 1라운드 `ACCEPTED`한다.
