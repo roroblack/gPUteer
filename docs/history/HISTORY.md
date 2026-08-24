@@ -16,6 +16,28 @@
 
 ---
 
+## 2026-08-24 18:00 — GPU ScopeCandidate 순수 kernel — evidence 기록 (`DoD-55`)
+- 계획: `docs/plans/2026-08-24_1700_gpu_scope_first_slice_v1.md`
+  (실물 GPU 실측 뒤 full Grant/Lease scope를 재판정해 계산 부분만 분리한 선행 조각).
+- 스트림: Runtime · Scheduler · QA · 문서.
+- 수행: `crates/scheduler/src/scope.rs:130`에 관측·요구·명시 자원값과 caller-supplied
+  `ProvenanceGate`만 받는 `gpu_scope_candidate()`를 추가했다. kernel은 I/O·clock·환경변수·
+  난수·crypto·전역 상태 없이 입력 검증·정렬·`BTreeMap`/`BTreeSet` 계산만 하며,
+  `(available_vram, gpu_id)` 전체 튜플로 선택하고 결과 ID를 재정렬한다. 동점 GPU를 포함한
+  4개 입력의 실제 24개 순열에서 `ScopeCandidate` 전체가 동일하다. provenance는 caller 입력일
+  뿐 자체 서명/membership 검증이 아니며, `PARTITIONED`, CUDA runtime 미해소,
+  `DerivedFromTotalAndReserved`는 typed error로 닫는다. 자체 재검토에서 proto의 CUDA runtime
+  요구가 타입에서 소실될 결함을 고쳐 필드·unresolved error·negative test를 추가했고,
+  model/driver/compute는 constraint가 있을 때만 요구해 irrelevant fact 과잉 배제를 피했다.
+  독립 검수는 순수성·동점/24개 순열/전체 결과·provenance 경계·PARTITIONED 상시 거부·CUDA
+  임의 규칙 부재·파생 VRAM 미사용과 회귀를 확인해 1라운드 `ACCEPTED`했다.
+- 검증: production provenance gate와 PARTITIONED 거부 조기 반환 뮤테이션 2건은 각각 지정
+  테스트 실패 후 원복·재통과했다. 감독자가 `cargo test -p gputeer-scheduler --no-fail-fast`를
+  직접 재실행해 신규 14 + hard-filter 33 + best-fit 20 = 67 passed, 0 failed를 확인했다.
+  `python scripts/verify_evidence.py`로 `DoD-55_gpu_scope_candidate_kernel.md` schema v2 PASS를
+  확인한다.
+- 리포트: `docs/evidence/DoD-55_gpu_scope_candidate_kernel.md` (구현·검수·한계·결정 기록).
+
 ## 2026-08-24 16:55 — resolved-input effective replica count 순수 kernel — evidence 기록 (`DoD-54`)
 - 계획: `docs/plans/2026-08-24_1634_effective_replica_count_kernel_v1.md`
   (holder/freshness/membership 해석을 입력으로 받는 순수 count 선행 조각).

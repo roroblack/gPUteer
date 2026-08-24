@@ -1,0 +1,152 @@
+=== 구현·검증 기록 — GPU ScopeCandidate 순수 kernel ===
+
+커밋 대상 HEAD: 2637e52d8c1057c20de534df56df7b428686a421 (`DoD-54`)
+계획: docs/plans/2026-08-24_1700_gpu_scope_first_slice_v1.md
+구현:
+  crates/scheduler/src/scope.rs
+  crates/scheduler/src/lib.rs
+  crates/scheduler/tests/gpu_scope_candidate.rs
+
+=== 이 조각을 선택한 배경 ===
+
+Grant/Lease scope는 NVML UUID provenance와 확정 자원값이 없다는 이유로 반복해서
+차단돼 있었다. 실물 GPU 호스트에서 RTX 4070 SUPER의 NVML UUID, PCI,
+compute capability, VRAM 등을 실측한 뒤 다시 판정했다. 그 결과 실제 GPU 값 자체가
+없다는 차단만 해소됐고, 관측을 authoritative truth로 승격할 서명·membership·durable
+binding 차단은 그대로였다. 따라서 full ResourceScope나 Grant/Lease를 만들지 않고,
+명시 입력에서 ScopeCandidate만 계산하는 순수 kernel을 떼어냈다.
+
+=== 구현 경계 ===
+
+- crates/scheduler/src/scope.rs:5 부근에 관측·요구·자원 입력 타입과
+  ProvenanceGate를 추가했다.
+- crates/scheduler/src/scope.rs:77에 ScopeCandidate를 추가했다.
+- crates/scheduler/src/scope.rs:109에 typed ScopeError를 추가했다.
+- crates/scheduler/src/scope.rs:130의 gpu_scope_candidate()는 입력을 읽고 검증·정렬한 뒤
+  BTreeMap/BTreeSet 기반 canonical 결과만 만든다. I/O, clock, environment variable,
+  randomness, crypto, DB/network, global state에 접근하지 않는다.
+- crates/scheduler/src/lib.rs:23의 module/export 추가가 기존 production 파일 변경의 전부다.
+- ResourceScope, Grant/Lease, 저장·서명·상태 전이 API는 만들지 않았다.
+
+=== 결정성과 입력 순서 독립성 ===
+
+production은 GPU ID를 먼저 canonical 검사하고, 적격 GPU를
+(available_vram_bytes, gpu_id) 전체 튜플 오름차순으로 정렬해 필요한 개수만 고른다.
+동일 VRAM 동점도 gpu_id로 풀린다. 선택 뒤 결과 ID는 다시 오름차순으로 정렬한다.
+
+crates/scheduler/tests/gpu_scope_candidate.rs:68의 재귀 permutations()는 remaining의
+각 index를 제거해 재귀 호출하고 빈 remaining에서 결과를 추가한다. line 117의 테스트는
+동점 GPU를 포함한 4개 입력의 실제 4! = 24개 순열을 모두 만들고, 각 순열에서
+ScopeCandidate 전체를 assert_eq!로 비교한다. allowlist와 writable-prefix 순서도 별도
+테스트로 전체 결과 동등성을 확인한다.
+
+=== fail-closed와 입증하지 않는 값을 만들지 않는 경계 ===
+
+- ProvenanceGate::Verified는 caller가 공급한 입력일 뿐이다. kernel은 서명, signer,
+  membership 또는 canonical observation을 스스로 검증하지 않는다.
+  Unverified는 즉시 ScopeError::UnverifiedProvenance다.
+- PARTITIONED는 GPU가 지원한다고 주장하는 mode 입력과 무관하게 항상
+  ScopeError::PartitionedAllocationUnproven이다. NVML [N/A]를 false, unsupported,
+  healthy 같은 긍정 값으로 바꾸지 않는다.
+- cuda_runtime_version 요구는 타입에 보존한다. 호환 규범이 없으므로 exact match나
+  driver mapping을 만들지 않고 ScopeError::CudaRuntimeCompatibilityUnresolved로 닫는다.
+- AvailableVramObservation::DerivedFromTotalAndReserved는 선택 계산에 쓰지 않고
+  ScopeError::NonAuthoritativeAvailableVram으로 거부한다.
+- model, driver, compute capability는 해당 constraint가 있을 때만 요구한다.
+  irrelevant fact의 부재 때문에 후보를 과잉 배제하지 않는다.
+
+근거는 CLAUDE.md:96의 "값을 모르면 비워 둔다. 추정으로 채우면 그 오류가 조용히
+스케줄링 결정까지 간다" 원칙과 proto/common.proto의 GpuRequest VRAM/count 및
+ResourceScope 자원 필드다.
+
+=== 자체 재검토에서 수정한 결함 ===
+
+초안의 JobGpuRequirements가 proto의 cuda_runtime_version 요구를 표현하지 않아 caller
+adapter가 해당 요구를 조용히 버릴 수 있음을 발견했다. 필드를 보존하고, 임의 호환 규칙
+대신 CudaRuntimeCompatibilityUnresolved typed error와 negative test를 추가했다.
+
+또한 model/driver/compute를 모든 GPU에 무조건 요구하던 과잉 배제를 피하도록 각 constraint가
+실제로 있을 때만 해당 fact를 요구하게 했다. health=false 또는 앞선 compatibility gate에서
+제외된 GPU의 뒤쪽 irrelevant fact도 요구하지 않는다.
+
+=== negative test와 production 뮤테이션 ===
+
+- unverified_provenance_is_an_explicit_gate_not_a_kernel_inference:
+  production provenance gate 조기 반환 분기를 제거하자 Err 대신 Ok(ScopeCandidate)를 받아
+  실패했다. 분기를 원복한 뒤 통과했다.
+- partitioned_allocation_is_rejected_even_when_input_claims_mig_support:
+  production PARTITIONED 거부 조기 반환 분기를 제거하자 Partitioned ScopeCandidate가
+  생성돼 실패했다. 분기를 원복한 뒤 통과했다.
+- measured_rtx_fixture_does_not_invent_missing_time_health_or_available_vram:
+  실측 RTX fixture의 누락 time/revision/health와 total-minus-reserved 파생 VRAM을 차례로
+  typed error로 확인한다.
+- cuda_runtime_requirement_is_not_silently_ignored_or_given_invented_compatibility:
+  CUDA runtime 요구가 조용히 소실되거나 임의 규칙으로 통과하지 않음을 확인한다.
+- all_four_gpu_input_permutations_produce_the_identical_candidate:
+  동점 GPU를 포함한 24개 순열의 ScopeCandidate 전체 동등성을 확인한다.
+
+두 뮤테이션은 실제 production 조기 반환 분기를 바꿨고, 각각 지정 테스트가 실패했다.
+둘 다 원복한 뒤 전체 suite가 통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 순수성, 동점 포함 결정성, 재귀 순열 생성기가 실제 4!를 만들고
+ScopeCandidate 전체를 비교하는지, ProvenanceGate가 caller 입력이고 kernel 자체 검증이
+없는지, PARTITIONED가 mode claim과 무관하게 항상 거부되는지, CUDA 임의 호환 규칙이
+없는지, DerivedFromTotalAndReserved가 계산에 쓰이지 않는지를 source/test에서 확인했다.
+
+검수자는 신규 14건과 DoD-41 hard-filter 33건, DoD-45 best-fit 20건을 직접 재실행해
+합계 67 passed, 0 failed를 확인하고 잔여 수정 요청 없이 1라운드 ACCEPTED했다.
+상세 receipt: docs/evidence/_raw/DoD-55_review.txt
+
+=== 감독자 직접 재확인 ===
+
+실행 명령:
+
+  C:\Users\playdata2\.cargo\bin\cargo.exe test -p gputeer-scheduler --no-fail-fast
+
+실행 시각: 2026-08-24, DoD-55 evidence 작성 세션
+exit code: 0
+
+출력 요약:
+
+  warn: could not canonicalize path C:\Users\playdata2
+      Finished `test` profile [unoptimized + debuginfo] target(s in 0.08s
+
+  src/lib.rs unit harness:             0 passed, 0 failed
+  tests/best_fit.rs:                  20 passed, 0 failed
+  tests/gpu_scope_candidate.rs:       14 passed, 0 failed
+  tests/hard_filter.rs:               33 passed, 0 failed
+  doc-tests:                           0 passed, 0 failed
+  total:                              67 passed, 0 failed
+  exit code:                           0
+
+신규 14개 테스트 이름:
+
+  candidate_preserves_explicit_scope_values_and_selects_tight_gpus ... ok
+  cuda_runtime_requirement_is_not_silently_ignored_or_given_invented_compatibility ... ok
+  blank_noncanonical_and_duplicate_gpu_ids_are_typed_canonical_errors ... ok
+  exact_requirement_boundaries_pass_and_one_byte_short_fails ... ok
+  missing_explicit_resource_values_never_receive_defaults ... ok
+  missing_or_zero_gpu_requirements_fail_closed_without_proto_defaults ... ok
+  measured_rtx_fixture_does_not_invent_missing_time_health_or_available_vram ... ok
+  partitioned_allocation_is_rejected_even_when_input_claims_mig_support ... ok
+  requirement_allowlist_and_prefix_orders_do_not_change_the_candidate ... ok
+  unhealthy_or_incompatible_gpus_never_enter_the_candidate ... ok
+  writable_prefixes_are_canonicalized_and_malformed_values_fail_closed ... ok
+  missing_required_gpu_facts_fail_closed_only_when_the_constraint_needs_them ... ok
+  all_four_gpu_input_permutations_produce_the_identical_candidate ... ok
+  unverified_provenance_is_an_explicit_gate_not_a_kernel_inference ... ok
+
+=== 범위 밖과 잔여 위험 ===
+
+- ProvenanceGate::Verified는 caller 입력일 뿐 kernel이 서명·membership을 검증하지 않는다.
+- CUDA runtime compatibility는 아직 판정할 수 없다.
+- shared mode 입력은 실제 MPS/동일-owner enforcement를 입증하지 않는다.
+- wire ResourceScope, Grant/Lease, 저장·서명·전이는 구현하지 않았다.
+- MIG partitioned allocation은 입증할 수 없다.
+- 실물 NVML 실측은 하드웨어 값 부재만 해소했다. authoritative provenance 차단은 그대로다.
+
+최종 판정: PASS — 서명·저장·전이와 분리된 ScopeCandidate 순수 kernel의 결정성,
+fail-closed, unknown 보존 경계를 14개 신규 테스트, production 조기 반환 뮤테이션 2건,
+독립 검수 1라운드 ACCEPTED와 감독자 67-test 회귀로 확인했다.

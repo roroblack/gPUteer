@@ -1,0 +1,98 @@
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+검수 범위는 ScopeCandidate kernel의 순수성, 동점 포함 입력 순서 독립성, provenance의
+caller/kernel 책임 경계, PARTITIONED·CUDA runtime·파생 VRAM의 fail-closed, 자체 재검토
+수정, production 뮤테이션 판별력, 변경 범위와 scheduler 회귀였다.
+
+순수 kernel 확인
+
+- 공개 진입점은 `crates/scheduler/src/scope.rs:130`의 `gpu_scope_candidate()`다.
+- `crates/scheduler/src/scope.rs:130-281`은 참조 입력을 읽고 typed validation, 정렬,
+  `BTreeMap`/`BTreeSet` 집계와 `ScopeCandidate` 구성만 한다. I/O, system clock,
+  environment variable, randomness, crypto, DB/network, global state 접근이 없다.
+- `crates/scheduler/src/lib.rs:23` 부근의 module/export 추가가 기존 production 파일 변경의
+  전부다. 저장소, 상태 전이, wire/proto 변경은 없다.
+
+동점 포함 결정성과 전체 결과 비교 확인
+
+- `crates/scheduler/src/scope.rs:265`의 `matching.sort_unstable()`는
+  `(available_vram, gpu_id)` 튜플 전체를 정렬한다. Rust 튜플 정렬이 첫 필드 동점에서
+  `gpu_id`를 비교하므로 동일 VRAM도 결정적이다.
+- `crates/scheduler/src/scope.rs:268-277`은 필요한 prefix만 선택한 뒤 결과 GPU ID를 다시
+  정렬한다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:68`의 `permutations()`는 remaining의 모든
+  index를 하나씩 제거해 재귀 호출하고 빈 remaining에서 하나를 기록한다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:117`은 동일 VRAM인 gpu-a/gpu-b를 포함한
+  4개 입력을 주므로 실제 4! = 24개 순열이 생성된다. 각 순열에서 selected ID만이 아니라
+  `ScopeCandidate` 전체를 `assert_eq!`한다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:145`는 model/compute allowlist와 writable
+  prefix 순서를 뒤집어도 전체 result가 동일함을 별도로 확인한다.
+
+provenance 경계 확인
+
+- `crates/scheduler/src/scope.rs:13`의 `ProvenanceGate`는 `Verified`/`Unverified` caller
+  입력이다.
+- `crates/scheduler/src/scope.rs:136-138`은 `Unverified`를 즉시
+  `ScopeError::UnverifiedProvenance`로 닫는다.
+- 함수 안에는 서명·signer·membership·canonical observation 검증이 없다. 따라서
+  `Verified`는 kernel이 증명한 사실이 아니라 caller가 공급한 gate다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:166`이 unverified를 typed error로 고정한다.
+  production 조기 반환 제거 뮤테이션에서 이 테스트가 Err 대신 Ok를 받아 실패했고 원복 뒤
+  통과했다.
+
+입증할 수 없는 값의 fail-closed 확인
+
+- `crates/scheduler/src/scope.rs:161-163`은 요구 allocation mode가 PARTITIONED이면 GPU의
+  mode claim을 읽기 전에 항상 `PartitionedAllocationUnproven`을 반환한다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:391`은 GPU가 PARTITIONED 지원을 주장해도
+  오류여야 함을 확인한다. production 조기 반환 제거 뮤테이션에서 Partitioned candidate가
+  생성돼 실패했고 원복 뒤 통과했다.
+- `crates/scheduler/src/scope.rs:155-157`은 보존된 CUDA runtime 요구가 있으면 임의 exact
+  match나 driver mapping 없이 `CudaRuntimeCompatibilityUnresolved`로 닫는다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:342`가 해당 요구의 조용한 소실과 임의
+  호환 판정을 막는다.
+- `crates/scheduler/src/scope.rs:250-260`은
+  `AvailableVramObservation::DerivedFromTotalAndReserved`를 numeric selection에 넣지 않고
+  `NonAuthoritativeAvailableVram`으로 반환한다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:179`의 RTX 4070 SUPER fixture는
+  observed time, revision, health가 없으면 차례로 typed error이며 health를 채운 뒤에도
+  total-minus-reserved 파생값이 authoritative available VRAM으로 쓰이지 않음을 확인한다.
+
+자체 재검토 수정 확인
+
+- `crates/scheduler/src/scope.rs:40`의 `JobGpuRequirements.cuda_runtime_version`은 proto 요구를
+  타입에 보존한다. `scope.rs:155-157`과 전용 negative test가 규범 없는 호환성 창작 대신
+  typed unresolved로 닫는다.
+- `crates/scheduler/src/scope.rs:211-242`의 model/driver/compute fact는 각 constraint가
+  비어 있지 않거나 설정됐을 때만 요구된다.
+- `crates/scheduler/tests/gpu_scope_candidate.rs:225`은 constraint를 제거하면 model/driver/
+  compute fact가 없어도 통과함을 확인해 irrelevant fact 과잉 배제를 막는다.
+
+규범과 변경 범위 확인
+
+- `CLAUDE.md:96`은 unknown을 비워 두고 추정으로 채우지 말라는 원칙을 둔다.
+- `proto/common.proto:187-193`의 `GpuRequest`가 VRAM/count와 CUDA·allocation/model 요구를,
+  `proto/common.proto:206-212`의 `ResourceScope`가 GPU와 CPU/RAM/workspace/prefix 자원을 둔다.
+- 현재 조각은 `ScopeCandidate`까지만 만들며 ResourceScope, Grant/Lease, storage, signature,
+  transition을 구현하지 않는다.
+- shared mode는 입력 mode를 소비할 뿐 MPS 또는 동일-owner enforcement를 검사하지 않는다.
+  `[N/A]`를 false, unsupported, healthy로 치환하는 코드도 없다.
+
+직접 재실행
+
+  cargo test -p gputeer-scheduler --no-fail-fast
+
+  gpu_scope_candidate:               14 passed, 0 failed
+  DoD-41 hard-filter regression:     33 passed, 0 failed
+  DoD-45 best-fit regression:         20 passed, 0 failed
+  total:                              67 passed, 0 failed
+  exit code:                           0
+
+최종 결론
+
+순수성, 동일 VRAM의 gpu_id tie-break, 실제 24개 순열과 ScopeCandidate 전체 비교,
+provenance caller 입력/자체 검증 부재, PARTITIONED의 mode claim 무관 상시 거부, CUDA 임의
+규칙 부재, DerivedFromTotalAndReserved 미사용, 자체 수정과 production 뮤테이션 판별력,
+14+33+20 회귀를 확인했다. 잔여 수정 요청 없이 1라운드 `ACCEPTED`다.
