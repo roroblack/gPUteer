@@ -8,7 +8,12 @@ pub mod durability;
 pub mod writer;
 
 pub use atomic::{gc_partial, replace_with_retry, sync_dir, write_once, RetryPolicy};
-pub use durability::{DurabilityState, Durability, CheckpointManifest, CheckpointFile};
+pub use durability::{
+    evaluate_effective_replicas, CheckpointFile, CheckpointManifest, CountedReplica, Durability,
+    DurabilityState, EffectiveReplicaReport, ExcludedReplica, FactResolution, HolderValidation,
+    ReplicaEvaluationError, ReplicaEvaluationScope, ReplicaExclusionReason, ReplicaKind,
+    ResolvedHolderObservation,
+};
 pub use writer::{find_resume_point, manifest_for, read_pointer, startup_gc, write_checkpoint};
 
 use std::path::PathBuf;

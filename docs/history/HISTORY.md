@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-08-24 16:55 — resolved-input effective replica count 순수 kernel — evidence 기록 (`DoD-54`)
+- 계획: `docs/plans/2026-08-24_1634_effective_replica_count_kernel_v1.md`
+  (holder/freshness/membership 해석을 입력으로 받는 순수 count 선행 조각).
+- 스트림: Runtime · Scheduler · QA · 문서.
+- 수행: `crates/checkpoint/src/durability.rs:178`에 외부 resolver가 해소한 observation만 받는
+  `evaluate_effective_replicas()`와 결정적 `EffectiveReplicaReport`를 추가했다. kernel은
+  시계·TTL·I/O·DB·network·난수·membership 조회 없이 입력 검증·정렬·`BTreeMap`/`BTreeSet`
+  집계만 하며, 4개 관측의 실제 24개 순열에서 report 전체가 동일하다. 동일 holder의 복수
+  selected는 후보 계산 전에 fail closed하고, 오래된 selected/최신 superseded 반례로
+  timestamp 최신값이나 TTL을 발명하지 않음을 고정했다. 자체 재검토에서 미해석 ephemeral
+  fact를 모든 kind에 요구하던 과잉 조건을 발견해 규범대로 `WORKER_LOCAL`에만 적용하고 전용
+  회귀 테스트를 추가했다. legacy `ReplicaSet`은 실행 코드를 바꾸지 않고 표현 한계 주석만
+  보강했다. 독립 검수는 순수성·24개 순열/report 전체·duplicate holder 우회 부재·TTL/ONLINE
+  미추가·ephemeral 양방향·변경 범위와 관련 회귀를 확인해 1라운드 `ACCEPTED`했다.
+- 검증: 감독자가 `cargo test -p gputeer-checkpoint`의 effective replica 13 + kill 7 + resume 7 +
+  state-table parity 5 + write-failure 5를 직접 재확인했다. evidence 작성 시 같은 checkout의
+  checkpoint 전체 suite도 67 passed, 0 failed로 재실행했다. production duplicate-selected와
+  `kind == WORKER_LOCAL` guard 뮤테이션 2건은 각각 지정 테스트 실패 후 원복·재통과했다.
+  `python scripts/verify_evidence.py`로 `DoD-54_effective_replica_count_kernel.md` schema v2 PASS를
+  확인한다.
+- 리포트: `docs/evidence/DoD-54_effective_replica_count_kernel.md` (요청된 evidence 본문에
+  구현·검수·한계·결정을 함께 기록).
+
 ## 2026-08-24 16:10 — verified ReplicaAck durable checkpoint/root binding — evidence 기록 (`DoD-53`)
 - 계획: `docs/plans/2026-08-24_1556_verified_replica_ack_durable_binding_v1.md`
   (verified ReplicaAck durable checkpoint/root binding 선행 조각).

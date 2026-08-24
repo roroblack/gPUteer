@@ -1,0 +1,99 @@
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+판정: ACCEPTED
+
+검수 범위는 holder/freshness/membership 해석을 입력으로 받는 effective replica count
+kernel의 순수성, 입력 순서 독립성, duplicate holder fail-closed, 규범에 없는 freshness와
+liveness 조건의 부재, ephemeral local 규칙의 양방향 정합, 변경 범위와 회귀였다.
+
+순수 kernel 확인
+
+- 공개 진입점은 `crates/checkpoint/src/durability.rs:178`의
+  `evaluate_effective_replicas()`다. 인자는 resolved observation slice와 `Durability`뿐이다.
+- `crates/checkpoint/src/durability.rs:182-255`는 입력 검증 뒤 selected/superseded 분리,
+  정렬, `BTreeMap` 집계, report 구성만 한다. 시계·TTL·I/O·filesystem·DB·network·난수·
+  membership 조회·전역 상태 접근이 없다.
+- 공개 변경은 `crates/checkpoint/src/lib.rs:11` 부근의 신규 타입/함수 additive re-export다.
+  상태 저장소나 기존 API 의미를 바꾸지 않는다.
+
+입력 순서 독립성 확인
+
+- `crates/checkpoint/tests/effective_replica_kernel.rs:25`의 `permutations()`는 remaining의
+  각 index를 하나씩 제거하고 재귀 호출해 빈 remaining에서 결과를 추가한다.
+- `crates/checkpoint/tests/effective_replica_kernel.rs:46`의 4개 observation에 대해 생성되는
+  경우는 실제 4! = 24개다. 테스트는 각 순열의 count만 비교하지 않고
+  `evaluate_effective_replicas()`가 반환한 `EffectiveReplicaReport` 전체를 `assert_eq!`한다.
+- production도 selected/superseded를 정렬하고 failure-domain을 `BTreeMap`, scope 집합을
+  `BTreeSet`으로 canonicalize한다(`durability.rs:188-255`, `durability.rs:289-299`).
+
+duplicate holder fail-closed 확인
+
+- `crates/checkpoint/src/durability.rs:182`에서 `validate_observations()`가 후보 계산보다 먼저
+  호출된다.
+- `crates/checkpoint/src/durability.rs:302-315`는 selected 관측만 holder별로 세고 최초
+  중복 holder를 `MultipleSelectedObservations`로 반환한다.
+- 이 오류 뒤에 하나를 선택하거나 계산을 재개하는 경로가 없다. 따라서 같은 holder의 두
+  selected 행이 서로 다른 domain에서 count 2가 되는 조용한 우회는 없다.
+- duplicate-selected production guard 제거 뮤테이션에서
+  `duplicate_selected_holder_fails_closed_instead_of_counting`이 실제 count 2를 관측해 실패하고,
+  원복 뒤 통과했으므로 assertion은 비공허하다.
+
+freshness와 ONLINE 비추가 확인
+
+- `ResolvedHolderObservation.selected`의 계약은 `crates/checkpoint/src/durability.rs:50-65`에
+  외부 resolver의 결과로 명시되어 있다.
+- kernel은 `selected` boolean으로만 분리하며 `acked_at_unix_ms` 최댓값 비교나 현재 시각,
+  TTL 판정을 하지 않는다(`durability.rs:188-199`).
+- `selected_old_observation_wins_over_newer_superseded_without_ttl_or_latest_rule`은 오래된 행을
+  selected, 최신 행을 superseded로 주고 오래된 행이 count되는 report를 요구한다.
+- 코드와 타입에 `ONLINE` 판정이 없다. `docs/protocol/state-machines.md:220-223`은 유효 count와
+  요구치 비교만 규정하며 replica count의 `ONLINE` 조건을 두지 않는다.
+
+규범 정합 확인
+
+- `proto/common.proto:148-153`의 `MIRRORED=REPLICATED(1)`,
+  `REPLICATED=REPLICATED(2)` 요구치를 `Durability::required_replicas()`가 그대로 사용한다
+  (`crates/checkpoint/src/durability.rs:150-170`).
+- `proto/artifact.proto:135-152`의 유효 서명, distinct failure-domain, ephemeral local 제외,
+  same-device 중복 제거 규칙을 resolved input과 canonical holder/domain 집계로 표현한다.
+- `docs/protocol/signing.md:514-527`의 signature 뒤 membership/승인 검증 결과는
+  `HolderValidation`으로 명시 입력된다. invalid, not-approved, unresolved, ambiguous는 모두
+  count되지 않는다(`durability.rs:319-335`).
+
+자체 수정의 양방향 확인
+
+- 초안은 `is_ephemeral`이 unresolved/ambiguous이면 모든 kind를 제외했으나 규범은 ephemeral의
+  local copy만 제외한다. 현재 코드는 `ReplicaKind::WorkerLocal` 분기 안에서만 ephemeral
+  resolution을 요구한다(`crates/checkpoint/src/durability.rs:336-349`).
+- `non_local_kind_does_not_require_irrelevant_ephemeral_resolution`은 unresolved/ambiguous
+  ephemeral인 Hub/SubmitterMirror가 세어지는 방향을 고정한다.
+- `only_ephemeral_worker_local_is_excluded`은 ephemeral WorkerLocal은 제외되고 ephemeral
+  SubmitterMirror는 세어지는 반대 방향을 고정한다.
+- `kind == WORKER_LOCAL` guard 제거 뮤테이션은 후자의 기대 count 1을 실제 0으로 만들어
+  실패했고 원복 뒤 통과했다. 과잉 제외뿐 아니라 제외돼야 할 local이 세어지는 반대 구멍도
+  테스트와 production 분기를 대조해 없음을 확인했다.
+
+fail-closed와 범위 확인
+
+- mixed checkpoint/root는 canonical scope 목록을 담은 `MixedEvaluationScope`, 빈 checkpoint/
+  root/holder/domain은 typed error다(`durability.rs:257-315`).
+- membership unresolved/ambiguous와 failure-domain unresolved/ambiguous는 report의 exclusion
+  reason으로 남고 count되지 않는다(`durability.rs:319-359`).
+- checkpoint 상태 전이 구현, proto 또는 `docs/protocol/` 변경은 없다.
+- 기존 `ReplicaSet`은 실행 코드가 동일하다. freshness/kind/current membership을 표현하지
+  못한다는 legacy 한계를 정확히 적도록 주석만 보강됐다.
+
+직접 재실행
+
+  DoD-41 hard-filter regression:     33 passed, 0 failed
+  DoD-45 best-fit regression:         20 passed, 0 failed
+  checkpoint state-table parity:       5 passed, 0 failed
+  legacy ReplicaSet tests:              2 passed, 0 failed
+
+최종 결론
+
+순수성, 실제 24개 순열과 report 전체 비교, duplicate selected holder의 후보 계산 전
+fail-closed와 우회 부재, timestamp/TTL 판정 부재, `ONLINE` 미추가, ephemeral local 규칙의
+양방향 정합, mixed scope·빈 식별자·미해석 membership 경계를 확인했다. 상태 전이·proto/
+protocol 변경이 없고 legacy 실행 코드가 동일하며 공개 API가 additive re-export뿐이다.
+잔여 수정 요청 없이 1라운드 `ACCEPTED`다.

@@ -17,6 +17,115 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::write_once;
 use crate::CheckpointError;
 
+/// Replica observation의 kind를 protobuf와 분리해 표현한 kernel 입력 값.
+///
+/// `UNSPECIFIED`는 resolver가 해소한 값이 아니므로 의도적으로 표현하지 않는다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReplicaKind {
+    WorkerLocal,
+    SubmitterMirror,
+    Hub,
+    TrustedPeer,
+    ExternalObjectStore,
+}
+
+/// authority가 해소해야 하는 사실의 결과.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FactResolution<T> {
+    Resolved(T),
+    Unresolved,
+    Ambiguous,
+}
+
+/// 현재 key/signature와 holder membership/승인 검증의 결합 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HolderValidation {
+    Valid,
+    InvalidSignature,
+    NotApproved,
+    MembershipUnresolved,
+    MembershipAmbiguous,
+}
+
+/// 외부 resolver가 holder별 freshness와 authority 사실을 해소해 만든 kernel 입력.
+///
+/// `selected`는 freshness 정책의 결과일 뿐이다. 이 타입이나 kernel은 ACK TTL,
+/// 현재 시각 또는 가장 큰 `acked_at_unix_ms`를 freshness 규칙으로 해석하지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ResolvedHolderObservation {
+    pub checkpoint_id: String,
+    pub root_digest: String,
+    /// authority가 canonical하게 해소한 device ID. 같은 device의 모든 kind는 같은 값이어야 한다.
+    pub holder_device_id: String,
+    pub acked_at_unix_ms: u64,
+    pub kind: ReplicaKind,
+    pub selected: bool,
+    pub holder_validation: HolderValidation,
+    pub is_ephemeral: FactResolution<bool>,
+    pub failure_domain: FactResolution<String>,
+}
+
+/// report가 평가한 checkpoint/root 범위.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReplicaEvaluationScope {
+    pub checkpoint_id: String,
+    pub root_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReplicaExclusionReason {
+    InvalidSignature,
+    HolderNotApproved,
+    MembershipUnresolved,
+    MembershipAmbiguous,
+    EphemeralStatusUnresolved,
+    EphemeralStatusAmbiguous,
+    FailureDomainUnresolved,
+    FailureDomainAmbiguous,
+    EphemeralWorkerLocal,
+    DuplicateFailureDomain { counted_holder_device_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CountedReplica {
+    pub observation: ResolvedHolderObservation,
+    pub failure_domain: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcludedReplica {
+    pub observation: ResolvedHolderObservation,
+    pub reasons: Vec<ReplicaExclusionReason>,
+}
+
+/// 순수 effective-replica kernel의 결정적 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveReplicaReport {
+    /// observation이 비어 있으면 평가 범위도 없다.
+    pub scope: Option<ReplicaEvaluationScope>,
+    pub required: Durability,
+    pub required_replica_count: u32,
+    pub effective_replica_count: u32,
+    pub requirement_met: bool,
+    pub counted: Vec<CountedReplica>,
+    pub excluded: Vec<ExcludedReplica>,
+    pub superseded: Vec<ResolvedHolderObservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicaEvaluationError {
+    EmptyCheckpointId,
+    EmptyRootDigest,
+    EmptyHolderDeviceId,
+    EmptyFailureDomain {
+        holder_device_id: String,
+        acked_at_unix_ms: u64,
+    },
+    MixedEvaluationScope { scopes: Vec<ReplicaEvaluationScope> },
+    MultipleSelectedObservations { holder_device_id: String, selected: usize },
+    ReplicaCountOverflow,
+}
+
 /// `docs/protocol/state-machines.md` §4 의 상태.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DurabilityState {
@@ -60,6 +169,194 @@ impl Durability {
             Durability::Replicated => 2,
         }
     }
+}
+
+/// holder/freshness/membership가 해소된 observation만으로 effective replica 수를 계산한다.
+///
+/// 외부 상태, 시계, I/O, 난수를 읽지 않는다. malformed scope와 holder별 복수 선택은
+/// typed error로 fail closed하며, 미해소 authority 사실은 report에 남기고 세지 않는다.
+pub fn evaluate_effective_replicas(
+    observations: &[ResolvedHolderObservation],
+    required: Durability,
+) -> Result<EffectiveReplicaReport, ReplicaEvaluationError> {
+    validate_observations(observations)?;
+
+    let scope = observations.first().map(|observation| ReplicaEvaluationScope {
+        checkpoint_id: observation.checkpoint_id.clone(),
+        root_digest: observation.root_digest.clone(),
+    });
+    let mut selected = observations
+        .iter()
+        .filter(|observation| observation.selected)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut superseded = observations
+        .iter()
+        .filter(|observation| !observation.selected)
+        .cloned()
+        .collect::<Vec<_>>();
+    selected.sort();
+    superseded.sort();
+
+    let mut candidates_by_domain = BTreeMap::<String, Vec<ResolvedHolderObservation>>::new();
+    let mut excluded = Vec::new();
+    for observation in selected {
+        let mut reasons = exclusion_reasons(&observation);
+        reasons.sort();
+        reasons.dedup();
+        if reasons.is_empty() {
+            let FactResolution::Resolved(failure_domain) = &observation.failure_domain else {
+                unreachable!("empty exclusion reasons require a resolved failure domain");
+            };
+            candidates_by_domain
+                .entry(failure_domain.clone())
+                .or_default()
+                .push(observation);
+        } else {
+            excluded.push(ExcludedReplica { observation, reasons });
+        }
+    }
+
+    let mut counted = Vec::new();
+    for (failure_domain, mut candidates) in candidates_by_domain {
+        candidates.sort();
+        let counted_observation = candidates.remove(0);
+        let counted_holder_device_id = counted_observation.holder_device_id.clone();
+        counted.push(CountedReplica {
+            observation: counted_observation,
+            failure_domain,
+        });
+        for observation in candidates {
+            excluded.push(ExcludedReplica {
+                observation,
+                reasons: vec![ReplicaExclusionReason::DuplicateFailureDomain {
+                    counted_holder_device_id: counted_holder_device_id.clone(),
+                }],
+            });
+        }
+    }
+    excluded.sort_by(|left, right| {
+        (&left.observation, &left.reasons).cmp(&(&right.observation, &right.reasons))
+    });
+
+    let effective_replica_count = u32::try_from(counted.len())
+        .map_err(|_| ReplicaEvaluationError::ReplicaCountOverflow)?;
+    let required_replica_count = required.required_replicas();
+    Ok(EffectiveReplicaReport {
+        scope,
+        required,
+        required_replica_count,
+        effective_replica_count,
+        requirement_met: effective_replica_count >= required_replica_count,
+        counted,
+        excluded,
+        superseded,
+    })
+}
+
+fn validate_observations(
+    observations: &[ResolvedHolderObservation],
+) -> Result<(), ReplicaEvaluationError> {
+    if observations.iter().any(|observation| observation.checkpoint_id.trim().is_empty()) {
+        return Err(ReplicaEvaluationError::EmptyCheckpointId);
+    }
+    if observations.iter().any(|observation| observation.root_digest.trim().is_empty()) {
+        return Err(ReplicaEvaluationError::EmptyRootDigest);
+    }
+    if observations
+        .iter()
+        .any(|observation| observation.holder_device_id.trim().is_empty())
+    {
+        return Err(ReplicaEvaluationError::EmptyHolderDeviceId);
+    }
+
+    let empty_domain = observations
+        .iter()
+        .filter_map(|observation| match &observation.failure_domain {
+            FactResolution::Resolved(domain) if domain.trim().is_empty() => {
+                Some((observation.holder_device_id.as_str(), observation.acked_at_unix_ms))
+            }
+            _ => None,
+        })
+        .min();
+    if let Some((holder_device_id, acked_at_unix_ms)) = empty_domain {
+        return Err(ReplicaEvaluationError::EmptyFailureDomain {
+            holder_device_id: holder_device_id.to_owned(),
+            acked_at_unix_ms,
+        });
+    }
+
+    let scopes = observations
+        .iter()
+        .map(|observation| ReplicaEvaluationScope {
+            checkpoint_id: observation.checkpoint_id.clone(),
+            root_digest: observation.root_digest.clone(),
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    if scopes.len() > 1 {
+        return Err(ReplicaEvaluationError::MixedEvaluationScope {
+            scopes: scopes.into_iter().collect(),
+        });
+    }
+
+    let mut selected_by_holder = BTreeMap::<&str, usize>::new();
+    for observation in observations.iter().filter(|observation| observation.selected) {
+        *selected_by_holder
+            .entry(observation.holder_device_id.as_str())
+            .or_default() += 1;
+    }
+    if let Some((holder_device_id, selected)) =
+        selected_by_holder.into_iter().find(|(_, selected)| *selected > 1)
+    {
+        return Err(ReplicaEvaluationError::MultipleSelectedObservations {
+            holder_device_id: holder_device_id.to_owned(),
+            selected,
+        });
+    }
+    Ok(())
+}
+
+fn exclusion_reasons(observation: &ResolvedHolderObservation) -> Vec<ReplicaExclusionReason> {
+    let mut reasons = Vec::new();
+    match observation.holder_validation {
+        HolderValidation::Valid => {}
+        HolderValidation::InvalidSignature => {
+            reasons.push(ReplicaExclusionReason::InvalidSignature);
+        }
+        HolderValidation::NotApproved => {
+            reasons.push(ReplicaExclusionReason::HolderNotApproved);
+        }
+        HolderValidation::MembershipUnresolved => {
+            reasons.push(ReplicaExclusionReason::MembershipUnresolved);
+        }
+        HolderValidation::MembershipAmbiguous => {
+            reasons.push(ReplicaExclusionReason::MembershipAmbiguous);
+        }
+    }
+    if observation.kind == ReplicaKind::WorkerLocal {
+        match observation.is_ephemeral {
+            FactResolution::Resolved(true) => {
+                reasons.push(ReplicaExclusionReason::EphemeralWorkerLocal);
+            }
+            FactResolution::Resolved(false) => {}
+            FactResolution::Unresolved => {
+                reasons.push(ReplicaExclusionReason::EphemeralStatusUnresolved);
+            }
+            FactResolution::Ambiguous => {
+                reasons.push(ReplicaExclusionReason::EphemeralStatusAmbiguous);
+            }
+        }
+    }
+    match observation.failure_domain {
+        FactResolution::Resolved(_) => {}
+        FactResolution::Unresolved => {
+            reasons.push(ReplicaExclusionReason::FailureDomainUnresolved);
+        }
+        FactResolution::Ambiguous => {
+            reasons.push(ReplicaExclusionReason::FailureDomainAmbiguous);
+        }
+    }
+    reasons
 }
 
 impl DurabilityState {
@@ -257,7 +554,10 @@ impl CheckpointManifest {
     }
 }
 
-/// 유효 replica 계수.
+/// 기존 호출자 호환용 단순 replica accumulator.
+///
+/// holder별 freshness, replica kind, current membership 해석을 표현하지 못하므로 새
+/// 결정 경로는 [`evaluate_effective_replicas`]를 사용해야 한다.
 #[derive(Debug, Clone, Default)]
 pub struct ReplicaSet {
     /// failure_domain -> (device_id, is_ephemeral, signature_valid)
@@ -283,7 +583,7 @@ impl ReplicaSet {
         self
     }
 
-    /// 규칙 1~4 를 적용한 유효 replica 수.
+    /// legacy entry 형태가 표현할 수 있는 signature/ephemeral/domain 필터 결과.
     pub fn effective_count(&self) -> u32 {
         self.entries
             .values()
