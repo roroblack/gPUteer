@@ -1410,7 +1410,7 @@ def build_vectors():
 
     # 26. 멤버십 — 소유자 서명
     add("v26_add_member",
-        "AddMember (domain gputeer/v1/membership)",
+        "AddMember (domain gputeer/v1/member-add)",
         "AddMember", {
             "member_id": "01JBXMEM00000000000000001",
             "public_key": bytes(range(32)),
@@ -1418,12 +1418,12 @@ def build_vectors():
             "owner_signature": b"\x11" * 64,
         })
 
-    # 26b. ★ 같은 domain_tag 를 공유하는 두 메시지가 서로 다른 canonical 을 내는가.
-    #      §5.1 — membership 은 6개 메시지가 한 tag 를 공유한다.
-    #      domain 분리가 없으므로 canonical 차이가 유일한 방어다.
+    # 26b. ★ ADR-028 이전에는 membership 6종이 한 tag 를 공유했고 canonical 차이가
+    #      유일한 방어였다. 지금은 tag 도 분리됐으므로(member-add / member-remove)
+    #      방어가 이중이다 — 그래도 canonical 차이는 계속 검증한다.
     c_rm = add("v26b_remove_member",
-               "RemoveMember — AddMember 와 **같은 domain_tag** 를 쓴다. "
-               "canonical 이 달라야 서명 재사용이 막힌다 (§5.1)",
+               "RemoveMember — AddMember 와 **다른 domain_tag**(member-remove) 를 쓴다. "
+               "ADR-028 이전의 tag 공유가 사라진 뒤에도 canonical 은 달라야 한다 (§5.1)",
                "RemoveMember", {
                    "member_id": "01JBXMEM00000000000000001",
                    "owner_signature": b"\x11" * 64,

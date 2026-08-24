@@ -325,7 +325,7 @@
     },
     {
       "name": "v26_add_member",
-      "description": "AddMember (domain gputeer/v1/membership)",
+      "description": "AddMember (domain gputeer/v1/member-add)",
       "message_type": "AddMember",
       "canonical_hex": "0a1930314a42584d454d30303030303030303030303030303030311220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f1a066d656d626572",
       "canonical_len": 69,
@@ -335,7 +335,7 @@
     },
     {
       "name": "v26b_remove_member",
-      "description": "RemoveMember — AddMember 와 **같은 domain_tag** 를 쓴다. canonical 이 달라야 서명 재사용이 막힌다 (§5.1)",
+      "description": "RemoveMember — AddMember 와 **다른 domain_tag**(member-remove) 를 쓴다. ADR-028 이전의 tag 공유가 사라진 뒤에도 canonical 은 달라야 한다 (§5.1)",
       "message_type": "RemoveMember",
       "canonical_hex": "0a1930314a42584d454d3030303030303030303030303030303031",
       "canonical_len": 27,

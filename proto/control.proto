@@ -289,7 +289,7 @@ message AddMember {
   string member_id = 1;
   bytes public_key = 2;
   string role = 3;
-  bytes owner_signature = 90; // domain_tag = "gputeer/v1/membership"
+  bytes owner_signature = 90; // domain_tag = "gputeer/v1/member-add"
 }
 
 message RemoveMember {
