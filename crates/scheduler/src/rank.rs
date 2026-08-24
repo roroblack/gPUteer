@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::model::{
     BestFitPolicy, BestFitRanking, CandidateSnapshot, EligibilityReport, EligibilityResolution,
     FitAxis, FitKey, JobRequirements, MissingFact, PoolSnapshot, RankedCandidate, RankingError,
+    ResourceFit,
 };
 
 /// 복수 hard-filter 적격 후보를 resource-tight 순서로 정렬한다.
@@ -27,15 +28,16 @@ pub fn rank_best_fit(
     }
 
     let pool_by_id = validate_candidate_sets(pool, report)?;
-    let requirements = RankRequirements::from_job(job)?;
     let mut ranked = report
         .eligible
         .iter()
         .map(|eligible| {
             let candidate = pool_by_id[eligible.node_id.as_str()];
+            let resource_fit = resource_fit(candidate, job)?;
             Ok(RankedCandidate {
                 node_id: eligible.node_id.clone(),
-                fit_key: fit_key(candidate, job, &requirements)?,
+                fit_key: resource_fit.fit_key,
+                selected_gpu_ids: resource_fit.selected_gpu_ids,
             })
         })
         .collect::<Result<Vec<_>, RankingError>>()?;
@@ -122,17 +124,35 @@ impl RankRequirements {
     }
 }
 
-fn fit_key(
+/// 한 candidate에서 resource-tight `FitKey`와 선택 GPU ID를 함께 계산한다.
+///
+/// ranking을 우회하는 단일 후보 경로도 이 함수를 사용해야 한다. GPU 후보는
+/// `(available_vram_bytes, gpu_id)` 오름차순으로 필요한 개수만 선택하고, 반환 ID는
+/// `gpu_id` 오름차순으로 다시 정규화한다.
+pub fn resource_fit(
     candidate: &CandidateSnapshot,
     job: &JobRequirements,
-    required: &RankRequirements,
-) -> Result<FitKey, RankingError> {
+) -> Result<ResourceFit, RankingError> {
+    let required = RankRequirements::from_job(job)?;
     let node_id = candidate.node_id.as_str();
     let gpus = candidate
         .gpus
         .as_ref()
         .ok_or_else(|| missing_candidate(node_id, MissingFact::GpuInventory))?;
-    let mut matching_vram = Vec::new();
+    let mut gpu_ids = BTreeSet::new();
+    for gpu in gpus {
+        if gpu.gpu_id.trim().is_empty() {
+            return Err(RankingError::EmptyGpuId { node_id: node_id.to_owned() });
+        }
+        if !gpu_ids.insert(gpu.gpu_id.as_str()) {
+            return Err(RankingError::DuplicateGpuId {
+                node_id: node_id.to_owned(),
+                gpu_id: gpu.gpu_id.clone(),
+            });
+        }
+    }
+
+    let mut matching_gpus = Vec::new();
     for gpu in gpus {
         match gpu.healthy {
             None => {
@@ -156,55 +176,70 @@ fn fit_key(
             missing_candidate(node_id, MissingFact::GpuVram { gpu_id: gpu.gpu_id.clone() })
         })?;
         if available >= required.vram_per_gpu {
-            matching_vram.push(available);
+            matching_gpus.push((available, gpu.gpu_id.as_str()));
         }
     }
 
-    matching_vram.sort_unstable();
+    matching_gpus.sort_unstable_by(|left, right| left.cmp(right));
     let required_gpu_count = usize::try_from(required.gpu_count).map_err(|_| {
         RankingError::FitOverflow { node_id: node_id.to_owned(), axis: FitAxis::GpuCount }
     })?;
-    if matching_vram.len() < required_gpu_count {
+    if matching_gpus.len() < required_gpu_count {
         return Err(mismatch(node_id, FitAxis::GpuCount));
     }
-    let vram_remaining_bytes = matching_vram
+    let selected = &matching_gpus[..required_gpu_count];
+    let vram_remaining_bytes = selected
         .iter()
-        .take(required_gpu_count)
-        .try_fold(0_u64, |total, available| {
+        .try_fold(0_u64, |total, (available, _)| {
             total.checked_add(*available - required.vram_per_gpu)
         })
         .ok_or_else(|| RankingError::FitOverflow {
             node_id: node_id.to_owned(),
             axis: FitAxis::Vram,
         })?;
-    let gpu_count_remaining = u32::try_from(matching_vram.len() - required_gpu_count).map_err(
+    let gpu_count_remaining = u32::try_from(matching_gpus.len() - required_gpu_count).map_err(
         |_| RankingError::FitOverflow { node_id: node_id.to_owned(), axis: FitAxis::GpuCount },
     )?;
+    let mut selected_gpu_ids = selected
+        .iter()
+        .map(|(_, gpu_id)| (*gpu_id).to_owned())
+        .collect::<Vec<_>>();
+    selected_gpu_ids.sort_unstable();
+    if selected_gpu_ids.len() != required_gpu_count {
+        return Err(RankingError::SelectedGpuCountMismatch {
+            node_id: node_id.to_owned(),
+            required: required.gpu_count,
+            actual: selected_gpu_ids.len(),
+        });
+    }
 
-    Ok(FitKey {
-        vram_remaining_bytes,
-        gpu_count_remaining,
-        cpu_cores_remaining: remaining(
-            candidate.available_cpu_cores,
-            required.cpu_cores,
-            node_id,
-            MissingFact::AvailableCpu,
-            FitAxis::Cpu,
-        )?,
-        ram_remaining_bytes: remaining(
-            candidate.available_ram_bytes,
-            required.ram_bytes,
-            node_id,
-            MissingFact::AvailableRam,
-            FitAxis::Ram,
-        )?,
-        workspace_remaining_bytes: remaining(
-            candidate.available_workspace_bytes,
-            required.workspace_bytes,
-            node_id,
-            MissingFact::AvailableWorkspace,
-            FitAxis::Workspace,
-        )?,
+    Ok(ResourceFit {
+        fit_key: FitKey {
+            vram_remaining_bytes,
+            gpu_count_remaining,
+            cpu_cores_remaining: remaining(
+                candidate.available_cpu_cores,
+                required.cpu_cores,
+                node_id,
+                MissingFact::AvailableCpu,
+                FitAxis::Cpu,
+            )?,
+            ram_remaining_bytes: remaining(
+                candidate.available_ram_bytes,
+                required.ram_bytes,
+                node_id,
+                MissingFact::AvailableRam,
+                FitAxis::Ram,
+            )?,
+            workspace_remaining_bytes: remaining(
+                candidate.available_workspace_bytes,
+                required.workspace_bytes,
+                node_id,
+                MissingFact::AvailableWorkspace,
+                FitAxis::Workspace,
+            )?,
+        },
+        selected_gpu_ids,
     })
 }
 

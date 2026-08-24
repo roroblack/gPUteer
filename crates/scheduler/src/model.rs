@@ -257,10 +257,21 @@ pub struct FitKey {
     pub workspace_remaining_bytes: u64,
 }
 
+/// 한 candidate에서 같은 규칙으로 계산한 자원 적합도와 실제 선택 GPU 식별자.
+///
+/// 선택 ID는 downstream plan/scope의 canonical 입력으로 쓸 수 있도록 항상
+/// `gpu_id` 오름차순이다. 이 값 자체는 reservation이나 wire-level UUID 증명이 아니다.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceFit {
+    pub fit_key: FitKey,
+    pub selected_gpu_ids: Vec<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RankedCandidate {
     pub node_id: String,
     pub fit_key: FitKey,
+    pub selected_gpu_ids: Vec<String>,
 }
 
 /// `winner`는 `ranked[0]`과 항상 같다. 이 결과는 reservation이나 Grant가 아니다.
@@ -280,7 +291,10 @@ pub enum RankingError {
     DuplicateReportNodeId { node_id: String },
     ReportCandidateMissingFromPool { node_id: String },
     PoolCandidateMissingFromReport { node_id: String },
+    EmptyGpuId { node_id: String },
+    DuplicateGpuId { node_id: String, gpu_id: String },
     MissingRankFact { node_id: Option<String>, fact: MissingFact },
     EligibleCandidateMismatch { node_id: String, axis: FitAxis },
+    SelectedGpuCountMismatch { node_id: String, required: u32, actual: usize },
     FitOverflow { node_id: String, axis: FitAxis },
 }

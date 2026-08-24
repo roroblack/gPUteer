@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
 use gputeer_scheduler::{
-    evaluate_eligibility, rank_best_fit, BestFitPolicy, CandidateSnapshot, EligibilityResolution,
-    FitAxis, GpuSnapshot, IsolationClass, JobRequirements, KeyProtection, MissingFact, NodeState,
-    Policy, PoolSnapshot, RankingError, RiskState, SecurityTier, Sensitivity, SideEffectClass,
-    WorkloadClass,
+    evaluate_eligibility, rank_best_fit, resource_fit, BestFitPolicy, CandidateSnapshot,
+    EligibilityResolution, FitAxis, GpuSnapshot, IsolationClass, JobRequirements, KeyProtection,
+    MissingFact, NodeState, Policy, PoolSnapshot, RankingError, RiskState, SecurityTier, Sensitivity,
+    SideEffectClass, WorkloadClass,
 };
 
 const NOW: u64 = 10_000;
@@ -169,6 +169,107 @@ fn gpu_subset_uses_the_tightest_adequate_required_count() {
     assert_eq!(actual.winner.node_id, "node-a");
     assert_eq!(actual.winner.fit_key.vram_remaining_bytes, 6);
     assert_eq!(actual.winner.fit_key.gpu_count_remaining, 1);
+    assert_eq!(
+        actual.winner.selected_gpu_ids,
+        ["node-a-gpu-1", "node-a-gpu-2"]
+    );
+}
+
+#[test]
+fn resource_fit_selects_tight_vram_and_returns_canonical_gpu_ids() {
+    let mut j = job();
+    j.minimum_gpu_count = Some(2);
+    let mut node = candidate("node-a");
+    node.gpus = Some(vec![
+        GpuSnapshot {
+            gpu_id: "gpu-z".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(9),
+            model: Some("GPU".into()),
+        },
+        GpuSnapshot {
+            gpu_id: "gpu-a".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(10),
+            model: Some("GPU".into()),
+        },
+        GpuSnapshot {
+            gpu_id: "gpu-unused".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(20),
+            model: Some("GPU".into()),
+        },
+    ]);
+
+    let actual = resource_fit(&node, &j).unwrap();
+
+    assert_eq!(actual.fit_key.vram_remaining_bytes, 3);
+    assert_eq!(actual.fit_key.gpu_count_remaining, 1);
+    assert_eq!(actual.selected_gpu_ids, ["gpu-a", "gpu-z"]);
+}
+
+#[test]
+fn equal_vram_gpu_tie_break_and_assignment_ignore_input_order() {
+    let mut forward = candidate("node-a");
+    forward.gpus = Some(vec![
+        GpuSnapshot {
+            gpu_id: "gpu-z".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(10),
+            model: Some("GPU".into()),
+        },
+        GpuSnapshot {
+            gpu_id: "gpu-a".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(10),
+            model: Some("GPU".into()),
+        },
+    ]);
+    let mut reversed = forward.clone();
+    reversed.gpus.as_mut().unwrap().reverse();
+
+    let forward_fit = resource_fit(&forward, &job()).unwrap();
+    let reversed_fit = resource_fit(&reversed, &job()).unwrap();
+
+    assert_eq!(forward_fit, reversed_fit);
+    assert_eq!(forward_fit.selected_gpu_ids, ["gpu-a"]);
+}
+
+#[test]
+fn assignment_excludes_unhealthy_disallowed_and_too_small_gpus() {
+    let mut node = candidate("node-a");
+    node.gpus = Some(vec![
+        GpuSnapshot {
+            gpu_id: "gpu-unhealthy".into(),
+            healthy: Some(false),
+            available_vram_bytes: Some(REQUIRED_VRAM),
+            model: Some("GPU".into()),
+        },
+        GpuSnapshot {
+            gpu_id: "gpu-disallowed".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(REQUIRED_VRAM),
+            model: Some("OTHER".into()),
+        },
+        GpuSnapshot {
+            gpu_id: "gpu-too-small".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(REQUIRED_VRAM - 1),
+            model: Some("GPU".into()),
+        },
+        GpuSnapshot {
+            gpu_id: "gpu-selected".into(),
+            healthy: Some(true),
+            available_vram_bytes: Some(REQUIRED_VRAM + 1),
+            model: Some("GPU".into()),
+        },
+    ]);
+
+    let actual = resource_fit(&node, &job()).unwrap();
+
+    assert_eq!(actual.selected_gpu_ids, ["gpu-selected"]);
+    assert_eq!(actual.fit_key.vram_remaining_bytes, 1);
+    assert_eq!(actual.fit_key.gpu_count_remaining, 0);
 }
 
 #[test]
@@ -202,6 +303,10 @@ fn gpu_inventory_permutations_produce_identical_ranking() {
     .unwrap();
 
     assert_eq!(forward, reversed);
+    assert_eq!(
+        forward.winner.selected_gpu_ids,
+        ["node-a-gpu-1", "node-a-gpu-2"]
+    );
 }
 
 #[test]
@@ -352,6 +457,74 @@ fn missing_job_and_candidate_rank_facts_fail_closed() {
             fact: MissingFact::AvailableCpu,
         }
     );
+}
+
+#[test]
+fn empty_and_duplicate_gpu_ids_fail_closed_with_typed_errors() {
+    let mut empty = candidate("node-a");
+    empty.gpus.as_mut().unwrap()[0].gpu_id = "   ".into();
+    assert_eq!(
+        resource_fit(&empty, &job()).unwrap_err(),
+        RankingError::EmptyGpuId {
+            node_id: "node-a".into()
+        }
+    );
+
+    let mut duplicate = candidate("node-b");
+    duplicate.gpus.as_mut().unwrap().push(gpu("node-b", 0, REQUIRED_VRAM + 1));
+    assert_eq!(
+        resource_fit(&duplicate, &job()).unwrap_err(),
+        RankingError::DuplicateGpuId {
+            node_id: "node-b".into(),
+            gpu_id: "node-b-gpu-0".into(),
+        }
+    );
+}
+
+#[test]
+fn missing_gpu_health_model_and_vram_remain_fail_closed() {
+    let cases = [
+        (
+            {
+                let mut value = candidate("node-health");
+                value.gpus.as_mut().unwrap()[0].healthy = None;
+                value
+            },
+            MissingFact::GpuHealth {
+                gpu_id: "node-health-gpu-0".into(),
+            },
+        ),
+        (
+            {
+                let mut value = candidate("node-model");
+                value.gpus.as_mut().unwrap()[0].model = None;
+                value
+            },
+            MissingFact::GpuModel {
+                gpu_id: "node-model-gpu-0".into(),
+            },
+        ),
+        (
+            {
+                let mut value = candidate("node-vram");
+                value.gpus.as_mut().unwrap()[0].available_vram_bytes = None;
+                value
+            },
+            MissingFact::GpuVram {
+                gpu_id: "node-vram-gpu-0".into(),
+            },
+        ),
+    ];
+
+    for (candidate, fact) in cases {
+        assert_eq!(
+            resource_fit(&candidate, &job()).unwrap_err(),
+            RankingError::MissingRankFact {
+                node_id: Some(candidate.node_id),
+                fact,
+            }
+        );
+    }
 }
 
 #[test]

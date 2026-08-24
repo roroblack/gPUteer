@@ -1,0 +1,74 @@
+=== 독립 검수 receipt — DoD-48 scheduler selected GPU assignment ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 완료 결론을 전제로 삼지 않고 계획, production diff, 테스트,
+뮤테이션 기록과 변경 범위를 대조했다.
+
+1. `resource_fit()` 순수성과 선택 규칙
+
+- `crates/scheduler/src/rank.rs:132`의 `resource_fit()`은 candidate와 job만 입력으로
+  받고 I/O, clock, randomness나 외부 상태 접근을 추가하지 않았다.
+- `crates/scheduler/src/rank.rs:155`부터 health, allowed model, VRAM 조건을 순서대로
+  적용하고, `crates/scheduler/src/rank.rs:183`에서 `(available_vram_bytes, gpu_id)`
+  tuple을 오름차순 정렬한다.
+- `crates/scheduler/src/rank.rs:190`에서 요구 개수만 선택하고
+  `crates/scheduler/src/rank.rs:203`부터 반환 ID를 `gpu_id` 오름차순으로 정규화한다.
+  `crates/scheduler/src/model.rs:265`의 `ResourceFit`은 그 `FitKey`와 ID를 함께 보존한다.
+
+2. 단일/복수 후보의 단일 계산 경로
+
+- `crates/scheduler/src/rank.rs:31`부터 복수 후보 ranking은 각 eligible candidate에
+  `resource_fit()`을 호출하고 그 결과의 `fit_key`와 `selected_gpu_ids`를 함께 옮긴다.
+- `crates/coordinator/src/orchestrate.rs:151`의 0/1/N 분기 뒤 단일 후보는
+  `crates/coordinator/src/orchestrate.rs:191`에서 `resource_fit()`을 직접 호출하고,
+  복수 후보는 같은 helper를 이미 호출한 ranking winner의 ID를 쓴다. 별도 GPU
+  filter/sort/selection 구현은 coordinator에 없다.
+- `crates/coordinator/src/orchestrate.rs:217`의 `Staged` outcome이 선택 ID를 보존한다.
+
+3. 결정성과 부적격 GPU 제외의 직접 판별력
+
+- `crates/scheduler/tests/best_fit.rs:212`는 GPU vector reverse 전후의 `ResourceFit`
+  전체를 비교하고 같은 VRAM에서 `gpu-a`를 선택함을 확인한다.
+- `crates/scheduler/tests/best_fit.rs:276`은 모든 candidate GPU vector를 reverse한 뒤
+  `BestFitRanking` 전체를 비교한다. 따라서 node 순위만 같고 selected ID가 달라지는
+  회귀도 통과할 수 없다.
+- 자체 재검토 뒤 추가된 `crates/scheduler/tests/best_fit.rs:239`는 한 candidate에
+  unhealthy, disallowed model, too-small VRAM GPU를 모두 넣고 `gpu-selected` 하나만
+  남는지 확인한다. production filter의 health→model→VRAM 순서인
+  `crates/scheduler/src/rank.rs:157`, `crates/scheduler/src/rank.rs:167`,
+  `crates/scheduler/src/rank.rs:175`를 세 경우 모두 직접 통과한다.
+
+4. typed error, STAGING 전 재검증과 뮤테이션
+
+- `crates/scheduler/src/model.rs:294`부터 빈/중복 GPU ID와 선택 개수 불일치를 typed
+  `RankingError`로 구분하고, `crates/scheduler/tests/best_fit.rs:463`과
+  `crates/scheduler/tests/best_fit.rs:485`가 ID와 missing fact fail-closed를 검사한다.
+- coordinator는 `crates/coordinator/src/orchestrate.rs:201`에서 ID 수를 다시 대조하고
+  불일치면 `crates/coordinator/src/orchestrate.rs:202`의
+  `SelectedGpuCountMismatch`를 반환한다. durable STAGING 호출은 그 뒤인
+  `crates/coordinator/src/orchestrate.rs:213`이므로 실패 시 STAGING 전에 멈춘다.
+- tuple 비교에서 `gpu_id` tie-break를 제거한 뮤테이션은 forward `gpu-z`, reverse
+  `gpu-a`로 갈려 reverse 동등성 테스트를 실패시켰다.
+- 반환 ID를 제거한 뮤테이션은 scheduler canonical ID assertion을 실패시키고
+  coordinator에서 `SelectedGpuCountMismatch { required: 1, actual: 0 }`를 발생시켰다.
+  두 뮤테이션은 실제 production 경로를 건드렸고 최종 코드에서는 원복됐다.
+
+5. 범위와 한계
+
+- 변경 범위는 `crates/scheduler/src/lib.rs`, `crates/scheduler/src/model.rs`,
+  `crates/scheduler/src/rank.rs`, `crates/scheduler/tests/best_fit.rs`,
+  `crates/coordinator/src/orchestrate.rs`와 계획/리포트 문서뿐이다.
+- `crates/coordinator/src/staging_store.rs`,
+  `crates/coordinator/src/inventory_store.rs`, `crates/coordinator/src/job_store.rs`는
+  변경되지 않았다. protobuf, Grant/Lease scope, GPU별 reservation/release와
+  production `run()`/wire도 바뀌지 않았다.
+- `crates/scheduler/src/model.rs:263`이 밝히듯 반환 값은 snapshot `gpu_id`이며
+  reservation이나 wire-level NVML UUID provenance 증명이 아니다.
+
+판정: deterministic selected GPU assignment 순수 kernel은 단일 resource-fit 경로,
+입력 순서 독립성, 부적격 GPU 제외, typed error, STAGING 전 개수 재검증과 두 뮤테이션으로
+충분히 판별됐다. 범위는 `DoD-46` 계약 불일치 3번의 선행 작업으로 제한되어 있으며,
+수정 요청 없이 1라운드 `ACCEPTED`한다.

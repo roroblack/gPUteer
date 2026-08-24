@@ -1,0 +1,117 @@
+=== 구현·검증 기록 — deterministic selected GPU assignment 순수 kernel ===
+
+기준 HEAD: 2ca2366da90c8687ece851a1be50daab9af6e90f (`DoD-47`)
+계획: docs/plans/2026-08-21_1036_scheduler_selected_gpu_assignment_v1.md
+리포트: docs/reports/2026-08-24_1048_scheduler_selected_gpu_assignment.md
+
+설계 조사는 `DoD-47` 뒤 production `run()` 연결 가능성을 다시 읽고, 그 연결이 하루
+규모를 넘는다고 판정했다. 선택 GPU 식별자와 Grant plan/scope, 원본 Manifest 저장과
+`JobRequirements` 변환, node/device/session routing의 남은 3건은 전부 실제 dispatch에
+필수다. 그 밖에도 Job submit ingress, durable outbox, ACK 상태기계, reservation
+release/requeue가 없으므로 기존 `issue_grant()` 앞에 orchestration 호출 하나를 붙이는
+방식은 안전한 production 연결이 아니다. 이번 범위는 첫 계약 불일치, 즉 ranking이
+선택 GPU 식별자를 반환하지 않아 Grant plan/scope 입력을 만들 수 없던 공백의 선행
+작업인 결정적 selected GPU assignment 순수 kernel로 제한했다.
+
+=== 구현 ===
+
+- `crates/scheduler/src/model.rs`에
+  `ResourceFit { fit_key, selected_gpu_ids }`를 추가하고 `RankedCandidate`가
+  `selected_gpu_ids`를 보존하도록 확장했다.
+- 빈 GPU ID, 같은 candidate 안의 중복 GPU ID, 선택 ID 개수 불일치를
+  `RankingError::{EmptyGpuId, DuplicateGpuId, SelectedGpuCountMismatch}` typed error로
+  fail closed한다.
+- `crates/scheduler/src/rank.rs`의 순수 `resource_fit()`은 입력 snapshot/job만 읽는다.
+  GPU health, allowed model, minimum VRAM 조건을 통과한 GPU를
+  `(available_vram_bytes, gpu_id)` 오름차순으로 정렬해 요구 개수만 선택하고, 반환
+  ID는 `gpu_id` 오름차순으로 다시 정규화한다. `FitKey`도 바로 그 선택 집합에서
+  계산한다.
+- `rank_best_fit()`은 모든 eligible candidate에 같은 `resource_fit()`을 호출한다.
+  별도의 GPU filter/selection 경로는 없다.
+- `crates/coordinator/src/orchestrate.rs`의 단일 후보 분기는 `resource_fit()`을 직접
+  호출하고 복수 후보 분기는 내부에서 같은 helper를 쓴 ranking winner의 ID를
+  사용한다. `PlacementToStagingOutcome::Staged`가 `selected_gpu_ids`를 보존한다.
+- 선택 ID 수는 durable STAGING API 호출 전에 요구 개수와 다시 대조되며, 다르면
+  `PlacementToStagingError::SelectedGpuCountMismatch`로 실패한다.
+
+=== 자체 재검토에서 발견하고 닫은 테스트 공백 ===
+
+초기 assignment 테스트는 tight VRAM, tie-break, 복수 GPU, 입력 순서 독립성과 typed
+error를 검사했지만 `healthy=false`, allowed model 불일치, VRAM 부족 GPU가 실제 선택
+집합에서 제외되는지를 한 테스트가 직접 보여 주지 않았다. 이를 발견한 뒤
+`assignment_excludes_unhealthy_disallowed_and_too_small_gpus`를 추가했다. 이 테스트는
+세 부적격 GPU와 한 적격 GPU를 같은 candidate에 넣고 `gpu-selected`만 선택되며 VRAM
+잔여와 GPU 수 잔여도 그 선택에 맞음을 확인한다.
+
+=== negative test와 뮤테이션 판별력 ===
+
+- `equal_vram_gpu_tie_break_and_assignment_ignore_input_order`: 같은 VRAM의 GPU vector를
+  reverse해도 `ResourceFit` 전체가 같고 `gpu-a`가 선택된다.
+- `gpu_inventory_permutations_produce_identical_ranking`: 각 candidate의 GPU vector를
+  reverse해도 `BestFitRanking` 전체가 같다.
+- `assignment_excludes_unhealthy_disallowed_and_too_small_gpus`: health → model → VRAM
+  세 제외 경계를 한 테스트에서 직접 증명한다.
+- `empty_and_duplicate_gpu_ids_fail_closed_with_typed_errors`: 빈 ID와 중복 ID를 typed
+  error로 거부한다.
+- `missing_gpu_health_model_and_vram_remain_fail_closed`: health/model/VRAM missing fact를
+  기존대로 fail closed한다.
+- `single_and_ranked_winner_use_the_same_gpu_assignment_rule`: 단일/복수 후보가 같은
+  GPU assignment 결과를 outcome과 ranking에 보존한다.
+- 뮤테이션 1: `(available_vram_bytes, gpu_id)` 비교에서 `gpu_id` tie-break를 제거하자
+  forward 입력은 `gpu-z`, reverse 입력은 `gpu-a`를 선택해
+  `equal_vram_gpu_tie_break_and_assignment_ignore_input_order`가 실패했다.
+- 뮤테이션 2: 반환 `selected_gpu_ids`를 빈 목록으로 바꾸자 scheduler canonical ID
+  assertion이 실패했고 coordinator는 durable STAGING 호출 전에
+  `SelectedGpuCountMismatch { required: 1, actual: 0 }`를 반환했다.
+- 두 뮤테이션은 즉시 원복했고 원복 뒤 전체 관련 suite가 재통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 `resource_fit()`의 순수성, single/N 공용 계산 경로, reverse 입력의
+`ResourceFit` 전체와 `BestFitRanking` 전체 동등성, health→model→VRAM 부적격 GPU 제외,
+두 뮤테이션이 실제 경로를 건드리는지, scheduler 4개 파일과 coordinator
+`orchestrate.rs`에 한정된 변경 범위를 확인했다. `staging_store.rs`,
+`inventory_store.rs`, `job_store.rs`가 변경되지 않았고 protobuf, Grant/Lease scope,
+reservation/release, production wire도 범위 밖임을 확인해 수정 요청 없이 1라운드에서
+`ACCEPTED`했다.
+
+세부 receipt: docs/evidence/_raw/DoD-48_review.txt
+
+=== 감독자 직접 재확인 ===
+
+감독자가 직접 실행한 명령:
+
+  cargo test -p gputeer-scheduler -p gputeer-coordinator
+
+관측 결과:
+
+  gputeer-scheduler: best-fit 20 + hard-filter 33 = 53 passed, 0 failed
+  gputeer-coordinator: unit 83 + integration 4 = 87 passed, 0 failed
+  doc-tests: 실행 대상 0, failed 0
+  exit code: 0
+
+리포트에 함께 기록된 구현자 검증:
+
+  cargo build --workspace --exclude gputeer-runtime-windows
+    PASS
+  cargo test --workspace --exclude gputeer-runtime-windows
+    PASS — 모든 실행 suite 0 failed, 기존 durable replay test 1건 ignored 유지
+  git diff --check
+    PASS
+
+`cargo fmt`는 설치된 stable toolchain에 `rustfmt` component가 없어 실행하지 못했다.
+빌드와 테스트에는 영향이 없었고 변경 코드는 기존 형식에 맞춰 수동 검토됐다.
+
+=== 범위와 제한 ===
+
+- 반환 ID는 scheduler snapshot 식별자이며 실제 NVML UUID provenance는 증명하지 않았다.
+- Grant/Lease scope 생성, GPU별 reservation/release, production wire 연결은 범위 밖이다.
+- 원본 Manifest 저장·검증과 `JobRequirements` adapter, Job submit ingress, active session
+  registry, node/device/session routing, durable outbox, send/ACK/timeout은 없다.
+- 기존 node-exclusive CAS request/schema와 reservation row는 바꾸지 않았다.
+- I/O, clock, randomness, protobuf와 production `run()`은 변경하지 않았다.
+
+결론: 결정적 selected GPU assignment 순수 kernel과 그 판별력은 구현·테스트·뮤테이션·
+독립 검수·감독자 재실행으로 확인됐다. 이는 `DoD-46` 계약 불일치 3번, 즉 ranking이
+선택 GPU 식별자를 반환하지 않아 Grant plan/scope를 채울 수 없던 공백의 선행
+작업만 닫는다. production dispatch나 실제 GPU allocation 완료를 뜻하지 않는다.

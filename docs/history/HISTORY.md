@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-08-24 10:54 — deterministic selected GPU assignment 순수 kernel — evidence 기록 (`DoD-48`, `DoD-46` 계약 불일치 3번 선행 작업)
+- 계획: `docs/plans/2026-08-21_1036_scheduler_selected_gpu_assignment_v1.md`
+  (조각 4b: deterministic selected GPU assignment 순수 kernel).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: 설계 조사에서 production 연결은 선택 GPU 식별자/Grant scope·원본 Manifest와
+  `JobRequirements` adapter·node/device/session routing의 필수 계약 3건뿐 아니라 Job
+  submit ingress·durable outbox·reservation release/requeue도 없어 하루 규모를 넘는다고
+  판정했다. 대신 `ResourceFit { fit_key, selected_gpu_ids }`, `RankedCandidate`의 선택 ID
+  보존과 순수 `resource_fit()`을 구현한 선행 조각의 evidence를 작성했다. 적격 GPU를
+  `(available_vram_bytes, gpu_id)` 오름차순으로 요구 개수만 선택하고 반환 ID는
+  `gpu_id` 오름차순으로 정규화한다. 단일/복수 후보는 같은 helper를 쓰며 coordinator는
+  `Staged` outcome에 ID를 보존하고 STAGING 전에 개수를 다시 확인한다. 자체 재검토에서
+  부적격 GPU 제외를 직접 증명하지 않던 공백을 찾아 세 제외 경우를 한 테스트로 추가했다.
+  독립 검수는 순수성·공용 경로·reverse 전체 동등성·부적격 GPU 제외·뮤테이션 2건·
+  제한된 변경 범위를 확인해 1라운드 `ACCEPTED`. 반환 ID는 snapshot 식별자일 뿐 NVML
+  UUID provenance가 아니며 Grant/Lease scope·GPU별 reservation/release·production wire는
+  범위 밖이다.
+- 검증: 감독자가 `cargo test -p gputeer-scheduler -p gputeer-coordinator`를 직접
+  재실행해 scheduler 53 passed, coordinator 87 passed, 0 failed를 확인했다.
+  `python scripts/verify_evidence.py`로 `DoD-48_scheduler_selected_gpu_assignment.md`
+  schema v2 PASS를 확인한다.
+- 리포트: `docs/reports/2026-08-24_1048_scheduler_selected_gpu_assignment.md` +
+  `docs/evidence/DoD-48_scheduler_selected_gpu_assignment.md`.
+
 ## 2026-08-21 16:04 — scheduler inventory revision 기반 CAS reservation — evidence 기록 (`DoD-47`, scheduler 로드맵 조각 5b)
 - 계획: `docs/plans/2026-08-21_1537_scheduler_inventory_cas_v1.md`
   (조각 5b: 로컬 node-exclusive inventory revision CAS admission).

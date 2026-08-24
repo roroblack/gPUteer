@@ -6,8 +6,8 @@
 //! production entrypoint.
 
 use gputeer_scheduler::{
-    evaluate_eligibility, rank_best_fit, BestFitPolicy, BestFitRanking, EligibilityReport,
-    EligibilityResolution, JobRequirements, Policy, RankingError,
+    evaluate_eligibility, rank_best_fit, resource_fit, BestFitPolicy, BestFitRanking,
+    EligibilityReport, EligibilityResolution, JobRequirements, MissingFact, Policy, RankingError,
 };
 
 use crate::{
@@ -59,6 +59,7 @@ pub(crate) enum PlacementToStagingOutcome {
         /// Present only for the multiple-candidate branch.
         ranking: Option<BestFitRanking>,
         selected_node_id: String,
+        selected_gpu_ids: Vec<String>,
         stage: StageQueuedResult,
     },
 }
@@ -70,6 +71,7 @@ pub(crate) enum PlacementToStagingError {
     Ranking(RankingError),
     SelectedCandidateNotUnique { node_id: String, matches: usize },
     SelectedCandidateMissingInventoryRevision { node_id: String },
+    SelectedGpuCountMismatch { node_id: String, required: u32, actual: usize },
     Staging(ReservedStageError),
 }
 
@@ -86,6 +88,10 @@ impl std::fmt::Display for PlacementToStagingError {
                 f,
                 "selected node has no inventory revision in its PoolSnapshot: {node_id}"
             ),
+            Self::SelectedGpuCountMismatch { node_id, required, actual } => write!(
+                f,
+                "selected GPU count differs from the Job requirement: node={node_id}, required={required}, actual={actual}"
+            ),
             Self::Staging(error) => write!(f, "durable staging failed: {error}"),
         }
     }
@@ -97,7 +103,8 @@ impl std::error::Error for PlacementToStagingError {
             Self::Inventory(error) => Some(error),
             Self::Ranking(_) => None,
             Self::SelectedCandidateNotUnique { .. }
-            | Self::SelectedCandidateMissingInventoryRevision { .. } => None,
+            | Self::SelectedCandidateMissingInventoryRevision { .. }
+            | Self::SelectedGpuCountMismatch { .. } => None,
             Self::Staging(error) => Some(error),
         }
     }
@@ -181,6 +188,23 @@ pub(crate) fn orchestrate_placement_to_staging(
             matches: matching_candidates.len(),
         });
     }
+    let selected_gpu_ids = match ranking.as_ref() {
+        Some(ranking) => ranking.winner.selected_gpu_ids.clone(),
+        None => resource_fit(matching_candidates[0], &input.job_requirements)?.selected_gpu_ids,
+    };
+    let required_gpu_count = input.job_requirements.minimum_gpu_count.ok_or_else(|| {
+        PlacementToStagingError::Ranking(RankingError::MissingRankFact {
+            node_id: None,
+            fact: MissingFact::JobMinimumGpuCount,
+        })
+    })?;
+    if u32::try_from(selected_gpu_ids.len()).ok() != Some(required_gpu_count) {
+        return Err(PlacementToStagingError::SelectedGpuCountMismatch {
+            node_id: selected_node_id,
+            required: required_gpu_count,
+            actual: selected_gpu_ids.len(),
+        });
+    }
     let expected_inventory_revision = matching_candidates[0]
         .inventory_revision
         .ok_or_else(|| PlacementToStagingError::SelectedCandidateMissingInventoryRevision {
@@ -194,6 +218,7 @@ pub(crate) fn orchestrate_placement_to_staging(
         eligibility,
         ranking,
         selected_node_id,
+        selected_gpu_ids,
         stage,
     })
 }
@@ -257,12 +282,30 @@ mod tests {
         }
 
         fn add_candidate(&mut self, node_id: &str, available_vram_bytes: u64) {
+            self.add_candidate_gpus(
+                node_id,
+                available_vram_bytes as u8,
+                vec![GpuInventory {
+                    gpu_id: format!("gpu-{node_id}"),
+                    model: Some("model-a".into()),
+                    healthy: Some(true),
+                    available_vram_bytes: Some(available_vram_bytes),
+                }],
+            );
+        }
+
+        fn add_candidate_gpus(
+            &mut self,
+            node_id: &str,
+            key_byte: u8,
+            gpus: Vec<GpuInventory>,
+        ) {
             self.inventory_store
                 .register_agent(&AgentRegistry {
                     node_id: node_id.into(),
                     device_id: format!("device-{node_id}"),
                     owner_member_id: "member-1".into(),
-                    verifying_key: vec![available_vram_bytes as u8; 32],
+                    verifying_key: vec![key_byte; 32],
                     node_state: Some(NodeState::Online),
                     risk_state: Some(RiskState::Normal),
                     security_tier: Some(SecurityTier::S2),
@@ -275,12 +318,7 @@ mod tests {
                     node_id: node_id.into(),
                     inventory_revision: 1,
                     observed_at_unix_ms: 90,
-                    gpus: Some(vec![GpuInventory {
-                        gpu_id: format!("gpu-{node_id}"),
-                        model: Some("model-a".into()),
-                        healthy: Some(true),
-                        available_vram_bytes: Some(available_vram_bytes),
-                    }]),
+                    gpus: Some(gpus),
                     available_cpu_cores: Some(8),
                     available_ram_bytes: Some(64),
                     available_workspace_bytes: Some(64),
@@ -376,6 +414,7 @@ mod tests {
         let PlacementToStagingOutcome::Staged {
             ranking,
             selected_node_id,
+            selected_gpu_ids,
             stage,
             ..
         } = outcome
@@ -384,6 +423,7 @@ mod tests {
         };
         assert_eq!(ranking, None);
         assert_eq!(selected_node_id, "node-a");
+        assert_eq!(selected_gpu_ids, ["gpu-node-a"]);
         assert_eq!(stage.attempt.node_ids, ["node-a"]);
         assert_eq!(stage.lease.holder_node_id, "node-a");
         assert_eq!(stage.job.state, JobState::Staging);
@@ -400,6 +440,7 @@ mod tests {
         let PlacementToStagingOutcome::Staged {
             ranking,
             selected_node_id,
+            selected_gpu_ids,
             stage,
             ..
         } = outcome
@@ -408,9 +449,58 @@ mod tests {
         };
         let ranking = ranking.expect("multiple candidates require ranking");
         assert_eq!(ranking.winner.node_id, "node-b");
+        assert_eq!(ranking.winner.selected_gpu_ids, ["gpu-node-b"]);
         assert_eq!(selected_node_id, "node-b");
+        assert_eq!(selected_gpu_ids, ["gpu-node-b"]);
         assert_eq!(stage.attempt.node_ids, ["node-b"]);
         assert_eq!(stage.lease.holder_node_id, "node-b");
+    }
+
+    #[test]
+    fn single_and_ranked_winner_use_the_same_gpu_assignment_rule() {
+        let node_a_gpus = vec![
+            GpuInventory {
+                gpu_id: "gpu-z".into(),
+                model: Some("model-a".into()),
+                healthy: Some(true),
+                available_vram_bytes: Some(10),
+            },
+            GpuInventory {
+                gpu_id: "gpu-a".into(),
+                model: Some("model-a".into()),
+                healthy: Some(true),
+                available_vram_bytes: Some(10),
+            },
+        ];
+
+        let mut single = Fixture::new();
+        single.add_candidate_gpus("node-a", 10, node_a_gpus.clone());
+        let PlacementToStagingOutcome::Staged {
+            selected_gpu_ids: single_ids,
+            ..
+        } = single.run().unwrap()
+        else {
+            panic!("single candidate must stage");
+        };
+
+        let mut multiple = Fixture::new();
+        multiple.add_candidate_gpus("node-a", 10, node_a_gpus);
+        multiple.add_candidate("node-b", 32);
+        let PlacementToStagingOutcome::Staged {
+            ranking,
+            selected_node_id,
+            selected_gpu_ids: ranked_ids,
+            ..
+        } = multiple.run().unwrap()
+        else {
+            panic!("ranked candidate must stage");
+        };
+        let ranking = ranking.expect("multiple candidates require ranking");
+
+        assert_eq!(selected_node_id, "node-a");
+        assert_eq!(single_ids, ["gpu-a"]);
+        assert_eq!(ranked_ids, single_ids);
+        assert_eq!(ranking.winner.selected_gpu_ids, ranked_ids);
     }
 
     #[test]
