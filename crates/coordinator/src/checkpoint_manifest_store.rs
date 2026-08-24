@@ -140,24 +140,7 @@ impl CoordinatorCheckpointManifestStore {
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(map_sql_error)?;
-        staging_store::initialize_schema(&mut connection).map_err(map_staging_error)?;
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS coordinator_checkpoint_manifests (
-                    checkpoint_id TEXT PRIMARY KEY,
-                    job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
-                    attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
-                    producer_node_id TEXT NOT NULL,
-                    verified_signer_id TEXT NOT NULL,
-                    fence_epoch BLOB NOT NULL,
-                    root_digest BLOB NOT NULL,
-                    manifest_hash BLOB NOT NULL CHECK(length(manifest_hash) = 32),
-                    manifest_body BLOB NOT NULL
-                );
-                "#,
-            )
-            .map_err(map_sql_error)?;
+        initialize_schema(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -276,6 +259,32 @@ impl CoordinatorCheckpointManifestStore {
     }
 }
 
+/// Initializes the durable CheckpointManifest anchor used by later coordinator
+/// evidence stores. Kept crate-private so those stores cannot accidentally
+/// reproduce a weaker version of the anchor schema.
+pub(crate) fn initialize_schema(
+    connection: &mut Connection,
+) -> Result<(), CheckpointManifestStoreError> {
+    staging_store::initialize_schema(connection).map_err(map_staging_error)?;
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS coordinator_checkpoint_manifests (
+                checkpoint_id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id),
+                attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
+                producer_node_id TEXT NOT NULL,
+                verified_signer_id TEXT NOT NULL,
+                fence_epoch BLOB NOT NULL,
+                root_digest BLOB NOT NULL,
+                manifest_hash BLOB NOT NULL CHECK(length(manifest_hash) = 32),
+                manifest_body BLOB NOT NULL
+            );
+            "#,
+        )
+        .map_err(map_sql_error)
+}
+
 fn validate_manifest_input(
     manifest: &pb::CheckpointManifest,
 ) -> Result<(), CheckpointManifestStoreError> {
@@ -373,7 +382,7 @@ fn bind_producer_and_signer(
     Ok(())
 }
 
-fn fetch_manifest_binding(
+pub(crate) fn fetch_manifest_binding(
     connection: &Connection,
     checkpoint_id: &str,
 ) -> Result<Option<StoredCheckpointManifestBinding>, CheckpointManifestStoreError> {

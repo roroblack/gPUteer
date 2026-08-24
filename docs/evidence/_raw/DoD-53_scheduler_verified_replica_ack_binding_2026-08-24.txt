@@ -1,0 +1,145 @@
+=== 구현·검증 기록 — verified ReplicaAck durable checkpoint/root binding ===
+
+커밋 대상 HEAD: 101f132dba92b861d37b63cbd71d9b7c23aeb63e (`DoD-52`)
+계획: docs/plans/2026-08-24_1556_verified_replica_ack_durable_binding_v1.md
+구현:
+  crates/coordinator/src/replica_ack_store.rs
+  crates/coordinator/src/checkpoint_manifest_store.rs
+  crates/coordinator/src/lib.rs
+
+=== 구현 ===
+
+- 신규 `CoordinatorReplicaAckStore`와 공개 저장 API
+  `store_verified_ack(&Verified<pb::ReplicaAck>)`를 추가했다.
+- raw `get_ack_binding()`과 `list_ack_bindings()`은 의도적으로
+  `StoredReplicaAckBinding`을 반환하며 `Verified<ReplicaAck>`를 재구성하지 않는다.
+- `coordinator_replica_acks`는 `(checkpoint_id, holder_device_id,
+  acked_at_unix_ms)`를 primary key로 사용한다. 시각은 u64 big-endian BLOB이며 verified signer,
+  encoded BLAKE3-256 root, complete signed body에서 저장소가 직접 계산한 BLAKE3 hash와
+  `holder_signature`를 포함한 complete body를 보존한다.
+- `checkpoint_manifest_store.rs`의 기존 DoD-52 schema 초기화와 validated anchor fetch를
+  `pub(crate)` helper로 추출했다. 기존 SQL과 검증 로직은 같고 visibility만 넓혔으며 public
+  API는 바꾸지 않았다.
+- raw protobuf로 저장 API를 호출할 수 없음을 compile-fail doctest로 고정했다.
+
+=== 정확한 검증 순서와 TOCTOU 경계 ===
+
+실제 production 순서는 다음과 같다.
+
+1. `Verified::get()`으로 ACK를 연다.
+2. signature를 포함한 complete protobuf body를 encode한다.
+3. 저장소가 complete body의 BLAKE3 hash를 계산한다.
+4. 그 다음 `BEGIN IMMEDIATE` transaction을 획득한다.
+5. transaction 안에서 ACK 구조를 검사한다.
+6. transaction 안에서 verified signer와 `holder_device_id`를 대조한다.
+7. 같은 transaction 객체로 DoD-52 anchor를 validated fetch한다. 이 helper는 manifest
+   body/hash와 row binding뿐 아니라 현재 Attempt의 job/node/fence binding까지 재검사한다.
+8. transaction 안에서 ACK root와 anchor root를 exact 비교한다.
+9. transaction 안에서 observation-key replay를 대조한다.
+10. 모든 검사를 통과한 뒤 같은 transaction에서 INSERT하고 commit한다.
+
+따라서 `Verified::get()`, body encode, BLAKE3 hash 계산은 `BEGIN IMMEDIATE` 이전이다.
+반면 구조 검증, signer↔holder 대조, DoD-52 anchor 판단, root 대조, replay 대조와 INSERT는
+모두 같은 write transaction 안에 있어 stale anchor 판단을 write에 사용하는 TOCTOU 경로가 없다.
+
+=== root, replay와 immutable observation history ===
+
+- ACK `root_digest`는 `HASH_ALGORITHM_BLAKE3_256`이면서 정확히 32바이트인 경우만 허용한다.
+  `common.proto`에 SHA-256 enum이 있어도 ACK validator는 SHA-256·unspecified·잘못된 길이를
+  INSERT 전에 거부한다.
+- ACK checkpoint가 없거나 DoD-52 anchor의 exact root와 다르면 row를 만들지 않는다.
+- 같은 `(checkpoint_id, holder_device_id, acked_at_unix_ms)`의 complete body와 signer가 같으면
+  최초 row를 `created=false`로 반환한다. body/signature가 바뀌면 typed conflict다.
+- 더 늦은 `acked_at_unix_ms`는 계획이 정한 immutable observation history에 따라 별도 row다.
+  현재 저장소에는 count나 consumer API가 없어 이 자체가 즉시 중복 계산을 만들지는 않는다.
+
+=== load와 corruption fail-closed ===
+
+- load/list는 ACK body hash를 재계산하고 decode한 뒤 row↔body checkpoint/holder/time/root,
+  submission-time signer, u64 big-endian time encoding과 현재 DoD-52 anchor/root를 재검사한다.
+- load 시 서명을 재검증하지 않는 것은 의도된 설계다. 현재 authoritative key directory를 가진
+  후속 소비자가 다시 검증해야 한다.
+- 자체 재검토에서 `acked_at_unix_ms` PK BLOB을 손상시키면 기존 key 기반 단건 조회로 그 행을
+  찾을 수 없어 손상 검사가 실행되지 않는 테스트 설계 결함을 발견했다. 해당 케이스는 checkpoint
+  전체를 읽는 `list_ack_bindings()` 경로에서 `AckedAtEncoding`으로 fail closed하는 검사로 바꿨다.
+
+=== negative test와 뮤테이션 판별력 ===
+
+- signature 포함 complete body와 저장소 계산 hash가 reopen 뒤 복원된다.
+- missing checkpoint, wrong root, SHA-256 root, 31-byte root는 행을 만들지 않는다.
+- exact replay는 최초 row를 유지하고 changed body/signature는 conflict이며 later observation은
+  별도 row로 남는다. list order는 `(acked_at, holder)`로 결정적이다.
+- `fsynced=false`, `hash_verified=false`, unspecified kind도 저장 단계에서는 signed claim으로
+  보존하며 eligibility로 해석하지 않는다.
+- empty/truncated/undecodable body, hash encoding/mismatch, invalid body, checkpoint/holder/signer/
+  time/root row binding, missing/corrupt/changed CheckpointManifest anchor를 typed corruption으로
+  fail closed한다.
+- insert 직후 injected failure는 ACK row를 rollback하고 manifest와 Job/Attempt/Lease/reservation을
+  바꾸지 않는다. 신규 schema에는 state/count/mirrored column이 없다.
+- 뮤테이션 1: production DoD-52 anchor root guard를 제거하자
+  `missing_anchor_wrong_root_sha256_and_wrong_length_create_no_row`가 wrong-root ACK 삽입을 관측하며
+  실패했다. guard 원복 뒤 재통과했다.
+- 뮤테이션 2: production load의 complete-body BLAKE3 hash guard를 제거하자
+  `corrupt_body_hash_identity_signer_time_and_root_fail_closed`의 `HashMismatch` case가 실패했다.
+  guard 원복 뒤 재통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 저장 API type gate, `Verified::get()` 이후 필드 접근, transaction 전 body/hash
+계산과 transaction 안의 구조·identity·validated anchor·root·replay·INSERT 순서를 분리해
+확인했다. DoD-52 helper가 body/hash와 Attempt job/node/fence binding을 재검사하는지, load가
+`Verified`를 재구성하지 않는지, exact replay와 later observation 의미, rollback·상태 무변경,
+corruption 경로와 실제 production guard 두 곳의 뮤테이션 판별력을 대조했다.
+
+초기 설명이 모든 검사를 transaction 안에서 수행한다고 뭉뚱그린 문서 불일치를 지적했다.
+production 코드는 body/hash 계산을 lock 전에 하는 것이 사실이며, durable 판단에 쓰이는 구조·
+signer·anchor·root·replay 대조와 INSERT가 모두 같은 transaction 안이므로 TOCTOU는 없다고
+정정했다. 수정 요청 없이 구현 자체는 1라운드 `ACCEPTED`했다.
+
+세부 receipt: docs/evidence/_raw/DoD-53_review.txt
+
+=== 감독자 직접 재확인 ===
+
+감독자가 직접 실행한 명령:
+
+  cargo test -p gputeer-coordinator
+
+결과:
+
+  unit tests:                         121 passed, 0 failed
+  integration + compile-fail doctest:   5 passed, 0 failed
+  total:                              126 passed, 0 failed
+  exit code:                            0
+
+구현 세션의 추가 확인:
+
+  cargo test -p gputeer-coordinator replica_ack_store --no-fail-fast
+    7 passed, 0 failed
+  cargo build --workspace --exclude gputeer-runtime-windows
+    PASS
+  cargo test --workspace --exclude gputeer-runtime-windows
+    PASS, 0 failed, existing ignored 1
+  python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+    48 vectors matched
+  git diff --check
+    whitespace error 없음
+
+실행 환경의 Rust toolchain에는 `rustfmt` component가 설치돼 있지 않아 `cargo fmt`는 실행하지
+못했다. build와 test 결과에는 영향이 없었다.
+
+=== 범위 밖과 잔여 위험 ===
+
+- load 시 서명을 재검증하지 않는 것은 의도된 설계다.
+- 후속 소비자는 holder별 dedup/freshness를 반드시 수행해야 한다.
+- 별도 retention 정책이 없으면 인증된 holder가 서로 다른 `acked_at_unix_ms`의 관측 행을
+  무제한 누적시킬 수 있다.
+- `MIRRORED` 판정·전이, effective replica count, membership/failure-domain 판정
+- 저장 결과의 production 소비자
+- holder current liveness, ephemeral/동일-device 제외, fsync/hash/kind/bytes eligibility 해석
+- checkpoint/Job/Attempt/Lease/reservation 상태 전이와 reservation release
+- production ReplicaAck routing/producer와 Raft/ControlStore `COMMITTED`
+
+판정: PASS — 검증된 ReplicaAck observation을 현재 validated DoD-52 checkpoint/root anchor에
+원자적으로 묶는 durable 저장 경계를 구현했고, 정확한 lock 전·후 검증 순서, immutable replay,
+raw load, corruption/rollback과 두 production guard의 판별력을 독립 검수 1라운드 ACCEPTED 및
+감독자 coordinator 121+5 passed로 확인했다.

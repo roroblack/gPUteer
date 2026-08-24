@@ -1,0 +1,95 @@
+=== 독립 검수 receipt — DoD-53 verified ReplicaAck durable checkpoint/root binding ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 완료 결론을 전제로 삼지 않고 계획, production 저장 API와 INSERT 경로,
+`Verified` 필드 관찰 순서, write transaction 경계, DoD-52 validated anchor 재사용, root 규범,
+complete body hash, immutable observation replay, raw load, rollback·상태 무변경, corruption 처리와
+뮤테이션 판별력을 대조했다.
+
+1. 미검증 ACK 저장 차단과 정확한 lock 전 순서
+
+- `crates/coordinator/src/replica_ack_store.rs:232`의 production 공개 저장 API는 raw
+  `pb::ReplicaAck`가 아니라 `&Verified<pb::ReplicaAck>`만 받는다.
+- `crates/coordinator/src/replica_ack_store.rs:224`의 compile-fail doctest는 raw protobuf 호출이
+  type-check되지 않음을 고정한다.
+- `crates/coordinator/src/replica_ack_store.rs:246`에서 `verified.get()`으로 ACK를 연 뒤
+  `:248-249`에서 signature 포함 complete body를 encode하고 BLAKE3 hash를 계산한다.
+- `BEGIN IMMEDIATE` transaction 획득은 그 뒤인 `crates/coordinator/src/replica_ack_store.rs:251`이다.
+  따라서 `Verified::get()`, body encode, BLAKE3 계산까지 transaction 안이라고 서술하면 실제
+  코드와 불일치한다. 이 문서 불일치를 지적했고 evidence에 정확한 순서를 반영하도록 했다.
+
+2. transaction 안의 구조·identity·anchor·root·replay·INSERT
+
+- transaction 획득 뒤 `crates/coordinator/src/replica_ack_store.rs:259`에서 구조 검증,
+  `:260-264`에서 verified signer↔holder 대조를 수행한다.
+- `crates/coordinator/src/replica_ack_store.rs:269-276`은 같은 transaction 객체로 DoD-52 anchor를
+  조회하고 missing anchor를 거부한다. `:277-281`이 exact root를 대조한다.
+- observation-key replay 조회와 complete ACK/signer 대조는
+  `crates/coordinator/src/replica_ack_store.rs:283-302`, 신규 INSERT는 `:304-319`다.
+- 따라서 durable 판단에 쓰이는 구조·identity·validated anchor·root·replay 대조와 INSERT는
+  모두 한 write transaction 안에 있고 stale anchor 판단을 write에 쓰는 TOCTOU 경로가 없다.
+
+3. DoD-52 anchor helper가 약화되지 않았는가
+
+- `crates/coordinator/src/checkpoint_manifest_store.rs:265`의 schema initializer와
+  `:378`의 `fetch_manifest_binding()`만 `pub(crate)`로 추출됐다. public API는 추가되지 않았다.
+- validated fetch는 `crates/coordinator/src/checkpoint_manifest_store.rs:425-481`에서 complete
+  manifest body/hash, identity/signer/fence/root를 재검사한다.
+- 이어 `crates/coordinator/src/checkpoint_manifest_store.rs:483-504`에서 현재 Attempt의
+  job/single-node/fence binding까지 재검사한다. ACK store가 raw SQL로 약한 anchor를 따로
+  만들지 않는다.
+
+4. root, schema와 immutable observation replay
+
+- `crates/coordinator/src/replica_ack_store.rs:361-366`은 root를 BLAKE3-256이면서 정확히
+  32바이트인 경우로 제한한다. SHA-256·unspecified·잘못된 길이 우회가 없다.
+- `crates/coordinator/src/replica_ack_store.rs:145-155`의 primary key는
+  `(checkpoint_id, holder_device_id, acked_at_unix_ms)`이고 time은 u64 big-endian BLOB이다.
+- `crates/coordinator/src/replica_ack_store.rs:879`의 replay test는 exact replay가 최초 row를
+  유지하고 changed body/signature가 conflict이며 later `acked_at`이 별도 row가 됨을 확인한다.
+- 이는 계획의 immutable observation history다. 현재 count/consumer API는 없지만, 후속 소비자는
+  holder별 dedup/freshness를 수행해야 하고 retention 없이는 인증된 holder가 관측 행을 무제한
+  누적시킬 수 있다는 운영 위험이 남는다.
+
+5. raw load, corruption과 자체 재검토 수정
+
+- `crates/coordinator/src/replica_ack_store.rs:18-20`은 load 결과가 의도적으로
+  `Verified<ReplicaAck>`가 아니라고 명시한다. production call graph에는 이를 durability 판정에
+  쓰는 소비자가 없다.
+- `crates/coordinator/src/replica_ack_store.rs:421-491`은 ACK body hash/decode, row↔body
+  checkpoint/holder/time/root, signer와 현재 DoD-52 anchor/root를 재검사한다.
+- `crates/coordinator/src/replica_ack_store.rs:991`의 corruption test에서 PK 일부인
+  `acked_at_unix_ms` BLOB을 손상시키면 원래 key로 단건 조회할 수 없다는 테스트 설계 결함을
+  구현자가 발견했다. 해당 `AckedAtEncoding` case는 `:1103`의 `list_ack_bindings()` 경로로 바꿔
+  실제 손상 행을 읽고 fail closed하도록 고쳤다.
+
+6. rollback, 상태 무변경과 production guard 뮤테이션
+
+- `crates/coordinator/src/replica_ack_store.rs:954`의 injected fault test는 INSERT 뒤 오류가 ACK
+  row를 rollback하고 Job/Attempt/Lease/reservation/manifest를 보존함을 확인한다. 신규 schema에
+  state/count/mirrored column도 없다.
+- production root guard `crates/coordinator/src/replica_ack_store.rs:277`을 제거한 뮤테이션에서
+  `missing_anchor_wrong_root_sha256_and_wrong_length_create_no_row`가 wrong-root 삽입을 관측하며
+  실패했다. guard 원복 뒤 재통과했다.
+- production body-hash guard `crates/coordinator/src/replica_ack_store.rs:432`를 제거한
+  뮤테이션에서 `corrupt_body_hash_identity_signer_time_and_root_fail_closed`의 `HashMismatch`
+  case가 실패했다. guard 원복 뒤 재통과했다.
+
+7. 범위
+
+- load 시 서명을 재검증하지 않는 것은 의도된 설계이며 후속 소비자가 당시 authoritative key
+  directory로 다시 검증해야 한다.
+- `MIRRORED` 판정·전이, effective replica count, membership/failure-domain/ephemeral/freshness
+  판정과 production routing은 구현하지 않았다.
+- 저장 결과의 production 소비자는 아직 없다.
+
+판정: 공개 저장 API의 `Verified` type gate와 compile-fail doctest가 raw ACK 저장을 막는다.
+`Verified::get()`·complete body encode·BLAKE3 계산은 lock 전이고, 구조·signer/holder·validated
+DoD-52 anchor·exact root·replay·INSERT는 한 `BEGIN IMMEDIATE` transaction 안이라는 정확한
+순서가 확인됐다. raw load는 `Verified`를 재구성하지 않고 전체 binding 손상을 재검사한다.
+immutable observation replay, rollback·상태 무변경과 실제 production guard 두 건의 뮤테이션
+판별력도 확인했다. 제한을 `MIRRORED`나 replica eligibility로 과장하지 않았으므로 수정 요청 없이
+1라운드 `ACCEPTED`한다.

@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-08-24 16:10 — verified ReplicaAck durable checkpoint/root binding — evidence 기록 (`DoD-53`)
+- 계획: `docs/plans/2026-08-24_1556_verified_replica_ack_durable_binding_v1.md`
+  (verified ReplicaAck durable checkpoint/root binding 선행 조각).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: 신규 `CoordinatorReplicaAckStore`의 공개 저장 API를
+  `&Verified<pb::ReplicaAck>` 전용으로 제한하고 raw protobuf 호출은 compile-fail doctest로
+  고정했다. 실제 순서는 `Verified::get()`·signature 포함 body encode·저장소 BLAKE3 hash 계산
+  뒤 `BEGIN IMMEDIATE`를 획득하며, 구조 검증·signer↔holder·validated DoD-52 anchor·exact root·
+  replay 대조와 INSERT는 같은 transaction 안에서 수행한다. PK
+  `(checkpoint_id, holder_device_id, acked_at_unix_ms)`의 immutable observation history는 exact
+  replay를 최초 행으로 유지하고 later observation을 별도 행으로 보존한다. load/list는 의도적으로
+  raw binding이며 body/hash·row identity·current anchor/root 손상을 fail closed한다. 자체 재검토에서
+  PK time BLOB 손상 행을 기존 key로 조회할 수 없는 test 설계 결함을 찾아 list 경로 검사로
+  바꿨다. 독립 검수는 정확한 transaction 전·후 순서, anchor helper의 body/hash와 Attempt
+  job/node/fence 재검사, root 제한·replay/load·rollback·상태 무변경과 production guard 뮤테이션
+  2건을 확인해 1라운드 `ACCEPTED`했다. 후속 consumer의 holder별 dedup/freshness와 retention
+  정책은 미구현이며 `MIRRORED`·effective count·membership/failure-domain 판정은 범위 밖이다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 재실행해 unit 121 +
+  integration/doctest 5 = 126 passed, 0 failed를 확인했다. `python scripts/verify_evidence.py`로
+  `DoD-53_scheduler_verified_replica_ack_binding.md` schema v2 PASS를 확인한다.
+- 리포트: `docs/reports/2026-08-24_1610_verified_replica_ack_durable_binding.md` +
+  `docs/evidence/DoD-53_scheduler_verified_replica_ack_binding.md`.
+
 ## 2026-08-24 15:37 — verified CheckpointManifest durable binding — evidence 기록 (`DoD-52`)
 - 계획: `docs/plans/2026-08-24_1513_verified_checkpoint_manifest_durable_binding_v1.md`
   (verified CheckpointManifest durable Attempt/reservation binding 선행 조각).

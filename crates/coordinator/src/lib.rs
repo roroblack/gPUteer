@@ -32,6 +32,7 @@ pub mod checkpoint_manifest_store;
 pub mod job_store;
 pub mod inventory_store;
 pub mod lease_store;
+pub mod replica_ack_store;
 #[allow(dead_code)]
 mod orchestrate;
 pub mod staging_store;
