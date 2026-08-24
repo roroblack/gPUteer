@@ -4,9 +4,9 @@
 //! the Job transition, Attempt/node creation, team-global fence allocation,
 //! Lease insertion, and operation idempotency record. The reservation-aware
 //! entrypoint additionally compares the selected Agent inventory revision and
-//! inserts a node-exclusive reservation in that same transaction. This is
-//! local durable state only; it is not a Raft/ControlStore `COMMITTED`
-//! transition and does not dispatch a Grant.
+//! validates and binds the selected GPU IDs to a node-exclusive reservation in
+//! that same transaction. This is local durable state only; it is not a
+//! Raft/ControlStore `COMMITTED` transition and does not dispatch a Grant.
 
 use std::path::Path;
 
@@ -24,6 +24,11 @@ pub struct StageQueuedRequest {
     pub attempt_id: String,
     pub lease_id: String,
     pub node_id: String,
+    /// Canonical scheduler GPU IDs selected from the admitted inventory revision.
+    ///
+    /// The reservation-aware entrypoint requires a non-empty, strictly sorted
+    /// list. The legacy reservation-free entrypoint deliberately ignores it.
+    pub selected_gpu_ids: Vec<String>,
     pub issuing_coordinator_id: String,
     pub coordinator_term: u64,
     pub issued_at_unix_ms: u64,
@@ -65,6 +70,7 @@ pub struct StoredNodeReservation {
     pub attempt_id: String,
     pub inventory_revision: u64,
     pub reserved_at_unix_ms: u64,
+    pub selected_gpu_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +133,10 @@ pub enum ReservedStageError {
         expected: u64,
         actual: u64,
     },
+    SelectedGpuMissing {
+        node_id: String,
+        gpu_id: String,
+    },
     NodeAlreadyReserved {
         node_id: String,
         owning_job_id: String,
@@ -148,6 +158,10 @@ impl std::fmt::Display for ReservedStageError {
             } => write!(
                 f,
                 "inventory revision CAS conflict for {node_id}: expected={expected}, actual={actual}"
+            ),
+            Self::SelectedGpuMissing { node_id, gpu_id } => write!(
+                f,
+                "selected GPU is missing from admitted inventory: node={node_id}, gpu={gpu_id}"
             ),
             Self::NodeAlreadyReserved {
                 node_id,
@@ -228,6 +242,14 @@ impl CoordinatorStagingStore {
                     inventory_revision BLOB NOT NULL,
                     reserved_at_unix_ms BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS coordinator_node_reservation_gpus (
+                    node_id TEXT NOT NULL
+                        REFERENCES coordinator_node_reservations(node_id),
+                    gpu_id TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                    PRIMARY KEY(node_id, ordinal),
+                    UNIQUE(node_id, gpu_id)
+                );
                 "#,
             )
             .map_err(map_sql_error)?;
@@ -305,6 +327,7 @@ impl CoordinatorStagingStore {
         fault: Option<TestFault>,
     ) -> Result<ReservedStageResult, ReservedStageError> {
         validate_request(request)?;
+        validate_selected_gpu_ids(&request.selected_gpu_ids)?;
         let request_payload = encode_reserved_request(request, expected_inventory_revision);
         let transaction = self
             .connection
@@ -352,6 +375,11 @@ impl CoordinatorStagingStore {
                 actual: actual_inventory_revision,
             });
         }
+        validate_selected_gpus_exist(
+            &transaction,
+            &request.node_id,
+            &request.selected_gpu_ids,
+        )?;
         if let Some(existing) = fetch_node_reservation(&transaction, &request.node_id)? {
             return Err(ReservedStageError::NodeAlreadyReserved {
                 node_id: existing.node_id,
@@ -366,9 +394,12 @@ impl CoordinatorStagingStore {
             attempt_id: request.attempt_id.clone(),
             inventory_revision: expected_inventory_revision,
             reserved_at_unix_ms: request.issued_at_unix_ms,
+            selected_gpu_ids: request.selected_gpu_ids.clone(),
         };
         insert_node_reservation(&transaction, &reservation)?;
         fail_at(fault, TestFault::AfterReservationInsert)?;
+        insert_gpu_binding(&transaction, &reservation)?;
+        fail_at(fault, TestFault::AfterGpuBindingInsert)?;
         let stage = stage_new_in_transaction(&transaction, request, &request_payload, fault)?;
         transaction.commit().map_err(map_sql_error)?;
         Ok(ReservedStageResult { reservation, stage })
@@ -490,6 +521,30 @@ fn validate_request(request: &StageQueuedRequest) -> Result<(), StagingStoreErro
         || lifetime_ms > max_duration_ms
     {
         return Err(StagingStoreError::InvalidLeaseLifetime);
+    }
+    Ok(())
+}
+
+fn validate_selected_gpu_ids(selected_gpu_ids: &[String]) -> Result<(), StagingStoreError> {
+    if selected_gpu_ids.is_empty() {
+        return Err(StagingStoreError::InvalidInput("selected_gpu_ids"));
+    }
+    for gpu_id in selected_gpu_ids {
+        if gpu_id.trim().is_empty() {
+            return Err(StagingStoreError::InvalidInput("selected_gpu_ids blank gpu_id"));
+        }
+    }
+    for pair in selected_gpu_ids.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(StagingStoreError::InvalidInput(
+                "selected_gpu_ids duplicate gpu_id",
+            ));
+        }
+        if pair[0] > pair[1] {
+            return Err(StagingStoreError::InvalidInput(
+                "selected_gpu_ids canonical order",
+            ));
+        }
     }
     Ok(())
 }
@@ -659,6 +714,11 @@ fn encode_reserved_request(
 ) -> Vec<u8> {
     let mut payload = encode_request(request);
     payload.extend_from_slice(&expected_inventory_revision.to_be_bytes());
+    payload.extend_from_slice(&(request.selected_gpu_ids.len() as u64).to_be_bytes());
+    for gpu_id in &request.selected_gpu_ids {
+        payload.extend_from_slice(&(gpu_id.len() as u64).to_be_bytes());
+        payload.extend_from_slice(gpu_id.as_bytes());
+    }
     payload
 }
 
@@ -676,6 +736,31 @@ fn fetch_inventory_revision(
         .map_err(map_sql_error)?
         .map(|bytes| decode_u64(&bytes, "inventory_revision"))
         .transpose()
+}
+
+fn validate_selected_gpus_exist(
+    connection: &Connection,
+    node_id: &str,
+    selected_gpu_ids: &[String],
+) -> Result<(), ReservedStageError> {
+    for gpu_id in selected_gpu_ids {
+        let exists = connection
+            .query_row(
+                "SELECT 1 FROM coordinator_agent_gpus WHERE node_id = ?1 AND gpu_id = ?2",
+                rusqlite::params![node_id, gpu_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(map_sql_error)?
+            .is_some();
+        if !exists {
+            return Err(ReservedStageError::SelectedGpuMissing {
+                node_id: node_id.to_owned(),
+                gpu_id: gpu_id.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn fetch_node_reservation(
@@ -707,13 +792,54 @@ fn fetch_node_reservation(
             "node reservation owner identity is blank".into(),
         ));
     }
+    let selected_gpu_ids = fetch_gpu_binding(connection, &node_id)?;
     Ok(Some(StoredNodeReservation {
         node_id,
         job_id,
         attempt_id,
         inventory_revision: decode_u64(&revision, "reservation inventory_revision")?,
         reserved_at_unix_ms: decode_u64(&reserved_at, "reservation reserved_at_unix_ms")?,
+        selected_gpu_ids,
     }))
+}
+
+fn fetch_gpu_binding(
+    connection: &Connection,
+    node_id: &str,
+) -> Result<Vec<String>, StagingStoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT gpu_id, ordinal FROM coordinator_node_reservation_gpus
+             WHERE node_id = ?1 ORDER BY ordinal",
+        )
+        .map_err(map_sql_error)?;
+    let rows = statement
+        .query_map(rusqlite::params![node_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(map_sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sql_error)?;
+    if rows.is_empty() {
+        return Err(StagingStoreError::CorruptData(
+            "node reservation has no selected GPU binding".into(),
+        ));
+    }
+    let mut selected_gpu_ids = Vec::with_capacity(rows.len());
+    for (expected_ordinal, (gpu_id, ordinal)) in rows.into_iter().enumerate() {
+        if ordinal != expected_ordinal as i64 {
+            return Err(StagingStoreError::CorruptData(
+                "node reservation GPU ordinals are not contiguous".into(),
+            ));
+        }
+        selected_gpu_ids.push(gpu_id);
+    }
+    validate_selected_gpu_ids(&selected_gpu_ids).map_err(|_| {
+        StagingStoreError::CorruptData(
+            "node reservation selected GPU binding is not canonical".into(),
+        )
+    })?;
+    Ok(selected_gpu_ids)
 }
 
 fn insert_node_reservation(
@@ -737,6 +863,22 @@ fn insert_node_reservation(
     Ok(())
 }
 
+fn insert_gpu_binding(
+    connection: &Connection,
+    reservation: &StoredNodeReservation,
+) -> Result<(), StagingStoreError> {
+    for (ordinal, gpu_id) in reservation.selected_gpu_ids.iter().enumerate() {
+        connection
+            .execute(
+                "INSERT INTO coordinator_node_reservation_gpus(node_id, gpu_id, ordinal)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![reservation.node_id, gpu_id, ordinal as i64],
+            )
+            .map_err(map_sql_error)?;
+    }
+    Ok(())
+}
+
 fn validate_replayed_reservation(
     reservation: &StoredNodeReservation,
     request: &StageQueuedRequest,
@@ -747,6 +889,7 @@ fn validate_replayed_reservation(
         || reservation.attempt_id != request.attempt_id
         || reservation.inventory_revision != expected_inventory_revision
         || reservation.reserved_at_unix_ms != request.issued_at_unix_ms
+        || reservation.selected_gpu_ids != request.selected_gpu_ids
     {
         return Err(StagingStoreError::CorruptData(
             "reserved staging operation result is inconsistent".into(),
@@ -819,6 +962,7 @@ fn map_lease_error(error: lease_store::LeaseStoreError) -> StagingStoreError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TestFault {
     AfterReservationInsert,
+    AfterGpuBindingInsert,
     AfterAttemptInsert,
     AfterLeaseInsert,
     BeforeJobUpdate,
@@ -829,6 +973,7 @@ fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), StagingStor
     if fault == Some(point) {
         let name = match point {
             TestFault::AfterReservationInsert => "after node reservation insert",
+            TestFault::AfterGpuBindingInsert => "after selected GPU binding insert",
             TestFault::AfterAttemptInsert => "after Attempt insert",
             TestFault::AfterLeaseInsert => "after Lease insert",
             TestFault::BeforeJobUpdate => "before Job update",
@@ -874,6 +1019,22 @@ mod tests {
     }
 
     fn prepare_inventory(path: &Path, node_id: &str, revision: u64, seed: u8) {
+        prepare_inventory_gpus(
+            path,
+            node_id,
+            revision,
+            seed,
+            &[format!("gpu-{node_id}")],
+        );
+    }
+
+    fn prepare_inventory_gpus(
+        path: &Path,
+        node_id: &str,
+        revision: u64,
+        seed: u8,
+        gpu_ids: &[String],
+    ) {
         let mut store = CoordinatorInventoryStore::open(path).unwrap();
         if store.get_agent(node_id).unwrap().is_none() {
             store
@@ -895,12 +1056,17 @@ mod tests {
                 node_id: node_id.into(),
                 inventory_revision: revision,
                 observed_at_unix_ms: revision,
-                gpus: Some(vec![GpuInventory {
-                    gpu_id: format!("gpu-{node_id}"),
-                    model: Some("model-a".into()),
-                    healthy: Some(true),
-                    available_vram_bytes: Some(16),
-                }]),
+                gpus: Some(
+                    gpu_ids
+                        .iter()
+                        .map(|gpu_id| GpuInventory {
+                            gpu_id: gpu_id.clone(),
+                            model: Some("model-a".into()),
+                            healthy: Some(true),
+                            available_vram_bytes: Some(16),
+                        })
+                        .collect(),
+                ),
                 available_cpu_cores: Some(8),
                 available_ram_bytes: Some(64),
                 available_workspace_bytes: Some(64),
@@ -917,6 +1083,7 @@ mod tests {
             attempt_id: format!("attempt-{operation}"),
             lease_id: format!("lease-{operation}"),
             node_id: "node-1".into(),
+            selected_gpu_ids: vec!["gpu-node-1".into()],
             issuing_coordinator_id: "coordinator-1".into(),
             coordinator_term: 7,
             issued_at_unix_ms: 200,
@@ -1087,6 +1254,7 @@ mod tests {
         );
         for table in [
             "coordinator_node_reservations",
+            "coordinator_node_reservation_gpus",
             "coordinator_attempts",
             "coordinator_leases",
             "staging_operation_idempotency",
@@ -1114,6 +1282,7 @@ mod tests {
             .unwrap();
         let mut second_request = request("job-2", 2);
         second_request.node_id = "node-2".into();
+        second_request.selected_gpu_ids = vec!["gpu-node-2".into()];
         let second = store
             .reserve_node_and_stage_queued_with_lease(&second_request, u64::MAX)
             .unwrap();
@@ -1176,6 +1345,236 @@ mod tests {
             .reserve_node_and_stage_queued_with_lease(&request, 5)
             .unwrap();
         assert_eq!(result.stage.lease.fence_epoch, 1);
+    }
+
+    #[test]
+    fn failure_after_gpu_binding_insert_rolls_back_every_staging_side_effect() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_inventory(&path, "node-1", 5, 1);
+        let request = request("job-1", 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        assert!(matches!(
+            store.reserve_and_stage(&request, 5, Some(TestFault::AfterGpuBindingInsert)),
+            Err(ReservedStageError::Staging(
+                StagingStoreError::InjectedFailure("after selected GPU binding insert")
+            ))
+        ));
+        assert_queued_and_no_side_effects(&store, &request);
+        let binding_count: u64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM coordinator_node_reservation_gpus",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(binding_count, 0);
+
+        let result = store
+            .reserve_node_and_stage_queued_with_lease(&request, 5)
+            .unwrap();
+        assert_eq!(result.stage.lease.fence_epoch, 1);
+        assert_eq!(result.reservation.selected_gpu_ids, ["gpu-node-1"]);
+    }
+
+    #[test]
+    fn invalid_or_missing_selected_gpu_ids_fail_before_staging() {
+        for (index, selected_gpu_ids) in [
+            Vec::<String>::new(),
+            vec![" ".into()],
+            vec!["gpu-node-1".into(), "gpu-node-1".into()],
+            vec!["gpu-z".into(), "gpu-a".into()],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("control.sqlite3");
+            prepare_queued(&path, "job-1", 1);
+            prepare_inventory(&path, "node-1", 5, 1);
+            let mut request = request("job-1", 1);
+            request.selected_gpu_ids = selected_gpu_ids;
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+            assert!(matches!(
+                store.reserve_node_and_stage_queued_with_lease(&request, 5),
+                Err(ReservedStageError::Staging(
+                    StagingStoreError::InvalidInput(_)
+                ))
+            ), "invalid selected GPU case {index} must fail closed");
+            assert_queued_and_no_side_effects(&store, &request);
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-missing-gpu", 1);
+        prepare_inventory(&path, "node-1", 5, 1);
+        prepare_inventory_gpus(&path, "node-2", 5, 2, &["gpu-missing".into()]);
+        let mut request = request("job-missing-gpu", 1);
+        request.selected_gpu_ids = vec!["gpu-missing".into()];
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        assert_eq!(
+            store.reserve_node_and_stage_queued_with_lease(&request, 5),
+            Err(ReservedStageError::SelectedGpuMissing {
+                node_id: "node-1".into(),
+                gpu_id: "gpu-missing".into(),
+            })
+        );
+        assert_queued_and_no_side_effects(&store, &request);
+    }
+
+    #[test]
+    fn selected_gpu_binding_is_in_operation_payload_and_replay_returns_original() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_inventory_gpus(
+            &path,
+            "node-1",
+            5,
+            1,
+            &["gpu-a".into(), "gpu-b".into()],
+        );
+        let mut request = request("job-1", 1);
+        request.selected_gpu_ids = vec!["gpu-a".into()];
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+
+        let first = store
+            .reserve_node_and_stage_queued_with_lease(&request, 5)
+            .unwrap();
+        let replay = store
+            .reserve_node_and_stage_queued_with_lease(&request, 5)
+            .unwrap();
+        assert!(!replay.stage.created);
+        assert_eq!(replay.reservation, first.reservation);
+
+        let mut changed = request.clone();
+        changed.selected_gpu_ids = vec!["gpu-b".into()];
+        assert_eq!(
+            store.reserve_node_and_stage_queued_with_lease(&changed, 5),
+            Err(ReservedStageError::Staging(
+                StagingStoreError::OperationConflict
+            ))
+        );
+        assert_eq!(
+            store.get_node_reservation("node-1").unwrap(),
+            Some(first.reservation)
+        );
+        assert_eq!(store.fence_epoch().unwrap(), Some(1));
+    }
+
+    #[test]
+    fn missing_blank_noncanonical_or_gapped_stored_gpu_binding_fails_closed() {
+        for corruption in ["missing", "blank", "noncanonical", "gapped"] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("control.sqlite3");
+            prepare_queued(&path, "job-1", 1);
+            prepare_inventory_gpus(
+                &path,
+                "node-1",
+                5,
+                1,
+                &["gpu-a".into(), "gpu-b".into()],
+            );
+            let mut request = request("job-1", 1);
+            request.selected_gpu_ids = vec!["gpu-a".into(), "gpu-b".into()];
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            store
+                .reserve_node_and_stage_queued_with_lease(&request, 5)
+                .unwrap();
+
+            match corruption {
+                "missing" => {
+                    store
+                        .connection
+                        .execute(
+                            "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = 'node-1'",
+                            [],
+                        )
+                        .unwrap();
+                }
+                "blank" => {
+                    store
+                        .connection
+                        .execute(
+                            "UPDATE coordinator_node_reservation_gpus SET gpu_id = ' ' WHERE ordinal = 0",
+                            [],
+                        )
+                        .unwrap();
+                }
+                "noncanonical" => {
+                    store
+                        .connection
+                        .execute(
+                            "UPDATE coordinator_node_reservation_gpus SET gpu_id = 'gpu-z' WHERE ordinal = 0",
+                            [],
+                        )
+                        .unwrap();
+                }
+                "gapped" => {
+                    store
+                        .connection
+                        .execute(
+                            "UPDATE coordinator_node_reservation_gpus SET ordinal = 2 WHERE ordinal = 1",
+                            [],
+                        )
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(matches!(
+                store.get_node_reservation("node-1"),
+                Err(StagingStoreError::CorruptData(_))
+            ));
+            assert!(matches!(
+                store.reserve_node_and_stage_queued_with_lease(&request, 5),
+                Err(ReservedStageError::Staging(
+                    StagingStoreError::CorruptData(_)
+                ))
+            ));
+            assert_eq!(store.fence_epoch().unwrap(), Some(1));
+        }
+    }
+
+    #[test]
+    fn revision_zero_and_multiple_gpu_ids_survive_reopen_in_canonical_order() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-1", 1);
+        prepare_inventory_gpus(
+            &path,
+            "node-1",
+            0,
+            1,
+            &["gpu-z".into(), "gpu-a".into()],
+        );
+        let mut request = request("job-1", 1);
+        request.selected_gpu_ids = vec!["gpu-a".into(), "gpu-z".into()];
+        let issued = {
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            store
+                .reserve_node_and_stage_queued_with_lease(&request, 0)
+                .unwrap()
+        };
+
+        let mut reopened = CoordinatorStagingStore::open(&path).unwrap();
+        assert_eq!(
+            reopened.get_node_reservation("node-1").unwrap(),
+            Some(issued.reservation.clone())
+        );
+        assert_eq!(issued.reservation.inventory_revision, 0);
+        assert_eq!(
+            issued.reservation.selected_gpu_ids,
+            ["gpu-a".to_owned(), "gpu-z".to_owned()]
+        );
+        let replay = reopened
+            .reserve_node_and_stage_queued_with_lease(&request, 0)
+            .unwrap();
+        assert!(!replay.stage.created);
+        assert_eq!(replay.reservation, issued.reservation);
     }
 
     #[test]
@@ -1242,7 +1641,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("control.sqlite3");
         prepare_queued(&path, "job-1", 1);
-        let request = request("job-1", 1);
+        let mut request = request("job-1", 1);
+        request.selected_gpu_ids.clear();
         let mut store = CoordinatorStagingStore::open(&path).unwrap();
 
         let first = store.stage_queued_with_lease(&request).unwrap();

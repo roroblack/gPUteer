@@ -1,0 +1,130 @@
+=== 구현·검증 기록 — selected GPU durable reservation binding ===
+
+기준 HEAD: 3a85bed5236f8751e8ab616337abb6549704a964 (`DoD-48`)
+계획: docs/plans/2026-08-24_1103_scheduler_selected_gpu_reservation_binding_v1.md
+리포트: docs/reports/2026-08-24_1118_scheduler_selected_gpu_reservation_binding.md
+
+설계 조사는 `DoD-48` 뒤 후보인 Manifest 변환기, Grant plan/scope 생성,
+reservation release와 selected GPU durable binding을 비교했다. Manifest 변환기는
+`Verified<JobManifest>`와 외부에서 해석한 submitter member identity가 필요하고, 현재
+durable Job row에는 원본 Manifest가 아니라 hash만 남는다. Grant/scope는 proto 필드는
+이미 있지만 selected GPU assignment와 UUID provenance가 durable하지 않다.
+
+reservation release 부재는 실제 위험이지만 지금 단독 구현해서는 안 된다고 판정했다.
+현재 durable outbox/publish 상태, terminal Attempt report, runtime stop handshake와 Lease
+만료 뒤 fencing 증명이 없다. 이런 상태에서 reservation row만 삭제하면 아직 실행 중인
+Agent workload와 새 Job이 겹쳐, capacity 고갈이라는 liveness 문제를 중복 실행이라는
+safety 문제로 바꿀 수 있다. 따라서 release는 실행 종료 또는 never-published 사실을
+durable하게 증명하는 경로와 결합하는 후속으로 두었다.
+
+이번 범위는 `DoD-48`의 canonical `selected_gpu_ids`를 inventory revision CAS, node
+reservation, Attempt/Lease/fence, `QUEUED -> STAGING`, operation idempotency와 같은 local
+SQLite transaction에 영속화하는 조각으로 제한했다.
+
+=== 구현 ===
+
+- `StageQueuedRequest.selected_gpu_ids`와
+  `StoredNodeReservation.selected_gpu_ids`를 추가했다.
+- `ReservedStageError::SelectedGpuMissing`을 추가했다.
+- `coordinator_node_reservation_gpus(node_id, gpu_id, ordinal)` child table을 추가했다.
+  `(node_id, ordinal)`은 PRIMARY KEY이고 `(node_id, gpu_id)`는 UNIQUE다.
+- reservation-aware 경로는 빈 목록, 공백 ID, 중복 ID와 `gpu_id` 오름차순이 아닌
+  목록을 STAGING 전에 거부한다.
+- 같은 transaction에서 CAS로 확인한 node의 inventory에 각 `(node_id, gpu_id)`가
+  존재하는지 `WHERE node_id = ?1 AND gpu_id = ?2`로 확인한다.
+- operation payload에는 GPU 개수와 length-delimited ID bytes가 포함된다. 같은 operation
+  key와 GPU 집합이 다르면 `OperationConflict`이고, exact replay는 최초 durable binding을
+  복원해 요청과 대조한다.
+- child row가 없는 기존 reservation은 unbound legacy로 보아 `CorruptData`로 fail
+  closed한다. 조회 시 ordinal gap, blank, duplicate, 비정렬 binding도 거부한다.
+- reservation, GPU binding, Attempt/Lease/fence, Job STAGING, operation row는 단일
+  `BEGIN IMMEDIATE`에서 기록하고 한 번만 commit한다.
+- `crates/coordinator/src/orchestrate.rs`의 single/N 후보가 모두 `DoD-48`의 exact
+  canonical ID를 reservation-aware staging request로 전달한다.
+
+=== 자체 재검토에서 발견하고 닫은 테스트 공백 ===
+
+초기 inventory 존재 fixture는 선택 node의 GPU 부재를 검사했지만, SQL이 node 범위를
+빼고 전역 GPU ID 존재만 확인해도 통과할 가능성이 있었다. 같은 GPU ID를 다른 node에만
+등록한 fixture를 추가했다. 선택 node에는 그 ID가 없으므로
+`SelectedGpuMissing { node_id, gpu_id }`으로 거부되고 Job은 QUEUED, staging side effect는
+0건임을 확인했다.
+
+=== negative test와 뮤테이션 판별력 ===
+
+- `invalid_or_missing_selected_gpu_ids_fail_before_staging`: 빈/공백/중복/비정렬
+  selected GPU ID를 typed error로 거부한다.
+- 선택 node에 GPU가 없고 같은 ID가 다른 node에만 있어도 `SelectedGpuMissing`이다.
+- `missing_blank_noncanonical_or_gapped_stored_gpu_binding_fails_closed`: child row 부재,
+  ordinal gap, blank, duplicate, 비정렬 durable binding을 `CorruptData`로 fail closed한다.
+- binding 직후 fault injection은 reservation, binding, Attempt, Lease, fence, Job,
+  operation을 모두 rollback한다.
+- `selected_gpu_binding_is_in_operation_payload_and_replay_returns_original`: exact replay와
+  reopen 뒤에도 최초 selected GPU IDs를 복원하며 changed payload는
+  `OperationConflict`다.
+- revision 0, `u64::MAX`, 복수 GPU canonical ordering을 round-trip한다.
+- 실제 `Barrier` 경쟁은 정확히 1건만 성공하고 loser Job은 QUEUED이며 reservation과
+  GPU child row는 winner에만 각각 정확히 1개 존재한다.
+- reservation 없는 기존 `stage_queued_with_lease()`는 빈 selected GPU 목록으로 기존
+  staging 동작을 유지한다.
+- 뮤테이션 1: reserved operation payload에서 GPU count/IDs를 제거하자 changed GPU
+  payload conflict test가 실패했다.
+- 뮤테이션 2: inventory GPU 존재 검사를 우회하자 missing GPU negative test가 실패하고
+  존재하지 않는 GPU가 STAGING되는 반례를 검출했다.
+- 두 뮤테이션은 즉시 원복했고 관련 suite가 다시 통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 `staging_store.rs:323,399,409`의 단일 `BEGIN IMMEDIATE` 원자성,
+`:1351`의 binding 직후 fault rollback, `:741`의 node-scoped SQL과 `:1411`의 다른
+node 동일 ID fixture를 확인했다. 자체 재검토 보고가 실제 구현과 test로 성립한다고
+판정했다.
+
+또한 `:806,1470`의 child 부재·ordinal gap·blank/duplicate/비정렬 손상 fail-closed,
+`:711,337,882`의 replay 멱등성과 `OperationConflict`, `:293,1639`의 기존 `DoD-43`
+reservation-free 경로 무회귀, `:1198`의 Barrier 경쟁을 확인했다. orchestration
+single/N 전달은 `orchestrate.rs:152,179`에서 대조했다. 변경 범위는
+`staging_store.rs`, `orchestrate.rs`, 계획/보고 문서뿐이며 `inventory_store.rs`,
+`job_store.rs`, scheduler와 wire는 바뀌지 않았다. 두 뮤테이션도 지정 테스트가 실제
+회귀를 잡으므로 수정 요청 없이 1라운드에서 `ACCEPTED`했다.
+
+세부 receipt: docs/evidence/_raw/DoD-49_review.txt
+
+=== 감독자 직접 재확인 ===
+
+감독자가 직접 실행한 명령:
+
+  cargo test -p gputeer-coordinator
+
+관측 결과:
+
+  gputeer-coordinator: unit 88 + integration 4 = 92 passed, 0 failed
+  exit code: 0
+
+구현 보고에 함께 기록된 검증:
+
+  cargo build --workspace --exclude gputeer-runtime-windows
+    PASS
+  cargo test --workspace --exclude gputeer-runtime-windows
+    PASS — 실행 suite 전체 0 failed, 기존 ignored 1건 유지
+  git diff --check
+    PASS
+
+stable toolchain에 `cargo-fmt`/`rustfmt` component가 없어 `cargo fmt`는 실행하지
+못했다. 빌드와 테스트에는 영향이 없었고 변경 코드는 기존 형식에 맞춰 검토됐다.
+
+=== 범위와 제한 ===
+
+- reservation release 경로는 여전히 없다. 실행 종료 또는 never-published 사실 없이
+  삭제하면 중복 실행 위험이 생기므로 설계 판단에 따라 후순위로 두었다.
+- Grant/Lease scope 생성, NVML UUID provenance, GPU별 capacity accounting,
+  production wire 연결은 범위 밖이다.
+- node-exclusive reservation 정책은 바꾸지 않았고 GPU-exclusive/shared/MIG allocation을
+  제공하지 않는다.
+- Manifest 원본 저장, strict `JobRequirements` 변환기와 submit ingress도 없다.
+- local SQLite `DURABLE`만 증명하며 Raft `COMMITTED`를 증명하지 않는다.
+
+결론: `DoD-48`의 selected GPU 식별자는 이제 inventory CAS, node reservation과
+STAGING의 단일 transaction에 결합되어 재시작과 exact replay 뒤에도 복원된다. 이는
+durable binding 조각의 완료이며 Grant 생성, 실제 GPU UUID 증명, capacity accounting,
+안전한 release 또는 production dispatch 완료를 뜻하지 않는다.

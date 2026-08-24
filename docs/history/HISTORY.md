@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-08-24 11:30 — selected GPU durable reservation binding — evidence 기록 (`DoD-49`)
+- 계획: `docs/plans/2026-08-24_1103_scheduler_selected_gpu_reservation_binding_v1.md`
+  (조각 5c: selected GPU durable reservation binding).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: `DoD-48`의 canonical `selected_gpu_ids`를 inventory revision CAS, node
+  reservation, Attempt/Lease/fence, `QUEUED→STAGING`, operation idempotency와 같은
+  `BEGIN IMMEDIATE` transaction에 보존한 구현의 evidence를 작성했다.
+  `coordinator_node_reservation_gpus(node_id, gpu_id, ordinal)` child table과 canonical
+  request 검사, node-scoped inventory 존재 확인, GPU-bound operation payload,
+  restart/replay 복원·대조, legacy/corrupt binding fail-closed를 기록했다. 자체 재검토에서
+  같은 GPU ID가 다른 node에만 있을 때 전역 ID 검사로 잘못 통과할 가능성을 찾아
+  `SelectedGpuMissing` fixture를 보강했다. 독립 검수는 단일 transaction 원자성·binding
+  직후 전체 rollback·실제 node-scoped SQL·손상 검사·replay/`OperationConflict`·DoD-43
+  무회귀·Barrier 경쟁·single/N 전달·뮤테이션 2건·제한된 범위를 확인해 1라운드
+  `ACCEPTED`. reservation release는 실행 종료 증명 없이 구현하면 중복 실행 위험을
+  만들므로 후순위이며 Grant/Lease scope·NVML UUID provenance·GPU별 capacity accounting·
+  production wire도 범위 밖이다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 재실행해 unit 88 +
+  integration 4 = 92 passed, 0 failed를 확인했다. `python scripts/verify_evidence.py`로
+  `DoD-49_scheduler_gpu_reservation_binding.md` schema v2 PASS를 확인한다.
+- 리포트: `docs/reports/2026-08-24_1118_scheduler_selected_gpu_reservation_binding.md` +
+  `docs/evidence/DoD-49_scheduler_gpu_reservation_binding.md`.
+
 ## 2026-08-24 10:54 — deterministic selected GPU assignment 순수 kernel — evidence 기록 (`DoD-48`, `DoD-46` 계약 불일치 3번 선행 작업)
 - 계획: `docs/plans/2026-08-21_1036_scheduler_selected_gpu_assignment_v1.md`
   (조각 4b: deterministic selected GPU assignment 순수 kernel).

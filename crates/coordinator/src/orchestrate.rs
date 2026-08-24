@@ -1,9 +1,10 @@
 //! Crate-internal local placement-to-staging orchestration.
 //!
 //! This seam performs local node-exclusive inventory-CAS admission together
-//! with durable staging. It deliberately is **not** per-GPU/partial resource
-//! allocation, release/requeue, Grant construction, network dispatch, or a
-//! production entrypoint.
+//! with durable staging and the selected GPU ID binding. It deliberately is
+//! **not** per-GPU capacity accounting/partial resource allocation,
+//! release/requeue, Grant construction, network dispatch, or a production
+//! entrypoint.
 
 use gputeer_scheduler::{
     evaluate_eligibility, rank_best_fit, resource_fit, BestFitPolicy, BestFitRanking,
@@ -164,19 +165,6 @@ pub(crate) fn orchestrate_placement_to_staging(
         }
     };
 
-    let request = StageQueuedRequest {
-        operation_key: input.issuance.operation_key,
-        job_id: input.job_id.clone(),
-        attempt_id: input.issuance.attempt_id.clone(),
-        lease_id: input.issuance.lease_id.clone(),
-        node_id: selected_node_id.clone(),
-        issuing_coordinator_id: input.issuance.issuing_coordinator_id.clone(),
-        coordinator_term: input.issuance.coordinator_term,
-        issued_at_unix_ms: input.issuance.issued_at_unix_ms,
-        renew_after_unix_ms: input.issuance.renew_after_unix_ms,
-        expires_at_unix_ms: input.issuance.expires_at_unix_ms,
-        max_total_duration_seconds: input.issuance.max_total_duration_seconds,
-    };
     let matching_candidates = pool
         .candidates
         .iter()
@@ -210,6 +198,20 @@ pub(crate) fn orchestrate_placement_to_staging(
         .ok_or_else(|| PlacementToStagingError::SelectedCandidateMissingInventoryRevision {
             node_id: selected_node_id.clone(),
         })?;
+    let request = StageQueuedRequest {
+        operation_key: input.issuance.operation_key,
+        job_id: input.job_id.clone(),
+        attempt_id: input.issuance.attempt_id.clone(),
+        lease_id: input.issuance.lease_id.clone(),
+        node_id: selected_node_id.clone(),
+        selected_gpu_ids: selected_gpu_ids.clone(),
+        issuing_coordinator_id: input.issuance.issuing_coordinator_id.clone(),
+        coordinator_term: input.issuance.coordinator_term,
+        issued_at_unix_ms: input.issuance.issued_at_unix_ms,
+        renew_after_unix_ms: input.issuance.renew_after_unix_ms,
+        expires_at_unix_ms: input.issuance.expires_at_unix_ms,
+        max_total_duration_seconds: input.issuance.max_total_duration_seconds,
+    };
     let stage = staging_store
         .reserve_node_and_stage_queued_with_lease(&request, expected_inventory_revision)?
         .stage;
@@ -427,6 +429,15 @@ mod tests {
         assert_eq!(stage.attempt.node_ids, ["node-a"]);
         assert_eq!(stage.lease.holder_node_id, "node-a");
         assert_eq!(stage.job.state, JobState::Staging);
+        assert_eq!(
+            fixture
+                .staging_store
+                .get_node_reservation("node-a")
+                .unwrap()
+                .unwrap()
+                .selected_gpu_ids,
+            selected_gpu_ids
+        );
     }
 
     #[test]
@@ -454,6 +465,15 @@ mod tests {
         assert_eq!(selected_gpu_ids, ["gpu-node-b"]);
         assert_eq!(stage.attempt.node_ids, ["node-b"]);
         assert_eq!(stage.lease.holder_node_id, "node-b");
+        assert_eq!(
+            fixture
+                .staging_store
+                .get_node_reservation("node-b")
+                .unwrap()
+                .unwrap()
+                .selected_gpu_ids,
+            selected_gpu_ids
+        );
     }
 
     #[test]

@@ -1,0 +1,65 @@
+=== 독립 검수 receipt — DoD-49 selected GPU durable reservation binding ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 완료 결론을 전제로 삼지 않고 계획, production diff, 테스트,
+뮤테이션 기록과 변경 범위를 대조했다.
+
+1. transaction 원자성과 rollback
+
+- `crates/coordinator/src/staging_store.rs:323`의 reservation-aware 경로는 단일
+  `BEGIN IMMEDIATE` transaction을 연다.
+- reservation과 GPU binding 뒤 Attempt/Lease/fence, Job STAGING, operation row까지 같은
+  transaction에서 기록되고 `:399`, `:409`에서 결과 구성과 commit이 이어진다.
+- `:1351`의 binding 직후 injected fault는 reservation, GPU child row, Attempt, Lease,
+  fence, Job 전이와 operation을 전부 rollback한다. 부분 commit은 남지 않는다.
+
+2. node-scoped inventory membership
+
+- `staging_store.rs:741`의 존재 검사는
+  `WHERE node_id = ?1 AND gpu_id = ?2`를 사용한다. GPU ID의 전역 존재만 검사하지 않는다.
+- 자체 재검토로 보강한 `:1411` fixture는 같은 ID를 다른 node에만 등록하고 선택 node의
+  요청이 `SelectedGpuMissing`으로 실패하는지 확인한다. 자체 재검토 보고는 사실이다.
+
+3. durable binding 형식과 fail-closed 손상 검사
+
+- `coordinator_node_reservation_gpus(node_id, gpu_id, ordinal)`은
+  `(node_id, ordinal)` PRIMARY KEY와 `(node_id, gpu_id)` UNIQUE를 강제한다.
+- `staging_store.rs:806`부터 child row를 ordinal 순으로 읽고, child 부재인 legacy
+  reservation과 ordinal gap, blank, duplicate, 비정렬 ID를 `CorruptData`로 거부한다.
+- `:1470`의 corruption fixture가 각 손상 유형을 실제 DB mutation으로 만들고 조회와
+  replay가 fail closed하는지 검사한다.
+
+4. operation replay와 기존 경로 무회귀
+
+- `staging_store.rs:711`의 request payload는 GPU count와 length-delimited ID를 포함한다.
+- `:337`의 operation replay 선행 판정과 `:882`의 durable reservation/request 대조는
+  exact replay만 최초 결과를 반환하고 GPU payload 차이는 `OperationConflict`가 되게 한다.
+- `:293`, `:1639`는 기존 `DoD-43` reservation-free API가 selected GPU binding 없이도
+  이전 계약대로 동작함을 확인한다.
+
+5. concurrency, orchestration, mutation과 범위
+
+- `staging_store.rs:1198`의 실제 두 connection `Barrier` 경쟁은 성공 1건, loser QUEUED,
+  winner reservation 1개와 GPU child row 1개를 확인한다.
+- `crates/coordinator/src/orchestrate.rs:152`, `:179`의 single/N 경로는 모두 `DoD-48`의
+  canonical `selected_gpu_ids`를 staging request에 전달한다.
+- operation payload에서 GPU count/ID를 제거하는 뮤테이션과 inventory membership 검사를
+  우회하는 뮤테이션은 각각 conflict/negative test에 검출됐다. 최종 코드에서는 원복됐다.
+- 변경 범위는 `staging_store.rs`, `orchestrate.rs`, 계획/보고 문서뿐이다.
+  `inventory_store.rs`, `job_store.rs`, scheduler, proto와 production wire는 바뀌지 않았다.
+
+6. 한계 판정
+
+- snapshot GPU ID의 NVML UUID provenance는 증명하지 않는다.
+- Grant/Lease scope 생성, GPU별 capacity accounting과 reservation release는 없다.
+- release는 실행 종료나 never-published 사실 없이 구현하면 중복 실행 위험을 만들므로
+  설계 문서가 후순위로 둔 판단이 타당하다.
+- private orchestration은 production `run()`/accept-loop와 wire에 연결되지 않았다.
+
+판정: selected GPU ID 집합은 inventory CAS, node reservation과 STAGING의 단일 local
+transaction에 durable하게 결합되고, restart/replay·fault rollback·node scope·손상
+fail-closed·동시성·기존 API 무회귀가 충분히 판별됐다. 범위를 Grant/release/production
+연결로 과장하지 않았으므로 수정 요청 없이 1라운드 `ACCEPTED`한다.
