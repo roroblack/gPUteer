@@ -16,6 +16,52 @@
 
 ---
 
+## 2026-08-24 15:37 — verified CheckpointManifest durable binding — evidence 기록 (`DoD-52`)
+- 계획: `docs/plans/2026-08-24_1513_verified_checkpoint_manifest_durable_binding_v1.md`
+  (verified CheckpointManifest durable Attempt/reservation binding 선행 조각).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: 직전 조사들이 계속 "앞으로 나갈 조각이 하루 규모인가"를 물어 매번 없다고
+  판정한 뒤, 이번에는 "선행 조건의 첫 슬라이스가 하루 규모인가"로 질문을 바꿔 이 조각을
+  찾았다. 신규 `CoordinatorCheckpointManifestStore`는
+  `&Verified<pb::CheckpointManifest>`만 받고 `Verified::get()` 뒤에만 필드를 읽는다.
+  하나의 `BEGIN IMMEDIATE`를 획득한 뒤 같은 transaction에서 현재 durable Attempt와
+  reservation의 job/attempt/producer/verified signer/fence/owner를 대조한 후 signature 포함
+  complete body와 저장소 계산 BLAKE3 hash를 first-write fact로 저장한다. root는
+  BLAKE3-256/정확히 32바이트만 허용한다. 자체 재검토에서 초기 구현이 SHA-256 root도
+  허용하는 실제 결함을 발견해 production 검사를 고치고 negative case를 추가했다. load는
+  의도적으로 raw binding이고 `ReplicaAck` 저장·`MIRRORED`/checkpoint durability 전이와
+  Job/Attempt/Lease/reservation 상태 전이는 추가하지 않았다. 독립 검수는 유일 API/INSERT,
+  검증 순서, transaction binding, root 제한, replay·raw load·corruption·rollback·상태 무변경과
+  production guard 뮤테이션 2건을 확인해 1라운드 `ACCEPTED`했다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 재실행해 unit 114 +
+  integration 4 = 118 passed, 0 failed를 확인했다. `python scripts/verify_evidence.py`로
+  `DoD-52_scheduler_verified_checkpoint_manifest_binding.md` schema v2 PASS를 확인한다.
+- 리포트: `docs/evidence/DoD-52_scheduler_verified_checkpoint_manifest_binding.md`.
+
+## 2026-08-24 15:28 — Elastic 추론 노드 admission 확장 vision 등록 (V-12)
+- 계획: (없음 — `RULE.md` §5.4 "지금은 안 한다" 항목의 직접 vision 등록. 실행계획서를 거치지 않음)
+- 스트림: — (문서 전용, `docs/vision/`)
+- 수행: FreeToken(arXiv:2608.16157 — 노드 하나 안에서 GPU VRAM·CPU RAM·PCIe 대역폭을
+  elastic 자원 풀로 취급하는 MoE serving 시스템 논문)을 별도 세션에서 검토하다 나온
+  아이디어를 `docs/vision/TODO_VISION.md`에 V-12로 등록했다 — 현재 scheduler
+  hard-filter(`crates/scheduler/src/filter.rs`)가 GPU VRAM을 스칼라 이진 판정하는
+  방식이 elastic serving 노드(모델 일부를 CPU/RAM으로 오프로드하며 처리량과
+  자원 배치를 함께 조정하는 노드)에는 안 맞을 수 있다는 내용이다. 관측 가능한
+  도입 트리거·측정 가능한 보류 이유·생성/검증/대기 비용 분해(병목 명시)·폐기
+  조건을 갖춰 V-10·V-11과 같은 형식으로 등록했다.
+- 검증: 코덱스 CLI 독립 검수(`codex exec -s read-only`, 대화 기록 없는 새 인스턴스)
+  4라운드. 1라운드가 실질 결함 6건을 찾아 `CHANGES_REQUESTED` — 트리거 (b)가
+  비수치였고, FreeToken의 서로 다른 하드웨어 등급 결과("8GB 노트북→35B"·
+  "96GB 워크스테이션→753B")를 하나로 합쳐 "8GB에 753B가 들어간다"는 근거 없는
+  조합을 만들었으며, `GpuSnapshot`이 아니라 이미 `CandidateSnapshot.available_ram_bytes`로
+  존재하는 것을 놓치고 중복 제안했고, `WorkloadHint`에 SLO 필드가 없다는 계약
+  공백이 비용 산정에 빠졌고, 기준선 §10.5(Shared Admission, 조건부 opt-in 경로)를
+  전체 admission 규범처럼 과대 일반화했고, V-10이 "아직 결정 안 함"이라 명시한
+  hard-filter/soft-rank 분리를 V-12가 이미 확정된 것처럼 서술해 모순이 있었다.
+  전부 코드/기준선 파일:줄 인용과 대조해 실재를 확인한 뒤 본문에 반영했다.
+  2·3라운드는 조사 앞 띄어쓰기 오류(총 5곳)만 지적, 4라운드에서 `ACCEPTED`.
+- 리포트: `docs/reports/2026-08-24_1528_elastic_admission_vision_등록.md`
+
 ## 2026-08-24 12:57 — verified terminal AttemptReport durable binding — evidence 기록 (`DoD-51`)
 - 계획: `docs/plans/2026-08-24_1238_terminal_attempt_report_binding_v1.md`
   (verified terminal AttemptReport durable Attempt/reservation binding 선행 조각).

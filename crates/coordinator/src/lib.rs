@@ -28,6 +28,7 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 pub mod attempt_report_store;
+pub mod checkpoint_manifest_store;
 pub mod job_store;
 pub mod inventory_store;
 pub mod lease_store;

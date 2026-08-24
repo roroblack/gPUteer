@@ -1,0 +1,170 @@
+=== 구현·검증 기록 — verified CheckpointManifest durable Attempt/reservation binding ===
+
+커밋 대상 HEAD: 3a0d4f5a36ec9fbe0ebed2f0defcec244a54dadf (`DoD-51`)
+계획: docs/plans/2026-08-24_1513_verified_checkpoint_manifest_durable_binding_v1.md
+구현:
+  crates/coordinator/src/checkpoint_manifest_store.rs
+  crates/coordinator/src/lib.rs
+
+=== 설계 조사와 범위 결정 ===
+
+직전 조사들은 계속 "앞으로 나갈 조각이 하루 규모인가"를 물었고, authoritative
+device→member 해석, `JobRequirements` projection, `MIRRORED` 소비, Job/Attempt terminal
+전이, reservation release와 production ingress/outbox 모두 선행 규범이나 권위 있는
+durable state가 부족해 매번 "없다"고 판정했다.
+
+이번에는 질문을 "각 blocker 선행 조건의 첫 슬라이스가 하루 규모인가"로 바꿨다. 그 결과
+`CheckpointManifest`는 proto·`Signable<Lifetime::Evidence>`·framed `Verified`와 durable
+Attempt/reservation identity가 이미 있고, 먼저 durable anchor를 만들면 다음
+`ReplicaAck`의 `checkpoint_id`/`root_digest` binding을 열 수 있어 하루 조각으로 선택됐다.
+반면 membership/ControlStore 계열은 authorization record, signer identity, lifetime,
+member 상태 규범부터 확정해야 해 첫 규범 조각 약 2일, durable 저장까지 누적 약 3일이다.
+
+ACK를 먼저 저장하지 않은 이유도 이 순서에 있다. coordinator에 durable
+`checkpoint_id`/`root_digest` authority가 없는 상태에서 `ReplicaAck`만 저장하면 서명된
+holder claim은 남지만 어느 producer checkpoint에 묶이는지 안전하게 대조할 수 없다.
+
+=== 구현 ===
+
+- 신규 `CoordinatorCheckpointManifestStore`와
+  `store_verified_manifest(&Verified<pb::CheckpointManifest>)`를 추가했다.
+- production 저장 API는 raw `pb::CheckpointManifest`를 받지 않는다. manifest 필드는
+  `Verified::get()` 뒤에만 처음 읽는다.
+- raw load `get_manifest_binding()`은 `StoredCheckpointManifestBinding`을 반환한다.
+  의도적으로 `Verified<CheckpointManifest>`가 아니며 현재 authoritative key directory에서
+  서명을 다시 검증하기 전 durability나 canonical-selection 결정에 쓰면 안 된다.
+- 신규 `coordinator_checkpoint_manifests` 테이블은 primary key `checkpoint_id`, job/attempt/
+  producer/verified signer, big-endian BLOB `fence_epoch`, encoded `root_digest`, 저장소가
+  signature 포함 complete protobuf `manifest_body`에서 직접 계산한 BLAKE3
+  `manifest_hash`, complete `manifest_body`를 보존한다.
+
+=== stale manifest 혼입 방지 — 같은 transaction 안의 binding ===
+
+신규 row는 `BEGIN IMMEDIATE`를 획득한 뒤 같은 transaction 안에서 durable Attempt와 현재
+reservation을 읽고 다음을 모두 대조한 뒤에만 INSERT한다.
+
+1. manifest `job_id` = durable Attempt `job_id` = reservation `job_id`.
+2. manifest `attempt_id` = durable Attempt `attempt_id` = reservation `attempt_id`.
+3. manifest `producer_node_id` = `Verified::signer_id()` = single-node Attempt node =
+   reservation node.
+4. manifest `fence_epoch` = durable Attempt `fence_epoch`.
+
+transaction 밖에서 owner나 fence를 미리 읽고 판단하는 경로는 없다. 따라서 write lock을
+잡기 전 읽은 stale Attempt/reservation을 근거로 INSERT하는 TOCTOU 경로가 없다.
+reservation이 없거나 owner가 다르면 manifest row를 만들지 않는다.
+
+=== root digest, complete body와 replay ===
+
+`root_digest`는 `HASH_ALGORITHM_BLAKE3_256`이면서 값이 정확히 32바이트인 경우만 허용한다.
+`common.proto`의 SHA-256은 OCI 호환 전용이고 Checkpoint Merkle root는 BLAKE3 규범을
+따르므로 SHA-256이나 unspecified/다른 길이는 INSERT 전에 거부한다.
+
+caller hash는 받지 않는다. signature를 포함한 complete protobuf body를 encode하고 저장소가
+BLAKE3-256 hash를 직접 계산한다. 같은 `checkpoint_id`의 exact semantic replay는 최초 row를
+`created=false`로 반환하고 행을 늘리거나 덮어쓰지 않는다. body/signature/root/fence가 달라진
+replay는 typed conflict로 거부한다.
+
+=== load, rollback과 상태 무변경 ===
+
+- load는 body hash를 재계산한 뒤 decode하고 row↔body checkpoint/job/attempt/producer,
+  submission-time signer, big-endian fence encoding/value, root encoding/value와 현재 durable
+  Attempt binding을 다시 검사한다. 손상은 typed corruption으로 fail closed한다.
+- INSERT 직후 injected fault는 transaction 전체를 rollback한다.
+- production 저장 경로에는 Job/Attempt/Lease/reservation UPDATE 또는 DELETE가 없다.
+- 신규 테이블에는 checkpoint durability state가 없고 저장 성공은 `HASH_VERIFIED`,
+  `REPLICATING`, `REPLICATED`, `MIRRORED` 또는 `COMMITTED` 전이를 주장하지 않는다.
+
+=== 자체 재검토에서 발견해 고친 실제 결함 ===
+
+초기 구현은 구조적으로 유효한 SHA-256 root digest도 허용했다. 이는 `common.proto`에서
+SHA-256을 OCI 호환 목적으로만 허용한 규정과 Checkpoint Merkle BLAKE3 규범에 어긋났다.
+자체 재검토에서 이 결함을 발견해 Checkpoint root를 BLAKE3-256/정확히 32바이트로만
+제한하도록 수정하고 SHA-256 negative case를 추가했다.
+
+또한 모든 durable owner read가 INSERT와 같은 `BEGIN IMMEDIATE` 안에 있는지, load가
+authoritative key directory 없이 `Verified`를 재구성하지 않는지, replay가 overwrite하지
+않는지, 신규 테이블에 durability state 열이 없는지를 다시 확인했다.
+
+=== negative test와 뮤테이션 판별력 ===
+
+- `complete_signed_manifest_and_store_derived_hash_survive_reopen`: signature 포함 complete body,
+  저장소 계산 hash와 root binding이 reopen 뒤 복원된다.
+- `missing_or_unspecified_root_and_blank_identity_create_no_row`: blank checkpoint와 누락/
+  unspecified/SHA-256/31-byte root가 row를 만들지 않는다.
+- `wrong_job_attempt_and_stale_fence_create_no_row`: wrong job/attempt와 stale fence를 거부한다.
+- `producer_signer_mismatch_with_durable_owner_creates_no_row`: producer, verified signer,
+  Attempt/reservation node가 다르면 row가 없다.
+- `missing_or_different_reservation_owner_creates_no_row`: reservation 부재와 job/attempt owner
+  불일치를 fail closed한다.
+- `exact_replay_returns_first_row_and_changed_body_or_signature_conflicts`: exact replay는 1행과
+  최초 body를 유지하고 changed body/signature는 conflict다.
+- `storage_has_no_checkpoint_state_or_control_state_side_effects`: checkpoint state 열이 없고
+  Job/Attempt/Lease/reservation이 불변이다.
+- `failure_after_insert_rolls_back_manifest_and_preserves_reservation`: INSERT 뒤 fault가 manifest
+  row 전체를 rollback하고 Attempt/reservation을 보존한다.
+- `corrupt_body_hash_identity_signer_fence_and_root_fail_closed`: body/hash/identity/signer/fence/
+  root 손상을 typed corruption으로 거부한다.
+- `current_attempt_binding_corruption_fails_closed`: load 때 현재 Attempt fence 변조도 거부한다.
+- 뮤테이션 1: production `bind_producer_and_signer` guard를 제거하면
+  `producer_signer_mismatch_with_durable_owner_creates_no_row`가 실패하며 잘못된 row가 생겼다.
+- 뮤테이션 2: production Attempt fence guard를 제거하면
+  `wrong_job_attempt_and_stale_fence_create_no_row`가 실패하며 stale fence row가 생겼다.
+- 두 뮤테이션은 원복했고 정상 suite가 다시 통과했다.
+
+=== 독립 검수 1라운드 — ACCEPTED ===
+
+독립 검수자는 public 저장 API와 production INSERT가 각각
+`checkpoint_manifest_store.rs:178,241` 한 곳뿐이고, manifest 최초 접근은 `:192`의
+`verified.get()` 뒤임을 확인했다. signature 포함 complete body에서 저장소 hash를 계산하는
+경로는 `:195`이고, `BEGIN IMMEDIATE` 획득과 같은 transaction의 Attempt/reservation read 및
+INSERT는 `:203,223,239`다.
+
+root는 `:311`에서 BLAKE3-256/32-byte만 허용해 SHA-256 우회가 없다. raw load 경계는
+`:20`, 재검사 경로는 `:376-507`이며 `Verified`를 재구성하거나 검증 없이 쓰는 production
+consumer가 없다. replay 1행 유지·changed conflict, fault 전체 rollback, 상태 전이 미추가와
+두 negative mutation이 실제 production guard `:357,332`를 뒤집는 것도 확인했다.
+수정 요청 없이 1라운드에서 `ACCEPTED`했다.
+
+세부 receipt: docs/evidence/_raw/DoD-52_review.txt
+
+=== 감독자 직접 재확인 ===
+
+감독자가 직접 실행한 명령:
+
+  cargo test -p gputeer-coordinator
+
+결과:
+
+  unit tests:        114 passed, 0 failed
+  integration tests:  4 passed, 0 failed
+  total:             118 passed, 0 failed
+  exit code:           0
+
+구현 세션의 추가 확인:
+
+  cargo build --workspace --exclude gputeer-runtime-windows
+    PASS
+  cargo test --workspace --exclude gputeer-runtime-windows
+    PASS
+  cargo test -p gputeer-coordinator checkpoint_manifest_store --no-fail-fast
+    10 passed, 0 failed
+
+Rust toolchain에 `rustfmt` component가 설치되어 있지 않아 `cargo fmt`는 실행하지 못했다.
+build와 test 결과에는 영향이 없었다.
+
+=== 범위 밖 ===
+
+- load 시 서명을 재검증하지 않는 것은 의도된 설계다. 소비자가 당시 authoritative key
+  directory로 다시 검증해야 한다.
+- `ReplicaAck` 저장과 `MIRRORED` 전이, checkpoint durability 상태
+- Job/Attempt/Lease/reservation 상태 전이
+- 실제 checkpoint writer, 파일 BLAKE3/Merkle 검증과 production checkpoint ingress
+- membership/failure-domain/ephemeral 판정과 effective replica count
+- artifact `COMMITTED`, canonical selection과 Job/Attempt terminal transaction
+- runtime-stop proof, Lease revoke와 reservation release
+- Raft/ControlStore `COMMITTED`
+
+판정: PASS — 검증된 CheckpointManifest를 현재 durable Attempt/reservation에 같은
+`BEGIN IMMEDIATE` transaction에서 묶고 BLAKE3-256/32-byte root만 허용하는 first-write
+evidence 조각을 구현했으며, 독립 검수 1라운드 ACCEPTED와 감독자 coordinator 118 passed로
+확인했다.

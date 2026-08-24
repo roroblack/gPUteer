@@ -1,0 +1,92 @@
+=== 독립 검수 receipt — DoD-52 verified CheckpointManifest durable binding ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 완료 결론을 전제로 삼지 않고 계획, production 저장 API와 INSERT 경로,
+`Verified` 필드 관찰 순서, transaction 안의 Attempt/reservation binding, root 규범, complete
+body hash, replay, raw load 경계, rollback·상태 무변경, corruption 처리와 뮤테이션 판별력을
+대조했다.
+
+1. 미검증 manifest 저장 차단과 필드 관찰 순서
+
+- `checkpoint_manifest_store.rs:178`에서 production 공개 저장 API는 raw
+  `pb::CheckpointManifest`가 아니라 `&Verified<pb::CheckpointManifest>`만 받는다.
+- fault injection을 받는 inner 함수는 private이며
+  `checkpoint_manifest_store.rs:241`의 `coordinator_checkpoint_manifests` INSERT가 production
+  INSERT 한 곳이다. raw 저장 API나 다른 INSERT 경로가 없다.
+- manifest 필드 최초 관찰은 `checkpoint_manifest_store.rs:192`의 `verified.get()` 뒤다.
+  따라서 검증 타입 경계 전에 checkpoint/job/attempt/producer/fence/root를 사용하지 않는다.
+
+2. 저장소 계산 complete-body hash와 root 규범
+
+- `checkpoint_manifest_store.rs:195`에서 signature를 포함한 complete protobuf body를
+  encode하고 저장소가 바로 BLAKE3 hash를 계산한다. caller-supplied hash 입력은 없다.
+- `checkpoint_manifest_store.rs:311`의 root 검사는 `HashAlgorithm::Blake3256`이면서 값 길이가
+  정확히 32인 경우만 통과시킨다. SHA-256이나 unspecified, 잘못된 길이의 우회 경로가 없다.
+- `checkpoint_manifest_store.rs:808`의 negative test는 누락·unspecified·SHA-256·잘못된 길이
+  root가 모두 행을 만들지 않는지 확인한다.
+
+3. 단일 transaction 안의 stale manifest 방지 binding
+
+- `checkpoint_manifest_store.rs:203`에서 `BEGIN IMMEDIATE` transaction을 연다.
+- 신규 row 경로는 같은 transaction의 `checkpoint_manifest_store.rs:223`에서 durable
+  Attempt를, `checkpoint_manifest_store.rs:231`에서 현재 reservation을 읽는다.
+- `checkpoint_manifest_store.rs:228`은 manifest job/attempt/fence와 Attempt를,
+  `checkpoint_manifest_store.rs:236`은 reservation job/attempt를,
+  `checkpoint_manifest_store.rs:237`은 producer·verified signer·Attempt/reservation node를
+  대조한다.
+- 이 대조를 모두 통과한 뒤에만 `checkpoint_manifest_store.rs:239`가 INSERT한다.
+  transaction 밖에서 Attempt/reservation owner를 미리 읽어 판단하는 production 경로가 없어
+  TOCTOU가 없다.
+
+4. replay, raw load와 corruption 재검사
+
+- `checkpoint_manifest_store.rs:208`의 exact replay는 기존 row의 complete manifest 의미와
+  submission-time signer가 같은 경우 최초 binding을 `created=false`로 반환할 뿐 행을 만들거나
+  바꾸지 않는다. 변경된 body/signature는 `ManifestConflict`다.
+- `checkpoint_manifest_store.rs:20`은 load 결과가 의도적으로
+  `Verified<CheckpointManifest>`가 아닌 raw evidence라고 명시한다.
+- `checkpoint_manifest_store.rs:376`부터 `checkpoint_manifest_store.rs:507`까지 load는 body
+  hash/decode, row↔body identity, signer, fence/root encoding과 값, 현재 Attempt의
+  job/single-node/fence binding을 재검사한다.
+- production call graph에는 raw load를 서명 재검증 없이 checkpoint durability나
+  canonical-selection에 쓰는 consumer가 없다.
+
+5. rollback과 상태 전이 미추가
+
+- `checkpoint_manifest_store.rs:1124`의 injected fault test는 INSERT 뒤 오류가 manifest row
+  전체를 rollback하고 Attempt/reservation을 보존함을 확인한다.
+- `checkpoint_manifest_store.rs:1044`는 신규 테이블에 state 열이 없고 저장 전후
+  Job/Attempt/Lease/reservation이 동일함을 확인한다.
+- production 저장 경로에는 Job/Attempt/Lease/reservation UPDATE 또는 DELETE가 없다.
+  저장 성공이 `HASH_VERIFIED`, `MIRRORED`, `REPLICATED`, `COMMITTED` 같은 checkpoint 상태를
+  만들지 않는다.
+
+6. negative test와 실제 production 분기 뮤테이션
+
+- producer/signer/owner 대조 production guard는 `checkpoint_manifest_store.rs:357`이다.
+  이를 제거한 뮤테이션에서
+  `producer_signer_mismatch_with_durable_owner_creates_no_row`가 실패하고 잘못된 row가 생성됐다.
+- Attempt fence production guard는 `checkpoint_manifest_store.rs:332`다. 이를 제거한
+  뮤테이션에서 `wrong_job_attempt_and_stale_fence_create_no_row`가 실패하고 stale fence row가
+  생성됐다.
+- 따라서 두 뮤테이션은 test-only 분기가 아니라 실제 production safety branch를 뒤집었고,
+  지정 negative test의 판별력이 확인됐다. 두 guard는 원복됐다.
+
+7. 자체 재검토 결함 수정과 범위
+
+- 초기 구현이 SHA-256 root도 허용했던 결함은 BLAKE3-256/32-byte 전용 검사와 SHA-256
+  negative case로 수정됐다. 현재 production 검사와 test가 같은 제한을 명시적으로 고정한다.
+- `ReplicaAck` 저장, `MIRRORED`/checkpoint durability 전이, Job/Attempt/Lease/reservation 전이,
+  membership/failure-domain 판정과 production routing은 구현하지 않았다.
+
+판정: 공개 저장 API의 `Verified` type gate와 필드 관찰 순서가 맞고, signature 포함 complete
+body hash를 저장소가 계산한다. 신규 INSERT 전에 현재 durable Attempt와 reservation을 같은
+`BEGIN IMMEDIATE` 안에서 job/attempt/producer/signer/fence/owner로 대조하며 BLAKE3-256
+32-byte root만 허용한다. replay는 1행 first-write fact를 유지하고 changed replay를 거부한다.
+raw load는 `Verified`를 재구성하지 않고 전체 binding 손상을 재검사하며 production 소비자가
+없다. 전체 rollback·control state 무변경과 production guard 뮤테이션 판별력도 확인했다.
+범위를 durability 전이나 ACK 저장으로 과장하지 않았으므로 수정 요청 없이 1라운드
+`ACCEPTED`한다.
