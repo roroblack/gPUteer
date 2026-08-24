@@ -1,0 +1,76 @@
+=== 독립 검수 receipt — DoD-50 verified signed JobManifest durable binding ===
+
+검수 컨텍스트: fresh-read-only
+검수 라운드: 1
+최종 판정: ACCEPTED
+
+검수자는 구현자의 완료 결론을 전제로 삼지 않고 계획, production diff, 공개 타입 경계,
+서명 검증 경로, transaction/fault test, replay·corruption test와 변경 범위를 대조했다.
+
+1. 미검증 Manifest 저장 차단과 검증 순서
+
+- production 저장 API `CoordinatorJobStore::submit_verified_manifest()`는
+  `job_store.rs:531`에서 raw `pb::JobManifest`가 아니라
+  `&Verified<pb::JobManifest>`만 받는다.
+- fault 경로를 받는 inner 구현은 private이며 Manifest table production INSERT는
+  `job_store.rs:628`의 이 경로 하나뿐이다.
+- `Verified`의 내부 필드는 private이고 정상 생성 경로는 `signing.rs:624,839`의 서명
+  검증 함수뿐이다.
+- Manifest의 raw 필드는 `job_store.rs:547`의 `verified.get()` 이후 처음 관찰된다.
+  그 전에 수행되는 submission validation과 `:551`까지의 검사는 durable side effect를
+  만들지 않는다. 저장소 최상위 규칙인 서명 검증 전 필드 관찰 금지를 지킨다.
+
+2. identity와 hash binding
+
+- `job_store.rs:826`은 Manifest job ID와 submitter device ID를 accepted submission에,
+  `Verified::signer_id()`를 accepted device identity에 대조한다.
+- `job_store.rs:553,847`은 caller hash를 신뢰하지 않고
+  `blake3_256(signing_input(manifest))`를 재계산해 supplied hash와 대조하며, 그
+  재계산값을 Job/binding에 저장한다.
+- identity/hash 불일치는 transaction 시작 전에 실패하고 Job, Manifest,
+  idempotency row를 남기지 않는다.
+
+3. transaction 원자성과 replay
+
+- `job_store.rs:559,625`는 Job, Manifest body/signer, idempotency를 단일
+  `BEGIN IMMEDIATE` transaction에 기록한다.
+- `job_store.rs:1377`의 Manifest insert 직후 injected fault는 세 테이블을 전부
+  rollback한다. 부분 durable state는 남지 않는다.
+- `job_store.rs:573,1338`은 exact replay에서 최초 body/signer를 대조·복원하고 changed
+  Manifest 또는 submission을 conflict로 거부한다.
+
+4. load 경계와 corruption fail-closed
+
+- `job_store.rs:149,401`의 반환 타입은 raw `StoredManifestBinding`이다. 의도적으로
+  `Verified<JobManifest>`가 아니며, production call graph에는 이 결과를 scheduler나
+  Grant 생성에 소비하는 경로가 없다.
+- `job_store.rs:875`의 loader는 empty/undecodable body, recomputed hash mismatch, job ID,
+  submitter device ID, signer ID mismatch를 typed `ManifestCorruption`으로 거부한다.
+  Manifest row가 없는 legacy Job은 `LegacyManifestMissing`으로 fail closed한다.
+- 자체 재검토로 legacy exact-error assertion과 body device identity corruption fixture가
+  보강된 사실을 확인했다.
+
+5. 뮤테이션과 범위
+
+- load의 recomputed hash 대조를 제거하는 뮤테이션은 `job_store.rs:1425`의 corruption
+  test에 검출됐다.
+- verified signer 대조를 제거하는 뮤테이션은 `job_store.rs:1306`의 identity negative
+  test에 검출됐다. 두 뮤테이션은 최종 코드에서 원복됐다.
+- 변경 범위는 `crates/coordinator/src/job_store.rs` 659 additions/0 deletions와
+  `docs/plans/2026-08-24_1142_scheduler_verified_manifest_durable_binding_v1.md` 1개다.
+  기존 `DoD-42/43/47/49` 구현의 삭제·수정은 없다.
+
+6. 한계 판정
+
+- load는 현재 key directory로 서명을 다시 검증하지 않는다. 이것은 raw durable fact와
+  현재 권위를 분리하기 위한 의도된 경계이며 caller가 authoritative key directory로
+  재검증해야 한다.
+- membership validity, authoritative device→member 해석, strict `JobRequirements`
+  projection과 기본 `MIRRORED` durability 소비 경로는 없다.
+- Grant/Lease scope, Raft `COMMITTED` submission과 production wire 연결은 없다.
+
+판정: public 저장 타입 경계가 미검증 Manifest를 차단하고, 서명 검증 뒤에만 identity를
+관찰하며, accepted device/signer와 재계산 hash를 단일 transaction에 결합한다. load는
+의도적으로 raw binding에 머물고 corruption/replay/fault가 fail closed하며 테스트와 두
+뮤테이션이 이를 판별한다. 범위를 membership/projection/Grant/COMMITTED/production
+연결로 과장하지 않았으므로 수정 요청 없이 1라운드 `ACCEPTED`한다.

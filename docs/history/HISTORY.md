@@ -16,6 +16,29 @@
 
 ---
 
+## 2026-08-24 12:19 — verified signed JobManifest durable binding — evidence 기록 (`DoD-50`)
+- 계획: `docs/plans/2026-08-24_1142_scheduler_verified_manifest_durable_binding_v1.md`
+  (verified signed Manifest durable binding 선행 조각).
+- 스트림: Coordinator · Scheduler · QA · 문서.
+- 수행: strict `JobManifest → JobRequirements` 변환기 자체는 하루에 만들 수 있지만
+  authoritative device→member 해석과 기본 `MIRRORED` durability 소비 경로 없이
+  orchestration에 연결하는 것은 안전하지 않다는 설계 판정에 따라, 먼저 verified signed
+  Manifest 원본을 accepted Job과 durable하게 묶었다. `submit_verified_manifest()`는
+  `&Verified<pb::JobManifest>`만 받고 `Verified::get()` 뒤에만 identity를 관찰하며 accepted
+  device와 signer를 대조한다. caller hash는 canonical signing input에서 재계산해 대조·
+  저장하고 Job/body/signer/idempotency를 한 `BEGIN IMMEDIATE` transaction에 기록한다.
+  load는 의도적으로 raw `StoredManifestBinding`을 반환해 authoritative key directory 재검증
+  전 scheduler/Grant 사용을 막는다. 자체 재검토에서 legacy migration exact-error assertion과
+  body device identity 손상 fixture를 보강했다. 독립 검수는 API type gate·검증 순서·단일
+  production INSERT·원자성/rollback·replay/corruption·raw load 경계·뮤테이션 2건·제한된
+  범위를 확인해 1라운드 `ACCEPTED`했다.
+- 검증: 감독자가 `cargo test -p gputeer-coordinator`를 직접 재실행해 unit 95 +
+  integration 4 = 99 passed, 0 failed를 확인했다. 첫 workspace 실행의 기존 crypto
+  lock-timeout timing test 1회 실패는 알려진 flaky로 재실행 통과했고 판정 근거에서
+  제외했다. `python scripts/verify_evidence.py`로
+  `DoD-50_scheduler_verified_manifest_binding.md` schema v2 PASS를 확인한다.
+- 리포트: `docs/evidence/DoD-50_scheduler_verified_manifest_binding.md`.
+
 ## 2026-08-24 11:30 — selected GPU durable reservation binding — evidence 기록 (`DoD-49`)
 - 계획: `docs/plans/2026-08-24_1103_scheduler_selected_gpu_reservation_binding_v1.md`
   (조각 5c: selected GPU durable reservation binding).

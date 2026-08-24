@@ -8,6 +8,12 @@
 
 use std::path::Path;
 
+use gputeer_protocol::{
+    canonical::blake3_256,
+    pb,
+    signing::{signing_input, Verified},
+};
+use prost::Message;
 use rusqlite::{
     Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior,
 };
@@ -140,6 +146,35 @@ pub struct SubmitResult {
     pub created: bool,
 }
 
+/// A durable protobuf body that was accepted through [`Verified`] at submission
+/// time. This type is deliberately not `Verified<JobManifest>`: after restart,
+/// callers must verify `manifest` again against the then-authoritative key
+/// directory before using any field for scheduling or grant construction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredManifestBinding {
+    pub manifest: pb::JobManifest,
+    pub manifest_hash: [u8; 32],
+    pub signer_id_at_submission: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManifestBoundSubmitResult {
+    pub job: StoredJob,
+    pub binding: StoredManifestBinding,
+    /// `false` means the idempotency key replayed the original durable result.
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestCorruption {
+    EmptyBody,
+    UndecodableBody,
+    HashMismatch,
+    JobIdMismatch,
+    SubmitterDeviceIdMismatch,
+    SignerIdMismatch,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum JobStoreError {
     InvalidInput(&'static str),
@@ -158,6 +193,13 @@ pub enum JobStoreError {
         requested_plan_id: String,
     },
     GuardNotMet(&'static str),
+    ManifestIdentityMismatch(&'static str),
+    ManifestHashMismatch,
+    LegacyManifestMissing { job_id: String },
+    ManifestCorrupt {
+        job_id: String,
+        kind: ManifestCorruption,
+    },
     ClockRollback {
         earlier_unix_ms: u64,
         later_unix_ms: u64,
@@ -165,6 +207,7 @@ pub enum JobStoreError {
     CorruptData(String),
     Io(String),
     LockTimeout,
+    InjectedFailure(&'static str),
 }
 
 impl std::fmt::Display for JobStoreError {
@@ -193,6 +236,19 @@ impl std::fmt::Display for JobStoreError {
                 "queued Job plan conflict: stored={stored_plan_id}, requested={requested_plan_id}"
             ),
             Self::GuardNotMet(guard) => write!(f, "Job transition guard not met: {guard}"),
+            Self::ManifestIdentityMismatch(field) => {
+                write!(f, "verified Manifest identity does not match accepted {field}")
+            }
+            Self::ManifestHashMismatch => {
+                write!(f, "supplied manifest_hash does not match the verified Manifest")
+            }
+            Self::LegacyManifestMissing { job_id } => write!(
+                f,
+                "job {job_id} predates durable Manifest bodies and cannot be consumed"
+            ),
+            Self::ManifestCorrupt { job_id, kind } => {
+                write!(f, "durable Manifest for job {job_id} is corrupt: {kind:?}")
+            }
             Self::ClockRollback {
                 earlier_unix_ms,
                 later_unix_ms,
@@ -203,6 +259,7 @@ impl std::fmt::Display for JobStoreError {
             Self::CorruptData(message) => write!(f, "job store corruption: {message}"),
             Self::Io(message) => write!(f, "job store I/O error: {message}"),
             Self::LockTimeout => write!(f, "job store lock acquisition timed out"),
+            Self::InjectedFailure(point) => write!(f, "injected job store failure: {point}"),
         }
     }
 }
@@ -275,6 +332,12 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), JobSt
                 idempotency_key BLOB PRIMARY KEY,
                 job_id TEXT NOT NULL REFERENCES coordinator_jobs(job_id)
             );
+
+            CREATE TABLE IF NOT EXISTS coordinator_job_manifests (
+                job_id TEXT PRIMARY KEY REFERENCES coordinator_jobs(job_id),
+                verified_signer_id TEXT NOT NULL,
+                manifest_body BLOB NOT NULL
+            );
             "#,
         )
         .map_err(map_sql_error)?;
@@ -330,6 +393,19 @@ impl CoordinatorJobStore {
 
     pub fn get(&self, job_id: &str) -> Result<Option<StoredJob>, JobStoreError> {
         fetch_job(&self.connection, job_id)
+    }
+
+    /// Loads a durable Manifest binding without claiming that its signature is
+    /// still valid. Existing hash-only Jobs fail closed with
+    /// [`JobStoreError::LegacyManifestMissing`].
+    pub fn get_manifest_binding(
+        &self,
+        job_id: &str,
+    ) -> Result<Option<StoredManifestBinding>, JobStoreError> {
+        let Some(job) = fetch_job(&self.connection, job_id)? else {
+            return Ok(None);
+        };
+        fetch_manifest_binding(&self.connection, &job).map(Some)
     }
 
     /// Returns the durable queue in deterministic FIFO order. `job_id` is the
@@ -445,6 +521,132 @@ impl CoordinatorJobStore {
         transaction.commit().map_err(map_sql_error)?;
         Ok(SubmitResult {
             job: stored,
+            created: true,
+        })
+    }
+
+    /// Atomically persists an accepted Job, its idempotency binding, and the
+    /// complete signed Manifest. The type gate ensures that this storage path
+    /// cannot receive an unverified Manifest.
+    pub fn submit_verified_manifest(
+        &mut self,
+        submission: &AcceptedJobSubmission,
+        manifest: &Verified<pb::JobManifest>,
+        submitted_at_unix_ms: u64,
+    ) -> Result<ManifestBoundSubmitResult, JobStoreError> {
+        self.submit_verified_manifest_inner(submission, manifest, submitted_at_unix_ms, None)
+    }
+
+    fn submit_verified_manifest_inner(
+        &mut self,
+        submission: &AcceptedJobSubmission,
+        verified: &Verified<pb::JobManifest>,
+        submitted_at_unix_ms: u64,
+        fault: Option<TestFault>,
+    ) -> Result<ManifestBoundSubmitResult, JobStoreError> {
+        validate_submission(submission)?;
+
+        // This is the first point at which Manifest fields are observed: the
+        // only Manifest parameter is already wrapped in Verified.
+        let manifest = verified.get();
+        validate_manifest_identity(submission, manifest, verified.signer_id())?;
+        let derived_hash = derive_manifest_hash(manifest);
+        if submission.manifest_hash != derived_hash {
+            return Err(JobStoreError::ManifestHashMismatch);
+        }
+        let manifest_body = manifest.encode_to_vec();
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+
+        let mapped_job_id = transaction
+            .query_row(
+                "SELECT job_id FROM job_submission_idempotency WHERE idempotency_key = ?1",
+                rusqlite::params![submission.idempotency_key.as_slice()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(map_sql_error)?;
+
+        if let Some(stored_job_id) = mapped_job_id {
+            let stored = fetch_job(&transaction, &stored_job_id)?.ok_or_else(|| {
+                JobStoreError::CorruptData(format!(
+                    "idempotency key points to missing job: {stored_job_id}"
+                ))
+            })?;
+            if !stored.matches_submission(submission) {
+                return Err(JobStoreError::IdempotencyConflict {
+                    stored_job_id,
+                    requested_job_id: submission.job_id.clone(),
+                });
+            }
+            let binding = fetch_manifest_binding(&transaction, &stored)?;
+            if binding.manifest != *manifest
+                || binding.signer_id_at_submission != verified.signer_id()
+            {
+                return Err(JobStoreError::IdempotencyConflict {
+                    stored_job_id: stored.job_id.clone(),
+                    requested_job_id: submission.job_id.clone(),
+                });
+            }
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(ManifestBoundSubmitResult {
+                job: stored,
+                binding,
+                created: false,
+            });
+        }
+
+        if fetch_job(&transaction, &submission.job_id)?.is_some() {
+            return Err(JobStoreError::JobIdConflict {
+                job_id: submission.job_id.clone(),
+            });
+        }
+
+        let stored = StoredJob {
+            job_id: submission.job_id.clone(),
+            submitter_device_id: submission.submitter_device_id.clone(),
+            manifest_hash: derived_hash,
+            state: JobState::Submitted,
+            submitted_at_unix_ms,
+            planning_at_unix_ms: None,
+            queued_at_unix_ms: None,
+            staging_at_unix_ms: None,
+            deadline_unix_ms: submission.deadline_unix_ms,
+            max_queue_duration_ms: submission.max_queue_duration_ms,
+            plan_id: None,
+            queue_failure: None,
+            failed_at_unix_ms: None,
+            revision: 0,
+        };
+
+        insert_job(&transaction, &stored)?;
+        transaction
+            .execute(
+                "INSERT INTO coordinator_job_manifests(
+                    job_id, verified_signer_id, manifest_body
+                 ) VALUES (?1, ?2, ?3)",
+                rusqlite::params![stored.job_id, verified.signer_id(), manifest_body],
+            )
+            .map_err(map_sql_error)?;
+        fail_at(fault, TestFault::AfterManifestInsert)?;
+        transaction
+            .execute(
+                "INSERT INTO job_submission_idempotency(idempotency_key, job_id) VALUES (?1, ?2)",
+                rusqlite::params![submission.idempotency_key.as_slice(), stored.job_id],
+            )
+            .map_err(map_sql_error)?;
+        transaction.commit().map_err(map_sql_error)?;
+
+        Ok(ManifestBoundSubmitResult {
+            job: stored,
+            binding: StoredManifestBinding {
+                manifest: manifest.clone(),
+                manifest_hash: derived_hash,
+                signer_id_at_submission: verified.signer_id().to_string(),
+            },
             created: true,
         })
     }
@@ -621,6 +823,110 @@ fn validate_submission(submission: &AcceptedJobSubmission) -> Result<(), JobStor
     Ok(())
 }
 
+fn validate_manifest_identity(
+    submission: &AcceptedJobSubmission,
+    manifest: &pb::JobManifest,
+    verified_signer_id: &str,
+) -> Result<(), JobStoreError> {
+    if manifest.job_id != submission.job_id {
+        return Err(JobStoreError::ManifestIdentityMismatch("job_id"));
+    }
+    if manifest.submitter_device_id != submission.submitter_device_id {
+        return Err(JobStoreError::ManifestIdentityMismatch(
+            "submitter_device_id",
+        ));
+    }
+    if verified_signer_id != submission.submitter_device_id {
+        return Err(JobStoreError::ManifestIdentityMismatch(
+            "verified signer_id",
+        ));
+    }
+    Ok(())
+}
+
+fn derive_manifest_hash(manifest: &pb::JobManifest) -> [u8; 32] {
+    blake3_256(&signing_input(manifest))
+}
+
+fn insert_job(connection: &Connection, stored: &StoredJob) -> Result<(), JobStoreError> {
+    connection
+        .execute(
+            "INSERT INTO coordinator_jobs(
+                job_id, submitter_device_id, manifest_hash, state,
+                submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms,
+                deadline_unix_ms, max_queue_duration_ms, plan_id,
+                queue_failure_kind, queue_failure_detail, failed_at_unix_ms, revision
+             ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7, NULL, NULL, NULL, NULL, ?8)",
+            rusqlite::params![
+                stored.job_id,
+                stored.submitter_device_id,
+                stored.manifest_hash.as_slice(),
+                stored.state.as_str(),
+                encode_u64(stored.submitted_at_unix_ms),
+                stored.deadline_unix_ms.map(encode_u64),
+                stored.max_queue_duration_ms.map(encode_u64),
+                encode_u64(stored.revision),
+            ],
+        )
+        .map_err(map_sql_error)?;
+    Ok(())
+}
+
+fn fetch_manifest_binding(
+    connection: &Connection,
+    job: &StoredJob,
+) -> Result<StoredManifestBinding, JobStoreError> {
+    let row = connection
+        .query_row(
+            "SELECT verified_signer_id, manifest_body
+             FROM coordinator_job_manifests WHERE job_id = ?1",
+            rusqlite::params![job.job_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()
+        .map_err(map_sql_error)?
+        .ok_or_else(|| JobStoreError::LegacyManifestMissing {
+            job_id: job.job_id.clone(),
+        })?;
+    let (signer_id_at_submission, body) = row;
+    if body.is_empty() {
+        return Err(manifest_corrupt(job, ManifestCorruption::EmptyBody));
+    }
+    let manifest = pb::JobManifest::decode(body.as_slice())
+        .map_err(|_| manifest_corrupt(job, ManifestCorruption::UndecodableBody))?;
+    if manifest.job_id != job.job_id {
+        return Err(manifest_corrupt(job, ManifestCorruption::JobIdMismatch));
+    }
+    if manifest.submitter_device_id != job.submitter_device_id {
+        return Err(manifest_corrupt(
+            job,
+            ManifestCorruption::SubmitterDeviceIdMismatch,
+        ));
+    }
+    if signer_id_at_submission != job.submitter_device_id {
+        return Err(manifest_corrupt(
+            job,
+            ManifestCorruption::SignerIdMismatch,
+        ));
+    }
+    let derived_hash = derive_manifest_hash(&manifest);
+    if derived_hash != job.manifest_hash {
+        return Err(manifest_corrupt(job, ManifestCorruption::HashMismatch));
+    }
+    Ok(StoredManifestBinding {
+        manifest,
+        manifest_hash: derived_hash,
+        signer_id_at_submission,
+    })
+}
+
+fn manifest_corrupt(job: &StoredJob, kind: ManifestCorruption) -> JobStoreError {
+    JobStoreError::ManifestCorrupt {
+        job_id: job.job_id.clone(),
+        kind,
+    }
+}
+
 fn ensure_not_before(event: u64, prior: u64) -> Result<(), JobStoreError> {
     if event < prior {
         Err(JobStoreError::ClockRollback {
@@ -630,6 +936,25 @@ fn ensure_not_before(event: u64, prior: u64) -> Result<(), JobStoreError> {
     } else {
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestFault {
+    AfterManifestInsert,
+}
+
+#[cfg(test)]
+fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), JobStoreError> {
+    if fault == Some(point) {
+        Err(JobStoreError::InjectedFailure("after Manifest insert"))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(test))]
+fn fail_at(_fault: Option<TestFault>, _point: TestFault) -> Result<(), JobStoreError> {
+    Ok(())
 }
 
 pub(crate) fn fetch_job(
@@ -848,6 +1173,63 @@ fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawJobRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
+    use gputeer_protocol::signing::{verify, NoReplayCheck};
+
+    const MANIFEST_DEVICE: &str = "submitter-1";
+
+    fn verified_manifest(
+        job_id: &str,
+        device_id: &str,
+        key_seed: u8,
+        team_marker: &str,
+    ) -> Verified<pb::JobManifest> {
+        let key = SigningKey::from_bytes(&[key_seed; 32]);
+        let mut manifest = pb::JobManifest {
+            schema_version: 1,
+            job_id: job_id.to_string(),
+            team_id: format!("team-{team_marker}"),
+            entrypoint: "train.py".to_string(),
+            submitter_device_id: device_id.to_string(),
+            issued_at_unix_ms: 10,
+            expires_at_unix_ms: 10_000,
+            ..Default::default()
+        };
+        manifest.submitter_signature = sign(&key, &manifest).to_vec();
+        let mut keys = InMemoryKeyring::new();
+        keys.insert(device_id, key.verifying_key());
+        verify(
+            &manifest,
+            1,
+            &Ed25519Verifier::new(keys),
+            100,
+            &mut NoReplayCheck,
+        )
+        .expect("test Manifest signature must verify")
+    }
+
+    fn bound_submission(
+        verified: &Verified<pb::JobManifest>,
+        key_byte: u8,
+    ) -> AcceptedJobSubmission {
+        AcceptedJobSubmission {
+            idempotency_key: [key_byte; 16],
+            job_id: verified.get().job_id.clone(),
+            submitter_device_id: verified.get().submitter_device_id.clone(),
+            manifest_hash: derive_manifest_hash(verified.get()),
+            deadline_unix_ms: Some(10_000),
+            max_queue_duration_ms: Some(1_000),
+        }
+    }
+
+    fn table_count(store: &CoordinatorJobStore, table: &str) -> u64 {
+        store
+            .connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    }
 
     fn submission(job_id: &str, key_byte: u8) -> AcceptedJobSubmission {
         AcceptedJobSubmission {
@@ -889,6 +1271,277 @@ mod tests {
     }
 
     #[test]
+    fn verified_manifest_body_signature_and_derived_hash_survive_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite3");
+        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+        let request = bound_submission(&verified, 1);
+        let original_manifest = verified.get().clone();
+        {
+            let mut store = CoordinatorJobStore::open(&path).unwrap();
+            let result = store
+                .submit_verified_manifest(&request, &verified, 100)
+                .unwrap();
+            assert!(result.created);
+            assert_eq!(result.binding.manifest, original_manifest);
+            assert_eq!(result.binding.manifest_hash, request.manifest_hash);
+            assert_eq!(result.binding.signer_id_at_submission, MANIFEST_DEVICE);
+        }
+
+        let reopened = CoordinatorJobStore::open(&path).unwrap();
+        let binding = reopened
+            .get_manifest_binding("job-bound")
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.manifest, original_manifest);
+        assert_eq!(
+            binding.manifest.submitter_signature,
+            original_manifest.submitter_signature
+        );
+        assert_eq!(binding.manifest_hash, derive_manifest_hash(&binding.manifest));
+        assert_eq!(binding.signer_id_at_submission, MANIFEST_DEVICE);
+    }
+
+    #[test]
+    fn identity_and_supplied_hash_mismatches_create_no_rows() {
+        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+        for mutation in ["job_id", "device_id", "hash"] {
+            let (mut store, _dir) = open_temp();
+            let mut request = bound_submission(&verified, 1);
+            let expected = match mutation {
+                "job_id" => {
+                    request.job_id = "another-job".to_string();
+                    JobStoreError::ManifestIdentityMismatch("job_id")
+                }
+                "device_id" => {
+                    request.submitter_device_id = "another-device".to_string();
+                    JobStoreError::ManifestIdentityMismatch("submitter_device_id")
+                }
+                "hash" => {
+                    request.manifest_hash[0] ^= 0xff;
+                    JobStoreError::ManifestHashMismatch
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                store.submit_verified_manifest(&request, &verified, 100),
+                Err(expected),
+                "mutation {mutation} must fail closed"
+            );
+            assert_eq!(table_count(&store, "coordinator_jobs"), 0);
+            assert_eq!(table_count(&store, "coordinator_job_manifests"), 0);
+            assert_eq!(table_count(&store, "job_submission_idempotency"), 0);
+        }
+    }
+
+    #[test]
+    fn verified_manifest_replay_returns_original_and_changed_manifest_conflicts() {
+        let (mut store, _dir) = open_temp();
+        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+        let request = bound_submission(&verified, 1);
+        let first = store
+            .submit_verified_manifest(&request, &verified, 100)
+            .unwrap();
+        let replay = store
+            .submit_verified_manifest(&request, &verified, 999)
+            .unwrap();
+        assert!(first.created);
+        assert!(!replay.created);
+        assert_eq!(replay.job, first.job);
+        assert_eq!(replay.binding, first.binding);
+        assert_eq!(table_count(&store, "coordinator_jobs"), 1);
+        assert_eq!(table_count(&store, "coordinator_job_manifests"), 1);
+        assert_eq!(table_count(&store, "job_submission_idempotency"), 1);
+
+        let changed = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "changed");
+        let changed_same_key = bound_submission(&changed, 1);
+        assert!(matches!(
+            store.submit_verified_manifest(&changed_same_key, &changed, 200),
+            Err(JobStoreError::IdempotencyConflict { .. })
+        ));
+
+        let changed_other_key = bound_submission(&changed, 2);
+        assert_eq!(
+            store.submit_verified_manifest(&changed_other_key, &changed, 200),
+            Err(JobStoreError::JobIdConflict {
+                job_id: "job-bound".to_string()
+            })
+        );
+        assert_eq!(
+            store.get_manifest_binding("job-bound").unwrap().unwrap(),
+            first.binding
+        );
+    }
+
+    #[test]
+    fn fault_after_manifest_insert_rolls_back_job_body_and_idempotency() {
+        let (mut store, _dir) = open_temp();
+        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+        let request = bound_submission(&verified, 1);
+        assert_eq!(
+            store.submit_verified_manifest_inner(
+                &request,
+                &verified,
+                100,
+                Some(TestFault::AfterManifestInsert)
+            ),
+            Err(JobStoreError::InjectedFailure("after Manifest insert"))
+        );
+        assert_eq!(table_count(&store, "coordinator_jobs"), 0);
+        assert_eq!(table_count(&store, "coordinator_job_manifests"), 0);
+        assert_eq!(table_count(&store, "job_submission_idempotency"), 0);
+    }
+
+    #[test]
+    fn empty_and_undecodable_manifest_bodies_fail_closed() {
+        for (body, expected) in [
+            (Vec::new(), ManifestCorruption::EmptyBody),
+            (vec![0x12, 0x05, b'a'], ManifestCorruption::UndecodableBody),
+        ] {
+            let (mut store, _dir) = open_temp();
+            let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+            let request = bound_submission(&verified, 1);
+            store
+                .submit_verified_manifest(&request, &verified, 100)
+                .unwrap();
+            store
+                .connection
+                .execute(
+                    "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+                    rusqlite::params![body, request.job_id],
+                )
+                .unwrap();
+            assert_eq!(
+                store.get_manifest_binding(&request.job_id),
+                Err(JobStoreError::ManifestCorrupt {
+                    job_id: request.job_id.clone(),
+                    kind: expected,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn body_hash_and_job_identity_corruption_fail_closed_independently() {
+        let (mut store, _dir) = open_temp();
+        let verified = verified_manifest("job-hash", MANIFEST_DEVICE, 7, "original");
+        let request = bound_submission(&verified, 1);
+        store
+            .submit_verified_manifest(&request, &verified, 100)
+            .unwrap();
+        let mut changed_body = verified.get().clone();
+        changed_body.team_id = "tampered-team".to_string();
+        store
+            .connection
+            .execute(
+                "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+                rusqlite::params![changed_body.encode_to_vec(), request.job_id],
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_manifest_binding(&request.job_id),
+            Err(JobStoreError::ManifestCorrupt {
+                job_id: request.job_id.clone(),
+                kind: ManifestCorruption::HashMismatch,
+            })
+        );
+
+        let verified = verified_manifest("job-identity", MANIFEST_DEVICE, 8, "original");
+        let request = bound_submission(&verified, 2);
+        store
+            .submit_verified_manifest(&request, &verified, 100)
+            .unwrap();
+        let mut changed_identity = verified.get().clone();
+        changed_identity.job_id = "body-points-elsewhere".to_string();
+        let changed_hash = derive_manifest_hash(&changed_identity);
+        store
+            .connection
+            .execute(
+                "UPDATE coordinator_jobs SET manifest_hash = ?1 WHERE job_id = ?2",
+                rusqlite::params![changed_hash.as_slice(), request.job_id],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+                rusqlite::params![changed_identity.encode_to_vec(), request.job_id],
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_manifest_binding(&request.job_id),
+            Err(JobStoreError::ManifestCorrupt {
+                job_id: request.job_id.clone(),
+                kind: ManifestCorruption::JobIdMismatch,
+            })
+        );
+
+        let verified = verified_manifest("job-device-identity", MANIFEST_DEVICE, 9, "original");
+        let request = bound_submission(&verified, 3);
+        store
+            .submit_verified_manifest(&request, &verified, 100)
+            .unwrap();
+        let mut changed_identity = verified.get().clone();
+        changed_identity.submitter_device_id = "body-device-elsewhere".to_string();
+        let changed_hash = derive_manifest_hash(&changed_identity);
+        store
+            .connection
+            .execute(
+                "UPDATE coordinator_jobs SET manifest_hash = ?1 WHERE job_id = ?2",
+                rusqlite::params![changed_hash.as_slice(), request.job_id],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+                rusqlite::params![changed_identity.encode_to_vec(), request.job_id],
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_manifest_binding(&request.job_id),
+            Err(JobStoreError::ManifestCorrupt {
+                job_id: request.job_id.clone(),
+                kind: ManifestCorruption::SubmitterDeviceIdMismatch,
+            })
+        );
+    }
+
+    #[test]
+    fn device_signer_corruption_and_legacy_missing_body_fail_closed() {
+        let (mut store, _dir) = open_temp();
+        let verified = verified_manifest("job-device", MANIFEST_DEVICE, 7, "original");
+        let request = bound_submission(&verified, 1);
+        store
+            .submit_verified_manifest(&request, &verified, 100)
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE coordinator_job_manifests SET verified_signer_id = 'other-device' WHERE job_id = ?1",
+                rusqlite::params![request.job_id],
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_manifest_binding(&request.job_id),
+            Err(JobStoreError::ManifestCorrupt {
+                job_id: request.job_id.clone(),
+                kind: ManifestCorruption::SignerIdMismatch,
+            })
+        );
+
+        let legacy = submission("legacy-job", 2);
+        store.submit_accepted(&legacy, 100).unwrap();
+        assert_eq!(
+            store.get_manifest_binding("legacy-job"),
+            Err(JobStoreError::LegacyManifestMissing {
+                job_id: "legacy-job".to_string()
+            })
+        );
+        assert!(store.get("legacy-job").unwrap().is_some());
+    }
+
+    #[test]
     fn opens_pre_staging_schema_and_preserves_existing_job() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.sqlite3");
@@ -926,6 +1579,12 @@ mod tests {
         let job = store.get("old-job").unwrap().unwrap();
         assert_eq!(job.state, JobState::Submitted);
         assert_eq!(job.staging_at_unix_ms, None);
+        assert_eq!(
+            store.get_manifest_binding("old-job"),
+            Err(JobStoreError::LegacyManifestMissing {
+                job_id: "old-job".to_string()
+            })
+        );
     }
 
     #[test]
