@@ -82,7 +82,13 @@ impl Default for RetryPolicy {
 ///
 /// ★ 심볼릭 링크는 **여기서 막지 못한다** — 경로 문자열만으로는 알 수 없다.
 ///   `write_once` 는 대상이 이미 존재하면 쓰지 않으므로 링크를 따라가 덮어쓰지는
-///   않지만, 링크를 통해 **읽는** 것은 막지 못한다. 별도 스파이크가 필요하다.
+///   않지만, 링크를 통해 **읽는** 것은 막지 못한다.
+///
+///   ★ 그 "별도 스파이크" 는 이미 있다 — `crates/runtime-windows/src/beneath.rs` 의
+///   `open_beneath`/`open_artifact` 가 reparse point(symlink·junction)를 **열기
+///   시점에** 거부한다(TOCTOU 방어). 다만 이 크레이트는 아직 그것을 쓰지 않는다.
+///   연결은 checkpoint 가 플랫폼 크레이트에 의존하게 만드는 계층 결정이라
+///   별도 조각이다. 스파이크를 다시 만들지 마라.
 fn validate_relative_name(name: &str) -> Result<(), CheckpointError> {
     use std::path::Component;
 
