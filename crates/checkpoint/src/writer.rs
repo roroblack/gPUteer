@@ -250,13 +250,10 @@ fn is_resume_candidate(
 fn load_valid_manifest(
     dir: &Path,
 ) -> Result<Option<CheckpointManifest>, CheckpointError> {
-    let manifest_path = dir.join(MANIFEST_FILENAME);
-
-    if !manifest_path.exists() {
-        return Ok(None);
-    }
-
-    let data = match fs::read(&manifest_path) {
+    // 이름 기반 사전 존재 검사를 두지 않는다. 검사와 열기 사이에 대상이
+    // 바뀔 수 있고(TOCTOU), read_beneath 가 이미 없는 파일을 오류로 돌려주므로
+    // 중복이다. 판정은 열린 핸들 하나에 맡긴다.
+    let data = match crate::platform::read_beneath(dir, Path::new(MANIFEST_FILENAME)) {
         Ok(data) => data,
         Err(_) => return Ok(None),
     };
@@ -391,8 +388,9 @@ pub fn find_resume_point(
 
 /// 포인터가 가리키는 체크포인트 id.
 pub fn read_pointer(root: &Path) -> Option<String> {
-    fs::read_to_string(root.join(POINTER_FILENAME))
+    crate::platform::read_beneath(root, Path::new(POINTER_FILENAME))
         .ok()
+        .and_then(|value| String::from_utf8(value).ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }

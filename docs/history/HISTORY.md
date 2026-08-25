@@ -16,6 +16,30 @@
 
 ---
 
+## 2026-08-24 21:10 — 체크포인트 읽기 경로에 심볼릭 링크 방어 연결
+- 계획: `docs/plans/2026-08-24_1707_checkpoint_symlink_defense_v1.md`.
+- 스트림: Runtime · Checkpoint · QA · 문서.
+- 수행: `crates/checkpoint` 가 체크포인트 파일을 평범한 `fs::read` 로 읽어 심볼릭 링크를
+  그대로 따라가고 있었다. 방어 수단(`runtime-windows` 의 `open_beneath`, reparse point 를
+  열기 시점에 거부)은 이미 있었으나 연결돼 있지 않았다. `crates/checkpoint/src/platform.rs`
+  를 두어 읽기 경로 5곳을 연결했다. 쓰기 경로(`write_once` 의 기존 파일 비교)는 범위 밖으로
+  두었다. Linux 는 사용자 지시대로 무방비를 유지하되 상수와 테스트로 상태를 고정해 조용하지
+  않게 했고, `openat2`(`RESOLVE_BENEATH`) 구현은 작성했으나 이 개발 기계가 Windows 라
+  **미검증**임을 명시했다.
+- 검증: 이 조각에서 결함 4건이 나왔고 전부 반복 실행으로만 드러났다. (1) 읽기에
+  `OPEN_ALWAYS` 를 써서 없는 파일을 만들던 문제 — `open_beneath_read_only`(`OPEN_EXISTING`)
+  를 추가해 커널이 판정하게 했다(사전 존재 검사는 그 자체가 TOCTOU 라 채택하지 않았다).
+  (2) 검수 지적을 그대로 받아 `atomic.rs` 의 `manifest_exists` 를 없앴다가, 그것이 사전
+  검사가 아니라 GC 판정 입력이어서 손상된 매니페스트를 "없음" 과 같게 만들어 **데이터
+  파일까지 지우는 유실 버그**가 됨을 발견하고 단일 읽기로 재구성했다. (3)(4) 전체 실행에서
+  1회 실패한 `write_failure` 를 반복 재현했더니 10회 중 4회였고, 원인이 셋이었다 —
+  `ERROR_NOT_FOUND`(1168) 를 Rust 가 `NotFound` 로 매핑하지 않는 문제(열기·정보 조회 **두**
+  경로)와 `FILE_SHARE_DELETE` 누락이다. 조치마다 4/10 -> 3/12 -> 1/15 -> **0/25** 로
+  줄었다. 워크스페이스·runtime-windows 전체 통과, `check_docs.py` 오류 0. 독립 검수 2라운드
+  `CHANGES_REQUESTED` 지적은 전부 반영했다.
+
+---
+
 ## 2026-08-24 20:15 — schema 지문 가드의 문서화된 한계 강제
 - 계획: `docs/plans/2026-08-24_1515_schema_fingerprint_guard_limits_v1.md`.
 - 스트림: Protocol · QA · 문서.

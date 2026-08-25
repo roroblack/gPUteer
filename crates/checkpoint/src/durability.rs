@@ -475,10 +475,9 @@ pub fn state_recorded(
     dir: &Path,
     state: DurabilityState,
 ) -> Result<bool, CheckpointError> {
-    let path = state_marker_path(dir, state);
     let expected = format!("{state:?}\n");
 
-    match std::fs::read(path) {
+    match crate::platform::read_beneath(dir, Path::new(state_marker_name(state))) {
         Ok(actual) => Ok(actual == expected.as_bytes()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
@@ -486,7 +485,7 @@ pub fn state_recorded(
 }
 
 pub fn publication_failed(dir: &Path) -> Result<bool, CheckpointError> {
-    match std::fs::read(publication_failed_marker_path(dir)) {
+    match crate::platform::read_beneath(dir, Path::new(PUBLICATION_FAILED_MARKER)) {
         Ok(actual) => Ok(actual == b"checkpoint publication failed\n"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
@@ -528,7 +527,7 @@ impl CheckpointManifest {
     pub fn verify_files(&self, dir: &Path) -> Result<(), CheckpointError> {
         for file in &self.files {
             let path = dir.join(&file.path);
-            let data = std::fs::read(&path)?;
+            let data = crate::platform::read_beneath(dir, Path::new(&file.path))?;
             let actual = blake3::hash(&data).to_hex().to_string();
 
             if actual != file.digest {

@@ -46,7 +46,7 @@
 #[cfg(windows)]
 mod beneath;
 #[cfg(windows)]
-pub use beneath::{open_artifact, open_beneath};
+pub use beneath::{open_artifact, open_beneath, open_beneath_read_only};
 
 #[cfg(windows)]
 mod windows_impl {

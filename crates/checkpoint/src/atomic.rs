@@ -487,26 +487,33 @@ pub fn gc_partial(
         return Ok(Vec::new());
     }
 
-    let manifest_path = checkpoint_dir.join(manifest_name);
+    // 이름 기반 사전 존재 검사를 두지 않는다 — 검사와 열기 사이에 대상이
+    // 바뀔 수 있다(TOCTOU). 존재 여부와 내용을 **한 번의 읽기**에서 함께
+    // 얻는다. `retry_tolerating_race` 의 `Ok(None)` 은 정확히 NotFound 이므로
+    // "매니페스트 없음" 과 "있는데 손상" 을 여전히 구분할 수 있다.
+    //
+    // ★ 이 구분은 아래 GC 판정에 그대로 쓰인다. `manifest_exists` 가 거짓이면
+    //   `should_remove` 가 전부 참이 되어 **데이터 파일까지 지운다.** 손상된
+    //   매니페스트를 "없음" 으로 접으면 데이터 유실이 되므로 접어서는 안 된다.
+    //
+    // 매니페스트가 reparse point 이거나 디렉터리면 read_beneath 가 NotFound 가
+    // 아닌 오류를 내고 여기서 전파된다. 조용히 "없음" 으로 떨어져 전체 삭제로
+    // 가는 것보다 시끄럽게 실패하는 편이 안전하다.
+    let manifest_data = retry_tolerating_race(|| {
+        crate::platform::read_beneath(checkpoint_dir, Path::new(manifest_name))
+    })?;
+    let manifest_exists = manifest_data.is_some();
 
-    let manifest_exists = retry_tolerating_race(|| fs::symlink_metadata(&manifest_path))?
-        .map(|m| m.is_file())
-        .unwrap_or(false);
-
-    let registered_tmp = if manifest_exists {
-        match retry_tolerating_race(|| fs::read(&manifest_path))? {
-            Some(data) => match crate::durability::CheckpointManifest::from_json(&data) {
-                Ok(manifest) => manifest
-                    .files
-                    .iter()
-                    .map(|file| file.path.clone())
-                    .collect::<Vec<_>>(),
-                Err(_) => Vec::new(),
-            },
-            None => Vec::new(), // 경합 — 그 사이 매니페스트가 사라졌다
-        }
-    } else {
-        Vec::new()
+    let registered_tmp = match manifest_data {
+        Some(data) => match crate::durability::CheckpointManifest::from_json(&data) {
+            Ok(manifest) => manifest
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(), // 있지만 손상 — 등록 목록은 비지만 존재는 참이다
+        },
+        None => Vec::new(),
     };
 
     let mut removed = Vec::new();

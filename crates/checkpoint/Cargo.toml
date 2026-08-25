@@ -21,5 +21,11 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+gputeer-runtime-windows = { path = "../runtime-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile.workspace = true

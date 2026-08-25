@@ -50,11 +50,36 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING,
 };
 
 fn wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(Some(0)).collect()
+}
+
+/// "대상이 없다" 는 뜻의 Win32 코드를 `io::ErrorKind::NotFound` 로 정규화한다.
+///
+/// ★ 왜 필요한가. Rust 는 `ERROR_FILE_NOT_FOUND`(2)·`ERROR_PATH_NOT_FOUND`(3)
+///   만 `NotFound` 로 매핑하고 **`ERROR_NOT_FOUND`(1168)** 는 원시 오류로 둔다.
+///   호출자는 "없음" 을 정상 경합으로 처리하는 경우가 많은데(체크포인트 GC 의
+///   `retry_tolerating_race` 가 그렇다), 1168 이 그대로 새어 나가면 정상적인
+///   경합이 치명적 오류가 된다. 실제로 체크포인트 읽기를 이 모듈로 옮긴 뒤
+///   `concurrent_startup_gc_treats_not_found_as_normal_race` 가 10회 중 4회
+///   실패했고 원인이 이것이었다.
+///
+///   "없음" 이 아닌 오류(접근 거부 등)는 그대로 둔다 — 뭉개면 진짜 실패를
+///   경합으로 오해하게 된다.
+fn normalize_not_found(error: io::Error) -> io::Error {
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_PATH_NOT_FOUND: i32 = 3;
+    const ERROR_NOT_FOUND: i32 = 1168;
+
+    match error.raw_os_error() {
+        Some(ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_NOT_FOUND) => {
+            io::Error::new(io::ErrorKind::NotFound, error)
+        }
+        _ => error,
+    }
 }
 
 /// reparse point 를 절대 따라가지 않고 연다(`FILE_FLAG_OPEN_REPARSE_POINT`).
@@ -71,7 +96,14 @@ fn open_no_reparse(path: &Path, access: u32, creation: u32, directory: bool) -> 
         CreateFileW(
             path_w.as_ptr(),
             access,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            // ★ FILE_SHARE_DELETE 를 반드시 포함한다. Rust 표준 File::open 이
+            // 셋을 모두 쓰는데 여기서 빼면, 우리가 읽는 동안 다른 쪽이 같은
+            // 파일을 지우려 할 때 ERROR_SHARING_VIOLATION(32) 이 난다.
+            // 체크포인트 GC 는 정확히 그런 동시 삭제를 정상 경합으로 다루므로
+            // (concurrent_startup_gc_treats_not_found_as_normal_race), 빼면
+            // 정상 경합이 치명적 오류가 된다. 읽기만 하는 우리가 남의 삭제를
+            // 막을 이유도 없다. 공유 모드는 reparse 탐지와 무관하다.
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             std::ptr::null(),
             creation,
             flags,
@@ -79,13 +111,17 @@ fn open_no_reparse(path: &Path, access: u32, creation: u32, directory: bool) -> 
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error());
+        return Err(normalize_not_found(io::Error::last_os_error()));
     }
 
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
     let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
     if ok == 0 {
-        let err = io::Error::last_os_error();
+        // ★ 여기도 정규화한다. FILE_SHARE_DELETE 를 허용하므로 핸들을 연
+        // 직후에 다른 쪽이 대상을 지울 수 있고, 그러면 이 조회가
+        // ERROR_NOT_FOUND(1168) 로 실패한다. 열기만 정규화하면 이 경로로
+        // 1168 이 새어 나가 정상 경합이 치명적 오류가 된다.
+        let err = normalize_not_found(io::Error::last_os_error());
         unsafe { CloseHandle(handle) };
         return Err(err);
     }
@@ -116,7 +152,34 @@ fn open_no_reparse(path: &Path, access: u32, creation: u32, directory: bool) -> 
 /// 다시 만들어 이름 기반 API(`std::fs::write` 등)를 부르면, 그 사이의
 /// 어떤 변경도 검증을 우회한다 — 검증과 사용이 같은 핸들이어야
 /// 의미가 있다.
+/// 읽기 전용 변형 — 없는 파일을 **만들지 않는다**.
+///
+/// [`open_beneath`] 는 최종 대상에 `OPEN_ALWAYS` 를 써서 파일이 없으면
+/// 만든다(쓰기 경로용). 읽기에 그것을 쓰면 "없는 체크포인트를 읽어보는"
+/// 정상 동작이 빈 파일을 만들어 버린다. 호출부에서 존재 검사를 먼저
+/// 하는 방식은 **그 자체가 TOCTOU** 라 이 모듈의 목적과 어긋난다.
+/// 그래서 커널에 `OPEN_EXISTING` 을 넘겨 없으면 그냥 실패시킨다.
+///
+/// ★ 반환된 `File` 로만 써야 한다([`open_beneath`] 와 같은 이유).
+pub fn open_beneath_read_only(root: &Path, relative: &Path) -> io::Result<File> {
+    open_beneath_with(root, relative, GENERIC_READ, OPEN_EXISTING)
+}
+
 pub fn open_beneath(root: &Path, relative: &Path) -> io::Result<File> {
+    open_beneath_with(
+        root,
+        relative,
+        GENERIC_READ | GENERIC_WRITE,
+        OPEN_ALWAYS,
+    )
+}
+
+fn open_beneath_with(
+    root: &Path,
+    relative: &Path,
+    access: u32,
+    disposition: u32,
+) -> io::Result<File> {
     if relative.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -148,7 +211,7 @@ pub fn open_beneath(root: &Path, relative: &Path) -> io::Result<File> {
 
         let is_final = index + 1 == components.len();
         if is_final {
-            return open_no_reparse(&current, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS, false);
+            return open_no_reparse(&current, access, disposition, false);
         }
 
         // ★ 중간 디렉터리는 지금 확인한 뒤 곧바로 그 경로 문자열로
