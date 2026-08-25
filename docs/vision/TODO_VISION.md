@@ -189,3 +189,49 @@ RevokeLeaseNotice   lease_id 로 대신
 
 이번 Lease 재발급 정책 조각에서는 위 트리거가 아직 오지 않았으므로 실제
 `QUARANTINED` 계산을 만들지 않는다.
+
+### V-12 — Elastic 추론 노드를 위한 admission 확장 (VRAM 이진 판정 → 처리량 곡선 판정)
+
+> ★ **2026-08-24 독립 검수 반영.** 최초 등록본은 코덱스 CLI 독립 검수(read-only,
+> 대화 기록 없는 인스턴스) 1라운드에서 `CHANGES_REQUESTED` — 트리거 (b)가
+> 수치가 아니었고, FreeToken 논문의 서로 다른 하드웨어 등급 결과("8GB 노트북
+> → 35B"·"96GB 워크스테이션 → 753B")를 하나로 합쳐 "8GB에 753B가 들어간다"는
+> 근거 없는 조합을 만들었으며, `GpuSnapshot`이 아니라 이미 `CandidateSnapshot`에
+> 있는 `available_ram_bytes`를 놓치고 host RAM 필드를 중복 제안했고, §10.5를
+> 일반 admission 규범인 것처럼 과대 일반화했고, V-10이 "아직 결정 안 함"이라
+> 명시한 hard-filter/soft-rank 분리를 이미 확정된 것처럼 서술했다. 전부 아래
+> 내용에 반영해 수정했다.
+
+| 필드 | 내용 |
+|---|---|
+| **도입 트리거** | 다음 중 하나 — (a) inference-class Job이 `minimum_vram_bytes_per_gpu` 미충족만으로 hard-filter에서 거부된 사례가 1건 이상 있고, 사후 확인 결과 그 노드가 VRAM+host RAM+PCIe 대역폭 조합으로는 목표 SLO(지연·tok/s)를 실제로 만족할 수 있었던 경우, (b) elastic serving runtime(모델 일부를 GPU VRAM 밖으로 내보내 CPU/RAM에서 계산하거나 필요 시에만 전송하는 방식 — 예: expert/layer 단위로 GPU↔CPU를 오가는 MoE 런타임)을 노드 **1대 이상**에 실제로 설치하고, 그 노드에서 고정 프롬프트/모델 세트로 처리량을 **1회 이상 실측(calibration)** 한 기록이 남는 시점 |
+| 지금 안 하는 이유 | `crates/scheduler`의 `JobRequirements`는 아직 실제 Job 제출 → Manifest → projection 경로에 연결되지 않았고(`CLAUDE.md` §5, "`JobRequirements` projection"이 scheduler `DoD-41`~`51` 전 조각에 걸쳐 반복적으로 후속으로 남아 있음), `crates/agent`도 아직 어떤 workload도 실행하지 않는다(entrypoint 실행 자체가 미착수 — `WRITING` 마커 생성까지만 완료, `DoD-30`). "몇 개 노드가 이 확장으로 실제 이득을 보는가"를 관측할 대상 자체가 없다. 또한 `WorkloadHint`(`proto/common.proto:223-236`, [gputeer_master_plan_FINAL.md:1783-1801](../../../gputeer_master_plan_FINAL.md:1783))에는 목표 처리량/지연 SLO 필드 자체가 없어 Manifest에서 값을 받을 계약이 아직 없다. 지금 시점에 처리량 곡선 판정을 hard-filter에 넣으면 실측 없는 추정 로직을 admission 결정에 박아 넣는 셈이라 `CLAUDE.md` §0.4("강제할 수 없는 것을 보장으로 선언하지 않는다")·§1("지어내지 않는다")과 같은 종류의 위험이다 |
+| 예상 비용 | 생성: 대 — ① `proto/common.proto`의 `WorkloadHint`에 목표 처리량/지연 SLO 필드 추가(schema_version 상향, §7.3 전체 검증 경로 재실행 필요) ② `CandidateSnapshot`에 이미 있는 `available_ram_bytes`([model.rs:108](../../crates/scheduler/src/model.rs))를 노드 단위 자원으로 재사용하고 GPU별 실측 PCIe 대역폭 관측값(현재 없음)을 신설 ③ hard-filter의 `available_vram_bytes >= required_vram` 스칼라 비교([filter.rs:216](../../crates/scheduler/src/filter.rs:216))를 inference class에 한정해 "이 자원 조합이 SLO를 만족하는가" 판정 함수로 교체(training 등 다른 class는 기존 이진 판정 유지) / 검증·통합: 대 — 처리량 추정 자체가 모델 크기·양자화·실측 PCIe 대역폭에 의존하는 회귀 모델이라 실측 calibration 없이는 채울 수 없다 / 대기: scheduler production 연결(Job submit ingress·`JobRequirements` projection) + 최소 1개 elastic serving runtime 채택 결정. **병목**: proto 계약 변경(①)이 나머지 전부를 막는 선행 조건이다 — schema_version을 올리기 전에는 SLO 값을 담을 그릇 자체가 없다 |
+| 폐기 조건 | gPUteer가 워커 노드에서 "모델 전체가 노드 VRAM에 들어가지 않으면 그 노드는 애초에 후보에서 제외"라는 고정 배치만 지원하기로 확정하고, CPU/RAM 오프로딩을 지원 대상에서 제외하는 결정이 기준선에 반영되는 경우 |
+
+★ FreeToken(arXiv:2608.16157 — 노드 하나 안에서 GPU VRAM·CPU RAM·PCIe 대역폭을
+하나의 elastic 자원 풀로 취급해 MoE 모델을 서빙하는 시스템 논문)을 검토하다
+제안됨(2026-08-24, 사용자). 이 논문은 하드웨어 등급별로 **서로 다른** 모델
+크기를 서빙한 결과를 보고한다(8GB 노트북 GPU급에서 더 작은 모델, 96GB
+워크스테이션 GPU급에서 훨씬 큰 모델 — 같은 모델을 여러 등급에서 돌린 비교가
+아니다). 여기서는 그 정확한 수치를 재인용하지 않고 **메커니즘만** 참고한다.
+**레이어 관계**: FreeToken류 런타임은 노드 하나 **내부**에서 계산·모델 상태를
+GPU/CPU에 계속 재매핑하는 실행 계층이고, gPUteer scheduler는 노드들 **사이**에서
+어느 Job을 어느 노드에 배치할지 정하는 계층이다 — 그 자체는 자연스러운 분리다.
+
+문제는 지금 admission이 그 경계를 "이 노드의 VRAM에 모델이 들어가는가"라는
+**이진 판정**으로 굳혀 놓았다는 것이다([filter.rs:215-223](../../crates/scheduler/src/filter.rs:215) —
+`CandidateSnapshot`에 `minimum_vram_bytes_per_gpu`를 대조해 부족하면 즉시 거부.
+[gputeer_master_plan_FINAL.md:1133-1144](../../../gputeer_master_plan_FINAL.md:1133)의
+§10.5 **Shared Admission**(조건부 opt-in 경로 — 전체 admission 규범이 아니라
+그 경로 한정) 공식도 `new_job_peak_estimate`를 노드가 반드시 흡수해야 하는
+고정값으로 취급하는 사례 중 하나다). Elastic 노드에서는 VRAM보다 훨씬 큰
+모델도 host RAM+PCIe를 함께 쓰면 서빙 자체는 가능해지고, 문제는 그 조합에서
+나오는 처리량이 SLO를 만족하느냐로 바뀐다.
+
+**V-10(Job↔Agent 자동 매칭)과는 다른 질문이다** — 이 항목은 inference class에
+한정해 hard-filter의 판정 기준 자체(이진 → SLO 곡선)를 바꾸는 문제다. 다만
+V-10 자체가 "사전조건(hard filter)과 우선순위(soft rank)를 분리할지"를 **아직
+결정하지 않았다**고 명시하므로, 이 항목도 그 경계를 이미 정해진 것처럼 서술하지
+않는다 — 둘 다 scheduler가 production에 연결되기 전까지는 서로 순서를 정할
+필요가 없다.
