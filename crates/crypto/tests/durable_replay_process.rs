@@ -122,7 +122,8 @@ fn run_scenario(workers: usize, distinct_nonces: bool, timeout_mode: bool, seed_
 
     if seed_same_nonce {
         let mut guard = DurableReplayGuard::open(&database).unwrap();
-        let nonce = [0xa5u8; 16];
+        let mut nonce = [0u8; 16];
+        nonce[0] = 0xa5;
 
         assert_eq!(
             guard
@@ -266,8 +267,8 @@ fn separate_processes_distinct_nonces_are_all_fresh() {
 
 /// `LockTimeout` 이 `Duplicate` 로 위장되지 않는다는 계약이
 /// 프로세스 경계에서도 지켜지는지 확인한다. 이미 기록된 nonce 를
-/// 다시 검사하는 동안 holder 가 1300ms(busy_timeout 1000ms 초과)
-/// 락을 쥐고 있으면, 그 결과는 "이미 봤다"(Duplicate)가 아니라
+/// 다시 검사하는 동안 holder 가 worker 의 호출이 반환할 때까지 락을
+/// 쥐고 있으면, 그 결과는 "이미 봤다"(Duplicate)가 아니라
 /// "저장소를 확정하지 못했다"(LockTimeout)여야 한다 — 둘을 섞으면
 /// "확인했다" 와 "확인 못 했다" 가 같은 값으로 보인다.
 #[test]

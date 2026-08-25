@@ -89,6 +89,12 @@ fn worker(database: &Path, gate: &Path, id: usize, nonce_second_byte: u8) -> Res
         Err(_) => "Other",
     };
 
+    // timeout 시나리오의 holder 는 이 marker 를 본 뒤에만 lock 을 푼다.
+    // 고정 sleep 으로 busy_timeout 을 추측하면 부하와 SQLite 재시도
+    // 스케줄에 따라 lock 이 먼저 풀려 테스트가 성공 경로로 빠질 수 있다.
+    fs::write(gate.join(format!("completed-{id}")), outcome.as_bytes())
+        .map_err(|e| format!("worker {id} completed marker failed: {e}"))?;
+
     println!(
         "RESULT id={id} pid={} outcome={outcome} start_ns={start_ns} end_ns={end_ns} result={result:?}",
         process::id()
@@ -116,10 +122,12 @@ fn holder(database: &Path, gate: &Path, workers: usize, timeout_mode: bool) -> R
         .map_err(|e| format!("contended marker failed: {e}"))?;
 
     if timeout_mode {
-        // DurableReplayGuard 의 busy_timeout 은 1초다(durable_replay.rs
-        // BUSY_TIMEOUT). 1300ms 동안 lock 을 쥐고 있으면 worker 는
-        // 반드시 LockTimeout 을 받아야 한다.
-        thread::sleep(Duration::from_millis(1_300));
+        // worker 의 check_and_record 가 반환할 때까지 lock 을 유지한다.
+        // wait_for 의 상한은 production timeout 이 사라져 영원히 막히는
+        // 회귀도 무한 대기 대신 명시적 fixture 실패로 만든다.
+        for id in 0..workers {
+            wait_for(&gate.join(format!("completed-{id}")))?;
+        }
     } else {
         wait_for(&gate.join("release"))?;
     }
