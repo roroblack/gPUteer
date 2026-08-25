@@ -96,7 +96,16 @@ fn open_no_reparse(path: &Path, access: u32, creation: u32, directory: bool) -> 
         CreateFileW(
             path_w.as_ptr(),
             access,
-            // ★ FILE_SHARE_DELETE 를 반드시 포함한다. Rust 표준 File::open 이
+            // ★ FILE_SHARE_DELETE 를 반드시 포함한다.
+            //
+            //   이 저장소는 이 사실을 이미 2026-08-17 에 배웠다 —
+            //   `crates/checkpoint/tests/write_failure.rs` 헤더가 "Rust 표준
+            //   핸들은 FILE_SHARE_DELETE 없이 열린다" 는 초안 가설을 실측으로
+            //   기각하고 정정해 두었다. 그런데 이 모듈을 쓸 때 그 지식이
+            //   건너오지 않아 같은 함정을 다시 밟았다(GC 경합이 공유 위반으로
+            //   실패). 크레이트가 다르면 배운 것이 자동으로 따라오지 않는다.
+            //
+            //   Rust 표준 File::open 이
             // 셋을 모두 쓰는데 여기서 빼면, 우리가 읽는 동안 다른 쪽이 같은
             // 파일을 지우려 할 때 ERROR_SHARING_VIOLATION(32) 이 난다.
             // 체크포인트 GC 는 정확히 그런 동시 삭제를 정상 경합으로 다루므로
