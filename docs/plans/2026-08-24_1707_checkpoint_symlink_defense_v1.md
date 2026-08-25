@@ -231,3 +231,64 @@ TOCTOU 는 없애고 "없음 vs 손상" 구분은 보존했다.
 - `cargo test --workspace --exclude gputeer-runtime-windows` 통과
 - `cargo test -p gputeer-runtime-windows` 통과
 - `check_docs.py` 오류 0
+
+
+---
+
+## ★ Linux 구현이 실제로 검사되고 있는가 (2026-08-24 확인)
+
+"구현은 해뒀다" 가 공허한 말이 되지 않으려면 그 코드가 최소한 컴파일은
+돼야 한다. `linux_unverified` 는 `#[cfg(target_os = "linux")]` 아래에
+있어 **Windows 빌드에서는 타입 검사조차 되지 않는다.** 확인했다.
+
+### 확인 방법과 결과
+
+이 개발 기계에는 Linux 타겟이 설치돼 있지 않았다(`rustup target list
+--installed` 결과가 `x86_64-pc-windows-msvc` 하나뿐이었다). 즉 이 코드는
+로컬에서 **한 번도 컴파일된 적이 없었다.** 타겟을 추가하고 확인했다.
+
+```
+rustup target add x86_64-unknown-linux-gnu
+cargo check -p gputeer-checkpoint --target x86_64-unknown-linux-gnu
+```
+
+통과했다. 그러나 **초록불 자체는 아무것도 증명하지 않는다** — cfg 로
+통째로 건너뛰어도 똑같이 통과한다. 그래서 뮤테이션으로 확인했다.
+
+첫 시도는 잘못된 프로브였다. 모듈 최상위에 `let` 을 넣어 **문법 오류**를
+만들었더니 Windows 빌드에서도 잡혔다. Rust 는 cfg 를 적용하기 **전에**
+파일 전체를 파싱하므로, 꺼진 모듈의 문법 오류는 모든 타겟에서 잡힌다.
+이건 "파싱된다" 는 증명이지 "타입 검사된다" 는 증명이 아니다.
+
+문법은 유효하고 타입만 틀린 프로브(`const _MUTATION_PROBE: u32 =
+"not a number";`)로 다시 했다.
+
+| 타겟 | 결과 | 의미 |
+|---|---|---|
+| Windows | 오류 0 | cfg 로 꺼져 **타입 검사되지 않는다** |
+| Linux | `E0308 mismatched types` | 크로스 체크가 **실제로 타입 검사한다** |
+
+프로브는 원복했다.
+
+### CI 는 이미 이것을 검사한다 — 스텝을 추가하지 않는다
+
+`.github/workflows/canonical-schema-check.yml` 은 **`ubuntu-latest`** 에서
+`cargo build --workspace --exclude gputeer-runtime-windows` 와
+`cargo test` 를 돌린다. `gputeer-checkpoint` 가 포함되므로 Linux 에서는
+`linux_unverified` 가 **네이티브로 타입 검사된다.** 별도 크로스 컴파일
+스텝은 중복이라 추가하지 않았다.
+
+`crates/checkpoint/Cargo.toml` 의
+`[target.'cfg(target_os = "linux")'.dependencies] libc` 선언과
+`Cargo.lock` 항목도 확인했다. CI 에서 의존이 빠져 깨질 상태는 아니다.
+
+### 남는 간극
+
+**로컬 Windows 개발에서는 여전히 검사되지 않는다.** Linux 코드를 고치고
+CI 에 올리기 전에 확인하려면 위 `cargo check --target` 명령을 직접
+돌려야 한다. 이건 CI 가 있는 이상 치명적이지 않지만, Linux 연결 작업을
+할 사람은 알고 있어야 한다.
+
+그리고 **컴파일이 통과한다는 것이 동작한다는 뜻은 아니다.** `openat2` 가
+정말 `RESOLVE_BENEATH` 로 링크를 막는지는 Linux 실측이 필요하며 여전히
+미검증이다. 연결 작업에는 실측이 반드시 포함되어야 한다.
