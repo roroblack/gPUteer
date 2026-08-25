@@ -9,6 +9,7 @@
 
 pub mod canonical;
 pub mod constants;
+pub mod fenced_operation;
 pub mod signable;
 pub mod signing;
 pub mod to_fields;
@@ -26,6 +27,10 @@ pub use signing::{
     signing_input, verify, DerivedMismatch, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard,
     ReplayStoreError,
     Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
+};
+pub use fenced_operation::{
+    derive_operation_id, evaluate_fenced_operation, FencedOperationDecision, FencedOperationKey,
+    InvalidFencedOperation,
 };
 pub use to_fields::{ToCanonicalFields, DERIVED_HASH_FIELDS, UNIMPLEMENTED_FIELDS};
 pub use watch_continuity::{
