@@ -7,9 +7,9 @@
 //! 는 **진짜 프로세스 경계**를 넘는 SQLite 잠금 경합을 만든다.
 //!
 //! 두 모드:
-//!   worker <db> <gate> <id> <nonce-byte>   DurableReplayGuard 로 nonce 기록 시도
-//!   holder <db> <gate> <workers> <timeout-mode>
-//!                                          별도 연결로 BEGIN IMMEDIATE 락을 쥐고 있는다
+//!   worker <db> <gate> <id> <nonce-byte> <mode>
+//!                                          DurableReplayGuard 로 nonce 기록 시도
+//!   holder <db> <gate> <workers>           별도 연결로 BEGIN IMMEDIATE 락을 쥐고 있는다
 //!
 //! `holder` 는 `DurableReplayGuard` 의 공개 API 를 우회하는 것이
 //! 아니다 — "트랜잭션을 일정 시간 쥐고 있는" 테스트 전용 기능이
@@ -19,9 +19,8 @@
 use std::{
     env, fs,
     path::Path,
-    process,
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    process, thread,
+    time::{Duration, Instant},
 };
 
 use gputeer_crypto::DurableReplayGuard;
@@ -32,13 +31,6 @@ use gputeer_protocol::{
 use rusqlite::Connection;
 
 const RETAIN_UNTIL_MS: u64 = 4_000_000_000_000;
-
-fn now_ns() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
-        .as_nanos()
-}
 
 /// `gate` 디렉터리에 `path` 파일이 생길 때까지 폴링한다.
 /// named event 대신 파일 존재를 쓰는 이유: 플랫폼 독립적이고,
@@ -56,9 +48,24 @@ fn wait_for(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn worker(database: &Path, gate: &Path, id: usize, nonce_second_byte: u8) -> Result<(), String> {
-    let mut guard =
-        DurableReplayGuard::open(database).map_err(|e| format!("worker {id} open failed: {e:?}"))?;
+fn outcome(result: &Result<ReplayDecision, ReplayStoreError>) -> &'static str {
+    match result {
+        Ok(ReplayDecision::Fresh) => "Fresh",
+        Ok(ReplayDecision::Duplicate) => "Duplicate",
+        Err(ReplayStoreError::LockTimeout) => "LockTimeout",
+        Err(_) => "Other",
+    }
+}
+
+fn worker(
+    database: &Path,
+    gate: &Path,
+    id: usize,
+    nonce_second_byte: u8,
+    mode: &str,
+) -> Result<(), String> {
+    let mut guard = DurableReplayGuard::open(database)
+        .map_err(|e| format!("worker {id} open failed: {e:?}"))?;
 
     fs::write(gate.join(format!("ready-{id}")), b"READY")
         .map_err(|e| format!("worker {id} ready marker failed: {e}"))?;
@@ -69,78 +76,99 @@ fn worker(database: &Path, gate: &Path, id: usize, nonce_second_byte: u8) -> Res
     nonce[0] = 0xa5;
     nonce[1] = nonce_second_byte;
 
-    let start_ns = now_ns();
-
-    // holder 가 아직 SQLite write lock 을 쥐고 있는 동안(즉 이 call
-    // marker 를 전부 확인하기 전까지는 commit 하지 않는다) 이 marker
-    // 를 남긴다 — "모든 worker 가 실제로 lock 보유 구간에 도달했다"
-    // 는 비공허성 증거다.
+    // worker-race 에서는 모든 worker 가 이 지점 바로 앞의 start
+    // barrier 에 함께 대기했다가, 이 단 한 번의 호출 결과로 동시성
+    // 불변식을 판정한다. held-* 에서는 holder 가 모든 completed
+    // marker 를 확인할 때까지 write lock 을 유지한다.
     fs::write(gate.join(format!("call-{id}")), b"CALL_BEGIN")
         .map_err(|e| format!("worker {id} call marker failed: {e}"))?;
 
-    let result = guard.check_and_record("process-race-signer", Domain::Grant, &nonce, RETAIN_UNTIL_MS);
+    let initial_result = guard.check_and_record(
+        "process-race-signer",
+        Domain::Grant,
+        &nonce,
+        RETAIN_UNTIL_MS,
+    );
+    let initial_outcome = outcome(&initial_result);
 
-    let end_ns = now_ns();
+    if mode == "worker-race" {
+        println!(
+            "RESULT id={id} pid={} initial_outcome={initial_outcome} retry_outcome=NotRun initial_result={initial_result:?}",
+            process::id()
+        );
+        return Ok(());
+    }
 
-    let outcome = match &result {
-        Ok(ReplayDecision::Fresh) => "Fresh",
-        Ok(ReplayDecision::Duplicate) => "Duplicate",
-        Err(ReplayStoreError::LockTimeout) => "LockTimeout",
-        Err(_) => "Other",
-    };
+    if !matches!(mode, "held" | "held-retry") {
+        return Err(format!("worker {id} has unknown mode {mode:?}"));
+    }
 
-    // timeout 시나리오의 holder 는 이 marker 를 본 뒤에만 lock 을 푼다.
-    // 고정 sleep 으로 busy_timeout 을 추측하면 부하와 SQLite 재시도
-    // 스케줄에 따라 lock 이 먼저 풀려 테스트가 성공 경로로 빠질 수 있다.
-    fs::write(gate.join(format!("completed-{id}")), outcome.as_bytes())
-        .map_err(|e| format!("worker {id} completed marker failed: {e}"))?;
+    fs::write(
+        gate.join(format!("completed-{id}")),
+        initial_outcome.as_bytes(),
+    )
+    .map_err(|e| format!("worker {id} completed marker failed: {e}"))?;
+
+    if mode == "held" {
+        println!(
+            "RESULT id={id} pid={} initial_outcome={initial_outcome} retry_outcome=NotRun initial_result={initial_result:?}",
+            process::id()
+        );
+        return Ok(());
+    }
+
+    // 이 재시도는 holder 의 COMMIT 뒤에만 시작한다. 따라서 그 결과는
+    // 동시 경합 불변식의 증거가 아니라, LockTimeout 뒤 재시도가 같은
+    // nonce 에 대해 멱등적으로 수렴하는지만 확인한다.
+    wait_for(&gate.join("released"))?;
+
+    let retry_result = guard.check_and_record(
+        "process-race-signer",
+        Domain::Grant,
+        &nonce,
+        RETAIN_UNTIL_MS,
+    );
+    let retry_outcome = outcome(&retry_result);
 
     println!(
-        "RESULT id={id} pid={} outcome={outcome} start_ns={start_ns} end_ns={end_ns} result={result:?}",
+        "RESULT id={id} pid={} initial_outcome={initial_outcome} retry_outcome={retry_outcome} initial_result={initial_result:?} retry_result={retry_result:?}",
         process::id()
     );
 
     Ok(())
 }
 
-fn holder(database: &Path, gate: &Path, workers: usize, timeout_mode: bool) -> Result<(), String> {
+fn holder(database: &Path, gate: &Path, workers: usize) -> Result<(), String> {
     let connection = Connection::open(database).map_err(|e| format!("holder open failed: {e}"))?;
 
     connection
         .execute_batch("BEGIN IMMEDIATE;")
         .map_err(|e| format!("holder could not acquire BEGIN IMMEDIATE: {e}"))?;
 
-    let locked_ns = now_ns();
     fs::write(gate.join("locked"), b"LOCKED").map_err(|e| format!("locked marker failed: {e}"))?;
 
     for id in 0..workers {
         wait_for(&gate.join(format!("call-{id}")))?;
     }
 
-    let contended_ns = now_ns();
     fs::write(gate.join("contended"), b"CONTENDED")
         .map_err(|e| format!("contended marker failed: {e}"))?;
 
-    if timeout_mode {
-        // worker 의 check_and_record 가 반환할 때까지 lock 을 유지한다.
-        // wait_for 의 상한은 production timeout 이 사라져 영원히 막히는
-        // 회귀도 무한 대기 대신 명시적 fixture 실패로 만든다.
-        for id in 0..workers {
-            wait_for(&gate.join(format!("completed-{id}")))?;
-        }
-    } else {
-        wait_for(&gate.join("release"))?;
+    // 모든 1차 호출이 반환하기 전에는 lock 을 해제하지 않는다. 테스트는
+    // 각 반환값이 LockTimeout 인지 검증하므로 call marker 직후 선점된
+    // worker 를 실제 경합으로 잘못 세는 빈틈이 없다.
+    for id in 0..workers {
+        wait_for(&gate.join(format!("completed-{id}")))?;
     }
 
     connection
         .execute_batch("COMMIT;")
         .map_err(|e| format!("holder commit failed: {e}"))?;
 
-    let released_ns = now_ns();
     fs::write(gate.join("released"), b"RELEASED")
         .map_err(|e| format!("released marker failed: {e}"))?;
 
-    println!("HOLDER locked_ns={locked_ns} contended_ns={contended_ns} released_ns={released_ns}");
+    println!("HOLDER released_after_completed={workers}");
 
     Ok(())
 }
@@ -149,20 +177,20 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
     let result = match args.first().map(String::as_str) {
-        Some("worker") if args.len() == 5 => worker(
+        Some("worker") if args.len() == 6 => worker(
             Path::new(&args[1]),
             Path::new(&args[2]),
             args[3].parse().expect("worker id"),
             args[4].parse().expect("nonce byte"),
+            &args[5],
         ),
-        Some("holder") if args.len() == 5 => holder(
+        Some("holder") if args.len() == 4 => holder(
             Path::new(&args[1]),
             Path::new(&args[2]),
             args[3].parse().expect("worker count"),
-            args[4].parse::<u8>().expect("timeout mode") != 0,
         ),
         _ => Err(
-            "usage: worker <db> <gate> <id> <nonce-byte> | holder <db> <gate> <workers> <timeout-mode>"
+            "usage: worker <db> <gate> <id> <nonce-byte> <worker-race|held|held-retry> | holder <db> <gate> <workers>"
                 .into(),
         ),
     };

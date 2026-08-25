@@ -8,13 +8,14 @@
 //! 두 번(체크포인트 GC 경합, `write_failure.rs` 의 FILE_SHARE_DELETE)
 //! 이미 틀린 전례가 있다.
 //!
-//! ★ 단순히 여러 자식 프로세스를 거의 동시에 띄우는 것만으로는
-//! 진짜 경합을 보장하지 않는다 — 먼저 뜬 프로세스가 끝나 버릴 수
-//! 있다. 그래서 `holder` fixture 가 SQLite write lock 을 실제로
-//! 쥔 채, **모든 worker 가 그 락이 걸린 동안 `check_and_record`
-//! 호출 직전 지점에 도달했다는 것을 파일 마커로 확인한 뒤에만**
-//! 락을 놓는다 — "우연히 겹쳤을 수도 있다" 가 아니라 "반드시
-//! 겹쳤다" 를 만든다.
+//! 두 검증의 시점을 의도적으로 분리한다.
+//! - worker-only 경합: 8개 프로세스가 모두 `ready` barrier 에 도달한
+//!   뒤 한꺼번에 풀리고, 그 **첫 API 호출** 자체에서 정확히 하나만
+//!   `Fresh` 인지 확인한다. holder 도 재시도도 없다.
+//! - 강제 lock 경합: holder 가 모든 worker 의 첫 호출이 반환할 때까지
+//!   write lock 을 유지하고, 그 첫 반환 전부가 실제 `LockTimeout` 인지
+//!   확인한다. holder 해제 뒤 재시도 결과는 오직 멱등 수렴 검증이며
+//!   동시 `Fresh` 불변식의 근거로 사용하지 않는다.
 
 use std::{
     path::{Path, PathBuf},
@@ -61,17 +62,10 @@ fn wait_for(path: &Path) {
     }
 }
 
-fn kv_u128(line: &str, key: &str) -> u128 {
-    line.split_whitespace()
-        .find_map(|part| part.strip_prefix(key).and_then(|value| value.parse::<u128>().ok()))
-        .unwrap_or_else(|| panic!("missing {key} in {line:?}"))
-}
-
 #[derive(Debug)]
 struct Observation {
-    outcome: String,
-    start_ns: u128,
-    end_ns: u128,
+    initial_outcome: String,
+    retry_outcome: String,
 }
 
 fn parse_worker_output(stdout: &[u8]) -> Observation {
@@ -81,36 +75,31 @@ fn parse_worker_output(stdout: &[u8]) -> Observation {
         .find(|line| line.starts_with("RESULT "))
         .unwrap_or_else(|| panic!("missing RESULT line:\n{text}"));
 
-    let outcome = line
-        .split_whitespace()
-        .find_map(|part| part.strip_prefix("outcome="))
-        .expect("missing outcome")
-        .to_string();
+    let field = |key: &str| {
+        line.split_whitespace()
+            .find_map(|part| part.strip_prefix(key))
+            .unwrap_or_else(|| panic!("missing {key} in {line:?}"))
+            .to_string()
+    };
 
     Observation {
-        outcome,
-        start_ns: kv_u128(line, "start_ns="),
-        end_ns: kv_u128(line, "end_ns="),
+        initial_outcome: field("initial_outcome="),
+        retry_outcome: field("retry_outcome="),
     }
-}
-
-fn holder_times(stdout: &[u8]) -> (u128, u128) {
-    let text = String::from_utf8_lossy(stdout);
-    let line = text
-        .lines()
-        .find(|line| line.starts_with("HOLDER "))
-        .unwrap_or_else(|| panic!("missing HOLDER line:\n{text}"));
-
-    (kv_u128(line, "locked_ns="), kv_u128(line, "released_ns="))
 }
 
 struct Scenario {
     observations: Vec<Observation>,
-    holder_stdout: Vec<u8>,
     entry_count: usize,
 }
 
-fn run_scenario(workers: usize, distinct_nonces: bool, timeout_mode: bool, seed_same_nonce: bool) -> Scenario {
+fn run_scenario(
+    workers: usize,
+    distinct_nonces: bool,
+    seed_same_nonce: bool,
+    mode: &str,
+    with_holder: bool,
+) -> Scenario {
     let temp = tempfile::tempdir().unwrap();
     let database = temp.path().join("replay.sqlite3");
     let gate = temp.path().join("gate");
@@ -127,7 +116,12 @@ fn run_scenario(workers: usize, distinct_nonces: bool, timeout_mode: bool, seed_
 
         assert_eq!(
             guard
-                .check_and_record("process-race-signer", Domain::Grant, &nonce, 4_000_000_000_000)
+                .check_and_record(
+                    "process-race-signer",
+                    Domain::Grant,
+                    &nonce,
+                    4_000_000_000_000
+                )
                 .unwrap(),
             ReplayDecision::Fresh
         );
@@ -144,6 +138,7 @@ fn run_scenario(workers: usize, distinct_nonces: bool, timeout_mode: bool, seed_
             .arg(&gate)
             .arg(id.to_string())
             .arg(nonce_second_byte.to_string())
+            .arg(mode)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -153,40 +148,42 @@ fn run_scenario(workers: usize, distinct_nonces: bool, timeout_mode: bool, seed_
         children.push(child);
     }
 
-    let holder = Command::new(fixture_bin())
-        .arg("holder")
-        .arg(&database)
-        .arg(&gate)
-        .arg(workers.to_string())
-        .arg(if timeout_mode { "1" } else { "0" })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn SQLite lock-holder fixture");
+    let holder = with_holder.then(|| {
+        let child = Command::new(fixture_bin())
+            .arg("holder")
+            .arg(&database)
+            .arg(&gate)
+            .arg(workers.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn SQLite lock-holder fixture");
 
-    // BEGIN IMMEDIATE 가 실제로 락을 얻었다는 확인이다.
-    wait_for(&gate.join("locked"));
+        // BEGIN IMMEDIATE 가 실제로 락을 얻었다는 확인이다.
+        wait_for(&gate.join("locked"));
+        child
+    });
 
-    // 모든 worker 를 한 번에 깨운다.
+    // 모든 worker process 가 guard 를 열고 ready marker 를 남긴 뒤에만
+    // 공용 start barrier 를 푼다. worker-race 는 이 barrier 뒤 단 한
+    // 번 호출하므로, worker 를 하나씩 실행·종료하는 순차 하네스로는
+    // 이 지점에 도달할 수 없다.
     std::fs::write(gate.join("start"), b"START").unwrap();
 
-    // holder 는 이 marker 가 생기기 전까지 commit 하지 않는다 —
-    // 그래서 이 대기가 끝났다는 것 자체가 "모든 worker 가 락 보유
-    // 구간에 실제로 도달했다" 는 비공허성 증거다.
-    wait_for(&gate.join("contended"));
+    if let Some(holder) = holder {
+        // holder 가 모든 worker 의 1차 호출 직전 marker 를 확인했다.
+        // 실제 lock 대기는 아래 initial_outcome 으로 별도 검증한다.
+        wait_for(&gate.join("contended"));
 
-    if !timeout_mode {
-        std::fs::write(gate.join("release"), b"RELEASE").unwrap();
+        let holder_output = holder.wait_with_output().expect("holder wait failed");
+
+        assert!(
+            holder_output.status.success(),
+            "holder failed: stdout={:?}, stderr={:?}",
+            String::from_utf8_lossy(&holder_output.stdout),
+            String::from_utf8_lossy(&holder_output.stderr)
+        );
     }
-
-    let holder_output = holder.wait_with_output().expect("holder wait failed");
-
-    assert!(
-        holder_output.status.success(),
-        "holder failed: stdout={:?}, stderr={:?}",
-        String::from_utf8_lossy(&holder_output.stdout),
-        String::from_utf8_lossy(&holder_output.stderr)
-    );
 
     let mut observations = Vec::with_capacity(workers);
 
@@ -207,31 +204,44 @@ fn run_scenario(workers: usize, distinct_nonces: bool, timeout_mode: bool, seed_
 
     Scenario {
         observations,
-        holder_stdout: holder_output.stdout,
         entry_count: guard.entry_count().unwrap(),
     }
 }
 
-fn count(observations: &[Observation], expected: &str) -> usize {
-    observations.iter().filter(|observation| observation.outcome == expected).count()
+fn count_by(
+    observations: &[Observation],
+    select: impl Fn(&Observation) -> &str,
+    expected: &str,
+) -> usize {
+    observations
+        .iter()
+        .filter(|observation| select(observation) == expected)
+        .count()
 }
 
-/// 비공허성의 핵심 — 모든 worker 의 호출이 실제로 holder 의 락
-/// 보유 구간 안에서 시작됐는지 타임스탬프로 재확인한다. 이게
-/// 실패하면 "경합을 만들었다"는 이 테스트 전체의 전제가 무너진다.
-fn assert_calls_started_while_lock_was_held(scenario: &Scenario) {
-    let (locked_ns, released_ns) = holder_times(&scenario.holder_stdout);
+fn count(observations: &[Observation], expected: &str) -> usize {
+    count_by(
+        observations,
+        |observation| &observation.initial_outcome,
+        expected,
+    )
+}
 
-    for observation in &scenario.observations {
-        assert!(
-            observation.start_ns >= locked_ns,
-            "worker started before holder lock: {observation:?}"
-        );
-        assert!(
-            observation.start_ns <= released_ns,
-            "worker started after holder release: {observation:?}"
-        );
-    }
+/// 모든 worker 의 같은 API 호출이 실제 SQLite lock 대기에서
+/// LockTimeout 으로 반환했는지 확인한다. holder 는 모든 호출의 반환
+/// marker 전에는 COMMIT 하지 않으므로 스케줄링이나 시각 비교에
+/// 기대지 않는 경합 증거다.
+fn assert_all_initial_attempts_contended(scenario: &Scenario) {
+    assert_eq!(
+        count_by(
+            &scenario.observations,
+            |observation| &observation.initial_outcome,
+            "LockTimeout",
+        ),
+        scenario.observations.len(),
+        "not every worker demonstrably waited on the holder lock: {:?}",
+        scenario.observations
+    );
 }
 
 /// 핵심 불변식 — 별도 프로세스 8개가 **같은 nonce** 로 동시에
@@ -239,14 +249,20 @@ fn assert_calls_started_while_lock_was_held(scenario: &Scenario) {
 /// 방어의 존재 이유 자체를 무너뜨린다.
 #[test]
 fn separate_processes_same_nonce_have_exactly_one_fresh() {
-    let scenario = run_scenario(WORKERS, false, false, false);
-
-    assert_calls_started_while_lock_was_held(&scenario);
+    let scenario = run_scenario(WORKERS, false, false, "worker-race", false);
 
     assert_eq!(count(&scenario.observations, "Fresh"), 1);
     assert_eq!(count(&scenario.observations, "Duplicate"), WORKERS - 1);
     assert_eq!(count(&scenario.observations, "LockTimeout"), 0);
     assert_eq!(count(&scenario.observations, "Other"), 0);
+    assert_eq!(
+        count_by(
+            &scenario.observations,
+            |observation| &observation.retry_outcome,
+            "NotRun"
+        ),
+        WORKERS
+    );
     assert_eq!(scenario.entry_count, 1);
 }
 
@@ -254,15 +270,40 @@ fn separate_processes_same_nonce_have_exactly_one_fresh() {
 /// nonce 를 쓰는 프로세스는 전부 통과해야 한다.
 #[test]
 fn separate_processes_distinct_nonces_are_all_fresh() {
-    let scenario = run_scenario(WORKERS, true, false, false);
-
-    assert_calls_started_while_lock_was_held(&scenario);
+    let scenario = run_scenario(WORKERS, true, false, "worker-race", false);
 
     assert_eq!(count(&scenario.observations, "Fresh"), WORKERS);
     assert_eq!(count(&scenario.observations, "Duplicate"), 0);
     assert_eq!(count(&scenario.observations, "LockTimeout"), 0);
     assert_eq!(count(&scenario.observations, "Other"), 0);
     assert_eq!(scenario.entry_count, WORKERS);
+}
+
+/// 외부 holder 가 모든 첫 호출의 반환까지 write lock 을 유지하므로,
+/// 8개 initial_outcome 전부가 LockTimeout 이어야 한다. released marker
+/// 뒤의 retry_outcome 은 경합 중 판정이 아니라 해제 후 멱등성 확인이다.
+#[test]
+fn separate_processes_all_initial_attempts_lock_timeout_then_retry_idempotently() {
+    let scenario = run_scenario(WORKERS, false, false, "held-retry", true);
+
+    assert_all_initial_attempts_contended(&scenario);
+    assert_eq!(
+        count_by(
+            &scenario.observations,
+            |observation| &observation.retry_outcome,
+            "Fresh"
+        ),
+        1
+    );
+    assert_eq!(
+        count_by(
+            &scenario.observations,
+            |observation| &observation.retry_outcome,
+            "Duplicate"
+        ),
+        WORKERS - 1
+    );
+    assert_eq!(scenario.entry_count, 1);
 }
 
 /// `LockTimeout` 이 `Duplicate` 로 위장되지 않는다는 계약이
@@ -273,17 +314,14 @@ fn separate_processes_distinct_nonces_are_all_fresh() {
 /// "확인했다" 와 "확인 못 했다" 가 같은 값으로 보인다.
 #[test]
 fn separate_process_lock_timeout_is_not_duplicate() {
-    let scenario = run_scenario(1, false, true, true);
+    let scenario = run_scenario(1, false, true, "held", true);
 
-    let (locked_ns, released_ns) = holder_times(&scenario.holder_stdout);
     let observation = &scenario.observations[0];
 
-    assert_eq!(observation.outcome, "LockTimeout");
-    assert_ne!(observation.outcome, "Duplicate");
-    assert_ne!(observation.outcome, "Fresh");
-
-    assert!(observation.start_ns >= locked_ns);
-    assert!(observation.end_ns <= released_ns);
+    assert_eq!(observation.initial_outcome, "LockTimeout");
+    assert_eq!(observation.retry_outcome, "NotRun");
+    assert_ne!(observation.initial_outcome, "Duplicate");
+    assert_ne!(observation.initial_outcome, "Fresh");
 
     // 사전 기록된 nonce 1개만 남아 있어야 한다 — LockTimeout 이
     // 조용히 새 항목을 만들지 않았는지 확인한다.
