@@ -57,10 +57,13 @@
 //! 중첩 message 선언을 처리하지 못한다
 //!     `message Outer { message Inner { ... } }` 의 Inner 필드는 Outer 것으로
 //!     기록되며, 번호가 겹치면 덮어쓴다.
-//!     -> 현 스키마에 중첩 선언은 **0건**이다 (grep 확인). 도입 시 파서를 고쳐야 한다.
+//!     -> 합성 입력으로 이 동작을 확인했다. 현 스키마에 중첩 선언은 **0건**이며,
+//!        도입되면 별도 지원 구문 검사가 명확히 실패한다.
 //!
-//! reserved 를 필드로 오인하지 않는지 미확인
-//!     현 스키마에 reserved 는 **0건**이다. 도입 시 확인이 필요하다.
+//! reserved 는 필드로 기록하지 않는다
+//!     합성 입력으로 명시적인 건너뛰기 분기를 확인했다. 다만 reserved 자체는 지문에
+//!     기록되지 않는다. 현 스키마에 reserved 는 **0건**이며, 도입되면 별도 지원 구문
+//!     검사가 검토와 가드 확장을 요구하며 실패한다.
 //! ```
 //!
 //! 지문은 **필드 집합의 변화**를 잡으며, 주석·공백·필드 선언 순서 변화는 무시한다.
@@ -82,13 +85,161 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[derive(Debug)]
+enum SyntaxToken {
+    Ident(String, usize),
+    OpenBrace,
+    CloseBrace,
+}
+
+/// 지원 한계 탐지용 최소 lexer. 주석과 문자열 안의 키워드는 구문으로 세지 않는다.
+fn proto_syntax_tokens(src: &str) -> Vec<SyntaxToken> {
+    let bytes = src.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    let mut line = 1usize;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\n' => {
+                line += 1;
+                index += 1;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len()
+                    && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    if bytes[index] == b'\n' {
+                        line += 1;
+                    }
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+            }
+            quote @ (b'\'' | b'"') => {
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        index = (index + 2).min(bytes.len());
+                    } else if bytes[index] == quote {
+                        index += 1;
+                        break;
+                    } else {
+                        if bytes[index] == b'\n' {
+                            line += 1;
+                        }
+                        index += 1;
+                    }
+                }
+            }
+            b'{' => {
+                tokens.push(SyntaxToken::OpenBrace);
+                index += 1;
+            }
+            b'}' => {
+                tokens.push(SyntaxToken::CloseBrace);
+                index += 1;
+            }
+            ch if ch.is_ascii_alphabetic() || ch == b'_' => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                tokens.push(SyntaxToken::Ident(src[start..index].to_string(), line));
+            }
+            _ => index += 1,
+        }
+    }
+
+    tokens
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Scope {
+    Message,
+    Other,
+}
+
+fn validate_guard_supported_syntax(file: &str, src: &str) -> Result<(), String> {
+    let tokens = proto_syntax_tokens(src);
+    let mut message_openings: BTreeMap<usize, (&str, usize)> = BTreeMap::new();
+
+    for (index, window) in tokens.windows(3).enumerate() {
+        if let [
+            SyntaxToken::Ident(keyword, line),
+            SyntaxToken::Ident(name, _),
+            SyntaxToken::OpenBrace,
+        ] = window
+        {
+            if keyword == "message" {
+                message_openings.insert(index + 2, (name.as_str(), *line));
+            }
+        }
+    }
+
+    let mut scopes = Vec::new();
+    let mut violations = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            SyntaxToken::Ident(keyword, line) if keyword == "reserved" => {
+                violations.push(format!(
+                    "{file}:{line}: `reserved` declaration is unsupported: the parser deliberately skips it, so the reservation itself is absent from the fingerprint. Extend the fingerprint representation and its regression tests, then update this support check before introducing `reserved`."
+                ));
+            }
+            SyntaxToken::OpenBrace => {
+                if let Some((name, line)) = message_openings.get(&index) {
+                    if scopes.contains(&Scope::Message) {
+                        violations.push(format!(
+                            "{file}:{line}: nested message `{name}` is unsupported: its fields are recorded under the outer message, and a reused field number silently overwrites the outer entry. Teach the parser nested ownership and add regression tests, then update this support check before introducing nested messages."
+                        ));
+                    }
+                    scopes.push(Scope::Message);
+                } else {
+                    scopes.push(Scope::Other);
+                }
+            }
+            SyntaxToken::CloseBrace => {
+                scopes.pop();
+            }
+            SyntaxToken::Ident(_, _) => {}
+        }
+    }
+
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "schema fingerprint guard refuses syntax it cannot safely enforce:\n{}",
+            violations.join("\n")
+        ))
+    }
+}
+
+fn read_proto(file: &str) -> String {
+    std::fs::read_to_string(repo_root().join("proto").join(file))
+        .unwrap_or_else(|e| panic!("{file} 읽기 실패: {e}"))
+}
+
 /// `.proto` 한 파일에서 `message <Name> { <num> <name> <type> }` 를 전부 뽑는다.
 ///
 /// 반환: "File::Message" -> (field number -> "type name")
 fn parse_proto(file: &str) -> BTreeMap<String, BTreeMap<u32, String>> {
-    let src = std::fs::read_to_string(repo_root().join("proto").join(file))
-        .unwrap_or_else(|e| panic!("{file} 읽기 실패: {e}"));
+    let src = read_proto(file);
+    validate_guard_supported_syntax(file, &src).unwrap_or_else(|message| panic!("{message}"));
+    parse_proto_source(file, &src)
+}
 
+fn parse_proto_source(file: &str, src: &str) -> BTreeMap<String, BTreeMap<u32, String>> {
     let mut out: BTreeMap<String, BTreeMap<u32, String>> = BTreeMap::new();
     let mut current: Option<String> = None;
     let mut depth = 0usize;
@@ -121,6 +272,10 @@ fn parse_proto(file: &str) -> BTreeMap<String, BTreeMap<u32, String>> {
             continue;
         }
         let body = line.trim_end_matches(';');
+        // reserved 는 필드가 아니다. 유효한 reserved 문법은 `=`가 없으므로 먼저 거른다.
+        if body.split_whitespace().next() == Some("reserved") {
+            continue;
+        }
         let Some((lhs, rhs)) = body.rsplit_once('=') else {
             continue;
         };
@@ -132,11 +287,6 @@ fn parse_proto(file: &str) -> BTreeMap<String, BTreeMap<u32, String>> {
         let Some(name) = parts.last() else { continue };
         let ty = parts[..parts.len() - 1].join(" ");
         let key = current.clone().unwrap();
-
-        // reserved 는 필드가 아니다
-        if ty.starts_with("reserved") || lhs.trim().starts_with("reserved") {
-            continue;
-        }
         out.entry(key).or_default().insert(num, format!("{ty} {name}"));
     }
     out
@@ -184,6 +334,96 @@ const HEADER: &str = "\
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 ";
+
+#[test]
+fn proto_schema_uses_only_fingerprint_guard_supported_syntax() {
+    let mut violations = Vec::new();
+    for file in PROTO_FILES {
+        let src = read_proto(file);
+        if let Err(message) = validate_guard_supported_syntax(file, &src) {
+            violations.push(message);
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "{}",
+        violations.join("\n\n")
+    );
+}
+
+#[test]
+fn guard_rejects_nested_message_mutation_before_silent_overwrite() {
+    let src = "message Outer {\n\
+               string outer = 1;\n\
+               message Inner {\n\
+               string inner = 1;\n\
+               }\n\
+               }\n";
+
+    let error = validate_guard_supported_syntax("synthetic.proto", src).unwrap_err();
+    assert!(error.contains("nested message `Inner` is unsupported"));
+    assert!(error.contains("silently overwrites the outer entry"));
+    assert!(error.contains("Teach the parser nested ownership"));
+}
+
+#[test]
+fn guard_rejects_reserved_mutation_before_it_can_be_invisible() {
+    let src = "message Synthetic {\n\
+               reserved 2, 4 to 6;\n\
+               string kept = 1;\n\
+               }\n";
+
+    let error = validate_guard_supported_syntax("synthetic.proto", src).unwrap_err();
+    assert!(error.contains("`reserved` declaration is unsupported"));
+    assert!(error.contains("reservation itself is absent from the fingerprint"));
+    assert!(error.contains("Extend the fingerprint representation"));
+}
+
+#[test]
+fn support_check_ignores_keywords_in_comments_and_strings() {
+    let src = "message Synthetic {\n\
+               // message CommentedOut { reserved 1; }\n\
+               /* reserved 2; message AlsoCommentedOut { } */\n\
+               string text = 1 [default = \"reserved message NotADeclaration {\"];\n\
+               }\n";
+
+    assert_eq!(validate_guard_supported_syntax("synthetic.proto", src), Ok(()));
+}
+
+#[test]
+fn parser_explicitly_skips_valid_reserved_declarations() {
+    let src = "message Synthetic {\n\
+               reserved 2, 4 to 6;\n\
+               reserved \"old_name\", \"older_name\";\n\
+               string kept = 1;\n\
+               }\n";
+
+    let parsed = parse_proto_source("synthetic.proto", src);
+    let fields = parsed.get("synthetic.proto::Synthetic").unwrap();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields.get(&1).map(String::as_str), Some("string kept"));
+}
+
+#[test]
+fn parser_nested_message_failure_mode_is_recorded() {
+    let src = "message Outer {\n\
+               string outer = 1;\n\
+               message Inner {\n\
+               string inner_reuses_one = 1;\n\
+               bytes inner_only = 2;\n\
+               }\n\
+               }\n";
+
+    let parsed = parse_proto_source("synthetic.proto", src);
+    assert!(!parsed.contains_key("synthetic.proto::Inner"));
+    let outer = parsed.get("synthetic.proto::Outer").unwrap();
+    assert_eq!(
+        outer.get(&1).map(String::as_str),
+        Some("string inner_reuses_one")
+    );
+    assert_eq!(outer.get(&2).map(String::as_str), Some("bytes inner_only"));
+}
 
 /// 파서가 조용히 빈 결과를 내면 지문 검사 전체가 공허해진다.
 #[test]
