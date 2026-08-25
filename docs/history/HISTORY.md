@@ -16,6 +16,81 @@
 
 ---
 
+## 2026-08-24 19:40 — FencedOperation 판정 순수 kernel (`77c4460`)
+- 계획: `docs/plans/2026-08-24_1436_fenced_operation_kernel_v1.md`.
+- 스트림: Protocol · QA · 문서.
+- 수행: `proto/lease.proto:240-254`가 "fence_epoch 만으로는 같은 attempt 가 보낸 서로 다른
+  두 쓰기를 구분할 수 없다"고 진단하고 `operation_id = BLAKE3(job_id || attempt_id ||
+  uint64_be(operation_seq))` 공식과 `(fence_epoch, operation_id)` 중복 판정까지 정해 두었으나
+  이를 쓰는 Rust 코드가 전혀 없었다. `crates/protocol/src/fenced_operation.rs`에
+  `evaluate_fenced_operation()`·`derive_operation_id()`를 추가했다. caller digest 를 신뢰하지
+  않고 저장소가 재계산해 대조하며(`DoD-50`~`DoD-53` 규율 계승), BLAKE3-256/32byte 만 허용해
+  SHA-256·unspecified·unknown 을 거부하고(`DoD-52` 선례), malformed 검증을 stale·dedup 보다
+  먼저 수행해 잘못된 digest 가 멱등 재전송으로 흡수되지 않게 한다.
+- 검증: 독립 검수 1라운드 `CHANGES_REQUESTED`. 구현과 계획서가 구분자 없는 연접의 모호성을
+  "규범 공식의 결함"으로 기록했으나 `proto/common.proto` 전역 규칙 5("ID 는 별도 명시가 없으면
+  ULID 26자")를 놓친 해석 누락이었다. 폭이 고정이면 연접은 모호하지 않다. 공식을 바꾸지 않고
+  해싱 전 26자 폭 검증을 추가했고, 실제 충돌 케이스(`("ab","c")` 와 `("a","bc")`)를 회귀
+  테스트로 고정했다. 기존 테스트 상수도 26자로 맞추되 다바이트 문자를 남겨 UTF-8 커버리지를
+  유지했다(26자/28바이트). 계획 문서의 "규범 한계" 서술도 정정했다. 뮤테이션 2건 확인,
+  워크스페이스 전체 통과.
+
+## 2026-08-24 19:10 — watch cursor 연속성 순수 kernel (`20584c7`)
+- 계획: `docs/plans/2026-08-24_1146_watch_cursor_continuity_kernel_v1.md`.
+- 스트림: Protocol · QA · 문서.
+- 수행: `proto/control.proto`의 `WatchEvent` 주석이 "구독자는 반드시 전체 재동기화를 해야
+  한다. 조용한 누락을 막는다"고 요구하지만 이를 강제하는 Rust 코드가 없었다(`Cursor`·
+  `WatchEvent`·`WatchReset` 은 proto 에만 있고 `crates/`에서 쓰이는 `Cursor` 는 무관한
+  `std::io::Cursor` 뿐이었다). `crates/protocol/src/watch_continuity.rs`에
+  `evaluate_watch_continuity()`를 추가했다. 연속 승인 경로는 같은 term 에서 index 가 정확히
+  1 증가할 때 하나뿐이며 gap·중복·후퇴·`WatchReset`·필드 누락·term 증가는 전부 재동기화로
+  닫힌다. term 증가 시 index 관계는 proto 에 정의돼 있지 않아 Raft 관행을 추측하지 않고
+  `Indeterminate(TermAdvanced)`로 닫았다.
+- 검증: 독립 검수 1라운드 `ACCEPTED`(지적 없음). 뮤테이션 2건, 워크스페이스 전체 통과.
+  한계로 `WatchFilter` 전제를 명시했다 — cursor 가 전역 log index 인지 필터된 전달 시퀀스인지
+  proto 가 정의하지 않아 이 kernel 은 전달 event 가 cursor 도메인에서 dense 하다고 전제한다.
+
+## 2026-08-24 18:40 — membership 규범 조사·초안 v0/v1 보존 (`c129d58`)
+- 계획: `docs/plans/2026-08-24_1700_membership_norm_skeleton_v1.md`,
+  `..._1730_membership_norm_draft_v0.md`, `..._1830_membership_norm_draft_v1.md`.
+- 스트림: 문서(규범 초안, 미확정).
+- 수행: scheduler 로드맵 최대 병목인 membership/ControlStore 규범 작업 산출물을 보존했다.
+  확정 규범이 아니라 검토 대기 초안이므로 `docs/protocol/`이 아니라 `docs/plans/`에 둔다.
+  두 초안의 제안 state table 은 예약 마커인 `statetable` 펜스 대신 `text` 펜스를 쓴다 —
+  정본 상태 전이표는 `state-machines.md` 하나이며 `check_docs.py` §4 가 중복을 금지한다.
+- 검증: 적대적 검토 2라운드. v0 는 재시작 시 lifetime 을 현재 시각으로 재검증해 정상 커밋된
+  로그가 TTL 경과만으로 `CORRUPT_DIRECTORY` 가 되는 모순 등으로 반려됐고, v1 은 개선됐으나
+  commit proof 검증에 필요한 당시 quorum 구성원 집합의 권위 근거가 없어 두 번째 순환이 남아
+  여전히 `CHANGES_REQUESTED`다. 사용자 결정 9개 항목은 임의 확정하지 않고 선택지로 남겼다.
+  `check_docs.py` 오류 0.
+
+## 2026-08-24 18:30 — Elastic 추론 노드 admission 확장 vision 등록 반영 (`72f3a5f`)
+- 계획: 없음(`RULE.md` §5.4 "지금은 안 한다" 항목의 vision 등록).
+- 스트림: 문서(`docs/vision/`).
+- 수행: 별도 세션에서 4라운드 독립 검수까지 받아 완료됐으나 커밋되지 않은 채 남아 있던 V-12
+  등록을 반영했다. `HISTORY.md` 의 V-12 항목은 `DoD-55` 커밋에 딸려 이미 들어갔는데 정작
+  vision 내용인 `TODO_VISION.md` 가 미커밋이라, 저장소가 "이력은 있으나 실물이 없는" 모순
+  상태였다. 코드 변경 없음.
+- 검증: `verify_evidence.py`·`check_docs.py` 통과.
+
+## 2026-08-24 18:20 — durable_replay_process 락 대기 증거 보강 (`04691f2`)
+- 계획: 없음(직전 커밋 `3e27690` 이 남긴 후속 항목 처리).
+- 스트림: QA.
+- 수행: 일반 성공 경로의 `call-*` marker 가 실제 DB 호출 직전에 생성돼 그 경로가 정말 락을
+  기다렸다는 보장이 timeout 시나리오만큼 강하지 않았다. worker-only barrier 로 동시성
+  불변식을 복구하고 holder 기반 "전원 `LockTimeout`" 검증을 별도 시나리오로 유지했다.
+  production 코드는 바꾸지 않았다.
+- 검증: 1라운드 시도는 독립 검수가 반려했다 — 성공 시나리오를 2단계 호출로 바꾸면서 기존
+  핵심 불변식("동시 경합 중 정확히 하나만 `Fresh`")을 락 해제 후 재시도의 멱등성 검사로
+  대체해 순차 실행으로도 통과할 수 있었기 때문이다. 2라운드에서 둘 다 갖도록 고쳤다.
+  production 뮤테이션 2건으로 비공허성을 확인했다 — `TransactionBehavior::Immediate` 를
+  `Deferred` 로 바꾸면 4개 테스트가 전부 실패하고, `map_sql_error` 의
+  `DatabaseBusy`/`DatabaseLocked` -> `LockTimeout` 분기를 제거하면 2개가 실패한다. 검수가
+  예측했던 "`BEGIN IMMEDIATE` 제거를 못 잡는다" 는 실측 결과 틀렸다. 10회 반복 실패 0건,
+  워크스페이스 전체 통과.
+
+---
+
 ## 2026-08-24 18:00 — GPU ScopeCandidate 순수 kernel — evidence 기록 (`DoD-55`)
 - 계획: `docs/plans/2026-08-24_1700_gpu_scope_first_slice_v1.md`
   (실물 GPU 실측 뒤 full Grant/Lease scope를 재판정해 계산 부분만 분리한 선행 조각).
