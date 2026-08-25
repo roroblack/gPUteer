@@ -12,6 +12,7 @@ pub mod constants;
 pub mod signable;
 pub mod signing;
 pub mod to_fields;
+pub mod watch_continuity;
 
 /// proto/*.proto 에서 생성된 타입.
 ///
@@ -27,6 +28,10 @@ pub use signing::{
     Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
 };
 pub use to_fields::{ToCanonicalFields, DERIVED_HASH_FIELDS, UNIMPLEMENTED_FIELDS};
+pub use watch_continuity::{
+    evaluate_watch_continuity, CursorRegression, IndeterminateReason, WatchContinuityOutcome,
+    WatchContinuityReport, WatchDiscontinuity,
+};
 pub use canonical::{
     blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
     SIGNATURE_FIELD,
