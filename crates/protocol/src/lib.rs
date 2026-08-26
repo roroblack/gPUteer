@@ -10,6 +10,7 @@
 pub mod canonical;
 pub mod constants;
 pub mod fenced_operation;
+pub mod participation;
 pub mod signable;
 pub mod signing;
 pub mod to_fields;
@@ -28,6 +29,7 @@ pub use signing::{
     ReplayStoreError,
     Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
 };
+pub use participation::{ParticipationModel, ParticipationModelError};
 pub use fenced_operation::{
     derive_operation_id, evaluate_fenced_operation, FencedOperationDecision, FencedOperationKey,
     InvalidFencedOperation,
