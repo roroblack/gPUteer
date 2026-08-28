@@ -326,12 +326,16 @@ fn unchecked_contract_items_are_declared() {
             "Checkpoint 표에는 `*` 행이 없다. Node/Job/Attempt/Lease 표에는 있으나 \
              그 상태기계는 미구현이다",
         ),
+        (
+            "§6-7 공개 풀 COMMITTED 가 §0.1 BROKER_ATTESTED 요건을 만족",
+            "Broker·공개 풀 자체가 미구현이다. ParticipationModel 선택자만 있고 배선이 없다 (crates/protocol/src/participation.rs)",
+        ),
     ];
 
     for (item, why) in UNCHECKED {
         println!("미검사 계약: {item}\n  사유: {why}");
     }
-    assert_eq!(UNCHECKED.len(), 3, "미검사 항목 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(UNCHECKED.len(), 4, "미검사 항목 수가 바뀌었다 — 목록을 갱신하라");
 
     // 다른 4개 상태기계는 구현 자체가 없다 — 그 사실을 고정한다
     for machine in ["Node", "Job", "Attempt", "Lease"] {
