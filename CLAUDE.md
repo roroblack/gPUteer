@@ -1532,6 +1532,15 @@ python scripts\verify_evidence.py
 # 빌드·테스트 (구현 착수 후)
 cargo test --workspace
 cargo test -p gputeer-protocol canonical_vectors
+
+# Linux 전용 코드 교차 타입 검사 (이 개발기는 Windows 다)
+#   crates/checkpoint/src/platform.rs 의 openat2 모듈은
+#   #[cfg(target_os = "linux")] 이라 Windows 기본 빌드에서
+#   컴파일되지 않는다 — 이 명령만이 그것을 검사한다.
+#   워크스페이스 전체는 불가하다(libsqlite3-sys 가 Linux용 C
+#   크로스 컴파일러를 요구). 통과는 "컴파일된다" 일 뿐
+#   "동작한다" 가 아니다 — 실측은 여전히 Linux 기계가 필요하다.
+cargo check -p gputeer-checkpoint --all-targets --target x86_64-unknown-linux-gnu
 ```
 
 ---

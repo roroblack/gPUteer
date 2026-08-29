@@ -92,6 +92,24 @@ pub(crate) fn read_beneath(root: &Path, relative: &Path) -> io::Result<Vec<u8>> 
 /// `RESOLVE_NO_MAGICLINKS`로 경로 전체의 링크 추적을 거부한다. 이 코드는
 /// Windows 개발기에서 작성됐고 Linux에서 아직 실측되지 않았다. 검증 전에는
 /// `open_beneath_for_read`에 연결하지 않는다.
+///
+/// ★ **타입 검사 이력(2026-08-27).** 이 모듈은 `#[cfg(target_os = "linux")]`
+///   이라 Windows 기본 빌드에서는 컴파일 자체가 안 된다 — 작성 이후 이날까지
+///   **어디서도 타입 검사를 받은 적이 없었다.** CI 워크플로가 ubuntu 에서
+///   워크스페이스를 빌드하지만 이 저장소는 원격이 없어 그 워크플로가 실제로
+///   실행된 적이 없다. 이날 아래 명령으로 처음 교차 검사했고 통과했다.
+///
+///   ```text
+///   cargo check -p gputeer-checkpoint --all-targets ///       --target x86_64-unknown-linux-gnu
+///   ```
+///
+///   비공허성 확인: 이 모듈 안에 타입 오류를 넣으면 Windows 기본 검사는
+///   그대로 통과하고 위 명령만 실패한다(실측). 워크스페이스 전체를 같은
+///   방식으로 교차 검사하지는 못한다 — `libsqlite3-sys` 가 Linux용 C
+///   크로스 컴파일러를 요구한다. 이 crate 는 rusqlite 의존이 없어 가능하다.
+///
+///   **통과했다는 것은 "컴파일된다" 는 뜻이지 "동작한다" 는 뜻이 아니다.**
+///   실제 `openat2` 거동·symlink 거부 실측은 여전히 Linux 기계가 필요하다.
 #[cfg(target_os = "linux")]
 mod linux_unverified {
     use std::ffi::CString;
