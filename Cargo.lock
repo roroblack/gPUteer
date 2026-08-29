@@ -354,6 +354,7 @@ dependencies = [
 name = "gputeer-coordinator"
 version = "0.0.1"
 dependencies = [
+ "blake3",
  "gputeer-crypto",
  "gputeer-protocol",
  "gputeer-scheduler",

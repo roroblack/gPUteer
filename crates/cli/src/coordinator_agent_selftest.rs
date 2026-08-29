@@ -4947,6 +4947,8 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("87) 보유 Lease 와 세대가 다른 heartbeat 를 fence_epoch 대조로 거부\n");
 
+    report.push_str(&run_multi_agent_scenario(&fixture)?);
+
     Ok(report)
 }
 
@@ -5453,4 +5455,199 @@ fn seed_from_label(label: &str) -> [u8; 32] {
 
 fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 88) 두 Agent 가 **동시에** 붙어 각자 자기 Lease 를 받는다.
+///
+/// # 이 시나리오가 여는 것
+///
+/// `DoD-40` 설계 조사는 진짜 다중 Agent 경쟁이 지금 아키텍처로는 표현
+/// 자체가 안 된다고 정직하게 판정했다 — Agent 신원이 하나뿐이고,
+/// Grant 를 먼저 보내므로 누가 붙었는지 모른 채 발급하며, 처리가
+/// 의도적으로 순차다. 이 시나리오가 그 셋이 열렸는지 실제로 본다.
+///
+/// ★ **두 Agent 를 거의 동시에 띄운다.** 순차로 띄우면 Coordinator 가
+///   순차 처리를 해도 통과해 버린다 — 그러면 "동시 처리" 를 검증한 게
+///   아니다.
+fn run_multi_agent_scenario(fixture: &Fixture) -> Result<String, String> {
+    // 두 번째 Agent 의 키. 첫 번째와 **달라야** 신원 분리가 의미 있다.
+    let second_seed = seed_from_label("coordinator-agent-selftest/agent-2");
+    let second_pub = gputeer_crypto::SigningKey::from_bytes(&second_seed).verifying_key();
+    let second_pub_hex = to_hex(second_pub.as_bytes());
+    let second_seed_hex = to_hex(&second_seed);
+    let second_device_id = "01JAGENT2SELFTEST0000000001";
+
+    let coordinator_seed_hex = to_hex(&fixture.coordinator_seed);
+    let extra_agents = format!("{second_device_id}={second_pub_hex}");
+
+    let mut coordinator = Command::new(&fixture.exe)
+        .args([
+            "coordinator-stub",
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            &coordinator_seed_hex,
+            "--peer-pubkey",
+            &fixture.agent_pub_hex,
+            "--coordinator-device-id",
+            fixture.coordinator_device_id,
+            "--agent-device-id",
+            fixture.agent_device_id,
+            "--grant-id",
+            fixture.grant_id,
+            "--attempt-id",
+            fixture.attempt_id,
+            "--lease-id",
+            fixture.lease_id,
+            "--job-id",
+            fixture.job_id,
+            "--multi-agent",
+            "true",
+            "--extra-agents",
+            &extra_agents,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "30000",
+            "--i-understand-legacy-mode-is-unsafe",
+            "true",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("88) coordinator-stub 스폰 실패: {e}"))?;
+
+    // READY 줄에서 실제 주소를 읽는다.
+    let stdout_pipe = coordinator.stdout.take().expect("piped stdout");
+    let stderr_pipe = coordinator.stderr.take().expect("piped stderr");
+    let stderr_reader = thread::spawn(move || -> String {
+        let mut text = String::new();
+        let mut reader = BufReader::new(stderr_pipe);
+        let _ = reader.read_to_string(&mut text);
+        text
+    });
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let reader = thread::spawn(move || -> Result<String, std::io::Error> {
+        let mut reader = BufReader::new(stdout_pipe);
+        let mut first = String::new();
+        reader.read_line(&mut first)?;
+        let _ = ready_tx.send(first.clone());
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest)?;
+        Ok(format!("{first}{rest}"))
+    });
+
+    let ready = ready_rx
+        .recv_timeout(Duration::from_secs(20))
+        .map_err(|e| format!("88) READY 를 못 받았다: {e}"))?;
+    let address = ready
+        .trim()
+        .strip_prefix("READY ")
+        .ok_or_else(|| format!("88) READY 형식이 다르다: {ready:?}"))?
+        .to_string();
+
+    // ★ 두 Agent 를 연달아 띄운다. 하나가 끝나기를 기다리지 않는다 —
+    //   기다리면 순차 처리로도 통과해 이 검사가 공허해진다.
+    let spawn_agent = |device_id: &str, seed_hex: &str| -> Result<std::process::Child, String> {
+        Command::new(&fixture.exe)
+            .args([
+                "agent-stub",
+                "--connect",
+                &address,
+                "--own-seed",
+                seed_hex,
+                "--peer-pubkey",
+                &fixture.coordinator_pub_hex,
+                "--coordinator-device-id",
+                fixture.coordinator_device_id,
+                "--agent-device-id",
+                device_id,
+                "--multi-agent",
+                "true",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("88) agent-stub({device_id}) 스폰 실패: {e}"))
+    };
+    let agent_seed_hex = to_hex(&fixture.agent_seed);
+    let first_agent = spawn_agent(fixture.agent_device_id, &agent_seed_hex)?;
+    let second_agent = spawn_agent(second_device_id, &second_seed_hex)?;
+
+    let first_out = first_agent
+        .wait_with_output()
+        .map_err(|e| format!("88) 첫 Agent 대기 실패: {e}"))?;
+    let second_out = second_agent
+        .wait_with_output()
+        .map_err(|e| format!("88) 둘째 Agent 대기 실패: {e}"))?;
+    let coordinator_status = coordinator
+        .wait()
+        .map_err(|e| format!("88) coordinator 대기 실패: {e}"))?;
+    let coordinator_stdout = reader
+        .join()
+        .map_err(|_| "88) coordinator stdout reader panic".to_string())?
+        .map_err(|e| format!("88) coordinator stdout 읽기 실패: {e}"))?;
+
+    for (name, out) in [("첫", &first_out), ("둘째", &second_out)] {
+        if !out.status.success() {
+            return Err(format!(
+                "88) {name} Agent 가 실패했다: stdout={:?} stderr={:?}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+    let coordinator_stderr = stderr_reader
+        .join()
+        .unwrap_or_else(|_| "<stderr reader panic>".to_string());
+    if !coordinator_status.success() {
+        return Err(format!(
+            "88) coordinator 가 실패했다: stdout={coordinator_stdout:?} stderr={coordinator_stderr:?}"
+        ));
+    }
+
+    // 두 세션이 모두 처리됐는가.
+    if !coordinator_stdout.contains("MULTI_AGENT_DONE served=2") {
+        return Err(format!(
+            "88) 두 세션이 모두 처리되지 않았다: {coordinator_stdout:?}"
+        ));
+    }
+    // 두 Agent 가 각각 자기 신원으로 Hello 를 보냈는가.
+    for device_id in [fixture.agent_device_id, second_device_id] {
+        if !coordinator_stdout.contains(&format!("agent_device_id={device_id}")) {
+            return Err(format!(
+                "88) {device_id} 의 세션이 안 보인다: {coordinator_stdout:?}"
+            ));
+        }
+    }
+
+    // ★ 각자 **다른** Lease 를 받았는가. 같은 lease_id 를 받았다면 두
+    //   Agent 가 같은 자원을 두고 다투는 것이고, 이 조각이 검증하려던
+    //   "동시 처리" 가 아니라 전혀 다른 상황이다.
+    let lease_of = |out: &std::process::Output| -> String {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("LEASE_ACCEPTED ")?
+                    .split_whitespace()
+                    .find_map(|f| f.strip_prefix("lease_id=").map(ToOwned::to_owned))
+            })
+            .unwrap_or_default()
+    };
+    let first_lease = lease_of(&first_out);
+    let second_lease = lease_of(&second_out);
+    if first_lease.is_empty() || second_lease.is_empty() {
+        return Err(format!(
+            "88) Lease 를 못 받은 Agent 가 있다: {first_lease:?} / {second_lease:?}"
+        ));
+    }
+    if first_lease == second_lease {
+        return Err(format!(
+            "88) 두 Agent 가 같은 Lease({first_lease})를 받았다 — 신원별 분리가 안 됐다"
+        ));
+    }
+
+    Ok(format!(
+        "88) 두 Agent 가 동시에 붙어 각자 다른 Lease 를 받고 각자 ACK 까지 완료({first_lease} / {second_lease})\n"
+    ))
 }

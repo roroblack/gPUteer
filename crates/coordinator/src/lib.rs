@@ -35,6 +35,7 @@ pub mod inventory_store;
 pub mod job_store;
 pub mod lease_store;
 #[allow(dead_code)]
+pub mod multi_agent;
 mod orchestrate;
 pub mod replica_ack_store;
 pub mod staging_store;
@@ -45,6 +46,7 @@ use lease_store::{
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Clone)]
 pub struct CoordinatorConfig {
     /// `"127.0.0.1:0"` 처럼 포트 0 을 주면 커널이 임시 포트를 고른다.
     pub listen: String,
@@ -194,6 +196,12 @@ pub struct CoordinatorConfig {
     pub revoke_before_renew: bool,
     /// ACK 뒤에 받을 `NodeHeartbeat` 개수. 0 이면 이 구간이 없다.
     pub expect_heartbeats: u32,
+    /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
+    ///
+    /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
+    pub extra_agents: Option<String>,
+    /// 다중 Agent lane 을 쓴다. 기본값은 기존 순차 경로다.
+    pub multi_agent: bool,
     /// ★ 테스트 전용 — 통지의 lease_id 를 바꿔 Agent identity 검증을
     ///   확인한다. 서명은 바뀐 payload 에 대해 다시 만든다.
     pub revoke_lease_id_override: Option<String>,
@@ -1748,6 +1756,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
+        extra_agents: flags.0.get("--extra-agents").cloned(),
+        multi_agent: flags.bool_flag("--multi-agent"),
         revoke_lease_id_override: flags.0.get("--revoke-lease-id").cloned(),
         revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
         corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),
@@ -1762,6 +1772,9 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .unwrap_or_else(|| "legacy-session".into()),
     };
 
+    if config.multi_agent {
+        return multi_agent::run_multi_agent(config);
+    }
     run(config)
 }
 

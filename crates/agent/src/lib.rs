@@ -21,6 +21,7 @@ use std::time::Duration;
 use gputeer_checkpoint::durability::record_initial_state;
 use gputeer_checkpoint::writer::{manifest_for, write_checkpoint};
 pub mod exec;
+pub mod multi_agent;
 pub mod owner_panel;
 
 use gputeer_crypto::{
@@ -130,6 +131,8 @@ pub struct AgentConfig {
     pub execute_workload: bool,
     /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
     pub heartbeat_rounds: u32,
+    /// 다중 Agent lane 을 쓴다. Hello 를 먼저 보내고 Grant 를 받는다.
+    pub multi_agent: bool,
     /// ★ 테스트 전용 — heartbeat 의 `fence_epoch` 을 보유 Lease 와
     ///   다르게 보낸다. Coordinator 가 그 대조를 실제로 하는지
     ///   확인하기 위해서다 — 대조를 지우고도 통과하는 검사는
@@ -246,6 +249,9 @@ pub struct AgentConfig {
 /// 않으며, 시작 디렉터리에는 데이터 파일과 `manifest.json`도 없으므로
 /// 이 마커만으로 resume 후보나 `COMMITTED` 근거를 만들 수 없다.
 pub fn run(config: AgentConfig) -> Result<(), String> {
+    if config.multi_agent {
+        return multi_agent::run_multi_agent_session(&config);
+    }
     let policy = RetryPolicy {
         max_attempts: config.max_reconnect_attempts,
         max_duration: Duration::from_secs(config.max_reconnect_duration_seconds),
@@ -1821,6 +1827,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
+        multi_agent: flags.bool_flag("--multi-agent"),
         heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
             Some(v) => v
                 .parse()
@@ -2050,6 +2057,7 @@ mod tests {
             execute_workload: false,
             heartbeat_rounds: 0,
             corrupt_heartbeat_fence: false,
+            multi_agent: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             owner_panel_port: None,
             workload_commit_limit_bytes: 256 * 1024 * 1024,
