@@ -20,8 +20,7 @@
 
 use std::{
     collections::BTreeMap,
-    fmt,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -102,10 +101,7 @@ impl SecretSigningKey {
     }
 
     /// 이 개인키로 메시지에 서명한다.
-    pub fn sign<M: gputeer_protocol::signing::Signable + ?Sized>(
-        &self,
-        message: &M,
-    ) -> [u8; 64] {
+    pub fn sign<M: gputeer_protocol::signing::Signable + ?Sized>(&self, message: &M) -> [u8; 64] {
         super::sign(&self.0, message)
     }
 
@@ -154,7 +150,9 @@ impl fmt::Display for KeyringError {
             Self::InvalidSignerId => formatter.write_str("signer_id가 비어 있거나 너무 길다"),
             Self::DuplicateSigner => formatter.write_str("이미 등록된 signer_id다"),
             Self::MissingSigner => formatter.write_str("등록되지 않은 signer_id다"),
-            Self::InvalidState(reason) => write!(formatter, "키 상태 전이가 허용되지 않는다: {reason}"),
+            Self::InvalidState(reason) => {
+                write!(formatter, "키 상태 전이가 허용되지 않는다: {reason}")
+            }
             Self::UnsupportedProtection(protection) => {
                 write!(formatter, "지원하지 않는 키 보관 등급이다: {protection:?}")
             }
@@ -375,7 +373,9 @@ impl PersistentKeyring {
         }
 
         if reader.remaining() != 0 {
-            return Err(KeyringError::CorruptFile("예상하지 않은 데이터가 뒤에 남았다"));
+            return Err(KeyringError::CorruptFile(
+                "예상하지 않은 데이터가 뒤에 남았다",
+            ));
         }
 
         Ok(Self {
@@ -588,10 +588,7 @@ impl PersistentKeyring {
 
             for version in versions {
                 put_u64(&mut body, version.valid_from_ms);
-                put_u64(
-                    &mut body,
-                    version.valid_until_ms.unwrap_or(u64::MAX),
-                );
+                put_u64(&mut body, version.valid_until_ms.unwrap_or(u64::MAX));
                 body.push(match version.state {
                     KeyState::Active => 0,
                     KeyState::Revoked => 1,
@@ -742,9 +739,7 @@ fn ensure_protection(
                 Ok(())
             }
         }
-        KeyProtection::K2HardwareBacked => {
-            Err(KeyringError::UnsupportedProtection(protection))
-        }
+        KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
     }
 }
 
@@ -755,9 +750,7 @@ fn protect_private_key(
     match protection {
         KeyProtection::K0Plaintext => Ok(private_key.to_vec()),
         KeyProtection::K1OsProtected => dpapi_protect(private_key),
-        KeyProtection::K2HardwareBacked => {
-            Err(KeyringError::UnsupportedProtection(protection))
-        }
+        KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
     }
 }
 
@@ -772,9 +765,7 @@ fn unprotect_private_key(
     match protection {
         KeyProtection::K0Plaintext => Ok(encrypted.to_vec()),
         KeyProtection::K1OsProtected => dpapi_unprotect(encrypted),
-        KeyProtection::K2HardwareBacked => {
-            Err(KeyringError::UnsupportedProtection(protection))
-        }
+        KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
     }
 }
 
@@ -784,9 +775,7 @@ fn dpapi_protect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
 
     use windows_sys::Win32::{
         Foundation::LocalFree,
-        Security::Cryptography::{
-            CryptProtectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
-        },
+        Security::Cryptography::{CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB},
     };
 
     let input = CRYPT_INTEGER_BLOB {
@@ -832,7 +821,7 @@ fn dpapi_unprotect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
     use windows_sys::Win32::{
         Foundation::LocalFree,
         Security::Cryptography::{
-            CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+            CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
         },
     };
 
@@ -915,19 +904,15 @@ impl<'a> Reader<'a> {
     }
 
     fn u32(&mut self) -> Result<u32, KeyringError> {
-        Ok(u32::from_le_bytes(
-            self.take(4)?
-                .try_into()
-                .map_err(|_| KeyringError::CorruptFile("u32 길이가 잘못되었다"))?,
-        ))
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().map_err(
+            |_| KeyringError::CorruptFile("u32 길이가 잘못되었다"),
+        )?))
     }
 
     fn u64(&mut self) -> Result<u64, KeyringError> {
-        Ok(u64::from_le_bytes(
-            self.take(8)?
-                .try_into()
-                .map_err(|_| KeyringError::CorruptFile("u64 길이가 잘못되었다"))?,
-        ))
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().map_err(
+            |_| KeyringError::CorruptFile("u64 길이가 잘못되었다"),
+        )?))
     }
 
     fn blob(&mut self) -> Result<&'a [u8], KeyringError> {

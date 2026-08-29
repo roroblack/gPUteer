@@ -98,10 +98,7 @@ pub struct MemberFact {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MemberAuthorization {
     /// 현재 권한이 있다.
-    Authorized {
-        member_id: String,
-        generation: u64,
-    },
+    Authorized { member_id: String, generation: u64 },
     /// 주체는 특정됐으나 현재 권한이 없다.
     NotAuthorized {
         member_id: String,
@@ -136,10 +133,7 @@ pub enum MembershipResolutionError {
     DuplicateDeviceBinding { device_id: String },
     /// 같은 `(member_id, generation)` 에 대해 완전히 같은 사실이 두 번
     /// 이상 들어왔다.
-    DuplicateMemberFact {
-        member_id: String,
-        generation: u64,
-    },
+    DuplicateMemberFact { member_id: String, generation: u64 },
 }
 
 /// device 하나의 현재 권한을 판정한다.

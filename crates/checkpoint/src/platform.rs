@@ -131,18 +131,13 @@ mod linux_unverified {
     }
 
     #[allow(dead_code)]
-    pub(super) fn open_beneath_linux_unverified(
-        root: &Path,
-        relative: &Path,
-    ) -> io::Result<File> {
+    pub(super) fn open_beneath_linux_unverified(root: &Path, relative: &Path) -> io::Result<File> {
         super::validate_relative(relative)?;
 
-        let root_c = CString::new(root.as_os_str().as_bytes()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "root 경로에 NUL이 있다")
-        })?;
-        let relative_c = CString::new(relative.as_os_str().as_bytes()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidInput, "상대 경로에 NUL이 있다")
-        })?;
+        let root_c = CString::new(root.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "root 경로에 NUL이 있다"))?;
+        let relative_c = CString::new(relative.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "상대 경로에 NUL이 있다"))?;
 
         let root_fd = unsafe {
             libc::open(

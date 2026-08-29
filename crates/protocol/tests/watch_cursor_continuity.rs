@@ -51,7 +51,11 @@ fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 #[test]
 fn consecutive_events_are_safe_to_continue() {
     let previous = cursor(40, 7);
-    let events = [control_event(41, 7), control_event(42, 7), control_event(43, 7)];
+    let events = [
+        control_event(41, 7),
+        control_event(42, 7),
+        control_event(43, 7),
+    ];
 
     assert_eq!(
         evaluate_watch_continuity(Some(&previous), &events),
@@ -76,7 +80,9 @@ fn absent_previous_cursor_uses_first_event_as_subscription_anchor() {
     assert_eq!(
         evaluate_watch_continuity(None, &[]),
         WatchContinuityReport {
-            outcome: WatchContinuityOutcome::Continuous { accepted_cursor: None },
+            outcome: WatchContinuityOutcome::Continuous {
+                accepted_cursor: None
+            },
         }
     );
 }
@@ -154,7 +160,10 @@ fn reset_dominates_every_four_event_permutation_with_the_identical_report() {
     let expected = resynchronize(WatchDiscontinuity::WatchReset);
 
     for permutation in permutations(&events) {
-        assert_eq!(evaluate_watch_continuity(Some(&previous), &permutation), expected);
+        assert_eq!(
+            evaluate_watch_continuity(Some(&previous), &permutation),
+            expected
+        );
     }
 }
 

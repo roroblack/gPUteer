@@ -53,8 +53,8 @@ struct Row {
 
 /// ```` ```statetable ```` 펜스만 읽는다 (§0).
 fn parse_state_table(machine: &str) -> Vec<Row> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/protocol/state-machines.md");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/protocol/state-machines.md");
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("{} 읽기 실패: {e}", path.display()));
 
@@ -200,10 +200,7 @@ fn every_documented_transition_is_allowed_by_implementation() {
             continue; // (none) / (deleted) 경계
         };
         if !from.can_transition_to(to) {
-            missing.push(format!(
-                "{} -> {} ({})",
-                r.from, r.to, r.trigger
-            ));
+            missing.push(format!("{} -> {} ({})", r.from, r.to, r.trigger));
         }
     }
     assert!(
@@ -254,10 +251,7 @@ fn every_implemented_transition_is_documented() {
     for &from in ALL_STATES {
         for &to in ALL_STATES {
             if from.can_transition_to(to)
-                && !documented.contains(&(
-                    table_name(from).to_string(),
-                    table_name(to).to_string(),
-                ))
+                && !documented.contains(&(table_name(from).to_string(), table_name(to).to_string()))
             {
                 undocumented.push(format!("{} -> {}", table_name(from), table_name(to)));
             }
@@ -339,7 +333,11 @@ fn unchecked_contract_items_are_declared() {
     for (item, why) in UNCHECKED {
         println!("미검사 계약: {item}\n  사유: {why}");
     }
-    assert_eq!(UNCHECKED.len(), 5, "미검사 항목 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(
+        UNCHECKED.len(),
+        5,
+        "미검사 항목 수가 바뀌었다 — 목록을 갱신하라"
+    );
 
     // 다른 4개 상태기계는 구현 자체가 없다 — 그 사실을 고정한다
     for machine in ["Node", "Job", "Attempt", "Lease", "Member"] {

@@ -21,9 +21,9 @@
 //! 여기에 **시계 되감김**을 추가했다 — 검수자가 "확신 없음" 으로 남긴 부분이다.
 
 use gputeer_crypto::replay::MAX_GC_ADVANCE_MS;
-use gputeer_protocol::constants::{CLOCK_SKEW_TOLERANCE_MS, MAX_SHORTLIVED_TTL_MS};
 use gputeer_crypto::{InMemoryReplayGuard, DEFAULT_CAPACITY};
 use gputeer_protocol::canonical::Domain;
+use gputeer_protocol::constants::{CLOCK_SKEW_TOLERANCE_MS, MAX_SHORTLIVED_TTL_MS};
 use gputeer_protocol::signing::{ReplayDecision, ReplayGuard, ReplayStoreError};
 
 const T: u64 = 1_755_200_000_000;
@@ -126,8 +126,10 @@ fn one_device_cannot_starve_others() {
 #[test]
 fn signer_quota_is_released_by_gc() {
     let mut g = InMemoryReplayGuard::with_capacities(10, 2);
-    g.check_and_record("a", Domain::Grant, &n(1), 5_000).unwrap();
-    g.check_and_record("a", Domain::Grant, &n(2), 5_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(1), 5_000)
+        .unwrap();
+    g.check_and_record("a", Domain::Grant, &n(2), 5_000)
+        .unwrap();
     assert_eq!(g.signer_usage("a"), 2);
 
     assert!(matches!(
@@ -144,7 +146,8 @@ fn signer_quota_is_released_by_gc() {
     );
 
     assert_eq!(
-        g.check_and_record("a", Domain::Grant, &n(3), 20_000).unwrap(),
+        g.check_and_record("a", Domain::Grant, &n(3), 20_000)
+            .unwrap(),
         ReplayDecision::Fresh
     );
 }
@@ -165,7 +168,8 @@ fn gc_clamps_forward_clock_jumps() {
     let retain = now + MAX_SHORTLIVED_TTL_MS + CLOCK_SKEW_TOLERANCE_MS;
 
     let mut g = InMemoryReplayGuard::with_capacities(10, 10);
-    g.check_and_record("a", Domain::Grant, &n(1), retain).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(1), retain)
+        .unwrap();
 
     // 기준선을 세운다
     assert_eq!(g.gc(now), 0);
@@ -178,7 +182,8 @@ fn gc_clamps_forward_clock_jumps() {
 
     // 그 nonce 는 여전히 막힌다 — replay 창이 열리지 않았다
     assert_eq!(
-        g.check_and_record("a", Domain::Grant, &n(1), retain).unwrap(),
+        g.check_and_record("a", Domain::Grant, &n(1), retain)
+            .unwrap(),
         ReplayDecision::Duplicate,
         "★ replay 창이 열렸다"
     );
@@ -193,7 +198,8 @@ fn gc_clamps_forward_clock_jumps() {
 
     // 비공허성 — 상한 안의 정상적인 전진은 실제로 지운다
     let mut h = InMemoryReplayGuard::with_capacities(10, 10);
-    h.check_and_record("a", Domain::Grant, &n(1), now + 10_000).unwrap();
+    h.check_and_record("a", Domain::Grant, &n(1), now + 10_000)
+        .unwrap();
     assert_eq!(h.gc(now), 0);
     assert_eq!(h.gc(now + 20_000), 1, "정상 전진에서도 GC 가 안 돈다");
     assert_eq!(h.clock_jumps(), 0);
@@ -211,7 +217,8 @@ fn repeated_bogus_gc_still_drains_the_cache() {
     let now = T;
     let retain = now + MAX_SHORTLIVED_TTL_MS + CLOCK_SKEW_TOLERANCE_MS;
     let mut g = InMemoryReplayGuard::with_capacities(10, 10);
-    g.check_and_record("a", Domain::Grant, &n(1), retain).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(1), retain)
+        .unwrap();
     assert_eq!(g.gc(now), 0);
 
     // 상한씩 전진하며 반복 호출
@@ -237,7 +244,10 @@ fn cache_full_never_evicts_unexpired_entries() {
     rec(&mut g, "a", 1).unwrap();
     rec(&mut g, "a", 2).unwrap();
 
-    assert_eq!(rec(&mut g, "a", 3).unwrap_err(), ReplayStoreError::CacheFull);
+    assert_eq!(
+        rec(&mut g, "a", 3).unwrap_err(),
+        ReplayStoreError::CacheFull
+    );
     assert_eq!(g.len(), 2, "거부하면서 항목을 지웠다");
 
     // ★ 기존 nonce 가 살아 있어야 한다 — 축출됐다면 Fresh 가 나온다
@@ -261,8 +271,10 @@ fn default_capacity_matches_spec() {
 #[test]
 fn gc_removes_only_expired_entries() {
     let mut g = InMemoryReplayGuard::new();
-    g.check_and_record("a", Domain::Grant, &n(1), T + 1_000).unwrap();
-    g.check_and_record("a", Domain::Grant, &n(2), T + 100_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(1), T + 1_000)
+        .unwrap();
+    g.check_and_record("a", Domain::Grant, &n(2), T + 100_000)
+        .unwrap();
 
     // 아직 둘 다 유효
     assert_eq!(g.gc(T), 0);
@@ -276,7 +288,8 @@ fn gc_removes_only_expired_entries() {
     assert_eq!(rec(&mut g, "a", 1).unwrap(), ReplayDecision::Fresh);
     // 안 지워진 것은 여전히 Duplicate
     assert_eq!(
-        g.check_and_record("a", Domain::Grant, &n(2), T + 100_000).unwrap(),
+        g.check_and_record("a", Domain::Grant, &n(2), T + 100_000)
+            .unwrap(),
         ReplayDecision::Duplicate
     );
 }
@@ -295,24 +308,30 @@ fn gc_removes_only_expired_entries() {
 #[test]
 fn gc_refuses_to_delete_while_clock_goes_backwards() {
     let mut g = InMemoryReplayGuard::new();
-    g.check_and_record("a", Domain::Grant, &n(1), T + 1_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(1), T + 1_000)
+        .unwrap();
 
     // 시계가 1시간 앞으로 튄다 — 정상 GC
     assert_eq!(g.gc(T + 3_600_000), 1);
     assert_eq!(g.clock_rollbacks(), 0);
 
     // 새 항목
-    g.check_and_record("a", Domain::Grant, &n(2), T + 3_700_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(2), T + 3_700_000)
+        .unwrap();
 
     // ★ 시계가 뒤로 간다 — 지우면 안 된다
     let removed = g.gc(T);
-    assert_eq!(removed, 0, "★ 되감김 중에 GC 가 항목을 지웠다 — replay 창이 열린다");
+    assert_eq!(
+        removed, 0,
+        "★ 되감김 중에 GC 가 항목을 지웠다 — replay 창이 열린다"
+    );
     assert_eq!(g.clock_rollbacks(), 1, "되감김을 세지 않았다");
     assert_eq!(g.len(), 1);
 
     // 그 nonce 는 여전히 Duplicate 여야 한다
     assert_eq!(
-        g.check_and_record("a", Domain::Grant, &n(2), T + 3_700_000).unwrap(),
+        g.check_and_record("a", Domain::Grant, &n(2), T + 3_700_000)
+            .unwrap(),
         ReplayDecision::Duplicate,
         "★ 되감김 뒤 nonce 가 재사용 가능해졌다"
     );
@@ -322,13 +341,15 @@ fn gc_refuses_to_delete_while_clock_goes_backwards() {
 #[test]
 fn gc_resumes_after_clock_recovers() {
     let mut g = InMemoryReplayGuard::new();
-    g.check_and_record("a", Domain::Grant, &n(1), T + 1_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(1), T + 1_000)
+        .unwrap();
     g.gc(T + 3_600_000); // 시각 기준을 올린다
     g.gc(T); // 되감김 — 무시
     assert_eq!(g.clock_rollbacks(), 1);
 
     // 다시 앞으로 — GC 가 동작한다
-    g.check_and_record("a", Domain::Grant, &n(2), T + 3_700_000).unwrap();
+    g.check_and_record("a", Domain::Grant, &n(2), T + 3_700_000)
+        .unwrap();
     assert_eq!(
         g.gc(T + 7_200_000),
         1,
@@ -407,7 +428,14 @@ fn failed_verification_does_not_touch_the_guard() {
     assert!(verify(&mk(2), 1, &ring, T + GRANT_TTL_MS, &mut guard).is_err());
 
     // skew 위반
-    assert!(verify(&mk(3), 1, &ring, T - CLOCK_SKEW_TOLERANCE_MS - 1, &mut guard).is_err());
+    assert!(verify(
+        &mk(3),
+        1,
+        &ring,
+        T - CLOCK_SKEW_TOLERANCE_MS - 1,
+        &mut guard
+    )
+    .is_err());
 
     assert!(
         guard.is_empty(),

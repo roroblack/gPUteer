@@ -14,10 +14,10 @@ mod scope;
 pub use filter::evaluate_eligibility;
 pub use model::{
     BestFitPolicy, BestFitRanking, CandidateSnapshot, EligibilityReport, EligibilityResolution,
-    EligibleCandidate, FitAxis, FitKey, GpuSnapshot, IsolationClass, JobRequirements, KeyProtection,
-    MissingFact, NodeState, Policy, PoolSnapshot, RankedCandidate, RankingError, RejectedCandidate,
-    RejectionReason, ResourceFit, RiskState, SecurityTier, Sensitivity, SideEffectClass,
-    WorkloadClass,
+    EligibleCandidate, FitAxis, FitKey, GpuSnapshot, IsolationClass, JobRequirements,
+    KeyProtection, MissingFact, NodeState, Policy, PoolSnapshot, RankedCandidate, RankingError,
+    RejectedCandidate, RejectionReason, ResourceFit, RiskState, SecurityTier, Sensitivity,
+    SideEffectClass, WorkloadClass,
 };
 pub use rank::{rank_best_fit, resource_fit};
 pub use scope::{

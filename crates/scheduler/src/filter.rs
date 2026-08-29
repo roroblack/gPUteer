@@ -1,6 +1,6 @@
 use crate::model::{
-    CandidateSnapshot, EligibilityReport, EligibilityResolution, EligibleCandidate, JobRequirements,
-    IsolationClass, MissingFact, NodeState, Policy, PoolSnapshot, RejectedCandidate,
+    CandidateSnapshot, EligibilityReport, EligibilityResolution, EligibleCandidate, IsolationClass,
+    JobRequirements, MissingFact, NodeState, Policy, PoolSnapshot, RejectedCandidate,
     RejectionReason, RiskState, SecurityTier, Sensitivity, SideEffectClass,
 };
 
@@ -17,9 +17,14 @@ pub fn evaluate_eligibility(
         reasons.sort();
         reasons.dedup();
         if reasons.is_empty() {
-            eligible.push(EligibleCandidate { node_id: candidate.node_id.clone() });
+            eligible.push(EligibleCandidate {
+                node_id: candidate.node_id.clone(),
+            });
         } else {
-            rejected.push(RejectedCandidate { node_id: candidate.node_id.clone(), reasons });
+            rejected.push(RejectedCandidate {
+                node_id: candidate.node_id.clone(),
+                reasons,
+            });
         }
     }
 
@@ -28,10 +33,16 @@ pub fn evaluate_eligibility(
     rejected.sort();
     let resolution = match eligible.as_slice() {
         [] => EligibilityResolution::NoEligibleCandidates,
-        [only] => EligibilityResolution::SingleEligible { node_id: only.node_id.clone() },
+        [only] => EligibilityResolution::SingleEligible {
+            node_id: only.node_id.clone(),
+        },
         _ => EligibilityResolution::RankingRequired,
     };
-    EligibilityReport { eligible, rejected, resolution }
+    EligibilityReport {
+        eligible,
+        rejected,
+        resolution,
+    }
 }
 
 fn evaluate_candidate(
@@ -76,7 +87,10 @@ fn evaluate_candidate(
         MissingFact::SecurityTier,
         MissingFact::JobMinimumSecurityTier,
         &mut reasons,
-        |available, required| RejectionReason::SecurityTierTooLow { available, required },
+        |available, required| RejectionReason::SecurityTierTooLow {
+            available,
+            required,
+        },
     );
     compare_minimum(
         candidate.isolation_class,
@@ -84,7 +98,10 @@ fn evaluate_candidate(
         MissingFact::IsolationClass,
         MissingFact::JobMinimumIsolationClass,
         &mut reasons,
-        |available, required| RejectionReason::IsolationClassTooLow { available, required },
+        |available, required| RejectionReason::IsolationClassTooLow {
+            available,
+            required,
+        },
     );
     compare_minimum(
         candidate.key_protection,
@@ -92,7 +109,10 @@ fn evaluate_candidate(
         MissingFact::KeyProtection,
         MissingFact::JobMinimumKeyProtection,
         &mut reasons,
-        |available, required| RejectionReason::KeyProtectionTooLow { available, required },
+        |available, required| RejectionReason::KeyProtectionTooLow {
+            available,
+            required,
+        },
     );
 
     evaluate_gpus(candidate, job, &mut reasons);
@@ -102,7 +122,10 @@ fn evaluate_candidate(
         MissingFact::AvailableCpu,
         MissingFact::JobCpu,
         &mut reasons,
-        |available, required| RejectionReason::CpuInsufficient { available, required },
+        |available, required| RejectionReason::CpuInsufficient {
+            available,
+            required,
+        },
     );
     compare_resource(
         candidate.available_ram_bytes,
@@ -110,7 +133,10 @@ fn evaluate_candidate(
         MissingFact::AvailableRam,
         MissingFact::JobRam,
         &mut reasons,
-        |available, required| RejectionReason::RamInsufficient { available, required },
+        |available, required| RejectionReason::RamInsufficient {
+            available,
+            required,
+        },
     );
     compare_resource(
         candidate.available_workspace_bytes,
@@ -118,7 +144,10 @@ fn evaluate_candidate(
         MissingFact::AvailableWorkspace,
         MissingFact::JobWorkspace,
         &mut reasons,
-        |available, required| RejectionReason::WorkspaceInsufficient { available, required },
+        |available, required| RejectionReason::WorkspaceInsufficient {
+            available,
+            required,
+        },
     );
 
     evaluate_owner_policy(candidate, job, &mut reasons);
@@ -161,7 +190,12 @@ fn evaluate_gpus(
             Some(false) => false,
             None => {
                 health_unknown = true;
-                missing(reasons, MissingFact::GpuHealth { gpu_id: gpu.gpu_id.clone() });
+                missing(
+                    reasons,
+                    MissingFact::GpuHealth {
+                        gpu_id: gpu.gpu_id.clone(),
+                    },
+                );
                 false
             }
         })
@@ -187,7 +221,12 @@ fn evaluate_gpus(
                 Some(model) => job.allowed_gpu_models.contains(model),
                 None => {
                     model_unknown = true;
-                    missing(reasons, MissingFact::GpuModel { gpu_id: gpu.gpu_id.clone() });
+                    missing(
+                        reasons,
+                        MissingFact::GpuModel {
+                            gpu_id: gpu.gpu_id.clone(),
+                        },
+                    );
                     false
                 }
             })
@@ -216,7 +255,12 @@ fn evaluate_gpus(
             Some(available) => available >= required_vram,
             None => {
                 vram_unknown = true;
-                missing(reasons, MissingFact::GpuVram { gpu_id: gpu.gpu_id.clone() });
+                missing(
+                    reasons,
+                    MissingFact::GpuVram {
+                        gpu_id: gpu.gpu_id.clone(),
+                    },
+                );
                 false
             }
         })
@@ -245,7 +289,9 @@ fn evaluate_owner_policy(
     match (&candidate.allowed_workload_classes, workload) {
         (None, _) => missing(reasons, MissingFact::AllowedWorkloadClasses),
         (Some(allowed), Some(class)) if !allowed.contains(&class) => {
-            reasons.push(RejectionReason::WorkloadClassNotAllowed { workload_class: class });
+            reasons.push(RejectionReason::WorkloadClassNotAllowed {
+                workload_class: class,
+            });
         }
         _ => {}
     }
@@ -285,9 +331,9 @@ fn evaluate_owner_policy(
     match job.side_effect_class {
         None => missing(reasons, MissingFact::JobSideEffectClass),
         Some(SideEffectClass::Pure) => {}
-        Some(actual) => reasons.push(
-            RejectionReason::ThirdPartyJobMustBePureOnRestrictedIsolation { actual },
-        ),
+        Some(actual) => {
+            reasons.push(RejectionReason::ThirdPartyJobMustBePureOnRestrictedIsolation { actual })
+        }
     }
     match job.sensitivity {
         None => missing(reasons, MissingFact::JobSensitivity),

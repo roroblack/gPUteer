@@ -11,9 +11,7 @@ use gputeer_scheduler::{
     CandidateSnapshot, GpuSnapshot, IsolationClass, KeyProtection, NodeState, PoolSnapshot,
     RiskState, SecurityTier, WorkloadClass,
 };
-use rusqlite::{
-    Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior,
-};
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -70,10 +68,19 @@ pub struct UpdateInventoryResult {
 #[derive(Debug, PartialEq, Eq)]
 pub enum InventoryStoreError {
     InvalidInput(&'static str),
-    AgentNotFound { node_id: String },
-    RegistryConflict { field: &'static str },
-    LowerRevision { stored: u64, requested: u64 },
-    RevisionConflict { revision: u64 },
+    AgentNotFound {
+        node_id: String,
+    },
+    RegistryConflict {
+        field: &'static str,
+    },
+    LowerRevision {
+        stored: u64,
+        requested: u64,
+    },
+    RevisionConflict {
+        revision: u64,
+    },
     CorruptData(String),
     Io(String),
     LockTimeout,
@@ -128,10 +135,7 @@ impl CoordinatorInventoryStore {
         matches!(self.connection.path(), Some(path) if !path.is_empty() && path != ":memory:")
     }
 
-    pub fn get_agent(
-        &self,
-        node_id: &str,
-    ) -> Result<Option<AgentRegistry>, InventoryStoreError> {
+    pub fn get_agent(&self, node_id: &str) -> Result<Option<AgentRegistry>, InventoryStoreError> {
         fetch_registry(&self.connection, node_id)
     }
 
@@ -272,7 +276,9 @@ impl CoordinatorInventoryStore {
                     encode_u64(inventory.inventory_revision),
                     encode_u64(inventory.observed_at_unix_ms),
                     bool_to_i64(inventory.gpus.is_some()),
-                    inventory.available_cpu_cores.map(|value| encode_u64(value.into())),
+                    inventory
+                        .available_cpu_cores
+                        .map(|value| encode_u64(value.into())),
                     inventory.available_ram_bytes.map(encode_u64),
                     inventory.available_workspace_bytes.map(encode_u64),
                     bool_to_i64(inventory.allowed_workload_classes.is_some()),
@@ -451,7 +457,11 @@ fn validate_inventory(inventory: &AgentInventory) -> Result<(), &'static str> {
             if !ids.insert(gpu.gpu_id.as_str()) {
                 return Err("duplicate gpu_id");
             }
-            if gpu.model.as_deref().is_some_and(|model| model.trim().is_empty()) {
+            if gpu
+                .model
+                .as_deref()
+                .is_some_and(|model| model.trim().is_empty())
+            {
                 return Err("gpu model");
             }
         }
@@ -476,10 +486,7 @@ fn registry_identity_exists(
         .map_err(map_sql_error)
 }
 
-fn registry_key_exists(
-    connection: &Connection,
-    key: &[u8],
-) -> Result<bool, InventoryStoreError> {
+fn registry_key_exists(connection: &Connection, key: &[u8]) -> Result<bool, InventoryStoreError> {
     connection
         .query_row(
             "SELECT 1 FROM coordinator_agent_registry WHERE verifying_key = ?1",
@@ -588,9 +595,7 @@ fn fetch_registry(
 fn fetch_all_registries(
     connection: &Connection,
 ) -> Result<Vec<AgentRegistry>, InventoryStoreError> {
-    let mut statement = connection
-        .prepare(SELECT_REGISTRY)
-        .map_err(map_sql_error)?;
+    let mut statement = connection.prepare(SELECT_REGISTRY).map_err(map_sql_error)?;
     let rows = statement
         .query_map([], row_to_raw_registry)
         .map_err(map_sql_error)?;
@@ -656,18 +661,16 @@ fn fetch_inventory(
         ));
     };
     let all_workloads = fetch_workloads(connection, node_id)?;
-    let allowed_workload_classes = if parse_bool(
-        raw.workload_classes_observed,
-        "workload_classes_observed",
-    )? {
-        Some(all_workloads)
-    } else if all_workloads.is_empty() {
-        None
-    } else {
-        return Err(InventoryStoreError::CorruptData(
-            "workload child rows exist while workload_classes_observed is false".into(),
-        ));
-    };
+    let allowed_workload_classes =
+        if parse_bool(raw.workload_classes_observed, "workload_classes_observed")? {
+            Some(all_workloads)
+        } else if all_workloads.is_empty() {
+            None
+        } else {
+            return Err(InventoryStoreError::CorruptData(
+                "workload child rows exist while workload_classes_observed is false".into(),
+            ));
+        };
     let cpu = raw
         .available_cpu_cores
         .as_deref()
@@ -781,7 +784,8 @@ fn project_candidate(
     registry: AgentRegistry,
     inventory: Option<AgentInventory>,
 ) -> CandidateSnapshot {
-    let (revision, observed_at, gpus, cpu, ram, workspace, workloads, third_party) = match inventory {
+    let (revision, observed_at, gpus, cpu, ram, workspace, workloads, third_party) = match inventory
+    {
         Some(inventory) => (
             Some(inventory.inventory_revision),
             Some(inventory.observed_at_unix_ms),
@@ -1097,8 +1101,12 @@ mod tests {
         let agent_a = registry("node-a", 1);
         store.register_agent(&agent_b).unwrap();
         store.register_agent(&agent_a).unwrap();
-        store.update_inventory(&inventory("node-b", 4, 90, 20)).unwrap();
-        store.update_inventory(&inventory("node-a", 7, 80, 10)).unwrap();
+        store
+            .update_inventory(&inventory("node-b", 4, 90, 20))
+            .unwrap();
+        store
+            .update_inventory(&inventory("node-a", 7, 80, 10))
+            .unwrap();
         drop(store);
 
         let mut reopened = CoordinatorInventoryStore::open(&path).unwrap();
@@ -1334,8 +1342,12 @@ mod tests {
         let mut store = CoordinatorInventoryStore::open(&path).unwrap();
         store.register_agent(&registry("node-a", 1)).unwrap();
         store.register_agent(&registry("node-b", 2)).unwrap();
-        store.update_inventory(&inventory("node-a", 1, 10, 10)).unwrap();
-        store.update_inventory(&inventory("node-b", 1, 110, 20)).unwrap();
+        store
+            .update_inventory(&inventory("node-a", 1, 10, 10))
+            .unwrap();
+        store
+            .update_inventory(&inventory("node-b", 1, 110, 20))
+            .unwrap();
         let snapshot = store.pool_snapshot(100).unwrap();
         assert_eq!(snapshot.candidates[0].observed_at_unix_ms, Some(10));
         assert_eq!(snapshot.candidates[1].observed_at_unix_ms, Some(110));
@@ -1363,10 +1375,10 @@ mod tests {
             },
         );
         for rejected in report.rejected {
-            assert!(rejected.reasons.iter().any(|reason| matches!(
-                reason,
-                RejectionReason::SnapshotNotFresh { .. }
-            )));
+            assert!(rejected
+                .reasons
+                .iter()
+                .any(|reason| matches!(reason, RejectionReason::SnapshotNotFresh { .. })));
         }
     }
 
@@ -1393,13 +1405,13 @@ mod tests {
         };
         store.update_inventory(&maximum).unwrap();
         assert!(!store.update_inventory(&maximum).unwrap().updated);
-        assert_eq!(store.get_inventory("node-a").unwrap(), Some(maximum.clone()));
+        assert_eq!(
+            store.get_inventory("node-a").unwrap(),
+            Some(maximum.clone())
+        );
         let snapshot = store.pool_snapshot(u64::MAX).unwrap();
         assert_eq!(snapshot.candidates[0].observed_at_unix_ms, Some(u64::MAX));
-        assert_eq!(
-            snapshot.candidates[0].available_cpu_cores,
-            Some(u32::MAX)
-        );
+        assert_eq!(snapshot.candidates[0].available_cpu_cores, Some(u32::MAX));
         assert_eq!(
             snapshot.candidates[0].gpus.as_ref().unwrap()[0].available_vram_bytes,
             Some(u64::MAX)
@@ -1458,7 +1470,10 @@ mod tests {
             .find_map(|(candidate, result)| result.is_ok().then_some(candidate))
             .unwrap();
         let reopened = CoordinatorInventoryStore::open(&path).unwrap();
-        assert_eq!(reopened.get_inventory("node-a").unwrap(), Some(winner.clone()));
+        assert_eq!(
+            reopened.get_inventory("node-a").unwrap(),
+            Some(winner.clone())
+        );
     }
 
     #[test]
@@ -1485,14 +1500,19 @@ mod tests {
             let temp = tempfile::tempdir().unwrap();
             let path = temp.path().join(format!("{label}.sqlite3"));
             let mut store = prepared_store(&path);
-            store.update_inventory(&inventory("node-a", 1, 100, 10)).unwrap();
+            store
+                .update_inventory(&inventory("node-a", 1, 100, 10))
+                .unwrap();
             store.connection.execute(sql, []).unwrap();
             drop(store);
             let mut reopened = CoordinatorInventoryStore::open(&path).unwrap();
-            assert!(matches!(
-                reopened.pool_snapshot(100),
-                Err(InventoryStoreError::CorruptData(_))
-            ), "corruption must not default or disappear: {label}");
+            assert!(
+                matches!(
+                    reopened.pool_snapshot(100),
+                    Err(InventoryStoreError::CorruptData(_))
+                ),
+                "corruption must not default or disappear: {label}"
+            );
         }
     }
 

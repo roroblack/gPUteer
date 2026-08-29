@@ -174,12 +174,8 @@ fn short_nonce_is_rejected_by_both() {
 
     // 잘못된 nonce 가 **자리를 차지하지 않아야** 한다.
     // 차지하면 공격자가 malformed 요청만으로 캐시를 채울 수 있다.
-    let r = agree!(m, d, "정상 nonce 는 여전히 통과", |g| g.check_and_record(
-        "dev-a",
-        Domain::Grant,
-        &n(1),
-        T + 120_000
-    ));
+    let r = agree!(m, d, "정상 nonce 는 여전히 통과", |g| g
+        .check_and_record("dev-a", Domain::Grant, &n(1), T + 120_000));
     assert!(matches!(r, Ok(ReplayDecision::Fresh)));
 }
 
@@ -226,14 +222,20 @@ fn extreme_gc_time_agrees() {
     //   5분 clamp 안에서 2분짜리 항목이 만료되는 것은 **정상**이다.
     //   실제 최대 보존 시한(TTL 상한 15분 + skew 1분)을 쓴다.
     let retain = T + MAX_SHORTLIVED_TTL_MS + CLOCK_SKEW_TOLERANCE_MS;
-    for g in [&mut m as &mut dyn ReplayGuard, &mut d as &mut dyn ReplayGuard] {
+    for g in [
+        &mut m as &mut dyn ReplayGuard,
+        &mut d as &mut dyn ReplayGuard,
+    ] {
         g.check_and_record("dev-a", Domain::Grant, &n(1), retain)
             .unwrap();
     }
 
     // 기준선
     assert_eq!(m.gc(T), 0);
-    assert_eq!(d.gc(T).expect("영속 구현이 정상 시각 GC 에서 오류를 냈다"), 0);
+    assert_eq!(
+        d.gc(T).expect("영속 구현이 정상 시각 GC 에서 오류를 냈다"),
+        0
+    );
 
     // ★ 극단값 — 둘 다 clamp 해야 하고, 아무것도 지우면 안 된다
     let mem_removed = m.gc(u64::MAX);
@@ -248,8 +250,14 @@ fn extreme_gc_time_agrees() {
 
     // 그 nonce 는 여전히 막혀야 한다 — replay 창이 열리지 않았다
     for (label, r) in [
-        ("메모리", m.check_and_record("dev-a", Domain::Grant, &n(1), retain)),
-        ("영속", d.check_and_record("dev-a", Domain::Grant, &n(1), retain)),
+        (
+            "메모리",
+            m.check_and_record("dev-a", Domain::Grant, &n(1), retain),
+        ),
+        (
+            "영속",
+            d.check_and_record("dev-a", Domain::Grant, &n(1), retain),
+        ),
     ] {
         assert!(
             matches!(r, Ok(ReplayDecision::Duplicate)),
@@ -307,7 +315,10 @@ fn signer_quota_agrees() {
         &n(3),
         T + 120_000
     ));
-    assert!(matches!(r, Err(ReplayStoreError::SignerQuotaExceeded { .. })));
+    assert!(matches!(
+        r,
+        Err(ReplayStoreError::SignerQuotaExceeded { .. })
+    ));
 
     // 다른 서명자는 영향받지 않는다
     let r = agree!(m, d, "다른 서명자", |g| g.check_and_record(
@@ -368,7 +379,10 @@ fn gc_expiry_and_rollback_agree() {
     let mut d =
         DurableReplayGuard::open_with_capacities(dir.path().join("r.sqlite3"), 10, 10).unwrap();
 
-    for g in [&mut m as &mut dyn ReplayGuard, &mut d as &mut dyn ReplayGuard] {
+    for g in [
+        &mut m as &mut dyn ReplayGuard,
+        &mut d as &mut dyn ReplayGuard,
+    ] {
         g.check_and_record("dev-a", Domain::Grant, &n(1), T + 1_000)
             .unwrap();
         g.check_and_record("dev-a", Domain::Grant, &n(2), T + 100_000)

@@ -758,7 +758,8 @@ pub fn verify<M: Signable + Clone>(
     //   ★ §8 의 9단계에는 없는 단계다. §6 의 요구를 §8 흐름에 넣은 것이며,
     //     서명 검증 **뒤**에 둔다 — 서명이 깨진 메시지의 내부 일관성을
     //     따지는 것은 의미가 없고, 오류 진단만 흐려진다.
-    msg.check_derived_consistency().map_err(VerifyError::Derived)?;
+    msg.check_derived_consistency()
+        .map_err(VerifyError::Derived)?;
 
     // 7. 시각 (§9)
     match M::LIFETIME {

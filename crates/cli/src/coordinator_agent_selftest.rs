@@ -89,8 +89,8 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Result<Self, String> {
-        let exe = std::env::current_exe()
-            .map_err(|e| format!("현재 실행 파일 경로를 못 얻었다: {e}"))?;
+        let exe =
+            std::env::current_exe().map_err(|e| format!("현재 실행 파일 경로를 못 얻었다: {e}"))?;
 
         // ★ 실제 CSPRNG 대신 라벨을 해시해 시드를 결정적으로 만든다 —
         //   이 selftest 는 매번 같은 조건으로 재현 가능해야 하고, 키
@@ -229,10 +229,7 @@ fn run_handshake_internal_with_ready_hook(
     coordinator_args.push(fixture.job_id);
     coordinator_args.extend_from_slice(extra_coordinator_args);
     if !extra_coordinator_args.contains(&"--lease-db") {
-        coordinator_args.extend_from_slice(&[
-            "--i-understand-legacy-mode-is-unsafe",
-            "true",
-        ]);
+        coordinator_args.extend_from_slice(&["--i-understand-legacy-mode-is-unsafe", "true"]);
     }
 
     let mut coordinator = Command::new(&fixture.exe)
@@ -278,9 +275,9 @@ fn run_handshake_internal_with_ready_hook(
         Ok(buf)
     });
 
-    let ready_line = match ready_receiver.recv_timeout(
-        handshake_deadline.saturating_duration_since(Instant::now()),
-    ) {
+    let ready_line = match ready_receiver
+        .recv_timeout(handshake_deadline.saturating_duration_since(Instant::now()))
+    {
         Ok(line) => line,
         Err(error) => {
             let _ = coordinator.kill();
@@ -396,9 +393,9 @@ fn checkpoint_entries(root: &Path) -> Result<Vec<std::fs::DirEntry>, String> {
 
 fn started_checkpoint_id(stdout: &str) -> Option<String> {
     stdout.lines().find_map(|line| {
-        line.strip_prefix("JOB_STARTED ")?.split_whitespace().find_map(|field| {
-            field.strip_prefix("checkpoint_id=").map(ToOwned::to_owned)
-        })
+        line.strip_prefix("JOB_STARTED ")?
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("checkpoint_id=").map(ToOwned::to_owned))
     })
 }
 
@@ -517,10 +514,7 @@ fn run_resume_case(
         "5000".to_string(),
     ];
     if !unavailable_without_store {
-        coordinator_args.extend([
-            "--lease-db".to_string(),
-            lease_db.to_string(),
-        ]);
+        coordinator_args.extend(["--lease-db".to_string(), lease_db.to_string()]);
     }
     let coordinator_refs: Vec<&str> = coordinator_args.iter().map(String::as_str).collect();
     let mut agent_args = vec![
@@ -540,10 +534,7 @@ fn run_resume_case(
         fence_db.to_string(),
     ];
     if disable_reconnect {
-        agent_args.extend([
-            "--disable-reconnect".to_string(),
-            "true".to_string(),
-        ]);
+        agent_args.extend(["--disable-reconnect".to_string(), "true".to_string()]);
     } else {
         agent_args.extend([
             "--max-reconnect-attempts".to_string(),
@@ -575,25 +566,42 @@ fn run_resume_storage_failure_case(
     lease_db: &Path,
     fence_db: &Path,
 ) -> Result<HandshakeOutcome, String> {
-    let lease_db = lease_db
-        .to_str()
-        .ok_or_else(|| format!("resume storage-failure lease DB path is not UTF-8: {lease_db:?}"))?;
-    let fence_db = fence_db
-        .to_str()
-        .ok_or_else(|| format!("resume storage-failure fence DB path is not UTF-8: {fence_db:?}"))?;
+    let lease_db = lease_db.to_str().ok_or_else(|| {
+        format!("resume storage-failure lease DB path is not UTF-8: {lease_db:?}")
+    })?;
+    let fence_db = fence_db.to_str().ok_or_else(|| {
+        format!("resume storage-failure fence DB path is not UTF-8: {fence_db:?}")
+    })?;
     let session_id = "resume-session-64";
     let coordinator_args = [
-        "--resume-protocol", "true", "--session-id", session_id,
-        "--max-connections", "2", "--accept-timeout-ms", "5000",
-        "--lease-db", lease_db,
+        "--resume-protocol",
+        "true",
+        "--session-id",
+        session_id,
+        "--max-connections",
+        "2",
+        "--accept-timeout-ms",
+        "5000",
+        "--lease-db",
+        lease_db,
     ];
     let agent_args = [
-        "--resume-protocol", "true", "--session-id", session_id,
-        "--resume-lease-id", fixture.lease_id,
-        "--resume-job-id", fixture.job_id,
-        "--resume-attempt-id", fixture.attempt_id,
-        "--resume-fence-epoch", "7", "--fence-db", fence_db,
-        "--disable-reconnect", "true",
+        "--resume-protocol",
+        "true",
+        "--session-id",
+        session_id,
+        "--resume-lease-id",
+        fixture.lease_id,
+        "--resume-job-id",
+        fixture.job_id,
+        "--resume-attempt-id",
+        fixture.attempt_id,
+        "--resume-fence-epoch",
+        "7",
+        "--fence-db",
+        fence_db,
+        "--disable-reconnect",
+        "true",
     ];
     let lease_db_path = lease_db.to_owned();
     let corrupt_after_ready = move |_address: &str| {
@@ -627,8 +635,7 @@ fn assert_resume_outcome(
         _ => None,
     };
     let agent_output = format!("{}\n{}", outcome.agent_stdout, outcome.agent_stderr);
-    let refusal_matches = expected_refusal
-        .is_none_or(|expected| agent_output.contains(expected));
+    let refusal_matches = expected_refusal.is_none_or(|expected| agent_output.contains(expected));
     let retried_to_exhaustion = agent_output.contains("ReconnectExhausted:");
     let accepted_connection_count = outcome
         .coordinator_stdout
@@ -706,7 +713,9 @@ pub fn run() -> Result<String, String> {
     // ★ Coordinator 도 ACK 를 못 받으므로 성공으로 끝나면 안 된다 —
     //   그러지 않으면 "위조를 보냈는데 스스로는 성공을 주장하는" 앞뒤가
     //   안 맞는 상태가 된다.
-    if forged_grant.coordinator_success || forged_grant.coordinator_stdout.contains(RESULT_OK_MARKER) {
+    if forged_grant.coordinator_success
+        || forged_grant.coordinator_stdout.contains(RESULT_OK_MARKER)
+    {
         return Err(format!(
             "위조된 Grant 를 보냈는데 coordinator 가 스스로 성공을 주장했다.\n\
              coordinator exit={} stdout={} stderr={}",
@@ -726,7 +735,9 @@ pub fn run() -> Result<String, String> {
         return Err(format!(
             "위조된 agent_signature 가 거부되지 않았다 — Coordinator 가 성공을 주장했다.\n\
              coordinator exit={} stdout={} stderr={}",
-            forged_ack.coordinator_success, forged_ack.coordinator_stdout, forged_ack.coordinator_stderr
+            forged_ack.coordinator_success,
+            forged_ack.coordinator_stdout,
+            forged_ack.coordinator_stderr
         ));
     }
     report.push_str("3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)\n");
@@ -806,15 +817,16 @@ pub fn run() -> Result<String, String> {
             renew_ok.agent_stderr
         ));
     }
-    if !renew_ok.agent_stdout.contains("RENEW_RESULT ok=true outcome=RENEWED") {
+    if !renew_ok
+        .agent_stdout
+        .contains("RENEW_RESULT ok=true outcome=RENEWED")
+    {
         return Err(format!(
             "정상 Lease 갱신인데 Agent 가 RENEW_RESULT 를 찍지 않았다.\nagent stdout: {}",
             renew_ok.agent_stdout
         ));
     }
-    report.push_str(
-        "7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)\n",
-    );
+    report.push_str("7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)\n");
 
     // ── 8. 위조 RenewLeaseRequest.node_signature — Coordinator ingress 검증 실패 ──
     let forged_renew_req = run_handshake(
@@ -978,7 +990,9 @@ pub fn run() -> Result<String, String> {
         &["--do-renew", "true"],
     )?;
     if quarantined.agent_success
-        || !quarantined.agent_stderr.contains("RENEW_REFUSED:QUARANTINED")
+        || !quarantined
+            .agent_stderr
+            .contains("RENEW_REFUSED:QUARANTINED")
     {
         return Err(format!(
             "RENEW_OUTCOME_QUARANTINED 가 서명된 정상 정책 거부로 분류되지 않았다.\n\
@@ -1057,12 +1071,7 @@ pub fn run() -> Result<String, String> {
     let epoch_mismatch = run_handshake(
         &fixture,
         &["--do-renew", "true", "--renewed-fence-epoch", "0"],
-        &[
-            "--do-renew",
-            "true",
-            "--renew-request-epoch-override",
-            "99",
-        ],
+        &["--do-renew", "true", "--renew-request-epoch-override", "99"],
     )?;
     if epoch_mismatch.coordinator_success
         || epoch_mismatch.coordinator_stdout.contains(RESULT_OK_MARKER)
@@ -1113,8 +1122,8 @@ pub fn run() -> Result<String, String> {
     //   전혀 없다. 그래서 시나리오를 하나로 정리했다 — 존재하지 않는
     //   구분을 존재하는 것처럼 보고하지 않는다.
 
-    let fence_dir = tempfile::tempdir()
-        .map_err(|e| format!("fence watermark 임시 디렉터리 생성 실패: {e}"))?;
+    let fence_dir =
+        tempfile::tempdir().map_err(|e| format!("fence watermark 임시 디렉터리 생성 실패: {e}"))?;
     let fence_db_path = fence_dir.path().join("fence.sqlite3");
     let fence_db = fence_db_path
         .to_str()
@@ -1215,7 +1224,8 @@ pub fn run() -> Result<String, String> {
     //   Coordinator 조차 필요 없다 — Agent 의 fail-closed 검사가
     //   `TcpStream::connect()` 보다 먼저 실행되므로, 연결 대상 주소가
     //   실재하지 않아도 절대 도달하지 않는다.
-    let (memory_ok, _memory_stdout, memory_stderr) = run_agent_alone(&fixture, &["--fence-db", ":memory:"])?;
+    let (memory_ok, _memory_stdout, memory_stderr) =
+        run_agent_alone(&fixture, &["--fence-db", ":memory:"])?;
     if memory_ok || !memory_stderr.contains("fence watermark 저장소가 영속이 아니다") {
         return Err(format!(
             "--fence-db :memory: 가 fail closed 되지 않았다.\nexit ok={memory_ok} stderr={memory_stderr}"
@@ -1317,8 +1327,8 @@ pub fn run() -> Result<String, String> {
     //   epoch=5 로 나간다 — Agent 의 watermark(5)와 일치해 성공한다.
     //   반대로 스토어를 무시하고 CLI 값(3)을 그대로 썼다면 Agent 의
     //   watermark(5)가 3 을 거부해 **관측 가능하게** 실패한다.
-    let lease_dir_20 = tempfile::tempdir()
-        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(20): {e}"))?;
+    let lease_dir_20 =
+        tempfile::tempdir().map_err(|e| format!("lease store 임시 디렉터리 생성 실패(20): {e}"))?;
     let lease_db_path_20 = lease_dir_20.path().join("leases.sqlite3");
     let lease_db_20 = lease_db_path_20
         .to_str()
@@ -1412,8 +1422,8 @@ pub fn run() -> Result<String, String> {
     //   하면 일치해 갱신이 성공한다 — 만약 여전히 `config.fence_epoch`
     //   (틀린 값 6)과 비교했다면 5 != 6 으로 **정당한 갱신을 잘못
     //   거부**했을 것이다. 이 시나리오는 그 회귀를 정확히 잡는다.
-    let lease_dir_21 = tempfile::tempdir()
-        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(21): {e}"))?;
+    let lease_dir_21 =
+        tempfile::tempdir().map_err(|e| format!("lease store 임시 디렉터리 생성 실패(21): {e}"))?;
     let lease_db_path_21 = lease_dir_21.path().join("leases.sqlite3");
     let lease_db_21 = lease_db_path_21
         .to_str()
@@ -1505,8 +1515,8 @@ pub fn run() -> Result<String, String> {
     // ══════════════════════════════════════════════════════════════
 
     // ── 22. 누적 시간 초과 — 서명된 MAX_DURATION_EXCEEDED 로 갱신 거부 ──
-    let lease_dir_22 = tempfile::tempdir()
-        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(22): {e}"))?;
+    let lease_dir_22 =
+        tempfile::tempdir().map_err(|e| format!("lease store 임시 디렉터리 생성 실패(22): {e}"))?;
     let lease_db_path_22 = lease_dir_22.path().join("leases.sqlite3");
     let lease_db_22 = lease_db_path_22
         .to_str()
@@ -1543,8 +1553,9 @@ pub fn run() -> Result<String, String> {
     // 저장소에 실제로 기록된 만료시각을 미리 읽어둔다 — 초과 판정
     // 뒤에도 이 값이 그대로인지 나중에 직접 대조한다.
     let expires_before_22 = {
-        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_22)
-            .map_err(|e| format!("lease store 재조회 열기 실패(22, 사전): {e}"))?;
+        let store =
+            gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_22)
+                .map_err(|e| format!("lease store 재조회 열기 실패(22, 사전): {e}"))?;
         store
             .get(fixture.lease_id)
             .map_err(|e| format!("lease store 재조회 실패(22, 사전): {e}"))?
@@ -1605,8 +1616,9 @@ pub fn run() -> Result<String, String> {
     // 초과 판정에서 UPDATE 를 아예 실행하지 않아야 다음 판정 시각도
     // 밀리지 않는다(연장해버리면 정책이 스스로 무력화된다).
     let expires_after_22 = {
-        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_22)
-            .map_err(|e| format!("lease store 재조회 열기 실패(22, 사후): {e}"))?;
+        let store =
+            gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_22)
+                .map_err(|e| format!("lease store 재조회 열기 실패(22, 사후): {e}"))?;
         store
             .get(fixture.lease_id)
             .map_err(|e| format!("lease store 재조회 실패(22, 사후): {e}"))?
@@ -1625,8 +1637,8 @@ pub fn run() -> Result<String, String> {
     );
 
     // ── 23. 대조군 — 한도 안에서는 여전히 RENEWED (오탐 없음) ──────────
-    let lease_dir_23 = tempfile::tempdir()
-        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(23): {e}"))?;
+    let lease_dir_23 =
+        tempfile::tempdir().map_err(|e| format!("lease store 임시 디렉터리 생성 실패(23): {e}"))?;
     let lease_db_path_23 = lease_dir_23.path().join("leases.sqlite3");
     let lease_db_23 = lease_db_path_23
         .to_str()
@@ -1711,8 +1723,8 @@ pub fn run() -> Result<String, String> {
     // 연장)한 **뒤에** override 를 적용했다 — "거부 응답인데 저장소는
     // 갱신됨" 이라는 상태 불일치였다. override 는 저장소를 **전혀**
     // 건드리지 않아야 한다(레거시 `None` 경로와 같은 계약).
-    let lease_dir_24 = tempfile::tempdir()
-        .map_err(|e| format!("lease store 임시 디렉터리 생성 실패(24): {e}"))?;
+    let lease_dir_24 =
+        tempfile::tempdir().map_err(|e| format!("lease store 임시 디렉터리 생성 실패(24): {e}"))?;
     let lease_db_path_24 = lease_dir_24.path().join("leases.sqlite3");
     let lease_db_24 = lease_db_path_24
         .to_str()
@@ -1747,8 +1759,9 @@ pub fn run() -> Result<String, String> {
     }
 
     let expires_before_24 = {
-        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_24)
-            .map_err(|e| format!("lease store 재조회 열기 실패(24, 사전): {e}"))?;
+        let store =
+            gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_24)
+                .map_err(|e| format!("lease store 재조회 열기 실패(24, 사전): {e}"))?;
         store
             .get(fixture.lease_id)
             .map_err(|e| format!("lease store 재조회 실패(24, 사전): {e}"))?
@@ -1785,7 +1798,9 @@ pub fn run() -> Result<String, String> {
         ));
     }
     if override_24.agent_success
-        || !override_24.agent_stderr.contains("RENEW_REFUSED:SUPERSEDED")
+        || !override_24
+            .agent_stderr
+            .contains("RENEW_REFUSED:SUPERSEDED")
     {
         return Err(format!(
             "lease_store=Some 에서 override(SUPERSEDED) 가 서명된 정상 정책 거부로 \
@@ -1802,8 +1817,9 @@ pub fn run() -> Result<String, String> {
     }
 
     let expires_after_24 = {
-        let store = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_24)
-            .map_err(|e| format!("lease store 재조회 열기 실패(24, 사후): {e}"))?;
+        let store =
+            gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_24)
+                .map_err(|e| format!("lease store 재조회 열기 실패(24, 사후): {e}"))?;
         store
             .get(fixture.lease_id)
             .map_err(|e| format!("lease store 재조회 실패(24, 사후): {e}"))?
@@ -1844,7 +1860,14 @@ pub fn run() -> Result<String, String> {
 
     let issue_25 = run_handshake(
         &fixture,
-        &["--lease-db", lease_db_25, "--fence-epoch", "5", "--do-renew", "false"],
+        &[
+            "--lease-db",
+            lease_db_25,
+            "--fence-epoch",
+            "5",
+            "--do-renew",
+            "false",
+        ],
         &["--fence-db", fence_db_25, "--do-renew", "false"],
     )?;
     if !issue_25.coordinator_success || !issue_25.agent_success {
@@ -1925,7 +1948,14 @@ pub fn run() -> Result<String, String> {
 
     let issue_26 = run_handshake(
         &fixture,
-        &["--lease-db", lease_db_26, "--fence-epoch", "7", "--do-renew", "false"],
+        &[
+            "--lease-db",
+            lease_db_26,
+            "--fence-epoch",
+            "7",
+            "--do-renew",
+            "false",
+        ],
         &["--fence-db", fence_db_26, "--do-renew", "false"],
     )?;
     if !issue_26.coordinator_success || !issue_26.agent_success {
@@ -2009,9 +2039,19 @@ pub fn run() -> Result<String, String> {
     if !revoke_ok.coordinator_success
         || !revoke_ok.agent_success
         || !revoke_ok.agent_stdout.contains("REVOKE_RESULT ok=true")
-        || !revoke_ok.agent_stdout.contains("RENEW_BLOCKED: lease revoked")
-        || revoke_ok.agent_stdout.matches("RENEW_RESULT ok=true").count() != 0
-        || revoke_ok.coordinator_stdout.matches("RENEW_RESULT ok=true").count() != 0
+        || !revoke_ok
+            .agent_stdout
+            .contains("RENEW_BLOCKED: lease revoked")
+        || revoke_ok
+            .agent_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 0
+        || revoke_ok
+            .coordinator_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 0
     {
         return Err(format!(
             "ACK 직후 revoke 교착 방지 또는 revoke 뒤 renew 차단이 실패했다.\n\
@@ -2036,7 +2076,12 @@ pub fn run() -> Result<String, String> {
     // 28: intentionally uses that no-`--lease-db` contract lane.
     let forged_revoke = run_handshake(
         &fixture,
-        &["--revoke-after-round", "0", "--corrupt-revoke-signature", "true"],
+        &[
+            "--revoke-after-round",
+            "0",
+            "--corrupt-revoke-signature",
+            "true",
+        ],
         &["--do-renew", "false", "--expect-revoke-after-round", "0"],
     )?;
     if forged_revoke.agent_success
@@ -2071,11 +2116,15 @@ pub fn run() -> Result<String, String> {
         ],
     )?;
     if wrong_id_revoke.agent_success
-        || !wrong_id_revoke.agent_stderr.contains("REVOKE_REJECTED: lease_id 불일치")
+        || !wrong_id_revoke
+            .agent_stderr
+            .contains("REVOKE_REJECTED: lease_id 불일치")
     {
         return Err(format!(
             "잘못된 revoke lease_id가 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
-            wrong_id_revoke.agent_success, wrong_id_revoke.agent_stdout, wrong_id_revoke.agent_stderr
+            wrong_id_revoke.agent_success,
+            wrong_id_revoke.agent_stdout,
+            wrong_id_revoke.agent_stderr
         ));
     }
     report.push_str("29) 잘못된 revoke lease_id 거부 확인\n");
@@ -2087,7 +2136,9 @@ pub fn run() -> Result<String, String> {
         &["--do-renew", "false", "--expect-revoke-after-round", "0"],
     )?;
     if wrong_epoch_revoke.agent_success
-        || !wrong_epoch_revoke.agent_stderr.contains("REVOKE_REJECTED: fence_epoch 불일치")
+        || !wrong_epoch_revoke
+            .agent_stderr
+            .contains("REVOKE_REJECTED: fence_epoch 불일치")
     {
         return Err(format!(
             "잘못된 revoke fence_epoch이 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
@@ -2114,13 +2165,13 @@ pub fn run() -> Result<String, String> {
         &["--do-renew", "false", "--expect-revoke-after-round", "0"],
     )?;
     if expired_revoke.agent_success
-        || !expired_revoke.agent_stderr.contains("REVOKE_REJECTED: held Lease가 이미 만료됐다")
+        || !expired_revoke
+            .agent_stderr
+            .contains("REVOKE_REJECTED: held Lease가 이미 만료됐다")
     {
         return Err(format!(
             "이미 만료된 Lease에 대한 revoke가 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
-            expired_revoke.agent_success,
-            expired_revoke.agent_stdout,
-            expired_revoke.agent_stderr
+            expired_revoke.agent_success, expired_revoke.agent_stdout, expired_revoke.agent_stderr
         ));
     }
     report.push_str("31) 이미 만료된 Lease에 대한 revoke 거부 확인\n");
@@ -2165,12 +2216,16 @@ pub fn run() -> Result<String, String> {
             .matches("RENEW_RESULT ok=true")
             .count()
             != 1
-        || !superseded_multi_round.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || !superseded_multi_round
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
         || superseded_multi_round.agent_success
         || !superseded_multi_round
             .agent_stderr
             .contains("RENEW_REFUSED:SUPERSEDED")
-        || superseded_multi_round.agent_stdout.contains("RENEW_RESULT ok=true")
+        || superseded_multi_round
+            .agent_stdout
+            .contains("RENEW_RESULT ok=true")
     {
         return Err(format!(
             "다회차 SUPERSEDED가 첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다.\n\
@@ -2371,7 +2426,9 @@ pub fn run() -> Result<String, String> {
     )?;
     if !revoked_first_35.coordinator_success
         || !revoked_first_35.agent_success
-        || !revoked_first_35.agent_stdout.contains("REVOKE_RESULT ok=true")
+        || !revoked_first_35
+            .agent_stdout
+            .contains("REVOKE_RESULT ok=true")
     {
         return Err(format!(
             "revoke 영속화 시나리오 1차 프로세스 쌍이 정상 종료하지 않았다(35).\n\
@@ -2386,13 +2443,12 @@ pub fn run() -> Result<String, String> {
         ));
     }
 
-    let stored_revoked_35 = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(
-        lease_db_35,
-    )
-    .map_err(|e| format!("revoke 영속화 lease store 재조회 열기 실패(35): {e}"))?
-    .get(fixture.lease_id)
-    .map_err(|e| format!("revoke 영속화 lease store 재조회 실패(35): {e}"))?
-    .ok_or_else(|| "revoke 영속화 lease store에 Lease가 없다(35)".to_string())?;
+    let stored_revoked_35 =
+        gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(lease_db_35)
+            .map_err(|e| format!("revoke 영속화 lease store 재조회 열기 실패(35): {e}"))?
+            .get(fixture.lease_id)
+            .map_err(|e| format!("revoke 영속화 lease store 재조회 실패(35): {e}"))?
+            .ok_or_else(|| "revoke 영속화 lease store에 Lease가 없다(35)".to_string())?;
     if stored_revoked_35.revoked_at_unix_ms.is_none() {
         return Err(
             "revoke 통지 성공 뒤 lease store의 revoked_at_unix_ms가 NULL이다(35)".to_string(),
@@ -2409,12 +2465,7 @@ pub fn run() -> Result<String, String> {
             "--do-renew",
             "false",
         ],
-        &[
-            "--fence-db",
-            fence_db_35,
-            "--do-renew",
-            "false",
-        ],
+        &["--fence-db", fence_db_35, "--do-renew", "false"],
     )?;
     if revoked_second_35.coordinator_success
         || !revoked_second_35
@@ -2425,7 +2476,9 @@ pub fn run() -> Result<String, String> {
         || !revoked_second_35
             .agent_stderr
             .contains("Grant 프레임 읽기/검증 실패")
-        || revoked_second_35.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || revoked_second_35
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
         || revoked_second_35.agent_stdout.contains(RESULT_OK_MARKER)
     {
         return Err(format!(
@@ -2518,7 +2571,9 @@ pub fn run() -> Result<String, String> {
         || !expired_reconnect_36.coordinator_stderr.contains("expired")
         || expired_reconnect_36.agent_success
         || expired_reconnect_36.agent_stdout.contains(RESULT_OK_MARKER)
-        || expired_reconnect_36.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || expired_reconnect_36
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
     {
         return Err(format!(
             "만료된 Lease 재접속이 Coordinator에서 Expired로 거부되지 않았다(36).\n\
@@ -2638,14 +2693,10 @@ pub fn run() -> Result<String, String> {
     ));
 
     // ── 39. 정상 Grant 뒤 실제 WRITING marker 생성 ──────────────────
-    let checkpoint_root_39 = tempfile::tempdir()
-        .map_err(|e| format!("정상 시작 marker root 생성 실패(39): {e}"))?;
-    let started_39 = run_handshake_with_checkpoint_root(
-        &fixture,
-        checkpoint_root_39.path(),
-        &[],
-        &[],
-    )?;
+    let checkpoint_root_39 =
+        tempfile::tempdir().map_err(|e| format!("정상 시작 marker root 생성 실패(39): {e}"))?;
+    let started_39 =
+        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_39.path(), &[], &[])?;
     if !started_39.coordinator_success
         || !started_39.agent_success
         || !started_39.agent_stdout.contains("state=WRITING")
@@ -2658,11 +2709,8 @@ pub fn run() -> Result<String, String> {
             started_39.agent_stderr
         ));
     }
-    let expected_checkpoint_id = gputeer_agent::start_checkpoint_id(
-        fixture.job_id,
-        fixture.attempt_id,
-        fixture.grant_id,
-    );
+    let expected_checkpoint_id =
+        gputeer_agent::start_checkpoint_id(fixture.job_id, fixture.attempt_id, fixture.grant_id);
     let started_id_39 = started_checkpoint_id(&started_39.agent_stdout)
         .ok_or_else(|| "JOB_STARTED checkpoint_id가 없다(39)".to_string())?;
     if started_id_39 != expected_checkpoint_id {
@@ -2677,7 +2725,10 @@ pub fn run() -> Result<String, String> {
     {
         return Err(format!(
             "정상 Grant 뒤 checkpoint 디렉터리가 정확히 하나 생성되지 않았다(39): entries={:?}",
-            entries_39.iter().map(|entry| entry.file_name()).collect::<Vec<_>>()
+            entries_39
+                .iter()
+                .map(|entry| entry.file_name())
+                .collect::<Vec<_>>()
         ));
     }
     let marker_39 = checkpoint_root_39
@@ -2695,43 +2746,48 @@ pub fn run() -> Result<String, String> {
     );
 
     // ── 40. 위조 Lease는 marker/ACK 전에 거부 ────────────────────────
-    let checkpoint_root_40 = tempfile::tempdir()
-        .map_err(|e| format!("위조 Lease marker root 생성 실패(40): {e}"))?;
+    let checkpoint_root_40 =
+        tempfile::tempdir().map_err(|e| format!("위조 Lease marker root 생성 실패(40): {e}"))?;
     let forged_lease_40 = run_handshake_with_checkpoint_root(
         &fixture,
         checkpoint_root_40.path(),
         &["--corrupt-lease-signature", "true"],
         &[],
     )?;
-    if forged_lease_40.agent_success
-        || !forged_lease_40.agent_stderr.contains("LEASE_REJECTED:")
-    {
+    if forged_lease_40.agent_success || !forged_lease_40.agent_stderr.contains("LEASE_REJECTED:") {
         return Err(format!(
             "위조 Lease가 marker 이전에 거부되지 않았다(40): agent={} stderr={}",
             forged_lease_40.agent_success, forged_lease_40.agent_stderr
         ));
     }
-    assert_no_agent_ack_or_marker(&forged_lease_40, checkpoint_root_40.path(), "위조 Lease(40)")?;
+    assert_no_agent_ack_or_marker(
+        &forged_lease_40,
+        checkpoint_root_40.path(),
+        "위조 Lease(40)",
+    )?;
     report.push_str("40) 위조 Lease 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
 
     // ── 41. 만료 Lease는 marker/ACK 전에 거부 ────────────────────────
-    let checkpoint_root_41 = tempfile::tempdir()
-        .map_err(|e| format!("만료 Lease marker root 생성 실패(41): {e}"))?;
+    let checkpoint_root_41 =
+        tempfile::tempdir().map_err(|e| format!("만료 Lease marker root 생성 실패(41): {e}"))?;
     let expired_lease_41 = run_handshake_with_checkpoint_root(
         &fixture,
         checkpoint_root_41.path(),
         &["--expire-lease", "true"],
         &[],
     )?;
-    if expired_lease_41.agent_success
-        || !expired_lease_41.agent_stderr.contains("LEASE_REJECTED:")
+    if expired_lease_41.agent_success || !expired_lease_41.agent_stderr.contains("LEASE_REJECTED:")
     {
         return Err(format!(
             "만료 Lease가 marker 이전에 거부되지 않았다(41): agent={} stderr={}",
             expired_lease_41.agent_success, expired_lease_41.agent_stderr
         ));
     }
-    assert_no_agent_ack_or_marker(&expired_lease_41, checkpoint_root_41.path(), "만료 Lease(41)")?;
+    assert_no_agent_ack_or_marker(
+        &expired_lease_41,
+        checkpoint_root_41.path(),
+        "만료 Lease(41)",
+    )?;
     report.push_str("41) 만료 Lease 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
 
     // ── 42. 영속 store에 revoke된 Lease는 재발급되지 않으며 marker/ACK 없음 ──
@@ -2741,8 +2797,8 @@ pub fn run() -> Result<String, String> {
     let lease_db_42_str = lease_db_42
         .to_str()
         .ok_or_else(|| "revoked Lease lease-db 경로가 UTF-8이 아니다(42)".to_string())?;
-    let first_root_42 = tempfile::tempdir()
-        .map_err(|e| format!("revoke 준비 marker root 생성 실패(42): {e}"))?;
+    let first_root_42 =
+        tempfile::tempdir().map_err(|e| format!("revoke 준비 marker root 생성 실패(42): {e}"))?;
     let first_42 = run_handshake_with_checkpoint_root(
         &fixture,
         first_root_42.path(),
@@ -2774,24 +2830,19 @@ pub fn run() -> Result<String, String> {
     // ── 43. 동일 attempt 재시도는 같은 digest 디렉터리에 멱등 기록 ────
     let checkpoint_root_43 = tempfile::tempdir()
         .map_err(|e| format!("동일 attempt retry marker root 생성 실패(43): {e}"))?;
-    let retry_first_43 = run_handshake_with_checkpoint_root(
-        &fixture,
-        checkpoint_root_43.path(),
-        &[],
-        &[],
-    )?;
-    let retry_second_43 = run_handshake_with_checkpoint_root(
-        &fixture,
-        checkpoint_root_43.path(),
-        &[],
-        &[],
-    )?;
+    let retry_first_43 =
+        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
+    let retry_second_43 =
+        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
     let first_id_43 = started_checkpoint_id(&retry_first_43.agent_stdout)
         .ok_or_else(|| "첫 retry에서 JOB_STARTED가 없다(43)".to_string())?;
     let second_id_43 = started_checkpoint_id(&retry_second_43.agent_stdout)
         .ok_or_else(|| "두 번째 retry에서 JOB_STARTED가 없다(43)".to_string())?;
     let entries_43 = checkpoint_entries(checkpoint_root_43.path())?;
-    let marker_43 = checkpoint_root_43.path().join(&first_id_43).join(".durability.writing");
+    let marker_43 = checkpoint_root_43
+        .path()
+        .join(&first_id_43)
+        .join(".durability.writing");
     if !retry_first_43.agent_success
         || !retry_second_43.agent_success
         || !retry_first_43.coordinator_success
@@ -2818,18 +2869,16 @@ pub fn run() -> Result<String, String> {
     let failed_root_44 = failed_root_dir_44.path().join("not-a-directory");
     std::fs::write(&failed_root_44, b"regular file")
         .map_err(|e| format!("fail-closed용 root 파일 생성 실패(44): {e}"))?;
-    let marker_failure_44 = run_handshake_with_checkpoint_root(
-        &fixture,
-        &failed_root_44,
-        &[],
-        &[],
-    )?;
+    let marker_failure_44 =
+        run_handshake_with_checkpoint_root(&fixture, &failed_root_44, &[], &[])?;
     if marker_failure_44.agent_success
         || !marker_failure_44
             .agent_stderr
             .contains("시작 checkpoint 디렉터리 생성 실패")
         || marker_failure_44.coordinator_success
-        || marker_failure_44.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || marker_failure_44
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
         || marker_failure_44.agent_stdout.contains("JOB_STARTED ")
         || !failed_root_44.is_file()
     {
@@ -2882,12 +2931,16 @@ pub fn run() -> Result<String, String> {
             .matches("RENEW_RESULT ok=true")
             .count()
             != 1
-        || !quarantined_multi_round.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || !quarantined_multi_round
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
         || quarantined_multi_round.agent_success
         || !quarantined_multi_round
             .agent_stderr
             .contains("RENEW_REFUSED:QUARANTINED")
-        || quarantined_multi_round.agent_stdout.contains("RENEW_RESULT ok=true")
+        || quarantined_multi_round
+            .agent_stdout
+            .contains("RENEW_RESULT ok=true")
     {
         return Err(format!(
             "다회차 QUARANTINED가 첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다.\n\
@@ -2909,12 +2962,13 @@ pub fn run() -> Result<String, String> {
     // 기존 22번의 --max-total-duration-seconds 2 + 실제 2.2초 경과
     // 트리거를 그대로 재사용한다. 먼저 Lease를 발급하고 한도를 넘긴
     // 뒤, renew_rounds=2 갱신을 시작해 첫 응답이 outcome=6이 되게 한다.
-    let max_duration_multi_dir_46 = tempfile::tempdir()
-        .map_err(|e| format!("MAX_DURATION_EXCEEDED 다회차 시나리오 임시 디렉터리 생성 실패(46): {e}"))?;
+    let max_duration_multi_dir_46 = tempfile::tempdir().map_err(|e| {
+        format!("MAX_DURATION_EXCEEDED 다회차 시나리오 임시 디렉터리 생성 실패(46): {e}")
+    })?;
     let max_duration_lease_db_46 = max_duration_multi_dir_46.path().join("lease.sqlite3");
-    let max_duration_lease_db_46 = max_duration_lease_db_46
-        .to_str()
-        .ok_or_else(|| "MAX_DURATION_EXCEEDED 다회차 lease store 경로가 UTF-8이 아니다(46)".to_string())?;
+    let max_duration_lease_db_46 = max_duration_lease_db_46.to_str().ok_or_else(|| {
+        "MAX_DURATION_EXCEEDED 다회차 lease store 경로가 UTF-8이 아니다(46)".to_string()
+    })?;
     let issue_max_duration_46 = run_handshake(
         &fixture,
         &[
@@ -2971,12 +3025,16 @@ pub fn run() -> Result<String, String> {
             .matches("RENEW_RESULT ok=true")
             .count()
             != 1
-        || !max_duration_multi_round.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || !max_duration_multi_round
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
         || max_duration_multi_round.agent_success
         || !max_duration_multi_round
             .agent_stderr
             .contains("RENEW_REFUSED:MAX_DURATION_EXCEEDED")
-        || max_duration_multi_round.agent_stdout.contains("RENEW_RESULT ok=true")
+        || max_duration_multi_round
+            .agent_stdout
+            .contains("RENEW_RESULT ok=true")
     {
         return Err(format!(
             "다회차 MAX_DURATION_EXCEEDED가 첫 회차에서 정상 종료되지 않았거나 이후 RENEW_RESULT가 발생했다.\n\
@@ -3062,12 +3120,7 @@ pub fn run() -> Result<String, String> {
             "--do-renew",
             "true",
         ],
-        &[
-            "--do-renew",
-            "true",
-            "--renew-delay-ms",
-            "1000",
-        ],
+        &["--do-renew", "true", "--renew-delay-ms", "1000"],
     )?;
     let local_expired_elapsed_48 = local_expired_started_48.elapsed();
     if local_expired_elapsed_48 >= HANDSHAKE_HARD_TIMEOUT
@@ -3103,30 +3156,54 @@ pub fn run() -> Result<String, String> {
 
     // 49. Same-process reconnect: the first accepted connection is dropped
     // after ACK, then the same Agent/Coordinator PIDs complete attempt 1.
-    let reconnect_dir_49 = tempfile::tempdir()
-        .map_err(|e| format!("reconnect success tempdir failed (49): {e}"))?;
+    let reconnect_dir_49 =
+        tempfile::tempdir().map_err(|e| format!("reconnect success tempdir failed (49): {e}"))?;
     let lease_db_49 = reconnect_dir_49.path().join("lease.sqlite3");
     let fence_db_49 = reconnect_dir_49.path().join("fence.sqlite3");
-    let lease_db_49 = lease_db_49.to_str().ok_or_else(|| "lease db 49 is not UTF-8".to_string())?;
-    let fence_db_49 = fence_db_49.to_str().ok_or_else(|| "fence db 49 is not UTF-8".to_string())?;
+    let lease_db_49 = lease_db_49
+        .to_str()
+        .ok_or_else(|| "lease db 49 is not UTF-8".to_string())?;
+    let fence_db_49 = fence_db_49
+        .to_str()
+        .ok_or_else(|| "fence db 49 is not UTF-8".to_string())?;
     let reconnect_ok_49 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_49, "--max-connections", "2",
-            "--accept-timeout-ms", "5000", "--drop-connection-after-ack-once", "true",
-            "--do-renew", "false",
+            "--lease-db",
+            lease_db_49,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-connection-after-ack-once",
+            "true",
+            "--do-renew",
+            "false",
         ],
-        &[
-            "--fence-db", fence_db_49, "--do-renew", "false",
-        ],
+        &["--fence-db", fence_db_49, "--do-renew", "false"],
     )?;
     if !reconnect_ok_49.coordinator_success
         || !reconnect_ok_49.agent_success
-        || reconnect_ok_49.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 2
-        || reconnect_ok_49.coordinator_stdout.matches(RESULT_OK_MARKER).count() != 1
-        || reconnect_ok_49.agent_stdout.matches(RESULT_OK_MARKER).count() != 1
+        || reconnect_ok_49
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 2
+        || reconnect_ok_49
+            .coordinator_stdout
+            .matches(RESULT_OK_MARKER)
+            .count()
+            != 1
+        || reconnect_ok_49
+            .agent_stdout
+            .matches(RESULT_OK_MARKER)
+            .count()
+            != 1
     {
-        return Err(format!("49) reconnect success failed: coordinator={:?} agent={:?}", reconnect_ok_49.coordinator_stdout, reconnect_ok_49.agent_stderr));
+        return Err(format!(
+            "49) reconnect success failed: coordinator={:?} agent={:?}",
+            reconnect_ok_49.coordinator_stdout, reconnect_ok_49.agent_stderr
+        ));
     }
     report.push_str("49) 동일 Agent/Coordinator PID에서 ACK 후 1회 drop, connection_attempt=1의 새 Grant/ACK nonce로 bounded reconnect 성공; RESULT ok=true 각 1회 (hard timeout=120s, accept-timeout=5000ms)\n");
 
@@ -3135,12 +3212,26 @@ pub fn run() -> Result<String, String> {
     let exhausted_50 = run_reconnect_case(
         &fixture,
         &[
-            "--max-connections", "1", "--accept-timeout-ms", "5000",
-            "--disconnect-after-ack", "true", "--do-renew", "false",
+            "--max-connections",
+            "1",
+            "--accept-timeout-ms",
+            "5000",
+            "--disconnect-after-ack",
+            "true",
+            "--do-renew",
+            "false",
         ],
         &[
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3",
-            "--retry-base-ms", "10", "--retry-cap-ms", "25", "--do-renew", "false",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "3",
+            "--retry-base-ms",
+            "10",
+            "--retry-cap-ms",
+            "25",
+            "--do-renew",
+            "false",
         ],
     )?;
     if exhausted_50.agent_success
@@ -3148,7 +3239,10 @@ pub fn run() -> Result<String, String> {
         || exhausted_50.coordinator_stdout.contains(RESULT_OK_MARKER)
         || !exhausted_50.agent_stderr.contains("ReconnectExhausted")
     {
-        return Err(format!("50) reconnect exhaustion failed: coordinator={:?} agent={:?}", exhausted_50.coordinator_stderr, exhausted_50.agent_stderr));
+        return Err(format!(
+            "50) reconnect exhaustion failed: coordinator={:?} agent={:?}",
+            exhausted_50.coordinator_stderr, exhausted_50.agent_stderr
+        ));
     }
     report.push_str("50) max-reconnect-attempts=2/max-duration=3s로 재접속 예산 소진; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
 
@@ -3157,14 +3251,32 @@ pub fn run() -> Result<String, String> {
     let revoke_51 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_49, "--max-connections", "2",
-            "--accept-timeout-ms", "5000", "--drop-connection-after-ack-once", "true",
-            "--revoke-before-drop", "true", "--do-renew", "false",
+            "--lease-db",
+            lease_db_49,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-connection-after-ack-once",
+            "true",
+            "--revoke-before-drop",
+            "true",
+            "--do-renew",
+            "false",
         ],
         &[
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3",
-            "--retry-base-ms", "10", "--retry-cap-ms", "25", "--fence-db", fence_db_49,
-            "--do-renew", "false",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "3",
+            "--retry-base-ms",
+            "10",
+            "--retry-cap-ms",
+            "25",
+            "--fence-db",
+            fence_db_49,
+            "--do-renew",
+            "false",
         ],
     )?;
     if revoke_51.coordinator_success
@@ -3173,30 +3285,56 @@ pub fn run() -> Result<String, String> {
         || revoke_51.agent_stdout.contains(RESULT_OK_MARKER)
         || !revoke_51.coordinator_stderr.contains("revoked")
     {
-        return Err(format!("51) reconnect revoke failed: coordinator={:?} agent={:?}", revoke_51.coordinator_stderr, revoke_51.agent_stderr));
+        return Err(format!(
+            "51) reconnect revoke failed: coordinator={:?} agent={:?}",
+            revoke_51.coordinator_stderr, revoke_51.agent_stderr
+        ));
     }
     report.push_str("51) 첫 ACK 직후 durable revoke 후 재접속 get_or_issue가 revoked로 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
 
     // 52. A short lease expires while the Coordinator deliberately pauses
     // before its second accept.
-    let expire_dir_52 = tempfile::tempdir()
-        .map_err(|e| format!("reconnect expiry tempdir failed (52): {e}"))?;
+    let expire_dir_52 =
+        tempfile::tempdir().map_err(|e| format!("reconnect expiry tempdir failed (52): {e}"))?;
     let lease_db_52 = expire_dir_52.path().join("lease.sqlite3");
     let fence_db_52 = expire_dir_52.path().join("fence.sqlite3");
-    let lease_db_52 = lease_db_52.to_str().ok_or_else(|| "lease db 52 is not UTF-8".to_string())?;
-    let fence_db_52 = fence_db_52.to_str().ok_or_else(|| "fence db 52 is not UTF-8".to_string())?;
+    let lease_db_52 = lease_db_52
+        .to_str()
+        .ok_or_else(|| "lease db 52 is not UTF-8".to_string())?;
+    let fence_db_52 = fence_db_52
+        .to_str()
+        .ok_or_else(|| "fence db 52 is not UTF-8".to_string())?;
     let expire_52 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_52, "--max-connections", "2",
-            "--accept-timeout-ms", "5000", "--drop-connection-after-ack-once", "true",
-            "--lease-ttl-ms", "2000", "--pause-before-next-accept-ms", "2500",
-            "--do-renew", "false",
+            "--lease-db",
+            lease_db_52,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-connection-after-ack-once",
+            "true",
+            "--lease-ttl-ms",
+            "2000",
+            "--pause-before-next-accept-ms",
+            "2500",
+            "--do-renew",
+            "false",
         ],
         &[
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3",
-            "--retry-base-ms", "10", "--retry-cap-ms", "25", "--fence-db", fence_db_52,
-            "--do-renew", "false",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "3",
+            "--retry-base-ms",
+            "10",
+            "--retry-cap-ms",
+            "25",
+            "--fence-db",
+            fence_db_52,
+            "--do-renew",
+            "false",
         ],
     )?;
     if expire_52.coordinator_success
@@ -3205,51 +3343,80 @@ pub fn run() -> Result<String, String> {
         || expire_52.agent_stdout.contains(RESULT_OK_MARKER)
         || !expire_52.coordinator_stderr.contains("expired")
     {
-        return Err(format!("52) reconnect expiry failed: coordinator={:?} agent={:?}", expire_52.coordinator_stderr, expire_52.agent_stderr));
+        return Err(format!(
+            "52) reconnect expiry failed: coordinator={:?} agent={:?}",
+            expire_52.coordinator_stderr, expire_52.agent_stderr
+        ));
     }
     report.push_str("52) 2초 TTL과 2500ms next-accept 대기로 재접속 시 expired 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)\n");
 
     // 53–60. Explicit opt-in Hello-first Resume lane. Every case owns a
     // separate temporary directory/database; the legacy 1–52 cases above do
     // not share this state.
-    let resume_dir_53 = tempfile::tempdir()
-        .map_err(|e| format!("resume success tempdir failed (53): {e}"))?;
+    let resume_dir_53 =
+        tempfile::tempdir().map_err(|e| format!("resume success tempdir failed (53): {e}"))?;
     let lease_db_53 = resume_dir_53.path().join("lease.sqlite3");
     let fence_db_53 = resume_dir_53.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_53, &fence_db_53, 7, 60_000)?;
     let resumed_53 = run_resume_case(
-        &fixture, &lease_db_53, &fence_db_53, "resume-session-53",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false, false,
+        &fixture,
+        &lease_db_53,
+        &fence_db_53,
+        "resume-session-53",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        7,
+        false,
+        false,
     )?;
     assert_resume_outcome(&resumed_53, 53, 1, true)?;
-    report.push_str("53) 명시적 --resume-protocol Hello-first Resume 성공(RESUMED), 저장된 expires_at 유지\n");
+    report.push_str(
+        "53) 명시적 --resume-protocol Hello-first Resume 성공(RESUMED), 저장된 expires_at 유지\n",
+    );
 
-    let unknown_dir_54 = tempfile::tempdir()
-        .map_err(|e| format!("resume unknown tempdir failed (54): {e}"))?;
+    let unknown_dir_54 =
+        tempfile::tempdir().map_err(|e| format!("resume unknown tempdir failed (54): {e}"))?;
     let lease_db_54 = unknown_dir_54.path().join("lease.sqlite3");
     let fence_db_54 = unknown_dir_54.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_54, &fence_db_54, 7, 60_000)?;
     let unknown_54 = run_resume_case(
-        &fixture, &lease_db_54, &fence_db_54, "resume-session-54",
-        "unknown-lease-id", fixture.job_id, fixture.attempt_id, 7, false, false,
+        &fixture,
+        &lease_db_54,
+        &fence_db_54,
+        "resume-session-54",
+        "unknown-lease-id",
+        fixture.job_id,
+        fixture.attempt_id,
+        7,
+        false,
+        false,
     )?;
     assert_resume_outcome(&unknown_54, 54, 5, false)?;
     report.push_str("54) 존재하지 않는 lease_id를 UNKNOWN_LEASE로 거부\n");
 
-    let identity_dir_55 = tempfile::tempdir()
-        .map_err(|e| format!("resume identity tempdir failed (55): {e}"))?;
+    let identity_dir_55 =
+        tempfile::tempdir().map_err(|e| format!("resume identity tempdir failed (55): {e}"))?;
     let lease_db_55 = identity_dir_55.path().join("lease.sqlite3");
     let fence_db_55 = identity_dir_55.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_55, &fence_db_55, 7, 60_000)?;
     let identity_55 = run_resume_case(
-        &fixture, &lease_db_55, &fence_db_55, "resume-session-55",
-        fixture.lease_id, "wrong-job-id", fixture.attempt_id, 7, false, false,
+        &fixture,
+        &lease_db_55,
+        &fence_db_55,
+        "resume-session-55",
+        fixture.lease_id,
+        "wrong-job-id",
+        fixture.attempt_id,
+        7,
+        false,
+        false,
     )?;
     assert_resume_outcome(&identity_55, 55, 6, false)?;
     report.push_str("55) job_id 불일치 identity conflict를 IDENTITY_CONFLICT로 거부\n");
 
-    let revoked_dir_56 = tempfile::tempdir()
-        .map_err(|e| format!("resume revoked tempdir failed (56): {e}"))?;
+    let revoked_dir_56 =
+        tempfile::tempdir().map_err(|e| format!("resume revoked tempdir failed (56): {e}"))?;
     let lease_db_56 = revoked_dir_56.path().join("lease.sqlite3");
     let fence_db_56 = revoked_dir_56.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_56, &fence_db_56, 7, 60_000)?;
@@ -3258,60 +3425,102 @@ pub fn run() -> Result<String, String> {
         .mark_revoked(fixture.lease_id, 1)
         .map_err(|e| format!("resume revoke mutation failed (56): {e}"))?;
     let revoked_56 = run_resume_case(
-        &fixture, &lease_db_56, &fence_db_56, "resume-session-56",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false, false,
+        &fixture,
+        &lease_db_56,
+        &fence_db_56,
+        "resume-session-56",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        7,
+        false,
+        false,
     )?;
     assert_resume_outcome(&revoked_56, 56, 2, false)?;
     report.push_str("56) durable revoke 상태를 REVOKED로 판정\n");
 
-    let expired_dir_57 = tempfile::tempdir()
-        .map_err(|e| format!("resume expired tempdir failed (57): {e}"))?;
+    let expired_dir_57 =
+        tempfile::tempdir().map_err(|e| format!("resume expired tempdir failed (57): {e}"))?;
     let lease_db_57 = expired_dir_57.path().join("lease.sqlite3");
     let fence_db_57 = expired_dir_57.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_57, &fence_db_57, 7, 2_000)?;
     thread::sleep(Duration::from_millis(2_200));
     let expired_57 = run_resume_case(
-        &fixture, &lease_db_57, &fence_db_57, "resume-session-57",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, false, false,
+        &fixture,
+        &lease_db_57,
+        &fence_db_57,
+        "resume-session-57",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        7,
+        false,
+        false,
     )?;
     assert_resume_outcome(&expired_57, 57, 3, false)?;
     report.push_str("57) expires_at_unix_ms <= now 경계로 EXPIRED 판정\n");
 
-    let superseded_dir_58 = tempfile::tempdir()
-        .map_err(|e| format!("resume superseded tempdir failed (58): {e}"))?;
+    let superseded_dir_58 =
+        tempfile::tempdir().map_err(|e| format!("resume superseded tempdir failed (58): {e}"))?;
     let lease_db_58 = superseded_dir_58.path().join("lease.sqlite3");
     let fence_db_58 = superseded_dir_58.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_58, &fence_db_58, 7, 60_000)?;
     let superseded_58 = run_resume_case(
-        &fixture, &lease_db_58, &fence_db_58, "resume-session-58",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 6, false, false,
+        &fixture,
+        &lease_db_58,
+        &fence_db_58,
+        "resume-session-58",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        6,
+        false,
+        false,
     )?;
     assert_resume_outcome(&superseded_58, 58, 4, false)?;
     report.push_str("58) 요청 epoch < 저장 epoch 방향을 SUPERSEDED로 고정\n");
 
-    let ahead_dir_59 = tempfile::tempdir()
-        .map_err(|e| format!("resume epoch-ahead tempdir failed (59): {e}"))?;
+    let ahead_dir_59 =
+        tempfile::tempdir().map_err(|e| format!("resume epoch-ahead tempdir failed (59): {e}"))?;
     let lease_db_59 = ahead_dir_59.path().join("lease.sqlite3");
     let fence_db_59 = ahead_dir_59.path().join("fence.sqlite3");
     seed_resume_lease(&fixture, &lease_db_59, &fence_db_59, 7, 60_000)?;
     let ahead_59 = run_resume_case(
-        &fixture, &lease_db_59, &fence_db_59, "resume-session-59",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 8, false, false,
+        &fixture,
+        &lease_db_59,
+        &fence_db_59,
+        "resume-session-59",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        8,
+        false,
+        false,
     )?;
     assert_resume_outcome(&ahead_59, 59, 8, false)?;
     report.push_str("59) 요청 epoch > 저장 epoch을 EPOCH_AHEAD(enum 값 8)로 고정\n");
 
-    let unavailable_dir_60 = tempfile::tempdir()
-        .map_err(|e| format!("resume unavailable tempdir failed (60): {e}"))?;
+    let unavailable_dir_60 =
+        tempfile::tempdir().map_err(|e| format!("resume unavailable tempdir failed (60): {e}"))?;
     let lease_db_60 = unavailable_dir_60.path().join("lease.sqlite3");
     let fence_db_60 = unavailable_dir_60.path().join("fence.sqlite3");
     let unavailable_60 = run_resume_case(
-        &fixture, &lease_db_60, &fence_db_60, "resume-session-60",
-        fixture.lease_id, fixture.job_id, fixture.attempt_id, 7, true, true,
+        &fixture,
+        &lease_db_60,
+        &fence_db_60,
+        "resume-session-60",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        7,
+        true,
+        true,
     )?;
     if unavailable_60.coordinator_success
         || !unavailable_60.coordinator_stderr.contains("kind=storage")
-        || unavailable_60.coordinator_stdout.contains("resume_outcome=7")
+        || unavailable_60
+            .coordinator_stdout
+            .contains("resume_outcome=7")
         || unavailable_60.coordinator_stdout.contains(RESULT_OK_MARKER)
     {
         return Err(format!(
@@ -3336,17 +3545,35 @@ pub fn run() -> Result<String, String> {
     let transport_61 = run_two_connection_case(
         &fixture,
         &[
-            "--lease-db", transport_lease_db_61, "--max-connections", "2",
-            "--accept-timeout-ms", "5000", "--do-renew", "false",
+            "--lease-db",
+            transport_lease_db_61,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--do-renew",
+            "false",
         ],
         true,
     )?;
     if !transport_61.coordinator_success
         || !transport_61.second_agent_success
-        || transport_61.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 2
+        || transport_61
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 2
         || !transport_61.coordinator_stderr.contains("kind=transport")
-        || transport_61.coordinator_stdout.matches(RESULT_OK_MARKER).count() != 1
-        || transport_61.second_agent_stdout.matches(RESULT_OK_MARKER).count() != 1
+        || transport_61
+            .coordinator_stdout
+            .matches(RESULT_OK_MARKER)
+            .count()
+            != 1
+        || transport_61
+            .second_agent_stdout
+            .matches(RESULT_OK_MARKER)
+            .count()
+            != 1
     {
         return Err(format!(
             "61) transport isolation failed: coordinator={:?} stderr={:?} agent={:?}",
@@ -3359,8 +3586,8 @@ pub fn run() -> Result<String, String> {
 
     // 62. A forged Agent ACK is a protocol error. It must not poison the
     // accept loop; a second valid Agent session still completes.
-    let protocol_dir_62 = tempfile::tempdir()
-        .map_err(|e| format!("protocol dispatcher tempdir failed (62): {e}"))?;
+    let protocol_dir_62 =
+        tempfile::tempdir().map_err(|e| format!("protocol dispatcher tempdir failed (62): {e}"))?;
     let protocol_lease_db_62 = protocol_dir_62.path().join("lease.sqlite3");
     let protocol_lease_db_62 = protocol_lease_db_62
         .to_str()
@@ -3368,18 +3595,36 @@ pub fn run() -> Result<String, String> {
     let protocol_62 = run_two_connection_case(
         &fixture,
         &[
-            "--lease-db", protocol_lease_db_62, "--max-connections", "2",
-            "--accept-timeout-ms", "5000", "--do-renew", "false",
+            "--lease-db",
+            protocol_lease_db_62,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--do-renew",
+            "false",
         ],
         false,
     )?;
     if !protocol_62.coordinator_success
         || protocol_62.first_agent_success
         || !protocol_62.second_agent_success
-        || protocol_62.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 2
+        || protocol_62
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 2
         || !protocol_62.coordinator_stderr.contains("kind=protocol")
-        || protocol_62.coordinator_stdout.matches(RESULT_OK_MARKER).count() != 1
-        || protocol_62.second_agent_stdout.matches(RESULT_OK_MARKER).count() != 1
+        || protocol_62
+            .coordinator_stdout
+            .matches(RESULT_OK_MARKER)
+            .count()
+            != 1
+        || protocol_62
+            .second_agent_stdout
+            .matches(RESULT_OK_MARKER)
+            .count()
+            != 1
     {
         return Err(format!(
             "62) protocol isolation failed: coordinator={:?} stderr={:?} first={:?} second={:?}",
@@ -3393,8 +3638,8 @@ pub fn run() -> Result<String, String> {
 
     // 63. Opening a lease DB below a missing parent is a storage failure before
     // bind. It must fail closed and must never enter the accept loop.
-    let storage_dir_63 = tempfile::tempdir()
-        .map_err(|e| format!("storage dispatcher tempdir failed (63): {e}"))?;
+    let storage_dir_63 =
+        tempfile::tempdir().map_err(|e| format!("storage dispatcher tempdir failed (63): {e}"))?;
     let missing_parent_63 = storage_dir_63.path().join("missing-parent");
     let missing_lease_db_63 = missing_parent_63.join("lease.sqlite3");
     let missing_lease_db_63 = missing_lease_db_63
@@ -3435,10 +3680,20 @@ pub fn run() -> Result<String, String> {
         &resume_storage_fence_db_64,
     )?;
     if resume_storage_64.coordinator_success
-        || !resume_storage_64.coordinator_stderr.contains("kind=storage")
-        || resume_storage_64.coordinator_stdout.contains("resume_outcome=7")
-        || resume_storage_64.coordinator_stdout.matches("CONNECTION_ATTEMPT").count() != 1
-        || resume_storage_64.coordinator_stdout.contains(RESULT_OK_MARKER)
+        || !resume_storage_64
+            .coordinator_stderr
+            .contains("kind=storage")
+        || resume_storage_64
+            .coordinator_stdout
+            .contains("resume_outcome=7")
+        || resume_storage_64
+            .coordinator_stdout
+            .matches("CONNECTION_ATTEMPT")
+            .count()
+            != 1
+        || resume_storage_64
+            .coordinator_stdout
+            .contains(RESULT_OK_MARKER)
     {
         return Err(format!(
             "64) Resume storage fail-closed failed: coordinator_success={} stdout={:?} stderr={:?} agent_success={} agent_stderr={:?}",
@@ -3467,16 +3722,32 @@ pub fn run() -> Result<String, String> {
     let recovered_65 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_65, "--max-connections", "2",
-            "--accept-timeout-ms", "5000",
-            "--drop-after-renew-commit-before-result-once", "true",
-            "--do-renew", "true",
+            "--lease-db",
+            lease_db_65,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-after-renew-commit-before-result-once",
+            "true",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_65, "--do-renew", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_65,
+            "--do-renew",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--max-reconnect-attempts",
+            "3",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
     let committed_expiry_65 = output_u64_field(
@@ -3511,7 +3782,11 @@ pub fn run() -> Result<String, String> {
             .count()
             != 2
         || recovered_65.agent_stdout.matches("LEASE_ACCEPTED").count() != 2
-        || recovered_65.agent_stdout.matches("RENEW_RESULT ok=true").count() != 1
+        || recovered_65
+            .agent_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 1
         || committed_expiry_65 != regranted_expiry_65
         || first_nonce_65 == second_nonce_65
     {
@@ -3546,25 +3821,42 @@ pub fn run() -> Result<String, String> {
     let revoked_66 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_66, "--max-connections", "2",
-            "--accept-timeout-ms", "5000",
-            "--drop-after-renew-commit-before-result-once", "true",
-            "--revoke-before-drop", "true", "--do-renew", "true",
+            "--lease-db",
+            lease_db_66,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-after-renew-commit-before-result-once",
+            "true",
+            "--revoke-before-drop",
+            "true",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_66, "--do-renew", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_66,
+            "--do-renew",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
-    let revoked_record_66 = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(
-        &lease_db_path_66,
-    )
-    .map_err(|e| format!("66) reopen lease store failed: {e}"))?
-    .get(fixture.lease_id)
-    .map_err(|e| format!("66) read revoked lease failed: {e}"))?
-    .ok_or_else(|| "66) revoked lease disappeared".to_string())?;
+    let revoked_record_66 =
+        gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&lease_db_path_66)
+            .map_err(|e| format!("66) reopen lease store failed: {e}"))?
+            .get(fixture.lease_id)
+            .map_err(|e| format!("66) read revoked lease failed: {e}"))?
+            .ok_or_else(|| "66) revoked lease disappeared".to_string())?;
     if revoked_66.agent_success
         || revoked_66.coordinator_success
         || revoked_record_66.revoked_at_unix_ms.is_none()
@@ -3598,24 +3890,47 @@ pub fn run() -> Result<String, String> {
     let expired_67 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_67, "--max-connections", "2",
-            "--accept-timeout-ms", "5000",
-            "--drop-after-renew-commit-before-result-once", "true",
-            "--renew-extension-ms", "300", "--pause-before-next-accept-ms", "600",
-            "--lease-ttl-ms", "5000", "--do-renew", "true",
+            "--lease-db",
+            lease_db_67,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-after-renew-commit-before-result-once",
+            "true",
+            "--renew-extension-ms",
+            "300",
+            "--pause-before-next-accept-ms",
+            "600",
+            "--lease-ttl-ms",
+            "5000",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_67, "--do-renew", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_67,
+            "--do-renew",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
     if expired_67.agent_success
         || expired_67.coordinator_success
         || !expired_67.coordinator_stderr.contains("expired")
         || !expired_67.agent_stderr.contains("ReconnectExhausted")
-        || expired_67.agent_stdout.contains("LEASE_ACCEPTED connection_attempt=1")
+        || expired_67
+            .agent_stdout
+            .contains("LEASE_ACCEPTED connection_attempt=1")
     {
         return Err(format!(
             "67) expiry bypassed ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
@@ -3642,17 +3957,36 @@ pub fn run() -> Result<String, String> {
     let maxed_68 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_68, "--max-connections", "2",
-            "--accept-timeout-ms", "5000",
-            "--drop-after-renew-commit-before-result-once", "true",
-            "--max-total-duration-seconds", "1", "--pause-before-next-accept-ms", "1200",
-            "--do-renew", "true",
+            "--lease-db",
+            lease_db_68,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-after-renew-commit-before-result-once",
+            "true",
+            "--max-total-duration-seconds",
+            "1",
+            "--pause-before-next-accept-ms",
+            "1200",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_68, "--do-renew", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_68,
+            "--do-renew",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
     if !maxed_68.coordinator_success
@@ -3663,9 +3997,7 @@ pub fn run() -> Result<String, String> {
         || !maxed_68
             .agent_stderr
             .contains("RENEW_REFUSED:MAX_DURATION_EXCEEDED")
-        || maxed_68
-            .agent_stderr
-            .contains("ReconnectExhausted")
+        || maxed_68.agent_stderr.contains("ReconnectExhausted")
     {
         return Err(format!(
             "68) max-duration bypassed ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
@@ -3692,16 +4024,34 @@ pub fn run() -> Result<String, String> {
     let replayed_69 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_69, "--max-connections", "2",
-            "--accept-timeout-ms", "5000",
-            "--drop-after-renew-commit-before-result-once", "true", "--do-renew", "true",
+            "--lease-db",
+            lease_db_69,
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-after-renew-commit-before-result-once",
+            "true",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_69, "--do-renew", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--reuse-renew-nonce-after-reconnect", "true",
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_69,
+            "--do-renew",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--reuse-renew-nonce-after-reconnect",
+            "true",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
     let replay_error_69 = replayed_69.coordinator_stderr.to_ascii_lowercase();
@@ -3735,14 +4085,28 @@ pub fn run() -> Result<String, String> {
     let legacy_70 = run_reconnect_case(
         &fixture,
         &[
-            "--max-connections", "1", "--accept-timeout-ms", "5000",
-            "--do-renew", "true",
+            "--max-connections",
+            "1",
+            "--accept-timeout-ms",
+            "5000",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_70, "--do-renew", "true",
-            "--drop-after-renew-request-once", "true",
-            "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_70,
+            "--do-renew",
+            "true",
+            "--drop-after-renew-request-once",
+            "true",
+            "--max-reconnect-attempts",
+            "3",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
     if legacy_70.agent_success
@@ -3783,15 +4147,32 @@ pub fn run() -> Result<String, String> {
     let exhausted_71 = run_reconnect_case(
         &fixture,
         &[
-            "--lease-db", lease_db_71, "--max-connections", "1",
-            "--accept-timeout-ms", "5000",
-            "--drop-after-renew-commit-before-result-once", "true", "--do-renew", "true",
+            "--lease-db",
+            lease_db_71,
+            "--max-connections",
+            "1",
+            "--accept-timeout-ms",
+            "5000",
+            "--drop-after-renew-commit-before-result-once",
+            "true",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_71, "--do-renew", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "3",
-            "--retry-base-ms", "10", "--retry-cap-ms", "25",
+            "--fence-db",
+            fence_db_71,
+            "--do-renew",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--max-reconnect-attempts",
+            "3",
+            "--max-reconnect-duration-seconds",
+            "3",
+            "--retry-base-ms",
+            "10",
+            "--retry-cap-ms",
+            "25",
         ],
     )?;
     let exhausted_elapsed_71 = exhausted_started_71.elapsed();
@@ -3834,15 +4215,30 @@ pub fn run() -> Result<String, String> {
     let legacy_recovery_72 = run_reconnect_case(
         &fixture,
         &[
-            "--max-connections", "2", "--accept-timeout-ms", "5000",
-            "--do-renew", "true",
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "5000",
+            "--do-renew",
+            "true",
         ],
         &[
-            "--fence-db", fence_db_72, "--do-renew", "true",
-            "--drop-after-renew-request-once", "true",
-            "--recover-ambiguous-renew-from-durable-lease", "true",
-            "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5",
-            "--retry-base-ms", "1", "--retry-cap-ms", "1",
+            "--fence-db",
+            fence_db_72,
+            "--do-renew",
+            "true",
+            "--drop-after-renew-request-once",
+            "true",
+            "--recover-ambiguous-renew-from-durable-lease",
+            "true",
+            "--max-reconnect-attempts",
+            "2",
+            "--max-reconnect-duration-seconds",
+            "5",
+            "--retry-base-ms",
+            "1",
+            "--retry-cap-ms",
+            "1",
         ],
     )?;
     if legacy_recovery_72.agent_success
@@ -3850,7 +4246,9 @@ pub fn run() -> Result<String, String> {
         || !legacy_recovery_72
             .agent_stderr
             .contains("DURABLE_LEASE_RECOVERY_REFUSED")
-        || legacy_recovery_72.agent_stderr.contains("ReconnectExhausted")
+        || legacy_recovery_72
+            .agent_stderr
+            .contains("ReconnectExhausted")
         || legacy_recovery_72
             .coordinator_stdout
             .matches("CONNECTION_ATTEMPT")
@@ -3859,7 +4257,11 @@ pub fn run() -> Result<String, String> {
         || legacy_recovery_72
             .agent_stdout
             .contains("LEASE_ACCEPTED connection_attempt=1")
-        || legacy_recovery_72.agent_stdout.matches("RENEW_RESULT ok=true").count() != 0
+        || legacy_recovery_72
+            .agent_stdout
+            .matches("RENEW_RESULT ok=true")
+            .count()
+            != 0
     {
         return Err(format!(
             "72) legacy Coordinator was accepted as durable recovery authority: coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
@@ -3948,12 +4350,25 @@ fn run_two_connection_case(
     let deadline = Instant::now() + Duration::from_secs(120);
     let coordinator_seed_hex = to_hex(&fixture.coordinator_seed);
     let mut coordinator_args: Vec<String> = vec![
-        "coordinator-stub", "--listen", "127.0.0.1:0", "--own-seed",
-        coordinator_seed_hex.as_str(), "--peer-pubkey", fixture.agent_pub_hex.as_str(),
-        "--coordinator-device-id", fixture.coordinator_device_id,
-        "--agent-device-id", fixture.agent_device_id, "--grant-id", fixture.grant_id,
-        "--attempt-id", fixture.attempt_id, "--lease-id", fixture.lease_id,
-        "--job-id", fixture.job_id,
+        "coordinator-stub",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        coordinator_seed_hex.as_str(),
+        "--peer-pubkey",
+        fixture.agent_pub_hex.as_str(),
+        "--coordinator-device-id",
+        fixture.coordinator_device_id,
+        "--agent-device-id",
+        fixture.agent_device_id,
+        "--grant-id",
+        fixture.grant_id,
+        "--attempt-id",
+        fixture.attempt_id,
+        "--lease-id",
+        fixture.lease_id,
+        "--job-id",
+        fixture.job_id,
     ]
     .into_iter()
     .map(str::to_owned)
@@ -3992,16 +4407,17 @@ fn run_two_connection_case(
         reader.read_to_string(&mut output)?;
         Ok(output)
     });
-    let ready_line = match ready_receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(line) => line,
-        Err(error) => {
-            let _ = coordinator.kill();
-            let _ = coordinator.wait();
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            return Err(format!("two-connection Coordinator READY timeout: {error}"));
-        }
-    };
+    let ready_line =
+        match ready_receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(line) => line,
+            Err(error) => {
+                let _ = coordinator.kill();
+                let _ = coordinator.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!("two-connection Coordinator READY timeout: {error}"));
+            }
+        };
     let address = ready_line
         .trim()
         .strip_prefix("READY ")
@@ -4062,9 +4478,9 @@ fn run_wire_agent_client(
     connection_attempt: u32,
     corrupt_signature: bool,
 ) -> Result<WireClientOutcome, String> {
+    use gputeer_crypto::Clock;
     use std::io::Write;
     use std::time::Duration;
-    use gputeer_crypto::Clock;
 
     let mut stream = std::net::TcpStream::connect(address)
         .map_err(|e| format!("wire Agent connect failed: {e}"))?;
@@ -4075,8 +4491,8 @@ fn run_wire_agent_client(
         .set_write_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| format!("wire Agent write timeout setup failed: {e}"))?;
 
-    let coordinator_key = gputeer_crypto::SigningKey::from_bytes(&fixture.coordinator_seed)
-        .verifying_key();
+    let coordinator_key =
+        gputeer_crypto::SigningKey::from_bytes(&fixture.coordinator_seed).verifying_key();
     let mut coordinator_keys = gputeer_crypto::InMemoryKeyring::new();
     coordinator_keys.insert(fixture.coordinator_device_id.to_owned(), coordinator_key);
     let mut replay = gputeer_crypto::InMemoryReplayGuard::new();
@@ -4123,11 +4539,9 @@ fn run_wire_agent_client(
             .ok_or_else(|| "wire Agent signature is empty".to_string())?;
         *last ^= 0x01;
     }
-    let frame = gputeer_crypto::write_frame(
-        gputeer_crypto::FrameType::GrantAck,
-        &ack.encode_to_vec(),
-    )
-    .map_err(|e| format!("wire Agent ACK encode failed: {e}"))?;
+    let frame =
+        gputeer_crypto::write_frame(gputeer_crypto::FrameType::GrantAck, &ack.encode_to_vec())
+            .map_err(|e| format!("wire Agent ACK encode failed: {e}"))?;
     stream
         .write_all(&frame)
         .map_err(|e| format!("wire Agent ACK write failed: {e}"))?;
@@ -4177,7 +4591,10 @@ fn wait_child_with_drain(mut child: Child, deadline: Instant) -> Result<Output, 
         Ok(output)
     });
     let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| format!("child wait failed: {e}"))? {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("child wait failed: {e}"))?
+        {
             break status;
         }
         if Instant::now() >= deadline {
@@ -4195,7 +4612,11 @@ fn wait_child_with_drain(mut child: Child, deadline: Instant) -> Result<Output, 
         .join()
         .map_err(|_| "child stderr reader panicked".to_string())?
         .map_err(|e| format!("child stderr read failed: {e}"))?;
-    Ok(Output { status, stdout, stderr })
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 fn run_coordinator_startup_case(
@@ -4204,12 +4625,25 @@ fn run_coordinator_startup_case(
 ) -> Result<CoordinatorOnlyOutcome, String> {
     let coordinator_seed_hex = to_hex(&fixture.coordinator_seed);
     let mut args: Vec<String> = vec![
-        "coordinator-stub", "--listen", "127.0.0.1:0", "--own-seed",
-        coordinator_seed_hex.as_str(), "--peer-pubkey", fixture.agent_pub_hex.as_str(),
-        "--coordinator-device-id", fixture.coordinator_device_id,
-        "--agent-device-id", fixture.agent_device_id, "--grant-id", fixture.grant_id,
-        "--attempt-id", fixture.attempt_id, "--lease-id", fixture.lease_id,
-        "--job-id", fixture.job_id,
+        "coordinator-stub",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        coordinator_seed_hex.as_str(),
+        "--peer-pubkey",
+        fixture.agent_pub_hex.as_str(),
+        "--coordinator-device-id",
+        fixture.coordinator_device_id,
+        "--agent-device-id",
+        fixture.agent_device_id,
+        "--grant-id",
+        fixture.grant_id,
+        "--attempt-id",
+        fixture.attempt_id,
+        "--lease-id",
+        fixture.lease_id,
+        "--job-id",
+        fixture.job_id,
     ]
     .into_iter()
     .map(str::to_owned)

@@ -20,9 +20,9 @@ use std::time::Duration;
 
 use gputeer_checkpoint::durability::record_initial_state;
 use gputeer_crypto::{
-    read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, InMemoryKeyring,
-    FramingError, InMemoryReplayGuard, IngressMessage, KeyDirectorySource, SigningKey, SystemClock,
-    VerifyingKey,
+    read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, FramingError,
+    InMemoryKeyring, InMemoryReplayGuard, IngressMessage, KeyDirectorySource, SigningKey,
+    SystemClock, VerifyingKey,
 };
 use gputeer_protocol::{pb, verify};
 use gputeer_runtime_policy::{DurableFenceError, DurableFenceWatermark};
@@ -80,10 +80,16 @@ impl RetryBudget {
         }
     }
 
-    fn update_lease_deadline(&mut self, expires_at_unix_ms: u64, now_unix_ms: u64, policy: &RetryPolicy) {
+    fn update_lease_deadline(
+        &mut self,
+        expires_at_unix_ms: u64,
+        now_unix_ms: u64,
+        policy: &RetryPolicy,
+    ) {
         self.lease_expires_at_unix_ms = Some(expires_at_unix_ms);
         let remaining_ms = expires_at_unix_ms.saturating_sub(now_unix_ms);
-        let lease_duration = Duration::from_millis(remaining_ms.saturating_sub(policy.safety_margin_ms));
+        let lease_duration =
+            Duration::from_millis(remaining_ms.saturating_sub(policy.safety_margin_ms));
         self.deadline = self
             .started_at
             .checked_add(policy.max_duration)
@@ -266,30 +272,29 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             std::thread::sleep(jitter);
         }
 
-        let connection_result = match connect_with_timeout(
-            &config.coordinator_addr,
-            policy.connect_timeout,
-        ) {
-            Ok(stream) => {
-                let mut attempt_config = config.clone();
-                // Only successful TCP connects consume nonce attempts. A
-                // refused/timed-out connect cannot have reached accept().
-                attempt_config.connection_attempt = next_connection_attempt(&mut connection_attempt);
-                run_one_connection(
-                    attempt_config,
-                    stream,
-                    recovering_ambiguous_renew,
-                    &signing_key,
-                    &mut coordinator_keys,
-                    &mut replay,
-                    &clock,
-                    &mut fence_watermark,
-                    &mut budget,
-                    &policy,
-                )
-            }
-            Err(error) => Err(format!("Coordinator connect failed: {error}")),
-        };
+        let connection_result =
+            match connect_with_timeout(&config.coordinator_addr, policy.connect_timeout) {
+                Ok(stream) => {
+                    let mut attempt_config = config.clone();
+                    // Only successful TCP connects consume nonce attempts. A
+                    // refused/timed-out connect cannot have reached accept().
+                    attempt_config.connection_attempt =
+                        next_connection_attempt(&mut connection_attempt);
+                    run_one_connection(
+                        attempt_config,
+                        stream,
+                        recovering_ambiguous_renew,
+                        &signing_key,
+                        &mut coordinator_keys,
+                        &mut replay,
+                        &clock,
+                        &mut fence_watermark,
+                        &mut budget,
+                        &policy,
+                    )
+                }
+                Err(error) => Err(format!("Coordinator connect failed: {error}")),
+            };
         match connection_result {
             Ok(()) => return Ok(()),
             Err(error) => match SessionError::from(error) {
@@ -407,8 +412,14 @@ fn run_resume_connection(
                 .lease
                 .clone()
                 .ok_or_else(|| "RESUME_REJECTED: RESUMED 결과에 Lease가 없다".to_string())?;
-            let verified_lease = verify(&lease, 1, &Ed25519Verifier::new(&*coordinator_keys), clock.now_unix_ms(), replay)
-                .map_err(|e| format!("RESUME_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
+            let verified_lease = verify(
+                &lease,
+                1,
+                &Ed25519Verifier::new(&*coordinator_keys),
+                clock.now_unix_ms(),
+                replay,
+            )
+            .map_err(|e| format!("RESUME_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
             if verified_lease.get().lease_id != request.lease_id
                 || verified_lease.get().job_id != request.job_id
                 || verified_lease.get().attempt_id != request.attempt_id
@@ -456,7 +467,10 @@ fn run_resume_connection(
                 "RESUME_RESULT ok=true outcome=1 lease_id={} connection_attempt={}",
                 request.lease_id, request.connection_attempt
             );
-            println!("RESULT ok=true resume_outcome=1 lease_id={}", request.lease_id);
+            println!(
+                "RESULT ok=true resume_outcome=1 lease_id={}",
+                request.lease_id
+            );
             Ok(())
         }
         7 => Err(format!(
@@ -470,7 +484,8 @@ fn run_resume_connection(
         6 => Err("RESUME_REFUSED:IDENTITY_CONFLICT".into()),
         8 => Err("RESUME_REFUSED:EPOCH_AHEAD".into()),
         outcome => Err(format!(
-            "RESUME_REJECTED: outcome={} detail={}", outcome, result.detail
+            "RESUME_REJECTED: outcome={} detail={}",
+            outcome, result.detail
         )),
     }
 }
@@ -583,11 +598,7 @@ fn run_one_connection(
         &mut replay,
         &mut fence_watermark,
     )?;
-    budget.update_lease_deadline(
-        held_lease.expires_at_unix_ms,
-        clock.now_unix_ms(),
-        policy,
-    );
+    budget.update_lease_deadline(held_lease.expires_at_unix_ms, clock.now_unix_ms(), policy);
     println!(
         "LEASE_ACCEPTED connection_attempt={} lease_id={} issued_at_unix_ms={} expires_at_unix_ms={}",
         config.connection_attempt,
@@ -707,12 +718,19 @@ fn run_one_connection(
     //   (2026-08-19, `docs/plans/2026-08-19_2330_...`)이 추가되면서
     //   왕복을 `renew_rounds` 만큼 반복한다 — 기본값 1이면 기존
     //   단일 왕복과 동일하다.
-    for round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
+    for round in if config.do_renew {
+        0..config.renew_rounds
+    } else {
+        0..0
+    } {
         if revoked {
             // revoke 뒤에는 request 생성·서명·전송보다 먼저 로컬에서
             // 멈춘다. Coordinator가 다음 frame을 기다리지 않도록
             // 이 연결의 작업도 여기서 정상 종료한다.
-            println!("RENEW_BLOCKED: lease revoked lease_id={}", held_lease.lease_id);
+            println!(
+                "RENEW_BLOCKED: lease revoked lease_id={}",
+                held_lease.lease_id
+            );
             break;
         }
 
@@ -796,9 +814,7 @@ fn run_one_connection(
         //   request_nonce 가 우리가 보낸 요청과 다르면, 이 결과가 다른
         //   갱신 요청에 대한 응답이 재사용되고 있다는 뜻이다.
         if result.request_nonce != renew_req.nonce {
-            return Err(
-                "RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다".into(),
-            );
+            return Err("RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다".into());
         }
         if result.coordinator_id != config.coordinator_device_id {
             return Err(format!(
@@ -811,10 +827,9 @@ fn run_one_connection(
             1 => {
                 // RENEW_OUTCOME_RENEWED — nested Lease 는 outer 결과
                 // 서명과 **무관하게** 독립적으로 검증한다(규칙 i).
-                let new_lease = result
-                    .lease
-                    .clone()
-                    .ok_or_else(|| "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string())?;
+                let new_lease = result.lease.clone().ok_or_else(|| {
+                    "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string()
+                })?;
 
                 let verifier = Ed25519Verifier::new(&*coordinator_keys);
                 let verified_lease = verify(&new_lease, 1, &verifier, clock.now_unix_ms(), replay)
@@ -832,11 +847,14 @@ fn run_one_connection(
                 }
                 if new_lease.issuing_coordinator_id != config.coordinator_device_id {
                     return Err(
-                        "RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다".into(),
+                        "RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다"
+                            .into(),
                     );
                 }
                 if new_lease.holder_node_id != config.agent_device_id {
-                    return Err("RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into());
+                    return Err(
+                        "RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into(),
+                    );
                 }
 
                 // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — epoch **상승**은
@@ -1164,7 +1182,10 @@ fn peer_closed_after_ack(stream: &TcpStream) -> Result<bool, String> {
                     | ErrorKind::ConnectionAborted
                     | ErrorKind::BrokenPipe
                     | ErrorKind::NotConnected
-            ) => Ok(true),
+            ) =>
+        {
+            Ok(true)
+        }
         Err(error) => Err(error.to_string()),
     }
 }
@@ -1249,10 +1270,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
         revoke_signer_id_override: flags.0.get("--revoke-signer-id").cloned(),
         max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
-        max_reconnect_duration_seconds: flags.u64_flag_with_default(
-            "--max-reconnect-duration-seconds",
-            60,
-        )?,
+        max_reconnect_duration_seconds: flags
+            .u64_flag_with_default("--max-reconnect-duration-seconds", 60)?,
         retry_base_ms: flags.u64_flag_with_default("--retry-base-ms", 250)?,
         retry_cap_ms: flags.u64_flag_with_default("--retry-cap-ms", 5_000)?,
         connection_attempt: 0,
@@ -1260,17 +1279,24 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         recover_ambiguous_renew_from_durable_lease: flags
             .bool_flag("--recover-ambiguous-renew-from-durable-lease"),
         drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
-        reuse_renew_nonce_after_reconnect: flags
-            .bool_flag("--reuse-renew-nonce-after-reconnect"),
+        reuse_renew_nonce_after_reconnect: flags.bool_flag("--reuse-renew-nonce-after-reconnect"),
         resume_protocol: flags.bool_flag("--resume-protocol"),
         session_id: flags
             .0
             .get("--session-id")
             .cloned()
             .unwrap_or_else(|| "resume-session".into()),
-        resume_lease_id: flags.0.get("--resume-lease-id").cloned().unwrap_or_default(),
+        resume_lease_id: flags
+            .0
+            .get("--resume-lease-id")
+            .cloned()
+            .unwrap_or_default(),
         resume_job_id: flags.0.get("--resume-job-id").cloned().unwrap_or_default(),
-        resume_attempt_id: flags.0.get("--resume-attempt-id").cloned().unwrap_or_default(),
+        resume_attempt_id: flags
+            .0
+            .get("--resume-attempt-id")
+            .cloned()
+            .unwrap_or_default(),
         resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
     };
 
@@ -1323,7 +1349,9 @@ impl Flags {
     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
         match self.0.get(key) {
             None => Ok(default),
-            Some(v) => v.parse::<u32>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+            Some(v) => v
+                .parse::<u32>()
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 
@@ -1332,7 +1360,9 @@ impl Flags {
     fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
         match self.0.get(key) {
             None => Ok(default),
-            Some(v) => v.parse::<u64>().map_err(|e| format!("{key} parse failed: {e}")),
+            Some(v) => v
+                .parse::<u64>()
+                .map_err(|e| format!("{key} parse failed: {e}")),
         }
     }
 
@@ -1420,7 +1450,10 @@ mod tests {
         let address = reserved.local_addr().expect("read reserved address");
         drop(reserved);
         let refused = TcpStream::connect_timeout(&address, Duration::from_millis(100));
-        assert!(refused.is_err(), "test setup must provide a refused TCP port");
+        assert!(
+            refused.is_err(),
+            "test setup must provide a refused TCP port"
+        );
 
         let tempdir = tempfile::tempdir().expect("create agent test directory");
         let fence_path = tempdir.path().join("fence.sqlite3");
@@ -1466,7 +1499,10 @@ mod tests {
         // connect() calls before opening the successful retry listener.
         let setup_deadline = Instant::now() + Duration::from_secs(5);
         while !fence_path.exists() {
-            assert!(Instant::now() < setup_deadline, "Agent did not initialize its fence DB");
+            assert!(
+                Instant::now() < setup_deadline,
+                "Agent did not initialize its fence DB"
+            );
             thread::sleep(Duration::from_millis(10));
         }
         thread::sleep(Duration::from_secs(5));
@@ -1480,7 +1516,10 @@ mod tests {
             match listener.accept() {
                 Ok((stream, _)) => break stream,
                 Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    assert!(Instant::now() < accept_deadline, "Agent never reached successful TCP connect");
+                    assert!(
+                        Instant::now() < accept_deadline,
+                        "Agent never reached successful TCP connect"
+                    );
                     thread::sleep(Duration::from_millis(10));
                 }
                 Err(error) => panic!("accept successful retry connection: {error}"),
@@ -1528,8 +1567,8 @@ mod tests {
         };
         grant.coordinator_signature = sign(&coordinator_key, &grant).to_vec();
 
-        let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
-            .expect("encode test Grant frame");
+        let frame =
+            write_frame(FrameType::Grant, &grant.encode_to_vec()).expect("encode test Grant frame");
         stream.write_all(&frame).expect("send test Grant");
         stream.flush().expect("flush test Grant");
         assert_eq!(grant.nonce, derive_nonce("grant", grant_id, 0));
@@ -1560,7 +1599,10 @@ mod tests {
             other => panic!("expected GrantAck, got {other:?}; Agent result: {agent_result:?}"),
         };
         assert_eq!(ack.nonce, derive_nonce("grant-ack", grant_id, 0));
-        assert!(agent_result.is_ok(), "production Agent run failed: {agent_result:?}");
+        assert!(
+            agent_result.is_ok(),
+            "production Agent run failed: {agent_result:?}"
+        );
     }
 
     fn held_lease() -> pb::Lease {

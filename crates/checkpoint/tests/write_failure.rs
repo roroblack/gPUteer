@@ -24,8 +24,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use gputeer_checkpoint::durability::{
-    publication_failed_marker_path, state_recorded, DurabilityState,
-    MANIFEST_FILENAME,
+    publication_failed_marker_path, state_recorded, DurabilityState, MANIFEST_FILENAME,
 };
 use gputeer_checkpoint::writer::{
     find_resume_point_for, manifest_for, startup_gc, write_checkpoint,
@@ -35,12 +34,7 @@ use gputeer_checkpoint::CheckpointManifest;
 const JOB: &str = "job-write-failure";
 const ATTEMPT: &str = "attempt-write-failure";
 
-fn put(
-    root: &Path,
-    id: &str,
-    step: u64,
-    files: &[(String, Vec<u8>)],
-) -> CheckpointManifest {
+fn put(root: &Path, id: &str, step: u64, files: &[(String, Vec<u8>)]) -> CheckpointManifest {
     let mut manifest = manifest_for(id, JOB, ATTEMPT, step, 1, files);
     manifest.created_at_unix_ms = step;
 

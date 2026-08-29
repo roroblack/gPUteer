@@ -70,9 +70,18 @@ pub(crate) enum PlacementToStagingOutcome {
 pub(crate) enum PlacementToStagingError {
     Inventory(InventoryStoreError),
     Ranking(RankingError),
-    SelectedCandidateNotUnique { node_id: String, matches: usize },
-    SelectedCandidateMissingInventoryRevision { node_id: String },
-    SelectedGpuCountMismatch { node_id: String, required: u32, actual: usize },
+    SelectedCandidateNotUnique {
+        node_id: String,
+        matches: usize,
+    },
+    SelectedCandidateMissingInventoryRevision {
+        node_id: String,
+    },
+    SelectedGpuCountMismatch {
+        node_id: String,
+        required: u32,
+        actual: usize,
+    },
     Staging(ReservedStageError),
 }
 
@@ -143,11 +152,8 @@ pub(crate) fn orchestrate_placement_to_staging(
     input: &PlacementToStagingInput,
 ) -> Result<PlacementToStagingOutcome, PlacementToStagingError> {
     let pool = inventory_store.pool_snapshot(input.evaluated_at_unix_ms)?;
-    let eligibility = evaluate_eligibility(
-        &pool,
-        &input.job_requirements,
-        &input.hard_filter_policy,
-    );
+    let eligibility =
+        evaluate_eligibility(&pool, &input.job_requirements, &input.hard_filter_policy);
 
     let (selected_node_id, ranking) = match &eligibility.resolution {
         EligibilityResolution::NoEligibleCandidates => {
@@ -193,10 +199,11 @@ pub(crate) fn orchestrate_placement_to_staging(
             actual: selected_gpu_ids.len(),
         });
     }
-    let expected_inventory_revision = matching_candidates[0]
-        .inventory_revision
-        .ok_or_else(|| PlacementToStagingError::SelectedCandidateMissingInventoryRevision {
-            node_id: selected_node_id.clone(),
+    let expected_inventory_revision =
+        matching_candidates[0].inventory_revision.ok_or_else(|| {
+            PlacementToStagingError::SelectedCandidateMissingInventoryRevision {
+                node_id: selected_node_id.clone(),
+            }
         })?;
     let request = StageQueuedRequest {
         operation_key: input.issuance.operation_key,
@@ -296,12 +303,7 @@ mod tests {
             );
         }
 
-        fn add_candidate_gpus(
-            &mut self,
-            node_id: &str,
-            key_byte: u8,
-            gpus: Vec<GpuInventory>,
-        ) {
+        fn add_candidate_gpus(&mut self, node_id: &str, key_byte: u8, gpus: Vec<GpuInventory>) {
             self.inventory_store
                 .register_agent(&AgentRegistry {
                     node_id: node_id.into(),
@@ -324,9 +326,7 @@ mod tests {
                     available_cpu_cores: Some(8),
                     available_ram_bytes: Some(64),
                     available_workspace_bytes: Some(64),
-                    allowed_workload_classes: Some(BTreeSet::from([
-                        WorkloadClass::Training,
-                    ])),
+                    allowed_workload_classes: Some(BTreeSet::from([WorkloadClass::Training])),
                     third_party_workloads_opt_in: None,
                 })
                 .unwrap();
@@ -401,8 +401,14 @@ mod tests {
             PlacementToStagingOutcome::NoEligible { ref eligibility }
                 if eligibility.resolution == EligibilityResolution::NoEligibleCandidates
         ));
-        assert_eq!(fixture.job_store.get("job-1").unwrap().unwrap().state, JobState::Queued);
-        assert_eq!(fixture.staging_store.get_attempt("attempt-1").unwrap(), None);
+        assert_eq!(
+            fixture.job_store.get("job-1").unwrap().unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(
+            fixture.staging_store.get_attempt("attempt-1").unwrap(),
+            None
+        );
         assert_eq!(fixture.staging_store.fence_epoch().unwrap(), None);
     }
 
@@ -574,9 +580,7 @@ mod tests {
                 available_cpu_cores: Some(8),
                 available_ram_bytes: Some(64),
                 available_workspace_bytes: Some(64),
-                allowed_workload_classes: Some(BTreeSet::from([
-                    WorkloadClass::Training,
-                ])),
+                allowed_workload_classes: Some(BTreeSet::from([WorkloadClass::Training])),
                 third_party_workloads_opt_in: None,
             })
             .unwrap();
@@ -621,8 +625,7 @@ mod tests {
             1
         );
         let jobs = CoordinatorJobStore::open(&path).unwrap();
-        let states = ["job-1", "job-2"]
-            .map(|job_id| jobs.get(job_id).unwrap().unwrap().state);
+        let states = ["job-1", "job-2"].map(|job_id| jobs.get(job_id).unwrap().unwrap().state);
         assert_eq!(
             states
                 .iter()
@@ -674,8 +677,14 @@ mod tests {
                 RankingError::InvalidPolicyAxisOrder
             ))
         );
-        assert_eq!(fixture.job_store.get("job-1").unwrap().unwrap().state, JobState::Queued);
-        assert_eq!(fixture.staging_store.get_attempt("attempt-1").unwrap(), None);
+        assert_eq!(
+            fixture.job_store.get("job-1").unwrap().unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(
+            fixture.staging_store.get_attempt("attempt-1").unwrap(),
+            None
+        );
         assert_eq!(fixture.staging_store.fence_epoch().unwrap(), None);
     }
 
@@ -703,10 +712,7 @@ mod tests {
             JobState::Queued
         );
         assert_eq!(
-            fixture
-                .staging_store
-                .get_attempt("attempt-1")
-                .unwrap(),
+            fixture.staging_store.get_attempt("attempt-1").unwrap(),
             None
         );
         assert_eq!(fixture.staging_store.fence_epoch().unwrap(), None);
@@ -724,8 +730,14 @@ mod tests {
                 ReservedStageError::Staging(StagingStoreError::InvalidLeaseLifetime)
             ))
         );
-        assert_eq!(fixture.job_store.get("job-1").unwrap().unwrap().state, JobState::Queued);
-        assert_eq!(fixture.staging_store.get_attempt("attempt-1").unwrap(), None);
+        assert_eq!(
+            fixture.job_store.get("job-1").unwrap().unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(
+            fixture.staging_store.get_attempt("attempt-1").unwrap(),
+            None
+        );
         assert_eq!(fixture.staging_store.fence_epoch().unwrap(), None);
     }
 }

@@ -26,7 +26,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LeaseScopeViolation {
     /// 들어온 epoch 가 이미 기록된 watermark 보다 낮다 — stale lease.
-    StaleEpoch { resource: String, incoming: u64, watermark: u64 },
+    StaleEpoch {
+        resource: String,
+        incoming: u64,
+        watermark: u64,
+    },
 }
 
 impl std::fmt::Display for LeaseScopeViolation {
@@ -127,7 +131,14 @@ mod tests {
 
         let r = w.check_and_advance("cas://jobs/1", 3);
         assert!(
-            matches!(r, Err(LeaseScopeViolation::StaleEpoch { incoming: 3, watermark: 5, .. })),
+            matches!(
+                r,
+                Err(LeaseScopeViolation::StaleEpoch {
+                    incoming: 3,
+                    watermark: 5,
+                    ..
+                })
+            ),
             "{r:?}"
         );
     }
@@ -140,7 +151,10 @@ mod tests {
         w.check_and_advance("cas://jobs/1", 10).unwrap();
 
         let r = w.check_and_advance("cas://jobs/1", 7);
-        assert!(matches!(r, Err(LeaseScopeViolation::StaleEpoch { watermark: 10, .. })));
+        assert!(matches!(
+            r,
+            Err(LeaseScopeViolation::StaleEpoch { watermark: 10, .. })
+        ));
     }
 
     /// 자원별로 독립적인가 — 한 자원의 epoch 가 다른 자원을 막지 않는다.

@@ -83,7 +83,10 @@ fn proto_fields(proto_file: &str, message: &str) -> BTreeMap<u32, String> {
         };
         out.insert(num, name.to_string());
     }
-    assert!(!out.is_empty(), "{proto_file}::{message} 에서 필드를 못 뽑았다");
+    assert!(
+        !out.is_empty(),
+        "{proto_file}::{message} 에서 필드를 못 뽑았다"
+    );
     out
 }
 
@@ -136,7 +139,10 @@ fn impl_fields(message: &str) -> BTreeMap<u32, String> {
             "{message}: field number {num} 이 두 번 쓰였다"
         );
     }
-    assert!(!out.is_empty(), "to_fields.rs::{message} 에서 호출을 못 뽑았다");
+    assert!(
+        !out.is_empty(),
+        "to_fields.rs::{message} 에서 호출을 못 뽑았다"
+    );
     out
 }
 
@@ -182,7 +188,11 @@ fn audit(proto_file: &str, message: &str, signature_field: u32) {
         "{message}: 서명 필드 {signature_field} 이 canonical 에 들어갔다 — 자기참조 순환"
     );
 
-    println!("{message}: proto {}개 필드 중 {}개 서명 대상", proto.len(), imp.len());
+    println!(
+        "{message}: proto {}개 필드 중 {}개 서명 대상",
+        proto.len(),
+        imp.len()
+    );
 }
 
 #[test]
@@ -298,7 +308,11 @@ fn every_impl_is_audited() {
             impls.push(rest.trim_end_matches(" {").to_string());
         }
     }
-    assert!(impls.len() >= 35, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
+    assert!(
+        impls.len() >= 35,
+        "impl 을 {}개만 찾았다 — 파서 결함",
+        impls.len()
+    );
 
     let missing: Vec<_> = impls
         .iter()

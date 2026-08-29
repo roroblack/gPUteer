@@ -64,11 +64,23 @@ pub struct ResumeRequestIdentity {
 pub enum ResumeDecision {
     Resumed(StoredLease),
     UnknownLease,
-    IdentityConflict { field: &'static str, stored: String, requested: String },
-    Revoked { stored: StoredLease },
-    Expired { stored: StoredLease },
-    Superseded { stored: StoredLease },
-    EpochAhead { stored: StoredLease },
+    IdentityConflict {
+        field: &'static str,
+        stored: String,
+        requested: String,
+    },
+    Revoked {
+        stored: StoredLease,
+    },
+    Expired {
+        stored: StoredLease,
+    },
+    Superseded {
+        stored: StoredLease,
+    },
+    EpochAhead {
+        stored: StoredLease,
+    },
 }
 
 impl StoredLease {
@@ -765,7 +777,10 @@ mod tests {
         let result = s.get_or_issue(&conflicting, 0);
         assert!(matches!(
             result,
-            Err(LeaseStoreError::IdentityConflict { field: "job_id", .. })
+            Err(LeaseStoreError::IdentityConflict {
+                field: "job_id",
+                ..
+            })
         ));
 
         // 원본이 훼손되지 않았다.
@@ -849,9 +864,7 @@ mod tests {
         let mut candidate_with_different_epoch = sample("lease-1");
         candidate_with_different_epoch.fence_epoch = 999; // CLI 가 다른 값을 줘도
 
-        let result = s
-            .get_or_issue(&candidate_with_different_epoch, 0)
-            .unwrap();
+        let result = s.get_or_issue(&candidate_with_different_epoch, 0).unwrap();
         assert_eq!(result.fence_epoch, 5, "저장된 값이 우선해야 한다");
     }
 
@@ -1021,8 +1034,7 @@ mod tests {
         record.expires_at_unix_ms = 1_000;
         s.get_or_issue(&record, 0).unwrap();
 
-        let result = s
-            .renew_existing_within_duration("lease-1", 1_000, 2_000, 1_500);
+        let result = s.renew_existing_within_duration("lease-1", 1_000, 2_000, 1_500);
         assert!(matches!(
             result,
             Err(LeaseStoreError::Expired {
@@ -1167,12 +1179,7 @@ mod tests {
         store.get_or_issue(&sample("lease-1"), 0).unwrap();
         store.mark_revoked("lease-1", 8_000).unwrap();
 
-        let result = store.renew_existing_within_duration(
-            "lease-1",
-            1_000,
-            2_000,
-            1_500,
-        );
+        let result = store.renew_existing_within_duration("lease-1", 1_000, 2_000, 1_500);
         assert!(matches!(
             result,
             Err(LeaseStoreError::Revoked {
@@ -1218,7 +1225,10 @@ mod tests {
         wrong_node.node_id = "other-node".into();
         assert!(matches!(
             store.classify_resume(&wrong_node, 9_999).unwrap(),
-            ResumeDecision::IdentityConflict { field: "node_id", .. }
+            ResumeDecision::IdentityConflict {
+                field: "node_id",
+                ..
+            }
         ));
         let mut missing = identity(7);
         missing.lease_id = "missing".into();
@@ -1228,10 +1238,13 @@ mod tests {
         ));
 
         store.mark_revoked("lease-1", 9_000).unwrap();
-        assert!(matches!(
-            store.classify_resume(&identity(7), 10_000).unwrap(),
-            ResumeDecision::Revoked { .. }
-        ), "revoke must win over the expiry boundary");
+        assert!(
+            matches!(
+                store.classify_resume(&identity(7), 10_000).unwrap(),
+                ResumeDecision::Revoked { .. }
+            ),
+            "revoke must win over the expiry boundary"
+        );
 
         let (mut expired_store, _expired_dir) = open_temp();
         let mut expired = sample("expired");
@@ -1245,7 +1258,9 @@ mod tests {
             fence_epoch: expired.fence_epoch,
         };
         assert!(matches!(
-            expired_store.classify_resume(&expired_identity, 10_000).unwrap(),
+            expired_store
+                .classify_resume(&expired_identity, 10_000)
+                .unwrap(),
             ResumeDecision::Expired { .. }
         ));
     }

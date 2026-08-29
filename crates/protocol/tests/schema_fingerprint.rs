@@ -113,8 +113,7 @@ fn proto_syntax_tokens(src: &str) -> Vec<SyntaxToken> {
             }
             b'/' if bytes.get(index + 1) == Some(&b'*') => {
                 index += 2;
-                while index + 1 < bytes.len()
-                    && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
                 {
                     if bytes[index] == b'\n' {
                         line += 1;
@@ -175,11 +174,8 @@ fn validate_guard_supported_syntax(file: &str, src: &str) -> Result<(), String> 
     let mut message_openings: BTreeMap<usize, (&str, usize)> = BTreeMap::new();
 
     for (index, window) in tokens.windows(3).enumerate() {
-        if let [
-            SyntaxToken::Ident(keyword, line),
-            SyntaxToken::Ident(name, _),
-            SyntaxToken::OpenBrace,
-        ] = window
+        if let [SyntaxToken::Ident(keyword, line), SyntaxToken::Ident(name, _), SyntaxToken::OpenBrace] =
+            window
         {
             if keyword == "message" {
                 message_openings.insert(index + 2, (name.as_str(), *line));
@@ -287,7 +283,9 @@ fn parse_proto_source(file: &str, src: &str) -> BTreeMap<String, BTreeMap<u32, S
         let Some(name) = parts.last() else { continue };
         let ty = parts[..parts.len() - 1].join(" ");
         let key = current.clone().unwrap();
-        out.entry(key).or_default().insert(num, format!("{ty} {name}"));
+        out.entry(key)
+            .or_default()
+            .insert(num, format!("{ty} {name}"));
     }
     out
 }
@@ -345,11 +343,7 @@ fn proto_schema_uses_only_fingerprint_guard_supported_syntax() {
         }
     }
 
-    assert!(
-        violations.is_empty(),
-        "{}",
-        violations.join("\n\n")
-    );
+    assert!(violations.is_empty(), "{}", violations.join("\n\n"));
 }
 
 #[test]
@@ -388,7 +382,10 @@ fn support_check_ignores_keywords_in_comments_and_strings() {
                string text = 1 [default = \"reserved message NotADeclaration {\"];\n\
                }\n";
 
-    assert_eq!(validate_guard_supported_syntax("synthetic.proto", src), Ok(()));
+    assert_eq!(
+        validate_guard_supported_syntax("synthetic.proto", src),
+        Ok(())
+    );
 }
 
 #[test]
@@ -430,12 +427,23 @@ fn parser_nested_message_failure_mode_is_recorded() {
 fn parser_is_not_vacuous() {
     let job = parse_proto("job.proto");
     let key = "job.proto::JobManifest".to_string();
-    let m = job.get(&key).unwrap_or_else(|| panic!("JobManifest 를 못 찾았다"));
+    let m = job
+        .get(&key)
+        .unwrap_or_else(|| panic!("JobManifest 를 못 찾았다"));
     assert!(m.len() >= 25, "JobManifest 필드를 {}개만 뽑았다", m.len());
     assert_eq!(m.get(&13).map(String::as_str), Some("string entrypoint"));
-    assert_eq!(m.get(&11).map(String::as_str), Some("repeated Digest input_artifacts"));
-    assert_eq!(m.get(&15).map(String::as_str), Some("map<string, string> env_vars"));
-    assert_eq!(m.get(&90).map(String::as_str), Some("bytes submitter_signature"));
+    assert_eq!(
+        m.get(&11).map(String::as_str),
+        Some("repeated Digest input_artifacts")
+    );
+    assert_eq!(
+        m.get(&15).map(String::as_str),
+        Some("map<string, string> env_vars")
+    );
+    assert_eq!(
+        m.get(&90).map(String::as_str),
+        Some("bytes submitter_signature")
+    );
 }
 
 #[test]
@@ -479,8 +487,24 @@ fn proto_schema_matches_recorded_fingerprint() {
              무시한 채 서명 검증을 통과시킨다.\n\n\
              그 외(주석·서식)라면 지문만 갱신하고 사유를 커밋에 적는다:\n  \
              UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint",
-            if added.is_empty() { "(없음)".to_string() } else { added.iter().map(|s| s.trim()).collect::<Vec<_>>().join("\n  ") },
-            if removed.is_empty() { "(없음)".to_string() } else { removed.iter().map(|s| s.trim()).collect::<Vec<_>>().join("\n  ") },
+            if added.is_empty() {
+                "(없음)".to_string()
+            } else {
+                added
+                    .iter()
+                    .map(|s| s.trim())
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            },
+            if removed.is_empty() {
+                "(없음)".to_string()
+            } else {
+                removed
+                    .iter()
+                    .map(|s| s.trim())
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            },
         );
     }
 }

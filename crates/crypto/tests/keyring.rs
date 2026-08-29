@@ -6,8 +6,8 @@
 use std::fs;
 
 use gputeer_crypto::{
-    sign, Ed25519Verifier, KeyDirectoryStatus, KeyProtection, PersistentKeyring,
-    PlaintextPolicy, SecretSigningKey, SigningKey,
+    sign, Ed25519Verifier, KeyDirectoryStatus, KeyProtection, PersistentKeyring, PlaintextPolicy,
+    SecretSigningKey, SigningKey,
 };
 use gputeer_protocol::{
     pb,
@@ -239,13 +239,13 @@ fn private_key_never_appears_in_debug_or_display_output() {
     //   실제로 새어 나갈 수 있는 모든 표기를 검사한다.
     let raw = [seed; 32];
     let leaks: Vec<String> = vec![
-        raw.iter().map(|b| format!("{b:02x}")).collect(),   // a5a5...
-        raw.iter().map(|b| format!("{b:02X}")).collect(),   // A5A5...
-        format!("{raw:?}"),                                  // [165, 165, ...]
+        raw.iter().map(|b| format!("{b:02x}")).collect(), // a5a5...
+        raw.iter().map(|b| format!("{b:02X}")).collect(), // A5A5...
+        format!("{raw:?}"),                               // [165, 165, ...]
         raw.iter()
             .map(|b| b.to_string())
             .collect::<Vec<_>>()
-            .join(", "),                                     // 165, 165, ...
+            .join(", "), // 165, 165, ...
     ];
 
     let secret_debug = format!("{private:?}");
@@ -284,10 +284,7 @@ fn corrupted_key_file_is_rejected_instead_of_silently_loaded() {
     .unwrap();
 
     keyring
-        .insert_private(
-            directory,
-            SecretSigningKey::from_signing_key(key(5)),
-        )
+        .insert_private(directory, SecretSigningKey::from_signing_key(key(5)))
         .unwrap();
     keyring.save().unwrap();
 
@@ -298,10 +295,7 @@ fn corrupted_key_file_is_rejected_instead_of_silently_loaded() {
 
     let result = PersistentKeyring::load(&key_path, PlaintextPolicy::Allow);
 
-    assert!(
-        result.is_err(),
-        "손상된 키 파일이 조용히 로드되었다"
-    );
+    assert!(result.is_err(), "손상된 키 파일이 조용히 로드되었다");
 }
 
 #[test]

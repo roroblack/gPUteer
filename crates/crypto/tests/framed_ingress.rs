@@ -193,7 +193,10 @@ fn normal_grant_frame_dispatches_to_the_right_variant() {
     )
     .expect("정상 프레임이 통과해야 한다");
 
-    assert!(matches!(msg, IngressMessage::Grant(_)), "잘못된 variant 로 디스패치됐다");
+    assert!(
+        matches!(msg, IngressMessage::Grant(_)),
+        "잘못된 variant 로 디스패치됐다"
+    );
 }
 
 /// 다른 타입(Lease)도 같은 스트림 구조에서 정상 동작하는가 — 비공허성.
@@ -215,7 +218,10 @@ fn normal_lease_frame_dispatches_to_the_right_variant() {
     )
     .expect("정상 Lease 프레임이 통과해야 한다");
 
-    assert!(matches!(msg, IngressMessage::Lease(_)), "잘못된 variant 로 디스패치됐다");
+    assert!(
+        matches!(msg, IngressMessage::Lease(_)),
+        "잘못된 variant 로 디스패치됐다"
+    );
 }
 
 /// `AgentGrantAck` 도 같은 스트림 구조에서 정상 동작하는가 — 비공허성.
@@ -241,7 +247,10 @@ fn normal_grant_ack_frame_dispatches_to_the_right_variant() {
     )
     .expect("정상 GrantAck 프레임이 통과해야 한다");
 
-    assert!(matches!(msg, IngressMessage::GrantAck(_)), "잘못된 variant 로 디스패치됐다");
+    assert!(
+        matches!(msg, IngressMessage::GrantAck(_)),
+        "잘못된 variant 로 디스패치됐다"
+    );
 }
 
 /// `RenewLeaseResult` 도 같은 스트림 구조에서 정상 동작하는가 — 비공허성.
@@ -279,7 +288,10 @@ fn normal_renew_lease_result_frame_dispatches_to_the_right_variant() {
     assert_eq!(got.outcome, 1, "outcome 이 원본과 다르다");
     assert_eq!(got.detail, "ok", "detail 이 원본과 다르다");
     assert_eq!(got.schema_version, 1, "schema_version 이 원본과 다르다");
-    assert_eq!(got.coordinator_id, DEVICE, "coordinator_id 가 원본과 다르다");
+    assert_eq!(
+        got.coordinator_id, DEVICE,
+        "coordinator_id 가 원본과 다르다"
+    );
     assert_eq!(
         got.issued_at_unix_ms, NOW,
         "issued_at_unix_ms 가 원본과 다르다"
@@ -298,7 +310,10 @@ fn resume_frames_round_trip_and_preserve_payloads() {
     let cases = vec![
         (FrameType::SessionHello, session_hello(&k).encode_to_vec()),
         (FrameType::LeaseResume, resume_request(&k).encode_to_vec()),
-        (FrameType::LeaseResumeResult, resume_result(&k).encode_to_vec()),
+        (
+            FrameType::LeaseResumeResult,
+            resume_result(&k).encode_to_vec(),
+        ),
     ];
     for (frame_type, body) in cases {
         let frame = write_frame(frame_type, &body).unwrap();
@@ -340,7 +355,13 @@ fn forged_resume_signature_is_rejected() {
     let mut stream = Cursor::new(frame);
     let mut replay = InMemoryReplayGuard::new();
     assert!(matches!(
-        read_frame(&mut stream, 1, KeyDirectorySource::Provided(&dir), &mut replay, &FixedClock(NOW)),
+        read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&dir),
+            &mut replay,
+            &FixedClock(NOW)
+        ),
         Err(FramingError::Verify(_))
     ));
 }
@@ -687,7 +708,10 @@ fn zero_length_frame_does_not_panic() {
         &FixedClock(NOW),
     );
 
-    assert!(result.is_err(), "빈 프레임이 통과했다 — 있을 수 없는 값이다");
+    assert!(
+        result.is_err(),
+        "빈 프레임이 통과했다 — 있을 수 없는 값이다"
+    );
 }
 
 /// 한 스트림에 프레임 여러 개가 이어져도 각각 독립적으로 읽히는가.

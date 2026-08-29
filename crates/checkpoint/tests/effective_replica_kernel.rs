@@ -83,8 +83,9 @@ fn selected_old_observation_wins_over_newer_superseded_without_ttl_or_latest_rul
     let mut newer = observation("device-a", "rack-b", ReplicaKind::Hub, u64::MAX);
     newer.selected = false;
 
-    let report = evaluate_effective_replicas(&[newer.clone(), selected.clone()], Durability::Mirrored)
-        .unwrap();
+    let report =
+        evaluate_effective_replicas(&[newer.clone(), selected.clone()], Durability::Mirrored)
+            .unwrap();
     assert_eq!(report.effective_replica_count, 1);
     assert_eq!(report.counted[0].observation, selected);
     assert_eq!(report.superseded, vec![newer]);
@@ -109,8 +110,14 @@ fn distinct_holders_in_one_failure_domain_count_once_deterministically() {
 #[test]
 fn invalid_unresolved_and_ambiguous_membership_never_count() {
     let states = [
-        (HolderValidation::InvalidSignature, ReplicaExclusionReason::InvalidSignature),
-        (HolderValidation::NotApproved, ReplicaExclusionReason::HolderNotApproved),
+        (
+            HolderValidation::InvalidSignature,
+            ReplicaExclusionReason::InvalidSignature,
+        ),
+        (
+            HolderValidation::NotApproved,
+            ReplicaExclusionReason::HolderNotApproved,
+        ),
         (
             HolderValidation::MembershipUnresolved,
             ReplicaExclusionReason::MembershipUnresolved,
@@ -137,11 +144,9 @@ fn invalid_unresolved_and_ambiguous_membership_never_count() {
 
 #[test]
 fn unresolved_or_ambiguous_authority_facts_never_count() {
-    let mut unresolved_ephemeral =
-        observation("device-a", "rack-a", ReplicaKind::WorkerLocal, 10);
+    let mut unresolved_ephemeral = observation("device-a", "rack-a", ReplicaKind::WorkerLocal, 10);
     unresolved_ephemeral.is_ephemeral = FactResolution::Unresolved;
-    let mut ambiguous_ephemeral =
-        observation("device-b", "rack-b", ReplicaKind::WorkerLocal, 20);
+    let mut ambiguous_ephemeral = observation("device-b", "rack-b", ReplicaKind::WorkerLocal, 20);
     ambiguous_ephemeral.is_ephemeral = FactResolution::Ambiguous;
     let mut unresolved_domain = observation("device-c", "rack-c", ReplicaKind::Hub, 30);
     unresolved_domain.failure_domain = FactResolution::Unresolved;
@@ -201,7 +206,10 @@ fn only_ephemeral_worker_local_is_excluded() {
 
     let report = evaluate_effective_replicas(&[local, mirror], Durability::Mirrored).unwrap();
     assert_eq!(report.effective_replica_count, 1);
-    assert_eq!(report.counted[0].observation.kind, ReplicaKind::SubmitterMirror);
+    assert_eq!(
+        report.counted[0].observation.kind,
+        ReplicaKind::SubmitterMirror
+    );
     assert_eq!(
         report.excluded[0].reasons,
         vec![ReplicaExclusionReason::EphemeralWorkerLocal]
@@ -211,11 +219,11 @@ fn only_ephemeral_worker_local_is_excluded() {
 #[test]
 fn same_device_different_kinds_are_never_separate_replicas() {
     let selected = observation("device-a", "rack-a", ReplicaKind::WorkerLocal, 20);
-    let mut superseded =
-        observation("device-a", "rack-a", ReplicaKind::SubmitterMirror, 10);
+    let mut superseded = observation("device-a", "rack-a", ReplicaKind::SubmitterMirror, 10);
     superseded.selected = false;
 
-    let report = evaluate_effective_replicas(&[superseded, selected], Durability::Replicated).unwrap();
+    let report =
+        evaluate_effective_replicas(&[superseded, selected], Durability::Replicated).unwrap();
     assert_eq!(report.effective_replica_count, 1);
     assert_eq!(report.superseded.len(), 1);
     assert!(!report.requirement_met);
@@ -224,23 +232,31 @@ fn same_device_different_kinds_are_never_separate_replicas() {
 #[test]
 fn durability_thresholds_use_effective_distinct_domain_count() {
     let one = vec![observation("device-a", "rack-a", ReplicaKind::Hub, 10)];
-    assert!(evaluate_effective_replicas(&one, Durability::Local)
-        .unwrap()
-        .requirement_met);
-    assert!(evaluate_effective_replicas(&one, Durability::Mirrored)
-        .unwrap()
-        .requirement_met);
-    assert!(!evaluate_effective_replicas(&one, Durability::Replicated)
-        .unwrap()
-        .requirement_met);
+    assert!(
+        evaluate_effective_replicas(&one, Durability::Local)
+            .unwrap()
+            .requirement_met
+    );
+    assert!(
+        evaluate_effective_replicas(&one, Durability::Mirrored)
+            .unwrap()
+            .requirement_met
+    );
+    assert!(
+        !evaluate_effective_replicas(&one, Durability::Replicated)
+            .unwrap()
+            .requirement_met
+    );
 
     let two = vec![
         one[0].clone(),
         observation("device-b", "rack-b", ReplicaKind::TrustedPeer, 20),
     ];
-    assert!(evaluate_effective_replicas(&two, Durability::Replicated)
-        .unwrap()
-        .requirement_met);
+    assert!(
+        evaluate_effective_replicas(&two, Durability::Replicated)
+            .unwrap()
+            .requirement_met
+    );
 }
 
 #[test]
@@ -249,9 +265,11 @@ fn empty_input_is_zero_and_only_local_requirement_is_met() {
     assert_eq!(local.scope, None);
     assert_eq!(local.effective_replica_count, 0);
     assert!(local.requirement_met);
-    assert!(!evaluate_effective_replicas(&[], Durability::Mirrored)
-        .unwrap()
-        .requirement_met);
+    assert!(
+        !evaluate_effective_replicas(&[], Durability::Mirrored)
+            .unwrap()
+            .requirement_met
+    );
 }
 
 #[test]

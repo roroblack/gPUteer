@@ -14,9 +14,7 @@ use gputeer_protocol::{
     signing::{signing_input, Verified},
 };
 use prost::Message;
-use rusqlite::{
-    Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior,
-};
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -82,11 +80,13 @@ impl QueueFailure {
             "DEADLINE_PASSED" if detail.is_none() => Ok(Self::DeadlinePassed),
             "QUEUE_TIMEOUT" if detail.is_none() => Ok(Self::QueueTimeout),
             "PERMANENTLY_INFEASIBLE" => {
-                let reason = detail.filter(|value| !value.trim().is_empty()).ok_or_else(|| {
-                    JobStoreError::CorruptData(
-                        "PERMANENTLY_INFEASIBLE row has no reason".to_string(),
-                    )
-                })?;
+                let reason = detail
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        JobStoreError::CorruptData(
+                            "PERMANENTLY_INFEASIBLE row has no reason".to_string(),
+                        )
+                    })?;
                 Ok(Self::PermanentlyInfeasible { reason })
             }
             other => Err(JobStoreError::CorruptData(format!(
@@ -183,7 +183,9 @@ pub enum JobStoreError {
         stored_job_id: String,
         requested_job_id: String,
     },
-    JobIdConflict { job_id: String },
+    JobIdConflict {
+        job_id: String,
+    },
     InvalidTransition {
         from: JobState,
         to: JobState,
@@ -195,7 +197,9 @@ pub enum JobStoreError {
     GuardNotMet(&'static str),
     ManifestIdentityMismatch(&'static str),
     ManifestHashMismatch,
-    LegacyManifestMissing { job_id: String },
+    LegacyManifestMissing {
+        job_id: String,
+    },
     ManifestCorrupt {
         job_id: String,
         kind: ManifestCorruption,
@@ -286,9 +290,9 @@ pub(crate) fn encode_u64(value: u64) -> Vec<u8> {
 }
 
 fn decode_u64(bytes: &[u8], field: &str) -> Result<u64, JobStoreError> {
-    let value: [u8; 8] = bytes.try_into().map_err(|_| {
-        JobStoreError::CorruptData(format!("{field} must contain exactly 8 bytes"))
-    })?;
+    let value: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| JobStoreError::CorruptData(format!("{field} must contain exactly 8 bytes")))?;
     Ok(u64::from_be_bytes(value))
 }
 
@@ -415,9 +419,7 @@ impl CoordinatorJobStore {
             .connection
             .prepare(SELECT_QUEUED_SQL)
             .map_err(map_sql_error)?;
-        let rows = statement
-            .query_map([], row_to_raw)
-            .map_err(map_sql_error)?;
+        let rows = statement.query_map([], row_to_raw).map_err(map_sql_error)?;
         let mut jobs = Vec::new();
         for row in rows {
             jobs.push(row.map_err(map_sql_error)?.into_stored()?);
@@ -671,9 +673,10 @@ impl CoordinatorJobStore {
             ensure_not_before(at_unix_ms, job.submitted_at_unix_ms)?;
             job.state = JobState::Planning;
             job.planning_at_unix_ms = Some(at_unix_ms);
-            job.revision = job.revision.checked_add(1).ok_or_else(|| {
-                JobStoreError::CorruptData("job revision overflow".to_string())
-            })?;
+            job.revision = job
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| JobStoreError::CorruptData("job revision overflow".to_string()))?;
             update_job(transaction, &job)?;
             Ok(job)
         })
@@ -713,9 +716,10 @@ impl CoordinatorJobStore {
             job.state = JobState::Queued;
             job.queued_at_unix_ms = Some(at_unix_ms);
             job.plan_id = Some(plan_id.to_string());
-            job.revision = job.revision.checked_add(1).ok_or_else(|| {
-                JobStoreError::CorruptData("job revision overflow".to_string())
-            })?;
+            job.revision = job
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| JobStoreError::CorruptData("job revision overflow".to_string()))?;
             update_job(transaction, &job)?;
             Ok(job)
         })
@@ -737,7 +741,9 @@ impl CoordinatorJobStore {
             &failure,
             QueueFailure::PermanentlyInfeasible { reason } if reason.trim().is_empty()
         ) {
-            return Err(JobStoreError::InvalidInput("permanent infeasibility reason"));
+            return Err(JobStoreError::InvalidInput(
+                "permanent infeasibility reason",
+            ));
         }
         self.transition(job_id, |transaction, mut job| {
             if job.state == JobState::Failed && job.queue_failure.as_ref() == Some(&failure) {
@@ -759,19 +765,22 @@ impl CoordinatorJobStore {
                         .deadline_unix_ms
                         .ok_or(JobStoreError::GuardNotMet("Job has no deadline"))?;
                     if at_unix_ms <= deadline {
-                        return Err(JobStoreError::GuardNotMet("now must be greater than deadline"));
+                        return Err(JobStoreError::GuardNotMet(
+                            "now must be greater than deadline",
+                        ));
                     }
                 }
                 QueueFailure::QueueTimeout => {
-                    let limit = job.max_queue_duration_ms.ok_or(
-                        JobStoreError::GuardNotMet("Job has no independent queue timeout"),
-                    )?;
-                    let elapsed = at_unix_ms.checked_sub(queued_at).ok_or(
-                        JobStoreError::ClockRollback {
-                            earlier_unix_ms: at_unix_ms,
-                            later_unix_ms: queued_at,
-                        },
-                    )?;
+                    let limit = job.max_queue_duration_ms.ok_or(JobStoreError::GuardNotMet(
+                        "Job has no independent queue timeout",
+                    ))?;
+                    let elapsed =
+                        at_unix_ms
+                            .checked_sub(queued_at)
+                            .ok_or(JobStoreError::ClockRollback {
+                                earlier_unix_ms: at_unix_ms,
+                                later_unix_ms: queued_at,
+                            })?;
                     if elapsed <= limit {
                         return Err(JobStoreError::GuardNotMet(
                             "queue wait must be greater than max queue duration",
@@ -783,19 +792,16 @@ impl CoordinatorJobStore {
             job.state = JobState::Failed;
             job.queue_failure = Some(failure.clone());
             job.failed_at_unix_ms = Some(at_unix_ms);
-            job.revision = job.revision.checked_add(1).ok_or_else(|| {
-                JobStoreError::CorruptData("job revision overflow".to_string())
-            })?;
+            job.revision = job
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| JobStoreError::CorruptData("job revision overflow".to_string()))?;
             update_job(transaction, &job)?;
             Ok(job)
         })
     }
 
-    fn transition<F>(
-        &mut self,
-        job_id: &str,
-        apply: F,
-    ) -> Result<StoredJob, JobStoreError>
+    fn transition<F>(&mut self, job_id: &str, apply: F) -> Result<StoredJob, JobStoreError>
     where
         F: FnOnce(&Connection, StoredJob) -> Result<StoredJob, JobStoreError>,
     {
@@ -904,10 +910,7 @@ fn fetch_manifest_binding(
         ));
     }
     if signer_id_at_submission != job.submitter_device_id {
-        return Err(manifest_corrupt(
-            job,
-            ManifestCorruption::SignerIdMismatch,
-        ));
+        return Err(manifest_corrupt(job, ManifestCorruption::SignerIdMismatch));
     }
     let derived_hash = derive_manifest_hash(&manifest);
     if derived_hash != job.manifest_hash {
@@ -969,10 +972,7 @@ pub(crate) fn fetch_job(
         .transpose()
 }
 
-pub(crate) fn update_job(
-    connection: &Connection,
-    job: &StoredJob,
-) -> Result<(), JobStoreError> {
+pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(), JobStoreError> {
     let (failure_kind, failure_detail) = match &job.queue_failure {
         Some(failure) => (Some(failure.code()), failure.detail()),
         None => (None, None),
@@ -1099,10 +1099,7 @@ impl RawJobRow {
             submitter_device_id: self.submitter_device_id,
             manifest_hash: decode_hash(self.manifest_hash)?,
             state,
-            submitted_at_unix_ms: decode_u64(
-                &self.submitted_at_unix_ms,
-                "submitted_at_unix_ms",
-            )?,
+            submitted_at_unix_ms: decode_u64(&self.submitted_at_unix_ms, "submitted_at_unix_ms")?,
             planning_at_unix_ms: self
                 .planning_at_unix_ms
                 .as_deref()
@@ -1289,16 +1286,16 @@ mod tests {
         }
 
         let reopened = CoordinatorJobStore::open(&path).unwrap();
-        let binding = reopened
-            .get_manifest_binding("job-bound")
-            .unwrap()
-            .unwrap();
+        let binding = reopened.get_manifest_binding("job-bound").unwrap().unwrap();
         assert_eq!(binding.manifest, original_manifest);
         assert_eq!(
             binding.manifest.submitter_signature,
             original_manifest.submitter_signature
         );
-        assert_eq!(binding.manifest_hash, derive_manifest_hash(&binding.manifest));
+        assert_eq!(
+            binding.manifest_hash,
+            derive_manifest_hash(&binding.manifest)
+        );
         assert_eq!(binding.signer_id_at_submission, MANIFEST_DEVICE);
     }
 
@@ -1607,7 +1604,10 @@ mod tests {
         let mut changed = original.clone();
         changed.manifest_hash = [8; 32];
         let result = store.submit_accepted(&changed, 200);
-        assert!(matches!(result, Err(JobStoreError::IdempotencyConflict { .. })));
+        assert!(matches!(
+            result,
+            Err(JobStoreError::IdempotencyConflict { .. })
+        ));
         assert_eq!(store.get("job-1").unwrap().unwrap().manifest_hash, [7; 32]);
     }
 
@@ -1698,7 +1698,10 @@ mod tests {
             store.start_planning("job-1", 99),
             Err(JobStoreError::ClockRollback { .. })
         ));
-        assert_eq!(store.get("job-1").unwrap().unwrap().state, JobState::Submitted);
+        assert_eq!(
+            store.get("job-1").unwrap().unwrap().state,
+            JobState::Submitted
+        );
     }
 
     #[test]
@@ -1755,7 +1758,9 @@ mod tests {
                 },
                 500
             ),
-            Err(JobStoreError::InvalidInput("permanent infeasibility reason"))
+            Err(JobStoreError::InvalidInput(
+                "permanent infeasibility reason"
+            ))
         );
         let reason = "all enrolled GPUs are below required VRAM".to_string();
         let failed = store
@@ -1826,9 +1831,15 @@ mod tests {
         ));
         store
             .connection
-            .execute("UPDATE coordinator_jobs SET state = 'UNKNOWN' WHERE job_id = 'job-1'", [])
+            .execute(
+                "UPDATE coordinator_jobs SET state = 'UNKNOWN' WHERE job_id = 'job-1'",
+                [],
+            )
             .unwrap();
-        assert!(matches!(store.get("job-1"), Err(JobStoreError::CorruptData(_))));
+        assert!(matches!(
+            store.get("job-1"),
+            Err(JobStoreError::CorruptData(_))
+        ));
         store
             .connection
             .execute(
@@ -1836,15 +1847,24 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert!(matches!(store.get("job-1"), Err(JobStoreError::CorruptData(_))));
+        assert!(matches!(
+            store.get("job-1"),
+            Err(JobStoreError::CorruptData(_))
+        ));
 
         let second = submission("job-2", 2);
         queued(&mut store, &second);
         store
             .connection
-            .execute("UPDATE coordinator_jobs SET plan_id = ' ' WHERE job_id = 'job-2'", [])
+            .execute(
+                "UPDATE coordinator_jobs SET plan_id = ' ' WHERE job_id = 'job-2'",
+                [],
+            )
             .unwrap();
-        assert!(matches!(store.get("job-2"), Err(JobStoreError::CorruptData(_))));
+        assert!(matches!(
+            store.get("job-2"),
+            Err(JobStoreError::CorruptData(_))
+        ));
     }
 
     #[test]
@@ -1853,6 +1873,9 @@ mod tests {
         let request = submission("job-1", 1);
         let result = store.submit_accepted(&request, u64::MAX).unwrap();
         assert_eq!(result.job.submitted_at_unix_ms, u64::MAX);
-        assert_eq!(store.get("job-1").unwrap().unwrap().submitted_at_unix_ms, u64::MAX);
+        assert_eq!(
+            store.get("job-1").unwrap().unwrap().submitted_at_unix_ms,
+            u64::MAX
+        );
     }
 }

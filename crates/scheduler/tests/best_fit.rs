@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use gputeer_scheduler::{
     evaluate_eligibility, rank_best_fit, resource_fit, BestFitPolicy, CandidateSnapshot,
     EligibilityResolution, FitAxis, GpuSnapshot, IsolationClass, JobRequirements, KeyProtection,
-    MissingFact, NodeState, Policy, PoolSnapshot, RankingError, RiskState, SecurityTier, Sensitivity,
-    SideEffectClass, WorkloadClass,
+    MissingFact, NodeState, Policy, PoolSnapshot, RankingError, RiskState, SecurityTier,
+    Sensitivity, SideEffectClass, WorkloadClass,
 };
 
 const NOW: u64 = 10_000;
@@ -61,7 +61,9 @@ fn candidate(node_id: &str) -> CandidateSnapshot {
 }
 
 fn hard_policy() -> Policy {
-    Policy { maximum_snapshot_age_ms: MAX_AGE }
+    Policy {
+        maximum_snapshot_age_ms: MAX_AGE,
+    }
 }
 
 fn policy(first: FitAxis) -> BestFitPolicy {
@@ -106,7 +108,10 @@ fn policy(first: FitAxis) -> BestFitPolicy {
 }
 
 fn pool(candidates: Vec<CandidateSnapshot>) -> PoolSnapshot {
-    PoolSnapshot { evaluated_at_unix_ms: NOW, candidates }
+    PoolSnapshot {
+        evaluated_at_unix_ms: NOW,
+        candidates,
+    }
 }
 
 fn report(pool: &PoolSnapshot, job: &JobRequirements) -> gputeer_scheduler::EligibilityReport {
@@ -115,7 +120,10 @@ fn report(pool: &PoolSnapshot, job: &JobRequirements) -> gputeer_scheduler::Elig
 
 fn winner(pool: &PoolSnapshot, job: &JobRequirements, first: FitAxis) -> String {
     let report = report(pool, job);
-    rank_best_fit(pool, job, &report, &policy(first)).unwrap().winner.node_id
+    rank_best_fit(pool, job, &report, &policy(first))
+        .unwrap()
+        .winner
+        .node_id
 }
 
 #[test]
@@ -160,7 +168,11 @@ fn gpu_subset_uses_the_tightest_adequate_required_count() {
     let mut j = job();
     j.minimum_gpu_count = Some(2);
     let mut a = candidate("node-a");
-    a.gpus = Some(vec![gpu("node-a", 0, 30), gpu("node-a", 1, 10), gpu("node-a", 2, 12)]);
+    a.gpus = Some(vec![
+        gpu("node-a", 0, 30),
+        gpu("node-a", 1, 10),
+        gpu("node-a", 2, 12),
+    ]);
     let mut b = candidate("node-b");
     b.gpus = Some(vec![gpu("node-b", 0, 11), gpu("node-b", 1, 12)]);
     let input = pool(vec![a, b]);
@@ -277,7 +289,11 @@ fn gpu_inventory_permutations_produce_identical_ranking() {
     let mut j = job();
     j.minimum_gpu_count = Some(2);
     let mut a = candidate("node-a");
-    a.gpus = Some(vec![gpu("node-a", 0, 30), gpu("node-a", 1, 10), gpu("node-a", 2, 12)]);
+    a.gpus = Some(vec![
+        gpu("node-a", 0, 30),
+        gpu("node-a", 1, 10),
+        gpu("node-a", 2, 12),
+    ]);
     let mut b = candidate("node-b");
     b.gpus = Some(vec![gpu("node-b", 0, 11), gpu("node-b", 1, 12)]);
     let forward_pool = pool(vec![a, b]);
@@ -311,7 +327,11 @@ fn gpu_inventory_permutations_produce_identical_ranking() {
 
 #[test]
 fn complete_tie_is_broken_only_by_node_id_ascending() {
-    let input = pool(vec![candidate("node-z"), candidate("node-a"), candidate("node-m")]);
+    let input = pool(vec![
+        candidate("node-z"),
+        candidate("node-a"),
+        candidate("node-m"),
+    ]);
     let actual = rank_best_fit(
         &input,
         &job(),
@@ -322,7 +342,11 @@ fn complete_tie_is_broken_only_by_node_id_ascending() {
 
     assert_eq!(actual.winner.node_id, "node-a");
     assert_eq!(
-        actual.ranked.iter().map(|entry| entry.node_id.as_str()).collect::<Vec<_>>(),
+        actual
+            .ranked
+            .iter()
+            .map(|entry| entry.node_id.as_str())
+            .collect::<Vec<_>>(),
         vec!["node-a", "node-m", "node-z"]
     );
 }
@@ -340,12 +364,25 @@ fn pool_and_report_permutations_produce_byte_equal_debug_output() {
     let mut reverse_report = report(&reverse_pool, &job());
     reverse_report.eligible.reverse();
 
-    let forward = rank_best_fit(&forward_pool, &job(), &forward_report, &policy(FitAxis::Cpu))
-        .unwrap();
-    let reverse = rank_best_fit(&reverse_pool, &job(), &reverse_report, &policy(FitAxis::Cpu))
-        .unwrap();
+    let forward = rank_best_fit(
+        &forward_pool,
+        &job(),
+        &forward_report,
+        &policy(FitAxis::Cpu),
+    )
+    .unwrap();
+    let reverse = rank_best_fit(
+        &reverse_pool,
+        &job(),
+        &reverse_report,
+        &policy(FitAxis::Cpu),
+    )
+    .unwrap();
     assert_eq!(forward, reverse);
-    assert_eq!(format!("{forward:?}").as_bytes(), format!("{reverse:?}").as_bytes());
+    assert_eq!(
+        format!("{forward:?}").as_bytes(),
+        format!("{reverse:?}").as_bytes()
+    );
 }
 
 #[test]
@@ -359,15 +396,23 @@ fn hard_filter_rejections_never_enter_the_ranking() {
     let actual = rank_best_fit(&input, &job(), &eligibility, &policy(FitAxis::Vram)).unwrap();
 
     assert_eq!(actual.ranked.len(), 2);
-    assert!(actual.ranked.iter().all(|entry| entry.node_id != "node-rejected"));
+    assert!(actual
+        .ranked
+        .iter()
+        .all(|entry| entry.node_id != "node-rejected"));
 }
 
 #[test]
 fn zero_or_one_candidate_report_is_not_misrepresented_as_a_ranking() {
     for candidates in [vec![], vec![candidate("node-a")]] {
         let input = pool(candidates);
-        let error = rank_best_fit(&input, &job(), &report(&input, &job()), &policy(FitAxis::Vram))
-            .unwrap_err();
+        let error = rank_best_fit(
+            &input,
+            &job(),
+            &report(&input, &job()),
+            &policy(FitAxis::Vram),
+        )
+        .unwrap_err();
         assert_eq!(error, RankingError::ResolutionNotRankingRequired);
     }
 
@@ -392,33 +437,47 @@ fn duplicate_pool_and_report_ids_fail_closed() {
             &policy(FitAxis::Vram),
         )
         .unwrap_err(),
-        RankingError::DuplicatePoolNodeId { node_id: "same".into() }
+        RankingError::DuplicatePoolNodeId {
+            node_id: "same".into()
+        }
     );
 
     let input = pool(vec![candidate("node-a"), candidate("node-b")]);
     let mut duplicate_report = report(&input, &job());
-    duplicate_report.eligible.push(duplicate_report.eligible[0].clone());
+    duplicate_report
+        .eligible
+        .push(duplicate_report.eligible[0].clone());
     assert_eq!(
         rank_best_fit(&input, &job(), &duplicate_report, &policy(FitAxis::Vram)).unwrap_err(),
-        RankingError::DuplicateReportNodeId { node_id: "node-a".into() }
+        RankingError::DuplicateReportNodeId {
+            node_id: "node-a".into()
+        }
     );
 }
 
 #[test]
 fn report_only_and_pool_only_candidate_ids_fail_closed() {
-    let input = pool(vec![candidate("node-a"), candidate("node-b"), candidate("node-c")]);
+    let input = pool(vec![
+        candidate("node-a"),
+        candidate("node-b"),
+        candidate("node-c"),
+    ]);
     let mut report_only = report(&input, &job());
     report_only.eligible[0].node_id = "node-x".into();
     assert_eq!(
         rank_best_fit(&input, &job(), &report_only, &policy(FitAxis::Vram)).unwrap_err(),
-        RankingError::ReportCandidateMissingFromPool { node_id: "node-x".into() }
+        RankingError::ReportCandidateMissingFromPool {
+            node_id: "node-x".into()
+        }
     );
 
     let mut pool_only = report(&input, &job());
     pool_only.eligible.pop();
     assert_eq!(
         rank_best_fit(&input, &job(), &pool_only, &policy(FitAxis::Vram)).unwrap_err(),
-        RankingError::PoolCandidateMissingFromReport { node_id: "node-c".into() }
+        RankingError::PoolCandidateMissingFromReport {
+            node_id: "node-c".into()
+        }
     );
 }
 
@@ -426,7 +485,13 @@ fn report_only_and_pool_only_candidate_ids_fail_closed() {
 fn duplicate_policy_axis_fails_closed() {
     let input = pool(vec![candidate("node-a"), candidate("node-b")]);
     let invalid = BestFitPolicy {
-        axis_order: [FitAxis::Vram, FitAxis::Vram, FitAxis::Cpu, FitAxis::Ram, FitAxis::Workspace],
+        axis_order: [
+            FitAxis::Vram,
+            FitAxis::Vram,
+            FitAxis::Cpu,
+            FitAxis::Ram,
+            FitAxis::Workspace,
+        ],
     };
     assert_eq!(
         rank_best_fit(&input, &job(), &report(&input, &job()), &invalid).unwrap_err(),
@@ -442,7 +507,10 @@ fn missing_job_and_candidate_rank_facts_fail_closed() {
     missing_job.cpu_cores = None;
     assert_eq!(
         rank_best_fit(&input, &missing_job, &eligibility, &policy(FitAxis::Cpu)).unwrap_err(),
-        RankingError::MissingRankFact { node_id: None, fact: MissingFact::JobCpu }
+        RankingError::MissingRankFact {
+            node_id: None,
+            fact: MissingFact::JobCpu
+        }
     );
 
     let mut candidates = vec![candidate("node-a"), candidate("node-b")];
@@ -451,7 +519,13 @@ fn missing_job_and_candidate_rank_facts_fail_closed() {
     candidates[0].available_cpu_cores = None;
     let missing_candidate = pool(candidates);
     assert_eq!(
-        rank_best_fit(&missing_candidate, &job(), &eligibility, &policy(FitAxis::Cpu)).unwrap_err(),
+        rank_best_fit(
+            &missing_candidate,
+            &job(),
+            &eligibility,
+            &policy(FitAxis::Cpu)
+        )
+        .unwrap_err(),
         RankingError::MissingRankFact {
             node_id: Some("node-a".into()),
             fact: MissingFact::AvailableCpu,
@@ -471,7 +545,11 @@ fn empty_and_duplicate_gpu_ids_fail_closed_with_typed_errors() {
     );
 
     let mut duplicate = candidate("node-b");
-    duplicate.gpus.as_mut().unwrap().push(gpu("node-b", 0, REQUIRED_VRAM + 1));
+    duplicate
+        .gpus
+        .as_mut()
+        .unwrap()
+        .push(gpu("node-b", 0, REQUIRED_VRAM + 1));
     assert_eq!(
         resource_fit(&duplicate, &job()).unwrap_err(),
         RankingError::DuplicateGpuId {
@@ -574,6 +652,9 @@ fn vram_remainder_overflow_fails_closed() {
 
     assert_eq!(
         rank_best_fit(&input, &j, &report(&input, &j), &policy(FitAxis::Vram)).unwrap_err(),
-        RankingError::FitOverflow { node_id: "node-a".into(), axis: FitAxis::Vram }
+        RankingError::FitOverflow {
+            node_id: "node-a".into(),
+            axis: FitAxis::Vram
+        }
     );
 }

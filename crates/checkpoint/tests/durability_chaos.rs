@@ -10,11 +10,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use gputeer_checkpoint::durability::{record_initial_state, ReplicaSet, MANIFEST_FILENAME};
 use gputeer_checkpoint::{
     gc_partial, replace_with_retry, startup_gc, sync_dir, write_once, CheckpointError,
     CheckpointFile, CheckpointManifest, Durability, DurabilityState, RetryPolicy,
 };
-use gputeer_checkpoint::durability::{record_initial_state, ReplicaSet, MANIFEST_FILENAME};
 
 // ═══════════════════════════════════════════════════════════════════
 // ADR-026 핵심 검증
@@ -90,7 +90,10 @@ fn adr026_write_once_is_idempotent_for_same_name() {
     let dir = tempfile::tempdir().unwrap();
     let data = b"content-addressed";
 
-    assert!(write_once(dir.path(), "a.bin", data).unwrap(), "첫 쓰기는 새 파일");
+    assert!(
+        write_once(dir.path(), "a.bin", data).unwrap(),
+        "첫 쓰기는 새 파일"
+    );
     assert!(
         !write_once(dir.path(), "a.bin", data).unwrap(),
         "이미 존재하면 rename 을 시도하지 않고 false 를 반환해야 한다"
@@ -167,11 +170,18 @@ fn manifest_last_rule_identifies_partial_checkpoints() {
     write_once(&partial, "model.bin", b"weights").unwrap();
 
     let removed_good = gc_partial(&good, MANIFEST_FILENAME).unwrap();
-    assert!(removed_good.is_empty(), "완전한 체크포인트는 GC 되면 안 된다");
+    assert!(
+        removed_good.is_empty(),
+        "완전한 체크포인트는 GC 되면 안 된다"
+    );
     assert!(good.join("model.bin").exists());
 
     let removed_partial = gc_partial(&partial, MANIFEST_FILENAME).unwrap();
-    assert_eq!(removed_partial.len(), 1, "매니페스트 없는 데이터는 GC 대상이다");
+    assert_eq!(
+        removed_partial.len(),
+        1,
+        "매니페스트 없는 데이터는 GC 대상이다"
+    );
     assert!(!partial.join("model.bin").exists());
 }
 
@@ -196,10 +206,22 @@ fn startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint()
 
     let (dirs, removed) = startup_gc(root.path()).unwrap();
 
-    assert_eq!(dirs, 2, "startup_gc must inspect both checkpoint directories");
-    assert_eq!(removed, 1, "the marker-only checkpoint contributes one removed marker");
-    assert!(!marker_only.exists(), "marker-only checkpoint directory must be removed");
-    assert!(complete.is_dir(), "manifest checkpoint directory must be preserved");
+    assert_eq!(
+        dirs, 2,
+        "startup_gc must inspect both checkpoint directories"
+    );
+    assert_eq!(
+        removed, 1,
+        "the marker-only checkpoint contributes one removed marker"
+    );
+    assert!(
+        !marker_only.exists(),
+        "marker-only checkpoint directory must be removed"
+    );
+    assert!(
+        complete.is_dir(),
+        "manifest checkpoint directory must be preserved"
+    );
     assert!(complete.join("model.bin").is_file());
     assert!(complete.join(MANIFEST_FILENAME).is_file());
 }
@@ -250,8 +272,12 @@ fn manifest_for(dir: &std::path::Path, files: &[(&str, &[u8])]) -> CheckpointMan
 #[test]
 fn hash_verification_passes_for_intact_files() {
     let dir = tempfile::tempdir().unwrap();
-    let m = manifest_for(dir.path(), &[("model.bin", b"weights"), ("optim.bin", b"adam")]);
-    m.verify_files(dir.path()).expect("온전한 파일은 검증을 통과해야 한다");
+    let m = manifest_for(
+        dir.path(),
+        &[("model.bin", b"weights"), ("optim.bin", b"adam")],
+    );
+    m.verify_files(dir.path())
+        .expect("온전한 파일은 검증을 통과해야 한다");
 }
 
 #[test]
@@ -353,21 +379,33 @@ fn replica_counting_applies_all_normative_rules() {
 
     // 규칙 1 — 서명 안 된 ACK 은 세지 않는다
     rs.add("dc-a", "dev-1", false, false);
-    assert_eq!(rs.effective_count(), 0, "서명되지 않은 ACK 은 replica 가 아니다");
+    assert_eq!(
+        rs.effective_count(),
+        0,
+        "서명되지 않은 ACK 은 replica 가 아니다"
+    );
 
     rs.add("dc-a", "dev-1", false, true);
     assert_eq!(rs.effective_count(), 1);
 
     // 규칙 2 — 같은 failure domain 은 1개로 센다
     rs.add("dc-a", "dev-2", false, true);
-    assert_eq!(rs.effective_count(), 1, "같은 failure domain 은 중복 계상하지 않는다");
+    assert_eq!(
+        rs.effective_count(),
+        1,
+        "같은 failure domain 은 중복 계상하지 않는다"
+    );
 
     rs.add("dc-b", "dev-3", false, true);
     assert_eq!(rs.effective_count(), 2);
 
     // 규칙 3 — ephemeral 노드의 로컬 복사본은 세지 않는다
     rs.add("dc-c", "runpod-1", true, true);
-    assert_eq!(rs.effective_count(), 2, "ephemeral 노드는 durable replica 가 아니다");
+    assert_eq!(
+        rs.effective_count(),
+        2,
+        "ephemeral 노드는 durable replica 가 아니다"
+    );
 }
 
 #[test]
@@ -380,7 +418,10 @@ fn durability_requirements_match_baseline() {
     rs.add("dc-a", "dev-1", false, true);
     assert!(rs.satisfies(Durability::Local));
     assert!(rs.satisfies(Durability::Mirrored));
-    assert!(!rs.satisfies(Durability::Replicated), "replica 1개로 REPLICATED 는 불가");
+    assert!(
+        !rs.satisfies(Durability::Replicated),
+        "replica 1개로 REPLICATED 는 불가"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -404,7 +445,10 @@ fn write_once_survives_readers_with_no_share_delete() {
     write_once(dir.path(), "held.bin", b"data").unwrap();
 
     // 파일을 연 채로 유지
-    let _held = OpenOptions::new().read(true).open(dir.path().join("held.bin")).unwrap();
+    let _held = OpenOptions::new()
+        .read(true)
+        .open(dir.path().join("held.bin"))
+        .unwrap();
 
     // 다른 이름으로는 계속 쓸 수 있어야 한다
     for i in 0..50 {

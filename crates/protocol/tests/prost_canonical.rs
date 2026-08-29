@@ -139,7 +139,12 @@ fn hashmap_canonical_is_stable_across_many_rebuilds() {
         m.env_vars = hm;
         seen.insert(canonical_encode(&m.to_canonical_fields(), &[]));
     }
-    assert_eq!(seen.len(), 1, "200회 중 서로 다른 canonical 이 {}종 나왔다", seen.len());
+    assert_eq!(
+        seen.len(),
+        1,
+        "200회 중 서로 다른 canonical 이 {}종 나왔다",
+        seen.len()
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -747,33 +752,111 @@ fn every_field_in_full_manifest_affects_canonical() {
 
     type Mut = Box<dyn Fn(&mut pb::JobManifest)>;
     let mutations: Vec<(&str, Mut)> = vec![
-        ("job_id(2)", Box::new(|m: &mut pb::JobManifest| m.job_id.clear())),
-        ("team_id(3)", Box::new(|m: &mut pb::JobManifest| m.team_id.clear())),
+        (
+            "job_id(2)",
+            Box::new(|m: &mut pb::JobManifest| m.job_id.clear()),
+        ),
+        (
+            "team_id(3)",
+            Box::new(|m: &mut pb::JobManifest| m.team_id.clear()),
+        ),
         ("env(10)", Box::new(|m: &mut pb::JobManifest| m.env = None)),
-        ("input_artifacts(11)", Box::new(|m: &mut pb::JobManifest| m.input_artifacts.clear())),
-        ("dataset(12)", Box::new(|m: &mut pb::JobManifest| m.dataset = None)),
-        ("entrypoint(13)", Box::new(|m: &mut pb::JobManifest| m.entrypoint.clear())),
-        ("args(14)", Box::new(|m: &mut pb::JobManifest| m.args.clear())),
-        ("env_vars(15)", Box::new(|m: &mut pb::JobManifest| m.env_vars.clear())),
-        ("resources(20)", Box::new(|m: &mut pb::JobManifest| m.resources = None)),
-        ("workload(21)", Box::new(|m: &mut pb::JobManifest| m.workload = None)),
-        ("deadline_minutes(30)", Box::new(|m: &mut pb::JobManifest| m.deadline_minutes = 0)),
-        ("preference(31)", Box::new(|m: &mut pb::JobManifest| m.preference = 0)),
-        ("max_queue_minutes(32)", Box::new(|m: &mut pb::JobManifest| m.max_queue_minutes = 0)),
-        ("checkpoint_interval_minutes(40)", Box::new(|m: &mut pb::JobManifest| m.checkpoint_interval_minutes = 0)),
-        ("durability(41)", Box::new(|m: &mut pb::JobManifest| m.durability = 0)),
-        ("on_partition(42)", Box::new(|m: &mut pb::JobManifest| m.on_partition = 0)),
-        ("max_data_loss_minutes(43)", Box::new(|m: &mut pb::JobManifest| m.max_data_loss_minutes = 0)),
-        ("minimum_isolation_class(50)", Box::new(|m: &mut pb::JobManifest| m.minimum_isolation_class = 0)),
-        ("minimum_security_tier(51)", Box::new(|m: &mut pb::JobManifest| m.minimum_security_tier = 0)),
-        ("minimum_key_protection(52)", Box::new(|m: &mut pb::JobManifest| m.minimum_key_protection = 0)),
-        ("side_effect_class(53)", Box::new(|m: &mut pb::JobManifest| m.side_effect_class = 0)),
-        ("network(54)", Box::new(|m: &mut pb::JobManifest| m.network = None)),
-        ("artifact_scope(55)", Box::new(|m: &mut pb::JobManifest| m.artifact_scope = None)),
-        ("acknowledge_duplicate_risk(56)", Box::new(|m: &mut pb::JobManifest| m.acknowledge_duplicate_risk = false)),
-        ("submitter_device_id(60)", Box::new(|m: &mut pb::JobManifest| m.submitter_device_id.clear())),
-        ("issued_at_unix_ms(61)", Box::new(|m: &mut pb::JobManifest| m.issued_at_unix_ms = 0)),
-        ("expires_at_unix_ms(62)", Box::new(|m: &mut pb::JobManifest| m.expires_at_unix_ms = 0)),
+        (
+            "input_artifacts(11)",
+            Box::new(|m: &mut pb::JobManifest| m.input_artifacts.clear()),
+        ),
+        (
+            "dataset(12)",
+            Box::new(|m: &mut pb::JobManifest| m.dataset = None),
+        ),
+        (
+            "entrypoint(13)",
+            Box::new(|m: &mut pb::JobManifest| m.entrypoint.clear()),
+        ),
+        (
+            "args(14)",
+            Box::new(|m: &mut pb::JobManifest| m.args.clear()),
+        ),
+        (
+            "env_vars(15)",
+            Box::new(|m: &mut pb::JobManifest| m.env_vars.clear()),
+        ),
+        (
+            "resources(20)",
+            Box::new(|m: &mut pb::JobManifest| m.resources = None),
+        ),
+        (
+            "workload(21)",
+            Box::new(|m: &mut pb::JobManifest| m.workload = None),
+        ),
+        (
+            "deadline_minutes(30)",
+            Box::new(|m: &mut pb::JobManifest| m.deadline_minutes = 0),
+        ),
+        (
+            "preference(31)",
+            Box::new(|m: &mut pb::JobManifest| m.preference = 0),
+        ),
+        (
+            "max_queue_minutes(32)",
+            Box::new(|m: &mut pb::JobManifest| m.max_queue_minutes = 0),
+        ),
+        (
+            "checkpoint_interval_minutes(40)",
+            Box::new(|m: &mut pb::JobManifest| m.checkpoint_interval_minutes = 0),
+        ),
+        (
+            "durability(41)",
+            Box::new(|m: &mut pb::JobManifest| m.durability = 0),
+        ),
+        (
+            "on_partition(42)",
+            Box::new(|m: &mut pb::JobManifest| m.on_partition = 0),
+        ),
+        (
+            "max_data_loss_minutes(43)",
+            Box::new(|m: &mut pb::JobManifest| m.max_data_loss_minutes = 0),
+        ),
+        (
+            "minimum_isolation_class(50)",
+            Box::new(|m: &mut pb::JobManifest| m.minimum_isolation_class = 0),
+        ),
+        (
+            "minimum_security_tier(51)",
+            Box::new(|m: &mut pb::JobManifest| m.minimum_security_tier = 0),
+        ),
+        (
+            "minimum_key_protection(52)",
+            Box::new(|m: &mut pb::JobManifest| m.minimum_key_protection = 0),
+        ),
+        (
+            "side_effect_class(53)",
+            Box::new(|m: &mut pb::JobManifest| m.side_effect_class = 0),
+        ),
+        (
+            "network(54)",
+            Box::new(|m: &mut pb::JobManifest| m.network = None),
+        ),
+        (
+            "artifact_scope(55)",
+            Box::new(|m: &mut pb::JobManifest| m.artifact_scope = None),
+        ),
+        (
+            "acknowledge_duplicate_risk(56)",
+            Box::new(|m: &mut pb::JobManifest| m.acknowledge_duplicate_risk = false),
+        ),
+        (
+            "submitter_device_id(60)",
+            Box::new(|m: &mut pb::JobManifest| m.submitter_device_id.clear()),
+        ),
+        (
+            "issued_at_unix_ms(61)",
+            Box::new(|m: &mut pb::JobManifest| m.issued_at_unix_ms = 0),
+        ),
+        (
+            "expires_at_unix_ms(62)",
+            Box::new(|m: &mut pb::JobManifest| m.expires_at_unix_ms = 0),
+        ),
     ];
 
     let mut unsigned = Vec::new();

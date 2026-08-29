@@ -11,9 +11,7 @@ use std::process::Command;
 use gputeer_crypto::durable_replay::DurableReplayGuard;
 use gputeer_crypto::replay::MAX_GC_ADVANCE_MS;
 use gputeer_protocol::canonical::Domain;
-use gputeer_protocol::signing::{
-    ReplayDecision, ReplayGuard, ReplayStoreError,
-};
+use gputeer_protocol::signing::{ReplayDecision, ReplayGuard, ReplayStoreError};
 use rusqlite::{params, Connection};
 use tempfile::tempdir;
 
@@ -54,14 +52,12 @@ fn first_use_is_fresh_and_restart_is_duplicate() {
         let mut guard = DurableReplayGuard::open(&database).unwrap();
 
         assert_eq!(
-            record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000)
-                .unwrap(),
+            record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000).unwrap(),
             ReplayDecision::Fresh
         );
 
         assert_eq!(
-            record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000)
-                .unwrap(),
+            record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000).unwrap(),
             ReplayDecision::Duplicate
         );
 
@@ -72,27 +68,13 @@ fn first_use_is_fresh_and_restart_is_duplicate() {
     let mut reopened = DurableReplayGuard::open(&database).unwrap();
 
     assert_eq!(
-        record(
-            &mut reopened,
-            "device-a",
-            Domain::Grant,
-            1,
-            NOW + 120_000
-        )
-        .unwrap(),
+        record(&mut reopened, "device-a", Domain::Grant, 1, NOW + 120_000).unwrap(),
         ReplayDecision::Duplicate,
         "저장소를 닫았다 다시 열었는데 replay 기록이 사라졌다"
     );
 
     assert_eq!(
-        record(
-            &mut reopened,
-            "device-a",
-            Domain::Grant,
-            2,
-            NOW + 120_000
-        )
-        .unwrap(),
+        record(&mut reopened, "device-a", Domain::Grant, 2, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh,
         "새 nonce까지 무조건 거부하는 구현은 정상 경로가 아니다"
     );
@@ -107,27 +89,18 @@ fn key_contains_device_domain_and_nonce() {
     let mut guard = DurableReplayGuard::open(&database).unwrap();
 
     assert_eq!(
-        record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000)
-            .unwrap(),
+        record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh
     );
 
     assert_eq!(
-        record(&mut guard, "device-b", Domain::Grant, 1, NOW + 120_000)
-            .unwrap(),
+        record(&mut guard, "device-b", Domain::Grant, 1, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh,
         "sender_device_id가 키에서 빠졌다"
     );
 
     assert_eq!(
-        record(
-            &mut guard,
-            "device-a",
-            Domain::LeaseRenew,
-            1,
-            NOW + 120_000
-        )
-        .unwrap(),
+        record(&mut guard, "device-a", Domain::LeaseRenew, 1, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh,
         "domain_tag가 키에서 빠졌다"
     );
@@ -140,8 +113,7 @@ fn signer_quota_does_not_starve_other_signers() {
     let directory = tempdir().unwrap();
     let database = directory.path().join("replay.sqlite");
 
-    let mut guard =
-        DurableReplayGuard::open_with_capacities(&database, 6, 3).unwrap();
+    let mut guard = DurableReplayGuard::open_with_capacities(&database, 6, 3).unwrap();
 
     for value in 0..3 {
         assert_eq!(
@@ -157,15 +129,7 @@ fn signer_quota_does_not_starve_other_signers() {
         );
     }
 
-    match record(
-        &mut guard,
-        "noisy-device",
-        Domain::Grant,
-        99,
-        NOW + 120_000,
-    )
-    .unwrap_err()
-    {
+    match record(&mut guard, "noisy-device", Domain::Grant, 99, NOW + 120_000).unwrap_err() {
         ReplayStoreError::SignerQuotaExceeded { signer_id, quota } => {
             assert_eq!(signer_id, "noisy-device");
             assert_eq!(quota, 3);
@@ -174,14 +138,7 @@ fn signer_quota_does_not_starve_other_signers() {
     }
 
     assert_eq!(
-        record(
-            &mut guard,
-            "quiet-device",
-            Domain::Grant,
-            1,
-            NOW + 120_000
-        )
-        .unwrap(),
+        record(&mut guard, "quiet-device", Domain::Grant, 1, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh,
         "한 서명자의 quota가 다른 서명자를 막았다"
     );
@@ -194,34 +151,28 @@ fn cache_full_does_not_evict_unexpired_entries() {
     let directory = tempdir().unwrap();
     let database = directory.path().join("replay.sqlite");
 
-    let mut guard =
-        DurableReplayGuard::open_with_capacities(&database, 2, 2).unwrap();
+    let mut guard = DurableReplayGuard::open_with_capacities(&database, 2, 2).unwrap();
 
     assert_eq!(
-        record(&mut guard, "device-a", Domain::Grant, 1, NOW + 100_000)
-            .unwrap(),
+        record(&mut guard, "device-a", Domain::Grant, 1, NOW + 100_000).unwrap(),
         ReplayDecision::Fresh
     );
     assert_eq!(
-        record(&mut guard, "device-b", Domain::Grant, 1, NOW + 100_000)
-            .unwrap(),
+        record(&mut guard, "device-b", Domain::Grant, 1, NOW + 100_000).unwrap(),
         ReplayDecision::Fresh
     );
 
     assert_eq!(
-        record(&mut guard, "device-a", Domain::Grant, 2, NOW + 100_000)
-            .unwrap_err(),
+        record(&mut guard, "device-a", Domain::Grant, 2, NOW + 100_000).unwrap_err(),
         ReplayStoreError::CacheFull
     );
 
     assert_eq!(
-        record(&mut guard, "device-a", Domain::Grant, 1, NOW + 100_000)
-            .unwrap(),
+        record(&mut guard, "device-a", Domain::Grant, 1, NOW + 100_000).unwrap(),
         ReplayDecision::Duplicate
     );
     assert_eq!(
-        record(&mut guard, "device-b", Domain::Grant, 1, NOW + 100_000)
-            .unwrap(),
+        record(&mut guard, "device-b", Domain::Grant, 1, NOW + 100_000).unwrap(),
         ReplayDecision::Duplicate
     );
     assert_eq!(guard.entry_count().unwrap(), 2);
@@ -234,12 +185,7 @@ fn invalid_nonce_does_not_consume_a_valid_nonce_slot() {
     let mut guard = DurableReplayGuard::open(&database).unwrap();
 
     let error = guard
-        .check_and_record(
-            "device-a",
-            Domain::Grant,
-            &[7u8; 15],
-            NOW + 120_000,
-        )
+        .check_and_record("device-a", Domain::Grant, &[7u8; 15], NOW + 120_000)
         .unwrap_err();
 
     // ★ 2026-08-17 분류 정정 (독립 검수).
@@ -257,8 +203,7 @@ fn invalid_nonce_does_not_consume_a_valid_nonce_slot() {
     );
 
     assert_eq!(
-        record(&mut guard, "device-a", Domain::Grant, 7, NOW + 120_000)
-            .unwrap(),
+        record(&mut guard, "device-a", Domain::Grant, 7, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh
     );
 }
@@ -268,24 +213,13 @@ fn gc_releases_quota_only_after_expiration() {
     let directory = tempdir().unwrap();
     let database = directory.path().join("replay.sqlite");
 
-    let mut guard =
-        DurableReplayGuard::open_with_capacities(&database, 10, 2).unwrap();
+    let mut guard = DurableReplayGuard::open_with_capacities(&database, 10, 2).unwrap();
 
     guard
-        .check_and_record(
-            "device-a",
-            Domain::Grant,
-            &nonce(1),
-            NOW + 1_000,
-        )
+        .check_and_record("device-a", Domain::Grant, &nonce(1), NOW + 1_000)
         .unwrap();
     guard
-        .check_and_record(
-            "device-a",
-            Domain::Grant,
-            &nonce(2),
-            NOW + 100_000,
-        )
+        .check_and_record("device-a", Domain::Grant, &nonce(2), NOW + 100_000)
         .unwrap();
 
     assert_eq!(guard.signer_usage("device-a").unwrap(), 2);
@@ -298,14 +232,7 @@ fn gc_releases_quota_only_after_expiration() {
     assert_eq!(guard.signer_usage("device-a").unwrap(), 1);
 
     assert_eq!(
-        record(
-            &mut guard,
-            "device-a",
-            Domain::Grant,
-            3,
-            NOW + 100_000
-        )
-        .unwrap(),
+        record(&mut guard, "device-a", Domain::Grant, 3, NOW + 100_000).unwrap(),
         ReplayDecision::Fresh
     );
 }
@@ -317,41 +244,26 @@ fn clock_state_survives_restart_and_blocks_bad_gc() {
     let retain_until = NOW + 16 * 60 * 1_000;
 
     {
-        let mut guard =
-            DurableReplayGuard::open_with_capacities(&database, 10, 10)
-                .unwrap();
+        let mut guard = DurableReplayGuard::open_with_capacities(&database, 10, 10).unwrap();
 
         guard
-            .check_and_record(
-                "device-a",
-                Domain::Grant,
-                &nonce(1),
-                retain_until,
-            )
+            .check_and_record("device-a", Domain::Grant, &nonce(1), retain_until)
             .unwrap();
 
         assert_eq!(guard.gc(NOW).unwrap(), 0);
     }
 
-    let mut reopened =
-        DurableReplayGuard::open_with_capacities(&database, 10, 10).unwrap();
+    let mut reopened = DurableReplayGuard::open_with_capacities(&database, 10, 10).unwrap();
 
     assert_eq!(
-        reopened
-            .gc(NOW + MAX_GC_ADVANCE_MS * 100)
-            .unwrap(),
+        reopened.gc(NOW + MAX_GC_ADVANCE_MS * 100).unwrap(),
         0,
         "미래 시각 한 번으로 유효한 nonce가 삭제되었다"
     );
     assert_eq!(reopened.clock_jumps().unwrap(), 1);
     assert_eq!(
         reopened
-            .check_and_record(
-                "device-a",
-                Domain::Grant,
-                &nonce(1),
-                retain_until,
-            )
+            .check_and_record("device-a", Domain::Grant, &nonce(1), retain_until,)
             .unwrap(),
         ReplayDecision::Duplicate
     );
@@ -360,12 +272,7 @@ fn clock_state_survives_restart_and_blocks_bad_gc() {
     assert_eq!(reopened.clock_rollbacks().unwrap(), 1);
     assert_eq!(
         reopened
-            .check_and_record(
-                "device-a",
-                Domain::Grant,
-                &nonce(1),
-                retain_until,
-            )
+            .check_and_record("device-a", Domain::Grant, &nonce(1), retain_until,)
             .unwrap(),
         ReplayDecision::Duplicate,
         "시계 되감김 뒤 유효한 nonce가 재사용 가능해졌다"
@@ -381,8 +288,7 @@ fn crash_recovery_discards_uncommitted_partial_record() {
     {
         let mut guard = DurableReplayGuard::open(&database).unwrap();
         assert_eq!(
-            record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000)
-                .unwrap(),
+            record(&mut guard, "device-a", Domain::Grant, 1, NOW + 120_000).unwrap(),
             ReplayDecision::Fresh
         );
     }
@@ -413,15 +319,13 @@ fn crash_recovery_discards_uncommitted_partial_record() {
     let mut reopened = DurableReplayGuard::open(&database).unwrap();
 
     assert_eq!(
-        record(&mut reopened, "device-a", Domain::Grant, 1, NOW + 120_000)
-            .unwrap(),
+        record(&mut reopened, "device-a", Domain::Grant, 1, NOW + 120_000).unwrap(),
         ReplayDecision::Duplicate,
         "commit된 기존 기록이 크래시 복구 뒤 사라졌다"
     );
 
     assert_eq!(
-        record(&mut reopened, "device-a", Domain::Grant, 2, NOW + 120_000)
-            .unwrap(),
+        record(&mut reopened, "device-a", Domain::Grant, 2, NOW + 120_000).unwrap(),
         ReplayDecision::Fresh,
         "commit되지 않은 부분 기록이 복구 뒤 남았다"
     );
@@ -431,16 +335,14 @@ fn crash_recovery_discards_uncommitted_partial_record() {
 #[test]
 #[ignore]
 fn crash_child_writes_uncommitted_record() {
-    let database = env::var_os("GPUTEER_REPLAY_CRASH_DB")
-        .expect("크래시 시뮬레이션 데이터베이스 경로가 없다");
-    let marker = env::var_os("GPUTEER_REPLAY_CRASH_MARKER")
-        .expect("크래시 시뮬레이션 표식 경로가 없다");
+    let database =
+        env::var_os("GPUTEER_REPLAY_CRASH_DB").expect("크래시 시뮬레이션 데이터베이스 경로가 없다");
+    let marker =
+        env::var_os("GPUTEER_REPLAY_CRASH_MARKER").expect("크래시 시뮬레이션 표식 경로가 없다");
 
     let connection = Connection::open(PathBuf::from(database)).unwrap();
 
-    connection
-        .execute_batch("BEGIN IMMEDIATE;")
-        .unwrap();
+    connection.execute_batch("BEGIN IMMEDIATE;").unwrap();
 
     connection
         .execute(
@@ -548,7 +450,10 @@ fn two_connections_with_different_nonces_both_succeed() {
 fn durable_guard_says_it_is_durable() {
     let dir = tempfile::tempdir().unwrap();
     let g = DurableReplayGuard::open(dir.path().join("replay.sqlite3")).unwrap();
-    assert!(g.is_durable(), "영속 저장소가 is_durable() 로 false 를 반환한다");
+    assert!(
+        g.is_durable(),
+        "영속 저장소가 is_durable() 로 false 를 반환한다"
+    );
     assert!(g.is_effective());
 
     // 대조군 — 메모리 구현은 false 다. 둘이 구분되지 않으면 신호가 없는 것이다.

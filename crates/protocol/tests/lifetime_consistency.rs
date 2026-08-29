@@ -34,8 +34,8 @@
 //! LongLived   expires_at() 이 0 이 아니어야 한다
 //! ```
 
-use gputeer_protocol::signing::{Lifetime, Signable};
 use gputeer_protocol::pb;
+use gputeer_protocol::signing::{Lifetime, Signable};
 
 const T: u64 = 1_755_200_000_000;
 
@@ -200,24 +200,33 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
-    check("AgentSessionHello", &pb::AgentSessionHello {
-        schema_version: 1,
-        issued_at_unix_ms: T,
-        nonce: vec![0u8; 16],
-        ..Default::default()
-    });
-    check("ResumeLeaseRequest", &pb::ResumeLeaseRequest {
-        schema_version: 1,
-        issued_at_unix_ms: T,
-        request_nonce: vec![0u8; 16],
-        ..Default::default()
-    });
-    check("ResumeLeaseResult", &pb::ResumeLeaseResult {
-        schema_version: 1,
-        issued_at_unix_ms: T,
-        request_nonce: vec![0u8; 16],
-        ..Default::default()
-    });
+    check(
+        "AgentSessionHello",
+        &pb::AgentSessionHello {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
+    check(
+        "ResumeLeaseRequest",
+        &pb::ResumeLeaseRequest {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            request_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
+    check(
+        "ResumeLeaseResult",
+        &pb::ResumeLeaseResult {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            request_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
 }
 
 /// ★ `Signable` 을 구현한 메시지가 위 테스트에 **전부** 있는가.
@@ -236,7 +245,11 @@ fn every_signable_is_covered() {
             impls.push(rest.trim_end_matches(" {").to_string());
         }
     }
-    assert!(impls.len() >= 10, "impl 을 {}개만 찾았다 — 파서 결함", impls.len());
+    assert!(
+        impls.len() >= 10,
+        "impl 을 {}개만 찾았다 — 파서 결함",
+        impls.len()
+    );
 
     let covered = include_str!("lifetime_consistency.rs");
     let missing: Vec<_> = impls
@@ -273,7 +286,9 @@ fn evidence_and_shortlived_differ_in_what_they_check() {
         ..Default::default()
     };
     assert!(
-        Signable::replay_nonce(&no_nonce).map(|n| n.is_empty()).unwrap_or(true),
+        Signable::replay_nonce(&no_nonce)
+            .map(|n| n.is_empty())
+            .unwrap_or(true),
         "nonce 가 비어 있어야 하는 테스트 전제"
     );
 

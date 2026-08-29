@@ -64,8 +64,13 @@ fn validate_candidate_sets<'a>(
         if candidate.node_id.is_empty() {
             return Err(RankingError::EmptyNodeId);
         }
-        if pool_by_id.insert(candidate.node_id.as_str(), candidate).is_some() {
-            return Err(RankingError::DuplicatePoolNodeId { node_id: candidate.node_id.clone() });
+        if pool_by_id
+            .insert(candidate.node_id.as_str(), candidate)
+            .is_some()
+        {
+            return Err(RankingError::DuplicatePoolNodeId {
+                node_id: candidate.node_id.clone(),
+            });
         }
     }
 
@@ -80,16 +85,24 @@ fn validate_candidate_sets<'a>(
             return Err(RankingError::EmptyNodeId);
         }
         if !report_ids.insert(node_id.as_str()) {
-            return Err(RankingError::DuplicateReportNodeId { node_id: node_id.clone() });
+            return Err(RankingError::DuplicateReportNodeId {
+                node_id: node_id.clone(),
+            });
         }
     }
 
-    if let Some(node_id) = report_ids.iter().find(|node_id| !pool_by_id.contains_key(**node_id)) {
+    if let Some(node_id) = report_ids
+        .iter()
+        .find(|node_id| !pool_by_id.contains_key(**node_id))
+    {
         return Err(RankingError::ReportCandidateMissingFromPool {
             node_id: (*node_id).to_string(),
         });
     }
-    if let Some(node_id) = pool_by_id.keys().find(|node_id| !report_ids.contains(**node_id)) {
+    if let Some(node_id) = pool_by_id
+        .keys()
+        .find(|node_id| !report_ids.contains(**node_id))
+    {
         return Err(RankingError::PoolCandidateMissingFromReport {
             node_id: (*node_id).to_string(),
         });
@@ -115,8 +128,12 @@ impl RankRequirements {
             vram_per_gpu: job
                 .minimum_vram_bytes_per_gpu
                 .ok_or_else(|| missing_job(MissingFact::JobMinimumVram))?,
-            cpu_cores: job.cpu_cores.ok_or_else(|| missing_job(MissingFact::JobCpu))?,
-            ram_bytes: job.ram_bytes.ok_or_else(|| missing_job(MissingFact::JobRam))?,
+            cpu_cores: job
+                .cpu_cores
+                .ok_or_else(|| missing_job(MissingFact::JobCpu))?,
+            ram_bytes: job
+                .ram_bytes
+                .ok_or_else(|| missing_job(MissingFact::JobRam))?,
             workspace_bytes: job
                 .workspace_bytes
                 .ok_or_else(|| missing_job(MissingFact::JobWorkspace))?,
@@ -142,7 +159,9 @@ pub fn resource_fit(
     let mut gpu_ids = BTreeSet::new();
     for gpu in gpus {
         if gpu.gpu_id.trim().is_empty() {
-            return Err(RankingError::EmptyGpuId { node_id: node_id.to_owned() });
+            return Err(RankingError::EmptyGpuId {
+                node_id: node_id.to_owned(),
+            });
         }
         if !gpu_ids.insert(gpu.gpu_id.as_str()) {
             return Err(RankingError::DuplicateGpuId {
@@ -158,7 +177,9 @@ pub fn resource_fit(
             None => {
                 return Err(missing_candidate(
                     node_id,
-                    MissingFact::GpuHealth { gpu_id: gpu.gpu_id.clone() },
+                    MissingFact::GpuHealth {
+                        gpu_id: gpu.gpu_id.clone(),
+                    },
                 ));
             }
             Some(false) => continue,
@@ -166,14 +187,24 @@ pub fn resource_fit(
         }
         if !job.allowed_gpu_models.is_empty() {
             let model = gpu.model.as_ref().ok_or_else(|| {
-                missing_candidate(node_id, MissingFact::GpuModel { gpu_id: gpu.gpu_id.clone() })
+                missing_candidate(
+                    node_id,
+                    MissingFact::GpuModel {
+                        gpu_id: gpu.gpu_id.clone(),
+                    },
+                )
             })?;
             if !job.allowed_gpu_models.contains(model) {
                 continue;
             }
         }
         let available = gpu.available_vram_bytes.ok_or_else(|| {
-            missing_candidate(node_id, MissingFact::GpuVram { gpu_id: gpu.gpu_id.clone() })
+            missing_candidate(
+                node_id,
+                MissingFact::GpuVram {
+                    gpu_id: gpu.gpu_id.clone(),
+                },
+            )
         })?;
         if available >= required.vram_per_gpu {
             matching_gpus.push((available, gpu.gpu_id.as_str()));
@@ -181,9 +212,11 @@ pub fn resource_fit(
     }
 
     matching_gpus.sort_unstable_by(|left, right| left.cmp(right));
-    let required_gpu_count = usize::try_from(required.gpu_count).map_err(|_| {
-        RankingError::FitOverflow { node_id: node_id.to_owned(), axis: FitAxis::GpuCount }
-    })?;
+    let required_gpu_count =
+        usize::try_from(required.gpu_count).map_err(|_| RankingError::FitOverflow {
+            node_id: node_id.to_owned(),
+            axis: FitAxis::GpuCount,
+        })?;
     if matching_gpus.len() < required_gpu_count {
         return Err(mismatch(node_id, FitAxis::GpuCount));
     }
@@ -197,9 +230,13 @@ pub fn resource_fit(
             node_id: node_id.to_owned(),
             axis: FitAxis::Vram,
         })?;
-    let gpu_count_remaining = u32::try_from(matching_gpus.len() - required_gpu_count).map_err(
-        |_| RankingError::FitOverflow { node_id: node_id.to_owned(), axis: FitAxis::GpuCount },
-    )?;
+    let gpu_count_remaining =
+        u32::try_from(matching_gpus.len() - required_gpu_count).map_err(|_| {
+            RankingError::FitOverflow {
+                node_id: node_id.to_owned(),
+                axis: FitAxis::GpuCount,
+            }
+        })?;
     let mut selected_gpu_ids = selected
         .iter()
         .map(|(_, gpu_id)| (*gpu_id).to_owned())
@@ -276,9 +313,10 @@ fn compare_ranked(
                 .fit_key
                 .cpu_cores_remaining
                 .cmp(&right.fit_key.cpu_cores_remaining),
-            FitAxis::Ram => {
-                left.fit_key.ram_remaining_bytes.cmp(&right.fit_key.ram_remaining_bytes)
-            }
+            FitAxis::Ram => left
+                .fit_key
+                .ram_remaining_bytes
+                .cmp(&right.fit_key.ram_remaining_bytes),
             FitAxis::Workspace => left
                 .fit_key
                 .workspace_remaining_bytes
@@ -292,13 +330,22 @@ fn compare_ranked(
 }
 
 fn missing_job(fact: MissingFact) -> RankingError {
-    RankingError::MissingRankFact { node_id: None, fact }
+    RankingError::MissingRankFact {
+        node_id: None,
+        fact,
+    }
 }
 
 fn missing_candidate(node_id: &str, fact: MissingFact) -> RankingError {
-    RankingError::MissingRankFact { node_id: Some(node_id.to_owned()), fact }
+    RankingError::MissingRankFact {
+        node_id: Some(node_id.to_owned()),
+        fact,
+    }
 }
 
 fn mismatch(node_id: &str, axis: FitAxis) -> RankingError {
-    RankingError::EligibleCandidateMismatch { node_id: node_id.to_owned(), axis }
+    RankingError::EligibleCandidateMismatch {
+        node_id: node_id.to_owned(),
+        axis,
+    }
 }

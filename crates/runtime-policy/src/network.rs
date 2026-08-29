@@ -93,11 +93,7 @@ impl<'a> NetworkPolicyCheck<'a> {
         if !self.backend.can_enforce() {
             return NetworkDecision::NoEnforcementBackend;
         }
-        if self
-            .runtime_allow_hosts
-            .iter()
-            .any(|h| h == requested_host)
-        {
+        if self.runtime_allow_hosts.iter().any(|h| h == requested_host) {
             NetworkDecision::Allowed
         } else {
             NetworkDecision::Denied {
@@ -163,7 +159,10 @@ mod tests {
         let allow = vec!["x".to_string()];
         let check = NetworkPolicyCheck::new(&allow, &backend);
 
-        assert!(!check.decide("x").permits_execution(), "백엔드 없이도 실행을 허용했다");
+        assert!(
+            !check.decide("x").permits_execution(),
+            "백엔드 없이도 실행을 허용했다"
+        );
 
         let enforcing = FakeEnforcingBackend;
         let check2 = NetworkPolicyCheck::new(&allow, &enforcing);

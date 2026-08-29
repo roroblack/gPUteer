@@ -1,10 +1,9 @@
 use std::collections::BTreeSet;
 
 use gputeer_scheduler::{
-    evaluate_eligibility, CandidateSnapshot, EligibilityReport, EligibilityResolution,
-    GpuSnapshot, IsolationClass, JobRequirements, KeyProtection, MissingFact, NodeState, Policy,
-    PoolSnapshot, RejectionReason, RiskState, SecurityTier, Sensitivity, SideEffectClass,
-    WorkloadClass,
+    evaluate_eligibility, CandidateSnapshot, EligibilityReport, EligibilityResolution, GpuSnapshot,
+    IsolationClass, JobRequirements, KeyProtection, MissingFact, NodeState, Policy, PoolSnapshot,
+    RejectionReason, RiskState, SecurityTier, Sensitivity, SideEffectClass, WorkloadClass,
 };
 
 const NOW: u64 = 1_000;
@@ -58,9 +57,14 @@ fn candidate(node_id: &str) -> CandidateSnapshot {
 
 fn report(candidate: CandidateSnapshot, job: &JobRequirements) -> EligibilityReport {
     evaluate_eligibility(
-        &PoolSnapshot { evaluated_at_unix_ms: NOW, candidates: vec![candidate] },
+        &PoolSnapshot {
+            evaluated_at_unix_ms: NOW,
+            candidates: vec![candidate],
+        },
         job,
-        &Policy { maximum_snapshot_age_ms: MAX_AGE },
+        &Policy {
+            maximum_snapshot_age_ms: MAX_AGE,
+        },
     )
 }
 
@@ -68,7 +72,10 @@ fn assert_eligible(candidate: CandidateSnapshot, job: &JobRequirements) {
     let actual = report(candidate, job);
     assert_eq!(actual.rejected, vec![]);
     assert_eq!(actual.eligible.len(), 1);
-    assert!(matches!(actual.resolution, EligibilityResolution::SingleEligible { .. }));
+    assert!(matches!(
+        actual.resolution,
+        EligibilityResolution::SingleEligible { .. }
+    ));
 }
 
 fn assert_rejected_with(
@@ -77,7 +84,10 @@ fn assert_rejected_with(
     expected: RejectionReason,
 ) {
     let actual = report(candidate, job);
-    assert!(actual.eligible.is_empty(), "unexpected eligible report: {actual:?}");
+    assert!(
+        actual.eligible.is_empty(),
+        "unexpected eligible report: {actual:?}"
+    );
     assert!(
         actual.rejected[0].reasons.contains(&expected),
         "missing {expected:?} in {actual:?}"
@@ -97,7 +107,9 @@ fn node_must_be_online() {
     assert_rejected_with(
         c,
         &job(),
-        RejectionReason::NodeNotOnline { actual: NodeState::Suspect },
+        RejectionReason::NodeNotOnline {
+            actual: NodeState::Suspect,
+        },
     );
 }
 
@@ -108,7 +120,9 @@ fn risk_must_be_normal() {
     assert_rejected_with(
         c,
         &job(),
-        RejectionReason::RiskNotNormal { actual: RiskState::Suspect },
+        RejectionReason::RiskNotNormal {
+            actual: RiskState::Suspect,
+        },
     );
 }
 
@@ -191,7 +205,10 @@ fn gpu_count_just_below_requirement_is_rejected() {
     assert_rejected_with(
         candidate("node-a"),
         &j,
-        RejectionReason::GpuCountInsufficient { available: 1, required: 2 },
+        RejectionReason::GpuCountInsufficient {
+            available: 1,
+            required: 2,
+        },
     );
 }
 
@@ -202,7 +219,10 @@ fn unhealthy_gpu_is_rejected() {
     assert_rejected_with(
         c,
         &job(),
-        RejectionReason::HealthyGpuCountInsufficient { available: 0, required: 1 },
+        RejectionReason::HealthyGpuCountInsufficient {
+            available: 0,
+            required: 1,
+        },
     );
 }
 
@@ -240,7 +260,14 @@ fn gpu_vram_one_byte_below_requirement_is_rejected() {
 fn cpu_one_core_below_requirement_is_rejected() {
     let mut c = candidate("node-a");
     c.available_cpu_cores = Some(7);
-    assert_rejected_with(c, &job(), RejectionReason::CpuInsufficient { available: 7, required: 8 });
+    assert_rejected_with(
+        c,
+        &job(),
+        RejectionReason::CpuInsufficient {
+            available: 7,
+            required: 8,
+        },
+    );
 }
 
 #[test]
@@ -250,7 +277,10 @@ fn ram_one_byte_below_requirement_is_rejected() {
     assert_rejected_with(
         c,
         &job(),
-        RejectionReason::RamInsufficient { available: RAM - 1, required: RAM },
+        RejectionReason::RamInsufficient {
+            available: RAM - 1,
+            required: RAM,
+        },
     );
 }
 
@@ -275,7 +305,9 @@ fn workload_class_must_be_owner_allowed() {
     assert_rejected_with(
         c,
         &job(),
-        RejectionReason::WorkloadClassNotAllowed { workload_class: WorkloadClass::Training },
+        RejectionReason::WorkloadClassNotAllowed {
+            workload_class: WorkloadClass::Training,
+        },
     );
 }
 
@@ -449,22 +481,32 @@ fn no_model_constraint_does_not_require_model_fact() {
 #[test]
 fn zero_one_and_multiple_eligible_candidates_are_distinguished_without_ranking() {
     let j = job();
-    let policy = Policy { maximum_snapshot_age_ms: MAX_AGE };
+    let policy = Policy {
+        maximum_snapshot_age_ms: MAX_AGE,
+    };
     let none = evaluate_eligibility(
-        &PoolSnapshot { evaluated_at_unix_ms: NOW, candidates: vec![] },
+        &PoolSnapshot {
+            evaluated_at_unix_ms: NOW,
+            candidates: vec![],
+        },
         &j,
         &policy,
     );
     assert_eq!(none.resolution, EligibilityResolution::NoEligibleCandidates);
 
     let one = evaluate_eligibility(
-        &PoolSnapshot { evaluated_at_unix_ms: NOW, candidates: vec![candidate("node-a")] },
+        &PoolSnapshot {
+            evaluated_at_unix_ms: NOW,
+            candidates: vec![candidate("node-a")],
+        },
         &j,
         &policy,
     );
     assert_eq!(
         one.resolution,
-        EligibilityResolution::SingleEligible { node_id: "node-a".into() }
+        EligibilityResolution::SingleEligible {
+            node_id: "node-a".into()
+        }
     );
 
     let multiple = evaluate_eligibility(
@@ -477,7 +519,11 @@ fn zero_one_and_multiple_eligible_candidates_are_distinguished_without_ranking()
     );
     assert_eq!(multiple.resolution, EligibilityResolution::RankingRequired);
     assert_eq!(
-        multiple.eligible.iter().map(|c| c.node_id.as_str()).collect::<Vec<_>>(),
+        multiple
+            .eligible
+            .iter()
+            .map(|c| c.node_id.as_str())
+            .collect::<Vec<_>>(),
         vec!["node-a", "node-b"]
     );
 }
@@ -485,7 +531,9 @@ fn zero_one_and_multiple_eligible_candidates_are_distinguished_without_ranking()
 #[test]
 fn candidate_and_reason_order_is_independent_of_input_order() {
     let j = job();
-    let policy = Policy { maximum_snapshot_age_ms: MAX_AGE };
+    let policy = Policy {
+        maximum_snapshot_age_ms: MAX_AGE,
+    };
     let mut a = candidate("node-c");
     a.node_state = Some(NodeState::Offline);
     a.risk_state = Some(RiskState::Quarantined);
@@ -503,19 +551,30 @@ fn candidate_and_reason_order_is_independent_of_input_order() {
         &policy,
     );
     let reverse = evaluate_eligibility(
-        &PoolSnapshot { evaluated_at_unix_ms: NOW, candidates: vec![c, b, a] },
+        &PoolSnapshot {
+            evaluated_at_unix_ms: NOW,
+            candidates: vec![c, b, a],
+        },
         &j,
         &policy,
     );
     assert_eq!(forward, reverse);
-    assert_eq!(format!("{forward:?}").as_bytes(), format!("{reverse:?}").as_bytes());
-    assert!(forward.rejected[1].reasons.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(
+        format!("{forward:?}").as_bytes(),
+        format!("{reverse:?}").as_bytes()
+    );
+    assert!(forward.rejected[1]
+        .reasons
+        .windows(2)
+        .all(|pair| pair[0] <= pair[1]));
 }
 
 #[test]
 fn duplicate_node_ids_do_not_reintroduce_input_order_dependence() {
     let j = job();
-    let policy = Policy { maximum_snapshot_age_ms: MAX_AGE };
+    let policy = Policy {
+        maximum_snapshot_age_ms: MAX_AGE,
+    };
     let mut first = candidate("same-node");
     first.node_state = Some(NodeState::Offline);
     let mut second = candidate("same-node");
@@ -529,7 +588,10 @@ fn duplicate_node_ids_do_not_reintroduce_input_order_dependence() {
         &policy,
     );
     let reverse = evaluate_eligibility(
-        &PoolSnapshot { evaluated_at_unix_ms: NOW, candidates: vec![second, first] },
+        &PoolSnapshot {
+            evaluated_at_unix_ms: NOW,
+            candidates: vec![second, first],
+        },
         &j,
         &policy,
     );

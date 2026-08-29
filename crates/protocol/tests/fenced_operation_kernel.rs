@@ -161,9 +161,7 @@ fn only_an_exact_blake3_256_digest_is_accepted() {
         received.operation_id.as_mut().unwrap().algo = algorithm;
         assert_eq!(
             evaluate_fenced_operation(JOB_ID, ATTEMPT_ID, &received, &[]),
-            invalid(InvalidFencedOperation::InvalidOperationIdAlgorithm {
-                actual: algorithm,
-            })
+            invalid(InvalidFencedOperation::InvalidOperationIdAlgorithm { actual: algorithm })
         );
     }
 

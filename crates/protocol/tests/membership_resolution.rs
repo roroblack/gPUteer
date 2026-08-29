@@ -157,8 +157,8 @@ fn generation_mismatch_is_unresolved_not_authorized() {
     // 같은 member_id 라도 세대가 다르면 다른 주체이므로 권한이 아니다.
     let bindings = [binding("dev-a", "mem-1", 1)];
     let members = [fact("mem-1", 2, MemberState::Active)];
-    let actual = resolve_device_authorization("dev-a", FRESH, &bindings, &members)
-        .expect("유효한 입력이다");
+    let actual =
+        resolve_device_authorization("dev-a", FRESH, &bindings, &members).expect("유효한 입력이다");
     assert_eq!(
         actual,
         MemberAuthorization::Unresolved,
@@ -195,7 +195,12 @@ fn device_bound_to_two_subjects_is_ambiguous() {
         fact("mem-1", 1, MemberState::Active),
         fact("mem-2", 1, MemberState::Active),
     ];
-    assert_order_independent("dev-a", &bindings, &members, &MemberAuthorization::Ambiguous);
+    assert_order_independent(
+        "dev-a",
+        &bindings,
+        &members,
+        &MemberAuthorization::Ambiguous,
+    );
 }
 
 #[test]
@@ -205,7 +210,12 @@ fn same_subject_in_two_states_is_ambiguous() {
         fact("mem-1", 1, MemberState::Active),
         fact("mem-1", 1, MemberState::Revoked),
     ];
-    assert_order_independent("dev-a", &bindings, &members, &MemberAuthorization::Ambiguous);
+    assert_order_independent(
+        "dev-a",
+        &bindings,
+        &members,
+        &MemberAuthorization::Ambiguous,
+    );
 }
 
 /// 충돌이 ACTIVE 를 이긴다 — 하나라도 권한이 있으면 통과시키는 식으로
@@ -217,8 +227,8 @@ fn ambiguity_is_not_resolved_in_favor_of_active() {
         fact("mem-1", 1, MemberState::Active),
         fact("mem-2", 1, MemberState::Revoked),
     ];
-    let actual = resolve_device_authorization("dev-a", FRESH, &bindings, &members)
-        .expect("유효한 입력이다");
+    let actual =
+        resolve_device_authorization("dev-a", FRESH, &bindings, &members).expect("유효한 입력이다");
     assert_eq!(
         actual,
         MemberAuthorization::Ambiguous,

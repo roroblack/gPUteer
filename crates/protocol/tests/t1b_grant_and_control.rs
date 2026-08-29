@@ -200,20 +200,47 @@ fn every_grant_field_affects_canonical() {
     let base = canon(&grant(0xAA, 0x01));
     type Mut = Box<dyn Fn(&mut pb::ExecutionGrant)>;
     let cases: Vec<(&str, Mut)> = vec![
-        ("grant_id(2)", Box::new(|g: &mut pb::ExecutionGrant| g.grant_id.clear())),
-        ("attempt_id(5)", Box::new(|g: &mut pb::ExecutionGrant| g.attempt_id.clear())),
-        ("peers(7)", Box::new(|g: &mut pb::ExecutionGrant| g.peers.clear())),
-        ("creds(8)", Box::new(|g: &mut pb::ExecutionGrant| g.creds = None)),
-        ("plan(9)", Box::new(|g: &mut pb::ExecutionGrant| g.plan = None)),
+        (
+            "grant_id(2)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.grant_id.clear()),
+        ),
+        (
+            "attempt_id(5)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.attempt_id.clear()),
+        ),
+        (
+            "peers(7)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.peers.clear()),
+        ),
+        (
+            "creds(8)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.creds = None),
+        ),
+        (
+            "plan(9)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.plan = None),
+        ),
         (
             "coordinator_device_id(20)",
             Box::new(|g: &mut pb::ExecutionGrant| g.coordinator_device_id.clear()),
         ),
-        ("coordinator_term(21)", Box::new(|g: &mut pb::ExecutionGrant| g.coordinator_term = 0)),
-        ("issued_at(22)", Box::new(|g: &mut pb::ExecutionGrant| g.issued_at_unix_ms = 0)),
-        ("expires_at(23)", Box::new(|g: &mut pb::ExecutionGrant| g.expires_at_unix_ms = 0)),
+        (
+            "coordinator_term(21)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.coordinator_term = 0),
+        ),
+        (
+            "issued_at(22)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.issued_at_unix_ms = 0),
+        ),
+        (
+            "expires_at(23)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.expires_at_unix_ms = 0),
+        ),
         // ★ nonce 가 서명 밖이면 replay 캐시를 우회할 수 있다
-        ("nonce(24)", Box::new(|g: &mut pb::ExecutionGrant| g.nonce.clear())),
+        (
+            "nonce(24)",
+            Box::new(|g: &mut pb::ExecutionGrant| g.nonce.clear()),
+        ),
         (
             "lease_from_durable_store(25)",
             Box::new(|g: &mut pb::ExecutionGrant| g.lease_from_durable_store = false),
@@ -247,11 +274,24 @@ fn every_grant_field_affects_canonical() {
     // ★ 배치 근거 — 서명 밖이면 Coordinator 가 "왜 이 노드를 골랐는가" 를
     //   사후에 조작할 수 있다. 분쟁 시 유일한 기록이다.
     let mut g3 = grant(0xAA, 0x01);
-    g3.plan.as_mut().unwrap().rationale.as_mut().unwrap().p_success_ppm = 999_999;
+    g3.plan
+        .as_mut()
+        .unwrap()
+        .rationale
+        .as_mut()
+        .unwrap()
+        .p_success_ppm = 999_999;
     assert_ne!(canon(&g3), base, "PlacementRationale 이 서명 밖이다");
 
     let mut g4 = grant(0xAA, 0x01);
-    g4.plan.as_mut().unwrap().rationale.as_mut().unwrap().rejected.clear();
+    g4.plan
+        .as_mut()
+        .unwrap()
+        .rationale
+        .as_mut()
+        .unwrap()
+        .rejected
+        .clear();
     assert_ne!(canon(&g4), base, "탈락 후보 기록이 서명 밖이다");
 }
 
@@ -380,13 +420,27 @@ fn signatures_do_not_transfer_between_control_messages() {
         device_id: id.into(),
         ..Default::default()
     };
-    assert_eq!(canon(&add), canon(&rem), "전제 변경 — ADR-028 근거 재확인 필요");
-    assert_eq!(canon(&rem), canon(&rev), "전제 변경 — ADR-028 근거 재확인 필요");
+    assert_eq!(
+        canon(&add),
+        canon(&rem),
+        "전제 변경 — ADR-028 근거 재확인 필요"
+    );
+    assert_eq!(
+        canon(&rem),
+        canon(&rev),
+        "전제 변경 — ADR-028 근거 재확인 필요"
+    );
 
     let inputs = [
         ("AddMember", sig_input(Domain::MemberAdd, 1, &canon(&add))),
-        ("RemoveMember", sig_input(Domain::MemberRemove, 1, &canon(&rem))),
-        ("RevokeDevice", sig_input(Domain::DeviceRevoke, 1, &canon(&rev))),
+        (
+            "RemoveMember",
+            sig_input(Domain::MemberRemove, 1, &canon(&rem)),
+        ),
+        (
+            "RevokeDevice",
+            sig_input(Domain::DeviceRevoke, 1, &canon(&rev)),
+        ),
     ];
     for (i, (na, a)) in inputs.iter().enumerate() {
         for (nb, b) in inputs.iter().skip(i + 1) {
@@ -415,15 +469,34 @@ fn signatures_do_not_transfer_between_control_messages() {
 fn all_domain_tags_are_distinct() {
     use gputeer_protocol::canonical::Domain;
     let all = [
-        Domain::Manifest, Domain::Grant, Domain::Lease, Domain::LeaseRenew,
-        Domain::LeaseRevoke, Domain::Checkpoint, Domain::ReplicaAck, Domain::Artifact,
-        Domain::AttemptReport, Domain::Canonical, Domain::Genesis,
-        Domain::MemberAdd, Domain::MemberRemove, Domain::DeviceApprove, Domain::DeviceRevoke,
-        Domain::CoordinatorSet, Domain::OwnerKeyRotate, Domain::PolicyUpdate,
-        Domain::QuarantineDevice, Domain::QuarantineRelease,
-        Domain::Audit, Domain::Release, Domain::Invite, Domain::GrantAck,
+        Domain::Manifest,
+        Domain::Grant,
+        Domain::Lease,
+        Domain::LeaseRenew,
+        Domain::LeaseRevoke,
+        Domain::Checkpoint,
+        Domain::ReplicaAck,
+        Domain::Artifact,
+        Domain::AttemptReport,
+        Domain::Canonical,
+        Domain::Genesis,
+        Domain::MemberAdd,
+        Domain::MemberRemove,
+        Domain::DeviceApprove,
+        Domain::DeviceRevoke,
+        Domain::CoordinatorSet,
+        Domain::OwnerKeyRotate,
+        Domain::PolicyUpdate,
+        Domain::QuarantineDevice,
+        Domain::QuarantineRelease,
+        Domain::Audit,
+        Domain::Release,
+        Domain::Invite,
+        Domain::GrantAck,
         Domain::LeaseRenewResult,
-        Domain::SessionHello, Domain::LeaseResume, Domain::LeaseResumeResult,
+        Domain::SessionHello,
+        Domain::LeaseResume,
+        Domain::LeaseResumeResult,
     ];
     let mut seen = std::collections::HashMap::new();
     for d in all {
@@ -493,7 +566,11 @@ fn quarantine_verdict_matches_reference() {
     // ★ Coordinator 격리와 워커 격리는 위험도가 다르다. 서명 밖이면 위장 가능하다.
     let mut worker = q.clone();
     worker.target_is_coordinator = false;
-    assert_ne!(canon(&worker), canon(&q), "target_is_coordinator 가 서명 밖이다");
+    assert_ne!(
+        canon(&worker),
+        canon(&q),
+        "target_is_coordinator 가 서명 밖이다"
+    );
 
     // 근거 신호를 지워도 canonical 이 변해야 한다 — 근거 없는 격리를 막는다
     let mut no_signals = q.clone();
@@ -520,12 +597,20 @@ fn change_coordinator_set_matches_reference_and_preserves_order() {
     // 규칙 d — 순서 유지
     let mut rev = c.clone();
     rev.new_set.reverse();
-    assert_ne!(canon(&rev), canon(&c), "coordinator 집합 순서가 반영되지 않았다");
+    assert_ne!(
+        canon(&rev),
+        canon(&c),
+        "coordinator 집합 순서가 반영되지 않았다"
+    );
 
     // ★ failure_domain 이 서명 밖이면 quorum 이 같은 랙에 몰려도 알 수 없다
     let mut same_rack = c.clone();
     same_rack.new_set[1].failure_domain = "rack-a".into();
-    assert_ne!(canon(&same_rack), canon(&c), "failure_domain 이 서명 밖이다");
+    assert_ne!(
+        canon(&same_rack),
+        canon(&c),
+        "failure_domain 이 서명 밖이다"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════

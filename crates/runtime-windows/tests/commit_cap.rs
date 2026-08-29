@@ -78,7 +78,9 @@ fn constrained_child_is_capped_near_the_limit() {
         .expect("create_constrained_child 실패 — alloc_fixture 를 먼저 빌드해야 한다");
     child.wait().expect("자식 대기 실패");
 
-    let (peak, limit) = child.query_memory_limits().expect("Job 메모리 정보 조회 실패");
+    let (peak, limit) = child
+        .query_memory_limits()
+        .expect("Job 메모리 정보 조회 실패");
 
     let result = parse_result(&result_file);
 
@@ -141,7 +143,10 @@ fn unconstrained_child_allocates_far_more_than_the_cap() {
         .arg(&result_file)
         .status()
         .expect("alloc_fixture 스폰 실패 — 먼저 빌드해야 한다");
-    assert!(status.success(), "제약 없는 fixture 실행 자체가 실패했다: {status:?}");
+    assert!(
+        status.success(),
+        "제약 없는 fixture 실행 자체가 실패했다: {status:?}"
+    );
 
     let result = parse_result(&result_file);
 

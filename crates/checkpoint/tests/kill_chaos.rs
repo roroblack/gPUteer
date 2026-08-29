@@ -15,15 +15,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use gputeer_checkpoint::writer::{
-    find_resume_point, read_pointer, startup_gc, POINTER_FILENAME,
-};
-#[cfg(feature = "chaos-hooks")]
-use gputeer_checkpoint::writer::find_resume_point_for;
-use gputeer_checkpoint::CheckpointManifest;
 use gputeer_checkpoint::durability::MANIFEST_FILENAME;
 #[cfg(feature = "chaos-hooks")]
 use gputeer_checkpoint::durability::{publication_failed, state_recorded, DurabilityState};
+#[cfg(feature = "chaos-hooks")]
+use gputeer_checkpoint::writer::find_resume_point_for;
+use gputeer_checkpoint::writer::{find_resume_point, read_pointer, startup_gc, POINTER_FILENAME};
+use gputeer_checkpoint::CheckpointManifest;
 
 fn writer_bin() -> PathBuf {
     // cargo 가 통합 테스트 실행 시 deps 옆에 바이너리를 둔다
@@ -32,7 +30,11 @@ fn writer_bin() -> PathBuf {
     if p.ends_with("deps") {
         p.pop();
     }
-    let exe = if cfg!(windows) { "ckpt_writer.exe" } else { "ckpt_writer" };
+    let exe = if cfg!(windows) {
+        "ckpt_writer.exe"
+    } else {
+        "ckpt_writer"
+    };
     p.join(exe)
 }
 
@@ -349,7 +351,10 @@ fn resume_point_is_valid_and_monotonic_across_restarts() {
             last_step = m.step;
         }
     }
-    assert!(last_step > 0, "5회 반복했는데 유효한 재개 지점이 하나도 없다");
+    assert!(
+        last_step > 0,
+        "5회 반복했는데 유효한 재개 지점이 하나도 없다"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -387,7 +392,9 @@ fn negative_tampered_committed_checkpoint_is_rejected_from_resume() {
     let root = tmp.path();
     run_and_kill(root, Duration::from_millis(500));
 
-    let before = find_resume_point(root).unwrap().expect("재개 지점이 있어야 한다");
+    let before = find_resume_point(root)
+        .unwrap()
+        .expect("재개 지점이 있어야 한다");
     let dir = root.join(&before.checkpoint_id);
 
     // 최신 체크포인트의 파일 1바이트를 변조
@@ -413,7 +420,9 @@ fn negative_missing_data_file_is_rejected_from_resume() {
     let root = tmp.path();
     run_and_kill(root, Duration::from_millis(500));
 
-    let before = find_resume_point(root).unwrap().expect("재개 지점이 있어야 한다");
+    let before = find_resume_point(root)
+        .unwrap()
+        .expect("재개 지점이 있어야 한다");
     let dir = root.join(&before.checkpoint_id);
     std::fs::remove_file(dir.join(&before.files[0].path)).unwrap();
 

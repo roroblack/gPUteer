@@ -74,7 +74,9 @@ fn main() {
 
     let body = format!(
         "allocated_bytes={allocated_bytes}\nlast_error={}\n",
-        last_error.map(|e| e.to_string()).unwrap_or_else(|| "none".into())
+        last_error
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "none".into())
     );
     fs::write(&result_file, body).expect("결과 파일 쓰기 실패");
 }

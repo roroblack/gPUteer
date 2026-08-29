@@ -386,7 +386,10 @@ fn k2_zero_attempts_returns_error_not_panic() {
         &missing,
         "LATEST",
         b"x",
-        RetryPolicy { max_attempts: 0, ..Default::default() },
+        RetryPolicy {
+            max_attempts: 0,
+            ..Default::default()
+        },
     );
     assert!(
         matches!(r2, Err(CheckpointError::InvalidRetryPolicy)),

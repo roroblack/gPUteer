@@ -415,8 +415,7 @@ pub fn sync_dir(_dir: &Path) -> Result<(), CheckpointError> {
 /// **한 번의 확인은 추측이고, 재시도는 사실이다.** 예산(약 200ms)을 넘기면
 /// `CLAUDE.md` §3 에 따라 오류를 조용히 삼키지 않고 그대로 올린다.
 pub(crate) fn is_windows_delete_race(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::NotFound
-        || error.raw_os_error() == Some(5) // ERROR_ACCESS_DENIED
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(5) // ERROR_ACCESS_DENIED
 }
 
 /// I/O 연산 하나를 **경합을 견디며** 재시도한다.
@@ -595,9 +594,7 @@ pub fn gc_partial(
 
         let is_tmp = name.ends_with(".tmp");
 
-        let is_registered = registered_tmp.iter().any(|registered| {
-            registered == &name
-        });
+        let is_registered = registered_tmp.iter().any(|registered| registered == &name);
 
         let should_remove = !manifest_exists || (is_tmp && !is_registered);
 

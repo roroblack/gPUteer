@@ -181,27 +181,67 @@ pub enum MissingFact {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RejectionReason {
     MissingFact(MissingFact),
-    NodeNotOnline { actual: NodeState },
-    RiskNotNormal { actual: RiskState },
+    NodeNotOnline {
+        actual: NodeState,
+    },
+    RiskNotNormal {
+        actual: RiskState,
+    },
     SnapshotNotFresh {
         observed_at_unix_ms: u64,
         evaluated_at_unix_ms: u64,
         maximum_age_ms: u64,
     },
-    SecurityTierTooLow { available: SecurityTier, required: SecurityTier },
-    IsolationClassTooLow { available: IsolationClass, required: IsolationClass },
-    KeyProtectionTooLow { available: KeyProtection, required: KeyProtection },
-    GpuCountInsufficient { available: u32, required: u32 },
-    HealthyGpuCountInsufficient { available: u32, required: u32 },
-    GpuModelMismatch { matching: u32, required: u32, allowed: Vec<String> },
-    GpuVramInsufficient { matching: u32, required: u32, minimum_bytes: u64 },
-    CpuInsufficient { available: u32, required: u32 },
-    RamInsufficient { available: u64, required: u64 },
-    WorkspaceInsufficient { available: u64, required: u64 },
-    WorkloadClassNotAllowed { workload_class: WorkloadClass },
+    SecurityTierTooLow {
+        available: SecurityTier,
+        required: SecurityTier,
+    },
+    IsolationClassTooLow {
+        available: IsolationClass,
+        required: IsolationClass,
+    },
+    KeyProtectionTooLow {
+        available: KeyProtection,
+        required: KeyProtection,
+    },
+    GpuCountInsufficient {
+        available: u32,
+        required: u32,
+    },
+    HealthyGpuCountInsufficient {
+        available: u32,
+        required: u32,
+    },
+    GpuModelMismatch {
+        matching: u32,
+        required: u32,
+        allowed: Vec<String>,
+    },
+    GpuVramInsufficient {
+        matching: u32,
+        required: u32,
+        minimum_bytes: u64,
+    },
+    CpuInsufficient {
+        available: u32,
+        required: u32,
+    },
+    RamInsufficient {
+        available: u64,
+        required: u64,
+    },
+    WorkspaceInsufficient {
+        available: u64,
+        required: u64,
+    },
+    WorkloadClassNotAllowed {
+        workload_class: WorkloadClass,
+    },
     ThirdPartyJobForbiddenOnS0,
     ThirdPartyOptInRequiredOnRestrictedIsolation,
-    ThirdPartyJobMustBePureOnRestrictedIsolation { actual: SideEffectClass },
+    ThirdPartyJobMustBePureOnRestrictedIsolation {
+        actual: SideEffectClass,
+    },
     ThirdPartySensitiveDataForbiddenOnRestrictedIsolation,
 }
 
@@ -285,16 +325,44 @@ pub struct BestFitRanking {
 pub enum RankingError {
     InvalidPolicyAxisOrder,
     ResolutionNotRankingRequired,
-    EligibleCandidateCountNotMultiple { actual: usize },
+    EligibleCandidateCountNotMultiple {
+        actual: usize,
+    },
     EmptyNodeId,
-    DuplicatePoolNodeId { node_id: String },
-    DuplicateReportNodeId { node_id: String },
-    ReportCandidateMissingFromPool { node_id: String },
-    PoolCandidateMissingFromReport { node_id: String },
-    EmptyGpuId { node_id: String },
-    DuplicateGpuId { node_id: String, gpu_id: String },
-    MissingRankFact { node_id: Option<String>, fact: MissingFact },
-    EligibleCandidateMismatch { node_id: String, axis: FitAxis },
-    SelectedGpuCountMismatch { node_id: String, required: u32, actual: usize },
-    FitOverflow { node_id: String, axis: FitAxis },
+    DuplicatePoolNodeId {
+        node_id: String,
+    },
+    DuplicateReportNodeId {
+        node_id: String,
+    },
+    ReportCandidateMissingFromPool {
+        node_id: String,
+    },
+    PoolCandidateMissingFromReport {
+        node_id: String,
+    },
+    EmptyGpuId {
+        node_id: String,
+    },
+    DuplicateGpuId {
+        node_id: String,
+        gpu_id: String,
+    },
+    MissingRankFact {
+        node_id: Option<String>,
+        fact: MissingFact,
+    },
+    EligibleCandidateMismatch {
+        node_id: String,
+        axis: FitAxis,
+    },
+    SelectedGpuCountMismatch {
+        node_id: String,
+        required: u32,
+        actual: usize,
+    },
+    FitOverflow {
+        node_id: String,
+        axis: FitAxis,
+    },
 }

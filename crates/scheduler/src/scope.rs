@@ -18,9 +18,14 @@ pub enum ProvenanceGate {
 /// scheduler가 소비할 수 있는 available VRAM과 아직 그 의미가 입증되지 않은 파생값.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum AvailableVramObservation {
-    Authoritative { bytes: u64 },
+    Authoritative {
+        bytes: u64,
+    },
     /// `total - reserved`를 available로 해석하는 규범은 아직 없다.
-    DerivedFromTotalAndReserved { total_bytes: u64, reserved_bytes: u64 },
+    DerivedFromTotalAndReserved {
+        total_bytes: u64,
+        reserved_bytes: u64,
+    },
 }
 
 /// 한 GPU에 대해 caller가 해소해 전달한 고정 관측값.
@@ -111,15 +116,28 @@ pub enum ScopeError {
     MissingFact(ScopeMissingFact),
     MinimumGpuCountMustBePositive,
     EmptyGpuId,
-    NonCanonicalGpuId { gpu_id: String },
-    DuplicateGpuId { gpu_id: String },
+    NonCanonicalGpuId {
+        gpu_id: String,
+    },
+    DuplicateGpuId {
+        gpu_id: String,
+    },
     EmptyWritablePrefix,
-    NonCanonicalWritablePrefix { prefix: String },
-    DuplicateWritablePrefix { prefix: String },
-    NonAuthoritativeAvailableVram { gpu_id: String },
+    NonCanonicalWritablePrefix {
+        prefix: String,
+    },
+    DuplicateWritablePrefix {
+        prefix: String,
+    },
+    NonAuthoritativeAvailableVram {
+        gpu_id: String,
+    },
     /// runtime 요구와 driver/capability의 호환 규칙은 이 첫 조각에 없다.
     CudaRuntimeCompatibilityUnresolved,
-    InsufficientMatchingGpus { matching: u32, required: u32 },
+    InsufficientMatchingGpus {
+        matching: u32,
+        required: u32,
+    },
     /// `[N/A]` 또는 caller의 mode claim만으로 MIG partition을 입증할 수 없다.
     PartitionedAllocationUnproven,
 }
@@ -143,12 +161,14 @@ pub fn gpu_scope_candidate(
     let inventory_revision = snapshot
         .inventory_revision
         .ok_or(ScopeError::MissingFact(ScopeMissingFact::InventoryRevision))?;
-    let minimum_vram_bytes_per_gpu = requirements.minimum_vram_bytes_per_gpu.ok_or(
-        ScopeError::MissingFact(ScopeMissingFact::JobMinimumVram),
-    )?;
+    let minimum_vram_bytes_per_gpu = requirements
+        .minimum_vram_bytes_per_gpu
+        .ok_or(ScopeError::MissingFact(ScopeMissingFact::JobMinimumVram))?;
     let minimum_gpu_count = requirements
         .minimum_gpu_count
-        .ok_or(ScopeError::MissingFact(ScopeMissingFact::JobMinimumGpuCount))?;
+        .ok_or(ScopeError::MissingFact(
+            ScopeMissingFact::JobMinimumGpuCount,
+        ))?;
     if minimum_gpu_count == 0 {
         return Err(ScopeError::MinimumGpuCountMustBePositive);
     }
@@ -171,9 +191,12 @@ pub fn gpu_scope_candidate(
     let workspace_bytes = resources
         .workspace_bytes
         .ok_or(ScopeError::MissingFact(ScopeMissingFact::WorkspaceBytes))?;
-    let writable_prefixes = canonical_prefixes(resources.writable_prefixes.as_ref().ok_or(
-        ScopeError::MissingFact(ScopeMissingFact::WritablePrefixes),
-    )?)?;
+    let writable_prefixes = canonical_prefixes(
+        resources
+            .writable_prefixes
+            .as_ref()
+            .ok_or(ScopeError::MissingFact(ScopeMissingFact::WritablePrefixes))?,
+    )?;
     let gpus = snapshot
         .gpus
         .as_ref()
@@ -298,14 +321,18 @@ fn validate_gpu_ids(gpus: &[ScopeGpuObservation]) -> Result<(), ScopeError> {
         .map(|gpu| gpu.gpu_id.as_str())
         .min()
     {
-        return Err(ScopeError::NonCanonicalGpuId { gpu_id: gpu_id.to_owned() });
+        return Err(ScopeError::NonCanonicalGpuId {
+            gpu_id: gpu_id.to_owned(),
+        });
     }
     let mut counts = BTreeMap::<&str, usize>::new();
     for gpu in gpus {
         *counts.entry(gpu.gpu_id.as_str()).or_default() += 1;
     }
     if let Some((gpu_id, _)) = counts.into_iter().find(|(_, count)| *count > 1) {
-        return Err(ScopeError::DuplicateGpuId { gpu_id: gpu_id.to_owned() });
+        return Err(ScopeError::DuplicateGpuId {
+            gpu_id: gpu_id.to_owned(),
+        });
     }
     Ok(())
 }
@@ -319,7 +346,9 @@ fn canonical_prefixes(prefixes: &[String]) -> Result<Vec<String>, ScopeError> {
         .filter(|prefix| prefix.trim() != prefix.as_str())
         .min()
     {
-        return Err(ScopeError::NonCanonicalWritablePrefix { prefix: prefix.clone() });
+        return Err(ScopeError::NonCanonicalWritablePrefix {
+            prefix: prefix.clone(),
+        });
     }
     let canonical = prefixes.iter().cloned().collect::<BTreeSet<_>>();
     if canonical.len() != prefixes.len() {
@@ -332,7 +361,9 @@ fn canonical_prefixes(prefixes: &[String]) -> Result<Vec<String>, ScopeError> {
             .find(|(_, count)| *count > 1)
             .expect("a shorter set requires a duplicate")
             .0;
-        return Err(ScopeError::DuplicateWritablePrefix { prefix: prefix.to_owned() });
+        return Err(ScopeError::DuplicateWritablePrefix {
+            prefix: prefix.to_owned(),
+        });
     }
     Ok(canonical.into_iter().collect())
 }

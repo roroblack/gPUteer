@@ -4,17 +4,14 @@
 //! 서명 위조·만료·replay·디코드 실패·락 타임아웃을 각각 고정한다.
 
 use gputeer_crypto::{
-    decode_and_verify, sign, Clock, DurableReplayGuard, InMemoryKeyring,
-    IngressError, KeyDirectorySource, KeyProtection, PersistentKeyring,
-    PlaintextPolicy, SigningKey, SystemClock,
+    decode_and_verify, sign, Clock, DurableReplayGuard, InMemoryKeyring, IngressError,
+    KeyDirectorySource, KeyProtection, PersistentKeyring, PlaintextPolicy, SigningKey, SystemClock,
 };
 use gputeer_protocol::signing::ReplayGuard;
 use gputeer_protocol::{
     canonical::Domain,
     pb,
-    signing::{
-        ReplayDecision, ReplayStoreError, VerifyError, VerifyOutcome,
-    },
+    signing::{ReplayDecision, ReplayStoreError, VerifyError, VerifyOutcome},
 };
 use prost::Message;
 use tempfile::tempdir;
@@ -97,10 +94,7 @@ fn valid_bytes_become_verified_with_effective_replay_guard() {
     )
     .expect("정상 protobuf가 검증을 통과해야 한다");
 
-    assert_eq!(
-        verified.get().grant_id,
-        "01JBXGRANT000000000000001"
-    );
+    assert_eq!(verified.get().grant_id, "01JBXGRANT000000000000001");
     assert!(verified.replay_checked());
     assert!(verified.require_replay_checked().is_ok());
 }
@@ -122,10 +116,7 @@ fn forged_signature_is_rejected() {
     )
     .expect_err("위조된 서명이 통과했다");
 
-    assert_eq!(
-        protocol_outcome(error),
-        VerifyOutcome::InvalidSignature
-    );
+    assert_eq!(protocol_outcome(error), VerifyOutcome::InvalidSignature);
 }
 
 #[test]
@@ -230,14 +221,9 @@ fn lock_timeout_is_rejected_without_retry() {
 
     assert!(matches!(
         error,
-        IngressError::ReplayStoreUnavailable(
-            ReplayStoreError::LockTimeout
-        )
+        IngressError::ReplayStoreUnavailable(ReplayStoreError::LockTimeout)
     ));
-    assert_eq!(
-        replay.calls, 1,
-        "진입점이 LockTimeout을 자동 재시도했다"
-    );
+    assert_eq!(replay.calls, 1, "진입점이 LockTimeout을 자동 재시도했다");
 }
 
 #[test]
@@ -286,9 +272,7 @@ fn persistent_keyring_and_durable_replay_are_wired_at_the_boundary() {
         .unwrap();
     keyring.save().unwrap();
 
-    let loaded_keyring =
-        PersistentKeyring::load(&keyring_path, PlaintextPolicy::Allow)
-            .unwrap();
+    let loaded_keyring = PersistentKeyring::load(&keyring_path, PlaintextPolicy::Allow).unwrap();
 
     let raw = grant(&signing_key).encode_to_vec();
 
@@ -307,8 +291,7 @@ fn persistent_keyring_and_durable_replay_are_wired_at_the_boundary() {
         assert!(verified.replay_checked());
     }
 
-    let mut restarted_replay =
-        DurableReplayGuard::open(&replay_path).unwrap();
+    let mut restarted_replay = DurableReplayGuard::open(&replay_path).unwrap();
 
     let error = decode_and_verify::<pb::ExecutionGrant>(
         &raw,

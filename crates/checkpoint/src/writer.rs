@@ -10,9 +10,8 @@ use crate::atomic::{
     gc_partial, replace_with_retry, retry_tolerating_race, write_once, RetryPolicy,
 };
 use crate::durability::{
-    publication_failed, record_initial_state, record_publication_failure,
-    record_state_transition, CheckpointFile, CheckpointManifest,
-    DurabilityState, MANIFEST_FILENAME,
+    publication_failed, record_initial_state, record_publication_failure, record_state_transition,
+    CheckpointFile, CheckpointManifest, DurabilityState, MANIFEST_FILENAME,
 };
 use crate::CheckpointError;
 
@@ -27,10 +26,7 @@ fn is_not_found(error: &std::io::Error) -> bool {
 ///
 /// 마커도 기록하지 못하면 그 사실을 오류에 포함한다.
 /// 실패 마커를 조용히 무시하면 W-4를 다시 만들기 때문이다.
-fn fail_after_materialization(
-    dir: &Path,
-    original: CheckpointError,
-) -> CheckpointError {
+fn fail_after_materialization(dir: &Path, original: CheckpointError) -> CheckpointError {
     match record_publication_failure(dir) {
         Ok(()) => original,
         Err(marker_error) => CheckpointError::Io(format!(
@@ -168,8 +164,7 @@ pub fn manifest_for(
         .collect();
 
     let total = entries.iter().map(|file| file.size_bytes).sum();
-    let chunks: Vec<&[u8]> =
-        files.iter().map(|(_, data)| data.as_slice()).collect();
+    let chunks: Vec<&[u8]> = files.iter().map(|(_, data)| data.as_slice()).collect();
 
     let root_digest = gputeer_protocol::merkle_root(&chunks)
         .map(|root| {
@@ -247,9 +242,7 @@ fn is_resume_candidate(
 }
 
 /// 유효 매니페스트를 읽는다.
-fn load_valid_manifest(
-    dir: &Path,
-) -> Result<Option<CheckpointManifest>, CheckpointError> {
+fn load_valid_manifest(dir: &Path) -> Result<Option<CheckpointManifest>, CheckpointError> {
     // 이름 기반 사전 존재 검사를 두지 않는다. 검사와 열기 사이에 대상이
     // 바뀔 수 있고(TOCTOU), read_beneath 가 이미 없는 파일을 오류로 돌려주므로
     // 중복이다. 판정은 열린 핸들 하나에 맡긴다.
@@ -306,10 +299,7 @@ pub fn find_resume_point_for(
             continue;
         };
 
-        let dir_name = dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
+        let dir_name = dir.file_name().and_then(|name| name.to_str()).unwrap_or("");
 
         if manifest.job_id != job_id
             || manifest.attempt_id != attempt_id
@@ -333,9 +323,7 @@ pub fn find_resume_point_for(
 /// job/attempt 필터가 없는 호환 API.
 ///
 /// 이 API는 여전히 다른 job의 상태를 고를 수 있다.
-pub fn find_resume_point(
-    root: &Path,
-) -> Result<Option<CheckpointManifest>, CheckpointError> {
+pub fn find_resume_point(root: &Path) -> Result<Option<CheckpointManifest>, CheckpointError> {
     let mut candidates = Vec::new();
     let pointer = read_pointer(root);
 
@@ -366,10 +354,7 @@ pub fn find_resume_point(
             continue;
         };
 
-        let dir_name = dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
+        let dir_name = dir.file_name().and_then(|name| name.to_str()).unwrap_or("");
 
         if manifest.files.is_empty() || manifest.checkpoint_id != dir_name {
             continue;

@@ -25,26 +25,25 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/gputeer.v1.rs"));
 }
 
-pub use signing::{
-    signing_input, verify, DerivedMismatch, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard,
-    ReplayStoreError,
-    Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
+pub use canonical::{
+    blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
+    SIGNATURE_FIELD,
 };
-pub use membership::{
-    resolve_device_authorization, DeviceBinding, MemberAuthorization, MemberFact,
-    MemberState, MembershipResolutionError, ViewFreshness,
-};
-pub use participation::{ParticipationModel, ParticipationModelError};
 pub use fenced_operation::{
     derive_operation_id, evaluate_fenced_operation, FencedOperationDecision, FencedOperationKey,
     InvalidFencedOperation,
+};
+pub use membership::{
+    resolve_device_authorization, DeviceBinding, MemberAuthorization, MemberFact, MemberState,
+    MembershipResolutionError, ViewFreshness,
+};
+pub use participation::{ParticipationModel, ParticipationModelError};
+pub use signing::{
+    signing_input, verify, DerivedMismatch, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard,
+    ReplayStoreError, Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
 };
 pub use to_fields::{ToCanonicalFields, DERIVED_HASH_FIELDS, UNIMPLEMENTED_FIELDS};
 pub use watch_continuity::{
     evaluate_watch_continuity, CursorRegression, IndeterminateReason, WatchContinuityOutcome,
     WatchContinuityReport, WatchDiscontinuity,
-};
-pub use canonical::{
-    blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
-    SIGNATURE_FIELD,
 };

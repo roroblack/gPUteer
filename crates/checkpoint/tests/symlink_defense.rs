@@ -78,11 +78,7 @@ fn checkpoint_manifest_read_from_junction_directory_is_rejected() {
     let data = b"outside checkpoint data";
     fs::write(outside.join("shard.bin"), data).unwrap();
     let manifest = manifest("linked-checkpoint", "shard.bin", data);
-    fs::write(
-        outside.join(MANIFEST_FILENAME),
-        manifest.to_json().unwrap(),
-    )
-    .unwrap();
+    fs::write(outside.join(MANIFEST_FILENAME), manifest.to_json().unwrap()).unwrap();
 
     let linked_checkpoint = root.join("linked-checkpoint");
     make_junction(&linked_checkpoint, &outside);
@@ -110,11 +106,9 @@ fn reading_a_missing_file_must_not_create_it() {
     let root = dir.path();
     let missing = root.join("absent.bin");
 
-    let err = gputeer_runtime_windows::open_beneath_read_only(
-        root,
-        std::path::Path::new("absent.bin"),
-    )
-    .expect_err("없는 파일은 열리면 안 된다");
+    let err =
+        gputeer_runtime_windows::open_beneath_read_only(root, std::path::Path::new("absent.bin"))
+            .expect_err("없는 파일은 열리면 안 된다");
     assert_eq!(
         err.kind(),
         std::io::ErrorKind::NotFound,

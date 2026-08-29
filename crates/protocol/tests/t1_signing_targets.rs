@@ -196,8 +196,14 @@ fn artifact_with_ack_signature(sig: u8) -> pb::ArtifactRef {
 /// 검증되지 않은 ACK 를 세면 **REPLICATED(n) 이 거짓이 된다.**
 #[test]
 fn nested_signature_is_excluded_from_outer_canonical() {
-    let a = canonical_encode(&artifact_with_ack_signature(0xAA).to_canonical_fields(), &[]);
-    let b = canonical_encode(&artifact_with_ack_signature(0xBB).to_canonical_fields(), &[]);
+    let a = canonical_encode(
+        &artifact_with_ack_signature(0xAA).to_canonical_fields(),
+        &[],
+    );
+    let b = canonical_encode(
+        &artifact_with_ack_signature(0xBB).to_canonical_fields(),
+        &[],
+    );
 
     assert_eq!(
         a, b,
@@ -215,7 +221,10 @@ fn nested_signature_is_excluded_from_outer_canonical() {
 /// 위 테스트만 있으면 "중첩 전체가 무시되는" 결함과 구분되지 않는다.
 #[test]
 fn nested_message_content_does_affect_outer_canonical() {
-    let base = canonical_encode(&artifact_with_ack_signature(0xAA).to_canonical_fields(), &[]);
+    let base = canonical_encode(
+        &artifact_with_ack_signature(0xAA).to_canonical_fields(),
+        &[],
+    );
 
     // failure_domain 을 바꾼다 — REPLICATED(n) 계산의 핵심 입력이다
     let mut tampered = artifact_with_ack_signature(0xAA);
@@ -446,7 +455,10 @@ fn renew_lease_result_matches_reference() {
         ..lease.clone()
     });
     assert_eq!(
-        hex(&canonical_encode(&other_lease_sig.to_canonical_fields(), &[])),
+        hex(&canonical_encode(
+            &other_lease_sig.to_canonical_fields(),
+            &[]
+        )),
         expect_hex("v33c_renew_lease_result_nested_signature_excluded")
     );
     assert_eq!(
@@ -512,9 +524,7 @@ fn resume_protocol_messages_match_reference() {
             cpu_cores: 8,
             ram_bytes: 25_769_803_776,
             workspace_bytes: 85_899_345_920,
-            writable_prefixes: vec![
-                "jobs/01JBXR7Q0000000000000000AA/attempt-3/".into(),
-            ],
+            writable_prefixes: vec!["jobs/01JBXR7Q0000000000000000AA/attempt-3/".into()],
         }),
         coordinator_signature: vec![0xCD; 64],
     };
@@ -619,7 +629,10 @@ fn domain_coverage_is_explicit() {
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
 
-    println!("domain {}종 — 구현 {implemented} · proto 메시지 없음 {no_message}", coverage.len());
+    println!(
+        "domain {}종 — 구현 {implemented} · proto 메시지 없음 {no_message}",
+        coverage.len()
+    );
     for (d, msg, impl_) in coverage {
         if !impl_ {
             println!(
@@ -632,7 +645,10 @@ fn domain_coverage_is_explicit() {
 
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
-    assert_eq!(implemented, 24, "구현된 domain 수가 바뀌었다 — 목록을 갱신하라");
+    assert_eq!(
+        implemented, 24,
+        "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
+    );
     assert_eq!(
         no_message, 4,
         "proto 메시지 없는 domain 수가 바뀌었다 — 목록을 갱신하라"

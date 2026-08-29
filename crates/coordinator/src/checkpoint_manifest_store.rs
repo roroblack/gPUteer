@@ -9,9 +9,7 @@ use std::path::Path;
 
 use gputeer_protocol::{canonical::blake3_256, pb, signing::Verified};
 use prost::Message;
-use rusqlite::{
-    Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior,
-};
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
 use crate::staging_store::{self, StoredAttempt, StoredNodeReservation};
 
@@ -73,10 +71,16 @@ pub enum CheckpointManifestCorruption {
 #[derive(Debug, PartialEq, Eq)]
 pub enum CheckpointManifestStoreError {
     InvalidInput(&'static str),
-    AttemptNotFound { attempt_id: String },
-    ReservationNotFound { node_id: String },
+    AttemptNotFound {
+        attempt_id: String,
+    },
+    ReservationNotFound {
+        node_id: String,
+    },
     BindingMismatch(CheckpointBindingField),
-    ManifestConflict { checkpoint_id: String },
+    ManifestConflict {
+        checkpoint_id: String,
+    },
     Corrupt {
         checkpoint_id: String,
         kind: CheckpointManifestCorruption,
@@ -95,7 +99,10 @@ impl std::fmt::Display for CheckpointManifestStoreError {
                 write!(f, "invalid CheckpointManifest input: {field}")
             }
             Self::AttemptNotFound { attempt_id } => {
-                write!(f, "CheckpointManifest references missing Attempt: {attempt_id}")
+                write!(
+                    f,
+                    "CheckpointManifest references missing Attempt: {attempt_id}"
+                )
             }
             Self::ReservationNotFound { node_id } => write!(
                 f,
@@ -188,9 +195,7 @@ impl CoordinatorCheckpointManifestStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sql_error)?;
 
-        if let Some(binding) =
-            fetch_manifest_binding(&transaction, &manifest.checkpoint_id)?
-        {
+        if let Some(binding) = fetch_manifest_binding(&transaction, &manifest.checkpoint_id)? {
             if binding.manifest != *manifest || binding.signer_id_at_submission != signer_id {
                 return Err(CheckpointManifestStoreError::ManifestConflict {
                     checkpoint_id: manifest.checkpoint_id.clone(),
@@ -442,9 +447,7 @@ pub(crate) fn fetch_manifest_binding(
         return Err(corrupt(CheckpointManifestCorruption::InvalidManifest));
     }
     if manifest.checkpoint_id != row_checkpoint_id {
-        return Err(corrupt(
-            CheckpointManifestCorruption::CheckpointIdMismatch,
-        ));
+        return Err(corrupt(CheckpointManifestCorruption::CheckpointIdMismatch));
     }
     if manifest.job_id != row_job_id {
         return Err(corrupt(CheckpointManifestCorruption::JobIdMismatch));
@@ -466,21 +469,15 @@ pub(crate) fn fetch_manifest_binding(
         return Err(corrupt(CheckpointManifestCorruption::FenceEpochMismatch));
     }
     if root_digest_body.is_empty() {
-        return Err(corrupt(
-            CheckpointManifestCorruption::RootDigestEncoding,
-        ));
+        return Err(corrupt(CheckpointManifestCorruption::RootDigestEncoding));
     }
     let bound_root_digest = pb::Digest::decode(root_digest_body.as_slice())
         .map_err(|_| corrupt(CheckpointManifestCorruption::RootDigestEncoding))?;
     if validate_root_digest(&bound_root_digest).is_err() {
-        return Err(corrupt(
-            CheckpointManifestCorruption::RootDigestEncoding,
-        ));
+        return Err(corrupt(CheckpointManifestCorruption::RootDigestEncoding));
     }
     if manifest.root_digest.as_ref() != Some(&bound_root_digest) {
-        return Err(corrupt(
-            CheckpointManifestCorruption::RootDigestMismatch,
-        ));
+        return Err(corrupt(CheckpointManifestCorruption::RootDigestMismatch));
     }
 
     let attempt = match staging_store::fetch_attempt(connection, &row_attempt_id) {
@@ -550,10 +547,7 @@ enum TestFault {
 }
 
 #[cfg(test)]
-fn fail_at(
-    fault: Option<TestFault>,
-    point: TestFault,
-) -> Result<(), CheckpointManifestStoreError> {
+fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), CheckpointManifestStoreError> {
     if fault == Some(point) {
         Err(CheckpointManifestStoreError::InjectedFailure(
             "after CheckpointManifest insert",
@@ -671,10 +665,7 @@ mod tests {
             )
             .unwrap();
 
-        Fixture {
-            _dir: dir,
-            path,
-        }
+        Fixture { _dir: dir, path }
     }
 
     fn verify_manifest(
@@ -729,16 +720,7 @@ mod tests {
     }
 
     fn valid_manifest() -> Verified<pb::CheckpointManifest> {
-        verified_manifest(
-            CHECKPOINT_ID,
-            JOB_ID,
-            ATTEMPT_ID,
-            NODE_ID,
-            1,
-            7,
-            3,
-            10,
-        )
+        verified_manifest(CHECKPOINT_ID, JOB_ID, ATTEMPT_ID, NODE_ID, 1, 7, 3, 10)
     }
 
     fn manifest_count(store: &CoordinatorCheckpointManifestStore) -> u64 {
@@ -752,10 +734,7 @@ mod tests {
             .unwrap()
     }
 
-    fn rewrite_body(
-        store: &CoordinatorCheckpointManifestStore,
-        manifest: &pb::CheckpointManifest,
-    ) {
+    fn rewrite_body(store: &CoordinatorCheckpointManifestStore, manifest: &pb::CheckpointManifest) {
         let body = manifest.encode_to_vec();
         let hash = blake3_256(&body);
         store
@@ -808,7 +787,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(binding.manifest, original);
-        assert_eq!(binding.manifest.producer_signature, original.producer_signature);
+        assert_eq!(
+            binding.manifest.producer_signature,
+            original.producer_signature
+        );
         assert_eq!(binding.manifest_hash, expected_hash);
         assert_eq!(binding.bound_root_digest, original.root_digest.unwrap());
     }
@@ -829,8 +811,7 @@ mod tests {
                 "root-missing" => manifest.root_digest = None,
                 "root-unspecified" => manifest.root_digest.as_mut().unwrap().algo = 0,
                 "root-sha256" => {
-                    manifest.root_digest.as_mut().unwrap().algo =
-                        pb::HashAlgorithm::Sha256 as i32;
+                    manifest.root_digest.as_mut().unwrap().algo = pb::HashAlgorithm::Sha256 as i32;
                 }
                 "root-length" => {
                     manifest.root_digest.as_mut().unwrap().value.pop();
@@ -852,49 +833,18 @@ mod tests {
     fn wrong_job_attempt_and_stale_fence_create_no_row() {
         for (manifest, expected) in [
             (
-                verified_manifest(
-                    CHECKPOINT_ID,
-                    "job-other",
-                    ATTEMPT_ID,
-                    NODE_ID,
-                    1,
-                    7,
-                    3,
-                    10,
-                ),
-                CheckpointManifestStoreError::BindingMismatch(
-                    CheckpointBindingField::JobId,
-                ),
+                verified_manifest(CHECKPOINT_ID, "job-other", ATTEMPT_ID, NODE_ID, 1, 7, 3, 10),
+                CheckpointManifestStoreError::BindingMismatch(CheckpointBindingField::JobId),
             ),
             (
-                verified_manifest(
-                    CHECKPOINT_ID,
-                    JOB_ID,
-                    "attempt-other",
-                    NODE_ID,
-                    1,
-                    7,
-                    3,
-                    10,
-                ),
+                verified_manifest(CHECKPOINT_ID, JOB_ID, "attempt-other", NODE_ID, 1, 7, 3, 10),
                 CheckpointManifestStoreError::AttemptNotFound {
                     attempt_id: "attempt-other".into(),
                 },
             ),
             (
-                verified_manifest(
-                    CHECKPOINT_ID,
-                    JOB_ID,
-                    ATTEMPT_ID,
-                    NODE_ID,
-                    0,
-                    7,
-                    3,
-                    10,
-                ),
-                CheckpointManifestStoreError::BindingMismatch(
-                    CheckpointBindingField::FenceEpoch,
-                ),
+                verified_manifest(CHECKPOINT_ID, JOB_ID, ATTEMPT_ID, NODE_ID, 0, 7, 3, 10),
+                CheckpointManifestStoreError::BindingMismatch(CheckpointBindingField::FenceEpoch),
             ),
         ] {
             let fixture = prepare_fixture();
@@ -907,16 +857,8 @@ mod tests {
     #[test]
     fn producer_signer_mismatch_with_durable_owner_creates_no_row() {
         let fixture = prepare_fixture();
-        let manifest = verified_manifest(
-            CHECKPOINT_ID,
-            JOB_ID,
-            ATTEMPT_ID,
-            "node-other",
-            1,
-            8,
-            3,
-            10,
-        );
+        let manifest =
+            verified_manifest(CHECKPOINT_ID, JOB_ID, ATTEMPT_ID, "node-other", 1, 8, 3, 10);
         let mut store = CoordinatorCheckpointManifestStore::open(&fixture.path).unwrap();
         assert_eq!(
             store.store_verified_manifest(&manifest),
@@ -1014,30 +956,14 @@ mod tests {
         assert_eq!(replay.binding, first.binding);
         assert_eq!(manifest_count(&store), 1);
 
-        let changed_body = verified_manifest(
-            CHECKPOINT_ID,
-            JOB_ID,
-            ATTEMPT_ID,
-            NODE_ID,
-            1,
-            7,
-            4,
-            11,
-        );
+        let changed_body =
+            verified_manifest(CHECKPOINT_ID, JOB_ID, ATTEMPT_ID, NODE_ID, 1, 7, 4, 11);
         assert!(matches!(
             store.store_verified_manifest(&changed_body),
             Err(CheckpointManifestStoreError::ManifestConflict { .. })
         ));
-        let changed_signature = verified_manifest(
-            CHECKPOINT_ID,
-            JOB_ID,
-            ATTEMPT_ID,
-            NODE_ID,
-            1,
-            8,
-            3,
-            10,
-        );
+        let changed_signature =
+            verified_manifest(CHECKPOINT_ID, JOB_ID, ATTEMPT_ID, NODE_ID, 1, 8, 3, 10);
         assert!(matches!(
             store.store_verified_manifest(&changed_signature),
             Err(CheckpointManifestStoreError::ManifestConflict { .. })
@@ -1145,10 +1071,7 @@ mod tests {
         let manifest = valid_manifest();
         let mut store = CoordinatorCheckpointManifestStore::open(&fixture.path).unwrap();
         assert_eq!(
-            store.store_verified_manifest_inner(
-                &manifest,
-                Some(TestFault::AfterManifestInsert)
-            ),
+            store.store_verified_manifest_inner(&manifest, Some(TestFault::AfterManifestInsert)),
             Err(CheckpointManifestStoreError::InjectedFailure(
                 "after CheckpointManifest insert"
             ))

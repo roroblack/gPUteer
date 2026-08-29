@@ -22,7 +22,10 @@ pub enum WatchContinuityOutcome {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WatchDiscontinuity {
-    Gap { previous: Cursor, received: Cursor },
+    Gap {
+        previous: Cursor,
+        received: Cursor,
+    },
     DuplicateOrRegression {
         previous: Cursor,
         received: Cursor,
@@ -101,7 +104,9 @@ pub fn evaluate_watch_continuity(
     }
 
     WatchContinuityReport {
-        outcome: WatchContinuityOutcome::Continuous { accepted_cursor: accepted },
+        outcome: WatchContinuityOutcome::Continuous {
+            accepted_cursor: accepted,
+        },
     }
 }
 

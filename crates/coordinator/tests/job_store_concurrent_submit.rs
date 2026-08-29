@@ -1,9 +1,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use gputeer_coordinator::job_store::{
-    AcceptedJobSubmission, CoordinatorJobStore, JobStoreError,
-};
+use gputeer_coordinator::job_store::{AcceptedJobSubmission, CoordinatorJobStore, JobStoreError};
 
 fn submission(job_id: &str, manifest_byte: u8) -> AcceptedJobSubmission {
     AcceptedJobSubmission {
@@ -64,7 +62,10 @@ fn concurrent_key_reuse_with_changed_payload_has_one_winner_and_no_overwrite() {
                 let mut store = CoordinatorJobStore::open(path).unwrap();
                 barrier.wait();
                 let request = submission(job_id, manifest_byte);
-                (request, store.submit_accepted(&submission(job_id, manifest_byte), 100))
+                (
+                    request,
+                    store.submit_accepted(&submission(job_id, manifest_byte), 100),
+                )
             })
         })
         .collect();
@@ -92,6 +93,10 @@ fn concurrent_key_reuse_with_changed_payload_has_one_winner_and_no_overwrite() {
     let store = CoordinatorJobStore::open(&path).unwrap();
     let durable = store.get(&winner.0.job_id).unwrap().unwrap();
     assert_eq!(durable, winner.1.job);
-    let loser_job_id = if winner.0.job_id == "job-a" { "job-b" } else { "job-a" };
+    let loser_job_id = if winner.0.job_id == "job-a" {
+        "job-b"
+    } else {
+        "job-a"
+    };
     assert!(store.get(loser_job_id).unwrap().is_none());
 }

@@ -28,7 +28,10 @@ fn repo_root() -> PathBuf {
 /// `Cargo.toml` 의 `[dependencies]` · `[build-dependencies]` · `[dev-dependencies]`
 /// 에 나오는 크레이트 이름을 전부 뽑는다.
 fn declared_deps(crate_dir: &str) -> BTreeSet<String> {
-    let path = repo_root().join("crates").join(crate_dir).join("Cargo.toml");
+    let path = repo_root()
+        .join("crates")
+        .join(crate_dir)
+        .join("Cargo.toml");
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("{} 읽기 실패: {e}", path.display()));
 
@@ -62,12 +65,18 @@ fn declared_deps(crate_dir: &str) -> BTreeSet<String> {
 #[test]
 fn parser_is_not_vacuous() {
     let p = declared_deps("protocol");
-    assert!(p.contains("prost"), "protocol 의 prost 의존성을 못 찾았다: {p:?}");
+    assert!(
+        p.contains("prost"),
+        "protocol 의 prost 의존성을 못 찾았다: {p:?}"
+    );
     assert!(p.contains("blake3"));
     assert!(p.contains("prost-build"), "build-dependencies 를 못 읽었다");
 
     let c = declared_deps("crypto");
-    assert!(c.contains("ed25519-dalek"), "crypto 의 ed25519 의존성을 못 찾았다: {c:?}");
+    assert!(
+        c.contains("ed25519-dalek"),
+        "crypto 의 ed25519 의존성을 못 찾았다: {c:?}"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -195,5 +204,9 @@ fn every_crate_is_covered_by_ownership_rules() {
         "소유권 검사에 등록되지 않은 크레이트: {unknown:?}\n\
          RULE.md §4.1 표에 스트림을 정하고 이 테스트의 KNOWN 에 추가하라."
     );
-    assert_eq!(found.len(), KNOWN.len(), "KNOWN 에 없어진 크레이트가 남아 있다");
+    assert_eq!(
+        found.len(),
+        KNOWN.len(),
+        "KNOWN 에 없어진 크레이트가 남아 있다"
+    );
 }

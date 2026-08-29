@@ -553,7 +553,9 @@ impl ToCanonicalFields for pb::AgentSessionHello {
         put_bytes(&mut f, 7, &self.nonce);
         f
     }
-    fn schema_version(&self) -> u32 { self.schema_version }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
 }
 
 impl ToCanonicalFields for pb::ResumeLeaseRequest {
@@ -571,7 +573,9 @@ impl ToCanonicalFields for pb::ResumeLeaseRequest {
         put_bytes(&mut f, 10, &self.request_nonce);
         f
     }
-    fn schema_version(&self) -> u32 { self.schema_version }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
 }
 
 impl ToCanonicalFields for pb::ResumeLeaseResult {
@@ -587,7 +591,9 @@ impl ToCanonicalFields for pb::ResumeLeaseResult {
         put_bytes(&mut f, 8, &self.request_nonce);
         f
     }
-    fn schema_version(&self) -> u32 { self.schema_version }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
 }
 
 impl ToCanonicalFields for pb::RevokeLeaseNotice {

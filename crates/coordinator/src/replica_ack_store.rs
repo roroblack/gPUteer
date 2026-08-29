@@ -9,9 +9,7 @@ use std::path::Path;
 
 use gputeer_protocol::{canonical::blake3_256, pb, signing::Verified};
 use prost::Message;
-use rusqlite::{
-    Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior,
-};
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
 use crate::checkpoint_manifest_store::{
     self, CheckpointManifestStoreError, StoredCheckpointManifestBinding,
@@ -67,7 +65,9 @@ pub enum ReplicaAckCorruption {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReplicaAckStoreError {
     InvalidInput(&'static str),
-    CheckpointNotFound { checkpoint_id: String },
+    CheckpointNotFound {
+        checkpoint_id: String,
+    },
     BindingMismatch(ReplicaAckBindingField),
     AckConflict {
         checkpoint_id: String,
@@ -266,14 +266,12 @@ impl CoordinatorReplicaAckStore {
             .root_digest
             .as_ref()
             .expect("validated root_digest must be present");
-        let anchor = checkpoint_manifest_store::fetch_manifest_binding(
-            &transaction,
-            &ack.checkpoint_id,
-        )
-        .map_err(ReplicaAckStoreError::CheckpointAnchor)?
-        .ok_or_else(|| ReplicaAckStoreError::CheckpointNotFound {
-            checkpoint_id: ack.checkpoint_id.clone(),
-        })?;
+        let anchor =
+            checkpoint_manifest_store::fetch_manifest_binding(&transaction, &ack.checkpoint_id)
+                .map_err(ReplicaAckStoreError::CheckpointAnchor)?
+                .ok_or_else(|| ReplicaAckStoreError::CheckpointNotFound {
+                    checkpoint_id: ack.checkpoint_id.clone(),
+                })?;
         if root_digest != &anchor.bound_root_digest {
             return Err(ReplicaAckStoreError::BindingMismatch(
                 ReplicaAckBindingField::RootDigest,
@@ -438,16 +436,10 @@ fn validate_ack_row(
         return Err(corrupt(&raw, ReplicaAckCorruption::InvalidAck));
     }
     if ack.checkpoint_id != raw.checkpoint_id {
-        return Err(corrupt(
-            &raw,
-            ReplicaAckCorruption::CheckpointIdMismatch,
-        ));
+        return Err(corrupt(&raw, ReplicaAckCorruption::CheckpointIdMismatch));
     }
     if ack.holder_device_id != raw.holder_device_id {
-        return Err(corrupt(
-            &raw,
-            ReplicaAckCorruption::HolderDeviceIdMismatch,
-        ));
+        return Err(corrupt(&raw, ReplicaAckCorruption::HolderDeviceIdMismatch));
     }
     if raw.signer_id != raw.holder_device_id || raw.signer_id != ack.holder_device_id {
         return Err(corrupt(&raw, ReplicaAckCorruption::SignerIdMismatch));
@@ -469,16 +461,10 @@ fn validate_ack_row(
         return Err(corrupt(&raw, ReplicaAckCorruption::RootDigestMismatch));
     }
     if raw.checkpoint_id != anchor.bound_checkpoint_id {
-        return Err(corrupt(
-            &raw,
-            ReplicaAckCorruption::MissingCheckpointAnchor,
-        ));
+        return Err(corrupt(&raw, ReplicaAckCorruption::MissingCheckpointAnchor));
     }
     if bound_root_digest != anchor.bound_root_digest {
-        return Err(corrupt(
-            &raw,
-            ReplicaAckCorruption::CheckpointRootMismatch,
-        ));
+        return Err(corrupt(&raw, ReplicaAckCorruption::CheckpointRootMismatch));
     }
 
     Ok(StoredReplicaAckBinding {
@@ -530,10 +516,7 @@ enum TestFault {
 }
 
 #[cfg(test)]
-fn fail_at(
-    fault: Option<TestFault>,
-    point: TestFault,
-) -> Result<(), ReplicaAckStoreError> {
+fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), ReplicaAckStoreError> {
     if fault == Some(point) {
         Err(ReplicaAckStoreError::InjectedFailure(
             "after ReplicaAck insert",
@@ -544,10 +527,7 @@ fn fail_at(
 }
 
 #[cfg(not(test))]
-fn fail_at(
-    _fault: Option<TestFault>,
-    _point: TestFault,
-) -> Result<(), ReplicaAckStoreError> {
+fn fail_at(_fault: Option<TestFault>, _point: TestFault) -> Result<(), ReplicaAckStoreError> {
     Ok(())
 }
 
@@ -658,15 +638,10 @@ mod tests {
             .store_verified_manifest(&manifest)
             .unwrap();
 
-        Fixture {
-            _dir: dir,
-            path,
-        }
+        Fixture { _dir: dir, path }
     }
 
-    fn verify_manifest(
-        mut manifest: pb::CheckpointManifest,
-    ) -> Verified<pb::CheckpointManifest> {
+    fn verify_manifest(mut manifest: pb::CheckpointManifest) -> Verified<pb::CheckpointManifest> {
         let key = SigningKey::from_bytes(&[7; 32]);
         manifest.producer_signature = sign(&key, &manifest).to_vec();
         let mut keys = InMemoryKeyring::new();
@@ -770,12 +745,10 @@ mod tests {
     }
 
     fn rewrite_manifest_root(store: &CoordinatorReplicaAckStore, root_byte: u8) {
-        let binding = checkpoint_manifest_store::fetch_manifest_binding(
-            &store.connection,
-            CHECKPOINT_ID,
-        )
-        .unwrap()
-        .unwrap();
+        let binding =
+            checkpoint_manifest_store::fetch_manifest_binding(&store.connection, CHECKPOINT_ID)
+                .unwrap()
+                .unwrap();
         let mut manifest = binding.manifest;
         manifest.root_digest = Some(digest(root_byte));
         let body = manifest.encode_to_vec();
@@ -869,7 +842,10 @@ mod tests {
                     ))
                 );
             } else {
-                assert_eq!(result, Err(ReplicaAckStoreError::InvalidInput("root_digest")));
+                assert_eq!(
+                    result,
+                    Err(ReplicaAckStoreError::InvalidInput("root_digest"))
+                );
             }
             assert_eq!(ack_count(&store), 0, "mutation {mutation} inserted a row");
         }
@@ -929,7 +905,10 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(keys, vec![(399, "holder-z"), (400, "holder-1"), (400, "holder-a")]);
+        assert_eq!(
+            keys,
+            vec![(399, "holder-z"), (400, "holder-1"), (400, "holder-a")]
+        );
         assert!(!listed[0].ack.fsynced);
         assert!(!listed[0].ack.hash_verified);
     }
@@ -950,7 +929,9 @@ mod tests {
             .map(|table| {
                 let count = store
                     .connection
-                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                        row.get(0)
+                    })
                     .unwrap();
                 (table.to_string(), count)
             })
@@ -967,7 +948,9 @@ mod tests {
         for (table, expected) in before {
             let actual: i64 = store
                 .connection
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(actual, expected, "storage changed control table {table}");
         }

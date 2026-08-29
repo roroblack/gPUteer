@@ -64,9 +64,8 @@ mod windows_impl {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject,
-        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION,
-        STARTUPINFOW,
+        CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED,
+        CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION, STARTUPINFOW,
     };
 
     /// `CreateProcessW` 호출에 필요한 최소 입력.
@@ -390,10 +389,7 @@ mod windows_impl {
         /// 출력해 명령줄이 깨졌다.
         #[test]
         fn trailing_backslash_before_closing_quote_is_doubled() {
-            let out = quote_command_line(
-                OsStr::new("exe"),
-                &[OsStr::new("C:\\Program Files\\")],
-            );
+            let out = quote_command_line(OsStr::new("exe"), &[OsStr::new("C:\\Program Files\\")]);
             // 기대: 여는 따옴표 + "C:\Program Files" + 백슬래시 2개 + 닫는 따옴표.
             let mut expected = String::from("exe \"C:\\Program Files");
             expected.push('\\');

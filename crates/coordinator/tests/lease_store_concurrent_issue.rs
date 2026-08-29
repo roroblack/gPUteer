@@ -8,9 +8,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
-use gputeer_coordinator::lease_store::{
-    CoordinatorLeaseStore, LeaseStoreError, StoredLease,
-};
+use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, LeaseStoreError, StoredLease};
 use rusqlite::{Connection, OptionalExtension};
 
 const ROUNDS: usize = 16;
@@ -65,26 +63,23 @@ fn assert_candidates_are_distinguishable(a: &StoredLease, b: &StoredLease) {
     assert_ne!(a.coordinator_term, b.coordinator_term);
     assert_ne!(a.issued_at_unix_ms, b.issued_at_unix_ms);
     assert_ne!(a.renew_after_unix_ms, b.renew_after_unix_ms);
-    assert_ne!(
-        a.max_total_duration_seconds,
-        b.max_total_duration_seconds
-    );
+    assert_ne!(a.max_total_duration_seconds, b.max_total_duration_seconds);
     assert_eq!(a.revoked_at_unix_ms, None);
     assert_eq!(b.revoked_at_unix_ms, None);
 }
 
 fn assert_complete_winner(stored: &StoredLease, winner: &StoredLease, loser: &StoredLease) {
-    assert_eq!(stored, winner, "durable row is not the complete winning candidate");
+    assert_eq!(
+        stored, winner,
+        "durable row is not the complete winning candidate"
+    );
 
     // 충돌 판정상 같아야 하는 identity와 최초 발급 시 항상 NULL인 revoke 상태를
     // 제외한 모든 저장 필드가 패자의 표식과 다름을 명시해 부분 덮어쓰기를 검출한다.
     assert_ne!(stored.holder_node_id, loser.holder_node_id);
     assert_ne!(stored.fence_epoch, loser.fence_epoch);
     assert_ne!(stored.expires_at_unix_ms, loser.expires_at_unix_ms);
-    assert_ne!(
-        stored.issuing_coordinator_id,
-        loser.issuing_coordinator_id
-    );
+    assert_ne!(stored.issuing_coordinator_id, loser.issuing_coordinator_id);
     assert_ne!(stored.coordinator_term, loser.coordinator_term);
     assert_ne!(stored.issued_at_unix_ms, loser.issued_at_unix_ms);
     assert_ne!(stored.renew_after_unix_ms, loser.renew_after_unix_ms);
@@ -174,9 +169,7 @@ fn query_stored_directly(connection: &Connection, lease_id: &str) -> StoredLease
         issued_at_unix_ms: decode_u64(raw.8, "issued_at_unix_ms"),
         renew_after_unix_ms: decode_u64(raw.9, "renew_after_unix_ms"),
         max_total_duration_seconds: decode_u64(raw.10, "max_total_duration_seconds"),
-        revoked_at_unix_ms: raw
-            .11
-            .map(|bytes| decode_u64(bytes, "revoked_at_unix_ms")),
+        revoked_at_unix_ms: raw.11.map(|bytes| decode_u64(bytes, "revoked_at_unix_ms")),
     }
 }
 
@@ -308,7 +301,9 @@ fn concurrent_first_issue_has_one_complete_winner() {
     // 직접 읽어, 패자 값의 부분 덮어쓰기 없이 승자 전체가 남았는지 확인한다.
     let connection = Connection::open(&path).expect("final direct SQLite connection failed");
     let row_count: usize = connection
-        .query_row("SELECT COUNT(*) FROM coordinator_leases", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM coordinator_leases", [], |row| {
+            row.get(0)
+        })
         .expect("lease row count query failed");
     assert_eq!(row_count, ROUNDS, "one durable row must remain per round");
 

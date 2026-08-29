@@ -74,7 +74,10 @@ pub enum ArtifactViolation {
     /// Windows 는 이 이름들을 일반 파일이 아니라 장치로 해석한다.
     /// `NUL` 에 쓰면 조용히 버려지고, `CON` 은 콘솔을 연다 — 검수자가
     /// 지적했다.
-    WindowsReservedName { requested: String, component: String },
+    WindowsReservedName {
+        requested: String,
+        component: String,
+    },
     /// ★ 끝에 점·공백이 있는 경로 요소.
     ///
     /// Win32 경로 처리는 trailing dot/space 를 **조용히 제거**한다.
@@ -100,13 +103,22 @@ impl std::fmt::Display for ArtifactViolation {
                 write!(f, "경로에 보이지 않는 문자: {requested}")
             }
             Self::NonAscii { requested } => {
-                write!(f, "경로에 ASCII 가 아닌 문자가 있다(동형 문자 우회 방지): {requested}")
+                write!(
+                    f,
+                    "경로에 ASCII 가 아닌 문자가 있다(동형 문자 우회 방지): {requested}"
+                )
             }
-            Self::WindowsReservedName { requested, component } => {
+            Self::WindowsReservedName {
+                requested,
+                component,
+            } => {
                 write!(f, "Windows 예약 장치 이름({component}): {requested}")
             }
             Self::TrailingDotOrSpace { requested } => {
-                write!(f, "경로 요소 끝에 점/공백이 있다(Win32 가 조용히 제거한다): {requested}")
+                write!(
+                    f,
+                    "경로 요소 끝에 점/공백이 있다(Win32 가 조용히 제거한다): {requested}"
+                )
             }
         }
     }
@@ -227,7 +239,10 @@ impl ArtifactPolicy {
             }
         }
 
-        let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+        let parts: Vec<&str> = normalized
+            .split('/')
+            .filter(|p| !p.is_empty() && *p != ".")
+            .collect();
         if parts.iter().any(|p| *p == "..") {
             return Err(ArtifactViolation::PathTraversal {
                 requested: requested.to_string(),
@@ -243,13 +258,10 @@ impl ArtifactPolicy {
             });
         }
 
-        let allowed = self
-            .writable_prefixes
-            .iter()
-            .any(|prefix| {
-                let prefix = prefix.trim_end_matches('/');
-                rebuilt == prefix || rebuilt.starts_with(&format!("{prefix}/"))
-            });
+        let allowed = self.writable_prefixes.iter().any(|prefix| {
+            let prefix = prefix.trim_end_matches('/');
+            rebuilt == prefix || rebuilt.starts_with(&format!("{prefix}/"))
+        });
 
         if !allowed {
             return Err(ArtifactViolation::OutsideAllowedPrefixes {
@@ -293,7 +305,10 @@ mod tests {
     fn artifact_absolute_path_is_rejected() {
         let p = policy();
         let r = p.check("/etc/passwd");
-        assert!(matches!(r, Err(ArtifactViolation::AbsolutePath { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(ArtifactViolation::AbsolutePath { .. })),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -353,7 +368,10 @@ mod tests {
         // U+FF0E 전각 마침표 두 개 — 눈으로 ".." 처럼 보이지만
         // 예전 코드의 정확한 ASCII 비교(`p == ".."`)를 통과했다.
         let r = p.check("jobs/job-1/attempt-1/\u{ff0e}\u{ff0e}/model.bin");
-        assert!(matches!(r, Err(ArtifactViolation::NonAscii { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(ArtifactViolation::NonAscii { .. })),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -361,7 +379,10 @@ mod tests {
         let p = policy();
         // 키릴 'о'(U+043E) — 라틴 'o' 처럼 보인다.
         let r = p.check("jobs/job-1/attempt-1/m\u{043e}del.bin");
-        assert!(matches!(r, Err(ArtifactViolation::NonAscii { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(ArtifactViolation::NonAscii { .. })),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -381,9 +402,15 @@ mod tests {
     fn artifact_trailing_dot_or_space_is_rejected() {
         let p = policy();
         let r1 = p.check("jobs/job-1/attempt-1/model.bin.");
-        assert!(matches!(r1, Err(ArtifactViolation::TrailingDotOrSpace { .. })), "{r1:?}");
+        assert!(
+            matches!(r1, Err(ArtifactViolation::TrailingDotOrSpace { .. })),
+            "{r1:?}"
+        );
         let r2 = p.check("jobs/job-1/attempt-1/model.bin ");
-        assert!(matches!(r2, Err(ArtifactViolation::TrailingDotOrSpace { .. })), "{r2:?}");
+        assert!(
+            matches!(r2, Err(ArtifactViolation::TrailingDotOrSpace { .. })),
+            "{r2:?}"
+        );
     }
 
     #[test]
@@ -411,6 +438,8 @@ mod tests {
     fn normal_ascii_filenames_with_dots_still_work() {
         let p = policy();
         assert!(p.check("jobs/job-1/attempt-1/model.v2.bin").is_ok());
-        assert!(p.check("jobs/job-1/attempt-1/checkpoint-00010.ckpt").is_ok());
+        assert!(p
+            .check("jobs/job-1/attempt-1/checkpoint-00010.ckpt")
+            .is_ok());
     }
 }

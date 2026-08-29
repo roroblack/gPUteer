@@ -13,9 +13,9 @@ use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
 use gputeer_protocol::canonical::Domain;
 use gputeer_protocol::constants::CLOCK_SKEW_TOLERANCE_MS;
 use gputeer_protocol::pb;
-use gputeer_protocol::signing::{ReplayStatus, 
-    signing_input, verify, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard, ReplayStoreError,
-    Signable, VerifyOutcome,
+use gputeer_protocol::signing::{
+    signing_input, verify, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard, ReplayStatus,
+    ReplayStoreError, Signable, VerifyOutcome,
 };
 
 const NOW: u64 = 1_755_200_000_000;
@@ -72,14 +72,8 @@ fn signed_manifest(k: &SigningKey) -> pb::JobManifest {
 fn valid_manifest_verifies() {
     let k = key(1);
     let m = signed_manifest(&k);
-    let v = verify(
-        &m,
-        1,
-        &ring_with(DEVICE, &k),
-        NOW,
-        &mut NoReplayCheck,
-    )
-    .expect("정상 매니페스트가 검증을 통과해야 한다");
+    let v = verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
+        .expect("정상 매니페스트가 검증을 통과해야 한다");
 
     assert_eq!(v.signer_id(), DEVICE);
     assert_eq!(v.get().job_id, "01JBXR7Q0000000000000000AA");
@@ -127,7 +121,9 @@ fn schema_too_new_is_rejected_and_not_reported_as_signature_failure() {
     m.submitter_signature = sign(&k, &m).to_vec(); // 서명 자체는 완전히 정상이다
 
     let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
-        .expect_err("구버전은 신버전 메시지를 거부해야 한다").outcome().unwrap();
+        .expect_err("구버전은 신버전 메시지를 거부해야 한다")
+        .outcome()
+        .unwrap();
 
     // ★ P0-08 의 결론 — 이것을 INVALID_SIGNATURE 로 보고하면 며칠 헤맨다
     assert_eq!(out, VerifyOutcome::SchemaTooNew);
@@ -147,7 +143,9 @@ fn version_check_precedes_signature_check() {
     m.submitter_signature = vec![0u8; 64]; // 명백히 틀린 서명
 
     let out = verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
-        .expect_err("거부되어야 한다").outcome().unwrap();
+        .expect_err("거부되어야 한다")
+        .outcome()
+        .unwrap();
     assert_eq!(
         out,
         VerifyOutcome::SchemaTooNew,
@@ -166,7 +164,10 @@ fn tampered_field_breaks_signature() {
     m.entrypoint = "evil.py".into(); // 서명 후 변조
 
     assert_eq!(
-        verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+        verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
         VerifyOutcome::InvalidSignature
     );
 }
@@ -181,7 +182,11 @@ fn tampering_security_fields_breaks_signature() {
         (
             "network(54): runtime_allow_hosts 추가",
             Box::new(|m: &mut pb::JobManifest| {
-                m.network.as_mut().unwrap().runtime_allow_hosts.push("evil.example".into());
+                m.network
+                    .as_mut()
+                    .unwrap()
+                    .runtime_allow_hosts
+                    .push("evil.example".into());
             }),
         ),
         (
@@ -268,7 +273,10 @@ fn wrong_length_signature_is_rejected() {
         let mut m = manifest();
         m.submitter_signature = vec![0u8; len];
         assert_eq!(
-            verify(&m, 1, &ring, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+            verify(&m, 1, &ring, NOW, &mut NoReplayCheck)
+                .unwrap_err()
+                .outcome()
+                .unwrap(),
             VerifyOutcome::InvalidSignature,
             "{len}바이트 서명이 거부되지 않았다"
         );
@@ -305,7 +313,10 @@ fn signature_from_another_domain_does_not_verify() {
     m.submitter_signature = lease.coordinator_signature.clone();
 
     assert_eq!(
-        verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+        verify(&m, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
         VerifyOutcome::InvalidSignature,
         "도메인 간 서명 재사용이 가능하다"
     );
@@ -325,7 +336,10 @@ fn unknown_signer_is_rejected() {
     let m = signed_manifest(&k);
     // 키링이 비어 있다 = 팀 멤버가 아니거나 폐기됨
     assert_eq!(
-        verify(&m, 1, &empty_ring(), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+        verify(&m, 1, &empty_ring(), NOW, &mut NoReplayCheck)
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
         VerifyOutcome::UnknownSigner
     );
 }
@@ -339,7 +353,10 @@ fn signature_by_different_key_is_rejected() {
 
     // 키링은 진짜 소유자의 키를 갖고 있다
     assert_eq!(
-        verify(&m, 1, &ring_with(DEVICE, &key(1)), NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+        verify(&m, 1, &ring_with(DEVICE, &key(1)), NOW, &mut NoReplayCheck)
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
         VerifyOutcome::InvalidSignature
     );
 }
@@ -359,7 +376,10 @@ fn expired_manifest_is_rejected() {
     verify(&m, 1, &ring, expiry - 1, &mut NoReplayCheck).expect("만료 1ms 전은 유효");
     // 만료 시점부터 거부
     assert_eq!(
-        verify(&m, 1, &ring, expiry, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+        verify(&m, 1, &ring, expiry, &mut NoReplayCheck)
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
         VerifyOutcome::Expired
     );
 }
@@ -492,20 +512,42 @@ mod short_lived {
         g.sig = sign(&k, &g).to_vec();
 
         // 경계값 — 허용
-        verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS, &mut NoReplayCheck)
-            .expect("skew 경계값은 허용된다");
+        verify(
+            &g,
+            1,
+            &ring,
+            NOW + CLOCK_SKEW_TOLERANCE_MS,
+            &mut NoReplayCheck,
+        )
+        .expect("skew 경계값은 허용된다");
 
         // 경계 바로 밖 — 거부
         assert_eq!(
-            verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS + 1, &mut NoReplayCheck)
-                .unwrap_err().outcome().unwrap(),
+            verify(
+                &g,
+                1,
+                &ring,
+                NOW + CLOCK_SKEW_TOLERANCE_MS + 1,
+                &mut NoReplayCheck
+            )
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
             VerifyOutcome::ClockSkew
         );
 
         // 과거 방향도 대칭으로 거부 (검증자 시계가 빠른 경우)
         assert_eq!(
-            verify(&g, 1, &ring, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, &mut NoReplayCheck)
-                .unwrap_err().outcome().unwrap(),
+            verify(
+                &g,
+                1,
+                &ring,
+                NOW - CLOCK_SKEW_TOLERANCE_MS - 1,
+                &mut NoReplayCheck
+            )
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
             VerifyOutcome::ClockSkew
         );
     }
@@ -527,16 +569,32 @@ mod short_lived {
 
         // skew 경계와 만료 시각이 같은 지점. 만료가 이긴다.
         assert_eq!(
-            verify(&g, 1, &ring, NOW + CLOCK_SKEW_TOLERANCE_MS, &mut NoReplayCheck)
-                .unwrap_err().outcome().unwrap(),
+            verify(
+                &g,
+                1,
+                &ring,
+                NOW + CLOCK_SKEW_TOLERANCE_MS,
+                &mut NoReplayCheck
+            )
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
             VerifyOutcome::Expired,
             "기본 TTL 에서는 미래 방향 skew 경로에 도달할 수 없다"
         );
 
         // 과거 방향은 여전히 도달 가능하다
         assert_eq!(
-            verify(&g, 1, &ring, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, &mut NoReplayCheck)
-                .unwrap_err().outcome().unwrap(),
+            verify(
+                &g,
+                1,
+                &ring,
+                NOW - CLOCK_SKEW_TOLERANCE_MS - 1,
+                &mut NoReplayCheck
+            )
+            .unwrap_err()
+            .outcome()
+            .unwrap(),
             VerifyOutcome::ClockSkew
         );
     }
@@ -554,7 +612,10 @@ mod short_lived {
         for len in [0usize, 8, 15, 17, 32] {
             let bad = grant_with_nonce(&k, vec![9u8; len]);
             assert_eq!(
-                verify(&bad, 1, &ring, NOW, &mut NoReplayCheck).unwrap_err().outcome().unwrap(),
+                verify(&bad, 1, &ring, NOW, &mut NoReplayCheck)
+                    .unwrap_err()
+                    .outcome()
+                    .unwrap(),
                 VerifyOutcome::Replay,
                 "{len}바이트 nonce 가 허용됐다 (§10 은 16바이트 MUST)"
             );
@@ -573,7 +634,10 @@ mod short_lived {
         let v = verify(&g, 1, &ring_with(DEVICE, &k), NOW, &mut NoReplayCheck)
             .expect("서명 자체는 정상이다");
 
-        assert!(!v.replay_checked(), "NoReplayCheck 인데 검사됨으로 표시됐다");
+        assert!(
+            !v.replay_checked(),
+            "NoReplayCheck 인데 검사됨으로 표시됐다"
+        );
         assert_eq!(
             v.require_replay_checked().unwrap_err(),
             VerifyOutcome::Replay,
@@ -590,8 +654,13 @@ mod short_lived {
 
         struct MemGuard(HashSet<(String, u32, Vec<u8>)>);
         impl ReplayGuard for MemGuard {
-            fn check_and_record(&mut self, s: &str, d: Domain, n: &[u8], _r: u64)
-                -> Result<ReplayDecision, ReplayStoreError> {
+            fn check_and_record(
+                &mut self,
+                s: &str,
+                d: Domain,
+                n: &[u8],
+                _r: u64,
+            ) -> Result<ReplayDecision, ReplayStoreError> {
                 Ok(if self.0.insert((s.to_string(), d as u32, n.to_vec())) {
                     ReplayDecision::Fresh
                 } else {
@@ -613,7 +682,10 @@ mod short_lived {
         assert!(v.require_replay_checked().is_ok());
 
         assert_eq!(
-            verify(&g, 1, &ring, NOW, &mut guard).unwrap_err().outcome().unwrap(),
+            verify(&g, 1, &ring, NOW, &mut guard)
+                .unwrap_err()
+                .outcome()
+                .unwrap(),
             VerifyOutcome::Replay,
             "같은 nonce 재사용이 통과했다"
         );
@@ -632,8 +704,13 @@ mod short_lived {
         use std::collections::HashSet;
         struct MemGuard(HashSet<(String, u32, Vec<u8>)>);
         impl ReplayGuard for MemGuard {
-            fn check_and_record(&mut self, s: &str, d: Domain, n: &[u8], _r: u64)
-                -> Result<ReplayDecision, ReplayStoreError> {
+            fn check_and_record(
+                &mut self,
+                s: &str,
+                d: Domain,
+                n: &[u8],
+                _r: u64,
+            ) -> Result<ReplayDecision, ReplayStoreError> {
                 Ok(if self.0.insert((s.to_string(), d as u32, n.to_vec())) {
                     ReplayDecision::Fresh
                 } else {
@@ -703,8 +780,14 @@ fn verify_outcome_matches_proto_enum() {
     .expect("common.proto");
 
     let expect = [
-        (VerifyOutcome::InvalidSignature, "VERIFY_OUTCOME_INVALID_SIGNATURE"),
-        (VerifyOutcome::UnknownSigner, "VERIFY_OUTCOME_UNKNOWN_SIGNER"),
+        (
+            VerifyOutcome::InvalidSignature,
+            "VERIFY_OUTCOME_INVALID_SIGNATURE",
+        ),
+        (
+            VerifyOutcome::UnknownSigner,
+            "VERIFY_OUTCOME_UNKNOWN_SIGNER",
+        ),
         (VerifyOutcome::Expired, "VERIFY_OUTCOME_EXPIRED"),
         (VerifyOutcome::ClockSkew, "VERIFY_OUTCOME_CLOCK_SKEW"),
         (VerifyOutcome::Replay, "VERIFY_OUTCOME_REPLAY"),

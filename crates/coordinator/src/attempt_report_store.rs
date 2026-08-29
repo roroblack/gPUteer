@@ -6,15 +6,9 @@
 
 use std::path::Path;
 
-use gputeer_protocol::{
-    canonical::blake3_256,
-    pb,
-    signing::Verified,
-};
+use gputeer_protocol::{canonical::blake3_256, pb, signing::Verified};
 use prost::Message;
-use rusqlite::{
-    Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior,
-};
+use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
 use crate::staging_store::{self, StoredAttempt, StoredNodeReservation};
 
@@ -70,10 +64,17 @@ pub enum AttemptReportCorruption {
 pub enum AttemptReportStoreError {
     InvalidInput(&'static str),
     InvalidOutcome(i32),
-    AttemptNotFound { attempt_id: String },
-    ReservationNotFound { node_id: String },
+    AttemptNotFound {
+        attempt_id: String,
+    },
+    ReservationNotFound {
+        node_id: String,
+    },
     BindingMismatch(BindingField),
-    ReportConflict { attempt_id: String, node_id: String },
+    ReportConflict {
+        attempt_id: String,
+        node_id: String,
+    },
     Corrupt {
         attempt_id: String,
         node_id: String,
@@ -91,13 +92,19 @@ impl std::fmt::Display for AttemptReportStoreError {
         match self {
             Self::InvalidInput(field) => write!(f, "invalid AttemptReport input: {field}"),
             Self::InvalidOutcome(outcome) => {
-                write!(f, "AttemptReport outcome is not a known terminal value: {outcome}")
+                write!(
+                    f,
+                    "AttemptReport outcome is not a known terminal value: {outcome}"
+                )
             }
             Self::AttemptNotFound { attempt_id } => {
                 write!(f, "AttemptReport references missing Attempt: {attempt_id}")
             }
             Self::ReservationNotFound { node_id } => {
-                write!(f, "AttemptReport node has no current reservation: {node_id}")
+                write!(
+                    f,
+                    "AttemptReport node has no current reservation: {node_id}"
+                )
             }
             Self::BindingMismatch(field) => {
                 write!(f, "AttemptReport durable binding mismatch: {field:?}")
@@ -303,7 +310,9 @@ fn bind_attempt(
     attempt: &StoredAttempt,
 ) -> Result<(), AttemptReportStoreError> {
     if report.job_id != attempt.job_id {
-        return Err(AttemptReportStoreError::BindingMismatch(BindingField::JobId));
+        return Err(AttemptReportStoreError::BindingMismatch(
+            BindingField::JobId,
+        ));
     }
     if report.attempt_id != attempt.attempt_id {
         return Err(AttemptReportStoreError::BindingMismatch(
@@ -311,7 +320,9 @@ fn bind_attempt(
         ));
     }
     if attempt.node_ids.as_slice() != [report.node_id.as_str()] {
-        return Err(AttemptReportStoreError::BindingMismatch(BindingField::NodeId));
+        return Err(AttemptReportStoreError::BindingMismatch(
+            BindingField::NodeId,
+        ));
     }
     if signer_id != report.node_id || signer_id != attempt.node_ids[0] {
         return Err(AttemptReportStoreError::BindingMismatch(
@@ -374,8 +385,7 @@ fn fetch_report_binding(
         )
         .optional()
         .map_err(map_sql_error)?;
-    let Some((row_attempt_id, row_node_id, row_job_id, epoch, signer_id, hash, body)) = raw
-    else {
+    let Some((row_attempt_id, row_node_id, row_job_id, epoch, signer_id, hash, body)) = raw else {
         return Ok(None);
     };
     let corrupt = |kind| AttemptReportStoreError::Corrupt {
@@ -409,8 +419,8 @@ fn fetch_report_binding(
     if signer_id != row_node_id || signer_id != report.node_id {
         return Err(corrupt(AttemptReportCorruption::SignerIdMismatch));
     }
-    let bound_fence_epoch = decode_u64(&epoch)
-        .map_err(|_| corrupt(AttemptReportCorruption::FenceEpochEncoding))?;
+    let bound_fence_epoch =
+        decode_u64(&epoch).map_err(|_| corrupt(AttemptReportCorruption::FenceEpochEncoding))?;
     if report.fence_epoch != bound_fence_epoch {
         return Err(corrupt(AttemptReportCorruption::FenceEpochMismatch));
     }
@@ -473,10 +483,7 @@ enum TestFault {
 }
 
 #[cfg(test)]
-fn fail_at(
-    fault: Option<TestFault>,
-    point: TestFault,
-) -> Result<(), AttemptReportStoreError> {
+fn fail_at(fault: Option<TestFault>, point: TestFault) -> Result<(), AttemptReportStoreError> {
     if fault == Some(point) {
         Err(AttemptReportStoreError::InjectedFailure(
             "after AttemptReport insert",
@@ -487,10 +494,7 @@ fn fail_at(
 }
 
 #[cfg(not(test))]
-fn fail_at(
-    _fault: Option<TestFault>,
-    _point: TestFault,
-) -> Result<(), AttemptReportStoreError> {
+fn fail_at(_fault: Option<TestFault>, _point: TestFault) -> Result<(), AttemptReportStoreError> {
     Ok(())
 }
 
@@ -591,10 +595,7 @@ mod tests {
             .reserve_node_and_stage_queued_with_lease(&request, 7)
             .unwrap();
 
-        Fixture {
-            _dir: dir,
-            path,
-        }
+        Fixture { _dir: dir, path }
     }
 
     fn verified_report(
@@ -648,16 +649,15 @@ mod tests {
     fn report_count(store: &CoordinatorAttemptReportStore) -> u64 {
         store
             .connection
-            .query_row("SELECT COUNT(*) FROM coordinator_attempt_reports", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM coordinator_attempt_reports",
+                [],
+                |row| row.get(0),
+            )
             .unwrap()
     }
 
-    fn rewrite_body(
-        store: &CoordinatorAttemptReportStore,
-        report: &pb::AttemptReport,
-    ) {
+    fn rewrite_body(store: &CoordinatorAttemptReportStore, report: &pb::AttemptReport) {
         let body = report.encode_to_vec();
         let hash = blake3_256(&body);
         store
@@ -779,7 +779,9 @@ mod tests {
         let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
         assert_eq!(
             store.store_verified_terminal_report(&report),
-            Err(AttemptReportStoreError::BindingMismatch(BindingField::NodeId))
+            Err(AttemptReportStoreError::BindingMismatch(
+                BindingField::NodeId
+            ))
         );
         assert_eq!(report_count(&store), 0);
     }
@@ -967,10 +969,7 @@ mod tests {
         let report = completed_report(1);
         let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
         assert_eq!(
-            store.store_verified_terminal_report_inner(
-                &report,
-                Some(TestFault::AfterReportInsert)
-            ),
+            store.store_verified_terminal_report_inner(&report, Some(TestFault::AfterReportInsert)),
             Err(AttemptReportStoreError::InjectedFailure(
                 "after AttemptReport insert"
             ))

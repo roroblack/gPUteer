@@ -175,12 +175,7 @@ pub fn open_beneath_read_only(root: &Path, relative: &Path) -> io::Result<File> 
 }
 
 pub fn open_beneath(root: &Path, relative: &Path) -> io::Result<File> {
-    open_beneath_with(
-        root,
-        relative,
-        GENERIC_READ | GENERIC_WRITE,
-        OPEN_ALWAYS,
-    )
+    open_beneath_with(root, relative, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS)
 }
 
 fn open_beneath_with(
@@ -198,7 +193,10 @@ fn open_beneath_with(
 
     let components: Vec<Component<'_>> = relative.components().collect();
     if components.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "relative 가 비어 있다"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "relative 가 비어 있다",
+        ));
     }
 
     // root 자신도 reparse point 가 아님을 확인한다 — 호출자가 이미
@@ -227,7 +225,12 @@ fn open_beneath_with(
         //   다음 컴포넌트를 연다 — 일반 Win32 공개 API 만으로는 "확인한
         //   바로 그 핸들을 기준으로 한 상대 열기"를 표현할 수 없다
         //   (모듈 문서의 한계 절 참조). 확인/사용 사이에 짧은 창이 남는다.
-        drop(open_no_reparse(&current, GENERIC_READ, OPEN_EXISTING, true)?);
+        drop(open_no_reparse(
+            &current,
+            GENERIC_READ,
+            OPEN_EXISTING,
+            true,
+        )?);
     }
 
     unreachable!("components 가 비어 있지 않음을 위에서 이미 확인했다")
@@ -241,8 +244,8 @@ pub fn open_artifact(
     root: &Path,
     requested: &str,
 ) -> io::Result<File> {
-    policy
-        .check(requested)
-        .map_err(|violation| io::Error::new(io::ErrorKind::PermissionDenied, format!("{violation:?}")))?;
+    policy.check(requested).map_err(|violation| {
+        io::Error::new(io::ErrorKind::PermissionDenied, format!("{violation:?}"))
+    })?;
     open_beneath(root, Path::new(requested))
 }

@@ -26,16 +26,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use gputeer_protocol::{
-    signing::{
-        verify, ReplayGuard, ReplayStoreError, Signable, Verified, VerifyError,
-    },
+use gputeer_protocol::signing::{
+    verify, ReplayGuard, ReplayStoreError, Signable, Verified, VerifyError,
 };
 use prost::Message;
 
-use crate::{
-    Ed25519Verifier, KeyDirectory, KeyDirectoryView, PersistentKeyring,
-};
+use crate::{Ed25519Verifier, KeyDirectory, KeyDirectoryView, PersistentKeyring};
 
 /// 테스트 가능한 시각 공급자.
 ///
@@ -91,9 +87,9 @@ pub enum IngressError {
     Verification(VerifyError),
 
     /// replay 저장소가 검증 결과를 확정하지 못했다.
-///
-/// 특히 `LockTimeout`은 "이미 본 메시지"가 아니다.
-/// 따라서 `Replay`로 위장하지 않고 별도 오류로 반환한다.
+    ///
+    /// 특히 `LockTimeout`은 "이미 본 메시지"가 아니다.
+    /// 따라서 `Replay`로 위장하지 않고 별도 오류로 반환한다.
     ReplayStoreUnavailable(ReplayStoreError),
 }
 
@@ -229,9 +225,7 @@ where
             ))
         }
 
-        Err(VerifyError::ReplayStore(error)) => {
-            Err(IngressError::ReplayStoreUnavailable(error))
-        }
+        Err(VerifyError::ReplayStore(error)) => Err(IngressError::ReplayStoreUnavailable(error)),
 
         Err(error) => Err(IngressError::Verification(error)),
     }

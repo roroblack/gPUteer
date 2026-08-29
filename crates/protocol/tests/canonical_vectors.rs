@@ -14,8 +14,7 @@ use gputeer_protocol::canonical::{
 };
 
 fn vectors_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/vectors/canonical_v1.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors/canonical_v1.json")
 }
 
 fn load_vectors() -> serde_json::Value {
@@ -86,7 +85,11 @@ fn v01_sig_input_and_digest_match_reference() {
     let canon = canonical_encode(&minimal_manifest(), &[]);
     let si = sig_input(Domain::Manifest, 1, &canon);
 
-    assert_eq!(hex(&si), v["sig_input_hex"].as_str().unwrap(), "sig_input 불일치");
+    assert_eq!(
+        hex(&si),
+        v["sig_input_hex"].as_str().unwrap(),
+        "sig_input 불일치"
+    );
     assert_eq!(
         hex(&blake3_256(&si)),
         v["sig_input_blake3_256"].as_str().unwrap(),
@@ -136,11 +139,15 @@ fn v04_repeated_order_is_preserved() {
 
     assert_eq!(
         hex(&ca),
-        find(&doc, "v04a_repeated_order_1")["canonical_hex"].as_str().unwrap()
+        find(&doc, "v04a_repeated_order_1")["canonical_hex"]
+            .as_str()
+            .unwrap()
     );
     assert_eq!(
         hex(&cb),
-        find(&doc, "v04b_repeated_order_2")["canonical_hex"].as_str().unwrap()
+        find(&doc, "v04b_repeated_order_2")["canonical_hex"]
+            .as_str()
+            .unwrap()
     );
 }
 
@@ -194,9 +201,18 @@ fn v10_domain_separation() {
     let as_manifest = sig_input(Domain::Manifest, 1, &canon);
     let as_lease = sig_input(Domain::Lease, 1, &canon);
 
-    assert_ne!(as_manifest, as_lease, "domain 이 다르면 sig_input 도 달라야 한다");
-    assert_eq!(hex(&as_manifest), v["sig_input_as_manifest_hex"].as_str().unwrap());
-    assert_eq!(hex(&as_lease), v["sig_input_as_lease_hex"].as_str().unwrap());
+    assert_ne!(
+        as_manifest, as_lease,
+        "domain 이 다르면 sig_input 도 달라야 한다"
+    );
+    assert_eq!(
+        hex(&as_manifest),
+        v["sig_input_as_manifest_hex"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex(&as_lease),
+        v["sig_input_as_lease_hex"].as_str().unwrap()
+    );
 }
 
 #[test]
@@ -205,8 +221,14 @@ fn v11_schema_version_separation() {
     let v = find(&doc, "v11_schema_version_separation");
     let canon = canonical_encode(&minimal_manifest(), &[]);
 
-    assert_eq!(hex(&sig_input(Domain::Manifest, 1, &canon)), v["sig_input_v1_hex"].as_str().unwrap());
-    assert_eq!(hex(&sig_input(Domain::Manifest, 2, &canon)), v["sig_input_v2_hex"].as_str().unwrap());
+    assert_eq!(
+        hex(&sig_input(Domain::Manifest, 1, &canon)),
+        v["sig_input_v1_hex"].as_str().unwrap()
+    );
+    assert_eq!(
+        hex(&sig_input(Domain::Manifest, 2, &canon)),
+        v["sig_input_v2_hex"].as_str().unwrap()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -230,7 +252,11 @@ fn v13_merkle_promotion_matches_reference() {
 
     for (key, chunks) in cases {
         let actual = hex(&merkle_root(&chunks).expect("루트가 있어야 한다"));
-        assert_eq!(actual, roots[key].as_str().unwrap(), "{key} merkle root 불일치");
+        assert_eq!(
+            actual,
+            roots[key].as_str().unwrap(),
+            "{key} merkle root 불일치"
+        );
     }
 }
 
@@ -242,7 +268,14 @@ fn v13_merkle_promotion_matches_reference() {
 fn determinism_100_iterations() {
     let mut m = minimal_manifest();
     m.set(14, repeated(&["--epochs", "3", "--lr", "1e-4"]))
-        .set(15, map_of(&[("OMP_NUM_THREADS", "8"), ("HF_HOME", "/ws/hf"), ("AAA", "1")]))
+        .set(
+            15,
+            map_of(&[
+                ("OMP_NUM_THREADS", "8"),
+                ("HF_HOME", "/ws/hf"),
+                ("AAA", "1"),
+            ]),
+        )
         .set(30, Value::Uint(180));
 
     let first = canonical_encode(&m, &[]);
@@ -271,7 +304,10 @@ fn negative_non_minimal_varint_is_rejected() {
 fn negative_truncated_varint_is_rejected() {
     let bad = [0x80u8]; // 연속 비트가 켜졌는데 다음 바이트가 없다
     let mut pos = 0;
-    assert_eq!(decode_varint(&bad, &mut pos), Err(CanonicalError::TruncatedVarint));
+    assert_eq!(
+        decode_varint(&bad, &mut pos),
+        Err(CanonicalError::TruncatedVarint)
+    );
 }
 
 #[test]
@@ -291,26 +327,51 @@ fn negative_cross_domain_signature_input_differs() {
     // 이것이 없으면 Lease 서명을 Manifest 서명으로 재사용할 수 있다.
     let canon = canonical_encode(&minimal_manifest(), &[]);
     let domains = [
-        Domain::Manifest, Domain::Grant, Domain::Lease, Domain::Checkpoint,
-        Domain::ReplicaAck, Domain::Artifact, Domain::Canonical, Domain::Release,
+        Domain::Manifest,
+        Domain::Grant,
+        Domain::Lease,
+        Domain::Checkpoint,
+        Domain::ReplicaAck,
+        Domain::Artifact,
+        Domain::Canonical,
+        Domain::Release,
     ];
     let mut seen = std::collections::HashSet::new();
     for d in domains {
-        assert!(seen.insert(sig_input(d, 1, &canon)), "domain {d:?} 의 sig_input 이 중복된다");
+        assert!(
+            seen.insert(sig_input(d, 1, &canon)),
+            "domain {d:?} 의 sig_input 이 중복된다"
+        );
     }
 }
 
 #[test]
 fn domain_tags_are_32_bytes_and_unique() {
     let domains = [
-        Domain::Manifest, Domain::Grant, Domain::Lease, Domain::LeaseRenew,
-        Domain::LeaseRevoke, Domain::Checkpoint, Domain::ReplicaAck, Domain::Artifact,
-        Domain::AttemptReport, Domain::Canonical, Domain::Genesis,
+        Domain::Manifest,
+        Domain::Grant,
+        Domain::Lease,
+        Domain::LeaseRenew,
+        Domain::LeaseRevoke,
+        Domain::Checkpoint,
+        Domain::ReplicaAck,
+        Domain::Artifact,
+        Domain::AttemptReport,
+        Domain::Canonical,
+        Domain::Genesis,
         // ADR-028 — membership/policy/quarantine 3종 -> 9종 분리
-        Domain::MemberAdd, Domain::MemberRemove, Domain::DeviceApprove, Domain::DeviceRevoke,
-        Domain::CoordinatorSet, Domain::OwnerKeyRotate, Domain::PolicyUpdate,
-        Domain::QuarantineDevice, Domain::QuarantineRelease,
-        Domain::Audit, Domain::Release, Domain::Invite,
+        Domain::MemberAdd,
+        Domain::MemberRemove,
+        Domain::DeviceApprove,
+        Domain::DeviceRevoke,
+        Domain::CoordinatorSet,
+        Domain::OwnerKeyRotate,
+        Domain::PolicyUpdate,
+        Domain::QuarantineDevice,
+        Domain::QuarantineRelease,
+        Domain::Audit,
+        Domain::Release,
+        Domain::Invite,
         // coordinator/agent 최소 핸드셰이크 (2026-08-18)
         Domain::GrantAck,
         // Lease 갱신 최소 조각 (2026-08-19) — RenewLeaseResult 를 새
@@ -323,7 +384,9 @@ fn domain_tags_are_32_bytes_and_unique() {
         //   와 t1b_grant_and_control.rs::all_domain_tags_are_distinct
         //   는 이미 올바르게 25종을 나열하고 있었다.
         Domain::LeaseRenewResult,
-        Domain::SessionHello, Domain::LeaseResume, Domain::LeaseResumeResult,
+        Domain::SessionHello,
+        Domain::LeaseResume,
+        Domain::LeaseResumeResult,
     ];
     let mut seen = std::collections::HashSet::new();
     for d in domains {

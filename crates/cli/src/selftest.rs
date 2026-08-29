@@ -181,8 +181,11 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
     let key_path = root.join("keys.bin");
     // K0(평문)는 **명시적으로 허용해야만** 쓸 수 있다.
     // 기본 거부인지 먼저 확인한다 — 기본값이 안전한지가 중요하다.
-    let rejected =
-        PersistentKeyring::new(&key_path, KeyProtection::K0Plaintext, PlaintextPolicy::Reject);
+    let rejected = PersistentKeyring::new(
+        &key_path,
+        KeyProtection::K0Plaintext,
+        PlaintextPolicy::Reject,
+    );
     r.check(
         "K0 평문 저장은 기본으로 거부된다",
         rejected.is_err(),
@@ -195,7 +198,10 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
         PlaintextPolicy::Allow,
     )?;
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-    keyring.insert_private(DEVICE, SecretSigningKey::from_signing_key(signing_key.clone()))?;
+    keyring.insert_private(
+        DEVICE,
+        SecretSigningKey::from_signing_key(signing_key.clone()),
+    )?;
     r.check("키를 등록했다", true, "");
     r.note(&format!("파일: {}", key_path.display()));
 
@@ -263,7 +269,9 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
         "같은 Grant 재전송이 replay 로 거부된다",
         matches!(
             &again,
-            Err(IngressError::Verification(VerifyError::Outcome(VerifyOutcome::Replay)))
+            Err(IngressError::Verification(VerifyError::Outcome(
+                VerifyOutcome::Replay
+            )))
         ),
         &format!("{:?}", again.as_ref().err()),
     );
@@ -302,7 +310,9 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
         "만료된 Grant 가 거부된다",
         matches!(
             &out,
-            Err(IngressError::Verification(VerifyError::Outcome(VerifyOutcome::Expired)))
+            Err(IngressError::Verification(VerifyError::Outcome(
+                VerifyOutcome::Expired
+            )))
         ),
         &format!("{:?}", out.as_ref().err()),
     );
@@ -362,7 +372,9 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
         "저장소를 닫았다 열어도 이미 본 nonce 를 기억한다",
         matches!(
             &after_restart,
-            Err(IngressError::Verification(VerifyError::Outcome(VerifyOutcome::Replay)))
+            Err(IngressError::Verification(VerifyError::Outcome(
+                VerifyOutcome::Replay
+            )))
         ),
         &format!(
             "재시작 후 replay 창이 열렸다: {:?}",
@@ -379,7 +391,10 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
 
         let g2 = grant(&signing_key, 20, NOW + 60_000);
         let frame = write_frame(FrameType::Grant, &g2.encode_to_vec()).unwrap();
-        r.note(&format!("Grant 프레임: {} 바이트 (헤더 5 + 몸통)", frame.len()));
+        r.note(&format!(
+            "Grant 프레임: {} 바이트 (헤더 5 + 몸통)",
+            frame.len()
+        ));
 
         let mut stream = Cursor::new(frame);
         let dispatched = read_frame(
@@ -391,10 +406,7 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
         );
         r.check(
             "프레임이 헤더 타입대로 디스패치된다",
-            matches!(
-                &dispatched,
-                Ok(gputeer_crypto::IngressMessage::Grant(_))
-            ),
+            matches!(&dispatched, Ok(gputeer_crypto::IngressMessage::Grant(_))),
             &format!("{dispatched:?}"),
         );
 
@@ -442,12 +454,12 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
         let scope = ArtifactPolicy::new(vec![format!("jobs/{JOB}/attempt-{ATTEMPT}")]);
         r.check(
             "허용 범위 안 경로는 통과한다",
-            scope.check(&format!("jobs/{JOB}/attempt-{ATTEMPT}/model.bin")).is_ok(),
+            scope
+                .check(&format!("jobs/{JOB}/attempt-{ATTEMPT}/model.bin"))
+                .is_ok(),
             "정상 경로가 거부됐다",
         );
-        let traversal = scope.check(&format!(
-            "jobs/{JOB}/attempt-{ATTEMPT}/../../../etc/passwd"
-        ));
+        let traversal = scope.check(&format!("jobs/{JOB}/attempt-{ATTEMPT}/../../../etc/passwd"));
         r.check(
             "경로 탈출이 거부된다",
             matches!(traversal, Err(ArtifactViolation::PathTraversal { .. })),
@@ -622,9 +634,11 @@ pub fn run(dir: Option<&str>) -> Result<SelftestReport, Box<dyn std::error::Erro
                 match server.join() {
                     Ok(Ok(())) => {}
                     Ok(Err(msg)) => r.check("서버 스레드가 정상 종료했다", false, &msg),
-                    Err(_) => {
-                        r.check("서버 스레드가 정상 종료했다", false, "서버 스레드가 패닉했다")
-                    }
+                    Err(_) => r.check(
+                        "서버 스레드가 정상 종료했다",
+                        false,
+                        "서버 스레드가 패닉했다",
+                    ),
                 }
             }
         }

@@ -29,16 +29,16 @@ use prost::Message;
 
 pub mod attempt_report_store;
 pub mod checkpoint_manifest_store;
-pub mod job_store;
 pub mod inventory_store;
+pub mod job_store;
 pub mod lease_store;
-pub mod replica_ack_store;
 #[allow(dead_code)]
 mod orchestrate;
+pub mod replica_ack_store;
 pub mod staging_store;
 use lease_store::{
-    CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision,
-    ResumeRequestIdentity, StoredLease,
+    CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision, ResumeRequestIdentity,
+    StoredLease,
 };
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -344,10 +344,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         if connection_count > 0 && config.pause_before_next_accept_ms != 0 {
             std::thread::sleep(Duration::from_millis(config.pause_before_next_accept_ms));
         }
-        let (mut stream, peer) = accept_with_deadline(
-            &listener,
-            Duration::from_millis(config.accept_timeout_ms),
-        )?;
+        let (mut stream, peer) =
+            accept_with_deadline(&listener, Duration::from_millis(config.accept_timeout_ms))?;
         let connection_attempt = connection_count;
         connection_count += 1;
         println!("CONNECTION_ATTEMPT {connection_attempt} peer={peer}");
@@ -474,132 +472,136 @@ fn serve_one_connection_impl(
     clock: &SystemClock,
     connection_attempt: u32,
 ) -> Result<(), SessionHandlerError> {
-        let now = clock.now_unix_ms();
-        if config.resume_protocol {
-            return serve_resume_connection(
-                config,
-                stream,
-                lease_store,
-                signing_key,
-                agent_keys,
-                replay,
-                clock,
-                connection_attempt,
-            );
-        }
-        let mut grant = issue_grant(
+    let now = clock.now_unix_ms();
+    if config.resume_protocol {
+        return serve_resume_connection(
             config,
+            stream,
             lease_store,
             signing_key,
-            now,
-            connection_attempt,
-        )?;
-
-        if config.corrupt_own_signature {
-            let last = grant
-                .coordinator_signature
-                .last_mut()
-                .ok_or_else(|| "coordinator_signature 가 비어 있다".to_string())?;
-            *last ^= 0x01;
-        }
-
-        let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
-            .map_err(|e| format!("Grant 프레임 인코딩 실패: {e}"))?;
-        stream
-            .write_all(&frame)
-            .map_err(|e| format!("Grant 전송 실패: {e}"))?;
-
-        // ★ replay 시나리오 — **똑같은 wire bytes** 를 다시 쓴다. `grant` 를
-        //   다시 인코딩하지 않는다 — 그러면 "논리적으로 같은 재발급" 이지
-        //   "같은 프레임의 replay" 가 아니게 된다. 검증 대상은 "같은 서명
-        //   바이트가 두 번 오면 두 번째가 거부되는가" 다.
-        if config.send_grant_twice {
-            stream
-                .write_all(&frame)
-                .map_err(|e| format!("replay Grant 전송 실패: {e}"))?;
-        }
-        stream.flush().map_err(|e| e.to_string())?;
-
-        let received = read_frame(
-            stream,
-            1,
-            KeyDirectorySource::Provided(agent_keys),
+            agent_keys,
             replay,
             clock,
+            connection_attempt,
+        );
+    }
+    let mut grant = issue_grant(config, lease_store, signing_key, now, connection_attempt)?;
+
+    if config.corrupt_own_signature {
+        let last = grant
+            .coordinator_signature
+            .last_mut()
+            .ok_or_else(|| "coordinator_signature 가 비어 있다".to_string())?;
+        *last ^= 0x01;
+    }
+
+    let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
+        .map_err(|e| format!("Grant 프레임 인코딩 실패: {e}"))?;
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("Grant 전송 실패: {e}"))?;
+
+    // ★ replay 시나리오 — **똑같은 wire bytes** 를 다시 쓴다. `grant` 를
+    //   다시 인코딩하지 않는다 — 그러면 "논리적으로 같은 재발급" 이지
+    //   "같은 프레임의 replay" 가 아니게 된다. 검증 대상은 "같은 서명
+    //   바이트가 두 번 오면 두 번째가 거부되는가" 다.
+    if config.send_grant_twice {
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("replay Grant 전송 실패: {e}"))?;
+    }
+    stream.flush().map_err(|e| e.to_string())?;
+
+    let received = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| format!("ACK 프레임 읽기/검증 실패: {e}"))?;
+
+    // ★ `require_replay_checked()` 를 반드시 거친다 — replay 상태가
+    //   `permits_side_effects()` 를 만족하지 못한 `Verified<M>` 로
+    //   grant_id 대조 같은 부작용을 실행하지 않는다(§10).
+    let ack = match &received {
+        IngressMessage::GrantAck(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
+        other => return Err(format!("예상하지 못한 응답 타입: {other:?}").into()),
+    };
+
+    if !ack.accepted {
+        return Err("Agent 가 Grant 를 accepted=false 로 응답했다"
+            .to_string()
+            .into());
+    }
+    if ack.grant_id != grant.grant_id {
+        return Err(format!(
+            "grant_id 상관관계 불일치: 보낸 값 {} != ACK 값 {}",
+            grant.grant_id, ack.grant_id
         )
-        .map_err(|e| format!("ACK 프레임 읽기/검증 실패: {e}"))?;
+        .into());
+    }
+    if ack.attempt_id != grant.attempt_id {
+        return Err(format!(
+            "attempt_id 상관관계 불일치: 보낸 값 {} != ACK 값 {}",
+            grant.attempt_id, ack.attempt_id
+        )
+        .into());
+    }
+    if ack.agent_device_id != config.agent_device_id {
+        return Err(format!(
+            "agent_device_id 불일치: 기대값 {} != ACK 값 {}",
+            config.agent_device_id, ack.agent_device_id
+        )
+        .into());
+    }
+    if ack.nonce != derive_nonce("grant-ack", &grant.grant_id, connection_attempt) {
+        return Err("ACK nonce does not match connection attempt"
+            .to_string()
+            .into());
+    }
 
-        // ★ `require_replay_checked()` 를 반드시 거친다 — replay 상태가
-        //   `permits_side_effects()` 를 만족하지 못한 `Verified<M>` 로
-        //   grant_id 대조 같은 부작용을 실행하지 않는다(§10).
-        let ack = match &received {
-            IngressMessage::GrantAck(verified) => verified
-                .require_replay_checked()
-                .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
-            other => return Err(format!("예상하지 못한 응답 타입: {other:?}").into()),
-        };
-
-        if !ack.accepted {
-            return Err("Agent 가 Grant 를 accepted=false 로 응답했다".to_string().into());
-        }
-        if ack.grant_id != grant.grant_id {
-            return Err(format!(
-                "grant_id 상관관계 불일치: 보낸 값 {} != ACK 값 {}",
-                grant.grant_id, ack.grant_id
-            ).into());
-        }
-        if ack.attempt_id != grant.attempt_id {
-            return Err(format!(
-                "attempt_id 상관관계 불일치: 보낸 값 {} != ACK 값 {}",
-                grant.attempt_id, ack.attempt_id
-            ).into());
-        }
-        if ack.agent_device_id != config.agent_device_id {
-            return Err(format!(
-                "agent_device_id 불일치: 기대값 {} != ACK 값 {}",
-                config.agent_device_id, ack.agent_device_id
-            ).into());
-        }
-        if ack.nonce != derive_nonce("grant-ack", &grant.grant_id, connection_attempt) {
-            return Err("ACK nonce does not match connection attempt".to_string().into());
-        }
-
-        if config.drop_connection_after_ack_once
-            && config.max_connections > 1
-            && connection_attempt == 0
-        {
-            if config.revoke_before_drop {
-                if let Some(store) = lease_store.as_mut() {
-                    store
-                        .mark_revoked(&grant.lease.as_ref().expect("Grant lease").lease_id, clock.now_unix_ms())
-                        .map_err(|e| format!("lease store revoke before drop failed: {e}"))?;
-                }
+    if config.drop_connection_after_ack_once
+        && config.max_connections > 1
+        && connection_attempt == 0
+    {
+        if config.revoke_before_drop {
+            if let Some(store) = lease_store.as_mut() {
+                store
+                    .mark_revoked(
+                        &grant.lease.as_ref().expect("Grant lease").lease_id,
+                        clock.now_unix_ms(),
+                    )
+                    .map_err(|e| format!("lease store revoke before drop failed: {e}"))?;
             }
-            println!(
-                "DROP_CONNECTION_AFTER_ACK_ONCE coordinator_acknowledged=true grant_id={}",
-                grant.grant_id
-            );
-            return Ok(());
         }
+        println!(
+            "DROP_CONNECTION_AFTER_ACK_ONCE coordinator_acknowledged=true grant_id={}",
+            grant.grant_id
+        );
+        return Ok(());
+    }
 
-        if config.disconnect_after_ack {
-            println!(
-                "DISCONNECT_AFTER_ACK coordinator_acknowledged=true grant_id={}",
-                grant.grant_id
-            );
-            return Ok(());
-        }
+    if config.disconnect_after_ack {
+        println!(
+            "DISCONNECT_AFTER_ACK coordinator_acknowledged=true grant_id={}",
+            grant.grant_id
+        );
+        return Ok(());
+    }
 
-        // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
-        //   찍지 않는다.** Agent 는 첫 번째(정상) Grant 에만 ACK 를 보내고
-        //   두 번째(replay) Grant 는 거부해야 하므로, 이 연결에 더 이상
-        //   올 것이 없다는 사실 자체가 검증 대상이다. `REPLAY_TIMEOUT`
-        //   짧은 타임아웃으로 "그 이상 아무것도 안 온다" 를 빠르게 확정한다.
-        if config.send_grant_twice {
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .map_err(|e| e.to_string())?;
-            return match read_frame(
+    // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
+    //   찍지 않는다.** Agent 는 첫 번째(정상) Grant 에만 ACK 를 보내고
+    //   두 번째(replay) Grant 는 거부해야 하므로, 이 연결에 더 이상
+    //   올 것이 없다는 사실 자체가 검증 대상이다. `REPLAY_TIMEOUT`
+    //   짧은 타임아웃으로 "그 이상 아무것도 안 온다" 를 빠르게 확정한다.
+    if config.send_grant_twice {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|e| e.to_string())?;
+        return match read_frame(
                 stream,
                 1,
                 KeyDirectorySource::Provided(agent_keys),
@@ -613,49 +615,53 @@ fn serve_one_connection_impl(
                     "REPLAY_SCENARIO_UNEXPECTED_EXTRA_MESSAGE: {message:?}"
                 ).into()),
             };
-        }
+    }
 
-        if config.revoke_before_renew {
-            let lease = grant
-                .lease
-                .as_ref()
-                .ok_or_else(|| "갱신 전 revoke 대상 Grant에 Lease가 없다".to_string())?;
-            let store = lease_store
-                .as_mut()
-                .ok_or_else(|| "갱신 전 revoke 시나리오에는 --lease-db가 필요하다".to_string())?;
-            let revoked_at = SystemClock.now_unix_ms();
-            store
-                .mark_revoked(&lease.lease_id, revoked_at)
-                .map_err(|e| format!("갱신 전 revoke 저장 실패: {e}"))?;
-            println!(
-                "REVOKE_STORE ok=true lease_id={} revoked_at_unix_ms={revoked_at}",
-                lease.lease_id
-            );
-        }
+    if config.revoke_before_renew {
+        let lease = grant
+            .lease
+            .as_ref()
+            .ok_or_else(|| "갱신 전 revoke 대상 Grant에 Lease가 없다".to_string())?;
+        let store = lease_store
+            .as_mut()
+            .ok_or_else(|| "갱신 전 revoke 시나리오에는 --lease-db가 필요하다".to_string())?;
+        let revoked_at = SystemClock.now_unix_ms();
+        store
+            .mark_revoked(&lease.lease_id, revoked_at)
+            .map_err(|e| format!("갱신 전 revoke 저장 실패: {e}"))?;
+        println!(
+            "REVOKE_STORE ok=true lease_id={} revoked_at_unix_ms={revoked_at}",
+            lease.lease_id
+        );
+    }
 
-        // 현재 stub 프로토콜에는 비동기 이벤트 multiplexing 이 없으므로,
-        // Agent가 이 옵션을 알고 있는 고정 순차 경로로 revoke를 받는다.
-        let revoked_after_grant = if config.revoke_after_round == Some(0) {
-            send_revoke_notice(config, &grant, lease_store, signing_key, stream)?;
-            true
+    // 현재 stub 프로토콜에는 비동기 이벤트 multiplexing 이 없으므로,
+    // Agent가 이 옵션을 알고 있는 고정 순차 경로로 revoke를 받는다.
+    let revoked_after_grant = if config.revoke_after_round == Some(0) {
+        send_revoke_notice(config, &grant, lease_store, signing_key, stream)?;
+        true
+    } else {
+        false
+    };
+
+    // ★ Lease 갱신 (2026-08-19) — 같은 연결에 이어서 Agent 가 보낸
+    //   `RenewLeaseRequest` 를 받고 서명된 `RenewLeaseResult` 로
+    //   응답한다. `do_renew == false` 면 건너뛴다(기존 핸드셰이크
+    //   전용 시나리오와 완전히 같게 동작). 반복 갱신(2026-08-19,
+    //   `docs/plans/2026-08-19_2330_...`)이 추가되면서 왕복을
+    //   `renew_rounds` 만큼 반복한다 — 기본값 1이면 기존 단일
+    //   왕복과 동일하다. Coordinator 는 매 회차 요청의 nonce 를
+    //   그대로 echo 할 뿐 스스로 회차를 유도하지 않는다 — 회차별
+    //   nonce 분리는 Agent 가 요청을 만들 때 책임진다.
+    if !revoked_after_grant {
+        if config.do_renew && config.renew_delay_ms != 0 {
+            std::thread::sleep(Duration::from_millis(config.renew_delay_ms));
+        }
+        for _round in if config.do_renew {
+            0..config.renew_rounds
         } else {
-            false
-        };
-
-        // ★ Lease 갱신 (2026-08-19) — 같은 연결에 이어서 Agent 가 보낸
-        //   `RenewLeaseRequest` 를 받고 서명된 `RenewLeaseResult` 로
-        //   응답한다. `do_renew == false` 면 건너뛴다(기존 핸드셰이크
-        //   전용 시나리오와 완전히 같게 동작). 반복 갱신(2026-08-19,
-        //   `docs/plans/2026-08-19_2330_...`)이 추가되면서 왕복을
-        //   `renew_rounds` 만큼 반복한다 — 기본값 1이면 기존 단일
-        //   왕복과 동일하다. Coordinator 는 매 회차 요청의 nonce 를
-        //   그대로 echo 할 뿐 스스로 회차를 유도하지 않는다 — 회차별
-        //   nonce 분리는 Agent 가 요청을 만들 때 책임진다.
-        if !revoked_after_grant {
-            if config.do_renew && config.renew_delay_ms != 0 {
-                std::thread::sleep(Duration::from_millis(config.renew_delay_ms));
-            }
-            for _round in if config.do_renew { 0..config.renew_rounds } else { 0..0 } {
+            0..0
+        } {
             let renew_msg = read_frame(
                 stream,
                 1,
@@ -677,13 +683,15 @@ fn serve_one_connection_impl(
                 return Err(format!(
                     "RenewLeaseRequest.node_id 불일치: 기대값 {} != {}",
                     config.agent_device_id, renew_req.node_id
-                ).into());
+                )
+                .into());
             }
             if renew_req.lease_id != config.lease_id {
                 return Err(format!(
                     "RenewLeaseRequest.lease_id 불일치: 기대값 {} != {}",
                     config.lease_id, renew_req.lease_id
-                ).into());
+                )
+                .into());
             }
             // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — 이전에는
             //   `renew_req.fence_epoch` 를 아무것도와 대조하지 않았다.
@@ -739,7 +747,8 @@ fn serve_one_connection_impl(
                 return Err(format!(
                     "RenewLeaseRequest.fence_epoch 불일치: 기대값 {} != {}",
                     expected_epoch, renew_req.fence_epoch
-                ).into());
+                )
+                .into());
             }
 
             let result = build_renew_result(
@@ -753,22 +762,21 @@ fn serve_one_connection_impl(
 
             if config.drop_after_renew_commit_before_result_once && connection_attempt == 0 {
                 let committed_lease = result.lease.as_ref().ok_or_else(|| {
-                    "drop-after-renew-commit hook requires a RENEWED result with Lease"
-                        .to_string()
+                    "drop-after-renew-commit hook requires a RENEWED result with Lease".to_string()
                 })?;
                 if lease_store.is_none() {
-                    return Err(
-                        "drop-after-renew-commit hook requires durable --lease-db"
-                            .to_string()
-                            .into(),
-                    );
+                    return Err("drop-after-renew-commit hook requires durable --lease-db"
+                        .to_string()
+                        .into());
                 }
                 if config.revoke_before_drop {
                     lease_store
                         .as_mut()
                         .expect("durable store checked above")
                         .mark_revoked(&renew_req.lease_id, clock.now_unix_ms())
-                        .map_err(|e| format!("lease store revoke after renew commit failed: {e}"))?;
+                        .map_err(|e| {
+                            format!("lease store revoke after renew commit failed: {e}")
+                        })?;
                 }
                 println!(
                     "DROP_AFTER_RENEW_COMMIT_BEFORE_RESULT_ONCE durable_commit=true lease_id={} expires_at_unix_ms={} request_nonce={}",
@@ -801,22 +809,22 @@ fn serve_one_connection_impl(
                 break;
             }
 
-                if config.revoke_after_round == Some(_round + 1) {
-                    send_revoke_notice(config, &grant, lease_store, signing_key, stream)?;
-                    break;
-                }
+            if config.revoke_after_round == Some(_round + 1) {
+                send_revoke_notice(config, &grant, lease_store, signing_key, stream)?;
+                break;
             }
         }
-
-        println!(
-            "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
-            grant.grant_id, grant.attempt_id, ack.agent_device_id
-        );
-        // Give an ACK-only Agent enough time to distinguish a completed session
-        // from the deliberate drop-after-ACK test hook.
-        std::thread::sleep(Duration::from_millis(100));
-        return Ok(());
     }
+
+    println!(
+        "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
+        grant.grant_id, grant.attempt_id, ack.agent_device_id
+    );
+    // Give an ACK-only Agent enough time to distinguish a completed session
+    // from the deliberate drop-after-ACK test hook.
+    std::thread::sleep(Duration::from_millis(100));
+    return Ok(());
+}
 
 /// 이미 발급한 Grant 안의 Lease를 대상으로 revoke 통지를 만들고
 /// 서명해 같은 연결로 보낸다.
@@ -855,7 +863,7 @@ fn serve_resume_connection(
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
     connection_attempt: u32,
- ) -> Result<(), SessionHandlerError> {
+) -> Result<(), SessionHandlerError> {
     let hello_message = read_frame(
         stream,
         1,
@@ -869,9 +877,11 @@ fn serve_resume_connection(
             .require_replay_checked()
             .map_err(|e| format!("AgentSessionHello replay 검사 실패: {e:?}"))?
             .clone(),
-        other => return Err(SessionHandlerError::Legacy(format!(
-            "Resume lane에서 Hello가 아닌 프레임 수신: {other:?}"
-        ))),
+        other => {
+            return Err(SessionHandlerError::Legacy(format!(
+                "Resume lane에서 Hello가 아닌 프레임 수신: {other:?}"
+            )))
+        }
     };
     if hello.mode != 2 {
         return Err(SessionHandlerError::Legacy(format!(
@@ -910,9 +920,11 @@ fn serve_resume_connection(
             .require_replay_checked()
             .map_err(|e| format!("ResumeLeaseRequest replay 검사 실패: {e:?}"))?
             .clone(),
-        other => return Err(SessionHandlerError::Legacy(format!(
-            "Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {other:?}"
-        ))),
+        other => {
+            return Err(SessionHandlerError::Legacy(format!(
+                "Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {other:?}"
+            )))
+        }
     };
     if request.node_id != hello.node_id
         || request.session_id != hello.session_id
@@ -942,7 +954,9 @@ fn serve_resume_connection(
             },
             now,
         ),
-        None => Err(LeaseStoreError::Io("resume requires a durable lease store".into())),
+        None => Err(LeaseStoreError::Io(
+            "resume requires a durable lease store".into(),
+        )),
     };
     match decision {
         Ok(ResumeDecision::Resumed(stored)) => {
@@ -954,9 +968,14 @@ fn serve_resume_connection(
             result.outcome = 5;
             result.detail = "lease_id is not present in the durable store".into();
         }
-        Ok(ResumeDecision::IdentityConflict { field, stored, requested }) => {
+        Ok(ResumeDecision::IdentityConflict {
+            field,
+            stored,
+            requested,
+        }) => {
             result.outcome = 6;
-            result.detail = format!("identity conflict in {field}: stored={stored} requested={requested}");
+            result.detail =
+                format!("identity conflict in {field}: stored={stored} requested={requested}");
         }
         Ok(ResumeDecision::Revoked { stored }) => {
             result.outcome = 2;
@@ -991,7 +1010,10 @@ fn serve_resume_connection(
         "RESUME_RESULT ok=true outcome={} lease_id={} connection_attempt={}",
         result.outcome, request.lease_id, connection_attempt
     );
-    println!("RESULT ok=true resume_outcome={} lease_id={}", result.outcome, request.lease_id);
+    println!(
+        "RESULT ok=true resume_outcome={} lease_id={}",
+        result.outcome, request.lease_id
+    );
     Ok(())
 }
 
@@ -1206,7 +1228,9 @@ fn build_renew_result(
                 let stored = store
                     .get(lease_id)
                     .map_err(|e| format!("lease store 조회 실패: {e}"))?
-                    .ok_or_else(|| format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다"))?;
+                    .ok_or_else(|| {
+                        format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다")
+                    })?;
                 if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
                     revoked_result(request_nonce, revoked_at_unix_ms)
                 } else if stored.expires_at_unix_ms <= now {
@@ -1290,8 +1314,10 @@ fn stored_to_signed_lease(
     key: &SigningKey,
     resolved: StoredLease,
 ) -> Result<pb::Lease, String> {
-    let max_total_duration_seconds =
-        u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
+    let max_total_duration_seconds = u32_from_stored(
+        resolved.max_total_duration_seconds,
+        "max_total_duration_seconds",
+    )?;
     let mut lease = pb::Lease {
         schema_version: 1,
         lease_id: resolved.lease_id,
@@ -1319,8 +1345,10 @@ fn build_renewed_lease_result(
     resolved: StoredLease,
     request_nonce: Vec<u8>,
 ) -> Result<pb::RenewLeaseResult, String> {
-    let max_total_duration_seconds =
-        u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
+    let max_total_duration_seconds = u32_from_stored(
+        resolved.max_total_duration_seconds,
+        "max_total_duration_seconds",
+    )?;
     let mut lease = pb::Lease {
         schema_version: 1,
         lease_id: resolved.lease_id,
@@ -1451,8 +1479,10 @@ fn issue_lease(
         }
     };
 
-    let max_total_duration_seconds =
-        u32_from_stored(resolved.max_total_duration_seconds, "max_total_duration_seconds")?;
+    let max_total_duration_seconds = u32_from_stored(
+        resolved.max_total_duration_seconds,
+        "max_total_duration_seconds",
+    )?;
     let mut lease = pb::Lease {
         schema_version: 1,
         lease_id: resolved.lease_id,
@@ -1548,10 +1578,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         max_connections: flags.u32_flag_with_default("--max-connections", 1)?,
         accept_timeout_ms: flags.u64_flag_with_default("--accept-timeout-ms", 30_000)?,
         revoke_before_drop: flags.bool_flag("--revoke-before-drop"),
-        pause_before_next_accept_ms: flags.u64_flag_with_default(
-            "--pause-before-next-accept-ms",
-            0,
-        )?,
+        pause_before_next_accept_ms: flags
+            .u64_flag_with_default("--pause-before-next-accept-ms", 0)?,
         lease_id: flags.require("--lease-id")?,
         job_id: flags.require("--job-id")?,
         fence_epoch: flags.u64_flag("--fence-epoch")?,
@@ -1613,7 +1641,9 @@ impl Flags {
     fn u64_flag(&self, key: &str) -> Result<u64, String> {
         match self.0.get(key) {
             None => Ok(0),
-            Some(v) => v.parse::<u64>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+            Some(v) => v
+                .parse::<u64>()
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 
@@ -1632,7 +1662,9 @@ impl Flags {
     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
         match self.0.get(key) {
             None => Ok(default),
-            Some(v) => v.parse::<u32>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+            Some(v) => v
+                .parse::<u32>()
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 
@@ -1641,7 +1673,9 @@ impl Flags {
     fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
         match self.0.get(key) {
             None => Ok(default),
-            Some(v) => v.parse::<u64>().map_err(|e| format!("{key} 파싱 실패: {e}")),
+            Some(v) => v
+                .parse::<u64>()
+                .map_err(|e| format!("{key} 파싱 실패: {e}")),
         }
     }
 
@@ -1714,15 +1748,15 @@ mod tests {
     /// 되돌아가지 않는지) 경계값으로 고정한다.
     #[test]
     fn u32_from_stored_accepts_max_total_duration_seconds_default() {
-        assert_eq!(u32_from_stored(86_400, "max_total_duration_seconds"), Ok(86_400));
+        assert_eq!(
+            u32_from_stored(86_400, "max_total_duration_seconds"),
+            Ok(86_400)
+        );
     }
 
     #[test]
     fn u32_from_stored_accepts_u32_max() {
-        assert_eq!(
-            u32_from_stored(u64::from(u32::MAX), "x"),
-            Ok(u32::MAX)
-        );
+        assert_eq!(u32_from_stored(u64::from(u32::MAX), "x"), Ok(u32::MAX));
     }
 
     #[test]

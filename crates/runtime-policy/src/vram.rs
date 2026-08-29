@@ -103,7 +103,9 @@ mod tests {
     fn commit_cap_subtracts_measured_reservation() {
         let cap = windows_commit_cap(8 * 1024 * 1024 * 1024);
         match cap {
-            VramEnforcement::WindowsCommitCap { approx_vram_max_bytes } => {
+            VramEnforcement::WindowsCommitCap {
+                approx_vram_max_bytes,
+            } => {
                 assert_eq!(
                     approx_vram_max_bytes,
                     8 * 1024 * 1024 * 1024 - WINDOWS_JOB_OBJECT_RESERVED_BYTES
@@ -119,7 +121,9 @@ mod tests {
     fn commit_cap_does_not_underflow_when_ram_limit_is_tiny() {
         let cap = windows_commit_cap(100);
         match cap {
-            VramEnforcement::WindowsCommitCap { approx_vram_max_bytes } => {
+            VramEnforcement::WindowsCommitCap {
+                approx_vram_max_bytes,
+            } => {
                 assert_eq!(approx_vram_max_bytes, 0);
             }
             other => panic!("잘못된 variant: {other:?}"),

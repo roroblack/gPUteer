@@ -121,8 +121,13 @@ pub enum ReplicaEvaluationError {
         holder_device_id: String,
         acked_at_unix_ms: u64,
     },
-    MixedEvaluationScope { scopes: Vec<ReplicaEvaluationScope> },
-    MultipleSelectedObservations { holder_device_id: String, selected: usize },
+    MixedEvaluationScope {
+        scopes: Vec<ReplicaEvaluationScope>,
+    },
+    MultipleSelectedObservations {
+        holder_device_id: String,
+        selected: usize,
+    },
     ReplicaCountOverflow,
 }
 
@@ -181,10 +186,12 @@ pub fn evaluate_effective_replicas(
 ) -> Result<EffectiveReplicaReport, ReplicaEvaluationError> {
     validate_observations(observations)?;
 
-    let scope = observations.first().map(|observation| ReplicaEvaluationScope {
-        checkpoint_id: observation.checkpoint_id.clone(),
-        root_digest: observation.root_digest.clone(),
-    });
+    let scope = observations
+        .first()
+        .map(|observation| ReplicaEvaluationScope {
+            checkpoint_id: observation.checkpoint_id.clone(),
+            root_digest: observation.root_digest.clone(),
+        });
     let mut selected = observations
         .iter()
         .filter(|observation| observation.selected)
@@ -213,7 +220,10 @@ pub fn evaluate_effective_replicas(
                 .or_default()
                 .push(observation);
         } else {
-            excluded.push(ExcludedReplica { observation, reasons });
+            excluded.push(ExcludedReplica {
+                observation,
+                reasons,
+            });
         }
     }
 
@@ -239,8 +249,8 @@ pub fn evaluate_effective_replicas(
         (&left.observation, &left.reasons).cmp(&(&right.observation, &right.reasons))
     });
 
-    let effective_replica_count = u32::try_from(counted.len())
-        .map_err(|_| ReplicaEvaluationError::ReplicaCountOverflow)?;
+    let effective_replica_count =
+        u32::try_from(counted.len()).map_err(|_| ReplicaEvaluationError::ReplicaCountOverflow)?;
     let required_replica_count = required.required_replicas();
     Ok(EffectiveReplicaReport {
         scope,
@@ -257,10 +267,16 @@ pub fn evaluate_effective_replicas(
 fn validate_observations(
     observations: &[ResolvedHolderObservation],
 ) -> Result<(), ReplicaEvaluationError> {
-    if observations.iter().any(|observation| observation.checkpoint_id.trim().is_empty()) {
+    if observations
+        .iter()
+        .any(|observation| observation.checkpoint_id.trim().is_empty())
+    {
         return Err(ReplicaEvaluationError::EmptyCheckpointId);
     }
-    if observations.iter().any(|observation| observation.root_digest.trim().is_empty()) {
+    if observations
+        .iter()
+        .any(|observation| observation.root_digest.trim().is_empty())
+    {
         return Err(ReplicaEvaluationError::EmptyRootDigest);
     }
     if observations
@@ -273,9 +289,10 @@ fn validate_observations(
     let empty_domain = observations
         .iter()
         .filter_map(|observation| match &observation.failure_domain {
-            FactResolution::Resolved(domain) if domain.trim().is_empty() => {
-                Some((observation.holder_device_id.as_str(), observation.acked_at_unix_ms))
-            }
+            FactResolution::Resolved(domain) if domain.trim().is_empty() => Some((
+                observation.holder_device_id.as_str(),
+                observation.acked_at_unix_ms,
+            )),
             _ => None,
         })
         .min();
@@ -300,13 +317,17 @@ fn validate_observations(
     }
 
     let mut selected_by_holder = BTreeMap::<&str, usize>::new();
-    for observation in observations.iter().filter(|observation| observation.selected) {
+    for observation in observations
+        .iter()
+        .filter(|observation| observation.selected)
+    {
         *selected_by_holder
             .entry(observation.holder_device_id.as_str())
             .or_default() += 1;
     }
-    if let Some((holder_device_id, selected)) =
-        selected_by_holder.into_iter().find(|(_, selected)| *selected > 1)
+    if let Some((holder_device_id, selected)) = selected_by_holder
+        .into_iter()
+        .find(|(_, selected)| *selected > 1)
     {
         return Err(ReplicaEvaluationError::MultipleSelectedObservations {
             holder_device_id: holder_device_id.to_owned(),
@@ -471,10 +492,7 @@ pub fn record_publication_failure(dir: &Path) -> Result<(), CheckpointError> {
 /// 상태 마커의 내용까지 확인한다.
 ///
 /// 파일이 없으면 아직 해당 상태에 도달하지 않은 것이다.
-pub fn state_recorded(
-    dir: &Path,
-    state: DurabilityState,
-) -> Result<bool, CheckpointError> {
+pub fn state_recorded(dir: &Path, state: DurabilityState) -> Result<bool, CheckpointError> {
     let expected = format!("{state:?}\n");
 
     match crate::platform::read_beneath(dir, Path::new(state_marker_name(state))) {
@@ -548,8 +566,7 @@ impl CheckpointManifest {
     }
 
     pub fn from_json(data: &[u8]) -> Result<Self, CheckpointError> {
-        serde_json::from_slice(data)
-            .map_err(|error| CheckpointError::Manifest(error.to_string()))
+        serde_json::from_slice(data).map_err(|error| CheckpointError::Manifest(error.to_string()))
     }
 }
 
@@ -586,9 +603,7 @@ impl ReplicaSet {
     pub fn effective_count(&self) -> u32 {
         self.entries
             .values()
-            .filter(|(_, is_ephemeral, signature_valid)| {
-                *signature_valid && !*is_ephemeral
-            })
+            .filter(|(_, is_ephemeral, signature_valid)| *signature_valid && !*is_ephemeral)
             .count() as u32
     }
 

@@ -60,7 +60,14 @@ fn w1_resume_must_not_pick_another_job() {
     // 내 job 은 step 10
     put(&root, "ckpt-mine", JOB, ATT, 10, &[f("a.bin", "mine")]);
     // 남의 job 이 step 100 — 같은 root 에 있다
-    put(&root, "ckpt-other", "01JBXOTHER00000000000000B", ATT, 100, &[f("a.bin", "other")]);
+    put(
+        &root,
+        "ckpt-other",
+        "01JBXOTHER00000000000000B",
+        ATT,
+        100,
+        &[f("a.bin", "other")],
+    );
 
     let picked = find_resume_point_for(&root, JOB, ATT)
         .expect("검색 실패")
@@ -80,7 +87,14 @@ fn w1_resume_must_not_pick_another_job() {
 fn w1b_resume_must_not_pick_another_attempt() {
     let root = tmpdir("w1b");
     put(&root, "ckpt-mine", JOB, ATT, 10, &[f("a.bin", "mine")]);
-    put(&root, "ckpt-stale", JOB, "01JBXATT00000000000000999", 100, &[f("a.bin", "stale")]);
+    put(
+        &root,
+        "ckpt-stale",
+        JOB,
+        "01JBXATT00000000000000999",
+        100,
+        &[f("a.bin", "stale")],
+    );
 
     let picked = find_resume_point_for(&root, JOB, ATT).unwrap().unwrap();
     assert_eq!(
@@ -173,7 +187,14 @@ fn no_candidates_returns_none() {
 fn unfiltered_api_documents_its_danger() {
     let root = tmpdir("unfiltered");
     put(&root, "ckpt-mine", JOB, ATT, 10, &[f("a.bin", "mine")]);
-    put(&root, "ckpt-other", "OTHER", "OTHER", 100, &[f("a.bin", "other")]);
+    put(
+        &root,
+        "ckpt-other",
+        "OTHER",
+        "OTHER",
+        100,
+        &[f("a.bin", "other")],
+    );
 
     // 필터 없는 버전은 남의 것도 고른다 — 그것이 이 API 의 의미다
     let any = find_resume_point(&root).unwrap().unwrap();

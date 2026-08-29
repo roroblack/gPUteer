@@ -15,15 +15,21 @@ pub struct FencedOperationKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FencedOperationDecision {
     /// This `(fence_epoch, operation_id)` has not previously been observed.
-    Accept { key: FencedOperationKey },
+    Accept {
+        key: FencedOperationKey,
+    },
     /// The exact key was previously observed and must be handled idempotently.
-    IdempotentRetransmission { key: FencedOperationKey },
+    IdempotentRetransmission {
+        key: FencedOperationKey,
+    },
     /// A higher fence has already been observed. Staleness takes precedence over deduplication.
     StaleFence {
         received_fence_epoch: u64,
         max_seen_fence_epoch: u64,
     },
-    Invalid { reason: InvalidFencedOperation },
+    Invalid {
+        reason: InvalidFencedOperation,
+    },
 }
 
 /// `common.proto` global rule 5 — "ID는 별도 명시가 없으면 ULID 26자 문자열".
@@ -35,11 +41,19 @@ pub enum InvalidFencedOperation {
     MissingAttemptId,
     /// `common.proto` global rule 5 fixes identities at 26 characters. Any other width would make
     /// the separator-free concatenation in [`derive_operation_id`] ambiguous.
-    InvalidJobIdLength { actual: usize },
-    InvalidAttemptIdLength { actual: usize },
+    InvalidJobIdLength {
+        actual: usize,
+    },
+    InvalidAttemptIdLength {
+        actual: usize,
+    },
     MissingOperationId,
-    InvalidOperationIdAlgorithm { actual: i32 },
-    InvalidOperationIdLength { actual: usize },
+    InvalidOperationIdAlgorithm {
+        actual: i32,
+    },
+    InvalidOperationIdLength {
+        actual: usize,
+    },
     OperationIdMismatch,
 }
 

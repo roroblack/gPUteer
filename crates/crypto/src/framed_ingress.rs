@@ -147,7 +147,10 @@ impl std::fmt::Display for FramingError {
         match self {
             Self::Truncated => write!(f, "프레임이 완결되기 전에 스트림이 끊겼다"),
             Self::FrameTooLarge { claimed, max } => {
-                write!(f, "프레임 크기 {claimed} 바이트가 상한 {max} 바이트를 넘는다")
+                write!(
+                    f,
+                    "프레임 크기 {claimed} 바이트가 상한 {max} 바이트를 넘는다"
+                )
             }
             Self::UnknownFrameType(t) => write!(f, "알 수 없는 프레임 타입: {t}"),
             Self::Verify(e) => write!(f, "{e}"),
@@ -321,10 +324,13 @@ fn read_exact_or_truncated<R: Read>(stream: &mut R, buf: &mut [u8]) -> Result<()
 /// `FrameTooLarge` 로 거부하는 비대칭이 있었다 — 쓰기와 읽기가 같은
 /// 규칙을 안 지켰다.
 pub fn write_frame(frame_type: FrameType, body: &[u8]) -> Result<Vec<u8>, FramingError> {
-    let len: u32 = body.len().try_into().map_err(|_| FramingError::FrameTooLarge {
-        claimed: u32::MAX,
-        max: MAX_INGRESS_FRAME_BYTES,
-    })?;
+    let len: u32 = body
+        .len()
+        .try_into()
+        .map_err(|_| FramingError::FrameTooLarge {
+            claimed: u32::MAX,
+            max: MAX_INGRESS_FRAME_BYTES,
+        })?;
     if len > MAX_INGRESS_FRAME_BYTES {
         return Err(FramingError::FrameTooLarge {
             claimed: len,

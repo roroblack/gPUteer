@@ -37,9 +37,7 @@ use rusqlite::{
     TransactionBehavior,
 };
 
-use crate::replay::{
-    DEFAULT_CAPACITY, DEFAULT_PER_SIGNER_CAPACITY, MAX_GC_ADVANCE_MS,
-};
+use crate::replay::{DEFAULT_CAPACITY, DEFAULT_PER_SIGNER_CAPACITY, MAX_GC_ADVANCE_MS};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(1);
 const META_LAST_SEEN_MS: &str = "last_seen_ms";
@@ -63,33 +61,23 @@ fn map_sql_error(error: SqlError) -> ReplayStoreError {
 }
 
 fn to_sql_i64(value: u64, field: &str) -> Result<i64, ReplayStoreError> {
-    i64::try_from(value).map_err(|_| {
-        ReplayStoreError::Io(format!(
-            "{field} 값이 SQLite INTEGER 범위를 넘었다"
-        ))
-    })
+    i64::try_from(value)
+        .map_err(|_| ReplayStoreError::Io(format!("{field} 값이 SQLite INTEGER 범위를 넘었다")))
 }
 
 fn from_sql_i64(value: i64, field: &str) -> Result<u64, ReplayStoreError> {
     u64::try_from(value).map_err(|_| {
-        ReplayStoreError::Io(format!(
-            "{field} 값이 음수여서 저장소 상태가 잘못되었다"
-        ))
+        ReplayStoreError::Io(format!("{field} 값이 음수여서 저장소 상태가 잘못되었다"))
     })
 }
 
 fn count_to_usize(value: i64, field: &str) -> Result<usize, ReplayStoreError> {
     usize::try_from(value).map_err(|_| {
-        ReplayStoreError::Io(format!(
-            "{field} 개수가 현재 플랫폼의 usize 범위를 넘었다"
-        ))
+        ReplayStoreError::Io(format!("{field} 개수가 현재 플랫폼의 usize 범위를 넘었다"))
     })
 }
 
-fn read_meta(
-    transaction: &Transaction<'_>,
-    key: &str,
-) -> Result<u64, ReplayStoreError> {
+fn read_meta(transaction: &Transaction<'_>, key: &str) -> Result<u64, ReplayStoreError> {
     let value: i64 = transaction
         .query_row(
             "SELECT value FROM replay_meta WHERE key = ?1",
@@ -123,10 +111,7 @@ fn write_meta(
     Ok(())
 }
 
-fn increment_meta(
-    transaction: &Transaction<'_>,
-    key: &str,
-) -> Result<(), ReplayStoreError> {
+fn increment_meta(transaction: &Transaction<'_>, key: &str) -> Result<(), ReplayStoreError> {
     let changed = transaction
         .execute(
             "UPDATE replay_meta SET value = value + 1 WHERE key = ?1",
@@ -178,11 +163,7 @@ impl DurableReplayGuard {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ReplayStoreError> {
-        Self::open_with_capacities(
-            path,
-            DEFAULT_CAPACITY,
-            DEFAULT_PER_SIGNER_CAPACITY,
-        )
+        Self::open_with_capacities(path, DEFAULT_CAPACITY, DEFAULT_PER_SIGNER_CAPACITY)
     }
 
     /// 전역 상한과 서명자별 상한을 지정하여 저장소를 연다.
@@ -266,9 +247,7 @@ impl DurableReplayGuard {
     pub fn entry_count(&self) -> Result<usize, ReplayStoreError> {
         let count: i64 = self
             .connection
-            .query_row("SELECT COUNT(*) FROM replay_entries", [], |row| {
-                row.get(0)
-            })
+            .query_row("SELECT COUNT(*) FROM replay_entries", [], |row| row.get(0))
             .map_err(map_sql_error)?;
 
         count_to_usize(count, "replay 항목")
@@ -280,10 +259,7 @@ impl DurableReplayGuard {
     }
 
     /// 특정 서명자가 사용 중인 항목 수를 반환한다.
-    pub fn signer_usage(
-        &self,
-        signer_id: &str,
-    ) -> Result<usize, ReplayStoreError> {
+    pub fn signer_usage(&self, signer_id: &str) -> Result<usize, ReplayStoreError> {
         let count: i64 = self
             .connection
             .query_row(
@@ -456,9 +432,7 @@ impl ReplayGuard for DurableReplayGuard {
         }
 
         let total_count: i64 = transaction
-            .query_row("SELECT COUNT(*) FROM replay_entries", [], |row| {
-                row.get(0)
-            })
+            .query_row("SELECT COUNT(*) FROM replay_entries", [], |row| row.get(0))
             .map_err(map_sql_error)?;
 
         let total_count = count_to_usize(total_count, "전체 replay 항목")?;

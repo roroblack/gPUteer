@@ -158,12 +158,7 @@ fn concurrent_distinct_nonces_all_succeed() {
             let mut g = DurableReplayGuard::open(&p).expect("연결 실패");
             let mut t = Tally::default();
             b.wait();
-            t.add(g.check_and_record(
-                "dev-a",
-                Domain::Grant,
-                &nonce(2, i as u8),
-                RETAIN,
-            ));
+            t.add(g.check_and_record("dev-a", Domain::Grant, &nonce(2, i as u8), RETAIN));
             t
         }));
     }
@@ -174,7 +169,10 @@ fn concurrent_distinct_nonces_all_succeed() {
     }
 
     assert!(total.other_err.is_empty(), "오류: {:?}", total.other_err);
-    assert_eq!(total.duplicate, 0, "서로 다른 nonce 인데 Duplicate 이 나왔다");
+    assert_eq!(
+        total.duplicate, 0,
+        "서로 다른 nonce 인데 Duplicate 이 나왔다"
+    );
     assert_eq!(
         total.fresh + total.lock_timeout,
         THREADS,

@@ -57,12 +57,7 @@ fn evaluate(
     requirements: &JobGpuRequirements,
     resources: &ScopeResourceInput,
 ) -> Result<ScopeCandidate, ScopeError> {
-    gpu_scope_candidate(
-        snapshot,
-        requirements,
-        resources,
-        ProvenanceGate::Verified,
-    )
+    gpu_scope_candidate(snapshot, requirements, resources, ProvenanceGate::Verified)
 }
 
 fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
@@ -145,7 +140,9 @@ fn all_four_gpu_input_permutations_produce_the_identical_candidate() {
 fn requirement_allowlist_and_prefix_orders_do_not_change_the_candidate() {
     let input = snapshot(vec![gpu("gpu-a", 20_000)]);
     let mut forward_requirements = requirements(1, 10_000);
-    forward_requirements.allowed_gpu_models.push("unused-model".into());
+    forward_requirements
+        .allowed_gpu_models
+        .push("unused-model".into());
     forward_requirements
         .allowed_compute_capabilities
         .push("9.0".into());
@@ -154,7 +151,11 @@ fn requirement_allowlist_and_prefix_orders_do_not_change_the_candidate() {
     reverse_requirements.allowed_compute_capabilities.reverse();
     let forward_resources = resources();
     let mut reverse_resources = forward_resources.clone();
-    reverse_resources.writable_prefixes.as_mut().unwrap().reverse();
+    reverse_resources
+        .writable_prefixes
+        .as_mut()
+        .unwrap()
+        .reverse();
 
     assert_eq!(
         evaluate(&input, &forward_requirements, &forward_resources),
@@ -233,22 +234,35 @@ fn missing_required_gpu_facts_fail_closed_only_when_the_constraint_needs_them() 
     );
 
     let cases = [
-        ("model", ScopeMissingFact::GpuModel { gpu_id: "gpu-a".into() }),
+        (
+            "model",
+            ScopeMissingFact::GpuModel {
+                gpu_id: "gpu-a".into(),
+            },
+        ),
         (
             "driver",
-            ScopeMissingFact::GpuDriverVersion { gpu_id: "gpu-a".into() },
+            ScopeMissingFact::GpuDriverVersion {
+                gpu_id: "gpu-a".into(),
+            },
         ),
         (
             "compute",
-            ScopeMissingFact::GpuComputeCapability { gpu_id: "gpu-a".into() },
+            ScopeMissingFact::GpuComputeCapability {
+                gpu_id: "gpu-a".into(),
+            },
         ),
         (
             "allocation",
-            ScopeMissingFact::GpuAllocationModes { gpu_id: "gpu-a".into() },
+            ScopeMissingFact::GpuAllocationModes {
+                gpu_id: "gpu-a".into(),
+            },
         ),
         (
             "vram",
-            ScopeMissingFact::AuthoritativeAvailableVram { gpu_id: "gpu-a".into() },
+            ScopeMissingFact::AuthoritativeAvailableVram {
+                gpu_id: "gpu-a".into(),
+            },
         ),
     ];
     for (field, expected) in cases {
@@ -322,7 +336,9 @@ fn missing_or_zero_gpu_requirements_fail_closed_without_proto_defaults() {
     required.minimum_gpu_count = None;
     assert_eq!(
         evaluate(&input, &required, &resources()),
-        Err(ScopeError::MissingFact(ScopeMissingFact::JobMinimumGpuCount))
+        Err(ScopeError::MissingFact(
+            ScopeMissingFact::JobMinimumGpuCount
+        ))
     );
 
     let mut required = requirements(0, 1);
@@ -366,7 +382,9 @@ fn blank_noncanonical_and_duplicate_gpu_ids_are_typed_canonical_errors() {
             &requirements(1, 1),
             &resources(),
         ),
-        Err(ScopeError::NonCanonicalGpuId { gpu_id: "gpu-a ".into() })
+        Err(ScopeError::NonCanonicalGpuId {
+            gpu_id: "gpu-a ".into()
+        })
     );
 
     let duplicates = vec![gpu("gpu-a", 10_000), gpu("gpu-a", 20_000)];
@@ -383,7 +401,9 @@ fn blank_noncanonical_and_duplicate_gpu_ids_are_typed_canonical_errors() {
     assert_eq!(forward, reverse);
     assert_eq!(
         forward,
-        Err(ScopeError::DuplicateGpuId { gpu_id: "gpu-a".into() })
+        Err(ScopeError::DuplicateGpuId {
+            gpu_id: "gpu-a".into()
+        })
     );
 }
 
@@ -442,7 +462,10 @@ fn exact_requirement_boundaries_pass_and_one_byte_short_fails() {
     assert!(evaluate(&input, &requirements(1, 10_000), &resources()).is_ok());
     assert_eq!(
         evaluate(&input, &requirements(1, 10_001), &resources()),
-        Err(ScopeError::InsufficientMatchingGpus { matching: 0, required: 1 })
+        Err(ScopeError::InsufficientMatchingGpus {
+            matching: 0,
+            required: 1
+        })
     );
 }
 
@@ -462,14 +485,18 @@ fn writable_prefixes_are_canonicalized_and_malformed_values_fail_closed() {
     noncanonical.writable_prefixes = Some(vec!["jobs/a/ ".into()]);
     assert_eq!(
         evaluate(&input, &required, &noncanonical),
-        Err(ScopeError::NonCanonicalWritablePrefix { prefix: "jobs/a/ ".into() })
+        Err(ScopeError::NonCanonicalWritablePrefix {
+            prefix: "jobs/a/ ".into()
+        })
     );
 
     let mut duplicate = resources();
     duplicate.writable_prefixes = Some(vec!["jobs/a/".into(), "jobs/a/".into()]);
     assert_eq!(
         evaluate(&input, &required, &duplicate),
-        Err(ScopeError::DuplicateWritablePrefix { prefix: "jobs/a/".into() })
+        Err(ScopeError::DuplicateWritablePrefix {
+            prefix: "jobs/a/".into()
+        })
     );
 
     let mut no_write_access = resources();

@@ -216,7 +216,14 @@ fn failed_verification_does_not_consume_the_nonce() {
 
     // skew 위반
     let skewed = grant(&k, COORD, n16(3));
-    assert!(verify(&skewed, 1, &r, NOW - CLOCK_SKEW_TOLERANCE_MS - 1, &mut guard).is_err());
+    assert!(verify(
+        &skewed,
+        1,
+        &r,
+        NOW - CLOCK_SKEW_TOLERANCE_MS - 1,
+        &mut guard
+    )
+    .is_err());
 
     assert!(
         guard.seen.is_empty(),

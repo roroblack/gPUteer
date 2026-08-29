@@ -88,8 +88,11 @@ fn q1_prost_accepts_and_drops_unknown_fields() {
 
     let reencoded = decoded.encode_to_vec();
 
-    println!("원본 {original_len}B -> 미지 필드 추가 {}B -> 재인코딩 {}B",
-             wire.len(), reencoded.len());
+    println!(
+        "원본 {original_len}B -> 미지 필드 추가 {}B -> 재인코딩 {}B",
+        wire.len(),
+        reencoded.len()
+    );
 
     // ★ 이 단언들이 P0-08 의 실측 결과다.
     assert_eq!(
@@ -253,5 +256,8 @@ fn q6_version_downgrade_breaks_signature() {
 
     // schema_version 은 canonical(필드 1) 과 sig_input 양쪽에 들어간다.
     // 이중으로 묶여 있어 강등은 반드시 서명을 깬다.
-    assert_ne!(canon_v2, canon_t, "schema_version 이 canonical 에도 들어가야 한다");
+    assert_ne!(
+        canon_v2, canon_t,
+        "schema_version 이 canonical 에도 들어가야 한다"
+    );
 }
