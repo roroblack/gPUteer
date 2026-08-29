@@ -682,7 +682,7 @@ fn run_one_connection(
         //
         //   루트의 **형제 디렉터리**를 쓴다 — 같은 볼륨·같은 권한이라
         //   새 설정 없이 동작하고, GC 가 스캔하는 범위 밖이다.
-        let run_root = workload_run_root(&config.checkpoint_root);
+        let run_root = workload_run_root(&config.checkpoint_root)?;
         let run_dir = run_root.join(&checkpoint_id);
         // 이전 실행이 죽으면서 남긴 것이 있으면 먼저 치운다 —
         // 남은 `stdout.log` 에 자식이 이어서 쓰면 지난번 출력과
@@ -697,56 +697,60 @@ fn run_one_connection(
             commit_limit_bytes: config.workload_commit_limit_bytes,
             capture_dir: Some(run_dir.clone()),
         };
-        match exec::execute(spec, policy) {
-            Ok(outcome) => {
-                println!(
-                    "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
-                    spec.job_id,
-                    outcome.exit_code,
-                    outcome.commit_limit_bytes,
-                    outcome.peak_commit_bytes
-                );
+        // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
+        //   작업 디렉터리를 지운다.
+        //
+        //   초안은 사이사이에 `?` 를 둔 평범한 직선 코드였는데,
+        //   중간에서 실패하면 삭제에 **도달하지 못해** 제출자의
+        //   stdout 이 남의 PC 에 남았다(2026-08-29, 독립 검수 지적).
+        //   `CLAUDE.md` §0.5 는 성공했을 때만 치우라고 하지 않는다 —
+        //   오히려 실패했을 때 남는 것이 더 위험하다.
+        let outcome = run_and_capture_workload(
+            spec,
+            policy,
+            &config.checkpoint_root,
+            &checkpoint_id,
+            &held_lease,
+            &grant.attempt_id,
+            &run_dir,
+        );
+        // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
+        // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
+        let cleanup = remove_dir_if_present(&run_dir);
+        let outcome = match (outcome, cleanup) {
+            (Ok(value), Ok(())) => value,
+            (Ok(_), Err(cleanup_error)) => return Err(cleanup_error),
+            (Err(run_error), Ok(())) => return Err(run_error),
+            (Err(run_error), Err(cleanup_error)) => {
+                return Err(format!("{run_error} / 그리고 {cleanup_error}"))
+            }
+        };
 
-                let files = collect_workload_artifacts(&run_dir, spec, &outcome)?;
-                finalize_workload_checkpoint(
-                    &config.checkpoint_root,
-                    &checkpoint_id,
-                    &held_lease,
-                    &grant.attempt_id,
-                    &files,
-                )?;
-                // ★ 체크포인트로 옮긴 **뒤에** 작업 디렉터리를 지운다.
-                //   순서를 바꾸면 옮기기 전에 지워 결과를 잃는다.
-                //   안 지우면 제출자의 출력이 남의 PC 에 계속 쌓인다
-                //   (`CLAUDE.md` §0.5).
-                remove_dir_if_present(&run_dir)?;
+        match outcome {
+            Some(report) => {
                 println!(
                     "WORKLOAD_ARTIFACTS checkpoint_id={} files={} bytes={}",
-                    checkpoint_id,
-                    files.len(),
-                    files.iter().map(|(_, data)| data.len()).sum::<usize>()
+                    checkpoint_id, report.file_count, report.total_bytes
                 );
-
                 // ★ 종료 코드 0 과 그 외를 **구분해서** 보고한다.
                 //   `state-machines.md` §3 이 WORKLOAD_EXITED_OK 와
                 //   WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
                 //   (전이 자체는 아직 구현하지 않는다.)
-                if outcome.exit_code == 0 {
+                if report.exit_code == 0 {
                     println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id);
                 } else {
                     println!(
                         "WORKLOAD_RESULT ok=false job_id={} exit_code={}",
-                        spec.job_id, outcome.exit_code
+                        spec.job_id, report.exit_code
                     );
                 }
             }
-            Err(exec::ExecutionError::NotOptedIn) => {
+            None => {
                 println!(
                     "WORKLOAD_SKIPPED job_id={} reason=not_opted_in",
                     spec.job_id
                 );
             }
-            Err(other) => return Err(other.to_string()),
         }
     }
 
@@ -1264,18 +1268,92 @@ pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> St
 /// 그대로 남긴다. 반면 파일 자체가 **없으면** 캐프처를 안 한
 /// 경우이므로 목록에서 뺀다 — 둘을 같은 것으로 만들면 관측
 /// 결과와 미관측을 구분할 수 없다(`CLAUDE.md` §1 — 모르면 비워 둔다).
+/// 실행 후 보고할 것들.
+struct WorkloadReport {
+    exit_code: u32,
+    file_count: usize,
+    total_bytes: usize,
+}
+
+/// 실행 -> 산출물 수집 -> 체크포인트 확정까지.
+///
+/// `Ok(None)` 은 **오류가 아니라 기본값**이다 — 운영자가 실행을
+/// 명시적으로 켜지 않았다는 뜻이다. 위험한 동작은 기본으로 켜져
+/// 있지 않다(`DoD-29` 와 같은 원칙).
+///
+/// ★ 이 함수는 작업 디렉터리를 **지우지 않는다.** 삭제는 호출부가
+///   성공·실패 관계없이 한다 — 여기서 지우면 중간에 `?` 로 나가는
+///   경로가 삭제를 건너뛰게 된다.
+#[allow(clippy::too_many_arguments)]
+fn run_and_capture_workload(
+    spec: &gputeer_protocol::execution_spec::ExecutionSpec,
+    policy: exec::ExecutionPolicy,
+    checkpoint_root: &std::path::Path,
+    checkpoint_id: &str,
+    lease: &pb::Lease,
+    attempt_id: &str,
+    run_dir: &std::path::Path,
+) -> Result<Option<WorkloadReport>, String> {
+    let outcome = match exec::execute(spec, policy) {
+        Ok(outcome) => outcome,
+        Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
+        Err(other) => return Err(other.to_string()),
+    };
+    println!(
+        "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
+        spec.job_id, outcome.exit_code, outcome.commit_limit_bytes, outcome.peak_commit_bytes
+    );
+
+    let files = collect_workload_artifacts(run_dir, spec, &outcome)?;
+    finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)?;
+    Ok(Some(WorkloadReport {
+        exit_code: outcome.exit_code,
+        file_count: files.len(),
+        total_bytes: files.iter().map(|(_, data)| data.len()).sum(),
+    }))
+}
+
 /// 작업 출력을 받는 루트. 체크포인트 루트의 **형제** 디렉터리다.
 ///
 /// 예: `C:/gputeer/checkpoints` -> `C:/gputeer/checkpoints.workload-run`
 ///
 /// ★ 루트 안에 두면 `startup_gc()` 가 그것을 체크포인트로 보고
-///   `gc_partial()` 을 돌린다. 지금은 그 함수가 파일만 지워서
-///   디렉터리만 들어 있는 작업 루트가 살아남지만, 그건 보장이
-///   아니라 우연이다. GC 의 스캔 범위 밖으로 빼 의존 자체를 없앱다.
-fn workload_run_root(checkpoint_root: &std::path::Path) -> PathBuf {
-    let mut name = checkpoint_root.as_os_str().to_os_string();
-    name.push(".workload-run");
-    PathBuf::from(name)
+///   `gc_partial()` 을 돌린다. GC 의 스캔 범위 밖으로 빼낸다.
+///
+/// ★ **문자열을 그냥 이어 붙이지 않는다**(2026-08-29, 독립 검수 지적).
+///   초안은 경로 문자열 끝에 접미사를 붙였는데, 그러면 이런 값들이
+///   **루트 안**으로 떨어졌다 — 정확히 막으려던 것이 다시 생긴다.
+///
+///   ```text
+///   "C:/data/cp/"  ->  "C:/data/cp/.workload-run"   루트 안 (결함)
+///   "."            ->  "..workload-run"             현재 디렉터리 안 (결함)
+///   "C:/"          ->  "C:/.workload-run"           루트 안 (결함)
+///   ```
+///
+///   그래서 절대 경로로 정규화한 뒤 **부모 + 이름** 으로 계산한다.
+///   `Path::file_name()` 은 후행 구분자를 무시하므로 첫 번째 반례도
+///   `cp.workload-run` 으로 제대로 떨어진다.
+///
+/// # 파일시스템 루트는 거부한다
+///
+/// `C:/` 같이 부모가 없는 경로는 형제 디렉터리를 만들 수 없다.
+/// 그럴때 적당히 루트 안에 두는 대신 오류를 낸다 — 애매하면
+/// 실행하지 않는다가 이 저장소의 기본값이다.
+fn workload_run_root(checkpoint_root: &std::path::Path) -> Result<PathBuf, String> {
+    let absolute = std::path::absolute(checkpoint_root).map_err(|error| {
+        format!("checkpoint root 를 절대 경로로 바꿀 수 없다({checkpoint_root:?}): {error}")
+    })?;
+    let parent = absolute.parent().ok_or_else(|| {
+        format!(
+            "checkpoint root 가 파일시스템 루트라 작업 디렉터리를 밖에 둘 수 없다({absolute:?})              — 하위 디렉터리를 지정하라"
+        )
+    })?;
+    let name = absolute.file_name().ok_or_else(|| {
+        format!("checkpoint root 에서 이름을 얻을 수 없다({absolute:?})")
+    })?;
+    let mut sibling = name.to_os_string();
+    sibling.push(".workload-run");
+    Ok(parent.join(sibling))
 }
 
 /// 있으면 지우고, 없으면 조용히 넘어간다.
@@ -1971,5 +2049,52 @@ mod tests {
     fn revoke_notice_for_expired_lease_is_rejected() {
         let result = validate_revoke_notice(&held_lease(), &revoke("lease-a", 7), 10_000);
         assert!(result.unwrap_err().contains("이미 만료됐다"));
+    }
+
+    /// 독립 검수가 든 반례들이 전부 체크포인트 루트 **밖**으로
+    /// 떨어지는가.
+    ///
+    /// ★ 초안은 경로 문자열 끝에 접미사를 붙였고, 그러면 후행
+    ///   구분자나 `.` 이 들어오는 순간 결과가 루트 **안**으로
+    ///   떨어졌다 — 정확히 막으려던 것이 다시 생긴다.
+    ///   반례를 테스트로 고정해 다시 돌아오지 못하게 한다.
+    #[test]
+    fn workload_run_root_is_never_inside_the_checkpoint_root() {
+        for raw in [
+            "C:/data/checkpoints",
+            "C:/data/checkpoints/",
+            ".",
+            "./cp",
+            "cp/",
+        ] {
+            let root = std::path::Path::new(raw);
+            let run_root = workload_run_root(root)
+                .unwrap_or_else(|error| panic!("{raw:?} 에서 작업 루트를 못 만들었다: {error}"));
+            let absolute_root = std::path::absolute(root).expect("절대 경로");
+            assert!(
+                !run_root.starts_with(&absolute_root),
+                "{raw:?} 의 작업 루트가 체크포인트 루트 안에 생겼다 —                  startup_gc 가 이걸 체크포인트로 오인한다: {run_root:?} ⊂ {absolute_root:?}"
+            );
+            assert_eq!(
+                run_root.parent(),
+                absolute_root.parent(),
+                "{raw:?} 의 작업 루트가 형제가 아니다"
+            );
+        }
+    }
+
+    /// 파일시스템 루트는 거부한다.
+    ///
+    /// 형제 디렉터리를 만들 수 없는 경로에서 적당히 루트 안에 두면
+    /// 위의 불변식이 조용히 깨진다.
+    #[test]
+    fn filesystem_root_as_checkpoint_root_is_refused() {
+        let root = if cfg!(windows) { "C:/" } else { "/" };
+        let error = workload_run_root(std::path::Path::new(root))
+            .expect_err("파일시스템 루트가 받아들여졌다");
+        assert!(
+            error.contains("파일시스템 루트"),
+            "거부 이유가 분명하지 않다: {error}"
+        );
     }
 }

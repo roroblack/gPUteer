@@ -23,8 +23,14 @@ use crate::NvmlError;
 const NVML_SUCCESS: c_int = 0;
 const NVML_ERROR_NOT_SUPPORTED: c_int = 3;
 
-/// `nvmlDeviceGetName` 이 요구하는 버퍼 상한(NVML_DEVICE_NAME_BUFFER_SIZE).
-const NAME_BUFFER: usize = 64;
+/// `nvmlDeviceGetName` 의 버퍼 상한(NVML_DEVICE_NAME_V2_BUFFER_SIZE).
+///
+/// ★ 첫 구현은 64(NVML_DEVICE_NAME_BUFFER_SIZE)를 썼다 — 독립 검수가
+///   지적했다. 64 는 오래된 일반 이름 상수이고 **이 함수용 상한은
+///   96** 이다. 이름이 63바이트를 넘는 장치가 오면
+///   `INSUFFICIENT_SIZE` 로 **관측 전체**가 실패한다 — 장치 하나의
+///   긴 이름 때문에 GPU 목록 전체를 못 읽는다.
+const NAME_BUFFER: usize = 96;
 /// `nvmlDeviceGetUUID` 상한(NVML_DEVICE_UUID_V2_BUFFER_SIZE).
 const UUID_BUFFER: usize = 96;
 /// `nvmlSystemGetDriverVersion` 상한(NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE).
@@ -276,7 +282,7 @@ fn read_c_string(buffer: &[c_char], call: &str) -> Result<String, NvmlError> {
     let nul = bytes
         .iter()
         .position(|byte| *byte == 0)
-        .ok_or_else(|| NvmlError::BadString {
+        .ok_or_else(|| NvmlError::UnterminatedString {
             call: call.to_string(),
         })?;
     CStr::from_bytes_with_nul(&bytes[..=nul])

@@ -100,6 +100,13 @@ pub enum NvmlError {
     },
     #[error("NVML_BAD_STRING: {call} 이(가) 돌려준 문자열이 UTF-8 이 아니다")]
     BadString { call: String },
+    /// 버퍼가 꽉 차고 NUL 이 없다 — 잘렸을 수 있다는 뜻이다.
+    ///
+    /// ★ 이걸 `BadString` 과 합치면 "인코딩이 이상하다" 와
+    ///   "버퍼 상한을 잘못 잡았다" 를 구분할 수 없다 — 후자는
+    ///   이 크레이트의 버그고 전자는 드라이버 문제다(독립 검수 지적).
+    #[error("NVML_UNTERMINATED_STRING: {call} 의 버퍼에 NUL 이 없다 — 버퍼 상한이 작아 잘렸을 수 있다")]
+    UnterminatedString { call: String },
 }
 
 /// NVML 을 열어 전체 스냅샷을 읽고 다시 닫는다.
