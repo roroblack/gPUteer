@@ -321,6 +321,10 @@ pub enum Domain {
     SessionHello,
     LeaseResume,
     LeaseResumeResult,
+    // ★ 2026-08-29 — 노드 생존 보고(ADR-033 §7 앞 단계).
+    //   다른 어느 domain 과도 공유하지 않는다 — 공유하면
+    //   heartbeat 서명을 다른 문맥에 재사용할 수 있다.
+    NodeHeartbeat,
 }
 
 impl Domain {
@@ -354,6 +358,7 @@ impl Domain {
             Domain::SessionHello => "gputeer/v1/session-hello",
             Domain::LeaseResume => "gputeer/v1/lease-resume",
             Domain::LeaseResumeResult => "gputeer/v1/lease-resume-result",
+            Domain::NodeHeartbeat => "gputeer/v1/node-heartbeat",
         }
     }
 

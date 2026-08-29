@@ -274,6 +274,7 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `AgentGrantAck` | `gputeer/v1/grant-ack` |
 | `RenewLeaseResult` | `gputeer/v1/lease-renew-result` |
 | `AgentSessionHello` | `gputeer/v1/session-hello` |
+| `NodeHeartbeat` | `gputeer/v1/node-heartbeat` |
 | `ResumeLeaseRequest` | `gputeer/v1/lease-resume` |
 | `ResumeLeaseResult` | `gputeer/v1/lease-resume-result` |
 

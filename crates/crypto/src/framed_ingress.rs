@@ -96,6 +96,8 @@ pub enum FrameType {
     SessionHello = 12,
     LeaseResume = 13,
     LeaseResumeResult = 14,
+    /// 노드 생존 보고(2026-08-29, ADR-033 §7 앞 단계).
+    NodeHeartbeat = 15,
 }
 
 impl FrameType {
@@ -115,6 +117,7 @@ impl FrameType {
             12 => Self::SessionHello,
             13 => Self::LeaseResume,
             14 => Self::LeaseResumeResult,
+            15 => Self::NodeHeartbeat,
             _ => return None,
         })
     }
@@ -189,6 +192,7 @@ pub enum IngressMessage {
     SessionHello(Verified<pb::AgentSessionHello>),
     LeaseResume(Verified<pb::ResumeLeaseRequest>),
     LeaseResumeResult(Verified<pb::ResumeLeaseResult>),
+    NodeHeartbeat(Verified<pb::NodeHeartbeat>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -304,6 +308,7 @@ pub fn read_frame<R: Read>(
         FrameType::SessionHello => verify_as!(SessionHello, pb::AgentSessionHello),
         FrameType::LeaseResume => verify_as!(LeaseResume, pb::ResumeLeaseRequest),
         FrameType::LeaseResumeResult => verify_as!(LeaseResumeResult, pb::ResumeLeaseResult),
+        FrameType::NodeHeartbeat => verify_as!(NodeHeartbeat, pb::NodeHeartbeat),
     }
 }
 

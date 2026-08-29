@@ -260,6 +260,8 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("lease.proto", "AgentSessionHello", 90),
     ("lease.proto", "ResumeLeaseRequest", 90),
     ("lease.proto", "ResumeLeaseResult", 90),
+    // 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계)
+    ("lease.proto", "NodeHeartbeat", 90),
 ];
 
 #[test]

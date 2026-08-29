@@ -227,6 +227,18 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    // 노드 생존 보고(2026-08-29). ShortLived 이어야 한다 —
+    // heartbeat 를 재생할 수 있으면 이미 죽은 노드를 살아 있는
+    // 것처럼 보이게 만들 수 있다.
+    check(
+        "NodeHeartbeat",
+        &pb::NodeHeartbeat {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            request_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
 }
 
 /// ★ `Signable` 을 구현한 메시지가 위 테스트에 **전부** 있는가.

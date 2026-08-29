@@ -654,3 +654,46 @@ fn domain_coverage_is_explicit() {
         "proto 메시지 없는 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
 }
+
+/// `NodeHeartbeat` 가 Python 참조 구현과 바이트 단위로 같은가.
+///
+/// ★ 이 대조가 없으면 "Rust 가 이렇게 인코딩한다" 는 말만 있고,
+///   그것이 규범인지는 아무도 모른다 — `DoD-05`·`DoD-36` 이 정확히
+///   그 공백을 뒤늦게 발견했다.
+#[test]
+fn node_heartbeat_matches_reference() {
+    let heartbeat = pb::NodeHeartbeat {
+        schema_version: 1,
+        node_id: "node-1".into(),
+        device_id: "01JBXDEV00000000000000001".into(),
+        coordinator_device_id: "01JBXCOORD000000000000001".into(),
+        issued_at_unix_ms: 1_755_103_900_000,
+        fence_epoch: 42,
+        running_attempts: 3,
+        request_nonce: (16u8..32).collect(),
+        node_signature: vec![0x44; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&heartbeat.to_canonical_fields(), &[])),
+        expect_hex("v37_node_heartbeat"),
+        "NodeHeartbeat canonical 이 Python 참조 구현과 다르다"
+    );
+
+    // ★ `fence_epoch` 하나만 바꾼 대조쌍. 값 하나만 검사하면 그 필드를
+    //   빠뜨려도 통과하므로, 그 필드가 실제로 바이트에 닿는지 본다.
+    let other = pb::NodeHeartbeat {
+        fence_epoch: 43,
+        ..heartbeat.clone()
+    };
+    let first = hex(&canonical_encode(&heartbeat.to_canonical_fields(), &[]));
+    let second = hex(&canonical_encode(&other.to_canonical_fields(), &[]));
+    assert_ne!(
+        first, second,
+        "fence_epoch 을 바꿨는데 canonical 바이트가 같다 — 그 필드가 인코딩에 안 들어간다"
+    );
+    assert_eq!(
+        second,
+        expect_hex("v37b_node_heartbeat_different_epoch"),
+        "fence_epoch 이 다른 NodeHeartbeat 가 참조 구현과 다르다"
+    );
+}

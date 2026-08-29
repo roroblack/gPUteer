@@ -569,3 +569,37 @@ impl Signable for pb::RevokeLeaseNotice {
         &self.lease_id
     }
 }
+
+/// 노드 생존 보고.
+///
+/// ★ `Lifetime::ShortLived` 다 — replay nonce 를 반드시 검사한다.
+///   heartbeat 를 재생할 수 있으면 이미 죽은 노드를 살아 있는 것처럼
+///   보이게 만들 수 있고, 그러면 ADR-033 §7 의 판정이 통째로 무의미해진다.
+impl Signable for pb::NodeHeartbeat {
+    const DOMAIN: Domain = Domain::NodeHeartbeat;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.node_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        // heartbeat 는 짧게 산다. 오래 유효하면 옛 보고가 지금 상태로
+        // 오인될 수 있다 — signing.md §13.1 의 "Heartbeat / RPC 60초"
+        // 를 그대로 따른다.
+        self.issued_at_unix_ms.saturating_add(60_000)
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.device_id
+    }
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.request_nonce)
+    }
+}

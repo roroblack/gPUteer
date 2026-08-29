@@ -388,6 +388,17 @@ SCHEMAS = {
         (7, "nonce", "bytes", None),
         (90, "node_signature", "bytes", None),
     ],
+    "NodeHeartbeat": [
+        (1, "schema_version", "uint", None),
+        (2, "node_id", "string", None),
+        (3, "device_id", "string", None),
+        (4, "coordinator_device_id", "string", None),
+        (5, "issued_at_unix_ms", "uint", None),
+        (6, "fence_epoch", "uint", None),
+        (7, "running_attempts", "uint", None),
+        (8, "request_nonce", "bytes", None),
+        (90, "node_signature", "bytes", None),
+    ],
     "ResumeLeaseRequest": [
         (1, "schema_version", "uint", None),
         (2, "lease_id", "string", None),
@@ -664,6 +675,7 @@ DOMAIN_TAGS = {
     "AgentGrantAck": b"gputeer/v1/grant-ack",
     "RenewLeaseResult": b"gputeer/v1/lease-renew-result",
     "AgentSessionHello": b"gputeer/v1/session-hello",
+    "NodeHeartbeat": b"gputeer/v1/node-heartbeat",
     "ResumeLeaseRequest": b"gputeer/v1/lease-resume",
     "ResumeLeaseResult": b"gputeer/v1/lease-resume-result",
     "CheckpointManifest": b"gputeer/v1/checkpoint",
@@ -1640,6 +1652,32 @@ def build_vectors():
         "request_nonce": bytes(range(16, 32)), "coordinator_signature": b"\x33" * 64,
     }
     add("v36_resume_lease_result", "ResumeLeaseResult RESUMED canonical vector", "ResumeLeaseResult", _resume_result)
+
+    # NodeHeartbeat (2026-08-29). 두 개를 만든다 — fence_epoch 만 다른
+    # 대조쌍이다. 그 필드가 canonical 에 실제로 반영되는지를
+    # 바이트로 확인하기 위해서다 — 값 하나만 넣으면 그 필드가
+    # 빠져도 벍터가 통과한다.
+    _heartbeat = {
+        "schema_version": 1,
+        "node_id": "node-1",
+        "device_id": "01JBXDEV00000000000000001",
+        "coordinator_device_id": "01JBXCOORD000000000000001",
+        "issued_at_unix_ms": 1_755_103_900_000,
+        "fence_epoch": 42,
+        "running_attempts": 3,
+        "request_nonce": bytes(range(16, 32)),
+        "node_signature": b"D" * 64,
+    }
+    add("v37_node_heartbeat", "NodeHeartbeat canonical vector", "NodeHeartbeat", _heartbeat)
+
+    _heartbeat_other_epoch = dict(_heartbeat)
+    _heartbeat_other_epoch["fence_epoch"] = 43
+    add(
+        "v37b_node_heartbeat_different_epoch",
+        "NodeHeartbeat with a different fence_epoch — proves the field reaches canonical bytes",
+        "NodeHeartbeat",
+        _heartbeat_other_epoch,
+    )
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

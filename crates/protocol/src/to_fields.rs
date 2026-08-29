@@ -1078,3 +1078,21 @@ pub const DERIVED_HASH_FIELDS: &[(&str, u32, &str)] = &[(
     "manifest_hash — signing.md §6.1. Agent 는 이 값을 신뢰하지 않고 \
      반드시 재계산해 대조한다(MUST). 계획서 §15.4 검증 13단계",
 )];
+
+impl ToCanonicalFields for pb::NodeHeartbeat {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.node_id);
+        put_str(&mut f, 3, &self.device_id);
+        put_str(&mut f, 4, &self.coordinator_device_id);
+        put_uint(&mut f, 5, self.issued_at_unix_ms);
+        put_uint(&mut f, 6, self.fence_epoch);
+        put_uint(&mut f, 7, self.running_attempts as u64);
+        put_bytes(&mut f, 8, &self.request_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
