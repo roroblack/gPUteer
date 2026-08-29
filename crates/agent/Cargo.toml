@@ -11,6 +11,7 @@ gputeer-crypto = { path = "../crypto" }
 gputeer-checkpoint = { path = "../checkpoint" }
 gputeer-runtime-policy = { path = "../runtime-policy" }
 prost.workspace = true
+serde_json.workspace = true
 getrandom.workspace = true
 
 [dev-dependencies]

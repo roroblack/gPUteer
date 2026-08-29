@@ -63,9 +63,18 @@ mod windows_impl {
         SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
     };
+    use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
+    };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_SUSPENDED,
-        CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION, STARTUPINFOW,
+        CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
+        ResumeThread, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
+        LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
     };
 
     /// `CreateProcessW` 호출에 필요한 최소 입력.
@@ -85,6 +94,16 @@ mod windows_impl {
         /// (`application_name` 자신도 첫 토큰으로 포함해야 한다).
         pub command_line: OsString,
         pub current_dir: Option<PathBuf>,
+        /// 자식의 표준 출력을 받을 파일. `None` 이면 받지 않는다.
+        ///
+        /// ★ 파이프가 아니라 **파일**이다. 파이프로 받으면 부모가
+        ///   계속 빨아내야 하고, 안 빨아내는 사이 버퍼가 차면 자식이
+        ///   쓰기에서 멈춘다 — 부모는 종료를 기다리고 자식은 쓰기를
+        ///   기다리는 고전적인 교착이다. 어차피 결과를 체크포인트에
+        ///   파일로 남겨야 하므로 처음부터 파일로 받는다.
+        pub stdout_path: Option<PathBuf>,
+        /// 자식의 표준 오류를 받을 파일. `None` 이면 받지 않는다.
+        pub stderr_path: Option<PathBuf>,
     }
 
     /// `std::process::Child` 대신 쓰는 최소 Windows 프로세스+Job 핸들.
@@ -258,6 +277,37 @@ mod windows_impl {
         }
     }
 
+    /// 자식이 상속할 수 있는 쓰기 전용 파일 핸들을 만든다.
+    ///
+    /// ★ `bInheritHandle = TRUE` 로 만들지만 그것만으로는 안전하지
+    ///   않다. `CreateProcessW` 에 `bInheritHandles = TRUE` 를 주면 이
+    ///   프로세스의 **상속 가능한 모든 핸들**이 넘어간다 — 남의
+    ///   코드를 돌리는 이 저장소에서는 받아들일 수 없는 위험이다.
+    ///   그래서 호출부는 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 로 상속
+    ///   대상을 **정확히 이 두 핸들로** 제한한다.
+    fn create_inheritable_output_file(path: &std::path::Path) -> std::io::Result<HANDLE> {
+        let wide_path = wide(path.as_os_str());
+        let mut security: SECURITY_ATTRIBUTES = unsafe { std::mem::zeroed() };
+        security.nLength = size_of::<SECURITY_ATTRIBUTES>() as u32;
+        security.bInheritHandle = 1;
+
+        let handle = unsafe {
+            CreateFileW(
+                wide_path.as_ptr(),
+                FILE_GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                &security,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(handle)
+    }
+
     /// `CREATE_SUSPENDED` 로 자식을 만들고, Job Object 커밋 상한을 건
     /// 뒤에야 재개한다. 순서를 바꾸면 안 된다 — 재개를 먼저 하면 자식이
     /// Job 에 할당되기 전에 이미 메모리를 커밋할 수 있다.
@@ -290,9 +340,93 @@ mod windows_impl {
         let mut command_line = wide(&spec.command_line);
         let current_dir = spec.current_dir.as_ref().map(|p| wide(p.as_os_str()));
 
-        let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
-        startup.cb = size_of::<STARTUPINFOW>() as u32;
+        // 출력 파일 핸들을 먼저 열어둔다. 여기서 실패하면 아직
+        // 프로세스가 없으므로 정리할 것도 없다.
+        let mut inherited: Vec<HANDLE> = Vec::new();
+        let stdout_handle = match spec.stdout_path.as_ref() {
+            Some(path) => {
+                let handle = create_inheritable_output_file(path)?;
+                inherited.push(handle);
+                Some(handle)
+            }
+            None => None,
+        };
+        let stderr_handle = match spec.stderr_path.as_ref() {
+            Some(path) => match create_inheritable_output_file(path) {
+                Ok(handle) => {
+                    inherited.push(handle);
+                    Some(handle)
+                }
+                Err(error) => {
+                    if let Some(handle) = stdout_handle {
+                        unsafe { CloseHandle(handle) };
+                    }
+                    return Err(error);
+                }
+            },
+            None => None,
+        };
+        // 자식이 생기기 전이든 뒤이든, 이 함수가 나갈 때 부모 쪽
+        // 복사본은 반드시 닫는다. 안 닫으면 파일이 계속 열린 채로 남아
+        // 나중에 읽는 쪽이 잘린 내용을 볼 수 있다.
+        let close_inherited = |handles: &[HANDLE]| {
+            for handle in handles {
+                unsafe { CloseHandle(*handle) };
+            }
+        };
+
+        let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
+        startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+
+        // ★ 상속 목록을 이 두 핸들로 제한한다. 이게 없으면
+        //   `bInheritHandles = TRUE` 가 이 프로세스의 모든 상속 가능
+        //   핸들(SQLite 파일·소켓·락 파일 등)을 남의 코드에게 넘긴다.
+        let mut attribute_buffer: Vec<u8> = Vec::new();
+        let mut attribute_list: LPPROC_THREAD_ATTRIBUTE_LIST = ptr::null_mut();
+        if !inherited.is_empty() {
+            let mut size: usize = 0;
+            // 첫 호출은 반드시 실패하면서 필요한 크기를 채운다 —
+            // 그게 이 API 의 계약이므로 반환값을 오류로 읽지 않는다.
+            unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut size) };
+            if size == 0 {
+                close_inherited(&inherited);
+                return Err(std::io::Error::last_os_error());
+            }
+            attribute_buffer.resize(size, 0);
+            attribute_list = attribute_buffer.as_mut_ptr() as LPPROC_THREAD_ATTRIBUTE_LIST;
+            if unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut size) } == 0 {
+                close_inherited(&inherited);
+                return Err(std::io::Error::last_os_error());
+            }
+            let updated = unsafe {
+                UpdateProcThreadAttribute(
+                    attribute_list,
+                    0,
+                    PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                    inherited.as_ptr() as *const std::ffi::c_void,
+                    std::mem::size_of_val(&inherited[..]),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            if updated == 0 {
+                let error = std::io::Error::last_os_error();
+                unsafe { DeleteProcThreadAttributeList(attribute_list) };
+                close_inherited(&inherited);
+                return Err(error);
+            }
+            startup.lpAttributeList = attribute_list;
+            startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdOutput = stdout_handle.unwrap_or(INVALID_HANDLE_VALUE);
+            startup.StartupInfo.hStdError = stderr_handle.unwrap_or(INVALID_HANDLE_VALUE);
+            startup.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+        }
+
         let mut process_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+        let mut flags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
+        if !inherited.is_empty() {
+            flags |= EXTENDED_STARTUPINFO_PRESENT;
+        }
 
         let created = unsafe {
             CreateProcessW(
@@ -300,14 +434,19 @@ mod windows_impl {
                 command_line.as_mut_ptr(),
                 ptr::null(),
                 ptr::null(),
-                0,
-                CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+                i32::from(!inherited.is_empty()),
+                flags,
                 ptr::null(),
                 current_dir.as_ref().map_or(ptr::null(), |v| v.as_ptr()),
-                &startup,
+                &startup as *const STARTUPINFOEXW as *const STARTUPINFOW,
                 &mut process_info,
             )
         };
+        if !attribute_list.is_null() {
+            unsafe { DeleteProcThreadAttributeList(attribute_list) };
+        }
+        // 자식이 자기 복사본을 가졌으므로 부모 쪽은 지금 닫는다.
+        close_inherited(&inherited);
         if created == 0 {
             return Err(std::io::Error::last_os_error());
         }

@@ -41,6 +41,11 @@
 
 use gputeer_protocol::execution_spec::ExecutionSpec;
 
+/// 자식의 표준 출력을 받는 파일 이름.
+pub const STDOUT_FILENAME: &str = "stdout.log";
+/// 자식의 표준 오류를 받는 파일 이름.
+pub const STDERR_FILENAME: &str = "stderr.log";
+
 /// 프로세스를 실제로 띄운 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionOutcome {
@@ -109,7 +114,7 @@ impl std::fmt::Display for ExecutionError {
 impl std::error::Error for ExecutionError {}
 
 /// 실행 정책 — caller 가 명시적으로 채운다.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ExecutionPolicy {
     /// 운영자가 "이 Agent 는 실제로 코드를 실행해도 된다" 를 켰는가.
     pub opted_in: bool,
@@ -121,6 +126,13 @@ pub struct ExecutionPolicy {
     ///   0 으로 포화해 "상한 0" 이 된다(실측으로 확인). 이 모듈이
     ///   원하는 것은 커밋 상한 자체이므로 변환 없는 경로를 쓴다.
     pub commit_limit_bytes: u64,
+    /// 자식의 표준 출력·오류를 받을 디렉터리. `None` 이면 받지 않는다.
+    ///
+    /// ★ **체크포인트 디렉터리를 직접 가리키지 마라.** 그 네임스페이스는
+    ///   `write_once()` 가 소유하며(`DoD-21` 계약), 남의 프로세스가 그
+    ///   안에 직접 쓰게 하면 그 계약이 깨진다. 별도 작업 디렉터리로
+    ///   받은 뒤 부모가 읽어 `write_once()` 로 옮긴다.
+    pub capture_dir: Option<std::path::PathBuf>,
 }
 
 /// 검증된 실행 지시를 실제 프로세스로 띄우고 종료까지 관측한다.
@@ -146,7 +158,7 @@ pub fn execute(
             detail: "commit_limit_bytes 가 0 이다".into(),
         });
     }
-    platform::execute(spec, policy)
+    platform::execute(spec, &policy)
 }
 
 #[cfg(windows)]
@@ -156,12 +168,14 @@ mod platform {
 
     pub(super) fn execute(
         spec: &ExecutionSpec,
-        policy: ExecutionPolicy,
+        policy: &ExecutionPolicy,
     ) -> Result<ExecutionOutcome, ExecutionError> {
         // ★ 명령줄 조립은 `runtime-windows` 가 한다. MSVC 인자 분해 규칙
         //   때문에 손으로 이어 붙이면 인용이 어긋난다 — 이미 그 버그를
         //   한 번 겪었다(`DoD` 이력의 "명령줄 인용 버그 2건").
         use std::ffi::OsStr;
+
+        use super::{STDERR_FILENAME, STDOUT_FILENAME};
 
         let exe: std::ffi::OsString = spec.entrypoint.clone().into();
         let args: Vec<std::ffi::OsString> = spec.args.iter().map(|a| a.clone().into()).collect();
@@ -171,6 +185,14 @@ mod platform {
             application_name: exe,
             command_line,
             current_dir: None,
+            stdout_path: policy
+                .capture_dir
+                .as_ref()
+                .map(|dir| dir.join(STDOUT_FILENAME)),
+            stderr_path: policy
+                .capture_dir
+                .as_ref()
+                .map(|dir| dir.join(STDERR_FILENAME)),
         };
 
         // ★ 상한을 **먼저** 걸고 재개한다. `create_constrained_child_for_ram_limit`
@@ -230,7 +252,7 @@ mod platform {
     /// "있다" 고 취급해 프로세스를 띄우면 `CLAUDE.md` §0.4 위반이다.
     pub(super) fn execute(
         _spec: &ExecutionSpec,
-        _policy: ExecutionPolicy,
+        _policy: &ExecutionPolicy,
     ) -> Result<ExecutionOutcome, ExecutionError> {
         Err(ExecutionError::UnsupportedPlatform {
             detail: "이 플랫폼에는 자원 상한 강제가 연결돼 있지 않다(Linux cgroup 미착수) — 상한 없이 실행하지 않는다".into(),

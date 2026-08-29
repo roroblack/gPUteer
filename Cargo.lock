@@ -316,6 +316,7 @@ dependencies = [
  "gputeer-runtime-policy",
  "gputeer-runtime-windows",
  "prost",
+ "serde_json",
  "tempfile",
 ]
 
@@ -384,14 +385,6 @@ dependencies = [
  "serde_json",
  "thiserror",
 ]
-
-[[package]]
-name = "gputeer-runtime-linux"
-version = "0.0.1"
-
-[[package]]
-name = "gputeer-runtime-nvml"
-version = "0.0.1"
 
 [[package]]
 name = "gputeer-runtime-policy"

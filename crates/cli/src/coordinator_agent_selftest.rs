@@ -4705,6 +4705,132 @@ pub fn run() -> Result<String, String> {
         "82) 커밋 상한을 걸 수 없으면(상한 0) 프로세스를 띄우지 않고 EXEC_REFUSED:LIMIT_NOT_APPLIED 로 거부\n",
     );
 
+    // 83) 작업의 표준 출력이 실제로 회수되고 매니페스트가 확정된다.
+    //
+    //     ★ 여기까지 와야 "결과가 나온다" 고 말할 수 있다. 79~82 는
+    //       프로세스가 떴는지만 봤을 뿐, 그 프로세스가 만든 것이
+    //       디스크에 남았는지는 확인하지 않았다.
+    let echo_path = manifest_dir.path().join("exec-echo.manifest");
+    let echo_str = echo_path
+        .to_str()
+        .ok_or_else(|| format!("경로가 UTF-8 이 아니다: {echo_path:?}"))?
+        .to_string();
+    run_submit(
+        &fixture,
+        fixture.job_id,
+        &cmd_exe,
+        "/c,echo,GPUTEER_STDOUT_MARKER",
+        &submitter_seed_hex,
+        &echo_str,
+    )?;
+    // ★ fence_epoch 을 기본값 0 이 아닌 값으로 명시한다. 0 이면
+    //   "매니페스트가 Lease 와 묶였다" 와 "그냥 기본값이 들어갔다" 를
+    //   구분할 수 없어 이 검사가 공허해진다 — 실제로 한 번 그렇게
+    //   쓰고 fence_epoch=0 으로 오판했다.
+    let echo_args: Vec<String> = vec![
+        "--manifest-file".to_string(),
+        echo_str.clone(),
+        "--fence-epoch".to_string(),
+        "9".to_string(),
+    ];
+    let echo_refs: Vec<&str> = echo_args.iter().map(String::as_str).collect();
+
+    let checkpoint_root_83 = tempfile::tempdir()
+        .map_err(|error| format!("83) checkpoint root 생성 실패: {error}"))?;
+    let exec_83 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_83.path(),
+        &echo_refs,
+        &exec_on,
+    )?;
+    if !exec_83.agent_success || !exec_83.agent_stdout.contains("WORKLOAD_ARTIFACTS") {
+        return Err(format!(
+            "83) 산출물 회수가 보고되지 않았다: stdout={:?} stderr={:?}",
+            exec_83.agent_stdout, exec_83.agent_stderr
+        ));
+    }
+    let checkpoint_id_83 = started_checkpoint_id(&exec_83.agent_stdout)
+        .ok_or_else(|| format!("83) checkpoint_id 를 찾을 수 없다: {:?}", exec_83.agent_stdout))?;
+    let dir_83 = checkpoint_root_83.path().join(&checkpoint_id_83);
+
+    // 자식이 실제로 찍은 바이트가 파일로 남았는가.
+    let stdout_83 = std::fs::read_to_string(dir_83.join("stdout.log"))
+        .map_err(|error| format!("83) stdout.log 읽기 실패: {error}"))?;
+    if !stdout_83.contains("GPUTEER_STDOUT_MARKER") {
+        return Err(format!(
+            "83) 자식의 표준 출력이 회수되지 않았다: stdout.log={stdout_83:?}"
+        ));
+    }
+
+    // 매니페스트가 마지막에 확정됐고, 그 안의 해시가 실제 파일과 맞는가.
+    let manifest_bytes_83 = std::fs::read(dir_83.join("manifest.json"))
+        .map_err(|error| format!("83) manifest.json 읽기 실패: {error}"))?;
+    let manifest_83 =
+        gputeer_checkpoint::durability::CheckpointManifest::from_json(&manifest_bytes_83)
+            .map_err(|error| format!("83) manifest.json 파싱 실패: {error}"))?;
+    manifest_83
+        .verify_files(&dir_83)
+        .map_err(|error| format!("83) 매니페스트의 해시가 실제 파일과 다르다: {error}"))?;
+    let names_83: Vec<&str> = manifest_83
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    for expected in ["stderr.log", "stdout.log", "workload-result.json"] {
+        if !names_83.contains(&expected) {
+            return Err(format!(
+                "83) 매니페스트에 {expected} 가 없다: files={names_83:?}"
+            ));
+        }
+    }
+    // fence_epoch 이 Lease 의 것과 묶여 있어야 나중에 어느 세대의
+    // 산출물인지 판별할 수 있다.
+    if manifest_83.fence_epoch != 9 || manifest_83.job_id != fixture.job_id {
+        return Err(format!(
+            "83) 매니페스트가 Lease 와 묶이지 않았다(fence_epoch 기대 9): job_id={} fence_epoch={}",
+            manifest_83.job_id, manifest_83.fence_epoch
+        ));
+    }
+    report.push_str(
+        "83) 자식 프로세스의 표준 출력이 체크포인트로 회수되고 매니페스트가 실제 해시와 함께 마지막에 확정됨\n",
+    );
+
+    // 84) 실행이 실패해도 산출물은 남는다.
+    //
+    //     ★ 실패했을 때야말로 출력이 필요하다. 성공 경로에서만
+    //       회수하면 "왜 실패했는지" 를 볼 방법이 없다.
+    let checkpoint_root_84 = tempfile::tempdir()
+        .map_err(|error| format!("84) checkpoint root 생성 실패: {error}"))?;
+    let exec_84 = run_handshake_with_checkpoint_root(
+        &fixture,
+        checkpoint_root_84.path(),
+        &fail_refs,
+        &exec_on,
+    )?;
+    if !exec_84.agent_success || !exec_84.agent_stdout.contains("WORKLOAD_RESULT ok=false") {
+        return Err(format!(
+            "84) 실패 실행이 기대대로 보고되지 않았다: stdout={:?} stderr={:?}",
+            exec_84.agent_stdout, exec_84.agent_stderr
+        ));
+    }
+    let checkpoint_id_84 = started_checkpoint_id(&exec_84.agent_stdout)
+        .ok_or_else(|| format!("84) checkpoint_id 를 찾을 수 없다: {:?}", exec_84.agent_stdout))?;
+    let result_84 = std::fs::read_to_string(
+        checkpoint_root_84
+            .path()
+            .join(&checkpoint_id_84)
+            .join("workload-result.json"),
+    )
+    .map_err(|error| format!("84) workload-result.json 읽기 실패: {error}"))?;
+    if !result_84.contains("\"exit_code\": 7") {
+        return Err(format!(
+            "84) 실패한 종료 코드가 결과 파일에 남지 않았다: {result_84:?}"
+        ));
+    }
+    report.push_str(
+        "84) 종료 코드 7 로 실패한 실행도 산출물과 결과 파일이 남고 exit_code 가 기록됨\n",
+    );
+
     Ok(report)
 }
 

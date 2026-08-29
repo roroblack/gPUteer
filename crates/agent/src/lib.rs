@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gputeer_checkpoint::durability::record_initial_state;
+use gputeer_checkpoint::writer::{manifest_for, write_checkpoint};
 pub mod exec;
 
 use gputeer_crypto::{
@@ -635,7 +636,8 @@ fn run_one_connection(
     //
     //   ACK·checkpoint **전에** 한다 — 실행 지시를 신뢰할 수 없으면
     //   시작 사실조차 남기지 않는다.
-    if let Some(spec) = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)? {
+    let workload_spec = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)?;
+    if let Some(spec) = workload_spec.as_ref() {
         println!(
             "MANIFEST_ACCEPTED job_id={} entrypoint={} args={} env_vars={}",
             spec.job_id,
@@ -643,19 +645,45 @@ fn run_one_connection(
             spec.args.len(),
             spec.env_vars.len()
         );
+    }
 
-        // ★ 실제 실행. 여기가 이 저장소에서 남의 코드를 처음으로
-        //   돌리는 지점이다 — 게이트는 `exec.rs` 가 갖고 있다.
-        //
-        //   opt-in 이 꺼져 있으면 `NotOptedIn` 이 오는데, 그건 오류가
-        //   아니라 **기본 동작**이므로 로그만 남기고 계속 진행한다.
-        //   나머지 오류는 전부 fail-closed 로 종료한다 — "실행하려 했는데
-        //   못 했다" 를 성공으로 세지 않는다.
+    // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
+    // 시작 사실을 durable artifact로 남긴다. 디렉터리 생성 또는
+    // record_initial_state()가 실패하면 여기서 fail-closed하여 ACK를
+    // 보내지 않는다. record_initial_state()는 내부 write_once()의
+    // 동일 내용 Ok(false) 멱등 동작을 그대로 상속한다.
+    let checkpoint_id = record_start_checkpoint(
+        &config.checkpoint_root,
+        &held_lease.job_id,
+        &grant.attempt_id,
+        &grant.grant_id,
+    )?;
+    println!(
+        "JOB_STARTED checkpoint_id={} job_id={} attempt_id={} grant_id={} state=WRITING",
+        checkpoint_id, held_lease.job_id, grant.attempt_id, grant.grant_id
+    );
+
+    // ★ 실제 실행은 **시작 마커 뒤**에 온다.
+    //
+    //   순서를 바꾸면 실행 중 이 프로세스가 죽었을 때 남은 것이
+    //   아무것도 없다 — 남의 PC 에서 남의 코드를 돌렸는데 그
+    //   사실을 기록한 데가 없는 상태다. 마커가 먼저 있어야 부팅 시
+    //   `startup_gc()` 가 그 PARTIAL 디렉터리를 보고 정리한다(`DoD-33`).
+    if let Some(spec) = workload_spec.as_ref() {
+        // 자식의 출력을 받을 별도 작업 디렉터리. 체크포인트
+        // 디렉터리 안에 남의 프로세스가 직접 쓰게 하지 않는다 —
+        // 그 네임스페이스는 `write_once()` 가 소유한다(`DoD-21`).
+        let run_dir = config.checkpoint_root.join(".run").join(&checkpoint_id);
+        fs::create_dir_all(&run_dir).map_err(|error| {
+            format!("작업 출력 디렉터리 생성 실패({run_dir:?}): {error}")
+        })?;
+
         let policy = exec::ExecutionPolicy {
             opted_in: config.execute_workload,
             commit_limit_bytes: config.workload_commit_limit_bytes,
+            capture_dir: Some(run_dir.clone()),
         };
-        match exec::execute(&spec, policy) {
+        match exec::execute(spec, policy) {
             Ok(outcome) => {
                 println!(
                     "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
@@ -664,6 +692,22 @@ fn run_one_connection(
                     outcome.commit_limit_bytes,
                     outcome.peak_commit_bytes
                 );
+
+                let files = collect_workload_artifacts(&run_dir, spec, &outcome)?;
+                finalize_workload_checkpoint(
+                    &config.checkpoint_root,
+                    &checkpoint_id,
+                    &held_lease,
+                    &grant.attempt_id,
+                    &files,
+                )?;
+                println!(
+                    "WORKLOAD_ARTIFACTS checkpoint_id={} files={} bytes={}",
+                    checkpoint_id,
+                    files.len(),
+                    files.iter().map(|(_, data)| data.len()).sum::<usize>()
+                );
+
                 // ★ 종료 코드 0 과 그 외를 **구분해서** 보고한다.
                 //   `state-machines.md` §3 이 WORKLOAD_EXITED_OK 와
                 //   WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
@@ -686,22 +730,6 @@ fn run_one_connection(
             Err(other) => return Err(other.to_string()),
         }
     }
-
-    // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
-    // 시작 사실을 durable artifact로 남긴다. 디렉터리 생성 또는
-    // record_initial_state()가 실패하면 여기서 fail-closed하여 ACK를
-    // 보내지 않는다. record_initial_state()는 내부 write_once()의
-    // 동일 내용 Ok(false) 멱등 동작을 그대로 상속한다.
-    let checkpoint_id = record_start_checkpoint(
-        &config.checkpoint_root,
-        &held_lease.job_id,
-        &grant.attempt_id,
-        &grant.grant_id,
-    )?;
-    println!(
-        "JOB_STARTED checkpoint_id={} job_id={} attempt_id={} grant_id={} state=WRITING",
-        checkpoint_id, held_lease.job_id, grant.attempt_id, grant.grant_id
-    );
 
     // RevokeLeaseNotice는 coordinator_device_id가 아닌 lease_id를
     // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
@@ -1207,6 +1235,91 @@ pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> St
         .collect::<String>();
     format!("start-{hex}")
 }
+
+/// 자식이 남긴 출력과 실행 결과를 체크포인트에 넣을 바이트로 모은다.
+///
+/// # 없는 파일을 빈 파일로 둔갓하지 않는다
+///
+/// 자식이 아무것도 안 출력하면 `CreateFileW(CREATE_ALWAYS)` 가 만든
+/// **빈 파일**이 있다. 그건 "출력이 없었다" 라는 사실이므로
+/// 그대로 남긴다. 반면 파일 자체가 **없으면** 캐프처를 안 한
+/// 경우이므로 목록에서 뺀다 — 둘을 같은 것으로 만들면 관측
+/// 결과와 미관측을 구분할 수 없다(`CLAUDE.md` §1 — 모르면 비워 둔다).
+fn collect_workload_artifacts(
+    run_dir: &std::path::Path,
+    spec: &gputeer_protocol::execution_spec::ExecutionSpec,
+    outcome: &exec::ExecutionOutcome,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+
+    for name in [exec::STDOUT_FILENAME, exec::STDERR_FILENAME] {
+        let path = run_dir.join(name);
+        match fs::read(&path) {
+            Ok(data) => files.push((name.to_string(), data)),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("작업 출력 읽기 실패({path:?}): {error}"));
+            }
+        }
+    }
+
+    // ★ 관측된 사실만 적는다. `peak_commit_bytes` 가
+    //   `commit_limit_bytes` 를 넘을 수 있는 것은 결함이 아니라
+    //   Job Object 가 소프트 제한이기 때문이다(`ADR-027` 실측).
+    //   그래서 값을 가공하지 않고 그대로 남긴다.
+    let result = serde_json::json!({
+        "job_id": spec.job_id,
+        "entrypoint": spec.entrypoint,
+        "exit_code": outcome.exit_code,
+        "commit_limit_bytes": outcome.commit_limit_bytes,
+        "peak_commit_bytes": outcome.peak_commit_bytes,
+    });
+    let mut result_bytes = serde_json::to_vec_pretty(&result)
+        .map_err(|error| format!("작업 결과를 JSON 으로 바꾸지 못했다: {error}"))?;
+    result_bytes.push(b'\n');
+    files.push((WORKLOAD_RESULT_FILENAME.to_string(), result_bytes));
+
+    // 매니페스트 해시는 목록 순서에 의존하므로 정렬해 고정한다.
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(files)
+}
+
+/// 데이터 파일을 쓰고 **마지막에** 매니페스트를 확정한다.
+///
+/// 순서는 `write_checkpoint()` 가 갖고 있다 — `CLAUDE.md` §0.3 의
+/// "매니페스트는 모든 데이터 파일이 확정된 뒤 마지막에 쓴다" 를
+/// 이미 구현해둔 경로라 여기서 손으로 다시 짜지 않는다.
+///
+/// ★ **이 경로가 도달하는 `COMMITTED` 는 복제본 수를 뜻하지 않는다.**
+///   `write_checkpoint()` 는 로컬 단일 본을 쓰고 그 상태로 옮긴다.
+///   `CLAUDE.md` §0.3 은 durability 정책이 요구하는 replica 수를
+///   채워야 `COMMITTED` 라고 정하며, 그 판정은
+///   `evaluate_effective_replicas()`(`DoD-54`)가 하고 그 입력을 만드는
+///   `ReplicaAck` 전송 경로는 아직 없다. 즉 지금 이 값은
+///   **로컬 확정**일 뿐이며, 그 이상을 주장하지 않는다.
+fn finalize_workload_checkpoint(
+    checkpoint_root: &std::path::Path,
+    checkpoint_id: &str,
+    lease: &pb::Lease,
+    attempt_id: &str,
+    files: &[(String, Vec<u8>)],
+) -> Result<(), String> {
+    let manifest = manifest_for(
+        checkpoint_id,
+        &lease.job_id,
+        attempt_id,
+        0,
+        lease.fence_epoch,
+        files,
+    );
+    write_checkpoint(checkpoint_root, &manifest, files, 0).map_err(|error| {
+        format!("작업 결과 체크포인트 확정 실패(checkpoint_id={checkpoint_id}): {error}")
+    })?;
+    Ok(())
+}
+
+/// 작업 실행 결과를 적는 파일 이름.
+const WORKLOAD_RESULT_FILENAME: &str = "workload-result.json";
 
 fn record_start_checkpoint(
     checkpoint_root: &std::path::Path,
