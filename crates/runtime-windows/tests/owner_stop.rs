@@ -88,63 +88,107 @@ fn a_blocked_wait_can_be_released_from_another_thread() {
 
 /// 손자 프로세스까지 죽는가.
 ///
-/// `cmd /c start /b cmd /c timeout ...` 로 손자를 만든다. 부모
-/// `cmd` 는 곧 끝나고 손자만 남으므로, Job 종료가 트리 전체에
-/// 닿지 않으면 손자가 살아남는다.
+/// `cmd /c start /b ping ...` 로 손자를 만든다. 부모 `cmd` 는 곧
+/// 끝나므로 남는 것은 손자뿐이다.
 ///
-/// ★ 손자가 **실제로 생겼는지** 먼저 확인한다. 안 생겼는데 "죽었다"
-///   고 보면 이 테스트는 아무것도 증명하지 않는다.
+/// ★ **Job 소속 PID 로 센다.** 처음엔 시스템 전체의 `PING.EXE` 개수를
+///   셌는데, 독립 검수가 "관측한 프로세스가 이 테스트가 만든 손자라는
+///   귀속이 엄밀하지 않다" 고 지적했다 — 다른 사람이 돌린 ping 이
+///   섞이고, 그것이 검사 도중 자연 종료하면 거짓 통과도 가능하다.
+///   Job 멤버십은 그 모호함이 없다.
 #[test]
 fn terminating_the_job_kills_grandchildren_too() {
-    // ★ `start` 에 제목을 주지 않는다. 처음엔 마커 문자열을 제목으로
-    //   넘겼는데, `start` 는 따옴표 없는 첫 토큰을 **제목이 아니라
-    //   실행 파일**로 해석해서 "gputeer_stop_probe_NNN 을(를) 찾을 수
-    //   없습니다" 로 실패했다 — 손자가 아예 안 떴다.
-    //   `/b` 를 첫 인자로 두면 그 다음 토큰이 실행 파일이 된다.
-    //
-    //   부모 `cmd` 는 `start /b` 직후 끝나므로, 남는 것은 손자 `ping`
-    //   하나다. 그게 이 테스트가 보려는 대상이다.
     let child = spawn(&["/c", "start", "/b", "ping", "-n", "99999", "127.0.0.1"]);
     let stopper = child.stopper().expect("stopper 생성");
 
-    // 손자가 뜰 시간을 준다. 뜬 것을 확인하지 못하면 전제가 깨진 것이다.
-    let mut alive_before = 0;
+    // 손자가 Job 안에 들어올 시간을 준다.
+    let mut before = Vec::new();
     for _ in 0..40 {
         std::thread::sleep(Duration::from_millis(100));
-        alive_before = count_ping_processes();
-        if alive_before >= 1 {
+        before = child.process_ids().expect("job pid 목록");
+        if before.len() >= 1 {
             break;
         }
     }
     assert!(
-        alive_before >= 1,
-        "손자(ping)가 뜨지 않았다 — 이 테스트의 전제가 깨졌다"
+        !before.is_empty(),
+        "Job 안에 프로세스가 하나도 없다 — 이 테스트의 전제가 깨졌다"
     );
 
-    // ★ 부모 `cmd` 는 `start /b` 직후 끝난다. 즉 지금 살아 있는 건
-    //   손자뿐이다 — 그것을 죽이는지가 이 테스트의 전부다. 종료
-    //   직전에 한 번 더 확인해 "이미 죽은 걸 죽였다" 를 막는다.
+    // 종료 직전에 한 번 더 확인해 "이미 죽은 걸 죽였다" 를 막는다.
+    let alive = child.process_ids().expect("job pid 목록");
     assert!(
-        count_ping_processes() >= 1,
-        "종료 직전에 손자가 이미 사라졌다 — 검사가 공허해진다"
+        !alive.is_empty(),
+        "종료 직전에 Job 이 이미 비었다 — 검사가 공허해진다"
     );
 
     stopper.terminate(1).expect("terminate");
 
-    // 종료가 반영될 시간을 준다.
-    let mut after = alive_before;
+    let mut after = alive;
     for _ in 0..50 {
         std::thread::sleep(Duration::from_millis(100));
-        after = count_ping_processes();
-        if after == 0 {
+        after = child.process_ids().expect("job pid 목록");
+        if after.is_empty() {
             break;
         }
     }
-    assert_eq!(
-        after, 0,
-        "Job 을 종료했는데 손자 ping 이 {after}개 살아있다 — \
+    assert!(
+        after.is_empty(),
+        "Job 을 종료했는데 소속 프로세스가 {after:?} 남았다 — \
          손자가 살아남으면 GPU 는 여전히 잡혀 있다"
     );
+}
+
+/// ★ 핸들을 전부 놓으면 자식이 죽는가 — 검수가 찾은 차단 결함의 회귀 테스트.
+///
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 가 없으면 Windows 는 마지막 Job
+/// 핸들을 닫아도 소속 프로세스를 죽이지 않는다. 그러면 기동 직후 어떤
+/// 이유로든(정지 손잡이 생성 실패·호출부 panic·에이전트 종료) 핸들만
+/// 사라지고 **남의 코드는 남의 PC 에서 계속 돌며 GPU 를 잡고 있는**
+/// 상태가 된다 — 제어할 핸들은 없으면서.
+#[test]
+fn dropping_every_handle_kills_the_workload() {
+    let pids;
+    {
+        let child = spawn(&["/c", "ping", "-n", "99999", "127.0.0.1"]);
+        // 실제로 떴는지 먼저 확인한다 — 안 떴으면 이 검사는 공허하다.
+        let mut seen = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(Duration::from_millis(100));
+            seen = child.process_ids().expect("job pid 목록");
+            if !seen.is_empty() {
+                break;
+            }
+        }
+        assert!(!seen.is_empty(), "자식이 뜨지 않았다 — 전제가 깨졌다");
+        pids = seen;
+        // 여기서 child 가 drop 되며 process/job 핸들이 모두 닫힌다.
+    }
+
+    // 핸들이 닫힌 뒤 실제로 죽었는가. Job 핸들이 없으므로 PID 로 확인한다.
+    let mut alive = pids.clone();
+    for _ in 0..50 {
+        std::thread::sleep(Duration::from_millis(100));
+        alive = pids.iter().copied().filter(|pid| pid_is_alive(*pid)).collect();
+        if alive.is_empty() {
+            break;
+        }
+    }
+    assert!(
+        alive.is_empty(),
+        "핸들을 전부 놓았는데 {alive:?} 가 살아있다 — 제어할 수 없는 고아 작업이 남았다"
+    );
+}
+
+/// PID 하나가 아직 살아 있는가.
+fn pid_is_alive(pid: u32) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .expect("tasklist");
+    // tasklist 는 없는 PID 에 대해 "작업이 없습니다" 를 내므로, PID
+    // 문자열이 보이면 살아 있는 것이다.
+    String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
 }
 
 /// 이미 끝난 Job 에 다시 불러도 실패하지 않는가(멱등).
@@ -184,22 +228,3 @@ fn stopper_outlives_the_child_handle() {
         .expect("child drop 뒤 손잡이가 죽었다 — 핸들 수명이 분리되지 않았다");
 }
 
-/// 이 테스트가 띄운 `PING.EXE` 프로세스 수.
-///
-/// ★ `cmd.exe` 를 세지 않는다. 이 기계에서 다른 이유로 `cmd` 가
-///   떠 있으면 절대 수가 흔들려 판정이 흐려진다. `ping -n 99999` 는
-///   평범한 상황에 떠 있지 않으므로 신호가 훨씬 깨끗하다.
-///
-///   완벽히 격리되지는 않는다 — 누군가 동시에 `ping` 을 돌리면
-///   0 이 안 될 수 있다. 그 경우 이 테스트는 **실패**하지 통과하지
-///   않으므로, 거짓 통과가 아니라 거짓 실패 쪽으로 기운다.
-fn count_ping_processes() -> usize {
-    let output = std::process::Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq PING.EXE", "/NH"])
-        .output()
-        .expect("tasklist");
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| line.to_uppercase().contains("PING.EXE"))
-        .count()
-}

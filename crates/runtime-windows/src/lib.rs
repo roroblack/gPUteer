@@ -64,6 +64,7 @@ mod windows_impl {
         TerminateJobObject,
         SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
@@ -178,6 +179,49 @@ mod windows_impl {
             Ok((info.PeakJobMemoryUsed, info.JobMemoryLimit))
         }
 
+        /// 이 Job 에 지금 속한 프로세스 ID 들.
+        ///
+        /// ★ 테스트가 "이 테스트가 만든 프로세스" 를 **정확히** 가리키게
+        ///   하려고 만들었다(2026-08-29, 독립 검수 지적). 시스템 전체의
+        ///   `PING.EXE` 개수를 세면 다른 사람이 돌린 ping 이 섞여
+        ///   귀속이 엄밀하지 않다.
+        pub fn process_ids(&self) -> std::io::Result<Vec<u32>> {
+            // 목록은 가변 길이라 넉넉히 잡는다. 이 저장소의 작업은
+            // 프로세스 트리가 작다 — 넘치면 오류로 알린다.
+            const CAPACITY: usize = 256;
+            #[repr(C)]
+            struct ProcessIdList {
+                number_of_assigned_processes: u32,
+                number_of_process_ids_in_list: u32,
+                process_id_list: [usize; CAPACITY],
+            }
+            let mut info: ProcessIdList = unsafe { std::mem::zeroed() };
+            let mut returned = 0u32;
+            let ok = unsafe {
+                windows_sys::Win32::System::JobObjects::QueryInformationJobObject(
+                    self.job,
+                    windows_sys::Win32::System::JobObjects::JobObjectBasicProcessIdList,
+                    &mut info as *mut _ as *mut _,
+                    size_of::<ProcessIdList>() as u32,
+                    &mut returned,
+                )
+            };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let count = info.number_of_process_ids_in_list as usize;
+            if count > CAPACITY {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::OutOfMemory,
+                    "Job 의 프로세스 수가 이 버퍼보다 많다",
+                ));
+            }
+            Ok(info.process_id_list[..count]
+                .iter()
+                .map(|id| *id as u32)
+                .collect())
+        }
+
         /// 이 자식을 **다른 스레드에서** 강제 종료할 수 있는 손잡이를 만든다.
         ///
         /// # 왜 이게 있어야 하는가
@@ -242,6 +286,16 @@ mod windows_impl {
     unsafe impl Sync for JobStopper {}
 
     impl JobStopper {
+        /// 테스트 전용 — 아무 Job 도 가리키지 않는 손잡이.
+        ///
+        /// ★ `terminate()` 는 반드시 **실패**한다. 성공을 돌려주면
+        ///   이걸 쓰는 상위 테스트가 "멈췄다" 를 통과시켜 공허해진다.
+        pub fn inert_for_test() -> Self {
+            Self {
+                job: std::ptr::null_mut(),
+            }
+        }
+
         /// Job 에 속한 **모든** 프로세스를 즉시 끝낸다.
         ///
         /// ★ 이건 정중한 요청이 아니라 강제 종료다. 자식은 정리할
@@ -253,6 +307,12 @@ mod windows_impl {
         ///
         /// 이미 끝난 Job 에 불러도 성공한다(멱등).
         pub fn terminate(&self, exit_code: u32) -> std::io::Result<()> {
+            if self.job.is_null() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "이 손잡이는 어떤 Job 도 가리키지 않는다",
+                ));
+            }
             let ok = unsafe { TerminateJobObject(self.job, exit_code) };
             if ok == 0 {
                 return Err(std::io::Error::last_os_error());
@@ -578,9 +638,24 @@ mod windows_impl {
             return Err(err);
         }
 
+        // ★ `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 를 반드시 같이 건다
+        //   (2026-08-29, 독립 검수가 찾은 차단 결함).
+        //
+        //   이 플래그가 없으면 Windows 는 **마지막 Job 핸들을 닫아도
+        //   소속 프로세스를 죽이지 않는다.** 그러면 기동 직후 어떤
+        //   이유로든(정지 손잡이 생성 실패·호출부 panic·에이전트
+        //   종료) 핸들만 사라지고 **남의 코드는 남의 PC 에서
+        //   계속 돌며 GPU 를 잡고 있는** 상태가 된다 — 제어할
+        //   핸들은 없으면서. `CLAUDE.md` §0.1 이 가장 앞에 금지하는
+        //   상태다.
+        //
+        //   이 플래그로 정리가 **RAII 로** 보장된다 — 오류 경로마다
+        //   손으로 죽이는 것을 기억할 필요가 없다. 그래도 명시적인
+        //   종료를 병행한다(아래 `stopper()` 실패 경로) — 의도가 코드에
+        //   드러나야 다음 사람이 지우지 않는다.
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation = JOBOBJECT_BASIC_LIMIT_INFORMATION {
-            LimitFlags: JOB_OBJECT_LIMIT_JOB_MEMORY,
+            LimitFlags: JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             ..unsafe { std::mem::zeroed() }
         };
         limits.JobMemoryLimit = commit_limit;

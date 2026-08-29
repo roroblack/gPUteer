@@ -1,0 +1,111 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>gPUteer — 내 GPU</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 60rem; }
+  h1 { font-size: 1.3rem; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { border: 1px solid #ccc; padding: .5rem .6rem; text-align: left; font-size: .9rem; }
+  th { background: #f4f4f4; }
+  .loss { font-weight: 600; }
+  .unknown { color: #b00; }
+  .empty { color: #666; margin-top: 1rem; }
+  button { padding: .4rem .8rem; cursor: pointer; }
+  #error { color: #b00; margin-top: 1rem; white-space: pre-wrap; }
+</style>
+
+<h1>내 GPU 에서 도는 작업</h1>
+<p>이 화면은 이 컴퓨터에서만 열린다. 네트워크가 끊겨도, 중개 서버가 죽어도 동작한다.</p>
+
+<div id="content"><p class="empty">불러오는 중…</p></div>
+<div id="error"></div>
+
+<script>
+  // ★ 토큰은 서버가 목록과 함께 준다. 이 페이지는 같은 출처에서만
+  //   열리므로 토큰을 받을 수 있고, 다른 사이트는 CORS 때문에
+  //   이 응답을 읽지 못한다.
+  let token = null;
+
+  function fmtDuration(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return s + "초";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "분 " + (s % 60) + "초";
+    return Math.floor(m / 60) + "시간 " + (m % 60) + "분";
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/workloads", { cache: "no-store" });
+      if (!res.ok) throw new Error("목록을 못 받았다: " + res.status);
+      const data = await res.json();
+      token = data.token;
+      render(data.workloads);
+      document.getElementById("error").textContent = "";
+    } catch (e) {
+      document.getElementById("error").textContent = String(e);
+    }
+  }
+
+  function render(items) {
+    const box = document.getElementById("content");
+    if (!items.length) {
+      box.innerHTML = '<p class="empty">지금 도는 작업이 없다.</p>';
+      return;
+    }
+    const table = document.createElement("table");
+    table.innerHTML =
+      "<tr><th>누가</th><th>어느 작업</th><th>무엇을</th>" +
+      "<th>언제부터</th><th>지금 멈추면 잃는 것</th><th></th></tr>";
+    for (const it of items) {
+      const row = table.insertRow();
+      // textContent 로만 넣는다 — 제출자가 정한 문자열이 화면에서
+      // 코드로 해석되면 안 된다.
+      row.insertCell().textContent = it.submitter_device_id;
+      row.insertCell().textContent = it.job_id;
+      row.insertCell().textContent = it.entrypoint;
+      row.insertCell().textContent = fmtDuration(it.running_ms) + " 전";
+
+      const loss = row.insertCell();
+      loss.className = "loss";
+      // ★ 확정된 체크포인트가 없으면 그 사실을 반드시 함께 보인다.
+      //   숫자만 보면 "조금만 잃는다" 로 오해한다.
+      loss.textContent = it.nothing_committed_yet
+        ? "최대 " + fmtDuration(it.lost_ms) + " (저장된 지점이 아직 없다 — 처음부터 다시)"
+        : "최대 " + fmtDuration(it.lost_ms);
+      if (it.nothing_committed_yet) loss.classList.add("unknown");
+
+      const action = row.insertCell();
+      const button = document.createElement("button");
+      button.textContent = "지금 비우기";
+      button.onclick = () => stop(it);
+      action.appendChild(button);
+    }
+    box.replaceChildren(table);
+  }
+
+  async function stop(item) {
+    const lossText = item.nothing_committed_yet
+      ? "저장된 지점이 아직 없어 처음부터 다시 해야 한다 (약 " + fmtDuration(item.lost_ms) + " 진행분)"
+      : "최대 " + fmtDuration(item.lost_ms) + " 진행분을 잃는다";
+    // ★ 손실 범위를 누르기 전에 다시 보여준다(§0.1).
+    if (!confirm(item.job_id + " 를 지금 멈춘다.\n" + lossText + "\n\n계속할까?")) return;
+    try {
+      const res = await fetch("/api/stop", {
+        method: "POST",
+        headers: { "x-gputeer-owner-token": token },
+        body: item.attempt_id,
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text);
+      document.getElementById("error").textContent = "";
+    } catch (e) {
+      // 실패를 조용히 넘기지 않는다 — 소유자가 멈춘 줄 알면 안 된다.
+      document.getElementById("error").textContent = "멈추지 못했다: " + String(e);
+    }
+    refresh();
+  }
+
+  refresh();
+  setInterval(refresh, 2000);
+</script>

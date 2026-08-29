@@ -21,6 +21,7 @@ use std::time::Duration;
 use gputeer_checkpoint::durability::record_initial_state;
 use gputeer_checkpoint::writer::{manifest_for, write_checkpoint};
 pub mod exec;
+pub mod owner_panel;
 
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, FramingError,
@@ -129,6 +130,12 @@ pub struct AgentConfig {
     pub execute_workload: bool,
     /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
     pub workload_commit_limit_bytes: u64,
+    /// Owner Panel 이 쓸 상태. Agent 가 작업을 시작하면 여기 등록하고
+    /// 끝나면 뺀다.
+    ///
+    /// ★ `Option` 이 아니다. 패널을 안 띄우더라도 상태는 항상 갱신한다 —
+    ///   나중에 패널이 붙었을 때 이미 도는 작업이 안 보이는 일이 없도록.
+    pub owner_panel_state: owner_panel::OwnerPanelState,
     pub coordinator_device_id: String,
     pub agent_device_id: String,
     /// ★ 테스트 전용 — `crates/coordinator/src/lib.rs::CoordinatorConfig::corrupt_own_signature`
@@ -636,8 +643,8 @@ fn run_one_connection(
     //
     //   ACK·checkpoint **전에** 한다 — 실행 지시를 신뢰할 수 없으면
     //   시작 사실조차 남기지 않는다.
-    let workload_spec = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)?;
-    if let Some(spec) = workload_spec.as_ref() {
+    let workload = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)?;
+    if let Some(spec) = workload.as_ref().map(|w| &w.spec) {
         println!(
             "MANIFEST_ACCEPTED job_id={} entrypoint={} args={} env_vars={}",
             spec.job_id,
@@ -669,7 +676,8 @@ fn run_one_connection(
     //   아무것도 없다 — 남의 PC 에서 남의 코드를 돌렸는데 그
     //   사실을 기록한 데가 없는 상태다. 마커가 먼저 있어야 부팅 시
     //   `startup_gc()` 가 그 PARTIAL 디렉터리를 보고 정리한다(`DoD-33`).
-    if let Some(spec) = workload_spec.as_ref() {
+    if let Some(loaded) = workload.as_ref() {
+        let spec = &loaded.spec;
         // 자식의 출력을 받을 별도 작업 디렉터리.
         //
         // ★ **체크포인트 루트 안에 두지 않는다.** 두 가지 이유다.
@@ -713,6 +721,9 @@ fn run_one_connection(
             &held_lease,
             &grant.attempt_id,
             &run_dir,
+            &config.owner_panel_state,
+            &loaded.submitter_device_id,
+            clock.now_unix_ms(),
         );
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
@@ -1138,7 +1149,7 @@ fn verify_nested_manifest(
     config: &AgentConfig,
     now_unix_ms: u64,
     replay: &mut InMemoryReplayGuard,
-) -> Result<Option<gputeer_protocol::execution_spec::ExecutionSpec>, String> {
+) -> Result<Option<VerifiedWorkload>, String> {
     let Some(manifest) = grant.manifest.as_ref() else {
         return Ok(None);
     };
@@ -1188,7 +1199,21 @@ fn verify_nested_manifest(
 
     let spec = gputeer_protocol::execution_spec::derive_execution_spec(&verified)
         .map_err(|e| format!("MANIFEST_REJECTED: 실행 지시를 만들 수 없다: {e}"))?;
-    Ok(Some(spec))
+    // ★ 제출자 신원을 여기서 같이 꺼낸다. `ExecutionSpec` 에는 없는데,
+    //   Owner Panel 은 소유자에게 **누가** 내 GPU 를 쓰는지 보여야
+    //   한다(`CLAUDE.md` §0.1). 검증을 통과한 뒤에만 읽는다.
+    Ok(Some(VerifiedWorkload {
+        submitter_device_id: verified.get().submitter_device_id.clone(),
+        spec,
+    }))
+}
+
+/// 검증을 통과한 실행 지시와, 그것을 낸 사람.
+struct VerifiedWorkload {
+    spec: gputeer_protocol::execution_spec::ExecutionSpec,
+    /// 소유자 화면에 보여줄 제출자. `ExecutionSpec` 에는 없다 —
+    /// 실행에는 필요 없지만 **소유자에게는 필요한** 사실이다.
+    submitter_device_id: String,
 }
 
 fn verify_and_record_lease(
@@ -1293,12 +1318,39 @@ fn run_and_capture_workload(
     lease: &pb::Lease,
     attempt_id: &str,
     run_dir: &std::path::Path,
+    panel: &owner_panel::OwnerPanelState,
+    submitter_device_id: &str,
+    started_at_unix_ms: u64,
 ) -> Result<Option<WorkloadReport>, String> {
-    let outcome = match exec::execute(spec, policy) {
+    // ★ 자식이 뜨는 **즉시** 소유자 화면에 올린다. `execute()` 가
+    //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
+    //   소유자는 도는 동안 멈출 수 있어야 한다(`CLAUDE.md` §0.1).
+    let outcome = match exec::execute_with_control(spec, policy, |stopper| {
+        panel.register(owner_panel::RunningWorkload {
+            job_id: spec.job_id.clone(),
+            attempt_id: attempt_id.to_string(),
+            submitter_device_id: submitter_device_id.to_string(),
+            started_at_unix_ms,
+            entrypoint: spec.entrypoint.clone(),
+            // 이 조각에는 실행 중 체크포인트가 없다 — 산출물은 끝난 뒤에
+            // 확정된다. 그러므로 도는 동안은 "확정된 것이 하나도 없다"
+            // 가 사실이고, 화면도 그렇게 보여야 한다.
+            last_checkpoint_at_unix_ms: None,
+            stopper,
+        });
+    }) {
         Ok(outcome) => outcome,
         Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
-        Err(other) => return Err(other.to_string()),
+        Err(other) => {
+            // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
+            // 소유자 화면에 영원히 남는다.
+            panel.unregister(attempt_id);
+            return Err(other.to_string());
+        }
     };
+    // 프로세스는 끝났다. 산출물 확정이 남았지만 **멈출 대상은 이미
+    // 없으므로** 화면에서 뺀다 — 못 멈추는 정지 버튼을 보이지 않는다.
+    panel.unregister(attempt_id);
     println!(
         "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
         spec.job_id, outcome.exit_code, outcome.commit_limit_bytes, outcome.peak_commit_bytes
@@ -1647,6 +1699,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             None => None,
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+        owner_panel_state: owner_panel::OwnerPanelState::new(),
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
         // `RAM 상한 - 2000MiB` 로 간접 제한된다(ADR-027) — 이 값은
         // 실행 자체를 증명하기 위한 최소값이고 정책이 아니다.
@@ -1866,6 +1919,7 @@ mod tests {
             coordinator_verifying_key: coordinator_key.verifying_key(),
             submitter_verifying_key: None,
             execute_workload: false,
+            owner_panel_state: owner_panel::OwnerPanelState::new(),
             workload_commit_limit_bytes: 256 * 1024 * 1024,
             coordinator_device_id: coordinator_device_id.into(),
             agent_device_id: agent_device_id.into(),

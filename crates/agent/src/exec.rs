@@ -154,6 +154,18 @@ impl WorkloadStopper {
     ///   (예: `cmd /c python train.py`) 그 손자도 죽여야 GPU 가 실제로
     ///   비워진다 — 실측으로 확인했다(`owner_stop.rs`).
     ///
+    /// 테스트 전용 — 아무것도 안 멈추는 손잡이.
+    ///
+    /// ★ `stop()` 은 **성공을 돌려주지 않는다.** 멈춘 척하면 그걸 쓰는
+    ///   테스트가 "멈췄다" 를 통과시켜 공허해진다.
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self {
+            #[cfg(windows)]
+            inner: gputeer_runtime_windows::JobStopper::inert_for_test(),
+        }
+    }
+
     /// 이미 끝난 작업에 불러도 성공한다. 소유자가 정지 버튼을 두 번
     /// 누르는 것은 정상적인 일이다.
     pub fn stop(&self) -> Result<(), ExecutionError> {
@@ -326,10 +338,27 @@ mod platform {
         match child.stopper() {
             Ok(inner) => on_started(super::WorkloadStopper { inner }),
             Err(error) => {
+                // ★ 여기서 그냥 반환하면 **자식이 계속 돈다**
+                //   (2026-08-29, 독립 검수가 찾은 차단 결함).
+                //   `ConstrainedChild::drop` 은 핸들만 닫는데, Windows 는
+                //   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 없이는 핸들을
+                //   닫아도 소속 프로세스를 안 죽인다. 그 플래그를
+                //   `create_constrained_child` 에 추가했고, 여기서는
+                //   그 RAII 에만 기대지 않고 **명시적으로도** 죽인다 —
+                //   두 겹으로 막아야 "멈출 수 없는 작업은 시작하지
+                //   않는다" 가 참이 된다.
                 let detail = error.to_string();
+                let explicit = match child.stopper() {
+                    // 손잡이를 못 만드는 상황이므로 이 두 번째 시도도
+                    // 실패할 가능성이 높다. 그래도 해 본다.
+                    Ok(stopper) => stopper.terminate(super::EXIT_CODE_OWNER_STOPPED).is_ok(),
+                    Err(_) => false,
+                };
+                drop(child); // KILL_ON_JOB_CLOSE 가 여기서 트리를 끝낸다
                 return Err(ExecutionError::SpawnFailed {
                     detail: format!(
-                        "정지 손잡이를 만들 수 없어 실행을 중단했다 — 멈출 수 없는 작업은 시작하지 않는다: {detail}"
+                        "정지 손잡이를 만들 수 없어 실행을 중단했다(명시적 종료 {},                          Job 닫힘 종료로도 정리) — 멈출 수 없는 작업은 시작하지 않는다: {detail}",
+                        if explicit { "성공" } else { "실패" }
                     ),
                 });
             }
