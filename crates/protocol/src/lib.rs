@@ -10,6 +10,7 @@
 pub mod canonical;
 pub mod constants;
 pub mod fenced_operation;
+pub mod membership;
 pub mod participation;
 pub mod signable;
 pub mod signing;
@@ -28,6 +29,10 @@ pub use signing::{
     signing_input, verify, DerivedMismatch, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard,
     ReplayStoreError,
     Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
+};
+pub use membership::{
+    resolve_device_authorization, DeviceBinding, MemberAuthorization, MemberFact,
+    MemberState, MembershipResolutionError, ViewFreshness,
 };
 pub use participation::{ParticipationModel, ParticipationModelError};
 pub use fenced_operation::{
