@@ -15,3 +15,6 @@ getrandom.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+gputeer-runtime-windows = { path = "../runtime-windows" }

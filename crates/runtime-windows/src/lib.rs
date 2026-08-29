@@ -107,6 +107,34 @@ mod windows_impl {
             Ok(())
         }
 
+        /// 자식의 종료 코드를 읽는다. **`wait()` 이 끝난 뒤에만 부른다.**
+        ///
+        /// ★ 아직 살아 있는 프로세스에 `GetExitCodeProcess` 를 부르면
+        ///   `STILL_ACTIVE`(259)가 돌아온다. 그걸 진짜 종료 코드로 쓰면
+        ///   "259 로 끝났다" 는 거짓 사실이 생기므로, 그 값을 만나면
+        ///   종료 코드가 아니라 **오류**로 보고한다.
+        ///
+        ///   259 로 실제로 끝나는 프로세스와 구분되지 않는다는 한계가
+        ///   있다 — Win32 API 자체의 한계이며 이 함수가 만든 것이 아니다.
+        ///   그래서 `wait()` 뒤에만 부르라는 계약을 문서로 못박는다.
+        pub fn exit_code(&self) -> std::io::Result<u32> {
+            const STILL_ACTIVE: u32 = 259;
+            let mut code: u32 = 0;
+            let ok = unsafe {
+                windows_sys::Win32::System::Threading::GetExitCodeProcess(self.process, &mut code)
+            };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if code == STILL_ACTIVE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "GetExitCodeProcess 가 STILL_ACTIVE(259) 를 반환했다 — wait() 뒤에 불러야 한다",
+                ));
+            }
+            Ok(code)
+        }
+
         /// 이 Job 에 연결된 프로세스들이 지금까지 커밋한 메모리의
         /// 최댓값(`PeakJobMemoryUsed`)과, 걸어 둔 상한(`JobMemoryLimit`)
         /// 을 함께 반환한다 — 실측 검증용(`peak <= limit` 을 확인한다).

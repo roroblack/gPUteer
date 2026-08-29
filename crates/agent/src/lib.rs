@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gputeer_checkpoint::durability::record_initial_state;
+pub mod exec;
+
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, FramingError,
     InMemoryKeyring, InMemoryReplayGuard, IngressMessage, KeyDirectorySource, SigningKey,
@@ -117,6 +119,15 @@ pub struct AgentConfig {
     ///   CLI 로 받는다 — `coordinator_verifying_key` 가 같은 처지인 것과
     ///   같은 단계다.
     pub submitter_verifying_key: Option<VerifyingKey>,
+    /// ★ **명시적 opt-in.** 이걸 켜지 않으면 Agent 는 실행 지시를
+    ///   뽑기만 하고 **프로세스를 띄우지 않는다.**
+    ///
+    ///   `DoD-29` 의 `--i-understand-legacy-mode-is-unsafe` 와 같은
+    ///   패턴이다 — 위험한 기본값을 실수로 켜는 것을 막는다. 다만
+    ///   이건 더 위험하다: 남의 코드를 실제로 실행한다.
+    pub execute_workload: bool,
+    /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
+    pub workload_commit_limit_bytes: u64,
     pub coordinator_device_id: String,
     pub agent_device_id: String,
     /// ★ 테스트 전용 — `crates/coordinator/src/lib.rs::CoordinatorConfig::corrupt_own_signature`
@@ -632,6 +643,48 @@ fn run_one_connection(
             spec.args.len(),
             spec.env_vars.len()
         );
+
+        // ★ 실제 실행. 여기가 이 저장소에서 남의 코드를 처음으로
+        //   돌리는 지점이다 — 게이트는 `exec.rs` 가 갖고 있다.
+        //
+        //   opt-in 이 꺼져 있으면 `NotOptedIn` 이 오는데, 그건 오류가
+        //   아니라 **기본 동작**이므로 로그만 남기고 계속 진행한다.
+        //   나머지 오류는 전부 fail-closed 로 종료한다 — "실행하려 했는데
+        //   못 했다" 를 성공으로 세지 않는다.
+        let policy = exec::ExecutionPolicy {
+            opted_in: config.execute_workload,
+            commit_limit_bytes: config.workload_commit_limit_bytes,
+        };
+        match exec::execute(&spec, policy) {
+            Ok(outcome) => {
+                println!(
+                    "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
+                    spec.job_id,
+                    outcome.exit_code,
+                    outcome.commit_limit_bytes,
+                    outcome.peak_commit_bytes
+                );
+                // ★ 종료 코드 0 과 그 외를 **구분해서** 보고한다.
+                //   `state-machines.md` §3 이 WORKLOAD_EXITED_OK 와
+                //   WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
+                //   (전이 자체는 아직 구현하지 않는다.)
+                if outcome.exit_code == 0 {
+                    println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id);
+                } else {
+                    println!(
+                        "WORKLOAD_RESULT ok=false job_id={} exit_code={}",
+                        spec.job_id, outcome.exit_code
+                    );
+                }
+            }
+            Err(exec::ExecutionError::NotOptedIn) => {
+                println!(
+                    "WORKLOAD_SKIPPED job_id={} reason=not_opted_in",
+                    spec.job_id
+                );
+            }
+            Err(other) => return Err(other.to_string()),
+        }
     }
 
     // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
@@ -1357,6 +1410,13 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             Some(hex) => Some(hex_to_verifying_key(hex)?),
             None => None,
         },
+        execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+        // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
+        // `RAM 상한 - 2000MiB` 로 간접 제한된다(ADR-027) — 이 값은
+        // 실행 자체를 증명하기 위한 최소값이고 정책이 아니다.
+        workload_commit_limit_bytes: flags
+            .u64_opt_flag("--workload-commit-limit-bytes")?
+            .unwrap_or(256 * 1024 * 1024),
         coordinator_device_id: flags.require("--coordinator-device-id")?,
         agent_device_id: flags.require("--agent-device-id")?,
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
@@ -1569,6 +1629,8 @@ mod tests {
             own_seed: agent_seed,
             coordinator_verifying_key: coordinator_key.verifying_key(),
             submitter_verifying_key: None,
+            execute_workload: false,
+            workload_commit_limit_bytes: 256 * 1024 * 1024,
             coordinator_device_id: coordinator_device_id.into(),
             agent_device_id: agent_device_id.into(),
             corrupt_own_signature: false,

@@ -4475,6 +4475,131 @@ pub fn run() -> Result<String, String> {
         "78) 서명이 유효해도 Manifest 의 job_id 가 같은 Grant 의 Lease 와 다르면 Agent 가 거부\n",
     );
 
+    // ── 79~82) 실제 프로세스 실행 ───────────────────────────────────
+    //
+    //   ★ 이 저장소가 **남의 코드를 실제로 돌리는 첫 지점**이다.
+    //     그래서 selftest 도 무해한 대상만 쓴다 — 실행 대상은
+    //     `cmd /c exit N` 이고, 검증하는 것은 "지시대로 떴고 종료
+    //     코드를 관측했는가" 뿐이다.
+    //
+    //   `exec.rs` 의 세 게이트를 각각 증명한다.
+    //     79  opt-in 없으면 실행 안 함
+    //     80  opt-in 하면 실제로 뜨고 exit_code=0 관측
+    //     81  0 이 아닌 종료 코드를 구분해 보고
+    //     82  상한을 못 걸면 실행 자체를 안 함
+    let cmd_exe =
+        std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".to_string());
+    let exec_coordinator_base: Vec<String> = vec![
+        "--manifest-entrypoint".to_string(),
+        cmd_exe.clone(),
+        "--manifest-args".to_string(),
+        "/c,exit,0".to_string(),
+        "--submitter-seed".to_string(),
+        submitter_seed_hex.clone(),
+        "--submitter-device-id".to_string(),
+        fixture.submitter_device_id.to_string(),
+    ];
+    let exec_coordinator_refs: Vec<&str> =
+        exec_coordinator_base.iter().map(String::as_str).collect();
+
+    // 79) opt-in 을 안 켜면 지시만 뽑고 실행하지 않는다.
+    //
+    //     ★ 이게 **기본값**이다. 위험한 동작이 기본으로 켜져 있으면
+    //       안 된다(DoD-29 와 같은 원칙).
+    let exec_79 = run_handshake(&fixture, &exec_coordinator_refs, &manifest_agent_args)?;
+    if !exec_79.agent_success
+        || !exec_79.agent_stdout.contains("WORKLOAD_SKIPPED")
+        || !exec_79.agent_stdout.contains("reason=not_opted_in")
+        || exec_79.agent_stdout.contains("WORKLOAD_EXITED")
+    {
+        return Err(format!(
+            "79) opt-in 없이 실행됐거나 건너뛰기가 보고되지 않았다: stdout={:?} stderr={:?}",
+            exec_79.agent_stdout, exec_79.agent_stderr
+        ));
+    }
+    report.push_str(
+        "79) 실행 opt-in 이 꺼진 기본값에서는 실행 지시를 뽑되 프로세스를 띄우지 않고 WORKLOAD_SKIPPED 보고\n",
+    );
+
+    // 80) opt-in 하면 실제로 프로세스가 뜨고 종료 코드 0 을 관측한다.
+    let exec_on: Vec<&str> = vec![
+        "--submitter-pubkey",
+        fixture.submitter_pub_hex.as_str(),
+        "--i-understand-this-executes-untrusted-code",
+        "true",
+    ];
+    let exec_80 = run_handshake(&fixture, &exec_coordinator_refs, &exec_on)?;
+    if !exec_80.agent_success
+        || !exec_80.agent_stdout.contains("WORKLOAD_EXITED")
+        || !exec_80.agent_stdout.contains("exit_code=0")
+        || !exec_80.agent_stdout.contains("WORKLOAD_RESULT ok=true")
+    {
+        return Err(format!(
+            "80) 실제 프로세스 실행/종료 관측 실패: stdout={:?} stderr={:?}",
+            exec_80.agent_stdout, exec_80.agent_stderr
+        ));
+    }
+    // 상한이 실제로 걸렸는지도 값으로 확인한다 — 0 이면 안 걸린 것이다.
+    if exec_80.agent_stdout.contains("commit_limit_bytes=0") {
+        return Err(format!(
+            "80) 커밋 상한이 0 으로 보고됐다 — 상한 없이 실행됐다: stdout={:?}",
+            exec_80.agent_stdout
+        ));
+    }
+    report
+        .push_str("80) opt-in 시 실제 프로세스가 뜨고 exit_code=0 과 0 이 아닌 커밋 상한을 관측\n");
+
+    // 81) 0 이 아닌 종료 코드를 **구분해서** 보고한다.
+    //
+    //     state-machines.md §3 이 WORKLOAD_EXITED_OK 와
+    //     WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
+    let mut fail_args = exec_coordinator_base.clone();
+    fail_args[3] = "/c,exit,7".to_string();
+    let fail_refs: Vec<&str> = fail_args.iter().map(String::as_str).collect();
+    let exec_81 = run_handshake(&fixture, &fail_refs, &exec_on)?;
+    if !exec_81.agent_stdout.contains("exit_code=7")
+        || !exec_81.agent_stdout.contains("WORKLOAD_RESULT ok=false")
+        || exec_81.agent_stdout.contains("WORKLOAD_RESULT ok=true")
+    {
+        return Err(format!(
+            "81) 0 이 아닌 종료 코드가 성공과 구분되지 않았다: stdout={:?} stderr={:?}",
+            exec_81.agent_stdout, exec_81.agent_stderr
+        ));
+    }
+    report.push_str("81) 종료 코드 7 을 관측해 WORKLOAD_RESULT ok=false 로 성공과 구분\n");
+
+    // 82) 상한을 걸 수 없으면 **실행하지 않는다.**
+    //
+    //     "일단 띄우고 상한은 나중에" 를 하지 않는다는 계약을 고정한다
+    //     (CLAUDE.md §0.4).
+    let no_limit: Vec<&str> = vec![
+        "--submitter-pubkey",
+        fixture.submitter_pub_hex.as_str(),
+        "--i-understand-this-executes-untrusted-code",
+        "true",
+        "--workload-commit-limit-bytes",
+        "0",
+    ];
+    let exec_82 = run_handshake(&fixture, &exec_coordinator_refs, &no_limit)?;
+    let out_82 = format!("{}\n{}", exec_82.agent_stdout, exec_82.agent_stderr);
+    if exec_82.agent_success
+        || !out_82.contains("EXEC_REFUSED:LIMIT_NOT_APPLIED")
+        // ★ 어느 계층이 막았는지까지 구분한다. runtime-windows 도 0 을
+        //   거부하므로("커밋 상한이 0이다"), exec.rs 의 게이트가 실제로
+        //   먼저 막는지 확인하려면 그쪽 메시지를 봐야 한다 —
+        //   뮤테이션으로 이 구분이 없으면 게이트를 지워도 안 잡힘을 확인했다.
+        || !out_82.contains("commit_limit_bytes")
+        || exec_82.agent_stdout.contains("WORKLOAD_EXITED")
+    {
+        return Err(format!(
+            "82) 상한 없이 실행됐거나 거부가 보고되지 않았다: agent_success={} stdout={:?} stderr={:?}",
+            exec_82.agent_success, exec_82.agent_stdout, exec_82.agent_stderr
+        ));
+    }
+    report.push_str(
+        "82) 커밋 상한을 걸 수 없으면(상한 0) 프로세스를 띄우지 않고 EXEC_REFUSED:LIMIT_NOT_APPLIED 로 거부\n",
+    );
+
     Ok(report)
 }
 
