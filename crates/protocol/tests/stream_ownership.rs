@@ -174,6 +174,12 @@ fn every_crate_is_covered_by_ownership_rules() {
     //   (`crates/runtime-policy/src/vram.rs`)을 실제 Windows Job Object
     //   커밋 상한 호출로 연결한다. 소유권 표(`RULE.md:159`)에도 이미
     //   `Runtime | crates/runtime-windows/` 로 예약되어 있었다.
+    //
+    // ★ 2026-08-29 `runtime-nvml` 추가 — `crates/scheduler` 의
+    //   `gpu_scope_candidate()` 가 입력으로 받는 GPU 관측을 실제
+    //   하드웨어(NVML)에서 읽는다. 소유권 표의 `Runtime` 스트림에
+    //   속한다 — 샘드박스·자원 강제 계열이다.
+    //   이 가드가 이번에도 실제로 잡았다(등록 없이 통과하지 않았다).
     const KNOWN: &[&str] = &[
         "protocol",
         "crypto",
@@ -181,6 +187,7 @@ fn every_crate_is_covered_by_ownership_rules() {
         "cli",
         "runtime-policy",
         "runtime-windows",
+        "runtime-nvml",
         "coordinator",
         "agent",
         "scheduler",

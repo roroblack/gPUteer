@@ -4791,8 +4791,33 @@ pub fn run() -> Result<String, String> {
             manifest_83.job_id, manifest_83.fence_epoch
         ));
     }
+    // 작업 디렉터리가 체크포인트 루트를 오염하지 않고, 끝난 뒤
+    // 남지도 않는가.
+    //
+    // ★ 둘 다 진짜 위험이다. 루트 안에 두면 `startup_gc()` 가 그것을
+    //   체크포인트로 오인하고, 안 지우면 제출자의 출력이 남의 PC 에
+    //   쌓인다(`CLAUDE.md` §0.5).
+    let root_entries_83: Vec<String> = std::fs::read_dir(checkpoint_root_83.path())
+        .map_err(|error| format!("83) checkpoint root 읽기 실패: {error}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    if root_entries_83.iter().any(|name| name.contains("run")) {
+        return Err(format!(
+            "83) 작업 디렉터리가 체크포인트 루트 안에 있다 — startup_gc 가 이걸 체크포인트로 오인한다: {root_entries_83:?}"
+        ));
+    }
+    let mut run_root_83 = checkpoint_root_83.path().as_os_str().to_os_string();
+    run_root_83.push(".workload-run");
+    let leftover_83 = std::path::PathBuf::from(run_root_83).join(&checkpoint_id_83);
+    if leftover_83.exists() {
+        return Err(format!(
+            "83) 작업 디렉터리가 끝난 뒤에도 남아 있다 — 제출자 출력이 남의 PC 에 쌓인다: {leftover_83:?}"
+        ));
+    }
+
     report.push_str(
-        "83) 자식 프로세스의 표준 출력이 체크포인트로 회수되고 매니페스트가 실제 해시와 함께 마지막에 확정됨\n",
+        "83) 자식 출력이 체크포인트로 회수·확정되고, 작업 디렉터리는 루트 밖에 있다가 끝난 뒤 사라짐\n",
     );
 
     // 84) 실행이 실패해도 산출물은 남는다.

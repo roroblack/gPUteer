@@ -35,6 +35,7 @@
 use std::process::ExitCode;
 
 mod coordinator_agent_selftest;
+mod gpu_probe;
 mod submit;
 mod selftest;
 
@@ -106,6 +107,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("coordinator-agent-selftest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("gpu-probe") => match gpu_probe::run(&args[1..]) {
+            Ok(report) => {
+                print!("{report}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("gpu-probe 실패: {e}");
                 ExitCode::FAILURE
             }
         },

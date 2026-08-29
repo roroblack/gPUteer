@@ -16,5 +16,6 @@ gputeer-checkpoint = { path = "../checkpoint" }
 gputeer-runtime-policy = { path = "../runtime-policy" }
 gputeer-coordinator = { path = "../coordinator" }
 gputeer-agent = { path = "../agent" }
+gputeer-runtime-nvml = { path = "../runtime-nvml" }
 prost.workspace = true
 tempfile.workspace = true

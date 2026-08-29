@@ -670,10 +670,24 @@ fn run_one_connection(
     //   사실을 기록한 데가 없는 상태다. 마커가 먼저 있어야 부팅 시
     //   `startup_gc()` 가 그 PARTIAL 디렉터리를 보고 정리한다(`DoD-33`).
     if let Some(spec) = workload_spec.as_ref() {
-        // 자식의 출력을 받을 별도 작업 디렉터리. 체크포인트
-        // 디렉터리 안에 남의 프로세스가 직접 쓰게 하지 않는다 —
-        // 그 네임스페이스는 `write_once()` 가 소유한다(`DoD-21`).
-        let run_dir = config.checkpoint_root.join(".run").join(&checkpoint_id);
+        // 자식의 출력을 받을 별도 작업 디렉터리.
+        //
+        // ★ **체크포인트 루트 안에 두지 않는다.** 두 가지 이유다.
+        //   1) 그 네임스페이스는 `write_once()` 가 소유한다(`DoD-21`) —
+        //      남의 프로세스가 직접 쓰게 하면 그 계약이 깨진다.
+        //   2) `startup_gc()` 는 루트 밑 모든 디렉터리를 체크포인트로
+        //      보고 `gc_partial()` 을 돌린다. 지금은 그 함수가 파일만
+        //      지워서 `.run` 이 **우연히** 살아남는데, 우연에 기대는
+        //      설계를 두지 않는다.
+        //
+        //   루트의 **형제 디렉터리**를 쓴다 — 같은 볼륨·같은 권한이라
+        //   새 설정 없이 동작하고, GC 가 스캔하는 범위 밖이다.
+        let run_root = workload_run_root(&config.checkpoint_root);
+        let run_dir = run_root.join(&checkpoint_id);
+        // 이전 실행이 죽으면서 남긴 것이 있으면 먼저 치운다 —
+        // 남은 `stdout.log` 에 자식이 이어서 쓰면 지난번 출력과
+        // 섞인다.
+        remove_dir_if_present(&run_dir)?;
         fs::create_dir_all(&run_dir).map_err(|error| {
             format!("작업 출력 디렉터리 생성 실패({run_dir:?}): {error}")
         })?;
@@ -701,6 +715,11 @@ fn run_one_connection(
                     &grant.attempt_id,
                     &files,
                 )?;
+                // ★ 체크포인트로 옮긴 **뒤에** 작업 디렉터리를 지운다.
+                //   순서를 바꾸면 옮기기 전에 지워 결과를 잃는다.
+                //   안 지우면 제출자의 출력이 남의 PC 에 계속 쌓인다
+                //   (`CLAUDE.md` §0.5).
+                remove_dir_if_present(&run_dir)?;
                 println!(
                     "WORKLOAD_ARTIFACTS checkpoint_id={} files={} bytes={}",
                     checkpoint_id,
@@ -1245,6 +1264,32 @@ pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> St
 /// 그대로 남긴다. 반면 파일 자체가 **없으면** 캐프처를 안 한
 /// 경우이므로 목록에서 뺀다 — 둘을 같은 것으로 만들면 관측
 /// 결과와 미관측을 구분할 수 없다(`CLAUDE.md` §1 — 모르면 비워 둔다).
+/// 작업 출력을 받는 루트. 체크포인트 루트의 **형제** 디렉터리다.
+///
+/// 예: `C:/gputeer/checkpoints` -> `C:/gputeer/checkpoints.workload-run`
+///
+/// ★ 루트 안에 두면 `startup_gc()` 가 그것을 체크포인트로 보고
+///   `gc_partial()` 을 돌린다. 지금은 그 함수가 파일만 지워서
+///   디렉터리만 들어 있는 작업 루트가 살아남지만, 그건 보장이
+///   아니라 우연이다. GC 의 스캔 범위 밖으로 빼 의존 자체를 없앱다.
+fn workload_run_root(checkpoint_root: &std::path::Path) -> PathBuf {
+    let mut name = checkpoint_root.as_os_str().to_os_string();
+    name.push(".workload-run");
+    PathBuf::from(name)
+}
+
+/// 있으면 지우고, 없으면 조용히 넘어간다.
+///
+/// ★ 삭제 실패를 `let _ =` 로 버리지 않는다(`CLAUDE.md` §3).
+///   남의 출력을 못 지우면 그건 알아야 할 사실이다.
+fn remove_dir_if_present(dir: &std::path::Path) -> Result<(), String> {
+    match fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("작업 출력 디렉터리 삭제 실패({dir:?}): {error}")),
+    }
+}
+
 fn collect_workload_artifacts(
     run_dir: &std::path::Path,
     spec: &gputeer_protocol::execution_spec::ExecutionSpec,
