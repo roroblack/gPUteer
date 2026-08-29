@@ -160,6 +160,68 @@ struct HandshakeOutcome {
 /// `run_handshake()` automatically adds
 /// `--i-understand-legacy-mode-is-unsafe true`; that opt-in is deliberate when
 /// the contract under test must work independently of a lease-store path.
+/// `gputeer submit` 를 **실제 서브프로세스로** 호출해 서명된 Manifest
+/// 파일을 만든다.
+///
+/// ★ 라이브러리 함수를 직접 부르지 않고 프로세스로 띄운다 — 이 selftest
+///   의 목적은 "제출 -> 배치 -> 실행" 이 **실제 경계를 넘어** 이어지는지
+///   보이는 것이다. 같은 프로세스 안에서 함수를 부르면 그 경계가 사라진다.
+/// 지금 시각(밀리초).
+///
+/// ★ 고정값(예: 1000)을 쓰면 Agent 가 **실제 현재 시각**로
+///   검증하므로 매니페스트가 이미 만료된 것으로 거부된다 —
+///   이 selftest 를 처음 배선할 때 정확히 그 것으로 한 번 실패했다.
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is before UNIX epoch")
+        .as_millis() as u64
+}
+
+fn run_submit(
+    fixture: &Fixture,
+    job_id: &str,
+    entrypoint: &str,
+    args_csv: &str,
+    submitter_seed_hex: &str,
+    out_path: &str,
+) -> Result<(), String> {
+    let output = Command::new(&fixture.exe)
+        .args([
+            "submit",
+            "--job-id",
+            job_id,
+            "--entrypoint",
+            entrypoint,
+            "--args",
+            args_csv,
+            "--submitter-device-id",
+            fixture.submitter_device_id,
+            "--submitter-seed",
+            submitter_seed_hex,
+            "--issued-at-unix-ms",
+            &now_unix_ms().to_string(),
+            "--out",
+            out_path,
+        ])
+        .output()
+        .map_err(|e| format!("gputeer submit 실행 실패: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "gputeer submit 실패(job_id={job_id}): stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("SUBMITTED") || !stdout.contains(job_id) {
+        return Err(format!(
+            "gputeer submit 출력이 기대와 다르다: {stdout}"
+        ));
+    }
+    Ok(())
+}
+
 fn run_handshake(
     fixture: &Fixture,
     extra_coordinator_args: &[&str],
@@ -4344,15 +4406,29 @@ pub fn run() -> Result<String, String> {
     //   제출자 키는 Coordinator·Agent 키와 다르다. 같은 키를 쓰면
     //   "독립 검증" 이 아무것도 증명하지 못한다.
     let submitter_seed_hex = to_hex(&fixture.submitter_seed);
+
+    // ★ 제출자가 직접 서명한다. Coordinator 는 제출자 개인키를
+    //   보지 못하고 서명된 파일을 실어 나를 뿐이다 — 그래야 Agent 의
+    //   독립 검증이 의미를 갖는다.
+    let manifest_dir = tempfile::tempdir()
+        .map_err(|e| format!("manifest tempdir 생성 실패: {e}"))?;
+    let manifest_path = manifest_dir.path().join("job.manifest");
+    let manifest_path_str = manifest_path
+        .to_str()
+        .ok_or_else(|| format!("manifest 경로가 UTF-8 이 아니다: {manifest_path:?}"))?
+        .to_string();
+    run_submit(
+        &fixture,
+        fixture.job_id,
+        "python",
+        "train.py,--epochs,3",
+        &submitter_seed_hex,
+        &manifest_path_str,
+    )?;
+
     let manifest_coordinator_args: Vec<String> = vec![
-        "--manifest-entrypoint".to_string(),
-        "python".to_string(),
-        "--manifest-args".to_string(),
-        "train.py,--epochs,3".to_string(),
-        "--submitter-seed".to_string(),
-        submitter_seed_hex.clone(),
-        "--submitter-device-id".to_string(),
-        fixture.submitter_device_id.to_string(),
+        "--manifest-file".to_string(),
+        manifest_path_str.clone(),
     ];
     let manifest_coordinator_refs: Vec<&str> = manifest_coordinator_args
         .iter()
@@ -4455,9 +4531,21 @@ pub fn run() -> Result<String, String> {
     //     Manifest 서명이 유효해도 **다른 Job 의 것**일 수 있다 —
     //     제출자가 예전에 서명한 Manifest 를 Coordinator 가 이 Grant 에
     //     끼워 넣는 경우다. 서명만으로는 "어느 Job 인가" 가 안 묶인다.
-    let mut wrong_job_args = manifest_coordinator_args.clone();
-    wrong_job_args.push("--manifest-job-id-override".to_string());
-    wrong_job_args.push("01JOTHERJOBSELFTEST000001".to_string());
+    let wrong_job_path = manifest_dir.path().join("other-job.manifest");
+    let wrong_job_path_str = wrong_job_path
+        .to_str()
+        .ok_or_else(|| format!("경로가 UTF-8 이 아니다: {wrong_job_path:?}"))?
+        .to_string();
+    run_submit(
+        &fixture,
+        "01JOTHERJOBSELFTEST000001",
+        "python",
+        "train.py,--epochs,3",
+        &submitter_seed_hex,
+        &wrong_job_path_str,
+    )?;
+    let wrong_job_args: Vec<String> =
+        vec!["--manifest-file".to_string(), wrong_job_path_str.clone()];
     let wrong_job_refs: Vec<&str> = wrong_job_args.iter().map(String::as_str).collect();
     let manifest_78 = run_handshake(&fixture, &wrong_job_refs, &manifest_agent_args)?;
     let out_78 = format!("{}\n{}", manifest_78.agent_stdout, manifest_78.agent_stderr);
@@ -4489,16 +4577,21 @@ pub fn run() -> Result<String, String> {
     //     82  상한을 못 걸면 실행 자체를 안 함
     let cmd_exe =
         std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".to_string());
-    let exec_coordinator_base: Vec<String> = vec![
-        "--manifest-entrypoint".to_string(),
-        cmd_exe.clone(),
-        "--manifest-args".to_string(),
-        "/c,exit,0".to_string(),
-        "--submitter-seed".to_string(),
-        submitter_seed_hex.clone(),
-        "--submitter-device-id".to_string(),
-        fixture.submitter_device_id.to_string(),
-    ];
+    let exec_ok_path = manifest_dir.path().join("exec-ok.manifest");
+    let exec_ok_str = exec_ok_path
+        .to_str()
+        .ok_or_else(|| format!("경로가 UTF-8 이 아니다: {exec_ok_path:?}"))?
+        .to_string();
+    run_submit(
+        &fixture,
+        fixture.job_id,
+        &cmd_exe,
+        "/c,exit,0",
+        &submitter_seed_hex,
+        &exec_ok_str,
+    )?;
+    let exec_coordinator_base: Vec<String> =
+        vec!["--manifest-file".to_string(), exec_ok_str.clone()];
     let exec_coordinator_refs: Vec<&str> =
         exec_coordinator_base.iter().map(String::as_str).collect();
 
@@ -4553,8 +4646,20 @@ pub fn run() -> Result<String, String> {
     //
     //     state-machines.md §3 이 WORKLOAD_EXITED_OK 와
     //     WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
-    let mut fail_args = exec_coordinator_base.clone();
-    fail_args[3] = "/c,exit,7".to_string();
+    let exec_fail_path = manifest_dir.path().join("exec-fail.manifest");
+    let exec_fail_str = exec_fail_path
+        .to_str()
+        .ok_or_else(|| format!("경로가 UTF-8 이 아니다: {exec_fail_path:?}"))?
+        .to_string();
+    run_submit(
+        &fixture,
+        fixture.job_id,
+        &cmd_exe,
+        "/c,exit,7",
+        &submitter_seed_hex,
+        &exec_fail_str,
+    )?;
+    let fail_args: Vec<String> = vec!["--manifest-file".to_string(), exec_fail_str.clone()];
     let fail_refs: Vec<&str> = fail_args.iter().map(String::as_str).collect();
     let exec_81 = run_handshake(&fixture, &fail_refs, &exec_on)?;
     if !exec_81.agent_stdout.contains("exit_code=7")

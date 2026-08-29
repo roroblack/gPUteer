@@ -35,6 +35,7 @@
 use std::process::ExitCode;
 
 mod coordinator_agent_selftest;
+mod submit;
 mod selftest;
 
 const USAGE: &str = "\
@@ -105,6 +106,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("coordinator-agent-selftest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("submit") => match submit::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("submit 실패: {e}");
                 ExitCode::FAILURE
             }
         },
