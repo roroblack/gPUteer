@@ -136,6 +136,11 @@ pub struct AgentConfig {
     /// ★ `Option` 이 아니다. 패널을 안 띄우더라도 상태는 항상 갱신한다 —
     ///   나중에 패널이 붙었을 때 이미 도는 작업이 안 보이는 일이 없도록.
     pub owner_panel_state: owner_panel::OwnerPanelState,
+    /// Owner Panel 을 띄울 포트. `None` 이면 안 띄운다.
+    ///
+    /// ★ 주소는 받지 않는다 — `127.0.0.1` 고정이다(`CLAUDE.md` §0.1).
+    ///   0 을 주면 OS 가 포트를 고르고, 실제 주소를 표준 출력에 찍는다.
+    pub owner_panel_port: Option<u16>,
     pub coordinator_device_id: String,
     pub agent_device_id: String,
     /// ★ 테스트 전용 — `crates/coordinator/src/lib.rs::CoordinatorConfig::corrupt_own_signature`
@@ -242,6 +247,34 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         connect_timeout: Duration::from_secs(3),
         safety_margin_ms: 1_000,
     };
+    // ★ Owner Panel 을 **다른 스레드에서** 띄운다.
+    //
+    //   여기서 띄우는 이유는 `run()` 이 곧 Coordinator 연결에
+    //   묶이기 때문이다. 연결이 막히거나 Coordinator 가 죽어도
+    //   패널은 살아 있어야 한다 — §0.1 이 "Coordinator 가 죽어도
+    //   동작해야 한다" 고 명시한 그것이다.
+    //
+    //   패널이 안 뜨면 **실행 자체를 안 한다.** 멈출 수 없는 남의
+    //   코드를 남의 PC 에서 돌리지 않는다 — 조용히 넘어가면
+    //   소유자는 패널이 있다고 믿는데 실제로는 없는 상태가 된다.
+    if let Some(port) = config.owner_panel_port {
+        let token = derive_owner_panel_token(&config.own_seed);
+        let panel = owner_panel::OwnerPanel::bind(port, config.owner_panel_state.clone(), token)
+            .map_err(|error| {
+                format!(
+                    "OWNER_PANEL_REFUSED: 소유자 패널을 127.0.0.1:{port} 에 띄우지 못했다                      — 멈출 수 없는 작업을 시작하지 않는다: {error}"
+                )
+            })?;
+        let addr = panel
+            .local_addr()
+            .map_err(|error| format!("OWNER_PANEL_REFUSED: 주소를 읽지 못했다: {error}"))?;
+        println!("OWNER_PANEL listening=http://{addr}/");
+        std::thread::Builder::new()
+            .name("gputeer-owner-panel".into())
+            .spawn(move || panel.serve_forever())
+            .map_err(|error| format!("OWNER_PANEL_REFUSED: 스레드 기동 실패: {error}"))?;
+    }
+
     let signing_key = SigningKey::from_bytes(&config.own_seed);
     let mut coordinator_keys = InMemoryKeyring::new();
     coordinator_keys.insert(
@@ -1496,6 +1529,28 @@ fn finalize_workload_checkpoint(
 /// 작업 실행 결과를 적는 파일 이름.
 const WORKLOAD_RESULT_FILENAME: &str = "workload-result.json";
 
+/// Owner Panel 의 CSRF 방어 토큰을 이 Agent 의 씨앨에서 파생한다.
+///
+/// # 왜 난수가 아니라 파생인가
+///
+/// 같은 Agent 가 재시작해도 토큰이 같아야 브라우저에 열어둔 패널이
+/// 계속 돌아간다. 난수면 재시작마다 소유자가 새로고침해야 하고,
+/// 그 사이에 정지 버튼이 안 듣는다.
+///
+/// ★ **씨씸을 그대로 쓰지 않는다.** 토큰은 화면·HTTP 응답에
+///   노출되므로, 그것으로부터 서명키를 역산할 수 없어야 한다.
+///   BLAKE3 에 용도 라벨을 붙여 파생한다.
+///
+/// ★ 이건 **인증이 아니다.** 같은 기계에 로그인한 다른 사용자는
+///   이 토큰을 읽을 수 있다. 막려는 것은 브라우저로 열린 남의
+///   웹페이지가 소유자 몰래 정지를 누르는 것이다.
+fn derive_owner_panel_token(own_seed: &[u8; 32]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"gputeer/v1/owner-panel-token");
+    hasher.update(own_seed);
+    hasher.finalize().to_hex().to_string()
+}
+
 fn record_start_checkpoint(
     checkpoint_root: &std::path::Path,
     job_id: &str,
@@ -1700,6 +1755,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
         owner_panel_state: owner_panel::OwnerPanelState::new(),
+        owner_panel_port: flags.0.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
         // `RAM 상한 - 2000MiB` 로 간접 제한된다(ADR-027) — 이 값은
         // 실행 자체를 증명하기 위한 최소값이고 정책이 아니다.
@@ -1920,6 +1976,7 @@ mod tests {
             submitter_verifying_key: None,
             execute_workload: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
+            owner_panel_port: None,
             workload_commit_limit_bytes: 256 * 1024 * 1024,
             coordinator_device_id: coordinator_device_id.into(),
             agent_device_id: agent_device_id.into(),

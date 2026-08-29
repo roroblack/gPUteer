@@ -12,6 +12,7 @@ gputeer-checkpoint = { path = "../checkpoint" }
 gputeer-runtime-policy = { path = "../runtime-policy" }
 prost.workspace = true
 serde_json.workspace = true
+blake3.workspace = true
 getrandom.workspace = true
 
 [dev-dependencies]
