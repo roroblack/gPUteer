@@ -2,7 +2,7 @@
 
 **상태:** NORMATIVE. 이 표에 없는 전이는 구현하면 안 된다(MUST NOT).
 **설계 근거:** `gputeer_master_implementation_plan_v5.md` §27
-**최종 수정:** 2026-08-27 (§0.1 참여 모델별 해석 추가)
+**최종 수정:** 2026-08-27 (§0.1 참여 모델별 해석 · §5.1 Member 추가)
 
 > **이 문서가 표 형식인 이유**
 >
@@ -369,6 +369,101 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
 
 ---
 
+## 5.1 Member (2026-08-27 추가)
+
+★ **이 표는 사용자 결정(2026-08-27)을 반영해 초안에서 승격됐다.**
+원안은 `docs/plans/2026-08-24_1830_membership_norm_draft_v1.md` §6.2 이며,
+그 문서는 적대적 검토를 거친 뒤 네 가지를 사용자 결정 항목으로 남겼다.
+그중 이 표에 필요한 것은 다음과 같이 결정됐다.
+
+```text
+멤버 상태      PENDING 을 거쳐 명시적 활동 전환. SUSPENDED/REINSTATED 채택
+무효화 후처리  과거 기록은 보존하되 현재 권한에서는 제외
+권한 조회      현재 권한 판정은 항상 최신 상태로만 한다
+```
+
+### 권위는 참여 모델에 따라 다르다 — 이음매 1
+
+```text
+사설 팀   방장(Owner)이 서명한다.
+          연결 중개 서버는 서명된 초대장을 배포하는 우체통까지만이며
+          승인·발급 권한을 갖지 않는다 (ADR-031 §5 · 기준선 §6.3).
+          여기를 서버로 옮기면 서버가 뚫릴 때 아무나 팀원이 된다.
+
+공개 풀   Broker 가 멤버십 권위다 (ADR-032 §1 · ADR-033).
+          이 경우 아래 durability 열의 `COMMITTED` 는 §0.1 에 따라
+          `BROKER_ATTESTED` 로 읽는다 — 과반 합의가 아니다.
+```
+
+`guard` 열의 "권위 policy" 는 이 구분을 가리킨다. 표는 하나지만
+**무엇이 그 guard 를 만족시키는지는 모드마다 다르다.**
+
+```statetable
+machine: Member
+from | to | trigger | guard | effect | durability
+(none) | PENDING | MEMBER_ADD_COMMITTED | AddMember 검증 + 권위 policy + tombstone 없음 | generation namespace 예약, device 없음 | COMMITTED
+PENDING | ACTIVE | MEMBER_ACTIVATED | ActivateMember 검증 + 같은 generation + predecessor revision 일치 | authorization subject 공개 | COMMITTED
+PENDING | REMOVED | MEMBER_REMOVE_COMMITTED | RemoveMember 검증 + 같은 generation | tombstone 보존, authorization 없음 | COMMITTED
+ACTIVE | SUSPENDED | MEMBER_SUSPEND_COMMITTED | SuspendMember 검증 + 같은 generation | 신규 admission/lease/grant 차단 | COMMITTED
+SUSPENDED | ACTIVE | MEMBER_REINSTATED | ReinstateMember 검증 + 같은 generation + revoked/removed 아님 | 신규 admission 재개 | COMMITTED
+ACTIVE | REVOKED | MEMBER_REVOKE_COMMITTED | RevokeMember 검증 + 같은 generation | device/lease/attempt fence cascade | COMMITTED
+SUSPENDED | REVOKED | MEMBER_REVOKE_COMMITTED | RevokeMember 검증 + 같은 generation | device/lease/attempt fence cascade | COMMITTED
+PENDING | REVOKED | MEMBER_REVOKE_COMMITTED | RevokeMember 검증 + 같은 generation | future binding 금지, tombstone 유지 | COMMITTED
+REVOKED | REMOVED | MEMBER_REMOVE_COMMITTED | RemoveMember 검증 + 같은 generation | terminal tombstone 표시, 삭제하지 않음 | COMMITTED
+```
+
+### 항상 금지 (MUST NOT)
+
+```text
+REVOKED -> ACTIVE
+REMOVED -> ACTIVE
+ACTIVE -> REMOVED 로 revoke 없이 직접 전이
+tombstone 된 ID 재사용
+local cache 만 보고 activation 판정
+```
+
+### 현재 권한 판정에 쓸 수 있는 상태
+
+사용자 결정 "과거 기록은 남기되 현재 권한에선 제외" 를 표로 고정한다.
+
+| 상태 | 현재 권한 | 과거 기록 |
+|---|---|---|
+| `PENDING` | ❌ | 보존 |
+| `ACTIVE` | ✅ | 보존 |
+| `SUSPENDED` | ❌ | 보존 |
+| `REVOKED` | ❌ | 보존 |
+| `REMOVED` | ❌ | 보존(tombstone) |
+
+**`ACTIVE` 하나만 현재 권한이다.** 나머지는 "그때 그랬다" 는 사실로만
+남고 "지금 유효하다" 로 승격되지 않는다.
+
+### 조회 일관성
+
+현재 권한 판정은 **항상 최신 상태**로만 한다(사용자 결정). 조금 오래된
+정보로 판정하면 방금 쫓아낸 멤버가 잠깐 유효해 보이는 구멍이 생긴다.
+
+```text
+현재 권한 판정   최신 상태 필수. 확인 불가면 판정 불가로 실패한다
+과거 조회·화면   명시적으로 오래된 정보 허용 가능
+로컬 캐시        표시·진단 전용. 권한 경로에 쓰지 않는다
+```
+
+★ 합의가 안 되는 장애 중에는 **권한 판정 자체가 "확인 불가" 로 멈춘다.**
+이것은 감수하기로 한 비용이다 — 조용히 통과시키지 않는다.
+
+### 이 표의 현재 강제 수준
+
+★ **구현이 없다.** `Member` 상태기계를 강제하는 코드는 아직 없고,
+표가 참조하는 action(`ActivateMember`·`SuspendMember`·
+`ReinstateMember`·`RemoveMember`)은 **`proto/` 에 메시지가 없다.**
+`AddMember` 만 존재한다(정본 domain tag `gputeer/v1/member-add`).
+
+따라서 이 표는 Node·Job·Attempt·Lease 와 같은 처지다 — §6 의 표현대로
+**"규범이 아니라 설계 메모"** 다. 강제가 생기기 전까지 이 표를 근거로
+"멤버십이 보호된다" 고 쓰지 않는다(`CLAUDE.md` §0.4).
+
+---
+
 ## 6. 테스트 계약
 
 `crates/checkpoint/tests/state_table_parity.rs` 는 이 파일을 파싱해 다음을 검사한다.
@@ -408,8 +503,9 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
 | 5 | `*` 행을 모든 from 상태에 대해 개별 검증 | ❌ 해당 표(Node/Job/Attempt/Lease) 미구현 |
 | 6 | terminal 상태에서 나가는 전이 없음 | ✅ Checkpoint (`PARTIAL`) |
 | 7 | 공개 풀 `COMMITTED` → `BROKER_ATTESTED` 요건 충족 | ❌ Broker·공개 풀 미구현 |
+| 8 | §5.1 `Member` 전이 강제 | ❌ 구현 없음. action 메시지도 `AddMember` 외엔 없다 |
 
-**Node · Job · Attempt · Lease 상태기계는 구현 자체가 없다.**
+**Node · Job · Attempt · Lease · Member 상태기계는 구현 자체가 없다.**
 표만 있고 그것을 강제하는 코드가 없으므로, **그 표들은 아직 규범이 아니라 설계 메모다.**
 `unchecked_contract_items_are_declared` 테스트가 이 사실을 고정한다.
 
