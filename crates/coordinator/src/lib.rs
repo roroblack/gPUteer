@@ -24,7 +24,9 @@ use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, FrameType, InMemoryKeyring, InMemoryReplayGuard,
     IngressMessage, KeyDirectorySource, SigningKey, SystemClock, VerifyingKey,
 };
+use gputeer_protocol::canonical::blake3_256;
 use gputeer_protocol::pb;
+use gputeer_protocol::signing::signing_input;
 use prost::Message;
 
 pub mod attempt_report_store;
@@ -88,6 +90,25 @@ pub struct CoordinatorConfig {
     pub lease_id: String,
     pub job_id: String,
     pub fence_epoch: u64,
+    /// Grant 에 실을 `JobManifest` 의 entrypoint.
+    ///
+    /// ★ `None` 이면 `manifest` 필드를 비운 채 보낸다 — 기존 시나리오가
+    ///   전부 그 경로이고, 이번 조각이 기존 동작을 바꾸지 않는다.
+    ///
+    /// ★ **제출자 서명이 필요하다.** Manifest 는 Coordinator 가 아니라
+    ///   제출자가 서명하는 메시지다(`signing.md`). 그래서 별도 seed 를
+    ///   받는다 — Coordinator 키로 서명하면 Agent 의 독립 검증이
+    ///   무의미해진다.
+    pub manifest_entrypoint: Option<String>,
+    pub manifest_args: Vec<String>,
+    pub submitter_seed: Option<[u8; 32]>,
+    pub submitter_device_id: String,
+    /// 테스트 전용 — Manifest 의 `job_id` 를 Lease 와 다르게 만든다.
+    pub manifest_job_id_override: Option<String>,
+    /// 테스트 전용 — nested Manifest 서명을 망가뜨린다.
+    pub corrupt_manifest_signature: bool,
+    /// 테스트 전용 — `manifest_hash` 를 실제 Manifest 와 다르게 채운다.
+    pub corrupt_manifest_hash: bool,
     /// ★ 테스트 전용 — nested `Lease` 서명 직후 마지막 바이트를
     ///   뒤집는다. outer `Grant` 서명은 정상이므로, 이 시나리오는
     ///   "outer 검증만으로는 안 잡히고 Agent 가 nested Lease 를
@@ -1411,8 +1432,68 @@ fn issue_grant(
         lease: Some(lease),
         ..Default::default()
     };
+
+    // ★ Manifest 는 **제출자가 서명한 별도 메시지**다. Coordinator 는
+    //   그것을 실어 나르기만 한다 — 그래서 여기서 outer Grant 서명
+    //   **전에** nested 서명을 먼저 완성해야 한다(그래야 Grant 서명이
+    //   최종 nested 바이트를 덮는다).
+    if let Some(manifest) = build_signed_manifest(config, now)? {
+        // `manifest_hash` 는 Agent 가 재계산해 대조한다(`CLAUDE.md` §0.2).
+        // 여기서는 그 대조 대상을 정직하게 채운다.
+        let mut digest = blake3_256(&signing_input(&manifest)).to_vec();
+        if config.corrupt_manifest_hash {
+            digest[0] ^= 0x01;
+        }
+        grant.manifest_hash = Some(pb::Digest {
+            algo: 1, // HASH_ALGORITHM_BLAKE3_256
+            value: digest,
+        });
+        grant.manifest = Some(manifest);
+    }
+
     grant.coordinator_signature = sign(key, &grant).to_vec();
     Ok(grant)
+}
+
+/// 설정에 entrypoint 가 있으면 **제출자 키로 서명한** `JobManifest` 를 만든다.
+///
+/// 이 조각의 목적은 "Agent 가 nested Manifest 를 독립 검증한다" 를 실제
+/// wire 로 증명하는 것이므로, Manifest 자체는 최소 필드만 채운다 —
+/// 자원 요구·데이터셋·보안 등급은 이 조각의 범위가 아니다.
+fn build_signed_manifest(
+    config: &CoordinatorConfig,
+    now: u64,
+) -> Result<Option<pb::JobManifest>, String> {
+    let Some(entrypoint) = config.manifest_entrypoint.clone() else {
+        return Ok(None);
+    };
+    let seed = config
+        .submitter_seed
+        .ok_or_else(|| "manifest_entrypoint 가 있으면 submitter_seed 도 있어야 한다".to_string())?;
+
+    let mut manifest = pb::JobManifest {
+        schema_version: 1,
+        job_id: config
+            .manifest_job_id_override
+            .clone()
+            .unwrap_or_else(|| config.job_id.clone()),
+        entrypoint,
+        args: config.manifest_args.clone(),
+        submitter_device_id: config.submitter_device_id.clone(),
+        issued_at_unix_ms: now,
+        expires_at_unix_ms: now + 7 * 24 * 60 * 60 * 1000,
+        ..Default::default()
+    };
+    let submitter_key = SigningKey::from_bytes(&seed);
+    manifest.submitter_signature = sign(&submitter_key, &manifest).to_vec();
+    if config.corrupt_manifest_signature {
+        let last = manifest
+            .submitter_signature
+            .last_mut()
+            .expect("submitter_signature 는 비어 있지 않다");
+        *last ^= 0x01;
+    }
+    Ok(Some(manifest))
 }
 
 /// `ExecutionGrant.lease` 에 실어 보낼 `Lease` 를 만들어 서명한다.
@@ -1583,6 +1664,30 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         lease_id: flags.require("--lease-id")?,
         job_id: flags.require("--job-id")?,
         fence_epoch: flags.u64_flag("--fence-epoch")?,
+        // Manifest 배선 — 안 주면 기존 경로 그대로(manifest 필드 없음).
+        manifest_entrypoint: flags.0.get("--manifest-entrypoint").cloned(),
+        manifest_args: flags
+            .0
+            .get("--manifest-args")
+            .map(|raw| {
+                raw.split(',')
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        submitter_seed: match flags.0.get("--submitter-seed") {
+            Some(hex) => Some(hex_to_seed(hex)?),
+            None => None,
+        },
+        submitter_device_id: flags
+            .0
+            .get("--submitter-device-id")
+            .cloned()
+            .unwrap_or_default(),
+        manifest_job_id_override: flags.0.get("--manifest-job-id-override").cloned(),
+        corrupt_manifest_signature: flags.bool_flag("--corrupt-manifest-signature"),
+        corrupt_manifest_hash: flags.bool_flag("--corrupt-manifest-hash"),
         corrupt_lease_signature: flags.bool_flag("--corrupt-lease-signature"),
         expire_lease: flags.bool_flag("--expire-lease"),
         do_renew: flags.bool_flag("--do-renew"),

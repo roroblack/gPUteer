@@ -85,6 +85,11 @@ struct Fixture {
     attempt_id: &'static str,
     lease_id: &'static str,
     job_id: &'static str,
+    /// nested `JobManifest` 를 서명할 제출자 키. Coordinator·Agent 키와
+    /// **반드시 달라야** Agent 의 독립 검증이 의미가 있다.
+    submitter_seed: [u8; 32],
+    submitter_pub_hex: String,
+    submitter_device_id: &'static str,
 }
 
 impl Fixture {
@@ -102,6 +107,8 @@ impl Fixture {
         let coordinator_pub =
             gputeer_crypto::SigningKey::from_bytes(&coordinator_seed).verifying_key();
         let agent_pub = gputeer_crypto::SigningKey::from_bytes(&agent_seed).verifying_key();
+        let submitter_seed = seed_from_label("coordinator-agent-selftest/submitter");
+        let submitter_pub = gputeer_crypto::SigningKey::from_bytes(&submitter_seed).verifying_key();
 
         Ok(Self {
             exe,
@@ -115,6 +122,9 @@ impl Fixture {
             attempt_id: "01JATTEMPTSELFTEST00000001",
             lease_id: "01JLEASESELFTEST000000001",
             job_id: "01JJOBSELFTEST00000000001",
+            submitter_seed,
+            submitter_pub_hex: to_hex(submitter_pub.as_bytes()),
+            submitter_device_id: "01JSUBMITSELFTEST0000000001",
         })
     }
 
@@ -4324,6 +4334,146 @@ pub fn run() -> Result<String, String> {
         ));
     }
     report.push_str("73) Coordinator가 RESUMED를 서명해도 durable fence watermark보다 낮은 epoch은 Agent가 거부\n");
+
+    // ── 74~77) nested JobManifest 독립 검증 ─────────────────────────
+    //
+    //   Grant 에 실려 온 Manifest 는 **제출자가 서명한 별도 메시지**다.
+    //   outer Grant 서명이 유효해도 nested 서명은 따로 위조될 수 있으므로
+    //   Agent 가 독립 검증해야 한다 — nested Lease 와 같은 이유다.
+    //
+    //   제출자 키는 Coordinator·Agent 키와 다르다. 같은 키를 쓰면
+    //   "독립 검증" 이 아무것도 증명하지 못한다.
+    let submitter_seed_hex = to_hex(&fixture.submitter_seed);
+    let manifest_coordinator_args: Vec<String> = vec![
+        "--manifest-entrypoint".to_string(),
+        "python".to_string(),
+        "--manifest-args".to_string(),
+        "train.py,--epochs,3".to_string(),
+        "--submitter-seed".to_string(),
+        submitter_seed_hex.clone(),
+        "--submitter-device-id".to_string(),
+        fixture.submitter_device_id.to_string(),
+    ];
+    let manifest_coordinator_refs: Vec<&str> = manifest_coordinator_args
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let manifest_agent_args = ["--submitter-pubkey", fixture.submitter_pub_hex.as_str()];
+
+    // 74) 정상 — Agent 가 nested Manifest 를 검증하고 실행 지시를 뽑는다.
+    let manifest_74 = run_handshake(&fixture, &manifest_coordinator_refs, &manifest_agent_args)?;
+    if !manifest_74.agent_success
+        || !manifest_74.agent_stdout.contains("MANIFEST_ACCEPTED")
+        || !manifest_74
+            .agent_stdout
+            .contains("entrypoint=python args=3 env_vars=0")
+        || !manifest_74.agent_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "74) nested Manifest 정상 경로 실패: agent_success={} stdout={:?} stderr={:?}",
+            manifest_74.agent_success, manifest_74.agent_stdout, manifest_74.agent_stderr
+        ));
+    }
+    report.push_str(
+        "74) Grant 에 실린 제출자 서명 Manifest 를 Agent 가 독립 검증하고 실행 지시(entrypoint·args)를 도출\n",
+    );
+
+    // 75) 제출자 서명 위조 — outer Grant 서명은 멀쩡한데 nested 만 망가뜨린다.
+    let mut forged_args = manifest_coordinator_args.clone();
+    forged_args.push("--corrupt-manifest-signature".to_string());
+    forged_args.push("true".to_string());
+    let forged_refs: Vec<&str> = forged_args.iter().map(String::as_str).collect();
+    let manifest_75 = run_handshake(&fixture, &forged_refs, &manifest_agent_args)?;
+    let out_75 = format!("{}\n{}", manifest_75.agent_stdout, manifest_75.agent_stderr);
+    if manifest_75.agent_success
+        || !out_75.contains("MANIFEST_REJECTED")
+        || manifest_75.agent_stdout.contains("MANIFEST_ACCEPTED")
+        || manifest_75.agent_stdout.contains(RESULT_OK_MARKER)
+    {
+        return Err(format!(
+            "75) 위조된 nested Manifest 서명이 통과했다: agent_success={} stdout={:?} stderr={:?}",
+            manifest_75.agent_success, manifest_75.agent_stdout, manifest_75.agent_stderr
+        ));
+    }
+    report.push_str(
+        "75) outer Grant 서명이 유효해도 nested Manifest 서명이 위조되면 Agent 가 거부\n",
+    );
+
+    // 76) manifest_hash 위조 — Coordinator 가 보낸 해시를 신뢰하지 않는다.
+    //
+    //     ★ 이 거부는 Agent 의 Manifest 처리 코드가 아니라 **프로토콜
+    //       계층**이 한다 — crates/protocol/src/signable.rs 의
+    //       ExecutionGrant::check_derived_consistency() 가 Grant 검증
+    //       중에 BLAKE3_256(sig_input_of(JobManifest)) 를 재계산해
+    //       대조하고 DerivedMismatch 로 Grant 자체를 거부한다.
+    //       (CLAUDE.md §0.2 가 요구하는 그 검사다.)
+    //
+    //       처음엔 Agent 쪽에도 같은 대조를 넣었다가, 뮤테이션으로
+    //       그 코드가 도달하지 않음을 확인하고 제거했다. 이 시나리오는
+    //       그래서 "Agent 재계산" 이 아니라 "Grant 파생값 대조" 를
+    //       증명한다 — 무엇이 실제로 막는지 정확히 적는다.
+    let mut bad_hash_args = manifest_coordinator_args.clone();
+    bad_hash_args.push("--corrupt-manifest-hash".to_string());
+    bad_hash_args.push("true".to_string());
+    let bad_hash_refs: Vec<&str> = bad_hash_args.iter().map(String::as_str).collect();
+    let manifest_76 = run_handshake(&fixture, &bad_hash_refs, &manifest_agent_args)?;
+    let out_76 = format!("{}\n{}", manifest_76.agent_stdout, manifest_76.agent_stderr);
+    if manifest_76.agent_success
+        || !out_76.contains("ExecutionGrant.manifest_hash")
+        || !out_76.contains("DerivedMismatch")
+        || manifest_76.agent_stdout.contains("MANIFEST_ACCEPTED")
+    {
+        return Err(format!(
+            "76) Manifest 와 다른 manifest_hash 가 통과했다: agent_success={} stdout={:?} stderr={:?}",
+            manifest_76.agent_success, manifest_76.agent_stdout, manifest_76.agent_stderr
+        ));
+    }
+    report.push_str(
+        "76) Coordinator 가 Manifest 와 다른 manifest_hash 를 보내면 프로토콜 계층의 파생값 대조(DerivedMismatch)가 Grant 자체를 거부\n",
+    );
+
+    // 77) 제출자 키 없이 Manifest 가 오면 fail closed.
+    //     조용히 무시하면 "지시가 없다" 와 "검증 못 한 지시가 왔다" 가
+    //     구분되지 않는다.
+    let manifest_77 = run_handshake(&fixture, &manifest_coordinator_refs, &[])?;
+    let out_77 = format!("{}\n{}", manifest_77.agent_stdout, manifest_77.agent_stderr);
+    if manifest_77.agent_success
+        || !out_77.contains("MANIFEST_REJECTED")
+        || manifest_77.agent_stdout.contains("MANIFEST_ACCEPTED")
+    {
+        return Err(format!(
+            "77) 제출자 공개키 없이 Manifest 를 받아들였다: agent_success={} stdout={:?} stderr={:?}",
+            manifest_77.agent_success, manifest_77.agent_stdout, manifest_77.agent_stderr
+        ));
+    }
+    report.push_str(
+        "77) 제출자 공개키가 없으면 Manifest 가 실린 Grant 를 fail closed 로 거부(조용히 무시하지 않음)\n",
+    );
+
+    // 78) Manifest 의 job_id 가 Lease 와 다르면 거부.
+    //
+    //     Manifest 서명이 유효해도 **다른 Job 의 것**일 수 있다 —
+    //     제출자가 예전에 서명한 Manifest 를 Coordinator 가 이 Grant 에
+    //     끼워 넣는 경우다. 서명만으로는 "어느 Job 인가" 가 안 묶인다.
+    let mut wrong_job_args = manifest_coordinator_args.clone();
+    wrong_job_args.push("--manifest-job-id-override".to_string());
+    wrong_job_args.push("01JOTHERJOBSELFTEST000001".to_string());
+    let wrong_job_refs: Vec<&str> = wrong_job_args.iter().map(String::as_str).collect();
+    let manifest_78 = run_handshake(&fixture, &wrong_job_refs, &manifest_agent_args)?;
+    let out_78 = format!("{}\n{}", manifest_78.agent_stdout, manifest_78.agent_stderr);
+    if manifest_78.agent_success
+        || !out_78.contains("MANIFEST_REJECTED")
+        || !out_78.contains("job_id")
+        || manifest_78.agent_stdout.contains("MANIFEST_ACCEPTED")
+    {
+        return Err(format!(
+            "78) Lease 와 다른 job_id 의 Manifest 가 통과했다: agent_success={} stdout={:?} stderr={:?}",
+            manifest_78.agent_success, manifest_78.agent_stdout, manifest_78.agent_stderr
+        ));
+    }
+    report.push_str(
+        "78) 서명이 유효해도 Manifest 의 job_id 가 같은 Grant 의 Lease 와 다르면 Agent 가 거부\n",
+    );
 
     Ok(report)
 }

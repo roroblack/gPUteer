@@ -107,6 +107,16 @@ pub struct AgentConfig {
     pub coordinator_addr: String,
     pub own_seed: [u8; 32],
     pub coordinator_verifying_key: VerifyingKey,
+    /// nested `JobManifest` 를 **독립 검증**할 제출자 공개키.
+    ///
+    /// ★ `None` 이면 Grant 에 Manifest 가 실려 오는 것 자체를 거부한다 —
+    ///   검증할 수 없는 실행 지시를 받아들이지 않는다(fail closed).
+    ///   Manifest 가 없는 Grant 는 기존대로 통과한다.
+    ///
+    /// ★ 이 키의 authoritative 출처는 membership 이며 아직 없다. 지금은
+    ///   CLI 로 받는다 — `coordinator_verifying_key` 가 같은 처지인 것과
+    ///   같은 단계다.
+    pub submitter_verifying_key: Option<VerifyingKey>,
     pub coordinator_device_id: String,
     pub agent_device_id: String,
     /// ★ 테스트 전용 — `crates/coordinator/src/lib.rs::CoordinatorConfig::corrupt_own_signature`
@@ -607,6 +617,23 @@ fn run_one_connection(
         held_lease.expires_at_unix_ms
     );
 
+    // ★ nested `JobManifest` 도 `Lease` 와 **똑같이** 독립 검증한다.
+    //   outer Grant 서명이 유효해도 nested Manifest 서명은 위조됐을 수
+    //   있다(`to_fields.rs` — "manifest 와 lease 는 각자 독립적으로
+    //   검증해야 한다(MUST)").
+    //
+    //   ACK·checkpoint **전에** 한다 — 실행 지시를 신뢰할 수 없으면
+    //   시작 사실조차 남기지 않는다.
+    if let Some(spec) = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)? {
+        println!(
+            "MANIFEST_ACCEPTED job_id={} entrypoint={} args={} env_vars={}",
+            spec.job_id,
+            spec.entrypoint,
+            spec.args.len(),
+            spec.env_vars.len()
+        );
+    }
+
     // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
     // 시작 사실을 durable artifact로 남긴다. 디렉터리 생성 또는
     // record_initial_state()가 실패하면 여기서 fail-closed하여 ACK를
@@ -985,6 +1012,81 @@ fn lease_is_expired(lease: &pb::Lease, now_unix_ms: u64) -> bool {
 /// 검사(attempt_id·issuing_coordinator·holder_node_id·job_id)는
 /// **서명 검증 뒤에** 한다. 서명 안 된 필드를 먼저 믿고 분기하면
 /// 위조된 Lease 로도 조기 반환을 유도할 수 있다.
+/// Grant 에 실려 온 nested `JobManifest` 를 **독립 검증**하고 실행 지시를 뽑는다.
+///
+/// `Lease` 검증(`verify_and_record_lease`)과 같은 이유로 존재한다 —
+/// outer Grant 서명이 유효해도 nested 메시지 서명은 따로 위조될 수 있다.
+///
+/// # 검사 순서
+///
+/// ```text
+/// 1  Manifest 가 없다                 -> Ok(None). 기존 경로 그대로
+/// 2  Manifest 는 있는데 제출자 키가 없다 -> 거부. 검증 못 하는 지시는 안 받는다
+/// 3  제출자 서명 검증 (Verified<M> 획득)
+/// 4  job_id 가 Lease 의 job_id 와 같은가
+/// 5  실행 지시 도출 (derive_execution_spec)
+/// ```
+///
+/// `manifest_hash` 대조는 이 함수가 아니라 프로토콜 계층이 한다 —
+/// 아래 본문 주석 참조.
+fn verify_nested_manifest(
+    grant: &pb::ExecutionGrant,
+    config: &AgentConfig,
+    now_unix_ms: u64,
+    replay: &mut InMemoryReplayGuard,
+) -> Result<Option<gputeer_protocol::execution_spec::ExecutionSpec>, String> {
+    let Some(manifest) = grant.manifest.as_ref() else {
+        return Ok(None);
+    };
+
+    // 검증할 수단이 없으면 받아들이지 않는다. 조용히 무시하면 "실행
+    // 지시가 없는 것" 과 "검증 못 한 실행 지시가 온 것" 이 구분되지 않는다.
+    let Some(submitter_key) = config.submitter_verifying_key else {
+        return Err(
+            "MANIFEST_REJECTED: Grant 에 Manifest 가 있는데 제출자 공개키가 설정되지 않았다".into(),
+        );
+    };
+
+    let mut submitter_keyring = InMemoryKeyring::new();
+    submitter_keyring.insert(manifest.submitter_device_id.clone(), submitter_key);
+    let verifier = Ed25519Verifier::new(&submitter_keyring);
+    let verified = verify(manifest, 1, &verifier, now_unix_ms, replay)
+        .map_err(|e| format!("MANIFEST_REJECTED: Manifest 서명 검증 실패: {e:?}"))?;
+
+    // ★ `manifest_hash` 재계산 대조는 **여기서 하지 않는다.**
+    //
+    //   `CLAUDE.md` §0.2 가 요구하는 그 검사는 이미 프로토콜 계층에 있다 —
+    //   `crates/protocol/src/signable.rs` 의
+    //   `ExecutionGrant::check_derived_consistency()` 가 Grant 검증 중에
+    //   `BLAKE3_256(sig_input_of(JobManifest))` 를 재계산해 대조하고,
+    //   다르면 `DerivedMismatch` 로 Grant 자체를 거부한다(2026-08-16
+    //   독립 검수가 "규범은 요구하는데 코드가 없다" 고 지적해 추가된 것).
+    //
+    //   ★ 처음엔 여기에도 같은 대조를 넣었다가 뺐다. 뮤테이션으로
+    //   확인해 보니 그 코드는 **도달하지 않았다** — 프로토콜 계층이
+    //   먼저 거부하기 때문이다. 도달하지 않는 방어를 남겨 두면
+    //   "구현했다" 와 "강제한다" 를 혼동하게 된다.
+    //
+    //   같은 이유로 "hash 가 반드시 있어야 한다" 도 넣지 않는다.
+    //   규범은 `manifest 있음 + hash 없음 -> 통과(주장을 안 했으므로)`
+    //   라고 정했다. 그보다 엄격한 규칙을 여기서 발명하지 않는다.
+
+    // 같은 Grant 안의 Lease 와 같은 Job 이어야 한다.
+    if let Some(lease) = grant.lease.as_ref() {
+        if verified.get().job_id != lease.job_id {
+            return Err(format!(
+                "MANIFEST_REJECTED: Manifest job_id({})가 Lease job_id({})와 다르다",
+                verified.get().job_id,
+                lease.job_id
+            ));
+        }
+    }
+
+    let spec = gputeer_protocol::execution_spec::derive_execution_spec(&verified)
+        .map_err(|e| format!("MANIFEST_REJECTED: 실행 지시를 만들 수 없다: {e}"))?;
+    Ok(Some(spec))
+}
+
 fn verify_and_record_lease(
     grant: &pb::ExecutionGrant,
     config: &AgentConfig,
@@ -1250,6 +1352,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         coordinator_addr: flags.require("--connect")?,
         own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
         coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+        // 안 주면 None — Manifest 가 실려 오면 fail closed 로 거부한다.
+        submitter_verifying_key: match flags.0.get("--submitter-pubkey") {
+            Some(hex) => Some(hex_to_verifying_key(hex)?),
+            None => None,
+        },
         coordinator_device_id: flags.require("--coordinator-device-id")?,
         agent_device_id: flags.require("--agent-device-id")?,
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
@@ -1461,6 +1568,7 @@ mod tests {
             coordinator_addr: address.to_string(),
             own_seed: agent_seed,
             coordinator_verifying_key: coordinator_key.verifying_key(),
+            submitter_verifying_key: None,
             coordinator_device_id: coordinator_device_id.into(),
             agent_device_id: agent_device_id.into(),
             corrupt_own_signature: false,
