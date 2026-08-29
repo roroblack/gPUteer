@@ -3873,6 +3873,56 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("72) recovery=true 오조합에서도 legacy Coordinator의 signed durable=false Grant를 ACK·새 Renew 전에 fatal 거부\n");
 
+    // 73) Resume 경로가 durable fence watermark 를 거친다.
+    //
+    //   Coordinator 가 정상적으로 서명해 `RESUMED` 를 돌려줘도, 그
+    //   Lease 의 epoch 가 **이 Agent 가 이미 본 epoch 보다 낮으면**
+    //   받아들이면 안 된다. Coordinator 저장소가 오래된 백업으로
+    //   되돌려진 상황을 재현한다 — fence DB 는 epoch 9 를 기억하고,
+    //   Coordinator 의 lease DB 는 epoch 7 만 가진 별도 파일이다.
+    let resume_dir_73 = tempfile::tempdir()
+        .map_err(|e| format!("resume fence regression tempdir failed (73): {e}"))?;
+    let fence_db_73 = resume_dir_73.path().join("fence.sqlite3");
+    let lease_db_high_73 = resume_dir_73.path().join("lease-high.sqlite3");
+    let lease_db_low_73 = resume_dir_73.path().join("lease-low.sqlite3");
+    let fence_db_seed_73 = resume_dir_73.path().join("fence-seed.sqlite3");
+
+    // (1) 이 Agent 의 durable watermark 를 epoch 9 로 올린다.
+    seed_resume_lease(&fixture, &lease_db_high_73, &fence_db_73, 9, 60_000)?;
+    // (2) 따로 떨어진 fence DB 로 epoch 7 짜리 Lease 를 가진 Coordinator
+    //     저장소를 별도로 만든다(오래된 백업 역할).
+    seed_resume_lease(&fixture, &lease_db_low_73, &fence_db_seed_73, 7, 60_000)?;
+
+    let stale_resume_73 = run_resume_case(
+        &fixture,
+        &lease_db_low_73,
+        &fence_db_73,
+        "resume-session-73",
+        fixture.lease_id,
+        fixture.job_id,
+        fixture.attempt_id,
+        7,
+        false,
+        true,
+    )?;
+    // Coordinator 는 RESUMED(outcome=1) 를 돌려주고 Agent 만 거부해야
+    // 한다 — 즉 이 방어는 Coordinator 의 협조에 의존하지 않는다.
+    assert_resume_outcome(&stale_resume_73, 73, 1, false)?;
+    let agent_output_73 = format!(
+        "{}\n{}",
+        stale_resume_73.agent_stdout, stale_resume_73.agent_stderr
+    );
+    // 저장소 장애가 아니라 **정책 거부**임을 문자열로 가른다.
+    if !agent_output_73.contains("RESUME_REJECTED: fence_epoch")
+        || agent_output_73.contains("FENCE_STORAGE_ERROR")
+    {
+        return Err(format!(
+            "73) Resume 이 durable fence watermark 를 거치지 않았다: agent_stdout={:?} agent_stderr={:?}",
+            stale_resume_73.agent_stdout, stale_resume_73.agent_stderr
+        ));
+    }
+    report.push_str("73) Coordinator가 RESUMED를 서명해도 durable fence watermark보다 낮은 epoch은 Agent가 거부\n");
+
     Ok(report)
 }
 

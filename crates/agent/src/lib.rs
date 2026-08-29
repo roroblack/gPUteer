@@ -325,6 +325,7 @@ fn run_resume_connection(
     coordinator_keys: &mut InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
+    fence_watermark: &mut DurableFenceWatermark,
     budget: &mut RetryBudget,
     policy: &RetryPolicy,
 ) -> Result<(), String> {
@@ -416,6 +417,36 @@ fn run_resume_connection(
             {
                 return Err("RESUME_REJECTED: returned Lease identity/epoch mismatch".into());
             }
+
+            // ★ Resume 경로도 durable fence watermark 를 거친다.
+            //
+            //   위의 identity/epoch 검사는 "돌아온 Lease 가 **내가
+            //   요청한** epoch 인가" 만 본다. 그 요청값은 CLI
+            //   설정(`--resume-fence-epoch`)에서 온다 — 이 Agent 가
+            //   과거에 이미 더 높은 epoch 를 봤는지와 무관하다.
+            //
+            //   Coordinator 쪽 `classify_resume()` 가 낮은 epoch 를
+            //   `SUPERSEDED` 로 거부하긴 하지만, 그건 **Coordinator 의
+            //   저장소가 온전할 때만** 유효한 방어다. 이
+            //   저장소가 오래된 백업으로 되돌려지면 더 낮은 epoch 를
+            //   정상으로 서명해 `RESUMED` 로 돌려준다. Agent 가
+            //   그걸 그대로 받아들이면 이미 상위 epoch 를 가진
+            //   다른 보유자와 동시에 살아있게 된다.
+            //
+            //   `CLAUDE.md` §0.2 — "Coordinator 가 보낸 값이라고
+            //   신뢰하지 않는다." Grant 경로와 갱신 경로는 이미
+            //   같은 검사를 하고 있었고, Resume 경로만 빠져 있었다.
+            //
+            //   Resume 은 같은 세대를 이어받는 것이므로 같은 epoch 가
+            //   정상이다. `check_and_advance()` 는 같은 값을 통과시키고
+            //   낮은 값만 거부한다(`durable_lease_scope.rs`).
+            fence_watermark
+                .check_and_advance(
+                    &verified_lease.get().job_id,
+                    verified_lease.get().fence_epoch,
+                )
+                .map_err(|e| fence_error_message("RESUME_REJECTED", e))?;
+
             budget.update_lease_deadline(
                 verified_lease.get().expires_at_unix_ms,
                 clock.now_unix_ms(),
@@ -499,6 +530,7 @@ fn run_one_connection(
             coordinator_keys,
             replay,
             clock,
+            fence_watermark,
             budget,
             policy,
         );
