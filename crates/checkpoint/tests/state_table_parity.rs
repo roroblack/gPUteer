@@ -318,7 +318,7 @@ fn unchecked_contract_items_are_declared() {
         (
             "§6-5 `*` 행을 모든 from 상태에 대해 개별 검증",
             "Checkpoint 표에는 `*` 행이 없다. Node/Job/Attempt/Lease 표에는 있으나 \
-             그 상태기계는 미구현이다",
+             그 상태기계는 미구현이다(Attempt 는 2026-08-29 구현됐고              그 표에도 `*` 행은 없다)",
         ),
         (
             "§6-7 공개 풀 COMMITTED 가 §0.1 BROKER_ATTESTED 요건을 만족",
@@ -340,7 +340,7 @@ fn unchecked_contract_items_are_declared() {
     );
 
     // 다른 4개 상태기계는 구현 자체가 없다 — 그 사실을 고정한다
-    for machine in ["Node", "Job", "Attempt", "Lease", "Member"] {
+    for machine in ["Node", "Job", "Lease", "Member"] {
         let rows = parse_state_table(machine);
         assert!(
             !rows.is_empty(),
@@ -348,4 +348,191 @@ fn unchecked_contract_items_are_declared() {
         );
         println!("{machine}: 표 {}행, 구현 없음 (미착수)", rows.len());
     }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ Attempt 상태기계 — §3
+//
+// 2026-08-29 추가. 그 전까지 이 파일 끝의 "구현 없음" 목록에
+// Attempt 가 들어 있었다. Agent 가 실제로 프로세스를 띄우고 종료
+// 코드를 관측하기 시작해(WORKLOAD_EXITED_OK / WORKLOAD_EXITED_ERROR)
+// 표의 전이를 진짜로 만들어내게 됐으므로 구현과 대조를 붙였다.
+// ══════════════════════════════════════════════════════════════════
+
+use gputeer_protocol::attempt_state::{
+    transition_triggers, AttemptState, ALL_ATTEMPT_STATES,
+};
+
+/// 표의 상태 이름 → 구현의 enum.
+fn to_attempt_state(name: &str) -> Option<AttemptState> {
+    use AttemptState::*;
+    Some(match name {
+        "CREATED" => Created,
+        "STARTING" => Starting,
+        "RUNNING" => Running,
+        "PAUSED" => Paused,
+        "STALE" => Stale,
+        "COMPLETED" => Completed,
+        "FAILED" => Failed,
+        "CANCELLED" => Cancelled,
+        "RECONCILING" => Reconciling,
+        "CANONICAL" => Canonical,
+        "SUPERSEDED" => Superseded,
+        "(none)" => return None,
+        other => panic!(
+            "Attempt 표에 알 수 없는 상태 이름: {other:?}\n\
+             AttemptState 에 추가했거나 표에 오타가 있다"
+        ),
+    })
+}
+
+#[test]
+fn attempt_parser_is_not_vacuous() {
+    let rows = parse_state_table("Attempt");
+    assert!(
+        rows.len() >= 20,
+        "Attempt 전이표에서 {}행만 뽑았다 — 파서 결함",
+        rows.len()
+    );
+    // 이 조각이 실제로 만들어내는 두 행이 잡히는가
+    for trigger in ["WORKLOAD_EXITED_OK", "WORKLOAD_EXITED_ERROR"] {
+        assert!(
+            rows.iter().any(|r| r.trigger == trigger),
+            "{trigger} 행을 못 찾았다"
+        );
+    }
+    assert!(
+        !rows.iter().any(|r| r.from == "DISCOVERED" || r.from == "SUBMITTED"),
+        "Attempt 표에 Node/Job 행이 섞였다"
+    );
+}
+
+/// 계약 1 — 표의 모든 행이 구현에 있는가.
+///
+/// ★ 전이 쌍(`from -> to`)만 대조하지 않고 **trigger 이름까지** 대조한다.
+///   쌍만 보면 표에 같은 쌍의 행이 둘인데 구현이 하나만 알아도
+///   통과한다 — 실제로 그러했고 이 검사가 잡았다.
+#[test]
+fn every_documented_attempt_transition_is_allowed() {
+    let mut missing = Vec::new();
+    for r in parse_state_table("Attempt") {
+        let (Some(from), Some(to)) = (to_attempt_state(&r.from), to_attempt_state(&r.to)) else {
+            continue; // (none) 경계
+        };
+        let implemented = transition_triggers(from, to);
+        if implemented.is_empty() {
+            missing.push(format!(
+                "{} -> {} ({}) 를 구현이 거부한다",
+                r.from, r.to, r.trigger
+            ));
+        } else if !implemented.contains(&r.trigger.as_str()) {
+            missing.push(format!(
+                "{} -> {} 의 trigger {} 가 구현에 없다(구현={implemented:?})",
+                r.from, r.to, r.trigger
+            ));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "★ 규범 표에 있는데 구현이 거부하거나 trigger 가 어깋난다:
+  {}
+         `state-machines.md` §3 을 고쳤다면 `attempt_state.rs` 도 고쳐야 한다.",
+        missing.join("
+  ")
+    );
+}
+
+/// 계약 2 — 구현이 허용하는 전이가 표에 전부 있는가.
+///
+/// 이쪽이 더 중요하다. 표에 없는 전이를 구현이 허용하면 아무도
+/// 검토하지 않은 상태 변화가 일어난다.
+#[test]
+fn every_implemented_attempt_transition_is_documented() {
+    let documented: BTreeSet<(String, String)> = parse_state_table("Attempt")
+        .into_iter()
+        .filter(|r| to_attempt_state(&r.from).is_some() && to_attempt_state(&r.to).is_some())
+        .map(|r| (r.from, r.to))
+        .collect();
+
+    let mut undocumented = Vec::new();
+    for &from in ALL_ATTEMPT_STATES {
+        for &to in ALL_ATTEMPT_STATES {
+            if !transition_triggers(from, to).is_empty()
+                && !documented.contains(&(
+                    from.table_name().to_string(),
+                    to.table_name().to_string(),
+                ))
+            {
+                undocumented.push(format!("{} -> {}", from.table_name(), to.table_name()));
+            }
+        }
+    }
+    assert!(
+        undocumented.is_empty(),
+        "★★ 표에 없는데 구현이 허용하는 Attempt 전이가 있다:\n  {}",
+        undocumented.join("\n  ")
+    );
+}
+
+/// 계약 6 — terminal 상태에서 나가는 전이가 없는가.
+///
+/// 표를 기준으로 terminal 을 판정하고, 구현의 `is_terminal()` 과
+/// 대조한다. 한쪽만 보면 둘이 갈라져도 알 수 없다.
+#[test]
+fn attempt_terminal_states_agree_with_the_table() {
+    let rows = parse_state_table("Attempt");
+    for &state in ALL_ATTEMPT_STATES {
+        let has_outgoing_in_table = rows
+            .iter()
+            .any(|r| r.from == state.table_name() && to_attempt_state(&r.to).is_some());
+        assert_eq!(
+            state.is_terminal(),
+            !has_outgoing_in_table,
+            "{} 의 terminal 판정이 표와 다르다 (구현={} 표={})",
+            state.table_name(),
+            state.is_terminal(),
+            !has_outgoing_in_table
+        );
+    }
+}
+
+/// 계약 1 의 반대 방향 — 구현이 아는 trigger 가 표에 전부 있는가.
+///
+/// 계약 1 은 "표 → 구현" 을 보므로, 구현이 표에 없는 trigger 이름을
+/// 지어내도 잡지 못한다. 둘을 다 보아야 이름이 1:1 로 묶인다.
+#[test]
+fn every_implemented_attempt_trigger_is_documented() {
+    let mut documented: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for r in parse_state_table("Attempt") {
+        if to_attempt_state(&r.from).is_some() && to_attempt_state(&r.to).is_some() {
+            documented.insert((r.from, r.to, r.trigger));
+        }
+    }
+
+    let mut invented = Vec::new();
+    for &from in ALL_ATTEMPT_STATES {
+        for &to in ALL_ATTEMPT_STATES {
+            for trigger in transition_triggers(from, to) {
+                let key = (
+                    from.table_name().to_string(),
+                    to.table_name().to_string(),
+                    (*trigger).to_string(),
+                );
+                if !documented.contains(&key) {
+                    invented.push(format!(
+                        "{} -> {} ({trigger})",
+                        from.table_name(),
+                        to.table_name()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        invented.is_empty(),
+        "★★ 표에 없는 trigger 이름을 구현이 가지고 있다:
+  {}",
+        invented.join("
+  ")
+    );
 }

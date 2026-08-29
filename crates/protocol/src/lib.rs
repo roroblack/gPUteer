@@ -7,6 +7,7 @@
 //!
 //! 이 크레이트는 Protocol 스트림이 소유한다 (`docs/contracts/01_스트림_소유권.md`).
 
+pub mod attempt_state;
 pub mod canonical;
 pub mod constants;
 pub mod execution_spec;
