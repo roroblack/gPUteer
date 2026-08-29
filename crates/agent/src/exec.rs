@@ -83,6 +83,12 @@ pub enum ExecutionError {
     WaitFailed { detail: String },
     /// 종료 코드를 읽지 못했다.
     ExitCodeUnavailable { detail: String },
+    /// 소유자의 정지 요청을 실행하지 못했다.
+    ///
+    /// ★ 이건 다른 오류들보다 심각하다. 소유자가 "비워라" 라고 했는데
+    ///   못 비운 것이므로, `CLAUDE.md` §0.1 이 약속한 것을 못 지킨
+    ///   상태다. 조용히 넘기지 않는다.
+    StopFailed { detail: String },
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -107,11 +113,75 @@ impl std::fmt::Display for ExecutionError {
             Self::ExitCodeUnavailable { detail } => {
                 write!(f, "EXEC_FAILED:EXIT_CODE: {detail}")
             }
+            Self::StopFailed { detail } => write!(
+                f,
+                "OWNER_STOP_FAILED: 소유자의 정지 요청을 실행하지 못했다 — {detail}"
+            ),
         }
     }
 }
 
 impl std::error::Error for ExecutionError {}
+
+/// 실행 중인 작업을 **밖에서** 멈추는 손잡이.
+///
+/// # 왜 필요한가
+///
+/// `CLAUDE.md` §0.1 은 다른 어떤 규칙보다 앞에 "노드 소유자는 언제든
+/// 자기 GPU 를 즉시 비울 수 있어야 한다 — 네트워크가 끊겨도, quorum 이
+/// 없어도, Coordinator 가 죽어도" 를 둔다. `execute()` 는 자식이 끝날
+/// 때까지 그 스레드를 붙잡으므로, 이 손잡이가 없으면 그 규칙을 지킬
+/// 수단 자체가 없다.
+///
+/// # 이 손잡이가 보장하지 않는 것
+///
+/// ```text
+/// 정중한 종료      강제 종료다. 자식은 정리할 기회를 얻지 못한다
+/// 손실 없음        진행 중이던 작업은 잃는다. 얼마를 잃는지 계산해
+///                  보여주는 것은 §0.1 이 요구하는 호출부의 책임이다
+/// GPU 메모리 반환  프로세스가 죽으면 드라이버가 회수하지만, 이
+///                  계층이 그것을 확인하지는 않는다
+/// ```
+pub struct WorkloadStopper {
+    #[cfg(windows)]
+    inner: gputeer_runtime_windows::JobStopper,
+}
+
+impl WorkloadStopper {
+    /// 작업 프로세스 트리를 즉시 끝낸다.
+    ///
+    /// ★ 프로세스 하나가 아니라 **트리 전체**다. 자식이 손자를 만들었으면
+    ///   (예: `cmd /c python train.py`) 그 손자도 죽여야 GPU 가 실제로
+    ///   비워진다 — 실측으로 확인했다(`owner_stop.rs`).
+    ///
+    /// 이미 끝난 작업에 불러도 성공한다. 소유자가 정지 버튼을 두 번
+    /// 누르는 것은 정상적인 일이다.
+    pub fn stop(&self) -> Result<(), ExecutionError> {
+        #[cfg(windows)]
+        {
+            self.inner
+                .terminate(EXIT_CODE_OWNER_STOPPED)
+                .map_err(|error| ExecutionError::StopFailed {
+                    detail: error.to_string(),
+                })
+        }
+        #[cfg(not(windows))]
+        {
+            // 이 플랫폼은 애초에 실행하지 않으므로(위 `platform::execute`)
+            // 멈출 대상이 존재하지 않는다. 그래도 "성공했다" 고 거짓말하지
+            // 않는다.
+            Err(ExecutionError::UnsupportedPlatform {
+                detail: "이 플랫폼에서는 작업을 실행하지 않으므로 멈출 대상도 없다".into(),
+            })
+        }
+    }
+}
+
+/// 소유자가 멈춘 작업의 종료 코드.
+///
+/// ★ 0 이 아니어야 한다. 0 이면 정상 완료와 구분되지 않아, 소유자가
+///   중단시킨 작업이 "성공" 으로 기록된다.
+pub const EXIT_CODE_OWNER_STOPPED: u32 = 0xC000_0013;
 
 /// 실행 정책 — caller 가 명시적으로 채운다.
 #[derive(Debug, Clone)]
@@ -150,6 +220,37 @@ pub fn execute(
     spec: &ExecutionSpec,
     policy: ExecutionPolicy,
 ) -> Result<ExecutionOutcome, ExecutionError> {
+    execute_with_control(spec, policy, |_| {})
+}
+
+/// `execute()` 와 같지만, 자식이 뜬 **직후** 정지 손잡이를 caller 에게
+/// 넘긴다.
+///
+/// # 왜 콜백인가
+///
+/// 손잡이는 `wait()` 으로 스레드가 붙잡히기 **전에** 나가야 한다.
+/// 반환값으로 주면 이미 늦다 — 반환은 자식이 끝난 뒤에나 일어난다.
+///
+/// ```text
+/// 기동 + 상한 적용
+///   -> on_started(손잡이)      <- 여기서 나가야 소유자가 멈출 수 있다
+///   -> wait()                  <- 여기서 붙잡힌다
+///   -> 종료 코드 관측
+/// ```
+///
+/// ★ `on_started` 는 **빨리 돌아와야 한다.** 여기서 오래 걸리면 그만큼
+///   자식 관측이 늦어진다. 손잡이를 어딘가에 등록만 하고 나가는 용도다.
+///
+/// # 실행하지 못하면 콜백도 안 부른다
+///
+/// opt-in 거부·상한 실패·기동 실패는 전부 자식이 없는 상태이므로
+/// 멈출 대상도 없다. "멈출 수 있다" 는 손잡이를 주고 나서 실은 아무것도
+/// 안 뜬 상태로 두지 않는다.
+pub fn execute_with_control(
+    spec: &ExecutionSpec,
+    policy: ExecutionPolicy,
+    on_started: impl FnOnce(WorkloadStopper),
+) -> Result<ExecutionOutcome, ExecutionError> {
     if !policy.opted_in {
         return Err(ExecutionError::NotOptedIn);
     }
@@ -158,7 +259,7 @@ pub fn execute(
             detail: "commit_limit_bytes 가 0 이다".into(),
         });
     }
-    platform::execute(spec, &policy)
+    platform::execute(spec, &policy, on_started)
 }
 
 #[cfg(windows)]
@@ -169,6 +270,7 @@ mod platform {
     pub(super) fn execute(
         spec: &ExecutionSpec,
         policy: &ExecutionPolicy,
+        on_started: impl FnOnce(super::WorkloadStopper),
     ) -> Result<ExecutionOutcome, ExecutionError> {
         // ★ 명령줄 조립은 `runtime-windows` 가 한다. MSVC 인자 분해 규칙
         //   때문에 손으로 이어 붙이면 인용이 어긋난다 — 이미 그 버그를
@@ -215,6 +317,24 @@ mod platform {
                 }
             })?;
 
+        // ★ `wait()` **전에** 손잡이를 넘긴다. 순서를 바꾸면 자식이
+        //   끝난 뒤에야 손잡이가 나가서 아무 소용이 없다.
+        //
+        //   손잡이를 못 만들면 실행을 중단하고 자식을 죽인다 —
+        //   멈출 수 없는 남의 코드를 남의 PC 에서 돌리지 않는다
+        //   (`CLAUDE.md` §0.1).
+        match child.stopper() {
+            Ok(inner) => on_started(super::WorkloadStopper { inner }),
+            Err(error) => {
+                let detail = error.to_string();
+                return Err(ExecutionError::SpawnFailed {
+                    detail: format!(
+                        "정지 손잡이를 만들 수 없어 실행을 중단했다 — 멈출 수 없는 작업은 시작하지 않는다: {detail}"
+                    ),
+                });
+            }
+        }
+
         child.wait().map_err(|e| ExecutionError::WaitFailed {
             detail: e.to_string(),
         })?;
@@ -253,6 +373,7 @@ mod platform {
     pub(super) fn execute(
         _spec: &ExecutionSpec,
         _policy: &ExecutionPolicy,
+        _on_started: impl FnOnce(super::WorkloadStopper),
     ) -> Result<ExecutionOutcome, ExecutionError> {
         Err(ExecutionError::UnsupportedPlatform {
             detail: "이 플랫폼에는 자원 상한 강제가 연결돼 있지 않다(Linux cgroup 미착수) — 상한 없이 실행하지 않는다".into(),

@@ -58,8 +58,10 @@ mod windows_impl {
 
     use gputeer_runtime_policy::vram::{windows_commit_cap, VramEnforcement};
     use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        TerminateJobObject,
         SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
     };
@@ -70,7 +72,8 @@ mod windows_impl {
         FILE_SHARE_WRITE,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
+        CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess,
+        InitializeProcThreadAttributeList,
         ResumeThread, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
         CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
         LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
@@ -173,6 +176,98 @@ mod windows_impl {
                 return Err(std::io::Error::last_os_error());
             }
             Ok((info.PeakJobMemoryUsed, info.JobMemoryLimit))
+        }
+
+        /// 이 자식을 **다른 스레드에서** 강제 종료할 수 있는 손잡이를 만든다.
+        ///
+        /// # 왜 이게 있어야 하는가
+        ///
+        /// `CLAUDE.md` §0.1 은 다른 어떤 규칙보다 앞에 이렇게 정한다 —
+        /// "노드 소유자는 언제든 자기 GPU 를 즉시 비울 수 있어야 한다.
+        /// 네트워크가 끊겨도, quorum 이 없어도, Coordinator 가 죽어도."
+        ///
+        /// 그런데 `wait()` 은 자식이 끝날 때까지 그 스레드를 붙잡는다.
+        /// 붙잡힌 스레드에서는 아무것도 못 하므로, **멈추라고 말할 수 있는
+        /// 다른 손잡이**가 없으면 그 규칙을 지킬 수단 자체가 없다.
+        ///
+        /// # 왜 프로세스가 아니라 Job 을 죽이는가
+        ///
+        /// 자식이 손자를 만들었을 수 있다(예: `cmd /c python train.py`).
+        /// `TerminateProcess` 는 그 프로세스 하나만 죽여 손자를 고아로
+        /// 남긴다 — GPU 를 쥔 채로. Job Object 는 이미 트리 전체를
+        /// 담고 있으므로 `TerminateJobObject` 가 트리를 한 번에 끝낸다.
+        /// `state-machines.md` §3 의 `WATCHDOG_KILLED` effect 도
+        /// "process tree 종료" 라고 적혀 있다.
+        ///
+        /// # 핸들을 복제하는 이유
+        ///
+        /// ★ Job 핸들을 그대로 넘기면 `ConstrainedChild` 가 먼저 drop 될 때
+        ///   `CloseHandle` 이 불려 손잡이가 이미 닫힌 핸들을 가리키게 된다.
+        ///   그 핸들 값은 나중에 **다른 객체에 재사용될 수 있으므로**,
+        ///   운 나쁘면 남의 Job 을 죽인다. `DuplicateHandle` 로 각자
+        ///   자기 몫을 갖게 해서 수명을 분리한다.
+        pub fn stopper(&self) -> std::io::Result<JobStopper> {
+            let process = unsafe { GetCurrentProcess() };
+            let mut duplicated: HANDLE = std::ptr::null_mut();
+            let ok = unsafe {
+                DuplicateHandle(
+                    process,
+                    self.job,
+                    process,
+                    &mut duplicated,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(JobStopper { job: duplicated })
+        }
+    }
+
+    /// 실행 중인 작업을 **밖에서** 끝낼 수 있는 손잡이.
+    ///
+    /// `ConstrainedChild` 와 수명이 독립적이다 — 어느 쪽이 먼저 사라져도
+    /// 다른 쪽이 닫힌 핸들을 쓰지 않는다.
+    pub struct JobStopper {
+        job: HANDLE,
+    }
+
+    // SAFETY: Win32 커널 핸들은 프로세스 전역이고 스레드에 묶이지
+    // 않는다. 이 타입은 그 값을 옮기기만 하며, 실제 조작은
+    // `TerminateJobObject` 한 번뿐이다(스레드 안전한 호출이다).
+    unsafe impl Send for JobStopper {}
+    unsafe impl Sync for JobStopper {}
+
+    impl JobStopper {
+        /// Job 에 속한 **모든** 프로세스를 즉시 끝낸다.
+        ///
+        /// ★ 이건 정중한 요청이 아니라 강제 종료다. 자식은 정리할
+        ///   기회를 얻지 못하며 쓰던 파일이 중간 상태로 남을 수 있다.
+        ///   그래서 `CLAUDE.md` §0.1 은 "강제 종료 시 손실 범위를 미리
+        ///   계산해 보여준다" 고 요구한다 — 얼마를 잃는지 모른 채
+        ///   누르게 하지 않는다. 그 계산은 이 함수의 책임이 아니라
+        ///   호출부의 책임이다.
+        ///
+        /// 이미 끝난 Job 에 불러도 성공한다(멱등).
+        pub fn terminate(&self, exit_code: u32) -> std::io::Result<()> {
+            let ok = unsafe { TerminateJobObject(self.job, exit_code) };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for JobStopper {
+        fn drop(&mut self) {
+            unsafe {
+                if !self.job.is_null() {
+                    CloseHandle(self.job);
+                }
+            }
         }
     }
 
@@ -601,7 +696,7 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::{
     create_constrained_child, create_constrained_child_for_ram_limit, quote_command_line,
-    ConstrainedChild, CreateProcessSpec,
+    ConstrainedChild, CreateProcessSpec, JobStopper,
 };
 
 #[cfg(not(windows))]
