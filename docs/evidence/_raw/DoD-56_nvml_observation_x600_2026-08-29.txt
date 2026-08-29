@@ -1,0 +1,14 @@
+GPU_PROBE_OK driver_version=595.79 cuda_driver_version=13020 devices=1
+GPU uuid=GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93 index=0 name="NVIDIA GeForce RTX 4070 SUPER" total_vram_bytes=12878610432 free_vram_bytes=12581863424 used_vram_bytes=296747008 compute_capability=8.9 mig=(지원 안 함)
+EXIT=0 
+uuid, name, driver_version, memory.total [MiB], memory.used [MiB], compute_cap
+GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93, NVIDIA GeForce RTX 4070 SUPER, 595.79, 12282 MiB, 0 MiB, 8.9
+=== 개발 기계(GPU 없음) — 확인 불가로 실패해야 한다 ===
+gpu-probe 실패: GPU_PROBE_UNKNOWN NVML 을 열 수 없어 이 기계의 GPU 유무를 확인하지 못했다 (GPU 가 0개라는 뜻이 아니다) — nvml.dll: LoadLibraryExW failed / C:\Program Files/NVIDIA Corporation/NVSMI/nvml.dll: LoadLibraryExW failed
+EXIT=1
+
+=== cargo test -p gputeer-runtime-nvml ===
+test tests::mig_states_are_three_not_two ... ok
+test tests::missing_nvml_is_an_error_not_an_empty_list ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
