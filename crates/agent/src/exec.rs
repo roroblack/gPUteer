@@ -309,60 +309,55 @@ mod platform {
                 .map(|dir| dir.join(STDERR_FILENAME)),
         };
 
-        // ★ 상한을 **먼저** 걸고 재개한다. `create_constrained_child_for_ram_limit`
-        //   이 그 순서를 보장한다(CREATE_SUSPENDED -> Job -> Assign -> Resume).
-        let child =
-            gputeer_runtime_windows::create_constrained_child(&create, policy.commit_limit_bytes)
-                .map_err(|e| {
-                // 기동 실패와 상한 실패를 구분한다 — 전자는 Manifest 문제일
-                // 수 있고 후자는 이 Agent 의 환경 문제다.
-                if e.kind() == std::io::ErrorKind::Unsupported
-                    || e.kind() == std::io::ErrorKind::InvalidInput
-                {
-                    ExecutionError::LimitNotApplied {
-                        detail: e.to_string(),
-                    }
-                } else {
-                    ExecutionError::SpawnFailed {
-                        detail: e.to_string(),
-                    }
-                }
-            })?;
-
-        // ★ `wait()` **전에** 손잡이를 넘긴다. 순서를 바꾸면 자식이
-        //   끝난 뒤에야 손잡이가 나가서 아무 소용이 없다.
+        // ★ 자식을 **정지 상태로** 받는다. 상한은 이미 걸려 있다.
         //
-        //   손잡이를 못 만들면 실행을 중단하고 자식을 죽인다 —
-        //   멈출 수 없는 남의 코드를 남의 PC 에서 돌리지 않는다
-        //   (`CLAUDE.md` §0.1).
-        match child.stopper() {
-            Ok(inner) => on_started(super::WorkloadStopper { inner }),
-            Err(error) => {
-                // ★ 여기서 그냥 반환하면 **자식이 계속 돈다**
-                //   (2026-08-29, 독립 검수가 찾은 차단 결함).
-                //   `ConstrainedChild::drop` 은 핸들만 닫는데, Windows 는
-                //   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 없이는 핸들을
-                //   닫아도 소속 프로세스를 안 죽인다. 그 플래그를
-                //   `create_constrained_child` 에 추가했고, 여기서는
-                //   그 RAII 에만 기대지 않고 **명시적으로도** 죽인다 —
-                //   두 겹으로 막아야 "멈출 수 없는 작업은 시작하지
-                //   않는다" 가 참이 된다.
-                let detail = error.to_string();
-                let explicit = match child.stopper() {
-                    // 손잡이를 못 만드는 상황이므로 이 두 번째 시도도
-                    // 실패할 가능성이 높다. 그래도 해 본다.
-                    Ok(stopper) => stopper.terminate(super::EXIT_CODE_OWNER_STOPPED).is_ok(),
-                    Err(_) => false,
-                };
-                drop(child); // KILL_ON_JOB_CLOSE 가 여기서 트리를 끝낸다
-                return Err(ExecutionError::SpawnFailed {
-                    detail: format!(
-                        "정지 손잡이를 만들 수 없어 실행을 중단했다(명시적 종료 {},                          Job 닫힘 종료로도 정리) — 멈출 수 없는 작업은 시작하지 않는다: {detail}",
-                        if explicit { "성공" } else { "실패" }
-                    ),
-                });
+        //   재개를 뒤로 미루는 이유는 등록을 먼저 끝내기 위해서다 —
+        //   돌기 시작한 뒤 등록하면 짧은 작업은 등록 전에 끝나 소유자
+        //   화면에 한 번도 안 보일 수 있다(2026-08-29 독립 검수 지적).
+        let suspended = gputeer_runtime_windows::create_constrained_child_suspended(
+            &create,
+            policy.commit_limit_bytes,
+        )
+        .map_err(|e| {
+            // 기동 실패와 상한 실패를 구분한다 — 전자는 Manifest 문제일
+            // 수 있고 후자는 이 Agent 의 환경 문제다.
+            if e.kind() == std::io::ErrorKind::Unsupported
+                || e.kind() == std::io::ErrorKind::InvalidInput
+            {
+                ExecutionError::LimitNotApplied {
+                    detail: e.to_string(),
+                }
+            } else {
+                ExecutionError::SpawnFailed {
+                    detail: e.to_string(),
+                }
             }
-        }
+        })?;
+
+        // 정지 손잡이를 먼저 만든다. 못 만들면 재개하지 않고 끝낸다 —
+        // 이 경우 자식은 단 한 번도 돌지 않았고, `SuspendedChild` 가
+        // drop 되면 `KILL_ON_JOB_CLOSE` 가 정리한다.
+        //
+        // ★ 이전 판은 이미 돌고 있는 자식에 대해 손잡이를 만들다 실패해
+        //   "돌기 시작했는데 멈출 수 없는" 순간이 존재했다. 이제 그
+        //   순간 자체가 없다.
+        let stopper = suspended
+            .stopper()
+            .map_err(|error| ExecutionError::SpawnFailed {
+                detail: format!(
+                    "정지 손잡이를 만들 수 없어 실행하지 않았다(자식은 한 번도 돌지 않았고 정리됨) \
+                     — 멈출 수 없는 작업은 시작하지 않는다: {error}"
+                ),
+            })?;
+        on_started(super::WorkloadStopper { inner: stopper });
+
+        // 이제서야 돌린다. 소유자는 첫 명령이 실행되기 전부터 이 작업을
+        // 보고 멈출 수 있다.
+        let child = suspended
+            .resume()
+            .map_err(|e| ExecutionError::SpawnFailed {
+                detail: e.to_string(),
+            })?;
 
         child.wait().map_err(|e| ExecutionError::WaitFailed {
             detail: e.to_string(),

@@ -421,23 +421,63 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     })
 }
 
-/// `Host` 헤더가 loopback 을 가리키는가.
+/// `Host` 헤더가 loopback authority 인가.
 ///
-/// ★ `localhost` 도 허용한다 — 소유자가 브라우저 주소창에 그렇게 칠
-///   것이기 때문이다. 그 이름은 hosts 파일에서 127.0.0.1 로 고정되며,
-///   공격자가 자기 도메인을 127.0.0.1 로 가리켜도 그 도메인 이름이
-///   Host 에 들어오므로 여기서 걸린다.
+/// ★ **문법을 실제로 검사한다**(2026-08-29, 독립 검수 지적). 초안은
+///   대괄호 뒤에 무엇이 오든 무시하고, 비대괄호도 첫 `:` 뒤를 전부
+///   버렸다. 그래서 아래 같은 깨진 Host 가 전부 통과했다.
+///
+///   ```text
+///   [::1                    닫는 괄호가 없다
+///   [::1]evil.example       괄호 뒤에 다른 이름이 붙었다
+///   localhost:not-a-port    포트가 숫자가 아니다
+///   127.0.0.1:1:2           콜론이 두 개다
+///   ```
+///
+///   표준 브라우저는 이런 Host 를 만들지 못하므로 실제 CSRF 우회는
+///   아니었지만, "Host 를 파싱해 loopback 만 허용한다" 는 주장이
+///   코드보다 컸다. 애매하면 거부한다.
+///
+/// `localhost` 도 허용한다 — 소유자가 주소창에 그렇게 친다. 그 이름은
+/// hosts 파일에서 loopback 으로 고정되며, 공격자가 자기 도메인을
+/// 127.0.0.1 로 가리켜도 그 **도메인 이름**이 Host 에 들어오므로 걸린다.
 fn host_is_loopback(host: Option<&str>) -> bool {
     let Some(host) = host else {
         // Host 없는 HTTP/1.1 요청은 규격 위반이다. 통과시키지 않는다.
         return false;
     };
-    // 포트를 뗀다. IPv6 대괄호 형태도 다룬다.
-    let name = if let Some(rest) = host.strip_prefix('[') {
-        rest.split(']').next().unwrap_or_default()
-    } else {
-        host.split(':').next().unwrap_or_default()
+    let (name, port) = match host.strip_prefix('[') {
+        // IPv6 리터럴: `[::1]` 또는 `[::1]:8765` 만 받는다.
+        Some(rest) => match rest.split_once(']') {
+            Some((inside, after)) => (inside, after),
+            // 닫는 대괄호가 없다 — 문법 위반이다.
+            None => return false,
+        },
+        None => match host.split_once(':') {
+            Some((name, port)) => (name, port),
+            None => (host, ""),
+        },
     };
+
+    // 대괄호 형태의 나머지는 비었거나 `:포트` 여야 한다.
+    let port = if host.starts_with('[') {
+        match port {
+            "" => "",
+            rest => match rest.strip_prefix(':') {
+                Some(port) => port,
+                // `]` 뒤에 콜론 없이 뭔가 붙었다.
+                None => return false,
+            },
+        }
+    } else {
+        port
+    };
+
+    // 포트가 있으면 숫자여야 하고 u16 범위여야 한다.
+    if !port.is_empty() && port.parse::<u16>().is_err() {
+        return false;
+    }
+
     matches!(
         name.to_ascii_lowercase().as_str(),
         "127.0.0.1" | "localhost" | "::1"
@@ -587,7 +627,20 @@ mod tests {
         for good in ["127.0.0.1", "127.0.0.1:8765", "localhost", "localhost:1", "[::1]:9"] {
             assert!(host_is_loopback(Some(good)), "{good} 이 거부됐다");
         }
-        for bad in ["evil.example.com", "evil.example.com:8765", "0.0.0.0", "192.168.0.5"] {
+        // ★ 문법이 깨진 Host 도 전부 거부해야 한다. 초안은 이것들을
+        //   전부 통과시켰다(2026-08-29 독립 검수가 하나하나 짚어줌).
+        for bad in [
+            "evil.example.com",
+            "evil.example.com:8765",
+            "0.0.0.0",
+            "192.168.0.5",
+            "[::1",
+            "[::1]evil.example",
+            "[127.0.0.1]evil.example",
+            "localhost:not-a-port",
+            "127.0.0.1:1:2",
+            "127.0.0.1:99999",
+        ] {
             assert!(!host_is_loopback(Some(bad)), "{bad} 이 통과했다");
         }
         assert!(!host_is_loopback(None), "Host 없는 요청이 통과했다");

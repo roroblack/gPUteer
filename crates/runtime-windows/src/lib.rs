@@ -478,6 +478,16 @@ mod windows_impl {
         spec: &CreateProcessSpec,
         commit_limit_bytes: u64,
     ) -> std::io::Result<ConstrainedChild> {
+        create_constrained_child_suspended(spec, commit_limit_bytes)?.resume()
+    }
+
+    /// `create_constrained_child` 와 같지만 **재개하지 않고** 돌려준다.
+    ///
+    /// 호출부가 정지 손잡이를 등록한 뒤 `resume()` 을 부른다.
+    pub fn create_constrained_child_suspended(
+        spec: &CreateProcessSpec,
+        commit_limit_bytes: u64,
+    ) -> std::io::Result<SuspendedChild> {
         if commit_limit_bytes == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -689,19 +699,68 @@ mod windows_impl {
             return Err(err);
         }
 
-        let resumed = unsafe { ResumeThread(process_info.hThread) };
-        unsafe { CloseHandle(process_info.hThread) };
-        if resumed == u32::MAX {
-            let err = std::io::Error::last_os_error();
-            unsafe { CloseHandle(job) };
-            kill_and_close();
-            return Err(err);
+        Ok(SuspendedChild {
+            child: ConstrainedChild {
+                process: process_info.hProcess,
+                job,
+            },
+            main_thread: process_info.hThread,
+        })
+    }
+
+    /// 상한까지 걸렸지만 **아직 돌지 않는** 자식.
+    ///
+    /// # 왜 이 단계를 밖으로 노출하는가
+    ///
+    /// ★ 2026-08-29, 독립 검수 지적. 전에는 기동과 재개가 한 덩어리였고,
+    ///   호출부는 이미 돌기 시작한 자식을 받아 그 다음에야 소유자 화면에
+    ///   등록했다. 짧은 작업은 **등록 전에 이미 끝나** 화면에 한 번도
+    ///   안 보이거나, 반대로 도는 작업이 잠깐 누락될 수 있었다.
+    ///
+    ///   정지 상태로 받아 **등록을 먼저 끝내고 재개**하면 그 구간이
+    ///   사라진다 — 소유자가 보는 목록이 사실과 어긋나지 않는다.
+    pub struct SuspendedChild {
+        child: ConstrainedChild,
+        main_thread: windows_sys::Win32::Foundation::HANDLE,
+    }
+
+    impl SuspendedChild {
+        /// 재개 전에 정지 손잡이를 먼저 만든다.
+        pub fn stopper(&self) -> std::io::Result<JobStopper> {
+            self.child.stopper()
         }
 
-        Ok(ConstrainedChild {
-            process: process_info.hProcess,
-            job,
-        })
+        /// 자식을 돌리기 시작한다.
+        ///
+        /// 실패하면 자식은 정지 상태 그대로 남는데, 여기서 `child` 를
+        /// drop 하므로 `KILL_ON_JOB_CLOSE` 가 정리한다.
+        pub fn resume(self) -> std::io::Result<ConstrainedChild> {
+            let resumed = unsafe { ResumeThread(self.main_thread) };
+            unsafe { CloseHandle(self.main_thread) };
+            // `self` 가 여기서 Drop 을 다시 돌리지 않도록 먼저 꺼낸다.
+            let child = unsafe { std::ptr::read(&self.child) };
+            std::mem::forget(self);
+            if resumed == u32::MAX {
+                let err = std::io::Error::last_os_error();
+                drop(child); // KILL_ON_JOB_CLOSE 가 정지 상태 자식을 끝낸다
+                return Err(err);
+            }
+            Ok(child)
+        }
+    }
+
+    impl Drop for SuspendedChild {
+        /// 재개 없이 버려지면 정지 상태 자식을 남기지 않는다.
+        ///
+        /// `child` 가 자기 Drop 에서 핸들을 닫고, `KILL_ON_JOB_CLOSE` 가
+        /// 정지 상태 프로세스를 끝낸다.
+        fn drop(&mut self) {
+            unsafe {
+                if !self.main_thread.is_null() {
+                    CloseHandle(self.main_thread);
+                }
+            }
+        }
     }
 
     #[cfg(test)]
@@ -771,7 +830,8 @@ mod windows_impl {
 #[cfg(windows)]
 pub use windows_impl::{
     create_constrained_child, create_constrained_child_for_ram_limit, quote_command_line,
-    ConstrainedChild, CreateProcessSpec, JobStopper,
+    create_constrained_child_suspended, ConstrainedChild, CreateProcessSpec, JobStopper,
+    SuspendedChild,
 };
 
 #[cfg(not(windows))]

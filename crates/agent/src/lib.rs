@@ -247,22 +247,33 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         connect_timeout: Duration::from_secs(3),
         safety_margin_ms: 1_000,
     };
-    // ★ Owner Panel 을 **다른 스레드에서** 띄운다.
+    // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
+    //   (2026-08-29, 독립 검수 지적).
     //
-    //   여기서 띄우는 이유는 `run()` 이 곧 Coordinator 연결에
-    //   묶이기 때문이다. 연결이 막히거나 Coordinator 가 죽어도
-    //   패널은 살아 있어야 한다 — §0.1 이 "Coordinator 가 죽어도
-    //   동작해야 한다" 고 명시한 그것이다.
+    //   전에는 `--owner-panel-port` 를 안 주면 패널 없이 그냥 실행됐다.
+    //   그러면 남의 코드가 남의 PC 에서 도는데 소유자는 그것을 볼
+    //   방법도 멈출 방법도 없다 — `CLAUDE.md` §0.1 이 가장 앞에서
+    //   요구하는 것이 정확히 그 두 가지다.
     //
-    //   패널이 안 뜨면 **실행 자체를 안 한다.** 멈출 수 없는 남의
-    //   코드를 남의 PC 에서 돌리지 않는다 — 조용히 넘어가면
-    //   소유자는 패널이 있다고 믿는데 실제로는 없는 상태가 된다.
-    if let Some(port) = config.owner_panel_port {
+    //   "포트를 안 줬으니 안 띄운다" 는 편의였지, 안전한 기본값이
+    //   아니었다. 실행이 켜져 있으면 포트를 안 줘도 **0 으로 자동
+    //   기동**한다 — OS 가 고른 포트를 표준 출력에 찍으므로 소유자는
+    //   거기로 들어가면 된다. 실행이 꺼져 있으면(기본값) 멈출 대상이
+    //   없으므로 명시했을 때만 띄운다.
+    let panel_port = match (config.owner_panel_port, config.execute_workload) {
+        (Some(port), _) => Some(port),
+        // 실행하는데 포트를 안 줬다 — 조용히 넘어가지 않고 자동으로 연다.
+        (None, true) => Some(0),
+        (None, false) => None,
+    };
+
+    if let Some(port) = panel_port {
         let token = derive_owner_panel_token(&config.own_seed);
         let panel = owner_panel::OwnerPanel::bind(port, config.owner_panel_state.clone(), token)
             .map_err(|error| {
                 format!(
-                    "OWNER_PANEL_REFUSED: 소유자 패널을 127.0.0.1:{port} 에 띄우지 못했다                      — 멈출 수 없는 작업을 시작하지 않는다: {error}"
+                    "OWNER_PANEL_REFUSED: 소유자 패널을 127.0.0.1:{port} 에 띄우지 못했다 \
+                     — 멈출 수 없는 작업을 시작하지 않는다: {error}"
                 )
             })?;
         let addr = panel
