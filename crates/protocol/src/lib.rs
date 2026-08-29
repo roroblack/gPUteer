@@ -9,6 +9,7 @@
 
 pub mod canonical;
 pub mod constants;
+pub mod execution_spec;
 pub mod fenced_operation;
 pub mod membership;
 pub mod participation;
@@ -29,6 +30,7 @@ pub use canonical::{
     blake3_256, canonical_encode, merkle_root, sig_input, CanonicalError, Domain, Fields, Value,
     SIGNATURE_FIELD,
 };
+pub use execution_spec::{derive_execution_spec, ExecutionSpec, ExecutionSpecError, SpecField};
 pub use fenced_operation::{
     derive_operation_id, evaluate_fenced_operation, FencedOperationDecision, FencedOperationKey,
     InvalidFencedOperation,
