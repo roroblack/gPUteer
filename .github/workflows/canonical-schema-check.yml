@@ -40,6 +40,9 @@ jobs:
       - name: Check canonical schema against proto definitions
         run: python tools/canonical/check_schema.py
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Build workspace excluding Windows runtime
         run: cargo build --workspace --exclude gputeer-runtime-windows
 

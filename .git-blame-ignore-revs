@@ -1,0 +1,14 @@
+# git blame 이 건너뛸 커밋 — 서식만 바꾼 커밋을 여기 등록한다.
+#
+# 사용:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# 등록 규칙:
+#   - 동작을 바꾸지 않는 순수 서식 커밋만 등록한다.
+#   - 다른 변경이 섞인 커밋은 등록하지 않는다.
+#   - 커밋 해시 한 줄 위에 무엇인지 주석으로 적는다.
+
+# cargo fmt --all (2026-08-27) — 75개 .rs 파일, 동작 변경 없음
+# 검증: 워크스페이스 테스트 584 passed 전후 동일, selftest 73/73,
+#       canonical 벡터 48개 일치
+e98db9a3680010b3b3da7ddef54b1a8d997c9d01
