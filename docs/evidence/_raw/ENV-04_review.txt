@@ -1,0 +1,71 @@
+ENV-04 독립 검수 기록 (2026-08-29)
+
+검수자   codex exec --model gpt-5.6-sol -c model_reasoning_effort=medium
+         --sandbox read-only --skip-git-repo-check
+         OpenAI Codex v0.148.0
+판정     ACCEPTED (1라운드)
+tokens   15,557
+
+---
+검수자가 직접 관측한 위치와 값
+
+주장 1 — raw 로그의 suite 수와 실패 수
+  docs/evidence/_raw/ENV-04_x600_wsl2_2026-08-29.txt
+    rg -c "test result:"         -> 56
+    rg -c "test result: FAILED"  -> 0
+  판정: 문서 주장(56 suite · 0 failed)과 일치
+
+주장 2 — passed 합계
+  docs/evidence/_raw/ENV-04_x600_wsl2_2026-08-29.txt
+    rg -o "ok\. [0-9]+ passed" 의 숫자 합산 -> 597
+  판정: 문서 주장(597 passed)과 일치
+
+주장 3 — symlink_defense 가 Windows 전용 4건
+  crates/checkpoint/tests/symlink_defense.rs:1   #![cfg(windows)]
+  crates/checkpoint/tests/symlink_defense.rs     #[test] 개수 4
+  판정: 문서 주장과 일치
+
+주장 4 — Linux 전용 테스트가 실제로 실행됨
+  crates/crypto/tests/keyring.rs:312             #[cfg(not(windows))]
+  crates/crypto/tests/keyring.rs:314             fn k1_is_explicitly_unavailable_on_unverified_linux()
+  crates/crypto/tests/keyring.rs:315-316         let result = PersistentKeyring::new(...)
+  docs/evidence/_raw/ENV-04_x600_wsl2_2026-08-29.txt:398
+      test k1_is_explicitly_unavailable_on_unverified_linux ... ok
+  판정: 문서 주장과 일치 — 선언과 실제 실행 둘 다 확인됨
+
+주장 5 — codex_findings 의 cfg 는 테스트가 아니라 변수
+  crates/checkpoint/tests/codex_findings.rs:519  #[cfg(windows)]
+  crates/checkpoint/tests/codex_findings.rs:520  let abs = "C:/Windows/Temp/gputeer-escape.bin";
+  crates/checkpoint/tests/codex_findings.rs:522  let abs = "/tmp/gputeer-escape.bin";
+  판정: 519행의 cfg 는 520행 let 선언에 적용된다. #[test] 가 아니므로
+        테스트 개수에 영향 없다 — 문서 주장과 일치
+
+---
+검수자 최종 응답 원문
+
+ACCEPTED
+1) 관측값: `test result:` 56개, `test result: FAILED` 0개.
+2) 관측값: `ok. N passed`의 N 합계는 597.
+3) 관측값: 1행은 `#![cfg(windows)]`, `#[test]`는 4개.
+4) 관측값: 해당 테스트에 `#[cfg(not(windows))]`가 있으며 R에서 `... ok`.
+5) 관측값: 519행 `#[cfg(windows)]`는 520행 `let abs = ...` 변수 선언에 적용되며 `#[test]`가 아님.
+
+---
+검수 이력 — 앞선 두 번의 시도는 판정 전에 종료됐다
+
+1차  프롬프트 약 60줄. PowerShell 이 UTF-8 한글 문서를 잘못된 인코딩으로
+     읽어 깨진 텍스트가 검수자 컨텍스트를 소진했다.
+2차  프롬프트 약 70줄. 명령을 직접 지정하고 reasoning effort 를 낮췄으나
+     실행 계획만 출력하고 종료했다.
+
+진단  코덱스에 한 줄짜리 작업(rg -c 실행 후 숫자 답하기)을 주자 6,044
+      토큰으로 정상 완료했다. 즉 실행 능력의 문제가 아니라 프롬프트
+      길이가 턴 예산을 소진시킨 것이었다. 3차에서 프롬프트를 약 20줄로
+      줄이자 15,557 토큰으로 완료했다.
+
+교훈  이 저장소의 검수 프롬프트는 짧게 쪼갠다. 파일 전체를 읽게 하지 말고
+      확인할 주장을 명시하고 rg 로 좁게 확인시킨다.
+
+한계  이 검수는 수치 대조와 cfg 게이트 확인에 한정된다. limitations 의
+      정직성, decision 의 과장 여부, WSL2 와 네이티브 Linux 의 차이에 대한
+      판단은 검수 범위에 넣지 않았다.
