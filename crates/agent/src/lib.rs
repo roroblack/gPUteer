@@ -138,6 +138,11 @@ pub struct AgentConfig {
     ///   확인하기 위해서다 — 대조를 지우고도 통과하는 검사는
     ///   아무것도 증명하지 않는다(2026-08-29 실제로 그랬다).
     pub corrupt_heartbeat_fence: bool,
+    /// ★ 테스트 전용 — heartbeat 의 `coordinator_device_id` 를 다른
+    ///   Coordinator 것으로 보낸다. 그 대조가 실제로 걸리는지
+    ///   확인하기 위해서다 — 지워도 통과하는 검사는 아무것도
+    ///   증명하지 않는다(2026-08-29 독립 검수 지적).
+    pub corrupt_heartbeat_coordinator: bool,
     /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
     pub workload_commit_limit_bytes: u64,
     /// Owner Panel 이 쓸 상태. Agent 가 작업을 시작하면 여기 등록하고
@@ -875,7 +880,11 @@ fn run_one_connection(
             schema_version: 1,
             node_id: config.agent_device_id.clone(),
             device_id: config.agent_device_id.clone(),
-            coordinator_device_id: config.coordinator_device_id.clone(),
+            coordinator_device_id: if config.corrupt_heartbeat_coordinator {
+                format!("{}-OTHER", config.coordinator_device_id)
+            } else {
+                config.coordinator_device_id.clone()
+            },
             issued_at_unix_ms: now,
             // 지금 들고 있는 Lease 의 세대. 이게 있어야 Coordinator 가
             // "살아 있다" 뿐 아니라 "어느 세대를 들고 살아 있다" 를 안다.
@@ -1775,16 +1784,37 @@ fn peer_closed_after_ack(stream: &TcpStream) -> Result<bool, String> {
 /// 이 nonce 선택을 같이 쓰면, 재시작 후 같은 `grant_id` 를 다시
 /// 발급했을 때 정당한 새 Grant 가 예전 nonce 와 충돌해 `Duplicate`
 /// 로 오판될 수 있다(코덱스 독립 검수 2026-08-18 지적).
+/// nonce 유도 — 모든 성분을 **길이 접두사와 함께** 넣는다.
+///
+/// # 왜 그냥 이어 붙이면 안 되는가
+///
+/// ★ 2026-08-29 독립 검수가 찾았다. 초안은 `tag || 0x00 || id` 뒤에
+///   `connection_attempt` 를 **0 이 아닐 때만** 붙였다. 그래서 서로 다른
+///   입력이 같은 바이트가 됐다.
+///
+///   ```text
+///   id = "L:51234", attempt = 0            -> "...\0L:51234"
+///   id = "L:5",     attempt = 0x31323334   -> "...\0L:5" + "1234"
+///   ```
+///
+///   두 번째의 4바이트가 ASCII `"1234"` 라 첫 번째와 완전히 같아진다.
+///   지금 bounded reconnect 범위에서는 도달하지 않지만, **함수가 단사가
+///   아니면** 언젠가 두 다른 요청이 같은 nonce 를 갖고 하나가 replay 로
+///   거부된다 — 그때 원인을 찾기가 매우 어렵다.
+///
+///   이 저장소는 같은 교훈을 이미 배웠다. `start_checkpoint_id()` 는
+///   "길이-프리픽스된 job_id/attempt_id/grant_id — canonical encoding
+///   결함 방지" 라고 주석까지 달아 뒀는데, 이 함수는 그러지 않았다.
+///
+/// 이제 모든 성분이 고정 폭 길이 접두사를 갖고, `connection_attempt` 는
+/// 값과 무관하게 **항상** 고정 8바이트로 들어간다.
 fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
-    let mut input = Vec::with_capacity(tag.len() + 1 + id.len() + 4);
-    input.extend_from_slice(tag.as_bytes());
-    input.push(0);
-    input.extend_from_slice(id.as_bytes());
-    if connection_attempt != 0 {
-        input.extend_from_slice(&connection_attempt.to_be_bytes());
-    }
-    gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+    // ★ 계산은 `crates/protocol` 에 **한 군데만** 있다. 예전에는
+    //   이 계산이 agent·coordinator·selftest 세 군데에 복사돼 있었고,
+    //   실제로 둘만 고치고 셋째를 놓쳐 selftest 가 깨졌다.
+    gputeer_protocol::nonce::derive_replay_nonce(tag, id, connection_attempt)
 }
+
 
 /// 반복 Lease 갱신(2026-08-19,
 /// `docs/plans/2026-08-19_2330_같은_연결_반복_lease_갱신_v1.md`) 전용
@@ -1827,6 +1857,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
+        corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
         multi_agent: flags.bool_flag("--multi-agent"),
         heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
             Some(v) => v
@@ -2018,6 +2049,7 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
@@ -2057,6 +2089,7 @@ mod tests {
             execute_workload: false,
             heartbeat_rounds: 0,
             corrupt_heartbeat_fence: false,
+            corrupt_heartbeat_coordinator: false,
             multi_agent: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             owner_panel_port: None,

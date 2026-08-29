@@ -689,7 +689,20 @@ fn serve_one_connection_impl(
         }
         // 어느 세대의 작업을 들고 살아 있는가. 발급한 Lease 와 다르면
         // 오래된 세대의 보고이므로 최신 상태로 오인하지 않는다.
-        if let Some(lease) = grant.lease.as_ref() {
+        // ★ Lease 가 없으면 **거부한다.** 예전에는 `if let Some` 으로
+        //   조용히 건너뛰었는데, 그러면 "3종을 항상 대조한다" 는
+        //   불변식이 조건부가 된다(2026-08-29 독립 검수 지적).
+        //   지금 이 Coordinator 는 항상 Lease 를 실어 보내므로 이
+        //   가지는 도달하지 않지만, 나중에 그 가정이 깨졌을 때
+        //   조용히 검사를 건너뛰기보다 멈추는 편이 낛다.
+        let Some(lease) = grant.lease.as_ref() else {
+            return Err(
+                "HEARTBEAT_REJECTED: 이 연결의 Grant 에 Lease 가 없어 세대를 대조할 수 없다"
+                    .to_string()
+                    .into(),
+            );
+        };
+        {
             if heartbeat.fence_epoch != lease.fence_epoch {
                 return Err(format!(
                     "HEARTBEAT_REJECTED: fence_epoch 불일치 — 발급 {} != 보고 {}",
@@ -1691,16 +1704,37 @@ fn u32_from_stored(value: u64, field: &str) -> Result<u32, String> {
     })
 }
 
+/// nonce 유도 — 모든 성분을 **길이 접두사와 함께** 넣는다.
+///
+/// # 왜 그냥 이어 붙이면 안 되는가
+///
+/// ★ 2026-08-29 독립 검수가 찾았다. 초안은 `tag || 0x00 || id` 뒤에
+///   `connection_attempt` 를 **0 이 아닐 때만** 붙였다. 그래서 서로 다른
+///   입력이 같은 바이트가 됐다.
+///
+///   ```text
+///   id = "L:51234", attempt = 0            -> "...\0L:51234"
+///   id = "L:5",     attempt = 0x31323334   -> "...\0L:5" + "1234"
+///   ```
+///
+///   두 번째의 4바이트가 ASCII `"1234"` 라 첫 번째와 완전히 같아진다.
+///   지금 bounded reconnect 범위에서는 도달하지 않지만, **함수가 단사가
+///   아니면** 언젠가 두 다른 요청이 같은 nonce 를 갖고 하나가 replay 로
+///   거부된다 — 그때 원인을 찾기가 매우 어렵다.
+///
+///   이 저장소는 같은 교훈을 이미 배웠다. `start_checkpoint_id()` 는
+///   "길이-프리픽스된 job_id/attempt_id/grant_id — canonical encoding
+///   결함 방지" 라고 주석까지 달아 뒀는데, 이 함수는 그러지 않았다.
+///
+/// 이제 모든 성분이 고정 폭 길이 접두사를 갖고, `connection_attempt` 는
+/// 값과 무관하게 **항상** 고정 8바이트로 들어간다.
 fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
-    let mut input = Vec::with_capacity(tag.len() + 1 + id.len() + 4);
-    input.extend_from_slice(tag.as_bytes());
-    input.push(0);
-    input.extend_from_slice(id.as_bytes());
-    if connection_attempt != 0 {
-        input.extend_from_slice(&connection_attempt.to_be_bytes());
-    }
-    gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+    // ★ 계산은 `crates/protocol` 에 **한 군데만** 있다. 예전에는
+    //   이 계산이 agent·coordinator·selftest 세 군데에 복사돼 있었고,
+    //   실제로 둘만 고치고 셋째를 놓쳐 selftest 가 깨졌다.
+    gputeer_protocol::nonce::derive_replay_nonce(tag, id, connection_attempt)
 }
+
 
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

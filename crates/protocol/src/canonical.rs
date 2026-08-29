@@ -277,179 +277,83 @@ pub const DOMAIN_TAG_LEN: usize = 32;
 /// 서명 용도를 고정하는 도메인 태그 (signing.md §5).
 ///
 /// 한 문맥의 서명을 다른 문맥에서 검증하면 반드시 실패한다.
-/// 새 서명 대상 메시지를 추가하면 여기에 등록해야 한다(MUST).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Domain {
-    Manifest,
-    Grant,
-    Lease,
-    LeaseRenew,
-    LeaseRevoke,
-    Checkpoint,
-    ReplicaAck,
-    Artifact,
-    AttemptReport,
-    Canonical,
-    Genesis,
-    // ★ ADR-028 (2026-08-16) — membership · policy · quarantine 3종을 9종으로 분리했다.
-    //   공유하면 서명 재사용이 가능하다: RemoveMember{id} 와 RevokeDevice{id} 의
-    //   canonical 이 28바이트로 동일해, 탈퇴 서명이 기기 폐기로 재사용된다.
-    MemberAdd,
-    MemberRemove,
-    DeviceApprove,
-    DeviceRevoke,
-    CoordinatorSet,
-    OwnerKeyRotate,
-    PolicyUpdate,
-    QuarantineDevice,
-    QuarantineRelease,
-    Audit,
-    Release,
-    Invite,
-    // ★ 2026-08-18 — coordinator/agent 최소 핸드셰이크
-    //   (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md).
-    //   ReplicaAck 의 domain 을 공유하지 않는다 — ReplicaAck 는
-    //   Lifetime::Evidence 라 replay nonce 를 검사하지 않으므로,
-    //   공유하면 AgentGrantAck 의 replay 방어를 증명할 수 없다.
-    GrantAck,
-    // ★ 2026-08-19 — Lease 갱신 최소 조각
-    //   (docs/plans/2026-08-19_0500_coordinator_agent_lease_갱신_최소_조각_v1.md).
-    //   LeaseRenew(요청)와 domain 을 공유하지 않는다 — 요청·응답이
-    //   같은 domain_tag 를 쓰면 요청 서명을 응답으로 재사용하는
-    //   교차 재생 공격을 배제할 근거가 사라진다.
-    LeaseRenewResult,
-    SessionHello,
-    LeaseResume,
-    LeaseResumeResult,
-    // ★ 2026-08-29 — 노드 생존 보고(ADR-033 §7 앞 단계).
-    //   다른 어느 domain 과도 공유하지 않는다 — 공유하면
-    //   heartbeat 서명을 다른 문맥에 재사용할 수 있다.
-    NodeHeartbeat,
+/// domain 을 **한 곳에서** 선언한다 — enum·`ALL`·tag 가 같이 생긴다.
+///
+/// # 왜 매크로인가
+///
+/// ★ 이 저장소는 "손으로 쓴 domain 목록" 이 새 domain 을 못 잡는
+///   결함을 **네 번** 겪었다.
+///
+/// ```text
+/// DoD-02      t1_signing_targets.rs 의 배열이 enum 크기 변화를 못 잡음
+/// DoD-06      같은 이유로 GrantAck tag 중복을 한 번도 검사 안 함
+/// 2026-08-29  NodeHeartbeat 추가 시 두 목록 모두 28 로 남음
+/// 2026-08-29  그것을 `ALL` 로 고쳐도 `ALL` 자체가 수동이라 구멍이 남음
+/// ```
+///
+///   네 번째는 검수가 직접 짚었다 — exhaustive `match` 는 variant 를
+///   추가했을 때 **알려주기만** 할 뿐, `ALL` 에 넣는 것은 여전히
+///   사람이 해야 했다. 이젠 한 줄을 적으면 세 가지가 함께 생긴다 —
+///   빠뜨릴 자리 자체가 없다.
+macro_rules! declare_domains {
+    ($($variant:ident => $tag:literal),+ $(,)?) => {
+        /// canonical 서명 입력의 domain 구분자.
+        ///
+        /// 새 서명 대상 메시지를 추가하면 `declare_domains!` 에 한 줄을
+        /// 더한다 — enum·`ALL`·tag 가 자동으로 같이 늘어난다.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Domain {
+            $($variant,)+
+        }
+
+        impl Domain {
+            /// 이 저장소가 아는 **모든** domain.
+            ///
+            /// 매크로가 enum 과 함께 만들므로 둘이 갈라질 수 없다.
+            pub const ALL: &'static [Domain] = &[$(Domain::$variant,)+];
+
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Domain::$variant => $tag,)+
+                }
+            }
+        }
+    };
+}
+
+declare_domains! {
+    Manifest => "gputeer/v1/manifest",
+    Grant => "gputeer/v2/grant",
+    Lease => "gputeer/v1/lease",
+    LeaseRenew => "gputeer/v1/lease-renew",
+    LeaseRevoke => "gputeer/v1/lease-revoke",
+    Checkpoint => "gputeer/v1/checkpoint",
+    ReplicaAck => "gputeer/v1/replica-ack",
+    Artifact => "gputeer/v1/artifact",
+    AttemptReport => "gputeer/v1/attempt-report",
+    Canonical => "gputeer/v1/canonical",
+    Genesis => "gputeer/v1/genesis",
+    MemberAdd => "gputeer/v1/member-add",
+    MemberRemove => "gputeer/v1/member-remove",
+    DeviceApprove => "gputeer/v1/device-approve",
+    DeviceRevoke => "gputeer/v1/device-revoke",
+    CoordinatorSet => "gputeer/v1/coordinator-set",
+    OwnerKeyRotate => "gputeer/v1/owner-key-rotate",
+    PolicyUpdate => "gputeer/v1/policy-update",
+    QuarantineDevice => "gputeer/v1/quarantine-device",
+    QuarantineRelease => "gputeer/v1/quarantine-release",
+    Audit => "gputeer/v1/audit",
+    Release => "gputeer/v1/release",
+    Invite => "gputeer/v1/invite",
+    GrantAck => "gputeer/v1/grant-ack",
+    LeaseRenewResult => "gputeer/v1/lease-renew-result",
+    SessionHello => "gputeer/v1/session-hello",
+    LeaseResume => "gputeer/v1/lease-resume",
+    LeaseResumeResult => "gputeer/v1/lease-resume-result",
+    NodeHeartbeat => "gputeer/v1/node-heartbeat",
 }
 
 impl Domain {
-    /// 이 저장소가 아는 **모든** domain.
-    ///
-    /// # 왜 이 배열이 필요한가
-    ///
-    /// ★ 이 저장소는 "손으로 쓴 domain 배열"이 새 domain 을 못 잡는
-    ///   결함을 **세 번** 겪었다.
-    ///
-    ///   ```text
-    ///   DoD-02   t1_signing_targets.rs 의 배열이 enum 크기 변화를 못 잡음
-    ///   DoD-06   t1b_grant_and_control.rs 도 같은 이유로 GrantAck 중복을 못 봄
-    ///   2026-08-29  NodeHeartbeat 추가 시 두 목록 모두 28 로 남음(독립 검수 지적)
-    ///   ```
-    ///
-    ///   세 번 같은 실수가 났다는 건 "다음엔 잘 기억하자"가 해법이 아니라는
-    ///   뜻이다. 테스트가 **이 배열에서** domain 을 끌어오게 하고, 아래
-    ///   `match` 가 enum 을 전수로 훑으므로 variant 를 추가하면
-    ///   **컴파일이 깨진다** — 잊을 방법이 없다.
-    pub const ALL: &'static [Domain] = &[
-        Domain::Manifest,
-        Domain::Grant,
-        Domain::Lease,
-        Domain::LeaseRenew,
-        Domain::LeaseRevoke,
-        Domain::Checkpoint,
-        Domain::ReplicaAck,
-        Domain::Artifact,
-        Domain::AttemptReport,
-        Domain::Canonical,
-        Domain::Genesis,
-        Domain::MemberAdd,
-        Domain::MemberRemove,
-        Domain::DeviceApprove,
-        Domain::DeviceRevoke,
-        Domain::CoordinatorSet,
-        Domain::OwnerKeyRotate,
-        Domain::PolicyUpdate,
-        Domain::QuarantineDevice,
-        Domain::QuarantineRelease,
-        Domain::Audit,
-        Domain::Release,
-        Domain::Invite,
-        Domain::GrantAck,
-        Domain::LeaseRenewResult,
-        Domain::SessionHello,
-        Domain::LeaseResume,
-        Domain::LeaseResumeResult,
-        Domain::NodeHeartbeat,
-    ];
-
-    /// `ALL` 이 실제로 전수인가를 **컴파일 시점에** 강제한다.
-    ///
-    /// 새 variant 를 추가하면 이 `match` 가 non-exhaustive 로 깨지고,
-    /// 그때 `ALL` 에도 넣게 된다. 런타임 검사와 달리 잊고 넘어갈 수 없다.
-    #[allow(dead_code)]
-    fn assert_all_is_exhaustive(self) -> &'static str {
-        match self {
-            Domain::Manifest => "Manifest",
-            Domain::Grant => "Grant",
-            Domain::Lease => "Lease",
-            Domain::LeaseRenew => "LeaseRenew",
-            Domain::LeaseRevoke => "LeaseRevoke",
-            Domain::Checkpoint => "Checkpoint",
-            Domain::ReplicaAck => "ReplicaAck",
-            Domain::Artifact => "Artifact",
-            Domain::AttemptReport => "AttemptReport",
-            Domain::Canonical => "Canonical",
-            Domain::Genesis => "Genesis",
-            Domain::MemberAdd => "MemberAdd",
-            Domain::MemberRemove => "MemberRemove",
-            Domain::DeviceApprove => "DeviceApprove",
-            Domain::DeviceRevoke => "DeviceRevoke",
-            Domain::CoordinatorSet => "CoordinatorSet",
-            Domain::OwnerKeyRotate => "OwnerKeyRotate",
-            Domain::PolicyUpdate => "PolicyUpdate",
-            Domain::QuarantineDevice => "QuarantineDevice",
-            Domain::QuarantineRelease => "QuarantineRelease",
-            Domain::Audit => "Audit",
-            Domain::Release => "Release",
-            Domain::Invite => "Invite",
-            Domain::GrantAck => "GrantAck",
-            Domain::LeaseRenewResult => "LeaseRenewResult",
-            Domain::SessionHello => "SessionHello",
-            Domain::LeaseResume => "LeaseResume",
-            Domain::LeaseResumeResult => "LeaseResumeResult",
-            Domain::NodeHeartbeat => "NodeHeartbeat",
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Domain::Manifest => "gputeer/v1/manifest",
-            Domain::Grant => "gputeer/v2/grant",
-            Domain::Lease => "gputeer/v1/lease",
-            Domain::LeaseRenew => "gputeer/v1/lease-renew",
-            Domain::LeaseRevoke => "gputeer/v1/lease-revoke",
-            Domain::Checkpoint => "gputeer/v1/checkpoint",
-            Domain::ReplicaAck => "gputeer/v1/replica-ack",
-            Domain::Artifact => "gputeer/v1/artifact",
-            Domain::AttemptReport => "gputeer/v1/attempt-report",
-            Domain::Canonical => "gputeer/v1/canonical",
-            Domain::Genesis => "gputeer/v1/genesis",
-            Domain::MemberAdd => "gputeer/v1/member-add",
-            Domain::MemberRemove => "gputeer/v1/member-remove",
-            Domain::DeviceApprove => "gputeer/v1/device-approve",
-            Domain::DeviceRevoke => "gputeer/v1/device-revoke",
-            Domain::CoordinatorSet => "gputeer/v1/coordinator-set",
-            Domain::OwnerKeyRotate => "gputeer/v1/owner-key-rotate",
-            Domain::PolicyUpdate => "gputeer/v1/policy-update",
-            Domain::QuarantineDevice => "gputeer/v1/quarantine-device",
-            Domain::QuarantineRelease => "gputeer/v1/quarantine-release",
-            Domain::Audit => "gputeer/v1/audit",
-            Domain::Release => "gputeer/v1/release",
-            Domain::Invite => "gputeer/v1/invite",
-            Domain::GrantAck => "gputeer/v1/grant-ack",
-            Domain::LeaseRenewResult => "gputeer/v1/lease-renew-result",
-            Domain::SessionHello => "gputeer/v1/session-hello",
-            Domain::LeaseResume => "gputeer/v1/lease-resume",
-            Domain::LeaseResumeResult => "gputeer/v1/lease-resume-result",
-            Domain::NodeHeartbeat => "gputeer/v1/node-heartbeat",
-        }
-    }
-
     /// 32바이트, 우측 0x00 패딩.
     pub fn tag_bytes(self) -> [u8; DOMAIN_TAG_LEN] {
         let s = self.as_str().as_bytes();

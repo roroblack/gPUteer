@@ -13,6 +13,7 @@ pub mod constants;
 pub mod execution_spec;
 pub mod fenced_operation;
 pub mod membership;
+pub mod nonce;
 pub mod participation;
 pub mod signable;
 pub mod signing;

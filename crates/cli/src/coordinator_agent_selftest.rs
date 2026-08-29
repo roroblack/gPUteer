@@ -4947,6 +4947,40 @@ pub fn run() -> Result<String, String> {
     }
     report.push_str("87) 보유 Lease 와 세대가 다른 heartbeat 를 fence_epoch 대조로 거부\n");
 
+    // 89) 다른 Coordinator 로 보낸 heartbeat 를 이쪽으로 돌려쓸 수 없다.
+    //
+    //     ★ 이 시나리오가 없으면 Coordinator 의 coordinator_device_id
+    //       대조는 **아무도 검사하지 않는다**(2026-08-29 독립 검수 지적).
+    //       85번은 정상값만 보내므로 그 대조의 존재를 증명하지 못한다.
+    //
+    //     이 대조가 없으면 A 코디네이터용으로 서명된 heartbeat 를 B 가
+    //     자기 것으로 받아들인다 — 서명은 유효하므로 걸러지지 않는다.
+    let wrong_coord_agent: Vec<&str> = vec![
+        "--heartbeat-rounds",
+        "1",
+        "--corrupt-heartbeat-coordinator",
+        "true",
+    ];
+    let hb_89 = run_handshake(&fixture, &one_heartbeat, &wrong_coord_agent)?;
+    if hb_89.coordinator_success {
+        return Err(format!(
+            "89) 다른 Coordinator 앞으로 서명된 heartbeat 가 통과했다: {:?}",
+            hb_89.coordinator_stdout
+        ));
+    }
+    if !hb_89
+        .coordinator_stderr
+        .contains("coordinator_device_id 불일치")
+    {
+        return Err(format!(
+            "89) 거부 사유가 coordinator 불일치로 식별되지 않는다: {:?}",
+            hb_89.coordinator_stderr
+        ));
+    }
+    report.push_str(
+        "89) 다른 Coordinator 앞으로 서명된 heartbeat 를 coordinator_device_id 대조로 거부\n",
+    );
+
     report.push_str(&run_multi_agent_scenario(&fixture)?);
 
     Ok(report)
@@ -5189,14 +5223,10 @@ fn run_wire_agent_client(
 }
 
 fn derive_selftest_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
-    let mut input = Vec::with_capacity(tag.len() + 1 + id.len() + 4);
-    input.extend_from_slice(tag.as_bytes());
-    input.push(0);
-    input.extend_from_slice(id.as_bytes());
-    if connection_attempt != 0 {
-        input.extend_from_slice(&connection_attempt.to_be_bytes());
-    }
-    gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+    // ★ 계산은 `crates/protocol` 에 **한 군데만** 있다. 예전에는
+    //   이 계산이 agent·coordinator·selftest 세 군데에 복사돼 있었고,
+    //   실제로 둘만 고치고 셋째를 놓쳐 selftest 가 깨졌다.
+    gputeer_protocol::nonce::derive_replay_nonce(tag, id, connection_attempt)
 }
 
 fn wait_child_with_drain(mut child: Child, deadline: Instant) -> Result<Output, String> {
