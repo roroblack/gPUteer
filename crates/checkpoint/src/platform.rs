@@ -1,9 +1,10 @@
 //! 체크포인트 루트 아래 파일을 경로 이탈 없이 읽기 위한 플랫폼 계층.
 //!
-//! Windows만 실제 읽기 경로에 링크 방어가 연결돼 있다. Linux용
-//! `openat2` 구현은 아래에 함께 두지만, Windows 개발기에서 아직 실측하지
-//! 못했으므로 의도적으로 호출하지 않는다. 이 상태는 공개 상수와 테스트로
-//! 고정해 조용히 "지원됨"으로 오해되지 않게 한다.
+//! Windows 와 Linux 둘 다 실제 읽기 경로에 링크 방어가 연결돼 있다.
+//! Windows 는 `CreateFileW` 의 reparse point 거부로, Linux 는 `openat2` 의
+//! `RESOLVE_BENEATH`/`RESOLVE_NO_SYMLINKS` 로 막는다. 그 외 플랫폼은
+//! 여전히 상대 경로 문법만 제한하고 링크를 따라간다 — 이 상태는 공개
+//! 상수와 테스트로 고정해 조용히 "지원됨"으로 오해되지 않게 한다.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -12,8 +13,14 @@ use std::path::{Component, Path};
 /// Windows 체크포인트 읽기 경로는 reparse point 방어가 활성화돼 있다.
 pub const WINDOWS_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE: bool = true;
 
-/// Linux 구현은 존재하지만 아직 검증·연결되지 않았으므로 반드시 `false`다.
-pub const LINUX_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE: bool = false;
+/// Linux 체크포인트 읽기 경로도 `openat2` 링크 방어가 활성화돼 있다.
+///
+/// ★ **2026-08-29 실측 후 `false` -> `true`.** 그 전까지는 구현만 있고
+///   호출되지 않아 `false` 였다. x600 의 WSL2(kernel 6.18)를 확보해
+///   `crates/checkpoint/tests/symlink_defense_linux.rs` 를 실제 Linux 에서
+///   돌린 뒤에 뒤집었다 — 배선만 하고 미리 켜면 `CLAUDE.md` §0.4 가
+///   금지하는 "강제할 수 없는 것을 보장으로 선언" 이 된다.
+pub const LINUX_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE: bool = true;
 
 /// 현재 빌드 대상에서 체크포인트 읽기 링크 방어가 실제로 연결됐는지 나타낸다.
 pub const CHECKPOINT_READ_LINK_DEFENSE_ACTIVE: bool = if cfg!(windows) {
@@ -63,12 +70,18 @@ pub(crate) fn open_beneath_for_read(root: &Path, relative: &Path) -> io::Result<
     gputeer_runtime_windows::open_beneath_read_only(root, relative)
 }
 
-/// Linux는 고의로 평범한 열기를 유지한다. 아래 `openat2` 구현을 검증하고
-/// 연결하기 전까지 symlink를 따라가므로 방어되지 않는다.
+/// Linux는 `openat2`의 `RESOLVE_BENEATH`/`RESOLVE_NO_SYMLINKS`로 경로
+/// 이탈과 링크 추적을 커널에서 거부한다.
+///
+/// ★ **배선 시점(2026-08-29).** 이 함수는 그 전까지 `File::open()`으로
+///   symlink를 그대로 따라갔다. x600의 WSL2(kernel 6.18)를 확보해 실측이
+///   가능해진 뒤 연결했다 — `openat2`는 커널 5.6+가 필요하다.
+///
+///   Windows 경로와 달리 여기서는 존재하지 않는 파일을 만들 위험이 없다.
+///   `flags`가 `O_RDONLY`뿐이고 `O_CREAT`가 없기 때문이다.
 #[cfg(target_os = "linux")]
 pub(crate) fn open_beneath_for_read(root: &Path, relative: &Path) -> io::Result<File> {
-    validate_relative(relative)?;
-    File::open(root.join(relative))
+    linux_openat2::open_beneath_linux(root, relative)
 }
 
 /// Windows/Linux 이외 플랫폼에는 커널 수준 beneath primitive가 연결돼 있지
@@ -86,7 +99,7 @@ pub(crate) fn read_beneath(root: &Path, relative: &Path) -> io::Result<Vec<u8>> 
     Ok(data)
 }
 
-/// 아직 호출하지 않는 Linux `openat2` 구현.
+/// Linux `openat2` 구현 — `open_beneath_for_read`가 실제로 호출한다.
 ///
 /// `RESOLVE_BENEATH`로 root 밖 탈출을 막고 `RESOLVE_NO_SYMLINKS`와
 /// `RESOLVE_NO_MAGICLINKS`로 경로 전체의 링크 추적을 거부한다. 이 코드는
@@ -111,7 +124,7 @@ pub(crate) fn read_beneath(root: &Path, relative: &Path) -> io::Result<Vec<u8>> 
 ///   **통과했다는 것은 "컴파일된다" 는 뜻이지 "동작한다" 는 뜻이 아니다.**
 ///   실제 `openat2` 거동·symlink 거부 실측은 여전히 Linux 기계가 필요하다.
 #[cfg(target_os = "linux")]
-mod linux_unverified {
+mod linux_openat2 {
     use std::ffi::CString;
     use std::fs::File;
     use std::io;
@@ -130,8 +143,7 @@ mod linux_unverified {
         resolve: u64,
     }
 
-    #[allow(dead_code)]
-    pub(super) fn open_beneath_linux_unverified(root: &Path, relative: &Path) -> io::Result<File> {
+    pub(super) fn open_beneath_linux(root: &Path, relative: &Path) -> io::Result<File> {
         super::validate_relative(relative)?;
 
         let root_c = CString::new(root.as_os_str().as_bytes())
@@ -179,13 +191,25 @@ mod tests {
         WINDOWS_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
     };
 
+    /// 어느 플랫폼에서 링크 방어가 실제로 연결돼 있는지를 고정한다.
+    ///
+    /// ★ **2026-08-29 개정.** 이 테스트는 원래 `rollout_status_is_windows_only`
+    ///   였고 "Linux 는 아직 꺼져 있다" 를 고정했다 — 구현만 있고 미배선인
+    ///   상태가 조용히 "지원됨" 으로 오해되는 것을 막는 가드였다.
+    ///   `openat2` 를 실제 Linux(x600 WSL2)에서 실측하고 배선한 뒤
+    ///   그 가드를 새 사실로 갱신한다. **가드를 지우지 않고 뒤집는다** —
+    ///   지우면 다음에 누가 꺼도 아무도 모른다.
     #[test]
-    fn rollout_status_is_windows_only() {
+    fn rollout_status_covers_windows_and_linux() {
         assert!(WINDOWS_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE);
         assert!(
-            !LINUX_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
-            "Linux openat2 구현은 아직 검증·연결되지 않았다"
+            LINUX_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
+            "Linux openat2 방어가 꺼졌다 — 실측 후 배선된 상태여야 한다"
         );
-        assert_eq!(CHECKPOINT_READ_LINK_DEFENSE_ACTIVE, cfg!(windows));
+        // Windows·Linux 는 켜져 있고, 그 외 플랫폼은 여전히 꺼져 있다.
+        assert_eq!(
+            CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
+            cfg!(any(windows, target_os = "linux"))
+        );
     }
 }
