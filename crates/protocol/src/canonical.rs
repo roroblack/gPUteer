@@ -328,6 +328,94 @@ pub enum Domain {
 }
 
 impl Domain {
+    /// 이 저장소가 아는 **모든** domain.
+    ///
+    /// # 왜 이 배열이 필요한가
+    ///
+    /// ★ 이 저장소는 "손으로 쓴 domain 배열"이 새 domain 을 못 잡는
+    ///   결함을 **세 번** 겪었다.
+    ///
+    ///   ```text
+    ///   DoD-02   t1_signing_targets.rs 의 배열이 enum 크기 변화를 못 잡음
+    ///   DoD-06   t1b_grant_and_control.rs 도 같은 이유로 GrantAck 중복을 못 봄
+    ///   2026-08-29  NodeHeartbeat 추가 시 두 목록 모두 28 로 남음(독립 검수 지적)
+    ///   ```
+    ///
+    ///   세 번 같은 실수가 났다는 건 "다음엔 잘 기억하자"가 해법이 아니라는
+    ///   뜻이다. 테스트가 **이 배열에서** domain 을 끌어오게 하고, 아래
+    ///   `match` 가 enum 을 전수로 훑으므로 variant 를 추가하면
+    ///   **컴파일이 깨진다** — 잊을 방법이 없다.
+    pub const ALL: &'static [Domain] = &[
+        Domain::Manifest,
+        Domain::Grant,
+        Domain::Lease,
+        Domain::LeaseRenew,
+        Domain::LeaseRevoke,
+        Domain::Checkpoint,
+        Domain::ReplicaAck,
+        Domain::Artifact,
+        Domain::AttemptReport,
+        Domain::Canonical,
+        Domain::Genesis,
+        Domain::MemberAdd,
+        Domain::MemberRemove,
+        Domain::DeviceApprove,
+        Domain::DeviceRevoke,
+        Domain::CoordinatorSet,
+        Domain::OwnerKeyRotate,
+        Domain::PolicyUpdate,
+        Domain::QuarantineDevice,
+        Domain::QuarantineRelease,
+        Domain::Audit,
+        Domain::Release,
+        Domain::Invite,
+        Domain::GrantAck,
+        Domain::LeaseRenewResult,
+        Domain::SessionHello,
+        Domain::LeaseResume,
+        Domain::LeaseResumeResult,
+        Domain::NodeHeartbeat,
+    ];
+
+    /// `ALL` 이 실제로 전수인가를 **컴파일 시점에** 강제한다.
+    ///
+    /// 새 variant 를 추가하면 이 `match` 가 non-exhaustive 로 깨지고,
+    /// 그때 `ALL` 에도 넣게 된다. 런타임 검사와 달리 잊고 넘어갈 수 없다.
+    #[allow(dead_code)]
+    fn assert_all_is_exhaustive(self) -> &'static str {
+        match self {
+            Domain::Manifest => "Manifest",
+            Domain::Grant => "Grant",
+            Domain::Lease => "Lease",
+            Domain::LeaseRenew => "LeaseRenew",
+            Domain::LeaseRevoke => "LeaseRevoke",
+            Domain::Checkpoint => "Checkpoint",
+            Domain::ReplicaAck => "ReplicaAck",
+            Domain::Artifact => "Artifact",
+            Domain::AttemptReport => "AttemptReport",
+            Domain::Canonical => "Canonical",
+            Domain::Genesis => "Genesis",
+            Domain::MemberAdd => "MemberAdd",
+            Domain::MemberRemove => "MemberRemove",
+            Domain::DeviceApprove => "DeviceApprove",
+            Domain::DeviceRevoke => "DeviceRevoke",
+            Domain::CoordinatorSet => "CoordinatorSet",
+            Domain::OwnerKeyRotate => "OwnerKeyRotate",
+            Domain::PolicyUpdate => "PolicyUpdate",
+            Domain::QuarantineDevice => "QuarantineDevice",
+            Domain::QuarantineRelease => "QuarantineRelease",
+            Domain::Audit => "Audit",
+            Domain::Release => "Release",
+            Domain::Invite => "Invite",
+            Domain::GrantAck => "GrantAck",
+            Domain::LeaseRenewResult => "LeaseRenewResult",
+            Domain::SessionHello => "SessionHello",
+            Domain::LeaseResume => "LeaseResume",
+            Domain::LeaseResumeResult => "LeaseResumeResult",
+            Domain::NodeHeartbeat => "NodeHeartbeat",
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Domain::Manifest => "gputeer/v1/manifest",

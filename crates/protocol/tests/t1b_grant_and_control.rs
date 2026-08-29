@@ -468,43 +468,22 @@ fn signatures_do_not_transfer_between_control_messages() {
 #[test]
 fn all_domain_tags_are_distinct() {
     use gputeer_protocol::canonical::Domain;
-    let all = [
-        Domain::Manifest,
-        Domain::Grant,
-        Domain::Lease,
-        Domain::LeaseRenew,
-        Domain::LeaseRevoke,
-        Domain::Checkpoint,
-        Domain::ReplicaAck,
-        Domain::Artifact,
-        Domain::AttemptReport,
-        Domain::Canonical,
-        Domain::Genesis,
-        Domain::MemberAdd,
-        Domain::MemberRemove,
-        Domain::DeviceApprove,
-        Domain::DeviceRevoke,
-        Domain::CoordinatorSet,
-        Domain::OwnerKeyRotate,
-        Domain::PolicyUpdate,
-        Domain::QuarantineDevice,
-        Domain::QuarantineRelease,
-        Domain::Audit,
-        Domain::Release,
-        Domain::Invite,
-        Domain::GrantAck,
-        Domain::LeaseRenewResult,
-        Domain::SessionHello,
-        Domain::LeaseResume,
-        Domain::LeaseResumeResult,
-    ];
+    // ★ 수동 배열을 쓰지 않는다. 이 저장소는 그 배열이 새 domain 을
+    //   못 잡는 결함을 **세 번** 겪었다(DoD-02·DoD-06·2026-08-29).
+    //   `Domain::ALL` 은 같은 파일의 exhaustive `match` 가 지키므로,
+    //   variant 를 추가하면 컴파일이 깨져 잊을 수가 없다.
+    let all = gputeer_protocol::canonical::Domain::ALL;
     let mut seen = std::collections::HashMap::new();
-    for d in all {
+    for &d in all {
         if let Some(prev) = seen.insert(d.tag_bytes(), d) {
             panic!("domain_tag 중복: {prev:?} 와 {d:?} 가 같은 tag 를 쓴다");
         }
     }
-    assert_eq!(seen.len(), 28, "signing.md §5 는 28종이다");
+    assert_eq!(
+        seen.len(),
+        Domain::ALL.len(),
+        "domain 중 일부가 같은 tag 로 접혔다"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════

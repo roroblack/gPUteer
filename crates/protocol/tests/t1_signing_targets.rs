@@ -622,9 +622,28 @@ fn domain_coverage_is_explicit() {
         (Domain::SessionHello, Some("AgentSessionHello"), true),
         (Domain::LeaseResume, Some("ResumeLeaseRequest"), true),
         (Domain::LeaseResumeResult, Some("ResumeLeaseResult"), true),
+        // 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계)
+        (Domain::NodeHeartbeat, Some("NodeHeartbeat"), true),
     ];
 
-    assert_eq!(coverage.len(), 28, "domain_tag 는 28종이다");
+    // ★ 수동으로 적은 28 같은 숫자를 쓰지 않는다. 그 숫자를 두면
+    //   새 domain 을 추가하고 이 목록을 안 고쳐도 숫자만 맞추면
+    //   통과해 버린다 — 이 저장소가 세 번 겪은 결함이다.
+    //   `Domain::ALL` 과 길이를 맞추면 문자 그대로 "빠진 domain 이 있다" 가 된다.
+    let missing: Vec<&str> = Domain::ALL
+        .iter()
+        .filter(|d| !coverage.iter().any(|(c, _, _)| c == *d))
+        .map(|d| d.as_str())
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "★ domain 을 추가했는데 이 감사 목록에 없다: {missing:?}"
+    );
+    assert_eq!(
+        coverage.len(),
+        Domain::ALL.len(),
+        "감사 목록에 Domain::ALL 에 없는 항목이 있다"
+    );
 
     let implemented = coverage.iter().filter(|(_, _, i)| *i).count();
     let no_message = coverage.iter().filter(|(_, m, _)| m.is_none()).count();
@@ -646,7 +665,7 @@ fn domain_coverage_is_explicit() {
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
     assert_eq!(
-        implemented, 24,
+        implemented, 25,
         "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
     assert_eq!(

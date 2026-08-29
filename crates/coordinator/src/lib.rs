@@ -192,6 +192,8 @@ pub struct CoordinatorConfig {
     /// 보내지 않는다. Agent가 같은 연결에서 갱신 요청을 보내면
     /// Coordinator의 signed `REVOKED` outcome 경로를 직접 시험한다.
     pub revoke_before_renew: bool,
+    /// ACK 뒤에 받을 `NodeHeartbeat` 개수. 0 이면 이 구간이 없다.
+    pub expect_heartbeats: u32,
     /// ★ 테스트 전용 — 통지의 lease_id 를 바꿔 Agent identity 검증을
     ///   확인한다. 서명은 바뀐 payload 에 대해 다시 만든다.
     pub revoke_lease_id_override: Option<String>,
@@ -629,6 +631,78 @@ fn serve_one_connection_impl(
                     "REPLAY_SCENARIO_UNEXPECTED_EXTRA_MESSAGE: {message:?}"
                 ).into()),
             };
+    }
+
+    // ★ 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계).
+    //
+    //   이 stub 프로토콜에는 비동기 multiplexing 이 없으므로, ACK 뒤·
+    //   갱신 앞의 **고정 위치**로 받는다. 실제 운영에서는 주기적으로
+    //   비동기로 와야 하지만, 그러려면 프레임 다중화가 먼저 필요하다 —
+    //   그 배선을 흉내 내지 않고 지금 표현 가능한 것만 한다.
+    //
+    //   `expect_heartbeats == 0`(기본값)이면 이 구간은 통째로 없다 —
+    //   기존 시나리오와 바이트 단위로 같게 동작한다.
+    for _ in 0..config.expect_heartbeats {
+        let message = read_frame(
+            stream,
+            1,
+            KeyDirectorySource::Provided(agent_keys),
+            replay,
+            clock,
+        )
+        .map_err(|e| format!("NodeHeartbeat 프레임 읽기/검증 실패: {e}"))?;
+
+        // ★ `require_replay_checked()` — ACK·갱신과 같은 이유(§10).
+        //   heartbeat 를 재생할 수 있으면 이미 죽은 노드를 살아 있는
+        //   것처럼 보이게 만들 수 있다.
+        let heartbeat = match &message {
+            IngressMessage::NodeHeartbeat(verified) => verified
+                .require_replay_checked()
+                .map_err(|e| format!("NodeHeartbeat replay 검사 실패: {e:?}"))?,
+            other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
+        };
+
+        // 이 연결의 상대가 맞는가. 서명은 "이 장치가 보냈다" 를 증명할
+        // 뿐이므로, 그 장치가 **이 연결의 그 장치인지**는 따로 본다.
+        if heartbeat.device_id != config.agent_device_id {
+            return Err(format!(
+                "HEARTBEAT_REJECTED: device_id 불일치 — 기대값 {} != {}",
+                config.agent_device_id, heartbeat.device_id
+            )
+            .into());
+        }
+        // 다른 Coordinator 로 보낸 heartbeat 를 이쪽으로 돌려쓸 수 없다.
+        if heartbeat.coordinator_device_id != config.coordinator_device_id {
+            return Err(format!(
+                "HEARTBEAT_REJECTED: coordinator_device_id 불일치 — 기대값 {} != {}",
+                config.coordinator_device_id, heartbeat.coordinator_device_id
+            )
+            .into());
+        }
+        // 어느 세대의 작업을 들고 살아 있는가. 발급한 Lease 와 다르면
+        // 오래된 세대의 보고이므로 최신 상태로 오인하지 않는다.
+        if let Some(lease) = grant.lease.as_ref() {
+            if heartbeat.fence_epoch != lease.fence_epoch {
+                return Err(format!(
+                    "HEARTBEAT_REJECTED: fence_epoch 불일치 — 발급 {} != 보고 {}",
+                    lease.fence_epoch, heartbeat.fence_epoch
+                )
+                .into());
+            }
+        }
+
+        // ★ 여기서 멈춘다. 이 값을 durable 하게 저장하는 것
+        //   (NodeRecord.last_heartbeat_unix_ms)과 그것으로 노드 상태를
+        //   판정하는 것(ADR-033 §7 의 판정 층)은 아직 없다. 관측했다는
+        //   사실만 보고하고, 판정한 척하지 않는다.
+        println!(
+            "HEARTBEAT_ACCEPTED node_id={} device_id={} fence_epoch={} running_attempts={} issued_at_unix_ms={}",
+            heartbeat.node_id,
+            heartbeat.device_id,
+            heartbeat.fence_epoch,
+            heartbeat.running_attempts,
+            heartbeat.issued_at_unix_ms
+        );
     }
 
     if config.revoke_before_renew {
@@ -1673,6 +1747,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
         revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
+        expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
         revoke_lease_id_override: flags.0.get("--revoke-lease-id").cloned(),
         revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
         corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),

@@ -589,9 +589,13 @@ impl Signable for pb::NodeHeartbeat {
     }
     fn expires_at_unix_ms(&self) -> u64 {
         // heartbeat 는 짧게 산다. 오래 유효하면 옛 보고가 지금 상태로
-        // 오인될 수 있다 — signing.md §13.1 의 "Heartbeat / RPC 60초"
-        // 를 그대로 따른다.
-        self.issued_at_unix_ms.saturating_add(60_000)
+        // 오인될 수 있다.
+        //
+        // ★ 60_000 을 직접 쓰지 않는다(2026-08-29 독립 검수 지적) —
+        //   다른 ShortLived 메시지는 전부 `GRANT_TTL_MS` 를 쓴다. 직접
+        //   쓰면 그 상수가 바뀌었을 때 heartbeat 만 조용히 갈라진다
+        //   (`RULE.md` 의 프로토콜 상수 단일 출처 규칙).
+        self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS)
     }
     fn issued_at_unix_ms(&self) -> u64 {
         self.issued_at_unix_ms

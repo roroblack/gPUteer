@@ -128,6 +128,13 @@ pub struct AgentConfig {
     ///   패턴이다 — 위험한 기본값을 실수로 켜는 것을 막는다. 다만
     ///   이건 더 위험하다: 남의 코드를 실제로 실행한다.
     pub execute_workload: bool,
+    /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
+    pub heartbeat_rounds: u32,
+    /// ★ 테스트 전용 — heartbeat 의 `fence_epoch` 을 보유 Lease 와
+    ///   다르게 보낸다. Coordinator 가 그 대조를 실제로 하는지
+    ///   확인하기 위해서다 — 대조를 지우고도 통과하는 검사는
+    ///   아무것도 증명하지 않는다(2026-08-29 실제로 그랬다).
+    pub corrupt_heartbeat_fence: bool,
     /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
     pub workload_commit_limit_bytes: u64,
     /// Owner Panel 이 쓸 상태. Agent 가 작업을 시작하면 여기 등록하고
@@ -848,6 +855,54 @@ fn run_one_connection(
         .write_all(&frame)
         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
     stream.flush().map_err(|e| e.to_string())?;
+
+    // ★ 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계).
+    //
+    //   ACK 뒤·갱신 앞의 고정 위치로 보낸다. 이 stub 프로토콜에는
+    //   비동기 multiplexing 이 없어 주기적 전송을 표현할 수 없다 —
+    //   할 수 없는 것을 하는 척하지 않고, 표현 가능한 순차 위치에 둔다.
+    //
+    //   `heartbeat_rounds == 0`(기본값)이면 이 구간이 통째로 없다.
+    for round in 0..config.heartbeat_rounds {
+        let now = clock.now_unix_ms();
+        let mut heartbeat = pb::NodeHeartbeat {
+            schema_version: 1,
+            node_id: config.agent_device_id.clone(),
+            device_id: config.agent_device_id.clone(),
+            coordinator_device_id: config.coordinator_device_id.clone(),
+            issued_at_unix_ms: now,
+            // 지금 들고 있는 Lease 의 세대. 이게 있어야 Coordinator 가
+            // "살아 있다" 뿐 아니라 "어느 세대를 들고 살아 있다" 를 안다.
+            fence_epoch: if config.corrupt_heartbeat_fence {
+                held_lease.fence_epoch.wrapping_add(999)
+            } else {
+                held_lease.fence_epoch
+            },
+            // ★ 관측값이다. 지금 이 stub 은 한 번에 한 작업만 돌리므로
+            //   0 또는 1 이다. 나중 값을 미리 만들어 넣지 않는다.
+            running_attempts: u32::from(workload.is_some()),
+            // ★ 회차별로 nonce 를 나눈다. 같은 nonce 를 두 번 쓰면
+            //   두 번째가 replay 로 거부된다 — 갱신 경로가 이미 같은
+            //   이유로 `derive_renew_nonce(lease_id, round)` 를 쓴다.
+            request_nonce: derive_nonce(
+                "node-heartbeat",
+                &format!("{}:{}", held_lease.lease_id, round),
+                config.connection_attempt,
+            ),
+            ..Default::default()
+        };
+        heartbeat.node_signature = sign(&signing_key, &heartbeat).to_vec();
+        let frame = write_frame(FrameType::NodeHeartbeat, &heartbeat.encode_to_vec())
+            .map_err(|e| format!("NodeHeartbeat 프레임 인코딩 실패(round={round}): {e}"))?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("NodeHeartbeat 전송 실패(round={round}): {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+        println!(
+            "HEARTBEAT_SENT round={round} fence_epoch={} running_attempts={}",
+            heartbeat.fence_epoch, heartbeat.running_attempts
+        );
+    }
 
     if config.reconnect_enabled
         && !config.do_renew
@@ -1765,6 +1820,13 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             None => None,
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+        corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
+        heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
+            Some(v) => v
+                .parse()
+                .map_err(|e| format!("--heartbeat-rounds 파싱 실패: {e}"))?,
+            None => 0,
+        },
         owner_panel_state: owner_panel::OwnerPanelState::new(),
         owner_panel_port: flags.0.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
@@ -1986,6 +2048,8 @@ mod tests {
             coordinator_verifying_key: coordinator_key.verifying_key(),
             submitter_verifying_key: None,
             execute_workload: false,
+            heartbeat_rounds: 0,
+            corrupt_heartbeat_fence: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             owner_panel_port: None,
             workload_commit_limit_bytes: 256 * 1024 * 1024,

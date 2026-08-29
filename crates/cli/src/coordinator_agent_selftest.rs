@@ -4856,6 +4856,97 @@ pub fn run() -> Result<String, String> {
         "84) 종료 코드 7 로 실패한 실행도 산출물과 결과 파일이 남고 exit_code 가 기록됨\n",
     );
 
+    // 85) 노드 생존 보고가 실제 wire 를 건너 검증까지 간다.
+    //
+    //     ★ 서명·replay·nonce 검증을 전부 통과해야만 성공한다.
+    //       Coordinator 는 device_id·coordinator_device_id·fence_epoch 을
+    //       각각 대조한다.
+    let heartbeat_coord: Vec<&str> = vec!["--expect-heartbeats", "2"];
+    let heartbeat_agent: Vec<&str> = vec!["--heartbeat-rounds", "2"];
+    let hb_85 = run_handshake(&fixture, &heartbeat_coord, &heartbeat_agent)?;
+    if !hb_85.coordinator_success || !hb_85.agent_success {
+        return Err(format!(
+            "85) heartbeat 왕복 실패: coord_stdout={:?} coord_stderr={:?} agent_stderr={:?}",
+            hb_85.coordinator_stdout, hb_85.coordinator_stderr, hb_85.agent_stderr
+        ));
+    }
+    let accepted = hb_85
+        .coordinator_stdout
+        .matches("HEARTBEAT_ACCEPTED")
+        .count();
+    if accepted != 2 {
+        return Err(format!(
+            "85) heartbeat 가 2개 와야 하는데 {accepted}개다: {:?}",
+            hb_85.coordinator_stdout
+        ));
+    }
+    // ★ 두 번째 회차가 replay 로 거부되지 않았는가 — 회차별 nonce 분리가
+    //   실제로 되는지 본다. 같은 nonce 를 두 번 쓰면 여기서 걸린다.
+    if hb_85.coordinator_stdout.contains("running_attempts=") == false {
+        return Err(format!(
+            "85) 관측값이 보고되지 않았다: {:?}",
+            hb_85.coordinator_stdout
+        ));
+    }
+    report.push_str(
+        "85) NodeHeartbeat 2회가 실제 wire 로 전송되어 서명·replay·회차별 nonce 분리 검증을 통과(거부 대조는 86·87 이 본다)\n",
+    );
+
+    // 86) 개수가 어긋나면 드러난다.
+    //
+    //     ★ Coordinator 가 2개를 기다리는데 Agent 가 1개만 보내면,
+    //       Coordinator 는 오지 않을 프레임을 기다린다. 이 저장소가
+    //       이미 세 번 겪은 교착 패턴(DoD-22·23·27)과 같은 부류다 —
+    //       그 상황이 **무한 대기가 아니라 오류로** 끝나는지 확인한다.
+    let mismatch_agent: Vec<&str> = vec!["--heartbeat-rounds", "1"];
+    let hb_86 = run_handshake(&fixture, &heartbeat_coord, &mismatch_agent)?;
+    if hb_86.coordinator_success {
+        return Err(format!(
+            "86) heartbeat 개수가 어긋났는데 Coordinator 가 성공했다: {:?}",
+            hb_86.coordinator_stdout
+        ));
+    }
+    if !hb_86.coordinator_stderr.contains("NodeHeartbeat") {
+        return Err(format!(
+            "86) 실패 사유가 heartbeat 로 식별되지 않는다: {:?}",
+            hb_86.coordinator_stderr
+        ));
+    }
+    report.push_str(
+        "86) heartbeat 개수 불일치가 무한 대기가 아니라 식별 가능한 오류로 끝남\n",
+    );
+
+    // 87) 세대가 다른 heartbeat 는 거부된다.
+    //
+    //     ★ 이 시나리오가 없으면 Coordinator 의 fence 대조는 **아무도
+    //       검사하지 않는다.** 실제로 그랬다 — 85번 라벨이 "fence 대조까지
+    //       통과"라고 주장했지만, 대조를 지우고 돌려도 85번은 그대로
+    //       통과했다(2026-08-29 뮤테이션으로 확인). 라벨이 코드보다 컸다.
+    //
+    //     세대를 대조하지 않으면 오래된 세대의 heartbeat 가 최신 상태로
+    //     오인되고, 그러면 ADR-033 §7 의 판정이 옛 사실 위에서 이뤄진다.
+    let wrong_fence_agent: Vec<&str> = vec![
+        "--heartbeat-rounds",
+        "1",
+        "--corrupt-heartbeat-fence",
+        "true",
+    ];
+    let one_heartbeat: Vec<&str> = vec!["--expect-heartbeats", "1"];
+    let hb_87 = run_handshake(&fixture, &one_heartbeat, &wrong_fence_agent)?;
+    if hb_87.coordinator_success {
+        return Err(format!(
+            "87) 세대가 다른 heartbeat 가 통과했다 — 옛 사실이 최신 상태로 오인된다: {:?}",
+            hb_87.coordinator_stdout
+        ));
+    }
+    if !hb_87.coordinator_stderr.contains("fence_epoch 불일치") {
+        return Err(format!(
+            "87) 거부 사유가 fence 불일치로 식별되지 않는다: {:?}",
+            hb_87.coordinator_stderr
+        ));
+    }
+    report.push_str("87) 보유 Lease 와 세대가 다른 heartbeat 를 fence_epoch 대조로 거부\n");
+
     Ok(report)
 }
 
