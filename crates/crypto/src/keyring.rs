@@ -1151,6 +1151,94 @@ fn run_systemd_creds(
     signer_id: &str,
     input: &[u8],
 ) -> Result<Vec<u8>, KeyringError> {
+    let mut argv: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    argv.push(format!("--name={}", linux_credential_name(signer_id)));
+    // `- -` 는 stdin 에서 읽어 stdout 으로 쓴다는 뜻이다.
+    argv.push("-".to_string());
+    argv.push("-".to_string());
+
+    let outcome = run_in_own_process_group("systemd-creds", &argv, input, GROUP_RUN_DEADLINE)?;
+
+    if outcome.timed_out {
+        return Err(KeyringError::OsProtectionFailed(format!(
+            "systemd-creds {} 가 {GROUP_RUN_DEADLINE:?} 안에 끝나지 않았다{}",
+            args.join(" "),
+            outcome.kill_note
+        )));
+    }
+    let status = outcome
+        .status
+        .expect("timed_out 이 false 면 status 가 있다");
+    if !status.success() {
+        // ★ "없다" 가 아니라 "있는데 실패했다" 다. 진단에 필요한 만큼만
+        //   stderr 를 싣는다 — 개인키는 stdin 으로만 갔고 stderr 에는
+        //   systemd 의 진단 문구만 나온다.
+        let detail: String = outcome
+            .stderr
+            .lines()
+            .next()
+            .unwrap_or("(stderr 없음)")
+            .chars()
+            .take(200)
+            .collect();
+        return Err(KeyringError::OsProtectionFailed(format!(
+            "systemd-creds {} 실패({status}): {detail}",
+            args.join(" ")
+        )));
+    }
+    if outcome.stdout.is_empty() {
+        // 성공했다는데 아무것도 안 나왔다. 빈 키를 통과시키지 않는다.
+        return Err(KeyringError::CorruptFile("systemd-creds 출력이 비었다"));
+    }
+    Ok(outcome.stdout)
+}
+
+/// 이만큼 안 끝나면 죽인다.
+///
+/// ★ 상한이 없으면 helper 가 멈췄을 때 Agent 도 무기한 멈춘다.
+///   이건 로컬 도구를 짧게 부르는 것이므로 초 단위면 충분하다.
+#[cfg(target_os = "linux")]
+const GROUP_RUN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// [`run_in_own_process_group`] 이 관측한 것.
+///
+/// **판정이 아니라 사실만 담는다** — 시간 초과인지, 종료 상태가 무엇인지,
+/// 무엇을 읽었는지. "이게 오류인가" 는 호출자가 정한다.
+#[cfg(target_os = "linux")]
+struct GroupRunOutcome {
+    /// 상한 안에 자식이 안 끝났다. 이때 `status` 는 `None` 이다.
+    timed_out: bool,
+    status: Option<std::process::ExitStatus>,
+    stdout: Vec<u8>,
+    stderr: String,
+    /// 프로세스 그룹을 못 죽였으면 그 이유. 정상이면 빈 문자열이다.
+    kill_note: String,
+}
+
+/// 명령을 **자기 프로세스 그룹**에서 돌리고, 끝나면 그 그룹을 통째로 죽인다.
+///
+/// # 왜 그룹인가
+///
+/// 자식이 정상 종료해도 **후손이 stdout 파이프를 물고 있으면** 읽기가
+/// 끝나지 않는다. 자식만 죽이는 것으로는 부족하다 — 그래서
+/// `process_group(0)` 으로 새 그룹을 만들고 `killpg` 로 통째로 끝낸다.
+///
+/// ★ `process_group(0)` 은 `setsid()` 가 **아니라** setpgid 다(2026-08-30
+///   독립 검수 6라운드가 틀린 주석을 지적했다). 그룹 종료 목적에는
+///   충분하지만 새 세션은 아니다.
+///
+/// # 무엇을 보장하지 않는가
+///
+/// 그룹을 벗어난 후손(스스로 `setpgid` 를 부른 손자)은 못 죽인다. 이
+/// 함수가 부르는 것은 우리가 고른 로컬 helper 이므로 그런 동작을 하지
+/// 않지만, 임의의 프로그램에 이 함수를 쓰면 그 가정이 깨진다.
+#[cfg(target_os = "linux")]
+fn run_in_own_process_group(
+    program: &str,
+    args: &[String],
+    input: &[u8],
+    deadline_after: std::time::Duration,
+) -> Result<GroupRunOutcome, KeyringError> {
     use std::io::Write as _;
     // ★ `process_group` 은 Unix 확장 트레이트의 메서드다. Windows 는 이
     //   함수를 아예 컴파일하지 않으므로(cfg linux) 개발 기계 빌드가
@@ -1158,28 +1246,11 @@ fn run_systemd_creds(
     use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
 
-    /// 이만큼 안 끝나면 죽인다.
-    ///
-    /// ★ 상한이 없으면 helper 가 멈췄을 때 Agent 도 무기한 멈춘다.
-    ///   이건 로컬 도구를 짧게 부르는 것이므로 초 단위면 충분하다.
-    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
-
-    let mut child = Command::new("systemd-creds")
+    let mut child = Command::new(program)
         .args(args)
-        .arg(format!("--name={}", linux_credential_name(signer_id)))
-        // `- -` 는 stdin 에서 읽어 stdout 으로 쓴다는 뜻이다.
-        .arg("-")
-        .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // ★ 자식을 **자기 프로세스 그룹**에 넣는다(setpgid). 그래야
-        //   후손까지 한 번에 끝낼 수 있다.
-        //
-        //   ★ 이전 주석은 "setsid() 한다" 고 썼는데 **틀렸다** —
-        //     `process_group(0)` 은 새 세션이 아니라 새 프로세스 그룹만
-        //     만든다(2026-08-30 독립 검수 6라운드 지적). 그룹 종료
-        //     목적에는 충분하지만 문서는 정확해야 한다.
         .process_group(0)
         .spawn()
         // ★ **없는 것**과 **있는데 못 띄운 것**을 구분한다(§3).
@@ -1188,7 +1259,7 @@ fn run_systemd_creds(
         //   방법이 전혀 다른데 같은 말을 하는 것이다.
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => KeyringError::UnsupportedPlatform,
-            _ => KeyringError::OsProtectionFailed(format!("systemd-creds 기동 실패: {error}")),
+            _ => KeyringError::OsProtectionFailed(format!("{program} 기동 실패: {error}")),
         })?;
 
     let pgid = child.id() as i32;
@@ -1240,7 +1311,7 @@ fn run_systemd_creds(
     }
 
     // 시간 상한 안에서 자식 종료를 기다린다.
-    let deadline = std::time::Instant::now() + DEADLINE;
+    let deadline = std::time::Instant::now() + deadline_after;
     let mut timed_out = false;
     let status = loop {
         match child.try_wait() {
@@ -1274,41 +1345,20 @@ fn run_systemd_creds(
 
     // 이제 파이프가 닫혔으므로 읽기 스레드가 곧 끝난다. 그래도 상한을
     // 건다 — "죽였으니 끝날 것" 을 가정하지 않는다.
-    let stdout = out_rx.recv_timeout(DEADLINE).map_err(|_| {
+    let stdout = out_rx.recv_timeout(deadline_after).map_err(|_| {
         KeyringError::OsProtectionFailed(format!(
-            "systemd-creds stdout 을 상한 안에 읽지 못했다 — 후손이 파이프를 물고 있을 수 있다{kill_note}"
+            "{program} stdout 을 상한 안에 읽지 못했다 — 후손이 파이프를 물고 있을 수 있다{kill_note}"
         ))
     })?;
-    let stderr = err_rx.recv_timeout(DEADLINE).unwrap_or_default();
+    let stderr = err_rx.recv_timeout(deadline_after).unwrap_or_default();
 
-    if timed_out {
-        return Err(KeyringError::OsProtectionFailed(format!(
-            "systemd-creds {} 가 {DEADLINE:?} 안에 끝나지 않았다{kill_note}",
-            args.join(" ")
-        )));
-    }
-    let status = status.expect("timed_out 이 false 면 status 가 있다");
-    if !status.success() {
-        // ★ "없다" 가 아니라 "있는데 실패했다" 다. 진단에 필요한 만큼만
-        //   stderr 를 싣는다 — 개인키는 stdin 으로만 갔고 stderr 에는
-        //   systemd 의 진단 문구만 나온다.
-        let detail: String = stderr
-            .lines()
-            .next()
-            .unwrap_or("(stderr 없음)")
-            .chars()
-            .take(200)
-            .collect();
-        return Err(KeyringError::OsProtectionFailed(format!(
-            "systemd-creds {} 실패({status}): {detail}",
-            args.join(" ")
-        )));
-    }
-    if stdout.is_empty() {
-        // 성공했다는데 아무것도 안 나왔다. 빈 키를 통과시키지 않는다.
-        return Err(KeyringError::CorruptFile("systemd-creds 출력이 비었다"));
-    }
-    Ok(stdout)
+    Ok(GroupRunOutcome {
+        timed_out,
+        status,
+        stdout,
+        stderr,
+        kill_note,
+    })
 }
 
 /// 프로세스 그룹 전체에 `SIGKILL` 을 보낸다.
@@ -1489,4 +1539,129 @@ fn put_string(output: &mut Vec<u8>, value: &str) -> Result<(), KeyringError> {
         return Err(KeyringError::InvalidSignerId);
     }
     put_blob(output, value.as_bytes())
+}
+
+/// 프로세스 그룹 종료 경로 자체를 재는 단위 테스트.
+///
+/// ★ **왜 여기 있나** — 이 경로는 `systemd-creds` 로는 잴 수 없다.
+///   `systemd-creds` 는 후손을 남기지 않기 때문이다. 그래서 후손을
+///   일부러 남기는 프로그램으로 [`run_in_own_process_group`] 를 직접
+///   부른다(2026-08-30 독립 검수 6라운드가 이 경로에 테스트가 없다고
+///   지적했다 — 정확히 이 수정이 겨냥한 상황인데 재 본 적이 없었다).
+#[cfg(all(test, target_os = "linux"))]
+mod process_group_tests {
+    use super::*;
+
+    /// 이 테스트에만 쓰는 값. 다른 프로세스와 겹치지 않게 특이하게 골랐다.
+    const MARKER_SECONDS: &str = "3117";
+
+    fn sh(script: &str) -> Result<GroupRunOutcome, KeyringError> {
+        run_in_own_process_group(
+            "/bin/sh",
+            &["-c".to_string(), script.to_string()],
+            b"",
+            std::time::Duration::from_secs(10),
+        )
+    }
+
+    /// 지정한 명령줄을 가진 프로세스가 몇 개 살아 있는지 센다.
+    fn count_survivors() -> usize {
+        let output = std::process::Command::new("ps")
+            .args(["-eo", "args"])
+            .output()
+            .expect("ps 를 실행할 수 있어야 한다");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.contains("sleep") && line.contains(MARKER_SECONDS))
+            .count()
+    }
+
+    /// **자식은 정상 종료했는데 후손이 stdout 을 물고 있는 경우.**
+    ///
+    /// 이게 그룹 종료가 겨냥한 바로 그 상황이다. 그룹을 안 죽이면
+    /// `read_to_end` 가 후손이 끝날 때까지(= 3117초) 안 끝나므로 상한에
+    /// 걸려 `OsProtectionFailed` 가 난다.
+    ///
+    /// ★ 뮤테이션: `run_in_own_process_group` 의 무조건 `kill_process_group`
+    ///   호출을 지우면 이 테스트가 상한 오류로 실패한다.
+    #[test]
+    fn a_descendant_holding_the_pipe_does_not_hang_the_read() {
+        let before = count_survivors();
+
+        let started = std::time::Instant::now();
+        let outcome = sh(&format!("sleep {MARKER_SECONDS} & echo done"))
+            .expect("후손이 파이프를 물고 있어도 상한 안에 끝나야 한다");
+        let elapsed = started.elapsed();
+
+        // 직접 자식(`sh`)은 정상 종료했다 — 즉 오류 경로가 아니다.
+        assert!(!outcome.timed_out, "sh 자체는 곧바로 끝난다");
+        assert!(
+            outcome.status.expect("status 가 있어야 한다").success(),
+            "sh 는 성공 종료한다"
+        );
+        // 후손이 물고 있던 파이프를 실제로 읽어냈다.
+        assert_eq!(
+            String::from_utf8_lossy(&outcome.stdout).trim(),
+            "done",
+            "stdout 을 끝까지 읽어야 한다"
+        );
+        // 상한(10초) 근처가 아니라 즉시 끝났어야 한다.
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "상한에 걸려 끝난 게 아니라 그룹 종료로 끝나야 한다 (실제 {elapsed:?})"
+        );
+
+        // 후손이 실제로 죽었다 — 남겨두고 성공했다고 하면 안 된다.
+        //
+        // ★ `killpg` 는 신호를 보낼 뿐 회수를 기다리지 않으므로 잠깐
+        //   여유를 준다. 그래도 무한 대기는 안 한다.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while count_survivors() > before && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(
+            count_survivors(),
+            before,
+            "그룹 종료가 후손 sleep 을 실제로 없애야 한다"
+        );
+    }
+
+    /// **아무 후손도 안 남긴 경우** — 그룹은 이미 비어 있다.
+    ///
+    /// 이때 `killpg` 는 `ESRCH` 로 실패하는데 그건 정상이다. 이 테스트는
+    /// 그 정상 실패가 진단 문구로 새어 나오지 않음을 고정한다 —
+    /// 새어 나오면 모든 정상 호출이 "그룹 종료 실패" 를 달고 다닌다.
+    #[test]
+    fn an_already_empty_group_is_not_reported_as_a_kill_failure() {
+        let outcome = sh("echo hello").expect("정상 종료해야 한다");
+
+        assert_eq!(String::from_utf8_lossy(&outcome.stdout).trim(), "hello");
+        assert_eq!(
+            outcome.kill_note, "",
+            "ESRCH 는 정상이므로 진단에 안 실려야 한다 (실제 {:?})",
+            outcome.kill_note
+        );
+    }
+
+    /// **자식이 상한 안에 안 끝나는 경우** — 사실대로 보고한다.
+    ///
+    /// 여기서 중요한 건 `timed_out` 이 `true` 이고 `status` 가 `None`
+    /// 이라는 것이다. 시간 초과를 "종료 상태 0" 으로 보고하면 호출자가
+    /// 성공으로 착각한다.
+    #[test]
+    fn a_child_that_outlives_the_deadline_is_reported_as_timed_out() {
+        let outcome = run_in_own_process_group(
+            "/bin/sh",
+            &["-c".to_string(), format!("sleep {MARKER_SECONDS}")],
+            b"",
+            std::time::Duration::from_millis(300),
+        )
+        .expect("상한 초과 자체는 오류가 아니라 관측 결과다");
+
+        assert!(outcome.timed_out, "상한을 넘겼다고 보고해야 한다");
+        assert!(
+            outcome.status.is_none(),
+            "안 끝난 자식에게 종료 상태가 있으면 안 된다"
+        );
+    }
 }
