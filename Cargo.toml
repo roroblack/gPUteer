@@ -8,6 +8,7 @@ members = [
     "crates/runtime-policy",
     "crates/runtime-windows",
     "crates/runtime-nvml",
+    "crates/runtime-linux",
     "crates/coordinator",
     "crates/agent",
     "crates/scheduler",

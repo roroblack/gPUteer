@@ -188,6 +188,7 @@ fn every_crate_is_covered_by_ownership_rules() {
         "runtime-policy",
         "runtime-windows",
         "runtime-nvml",
+        "runtime-linux",
         "coordinator",
         "agent",
         "scheduler",
