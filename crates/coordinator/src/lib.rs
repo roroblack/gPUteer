@@ -315,6 +315,13 @@ fn classify_resume_store_error(error: LeaseStoreError) -> CoordinatorSessionErro
 /// 성공하면 `stdout` 에 `RESULT ok=true ...` 를 찍고 `Ok(())`,
 /// 실패하면 그 이유를 담아 `Err` 를 반환한다(호출자가 exit code 로 매핑).
 pub fn run(config: CoordinatorConfig) -> Result<(), String> {
+    // ★ 검사를 **파서가 아니라 실행 진입점에** 둔다(2026-08-30 독립
+    //   검수 2라운드 지적). 초안은 `run_from_args()` 에서만 불러서,
+    //   라이브러리로 `run(config)` 를 직접 부르는 호출자는 검사를 통째로
+    //   우회했다. CLI 는 이 저장소가 쓰는 한 가지 진입 방법일 뿐이다.
+    validate_device_id(&config.agent_device_id)?;
+    validate_device_id(&config.coordinator_device_id)?;
+
     if config.lease_db_path.is_none() && !config.allow_unsafe_legacy_mode {
         return Err(
             "--lease-db 없이 실행하는 레거시 모드는 revoke/만료/max-duration 보호가 없다; \
@@ -1872,13 +1879,6 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .cloned()
             .unwrap_or_else(|| "legacy-session".into()),
     };
-
-    // ★ 두 경로 **모두** 검사한다(2026-08-30 독립 검수 지적).
-    //   초안은 --multi-agent 경로에서만 불러서, 단일 Agent Coordinator 는
-    //   CLI 값을 그대로 썼다. 이 값은 checkpoint 디렉터리 이름과 로그로
-    //   흘러 들어가므로 어느 경로든 같은 규칙이어야 한다.
-    validate_device_id(&config.agent_device_id)?;
-    validate_device_id(&config.coordinator_device_id)?;
 
     if config.multi_agent {
         return multi_agent::run_multi_agent(config);

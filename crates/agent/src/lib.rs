@@ -795,7 +795,10 @@ fn run_one_connection(
             capture_dir: Some(run_dir.clone()),
             // ★ attempt 별로 갈라야 한다 — 같은 Job 의 두 attempt 가 같은
             //   격리 이름을 받으면 하나를 멈출 때 다른 하나도 죽는다.
-            isolation_name: format!("{}-{}", grant.grant_id, grant.attempt_id),
+            isolation: exec::IsolationIdentity {
+                grant_id: grant.grant_id.clone(),
+                attempt_id: grant.attempt_id.clone(),
+            },
             cgroup_parent: config.workload_cgroup_parent.clone(),
         };
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**

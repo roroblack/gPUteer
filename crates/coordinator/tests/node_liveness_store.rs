@@ -263,3 +263,50 @@ fn stored_facts_feed_the_liveness_kernel() {
     let silent = classify_node_liveness(&observations, &[], policy, 1_200_000).expect("판정");
     assert_eq!(silent[0].liveness, NodeLiveness::Silent);
 }
+
+/// ★ 같은 밀리초의 두 관측을 **커널과 같은 규칙**으로 가르는가.
+///
+/// 2026-08-30 독립 검수 2라운드 지적. 초안은 무조건 먼저 온 것이 이겨서,
+/// 저장소와 `classify_node_liveness` 가 서로 다른 답을 냈다 — 잠금 획득
+/// 순서가 결과를 바꿨다. 두 계층이 다른 규칙을 쓰면 시스템은 틀린다.
+#[test]
+fn a_same_millisecond_tie_uses_the_same_rule_as_the_kernel() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+
+    // 낮은 세대를 먼저 넣고 같은 시각의 높은 세대를 넣는다.
+    s.observe(&verified_heartbeat(DEVICE, 5_000, 3, 0)).expect("첫 관측");
+    let later = s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 1)).expect("동점");
+    assert!(later.advanced, "같은 시각의 나중 세대가 반영되지 않았다");
+    assert_eq!(later.stored.fence_epoch, 9);
+
+    // 반대 방향은 진행하지 않아야 한다.
+    let back = s.observe(&verified_heartbeat(DEVICE, 5_000, 3, 0)).expect("역방향");
+    assert!(!back.advanced, "같은 시각의 옛 세대가 최신을 밀어냈다");
+    assert_eq!(back.stored.fence_epoch, 9);
+}
+
+/// ★ 같은 노드를 다른 장치가 보고하면 덮지 않고 멈추는가.
+///
+/// 덮으면 커널의 `ConflictingDevice` 방어에 도달하기 전에 충돌 증거가
+/// 사라진다 — 등록된 B 가 A 의 노드를 조용히 인수할 수 있다.
+#[test]
+fn a_different_device_claiming_the_same_node_is_refused() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("첫 관측");
+
+    // 더 최신 시각인데도 거부돼야 한다 — 시각이 문제가 아니라 신원이다.
+    let error = s
+        .observe(&verified_heartbeat("01JOTHERDEVICE0000000000001", 9_000, 1, 0))
+        .expect_err("다른 장치가 같은 노드를 인수했다");
+    assert!(matches!(
+        error,
+        NodeLivenessStoreError::DeviceChanged { .. }
+    ));
+
+    // 기존 사실이 그대로인가.
+    let all = s.load_all().expect("읽기");
+    assert_eq!(all[0].device_id, DEVICE);
+    assert_eq!(all[0].last_heartbeat_unix_ms, 1_000);
+}

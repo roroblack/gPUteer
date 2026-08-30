@@ -71,6 +71,9 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
         config.extra_agents.as_deref(),
     )?;
     require_multiple_identities(agents.len())?;
+    // ★ Coordinator 자신의 신원도 검사한다(2026-08-30 독립 검수 2라운드).
+    //   초안은 Agent 쪽만 봤다 — 이 값도 로그와 대조에 쓰인다.
+    validate_device_id(&config.coordinator_device_id)?;
     // ★ 정의만 해 두고 안 부르면 아무것도 막지 못한다(2026-08-30 독립
     //   검수 지적 — 직전 수정이 정확히 그 상태였다). bind 전에 부른다.
     require_distinct_scoped_ids(&config, &agents)?;

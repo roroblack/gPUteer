@@ -240,7 +240,7 @@ pub struct ExecutionPolicy {
     ///   유일성에 기대지 않고 호출부가 명시한다.
     ///
     /// Windows 는 Job Object 가 익명 커널 객체라 이 값을 쓰지 않는다.
-    pub isolation_name: String,
+    pub isolation: IsolationIdentity,
     /// Linux 에서 하위 cgroup 을 만들 부모.
     ///
     /// ★ 2026-08-30 독립 검수 지적. 초안은 무조건 "내 cgroup" 을 썼는데,
@@ -465,7 +465,7 @@ mod platform {
         // ★ cgroup 이름은 attempt 별로 갈라야 한다. 같은 이름을 쓰면
         //   두 작업이 같은 cgroup 을 공유해 한쪽을 멈출 때 다른 쪽도
         //   죽는다 — 소유자가 A 를 멈췄는데 B 가 사라진다.
-        let cgroup_name = super::sanitize_cgroup_name(&policy.isolation_name);
+        let cgroup_name = super::derive_cgroup_name(&policy.isolation);
 
         let mut child = gputeer_runtime_linux::create_constrained_child(
             &create,
@@ -539,6 +539,25 @@ mod platform {
     }
 }
 
+/// 이 실행을 다른 실행과 구분하는 신원.
+///
+/// ★ 두 성분을 **문자열로 미리 합치지 않는다**(2026-08-30 독립 검수
+///   지적). 초안은 `format!("{grant}-{attempt}")` 로 합친 뒤 해시했는데,
+///   그러면 구분자가 성분 경계를 못 지킨다.
+///
+/// ```text
+/// grant="g-a", attempt="b"    ->  "g-a-b"
+/// grant="g",   attempt="a-b"  ->  "g-a-b"   ← 같아진다
+/// ```
+///
+/// 이 저장소가 이미 두 번 배운 것이다 — `derive_replay_nonce` 와
+/// `start_checkpoint_id()` 둘 다 길이 접두사를 쓴다. 여기서만 안 썼다.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IsolationIdentity {
+    pub grant_id: String,
+    pub attempt_id: String,
+}
+
 /// cgroup 디렉터리 이름을 만든다. **자르거나 치환하지 않고 해시한다.**
 ///
 /// # 왜 다듬으면 안 되는가
@@ -557,9 +576,9 @@ mod platform {
 /// **B 를 시작하면 A 가 죽었다.** 소유자가 아닌 것이 남의 작업을
 /// 끝내는 것은 `CLAUDE.md` §0.1 이 가장 앞에서 막는 일이다.
 ///
-/// 그래서 다듬지 않는다. 전체 이름을 BLAKE3 로 해시해 고정 길이 hex 를
-/// 쓴다 — 문자 집합·길이 문제가 동시에 사라지고, 서로 다른 입력은
-/// 128비트 충돌 저항 안에서 서로 다른 이름을 받는다.
+/// 그래서 다듬지 않는다. 각 성분에 길이 접두사를 붙여 BLAKE3 로
+/// 해시하고 고정 길이 hex 를 쓴다 — 문자 집합·길이·성분 경계 문제가
+/// 동시에 사라진다.
 ///
 /// ★ `derive_replay_nonce` 와 같은 이유로 **단사 함수라고 주장하지
 ///   않는다.** 해시를 자르는 한 그건 사실이 아니다. 정확히는
@@ -571,39 +590,51 @@ mod platform {
 /// 대가로 남의 작업을 죽이지 않는다 — 바꿀 만한 거래다. 어느 attempt
 /// 인지는 Agent 로그가 같이 남긴다.
 #[cfg(target_os = "linux")]
-fn sanitize_cgroup_name(name: &str) -> String {
+fn derive_cgroup_name(isolation: &IsolationIdentity) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"gputeer/v1/cgroup-name");
-    // 길이 접두사 — 성분 경계가 흐려지지 않게 한다.
-    hasher.update(&(name.len() as u64).to_be_bytes());
-    hasher.update(name.as_bytes());
+    for component in [&isolation.grant_id, &isolation.attempt_id] {
+        hasher.update(&(component.len() as u64).to_be_bytes());
+        hasher.update(component.as_bytes());
+    }
     hasher.finalize().to_hex()[..32].to_string()
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod cgroup_name_tests {
-    use super::sanitize_cgroup_name;
+    use super::{derive_cgroup_name, IsolationIdentity};
+
+    fn name(grant: &str, attempt: &str) -> String {
+        derive_cgroup_name(&IsolationIdentity {
+            grant_id: grant.to_string(),
+            attempt_id: attempt.to_string(),
+        })
+    }
 
     /// ★ 검수가 든 실제 충돌 반례가 이제 안 나오는가.
     #[test]
     fn the_reported_name_collisions_are_gone() {
-        assert_ne!(sanitize_cgroup_name("g-a.b"), sanitize_cgroup_name("g-a_b"));
-        assert_ne!(sanitize_cgroup_name("a-b-c"), sanitize_cgroup_name("a-b_c"));
-        // 64자 뒤만 다른 두 값 — 초안은 잘라서 같아졌다.
+        // 1라운드 지적 — 문자 치환·절단
+        assert_ne!(name("g", "a.b"), name("g", "a_b"));
         let long_a = format!("{}X", "z".repeat(70));
         let long_b = format!("{}Y", "z".repeat(70));
-        assert_ne!(sanitize_cgroup_name(&long_a), sanitize_cgroup_name(&long_b));
+        assert_ne!(name("g", &long_a), name("g", &long_b));
+
+        // 2라운드 지적 — 성분 경계
+        assert_ne!(name("g-a", "b"), name("g", "a-b"));
+        assert_ne!(name("ab", "c"), name("a", "bc"));
+        assert_ne!(name("", "abc"), name("abc", ""));
     }
 
     /// 이름이 cgroup 디렉터리로 쓸 수 있는 모양인가.
     #[test]
     fn the_name_is_always_a_valid_directory_name() {
-        for input in ["", "a/b", "a b", "한글", &"x".repeat(500)] {
-            let name = sanitize_cgroup_name(input);
-            assert_eq!(name.len(), 32, "길이가 고정이 아니다: {name}");
+        for (g, a) in [("", ""), ("a/b", "c"), ("한글", "x"), (&"x".repeat(500), "y")] {
+            let n = name(g, a);
+            assert_eq!(n.len(), 32, "길이가 고정이 아니다: {n}");
             assert!(
-                name.chars().all(|c| c.is_ascii_hexdigit()),
-                "hex 가 아닌 문자가 있다: {name}"
+                n.chars().all(|c| c.is_ascii_hexdigit()),
+                "hex 가 아닌 문자가 있다: {n}"
             );
         }
     }
@@ -611,6 +642,6 @@ mod cgroup_name_tests {
     /// 같은 입력은 같은 이름을 낸다 — 재시도가 같은 자리를 쓴다.
     #[test]
     fn the_name_is_deterministic() {
-        assert_eq!(sanitize_cgroup_name("same"), sanitize_cgroup_name("same"));
+        assert_eq!(name("g", "a"), name("g", "a"));
     }
 }

@@ -241,8 +241,13 @@ fn a_determined_child_can_still_escape_the_cgroup() {
 
     // 탈출 전 cgroup 을 기록 -> 루트로 이동 -> 탈출 후 cgroup 기록 ->
     // 상한을 훌쩍 넘는 메모리를 잡고 실제 크기를 기록.
+    // ★ `set -eu` — 중간 명령이 실패하면 **거기서 끝난다**
+    //   (2026-08-30 독립 검수 2라운드 지적). 초안은 `;` 로만 이어서,
+    //   탈출 후 `cat` 이 실패해도 스크립트가 계속됐고 빈 `after` 파일이
+    //   `!contains("gputeer-escape")` 를 만족해 통과했다 — 탈출이 아니라
+    //   **관측 실패**로 통과할 수 있었다.
     let script = format!(
-        "cat /proc/self/cgroup > {before};          echo $$ > /sys/fs/cgroup/cgroup.procs;          cat /proc/self/cgroup > {after};          A=$(head -c 67108864 /dev/urandom | base64) || exit 9;          printf '%s' ${{#A}} > {size}",
+        "set -eu;          cat /proc/self/cgroup > {before};          echo $$ > /sys/fs/cgroup/cgroup.procs;          cat /proc/self/cgroup > {after};          A=$(head -c 67108864 /dev/urandom | base64);          printf '%s' ${{#A}} > {size}",
         before = before.display(),
         after = after.display(),
         size = size.display()
@@ -258,7 +263,11 @@ fn a_determined_child_can_still_escape_the_cgroup() {
     let code = wait_within(child, Duration::from_secs(60));
     assert_eq!(code, 0, "탈출 스크립트가 끝까지 못 갔다");
 
-    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+    // ★ 읽기 실패를 빈 문자열로 접지 않는다 — 그게 통과 사유가 됐었다.
+    let read = |p: &std::path::Path| {
+        std::fs::read_to_string(p)
+            .unwrap_or_else(|error| panic!("증거 파일을 못 읽었다({p:?}): {error}"))
+    };
     let (before_txt, after_txt, size_txt) = (read(&before), read(&after), read(&size));
 
     // 1) 처음에는 우리가 만든 cgroup 안에 있었는가.
@@ -266,10 +275,14 @@ fn a_determined_child_can_still_escape_the_cgroup() {
         before_txt.contains("gputeer-escape"),
         "자식이 애초에 우리 cgroup 안에 없었다 — 이 테스트의 전제가 깨졌다: {before_txt:?}"
     );
-    // 2) 실제로 밖으로 나갔는가.
-    assert!(
-        !after_txt.contains("gputeer-escape"),
-        "탈출에 실패했다 — 구멍이 닫혔다면 모듈 문서의 '적대적인 코드는          못 막는다' 를 같이 고쳐야 한다: {after_txt:?}"
+    // 2) 실제로 루트로 나갔는가.
+    //
+    //    ★ 부분 문자열이 아니라 **정확히 `0::/`** 인지 본다. 부분
+    //      문자열 검사는 관측이 비었을 때도 만족한다.
+    assert_eq!(
+        after_txt.trim(),
+        "0::/",
+        "탈출 후 cgroup 이 루트가 아니다 — 구멍이 닫혔다면 모듈 문서의          '적대적인 코드는 못 막는다' 를 같이 고쳐야 한다"
     );
     // 3) 상한(32MiB)을 실제로 넘겨 살아남았는가.
     let allocated: u64 = size_txt.trim().parse().unwrap_or(0);

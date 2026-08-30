@@ -110,6 +110,15 @@ pub enum NodeLivenessStoreError {
     SignerIsNotTheDevice { signer: String, device: String },
     /// 저장된 행이 손상됐다.
     Corrupt { kind: LivenessCorruption },
+    /// 같은 노드를 다른 장치가 보고했다.
+    ///
+    /// ★ 조용히 덮지 않는다. 어느 쪽이 진짜인지 이 저장소는 모르고,
+    ///   덮으면 충돌이 있었다는 사실 자체가 사라진다.
+    DeviceChanged {
+        node_id: String,
+        stored: String,
+        incoming: String,
+    },
 }
 
 impl std::fmt::Display for NodeLivenessStoreError {
@@ -122,6 +131,14 @@ impl std::fmt::Display for NodeLivenessStoreError {
                 "LIVENESS_SIGNER_MISMATCH: 서명자 {signer} 와 device_id {device} 가 다르다"
             ),
             Self::Corrupt { kind } => write!(f, "LIVENESS_CORRUPT: {kind:?}"),
+            Self::DeviceChanged {
+                node_id,
+                stored,
+                incoming,
+            } => write!(
+                f,
+                "LIVENESS_DEVICE_CHANGED: node {node_id} 는 {stored} 로 기록돼 있는데                  {incoming} 가 보고했다 — 어느 쪽이 진짜인지 이 저장소는 모른다"
+            ),
         }
     }
 }
@@ -241,13 +258,45 @@ impl CoordinatorNodeLivenessStore {
             .map_err(storage)?;
 
         if let Some(row) = &existing {
+            // ★ 같은 노드를 **다른 장치**가 보고하면 덮지 않고 멈춘다
+            //   (2026-08-30 독립 검수 2라운드 지적). 초안은 더 최신이면
+            //   그냥 덮었는데, 그러면 커널의 `ConflictingDevice` 방어에
+            //   도달하기 전에 충돌 증거가 사라진다 — 등록된 B 가 A 의
+            //   노드를 대신 보고해 조용히 인수할 수 있다.
+            if row.0 != heartbeat.device_id {
+                drop(transaction);
+                return Err(NodeLivenessStoreError::DeviceChanged {
+                    node_id: heartbeat.node_id.clone(),
+                    stored: row.0.clone(),
+                    incoming: heartbeat.device_id.clone(),
+                });
+            }
             let stored_at = u64::try_from(row.1).map_err(|_| NodeLivenessStoreError::Corrupt {
                 kind: LivenessCorruption::IssuedAtMismatch,
             })?;
             // ★ 같거나 더 오래된 관측은 저장하지 않는다. 늦게 도착한 옛
             //   heartbeat 로 최신 값을 밀어내면 살아 있는 노드가 갑자기
             //   조용해 보인다.
-            if heartbeat.issued_at_unix_ms <= stored_at {
+            //
+            // ★ 같은 밀리초의 서로 다른 관측은 커널과 **같은 규칙**으로
+            //   가른다(2026-08-30 독립 검수 2라운드 지적). 초안은 무조건
+            //   먼저 온 것이 이겨서, 저장소와 `classify_node_liveness` 가
+            //   서로 다른 답을 냈다 — 잠금 획득 순서가 결과를 바꿨다.
+            let stored_epoch =
+                u64::try_from(row.2).map_err(|_| NodeLivenessStoreError::Corrupt {
+                    kind: LivenessCorruption::FenceEpochMismatch,
+                })?;
+            let stored_attempts =
+                u32::try_from(row.3).map_err(|_| NodeLivenessStoreError::Corrupt {
+                    kind: LivenessCorruption::RunningAttemptsMismatch,
+                })?;
+            let incoming_rank = (
+                heartbeat.issued_at_unix_ms,
+                heartbeat.fence_epoch,
+                heartbeat.running_attempts,
+            );
+            let stored_rank = (stored_at, stored_epoch, stored_attempts);
+            if incoming_rank <= stored_rank {
                 let stored = decode_row(&heartbeat.node_id, row)?;
                 drop(transaction);
                 return Ok(ObserveResult {

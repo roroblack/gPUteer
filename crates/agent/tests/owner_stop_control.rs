@@ -38,7 +38,10 @@ fn policy(opted_in: bool, limit: u64) -> ExecutionPolicy {
         opted_in,
         commit_limit_bytes: limit,
         capture_dir: None,
-        isolation_name: "owner-stop-control-test".to_string(),
+        isolation: gputeer_agent::exec::IsolationIdentity {
+            grant_id: "owner-stop-control-test".to_string(),
+            attempt_id: "attempt".to_string(),
+        },
         cgroup_parent: None,
     }
 }

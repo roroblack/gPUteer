@@ -381,6 +381,27 @@ pub fn create_constrained_child(
     Ok(ConstrainedChild { child, cgroup })
 }
 
+/// 이 cgroup 이 **비어 있음이 증명되는가.**
+///
+/// ★ "확인 못 했다" 를 "비었다" 로 접지 않는다. 읽기에 실패하면
+///   `Err` 다 — 모르는 상태에서 남의 작업을 지우면 되돌릴 수 없다.
+fn cgroup_is_provably_empty(dir: &Path) -> Result<bool, String> {
+    let procs = std::fs::read_to_string(dir.join("cgroup.procs"))
+        .map_err(|error| format!("cgroup.procs 읽기 실패: {error}"))?;
+    if procs.lines().any(|line| !line.trim().is_empty()) {
+        return Ok(false);
+    }
+    // `cgroup.events` 는 `populated 0` / `populated 1` 줄을 낸다.
+    // 하위 트리까지 통틀어 아무도 없을 때만 0 이다.
+    let events = std::fs::read_to_string(dir.join("cgroup.events"))
+        .map_err(|error| format!("cgroup.events 읽기 실패: {error}"))?;
+    let populated = events
+        .lines()
+        .find_map(|line| line.strip_prefix("populated "))
+        .ok_or_else(|| "cgroup.events 에 populated 줄이 없다".to_string())?;
+    Ok(populated.trim() == "0")
+}
+
 /// 이 시스템에 스왑이 실제로 켜져 있는가.
 ///
 /// `/proc/swaps` 는 헤더 한 줄 뒤에 활성 스왑 장치를 한 줄씩 낸다.
@@ -454,7 +475,7 @@ fn resolve_parent(parent: &CgroupParent) -> Result<PathBuf, CgroupError> {
     }
     let candidate = match parent {
         CgroupParent::Current => current_cgroup_dir()?,
-        CgroupParent::Explicit(path) => path.clone(),
+        CgroupParent::Explicit(path) => validate_explicit_parent(path, root)?,
         CgroupParent::RootBypassingAncestorLimits => root.to_path_buf(),
     };
     memory_is_delegated(&candidate).map_err(|reason| {
@@ -463,6 +484,62 @@ fn resolve_parent(parent: &CgroupParent) -> Result<PathBuf, CgroupError> {
         }
     })?;
     Ok(candidate)
+}
+
+/// 운영자가 지정한 부모가 **위임받은 subtree 로 쓸 수 있는 모양인가.**
+///
+/// # 왜 아무 경로나 받으면 안 되는가
+///
+/// ★ 2026-08-30 독립 검수 2라운드 지적. `Explicit` 는 CLI 문자열을
+///   그대로 받았다. 운영자가 `/sys/fs/cgroup` 이나 `system.slice` 를
+///   지정하면:
+///
+/// ```text
+/// Agent 상위의 CPU·PID·메모리 제한을 우회한다
+/// 시스템 cgroup 의 subtree_control 에 +memory 를 쓴다
+/// 시스템 계층 아래에 남의 작업 cgroup 을 만든다
+/// ```
+///
+/// 위험을 드러내려고 이름을 길게 만든 `RootBypassingAncestorLimits` 를
+/// `Explicit` 가 사실상 우회하는 셈이었다.
+///
+/// # 무엇을 요구하는가
+///
+/// ```text
+/// cgroup v2 루트 아래         밖은 애초에 cgroup 이 아니다
+/// 루트 자신은 아니다          그건 RootBypassingAncestorLimits 의 일이다
+/// `..` 성분이 없다            정규화 전에 탈출하는 경로를 막는다
+/// 실제로 존재하는 디렉터리    없는 곳을 만들어 주지 않는다
+/// ```
+///
+/// ★ **"운영자가 위임했다" 를 확인하지는 못한다.** 커널에 그 사실을
+///   물어볼 방법이 없다 — cgroup 에는 소유권 표식을 둘 자리가 없다.
+///   여기서 하는 것은 "명백히 위험한 값을 막는 것" 이지 "안전을 보장하는
+///   것" 이 아니다(`CLAUDE.md` §0.4).
+fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupError> {
+    let refuse = |detail: String| CgroupError::NotDelegated { detail };
+
+    if path.components().any(|c| c.as_os_str() == "..") {
+        return Err(refuse(format!(
+            "{path:?} 에 `..` 가 있다 — 정규화로 cgroup 루트 밖을 가리킬 수 있다"
+        )));
+    }
+    if !path.starts_with(root) {
+        return Err(refuse(format!(
+            "{path:?} 가 {root:?} 아래가 아니다 — cgroup 이 아닌 경로다"
+        )));
+    }
+    if path == root {
+        return Err(refuse(format!(
+            "{path:?} 는 cgroup v2 루트다 — 상위 제한을 우회하려면              RootBypassingAncestorLimits 를 명시적으로 골라야 한다"
+        )));
+    }
+    if !path.is_dir() {
+        return Err(refuse(format!(
+            "{path:?} 가 디렉터리가 아니다 — 위임받은 subtree 는 이미 있어야 한다"
+        )));
+    }
+    Ok(path.to_path_buf())
 }
 
 /// 이 cgroup 이 하위에 `memory` 를 위임하는가. 아니면 켜 본다.
@@ -524,22 +601,49 @@ fn create_child_cgroup(parent: &Path, name: &str) -> Result<PathBuf, CgroupError
     }
     let dir = parent.join(format!("gputeer-{name}"));
 
-    // ★ 이미 있으면 **죽이지 않고 거부한다**(2026-08-30 독립 검수 지적).
+    // ★ 이미 있으면 **죽이지 않는다**(2026-08-30 독립 검수 1라운드).
     //
     //   초안은 `cgroup.kill` 을 쓰고 지운 뒤 새로 만들었다. 이름이
-    //   충돌하면 그건 "남은 찌꺼기 청소" 가 아니라 **다른 사람의 작업을
+    //   충돌하면 그건 "찌꺼기 청소" 가 아니라 **다른 사람의 작업을
     //   죽이는 것**이다. `CLAUDE.md` §0.1 은 소유자만이 자기 GPU 를
     //   비울 수 있다고 정했는데, 이 코드는 이름이 겹쳤다는 이유만으로
     //   남의 작업을 끝냈다.
     //
-    //   지금은 이름이 해시라 정상 경로에서 충돌하지 않는다. 그래도
-    //   충돌하면 그건 우리가 모르는 상태이므로, 조용히 덮지 않고 멈춘다.
+    // ★ 그렇다고 무조건 거부하면 다른 문제가 생긴다(같은 검수 2라운드).
+    //   Agent 가 비정상 종료하거나 전원이 나가면 빈 cgroup 이 남고,
+    //   이름은 결정적이므로 **같은 attempt 의 재시도가 영영 막힌다.**
+    //   사람이 손으로 지울 때까지 그 작업은 다시 못 뜬다.
+    //
+    //   그래서 **비어 있음이 증명될 때만** 회수한다.
+    //
+    //   ```text
+    //   cgroup.procs 가 비었다        직계 프로세스가 없다
+    //   cgroup.events 가 populated 0  하위 트리까지 통틀어 아무도 없다
+    //   ```
+    //
+    //   둘 다여야 한다. `cgroup.procs` 만 보면 손자가 남아 있는 트리를
+    //   비었다고 오인한다. 하나라도 아니면 그건 남의 살아 있는 작업일
+    //   수 있으므로 지우지 않고 멈춘다.
     if dir.exists() {
-        return Err(CgroupError::NotDelegated {
-            detail: format!(
-                "{dir:?} 가 이미 있다 — 남의 작업일 수 있으므로 지우지 않고 멈춘다.                  앞선 실행이 남긴 것이 확실하면 사람이 직접 확인하고 지워야 한다"
-            ),
-        });
+        match cgroup_is_provably_empty(&dir) {
+            Ok(true) => {
+                std::fs::remove_dir(&dir).map_err(|error| CgroupError::NotDelegated {
+                    detail: format!("빈 cgroup 회수 실패({dir:?}): {error}"),
+                })?;
+            }
+            Ok(false) => {
+                return Err(CgroupError::NotDelegated {
+                    detail: format!(
+                        "{dir:?} 에 프로세스가 남아 있다 — 남의 작업일 수 있으므로 지우지 않는다"
+                    ),
+                });
+            }
+            Err(detail) => {
+                return Err(CgroupError::NotDelegated {
+                    detail: format!("{dir:?} 가 비었는지 확인하지 못했다: {detail}"),
+                });
+            }
+        }
     }
     std::fs::create_dir(&dir).map_err(|error| CgroupError::NotDelegated {
         detail: format!("하위 cgroup 생성 실패({dir:?}): {error}"),
