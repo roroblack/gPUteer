@@ -1,0 +1,31 @@
+uname: Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+cargo: cargo 1.89.0 (c24e10642 2025-06-23)
+
+=== 프로세스 그룹 단위 테스트 ===
+test keyring::process_group_tests::an_already_empty_group_is_not_reported_as_a_kill_failure ... ok
+test keyring::process_group_tests::a_descendant_holding_the_pipe_does_not_hang_the_read ... ok
+test keyring::process_group_tests::a_child_that_outlives_the_deadline_is_reported_as_timed_out ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+=== 남은 프로세스 ===
+sleep 3117 = 0
+systemd-creds = 0
+
+=== 뮤테이션 3건 (x600 실측, 앞선 실행의 실제 출력) ===
+=== M1: 무조건 그룹 종료 제거 ===
+--- M1 ---
+  OK — 실패했다
+thread 'keyring::process_group_tests::a_descendant_holding_the_pipe_does_not_hang_the_read' panicked at crates/crypto/src/keyring.rs:1593:14:
+후손이 파이프를 물고 있어도 상한 안에 끝나야 한다: OsProtectionFailed("/bin/sh stdout 을 상한 안에 읽지 못했다 — 후손이 파이프를 물고 있을 수 있다")
+=== M2: ESRCH 를 정상으로 안 봄 ===
+--- M2 ---
+  OK — 실패했다
+thread 'keyring::process_group_tests::an_already_empty_group_is_not_reported_as_a_kill_failure' panicked at crates/crypto/src/keyring.rs:1639:9:
+assertion `left == right` failed: ESRCH 는 정상이므로 진단에 안 실려야 한다 (실제 " (프로세스 그룹 35414 종료 실패: No such process (os error 3))")
+=== M3: 시간 초과를 종료 상태 있음으로 보고 ===
+--- M3 ---
+  OK — 실패했다
+thread 'keyring::process_group_tests::a_child_that_outlives_the_deadline_is_reported_as_timed_out' panicked at crates/crypto/src/keyring.rs:1661:9:
+상한을 넘겼다고 보고해야 한다
+=== 원복 후 재확인 ===
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
