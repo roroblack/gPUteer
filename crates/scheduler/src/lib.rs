@@ -7,11 +7,16 @@
 //! 외부 I/O, 현재 시각 조회, 무작위 선택, 자원 예약을 하지 않는다.
 
 mod filter;
+mod liveness;
 mod model;
 mod rank;
 mod scope;
 
 pub use filter::evaluate_eligibility;
+pub use liveness::{
+    classify_node_liveness, HeartbeatObservation, LivenessError, LivenessPolicy, NodeLiveness,
+    NodeLivenessReport,
+};
 pub use model::{
     BestFitPolicy, BestFitRanking, CandidateSnapshot, EligibilityReport, EligibilityResolution,
     EligibleCandidate, FitAxis, FitKey, GpuSnapshot, IsolationClass, JobRequirements,
