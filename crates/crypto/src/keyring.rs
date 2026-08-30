@@ -3,17 +3,38 @@
 //! 이 모듈이 보장하는 범위:
 //!
 //! - K0 평문 파일은 명시적으로 허용해야만 사용할 수 있다.
-//! - Windows K1은 DPAPI로 개인키 바이트를 보호한다.
-//! - 키 폐기·quarantine·회전 상태를 공개키와 함께 보존한다.
+//! - Windows K1은 DPAPI로, Linux K1은 `systemd-creds --with-key=host`로
+//!   개인키 바이트를 보호한다. **두 등급은 이름이 같지만 막는 경계가
+//!   다르다** — Windows는 다른 *사용자*를, Linux는 *비-root*를 막는다.
+//! - 키 폐기·quarantine·회전 상태를 공개키와 함께 **한 파일 안에서**
+//!   보존한다. ★ 그 파일이 통째로 옛 버전으로 되돌려지는 것은 막지
+//!   못한다 — 아래 비보장 목록 참조.
 //! - 회전 중에는 24시간 동안 구 키와 신 키를 함께 검증한다.
 //! - 손상된 파일은 checksum·길이·공개키/개인키 일치 검사를 통과하지 못한다.
 //!
 //! 이 모듈이 보장하지 않는 범위:
 //!
 //! - K0 파일에 대한 관리자·악성 코드 방어
-//! - DPAPI가 풀린 뒤 프로세스 메모리·크래시 덤프 보호
-//! - TPM 2.0/Secure Enclave 기반 비수출 키
-//! - Linux의 OS 보호 저장소
+//! - 복호된 뒤의 프로세스 메모리·크래시 덤프 보호(두 플랫폼 공통)
+//! - TPM 2.0/Secure Enclave 기반 비수출 키 (= K2, 미구현)
+//! - **신선성·롤백 방지.** K1은 *변조 탐지*만 제공한다. 정상적으로
+//!   봉인됐던 **과거 파일을 통째로 되돌리면** 검증을 그대로 통과하며,
+//!   그때 되살아나는 것은 폐기된 개인키만이 아니다.
+//!
+//!   ```text
+//!   되살아나는 것   폐기(revoke)된 키
+//!                   quarantine 설정·해제 상태
+//!                   그 뒤 새로 등록된 키가 사라짐
+//!                   회전 이력과 유효 시작·종료 시각
+//!                   공개키 디렉터리의 최신 신뢰 상태
+//!   ```
+//!
+//!   막으려면 파일 밖의 단조 상태(TPM monotonic counter 등)가 필요하고
+//!   이 모듈에 없다. `CLAUDE.md` §0.4 대로 반쯤 동작하는 방어를 만들지
+//!   않고 **못 막는다고 적는다.**
+//! - **K1 경계 안쪽의 공격자.** Windows의 같은 사용자, Linux의 root는
+//!   알려진 entropy/이름으로 직접 봉인을 만들 수 있다 — 처음부터 이
+//!   등급의 정의다.
 //!
 //! 개인키를 담는 타입은 `Debug`, `Display`, `serde` 직렬화를 제공하지 않는다.
 //! 사람이 출력할 수 있는 경로에는 개인키 바이트가 절대 들어가지 않는다.
@@ -805,26 +826,6 @@ fn ensure_protection(
 ///
 ///   `signing.md` 의 `domain_tag` 가 서명에서, `derive_replay_nonce` 가
 ///   nonce 에서 하는 일과 같은 종류의 분리다.
-/// 스레드를 시간 상한 안에서 거둔다. 넘기면 `None` 이고 스레드는 남는다.
-///
-/// ★ `JoinHandle` 에는 시간 제한 join 이 없다. 채널로 완료를 알리게
-///   해서 상한을 건다 — 스레드가 안 끝나도 호출부는 진행할 수 있다.
-#[cfg(target_os = "linux")]
-fn join_within<T: Send + 'static>(
-    handle: std::thread::JoinHandle<T>,
-    limit: std::time::Duration,
-) -> Option<T> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(handle.join());
-    });
-    match rx.recv_timeout(limit) {
-        Ok(Ok(value)) => Some(value),
-        // 패닉했으면 값이 없다 — 남은 것을 없는 것과 구분하지 않는다.
-        Ok(Err(_)) | Err(_) => None,
-    }
-}
-
 /// 파일 전체 무결성 표식을 봉인할 때 쓰는 이름.
 ///
 /// ★ signer 별 이름과 **다르다.** 같은 이름을 쓰면 어떤 signer 의 개인키
@@ -1159,9 +1160,8 @@ fn run_systemd_creds(
 
     /// 이만큼 안 끝나면 죽인다.
     ///
-    /// ★ 상한이 없으면 helper 가 멈췄을 때 Agent 도 무기한 멈춘다
-    ///   (2026-08-30 독립 검수 3라운드 지적). 이건 로컬 도구를 짧게
-    ///   부르는 것이므로 넉넉히 잡아도 초 단위면 충분하다.
+    /// ★ 상한이 없으면 helper 가 멈췄을 때 Agent 도 무기한 멈춘다.
+    ///   이건 로컬 도구를 짧게 부르는 것이므로 초 단위면 충분하다.
     const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
     let mut child = Command::new("systemd-creds")
@@ -1173,42 +1173,56 @@ fn run_systemd_creds(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        // ★ 자기 프로세스 그룹을 갖게 한다 — 그래야 후손까지 한 번에
-        //   끝낼 수 있다. `setsid()` 는 async-signal-safe 한 syscall 이다.
+        // ★ 자식을 **자기 프로세스 그룹**에 넣는다(setpgid). 그래야
+        //   후손까지 한 번에 끝낼 수 있다.
+        //
+        //   ★ 이전 주석은 "setsid() 한다" 고 썼는데 **틀렸다** —
+        //     `process_group(0)` 은 새 세션이 아니라 새 프로세스 그룹만
+        //     만든다(2026-08-30 독립 검수 6라운드 지적). 그룹 종료
+        //     목적에는 충분하지만 문서는 정확해야 한다.
         .process_group(0)
         .spawn()
         // ★ **없는 것**과 **있는데 못 띄운 것**을 구분한다(§3).
-        //   초안은 전부 UnsupportedPlatform 이라, 권한 거부나 프로세스
-        //   한도 초과도 "이 플랫폼은 지원 안 함" 으로 보고했다 — 고치는
-        //   방법이 전혀 다른데 같은 말을 했다.
+        //   전부 `UnsupportedPlatform` 이면 권한 거부나 프로세스 한도
+        //   초과도 "이 플랫폼은 지원 안 함" 으로 보고된다 — 고치는
+        //   방법이 전혀 다른데 같은 말을 하는 것이다.
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => KeyringError::UnsupportedPlatform,
             _ => KeyringError::OsProtectionFailed(format!("systemd-creds 기동 실패: {error}")),
         })?;
 
-    // ★ 아래 어느 단계에서 실패하든 자식을 **반드시 회수한다.**
-    //   Rust 의 `Child` 는 drop 해도 자동으로 안 거둬서, 그냥 반환하면
-    //   자식이 계속 돌거나 좀비로 남는다(같은 검수 지적).
-    let reap = |child: &mut std::process::Child| {
-        // ★ 프로세스 **그룹** 전체를 끝낸다(2026-08-30 독립 검수 5라운드).
-        //   직접 자식만 죽이면 그 자식이 만든 후손이 stdout/stderr 를
-        //   물려받은 채 남아, 파이프가 안 닫혀 읽기가 EOF 를 못 본다.
-        #[cfg(target_os = "linux")]
-        {
-            // `pre_exec` 에서 setsid 한 자식이므로 pgid == pid 다.
-            // libc 없이 부르려면 `kill` 명령을 쓴다 — 이 경로는 이미
-            // 실패 처리 중이라 한 번 더 프로세스를 띄우는 비용이 문제되지
-            // 않는다.
-            let _ = std::process::Command::new("kill")
-                .arg("-KILL")
-                .arg(format!("-{}", child.id()))
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+    let pgid = child.id() as i32;
+
+    // ★ 파이프를 **읽는 스레드가 채널로 직접 보낸다.**
+    //
+    //   이전 설계는 `JoinHandle` 을 기다리는 **보조 스레드를 하나 더**
+    //   띄워 시간 상한을 걸었다. 시간 초과 시 reader 와 보조 스레드가
+    //   둘 다 남아, 실패 한 번에 최대 3개가 쌓이고 반복 호출하면
+    //   선형으로 누적됐다(2026-08-30 독립 검수 6라운드 지적).
+    //
+    //   채널로 보내면 보조 스레드가 필요 없다 — 시간 초과 시 남는 것은
+    //   reader 스레드뿐이고, 그마저도 아래에서 프로세스 그룹을 죽여
+    //   파이프가 닫히면 스스로 끝난다.
+    let (out_tx, out_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (err_tx, err_rx) = std::sync::mpsc::channel::<String>();
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+    std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut buffer = Vec::new();
+        if let Some(mut handle) = stdout_handle {
+            let _ = handle.read_to_end(&mut buffer);
         }
-        let _ = child.kill();
-        let _ = child.wait();
-    };
+        let _ = out_tx.send(buffer);
+    });
+    std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut text = String::new();
+        if let Some(mut handle) = stderr_handle {
+            let _ = handle.read_to_string(&mut text);
+        }
+        let _ = err_tx.send(text);
+    });
 
     let write_result = (|| -> std::io::Result<()> {
         let mut stdin = child.stdin.take().ok_or_else(|| {
@@ -1220,81 +1234,60 @@ fn run_systemd_creds(
         Ok(())
     })();
     if let Err(error) = write_result {
-        reap(&mut child);
+        kill_process_group(pgid);
+        let _ = child.wait();
         return Err(KeyringError::Io(error));
     }
 
-    // ★ 파이프를 **먼저 배출한다**(2026-08-30 독립 검수 4라운드 지적).
-    //
-    //   초안은 자식 종료만 폴링하고 그 뒤에 읽었다. 출력이 파이프 버퍼를
-    //   채우면 자식은 쓰기에서 멈춰 영영 종료하지 못하고, 정상 결과도
-    //   10초 뒤 강제 종료됐다 — 상한이 보호가 아니라 오작동의 원인이 됐다.
-    //
-    //   각 파이프를 별도 스레드가 계속 빨아낸다. 그러면 자식은 버퍼가
-    //   차서 멈추지 않는다.
-    let stdout_handle = child.stdout.take();
-    let stderr_handle = child.stderr.take();
-    let stdout_reader = std::thread::spawn(move || {
-        use std::io::Read as _;
-        let mut buffer = Vec::new();
-        if let Some(mut handle) = stdout_handle {
-            let _ = handle.read_to_end(&mut buffer);
-        }
-        buffer
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        use std::io::Read as _;
-        let mut text = String::new();
-        if let Some(mut handle) = stderr_handle {
-            let _ = handle.read_to_string(&mut text);
-        }
-        text
-    });
-
-    // 시간 상한 안에서 기다린다. 넘기면 죽이고 실패로 보고한다.
+    // 시간 상한 안에서 자식 종료를 기다린다.
     let deadline = std::time::Instant::now() + DEADLINE;
+    let mut timed_out = false;
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => break Some(status),
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
-                    reap(&mut child);
-                    // 죽였으므로 파이프가 닫히고 읽기 스레드가 끝난다.
-                    let _ = stdout_reader.join();
-                    let _ = stderr_reader.join();
-                    return Err(KeyringError::OsProtectionFailed(format!(
-                        "systemd-creds {} 가 {DEADLINE:?} 안에 끝나지 않았다",
-                        args.join(" ")
-                    )));
+                    timed_out = true;
+                    break None;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             Err(error) => {
-                reap(&mut child);
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
+                kill_process_group(pgid);
+                let _ = child.wait();
                 return Err(KeyringError::Io(error));
             }
         }
     };
 
-    // ★ 읽기 스레드도 **상한 안에서** 거둔다(2026-08-30 독립 검수 5라운드).
+    // ★ 그룹 종료를 **항상** 한다 — 자식이 정상 종료한 경우에도.
     //
-    //   자식이 끝나도 후손이 파이프를 물고 있으면 `read_to_end()` 가
-    //   EOF 를 못 봐서 무제한 `join()` 이 영영 안 끝난다. 위에서
-    //   프로세스 그룹을 죽이지만, 그것도 실패할 수 있다 — "죽였으니
-    //   끝날 것" 을 가정하지 않는다.
+    //   이전 설계는 오류 경로에서만 그룹을 죽였다. 그런데 이 수정이
+    //   겨냥한 상황은 정확히 **자식은 정상 종료했는데 후손이 파이프를
+    //   물고 있는 경우**다 — 그 경로에서는 그룹 종료가 아예 안 불렸다
+    //   (2026-08-30 독립 검수 6라운드 지적).
     //
-    //   시간이 지나면 스레드를 남겨 두고 실패로 보고한다. 스레드가
-    //   남는 것은 좋지 않지만, Agent 전체가 멈추는 것보다 낫다.
-    let stdout = join_within(stdout_reader, DEADLINE).ok_or_else(|| {
-        KeyringError::OsProtectionFailed(
-            "systemd-creds stdout 을 상한 안에 읽지 못했다 — 후손이 파이프를 물고 있을 수 있다"
-                .into(),
-        )
-    })?;
-    let stderr = join_within(stderr_reader, DEADLINE).unwrap_or_default();
+    //   자식이 이미 죽었고 후손도 없으면 `killpg` 는 `ESRCH` 로 실패한다
+    //   — 그건 정상이며 아래에서 구분해 다룬다.
+    let kill_note = kill_process_group(pgid);
+    let _ = child.wait();
 
+    // 이제 파이프가 닫혔으므로 읽기 스레드가 곧 끝난다. 그래도 상한을
+    // 건다 — "죽였으니 끝날 것" 을 가정하지 않는다.
+    let stdout = out_rx.recv_timeout(DEADLINE).map_err(|_| {
+        KeyringError::OsProtectionFailed(format!(
+            "systemd-creds stdout 을 상한 안에 읽지 못했다 — 후손이 파이프를 물고 있을 수 있다{kill_note}"
+        ))
+    })?;
+    let stderr = err_rx.recv_timeout(DEADLINE).unwrap_or_default();
+
+    if timed_out {
+        return Err(KeyringError::OsProtectionFailed(format!(
+            "systemd-creds {} 가 {DEADLINE:?} 안에 끝나지 않았다{kill_note}",
+            args.join(" ")
+        )));
+    }
+    let status = status.expect("timed_out 이 false 면 status 가 있다");
     if !status.success() {
         // ★ "없다" 가 아니라 "있는데 실패했다" 다. 진단에 필요한 만큼만
         //   stderr 를 싣는다 — 개인키는 stdin 으로만 갔고 stderr 에는
@@ -1316,6 +1309,39 @@ fn run_systemd_creds(
         return Err(KeyringError::CorruptFile("systemd-creds 출력이 비었다"));
     }
     Ok(stdout)
+}
+
+/// 프로세스 그룹 전체에 `SIGKILL` 을 보낸다.
+///
+/// # 왜 `kill` 명령이 아니라 `killpg` 인가
+///
+/// ★ 이전 구현은 `kill -KILL -<pgid>` 를 subprocess 로 불렀고 **결과를
+///   통째로 버렸다**(2026-08-30 독립 검수 6라운드 지적). 실행 파일 부재·
+///   PATH 문제·인자 해석 차이·비정상 종료가 전부 조용히 무시됐다.
+///   그 뒤의 `child.kill()` 은 직접 자식만 죽이므로 대안이 아니다.
+///
+/// `killpg(2)` 를 직접 부르고 결과를 본다.
+///
+/// # 반환값
+///
+/// 진단에 붙일 문구. 정상(죽였거나 이미 없음)이면 빈 문자열이고,
+/// 그 밖의 실패면 이유를 담는다 — 나중에 읽기가 시간 초과했을 때
+/// "그룹을 못 죽여서" 인지 알 수 있어야 한다.
+#[cfg(target_os = "linux")]
+fn kill_process_group(pgid: i32) -> String {
+    // SAFETY: `killpg` 는 정수 두 개만 받는다. 잘못된 pgid 는 -1 과
+    // errno 로 보고되며 메모리 안전성과 무관하다.
+    let result = unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    if result == 0 {
+        return String::new();
+    }
+    let error = std::io::Error::last_os_error();
+    // ESRCH = 그런 그룹이 없다. 자식이 이미 끝났고 후손도 없다는 뜻이라
+    // 정상이다.
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return String::new();
+    }
+    format!(" (프로세스 그룹 {pgid} 종료 실패: {error})")
 }
 
 #[cfg(windows)]

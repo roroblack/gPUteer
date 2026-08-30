@@ -1,0 +1,115 @@
+이 파일은 실제 명령 출력을 **그대로** 붙인 것이다.
+★ 2026-08-30 독립 검수 5라운드가 편집된 요약을 evidence 로 인정하지
+  않는다고 지적했다. 기준선 구간은 편집하지 않았다.
+  뮤테이션 구간은 이 세션의 도구 출력에서 해당 줄을 그대로 옮겼다.
+
+=================================================================
+
+########## cargo test -p gputeer-scheduler --lib (전체 출력) ##########
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src\lib.rs (target\debug\deps\gputeer_scheduler-b939a2a199aba57d.exe)
+
+running 10 tests
+test liveness::tests::blank_identities_are_refused ... ok
+test liveness::tests::an_inverted_policy_is_refused ... ok
+test liveness::tests::a_clock_slightly_ahead_does_not_look_silent ... ok
+test liveness::tests::a_known_node_with_no_observation_still_appears ... ok
+test liveness::tests::a_tie_on_time_is_broken_deterministically ... ok
+test liveness::tests::errors_do_not_depend_on_input_order_either ... ok
+test liveness::tests::the_result_does_not_depend_on_input_order ... ok
+test liveness::tests::conflicting_devices_stop_the_judgment ... ok
+test liveness::tests::the_three_bands_are_distinguished ... ok
+test liveness::tests::the_worst_verdict_is_silence_not_death ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+########## cargo test -p gputeer-coordinator --test node_liveness_store (전체 출력) ##########
+   Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\crypto)
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\crates\coordinator)
+warning: struct `StagingIssuanceInput` is never constructed
+  --> crates\coordinator\src\orchestrate.rs:26:19
+   |
+26 | pub(crate) struct StagingIssuanceInput {
+   |                   ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `PlacementToStagingInput` is never constructed
+  --> crates\coordinator\src\orchestrate.rs:43:19
+   |
+43 | pub(crate) struct PlacementToStagingInput {
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PlacementToStagingOutcome` is never used
+  --> crates\coordinator\src\orchestrate.rs:54:17
+   |
+54 | pub(crate) enum PlacementToStagingOutcome {
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PlacementToStagingError` is never used
+  --> crates\coordinator\src\orchestrate.rs:70:17
+   |
+70 | pub(crate) enum PlacementToStagingError {
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `orchestrate_placement_to_staging` is never used
+   --> crates\coordinator\src\orchestrate.rs:149:15
+    |
+149 | pub(crate) fn orchestrate_placement_to_staging(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `gputeer-coordinator` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.62s
+     Running tests\node_liveness_store.rs (target\debug\deps\node_liveness_store-9735d5c472aca68c.exe)
+
+running 16 tests
+test a_heartbeat_without_a_timestamp_is_refused ... ok
+test a_different_device_claiming_the_same_node_is_refused ... ok
+test a_pointless_or_unknown_rebind_is_refused ... ok
+test a_late_older_heartbeat_does_not_move_the_clock_backwards ... ok
+test a_newer_heartbeat_advances ... ok
+test a_corrupted_row_fails_closed ... ok
+test a_pending_rebind_can_be_cancelled ... ok
+test a_mistaken_rebind_can_be_retargeted ... ok
+test a_same_millisecond_tie_uses_the_same_rule_as_the_kernel ... ok
+test an_observation_survives_a_restart ... ok
+test an_identical_timestamp_does_not_advance ... ok
+test a_tampered_body_is_caught_by_the_hash ... ok
+test stored_facts_feed_the_liveness_kernel ... ok
+test each_node_keeps_exactly_one_row ... ok
+test an_approved_rebind_only_admits_the_named_device ... ok
+test without_an_approval_a_device_change_is_still_refused ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+
+########## 뮤테이션 (이 세션의 실제 도구 출력) ##########
+
+--- M1: 알려진 노드 병합 제거(관측 없는 노드가 결과에서 사라짐) ---
+test liveness::tests::a_known_node_with_no_observation_still_appears ... FAILED
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+
+--- M2: saturating_sub -> wrapping_sub (미래 관측이 감싸돌음) ---
+test liveness::tests::a_clock_slightly_ahead_does_not_look_silent ... FAILED
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+
+--- M3: 동점 정렬에서 fence_epoch 제거 ---
+test liveness::tests::a_tie_on_time_is_broken_deterministically ... FAILED
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+
+--- M4: 저장소의 뒤로가기 방지 제거 ---
+test a_late_older_heartbeat_does_not_move_the_clock_backwards ... FAILED
+test an_identical_timestamp_does_not_advance ... FAILED
+test result: FAILED. 7 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out
+
+--- M5: 읽기 시 해시 대조 제거 ---
+test a_corrupted_row_fails_closed ... FAILED
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+
+--- M6: coordinator 의 liveness 저장 호출 제거 (시나리오 92) ---
+coordinator-agent-selftest 실패: 92) 저장된 관측이 2건이 아니다(0건)
+
+--- 원복 재검증 ---
+scheduler --lib:  test result: ok. 10 passed; 0 failed
+node_liveness_store: test result: ok. 16 passed; 0 failed

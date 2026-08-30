@@ -1,0 +1,97 @@
+이 파일은 `codex exec --model gpt-5.6-sol --sandbox read-only` 세션 출력의
+**최종 판정 블록을 그대로 잘라낸 것**이다. 잘라낸 위치 뒤의 글자는 하나도
+고치지 않았다. 앞부분(도구 호출 로그, 수십만 바이트)은 뺐다.
+
+-----------------------------------------------------------------
+
+CHANGES_REQUESTED
+
+핵심 구현은 이전보다 안전해졌지만, 봉인된 키링의 롤백 우회와 파이프 종료 보장의 공백이 남았습니다. DoD-57도 형식 검사는 통과하지만 “raw evidence” 요건을 충족하지 않습니다.
+
+1. [중대] 봉인은 본문 변조를 막지만, 과거의 정상 v2 파일을 통째로 되돌리는 공격은 막지 못합니다.
+
+[키링 저장 코드](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/keyring.rs:631)는 본문의 BLAKE3 digest만 OS로 봉인합니다. 파일별 식별자·세대 번호·외부 단조 카운터가 없습니다. 따라서 공격자가 예전에 복사한 정상 v2 파일을 복원하면 봉인 검증을 그대로 통과하며, 이후 폐기·회전된 공개키와 개인키 상태가 되살아납니다.
+
+이는 공개키 바이트만 바꾸는 이번 공격은 막더라도, 예전 개인키를 가진 공격자가 signer 권한을 되찾는 남은 우회입니다. 파일 버전 2는 v1 거부에는 충분하지만 anti-rollback에는 충분하지 않습니다.
+
+또한 Windows K1은 같은 사용자 프로세스를 막지 않는다고 코드가 정확히 인정합니다([keyring.rs](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/keyring.rs:1030)). 같은 사용자 공격자는 알려진 entropy/label로 DPAPI를 직접 호출해 새 봉인을 만들 수 있습니다. 이는 구현 결함이라기보다 K1의 명시된 보호 경계지만, 커밋 메시지의 “파일을 쓸 수 있는 공격자는 봉인을 만들 수 없다”는 일반화는 과합니다.
+
+K0의 평문 체크섬은 새로운 위험을 만들지는 않습니다. `PlaintextPolicy::Reject` 호출에서는 K0 선택이 봉인 검증 전에 거부됩니다([keyring.rs](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/keyring.rs:305)). 다만 `PlaintextPolicy::Allow`는 의도적으로 파일 위조를 전혀 막지 않으므로 운영 경로에서 사용되면 안 됩니다.
+
+2. 봉인 검증 순서 자체는 안전합니다.
+
+로드 경로가 검증 전에 읽는 값은 파일 길이, 꼬리 봉인 길이, 보호 등급 바이트뿐입니다. 보호 등급은 검증 알고리즘을 선택하는 데만 사용되며, signer·공개키·상태 등 본문 의미는 봉인 검증 뒤에 파싱합니다.
+
+강등 공격도 `Reject` 정책에서는 다음 순서로 막힙니다.
+
+```text
+보호 등급 바이트 읽기
+→ K0 거부
+→ 봉인된 checksum 검증
+→ magic/version/body 파싱
+```
+
+v1 파일도 수용하지 않습니다. 다만 앞서 말한 정상 v2 스냅샷 롤백은 버전 검사로 해결되지 않습니다.
+
+3. rebind 재지정은 타당하지만, `cancel_rebind()`는 보안상 강한 “초기화”입니다.
+
+재지정은 기존 행이 삭제된 뒤에도 pending 값을 기준으로 다시 지정하므로 교착을 해결합니다.
+
+반면 [cancel_rebind()](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/node_liveness_store.rs:518)는 pending 행만 삭제합니다. 원래 장치 바인딩은 rebind 때 이미 삭제됩니다([node_liveness_store.rs](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/node_liveness_store.rs:289)). 따라서 취소 후에는 검증 가능한 키를 가진 아무 등록 장치가 그 `node_id`를 먼저 주장할 수 있습니다.
+
+이 동작은 주석과 테스트에 명시되어 있으므로 우발적 구현은 아닙니다. 다만:
+
+- 이름은 “취소”지만 실제 의미는 “바인딩 전체 초기화”입니다.
+- 사람이 호출한다는 설명만 있고 타입이나 권한 토큰으로 강제되지 않습니다.
+- 현재 production 호출부가 없어 즉시 원격 악용되는 경로는 없습니다.
+
+안전한 취소를 원한다면 pending 테이블에 이전 장치를 보존해 복원해야 합니다. 현재 의미를 유지한다면 `reset_binding`처럼 위험이 드러나는 이름과 명시적 운영자 권한 경계가 필요합니다.
+
+4. [중대] 파이프 교착은 일반 출력에서는 해결됐지만, 10초 종료 보장은 여전히 성립하지 않습니다.
+
+[run_systemd_creds()](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/keyring.rs:1164)는 stdout/stderr를 병렬 배출하므로 파이프 버퍼 포화 문제는 해결합니다.
+
+하지만 직접 자식만 `kill()`하고, 이후 reader thread를 무제한 `join()`합니다([keyring.rs](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/crypto/src/keyring.rs:1186)). 다음 경로에서는 계속 멈출 수 있습니다.
+
+```text
+systemd-creds 또는 PATH의 대체 실행 파일이 후손 프로세스를 생성
+→ 후손이 stdout/stderr fd를 상속
+→ 직접 자식은 종료되거나 kill됨
+→ 후손은 파이프를 계속 열어 둠
+→ read_to_end()가 EOF를 못 봄
+→ join()이 무기한 대기
+```
+
+`reap()`도 `kill()` 실패를 무시하고 바로 blocking `wait()`하므로 직접 자식이 죽지 않는 경우 deadline을 넘길 수 있습니다. 프로세스 그룹 전체 종료와 reader 종료 상한이 필요합니다. 출력도 현재 무제한 `Vec`에 모으므로 크기 제한이 바람직합니다.
+
+5. DoD-57의 코드 주장은 대체로 구현과 일치하지만 evidence 원본성이 부족합니다.
+
+코드상 다음은 확인됩니다.
+
+- Agent Linux 경로가 `runtime-linux`를 실제 호출합니다.
+- 상한 파일을 먼저 쓴 뒤 spawn합니다.
+- 적용 실패는 typed error로 변환됩니다.
+- 적대적 자식의 cgroup 탈출 한계를 문서에 정직하게 적었습니다.
+
+그러나 제출된 “raw” 파일은 실제 명령 전체 출력이 아니라 사람이 편집한 요약입니다. [실측 파일](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/DoD-57_cgroup_enforcement_x600_2026-08-30.txt:15)은 “running 5 tests”라고 쓰고 바로 아래 테스트 6개를 나열합니다. 워크스페이스 부분도 전체 cargo 출력 없이 “690 passed”만 기록합니다.
+
+[검수 파일](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/DoD-57_review_rounds.txt:1) 역시 스스로 “요약”이라고 하며, 세 차례 검수 원문은 저장소에 없습니다. 따라서 RULE.md §7.3의 `raw_output_artifact` 및 재현 가능한 독립 검수 receipt 주장에는 미달합니다.
+
+`verify_evidence.py`는 실행해 확인했고 스키마 위반 0, PASS 66/67이었습니다. SHA-256과 3,687바이트 크기도 frontmatter와 일치했습니다. 하지만 검사기는 주장 범위와 원본성을 판단하지 못합니다.
+
+6. 커밋 메시지에서 저장소 증거가 뒷받침하지 않는 주장입니다.
+
+다음 실측 주장은 이 커밋에 원본 로그가 없습니다.
+
+- Windows `cargo test --workspace` 통과
+- selftest 92/92
+- Linux 693 passed
+- 봉인을 평문으로 되돌렸을 때 Windows·Linux 양쪽에서 정확히 한 테스트만 실패
+
+DoD-57 원본은 Linux 690 passed만 기록하며, 그것도 전체 명령 출력이 아닌 요약입니다. 로컬 재실행은 읽기 전용 환경에서 `target/debug/.cargo-build-lock` 접근이 거부되어 수행하지 못했습니다. 따라서 이 수치들은 거짓이라고 판정할 수는 없지만, 현재 커밋만으로 독립 확인할 수 없습니다.
+
+최소 수정 요구는 다음 세 가지입니다.
+
+- 봉인된 v2 키링의 롤백 위협을 막거나 명시적으로 비보장 범위로 제한할 것.
+- `systemd-creds`의 프로세스 그룹 종료와 reader thread 종료 상한을 구현할 것.
+- DoD-57의 실제 cargo/뮤테이션 출력과 독립 검수 원문을 evidence로 보존할 것.

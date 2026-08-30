@@ -371,6 +371,7 @@ dependencies = [
  "blake3",
  "ed25519-dalek",
  "gputeer-protocol",
+ "libc",
  "prost",
  "rusqlite",
  "serde_json",

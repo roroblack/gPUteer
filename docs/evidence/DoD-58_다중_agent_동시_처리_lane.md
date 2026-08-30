@@ -37,6 +37,7 @@ command: |
   # 뮤테이션 A: accept 루프를 순차 처리로
   # 뮤테이션 B: hello.mode 대조 무력화
   cargo test --workspace
+  # ★ x600 회귀도 돌렸으나 그 출력은 이 raw 에 **없다**(아래 한계 참조)
   ssh x600 "wsl -e bash /mnt/f/gputeer-work/lxv2.sh"
 raw_output: |
   (docs/evidence/_raw/DoD-58_multi_agent_concurrency_2026-08-30.txt 전문 참조)
@@ -71,6 +72,8 @@ limitations:
   - "replay 잠금을 `read_frame()` 동안 잡아 모든 ingress 읽기를 직렬화한다 — 느린 Agent 하나가 최대 타임아웃 동안 다른 Agent 의 검증을 막을 수 있다. 안전성이 아니라 동시성·가용성 문제이며 검수도 그렇게 판정했다"
   - "저장소 없이(legacy) 도는 경로로 검증했다 — durable lease-store 경합은 `DoD-40` 이 별도로 다뤘고 이 lane 과 결합해 재검증하지 않았다"
   - "Coordinator HA·다중 Coordinator·동일 identity 복제 Agent 의 active-session owner 선정은 여전히 범위 밖이다"
+  - "★ **x600 WSL 회귀 출력이 이 raw 에 없다**(2026-08-30 독립 검수 6라운드 지적). `command` 에는 있지만 저장하지 않았다 — 이 artifact 만으로는 Linux 회귀를 독립 확인할 수 없다"
+  - "★ **뮤테이션 출력은 명령의 stdout/stderr 를 직접 저장한 원본이 아니라 수동 전사본**이다(같은 검수 지적). raw 파일 자체가 그렇게 밝히고 있다"
   - "★ `raw_output_artifact` 는 실제 출력이지만 **워크스페이스 전체 출력은 요약 줄만 남긴 것**이다(수천 줄이라 전량 보존하지 않았다). 남긴 줄 자체는 편집하지 않았다. 검수 원문도 판정 블록만 잘라 보존했다"
   - "`hello.mode` 대조는 두 lane 을 구분하지만, 같은 lane 안에서 등록된 Agent 가 남의 자리를 주장하는 것은 `parse_agent_directory` 의 중복 거부와 keyring 조회에 의존한다"
 ---

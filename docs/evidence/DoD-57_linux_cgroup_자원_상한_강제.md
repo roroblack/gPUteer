@@ -50,11 +50,15 @@ raw_output: |
 
   (docs/evidence/_raw/DoD-57_cgroup_enforcement_x600_2026-08-30.txt 전문 참조)
 
-  통합 7/7 · 단위 6/6 · Linux 워크스페이스 690 passed / 실패 suite 0
+  통합 7/7 · 단위 6/6 · Linux 워크스페이스 693 passed / 실패 suite 0
 
   탈출 실측: before 에 gputeer-escape 있음 -> after == "0::/" -> 90,655,836 바이트 할당
-  뮤테이션 M1(swap 상한 제거): 2건 실패   M2(pre_exec 투입 제거): 4건 실패
-  뮤테이션 M3(이름 접두사 제거): system_slices_are_refused_by_name 실패
+  ★ 뮤테이션 M1/M2/M3 의 실패 출력은 **이 raw 파일에 없다**(2026-08-30
+    독립 검수 6라운드 지적). 뮤테이션은 기준선과 다른 실행이었고 그
+    출력을 저장하지 않았다 — 아래는 그때 관측한 결과의 서술이지
+    원문이 아니다.
+    M1(swap 상한 제거): 2건 실패   M2(pre_exec 투입 제거): 4건 실패
+    M3(이름 접두사 제거): system_slices_are_refused_by_name 실패
 
 artifacts:
   - crates/runtime-linux/src/lib.rs
@@ -86,6 +90,7 @@ limitations:
   - "systemd 가 관리하는 위임 slice 를 지원하지 않는다 — 깊이 1 제한의 대가다. 운영자가 `/sys/fs/cgroup/gputeer-*` 를 직접 만들어야 한다"
   - "`pre_exec` 안의 `std::fs::write` 가 async-signal-safe 하다고 **보장되지 않는다** — 실제 하는 일은 open/write/close 뿐이지만 `std` 가 그 경로만 쓴다는 계약은 없다. 없애려면 raw syscall 이나 libc 의존이 필요하다"
   - "WSL2 한 대에서만 실측했다 — 네이티브 Linux, 컨테이너 안, systemd 위임 환경에서는 돌린 적이 없다"
+  - "★ **`raw_output_artifact` 는 '실제 출력 그대로' 가 아니라 '필터링·수동 결합한 실제 출력 발췌' 다**(2026-08-30 독립 검수 6라운드 정정). 여러 실행을 사람이 합쳤고 헤더도 수작업이다. 특히 **뮤테이션 M1/M2/M3 의 실패 출력은 들어 있지 않다** — 서술로만 남았다"
   - "★ `raw_output_artifact` 는 실제 출력이지만 **워크스페이스 전체 출력은 `test result:`/`running`/`error` 줄만 남긴 것**이다(수천 줄이라 전량 보존하지 않았다). 남긴 줄 자체는 편집하지 않았다. 검수 원문도 판정 블록만 잘라 보존했고 도구 호출 로그(수십만 바이트)는 저장소에 없다"
   - "Windows 실행 경로는 이 조각에서 바뀌지 않았다 — 한 플랫폼 통과를 다른 플랫폼 통과로 세지 않는다(§4)"
 ---

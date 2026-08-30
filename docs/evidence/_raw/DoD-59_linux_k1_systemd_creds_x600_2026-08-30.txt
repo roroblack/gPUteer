@@ -1,0 +1,70 @@
+이 파일은 실제 명령 출력을 **그대로** 붙인 것이다.
+★ 2026-08-30 독립 검수 5라운드가 편집된 요약을 evidence 로 인정하지
+  않는다고 지적했다. 아래는 편집하지 않았다.
+  (SSH 배너 3줄과 뮤테이션 구간의 grep 필터만 적용됐다)
+
+=================================================================
+
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+########## systemd-creds 환경 ##########
+systemd
+systemd 259 (259.5-0ubuntu3.4)
+-r-------- 1 root root 4112 Aug 30 15:59 /var/lib/systemd/credential.secret
+
+########## 기준선: cargo test -p gputeer-crypto --test keyring (전체 출력) ##########
+   Compiling libc v0.2.189
+   Compiling gputeer-protocol v0.0.1 (/mnt/f/gputeer-work/build/gputeer/crates/protocol)
+   Compiling serde_core v1.0.229
+   Compiling getrandom v0.4.3
+   Compiling tempfile v3.27.0
+   Compiling serde_json v1.0.151
+   Compiling gputeer-crypto v0.0.1 (/mnt/f/gputeer-work/build/gputeer/crates/crypto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.12s
+     Running tests/keyring.rs (target/debug/deps/keyring-61bc05b30fee773e)
+
+running 10 tests
+test plaintext_storage_is_rejected_without_explicit_opt_in ... ok
+test unsupported_platform_and_call_failure_are_different_errors ... ok
+test private_key_never_appears_in_debug_or_display_output ... ok
+test quarantine_is_distinguishable_in_directory_but_rejects_verification ... ok
+test corrupted_key_file_is_rejected_instead_of_silently_loaded ... ok
+test revoked_key_rejects_a_message_signed_before_revocation ... ok
+test rotation_accepts_both_keys_during_grace_and_rejects_old_key_afterward ... ok
+test linux_k1_round_trips_through_systemd_creds ... ok
+test a_public_key_only_entry_cannot_be_swapped_in_either ... ok
+test another_signers_keypair_cannot_be_transplanted_into_this_slot ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+########## 뮤테이션 A: --name 을 signer 무관하게 ##########
+test plaintext_storage_is_rejected_without_explicit_opt_in ... ok
+test unsupported_platform_and_call_failure_are_different_errors ... ok
+test private_key_never_appears_in_debug_or_display_output ... ok
+test quarantine_is_distinguishable_in_directory_but_rejects_verification ... ok
+test corrupted_key_file_is_rejected_instead_of_silently_loaded ... ok
+test revoked_key_rejects_a_message_signed_before_revocation ... ok
+test rotation_accepts_both_keys_during_grace_and_rejects_old_key_afterward ... ok
+test linux_k1_round_trips_through_systemd_creds ... ok
+test a_public_key_only_entry_cannot_be_swapped_in_either ... ok
+test another_signers_keypair_cannot_be_transplanted_into_this_slot ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+########## 뮤테이션 B: 체크섬 봉인 제거(평문) ##########
+test plaintext_storage_is_rejected_without_explicit_opt_in ... ok
+test unsupported_platform_and_call_failure_are_different_errors ... ok
+test private_key_never_appears_in_debug_or_display_output ... ok
+test quarantine_is_distinguishable_in_directory_but_rejects_verification ... ok
+test corrupted_key_file_is_rejected_instead_of_silently_loaded ... ok
+test revoked_key_rejects_a_message_signed_before_revocation ... ok
+test rotation_accepts_both_keys_during_grace_and_rejects_old_key_afterward ... ok
+test a_public_key_only_entry_cannot_be_swapped_in_either ... FAILED
+test linux_k1_round_trips_through_systemd_creds ... ok
+test another_signers_keypair_cannot_be_transplanted_into_this_slot ... ok
+thread 'a_public_key_only_entry_cannot_be_swapped_in_either' panicked at crates/crypto/tests/keyring.rs:664:5:
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+########## 원복 재검증 ##########
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
