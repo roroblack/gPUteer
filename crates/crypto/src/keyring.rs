@@ -30,7 +30,23 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use super::KeyDirectory;
 
 const FILE_MAGIC: &[u8] = b"GPUTEER-KEYRING\0";
-const FILE_VERSION: u8 = 1;
+/// 파일 형식 버전.
+///
+/// ★ 2026-08-30 에 1 -> 2 로 올렸다(독립 검수 4라운드 지적).
+///
+///   v1 은 꼬리에 **키 없는** BLAKE3 체크섬을 붙였다. 파일을 쓸 수 있는
+///   누구나 다시 계산할 수 있으므로 위조를 전혀 막지 못했다 — 개인키를
+///   signer 에 묶어도, **개인키 blob 을 비워** 공개키 전용 엔트리로
+///   만들면 복호를 건너뛰어 그 방어가 통째로 우회됐다.
+///
+///   v2 는 그 체크섬을 OS 보호 저장소로 **봉인**한다. 위조하려면 봉인을
+///   만들 수 있어야 하고, 그건 OS 비밀(Windows 사용자 DPAPI / Linux
+///   root credential.secret)이 있어야 한다.
+///
+/// ★ **v1 파일은 못 읽는다.** legacy fallback 을 두면 원래 이식 공격이
+///   되살아나므로 두지 않는다. 이 저장소는 아직 배포된 적이 없어
+///   마이그레이션 대상이 없다.
+const FILE_VERSION: u8 = 2;
 const ROTATION_GRACE_PERIOD_MS: u64 = 24 * 60 * 60 * 1_000;
 const MAX_SIGNER_ID_BYTES: usize = 16 * 1024;
 const MAX_ENTRY_COUNT: usize = 4_096;
@@ -262,17 +278,37 @@ impl PersistentKeyring {
             return Err(KeyringError::CorruptFile("파일 길이가 너무 짧다"));
         }
 
-        let checksum_offset = bytes
+        // 꼬리: `u32(LE) 봉인 길이 || 봉인된 체크섬`.
+        let tail_len_at = bytes
             .len()
-            .checked_sub(32)
-            .ok_or(KeyringError::CorruptFile("checksum 위치가 없다"))?;
-        let body = &bytes[..checksum_offset];
-        let checksum = &bytes[checksum_offset..];
-
-        let expected = blake3::hash(body);
-        if &expected.as_bytes()[..] != checksum {
-            return Err(KeyringError::CorruptFile("checksum이 일치하지 않는다"));
+            .checked_sub(4)
+            .ok_or(KeyringError::CorruptFile("checksum 길이 필드가 없다"))?;
+        let sealed_len = u32::from_le_bytes(
+            bytes[tail_len_at..]
+                .try_into()
+                .map_err(|_| KeyringError::CorruptFile("checksum 길이 필드가 잘못되었다"))?,
+        ) as usize;
+        if sealed_len == 0 || sealed_len > MAX_BLOB_BYTES {
+            return Err(KeyringError::CorruptFile("checksum 길이가 범위를 벗어났다"));
         }
+        let sealed_at = tail_len_at
+            .checked_sub(sealed_len)
+            .ok_or(KeyringError::CorruptFile("checksum 위치가 없다"))?;
+        let body = &bytes[..sealed_at];
+        let sealed = &bytes[sealed_at..tail_len_at];
+
+        // ★ 보관 등급을 body 에서 먼저 읽는다. 아직 검증 전이라 신뢰하지
+        //   않지만, **어떤 방식으로 검증할지**를 정하려면 필요하다.
+        //   K0 로 낮춰 적어 평문 검증을 유도하는 강등 공격은
+        //   `ensure_protection(..., PlaintextPolicy::Reject)` 가 막는다 —
+        //   그래서 그 검사를 여기서 **먼저** 한다.
+        let claimed_protection = KeyProtection::from_byte(
+            *bytes
+                .get(FILE_MAGIC.len() + 1)
+                .ok_or(KeyringError::CorruptFile("보관 등급 위치가 없다"))?,
+        )?;
+        ensure_protection(claimed_protection, plaintext_policy)?;
+        verify_sealed_checksum(claimed_protection, body, sealed)?;
 
         let mut reader = Reader::new(body);
 
@@ -282,7 +318,12 @@ impl PersistentKeyring {
 
         let version = reader.u8()?;
         if version != FILE_VERSION {
-            return Err(KeyringError::CorruptFile("지원하지 않는 파일 버전이다"));
+            // ★ v1 을 조용히 받아 주지 않는다 — 그 형식의 체크섬은 키가
+            //   없어 위조를 막지 못했다. 되살리면 공개키 전용 엔트리로
+            //   신원을 바꿔치기할 수 있다.
+            return Err(KeyringError::CorruptFile(
+                "지원하지 않는 파일 버전이다 — v1 은 봉인되지 않은 체크섬을 써서 위조를 막지 못한다",
+            ));
         }
 
         let protection = KeyProtection::from_byte(reader.u8()?)?;
@@ -618,8 +659,9 @@ impl PersistentKeyring {
             }
         }
 
-        let checksum = blake3::hash(&body);
-        body.extend_from_slice(checksum.as_bytes());
+        let sealed = seal_checksum(self.protection, &body)?;
+        body.extend_from_slice(&sealed);
+        put_u32(&mut body, sealed.len() as u32);
 
         fs::write(&self.path, &body).map_err(KeyringError::Io)?;
 
@@ -763,6 +805,63 @@ fn ensure_protection(
 ///
 ///   `signing.md` 의 `domain_tag` 가 서명에서, `derive_replay_nonce` 가
 ///   nonce 에서 하는 일과 같은 종류의 분리다.
+/// 파일 전체 무결성 표식을 봉인할 때 쓰는 이름.
+///
+/// ★ signer 별 이름과 **다르다.** 같은 이름을 쓰면 어떤 signer 의 개인키
+///   봉인 blob 을 파일 MAC 자리에 놓을 수 있다.
+const FILE_MAC_LABEL: &str = "gputeer-keyring-file-mac";
+
+/// 본문의 무결성 표식을 만든다.
+///
+/// # 왜 체크섬을 봉인하는가
+///
+/// ★ 2026-08-30 독립 검수 4라운드가 우회를 찾았다. 개인키를 signer 에
+///   묶어도, 공격자가 **개인키 blob 을 비워** 공개키 전용 엔트리로
+///   만들면 복호 자체가 일어나지 않아 그 방어를 건너뛴다.
+///
+/// ```text
+/// alice 엔트리를 (bob 공개키, 빈 private blob) 으로 바꾼다
+///   -> 복호 없음 -> signer 묶기가 작동하지 않는다
+///   -> lookup("alice") 가 bob 공개키를 돌려준다
+///   -> bob 의 서명이 alice 의 것으로 받아들여진다
+/// ```
+///
+/// 근본 원인은 체크섬이 **키 없는** BLAKE3 라는 것이다 — 파일을 쓸 수
+/// 있으면 누구나 다시 계산한다. 봉인하면 위조에 OS 비밀이 필요해진다.
+///
+/// K0 는 봉인이 없는 등급이므로 평문 체크섬 그대로다 — 그 등급이 무엇을
+/// 보호하지 않는지는 이미 이름에 있다.
+fn seal_checksum(
+    protection: KeyProtection,
+    body: &[u8],
+) -> Result<Vec<u8>, KeyringError> {
+    let digest = blake3::hash(body);
+    match protection {
+        KeyProtection::K0Plaintext => Ok(digest.as_bytes().to_vec()),
+        KeyProtection::K1OsProtected => os_protect(FILE_MAC_LABEL, digest.as_bytes()),
+        KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
+    }
+}
+
+fn verify_sealed_checksum(
+    protection: KeyProtection,
+    body: &[u8],
+    sealed: &[u8],
+) -> Result<(), KeyringError> {
+    let expected = blake3::hash(body);
+    let actual = match protection {
+        KeyProtection::K0Plaintext => sealed.to_vec(),
+        KeyProtection::K1OsProtected => os_unprotect(FILE_MAC_LABEL, sealed)?,
+        KeyProtection::K2HardwareBacked => {
+            return Err(KeyringError::UnsupportedProtection(protection))
+        }
+    };
+    if actual.as_slice() != expected.as_bytes() {
+        return Err(KeyringError::CorruptFile("checksum이 일치하지 않는다"));
+    }
+    Ok(())
+}
+
 fn protect_private_key(
     protection: KeyProtection,
     signer_id: &str,
@@ -1052,6 +1151,33 @@ fn run_systemd_creds(
         return Err(KeyringError::Io(error));
     }
 
+    // ★ 파이프를 **먼저 배출한다**(2026-08-30 독립 검수 4라운드 지적).
+    //
+    //   초안은 자식 종료만 폴링하고 그 뒤에 읽었다. 출력이 파이프 버퍼를
+    //   채우면 자식은 쓰기에서 멈춰 영영 종료하지 못하고, 정상 결과도
+    //   10초 뒤 강제 종료됐다 — 상한이 보호가 아니라 오작동의 원인이 됐다.
+    //
+    //   각 파이프를 별도 스레드가 계속 빨아낸다. 그러면 자식은 버퍼가
+    //   차서 멈추지 않는다.
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut buffer = Vec::new();
+        if let Some(mut handle) = stdout_handle {
+            let _ = handle.read_to_end(&mut buffer);
+        }
+        buffer
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut text = String::new();
+        if let Some(mut handle) = stderr_handle {
+            let _ = handle.read_to_string(&mut text);
+        }
+        text
+    });
+
     // 시간 상한 안에서 기다린다. 넘기면 죽이고 실패로 보고한다.
     let deadline = std::time::Instant::now() + DEADLINE;
     let status = loop {
@@ -1060,6 +1186,9 @@ fn run_systemd_creds(
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     reap(&mut child);
+                    // 죽였으므로 파이프가 닫히고 읽기 스레드가 끝난다.
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
                     return Err(KeyringError::OsProtectionFailed(format!(
                         "systemd-creds {} 가 {DEADLINE:?} 안에 끝나지 않았다",
                         args.join(" ")
@@ -1069,22 +1198,20 @@ fn run_systemd_creds(
             }
             Err(error) => {
                 reap(&mut child);
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
                 return Err(KeyringError::Io(error));
             }
         }
     };
 
-    // 파이프에 남은 것을 읽는다. 자식은 이미 끝났으므로 블로킹하지 않는다.
-    let mut stdout = Vec::new();
-    let mut stderr = String::new();
-    if let Some(mut handle) = child.stdout.take() {
-        use std::io::Read as _;
-        handle.read_to_end(&mut stdout).map_err(KeyringError::Io)?;
-    }
-    if let Some(mut handle) = child.stderr.take() {
-        use std::io::Read as _;
-        let _ = handle.read_to_string(&mut stderr);
-    }
+    // 자식이 끝났으므로 읽기 스레드도 곧 끝난다.
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| KeyringError::OsProtectionFailed("stdout 읽기 스레드가 panic 했다".into()))?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| KeyringError::OsProtectionFailed("stderr 읽기 스레드가 panic 했다".into()))?;
 
     if !status.success() {
         // ★ "없다" 가 아니라 "있는데 실패했다" 다. 진단에 필요한 만큼만

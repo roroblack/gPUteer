@@ -244,12 +244,32 @@ impl CoordinatorNodeLivenessStore {
             )
             .optional()
             .map_err(storage)?;
-        let Some(current) = current else {
-            return Err(NodeLivenessStoreError::InvalidHeartbeat {
-                detail: format!("{node_id} 에 대한 기록이 없다 — rebind 할 대상이 없다"),
-            });
+        // ★ 기록이 없어도 **대기 중인 rebind 가 있으면** 다시 지정할 수
+        //   있어야 한다(2026-08-30 독립 검수 4라운드 지적). 초안은 기록이
+        //   없으면 무조건 거부해서, 한 번 잘못 지정하면 되돌릴 방법이
+        //   영영 없었다 — 지정한 장치가 고장 나거나 ID 를 잘못 쳤을 때
+        //   운영자가 DB 를 손으로 지우게 되고, 그게 훨씬 위험하다.
+        let pending: Option<String> = transaction
+            .query_row(
+                "SELECT expected_device_id FROM coordinator_node_pending_rebind WHERE node_id = ?1",
+                [node_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage)?;
+
+        let previous = match (&current, &pending) {
+            (Some(device), _) => device.clone(),
+            (None, Some(expected)) => expected.clone(),
+            (None, None) => {
+                return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                    detail: format!(
+                        "{node_id} 에 대한 기록도 대기도 없다 — rebind 할 대상이 없다"
+                    ),
+                })
+            }
         };
-        if current == new_device_id {
+        if previous == new_device_id {
             return Err(NodeLivenessStoreError::InvalidHeartbeat {
                 detail: format!("{node_id} 는 이미 {new_device_id} 다 — 바꿀 것이 없다"),
             });
@@ -487,6 +507,28 @@ impl CoordinatorNodeLivenessStore {
             },
             advanced: true,
         })
+    }
+
+    /// 대기 중인 rebind 를 취소한다.
+    ///
+    /// ★ 지정 자체를 무르는 길이다(2026-08-30 독립 검수 4라운드).
+    ///   취소하면 그 노드는 **아무 등록 장치나** 다시 주장할 수 있는
+    ///   상태로 돌아간다 — 최초 등록과 같은 상태다. 그래서 이것도
+    ///   사람이 부르는 것이고, 자동 경로에서 부르지 않는다.
+    pub fn cancel_rebind(&mut self, node_id: &str) -> Result<(), NodeLivenessStoreError> {
+        let removed = self
+            .connection
+            .execute(
+                "DELETE FROM coordinator_node_pending_rebind WHERE node_id = ?1",
+                [node_id],
+            )
+            .map_err(storage)?;
+        if removed == 0 {
+            return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                detail: format!("{node_id} 에 대기 중인 rebind 가 없다"),
+            });
+        }
+        Ok(())
     }
 
     /// 저장된 모든 노드의 최신 생존 사실. `node_id` 오름차순.

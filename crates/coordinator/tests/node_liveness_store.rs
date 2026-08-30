@@ -391,3 +391,53 @@ fn a_pointless_or_unknown_rebind_is_refused() {
         "같은 장치로 rebind 가 성공했다 — 대기만 남기고 아무것도 안 바뀐다"
     );
 }
+
+/// ★ 잘못 지정한 rebind 를 다시 지정할 수 있는가.
+///
+/// 2026-08-30 독립 검수 4라운드 지적. 초안은 기록이 없으면 무조건
+/// 거부해서, 첫 rebind 가 행을 지운 뒤로는 되돌릴 방법이 영영 없었다 —
+/// 지정한 장치가 고장 나거나 ID 를 잘못 쳤을 때 운영자가 DB 를 손으로
+/// 지우게 되고, 그게 훨씬 위험하다.
+#[test]
+fn a_mistaken_rebind_can_be_retargeted() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+
+    // 잘못 지정한다.
+    s.rebind_device(NODE, THIRD_DEVICE).expect("첫 지정");
+    // 다시 지정한다 — 기록은 이미 지워졌지만 대기가 있으므로 가능해야 한다.
+    s.rebind_device(NODE, OTHER_DEVICE).expect("재지정");
+
+    // 처음 잘못 지정했던 장치는 이제 못 들어온다.
+    assert!(matches!(
+        s.observe(&verified_heartbeat(THIRD_DEVICE, 2_000, 1, 0)),
+        Err(NodeLivenessStoreError::DeviceChanged { .. })
+    ));
+    // 다시 지정한 장치는 들어온다.
+    let accepted = s
+        .observe(&verified_heartbeat(OTHER_DEVICE, 3_000, 1, 0))
+        .expect("재지정한 장치가 거부됐다");
+    assert_eq!(accepted.stored.device_id, OTHER_DEVICE);
+}
+
+/// ★ 지정 자체를 무를 수 있는가.
+///
+/// 취소하면 그 노드는 최초 등록과 같은 상태로 돌아간다.
+#[test]
+fn a_pending_rebind_can_be_cancelled() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+    s.rebind_device(NODE, OTHER_DEVICE).expect("지정");
+
+    s.cancel_rebind(NODE).expect("취소");
+    // 취소 뒤에는 최초 등록과 같다 — 아무 등록 장치나 주장할 수 있다.
+    let after = s
+        .observe(&verified_heartbeat(THIRD_DEVICE, 2_000, 1, 0))
+        .expect("취소 뒤에도 막혔다");
+    assert_eq!(after.stored.device_id, THIRD_DEVICE);
+
+    // 두 번 취소하면 대상이 없다고 알린다 — 조용히 성공하지 않는다.
+    assert!(s.cancel_rebind(NODE).is_err(), "없는 대기를 취소했는데 성공했다");
+}

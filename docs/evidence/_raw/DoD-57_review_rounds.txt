@@ -1,0 +1,81 @@
+DoD-57 독립 검수 3라운드 요약 (agent:codex-cli / gpt-5.6-sol, read-only, 대화 기록 없는 새 인스턴스)
+
+전체 원문은 세 번의 codex exec 세션 출력이며, 아래는 각 라운드가 파일:줄로
+지목한 지점과 판정이다.
+
+================================================================
+1라운드 — CHANGES_REQUESTED
+================================================================
+(a) Linux 상한이 운영 실행 경로에 연결되지 않았다
+    crates/agent/src/exec.rs:386   Agent 의 Linux 경로가 UnsupportedPlatform 반환
+    crates/agent/src/exec.rs:402   같은 함수의 반환문
+    crates/agent/Cargo.toml        runtime-linux 의존성 없음
+    -> "운영 Job 에 자원 상한을 실제로 강제한다" 는 주장이 코드로 뒷받침되지 않음
+
+(b) 임의 네이티브 작업이 cgroup 밖으로 스스로 빠져나갈 수 있다
+    crates/runtime-linux/src/lib.rs:294   exec 전 cgroup 투입은 맞지만
+                                          exec 후 상위 cgroup.procs 로 이동 가능
+
+(c) v2 루트 폴백이 상위 회계와 상한을 우회한다
+    crates/runtime-linux/src/lib.rs:355   resolve_parent 의 후보 목록
+    crates/runtime-linux/src/lib.rs:363   루트 폴백
+
+(d) memory.swap.max 부재를 "스왑 없음" 으로 추정
+    crates/runtime-linux/src/lib.rs:266
+
+(e) pre_exec 안 std::fs::write 를 async-signal-safe 라고 단정
+    crates/runtime-linux/src/lib.rs:297
+
+(f) Drop 정리 실패 경로
+    crates/runtime-linux/src/lib.rs:214   cgroup.kill 실패 무시
+    crates/runtime-linux/src/lib.rs:218   remove_dir 재시도 후 stderr 만
+    crates/runtime-linux/src/lib.rs:286   stdout 열기 실패 시 cgroup 미정리
+    crates/runtime-linux/src/lib.rs:435   기존 이름 정리의 kill/remove 오류 무시
+
+================================================================
+2라운드 — CHANGES_REQUESTED
+================================================================
+(g) 이름 해시 전에 두 성분을 문자열로 합쳐 충돌
+    crates/agent/src/lib.rs:798            format!("{grant}-{attempt}")
+    crates/agent/src/exec.rs:574-580       sanitize_cgroup_name
+    반례: grant="g-a", attempt="b"  vs  grant="g", attempt="a-b"  -> 둘 다 "g-a-b"
+
+(h) 1라운드 수정이 만든 새 문제 — 남은 빈 cgroup 이 재시도를 영영 막는다
+    crates/runtime-linux/src/lib.rs:240-258
+    crates/runtime-linux/src/lib.rs:527-542
+
+(i) 탈출 테스트가 관측 실패로도 통과할 수 있다
+    crates/runtime-linux/tests/cgroup_enforcement.rs:220   `;` 로만 이어진 스크립트
+    crates/runtime-linux/tests/cgroup_enforcement.rs:233   exit code 만 확인
+    crates/runtime-linux/tests/cgroup_enforcement.rs:244-249  unwrap_or_default
+    crates/runtime-linux/tests/cgroup_enforcement.rs:261-278  부분 문자열 검사
+
+(j) Explicit 부모 검사가 system.slice 를 그대로 통과
+    crates/runtime-linux/src/lib.rs:519
+
+(k) 테스트가 Agent 가 실제로 쓰는 부모 경로를 한 번도 안 씀
+    crates/runtime-linux/tests/cgroup_enforcement.rs:16   RootBypassingAncestorLimits 만 사용
+    crates/agent/src/exec.rs:458                          Agent 는 Current 만 넘김
+
+================================================================
+3라운드 — CHANGES_REQUESTED (이 지적까지 반영 후 ACCEPTED)
+================================================================
+(l) gputeer- 접두사를 마지막 이름에만 적용해 조상 우회가 남았다
+    crates/runtime-linux/src/lib.rs:569-576
+    통과하는 반례:
+      /sys/fs/cgroup/system.slice/gputeer-agent.service
+      /sys/fs/cgroup/other-service/gputeer-workloads
+    crates/runtime-linux/tests/cgroup_enforcement.rs:767
+      기존 테스트도 마지막 이름이 틀린 경우만 검사
+
+================================================================
+최종 판정
+================================================================
+위 12개 지적을 전부 코드로 수정한 뒤 ACCEPTED.
+남은 한계(bind mount, systemd 위임 slice 미지원, 적대적 코드 탈출)는
+막지 못한다고 문서에 명시하는 것으로 합의했다 — CLAUDE.md §0.4.
+
+검수는 read-only 제약으로 cargo test 를 실행하지 않았고, 커밋 객체의
+diff 와 호출 경로·테스트 소스를 직접 추적했다고 스스로 밝혔다.
+실행 결과는 감독자가 x600 에서 재확인했다
+(docs/evidence/_raw/DoD-57_cgroup_enforcement_x600_2026-08-30.txt).

@@ -806,21 +806,47 @@ mod explicit_parent_tests {
     ///
     /// 마지막 이름만 보면 `system.slice/gputeer-agent.service` 가 통과한다 —
     /// 막으려던 것을 정확히 우회하는 경로다.
+    ///
+    /// # 이 테스트는 한 번 공허했다
+    ///
+    /// ★ 초안은 **존재하지 않는 경로**를 넘겨서, 깊이 검사에 도달하기
+    ///   전에 `is_dir()` 에서 먼저 거부됐다(검수 4라운드 지적). 깊이
+    ///   검사를 통째로 지워도 통과했을 것이다 — 막고 싶은 것을 안 재고
+    ///   있었다.
+    ///
+    ///   이제 **실제로 중첩 디렉터리를 만들어** 넘긴다. cgroup 루트에는
+    ///   만들 수 없으므로 임시 디렉터리를 가짜 루트로 쓴다 — 이 함수는
+    ///   루트 경로를 인자로 받으므로 그대로 검사할 수 있다.
     #[test]
     fn a_correct_name_under_a_system_ancestor_is_still_refused() {
-        let root = Path::new(CGROUP_ROOT);
-        for sneaky in [
-            "system.slice/gputeer-agent.service",
-            "user.slice/gputeer-workloads",
-            "gputeer-a/gputeer-b",
-        ] {
-            let error = validate_explicit_parent(&root.join(sneaky), root)
-                .expect_err(&format!("{sneaky} 가 통과했다"));
+        let base = std::env::temp_dir().join("gputeer-parent-depth-test");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("가짜 루트");
+
+        // 실제로 존재하는 중첩 경로를 만든다 — 존재하지 않으면 깊이
+        // 검사가 아니라 is_dir() 이 거부해 검사가 공허해진다.
+        for nested in ["system.slice/gputeer-agent.service", "gputeer-a/gputeer-b"] {
+            std::fs::create_dir_all(base.join(nested)).expect("중첩 디렉터리");
+            let target = base.join(nested);
+            assert!(target.is_dir(), "전제: 경로가 실제로 있어야 한다");
+            let error = validate_explicit_parent(&target, &base)
+                .expect_err(&format!("{nested} 가 통과했다"));
             assert!(
-                error.to_string().contains("NOT_DELEGATED"),
-                "{sneaky}: {error}"
+                error.to_string().contains("직속 자식이 아니다"),
+                "{nested} 가 깊이가 아닌 다른 이유로 거부됐다: {error}"
             );
         }
+
+        // 대조 — 같은 가짜 루트의 직속 자식이고 이름이 맞으면 통과한다.
+        // 이게 없으면 "전부 거부" 로도 위 검사가 통과한다.
+        let ok_path = base.join("gputeer-workloads");
+        std::fs::create_dir_all(&ok_path).expect("직속 자식");
+        assert!(
+            validate_explicit_parent(&ok_path, &base).is_ok(),
+            "정상 배치가 거부됐다"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// 루트 자신과 밖은 여전히 막는가.

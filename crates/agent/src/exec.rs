@@ -250,7 +250,20 @@ pub struct ExecutionPolicy {
     ///   경로였다. 위임받은 subtree 를 전달할 방법 자체가 없었다.
     ///
     ///   `None` 이면 "내 cgroup"(fail-closed 기본값)이고, 운영자가
-    ///   `--workload-cgroup-parent` 로 위임받은 subtree 를 지정할 수 있다.
+    ///   `--workload-cgroup-parent` 로 지정할 수 있다.
+    ///
+    /// ★ **아무 위임 경로나 되지 않는다**(2026-08-30 독립 검수 4라운드
+    ///   지적 — 이 문서가 그렇게 읽혔다). 받는 것은 정확히 하나다.
+    ///
+    /// ```text
+    /// /sys/fs/cgroup/gputeer-<이름>     cgroup v2 루트의 직속 자식
+    /// ```
+    ///
+    ///   깊이 1 로 고정한 이유는 `system.slice/gputeer-x` 같은 다른 서비스
+    ///   계층 아래를 쓰지 못하게 하기 위해서다. 그 대가로 **systemd 가
+    ///   관리하는 중첩 위임 slice 는 지원하지 않는다** — 운영자가
+    ///   `/sys/fs/cgroup/gputeer-workloads` 를 직접 만들어야 한다.
+    ///
     ///   Windows 는 이 값을 쓰지 않는다.
     pub cgroup_parent: Option<std::path::PathBuf>,
 }

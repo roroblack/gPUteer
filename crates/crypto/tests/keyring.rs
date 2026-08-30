@@ -510,7 +510,7 @@ fn another_signers_keypair_cannot_be_transplanted_into_this_slot() {
     //   체크섬은 본문의 BLAKE3 이고 키가 없다. 파일을 고칠 수 있는
     //   공격자는 이것도 다시 계산할 수 있으므로, 공격을 정확히 흉내내는
     //   것이기도 하다.
-    let swapped = reseal_checksum(&swapped);
+    let swapped = recompute_plain_checksum(&swapped, sealed_len_of(&raw));
     fs::write(&path, &swapped).expect("파일 쓰기");
 
     let result = PersistentKeyring::load(&path, PlaintextPolicy::Reject);
@@ -528,15 +528,26 @@ fn another_signers_keypair_cannot_be_transplanted_into_this_slot() {
     );
 }
 
-/// 본문을 고친 뒤 꼬리의 체크섬을 다시 계산한다.
+/// 본문을 고친 뒤 꼬리의 체크섬을 **평문으로** 다시 계산한다.
 ///
-/// 파일 형식은 `본문 || BLAKE3(본문)` 이다(`PersistentKeyring::save`).
+/// 파일 형식은 `본문 || 봉인된 체크섬 || u32(LE) 길이` 다.
+///
+/// ★ 이 헬퍼는 **봉인하지 못한다** — 그게 요점이다. 공격자도 OS 비밀이
+///   없으면 못 한다. K1 파일에 이걸 쓰면 load 가 거부해야 정상이고,
+///   그 거부가 곧 이 방어가 작동한다는 증거다.
 #[cfg(any(windows, target_os = "linux"))]
-fn reseal_checksum(raw: &[u8]) -> Vec<u8> {
-    let body = &raw[..raw.len() - 32];
+fn recompute_plain_checksum(raw: &[u8], sealed_len: usize) -> Vec<u8> {
+    let body = &raw[..raw.len() - 4 - sealed_len];
     let mut out = body.to_vec();
     out.extend_from_slice(blake3::hash(body).as_bytes());
+    out.extend_from_slice(&(32u32).to_le_bytes());
     out
+}
+
+/// 파일 꼬리의 봉인 길이를 읽는다.
+#[cfg(any(windows, target_os = "linux"))]
+fn sealed_len_of(raw: &[u8]) -> usize {
+    u32::from_le_bytes(raw[raw.len() - 4..].try_into().expect("길이 필드")) as usize
 }
 
 /// 두 signer 의 (공개키 + 봉인 blob) 쌍을 통째로 맞바꾼다.
@@ -581,5 +592,98 @@ fn swap_two_keypairs(raw: &[u8], first_public: &[u8], second_public: &[u8]) -> O
     for i in 0..a_len {
         out.swap(a_blob + i, b_blob + i);
     }
+    Some(out)
+}
+
+/// ★ **공개키만 옮겨도** 신원 바꿔치기가 막히는가.
+///
+/// # 검수가 찾은 우회
+///
+/// 개인키를 signer 에 묶는 것만으로는 부족했다(2026-08-30 독립 검수
+/// 4라운드). 공격자가 개인키 blob 을 **비워** 공개키 전용 엔트리로
+/// 만들면 복호 자체가 일어나지 않아 그 방어를 건너뛴다.
+///
+/// ```text
+/// alice 엔트리를 (bob 공개키, 빈 private blob) 으로 바꾼다
+///   -> 복호 없음 -> signer 묶기가 작동하지 않는다
+///   -> lookup("alice") 가 bob 공개키를 돌려준다
+///   -> bob 의 서명이 alice 의 것으로 받아들여진다
+/// ```
+///
+/// 근본 원인은 파일 체크섬이 **키 없는** BLAKE3 였다는 것이다 — 파일을
+/// 쓸 수 있으면 누구나 다시 계산한다. 체크섬을 봉인하면 위조에 OS
+/// 비밀이 필요해지고, 이 공격이 거기서 막힌다.
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn a_public_key_only_entry_cannot_be_swapped_in_either() {
+    #[cfg(target_os = "linux")]
+    {
+        let available = std::process::Command::new("systemd-creds")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        if !available {
+            eprintln!("ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — 공개키 이식 검사는 측정하지 않았다");
+            return;
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("keys.bin");
+    let alice = "01JALICESELFTEST00000000001";
+
+    let mut keyring = PersistentKeyring::new(
+        &path,
+        KeyProtection::K1OsProtected,
+        PlaintextPolicy::Reject,
+    )
+    .expect("K1 키링");
+    keyring
+        .insert_private(alice, SecretSigningKey::from_signing_key(key(1)))
+        .expect("alice");
+    keyring.save().expect("봉인 저장");
+    PersistentKeyring::load(&path, PlaintextPolicy::Reject).expect("정상 재열기");
+
+    // alice 의 공개키를 bob 의 것으로 바꾸고 개인키 blob 을 비운다.
+    // 개인키가 없으므로 복호는 아예 일어나지 않는다 — signer 묶기로는
+    // 못 막는 경로다.
+    let raw = fs::read(&path).expect("파일 읽기");
+    let forged = replace_with_public_only(
+        &raw,
+        key(1).verifying_key().as_bytes(),
+        key(2).verifying_key().as_bytes(),
+    )
+    .expect("공개키 위치를 형식대로 찾지 못했다");
+    assert_ne!(forged, raw, "위조했는데 파일이 그대로다");
+    // 공격자가 할 수 있는 만큼 한다 — 평문 체크섬 재계산.
+    let forged = recompute_plain_checksum(&forged, sealed_len_of(&raw));
+    fs::write(&path, &forged).expect("파일 쓰기");
+
+    let result = PersistentKeyring::load(&path, PlaintextPolicy::Reject);
+    assert!(
+        result.is_err(),
+        "공개키만 바꿔치기한 파일이 그대로 열렸다 — 남의 서명이 이 signer 의 것으로 받아들여진다"
+    );
+}
+
+/// 공개키를 바꾸고 뒤따르는 개인키 blob 을 **빈 것으로** 만든다.
+///
+/// 길이 필드까지 고쳐야 하므로 뒤쪽 바이트가 밀린다 — 그래서 blob 을
+/// 잘라내고 길이를 0 으로 쓴다.
+#[cfg(any(windows, target_os = "linux"))]
+fn replace_with_public_only(raw: &[u8], target_public: &[u8], new_public: &[u8]) -> Option<Vec<u8>> {
+    let key_at = raw.windows(32).position(|w| w == target_public)?;
+    let len_at = key_at + 32;
+    let length = u32::from_le_bytes(raw.get(len_at..len_at + 4)?.try_into().ok()?) as usize;
+    let blob_end = len_at + 4 + length;
+    if blob_end > raw.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(raw.len());
+    out.extend_from_slice(&raw[..key_at]);
+    out.extend_from_slice(new_public);
+    out.extend_from_slice(&0u32.to_le_bytes()); // 개인키 blob 을 비운다
+    out.extend_from_slice(&raw[blob_end..]);
     Some(out)
 }
