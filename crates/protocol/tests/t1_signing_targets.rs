@@ -1,6 +1,8 @@
 //! T1 — `artifact.proto` / `lease.proto` 서명 대상의 참조 구현 대조.
 //!
-//! `signing.md` §5 domain_tag 23종(ADR-028) 중 이 파일이 다루는 것:
+//! `signing.md` §5 domain_tag 중 이 파일이 다루는 것:
+//! (★ 여기 개수를 적지 않는다 — 적으면 목록이 늘어도 숫자만 낡는다.
+//!  2026-08-30 독립 검수가 "23종" 이 30종이 된 뒤에도 남아 있음을 짚었다)
 //! `checkpoint` · `replica-ack` · `artifact` · `attempt-report` · `canonical` ·
 //! `lease-renew` · `lease-revoke`
 //!
@@ -575,8 +577,12 @@ fn revoke_lease_notice_matches_reference() {
 // ★ 도메인 커버리지 감사
 // ══════════════════════════════════════════════════════════════════
 
-/// `signing.md` §5 의 domain_tag 24종 중 실제 proto 메시지가 있는 것과
-/// `ToCanonicalFields` 가 구현된 것을 대조한다.
+/// `signing.md` §5 의 domain_tag **전부**에 대해, 실제 proto 메시지가
+/// 있는 것과 `ToCanonicalFields` 가 구현된 것을 대조한다.
+///
+/// ★ 이 주석은 "24종" 이라고 적혀 있었다 — 그 뒤 30종이 됐는데 숫자만
+///   낡았다(2026-08-30 독립 검수 4라운드 지적). **숫자를 주석에 적지
+///   않는다** — 코드는 `Domain::ALL` 을 쓰므로 자동으로 따라간다.
 ///
 /// ★ **4종은 proto 메시지 자체가 없다** — 규범이 존재하지 않는 메시지의
 ///   domain_tag 를 등록해 두고 있다. 스펙 공백이며 이 테스트가 그것을 고정한다.
@@ -595,7 +601,9 @@ fn domain_coverage_is_explicit() {
         (Domain::Artifact, Some("ArtifactRef"), true),
         (Domain::AttemptReport, Some("AttemptReport"), true),
         (Domain::Canonical, Some("CanonicalDecision"), true),
-        // 아직 구현하지 않음 — 메시지는 있다
+        // ★ 한때 "아직 구현하지 않음" 이라고 적혀 있었다 — 그 뒤
+        //   `ToCanonicalFields`·`Signable` 둘 다 구현됐는데 주석만
+        //   남았다(2026-08-30 독립 검수 12라운드 지적).
         (Domain::Grant, Some("ExecutionGrant"), true),
         // ADR-028 — 메시지별 tag 분리. ToCanonicalFields 는 구현했으나
         // Signable(§9 시각 정책)이 없어 아직 verify() 는 통과하지 못한다.
@@ -624,6 +632,12 @@ fn domain_coverage_is_explicit() {
         (Domain::LeaseResumeResult, Some("ResumeLeaseResult"), true),
         // 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계)
         (Domain::NodeHeartbeat, Some("NodeHeartbeat"), true),
+        // 이웃 신고 (2026-08-30, ADR-033 §7 관측 층)
+        (
+            Domain::NeighborUnreachableReport,
+            Some("NeighborUnreachableReport"),
+            true,
+        ),
     ];
 
     // ★ 수동으로 적은 28 같은 숫자를 쓰지 않는다. 그 숫자를 두면
@@ -665,7 +679,7 @@ fn domain_coverage_is_explicit() {
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
     assert_eq!(
-        implemented, 25,
+        implemented, 26,
         "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
     assert_eq!(
@@ -714,5 +728,53 @@ fn node_heartbeat_matches_reference() {
         second,
         expect_hex("v37b_node_heartbeat_different_epoch"),
         "fence_epoch 이 다른 NodeHeartbeat 가 참조 구현과 다르다"
+    );
+}
+
+/// 이웃 신고가 Python 참조 구현과 **바이트 단위로** 같은가.
+///
+/// ★ `DoD-05` 가 찾은 공백과 같은 종류다 — `AgentGrantAck` 는 서명·검증·
+///   dispatch 테스트는 있었지만 참조 구현 대조가 없어, Rust 와 Python 이
+///   갈라져도 아무도 몰랐다. 새 서명 대상 메시지는 반드시 이 대조를 받는다.
+#[test]
+fn neighbor_unreachable_report_matches_reference() {
+    let report = pb::NeighborUnreachableReport {
+        schema_version: 1,
+        reporter_node_id: "node-reporter".into(),
+        reporter_device_id: "device-reporter".into(),
+        unreachable_node_id: "node-stranded".into(),
+        coordinator_device_id: "coordinator-1".into(),
+        observed_at_unix_ms: 1_700_000_000_000,
+        request_nonce: (32u8..48).collect(),
+        reporter_signature: vec![0x45; 64],
+    };
+    assert_eq!(
+        hex(&canonical_encode(&report.to_canonical_fields(), &[])),
+        expect_hex("v38_neighbor_unreachable_report"),
+        "NeighborUnreachableReport canonical 이 Python 참조 구현과 다르다"
+    );
+
+    // ★ **지목당한 노드**만 바꾼 대조쌍. 이 필드가 canonical 에 안 들어가면
+    //   한 노드에 대한 신고 서명을 **다른 노드에 그대로 재사용**할 수 있다 —
+    //   A 를 지목한 정당한 신고가 B 를 지목한 신고로 둔갑한다.
+    //
+    //   ★ 초안 주석은 여기에 "정족수를 한 건으로 채운다" 를 붙였는데
+    //     **틀렸다**(독립 검수 2라운드 지적) — 정족수는 신고자 기계 수로
+    //     세므로 대상을 바꿔도 한 신고자는 한 표다. 문제는 **대상 위조**
+    //     자체다.
+    let other = pb::NeighborUnreachableReport {
+        unreachable_node_id: "node-other".into(),
+        ..report.clone()
+    };
+    let first = hex(&canonical_encode(&report.to_canonical_fields(), &[]));
+    let second = hex(&canonical_encode(&other.to_canonical_fields(), &[]));
+    assert_ne!(
+        first, second,
+        "지목 노드를 바꿨는데 canonical 이 같다 — 신고 서명을 다른 노드에 재사용할 수 있다"
+    );
+    assert_eq!(
+        second,
+        expect_hex("v38b_neighbor_unreachable_different_target"),
+        "지목 노드가 다른 신고가 참조 구현과 다르다"
     );
 }

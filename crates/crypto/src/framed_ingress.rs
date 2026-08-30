@@ -98,6 +98,13 @@ pub enum FrameType {
     LeaseResumeResult = 14,
     /// 노드 생존 보고(2026-08-29, ADR-033 §7 앞 단계).
     NodeHeartbeat = 15,
+    /// 이웃 신고(2026-08-30, ADR-033 §7 관측 층).
+    ///
+    /// ★ 프레임 종류가 있다는 것은 "받을 수 있다" 이지 "믿는다" 가
+    ///   아니다. 이 신고가 정당한 이웃에게서 왔는지는 멤버십 해소의
+    ///   몫이고 아직 없다 — `crates/scheduler/src/reassignment.rs` 가
+    ///   그것을 호출부 진술로 요구하는 이유다.
+    NeighborUnreachableReport = 16,
 }
 
 impl FrameType {
@@ -118,6 +125,7 @@ impl FrameType {
             13 => Self::LeaseResume,
             14 => Self::LeaseResumeResult,
             15 => Self::NodeHeartbeat,
+            16 => Self::NeighborUnreachableReport,
             _ => return None,
         })
     }
@@ -193,6 +201,7 @@ pub enum IngressMessage {
     LeaseResume(Verified<pb::ResumeLeaseRequest>),
     LeaseResumeResult(Verified<pb::ResumeLeaseResult>),
     NodeHeartbeat(Verified<pb::NodeHeartbeat>),
+    NeighborUnreachableReport(Verified<pb::NeighborUnreachableReport>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -309,6 +318,10 @@ pub fn read_frame<R: Read>(
         FrameType::LeaseResume => verify_as!(LeaseResume, pb::ResumeLeaseRequest),
         FrameType::LeaseResumeResult => verify_as!(LeaseResumeResult, pb::ResumeLeaseResult),
         FrameType::NodeHeartbeat => verify_as!(NodeHeartbeat, pb::NodeHeartbeat),
+        FrameType::NeighborUnreachableReport => verify_as!(
+            NeighborUnreachableReport,
+            pb::NeighborUnreachableReport
+        ),
     }
 }
 

@@ -22,8 +22,11 @@
 //! - `oneof` · `reserved` · 중첩 message 선언은 다루지 않는다
 //! - 주석 안의 `put_str(...)` 는 오탐이 될 수 있다 (아래에서 주석 줄을 걸러낸다)
 //!
-//! 이 한계가 문제가 되면 `prost-reflect` 로 교체한다. 지금 스키마 규모(17종)에서는
+//! 이 한계가 문제가 되면 `prost-reflect` 로 교체한다. 지금 스키마 규모에서는
 //! 정규식이 충분하고, 의존성이 적은 쪽이 낫다.
+//!
+//! ★ 여기 "17종" 이라고 적혀 있었는데 감사 목록은 48종이 됐다
+//!   (2026-08-30 독립 검수 5라운드 지적). 개수는 적지 않는다.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -262,6 +265,7 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("lease.proto", "ResumeLeaseResult", 90),
     // 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계)
     ("lease.proto", "NodeHeartbeat", 90),
+    ("lease.proto", "NeighborUnreachableReport", 90),
 ];
 
 #[test]

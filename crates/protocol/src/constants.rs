@@ -14,6 +14,20 @@ pub const CLOCK_SKEW_TOLERANCE_MS: u64 = 60_000;
 /// ExecutionGrant 기본 수명. 기준선 §15.4.
 pub const GRANT_TTL_MS: u64 = 60_000;
 
+/// 이웃 신고(`NeighborUnreachableReport`)의 수명.
+///
+/// ★ **규범이 정한 값이 아니다.** `ADR-033` §7 은 신고 TTL 을 정하지
+///   않았다. `GRANT_TTL_MS` 를 그대로 쓰면 "ExecutionGrant 기본 수명"
+///   (기준선 §15.4)이 신고에도 적용되는 것처럼 보이는데, 그럴 근거가
+///   없다(2026-08-30 독립 검수 지적).
+///
+///   그래서 **별도 상수로 분리**하고 값의 근거를 여기 적는다 — 관측은
+///   짧게 살아야 하고(오래된 신고가 지금 상태로 오인되면 안 된다), 이
+///   저장소의 다른 ShortLived 메시지와 같은 시간 규모를 쓰는 것이
+///   가장 덜 놀랍다. 풀 정책이 이 값을 정하게 되면 여기가 아니라
+///   정책에서 와야 한다.
+pub const NEIGHBOR_REPORT_TTL_MS: u64 = 60_000;
+
 /// JobManifest 기본 수명. 기준선 §15.2.
 pub const MANIFEST_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 

@@ -1,0 +1,456 @@
+################ 독립 검수 1라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+/tests/framed_ingress.rs:965-1002` — “동일 신고 재생으로 한 기계가 정족수 N을 채운다”는 설명은 실제 집계 코드와 모순이다. `crates/scheduler/src/reassignment.rs:952-953,986-991`은 `reporter_node_id`를 집합으로 중복 제거하므로 동일 신고를 N번 넣어도 한 표다. replay 방어는 오래된 관측 재사용과 중복 부작용을 막지만 기계 정족수 자체를 보장하지 않는다. 또한 테스트는 첫 요청이 성공하므로 실질적으로 replay 상태를 건드리기는 하지만 `result.is_err()`만 검사하여 `VerifyOutcome::Replay`가 아닌 저장소·정책 오류도 성공으로 센다. 정확한 중첩 오류를 assert해야 한다.
+
+- `proto/lease.proto:324-328`, `crates/protocol/src/signable.rs:610-611` — `signer_id()`를 `reporter_device_id`로 둔 선택은 키 디렉터리가 device ID 기준이므로 맞다. 그러나 서명은 `reporter_device_id`만 인증하고, 그 device가 주장한 `reporter_node_id`의 실제 장치인지는 인증하지 않는다. 유효한 장치 키 하나가 서로 다른 nonce와 임의의 node ID N개를 서명할 수 있다. 기존 커널은 `crates/scheduler/src/reassignment.rs:800-804`에서 해소된 신고만 요구하지만 wire→커널 어댑터는 없다. 소비 전에 authoritative device→node→member 결합과 수신 coordinator 일치 검사를 MUST로 명시하고 테스트해야 한다.
+
+- `proto/lease.proto:333-335` — `coordinator_device_id`가 “다른 Coordinator로 재사용할 수 없게 한다”는 보장은 현재 강제되지 않는다. canonical에 포함되어 변조은 막지만, `crates/crypto/src/framed_ingress.rs:318-324`는 로컬 coordinator ID와 비교하지 않고 `Verified`를 반환한다. 이는 CLAUDE.md §0.4가 금지한 강제되지 않은 보장이다. “소비자가 반드시 대조해야 한다”로 고치거나 실제 대조 관문을 구현해야 한다.
+
+- `proto/lease.proto:338-345` — `last_contact_at_unix_ms`와 `failed_attempt_count`는 ADR-033 §7·§8의 필수 재료가 아니며 현재 production 소비자도 없다. 특히 `last_contact_at > observed_at`이나 `failed_attempt_count == 0`인 모순된 “연락 불가 신고”도 서명만 맞으면 통과한다. 불필요한 공격 입력면이므로 지금 제거하거나, 필요성을 계약에 정하고 내부 일관성 거부 테스트를 추가해야 한다. 현재 상태는 `RULE.md:93-95`의 YAGNI에도 맞지 않는다.
+
+- `docs/protocol/signing.md:503-504`, `proto/lease.proto:322-347` — 기존 메시지에 필드를 추가한 것이 아니라 새 메시지를 schema v1로 도입했으므로 기존 메시지 버전을 올리지 않은 결과는 맞다. 다만 이를 §7.3의 `(b) 주석·서식·파서 무관 변경`이라고 설명하는 것은 틀렸다. 새 wire 메시지는 파서 관련 변경이다. 정확한 근거는 “이 타입의 구버전 인스턴스가 없으므로 새 타입은 v1에서 시작한다”이다.
+
+- `crates/protocol/src/signable.rs:573-578` — `NodeHeartbeat` 문서 주석이 `NeighborUnreachableReport` 구현에 붙어 있고 실제 `NodeHeartbeat` 구현에는 붙지 않는다. 동작 결함은 아니지만 오류 진단과 보안 설명을 혼동시킨다.
+
+확인된 정상 부분:
+
+- `docs/decisions/ADR-033_공개풀_배치_권한과_공정성.md:159-187`과 대조했을 때 `is_dead`, 상태, 재배정 승인 같은 판정 필드는 없다. 현재 필드는 모두 신고자 주장 또는 라우팅·서명 메타데이터다.
+- proto 1–9/90, Rust `to_fields` 1–9, Python `SCHEMAS`, domain 문자열, 두 벡터, schema fingerprint의 실제 필드 목록은 서로 일치했다.
+- 기존 최신 테스트 바이너리를 직접 실행해 protocol 대상 38건과 neighbor ingress 5건이 통과함을 확인했다. 다만 읽기 전용 환경 때문에 Cargo의 현재 소스 재빌드는 build-lock 생성 단계에서 거부됐다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 2라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+k
+test guard_rejects_reserved_mutation_before_it_can_be_invisible ... ok
+test guard_rejects_nested_message_mutation_before_silent_overwrite ... ok
+test parser_explicitly_skips_valid_reserved_declarations ... ok
+test support_check_ignores_keywords_in_comments_and_strings ... ok
+test parser_is_not_vacuous ... ok
+test proto_schema_uses_only_fingerprint_guard_supported_syntax ... ok
+test proto_schema_matches_recorded_fingerprint ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+codex
+- [crates/protocol/tests/lifetime_consistency.rs:242](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:242), [:354](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:354), [:368](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:368) — 동일 신고는 `reporter_node_id`로 중복 제거되는데도 “한 건/이웃 하나가 정족수를 혼자 채운다”는 틀린 설명이 세 군데 남았다. 재생 방어가 막는 것은 신선도 위조와 중복 부작용이다.
+
+- [crates/protocol/tests/t1_signing_targets.rs:748](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:748) — `unreachable_node_id`가 canonical에서 빠지면 다른 대상에 서명을 재사용할 수 있지만, 동일 `reporter_node_id` 한 건으로 특정 대상의 정족수를 채울 수는 없다. 테스트 목적은 유효하나 설명은 집계 동작과 다르다.
+
+- [crates/protocol/src/signable.rs:573](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signable.rs:573) — `NodeHeartbeat` 문서 주석이 여전히 바로 뒤의 `NeighborUnreachableReport` 구현에 붙어 있다. `NodeHeartbeat` 구현은 632행부터 시작하므로 1라운드 지적 8은 실제로 고쳐지지 않았다.
+
+- [docs/protocol/signing.md:494](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/protocol/signing.md:494) — 스키마 지문을 “66개 메시지·389개 필드”라고 쓰지만 현재 지문은 72개 메시지·449개 필드다.
+
+CHANGES_REQUESTED
+tokens used
+99,055
+- [crates/protocol/tests/lifetime_consistency.rs:242](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:242), [:354](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:354), [:368](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/lifetime_consistency.rs:368) — 동일 신고는 `reporter_node_id`로 중복 제거되는데도 “한 건/이웃 하나가 정족수를 혼자 채운다”는 틀린 설명이 세 군데 남았다. 재생 방어가 막는 것은 신선도 위조와 중복 부작용이다.
+
+- [crates/protocol/tests/t1_signing_targets.rs:748](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/tests/t1_signing_targets.rs:748) — `unreachable_node_id`가 canonical에서 빠지면 다른 대상에 서명을 재사용할 수 있지만, 동일 `reporter_node_id` 한 건으로 특정 대상의 정족수를 채울 수는 없다. 테스트 목적은 유효하나 설명은 집계 동작과 다르다.
+
+- [crates/protocol/src/signable.rs:573](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/protocol/src/signable.rs:573) — `NodeHeartbeat` 문서 주석이 여전히 바로 뒤의 `NeighborUnreachableReport` 구현에 붙어 있다. `NodeHeartbeat` 구현은 632행부터 시작하므로 1라운드 지적 8은 실제로 고쳐지지 않았다.
+
+- [docs/protocol/signing.md:494](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/protocol/signing.md:494) — 스키마 지문을 “66개 메시지·389개 필드”라고 쓰지만 현재 지문은 72개 메시지·449개 필드다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 3라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ndowsPowerShell\\v1.0\\powershell.exe" -Command '$a='"'01JBXNODE000000000000000A'; "'$b='"'01JBXNODE000000000000000B'; Write-Output "'$a.Substring(0,16); Write-Output $b.Substring(0,16); Write-Output ($a.Substring(0,16) -eq $b.Substring(0,16))' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 103ms:
+01JBXNODE0000000
+01JBXNODE0000000
+True
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$lines=Get-Content crates/protocol/src/canonical.rs -Encoding utf8; $block=$lines[323..354]; ($block | Where-Object {$_ -match '"'"'^'"\\s+\\w+\\s*=>'}).Count; "'$doc=Get-Content docs/protocol/signing.md -Encoding utf8; $rows=$doc[246..278] | Where-Object {$_ -match '"'"'^'"\\| "'`'"'}; "'$rows.Count' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 500ms:
+30
+25
+
+codex
+2라운드 4건은 실제로 수정됐다.
+
+- `lifetime_consistency.rs:243-250,357-371` — 신선도 위조 설명으로 정정됨.
+- `t1_signing_targets.rs:749-756` — 대상 위조 자체가 문제라고 정정됨.
+- `signable.rs:627-636` — `NodeHeartbeat` 주석이 실제 impl 바로 위로 이동됨.
+- `signing.md:494` — 72개 메시지·449개 필드이며, `SCHEMA_FINGERPRINT.txt:13`의 지문 및 실제 집계와 일치함.
+- 관측 메시지에 판정 필드가 새어 든 곳은 확인되지 않았다.
+
+`crates/crypto/tests/framed_ingress.rs:1049-1073` — “unknown signer” 테스트가 실제로는 `DEVICE`라는 동일한 signer ID에 다른 공개키를 등록한다. 따라서 현재 결과는 `UnknownSigner`가 아니라 `InvalidSignature`이며, 포괄적인 `is_err()`가 이 잘못된 테스트 구성을 숨긴다.
+
+`crates/crypto/tests/framed_ingress.rs:1017-1040` — domain 분리를 검증한다고 설명하지만 두 메시지의 canonical 필드 배치도 서로 달라 domain tag가 같아져도 서명은 실패한다. `is_err()`만 검사하므로 이 테스트는 주장한 domain 분리 회귀를 고정하지 못한다.
+
+`crates/crypto/tests/framed_ingress.rs:1092-1105` — 두 node ID의 앞 16바이트가 동일하므로 line 1095의 “nonce도 달리한다”는 설명은 사실이 아니다. 또한 매 반복마다 replay guard를 새로 만들어 이 실수를 숨기므로, 동일 수신 문맥에서 서로 다른 두 신고가 통과한다는 시나리오도 고정하지 못한다.
+
+CHANGES_REQUESTED
+tokens used
+139,868
+2라운드 4건은 실제로 수정됐다.
+
+- `lifetime_consistency.rs:243-250,357-371` — 신선도 위조 설명으로 정정됨.
+- `t1_signing_targets.rs:749-756` — 대상 위조 자체가 문제라고 정정됨.
+- `signable.rs:627-636` — `NodeHeartbeat` 주석이 실제 impl 바로 위로 이동됨.
+- `signing.md:494` — 72개 메시지·449개 필드이며, `SCHEMA_FINGERPRINT.txt:13`의 지문 및 실제 집계와 일치함.
+- 관측 메시지에 판정 필드가 새어 든 곳은 확인되지 않았다.
+
+`crates/crypto/tests/framed_ingress.rs:1049-1073` — “unknown signer” 테스트가 실제로는 `DEVICE`라는 동일한 signer ID에 다른 공개키를 등록한다. 따라서 현재 결과는 `UnknownSigner`가 아니라 `InvalidSignature`이며, 포괄적인 `is_err()`가 이 잘못된 테스트 구성을 숨긴다.
+
+`crates/crypto/tests/framed_ingress.rs:1017-1040` — domain 분리를 검증한다고 설명하지만 두 메시지의 canonical 필드 배치도 서로 달라 domain tag가 같아져도 서명은 실패한다. `is_err()`만 검사하므로 이 테스트는 주장한 domain 분리 회귀를 고정하지 못한다.
+
+`crates/crypto/tests/framed_ingress.rs:1092-1105` — 두 node ID의 앞 16바이트가 동일하므로 line 1095의 “nonce도 달리한다”는 설명은 사실이 아니다. 또한 매 반복마다 replay guard를 새로 만들어 이 실수를 숨기므로, 동일 수신 문맥에서 서로 다른 두 신고가 통과한다는 시나리오도 고정하지 못한다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 4라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+30종이다.
+crates/protocol\tests\field_number_audit.rs:25://! 이 한계가 문제가 되면 `prost-reflect` 로 교체한다. 지금 스키마 규모(17종)에서는
+crates/protocol\tests\t1_signing_targets.rs:3://! `signing.md` §5 domain_tag 23종(ADR-028) 중 이 파일이 다루는 것:
+crates/protocol\tests\t1_signing_targets.rs:578:/// `signing.md` §5 의 domain_tag 24종 중 실제 proto 메시지가 있는 것과
+crates/protocol\tests\canonical_vectors.rs:380:        //   쓰여 있어 실제 Domain enum 이 25종으로 늘어난 뒤에도 이
+crates/protocol\tests\canonical_vectors.rs:381:        //   테스트는 계속 24종으로 통과하고 있었다(누락된 25번째
+crates/protocol\tests\canonical_vectors.rs:385:        //   는 이미 올바르게 25종을 나열하고 있었다.
+crates/protocol\tests\canonical_vectors.rs:400:        "signing.md §5 의 domain_tag 25종과 일치해야 한다 (ADR-028 + GrantAck + LeaseRenewResult)"
+crates/protocol\tests\t1b_grant_and_control.rs:456:/// domain_tag 가 실제로 24종 전부 서로 다른가.
+crates/protocol\src\to_fields.rs:297:// ★ 2026-08-16 T1. `signing.md` §5 domain_tag 17종 중 10종을 여기서 채운다.
+
+codex
+3라운드 지적 3건은 모두 정상 수정됐다.
+
+- `crates/crypto/tests/framed_ingress.rs:1084` — 없는 ID는 정확히 `UnknownSigner`를 assert하며 실제 테스트도 해당 결과로 통과한다.
+- `crates/crypto/tests/framed_ingress.rs:1122` — 같은 ID의 다른 키는 정확히 `InvalidSignature`를 assert하며 통과한다.
+- `crates/crypto/tests/framed_ingress.rs:1151` — replay guard 하나를 공유한다. `:1160`의 두 nonce도 실제로 다르며 둘 다 같은 guard에서 통과한다.
+- `crates/crypto/tests/framed_ingress.rs:1017` — 프레임 타입 변경 거부만 측정한다고 정확히 정정했다.
+
+남은 지적:
+
+- `crates/protocol/tests/canonical_vectors.rs:349` — 이름은 모든 domain tag의 길이와 유일성을 검사한다고 주장하지만 `:350-390`의 수동 배열은 현재 30종 중 `NodeHeartbeat`와 `NeighborUnreachableReport`를 제외한 28종만 검사한다. 또한 `:400`은 기대값 28을 두고 “25종과 일치”한다고 출력해 사실과 다르다.
+- `crates/protocol/tests/t1_signing_targets.rs:578` — 현재 `Domain::ALL`과 coverage는 30종인데 문서 주석은 “24종”이라고 서술한다.
+- `crates/protocol/tests/t1b_grant_and_control.rs:456` — 실제 테스트는 `Domain::ALL`의 30종을 검사하지만 주석은 “24종 전부”라고 서술한다.
+
+CHANGES_REQUESTED
+tokens used
+111,223
+3라운드 지적 3건은 모두 정상 수정됐다.
+
+- `crates/crypto/tests/framed_ingress.rs:1084` — 없는 ID는 정확히 `UnknownSigner`를 assert하며 실제 테스트도 해당 결과로 통과한다.
+- `crates/crypto/tests/framed_ingress.rs:1122` — 같은 ID의 다른 키는 정확히 `InvalidSignature`를 assert하며 통과한다.
+- `crates/crypto/tests/framed_ingress.rs:1151` — replay guard 하나를 공유한다. `:1160`의 두 nonce도 실제로 다르며 둘 다 같은 guard에서 통과한다.
+- `crates/crypto/tests/framed_ingress.rs:1017` — 프레임 타입 변경 거부만 측정한다고 정확히 정정했다.
+
+남은 지적:
+
+- `crates/protocol/tests/canonical_vectors.rs:349` — 이름은 모든 domain tag의 길이와 유일성을 검사한다고 주장하지만 `:350-390`의 수동 배열은 현재 30종 중 `NodeHeartbeat`와 `NeighborUnreachableReport`를 제외한 28종만 검사한다. 또한 `:400`은 기대값 28을 두고 “25종과 일치”한다고 출력해 사실과 다르다.
+- `crates/protocol/tests/t1_signing_targets.rs:578` — 현재 `Domain::ALL`과 coverage는 30종인데 문서 주석은 “24종”이라고 서술한다.
+- `crates/protocol/tests/t1b_grant_and_control.rs:456` — 실제 테스트는 `Domain::ALL`의 30종을 검사하지만 주석은 “24종 전부”라고 서술한다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 5라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ 순회한다. `canonical.rs:298`의 매크로가 enum·`ALL`·tag 매핑을 함께 생성하며, 중복 tag 변이 실행 파일도 `NeighborUnreachableReport`에서 실제 실패해 검사가 비공허함을 확인했다.
+
+- `crates/protocol/tests/t1_signing_targets.rs:581` — 2번의 “24종” 주석은 숫자 없는 현재 설명으로 수정됐다.
+
+- `crates/protocol/tests/t1b_grant_and_control.rs:456` — 3번도 숫자를 제거했고, 기존 코드가 이미 `Domain::ALL`을 사용했다는 설명도 정확하다.
+
+- `tools/canonical/reference_canonical.py:679` — `DOMAIN_TAGS`가 여전히 독립 수동 목록이다. `:1836`의 자체 검사는 목록에 이미 들어온 항목의 길이만 검사하므로 Rust `Domain::ALL` 누락이나 tag 중복을 잡지 못한다. 같은 결함이 여섯 번째로 발생할 수 있는 실제 검사 공백이다.
+
+- `docs/protocol/signing.md:249` — domain/message 표도 독립 수동 목록이며 `Domain::ALL`과 대조하는 장치가 없다. 현재 30개 내용은 맞지만 향후 누락을 자동 검출하지 못한다. 반면 `t1_signing_targets.rs:592`의 수동 `coverage`는 `:643`과 `:652`에서 누락과 길이를 모두 대조하므로 같은 공백이 아니다.
+
+- `crates/protocol/tests/t1_signing_targets.rs:3` — 현재 §5는 30종인데 여전히 “domain_tag 23종”이라고 서술한다.
+
+- `crates/protocol/tests/lifetime_consistency.rs:90` — “10개 메시지 전부”라고 적었지만 실제 `check` 대상은 17개다.
+
+- `crates/protocol/tests/field_number_audit.rs:25` — 현재 감사 목록은 48종인데 스키마 규모를 17종이라고 서술한다.
+
+- `docs/protocol/signing.md:337` — 존재하지 않는 `domain_tags_are_unique` 테스트가 중복을 검사한다고 서술한다. 실제 이름은 `domain_tags_are_32_bytes_and_unique`와 `all_domain_tags_are_distinct`다.
+
+CHANGES_REQUESTED
+tokens used
+81,381
+- `crates/protocol/tests/canonical_vectors.rs:350`·`:369` — 1번은 수정됐다. 다섯 번째 결함이라는 기록이 있고 `Domain::ALL` 전체를 순회한다. `canonical.rs:298`의 매크로가 enum·`ALL`·tag 매핑을 함께 생성하며, 중복 tag 변이 실행 파일도 `NeighborUnreachableReport`에서 실제 실패해 검사가 비공허함을 확인했다.
+
+- `crates/protocol/tests/t1_signing_targets.rs:581` — 2번의 “24종” 주석은 숫자 없는 현재 설명으로 수정됐다.
+
+- `crates/protocol/tests/t1b_grant_and_control.rs:456` — 3번도 숫자를 제거했고, 기존 코드가 이미 `Domain::ALL`을 사용했다는 설명도 정확하다.
+
+- `tools/canonical/reference_canonical.py:679` — `DOMAIN_TAGS`가 여전히 독립 수동 목록이다. `:1836`의 자체 검사는 목록에 이미 들어온 항목의 길이만 검사하므로 Rust `Domain::ALL` 누락이나 tag 중복을 잡지 못한다. 같은 결함이 여섯 번째로 발생할 수 있는 실제 검사 공백이다.
+
+- `docs/protocol/signing.md:249` — domain/message 표도 독립 수동 목록이며 `Domain::ALL`과 대조하는 장치가 없다. 현재 30개 내용은 맞지만 향후 누락을 자동 검출하지 못한다. 반면 `t1_signing_targets.rs:592`의 수동 `coverage`는 `:643`과 `:652`에서 누락과 길이를 모두 대조하므로 같은 공백이 아니다.
+
+- `crates/protocol/tests/t1_signing_targets.rs:3` — 현재 §5는 30종인데 여전히 “domain_tag 23종”이라고 서술한다.
+
+- `crates/protocol/tests/lifetime_consistency.rs:90` — “10개 메시지 전부”라고 적었지만 실제 `check` 대상은 17개다.
+
+- `crates/protocol/tests/field_number_audit.rs:25` — 현재 감사 목록은 48종인데 스키마 규모를 17종이라고 서술한다.
+
+- `docs/protocol/signing.md:337` — 존재하지 않는 `domain_tags_are_unique` 테스트가 중복을 검사한다고 서술한다. 실제 이름은 `domain_tags_are_32_bytes_and_unique`와 `all_domain_tags_are_distinct`다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 6라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ates/protocol\tests\t1_signing_targets.rs:618:        (Domain::Genesis, None, false),
+crates/protocol\tests\t1_signing_targets.rs:619:        (Domain::Audit, None, false),
+crates/protocol\tests\t1_signing_targets.rs:620:        (Domain::Release, None, false),
+crates/protocol\tests\t1_signing_targets.rs:621:        (Domain::Invite, None, false),
+crates/protocol\tests\t1_signing_targets.rs:624:        (Domain::GrantAck, Some("AgentGrantAck"), true),
+crates/protocol\tests\t1_signing_targets.rs:627:        (Domain::LeaseRenewResult, Some("RenewLeaseResult"), true),
+crates/protocol\tests\t1_signing_targets.rs:628:        (Domain::SessionHello, Some("AgentSessionHello"), true),
+crates/protocol\tests\t1_signing_targets.rs:629:        (Domain::LeaseResume, Some("ResumeLeaseRequest"), true),
+crates/protocol\tests\t1_signing_targets.rs:630:        (Domain::LeaseResumeResult, Some("ResumeLeaseResult"), true),
+crates/protocol\tests\t1_signing_targets.rs:632:        (Domain::NodeHeartbeat, Some("NodeHeartbeat"), true),
+crates/protocol\tests\t1_signing_targets.rs:635:            Domain::NeighborUnreachableReport,
+crates/protocol\tests\t1_signing_targets.rs:644:    //   `Domain::ALL` 과 길이를 맞추면 문자 그대로 "빠진 domain 이 있다" 가 된다.
+crates/protocol\tests\t1_signing_targets.rs:645:    let missing: Vec<&str> = Domain::ALL
+crates/protocol\tests\t1_signing_targets.rs:656:        Domain::ALL.len(),
+crates/protocol\tests\t1_signing_targets.rs:657:        "감사 목록에 Domain::ALL 에 없는 항목이 있다"
+crates/crypto\src\bin\durable_replay_process_fixture.rs:88:        Domain::Grant,
+crates/crypto\src\bin\durable_replay_process_fixture.rs:127:        Domain::Grant,
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$lines=Get-Content -Encoding utf8 proto/SCHEMA_FINGERPRINT.txt | Where-Object { $_ -and -not $_.StartsWith('"'#') }; "'$messages=($lines | Where-Object { $_ -notmatch '"'"'^'"\\s' }).Count; "'$fields=($lines | Where-Object { $_ -match '"'"'^'"\\s+\\d+\\s' }).Count; \"messages="'$messages fields=$fields"; $domains=(Select-String -Path crates/protocol/src/canonical.rs -Pattern '"'"'^'"\\s+[A-Za-z][A-Za-z0-9]+ => \"gputeer/v').Count; \"domains="'$domains"; $signables=(Select-String -Path crates/protocol/src/signable.rs -Pattern '"'"'^impl Signable for '"').Count; \"signables="'$signables"; $coverage=(Select-String -Path crates/protocol/tests/t1_signing_targets.rs -Pattern '"'"'^'"\\s+\\(Domain::|"'^'"\\s+Domain::NeighborUnreachableReport').Count; \"coverage_rough="'$coverage"; $fieldAudit=(Select-String -Path crates/protocol/tests/field_number_audit.rs -Pattern '"'"'^'"\\s+\\(\"[A-Za-z]').Count; \"audit_tuple_lines="'$fieldAudit"' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 402ms:
+messages=72 fields=449
+domains=30
+signables=17
+coverage_rough=30
+audit_tuple_lines=48
+
+codex
+- `crates/protocol/tests/canonical_vectors.rs:411` — `tags_in`이 실제 §5 표나 Python `DOMAIN_TAGS` 블록이 아니라 파일 전체를 훑는다. 따라서 `signing.md:278` 행을 삭제해도 `signing.md:296`의 동일 tag가 대신 검출되고, Python의 `AddMember` 항목을 삭제해도 `reference_canonical.py:1436`의 설명 문자열이 대신 검출된다. 집합 차이는 양방향이지만, 실제 세 목록의 대조가 아니어서 수동 목록 누락을 놓칠 자리가 남아 있다.
+
+CHANGES_REQUESTED
+tokens used
+75,109
+- `crates/protocol/tests/canonical_vectors.rs:411` — `tags_in`이 실제 §5 표나 Python `DOMAIN_TAGS` 블록이 아니라 파일 전체를 훑는다. 따라서 `signing.md:278` 행을 삭제해도 `signing.md:296`의 동일 tag가 대신 검출되고, Python의 `AddMember` 항목을 삭제해도 `reference_canonical.py:1436`의 설명 문자열이 대신 검출된다. 집합 차이는 양방향이지만, 실제 세 목록의 대조가 아니어서 수동 목록 누락을 놓칠 자리가 남아 있다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 7라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+7,26 @@
+       "sig_input_blake3_256": "95541819e3a75d49b70d08230bb706e688904d923f5bfa093feb7860994695ae",
+       "checks": []
+     },
++    {
++      "name": "v38_neighbor_unreachable_report",
++      "description": "NeighborUnreachableReport canonical vector",
++      "message_type": "NeighborUnreachableReport",
++      "canonical_hex": "0801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220d6e6f64652d737472616e6465642a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
++      "canonical_len": 89,
++      "sig_input_hex": "677075746565722f76312f6e65696768626f722d756e726561636861626c650000000001000000590801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220d6e6f64652d737472616e6465642a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
++      "sig_input_blake3_256": "5b2637f0d5484ed7d43e1406adc96d71bd732c1da141e651a14c1fdc798bb607",
++      "checks": []
++    },
++    {
++      "name": "v38b_neighbor_unreachable_different_target",
++      "description": "NeighborUnreachableReport with a different unreachable_node_id — proves the accused node reaches canonical bytes",
++      "message_type": "NeighborUnreachableReport",
++      "canonical_hex": "0801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220a6e6f64652d6f746865722a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
++      "canonical_len": 86,
++      "sig_input_hex": "677075746565722f76312f6e65696768626f722d756e726561636861626c650000000001000000560801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220a6e6f64652d6f746865722a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
++      "sig_input_blake3_256": "a2feed37afda3f9a6ede7ea1d9f374bc9d87526873f7044a8c6757df97764dd0",
++      "checks": []
++    },
+     {
+       "name": "v10_domain_separation",
+       "description": "같은 canonical, 다른 domain_tag → sig_input 이 달라야 한다 (§5)",
+
+codex
+- `crates/protocol/tests/canonical_vectors.rs:417` — `tags_in_norm_table`은 §5 경계를 찾지 않고 문서 전체 표의 두 번째 칸을 훑는다. 따라서 다른 표의 동일 tag가 §5 행 삭제를 다시 가릴 수 있으며, “§5 표만 파싱한다”는 서술과 다르다.
+- `crates/protocol/tests/canonical_vectors.rs:437` — `tags_in_python_dict`는 블록 안의 모든 줄을 검사하므로 `# "AddMember": b"gputeer/v1/member-add",`처럼 항목을 주석 처리해 실제 사전에서 제거해도 tag를 계속 검출한다. 실제 사전 항목만 파싱하지 않는다.
+- `crates/protocol/tests/canonical_vectors.rs:482` — 세 자료를 `BTreeSet<String>`의 tag 집합으로만 비교해 메시지→tag 대응을 버린다. Python에서 `AddMember`와 `RemoveMember`의 값을 서로 바꾸거나 문서 표에서 두 tag를 맞바꿔도 테스트가 통과하지만 참조 구현·규범은 Rust와 달라진다.
+
+CHANGES_REQUESTED
+tokens used
+66,078
+- `crates/protocol/tests/canonical_vectors.rs:417` — `tags_in_norm_table`은 §5 경계를 찾지 않고 문서 전체 표의 두 번째 칸을 훑는다. 따라서 다른 표의 동일 tag가 §5 행 삭제를 다시 가릴 수 있으며, “§5 표만 파싱한다”는 서술과 다르다.
+- `crates/protocol/tests/canonical_vectors.rs:437` — `tags_in_python_dict`는 블록 안의 모든 줄을 검사하므로 `# "AddMember": b"gputeer/v1/member-add",`처럼 항목을 주석 처리해 실제 사전에서 제거해도 tag를 계속 검출한다. 실제 사전 항목만 파싱하지 않는다.
+- `crates/protocol/tests/canonical_vectors.rs:482` — 세 자료를 `BTreeSet<String>`의 tag 집합으로만 비교해 메시지→tag 대응을 버린다. Python에서 `AddMember`와 `RemoveMember`의 값을 서로 바꾸거나 문서 표에서 두 tag를 맞바꿔도 테스트가 통과하지만 참조 구현·규범은 Rust와 달라진다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 8라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+nonical reference self-test
+  35:         run: python tools/canonical/reference_canonical.py --self-test
+  36: 
+  37:       - name: Verify canonical vectors
+  38:         run: python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+  39: 
+  40:       - name: Check canonical schema against proto definitions
+  41:         run: python tools/canonical/check_schema.py
+  42: 
+  43:       - name: Check formatting
+
+codex
+확인 결과:
+
+- `canonical_vectors.rs:427-450` — 문서 파싱이 §5 내부로 제한됨.
+- `canonical_vectors.rs:457-487` — 주석 처리된 Python 항목을 건너뜀.
+- A는 문서 tag 집합 검사(`:573-583`), B는 Python tag 집합 검사(`:584-594`)가 잡음.
+- C·D는 membership 계열이면 문서↔Python 대응 검사(`:620-627`), `Signable` 계열이면 추가로 Rust 대응 검사(`:598-612`)가 잡음.
+
+`crates/protocol/tests/canonical_vectors.rs:619` — “membership 구간을 두 문서 대조로 덮는다”는 서술은 불완전하다. `AddMember`와 `RemoveMember`의 tag를 `signing.md`와 Python 양쪽에서 동일하게 맞바꾸면 tag 집합과 문서↔Python 대응이 모두 그대로여서 이 테스트가 통과한다. 미갱신 벡터는 `.github/workflows/canonical-schema-check.yml:37-38`이 잡지만, 벡터까지 정상 절차로 재생성하면 Rust 테스트는 membership 벡터의 canonical만 비교하고 domain 대응은 비교하지 않는다(`t1b_grant_and_control.rs:358-359`). 권위 있는 대응이 이미 `t1_signing_targets.rs:608-613`에 있으나 이 검사가 사용하지 않는다. 이 남은 한계는 문서화되지 않았고, 오히려 `docs/protocol/signing.md:341-345`는 공백을 닫았다고 서술한다.
+
+`crates/protocol/tests/canonical_vectors.rs:475-484` — 주장과 달리 `"Name": b"tag"` 형태를 검증하지 않고 키 뒤의 첫 `gputeer/v...` 문자열을 어디서든 추출한다. 예를 들어 유효한 Python 항목 `"AddMember": b"x", # gputeer/v1/member-add`는 실제 값이 잘못됐는데도 주석의 tag를 읽어 정상으로 판정한다. 따라서 현재 파서는 여전히 주석에 의한 과잉 검출 우회가 가능하다.
+
+CHANGES_REQUESTED
+tokens used
+101,325
+확인 결과:
+
+- `canonical_vectors.rs:427-450` — 문서 파싱이 §5 내부로 제한됨.
+- `canonical_vectors.rs:457-487` — 주석 처리된 Python 항목을 건너뜀.
+- A는 문서 tag 집합 검사(`:573-583`), B는 Python tag 집합 검사(`:584-594`)가 잡음.
+- C·D는 membership 계열이면 문서↔Python 대응 검사(`:620-627`), `Signable` 계열이면 추가로 Rust 대응 검사(`:598-612`)가 잡음.
+
+`crates/protocol/tests/canonical_vectors.rs:619` — “membership 구간을 두 문서 대조로 덮는다”는 서술은 불완전하다. `AddMember`와 `RemoveMember`의 tag를 `signing.md`와 Python 양쪽에서 동일하게 맞바꾸면 tag 집합과 문서↔Python 대응이 모두 그대로여서 이 테스트가 통과한다. 미갱신 벡터는 `.github/workflows/canonical-schema-check.yml:37-38`이 잡지만, 벡터까지 정상 절차로 재생성하면 Rust 테스트는 membership 벡터의 canonical만 비교하고 domain 대응은 비교하지 않는다(`t1b_grant_and_control.rs:358-359`). 권위 있는 대응이 이미 `t1_signing_targets.rs:608-613`에 있으나 이 검사가 사용하지 않는다. 이 남은 한계는 문서화되지 않았고, 오히려 `docs/protocol/signing.md:341-345`는 공백을 닫았다고 서술한다.
+
+`crates/protocol/tests/canonical_vectors.rs:475-484` — 주장과 달리 `"Name": b"tag"` 형태를 검증하지 않고 키 뒤의 첫 `gputeer/v...` 문자열을 어디서든 추출한다. 예를 들어 유효한 Python 항목 `"AddMember": b"x", # gputeer/v1/member-add`는 실제 값이 잘못됐는데도 주석의 tag를 읽어 정상으로 판정한다. 따라서 현재 파서는 여전히 주석에 의한 과잉 검출 우회가 가능하다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 9라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+다. 비-`Signable` 메시지명을 양쪽 문서에서 함께 변경하면 tag 집합과 문서↔Python 비교는 유지되고, `:698`의 느슨한 20개 하한도 통과한다. 남은 공동변경 우회이며 문서화된 한계가 아니다.
+
+- `crates/protocol/tests/canonical_vectors.rs:515` — `variant_to_message_from_coverage`는 배열 범위를 찾지 않고 파일 전체를 검색하며 주석도 제외하지 않는다. 여러 줄의 현재 항목은 파싱하고 `None` 4종은 의도적으로 생략하지만, 배열 뒤에 `// Domain::MemberAdd, Some("RemoveMember")` 같은 주석을 두면 `:540`의 `insert`가 실제 대응을 덮어쓴다. E와 같은 양방향 맞바꾸기를 주석 두 줄로 다시 우회할 수 있다.
+
+- `crates/protocol/tests/canonical_vectors.rs:488` — 원래 F인 `b"x"` 뒤 일반 tag 주석은 값 `x`만 읽고 `:642-647`의 누락 검사에서 잡힌다. 하지만 “값 리터럴 안만 읽는다”는 서술은 여전히 틀렸다. `after_key.find("b\"")`는 주석까지 검색하므로, 예를 들어 실제 값을 `bytes("잘못된-tag", "ascii")`로 두고 뒤에 `# b"gputeer/v1/audit"`를 쓰면 주석 값을 읽어 통과한다. 값 문법의 `:`와 실제 byte literal 위치를 엄격히 확인하지 않는다.
+
+- `docs/protocol/signing.md:341` — 세 목록이 “정확히 같다”거나 목록 노후화의 “남은 자리를 닫는다”는 `:342-345`의 주장은 위의 이름 누락·주석 오탐 우회 때문에 사실과 다르다.
+
+CHANGES_REQUESTED
+tokens used
+84,051
+- `crates/protocol/tests/canonical_vectors.rs:690` — E는 현재 `coverage`에서 만든 권위 대응과 문서·Python을 각각 비교하는 `:702-716`, 최종 assertion `:719-724`가 잡는다. 이 수정 자체는 유효하다.
+
+- `crates/protocol/tests/t1_signing_targets.rs:645` — `domain_coverage_is_explicit`는 `Domain::ALL` 누락을 잡고 `:654-658`의 길이 비교로 중복에 따른 누락도 잡는다. 그러나 `Some("메시지명")`의 정확성은 검증하지 않고 `:667-674`에서 출력만 한다. 따라서 메시지명 두 개를 맞바꿔도 통과하며, 이 배열이 “권위 있는 이름 대응이고 조용히 낡지 않는다”는 `canonical_vectors.rs:512-514`의 서술은 사실과 다르다.
+
+- `crates/protocol/tests/canonical_vectors.rs:703` — 권위 대응의 메시지명이 문서나 Python에 없으면 오류가 아니라 `if let Some`으로 건너뛴다. 비-`Signable` 메시지명을 양쪽 문서에서 함께 변경하면 tag 집합과 문서↔Python 비교는 유지되고, `:698`의 느슨한 20개 하한도 통과한다. 남은 공동변경 우회이며 문서화된 한계가 아니다.
+
+- `crates/protocol/tests/canonical_vectors.rs:515` — `variant_to_message_from_coverage`는 배열 범위를 찾지 않고 파일 전체를 검색하며 주석도 제외하지 않는다. 여러 줄의 현재 항목은 파싱하고 `None` 4종은 의도적으로 생략하지만, 배열 뒤에 `// Domain::MemberAdd, Some("RemoveMember")` 같은 주석을 두면 `:540`의 `insert`가 실제 대응을 덮어쓴다. E와 같은 양방향 맞바꾸기를 주석 두 줄로 다시 우회할 수 있다.
+
+- `crates/protocol/tests/canonical_vectors.rs:488` — 원래 F인 `b"x"` 뒤 일반 tag 주석은 값 `x`만 읽고 `:642-647`의 누락 검사에서 잡힌다. 하지만 “값 리터럴 안만 읽는다”는 서술은 여전히 틀렸다. `after_key.find("b\"")`는 주석까지 검색하므로, 예를 들어 실제 값을 `bytes("잘못된-tag", "ascii")`로 두고 뒤에 `# b"gputeer/v1/audit"`를 쓰면 주석 값을 읽어 통과한다. 값 문법의 `:`와 실제 byte literal 위치를 엄격히 확인하지 않는다.
+
+- `docs/protocol/signing.md:341` — 세 목록이 “정확히 같다”거나 목록 노후화의 “남은 자리를 닫는다”는 `:342-345`의 주장은 위의 이름 누락·주석 오탐 우회 때문에 사실과 다르다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 10라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ag라는 세 자리만 함께 맞바꾸면 된다. `variant_to_tag`에서 얻은 tag와 변경된 coverage 이름을 `canonical_vectors.rs:719-721`에서 재결합하므로 `canonical.rs`나 `signable.rs`를 고치지 않아도 세 대응이 일치한다. 이는 문서화된 “네 자리 동시 수정”과 다른, 문서화되지 않은 3자리 우회다.
+
+- `crates/protocol/tests/canonical_vectors.rs:715` — coverage가 “30종 전부에 대한 권위 있는 이름 대응”을 가진다는 설명도 틀렸다. `t1_signing_targets.rs:618-621`의 네 domain은 메시지가 `None`이므로 이름 대응은 26종뿐이다. `authoritative.len() >= 20` 검사(`canonical_vectors.rs:724`)도 30종 대응을 보장하지 않는다.
+
+- `crates/protocol/tests/canonical_vectors.rs:526` — 3번 수정과 정직한 보고는 일치한다. 주석 줄을 제거하며, `canonical_vectors.rs:530-535`에서 이것이 단독으로 입증된 방어가 아니라 위생이라고 명시했다.
+
+- `crates/protocol/tests/canonical_vectors.rs:495` — H는 `b"`로 시작하지 않는 함수 호출 값이 `strip_prefix("b\"")`에서 제외되고, 해당 tag가 `py_tags`에서 사라져 `missing_in_py` 검사(`canonical_vectors.rs:669-674`)가 먼저 잡는다. 같은 줄 주석은 읽지 않는다.
+
+- `crates/protocol/tests/canonical_vectors.rs:729` — I는 coverage에서 얻은 기존 메시지가 두 문서에 반드시 존재해야 하므로, `md_map.get`/`py_map.get`의 `None` 분기(`canonical_vectors.rs:732-749`)가 mismatch를 추가하고 최종 assertion(`canonical_vectors.rs:753-758`)이 잡는다.
+
+- 테스트 환경 — Python 참조 구현의 self-test는 통과했다. 다만 현재 환경에는 `cargo` 실행 파일이 없어 Rust 테스트는 실행하지 못했다.
+
+CHANGES_REQUESTED
+tokens used
+84,611
+- `crates/protocol/tests/canonical_vectors.rs:521` / `docs/protocol/signing.md:347` — “네 자리를 동시에 고쳐야 우회된다”는 설명이 사실과 다르다. `AddMember`·`RemoveMember`처럼 `Signable`이 없는 항목은 `t1_signing_targets.rs:608-609`의 메시지 이름, `signing.md:262-263`의 tag, `reference_canonical.py:701-702`의 tag라는 세 자리만 함께 맞바꾸면 된다. `variant_to_tag`에서 얻은 tag와 변경된 coverage 이름을 `canonical_vectors.rs:719-721`에서 재결합하므로 `canonical.rs`나 `signable.rs`를 고치지 않아도 세 대응이 일치한다. 이는 문서화된 “네 자리 동시 수정”과 다른, 문서화되지 않은 3자리 우회다.
+
+- `crates/protocol/tests/canonical_vectors.rs:715` — coverage가 “30종 전부에 대한 권위 있는 이름 대응”을 가진다는 설명도 틀렸다. `t1_signing_targets.rs:618-621`의 네 domain은 메시지가 `None`이므로 이름 대응은 26종뿐이다. `authoritative.len() >= 20` 검사(`canonical_vectors.rs:724`)도 30종 대응을 보장하지 않는다.
+
+- `crates/protocol/tests/canonical_vectors.rs:526` — 3번 수정과 정직한 보고는 일치한다. 주석 줄을 제거하며, `canonical_vectors.rs:530-535`에서 이것이 단독으로 입증된 방어가 아니라 위생이라고 명시했다.
+
+- `crates/protocol/tests/canonical_vectors.rs:495` — H는 `b"`로 시작하지 않는 함수 호출 값이 `strip_prefix("b\"")`에서 제외되고, 해당 tag가 `py_tags`에서 사라져 `missing_in_py` 검사(`canonical_vectors.rs:669-674`)가 먼저 잡는다. 같은 줄 주석은 읽지 않는다.
+
+- `crates/protocol/tests/canonical_vectors.rs:729` — I는 coverage에서 얻은 기존 메시지가 두 문서에 반드시 존재해야 하므로, `md_map.get`/`py_map.get`의 `None` 분기(`canonical_vectors.rs:732-749`)가 mismatch를 추가하고 최종 assertion(`canonical_vectors.rs:753-758`)이 잡는다.
+
+- 테스트 환경 — Python 참조 구현의 self-test는 통과했다. 다만 현재 환경에는 `cargo` 실행 파일이 없어 Rust 테스트는 실행하지 못했다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 11라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ChildItem -LiteralPath C:'"\\Users\\playdata2\\.cargo\\bin\\cargo.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName; git diff --check" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 410ms:
+C:\Users\playdata2\.cargo\bin\cargo.exe
+warning: in the working copy of 'crates/crypto/src/framed_ingress.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/crypto/tests/framed_ingress.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/src/canonical.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/src/signable.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/src/to_fields.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/tests/canonical_vectors.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/tests/field_number_audit.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/tests/lifetime_consistency.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/tests/t1_signing_targets.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/protocol/tests/t1b_grant_and_control.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/protocol/signing.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'proto/SCHEMA_FINGERPRINT.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'proto/lease.proto', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tools/canonical/reference_canonical.py', LF will be replaced by CRLF the next time Git touches it
+
+codex
+Rust 도구는 PATH에만 빠져 있고 설치 자체는 확인됐습니다. 절대 경로로 protocol/crypto 테스트를 실행해 동작 결함 여부를 마저 확인하겠습니다. Python 참조 구현의 self-test와 저장 벡터 52개 재생성 대조는 모두 통과했습니다.
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "C:\\Users\\playdata2\\.cargo\\bin\\cargo.exe test -p gputeer-protocol; if ("'$LASTEXITCODE -eq 0) { C:'"\\Users\\playdata2\\.cargo\\bin\\cargo.exe test -p gputeer-crypto }" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 318ms:
+warn: could not canonicalize path C:\Users\playdata2
+error: failed to open: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\.cargo-build-lock
+
+Caused by:
+  액세스가 거부되었습니다. (os error 5)
+
+codex
+crates/protocol/tests/canonical_vectors.rs:725 — `coverage`가 “30종 전부”의 이름 대응을 가진다는 이전 서술이 남아 있다. `None`인 4종을 제외하므로 실제 권위 대응은 26종이다.
+
+crates/protocol/tests/t1b_grant_and_control.rs:466 — 테스트가 수동 배열을 사용해 `Domain`을 순회하지 않는다고 서술하지만, 실제 구현은 479행에서 `Domain::ALL`을 순회한다. 바로 위 462~464행 및 아래 475~478행과도 모순된다.
+
+CHANGES_REQUESTED
+tokens used
+82,962
+crates/protocol/tests/canonical_vectors.rs:725 — `coverage`가 “30종 전부”의 이름 대응을 가진다는 이전 서술이 남아 있다. `None`인 4종을 제외하므로 실제 권위 대응은 26종이다.
+
+crates/protocol/tests/t1b_grant_and_control.rs:466 — 테스트가 수동 배열을 사용해 `Domain`을 순회하지 않는다고 서술하지만, 실제 구현은 479행에서 `Domain::ALL`을 순회한다. 바로 위 462~464행 및 아래 475~478행과도 모순된다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 12라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+xt time Git touches it
+warning: in the working copy of 'crates/protocol/tests/t1b_grant_and_control.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/protocol/signing.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'proto/SCHEMA_FINGERPRINT.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'proto/lease.proto', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tools/canonical/reference_canonical.py', LF will be replaced by CRLF the next time Git touches it
+ M crates/crypto/src/framed_ingress.rs
+ M crates/crypto/tests/framed_ingress.rs
+ M crates/protocol/src/canonical.rs
+ M crates/protocol/src/constants.rs
+ M crates/protocol/src/signable.rs
+ M crates/protocol/src/to_fields.rs
+ M crates/protocol/tests/canonical_vectors.rs
+ M crates/protocol/tests/field_number_audit.rs
+ M crates/protocol/tests/lifetime_consistency.rs
+ M crates/protocol/tests/t1_signing_targets.rs
+ M crates/protocol/tests/t1b_grant_and_control.rs
+ M docs/protocol/signing.md
+ M proto/SCHEMA_FINGERPRINT.txt
+ M proto/lease.proto
+ M tests/vectors/canonical_v1.json
+ M tools/canonical/reference_canonical.py
+
+codex
+- `crates/protocol/tests/canonical_vectors.rs:725` — 30개 domain 중 proto 메시지가 없는 4개를 제외한 26개로 올바르게 수정됐다.
+- `crates/protocol/tests/t1b_grant_and_control.rs:466-474` — 현재 `Domain::ALL`을 순회하며 과거 한계였음을 명시했다. 다만 `:463`의 “처음부터 옳았다”는 과거 수동 배열이었다는 설명과 어긋나는 경미한 이력 문구다.
+- `crates/protocol/src/canonical.rs:17` — 벡터가 “12건”이라는 기존 설명은 현재 52건과 다르다.
+- `crates/protocol/tests/t1_signing_targets.rs:604` — `ExecutionGrant`를 “아직 구현하지 않음”이라고 하지만 `ToCanonicalFields`와 `Signable` 모두 구현돼 있다. 동작에는 영향 없는 낡은 주석이다.
+- `crates/crypto/tests/ed25519_verify.rs:416-417` — 모든 `Signable` 메시지가 장수명이라는 설명은 현재 여러 `ShortLived` 구현과 다르다. 역시 기존 주석 문제다.
+
+이웃 신고의 proto 필드, canonical 포함 범위, 독립 domain, 서명자 선택, 60초 수명, nonce replay, frame dispatch 및 위조·미등록 키·잘못된 키·만료 거부 경로에서는 결함을 찾지 못했다. Python 참조 구현의 52개 벡터 재생성 대조와 자체 검사는 통과했다. `cargo`는 환경에 없어 재실행하지 못했다.
+
+ACCEPTED
+tokens used
+135,771
+- `crates/protocol/tests/canonical_vectors.rs:725` — 30개 domain 중 proto 메시지가 없는 4개를 제외한 26개로 올바르게 수정됐다.
+- `crates/protocol/tests/t1b_grant_and_control.rs:466-474` — 현재 `Domain::ALL`을 순회하며 과거 한계였음을 명시했다. 다만 `:463`의 “처음부터 옳았다”는 과거 수동 배열이었다는 설명과 어긋나는 경미한 이력 문구다.
+- `crates/protocol/src/canonical.rs:17` — 벡터가 “12건”이라는 기존 설명은 현재 52건과 다르다.
+- `crates/protocol/tests/t1_signing_targets.rs:604` — `ExecutionGrant`를 “아직 구현하지 않음”이라고 하지만 `ToCanonicalFields`와 `Signable` 모두 구현돼 있다. 동작에는 영향 없는 낡은 주석이다.
+- `crates/crypto/tests/ed25519_verify.rs:416-417` — 모든 `Signable` 메시지가 장수명이라는 설명은 현재 여러 `ShortLived` 구현과 다르다. 역시 기존 주석 문제다.
+
+이웃 신고의 proto 필드, canonical 포함 범위, 독립 domain, 서명자 선택, 60초 수명, nonce replay, frame dispatch 및 위조·미등록 키·잘못된 키·만료 거부 경로에서는 결함을 찾지 못했다. Python 참조 구현의 52개 벡터 재생성 대조와 자체 검사는 통과했다. `cargo`는 환경에 없어 재실행하지 못했다.
+
+ACCEPTED
+

@@ -275,10 +275,11 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `RenewLeaseResult` | `gputeer/v1/lease-renew-result` |
 | `AgentSessionHello` | `gputeer/v1/session-hello` |
 | `NodeHeartbeat` | `gputeer/v1/node-heartbeat` |
+| `NeighborUnreachableReport` | `gputeer/v1/neighbor-unreachable` |
 | `ResumeLeaseRequest` | `gputeer/v1/lease-resume` |
 | `ResumeLeaseResult` | `gputeer/v1/lease-resume-result` |
 
-**총 29종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
+**총 30종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
 `policy` · `quarantine`(2개 메시지)이 tag 를 공유했다. **ADR-028 로 분리했다** —
 사유는 §5.1. `AgentGrantAck` 는 coordinator/agent 최소 핸드셰이크
 (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md, 2026-08-18)로
@@ -291,7 +292,8 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 tag 를 공유하지 않는다. 공유하면 요청 서명이 응답 검증도 통과해
 교차 재생(cross-message replay)이 가능해진다. Resume 프로토콜의
 `AgentSessionHello`·`ResumeLeaseRequest`·`ResumeLeaseResult`가 조각 3에서
-각각 독립 tag를 추가해 현재 총 29종이 됐다.
+각각 독립 tag를 추가해 29종이 됐고, 2026-08-30 이웃 신고
+(`gputeer/v1/neighbor-unreachable`)가 더해져 현재 총 30종이다.
 
 **한 문맥의 서명을 다른 문맥에서 검증하면 domain_tag가 달라 반드시 실패한다.**
 이것이 없으면 예컨대 Lease 서명을 Manifest 서명으로 재사용하는 공격이 가능하다.
@@ -332,7 +334,28 @@ Coordinator 들이 QuarantineDevice 에 m-of-n 서명한다
 
 회귀 방지: `crates/protocol/tests/t1b_grant_and_control.rs` 가 같은 domain 을
 공유하는 메시지 쌍의 canonical 이 서로 다른지 검사한다.
-`domain_tags_are_unique` 가 tag 중복을 검사한다.
+`crates/protocol/tests/canonical_vectors.rs::domain_tags_are_32_bytes_and_unique` 와
+`t1b_grant_and_control.rs::all_domain_tags_are_distinct` 가 tag 중복을 검사한다
+(둘 다 `Domain::ALL` 을 순회하므로 새 domain 이 자동으로 포함된다).
+
+★ 위 표와 `tools/canonical/reference_canonical.py` 의 `DOMAIN_TAGS` 가 코드의
+`Domain::ALL` 과 정확히 같은지는
+`canonical_vectors.rs::domain_tags_match_the_norm_document_and_the_python_reference`
+가 세 목록을 실제로 파싱해 **메시지 → tag 대응까지** 대조한다 — 이 저장소가
+다섯 번 겪은 "손으로 쓴 목록이 낡는" 결함을 잡기 위해서다(2026-08-30).
+
+★ 이것은 **낡음을 잡는 장치이지 위조를 막는 장치가 아니다.** 관련된 자리를
+**동시에 같은 방향으로** 고치면 여전히 통과한다. 어떤 파서도 일부러 속이려는
+편집을 전부 막지는 못한다 — 이 테스트가 올리는 것은 **우회 비용**이고, 그
+비용은 메시지에 따라 다르다.
+
+```text
+Signable 구현 메시지    네 자리 — canonical.rs 또는 signable.rs +
+                        t1_signing_targets.rs 의 coverage 이름 + 이 표 +
+                        reference_canonical.py
+그 외(membership 계열)  세 자리 — coverage 이름 + 이 표 + reference_canonical.py
+                        (Rust 쪽 메시지→domain 대응이 없어 한 자리가 빠진다)
+```
 
 ### ★ 5.2 4종은 proto 메시지가 없다
 
@@ -489,7 +512,7 @@ P0-08 이 확인한 가장 중요한 사실이다.
 그래서 스키마 지문을 저장소에 고정한다.
 
 ```text
-proto/SCHEMA_FINGERPRINT.txt                      66개 메시지 · 389개 필드
+proto/SCHEMA_FINGERPRINT.txt                      72개 메시지 · 449개 필드
 crates/protocol/tests/schema_fingerprint.rs       대조. 다르면 실패
 
 갱신: UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint

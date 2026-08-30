@@ -1079,6 +1079,27 @@ pub const DERIVED_HASH_FIELDS: &[(&str, u32, &str)] = &[(
      반드시 재계산해 대조한다(MUST). 계획서 §15.4 검증 13단계",
 )];
 
+/// 이웃 신고의 canonical 필드.
+///
+/// ★ **판정 필드가 없다** — 전부 신고자가 본 사실이다. 순서는 proto
+///   필드 번호 그대로이며, 번호를 건너뛰지 않는다.
+impl ToCanonicalFields for pb::NeighborUnreachableReport {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.reporter_node_id);
+        put_str(&mut f, 3, &self.reporter_device_id);
+        put_str(&mut f, 4, &self.unreachable_node_id);
+        put_str(&mut f, 5, &self.coordinator_device_id);
+        put_uint(&mut f, 6, self.observed_at_unix_ms);
+        put_bytes(&mut f, 7, &self.request_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 impl ToCanonicalFields for pb::NodeHeartbeat {
     fn to_canonical_fields(&self) -> Fields {
         let mut f = Fields::new();

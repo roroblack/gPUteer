@@ -87,7 +87,11 @@ fn check<M: Signable>(name: &str, msg: &M) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 10개 메시지 전부
+// `Signable` 을 구현한 메시지 전부
+//
+// ★ 여기 개수를 적지 않는다 — "10개" 라고 적혀 있었는데 실제로는
+//   17개였다(2026-08-30 독립 검수 5라운드 지적). 빠짐은 아래
+//   `every_signable_is_covered` 가 잡으므로 숫자는 불필요하다.
 // ══════════════════════════════════════════════════════════════════
 
 /// ★ `Signable` 을 구현한 **모든** 메시지가 여기 있어야 한다.
@@ -239,6 +243,23 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    // 이웃 신고(2026-08-30). ShortLived 이어야 한다 — heartbeat 와 방향이
+    // 반대다. 신고를 재생할 수 있으면 **어제의 "연락이 안 된다" 가 오늘
+    // 관측으로 되살아나** 지금 멀쩡한 노드가 연락 두절로 보인다.
+    //
+    // ★ 초안 주석은 "정족수를 한 건으로 채울 수 있다" 고 썼는데 **틀렸다**
+    //   (2026-08-30 독립 검수 지적). `reassignment.rs` 가 `reporter_node_id`
+    //   로 중복 제거하므로 같은 신고를 N 번 넣어도 한 표다. 재생 방어가
+    //   막는 것은 **신선도 위조와 중복 부작용**이다.
+    check(
+        "NeighborUnreachableReport",
+        &pb::NeighborUnreachableReport {
+            schema_version: 1,
+            observed_at_unix_ms: T,
+            request_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
 }
 
 /// ★ `Signable` 을 구현한 메시지가 위 테스트에 **전부** 있는가.
@@ -319,5 +340,38 @@ fn evidence_and_shortlived_differ_in_what_they_check() {
         Signable::expires_at_unix_ms(&c),
         0,
         "Evidence 의 expires_at 이 0 이 아니다"
+    );
+}
+
+
+/// ★ **재생이 사실을 조작하는 메시지**의 `Lifetime` 을 값으로 고정한다.
+///
+/// # 왜 이 테스트가 따로 필요한가
+///
+/// `declared_lifetime_matches_message_capability` 는 선언한 lifetime 의
+/// **내부 일관성**만 본다 — `ShortLived` 를 `LongLived` 로 바꿔도
+/// `expires_at != 0` 이면 그대로 통과한다. 즉 **강등을 아무도 못 잡는다.**
+///
+/// 2026-08-30 이웃 신고를 추가하며 뮤테이션으로 발견했다. 새 메시지만의
+/// 문제가 아니라 `NodeHeartbeat` 도 같은 구멍이었으므로 둘 다 고정한다.
+///
+/// # 강등되면 무슨 일이 생기는가
+///
+/// ```text
+/// NodeHeartbeat              재생하면 이미 죽은 노드가 살아 있어 보인다
+/// NeighborUnreachableReport  재생하면 어제의 관측이 오늘 관측으로
+///                            되살아나 살아 있는 노드가 연락 두절로 보인다
+/// ```
+#[test]
+fn messages_whose_replay_would_forge_facts_must_stay_shortlived() {
+    assert_eq!(
+        <pb::NodeHeartbeat as Signable>::LIFETIME,
+        Lifetime::ShortLived,
+        "★ NodeHeartbeat 의 lifetime 이 강등됐다 — 재생하면 죽은 노드가 살아 보인다"
+    );
+    assert_eq!(
+        <pb::NeighborUnreachableReport as Signable>::LIFETIME,
+        Lifetime::ShortLived,
+        "★ NeighborUnreachableReport 의 lifetime 이 강등됐다 — 재생하면 어제의 관측이 오늘 관측으로 되살아난다"
     );
 }

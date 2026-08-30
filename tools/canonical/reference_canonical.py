@@ -399,6 +399,16 @@ SCHEMAS = {
         (8, "request_nonce", "bytes", None),
         (90, "node_signature", "bytes", None),
     ],
+    "NeighborUnreachableReport": [
+        (1, "schema_version", "uint", None),
+        (2, "reporter_node_id", "string", None),
+        (3, "reporter_device_id", "string", None),
+        (4, "unreachable_node_id", "string", None),
+        (5, "coordinator_device_id", "string", None),
+        (6, "observed_at_unix_ms", "uint", None),
+        (7, "request_nonce", "bytes", None),
+        (90, "reporter_signature", "bytes", None),
+    ],
     "ResumeLeaseRequest": [
         (1, "schema_version", "uint", None),
         (2, "lease_id", "string", None),
@@ -676,6 +686,7 @@ DOMAIN_TAGS = {
     "RenewLeaseResult": b"gputeer/v1/lease-renew-result",
     "AgentSessionHello": b"gputeer/v1/session-hello",
     "NodeHeartbeat": b"gputeer/v1/node-heartbeat",
+    "NeighborUnreachableReport": b"gputeer/v1/neighbor-unreachable",
     "ResumeLeaseRequest": b"gputeer/v1/lease-resume",
     "ResumeLeaseResult": b"gputeer/v1/lease-resume-result",
     "CheckpointManifest": b"gputeer/v1/checkpoint",
@@ -1677,6 +1688,36 @@ def build_vectors():
         "NodeHeartbeat with a different fence_epoch — proves the field reaches canonical bytes",
         "NodeHeartbeat",
         _heartbeat_other_epoch,
+    )
+
+    # 이웃 신고 (ADR-033 §7 관측 층, 2026-08-30).
+    _neighbor = {
+        "schema_version": 1,
+        "reporter_node_id": "node-reporter",
+        "reporter_device_id": "device-reporter",
+        "unreachable_node_id": "node-stranded",
+        "coordinator_device_id": "coordinator-1",
+        "observed_at_unix_ms": 1_700_000_000_000,
+        "request_nonce": bytes(range(32, 48)),
+        "reporter_signature": b"E" * 64,
+    }
+    add(
+        "v38_neighbor_unreachable_report",
+        "NeighborUnreachableReport canonical vector",
+        "NeighborUnreachableReport",
+        _neighbor,
+    )
+
+    # 대조쌍 — 지목당한 노드가 바뀌면 canonical 바이트도 달라야 한다.
+    # 이게 같으면 한 노드에 대한 신고 서명을 다른 노드에 재사용할 수 있다.
+    _neighbor_other_target = dict(_neighbor)
+    _neighbor_other_target["unreachable_node_id"] = "node-other"
+    add(
+        "v38b_neighbor_unreachable_different_target",
+        "NeighborUnreachableReport with a different unreachable_node_id"
+        " — proves the accused node reaches canonical bytes",
+        "NeighborUnreachableReport",
+        _neighbor_other_target,
     )
 
     base = _minimal_manifest()

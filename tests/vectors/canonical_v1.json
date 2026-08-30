@@ -528,6 +528,26 @@
       "checks": []
     },
     {
+      "name": "v38_neighbor_unreachable_report",
+      "description": "NeighborUnreachableReport canonical vector",
+      "message_type": "NeighborUnreachableReport",
+      "canonical_hex": "0801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220d6e6f64652d737472616e6465642a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
+      "canonical_len": 89,
+      "sig_input_hex": "677075746565722f76312f6e65696768626f722d756e726561636861626c650000000001000000590801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220d6e6f64652d737472616e6465642a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
+      "sig_input_blake3_256": "5b2637f0d5484ed7d43e1406adc96d71bd732c1da141e651a14c1fdc798bb607",
+      "checks": []
+    },
+    {
+      "name": "v38b_neighbor_unreachable_different_target",
+      "description": "NeighborUnreachableReport with a different unreachable_node_id — proves the accused node reaches canonical bytes",
+      "message_type": "NeighborUnreachableReport",
+      "canonical_hex": "0801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220a6e6f64652d6f746865722a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
+      "canonical_len": 86,
+      "sig_input_hex": "677075746565722f76312f6e65696768626f722d756e726561636861626c650000000001000000560801120d6e6f64652d7265706f727465721a0f6465766963652d7265706f72746572220a6e6f64652d6f746865722a0d636f6f7264696e61746f722d313080d095ffbc313a10202122232425262728292a2b2c2d2e2f",
+      "sig_input_blake3_256": "a2feed37afda3f9a6ede7ea1d9f374bc9d87526873f7044a8c6757df97764dd0",
+      "checks": []
+    },
+    {
       "name": "v10_domain_separation",
       "description": "같은 canonical, 다른 domain_tag → sig_input 이 달라야 한다 (§5)",
       "message_type": "JobManifest",

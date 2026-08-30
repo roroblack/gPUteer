@@ -28,7 +28,7 @@
 //! - domain_tag 분리 → **ADR-028**
 
 use crate::canonical::{Domain, Fields};
-use crate::constants::GRANT_TTL_MS;
+use crate::constants::{GRANT_TTL_MS, NEIGHBOR_REPORT_TTL_MS};
 use crate::pb;
 use crate::signing::{signing_input, DerivedMismatch, Lifetime, Signable};
 use crate::ToCanonicalFields;
@@ -570,11 +570,69 @@ impl Signable for pb::RevokeLeaseNotice {
     }
 }
 
+/// 이웃 신고 — `ADR-033` §7 의 관측 층.
+///
+/// ★ `Lifetime::ShortLived` 다 — **오래된 관측이 지금 관측으로 재사용되는
+///   것**을 막기 위해서다. 어제의 "연락이 안 된다" 를 오늘 다시 보내면
+///   지금 멀쩡한 노드가 연락 두절로 보인다.
+///
+///   ★ 초안 주석은 "재생하면 이웃 하나가 `ADR-033` §8 조건 3 의 정족수를
+///     혼자 채울 수 있다" 고 썼는데 **틀렸다**(2026-08-30 독립 검수 지적).
+///     `crates/scheduler/src/reassignment.rs` 는 `reporter_node_id` 를
+///     집합으로 중복 제거하므로 같은 신고를 N 번 넣어도 한 표다. replay
+///     방어가 막는 것은 정족수 조작이 아니라 **신선도 위조와 중복
+///     부작용**이다.
+///
+/// ★ 서명자는 **신고자의 장치**다. "이 장치가 이 관측을 보냈다" 를
+///   증명할 뿐이다. 증명하지 **않는** 것 —
+///
+///   - 그 관측이 사실인지
+///   - 그 장치가 정당한 풀 이웃인지 (멤버십 해소의 몫, 아직 없다)
+///   - 그 장치가 주장한 `reporter_node_id` 의 실제 장치인지
+///     ★ 유효한 장치 키 하나가 서로 다른 node ID N 개를 서명할 수 있다
+///       (같은 검수 지적). 정족수를 세기 전에 소비자가 authoritative
+///       device→node 결합을 해소해야 한다 —
+///       `crates/scheduler/src/reassignment.rs` 가 그것을 호출부 진술로
+///       요구하는 이유이고, wire→커널 어댑터는 아직 없다.
+impl Signable for pb::NeighborUnreachableReport {
+    const DOMAIN: Domain = Domain::NeighborUnreachableReport;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.reporter_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        // ★ `GRANT_TTL_MS` 를 쓰지 않는다 — 그건 "ExecutionGrant 기본
+        //   수명"(기준선 §15.4)이고 신고에 적용할 규범적 근거가 없다
+        //   (2026-08-30 독립 검수 지적). 전용 상수를 쓴다.
+        self.observed_at_unix_ms
+            .saturating_add(NEIGHBOR_REPORT_TTL_MS)
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.observed_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.reporter_device_id
+    }
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.request_nonce)
+    }
+}
+
 /// 노드 생존 보고.
 ///
 /// ★ `Lifetime::ShortLived` 다 — replay nonce 를 반드시 검사한다.
 ///   heartbeat 를 재생할 수 있으면 이미 죽은 노드를 살아 있는 것처럼
 ///   보이게 만들 수 있고, 그러면 ADR-033 §7 의 판정이 통째로 무의미해진다.
+///
+/// ★ 이 주석은 2026-08-30 이웃 신고를 그 **위에** 끼워 넣으면서 잠시
+///   남의 impl 에 붙어 있었다(독립 검수 2라운드가 짚었다). 문서 주석은
+///   바로 아래 항목에 붙는다 — 새 impl 을 위에 넣을 때 딸려 올라간다.
 impl Signable for pb::NodeHeartbeat {
     const DOMAIN: Domain = Domain::NodeHeartbeat;
     const LIFETIME: Lifetime = Lifetime::ShortLived;

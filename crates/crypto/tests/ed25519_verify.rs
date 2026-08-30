@@ -413,8 +413,13 @@ fn long_lived_manifest_ignores_clock_skew() {
 
 /// 단수명 메시지에는 skew 규칙이 **적용되어야** 한다.
 ///
-/// 현재 `Signable` 을 구현한 메시지가 전부 장수명이라, 단수명 경로가
-/// 검증되지 않은 채 남는다. 테스트용 타입으로 그 경로를 검증한다.
+/// ★ 이 주석은 "현재 `Signable` 을 구현한 메시지가 전부 장수명" 이라고
+///   적혀 있었다. **더는 사실이 아니다** — `ExecutionGrant`·
+///   `NodeHeartbeat`·`NeighborUnreachableReport` 등 여러 `ShortLived`
+///   구현이 생겼다(2026-08-30 독립 검수 12라운드 지적).
+///
+///   그래도 이 테스트용 타입은 남긴다 — 실제 메시지와 무관하게
+///   **skew 규칙 자체**를 격리해 재는 것이 목적이기 때문이다.
 mod short_lived {
     use super::*;
     use gputeer_protocol::canonical::{Fields, Value};

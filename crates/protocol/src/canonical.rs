@@ -14,7 +14,10 @@
 //!   h. 알 수 없는 필드는 포함하지 않는다
 //!   i. 서명 필드(90)와 도출 해시 필드는 제외
 //!
-//! 검증: `tests/vectors/canonical_v1.json` 의 벡터 12건과 대조한다.
+//! 검증: `tests/vectors/canonical_v1.json` 의 벡터와 대조한다.
+//!
+//! ★ 여기 개수를 적지 않는다 — "12건" 이라고 적혀 있었는데 52건이
+//!   됐다(2026-08-30 독립 검수 12라운드 지적). 벡터는 계속 늘어난다.
 
 use std::collections::BTreeMap;
 
@@ -351,6 +354,7 @@ declare_domains! {
     LeaseResume => "gputeer/v1/lease-resume",
     LeaseResumeResult => "gputeer/v1/lease-resume-result",
     NodeHeartbeat => "gputeer/v1/node-heartbeat",
+    NeighborUnreachableReport => "gputeer/v1/neighbor-unreachable",
 }
 
 impl Domain {

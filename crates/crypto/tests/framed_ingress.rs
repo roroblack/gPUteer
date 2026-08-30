@@ -7,10 +7,11 @@ use std::io::Cursor;
 
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, FrameType, FramingError, InMemoryKeyring,
-    InMemoryReplayGuard, IngressMessage, KeyDirectorySource, SigningKey,
+    InMemoryReplayGuard, IngressError, IngressMessage, KeyDirectorySource, SigningKey,
 };
 use gputeer_protocol::constants::MAX_INGRESS_FRAME_BYTES;
 use gputeer_protocol::pb;
+use gputeer_protocol::signing::{VerifyError, VerifyOutcome};
 use prost::Message;
 
 const NOW: u64 = 1_755_200_000_000;
@@ -873,4 +874,393 @@ fn write_frame_rejects_bodies_over_the_limit() {
 fn write_frame_accepts_bodies_within_the_limit() {
     let ok_body = vec![0u8; 128];
     assert!(write_frame(FrameType::Grant, &ok_body).is_ok());
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// 이웃 신고 (ADR-033 §7 관측 층, 2026-08-30)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn neighbor_report(k: &SigningKey, nonce_seed: u8) -> pb::NeighborUnreachableReport {
+    let mut m = pb::NeighborUnreachableReport {
+        schema_version: 1,
+        reporter_node_id: "01JBXNODE0000000000000001".into(),
+        // ★ signer_id() 는 reporter_device_id 다 — 빠뜨리면 UnknownSigner 다.
+        reporter_device_id: DEVICE.into(),
+        unreachable_node_id: "01JBXNODE0000000000000002".into(),
+        coordinator_device_id: "01JBXCOORD000000000000001".into(),
+        observed_at_unix_ms: NOW,
+        request_nonce: (0u8..16).map(|i| i.wrapping_add(nonce_seed)).collect(),
+        ..Default::default()
+    };
+    m.reporter_signature = sign(k, &m).to_vec();
+    m
+}
+
+/// 정상 신고가 프레이밍 계층을 통과한다 — 비공허성.
+///
+/// 이것이 없으면 아래 거부 테스트들이 "애초에 아무것도 통과 못 하는"
+/// 조건에서 우연히 통과할 수 있다.
+#[test]
+fn a_signed_neighbor_report_dispatches() {
+    let k = key(21);
+    let dir = directory(&k);
+    let report = neighbor_report(&k, 0);
+    let frame = write_frame(
+        FrameType::NeighborUnreachableReport,
+        &report.encode_to_vec(),
+    )
+    .unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let message = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    )
+    .expect("정상 신고는 통과해야 한다");
+
+    match message {
+        IngressMessage::NeighborUnreachableReport(verified) => {
+            assert_eq!(verified.get().unreachable_node_id, "01JBXNODE0000000000000002");
+            assert_eq!(verified.signer_id(), DEVICE);
+        }
+        other => panic!("다른 메시지로 dispatch 됐다: {other:?}"),
+    }
+}
+
+/// 위조된 서명은 거부된다.
+#[test]
+fn a_forged_neighbor_report_is_rejected() {
+    let k = key(22);
+    let dir = directory(&k);
+    let mut report = neighbor_report(&k, 1);
+    report.reporter_signature[0] ^= 0xFF;
+    let frame = write_frame(
+        FrameType::NeighborUnreachableReport,
+        &report.encode_to_vec(),
+    )
+    .unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let result = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    );
+
+    assert!(
+        matches!(result, Err(FramingError::Verify(_))),
+        "위조된 신고가 통과했다: {result:?}"
+    );
+}
+
+/// ★ **같은 신고를 두 번 보내면 두 번째는 재생으로 거부된다.**
+///
+/// 재생 방어가 막는 것은 **신선도 위조와 중복 부작용**이다 — 어제의
+/// "연락이 안 된다" 를 오늘 다시 보내는 것.
+///
+/// ★ 초안 주석은 "재생하면 이웃 하나가 `ADR-033` §8 조건 3 의 정족수를
+///   혼자 채울 수 있다" 고 썼는데 **틀렸다**(2026-08-30 독립 검수 지적).
+///   `crates/scheduler/src/reassignment.rs` 가 `reporter_node_id` 를
+///   집합으로 중복 제거하므로 같은 신고를 N 번 넣어도 한 표다.
+///
+/// ★ `is_err()` 만 보면 저장소 오류·정책 오류도 성공으로 세므로
+///   **정확한 오류**로 고정한다(같은 검수 지적).
+#[test]
+fn replaying_a_neighbor_report_is_rejected() {
+    let k = key(23);
+    let dir = directory(&k);
+    let report = neighbor_report(&k, 2);
+    let body = report.encode_to_vec();
+
+    let mut replay = InMemoryReplayGuard::new();
+
+    let mut first = Cursor::new(write_frame(FrameType::NeighborUnreachableReport, &body).unwrap());
+    read_frame(
+        &mut first,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    )
+    .expect("첫 신고는 통과해야 한다");
+
+    // 같은 바이트를 그대로 다시 보낸다.
+    let mut second = Cursor::new(write_frame(FrameType::NeighborUnreachableReport, &body).unwrap());
+    let result = read_frame(
+        &mut second,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    );
+
+    assert!(
+        matches!(
+            result,
+            Err(FramingError::Verify(IngressError::Verification(
+                VerifyError::Outcome(VerifyOutcome::Replay)
+            )))
+        ),
+        "재생이 정확히 Replay 로 거부되지 않았다 — 다른 이유로 실패하면 \
+         이 테스트는 재생 방어를 재는 게 아니다: {result:?}"
+    );
+}
+
+/// 신고 몸통을 **heartbeat 프레임으로** 보내면 거부된다.
+///
+/// ★ 초안은 이 테스트가 "domain 분리" 를 증명한다고 썼는데 **틀렸다**
+///   (2026-08-30 독립 검수 3라운드 지적). 두 메시지는 canonical 필드
+///   배치 자체가 달라서, domain tag 가 같아져도 서명은 어차피 실패한다 —
+///   즉 이 테스트는 domain 분리 회귀를 고정하지 못한다.
+///
+///   domain tag 가 실제로 서로 다른지는
+///   `crates/protocol/tests/t1b_grant_and_control.rs::all_domain_tags_are_distinct`
+///   가 고정한다(뮤테이션으로 확인함). 여기서 고정하는 것은 **프레임
+///   타입을 바꿔 보낸 몸통이 통과하지 못한다** 는 사실 하나다.
+#[test]
+fn a_neighbor_report_body_sent_as_a_heartbeat_frame_is_rejected() {
+    let k = key(24);
+    let dir = directory(&k);
+    let report = neighbor_report(&k, 3);
+    let frame = write_frame(FrameType::NodeHeartbeat, &report.encode_to_vec()).unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let result = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    );
+
+    assert!(
+        result.is_err(),
+        "신고 몸통이 heartbeat 프레임으로 통과했다: {result:?}"
+    );
+}
+
+/// **디렉터리에 없는 신고자**는 `UnknownSigner` 로 거부된다.
+///
+/// ★ 이건 "정당한 이웃인가" 를 판정하는 것이 **아니다** — 키 디렉터리에
+///   있는지만 본다. 멤버십 해소는 여전히 없다.
+///
+/// ★ 초안은 이 테스트를 "unknown signer" 라고 불렀지만 실제로는 **같은
+///   signer ID 에 다른 공개키**를 등록해서 `InvalidSignature` 가 나왔다
+///   (2026-08-30 독립 검수 3라운드 지적). `is_err()` 만 봐서 그 불일치가
+///   가려졌다. 둘은 다른 방어이므로 테스트도 둘로 나눈다.
+#[test]
+fn a_report_from_a_signer_absent_from_the_directory_is_rejected() {
+    let k = key(25);
+    // 디렉터리에는 **다른 ID** 를 등록한다 — 이 신고자는 아예 없다.
+    let mut dir = InMemoryKeyring::new();
+    dir.insert("01JBXOTHERDEVICE000000000A", key(26).verifying_key());
+
+    let report = neighbor_report(&k, 4);
+    let frame = write_frame(
+        FrameType::NeighborUnreachableReport,
+        &report.encode_to_vec(),
+    )
+    .unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let result = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    );
+
+    assert!(
+        matches!(
+            result,
+            Err(FramingError::Verify(IngressError::Verification(
+                VerifyError::Outcome(VerifyOutcome::UnknownSigner)
+            )))
+        ),
+        "디렉터리에 없는 신고자가 UnknownSigner 로 거부되지 않았다: {result:?}"
+    );
+}
+
+/// **등록은 됐지만 키가 다른** 신고자는 `InvalidSignature` 로 거부된다.
+///
+/// 위와 다른 방어다 — 이쪽은 "이 ID 는 아는데 이 서명은 그 키로 만든 게
+/// 아니다" 다.
+#[test]
+fn a_report_signed_by_the_wrong_key_is_rejected() {
+    let k = key(25);
+    // 같은 ID 에 **다른 키**를 등록한다.
+    let dir = directory(&key(26));
+
+    let report = neighbor_report(&k, 4);
+    let frame = write_frame(
+        FrameType::NeighborUnreachableReport,
+        &report.encode_to_vec(),
+    )
+    .unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let result = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    );
+
+    assert!(
+        matches!(
+            result,
+            Err(FramingError::Verify(IngressError::Verification(
+                VerifyError::Outcome(VerifyOutcome::InvalidSignature)
+            )))
+        ),
+        "잘못된 키로 서명한 신고가 InvalidSignature 로 거부되지 않았다: {result:?}"
+    );
+}
+
+/// ★ **한 장치 키가 서로 다른 `reporter_node_id` 를 서명할 수 있다.**
+///
+/// 서명은 "이 **장치**가 보냈다" 만 증명하고, 그 장치가 주장한 **기계
+/// ID** 의 실제 소유자인지는 증명하지 않는다(2026-08-30 독립 검수 지적).
+/// `ADR-033` §8 조건 3 의 정족수는 기계 수로 세므로, 이 결합을 해소하지
+/// 않고 세면 장치 하나가 N 표를 만들 수 있다.
+///
+/// 이 테스트는 **그 구멍이 열려 있음을 고정한다** — 나중에 닫히면 이
+/// 테스트가 실패하며 문서도 같이 고치라고 알린다. `runtime-linux` 의
+/// "탈출이 성공하기를 기대하는 테스트" 와 같은 장치다.
+#[test]
+fn one_device_key_can_sign_many_reporter_node_ids_today() {
+    let k = key(28);
+    let dir = directory(&k);
+
+    // ★ replay guard 를 **하나만** 쓴다. 반복마다 새로 만들면 nonce 실수를
+    //   숨긴다(2026-08-30 독립 검수 3라운드 지적) — 초안은 두 nonce 의 앞
+    //   16바이트가 같았는데도 매번 새 guard 를 만들어 통과했다.
+    let mut replay = InMemoryReplayGuard::new();
+
+    for (index, node_id) in ["01JBXNODE000000000000000A", "01JBXNODE000000000000000B"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut report = neighbor_report(&k, 6);
+        report.reporter_node_id = node_id.into();
+        // nonce 를 실제로 다르게 만든다 — 같은 문맥에서 둘 다 통과해야 하므로.
+        report.request_nonce = (0u8..16).map(|b| b ^ (index as u8 + 1)).collect();
+        report.reporter_signature = sign(&k, &report).to_vec();
+
+        let frame = write_frame(
+            FrameType::NeighborUnreachableReport,
+            &report.encode_to_vec(),
+        )
+        .unwrap();
+        let mut stream = Cursor::new(frame);
+
+        let message = read_frame(
+            &mut stream,
+            1,
+            KeyDirectorySource::Provided(&dir),
+            &mut replay,
+            &FixedClock(NOW),
+        )
+        .expect("서명 계층은 기계 ID 주장을 검사하지 않는다 — 지금은 통과한다");
+
+        match message {
+            IngressMessage::NeighborUnreachableReport(verified) => {
+                assert_eq!(verified.get().reporter_node_id, node_id);
+                assert_eq!(
+                    verified.signer_id(),
+                    DEVICE,
+                    "서명자는 장치 하나인데 기계 ID 만 바뀌었다"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// ★ **프레이밍 계층은 `coordinator_device_id` 를 자기 ID 와 대조하지
+///   않는다.**
+///
+/// proto 주석이 초안에 "다른 Coordinator 로 보낸 신고를 재사용할 수 없게
+/// 한다" 고 썼는데 강제되지 않는 보장이었다(`CLAUDE.md` §0.4).
+/// canonical 에 들어가므로 **변조**는 막히지만 **대조**는 소비자 몫이다.
+///
+/// 이 테스트도 그 사실을 고정한다.
+#[test]
+fn the_framing_layer_does_not_check_the_target_coordinator_today() {
+    let k = key(29);
+    let dir = directory(&k);
+    let mut report = neighbor_report(&k, 7);
+    report.coordinator_device_id = "01JBXCOORD00000000000OTHER".into();
+    report.reporter_signature = sign(&k, &report).to_vec();
+
+    let frame = write_frame(
+        FrameType::NeighborUnreachableReport,
+        &report.encode_to_vec(),
+    )
+    .unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    let message = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW),
+    )
+    .expect("프레이밍 계층은 수신 Coordinator 를 대조하지 않는다 — 지금은 통과한다");
+
+    match message {
+        IngressMessage::NeighborUnreachableReport(verified) => assert_eq!(
+            verified.get().coordinator_device_id,
+            "01JBXCOORD00000000000OTHER",
+            "값은 그대로 전달된다 — 대조는 소비자가 해야 한다"
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// **너무 오래된 신고는 거부된다** — `Lifetime::ShortLived`.
+///
+/// 오래된 신고가 통과하면 "지금 연락이 안 된다" 를 어제 관측으로 주장할
+/// 수 있다.
+#[test]
+fn a_stale_neighbor_report_is_rejected() {
+    let k = key(27);
+    let dir = directory(&k);
+    let report = neighbor_report(&k, 5);
+    let frame = write_frame(
+        FrameType::NeighborUnreachableReport,
+        &report.encode_to_vec(),
+    )
+    .unwrap();
+    let mut stream = Cursor::new(frame);
+    let mut replay = InMemoryReplayGuard::new();
+
+    // TTL 을 훌쩍 넘긴 시각에 읽는다.
+    let result = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&dir),
+        &mut replay,
+        &FixedClock(NOW + 3_600_000),
+    );
+
+    assert!(
+        result.is_err(),
+        "만료된 신고가 통과했다: {result:?}"
+    );
 }
