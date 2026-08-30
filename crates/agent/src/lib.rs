@@ -452,7 +452,10 @@ fn run_resume_connection(
     let now = clock.now_unix_ms();
     let mut hello = pb::AgentSessionHello {
         schema_version: 1,
-        mode: 2,
+        // ★ 리터럴 2 대신 공용 상수를 쓴다(2026-08-30 독립 검수 지적).
+        //   다중 Agent lane 만 상수로 옮기고 Resume 경로는 리터럴로
+        //   남겨 두면, 두 값이 갈라졌을 때 아무도 모른다.
+        mode: gputeer_protocol::constants::MODE_RESUME,
         session_id: config.session_id.clone(),
         node_id: config.agent_device_id.clone(),
         connection_attempt: config.connection_attempt,
@@ -783,6 +786,9 @@ fn run_one_connection(
             opted_in: config.execute_workload,
             commit_limit_bytes: config.workload_commit_limit_bytes,
             capture_dir: Some(run_dir.clone()),
+            // ★ attempt 별로 갈라야 한다 — 같은 Job 의 두 attempt 가 같은
+            //   격리 이름을 받으면 하나를 멈출 때 다른 하나도 죽는다.
+            isolation_name: format!("{}-{}", grant.grant_id, grant.attempt_id),
         };
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
         //   작업 디렉터리를 지운다.

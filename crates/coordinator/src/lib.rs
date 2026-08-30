@@ -1012,7 +1012,8 @@ fn serve_resume_connection(
             )))
         }
     };
-    if hello.mode != 2 {
+    // ★ 리터럴 2 대신 공용 상수(2026-08-30 독립 검수 지적).
+    if hello.mode != gputeer_protocol::constants::MODE_RESUME {
         return Err(SessionHandlerError::Legacy(format!(
             "AgentSessionHello.mode must be RESUME, got {}",
             hello.mode

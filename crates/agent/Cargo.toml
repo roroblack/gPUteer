@@ -20,3 +20,6 @@ tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 gputeer-runtime-windows = { path = "../runtime-windows" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gputeer-runtime-linux = { path = "../runtime-linux" }

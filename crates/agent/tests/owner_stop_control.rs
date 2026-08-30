@@ -38,6 +38,7 @@ fn policy(opted_in: bool, limit: u64) -> ExecutionPolicy {
         opted_in,
         commit_limit_bytes: limit,
         capture_dir: None,
+        isolation_name: "owner-stop-control-test".to_string(),
     }
 }
 

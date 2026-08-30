@@ -145,6 +145,8 @@ impl std::error::Error for ExecutionError {}
 pub struct WorkloadStopper {
     #[cfg(windows)]
     inner: gputeer_runtime_windows::JobStopper,
+    #[cfg(target_os = "linux")]
+    inner: gputeer_runtime_linux::CgroupStopper,
 }
 
 impl WorkloadStopper {
@@ -163,6 +165,8 @@ impl WorkloadStopper {
         Self {
             #[cfg(windows)]
             inner: gputeer_runtime_windows::JobStopper::inert_for_test(),
+            #[cfg(target_os = "linux")]
+            inner: gputeer_runtime_linux::CgroupStopper::inert_for_test(),
         }
     }
 
@@ -177,9 +181,19 @@ impl WorkloadStopper {
                     detail: error.to_string(),
                 })
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
-            // 이 플랫폼은 애초에 실행하지 않으므로(위 `platform::execute`)
+            // cgroup 전체를 끝낸다 — 자식이 손자를 만들었어도 같이 죽는다.
+            // Windows 의 `TerminateJobObject` 와 같은 자리다.
+            self.inner
+                .stop()
+                .map_err(|error| ExecutionError::StopFailed {
+                    detail: error.to_string(),
+                })
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            // 이 플랫폼은 애초에 실행하지 않으므로(아래 `platform::execute`)
             // 멈출 대상이 존재하지 않는다. 그래도 "성공했다" 고 거짓말하지
             // 않는다.
             Err(ExecutionError::UnsupportedPlatform {
@@ -215,6 +229,18 @@ pub struct ExecutionPolicy {
     ///   안에 직접 쓰게 하면 그 계약이 깨진다. 별도 작업 디렉터리로
     ///   받은 뒤 부모가 읽어 `write_once()` 로 옮긴다.
     pub capture_dir: Option<std::path::PathBuf>,
+    /// 이 실행을 다른 실행과 구분하는 이름.
+    ///
+    /// ★ Linux 에서 cgroup 디렉터리 이름이 된다. **attempt 마다 달라야
+    ///   한다** — 같으면 두 작업이 같은 cgroup 을 공유해, 소유자가 A 를
+    ///   멈출 때 B 도 같이 죽는다.
+    ///
+    /// ★ `ExecutionSpec.job_id` 를 쓰지 않는다(2026-08-30). 같은 Job 의
+    ///   두 attempt 가 같은 이름을 받아 정확히 그 사고가 난다. 우연한
+    ///   유일성에 기대지 않고 호출부가 명시한다.
+    ///
+    /// Windows 는 Job Object 가 익명 커널 객체라 이 값을 쓰지 않는다.
+    pub isolation_name: String,
 }
 
 /// 검증된 실행 지시를 실제 프로세스로 띄우고 종료까지 관측한다.
@@ -383,24 +409,140 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::{ExecutionError, ExecutionOutcome, ExecutionPolicy};
+    use gputeer_protocol::execution_spec::ExecutionSpec;
+
+    use super::{STDERR_FILENAME, STDOUT_FILENAME};
+
+    /// cgroup v2 로 상한을 걸고 실행한다.
+    ///
+    /// # ★ 이것이 무엇이고 무엇이 아닌가
+    ///
+    /// `runtime-linux` 가 실측으로 확인한 그대로다.
+    ///
+    /// ```text
+    /// 막는다     실수로 메모리를 너무 먹는 작업
+    ///            소유자가 즉시 끝내야 하는 작업(cgroup.kill 로 트리 전체)
+    /// 못 막는다  빠져나가려고 작정한 코드 — 자기 pid 를 상위
+    ///            cgroup.procs 에 써서 나갈 수 있다(테스트로 확인)
+    /// ```
+    ///
+    /// Windows 의 Job Object 도 같은 성격이다(소프트 제한, 호스트 보호
+    /// 아님). `CLAUDE.md` §0.4 대로, 여기서 그 이상을 주장하지 않는다.
+    pub(super) fn execute(
+        spec: &ExecutionSpec,
+        policy: &ExecutionPolicy,
+        on_started: impl FnOnce(super::WorkloadStopper),
+    ) -> Result<ExecutionOutcome, ExecutionError> {
+        let create = gputeer_runtime_linux::SpawnSpec {
+            program: spec.entrypoint.clone().into(),
+            args: spec.args.iter().map(|a| a.clone().into()).collect(),
+            current_dir: policy.capture_dir.clone(),
+            stdout_path: policy
+                .capture_dir
+                .as_ref()
+                .map(|dir| dir.join(STDOUT_FILENAME)),
+            stderr_path: policy
+                .capture_dir
+                .as_ref()
+                .map(|dir| dir.join(STDERR_FILENAME)),
+        };
+
+        // ★ cgroup 이름은 attempt 별로 갈라야 한다. 같은 이름을 쓰면
+        //   두 작업이 같은 cgroup 을 공유해 한쪽을 멈출 때 다른 쪽도
+        //   죽는다 — 소유자가 A 를 멈췄는데 B 가 사라진다.
+        let cgroup_name = super::sanitize_cgroup_name(&policy.isolation_name);
+
+        let mut child = gputeer_runtime_linux::create_constrained_child(
+            &create,
+            policy.commit_limit_bytes,
+            &cgroup_name,
+            // ★ 위임받은 subtree 만 쓴다. 루트로 내려가면 운영자가
+            //   상위에 걸어 둔 CPU·메모리·PID 상한 밖으로 나간다
+            //   (2026-08-30 독립 검수 지적) — 그건 Agent 가 자기 판단으로
+            //   할 일이 아니다. 위임이 없으면 실행을 거부한다.
+            &gputeer_runtime_linux::CgroupParent::Current,
+        )
+        .map_err(|error| match error {
+            gputeer_runtime_linux::CgroupError::SpawnFailed { detail } => {
+                ExecutionError::SpawnFailed { detail }
+            }
+            other => ExecutionError::LimitNotApplied {
+                detail: other.to_string(),
+            },
+        })?;
+
+        // ★ 손잡이를 **기다리기 전에** 넘긴다. 자식은 이미 돌고 있으므로,
+        //   여기서 넘기지 않으면 `wait()` 에 붙잡힌 동안 소유자가 멈출
+        //   방법이 없다.
+        on_started(super::WorkloadStopper {
+            inner: child.stopper(),
+        });
+
+        let limit = child.memory_limit_bytes().unwrap_or(policy.commit_limit_bytes);
+        let exit_code = child.wait().map_err(|error| ExecutionError::WaitFailed {
+            detail: error.to_string(),
+        })?;
+        // ★ peak 는 `wait()` **뒤에** 읽는다. 자식이 살아 있는 동안 읽으면
+        //   최종값이 아니다. cgroup 은 프로세스가 끝나도 우리가 지울
+        //   때까지 남아 있으므로 여기서 읽을 수 있다.
+        let peak = child.peak_memory_bytes().unwrap_or(0);
+
+        Ok(ExecutionOutcome {
+            // 종료 코드는 i32 다(신호로 죽으면 -1). u32 로 옮기며 부호를
+            // 잃지 않게 as 캐스트로 비트 그대로 보존한다.
+            exit_code: exit_code as u32,
+            commit_limit_bytes: limit,
+            peak_commit_bytes: peak,
+        })
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use super::{ExecutionError, ExecutionOutcome, ExecutionPolicy};
     use gputeer_protocol::execution_spec::ExecutionSpec;
 
     /// ★ **무방비로 실행하느니 거부한다.**
     ///
-    /// Linux 에는 cgroup 으로 강제할 수단이 실제로 있고 `ENV-03` 이
-    /// 네이티브에서 4종(memory/CPU/PID/freezer)을 확인했지만, **이
-    /// 저장소의 코드가 그것을 걸지는 않는다.** 연결되지 않은 강제를
-    /// "있다" 고 취급해 프로세스를 띄우면 `CLAUDE.md` §0.4 위반이다.
+    /// Windows 는 Job Object, Linux 는 cgroup v2 로 상한을 건다. 그
+    /// 둘이 아닌 플랫폼에는 연결된 강제 수단이 없다 — 연결되지 않은
+    /// 강제를 "있다" 고 취급해 프로세스를 띄우면 `CLAUDE.md` §0.4 위반이다.
     pub(super) fn execute(
         _spec: &ExecutionSpec,
         _policy: &ExecutionPolicy,
         _on_started: impl FnOnce(super::WorkloadStopper),
     ) -> Result<ExecutionOutcome, ExecutionError> {
         Err(ExecutionError::UnsupportedPlatform {
-            detail: "이 플랫폼에는 자원 상한 강제가 연결돼 있지 않다(Linux cgroup 미착수) — 상한 없이 실행하지 않는다".into(),
+            detail: "이 플랫폼에는 자원 상한 강제가 연결돼 있지 않다 — 상한 없이 실행하지 않는다"
+                .into(),
         })
+    }
+}
+
+/// cgroup 디렉터리 이름으로 쓸 수 있게 다듬는다.
+///
+/// ★ 호출부가 준 값이지만 그대로 믿지 않는다. `/` 나
+///   NUL 이 들어오면 경로가 탈출하고, 빈 문자열이면 이름이 없어진다.
+///   영숫자·`-`·`_` 만 남기고 나머지는 `_` 로 바꾼다.
+#[cfg(target_os = "linux")]
+fn sanitize_cgroup_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect();
+    if cleaned.is_empty() {
+        "unnamed".to_string()
+    } else {
+        cleaned
     }
 }

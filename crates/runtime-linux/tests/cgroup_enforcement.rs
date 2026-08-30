@@ -11,7 +11,14 @@
 
 use std::time::{Duration, Instant};
 
-use gputeer_runtime_linux::{create_constrained_child, SpawnSpec};
+use gputeer_runtime_linux::{create_constrained_child, CgroupParent, SpawnSpec};
+
+/// ★ 이 테스트 환경(WSL, /init.scope)은 위임된 subtree 가 없어서
+///   루트를 써야 한다. 그 선택이 상위 제한을 우회한다는 것은
+///   `CgroupParent` 문서에 적혀 있고, 이름이 그것을 계속 상기시킨다.
+fn parent() -> CgroupParent {
+    CgroupParent::RootBypassingAncestorLimits
+}
 
 const LIMIT: u64 = 256 * 1024 * 1024;
 
@@ -52,7 +59,7 @@ fn wait_within(mut child: gputeer_runtime_linux::ConstrainedChild, limit: Durati
 /// 상한이 실제로 걸리고 자식이 그 cgroup 안에서 도는가.
 #[test]
 fn a_child_actually_runs_inside_the_cgroup() {
-    let mut child = create_constrained_child(&spec("/bin/sleep", &["3"]), LIMIT, "runs-inside")
+    let mut child = create_constrained_child(&spec("/bin/sleep", &["3"]), LIMIT, "runs-inside", &parent())
         .expect("자식 기동");
 
     // 자식이 실제로 그 cgroup 에 들어갔는지 본다. 안 들어갔다면
@@ -96,6 +103,7 @@ fn exceeding_the_limit_actually_kills_the_child() {
         &spec("/bin/sh", &["-c", "A=$(head -c 67108864 /dev/urandom | base64); echo ${#A}"]),
         small,
         "exceeds",
+        &parent(),
     )
     .expect("자식 기동");
 
@@ -116,6 +124,7 @@ fn a_workload_within_the_limit_is_untouched() {
         &spec("/bin/sh", &["-c", "A=$(head -c 1048576 /dev/urandom | base64); echo ${#A}"]),
         LIMIT,
         "within",
+        &parent(),
     )
     .expect("자식 기동");
     let code = child.wait().expect("wait");
@@ -126,7 +135,7 @@ fn a_workload_within_the_limit_is_untouched() {
 #[test]
 fn a_blocked_wait_can_be_released_from_another_thread() {
     let child =
-        create_constrained_child(&spec("/bin/sleep", &["99999"]), LIMIT, "stoppable").expect("기동");
+        create_constrained_child(&spec("/bin/sleep", &["99999"]), LIMIT, "stoppable", &parent()).expect("기동");
     let stopper = child.stopper();
 
     let started = Instant::now();
@@ -156,9 +165,7 @@ fn a_blocked_wait_can_be_released_from_another_thread() {
 fn killing_the_cgroup_kills_grandchildren_too() {
     let child = create_constrained_child(
         &spec("/bin/sh", &["-c", "sleep 99999 & sleep 99999"]),
-        LIMIT,
-        "grandchildren",
-    )
+        LIMIT, "grandchildren", &parent())
     .expect("기동");
 
     let mut before = Vec::new();
@@ -191,5 +198,46 @@ fn killing_the_cgroup_kills_grandchildren_too() {
     assert!(
         after.is_empty(),
         "cgroup 을 죽였는데 {after:?} 가 남았다 — 손자가 살아남으면 GPU 는 여전히 잡혀 있다"
+    );
+}
+
+/// ★ 자식이 cgroup 밖으로 **실제로 나갈 수 있는가.**
+///
+/// # 왜 못 막는 것을 테스트하는가
+///
+/// 2026-08-30 독립 검수가 "이건 협조하는 작업에는 상한이지만 적대적인
+/// 코드에는 아니다" 를 짚었다. 모듈 문서에 그렇게 적었는데, **적어 두는
+/// 것만으로는 그게 사실인지 알 수 없다.**
+///
+/// `CLAUDE.md` §0.4 는 강제할 수 없는 것을 보장으로 선언하지 말라고
+/// 한다. 그러려면 무엇을 강제 못 하는지 정확히 알아야 하고, 아는
+/// 방법은 해 보는 것뿐이다.
+///
+/// 이 테스트는 **탈출이 성공하기를 기대한다.** 나중에 누가 cgroup
+/// namespace 나 권한 강등으로 이 구멍을 닫으면 이 테스트가 실패하고,
+/// 그때 모듈 문서의 "못 막는다" 를 같이 고치게 된다.
+#[test]
+fn a_determined_child_can_still_escape_the_cgroup() {
+    // 자기 pid 를 루트 cgroup.procs 에 써서 나간 뒤, 상한을 훌쩍 넘는
+    // 메모리를 잡는다. 상한이 강제됐다면 죽어야 한다.
+    let escape = "echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; \
+                  A=$(head -c 67108864 /dev/urandom | base64); echo escaped=${#A}";
+    let child = create_constrained_child(
+        &spec("/bin/sh", &["-c", escape]),
+        32 * 1024 * 1024,
+        "escape",
+        &parent(),
+    )
+    .expect("기동");
+
+    let code = wait_within(child, Duration::from_secs(30));
+
+    // ★ 이 assert 가 실패하면 좋은 소식이다 — 구멍이 닫혔다는 뜻이다.
+    //   그때는 이 테스트를 지우는 게 아니라 뒤집고, 모듈 문서의
+    //   "못 막는다" 도 같이 고쳐야 한다.
+    assert_eq!(
+        code, 0,
+        "자식이 탈출하지 못했다 — 구멍이 닫혔다면 모듈 문서의 \
+         '적대적인 코드는 못 막는다' 를 같이 고쳐야 한다"
     );
 }

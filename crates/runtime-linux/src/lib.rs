@@ -33,9 +33,30 @@
 //! 하위에 위임되지 않았으면 **typed error 로 실패한다.** 상한 없이
 //! 띄우지 않는다 — 그게 이 크레이트의 존재 이유다(`CLAUDE.md` §0.4).
 //!
+//! # ★ 협조하는 작업에는 상한이고, 적대적인 코드에는 아니다
+//!
+//! 2026-08-30 독립 검수가 짚은 것을 그대로 적는다. 자식은 부모와 **같은
+//! 권한**으로 돈다. `exec` 전에 제한 cgroup 에 넣지만, 실행이 시작된 뒤
+//! 자기 pid 를 상위 cgroup 의 `cgroup.procs` 에 써서 **스스로 빠져나갈
+//! 수 있다.**
+//!
+//! ```text
+//! 막는다        실수로 메모리를 너무 먹는 작업
+//!               상한을 몰라서 넘기는 작업
+//!               소유자가 즉시 끝내야 하는 작업(cgroup.kill)
+//! 못 막는다     빠져나가려고 작정한 코드
+//! ```
+//!
+//! 이걸 닫으려면 cgroup namespace(`CLONE_NEWCGROUP`)로 상위를 안 보이게
+//! 하고 권한을 낮춰야 하는데, 둘 다 이 조각보다 크다. `CLAUDE.md` §0.4 가
+//! "강제할 수 없는 것을 보장으로 선언하지 않는다" 고 했으므로, 여기서
+//! **선언하지 않는다** — `runtime-windows` 가 "S1 은 호스트를 지키지
+//! 못한다" 고 적어 둔 것과 같은 자리다.
+//!
 //! # 이 크레이트가 보장하지 않는 것
 //!
 //! ```text
+//! 탈출 방지        위 참조. 자식이 상위 cgroup.procs 에 자기를 쓰면 나간다
 //! 호스트 보호      메모리 상한일 뿐이다. 임의 네이티브 코드로부터
 //!                  호스트를 지키지 못한다(§0.4 — "S1 이상이면 안전"
 //!                  이라 쓰지 않는다)
@@ -136,6 +157,17 @@ pub struct CgroupStopper {
 }
 
 impl CgroupStopper {
+    /// 테스트 전용 — 아무것도 안 멈추는 손잡이.
+    ///
+    /// ★ `stop()` 이 **성공을 돌려주지 않는다.** 멈춘 척하면 그걸 쓰는
+    ///   테스트가 "멈췄다" 를 통과시켜 공허해진다. Windows 쪽
+    ///   `JobStopper::inert_for_test()` 와 같은 규칙이다.
+    pub fn inert_for_test() -> Self {
+        Self {
+            cgroup: PathBuf::from("/nonexistent/gputeer-inert-for-test"),
+        }
+    }
+
     /// 이 cgroup 에 속한 **모든** 프로세스를 즉시 끝낸다.
     ///
     /// ★ `cgroup.kill` 은 Linux 5.14+ 다. 없으면 `cgroup.procs` 를 읽어
@@ -237,13 +269,14 @@ pub fn create_constrained_child(
     spec: &SpawnSpec,
     memory_limit_bytes: u64,
     cgroup_name: &str,
+    parent: &CgroupParent,
 ) -> Result<ConstrainedChild, CgroupError> {
     if memory_limit_bytes == 0 {
         return Err(CgroupError::LimitNotApplied {
             detail: "memory_limit_bytes 가 0 이다".into(),
         });
     }
-    let parent = resolve_parent()?;
+    let parent = resolve_parent(parent)?;
     let cgroup = create_child_cgroup(&parent, cgroup_name)?;
 
     // 상한을 **먼저** 건다.
@@ -258,23 +291,35 @@ pub fn create_constrained_child(
     //   무한정 먹으면 소유자의 기계가 기어간다. 그건 상한이 아니다.
     //
     //   `memory.swap.max = 0` 을 같이 걸어야 실제로 OOM 으로 끝난다.
-    for (name, value) in [
-        ("memory.max", memory_limit_bytes.to_string()),
-        ("memory.swap.max", "0".to_string()),
-    ] {
-        let path = cgroup.join(name);
-        // `memory.swap.max` 는 스왑 계정이 꺼진 커널에 없을 수 있다.
-        // 그 경우엔 애초에 스왑으로 새어나갈 곳이 없으므로 넘어간다 —
-        // 있는데 못 쓰는 것과 아예 없는 것은 다르다.
-        if name == "memory.swap.max" && !path.exists() {
-            continue;
-        }
-        if let Err(error) = std::fs::write(&path, &value) {
+    let limit_path = cgroup.join("memory.max");
+    if let Err(error) = std::fs::write(&limit_path, memory_limit_bytes.to_string()) {
+        let _ = std::fs::remove_dir(&cgroup);
+        return Err(CgroupError::LimitNotApplied {
+            detail: format!("memory.max 쓰기 실패({limit_path:?}): {error}"),
+        });
+    }
+
+    // ★ `memory.swap.max` 가 없으면 **넘어가지 않는다**(2026-08-30 독립
+    //   검수 지적). 초안은 "없으면 새어나갈 곳도 없다" 고 **추정**했는데,
+    //   파일 부재는 스왑 계정이 꺼졌다는 뜻일 뿐 스왑이 없다는 뜻이
+    //   아니다. 계정이 꺼진 채 스왑이 켜져 있으면 상한이 조용히 샌다 —
+    //   정확히 이 실측이 잡았던 결함으로 되돌아간다.
+    //
+    //   그래서 실제로 확인한다. 스왑이 진짜 없을 때만 넘어간다.
+    let swap_path = cgroup.join("memory.swap.max");
+    if swap_path.exists() {
+        if let Err(error) = std::fs::write(&swap_path, "0") {
             let _ = std::fs::remove_dir(&cgroup);
             return Err(CgroupError::LimitNotApplied {
-                detail: format!("{name} 쓰기 실패({path:?}): {error}"),
+                detail: format!("memory.swap.max 쓰기 실패({swap_path:?}): {error}"),
             });
         }
+    } else if system_has_swap() {
+        let _ = std::fs::remove_dir(&cgroup);
+        return Err(CgroupError::LimitNotApplied {
+            detail: "memory.swap.max 가 없는데 스왑은 켜져 있다(/proc/swaps) —                      상한을 넘겨도 스왑으로 살아남으므로 실행하지 않는다"
+                .into(),
+        });
     }
 
     let mut command = std::process::Command::new(&spec.program);
@@ -282,11 +327,21 @@ pub fn create_constrained_child(
     if let Some(dir) = &spec.current_dir {
         command.current_dir(dir);
     }
-    if let Some(path) = &spec.stdout_path {
-        command.stdout(open_for_write(path)?);
-    }
-    if let Some(path) = &spec.stderr_path {
-        command.stderr(open_for_write(path)?);
+    // ★ 여기서 `?` 로 바로 나가면 이미 만든 cgroup 이 남는다
+    //   (2026-08-30 독립 검수 지적). 남은 cgroup 은 같은 이름의 다음
+    //   실행을 계속 실패시킨다.
+    let mut open_outputs = || -> Result<(), CgroupError> {
+        if let Some(path) = &spec.stdout_path {
+            command.stdout(open_for_write(path)?);
+        }
+        if let Some(path) = &spec.stderr_path {
+            command.stderr(open_for_write(path)?);
+        }
+        Ok(())
+    };
+    if let Err(error) = open_outputs() {
+        let _ = std::fs::remove_dir(&cgroup);
+        return Err(error);
     }
 
     // ★ fork 후 exec **전에** 자기를 cgroup 에 넣는다. 이 순서가
@@ -295,8 +350,20 @@ pub fn create_constrained_child(
     unsafe {
         use std::os::unix::process::CommandExt;
         command.pre_exec(move || {
-            // pre_exec 은 fork 와 exec 사이에서 돈다 — async-signal-safe
-            // 해야 한다. 파일 하나에 짧은 숫자를 쓰는 것뿐이다.
+            // ★ pre_exec 은 fork 와 exec 사이에서 돈다. 엄밀히는
+            //   async-signal-safe 한 호출만 써야 하는데,
+            //   `std::fs::write` 가 그것을 **보장하지는 않는다**
+            //   (2026-08-30 독립 검수 지적 — 초안 주석은 보장한다고
+            //   썼다. 틀린 서술이었다).
+            //
+            //   실제로 하는 일은 open/write/close 뿐이고 셋 다
+            //   async-signal-safe 한 syscall 이지만, `std` 가 그 경로만
+            //   쓴다는 계약은 없다. 할당이나 잠금이 끼면 다중 스레드
+            //   프로세스에서 fork 뒤 교착할 수 있다.
+            //
+            //   지금 이것을 없애려면 raw syscall 을 직접 부르거나 libc
+            //   의존을 추가해야 한다. 둘 다 이 조각보다 크므로, 위험을
+            //   숨기지 않고 여기 적어 둔다.
             std::fs::write(&procs_path, "0")?;
             Ok(())
         });
@@ -314,61 +381,88 @@ pub fn create_constrained_child(
     Ok(ConstrainedChild { child, cgroup })
 }
 
+/// 이 시스템에 스왑이 실제로 켜져 있는가.
+///
+/// `/proc/swaps` 는 헤더 한 줄 뒤에 활성 스왑 장치를 한 줄씩 낸다.
+/// 읽지 못하면 **있다고 본다** — 모르면 안전한 쪽으로 기운다.
+fn system_has_swap() -> bool {
+    match std::fs::read_to_string("/proc/swaps") {
+        Ok(text) => text.lines().skip(1).any(|line| !line.trim().is_empty()),
+        Err(_) => true,
+    }
+}
+
 fn open_for_write(path: &Path) -> Result<std::fs::File, CgroupError> {
     std::fs::File::create(path).map_err(|error| CgroupError::SpawnFailed {
         detail: format!("출력 파일 열기 실패({path:?}): {error}"),
     })
 }
 
-/// 하위 cgroup 을 만들 수 있는 부모를 고른다.
+/// 하위 cgroup 을 어디에 만들 것인가.
 ///
-/// # 왜 "내 cgroup" 만으로는 안 되는가
+/// ★ 2026-08-30 독립 검수가 초안의 자동 루트 폴백을 반려했다. 자동으로
+///   v2 루트까지 내려가면 자식이 systemd unit·사용자 slice·컨테이너에
+///   걸린 CPU·메모리·PID 상한 **밖**으로 나간다. 개별 `memory.max` 는
+///   걸려도 운영자가 설정한 상위 총량 제한을 벗어나므로 안전한 폴백이
+///   아니다 — 게다가 루트의 `subtree_control` 을 건드리는 것 자체가
+///   자기 위임 범위를 넘는 시스템 전역 변경이다.
 ///
-/// ★ 2026-08-30 x600 WSL 실측에서 이 코드가 **설계대로 실행을
-///   거부했다.** 초안은 무조건 이 프로세스의 cgroup 을 부모로 썼는데,
-///   그게 `/init.scope` 였다.
+///   그래서 선택을 호출부에 넘긴다. 기본값은 거부다.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CgroupParent {
+    /// 이 프로세스가 속한 cgroup 아래. 위임받은 환경의 정상 경로다.
+    Current,
+    /// 운영자가 지정한 cgroup 아래. 위임받은 subtree 를 명시할 때 쓴다.
+    Explicit(PathBuf),
+    /// cgroup v2 루트 아래.
+    ///
+    /// ★ 상위 제한을 우회한다는 것을 **아는 채로** 고르는 값이다.
+    ///   이름이 길고 불편한 것이 의도다 — 실수로 고를 수 없어야 한다.
+    RootBypassingAncestorLimits,
+}
+
+impl Default for CgroupParent {
+    fn default() -> Self {
+        Self::Current
+    }
+}
+
+/// 부모 후보를 실제 경로로 바꾸고 `memory` 위임을 확인한다.
+///
+/// # 왜 "내 cgroup" 이 항상 되지는 않는가
+///
+/// ★ 2026-08-30 x600 WSL 실측에서 이 코드가 설계대로 실행을 거부했다 —
+///   `/proc/self/cgroup` 이 `/init.scope` 였다.
 ///
 /// ```text
-/// /proc/self/cgroup          0::/init.scope
 /// init.scope 의 subtree_control   (비어 있음)
 /// -> 하위 디렉터리는 만들어지지만 memory.max 파일이 없다
 /// ```
 ///
 /// cgroup v2 의 **"내부 프로세스 금지"** 규칙 때문이다 — 프로세스를
 /// 직접 담고 있는 cgroup 은 컨트롤러를 하위에 위임할 수 없다.
-/// `init.scope` 에는 init 이 들어 있으므로 `+memory` 쓰기가 실패한다.
 ///
-/// # 고르는 순서
-///
-/// ```text
-/// 1  이 프로세스의 cgroup      위임받은 환경(컨테이너·systemd slice)
-/// 2  cgroup v2 루트            우리가 root 이고 위임이 없는 환경
-/// ```
-///
-/// 각 후보에 대해 `memory` 가 하위에 위임돼 있는지 보고, 없으면
-/// **한 번 켜 보고** 다시 확인한다. 둘 다 안 되면 typed error 다 —
-/// 상한 없이 실행하지 않는다.
-///
-/// ★ 2번으로 내려가면 자식이 이 프로세스의 cgroup **밖**에 놓인다.
-///   상한 자체는 동일하게 걸리지만, 이 프로세스를 담은 상위 cgroup 의
-///   회계에는 자식이 안 잡힌다. 그 차이를 아는 채로 쓰라고 여기 적는다.
-fn resolve_parent() -> Result<PathBuf, CgroupError> {
+/// 그런 환경에서는 호출부가 `Explicit` 로 위임받은 subtree 를 주거나,
+/// 위험을 감수하고 `RootBypassingAncestorLimits` 를 고른다. 자동으로
+/// 내려가지 않는다.
+fn resolve_parent(parent: &CgroupParent) -> Result<PathBuf, CgroupError> {
     let root = Path::new(CGROUP_ROOT);
     if !root.join("cgroup.controllers").exists() {
         return Err(CgroupError::NotAvailable {
             detail: format!("{CGROUP_ROOT}/cgroup.controllers 가 없다 — cgroup v2 가 아니다"),
         });
     }
-    let mut reasons = Vec::new();
-    for candidate in [current_cgroup_dir()?, root.to_path_buf()] {
-        match memory_is_delegated(&candidate) {
-            Ok(()) => return Ok(candidate),
-            Err(reason) => reasons.push(format!("{candidate:?}: {reason}")),
+    let candidate = match parent {
+        CgroupParent::Current => current_cgroup_dir()?,
+        CgroupParent::Explicit(path) => path.clone(),
+        CgroupParent::RootBypassingAncestorLimits => root.to_path_buf(),
+    };
+    memory_is_delegated(&candidate).map_err(|reason| {
+        CgroupError::MemoryControllerUnavailable {
+            detail: format!("{candidate:?}: {reason}"),
         }
-    }
-    Err(CgroupError::MemoryControllerUnavailable {
-        detail: reasons.join(" / "),
-    })
+    })?;
+    Ok(candidate)
 }
 
 /// 이 cgroup 이 하위에 `memory` 를 위임하는가. 아니면 켜 본다.
@@ -470,7 +564,7 @@ mod tests {
             stdout_path: None,
             stderr_path: None,
         };
-        let error = match create_constrained_child(&spec, 0, "zero") {
+        let error = match create_constrained_child(&spec, 0, "zero", &CgroupParent::Current) {
             Err(error) => error,
             Ok(_) => panic!("상한 0 이 통과했다"),
         };

@@ -314,6 +314,7 @@ dependencies = [
  "gputeer-checkpoint",
  "gputeer-crypto",
  "gputeer-protocol",
+ "gputeer-runtime-linux",
  "gputeer-runtime-policy",
  "gputeer-runtime-windows",
  "prost",
