@@ -5029,6 +5029,63 @@ pub fn run() -> Result<String, String> {
         "90) 남의 Agent 이름으로 보낸 heartbeat 를 서명자 조회에서 거부(UnknownSigner)\n",
     );
 
+    // 92) heartbeat 관측이 실제 wire 를 타고 durable 하게 남는가.
+    //
+    //     ★ `ADR-033` §7 이 "`NodeRecord.last_heartbeat_unix_ms` 필드는
+    //       있지만 그 값을 채우는 메시지도 관측자도 없다" 고 지목한
+    //       공백이다. 메시지(`NodeHeartbeat`)와 관측자(Coordinator)는
+    //       생겼는데, 그 관측이 재시작을 넘지 못하면 공백은 그대로다 —
+    //       Coordinator 가 재시작하는 순간 모든 노드가 "한 번도 못 봤다"
+    //       가 된다.
+    //
+    //     저장소 단위 테스트는 따로 있다. 여기서 보는 것은 **실제 서명·
+    //     replay·3종 대조를 전부 통과한 heartbeat 가** 그 저장소까지
+    //     도달하는가다.
+    let liveness_dir = tempfile::tempdir()
+        .map_err(|e| format!("92) liveness 임시 디렉터리 생성 실패: {e}"))?;
+    let liveness_db = liveness_dir.path().join("liveness.db");
+    let liveness_db = liveness_db
+        .to_str()
+        .ok_or_else(|| format!("92) liveness DB 경로가 UTF-8 이 아니다: {liveness_db:?}"))?;
+
+    let hb_92 = run_handshake(
+        &fixture,
+        &["--expect-heartbeats", "2", "--liveness-db", liveness_db],
+        &["--heartbeat-rounds", "2"],
+    )?;
+    if !hb_92.coordinator_success || !hb_92.agent_success {
+        return Err(format!(
+            "92) 정상 heartbeat 왕복이 실패했다: coordinator={:?} agent={:?}",
+            hb_92.coordinator_stderr, hb_92.agent_stderr
+        ));
+    }
+    // 두 회차가 모두 저장됐는가.
+    let stored = hb_92
+        .coordinator_stdout
+        .lines()
+        .filter(|line| line.starts_with("HEARTBEAT_STORED "))
+        .count();
+    if stored != 2 {
+        return Err(format!(
+            "92) 저장된 관측이 2건이 아니다({stored}건): {:?}",
+            hb_92.coordinator_stdout
+        ));
+    }
+    // ★ 두 번째 회차가 실제로 **진행**했는가. 둘 다 advanced=false 면
+    //   저장은 하는데 값이 안 바뀌는 것이고, 그러면 침묵 시간이 영영
+    //   늘어나 살아 있는 노드가 조용해 보인다.
+    if !hb_92.coordinator_stdout.contains("advanced=true") {
+        return Err(format!(
+            "92) 관측이 한 번도 진행하지 않았다: {:?}",
+            hb_92.coordinator_stdout
+        ));
+    }
+    // 파일이 실제로 생겼는가 — 로그만 찍고 안 쓰는 경우를 배제한다.
+    if !std::path::Path::new(liveness_db).exists() {
+        return Err("92) liveness DB 파일이 만들어지지 않았다".to_string());
+    }
+    report.push_str("92) heartbeat 관측이 실제 wire 를 거쳐 durable 저장소까지 도달\n");
+
     report.push_str(&run_multi_agent_scenario(&fixture)?);
 
     Ok(report)

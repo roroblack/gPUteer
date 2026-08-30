@@ -197,6 +197,13 @@ pub struct CoordinatorConfig {
     pub revoke_before_renew: bool,
     /// ACK 뒤에 받을 `NodeHeartbeat` 개수. 0 이면 이 구간이 없다.
     pub expect_heartbeats: u32,
+    /// heartbeat 관측을 남길 SQLite 경로.
+    ///
+    /// ★ `None` 이면 관측이 **메모리에도 안 남는다** — 로그로 찍고
+    ///   버린다. 그러면 Coordinator 가 재시작하는 순간 모든 노드가
+    ///   "한 번도 못 봤다" 가 된다. `ADR-033` §7 이 지목한
+    ///   `NodeRecord.last_heartbeat_unix_ms` 공백이 정확히 그것이다.
+    pub liveness_db_path: Option<String>,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -658,6 +665,26 @@ fn serve_one_connection_impl(
     //
     //   `expect_heartbeats == 0`(기본값)이면 이 구간은 통째로 없다 —
     //   기존 시나리오와 바이트 단위로 같게 동작한다.
+    // ★ 관측을 남길 곳을 **루프 밖에서** 한 번 연다. 회차마다 열면
+    //   heartbeat 하나에 파일 열기가 하나씩 붙는다.
+    //
+    //   저장소 열기 실패는 `Storage` 로 분류해 fail-closed 한다
+    //   (`DoD-37` 이 세운 규칙) — 관측을 못 남기는 채로 "살아 있다" 를
+    //   계속 받아들이면, 그 사실이 어디에도 안 남는다.
+    let mut liveness_store = match &config.liveness_db_path {
+        Some(path) if config.expect_heartbeats > 0 => Some(
+            crate::node_liveness_store::CoordinatorNodeLivenessStore::open(path).map_err(
+                |error| {
+                    SessionHandlerError::Classified(storage_error(
+                        "liveness store open",
+                        error,
+                    ))
+                },
+            )?,
+        ),
+        _ => None,
+    };
+
     for _ in 0..config.expect_heartbeats {
         let message = read_frame(
             stream,
@@ -733,10 +760,26 @@ fn serve_one_connection_impl(
             }
         }
 
-        // ★ 여기서 멈춘다. 이 값을 durable 하게 저장하는 것
-        //   (NodeRecord.last_heartbeat_unix_ms)과 그것으로 노드 상태를
-        //   판정하는 것(ADR-033 §7 의 판정 층)은 아직 없다. 관측했다는
-        //   사실만 보고하고, 판정한 척하지 않는다.
+        // ★ 세 대조를 **전부 통과한 뒤에만** 남긴다. 먼저 저장하면
+        //   거부될 관측이 사실로 기록된다.
+        //
+        //   판정은 여전히 여기서 하지 않는다 — `classify_node_liveness`
+        //   가 하고, 재배정은 `ADR-033` §8 의 여섯 조건이 필요하다.
+        //   이 자리는 **사실만** 남긴다.
+        if let Some(store) = liveness_store.as_mut() {
+            let verified = match &message {
+                IngressMessage::NodeHeartbeat(verified) => verified,
+                other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
+            };
+            let observed = store.observe(verified).map_err(|error| {
+                SessionHandlerError::Classified(storage_error("liveness observe", error))
+            })?;
+            println!(
+                "HEARTBEAT_STORED node_id={} last_heartbeat_unix_ms={} advanced={}",
+                observed.stored.node_id, observed.stored.last_heartbeat_unix_ms, observed.advanced
+            );
+        }
+
         println!(
             "HEARTBEAT_ACCEPTED node_id={} device_id={} fence_epoch={} running_attempts={} issued_at_unix_ms={}",
             heartbeat.node_id,
@@ -1812,6 +1855,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
+        liveness_db_path: flags.0.get("--liveness-db").cloned(),
         extra_agents: flags.0.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
