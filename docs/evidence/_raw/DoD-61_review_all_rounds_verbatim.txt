@@ -1,0 +1,456 @@
+################ 독립 검수 2라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+Allowed`를 받는다. `Recordable`에서 이름만 더 강한 진술 값으로 바뀐 셈이며, ADR-033:207의 “이 재할당이 감사 로그에 기록된다”를 충족하지 못한다.
+
+2. `crates/scheduler/src/reassignment.rs:182-196,242-251,457-472` — 조건 5의 수치 비교 자체는 우회되지 않는다. `first > original_fence_epoch`이고 제안값도 범위 안이어야 하므로 `original=u64::MAX`는 fail-closed이고, `MAX-1 → MAX`만 통과한다. 그러나 두 비교값과 `BrokerPreSignedVerifiedByCaller`를 모두 호출자가 직접 만든다. 실제 fence가 100이어도 `original_fence_epoch=0`, 범위 `1..=u64::MAX`라고 진술할 수 있고, 다른 Job용 서명 범위도 현재 Job에 재사용할 수 있다. ADR-033:234-241은 “이 Job의 failover 범위”를 요구하지만 Job·Attempt·원래 fence와 서명 범위를 결합하는 값이 없다. 테스트도 `crates/scheduler/tests/reassignment.rs:395-412`의 단순 경계 비교만 검증한다.
+
+3. `crates/scheduler/src/reassignment.rs:23-36,370-377,601-604` — “오늘 이 커널은 아무것도 허용하지 못한다”와 `Allowed`의 “여섯 조건이 전부 충족됐다”는 실제 API와 모순된다. `crates/scheduler/tests/reassignment.rs:73-77,120-128`가 오늘 바로 `Allowed`를 받는 경로를 명시적으로 실행한다. `EnforcedByCaller` 외에도 서명된 이웃 신고, Broker 범위, 수신 동의, 감사 커밋, 침묵 기간과 Lease 시각까지 모두 공개 생성 가능한 진술 또는 숫자다. production 소비자가 없다는 것은 `rg`로 확인했지만, 공개 판정 API가 사실 검증 없이 “전부 충족”을 선언하므로 `CLAUDE.md:94-106` §0.4 위반은 남는다.
+
+4. `crates/scheduler/src/reassignment.rs:382-405,443-450,488-490` — `require_canonical_identifier`는 Job·Attempt·양쪽 Node·양쪽 Member·신고자·신고 대상의 8개 경로에는 모두 적용된다. 하지만 저장소의 정본 규칙인 “ID는 26자 ULID”(`proto/common.proto:18-21`)를 구현하지 않고, 임의 길이의 모든 ASCII 그래픽 문자를 허용한다. 따라서 `"x"`, `"!"`, 테스트의 `"job-1"`도 통과한다. `crates/scheduler/tests/reassignment.rs:42-70`의 정상 fixture 자체가 프로토콜상 유효하지 않아 새 식별자 테스트가 실제 계약을 검증하지 못한다.
+
+5. `crates/scheduler/src/reassignment.rs:408-410,511-535` — 대소문자 비교는 자기편향 검사를 우회하지 못하게 하는 거부 방향으로 사용되고, 모호한 신고자는 표를 잃는 대신 전체 입력 오류가 된다. O(n²) 검사도 모든 이전 원소를 보므로 세 명 이상에서 조합을 놓치지는 않는다. 다만 저장소의 기존 멤버십 판정은 정확한 문자열 동일성을 사용하고(`crates/protocol/src/membership.rs:187-208`), 여기만 별도 대소문자 동일성 규칙을 발명했다. 정본 ULID 검증 없이 이 규칙을 적용하므로 다른 계층이 별개로 취급하는 두 ID를 여기서는 `AmbiguousReporterIdentity`로 거부할 수 있다. 세 명 이상·비인접 정렬 조합 테스트도 없다.
+
+6. `crates/scheduler/src/reassignment.rs:366-367,474-477` — `audit_record.record_id`는 식별자인데 유일하게 canonical 식별자 검사를 거치지 않는다. `" audit "`, `"a b"`, 비ASCII, 제어문자를 포함한 비공백 문자열도 모두 통과한다. 다른 ID와 규칙이 다른 이유가 문서화되지 않았고, `crates/scheduler/tests/reassignment.rs:301-312`도 공백-only 한 건만 검사한다. 의도적인 별도 규칙이라기보다 누락으로 보인다.
+
+7. `crates/scheduler/src/reassignment.rs:426-441,541-589` — 정책 0, 빈 신고, 조건 1의 `>` 경계, Lease의 `<=` 경계, 범위 포함 경계는 코드와 테스트가 실제로 고쳐졌다. `u64::MAX`에서도 허용 우회는 발견되지 않았다. 다만 `distinct_reporters.len() as u32`(`:565`)는 보고 수가 `u32::MAX`를 넘으면 조용히 잘려 `CLAUDE.md:166-175` §3의 조용한 오류 금지에 어긋난다. 안전성 우회보다는 잘못된 거부를 만드는 이론적 경계 결함이다.
+
+8. `crates/scheduler/src/reassignment.rs:89-94` 및 `crates/scheduler/src/lib.rs:29-34` — 이미 정본인 `gputeer_protocol::ParticipationModel`과 별개의 동명 enum을 새로 정의·공개했다. ADR-033:249-252가 참조하는 `assumes_mutual_trust()`도 이 타입에는 없다. production 배선 시 별도 변환이 필요해지고 잘못된 모델 매핑이 새 우회점이 될 수 있다. 실제 production 호출부가 없다는 점은 전체 검색으로 확인했다.
+
+새 테스트 37개는 공허한 assert는 아니며 기존 바이너리에서는 37/37 통과했다. 다만 현재 소스가 그 바이너리보다 1초 늦게 수정됐고, read-only 환경 때문에 Cargo build lock을 만들 수 없어 현 소스의 재컴파일 결과로 계상할 수는 없다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 3라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+uous`로 판정합니다(`crates/protocol/src/membership.rs:185`, `crates/protocol/src/membership.rs:199`). 따라서 “정본과 같은 규칙”이라는 설명은 사실이 아닙니다.
+
+3. `crates/scheduler/src/reassignment.rs:575`, `crates/scheduler/src/reassignment.rs:614` — 그 발명된 `Ambiguous` 규칙조차 모든 비교 지점에 적용되지 않습니다. fence 범위의 job/attempt와 감사 기록의 job/attempt는 직접 `!=` 비교합니다. 대소문자만 다른 값은 각각 `FenceRangeIssuedForAnotherAttempt`와 `AuditRecordDoesNotMatchRequest`로 보고되어 “판단 불가”가 아닌 “다른 요청”으로 단정됩니다. 이는 오류가 사실을 잘못 전하지 않아야 한다는 `CLAUDE.md:173`에도 어긋납니다. 보안상 `Allowed` 우회는 아니지만 대응 5의 주장은 구현과 다릅니다.
+
+4. `crates/scheduler/src/reassignment.rs:85` — “어느 계층도 ULID 26자를 강제하지 않는다”는 한계 설명이 사실과 다릅니다. `crates/protocol/src/fenced_operation.rs:35`와 `crates/protocol/src/fenced_operation.rs:97`에서 job/attempt ID의 26자 길이를 명시적으로 거부합니다. 이 관문은 `"job-1"` 같은 비규범 ID로 실제 `Allowed`를 반환하며 기본 fixture도 이를 사용합니다(`crates/scheduler/tests/reassignment.rs:57`). 대응 4는 수정이 아니라 잘못된 사실 설명으로 회피한 상태입니다.
+
+5. `crates/scheduler/src/reassignment.rs:198` — 감사 기록 대조는 직접 다른 job/attempt/fence를 넣은 실수는 잡지만, “아무 기록이나 재사용하는 것은 막는다”는 보장은 성립하지 않습니다. `AuditRecord::Committed`의 모든 필드가 공개 생성 가능한 문자열/정수이고 실제 `record_id` 내용과 metadata 사이의 검증된 결합이 없습니다(`crates/scheduler/src/reassignment.rs:203`). 다른 기록 ID에 현재 요청 값을 다시 적으면 통과합니다. 모듈 앞부분의 “호출부 진술일 뿐”이라는 한계와도 모순되며 `CLAUDE.md:94`의 과장 금지에 걸립니다. 추가 테스트도 enum 값을 직접 만들어 단순 불일치만 확인합니다(`crates/scheduler/tests/reassignment.rs:345`).
+
+6. `crates/scheduler/tests/reassignment.rs:3`, `crates/scheduler/tests/reassignment.rs:109` — “오늘 아무것도 허용되지 않는다”는 과장이 테스트 문서에 남았습니다. 바로 아래 테스트가 `EnforcedByCaller` 값 하나로 `Allowed`를 확인합니다(`crates/scheduler/tests/reassignment.rs:138`). 소스 모듈 문서는 “정직한 호출”로 고쳤지만 대상 전체에서는 대응 3이 불완전합니다.
+
+나머지 확인 결과:
+
+- 대응 2의 job/attempt 범위 필드 추가와 직접 불일치 거부는 구현되어 있습니다(`crates/scheduler/src/reassignment.rs:250`, `crates/scheduler/src/reassignment.rs:571`). 다만 서명 내용과의 실제 결합은 호출부 진술입니다.
+- 대응 6의 `record_id` canonical 검사는 실제로 통합됐습니다(`crates/scheduler/src/reassignment.rs:609`).
+- 대응 7의 `usize` 비교도 적용됐습니다(`crates/scheduler/src/reassignment.rs:753`).
+- 대응 8은 중복을 제거하지는 않았지만, 무의존성 근거 문서와 동일한 `assumes_mutual_trust()` 및 관문 사용은 실제로 추가됐습니다(`crates/scheduler/src/reassignment.rs:100`, `crates/scheduler/src/reassignment.rs:128`, `crates/scheduler/src/reassignment.rs:789`; `crates/scheduler/Cargo.toml:8`).
+- `receiving_member_id == stranded_member_id` 자체는 입력 오류로 걸러지지 않으며, 제3자 신고가 충분하면 `Allowed` 가능합니다. 하지만 ADR-033 §8은 다른 노드를 요구할 뿐 두 노드의 소유자가 달라야 한다고 규정하지 않으므로 이것만으로는 결함으로 판정하지 않았습니다. 해당 분기는 같은 멤버의 신고를 beneficiary 오류로 거부하므로 신고 우회도 없습니다(`crates/scheduler/src/reassignment.rs:683`).
+- 감사 기록 검사가 조건 5보다 먼저 실행되지만, 감사 metadata가 제안 번호와 맞으면 이후 조건 5가 범위 밖/재사용 번호를 거부합니다. 이 순서로 `Allowed` 우회는 없습니다.
+- `BTreeSet<&str>`은 복제된 `reports`가 살아 있는 동안만 참조되고, 정렬 및 BTree 순회가 결정적입니다. 모든 이전 신고자와 비교하므로 순서 독립성은 유지됩니다(`crates/scheduler/src/reassignment.rs:629`, `crates/scheduler/src/reassignment.rs:708`).
+- 새로 추가된 네 테스트는 각각 검사를 제거하면 정상 fixture가 통과하므로 공허하지 않습니다. 다만 위의 낮아진 fence 재사용, audit metadata 위조, audit/range 대소문자 판정은 검사하지 않습니다.
+- 기존 빌드 산출물로 40개 테스트가 모두 통과했습니다. 새 빌드는 읽기 전용 환경에서 Cargo lock 생성이 거부되어 실행하지 못했습니다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 4라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+`crates/scheduler/src/reassignment.rs:881-892`에서 실제로 거부되며, 같은 범위의 2차 failover도 허용됩니다.
+- 빈 `already_used`는 `original_fence_epoch`가 `max()`의 최소 한 원소가 되어 안전합니다. `original_fence_epoch=u64::MAX`는 `crates/scheduler/src/reassignment.rs:672`에서 먼저 입력 오류가 되어 오버플로가 없습니다.
+- 범위 밖의 `already_used`도 highest-seen에 반영됩니다. 높은 외부 값은 현재 범위를 소진된 것으로 만드는 보수적 fail-closed 동작이며 허용 구멍은 만들지 않습니다.
+- `compare_identity` 설명은 `crates/scheduler/src/reassignment.rs:536-545`에서 정정됐습니다.
+- fence 범위와 감사 기록의 job/attempt `Ambiguous` 처리는 각각 `crates/scheduler/src/reassignment.rs:631-650`, `697-712`에 적용됐습니다.
+- job/attempt 및 `issued_for_*`, `recorded_*`는 모두 26자 검사를 받고, node/member는 최소 형태 검사만 받습니다(`crates/scheduler/src/reassignment.rs:600-606, 624-626, 692-694`). 문서 경계와 일치합니다.
+- 감사 기록 결합 한계는 `crates/scheduler/src/reassignment.rs:208-211`, 테스트 헤더 과장은 `crates/scheduler/tests/reassignment.rs:3-10`에서 정정됐습니다.
+- 새 테스트 4개는 각 변경 경로를 실제로 자극하므로 공허하지 않습니다. 다만 위 중첩 진단 조합은 빠졌습니다.
+- 테스트 실행은 시도했지만 읽기 전용 환경에서 `target/debug/.cargo-build-lock` 생성이 거부되어 실행 결과는 확보하지 못했습니다. 판정은 코드 경로와 테스트 assertion의 정적 대조에 근거합니다.
+
+CHANGES_REQUESTED
+tokens used
+86,404
+검수 결과, 3라운드 6건의 수정 자체는 대체로 반영됐지만 새 fence 진단 결함 2건이 남았습니다.
+
+- `crates/scheduler/src/reassignment.rs:460-463, 665-676` — 검사는 `range.last <= original_fence_epoch`로 바뀌었는데 오류 이름과 payload는 여전히 `ReservedFenceRangeNotAboveOriginal { first, original }`입니다. 실제 실패 원인은 `last`인데 `first`를 보고하므로 오류가 사실과 다릅니다. `first=90, last=100, original=100`을 대입해 경로를 추적했고, `crates/scheduler/tests/reassignment.rs:499-512`가 잘못된 `first: 90` 진단을 그대로 고정하는 것도 확인했습니다. `CLAUDE.md` §3의 정확한 오류 진단 원칙에도 어긋납니다.
+
+- `crates/scheduler/src/reassignment.rs:333-334, 867-894` — “충족되지 않은 조건을 전부 반환한다”는 계약과 `if / else if / else` 구조가 충돌합니다. 예를 들어 범위 `101..=110`, `already_used={104,105}`, 제안 `104`이면 `FenceEpochAlreadyUsed`와 `FenceEpochNotAboveHighestSeen { must_exceed:105 }`가 모두 참이지만 전자만 반환합니다. 범위 밖이면서 highest 이하인 조합도 `OutsideReservedRange`만 반환합니다. `crates/scheduler/tests/reassignment.rs:303-312, 539-552, 900-942`를 대조했으며 이 중첩 조합은 테스트되지 않았습니다. 두 진단을 상호배타적으로 정의하려면 문서와 enum 의미를 고쳐야 하고, “전부”가 계약이라면 독립 검사로 바꿔야 합니다.
+
+그 밖의 확인 결과:
+
+- stale 사례 `original=100, used={105}, proposed=104`는 `crates/scheduler/src/reassignment.rs:881-892`에서 실제로 거부되며, 같은 범위의 2차 failover도 허용됩니다.
+- 빈 `already_used`는 `original_fence_epoch`가 `max()`의 최소 한 원소가 되어 안전합니다. `original_fence_epoch=u64::MAX`는 `crates/scheduler/src/reassignment.rs:672`에서 먼저 입력 오류가 되어 오버플로가 없습니다.
+- 범위 밖의 `already_used`도 highest-seen에 반영됩니다. 높은 외부 값은 현재 범위를 소진된 것으로 만드는 보수적 fail-closed 동작이며 허용 구멍은 만들지 않습니다.
+- `compare_identity` 설명은 `crates/scheduler/src/reassignment.rs:536-545`에서 정정됐습니다.
+- fence 범위와 감사 기록의 job/attempt `Ambiguous` 처리는 각각 `crates/scheduler/src/reassignment.rs:631-650`, `697-712`에 적용됐습니다.
+- job/attempt 및 `issued_for_*`, `recorded_*`는 모두 26자 검사를 받고, node/member는 최소 형태 검사만 받습니다(`crates/scheduler/src/reassignment.rs:600-606, 624-626, 692-694`). 문서 경계와 일치합니다.
+- 감사 기록 결합 한계는 `crates/scheduler/src/reassignment.rs:208-211`, 테스트 헤더 과장은 `crates/scheduler/tests/reassignment.rs:3-10`에서 정정됐습니다.
+- 새 테스트 4개는 각 변경 경로를 실제로 자극하므로 공허하지 않습니다. 다만 위 중첩 진단 조합은 빠졌습니다.
+- 테스트 실행은 시도했지만 읽기 전용 환경에서 `target/debug/.cargo-build-lock` 생성이 거부되어 실행 결과는 확보하지 못했습니다. 판정은 코드 경로와 테스트 assertion의 정적 대조에 근거합니다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 5라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ 기능을 hard gate·best-fit·GPU assignment·`ScopeCandidate`만이라고 서술하지만, 같은 파일 `13,29-33`에서 재할당 판정 API를 추가했다. 배선 후 모듈 문서가 실제 공개 표면과 어긋난다.
+
+- `crates/scheduler/src/reassignment.rs:675-679` 및 `crates/scheduler/tests/reassignment.rs:507-520` — 4라운드 첫 지적은 실제로 수정됐다. 조건도 payload도 `range.last`를 사용하며 테스트가 정확한 `last` 값을 비교한다.
+
+- `crates/scheduler/src/reassignment.rs:875-900` — 세 검사는 실제로 독립됐다. 기존 테스트 기대값 변경(`crates/scheduler/tests/reassignment.rs:305-320`)도 정당하다. 제안 `105`가 이미 사용됐고 최고 관측값도 `105`이므로 두 진단 모두 사실이다. `UnmetCondition`의 파생 `Ord`(`crates/scheduler/src/reassignment.rs:335`)와 `sort/dedup`(`923-925`)은 조합이 늘어도 결정적이며, 정상 `Allowed` 경로는 `crates/scheduler/tests/reassignment.rs:294-300,576-583`에 유지된다.
+
+- 검증 명령 `cargo test -p gputeer-scheduler --test reassignment`도 시도했지만, 현재 read-only 환경에서 `target/debug/.cargo-build-lock` 생성이 거부되어 실행 검증은 완료하지 못했다.
+
+CHANGES_REQUESTED
+tokens used
+103,827
+- `crates/scheduler/src/reassignment.rs:738-824` — ADR-033 §8 조건 3의 “이웃 N대”를 서로 다른 **기계**가 아니라 `reporter_member_id` 개수로 판정한다. 신고 구조체에도 신고 노드 ID가 없어 한 기계의 복수 멤버 ID를 구별하거나, 한 멤버가 소유한 복수 기계를 셀 수 없다. ADR-033:204의 원문과 구조체(`crates/scheduler/src/reassignment.rs:234-242`), 테스트 fixture(`crates/scheduler/tests/reassignment.rs:42-48`)를 대조해 확인했다. 조건 3을 느슨하거나 다른 조건으로 바꾼 것이다.
+
+- `crates/scheduler/src/reassignment.rs:627-683,889-900` — `already_used` 원소가 실제 예비 범위 안인지 검증하지 않은 채 범위 밖 제안에도 `highest_seen` 계산에 사용한다. 예를 들어 범위 `101..=110`, `already_used={120}`, 제안 `111`도 입력 오류가 아니라 `OutsideReservedRange`와 `NotAboveHighestSeen(must_exceed=120)`으로 판정된다. ADR-033:234-245는 해당 집합을 Broker가 미리 발행한 범위의 사용 이력으로 전제하므로 이런 모순된 입력은 fail-closed 입력 오류여야 한다. 새 테스트 `crates/scheduler/tests/reassignment.rs:550-567`은 정상적인 범위 내 값 `108`만 검사해 이 조합을 놓친다.
+
+- `crates/scheduler/tests/reassignment.rs:125-155` — “오늘은 아무것도 허용되지 않는다”와 “이 테스트가 실패하면 실제 강제 수단이 생긴 신호”라는 설명은 사실이 아니다. 테스트는 production 배선을 확인하지 않고 fixture에 `NotEnforcedYet`를 고정하므로, 내일 실제 호출부가 추가돼도 계속 통과한다. 반대로 `gate_open()`이 `EnforcedByCaller`를 넣는 `crates/scheduler/tests/reassignment.rs:102-105` 경로는 오늘 바로 `Allowed`를 반환하며, API도 `crates/scheduler/src/lib.rs:29-33`에서 공개된다. 전체 검색으로 production 호출부는 현재 없음을 확인했지만, 그것은 이 테스트가 증명한 결과가 아니다.
+
+- `crates/scheduler/tests/reassignment.rs:538-567` — 새 중첩 테스트는 `contains`만 검사해 사실과 다른 추가 진단이 끼어도 통과한다. `else if` 복원에는 실패하므로 공허하지는 않지만, 진단 정확성을 고정하려는 회귀 테스트로는 느슨하다. 정렬된 정확한 `Vec` 전체를 비교해야 한다.
+
+- `crates/scheduler/src/lib.rs:3-6` — 크레이트가 제공하는 기능을 hard gate·best-fit·GPU assignment·`ScopeCandidate`만이라고 서술하지만, 같은 파일 `13,29-33`에서 재할당 판정 API를 추가했다. 배선 후 모듈 문서가 실제 공개 표면과 어긋난다.
+
+- `crates/scheduler/src/reassignment.rs:675-679` 및 `crates/scheduler/tests/reassignment.rs:507-520` — 4라운드 첫 지적은 실제로 수정됐다. 조건도 payload도 `range.last`를 사용하며 테스트가 정확한 `last` 값을 비교한다.
+
+- `crates/scheduler/src/reassignment.rs:875-900` — 세 검사는 실제로 독립됐다. 기존 테스트 기대값 변경(`crates/scheduler/tests/reassignment.rs:305-320`)도 정당하다. 제안 `105`가 이미 사용됐고 최고 관측값도 `105`이므로 두 진단 모두 사실이다. `UnmetCondition`의 파생 `Ord`(`crates/scheduler/src/reassignment.rs:335`)와 `sort/dedup`(`923-925`)은 조합이 늘어도 결정적이며, 정상 `Allowed` 경로는 `crates/scheduler/tests/reassignment.rs:294-300,576-583`에 유지된다.
+
+- 검증 명령 `cargo test -p gputeer-scheduler --test reassignment`도 시도했지만, 현재 read-only 환경에서 `target/debug/.cargo-build-lock` 생성이 거부되어 실행 검증은 완료하지 못했다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 6라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+eneficiary`의 정의·설명(`:435-441`)과 모순되고, `CLAUDE.md:173`의 “오류 메시지가 사실을 잘못 전하지 않게 한다”를 위반한다. 멤버 검사가 먼저 실행되므로 같은 기계라도 신고 멤버가 stranded/receiving 멤버이면 서로 다른 멤버 오류가 먼저 나오는 등 진단도 입력 조합에 따라 의미가 바뀐다. 기계별 오류를 분리해야 한다.
+
+- `crates/scheduler/tests/reassignment.rs:857-873` — 새 자기 신고 테스트가 위 잘못된 진단을 정상 동작으로 고정한다. 두 기계를 한 루프로 묶고 모두 `ReportFromBeneficiary`를 기대하므로 `reporter_node_id == unreachable_node_id`의 올바른 의미를 검증하지 못한다. 테스트 자체는 실행되지만 결함을 방어하는 대신 결함을 승인한다.
+
+- `crates/scheduler/tests/reassignment.rs:837-854` — 테스트 이름 `two_members_on_one_machine_are_still_one_vote`와 설명은 “한 표”를 검증한다고 주장하지만 실제 assertion은 정족수 계산까지 가지 않고 `ConflictingReporterOwnership` 입력 오류를 기대한다. fail-closed 동작은 맞지만 서술은 테스트가 증명하는 사실과 다르다. 같은 기계·같은 소유자의 3회 중복은 `:257-274`에서 실제로 한 표만 됨을 확인할 수 있으므로, 이 테스트는 ownership conflict 테스트로 이름과 설명을 고쳐야 한다.
+
+- `crates/scheduler/src/reassignment.rs:773-905` — 기계 기준 집계 자체는 결정적이다. 신고를 먼저 정렬하고, `node_owner`가 모든 기존 원소를 검색하므로 같은 기계가 3회 이상 나와도 첫 ownership 충돌에서 동일하게 fail closed한다. 같은 기계·같은 소유자의 중복은 정상 입력으로 받아 `BTreeSet`에서 한 표만 센다. 대소문자만 다른 기계가 비인접해도 전체 기존 집합을 검색하며, `crates/scheduler/tests/reassignment.rs:904-920`이 이를 정확히 검증한다. 새 구멍은 확인되지 않았다.
+
+- `crates/scheduler/src/reassignment.rs:713-723`, `crates/scheduler/tests/reassignment.rs:883-897` — 5라운드 2번은 실제 수정됐다. 범위 밖 `already_used`를 정렬된 집합에서 결정적으로 골라 `AlreadyUsedEpochOutsideRange`로 거부하며 양쪽 경계 밖 값을 테스트한다.
+
+- `crates/scheduler/tests/reassignment.rs:143-148` — 5라운드 3번은 수정됐다. 테스트가 production 전체를 증명하지 않고 `NotEnforcedYet`의 커널 거부만 증명한다고 정확히 제한했다.
+
+- `crates/scheduler/tests/reassignment.rs:536-581` — 5라운드 4번은 수정됐다. 중첩 fence 진단 두 경우 모두 정렬된 `Vec` 전체를 `assert_eq!`로 비교한다. 별도의 전체-condition 테스트 `:1072-1111`에는 여전히 `contains`가 있지만 지적 대상인 중첩 진단 테스트는 아니다.
+
+- `crates/scheduler/src/lib.rs:6-9` — 5라운드 5번은 수정됐다. 재배정 API와 production 소비자 부재가 크레이트 문서에 추가됐고 실제 호출 검색에서도 `evaluate_reassignment`는 테스트 외 소비자가 없었다.
+
+- `crates/scheduler/src/reassignment.rs:911-1000` — `Allowed` 경로를 정수 경계·빈 컬렉션·정책 조합으로 다시 추적했다. 침묵은 임계값 초과만 허용하고, Lease는 `now == expiry`부터 만료이며, 빈 신고는 0 정족수가 금지되어 거부된다. fence 비교에는 덧셈이 없어 `u64` overflow 우회가 없고, `original == u64::MAX`이면 유효한 상위 범위가 없어 fail closed한다. 공개 풀은 명시적 enable과 더 높은 정족수를 모두 요구한다. 오늘 `Allowed`는 결국 `EnforcedByCaller` 및 검증·확정되었다는 값들을 호출자가 진술하는 경로뿐이며, 이 한계는 `reassignment.rs:43-59`에 정확히 공개돼 있다. ADR-033 §8의 여섯 조건에서 추가로 느슨해진 수치·빈 값 경로는 찾지 못했다.
+
+- `crates/scheduler/src/reassignment.rs:240-242` — 한 멤버가 N대의 기계를 소유해 정족수를 채울 수 있다는 한계는 실제 동작이며 `crates/scheduler/tests/reassignment.rs:827-835`가 `Allowed`까지 확인한다. ADR-033 `:204`의 단위가 “N대”이므로 집계 자체는 원문과 맞지만, 이를 ADR `:265`의 “담합한 다수”와 같은 것이라고 표현한 것은 엄밀히 동일하지 않다. 한 주체의 다중 기계와 여러 주체의 담합은 다른 공격 모델이므로 “같은 종류의 미방어 다중기계 장악” 정도로 서술을 낮추는 편이 정확하다.
+
+- 검증 실행 — 현재 소스와 수정 시각이 같은 `target/debug/deps/reassignment-62e0254a0b4800c6.exe`를 실행해 49/49 통과를 확인했다. 새 테스트들은 실행되지만 위 자기 신고 테스트는 잘못된 오류 의미를 고정한다. `cargo test` 재빌드는 read-only 환경에서 `.cargo-build-lock` 생성이 거부되어 수행하지 못했다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 7라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+� 공격 모델이라고 명시한다.
+
+- `crates/scheduler/src/reassignment.rs:438-446,825-848` — `ReportFromBeneficiary`는 신고 멤버가 `receiving_member_id`와 정확히 같을 때만 나온다. 받는 기계의 소유자는 실제 수혜자이므로 이름은 사실에 맞는다. `stranded_member_id == receiving_member_id`이면 동일 멤버의 신고는 수신자 비교가 먼저 실행되어 `ReportFromBeneficiary`가 나온다. 그 멤버는 실제로 받는 기계의 소유자이기도 하므로 오도는 아니다.
+
+- `crates/scheduler/src/lib.rs:29-35`, `crates/scheduler/tests/reassignment.rs:79-129`, `crates/scheduler/src/reassignment.rs:1025-1028` — 오늘도 공개 API 호출자가 `EnforcedByCaller`와 나머지 검증·확정 값을 직접 주장하면 `Allowed`를 받을 수 있다. 저장소 전체 호출 검색에서는 테스트 외 production 소비자가 없었다. 따라서 “정직한 production 경로는 없다”는 서술은 맞지만 타입 자체가 `Allowed`를 불가능하게 하지는 않는다.
+
+- `crates/scheduler/tests/reassignment.rs:1096-1135` — `contains`는 이 한 곳에만 남았다. 먼저 결과 길이를 정확히 7로 고정하고 서로 다른 7개 오류를 모두 확인하며, 구현도 `sort`·`dedup`하므로 추가·누락 오류가 섞여 통과할 수 없다. 나머지는 전체 결과 `assert_eq!`다. 최신 테스트 실행 파일로 50/50 통과를 확인했다.
+
+- `crates/scheduler/tests/reassignment.rs:257-274` — 사실과 다른 설명이 남았다. “같은 멤버가 여러 번 신고해도 한 표”라고 일반화하지만, 실제 정족수는 기계 수이며 같은 멤버가 서로 다른 두 기계로 신고하면 두 표가 된다(`crates/scheduler/tests/reassignment.rs:822-835`). 이 테스트가 실제로 확인하는 것은 동일 멤버가 아니라 `report()`가 파생한 **동일 기계의 반복 신고**다. 설명과 메시지를 “같은 기계의 반복 신고는 한 표”로 고쳐야 한다. ADR-033 §8 조건 3의 “이웃 N대”와도 이 표현만 충돌한다.
+
+CHANGES_REQUESTED
+tokens used
+93,069
+- `crates/scheduler/src/reassignment.rs:447-454,861-887` — 6라운드 1번은 수정됐다. 지목당한 기계는 `ReportFromStrandedNode`, 받는 기계는 `ReportFromReceivingNode`로 분리됨을 분기까지 확인했다.
+
+- `crates/scheduler/tests/reassignment.rs:863-898` — 6라운드 2번은 수정됐다. 두 경우를 별도 테스트하고 오류 전체를 `assert_eq!`로 정확히 대조한다.
+
+- `crates/scheduler/tests/reassignment.rs:837-860` — 6라운드 3번은 수정됐다. 테스트 이름과 assertion 모두 “한 기계의 소유권 충돌”을 확인한다.
+
+- `crates/scheduler/src/reassignment.rs:240-245` — 6라운드 4번은 수정됐다. 한 주체의 다중 기계와 여러 주체의 담합을 서로 다른 공격 모델이라고 명시한다.
+
+- `crates/scheduler/src/reassignment.rs:438-446,825-848` — `ReportFromBeneficiary`는 신고 멤버가 `receiving_member_id`와 정확히 같을 때만 나온다. 받는 기계의 소유자는 실제 수혜자이므로 이름은 사실에 맞는다. `stranded_member_id == receiving_member_id`이면 동일 멤버의 신고는 수신자 비교가 먼저 실행되어 `ReportFromBeneficiary`가 나온다. 그 멤버는 실제로 받는 기계의 소유자이기도 하므로 오도는 아니다.
+
+- `crates/scheduler/src/lib.rs:29-35`, `crates/scheduler/tests/reassignment.rs:79-129`, `crates/scheduler/src/reassignment.rs:1025-1028` — 오늘도 공개 API 호출자가 `EnforcedByCaller`와 나머지 검증·확정 값을 직접 주장하면 `Allowed`를 받을 수 있다. 저장소 전체 호출 검색에서는 테스트 외 production 소비자가 없었다. 따라서 “정직한 production 경로는 없다”는 서술은 맞지만 타입 자체가 `Allowed`를 불가능하게 하지는 않는다.
+
+- `crates/scheduler/tests/reassignment.rs:1096-1135` — `contains`는 이 한 곳에만 남았다. 먼저 결과 길이를 정확히 7로 고정하고 서로 다른 7개 오류를 모두 확인하며, 구현도 `sort`·`dedup`하므로 추가·누락 오류가 섞여 통과할 수 없다. 나머지는 전체 결과 `assert_eq!`다. 최신 테스트 실행 파일로 50/50 통과를 확인했다.
+
+- `crates/scheduler/tests/reassignment.rs:257-274` — 사실과 다른 설명이 남았다. “같은 멤버가 여러 번 신고해도 한 표”라고 일반화하지만, 실제 정족수는 기계 수이며 같은 멤버가 서로 다른 두 기계로 신고하면 두 표가 된다(`crates/scheduler/tests/reassignment.rs:822-835`). 이 테스트가 실제로 확인하는 것은 동일 멤버가 아니라 `report()`가 파생한 **동일 기계의 반복 신고**다. 설명과 메시지를 “같은 기계의 반복 신고는 한 표”로 고쳐야 한다. ADR-033 §8 조건 3의 “이웃 N대”와도 이 표현만 충돌한다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 8라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+ NOW - 200);
+ 1187: 
+ 1188:     let mut forward = gate_open();
+ 1189:     forward.neighbor_reports = vec![bad_a.clone(), bad_b.clone()];
+ 1190: 
+ 1191:     let mut backward = gate_open();
+ 1192:     backward.neighbor_reports = vec![bad_b, bad_a];
+ 1193: 
+ 1194:     assert_eq!(
+ 1195:         evaluate_reassignment(&forward, &policy()),
+ 1196:         evaluate_reassignment(&backward, &policy()),
+ 1197:         "두 가지 오류가 동시에 있을 때 순서가 답을 바꾸면 안 된다"
+ 1198:     );
+ 1199: }
+cargo : 'cargo' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다. 이름이 정확한지 확인하고 경로가 포함된 경우 경로가 올바른지 검증한 다음 다시 시도
+하십시오.
+위치 줄:2 문자:247
++ ... ];$i -le $range[1];$i++){'{0,5}: {1}' -f $i,$l[$i-1]}}; cargo test -p ...
++                                                             ~~~~~
+    + CategoryInfo          : ObjectNotFound: (cargo:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n \"evaluate_reassignment|Reassignment(Request|Policy|Decision)|NeighborUnreachableReport\" --glob '"'!crates/scheduler/src/reassignment.rs'"' --glob '"'!crates/scheduler/tests/reassignment.rs'"' --glob '"'!crates/scheduler/src/lib.rs'"' .; rg -n \"condition_3_counts_a_repeat_reporter_once|condition_3_counts_a_repeat_machine_once\" crates/scheduler; rg -n \"ParticipationModel\" crates/protocol/src proto/common.proto; rg -n \"assumes_mutual_trust\" crates/protocol/src proto" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 150ms:
+crates/scheduler\tests\reassignment.rs:264:fn condition_3_counts_a_repeat_machine_once() {
+crates/scheduler\tests\reassignment.rs:847:///   한 표가 되는 것은 `condition_3_counts_a_repeat_reporter_once` 가
+crates/protocol/src\lib.rs:44:pub use participation::{ParticipationModel, ParticipationModelError};
+crates/protocol/src\participation.rs:41:pub enum ParticipationModel {
+crates/protocol/src\participation.rs:52:pub enum ParticipationModelError {
+crates/protocol/src\participation.rs:63:impl fmt::Display for ParticipationModelError {
+crates/protocol/src\participation.rs:80:impl std::error::Error for ParticipationModelError {}
+crates/protocol/src\participation.rs:82:impl ParticipationModel {
+crates/protocol/src\participation.rs:87:    pub fn parse(value: &str) -> Result<Self, ParticipationModelError> {
+crates/protocol/src\participation.rs:90:            return Err(ParticipationModelError::Missing);
+crates/protocol/src\participation.rs:95:            other => Err(ParticipationModelError::Unknown {
+crates/protocol/src\participation.rs:124:impl fmt::Display for ParticipationModel {
+crates/protocol/src\participation.rs:116:    pub fn assumes_mutual_trust(self) -> bool {
+
+codex
+- `crates/scheduler/tests/reassignment.rs:847` — 이름을 바꾸기 전의 존재하지 않는 테스트 `condition_3_counts_a_repeat_reporter_once`를 여전히 가리킨다. 실제 테스트 이름은 `condition_3_counts_a_repeat_machine_once`이므로 7라운드 수정이 완전히 반영되지 않았다.
+- `crates/scheduler/tests/reassignment.rs:383` — “다른 재할당의 감사 기록을 가져다 붙일 수 없다”는 과장이다. 커널은 `record_id`와 기록 내용의 검증된 결합을 확인하지 못하므로, 정확히는 요청과 다른 값이 적힌 기록만 거부한다.
+- `crates/scheduler/src/reassignment.rs:918` — 같은 기계의 소유자 ID가 대소문자만 다르면 동일인인지 판단할 수 없는데도 단순 `!=` 비교로 `ConflictingReporterOwnership`을 반환한다. 이 파일의 식별자 계약대로라면 `AmbiguousIdentifier`여야 하며, 현재 오류는 “서로 다른 멤버”라고 사실을 단정한다.
+
+CHANGES_REQUESTED
+tokens used
+86,131
+- `crates/scheduler/tests/reassignment.rs:847` — 이름을 바꾸기 전의 존재하지 않는 테스트 `condition_3_counts_a_repeat_reporter_once`를 여전히 가리킨다. 실제 테스트 이름은 `condition_3_counts_a_repeat_machine_once`이므로 7라운드 수정이 완전히 반영되지 않았다.
+- `crates/scheduler/tests/reassignment.rs:383` — “다른 재할당의 감사 기록을 가져다 붙일 수 없다”는 과장이다. 커널은 `record_id`와 기록 내용의 검증된 결합을 확인하지 못하므로, 정확히는 요청과 다른 값이 적힌 기록만 거부한다.
+- `crates/scheduler/src/reassignment.rs:918` — 같은 기계의 소유자 ID가 대소문자만 다르면 동일인인지 판단할 수 없는데도 단순 `!=` 비교로 `ConflictingReporterOwnership`을 반환한다. 이 파일의 식별자 계약대로라면 `AmbiguousIdentifier`여야 하며, 현재 오류는 “서로 다른 멤버”라고 사실을 단정한다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 9라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+een { proposed: u64, must_exceed: u64 },
+391:    /// 조건 6.
+392:    AuditRecordNotCommitted,
+393:    /// 모델 관문 — 공개 풀에서 이 경로가 꺼져 있다.
+394:    PublicPoolReassignmentDisabled,
+395:}
+396:
+397:/// 입력 자체가 판정할 수 없는 상태 — **fail closed**.
+538:fn require_canonical_identifier(
+539:    value: &str,
+540:    field: &'static str,
+541:) -> Result<(), ReassignmentInputError> {
+542:    let malformed = value.is_empty()
+543:        || value.chars().any(|c| c.is_whitespace())
+544:        || !value.chars().all(|c| c.is_ascii_graphic());
+545:    if malformed {
+546:        return Err(ReassignmentInputError::NonCanonicalIdentifier {
+547:            field,
+548:            value: value.to_string(),
+549:        });
+550:    }
+551:    Ok(())
+552:}
+553:
+554:/// `proto/common.proto` §5 — "ID 는 별도 명시가 없으면 ULID 26자 문자열".
+555:///
+556:/// `crates/protocol/src/fenced_operation.rs` 가 job/attempt ID 에 대해 쓰는
+557:/// 것과 같은 상수다. 알파벳까지 보지는 않는다 — 그쪽도 길이만 본다.
+558:const ULID_LEN: usize = 26;
+559:
+560:/// job/attempt ID 는 규범 형태 + 26자여야 한다.
+561:fn require_ulid_identifier(
+562:    value: &str,
+563:    field: &'static str,
+564:) -> Result<(), ReassignmentInputError> {
+565:    require_canonical_identifier(value, field)?;
+566:    if value.chars().count() != ULID_LEN {
+567:        return Err(ReassignmentInputError::IdentifierIsNotUlidLength {
+568:            field,
+569:            actual: value.chars().count(),
+570:        });
+571:    }
+572:    Ok(())
+573:}
+574:
+618:pub fn evaluate_reassignment(
+619:    request: &ReassignmentRequest,
+620:    policy: &ReassignmentPolicy,
+621:) -> Result<ReassignmentDecision, ReassignmentInputError> {
+622:    // --- 정책 검증. 정책으로 조건을 지워 버릴 수 없게 한다. ---
+623:    //
+624:    // ★ 초안은 임계값 0·정족수 0 을 그대로 받았다 — 그러면 조건 1 과 3 이
+625:    //   있으나 마나다(2026-08-30 독립 검수 지적).
+626:    if policy.broker_silence_threshold_ms == 0 {
+627:        return Err(ReassignmentInputError::BrokerSilenceThresholdIsZero);
+628:    }
+629:    if policy.private_team_required_reports == 0 || policy.public_pool_required_reports == 0 {
+630:        return Err(ReassignmentInputError::RequiredNeighborReportsIsZero);
+631:    }
+632:    if policy.public_pool_required_reports <= policy.private_team_required_reports {
+633:        return Err(ReassignmentInputError::PublicPoolQuorumNotHigher {
+634:            public_pool: policy.public_pool_required_reports,
+635:            private_team: policy.private_team_required_reports,
+636:        });
+637:    }
+638:
+639:    // --- 입력 검증. 판정보다 먼저, 그리고 조용히 넘기지 않는다. ---
+640:    require_ulid_identifier(&request.job_id, "job_id")?;
+641:    require_ulid_identifier(&request.attempt_id, "attempt_id")?;
+642:    require_canonical_identifier(&request.stranded_node_id, "stranded_node_id")?;
+643:    require_canonical_identifier(&request.stranded_member_id, "stranded_member_id")?;
+644:    require_canonical_identifier(&request.receiving_node_id, "receiving_node_id")?;
+645:    require_canonical_identifier(&request.receiving_member_id, "receiving_member_id")?;
+646:
+
+codex
+crates/scheduler/tests/reassignment.rs:62-63 — 여전히 “다른 재할당의 기록을 가져다 붙일 수 없다”고 단정한다. 실제로는 385-388줄에 명시했듯 요청과 다른 필드 값만 거부하며, `record_id`와 값의 결합은 검증하지 못한다.
+
+crates/scheduler/tests/reassignment.rs:390 — 테스트 이름 `an_audit_record_for_another_reassignment_is_an_input_error`도 실제 보장보다 강하다. 검증하는 것은 “다른 재할당의 기록” 여부가 아니라 기록 필드와 요청 값의 불일치다.
+
+crates/scheduler/src/reassignment.rs:471 — `AuditRecordDoesNotMatchRequest`를 “다른 재할당을 기록했다”고 설명하지만 구현이 확인하는 것은 job·attempt·fence 값의 불일치뿐이다.
+
+CHANGES_REQUESTED
+tokens used
+91,840
+crates/scheduler/tests/reassignment.rs:62-63 — 여전히 “다른 재할당의 기록을 가져다 붙일 수 없다”고 단정한다. 실제로는 385-388줄에 명시했듯 요청과 다른 필드 값만 거부하며, `record_id`와 값의 결합은 검증하지 못한다.
+
+crates/scheduler/tests/reassignment.rs:390 — 테스트 이름 `an_audit_record_for_another_reassignment_is_an_input_error`도 실제 보장보다 강하다. 검증하는 것은 “다른 재할당의 기록” 여부가 아니라 기록 필드와 요청 값의 불일치다.
+
+crates/scheduler/src/reassignment.rs:471 — `AuditRecordDoesNotMatchRequest`를 “다른 재할당을 기록했다”고 설명하지만 구현이 확인하는 것은 job·attempt·fence 값의 불일치뿐이다.
+
+CHANGES_REQUESTED
+
+################ 독립 검수 10라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+e_epoch = 999;
+ 1138:     request.audit_record = AuditRecord::NotRecorded;
+ 1139: 
+ 1140:     let unmet = refusals(&request);
+ 1141: 
+ 1142:     assert_eq!(
+ 1143:         unmet.len(),
+ 1144:         7,
+ 1145:         "여섯 조건 + 조건 2 의 강제 부재까지 전부 나와야 한다: {unmet:?}"
+ 1146:     );
+ 1147:     for expected in [
+ 1148:         UnmetCondition::BrokerSilenceTooShort {
+ 1149:             observed_ms: 0,
+ 1150:             required_ms: 60_000,
+ 1151:         },
+ 1152:         UnmetCondition::OriginalLeaseStillValid {
+ 1153:             expires_at_unix_ms: NOW + 10_000,
+ 1154:             now_unix_ms: NOW,
+ 1155:         },
+ 1156:         UnmetCondition::PartitionPauseNotEnforced,
+ 1157:         UnmetCondition::NotEnoughNeighborReports {
+ 1158:             distinct: 0,
+ 1159:             required: 2,
+ 1160:         },
+ 1161:         UnmetCondition::ReceivingNodeDidNotConsent,
+ 1162:         UnmetCondition::FenceEpochOutsideReservedRange {
+ 1163:             proposed: 999,
+ 1164:             first: 101,
+ 1165:             last: 110,
+ 1166:         },
+ 1167:         UnmetCondition::AuditRecordNotCommitted,
+ 1168:     ] {
+ 1169:         assert!(unmet.contains(&expected), "{expected:?} 가 빠졌다: {unmet:?}");
+ 1170:     }
+ 1171: }
+ 1172: 
+ 1173: /// 신고 순서를 바꿔도 **성공과 실패 양쪽 다** 같은 답이 나온다.
+ 1174: #[test]
+ 1175: fn the_answer_does_not_depend_on_report_order() {
+ 1176:     let members = ["member-a", "member-b", "member-c"];
+ 1177: 
+ 1178:     for enforced in [
+ 1179:         PartitionPauseEnforcement::EnforcedByCaller,
+ 1180:         PartitionPauseEnforcement::NotEnforcedYet,
+ 1181:     ] {
+ 1182:         let mut baseline: Option<Result<ReassignmentDecision, ReassignmentInputError>> = None;
+ 1183: 
+ 1184:         // 3! = 6 개 순열.
+ 1185:         for permutation in [
+ 1186:             [0, 1, 2],
+ 1187:             [0, 2, 1],
+ 1188:             [1, 0, 2],
+ 1189:             [1, 2, 0],
+ 1190:             [2, 0, 1],
+ 1191:             [2, 1, 0],
+ 1192:         ] {
+ 1193:             let mut request = everything_but_the_enforcement_gate();
+ 1194:             request.partition_pause = enforced;
+ 1195:             request.neighbor_reports = permutation
+ 1196:                 .iter()
+ 1197:                 .map(|&index| report(members[index], NOW - 500 + index as u64))
+ 1198:                 .collect();
+ 1199: 
+ 1200:             let answer = evaluate_reassignment(&request, &policy());
+ 1201:             match &baseline {
+ 1202:                 None => baseline = Some(answer),
+ 1203:                 Some(first) => assert_eq!(
+ 1204:                     &answer, first,
+ 1205:                     "순서 {permutation:?} 에서 답이 달라졌다 (enforced={enforced:?})"
+ 1206:                 ),
+ 1207:             }
+ 1208:         }
+ 1209:     }
+ 1210: }
+ 1211: 
+ 1212: /// 오류도 순서와 무관하다.
+ 1213: #[test]
+ 1214: fn errors_do_not_depend_on_report_order_either() {
+ 1215:     let bad_a = report("member-receiver", NOW - 100);
+ 1216:     let bad_b = report("member-stranded", NOW - 200);
+ 1217: 
+ 1218:     let mut forward = gate_open();
+ 1219:     forward.neighbor_reports = vec![bad_a.clone(), bad_b.clone()];
+ 1220: 
+ 1221:     let mut backward = gate_open();
+ 1222:     backward.neighbor_reports = vec![bad_b, bad_a];
+ 1223: 
+ 1224:     assert_eq!(
+ 1225:         evaluate_reassignment(&forward, &policy()),
+ 1226:         evaluate_reassignment(&backward, &policy()),
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$candidates=@('"'C:\\Users\\playdata2\\.cargo\\bin\\cargo.exe','C:\\Program Files\\Rust stable GNU 1.94\\bin\\cargo.exe','C:\\Program Files\\Rust stable MSVC 1.94\\bin\\cargo.exe'); foreach("'$p in $candidates){ if(Test-Path -LiteralPath $p){ Write-Output $p } }; Get-Command rustc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 303ms:
+C:\Users\playdata2\.cargo\bin\cargo.exe
+
+codex
+구현 추적상 감사 기록의 세 필드는 요청과 정확히 대조되고, 동일 값 위조를 검증하지 못한다는 한계도 명시되어 있습니다. 기본 `cargo`가 PATH에 없었지만 설치된 실행 파일을 확인했으므로, 그 경로로 전체 scheduler 테스트를 한 번 더 검증하겠습니다.
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "& 'C:\\Users\\playdata2\\.cargo\\bin\\cargo.exe' test -p gputeer-scheduler" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 145ms:
+warn: could not canonicalize path C:\Users\playdata2
+error: failed to open: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\.cargo-build-lock
+
+Caused by:
+  액세스가 거부되었습니다. (os error 5)
+
+codex
+ACCEPTED
+tokens used
+99,102
+ACCEPTED
+
+################ 1라운드 ################
+lowed`를 반환한다. 실제 기록 완료 증거나 원자적 기록을 요구하지 않는다. `AuditLogAvailability::Recordable`을 넣으면 로그를 한 건도 쓰지 않고 허용됨을 코드로 확인했다.
+
+- `crates/scheduler/src/reassignment.rs:116-130,350-381` — 조건 3의 “서명한 이웃 N대”를 타입으로 요구하지 않는다. 서명, 검증된 멤버십, 보고 유효기간 증거가 전혀 없는 공개 `String` 구조체를 N개 만들면 된다. 이는 ADR 원문의 서명 요구(`docs/decisions/ADR-033_공개풀_배치_권한과_공정성.md:202-207`)보다 느슨하다. 소스 주석도 검증을 호출부에 전가한다고 명시한다(`crates/scheduler/src/reassignment.rs:121`).
+
+- `crates/scheduler/src/reassignment.rs:132-143,424-436` — 조건 5 역시 Broker가 서명해 미리 발행한 범위를 증명하지 않는다. 호출자가 `first=0, last=u64::MAX, already_used={}`를 직접 구성하면 어떤 fence 번호든 통과한다. ADR의 Broker 사전 서명 요구는 `docs/decisions/ADR-033_공개풀_배치_권한과_공정성.md:229-245`에 있다.
+
+- `crates/scheduler/src/reassignment.rs:146-162,338-343,387-417` — 정책 조작으로 조건 1과 3을 공허하게 만들 수 있다. `broker_silence_threshold_ms=0`, `private_team_required_reports=0`, `public_pool_required_reports=1`이면 Broker 침묵이 0ms이고 신고가 빈 배열이어도 사설 팀에서 두 조건이 통과한다. 양수 검증이 없고 공개 정족수의 상대 비교만 한다. 특히 조건 1은 ADR의 “정한 시간을 넘겼다”인데 정확히 같은 값도 통과한다(`crates/scheduler/src/reassignment.rs:388`, 이를 고정한 테스트는 `crates/scheduler/tests/reassignment.rs:133-143`).
+
+- `crates/scheduler/src/reassignment.rs:89-96,313-316,402-404,448-451` — `NotEnforcedYet`로 `Allowed`를 받는 우회는 찾지 못했다. 그러나 금지를 “타입으로 강제”했다는 주장은 과장이다. `Enforced`는 검증된 증명 타입이나 제한된 생성자가 아니라 누구나 직접 구성하는 공개 enum variant이며 `lib.rs:29-33`에서 공개 재수출된다. 실제 대조 테스트도 한 줄 대입만으로 오늘 `Allowed`를 만든다(`crates/scheduler/tests/reassignment.rs:104-111`). 따라서 정직성은 타입이 아니라 호출자 규율에 의존하며 `CLAUDE.md:94-104` §0.4 취지에 맞지 않는다.
+
+- `crates/scheduler/src/reassignment.rs:294-300,325-381` — 자기편향 분리는 원시 문자열의 정확한 바이트 비교에만 의존한다. 예를 들어 실제 수혜 멤버가 `member-receiver`일 때 신고자에 `" member-receiver"`, `"Member-Receiver"` 또는 다른 유니코드 정규화 표현을 넣으면 `ReportFromBeneficiary`를 피하고 별도 표로 집계된다. 저장소에서 canonical member-ID 타입이나 정규화 계약을 찾지 못했다. 단순 문자열 정규화보다, 검증된 동일 멤버 식별자 타입과 멤버십 해석 결과를 입력으로 받아야 한다.
+
+- `crates/scheduler/tests/reassignment.rs:88-111` — `todays_honest_caller_is_always_refused` 자체는 공허하지 않다. 정확히 `PartitionPauseNotEnforced` 하나만 요구하고, `Enforced`로 바꾼 대조 케이스가 내부 판정상 `Allowed`를 요구한다. 다만 그 fixture의 “나머지 다섯 조건 충족” 주장은 unsigned 문자열 신고와 단순 `Recordable` 상태를 사용하므로 ADR 수준에서는 사실이 아니다(`crates/scheduler/tests/reassignment.rs:26-31,50-58`).
+
+- `crates/scheduler/src/reassignment.rs:313-457` — 순수성은 확인됐다. 인자 외 시계, I/O, 난수, 전역 상태, crypto 사용이 없고 비교·복제·정렬·집합 연산만 한다. 정수 산술에 의한 허용 우회도 없다.
+
+- `crates/scheduler/src/reassignment.rs:317-381,454-457` — 결정성은 확인됐다. 보고서별 검증 전에 복제본을 정렬하고, 결과 조건도 다시 정렬·중복 제거한다. 정렬 전에 보고서 순서에 의존하는 검사는 없다. 관련 순열 테스트는 `crates/scheduler/tests/reassignment.rs:545-615`에 있다.
+
+- `crates/scheduler/src/reassignment.rs:313` — 저장소 전체에서 `evaluate_reassignment(`를 검색한 결과 production 호출은 없고, 정의 자체와 `crates/scheduler/tests/reassignment.rs`의 호출만 존재한다.
+
+- `crates/scheduler/src/reassignment.rs:350-381` — 잘못된 대상·미래 관측·자기 신고는 오류로 반환하며 조용히 버리지 않는다. 중복 신고자를 한 표로 합치는 것은 명시된 정족수 의미다. 따라서 `CLAUDE.md:166-175` §3의 직접적인 조용한 스킵 위반은 찾지 못했다. 다만 감사 로그는 위에서 지적한 대로 실제 완료가 강제되지 않는다.
+
+검수 환경에 `cargo` 실행 파일이 없어 테스트 바이너리는 실행하지 못했으며, 호출 검색·정적 경로 분석과 `git diff --check`로 확인했다.
+
+CHANGES_REQUESTED
