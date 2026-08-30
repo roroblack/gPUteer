@@ -33,7 +33,7 @@ binary_digests:
 protocol_versions:
   schema_version: "★ 새 메시지 `NeighborUnreachableReport` 를 schema v1 로 신설. 기존 메시지의 `schema_version` 은 올리지 않았다 — `signing.md` §7.3 의 (b) 가 아니라 **'이 타입의 구버전 인스턴스가 없으므로 새 타입은 v1 에서 시작한다'** 가 정확한 근거다(독립 검수 1라운드 정정). domain `gputeer/v1/neighbor-unreachable` 추가, domain 29 → 30종"
   canonical_spec: "canonical 벡터 50 → **52건**(`v38_neighbor_unreachable_report`, `v38b_neighbor_unreachable_different_target`). 스키마 지문 갱신(72개 메시지·449개 필드)"
-platform: "Windows 11 개발 기계. ★ 이번 조각에 Linux 회귀는 **없다** — 순수 프로토콜/직렬화 코드라 플랫폼 의존이 없지만 확인한 것은 아니다"
+platform: "Windows 11 개발 기계 + x600 WSL2 회귀. ★ Linux 에서 `cargo test -p gputeer-protocol -p gputeer-crypto` **322 passed / 실패 suite 0**(2026-08-31). 단 x600 의 python3 에는 `blake3` 패키지가 없어 `reference_canonical.py --verify` 는 그 기계에서 돌릴 수 없다 — 다이제스트 필드를 만들지 못해 **모든** 벡터가 불일치로 보고된다(신규 2건만이 아니라 v01 부터 전부). 코드 결함이 아니라 환경 부재이며, 그 검증은 개발 기계에서 통과했다"
 hardware: "GPU 무관"
 network_profile: "프레이밍 테스트는 `Cursor` 인메모리 스트림. 실제 소켓을 쓰지 않는다"
 command: |
@@ -59,6 +59,12 @@ raw_output: |
 
   === cargo test --workspace ===
   783 passed
+
+  === x600 WSL2 회귀 (2026-08-31) ===
+  cargo test -p gputeer-protocol -p gputeer-crypto -> 322 passed / 실패 suite 0
+  ★ python3 reference_canonical.py --verify 는 그 기계에서 실행 불가 —
+    blake3 패키지가 없어 다이제스트를 만들지 못한다(self-test 자체는
+    "all checks passed" 후 "NOTE: blake3 not installed" 를 낸다)
 
   === 뮤테이션 8건 — 전부 지정 테스트를 **동작 수준에서** 실패시켰다 ===
   N1  지목 노드를 canonical 에서 제거     -> neighbor_unreachable_report_matches_reference
@@ -99,7 +105,7 @@ limitations:
   - "★ 재생 방어가 막는 것은 **신선도 위조와 중복 부작용**이지 정족수 조작이 아니다 — `reassignment.rs` 가 `reporter_node_id` 로 중복 제거하므로 같은 신고를 N 번 넣어도 한 표다(초안이 세 곳에서 반대로 서술했고 독립 검수가 정정했다)"
   - "★ `NEIGHBOR_REPORT_TTL_MS = 60_000` 은 **규범이 정한 값이 아니다.** `ADR-033` §7 은 신고 TTL 을 정하지 않았다. 풀 정책이 정하게 되면 상수가 아니라 정책에서 와야 한다"
   - "★ 3자 domain 대조는 **낡음을 잡는 장치이지 위조를 막는 장치가 아니다.** 관련된 자리를 동시에 같은 방향으로 고치면 통과한다 — `Signable` 구현 메시지는 네 자리, membership 계열은 세 자리다(Rust 쪽 메시지→domain 대응이 없어 한 자리가 빠진다). 올리는 것은 **우회 비용**이다"
-  - "★ **이 조각에 Linux 회귀가 없다.** 순수 프로토콜/직렬화라 플랫폼 의존이 없지만 확인한 것은 아니다"
+  - "★ **x600 의 python3 에 `blake3` 가 없어 canonical 벡터 대조를 그 기계에서 재현할 수 없다.** Rust 테스트(322 passed)는 통과했고 벡터 대조는 개발 기계에서 통과했지만, **두 검증이 같은 기계에서 함께 돌아간 적은 없다.** 설치는 사용자 환경 변경이라 이 세션이 하지 않았다"
   - "이 메시지를 **소비하는 production 경로가 없다** — `ADR-033` §7 의 판정(Broker 가 신고를 모아 상태를 정하는 것)도, §8 관문에 신고를 넣는 어댑터도 아직 없다"
   - "★ `raw_output` 절은 **필터링·수동 결합한 실제 출력 발췌**다. 원본은 `raw_output_artifact` 파일이다"
 ---

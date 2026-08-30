@@ -203,7 +203,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **52건**(2026-08-31 실측). `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **Windows `cargo test --workspace` 783 passed / 0 failed**, **Linux(x600 WSL2, runtime-windows 제외) 765 passed / 실패 suite 0**, `coordinator-agent-selftest` **92/92 시나리오**, canonical 벡터 **52건** 일치 (2026-08-30~31 실측). 커밋 241개 |
+| **Rust 구현** | 🟡 **진행 중** — **Windows `cargo test --workspace` 783 passed / 0 failed**, **Linux(x600 WSL2, runtime-windows 제외) 765 passed / 실패 suite 0** (protocol·crypto 는 2026-08-31 재확인 322 passed), `coordinator-agent-selftest` **92/92 시나리오**, canonical 벡터 **52건** 일치 (2026-08-30~31 실측). 커밋 241개 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** · **`write_once()` 동시 동일-이름 호출 명시적 거부(2026-08-19, `DoD-21`)** — 프로세스 간 파일 잠금 + 성공 시 자가 정리 + GC 의 죽은 락 회수 |
@@ -1806,7 +1806,13 @@ C: 의 `Users\<x600-user>\AppData\Local\wsl\...\ext4.vhdx`(25.4GB)에 있다.
   PID 1, cgroup v2 단일 계층, `systemd-creds` 사용 가능. Rust 1.89 설치돼 있다
   (`/root/.cargo`). ★ **빌드는 반드시 `/mnt/f/gputeer-work/build` 에서 한다** —
   WSL 의 `/tmp` 는 C: 에 있는 ext4 VHDX 다.
-- `blake3` Python 패키지 설치 확인됨.
+- `blake3` Python 패키지 설치 확인됨 — **개발 기계만**.
+  ★ **x600 의 WSL python3(3.14.4)에는 없다**(2026-08-31 확인). 그래서
+  `reference_canonical.py --verify` 를 x600 에서 돌리면 다이제스트를
+  만들지 못해 **모든** 벡터가 불일치로 보고된다(신규분만이 아니라 v01
+  부터 전부) — 코드 결함으로 오해하기 쉽다. Rust 테스트는 x600 에서
+  정상이므로, **벡터 대조는 개발 기계에서만** 한다. 설치하려면 사용자가
+  직접 `pip install blake3` 해야 한다.
 - **Linux 검증 — 부분 해소(2026-08-19, `ENV-03`).** 사용자 소유의 원격 기계
   **remote5090**(Ubuntu 24.04.3, RTX 5090 32GB, sudo 불가)를 임시로 빌려 이
   저장소를 처음으로 Linux 에서 빌드·테스트했다. **하지만 이 기계는
