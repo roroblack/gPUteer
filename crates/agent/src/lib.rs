@@ -131,6 +131,13 @@ pub struct AgentConfig {
     pub execute_workload: bool,
     /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
     pub heartbeat_rounds: u32,
+    /// heartbeat 회차 사이에 둘 간격(밀리초).
+    ///
+    /// ★ 2026-08-30 selftest 가 실제를 잡아 생겼다. 간격이 없으면 두
+    ///   회차가 **같은 밀리초**에 나가고, 그러면 저장소가 두 번째를
+    ///   "진행 없음" 으로 옳게 판정한다 — 코드는 맞는데 테스트의 전제가
+    ///   현실과 달랐던 것이다. 실제 시스템은 초 단위로 보낸다.
+    pub heartbeat_interval_ms: u64,
     /// 다중 Agent lane 을 쓴다. Hello 를 먼저 보내고 Grant 를 받는다.
     pub multi_agent: bool,
     /// ★ 테스트 전용 — heartbeat 의 `fence_epoch` 을 보유 Lease 와
@@ -909,6 +916,10 @@ fn run_one_connection(
     //
     //   `heartbeat_rounds == 0`(기본값)이면 이 구간이 통째로 없다.
     for round in 0..config.heartbeat_rounds {
+        // 첫 회차는 기다리지 않는다 — 간격은 회차 **사이**의 것이다.
+        if round > 0 && config.heartbeat_interval_ms > 0 {
+            std::thread::sleep(Duration::from_millis(config.heartbeat_interval_ms));
+        }
         let now = clock.now_unix_ms();
         let mut heartbeat = pb::NodeHeartbeat {
             schema_version: 1,
@@ -1903,6 +1914,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .get("--workload-cgroup-parent")
             .map(std::path::PathBuf::from),
         multi_agent: flags.bool_flag("--multi-agent"),
+        heartbeat_interval_ms: flags
+            .0
+            .get("--heartbeat-interval-ms")
+            .map(|v| v.parse::<u64>().unwrap_or(0))
+            .unwrap_or(0),
         heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
             Some(v) => v
                 .parse()
@@ -2132,6 +2148,7 @@ mod tests {
             submitter_verifying_key: None,
             execute_workload: false,
             heartbeat_rounds: 0,
+            heartbeat_interval_ms: 0,
             corrupt_heartbeat_fence: false,
             corrupt_heartbeat_coordinator: false,
             corrupt_heartbeat_device: false,

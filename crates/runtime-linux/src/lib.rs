@@ -486,18 +486,24 @@ fn resolve_parent(parent: &CgroupParent) -> Result<PathBuf, CgroupError> {
     Ok(candidate)
 }
 
+/// 위임 디렉터리 이름이 반드시 시작해야 하는 접두사.
+///
+/// ★ 운영자가 **우리 몫이라고 이름으로 밝힌** 디렉터리만 받는다.
+///   `system.slice` 를 실수로 가리킬 수 없게 하는 가장 확실한 방법이다 —
+///   그 이름은 이 접두사로 시작하지 않는다.
+pub const DELEGATED_PARENT_PREFIX: &str = "gputeer-";
+
 /// 운영자가 지정한 부모가 **위임받은 subtree 로 쓸 수 있는 모양인가.**
 ///
 /// # 왜 아무 경로나 받으면 안 되는가
 ///
-/// ★ 2026-08-30 독립 검수 2라운드 지적. `Explicit` 는 CLI 문자열을
-///   그대로 받았다. 운영자가 `/sys/fs/cgroup` 이나 `system.slice` 를
-///   지정하면:
+/// ★ 2026-08-30 독립 검수 2라운드 지적. 1차 수정은 "루트 아래인가,
+///   루트 자신은 아닌가" 만 봤는데, 그러면 아래가 **전부 통과했다.**
 ///
 /// ```text
-/// Agent 상위의 CPU·PID·메모리 제한을 우회한다
-/// 시스템 cgroup 의 subtree_control 에 +memory 를 쓴다
-/// 시스템 계층 아래에 남의 작업 cgroup 을 만든다
+/// /sys/fs/cgroup/system.slice
+/// /sys/fs/cgroup/user.slice
+/// /sys/fs/cgroup/<다른 서비스의 subtree>
 /// ```
 ///
 /// 위험을 드러내려고 이름을 길게 만든 `RootBypassingAncestorLimits` 를
@@ -506,16 +512,30 @@ fn resolve_parent(parent: &CgroupParent) -> Result<PathBuf, CgroupError> {
 /// # 무엇을 요구하는가
 ///
 /// ```text
-/// cgroup v2 루트 아래         밖은 애초에 cgroup 이 아니다
-/// 루트 자신은 아니다          그건 RootBypassingAncestorLimits 의 일이다
-/// `..` 성분이 없다            정규화 전에 탈출하는 경로를 막는다
-/// 실제로 존재하는 디렉터리    없는 곳을 만들어 주지 않는다
+/// cgroup v2 루트 아래       밖은 애초에 cgroup 이 아니다
+/// 루트 자신은 아니다        그건 RootBypassingAncestorLimits 의 일이다
+/// `..` 성분이 없다          정규화 전에 탈출하는 경로를 막는다
+/// 실제로 존재하는 디렉터리  없는 곳을 만들어 주지 않는다
+/// 이름이 `gputeer-` 로 시작 운영자가 우리 몫이라고 **밝힌** 디렉터리만
 /// ```
 ///
-/// ★ **"운영자가 위임했다" 를 확인하지는 못한다.** 커널에 그 사실을
-///   물어볼 방법이 없다 — cgroup 에는 소유권 표식을 둘 자리가 없다.
-///   여기서 하는 것은 "명백히 위험한 값을 막는 것" 이지 "안전을 보장하는
-///   것" 이 아니다(`CLAUDE.md` §0.4).
+/// 마지막 조건이 핵심이다. 시스템 slice 를 하나하나 금지 목록에 넣는
+/// 대신, **허용 조건을 이름으로 만든다.** 금지 목록은 언제나 빠뜨린
+/// 항목이 생기지만, "우리 이름으로 만든 것만" 은 빠뜨릴 자리가 없다.
+///
+/// # 막지 못하는 것 — 정직하게 적는다
+///
+/// ★ **bind mount 는 못 막는다.** cgroup 루트를 루트 아래의 다른
+///   이름에 bind mount 하면 겉보기 경로는 하위인데 실제 대상은 루트일
+///   수 있다. `canonicalize()` 로도 안 잡힌다 — mount 정보를 봐야 하고,
+///   그건 이 조각보다 크다.
+///
+///   symlink 는 `canonicalize()` 로 잡는다(아래). 그러나 cgroup2
+///   파일시스템은 보통 symlink 생성을 허용하지 않으므로, 이건 방어라기
+///   보다 "경로가 겉보기와 다른 곳을 가리키지 않게" 하는 정리에 가깝다.
+///
+///   즉 이 함수는 **실수를 막는 것**이지 적대적인 운영자를 막는 것이
+///   아니다(`CLAUDE.md` §0.4).
 fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupError> {
     let refuse = |detail: String| CgroupError::NotDelegated { detail };
 
@@ -524,22 +544,37 @@ fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupE
             "{path:?} 에 `..` 가 있다 — 정규화로 cgroup 루트 밖을 가리킬 수 있다"
         )));
     }
-    if !path.starts_with(root) {
-        return Err(refuse(format!(
-            "{path:?} 가 {root:?} 아래가 아니다 — cgroup 이 아닌 경로다"
-        )));
-    }
-    if path == root {
-        return Err(refuse(format!(
-            "{path:?} 는 cgroup v2 루트다 — 상위 제한을 우회하려면              RootBypassingAncestorLimits 를 명시적으로 골라야 한다"
-        )));
-    }
     if !path.is_dir() {
         return Err(refuse(format!(
             "{path:?} 가 디렉터리가 아니다 — 위임받은 subtree 는 이미 있어야 한다"
         )));
     }
-    Ok(path.to_path_buf())
+    // symlink 를 따라간 **실제** 경로로 판정한다. 겉보기 경로로만 보면
+    // 링크 하나로 검사를 통과할 수 있다.
+    let resolved = path
+        .canonicalize()
+        .map_err(|error| refuse(format!("{path:?} 를 정규화하지 못했다: {error}")))?;
+
+    if !resolved.starts_with(root) {
+        return Err(refuse(format!(
+            "{resolved:?} 가 {root:?} 아래가 아니다 — cgroup 이 아닌 경로다"
+        )));
+    }
+    if resolved == root {
+        return Err(refuse(format!(
+            "{resolved:?} 는 cgroup v2 루트다 — 상위 제한을 우회하려면              RootBypassingAncestorLimits 를 명시적으로 골라야 한다"
+        )));
+    }
+    let name = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| refuse(format!("{resolved:?} 의 이름을 읽지 못했다")))?;
+    if !name.starts_with(DELEGATED_PARENT_PREFIX) {
+        return Err(refuse(format!(
+            "{resolved:?} 의 이름이 `{DELEGATED_PARENT_PREFIX}` 로 시작하지 않는다 —              운영자가 이 Agent 몫으로 만든 디렉터리만 받는다. system.slice 같은              시스템 계층을 실수로 가리키는 것을 이 조건이 막는다"
+        )));
+    }
+    Ok(resolved)
 }
 
 /// 이 cgroup 이 하위에 `memory` 를 위임하는가. 아니면 켜 본다.
@@ -717,5 +752,43 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.starts_with("CGROUP_NOT_DELEGATED"));
         assert!(b.starts_with("CGROUP_NO_MEMORY_CONTROLLER"));
+    }
+}
+
+#[cfg(test)]
+mod explicit_parent_tests {
+    use super::*;
+
+    /// ★ 검수가 든 실제 우회 경로를 막는가.
+    ///
+    /// 1차 수정은 `system.slice` 를 그대로 통과시켰다. 이름 조건이
+    /// 그것을 막는지 확인한다.
+    #[test]
+    fn system_slices_are_refused_by_name() {
+        let root = Path::new(CGROUP_ROOT);
+        for dangerous in ["system.slice", "user.slice", "init.scope", "someservice"] {
+            let error = validate_explicit_parent(&root.join(dangerous), root)
+                .expect_err(&format!("{dangerous} 가 통과했다"));
+            let message = error.to_string();
+            assert!(
+                message.contains("NOT_DELEGATED"),
+                "{dangerous}: {message}"
+            );
+        }
+    }
+
+    /// 루트 자신과 밖은 여전히 막는가.
+    #[test]
+    fn the_root_and_outside_paths_are_refused() {
+        let root = Path::new(CGROUP_ROOT);
+        assert!(validate_explicit_parent(root, root).is_err(), "루트가 통과했다");
+        assert!(
+            validate_explicit_parent(Path::new("/etc"), root).is_err(),
+            "cgroup 밖이 통과했다"
+        );
+        assert!(
+            validate_explicit_parent(&root.join("gputeer-x/.."), root).is_err(),
+            "`..` 가 통과했다"
+        );
     }
 }

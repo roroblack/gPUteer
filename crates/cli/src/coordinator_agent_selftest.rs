@@ -5051,7 +5051,11 @@ pub fn run() -> Result<String, String> {
     let hb_92 = run_handshake(
         &fixture,
         &["--expect-heartbeats", "2", "--liveness-db", liveness_db],
-        &["--heartbeat-rounds", "2"],
+        // ★ 회차 사이에 간격을 둔다. 없으면 두 heartbeat 가 같은
+        //   밀리초에 나가고, 저장소가 두 번째를 "진행 없음" 으로 옳게
+        //   판정한다 — 실제 시스템은 초 단위로 보내므로 그 상황이
+        //   현실과 다르다.
+        &["--heartbeat-rounds", "2", "--heartbeat-interval-ms", "5"],
     )?;
     if !hb_92.coordinator_success || !hb_92.agent_success {
         return Err(format!(
@@ -5071,16 +5075,43 @@ pub fn run() -> Result<String, String> {
             hb_92.coordinator_stdout
         ));
     }
-    // ★ 두 번째 회차가 실제로 **진행**했는가. 둘 다 advanced=false 면
-    //   저장은 하는데 값이 안 바뀌는 것이고, 그러면 침묵 시간이 영영
-    //   늘어나 살아 있는 노드가 조용해 보인다.
-    if !hb_92.coordinator_stdout.contains("advanced=true") {
+    // ★ **두 회차 모두** 진행했는가(2026-08-30 독립 검수 2라운드 지적).
+    //
+    //   초안은 출력 전체에 `advanced=true` 가 한 번이라도 있는지만 봤다.
+    //   첫 관측은 항상 그것을 만족하므로, 두 번째가 진행하지 않아도
+    //   통과했다 — 공허한 검사였다.
+    let advanced = hb_92
+        .coordinator_stdout
+        .lines()
+        .filter(|line| line.starts_with("HEARTBEAT_STORED ") && line.contains("advanced=true"))
+        .count();
+    if advanced != 2 {
         return Err(format!(
-            "92) 관측이 한 번도 진행하지 않았다: {:?}",
+            "92) 진행한 관측이 2건이 아니다({advanced}건) — 두 번째 회차가 최신으로 갱신되지 않으면 침묵 시간이 영영 늘어난다: {:?}",
             hb_92.coordinator_stdout
         ));
     }
+    // 두 회차의 시각이 실제로 다른가 — 같으면 두 번째가 진행할 리 없고,
+    // 위 검사가 통과했다면 그건 개수를 잘못 센 것이다.
+    let stamps: std::collections::BTreeSet<&str> = hb_92
+        .coordinator_stdout
+        .lines()
+        .filter(|line| line.starts_with("HEARTBEAT_STORED "))
+        .filter_map(|line| {
+            line.split_whitespace()
+                .find_map(|f| f.strip_prefix("last_heartbeat_unix_ms="))
+        })
+        .collect();
+    if stamps.len() != 2 {
+        return Err(format!(
+            "92) 저장된 시각이 서로 다르지 않다({stamps:?}) — 같은 관측을 두 번 센 것이다"
+        ));
+    }
     // 파일이 실제로 생겼는가 — 로그만 찍고 안 쓰는 경우를 배제한다.
+    //
+    // ★ 재시작을 넘는 복원은 여기서 증명하지 않는다. 그건 저장소
+    //   단위 테스트(`an_observation_survives_a_restart`)의 일이고,
+    //   이 시나리오가 보는 것은 **wire 경로**다.
     if !std::path::Path::new(liveness_db).exists() {
         return Err("92) liveness DB 파일이 만들어지지 않았다".to_string());
     }

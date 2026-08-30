@@ -269,10 +269,26 @@ framed_ingress 의 타임아웃 없는 블로킹 read DoS — **호출자 책임
   코드로 재확인했다. `framed_ingress` 모듈 자체는 여전히 바뀌지 않았다
   — 책임 분담이 실측으로 검증됐을 뿐이다.
 
-키 보관이 Windows 전용이다
-  §11 K1 은 DPAPI 다. Linux 는 UnsupportedPlatform 으로 **명시적으로 실패**한다
-  (조용히 K0 로 내려가지 않는다). K2(TPM)는 미구현이다.
-  DPAPI 가 풀린 뒤 프로세스 메모리·크래시 덤프는 보호하지 않는다.
+키 보관 — Windows·Linux 둘 다 있지만 **막는 경계가 다르다**(2026-08-30)
+  §11 K1 이 두 플랫폼에 다 생겼다. 그러나 같은 이름이 같은 보호를 뜻하지 않는다.
+
+             막는다                              못 막는다
+  Windows    같은 기계의 **다른 사용자**         같은 사용자, 관리자
+  (DPAPI)
+  Linux      같은 기계의 **비-root 사용자**      root
+  (systemd-  키링 파일만 훔쳐 다른 기계에서
+   creds      여는 것
+   --with-
+   key=host)
+
+  ★ Linux 쪽은 /var/lib/systemd/credential.secret(0600 root)로 봉인한다.
+    systemd 자신이 경고하듯, **그 파일이 암호화 안 된 디스크에 있으면
+    디스크를 통째로 가져가는 것은 막지 못한다** — x600 실측에서 정확히
+    그 경고가 나왔다. TPM 봉인(--with-key=tpm2)이 그것까지 막지만 그건
+    K2 이고 미구현이다.
+
+  둘 다 공통: 복호된 뒤의 프로세스 메모리·크래시 덤프는 보호하지 않는다.
+  systemd-creds 가 없는 Linux 는 조용히 K0 로 내려가지 않고 실패한다.
 
 장수명·증거 메시지에는 replay 방어가 아예 없다
   ReplayStatus::NotApplicable 로 **보고는 한다** (2026-08-17).

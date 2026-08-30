@@ -176,7 +176,72 @@ impl CoordinatorNodeLivenessStore {
                 ",
             )
             .map_err(storage)?;
-        Ok(Self { connection })
+        let store = Self { connection };
+        // ★ 메모리 DB 는 거부한다(2026-08-30 독립 검수 2라운드 지적).
+        //
+        //   `--liveness-db :memory:` 나 빈 경로도 그대로 받아들여서,
+        //   "durable 하게 남긴다" 는 주장이 모든 허용 설정에 대해
+        //   성립하지 않았다. `CoordinatorLeaseStore` 는 이미 같은 검사를
+        //   하는데 여기만 빠져 있었다.
+        if !store.is_durable() {
+            return Err(NodeLivenessStoreError::Storage {
+                detail: "liveness 저장소가 영속이 아니다 — 메모리 DB 는 재시작을 못 넘는다"
+                    .into(),
+            });
+        }
+        Ok(store)
+    }
+
+    /// 이 저장소가 실제 파일을 가리키는가.
+    ///
+    /// `CoordinatorLeaseStore::is_durable` 와 같은 관례다.
+    pub fn is_durable(&self) -> bool {
+        match self.connection.path() {
+            Some(p) => !p.is_empty() && p != ":memory:",
+            None => false,
+        }
+    }
+
+    /// 운영자가 승인한 장치 교체.
+    ///
+    /// # 왜 이 API 가 필요한가
+    ///
+    /// ★ 2026-08-30 독립 검수 2라운드 지적. `DeviceChanged` 를 거부만
+    ///   하고 풀 방법을 안 만들어서, **정상적인 하드웨어 교체·키 회전이
+    ///   영영 막혔다.** DB 를 유지하는 한 새 장치는 계속 거부된다.
+    ///
+    ///   거부 자체는 옳다 — 조용히 덮으면 등록된 B 가 A 의 노드를 인수할
+    ///   수 있다. 그러나 거부에는 **되돌리는 길**이 있어야 한다. 없으면
+    ///   운영자가 DB 를 손으로 지우게 되고, 그건 훨씬 위험하다.
+    ///
+    /// 이 함수는 **사람이 부르는 것**이다. 자동 경로에서 부르지 않는다 —
+    /// 자동으로 부르면 거부가 있으나 마나다.
+    pub fn rebind_device(
+        &mut self,
+        node_id: &str,
+        new_device_id: &str,
+    ) -> Result<(), NodeLivenessStoreError> {
+        if node_id.trim().is_empty() || new_device_id.trim().is_empty() {
+            return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                detail: "rebind 에 빈 식별자를 줄 수 없다".into(),
+            });
+        }
+        // ★ 행을 고치지 않고 **지운다.** 옛 장치의 관측을 새 장치 것으로
+        //   바꿔 놓으면, 새 장치가 한 번도 보고한 적 없는데 "최근에
+        //   살아 있었다" 로 보인다. 다음 heartbeat 부터 새로 쌓는다.
+        let removed = self
+            .connection
+            .execute(
+                "DELETE FROM coordinator_node_liveness WHERE node_id = ?1",
+                [node_id],
+            )
+            .map_err(storage)?;
+        if removed == 0 {
+            return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                detail: format!("{node_id} 에 대한 기록이 없다 — rebind 할 대상이 없다"),
+            });
+        }
+        Ok(())
     }
 
     /// 검증된 heartbeat 를 관측으로 남긴다.

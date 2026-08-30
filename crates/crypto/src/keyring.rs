@@ -140,6 +140,14 @@ pub enum KeyringError {
     InvalidState(&'static str),
     UnsupportedProtection(KeyProtection),
     UnsupportedPlatform,
+    /// OS 보호 저장소는 있는데 그 호출이 실패했다.
+    ///
+    /// ★ `UnsupportedPlatform` 과 **구분한다**(`CLAUDE.md` §3 — 오류
+    ///   메시지가 사실을 잘못 전하지 않게 한다). "이 플랫폼은 지원 안
+    ///   한다" 와 "지원하는데 이번 호출이 실패했다" 는 고치는 방법이
+    ///   전혀 다르다. 전자는 다른 등급을 골라야 하고, 후자는 권한이나
+    ///   봉인 상태를 봐야 한다.
+    OsProtectionFailed(String),
 }
 
 impl fmt::Display for KeyringError {
@@ -158,6 +166,9 @@ impl fmt::Display for KeyringError {
             }
             Self::UnsupportedPlatform => {
                 formatter.write_str("현재 플랫폼에서 OS 보호 키 저장소를 사용할 수 없다")
+            }
+            Self::OsProtectionFailed(detail) => {
+                write!(formatter, "OS 보호 키 저장소 호출이 실패했다: {detail}")
             }
         }
     }
@@ -729,14 +740,13 @@ fn ensure_protection(
             }
         }
         KeyProtection::K1OsProtected => {
-            #[cfg(not(windows))]
-            {
-                Err(KeyringError::UnsupportedPlatform)
-            }
-
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             {
                 Ok(())
+            }
+            #[cfg(not(any(windows, target_os = "linux")))]
+            {
+                Err(KeyringError::UnsupportedPlatform)
             }
         }
         KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
@@ -749,7 +759,7 @@ fn protect_private_key(
 ) -> Result<Vec<u8>, KeyringError> {
     match protection {
         KeyProtection::K0Plaintext => Ok(private_key.to_vec()),
-        KeyProtection::K1OsProtected => dpapi_protect(private_key),
+        KeyProtection::K1OsProtected => os_protect(private_key),
         KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
     }
 }
@@ -764,7 +774,7 @@ fn unprotect_private_key(
 
     match protection {
         KeyProtection::K0Plaintext => Ok(encrypted.to_vec()),
-        KeyProtection::K1OsProtected => dpapi_unprotect(encrypted),
+        KeyProtection::K1OsProtected => os_unprotect(encrypted),
         KeyProtection::K2HardwareBacked => Err(KeyringError::UnsupportedProtection(protection)),
     }
 }
@@ -809,9 +819,164 @@ fn dpapi_protect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
     Ok(result)
 }
 
-#[cfg(not(windows))]
-fn dpapi_protect(_: &[u8]) -> Result<Vec<u8>, KeyringError> {
-    Err(KeyringError::UnsupportedPlatform)
+/// K1 을 이 플랫폼의 OS 보호 저장소로 보낸다.
+///
+/// ```text
+/// Windows  DPAPI (CryptProtectData)        — **사용자** 경계
+/// Linux    systemd-creds --with-key=host   — **기계·root** 경계
+/// 그 외    UnsupportedPlatform
+/// ```
+///
+/// ★ 둘은 같은 등급 이름을 쓰지만 **막는 대상이 다르다.** 아래
+///   `linux_creds_protect` 문서를 보라. 같은 K1 이라고 해서 같은
+///   보호를 받는다고 읽으면 안 된다.
+fn os_protect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
+    #[cfg(windows)]
+    {
+        dpapi_protect(bytes)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_creds_protect(bytes)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = bytes;
+        Err(KeyringError::UnsupportedPlatform)
+    }
+}
+
+fn os_unprotect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
+    #[cfg(windows)]
+    {
+        dpapi_unprotect(bytes)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_creds_unprotect(bytes)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = bytes;
+        Err(KeyringError::UnsupportedPlatform)
+    }
+}
+
+/// `systemd-creds` 가 ciphertext 를 묶는 이름.
+///
+/// ★ 이름이 다르면 복호가 실패한다. 다른 용도로 만든 blob 을 키로
+///   되읽는 것을 막는다 — `signing.md` 의 `domain_tag` 가 서명에서
+///   하는 일과 같은 종류의 분리다.
+#[cfg(target_os = "linux")]
+const LINUX_CREDENTIAL_NAME: &str = "gputeer-device-private-key";
+
+/// Linux 의 K1 — `systemd-creds --with-key=host`.
+///
+/// # 이것이 막는 것과 못 막는 것
+///
+/// ★ **Windows DPAPI 와 경계가 다르다.** 같은 "K1" 이라는 이름을 쓰지만
+///   같은 보호가 아니다.
+///
+/// ```text
+///            막는다                                  못 막는다
+/// DPAPI      같은 기계의 **다른 사용자**             같은 사용자, 관리자
+/// host key   같은 기계의 **비-root 사용자**          root, 다른 기계로의 이동은
+///                                                    막지만 root 면 그만
+/// ```
+///
+/// `--with-key=host` 는 `/var/lib/systemd/credential.secret`(0600 root)
+/// 로 봉인한다. 그래서:
+///
+/// ```text
+/// 막는다     비-root 사용자의 읽기
+///            키링 파일만 훔쳐 **다른 기계**에서 여는 것
+/// 못 막는다  root
+///            복호 뒤의 프로세스 메모리·크래시 덤프(Windows 와 동일)
+///            디스크가 암호화돼 있지 않으면 디스크를 통째로 가져가는 것
+/// ```
+///
+/// ★ 마지막 항목은 추측이 아니다 — `systemd-creds` 자신이 경고한다.
+///   x600 WSL 실측에서 정확히 이 문구가 나왔다.
+///
+///   > Credential secret file '/var/lib/systemd/credential.secret' is not
+///   > located on encrypted media, using anyway.
+///
+///   TPM 으로 봉인하면(`--with-key=tpm2`) 그것까지 막지만 그건 K2 이고,
+///   이 조각은 K2 를 구현하지 않는다(`CLAUDE.md` §0.4 — 강제할 수 없는
+///   것을 보장으로 선언하지 않는다).
+///
+/// # 왜 라이브러리가 아니라 subprocess 인가
+///
+/// systemd 의 credential 형식을 직접 다루려면 그 포맷과 TPM 정책을
+/// 재구현해야 한다. 남의 PC 에서 도는 코드에 암호 구현을 하나 더
+/// 늘리는 것보다, OS 가 이미 관리하는 도구를 부르는 편이 낫다.
+/// `dpapi_protect` 가 Win32 API 를 부르는 것과 같은 자리다.
+#[cfg(target_os = "linux")]
+fn linux_creds_protect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
+    run_systemd_creds(&["encrypt", "--with-key=host"], bytes)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_creds_unprotect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
+    run_systemd_creds(&["decrypt"], bytes)
+}
+
+/// `systemd-creds` 를 stdin -> stdout 으로 한 번 부른다.
+///
+/// ★ 개인키를 **명령줄 인자나 임시 파일로 넘기지 않는다.** 인자는
+///   `/proc/<pid>/cmdline` 으로 같은 기계의 아무나 읽을 수 있고, 임시
+///   파일은 지우기 전에 죽으면 남는다. stdin 은 그 둘 다 아니다.
+#[cfg(target_os = "linux")]
+fn run_systemd_creds(args: &[&str], input: &[u8]) -> Result<Vec<u8>, KeyringError> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("systemd-creds")
+        .args(args)
+        .arg(format!("--name={LINUX_CREDENTIAL_NAME}"))
+        // `- -` 는 stdin 에서 읽어 stdout 으로 쓴다는 뜻이다.
+        .arg("-")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        // ★ 없으면 **K0 로 내려가지 않는다.** 조용한 강등은 "보호받는다"
+        //   고 믿는 상태에서 평문으로 두는 것이다.
+        .map_err(|_| KeyringError::UnsupportedPlatform)?;
+
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| KeyringError::OsProtectionFailed("stdin 을 열지 못했다".into()))?
+        .write_all(input)
+        .map_err(KeyringError::Io)?;
+    // stdin 을 닫아야 상대가 EOF 를 본다.
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().map_err(KeyringError::Io)?;
+    if !output.status.success() {
+        // ★ "없다" 가 아니라 "있는데 실패했다" 다. 진단에 필요한 만큼만
+        //   stderr 를 싣는다 — 개인키는 stdin 으로만 갔고 stderr 에는
+        //   systemd 의 진단 문구만 나온다.
+        let detail: String = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .next()
+            .unwrap_or("(stderr 없음)")
+            .chars()
+            .take(200)
+            .collect();
+        return Err(KeyringError::OsProtectionFailed(format!(
+            "systemd-creds {} 실패({}): {detail}",
+            args.join(" "),
+            output.status
+        )));
+    }
+    if output.stdout.is_empty() {
+        // 성공했다는데 아무것도 안 나왔다. 빈 키를 통과시키지 않는다.
+        return Err(KeyringError::CorruptFile("systemd-creds 출력이 비었다"));
+    }
+    Ok(output.stdout)
 }
 
 #[cfg(windows)]
@@ -869,10 +1034,7 @@ fn dpapi_unprotect(bytes: &[u8]) -> Result<Vec<u8>, KeyringError> {
     Ok(result)
 }
 
-#[cfg(not(windows))]
-fn dpapi_unprotect(_: &[u8]) -> Result<Vec<u8>, KeyringError> {
-    Err(KeyringError::UnsupportedPlatform)
-}
+
 
 struct Reader<'a> {
     bytes: &'a [u8],

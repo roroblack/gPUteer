@@ -778,8 +778,25 @@ fn serve_one_connection_impl(
                 IngressMessage::NodeHeartbeat(verified) => verified,
                 other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
             };
-            let observed = store.observe(verified).map_err(|error| {
-                SessionHandlerError::Classified(storage_error("liveness observe", error))
+            let observed = store.observe(verified).map_err(|error| match error {
+                // ★ 신원 충돌은 **저장소 장애가 아니다**(2026-08-30 독립
+                //   검수 2라운드 지적). `Storage` 로 포장하면 이 세션만
+                //   거부하는 게 아니라 Coordinator accept loop 전체가
+                //   종료된다 — 장치 하나를 잘못 신고한 것 때문에 다른
+                //   Agent 들의 작업까지 끊긴다.
+                crate::node_liveness_store::NodeLivenessStoreError::DeviceChanged {
+                    ..
+                }
+                | crate::node_liveness_store::NodeLivenessStoreError::InvalidHeartbeat {
+                    ..
+                }
+                | crate::node_liveness_store::NodeLivenessStoreError::SignerIsNotTheDevice {
+                    ..
+                } => SessionHandlerError::Legacy(format!("HEARTBEAT_REJECTED: {error}")),
+                // 진짜 저장소 장애는 fail-closed 다(`DoD-37` 규칙).
+                other => {
+                    SessionHandlerError::Classified(storage_error("liveness observe", other))
+                }
             })?;
             println!(
                 "HEARTBEAT_STORED node_id={} last_heartbeat_unix_ms={} advanced={}",
