@@ -200,6 +200,13 @@ pub struct CoordinatorConfig {
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
     pub extra_agents: Option<String>,
+    /// ★ 테스트 전용 — 각 세션이 이만큼의 세션이 **동시에** 열릴
+    ///   때까지 기다렸다가 진행한다. 0(기본값)이면 안 기다린다.
+    ///
+    ///   운영 경로는 이걸 켜지 않는다. 이건 "동시에 처리한다" 는
+    ///   주장을 확률이 아니라 구조로 증명하기 위한 관문이다 —
+    ///   순차 서버는 통과할 수가 없다.
+    pub require_concurrent_sessions: u32,
     /// 다중 Agent lane 을 쓴다. 기본값은 기존 순차 경로다.
     pub multi_agent: bool,
     /// ★ 테스트 전용 — 통지의 lease_id 를 바꿔 Agent identity 검증을
@@ -672,6 +679,19 @@ fn serve_one_connection_impl(
 
         // 이 연결의 상대가 맞는가. 서명은 "이 장치가 보냈다" 를 증명할
         // 뿐이므로, 그 장치가 **이 연결의 그 장치인지**는 따로 본다.
+        // ★ 이 대조는 **지금 도달 불가다** — 사실대로 적는다
+        //   (2026-08-30 독립 검수 지적을 확인하다 알아냈다).
+        //
+        //   `NodeHeartbeat::signer_id()` 가 `device_id` 라, 다른 이름을
+        //   실으면 서명 검증이 그 이름의 키를 못 찾아 먼저 막는다
+        //   (`UnknownSigner`). 여기까지 오려면 등록된 **다른** Agent 가
+        //   자기 이름·자기 키로 정상 서명해 보내야 하는데, 이 lane 은
+        //   Agent 키를 하나만 등록한다.
+        //
+        //   그래도 지우지 않는다. keyring 에 신원이 둘 이상 들어가는
+        //   순간(다중 Agent lane 이 그 방향이다) 이 대조가 유일한
+        //   방어가 된다 — 등록된 B 가 A 를 대신해 "살아 있다" 고
+        //   보고하는 것을 서명 검증은 막지 못한다.
         if heartbeat.device_id != config.agent_device_id {
             return Err(format!(
                 "HEARTBEAT_REJECTED: device_id 불일치 — 기대값 {} != {}",
@@ -1791,6 +1811,7 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
         extra_agents: flags.0.get("--extra-agents").cloned(),
+        require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
         revoke_lease_id_override: flags.0.get("--revoke-lease-id").cloned(),
         revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,

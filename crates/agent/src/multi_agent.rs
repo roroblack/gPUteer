@@ -26,18 +26,24 @@ use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, FrameType, InMemoryKeyring, InMemoryReplayGuard,
     IngressMessage, KeyDirectorySource, SigningKey, SystemClock,
 };
+use gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
 use gputeer_protocol::pb;
 use prost::Message;
 
 use crate::{derive_nonce, AgentConfig};
 
-/// `AgentSessionHello.mode` 중 이 lane 이 쓰는 값.
-///
-/// ★ Resume lane 은 2(RESUME)를 쓴다. 같은 값을 쓰면 Coordinator 가
-///   두 lane 을 구분하지 못하고, 한쪽 프레임 순서를 다른 쪽으로 해석해
-///   조용히 어긋난다 — `serve_resume_connection` 이 "두 wire ordering 을
-///   한 포트에서 모호하게 만들지 말라" 고 이미 주석에 적어 둔 이유다.
-const MODE_MULTI_AGENT_GRANT: i32 = 1;
+// `AgentSessionHello.mode` 는 `gputeer_protocol::constants` 에 있다.
+//
+// ★ 원래 이 파일에 있었다. 2026-08-30 독립 검수가 "보내는 쪽만 알고
+//   받는 쪽은 모르는 상수" 라는 결함을 짚어 protocol 로 옮겼다 —
+//   Coordinator 가 이 값을 대조하지 않아, Resume lane 용으로 서명된
+//   Hello 도 이 lane 이 받아들이고 있었다.
+//
+//   Resume lane 은 2(`MODE_RESUME`)를 쓴다. 같은 값을 쓰면 Coordinator
+//   가 두 lane 을 구분하지 못하고 한쪽 프레임 순서를 다른 쪽으로 해석해
+//   조용히 어긋난다 — `serve_resume_connection` 이 "두 wire ordering 을
+//   한 포트에서 모호하게 만들지 말라" 고 이미 적어 둔 이유다.
+
 
 /// Hello -> Grant -> ACK 한 왕복.
 pub fn run_multi_agent_session(config: &AgentConfig) -> Result<(), String> {
@@ -58,7 +64,14 @@ pub fn run_multi_agent_session(config: &AgentConfig) -> Result<(), String> {
     let now = clock.now_unix_ms();
     let mut hello = pb::AgentSessionHello {
         schema_version: 1,
-        mode: MODE_MULTI_AGENT_GRANT,
+        // ★ 테스트 전용으로 다른 lane 의 mode 를 실을 수 있다.
+        //   Coordinator 가 이 값을 실제로 대조하는지 증명하려면,
+        //   틀린 값을 보내 거부당하는 것을 봐야 한다.
+        mode: if config.corrupt_hello_mode {
+            gputeer_protocol::constants::MODE_RESUME
+        } else {
+            MODE_MULTI_AGENT_GRANT
+        },
         session_id: config.session_id.clone(),
         node_id: config.agent_device_id.clone(),
         connection_attempt: 0,
@@ -154,7 +167,8 @@ mod tests {
     #[test]
     fn this_lane_uses_a_distinct_session_mode() {
         assert_ne!(
-            MODE_MULTI_AGENT_GRANT, 2,
+            MODE_MULTI_AGENT_GRANT,
+            gputeer_protocol::constants::MODE_RESUME,
             "Resume lane 과 같은 mode 를 쓰면 두 wire ordering 이 모호해진다"
         );
     }

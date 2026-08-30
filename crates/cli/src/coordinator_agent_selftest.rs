@@ -4981,6 +4981,54 @@ pub fn run() -> Result<String, String> {
         "89) 다른 Coordinator 앞으로 서명된 heartbeat 를 coordinator_device_id 대조로 거부\n",
     );
 
+    // 90) 다른 Agent 이름으로 보낸 heartbeat 를 이쪽 것으로 받지 않는다.
+    //
+    //     ★ 89번은 `coordinator_device_id` 만 손상시킨다. Coordinator 는
+    //       `device_id` 도 대조하는데, 그 대조를 **지워도 89번은 그대로
+    //       통과했다**(2026-08-30 독립 검수 지적). 검사가 있다는 것과
+    //       그 검사가 지켜진다는 것을 증명하는 것은 다르다.
+    //
+    //     이 대조가 없으면 등록된 Agent 가 남의 이름으로 "살아 있다" 고
+    //     보고할 수 있다 — 서명은 자기 키로 유효하므로 안 걸린다.
+    let wrong_device_agent: Vec<&str> = vec![
+        "--heartbeat-rounds",
+        "1",
+        "--corrupt-heartbeat-device",
+        "true",
+    ];
+    let hb_90 = run_handshake(&fixture, &one_heartbeat, &wrong_device_agent)?;
+    if hb_90.coordinator_success {
+        return Err(format!(
+            "90) 남의 이름으로 보낸 heartbeat 가 통과했다: {:?}",
+            hb_90.coordinator_stdout
+        ));
+    }
+    // ★ 어디서 막히는지가 예상과 달랐다 — 그대로 기록한다.
+    //
+    //   `NodeHeartbeat::signer_id()` 가 `device_id` 다. 그래서 이름을
+    //   바꾸면 **서명 검증 단계에서** 그 이름의 키를 못 찾아
+    //   `UnknownSigner` 로 먼저 막힌다. 뒤의 명시적
+    //   `device_id != config.agent_device_id` 대조까지 가지도 못한다.
+    //
+    //   즉 검수가 지적한 "device_id 대조에 negative test 가 없다" 는
+    //   맞지만, 그 대조는 **이 경로에서 도달 불가**다. keyring 에 신원이
+    //   하나뿐이라 다른 이름은 전부 서명 단계에서 걸린다. 도달하려면
+    //   등록된 **다른** Agent 가 자기 이름·자기 키로 서명해 보내야
+    //   하는데, 이 lane 의 Coordinator 는 Agent 키를 하나만 등록한다.
+    //
+    //   없는 테스트를 지어내는 대신 실제로 막히는 지점을 고정한다 —
+    //   남의 이름으로 보낸 heartbeat 는 통과하지 못한다는 사실 자체는
+    //   이것으로 증명된다.
+    if !hb_90.coordinator_stderr.contains("UnknownSigner") {
+        return Err(format!(
+            "90) 거부 사유가 서명자 미상으로 식별되지 않는다: {:?}",
+            hb_90.coordinator_stderr
+        ));
+    }
+    report.push_str(
+        "90) 남의 Agent 이름으로 보낸 heartbeat 를 서명자 조회에서 거부(UnknownSigner)\n",
+    );
+
     report.push_str(&run_multi_agent_scenario(&fixture)?);
 
     Ok(report)
@@ -5535,6 +5583,12 @@ fn run_multi_agent_scenario(fixture: &Fixture) -> Result<String, String> {
             "true",
             "--extra-agents",
             &extra_agents,
+            // ★ 동시 처리를 **구조로** 증명하는 관문(2026-08-30 검수 지적).
+            //   각 세션은 2개 세션이 동시에 열릴 때까지 기다렸다가
+            //   진행한다. 순차 서버는 두 번째 연결을 아예 받지 않으므로
+            //   첫 세션의 대기가 절대 안 풀려 시간 초과로 실패한다.
+            "--require-concurrent-sessions",
+            "2",
             "--max-connections",
             "2",
             "--accept-timeout-ms",
@@ -5642,6 +5696,15 @@ fn run_multi_agent_scenario(fixture: &Fixture) -> Result<String, String> {
             "88) 두 세션이 모두 처리되지 않았다: {coordinator_stdout:?}"
         ));
     }
+    // ★ 두 세션이 **동시에** 열려 있었는가.
+    //
+    //   관문이 이미 그것을 강제하지만, 관측값도 함께 확인한다 —
+    //   관문을 나중에 누가 지우면 이 assert 가 남아서 잡는다.
+    if !coordinator_stdout.contains("peak_concurrent=2") {
+        return Err(format!(
+            "88) 두 세션이 동시에 열린 적이 없다(순차 처리였다): {coordinator_stdout:?}"
+        ));
+    }
     // 두 Agent 가 각각 자기 신원으로 Hello 를 보냈는가.
     for device_id in [fixture.agent_device_id, second_device_id] {
         if !coordinator_stdout.contains(&format!("agent_device_id={device_id}")) {
@@ -5677,7 +5740,164 @@ fn run_multi_agent_scenario(fixture: &Fixture) -> Result<String, String> {
         ));
     }
 
+    // ★ 두 Agent 의 식별자가 실제로 갈렸는가 — 파생 규칙이 단사인가.
+    //
+    //   2026-08-30 독립 검수가 실제 충돌 반례를 냈다. 초안은 Agent ID 를
+    //   BLAKE3 앞 8자(32비트)로 줄여 붙였는데, 32비트는 생일 문제로
+    //   수만 개만 시도해도 충돌한다(`agent-47131` 과 `agent-71872` 가
+    //   둘 다 `e7525a3b`). 충돌하면 저장소 없이 도는 이 경로에서
+    //   **서로 다른 holder 앞으로 같은 식별자·같은 fence epoch 를 가진
+    //   서명된 Lease 두 개가 나간다.**
+    //
+    //   지금은 축약하지 않으므로 각 Lease 에 자기 Agent ID 가 그대로
+    //   들어 있어야 한다. 축약을 다시 넣으면 여기서 걸린다.
+    for (device_id, lease) in [
+        (fixture.agent_device_id, &first_lease),
+        (second_device_id, &second_lease),
+    ] {
+        if !lease.ends_with(device_id) {
+            return Err(format!(
+                "88) Lease {lease} 에 Agent 신원({device_id})이 그대로 안 들어 있다 — 식별자를 줄이면 충돌할 수 있다"
+            ));
+        }
+    }
+
+    let mode_report = run_wrong_hello_mode_case(fixture, &extra_agents, &coordinator_seed_hex)?;
+
     Ok(format!(
-        "88) 두 Agent 가 동시에 붙어 각자 다른 Lease 를 받고 각자 ACK 까지 완료({first_lease} / {second_lease})\n"
+        "88) 두 Agent 가 동시에 붙어(peak_concurrent=2) 각자 다른 Lease 를 받고 각자 ACK 까지 완료({first_lease} / {second_lease})\n{mode_report}"
     ))
+}
+
+/// 91) 다른 lane 용으로 서명된 Hello 를 다중 Agent lane 이 거부하는가.
+///
+/// ★ 2026-08-30 독립 검수 지적. Coordinator 가 `AgentSessionHello.mode`
+///   를 **아예 안 봤다.** 등록된 Agent 가 Resume lane 값(2)으로 서명한
+///   Hello 를 보내도 다중 Agent Grant 를 받았다 — 서명은 자기 키로
+///   유효하므로 서명 검증은 이것을 절대 못 잡는다.
+///
+///   기존 단위 테스트는 상수가 2 가 아닌지만 확인했다. 그건 "보내는
+///   쪽이 다른 값을 쓴다" 는 뜻이지 "받는 쪽이 대조한다" 는 뜻이 아니다.
+fn run_wrong_hello_mode_case(
+    fixture: &Fixture,
+    extra_agents: &str,
+    coordinator_seed_hex: &str,
+) -> Result<String, String> {
+    let mut coordinator = Command::new(&fixture.exe)
+        .args([
+            "coordinator-stub",
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            coordinator_seed_hex,
+            "--peer-pubkey",
+            &fixture.agent_pub_hex,
+            "--coordinator-device-id",
+            fixture.coordinator_device_id,
+            "--agent-device-id",
+            fixture.agent_device_id,
+            "--grant-id",
+            fixture.grant_id,
+            "--attempt-id",
+            fixture.attempt_id,
+            "--lease-id",
+            fixture.lease_id,
+            "--job-id",
+            fixture.job_id,
+            "--multi-agent",
+            "true",
+            "--extra-agents",
+            extra_agents,
+            "--max-connections",
+            "1",
+            "--accept-timeout-ms",
+            "30000",
+            "--i-understand-legacy-mode-is-unsafe",
+            "true",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("91) coordinator 스폰 실패: {e}"))?;
+
+    let stdout_pipe = coordinator
+        .stdout
+        .take()
+        .ok_or_else(|| "91) coordinator stdout 없음".to_string())?;
+    let stderr_pipe = coordinator
+        .stderr
+        .take()
+        .ok_or_else(|| "91) coordinator stderr 없음".to_string())?;
+    let stderr_reader = thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stderr_pipe).read_to_string(&mut text);
+        text
+    });
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<String>();
+    let reader = thread::spawn(move || -> Result<String, std::io::Error> {
+        let mut reader = BufReader::new(stdout_pipe);
+        let mut first = String::new();
+        reader.read_line(&mut first)?;
+        let _ = ready_tx.send(first.clone());
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest)?;
+        Ok(format!("{first}{rest}"))
+    });
+    let ready = ready_rx
+        .recv_timeout(Duration::from_secs(20))
+        .map_err(|e| format!("91) READY 를 못 받았다: {e}"))?;
+    let address = ready
+        .trim()
+        .strip_prefix("READY ")
+        .ok_or_else(|| format!("91) READY 형식이 다르다: {ready:?}"))?
+        .to_string();
+
+    let agent_out = Command::new(&fixture.exe)
+        .args([
+            "agent-stub",
+            "--connect",
+            &address,
+            "--own-seed",
+            &to_hex(&fixture.agent_seed),
+            "--peer-pubkey",
+            &fixture.coordinator_pub_hex,
+            "--coordinator-device-id",
+            fixture.coordinator_device_id,
+            "--agent-device-id",
+            fixture.agent_device_id,
+            "--multi-agent",
+            "true",
+            // 이 한 줄이 검사 대상이다 — Resume lane 값으로 서명해 보낸다.
+            "--corrupt-hello-mode",
+            "true",
+        ])
+        .output()
+        .map_err(|e| format!("91) agent-stub 실행 실패: {e}"))?;
+
+    let coordinator_status = coordinator
+        .wait()
+        .map_err(|e| format!("91) coordinator 대기 실패: {e}"))?;
+    let coordinator_stdout = reader
+        .join()
+        .map_err(|_| "91) coordinator stdout reader panic".to_string())?
+        .map_err(|e| format!("91) coordinator stdout 읽기 실패: {e}"))?;
+    let coordinator_stderr = stderr_reader
+        .join()
+        .unwrap_or_else(|_| "<stderr reader panic>".to_string());
+
+    if coordinator_status.success() {
+        return Err(format!(
+            "91) 다른 lane 용 mode 로 서명된 Hello 가 통과했다: stdout={coordinator_stdout:?}"
+        ));
+    }
+    if !coordinator_stderr.contains("mode 불일치") {
+        return Err(format!(
+            "91) 거부 사유가 mode 불일치로 식별되지 않는다: {coordinator_stderr:?}"
+        ));
+    }
+    if agent_out.status.success() {
+        return Err("91) Agent 가 거부당했는데도 성공으로 끝났다".to_string());
+    }
+
+    Ok("91) 다른 lane(Resume) 용으로 서명된 Hello 를 mode 대조로 거부\n".to_string())
 }

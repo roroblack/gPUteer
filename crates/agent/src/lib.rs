@@ -143,6 +143,23 @@ pub struct AgentConfig {
     ///   확인하기 위해서다 — 지워도 통과하는 검사는 아무것도
     ///   증명하지 않는다(2026-08-29 독립 검수 지적).
     pub corrupt_heartbeat_coordinator: bool,
+    /// ★ 테스트 전용 — heartbeat 의 `device_id` 를 다른 Agent 것으로
+    ///   바꿔 보낸다.
+    ///
+    ///   2026-08-30 독립 검수 지적으로 생겼다. Coordinator 는
+    ///   `device_id` 와 `coordinator_device_id` **둘 다** 대조하는데,
+    ///   시나리오 89 는 뒤엣것만 손상시켰다 — 앞엣것 대조를 지워도
+    ///   아무 테스트도 실패하지 않았다. 검사가 있다는 것과 그 검사가
+    ///   지켜지는 것을 증명하는 것은 다르다.
+    pub corrupt_heartbeat_device: bool,
+    /// ★ 테스트 전용 — 다중 Agent Hello 의 `mode` 를 Resume lane 값으로
+    ///   바꿔 보낸다.
+    ///
+    ///   2026-08-30 독립 검수 지적. Coordinator 가 `mode` 를 아예 안 봐서,
+    ///   등록된 Agent 가 Resume lane 용으로 서명한 Hello 를 보내도 다중
+    ///   Agent Grant 를 받았다 — 서명은 유효하므로 서명 검증은 이것을
+    ///   절대 못 잡는다.
+    pub corrupt_hello_mode: bool,
     /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
     pub workload_commit_limit_bytes: u64,
     /// Owner Panel 이 쓸 상태. Agent 가 작업을 시작하면 여기 등록하고
@@ -879,7 +896,11 @@ fn run_one_connection(
         let mut heartbeat = pb::NodeHeartbeat {
             schema_version: 1,
             node_id: config.agent_device_id.clone(),
-            device_id: config.agent_device_id.clone(),
+            device_id: if config.corrupt_heartbeat_device {
+                format!("{}-OTHER", config.agent_device_id)
+            } else {
+                config.agent_device_id.clone()
+            },
             coordinator_device_id: if config.corrupt_heartbeat_coordinator {
                 format!("{}-OTHER", config.coordinator_device_id)
             } else {
@@ -1858,6 +1879,8 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
         corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
+        corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
+        corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
         multi_agent: flags.bool_flag("--multi-agent"),
         heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
             Some(v) => v
@@ -2090,6 +2113,8 @@ mod tests {
             heartbeat_rounds: 0,
             corrupt_heartbeat_fence: false,
             corrupt_heartbeat_coordinator: false,
+            corrupt_heartbeat_device: false,
+            corrupt_hello_mode: false,
             multi_agent: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             owner_panel_port: None,

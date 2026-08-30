@@ -47,13 +47,14 @@
 use std::collections::BTreeMap;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, FrameType, InMemoryKeyring, InMemoryReplayGuard,
     IngressMessage, KeyDirectorySource, SigningKey, SystemClock, VerifyingKey,
 };
+use gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
 use gputeer_protocol::pb;
 use prost::Message;
 
@@ -106,6 +107,9 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
         lease_store: Mutex::new(lease_store),
         replay: Mutex::new(InMemoryReplayGuard::new()),
         served: AtomicU32::new(0),
+        overlap: Mutex::new(0),
+        overlap_changed: Condvar::new(),
+        peak_concurrent: AtomicU32::new(0),
     });
 
     let expected = shared.config.max_connections;
@@ -149,8 +153,9 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
     }
 
     println!(
-        "MULTI_AGENT_DONE served={}",
-        shared.served.load(Ordering::SeqCst)
+        "MULTI_AGENT_DONE served={} peak_concurrent={}",
+        shared.served.load(Ordering::SeqCst),
+        shared.peak_concurrent.load(Ordering::SeqCst)
     );
     Ok(())
 }
@@ -176,6 +181,15 @@ struct Shared {
     lease_store: Mutex<Option<CoordinatorLeaseStore>>,
     replay: Mutex<InMemoryReplayGuard>,
     served: AtomicU32,
+    /// 지금 **동시에** 열려 있는 세션 수.
+    ///
+    /// ★ 2026-08-30 독립 검수 지적으로 생겼다. 시나리오 88 은 두
+    ///   Agent 를 연달아 띄우고 둘 다 성공했는지만 봤는데, 그건
+    ///   **순차 서버로도 통과한다** — 동시 처리를 전혀 증명하지 못했다.
+    overlap: Mutex<u32>,
+    overlap_changed: Condvar,
+    /// 관측된 최대 동시 세션 수. 보고용이다.
+    peak_concurrent: AtomicU32,
 }
 
 /// 연결 하나를 끝까지 처리한다.
@@ -210,6 +224,11 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
     let clock = SystemClock;
     let agent_device_id = read_hello(shared, &mut stream, &clock)?;
     println!("SESSION_HELLO peer={peer} agent_device_id={agent_device_id}");
+
+    // 이 세션이 열려 있는 동안 동시 개수를 센다. `_open` 이 drop 될 때
+    // 자동으로 줄어든다 — 아래 어느 `?` 에서 빠져나가도 새지 않는다.
+    let _open = OpenSession::enter(shared);
+    await_required_overlap(shared)?;
 
     // ★ 이 Agent 몫의 설정을 만든다. 식별자를 Agent 마다 갈라 놓지
     //   않으면 두 Agent 가 같은 `lease_id` 를 두고 다투게 되고, 그건
@@ -285,6 +304,20 @@ fn read_hello(
             if hello.node_id.is_empty() {
                 return Err("HELLO_REJECTED: node_id 가 비었다".into());
             }
+            // ★ mode 를 실제로 대조한다(2026-08-30 독립 검수 지적).
+            //
+            //   이 검사가 없으면 등록된 Agent 가 Resume lane 용
+            //   (`MODE_RESUME`)으로 서명한 Hello 를 보내도 이 lane 이
+            //   받아들여 다중 Agent Grant 를 내준다 — 서명은 유효하므로
+            //   서명 검증은 이것을 절대 못 잡는다. 한 lane 용으로 서명한
+            //   메시지를 다른 lane 이 쓰는 것은 `signing.md` 가
+            //   domain_tag 로 막으려는 것과 같은 부류의 혼동이다.
+            if hello.mode != MODE_MULTI_AGENT_GRANT {
+                return Err(format!(
+                    "HELLO_REJECTED: mode 불일치 — 이 lane 은 {MODE_MULTI_AGENT_GRANT} 만 받는다, 받은 값 {}",
+                    hello.mode
+                ));
+            }
             Ok(hello.node_id.clone())
         }
         other => Err(format!("HELLO_REJECTED: 예상하지 못한 타입: {other:?}")),
@@ -335,19 +368,52 @@ fn scope_config_to_agent(base: &CoordinatorConfig, agent_device_id: &str) -> Coo
 
 /// 식별자 하나를 이 Agent 몫으로 갈라 놓는다. 순수 함수다 —
 /// 그래서 테스트가 `CoordinatorConfig` 48개 필드를 채우지 않아도 된다.
+///
+/// # 왜 해시가 아니라 Agent ID 를 그대로 붙이는가
+///
+/// ★ 2026-08-30 독립 검수가 실제 충돌 반례를 만들어냈다. 초안은
+///   BLAKE3 해시 **앞 8자(32비트)** 만 썼는데, 32비트는 생일 문제로
+///   수만 개만 시도해도 충돌한다.
+///
+/// ```text
+/// agent-47131  ->  e7525a3b
+/// agent-71872  ->  e7525a3b
+/// ```
+///
+/// 충돌하면 두 Agent 가 같은 `lease_id`·`job_id`·`attempt_id`·
+/// `grant_id` 를 받는다. 영속 저장소가 있으면 `holder_node_id` 충돌로
+/// 거부돼 fail-closed 지만(그래도 서비스 거부다), **저장소가 없으면
+/// 서로 다른 holder 앞으로 같은 식별자·같은 fence epoch 를 가진
+/// 서명된 Lease 두 개가 나간다.** 이 lane 의 전제 자체가 깨진다.
+///
+/// 그래서 축약하지 않는다. `device_id` 는 이미 사람이 정한 짧은
+/// 이름이고, 식별자가 조금 길어지는 것보다 충돌이 훨씬 비싸다.
+/// 해시로 짧게 만들고 싶으면 128비트 이상을 써야 하는데, 그러면
+/// 어차피 원본보다 길다.
 fn scoped_id(base_id: &str, agent_device_id: &str) -> String {
-    format!("{base_id}-{}", short_tag(agent_device_id))
+    format!("{base_id}-{agent_device_id}")
 }
 
-/// Agent 식별자에서 짧고 안정적인 꼬리표를 만든다.
+/// 등록된 Agent 들이 서로 다른 식별자를 받는지 확인한다.
 ///
-/// 이름을 그대로 이어 붙이면 식별자가 길어지고 읽기 어렵다. 해시를
-/// 쓰면 같은 Agent 는 항상 같은 꼬리표를 받아 재접속에도 안정적이다.
-fn short_tag(agent_device_id: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"gputeer/v1/multi-agent-scope");
-    hasher.update(agent_device_id.as_bytes());
-    hasher.finalize().to_hex()[..8].to_string()
+/// ★ `scoped_id()` 가 단사임을 코드로 확인할 수 있어도, 그 성질을
+///   **여기서 한 번 더 강제한다.** 나중에 누가 다시 축약을 넣으면
+///   그때는 이 검사가 걸린다 — 검수가 든 결함이 조용히 되살아나는
+///   것을 막는 유일한 방법이다.
+fn require_distinct_scoped_ids(
+    base: &CoordinatorConfig,
+    agents: &BTreeMap<String, VerifyingKey>,
+) -> Result<(), String> {
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    for device_id in agents.keys() {
+        let derived = scoped_id(&base.lease_id, device_id);
+        if let Some(previous) = seen.insert(derived.clone(), device_id.clone()) {
+            return Err(format!(
+                "SCOPED_ID_COLLISION: {previous} 와 {device_id} 가 같은 식별자 {derived} 를                  만든다 — 저장소 없이 실행하면 서로 다른 Agent 에게 같은 Lease 가 서명돼 나간다"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `--extra-agents` 를 포함한 전체 Agent 신원 목록.
@@ -517,4 +583,87 @@ mod tests {
             assert!(agents.contains_key(expected), "{expected} 가 없다");
         }
     }
+}
+
+
+/// 열려 있는 세션 하나. RAII 로 동시 개수를 센다.
+///
+/// ★ 수동으로 증감하면 중간의 `?` 하나가 감소를 건너뛰고, 그러면
+///   개수가 영영 안 줄어 다음 관문이 잘못 통과한다. 세는 코드가
+///   틀리면 그 위에서 내린 판정이 전부 거짓이 된다.
+struct OpenSession<'a> {
+    shared: &'a Shared,
+}
+
+impl<'a> OpenSession<'a> {
+    fn enter(shared: &'a Shared) -> Self {
+        let mut open = lock(&shared.overlap);
+        *open += 1;
+        let now = *open;
+        shared.peak_concurrent.fetch_max(now, Ordering::SeqCst);
+        println!("SESSION_OPEN concurrent={now}");
+        shared.overlap_changed.notify_all();
+        drop(open);
+        Self { shared }
+    }
+}
+
+impl Drop for OpenSession<'_> {
+    fn drop(&mut self) {
+        let mut open = lock(&self.shared.overlap);
+        *open = open.saturating_sub(1);
+        self.shared.overlap_changed.notify_all();
+    }
+}
+
+/// 요구된 만큼의 세션이 **동시에** 열릴 때까지 기다린다.
+///
+/// # 왜 이런 관문이 필요한가
+///
+/// ★ 2026-08-30 독립 검수가 시나리오 88 의 공허성을 지적했다 — 두
+///   Agent 를 연달아 띄우고 둘 다 성공했는지만 보면, 서버가 하나씩
+///   순차 처리해도 똑같이 통과한다. "동시에 처리한다" 를 전혀
+///   증명하지 못했다.
+///
+/// 겹칠 때까지 잠깐 붙잡아 두는 방법도 있지만 그건 확률이다 —
+/// 느린 기계에서 첫 세션이 먼저 끝나면 조용히 무의미해진다.
+/// 관문은 다르다. 순차 서버는 두 번째 연결을 **아예 받지 않으므로**
+/// 첫 세션의 대기가 절대 안 풀리고, 시간 초과로 명확히 실패한다.
+/// 통과하는 유일한 방법이 실제 동시 처리다.
+///
+/// 기본값(`0`)이면 이 함수는 아무것도 안 한다 — 운영 경로는 대기하지
+/// 않는다.
+fn await_required_overlap(shared: &Shared) -> Result<(), String> {
+    let required = shared.config.require_concurrent_sessions;
+    if required == 0 {
+        return Ok(());
+    }
+    let deadline = Duration::from_millis(shared.config.accept_timeout_ms.max(5_000));
+    let started = std::time::Instant::now();
+    let mut open = lock(&shared.overlap);
+    while *open < required {
+        let remaining = deadline.checked_sub(started.elapsed()).ok_or_else(|| {
+            format!(
+                "CONCURRENCY_NOT_OBSERVED: {required}개 세션이 동시에 열리기를 {deadline:?}                  기다렸으나 최대 {}개까지만 열렸다 — 서버가 순차 처리하고 있다",
+                shared.peak_concurrent.load(Ordering::SeqCst)
+            )
+        })?;
+        let (guard, timeout) = shared
+            .overlap_changed
+            .wait_timeout(open, remaining)
+            .map_err(|poisoned| {
+                // poisoned 여도 값 자체는 읽을 수 있다. 여기서 죽이면
+                // 관문이 원인 불명으로 실패해 진단이 더 어려워진다.
+                let _ = poisoned;
+                "overlap 대기 중 잠금이 poisoned 됐다".to_string()
+            })?;
+        open = guard;
+        if timeout.timed_out() && *open < required {
+            return Err(format!(
+                "CONCURRENCY_NOT_OBSERVED: {required}개 세션이 동시에 열리기를 기다렸으나                  최대 {}개까지만 열렸다 — 서버가 순차 처리하고 있다",
+                shared.peak_concurrent.load(Ordering::SeqCst)
+            ));
+        }
+    }
+    Ok(())
 }

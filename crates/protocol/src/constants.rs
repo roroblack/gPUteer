@@ -82,3 +82,23 @@ pub const MAX_SHORTLIVED_TTL_MS: u64 = 15 * 60 * 1_000;
 /// ★ 이것은 측정값이 아니라 정책값이다. 실제 최대 청크 크기를 재면
 ///   조정해야 할 수 있다.
 pub const MAX_INGRESS_FRAME_BYTES: u32 = 8 * 1024 * 1024;
+
+/// `AgentSessionHello.mode` — 다중 Agent Grant lane.
+///
+/// # 왜 여기 있는가
+///
+/// ★ 2026-08-30 독립 검수 지적. 이 값이 `crates/agent` 안에만 있어서
+///   **Coordinator 는 mode 를 아예 안 봤다.** 등록된 Agent 가 Resume
+///   모드(`2`)로 서명한 Hello 를 보내도 다중 Agent Grant 를 받았다 —
+///   서명은 유효하므로 아무것도 걸러내지 못한다.
+///
+/// 보내는 쪽만 상수를 알고 받는 쪽은 모르면, 그 필드는 있으나 마나다.
+/// `CLAUDE.md` §3 이 "프로토콜 상수는 한 곳에만 둔다" 고 정한 것과
+/// 같은 이유로 여기 둔다.
+pub const MODE_MULTI_AGENT_GRANT: i32 = 1;
+
+/// `AgentSessionHello.mode` — Resume lane(`DoD-36`).
+///
+/// 다중 Agent lane 과 **반드시 달라야 한다.** 같으면 한쪽 lane 용으로
+/// 서명된 Hello 를 다른 lane 이 자기 것으로 받아들인다.
+pub const MODE_RESUME: i32 = 2;
