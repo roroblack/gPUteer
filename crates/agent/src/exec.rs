@@ -241,6 +241,18 @@ pub struct ExecutionPolicy {
     ///
     /// Windows 는 Job Object 가 익명 커널 객체라 이 값을 쓰지 않는다.
     pub isolation_name: String,
+    /// Linux 에서 하위 cgroup 을 만들 부모.
+    ///
+    /// ★ 2026-08-30 독립 검수 지적. 초안은 무조건 "내 cgroup" 을 썼는데,
+    ///   보통의 배포 환경에서 Agent 자신이 그 cgroup 안에 있으므로
+    ///   cgroup v2 의 **"내부 프로세스 금지"** 규칙 때문에 `+memory` 를
+    ///   하위에 켤 수 없다 — 거부될 **가능성**이 아니라 구조적으로 거부되는
+    ///   경로였다. 위임받은 subtree 를 전달할 방법 자체가 없었다.
+    ///
+    ///   `None` 이면 "내 cgroup"(fail-closed 기본값)이고, 운영자가
+    ///   `--workload-cgroup-parent` 로 위임받은 subtree 를 지정할 수 있다.
+    ///   Windows 는 이 값을 쓰지 않는다.
+    pub cgroup_parent: Option<std::path::PathBuf>,
 }
 
 /// 검증된 실행 지시를 실제 프로세스로 띄우고 종료까지 관측한다.
@@ -459,11 +471,16 @@ mod platform {
             &create,
             policy.commit_limit_bytes,
             &cgroup_name,
-            // ★ 위임받은 subtree 만 쓴다. 루트로 내려가면 운영자가
-            //   상위에 걸어 둔 CPU·메모리·PID 상한 밖으로 나간다
-            //   (2026-08-30 독립 검수 지적) — 그건 Agent 가 자기 판단으로
-            //   할 일이 아니다. 위임이 없으면 실행을 거부한다.
-            &gputeer_runtime_linux::CgroupParent::Current,
+            // ★ 루트로 **자동으로** 내려가지 않는다. 그러면 운영자가
+            //   상위에 걸어 둔 CPU·메모리·PID 상한 밖으로 나간다 —
+            //   Agent 가 자기 판단으로 할 일이 아니다.
+            //
+            //   운영자가 위임받은 subtree 를 지정하면 그것을 쓰고,
+            //   없으면 "내 cgroup" 을 쓴다(위임이 없으면 거부된다).
+            &match &policy.cgroup_parent {
+                Some(path) => gputeer_runtime_linux::CgroupParent::Explicit(path.clone()),
+                None => gputeer_runtime_linux::CgroupParent::Current,
+            },
         )
         .map_err(|error| match error {
             gputeer_runtime_linux::CgroupError::SpawnFailed { detail } => {
@@ -522,27 +539,78 @@ mod platform {
     }
 }
 
-/// cgroup 디렉터리 이름으로 쓸 수 있게 다듬는다.
+/// cgroup 디렉터리 이름을 만든다. **자르거나 치환하지 않고 해시한다.**
 ///
-/// ★ 호출부가 준 값이지만 그대로 믿지 않는다. `/` 나
-///   NUL 이 들어오면 경로가 탈출하고, 빈 문자열이면 이름이 없어진다.
-///   영숫자·`-`·`_` 만 남기고 나머지는 `_` 로 바꾼다.
+/// # 왜 다듬으면 안 되는가
+///
+/// ★ 2026-08-30 독립 검수가 실제 충돌 반례를 냈다. 초안은 허용 문자만
+///   남기고 64자로 잘랐는데, 그러면 서로 다른 실행이 같은 이름이 된다.
+///
+/// ```text
+/// grant=g, attempt=a.b   ->  g-a_b
+/// grant=g, attempt=a_b   ->  g-a_b     ← 같아진다
+/// 64자 뒤만 다른 두 값   ->  같아진다
+/// ```
+///
+/// 그리고 그건 단순히 cgroup 을 공유하는 것으로 끝나지 않았다 —
+/// `runtime-linux` 가 기존 cgroup 을 죽이고 다시 만들었으므로,
+/// **B 를 시작하면 A 가 죽었다.** 소유자가 아닌 것이 남의 작업을
+/// 끝내는 것은 `CLAUDE.md` §0.1 이 가장 앞에서 막는 일이다.
+///
+/// 그래서 다듬지 않는다. 전체 이름을 BLAKE3 로 해시해 고정 길이 hex 를
+/// 쓴다 — 문자 집합·길이 문제가 동시에 사라지고, 서로 다른 입력은
+/// 128비트 충돌 저항 안에서 서로 다른 이름을 받는다.
+///
+/// ★ `derive_replay_nonce` 와 같은 이유로 **단사 함수라고 주장하지
+///   않는다.** 해시를 자르는 한 그건 사실이 아니다. 정확히는
+///   "128비트 충돌 저항에 의존하는 결정적 이름" 이다.
+///
+/// # 읽기 어려워지는 것은 감수한다
+///
+/// 사람이 `/sys/fs/cgroup` 에서 어느 작업인지 바로 못 알아본다. 그
+/// 대가로 남의 작업을 죽이지 않는다 — 바꿀 만한 거래다. 어느 attempt
+/// 인지는 Agent 로그가 같이 남긴다.
 #[cfg(target_os = "linux")]
 fn sanitize_cgroup_name(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(64)
-        .collect();
-    if cleaned.is_empty() {
-        "unnamed".to_string()
-    } else {
-        cleaned
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"gputeer/v1/cgroup-name");
+    // 길이 접두사 — 성분 경계가 흐려지지 않게 한다.
+    hasher.update(&(name.len() as u64).to_be_bytes());
+    hasher.update(name.as_bytes());
+    hasher.finalize().to_hex()[..32].to_string()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod cgroup_name_tests {
+    use super::sanitize_cgroup_name;
+
+    /// ★ 검수가 든 실제 충돌 반례가 이제 안 나오는가.
+    #[test]
+    fn the_reported_name_collisions_are_gone() {
+        assert_ne!(sanitize_cgroup_name("g-a.b"), sanitize_cgroup_name("g-a_b"));
+        assert_ne!(sanitize_cgroup_name("a-b-c"), sanitize_cgroup_name("a-b_c"));
+        // 64자 뒤만 다른 두 값 — 초안은 잘라서 같아졌다.
+        let long_a = format!("{}X", "z".repeat(70));
+        let long_b = format!("{}Y", "z".repeat(70));
+        assert_ne!(sanitize_cgroup_name(&long_a), sanitize_cgroup_name(&long_b));
+    }
+
+    /// 이름이 cgroup 디렉터리로 쓸 수 있는 모양인가.
+    #[test]
+    fn the_name_is_always_a_valid_directory_name() {
+        for input in ["", "a/b", "a b", "한글", &"x".repeat(500)] {
+            let name = sanitize_cgroup_name(input);
+            assert_eq!(name.len(), 32, "길이가 고정이 아니다: {name}");
+            assert!(
+                name.chars().all(|c| c.is_ascii_hexdigit()),
+                "hex 가 아닌 문자가 있다: {name}"
+            );
+        }
+    }
+
+    /// 같은 입력은 같은 이름을 낸다 — 재시도가 같은 자리를 쓴다.
+    #[test]
+    fn the_name_is_deterministic() {
+        assert_eq!(sanitize_cgroup_name("same"), sanitize_cgroup_name("same"));
     }
 }

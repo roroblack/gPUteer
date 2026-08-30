@@ -58,7 +58,7 @@ use gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
 use gputeer_protocol::pb;
 use prost::Message;
 
-use crate::{issue_grant, CoordinatorConfig, CoordinatorLeaseStore};
+use crate::{issue_grant, validate_device_id, CoordinatorConfig, CoordinatorLeaseStore};
 
 /// 여러 Agent 를 동시에 받는다.
 ///
@@ -453,47 +453,6 @@ fn parse_agent_directory(
         }
     }
     Ok(agents)
-}
-
-/// Agent 식별자로 쓸 수 있는 모양인가.
-///
-/// # 왜 검사하는가
-///
-/// ★ 2026-08-30 독립 검수 지적. `scoped_id()` 가 이 값을 식별자 네 곳
-///   (`lease_id`·`job_id`·`attempt_id`·`grant_id`)에 그대로 복제한다.
-///   "사람이 정한 짧은 이름" 이라는 전제로 축약을 없앴는데, 그 전제를
-///   코드가 강제하지 않으면 전제가 아니라 희망이다.
-///
-/// ```text
-/// `;` `=`   --extra-agents 문법과 충돌한다(id=key;id2=key2)
-/// 개행      로그 한 줄을 여러 줄로 쪼개 위조·파싱 혼동을 만든다
-/// 매우 긴 값 네 곳에 복제돼 프레임 상한을 넘기고 저장소를 부풀린다
-/// 경로 문자 checkpoint 디렉터리 이름으로 흘러 들어간다
-/// ```
-///
-/// 영숫자와 `-`·`_`·`.` 만 허용한다. 이 저장소가 쓰는 ULID 계열
-/// 식별자는 전부 이 안에 들어간다.
-const MAX_DEVICE_ID_LEN: usize = 64;
-
-fn validate_device_id(device_id: &str) -> Result<(), String> {
-    if device_id.is_empty() {
-        return Err("DEVICE_ID_REJECTED: 비었다".to_string());
-    }
-    if device_id.len() > MAX_DEVICE_ID_LEN {
-        return Err(format!(
-            "DEVICE_ID_REJECTED: {}자다 — 상한 {MAX_DEVICE_ID_LEN}자.              이 값은 식별자 네 곳에 복제된다",
-            device_id.len()
-        ));
-    }
-    if let Some(bad) = device_id
-        .chars()
-        .find(|c| !(c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.'))
-    {
-        return Err(format!(
-            "DEVICE_ID_REJECTED: {bad:?} 는 쓸 수 없다({device_id:?}) —              영숫자와 - _ . 만 허용한다"
-        ));
-    }
-    Ok(())
 }
 
 /// ★ 잠금이 poisoned 여도 계속 간다.

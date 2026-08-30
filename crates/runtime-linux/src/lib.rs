@@ -517,17 +517,30 @@ fn current_cgroup_dir() -> Result<PathBuf, CgroupError> {
 ///   만든 것과 남이 만든 것을 사람이 구분할 수 있어야, 뭔가 남았을 때
 ///   누구 것인지 안다.
 fn create_child_cgroup(parent: &Path, name: &str) -> Result<PathBuf, CgroupError> {
-    if name.is_empty() || name.contains('/') || name.contains('\0') {
+    if name.is_empty() || name.contains('/') || name.contains(' ') {
         return Err(CgroupError::NotDelegated {
             detail: format!("cgroup 이름으로 쓸 수 없다: {name:?}"),
         });
     }
     let dir = parent.join(format!("gputeer-{name}"));
-    // 이미 있으면 이전 실행이 남긴 것이다. 재사용하지 않고 지운 뒤
-    // 새로 만든다 — 남은 프로세스가 있으면 새 상한이 그것들에도
-    // 적용돼 관측이 섞인다.
-    let _ = std::fs::write(dir.join("cgroup.kill"), "1");
-    let _ = std::fs::remove_dir(&dir);
+
+    // ★ 이미 있으면 **죽이지 않고 거부한다**(2026-08-30 독립 검수 지적).
+    //
+    //   초안은 `cgroup.kill` 을 쓰고 지운 뒤 새로 만들었다. 이름이
+    //   충돌하면 그건 "남은 찌꺼기 청소" 가 아니라 **다른 사람의 작업을
+    //   죽이는 것**이다. `CLAUDE.md` §0.1 은 소유자만이 자기 GPU 를
+    //   비울 수 있다고 정했는데, 이 코드는 이름이 겹쳤다는 이유만으로
+    //   남의 작업을 끝냈다.
+    //
+    //   지금은 이름이 해시라 정상 경로에서 충돌하지 않는다. 그래도
+    //   충돌하면 그건 우리가 모르는 상태이므로, 조용히 덮지 않고 멈춘다.
+    if dir.exists() {
+        return Err(CgroupError::NotDelegated {
+            detail: format!(
+                "{dir:?} 가 이미 있다 — 남의 작업일 수 있으므로 지우지 않고 멈춘다.                  앞선 실행이 남긴 것이 확실하면 사람이 직접 확인하고 지워야 한다"
+            ),
+        });
+    }
     std::fs::create_dir(&dir).map_err(|error| CgroupError::NotDelegated {
         detail: format!("하위 cgroup 생성 실패({dir:?}): {error}"),
     })?;

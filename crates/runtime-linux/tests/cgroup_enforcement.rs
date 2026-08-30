@@ -213,31 +213,122 @@ fn killing_the_cgroup_kills_grandchildren_too() {
 /// 한다. 그러려면 무엇을 강제 못 하는지 정확히 알아야 하고, 아는
 /// 방법은 해 보는 것뿐이다.
 ///
+/// # 왜 exit code 만 보면 안 되는가
+///
+/// ★ 두 번째 검수 지적. 초안은 마지막 exit code 가 0 인지만 봤는데,
+///   그건 다음 경우에도 통과한다.
+///
+/// ```text
+/// echo $$ 가 실패했는데 상한 자체가 안 걸려서 할당이 성공
+/// head/base64 가 실패해 할당 없이 마지막 echo 만 0 으로 끝남
+/// 할당 크기가 0 이어도 exit 0
+/// ```
+///
+/// 그래서 실제 증거를 남기게 한다 — 탈출 **전후의 cgroup 경로**와
+/// **실제 할당 크기**를 파일에 쓰고, 셋을 전부 확인한다.
+///
 /// 이 테스트는 **탈출이 성공하기를 기대한다.** 나중에 누가 cgroup
 /// namespace 나 권한 강등으로 이 구멍을 닫으면 이 테스트가 실패하고,
 /// 그때 모듈 문서의 "못 막는다" 를 같이 고치게 된다.
 #[test]
 fn a_determined_child_can_still_escape_the_cgroup() {
-    // 자기 pid 를 루트 cgroup.procs 에 써서 나간 뒤, 상한을 훌쩍 넘는
-    // 메모리를 잡는다. 상한이 강제됐다면 죽어야 한다.
-    let escape = "echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null; \
-                  A=$(head -c 67108864 /dev/urandom | base64); echo escaped=${#A}";
+    let dir = std::env::temp_dir().join("gputeer-escape-probe");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("증거 디렉터리");
+    let before = dir.join("before");
+    let after = dir.join("after");
+    let size = dir.join("size");
+
+    // 탈출 전 cgroup 을 기록 -> 루트로 이동 -> 탈출 후 cgroup 기록 ->
+    // 상한을 훌쩍 넘는 메모리를 잡고 실제 크기를 기록.
+    let script = format!(
+        "cat /proc/self/cgroup > {before};          echo $$ > /sys/fs/cgroup/cgroup.procs;          cat /proc/self/cgroup > {after};          A=$(head -c 67108864 /dev/urandom | base64) || exit 9;          printf '%s' ${{#A}} > {size}",
+        before = before.display(),
+        after = after.display(),
+        size = size.display()
+    );
     let child = create_constrained_child(
-        &spec("/bin/sh", &["-c", escape]),
+        &spec("/bin/sh", &["-c", &script]),
         32 * 1024 * 1024,
         "escape",
         &parent(),
     )
     .expect("기동");
 
-    let code = wait_within(child, Duration::from_secs(30));
+    let code = wait_within(child, Duration::from_secs(60));
+    assert_eq!(code, 0, "탈출 스크립트가 끝까지 못 갔다");
 
-    // ★ 이 assert 가 실패하면 좋은 소식이다 — 구멍이 닫혔다는 뜻이다.
-    //   그때는 이 테스트를 지우는 게 아니라 뒤집고, 모듈 문서의
-    //   "못 막는다" 도 같이 고쳐야 한다.
-    assert_eq!(
-        code, 0,
-        "자식이 탈출하지 못했다 — 구멍이 닫혔다면 모듈 문서의 \
-         '적대적인 코드는 못 막는다' 를 같이 고쳐야 한다"
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).unwrap_or_default();
+    let (before_txt, after_txt, size_txt) = (read(&before), read(&after), read(&size));
+
+    // 1) 처음에는 우리가 만든 cgroup 안에 있었는가.
+    assert!(
+        before_txt.contains("gputeer-escape"),
+        "자식이 애초에 우리 cgroup 안에 없었다 — 이 테스트의 전제가 깨졌다: {before_txt:?}"
     );
+    // 2) 실제로 밖으로 나갔는가.
+    assert!(
+        !after_txt.contains("gputeer-escape"),
+        "탈출에 실패했다 — 구멍이 닫혔다면 모듈 문서의 '적대적인 코드는          못 막는다' 를 같이 고쳐야 한다: {after_txt:?}"
+    );
+    // 3) 상한(32MiB)을 실제로 넘겨 살아남았는가.
+    let allocated: u64 = size_txt.trim().parse().unwrap_or(0);
+    assert!(
+        allocated > 64 * 1024 * 1024,
+        "상한을 넘는 할당이 실제로 일어나지 않았다({allocated}바이트) —          exit 0 만으로는 탈출을 증명하지 못한다"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ★ Agent 가 실제로 쓰는 경로(`Current`·`Explicit`)도 확인한다.
+///
+/// 2026-08-30 독립 검수 지적 — 기존 테스트는 전부
+/// `RootBypassingAncestorLimits` 만 썼다. Agent 는 그것을 절대 안 쓰므로,
+/// **Agent 의 실제 경로는 한 번도 실행된 적이 없었다.**
+#[test]
+fn the_parent_the_agent_actually_uses_is_exercised() {
+    // 1) 위임받은 subtree 를 실제로 만든다 — 운영자가 Agent 몫으로
+    //    준비해 주는 것과 같은 모양이다.
+    let delegated = std::path::Path::new("/sys/fs/cgroup/gputeer-delegated-probe");
+    let _ = std::fs::remove_dir(delegated);
+    std::fs::create_dir(delegated).expect("위임 subtree 생성");
+    std::fs::write(delegated.join("cgroup.subtree_control"), "+memory")
+        .expect("위임 subtree 에 memory 켜기");
+
+    let child = create_constrained_child(
+        &spec("/bin/sleep", &["1"]),
+        LIMIT,
+        "explicit-parent",
+        &CgroupParent::Explicit(delegated.to_path_buf()),
+    )
+    .expect("Explicit 부모로 기동");
+    assert_eq!(
+        child.memory_limit_bytes(),
+        Some(LIMIT),
+        "Explicit 부모에서 상한이 안 걸렸다"
+    );
+    let code = wait_within(child, Duration::from_secs(30));
+    assert_eq!(code, 0);
+    let _ = std::fs::remove_dir(delegated);
+
+    // 2) `Current` 는 이 환경(/init.scope)에서 **거부돼야 한다.**
+    //    거부가 곧 fail-closed 다 — 상한 없이 띄우지 않는다.
+    let refused = create_constrained_child(
+        &spec("/bin/true", &[]),
+        LIMIT,
+        "current-parent",
+        &CgroupParent::Current,
+    );
+    match refused {
+        Err(error) => assert!(
+            error.to_string().contains("CGROUP_NO_MEMORY_CONTROLLER"),
+            "거부는 됐는데 사유가 위임 부재로 식별되지 않는다: {error}"
+        ),
+        Ok(_) => {
+            // 이 환경의 현재 cgroup 이 위임을 받은 경우다 — 그러면
+            // 성공이 정상이다. 어느 쪽이든 "조용히 상한 없이 실행" 은
+            // 아니라는 것이 이 테스트의 주장이다.
+        }
+    }
 }

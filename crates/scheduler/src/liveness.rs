@@ -1,30 +1,54 @@
-//! 노드 생존 판정 — **관측을 정리할 뿐 사망을 선언하지 않는다.**
+//! 노드 자기보고(heartbeat)의 **신선도 분류기**.
 //!
-//! # 규범이 먼저 정해 둔 것
+//! # 이것은 `ADR-033` §7 의 구현이 **아니다**
 //!
-//! `ADR-033` §7 이 이 층을 두 개로 나눴다.
+//! ★ 2026-08-30 독립 검수가 정정했다. 초안 문서는 이 커널이 §7 을
+//!   구현한다고 썼는데, 틀렸다.
 //!
 //! ```text
-//! 관측(신고)   같은 풀의 이웃이 "저 노드에 연락이 안 된다" 고 보고한다
-//! 판정(결정)   Broker 가 그 보고를 모아 노드 상태를 정하고 재배정을 결정한다
+//! §7 이 정한 것    이웃이 "저 노드에 연락이 안 된다" 고 서명해 신고하고
+//!                  Broker 가 그 신고들을 모아 판정한다
+//! 이 커널이 받는 것 노드 **자신**이 보낸 heartbeat 에서 뽑은 사실
 //! ```
 //!
-//! ★ 그리고 못박았다 — **"연락이 안 된다" 는 "죽었다" 가 아니다.**
-//!   네트워크가 갈라졌으면 대상 노드는 멀쩡히 계속 실행 중이다.
-//!   그 상태에서 다른 GPU 에 같은 작업을 다시 띄우면 **두 번 돈다.**
-//!   `side_effecting` 작업이면 되돌릴 수 없다.
+//! 둘은 신뢰 모델이 다르다. 자기보고는 그 노드가 살아서 보낸 것이므로
+//! 도착하면 "살아 있다" 의 강한 증거지만, **안 오는 것은 약한 증거다** —
+//! 네트워크가 갈라졌는지 노드가 죽었는지 구분하지 못한다. 이웃 신고는
+//! 바로 그 구분을 위해 있는데, 그 메시지는 아직 없다.
 //!
-//! 그래서 이 커널은 `Dead` 라는 값을 **아예 갖고 있지 않다.** 가장
-//! 나쁜 판정이 `Silent`(정해진 시간 안에 소식이 없다)이고, 그것은
-//! 사실 진술이지 결정이 아니다. 재배정 결정은 `ADR-033` §8 의 여섯
-//! 조건이 갖춰진 뒤에야 가능하고, 그건 이 조각 밖이다.
+//! 그래서 정확한 위치는 이렇다.
+//!
+//! ```text
+//! 이 커널      §7 판정의 **선행 조건** — 자기보고 신선도를 정리한다
+//! 아직 없는 것 이웃 신고 메시지, 그 신고를 모으는 Broker 판정
+//! ```
+//!
+//! # 그래도 §7 의 한 문장은 여기에도 그대로 적용된다
+//!
+//! > "연락이 안 된다" 는 "죽었다" 가 아니다.
+//!
+//! 네트워크가 갈라졌으면 대상 노드는 멀쩡히 계속 실행 중이다. 그
+//! 상태에서 다른 GPU 에 같은 작업을 다시 띄우면 **두 번 돈다.**
+//! `side_effecting` 작업이면 되돌릴 수 없다.
+//!
+//! 그래서 이 커널에는 `Dead` 라는 값이 없다. 가장 나쁜 판정이
+//! `Silent`(정해진 시간 안에 소식 없음)이고, 그것은 사실 진술이지
+//! 결정이 아니다.
+//!
+//! ★ **다만 `Dead` 가 없는 것 자체는 강제 장치가 아니다**(같은 검수의
+//!   지적). 소비자가 `Silent => 재배정` 으로 매핑하는 것을 이 타입이
+//!   막지 못한다. 지금 안전한 이유는 "`Dead` 가 없어서" 가 아니라
+//!   **재배정 소비자가 아직 하나도 없어서**다. 재배정을 만들 때는
+//!   `ADR-033` §8 의 여섯 조건을 타입으로 요구하는 별도 관문이 필요하다 —
+//!   그건 이 조각 밖이고, 여기 적어 두는 이유는 그때 이 문장을 읽으라는
+//!   것이다.
 //!
 //! # 순수 커널이다
 //!
 //! 시계·I/O·난수·전역 상태를 쓰지 않는다. `now_unix_ms` 를 인자로
-//! 받고, 정렬에 `BTreeMap` 을 써서 입력 순서와 무관하게 같은 답을 낸다
-//! — 이 저장소의 다른 kernel(`evaluate_effective_replicas`,
-//! `gpu_scope_candidate`)과 같은 규칙이다.
+//! 받고, 처리 전에 입력을 정렬해 **성공과 오류 모두** 입력 순서와
+//! 무관하게 같은 답을 낸다 — 이 저장소의 다른 kernel
+//! (`evaluate_effective_replicas`, `gpu_scope_candidate`)과 같은 규칙이다.
 //!
 //! # 이 커널이 하지 않는 것
 //!
@@ -34,8 +58,8 @@
 //!                  주장하게 된다(§0.4)
 //! 재배정 결정      ADR-033 §8 의 여섯 조건이 필요하다. 이 커널은
 //!                  "다시 띄워도 된다" 를 절대 말하지 않는다
-//! 이웃 신고 취합   §7 의 신고 경로는 아직 메시지가 없다. 없는 입력을
-//!                  받는 척하지 않는다
+//! 이웃 신고 취합   §7 의 신고 메시지가 아직 없다. 없는 입력을 받는
+//!                  척하지 않는다
 //! 사망 선언        Dead 라는 값 자체가 없다 — 위 참조
 //! ```
 
@@ -185,8 +209,36 @@ pub fn classify_node_liveness(
         });
     }
 
+    // ★ 처리 전에 정렬한다(2026-08-30 독립 검수 지적).
+    //
+    //   성공 결과는 `BTreeMap` 덕에 이미 순서 독립이었지만 **오류 결과는
+    //   아니었다.** 같은 노드를 A·B 가 보고하면 입력 순서에 따라
+    //   `ConflictingDevice{first: A, second: B}` 와 `{first: B, second: A}`
+    //   가 갈렸고, 빈 `node_id` 와 빈 `device_id` 가 섞이면 먼저 만난
+    //   쪽이 보고됐다.
+    //
+    //   오류도 결과다. 같은 입력 집합에 다른 답이 나오면 그건 순수
+    //   커널이 아니고, 진단할 때 재현이 안 된다.
+    let mut sorted: Vec<&HeartbeatObservation> = observations.iter().collect();
+    sorted.sort_by(|a, b| {
+        (
+            &a.node_id,
+            &a.device_id,
+            a.issued_at_unix_ms,
+            a.fence_epoch,
+            a.running_attempts,
+        )
+            .cmp(&(
+                &b.node_id,
+                &b.device_id,
+                b.issued_at_unix_ms,
+                b.fence_epoch,
+                b.running_attempts,
+            ))
+    });
+
     let mut selected: BTreeMap<String, HeartbeatObservation> = BTreeMap::new();
-    for observation in observations {
+    for observation in sorted {
         if observation.node_id.trim().is_empty() {
             return Err(LivenessError::BlankIdentity { field: "node_id" });
         }
@@ -415,6 +467,31 @@ mod tests {
                 field: "known node_id"
             })
         ));
+    }
+
+    /// ★ 오류 결과도 입력 순서에 무관한가.
+    ///
+    /// 2026-08-30 독립 검수 지적. 성공 경로만 순서 독립이면 반쪽이다 —
+    /// 같은 입력 집합에 다른 오류가 나오면 진단할 때 재현이 안 된다.
+    #[test]
+    fn errors_do_not_depend_on_input_order_either() {
+        let mut other = observation("n1", 10);
+        other.device_id = "aaa-first-alphabetically".to_string();
+        let mut mine = observation("n1", 20);
+        mine.device_id = "zzz-last-alphabetically".to_string();
+
+        let forward = classify_node_liveness(&[other.clone(), mine.clone()], &[], policy(), 100);
+        let backward = classify_node_liveness(&[mine, other], &[], policy(), 100);
+        assert_eq!(forward, backward, "오류가 입력 순서에 따라 달라진다");
+
+        // 빈 식별자 두 종류가 섞였을 때도 같은 오류를 내는가.
+        let mut blank_node = observation("n2", 1);
+        blank_node.node_id = String::new();
+        let mut blank_device = observation("n3", 1);
+        blank_device.device_id = String::new();
+        let a = classify_node_liveness(&[blank_node.clone(), blank_device.clone()], &[], policy(), 0);
+        let b = classify_node_liveness(&[blank_device, blank_node], &[], policy(), 0);
+        assert_eq!(a, b, "어느 빈 식별자를 먼저 만나느냐에 따라 오류가 갈린다");
     }
 
     /// 같은 노드를 다른 장치가 보고하면 멈추는가.

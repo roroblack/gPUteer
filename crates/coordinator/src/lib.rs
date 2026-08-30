@@ -35,6 +35,7 @@ pub mod inventory_store;
 pub mod job_store;
 pub mod lease_store;
 #[allow(dead_code)]
+pub mod node_liveness_store;
 pub mod multi_agent;
 mod orchestrate;
 pub mod replica_ack_store;
@@ -1828,10 +1829,58 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .unwrap_or_else(|| "legacy-session".into()),
     };
 
+    // ★ 두 경로 **모두** 검사한다(2026-08-30 독립 검수 지적).
+    //   초안은 --multi-agent 경로에서만 불러서, 단일 Agent Coordinator 는
+    //   CLI 값을 그대로 썼다. 이 값은 checkpoint 디렉터리 이름과 로그로
+    //   흘러 들어가므로 어느 경로든 같은 규칙이어야 한다.
+    validate_device_id(&config.agent_device_id)?;
+    validate_device_id(&config.coordinator_device_id)?;
+
     if config.multi_agent {
         return multi_agent::run_multi_agent(config);
     }
     run(config)
+}
+
+/// Agent 식별자로 쓸 수 있는 모양인가.
+///
+/// # 왜 검사하는가
+///
+/// ★ 2026-08-30 독립 검수 지적. `scoped_id()` 가 이 값을 식별자 네 곳
+///   (`lease_id`·`job_id`·`attempt_id`·`grant_id`)에 그대로 복제한다.
+///   "사람이 정한 짧은 이름" 이라는 전제로 축약을 없앴는데, 그 전제를
+///   코드가 강제하지 않으면 전제가 아니라 희망이다.
+///
+/// ```text
+/// `;` `=`   --extra-agents 문법과 충돌한다(id=key;id2=key2)
+/// 개행      로그 한 줄을 여러 줄로 쪼개 위조·파싱 혼동을 만든다
+/// 매우 긴 값 네 곳에 복제돼 프레임 상한을 넘기고 저장소를 부풀린다
+/// 경로 문자 checkpoint 디렉터리 이름으로 흘러 들어간다
+/// ```
+///
+/// 영숫자와 `-`·`_`·`.` 만 허용한다. 이 저장소가 쓰는 ULID 계열
+/// 식별자는 전부 이 안에 들어간다.
+pub const MAX_DEVICE_ID_LEN: usize = 64;
+
+pub fn validate_device_id(device_id: &str) -> Result<(), String> {
+    if device_id.is_empty() {
+        return Err("DEVICE_ID_REJECTED: 비었다".to_string());
+    }
+    if device_id.len() > MAX_DEVICE_ID_LEN {
+        return Err(format!(
+            "DEVICE_ID_REJECTED: {}자다 — 상한 {MAX_DEVICE_ID_LEN}자.              이 값은 식별자 네 곳에 복제된다",
+            device_id.len()
+        ));
+    }
+    if let Some(bad) = device_id
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.'))
+    {
+        return Err(format!(
+            "DEVICE_ID_REJECTED: {bad:?} 는 쓸 수 없다({device_id:?}) —              영숫자와 - _ . 만 허용한다"
+        ));
+    }
+    Ok(())
 }
 
 struct Flags(std::collections::HashMap<String, String>);
@@ -2018,5 +2067,52 @@ mod tests {
             sign(&key, &notice).to_vec(),
             "override가 적용된 최종 payload에 대한 서명이어야 한다"
         );
+    }
+}
+
+#[cfg(test)]
+mod device_id_validation_tests {
+    use super::{validate_device_id, MAX_DEVICE_ID_LEN};
+
+    /// ★ 2026-08-30 독립 검수가 "새 validator 의 금지 문자·길이 부정
+    ///   테스트가 없다" 고 지적했다. 검사를 만들어 놓고 그 검사가 실제로
+    ///   막는지 확인하지 않으면, 나중에 조건이 뒤집혀도 아무도 모른다.
+    #[test]
+    fn the_forbidden_shapes_are_actually_refused() {
+        let cases: &[(&str, &str)] = &[
+            ("", "빈 값"),
+            ("a;b", "--extra-agents 항목 구분자"),
+            ("a=b", "--extra-agents key 구분자"),
+            ("a\nb", "개행 — 로그 한 줄을 쪼갠다"),
+            ("a b", "공백"),
+            ("a/b", "경로 구분자"),
+            ("../escape", "경로 탈출"),
+            ("노드", "비ASCII"),
+            ("a\0b", "NUL"),
+        ];
+        for (value, why) in cases {
+            assert!(
+                validate_device_id(value).is_err(),
+                "{value:?} 가 통과했다 — {why}"
+            );
+        }
+        let too_long = "a".repeat(MAX_DEVICE_ID_LEN + 1);
+        assert!(validate_device_id(&too_long).is_err(), "상한을 넘겼는데 통과했다");
+    }
+
+    /// 정상 값은 통과하는가.
+    ///
+    /// ★ 위 테스트만 있으면 "전부 거부" 로도 통과한다.
+    #[test]
+    fn ordinary_identifiers_pass() {
+        for value in [
+            "01JAGENTSELFTEST00000000001",
+            "node-1",
+            "node_1",
+            "node.1",
+            &"a".repeat(MAX_DEVICE_ID_LEN),
+        ] {
+            assert!(validate_device_id(value).is_ok(), "{value:?} 가 거부됐다");
+        }
     }
 }

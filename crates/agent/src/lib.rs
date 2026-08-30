@@ -160,6 +160,13 @@ pub struct AgentConfig {
     ///   Agent Grant 를 받았다 — 서명은 유효하므로 서명 검증은 이것을
     ///   절대 못 잡는다.
     pub corrupt_hello_mode: bool,
+    /// Linux 에서 작업 cgroup 을 만들 부모(위임받은 subtree).
+    ///
+    /// ★ 보통의 배포 환경에서는 Agent 자신이 자기 cgroup 안에 있어서
+    ///   거기에는 컨트롤러를 위임할 수 없다. 운영자가 Agent 몫으로
+    ///   위임한 subtree 를 여기 지정한다. 없으면 "내 cgroup" 을 쓰고,
+    ///   위임이 없으면 실행을 거부한다 — 상한 없이 띄우지 않는다.
+    pub workload_cgroup_parent: Option<std::path::PathBuf>,
     /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
     pub workload_commit_limit_bytes: u64,
     /// Owner Panel 이 쓸 상태. Agent 가 작업을 시작하면 여기 등록하고
@@ -789,6 +796,7 @@ fn run_one_connection(
             // ★ attempt 별로 갈라야 한다 — 같은 Job 의 두 attempt 가 같은
             //   격리 이름을 받으면 하나를 멈출 때 다른 하나도 죽는다.
             isolation_name: format!("{}-{}", grant.grant_id, grant.attempt_id),
+            cgroup_parent: config.workload_cgroup_parent.clone(),
         };
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
         //   작업 디렉터리를 지운다.
@@ -1887,6 +1895,10 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
         corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
         corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
+        workload_cgroup_parent: flags
+            .0
+            .get("--workload-cgroup-parent")
+            .map(std::path::PathBuf::from),
         multi_agent: flags.bool_flag("--multi-agent"),
         heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
             Some(v) => v
@@ -2121,6 +2133,7 @@ mod tests {
             corrupt_heartbeat_coordinator: false,
             corrupt_heartbeat_device: false,
             corrupt_hello_mode: false,
+            workload_cgroup_parent: None,
             multi_agent: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             owner_panel_port: None,
