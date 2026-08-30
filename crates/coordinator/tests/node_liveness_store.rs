@@ -310,3 +310,84 @@ fn a_different_device_claiming_the_same_node_is_refused() {
     assert_eq!(all[0].device_id, DEVICE);
     assert_eq!(all[0].last_heartbeat_unix_ms, 1_000);
 }
+
+const OTHER_DEVICE: &str = "01JOTHERDEVICE0000000000001";
+const THIRD_DEVICE: &str = "01JTHIRDDEVICE0000000000001";
+
+/// ★ 승인된 장치 교체가 **그 장치에만** 열리는가.
+///
+/// # 이 검사가 왜 필요한가
+///
+/// 2026-08-30 독립 검수 3라운드 지적. 초안 `rebind_device()` 는 행만
+/// 지웠다. 그러면 그 뒤에는 "운영자가 지정한 장치" 가 아니라 **먼저
+/// 서명 heartbeat 를 보낸 등록 장치**가 그 노드를 차지한다 — A→B 교체를
+/// 승인한 순간 C 가 먼저 보고하면 C 가 인수한다. 승인이 있으나 마나다.
+#[test]
+fn an_approved_rebind_only_admits_the_named_device() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+
+    // 운영자가 DEVICE -> OTHER_DEVICE 교체를 승인한다.
+    s.rebind_device(NODE, OTHER_DEVICE).expect("rebind 승인");
+
+    // ★ 승인되지 않은 제3 장치가 먼저 보고해도 인수하지 못해야 한다.
+    let stolen = s
+        .observe(&verified_heartbeat(THIRD_DEVICE, 2_000, 1, 0))
+        .expect_err("승인 안 된 장치가 노드를 인수했다");
+    assert!(matches!(
+        stolen,
+        NodeLivenessStoreError::DeviceChanged { .. }
+    ));
+    assert!(
+        s.load_all().expect("읽기").is_empty(),
+        "인수를 거부했는데 행이 생겼다"
+    );
+
+    // 승인된 장치는 들어온다.
+    let accepted = s
+        .observe(&verified_heartbeat(OTHER_DEVICE, 3_000, 1, 0))
+        .expect("승인된 장치가 거부됐다");
+    assert!(accepted.advanced);
+    assert_eq!(accepted.stored.device_id, OTHER_DEVICE);
+
+    // ★ 대기가 소진됐는가 — 한 번 쓰고 남아 있으면 다음에 또 열린다.
+    let after = s
+        .observe(&verified_heartbeat(THIRD_DEVICE, 4_000, 1, 0))
+        .expect_err("교체가 끝났는데 제3 장치가 들어왔다");
+    assert!(matches!(
+        after,
+        NodeLivenessStoreError::DeviceChanged { .. }
+    ));
+}
+
+/// 승인 없이는 여전히 막는가 — 위 테스트가 문을 열어 둔 게 아닌지 본다.
+#[test]
+fn without_an_approval_a_device_change_is_still_refused() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+    let error = s
+        .observe(&verified_heartbeat(OTHER_DEVICE, 2_000, 1, 0))
+        .expect_err("승인 없이 장치가 바뀌었다");
+    assert!(matches!(
+        error,
+        NodeLivenessStoreError::DeviceChanged { .. }
+    ));
+}
+
+/// rebind 대상이 없거나 같은 장치면 거부하는가.
+#[test]
+fn a_pointless_or_unknown_rebind_is_refused() {
+    let dir = tempfile::tempdir().expect("temp");
+    let mut s = store(&dir, "liveness.db");
+    assert!(
+        s.rebind_device(NODE, OTHER_DEVICE).is_err(),
+        "기록도 없는데 rebind 가 성공했다"
+    );
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("등록");
+    assert!(
+        s.rebind_device(NODE, DEVICE).is_err(),
+        "같은 장치로 rebind 가 성공했다 — 대기만 남기고 아무것도 안 바뀐다"
+    );
+}

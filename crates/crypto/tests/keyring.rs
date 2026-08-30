@@ -430,3 +430,156 @@ fn unsupported_platform_and_call_failure_are_different_errors() {
     assert!(unsupported.contains("사용할 수 없다"));
     assert!(failed.contains("실패했다") && failed.contains("권한 없음"));
 }
+
+/// ★ 남의 키쌍을 통째로 내 자리에 옮겨 심을 수 있는가.
+///
+/// # 이 테스트는 한 번 공허했다 — 그 경위를 남긴다
+///
+/// 초안은 **봉인 blob 만** 맞바꿨다. 그런데 그건 이미 있던 검사가
+/// 잡는다 — `load` 가 "개인키와 공개키가 서로 일치하지 않는다" 로
+/// 거부한다. 그래서 signer 묶기를 뮤테이션으로 없애도 테스트가 그대로
+/// 통과했다. **막고 싶은 것을 안 재고 있었다.**
+///
+/// 기존 검사가 **못 막는** 것은 이것이다.
+///
+/// ```text
+/// 공개키와 봉인 blob 을 **같이** 옮긴다
+///   -> alice 자리에 bob 의 키쌍이 통째로 들어간다
+///   -> 개인키·공개키는 서로 맞으므로 기존 검사는 통과한다
+///   -> 그 뒤 bob 의 서명이 alice 의 것으로 받아들여진다
+/// ```
+///
+/// 봉인을 signer 에 묶으면(Linux `--name=`, Windows DPAPI entropy)
+/// alice 이름으로는 bob 앞으로 봉인된 blob 을 복호할 수 없어 여기서
+/// 막힌다. 그게 이 검사가 재는 것이다.
+///
+/// K0(평문)에는 봉인이 없으므로 성립하지 않는다 — K1 이 실제로 되는
+/// 플랫폼에서만 돈다.
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn another_signers_keypair_cannot_be_transplanted_into_this_slot() {
+    #[cfg(target_os = "linux")]
+    {
+        let available = std::process::Command::new("systemd-creds")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        if !available {
+            eprintln!(
+                "ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — 키쌍 이식 검사는 측정하지 않았다"
+            );
+            return;
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("keys.bin");
+    let alice = "01JALICESELFTEST00000000001";
+    let bob = "01JBOBSELFTEST0000000000001";
+
+    let mut keyring = PersistentKeyring::new(
+        &path,
+        KeyProtection::K1OsProtected,
+        PlaintextPolicy::Reject,
+    )
+    .expect("K1 키링");
+    keyring
+        .insert_private(alice, SecretSigningKey::from_signing_key(key(1)))
+        .expect("alice");
+    keyring
+        .insert_private(bob, SecretSigningKey::from_signing_key(key(2)))
+        .expect("bob");
+    keyring.save().expect("봉인 저장");
+
+    // 정상 상태에서는 열린다 — 아래 실패가 "원래 안 열린다" 가 아님을 보인다.
+    PersistentKeyring::load(&path, PlaintextPolicy::Reject).expect("정상 재열기");
+
+    let raw = fs::read(&path).expect("파일 읽기");
+    let swapped = swap_two_keypairs(
+        &raw,
+        key(1).verifying_key().as_bytes(),
+        key(2).verifying_key().as_bytes(),
+    )
+    .expect("공개키와 봉인 blob 을 형식대로 찾지 못했다");
+    assert_ne!(swapped, raw, "맞바꿨는데 파일이 그대로다 — 아무것도 안 바꾼 것이다");
+    // ★ 체크섬을 다시 계산한다. 안 하면 **키 로직에 닿기도 전에**
+    //   "checksum 이 일치하지 않는다" 로 걸려서, 봉인이 막았는지 체크섬이
+    //   막았는지 구분할 수 없다 — 실제로 처음엔 그렇게 공허했다.
+    //
+    //   체크섬은 본문의 BLAKE3 이고 키가 없다. 파일을 고칠 수 있는
+    //   공격자는 이것도 다시 계산할 수 있으므로, 공격을 정확히 흉내내는
+    //   것이기도 하다.
+    let swapped = reseal_checksum(&swapped);
+    fs::write(&path, &swapped).expect("파일 쓰기");
+
+    let result = PersistentKeyring::load(&path, PlaintextPolicy::Reject);
+    // ★ 체크섬이 아니라 **봉인** 이 막았는지 확인한다. 체크섬으로
+    //   막히면 이 검사는 아무것도 증명하지 않는다.
+    if let Err(error) = &result {
+        assert!(
+            !error.to_string().contains("checksum"),
+            "체크섬이 먼저 막았다 — 이 검사는 봉인을 재지 못한다: {error}"
+        );
+    }
+    assert!(
+        result.is_err(),
+        "남의 키쌍이 통째로 옮겨 심어졌다 — 그 뒤 그 서명이 이 signer 의 것으로 받아들여진다"
+    );
+}
+
+/// 본문을 고친 뒤 꼬리의 체크섬을 다시 계산한다.
+///
+/// 파일 형식은 `본문 || BLAKE3(본문)` 이다(`PersistentKeyring::save`).
+#[cfg(any(windows, target_os = "linux"))]
+fn reseal_checksum(raw: &[u8]) -> Vec<u8> {
+    let body = &raw[..raw.len() - 32];
+    let mut out = body.to_vec();
+    out.extend_from_slice(blake3::hash(body).as_bytes());
+    out
+}
+
+/// 두 signer 의 (공개키 + 봉인 blob) 쌍을 통째로 맞바꾼다.
+///
+/// # 왜 형식을 따라가는가
+///
+/// ★ 휴리스틱으로 "비슷한 바이트열" 을 찾으면 헤더를 망가뜨려 놓고
+///   통과할 수 있다. 그러면 **봉인이 막았는지 파싱이 막았는지 구분할 수
+///   없어** 다시 공허해진다.
+///
+/// `PersistentKeyring::save` 는 signer 마다 이렇게 쓴다.
+///
+/// ```text
+/// ... 32바이트 공개키 || u32(LE) blob 길이 || 봉인 blob ...
+/// ```
+#[cfg(any(windows, target_os = "linux"))]
+fn swap_two_keypairs(raw: &[u8], first_public: &[u8], second_public: &[u8]) -> Option<Vec<u8>> {
+    let locate = |public: &[u8]| -> Option<(usize, usize, usize)> {
+        let key_at = raw.windows(32).position(|w| w == public)?;
+        let len_at = key_at + 32;
+        // ★ 파일은 little-endian 으로 쓴다(`put_u32`). big-endian 으로
+        //   읽으면 터무니없는 길이가 나와 인덱스가 범위를 벗어난다 —
+        //   실제로 그렇게 한 번 틀렸다.
+        let length = u32::from_le_bytes(raw.get(len_at..len_at + 4)?.try_into().ok()?) as usize;
+        let blob_at = len_at + 4;
+        if blob_at.checked_add(length)? > raw.len() {
+            return None;
+        }
+        Some((key_at, blob_at, length))
+    };
+    let (a_key, a_blob, a_len) = locate(first_public)?;
+    let (b_key, b_blob, b_len) = locate(second_public)?;
+    // 길이가 다르면 맞바꿀 수 없다 — 길이 필드까지 고치면 그건 형식
+    // 손상이고, 이 테스트가 보려는 것이 아니다.
+    if a_len != b_len || a_len == 0 {
+        return None;
+    }
+    let mut out = raw.to_vec();
+    for i in 0..32 {
+        out.swap(a_key + i, b_key + i);
+    }
+    for i in 0..a_len {
+        out.swap(a_blob + i, b_blob + i);
+    }
+    Some(out)
+}

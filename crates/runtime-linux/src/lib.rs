@@ -512,27 +512,43 @@ pub const DELEGATED_PARENT_PREFIX: &str = "gputeer-";
 /// # 무엇을 요구하는가
 ///
 /// ```text
-/// cgroup v2 루트 아래       밖은 애초에 cgroup 이 아니다
-/// 루트 자신은 아니다        그건 RootBypassingAncestorLimits 의 일이다
-/// `..` 성분이 없다          정규화 전에 탈출하는 경로를 막는다
-/// 실제로 존재하는 디렉터리  없는 곳을 만들어 주지 않는다
-/// 이름이 `gputeer-` 로 시작 운영자가 우리 몫이라고 **밝힌** 디렉터리만
+/// cgroup v2 루트의 **직속 자식**   조상 계층을 탈 수 없다
+/// 이름이 `gputeer-` 로 시작        운영자가 우리 몫이라고 밝힌 것만
+/// `..` 성분이 없다                 정규화 전에 탈출하는 경로를 막는다
+/// 실제로 존재하는 디렉터리         없는 곳을 만들어 주지 않는다
 /// ```
 ///
-/// 마지막 조건이 핵심이다. 시스템 slice 를 하나하나 금지 목록에 넣는
-/// 대신, **허용 조건을 이름으로 만든다.** 금지 목록은 언제나 빠뜨린
-/// 항목이 생기지만, "우리 이름으로 만든 것만" 은 빠뜨릴 자리가 없다.
+/// ★ **직속 자식** 조건이 핵심이다(2026-08-30 독립 검수 3라운드 지적).
+///   1·2차 수정은 "루트 아래인가" 와 "마지막 이름이 `gputeer-` 인가" 만
+///   봐서 아래가 그대로 통과했다.
 ///
-/// # 막지 못하는 것 — 정직하게 적는다
+/// ```text
+/// /sys/fs/cgroup/system.slice/gputeer-agent.service
+/// /sys/fs/cgroup/other-service/gputeer-workloads
+/// ```
+///
+/// 막으려던 "다른 서비스 subtree 사용" 을 정확히 우회한 것이다. 조상을
+/// 하나하나 금지하는 대신 **깊이를 1 로 고정한다** — 조상이 루트뿐이면
+/// 탈 수 있는 계층 자체가 없다.
+///
+/// # 이 규칙이 배제하는 정상 배치 — 정직하게 적는다
+///
+/// ★ systemd 가 관리하는 위임 slice(`gputeer.slice` 아래 `.service`
+///   cgroup)는 이 규칙을 통과하지 못한다. 그건 보통 루트의 직속 자식이
+///   아니고 이름 규칙도 다르다. 지금은 **지원하지 않는다** — 지원하려면
+///   위임 여부를 커널에 물어야 하는데(소유권·`cgroup.subtree_control`
+///   위임 확인) 그건 이 조각보다 크다.
+///
+///   운영자는 `/sys/fs/cgroup/gputeer-workloads` 를 직접 만들어 쓴다.
+///
+/// # 막지 못하는 것
 ///
 /// ★ **bind mount 는 못 막는다.** cgroup 루트를 루트 아래의 다른
-///   이름에 bind mount 하면 겉보기 경로는 하위인데 실제 대상은 루트일
-///   수 있다. `canonicalize()` 로도 안 잡힌다 — mount 정보를 봐야 하고,
-///   그건 이 조각보다 크다.
+///   이름에 bind mount 하면 겉보기 경로는 직속 자식인데 실제 대상은
+///   루트일 수 있다. `canonicalize()` 로도 안 잡힌다 — mount 정보를
+///   봐야 하고 그건 이 조각보다 크다.
 ///
-///   symlink 는 `canonicalize()` 로 잡는다(아래). 그러나 cgroup2
-///   파일시스템은 보통 symlink 생성을 허용하지 않으므로, 이건 방어라기
-///   보다 "경로가 겉보기와 다른 곳을 가리키지 않게" 하는 정리에 가깝다.
+///   symlink 는 `canonicalize()` 로 잡는다.
 ///
 ///   즉 이 함수는 **실수를 막는 것**이지 적대적인 운영자를 막는 것이
 ///   아니다(`CLAUDE.md` §0.4).
@@ -565,13 +581,22 @@ fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupE
             "{resolved:?} 는 cgroup v2 루트다 — 상위 제한을 우회하려면              RootBypassingAncestorLimits 를 명시적으로 골라야 한다"
         )));
     }
+    // ★ 루트의 **직속 자식**인가. 조상 계층을 못 타게 하는 조건이다.
+    let parent_of = resolved
+        .parent()
+        .ok_or_else(|| refuse(format!("{resolved:?} 의 상위를 읽지 못했다")))?;
+    if parent_of != root {
+        return Err(refuse(format!(
+            "{resolved:?} 가 {root:?} 의 직속 자식이 아니다 — system.slice 같은 다른              서비스 계층 아래를 쓰지 못하게 깊이를 1 로 고정한다"
+        )));
+    }
     let name = resolved
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| refuse(format!("{resolved:?} 의 이름을 읽지 못했다")))?;
     if !name.starts_with(DELEGATED_PARENT_PREFIX) {
         return Err(refuse(format!(
-            "{resolved:?} 의 이름이 `{DELEGATED_PARENT_PREFIX}` 로 시작하지 않는다 —              운영자가 이 Agent 몫으로 만든 디렉터리만 받는다. system.slice 같은              시스템 계층을 실수로 가리키는 것을 이 조건이 막는다"
+            "{resolved:?} 의 이름이 `{DELEGATED_PARENT_PREFIX}` 로 시작하지 않는다 —              운영자가 이 Agent 몫으로 만든 디렉터리만 받는다"
         )));
     }
     Ok(resolved)
@@ -773,6 +798,27 @@ mod explicit_parent_tests {
             assert!(
                 message.contains("NOT_DELEGATED"),
                 "{dangerous}: {message}"
+            );
+        }
+    }
+
+    /// ★ 조상 계층 아래에 숨은 것도 막는가(2026-08-30 검수 3라운드).
+    ///
+    /// 마지막 이름만 보면 `system.slice/gputeer-agent.service` 가 통과한다 —
+    /// 막으려던 것을 정확히 우회하는 경로다.
+    #[test]
+    fn a_correct_name_under_a_system_ancestor_is_still_refused() {
+        let root = Path::new(CGROUP_ROOT);
+        for sneaky in [
+            "system.slice/gputeer-agent.service",
+            "user.slice/gputeer-workloads",
+            "gputeer-a/gputeer-b",
+        ] {
+            let error = validate_explicit_parent(&root.join(sneaky), root)
+                .expect_err(&format!("{sneaky} 가 통과했다"));
+            assert!(
+                error.to_string().contains("NOT_DELEGATED"),
+                "{sneaky}: {error}"
             );
         }
     }

@@ -287,7 +287,14 @@ framed_ingress 의 타임아웃 없는 블로킹 read DoS — **호출자 책임
     그 경고가 나왔다. TPM 봉인(--with-key=tpm2)이 그것까지 막지만 그건
     K2 이고 미구현이다.
 
+  ★ Linux K1 은 **Agent 가 root 여야 성립한다** — credential.secret 이
+    0600 root 다. 비-root Agent 는 systemd-creds 가 설치돼 있어도 실패한다.
+    결함이 아니라 이 등급의 조건이지만, "Linux 에 K1 이 있다" 가 "아무
+    Agent 나 쓸 수 있다" 로 읽히면 안 된다.
+
   둘 다 공통: 복호된 뒤의 프로세스 메모리·크래시 덤프는 보호하지 않는다.
+  Linux 는 평문이 커널 파이프와 systemd-creds 프로세스 메모리에도 한 번
+  더 존재한다 — 명령줄·임시 파일 누출은 피했지만 "누출 없음" 은 아니다.
   systemd-creds 가 없는 Linux 는 조용히 K0 로 내려가지 않고 실패한다.
 
 장수명·증거 메시지에는 replay 방어가 아예 없다

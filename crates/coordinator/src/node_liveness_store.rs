@@ -173,6 +173,10 @@ impl CoordinatorNodeLivenessStore {
                     heartbeat_body BLOB NOT NULL,
                     heartbeat_hash BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS coordinator_node_pending_rebind (
+                    node_id TEXT PRIMARY KEY,
+                    expected_device_id TEXT NOT NULL
+                );
                 ",
             )
             .map_err(storage)?;
@@ -226,21 +230,53 @@ impl CoordinatorNodeLivenessStore {
                 detail: "rebind 에 빈 식별자를 줄 수 없다".into(),
             });
         }
-        // ★ 행을 고치지 않고 **지운다.** 옛 장치의 관측을 새 장치 것으로
-        //   바꿔 놓으면, 새 장치가 한 번도 보고한 적 없는데 "최근에
-        //   살아 있었다" 로 보인다. 다음 heartbeat 부터 새로 쌓는다.
-        let removed = self
+
+        let transaction = self
             .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage)?;
+
+        let current: Option<String> = transaction
+            .query_row(
+                "SELECT device_id FROM coordinator_node_liveness WHERE node_id = ?1",
+                [node_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage)?;
+        let Some(current) = current else {
+            return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                detail: format!("{node_id} 에 대한 기록이 없다 — rebind 할 대상이 없다"),
+            });
+        };
+        if current == new_device_id {
+            return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                detail: format!("{node_id} 는 이미 {new_device_id} 다 — 바꿀 것이 없다"),
+            });
+        }
+
+        // 옛 관측을 지우고 **어느 장치를 기다리는지** 적는다
+        // (2026-08-30 독립 검수 3라운드 지적).
+        //
+        // 초안은 행만 지웠다. 그러면 그 뒤에는 "운영자가 지정한 장치" 가
+        // 아니라 **먼저 서명 heartbeat 를 보낸 등록 장치**가 그 노드를
+        // 차지한다 — A→B 교체를 승인한 순간 C 가 먼저 보고하면 C 가
+        // 인수한다. 승인이 있으나 마나였다.
+        //
+        // 지운 자리에 기다리는 신원을 남기면 그 하나만 들어올 수 있다.
+        transaction
             .execute(
                 "DELETE FROM coordinator_node_liveness WHERE node_id = ?1",
                 [node_id],
             )
             .map_err(storage)?;
-        if removed == 0 {
-            return Err(NodeLivenessStoreError::InvalidHeartbeat {
-                detail: format!("{node_id} 에 대한 기록이 없다 — rebind 할 대상이 없다"),
-            });
-        }
+        transaction
+            .execute(
+                "INSERT INTO coordinator_node_pending_rebind (node_id, expected_device_id) VALUES (?1, ?2) ON CONFLICT(node_id) DO UPDATE SET expected_device_id = excluded.expected_device_id",
+                [node_id, new_device_id],
+            )
+            .map_err(storage)?;
+        transaction.commit().map_err(storage)?;
         Ok(())
     }
 
@@ -321,6 +357,37 @@ impl CoordinatorNodeLivenessStore {
             )
             .optional()
             .map_err(storage)?;
+
+        // 기록이 없을 때, 대기 중인 rebind 가 있으면 **그 장치만** 받는다.
+        // 없으면(정상 최초 등록) 누구든 받는다 — 아직 아무도 그 노드를
+        // 주장한 적이 없다는 뜻이다.
+        if existing.is_none() {
+            let pending: Option<String> = transaction
+                .query_row(
+                    "SELECT expected_device_id FROM coordinator_node_pending_rebind WHERE node_id = ?1",
+                    [&heartbeat.node_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(storage)?;
+            if let Some(expected) = pending {
+                if expected != heartbeat.device_id {
+                    drop(transaction);
+                    return Err(NodeLivenessStoreError::DeviceChanged {
+                        node_id: heartbeat.node_id.clone(),
+                        stored: format!("(rebind 대기: {expected})"),
+                        incoming: heartbeat.device_id.clone(),
+                    });
+                }
+                // 기다리던 장치가 왔다. 대기를 지우고 아래에서 정상 등록한다.
+                transaction
+                    .execute(
+                        "DELETE FROM coordinator_node_pending_rebind WHERE node_id = ?1",
+                        [&heartbeat.node_id],
+                    )
+                    .map_err(storage)?;
+            }
+        }
 
         if let Some(row) = &existing {
             // ★ 같은 노드를 **다른 장치**가 보고하면 덮지 않고 멈춘다

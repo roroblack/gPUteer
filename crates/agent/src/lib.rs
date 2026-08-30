@@ -1914,11 +1914,15 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .get("--workload-cgroup-parent")
             .map(std::path::PathBuf::from),
         multi_agent: flags.bool_flag("--multi-agent"),
-        heartbeat_interval_ms: flags
-            .0
-            .get("--heartbeat-interval-ms")
-            .map(|v| v.parse::<u64>().unwrap_or(0))
-            .unwrap_or(0),
+        // ★ 파싱 실패를 0 으로 접지 않는다(2026-08-30 독립 검수 3라운드).
+        //   잘못 쓴 값이 "간격 없음" 으로 조용히 바뀌면, 운영자는 간격을
+        //   줬다고 믿는데 실제로는 안 준 상태가 된다.
+        heartbeat_interval_ms: match flags.0.get("--heartbeat-interval-ms") {
+            Some(raw) => raw.parse::<u64>().map_err(|_| {
+                format!("--heartbeat-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
+            })?,
+            None => 0,
+        },
         heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
             Some(v) => v
                 .parse()
