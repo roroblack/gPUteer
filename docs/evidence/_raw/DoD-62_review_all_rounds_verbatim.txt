@@ -1,0 +1,94 @@
+################ 독립 검수 1라운드 — codex exec --sandbox read-only (gpt-5.6-sol) ################
+서 임의 키를 `node_id`에 연결한 자체 keyring과 `NoReplayCheck`로 `Verified`를 만든다. 이 값을 `CoordinatorAttemptReportStore`에 저장한 뒤 같은 값으로 release하면 DB 직접 조작 없이 통과한다. `DoD-51`의 authoritative-directory 조건(`docs/evidence/DoD-51_scheduler_terminal_attempt_report_binding.md:177-180`)을 현재 타입/API가 증명하지 못한다.
+
+3. `crates/coordinator/tests/reservation_release.rs:627-658` — “거부된 해제는 아무것도 남기지 않는다” 테스트는 증거가 없어 쓰기 전에 실패하는 경로만 검사한다. 실제 부분 커밋 위험 구간은 예약 GPU 삭제, 부모 예약 삭제, release 부모/자식 삽입 사이(`crates/coordinator/src/reservation_release.rs:279-325`)인데 그 사이 fault injection이나 rollback 검사가 없다. 동시 release 경쟁 테스트도 없다. 코드는 `BEGIN IMMEDIATE` 안에서 처리하고(`:217-220`) 부모 삭제도 `node_id AND attempt_id`로 제한해(`:287-299`) 정적 구조는 적절하지만, 요구된 부분 커밋·경쟁 검증은 테스트로 입증되지 않았다. 반면 구현자가 고쳤다고 한 저장 GPU 재조회 테스트(`tests/reservation_release.rs:309-318`)와 moved-fence의 구체적 오류 검사(`:571-584`)는 현재 assertion 기준으로 공허하지 않다.
+
+4. `crates/coordinator/src/attempt_report_store.rs:270-289,304-323,381-468` — 스키마 함수 분리와 세 helper의 `pub(crate)` 노출 자체는 기존 SQL·terminal outcome 규칙·손상 검사를 그대로 재사용하므로 기존 동작 변경은 발견하지 못했다. 하지만 이것은 1번의 누락된 runtime-stop 증명을 제공하지 않는다. 구현 주석도 그 사실을 “이미 fence를 재검사한다”는 이유로 대체하고 있는데(`reservation_release.rs:264-271`), fence 일치는 프로세스 종료나 GPU 반환 증명이 아니다.
+
+테스트 실행은 기존 빌드된 14-test 바이너리까지 확인했으나, read-only 환경에서 임시 디렉터리 생성이 거부되어 14건 모두 fixture 생성 단계에서 실패했다. 따라서 통과 주장은 이번 환경에서 재확인되지 않았다.
+
+CHANGES_REQUESTED
+tokens used
+128,432
+1. `crates/coordinator/src/reservation_release.rs:237-277,279-327` — 검증된 terminal `AttemptReport`만으로 예약을 삭제한다. runtime-stop, process-tree 종료, VRAM 반환, Lease 종료, Attempt terminal 전이는 확인하지 않는다. 따라서 정상 노드 키로 “종료” 보고서를 서명한 뒤 프로세스가 계속 실행되는 경우에도 예약이 풀리고, `crates/coordinator/tests/reservation_release.rs:683-735`가 새 Job 예약까지 가능함을 입증한다. 이는 위조된 `Verified`나 DB 조작 없이 가능한 중복 실행 경로다. `docs/evidence/DoD-51_scheduler_terminal_attempt_report_binding.md:66-70`은 이 저장 성공이 프로세스 종료를 증명하지 않으며 release 충분조건이 아니라고 명시하고, `docs/plans/2026-08-24_1142_scheduler_verified_manifest_durable_binding_v1.md:131-148`은 runtime-stop/VRAM 반환 증명을 요구한다. 구현자의 핵심 전제가 기존 DoD와 정면으로 모순되며 `CLAUDE.md:94-98`의 “강제할 수 없는 것을 보장으로 선언 금지”를 위반한다.
+
+2. `crates/coordinator/src/reservation_release.rs:205-215` — API가 요구하는 것은 임의의 `Verified<AttemptReport>`일 뿐 “authoritative key directory로 재검증된 값”이라는 provenance는 강제하지 않는다. `crates/protocol/src/signing.rs:719-750`에서 `verify()`는 호출자가 제공한 임의 `SignatureVerifier`를 사용하며, 실제 신규 테스트도 `crates/coordinator/tests/reservation_release.rs:140-171`에서 임의 키를 `node_id`에 연결한 자체 keyring과 `NoReplayCheck`로 `Verified`를 만든다. 이 값을 `CoordinatorAttemptReportStore`에 저장한 뒤 같은 값으로 release하면 DB 직접 조작 없이 통과한다. `DoD-51`의 authoritative-directory 조건(`docs/evidence/DoD-51_scheduler_terminal_attempt_report_binding.md:177-180`)을 현재 타입/API가 증명하지 못한다.
+
+3. `crates/coordinator/tests/reservation_release.rs:627-658` — “거부된 해제는 아무것도 남기지 않는다” 테스트는 증거가 없어 쓰기 전에 실패하는 경로만 검사한다. 실제 부분 커밋 위험 구간은 예약 GPU 삭제, 부모 예약 삭제, release 부모/자식 삽입 사이(`crates/coordinator/src/reservation_release.rs:279-325`)인데 그 사이 fault injection이나 rollback 검사가 없다. 동시 release 경쟁 테스트도 없다. 코드는 `BEGIN IMMEDIATE` 안에서 처리하고(`:217-220`) 부모 삭제도 `node_id AND attempt_id`로 제한해(`:287-299`) 정적 구조는 적절하지만, 요구된 부분 커밋·경쟁 검증은 테스트로 입증되지 않았다. 반면 구현자가 고쳤다고 한 저장 GPU 재조회 테스트(`tests/reservation_release.rs:309-318`)와 moved-fence의 구체적 오류 검사(`:571-584`)는 현재 assertion 기준으로 공허하지 않다.
+
+4. `crates/coordinator/src/attempt_report_store.rs:270-289,304-323,381-468` — 스키마 함수 분리와 세 helper의 `pub(crate)` 노출 자체는 기존 SQL·terminal outcome 규칙·손상 검사를 그대로 재사용하므로 기존 동작 변경은 발견하지 못했다. 하지만 이것은 1번의 누락된 runtime-stop 증명을 제공하지 않는다. 구현 주석도 그 사실을 “이미 fence를 재검사한다”는 이유로 대체하고 있는데(`reservation_release.rs:264-271`), fence 일치는 프로세스 종료나 GPU 반환 증명이 아니다.
+
+테스트 실행은 기존 빌드된 14-test 바이너리까지 확인했으나, read-only 환경에서 임시 디렉터리 생성이 거부되어 14건 모두 fixture 생성 단계에서 실패했다. 따라서 통과 주장은 이번 환경에서 재확인되지 않았다.
+
+CHANGES_REQUESTED
+
+################ 2라운드 ################
+ 'crates/coordinator/src/lib.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coordinator/src/attempt_report_store.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/coordinator/src/lib.rs', LF will be replaced by CRLF the next time Git touches it
+ crates/coordinator/src/attempt_report_store.rs | 53 +++++++++++++++++---------
+ crates/coordinator/src/lib.rs                  |  1 +
+ 2 files changed, 37 insertions(+), 17 deletions(-)
+ M crates/coordinator/src/attempt_report_store.rs
+ M crates/coordinator/src/lib.rs
+?? crates/coordinator/src/reservation_release.rs
+?? crates/coordinator/tests/reservation_release.rs
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "& 'C:\\Users\\playdata2\\.cargo\\bin\\cargo.exe' test -p gputeer-coordinator --test reservation_release -- --nocapture" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 1756ms:
+warn: could not canonicalize path C:\Users\playdata2
+error: failed to open: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\.cargo-build-lock
+
+Caused by:
+  액세스가 거부되었습니다. (os error 5)
+
+codex
+`cargo`는 별도 경로에 있었지만, 현재 검수 환경이 읽기 전용이라 `target/debug/.cargo-build-lock` 생성 단계에서 거부됐습니다. 기존 빌드 산출물이 있으면 직접 실행해 19건을 확인하고, 없으면 이 환경 제약을 판정에 명시하겠습니다.
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg --files target/debug/deps | rg 'reservation_release.*\\.exe"'$|gputeer_coordinator.*'"\\.(rlib|rmeta)"'$'"'" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 855ms:
+codex
+- `crates/coordinator/src/reservation_release.rs:33` — 2~4번 조건을 세 진술로 요구한다고 서술하지만, `ReleaseAuthorization`(`:132`)에는 완료 Job의 artifact/durability guard에 대응하는 값이 없고 `check_authorization`(`:429`)도 이를 검사하지 않는다. 조건 4를 갖추지 않은 `Completed` 보고서도 나머지 세 진술만으로 해제할 수 있다.
+
+- `crates/coordinator/src/reservation_release.rs:118` — Attempt·Lease 전이와 예약 삭제의 동일 트랜잭션 결합을 “호출부 몫”이라고 하지만, 실제 메서드는 비공개 connection으로 자체 트랜잭션을 생성한다(`:301`). 호출부가 그 트랜잭션에 전이를 추가할 수 없어 `BoundByCaller`를 정직하게 충족할 API 경로가 없다.
+
+- `crates/coordinator/tests/reservation_release.rs:1` — terminal `AttemptReport`를 여전히 “검증된 실행 종료 증거”라고 표현한다. 같은 파일의 `:772-776` 및 수정된 모듈 문서와 정면으로 모순되는 사실과 다른 서술이다.
+
+CHANGES_REQUESTED
+tokens used
+81,892
+- `crates/coordinator/src/reservation_release.rs:33` — 2~4번 조건을 세 진술로 요구한다고 서술하지만, `ReleaseAuthorization`(`:132`)에는 완료 Job의 artifact/durability guard에 대응하는 값이 없고 `check_authorization`(`:429`)도 이를 검사하지 않는다. 조건 4를 갖추지 않은 `Completed` 보고서도 나머지 세 진술만으로 해제할 수 있다.
+
+- `crates/coordinator/src/reservation_release.rs:118` — Attempt·Lease 전이와 예약 삭제의 동일 트랜잭션 결합을 “호출부 몫”이라고 하지만, 실제 메서드는 비공개 connection으로 자체 트랜잭션을 생성한다(`:301`). 호출부가 그 트랜잭션에 전이를 추가할 수 없어 `BoundByCaller`를 정직하게 충족할 API 경로가 없다.
+
+- `crates/coordinator/tests/reservation_release.rs:1` — terminal `AttemptReport`를 여전히 “검증된 실행 종료 증거”라고 표현한다. 같은 파일의 `:772-776` 및 수정된 모듈 문서와 정면으로 모순되는 사실과 다른 서술이다.
+
+CHANGES_REQUESTED
+
+################ 3라운드 ################
+aseLocked
+ 486:             ) =>
+ 487:         {
+ 488:             AttemptReportStoreError::LockTimeout
+ 489:         }
+ 490:         SqlError::SqliteFailure(code, _) => AttemptReportStoreError::Io(code.to_string()),
+crates/coordinator/src\lib.rs:42:pub mod reservation_release;
+crates/coordinator/src\attempt_report_store.rs:268:/// `reservation_release` 가 같은 control DB 를 열 때도 이 스키마가 있어야
+crates/coordinator/src\attempt_report_store.rs:306:/// ★ `reservation_release` 가 **같은 규칙**을 써야 한다 — 여기서
+
+codex
+- `crates/coordinator/src/reservation_release.rs:133-148,474-491` — `Completed`에만 artifact guard를 요구하고 `NotApplicableNonCompleted`를 거부한다. outcome은 서명된 보고서에서 오며, `:354-379`에서 durable 증거와 동일성까지 확인하므로 별도 outcome 위장은 불가능하다.
+- `crates/coordinator/src/reservation_release.rs:39-55,308-309` — 만족 불가능했던 `TerminalTransitionBinding`은 제거됐고 조건 3 미충족이 정확히 명시됐다. 제거 전에도 호출자 진술뿐이어서 실질적 안전 저하는 없으며, 현재는 정직한 `RuntimeStopProof` 생산자가 없어 `:462-471` 관문이 막는다.
+- `crates/coordinator/tests/reservation_release.rs:3-16` — “검증된 실행 종료 증거”라는 잘못된 서술은 자기보고라는 설명으로 정정됐다.
+- `crates/coordinator/tests/reservation_release.rs:314-1009` — 20개 테스트가 성공·멱등·재시작·증거/소유권/fence 불일치·rollback·경쟁·각 authorization 관문을 실제 상태 변화와 오류로 검증한다. 공허한 테스트는 발견하지 못했다. 단, 환경에 `cargo`가 없어 실행 검증은 불가능했다.
+
+ACCEPTED
+tokens used
+76,469
+- `crates/coordinator/src/reservation_release.rs:133-148,474-491` — `Completed`에만 artifact guard를 요구하고 `NotApplicableNonCompleted`를 거부한다. outcome은 서명된 보고서에서 오며, `:354-379`에서 durable 증거와 동일성까지 확인하므로 별도 outcome 위장은 불가능하다.
+- `crates/coordinator/src/reservation_release.rs:39-55,308-309` — 만족 불가능했던 `TerminalTransitionBinding`은 제거됐고 조건 3 미충족이 정확히 명시됐다. 제거 전에도 호출자 진술뿐이어서 실질적 안전 저하는 없으며, 현재는 정직한 `RuntimeStopProof` 생산자가 없어 `:462-471` 관문이 막는다.
+- `crates/coordinator/tests/reservation_release.rs:3-16` — “검증된 실행 종료 증거”라는 잘못된 서술은 자기보고라는 설명으로 정정됐다.
+- `crates/coordinator/tests/reservation_release.rs:314-1009` — 20개 테스트가 성공·멱등·재시작·증거/소유권/fence 불일치·rollback·경쟁·각 authorization 관문을 실제 상태 변화와 오류로 검증한다. 공허한 테스트는 발견하지 못했다. 단, 환경에 `cargo`가 없어 실행 검증은 불가능했다.
+
+ACCEPTED

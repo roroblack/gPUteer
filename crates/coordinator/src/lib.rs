@@ -39,6 +39,7 @@ pub mod node_liveness_store;
 pub mod multi_agent;
 mod orchestrate;
 pub mod replica_ack_store;
+pub mod reservation_release;
 pub mod staging_store;
 use lease_store::{
     CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision, ResumeRequestIdentity,

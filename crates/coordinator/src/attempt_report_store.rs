@@ -152,22 +152,7 @@ impl CoordinatorAttemptReportStore {
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(map_sql_error)?;
         staging_store::initialize_schema(&mut connection).map_err(map_staging_error)?;
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS coordinator_attempt_reports (
-                    attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
-                    node_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    fence_epoch BLOB NOT NULL,
-                    verified_signer_id TEXT NOT NULL,
-                    report_hash BLOB NOT NULL CHECK(length(report_hash) = 32),
-                    report_body BLOB NOT NULL,
-                    PRIMARY KEY(attempt_id, node_id)
-                );
-                "#,
-            )
-            .map_err(map_sql_error)?;
+        initialize_report_schema(&connection)?;
         Ok(Self { connection })
     }
 
@@ -278,6 +263,31 @@ impl CoordinatorAttemptReportStore {
     }
 }
 
+/// 보고서 테이블을 만든다.
+///
+/// `reservation_release` 가 같은 control DB 를 열 때도 이 스키마가 있어야
+/// 한 트랜잭션에서 증거와 예약을 함께 볼 수 있다.
+pub(crate) fn initialize_report_schema(
+    connection: &Connection,
+) -> Result<(), AttemptReportStoreError> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS coordinator_attempt_reports (
+                attempt_id TEXT NOT NULL REFERENCES coordinator_attempts(attempt_id),
+                node_id TEXT NOT NULL,
+                job_id TEXT NOT NULL,
+                fence_epoch BLOB NOT NULL,
+                verified_signer_id TEXT NOT NULL,
+                report_hash BLOB NOT NULL CHECK(length(report_hash) = 32),
+                report_body BLOB NOT NULL,
+                PRIMARY KEY(attempt_id, node_id)
+            );
+            "#,
+        )
+        .map_err(map_sql_error)
+}
+
 fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReportStoreError> {
     if report.job_id.trim().is_empty() {
         return Err(AttemptReportStoreError::InvalidInput("job_id"));
@@ -289,6 +299,15 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
         return Err(AttemptReportStoreError::InvalidInput("node_id"));
     }
     validate_terminal_outcome(report.outcome)
+}
+
+/// terminal outcome 인가.
+///
+/// ★ `reservation_release` 가 **같은 규칙**을 써야 한다 — 여기서
+///   terminal 이라 저장한 것을 저기서 아니라고 하면 증거는 있는데 못 푸는
+///   상태가 된다.
+pub(crate) fn is_terminal_outcome(outcome: i32) -> bool {
+    validate_terminal_outcome(outcome).is_ok()
 }
 
 fn validate_terminal_outcome(outcome: i32) -> Result<(), AttemptReportStoreError> {
@@ -359,7 +378,7 @@ fn bind_reservation(
     Ok(())
 }
 
-fn fetch_report_binding(
+pub(crate) fn fetch_report_binding(
     connection: &Connection,
     attempt_id: &str,
     node_id: &str,

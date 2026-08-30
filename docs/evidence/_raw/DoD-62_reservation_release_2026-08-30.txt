@@ -1,0 +1,64 @@
+=== 1. cargo test -p gputeer-coordinator --test reservation_release ===
+26 | pub(crate) struct StagingIssuanceInput {
+43 | pub(crate) struct PlacementToStagingInput {
+54 | pub(crate) enum PlacementToStagingOutcome {
+70 | pub(crate) enum PlacementToStagingError {
+149 | pub(crate) fn orchestrate_placement_to_staging(
+     Running tests\reservation_release.rs (target\debug\deps\reservation_release-12349cdce4c139fd.exe)
+running 20 tests
+test a_refused_release_leaves_no_trace ... ok
+test a_non_terminal_outcome_cannot_release ... ok
+test a_report_that_does_not_match_the_stored_evidence_cannot_release ... ok
+test a_report_from_an_older_fence_is_caught_by_the_evidence_check ... ok
+test a_non_completed_outcome_does_not_need_the_artifact_guard ... ok
+test a_moved_attempt_fence_blocks_the_release ... ok
+test a_failure_between_the_deletes_and_the_insert_rolls_everything_back ... ok
+test a_missing_reservation_without_a_release_record_fails_closed ... ok
+test the_authorization_gate_is_checked_before_the_evidence ... ok
+test releasing_twice_with_the_same_evidence_is_idempotent ... ok
+test a_verified_terminal_report_releases_the_reservation ... ok
+test an_in_memory_store_is_not_durable ... ok
+test releasing_removes_the_reserved_gpu_rows_too ... ok
+test after_release_another_job_can_reserve_the_same_node ... ok
+test a_reservation_held_by_another_attempt_is_never_deleted ... ok
+test the_release_record_survives_reopening_the_store ... ok
+test without_stored_terminal_evidence_the_reservation_is_not_released ... ok
+test todays_honest_caller_cannot_release_anything ... ok
+test two_concurrent_releases_produce_exactly_one_release ... ok
+test each_missing_declaration_blocks_on_its_own ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.65s
+
+=== 2. cargo test -p gputeer-coordinator (전체) ===
+running 130 tests
+test result: ok. 130 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 33.61s
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+running 2 tests
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+running 16 tests
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+running 20 tests
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.57s
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+=== 3. cargo test --workspace 합계 ===
+771 passed
+
+=== 4. 뮤테이션 14건 (scratchpad/mut_release.py 실제 stdout) ===
+R1 release-without-stored-terminal-evidence: OK - without_stored_terminal_evidence_the_reservation_is_not_released failed (test-failed)
+R2 stored-row-alone-is-enough: OK - a_report_that_does_not_match_the_stored_evidence_cannot_release failed (test-failed)
+R3 someone-elses-reservation-is-deleted: OK - a_reservation_held_by_another_attempt_is_never_deleted failed (test-failed)
+R4 non-terminal-outcome-may-release: OK - a_non_terminal_outcome_cannot_release failed (test-failed)
+R5 attempt-fence-recheck-removed-from-evidence-fetch: OK - a_moved_attempt_fence_blocks_the_release failed (test-failed)
+R6 replay-overwrites-the-first-record: OK - releasing_twice_with_the_same_evidence_is_idempotent failed (test-failed)
+R7 reserved-gpu-child-rows-left-behind: OK - releasing_removes_the_reserved_gpu_rows_too failed (test-failed)
+R8 released-gpu-ids-not-recorded: OK - a_verified_terminal_report_releases_the_reservation failed (test-failed)
+R9 missing-reservation-silently-succeeds: OK - a_missing_reservation_without_a_release_record_fails_closed failed (test-failed)
+R10 runtime-stop-gate-removed: OK - todays_honest_caller_cannot_release_anything failed (test-failed)
+R11 key-directory-gate-removed: OK - each_missing_declaration_blocks_on_its_own failed (test-failed)
+R12 artifact-durability-gate-removed: OK - each_missing_declaration_blocks_on_its_own failed (test-failed)
+R14 artifact-guard-applied-to-non-completed-too: OK - a_non_completed_outcome_does_not_need_the_artifact_guard failed (test-failed)
+R13 authorization-checked-after-the-evidence: OK - the_authorization_gate_is_checked_before_the_evidence failed (test-failed)
+restored full run: pass
+verdict: all non-vacuous
