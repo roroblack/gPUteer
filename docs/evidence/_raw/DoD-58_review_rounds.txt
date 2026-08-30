@@ -1,0 +1,56 @@
+DoD-58 독립 검수 (agent:codex-cli / gpt-5.6-sol, read-only, 대화 기록 없는 새 인스턴스)
+
+라운드 1 — CHANGES_REQUESTED
+--------------------------------------------------------------
+(a) [높음] short_tag 32비트 충돌로 서로 다른 Agent 에 같은 Lease 식별자
+    crates/coordinator/src/multi_agent.rs:326   short_tag 정의
+    crates/coordinator/src/multi_agent.rs:338   scoped_id
+    crates/coordinator/src/multi_agent.rs:346   scope_config_to_agent
+    실제 반례: agent-47131 / agent-71872 -> 둘 다 e7525a3b
+
+(b) [중간] 시나리오 88 이 동시 처리를 증명하지 않는다
+    crates/cli/src/coordinator_agent_selftest.rs:5579  두 Agent 스폰
+    crates/cli/src/coordinator_agent_selftest.rs:5607  하나씩 결과 대기
+    crates/cli/src/coordinator_agent_selftest.rs:5639  최종 assert
+    동시 진입 barrier 없음, 세션 겹침·최대 동시 수·로그 순서·처리 시간
+    어느 것도 안 봄 -> 순차 서버로도 통과
+
+(c) [중간] hello.mode == MODE_MULTI_AGENT_GRANT 대조가 없다
+    crates/agent/src/multi_agent.rs:58     Agent 가 mode 를 설정
+    crates/coordinator/src/multi_agent.rs:261  Coordinator 수신 검사에 없음
+    등록된 Agent 가 Resume mode(2) 로 서명한 Hello 를 보내도 통과
+
+(d) [낮음] heartbeat 의 device_id 대조가 테스트되지 않는다
+    crates/coordinator/src/lib.rs:675      실제 두 대조
+    crates/cli/src/coordinator_agent_selftest.rs:4950  시나리오 89 는
+                                          coordinator_device_id 만 손상
+
+라운드 2 — CHANGES_REQUESTED
+--------------------------------------------------------------
+(e) require_distinct_scoped_ids 가 정의만 되고 호출되지 않는다
+    crates/coordinator/src/multi_agent.rs:403
+
+(f) device_id 길이·문자 집합 검사가 없다
+    `;` `=` 는 --extra-agents 문법과 충돌, 개행은 로그 위조,
+    긴 값은 식별자 네 곳에 복제
+
+(g) validate_device_id 가 --multi-agent 경로에서만 불린다
+    crates/coordinator/src/lib.rs:1776
+    crates/coordinator/src/lib.rs:1832
+
+라운드 3 — CHANGES_REQUESTED
+--------------------------------------------------------------
+(h) 공개 함수 run(CoordinatorConfig) 는 검사하지 않는다
+    crates/coordinator/src/lib.rs:310
+    run_multi_agent 도 coordinator ID 는 검사 안 함
+    crates/coordinator/src/multi_agent.rs:67
+    -> 검사는 파서가 아니라 실행 진입점에 있어야 한다
+
+최종 — ACCEPTED
+--------------------------------------------------------------
+위 지적을 전부 코드로 고친 뒤 승인. 검수가 명시적으로 확인한 것:
+- 별도 lease_store/replay Mutex 사이에 저장소 안전성을 깨는 TOCTOU 없음
+  (issue_grant 전체가 lease-store 잠금 안, SQLite BEGIN IMMEDIATE)
+- declare_domains! 매크로는 "variant 추가 시 ALL/tag 누락" 구멍을 닫음
+- 남은 한계: replay 잠금을 read_frame 동안 잡아 ingress 를 직렬화한다
+  (안전성이 아니라 동시성·가용성 문제)

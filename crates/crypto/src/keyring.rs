@@ -805,6 +805,26 @@ fn ensure_protection(
 ///
 ///   `signing.md` 의 `domain_tag` 가 서명에서, `derive_replay_nonce` 가
 ///   nonce 에서 하는 일과 같은 종류의 분리다.
+/// 스레드를 시간 상한 안에서 거둔다. 넘기면 `None` 이고 스레드는 남는다.
+///
+/// ★ `JoinHandle` 에는 시간 제한 join 이 없다. 채널로 완료를 알리게
+///   해서 상한을 건다 — 스레드가 안 끝나도 호출부는 진행할 수 있다.
+#[cfg(target_os = "linux")]
+fn join_within<T: Send + 'static>(
+    handle: std::thread::JoinHandle<T>,
+    limit: std::time::Duration,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(handle.join());
+    });
+    match rx.recv_timeout(limit) {
+        Ok(Ok(value)) => Some(value),
+        // 패닉했으면 값이 없다 — 남은 것을 없는 것과 구분하지 않는다.
+        Ok(Err(_)) | Err(_) => None,
+    }
+}
+
 /// 파일 전체 무결성 표식을 봉인할 때 쓰는 이름.
 ///
 /// ★ signer 별 이름과 **다르다.** 같은 이름을 쓰면 어떤 signer 의 개인키
@@ -831,6 +851,36 @@ const FILE_MAC_LABEL: &str = "gputeer-keyring-file-mac";
 ///
 /// K0 는 봉인이 없는 등급이므로 평문 체크섬 그대로다 — 그 등급이 무엇을
 /// 보호하지 않는지는 이미 이름에 있다.
+///
+/// # ★ 롤백은 막지 못한다 — 명시적 비보장이다
+///
+/// 2026-08-30 독립 검수 5라운드 지적. 이 봉인은 **본문 변조**를 막지만
+/// **과거의 정상 파일을 통째로 되돌리는 것**은 막지 못한다.
+///
+/// ```text
+/// 공격자가 예전 v2 파일을 복사해 둔다
+///   -> 그 파일은 그때 정상적으로 봉인된 것이다
+///   -> 나중에 되돌려 놓으면 봉인 검증을 그대로 통과한다
+///   -> 폐기·회전된 키가 되살아난다
+/// ```
+///
+/// 막으려면 파일 밖의 **단조 카운터**가 필요하다 — 세대 번호를 봉인
+/// 안에 넣어도, 기대값을 어디에 둘지가 같은 문제다. TPM 의 monotonic
+/// counter 나 별도 권위 저장소가 있어야 하고 둘 다 이 조각 밖이다.
+///
+/// `CLAUDE.md` §0.4 는 강제할 수 없는 것을 보장으로 선언하지 말라고
+/// 한다. 그래서 반쯤 동작하는 카운터를 만들지 않고 **못 막는다고
+/// 적는다.**
+///
+/// # ★ 같은 사용자(Windows)·root(Linux)는 봉인을 만들 수 있다
+///
+/// 같은 검수의 정정. K1 의 경계는 처음부터 그렇게 정의돼 있다 —
+/// Windows DPAPI 는 **다른 사용자**를, Linux host key 는 **비-root** 를
+/// 막는다. 그 경계 안쪽의 공격자는 알려진 entropy/이름으로 직접
+/// 봉인을 만들 수 있다.
+///
+/// 즉 "파일을 쓸 수 있는 공격자는 봉인을 만들 수 없다" 는 **과한
+/// 일반화**다. 정확히는 "그 경계 **밖**의 공격자는 못 만든다" 다.
 fn seal_checksum(
     protection: KeyProtection,
     body: &[u8],
@@ -1101,6 +1151,10 @@ fn run_systemd_creds(
     input: &[u8],
 ) -> Result<Vec<u8>, KeyringError> {
     use std::io::Write as _;
+    // ★ `process_group` 은 Unix 확장 트레이트의 메서드다. Windows 는 이
+    //   함수를 아예 컴파일하지 않으므로(cfg linux) 개발 기계 빌드가
+    //   빠진 import 를 못 잡았다 — x600 빌드에서 드러났다.
+    use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
 
     /// 이만큼 안 끝나면 죽인다.
@@ -1119,6 +1173,9 @@ fn run_systemd_creds(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // ★ 자기 프로세스 그룹을 갖게 한다 — 그래야 후손까지 한 번에
+        //   끝낼 수 있다. `setsid()` 는 async-signal-safe 한 syscall 이다.
+        .process_group(0)
         .spawn()
         // ★ **없는 것**과 **있는데 못 띄운 것**을 구분한다(§3).
         //   초안은 전부 UnsupportedPlatform 이라, 권한 거부나 프로세스
@@ -1133,6 +1190,22 @@ fn run_systemd_creds(
     //   Rust 의 `Child` 는 drop 해도 자동으로 안 거둬서, 그냥 반환하면
     //   자식이 계속 돌거나 좀비로 남는다(같은 검수 지적).
     let reap = |child: &mut std::process::Child| {
+        // ★ 프로세스 **그룹** 전체를 끝낸다(2026-08-30 독립 검수 5라운드).
+        //   직접 자식만 죽이면 그 자식이 만든 후손이 stdout/stderr 를
+        //   물려받은 채 남아, 파이프가 안 닫혀 읽기가 EOF 를 못 본다.
+        #[cfg(target_os = "linux")]
+        {
+            // `pre_exec` 에서 setsid 한 자식이므로 pgid == pid 다.
+            // libc 없이 부르려면 `kill` 명령을 쓴다 — 이 경로는 이미
+            // 실패 처리 중이라 한 번 더 프로세스를 띄우는 비용이 문제되지
+            // 않는다.
+            let _ = std::process::Command::new("kill")
+                .arg("-KILL")
+                .arg(format!("-{}", child.id()))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
         let _ = child.kill();
         let _ = child.wait();
     };
@@ -1205,13 +1278,22 @@ fn run_systemd_creds(
         }
     };
 
-    // 자식이 끝났으므로 읽기 스레드도 곧 끝난다.
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| KeyringError::OsProtectionFailed("stdout 읽기 스레드가 panic 했다".into()))?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| KeyringError::OsProtectionFailed("stderr 읽기 스레드가 panic 했다".into()))?;
+    // ★ 읽기 스레드도 **상한 안에서** 거둔다(2026-08-30 독립 검수 5라운드).
+    //
+    //   자식이 끝나도 후손이 파이프를 물고 있으면 `read_to_end()` 가
+    //   EOF 를 못 봐서 무제한 `join()` 이 영영 안 끝난다. 위에서
+    //   프로세스 그룹을 죽이지만, 그것도 실패할 수 있다 — "죽였으니
+    //   끝날 것" 을 가정하지 않는다.
+    //
+    //   시간이 지나면 스레드를 남겨 두고 실패로 보고한다. 스레드가
+    //   남는 것은 좋지 않지만, Agent 전체가 멈추는 것보다 낫다.
+    let stdout = join_within(stdout_reader, DEADLINE).ok_or_else(|| {
+        KeyringError::OsProtectionFailed(
+            "systemd-creds stdout 을 상한 안에 읽지 못했다 — 후손이 파이프를 물고 있을 수 있다"
+                .into(),
+        )
+    })?;
+    let stderr = join_within(stderr_reader, DEADLINE).unwrap_or_default();
 
     if !status.success() {
         // ★ "없다" 가 아니라 "있는데 실패했다" 다. 진단에 필요한 만큼만

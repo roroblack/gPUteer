@@ -1,0 +1,114 @@
+이 파일은 `codex exec --model gpt-5.6-sol --sandbox read-only` 세션 출력의
+**최종 판정 블록을 그대로 잘라낸 것**이다. 잘라낸 위치 뒤의 글자는 하나도
+고치지 않았다. 앞부분(도구 호출 로그)은 수십만 바이트라 뺐다.
+원본 전체는 세션 스크래치패드에만 있고 저장소에는 없다.
+
+-----------------------------------------------------------------
+
+# CHANGES_REQUESTED
+
+보고된 일부 결함은 제대로 닫혔지만, cgroup 이름 충돌·재시도·부모 경로 안전성 등에 실질적인 반례가 남아 있습니다. 작업 트리의 `crates/coordinator/src/lib.rs` 수정본은 배제하고 `8134afa:<path>` blob을 직접 읽었습니다.
+
+주요 지적은 다음과 같습니다.
+
+1. cgroup 이름 충돌이 완전히 닫히지 않았습니다.
+
+`sanitize_cgroup_name()` 자체의 치환·64자 절단 충돌은 해시로 해결됐습니다. 하지만 해시하기 전에 두 성분을 구분자 `-`로 합칩니다.
+
+```text
+grant_id="g-a", attempt_id="b"  -> "g-a-b"
+grant_id="g",   attempt_id="a-b" -> "g-a-b"
+```
+
+두 경우 모두 동일한 해시가 됩니다. `--grant-id`와 `--attempt-id`는 임의 문자열을 그대로 받으므로 실제 도달 가능합니다.
+
+- `crates/agent/src/lib.rs:798`
+- `crates/agent/src/exec.rs:574-580`
+- `crates/coordinator/src/lib.rs:1778-1779`
+
+두 ID를 별도 길이 접두사와 함께 해시하거나, 구조화된 두 값을 해시 함수에 직접 넘겨야 합니다.
+
+또한 기존 cgroup 거부는 다른 작업을 죽이는 문제는 막지만, 죽은 Agent가 남긴 빈 cgroup 때문에 같은 attempt의 재시도가 계속 거부됩니다. 이름은 결정적이고, 기존 디렉터리는 무조건 거부하며 자동 회수 경로가 없습니다.
+
+- `crates/runtime-linux/src/lib.rs:240-258`
+- `crates/runtime-linux/src/lib.rs:527-542`
+
+프로세스 비정상 종료·전원 장애 후에는 운영자가 수동 삭제할 때까지 재시도가 막힙니다. 소유권 마커와 `cgroup.events populated=0` 등을 검증한 안전한 stale 회수가 필요합니다.
+
+2. liveness 정렬 수정은 해당 오류 순서 문제를 닫았습니다.
+
+관측 전체를 `(node_id, device_id, issued_at, fence_epoch, running_attempts)`로 먼저 정렬하므로 `ConflictingDevice`와 빈 식별자 오류는 입력 순서에 무관합니다.
+
+- `crates/scheduler/src/liveness.rs:212-263`
+
+현재 타입이 가진 필드 범위에서는 추가적인 입력 순서 반례를 찾지 못했습니다.
+
+3. `validate_device_id()` 우회가 남아 있습니다.
+
+CLI의 단일·다중 Agent 분기는 `run_from_args()`에서 모두 검사됩니다. 추가 Agent도 검사됩니다. 그러나 공개 함수인 `run(CoordinatorConfig)`는 검사하지 않으며, `run_multi_agent(CoordinatorConfig)`도 coordinator ID는 검사하지 않습니다.
+
+- `crates/coordinator/src/lib.rs:310`
+- `crates/coordinator/src/lib.rs:1832-1842`
+- `crates/coordinator/src/multi_agent.rs:67-76`
+
+따라서 라이브러리 호출자는 검사를 완전히 우회할 수 있습니다. 검사는 파서가 아니라 실제 실행 진입점에 있어야 합니다.
+
+4. 탈출 테스트는 여전히 잘못 통과할 여지가 있습니다.
+
+개선된 세 가지 assertion 자체는 유효하지만 셸 명령이 실패 즉시 종료하도록 묶이지 않았습니다.
+
+- 탈출 후 `cat /proc/self/cgroup > after`가 실패해도 스크립트는 계속됩니다.
+- 읽기 실패는 `unwrap_or_default()`로 빈 문자열이 됩니다.
+- 빈 `after`는 `!after_txt.contains("gputeer-escape")`를 만족합니다.
+- 정확한 cgroup 경로가 아니라 부분 문자열만 검사합니다.
+
+관련 위치:
+
+- `crates/runtime-linux/tests/cgroup_enforcement.rs:244-249`
+- `crates/runtime-linux/tests/cgroup_enforcement.rs:261-278`
+
+`set -eu`, 각 명령의 명시적 실패 처리, 탈출 후 정확히 `0::/`인지 확인하는 검사가 필요합니다.
+
+5. `node_liveness_store`의 transaction에는 전형적인 TOCTOU가 없지만, 저장 의미가 안전하지 않습니다.
+
+`BEGIN IMMEDIATE` 안에서 읽기·비교·쓰기하므로 별도 SQLite 연결 간 check-then-update 경쟁은 직렬화됩니다. 시각이 낮은 관측의 뒤로 가기도 실제 차단됩니다.
+
+- `crates/coordinator/src/node_liveness_store.rs:217-258`
+- `crates/coordinator/src/node_liveness_store.rs:260-294`
+
+그러나 두 문제가 남습니다.
+
+- 동일 밀리초의 서로 다른 heartbeat는 무조건 첫 번째가 이깁니다. liveness 커널은 동점 시 `fence_epoch`, `running_attempts`로 고르는데 저장소는 그 규칙을 적용하지 않습니다. 동시 관측 결과가 잠금 획득 순서에 따라 달라집니다.
+- 같은 `node_id`를 다른 유효한 장치가 더 최신 시각으로 서명하면 기존 장치를 그대로 덮어씁니다. 커널의 `ConflictingDevice` 방어에 도달하기 전에 충돌 증거가 사라집니다.
+
+즉 고전적인 TOCTOU는 아니지만, 동시·충돌 관측에 대한 first-writer/last-writer 문제가 있습니다.
+
+더구나 이 저장소는 production heartbeat 경로에 연결되지 않았습니다. 사용처는 테스트뿐이며, 기존 handler도 명시적으로 “durable 저장은 아직 없다”고 적고 있습니다.
+
+- `crates/coordinator/src/lib.rs:736-739`
+- `CoordinatorNodeLivenessStore` 검색 결과: 구현과 테스트 외 호출 없음
+
+6. `--workload-cgroup-parent`는 위험한 값을 받을 수 있습니다.
+
+CLI 문자열을 그대로 `PathBuf`로 만들고, `Explicit` 경로는 cgroup 루트 아래인지·Agent에게 위임된 전용 subtree인지 확인하지 않습니다.
+
+- `crates/agent/src/lib.rs:1898-1901`
+- `crates/runtime-linux/src/lib.rs:455-465`
+
+운영자가 `/sys/fs/cgroup`, `system.slice` 등 쓰기 가능한 시스템 cgroup을 지정하면:
+
+- Agent 상위의 CPU·PID·메모리 제한을 우회할 수 있고,
+- 해당 시스템 cgroup의 `cgroup.subtree_control`에 `+memory`를 쓸 수 있으며,
+- 시스템 계층 아래에 작업 cgroup을 만들 수 있습니다.
+
+위험을 드러내기 위해 길게 만든 `RootBypassingAncestorLimits` enum을 CLI의 임의 `Explicit` 경로가 사실상 우회합니다. 안전한 기준 디렉터리 아래의 canonical descendant만 허용하거나, 위임 확인용 소유권 계약이 필요합니다.
+
+7. 코드가 뒷받침하지 않는 커밋 메시지 주장이 있습니다.
+
+- “cgroup 이름 충돌 문제가 사라진다”: 성분 결합 충돌이 남습니다.
+- “두 경로 모두 `validate_device_id`”: CLI 두 분기만 맞고 공개 실행 API는 우회됩니다.
+- “탈출을 실제로 증명”: 실패한 `after` 관측이 빈 문자열로 통과할 수 있습니다.
+- “Agent가 실제로 쓰는 부모 경로를 테스트”: runtime primitive의 `Explicit`·`Current`만 호출하며 Agent CLI→정책→runtime 배선은 테스트하지 않습니다.
+- “`NodeRecord.last_heartbeat_unix_ms`를 실제로 채운다”: 저장소는 production 경로에 연결되지 않았고 `NodeRecord`도 갱신하지 않습니다.
+
+따라서 현재 커밋은 수용할 수 없습니다.

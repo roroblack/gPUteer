@@ -21,8 +21,8 @@ review_artifact: "docs/evidence/_raw/DoD-57_review_rounds.txt"
 
 decision: "cgroup 부모를 자동으로 고르지 않고 `CgroupParent{Current, Explicit, RootBypassingAncestorLimits}` 로 호출부에 넘긴다 — 자동 폴백은 운영자가 상위에 걸어 둔 CPU·메모리·PID 상한 밖으로 자식을 내보내는데, 그건 Agent 가 자기 판단으로 할 일이 아니다. `Explicit` 는 금지 목록이 아니라 **허용 조건**(루트의 직속 자식 + 이름이 `gputeer-` 로 시작)으로 막는다 — 금지 목록은 언제나 빠뜨린 항목이 생기지만 '우리 이름으로 만든 것만' 은 빠뜨릴 자리가 없다. 그 대가로 systemd 위임 slice 를 지원하지 않게 됐고 그것을 문서에 적었다. cgroup 이름은 다듬지 않고 성분별 길이 접두사와 함께 해시한다 — 치환·절단·성분 결합이 각각 충돌을 만들었고, 충돌하면 남의 작업을 죽인다. 기존 cgroup 은 **비어 있음이 증명될 때만**(`cgroup.procs` 비었고 `cgroup.events` 가 `populated 0`) 회수한다 — 무조건 죽이면 남의 작업을 끝내고, 무조건 거부하면 비정상 종료 후 재시도가 영영 막힌다."
 raw_output_artifact: "docs/evidence/_raw/DoD-57_cgroup_enforcement_x600_2026-08-30.txt"
-raw_output_digest: "sha256:0a489696ea3fec0beaaba0d95ce6e97eff82940c79168d4223633133e25d665d"
-raw_output_bytes: 3687
+raw_output_digest: "sha256:1a829492e6a7dad72799099495df4c43d27adca64a902dcbe4b8be34010951a1"
+raw_output_bytes: 35538
 
 binary_digests:
   toolchain: "x600 WSL2 의 cargo 1.89.0 (c24e10642 2025-06-23) — /root/.cargo. 개발 기계 교차 타입 검사는 cargo 1.97.1 + --target x86_64-unknown-linux-gnu"
@@ -43,6 +43,11 @@ command: |
   # 개발 기계 교차 타입 검사
   cargo check -p gputeer-runtime-linux --all-targets --target x86_64-unknown-linux-gnu
 raw_output: |
+  ★ 2026-08-30 독립 검수 5라운드가 이전 raw 를 반려했다 — 사람이 편집한
+    요약이라 "running 5 tests" 아래 6개가 나열되는 불일치가 있었다.
+    지금은 실제 명령 출력을 그대로 붙였다(35,538바이트).
+    검수 원문도 판정 블록을 편집 없이 잘라 세 파일로 보존했다.
+
   (docs/evidence/_raw/DoD-57_cgroup_enforcement_x600_2026-08-30.txt 전문 참조)
 
   통합 7/7 · 단위 6/6 · Linux 워크스페이스 690 passed / 실패 suite 0
@@ -59,6 +64,9 @@ artifacts:
   - crates/agent/Cargo.toml
   - docs/evidence/_raw/DoD-57_cgroup_enforcement_x600_2026-08-30.txt
   - docs/evidence/_raw/DoD-57_review_rounds.txt
+  - docs/evidence/_raw/DoD-57_review_round1_verbatim.txt
+  - docs/evidence/_raw/DoD-57_review_round2_verbatim.txt
+  - docs/evidence/_raw/DoD-57_review_round3_verbatim.txt
 negative_tests:
   - "exceeding_the_limit_actually_kills_the_child: 32MiB 상한에 64MiB 를 잡으려 하면 자식이 0 이 아닌 코드로 끝남을 확인한다. ★ 이 검사가 **초안을 실제로 반증했다** — `memory.max` 만 걸었을 때 자식이 90MB 를 잡고 **정상 종료했다**. cgroup 은 상한 초과 시 먼저 회수를 시도하고 스왑으로 밀어내므로, `memory.swap.max=0` 을 같이 걸어야 실제로 끝난다"
   - "a_workload_within_the_limit_is_untouched: 상한 안의 작업이 살아남음을 확인한다 — 위 검사만 있으면 '전부 죽인다' 로도 통과한다"
@@ -78,6 +86,7 @@ limitations:
   - "systemd 가 관리하는 위임 slice 를 지원하지 않는다 — 깊이 1 제한의 대가다. 운영자가 `/sys/fs/cgroup/gputeer-*` 를 직접 만들어야 한다"
   - "`pre_exec` 안의 `std::fs::write` 가 async-signal-safe 하다고 **보장되지 않는다** — 실제 하는 일은 open/write/close 뿐이지만 `std` 가 그 경로만 쓴다는 계약은 없다. 없애려면 raw syscall 이나 libc 의존이 필요하다"
   - "WSL2 한 대에서만 실측했다 — 네이티브 Linux, 컨테이너 안, systemd 위임 환경에서는 돌린 적이 없다"
+  - "★ `raw_output_artifact` 는 실제 출력이지만 **워크스페이스 전체 출력은 `test result:`/`running`/`error` 줄만 남긴 것**이다(수천 줄이라 전량 보존하지 않았다). 남긴 줄 자체는 편집하지 않았다. 검수 원문도 판정 블록만 잘라 보존했고 도구 호출 로그(수십만 바이트)는 저장소에 없다"
   - "Windows 실행 경로는 이 조각에서 바뀌지 않았다 — 한 플랫폼 통과를 다른 플랫폼 통과로 세지 않는다(§4)"
 ---
 

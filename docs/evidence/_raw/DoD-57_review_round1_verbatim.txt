@@ -1,0 +1,105 @@
+이 파일은 `codex exec --model gpt-5.6-sol --sandbox read-only` 세션 출력의
+**최종 판정 블록을 그대로 잘라낸 것**이다. 잘라낸 위치 뒤의 글자는 하나도
+고치지 않았다. 앞부분(도구 호출 로그)은 수십만 바이트라 뺐다.
+원본 전체는 세션 스크래치패드에만 있고 저장소에는 없다.
+
+-----------------------------------------------------------------
+
+판정: **CHANGES_REQUESTED**
+
+읽기 전용으로 두 커밋과 현재 호출 경로를 대조했다. Linux 실측은 재실행하지 않았으며 파일도 변경하지 않았다.
+
+## 중대한 결함
+
+1. **Linux 상한이 운영 실행 경로에 연결되지 않았다.**
+
+새 크레이트는 독립 API와 테스트만 추가됐다. Agent의 Linux 실행 경로는 여전히 `UnsupportedPlatform`을 반환한다([exec.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/exec.rs:386), [exec.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/exec.rs:402)). `crates/agent/Cargo.toml`에도 `runtime-linux` 의존성이 없다.
+
+따라서 39b4eb1은 “상한 primitive를 실측했다”까지는 맞지만, “운영 Job에 자원 상한을 실제로 강제한다”는 주장은 코드가 뒷받침하지 않는다.
+
+2. **임의 네이티브 작업은 cgroup 밖으로 스스로 빠져나갈 수 있다.**
+
+부모가 cgroup을 생성할 권한을 가진 동일 UID/권한으로 자식을 실행하며, 권한 강등·cgroup namespace·ancestor `cgroup.procs` 차단이 없다. 자식은 `exec` 전에 제한 cgroup에 들어가지만([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:294)), 실행 후 쓰기 가능한 부모 또는 루트의 `cgroup.procs`로 자신을 이동시킬 수 있다.
+
+특히 v2 루트를 쓰는 환경은 높은 권한일 가능성이 크므로 탈출이 더 직접적이다. 현재 구현은 협조적인 작업에는 상한이지만, 이 프로젝트가 전제하는 “남의 임의 코드”에 대한 강제 상한은 아니다.
+
+3. **v2 루트 폴백은 상위 회계와 상한을 우회한다.**
+
+`resolve_parent()`는 현재 cgroup 실패 시 `/sys/fs/cgroup`을 후보로 사용한다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:355), [lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:363)).
+
+그 결과 자식은 `systemd` unit, 사용자 slice, 컨테이너에 걸린 CPU·메모리·PID 상한과 회계 밖의 루트 직계 자식으로 이동한다. 개별 `memory.max`가 걸려도 운영자가 설정한 상위 총량 제한을 벗어나므로 안전한 폴백이 아니다. 실패 시 실행을 거부하거나, 적법하게 위임된 현재 subtree만 사용해야 한다.
+
+## 항목별 답변
+
+### 1. `memory.max + memory.swap.max`가 실제 상한인가
+
+- 페이지 캐시와 tmpfs/shmem은 memory cgroup 회계 대상이므로 그 자체가 주요 누수 경로는 아니다.
+- `memory.max`와 존재하는 `memory.swap.max=0` 조합은 해당 cgroup에 계속 머무는 프로세스의 시스템 RAM+swap 사용을 강하게 제한한다.
+- 다만 `memory.max`는 순간적인 초과까지 절대 불가능하다는 의미의 정확한 산술 상한은 아니다.
+- 더 큰 결함은 프로세스가 cgroup에서 탈출할 수 있다는 점이다.
+- `memory.swap.max` 파일이 없으면 무조건 안전하다고 보고 건너뛰는 코드도 근거가 부족하다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:266)). 파일 부재가 “사용 가능한 swap 자체가 없음”을 증명하지 않는다.
+- GPU 메모리, 일부 호스트 전역 커널 자원, 네트워크·파일시스템·PID·CPU는 애초에 제한하지 않는다.
+
+또한 `pre_exec` 안의 `std::fs::write`를 “async-signal-safe”라고 선언한 설명도 안전하지 않다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:297)). 다중 스레드 프로세스의 fork 후에는 보장된 async-signal-safe 호출만 써야 한다.
+
+### 2. `resolve_parent()`의 루트 폴백
+
+안전하지 않다. 코드 주석도 회계 이탈을 인정하지만, 인정만 하고 허용한다. 상위 cgroup의 메모리뿐 아니라 CPU/PID 등 다른 정책도 우회할 수 있다. 루트의 `cgroup.subtree_control`까지 변경하려 시도하므로 자기 위임 범위를 넘어선 시스템 전역 변경이기도 하다.
+
+### 3. `Drop` 정리 실패와 누적
+
+정리 실패 경로가 여러 개다.
+
+- `cgroup.kill` 실패를 무시한다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:214)).
+- 1초 동안 `remove_dir`만 재시도하고 최종적으로 stderr만 남긴다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:218)).
+- 자식이 하위 cgroup을 만들면 부모 디렉터리는 비어도 삭제되지 않는다.
+- stdout/stderr 파일 열기가 실패하면 `?`로 즉시 반환해 이미 만든 cgroup을 정리하지 않는다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:286)).
+- 기존 이름을 정리할 때도 kill/remove 오류를 모두 무시한다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/runtime-linux/src/lib.rs:435)).
+
+남은 cgroup은 같은 이름의 다음 실행을 지속적으로 실패시키고, 고유 이름을 계속 쓰면 cgroup 디렉터리와 커널 메타데이터가 누적된다. 작업이 새 하위 cgroup을 만들 수 있는 현재 권한 모델에서는 자동 회복되지 않을 수 있다.
+
+### 4. `scoped_id`
+
+32비트 해시 충돌은 제거됐다. 같은 `base_id`에서 서로 다른 문자열 `device_id`를 그대로 붙이는 현재 함수는 그 두 입력을 구별한다([multi_agent.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:393)).
+
+하지만 수정은 완결되지 않았다.
+
+- `require_distinct_scoped_ids()`는 정의만 있고 실제로 호출되지 않는다([multi_agent.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:403)).
+- `device_id` 길이·문자 집합 검사가 없다.
+- `;`, `=`는 `--extra-agents` 문법과 충돌한다.
+- 개행 등은 로그 위조/파싱 혼동을 만든다.
+- 매우 긴 ID는 lease/job/attempt/grant 네 곳에 복제되어 프레임 상한 초과와 메모리·저장소 서비스 거부를 유발할 수 있다.
+
+즉 원래의 32비트 충돌은 닫았지만 “사람이 정한 짧은 이름”이라는 전제는 코드로 강제되지 않는다.
+
+### 5. `require_concurrent_sessions`
+
+기본값 0이면 `await_required_overlap()`은 즉시 반환하므로 추가 대기는 없다([multi_agent.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:636)). 이 조건에서 교착은 찾지 못했다.
+
+다만 “아무것도 안 한다”는 표현은 정확하지 않다. 기본값에서도 모든 세션이 mutex를 잡아 동시 수를 기록하고 새 로그를 출력한다([multi_agent.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:230), [multi_agent.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:598)).
+
+또한 `cfg(test)`가 아니라 운영 CLI에 노출되어 있다([lib.rs](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1814)). 운영자가 실수로 `required > max_connections`를 주면 영구 교착은 아니지만 설정된 timeout까지 모든 세션이 대기한 뒤 실패한다.
+
+### 6. 시나리오 88·90·91
+
+- **88:** 서명 검증된 Hello 두 개가 동시에 `OpenSession` 구간에 진입했고, 각각 Grant/ACK를 완료하며 서로 다른 suffix 기반 Lease를 받았음을 증명한다. 실제 Grant/ACK 처리의 병렬성, durable lease-store 경합, cgroup과의 통합은 증명하지 않는다. 안전하지 않은 legacy store-less 모드로 돈다.
+- **90:** 변조된 `device_id`가 `UnknownSigner`에서 거부됨만 증명한다([selftest](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5022)). 명시적인 `heartbeat.device_id != expected` 대조는 여전히 도달하지 않으며 테스트되지 않는다. 원래 지적에 대한 회귀 검사는 공허한 상태다.
+- **91:** 등록된 Agent가 Resume 값으로 서명한 Hello를 보내도 multi-agent lane이 거부함을 제대로 증명한다([selftest](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5893)). 다만 Resume 경로 자체가 새 공용 상수를 사용하는지는 증명하지 않는다.
+
+### 7. 코드가 뒷받침하지 않는 커밋 메시지 주장
+
+39b4eb1:
+
+- “Linux 자원 상한을 실제로 강제” — 독립 primitive에만 해당하며 Agent 운영 경로는 여전히 실행 거부다.
+- “memory.swap.max가 없으면 새어 나갈 곳이 없다” — 코드가 환경을 확인하지 않고 추정한다.
+- “pre_exec에서 하는 파일 쓰기는 async-signal-safe” — 보장되지 않는다.
+- “프로세스 트리 전체 종료” — cgroup에서 빠져나간 프로세스에는 성립하지 않는다.
+
+d55cdee:
+
+- “`require_distinct_scoped_ids()`로 명시적으로 막는다” — 함수가 호출되지 않는다.
+- “mode 상수를 protocol 단일 출처로 옮겼다” — Resume 운영 경로는 여전히 `mode: 2`, `hello.mode != 2`를 직접 쓴다([agent](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:455), [coordinator](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:1015)).
+- “device_id 대조 테스트 공허성을 수정했다” — 시나리오 90은 그 대조에 도달하지 않는다.
+- “기본값 0이면 아무것도 안 한다” — 대기는 없지만 운영 세션의 계수·잠금·로그 경로는 바뀐다.
+
+따라서 두 커밋을 현재 주장 그대로 수용할 수 없다. 특히 **운영 경로 미연결, cgroup 탈출, 루트 폴백에 의한 상위 제한 우회** 세 건은 승인 전 수정이 필요하다.

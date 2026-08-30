@@ -1,192 +1,12 @@
 이 파일은 실제 명령 출력을 **그대로** 붙인 것이다.
-★ 2026-08-30 독립 검수 5라운드가 이전 버전을 반려했다 — 사람이 편집한
-  요약이라 'running 5 tests' 아래 6개가 나열되는 불일치가 있었다.
-  요약은 증거가 아니다. 아래는 편집하지 않았다.
+★ 2026-08-30 독립 검수 5라운드가 편집된 요약을 evidence 로 인정하지
+  않는다고 지적했다. 아래는 편집하지 않았다.
 
-SSH 배너(post-quantum 경고)와 grep 필터만 적용됐다 — 워크스페이스 전체
-출력은 수천 줄이라 `test result:`/`running`/`error` 줄만 남겼고,
-그 줄들 자체는 고치지 않았다.
+워크스페이스 전체 출력은 수천 줄이라 grep 으로 `test result:`/`running`/
+`error` 줄만 남겼다 — 남긴 줄 자체는 고치지 않았다.
+뮤테이션 결과는 이 세션의 도구 출력에서 그대로 옮겼다.
 
 =================================================================
-
-##################### x600 WSL2 (Linux) #####################
-
-** WARNING: connection is not using a post-quantum key exchange algorithm.
-** This session may be vulnerable to "store now, decrypt later" attacks.
-** The server may need to be upgraded. See https://openssh.com/pq.html
-########## cargo test -p gputeer-runtime-linux (전체 출력) ##########
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
-     Running unittests src/lib.rs (target/debug/deps/gputeer_runtime_linux-16d8d4f49257c197)
-
-running 6 tests
-test explicit_parent_tests::the_root_and_outside_paths_are_refused ... ok
-test tests::a_zero_limit_is_refused ... ok
-test tests::error_kinds_are_distinguishable ... ok
-test explicit_parent_tests::system_slices_are_refused_by_name ... ok
-test tests::a_name_with_a_separator_is_refused ... ok
-test explicit_parent_tests::a_correct_name_under_a_system_ancestor_is_still_refused ... ok
-
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-     Running tests/cgroup_enforcement.rs (target/debug/deps/cgroup_enforcement-7273d3f433527b5d)
-
-running 7 tests
-1416500
-test a_workload_within_the_limit_is_untouched ... ok
-test killing_the_cgroup_kills_grandchildren_too ... ok
-test exceeding_the_limit_actually_kills_the_child ... ok
-test a_blocked_wait_can_be_released_from_another_thread ... ok
-test a_determined_child_can_still_escape_the_cgroup ... ok
-test the_parent_the_agent_actually_uses_is_exercised ... ok
-test a_child_actually_runs_inside_the_cgroup ... ok
-
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.04s
-
-   Doc-tests gputeer_runtime_linux
-
-running 0 tests
-
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-
-########## cargo test --workspace --exclude gputeer-runtime-windows (요약 줄만 — 전체는 수천 줄) ##########
-running 20 tests
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.16s
-running 8 tests
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 1 test
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 13 tests
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 17 tests
-test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
-running 13 tests
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 7 tests
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
-running 7 tests
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 10 tests
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 5 tests
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 130 tests
-test result: ok. 130 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
-running 2 tests
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 2 tests
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
-running 16 tests
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 12 tests
-running 1 test
-test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.07s
-running 4 tests
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
-running 3 tests
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
-running 20 tests
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
-running 22 tests
-test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
-running 10 tests
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
-running 19 tests
-test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
-running 10 tests
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
-running 9 tests
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 13 tests
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
-running 9 tests
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
-running 8 tests
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 15 tests
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 15 tests
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 12 tests
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 10 tests
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
-running 3 tests
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 16 tests
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 7 tests
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 25 tests
-test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 8 tests
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 5 tests
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 15 tests
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 13 tests
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 8 tests
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 7 tests
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.05s
-running 2 tests
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
-running 36 tests
-test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-running 10 tests
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 20 tests
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 14 tests
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 33 tests
-test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 1 test
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
-running 2 tests
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
-running 3 tests
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 0 tests
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-########## 정리 ##########
-done
-
 
 ##################### Windows 개발 기계 #####################
 
@@ -493,3 +313,27 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 88) 두 Agent 가 동시에 붙어(peak_concurrent=2) 각자 다른 Lease 를 받고 각자 ACK 까지 완료(01JLEASESELFTEST000000001-01JAGENTSELFTEST00000000001 / 01JLEASESELFTEST000000001-01JAGENT2SELFTEST0000000001)
 91) 다른 lane(Resume) 용으로 서명된 Hello 를 mode 대조로 거부
 exit=0
+
+
+##################### 뮤테이션 (이 세션의 실제 도구 출력) #####################
+
+--- 뮤테이션 A: accept 루프를 순차 처리로 ---
+$ cargo run -q --bin gputeer -- coordinator-agent-selftest
+coordinator-agent-selftest 실패: 88) 첫 Agent 가 실패했다: stdout="HELLO_SENT node_id=01JAGENTSELFTEST00000000001
+" stderr="agent-stub 실패: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+"
+
+--- 뮤테이션 B: hello.mode 대조 무력화 ---
+$ cargo run -q --bin gputeer -- coordinator-agent-selftest
+coordinator-agent-selftest 실패: 91) 다른 lane 용 mode 로 서명된 Hello 가 통과했다: stdout="READY 127.0.0.1:62326
+MULTI_AGENT agents=2
+CONNECTION_ACCEPTED peer=127.0.0.1:62327
+SESSION_HELLO peer=127.0.0.1:62327 agent_device_id=01JAGENTSELFTEST00000000001
+SESSION_OPEN concurrent=1
+RESULT ok=true grant_id=01JGRANTSELFTEST000000001-01JAGENTSELFTEST00000000001 attempt_id=01JATTEMPTSELFTEST00000001-01JAGENTSELFTEST00000000001 agent_device_id=01JAGENTSELFTEST00000000001
+MULTI_AGENT_DONE served=1 peak_concurrent=1
+"
+
+--- 검수가 낸 식별자 충돌 반례 (1차 설계, 32비트 short_tag) ---
+agent-47131 -> e7525a3b
+agent-71872 -> e7525a3b
