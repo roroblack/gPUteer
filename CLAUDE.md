@@ -189,7 +189,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 
 ---
 
-## 5. 지금 상태 (2026-08-24)
+## 5. 지금 상태 (2026-08-30)
 
 > ★ 상태표의 숫자는 **문서가 아니라 디스크·빌드 결과를 세어** 갱신한다.
 > 아래 숫자는 `cargo test --workspace` · `ls docs/evidence` · `git rev-list --count` 실측이다.
@@ -201,9 +201,9 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | 서명 규범 | **완료** — `docs/protocol/signing.md`. §7.2·§7.3·§8·§13.1 은 실측 근거 반영됨 |
 | 상태 전이 규범 | **완료** — `docs/protocol/state-machines.md` 5종 |
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
-| 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **40건**. `--verify` 가 재생성 대조 |
+| 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **50건**(2026-08-30 실측). `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **`cargo test --workspace` 348 passed / 0 failed**(1 ignored, 2026-08-20 실측), 빌드 경고 0 |
+| **Rust 구현** | 🟡 **진행 중** — **Windows `cargo test --workspace` 697 passed / 0 failed**, **Linux(x600 WSL2, runtime-windows 제외) 693 passed / 실패 suite 0**, `coordinator-agent-selftest` **92/92 시나리오**, canonical 벡터 50건 일치 (전부 2026-08-30 실측). 커밋 241개 |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** · **`write_once()` 동시 동일-이름 호출 명시적 거부(2026-08-19, `DoD-21`)** — 프로세스 간 파일 잠금 + 성공 시 자가 정리 + GC 의 죽은 락 회수 |
@@ -215,7 +215,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | ├ `crates/scheduler` + checkpoint durability kernel | **신규**(2026-08-21~24, `DoD-41`~`DoD-55`) — hard-filter부터 durable Job/Queue·STAGING·inventory·best-fit·reservation·selected GPU binding까지의 선행 kernel과 verified JobManifest/AttemptReport/CheckpointManifest 저장을 갖췄다. **verified ReplicaAck durable checkpoint/root binding**(`DoD-53`)은 signed observation을 validated DoD-52 anchor와 exact root에 묶어 immutable history로 저장한다. **resolved-input effective replica count 순수 kernel**(`DoD-54`)은 외부 resolver가 선택·검증한 holder observation만 받아 holder/domain 중복 제거와 `MIRRORED=1`/`REPLICATED=2` 요구치 충족 여부를 입력 순서와 무관한 report로 계산한다. **GPU ScopeCandidate 순수 kernel**(`DoD-55`)은 실물 RTX 4070 SUPER NVML 실측 뒤 full scope를 재판정해 계산만 떼어냈다. 관측·요구·명시 자원·caller provenance gate에서 `(available_vram, gpu_id)` 동점까지 결정적인 후보를 만들고 PARTITIONED·CUDA 미해소·파생 VRAM을 typed error로 닫는다. 두 kernel 모두 시계·I/O·DB·network·crypto·상태 전이가 없다. **로드맵 `DoD-41`~`DoD-55` 완료** — 하드웨어 값 부재는 해소됐지만 authoritative GPU observation provenance와 membership/ControlStore, full Grant/Lease scope는 별도 과제다 |
 | └ 미착수 | scheduler(`DoD-41`~`DoD-55` 완료, orchestration과 ReplicaAck consumer는 production 미연결; reservation release, authoritative device→member·membership/failure-domain resolver·projection, signed GPU observation provenance·freshness/revision binding, `MIRRORED` 판정 적용/전이, durable count 저장, holder freshness 선택과 ACK retention 정책이 없고 모든 raw signed binding은 key directory 재검증 필요) · full Grant/Lease wire `ResourceScope`·GPU allocation/release·shared MPS/동일-owner·MIG partitioned allocation · 다중 노드/Raft COMMITTED · 다중 Agent/session owner/fencing · Job ingress·routing/outbox/wire · UI · OS 방화벽 · 실제 entrypoint 실행. `coordinator-agent-selftest` 72/72와 schema v2 `DoD-11`~`55` 기록 완료 |
 | **P0 스파이크** | 🟡 **5/9 완료** — 01 ✅ · 03 ✅ · 03a ✅ · 06 ⚠️FAIL-SCOPE · 07 ✅(2026-08-18 x600 재실측으로 σ=0.0213 재확인, INCONCLUSIVE→PASS 복원) · 08 ✅ / 02·04·04b·05 미실행 |
-| **DoD 최신 집계** | 🟡 **evidence 63건** (PASS **63** · FAIL-SCOPE 1, 2026-08-24 `verify_evidence.py` 실측 — 64개 중). `DoD-55` GPU ScopeCandidate 순수 kernel 추가, 스키마 위반 0, 독립 검수 없는 P0/DoD PASS 부채 0건. `DoD-52` anchor와 `DoD-53` durable ACK 저장, `DoD-54` effective count에 이어 실물 NVML 재판정에서 하드웨어 값 부재를 해소하고 scope 계산만 분리했다. authoritative GPU observation provenance·membership/ControlStore·full Grant/Lease scope는 후속이다. 아래 `DoD` 행은 DoD-52까지의 누적 상세 이력이며 DoD-53~55는 "다음에 할 일" 39~41번에 기록했다 |
+| **DoD 최신 집계** | 🟡 **evidence 67건** (PASS **66** · FAIL-SCOPE 1, 2026-08-30 `verify_evidence.py` 실측). `DoD-56` NVML 실측 관측 계층, `DoD-57` Linux cgroup 자원 상한 강제 추가. 스키마 위반 0, 독립 검수 없는 P0/DoD PASS 부채 0건. ★ 이번 세션의 나머지 조각(다중 Agent lane · 생존 판정 커널 · 생존 관측 저장소 · Linux K1 키 보관)은 **evidence 미작성 부채**다 — 커밋과 독립 검수 기록은 있으나 `docs/evidence/` 정식 문서가 아직 없다 |
 | **DoD** | 🟡 **evidence 60건** (PASS **60** · FAIL-SCOPE 1, 2026-08-24 `verify_evidence.py` 실측 — 61개 중). `DoD-17`(RevokeLeaseNotice 커버리지)·`DoD-18`(max_total_duration_seconds 갱신 차단)·`DoD-19`(오래된 테스트 공백 3건)·`DoD-20`(`tools/canonical/check_schema.py` 신규 구현, 코덱스 1라운드가 실행 환경 오류 exit 코드 계약 위반을 실제 실행으로 발견 후 2라운드 ACCEPTED)·**`DoD-21`(2026-08-19, `write_once()` 동시 호출 계약 — 아래 참조)**·**`DoD-22`(2026-08-19, Lease revoke 최소 경로 — 아래 참조)**·**`DoD-23`(2026-08-19, Coordinator 재발급 정책 SUPERSEDED — 아래 참조)**·**`DoD-24`(2026-08-19, Lease 재접속 최소 조각 — 아래 참조)**·**`DoD-25`(2026-08-19, Coordinator Lease revoke 영속화 — 아래 참조)**·**`DoD-26`(2026-08-20, 만료 Lease 재접속 거부 — 아래 참조)**·**`DoD-27`(2026-08-20, REVOKED signed outcome — 아래 참조)**·**`DoD-28`(2026-08-20, check_schema.py CI 연결 — 아래 참조)**·**`DoD-29`(2026-08-20, 레거시 lease 경로 명시적 opt-in — 아래 참조)**·**`DoD-30`(2026-08-20, Job 시작 WRITING 마커 — 아래 참조)**·**`DoD-31`(2026-08-20, terminal outcome 다회차 교착 회귀 테스트 — 아래 참조)**·**`DoD-32`(2026-08-20, 만료 Lease 갱신 fail-closed — 아래 참조)**·**`DoD-33`(2026-08-20, marker-only checkpoint GC 회귀 테스트 — 아래 참조)**·**`DoD-34`(2026-08-20, Agent 쪽 갱신 직전 만료 재확인 — 아래 참조)**·**`DoD-35`(2026-08-20, 자동 재접속 최소 경로 — 아래 참조)**·**`DoD-36`(2026-08-20, Resume 프로토콜 — 아래 참조)**·**`DoD-37`(2026-08-20, Coordinator dispatcher 정교화 — 아래 참조)**·**`DoD-38`(2026-08-20, Agent Resume outcome 별 명시적 처리 — 아래 참조)**·**`DoD-39`(2026-08-20, Ambiguous Renew 복구 — 아래 참조)**·**`DoD-40`(2026-08-20, Lease store 동시 최초 발급 안전성, 로드맵 조각 7 재정의·자동 재접속 루프 로드맵 마무리 — 아래 참조)**·**`DoD-41`(2026-08-21, scheduler 순수 hard-filter kernel, 로드맵 조각 1 — 아래 참조)**·**`DoD-42`(2026-08-21, scheduler durable Job/Queue truth, 로드맵 조각 2a — 아래 참조)**·**`DoD-43`(2026-08-21, scheduler single-node local atomic STAGING kernel, 로드맵 조각 2b-1 — 아래 참조)**·**`DoD-44`(2026-08-21, scheduler durable Agent inventory 저장소 kernel, 로드맵 조각 3a — 아래 참조)**·**`DoD-45`(2026-08-21, scheduler 순수 deterministic resource best-fit kernel, 로드맵 조각 4 — 아래 참조)**·**`DoD-46`(2026-08-21, scheduler 로컬 placement-to-staging orchestration kernel, 로드맵 조각 5 — 아래 참조)**·**`DoD-47`(2026-08-21, scheduler inventory revision 기반 CAS reservation, 로드맵 조각 5b — 아래 참조)**·**`DoD-48`(2026-08-24, deterministic selected GPU assignment 순수 kernel — 아래 참조)**·**`DoD-49`(2026-08-24, selected GPU durable reservation binding — 아래 참조)**·**`DoD-50`(2026-08-24, verified signed JobManifest durable binding — 아래 참조)**·**`DoD-51`(2026-08-24, verified terminal AttemptReport durable binding — 아래 참조)**·**`DoD-52`(2026-08-24, verified CheckpointManifest durable binding — 아래 참조)** 추가. 스키마 위반 0. ★ v1 evidence 전부(DoD-01~08·P0-01·03·03a·07·08 13건) schema v2 승격 완료, 독립 검수 없는 P0/DoD PASS 부채 **0건**. `DoD-09`~`52` 는 신규 작성부터 v2. **`DoD-13`(2026-08-19)** — Lease 갱신 최소 조각(`RenewLeaseRequest`/`RenewLeaseResult` 왕복, `RenewLeaseResult` 신규 서명화 포함). 코덱스 1라운드 검수(`p99`)가 완료 보고 전에 실제 설계 결함 2건을 찾아냈다 — Coordinator 가 요청의 `fence_epoch` 을 검증하지 않던 문제, `FenceWatermark` 가 `<` 만 거부하고 `>`(epoch 상승)는 통과시키는데 계획서는 상승을 이 조각 범위에서 정책상 거부하라고 명시했던 문제. 둘 다 코드로 고치고 2라운드 좁은 후속 검수(`p100`)에서 `ACCEPTED`. 신규 검증 게이트 4건(nested Lease 독립 검증·request_nonce 대조·epoch 상승 거부·Coordinator epoch 대조)을 뮤테이션 테스트로 비공허성 확인. **`DoD-21`(2026-08-19)** — `write_once()`(`crates/checkpoint`)가 같은 `(dir, name)` 동시 호출을 지원하지 않고 명시적으로 거부하는 계약을 `std::fs::File::try_lock()` 기반 프로세스 간 파일 잠금으로 강제했다(`DoD-08` 이 발견했으나 안 고치고 넘겼던 결함의 후속). 코덱스 독립 검수 **5라운드**(`p128`~`p132`) — 매 라운드가 실제 결함을 찾았다: MSRV 불일치(`Cargo.toml` 1.85 vs `try_lock` 요구 1.89)·`k1c` 결함 고정 테스트의 비결정적 주장·GC 의 죽은 락 영구 보존으로 PARTIAL 디렉터리 청소 불능(내 1차 수정이 만든 회귀)·이름공간 충돌로 등록 데이터 파일 삭제 가능성(락 경로와 데이터 경로가 우연히 같아질 수 있음, 1차 등록 검사→근본 원인은 접미사 자체 예약)·대소문자/Win32 후행 점공백 우회. 전부 코드로 고치고 5라운드에서 `ACCEPTED`. 신규 테스트 5건(`k1c` 재설계+`k1d`·`k1e`·`k1f`·`k4c`)과 뮤테이션 테스트 6건으로 비공허성 확인 — 그 중 하나(락 파일 자가 정리 무력화)는 **기존** `durability_chaos.rs` 테스트 2건("완결된 체크포인트는 GC 가 절대 안 건드려야 한다")을 실패시켜, 이 세션 안에서 스스로 만들었다가 스스로 고친 회귀였음을 확인했다. GC 대 활성 writer 의 디렉터리 단위 경쟁은 의도적으로 범위 밖으로 남겨 문서화만 함(다중 Agent 실행 시작이 트리거). **`DoD-22`(2026-08-19)** — `RevokeLeaseNotice`(서명 대상·framed_ingress dispatch 는 `DoD-17` 이 이미 갖춰뒀다)의 실제 Coordinator/Agent 업무 로직을 구현했다 — Coordinator 가 이미 발급한 Lease 를 대상으로 서명해 보내고, Agent 가 서명·`lease_id`·`fence_epoch`·만료 여부를 검증한 뒤 보유 Lease 를 revoked 로 표시해 갱신을 멈춘다. ★ 사용자 요청에 따라 **구현 자체를 코덱스 CLI(workspace-write 샌드박스)에 위임**하고, 이 세션은 독립 재검증(빌드·테스트·selftest 직접 재실행)과 대화 기록이 없는 새 코덱스 인스턴스의 독립 검수(read-only)만 맡는 방식으로 진행했다. 독립 검수 1라운드(`p134`)가 진짜 교착 결함 1건(`--revoke-after-round 0` + Coordinator/Agent 둘 다 `do_renew=true` 조합에서 Coordinator 가 오지 않을 프레임을 기다림 — 기존 selftest 시나리오들이 이 조합을 우연히 피해가 안 드러났었다)을 포함해 4건을 찾아 전부 코드로 고쳤다(`p135`). 이 세션이 코덱스의 자체 뮤테이션 보고와 별개로 교착 방지 가드를 직접 되돌려 재현해(정확히 시나리오 25 에서 exit=1) 결함의 실재를 독립 재확인했다. 2라운드(`p136`)는 문서 완결성만 지적, 문서 보강 뒤 3라운드(`p137`)에서 `ACCEPTED`. 재접속 시 revoke 유실·비동기 전송·실제 정책 엔진(SUPERSEDED/QUARANTINED 판단)은 의도적으로 범위 밖. **`DoD-23`(2026-08-19)** — Coordinator 의 실제 재발급 정책 중 SUPERSEDED 부분을 구현했다 — `lease_store` 가 있고 요청 epoch 이 저장된 값보다 낮으면 연결을 끊는 대신 서명된 `RENEW_OUTCOME_SUPERSEDED` 로 응답한다(proto 자체가 "정상적인 failover 경합"이라 선언했던 상황을 실제로 그렇게 처리). 이번에도 구현을 코덱스 CLI(workspace-write)에 위임. 이 코드를 읽던 이 세션이 먼저 의심스러운 지점(SUPERSEDED 응답 후 `continue`)을 포착해 미리 알리지 않고 블라인드로 독립 검수를 돌려 교차 확인했다 — 독립 검수 1라운드(`p139`)가 정확히 같은 지점을 지적: `renew_rounds > 1` 이고 SUPERSEDED 가 마지막이 아닌 회차에서 발생하면 Coordinator 가 오지 않을 프레임을 기다리는 교착(오늘 Lease revoke 조각에 이어 **두 번째로** 나온 같은 부류의 결함, 기존 시나리오들이 우연히 이 조합을 피해가 안 드러났었다). `continue` 를 `break` 로 고치면서, Agent 가 즉시 종료하는 다른 outcome(QUARANTINED·MAX_DURATION_EXCEEDED)도 같은 위험이 **이전 조각들부터** 있었음을 확인해 공통으로 일반화했다(`p140`). 이 세션이 그 수정을 직접 되돌려 뮤테이션을 재현해(정확히 새 시나리오 32 에서 exit=1, 스트림 끊김) 코덱스의 자체 보고와 별개로 재확인했다. 2라운드(`p141`)에서 `ACCEPTED`. QUARANTINED 실제 트리거는 위험도/신뢰도 인프라 부재로 `TODO_VISION` V-11 로 등록만 함. **`DoD-24`(2026-08-19)** — 재접속(failover)의 첫 최소 조각("Active Lease process-restart rehydration")을 구현했다 — 설계 조사(코덱스, `p142`)가 먼저 "전체 재연결 프로토콜은 오늘 조각들보다 크다" 고 정직하게 판단하고, "프로세스 재시작 후 활성 Lease 복원" 만으로 범위를 좁혔다. 새 proto 메시지 없이, 테스트 전용 `--disconnect-after-ack` 로 ACK 직후 연결을 끊고, 완전히 새로운 프로세스 쌍이 같은 `--lease-db`/`--fence-db` 로 시작해 `CoordinatorLeaseStore::get_or_issue()`(이미 있던 인프라)로 저장된 Lease 를 복원한다 — CLI 의 틀린 `--fence-epoch` 보다 저장된 값이 우선함을 확인했다. 오늘 이미 두 번 나온 "한쪽은 끝났는데 다른 쪽은 계속 기다리는" 교착 패턴이 세 번째로 있는지 특히 의심하며 독립 검수(`p144`)를 요청했으나, 이번 설계는 애초에 그 위험 구조를 피했음을 확인(연결이 끊기면 Agent 는 무한 대기가 아니라 즉시 EOF 오류로 종료) — **1라운드 만에 `ACCEPTED`**. holder identity 충돌 검사는 새로 만든 게 아니라 기존 코드였음을 확인만 하고 테스트를 추가했다. revoke 상태는 재접속에서 여전히 보존 안 됨(`DoD-22` 한계 그대로), 자동 재접속 루프·`ResumeLeaseRequest`는 의도적으로 범위 밖. **`DoD-25`(2026-08-19)** — `DoD-24` 가 남긴 그 revoke 미보존 안전 공백을 닫았다 — `CoordinatorLeaseStore` 에 `revoked_at_unix_ms` 필드를 추가하고, 기존 SQLite 파일도 `open()` 시점에 `PRAGMA table_info`+`ALTER TABLE` 로 자동 보정한다. 설계 조사(코덱스 `p145`)가 먼저 스키마·`get_or_issue()`·`send_revoke_notice()` 를 실측해 마이그레이션이 필요함을 짚었고, 구현(`p146`, 코덱스 workspace-write)이 `mark_revoked()`(idempotent, wire 전송 **전에** 커밋 확정)와 `get_or_issue()`·갱신 경로(정상 경로 + `renew_outcome_override` 읽기 전용 경로) **양쪽 다**의 revoked 거부를 만들었다. 이번엔 구현자가 evidence·CLAUDE.md·HISTORY 를 안 건드려 구현자/검수자 경계가 더 깔끔했다. 독립 검수(`p147`)가 마이그레이션 로직·두 갱신 경로·override 시에도 실제 lease_id 로 기록되는지까지 전부 확인하고 **1라운드 만에 `ACCEPTED`**. **`DoD-26`(2026-08-20)** — `DoD-24` 가 이월한 "만료된 Lease 재접속 거부" 를 구현했다 — `get_or_issue()` 에 만료 검사를 추가했다. 독립 검수 1라운드(`p149`)가 진짜 계층 간 결함을 찾았다 — 만료 판정이 엄격한 `<` 를 써서, 이미 이 저장소가 정착시킨 "경계 포함"(`<=`) 규칙(`crates/protocol/src/signing.rs` 의 Lease 서명 검증, Agent 의 revoke 검사)과 어긋났다 — 정확히 만료 시각과 같은 순간에 Coordinator 는 재발급을 허용하는데 Agent 는 같은 Lease 를 즉시 거부하는 모순이 생길 뻔했다. `<` 를 `<=` 로 고치고 경계값 테스트 2건을 추가한 뒤(`p150`) 2라운드(`p151`)에서 `ACCEPTED`. **`DoD-27`(2026-08-20)** — `DoD-25` 가 명시적으로 남긴 공백("새 signed outcome 이나 proto 변경은 하지 않았다 — Agent 쪽에서 이 거부와 다른 종류의 handshake 실패를 구분할 신호가 없다")을 닫았다 — **갱신(renew) 경로에 한정해** `proto/lease.proto` 에 `RENEW_OUTCOME_REVOKED = 8` 을 순수 추가하고, Coordinator 가 revoked Lease 에 대한 갱신 요청을 raw error 로 연결을 끊는 대신 서명된 `RenewLeaseResult{ outcome: 8 }` 로 응답하도록(override 읽기 전용 경로·정상 갱신 경로 양쪽 다) 고쳤다. 오늘 이미 두 번(`DoD-22`·`DoD-23`) 나온 "한쪽은 끝났는데 다른 쪽은 계속 기다리는" 교착 패턴이 세 번째로 있는지 특히 의심하며 독립 검수를 요청했다 — 결과를 전송·flush 한 **뒤에** outcome 8 을 기존 교착 방지 `break` 목록(`2 | 3 | 6`)에 정확히 추가했는지, Agent(`crates/agent/src/lib.rs`)도 outcome 8 을 만나면 즉시 종료하는지가 핵심 확인 대상이었다. 독립 검수(`p157`)가 proto enum 순수 추가·양쪽 경로의 signed outcome 변환·`break` 위치(전송 후)·Agent 즉시 종료·신규 테스트 전용 플래그 `revoke_before_renew`(ACK 후 저장소만 revoke, notice 는 안 보냄 — 기존 `revoke_after_round` 경로와 독립)·시나리오 37 이 실제 wire 서명/replay/nonce 검증을 통과해야 성공함·`lease_store.rs` 는 이번 조각에서 전혀 안 바뀌었음(설계대로)·초기 Grant 발급 시점의 revoked 거부는 여전히 범위 밖(안 건드림)까지 전부 확인하고 **1라운드 만에 `ACCEPTED`**. `coordinator-agent-selftest` 37/37 시나리오, 5회 연속 통과(각 60초 하드 타임아웃). 뮤테이션 테스트로 outcome 8 `break` 제거 시 시나리오 37 실패 및 교착 재현을 확인. 초기 Grant 발급의 revoked 거부·`lease_store.rs` 자체 변경은 의도적으로 범위 밖. **`DoD-28`(2026-08-20)** — `DoD-20`(`check_schema.py` 신규 구현)이 남긴 "CI 파이프라인에 실제로 연결하지 않았다" 공백을 닫았다 — `.github/workflows/canonical-schema-check.yml` 을 신설해 `main` 대상 `push`·`pull_request` 에서 canonical 참조 self-test·벡터 대조·`check_schema.py`·워크스페이스 build/test(`gputeer-runtime-windows` 제외)·`verify_evidence.py` 를 순서대로 실행한다. 이 저장소는 원격이 없어 워크플로가 실제 GitHub Actions 에서 돈 적은 없다 — 로컬 명령 순서 실행 성공으로 검증을 대신했다. 독립 검수(`p159`)가 YAML 문법·트리거·경로 정확성(`--exclude gputeer-runtime-windows` 이름이 `crates/runtime-windows/Cargo.toml` 의 실제 package name 과 일치)·Rust 버전 일치·apt `protobuf-compiler` 설치의 실제 필요성(`check_schema.py` 가 Cargo 의 `protoc-bin-vendored` 와 별개로 PATH 의 `protoc` 를 직접 호출함을 코드로 확인)·최소 권한·미커밋 상태까지 전부 확인하고 **1라운드 만에 `ACCEPTED`**. **`DoD-29`(2026-08-20)** — `--lease-db` 없는 레거시 경로가 운영에서 실수로 켜지는 것을 막는 명시적 opt-in 플래그(`--i-understand-legacy-mode-is-unsafe`)를 추가했다. 독립 검수 1라운드(`p161`)가 실제 코드 지적 2건(시나리오 27~31 의 legacy opt-in 자동 적용 의도 불명확, 시나리오 38 의 Agent 쪽 미검증)을 찾아 전부 고쳤다(`p162`). 2·3라운드(`p163`·`p164`)가 코드 자체는 문제없음을 확인했으나 코덱스 read-only 샌드박스 안에서만 재현되는 selftest 미완료(Coordinator 만 스폰되고 Agent 서브프로세스는 안 뜸)를 보고해 반려됐다 — 감독자(claude-code)가 같은 바이너리를 샌드박스 밖에서 16회 연속 실행해(전부 exit=0, 38개 시나리오, 약 9초/회) 재현되지 않음을 확인하고, `DoD-28` 에서 이미 관측된 것과 같은 종류의 샌드박스 프로세스 스폰 제약으로 결론지어 최종 `ACCEPTED`. **`DoD-30`(2026-08-20)** — `crates/agent` 에 Job 실행을 향한 가장 작은 첫 걸음(설계는 `p154`)을 구현했다 — 유효 Grant/Lease 검증 성공 직후·`AgentGrantAck` 전송 전에 결정적 `checkpoint_id`(BLAKE3-256, 길이-프리픽스된 job_id/attempt_id/grant_id)로 `WRITING` 마커를 `write_once()` 로 기록한다. 위조/만료/revoked Lease 는 마커 미생성·ACK 미전송, 마커 생성 실패는 fail-closed, 재시도는 `write_once()` 의 기존 idempotent 동작에 의존한다. 실제 entrypoint 실행·manifest·wire 메시지·scheduler 는 전부 범위 밖 — `RESULT ok=true` 는 여전히 Job 완료가 아니다. 독립 검수(`p166`)가 실행 순서·checkpoint_id 인코딩·거부 경로·fail-closed·멱등성·범위 제한까지 전부 코드로 확인하고 **1라운드 만에 `ACCEPTED`**(검수 환경의 selftest 30초 제한은 `DoD-28`·`DoD-29` 와 같은 샌드박스 제약으로 판단, 감독자가 5회 연속 재확인). **`DoD-31`(2026-08-20)** — 오늘 밤 세 번(`DoD-22`·`DoD-23`·`DoD-27`) 나온 교착 버그 패턴에 대한 회귀 테스트를 `QUARANTINED`·`MAX_DURATION_EXCEEDED` 까지 확장했다(프로덕션 코드 불변, 순수 테스트 추가). 독립 검수 1라운드(`p169`)가 `CHANGES_REQUESTED` 를 냈으나, 이는 검수가 진행되던 시간대에 감독자(claude-code)가 코덱스의 뮤테이션 보고를 독립 재확인하려고 `matches!` 를 직접 순차 뮤테이션(outcome=3·6 각각 제거→재현→원복)하던 중간 상태를 검수가 우연히 읽은 오탐이었다 — 감독자가 두 뮤테이션 모두 정확히 예측된 교착으로 재현·원복까지 확인한 뒤 안정 상태에서 2라운드(`p170`)를 요청해 **`ACCEPTED`**. 프로세스 교훈: 독립 검수 진행 중 감독자의 직접 뮤테이션 재현은 순차 진행하기로 함. **`DoD-32`(2026-08-20)** — 설계 조사(`p171`)가 확인한 실제 안전 공백을 닫았다 — `renew_existing_within_duration()` 이 revoke·max-duration 만 검사하고 저장된 `expires_at_unix_ms` 가 이미 지났는지는 검사 안 한 채 즉시 새 만료시각으로 갱신했다(정상 Agent 도 지연·시계 어긋남으로 도달 가능). `DoD-26` 과 동일한 `<=` 경계 규칙으로 `expires_at_unix_ms <= now_unix_ms` 검사를 revoke 뒤·max-duration 전에 추가하고, 기존 `LeaseStoreError::Expired` 를 재사용해 raw error 로 거부한다(signed outcome 없음, `DoD-27` 과 같은 범위 판단). override·일반 갱신 경로 양쪽 적용, 기존 fixture 보정(판정 조건 유지), 경계 단위 테스트 2건·selftest 시나리오 47 신설. 독립 검수(`p173`)가 경계·순서·`UPDATE` 미실행·fixture 타당성·범위 제한까지 전부 코드로 확인하고 **1라운드 만에 `ACCEPTED`**, 감독자가 검수 완료 후 순차로 재확인(5회 연속 exit=0, 47개 시나리오). **`DoD-33`(2026-08-20)** — `DoD-30` 이 문서로만 주장했던 "marker-only 디렉터리는 GC 대상" 이라는 안전 불변식을 실제 회귀 테스트로 고정했다 — `crates/checkpoint/tests/durability_chaos.rs` 에 신설한 테스트가 `.durability.writing` 마커만 있는 디렉터리는 `startup_gc()` 후 삭제되고 완결된(manifest+데이터) 디렉터리는 보존됨을 파일시스템 상태로 확인한다. GC 알고리즘·Agent 코드는 전혀 안 바꿨다. 독립 검수(`p175`)가 `gc_partial()` 판정식과 Agent 의 실제 마커 생성 코드가 정확히 일치하는지, assert 가 실질적인지, 뮤테이션 논리까지 전부 코드로 확인하고 **1라운드 만에 `ACCEPTED`**, 감독자가 직접 재현해 재확인. 이로써 백로그 재조사(`p167`)가 찾은 3개 후보(교착 회귀·만료 갱신 fail-closed·marker-only GC) 전부 완료. **`DoD-34`(2026-08-20)** — 마지막 재조사(`p176`)가 확인한 유일 후보 — Agent 가 갱신 루프에서 `revoked` 만 확인하고 만료는 재확인 안 해 이미 만료된 Lease 로 갱신 요청을 보낼 수 있던 공백(`DoD-32` 가 Coordinator 쪽에서 이미 방어)을 Agent 쪽에서도 닫았다. `RenewLeaseRequest` 생성 직전에 새 `lease_is_expired()`(`<=` 경계, `DoD-26`/`DoD-32` 와 일관)로 재확인해 만료 시 요청을 안 보내고 `RENEW_REFUSED:LOCAL_EXPIRED` 로 종료. Coordinator 는 전혀 안 건드림. ★ 오늘 밤 세 번 나온 교착의 **반대 방향**(Agent 가 안 보내면 Coordinator 가 기다릴 위험)이 최우선 검증 대상이었다 — 구현자·독립 검수(`p178`)·감독자 3단계 모두 `read_frame()` 의 EOF 즉시 전파를 코드로 확인하고 selftest 5회(매회 약 16초, 90초 타임아웃 근처 안 감)로 실측 확인, **1라운드 만에 `ACCEPTED`**. 이로써 오늘 밤 백로그 재조사가 찾은 모든 후보를 마쳤다. **`DoD-35`(2026-08-20)** — 사용자가 기상 후 직접 지시해 자동 재접속 루프 로드맵(7조각·6~8일)의 "1+2 축소판"(proto 변경 없이 Agent bounded retry + Coordinator 반복 accept)을 구현했다. 독립 검수 1라운드(`p182`)가 진짜 결함 2건을 찾았다 — Agent/Coordinator 간 nonce attempt 카운터 불일치(TCP `connect()` 레벨 실패 후 재접속이 `GRANT_REJECTED` 로 실패)와 selftest 하드 타임아웃이 Coordinator 반복 accept 상황에서 무력화될 수 있음. 2라운드(`p183`→`p184`)가 두 결함의 프로덕션 수정 자체는 올바르다고 확인했으나 새 회귀 테스트가 실제 경로를 안 타 증명력이 없다고 지적, 3라운드(`p185`→`p186`)가 실제 TCP 연결 거부→`run()` 재시도→성공까지 타는 통합 테스트로 재작성해 뮤테이션으로 원래 버그 재현까지 확인하고 **`ACCEPTED`**. Windows `WSAEWOULDBLOCK`(10035) 플랫폼 버그도 발견해 고쳤다. `coordinator-agent-selftest` 48→52개 시나리오, 기존 48개는 전부 회귀 없음. Resume proto·durable request ledger·다중 Agent 경쟁은 로드맵 후속 조각(3~7)으로 명시적으로 남음. **`DoD-36`(2026-08-20)** — 로드맵 조각 3(Resume 프로토콜)을 구현했다 — `proto/lease.proto` 에 `SessionMode`·`AgentSessionHello`·`ResumeLeaseRequest`·`ResumeOutcome`·`ResumeLeaseResult` 를 순수 추가(기존 필드 번호 불변)하고 canonical/signing 체인 전체(domain 25→28)를 갱신했다. `classify_resume()`(읽기 전용, `get_or_issue()`/`renew_existing_within_duration()` 재사용 안 함)이 identity→revoke→만료(`<=`)→epoch 순으로 판정한다. Agent 는 `--resume-protocol` opt-in 시에만 새 경로를 쓰고 기본값은 기존 handshake 그대로 — 기존 52개 시나리오 전부 회귀 없음. 독립 검수 1라운드(`p189`)가 대부분 통과시키면서도 새 canonical 벡터가 Rust 쪽에서 대조 테스트가 없는 진짜 공백(`DoD-05` 와 같은 종류)을 찾아 반려, 수정 뒤 2라운드(`p191`)가 내용은 확인했으나 아직 커밋 전인 조각 전체의 `git diff` 범위를 오해해(`DoD-31` 과 같은 종류) 다시 반려, 3라운드(`p192`)에서 오해 해소 후 **`ACCEPTED`**. `coordinator-agent-selftest` 52→60개 시나리오. 로드맵 7조각 중 1~3 완료 — 남은 4(dispatcher 정교화)·5(durable ledger)·6(Agent Resume 통합)·7(다중 Agent selftest)은 후속 조각. **`DoD-37`(2026-08-20)** — 로드맵 조각 4(session dispatcher + transport 오류 격리)를 완료했다 — 인라인 Grant 처리를 `serve_one_connection()` 으로 추출하고 `CoordinatorSessionError{Transport, Protocol, Storage}` 로 오류를 분류(transport/protocol 은 로그 후 다음 accept, storage 는 fail-closed 즉시 종료). 독립 검수 1라운드(`p195`)가 Resume 경로(`classify_resume()`)의 SQLite 오류가 서명된 `UNAVAILABLE` 로 흡수돼 fail-closed 분기를 우회하는 진짜 안전 결함을 찾아 반려 — 감독자가 코드로 직접 재확인해 실재함을 확인. 수정(`p196`)이 `LeaseStoreError` 를 정책 판정(정상 서명 응답)과 진짜 저장소 장애(`Storage` fail-closed)로 명확히 구분해 닫았다. ★ 이 과정에서 `DoD-36` 이 기록한 시나리오 60(durable store 없이 Resume → 서명된 `UNAVAILABLE`)의 기대 동작이 "구성 오류로 보고 fail-closed 즉시 종료" 로 의도적으로 재정의됐다 — 독립 검수 2라운드(`p197`)가 이 변경 방향이 fail-closed 원칙과 일관됨을 확인하고 최종 `ACCEPTED`. `coordinator-agent-selftest` 60→64개 시나리오. 로드맵 7조각 중 1~4 완료 — 남은 5(durable request ledger)·6(Agent Resume 통합)·7(다중 Agent selftest)은 후속 조각. **`DoD-38`(2026-08-20)** — 로드맵 조각 6(Agent Resume 통합)을 완료했다. 설계 조사(`p198`)가 "부분 완료" — Agent 는 이미 실제로 Resume 요청을 보내고 재시도 여부(안전 동작)는 이미 올바르지만 outcome 별 명시적 구분이 없다 — 로 정직하게 판정했다. `RESUMED`/`UNAVAILABLE` 를 뺀 6개 terminal outcome 각각에 `RESUME_REFUSED:<OUTCOME>` 구분된 오류 문자열을 추가하고(`DoD-27` 의 `RENEW_REFUSED:REVOKED` 패턴 재사용), selftest 시나리오 53~59 가 이 문자열·연결 1회·`ReconnectExhausted` 미발생을 실제로 assert 하도록 보강했다. 독립 검수(`p200`)가 재시도 안전 동작(`Retryable`/`Fatal` 분류) 불변을 코드로 직접 추적해 확인하고 **1라운드 만에 `ACCEPTED`**. Coordinator·proto 는 전혀 안 건드렸다. `coordinator-agent-selftest` 64개 시나리오(개수 불변, 기존 시나리오 강화만). 로드맵 7조각 중 1·2·3·4·6 완료 — 남은 5(durable request ledger)·7(다중 Agent selftest, 조각 5 이후 유의미)은 후속 조각. **`DoD-39`(2026-08-20)** — 로드맵 조각 5(원안 "durable request ledger")를 완료했다. 설계 조사(`p201`)가 실제 공백은 "정확히 한 번 처리"가 아니라 가용성 공백임을 코드로 확인해 "Ambiguous Renew 의 durable Lease 상태 기반 복구"로 재범위했다 — Agent 가 `RenewLeaseRequest` 전송 뒤 결과를 못 받으면(`AmbiguousRenew`) 즉시 fatal 종료하던 것을, 새 게이트(`--recover-ambiguous-renew-from-durable-lease`)가 켜졌을 때만 bounded reconnect 후 기존 Grant/ACK 경로(`get_or_issue()`)로 최신 저장 Lease 를 재조회하고 새 nonce 로 새 Renew 를 보내도록 구현(`p202`). 독립 검수 1라운드(`p203`)가 진짜 안전 결함을 찾았다 — durable 복구 게이트가 Coordinator 의 실제 `--lease-db` 설정과 검증 가능하게 결합되지 않아, legacy Coordinator + 게이트 오조합 시 재접속이 "상태 재조회"가 아니라 "그 순간 새로 조작된 Lease 발급"이 되는 결함. 구현 2라운드(`p204`)가 `proto/job.proto` 의 `ExecutionGrant` 를 schema v2 로 승격해 서명 대상 필드 `lease_from_durable_store` 를 순수 추가, Coordinator 는 `lease_store.is_some()` 일 때만 true 로 서명, Agent 는 이 비트가 true 가 아니면 ACK·checkpoint·Renew 전에 fatal 거부하도록 근본 수정. 독립 검수 2라운드(`p205`)가 서명 결합·Coordinator 정직성·Agent 거부 순서·기존 경로 무회귀까지 확인하고 최종 `ACCEPTED`. `coordinator-agent-selftest` 71→72개 시나리오. **로드맵 7조각 중 1·2·3·4·5·6 완료** — 남은 7(다중 Agent selftest)만 후속 조각. **`DoD-40`(2026-08-20)** — 로드맵 조각 7(원안 "다중 Agent selftest")을 완료했다. 설계 조사(`p206`)가 진짜 "다중 Agent 동시 경쟁"은 지금 Coordinator 아키텍처(의도적 순차 처리, Agent identity/key 1개만 등록)로는 표현 자체가 안 되고 가능하게 하려면 최소 2~4일 아키텍처 변경이 필요하다고 정직하게 판정, 대신 검증 안 된 진짜 위험(`get_or_issue()` 의 `BEGIN IMMEDIATE` 동시성 안전성이 실측된 적 없음)을 새 통합 테스트로 좁혔다(구현 `p207`). 독립 검수 1라운드(`p208`)가 경쟁 후보가 `holder_node_id` 외 모든 필드가 같아 부분 덮어쓰기를 못 잡는 테스트 판별력 결함을 찾음, 구현 2라운드(`p209`)가 후보 8개 필드를 전부 구별되게 만들고 self-check 로 판별력을 직접 증명, 독립 검수 2라운드(`p210`)에서 `ACCEPTED`. 프로덕션 코드 무변경(순수 테스트 추가). **로드맵 조각 7 원안은 scheduler/다중 Agent 아키텍처 도입 단계로 명시적으로 이월** — 이 조각은 "Lease store 동시 최초 발급 안전성"으로 기록. **이로써 2026-08-20 자동 재접속 루프 로드맵(7조각) 작업을 마무리한다**. **`DoD-41`(2026-08-21)** — scheduler 9단계 로드맵의 조각 1인 순수 hard-filter kernel을 완료했다. 1차 독립 검수가 실제 보안 결함 2건(`isolation_class` 축 오류·빈 identity `MissingFact` 우회)을 찾아 `CHANGES_REQUESTED`, 2라운드에서 Restricted isolation 축과 빈 문자열 fail-closed로 근본 수정하고 회귀 테스트 5건·뮤테이션 2건으로 고정한 뒤 2차 검수 `ACCEPTED`. 감독자가 `cargo test -p gputeer-scheduler` 33/33을 직접 확인했다. Coordinator 연결·실제 자동 매칭은 없으며, **scheduler 로드맵 조각 1 완료 — 남은 8단계는 후속 조각**. **`DoD-42`(2026-08-21)** — scheduler 로드맵 조각 2 원안(3~5일 규모 durable Job/Attempt/Queue·Lease/Grant 결합·전체 ControlStore)을 하루에 완료했다고 과장하지 않고 **조각 2a: durable Job/Queue truth**로 축소했다. 신규 `CoordinatorJobStore`가 SQLite `BEGIN IMMEDIATE` read-check-write로 accepted submit의 멱등 저장, `SUBMITTED→PLANNING→QUEUED`, 결정적 queue 조회, deadline/queue-timeout/영구 불가능 실패를 보존한다. 자체 재검토로 규범에 없는 all-zero key 거부를 제거하고 상태별 전체 row-shape 손상 검사로 강화했다. 독립 검수가 transaction 경계·실제 Barrier 경쟁·멱등성·전이·경계·뮤테이션 2건·자체 수정 2건·범위를 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 테스트를 직접 재확인했다. Attempt 생성은 `STAGING` 진입과 fence epoch·Lease 발급에 함께 묶어야 split authority를 피하므로 조각 2b로 이월했다. **scheduler 로드맵 9단계 중 조각 1·2a 완료 — 남은 durable Attempt/Lease 결합(2b)과 이후 7단계는 후속**. **`DoD-43`(2026-08-21)** — 조각 2b 전체를 완료했다고 과장하지 않고 **조각 2b-1: single-node local atomic STAGING kernel**로 제한했다. 신규 `CoordinatorStagingStore::stage_queued_with_lease()`가 한 `BEGIN IMMEDIATE` transaction에서 fence epoch 채번·Attempt/node/Lease 삽입·`QUEUED→STAGING` 전이·operation idempotency를 전부-or-none 처리한다. 자체 재검토로 renew/revoke 뒤 retry가 정상 가변 Lease 필드를 손상으로 오인하던 버그를 고쳐 최초 결과 반환과 불변 identity/epoch 대조를 분리하고, 공백 plan row-shape·조각 2a 이전 migration·부분 commit 경로를 보강했다. 독립 검수가 rollback epoch 미소비·기존 Lease API 무회귀·실제 Barrier 경쟁·뮤테이션 2건·프로덕션 4개 파일 범위·`staging_store.rs` 862줄의 계획 상한 360줄 초과 자기 보고를 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 테스트를 직접 재확인했다. **scheduler 로드맵 9단계 중 조각 1·2a·2b-1 완료 — 남은 조각 2의 다중 노드 결합·Raft `COMMITTED`와 조각 3~9는 후속**. **`DoD-44`(2026-08-21)** — scheduler 로드맵 조각 3 전체를 끝냈다고 과장하지 않고 **조각 3a: durable Agent inventory 저장소 kernel**로 제한했다. 신규 `CoordinatorInventoryStore`가 복수 Agent registry를 충돌 방지·멱등 등록하고, 한 `BEGIN IMMEDIATE` transaction에서 parent/GPU/workload inventory를 원자 교체해 node ID 순의 기존 scheduler `PoolSnapshot`으로 결정 투영한다. 자체 재검토로 key를 `Vec<u8>`+명시적 32-byte 검사로 바꾸고 경쟁 후보 전 필드 판별력을 보강했으며 SQL/Rust 이중 정렬을 Rust sort 한 곳으로 통일했다. 독립 검수가 원자성·register 멱등/충돌·revision 뮤테이션·결정성·수정 5건·제한된 변경 범위·1,514줄 자기 보고를 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 테스트 71건을 직접 재확인했다. **scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a 완료 — 남은 조각 3의 실제 다중 연결·heartbeat wire·session owner/fencing과 조각 4~9는 후속**. **`DoD-45`(2026-08-21)** — scheduler 로드맵 조각 4를 전체 placement/reservation으로 과장하지 않고 **순수 deterministic resource best-fit kernel**로 완료했다. 신규 `rank_best_fit()`이 hard-filter 적격 후보에서 가장 tight한 GPU 요구 개수를 선택하고, `BestFitPolicy`가 명시한 VRAM 잔여 합·GPU 수 잔여·CPU/RAM/workspace 잔여를 lexicographic 비교한 뒤 완전 동점은 `node_id` 오름차순으로 해소한다. 독립 검수 1라운드는 GPU vector 자체의 순열 동등성 검증 공백을 찾아 `CHANGES_REQUESTED`, reverse된 GPU vector의 `BestFitRanking` 전체 비교와 VRAM 정렬 제거 시 `node-b`/`node-a` winner 분기 뮤테이션으로 보강했다. 2라운드는 조각 전체 미커밋 diff의 `lib.rs`/`model.rs` 1차 산출물을 후속 수정으로 오인한 git-diff-scope 오탐이었고, HEAD가 DoD-44의 `1877760`임을 명확히 한 3라운드에서 최종 `ACCEPTED`. 감독자가 scheduler 테스트 48/48을 직접 재확인했다. Coordinator 배선·inventory revision/CAS·allocation·reservation·Grant는 후속이며, **scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a·4 완료 — 남은 조각 3 나머지·5~9는 후속** **`DoD-46`(2026-08-21)** — private `orchestrate` module이 `pool_snapshot()`→hard-filter→0/1/N 분기→N에서만 best-fit→durable staging을 조합하고 caller-supplied issuance 값을 사용한다. 독립 검수가 private module·test-only 유일 호출, 기존 `run()`/accept-loop의 별도 `issue_grant()` 유지, 0/1/N 분기·뮤테이션 2건·unchanged-inventory replay 의미와 범위를 확인해 **1라운드 만에 `ACCEPTED`**했고 감독자가 coordinator 테스트 78/78을 재확인했다. inventory revision/CAS reservation이 없어 서로 다른 Job의 같은 GPU 중복 선택을 막지 못하므로 production에는 연결하지 않았다. **scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a·4·5 완료(5는 production 미연결 kernel만) — 조각 3 나머지·inventory CAS reservation·실제 wire 연결·조각 6~9는 후속** **`DoD-47`(2026-08-21)** — `CandidateSnapshot.inventory_revision`을 inventory projection부터 선택까지 보존하고, 새 reservation-aware staging API가 operation replay→revision 비교→`node_id` PRIMARY KEY reservation→Attempt/Lease/fence→`QUEUED→STAGING`→operation 기록을 하나의 `BEGIN IMMEDIATE` transaction에서 원자 처리한다. CAS·점유 충돌은 자동 재시도 없이 즉시 실패한다. 독립 검수가 rollback fence 미소비·같은 transaction의 CAS/점유 강제·실제 `Barrier` 경쟁에서 정확히 1건 성공과 loser QUEUED·뮤테이션 2건·DoD-43 API 무회귀·범위를 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 테스트 86/86을 직접 재확인했다. node-exclusive라 같은 node의 다른 GPU도 동시에 쓸 수 없고 release가 없으며 private orchestration은 production `run()`에 미연결이다. **scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a·4·5·5b 완료 — GPU별 allocation/release·조각 3 나머지·실제 wire 연결·조각 6~9는 후속** **`DoD-48`(2026-08-24)** — 설계 조사에서 실제 production 연결은 선택 GPU 식별자/Grant scope·원본 Manifest adapter·node/device/session routing의 남은 계약 3건과 Job submit ingress·durable outbox·reservation release가 모두 없어 하루 규모를 넘는다고 판정했다. 대신 순수 `resource_fit()`이 적격 GPU를 `(available_vram_bytes, gpu_id)` 순으로 요구 개수만 선택하고 canonical ID를 `ResourceFit`·`RankedCandidate`·`Staged` outcome에 보존하도록 구현한 선행 조각을 기록했다. 자체 재검토에서 부적격 GPU 제외 직접 증명 공백을 찾아 테스트를 추가했고, 독립 검수가 순수성·single/N 공용 helper·reverse 전체 동등성·뮤테이션 2건·STAGING 전 개수 재검증·범위를 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 scheduler 53/coordinator 87 passed를 직접 재확인했다. 반환 ID는 scheduler snapshot 식별자일 뿐 NVML UUID provenance가 아니며 Grant/Lease scope·GPU별 reservation/release·production wire는 후속이다. **`DoD-49`(2026-08-24)** — `DoD-48`의 canonical `selected_gpu_ids`를 inventory CAS·node reservation·Attempt/Lease/fence·`QUEUED→STAGING`·operation idempotency와 같은 `BEGIN IMMEDIATE` transaction에 durable child rows로 결합했다. 자체 재검토에서 같은 ID가 다른 node에만 있는 fixture를 보강했고, 독립 검수가 node-scoped SQL·binding 직후 전체 rollback·손상 fail-closed·replay/`OperationConflict`·DoD-43 무회귀·Barrier 경쟁·single/N 전달·뮤테이션 2건을 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 92 passed를 직접 재확인했다. release는 실행 종료 증명 없이 구현하면 중복 실행 위험이 생겨 후순위이며 Grant/Lease scope·NVML UUID provenance·GPU별 capacity accounting·production wire도 후속이다. **`DoD-50`(2026-08-24)** — `submit_verified_manifest()`가 `&Verified<pb::JobManifest>`만 받아 서명 검증 뒤에만 Manifest identity를 관찰하고 accepted device/signer를 대조한다. caller hash는 canonical signing input에서 재계산해 대조·저장하며 Job/body/signer/idempotency는 한 `BEGIN IMMEDIATE` transaction에 묶인다. load는 authoritative key directory 재검증 전 사용할 수 없는 raw `StoredManifestBinding`이다. 자체 재검토가 legacy exact-error와 body device identity 손상 fixture를 보강했고 독립 검수는 원자성·rollback·replay/corruption·뮤테이션 2건·범위를 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 99 passed를 직접 재확인했다. membership validity·authoritative device→member·`JobRequirements` projection·기본 `MIRRORED` 소비·Grant/Lease scope·`COMMITTED`·production wire는 후속이다. **`DoD-51`(2026-08-24)** — verified terminal `AttemptReport`를 signature 포함 body와 저장소 직접 계산 hash로 보존하고, 하나의 `BEGIN IMMEDIATE` 안에서 report와 durable Attempt·현재 reservation을 job/attempt·single node·verified signer·fence·owner로 5중 대조한다. reservation 부재/불일치와 non-terminal outcome은 row 없이 거부하고 exact replay는 전체 protobuf 의미와 signer가 같은 기존 first-write fact만 반환한다. load는 의도적으로 raw binding이며 재검증 없이 쓰는 production consumer가 없다. 독립 검수는 rollback·상태 무변경·corruption fail-closed·staging helper 무회귀까지 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 108 passed를 직접 재확인했다. Job/Attempt terminal 전이, artifact/runtime-stop guard, Lease revoke/reservation release와 production wire는 후속이다. **`DoD-52`(2026-08-24)** — 직전 조사들의 질문을 "앞으로 나갈 조각"에서 "선행 조건의 첫 슬라이스"로 바꿔 verified `CheckpointManifest` durable binding을 찾았다. `&Verified<pb::CheckpointManifest>` 전용 API가 write lock 뒤 같은 transaction에서 current Attempt/reservation의 job/attempt/producer/signer/fence/owner를 대조하고, BLAKE3-256/32-byte root와 signature 포함 complete body·저장소 계산 hash를 first-write fact로 저장한다. 자체 재검토에서 SHA-256 root 허용 결함을 찾아 수정하고 negative case로 고정했다. 독립 검수는 유일 API/INSERT·검증 순서·TOCTOU 부재·root 제한·replay/load·rollback/state 무변경·production guard 뮤테이션을 확인해 **1라운드 만에 `ACCEPTED`**, 감독자가 coordinator 118 passed를 직접 재확인했다. `ReplicaAck` 저장과 `MIRRORED`/checkpoint durability 전이, control state 전이는 후속이다. |
 | ADR | 5건 — 026 체크포인트 플랫폼 · 027 Job Object VRAM · 028 메시지별 domain_tag · 029 증거 시각 정책 · **030 evidence 독립 검수 강제** |
 
@@ -309,13 +309,31 @@ evidence 16건 중 12건은 addendum 이 독립 재검수 ACCEPTED 를 받았지
   남은 4건: `P0-06`·`P0-07`(재검수 중), `ENV-01`·`02`(review-required
   아님, 미착수).                                          -> RULE.md §7.3
 
-Linux 검증 — 부분 해소, 완전 해소 아님(2026-08-19, `ENV-03`)
+자원 상한은 **협조하는 작업**에만 상한이다(2026-08-30, `DoD-57`)
+  Linux cgroup v2 로 memory 상한을 실제로 걸고 Agent 실행 경로에
+  연결했다. 그러나 자식은 부모와 같은 권한으로 돌고, exec 뒤 자기
+  pid 를 상위 `cgroup.procs` 에 써서 **실제로 빠져나간다** — 32MiB
+  상한 밖에서 90MB 를 잡는 것을 테스트로 확인했다.
+
+    막는다     실수로 메모리를 너무 먹는 작업, 소유자의 강제 종료
+    못 막는다  빠져나가려고 작정한 코드
+
+  Windows Job Object 도 같은 성격이다(소프트 제한, 호스트 보호 아님).
+  닫으려면 cgroup namespace + 권한 강등이 필요하고 둘 다 미착수다.
+  memory 만 건다 — CPU·PID·io·네트워크·파일시스템·VRAM 은 제한 안 한다.
+
+Linux 검증 — 반복 가능해졌다(2026-08-30) / remote5090 는 여전히 임시(`ENV-03`)
   사용자가 임시로 빌려준 원격 기계(remote5090, Ubuntu 24.04 + RTX 5090)에서
   이 저장소가 처음으로 Linux 빌드·테스트를 통과했고(gputeer-runtime-windows
   제외 전부 ok, k1c 하나만 플랫폼 차이로 FAILED), sudo 없이 cgroup v2 로
   memory/CPU/PID/freezer 4종 강제를 확인했다. 그러나 이 기계는 사용자
   소유의 공유·비영구 기계라 "확보"가 아니라 "임시 접근"이다 — 반복
   가능한 접근성과 GPU VRAM 세분 할당(MPS) 검증은 여전히 없다.  -> D-3
+
+  ★ 그러나 **x600 의 WSL2 가 동작하면서 반복 가능한 Linux 환경이
+    생겼다**(2026-08-30). 워크스페이스 693 passed / 실패 0 을 그 위에서
+    확인했고, cgroup·systemd-creds 실측도 거기서 했다. GPU 는 WSL 에
+    노출되지 않으므로 GPU 관련 Linux 검증은 여전히 없다.
 ```
 
 ### 다음에 할 일
@@ -1467,6 +1485,104 @@ Linux 검증 — 부분 해소, 완전 해소 아님(2026-08-19, `ENV-03`)
     부분은 순수 kernel로 분리됐지만 authoritative provenance 차단은 그대로여서 full Grant/Lease
     scope는 여전히 막혀 있다. membership/ControlStore 계열은 규범 확정 포함 누적 약 3일의
     별도 과제다**.
+42. Stage 1 조각 7 — Linux cgroup v2 자원 상한 강제   ★ **완료**(2026-08-30, `DoD-57`)
+    x600 의 WSL 이 응답하게 되면서 실측이 가능해져 `crates/runtime-linux`
+    를 신설하고 Agent 의 Linux 실행 경로에 연결했다. 순서가 핵심이다 —
+    하위 cgroup 생성 -> memory.max + memory.swap.max -> fork 후 exec
+    **전에** pre_exec 로 자기를 cgroup 에 투입 -> exec. 3-4 를 바꾸면
+    남의 코드가 상한 밖에서 먼저 돈다(runtime-windows 의
+    CREATE_SUSPENDED 와 같은 이유).
+
+    ★ **실측이 초안을 두 번 반증했다.** (1) memory.max 만 걸었을 때
+    32MiB 상한에 90MB 를 할당했는데 자식이 **정상 종료했다** — cgroup 은
+    스왑으로 밀어낼 뿐이다. (2) 부모 cgroup 을 "내 cgroup" 으로 고정하니
+    /init.scope 에서 설계대로 실행을 거부했다(내부 프로세스 금지 규칙).
+
+    ★ **못 막는 것을 실제로 재 봤다.** 검수가 "적대적 코드는 못 막는다"
+    고 지적했을 때, 문서에 적기만 하지 않고 자식이 상위 cgroup.procs 로
+    나가는 것을 실행해 확인했다. **탈출이 성공하기를 기대하는 테스트**를
+    남겨, 구멍이 닫히면 그 테스트가 실패하며 문서도 같이 고치라고 알린다.
+
+    독립 검수 3라운드가 12개 지적(운영 경로 미연결·탈출·루트 폴백·스왑
+    추정·이름 충돌·회수 불가·탈출 테스트 오통과·system.slice 우회·조상
+    우회 등)을 파일:줄로 냈고 전부 코드로 고쳤다. 남은 한계(bind mount,
+    systemd 위임 slice 미지원, 적대적 코드 탈출)는 문서에 명시했다.
+
+43. Stage 2 조각 12 — 다중 Agent 동시 처리 lane   ★ **완료**(2026-08-30)
+    `DoD-40` 이 "2~4일 아키텍처 변경" 으로 이월했던 것을, 순차 `run()` 을
+    건드리지 않고 별도 lane 으로 열었다 — 기존 시나리오 무회귀.
+
+    ★ 검수가 시나리오의 **공허성**을 지적했다: 두 Agent 를 연달아 띄우고
+    둘 다 성공했는지만 보면 **순차 서버로도 통과한다.** 겹칠 때까지
+    붙잡아 두는 방법은 확률이라 느린 기계에서 무의미해진다. 대신 관문을
+    뒀다 — 각 세션이 2개 세션이 동시에 열릴 때까지 기다린다. 순차 서버는
+    두 번째 연결을 아예 안 받으므로 **구조적으로 통과할 수 없다.**
+    뮤테이션(순차 처리로 바꾸기)으로 시나리오 88 이 실제로 실패함을 확인.
+
+    식별자 분리도 검수가 32비트 해시 충돌 반례를 실제로 만들어 반려했다
+    (`agent-47131` 과 `agent-71872` 가 둘 다 `e7525a3b`). 축약을 없앴다.
+
+44. Stage 2 조각 14 첫 조각 — 노드 생존 판정 + 관측 영속화   🟡 **진행 중**(2026-08-30)
+    `ADR-033` §7 이 이미 답을 정해 뒀다 — 관측(신고)과 판정(결정)을
+    나누고, **"연락이 안 된다" 는 "죽었다" 가 아니다**. 네트워크가
+    갈라졌으면 대상 노드는 멀쩡히 실행 중이고, 그 상태에서 다른 GPU 에
+    다시 띄우면 두 번 돈다.
+
+    `classify_node_liveness()` 순수 커널에는 `Dead` 값이 **없다** — 가장
+    나쁜 판정이 `Silent` 이고 그건 사실 진술이지 결정이 아니다.
+    ★ 다만 검수가 정정했듯 **`Dead` 부재 자체는 강제 장치가 아니다** —
+    지금 안전한 이유는 재배정 소비자가 아직 하나도 없어서다.
+
+    ★ 이 커널은 `ADR-033` §7 의 **구현이 아니라 선행 조건**이다. §7 의
+    입력은 이웃의 서명된 신고인데 이 커널은 노드 자기보고를 받는다 —
+    검수가 이 차이를 짚어 문서를 정정했다.
+
+    `CoordinatorNodeLivenessStore` 로 `NodeRecord.last_heartbeat_unix_ms`
+    공백(§7 이 "값을 채우는 관측자가 없다" 고 지목)을 채우고 wire 에
+    연결했다(시나리오 92). 노드당 한 행, 뒤로 안 감, 읽을 때 전체 재대조.
+
+    남은 것: 이웃 신고 메시지, 재배정 결정(§8 의 여섯 조건),
+    reservation release.
+
+45. Stage 2 조각 17 — Linux 운영용 키 보관   ★ **완료**(2026-08-30)
+    x600 WSL 에 systemd 259 가 PID 1 로 돌아 실측이 가능해졌다. Linux K1
+    을 `systemd-creds --with-key=host` 로 구현했다(새 의존성 없음).
+
+    ★ **같은 "K1" 이 두 플랫폼에서 다른 것을 막는다** — Windows(DPAPI)는
+    다른 **사용자**를, Linux(host key)는 **비-root** 를 막는다. 같다고
+    쓰면 안 되므로 표로 나눠 적었다. Linux 는 Agent 가 root 여야 성립하고,
+    평문이 커널 파이프와 systemd-creds 프로세스 메모리에도 존재한다 —
+    "명령줄·임시 파일 누출을 피했다" 가 정확하지 "누출 없음" 이 아니다.
+
+    ★ **검수와 내가 독립적으로 같은 결함을 찾았다** — 봉인이 signer 에
+    안 묶여 있어 남의 키쌍을 이식할 수 있었다. 고친 뒤 검수가 **더 깊은
+    우회**를 냈다: 개인키 blob 을 **비워** 공개키 전용 엔트리로 만들면
+    복호를 건너뛰어 그 방어가 무의미해진다. 근본 원인은 파일 체크섬이
+    **키 없는** BLAKE3 였다는 것 — 체크섬을 봉인해 위조에 OS 비밀이
+    필요하게 만들고 파일 버전을 2 로 올렸다(v1 은 못 읽는다 — legacy
+    fallback 은 원래 공격을 되살린다).
+
+    ★ 이 테스트를 **두 번 공허하게** 썼고 둘 다 뮤테이션이 잡았다.
+    1차는 봉인 blob 만 교환해 기존 "개인키·공개키 불일치" 검사가 잡았고,
+    2차는 공개키까지 교환했지만 **파일 체크섬이 먼저** 막았다. 체크섬도
+    다시 계산해서야 봉인을 실제로 쟀다.
+
+46. **막힌 항목 — 지어내지 않고 그대로 둔다**
+    - **Stage 2 조각 11(멤버십)**: `docs/plans/2026-08-24_1830_membership_norm_draft_v1.md`
+      이 사용자 결정 4건(root key rotation·권한 주체·상태 전이 채택·
+      mutation TTL)을 명시적으로 남겨 뒀고, 더 근본적으로 membership
+      authorization 이 `COMMITTED`(과반 합의)를 필수 조건으로 요구하는데
+      SingleNodeStore 로는 제공할 수 없다. 다중 노드/Raft 가 선행이다.
+    - **Stage 2 조각 16(TLS)**: 기준선 §25.2 는 QUIC + TLS 1.3 을 정했고
+      §42.7.3 은 인증서 신원 방식을 **미정**으로 남겼다(Device
+      Certificate mTLS vs 단기 세션 토큰). 지금 모든 메시지는 이미
+      Ed25519 로 서명·replay 방어되므로 TLS 가 더하는 것은 **기밀성**
+      이다 — 그건 실제로 필요하지만, 신원 체계를 하나 더 만들면 두
+      체계가 어긋나는 것이 진짜 위험이다. 규범 결정이 선행이다.
+
+47. **evidence 미작성 부채** — 43·44·45 는 커밋과 독립 검수 기록이
+    있으나 `docs/evidence/` 정식 문서가 아직 없다(`RULE.md` §8).
+    42 는 `DoD-57` 로 기록 완료.
 ```
 
 `RULE.md` §8 에 따라 각 스파이크는 **결과와 무관하게** `docs/evidence/` 에 기록한다.
@@ -1525,11 +1641,71 @@ Linux 검증 — 부분 해소, 완전 해소 아님(2026-08-19, `ENV-03`)
 방화벽)부터 직접 처리하거나, `crates/scheduler` 같은 새 서브시스템
 착수 여부를 판단하면 된다.
 
+### ★ 2026-08-30 자율 작업 세션 요약
+
+x600 의 WSL 이 응답하게 되면서 **Linux 가 처음으로 반복 검증 가능한
+환경이 됐다.** 그 결과 오래 막혀 있던 두 항목이 풀렸다.
+
+| 로드맵 항목 | 결과 |
+|---|---|
+| Stage 1 · 7 격리 적용 | ✅ `crates/runtime-linux` 신설, Agent 실행 경로 연결, x600 실측 (`DoD-57`) |
+| Stage 2 · 12 다중 Agent | ✅ 동시성을 관문으로 **증명**(순차 서버는 통과 불가) |
+| Stage 2 · 14 실패 감지 | 🟡 생존 판정 순수 커널 + 관측 영속화 + wire 연결 |
+| Stage 2 · 17 운영용 키 보관 | ✅ Linux K1 을 `systemd-creds` 로 구현, x600 실측 |
+| Stage 2 · 11 멤버십 | ⛔ 사용자 결정 4건 + `COMMITTED`(과반 합의) 부재로 막힘 |
+| Stage 2 · 16 TLS | ⛔ 인증서 신원 규범 미정(기준선 §42.7.3) |
+
+`coordinator-agent-selftest` 72 → **92개 시나리오**.
+
+**독립 검수를 5라운드 돌렸고, 매 라운드가 진짜 결함을 찾았다.**
+그중 무거운 것들:
+
+- **`memory.max` 하나만으로는 상한이 아니다.** 32MiB 상한에 90MB 를
+  할당했는데 자식이 정상 종료했다 — cgroup 은 스왑으로 밀어낼 뿐이다.
+  `memory.swap.max=0` 을 같이 걸어야 실제로 끝난다.
+- **cgroup 이름 충돌이 남의 작업을 죽였다.** `a.b` 와 `a_b` 가 같은
+  이름이 되고, 기존 cgroup 을 죽인 뒤 다시 만들었다 — B 를 시작하면
+  A 가 죽는다(§0.1 위반). 해시 + 성분별 길이 접두사로 고쳤다.
+- **키 봉인을 signer 에 묶어도 이식이 가능했다.** 개인키 blob 을 비워
+  공개키 전용 엔트리로 만들면 복호를 건너뛴다. 근본 원인은 파일
+  체크섬이 **키 없는** BLAKE3 였다는 것 — 봉인해서 위조에 OS 비밀이
+  필요하게 만들고 파일 버전을 2 로 올렸다.
+- **`rebind_device()` 가 새 장치에 묶이지 않았다.** 행만 지워서 A→B
+  교체를 승인한 순간 C 가 먼저 보고하면 C 가 인수했다.
+
+**★ 못 막는 것을 실제로 재 봤다.** 검수가 "적대적 코드는 못 막는다" 고
+지적했을 때 문서에 적기만 하지 않고 실행했다 — 자식이 자기 pid 를 상위
+`cgroup.procs` 에 쓰고 나가 32MiB 상한 밖에서 90MB 를 잡는 데 성공했다
+(`escaped=90655836`). **탈출이 성공하기를 기대하는 테스트**를 남겨,
+나중에 구멍이 닫히면 그 테스트가 실패하며 문서도 같이 고치라고 알린다.
+
+**패턴으로 남길 것 — 내 테스트가 세 번 공허했고 전부 뮤테이션이 잡았다:**
+
+```text
+시나리오 88   두 Agent 를 연달아 띄우고 성공만 확인 -> 순차 서버로도 통과
+              고침: 동시 세션 관문(순차 서버는 구조적으로 통과 불가)
+키 이식 검사   봉인 blob 만 교환 -> 기존 "개인키·공개키 불일치" 가 잡음
+              고침: 공개키까지 교환 + 체크섬 재계산해야 봉인을 실제로 잼
+깊이 검사      존재하지 않는 경로 -> is_dir() 이 먼저 거부
+              고침: 실제 중첩 디렉터리 생성 + "전부 거부" 배제 대조 케이스
+```
+
+**작업 드라이브 — F: 다.** WSL 의 `/tmp` 는 ext4 VHDX 이고 그 파일이
+C: 의 `Users\<x600-user>\AppData\Local\wsl\...\ext4.vhdx`(25.4GB)에 있다.
+거기서 빌드하면 여유 18G 인 x600 의 C: 를 먹는다. 지금은
+`/mnt/f/gputeer-work/build` 에서 빌드한다(drvfs 라 전체 빌드 약 3분 36초).
+★ 이미 VHDX 가 잡은 공간은 파일을 지워도 안 줄어든다 — `wsl --shutdown`
+후 압축이 필요하며 사용자가 직접 해야 한다.
+
 ### 환경 주의사항
 
 - **Rust 1.97.1** 설치됨 (로컬 · x600 · remote5090 전부). `protoc` 는 `protoc-bin-vendored` 로 번들.
 - 개발 기계는 Windows 11, GPU 없음(Intel Iris Xe).
   GPU 검증은 **x600**(RTX 4070 SUPER · driver 595.79 · CUDA 13.2, Windows). 작업 디스크 **F:**.
+- **x600 의 WSL2 가 이제 동작한다**(2026-08-30). 커널 6.18.33.2, systemd 259 가
+  PID 1, cgroup v2 단일 계층, `systemd-creds` 사용 가능. Rust 1.89 설치돼 있다
+  (`/root/.cargo`). ★ **빌드는 반드시 `/mnt/f/gputeer-work/build` 에서 한다** —
+  WSL 의 `/tmp` 는 C: 에 있는 ext4 VHDX 다.
 - `blake3` Python 패키지 설치 확인됨.
 - **Linux 검증 — 부분 해소(2026-08-19, `ENV-03`).** 사용자 소유의 원격 기계
   **remote5090**(Ubuntu 24.04.3, RTX 5090 32GB, sudo 불가)를 임시로 빌려 이
