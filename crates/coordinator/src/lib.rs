@@ -34,6 +34,7 @@ pub mod checkpoint_manifest_store;
 pub mod inventory_store;
 pub mod job_store;
 pub mod lease_store;
+pub mod neighbor_report_store;
 #[allow(dead_code)]
 pub mod node_liveness_store;
 pub mod multi_agent;
