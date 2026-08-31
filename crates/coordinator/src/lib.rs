@@ -206,6 +206,18 @@ pub struct CoordinatorConfig {
     ///   "한 번도 못 봤다" 가 된다. `ADR-033` §7 이 지목한
     ///   `NodeRecord.last_heartbeat_unix_ms` 공백이 정확히 그것이다.
     pub liveness_db_path: Option<String>,
+    /// ACK·heartbeat 뒤에 받을 `NeighborUnreachableReport` 개수.
+    /// 0 이면 이 구간이 없다.
+    pub expect_neighbor_reports: u32,
+    /// 이웃 신고 관측을 남길 SQLite 경로.
+    ///
+    /// ★ `expect_neighbor_reports > 0` 인데 이 값이 `None` 이면 **아예
+    ///   시작하지 않는다**(`run()` 이 bind 전에 막는다). 받아 놓고 안
+    ///   남기면 `ADR-033` §7 의 "Broker 가 그 보고를 모아" 가 성립하지
+    ///   않는데, 로그에는 받은 것처럼 찍히기 때문이다.
+    ///
+    ///   `:memory:` 와 빈 경로도 같은 이유로 막는다.
+    pub neighbor_report_db_path: Option<String>,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -368,8 +380,54 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         None => None,
     };
 
+    // ★ **이웃 신고 저장소를 listener bind 보다 먼저 연다**(독립 검수
+    //   4·5라운드 지적). 4라운드 수정은 이 블록을 bind **뒤에** 두어
+    //   주석과 코드가 어긋나 있었다 — 소켓이 열린 뒤 죽으면 그 사이에
+    //   들어온 연결이 있을 수 있다. lease store 가 이미 바로 위에서
+    //   같은 방식으로 검증된다.
+    if config.expect_neighbor_reports > 0 && config.neighbor_report_db_path.is_none() {
+        let message =
+            "--expect-neighbor-reports 를 켰으면 --neighbor-report-db 가 있어야 한다".to_string();
+        eprintln!(
+            "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+        );
+        return Err(message);
+    }
+    let mut neighbor_store = if let (true, Some(path)) = (
+        config.expect_neighbor_reports > 0,
+        config.neighbor_report_db_path.as_ref(),
+    ) {
+        let store = match crate::neighbor_report_store::CoordinatorNeighborReportStore::open(
+            path,
+            &config.coordinator_device_id,
+        ) {
+            Ok(store) => store,
+            Err(error) => {
+                let message = format!("이웃 신고 저장소 열기 실패: {error}");
+                eprintln!(
+                    "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+                );
+                return Err(message);
+            }
+        };
+        if !store.is_durable() {
+            let message = format!(
+                "이웃 신고 저장소가 영속이 아니다(neighbor_report_db_path={path:?}) — \
+                 여러 이웃의 관측을 모아 둘 수 없는데 로그에는 저장한 것처럼 찍힌다"
+            );
+            eprintln!(
+                "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+            );
+            return Err(message);
+        }
+        Some(store)
+    } else {
+        None
+    };
+
     let listener = TcpListener::bind(&config.listen).map_err(|e| format!("bind 실패: {e}"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
+
 
     println!("READY {address}");
     std::io::stdout().flush().map_err(|e| e.to_string())?;
@@ -402,6 +460,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &config,
             &mut stream,
             &mut lease_store,
+            &mut neighbor_store,
             &signing_key,
             &agent_keys,
             &mut replay,
@@ -472,10 +531,12 @@ fn classify_legacy_session_error(
 
 /// Dispatch and serve exactly one accepted connection. The implementation is
 /// deliberately sequential; the outer loop owns accept/count/error isolation.
+#[allow(clippy::too_many_arguments)]
 fn serve_one_connection(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
     lease_store: &mut Option<CoordinatorLeaseStore>,
+    neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
@@ -496,6 +557,7 @@ fn serve_one_connection(
         config,
         stream,
         lease_store,
+        neighbor_store,
         signing_key,
         agent_keys,
         replay,
@@ -510,10 +572,12 @@ fn serve_one_connection(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serve_one_connection_impl(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
     lease_store: &mut Option<CoordinatorLeaseStore>,
+    neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
@@ -813,6 +877,193 @@ fn serve_one_connection_impl(
             heartbeat.fence_epoch,
             heartbeat.running_attempts,
             heartbeat.issued_at_unix_ms
+        );
+    }
+
+    // ── 이웃 신고(`ADR-033` §7 의 관측 층) ───────────────────────────
+    //
+    // ★ **저장은 판정이 아니다.** §7 이 금지한 것은 관측을 판정으로
+    //   승격하는 것이고, 이 구간은 관측을 남기기만 한다 — 세지 않고,
+    //   임계값도 없고, "죽었다" 고 결론짓지 않는다. 그래서 멤버십 해소가
+    //   없어도 안전하게 연결할 수 있다.
+    //
+    //   재배정은 여전히 `ADR-033` §8 의 여섯 조건이 필요하고, 그 관문
+    //   (`crates/scheduler/src/reassignment.rs`)은 오늘 어떤 정직한
+    //   호출부도 통과시키지 않는다.
+    //
+    // ★ 저장소는 heartbeat 와 같은 이유로 **루프 밖에서** 한 번 연다.
+    //   열기 실패는 `Storage` 로 분류해 fail-closed 한다(`DoD-37` 규칙) —
+    //   관측을 못 남기는 채로 신고를 계속 받아들이면 그 사실이 어디에도
+    //   안 남는다.
+    // ★ 저장소는 `run()` 이 **bind 보다 먼저** 열고 검증했다(독립 검수
+    //   4라운드 정정) — 여기서 열면 Grant/ACK 를 다 지난 뒤에야 잘못된
+    //   구성이 드러나고, 그때는 이미 Lease 를 영속 발급한 뒤다.
+    //
+    //   그러므로 이 자리에는 검사가 없다. `expect_neighbor_reports > 0`
+    //   인데 `neighbor_store` 가 `None` 인 상태는 `run()` 이 만들지 않는다.
+
+    for _ in 0..config.expect_neighbor_reports {
+        let message = read_frame(
+            stream,
+            1,
+            KeyDirectorySource::Provided(agent_keys),
+            replay,
+            clock,
+        )
+        .map_err(|e| format!("NeighborUnreachableReport 프레임 읽기/검증 실패: {e}"))?;
+
+        // ★ `require_replay_checked()` — 이 메시지는 `ShortLived` 다.
+        //   재생을 허용하면 **오래된 관측을 지금 것처럼** 보이게 만들 수
+        //   있다(신선도 위조). 정족수를 혼자 채우는 것은 막지 못한다 —
+        //   저장소가 기계별로 한 행만 두므로 N 번 넣어도 한 행이다.
+        let verified = match &message {
+            IngressMessage::NeighborUnreachableReport(verified) => {
+                verified.require_replay_checked().map_err(|e| {
+                    format!("NeighborUnreachableReport replay 검사 실패: {e:?}")
+                })?;
+                verified
+            }
+            other => {
+                return Err(format!("예상하지 못한 이웃 신고 타입: {other:?}").into())
+            }
+        };
+        let report = verified.get();
+
+        // 이 연결의 상대가 맞는가. 서명은 "이 장치가 보냈다" 를 증명할
+        // 뿐이므로, 그 장치가 **이 연결의 그 장치인지**는 따로 본다.
+        //
+        // ★ 이 대조는 **지금 도달 불가다** — heartbeat 경로와 같은 이유로
+        //   사실대로 적는다. `NeighborUnreachableReport::signer_id()` 가
+        //   `reporter_device_id` 라, 다른 이름을 실으면 서명 검증이 그
+        //   이름의 키를 못 찾아 먼저 막는다(`UnknownSigner`). 여기까지
+        //   오려면 등록된 **다른** Agent 가 자기 이름·자기 키로 정상
+        //   서명해 보내야 하는데, 이 lane 은 Agent 키를 하나만 등록한다.
+        //
+        //   그래도 지우지 않는다. keyring 에 신원이 둘 이상 들어가는
+        //   순간(다중 Agent lane 이 그 방향이다) 이 대조가 유일한 방어가
+        //   된다 — 등록된 B 가 A 를 사칭해 남의 기계 이름으로 신고하는
+        //   것을 서명 검증은 막지 못한다.
+        if report.reporter_device_id != config.agent_device_id {
+            return Err(format!(
+                "NEIGHBOR_REPORT_REJECTED: reporter_device_id 불일치 — 기대값 {} != {}",
+                config.agent_device_id, report.reporter_device_id
+            )
+            .into());
+        }
+        // 다른 Coordinator 로 보낸 신고를 이쪽으로 돌려쓸 수 없다.
+        //
+        // ★ **저장소도 같은 값을 대조한다** — 이 배선에서는 저장소를 열 때
+        //   `config.coordinator_device_id` 를 그대로 넘기므로, 이 검사가
+        //   없어도 신고는 저장소에서 거부된다(초안 주석은 "다른 것을 본다"
+        //   고 썼는데 이 배선에서는 **같은 값**이다 — 독립 검수 1라운드
+        //   뮤테이션이 그 사실을 드러냈다).
+        //
+        //   그래도 둔다. 얻는 것은 두 가지다 — 저장소를 **건드리기 전에**
+        //   끝내는 것과, 거부 사유를 이 계층의 말로 분명히 하는 것.
+        //   그리고 저장소가 다른 ID 로 열리는 배선이 생기면 그때는 둘이
+        //   실제로 다른 것을 보게 된다.
+        if report.coordinator_device_id != config.coordinator_device_id {
+            return Err(format!(
+                "NEIGHBOR_REPORT_REJECTED: coordinator_device_id 불일치 — 기대값 {} != {}",
+                config.coordinator_device_id, report.coordinator_device_id
+            )
+            .into());
+        }
+        // ★ 세대(`fence_epoch`) 대조는 **없다** — 이 메시지에 그 필드가
+        //   없기 때문이다. 없는 것을 만들어 넣지 않는다. 이웃 신고는
+        //   신고자가 어느 세대를 들고 있는지와 무관한 관측이다.
+
+        // ★ 대조를 전부 통과한 뒤에만 남긴다. 먼저 저장하면 거부될 관측이
+        //   사실로 기록된다.
+        if let Some(store) = neighbor_store.as_mut() {
+            let outcome = store.record_verified_report(verified).map_err(|error| {
+                match error {
+                    // ★ 아래는 전부 **들어온 신고가 유발한** 문제다 — 입력이
+                    //   잘못됐거나, 서명자가 신고 안의 장치와 다르거나, 그
+                    //   기계가 이미 다른 장치에 묶여 있거나, 그 장치의 저장
+                    //   상한이 찼다.
+                    //
+                    //   ("남의 Coordinator 앞" 은 여기서 뺐다 — 2라운드에서
+                    //    fail-closed 로 옮겼는데 이 예시만 낡아 있었다.)
+                    //
+                    //   `Storage` 로 포장하면 accept loop 전체가 끝나 다른
+                    //   Agent 들의 작업까지 끊긴다 — 2026-08-30 독립 검수가
+                    //   heartbeat 경로에서 정확히 이 지적을 했다.
+                    crate::neighbor_report_store::NeighborReportStoreError::InvalidInput(_)
+                    | crate::neighbor_report_store::NeighborReportStoreError::SignerIsNotTheReporterDevice { .. }
+                    | crate::neighbor_report_store::NeighborReportStoreError::ConflictingReporterDevice { .. }
+                    | crate::neighbor_report_store::NeighborReportStoreError::ReporterDeviceQuotaExhausted { .. } => {
+                        SessionHandlerError::Legacy(format!(
+                            "NEIGHBOR_REPORT_REJECTED: {error}"
+                        ))
+                    }
+                    // ★ **`AddressedToAnotherCoordinator` 도 여기가 아니다**
+                    //   (독립 검수 2라운드 정정).
+                    //
+                    //   이 오류는 **읽기 경로에서도** 난다 — 저장된 행을
+                    //   디코드할 때 그 행의 수신자가 우리와 다르면 같은
+                    //   오류다(`decode_row`). 그리고 들어온 신고 쪽은 바로
+                    //   위에서 이미 걸렀으므로, 저장소가 이 오류를 내면
+                    //   그건 **이미 들어 있는 행이 남의 것**이라는 뜻이다
+                    //   — 파일 복사·이관·설정 오류로 생긴 저장 상태의
+                    //   불일치이지 이 신고의 문제가 아니다.
+                    //
+                    //   ★ 이 판단은 **위 세션 대조가 있어야 성립한다.**
+                    //     그것이 없으면 두 원인을 구분할 수 없다 — 그
+                    //     대조를 남겨 둔 진짜 이유가 여기에 있다.
+                    //
+                    // ★ **`Corrupt` 는 여기가 아니다**(독립 검수 1라운드 정정).
+                    //
+                    //   초안은 "손상된 행은 한 기계의 것이니 풀 전체를 멈추는
+                    //   건 과하다" 며 세션 거부로 뒀는데, **그 근거가 사실과
+                    //   다르다** — 저장소는 상한·축출을 처리하며 **같은 장치가
+                    //   주장한 다른 기계의 행까지** 읽으므로 손상은 지금 신고와
+                    //   무관한 행에서도 나온다.
+                    //
+                    //   그리고 손상은 들어온 입력의 문제가 아니라 **이미
+                    //   영속된 데이터가 깨졌다**는 뜻이다. 그 상태로 계속
+                    //   기록하면 깨진 DB 에 계속 쓰게 된다. heartbeat 경로도
+                    //   손상을 `Storage` 로 fail-closed 한다.
+                    //
+                    // 진짜 저장소 장애와 손상은 fail-closed 다(`DoD-37` 규칙).
+                    other => SessionHandlerError::Classified(storage_error(
+                        "neighbor report record",
+                        other,
+                    )),
+                }
+            })?;
+            match outcome {
+                crate::neighbor_report_store::RecordOutcome::Recorded {
+                    stored,
+                    evicted,
+                } => {
+                    println!(
+                        "NEIGHBOR_REPORT_STORED reporter_node_id={} unreachable_node_id={} observed_at_unix_ms={} evicted={}",
+                        stored.reporter_node_id,
+                        stored.unreachable_node_id,
+                        stored.observed_at_unix_ms,
+                        evicted.len()
+                    );
+                }
+                crate::neighbor_report_store::RecordOutcome::NotNewer(stored) => {
+                    // ★ 오류가 아니다 — 재전송·지연은 정상이다. 그러나
+                    //   조용히 넘기지 않는다(`CLAUDE.md` §3).
+                    println!(
+                        "NEIGHBOR_REPORT_NOT_NEWER reporter_node_id={} unreachable_node_id={} kept_observed_at_unix_ms={}",
+                        stored.reporter_node_id,
+                        stored.unreachable_node_id,
+                        stored.observed_at_unix_ms
+                    );
+                }
+            }
+        }
+
+        println!(
+            "NEIGHBOR_REPORT_ACCEPTED reporter_node_id={} reporter_device_id={} unreachable_node_id={} observed_at_unix_ms={}",
+            report.reporter_node_id,
+            report.reporter_device_id,
+            report.unreachable_node_id,
+            report.observed_at_unix_ms
         );
     }
 
@@ -1882,6 +2133,9 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
         liveness_db_path: flags.0.get("--liveness-db").cloned(),
+        expect_neighbor_reports: flags
+            .u32_flag_with_default("--expect-neighbor-reports", 0)?,
+        neighbor_report_db_path: flags.0.get("--neighbor-report-db").cloned(),
         extra_agents: flags.0.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
@@ -1899,6 +2153,21 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .unwrap_or_else(|| "legacy-session".into()),
     };
 
+    // ★ **multi-agent lane 은 이웃 신고를 다루지 않는다**(독립 검수 5라운드
+    //   지적). 그 lane 은 `run()` 을 거치지 않으므로 시작 관문도, 수신
+    //   루프도 없다 — 그런데 플래그는 받아들여져서 **조용히 무시**됐다.
+    //
+    //   구현하지 않은 조합은 **거부한다.** 받아 놓고 안 하는 것이 가장
+    //   나쁘다 — 운영자는 신고가 모이는 줄 안다.
+    if config.multi_agent && config.expect_neighbor_reports > 0 {
+        let message =
+            "multi-agent lane 은 이웃 신고 수신을 구현하지 않았다 —              --expect-neighbor-reports 와 --multi-agent 를 함께 줄 수 없다"
+                .to_string();
+        eprintln!(
+            "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+        );
+        return Err(message);
+    }
     if config.multi_agent {
         return multi_agent::run_multi_agent(config);
     }

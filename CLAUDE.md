@@ -1867,6 +1867,11 @@ C: 의 `Users\<x600-user>\AppData\Local\wsl\...\ext4.vhdx`(25.4GB)에 있다.
   WSL 배포판 전체가 **E: 로 이전됐다**(사용자가 직접 수행) — 등록 BasePath
   는 `\\?\E:`, 파일은 `E:\WSL-Ubuntu.vhdx`(41.63GB)이고 C: 에 잔재는
   없다. 이전 후 실측 여유: **C: 51.7GB · D: 11.1GB · E: 93.7GB · F: 81GB**
+  ★ **Linux 빌드는 이제 `/mnt/e/gputeer-work/build/gputeer` 에서 한다**
+    (2026-08-31, 사용자 지시로 F: 에서 이전). 소스만 옮겼고(28M, `target/`
+    제외) 거기서 `cargo test -p gputeer-coordinator --test
+    neighbor_report_store` **33 passed** 로 동작을 확인했다. 위 1844줄의
+    `/mnt/f/...` 는 그 이전 기록이다.
   (이전 전 C: 는 9.3GB 까지 내려가 있었다).
 
   ★ 그 VHDX 가 41.6GB 였던 이유는 **우리 빌드가 아니다** — 안쪽 39G 중

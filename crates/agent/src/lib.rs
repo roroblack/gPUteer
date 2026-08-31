@@ -131,6 +131,24 @@ pub struct AgentConfig {
     pub execute_workload: bool,
     /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
     pub heartbeat_rounds: u32,
+    /// heartbeat 뒤에 보낼 `NeighborUnreachableReport` 개수. 0 이면 안 보낸다.
+    ///
+    /// ★ 이건 **관측 보고**다 — "저 노드에 연락이 안 된다" 를 서명해 알릴
+    ///   뿐, "죽었다" 고 판정하지 않는다(`ADR-033` §7).
+    pub neighbor_report_rounds: u32,
+    /// 이웃 신고 회차 사이 간격(밀리초).
+    ///
+    /// ★ heartbeat 와 같은 이유로 필요하다 — 간격이 없으면 두 회차가 같은
+    ///   밀리초에 나가고, 저장소가 두 번째를 "진행 없음" 으로 **옳게**
+    ///   판정한다(`DoD-60` 이 실측으로 배운 것).
+    pub neighbor_report_interval_ms: u64,
+    /// 연락이 안 된다고 신고할 대상 노드.
+    ///
+    /// ★ `neighbor_report_rounds > 0` 인데 이 값이 없으면 시작하지 않는다 —
+    ///   대상 없는 신고는 만들 수 없다.
+    pub neighbor_report_target_node_id: Option<String>,
+    /// 테스트 전용 — 신고의 수신 Coordinator 를 일부러 틀리게 적는다.
+    pub corrupt_neighbor_report_coordinator: bool,
     /// heartbeat 회차 사이에 둘 간격(밀리초).
     ///
     /// ★ 2026-08-30 selftest 가 실제를 잡아 생겼다. 간격이 없으면 두
@@ -285,6 +303,39 @@ pub struct AgentConfig {
 /// 않으며, 시작 디렉터리에는 데이터 파일과 `manifest.json`도 없으므로
 /// 이 마커만으로 resume 후보나 `COMMITTED` 근거를 만들 수 없다.
 pub fn run(config: AgentConfig) -> Result<(), String> {
+    // ★ **신고 대상은 연결하기 전에 확인한다**(독립 검수 4라운드 지적).
+    //
+    //   전에는 이 검사가 송신 루프 안에 있었다 — Grant/ACK 를 다 마치고
+    //   Lease 를 받아들인 뒤에야 "대상이 없다" 로 죽었다. 구성 오류는
+    //   아무것도 시작하기 전에 드러나야 한다.
+    //
+    //   빈 문자열·공백도 막는다. 그것들은 저장소가 `InvalidInput` 으로
+    //   거부하지만, 여기까지 오면 이미 왕복을 한 뒤다.
+    if config.neighbor_report_rounds > 0 {
+        match config.neighbor_report_target_node_id.as_deref() {
+            None => {
+                return Err(
+                    "NEIGHBOR_REPORT_REFUSED: --neighbor-report-rounds 를 켰으면                      --neighbor-report-target 이 있어야 한다"
+                        .to_string(),
+                )
+            }
+            Some(target) if target.trim().is_empty() => {
+                return Err(
+                    "NEIGHBOR_REPORT_REFUSED: --neighbor-report-target 이 비어 있다".to_string(),
+                )
+            }
+            Some(_) => {}
+        }
+    }
+    // ★ **multi-agent lane 은 이웃 신고를 보내지 않는다**(독립 검수 5라운드
+    //   지적). 그 lane 은 Grant/ACK 만 하고 끝나므로, 신고 옵션을 줘도
+    //   한 건도 안 보내고 **성공으로 끝난다** — 조용한 무시다.
+    if config.multi_agent && config.neighbor_report_rounds > 0 {
+        return Err(
+            "NEIGHBOR_REPORT_REFUSED: multi-agent lane 은 이웃 신고를 보내지 않는다 —              --neighbor-report-rounds 와 --multi-agent 를 함께 줄 수 없다"
+                .to_string(),
+        );
+    }
     if config.multi_agent {
         return multi_agent::run_multi_agent_session(&config);
     }
@@ -965,6 +1016,72 @@ fn run_one_connection(
         println!(
             "HEARTBEAT_SENT round={round} fence_epoch={} running_attempts={}",
             heartbeat.fence_epoch, heartbeat.running_attempts
+        );
+    }
+
+    // ── 이웃 신고(`ADR-033` §7 의 관측 층) ───────────────────────────
+    //
+    // ★ 이 stub 은 **이웃이 아니다.** 자기 자신이 연결된 Coordinator 에게
+    //   "다른 어떤 노드에 연락이 안 된다" 고 보고할 뿐이고, 그 노드가
+    //   실제로 존재하는지도 모른다 — 이 lane 은 네트워크를 갈라 볼 수단이
+    //   없다. 그러므로 이 경로가 증명하는 것은 **"서명된 관측이 wire 를
+    //   건너 저장소에 도달한다"** 이지 "연락 두절을 실제로 감지한다" 가
+    //   아니다.
+    //
+    //   `neighbor_report_rounds == 0`(기본값)이면 이 구간이 통째로 없다.
+    for round in 0..config.neighbor_report_rounds {
+        // ★ 이 분기는 **도달 불가다** — `run()` 이 연결 전에 이미 막는다
+        //   (독립 검수 4라운드 정정). 그래도 `Option` 을 여는 자리는
+        //   필요하므로 남기고, 사실을 적어 둔다.
+        let Some(target) = config.neighbor_report_target_node_id.as_ref() else {
+            return Err(
+                "NEIGHBOR_REPORT_REFUSED: --neighbor-report-target 없이 신고할 수 없다"
+                    .to_string()
+                    .into(),
+            );
+        };
+        if round > 0 && config.neighbor_report_interval_ms > 0 {
+            std::thread::sleep(Duration::from_millis(config.neighbor_report_interval_ms));
+        }
+        let now = clock.now_unix_ms();
+        let mut report = pb::NeighborUnreachableReport {
+            schema_version: 1,
+            // ★ 이 stub 은 기계 ID 와 장치 ID 를 같은 값으로 쓴다 —
+            //   heartbeat 경로가 이미 그렇게 한다. 둘이 다른 실제 배치에서는
+            //   저장소의 기계->장치 결합 검사가 그 차이를 본다.
+            reporter_node_id: config.agent_device_id.clone(),
+            reporter_device_id: config.agent_device_id.clone(),
+            unreachable_node_id: target.clone(),
+            coordinator_device_id: if config.corrupt_neighbor_report_coordinator {
+                format!("{}-OTHER", config.coordinator_device_id)
+            } else {
+                config.coordinator_device_id.clone()
+            },
+            observed_at_unix_ms: now,
+            // ★ 회차별 nonce. 같은 nonce 를 두 번 쓰면 두 번째가 replay 로
+            //   거부된다 — heartbeat·갱신과 같은 이유다.
+            request_nonce: derive_nonce(
+                "neighbor-unreachable",
+                &format!("{}:{}", held_lease.lease_id, round),
+                config.connection_attempt,
+            ),
+            ..Default::default()
+        };
+        report.reporter_signature = sign(&signing_key, &report).to_vec();
+        let frame = write_frame(
+            FrameType::NeighborUnreachableReport,
+            &report.encode_to_vec(),
+        )
+        .map_err(|e| {
+            format!("NeighborUnreachableReport 프레임 인코딩 실패(round={round}): {e}")
+        })?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("NeighborUnreachableReport 전송 실패(round={round}): {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+        println!(
+            "NEIGHBOR_REPORT_SENT round={round} unreachable_node_id={} observed_at_unix_ms={}",
+            report.unreachable_node_id, report.observed_at_unix_ms
         );
     }
 
@@ -1929,6 +2046,24 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
                 .map_err(|e| format!("--heartbeat-rounds 파싱 실패: {e}"))?,
             None => 0,
         },
+        neighbor_report_rounds: match flags.0.get("--neighbor-report-rounds") {
+            Some(v) => v
+                .parse()
+                .map_err(|e| format!("--neighbor-report-rounds 파싱 실패: {e}"))?,
+            None => 0,
+        },
+        // ★ heartbeat 간격과 같은 이유로 **조용히 0 으로 떨어뜨리지 않는다** —
+        //   잘못 쓴 값이 "간격 없음" 이 되면 운영자는 간격을 줬다고 믿는데
+        //   실제로는 안 준 상태가 된다.
+        neighbor_report_interval_ms: match flags.0.get("--neighbor-report-interval-ms") {
+            Some(raw) => raw.parse::<u64>().map_err(|_| {
+                format!("--neighbor-report-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
+            })?,
+            None => 0,
+        },
+        neighbor_report_target_node_id: flags.0.get("--neighbor-report-target").cloned(),
+        corrupt_neighbor_report_coordinator: flags
+            .bool_flag("--corrupt-neighbor-report-coordinator"),
         owner_panel_state: owner_panel::OwnerPanelState::new(),
         owner_panel_port: flags.0.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
@@ -2153,6 +2288,10 @@ mod tests {
             execute_workload: false,
             heartbeat_rounds: 0,
             heartbeat_interval_ms: 0,
+            neighbor_report_rounds: 0,
+            neighbor_report_interval_ms: 0,
+            neighbor_report_target_node_id: None,
+            corrupt_neighbor_report_coordinator: false,
             corrupt_heartbeat_fence: false,
             corrupt_heartbeat_coordinator: false,
             corrupt_heartbeat_device: false,

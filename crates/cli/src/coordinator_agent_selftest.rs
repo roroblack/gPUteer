@@ -267,6 +267,99 @@ fn run_handshake_internal(
     )
 }
 
+/// Coordinator 만 띄워 **시작 전에 죽는지** 본다.
+///
+/// ★ `run_handshake` 는 `READY` 를 기다리므로 이 경우에 쓸 수 없다 —
+///   구성 오류로 bind 전에 끝나는 것이 바로 우리가 확인하려는 동작이다.
+const NEWLINE: char = '\n';
+
+fn run_coordinator_only(
+    fixture: &Fixture,
+    extra_coordinator_args: &[&str],
+) -> Result<(bool, String, String), String> {
+    run_coordinator_only_at(fixture, "127.0.0.1:0", extra_coordinator_args)
+}
+
+fn run_coordinator_only_at(
+    fixture: &Fixture,
+    listen: &str,
+    extra_coordinator_args: &[&str],
+) -> Result<(bool, String, String), String> {
+    let mut args: Vec<&str> = vec!["coordinator-stub", "--listen", listen, "--own-seed"];
+    let seed_hex = to_hex(&fixture.coordinator_seed);
+    args.push(&seed_hex);
+    args.push("--peer-pubkey");
+    args.push(&fixture.agent_pub_hex);
+    args.push("--coordinator-device-id");
+    args.push(fixture.coordinator_device_id);
+    args.push("--agent-device-id");
+    args.push(fixture.agent_device_id);
+    args.push("--grant-id");
+    args.push(fixture.grant_id);
+    args.push("--attempt-id");
+    args.push(fixture.attempt_id);
+    args.push("--lease-id");
+    args.push(fixture.lease_id);
+    args.push("--job-id");
+    args.push(fixture.job_id);
+    args.extend_from_slice(extra_coordinator_args);
+    if !extra_coordinator_args.contains(&"--lease-db") {
+        args.extend_from_slice(&["--i-understand-legacy-mode-is-unsafe", "true"]);
+    }
+    // ★ 하드 타임아웃 대신 accept 타임아웃을 짧게 준다 — 구성이 통과해
+    //   listener 가 열려 버린 경우에도 이 호출이 영원히 매달리지 않는다.
+    args.extend_from_slice(&["--accept-timeout-ms", "3000"]);
+
+    let output = Command::new(&fixture.exe)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("coordinator-stub 단독 실행 실패: {e}"))?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
+/// Agent 만 띄워 **연결 전에** 죽는지 본다.
+///
+/// ★ 연결 주소는 **호출부가 직접 들고 있는 listener** 를 준다(독립 검수
+///   5라운드 지적) — 고정 포트를 "아무도 안 듣는다" 고 가정하면 환경에
+///   따라 틀린다. 그리고 그래야 "연결을 시도했는가" 를 accept 로 **관측**
+///   할 수 있다.
+fn run_agent_only(
+    fixture: &Fixture,
+    connect: &str,
+    extra_agent_args: &[&str],
+) -> Result<(bool, String, String), String> {
+    let mut args: Vec<&str> = vec!["agent-stub", "--connect", connect, "--own-seed"];
+    let seed_hex = to_hex(&fixture.agent_seed);
+    args.push(&seed_hex);
+    args.push("--peer-pubkey");
+    args.push(&fixture.coordinator_pub_hex);
+    args.push("--coordinator-device-id");
+    args.push(fixture.coordinator_device_id);
+    args.push("--agent-device-id");
+    args.push(fixture.agent_device_id);
+    args.push("--disable-reconnect");
+    args.push("true");
+    args.extend_from_slice(extra_agent_args);
+
+    let output = Command::new(&fixture.exe)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("agent-stub 단독 실행 실패: {e}"))?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
 fn run_handshake_internal_with_ready_hook(
     fixture: &Fixture,
     extra_coordinator_args: &[&str],
@@ -5116,6 +5209,415 @@ pub fn run() -> Result<String, String> {
         return Err("92) liveness DB 파일이 만들어지지 않았다".to_string());
     }
     report.push_str("92) heartbeat 관측이 실제 wire 를 거쳐 durable 저장소까지 도달\n");
+
+    // ── 93) 이웃 신고가 실제 wire 를 거쳐 저장소까지 도달 ────────────
+    //
+    // ★ `DoD-64` 가 저장소를 만들었지만 **호출하는 사람이 없었다** —
+    //   신고가 도착해도 Coordinator 가 그 프레임을 아예 받지 않았다.
+    //   여기서 보는 것은 서명·replay·2종 대조를 전부 통과한 신고가
+    //   저장소까지 도달하는가다.
+    //
+    // ★ 이 시나리오가 증명하지 **않는** 것 — 신고자가 정당한 이웃인지,
+    //   지목된 노드가 실재하는지, 연락 두절이 실제로 일어났는지. 이 lane
+    //   에는 네트워크를 갈라 볼 수단이 없다. 증명하는 것은 **관측이
+    //   전달되고 남는다** 까지다.
+    let neighbor_dir = tempfile::tempdir()
+        .map_err(|e| format!("93) 이웃 신고 임시 디렉터리 생성 실패: {e}"))?;
+    let neighbor_db = neighbor_dir.path().join("neighbors.db");
+    let neighbor_db = neighbor_db
+        .to_str()
+        .ok_or_else(|| format!("93) 이웃 신고 DB 경로가 UTF-8 이 아니다: {neighbor_db:?}"))?;
+    const TARGET_93: &str = "01JNODEUNREACHABLE0000001";
+
+    let nb_93 = run_handshake(
+        &fixture,
+        &[
+            "--expect-neighbor-reports",
+            "2",
+            "--neighbor-report-db",
+            neighbor_db,
+        ],
+        // 회차 사이 간격 — heartbeat 와 같은 이유다. 없으면 두 신고가 같은
+        // 밀리초에 나가고, 저장소가 두 번째를 "진행 없음" 으로 옳게 판정한다.
+        &[
+            "--neighbor-report-rounds",
+            "2",
+            "--neighbor-report-interval-ms",
+            "5",
+            "--neighbor-report-target",
+            TARGET_93,
+        ],
+    )?;
+    if !nb_93.coordinator_success || !nb_93.agent_success {
+        return Err(format!(
+            "93) 정상 이웃 신고 왕복이 실패했다: coordinator={:?} agent={:?}",
+            nb_93.coordinator_stderr, nb_93.agent_stderr
+        ));
+    }
+    // 두 회차가 모두 저장됐는가.
+    let stored_93 = nb_93
+        .coordinator_stdout
+        .lines()
+        .filter(|line| line.starts_with("NEIGHBOR_REPORT_STORED "))
+        .count();
+    if stored_93 != 2 {
+        return Err(format!(
+            "93) 저장된 관측이 2건이 아니다({stored_93}건): {:?}",
+            nb_93.coordinator_stdout
+        ));
+    }
+    // ★ 두 회차의 관측 시각이 실제로 다른가 — 같으면 두 번째가 갱신될 리
+    //   없고, 그런데도 위 검사가 통과했다면 개수를 잘못 센 것이다.
+    let stamps_93: std::collections::BTreeSet<&str> = nb_93
+        .coordinator_stdout
+        .lines()
+        .filter(|line| line.starts_with("NEIGHBOR_REPORT_STORED "))
+        .filter_map(|line| {
+            line.split_whitespace()
+                .find_map(|f| f.strip_prefix("observed_at_unix_ms="))
+        })
+        .collect();
+    if stamps_93.len() != 2 {
+        return Err(format!(
+            "93) 저장된 시각이 서로 다르지 않다({stamps_93:?}) — 같은 관측을 두 번 센 것이다"
+        ));
+    }
+    // ★ 아무것도 밀려나지 않았는가 — 상한에 한참 못 미치는데 축출이
+    //   보고되면 그건 결함이다.
+    if nb_93
+        .coordinator_stdout
+        .lines()
+        .any(|line| line.starts_with("NEIGHBOR_REPORT_STORED ") && !line.contains("evicted=0"))
+    {
+        return Err(format!(
+            "93) 상한과 무관한 상황에서 축출이 보고됐다: {:?}",
+            nb_93.coordinator_stdout
+        ));
+    }
+    // 지목된 노드가 실제로 그 대상인가 — 대상이 뒤바뀌어도 개수는 맞는다.
+    if !nb_93
+        .coordinator_stdout
+        .contains(&format!("unreachable_node_id={TARGET_93}"))
+    {
+        return Err(format!(
+            "93) 저장된 신고의 지목 노드가 보낸 대상과 다르다: {:?}",
+            nb_93.coordinator_stdout
+        ));
+    }
+    // ★ **파일 존재로는 아무것도 증명하지 못한다**(독립 검수 1라운드 지적).
+    //   파일은 첫 프레임을 받기 전 `open()` 이 만든다 — 저장은 하나도 안 하고
+    //   로그만 찍는 구현도 그 검사를 통과한다.
+    //
+    //   그래서 프로세스가 끝난 **뒤에** 저장소를 다시 열어 행을 읽는다.
+    //   재시작을 넘어 남았는지까지 이 자리에서 함께 본다.
+    let reopened = gputeer_coordinator::neighbor_report_store::CoordinatorNeighborReportStore::open(
+        neighbor_db,
+        fixture.coordinator_device_id,
+    )
+    .map_err(|e| format!("93) 저장소를 다시 열지 못했다: {e}"))?;
+    let rows_93 = reopened
+        .reports_about(TARGET_93)
+        .map_err(|e| format!("93) 저장된 신고를 읽지 못했다: {e}"))?;
+    if rows_93.len() != 1 {
+        return Err(format!(
+            "93) 저장된 행이 1건이 아니다({}건) — 신고자 하나당 대상 하나의 최신 한 행이어야 한다",
+            rows_93.len()
+        ));
+    }
+    let row_93 = &rows_93[0];
+    if row_93.unreachable_node_id != TARGET_93 {
+        return Err(format!(
+            "93) 저장된 행의 지목 노드가 다르다: {}",
+            row_93.unreachable_node_id
+        ));
+    }
+    // ★ **두 번째 회차가 남았는가.** 최신 한 행만 유지하므로, 저장된 시각이
+    //   로그의 **두 시각 중 큰 쪽**과 같아야 한다. 첫 회차만 저장하고 두
+    //   번째를 버리는 구현은 개수 검사로는 안 잡힌다.
+    let newest_93 = stamps_93
+        .iter()
+        .filter_map(|v| v.parse::<u64>().ok())
+        .max()
+        .ok_or_else(|| "93) 로그에서 관측 시각을 읽지 못했다".to_string())?;
+    if row_93.observed_at_unix_ms != newest_93 {
+        return Err(format!(
+            "93) 저장된 시각({})이 마지막 회차({newest_93})가 아니다 — 최신으로 갱신되지 않았다",
+            row_93.observed_at_unix_ms
+        ));
+    }
+    // 몸통이 실제로 그 신고인가 — 인덱스 열만 맞고 원본이 다른 경우를 배제한다.
+    //
+    // ★ 무엇을 보고 무엇을 **안 보는지** 적는다(독립 검수 2라운드 지적).
+    //   여기서 고정하는 것은 스키마 버전·신고자 기계·신고자 장치·지목 노드·
+    //   수신 Coordinator·관측 시각·서명 길이(Ed25519 64바이트)·nonce 존재다.
+    //   **서명 바이트 자체는 대조하지 않는다** — 재현하려면 Agent 의 서명
+    //   키와 nonce 유도를 이 자리에서 다시 구현해야 하고, 그건 프로덕션
+    //   계산을 테스트에서 베끼는 것이라 함께 틀릴 수 있다. 서명이 실제로
+    //   유효했다는 것은 **Coordinator 가 검증을 통과시켰다는 사실**이
+    //   증명한다(위조 서명은 프레임 검증에서 먼저 막힌다).
+    // 신고자 필드는 **보낸 쪽이 의도한 값**과 대조한다(독립 검수 3라운드
+    // 지적) — row_93 의 같은 필드와 비교하면 공허하다. 그 일치는 저장소의
+    // decode_row() 가 이미 강제하므로, 몸통과 인덱스가 **함께** 엉뚱한
+    // 신고자를 담고 있어도 통과한다.
+    //
+    // 이 stub 은 기계 ID 와 장치 ID 를 같은 값으로 쓴다(송신부 주석 참조).
+    if row_93.reporter_node_id != fixture.agent_device_id
+        || row_93.reporter_device_id != fixture.agent_device_id
+    {
+        return Err(format!(
+            "93) 저장된 신고자가 보낸 쪽과 다르다: 기계 {} 장치 {}",
+            row_93.reporter_node_id, row_93.reporter_device_id
+        ));
+    }
+    let body_93 = &row_93.report;
+    if body_93.schema_version != 1
+        || body_93.reporter_node_id != fixture.agent_device_id
+        || body_93.reporter_device_id != fixture.agent_device_id
+        || body_93.unreachable_node_id != TARGET_93
+        || body_93.coordinator_device_id != fixture.coordinator_device_id
+        || body_93.observed_at_unix_ms != row_93.observed_at_unix_ms
+        || body_93.reporter_signature.len() != 64
+        || body_93.request_nonce.is_empty()
+    {
+        return Err(format!("93) 저장된 몸통이 보낸 신고와 다르다: {body_93:?}"));
+    }
+    report.push_str("93) 이웃 신고 관측이 실제 wire 를 거쳐 durable 저장소까지 도달\n");
+
+    // ── 94) 다른 Coordinator 앞으로 서명된 신고는 거부 ──────────────
+    //
+    // ★ `DoD-63` 이 "프레이밍 계층은 이 값을 자기 ID 와 대조하지 않는다 —
+    //   소비자가 반드시 대조해야 한다" 며 열어 둔 구멍이다. 대조하지 않으면
+    //   A 에게 보낸 신고를 B 가 자기 판정 재료로 쓴다.
+    let nb_94 = run_handshake(
+        &fixture,
+        &[
+            "--expect-neighbor-reports",
+            "1",
+            "--neighbor-report-db",
+            neighbor_db,
+        ],
+        &[
+            "--neighbor-report-rounds",
+            "1",
+            "--neighbor-report-target",
+            TARGET_93,
+            "--corrupt-neighbor-report-coordinator",
+            "true",
+        ],
+    )?;
+    if nb_94.coordinator_success {
+        return Err(format!(
+            "94) 다른 Coordinator 앞으로 서명된 이웃 신고가 통과했다: {:?}",
+            nb_94.coordinator_stdout
+        ));
+    }
+    if !nb_94
+        .coordinator_stderr
+        .contains("coordinator_device_id 불일치")
+    {
+        return Err(format!(
+            "94) 거부 사유가 coordinator 불일치로 식별되지 않는다: {:?}",
+            nb_94.coordinator_stderr
+        ));
+    }
+    // ★ **세션 거부여야지 저장소 장애가 아니다**(독립 검수 4라운드 지적).
+    //
+    //   `Storage` 로 분류하면 이 연결 하나 때문에 accept loop 전체가
+    //   끝나 다른 Agent 들의 작업까지 끊긴다 — 2026-08-30 검수가 heartbeat
+    //   경로에서 지적한 그 문제다. 문자열만 보면 그 차이가 안 보인다.
+    if !nb_94.coordinator_stderr.contains("kind=protocol") {
+        return Err(format!(
+            "94) 수신자 불일치가 protocol 이 아닌 것으로 분류됐다 — accept loop 를 죽이면 안 된다: {:?}",
+            nb_94.coordinator_stderr
+        ));
+    }
+    // ★ 거부했는데 저장까지 했는가 — 대조를 통과한 뒤에만 남긴다는 순서가
+    //   지켜지는지 본다.
+    //
+    //   ★ **로그에 문자열이 없다는 것으로는 부족하다**(독립 검수 1라운드
+    //     지적) — DB 를 먼저 바꾸고 로그를 찍기 전에 오류로 빠져나가는
+    //     구현도 그 검사를 통과한다. 저장소를 다시 열어 행을 대조한다.
+    //
+    //   ★ 다만 이것은 **저장소 전체 불변이 아니다**(2라운드 정정) — 이
+    //     대상에 대한 행만 본다. 이 lane 에서 94 가 만들 수 있는 행은
+    //     `(이 Agent 의 기계, TARGET_93)` 하나뿐이므로 여기서는 충분하지만,
+    //     "한 글자도 다르지 않다" 는 저장소 전체에 대한 주장이 아니다.
+    let after_94 = gputeer_coordinator::neighbor_report_store::CoordinatorNeighborReportStore::open(
+        neighbor_db,
+        fixture.coordinator_device_id,
+    )
+    .map_err(|e| format!("94) 저장소를 다시 열지 못했다: {e}"))?
+    .reports_about(TARGET_93)
+    .map_err(|e| format!("94) 저장된 신고를 읽지 못했다: {e}"))?;
+    if after_94 != rows_93 {
+        return Err(format!(
+            "94) 거부된 신고가 저장소를 바꿨다 — 저장이 대조보다 먼저다.\n  전: {rows_93:?}\n  후: {after_94:?}"
+        ));
+    }
+    report.push_str("94) 다른 Coordinator 앞으로 서명된 이웃 신고는 거부되고 저장되지 않는다\n");
+
+    // ── 95) 저장소 구성이 잘못되면 아예 시작하지 않는다 ────────────
+    //
+    // :memory: 도 경로 부재도 세션마다 열렸다 닫히거나 아무 데도 안 남는다 —
+    // 여러 이웃의 관측을 "모아" 둘 수가 없는데(ADR-033 §7 이 요구하는 것이
+    // 그 모으기다) 로그에는 받은 것처럼 찍힌다.
+    //
+    // ★ Coordinator 만 띄워 본다 — run_handshake 는 READY 를 기다리는데,
+    //   bind 전에 죽는 것이 바로 우리가 확인하려는 동작이다.
+    for (label, extra) in [
+        (
+            "비영속(:memory:)",
+            vec!["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+        ),
+        ("경로 부재", vec!["--expect-neighbor-reports", "1"]),
+    ] {
+        let (ok, out, err) = run_coordinator_only(&fixture, &extra)?;
+        if ok {
+            return Err(format!("95) {label} 구성으로 정상 종료했다: {out:?}"));
+        }
+        // ★ listener 를 열기 전에 끝나는가 — 열고 나서 죽으면 그 사이에
+        //   Lease 를 영속 발급하고 Agent 가 받아들일 수 있다.
+        if out.contains("READY ") || out.contains("CONNECTION_ATTEMPT ") {
+            return Err(format!(
+                "95) {label} 구성인데 listener 를 열었다 — bind 전에 막아야 한다: {out:?}"
+            ));
+        }
+        if out.contains("NEIGHBOR_REPORT_ACCEPTED ") || out.contains("NEIGHBOR_REPORT_STORED ") {
+            return Err(format!("95) {label} 구성인데 신고를 받아들였다: {out:?}"));
+        }
+        // 사유가 식별되는가 — 구성 오류는 storage 로 분류한다.
+        if !err.contains("kind=storage") {
+            return Err(format!(
+                "95) {label} 구성 오류가 storage 로 분류되지 않는다: {err:?}"
+            ));
+        }
+    }
+    // ★ **관문이 bind 보다 먼저인지 자체를 잰다**(독립 검수 5라운드 지적).
+    //
+    //   `READY` 부재만으로는 "bind 는 했는데 READY 전에 죽었다" 와 구분이
+    //   안 된다. 그래서 **이미 점유된 포트**를 준다 —
+    //     · 관문이 먼저면  저장소 구성 오류로 끝난다
+    //     · 관문이 나중이면 bind 실패로 끝난다
+    //   두 오류 문구가 다르므로 순서가 값으로 드러난다.
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("95) 포트 점유 실패: {e}"))?;
+    let occupied_addr = occupied
+        .local_addr()
+        .map_err(|e| format!("95) 점유 주소를 못 읽었다: {e}"))?
+        .to_string();
+    let (ok_order, _out_order, err_order) = run_coordinator_only_at(
+        &fixture,
+        &occupied_addr,
+        &["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+    )?;
+    if ok_order {
+        return Err("95) 점유된 포트에서 정상 종료했다".to_string());
+    }
+    if err_order.contains("bind 실패") {
+        return Err(format!(
+            "95) 저장소 관문보다 bind 가 먼저 일어났다 — 소켓을 연 뒤에 죽는다: {err_order:?}"
+        ));
+    }
+    if !err_order.contains("영속이 아니다") {
+        return Err(format!(
+            "95) 점유된 포트에서 저장소 구성 오류가 아닌 것으로 끝났다: {err_order:?}"
+        ));
+    }
+    drop(occupied);
+
+    report.push_str(
+        "95) 이웃 신고 저장소 구성이 잘못되면(비영속/경로 부재) listener 를 열기 전에 멈춘다",
+    );
+    report.push(NEWLINE);
+
+    // ── 96) 잘못된 신고 구성이면 Agent 가 연결조차 하지 않는다 ─────
+    //
+    // 전에는 이 검사가 송신 루프 안에 있었다 — Grant/ACK 를 마치고 Lease 를
+    // 받아들인 뒤에야 죽었다(독립 검수 4라운드 지적).
+    //
+    // ★ "연결조차 안 한다" 를 **관측한다**(5라운드 지적) — 테스트가 직접
+    //   listener 를 들고, 그 주소를 주고, accept 가 한 건도 없었는지 본다.
+    //   고정 포트를 비어 있다고 가정하던 앞선 판은 그것을 증명하지 못했다.
+    for (label, extra) in [
+        ("대상 없음", vec!["--neighbor-report-rounds", "1"]),
+        (
+            "대상이 공백",
+            vec!["--neighbor-report-rounds", "1", "--neighbor-report-target", "   "],
+        ),
+        (
+            "multi-agent 와 함께",
+            vec![
+                "--neighbor-report-rounds",
+                "1",
+                "--neighbor-report-target",
+                TARGET_93,
+                "--multi-agent",
+                "true",
+            ],
+        ),
+    ] {
+        let watcher = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("96) listener 준비 실패: {e}"))?;
+        let watch_addr = watcher
+            .local_addr()
+            .map_err(|e| format!("96) 주소를 못 읽었다: {e}"))?
+            .to_string();
+        watcher
+            .set_nonblocking(true)
+            .map_err(|e| format!("96) nonblocking 설정 실패: {e}"))?;
+
+        let (ok, out, err) = run_agent_only(&fixture, &watch_addr, &extra)?;
+        if ok {
+            return Err(format!("96) {label} 인데 정상 종료했다: {out:?}"));
+        }
+        if !err.contains("NEIGHBOR_REPORT_REFUSED") {
+            return Err(format!("96) {label} 의 거부 사유가 식별되지 않는다: {err:?}"));
+        }
+        // ★ accept 가 한 건이라도 있으면 연결을 시도한 것이다.
+        match watcher.accept() {
+            Ok((_stream, peer)) => {
+                return Err(format!(
+                    "96) {label} 인데 연결을 시도했다(peer={peer}) — 구성 관문이 늦다"
+                ))
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(format!("96) accept 확인 실패: {e}")),
+        }
+    }
+    report.push_str(
+        "96) 잘못된 신고 구성(대상 없음/공백/multi-agent)이면 Agent 가 연결조차 하지 않는다",
+    );
+    report.push(NEWLINE);
+
+    // ── 97) multi-agent lane 은 이웃 신고 수신을 받아들이지 않는다 ──
+    //
+    // 그 lane 은 run() 을 거치지 않아 시작 관문도 수신 루프도 없다 —
+    // 그런데 플래그는 받아들여져 조용히 무시됐다(독립 검수 5라운드 지적).
+    // 구현하지 않은 조합은 거부한다.
+    let (ok_97, out_97, err_97) = run_coordinator_only(
+        &fixture,
+        &[
+            "--expect-neighbor-reports",
+            "1",
+            "--neighbor-report-db",
+            neighbor_db,
+            "--multi-agent",
+            "true",
+        ],
+    )?;
+    if ok_97 {
+        return Err(format!("97) multi-agent 와 함께 정상 종료했다: {out_97:?}"));
+    }
+    if out_97.contains("READY ") {
+        return Err(format!(
+            "97) multi-agent lane 이 listener 를 열었다 — 조합을 거부해야 한다: {out_97:?}"
+        ));
+    }
+    if !err_97.contains("multi-agent") || !err_97.contains("kind=storage") {
+        return Err(format!("97) 거부 사유가 식별되지 않는다: {err_97:?}"));
+    }
+    report.push_str("97) multi-agent lane 과 이웃 신고 수신 조합은 조용히 무시하지 않고 거부한다");
+    report.push(NEWLINE);
 
     report.push_str(&run_multi_agent_scenario(&fixture)?);
 

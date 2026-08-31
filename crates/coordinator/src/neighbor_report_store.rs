@@ -267,6 +267,61 @@ pub enum NeighborReportStoreError {
     Storage(String),
 }
 
+/// ★ 오류가 **사실을 정확히** 전하게 한다(`CLAUDE.md` §3).
+///
+/// 예컨대 손상을 "저장소 장애" 로 읽히게 쓰면 운영자가 디스크를 의심하며
+/// 엉뚱한 곳을 본다 — 어느 행의 무엇이 어긋났는지까지 적는다.
+impl std::fmt::Display for NeighborReportStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput(field) => write!(f, "입력이 유효하지 않다: {field}"),
+            Self::AddressedToAnotherCoordinator { addressed, ours } => write!(
+                f,
+                "이 Coordinator 앞으로 온 신고가 아니다 — 수신자 {addressed}, 우리 {ours}"
+            ),
+            Self::SignerIsNotTheReporterDevice {
+                signer_id,
+                reporter_device_id,
+            } => write!(
+                f,
+                "서명자가 신고자 장치와 다르다 — 서명자 {signer_id}, 신고 안의 장치 {reporter_device_id}"
+            ),
+            Self::ConflictingReporterDevice {
+                reporter_node_id,
+                stored_device_id,
+                incoming_device_id,
+            } => write!(
+                f,
+                "기계 {reporter_node_id} 는 이미 장치 {stored_device_id} 에 묶여 있다 — 들어온 장치 {incoming_device_id}"
+            ),
+            Self::ReporterDeviceQuotaExhausted {
+                reporter_device_id,
+                stored_rows,
+                limit,
+                blocking_observed_at_unix_ms,
+            } => write!(
+                f,
+                "장치 {reporter_device_id} 의 저장 상한({limit})이 찼고(현재 {stored_rows}행)                  들어온 신고가 밀려날 관측({blocking_observed_at_unix_ms})보다 새롭지 않다"
+            ),
+            // ★ 이 두 값은 **행 키(SQLite 인덱스 열)** 이지 디코드된 신고에서
+            //   온 값이 아니다(독립 검수 1라운드 정정) — `ReporterNodeMismatch`
+            //   같은 손상은 바로 그 둘이 어긋났다는 뜻이므로, 그냥 "신고자/대상"
+            //   이라고 쓰면 어느 쪽 값인지 잘못 전한다.
+            Self::Corrupt {
+                reporter_node_id,
+                unreachable_node_id,
+                kind,
+            } => write!(
+                f,
+                "저장된 행이 손상됐다 — 행 키(신고자 {reporter_node_id}, 대상 {unreachable_node_id}), 종류 {kind:?}"
+            ),
+            Self::Storage(message) => write!(f, "저장소 오류: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for NeighborReportStoreError {}
+
 pub struct CoordinatorNeighborReportStore {
     connection: Connection,
     /// 이 저장소를 소유한 Coordinator. 신고의 수신자와 대조한다.
