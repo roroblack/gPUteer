@@ -1611,15 +1611,6 @@ pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> St
     format!("start-{hex}")
 }
 
-/// 자식이 남긴 출력과 실행 결과를 체크포인트에 넣을 바이트로 모은다.
-///
-/// # 없는 파일을 빈 파일로 둔갓하지 않는다
-///
-/// 자식이 아무것도 안 출력하면 `CreateFileW(CREATE_ALWAYS)` 가 만든
-/// **빈 파일**이 있다. 그건 "출력이 없었다" 라는 사실이므로
-/// 그대로 남긴다. 반면 파일 자체가 **없으면** 캐프처를 안 한
-/// 경우이므로 목록에서 뺀다 — 둘을 같은 것으로 만들면 관측
-/// 결과와 미관측을 구분할 수 없다(`CLAUDE.md` §1 — 모르면 비워 둔다).
 /// 실행 후 보고할 것들.
 struct WorkloadReport {
     exit_code: u32,
@@ -1747,6 +1738,15 @@ fn remove_dir_if_present(dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// 자식이 남긴 출력과 실행 결과를 체크포인트에 넣을 바이트로 모은다.
+///
+/// # 없는 파일을 빈 파일로 둔갑시키지 않는다
+///
+/// 자식이 아무것도 안 출력하면 `CreateFileW(CREATE_ALWAYS)` 가 만든
+/// **빈 파일**이 있다. 그건 "출력이 없었다" 라는 사실이므로 그대로
+/// 남긴다. 반면 파일 자체가 **없으면** 캡처를 안 한 경우이므로 목록에서
+/// 뺀다 — 둘을 같은 것으로 만들면 관측 결과와 미관측을 구분할 수 없다
+/// (`CLAUDE.md` §1 — 모르면 비워 둔다).
 fn collect_workload_artifacts(
     run_dir: &std::path::Path,
     spec: &gputeer_protocol::execution_spec::ExecutionSpec,

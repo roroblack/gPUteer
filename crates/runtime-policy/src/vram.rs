@@ -50,12 +50,14 @@ impl VramEnforcement {
     }
 }
 
-/// `WindowsCommitCap` 의 근사 계산. RAM 제한에서 예약분을 뺀다.
-///
 /// ★ 이 상수(2000MiB)는 P0-06 실측값이다. 재측정 없이 다른 값으로
 ///   바꾸지 않는다 — `CLAUDE.md` §1, "지어내지 않는다."
 pub const WINDOWS_JOB_OBJECT_RESERVED_BYTES: u64 = 2000 * 1024 * 1024;
 
+/// `WindowsCommitCap` 의 근사 계산. RAM 제한에서 예약분을 뺀다.
+///
+/// ★ 이 문서는 예약분 상수가 위에 끼어들면서 그쪽으로 밀려나 있었다 —
+///   계산은 상수가 아니라 이 함수가 한다.
 pub fn windows_commit_cap(ram_limit_bytes: u64) -> VramEnforcement {
     VramEnforcement::WindowsCommitCap {
         approx_vram_max_bytes: ram_limit_bytes.saturating_sub(WINDOWS_JOB_OBJECT_RESERVED_BYTES),

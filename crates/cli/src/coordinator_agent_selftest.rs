@@ -267,12 +267,16 @@ fn run_handshake_internal(
     )
 }
 
+const NEWLINE: char = '\n';
+
+
 /// Coordinator 만 띄워 **시작 전에 죽는지** 본다.
 ///
 /// ★ `run_handshake` 는 `READY` 를 기다리므로 이 경우에 쓸 수 없다 —
 ///   구성 오류로 bind 전에 끝나는 것이 바로 우리가 확인하려는 동작이다.
-const NEWLINE: char = '\n';
-
+///
+/// ★ 이 문서는 `NEWLINE` 상수가 위에 끼어들면서 그쪽으로 밀려나
+///   있었다 — 개행 상수는 Coordinator 를 실행하지 않는다.
 fn run_coordinator_only(
     fixture: &Fixture,
     extra_coordinator_args: &[&str],

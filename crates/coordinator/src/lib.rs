@@ -35,9 +35,21 @@ pub mod inventory_store;
 pub mod job_store;
 pub mod lease_store;
 pub mod neighbor_report_store;
-#[allow(dead_code)]
 pub mod node_liveness_store;
 pub mod multi_agent;
+// ★ 이 허용은 **`orchestrate` 의 것이다.** production 호출자가 없고
+//   테스트 fixture 만 부르므로 dead_code 경고가 난다(`DoD-46` 이
+//   "production 미연결" 로 남긴 상태 그대로).
+//
+//   ★ 이 속성은 **세 번 연속 가로채였다.** 위에 모듈 선언을 한 줄씩
+//     끼워 넣을 때마다 바로 아래 항목에 붙는 성질 때문에 소속이
+//     조용히 옮겨갔다 — `multi_agent`(eba4114) → `node_liveness_store`
+//     (8134afa) → 그대로 유지(9c0239e). 그 사이 `orchestrate` 의 경고
+//     5개가 계속 떴고, 정작 `pub mod` 라 경고가 날 일도 없는 모듈이
+//     허용을 달고 있었다.
+//
+//   **새 모듈은 이 줄 위에 넣는다.**
+#[allow(dead_code)]
 mod orchestrate;
 pub mod replica_ack_store;
 pub mod reservation_release;
@@ -2289,6 +2301,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
     run(config)
 }
 
+/// 식별자 길이 상한 — 이 값이 식별자 네 곳에 복제되므로 길면 프레임
+/// 상한을 넘기고 저장소를 부풀린다.
+pub const MAX_DEVICE_ID_LEN: usize = 64;
+
+
 /// Agent 식별자로 쓸 수 있는 모양인가.
 ///
 /// # 왜 검사하는가
@@ -2307,8 +2324,9 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
 ///
 /// 영숫자와 `-`·`_`·`.` 만 허용한다. 이 저장소가 쓰는 ULID 계열
 /// 식별자는 전부 이 안에 들어간다.
-pub const MAX_DEVICE_ID_LEN: usize = 64;
-
+///
+/// ★ 이 문서는 `MAX_DEVICE_ID_LEN` 상수가 위에 끼어들면서 그쪽으로
+///   밀려나 있었다 — 상수는 문자 형태를 검사하지 않는다.
 pub fn validate_device_id(device_id: &str) -> Result<(), String> {
     if device_id.is_empty() {
         return Err("DEVICE_ID_REJECTED: 비었다".to_string());

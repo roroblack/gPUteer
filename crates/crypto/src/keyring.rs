@@ -816,20 +816,7 @@ fn ensure_protection(
     }
 }
 
-/// 개인키를 이 등급으로 봉인한다.
-///
-/// # 왜 `signer_id` 가 필요한가
-///
-/// ★ 봉인 이름을 **signer 마다 다르게** 묶는다. 고정 이름을 쓰면 A 의
-///   봉인 blob 을 B 자리에 바꿔치기해도 복호가 성공한다 — 파일을 쓸 수
-///   있는 누군가가 어느 장치의 키를 다른 장치의 것으로 만들 수 있다.
-///
-///   `signing.md` 의 `domain_tag` 가 서명에서, `derive_replay_nonce` 가
-///   nonce 에서 하는 일과 같은 종류의 분리다.
 /// 파일 전체 무결성 표식을 봉인할 때 쓰는 이름.
-///
-/// ★ signer 별 이름과 **다르다.** 같은 이름을 쓰면 어떤 signer 의 개인키
-///   봉인 blob 을 파일 MAC 자리에 놓을 수 있다.
 const FILE_MAC_LABEL: &str = "gputeer-keyring-file-mac";
 
 /// 본문의 무결성 표식을 만든다.
@@ -913,6 +900,22 @@ fn verify_sealed_checksum(
     Ok(())
 }
 
+/// 개인키를 이 등급으로 봉인한다.
+///
+/// # 왜 `signer_id` 가 필요한가
+///
+/// ★ 봉인 이름을 **signer 마다 다르게** 묶는다. 고정 이름을 쓰면 A 의
+///   봉인 blob 을 B 자리에 바꿔치기해도 복호가 성공한다 — 파일을 쓸 수
+///   있는 누군가가 어느 장치의 키를 다른 장치의 것으로 만들 수 있다.
+///
+///   `signing.md` 의 `domain_tag` 가 서명에서, `derive_replay_nonce` 가
+///   nonce 에서 하는 일과 같은 종류의 분리다.
+///
+/// ★ signer 별 이름과 **다르다.** 같은 이름을 쓰면 어떤 signer 의 개인키
+///   봉인 blob 을 파일 MAC 자리에 놓을 수 있다.
+///
+/// ★ 이 문서는 `FILE_MAC_LABEL` 상수가 위에 끼어들면서 그쪽으로
+///   밀려나 있었다 — 상수에는 `signer_id` 인자가 없다.
 fn protect_private_key(
     protection: KeyProtection,
     signer_id: &str,
