@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-65
 claim: "`DoD-64` 가 만든 `CoordinatorNeighborReportStore` 를 **실제 wire 경로에 연결**했다 — Agent 가 서명한 `NeighborUnreachableReport` 를 보내고, Coordinator 가 받아 검증한 뒤 영속 저장소에 남긴다. `DoD-64` 자신이 '`wire` 수신부에서 이 저장소를 호출하는 경로를 만들지 않았다' 고 적어 둔 한계를 닫는다. ★ 이 조각의 무게중심은 송수신이 아니라 **거부**에 있다 — 이웃 신고를 **실제로 다루지 않는 실행 경로**가 그 옵션을 받아들이면 운영자는 신고가 모이는 줄 아는데 한 건도 안 모인다. 그래서 구현하지 않은 조합(multi-agent lane · resume 경로 · ACK 직후 끝날 수 있는 test hook 3종)은 **시작 전에 거부**한다. 관문은 `NeighborReportLane` 을 **인자로 받아** 자기가 어느 lane 인지를 설정에 묻지 않는다 — 진입점이 스스로 말한다. ★ 순서를 문구가 아니라 **값**으로 드러낸다: 점유된 포트를 줘서 관문이 bind 보다 먼저인지 재고, 테스트가 자기 listener 를 소유해 `accept()` 로 **연결 시도 자체가 없었음**을 관측한다. ★ **production 소비자는 만들지 않았다** — 모은 관측을 재배정에 쓰는 경로는 `ADR-033` §8 조건 2 의 강제 수단이 없는 한 켜면 안 된다(`DoD-62`)"
 status: PASS
-commit: PENDING
+commit: 15de8ff1f51b029bcdd1969f86d3024d63d1c88c
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — wire 연결, selftest 시나리오 5건, crate 테스트 10건, 뮤테이션 18건, 독립 검수 14라운드"
