@@ -264,10 +264,7 @@ impl Nvml {
             return Ok(None);
         }
         Self::check("nvmlDeviceGetMigMode", code)?;
-        // ★ `pending` 이 아니라 `current` 로 판정한다. pending 은 재부팅
-        //   뒤에 적용될 값이라, 그걸로 지금을 판단하면 아직 분할되지 않은
-        //   GPU 를 분할됐다고 보거나 그 반대가 된다.
-        Ok(Some(current == 1))
+        Ok(Some(mig_enabled_from_modes(current, pending)))
     }
 
 }
@@ -294,4 +291,111 @@ fn read_c_string(buffer: &[c_char], call: &str) -> Result<String, NvmlError> {
         .map_err(|_| NvmlError::BadString {
             call: call.to_string(),
         })
+}
+
+/// `nvmlDeviceGetMigMode` 가 돌려준 두 값 중 **무엇으로 판정하는가**.
+///
+/// ★ `pending` 이 아니라 `current` 다. `pending` 은 **재부팅 뒤에 적용될**
+///   값이라, 그걸로 지금을 판단하면 아직 분할되지 않은 GPU 를 분할됐다고
+///   보거나 그 반대가 된다.
+///
+/// ★ 이 판정을 함수로 떼어낸 이유는 **GPU 없이 재기 위해서**다(`DoD-56` 이
+///   "지원 장치가 없어 합성값 단위 테스트뿐" 이라 남긴 부채). FFI 호출 안에
+///   묻어 두면 `pending` 으로 바꾸는 회귀를 아무도 잡지 못한다.
+pub(crate) fn mig_enabled_from_modes(current: c_uint, pending: c_uint) -> bool {
+    // `pending` 은 **의도적으로 안 쓴다** — 쓰면 위 주석이 거짓이 된다.
+    let _ = pending;
+    current == NVML_DEVICE_MIG_ENABLE
+}
+
+/// `NVML_DEVICE_MIG_ENABLE`. 꺼짐은 0 이다.
+const NVML_DEVICE_MIG_ENABLE: c_uint = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 버퍼 크기를 **숫자로** 못박는다.
+    ///
+    /// ★ 내 뮤테이션이 이 공백을 잡았다 — 아래 경계 테스트들은 버퍼를
+    ///   `NAME_BUFFER` 로 만들기 때문에, 상수를 64 로 줄이면 **테스트
+    ///   버퍼도 같이 줄어** 그대로 통과했다. 재려는 대상으로 기대값을
+    ///   만든 셈이다(`DoD-64` 가 겪은 것과 같은 유형).
+    ///
+    /// 그래서 값 자체를 리터럴로 고정한다. 첫 구현은 64
+    /// (`NVML_DEVICE_NAME_BUFFER_SIZE`)를 썼고, 독립 검수가 v2 API 의
+    /// 상한이 **96**(`NVML_DEVICE_NAME_V2_BUFFER_SIZE`)임을 짚었다 —
+    /// 63바이트 넘는 이름이 오면 잘리거나 오류가 된다.
+    #[test]
+    fn the_string_buffers_match_the_nvml_v2_size() {
+        assert_eq!(
+            NAME_BUFFER, 96,
+            "이름 버퍼가 NVML v2 상한이 아니다 — 긴 장치 이름이 잘린다"
+        );
+        assert_eq!(
+            UUID_BUFFER, 96,
+            "UUID 버퍼가 NVML v2 상한이 아니다 — 다른 장치가 같아 보일 수 있다"
+        );
+    }
+
+    /// ★ `DoD-56` 이 "63바이트 넘는 이름을 본 적 없다" 며 남긴 부채.
+    ///
+    /// 실제 장치 없이도 **경계 자체는** 잴 수 있다 — 버퍼를 손으로 만든다.
+    #[test]
+    fn a_name_that_exactly_fills_the_buffer_without_nul_is_an_error() {
+        // 96바이트를 꽉 채우고 NUL 이 없다 — NVML 이 자를 수 있는 상황.
+        let full: Vec<c_char> = vec![b'x' as c_char; NAME_BUFFER];
+        let error = read_c_string(&full, "nvmlDeviceGetName")
+            .expect_err("NUL 이 없으면 오류여야 한다");
+        assert!(
+            matches!(error, NvmlError::UnterminatedString { ref call } if call == "nvmlDeviceGetName"),
+            "잘린 문자열을 값으로 받아들였다: {error}"
+        );
+    }
+
+    /// 경계 **바로 아래**는 정상이어야 한다 — "전부 거부" 로 바꿔도
+    /// 위 테스트가 통과하므로 이 대조가 없으면 공허해진다.
+    #[test]
+    fn a_name_one_byte_short_of_the_buffer_reads_back_whole() {
+        let mut buffer: Vec<c_char> = vec![b'x' as c_char; NAME_BUFFER - 1];
+        buffer.push(0);
+        let name = read_c_string(&buffer, "nvmlDeviceGetName").expect("읽혀야 한다");
+        assert_eq!(
+            name.len(),
+            NAME_BUFFER - 1,
+            "경계 바로 아래 이름이 잘렸다"
+        );
+        assert!(name.chars().all(|c| c == 'x'), "내용이 바뀌었다: {name}");
+    }
+
+    /// UUID 버퍼도 같은 경계를 갖는다 — 이름만 재고 UUID 를 안 재면
+    /// 한쪽만 고친 회귀를 놓친다.
+    #[test]
+    fn the_uuid_buffer_has_the_same_boundary() {
+        let full: Vec<c_char> = vec![b'G' as c_char; UUID_BUFFER];
+        assert!(
+            read_c_string(&full, "nvmlDeviceGetUUID").is_err(),
+            "NUL 없는 UUID 를 값으로 받아들였다 — 다른 장치가 같아 보일 수 있다"
+        );
+    }
+
+    /// ★ `DoD-56` 이 남긴 부채 — **`current` 로 판정하는가.**
+    ///
+    /// 두 값을 어긋나게 줘서, `pending` 으로 바꾸면 **두 경우 다** 답이
+    /// 뒤집히게 만든다.
+    #[test]
+    fn mig_mode_is_read_from_current_not_pending() {
+        assert!(
+            !mig_enabled_from_modes(0, 1),
+            "재부팅 뒤에 켜질 예정인 GPU 를 지금 분할됐다고 봤다"
+        );
+        assert!(
+            mig_enabled_from_modes(1, 0),
+            "지금 분할된 GPU 를 재부팅 뒤 꺼질 예정이라고 안 봤다"
+        );
+        // 두 값이 같으면 어느 쪽을 읽든 답이 같다 — 판별력이 없으므로
+        // 그것만으로는 이 계약을 고정하지 못한다. 대조로만 둔다.
+        assert!(mig_enabled_from_modes(1, 1));
+        assert!(!mig_enabled_from_modes(0, 0));
+    }
 }

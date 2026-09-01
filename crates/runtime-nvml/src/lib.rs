@@ -132,6 +132,29 @@ pub fn observe() -> Result<NvmlSnapshot, NvmlError> {
     result
 }
 
+/// 열거 순서가 아니라 **UUID 순**으로 세운다.
+///
+/// NVML 의 열거 순서는 **재부팅 사이에 안정적이지 않다**. 그 순서를
+/// 그대로 두면 **같은 기계의 두 스냅샷이 달라 보인다** — 스케줄러가 같은
+/// 풀을 다른 풀로 읽는다.
+///
+/// ★ 2라운드 정정 — 전에 `CUDA_DEVICE_ORDER` 를 원인으로 적었는데 그건
+///   **CUDA** 의 열거 순서를 바꾸는 변수이지 NVML index 를 바꾸지 않는다.
+///   NVML index 가 CUDA index 와 다를 수 있다는 것은 별개의 사실이다.
+///
+/// ★ 이 정렬을 함수로 떼어낸 이유는 **실물 GPU 없이 재기 위해서**다
+///   (`DoD-56` 이 "GPU 1장으로는 증명되지 않는다" 며 남긴 부채). 관측
+///   경로 안에 묻어 두면, 관측 결과를 다시 정렬해 자기와 비교하는
+///   공허한 테스트밖에 못 쓴다 — 정렬을 통째로 지워도 그 테스트는
+///   통과한다.
+///
+/// ★ `index` 는 **바꾸지 않는다.** 그건 NVML 이 준 사실이고, 정렬은
+///   보는 순서일 뿐이다. 둘을 섞으면 관측과 표현이 뒤엉킨다.
+pub fn normalize_gpu_order(mut gpus: Vec<NvmlGpu>) -> Vec<NvmlGpu> {
+    gpus.sort_by(|left, right| left.uuid.cmp(&right.uuid));
+    gpus
+}
+
 fn observe_with(nvml: &ffi::Nvml) -> Result<NvmlSnapshot, NvmlError> {
     let driver_version = nvml.driver_version()?;
     let cuda_driver_version = nvml.cuda_driver_version()?;
@@ -153,10 +176,7 @@ fn observe_with(nvml: &ffi::Nvml) -> Result<NvmlSnapshot, NvmlError> {
         });
     }
 
-    // ★ 열거 순서가 아니라 UUID 로 정렬한다. NVML 의 index 는 드라이버
-    //   설정(`CUDA_DEVICE_ORDER`)이나 재부팅으로 바뀔 수 있어서, 그
-    //   순서를 그대로 두면 같은 기계의 두 스냅샷이 달라 보인다.
-    gpus.sort_by(|left, right| left.uuid.cmp(&right.uuid));
+    let gpus = normalize_gpu_order(gpus);
 
     Ok(NvmlSnapshot {
         driver_version,
@@ -206,11 +226,17 @@ mod tests {
                         gpu.total_vram_bytes
                     );
                 }
-                let mut sorted = snapshot.gpus.clone();
-                sorted.sort_by(|l, r| l.uuid.cmp(&r.uuid));
-                assert_eq!(
-                    sorted, snapshot.gpus,
-                    "장치 목록이 UUID 순으로 정렬돼 있지 않다 — 스냅샷이 실행마다 달라진다"
+                // ★ 여기서는 **이 기계가 실제로 정렬된 목록을 돌려줬는지**
+                //   만 본다. 정렬 규칙 자체의 순서 독립성은 아래
+                //   `gpu_order_is_the_same_for_every_enumeration_order` 가
+                //   합성 GPU 로 잰다 — 관측 결과를 다시 정렬해 자기와
+                //   비교하면 정렬을 통째로 지워도 통과한다(공허).
+                assert!(
+                    snapshot
+                        .gpus
+                        .windows(2)
+                        .all(|pair| pair[0].uuid <= pair[1].uuid),
+                    "장치 목록이 UUID 순이 아니다 — 스냅샷이 실행마다 달라진다"
                 );
             }
         }
@@ -249,5 +275,116 @@ mod tests {
             .is_partitioned(),
             "MIG 켜짐을 분할됨으로 보지 않았다 — scheduler 의 PARTITIONED 거부가 안 걸린다"
         );
+    }
+
+    /// 합성 GPU 4장. `index` 는 열거 순서를 흉내내려고 일부러 UUID 순과
+    /// **어긋나게** 준다 — 정렬이 index 를 따라가면 바로 드러난다.
+    fn synthetic_gpus() -> Vec<NvmlGpu> {
+        let make = |uuid: &str, index: u32, name: &str, total: u64| NvmlGpu {
+            uuid: uuid.into(),
+            index,
+            name: name.into(),
+            total_vram_bytes: total,
+            free_vram_bytes: total / 2,
+            used_vram_bytes: total / 4,
+            compute_capability: Some("8.9".into()),
+            mig_enabled: Some(false),
+        };
+        vec![
+            make("GPU-dddd", 0, "D", 4_000),
+            make("GPU-bbbb", 1, "B", 2_000),
+            make("GPU-aaaa", 2, "A", 1_000),
+            make("GPU-cccc", 3, "C", 3_000),
+        ]
+    }
+
+    /// ★ `DoD-56` 이 "GPU 1장으로는 증명되지 않는다" 며 남긴 부채.
+    ///
+    /// 실제 **4! = 24개 순열 전부**를 넣어 결과가 같은지 본다. 개수나
+    /// UUID 목록만 비교하지 않고 **행 전체**를 비교하며, 기대 행은
+    /// 검수 대상 함수가 아니라 **입력에서 손으로** 고른다.
+    #[test]
+    fn gpu_order_is_the_same_for_every_enumeration_order() {
+        let base = synthetic_gpus();
+
+        // ★ 기대값을 **입력에서 손으로** 고른다 — `normalize_gpu_order()` 로
+        //   만들면 그 함수가 `name`·VRAM·capability·MIG 를 일관되게
+        //   훼손해도 기대값이 함께 훼손돼 통과한다(독립 검수 1라운드가
+        //   찾은 것 — 이 조각에서 **두 번째** 같은 유형이다. 처음엔
+        //   버퍼 크기를 상수로 만들어 같은 일이 있었다).
+        //
+        //   `synthetic_gpus()` 의 index 는 0=dddd · 1=bbbb · 2=aaaa · 3=cccc
+        //   이므로 UUID 오름차순은 [2, 1, 3, 0] 이다.
+        let expected: Vec<NvmlGpu> = [2usize, 1, 3, 0]
+            .iter()
+            .map(|i| base[*i].clone())
+            .collect();
+
+        // 손으로 고른 것이 실제로 UUID 오름차순인지 대조한다 — 순서를
+        // 잘못 적었으면 이 테스트 전체가 틀린 것을 재게 된다.
+        assert!(
+            expected.windows(2).all(|p| p[0].uuid < p[1].uuid),
+            "손으로 고른 기대 순서가 UUID 오름차순이 아니다"
+        );
+        assert_eq!(
+            expected.iter().map(|g| g.index).collect::<Vec<_>>(),
+            vec![2, 1, 3, 0],
+            "기대 행이 의도한 원본 행이 아니다"
+        );
+
+        // ★ **서로 다른** 24개인지 본다(독립 검수 2라운드 지적). 개수만
+        //   세면, 생성기가 정렬된 같은 순열을 24번 돌려줘도 전부 통과한다
+        //   — 그러면 정렬을 지우는 뮤테이션조차 안 잡힌다. 생성기는
+        //   테스트 코드이므로 낡을 수 있다.
+        let mut orders = std::collections::BTreeSet::new();
+        for perm in permutations(base) {
+            orders.insert(perm.iter().map(|g| g.index).collect::<Vec<_>>());
+            assert_eq!(
+                normalize_gpu_order(perm.clone()),
+                expected,
+                "열거 순서 {:?} 에서 다른 결과가 나왔다",
+                perm.iter().map(|g| g.index).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(
+            orders.len(),
+            24,
+            "서로 다른 순열이 24개가 아니다 — {}개뿐이라 순서 독립성을 재지 못한다",
+            orders.len()
+        );
+    }
+
+    /// 정렬이 **실제로 필요한지** 대조한다 — 이게 없으면 "입력이 이미
+    /// 정렬돼 있었다" 는 경우와 구분되지 않는다.
+    #[test]
+    fn the_synthetic_input_is_not_already_sorted() {
+        let base = synthetic_gpus();
+        assert!(
+            !base.windows(2).all(|p| p[0].uuid <= p[1].uuid),
+            "합성 입력이 이미 정렬돼 있다 — 이 테스트가 정렬을 재지 못한다"
+        );
+    }
+
+    /// 24개 순열을 만든다(Heap 알고리즘).
+    fn permutations(items: Vec<NvmlGpu>) -> Vec<Vec<NvmlGpu>> {
+        fn go(k: usize, items: &mut Vec<NvmlGpu>, out: &mut Vec<Vec<NvmlGpu>>) {
+            if k == 1 {
+                out.push(items.clone());
+                return;
+            }
+            for i in 0..k {
+                go(k - 1, items, out);
+                if k % 2 == 0 {
+                    items.swap(i, k - 1);
+                } else {
+                    items.swap(0, k - 1);
+                }
+            }
+        }
+        let mut items = items;
+        let mut out = Vec::new();
+        let k = items.len();
+        go(k, &mut items, &mut out);
+        out
     }
 }

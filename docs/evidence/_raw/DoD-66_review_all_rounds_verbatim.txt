@@ -1,0 +1,39 @@
+################ nvml_r1 ################
+tokens used
+43,346
+- `crates/runtime-nvml/src/lib.rs:305-327` — **실제 결함**. `expected`를 검수 대상인 `normalize_gpu_order()`로 생성한다. 따라서 함수가 UUID·index는 유지하면서 `name`, VRAM, capability, MIG 등의 필드를 일관되게 훼손해도 기대값과 실제값이 함께 훼손되어 통과한다. 기대 행은 `base`에서 독립적으로 `[2, 1, 3, 0]` 순서로 선택해 만들어야 한다.
+
+- `crates/runtime-nvml/src/lib.rs:299-308` — **서술 문제**. “행 전체를 비교하므로 다른 필드를 뒤섞어도 잡는다”, “기대값을 입력에서 만든다”는 설명은 위의 순환 oracle 때문에 사실보다 강하다.
+
+그 밖에는 직접 대조 결과, Heap 구현이 현재 서로 다른 24개 순열을 생성하며 결과 벡터 전체를 비교한다. 정렬은 구조체 자체를 이동하므로 `index`를 재작성하지 않는다. MIG는 기존 `current == 1` 동작을 유지하고 어긋난 입력으로 `pending` 회귀를 잡는다. 버퍼 상수 96은 리터럴 assertion으로 독립 고정되어 N4가 먼저/별도로 검출된다. 새 함수·상수 삽입으로 `#[...]` 또는 `///` 소속이 밀린 자리도 없다.
+
+이 환경에는 `cargo`가 없어 테스트를 실행하지 못했으며 코드 직접 대조로 판정했다.
+
+CHANGES_REQUESTED
+
+################ nvml_r2 ################
+tokens used
+61,471
+`cargo`가 없어 테스트는 실행하지 못했고, 코드를 직접 대조했다.
+
+- `crates/runtime-nvml/src/lib.rs:331-341` — **실제 결함**. 순열 테스트는 생성 결과가 24개라는 것만 확인하고 서로 다른 24개인지는 확인하지 않는다. `permutations()`가 정렬된 동일 순열을 24번 반환해도 `seen == 24`, 기대값 비교, 별도의 비정렬 입력 검사가 모두 통과한다. 그러면 N1도 잡히지 않는다. index 순열을 집합에 넣어 크기가 24인지 확인해야 “실제 24개 순열 전부”가 고정된다.
+
+- `crates/runtime-nvml/src/lib.rs:137` — **서술 문제**. `CUDA_DEVICE_ORDER`가 NVML index를 바꾼다는 설명은 부정확하다. 이 변수는 CUDA의 장치 열거 순서를 제어한다. NVML은 자체 열거 순서가 재부팅 간 안정적이지 않으며 CUDA index와 일치하지 않을 수 있다고 별도로 규정한다. 재부팅 근거만 남기는 것이 정확하다. [CUDA 문서](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/environment-variables.html), [NVML 문서](https://docs.nvidia.com/deploy/nvml-api/group__nvmlDeviceQueries.html)
+
+- `crates/runtime-nvml/src/lib.rs:141-145` — **서술 문제**. “GPU 한 장으로도 재기 위해서”라고 했지만 신규 검증의 핵심은 실물 GPU 없이 합성 GPU 4장으로 재는 것이다. 같은 파일의 테스트 및 `ffi.rs:302-304`와 맞게 “GPU 없이”로 고쳐야 한다.
+
+그 밖에 순수 함수 추출로 인한 동작 변경, MIG 판정의 다른 선행 관문, 버퍼 경계의 공허성, 속성·문서 소속 밀림은 발견하지 못했다.
+
+CHANGES_REQUESTED
+
+################ nvml_r3 ################
+tokens used
+38,536
+`cargo`가 없어 테스트는 실행하지 못했고, 두 파일을 직접 대조했다.
+
+실제 결함: 없음.  
+서술 문제: 없음.  
+기대값의 자기참조나 테스트 헬퍼가 검증을 무력화하는 추가 지점도 찾지 못했다.
+
+ACCEPTED
+

@@ -1,0 +1,92 @@
+DoD-66 — NVML 불변식 세 가지를 실물 GPU 없이 고정 · 실측 기록
+================================================================
+측정: 2026-09-01, Windows 개발 기계(cargo 1.97.1, NVIDIA GPU 없음)
+
+
+1. 왜 이 조각인가
+--------------------
+`DoD-56`(NVML 실제 GPU 관측 계층) evidence 가 **스스로** 남긴 문장:
+
+  "이 조각의 NVML 쪽 주장들은 뮤테이션으로 검증하지 못했다. 다음 세 주장은
+   실측 1회로 받침될 뿐 자동 검사로 고정되지 않았다."
+
+     UUID 정렬이 열거 순서에 무관하다      GPU 1장으로는 증명되지 않는다
+     버퍼 상한 96 이 충분하다               63바이트 넘는 이름을 본 적 없다
+     MIG 켜짐을 PARTITIONED 로 보고한다    지원 장치가 없어 합성값 단위 테스트뿐
+
+셋 다 **실물 GPU 없이 재는 방법**으로 닫는다.
+
+
+2. 무엇을 했나 — 핵심은 "떼어냈다"
+------------------------------------
+셋 다 전에는 FFI 호출이나 관측 경로 **안에 묻혀** 있었다. 묻혀 있으면
+GPU 없이는 못 재고, 못 재니까 테스트가 공허해진다.
+
+  normalize_gpu_order(Vec<NvmlGpu>) -> Vec<NvmlGpu>
+      정렬만 하는 순수 함수. index 는 건드리지 않는다(관측 사실이다).
+
+  mig_enabled_from_modes(current, pending) -> bool
+      `pending` 은 **의도적으로 안 쓴다** — 재부팅 뒤에 적용될 값이다.
+
+  read_c_string(&[c_char], call) -> Result<String, NvmlError>
+      이미 순수했으나 테스트 모듈이 아예 없었다(ffi.rs 에 신설).
+
+★ 전에 정렬 테스트는 **관측 결과를 다시 정렬해 자기와 비교**했다 —
+  정렬을 통째로 지워도 통과하는 공허한 테스트였다.
+
+
+3. 테스트 (신규 7건)
+----------------------
+lib.rs
+  gpu_order_is_the_same_for_every_enumeration_order
+      합성 GPU 4장의 **서로 다른 24개 순열 전부**. 결과 **행 전체** 비교.
+      기대 행은 검수 대상 함수가 아니라 **입력에서 손으로** 고른다.
+  the_synthetic_input_is_not_already_sorted
+      입력이 이미 정렬돼 있으면 이 테스트가 정렬을 재지 못한다 — 대조군.
+
+ffi.rs
+  the_string_buffers_match_the_nvml_v2_size      값 자체를 리터럴 96 으로
+  a_name_that_exactly_fills_the_buffer_without_nul_is_an_error
+  a_name_one_byte_short_of_the_buffer_reads_back_whole   "전부 거부" 배제
+  the_uuid_buffer_has_the_same_boundary          한쪽만 고친 회귀 방지
+  mig_mode_is_read_from_current_not_pending      두 값을 어긋나게
+
+
+4. 뮤테이션 7건 — 전부 지정 테스트를 동작 수준에서 실패시켰다
+----------------------------------------------------------------
+  N1  정렬을 통째로 제거              -> gpu_order_is_the_same_...
+  N2  정렬 기준을 index 로            -> gpu_order_is_the_same_...
+  N3  MIG 를 pending 으로 판정        -> mig_mode_is_read_from_current...
+  N4  버퍼를 64 로 되돌림             -> a_name_*
+  N5  NUL 없으면 마지막을 잘라 씀     -> a_name_that_exactly_fills...
+  N6  정렬이 name 을 지움             -> gpu_order_is_the_same_...
+  N7  생성기가 같은 순열 24번         -> gpu_order_is_the_same_...
+
+★ N6 은 **1라운드 수정 뒤에야**, N7 은 **2라운드 수정 뒤에야** 잡힌다.
+  고치기 전에는 둘 다 통과했다.
+
+
+5. 이 조각에서 같은 실수가 두 번 나왔다
+------------------------------------------
+  (1) 버퍼 경계 테스트가 버퍼를 `NAME_BUFFER` **상수로** 만들었다.
+      상수를 96 -> 64 로 줄이면 **테스트 버퍼도 같이 줄어** 통과했다.
+      -> 내 뮤테이션(N4)이 잡았다. 값 자체를 리터럴로 고정해 닫았다.
+
+  (2) 순열 테스트가 기대값을 **검수 대상 함수로** 만들었다.
+      UUID·index 는 리터럴로 봤지만 name·VRAM·capability·MIG 는
+      함수 출력에서 왔다 — 그 필드들을 일관되게 훼손하면 통과했다.
+      -> 독립 검수 1라운드가 잡았다. 입력에서 손으로 고르도록 닫았다.
+
+둘 다 **재려는 대상으로 기대값을 만든 것**이다. `DoD-64` 가 "DB 에서 읽은
+값을 그 DB 검사에 쓴다" 로 지적받은 것과 같은 유형 — **세 번째**다.
+
+
+6. 측정
+---------
+  cargo test -p gputeer-runtime-nvml        9 passed / 0 failed
+  cargo test --workspace                    833 passed / 0 failed
+    (이 조각 착수 전 826 — 신규 7건이 늘어난 전부이고 회귀 0)
+
+★ **실물 GPU 실측은 이 조각에 없다.** 여기서 고정한 것은 규칙이 순서·경계·
+  모드 선택에 대해 **어떻게 행동하는가**이지, x600 의 RTX 4070 SUPER 가
+  무엇을 돌려주는가가 아니다. 후자는 `DoD-56` 이 이미 1회 실측했다.
