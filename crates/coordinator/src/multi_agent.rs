@@ -3,10 +3,14 @@
 //! # 왜 기존 `run()` 을 안 고치는가
 //!
 //! `run()` 은 **의도적으로 순차**다. `accept()` → 동기
-//! `serve_one_connection()` → 완료 후 다음 `accept()`. 그 위에 87개
-//! selftest 시나리오가 얹혀 있고, 그중 다수는 "이 순서로 이 프레임이
-//! 온다" 를 정확히 검사한다. 그 함수를 동시 처리로 바꾸면 87개가 전부
-//! 흔들린다.
+//! `serve_one_connection()` → 완료 후 다음 `accept()`. 그 위에 selftest
+//! 시나리오가 잔뜩 얹혀 있고, **그중 다수**는 "이 순서로 이 프레임이 온다"
+//! 를 정확히 검사한다 — 그 함수를 동시 처리로 바꾸면 그것들이 흔들린다.
+//!
+//! ★ 전에 여기 개수를 적어 뒀는데 시나리오가 늘면서 낡았다(독립 검수
+//!   11라운드). 개수를 손으로 적지 않는다 — 정확한 수는 selftest 출력이
+//!   말한다. 그리고 "전부" 도 과장이었다: 프레임 순서를 안 보는 시나리오도
+//!   있다.
 //!
 //! 그래서 **새 lane** 을 만든다. 기존 경로는 바이트 하나 안 바뀌고,
 //! `--multi-agent true` 를 준 경우에만 이쪽으로 온다.
@@ -62,9 +66,22 @@ use crate::{issue_grant, validate_device_id, CoordinatorConfig, CoordinatorLease
 
 /// 여러 Agent 를 동시에 받는다.
 ///
-/// 각 연결은 자기 스레드에서 처리된다. 공유되는 것은 Lease 저장소와
-/// replay 방어뿐이며 둘 다 잠금 뒤에 있다.
+/// 각 연결은 자기 스레드에서 처리된다. `Shared` 가 모든 세션에 걸쳐
+/// 공유하는 것은 Lease 저장소·replay 방어·설정·keyring·처리 수·동시
+/// 세션 관문(`Condvar` 포함)·최대 동시치다 — 상태를 가진 것은 잠금 뒤에 있다.
+///
+/// ★ 전에 "Lease 저장소와 replay 방어뿐" 이라 적었는데 사실이 아니었다
+///   (독립 검수 11라운드).
 pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
+    // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
+    //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
+    //   다시 본다.
+    if let Some(message) = crate::unsupported_neighbor_report_lane(
+        &config,
+        crate::NeighborReportLane::MultiAgent,
+    ) {
+        return Err(message);
+    }
     let agents = parse_agent_directory(
         &config.agent_device_id,
         config.agent_verifying_key,
@@ -302,8 +319,12 @@ fn read_hello(
     match &message {
         IngressMessage::SessionHello(verified) => {
             // ★ `require_replay_checked()` — 이 저장소의 다른 ShortLived
-            //   수신부와 같은 이유(§10). 검사했다는 사실을 타입으로
-            //   확인하지 않으면 조용히 안 한 채로 지나갈 수 있다.
+            //   수신부와 같은 이유(§10). 검사했다는 사실을 **실행 중에**
+            //   확인해 `Result` 로 돌려준다.
+            //
+            //   ★ 이건 typestate 강제가 아니다(독립 검수 11라운드 정정 —
+            //     전에 "타입으로 확인" 이라 썼다). 부르지 않으면 아무도
+            //     막지 않는다. 값어치는 "부르면 조용히 통과하지 않는다" 다.
             let hello = verified
                 .require_replay_checked()
                 .map_err(|e| format!("Hello replay 검사 실패: {e:?}"))?;
@@ -649,7 +670,7 @@ fn await_required_overlap(shared: &Shared) -> Result<(), String> {
     while *open < required {
         let remaining = deadline.checked_sub(started.elapsed()).ok_or_else(|| {
             format!(
-                "CONCURRENCY_NOT_OBSERVED: {required}개 세션이 동시에 열리기를 {deadline:?}                  기다렸으나 최대 {}개까지만 열렸다 — 서버가 순차 처리하고 있다",
+                "CONCURRENCY_NOT_OBSERVED: {required}개 세션이 동시에 열리기를 {deadline:?} 기다렸으나 최대 {}개까지만 열렸다 — 서버의 순차 처리일 수도, 클라이언트가 덜 붙었거나 연결/Hello 가 실패했을 수도, required 설정이 틀렸을 수도 있다",
                 shared.peak_concurrent.load(Ordering::SeqCst)
             )
         })?;
@@ -665,7 +686,7 @@ fn await_required_overlap(shared: &Shared) -> Result<(), String> {
         open = guard;
         if timeout.timed_out() && *open < required {
             return Err(format!(
-                "CONCURRENCY_NOT_OBSERVED: {required}개 세션이 동시에 열리기를 기다렸으나                  최대 {}개까지만 열렸다 — 서버가 순차 처리하고 있다",
+                "CONCURRENCY_NOT_OBSERVED: {required}개 세션이 동시에 열리기를 기다렸으나 최대 {}개까지만 열렸다 — 서버의 순차 처리일 수도, 클라이언트가 덜 붙었거나 연결/Hello 가 실패했을 수도, required 설정이 틀렸을 수도 있다",
                 shared.peak_concurrent.load(Ordering::SeqCst)
             ));
         }

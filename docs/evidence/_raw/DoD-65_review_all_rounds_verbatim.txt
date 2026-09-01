@@ -1,0 +1,388 @@
+DoD-65 — 이웃 신고 wire 연결: 독립 검수 전 라운드 원문
+========================================================
+검수자: 대화 기록을 공유하지 않는 새 codex 인스턴스
+        (codex exec --sandbox read-only --model gpt-5.6-sol)
+
+각 라운드의 판정 부분만 그대로 옮긴다.
+
+★ 11라운드는 **세 갈래를 동시에** 돌렸다(종합 · 서술 감사 · 우회 조사).
+  넓게 본 종합은 ACCEPTED 였고, 좁게 판 둘이 이 조각에서 가장 무거운
+  결함을 찾았다 — 넓게 물으면 "관문이 있나" 에 답하고, 좁게 물으면
+  "그 관문이 옳은가" 에 답한다.
+
+★ 13라운드는 프롬프트를 만들 때 셸이 백틱을 실행해 한 번 깨졌다.
+  프롬프트를 파일로 다시 만들어 재실행한 것이 아래 r13b 다.
+
+################################################################
+## review_wire_r1_out
+################################################################
+tokens used
+91,725
+검수 결과 실제 결함 4건, 서술 문제 2건을 확인했다.
+
+- `crates/coordinator/src/lib.rs:934-945` — **실제 결함.** `Corrupt`는 들어온 신고의 문제가 아니라 이미 영속된 행의 무결성 훼손이다. 특히 저장소는 같은 기계의 모든 행과 같은 장치의 축출 후보까지 읽으므로(`neighbor_report_store.rs:501-545,599-633`), 손상 행은 현재 신고와 다른 행일 수도 있다. 이를 세션 거부(`Legacy` → `Protocol`)로 분류하면 Coordinator가 손상된 DB에 계속 기록한다. heartbeat 경로는 `Corrupt`를 제외하지 않아 `Storage`로 fail-closed 한다(`coordinator/src/lib.rs:797-810`). 신원 충돌처럼 입력으로 유발되는 `ConflictingReporterDevice`는 세션 거부가 맞지만, `Corrupt`까지 같은 분류에 넣은 것은 정당하지 않다.
+
+- `crates/coordinator/src/lib.rs:843-857`, `crates/coordinator/src/neighbor_report_store.rs:379-381` — **실제 결함.** wire 수신부가 저장소의 `is_durable()`을 전혀 확인하지 않는다. 따라서 `--neighbor-report-db :memory:` 또는 빈 경로가 허용되고, 저장소가 세션마다 열렸다 닫히므로 여러 이웃의 관측을 “모아” 둘 수도 없다. heartbeat 저장소는 `open()`에서 비영속 DB를 거부한다. 최소한 운영 수신부에서는 비영속 경로를 fail-closed 해야 한다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5164-5218` — **실제 결함.** 시나리오 93은 SQLite 내용을 읽지 않는다. `NEIGHBOR_REPORT_STORED` 로그 두 줄과 DB 파일 존재만 검사하는데, 파일은 첫 프레임을 받기 전 `open()`에서 생성된다. 그러므로 저장 없이 로그만 출력하는 구현도 통과할 수 있으며, “durable 저장소까지 도달”을 증명하지 못한다. 프로세스 종료 후 DB를 다시 열어 대상 행의 본문·시각·신고자·서명 정보를 확인해야 한다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5257-5268` — **실제 결함.** 시나리오 94의 미저장 검증은 `NEIGHBOR_REPORT_STORED` 문자열이 없다는 것뿐이다. 대조 전에 DB를 변경하고 오류로 종료하여 로그를 찍지 않는 구현도 통과한다. 시나리오 93 이후의 행을 읽어 기준값을 확보한 뒤, 94 실행 후 행 수와 전체 저장값이 변하지 않았음을 대조해야 한다.
+
+- `crates/coordinator/src/lib.rs:929-936` — **서술 문제.** `Corrupt`를 “이 신고 하나의 문제”, “한 기계의 것”이라고 설명하지만, 장치별 상한 처리 중에는 같은 장치가 주장한 다른 기계의 손상 행에서도 발생한다. 코드보다 강하고 오류 분류의 근거도 사실과 다르다.
+
+- `crates/coordinator/src/neighbor_report_store.rs:306-313` — **서술 문제.** `Corrupt`의 `reporter_node_id`와 `unreachable_node_id`는 디코딩된 신고의 신뢰 가능한 값이 아니라 SQLite 인덱스 열의 값이다(`:818-823`). `ReporterNodeMismatch`나 `UnreachableNodeMismatch`일 때 이를 단순히 “신고자/대상”이라고 출력하면 어느 값이 어긋났는지 정확히 전달하지 못한다. “행 키의 신고자/대상”이라고 밝혀야 한다.
+
+판정으로 새는 호출부나 임계값 적용은 찾지 못했다. 정상 수신 경로의 순서도 서명·replay 검증 → 세션 상대 및 Coordinator 대조 → 저장으로 되어 있어 대조 전 저장은 없다. `fence_epoch` 대조가 없는 차이도 메시지에 해당 필드가 없으므로 정당하다. “reporter_device_id 대조가 현재 도달 불가”라는 주석도 단일-Agent handler의 keyring 구성을 대조한 결과 현재 코드에서는 사실이다.
+
+`cargo`와 `rustc`가 환경에 없어 컴파일 및 테스트 실행은 하지 못했으며, 위 판정은 코드 직접 대조와 `git diff --check`에 근거한다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r2_out
+################################################################
+tokens used
+84,668
+- [crates/coordinator/src/lib.rs:950](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:950) — **실제 결함.** `AddressedToAnotherCoordinator`를 모두 “들어온 신고가 유발한 문제”로 분류하지만, 이 오류는 기존 영속 행을 읽는 `decode_row()`([neighbor_report_store.rs:856](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/neighbor_report_store.rs:856))에서도 발생한다. 복사·이관·설정 오류로 다른 Coordinator의 행이 DB에 들어 있는 경우 이는 기존 저장 상태의 불일치인데도 세션 거부로 끝나며 accept loop가 계속된다. `Corrupt`와 마찬가지로 저장소 쪽 발생과 입력 쪽 발생을 구분하여 전자는 fail-closed 해야 한다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:5255](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5255) — **서술 문제.** “몸통이 실제로 그 신고인가”라고 하지만 대상·Coordinator·서명 비어 있지 않음만 검사한다. 신고자 node/device, schema version, nonce, 정확한 서명 바이트 등은 비교하지 않으므로 다른 몸통도 통과할 수 있다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:5309](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5309) — **실제 결함.** 시나리오 94는 “93이 남긴 상태와 한 글자도 다르지 않은지” 본다고 설명하지만 `reports_about(TARGET_93)` 결과만 비교한다. 거부 경로가 다른 대상의 행을 추가·변경해도 검출하지 못하므로 저장소 전체 불변 단언이 아니다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:5358](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5358) — **실제 결함.** 시나리오 95는 `NEIGHBOR_REPORT_ACCEPTED` 부재만 확인한다. 신고를 읽고 `NEIGHBOR_REPORT_STORED`까지 수행한 뒤 비영속 오류를 반환하는 뮤테이션도 통과하므로 “신고를 하나라도 받아들이기 전에 막는다”는 단언은 부분적이다.
+
+`Corrupt`의 fail-closed 분류, `is_durable()` 관문 자체, `Display`/`Error` 구현에서는 추가 결함을 찾지 못했다. 송신부에서도 이번 범위의 추가 결함은 발견하지 못했다. 환경에 `cargo`가 없어 실행 검증은 하지 못했으며 코드 직접 대조로 판정했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r3_out
+################################################################
+tokens used
+74,744
+- [crates/coordinator/src/lib.rs:843](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:843) — **실제 결함**: `expect_neighbor_reports > 0`인데 `neighbor_report_db_path == None`이면 저장소 없이 신고를 계속 수신하고, 1026행에서 `NEIGHBOR_REPORT_ACCEPTED`까지 출력한다. `:memory:`는 fail-closed 하면서 더 비영속적인 `None`은 허용하므로 저장 보장이 성립하지 않는다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:5347](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5347) — **실제 결함(부분 단언)**: 시나리오 95는 `:memory:`만 검사하여 위의 저장소 경로 부재(`None`)를 놓친다. `ACCEPTED`·`STORED`·`NOT_NEWER` 부재 검사는 해당 실행에 대해서는 충분하다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:5267](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5267) — **실제 결함(공허한 단언)**: 신고자 기계·장치를 `row_93`의 복제 필드와만 비교한다. 이 일치는 저장소의 `decode_row()`가 이미 강제하므로, 송신자가 의도한 `fixture.agent_device_id`와 다른 신고자 기계가 몸통과 인덱스에 함께 저장되어도 통과한다. 적어도 `reporter_node_id`는 기대 송신자 값과 직접 대조해야 한다.
+
+- [crates/coordinator/src/lib.rs:950](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:950) — **서술 문제**: “아래는 전부 들어온 신고가 유발한 문제”의 예시에 여전히 “남의 Coordinator 앞”이 포함되지만, 그 오류인 `AddressedToAnotherCoordinator`는 바로 다음 분기에서 fail-closed로 제외됐다. 2라운드 수정 뒤 남은 낡은 설명이다.
+
+`AddressedToAnotherCoordinator`의 새 분류 자체와 968–978행의 세션 대조 근거는 코드와 정확히 일치하며, 시나리오 94에서는 추가 결함을 찾지 못했다. `Display`/`Error` 구현에도 결함이 없다. 환경에 `cargo`가 없어 실행 검증은 하지 못했고 코드 직접 대조로 판정했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r4_out
+################################################################
+tokens used
+100,818
+- `crates/coordinator/src/lib.rs:350, 404-419, 545-621, 853-887` — **실제 결함.** 저장소 경로·내구성 검사가 listener bind, 연결 수락, Lease 발급 및 Grant/ACK 뒤에 실행된다. 따라서 잘못된 구성에서도 Lease를 영속 발급하고 Agent가 수락한 뒤 Coordinator가 종료될 수 있다. “아예 시작하지 않는다”를 보장하려면 저장소를 `run()`의 bind 이전에 열고 검증해야 한다. `None`, `:memory:`, 빈 경로, open 실패가 모두 같은 문제다.
+
+- `crates/agent/src/lib.rs:147-149, 305-375, 999-1006` — **실제 결함.** `neighbor_report_rounds > 0`인데 대상이 없다는 검사가 연결과 Grant/ACK 이후에야 실행된다. 주석의 “시작하지 않는다”와 달리 Lease를 이미 수락한 뒤 실패한다. 빈 문자열·공백 대상도 송신 단계까지 통과한다. 이번 수정과 같은 성질로 빠진 관문이다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5355-5432` — **실제 결함(부분적인 단언).** 시나리오 95는 `run_handshake`를 사용하므로 Coordinator가 `READY`, `CONNECTION_ATTEMPT`, Grant/ACK까지 진행한 현재 구현도 통과한다. `READY` 부재, 연결/Lease 부작용 부재, `kind=storage`, Agent 미접속을 확인하지 않아 “시작하지 않는다”를 증명하지 못한다. 특히 경로 부재 경우는 오류 사유조차 확인하지 않는다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5315-5328` — **실제 결함(부분적인 단언).** 시나리오 94는 실패와 오류 문자열만 확인하고 `kind=protocol` 및 다음 연결 수락을 검사하지 않는다. 수신자 불일치를 잘못 `Storage`로 분류해 Coordinator 전체를 종료해도 통과한다. 현재 프로덕션 분류 자체는 `crates/coordinator/src/lib.rs:953-958, 1017-1020` 대조상 올바르다.
+
+- `crates/coordinator/src/lib.rs:212-217` — **서술 문제.** `neighbor_report_db_path == None`이면 “검증만 하고 버린다”고 설명하지만 현재 코드는 `expect_neighbor_reports > 0`일 때 거부한다.
+
+시나리오 93의 `fixture.agent_device_id` 직접 대조는 비공허하며, 저장된 몸통·최신 회차·대상에 대한 나머지 단언에서도 추가적인 중대 공백은 찾지 못했다. `neighbor_report_store.rs`의 `Display`/`Error` 구현과 현재 오류 variant 분류에서도 추가 프로덕션 결함은 찾지 못했다. 환경에 `cargo`가 없어 실행 검증은 못 했으며 코드 직접 대조로 판정했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r5_out
+################################################################
+tokens used
+83,043
+
+################################################################
+## review_wire_r5b_out
+################################################################
+tokens used
+91,552
+- [crates/coordinator/src/lib.rs:2156](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2156) — **실제 결함**: CLI에서 `--multi-agent true`이면 `run(config)`을 우회해 `multi_agent::run_multi_agent(config)`로 직행한다. 따라서 이번에 `run()`에 추가한 이웃 신고 저장소 시작 관문도 우회된다. `--expect-neighbor-reports 1`과 저장소 누락/`:memory:`를 함께 주어도 multi-agent 경로는 listener를 bind하며, 신고 기대 설정 자체도 무시한다. 시나리오 95는 기본 lane만 검사하므로 이 회귀를 잡지 못한다.
+
+- [crates/agent/src/lib.rs:328](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:328) — **실제 결함**: Agent는 대상 존재만 검사한 뒤 `multi_agent`이면 별도 세션으로 반환한다. 그 lane은 Grant/ACK만 수행하므로 `neighbor_report_rounds > 0`과 유효한 대상이 설정되어도 신고를 한 건도 보내지 않고 성공할 수 있다. Coordinator 쪽의 동일한 우회와 합쳐져, multi-agent 구성에서는 신고 관련 옵션이 양쪽 모두 조용히 무시된다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:328](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:328), [crates/cli/src/coordinator_agent_selftest.rs:5550](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5550) — **실제 결함**: 시나리오 96은 TCP 연결 시도 여부를 관측하지 않는다. `127.0.0.1:9`가 비어 있다고 가정할 뿐이며, 검사하는 `CONNECTION_ATTEMPT`는 Coordinator 출력이고 Agent 연결 함수는 그 표식을 출력하지 않는다. 대상 검사를 TCP 연결 직후로 옮긴 구현도 포트 9에서 연결이 성립하면 `NEIGHBOR_REPORT_REFUSED`와 빈 stdout으로 통과할 수 있다. 테스트가 직접 임시 listener를 소유하고 accept 여부를 확인해야 “연결조차 하지 않는다”를 증명한다.
+
+- [crates/cli/src/coordinator_agent_selftest.rs:326](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:326) — **서술 문제**: “연결 주소는 아무도 듣지 않는 곳”이라는 보장은 고정 포트 9로 성립하지 않는다. 환경에 따라 discard 서비스나 다른 프로세스가 점유할 수 있다.
+
+저장소를 `run()`에서 한 번 열고 순차 세션 사이에 `&mut`로 재사용하는 구조는 안전하다. 단일 `rusqlite::Connection` 소유권이 유지되고 각 기록은 독립 트랜잭션으로 commit/rollback된다. 시나리오 93·94의 저장·최신값·수신자 거부·`kind=protocol` 단언과 시나리오 95의 bind 순서 검사는 유효하며, `--accept-timeout-ms 3000`도 `READY` 검사를 무디게 만들지 않는다.
+
+환경에 `cargo`가 없어 컴파일 및 실행은 하지 못했고 코드 직접 대조로 판정했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r6_out
+################################################################
+tokens used
+111,606
+- `crates/agent/src/lib.rs:716`, `crates/coordinator/src/lib.rs:588` — **실제 결함**. `resume_protocol` 경로가 신고 송신 루프(`agent:1032`)와 수신 루프(`coordinator:905`)보다 먼저 반환한다. 따라서 `--resume-protocol`과 신고 옵션을 함께 주면 양쪽 모두 정상적으로 resume을 수행하면서 신고 옵션을 조용히 무시한다. multi-agent와 같은 성질의 미차단 lane이다.
+
+- `crates/agent/src/multi_agent.rs:49`, `crates/coordinator/src/multi_agent.rs:67` — **실제 결함**. 두 multi-agent 실행 함수가 공개되어 있으며 자체 조합 검사가 없다. 현재 저장소 내부 호출자는 각각 `agent::run()`과 `coordinator::run_from_args()`의 검사를 거치지만, 라이브러리 호출자가 공개 함수를 직접 부르면 신고 옵션 거부 관문을 우회한다.
+
+- `crates/coordinator/src/lib.rs:331`, `crates/coordinator/src/lib.rs:2171` — **실제 결함**. 공개 `run(CoordinatorConfig)`은 `config.multi_agent`를 전혀 분기하지 않는다. multi-agent 선택과 조합 검사는 CLI 진입점인 `run_from_args()`에만 있다. 코드 주석이 강조하는 “라이브러리 직접 호출도 관문을 통과한다”는 원칙과 맞지 않으며, `run(config)` 직접 호출은 lane 선택 자체를 조용히 무시한다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5467`, `crates/cli/src/coordinator_agent_selftest.rs:5508` — **실제 결함(부분적인 테스트 단언)**. 시나리오 95의 bind 순서 판별은 `:memory:` 경우에만 점유 포트를 사용한다. “경로 부재” 관문을 bind 뒤로 옮겨도, bind 후 `READY` 출력 전에 실패하면 해당 변이를 잡지 못하면서 최종 문구는 두 경우 모두 listener 이전에 멈춘다고 주장한다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5597`, `crates/cli/src/coordinator_agent_selftest.rs:5611` — **서술 문제**. 시나리오 97은 `READY` 부재만 검사하면서 오류 문구에서는 “listener를 열었다”라고 판정한다. bind 후 `READY` 전에 실패한 경우와 bind 전 거부를 구분하지 못한다. 조합 거부 자체는 종료 상태와 오류 문자열로 확인하지만, 시작 전/bind 전이라는 더 강한 보장은 측정하지 않는다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5559`, `crates/cli/src/coordinator_agent_selftest.rs:5577` — 새 `accept()` 관측에는 결함을 찾지 못했다. 자식 프로세스 종료를 기다린 뒤 nonblocking `accept()`를 호출하고, `WouldBlock`만 “연결 없음”으로 인정한다. 살아 있는 로컬 listener에 성공한 연결은 accept queue에 남으므로 기존 고정 포트 방식보다 실제 판별력이 있다.
+
+- 시나리오 93·94와 `neighbor_report_store.rs`의 `Display`/`Error` 구현에서는 추가 결함이나 과장된 설명을 찾지 못했다.
+
+`cargo`는 이 환경에 설치되어 있지 않아 빌드·테스트는 실행하지 못했으며, 위 판정은 코드 직접 대조 결과다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r7_out
+################################################################
+tokens used
+115,167
+- `crates/cli/src/coordinator_agent_selftest.rs:276`, `:283`, `:332`, `:5505`, `:5560`, `:5627` — **실제 결함(검증 공백)**. 93~97은 모두 CLI subprocess를 사용합니다. 따라서 `crates/coordinator/src/lib.rs:384`, `crates/coordinator/src/multi_agent.rs:71`, `crates/agent/src/multi_agent.rs:53`의 라이브러리 직접 호출 관문을 제거해도 해당 시나리오들은 통과합니다. 이번 수정의 핵심인 “CLI 우회 방지”를 직접 검증하는 테스트가 없습니다.
+
+- `crates/cli/src/coordinator_agent_selftest.rs:5505-5522` — **실제 결함(부분 단언)**. 점유 포트 순서 검사는 비영속·경로 부재·multi-agent만 포함합니다. `crates/coordinator/src/lib.rs:520`의 coordinator resume 조합은 전혀 실행하지 않으므로, resume 관문만 bind 뒤로 이동하거나 제거되는 회귀를 잡지 못합니다. 시나리오 96의 resume 항목은 Agent 측 검사일 뿐입니다.
+
+정적 대조 결과, 현재 구현 자체에서는 추가 우회 경로를 찾지 못했습니다. `unsupported_neighbor_report_lane()`은 양쪽 모두 `multi_agent`와 `resume_protocol` 조합을 덮고, 네 실행 진입점에도 배치되어 있습니다. 93·94·96·97의 기존 단언과 설명에서 별도의 공허한 단언이나 코드보다 강한 주장은 찾지 못했습니다.
+
+`cargo`가 설치되어 있지 않아 빌드와 테스트는 실행하지 못했고, 최종 복원된 소스를 직접 대조해 판정했습니다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r8_out
+################################################################
+tokens used
+73,722
+- **실제 결함 — resume 관문의 bind 순서 공백이 남아 있다.** [crates/coordinator/tests/neighbor_report_lane_guard.rs:80](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/tests/neighbor_report_lane_guard.rs:80)의 `the_lane_guard_runs_before_bind`는 이름과 달리 `--multi-agent` 조합만 시험한다([같은 파일:84](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/tests/neighbor_report_lane_guard.rs:84)). `run_refuses_the_resume_combination`은 임의 포트와 DB 경로 부재를 사용하므로 resume 관문을 bind 뒤로 옮겼을 때의 순서를 판별하지 못한다. 유효한 `--neighbor-report-db`와 점유 포트를 사용한 resume 조합이 필요하다.
+
+- **실제 결함 — 옮긴 coordinator lane 분기를 신규 crate 테스트가 고정하지 못한다.** [crates/coordinator/tests/neighbor_report_lane_guard.rs:107](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/tests/neighbor_report_lane_guard.rs:107)은 “신원이 하나라 거부된다”고 설명하지만, 실제 단언은 오류에 `이웃 신고`가 없다는 것뿐이다([같은 파일:114](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/tests/neighbor_report_lane_guard.rs:114)). [crates/coordinator/src/lib.rs:345](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:345)의 분기를 삭제해 순차 lane이 accept timeout으로 실패해도 이 테스트는 통과한다. 나머지 세 테스트도 순차 lane의 관문으로 통과하므로, 신규 4건만으로는 `run()`의 multi-agent 분기를 보호하지 못한다.
+
+- **서술 문제 — 분리 후 설명이 현재 코드와 모순된다.** [crates/coordinator/src/lib.rs:2129](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2129)와 [crates/agent/src/lib.rs:2031](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:2031)은 `parse_config_from_args()`가 `run`을 부른다고 설명하지만 실제로는 설정만 반환한다. 또한 [crates/coordinator/src/lib.rs:2210](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2210) 및 [crates/cli/src/coordinator_agent_selftest.rs:5622](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/coordinator_agent_selftest.rs:5622)은 multi-agent lane이 `run()`을 거치지 않는다고 서술하지만, 현재는 `run()`에서 분기한다.
+
+파싱 분리 자체에서는 필드·기본값·오류 전파의 누락을 찾지 못했고, 조사한 공개 실행 진입점 외의 프로덕션 관문 우회 경로도 찾지 못했다. `cargo`가 설치되어 있지 않아 테스트 실행은 불가능했으며 판정은 기준 커밋과 현재 코드의 직접 대조에 근거한다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r9_out
+################################################################
+tokens used
+87,907
+- `crates/agent/src/lib.rs:2031`, `crates/coordinator/src/lib.rs:2129` — **서술 문제**. `parse_config_from_args()`의 문서가 “관문을 지나 `run()`을 호출하며, 파싱은 이 함수가 하지 않는다”고 설명하지만 실제 함수는 설정만 파싱해 반환하고 `run()`을 호출하지 않는다. 바로 뒤 설명과도 모순된다.
+
+- `crates/agent/tests/neighbor_report_lane_guard.rs:3` — **서술 문제**. `run_from_args()` 관문이 먼저 걸려 `run()` 관문이 실행되지 않는다고 주장하지만, Agent의 `run_from_args()`는 별도 관문 없이 `run(config)`를 호출한다(`crates/agent/src/lib.rs:2155`). 따라서 selftest도 `run()` 관문은 실제로 실행한다. 직접 multi-agent 진입점 테스트의 필요성은 남지만 현재 설명은 과장됐다.
+
+- `crates/agent/tests/neighbor_report_lane_guard.rs:54` — **서술 문제**. resume lane이 “Grant/ACK만 하고 반환”한다고 적었지만 실제로는 `AgentSessionHello`와 `ResumeLeaseRequest`를 보내고 `ResumeLeaseResult`를 받는다(`crates/agent/src/lib.rs:522`). Grant/ACK는 multi-agent lane 설명이다.
+
+프로덕션 우회 경로와 신규 테스트의 관문 가림 문제는 찾지 못했다. Coordinator 순서 테스트는 유효한 신고 DB를 사용해 경로 관문 가림을 피하고 두 lane을 모두 측정한다. Agent 5건도 resume를 통한 `run()` 관문, 직접 multi-agent 관문, 대상 검사와 연결 전 순서를 각각 고정한다.
+
+이 환경에는 `cargo`가 없어 실행 검증은 하지 못했으며, 판정은 코드 직접 대조 결과다. 실제 동작 결함은 발견하지 못했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## review_wire_r10_out
+################################################################
+tokens used
+115,789
+- `crates/agent/src/lib.rs:294` — **서술 문제**. `unsupported_neighbor_report_lane()`의 rustdoc가 “정상 handshake 실행”, `ExecutionGrant` 수신, `AgentGrantAck` 송신, 출력 마커를 설명한다. 함수는 설정을 검사해 `Option<String>`만 반환한다. 9라운드에서 지적된 문서 이동 오류가 그대로 남았다.
+
+- `crates/agent/src/lib.rs:356`, `crates/agent/tests/neighbor_report_lane_guard.rs:65` — **서술 문제**. multi-agent lane을 “Grant/ACK만” 하는 다른 lane이라고 서술하지만 실제 경로는 `crates/agent/src/multi_agent.rs:48`의 `Hello → Grant → ACK`이다. resume 설명 자체는 고쳐졌지만 정정 문장이 새 부정확성을 만들었다.
+
+- `crates/coordinator/src/lib.rs:323` — **서술 문제**. `run()`을 “정상 handshake 한 번”이라고 문서화하지만, `:345`에서 multi-agent lane으로 분기하며 해당 lane은 `max_connections`개 연결을 동시에 처리한다. 현재 `run()`의 전체 동작을 설명하지 못한다.
+
+- `crates/coordinator/tests/neighbor_report_lane_guard.rs:3` — **서술 문제**. 관문이 “네 진입점”에 있고 selftest에서는 나머지가 한 번도 실행되지 않는다고 주장한다. 실제 호출 지점은 두 crate 합계 5곳이며, Agent `run_from_args()`에는 별도 관문이 없어 selftest가 Agent `run()` 관문을 실행한다.
+
+- `crates/agent/tests/neighbor_report_lane_guard.rs:20` — **실제 결함(테스트)**. `127.0.0.1:1`을 “연결이 거부되는 주소”라고 가정하지만 테스트가 그 포트를 점유하거나 폐쇄 상태를 보장하지 않는다. 따라서 환경에 따라 연결·타임아웃 경로가 달라질 수 있다. 시나리오 96처럼 테스트 소유 listener로 연결 시도 여부를 직접 관측해야 한다.
+
+프로덕션 관문을 우회하는 추가 공개 경로와, 다른 관문에 가려져 의도한 관문을 재지 못하는 신규 crate 테스트는 찾지 못했다. `cargo`는 이 환경에 없어 실행하지 못했으며 코드 직접 대조로 판정했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## r11_main_out
+################################################################
+tokens used
+92,461
+실제 결함: 없음.
+
+서술 문제: 없음.
+
+- `crates/agent/tests/neighbor_report_lane_guard.rs:51-65` — Agent 종료 후 확인하므로 타이밍 경쟁이 없다. 성공한 연결은 backlog에 남으며, 연결 존재 여부 확인에는 `accept()` 한 번이면 충분하다.
+- `crates/agent/tests/neighbor_report_lane_guard.rs:129-138` — 대조 테스트가 실제 연결 발생까지 요구해 “항상 거부” 변이를 방지한다.
+- `crates/agent/src/lib.rs:334-367`, `crates/agent/src/multi_agent.rs:49-59` — `run()`과 직접 multi-agent 진입 모두 관문을 통과한다.
+- `crates/coordinator/src/lib.rs:335-350,397-403,2218-2237`, `crates/coordinator/src/multi_agent.rs:67-71` — CLI, 기본/resume 및 직접 multi-agent 경로가 모두 보호된다.
+- 관문을 우회하는 추가 프로덕션 경로는 찾지 못했다.
+- 이 환경에는 `cargo`가 없어 테스트를 실행하지 못했으며, 코드 직접 대조로 판정했다.
+
+ACCEPTED
+
+################################################################
+## r11_narrative_out
+################################################################
+tokens used
+131,709
+- `crates/coordinator/src/multi_agent.rs:6-9` — “`87개 selftest 시나리오`”, “`87개가 전부 흔들린다`”고 적었다. 실제 selftest는 시나리오 97까지 존재하며, 93~97 중에도 저장소 구성·연결 전 관문처럼 프레임 순서를 검사하지 않는 시나리오가 있다. 개수와 “전부”가 모두 낡았다.
+
+- `crates/coordinator/src/lib.rs:325-327` — multi-agent lane이 “`max_connections`개 연결을 동시에 처리”한다고 적었다. 실제 코드는 연결마다 스레드를 만들지만, 동시 겹침을 기다리는 것은 `require_concurrent_sessions > 0`일 때뿐이며 기본값 0에서는 세션들이 시간상 순차로 끝날 수 있다(`crates/coordinator/src/multi_agent.rs:645-650`). 동시 처리 능력을 모든 연결의 실제 동시 실행으로 과장했다.
+
+- `crates/coordinator/src/multi_agent.rs:65-66` — “공유되는 것은 Lease 저장소와 replay 방어뿐”이라고 적었다. 실제 `Shared`에는 `config`, `keyring`, `served`, `overlap`, `Condvar`, `peak_concurrent`도 들어가 모든 세션이 공유한다(`190-204`).
+
+- `crates/coordinator/src/multi_agent.rs:310-315` — replay 검사를 “타입으로 확인”한다고 적었다. 실제 `require_replay_checked()`는 동일한 `Verified` 값의 상태를 실행 중 검사해 `Result`를 반환하는 런타임 관문이며, typestate로 사용을 강제하지 않는다. 호출부도 `.map_err(...)`로 실패를 처리한다.
+
+- `crates/agent/src/multi_agent.rs:182-190` — 테스트 이름은 `each_agent_derives_a_distinct_hello_nonce`, 설명은 nonce가 같으면 “두 번째 Agent의 Hello가 replay로 거부된다”고 주장한다. 실제 단언은 `"agent-a"`와 `"agent-b"` 두 입력의 해시가 우연히 다른지만 확인한다. 또한 replay nonce는 sender별 namespace라는 설명이 `crates/agent/src/lib.rs:1965-1970`에 있어, 서로 다른 Agent의 동일 nonce가 곧 두 번째 Agent의 replay 거부를 뜻하지도 않는다.
+
+- `crates/coordinator/src/multi_agent.rs:657-675` — 동시 세션 수가 시간 안에 차지 않으면 오류 문구가 “서버가 순차 처리하고 있다”고 단정한다. 실제 조건은 단지 `open < required`인 채 시간 초과한 것이다. 클라이언트 수 부족, 연결·Hello 실패, 잘못된 `required` 설정도 같은 경로에 들어오므로 순차 서버라고 판정할 수 없다.
+
+- `crates/coordinator/src/lib.rs:399-400,2231-2234` — 지원하지 않는 lane 조합 오류를 `kind=storage`라고 출력한다. 실제 검사는 `multi_agent`/`resume_protocol`과 신고 옵션의 구성 충돌이며 저장소 연산을 하지 않는다. `crates/cli/src/coordinator_agent_selftest.rs:5539-5542,5651-5652`도 multi-agent 구성 충돌이 `kind=storage`여야 한다고 잘못 고정한다.
+
+- `crates/coordinator/src/lib.rs:435-438` — 비영속 저장소이면 “여러 이웃의 관측을 모아 둘 수 없다”고 적었다. 실제 `:memory:` 저장소도 하나의 `neighbor_store`로 열려 accept loop 밖에서 유지되므로 프로세스가 살아 있는 동안 여러 신고를 모을 수 있다. 잃는 보장은 재시작 내구성이다. `crates/cli/src/coordinator_agent_selftest.rs:5459-5463`도 `:memory:`가 세션마다 열렸다 닫혀 관측을 모을 수 없다고 같은 잘못을 반복한다.
+
+- `crates/coordinator/tests/neighbor_report_lane_guard.rs:132-151` — 테스트 이름은 `a_lane_without_neighbor_reports_is_not_refused`다. 실제 테스트는 `run(cfg).expect_err(...)`로 그 lane이 `MULTI_AGENT_REFUSED`되어야 한다고 단언한다. 확인하는 것은 이웃 신고 관문이 거부하지 않는다는 것뿐이며, 이름은 lane 자체가 거부되지 않는다고 더 강하게 말한다.
+
+- `crates/agent/tests/neighbor_report_lane_guard.rs:62-65,124-137` — “연결이 실제로 일어났음까지 확인한다” 및 `a_lane_without_neighbor_reports_is_not_refused`라고 적었다. 실제 `connected`는 `accept()`가 `WouldBlock`이 아닌 모든 경우를 `true`로 처리하므로, 다른 accept 오류도 연결 성공으로 센다. 또한 오류에서 `NEIGHBOR_REPORT_REFUSED` 문자열이 없는지만 확인할 뿐 다른 거부가 없었다고 단언하지 않는다.
+
+- `crates/coordinator/src/neighbor_report_store.rs` — 지적 없음.
+
+CHANGES_REQUESTED
+
+################################################################
+## r11_bypass_out
+################################################################
+tokens used
+104,350
+판정: 우회 경로가 있다. 공개 multi-agent 진입점이 실제 lane이 아니라 설정 필드만 검사하므로, 라이브러리 호출자가 `multi_agent=false`로 직접 호출하면 관문을 통과한다.
+
+## 주요 결함
+
+1. Coordinator 공개 진입점 우회
+
+경로:
+
+`CoordinatorConfig { expect_neighbor_reports: 1, multi_agent: false, resume_protocol: false, ... }`
+→ [`multi_agent::run_multi_agent()`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:67)
+→ [`unsupported_neighbor_report_lane()` 호출](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:71)
+→ 판정 함수가 `config.multi_agent == false`라 통과([lib.rs:524](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:524))
+→ listener bind([multi_agent.rs:106](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:106))
+→ `Hello → Grant → ACK`만 처리([multi_agent.rs:207](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:207), [multi_agent.rs:284](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:284)).
+
+이 모듈에서 `neighbor` 참조는 관문 호출 한 곳뿐이다. 신고 저장소를 열거나 신고를 수신하지 않는다. `extra_agents`에 유효한 추가 신원을 넣으면 실제 bind와 세션 실행까지 도달한다.
+
+즉, 함수 자체가 multi-agent lane인데 관문은 호출된 함수가 아니라 신뢰할 수 없는 `config.multi_agent`만 보고 있다.
+
+2. Agent 공개 진입점도 같은 방식으로 우회
+
+경로:
+
+`AgentConfig { neighbor_report_rounds: 1, multi_agent: false, resume_protocol: false, ... }`
+→ [`multi_agent::run_multi_agent_session()`](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/multi_agent.rs:49)
+→ [관문 호출](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/multi_agent.rs:53)
+→ `multi_agent == false`라 통과([lib.rs:294](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:294))
+→ Coordinator 연결([multi_agent.rs:59](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/multi_agent.rs:59))
+→ `Hello → Grant → ACK`
+→ 신고를 한 건도 보내지 않고 성공([multi_agent.rs:138](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/multi_agent.rs:138), [multi_agent.rs:158](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/multi_agent.rs:158)).
+
+직접 진입점은 `run()`의 신고 대상 검사([lib.rs:343](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:343))도 우회한다. 따라서 대상이 없더라도 위 경로로 실행할 수 있다.
+
+현재 테스트도 직접 multi-agent 진입점을 호출할 때 `--multi-agent true`를 함께 넣어 이 반례를 놓친다([neighbor_report_lane_guard.rs:146](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/tests/neighbor_report_lane_guard.rs:146), [neighbor_report_lane_guard.rs:152](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/tests/neighbor_report_lane_guard.rs:152)).
+
+## 다른 누락 조합
+
+Coordinator 기본 lane에는 신고 수신 전에 종료하는 세 가지 모드가 더 있다.
+
+- `drop_connection_after_ack_once`: [lib.rs:726](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:726)
+- `disconnect_after_ack`: [lib.rs:747](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:747)
+- `send_grant_twice`: [lib.rs:760](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:760)
+
+신고 수신 루프는 그 뒤인 [lib.rs:953](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:953)에 있다. 그런데 관문은 이 세 필드를 전혀 판정하지 않는다.
+
+특히 구체적인 불일치 경로는 다음과 같다.
+
+`Coordinator: expect_neighbor_reports=1, send_grant_twice=true`
++
+`Agent: neighbor_report_rounds=1, expect_replay=true`
+→ 양쪽 관문 통과
+→ Agent가 ACK 뒤 신고를 전송([agent/lib.rs:1059](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1059))
+→ Coordinator는 신고 수신 루프 대신 replay 전용 읽기로 들어가 해당 신고를 “예상하지 못한 추가 메시지”로 처리([coordinator/lib.rs:764](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:764))
+→ 신고는 저장되지 않는다.
+
+## 전체 공개 API 조사 결과
+
+세션 실행으로 이어지는 공개 함수는 다음뿐이다.
+
+- Coordinator: `run`([lib.rs:335](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:335)), `run_from_args`([lib.rs:2218](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2218)), `multi_agent::run_multi_agent`
+- Agent: `run`([lib.rs:334](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:334)), `run_from_args`([lib.rs:2166](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:2166)), `multi_agent::run_multi_agent_session`
+
+`parse_config_from_args`, 저장소 API, owner-panel API, `exec::execute*`, `start_checkpoint_id`, `validate_device_id`는 이 세션 실행 함수로 재진입하지 않는다. `exec::execute*`는 `AgentConfig`나 이웃 신고 옵션을 받지 않으므로 이 관문의 우회 진입점은 아니다.
+
+CLI는 Coordinator와 Agent 모두 `run_from_args`만 호출한다([main.rs:133](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/main.rs:133), [main.rs:140](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/main.rs:140)). 따라서 위 두 직접 multi-agent 우회는 CLI가 아니라 라이브러리 호출자에게 열려 있다.
+
+## 관문 이후 필드 변이
+
+관문이 읽는 네 필드는 관문 이후 변경되지 않는다.
+
+- Agent 재접속 clone은 `connection_attempt`만 변경한다([lib.rs:478](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:478)).
+- Coordinator multi-agent clone은 Agent별 ID 필드만 변경한다([multi_agent.rs:371](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/multi_agent.rs:371)).
+- 관련 필드는 일반 정수·bool이고 실행 중 가변 참조나 interior mutability로 노출되지 않는다.
+
+따라서 우회의 원인은 관문 이후 변이가 아니라 “직접 호출된 lane과 `config.multi_agent` 값이 다를 수 있음”이다.
+
+## 양쪽 판정 및 lane 수 대조
+
+정상 `run()` 경로에서 실질적인 lane 선택자는 양쪽 모두 두 개다.
+
+- Coordinator: `multi_agent`([lib.rs:233](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:233)), `resume_protocol`([lib.rs:250](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:250))
+- Agent: `multi_agent`([lib.rs:160](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:160)), `resume_protocol`([lib.rs:286](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:286))
+
+신고 횟수와 이 두 값이 동일하게 맞춰진 정상 진입에서는 양쪽 관문식이 서로 같다. 한쪽만 거부하는 논리식 차이는 없다.
+
+그러나 공개 multi-agent 함수 자체가 세 번째 lane 선택 수단인데도 양쪽 관문 모두 이를 세지 않는다. 또한 Coordinator의 세 ACK 이후 조기 종료 모드도 신고 수신 가능성 대조에서 빠져 있다. 따라서 “모든 실행 경로가 관문으로 보호된다”는 불변식은 성립하지 않는다.
+
+CHANGES_REQUESTED
+
+################################################################
+## r12_out
+################################################################
+tokens used
+119,642
+`cargo`가 없어 빌드·테스트는 실행하지 못했고, 코드를 직접 대조했다.
+
+- **서술 문제** — `crates/coordinator/src/lib.rs:326`: multi-agent lane이 `max_connections`개 연결을 “동시에” 처리한다고 단정한다. 실제로 `max_connections`는 총 accept 수이며(`crates/coordinator/src/multi_agent.rs:138-159`), 스레드가 동시 처리를 허용할 뿐 실제 중첩을 보장하지 않는다. 이번에 고친 동시성 원인 단정과 같은 종류의 새 부정확성이다.
+- **서술 문제** — `crates/coordinator/src/lib.rs:568-578`, `crates/coordinator/tests/neighbor_report_lane_guard.rs:172-183`: `--drop-connection-after-ack-once`가 항상 ACK 직후 세션을 끝낸다고 설명한다. 실제 조기 종료는 `max_connections > 1 && connection_attempt == 0`일 때뿐이다(`crates/coordinator/src/lib.rs:768-786`). 테스트의 기본 `max_connections`는 1이므로, 세 번째 사례는 실제 “ACK 조기 종료 모드”가 활성화되는 구성을 사용하지 않는다. 관문 자체는 플래그 조합을 거부하지만 설명과 반례 고정 주장이 실제 실행 조건보다 강하다.
+- **서술 문제** — `crates/cli/src/coordinator_agent_selftest.rs:5493`: 바로 위 루프에는 비영속 저장소와 경로 부재, 두 경우만 있는데 “이 루프의 세 경우”라고 적었다.
+
+`NeighborReportLane` 전달은 확인한 모든 프로덕션 호출부에서 올바르다. 미분기 진입점은 `lane_from_config()`를 쓰고, 두 multi-agent 직접 진입점은 `NeighborReportLane::MultiAgent`를 명시한다. 순차 수신 루프 전의 구성 기반 조기 종료 경로도 resume 및 세 ACK 관련 플래그 외에 추가 우회는 발견하지 못했다. 실제 관문 우회 결함은 발견하지 못했다.
+
+CHANGES_REQUESTED
+
+################################################################
+## r13b_out
+################################################################
+tokens used
+103,618
+`cargo`가 설치되어 있지 않아 테스트를 실행하지 못했고, 코드를 직접 대조했다.
+
+- `crates/coordinator/src/lib.rs:562` — **서술 문제**. “세 test hook은 ACK 직후 세션을 끝낸다”는 여전히 부정확하다. `drop_connection_after_ack_once`는 `max_connections > 1 && connection_attempt == 0`일 때만 끝낸다(`crates/coordinator/src/lib.rs:775-778`). 바로 아래의 정정 주석과도 모순된다.
+- `crates/coordinator/tests/neighbor_report_lane_guard.rs:181` — **서술 문제**. 테스트 이름 `ack_only_modes_are_refused_with_neighbor_reports`는 기본 `max_connections == 1`에서 동작하지 않는 `drop_connection_after_ack_once`까지 “ACK-only mode”라고 부른다. 테스트 본문의 정정된 설명보다 이름이 강하다.
+
+실제 결함이나 관문을 우회하는 프로덕션 경로는 찾지 못했다. Agent·Coordinator의 `run()` 및 직접 multi-agent 진입점 모두 신고 옵션 조합을 연결/bind 전에 거부한다.
+
+CHANGES_REQUESTED
+
+################################################################
+## r14_out
+################################################################
+tokens used
+120,297
+`cargo`와 `rustfmt`가 없어 테스트 실행은 하지 못했으며, 대상 파일을 코드로 직접 대조했다. `git diff --check`는 통과했다.
+
+지적 없음 — 실제 결함과 서술 문제 모두 발견하지 못했다. 13라운드의 두 정정은 코드와 일치하며, 낡은 상충 문장이나 프로덕션 관문 우회 경로도 확인되지 않았다.
+
+ACCEPTED
+

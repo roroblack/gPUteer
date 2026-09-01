@@ -291,7 +291,49 @@ pub struct AgentConfig {
     pub resume_fence_epoch: u64,
 }
 
-/// 정상 handshake 한 번을 실행한다.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NeighborReportLane {
+    /// `run()` 이 직접 도는 경로 — **유일하게 신고를 보낸다.**
+    Sequential,
+    /// `multi_agent::run_multi_agent_session()` — 송신 루프가 없다.
+    MultiAgent,
+}
+
+/// 설정만 보고 lane 을 고른다 — 아직 분기하지 않은 자리에서만 쓴다.
+pub(crate) fn lane_from_config(config: &AgentConfig) -> NeighborReportLane {
+    if config.multi_agent {
+        NeighborReportLane::MultiAgent
+    } else {
+        NeighborReportLane::Sequential
+    }
+}
+
+pub(crate) fn unsupported_neighbor_report_lane(
+    config: &AgentConfig,
+    lane: NeighborReportLane,
+) -> Option<String> {
+    if config.neighbor_report_rounds == 0 {
+        return None;
+    }
+    if lane == NeighborReportLane::MultiAgent {
+        return Some(
+            "NEIGHBOR_REPORT_REFUSED: multi-agent lane 은 이웃 신고를 보내지 않는다 — --neighbor-report-rounds 와 함께 쓸 수 없다"
+                .to_string(),
+        );
+    }
+    if config.resume_protocol {
+        return Some(
+            "NEIGHBOR_REPORT_REFUSED: resume 경로는 이웃 신고 송신에 닿기 전에 반환한다 — --neighbor-report-rounds 와 --resume-protocol 을 함께 줄 수 없다"
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// 이 Agent 를 실행한다 — lane 선택도 여기서 한다.
+///
+/// ★ 기본은 정상 handshake 한 번이지만, `multi_agent` 가 켜져 있으면
+///   그 lane 으로 분기한다. 아래 설명은 기본 lane 의 것이다.
 ///
 /// Coordinator 에 연결해 `ExecutionGrant` 를 받아 검증하고, 서명된
 /// `AgentGrantAck` 를 돌려준다. 성공하면 `stdout` 에
@@ -302,6 +344,13 @@ pub struct AgentConfig {
 /// `RESULT ok=true` 는 Job 완료가 아니다. 이 stub은 entrypoint를 실행하지
 /// 않으며, 시작 디렉터리에는 데이터 파일과 `manifest.json`도 없으므로
 /// 이 마커만으로 resume 후보나 `COMMITTED` 근거를 만들 수 없다.
+/// 이웃 신고 옵션이 **이 lane 에서 실제로 동작하는가**를 본다.
+///
+/// ★ 관문을 CLI 진입점에만 두면 라이브러리 호출자가 지나쳐 간다(독립 검수
+///   6라운드 지적). 그래서 **각 lane 이 실제로 시작하는 자리**마다 둔다.
+///
+/// ★ 구현하지 않은 조합은 거부한다 — 받아 놓고 안 하는 것이 가장 나쁘다.
+///   운영자는 신고가 모이는 줄 안다.
 pub fn run(config: AgentConfig) -> Result<(), String> {
     // ★ **신고 대상은 연결하기 전에 확인한다**(독립 검수 4라운드 지적).
     //
@@ -328,13 +377,11 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         }
     }
     // ★ **multi-agent lane 은 이웃 신고를 보내지 않는다**(독립 검수 5라운드
-    //   지적). 그 lane 은 Grant/ACK 만 하고 끝나므로, 신고 옵션을 줘도
-    //   한 건도 안 보내고 **성공으로 끝난다** — 조용한 무시다.
-    if config.multi_agent && config.neighbor_report_rounds > 0 {
-        return Err(
-            "NEIGHBOR_REPORT_REFUSED: multi-agent lane 은 이웃 신고를 보내지 않는다 —              --neighbor-report-rounds 와 --multi-agent 를 함께 줄 수 없다"
-                .to_string(),
-        );
+    //   지적). 그 lane 은 `Hello -> Grant -> ACK` 을 하고 끝나므로(10라운드
+    //   정정 — 전에 "Grant/ACK 만" 이라 썼다), 신고 옵션을 줘도 한 건도
+    //   안 보내고 **성공으로 끝난다** — 조용한 무시다.
+    if let Some(message) = unsupported_neighbor_report_lane(&config, lane_from_config(&config)) {
+        return Err(message);
     }
     if config.multi_agent {
         return multi_agent::run_multi_agent_session(&config);
@@ -2005,11 +2052,13 @@ fn derive_renew_nonce(lease_id: &str, connection_attempt: u32, round: u64) -> Ve
     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
 }
 
-/// `--flag value` 쌍으로 이루어진 CLI 인자를 [`AgentConfig`] 로
-/// 파싱해 [`run`] 을 부른다. `crates/coordinator/src/lib.rs::run_from_args`
-/// 와 같은 이유로 `crates/cli` 대신 여기(Agent 스트림)가 인자 의미를
-/// 정의한다.
-pub fn run_from_args(args: &[String]) -> Result<(), String> {
+/// `--flag value` 쌍으로 이루어진 CLI 인자를 설정으로 바꾸기만 한다 —
+/// lane 선택도 관문도 여기서 하지 않는다.
+///
+/// ★ `run_from_args` 에서 떼어냈다(독립 검수 7라운드). 관문이 실제로
+///   각 진입점에 있는지 재려면, 라이브러리 호출자처럼 설정을 만들어
+///   진입점을 **직접** 부를 수 있어야 한다.
+pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
     let flags = parse_flags(args)?;
 
     let config = AgentConfig {
@@ -2121,6 +2170,21 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .unwrap_or_default(),
         resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
     };
+    Ok(config)
+}
+
+/// CLI 인자를 [`parse_config_from_args`] 로 설정으로 바꾼 뒤 실행한다.
+/// 파싱 자체는 이 함수가 하지 않는다.
+///
+/// `crates/coordinator/src/lib.rs::run_from_args` 와 같은 이유로
+/// `crates/cli` 대신 여기(Agent 스트림)가 인자 의미를 정의한다.
+///
+/// ★ 이 함수 자체에는 관문이 없다 — 설정을 [`run`] 에 넘길 뿐이고
+///   관문은 거기에 있다. 따라서 selftest 도 `run()` 의 관문은 실제로
+///   실행한다. 라이브러리 호출자에게만 보이는 것은 multi-agent lane
+///   진입점의 관문이다.
+pub fn run_from_args(args: &[String]) -> Result<(), String> {
+    let config = parse_config_from_args(args)?;
 
     run(config)
 }

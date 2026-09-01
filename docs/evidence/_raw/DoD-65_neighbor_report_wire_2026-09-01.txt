@@ -1,0 +1,137 @@
+DoD-65 — 이웃 신고 wire 연결(송신·수신·저장) 실측 기록
+=========================================================
+측정: 2026-09-01
+Windows 개발 기계(cargo 1.97.1) + x600 WSL2 /mnt/e (cargo 1.89.0)
+
+
+1. Windows — coordinator-agent-selftest
+-----------------------------------------
+$ cargo build -p gputeer-cli        (오류 0)
+$ ./target/debug/gputeer.exe coordinator-agent-selftest
+
+run1 exit=0 scenarios=97
+run2 exit=0 scenarios=97
+run3 exit=0 scenarios=97
+
+신규 시나리오 93~97:
+  93) 이웃 신고가 wire 를 건너 영속 저장소에 남는다
+  94) 다른 Coordinator 앞으로 온 신고는 세션 거부(kind=protocol), DB 불변
+  95) 저장소 구성 오류(비영속/경로 부재/multi-agent)면 listener 를 열기 전에 멈춘다
+      — 세 경우 전부 **점유 포트**로 순서를 잰다
+  96) 잘못된 신고 구성(대상 없음/공백/multi-agent/resume)이면 Agent 가 연결조차 하지 않는다
+      — 테스트가 자기 listener 를 열고 accept() 가 WouldBlock 인지 확인
+  97) 구현하지 않은 lane 조합(multi-agent)은 조용히 무시하지 않고 거부한다
+
+
+2. Windows — 워크스페이스 전체
+--------------------------------
+$ cargo test --workspace
+passed=826  failed=0  errors=0
+
+  (이 조각 착수 전 816 — 신규 crate 테스트 10건이 늘어난 전부이고 회귀 0)
+
+
+3. x600 WSL2 (/mnt/e/gputeer-work/build/gputeer) — Linux
+----------------------------------------------------------
+$ cargo test -p gputeer-coordinator -p gputeer-agent
+합계 242 passed / 0 failed
+
+  그중 이 조각의 신규 suite:
+    neighbor_report_lane_guard (coordinator)   6 passed
+    neighbor_report_lane_guard (agent)         4 passed
+
+★ x600 에서 selftest **전체**는 시나리오 80(cgroup memory 위임 부재)에서
+  멈춘다 — `DoD-57` 이 기록한 환경 조건이고 이번 변경과 무관하다.
+  따라서 시나리오 93~97 은 **Windows 에서만 측정됐다.**
+  반면 신규 crate 테스트 9건은 **양쪽 플랫폼에서 측정됐다.**
+
+
+4. 뮤테이션 16건 — 전부 지정 테스트를 동작 수준에서 실패시켰다
+----------------------------------------------------------------
+[wire 경로 — selftest 시나리오가 잡는다]
+  W1  수신자(coordinator_device_id) 대조 제거      -> 94)
+  W2  저장소를 아예 안 부름                        -> 93)
+  W3  저장소를 아예 안 엶                          -> 93)
+  W4  영속성 관문 제거                             -> 95)
+  W5  검사보다 먼저 저장                           -> 93)
+  W6  DB 경로 부재 허용                            -> 95)
+  W7  Agent 대상 검사 제거                         -> 96)
+  W8  Coordinator multi-agent lane 조합 허용       -> 95)
+  W9  Agent multi-agent lane 조합 허용             -> 96)
+  W10 Agent resume lane 조합 허용                  -> 96)
+
+[관문 자리 — crate 테스트가 잡는다]
+  G1  Coordinator run() 관문 호출 제거             -> run_refuses_the_resume_combination
+  G2  coordinator::run_multi_agent() 관문 제거     -> run_refuses_the_multi_agent_combination
+  G3  Agent run() 관문 호출 제거                   -> run_refuses_the_resume_combination
+  G4  agent::run_multi_agent_session() 관문 제거   -> the_multi_agent_entry_point_refuses_...
+
+[8라운드 지적 뒤 추가]
+  R1  Coordinator run() 의 lane 분기 삭제          -> a_lane_without_neighbor_reports_is_not_refused
+  R2  Coordinator resume lane 관문 무력화          -> the_lane_guard_runs_before_bind_for_every_lane
+
+★ W8 은 처음에 "97 이 잡는다" 고 적었으나 재현해 보니 **95 가 먼저** 잡는다
+  (그 lane 이 MULTI_AGENT_REFUSED 로 죽어 "구성 오류로 끝나지 않았다" 에 걸린다).
+  라벨을 사실에 맞게 고쳤다 — 뮤테이션 표도 과장하면 안 된다.
+
+★ G1 은 `run()` 과 `run_from_args` 의 관문 코드가 **글자까지 같아** 문자열로
+  지목할 수 없었다. 앞 주석을 닻으로 삼아 `run()` 쪽만 지웠다.
+
+
+5. 순서를 어떻게 값으로 드러냈는가
+------------------------------------
+"관문이 bind 보다 먼저인가" 는 `READY` 부재로는 증명되지 않는다 —
+"bind 는 했는데 READY 전에 죽었다" 와 구분이 안 된다.
+
+  기법 A (점유 포트)
+    이미 다른 listener 가 잡은 포트를 준다.
+      관문이 먼저면  -> 구성/lane 오류로 끝난다
+      관문이 나중이면 -> "bind 실패" 로 끝난다
+    두 오류 문구가 다르므로 순서가 값이 된다.
+
+  기법 B (테스트가 listener 를 소유)
+    테스트가 자기 listener 를 열고 그 주소를 Agent 에게 준다.
+    끝난 뒤 accept() 가 WouldBlock 이면 **연결조차 없었다**.
+
+  기법 C (연결이 거부되는 주소)
+    Agent crate 테스트는 127.0.0.1:1 을 준다.
+    관문이 늦으면 오류가 연결 실패로 바뀐다 — 그 차이가 순서를 드러낸다.
+
+6. 11라운드 뒤 추가된 뮤테이션
+--------------------------------
+  S1  Agent 관문을 "항상 거부" 로     -> the_report_guard_stays_out_of_a_lane_that_wants_no_reports
+  S2  Agent 관문 제거                 -> run_refuses_unsupported_lane_combinations_before_connecting
+
+★ S1 은 **대조 테스트가 없으면 못 잡는다** — "관문이 걸린다" 만 재는 테스트는
+  관문을 항상 켜도 전부 통과한다. 그래서 반대 방향 대조를 둔다:
+  신고를 안 보내는 lane 에서는 관문이 걸리지 않고 **연결이 실제로 일어난다.**
+
+
+7. 관문 호출 지점 — 다섯 곳
+------------------------------
+  Coordinator  run()  ·  run_from_args()  ·  multi_agent::run_multi_agent()
+  Agent        run()  ·  multi_agent::run_multi_agent_session()
+
+★ 관문은 `NeighborReportLane` 을 **인자로 받는다**(11라운드 우회 조사).
+  전에는 `config.multi_agent` 를 읽어 판정했는데, `run_multi_agent()` 는
+  **그 함수 자체가 그 lane** 이라 플래그를 끄고 부르면 통과했다.
+  이제 lane 진입점은 자기 lane 을 명시하고, 아직 분기하지 않은 자리만
+  `lane_from_config()` 로 고른다.
+
+★ 거부 대상:
+    multi-agent lane                      (수신/송신 루프 없음)
+    resume 경로                            (그보다 먼저 반환)
+    --send-grant-twice                     (ACK 직후 끝낸다)
+    --disconnect-after-ack                 (ACK 직후 끝낸다)
+    --drop-connection-after-ack-once       (max_connections > 1 이고 첫
+                                            연결일 때만 끝낸다 — 그래도
+                                            **보장할 수 없으면** 안 받는다)
+
+
+8. 오류 종류를 원인에 맞춘다
+-------------------------------
+  kind=storage       저장소 문제(비영속 · 경로 부재)
+  STARTUP_REFUSED    구성 충돌(lane · ACK 조기 종료 플래그)
+
+★ 전에는 lane 충돌도 `kind=storage` 로 찍었고 **테스트가 그 잘못된 분류를
+  고정**하고 있었다(11라운드 서술 감사).

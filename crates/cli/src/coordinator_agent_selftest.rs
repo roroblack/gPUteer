@@ -5458,9 +5458,14 @@ pub fn run() -> Result<String, String> {
 
     // ── 95) 저장소 구성이 잘못되면 아예 시작하지 않는다 ────────────
     //
-    // :memory: 도 경로 부재도 세션마다 열렸다 닫히거나 아무 데도 안 남는다 —
-    // 여러 이웃의 관측을 "모아" 둘 수가 없는데(ADR-033 §7 이 요구하는 것이
-    // 그 모으기다) 로그에는 받은 것처럼 찍힌다.
+    // :memory: 는 프로세스가 죽는 순간 통째로 사라지고, 경로 부재는 아무 데도
+    // 안 남는다 — `ADR-033` §7 이 요구하는 "모으기" 가 재시작을 못 넘는데
+    // 로그에는 받은 것처럼 찍힌다.
+    //
+    // ★ 11라운드 정정 — 전에 ":memory: 는 세션마다 열렸다 닫혀 모을 수 없다"
+    //   고 썼는데 사실이 아니다. `neighbor_store` 는 accept loop **밖**에서
+    //   한 번 열려 유지되므로 프로세스가 사는 동안은 여러 신고를 모은다.
+    //   잃는 것은 **재시작 내구성**이다.
     //
     // ★ Coordinator 만 띄워 본다 — run_handshake 는 READY 를 기다리는데,
     //   bind 전에 죽는 것이 바로 우리가 확인하려는 동작이다.
@@ -5485,45 +5490,69 @@ pub fn run() -> Result<String, String> {
         if out.contains("NEIGHBOR_REPORT_ACCEPTED ") || out.contains("NEIGHBOR_REPORT_STORED ") {
             return Err(format!("95) {label} 구성인데 신고를 받아들였다: {out:?}"));
         }
-        // 사유가 식별되는가 — 구성 오류는 storage 로 분류한다.
+        // 사유가 식별되는가 — 이 루프의 두 경우는 **저장소** 문제다.
         if !err.contains("kind=storage") {
             return Err(format!(
-                "95) {label} 구성 오류가 storage 로 분류되지 않는다: {err:?}"
+                "95) {label} 저장소 구성 오류가 storage 로 분류되지 않는다: {err:?}"
             ));
         }
     }
-    // ★ **관문이 bind 보다 먼저인지 자체를 잰다**(독립 검수 5라운드 지적).
+    // ★ **관문이 bind 보다 먼저인지 자체를 잰다**(독립 검수 5·6라운드 지적).
     //
     //   `READY` 부재만으로는 "bind 는 했는데 READY 전에 죽었다" 와 구분이
     //   안 된다. 그래서 **이미 점유된 포트**를 준다 —
-    //     · 관문이 먼저면  저장소 구성 오류로 끝난다
+    //     · 관문이 먼저면  구성 오류로 끝난다
     //     · 관문이 나중이면 bind 실패로 끝난다
     //   두 오류 문구가 다르므로 순서가 값으로 드러난다.
-    let occupied = std::net::TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("95) 포트 점유 실패: {e}"))?;
-    let occupied_addr = occupied
-        .local_addr()
-        .map_err(|e| format!("95) 점유 주소를 못 읽었다: {e}"))?
-        .to_string();
-    let (ok_order, _out_order, err_order) = run_coordinator_only_at(
-        &fixture,
-        &occupied_addr,
-        &["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
-    )?;
-    if ok_order {
-        return Err("95) 점유된 포트에서 정상 종료했다".to_string());
+    //
+    //   ★ 세 경우 **전부**에 적용한다 — 6라운드 전에는 :memory: 에만 걸어
+    //     두어, 나머지 관문을 bind 뒤로 옮겨도 잡지 못했다.
+    // ★ 기대 표지가 경우마다 다르다(독립 검수 11라운드) — 저장소 문제는
+    //   `kind=storage`, lane 충돌은 `STARTUP_REFUSED` 다. 원인이 다르면
+    //   이름도 달라야 한다.
+    for (label, marker, extra_order) in [
+        (
+            "비영속(:memory:)",
+            "kind=storage",
+            vec!["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+        ),
+        ("경로 부재", "kind=storage", vec!["--expect-neighbor-reports", "1"]),
+        (
+            "multi-agent 조합",
+            "STARTUP_REFUSED",
+            vec![
+                "--expect-neighbor-reports",
+                "1",
+                "--neighbor-report-db",
+                neighbor_db,
+                "--multi-agent",
+                "true",
+            ],
+        ),
+    ] {
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("95) 포트 점유 실패: {e}"))?;
+        let occupied_addr = occupied
+            .local_addr()
+            .map_err(|e| format!("95) 점유 주소를 못 읽었다: {e}"))?
+            .to_string();
+        let (ok_order, _out_order, err_order) =
+            run_coordinator_only_at(&fixture, &occupied_addr, &extra_order)?;
+        if ok_order {
+            return Err(format!("95) {label} 인데 점유된 포트에서 정상 종료했다"));
+        }
+        if err_order.contains("bind 실패") {
+            return Err(format!(
+                "95) {label} 의 관문보다 bind 가 먼저 일어났다 — 소켓을 연 뒤에 죽는다: {err_order:?}"
+            ));
+        }
+        if !err_order.contains(marker) {
+            return Err(format!(
+                "95) {label} 이 {marker} 로 끝나지 않았다: {err_order:?}"
+            ));
+        }
+        drop(occupied);
     }
-    if err_order.contains("bind 실패") {
-        return Err(format!(
-            "95) 저장소 관문보다 bind 가 먼저 일어났다 — 소켓을 연 뒤에 죽는다: {err_order:?}"
-        ));
-    }
-    if !err_order.contains("영속이 아니다") {
-        return Err(format!(
-            "95) 점유된 포트에서 저장소 구성 오류가 아닌 것으로 끝났다: {err_order:?}"
-        ));
-    }
-    drop(occupied);
 
     report.push_str(
         "95) 이웃 신고 저장소 구성이 잘못되면(비영속/경로 부재) listener 를 열기 전에 멈춘다",
@@ -5552,6 +5581,17 @@ pub fn run() -> Result<String, String> {
                 "--neighbor-report-target",
                 TARGET_93,
                 "--multi-agent",
+                "true",
+            ],
+        ),
+        (
+            "resume lane 과 함께",
+            vec![
+                "--neighbor-report-rounds",
+                "1",
+                "--neighbor-report-target",
+                TARGET_93,
+                "--resume-protocol",
                 "true",
             ],
         ),
@@ -5585,14 +5625,15 @@ pub fn run() -> Result<String, String> {
         }
     }
     report.push_str(
-        "96) 잘못된 신고 구성(대상 없음/공백/multi-agent)이면 Agent 가 연결조차 하지 않는다",
+        "96) 잘못된 신고 구성(대상 없음/공백/multi-agent/resume)이면 Agent 가 연결조차 하지 않는다",
     );
     report.push(NEWLINE);
 
     // ── 97) multi-agent lane 은 이웃 신고 수신을 받아들이지 않는다 ──
     //
-    // 그 lane 은 run() 을 거치지 않아 시작 관문도 수신 루프도 없다 —
-    // 그런데 플래그는 받아들여져 조용히 무시됐다(독립 검수 5라운드 지적).
+    // 그 lane 에는 이웃 신고 수신 루프가 없는데 플래그는 받아들여져
+    // 조용히 무시됐다(독립 검수 5라운드 지적). ★ 8라운드 정정 — 그 lane 은
+    // 이제 run() 의 분기를 거치며, lane 진입점 자체에도 관문이 있다.
     // 구현하지 않은 조합은 거부한다.
     let (ok_97, out_97, err_97) = run_coordinator_only(
         &fixture,
@@ -5608,15 +5649,21 @@ pub fn run() -> Result<String, String> {
     if ok_97 {
         return Err(format!("97) multi-agent 와 함께 정상 종료했다: {out_97:?}"));
     }
+    // ★ `READY` 부재는 "bind 전에 막았다" 를 증명하지 않는다(독립 검수
+    //   6라운드 지적) — bind 뒤 READY 전에 죽어도 같아 보인다. **순서 자체는
+    //   시나리오 95 가 점유 포트로 잰다**(이 조합도 거기에 포함돼 있다).
+    //   여기서는 "READY 를 안 찍고 끝났다" 까지만 주장한다.
     if out_97.contains("READY ") {
         return Err(format!(
-            "97) multi-agent lane 이 listener 를 열었다 — 조합을 거부해야 한다: {out_97:?}"
+            "97) multi-agent lane 이 READY 까지 갔다 — 조합을 거부해야 한다: {out_97:?}"
         ));
     }
-    if !err_97.contains("multi-agent") || !err_97.contains("kind=storage") {
+    // ★ lane 충돌은 **저장소 문제가 아니다**(독립 검수 11라운드) — 전에는
+    //   `kind=storage` 를 요구해서 잘못된 분류를 테스트가 고정하고 있었다.
+    if !err_97.contains("multi-agent") || !err_97.contains("STARTUP_REFUSED") {
         return Err(format!("97) 거부 사유가 식별되지 않는다: {err_97:?}"));
     }
-    report.push_str("97) multi-agent lane 과 이웃 신고 수신 조합은 조용히 무시하지 않고 거부한다");
+    report.push_str("97) 구현하지 않은 lane 조합(multi-agent)은 조용히 무시하지 않고 거부한다 — 순서는 95 가 잰다");
     report.push(NEWLINE);
 
     report.push_str(&run_multi_agent_scenario(&fixture)?);

@@ -47,6 +47,15 @@ use crate::{derive_nonce, AgentConfig};
 
 /// Hello -> Grant -> ACK 한 왕복.
 pub fn run_multi_agent_session(config: &AgentConfig) -> Result<(), String> {
+    // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
+    //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
+    //   다시 본다.
+    if let Some(message) = crate::unsupported_neighbor_report_lane(
+        config,
+        crate::NeighborReportLane::MultiAgent,
+    ) {
+        return Err(message);
+    }
     let clock = SystemClock;
     let signing_key = SigningKey::from_bytes(&config.own_seed);
 

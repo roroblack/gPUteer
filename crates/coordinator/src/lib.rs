@@ -320,7 +320,13 @@ fn classify_resume_store_error(error: LeaseStoreError) -> CoordinatorSessionErro
     }
 }
 
-/// 정상 handshake 한 번을 실행한다.
+/// 이 Coordinator 를 실행한다 — lane 선택도 여기서 한다.
+///
+/// ★ `multi_agent` 가 켜져 있으면 그 lane 으로 분기한다(독립 검수 8라운드에
+///   `run_from_args` 에서 옮겼다). 그 lane 은 연결마다 스레드를 만들어
+///   **동시 처리를 허용**한다(`max_connections` 는 총 accept 수이지 동시치가
+///   아니고, 실제 중첩을 보장하지도 않는다 — 12라운드 정정). 아래 설명은
+///   기본(순차) lane 의 것이다.
 ///
 /// 리스닝을 시작하면 즉시 `stdout` 에 `READY <addr>` 한 줄을 찍는다 —
 /// 호출자(주로 `coordinator-agent-selftest`)가 이 줄로 실제 바인딩된
@@ -335,6 +341,16 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     //   우회했다. CLI 는 이 저장소가 쓰는 한 가지 진입 방법일 뿐이다.
     validate_device_id(&config.agent_device_id)?;
     validate_device_id(&config.coordinator_device_id)?;
+
+    // ★ lane 선택을 **여기서** 한다(독립 검수 6라운드 지적).
+    //
+    //   전에는 `run_from_args()` 만 분기해서, 라이브러리로
+    //   `run(config)` 를 직접 부르면 `multi_agent` 설정이 **조용히**
+    //   무시되고 순차 lane 이 돌았다. Agent 쪽 `run()` 은 이미 여기서
+    //   분기하고 있었다 — 비대칭 자체가 결함이었다.
+    if config.multi_agent {
+        return multi_agent::run_multi_agent(config);
+    }
 
     if config.lease_db_path.is_none() && !config.allow_unsafe_legacy_mode {
         return Err(
@@ -380,6 +396,14 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         None => None,
     };
 
+    // ★ 이 lane 이 이웃 신고를 실제로 다루는가 — 아니면 시작하지 않는다.
+    // ★ `kind=storage` 로 찍지 않는다(독립 검수 11라운드) — 이건 저장소
+    //   연산이 아니라 **구성 충돌**이다. 원인이 다르면 이름도 달라야 한다.
+    if let Some(message) = unsupported_neighbor_report_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+
     // ★ **이웃 신고 저장소를 listener bind 보다 먼저 연다**(독립 검수
     //   4·5라운드 지적). 4라운드 수정은 이 블록을 bind **뒤에** 두어
     //   주석과 코드가 어긋나 있었다 — 소켓이 열린 뒤 죽으면 그 사이에
@@ -413,7 +437,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         if !store.is_durable() {
             let message = format!(
                 "이웃 신고 저장소가 영속이 아니다(neighbor_report_db_path={path:?}) — \
-                 여러 이웃의 관측을 모아 둘 수 없는데 로그에는 저장한 것처럼 찍힌다"
+                 프로세스가 죽으면 모아 둔 관측이 통째로 사라지는데 로그에는 저장한 것처럼 찍힌다"
             );
             eprintln!(
                 "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
@@ -490,6 +514,82 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             }
         }
     }
+}
+
+/// **어느 lane 을 실제로 시작하는가** — 설정이 아니라 진입점이 말한다.
+///
+/// ★ 독립 검수 11라운드 지적. 전에는 관문이 `config.multi_agent` 를 읽어서
+///   판정했는데, **`run_multi_agent()` 자체가 그 lane 이다.** 라이브러리
+///   호출자가 그 함수를 `multi_agent: false` 로 부르면 관문이 "순차 lane
+///   이구나" 하고 통과시켰다 — 관문이 자기가 어디 있는지를 남에게 물어본 셈.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NeighborReportLane {
+    /// `run()` 이 직접 도는 경로 — **유일하게 신고를 받는다.**
+    Sequential,
+    /// `multi_agent::run_multi_agent()` — 수신 루프가 없다.
+    MultiAgent,
+}
+
+/// 설정만 보고 lane 을 고른다 — `run()`/`run_from_args()` 처럼 **아직 분기하지
+/// 않은** 자리에서만 쓴다. lane 진입점 안에서는 쓰지 않는다(그 자리는 답을
+/// 이미 안다).
+pub(crate) fn lane_from_config(config: &CoordinatorConfig) -> NeighborReportLane {
+    if config.multi_agent {
+        NeighborReportLane::MultiAgent
+    } else {
+        NeighborReportLane::Sequential
+    }
+}
+
+/// 이웃 신고 옵션이 **이 lane 에서 실제로 동작하는가**를 본다.
+///
+/// ★ 구현하지 않은 조합은 거부한다 — 받아 놓고 안 하는 것이 가장 나쁘다.
+///   운영자는 신고가 모이는 줄 안다.
+pub(crate) fn unsupported_neighbor_report_lane(
+    config: &CoordinatorConfig,
+    lane: NeighborReportLane,
+) -> Option<String> {
+    if config.expect_neighbor_reports == 0 {
+        return None;
+    }
+    if lane == NeighborReportLane::MultiAgent {
+        return Some(
+            "multi-agent lane 은 이웃 신고 수신을 구현하지 않았다 — --expect-neighbor-reports 와 함께 쓸 수 없다"
+                .to_string(),
+        );
+    }
+    // ★ 순차 lane 안에도 **신고 수신 루프에 닿지 못할 수 있는** 구성이 있다
+    //   (독립 검수 11라운드). resume 경로는 그보다 먼저 반환하고, 세 test
+    //   hook 은 ACK 직후 세션을 끝낼 수 있다 — 셋 중 둘은 항상 끝내고,
+    //   `--drop-connection-after-ack-once` 는 `max_connections > 1` 이고 첫
+    //   연결일 때만 끝낸다(13라운드 정정 — 전에 "세 hook 은 ACK 직후 끝낸다"
+    //   고 뭉뚱그렸다). 닿는다고 **보장할 수 없으면** 받지 않는다.
+    if config.resume_protocol {
+        return Some(
+            "resume 경로는 이웃 신고 수신에 닿기 전에 반환한다 — --expect-neighbor-reports 와 --resume-protocol 을 함께 줄 수 없다"
+                .to_string(),
+        );
+    }
+    for (enabled, flag) in [
+        (config.send_grant_twice, "--send-grant-twice"),
+        (config.disconnect_after_ack, "--disconnect-after-ack"),
+        (
+            config.drop_connection_after_ack_once,
+            "--drop-connection-after-ack-once",
+        ),
+    ] {
+        if enabled {
+            // ★ 조건 없이 거부한다. `--drop-connection-after-ack-once` 는
+            //   `max_connections > 1 && connection_attempt == 0` 일 때만
+            //   실제로 끊지만(12라운드 정정 — 전에 "항상 끝낸다" 고 썼다),
+            //   **닿을 수도 있고 아닐 수도 있는 구성**을 받아 주는 것이
+            //   조용한 무시보다 낫지 않다.
+            return Some(format!(
+                "{flag} 는 ACK 직후 세션을 끝낼 수 있어 이웃 신고 수신에 닿는다고 보장할 수 없다 — --expect-neighbor-reports 와 함께 줄 수 없다"
+            ));
+        }
+    }
+    None
 }
 
 fn session_error_kind(error: &CoordinatorSessionError) -> &'static str {
@@ -2082,11 +2182,14 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// `--flag value` 쌍으로 이루어진 CLI 인자를 [`CoordinatorConfig`] 로
-/// 파싱해 [`run`] 을 부른다. `crates/cli` 는 이 함수를 호출하기만 하고
-/// 인자 의미는 여기(Coordinator 스트림)가 정의한다
-/// (`docs/contracts/01_스트림_소유권.md`).
-pub fn run_from_args(args: &[String]) -> Result<(), String> {
+/// `--flag value` 쌍으로 이루어진 CLI 인자를 설정으로 바꾸기만 한다 —
+/// lane 선택도 관문도 여기서 하지 않는다.
+///
+/// ★ `run_from_args` 에서 떼어냈다(독립 검수 7라운드). 관문이 실제로
+///   각 진입점에 있는지 재려면, 라이브러리 호출자처럼 설정을 만들어
+///   진입점을 **직접** 부를 수 있어야 한다 — `CoordinatorConfig` 는
+///   손으로 만들기에 필드가 너무 많다.
+pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, String> {
     let flags = parse_flags(args)?;
 
     let config = CoordinatorConfig {
@@ -2152,24 +2255,36 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
             .cloned()
             .unwrap_or_else(|| "legacy-session".into()),
     };
+    Ok(config)
+}
+
+/// CLI 인자를 [`parse_config_from_args`] 로 설정으로 바꾼 뒤 실행한다.
+/// 파싱 자체는 이 함수가 하지 않는다.
+///
+/// `crates/cli` 는 이 함수를 호출하기만 하고 인자 의미는 여기
+/// (Coordinator 스트림)가 정의한다(`docs/contracts/01_스트림_소유권.md`).
+///
+/// ★ 여기에도 lane 관문이 있다 — CLI 로 들어오면 이것이 먼저 걸리므로,
+///   각 lane 진입점의 관문은 **라이브러리 호출자에게만** 보인다.
+///   그래서 그쪽은 `tests/neighbor_report_lane_guard.rs` 가 따로 잰다.
+pub fn run_from_args(args: &[String]) -> Result<(), String> {
+    let config = parse_config_from_args(args)?;
 
     // ★ **multi-agent lane 은 이웃 신고를 다루지 않는다**(독립 검수 5라운드
-    //   지적). 그 lane 은 `run()` 을 거치지 않으므로 시작 관문도, 수신
-    //   루프도 없다 — 그런데 플래그는 받아들여져서 **조용히 무시**됐다.
+    //   지적). 그 lane 에는 수신 루프가 없는데 플래그는 받아들여져서
+    //   **조용히 무시**됐다.
+    //
+    //   ★ 8라운드 정정 — 그 lane 은 이제 `run()` 의 분기를 거친다.
+    //     이 관문은 그보다 앞이라 CLI 경로에서 먼저 걸리고, lane 진입점
+    //     자체에도 같은 관문이 따로 있다.
     //
     //   구현하지 않은 조합은 **거부한다.** 받아 놓고 안 하는 것이 가장
     //   나쁘다 — 운영자는 신고가 모이는 줄 안다.
-    if config.multi_agent && config.expect_neighbor_reports > 0 {
-        let message =
-            "multi-agent lane 은 이웃 신고 수신을 구현하지 않았다 —              --expect-neighbor-reports 와 --multi-agent 를 함께 줄 수 없다"
-                .to_string();
-        eprintln!(
-            "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
-        );
+    // ★ `kind=storage` 로 찍지 않는다(독립 검수 11라운드) — 이건 저장소
+    //   연산이 아니라 **구성 충돌**이다. 원인이 다르면 이름도 달라야 한다.
+    if let Some(message) = unsupported_neighbor_report_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
         return Err(message);
-    }
-    if config.multi_agent {
-        return multi_agent::run_multi_agent(config);
     }
     run(config)
 }
