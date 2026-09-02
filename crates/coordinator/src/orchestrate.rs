@@ -23,7 +23,7 @@ use crate::{
 /// The orchestration kernel does not generate IDs, read a clock, or invent a
 /// Lease lifetime policy. Only the selected `node_id` is added locally.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StagingIssuanceInput {
+pub struct StagingIssuanceInput {
     pub operation_key: [u8; 16],
     pub attempt_id: String,
     pub lease_id: String,
@@ -40,7 +40,7 @@ pub(crate) struct StagingIssuanceInput {
 /// Manifest ingestion and conversion into [`JobRequirements`] are outside this
 /// module; callers must supply that domain object explicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PlacementToStagingInput {
+pub struct PlacementToStagingInput {
     pub job_id: String,
     pub job_requirements: JobRequirements,
     pub hard_filter_policy: Policy,
@@ -51,7 +51,7 @@ pub(crate) struct PlacementToStagingInput {
 
 /// A zero-candidate result is structurally unable to masquerade as staging.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum PlacementToStagingOutcome {
+pub enum PlacementToStagingOutcome {
     NoEligible {
         eligibility: EligibilityReport,
     },
@@ -67,7 +67,7 @@ pub(crate) enum PlacementToStagingOutcome {
 
 /// Preserves the producing subsystem's typed error instead of flattening it.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum PlacementToStagingError {
+pub enum PlacementToStagingError {
     Inventory(InventoryStoreError),
     Ranking(RankingError),
     SelectedCandidateNotUnique {
@@ -146,7 +146,7 @@ impl From<ReservedStageError> for PlacementToStagingError {
 /// staging write begin as separate snapshot and write transactions, but the
 /// selected revision comparison, node reservation, and staging commit share
 /// the staging store's single `BEGIN IMMEDIATE` linearization point.
-pub(crate) fn orchestrate_placement_to_staging(
+pub fn orchestrate_placement_to_staging(
     inventory_store: &mut CoordinatorInventoryStore,
     staging_store: &mut CoordinatorStagingStore,
     input: &PlacementToStagingInput,

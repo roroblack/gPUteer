@@ -39,6 +39,7 @@ mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
 mod plan_job;
+mod stage_job;
 mod submit;
 mod selftest;
 
@@ -59,6 +60,13 @@ gputeer — gPUteer CLI
     gputeer import-manifest --manifest <path> --submitter-keyring <path> \\
         --job-db <path> --idempotency-key <hex16>
     gputeer import-inventory --inventory <path> --inventory-db <path>
+    gputeer stage-job --job-id <id> --control-db <path> \
+        --submitter-keyring <path> --submitter-member <id> \
+        --max-snapshot-age-ms <ms> --best-fit-axes <a,b,c,d,e> \
+        --coordinator-id <id> --coordinator-term <n> \
+        --attempt-id <ulid> --lease-id <ulid> --operation-key <hex16> \
+        --lease-issued-at-unix-ms <ms> --lease-renew-after-unix-ms <ms> \
+        --lease-expires-at-unix-ms <ms> --lease-max-total-duration-seconds <s>
     gputeer plan-job --job-id <id> --control-db <path> \
         --submitter-keyring <path> --submitter-member <id> \
         --max-snapshot-age-ms <ms>
@@ -152,6 +160,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("import-manifest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("stage-job") => match stage_job::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("stage-job 실패: {e}");
                 ExitCode::FAILURE
             }
         },

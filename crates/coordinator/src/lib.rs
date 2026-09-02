@@ -38,9 +38,11 @@ pub mod manifest_requirements;
 pub mod neighbor_report_store;
 pub mod node_liveness_store;
 pub mod multi_agent;
-// ★ 이 허용은 **`orchestrate` 의 것이다.** production 호출자가 없고
-//   테스트 fixture 만 부르므로 dead_code 경고가 난다(`DoD-46` 이
-//   "production 미연결" 로 남긴 상태 그대로).
+// ★ 이 허용은 **`orchestrate` 의 것이다.** `DoD-46` 이 "production
+//   미연결" 로 남겨 테스트 fixture 만 부르던 동안 dead_code 경고가
+//   났다. 이제 `gputeer stage-job` 이 부르므로 허용이 필요 없을 수도
+//   있지만, 아직 안 쓰는 항목이 남아 있으면 다시 경고가 난다 —
+//   경고 0 을 실제로 확인하고 지울지 정한다.
 //
 //   ★ 이 속성은 **세 번 연속 가로채였다.** 위에 모듈 선언을 한 줄씩
 //     끼워 넣을 때마다 바로 아래 항목에 붙는 성질 때문에 소속이
@@ -51,7 +53,7 @@ pub mod multi_agent;
 //
 //   **새 모듈은 이 줄 위에 넣는다.**
 #[allow(dead_code)]
-mod orchestrate;
+pub mod orchestrate;
 pub mod replica_ack_store;
 pub mod reservation_release;
 pub mod staging_store;
