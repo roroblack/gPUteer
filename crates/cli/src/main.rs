@@ -38,6 +38,7 @@ mod coordinator_agent_selftest;
 mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
+mod plan_job;
 mod submit;
 mod selftest;
 
@@ -58,6 +59,9 @@ gputeer — gPUteer CLI
     gputeer import-manifest --manifest <path> --submitter-keyring <path> \\
         --job-db <path> --idempotency-key <hex16>
     gputeer import-inventory --inventory <path> --inventory-db <path>
+    gputeer plan-job --job-id <id> --control-db <path> \
+        --submitter-keyring <path> --submitter-member <id> \
+        --max-snapshot-age-ms <ms>
 
     selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
                                   작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
@@ -148,6 +152,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("import-manifest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("plan-job") => match plan_job::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("plan-job 실패: {e}");
                 ExitCode::FAILURE
             }
         },

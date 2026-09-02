@@ -72,6 +72,81 @@ pub fn run(args: &[String]) -> Result<String, String> {
         None => issued_at_unix_ms + 7 * 24 * 60 * 60 * 1000,
     };
 
+    // ── 스케줄에 필요한 선언 ────────────────────────────────────────
+    //
+    // ★ **전부 선택 사항이다. 그러나 안 주면 이 Job 은 스케줄되지
+    //   않는다.** proto 의 분류 축은 모두 `*_UNSPECIFIED = 0` 이고,
+    //   `manifest_requirements.rs` 가 그것을 값으로 바꾸지 않고 거부한다
+    //   — 제출자가 **말하지 않은 것을 말한 것으로** 만들지 않기
+    //   위해서다(`CLAUDE.md` §1).
+    //
+    //   그래서 여기서도 기본값을 지어내지 않는다. 안 주면 안 준 대로
+    //   서명되고, `gputeer plan-job` 이 **어느 축이 비었는지 이름을
+    //   대며** 거부한다.
+    //
+    //   ★ 이 조각 전까지 `submit` 은 이 축들을 **선언할 방법 자체가
+    //     없었다** — 즉 이 명령이 만든 어떤 Manifest 도 스케줄될 수
+    //     없었다. 변환기의 fail-closed 규칙이 그 사실을 드러냈다.
+    let workload_class = enum_flag(&flags, "--workload-class", &[
+        ("TRAINING", pb::WorkloadClass::Training as i32),
+        ("INFERENCE", pb::WorkloadClass::Inference as i32),
+        ("PREPROCESSING", pb::WorkloadClass::Preprocessing as i32),
+        ("EVALUATION", pb::WorkloadClass::Evaluation as i32),
+        ("RENDERING", pb::WorkloadClass::Rendering as i32),
+        ("OTHER", pb::WorkloadClass::Other as i32),
+    ])?;
+    let side_effect_class = enum_flag(&flags, "--side-effect-class", &[
+        ("PURE", pb::SideEffectClass::Pure as i32),
+        ("IDEMPOTENT", pb::SideEffectClass::Idempotent as i32),
+        ("SIDE_EFFECTING", pb::SideEffectClass::SideEffecting as i32),
+    ])?;
+    let sensitivity = enum_flag(&flags, "--dataset-sensitivity", &[
+        ("PUBLIC", pb::Sensitivity::Public as i32),
+        ("INTERNAL", pb::Sensitivity::Internal as i32),
+        ("SENSITIVE", pb::Sensitivity::Sensitive as i32),
+    ])?;
+    let minimum_security_tier = enum_flag(&flags, "--minimum-security-tier", &[
+        ("S0", pb::SecurityTier::S0 as i32),
+        ("S1", pb::SecurityTier::S1 as i32),
+        ("S2", pb::SecurityTier::S2 as i32),
+        ("S3", pb::SecurityTier::S3 as i32),
+        ("S4", pb::SecurityTier::S4 as i32),
+        ("S5", pb::SecurityTier::S5 as i32),
+    ])?;
+    let minimum_isolation_class = enum_flag(&flags, "--minimum-isolation-class", &[
+        ("RESTRICTED", pb::IsolationClass::Restricted as i32),
+        ("CONTAINED", pb::IsolationClass::Contained as i32),
+        ("VIRTUALIZED", pb::IsolationClass::Virtualized as i32),
+    ])?;
+    let minimum_key_protection = enum_flag(&flags, "--minimum-key-protection", &[
+        ("K0", pb::KeyProtection::K0 as i32),
+        ("K1", pb::KeyProtection::K1 as i32),
+        ("K2", pb::KeyProtection::K2 as i32),
+    ])?;
+
+    // 자원 요구. `--gpu-count` 를 준 경우에만 `ResourceRequest` 를 만든다
+    // — 안 주면 메시지 자체가 없고 변환기가 그렇게 보고한다.
+    let resources = match flags.get("--gpu-count") {
+        None => None,
+        Some(_) => Some(pb::ResourceRequest {
+            gpu: Some(pb::GpuRequest {
+                min_count: u32_flag(&flags, "--gpu-count")?.unwrap_or(0),
+                min_vram_bytes: u64_flag(&flags, "--gpu-min-vram-bytes")?.unwrap_or(0),
+                allowed_gpu_models: match flags.get("--allowed-gpu-models") {
+                    Some(raw) if !raw.is_empty() => {
+                        raw.split(',').map(|s| s.trim().to_string()).collect()
+                    }
+                    _ => Vec::new(),
+                },
+                ..Default::default()
+            }),
+            cpu_cores: u32_flag(&flags, "--cpu-cores")?.unwrap_or(0),
+            ram_bytes: u64_flag(&flags, "--ram-bytes")?.unwrap_or(0),
+            workspace_bytes: u64_flag(&flags, "--workspace-bytes")?.unwrap_or(0),
+            ..Default::default()
+        }),
+    };
+
     let mut manifest = pb::JobManifest {
         schema_version: 1,
         job_id: job_id.clone(),
@@ -81,6 +156,27 @@ pub fn run(args: &[String]) -> Result<String, String> {
         submitter_device_id,
         issued_at_unix_ms,
         expires_at_unix_ms,
+        side_effect_class,
+        minimum_security_tier,
+        minimum_isolation_class,
+        minimum_key_protection,
+        resources,
+        workload: if workload_class == 0 {
+            None
+        } else {
+            Some(pb::WorkloadHint {
+                class: workload_class,
+                ..Default::default()
+            })
+        },
+        dataset: if sensitivity == 0 {
+            None
+        } else {
+            Some(pb::DatasetRef {
+                sensitivity,
+                ..Default::default()
+            })
+        },
         ..Default::default()
     };
 
@@ -149,6 +245,55 @@ fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
         i += 2;
     }
     Ok(out)
+}
+
+/// 이름으로 받은 enum 값을 번호로 옮긴다. **안 주면 0(UNSPECIFIED)** 이고
+/// 그건 "선언하지 않았다" 는 사실 그대로다 — 기본값을 지어내지 않는다.
+///
+/// 모르는 이름은 거부한다. 오타를 조용히 `UNSPECIFIED` 로 흘리면
+/// 제출자는 선언했다고 믿는데 스케줄러는 못 본다.
+fn enum_flag(
+    flags: &BTreeMap<String, String>,
+    key: &str,
+    table: &[(&str, i32)],
+) -> Result<i32, String> {
+    let Some(raw) = flags.get(key) else {
+        return Ok(0);
+    };
+    table
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(raw))
+        .map(|(_, value)| *value)
+        .ok_or_else(|| {
+            format!(
+                "{key} 값 {raw:?} 를 모른다 — 쓸 수 있는 값: {}",
+                table
+                    .iter()
+                    .map(|(name, _)| *name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn u32_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<Option<u32>, String> {
+    flags
+        .get(key)
+        .map(|raw| {
+            raw.parse::<u32>()
+                .map_err(|e| format!("{key} 파싱 실패: {e}"))
+        })
+        .transpose()
+}
+
+fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<Option<u64>, String> {
+    flags
+        .get(key)
+        .map(|raw| {
+            raw.parse::<u64>()
+                .map_err(|e| format!("{key} 파싱 실패: {e}"))
+        })
+        .transpose()
 }
 
 fn require(flags: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
