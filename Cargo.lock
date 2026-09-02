@@ -347,7 +347,10 @@ dependencies = [
  "gputeer-protocol",
  "gputeer-runtime-nvml",
  "gputeer-runtime-policy",
+ "gputeer-scheduler",
  "prost",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

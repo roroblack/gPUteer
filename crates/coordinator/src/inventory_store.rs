@@ -53,6 +53,20 @@ pub struct AgentInventory {
     pub third_party_workloads_opt_in: Option<bool>,
 }
 
+/// One Agent's registration and its inventory, imported together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentBootstrap {
+    pub registry: AgentRegistry,
+    pub inventory: AgentInventory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportBootstrapResult {
+    pub registered: usize,
+    pub inventories_updated: usize,
+    pub entries: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterAgentResult {
     pub registry: AgentRegistry,
@@ -81,6 +95,13 @@ pub enum InventoryStoreError {
     RevisionConflict {
         revision: u64,
     },
+    /// A bootstrap entry failed. Carries the offending entry so the caller can
+    /// say *which* Agent stopped the import — nothing was written.
+    BootstrapEntry {
+        index: usize,
+        node_id: String,
+        source: Box<InventoryStoreError>,
+    },
     CorruptData(String),
     Io(String),
     LockTimeout,
@@ -105,6 +126,14 @@ impl std::fmt::Display for InventoryStoreError {
             Self::RevisionConflict { revision } => write!(
                 f,
                 "inventory revision {revision} already has a different payload"
+            ),
+            Self::BootstrapEntry {
+                index,
+                node_id,
+                source,
+            } => write!(
+                f,
+                "bootstrap entry {index} ({node_id}) rejected, nothing was imported: {source}"
             ),
             Self::CorruptData(message) => write!(f, "inventory store corruption: {message}"),
             Self::Io(message) => write!(f, "inventory store I/O error: {message}"),
@@ -152,16 +181,45 @@ impl CoordinatorInventoryStore {
         &mut self,
         registry: &AgentRegistry,
     ) -> Result<RegisterAgentResult, InventoryStoreError> {
+        // ★ Validate **before** taking the write lock. The refactor that
+        //   extracted the in-transaction body moved validation inside the
+        //   lock, so bad input against a busy database started returning
+        //   `LockTimeout` instead of `InvalidInput` — an input error reported
+        //   as a contention error (independent review round 1).
         validate_registry(registry).map_err(InventoryStoreError::InvalidInput)?;
-        let payload = encode_registry(registry);
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sql_error)?;
+        let result = register_agent_in_tx(&transaction, registry)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(result)
+    }
+}
 
-        if let Some(stored) = fetch_registry(&transaction, &registry.node_id)? {
+/// Registers one Agent **inside a caller-owned transaction**. Does not commit.
+///
+/// Extracted so that [`CoordinatorInventoryStore::import_bootstrap`] can put
+/// several registrations and inventory updates under one `BEGIN IMMEDIATE`.
+/// Composing the public single-entry APIs would not be equivalent: each of
+/// those commits on its own, so a later failure would leave earlier rows
+/// behind.
+///
+/// # Precondition
+///
+/// `registry` must already have passed [`validate_registry`]. Callers do that
+/// **before** opening the transaction so that an input error is never reported
+/// as lock contention.
+fn register_agent_in_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    registry: &AgentRegistry,
+) -> Result<RegisterAgentResult, InventoryStoreError> {
+    {
+        debug_assert!(validate_registry(registry).is_ok(), "caller must validate first");
+        let payload = encode_registry(registry);
+
+        if let Some(stored) = fetch_registry(transaction, &registry.node_id)? {
             if encode_registry(&stored) == payload {
-                transaction.commit().map_err(map_sql_error)?;
                 return Ok(RegisterAgentResult {
                     registry: stored,
                     created: false,
@@ -169,10 +227,10 @@ impl CoordinatorInventoryStore {
             }
             return Err(InventoryStoreError::RegistryConflict { field: "node_id" });
         }
-        if registry_identity_exists(&transaction, "device_id", &registry.device_id)? {
+        if registry_identity_exists(transaction, "device_id", &registry.device_id)? {
             return Err(InventoryStoreError::RegistryConflict { field: "device_id" });
         }
-        if registry_key_exists(&transaction, &registry.verifying_key)? {
+        if registry_key_exists(transaction, &registry.verifying_key)? {
             return Err(InventoryStoreError::RegistryConflict {
                 field: "verifying_key",
             });
@@ -198,13 +256,14 @@ impl CoordinatorInventoryStore {
                 ],
             )
             .map_err(map_sql_error)?;
-        transaction.commit().map_err(map_sql_error)?;
         Ok(RegisterAgentResult {
             registry: registry.clone(),
             created: true,
         })
     }
+}
 
+impl CoordinatorInventoryStore {
     pub fn update_inventory(
         &mut self,
         inventory: &AgentInventory,
@@ -217,23 +276,55 @@ impl CoordinatorInventoryStore {
         inventory: &AgentInventory,
         fault: Option<TestFault>,
     ) -> Result<UpdateInventoryResult, InventoryStoreError> {
-        let mut normalized = inventory.clone();
-        if let Some(gpus) = normalized.gpus.as_mut() {
-            gpus.sort_by(|left, right| left.gpu_id.cmp(&right.gpu_id));
-        }
-        let inventory = &normalized;
-        validate_inventory(inventory).map_err(InventoryStoreError::InvalidInput)?;
-        let payload = encode_inventory_payload(inventory);
+        // ★ Same reason as `register_agent`: normalize and validate before
+        //   taking the write lock (independent review round 1).
+        let normalized = normalized_and_validated(inventory)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sql_error)?;
-        if fetch_registry(&transaction, &inventory.node_id)?.is_none() {
+        let result = update_inventory_in_tx(&transaction, &normalized, fault)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(result)
+    }
+}
+
+/// Sorts GPUs into canonical order and validates. Runs **outside** any
+/// transaction so an input error never surfaces as lock contention.
+fn normalized_and_validated(
+    inventory: &AgentInventory,
+) -> Result<AgentInventory, InventoryStoreError> {
+    let mut normalized = inventory.clone();
+    if let Some(gpus) = normalized.gpus.as_mut() {
+        gpus.sort_by(|left, right| left.gpu_id.cmp(&right.gpu_id));
+    }
+    validate_inventory(&normalized).map_err(InventoryStoreError::InvalidInput)?;
+    Ok(normalized)
+}
+
+/// Replaces one Agent's inventory **inside a caller-owned transaction**.
+/// Does not commit. See [`register_agent_in_tx`] for why this is extracted.
+///
+/// # Precondition
+///
+/// `inventory` must already have gone through [`normalized_and_validated`].
+fn update_inventory_in_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    inventory: &AgentInventory,
+    fault: Option<TestFault>,
+) -> Result<UpdateInventoryResult, InventoryStoreError> {
+    {
+        debug_assert!(
+            validate_inventory(inventory).is_ok(),
+            "caller must normalize and validate first"
+        );
+        let payload = encode_inventory_payload(inventory);
+        if fetch_registry(transaction, &inventory.node_id)?.is_none() {
             return Err(InventoryStoreError::AgentNotFound {
                 node_id: inventory.node_id.clone(),
             });
         }
-        if let Some(stored) = fetch_inventory(&transaction, &inventory.node_id)? {
+        if let Some(stored) = fetch_inventory(transaction, &inventory.node_id)? {
             if inventory.inventory_revision < stored.inventory_revision {
                 return Err(InventoryStoreError::LowerRevision {
                     stored: stored.inventory_revision,
@@ -242,7 +333,6 @@ impl CoordinatorInventoryStore {
             }
             if inventory.inventory_revision == stored.inventory_revision {
                 if payload == encode_inventory_payload(&stored) {
-                    transaction.commit().map_err(map_sql_error)?;
                     return Ok(UpdateInventoryResult {
                         inventory: stored,
                         updated: false,
@@ -345,10 +435,91 @@ impl CoordinatorInventoryStore {
                 fail_at(fault, TestFault::DuringWorkloadReplacement)?;
             }
         }
-        transaction.commit().map_err(map_sql_error)?;
         Ok(UpdateInventoryResult {
             inventory: inventory.clone(),
             updated: true,
+        })
+    }
+}
+
+impl CoordinatorInventoryStore {
+    /// Imports several Agents' registration **and** inventory in **one**
+    /// `BEGIN IMMEDIATE` transaction. Either every entry lands or none does.
+    ///
+    /// # Why this exists instead of calling the two single-entry APIs
+    ///
+    /// [`Self::register_agent`] and [`Self::update_inventory`] each own their
+    /// transaction and commit on their own. Calling them in sequence is **not**
+    /// atomic: once a registration commits, a later inventory failure (node
+    /// mismatch, revision conflict, I/O) leaves the registry row behind. A
+    /// caller that reports "rejected" while rows survive is reporting something
+    /// that did not happen.
+    ///
+    /// This kernel performs no signature verification, membership judgment, or
+    /// clock read. `entries` are facts the caller already decided to trust; the
+    /// store only checks that they are internally consistent and do not
+    /// conflict with what is already stored.
+    pub fn import_bootstrap(
+        &mut self,
+        entries: &[AgentBootstrap],
+    ) -> Result<ImportBootstrapResult, InventoryStoreError> {
+        // ★ Everything that can be judged from the input alone is judged
+        //   **before** the write lock: shape, identity agreement, and each
+        //   half's own validity. Only checks that need stored rows (identity
+        //   conflicts, revision ordering) happen under the lock — those cannot
+        //   be hoisted, because they are questions about the database.
+        let mut prepared = Vec::with_capacity(entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            let attribute = |source: InventoryStoreError| InventoryStoreError::BootstrapEntry {
+                index,
+                node_id: entry.registry.node_id.clone(),
+                source: Box::new(source),
+            };
+            // The two halves must name the same node. The store would otherwise
+            // register one node and attach the inventory to another — or to
+            // nothing at all, which surfaces as a confusing `AgentNotFound`.
+            if entry.registry.node_id != entry.inventory.node_id {
+                return Err(attribute(InventoryStoreError::InvalidInput(
+                    "registry/inventory node_id mismatch",
+                )));
+            }
+            validate_registry(&entry.registry)
+                .map_err(|field| attribute(InventoryStoreError::InvalidInput(field)))?;
+            prepared.push(normalized_and_validated(&entry.inventory).map_err(attribute)?);
+        }
+
+        // The empty import is not an error, but it must not be reported as work
+        // either — `registered: 0` says exactly what happened.
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+
+        let mut registered = 0usize;
+        let mut inventories_updated = 0usize;
+        for (index, (entry, inventory)) in entries.iter().zip(prepared.iter()).enumerate() {
+            let attribute = |source: InventoryStoreError| InventoryStoreError::BootstrapEntry {
+                index,
+                node_id: entry.registry.node_id.clone(),
+                source: Box::new(source),
+            };
+            let registration =
+                register_agent_in_tx(&transaction, &entry.registry).map_err(attribute)?;
+            if registration.created {
+                registered += 1;
+            }
+            let update =
+                update_inventory_in_tx(&transaction, inventory, None).map_err(attribute)?;
+            if update.updated {
+                inventories_updated += 1;
+            }
+        }
+
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(ImportBootstrapResult {
+            registered,
+            inventories_updated,
+            entries: entries.len(),
         })
     }
 
@@ -1084,6 +1255,238 @@ mod tests {
             ])),
             third_party_workloads_opt_in: Some(marker % 2 == 0),
         }
+    }
+
+    fn bootstrap(node: &str, seed: u8, revision: u64, marker: u64) -> AgentBootstrap {
+        AgentBootstrap {
+            registry: registry(node, seed),
+            inventory: inventory(node, revision, 1_700_000_000_000, marker),
+        }
+    }
+
+    /// The whole reason this API exists: a later entry's failure must not leave
+    /// earlier entries behind.
+    ///
+    /// ★ Composing `register_agent()` + `update_inventory()` in a loop would
+    ///   fail this — each of those commits on its own.
+    #[test]
+    fn a_failing_entry_rolls_back_every_earlier_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inventory.sqlite3");
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+
+        // Entry 0 is fine. Entry 1 reuses entry 0's device_id, which the store
+        // already rejects — we do not reimplement that judgment here.
+        let good = bootstrap("node-a", 1, 1, 100);
+        let mut clashing = bootstrap("node-b", 2, 1, 200);
+        clashing.registry.device_id = good.registry.device_id.clone();
+
+        let error = store
+            .import_bootstrap(&[good.clone(), clashing])
+            .expect_err("device_id 충돌을 받아들였다");
+        match error {
+            InventoryStoreError::BootstrapEntry {
+                index,
+                ref node_id,
+                ref source,
+            } => {
+                assert_eq!(index, 1, "실패한 항목 번호를 잘못 말한다");
+                assert_eq!(node_id, "node-b", "실패한 노드를 잘못 말한다");
+                assert_eq!(
+                    **source,
+                    InventoryStoreError::RegistryConflict {
+                        field: "device_id"
+                    },
+                    "원인을 잘못 말한다"
+                );
+            }
+            other => panic!("항목을 지목하지 않는 오류: {other}"),
+        }
+
+        // ★ 앞 항목이 남지 않았는가 — 이것이 이 API 의 값어치다.
+        assert!(
+            store.get_agent("node-a").unwrap().is_none(),
+            "앞 항목의 registry 가 남았다"
+        );
+        assert!(
+            store.get_inventory("node-a").unwrap().is_none(),
+            "앞 항목의 inventory 가 남았다"
+        );
+        assert!(
+            store.get_agent("node-b").unwrap().is_none(),
+            "실패한 항목이 남았다"
+        );
+        // 파일을 다시 열어도 마찬가지여야 한다(커밋되지 않았음을 확인).
+        drop(store);
+        let mut reopened = CoordinatorInventoryStore::open(&path).unwrap();
+        assert!(reopened.get_agent("node-a").unwrap().is_none());
+        assert_eq!(
+            reopened.pool_snapshot(1_700_000_001_000).unwrap().candidates.len(),
+            0,
+            "거부했는데 후보가 생겼다"
+        );
+    }
+
+    /// registry 와 inventory 가 다른 노드를 가리키면 거부한다.
+    ///
+    /// 이걸 막지 않으면 한 노드를 등록하고 inventory 는 다른 노드에 붙인다 —
+    /// 혹은 아무 데도 안 붙어 `AgentNotFound` 라는 엉뚱한 이름으로 나온다.
+    #[test]
+    fn the_two_halves_of_an_entry_must_name_the_same_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = CoordinatorInventoryStore::open(dir.path().join("i.sqlite3")).unwrap();
+        let mut entry = bootstrap("node-a", 1, 1, 100);
+        entry.inventory.node_id = "node-elsewhere".into();
+
+        let error = store
+            .import_bootstrap(&[entry])
+            .expect_err("서로 다른 노드를 가리키는 항목을 받아들였다");
+        match error {
+            InventoryStoreError::BootstrapEntry { ref source, .. } => assert_eq!(
+                **source,
+                InventoryStoreError::InvalidInput("registry/inventory node_id mismatch"),
+                "원인을 잘못 말한다"
+            ),
+            other => panic!("항목을 지목하지 않는 오류: {other}"),
+        }
+        assert!(store.get_agent("node-a").unwrap().is_none());
+    }
+
+    /// 정상 경로 — 여러 Agent 가 한 번에 들어가고 실제 후보가 된다.
+    #[test]
+    fn a_bootstrap_import_produces_schedulable_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inventory.sqlite3");
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+
+        let result = store
+            .import_bootstrap(&[bootstrap("node-a", 1, 1, 100), bootstrap("node-b", 2, 1, 200)])
+            .expect("정상 반입");
+        assert_eq!(
+            (result.registered, result.inventories_updated, result.entries),
+            (2, 2, 2),
+            "무엇을 했는지 잘못 보고한다"
+        );
+
+        // 다른 프로세스처럼 파일을 다시 열어 확인한다.
+        drop(store);
+        let mut reopened = CoordinatorInventoryStore::open(&path).unwrap();
+        let pool = reopened.pool_snapshot(1_700_000_001_000).unwrap();
+        let ids: Vec<&str> = pool
+            .candidates
+            .iter()
+            .map(|c| c.node_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["node-a", "node-b"], "후보가 안 생겼다");
+    }
+
+    /// 같은 파일을 그대로 다시 반입하면 아무것도 새로 만들지 않는다.
+    #[test]
+    fn importing_the_same_bootstrap_twice_creates_nothing_new() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = CoordinatorInventoryStore::open(dir.path().join("i.sqlite3")).unwrap();
+        let entries = [bootstrap("node-a", 1, 1, 100)];
+
+        let first = store.import_bootstrap(&entries).unwrap();
+        assert_eq!((first.registered, first.inventories_updated), (1, 1));
+        let second = store.import_bootstrap(&entries).unwrap();
+        assert_eq!(
+            (second.registered, second.inventories_updated),
+            (0, 0),
+            "재반입이 새로 만들었다고 보고한다"
+        );
+        assert_eq!(second.entries, 1, "처리한 항목 수는 여전히 1 이어야 한다");
+    }
+
+    /// 잘못된 입력은 **잠금을 기다리지 않고** 즉시 입력 오류로 거부된다.
+    ///
+    /// ★ 리팩터가 이 순서를 뒤집었고 독립 검수 1라운드가 잡았다 — 검증을
+    ///   트랜잭션 안으로 옮기면, 바쁜 DB 에 잘못된 입력을 주었을 때
+    ///   `InvalidInput` 대신 `LockTimeout` 이 난다. **입력 오류가 경합
+    ///   오류로 보고된다**(`CLAUDE.md` §3 — 오류가 사실을 잘못 전하지
+    ///   않게 한다). 운영자는 오타를 고치는 대신 누가 DB 를 잡고 있는지
+    ///   찾으러 간다.
+    ///
+    /// 다른 연결이 실제로 쓰기 잠금을 잡은 상태에서 잰다.
+    #[test]
+    fn bad_input_is_rejected_without_waiting_for_the_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inventory.sqlite3");
+        // 스키마를 먼저 만들어 둔다.
+        drop(CoordinatorInventoryStore::open(&path).unwrap());
+
+        // 다른 연결이 쓰기 잠금을 잡고 놓지 않는다.
+        let holder = Connection::open(&path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+        let mut invalid = registry("node-a", 1);
+        invalid.node_id = "   ".into(); // 공백뿐인 식별자 — 저장소가 막는다
+
+        let error = store
+            .register_agent(&invalid)
+            .expect_err("공백 식별자를 받아들였다");
+        assert!(
+            matches!(error, InventoryStoreError::InvalidInput(_)),
+            "입력 오류를 다른 것으로 보고한다: {error}"
+        );
+
+        let mut bad_inventory = inventory("node-a", 1, 1_700_000_000_000, 100);
+        bad_inventory.node_id = "   ".into();
+        let error = store
+            .update_inventory(&bad_inventory)
+            .expect_err("공백 식별자를 받아들였다");
+        assert!(
+            matches!(error, InventoryStoreError::InvalidInput(_)),
+            "입력 오류를 다른 것으로 보고한다: {error}"
+        );
+
+        // 대조 — 잠금이 진짜로 잡혀 있었는가. 멀쩡한 입력은 실제로
+        // 경합에 막혀야 한다. 이게 없으면 잠기지 않은 DB 로도 통과한다.
+        let blocked = store
+            .register_agent(&registry("node-a", 1))
+            .expect_err("잠긴 DB 에 썼다");
+        assert!(
+            matches!(blocked, InventoryStoreError::LockTimeout),
+            "잠금이 실제로 잡혀 있지 않았다 — 이 테스트는 아무것도 안 쟀다: {blocked}"
+        );
+        drop(holder);
+    }
+
+    /// bulk 반입도 같다 — 문서가 틀렸으면 잠그기 전에 끝난다.
+    #[test]
+    fn a_bad_bootstrap_entry_is_rejected_without_waiting_for_the_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inventory.sqlite3");
+        drop(CoordinatorInventoryStore::open(&path).unwrap());
+        let holder = Connection::open(&path).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+        let mut bad = bootstrap("node-a", 1, 1, 100);
+        bad.registry.device_id = "  ".into();
+        bad.inventory.node_id = bad.registry.node_id.clone();
+
+        let error = store
+            .import_bootstrap(&[bad])
+            .expect_err("공백 device_id 를 받아들였다");
+        match error {
+            InventoryStoreError::BootstrapEntry { ref source, .. } => assert!(
+                matches!(**source, InventoryStoreError::InvalidInput(_)),
+                "입력 오류를 다른 것으로 보고한다: {source}"
+            ),
+            other => panic!("항목을 지목하지 않는 오류: {other}"),
+        }
+
+        // 대조 — 잠금이 실제로 잡혀 있었는가.
+        let blocked = store
+            .import_bootstrap(&[bootstrap("node-a", 1, 1, 100)])
+            .expect_err("잠긴 DB 에 썼다");
+        assert!(
+            matches!(blocked, InventoryStoreError::LockTimeout),
+            "잠금이 실제로 잡혀 있지 않았다: {blocked}"
+        );
+        drop(holder);
     }
 
     fn prepared_store(path: &Path) -> CoordinatorInventoryStore {

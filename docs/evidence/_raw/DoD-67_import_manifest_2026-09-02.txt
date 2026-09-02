@@ -1,0 +1,65 @@
+=== DoD-67 gputeer import-manifest — 원시 실행 기록 ===
+측정: 2026-09-02, Windows 개발 기계, cargo 1.97.1
+
+--- 1. 신규 테스트 ---
+$ cargo test -p gputeer-cli --test import_manifest
+running 8 tests
+test a_manifest_signed_by_a_trusted_submitter_is_imported ... ok
+test a_manifest_from_an_unknown_signer_is_rejected_and_the_db_is_untouched ... ok
+test a_forged_signature_is_rejected_and_the_db_is_untouched ... ok
+test an_expired_manifest_is_rejected_and_the_db_is_untouched ... ok
+test a_plaintext_keyring_is_refused_without_the_explicit_opt_in ... ok
+test a_non_durable_job_db_is_refused ... ok
+test importing_the_same_manifest_twice_keeps_one_row ... ok
+test a_rejection_leaves_an_already_populated_db_byte_for_byte_identical ... ok
+test result: ok. 8 passed; 0 failed
+
+--- 2. 워크스페이스 ---
+$ cargo test --workspace
+passed=841  failed=0
+  (이 조각 착수 전 833 — 신규 8건이 늘어난 전부이고 회귀 0)
+
+--- 3. --help 확인 ---
+$ ./target/debug/gputeer.exe
+    gputeer coordinator-stub --listen <addr> --own-seed <hex32> --peer-pubkey <hex32> \
+        --coordinator-device-id <id> --agent-device-id <id> --grant-id <id> --attempt-id <id> \
+        --lease-id <id> --job-id <id> [--lease-db <path> | \
+        --i-understand-legacy-mode-is-unsafe true]
+    gputeer agent-stub --connect <addr> --own-seed <hex32> --peer-pubkey <hex32> \
+        --coordinator-device-id <id> --agent-device-id <id>
+    gputeer submit --job-id <id> --entrypoint <cmd> --submitter-device-id <id> \
+        --submitter-seed <hex32> --issued-at-unix-ms <ms> --out <path>
+    gputeer import-manifest --manifest <path> --submitter-keyring <path> \
+        --job-db <path> --idempotency-key <hex16>
+
+  ★ 2라운드가 "삽입이 coordinator-stub 사용법을 두 동강 냈다"고 지적한 뒤
+    agent-stub 블록 뒤로 옮긴 상태다.
+
+--- 4. 3라운드 반박의 실측 근거 ---
+  3라운드가 "help 는 agent-stub 에 두 device ID 를 필수처럼 쓰지만 실제
+  파서는 --connect/--own-seed/--peer-pubkey 만 필수" 라고 지적했다.
+  직접 실행해 반박했다:
+
+$ ./target/debug/gputeer.exe agent-stub --connect 127.0.0.1:9 \
+    --own-seed 1111...aa --peer-pubkey 5866666666...66
+agent-stub 실패: 필수 인자 누락: --coordinator-device-id
+
+  (유효한 --peer-pubkey 를 줘야 여기까지 온다. 공개키 파싱이 구조체
+   앞쪽이라 먼저 실패하면 이 오류를 못 본다 — 3라운드가 그래서 못 본
+   것으로 보인다. crates/agent/src/lib.rs:2124-2125 가 둘 다 require() 한다.)
+  4라운드가 이 반박을 확인하고 ACCEPTED.
+
+--- 5. 뮤테이션 ---
+I1  keyring 대신 아무 서명이나 받아들임   -> unknown_signer 실패
+I2  평문 keyring 을 항상 허용             -> plaintext_keyring 실패
+I4  만료 검사 우회(now=0)                 -> expired 실패
+I5  is_durable() 위임 제거                -> non_durable 실패(:memory: 와 빈 경로 둘 다)
+I6  거부 사유를 하나로 뭉갬               -> 세 거부 테스트가 각각 실패
+I7  거부 전에 job store 를 **열기만** 함
+      -> 빈 DB 테스트 3건 실패(파일이 새로 생긴다)
+      -> ★ 8번째 테스트는 **통과했다**. 이미 있는 DB 를 여는 것만으로는
+         바이트가 안 바뀐다. 그 테스트의 판별력은 "행 쓰기" 에 있다
+I8  거부 경로가 audit 행을 남김            -> 4건 전부 실패(8번째 포함)
+
+  ★ I3 은 I5 로 대체됐다 — ":memory:" 문자열 관문을 없애고 저장소에
+    위임했으므로 그 뮤테이션 대상 자체가 사라졌다.

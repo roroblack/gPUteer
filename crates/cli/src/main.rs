@@ -36,6 +36,8 @@ use std::process::ExitCode;
 
 mod coordinator_agent_selftest;
 mod gpu_probe;
+mod import_inventory;
+mod import_manifest;
 mod submit;
 mod selftest;
 
@@ -51,6 +53,11 @@ gputeer — gPUteer CLI
         --i-understand-legacy-mode-is-unsafe true]
     gputeer agent-stub --connect <addr> --own-seed <hex32> --peer-pubkey <hex32> \\
         --coordinator-device-id <id> --agent-device-id <id>
+    gputeer submit --job-id <id> --entrypoint <cmd> --submitter-device-id <id> \\
+        --submitter-seed <hex32> --issued-at-unix-ms <ms> --out <path>
+    gputeer import-manifest --manifest <path> --submitter-keyring <path> \\
+        --job-db <path> --idempotency-key <hex16>
+    gputeer import-inventory --inventory <path> --inventory-db <path>
 
     selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
                                   작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
@@ -59,8 +66,22 @@ gputeer — gPUteer CLI
     coordinator-stub/agent-stub  coordinator-agent-selftest 가 내부적으로 띄우는
                                   하위 프로세스다 — 직접 부를 수도 있지만 사람이 쓰라고
                                   만든 인터페이스는 아니다.
+    submit                       제출자가 자기 키로 JobManifest 를 서명해 파일로 낸다.
+                                  ★ Coordinator 는 제출자 개인키를 갖지 않는다.
+    import-manifest              운영자가 그 파일을 durable job store 에 **반입**한다.
+                                  ★ 제출 \"접수\" 가 아니다 — 신뢰 경계는 운영자가
+                                    provision 한 keyring 파일이고, 거기 없는 서명자는
+                                    거부된다. 멤버십 판정은 하지 않는다.
+    import-inventory             운영자가 선언한 노드 목록을 durable inventory
+                                  store 에 **반입**한다 — 이게 있어야 scheduler 가
+                                  고를 후보가 생긴다.
+                                  ★ 서명된 inventory 메시지가 없으므로 이건
+                                    \"검증\" 이 아니다. 신뢰 경계는 이 명령을
+                                    실행할 권한과 그 파일의 OS 권한이다.
 
-★ scheduler · runtime-container/windows 는 여전히 미착수다.
+★ scheduler 커널은 있고 production 연결만 없다 — import-inventory 로
+  후보를 넣으면 evaluate_eligibility 가 실제로 고른다. 그 결과를 받아
+  Grant 를 만드는 경로가 아직 없다. runtime-container 는 미착수다.
   없는 것을 있는 것처럼 적지 않는다.
 ";
 
@@ -117,6 +138,26 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("gpu-probe 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("import-manifest") => match import_manifest::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("import-manifest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("import-inventory") => match import_inventory::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("import-inventory 실패: {e}");
                 ExitCode::FAILURE
             }
         },

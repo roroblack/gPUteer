@@ -1,0 +1,71 @@
+########## import-manifest 독립 검수 1라운드 ##########
+tokens used
+135,547
+- `crates/cli/src/import_manifest.rs:57`, `crates/cli/src/import_manifest.rs:126` — **실제 결함**. 비영속 DB를 문자열 `":memory:"` 하나로만 거부한다. `CoordinatorJobStore::is_durable()`는 빈 경로도 비영속으로 판정하도록 설계되어 있는데(`crates/coordinator/src/job_store.rs:380-395`), 명령은 저장소를 연 뒤 이를 확인하지 않는다. 따라서 `--job-db ""`는 임시 SQLite DB에 저장하고도 `IMPORTED` 성공을 반환할 수 있다. `crates/cli/tests/import_manifest.rs:235-247`도 `:memory:`만 검사하므로 이 결함을 잡지 못한다.
+
+- `crates/cli/tests/import_manifest.rs:125-138`, `crates/cli/tests/import_manifest.rs:188`, `crates/cli/tests/import_manifest.rs:209`, `crates/cli/tests/import_manifest.rs:229`, `crates/cli/tests/import_manifest.rs:299` — **실제 결함(테스트 판별력)**. 거부 후 DB 불변을 재는 대신 고정된 `JOB_ID` 한 건이 없는지만 확인한다. 거부 경로가 스키마·idempotency 행·manifest binding 또는 다른 Job 행을 남겨도 통과한다. 특히 127-128행의 설명과 반대로, “다른 행이 들어온 경우”를 이 helper가 놓친다. 사전 DB snapshot과 사후 전체 관련 테이블 상태를 비교해야 한다.
+
+- `crates/cli/tests/import_manifest.rs:181-186`, `crates/cli/tests/import_manifest.rs:207-209`, `crates/cli/tests/import_manifest.rs:292-299` — **실제 결함(테스트 판별력)**. 모르는 서명자와 만료는 공통 문자열 `MANIFEST_REJECTED`만 검사하고, 위조 테스트는 오류 종류를 전혀 검사하지 않는다. 세 원인을 하나의 오류로 뭉개는 구현도 모두 통과하므로 “각각 구분해 거부” 계약을 고정하지 못한다.
+
+- `crates/cli/src/import_manifest.rs:103-104` — **서술 문제**. `verify()`의 만료·schema·정책 실패까지 전부 “서명 검증 실패”라고 표시한다. 뒤의 `Debug` 값으로 원인은 구분되지만, 만료된 정상 서명을 서명 실패라고 부르는 상위 설명은 부정확하다.
+
+- `crates/cli/src/main.rs:43-65` — **실제 결함(명령 등록 완결성)**. dispatch에는 `import-manifest`가 등록됐지만 `gputeer --help`의 사용법에는 새 명령과 필수 옵션이 없다. 운영자용 신규 명령을 정상적인 CLI 탐색 경로에서 발견할 수 없다.
+
+그 외 직접 대조 결과, 검증 전 Manifest 필드 접근은 없고, `Verified::get()` 이후에만 읽는다. `JobManifest`는 규범상 `Lifetime::LongLived`이며 replay 대상이 아니므로 `NoReplayCheck` 사용은 맞다. `max_queue_minutes == 0 → None`은 proto와 job-store 계약에 맞고, `deadline_minutes == 0 → None`도 즉시 만료시키는 것보다 기존 optional deadline 모델과 일관된다. 기대값을 검수 대상 함수로 계산한 자리나, 삽입으로 인해 `#[...]`·`///` 소속이 밀린 자리, 멤버십 판정을 수행한다고 과장한 문구는 발견하지 못했다.
+
+이 환경에는 `cargo` 실행 파일이 없어 빌드·테스트는 실행하지 못했으며, 위 판정은 코드와 규범의 직접 대조 결과다.
+
+CHANGES_REQUESTED
+
+########## import-manifest 독립 검수 2라운드 ##########
+tokens used
+80,588
+Cargo가 환경에 없어 테스트는 실행하지 못했고, 관련 구현을 직접 대조해 판정했다.
+
+- `crates/cli/src/import_manifest.rs:155`, `crates/cli/tests/import_manifest.rs:215` — **실제 결함**. `VerifyOutcome::UnknownSigner`는 미등록뿐 아니라 폐기·회전 만료 키도 포함하며, quarantine 상태도 같은 결과가 된다. 그런데 오류를 “신뢰 목록에 없는 서명자”로 단정해 실제로 목록에 존재하는 폐기 서명자를 오진한다. 테스트도 이 과도하게 좁은 문구를 기대값으로 고정했다.
+
+- `crates/cli/src/main.rs:49-56` — **서술 문제**. `coordinator-stub`의 `--lease-id`, `--job-id`, `--lease-db` 연속행 사이에 `submit`과 `import-manifest` 사용법이 삽입됐다. 결과적으로 help에서 lease 옵션이 `import-manifest`에 속한 것처럼 보이고, coordinator 명령 사용법은 끊겼다.
+
+- `docs/plans/2026-09-01_2000_제출된_manifest_운영자_반입_v1.md:77-90` — **서술 문제**. 문서는 negative test에 revoke 서명자와 변경 입력 재실행을 열거하지만 실제 7건에는 둘 다 없고, 실제 추가된 평문 keyring 기본 거부는 목록에 없다.
+
+그 밖에는 검증 전 Manifest 필드 사용을 찾지 못했다. `rejection_reason()`의 `InvalidSignature`·`Expired` 분류는 실제 `VerifyOutcome`과 맞으며, `is_durable()` 위임도 `:memory:`와 빈 경로를 모두 거부한다. `db_snapshot()`은 현재 거부 테스트들이 DB를 열기 전에 종료되므로 SQLite 읽기로 흔들리지 않고, 새 DB·스키마·행 흔적을 판별한다. 다만 테스트들이 모두 “DB가 처음부터 없음” 상태라 기존 DB 바이트 비교 분기는 실제로 실행되지 않는다.
+
+CHANGES_REQUESTED
+
+########## import-manifest 독립 검수 3라운드 ##########
+tokens used
+75,081
+cargo가 없어 테스트는 실행하지 못했고, 코드를 직접 대조해 판정했다.
+
+- `crates/cli/tests/import_manifest.rs:323` — **서술 문제**. 새 8번째 테스트 위에 기존 만료 테스트의 문서 주석인 “만료된 Manifest는 거부한다”가 남아 있어, 주석이 엉뚱한 `a_rejection_leaves_an_already_populated_db_byte_for_byte_identical`에 소속됐다. 실제 만료 테스트(`:378`)는 해당 설명과 분리됐다.
+
+- `crates/cli/src/import_manifest.rs:142` — **서술 문제**. `rejection_reason` 설명은 여전히 “세 원인”과 “모르는 서명자 → keyring에 넣기”라고 단정한다(`:144-147`). 그러나 바로 아래 구현은 폐기·회전 만료·격리도 `UnknownSigner`로 처리한다. 특히 폐기·격리는 keyring에 다시 넣는 것이 올바른 대응이 아니므로, 2라운드 정정 아래에 낡은 운영 안내가 남았다.
+
+- `crates/cli/src/main.rs:53` — **서술 문제**. help는 `agent-stub`에 `--coordinator-device-id`와 `--agent-device-id`가 필수인 것처럼 표시한다(`:54`). 실제 Agent 파서는 `--connect`, `--own-seed`, `--peer-pubkey`만 필수로 읽고 두 ID 인자는 사용하지 않는다(`crates/agent/src/lib.rs:2065`). 명령별 필수 인자 표시가 실제와 일치하지 않는다. 반면 `coordinator-stub`, `submit`, `import-manifest`의 줄 연속과 필수 인자 소속은 올바르다.
+
+- `docs/plans/2026-09-01_2000_제출된_manifest_운영자_반입_v1.md:89` — **서술 문제**. “거부 뒤 DB가 안 바뀌는지를 매번 확인한다”고 했지만 비영속 DB 거부 테스트는 성공 여부와 오류 문구만 검사하며 DB 불변 검사를 하지 않는다(`crates/cli/tests/import_manifest.rs:273-291`). 테스트 목록 자체는 현재 8건과 맞는다.
+
+`UnknownSigner` 확대 문구는 실제 규범과 맞는다. 활성 후보가 없으면 즉시 `UnknownSigner`이고, 폐기·회전 만료 키의 서명이 retired 후보와 맞아도 같은 결과이며, 격리 시 후보 목록 자체가 비워진다(`crates/crypto/src/lib.rs:136-154`, `crates/crypto/src/keyring.rs:723-755`). 계획서의 revoke 설명도 사실이다.
+
+새 8번째 테스트는 정상 반입 성공과 기존 Job 존재를 먼저 강제하고, 비어 있지 않은 DB 바이트를 스냅샷으로 잡으므로 측정이 공허하지 않다(`crates/cli/tests/import_manifest.rs:341-349`). 거부 후 전체 바이트와 기존 Job 상태를 확인한다. I7이 이 테스트를 통과한다는 보고도 코드상 맞다. 기준 스냅샷 전에 이미 DB를 재개방했고, 최신 스키마의 기존 DB를 다시 여는 것만으로는 행이나 바이트를 변경하지 않는다. I8의 audit 행 삽입은 전체 바이트 비교에 걸린다.
+
+검증 전에는 decode된 Manifest 필드를 소비하는 자리가 없고, 저장소는 검증 성공 뒤에만 열린다. 명령이 네트워크 접수나 멤버십 판정을 수행하는 동작 결함도 발견하지 않았다.
+
+CHANGES_REQUESTED
+
+########## import-manifest 독립 검수 4라운드 ##########
+tokens used
+77,357
+`cargo`가 없어 테스트는 실행하지 못했고, 코드를 직접 대조했다.
+
+지적 없음 — 실제 결함 0건, 서술 문제 0건.
+
+- 테스트 문서 귀속 정상: `crates/cli/tests/import_manifest.rs:323-331`, `:375-379`
+- 폐기·회전 만료·격리는 실제로 `UnknownSigner`로 합류: `crates/crypto/src/keyring.rs:723-755`, `crates/crypto/src/lib.rs:136-154`
+- DB 무변경 설명과 비영속 DB 예외가 테스트와 일치: `docs/plans/2026-09-01_2000_제출된_manifest_운영자_반입_v1.md:89-94`, `crates/cli/tests/import_manifest.rs:271-291`
+- 3라운드 반박이 맞음: help는 두 ID를 요구하며(`crates/cli/src/main.rs:54-55`), 파서도 실제로 둘 다 `require()`한다(`crates/agent/src/lib.rs:2124-2125`).
+- Manifest 필드는 검증 성공 전 CLI 로직에서 읽지 않음: `crates/cli/src/import_manifest.rs:54-95`
+- 명령의 범위 설명은 구현과 일치하며, 하지 않는 기능을 한다고 주장하는 곳 없음: `crates/cli/src/import_manifest.rs:20-33`, `crates/cli/src/main.rs:71-74`
+
+ACCEPTED
+
