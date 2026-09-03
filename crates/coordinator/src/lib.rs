@@ -31,6 +31,7 @@ use prost::Message;
 
 pub mod attempt_report_store;
 pub mod checkpoint_manifest_store;
+pub mod grant_from_stored;
 pub mod inventory_store;
 pub mod job_store;
 pub mod lease_store;
@@ -195,6 +196,25 @@ pub struct CoordinatorConfig {
     /// 호출자가 확인했는지 여부. 기본값은 `false`이며, 위험을 명시적으로
     /// 수락하지 않으면 Coordinator는 시작하지 않는다.
     pub allow_unsafe_legacy_mode: bool,
+
+    // ── 저장된 예약에서 Grant 발급 (2026-09-03) ──
+    /// 켜면 `config` 값으로 Grant 를 조립하는 대신 **이 control DB 에
+    /// 저장된 예약**(Attempt·Lease·fence epoch·coordinator term)에서
+    /// 조립한다.
+    ///
+    /// ★ 기존 경로는 `coordinator_term` 을 리터럴 1 로 박아 넣고
+    ///   `config.attempt_id` 를 그대로 쓴다 — selftest 재현에는 충분하지만
+    ///   그 Grant 는 저장소가 아는 사실과 아무 관계가 없다.
+    ///
+    /// `None` 이면 **기존 경로 그대로다**(회귀 없음).
+    pub grant_from_control_db: Option<PathBuf>,
+    /// 저장된 예약에서 발급할 때 쓸 식별자. `grant_from_control_db` 가
+    /// `Some` 일 때만 읽는다.
+    pub stored_grant_job_id: String,
+    pub stored_grant_attempt_id: String,
+    pub stored_grant_lease_id: String,
+    /// Grant 수명(발급 시각 기준). 저장된 Lease 만료를 넘으면 거부된다.
+    pub stored_grant_ttl_ms: u64,
 
     // ── max_total_duration_seconds 갱신 차단 (2026-08-19, `docs/plans/2026-08-19_2350_...`) ──
     /// 최초 발급 시 후보값으로만 쓰인다 — 이미 저장소에 있는 Lease 의
@@ -712,7 +732,40 @@ fn serve_one_connection_impl(
             connection_attempt,
         );
     }
-    let mut grant = issue_grant(config, lease_store, signing_key, now, connection_attempt)?;
+    let mut grant = match &config.grant_from_control_db {
+        // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
+        //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
+        //   함수**여서 두 벌이 생기지 않는다.
+        Some(control_db) => {
+            let jobs = crate::job_store::CoordinatorJobStore::open(control_db)
+                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("job store: {e}"))))?;
+            let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)
+                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("staging store: {e}"))))?;
+            let leases = CoordinatorLeaseStore::open(control_db)
+                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("lease store: {e}"))))?;
+            crate::grant_from_stored::signed_grant_from_stored(
+                &jobs,
+                &staging,
+                &leases,
+                &crate::grant_from_stored::StoredGrantRequest {
+                    job_id: config.stored_grant_job_id.clone(),
+                    attempt_id: config.stored_grant_attempt_id.clone(),
+                    lease_id: config.stored_grant_lease_id.clone(),
+                    grant_id: config.grant_id.clone(),
+                    issued_at_unix_ms: now,
+                    expires_at_unix_ms: now.saturating_add(config.stored_grant_ttl_ms),
+                    // ★ **기존 handshake 의 유도식을 그대로 쓴다.** Agent 가
+                    //   연결 시도 번호에서 같은 값을 다시 만들어 대조한다 —
+                    //   저장된 사실로 뽑으면 그 대조가 깨진다(통합 테스트가
+                    //   `nonce does not match connection attempt` 로 잡았다).
+                    nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
+                },
+                signing_key,
+            )
+            .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Protocol(e)))?
+        }
+        None => issue_grant(config, lease_store, signing_key, now, connection_attempt)?,
+    };
 
     if config.corrupt_own_signature {
         let last = grant
@@ -2224,6 +2277,22 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
+        // ★ 저장된 예약에서 발급(2026-09-03). 안 주면 기존 경로 그대로다.
+        grant_from_control_db: flags.0.get("--grant-from-control-db").map(PathBuf::from),
+        stored_grant_job_id: flags.0.get("--stored-grant-job-id").cloned().unwrap_or_default(),
+        stored_grant_attempt_id: flags
+            .0
+            .get("--stored-grant-attempt-id")
+            .cloned()
+            .unwrap_or_default(),
+        stored_grant_lease_id: flags
+            .0
+            .get("--stored-grant-lease-id")
+            .cloned()
+            .unwrap_or_default(),
+        stored_grant_ttl_ms: flags
+            .u64_opt_flag("--stored-grant-ttl-ms")?
+            .unwrap_or(60_000),
         allow_unsafe_legacy_mode: flags.bool_flag("--i-understand-legacy-mode-is-unsafe"),
         max_total_duration_seconds: flags
             .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
