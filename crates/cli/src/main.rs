@@ -39,6 +39,7 @@ mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
 mod plan_job;
+mod issue_grant;
 mod stage_job;
 mod submit;
 mod selftest;
@@ -60,6 +61,10 @@ gputeer — gPUteer CLI
     gputeer import-manifest --manifest <path> --submitter-keyring <path> \\
         --job-db <path> --idempotency-key <hex16>
     gputeer import-inventory --inventory <path> --inventory-db <path>
+    gputeer issue-grant --job-id <id> --control-db <path> \
+        --attempt-id <ulid> --lease-id <ulid> --grant-id <id> \
+        --grant-issued-at-unix-ms <ms> --grant-expires-at-unix-ms <ms> \
+        --coordinator-key-file <path> --out <path>
     gputeer stage-job --job-id <id> --control-db <path> \
         --submitter-keyring <path> --submitter-member <id> \
         --max-snapshot-age-ms <ms> --best-fit-axes <a,b,c,d,e> \
@@ -160,6 +165,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("import-manifest 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("issue-grant") => match issue_grant::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("issue-grant 실패: {e}");
                 ExitCode::FAILURE
             }
         },

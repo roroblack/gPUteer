@@ -1880,28 +1880,46 @@ fn stored_to_signed_lease(
     key: &SigningKey,
     resolved: StoredLease,
 ) -> Result<pb::Lease, String> {
-    let max_total_duration_seconds = u32_from_stored(
-        resolved.max_total_duration_seconds,
-        "max_total_duration_seconds",
-    )?;
-    let mut lease = pb::Lease {
-        schema_version: 1,
-        lease_id: resolved.lease_id,
-        job_id: resolved.job_id,
-        attempt_id: resolved.attempt_id,
-        fence_epoch: resolved.fence_epoch,
-        coordinator_term: resolved.coordinator_term,
-        holder_node_id: resolved.holder_node_id.clone(),
-        member_node_ids: vec![resolved.holder_node_id],
-        issuing_coordinator_id: resolved.issuing_coordinator_id,
-        issued_at_unix_ms: resolved.issued_at_unix_ms,
-        expires_at_unix_ms: resolved.expires_at_unix_ms,
-        renew_after_unix_ms: resolved.renew_after_unix_ms,
-        max_total_duration_seconds,
-        ..Default::default()
-    };
+    let mut lease = unsigned_lease_from_stored(&resolved)?;
     lease.coordinator_signature = sign(key, &lease).to_vec();
     Ok(lease)
+}
+
+/// 저장된 Lease 를 **서명 전** `pb::Lease` 로 옮긴다.
+///
+/// ★ 이 변환은 **세 벌로 복사돼 있었다**(`stored_to_signed_lease` ·
+///   `build_renewed_lease_result` · `issue_lease`). `gputeer issue-grant`
+///   가 네 번째 소비자가 될 참이어서 하나로 합쳤다.
+///
+///   같은 판정을 여러 곳에 두면 한쪽만 낡는다 — `DoD-67` 에서 영속성
+///   판정을 CLI 와 저장소 두 곳에 두었다가 `--job-db ""` 가 조용히
+///   성공했던 것이 정확히 그 함정이다.
+///
+/// 서명하지 않는다. 누가 어떤 키로 서명할지는 호출부의 몫이다.
+///
+/// `member_node_ids` 는 `holder_node_id` 하나뿐이다 — 분산 Job(Mode B/C)
+/// 은 아직 없고, 없는 참여자를 지어내지 않는다.
+pub fn unsigned_lease_from_stored(stored: &StoredLease) -> Result<pb::Lease, String> {
+    let max_total_duration_seconds = u32_from_stored(
+        stored.max_total_duration_seconds,
+        "max_total_duration_seconds",
+    )?;
+    Ok(pb::Lease {
+        schema_version: 1,
+        lease_id: stored.lease_id.clone(),
+        job_id: stored.job_id.clone(),
+        attempt_id: stored.attempt_id.clone(),
+        fence_epoch: stored.fence_epoch,
+        coordinator_term: stored.coordinator_term,
+        holder_node_id: stored.holder_node_id.clone(),
+        member_node_ids: vec![stored.holder_node_id.clone()],
+        issuing_coordinator_id: stored.issuing_coordinator_id.clone(),
+        issued_at_unix_ms: stored.issued_at_unix_ms,
+        expires_at_unix_ms: stored.expires_at_unix_ms,
+        renew_after_unix_ms: stored.renew_after_unix_ms,
+        max_total_duration_seconds,
+        ..Default::default()
+    })
 }
 
 fn build_renewed_lease_result(
@@ -1911,26 +1929,7 @@ fn build_renewed_lease_result(
     resolved: StoredLease,
     request_nonce: Vec<u8>,
 ) -> Result<pb::RenewLeaseResult, String> {
-    let max_total_duration_seconds = u32_from_stored(
-        resolved.max_total_duration_seconds,
-        "max_total_duration_seconds",
-    )?;
-    let mut lease = pb::Lease {
-        schema_version: 1,
-        lease_id: resolved.lease_id,
-        job_id: resolved.job_id,
-        attempt_id: resolved.attempt_id,
-        fence_epoch: resolved.fence_epoch,
-        coordinator_term: resolved.coordinator_term,
-        holder_node_id: resolved.holder_node_id.clone(),
-        member_node_ids: vec![resolved.holder_node_id],
-        issuing_coordinator_id: resolved.issuing_coordinator_id,
-        issued_at_unix_ms: resolved.issued_at_unix_ms,
-        expires_at_unix_ms: resolved.expires_at_unix_ms,
-        renew_after_unix_ms: resolved.renew_after_unix_ms,
-        max_total_duration_seconds,
-        ..Default::default()
-    };
+    let mut lease = unsigned_lease_from_stored(&resolved)?;
     lease.coordinator_signature = sign(key, &lease).to_vec();
 
     if config.corrupt_renewed_lease_signature {
@@ -2099,26 +2098,7 @@ fn issue_lease(
         }
     };
 
-    let max_total_duration_seconds = u32_from_stored(
-        resolved.max_total_duration_seconds,
-        "max_total_duration_seconds",
-    )?;
-    let mut lease = pb::Lease {
-        schema_version: 1,
-        lease_id: resolved.lease_id,
-        job_id: resolved.job_id,
-        attempt_id: resolved.attempt_id,
-        fence_epoch: resolved.fence_epoch,
-        coordinator_term: resolved.coordinator_term,
-        holder_node_id: resolved.holder_node_id.clone(),
-        member_node_ids: vec![resolved.holder_node_id],
-        issuing_coordinator_id: resolved.issuing_coordinator_id,
-        issued_at_unix_ms: resolved.issued_at_unix_ms,
-        expires_at_unix_ms: resolved.expires_at_unix_ms,
-        renew_after_unix_ms: resolved.renew_after_unix_ms,
-        max_total_duration_seconds,
-        ..Default::default()
-    };
+    let mut lease = unsigned_lease_from_stored(&resolved)?;
 
     lease.coordinator_signature = sign(key, &lease).to_vec();
 
