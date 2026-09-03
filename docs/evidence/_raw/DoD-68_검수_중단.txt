@@ -1,0 +1,22 @@
+=== DoD-68 독립 검수 — 판정 없음 (쿼터 소진) ===
+
+세 갈래를 동시에 걸었고 셋 다 판정 전에 끊겼다.
+복구 시각: 2026-09-07 15:43 (코덱스가 보고한 값)
+
+--- r_chain : 904763 bytes ---
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 7th, 2026 3:43 PM.
+tokens used
+131,091
+
+--- r_prose : 398548 bytes ---
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 7th, 2026 3:43 PM.
+tokens used
+95,128
+
+--- r_edge : 455839 bytes ---
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 7th, 2026 3:43 PM.
+tokens used
+60,732
+
+--- 판정 문자열 탐색 ---
+없음 — 셋 다 판정 전에 끊겼다
