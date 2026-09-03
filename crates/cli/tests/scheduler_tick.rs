@@ -1,0 +1,437 @@
+//! `gputeer scheduler-tick` — **스스로 골라 예약한다.**
+//!
+//! ★ **무게중심은 멱등이다.** `stage-job` 은 운영자가 식별자와 시각을
+//!   직접 주므로 재시도가 같은 값이면 같은 결과다. tick 은 그것을
+//!   **스스로 만들어야** 하는데, 시계나 난수로 만들면 재시도마다 달라져
+//!   저장소의 operation key 가 약속하는 멱등이 거짓말이 된다.
+//!
+//!   그래서 전부 `(job_id, plan_id)` 와 저장된 `queued_at` 에서 유도한다.
+//!   이 파일이 그게 실제로 성립하는지 잰다.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use gputeer_coordinator::job_store::{CoordinatorJobStore, JobState};
+
+fn cli_bin() -> PathBuf {
+    let mut path = std::env::current_exe().expect("test executable");
+    path.pop();
+    if path.ends_with("deps") {
+        path.pop();
+    }
+    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+}
+
+const NODE: &str = "node-tick-a";
+const SUBMITTER: &str = "01JSUBMITTERTICK00000001";
+const SEED: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc11";
+const OWNER: &str = "owner-tick";
+const COORDINATOR: &str = "01JCOORDINATORTICK000001";
+const AXES: &str = "vram,gpu_count,cpu,ram,workspace";
+const JOB_A: &str = "01JJOBTICKA0000000000001";
+const JOB_B: &str = "01JJOBTICKB0000000000001";
+
+fn run_cli(args: &[&str]) -> (bool, String) {
+    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    (
+        out.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_millis() as u64
+}
+
+fn write_keyring(dir: &Path) -> PathBuf {
+    let keyring = dir.join("submitters.keyring");
+    let mut seed = [0u8; 32];
+    for (i, byte) in seed.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&SEED[i * 2..i * 2 + 2], 16).expect("seed hex");
+    }
+    let mut ring = gputeer_crypto::PersistentKeyring::new(
+        &keyring,
+        gputeer_crypto::KeyProtection::K0Plaintext,
+        gputeer_crypto::PlaintextPolicy::Allow,
+    )
+    .expect("keyring 생성");
+    ring.insert_public(
+        SUBMITTER,
+        gputeer_crypto::SigningKey::from_bytes(&seed).verifying_key(),
+    )
+    .expect("공개키 등록");
+    ring.save().expect("keyring 저장");
+    keyring
+}
+
+/// `gpu_count` 로 노드 수를 정한다 — 두 Job 을 각각 예약하려면 둘이 필요하다.
+fn write_bootstrap(dir: &Path, nodes: usize) -> PathBuf {
+    let key: String = gputeer_crypto::SigningKey::from_bytes(&[31u8; 32])
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let observed = now_unix_ms();
+    let agents: Vec<String> = (0..nodes)
+        .map(|i| {
+            let node = if i == 0 {
+                NODE.to_string()
+            } else {
+                format!("{NODE}-{i}")
+            };
+            let gpu = format!("{node}-gpu-0");
+            let device = format!("device-tick-{i}");
+            let node_key = if i == 0 {
+                key.clone()
+            } else {
+                gputeer_crypto::SigningKey::from_bytes(&[40u8 + i as u8; 32])
+                    .verifying_key()
+                    .to_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect()
+            };
+            format!(
+                r#"    {{
+      "registry": {{
+        "node_id": "{node}", "device_id": "{device}",
+        "owner_member_id": "{OWNER}", "verifying_key_hex": "{node_key}",
+        "node_state": "ONLINE", "risk_state": "NORMAL",
+        "security_tier": "S2", "isolation_class": "CONTAINED",
+        "key_protection": "K1"
+      }},
+      "inventory": {{
+        "inventory_revision": 1, "observed_at_unix_ms": {observed},
+        "gpus": [{{ "gpu_id": "{gpu}", "model": "RTX 4070 SUPER",
+                    "healthy": true, "available_vram_bytes": 12884901888 }}],
+        "available_cpu_cores": 16, "available_ram_bytes": 34359738368,
+        "available_workspace_bytes": 107374182400,
+        "allowed_workload_classes": ["TRAINING"],
+        "third_party_workloads_opt_in": true
+      }}
+    }}"#
+            )
+        })
+        .collect();
+    let path = dir.join("bootstrap.json");
+    std::fs::write(
+        &path,
+        format!(
+            "{{\n  \"schema_version\": 1,\n  \"agents\": [\n{}\n  ]\n}}",
+            agents.join(",\n")
+        ),
+    )
+    .expect("문서 쓰기");
+    path
+}
+
+const DECLARATIONS: [&str; 16] = [
+    "--workload-class", "TRAINING",
+    "--side-effect-class", "PURE",
+    "--dataset-sensitivity", "INTERNAL",
+    "--minimum-security-tier", "S2",
+    "--minimum-isolation-class", "CONTAINED",
+    "--minimum-key-protection", "K1",
+    "--gpu-count", "1",
+    "--gpu-min-vram-bytes", "8589934592",
+];
+
+/// 한 Job 을 `submit` -> `import-manifest` -> `plan-job` 까지 올린다.
+fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
+    let manifest = dir.join(format!("{job_id}.pb"));
+    let issued = now_unix_ms().saturating_sub(60_000).to_string();
+    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+    let mut args: Vec<&str> = vec![
+        "submit", "--job-id", job_id, "--entrypoint", "python",
+        "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
+        "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
+        "--out", manifest.to_str().unwrap(),
+    ];
+    args.extend_from_slice(&DECLARATIONS);
+    let (ok, out) = run_cli(&args);
+    assert!(ok, "submit 실패: {out}");
+
+    let (ok, out) = run_cli(&[
+        "import-manifest", "--manifest", manifest.to_str().unwrap(),
+        "--submitter-keyring", keyring.to_str().unwrap(),
+        "--job-db", db.to_str().unwrap(), "--idempotency-key", idem,
+        "--i-understand-plaintext-keyring-is-unsafe", "true",
+    ]);
+    assert!(ok, "import-manifest 실패: {out}");
+
+    let (ok, out) = run_cli(&[
+        "plan-job", "--job-id", job_id, "--control-db", db.to_str().unwrap(),
+        "--submitter-keyring", keyring.to_str().unwrap(),
+        "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
+        "--i-understand-plaintext-keyring-is-unsafe", "true",
+    ]);
+    assert!(ok, "plan-job 실패: {out}");
+}
+
+fn tick(keyring: &Path, db: &Path, extra: &[&str]) -> (bool, String) {
+    let mut args: Vec<&str> = vec![
+        "scheduler-tick",
+        "--control-db", db.to_str().unwrap(),
+        "--submitter-keyring", keyring.to_str().unwrap(),
+        "--submitter-member", OWNER,
+        "--max-snapshot-age-ms", "86400000",
+        "--best-fit-axes", AXES,
+        "--coordinator-id", COORDINATOR,
+        "--coordinator-term", "3",
+        "--lease-ttl-ms", "600000",
+        "--lease-renew-after-ms", "300000",
+        "--lease-max-total-duration-seconds", "86400",
+        "--i-understand-plaintext-keyring-is-unsafe", "true",
+    ];
+    args.extend_from_slice(extra);
+    run_cli(&args)
+}
+
+fn job_state(db: &Path, job_id: &str) -> Option<JobState> {
+    let store = CoordinatorJobStore::open(db).expect("job store");
+    store.get(job_id).expect("조회").map(|job| job.state)
+}
+
+/// inventory 를 넣고 Job 하나를 큐에 올린다.
+fn prepared(dir: &Path, nodes: usize) -> (PathBuf, PathBuf) {
+    let db = dir.join("control.sqlite3");
+    let bootstrap = write_bootstrap(dir, nodes);
+    let (ok, out) = run_cli(&[
+        "import-inventory",
+        "--inventory", bootstrap.to_str().unwrap(),
+        "--inventory-db", db.to_str().unwrap(),
+    ]);
+    assert!(ok, "import-inventory 실패: {out}");
+    let keyring = write_keyring(dir);
+    queue_job(dir, &keyring, &db, JOB_A, "0102030405060708090a0b0c0d0e0f10");
+    (keyring, db)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+
+/// ★★ **운영자가 식별자를 안 줘도 스스로 골라 예약한다.**
+#[test]
+fn a_tick_picks_a_queued_job_and_stages_it_without_operator_identifiers() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "tick 실패: {output}");
+    assert!(output.contains("TICK_STAGED"), "출력이 다르다: {output}");
+    assert!(output.contains(NODE), "어느 노드인지 안 말한다: {output}");
+    assert!(output.contains("created=true"), "최초 예약이 아니다: {output}");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+}
+
+/// ★★ **같은 Job 을 다시 tick 해도 같은 Attempt 다.**
+///
+/// 시계나 난수로 식별자를 만들면 두 번째 tick 이
+/// `operation key payload conflict` 로 실패하거나 새 Attempt 를 만든다.
+#[test]
+fn ticking_the_same_job_twice_returns_the_same_attempt() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    // 예약 **전** 상태를 떠 둔다 — 이게 재현의 기준점이다.
+    let snapshot_before_tick = dir.path().join("before.sqlite3");
+    std::fs::copy(&db, &snapshot_before_tick).expect("DB 복사");
+
+    let (ok, first) = tick(&keyring, &db, &[]);
+    assert!(ok, "1회차 실패: {first}");
+    // 두 번째는 Job 이 이미 STAGING 이므로 큐에서 빠졌다 — 유휴다.
+    let (ok, second) = tick(&keyring, &db, &[]);
+    assert!(ok, "2회차 실패: {second}");
+    assert!(
+        second.contains("TICK_IDLE"),
+        "예약된 Job 이 아직 큐에 있다: {second}"
+    );
+
+    // ★ 그러나 **식별자 유도 자체**는 재현 가능해야 한다.
+    //
+    //   ★ 처음에는 `prepared()` 를 다시 불러 새 DB 를 만들고 비교했는데
+    //     **그건 같은 입력이 아니었다** — `submit` 이 `issued_at` 에
+    //     현재 시각을 넣어 Manifest 바이트가 달라지고, 그러면
+    //     `manifest_hash` -> `plan_id` -> Attempt 가 전부 달라진다.
+    //     그건 결함이 아니라 **의도한 동작**이다(다른 계획이면 다른
+    //     Attempt 여야 한다). 내 전제가 틀렸다.
+    //
+    //   진짜 "같은 입력" 은 **예약 전 DB 를 그대로 복사**하는 것이다.
+    let _ = &first;
+    let replay_db = dir.path().join("replay.sqlite3");
+    std::fs::copy(&snapshot_before_tick, &replay_db).expect("DB 복사");
+    let (ok, replay) = tick(&keyring, &replay_db, &[]);
+    assert!(ok, "복제본 tick 실패: {replay}");
+
+    let field = |line: &str, key: &str| -> String {
+        line.split_whitespace()
+            .find_map(|t| t.strip_prefix(key).map(str::to_string))
+            .unwrap_or_else(|| panic!("{key} 가 출력에 없다: {line}"))
+    };
+    assert_eq!(
+        field(&first, "attempt="),
+        field(&replay, "attempt="),
+        "같은 (job_id, plan_id) 인데 Attempt 가 달라졌다 — 시계나 난수를 썼다"
+    );
+    assert_eq!(
+        field(&first, "lease="),
+        field(&replay, "lease="),
+        "같은 (job_id, plan_id) 인데 Lease 가 달라졌다"
+    );
+}
+
+/// 큐가 비면 **오류가 아니다.**
+///
+/// 루프가 이걸 실패로 세면 정상 유휴 상태가 장애로 보인다.
+#[test]
+fn an_empty_queue_is_idle_not_an_error() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("control.sqlite3");
+    let bootstrap = write_bootstrap(dir.path(), 1);
+    let (ok, out) = run_cli(&[
+        "import-inventory",
+        "--inventory", bootstrap.to_str().unwrap(),
+        "--inventory-db", db.to_str().unwrap(),
+    ]);
+    assert!(ok, "import-inventory 실패: {out}");
+    let keyring = write_keyring(dir.path());
+
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "빈 큐를 오류로 다뤘다: {output}");
+    assert!(output.contains("TICK_IDLE"), "출력이 다르다: {output}");
+}
+
+/// ★★ **찾은 공백 — 후보 선택이 기존 예약을 모른다.**
+///
+/// 노드가 **둘**인데 두 번째 tick 이 실패한다:
+///
+/// ```text
+/// TICK_REFUSED: node is already reserved: node=node-tick-a, ...
+/// ```
+///
+/// `evaluate_eligibility`/`rank_best_fit` 은 **inventory 만** 본다.
+/// 예약은 staging 저장소의 다른 테이블에 있고, 둘을 잇는 것이 없다.
+/// 그래서 best-fit 이 늘 같은 노드를 골라 예약 관문에서 막힌다 —
+/// **비어 있는 노드가 있어도 그렇다.**
+///
+/// 안전에는 문제가 없다(예약 관문이 중복을 막는다). 그러나 **루프를
+/// 돌리면 큐 맨 앞에서 영영 멈춘다** — 이게 ④ 데몬화의 실질적 차단
+/// 요인이다.
+///
+/// ★ 고치려면 결정이 필요하다 — 예약된 노드를 `pool_snapshot()` 에서
+///   빼는가, hard-filter 에서 거르는가, 아니면 orchestrate 가 차순위
+///   후보로 재시도하는가. 셋이 의미가 다르고 규범이 아직 없다.
+///   **그래서 지금 고치지 않고, 지금 동작을 테스트로 고정한다** —
+///   메우면 이 테스트가 실패하며 문서도 같이 고치라고 알린다
+///   (`runtime-linux` 의 "탈출이 성공하기를 기대하는 테스트" 와 같은
+///   장치).
+#[test]
+fn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 2);
+    // 두 번째 Job 을 뒤이어 큐에 올린다.
+    queue_job(dir.path(), &keyring, &db, JOB_B, "1102030405060708090a0b0c0d0e0f10");
+
+    let (ok, first) = tick(&keyring, &db, &[]);
+    assert!(ok, "1회차 실패: {first}");
+    assert!(
+        first.contains(&format!("job_id={JOB_A}")),
+        "먼저 들어온 Job 을 안 골랐다: {first}"
+    );
+
+    // ★ 노드가 둘인데도 두 번째는 막힌다 — 위 문서의 공백이다.
+    let (ok, second) = tick(&keyring, &db, &[]);
+    assert!(
+        !ok,
+        "예약이 후보 선택에 반영되기 시작했다 — 이 테스트와 위 문서를 같이 고쳐라: {second}"
+    );
+    assert!(
+        second.contains("already reserved"),
+        "막힌 이유가 예약이 아니다: {second}"
+    );
+
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+    assert_eq!(
+        job_state(&db, JOB_B),
+        Some(JobState::Queued),
+        "두 번째 Job 은 큐에 남아야 한다"
+    );
+}
+
+/// ★★ **큐에 너무 오래 있었으면 예약하지 않는다.**
+///
+/// Lease 발급 시각을 `queued_at` 으로 쓰므로, TTL 이 짧으면 지금
+/// 예약해도 **이미 만료된 Lease** 를 주게 된다. 그걸 주면 Agent 는
+/// 받자마자 거부한다 — 조용히 만들지 않고 거부 이유를 말한다.
+#[test]
+fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    // TTL 을 1ms 로 — 큐 진입 직후라도 이미 지났다.
+    let (ok, output) = tick(&keyring, &db, &["--lease-ttl-ms", "1"]);
+    assert!(!ok, "만료될 Lease 로 예약했다: {output}");
+    assert!(
+        output.contains("너무 오래 있었다") || output.contains("앞서지 않는다") || output.contains("작아야 한다"),
+        "이유를 안 말한다: {output}"
+    );
+    assert_eq!(
+        job_state(&db, JOB_A),
+        Some(JobState::Queued),
+        "거부했는데 상태가 바뀌었다"
+    );
+
+    // 대조 — 넉넉한 TTL 이면 예약된다. 없으면 "항상 거부" 로도 통과한다.
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "넉넉한 TTL 에서도 거부했다: {output}");
+}
+
+/// 갱신 시점이 만료 뒤면 받아 주지 않는다.
+#[test]
+fn a_renew_offset_at_or_after_the_ttl_is_refused() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    for renew in ["600000", "700000", "0"] {
+        let (ok, output) = tick(&keyring, &db, &["--lease-renew-after-ms", renew]);
+        assert!(!ok, "--lease-renew-after-ms {renew} 를 받아들였다: {output}");
+        assert!(output.contains("작아야 한다"), "이유를 안 말한다: {output}");
+        assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+    }
+}
+
+/// 비영속 DB 는 거부한다.
+#[test]
+fn a_non_durable_control_db_is_refused() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let keyring = write_keyring(dir.path());
+    for label in [":memory:", ""] {
+        let (ok, output) = run_cli(&[
+            "scheduler-tick",
+            "--control-db", label,
+            "--submitter-keyring", keyring.to_str().unwrap(),
+            "--submitter-member", OWNER,
+            "--max-snapshot-age-ms", "86400000",
+            "--best-fit-axes", AXES,
+            "--coordinator-id", COORDINATOR,
+            "--coordinator-term", "3",
+            "--lease-ttl-ms", "600000",
+            "--lease-renew-after-ms", "300000",
+            "--lease-max-total-duration-seconds", "86400",
+            "--i-understand-plaintext-keyring-is-unsafe", "true",
+        ]);
+        assert!(!ok, "{label:?} 를 받아들였다: {output}");
+        assert!(
+            output.contains("영속이 아니다"),
+            "{label:?}: 이유를 안 말한다: {output}"
+        );
+    }
+}

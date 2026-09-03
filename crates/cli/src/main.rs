@@ -40,6 +40,7 @@ mod import_inventory;
 mod import_manifest;
 mod plan_job;
 mod issue_grant;
+mod scheduler_tick;
 mod stage_job;
 mod submit;
 mod selftest;
@@ -65,6 +66,11 @@ gputeer — gPUteer CLI
         --attempt-id <ulid> --lease-id <ulid> --grant-id <id> \
         --grant-issued-at-unix-ms <ms> --grant-expires-at-unix-ms <ms> \
         --coordinator-key-file <path> --out <path>
+    gputeer scheduler-tick --control-db <path> --submitter-keyring <path> \
+        --submitter-member <id> --max-snapshot-age-ms <ms> \
+        --best-fit-axes <a,b,c,d,e> --coordinator-id <id> --coordinator-term <n> \
+        --lease-ttl-ms <ms> --lease-renew-after-ms <ms> \
+        --lease-max-total-duration-seconds <s>
     gputeer stage-job --job-id <id> --control-db <path> \
         --submitter-keyring <path> --submitter-member <id> \
         --max-snapshot-age-ms <ms> --best-fit-axes <a,b,c,d,e> \
@@ -175,6 +181,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("issue-grant 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("scheduler-tick") => match scheduler_tick::run(&args[1..]) {
+            Ok(line) => {
+                println!("{line}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("scheduler-tick 실패: {e}");
                 ExitCode::FAILURE
             }
         },
