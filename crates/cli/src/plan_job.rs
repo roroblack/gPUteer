@@ -120,27 +120,27 @@ pub fn run(args: &[String]) -> Result<String, String> {
         )
     })?;
 
-    // 저장 당시의 서명자와 지금 검증된 서명자가 같은가.
+    // ★★ **여기 있던 "저장 당시 서명자 == 지금 검증된 서명자" 대조를
+    //   지웠다 — 도달할 수 없는 코드였다.**
     //
-    // ★ **이 분기는 테스트로 고정되지 않았다** — 뮤테이션 P2 로 통째로
-    //   지워도 10건이 전부 통과한다. 숨기지 않고 적는다.
+    //   뮤테이션으로 지워도 아무 테스트가 안 깨지길래 "DB 변조 방어라
+    //   재기 어렵다" 고 적어 뒀는데, 실제로 변조해 보니 **더 앞에서
+    //   막혔다.** 저장소의 load 가 이미 둘을 강제한다:
     //
-    //   도달하기 어려운 이유가 있다. 검증된 서명자는 Manifest 안의
-    //   `submitter_device_id` 에서 나오고, 저장된 값도 **반입 시점의 같은
-    //   검증**에서 나왔다. 그러니 둘이 갈리려면 저장 뒤에 DB 행이
-    //   손대져야 한다 — 즉 이건 **DB 변조 방어**이지 정상 경로의 관문이
-    //   아니다. 그걸 재려면 SQL 로 행을 직접 고치는 테스트가 필요하고,
-    //   그건 이 조각에서 만들지 않았다.
+    //       job_store.rs:906   manifest.submitter_device_id == job.submitter_device_id
+    //       job_store.rs:912   signer_id_at_submission      == job.submitter_device_id
     //
-    //   지우지 않는 이유는 비용이 0 이고 막는 것이 실재하기 때문이다.
-    //   다만 **"이 관문이 지키고 있다" 고 말할 근거는 아직 없다.**
-    if verified.signer_id() != binding.signer_id_at_submission {
-        return Err(format!(
-            "PLAN_REFUSED: 저장 당시 서명자({})와 지금 검증된 서명자({})가 다르다",
-            binding.signer_id_at_submission,
-            verified.signer_id()
-        ));
-    }
+    //   그리고 `Verified::signer_id()` 는 **메시지의 필드**에서 온다
+    //   (`signing.rs:843`). 셋을 합치면 두 값은 항상 같다.
+    //
+    //   ★ `DoD-62` 에서 **똑같은 실수를 했다** — 거기서도 내가 넣은
+    //     재대조를 `fetch_report_binding` 이 이미 하고 있었다. 두 번째다.
+    //     패턴이 보인다: **"한 번 더 확인해서 나쁠 것 없다" 가 아니다.**
+    //     도달 못 하는 검사는 지키는 게 없으면서 지키는 것처럼 읽힌다.
+    //
+    //   지금 이 자리를 지키는 것은 저장소의 대조이고, 그것이 느슨해지면
+    //   `tampering_the_stored_signer_is_stopped_by_the_store_before_planning`
+    //   이 실패하며 알려 준다.
 
     // ── 3. Verified 뒤에만 필드를 읽는다 ─────────────────────────────
     let requirements = job_requirements_from_manifest(&verified, submitter_member)

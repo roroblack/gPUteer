@@ -25,3 +25,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# ★ **테스트 전용.** DB 변조 방어(관문 셋)를 재려면 저장된 행을 직접
+#   고쳐야 한다 — 정상 경로로는 그 상태를 만들 수 없다. production 코드는
+#   여전히 rusqlite 를 쓰지 않는다(저장소 crate 를 거친다).
+rusqlite.workspace = true

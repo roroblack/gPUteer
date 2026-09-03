@@ -677,3 +677,93 @@ fn a_revoked_lease_yields_no_grant() {
     );
     assert!(!out.exists(), "거부했는데 파일을 남겼다");
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// DB 변조 방어 — 뮤테이션 G5·G6 가 안 잡혔던 두 관문
+// ══════════════════════════════════════════════════════════════════════
+
+/// ★★ **Attempt 와 Lease 의 fence epoch 를 어긋나게 만든다.**
+///
+/// `grant_from_stored.rs` 의 대조를 지워도 아무 테스트가 안 깨졌다
+/// (뮤테이션 G5). 셋이 한 트랜잭션에서 함께 쓰이므로 정상 경로로는 이
+/// 상태를 못 만든다 — 그래서 **DB 를 직접 고쳐** 만든다.
+#[test]
+fn a_lease_whose_fence_disagrees_with_its_attempt_yields_no_grant() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+
+    let before = dir.path().join("before.pb");
+    let (ok, output) = issue(&db, &key_file, &before, &[]);
+    assert!(ok, "변조 전인데 거부했다: {output}");
+
+    // ★ `fence_epoch` 은 **BLOB(8바이트 big-endian)** 이다. 처음에
+    //   `fence_epoch + 1` 로 정수를 넣었더니 저장소가 타입 오류로 막았고
+    //   — 재려던 관문이 아니라 **디코더**가 잡은 것이었다. 뮤테이션이
+    //   안 잡히는 걸 보고 알았다.
+    let connection = rusqlite::Connection::open(&db).expect("DB 열기");
+    let current: Vec<u8> = connection
+        .query_row(
+            "SELECT fence_epoch FROM coordinator_attempts WHERE attempt_id = ?1",
+            [ATTEMPT],
+            |row| row.get(0),
+        )
+        .expect("현재 fence 조회");
+    assert_eq!(current.len(), 8, "fence_epoch 인코딩이 바뀌었다");
+    let bumped = (u64::from_be_bytes(current.try_into().unwrap()) + 1).to_be_bytes();
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_attempts SET fence_epoch = ?2 WHERE attempt_id = ?1",
+            rusqlite::params![ATTEMPT, bumped.to_vec()],
+        )
+        .expect("변조");
+    assert_eq!(changed, 1, "변조할 Attempt 행이 없다");
+    drop(connection);
+
+    let out = dir.path().join("after.pb");
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(!ok, "fence 가 어긋나는데 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("fence epoch 가 다르다"),
+        "재려던 관문이 아니라 다른 곳에서 막혔다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// ★★ **예약이 다른 Job 의 것일 때 거부하는가.**
+///
+/// ★ 처음에는 예약을 **지웠는데** 그건 *존재* 검사에 걸렸다 — 뮤테이션
+///   G6 가 지운 것은 *불일치* 검사라 안 잡혔다. 같은 자리를 재려면 행을
+///   남겨 두고 **주인만 바꿔야** 한다.
+///
+/// 이 상태가 통과하면 **남이 잡고 있는 노드에 실행 허가가 나간다.**
+#[test]
+fn a_reservation_held_by_another_job_yields_no_grant() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+
+    let before = dir.path().join("before.pb");
+    let (ok, output) = issue(&db, &key_file, &before, &[]);
+    assert!(ok, "변조 전인데 거부했다: {output}");
+
+    let connection = rusqlite::Connection::open(&db).expect("DB 열기");
+    connection
+        .execute_batch("PRAGMA foreign_keys = OFF;")
+        .expect("외래 키 끄기");
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_node_reservations SET job_id = 'someone-elses-job'",
+            [],
+        )
+        .expect("변조");
+    assert_eq!(changed, 1, "변조할 예약이 없다");
+    drop(connection);
+
+    let out = dir.path().join("after.pb");
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(!ok, "남의 예약인데 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("someone-elses-job"),
+        "재려던 관문이 아니라 다른 곳에서 막혔다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}

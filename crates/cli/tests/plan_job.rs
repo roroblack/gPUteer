@@ -576,3 +576,57 @@ fn a_non_durable_control_db_is_refused() {
         );
     }
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// DB 변조 방어 — 정상 경로로는 만들 수 없는 상태를 만들어 본다
+// ══════════════════════════════════════════════════════════════════════
+
+/// ★★ **"저장 당시 서명자 ≠ 지금 검증된 서명자" 를 만들 수 있는가.**
+///
+/// `plan_job.rs` 에 그 분기가 있는데 뮤테이션으로 지워도 아무 테스트도
+/// 안 깨졌다. 나는 "DB 를 직접 고쳐야 재는 상태" 라고 적었다 — 그래서
+/// **실제로 고쳐 봤다.**
+///
+/// 결과: **못 만든다.** 저장소의 load 경로가 먼저 막는다
+/// (`job_store.rs:906`·`:912`):
+///
+/// ```text
+///   manifest.submitter_device_id == job.submitter_device_id
+///   signer_id_at_submission      == job.submitter_device_id
+/// ```
+///
+/// 그리고 `Verified::signer_id()` 는 **메시지의 필드**에서 온다
+/// (`signing.rs:843`, `signer_id: msg.signer_id()`). 셋을 합치면
+/// 두 값은 **항상 같다** — 그 분기는 도달 불가능하다.
+///
+/// ★ 이 테스트는 분기를 재지 않는다. **재려고 했더니 더 앞의 관문이
+///   전부 막더라**는 것을 고정한다. 나중에 load 의 대조가 느슨해지면
+///   이 테스트가 실패하며 알려 준다.
+#[test]
+fn tampering_the_stored_signer_is_stopped_by_the_store_before_planning() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepare(dir.path(), &FULL, now_unix_ms());
+
+    // 대조 — 변조 전에는 계획이 성공한다. 없으면 "항상 실패" 로도 통과한다.
+    let (ok, output) = plan(&keyring, &db, &[]);
+    assert!(ok, "변조 전인데 실패했다: {output}");
+
+    let connection = rusqlite::Connection::open(&db).expect("DB 열기");
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_job_manifests SET verified_signer_id = 'someone-else' WHERE job_id = ?1",
+            [JOB_ID],
+        )
+        .expect("변조");
+    assert_eq!(changed, 1, "변조할 행이 없다 — 테이블 이름이 바뀌었나");
+    drop(connection);
+
+    let (ok, output) = plan(&keyring, &db, &[]);
+    assert!(!ok, "변조했는데 계획이 성공했다: {output}");
+    assert!(
+        output.contains("손상") || output.to_lowercase().contains("corrupt"),
+        "★ 저장소의 손상 판정이 아니라 다른 이유로 막혔다 — 그러면 \
+         plan_job 의 서명자 대조가 실제로 도달 가능하다는 뜻이고, \
+         그 분기와 이 문서를 같이 고쳐야 한다: {output}"
+    );
+}
