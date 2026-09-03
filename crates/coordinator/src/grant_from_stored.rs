@@ -213,7 +213,76 @@ pub fn signed_grant_from_stored(
         ..Default::default()
     };
     grant.coordinator_signature = sign(key, &grant).to_vec();
+
+    // ── 방금 만든 것을 바로 다시 검증한다 ───────────────────────────
+    //
+    // ★ `gputeer submit` 이 이미 하는 일이다("서명하자마자 깨진 파일을
+    //   내보내는 것보다 여기서 실패하는 편이 훨씬 싸다"). 이 경로에는
+    //   그게 **없었다** — 내 뮤테이션이 아니라 코드를 나란히 놓고 보다가
+    //   찾았다.
+    //
+    //   `AlwaysValid` 를 쓰므로 이것이 **확인하는 것과 못 하는 것**을
+    //   정확히 적는다:
+    //
+    //   확인한다   구조·`schema_version`·수명·canonical 인코딩이
+    //              성립하는가. nested Lease 도 같이 본다.
+    //   못 한다    **이 키가 정말 `issuing_coordinator_id` 의 것인가.**
+    //              이 모듈에는 key directory 가 없다 — 호출부가 준
+    //              키를 그대로 쓴다.
+    //
+    //   ★ 그래서 엉뚱한 키로 서명하면 **여기서는 통과하고**, 나중에
+    //     Agent 가 거부한다(그 id 의 공개키로 서명이 안 맞는다). 위험
+    //     하지는 않다 — 아무도 못 쓰는 Grant 다. 다만 **운영자는 유효한
+    //     것을 만든 줄 안다**는 문제가 남는다. 그걸 닫으려면 Coordinator
+    //     공개키 목록이 필요하고, 이 저장소에 아직 없다.
+    verify_own_output(&grant, request.issued_at_unix_ms)?;
     Ok(grant)
+}
+
+/// 방금 서명한 Grant 를 **구조·수명 수준에서** 자기 검증한다.
+///
+/// 서명 자체를 다시 도는 것이 목적이 아니다(방금 우리가 만들었다).
+/// 확인하려는 것은 canonical 인코딩과 수명이 성립하는가다.
+fn verify_own_output(grant: &pb::ExecutionGrant, at_unix_ms: u64) -> Result<(), String> {
+    gputeer_protocol::verify(
+        grant,
+        2,
+        &AlwaysValid,
+        at_unix_ms,
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .map_err(|e| format!("방금 만든 Grant 가 자기 검증을 통과하지 못했다: {e:?}"))?;
+
+    let lease = grant
+        .lease
+        .as_ref()
+        .ok_or_else(|| "방금 만든 Grant 에 Lease 가 없다".to_string())?;
+    gputeer_protocol::verify(
+        lease,
+        1,
+        &AlwaysValid,
+        at_unix_ms,
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .map_err(|e| format!("방금 만든 nested Lease 가 자기 검증을 통과하지 못했다: {e:?}"))?;
+    Ok(())
+}
+
+/// 서명 **검사를 건너뛰는** 검증자 — "내가 방금 만든 것" 에만 쓴다.
+///
+/// ★ 수신 측에서 이것을 쓰면 안 된다. `submit.rs` 에 같은 것이 있고
+///   같은 이유로 거기서만 쓰인다.
+struct AlwaysValid;
+
+impl gputeer_protocol::signing::SignatureVerifier for AlwaysValid {
+    fn verify_signature(
+        &self,
+        _signer_id: &str,
+        _message: &[u8],
+        _signature: &[u8],
+    ) -> Result<(), gputeer_protocol::VerifyOutcome> {
+        Ok(())
+    }
 }
 
 /// `(grant_id, attempt_id)` 에서 16바이트 nonce 를 결정적으로 뽑는다.
