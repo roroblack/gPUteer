@@ -646,3 +646,34 @@ fn a_non_durable_control_db_is_refused() {
         );
     }
 }
+
+/// ★★ **폐기된 Lease 로는 Grant 를 못 낸다.**
+///
+/// `grant_from_stored.rs` 에 그 관문이 있는데 **아무 테스트도 그 자리를
+/// 밟지 않았다** — 뮤테이션 G7(폐기 검사를 무력화)을 걸어도 9건이 전부
+/// 통과했다. CLI 로는 Lease 를 폐기할 방법이 없어서 저장소 API 를 직접
+/// 부른다(`send_revoke_notice` 가 wire 전송 전에 하는 것과 같은 호출).
+#[test]
+fn a_revoked_lease_yields_no_grant() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+
+    // 대조 — 폐기 전에는 실제로 발급된다. 없으면 "항상 거부" 로도 통과한다.
+    let before = dir.path().join("before.pb");
+    let (ok, output) = issue(&db, &key_file, &before, &[]);
+    assert!(ok, "폐기 전인데 거부했다: {output}");
+
+    gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db)
+        .expect("lease store")
+        .mark_revoked(LEASE, LEASE_ISSUED + 1)
+        .expect("폐기");
+
+    let out = dir.path().join("after.pb");
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(!ok, "폐기된 Lease 로 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("폐기") || output.to_lowercase().contains("revoked"),
+        "거부 이유가 폐기가 아니다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}

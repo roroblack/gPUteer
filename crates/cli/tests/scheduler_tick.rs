@@ -376,12 +376,25 @@ fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared(dir.path(), 1);
 
-    // TTL 을 1ms 로 — 큐 진입 직후라도 이미 지났다.
-    let (ok, output) = tick(&keyring, &db, &["--lease-ttl-ms", "1"]);
+    // ★★ **처음 쓴 이 테스트는 엉뚱한 관문을 재고 있었다.**
+    //
+    //   `--lease-ttl-ms 1` 만 줬는데 `--lease-renew-after-ms` 는 기본
+    //   300000 이 남아 있었다. 갱신 오프셋 검사가 **먼저** 있으므로
+    //   (`scheduler_tick.rs:85` 가 `:128` 보다 앞이다) 거기서 걸렸고,
+    //   내 단언이 "작아야 한다" 도 받아 줘서 **통과했다.**
+    //   내 뮤테이션 T3(큐 나이 검사를 통째로 지움)이 안 잡히는 것을
+    //   보고서야 알았다 — 재려던 것을 하나도 안 재고 있었다.
+    //
+    //   이제 갱신 검사를 **통과하는** 값을 준다(1 < 2).
+    let (ok, output) = tick(
+        &keyring,
+        &db,
+        &["--lease-ttl-ms", "2", "--lease-renew-after-ms", "1"],
+    );
     assert!(!ok, "만료될 Lease 로 예약했다: {output}");
     assert!(
-        output.contains("너무 오래 있었다") || output.contains("앞서지 않는다") || output.contains("작아야 한다"),
-        "이유를 안 말한다: {output}"
+        output.contains("너무 오래 있었다"),
+        "큐 나이가 아니라 다른 관문에 걸렸다: {output}"
     );
     assert_eq!(
         job_state(&db, JOB_A),
@@ -392,6 +405,58 @@ fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
     // 대조 — 넉넉한 TTL 이면 예약된다. 없으면 "항상 거부" 로도 통과한다.
     let (ok, output) = tick(&keyring, &db, &[]);
     assert!(ok, "넉넉한 TTL 에서도 거부했다: {output}");
+}
+
+/// ★★ **Lease 발급 시각이 정말 `queued_at` 인가 — 저장된 값으로 잰다.**
+///
+/// 이 모듈의 무게중심인데 **아무 테스트도 안 재고 있었다** — 멱등
+/// 테스트는 attempt/lease **식별자**만 비교하고, 식별자는 시각에서
+/// 유도되지 않으므로 발급 시각을 시계로 바꿔도 통과했다(뮤테이션 T2).
+///
+/// 이제 저장소를 열어 실제 행을 본다.
+#[test]
+fn the_stored_lease_is_issued_at_the_moment_the_job_entered_the_queue() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    let queued_at = {
+        let store = CoordinatorJobStore::open(&db).expect("job store");
+        store
+            .get(JOB_A)
+            .expect("조회")
+            .expect("Job")
+            .queued_at_unix_ms
+            .expect("queued_at")
+    };
+
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "tick 실패: {output}");
+    let lease_id = output
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("lease="))
+        .expect("출력에 lease= 가 없다")
+        .to_string();
+
+    let stored = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db)
+        .expect("lease store")
+        .get(&lease_id)
+        .expect("조회")
+        .expect("Lease");
+
+    assert_eq!(
+        stored.issued_at_unix_ms, queued_at,
+        "발급 시각이 큐 진입 시각이 아니다 — 시계를 읽었다"
+    );
+    assert_eq!(
+        stored.expires_at_unix_ms,
+        queued_at + 600_000,
+        "만료가 queued_at + TTL 이 아니다"
+    );
+    assert_eq!(
+        stored.renew_after_unix_ms,
+        queued_at + 300_000,
+        "갱신 시점이 queued_at + 오프셋이 아니다"
+    );
 }
 
 /// 갱신 시점이 만료 뒤면 받아 주지 않는다.
@@ -435,3 +500,4 @@ fn a_non_durable_control_db_is_refused() {
         );
     }
 }
+

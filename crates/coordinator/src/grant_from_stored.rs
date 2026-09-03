@@ -140,6 +140,19 @@ pub fn signed_grant_from_stored(
             ));
         }
     }
+    // ★★ **아래 두 대조는 테스트로 고정되지 않았다 — 왜인지 적는다.**
+    //
+    //   뮤테이션 G5(fence 대조 제거)·G6(예약 존재 확인 제거)를 걸어도
+    //   `issue_grant` 10건이 전부 통과한다. 억지로 통과시킨 게 아니라
+    //   **그 상태를 정상 경로로 만들 수 없어서**다 — Attempt·Lease·
+    //   예약은 `staging_store.rs` 의 **한 `BEGIN IMMEDIATE` 안에서 함께**
+    //   쓰인다(`:605`·`:915`·`:1985`). 셋이 어긋나려면 DB 를 직접
+    //   조작해야 한다.
+    //
+    //   그래서 이건 **입력 검증이 아니라 손상 방어**다. 값어치가 없다는
+    //   뜻은 아니지만, "테스트가 지키고 있다" 고 말하면 거짓이다.
+    //   고정하려면 rusqlite 로 행을 직접 망가뜨리는 테스트가 필요하고
+    //   이 crate 의 통합 테스트에는 그 의존성이 없다.
     if attempt.fence_epoch != stored_lease.fence_epoch {
         return Err(format!(
             "GRANT_REFUSED: Attempt 와 Lease 의 fence epoch 가 다르다(Attempt {}, Lease {}) — 오래된 한쪽으로 Grant 를 만들면 fencing 이 무의미해진다",
