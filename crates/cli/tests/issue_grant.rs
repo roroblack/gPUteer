@@ -576,6 +576,19 @@ fn an_expired_lease_at_issue_time_is_refused() {
         ],
     );
     assert!(!ok, "만료 경계에서 발급했다: {output}");
+    // ★★ **이유까지 봐야 이 관문이 재진다.** 이 입력은 "Lease 가 이미
+    //   만료" 와 "Grant 만료가 Lease 만료보다 늦다" **둘 다** 성립한다
+    //   — `!ok` 만 보면 어느 쪽이 막았는지 모르고, 실제로 앞의 검사를
+    //   지우는 뮤테이션(H3)이 안 잡혔다.
+    //
+    //   ★ 둘을 **떼어 낼 입력은 없다**: 앞선 검사가 `발급 < 만료` 를
+    //     요구하므로 `lease.만료 <= 발급` 이면 `만료 > lease.만료` 도
+    //     반드시 참이다. 그래서 이 검사는 홀로 막는 일이 없고, 값어치는
+    //     **더 정확한 이유를 먼저 말하는 것**이다(`CLAUDE.md` §3).
+    assert!(
+        output.contains("Lease 가 이미 만료"),
+        "다른 관문이 먼저 막았다 — 이유가 덜 정확해진다: {output}"
+    );
     assert!(!out.exists());
 
     // 대조 — 만료 1ms 전은 발급된다.
@@ -763,6 +776,52 @@ fn a_reservation_held_by_another_job_yields_no_grant() {
     assert!(!ok, "남의 예약인데 Grant 를 냈다: {output}");
     assert!(
         output.contains("someone-elses-job"),
+        "재려던 관문이 아니라 다른 곳에서 막혔다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// ★★ **Attempt 가 다른 Job 의 것일 때 거부하는가** (뮤테이션 H2).
+///
+/// 정상 경로로는 못 만든다 — Attempt 와 Job 은 함께 쓰인다. DB 를 고친다.
+#[test]
+fn an_attempt_belonging_to_another_job_yields_no_grant() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+
+    let before = dir.path().join("before.pb");
+    let (ok, output) = issue(&db, &key_file, &before, &[]);
+    assert!(ok, "변조 전인데 거부했다: {output}");
+
+    let connection = rusqlite::Connection::open(&db).expect("DB 열기");
+    connection
+        .execute_batch("PRAGMA foreign_keys = OFF;")
+        .expect("외래 키 끄기");
+    // ★★ **Attempt 만 고치면 이 관문을 못 잰다.** 더 앞에 Attempt↔Lease
+    //   대조가 있어서 거기서 먼저 걸리고, 그 메시지에도 'another-job' 이
+    //   들어가 내 단언이 통과해 버렸다 — 뮤테이션이 안 잡히는 걸 보고
+    //   알았다. 둘을 **같이** 고쳐야 앞 대조를 통과하고 이 자리에 닿는다.
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_attempts SET job_id = 'another-job' WHERE attempt_id = ?1",
+            [ATTEMPT],
+        )
+        .expect("Attempt 변조");
+    assert_eq!(changed, 1, "변조할 Attempt 행이 없다");
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_leases SET job_id = 'another-job' WHERE lease_id = ?1",
+            [LEASE],
+        )
+        .expect("Lease 변조");
+    assert_eq!(changed, 1, "변조할 Lease 행이 없다");
+    drop(connection);
+
+    let out = dir.path().join("after.pb");
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(!ok, "남의 Job 의 Attempt 인데 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("다른 Job 의 것이다"),
         "재려던 관문이 아니라 다른 곳에서 막혔다: {output}"
     );
     assert!(!out.exists(), "거부했는데 파일을 남겼다");

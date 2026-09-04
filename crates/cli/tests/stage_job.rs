@@ -650,3 +650,37 @@ fn a_non_durable_control_db_is_refused() {
         );
     }
 }
+
+/// `--operation-key` 는 **32자리 hex** 여야 한다 (뮤테이션 H6).
+///
+/// 길이 검사를 지워도 아무 테스트가 안 깨졌다 — 잘못된 키를 준 적이
+/// 없어서다. 짧은 것·긴 것·hex 가 아닌 것을 각각 준다.
+#[test]
+fn a_malformed_operation_key_is_refused() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), JOB_A);
+
+    for bad in [
+        "aa0102030405060708090a0b0c0d0e",     // 30자 — 짧다
+        "aa0102030405060708090a0b0c0d0e0f00", // 34자 — 길다
+        "",                                   // 빈 값
+    ] {
+        let (ok, output) = stage(&keyring, &db, JOB_A, ATTEMPT, LEASE, bad);
+        assert!(!ok, "{bad:?} 를 받아들였다: {output}");
+        assert!(
+            output.contains("32자리 hex"),
+            "{bad:?}: 길이 관문이 아니라 다른 곳에서 막혔다: {output}"
+        );
+    }
+
+    // 대조 — 올바른 길이는 통과한다. 없으면 "항상 거부" 로도 통과한다.
+    let (ok, output) = stage(
+        &keyring,
+        &db,
+        JOB_A,
+        ATTEMPT,
+        LEASE,
+        "aa0102030405060708090a0b0c0d0e0f",
+    );
+    assert!(ok, "올바른 키인데 거부했다: {output}");
+}
