@@ -18,3 +18,21 @@ GPU uuid=GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93 index=0 name="NVIDIA GeForce R
      (0x31 반복은 유효한 점이 아니다 — 진짜 관문에 걸렸다)
 2차: IMPORTED entries=1 registered=1 inventories_updated=1
      gpu_id 가 손으로 쓴 값이 아니라 NVML UUID 다
+
+=== Linux 실측 (x600 WSL2) — 2026-09-05 ===
+커널 6.18.33.2-microsoft-standard-WSL2, cargo 1.89.0
+같은 소스 트리(/mnt/e/gputeer-work/build/gputeer)를 Windows·Linux 가 공유한다
+
+cargo test --workspace --exclude gputeer-runtime-windows
+  918 passed / 0 failed / 경고 0
+
+--- 플랫폼 차이가 설명되는가 (이름 기준) ---
+  Windows 914 이름 - 28 (Windows 전용) = 886
+  Linux    910 이름 - 24 (Linux 전용)   = 886   <- 일치
+
+  양쪽 전용은 서로 **짝**이다:
+    junction 거부      <-> symlink 거부
+    Job Object 상한    <-> cgroup 상한
+    DPAPI K1           <-> systemd-creds K1
+    owner panel(win)   <-> process group(linux)
+  즉 조용히 빠진 공유 테스트는 없다.
