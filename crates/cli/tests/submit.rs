@@ -1,0 +1,129 @@
+//! `gputeer submit` — **선언한 축이 진짜 그 값인가.**
+//!
+//! ★ 이 명령은 사슬의 모든 테스트가 거쳐 가는데도 **자기 테스트가
+//!   없었다.** 다른 테스트들은 전부 올바른 값을 주므로 오타를 거부하는
+//!   경로를 한 번도 밟지 않았다.
+//!
+//! ★ **왜 중요한가.** 축 이름을 잘못 쓰면 조용히 기본값으로 떨어지는
+//!   설계가 흔한데, 그러면 `TRAINING` 을 쓰려던 Job 이 `UNSPECIFIED` 로
+//!   제출되고 나중에 `plan-job` 이 "축이 비었다" 고 거부한다 — 운영자는
+//!   **오타가 아니라 파서 결함으로 오해한다.** 제출 시점에 거부해야
+//!   무엇이 잘못됐는지 알 수 있다.
+
+use std::path::PathBuf;
+use std::process::Command;
+
+fn cli_bin() -> PathBuf {
+    let mut path = std::env::current_exe().expect("test executable");
+    path.pop();
+    if path.ends_with("deps") {
+        path.pop();
+    }
+    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+}
+
+const JOB: &str = "01JJOBSUBMIT000000000001";
+const SUBMITTER: &str = "01JSUBMITTERSUB000000001";
+const SEED: &str = "1111111111111111111111111111111111111111111111111111111111111122";
+
+fn run_cli(args: &[&str]) -> (bool, String) {
+    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    (
+        out.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_millis() as u64
+}
+
+/// 올바른 선언 여덟 축. 개별 테스트가 이 중 하나만 바꿔 쓴다.
+const GOOD: [(&str, &str); 8] = [
+    ("--workload-class", "TRAINING"),
+    ("--side-effect-class", "PURE"),
+    ("--dataset-sensitivity", "INTERNAL"),
+    ("--minimum-security-tier", "S2"),
+    ("--minimum-isolation-class", "CONTAINED"),
+    ("--minimum-key-protection", "K1"),
+    ("--gpu-count", "1"),
+    ("--gpu-min-vram-bytes", "8589934592"),
+];
+
+fn submit(out: &std::path::Path, override_flag: Option<(&str, &str)>) -> (bool, String) {
+    let issued = now_unix_ms().saturating_sub(60_000).to_string();
+    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+    let mut args: Vec<String> = vec![
+        "submit".into(), "--job-id".into(), JOB.into(),
+        "--entrypoint".into(), "python".into(),
+        "--submitter-device-id".into(), SUBMITTER.into(),
+        "--submitter-seed".into(), SEED.into(),
+        "--issued-at-unix-ms".into(), issued,
+        "--expires-at-unix-ms".into(), expires,
+        "--out".into(), out.to_str().unwrap().into(),
+    ];
+    for (name, value) in GOOD {
+        let value = match override_flag {
+            Some((k, v)) if k == name => v,
+            _ => value,
+        };
+        args.push(name.into());
+        args.push(value.into());
+    }
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_cli(&borrowed)
+}
+
+/// ★★ **오타는 제출 시점에 거부된다** — 조용히 기본값으로 떨어지지 않는다.
+#[test]
+fn a_misspelled_declaration_is_refused_at_submit_time() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+
+    // 대조 — 올바른 값이면 파일이 나온다. 없으면 "항상 거부" 로도 통과한다.
+    let good = dir.path().join("good.pb");
+    let (ok, output) = submit(&good, None);
+    assert!(ok, "올바른 선언인데 거부했다: {output}");
+    assert!(good.exists(), "성공했는데 파일이 없다");
+
+    // 여섯 enum 축 각각에 **그럴듯한 오타**를 준다.
+    for (flag, typo) in [
+        ("--workload-class", "TRAINNG"),          // 글자 빠짐
+        ("--side-effect-class", "PURE_"),         // 꼬리 붙음
+        ("--dataset-sensitivity", "INTERNALL"),   // 글자 겹침
+        ("--minimum-security-tier", "S22"),       // 숫자 겹침
+        ("--minimum-isolation-class", "CONTAIN"), // 잘림
+        ("--minimum-key-protection", "K"),        // 잘림
+    ] {
+        let out = dir.path().join("typo.pb");
+        let _ = std::fs::remove_file(&out);
+        let (ok, output) = submit(&out, Some((flag, typo)));
+        assert!(!ok, "{flag} {typo:?} 를 받아들였다: {output}");
+        assert!(
+            output.contains(typo) && output.contains("모른다"),
+            "{flag}: 무엇이 잘못됐는지 안 말한다: {output}"
+        );
+        assert!(
+            !out.exists(),
+            "{flag}: 거부했는데 Manifest 파일을 남겼다"
+        );
+    }
+}
+
+/// 대소문자는 받아 준다 — 거부는 **오타**에만 걸려야 한다.
+///
+/// 이 대조가 없으면 위 테스트가 "값을 아무것도 못 알아본다" 로도 통과한다.
+#[test]
+fn declarations_are_case_insensitive() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("lower.pb");
+    let (ok, output) = submit(&out, Some(("--workload-class", "training")));
+    assert!(ok, "소문자를 거부했다: {output}");
+    assert!(out.exists());
+}
