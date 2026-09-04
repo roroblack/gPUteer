@@ -1,0 +1,20 @@
+=== x600 실측 — 2026-09-04 ===
+기계: x600 (Windows 11, RTX 4070 SUPER)
+소스: 개발 기계에서 tar 로 동기화(target/.git 제외), 커밋 2306ebd 시점
+
+--- cargo test --workspace ---
+922 passed / 0 failed
+경고: 0
+
+--- coordinator-agent-selftest ---
+시나리오 97 개, exit=0
+
+--- gpu-probe (실물 하드웨어) ---
+GPU_PROBE_OK driver_version=595.79 cuda_driver_version=13020 devices=1
+GPU uuid=GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93 index=0 name="NVIDIA GeForce RTX 4070 SUPER" total_vram_bytes=12878610432 free_vram_bytes=12581863424 used_vram_bytes=296747008 compute_capability=8.9 mig=(지원 안 함)
+
+--- import-inventory 를 그 실물 값으로 ---
+1차: BOOTSTRAP_REJECTED: verifying_key_hex 가 Ed25519 공개키가 아니다
+     (0x31 반복은 유효한 점이 아니다 — 진짜 관문에 걸렸다)
+2차: IMPORTED entries=1 registered=1 inventories_updated=1
+     gpu_id 가 손으로 쓴 값이 아니라 NVML UUID 다
