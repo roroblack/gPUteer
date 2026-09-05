@@ -64,8 +64,7 @@ fn explain_exit(code: u32) -> &'static str {
 
 #[cfg(windows)]
 fn main() {
-    use gputeer_runtime_windows::appcontainer::{run_in_container, AppContainerProfile};
-    use std::path::PathBuf;
+    use gputeer_runtime_windows::appcontainer::{run_in_container_capture, AppContainerProfile};
 
     let python = match std::env::args().nth(1) {
         Some(p) => p,
@@ -76,6 +75,17 @@ fn main() {
     };
 
     const NAME: &str = "gputeer-p0-02-probe";
+
+    // ★★ **파일을 하나도 안 쓴다.** 코드는 `-c` 로 넘기고 결과는 stdout
+    //   으로 받는다 — 그래서 컨테이너에 작업 폴더 권한을 줄 필요가 없다.
+    //
+    //   1차 실측(2026-09-05)이 정확히 거기서 막혔다: Python 은 떴는데
+    //   `[Errno 13] Permission denied` 로 스크립트 파일을 못 읽었다.
+    //   운영자가 손으로 권한 주는 일을 하나라도 줄인다.
+    //
+    // ★ 작은따옴표만 쓴다 — `CreateProcessW` 인용 규칙이 얽히면 거기부터
+    //   디버깅하게 된다. 예외는 stderr 로 나가고 그것도 같이 캡처한다.
+    const CODE: &str = "import torch;a=torch.cuda.is_available();print('torch='+torch.__version__+' ; cuda_available='+str(a));t=(torch.ones(64,64,device='cuda') if a else None);print('device_name='+torch.cuda.get_device_name(0)+' ; matmul_sum='+str((t@t).sum().item())+' ; compute=ok') if a else print('compute=skipped')";
 
     let profile = match AppContainerProfile::create(
         NAME,
@@ -93,73 +103,36 @@ fn main() {
         profile.sid_string().unwrap_or_else(|| "(못 읽음)".into())
     );
 
-    let work: PathBuf = PathBuf::from(std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA"))
-        .join("Packages")
-        .join(NAME);
-    let script = work.join("probe.py");
-    let result = work.join("result.txt");
-    let _ = std::fs::remove_file(&result);
-
-    // ★ 스크립트는 **결과를 파일에 적는다.** 예외도 적는다 — 실패의 모양이
-    //   곧 `P0-02` 의 답이라 삼키면 안 된다.
-    let body = r#"import sys, traceback
-out = []
-try:
-    import torch
-    out.append("torch=" + torch.__version__)
-    avail = torch.cuda.is_available()
-    out.append("cuda_available=" + str(avail))
-    if avail:
-        out.append("device_count=" + str(torch.cuda.device_count()))
-        out.append("device_name=" + torch.cuda.get_device_name(0))
-        # 작은 CUDA tensor 연산 — "보인다" 와 "계산된다" 는 다른 사실이다.
-        a = torch.ones(64, 64, device="cuda")
-        b = (a @ a).sum().item()
-        out.append("matmul_sum=" + str(b))
-        out.append("compute=ok")
-    else:
-        out.append("compute=skipped")
-except Exception:
-    out.append("exception=" + traceback.format_exc().replace("\n", " | "))
-open(sys.argv[1], "w", encoding="utf-8").write("\n".join(out))
-"#;
-    if let Err(e) = std::fs::write(&script, body) {
-        println!("P0_02_RESULT stage=script ok=false detail={e}");
-        std::process::exit(1);
-    }
-
     // ── 1) 바깥 기준선 ────────────────────────────────────────────────
     //
-    // ★ 이게 없으면 컨테이너 안의 실패를 해석할 수 없다.
-    let outside_file = work.join("result_outside.txt");
-    let _ = std::fs::remove_file(&outside_file);
-    let outside = std::process::Command::new(&python)
-        .arg(&script)
-        .arg(&outside_file)
-        .status();
-    let outside_text = std::fs::read_to_string(&outside_file).unwrap_or_default();
-    println!(
-        "P0_02 outside exit={:?} result={}",
-        outside.map(|s| s.code()).unwrap_or(None),
-        outside_text.replace('\n', " ; ")
-    );
+    // ★ 이게 없으면 안쪽 실패가 "AppContainer 때문" 인지 "이 기계가 원래
+    //   안 되는 것" 인지 구분할 수 없다.
+    match std::process::Command::new(&python).arg("-c").arg(CODE).output() {
+        Ok(o) => println!(
+            "P0_02 outside exit={:?} result={}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).replace('\r', "").trim()
+        ),
+        Err(e) => println!("P0_02 outside 실행 실패: {e}"),
+    }
 
     // ── 2) 컨테이너 안 ────────────────────────────────────────────────
-    let command = format!("\"{}\" \"{}\" \"{}\"", python, script.display(), result.display());
-    match run_in_container(&profile, &command, work.to_str()) {
-        Ok(code) => {
-            let text = std::fs::read_to_string(&result).unwrap_or_default();
-            if text.is_empty() {
-                // ★ 종료 코드만 보고 "됐다" 고 하지 않는다 — 파일이 비었으면
-                //   스크립트가 시작조차 못 했을 수 있다.
+    let command = format!("\"{python}\" -c \"{CODE}\"");
+    match run_in_container_capture(&profile, &command, None) {
+        Ok((code, text)) => {
+            let clean = text.replace('\r', "").replace('\n', " ; ");
+            let clean = clean.trim();
+            if clean.is_empty() {
+                // ★ 종료 코드만 보고 "됐다" 고 하지 않는다.
                 println!(
-                    "P0_02_RESULT stage=inside ok=false exit={code} exit_hex=0x{code:08X} meaning={} detail=결과 파일이 비었다 — 스크립트가 시작하지 못했다",
+                    "P0_02_RESULT stage=inside ok=false exit={code} exit_hex=0x{code:08X} meaning={} detail=출력이 비었다",
                     explain_exit(code)
                 );
             } else {
                 println!(
-                    "P0_02_RESULT stage=inside ok=true exit={code} result={}",
-                    text.replace('\n', " ; ")
+                    "P0_02_RESULT stage=inside ok={} exit={code} exit_hex=0x{code:08X} meaning={} output={clean}",
+                    code == 0,
+                    explain_exit(code)
                 );
             }
         }

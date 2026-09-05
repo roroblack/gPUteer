@@ -292,6 +292,165 @@ pub fn run_in_container(
     Ok(exit_code)
 }
 
+/// AppContainer 안에서 명령을 띄우고 **종료 코드와 stdout 을 함께** 준다.
+///
+/// ★★ **파일을 안 쓴다.** [`run_in_container`] 는 자식이 파일에 적게
+///   하는데, 그러면 **그 폴더에도 권한을 줘야 한다** — 2026-09-05 x600
+///   실측에서 정확히 거기서 막혔다(`[Errno 13] Permission denied`).
+///   운영자가 손으로 할 일이 하나 더 느는 것이라, 파이프로 직접 받는다.
+///
+/// ★ 파이프의 쓰기 끝만 상속시키고, 부모 쪽 사본은 `CreateProcessW`
+///   **직후에 닫는다.** 안 닫으면 자식이 끝나도 파이프가 안 닫혀
+///   `read_to_end` 가 영원히 기다린다 — 흔한 함정이라 적어 둔다.
+pub fn run_in_container_capture(
+    profile: &AppContainerProfile,
+    command_line: &str,
+    working_dir: Option<&str>,
+) -> Result<(u32, String), AppContainerError> {
+    use std::io::Read;
+    use std::os::windows::io::FromRawHandle;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_FAILED,
+    };
+    use windows_sys::Win32::Foundation::DuplicateHandle;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+    use windows_sys::Win32::System::Pipes::CreatePipe;
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+        InitializeProcThreadAttributeList, UpdateProcThreadAttribute, WaitForSingleObject,
+        EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST,
+        PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES,
+        STARTUPINFOEXW,
+    };
+
+    // ── 파이프 ────────────────────────────────────────────────────────
+    let mut sa: SECURITY_ATTRIBUTES = unsafe { std::mem::zeroed() };
+    sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
+    sa.bInheritHandle = 1; // 자식이 물려받아야 한다
+    let mut read_end: HANDLE = INVALID_HANDLE_VALUE;
+    let mut write_end: HANDLE = INVALID_HANDLE_VALUE;
+    if unsafe { CreatePipe(&mut read_end, &mut write_end, &sa, 0) } == 0 {
+        return Err(AppContainerError::AttributeList {
+            code: unsafe { GetLastError() },
+        });
+    }
+    // ★ 읽기 끝은 **상속시키지 않는다.** 자식이 그것까지 들고 있으면
+    //   자식이 죽어도 파이프가 안 닫힌다.
+    let mut private_read: HANDLE = INVALID_HANDLE_VALUE;
+    unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            read_end,
+            GetCurrentProcess(),
+            &mut private_read,
+            0,
+            0, // bInheritHandle = FALSE
+            DUPLICATE_SAME_ACCESS,
+        );
+        CloseHandle(read_end);
+    }
+
+    let mut caps = SECURITY_CAPABILITIES {
+        AppContainerSid: profile.sid(),
+        Capabilities: std::ptr::null_mut(),
+        CapabilityCount: 0,
+        Reserved: 0,
+    };
+
+    let mut size: usize = 0;
+    unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut size) };
+    if size == 0 {
+        return Err(AppContainerError::AttributeList {
+            code: unsafe { GetLastError() },
+        });
+    }
+    let mut buffer = vec![0u8; size];
+    let attrs = buffer.as_mut_ptr() as LPPROC_THREAD_ATTRIBUTE_LIST;
+    if unsafe { InitializeProcThreadAttributeList(attrs, 1, 0, &mut size) } == 0 {
+        return Err(AppContainerError::AttributeList {
+            code: unsafe { GetLastError() },
+        });
+    }
+    if unsafe {
+        UpdateProcThreadAttribute(
+            attrs,
+            0,
+            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+            &mut caps as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<SECURITY_CAPABILITIES>(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } == 0
+    {
+        let code = unsafe { GetLastError() };
+        unsafe { DeleteProcThreadAttributeList(attrs) };
+        return Err(AppContainerError::AttributeList { code });
+    }
+
+    let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
+    startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+    startup.lpAttributeList = attrs;
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdOutput = write_end;
+    startup.StartupInfo.hStdError = write_end;
+    startup.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+
+    let mut cmd = wide(command_line);
+    let cwd = working_dir.map(wide);
+    let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+
+    let spawned = unsafe {
+        CreateProcessW(
+            std::ptr::null(),
+            cmd.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1, // ★ bInheritHandles — 파이프를 물려주려면 반드시 TRUE
+            EXTENDED_STARTUPINFO_PRESENT,
+            std::ptr::null(),
+            cwd.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
+            &mut startup.StartupInfo,
+            &mut info,
+        )
+    };
+    let spawn_error = unsafe { GetLastError() };
+    unsafe { DeleteProcThreadAttributeList(attrs) };
+    // ★ 부모 쪽 쓰기 끝을 **여기서** 닫는다. 안 닫으면 읽기가 안 끝난다.
+    unsafe { CloseHandle(write_end) };
+
+    if spawned == 0 {
+        unsafe { CloseHandle(private_read) };
+        return Err(AppContainerError::Spawn { code: spawn_error });
+    }
+
+    let out = {
+        let mut file = unsafe { std::fs::File::from_raw_handle(private_read as *mut _) };
+        let mut raw = Vec::new();
+        let _ = file.read_to_end(&mut raw);
+        String::from_utf8_lossy(&raw).into_owned()
+    };
+
+    let waited = unsafe { WaitForSingleObject(info.hProcess, INFINITE) };
+    if waited == WAIT_FAILED {
+        let code = unsafe { GetLastError() };
+        unsafe {
+            CloseHandle(info.hProcess);
+            CloseHandle(info.hThread);
+        }
+        return Err(AppContainerError::Wait { code });
+    }
+    let mut exit_code: u32 = 0;
+    unsafe {
+        GetExitCodeProcess(info.hProcess, &mut exit_code);
+        CloseHandle(info.hProcess);
+        CloseHandle(info.hThread);
+    }
+    Ok((exit_code, out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,10 +523,16 @@ mod tests {
     /// 준다. Python 스크립트와 결과 파일을 거기 두면 `P0-02` 의 나머지를
     /// ACL 없이 잴 수 있다.
     ///
-    /// ★ 없으면 `SetNamedSecurityInfoW` 로 직접 ACL 을 줘야 한다 —
-    ///   그건 훨씬 큰 일이라 **먼저 확인한다.**
+    /// ★★ **이 테스트의 원래 이름은 거짓말이었다**(`..._the_container_can_use`).
+    ///   폴더가 **있는지만** 재면서 **쓸 수 있는지** 재는 것처럼 이름을
+    ///   붙였다. 2026-09-05 x600 실측이 그 차이를 드러냈다 — 폴더는
+    ///   있는데 컨테이너가 그 안의 파일을 **못 읽었다**
+    ///   (`[Errno 13] Permission denied`).
+    ///
+    ///   이름을 사실로 바꿨다 — **폴더가 생긴다는 것까지만** 잰다.
+    ///   그래서 프로브는 이제 그 폴더를 안 쓰고 stdout 으로 받는다.
     #[test]
-    fn the_profile_creates_a_folder_the_container_can_use() {
+    fn the_profile_creates_a_folder_but_that_does_not_mean_it_is_usable() {
         let profile = AppContainerProfile::create("gputeer-test-folder", "f", "테스트")
             .expect("프로파일 생성");
         let _ = &profile;

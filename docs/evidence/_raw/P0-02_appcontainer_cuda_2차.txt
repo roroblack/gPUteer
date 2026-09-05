@@ -1,0 +1,97 @@
+=== P0-02 · AppContainer + CUDA — 2차 실측 ===
+일시   2026-09-05
+기계   x600 (RTX 4070 SUPER, driver 595.79, CUDA 13.2)
+차이   1차 대비 (a) Python 트리에 컨테이너 SID 읽기+실행 권한 부여
+              (b) 프로브가 파일을 안 쓰고 `-c` + stdout 파이프로 바뀜
+권한   부여 27112 files -> 실측 -> **원복 27112 files** (남기지 않았다)
+
+--- 바깥 기준선 ---
+  torch=2.11.0+cu128 ; cuda_available=True
+
+--- 컨테이너 안 ---
+  exit=1
+  Failed to find real location of ...\Python313\python.exe
+  Traceback (most recent call last):
+    File "<string>", line 1, in <module>
+      import torch; ...
+    File "...\site-packages\torch\__init__.py", line 14, in <module>
+      import ctypes
+    File "...\Lib\ctypes\__init__.py", line 10, in <module>
+      from _ctypes import Union, Structure, Array
+  ImportError: DLL load failed while importing _ctypes:
+    A dynamic link library (DLL) initialization routine failed.
+
+=== 벽이 한 칸 더 밀렸다 ===
+
+  1차   0xC0000135 STATUS_DLL_NOT_FOUND   — Python 이 **시작조차** 못 함
+  2차   Python 시작 O -> import torch O -> **_ctypes DLL 초기화 실패**
+
+즉 "AppContainer 에서 CUDA 가 되는가" 는 **여전히 모른다.** CUDA 근처에도
+못 갔다 — 그 전에 표준 라이브러리 `ctypes` 가 실패한다.
+
+★ "not found" 가 아니라 **"initialization routine failed"** 다. DLL 은
+  찾았고 로드까지 갔는데 초기화가 실패했다는 뜻이라, 경로 권한이 아니라
+  **컨테이너에 없는 다른 무언가**를 요구한다는 신호다.
+
+★ `Failed to find real location of python.exe` 도 같이 나온다 — 컨테이너가
+  자기 실행 파일의 실제 경로를 해석하지 못한다. 상위 디렉터리 순회 권한이나
+  재분석 지점 해석과 관련이 있을 수 있다(확인 안 함 — **추측이다**).
+
+=== 다음에 확인할 것 (아직 안 함) ===
+
+- `ALL APPLICATION PACKAGES` 에 권한을 주면 달라지는가
+  (지금은 **이 컨테이너 SID 하나**에만 줬다)
+- 컨테이너가 쓸 수 있는 TEMP 가 필요한가 — libffi 초기화가 임시 파일을
+  요구할 수 있다
+- 상위 경로(`C:\Users\<x600-user>\AppData\Local\Programs`) 순회 권한
+- capability 를 하나씩 넣어 보기 — 다만 **지어내지 않고** 실패가 가리키는
+  것부터 넣는다
+
+★ 이 실측은 `P0-02` 체크리스트의 "GPU 드라이버 접근에 필요한 capability
+  식별" 이 **진행 중**이라는 뜻이지 완료가 아니다. 지금까지 식별된 것은
+  "capability 이전에 파일 접근이 먼저 문제" 라는 사실뿐이다.
+
+=== 실행자 기록 ===
+
+이번 실측은 세션(agent:claude-code)이 SSH 로 직접 수행했다 —
+`icacls` 부여·프로브·원복 세 단계 모두. 파일 ACL 은 사용자 소유
+디렉터리에 대한 것이고 되돌렸다.
+
+=== 3차: ALL APPLICATION PACKAGES 로도 같은 벽 ===
+
+같은 Python 트리에 `*S-1-15-2-1`(ALL APPLICATION PACKAGES)로 다시 권한을
+주고 재실행했다. 27112 files 성공.
+
+  결과: **완전히 같다** — _ctypes DLL initialization routine failed.
+
+★ 그 사이 `*S-1-15-4096` 표기로 시도한 것은 문법 오류로 실패했고
+  (0 files), 그때 프로브가 다시 `0xC0000135` 로 돌아갔다.
+  **이것이 대조 역할을 했다** — 권한이 있고 없고가 1차/2차 차이의
+  원인임을 확인해 준다.
+
+=== 그래서 알게 된 것 ===
+
+**파일 권한 문제가 아니다.** 서로 다른 두 주체(컨테이너 전용 SID,
+ALL APPLICATION PACKAGES)에 똑같이 읽기+실행을 줬는데 같은 지점에서
+같은 방식으로 실패한다.
+
+즉 CPython 의 `_ctypes` 가 AppContainer 안에서 **초기화 자체를 못 한다.**
+`torch/__init__.py` 가 14번째 줄에서 `import ctypes` 를 하므로,
+**torch 는 이 상태의 AppContainer 에서 import 조차 되지 않는다.**
+
+★ 이것은 `P0-02` 의 DoD 에 직접 닿는 사실이다:
+    성공 -> S2 설계 유지, 검증된 환경에서만 enable
+    실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+
+  다만 **아직 "실패" 로 확정하지 않는다.** 남은 가능성이 있다:
+    - 컨테이너가 쓸 수 있는 TEMP/작업 디렉터리 부여
+    - capability 를 실제로 넣어 보기(지금은 빈 목록)
+    - Python embeddable 배포판 등 다른 Python 으로 시도
+  이것들을 안 해 보고 "AppContainer 에서 torch 는 불가" 라고 적으면
+  **재지 않은 것을 결론으로 쓰는 것**이다.
+
+=== 권한 정리 ===
+
+  컨테이너 전용 SID : 부여 -> 원복 (27112 files)
+  ALL APPLICATION PACKAGES : 부여 -> 원복 (27112 files)
+  최종 확인: icacls 출력에 `S-1-15` 항목 없음 — **남은 권한 없다**
