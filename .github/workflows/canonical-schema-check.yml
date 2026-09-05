@@ -51,3 +51,10 @@ jobs:
 
       - name: Verify evidence schema
         run: python scripts/verify_evidence.py
+
+      - name: 문서 구조·주장 검사
+        run: python scripts/check_docs.py
+
+      # 검사표가 공허하지 않은지 — 각 줄을 뒤집어 실패하는지 본다
+      - name: 주장 검사표 뒤집기 시험
+        run: python scripts/claims_selftest.py

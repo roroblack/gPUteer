@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 문서 구조 · 파일명 · 중복 검사.
@@ -56,6 +56,9 @@ PROTO_MARKERS = [
 ]
 
 STATE_TABLE = re.compile(r"^\s*```statetable", re.M)
+
+
+from claims_check import check_claims  # noqa: E402
 
 
 def rel(p):
@@ -217,6 +220,7 @@ def main():
     # ★ 2026-08-16 추가 — 독립 검수 지적
     errors.extend(check_referenced_paths())
     warns.extend(check_history_append_only())
+    errors.extend(check_claims(ROOT, rel))
 
     print("문서 구조 검사 — %s" % ROOT)
     print("=" * 62)

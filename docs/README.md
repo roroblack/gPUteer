@@ -25,7 +25,12 @@ history/                언제 무엇을 했는가            (추가만, 수정
 runbooks/               운영·복구는 어떻게 하는가
 vision/                 지금 안 하는 것과 그 트리거
 manuals/                환경 구축 절차
+_주장_검사.md            "아직 없다" 가 아직도 참인가   (기계가 파싱한다)
 ```
+
+★ `_주장_검사.md` 만 폴더가 아니라 파일이다. 어느 폴더에도 안 넣은 이유는
+**여러 폴더의 문서가 쓴 주장을 한곳에서 검사**하기 때문이다 — 한 폴더에
+넣으면 그 폴더 것만 검사하는 것으로 읽힌다.
 
 ## 우선순위 — 충돌하면 무엇이 이기나
 
@@ -99,8 +104,14 @@ vision/       VISION-NN_<제목>.md (시점이 아니라 주제로 읽는다)
 
 ```bash
 python scripts/verify_evidence.py      # evidence front-matter 스키마 검사
-python scripts/check_docs.py           # 문서 구조·파일명·중복 검사
+python scripts/check_docs.py           # 문서 구조·파일명·중복 + 주장 검사
+python scripts/claims_selftest.py      # 그 주장 검사가 공허하지 않은지
 ```
+
+★ **`check_docs.py` 는 이제 `_주장_검사.md` 도 본다**(2026-09-06 추가).
+문서가 "아직 없다" 고 적어 둔 것이 **실제로 생겼으면 실패한다** —
+그건 결함이 아니라 진전이고, 할 일은 **주장을 쓴 문서를 고치는 것**이다
+(`RULE.md` §6.5).
 
 **`scripts/verify_evidence.py` 는 "파일이 있다"가 아니라 "재현 가능한 기록이 완전하다"를 검사한다.**
 `limitations` 가 비어 있으면 반려된다.

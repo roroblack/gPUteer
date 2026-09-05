@@ -594,6 +594,14 @@ python tools\canonical\reference_canonical.py --verify tests\vectors\canonical_v
 # evidence 스키마 검사
 python scripts\verify_evidence.py
 
+# 문서 구조 + "아직 없다" 주장이 아직도 참인가
+#   ★ 조각을 끝냈으면 이걸 돌린다. 부재 주장이 깨지면 여기서 잡힌다
+#     (RULE.md §6.5 · docs/_주장_검사.md)
+python scripts\check_docs.py
+
+# 그 주장 검사표가 공허하지 않은지 — 각 줄을 뒤집어 실패하는지 본다
+python scripts\claims_selftest.py
+
 # 빌드·테스트 (구현 착수 후)
 cargo test --workspace
 cargo test -p gputeer-protocol canonical_vectors
