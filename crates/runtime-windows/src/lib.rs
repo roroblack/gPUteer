@@ -48,6 +48,12 @@ mod beneath;
 #[cfg(windows)]
 pub use beneath::{open_artifact, open_beneath, open_beneath_read_only};
 
+// ★ **완결된 짝으로 넣는다.** 위의 `#[cfg(windows)]` 는 `mod beneath` 의
+//   것이고, 그 사이에 끼워 넣으면 소속이 조용히 바뀐다 — 이 저장소가
+//   여덟 번 겪은 실수다(2026-09-01 커밋 040b5d0).
+#[cfg(windows)]
+pub mod appcontainer;
+
 #[cfg(windows)]
 mod windows_impl {
     use std::ffi::{OsStr, OsString};
