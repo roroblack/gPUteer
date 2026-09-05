@@ -396,7 +396,24 @@ OS 방화벽            ★ 2026-09-05 사용자가 직접 실측 — **경로 �
                        4. Agent 가 죽었을 때 규칙 정리 보장
                      ★ 규칙 추가·삭제 자체는 여전히 이 세션이 못 한다 —
                        시스템/보안 설정 변경은 금지 카테고리다
-P0-02 AppContainer   ★ 2026-09-05 x600 실물 GPU 로 1차 실측 —
+P0-02 AppContainer   ★★ 2026-09-05 x600 에서 네 차례 실측 — **막힌 곳이
+                       한 곳으로 좁혀졌다.**
+                       docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt
+                     된다   AppContainer 안에서 Python 이 돌고 **C 확장도
+                            로드된다**(zlib · _socket 확인). 가둠도 확인.
+                     안 된다 `import _ctypes` **하나** —
+                            "DLL initialization routine failed"
+                     ★ torch/__init__.py:14 가 `import ctypes` 를 하므로
+                       이 벽이 그대로면 **torch 는 import 조차 안 된다.**
+                       CUDA 가 되는지는 그 뒤의 질문이라 아직 답이 없다.
+                     소거한 가설 넷(각각 대조 있음): 상위 경로 순회 권한 ·
+                       컨테이너 TEMP · capability 주입 · 다른 Python 배포판
+                     ★ `Failed to find real location of python.exe` 는
+                       **무해한 잡음**이다 — 성공 실행에서도 나온다.
+                       한때 단서로 의심했으나 대조가 아님을 보여 줬다.
+                     남은 것: libffi 초기화가 무엇을 요구하는지 직접 관측
+                     ─────────────────────────────────────────────
+                     (1차 기록)
                        docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt
                      된 것: 프로파일 생성 · 고유 SID · 컨테이너 안 실행 ·
                        **가둠 확인**(호스트 파일을 못 읽는다) ·

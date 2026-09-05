@@ -1,0 +1,64 @@
+=== P0-02 · 감별 진단 — 막힌 것은 `_ctypes` **하나**다 ===
+일시   2026-09-05
+기계   x600 (RTX 4070 SUPER)
+Python E:\gputeer-work\tmp\pyembed (python.org embeddable 3.13.7, E: 에 새로 받음)
+설정   컨테이너 SID 에 pyembed RX · actemp 를 TEMP 로 지정 · capability 없음
+
+=== 네 가지를 각각 컨테이너 안에서 돌렸다 ===
+
+  코드                     바깥      컨테이너 안
+  import sys               pure=ok   **ok  (exit 0)**
+  import zlib              zlib=ok   **ok  (exit 0)**
+  import _socket           socket=ok **ok  (exit 0)**
+  import _ctypes           _ctypes=ok  **실패 (exit 1)**
+
+전체 출력 확인(컨테이너 안):
+
+  P0_02_RESULT stage=inside ok=true exit=0 meaning=정상
+    output=Failed to find real location of ...\pyembed\python.exe
+           exts=ok zlib _socket
+
+  -> `exts=ok zlib _socket` 이 **컨테이너 안에서 실제로 찍혔다.**
+
+=== 그래서 판이 바뀐다 ===
+
+앞선 기록들은 "AppContainer 안에서 Python 이 안 된다" 는 쪽으로 읽힐 수
+있었다. **틀렸다.**
+
+  된다   AppContainer 안에서 Python 이 돌고, **C 확장 모듈도 로드된다**
+         (`zlib`·`_socket` 은 둘 다 .pyd 다)
+  안 된다 `_ctypes` **하나**
+
+즉 문제는 "샌드박스에서 네이티브 코드가 안 돈다" 가 아니라
+**`_ctypes`/libffi 가 AppContainer 에서 초기화되지 않는다** 는 훨씬 좁은
+사실이다.
+
+★★ **`Failed to find real location of python.exe` 는 무해한 잡음이다.**
+  성공한 실행(exit 0)에서도 똑같이 나온다. 앞 기록에서 이 문장을 실패의
+  단서로 의심했는데(가설 1의 근거였다) **아니었다.** 실패 메시지 옆에
+  같이 있다고 원인인 것은 아니다 — 대조를 보고서야 알았다.
+
+=== P0-02 에 대해 지금 말할 수 있는 것 ===
+
+`torch/__init__.py` 는 14번째 줄에서 `import ctypes` 를 한다. 그러므로
+**이 벽이 그대로면 torch 는 AppContainer 에서 import 되지 않는다** —
+CUDA 가 되는지 여부는 그 뒤의 질문이라 **아직 답이 없다.**
+
+다만 남은 과제가 훨씬 좁아졌다:
+
+  전    "AppContainer + CUDA 가 되는가" (막연)
+  후    "`_ctypes`/libffi 를 AppContainer 에서 초기화시킬 수 있는가"
+
+★ 이것을 "S2 실패" 로 확정하지 않는다. 아직 안 본 것:
+  - `_ctypes.pyd` 가 의존하는 `libffi-8.dll` 의 초기화가 무엇을 요구하는지
+    (Process Monitor 등으로 직접 관측)
+  - Windows 빌드/버전에 따른 차이
+  - libffi 를 쓰지 않는 대체 경로가 있는지
+  네 번 시도한 것으로 "불가" 라는 일반 명제를 쓰지 않는다.
+
+=== 이 실측이 이전 기록을 정정하는 부분 ===
+
+`P0-02_appcontainer_cuda_2차.txt` 와 `..._3차_가설소거.txt` 는
+"CPython 의 `_ctypes` 가 초기화되지 않는다" 까지는 맞게 적었지만,
+`Failed to find real location` 을 단서로 다룬 부분(가설 1)은
+**근거가 없었다** — 이 감별에서 그 메시지가 성공 시에도 나옴을 확인했다.
