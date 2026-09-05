@@ -4,7 +4,7 @@
 각 노드의 성능 · 자원 · 가용시간 · 신뢰성 · 보안 등급을 기준으로 작업을 자동 배치하며,
 노드 장애 시 지속 보존된 상태로 **다른 GPU 에서 작업을 이어가는** GPU 오케스트레이션 플랫폼이다.
 
-> **최종 갱신** 2026-09-05 · **성격** 규범(이 저장소에서 가장 강한 규칙) ·
+> **최종 갱신** 2026-09-06 · **성격** 규범(이 저장소에서 가장 강한 규칙) ·
 > **기준선** `../gputeer_master_plan_FINAL.md`(**읽기 전용 · 수정 금지**) ·
 > **검사** `scripts/check_docs.py` · `scripts/verify_evidence.py`
 
@@ -370,10 +370,14 @@ Linux 검증 — 반복 가능해졌다(2026-08-30) / remote5090 는 여전히 �
 #### 1. 검수만 기다리는 것 — 코드는 끝났다
 
 ```text
-독립 검수 7건   실행 사슬 6조각 + DoD-68 evidence 확정
+독립 검수 8건   실행 사슬 6조각 + DoD-68 evidence 확정 + P0-02 evidence
                 복구 2026-09-07 15:43. ★ 반드시 **순차로** 돌린다 —
                 병렬 3갈래가 판정 전에 쿼터를 태운 것이 이번 실패다
-                초안: docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md
+                초안 둘  docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md
+                        docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md
+                ★ P0-02 는 **강제 대상이 아니다**(INCONCLUSIVE 는 PASS 가
+                  아니다). 그래도 받는다 — "AppContainer 자체는 동작한다"
+                  는 서술이 한 기계에서만 나와 반증에 취약하다
 ```
 
 ★ **검수 전까지 이 사슬 위에 새 기능을 쌓지 않는다.** 쌓으면 나중에 어느
@@ -396,47 +400,26 @@ OS 방화벽            ★ 2026-09-05 사용자가 직접 실측 — **경로 �
                        4. Agent 가 죽었을 때 규칙 정리 보장
                      ★ 규칙 추가·삭제 자체는 여전히 이 세션이 못 한다 —
                        시스템/보안 설정 변경은 금지 카테고리다
-P0-02 AppContainer   ★★ 2026-09-05 x600 에서 네 차례 실측 — **막힌 곳이
-                       한 곳으로 좁혀졌다.**
-                       docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt
-                     된다   AppContainer 안에서 Python 이 돌고 **C 확장도
-                            로드된다**(zlib · _socket 확인). 가둠도 확인.
-                     안 된다 `import _ctypes` **하나** —
-                            "DLL initialization routine failed"
-                     ★★ **원인을 한 DLL 로 지목했다**(5차, `dll_probe` 신설).
-                       컨테이너 안에서 DLL 을 하나씩 열어 보니:
-                         libffi-8.dll · python313.dll · vcruntime140.dll ·
-                         oleaut32.dll  -> 전부 ok
-                         **ole32.dll   -> error=1114 (DLL_INIT_FAILED)**
-                         _ctypes.pyd   -> error=1114
-                       `_ctypes` 는 COM 지원 때문에 `ole32` 를 요구한다.
-                       즉 막힌 것은 **COM 을 요구하는 경로**이지
-                       "네이티브 코드" 가 아니다.
-                     ★ torch/__init__.py:14 가 `import ctypes` 를 하므로
-                       이 벽이 그대로면 **torch 는 import 조차 안 된다.**
-                       CUDA 가 되는지는 그 뒤의 질문이라 아직 답이 없다.
-                     소거한 가설 넷(각각 대조 있음): 상위 경로 순회 권한 ·
-                       컨테이너 TEMP · capability 주입 · 다른 Python 배포판
-                     ★ `Failed to find real location of python.exe` 는
-                       **무해한 잡음**이다 — 성공 실행에서도 나온다.
-                       한때 단서로 의심했으나 대조가 아님을 보여 줬다.
-                     남은 것: libffi 초기화가 무엇을 요구하는지 직접 관측
-                     ─────────────────────────────────────────────
-                     (1차 기록)
-                       docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt
-                     된 것: 프로파일 생성 · 고유 SID · 컨테이너 안 실행 ·
-                       **가둠 확인**(호스트 파일을 못 읽는다) ·
-                       바깥 기준선(cuda True, matmul 계산까지 ok)
-                     ★★ **CUDA 가 되는지는 아직 모른다** — 더 앞에서
-                       막혔다: 0xC0000135 STATUS_DLL_NOT_FOUND.
-                       CUDA 가 아니라 **Python 이 자기 DLL 을 못 읽어
-                       시작조차 못 한 것**이다. 종료 코드만 보고
-                       "AppContainer 에서 CUDA 실패" 로 적었으면 거짓을
-                       기록할 뻔했다.
-                     다음: Python 설치·site-packages 폴더에 컨테이너 SID
-                       읽기·실행 권한(= P0-02 의 filesystem allowlist).
-                       ★ 사용자 소유 디렉터리의 ACL 변경이라 이 세션이
-                         실행하지 않는다
+P0-02 AppContainer   ★★ 2026-09-05~06 x600 에서 **여섯 차례** 실측했다.
+                     기록은 초안 한 곳에 모았다 — 여기서 복제하지 않는다:
+                       docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md
+                       docs/evidence/_raw/P0-02_appcontainer_cuda_*.txt (5개)
+                     된다   프로파일·고유 SID·컨테이너 안 실행·**가둠**·
+                            Python·C 확장(zlib · _socket)
+                     안 된다 **`ole32.dll` 하나** — error=1114
+                            (DLL_INIT_FAILED). COM 본체인 `combase.dll` 은
+                            정상 로드된다
+                     ★★ **그래서 이 스파이크는 자기 질문에 답하지 못했다.**
+                       `torch/__init__.py:14` 의 `import ctypes` 가
+                       `_ctypes.pyd` -> `ole32` 를 타고 죽어 **CUDA 근처에도
+                       못 갔다.** `status: INCONCLUSIVE` 다 —
+                       "AppContainer 에서 CUDA 가 안 된다" 가 **아니다**
+                     ★ 근거는 "S2 를 EXPERIMENTAL 로 유지" 쪽으로 강하게
+                       기운다. 그래도 **지금 확정하지 않는다** — `ole32` 가
+                       왜 실패하는지 안 봤고, 한 기계·한 Windows 빌드다
+                     남은 한 칸  Process Monitor 로 `ole32` 의 DllMain 이
+                       무엇을 요구하다 거부되는지 직접 관측.
+                       ★ 드라이버를 설치하는 도구라 이 세션이 못 한다
 ADR-026 · ADR-027    구현은 이미 그 결정을 따른다. 기준선 수정 승인만 남음
 ```
 

@@ -63,3 +63,31 @@
 
 즉 "샌드박스에서 네이티브 코드가 안 돈다" 가 아니다. **COM 을 요구하는
 경로만** 막힌다.
+
+=== 6차: COM 계열을 더 갈랐다 — ole32 **하나**다 ===
+
+컨테이너 안에서:
+
+  combase.dll    ok=true    <- **실제 COM 런타임이다**
+  rpcrt4.dll     ok=true
+  shcore.dll     ok=true
+  advapi32.dll   ok=true
+  **ole32.dll    ok=false  error=1114**
+
+★ 요즘 Windows 에서 COM 본체는 `combase.dll` 이고 `ole32` 는 그 위의
+  레거시 계층(OLE·클립보드·drag&drop·moniker)이다. **본체는 되는데
+  레거시 계층만 안 된다.**
+
+즉 "AppContainer 에서 COM 이 안 된다" 가 아니다. 더 좁게
+**`ole32.dll` 의 DllMain 이 이 컨테이너에서 실패한다.**
+
+★ 왜 실패하는지는 **여전히 모른다.** 이 프로브로 갈 수 있는 가장 미세한
+  지점이 여기다 — 더 가려면 Process Monitor 로 거부된 접근을 직접 봐야
+  한다. 안 했다.
+
+★ 한 가지 유력한 방향은 적어 둔다(**추측이며 확인 안 했다**):
+  우리 컨테이너는 `CreateAppContainerProfile` 로 만든 **package identity
+  가 없는 맨 AppContainer** 다. Store 앱은 package identity 를 갖고
+  돌며 COM 을 쓴다. 그 차이일 수 있다. 확인하려면 Store 앱 쪽을 재야
+  하는데 그건 안 했다 — **그래서 이 문서는 그 가설을 결론으로 쓰지
+  않는다.**
