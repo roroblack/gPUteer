@@ -455,9 +455,19 @@ ADR-026 · ADR-027    구현은 이미 그 결정을 따른다. 기준선 수정
 #### 3. 규범 결정이 먼저인 것 — 코드가 아니라 판단이 막고 있다
 
 ```text
-멤버십(Stage 2·11)   사용자 결정 4건(root key rotation · 권한 주체 ·
-                     상태 전이 채택 · mutation TTL) + 과반 합의(COMMITTED)
-                     부재 -> 다중 노드/Raft 가 선행
+멤버십(Stage 2·11)   사용자 결정 4건 + 과반 합의(COMMITTED) 부재
+                     -> 다중 노드/Raft 가 선행
+                     ★ **2026-09-06 정정.** 여기 "root key rotation ·
+                       권한 주체 · 상태 전이 채택 · mutation TTL" 이라고
+                       적혀 있었는데 **가운데 둘은 이미 답을 받았다**
+                       (2026-08-27, `state-machines.md` §5.1 로 승격).
+                       개수만 4로 맞고 **항목이 틀렸다.**
+                     실제로 남은 넷 — 초안 §12 의:
+                       §12.1  Owner+Recovery 2-of-2 root key 회전
+                       §12.4  mutation 기본 TTL 7일
+                       §12.5  tombstone 영구 보존과 법적 예외
+                       §12.8  signed snapshot + tail 의 proof 형식
+                     docs/plans/2026-08-24_1830_membership_norm_draft_v1.md
 TLS(Stage 2·16)      인증서 신원 방식 미정(기준선 §42.7.3).
                      지금도 Ed25519 서명·replay 방어가 있으므로 TLS 가
                      더하는 것은 **기밀성**이다 — 필요하지만, 신원 체계를
