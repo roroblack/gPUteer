@@ -403,6 +403,15 @@ P0-02 AppContainer   ★★ 2026-09-05 x600 에서 네 차례 실측 — **막�
                             로드된다**(zlib · _socket 확인). 가둠도 확인.
                      안 된다 `import _ctypes` **하나** —
                             "DLL initialization routine failed"
+                     ★★ **원인을 한 DLL 로 지목했다**(5차, `dll_probe` 신설).
+                       컨테이너 안에서 DLL 을 하나씩 열어 보니:
+                         libffi-8.dll · python313.dll · vcruntime140.dll ·
+                         oleaut32.dll  -> 전부 ok
+                         **ole32.dll   -> error=1114 (DLL_INIT_FAILED)**
+                         _ctypes.pyd   -> error=1114
+                       `_ctypes` 는 COM 지원 때문에 `ole32` 를 요구한다.
+                       즉 막힌 것은 **COM 을 요구하는 경로**이지
+                       "네이티브 코드" 가 아니다.
                      ★ torch/__init__.py:14 가 `import ctypes` 를 하므로
                        이 벽이 그대로면 **torch 는 import 조차 안 된다.**
                        CUDA 가 되는지는 그 뒤의 질문이라 아직 답이 없다.

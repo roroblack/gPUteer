@@ -1,0 +1,65 @@
+=== P0-02 · 원인을 한 DLL 로 지목했다 ===
+일시   2026-09-05
+기계   x600 (RTX 4070 SUPER)
+도구   `dll_probe` 신설 — `LoadLibraryW` 하나만 하고 Win32 오류 코드를 찍는다
+       (Python 을 거치면 `import _ctypes` 가 여러 DLL 을 한 번에 시도해
+        누가 실패했는지 구분이 안 된다)
+
+=== 컨테이너 안에서 DLL 을 하나씩 열었다 ===
+
+  libffi-8.dll                  ok=true
+  python313.dll                 ok=true
+  vcruntime140.dll              ok=true
+  oleaut32.dll                  ok=true
+  **ole32.dll                   ok=false  error=1114**
+  **_ctypes.pyd                 ok=false  error=1114**
+
+  1114 = ERROR_DLL_INIT_FAILED (DLL 초기화 루틴이 실패했다)
+
+바깥 대조: `libffi-8.dll`·`_ctypes.pyd` 둘 다 ok=true.
+
+=== 지목 ===
+
+**`ole32.dll` 이 AppContainer 안에서 초기화되지 않는다.**
+
+`_ctypes.pyd` 는 COM 지원 때문에 `ole32` 를 요구한다. 그래서
+`import _ctypes` 가 1114 로 죽고, `torch/__init__.py:14` 의
+`import ctypes` 가 그것을 타고, 결국 **torch 가 import 되지 않는다.**
+
+★ 앞 단계까지는 "`_ctypes` 가 안 된다" 였다. 이제 **왜 안 되는지**까지
+  왔다 — libffi 도, python313 도, vcruntime 도 아니고 `ole32` 다.
+
+★ **이 프로브가 없었으면 못 찾았다.** `import _ctypes` 는 여러 DLL 을
+  한 번에 시도해 실패 지점을 감춘다. 하나씩 열어 보는 것이 유일한 방법
+  이었다.
+
+=== 그래서 P0-02 는 ===
+
+`P0-02` 의 DoD:
+    성공 -> S2 설계 유지, 검증된 환경에서만 enable
+    실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+
+지금 근거는 **후자 쪽으로 강하게 기운다.** 다만 아직 확정하지 않는다:
+
+  - `ole32` 가 **왜** 실패하는지는 모른다(어떤 자원을 요구하는지).
+    Process Monitor 등으로 실제 거부된 접근을 봐야 안다.
+  - COM capability 를 주면 달라질 수 있다 — 다만 그런 capability 가
+    있는지, 있다면 무엇인지 **확인하지 않았다.** 지어내지 않는다.
+  - Windows 빌드/버전 차이는 안 봤다.
+
+★ 그러나 방향은 분명하다. **AppContainer 는 임의의 데스크톱 Python 을
+  담도록 만들어진 것이 아니다** — 이 결과는 그 설계 의도와 일치한다.
+  torch 처럼 COM 을 간접적으로 끌어오는 스택을 그대로 넣는 것은,
+  적어도 지금 아는 범위에서는 막혀 있다.
+
+=== 되는 것도 분명히 적는다 ===
+
+  AppContainer 프로파일 생성 · 고유 SID          O
+  컨테이너 안에서 프로세스 실행                   O
+  **가둠**(호스트 파일을 못 읽는다)               O — 뮤테이션으로 고정
+  Python 실행 · 순수 파이썬 코드                  O
+  **C 확장 로드**(zlib · _socket)                 O
+  ole32 / _ctypes / torch                        X
+
+즉 "샌드박스에서 네이티브 코드가 안 돈다" 가 아니다. **COM 을 요구하는
+경로만** 막힌다.
