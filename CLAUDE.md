@@ -396,7 +396,21 @@ OS 방화벽            ★ 2026-09-05 사용자가 직접 실측 — **경로 �
                        4. Agent 가 죽었을 때 규칙 정리 보장
                      ★ 규칙 추가·삭제 자체는 여전히 이 세션이 못 한다 —
                        시스템/보안 설정 변경은 금지 카테고리다
-P0-02 AppContainer   같은 이유
+P0-02 AppContainer   ★ 2026-09-05 x600 실물 GPU 로 1차 실측 —
+                       docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt
+                     된 것: 프로파일 생성 · 고유 SID · 컨테이너 안 실행 ·
+                       **가둠 확인**(호스트 파일을 못 읽는다) ·
+                       바깥 기준선(cuda True, matmul 계산까지 ok)
+                     ★★ **CUDA 가 되는지는 아직 모른다** — 더 앞에서
+                       막혔다: 0xC0000135 STATUS_DLL_NOT_FOUND.
+                       CUDA 가 아니라 **Python 이 자기 DLL 을 못 읽어
+                       시작조차 못 한 것**이다. 종료 코드만 보고
+                       "AppContainer 에서 CUDA 실패" 로 적었으면 거짓을
+                       기록할 뻔했다.
+                     다음: Python 설치·site-packages 폴더에 컨테이너 SID
+                       읽기·실행 권한(= P0-02 의 filesystem allowlist).
+                       ★ 사용자 소유 디렉터리의 ACL 변경이라 이 세션이
+                         실행하지 않는다
 ADR-026 · ADR-027    구현은 이미 그 결정을 따른다. 기준선 수정 승인만 남음
 ```
 

@@ -357,6 +357,33 @@ mod tests {
         );
     }
 
+    /// ★★ **컨테이너가 쓸 수 있는 폴더가 생기는가.**
+    ///
+    /// 이게 있으면 **파일 ACL 코드를 안 써도 된다** — Windows 가
+    /// `%LOCALAPPDATA%\Packages\<이름>\` 을 만들고 그 컨테이너에 권한을
+    /// 준다. Python 스크립트와 결과 파일을 거기 두면 `P0-02` 의 나머지를
+    /// ACL 없이 잴 수 있다.
+    ///
+    /// ★ 없으면 `SetNamedSecurityInfoW` 로 직접 ACL 을 줘야 한다 —
+    ///   그건 훨씬 큰 일이라 **먼저 확인한다.**
+    #[test]
+    fn the_profile_creates_a_folder_the_container_can_use() {
+        let profile = AppContainerProfile::create("gputeer-test-folder", "f", "테스트")
+            .expect("프로파일 생성");
+        let _ = &profile;
+
+        let local = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA");
+        let dir = std::path::Path::new(&local)
+            .join("Packages")
+            .join("gputeer-test-folder");
+
+        assert!(
+            dir.is_dir(),
+            "프로파일 폴더가 없다({}) — ACL 을 직접 줘야 한다",
+            dir.display()
+        );
+    }
+
     /// **같은 이름을 두 번 만들어도 같은 SID** 여야 한다.
     ///
     /// ★ 이게 깨지면 재시작 뒤 방화벽 규칙이 **엉뚱한 컨테이너**를 가리킨다.

@@ -1,0 +1,58 @@
+=== P0-02 · AppContainer + CUDA — 1차 실측 ===
+일시   2026-09-05
+기계   x600 (Windows 11, RTX 4070 SUPER, driver 595.79, CUDA 13.2)
+도구   target/debug/p0_02_probe.exe (crates/runtime-windows/src/bin/)
+Python C:/Users/<x600-user>/AppData/Local/Programs/Python/Python313/python.exe
+       torch 2.11.0+cu128
+
+출력
+
+  P0_02 profile_sid=S-1-15-2-1410904197-4105201817-3202243263-3239620330
+                    -932966420-3733530804-2953875994
+
+  P0_02 outside exit=Some(0)
+    torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+    device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+
+  P0_02_RESULT stage=inside ok=false
+    exit=3221225781 exit_hex=0xC0000135
+    meaning=STATUS_DLL_NOT_FOUND - 필요한 DLL 을 못 읽었다(경로 ACL)
+    detail=결과 파일이 비었다 - 스크립트가 시작하지 못했다
+
+=== 확인된 것 ===
+
+1. AppContainer 프로파일이 만들어지고 고유 SID 를 준다(S-1-15-2-...).
+   그 SID 에 방화벽 규칙을 걸면 **그 Job 하나만** 막을 수 있다 —
+   경로 단위(program=)가 못 하던 일이다.
+
+2. AppContainer 안에서 프로세스가 실제로 뜨고, **가둬진다.**
+   컨테이너는 호스트의 임시 파일을 못 읽는다(단위 테스트가 고정).
+
+3. 바깥 기준선이 확실하다 — 같은 스크립트가 컨테이너 밖에서는
+   CUDA 를 보고 실제로 계산까지 한다(matmul_sum=262144.0).
+   **그래서 안쪽 실패를 "이 기계가 원래 안 되는 것" 으로 오해할 수 없다.**
+
+=== ★★ 아직 답 못 한 것 — 그리고 왜 못 했는지 ===
+
+**"AppContainer 에서 CUDA 가 되는가" 는 아직 모른다.**
+
+더 앞에서 막혔기 때문이다. `0xC0000135`(STATUS_DLL_NOT_FOUND)는 CUDA 와
+아무 상관이 없다 — **Python 이 자기 DLL 을 못 읽어 시작조차 못 했다.**
+Python 설치 폴더에 `ALL APPLICATION PACKAGES` 권한이 없어서다.
+
+★ 이 구분이 중요하다. 종료 코드만 보고 "AppContainer 에서 CUDA 실패" 로
+  적었으면 **거짓을 기록할 뻔했다.** 그래서 프로브가 종료 코드를 해설한다.
+
+=== 다음에 필요한 것 ===
+
+`P0-02` 체크리스트의 "filesystem allowlist" 가 바로 이것이다:
+
+  - Python 설치 폴더에 컨테이너 SID 읽기·실행 권한
+  - torch 패키지 폴더(site-packages)와 그 CUDA DLL
+  - 그다음에야 "GPU 드라이버 접근에 필요한 capability" 를 식별할 수 있다
+
+★ 그 권한 부여는 **사용자 소유 디렉터리의 ACL 변경**이라 이 세션이
+  실행하지 않는다. 필요하면 정확한 명령을 준비한다.
+
+★ capability 는 여전히 **빈 목록**으로 띄웠다 — 무엇이 필요한지 모르는
+  상태에서 지어내지 않는다. DLL 벽을 넘은 뒤에야 그 질문에 답할 수 있다.
