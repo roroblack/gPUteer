@@ -257,10 +257,14 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
                        건다(`agent/src/exec.rs`). ★ 단 **소프트 제한**이다
                        — 빠져나가려 작정한 코드는 못 막는다(아래 항목)
   artifact_scope    △  `open_beneath`/`open_artifact` 가 reparse point 를
-                       열기 시점에 거부한다. ★ 그러나 **실행 경로에는
-                       아직 안 붙었다** — `exec.rs` 머리말이 스스로 적어
-                       뒀다("파일시스템 격리 ... 이 경로에 아직 연결되지
-                       않았다")
+                       열기 시점에 거부한다 — **Agent 자신이 여는 경로**에
+                       대해서다. `runtime-policy::artifact` 의 문자열 검사는
+                       스스로 "파일시스템 강제가 아니다" 라고 적어 뒀다.
+                       ★ **자식 프로세스가 어디에 쓰는지는 못 막는다.**
+                       `exec.rs` 가 "이 경로에 아직 연결되지 않았다" 고 적은
+                       것을 **배선만 하면 되는 일로 읽지 마라** — 임의의
+                       네이티브 코드를 경로에 가두려면 OS 격리(AppContainer /
+                       cgroup+namespace)가 필요하고, 그게 `P0-02` 다
   network           X  방화벽을 부르는 코드가 없다. `runtime-windows` 에서
                        `network` 가 나오는 곳은 `appcontainer.rs:18` 의
                        **주석 한 줄뿐**이고, 그 주석이 하는 말이 정확히
