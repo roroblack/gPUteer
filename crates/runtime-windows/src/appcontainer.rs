@@ -307,6 +307,23 @@ pub fn run_in_container_capture(
     command_line: &str,
     working_dir: Option<&str>,
 ) -> Result<(u32, String), AppContainerError> {
+    run_in_container_capture_with_caps(profile, command_line, working_dir, &[])
+}
+
+/// 같은 일을 하되 **capability SID 문자열을 받는다.**
+///
+/// ★ `P0-02` 는 "GPU 드라이버 접근에 필요한 capability 식별" 을 요구한다.
+///   지금까지 빈 목록으로만 띄웠는데, **넣어 보는 것 자체가 식별 방법**
+///   이다 — 되면 그게 답이고, 안 되면 그 방향이 아니라는 사실이 남는다.
+///
+/// ★ 넘기는 값은 Windows 가 정한 표준 SID(`S-1-15-3-N`) 여야 한다.
+///   이 함수는 **문자열을 그대로 변환할 뿐** 무엇이 옳은지 모른다.
+pub fn run_in_container_capture_with_caps(
+    profile: &AppContainerProfile,
+    command_line: &str,
+    working_dir: Option<&str>,
+    capability_sids: &[String],
+) -> Result<(u32, String), AppContainerError> {
     use std::io::Read;
     use std::os::windows::io::FromRawHandle;
     use windows_sys::Win32::Foundation::{
@@ -315,7 +332,9 @@ pub fn run_in_container_capture(
     };
     use windows_sys::Win32::Foundation::DuplicateHandle;
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
-    use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+    use windows_sys::Win32::Security::{
+        SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+    };
     use windows_sys::Win32::System::Pipes::CreatePipe;
     use windows_sys::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
@@ -352,10 +371,39 @@ pub fn run_in_container_capture(
         CloseHandle(read_end);
     }
 
+    // ★ 문자열 SID 를 실제 SID 로 바꾼다. 실패하면 **조용히 빼지 않고**
+    //   그 사실을 오류로 돌려준다 — 조용히 빠지면 "capability 를 줬는데도
+    //   안 된다" 는 **거짓 결론**을 쓰게 된다.
+    let mut cap_sids: Vec<*mut core::ffi::c_void> = Vec::new();
+    for text in capability_sids {
+        use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+        let wide_sid = wide(text.as_str());
+        let mut sid: *mut core::ffi::c_void = std::ptr::null_mut();
+        if unsafe { ConvertStringSidToSidW(wide_sid.as_ptr(), &mut sid) } == 0 {
+            return Err(AppContainerError::AttributeList {
+                code: unsafe { windows_sys::Win32::Foundation::GetLastError() },
+            });
+        }
+        cap_sids.push(sid);
+    }
+    let mut attributes: Vec<SID_AND_ATTRIBUTES> = cap_sids
+        .iter()
+        .map(|sid| SID_AND_ATTRIBUTES {
+            Sid: *sid,
+            // SE_GROUP_ENABLED — windows-sys 0.61 이 이 상수를 노출하지
+            // 않아 값을 직접 쓴다(winnt.h 의 0x00000004).
+            Attributes: 0x0000_0004,
+        })
+        .collect();
+
     let mut caps = SECURITY_CAPABILITIES {
         AppContainerSid: profile.sid(),
-        Capabilities: std::ptr::null_mut(),
-        CapabilityCount: 0,
+        Capabilities: if attributes.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            attributes.as_mut_ptr()
+        },
+        CapabilityCount: attributes.len() as u32,
         Reserved: 0,
     };
 

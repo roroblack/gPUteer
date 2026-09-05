@@ -64,7 +64,9 @@ fn explain_exit(code: u32) -> &'static str {
 
 #[cfg(windows)]
 fn main() {
-    use gputeer_runtime_windows::appcontainer::{run_in_container_capture, AppContainerProfile};
+    use gputeer_runtime_windows::appcontainer::{
+        run_in_container_capture_with_caps, AppContainerProfile,
+    };
 
     let python = match std::env::args().nth(1) {
         Some(p) => p,
@@ -85,7 +87,26 @@ fn main() {
     //
     // ★ 작은따옴표만 쓴다 — `CreateProcessW` 인용 규칙이 얽히면 거기부터
     //   디버깅하게 된다. 예외는 stderr 로 나가고 그것도 같이 캡처한다.
-    const CODE: &str = "import torch;a=torch.cuda.is_available();print('torch='+torch.__version__+' ; cuda_available='+str(a));t=(torch.ones(64,64,device='cuda') if a else None);print('device_name='+torch.cuda.get_device_name(0)+' ; matmul_sum='+str((t@t).sum().item())+' ; compute=ok') if a else print('compute=skipped')";
+    // ★ 환경변수로 코드를 바꿔 끼울 수 있게 한다 — **무엇이 벽인지**
+    //   좁히려면 torch 말고  만 시험해 볼 수 있어야 한다.
+    const DEFAULT_CODE: &str = "import torch;a=torch.cuda.is_available();print('torch='+torch.__version__+' ; cuda_available='+str(a));t=(torch.ones(64,64,device='cuda') if a else None);print('device_name='+torch.cuda.get_device_name(0)+' ; matmul_sum='+str((t@t).sum().item())+' ; compute=ok') if a else print('compute=skipped')";
+    let code_owned = std::env::var("P0_02_CODE").unwrap_or_else(|_| DEFAULT_CODE.to_string());
+    let code: &str = &code_owned;
+
+    // ★★ **TEMP 를 컨테이너가 쓸 수 있는 곳으로 옮긴다** (가설 2).
+    //
+    //   `_ctypes` 초기화 실패의 흔한 원인 중 하나가 **쓸 수 있는 임시
+    //   경로 부재**다. 부모 환경을 자식이 물려받으므로(`CreateProcessW`
+    //   에 환경 블록을 안 주면 호출자 것을 그대로 쓴다) 여기서 바꾸면
+    //   컨테이너 안 Python 도 그것을 본다.
+    //
+    // ★ 두 번째 인자로 받는다 — 안 주면 **안 건드린다.** 그래야
+    //   "TEMP 때문인가" 를 켜고 끄며 잴 수 있다.
+    if let Some(tmp) = std::env::args().nth(2) {
+        std::env::set_var("TEMP", &tmp);
+        std::env::set_var("TMP", &tmp);
+        println!("P0_02 temp_override={tmp}");
+    }
 
     let profile = match AppContainerProfile::create(
         NAME,
@@ -107,7 +128,7 @@ fn main() {
     //
     // ★ 이게 없으면 안쪽 실패가 "AppContainer 때문" 인지 "이 기계가 원래
     //   안 되는 것" 인지 구분할 수 없다.
-    match std::process::Command::new(&python).arg("-c").arg(CODE).output() {
+    match std::process::Command::new(&python).arg("-c").arg(code).output() {
         Ok(o) => println!(
             "P0_02 outside exit={:?} result={}",
             o.status.code(),
@@ -117,8 +138,18 @@ fn main() {
     }
 
     // ── 2) 컨테이너 안 ────────────────────────────────────────────────
-    let command = format!("\"{python}\" -c \"{CODE}\"");
-    match run_in_container_capture(&profile, &command, None) {
+    let command = format!("\"{python}\" -c \"{code}\"");
+    // ★ capability 를 세 번째 인자로 받는다(쉼표 구분). 안 주면 빈 목록 —
+    //   지금까지와 같다. 넣어 보는 것 자체가 `P0-02` 의 "식별" 방법이다.
+    let caps: Vec<String> = std::env::args()
+        .nth(3)
+        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    if !caps.is_empty() {
+        println!("P0_02 capabilities={}", caps.join(","));
+    }
+
+    match run_in_container_capture_with_caps(&profile, &command, None, &caps) {
         Ok((code, text)) => {
             let clean = text.replace('\r', "").replace('\n', " ; ");
             let clean = clean.trim();

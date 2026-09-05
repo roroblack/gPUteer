@@ -1,0 +1,80 @@
+=== P0-02 · AppContainer + CUDA — 가설 넷을 전부 소거했다 ===
+일시   2026-09-05
+기계   x600 (RTX 4070 SUPER, driver 595.79, CUDA 13.2)
+실행   세션(agent:claude-code)이 SSH 로 직접 — 권한 부여·측정·원복 전부
+
+=== 벽은 하나다 ===
+
+  ImportError: DLL load failed while importing _ctypes:
+    A dynamic link library (DLL) initialization routine failed.
+
+`torch/__init__.py` 가 14번째 줄에서 `import ctypes` 를 하므로,
+**이 벽을 못 넘으면 torch 는 import 조차 안 된다.** CUDA 근처에도 못 간다.
+
+=== 소거한 가설 넷 — 각각 대조가 있다 ===
+
+가설 1 · 상위 경로 순회 권한이 없다
+  근거였던 것: `Failed to find real location of python.exe` 가 같이 뜬다
+  한 일: C:\Users\<x600-user> · \AppData · \Local · \Programs 에 각각 RX 부여
+  결과: **같은 실패.** 소거.
+
+가설 2 · 컨테이너가 쓸 수 있는 TEMP 가 없다
+  근거였던 것: libffi 초기화가 임시 경로를 요구한다고 알려져 있다
+  한 일: E:\gputeer-work\tmp\actemp 를 만들어 컨테이너 SID 에 (F) 부여,
+        프로브가 TEMP/TMP 를 그리로 바꿔 자식에게 물려줌
+  결과: **같은 실패.** 소거.
+
+가설 3 · capability 가 없다
+  근거였던 것: 지금까지 빈 목록으로만 띄웠다
+  한 일: `run_in_container_capture_with_caps()` 를 만들어 표준 SID 를
+        실제로 주입 — S-1-15-3-1(internetClient), 그리고 앱 전용 형태 하나
+  결과: **둘 다 같은 실패.** 소거.
+  ★ capability 변환에 실패하면 **조용히 빼지 않고 오류를 낸다** — 조용히
+    빠지면 "줬는데도 안 된다" 는 거짓 결론을 쓰게 된다.
+
+가설 4 · 이 Python 설치가 특이하다
+  한 일: python.org 의 **embeddable 3.13.7** 을 E: 에 새로 받아 컨테이너
+        SID 에 RX 부여하고 `import ctypes` 만 시험
+  결과:
+      바깥  ctypes=ok
+      안    ImportError: DLL load failed while importing _ctypes ...
+  **깨끗한 배포판에서도 같다.** 소거.
+
+=== 대조가 있었다 ===
+
+중간에 SID 표기를 틀려(`*S-1-15-4096`) 권한 부여가 0 files 로 실패한 적이
+있는데, 그때 프로브가 다시 `0xC0000135`(DLL not found)로 돌아갔다.
+**의도치 않았지만 좋은 대조다** — 권한이 실제로 효과를 내고 있었고,
+지금 보는 `_ctypes` 실패는 권한 부족과는 **다른 층**임을 확인해 준다.
+
+=== 그래서 무엇을 알았나 ===
+
+**CPython 의 `_ctypes` 가 AppContainer 안에서 초기화되지 않는다** —
+Python 배포판·ACL 주체·상위 경로 권한·TEMP·capability 어느 것으로도
+바뀌지 않았다.
+
+★ 이것을 곧바로 "`P0-02` 실패" 로 적지는 않는다. 안 해 본 것이 남아 있다:
+  - `_ctypes` 가 어느 DLL 에서 실패하는지 좁히기(libffi-8.dll 의존)
+  - Process Monitor 등으로 실제 거부된 접근을 직접 관측
+  - Windows 버전·빌드에 따른 차이
+  이것들을 안 하고 "AppContainer 에서 CPython 불가" 라고 쓰면 **네 번
+  시도한 것으로 일반 명제를 주장하는 것**이 된다.
+
+★ 다만 방향은 뚜렷하다. `P0-02` 의 DoD 는 이렇게 적혀 있다:
+      성공 -> S2 설계 유지, 검증된 환경에서만 enable
+      실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+  현재 근거는 **후자 쪽으로 기운다.**
+
+=== 권한 정리 ===
+
+  C:\...\Python313               부여 -> 원복 (27112 files)
+  C:\Users\<x600-user> 이하 4개 상위    부여 -> 원복 (각 1)
+  ALL APPLICATION PACKAGES       부여 -> 원복 (27112 files)
+  E: 쪽(actemp · pyembed)        E 드라이브라 남겨 둠 — 재현에 쓴다
+
+  최종 확인:
+    Python313        S-1-15 항목 0
+    C:\Users\<x600-user>    S-1-15-3-65536-... 1개 남음
+                     ★ 이건 **내가 만든 게 아니다.** Windows 가 원래 두는
+                       capability ACE 이고, 내 컨테이너 SID 는 `S-1-15-2-`
+                       로 시작한다. 건드리지 않았다.
