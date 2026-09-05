@@ -36,7 +36,7 @@ crates/cli/tests/scheduler_tick.rs    (503줄)
 
 # 물을 것 — 네 가지
 
-1. **`tests/scheduler_tick.rs` 의 모든 실패-확인 단언을 하나씩 보고**,
+1. **`crates/cli/tests/scheduler_tick.rs` 의 모든 실패-확인 단언을 하나씩 보고**,
    실패 사유까지 확인하는 것과 `!ok` 만 보는 것을 갈라라. 후자가 있으면
    그 줄을 지목하고, **그 테스트가 통과하면서도 의도한 관문이 안 도는
    입력**을 하나 제시하라.

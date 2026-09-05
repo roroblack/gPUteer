@@ -17,6 +17,7 @@
 사용법:
     python scripts/check_docs.py
 """
+import glob
 import io
 import os
 import re
@@ -90,13 +91,50 @@ PATH_CHECKED = [
     "docs/README.md",
     "docs/protocol/signing.md", "docs/protocol/state-machines.md",
     "docs/contracts/01_스트림_소유권.md", "docs/contracts/02_변경_제안_절차.md",
+    # ★ 런북은 **그대로 실행하는** 문서다. 여기 적힌 경로가 틀리면
+    #   실행하는 사람이 없는 파일을 먹인다. 리포트보다 더 엄하게 본다.
+    "docs/runbooks/검수_대기열.md",
 ]
+# 검수 프롬프트도 같은 이유로 전부 본다(파일이 늘어나므로 glob 으로 모은다).
+PATH_CHECKED_GLOBS = ["docs/runbooks/검수_프롬프트/*.md"]
+
+# 문서가 `파일:줄` 로 지목한 줄이 **파일에 실제로 있는가**.
+#
+# ★ 줄 번호는 편집하면 어긋난다 — 그래서 "가리키는 줄이 맞는가" 는 기계가
+#   못 본다. 그러나 **파일이 그 줄보다 짧아졌다면** 그 인용은 확실히
+#   죽었다. 거짓 양성이 없는 만큼만 검사한다.
+PATH_WITH_LINE = re.compile(
+    r"`((?:crates|tools|scripts|proto|tests|docs)/[A-Za-z0-9_./-]+):(\d+)`"
+)
+
+
+def _path_checked_docs():
+    """검사 대상 문서 목록. glob 으로 모으는 것도 포함한다."""
+    docs = list(PATH_CHECKED)
+    for pattern in PATH_CHECKED_GLOBS:
+        for path in sorted(glob.glob(os.path.join(ROOT, pattern))):
+            docs.append(rel(path))
+    return docs
 
 
 def check_referenced_paths():
     errs = []
-    for doc in PATH_CHECKED:
+    for doc in _path_checked_docs():
         full = os.path.join(ROOT, doc)
+        if os.path.exists(full):
+            text = io.open(full, encoding="utf-8").read()
+            # `파일:줄` 인용 — 파일이 그 줄보다 짧으면 인용이 죽은 것이다.
+            for m in PATH_WITH_LINE.finditer(text):
+                ref, lineno = m.group(1), int(m.group(2))
+                target = os.path.join(ROOT, ref)
+                if not os.path.isfile(target):
+                    continue  # 아래 경로 검사가 따로 잡는다
+                total = len(io.open(target, encoding="utf-8",
+                                    errors="ignore").read().splitlines())
+                if lineno > total:
+                    errs.append(
+                        "%s 가 없는 줄을 가리킨다: %s:%d (그 파일은 %d줄뿐)"
+                        % (doc, ref, lineno, total))
         if not os.path.exists(full):
             continue
         text = io.open(full, encoding="utf-8").read()
