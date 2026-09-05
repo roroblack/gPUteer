@@ -70,7 +70,7 @@ vision/       VISION-NN_<제목>.md (시점이 아니라 주제로 읽는다)
 
 | 폴더 | 템플릿 |
 |---|---|
-| `evidence/` | `_TEMPLATE.md` — front-matter 15개 필드. `scripts/verify_evidence.py` 가 검사 |
+| `evidence/` | `_TEMPLATE.md` — front-matter **필수 15 + schema v2 12 = 27개**. `scripts/verify_evidence.py` 가 검사 |
 | `decisions/` | `_TEMPLATE.md` — ADR 형식 |
 | `reports/` | `_TEMPLATE.md` |
 | `reports/debugs/` | `_TEMPLATE.md` |
@@ -85,3 +85,27 @@ python scripts/check_docs.py           # 문서 구조·파일명·중복 검사
 
 **`scripts/verify_evidence.py` 는 "파일이 있다"가 아니라 "재현 가능한 기록이 완전하다"를 검사한다.**
 `limitations` 가 비어 있으면 반려된다.
+
+## ★ evidence 에 **넣을 수 없는** 상태가 있다 (2026-09-05 추가)
+
+schema v2(`ADR-030`)에는 **"측정은 끝났고 독립 검수만 없다" 는 상태가 없다.**
+`review_artifact` 는 필수인데 그 내용 검사가 이렇게 요구한다:
+
+```text
+! review_artifact 에 파일:줄 위치가 하나도 없다 —
+  구체적 반례 없는 검수는 형식적 승인이다
+```
+
+즉 **검수를 못 받았으면 `docs/evidence/` 에 둘 수 없다.** 이것은 결함이
+아니라 설계다 — 그 칸을 아무 로그로나 채우면 "검수를 강제한다" 가
+"주장이 참이다" 로 읽히기 시작한다.
+
+★ **그때는 `plans/` 에 초안으로 둔다.** 파일 이름에 `_검수대기` 를 붙이고,
+  머리에 HTML 주석으로 "이것은 아직 evidence 가 아니다" 와 **왜 그런지**를
+  적는다. 검수가 `ACCEPTED` 를 내면 `review_*` 를 채워 `evidence/` 로 옮기고
+  `status` 를 `PASS` 로 올린다.
+
+  ★ `INCONCLUSIVE` 로 우회하지 않는다 — 그건 "측정이 안 끝났다" 는 뜻이라
+    **다른 상태**다. 둘을 같은 이름으로 부르면 나중에 구분이 사라진다.
+
+  실제 사례: `plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md`

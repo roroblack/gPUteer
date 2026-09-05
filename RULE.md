@@ -413,6 +413,12 @@ raw_output_artifact / raw_output_digest / raw_output_bytes
 `ENV-*` 같은 단순 환경 기록까지 검수시키면 과하다 —
 **규칙이 과하면 우회하게 되고, 그러면 규칙이 없는 것보다 나쁘다.**
 
+★ **검수자를 못 구했을 때**(쿼터 소진·부재 등)는 evidence 를 억지로
+  만들지 않는다 — 이 스키마에는 "측정은 끝났고 검수만 없다" 상태가
+  **없고**, 그건 결함이 아니라 설계다. 그때의 처리 절차는
+  `docs/README.md` 의 "evidence 에 넣을 수 없는 상태가 있다" 를 따른다
+  (여기에 옮겨 적지 않는다 — 폴더 배치 규칙은 그 문서가 소유한다).
+
 #### 유예
 
 2026-08-17 이전 evidence 16건은 `docs/evidence/_schema_v1_grandfathered.txt` 에
