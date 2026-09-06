@@ -766,7 +766,7 @@ pub fn verify<M: Signable + Clone>(
         // 증거는 만료되지 않는다 (ADR-029). 신선도는 소비 측이 fence_epoch 로 판단한다.
         Lifetime::Evidence | Lifetime::Perpetual => {}
         Lifetime::LongLived => {
-            if now_unix_ms > msg.expires_at_unix_ms() {
+            if now_unix_ms >= msg.expires_at_unix_ms() {
                 return Err(VerifyOutcome::Expired.into());
             }
         }
