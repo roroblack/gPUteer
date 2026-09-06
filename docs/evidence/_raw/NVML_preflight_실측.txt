@@ -1,0 +1,161 @@
+=== NVML 실행 직전 확인 — 실물 GPU 실측 ===
+일시   2026-09-06
+기계   x600 (x600_251214), NVIDIA GeForce RTX 4070 SUPER
+       driver 595.79 / CUDA 13.2 / cargo 1.98.0
+방법   ssh 로 원격 실행. cmd 만 사용(WSL 안 씀 — 사용자 지시)
+       소스는 tar 로 E:\gputeer-work\nvmlsrc 에 전개(C: 안 씀 — 사용자 지시)
+
+=== 왜 쟀나 ===
+
+`crates/runtime-nvml/src/preflight.rs` 의 테스트 32건은 **전부 합성
+관측값**으로 돈다. 순수 판정 로직은 그것으로 충분히 재지만,
+`check_gpu_requirements_now()` 가 **진짜 NVML 을 제대로 읽는지는
+아무것도 증명하지 않는다** — 그 함수만 통째로 망가져 있어도 32건이
+전부 초록이다.
+
+개발 기계에는 NVIDIA GPU 가 없다(Intel Iris Xe). 그래서 x600 에서 쟀다.
+
+=== 먼저: 기존 테스트를 x600 에서도 돌렸다 ===
+
+  cargo test -p gputeer-runtime-nvml
+    -> 32 passed / 0 failed
+
+  cargo test -p gputeer-runtime-nvml -- --ignored
+    -> 0 passed / 32 filtered out
+
+★ 두 번째 줄이 요점이다. **실물 NVML 을 부르는 테스트가 0개다.**
+  32건이 GPU 있는 기계에서 통과했다는 것은 "합성 판정이 플랫폼과
+  무관하다" 는 뜻일 뿐, NVML 연결을 증명하지 않는다.
+
+=== 그래서 프로브를 만들었다 ===
+
+`crates/runtime-nvml/src/bin/preflight_probe.rs`
+
+  1  실제로 관측되는가
+  2  지금 사실에 맞는 요구는 통과하는가
+  3  틀린 요구 셋은 각각 거부하는가   <- ★ 이게 없으면 2는 뜻이 없다
+                                        "항상 통과" 구현도 2를 통과한다
+
+=== 실측 출력 (그대로) ===
+
+PREFLIGHT_PROBE stage=observe ok=true gpu_count=1
+  GPU index=0 uuid=GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93
+     total=12878610432B free=12524265472B mig=None
+PREFLIGHT_PROBE stage=accept ok=true need_free=6262132736B
+PREFLIGHT_PROBE stage=reject_absent ok=true
+     rejection=SelectedGpuAbsent { uuid: "GPU-00000000-..." }
+PREFLIGHT_PROBE stage=reject_vram ok=true
+     rejection=InsufficientFreeVram { uuid: "GPU-09a269a7-...",
+                free_bytes: 12524265472, required_bytes: 51514441728 }
+PREFLIGHT_PROBE stage=reject_count ok=true
+     rejection=InsufficientGpuCount { present: 1, required: 2 }
+PREFLIGHT_PROBE done
+EXIT=0
+
+=== 무엇이 확인됐나 ===
+
+  NVML 을 실제로 읽는다                    O  UUID·총량·여유·MIG 상태
+  nvidia-smi 값과 일치한다                 O  12282 MiB ~= 12878610432B
+                                              11945 MiB ~= 12524265472B
+                                              (MiB 반올림 차이 범위 안)
+  맞는 요구는 통과한다                     O
+  없는 UUID 를 거부한다                    O  SelectedGpuAbsent
+  과한 VRAM 요구를 거부한다                O  InsufficientFreeVram
+                                              (실제 여유·요구 값을 둘 다 보고)
+  있는 것보다 많은 개수를 거부한다          O  InsufficientGpuCount
+
+=== 확인되지 **않은** 것 ===
+
+★ **여러 장 요구는 못 쟀다.** 이 기계에 GPU 가 한 장뿐이라
+  `required_gpu_count >= 2` 의 성공 경로가 안 돈다. 거부 경로만 봤다.
+
+★ **MIG 켜진 장치 거부는 못 쟀다.** 이 카드는 MIG 를 지원하지 않아
+  `mig=None` 이다. 합성 테스트로만 확인돼 있다.
+
+★ **NVML 실패 경로는 못 쟀다.** NVML 이 정상이라 `ObservationUnavailable`
+  이 실제로 어떻게 나오는지 안 봤다. 합성 테스트로만 있다.
+
+★ **한 번 쟀다.** 반복·부하 상황은 안 봤다. TOCTOU(통과 뒤 다른
+  프로세스가 VRAM 을 먹는 것)는 이 계층이 원래 못 막는다.
+
+★ **Agent 에 배선 안 됐다.** `crates/agent/Cargo.toml` 에
+  `runtime-nvml` 의존이 없다 — 이 확인은 아직 실행 경로에서 안 불린다.
+
+════════════════════════════════════════════════════════════════
+=== 2차 (2026-09-07) — 환경 셋으로 넓혔다 ===
+════════════════════════════════════════════════════════════════
+
+사용자가 다른 기계 둘을 알려 줘서 범위를 넓혔다.
+
+=== 잰 환경 셋 ===
+
+  기계        OS        GPU                        용도
+  ─────────────────────────────────────────────────────────────
+  x600        Windows   RTX 4070 SUPER  12GB      1차 (위)
+  remote5090    Linux     RTX 5090        32GB      ★ 리눅스 첫 실측
+  개발 기계    Windows   없음 (Intel Iris Xe)      ★ NVML 실패 경로
+
+=== remote5090 — 리눅스 + RTX 5090 ===
+
+`cargo test -p gputeer-runtime-nvml` -> 32 passed / 0 failed
+
+★ **이 32건이 리눅스에서 돈 것은 처음이다.** `CLAUDE.md` §4 —
+  "한 플랫폼 통과를 다른 플랫폼 통과로 세지 않는다."
+
+프로브 출력(그대로):
+
+  PREFLIGHT_PROBE stage=observe ok=true gpu_count=1
+    GPU index=0 uuid=GPU-898760f4-b097-d510-b453-4f9a842da5b1
+       total=34190917632B free=28521332736B mig=None
+  PREFLIGHT_PROBE stage=accept ok=true need_free=14260666368B
+  PREFLIGHT_PROBE stage=reject_absent ok=true
+       rejection=SelectedGpuAbsent { uuid: "GPU-00000000-..." }
+  PREFLIGHT_PROBE stage=reject_vram ok=true
+       rejection=InsufficientFreeVram { free_bytes: 28521332736,
+                  required_bytes: 136763670528 }
+  PREFLIGHT_PROBE stage=reject_count ok=true
+       rejection=InsufficientGpuCount { present: 1, required: 2 }
+  PREFLIGHT_PROBE done
+
+nvidia-smi 대조: 32607 MiB total / 27521 MiB free
+                 ≈ 34190917632B / 28521332736B  (MiB 반올림 범위 안)
+
+★ **다른 세대·다른 OS·다른 용량에서 같은 판정이 나온다.** 4070 SUPER
+  (Ada, 12GB, Windows) 와 5090(Blackwell, 32GB, Linux) 이 같은 다섯
+  단계를 같은 모양으로 통과·거부했다.
+
+=== 개발 기계 — NVML 이 아예 없는 경우 (★ 1차에서 못 잰 것) ===
+
+  PREFLIGHT_PROBE stage=observe ok=false
+    detail=LibraryUnavailable { detail: "nvml.dll: LoadLibraryExW failed
+            / C:\Program Files/NVIDIA Corporation/NVSMI/nvml.dll:
+              LoadLibraryExW failed" }
+  EXIT=1
+
+★★ **이게 이 계층 설계의 요점이다.** "GPU 가 모자란다" 가 아니라
+  **"확인 자체를 못 했다"** 로 나온다. 둘을 합치면 NVML 이 잠깐 안 열린
+  노드가 "GPU 요구를 못 맞추는 노드" 로 낙인찍혀 계속 배제된다.
+
+  1차에서 "NVML 실패 경로는 못 쟀다" 고 적었던 것이 이것으로 해소됐다.
+  합성 테스트로만 있던 `ObservationUnavailable` 이 **실제로** 그 모양으로
+  나온다.
+
+=== 여전히 확인되지 **않은** 것 ===
+
+★ **MIG 거부는 못 잰다 — 가진 하드웨어로는 불가능하다.**
+
+    x600     RTX 4070 SUPER   mig.mode.current = [N/A]
+    remote5090 RTX 5090         mig.mode.current = [N/A]
+
+  MIG 는 데이터센터 카드(A100·H100 계열) 기능이고 GeForce 는 지원하지
+  않는다. `runpod-gpu` 는 SSH 연결이 거부됐다(pod 정지 추정).
+  **합성 테스트로만 남는다** — 그 사실을 여기 적어 둔다.
+
+★ **여러 장 요구의 성공 경로도 여전히 못 쟀다.** 두 기계 다 GPU 1장이다.
+  거부 경로(`InsufficientGpuCount`)만 두 기계에서 확인됐다.
+
+★ **`pocof7t`/`pocof7u` 는 안드로이드 폰이다**(POCO F7). GPU 가 있지만
+  Adreno 라 NVML 대상이 아니다. 이 계층으로는 잴 것이 없다.
+
+★ **Agent 배선은 여전히 안 됐다.** `crates/agent/Cargo.toml` 에
+  `runtime-nvml` 의존이 없다 — 이 확인은 아직 실행 경로에서 안 불린다.
