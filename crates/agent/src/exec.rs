@@ -89,6 +89,28 @@ pub enum ExecutionError {
     ///   못 비운 것이므로, `CLAUDE.md` §0.1 이 약속한 것을 못 지킨
     ///   상태다. 조용히 넘기지 않는다.
     StopFailed { detail: String },
+
+    /// ★ 요구한 GPU 가 **지금** 그 노드에 없다 (2026-09-07 신설).
+    ///
+    /// 스케줄러가 골랐을 때와 실제로 띄우는 순간 사이에는 시차가 있다.
+    /// 그 사이에 GPU 가 빠지거나, 다른 프로세스가 VRAM 을 먹거나,
+    /// 재부팅으로 장치 번호가 바뀔 수 있다.
+    ///
+    /// ★★ **`GpuUnverifiable` 과 갈라 둔다.** 아래 항목 참조.
+    GpuRequirementUnmet { detail: String },
+
+    /// ★ GPU 를 **확인하지 못했다** — 모자란 것이 아니다 (2026-09-07 신설).
+    ///
+    /// NVML 을 못 열었거나 조회가 실패한 경우다.
+    ///
+    /// ★★ **이 둘을 합치면 안 된다.** 합치면 NVML 이 잠깐 안 열린 노드가
+    ///   "GPU 요구를 못 맞추는 노드" 로 낙인찍혀 계속 배제된다.
+    ///   `runtime-nvml` 이 같은 이유로 `is_unknown()` 을 따로 두었고,
+    ///   그 구분을 여기서 뭉개면 그 설계가 무의미해진다.
+    ///
+    ///   2026-09-07 실측에서 GPU 없는 기계가 정확히 이 모양으로 나오는
+    ///   것을 확인했다(`docs/evidence/_raw/NVML_preflight_실측.txt`).
+    GpuUnverifiable { detail: String },
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -116,6 +138,16 @@ impl std::fmt::Display for ExecutionError {
             Self::StopFailed { detail } => write!(
                 f,
                 "OWNER_STOP_FAILED: 소유자의 정지 요청을 실행하지 못했다 — {detail}"
+            ),
+            // ★ 접두사를 다르게 둔다. 로그만 보고도 "모자라다" 와
+            //   "확인 못 했다" 를 갈라야 운영자가 엉뚱한 곳을 고치지 않는다.
+            Self::GpuRequirementUnmet { detail } => write!(
+                f,
+                "EXEC_REFUSED:GPU_REQUIREMENT_UNMET: 요구한 GPU 가 지금 이 노드에 없다 — {detail}"
+            ),
+            Self::GpuUnverifiable { detail } => write!(
+                f,
+                "EXEC_REFUSED:GPU_UNVERIFIABLE: GPU 를 확인하지 못했다(모자란 것이 아니다) — {detail}"
             ),
         }
     }
@@ -225,6 +257,17 @@ pub struct ExecutionPolicy {
     ///   0 으로 포화해 "상한 0" 이 된다(실측으로 확인). 이 모듈이
     ///   원하는 것은 커밋 상한 자체이므로 변환 없는 경로를 쓴다.
     pub commit_limit_bytes: u64,
+    /// 띄우기 **직전에** 확인할 GPU 요구. `None` 이면 확인하지 않는다.
+    ///
+    /// ★ **기본이 `None` 인 것은 의도다.** GPU 를 안 쓰는 워크로드까지
+    ///   NVML 을 요구하면, NVIDIA 카드 없는 노드가 CPU 작업조차 못 받는다.
+    ///   요구를 선언한 Job 만 이 관문을 지난다.
+    ///
+    /// ★★ **이것은 "확인" 이지 "예약" 이 아니다.** 통과한 뒤 다른
+    ///   프로세스가 VRAM 을 먹는 것을 막지 못한다 — 그 창은 열려 있다.
+    ///   `runtime-nvml` 의 통과 타입에 반납할 핸들이 없는 것이 그 뜻이다.
+    ///   `CLAUDE.md` §0.4 — 강제할 수 없는 것을 보장으로 선언하지 않는다.
+    pub gpu_requirements: Option<gputeer_runtime_nvml::preflight::GpuRequirements>,
     /// 자식의 표준 출력·오류를 받을 디렉터리. `None` 이면 받지 않는다.
     ///
     /// ★ **체크포인트 디렉터리를 직접 가리키지 마라.** 그 네임스페이스는
@@ -324,6 +367,32 @@ pub fn execute_with_control(
         return Err(ExecutionError::LimitNotApplied {
             detail: "commit_limit_bytes 가 0 이다".into(),
         });
+    }
+    // ★★ **GPU 확인은 여기다 — 자식을 띄우기 전이다** (2026-09-07 신설).
+    //
+    //   띄운 뒤에 확인하면 "요구를 못 맞추는데 이미 남의 GPU 를 물고
+    //   있는" 순간이 생긴다. 그 순간이 짧다고 없는 것이 아니다.
+    //
+    //   ★ 상한 검사 **뒤에** 둔 것도 의도다. 상한을 못 걸면 어차피 안
+    //     띄우므로, 그 경우 NVML 을 부를 이유가 없다. 값싼 관문이 먼저다.
+    if let Some(requirements) = policy.gpu_requirements.as_ref() {
+        if let Err(rejection) =
+            gputeer_runtime_nvml::preflight::check_gpu_requirements_now(requirements)
+        {
+            // ★★ **여기서 두 갈래로 나눈다.** `runtime-nvml` 이
+            //   `is_unknown()` 을 따로 둔 이유가 바로 이 자리다 —
+            //   "모자라다" 와 "확인 못 했다" 를 합치면 NVML 이 잠깐 안
+            //   열린 노드가 계속 배제된다.
+            return Err(if rejection.is_unknown() {
+                ExecutionError::GpuUnverifiable {
+                    detail: format!("{rejection:?}"),
+                }
+            } else {
+                ExecutionError::GpuRequirementUnmet {
+                    detail: format!("{rejection:?}"),
+                }
+            });
+        }
     }
     platform::execute(spec, &policy, on_started)
 }

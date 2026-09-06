@@ -23,6 +23,56 @@
 
 ---
 
+## 2026-09-07 02:50 — GPU 확인을 실행 경로에 붙였다. 다만 아직 안 돈다
+
+- 계획: (`_열린_작업.md` §A1 6번. 검수 한도 복구가 오늘 15:43 이라
+  그때까지 사슬과 안 겹치는 것을 한다 — `crates/agent` 는 검수된 층이다)
+- 스트림: 구현
+- 수행: `crates/runtime-nvml` 의 판정 함수를 **아무도 부르지 않고**
+  있었다 — `crates/agent/Cargo.toml` 에 의존조차 없었다. 확인은 만들어져
+  있는데 실행 경로에서는 안 돌고 있었다. 그것을 붙였다.
+
+  `exec.rs` 의 관문 순서:
+
+```text
+1  opt-in            운영자가 안 켰으면 NVML 도 안 연다
+2  자원 상한          못 걸면 어차피 안 띄운다 — 값싼 관문이 먼저다
+3  ★ GPU 확인        자식을 띄우기 **전이다**
+4  기동 · 대기 · 종료 코드
+```
+
+  ★★ **오류를 두 갈래로 갈랐다** — `GpuRequirementUnmet`(모자라다)와
+  `GpuUnverifiable`(확인 못 했다). 합치면 NVML 이 잠깐 안 열린 노드가
+  "GPU 요구를 못 맞추는 노드" 로 낙인찍혀 계속 배제된다. `runtime-nvml`
+  이 `is_unknown()` 을 따로 둔 이유가 이 자리이고, 여기서 뭉개면 그
+  설계가 무의미해진다. 로그 접두사도 다르게 뒀다.
+
+- 검증: 전체 **1015 passed · 0 failed · 경고 0**. 새 테스트 5건.
+  뮤테이션 둘 다 잡혔다:
+
+```text
+관문 통째 제거     -> a_workload_that_asks_for_a_gpu_that_is_not_here... 실패
+두 갈래 구분 뭉갬  -> 같은 테스트가 "GPU 관문이 아닌 다른 이유로 막혔다:
+                      ObservationUnavailable" 로 정확히 잡았다
+```
+
+  ★ 테스트를 **GPU 유무에 관계없이 성립하도록** 썼다 — 특정 결과를
+  기대하면 다른 기계에서 깨진다(`CLAUDE.md` §4). GPU 있는 기계면
+  `GpuRequirementUnmet`, 없으면 `GpuUnverifiable` 이 나오고 **둘 다
+  "관문이 돌았다" 는 증거**다.
+
+- 결정: ★★ **"이제 GPU 를 확인한다" 고 쓰지 않는다.** 요구는 서명된
+  Grant 의 `plan.assigned_gpu_uuids` 에서만 오는데(`proto/job.proto` 가
+  "Agent 가 스스로 계산하지 않는다" 고 적어 뒀다), **Coordinator 가 그
+  칸을 아직 안 채운다** — `issue_grant.rs:40`·`grant_from_stored.rs:33`
+  이 "안 한다" 고 명시했다. 즉 **관문은 자리만 잡았고 실제로는 늘 비어
+  통과한다.** §A1 에 그 사실을 적고, 주장 검사표에도 "Coordinator 가
+  아직 안 채운다" 를 기계가 지키는 줄로 넣었다(20/20 비공허).
+
+  ★ 최소 VRAM 은 **0 으로 뒀다** — Grant 에 그 값을 담을 칸이 없다.
+  없는 값을 지어내지 않는다(`CLAUDE.md` §1).
+- 리포트: 없음(구현). `crates/agent/tests/gpu_preflight_gate.rs` 가 근거다
+
 ## 2026-09-07 00:30 — NVML 실측을 환경 셋으로 넓혔다. MIG 는 못 잰다
 
 - 계획: (사용자가 다른 기계 둘을 알려 줌 — "imjt 그 ssh 는 어때? mig 거부

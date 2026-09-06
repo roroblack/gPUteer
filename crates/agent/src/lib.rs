@@ -911,9 +911,40 @@ fn run_one_connection(
             format!("작업 출력 디렉터리 생성 실패({run_dir:?}): {error}")
         })?;
 
+        // ★★ **GPU 요구는 Coordinator 가 확정해 내려준 것만 쓴다**
+        //   (2026-09-07 신설).
+        //
+        //   `proto/job.proto` 가 `GrantedExecutionPlan` 에 적어 뒀다 —
+        //   "Agent 가 스스로 계산하지 않는다(노드마다 다른 결론이 나오면
+        //   안 되므로)". 그래서 여기서 추론하지 않고 **서명된 Grant 의
+        //   `plan.assigned_gpu_uuids` 를 그대로** 쓴다.
+        //
+        //   ★ 비어 있으면 `None` 이다 — 확인하지 않는다. 이유 둘:
+        //     1. GPU 를 안 쓰는 Job 까지 NVML 을 요구하면 NVIDIA 없는
+        //        노드가 CPU 작업조차 못 받는다
+        //     2. **오늘 Coordinator 는 이 칸을 채우지 않는다.**
+        //        `issue_grant.rs:40`·`grant_from_stored.rs:33` 이 "안
+        //        한다" 고 명시했다(GPU scope 의 authoritative provenance
+        //        가 없어서다). 즉 이 관문은 **자리만 잡은 상태**이고,
+        //        그 칸이 채워지는 순간부터 실제로 돈다.
+        //
+        //   ★ 최소 VRAM 은 **요구하지 않는다**(0). Grant 에 그 값을 담을
+        //     칸이 아직 없기 때문이다. 없는 값을 지어내지 않는다
+        //     (`CLAUDE.md` §1). 칸이 생기면 그때 채운다.
+        let gpu_requirements = grant
+            .plan
+            .as_ref()
+            .filter(|plan| !plan.assigned_gpu_uuids.is_empty())
+            .map(|plan| gputeer_runtime_nvml::preflight::GpuRequirements {
+                required_gpu_count: plan.assigned_gpu_uuids.len() as u32,
+                minimum_free_vram_bytes_per_gpu: 0,
+                selected_gpu_uuids: plan.assigned_gpu_uuids.clone(),
+            });
+
         let policy = exec::ExecutionPolicy {
             opted_in: config.execute_workload,
             commit_limit_bytes: config.workload_commit_limit_bytes,
+            gpu_requirements,
             capture_dir: Some(run_dir.clone()),
             // ★ attempt 별로 갈라야 한다 — 같은 Job 의 두 attempt 가 같은
             //   격리 이름을 받으면 하나를 멈출 때 다른 하나도 죽는다.

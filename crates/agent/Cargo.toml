@@ -10,6 +10,7 @@ gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
 gputeer-checkpoint = { path = "../checkpoint" }
 gputeer-runtime-policy = { path = "../runtime-policy" }
+gputeer-runtime-nvml = { path = "../runtime-nvml" }
 prost.workspace = true
 serde_json.workspace = true
 blake3.workspace = true

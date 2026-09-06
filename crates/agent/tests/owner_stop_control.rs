@@ -37,6 +37,10 @@ fn policy(opted_in: bool, limit: u64) -> ExecutionPolicy {
     ExecutionPolicy {
         opted_in,
         commit_limit_bytes: limit,
+        // ★ 이 테스트는 소유자 정지를 잰다. GPU 관문을 켜면 이 기계에
+        //   NVIDIA 카드가 없어 **정지를 재기도 전에** 막힌다 —
+        //   그러면 재려던 것을 못 재게 된다.
+        gpu_requirements: None,
         capture_dir: None,
         isolation: gputeer_agent::exec::IsolationIdentity {
             grant_id: "owner-stop-control-test".to_string(),
