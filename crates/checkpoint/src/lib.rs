@@ -84,6 +84,18 @@ pub enum CheckpointError {
     ///
     /// 파일 이름은 매니페스트에서 오는 **외부 입력**이고,
     /// 이 시스템은 **남의 개인 PC 에서** 돌아간다 (`CLAUDE.md` §0).
+    ///
+    /// ★★ **2026-09-06 — `checkpoint_id`(디렉터리 이름)도 여기로 온다.**
+    ///
+    ///   `write_checkpoint()` 가 `root.join(&manifest.checkpoint_id)` 를
+    ///   검증 없이 하고 있었다. 즉 이 변형이 **파일 이름은 지키는데
+    ///   디렉터리 이름은 안 지키고** 있었다 — `atomic.rs` 의
+    ///   `validate_relative_name()` 이 파일에만 걸렸기 때문이다.
+    ///   `checkpoint_id` 가 `"../evil"` 이면 루트 밖에 디렉터리가 생겼다.
+    ///
+    ///   ★ 새 변형을 만들지 않고 이것을 쓴다. 같은 성격의 거부를 두
+    ///     이름으로 나누면 호출부가 **둘 중 하나만** 처리하게 된다.
+    ///     `name` 칸에 파일 이름이든 `checkpoint_id` 든 거부된 값이 온다.
     #[error("안전하지 않은 경로 {name:?}: {reason}")]
     UnsafePath { name: String, reason: &'static str },
 
@@ -102,4 +114,5 @@ pub enum CheckpointError {
 
     #[error("매니페스트 파싱: {0}")]
     Manifest(String),
+
 }

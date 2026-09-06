@@ -99,13 +99,16 @@ pub fn write_checkpoint(
     //     그래서 저장소에 **막는 문 하나와 안 막는 문 하나**가 생겼고,
     //     그런 상태가 가장 위험하다 — 막힌다고 믿으면서 안 막힌 쪽으로
     //     들어간다. 같은 함수를 쓰게 해서 둘을 하나로 만든다.
-    if let Err(reason) =
-        crate::commit::validate_component(&manifest.checkpoint_id, crate::commit::MAX_LOGICAL_NAME_LEN)
-    {
-        return Err(CheckpointError::Io(format!(
-            "checkpoint_id 를 디렉터리 이름으로 쓸 수 없다({:?}): {reason}",
-            manifest.checkpoint_id
-        )));
+    //   ★ 거부는 **디렉터리를 만들기 전에** 한다. `create_dir_all` 뒤에
+    //     거부하면 거부하면서도 흔적을 남긴다 — 그건 막은 것이 아니다.
+    if let Err(reason) = crate::commit::validate_component(
+        &manifest.checkpoint_id,
+        crate::commit::MAX_LOGICAL_NAME_LEN,
+    ) {
+        return Err(CheckpointError::UnsafePath {
+            name: manifest.checkpoint_id.clone(),
+            reason,
+        });
     }
     let dir = root.join(&manifest.checkpoint_id);
     fs::create_dir_all(&dir)?;
