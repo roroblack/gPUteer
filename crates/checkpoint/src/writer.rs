@@ -88,6 +88,25 @@ pub fn write_checkpoint(
     files: &[(String, Vec<u8>)],
     slow_ms: u64,
 ) -> Result<PathBuf, CheckpointError> {
+    // ★★ **매니페스트는 바깥에서 온 값이다** (2026-09-06 신설).
+    //
+    //   여기 검증 없이 `root.join(&manifest.checkpoint_id)` 만 있었다.
+    //   `checkpoint_id` 가 `"../evil"` 이면 **체크포인트 루트 밖에
+    //   디렉터리가 생긴다.** 이 함수는 `agent/src/lib.rs` 의 실행 경로가
+    //   실제로 부른다 — 테스트 전용이 아니다.
+    //
+    //   ★ 오늘 신설한 `StagedCheckpoint` 는 같은 검사를 하고 있었다.
+    //     그래서 저장소에 **막는 문 하나와 안 막는 문 하나**가 생겼고,
+    //     그런 상태가 가장 위험하다 — 막힌다고 믿으면서 안 막힌 쪽으로
+    //     들어간다. 같은 함수를 쓰게 해서 둘을 하나로 만든다.
+    if let Err(reason) =
+        crate::commit::validate_component(&manifest.checkpoint_id, crate::commit::MAX_LOGICAL_NAME_LEN)
+    {
+        return Err(CheckpointError::Io(format!(
+            "checkpoint_id 를 디렉터리 이름으로 쓸 수 없다({:?}): {reason}",
+            manifest.checkpoint_id
+        )));
+    }
     let dir = root.join(&manifest.checkpoint_id);
     fs::create_dir_all(&dir)?;
 

@@ -4,11 +4,16 @@
 //! **표에 없는 전이는 구현하지 않는다.**
 
 pub mod atomic;
+pub mod commit;
 pub mod durability;
 pub mod platform;
 pub mod writer;
 
 pub use atomic::{gc_partial, replace_with_retry, sync_dir, write_once, RetryPolicy};
+pub use commit::{
+    logical_name_of, stored_name_for, CommitError, CommittedCheckpoint, ManifestMeta,
+    StagedCheckpoint, StagedFile, CONTENT_ADDRESS_MARKER,
+};
 pub use durability::{
     evaluate_effective_replicas, CheckpointFile, CheckpointManifest, CountedReplica, Durability,
     DurabilityState, EffectiveReplicaReport, ExcludedReplica, FactResolution, HolderValidation,

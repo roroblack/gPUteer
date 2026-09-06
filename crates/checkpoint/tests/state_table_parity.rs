@@ -359,9 +359,7 @@ fn unchecked_contract_items_are_declared() {
 // 표의 전이를 진짜로 만들어내게 됐으므로 구현과 대조를 붙였다.
 // ══════════════════════════════════════════════════════════════════
 
-use gputeer_protocol::attempt_state::{
-    transition_triggers, AttemptState, ALL_ATTEMPT_STATES,
-};
+use gputeer_protocol::attempt_state::{transition_triggers, AttemptState, ALL_ATTEMPT_STATES};
 
 /// 표의 상태 이름 → 구현의 enum.
 fn to_attempt_state(name: &str) -> Option<AttemptState> {
@@ -402,7 +400,9 @@ fn attempt_parser_is_not_vacuous() {
         );
     }
     assert!(
-        !rows.iter().any(|r| r.from == "DISCOVERED" || r.from == "SUBMITTED"),
+        !rows
+            .iter()
+            .any(|r| r.from == "DISCOVERED" || r.from == "SUBMITTED"),
         "Attempt 표에 Node/Job 행이 섞였다"
     );
 }
@@ -437,8 +437,10 @@ fn every_documented_attempt_transition_is_allowed() {
         "★ 규범 표에 있는데 구현이 거부하거나 trigger 가 어깋난다:
   {}
          `state-machines.md` §3 을 고쳤다면 `attempt_state.rs` 도 고쳐야 한다.",
-        missing.join("
-  ")
+        missing.join(
+            "
+  "
+        )
     );
 }
 
@@ -458,10 +460,8 @@ fn every_implemented_attempt_transition_is_documented() {
     for &from in ALL_ATTEMPT_STATES {
         for &to in ALL_ATTEMPT_STATES {
             if !transition_triggers(from, to).is_empty()
-                && !documented.contains(&(
-                    from.table_name().to_string(),
-                    to.table_name().to_string(),
-                ))
+                && !documented
+                    .contains(&(from.table_name().to_string(), to.table_name().to_string()))
             {
                 undocumented.push(format!("{} -> {}", from.table_name(), to.table_name()));
             }
@@ -532,7 +532,9 @@ fn every_implemented_attempt_trigger_is_documented() {
         invented.is_empty(),
         "★★ 표에 없는 trigger 이름을 구현이 가지고 있다:
   {}",
-        invented.join("
-  ")
+        invented.join(
+            "
+  "
+        )
     );
 }
