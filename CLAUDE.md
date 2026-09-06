@@ -576,48 +576,26 @@ TODO_VISION V-05~V-12 (8건)         트리거 없음 — 자동 매칭 · QUARA
 
 ### 환경 주의사항
 
-- **Rust 1.97.1** 설치됨 (로컬 · x600 · remote5090 전부). `protoc` 는 `protoc-bin-vendored` 로 번들.
-- 개발 기계는 Windows 11, GPU 없음(Intel Iris Xe).
-  GPU 검증은 **x600**(RTX 4070 SUPER · driver 595.79 · CUDA 13.2, Windows). 작업 디스크 **F:**.
-- **x600 의 WSL2 가 이제 동작한다**(2026-08-30). 커널 6.18.33.2, systemd 259 가
-  PID 1, cgroup v2 단일 계층, `systemd-creds` 사용 가능. Rust 1.89 설치돼 있다
-  (`/root/.cargo`). WSL 버전 2.7.12.0, 배포판은 `Ubuntu` 하나다.
+★★ **여기 있던 45줄을 [`docs/manuals/작업_환경.md`](docs/manuals/작업_환경.md)
+  로 옮겼다**(2026-09-06). "x600 에 RTX 4070 SUPER 가 있다" 는 **사실**이지
+  규칙이 아니고, 이 파일은 매 세션 자동으로 읽히므로 규칙만 둔다.
+  (`docs/manuals/` 가 "환경 구축 절차" 를 담기로 해 놓고 빈 폴더였던 것도
+  같이 해소됐다.)
 
-- ★★ **x600 의 C: 에서는 WSL·Docker 작업을 하지 않는다**(2026-08-31,
-  사용자 지시). Docker 컨테이너 생성도 `wsl` 작업도 **사용자가 명령하기
-  전까지** 하지 않는다.
+**규칙에 해당하는 것만 여기 남긴다.**
 
-  WSL 배포판 전체가 **E: 로 이전됐다**(사용자가 직접 수행) — 등록 BasePath
-  는 `\\?\E:`, 파일은 `E:\WSL-Ubuntu.vhdx`(41.63GB)이고 C: 에 잔재는
-  없다. 이전 후 실측 여유: **C: 51.7GB · D: 11.1GB · E: 93.7GB · F: 81GB**
-  ★ **Linux 빌드는 이제 `/mnt/e/gputeer-work/build/gputeer` 에서 한다**
-    (2026-08-31, 사용자 지시로 F: 에서 이전). 소스만 옮겼고(28M, `target/`
-    제외) 거기서 `cargo test -p gputeer-coordinator --test
-    neighbor_report_store` **33 passed** 로 동작을 확인했다. 위 1844줄의
-    `/mnt/f/...` 는 그 이전 기록이다.
-  (이전 전 C: 는 9.3GB 까지 내려가 있었다).
+- ★★ **x600 의 C: 드라이브에 아무것도 쓰지 않는다**(사용자 지시,
+  2026-08-31·2026-09-05 두 번 정정받음). 임시 파일도 안 된다 —
+  x600 에 무엇을 두든 **`E:\gputeer-work` 아래**다.
+  Docker 컨테이너 생성도 `wsl` 작업도 **사용자가 명령하기 전까지**
+  하지 않는다.
 
-  ★ 그 VHDX 가 41.6GB 였던 이유는 **우리 빌드가 아니다** — 안쪽 39G 중
-    `/var/lib/containerd` 20G + `/var/lib/docker` 12G 로, 사용자의 **살아
-    있는** Docker 환경이다(실행 중 컨테이너 4개·사용 중 볼륨 3개).
-    **건드리지 않는다.** 껍데기만 큰 게 아니라 실제로 차 있어서 압축으로는
-    2.6GB 밖에 못 되찾는다 — "안은 비었는데 껍데기만 크다" 는 추측이
-    실측으로 반증된 사례다.
-- `blake3` Python 패키지 설치 확인됨 — **개발 기계만**.
-  ★ **x600 의 WSL python3(3.14.4)에는 없다**(2026-08-31 확인). 그래서
-  `reference_canonical.py --verify` 를 x600 에서 돌리면 다이제스트를
-  만들지 못해 **모든** 벡터가 불일치로 보고된다(신규분만이 아니라 v01
-  부터 전부) — 코드 결함으로 오해하기 쉽다. Rust 테스트는 x600 에서
-  정상이므로, **벡터 대조는 개발 기계에서만** 한다. 설치하려면 사용자가
-  직접 `pip install blake3` 해야 한다.
-- **Linux 검증 — 부분 해소(2026-08-19, `ENV-03`).** 사용자 소유의 원격 기계
-  **remote5090**(Ubuntu 24.04.3, RTX 5090 32GB, sudo 불가)를 임시로 빌려 이
-  저장소를 처음으로 Linux 에서 빌드·테스트했다. **하지만 이 기계는
-  "확보"가 아니라 "임시 접근"이다** — 사용자 소유의 공유·비영구
-  기계이고, 다른 사용자·서비스가 이미 돌고 있다. 반복 가능한 접근성이
-  보장되지 않으므로, Linux 대상 DoD 를 이 기계 하나에 의존해 정기적으로
-  검증할 수는 없다 — 필요할 때마다 접근 가능 여부를 다시 확인해야 한다.
-  `ENV-03_remote5090_리눅스_GPU_기계_실측.md` 참조.
+- ★ **canonical 벡터 대조는 개발 기계에서만 한다.** x600 의 WSL python 에
+  `blake3` 가 없어서 거기서 돌리면 **모든** 벡터가 불일치로 보고된다 —
+  코드 결함으로 오해하기 딱 좋다. 이유는 위 매뉴얼에 적어 뒀다.
+
+- ★ **한 플랫폼 통과를 다른 플랫폼 통과로 세지 않는다**(§4). GPU 검증은
+  x600 에서만 가능하고, WSL 에는 GPU 가 안 보인다.
 
 ---
 
@@ -663,7 +641,7 @@ cargo check -p gputeer-checkpoint --all-targets --target x86_64-unknown-linux-gn
 - 소유권·변경 절차: `docs/contracts/`
 - 실행계획: `docs/plans/` · 리포트: `docs/reports/` · 결함: `docs/reports/debugs/`
 - 검증 로그: `docs/evidence/` · 결정 기록: `docs/decisions/`
-- 미룬 것: `docs/vision/`
+- 미룬 것: `docs/vision/` · 작업 환경: `docs/manuals/작업_환경.md`
 - 문서 지도 전체: `docs/README.md`
 
 **결정은 리포트와 ADR 로 남긴다.** 코드 주석만으로는 "왜" 가 사라진다.

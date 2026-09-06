@@ -233,7 +233,7 @@ tests/vectors/*             crates/protocol/src/constants.rs
 | `docs/decisions/` | **왜 그렇게 결정했는가** (ADR) | 아키텍처 결정 · P0 실패 시 |
 | `docs/runbooks/` | 운영·복구는 어떻게 하는가 | 절차가 바뀔 때 |
 | `docs/vision/` | 지금 안 하는 것과 그 트리거 | "지금은 안 한다"로 판정한 **그 자리에서** |
-| `docs/manuals/` | 환경 구축 절차 | 절차가 바뀔 때 |
+| `docs/manuals/` | 어느 기계에 무엇이 있나 · 환경 구축 절차 | 환경이 바뀔 때. ★ 2026-09-06 까지 **빈 폴더였다** — `CLAUDE.md` 안에 45줄로 들어가 있던 것을 `작업_환경.md` 로 옮겼다 |
 | `legacy/` | 대체된 코드 | 대체·삭제 **직전** |
 
 ### 5.1 파일명 규칙
