@@ -152,6 +152,48 @@ fn signer_quota_is_released_by_gc() {
     );
 }
 
+/// ★ GC 의 **경계** — 보존 시한이 아직 안 지난 항목은 지우지 않는다 (§10 MUST NOT).
+///
+/// 2026-09-06 뮤테이션 감사에서 살아남은 관문이다. `retain_until > effective` 를
+/// `retain_until > effective + 1` 로 바꿔 **만료 1ms 전 항목까지 축출**하게
+/// 만들었는데 아무 테스트도 깨지지 않았다.
+///
+/// 기존 GC 테스트들은 지워질 항목과 남을 항목의 시각 차이를 크게 잡아
+/// (5_000 vs 6_000, 10_000 vs 20_000) **경계 자체를 재지 않았다.**
+/// 그래서 "몇 ms 씩 일찍 지우는" 결함은 통과한다 — 그 결함은 미만료 nonce 를
+/// 밀어내는 것이므로 정확히 §10 이 금지한 replay 창이다.
+#[test]
+fn gc_keeps_an_entry_that_is_one_millisecond_from_expiry() {
+    let mut g = InMemoryReplayGuard::with_capacities(10, 10);
+    g.check_and_record("a", Domain::Grant, &n(1), 20_000)
+        .unwrap();
+
+    // 기준선을 세운다 (last_seen_ms == 0 이면 전진 상한을 적용하지 않는다).
+    assert_eq!(g.gc(10_000), 0);
+
+    // 보존 시한 1ms 전 — 아직 만료 전이다.
+    assert_eq!(
+        g.gc(19_999),
+        0,
+        "★ 만료 1ms 전 항목을 축출했다 — 그 nonce 가 다시 Fresh 가 되어 replay 창이 열린다"
+    );
+    assert_eq!(
+        g.check_and_record("a", Domain::Grant, &n(1), 20_000)
+            .unwrap(),
+        ReplayDecision::Duplicate,
+        "★ 축출된 nonce 가 재사용 가능해졌다"
+    );
+
+    // 비공허성 — 보존 시한 정각에는 실제로 지운다. 이것이 없으면
+    // "GC 가 아무것도 안 지운다" 는 결함과 구분되지 않는다.
+    assert_eq!(g.gc(20_000), 1, "보존 시한이 지난 항목이 남았다");
+    assert_eq!(
+        g.check_and_record("a", Domain::Grant, &n(1), 40_000)
+            .unwrap(),
+        ReplayDecision::Fresh
+    );
+}
+
 /// ★ 시각이 **앞으로 튀어도** 캐시를 통째로 비우지 못한다.
 ///
 /// 되감김만 막는 것으로는 부족하다는 독립 검수(2026-08-17) 지적:
