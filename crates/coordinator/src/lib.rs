@@ -253,6 +253,20 @@ pub struct CoordinatorConfig {
     ///
     ///   `:memory:` 와 빈 경로도 같은 이유로 막는다.
     pub neighbor_report_db_path: Option<String>,
+    /// ACK·heartbeat·이웃 신고 뒤에 받을 `AttemptReport` 개수.
+    /// 0(기본값)이면 이 구간이 통째로 없다.
+    ///
+    /// ★ **저장소 경로를 따로 두지 않는다.** 종료 증거는 그 Attempt 와
+    ///   그 노드의 **예약**에 결합해야만 저장되는데
+    ///   (`store_verified_terminal_report()`), 그 예약은
+    ///   `grant_from_control_db` 가 가리키는 control DB 에 있다. 경로를
+    ///   둘로 두면 "증거는 A 에, 예약은 B 에" 인 구성이 만들어지고 그건
+    ///   반드시 `AttemptNotFound` 로 끝난다 — 만들 수 있는 잘못된 구성을
+    ///   애초에 만들지 않는다(`RULE.md` §3.1 과 같은 정신).
+    ///
+    ///   그래서 `expect_attempt_reports > 0` 이면
+    ///   `grant_from_control_db` 가 반드시 `Some` 이어야 한다.
+    pub expect_attempt_reports: u32,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -439,6 +453,12 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         return Err(message);
     }
 
+    // ★ 종료 보고도 같은 자리에서 본다 — bind 보다 먼저다.
+    if let Some(message) = unsupported_attempt_report_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+
     // ★ **이웃 신고 저장소를 listener bind 보다 먼저 연다**(독립 검수
     //   4·5라운드 지적). 4라운드 수정은 이 블록을 bind **뒤에** 두어
     //   주석과 코드가 어긋나 있었다 — 소켓이 열린 뒤 죽으면 그 사이에
@@ -473,6 +493,42 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             let message = format!(
                 "이웃 신고 저장소가 영속이 아니다(neighbor_report_db_path={path:?}) — \
                  프로세스가 죽으면 모아 둔 관측이 통째로 사라지는데 로그에는 저장한 것처럼 찍힌다"
+            );
+            eprintln!(
+                "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+            );
+            return Err(message);
+        }
+        Some(store)
+    } else {
+        None
+    };
+
+    // ★ 종료 증거 저장소도 **bind 보다 먼저** 연다 — 이웃 신고 저장소와
+    //   같은 이유다. 소켓을 열고 나서 구성 오류가 드러나면 그 사이에
+    //   들어온 연결이 이미 Grant 를 받아 갔을 수 있다.
+    //
+    //   경로는 `grant_from_control_db` 그대로다. 위 lane 관문이
+    //   `expect_attempt_reports > 0` 이면 그 값이 `Some` 임을 보장한다.
+    let mut attempt_report_store = if config.expect_attempt_reports > 0 {
+        let path = config
+            .grant_from_control_db
+            .as_ref()
+            .expect("lane 관문이 grant_from_control_db 를 이미 요구했다");
+        let store = match crate::attempt_report_store::CoordinatorAttemptReportStore::open(path) {
+            Ok(store) => store,
+            Err(error) => {
+                let message = format!("AttemptReport 저장소 열기 실패: {error}");
+                eprintln!(
+                    "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+                );
+                return Err(message);
+            }
+        };
+        if !store.is_durable() {
+            let message = format!(
+                "AttemptReport 저장소가 영속이 아니다(grant_from_control_db={path:?}) — \
+                 프로세스가 죽으면 종료 증거가 통째로 사라지는데 로그에는 저장한 것처럼 찍힌다"
             );
             eprintln!(
                 "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
@@ -520,6 +576,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &mut stream,
             &mut lease_store,
             &mut neighbor_store,
+            &mut attempt_report_store,
             &signing_key,
             &agent_keys,
             &mut replay,
@@ -627,6 +684,59 @@ pub(crate) fn unsupported_neighbor_report_lane(
     None
 }
 
+/// 종료 보고 옵션이 **이 lane 에서 실제로 동작하는가**를 본다.
+///
+/// ★ 이웃 신고 관문(`unsupported_neighbor_report_lane`)과 같은 이유로
+///   있다 — 받아 놓고 안 하는 것이 가장 나쁘다. 여기서는 그보다 하나 더
+///   본다: 증거를 결합할 **예약이 있는 control DB** 가 없으면 저장 자체가
+///   불가능하다.
+///
+/// ★ `NeighborReportLane` 을 재사용한다. 두 옵션이 같은 lane 구분을 쓰고,
+///   그 구분은 "순차 lane 인가 multi-agent lane 인가" 라는 **하나의 사실**
+///   이다 — 같은 사실을 두 개의 enum 으로 적으면 둘이 어긋난다.
+pub(crate) fn unsupported_attempt_report_lane(
+    config: &CoordinatorConfig,
+    lane: NeighborReportLane,
+) -> Option<String> {
+    if config.expect_attempt_reports == 0 {
+        return None;
+    }
+    if lane == NeighborReportLane::MultiAgent {
+        return Some(
+            "multi-agent lane 은 AttemptReport 수신을 구현하지 않았다 — --expect-attempt-reports 와 함께 쓸 수 없다"
+                .to_string(),
+        );
+    }
+    if config.grant_from_control_db.is_none() {
+        return Some(
+            "--expect-attempt-reports 는 --grant-from-control-db 가 있어야 한다 — \
+             종료 증거는 그 control DB 에 저장된 Attempt·예약에 결합해야만 저장된다"
+                .to_string(),
+        );
+    }
+    if config.resume_protocol {
+        return Some(
+            "resume 경로는 AttemptReport 수신에 닿기 전에 반환한다 — --expect-attempt-reports 와 --resume-protocol 을 함께 줄 수 없다"
+                .to_string(),
+        );
+    }
+    for (enabled, flag) in [
+        (config.send_grant_twice, "--send-grant-twice"),
+        (config.disconnect_after_ack, "--disconnect-after-ack"),
+        (
+            config.drop_connection_after_ack_once,
+            "--drop-connection-after-ack-once",
+        ),
+    ] {
+        if enabled {
+            return Some(format!(
+                "{flag} 는 ACK 직후 세션을 끝낼 수 있어 AttemptReport 수신에 닿는다고 보장할 수 없다 — --expect-attempt-reports 와 함께 줄 수 없다"
+            ));
+        }
+    }
+    None
+}
+
 fn session_error_kind(error: &CoordinatorSessionError) -> &'static str {
     match error {
         CoordinatorSessionError::Transport(_) => "transport",
@@ -672,6 +782,7 @@ fn serve_one_connection(
     stream: &mut std::net::TcpStream,
     lease_store: &mut Option<CoordinatorLeaseStore>,
     neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
+    attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
@@ -693,6 +804,7 @@ fn serve_one_connection(
         stream,
         lease_store,
         neighbor_store,
+        attempt_report_store,
         signing_key,
         agent_keys,
         replay,
@@ -713,6 +825,7 @@ fn serve_one_connection_impl(
     stream: &mut std::net::TcpStream,
     lease_store: &mut Option<CoordinatorLeaseStore>,
     neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
+    attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
@@ -1232,6 +1345,178 @@ fn serve_one_connection_impl(
             report.reporter_device_id,
             report.unreachable_node_id,
             report.observed_at_unix_ms
+        );
+    }
+
+    // ── 종료 보고(`AttemptReport`) ───────────────────────────────────
+    //
+    // ★ 자리는 heartbeat·이웃 신고와 같은 이유로 **고정 순차 위치**다 —
+    //   이 stub 프로토콜에 비동기 다중화가 없다. Agent 쪽도 같은 자리에
+    //   둔다(`crates/agent/src/lib.rs` 의 `ATTEMPT_REPORT_SENT`).
+    //
+    // ★ **검증 -> 세션 대조 -> 저장** 순서를 지킨다. `read_frame` 이
+    //   `Verified<pb::AttemptReport>` 를 돌려주기 전에는 어떤 필드도
+    //   읽지 않는다(`CLAUDE.md` §0.2).
+    //
+    // ★ `require_replay_checked()` 를 **쓰지 않는다.** `AttemptReport` 는
+    //   `Lifetime::Evidence` 라 nonce 가 없고, 그래서 replay 상태가 항상
+    //   `NotApplicable` 이다 — 부르면 정상 보고까지 전부 거부된다.
+    //   중복 방어는 저장소가 한다: 같은 (attempt, node) 의 **바이트가 같은**
+    //   재전송은 `created=false` 로 첫 행을 돌려주고, 내용이나 서명자가
+    //   다르면 `ReportConflict` 로 거부한다. 그것이 이 메시지의 멱등성이며,
+    //   `Verified::require_replay_checked()` 문서가 말하는
+    //   "소비 측이 자기 멱등성을 갖춘다" 가 바로 이 자리다.
+    for _ in 0..config.expect_attempt_reports {
+        let message = read_frame(
+            stream,
+            1,
+            KeyDirectorySource::Provided(agent_keys),
+            replay,
+            clock,
+        )
+        .map_err(|e| format!("AttemptReport 프레임 읽기/검증 실패: {e}"))?;
+
+        let verified = match &message {
+            IngressMessage::AttemptReport(verified) => verified,
+            other => {
+                return Err(format!("예상하지 못한 종료 보고 타입: {other:?}").into());
+            }
+        };
+        // 검증을 통과한 뒤에야 필드를 본다.
+        let report = verified.get();
+
+        // 이 연결의 상대가 맞는가. 서명은 "이 노드가 보냈다" 를 증명할
+        // 뿐이므로, 그 노드가 **이 연결의 그 노드인지**는 따로 본다.
+        //
+        // ★ 이 대조는 **지금 도달 불가다** — heartbeat·이웃 신고 경로와
+        //   같은 이유이며, 뮤테이션으로 확인했다(2026-09-06). 이 검사를
+        //   `if false && ...` 로 무력화해도
+        //   `tests/attempt_report_ingress.rs` 9건이 전부 통과한다.
+        //
+        //   `AttemptReport::signer_id()` 가 `node_id` 라, 다른 이름을 실으면
+        //   서명 검증이 그 이름의 키를 못 찾아 먼저 막는다(`UnknownSigner`).
+        //   여기까지 오려면 등록된 **다른** Agent 가 자기 이름·자기 키로
+        //   정상 서명해 보내야 하는데, 이 lane 은 Agent 키를 하나만
+        //   등록한다.
+        //
+        //   그래도 지우지 않는다. keyring 에 신원이 둘 이상 들어가는 순간
+        //   이 대조가 유일한 방어가 된다 — 등록된 B 가 A 의 이름으로 남의
+        //   Attempt 종료를 보고하는 것을 서명 검증은 막지 못한다.
+        //   **다만 "테스트가 이것을 지키고 있다" 고 말하면 거짓이다.**
+        if report.node_id != config.agent_device_id {
+            return Err(format!(
+                "ATTEMPT_REPORT_REJECTED: node_id 불일치 — 기대값 {} != {}",
+                config.agent_device_id, report.node_id
+            )
+            .into());
+        }
+        if report.attempt_id != grant.attempt_id {
+            return Err(format!(
+                "ATTEMPT_REPORT_REJECTED: attempt_id 불일치 — 이 연결의 Grant 는 {} 인데 보고는 {} 이다",
+                grant.attempt_id, report.attempt_id
+            )
+            .into());
+        }
+        // 세대와 Job 은 이 연결에서 발급한 Lease 가 권위다.
+        // ★ Lease 가 없으면 **거부한다** — heartbeat 경로와 같은 이유로,
+        //   조용히 검사를 건너뛰기보다 멈춘다.
+        let Some(lease) = grant.lease.as_ref() else {
+            return Err(
+                "ATTEMPT_REPORT_REJECTED: 이 연결의 Grant 에 Lease 가 없어 job·세대를 대조할 수 없다"
+                    .to_string()
+                    .into(),
+            );
+        };
+        if report.job_id != lease.job_id {
+            return Err(format!(
+                "ATTEMPT_REPORT_REJECTED: job_id 불일치 — 발급 Lease 는 {} 인데 보고는 {} 이다",
+                lease.job_id, report.job_id
+            )
+            .into());
+        }
+        if report.fence_epoch != lease.fence_epoch {
+            return Err(format!(
+                "ATTEMPT_REPORT_REJECTED: fence_epoch 불일치 — 발급 {} != 보고 {}",
+                lease.fence_epoch, report.fence_epoch
+            )
+            .into());
+        }
+        // terminal 이 아닌 결과는 종료 증거가 아니다.
+        //
+        // ★ 저장소도 같은 판정을 한다(`is_terminal_outcome`). 그래도 여기서
+        //   먼저 보는 이유는 이웃 신고의 coordinator_device_id 대조와 같다 —
+        //   저장소를 **건드리기 전에** 끝내고, 거부 사유를 이 계층의 말로
+        //   분명히 한다. 그리고 **같은 함수**를 부르므로 두 판정이 갈릴 수
+        //   없다(`RULE.md` §3.1 — 같은 규칙을 두 곳에 적지 않는다).
+        if !crate::attempt_report_store::is_terminal_outcome(report.outcome) {
+            return Err(format!(
+                "ATTEMPT_REPORT_REJECTED: outcome {} 은 terminal 이 아니다 — \
+                 종료하지 않은 Attempt 의 보고를 증거로 저장하지 않는다",
+                report.outcome
+            )
+            .into());
+        }
+
+        // ★ 대조를 전부 통과한 뒤에만 남긴다. 먼저 저장하면 거부될 보고가
+        //   사실로 기록된다.
+        //
+        // ★ 저장은 판정이 아니다. 예약 해제(`release_for_verified_terminal_report`)
+        //   도, Attempt 상태 전이도 여기서 하지 않는다 — 그 관문은
+        //   `RuntimeStopProof` 를 요구하고 오늘 정직한 값이 "증명 못 함"
+        //   이다(`crates/coordinator/src/reservation_release.rs`).
+        let store = attempt_report_store.as_mut().ok_or_else(|| {
+            SessionHandlerError::Classified(storage_error(
+                "attempt report store",
+                "--expect-attempt-reports 를 켰는데 저장소가 열려 있지 않다",
+            ))
+        })?;
+        let result = store.store_verified_terminal_report(verified).map_err(|error| {
+            use crate::attempt_report_store::AttemptReportStoreError as E;
+            match error {
+                // ★ 아래는 전부 **들어온 보고가 유발한** 문제다 — 입력이
+                //   비었거나, terminal 이 아니거나, 저장된 Attempt·예약과
+                //   결합되지 않거나, 이미 다른 내용의 증거가 있다.
+                //
+                //   `Storage` 로 포장하면 accept loop 전체가 끝나 다른
+                //   Agent 들의 작업까지 끊긴다 — heartbeat·이웃 신고
+                //   경로가 이미 같은 이유로 이렇게 가른다.
+                E::InvalidInput(_)
+                | E::InvalidOutcome(_)
+                | E::AttemptNotFound { .. }
+                | E::ReservationNotFound { .. }
+                | E::BindingMismatch(_)
+                | E::ReportConflict { .. } => {
+                    SessionHandlerError::Legacy(format!("ATTEMPT_REPORT_REJECTED: {error}"))
+                }
+                // 진짜 저장소 장애와 **이미 영속된 행의 손상**은
+                // fail-closed 다(`DoD-37` 규칙, 이웃 신고 경로와 같다).
+                other => SessionHandlerError::Classified(storage_error(
+                    "attempt report store",
+                    other,
+                )),
+            }
+        })?;
+        println!(
+            "ATTEMPT_REPORT_STORED job_id={} attempt_id={} node_id={} fence_epoch={} \
+             signer_id={} created={}",
+            result.binding.bound_job_id,
+            result.binding.bound_attempt_id,
+            result.binding.bound_node_id,
+            result.binding.bound_fence_epoch,
+            result.binding.signer_id_at_submission,
+            result.created
+        );
+
+        println!(
+            "ATTEMPT_REPORT_ACCEPTED job_id={} attempt_id={} node_id={} outcome={} \
+             started_at_unix_ms={} finished_at_unix_ms={} issued_at_unix_ms={}",
+            report.job_id,
+            report.attempt_id,
+            report.node_id,
+            report.outcome,
+            report.started_at_unix_ms,
+            report.finished_at_unix_ms,
+            report.issued_at_unix_ms
         );
     }
 
@@ -2303,6 +2588,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         expect_neighbor_reports: flags
             .u32_flag_with_default("--expect-neighbor-reports", 0)?,
         neighbor_report_db_path: flags.0.get("--neighbor-report-db").cloned(),
+        expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
         extra_agents: flags.0.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
@@ -2347,6 +2633,10 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
     // ★ `kind=storage` 로 찍지 않는다(독립 검수 11라운드) — 이건 저장소
     //   연산이 아니라 **구성 충돌**이다. 원인이 다르면 이름도 달라야 한다.
     if let Some(message) = unsupported_neighbor_report_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+    if let Some(message) = unsupported_attempt_report_lane(&config, lane_from_config(&config)) {
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
         return Err(message);
     }

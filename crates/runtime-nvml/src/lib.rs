@@ -15,6 +15,9 @@
 //!                   되어, 서명·멤버십 검증을 우회하는 뒷문이 된다.
 //! 서명·저장·전이    아무것도 안 한다. 조회만 한다.
 //! GPU 점유·해제     할당은 이 계층의 일이 아니다.
+//! 요구 강제         [`preflight`] 가 요구와 관측을 **대조**하지만,
+//!                   대조 결과를 유지시키지는 못한다. 확인이지 강제가
+//!                   아니다 — 그 모듈 문서에 경계를 적어 뒀다.
 //! ```
 //!
 //! 그래서 scheduler 의 타입을 반환하지 않고 **자기 타입**을 반환한다.
@@ -38,6 +41,12 @@
 use std::ffi::c_void;
 
 mod ffi;
+pub mod preflight;
+
+pub use preflight::{
+    check_gpu_requirements_against, check_gpu_requirements_now, check_gpu_requirements_with,
+    CheckedGpu, GpuPreflightOk, GpuPreflightRejection, GpuRequirements,
+};
 
 /// 한 GPU 에 대해 NVML 이 실제로 답한 값.
 ///

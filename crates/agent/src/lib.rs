@@ -23,6 +23,7 @@ use gputeer_checkpoint::writer::{manifest_for, write_checkpoint};
 pub mod exec;
 pub mod multi_agent;
 pub mod owner_panel;
+pub mod report;
 
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, FramingError,
@@ -129,6 +130,16 @@ pub struct AgentConfig {
     ///   패턴이다 — 위험한 기본값을 실수로 켜는 것을 막는다. 다만
     ///   이건 더 위험하다: 남의 코드를 실제로 실행한다.
     pub execute_workload: bool,
+    /// 워크로드가 끝난 뒤 서명된 `AttemptReport` 를 Coordinator 에 보낸다.
+    ///
+    /// ★ 기본값 `false` 다 — 이 값이 꺼져 있으면 이 조각 **이전과
+    ///   바이트 단위로 같게** 동작한다(기존 시나리오 회귀 없음).
+    ///
+    /// ★ 켰는데 **관측된 종료가 없으면 오류로 끝난다.** 워크로드를
+    ///   실행하지 않았거나(`--i-understand-this-executes-untrusted-code`
+    ///   가 꺼져 있음) Grant 에 Manifest 가 없었다면 보고할 사실이 없다 —
+    ///   그때 빈 보고를 만들어 보내면 그것이 곧 지어낸 값이다.
+    pub send_attempt_report: bool,
     /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
     pub heartbeat_rounds: u32,
     /// heartbeat 뒤에 보낼 `NeighborUnreachableReport` 개수. 0 이면 안 보낸다.
@@ -870,6 +881,12 @@ fn run_one_connection(
     //   아무것도 없다 — 남의 PC 에서 남의 코드를 돌렸는데 그
     //   사실을 기록한 데가 없는 상태다. 마커가 먼저 있어야 부팅 시
     //   `startup_gc()` 가 그 PARTIAL 디렉터리를 보고 정리한다(`DoD-33`).
+
+    // ★ 관측한 종료를 **여기서 보내지 않는다.** 이 지점은 아직 ACK 전이고,
+    //   Coordinator 는 ACK 를 먼저 기다린다 — 여기서 보내면 프레임 순서가
+    //   어긋나 Coordinator 가 `AttemptReport` 를 ACK 로 읽으려다 실패한다.
+    //   사실만 들고 있다가 ACK·heartbeat·이웃 신고 뒤에 보낸다.
+    let mut terminal_observation: Option<crate::report::TerminalObservation> = None;
     if let Some(loaded) = workload.as_ref() {
         let spec = &loaded.spec;
         // 자식의 출력을 받을 별도 작업 디렉터리.
@@ -925,6 +942,7 @@ fn run_one_connection(
             &config.owner_panel_state,
             &loaded.submitter_device_id,
             clock.now_unix_ms(),
+            clock,
         );
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
@@ -956,6 +974,20 @@ fn run_one_connection(
                         spec.job_id, report.exit_code
                     );
                 }
+                // ★ **관측한 것만** 담는다. `job_id`·`fence_epoch` 은
+                //   Coordinator 가 서명해 준 Lease 에서, `attempt_id` 는
+                //   같은 Grant 에서 온다 — 여기서 새로 만들지 않는다.
+                //   `issued_at_unix_ms` 는 실제로 보낼 때 읽는다.
+                terminal_observation = Some(crate::report::TerminalObservation {
+                    job_id: held_lease.job_id.clone(),
+                    attempt_id: grant.attempt_id.clone(),
+                    node_id: config.agent_device_id.clone(),
+                    fence_epoch: held_lease.fence_epoch,
+                    exit_code: report.exit_code,
+                    started_at_unix_ms: report.started_at_unix_ms,
+                    finished_at_unix_ms: report.finished_at_unix_ms,
+                    issued_at_unix_ms: 0,
+                });
             }
             None => {
                 println!(
@@ -1129,6 +1161,56 @@ fn run_one_connection(
         println!(
             "NEIGHBOR_REPORT_SENT round={round} unreachable_node_id={} observed_at_unix_ms={}",
             report.unreachable_node_id, report.observed_at_unix_ms
+        );
+    }
+
+    // ── 종료 보고(`AttemptReport`) ───────────────────────────────────
+    //
+    // ★ **관측한 종료가 없으면 보내지 않는다.** 실행이 꺼져 있거나
+    //   Grant 에 Manifest 가 없었으면 `terminal_observation` 이 `None`
+    //   이고, 그때 빈 보고를 만들어 보내면 그것이 지어낸 값이다
+    //   (`CLAUDE.md` §1). 켜 놓고 보낼 것이 없으면 **오류로 끝낸다** —
+    //   조용히 건너뛰면 운영자는 보고가 간 줄 안다.
+    //
+    // ★ 자리는 heartbeat·이웃 신고와 같은 이유로 **고정 순차 위치**다.
+    //   이 stub 프로토콜에는 비동기 다중화가 없어 "끝나는 즉시" 를
+    //   표현할 수 없다 — 표현할 수 없는 것을 하는 척하지 않는다.
+    if config.send_attempt_report {
+        let Some(observed) = terminal_observation.as_ref() else {
+            return Err(
+                "ATTEMPT_REPORT_REFUSED: 관측된 워크로드 종료가 없다 — \
+                 보고할 사실이 없으면 보내지 않는다"
+                    .to_string(),
+            );
+        };
+        // 발행 시각만 지금 읽는다. 시작·종료는 그때 관측한 값 그대로다.
+        let attempt_report = report::build_signed_attempt_report(
+            &signing_key,
+            &crate::report::TerminalObservation {
+                issued_at_unix_ms: clock.now_unix_ms(),
+                ..observed.clone()
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let frame =
+            report::attempt_report_frame(&attempt_report).map_err(|error| error.to_string())?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("AttemptReport 전송 실패: {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+        println!(
+            "ATTEMPT_REPORT_SENT job_id={} attempt_id={} node_id={} fence_epoch={} \
+             outcome={} exit_code={} started_at_unix_ms={} finished_at_unix_ms={} \
+             issued_at_unix_ms={}",
+            attempt_report.job_id,
+            attempt_report.attempt_id,
+            attempt_report.node_id,
+            attempt_report.fence_epoch,
+            attempt_report.outcome,
+            observed.exit_code,
+            attempt_report.started_at_unix_ms,
+            attempt_report.finished_at_unix_ms,
+            attempt_report.issued_at_unix_ms
         );
     }
 
@@ -1616,6 +1698,15 @@ struct WorkloadReport {
     exit_code: u32,
     file_count: usize,
     total_bytes: usize,
+    /// 자식을 띄우기 **직전에** 읽은 시계. 호출부가 준 값을 그대로
+    /// 돌려준다 — 여기서 다시 계산하지 않는다.
+    started_at_unix_ms: u64,
+    /// 자식을 **거둔 직후**에 읽은 시계.
+    ///
+    /// ★ `started + 걸린시간` 이 아니다(`CLAUDE.md` §1). 산출물 수집과
+    ///   체크포인트 확정은 프로세스가 끝난 **뒤** 일이므로, 그 뒤에 시계를
+    ///   읽으면 "언제 끝났나" 가 아니라 "언제 정리가 끝났나" 가 된다.
+    finished_at_unix_ms: u64,
 }
 
 /// 실행 -> 산출물 수집 -> 체크포인트 확정까지.
@@ -1639,6 +1730,7 @@ fn run_and_capture_workload(
     panel: &owner_panel::OwnerPanelState,
     submitter_device_id: &str,
     started_at_unix_ms: u64,
+    clock: &SystemClock,
 ) -> Result<Option<WorkloadReport>, String> {
     // ★ 자식이 뜨는 **즉시** 소유자 화면에 올린다. `execute()` 가
     //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
@@ -1659,6 +1751,10 @@ fn run_and_capture_workload(
     }) {
         Ok(outcome) => outcome,
         Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
+        // ★ 여기서도 종료 시각을 읽지 않는다. 실행 자체가 **일어나지
+        //   않았거나**(NotOptedIn·UnsupportedPlatform·LimitNotApplied·
+        //   SpawnFailed) 종료를 **관측하지 못한** 경우(WaitFailed·
+        //   ExitCodeUnavailable)이므로, 보고할 종료가 없다.
         Err(other) => {
             // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
             // 소유자 화면에 영원히 남는다.
@@ -1666,6 +1762,11 @@ fn run_and_capture_workload(
             return Err(other.to_string());
         }
     };
+    // ★ 종료 시각을 **여기서** 읽는다 — `execute_with_control()` 가
+    //   돌아온 직후이자 산출물 수집 전이다. 아래 `collect_...` 와
+    //   `finalize_...` 뒤로 미루면 그 값은 "언제 끝났나" 가 아니라
+    //   "언제 정리까지 끝났나" 가 된다.
+    let finished_at_unix_ms = clock.now_unix_ms();
     // 프로세스는 끝났다. 산출물 확정이 남았지만 **멈출 대상은 이미
     // 없으므로** 화면에서 뺀다 — 못 멈추는 정지 버튼을 보이지 않는다.
     panel.unregister(attempt_id);
@@ -1680,6 +1781,8 @@ fn run_and_capture_workload(
         exit_code: outcome.exit_code,
         file_count: files.len(),
         total_bytes: files.iter().map(|(_, data)| data.len()).sum(),
+        started_at_unix_ms,
+        finished_at_unix_ms,
     }))
 }
 
@@ -2071,6 +2174,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             None => None,
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+        send_attempt_report: flags.bool_flag("--send-attempt-report"),
         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
         corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
         corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
@@ -2350,6 +2454,7 @@ mod tests {
             coordinator_verifying_key: coordinator_key.verifying_key(),
             submitter_verifying_key: None,
             execute_workload: false,
+            send_attempt_report: false,
             heartbeat_rounds: 0,
             heartbeat_interval_ms: 0,
             neighbor_report_rounds: 0,

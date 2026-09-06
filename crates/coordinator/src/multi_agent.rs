@@ -82,6 +82,15 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
     ) {
         return Err(message);
     }
+    // ★ 종료 보고도 같은 자리에서 막는다 — 이 lane 의 `serve()` 는
+    //   자기 세션 루프를 따로 갖고 있어 `serve_one_connection()` 을
+    //   부르지 않는다. 즉 `AttemptReport` 수신 구간이 **없다.**
+    if let Some(message) = crate::unsupported_attempt_report_lane(
+        &config,
+        crate::NeighborReportLane::MultiAgent,
+    ) {
+        return Err(message);
+    }
     let agents = parse_agent_directory(
         &config.agent_device_id,
         config.agent_verifying_key,
