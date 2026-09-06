@@ -453,10 +453,20 @@ local cache 만 보고 activation 판정
 
 ### 이 표의 현재 강제 수준
 
-★ **구현이 없다.** `Member` 상태기계를 강제하는 코드는 아직 없고,
-표가 참조하는 action(`ActivateMember`·`SuspendMember`·
-`ReinstateMember`·`RemoveMember`)은 **`proto/` 에 메시지가 없다.**
-`AddMember` 만 존재한다(정본 domain tag `gputeer/v1/member-add`).
+★ **구현이 없다.** `Member` 상태기계를 강제하는 코드는 아직 없다.
+
+★★ **2026-09-06 정정 — 여기 적힌 메시지 목록이 양쪽으로 틀렸다.**
+
+```text
+없다고 적었는데 있다     RemoveMember    proto/control.proto:295
+                                        (canonical 인코딩까지 돼 있다)
+목록에 없는데 실제로 없다 RevokeMember    이 표가 실제로 쓰는 이름이다
+정말 없는 셋             ActivateMember · SuspendMember · ReinstateMember
+```
+
+즉 `AddMember` 와 `RemoveMember` 는 **proto 에 있다.** 다만 **둘 다
+업무 로직은 없다** — 메시지만 있고 그것을 처리하는 코드가 없다.
+"있다" 와 "동작한다" 를 같은 칸에 세지 않는다.
 
 따라서 이 표는 Node·Job·Attempt·Lease 와 같은 처지다 — §6 의 표현대로
 **"규범이 아니라 설계 메모"** 다. 강제가 생기기 전까지 이 표를 근거로
@@ -492,7 +502,19 @@ local cache 만 보고 activation 판정
 
 ### 현재 검사 범위
 
-★ **위 6개 중 3개만 검사된다.** 나머지는 해당 계층이 미구현이다.
+★★ **2026-09-06 정정 셋.** 이 절이 세 군데 낡아 있었다.
+
+```text
+"위 6개 중 3개만"   위 목록은 7개이고 아래 표는 8행이다(§0.1·§5.1 이
+                    나중에 추가됐다). 숫자를 문서에 박아 두면 이렇게 된다
+Attempt 미구현      틀렸다. crates/protocol/src/attempt_state.rs 에
+                    enum 과 transition() 이 있고 파리티 테스트도 붙었다
+Job 미구현          부분적으로 틀렸다. SUBMITTED->PLANNING->QUEUED 는
+                    coordinator/src/job_store.rs 에 있다
+```
+
+★ **검사기 자신은 이미 Attempt 를 목록에서 뺐는데 문서만 안 고쳤다** —
+  코드가 앞서가고 문서가 뒤에 남은 전형적인 경우다.
 
 | # | 검사 | 상태 |
 |---|---|---|
@@ -500,14 +522,26 @@ local cache 만 보고 activation 판정
 | 2 | 구현의 모든 전이가 표에 있다 | ✅ Checkpoint |
 | 3 | `COMMITTED` 전이 → SingleNodeStore 는 `Unsupported` | ❌ ControlStore 미구현 |
 | 4 | 도달 불가 상태로의 전이 거부 | 🟡 2번이 부분적으로 덮는다 |
-| 5 | `*` 행을 모든 from 상태에 대해 개별 검증 | ❌ 해당 표(Node/Job/Attempt/Lease) 미구현 |
+| 5 | `*` 행을 모든 from 상태에 대해 개별 검증 | 🟡 Attempt 는 구현·대조됨. Node·Lease 는 여전히 미구현 |
 | 6 | terminal 상태에서 나가는 전이 없음 | ✅ Checkpoint (`PARTIAL`) |
 | 7 | 공개 풀 `COMMITTED` → `BROKER_ATTESTED` 요건 충족 | ❌ Broker·공개 풀 미구현 |
 | 8 | §5.1 `Member` 전이 강제 | ❌ 구현 없음. action 메시지도 `AddMember` 외엔 없다 |
 
-**Node · Job · Attempt · Lease · Member 상태기계는 구현 자체가 없다.**
-표만 있고 그것을 강제하는 코드가 없으므로, **그 표들은 아직 규범이 아니라 설계 메모다.**
-`unchecked_contract_items_are_declared` 테스트가 이 사실을 고정한다.
+**강제되는 것과 아닌 것을 갈라 적는다**(2026-09-06 재확인):
+
+```text
+Checkpoint   ✅ 표를 실제로 파싱해 양방향 대조한다
+Attempt      ✅ attempt_state.rs 의 transition() + 파리티 테스트(2026-08-29)
+Job          🟡 SUBMITTED->PLANNING->QUEUED 만 job_store.rs 에 있다.
+                나머지 전이는 없다
+Node         ❌ 구현 없음
+Lease        ❌ 구현 없음
+Member       ❌ 구현 없음
+```
+
+**Node · Lease · Member 표는 아직 규범이 아니라 설계 메모다.** 강제하는
+코드가 없기 때문이다. `unchecked_contract_items_are_declared` 테스트가
+그 사실을 고정한다.
 
 ---
 

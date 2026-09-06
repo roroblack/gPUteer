@@ -734,19 +734,35 @@ v5 초안은 "오래된 것부터 제거"였다. **아직 유효한 nonce가 밀
 
 ### 10.2 현재 구현 상태
 
+★★ **2026-09-06 정정.** 이 절 전체가 낡아 있었다. "영속 저장소는
+미구현" 이라 적혀 있었는데 **있고**, "한 device 가 다른 device 를 굶길 수
+있다" 는 **이미 막혔다.** 둘 다 2026-08-17 에 해소됐는데 이 문서만 그
+전 상태에 멈춰 있었다.
+
 ```text
-crates/crypto/src/replay.rs   InMemoryReplayGuard
+crates/crypto/src/replay.rs          InMemoryReplayGuard   프로세스 수명 안
+crates/crypto/src/durable_replay.rs  DurableReplayGuard    SQLite · 재시작을 넘는다
 ```
 
-★ **영속되지 않는다.** 프로세스가 재시작하면 캐시가 비고
-**재시작 직후 replay 창이 열린다.** `is_durable()` 이 `false` 를 반환하는 것이 그 신호다.
+★ **어느 것을 쓰는지가 곧 보장 범위다.** `is_durable()` 이 그것을 말한다.
 
-★ **전역 상한**을 쓴다 — device 별 quota 가 없어
-한 device 가 다른 device 의 nonce 공간을 소진시킬 수 있다.
-`global_capacity_lets_one_device_starve_others` 테스트가 그 사실을 고정한다
-(통과가 곧 "아직 못 막는다" 는 뜻이다).
+```text
+InMemoryReplayGuard   막는다   같은 프로세스 수명 안의 replay
+                      못 막는다 재시작 직후의 replay 창
+DurableReplayGuard    막는다   재시작을 넘는 replay
+                      못 막는다 DB 파일을 지우거나 바꿔치기하는 것
+```
 
-영속 저장소는 미구현이다 — 실행계획 v2 T4 3단계.
+★ **굶기기는 막힌다.** 서명자별 quota 가 있다. 여기 있던
+`global_capacity_lets_one_device_starve_others`(통과 = 아직 못 막는다)는
+**정반대 이름으로 바뀌었다** — 지금은
+`crates/crypto/tests/replay_guard.rs:97` 의 `one_device_cannot_starve_others`
+와 `crates/crypto/tests/durable_replay.rs:112` 의
+`signer_quota_does_not_starve_other_signers` 가 **막힌다는 것**을 고정한다.
+
+★ 여전히 못 막는 것: 장수명·증거 메시지에는 replay 방어가 **적용 대상이
+아니다**(`ReplayStatus::NotApplicable`). 그런 메시지로 부작용을 실행하려면
+소비 측이 멱등성을 갖춰야 한다.
 
 ---
 
