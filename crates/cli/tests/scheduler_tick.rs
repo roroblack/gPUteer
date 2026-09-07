@@ -403,8 +403,25 @@ fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
     );
 
     // 대조 — 넉넉한 TTL 이면 예약된다. 없으면 "항상 거부" 로도 통과한다.
+    //
+    // ★★ **이 대조군 자체가 부실했다** (2026-09-07 독립 검수 지적).
+    //   `assert!(ok)` 만 봤다. 검수가 반례를 만들어 보였다 — 구현이
+    //   예약 경로로 안 들어가고 `TICK_IDLE` 을 조기 반환하도록 바뀌어도
+    //   **종료 코드는 0 이라 이 단언이 통과한다.** 그러면 "항상 거부"
+    //   회귀는 잡아도 **"아무것도 예약 안 함" 회귀는 못 잡는다.**
+    //
+    //   대조군을 두는 목적이 바로 그 두 번째인데, 그걸 못 재고 있었다.
     let (ok, output) = tick(&keyring, &db, &[]);
     assert!(ok, "넉넉한 TTL 에서도 거부했다: {output}");
+    assert!(
+        output.contains("TICK_STAGED"),
+        "성공했다는데 예약을 안 했다 — TICK_IDLE 로 빠졌을 수 있다: {output}"
+    );
+    assert_eq!(
+        job_state(&db, JOB_A),
+        Some(JobState::Staging),
+        "TICK_STAGED 라고 찍었는데 Job 상태가 안 바뀌었다"
+    );
 }
 
 /// ★★ **Lease 발급 시각이 정말 `queued_at` 인가 — 저장된 값으로 잰다.**
