@@ -23,6 +23,48 @@
 
 ---
 
+## 2026-09-07 03:30 — 7번은 이미 돼 있었고, 대신 상태 enum 중복을 막았다
+
+- 계획: (`_열린_작업.md` §A1 7번을 잡으려다 방향이 바뀌었다)
+- 스트림: 구현 · 문서
+- 수행: 7번(체크포인트 데이터 파일 + manifest 확정)을 붙이려고 코드를
+  열었더니 **이미 돼 있었다.** `agent/src/lib.rs:1810` 이 워크로드 종료
+  후 산출물을 모아 `finalize_workload_checkpoint()` 로 확정한다.
+  §A1 에 적힌 "지금은 `WRITING` 마커만 쓴다" 가 **또 낡은 서술**이었다.
+
+  ★ 대신 진짜 공백을 하나 찾아 닫았다 — **같은 이름의 `AttemptState` 가
+  두 곳에 있었다.**
+
+```text
+protocol/src/attempt_state.rs    11개 상태 · transition() 있음
+                                 state_table_parity.rs 가 규범 표와 대조
+coordinator/src/staging_store.rs 1개(Created) · **아무 설명 없음**
+```
+
+  ★★ **위험한 것은 개수 차이가 아니라 설명이 없다는 점이었다.** 저장소
+  쪽에 누가 `Running` 을 추가하면 그 상태는 **규범 표를 거치지 않고**
+  생긴다. `state-machines.md` 가 강제한다고 믿는 규칙 밖에서 상태가 는다.
+
+- 검증: `crates/coordinator/tests/attempt_state_parity.rs` 신설(3건).
+  핵심 장치는 **exhaustive `match`** 다 — 저장소 enum 이 늘면 매핑
+  함수가 컴파일되지 않는다.
+
+  ★ 뮤테이션으로 확인했다. `Running` 을 몰래 추가하니 정확히
+  `error[E0004]: non-exhaustive patterns: ...::Running not covered` 가
+  났다. 추가하는 사람이 "이 새 상태는 규범 표의 어느 것인가" 를 반드시
+  답하게 된다. coordinator 240 passed · 0 failed · 경고 0.
+
+  ★ 반대 방향 대조군도 뒀다 — 규범 쪽에서 `Created` 를 지워도 통과하는
+  일이 없게. 그게 없으면 저장소를 0개로 만드는 것으로도 통과한다.
+- 결정: 두 enum 을 **합치지 않았다.** 저장소 쪽은 SQLite 에 적히는
+  값이라 합치려면 마이그레이션이 필요하고, 그건 이 조각의 범위가 아니다.
+  못 하는 것을 한 것처럼 두지 않고 테스트 머리말에 적었다.
+
+  ★ 사용자 지시로 **장기 안정성 시험은 x600 에서** 돌린다.
+  `coordinator-agent-selftest` 200회 반복을 걸었다 — 이 저장소의 교착
+  버그는 전부 특정 시나리오 조합에서만 드러났고, 반복이 그것을 잡는다.
+- 리포트: 없음(구현). `crates/coordinator/tests/attempt_state_parity.rs` 가 근거다
+
 ## 2026-09-07 02:50 — GPU 확인을 실행 경로에 붙였다. 다만 아직 안 돈다
 
 - 계획: (`_열린_작업.md` §A1 6번. 검수 한도 복구가 오늘 15:43 이라
