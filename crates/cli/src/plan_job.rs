@@ -131,7 +131,19 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //       job_store.rs:912   signer_id_at_submission      == job.submitter_device_id
     //
     //   그리고 `Verified::signer_id()` 는 **메시지의 필드**에서 온다
-    //   (`signing.rs:843`). 셋을 합치면 두 값은 항상 같다.
+    //   (`signing.rs:843`).
+    //
+    //   ★★ **어느 필드인지가 증명의 마지막 칸이다** (2026-09-07 독립
+    //     검수 지적). 처음엔 `signing.rs:843` 까지만 적었는데, 그 줄은
+    //     "추상 메서드 `msg.signer_id()` 를 복사한다" 만 보여 줄 뿐
+    //     `JobManifest` 가 **무엇을** 돌려주는지는 말하지 않는다.
+    //     그 칸이 비면 증명이 형식적으로 성립하지 않는다.
+    //
+    //       signable.rs:61-63
+    //         impl Signable for pb::JobManifest {
+    //             fn signer_id(&self) -> &str { &self.submitter_device_id }
+    //
+    //   넷을 합치면 두 값은 항상 같다.
     //
     //   ★ `DoD-62` 에서 **똑같은 실수를 했다** — 거기서도 내가 넣은
     //     재대조를 `fetch_report_binding` 이 이미 하고 있었다. 두 번째다.

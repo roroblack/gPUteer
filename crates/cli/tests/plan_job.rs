@@ -360,6 +360,19 @@ fn a_rejected_candidate_is_named_with_its_reason() {
         output.contains(NODE),
         "떨어진 노드 이름을 말하지 않는다: {output}"
     );
+    // ★★ **이유까지 확인한다** (2026-09-07 독립 검수 지적).
+    //
+    //   전에는 `!ok` 와 "노드 이름이 나온다" 만 봤다. 검수가 반례를
+    //   만들어 보였다 — inventory 관측 시각을 오래된 값으로 바꾸면
+    //   `SnapshotNotFresh` 로 거부되는데, 그때도 같은 노드 이름이
+    //   나오므로 **VRAM 검사가 통째로 없어도 이 테스트가 통과한다.**
+    //
+    //   이 파일이 재려던 것은 "VRAM 이 모자라서 떨어졌다" 이지
+    //   "무슨 이유로든 떨어졌다" 가 아니다.
+    assert!(
+        output.contains("GpuVramInsufficient"),
+        "VRAM 부족이 아니라 다른 관문에 걸렸다 — 이 테스트가 재려던 것이 아니다: {output}"
+    );
     assert_eq!(job_state(&db), Some(JobState::Submitted));
 }
 
@@ -470,9 +483,20 @@ fn a_signer_no_longer_in_the_keyring_stops_planning() {
 
     let (ok, output) = plan(&keyring2, &db2, &[]);
     assert!(!ok, "믿지 않는 서명자의 Job 을 계획했다: {output}");
+    // ★★ **공통 포장 문구가 아니라 실제 이유를 본다** (2026-09-07 검수 지적).
+    //
+    //   "다시 검증하지 못했다" 는 `plan_job.rs:117-121` 이 **모든**
+    //   `VerifyError` 에 붙이는 문구다. 검수가 반례를 만들어 보였다 —
+    //   keyring 에서 서명자를 지우는 대신 **같은 ID 에 다른 공개키**를
+    //   넣으면 `InvalidSignature` 가 나오는데, 그때도 이 단언은 전부
+    //   통과한다.
+    //
+    //   이 테스트가 재려던 것은 "그 서명자를 모른다" 이지 "서명 검증이
+    //   어떤 이유로든 실패했다" 가 아니다. 다행히 포장 문구가 `{e:?}` 로
+    //   실제 오류를 담으므로 여기서 그것을 직접 확인할 수 있다.
     assert!(
-        output.contains("다시 검증하지 못했다"),
-        "이유를 안 말한다: {output}"
+        output.contains("UnknownSigner"),
+        "서명자를 모른다는 이유가 아니라 다른 검증 실패다: {output}"
     );
     assert_eq!(job_state(&db2), Some(JobState::Submitted));
 }
