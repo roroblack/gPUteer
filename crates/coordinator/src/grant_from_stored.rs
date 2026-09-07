@@ -234,33 +234,68 @@ pub fn signed_grant_from_stored(
     //   그게 **없었다** — 내 뮤테이션이 아니라 코드를 나란히 놓고 보다가
     //   찾았다.
     //
-    //   `AlwaysValid` 를 쓰므로 이것이 **확인하는 것과 못 하는 것**을
-    //   정확히 적는다:
+    //   확인하는 것과 못 하는 것을 정확히 적는다:
     //
-    //   확인한다   구조·`schema_version`·수명·canonical 인코딩이
-    //              성립하는가. nested Lease 도 같이 본다.
+    //   확인한다   구조·`schema_version`·수명·canonical 인코딩,
+    //              그리고 **서명이 실제로 검증되는가**(2026-09-07 추가).
+    //              nested Lease 도 같이 본다.
     //   못 한다    **이 키가 정말 `issuing_coordinator_id` 의 것인가.**
     //              이 모듈에는 key directory 가 없다 — 호출부가 준
     //              키를 그대로 쓴다.
     //
-    //   ★ 그래서 엉뚱한 키로 서명하면 **여기서는 통과하고**, 나중에
-    //     Agent 가 거부한다(그 id 의 공개키로 서명이 안 맞는다). 위험
-    //     하지는 않다 — 아무도 못 쓰는 Grant 다. 다만 **운영자는 유효한
-    //     것을 만든 줄 안다**는 문제가 남는다. 그걸 닫으려면 Coordinator
-    //     공개키 목록이 필요하고, 이 저장소에 아직 없다.
-    verify_own_output(&grant, request.issued_at_unix_ms)?;
+    //   ★★ **"위험하지 않다" 고 적었던 것을 고친다** (2026-09-07 독립
+    //     검수 지적). 엉뚱한 키로 서명하면 여기서는 통과하고 나중에
+    //     Agent 가 거부한다. 인증 우회는 아니지만 **위험이 없는 것은
+    //     아니다**:
+    //
+    //       · 운영자는 유효한 Grant 를 만든 줄 안다
+    //       · 실패가 Agent 단계까지 밀려 원인 파악이 늦어진다
+    //       · `--out` 에 기존 파일이 있었다면 못 쓰는 Grant 로 덮인다
+    //
+    //     닫으려면 Coordinator 공개키 목록이 필요하고 아직 없다.
+    verify_own_output(&grant, key, request.issued_at_unix_ms)?;
     Ok(grant)
 }
 
-/// 방금 서명한 Grant 를 **구조·수명 수준에서** 자기 검증한다.
+/// 방금 서명한 Grant 를 **서명까지** 자기 검증한다.
 ///
-/// 서명 자체를 다시 도는 것이 목적이 아니다(방금 우리가 만들었다).
-/// 확인하려는 것은 canonical 인코딩과 수명이 성립하는가다.
-fn verify_own_output(grant: &pb::ExecutionGrant, at_unix_ms: u64) -> Result<(), String> {
+/// ★★ **2026-09-07 독립 검수가 이 함수를 반려했다.** 전에는
+///   `AlwaysValid`(서명을 읽지도 않는 검증자)를 썼다. 검수가 반례를
+///   보였다 —
+///
+///   > `sign()` 이 버그 때문에 잘못된 preimage 를 서명하거나 64바이트
+///   > 쓰레기를 반환해도, 검증기가 서명을 **읽지 않으므로** 통과한다.
+///
+///   즉 그 검사는 "서명 생성과 검증 양쪽에 같은 버그가 있으면 못 잡는다"
+///   보다도 약했다. **생성기의 단독 버그조차 못 잡았다.**
+///
+///   지금은 서명에 쓴 키에서 공개키를 도출해 **실제로 검증한다.**
+///   그러면 서명 생성과 canonical preimage 의 불일치를 잡는다.
+///
+/// ★ 여전히 못 하는 것은 그대로다 — **이 공개키가 정말
+///   `issuing_coordinator_id` 의 신뢰된 키인가.** 이 모듈에는 key
+///   directory 가 없고 호출부가 준 키를 그대로 쓴다. 그건 별도 검사가
+///   필요하고 이 저장소에 아직 없다.
+fn verify_own_output(
+    grant: &pb::ExecutionGrant,
+    key: &gputeer_crypto::SigningKey,
+    at_unix_ms: u64,
+) -> Result<(), String> {
+    // 서명에 쓴 키의 공개키를 두 신원 모두에 등록한다 — Grant 와 nested
+    // Lease 는 서명자 이름이 다를 수 있는데, 여기서 확인하려는 것은
+    // "이 키로 서명한 것이 그대로 검증되는가" 뿐이다.
+    let mut ring = gputeer_crypto::InMemoryKeyring::new();
+    let public = key.verifying_key();
+    ring.insert(grant.coordinator_device_id.clone(), public);
+    if let Some(lease) = grant.lease.as_ref() {
+        ring.insert(lease.issuing_coordinator_id.clone(), public);
+    }
+    let verifier = gputeer_crypto::Ed25519Verifier::new(&ring);
+
     gputeer_protocol::verify(
         grant,
         2,
-        &AlwaysValid,
+        &verifier,
         at_unix_ms,
         &mut gputeer_protocol::signing::NoReplayCheck,
     )
@@ -273,29 +308,12 @@ fn verify_own_output(grant: &pb::ExecutionGrant, at_unix_ms: u64) -> Result<(), 
     gputeer_protocol::verify(
         lease,
         1,
-        &AlwaysValid,
+        &verifier,
         at_unix_ms,
         &mut gputeer_protocol::signing::NoReplayCheck,
     )
     .map_err(|e| format!("방금 만든 nested Lease 가 자기 검증을 통과하지 못했다: {e:?}"))?;
     Ok(())
-}
-
-/// 서명 **검사를 건너뛰는** 검증자 — "내가 방금 만든 것" 에만 쓴다.
-///
-/// ★ 수신 측에서 이것을 쓰면 안 된다. `submit.rs` 에 같은 것이 있고
-///   같은 이유로 거기서만 쓰인다.
-struct AlwaysValid;
-
-impl gputeer_protocol::signing::SignatureVerifier for AlwaysValid {
-    fn verify_signature(
-        &self,
-        _signer_id: &str,
-        _message: &[u8],
-        _signature: &[u8],
-    ) -> Result<(), gputeer_protocol::VerifyOutcome> {
-        Ok(())
-    }
 }
 
 /// `(grant_id, attempt_id)` 에서 16바이트 nonce 를 결정적으로 뽑는다.
