@@ -23,6 +23,25 @@
 
 ---
 
+## 2026-09-07 12:44 — V-12(elastic 추론 admission) 실행계획서 작성 — 코드 0줄
+- 계획: `docs/plans/2026-09-07_1244_elastic_추론_admission_v1.md` (이 세션이 만든 것. 단계 착수 아님)
+- 스트림: 문서 (`docs/plans/` · `docs/vision/`)
+- 수행: 사용자가 "FreeToken 기술을 적용하기로 했다" 고 결정해, vision 보류 항목
+  V-12 를 실행계획서로 올렸다. 조사 결과 V-12 는 **vision 등록만 있고 계획서·코드
+  전부 없었다** — `filter.rs:215-229` 스칼라 VRAM 비교 그대로, `WorkloadHint` 에
+  SLO 필드 없음, crates 전체에 SLO/offload/PCIe 관련 코드 0건. 계획의 핵심 결정:
+  ① v1 은 처리량 곡선을 **추정하지 않는다** — 운영자가 반입한 calibration 실측
+  점이 요구를 8조건으로 **지배**하는지만 본다 ② 새 필드 없는 Job 은 새 관문에
+  들어오지 않아 기존 경로가 바이트 하나도 안 바뀐다 ③ rank 는 건드리지 않는다
+  (V-10 미결정 존중) ④ proto 변경은 `WorkloadHint` 13~16 네 필드, `SCHEMA_VERSION`
+  2→3 — S0 제안서 승인 전엔 코드 안 씀 ⑤ 트리거 (b) 는 S1 에서 x600 calibration
+  으로 직접 만든다(E: 규칙 · WSL 은 사용자 명령 뒤). 부수 확인: V-12 "안 하는
+  이유" 세 줄 중 둘이 낡았다(projection 변환기 있음 · agent 실행함) — vision 에
+  주석으로 표시, 원문은 보존.
+- 검증: 코드 변경 없음. `python scripts/check_docs.py` 로 문서 검사기 통과 확인
+  (아래 리포트). **독립 검수 미실시** — 코덱스 쿼터 복구 15:43 이후 `검수_대기열` 순번 뒤.
+- 리포트: `docs/reports/2026-09-07_1244_elastic_추론_admission_계획서.md`
+
 ## 2026-09-07 03:30 — 7번은 이미 돼 있었고, 대신 상태 enum 중복을 막았다
 
 - 계획: (`_열린_작업.md` §A1 7번을 잡으려다 방향이 바뀌었다)

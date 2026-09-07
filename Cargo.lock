@@ -315,6 +315,7 @@ dependencies = [
  "gputeer-crypto",
  "gputeer-protocol",
  "gputeer-runtime-linux",
+ "gputeer-runtime-nvml",
  "gputeer-runtime-policy",
  "gputeer-runtime-windows",
  "prost",
