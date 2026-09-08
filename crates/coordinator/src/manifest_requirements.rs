@@ -493,4 +493,119 @@ mod tests {
             }
         );
     }
+
+    /// ★★ **여섯 축의 모든 유효 변형이 제 값으로 넘어가는가.**
+    ///
+    /// 2026-09-07 독립 검수 지적으로 추가했다. 그전까지 이 파일이
+    /// 직접 검사한 것은 **30개 유효 변형 중 12개**뿐이었다 —
+    /// `Unspecified` 여섯과 성공 경로의 **대표값 여섯**. 나머지 18개는
+    /// 아무도 안 봤다.
+    ///
+    /// ★ 내가 evidence 초안에 "축 전수 뮤테이션을 돌렸다" 고 적었는데,
+    ///   그 '전수' 는 **거부 축 여섯**이었지 **값 서른**이 아니었다.
+    ///   검수가 그 차이를 짚었다.
+    ///
+    /// ★★ 기대값을 **손으로 적는다.** 변환 함수를 다시 돌려 기대값을
+    ///   만들면 자기가 자기를 확인하는 것이라 아무것도 증명하지 않는다.
+    #[test]
+    fn every_valid_variant_of_every_axis_maps_to_its_own_value() {
+        // workload.class — proto 의 여섯 변형
+        for (raw, want) in [
+            (pb::WorkloadClass::Training, WorkloadClass::Training),
+            (pb::WorkloadClass::Inference, WorkloadClass::Inference),
+            (
+                pb::WorkloadClass::Preprocessing,
+                WorkloadClass::Preprocessing,
+            ),
+            (pb::WorkloadClass::Evaluation, WorkloadClass::Evaluation),
+            (pb::WorkloadClass::Rendering, WorkloadClass::Rendering),
+            (pb::WorkloadClass::Other, WorkloadClass::Other),
+        ] {
+            let got = job_requirements_from_manifest(
+                &verified(|m| m.workload.as_mut().unwrap().class = raw as i32),
+                MEMBER,
+            )
+            .unwrap_or_else(|e| panic!("workload.class {raw:?} 를 거부했다: {e:?}"));
+            assert_eq!(
+                got.workload_class,
+                Some(want),
+                "workload.class {raw:?} 가 엉뚱한 값으로 갔다"
+            );
+        }
+
+        for (raw, want) in [
+            (pb::SideEffectClass::Pure, SideEffectClass::Pure),
+            (
+                pb::SideEffectClass::Idempotent,
+                SideEffectClass::Idempotent,
+            ),
+            (
+                pb::SideEffectClass::SideEffecting,
+                SideEffectClass::SideEffecting,
+            ),
+        ] {
+            let got =
+                job_requirements_from_manifest(&verified(|m| m.side_effect_class = raw as i32), MEMBER)
+                    .unwrap_or_else(|e| panic!("side_effect_class {raw:?} 를 거부했다: {e:?}"));
+            assert_eq!(got.side_effect_class, Some(want));
+        }
+
+        for (raw, want) in [
+            (pb::Sensitivity::Public, Sensitivity::Public),
+            (pb::Sensitivity::Internal, Sensitivity::Internal),
+            (pb::Sensitivity::Sensitive, Sensitivity::Sensitive),
+        ] {
+            let got = job_requirements_from_manifest(
+                &verified(|m| m.dataset.as_mut().unwrap().sensitivity = raw as i32),
+                MEMBER,
+            )
+            .unwrap_or_else(|e| panic!("sensitivity {raw:?} 를 거부했다: {e:?}"));
+            assert_eq!(got.sensitivity, Some(want));
+        }
+
+        for (raw, want) in [
+            (pb::SecurityTier::S0, SecurityTier::S0),
+            (pb::SecurityTier::S1, SecurityTier::S1),
+            (pb::SecurityTier::S2, SecurityTier::S2),
+            (pb::SecurityTier::S3, SecurityTier::S3),
+            (pb::SecurityTier::S4, SecurityTier::S4),
+            (pb::SecurityTier::S5, SecurityTier::S5),
+        ] {
+            let got = job_requirements_from_manifest(
+                &verified(|m| m.minimum_security_tier = raw as i32),
+                MEMBER,
+            )
+            .unwrap_or_else(|e| panic!("security_tier {raw:?} 를 거부했다: {e:?}"));
+            assert_eq!(got.minimum_security_tier, Some(want));
+        }
+
+        for (raw, want) in [
+            (pb::IsolationClass::Restricted, IsolationClass::Restricted),
+            (pb::IsolationClass::Contained, IsolationClass::Contained),
+            (
+                pb::IsolationClass::Virtualized,
+                IsolationClass::Virtualized,
+            ),
+        ] {
+            let got = job_requirements_from_manifest(
+                &verified(|m| m.minimum_isolation_class = raw as i32),
+                MEMBER,
+            )
+            .unwrap_or_else(|e| panic!("isolation_class {raw:?} 를 거부했다: {e:?}"));
+            assert_eq!(got.minimum_isolation_class, Some(want));
+        }
+
+        for (raw, want) in [
+            (pb::KeyProtection::K0, KeyProtection::K0),
+            (pb::KeyProtection::K1, KeyProtection::K1),
+            (pb::KeyProtection::K2, KeyProtection::K2),
+        ] {
+            let got = job_requirements_from_manifest(
+                &verified(|m| m.minimum_key_protection = raw as i32),
+                MEMBER,
+            )
+            .unwrap_or_else(|e| panic!("key_protection {raw:?} 를 거부했다: {e:?}"));
+            assert_eq!(got.minimum_key_protection, Some(want));
+        }
+    }
 }

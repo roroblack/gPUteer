@@ -192,6 +192,16 @@ RevokeLeaseNotice   lease_id 로 대신
 
 ### V-12 — Elastic 추론 노드를 위한 admission 확장 (VRAM 이진 판정 → 처리량 곡선 판정)
 
+> ★★ **2026-09-07 실행계획으로 올라감 — 사용자 결정.** 트리거 (a)·(b)는
+> 여전히 오지 않았다. 사용자가 "FreeToken 기술을 적용하기로 했다" 고 결정해
+> [`docs/plans/2026-09-07_1244_elastic_추론_admission_v1.md`](../plans/2026-09-07_1244_elastic_추론_admission_v1.md)
+> 를 썼고, 그 계획의 S1 이 트리거 (b)(calibration 실측)를 **직접 만든다.**
+> 아래 "지금 안 하는 이유" 중 두 줄은 낡았다 — `JobRequirements` projection 은
+> `crates/coordinator/src/manifest_requirements.rs` 로 생겼고, `crates/agent` 는
+> workload 를 실행한다(2026-09-06 감사). 남은 참인 이유는 `WorkloadHint` 에 SLO
+> 필드가 없다는 것 하나고, 그것이 계획의 S0·S2 다. 이 항목은 계획이 S5 까지
+> 끝나면 vision 에서 지운다. 그전까지 아래 원문은 등록 당시 그대로 둔다.
+
 > ★ **2026-08-24 독립 검수 반영.** 최초 등록본은 코덱스 CLI 독립 검수(read-only,
 > 대화 기록 없는 인스턴스) 1라운드에서 `CHANGES_REQUESTED` — 트리거 (b)가
 > 수치가 아니었고, FreeToken 논문의 서로 다른 하드웨어 등급 결과("8GB 노트북

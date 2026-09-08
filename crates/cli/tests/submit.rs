@@ -127,3 +127,93 @@ fn declarations_are_case_insensitive() {
     assert!(ok, "소문자를 거부했다: {output}");
     assert!(out.exists());
 }
+
+/// 시각 인자를 직접 통제하는 제출 — 기본 helper 는 항상 만료를 준다.
+fn submit_with_times(
+    out: &std::path::Path,
+    issued: &str,
+    expires: Option<&str>,
+) -> (bool, String) {
+    let mut args: Vec<String> = vec![
+        "submit".into(), "--job-id".into(), JOB.into(),
+        "--entrypoint".into(), "python".into(),
+        "--submitter-device-id".into(), SUBMITTER.into(),
+        "--submitter-seed".into(), SEED.into(),
+        "--issued-at-unix-ms".into(), issued.into(),
+        "--out".into(), out.to_str().unwrap().into(),
+    ];
+    if let Some(e) = expires {
+        args.push("--expires-at-unix-ms".into());
+        args.push(e.into());
+    }
+    for (name, value) in GOOD {
+        args.push((*name).into());
+        args.push((*value).into());
+    }
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_cli(&borrowed)
+}
+
+/// ★★ **만료를 생략하는 경로를 실제로 돈다** (2026-09-07 검수 지적).
+///
+/// 기본 helper 가 **항상** 만료를 주기 때문에, 생략 경로(`issued + 7일`)는
+/// 테스트에서 한 번도 실행되지 않고 있었다. 제출자가 말하지 않은 값이
+/// 서명 대상에 들어가는 자리인데 아무도 안 보고 있었다.
+#[test]
+fn omitting_the_expiry_uses_the_documented_seven_day_default() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("no-expiry.pb");
+    let issued = now_unix_ms().saturating_sub(60_000).to_string();
+
+    let (ok, output) = submit_with_times(&out, &issued, None);
+    assert!(ok, "만료를 생략했는데 거부했다: {output}");
+    assert!(out.exists(), "성공했다는데 파일이 없다");
+
+    // ★ 정말 7일이 들어갔는지 **서명된 바이트에서** 확인한다.
+    //   "성공했다" 만 보면 0 이 들어가도 통과한다.
+    let bytes = std::fs::read(&out).expect("Manifest 읽기");
+    let manifest = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(bytes.as_slice())
+        .expect("Manifest 디코드");
+    let want: u64 = issued.parse::<u64>().unwrap() + 7 * 24 * 60 * 60 * 1000;
+    assert_eq!(
+        manifest.expires_at_unix_ms, want,
+        "생략 시 기본값이 규범(issued + 7일)과 다르다"
+    );
+}
+
+/// ★★ **발급이 만료보다 뒤면 거부한다** (2026-09-07 검수 지적).
+///
+/// 전에는 이 검사가 **없었고** 그 경로를 도는 테스트도 없었다.
+/// 역전된 시각도 그대로 서명한 뒤 바깥 검증에 넘겼다.
+#[test]
+fn a_manifest_that_expires_before_it_is_issued_is_refused_before_signing() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("reversed.pb");
+    let issued = now_unix_ms();
+
+    let (ok, output) = submit_with_times(
+        &out,
+        &issued.to_string(),
+        Some(&(issued - 1).to_string()),
+    );
+    assert!(!ok, "만료가 발급보다 앞인데 받아들였다: {output}");
+    // ★ 이유까지 본다 — 다른 관문에 걸려도 !ok 는 참이다.
+    assert!(
+        output.contains("발급") && output.contains("만료"),
+        "시각 순서가 아니라 다른 이유로 막혔다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// 발급과 만료가 **같아도** 거부한다 — 만들자마자 만료된 것이다.
+#[test]
+fn an_expiry_equal_to_the_issue_time_is_refused_too() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("equal.pb");
+    let issued = now_unix_ms();
+
+    let (ok, output) =
+        submit_with_times(&out, &issued.to_string(), Some(&issued.to_string()));
+    assert!(!ok, "발급 == 만료 를 받아들였다: {output}");
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}

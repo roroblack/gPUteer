@@ -65,12 +65,34 @@ pub fn run(args: &[String]) -> Result<String, String> {
 
     let issued_at_unix_ms = require_u64(&flags, "--issued-at-unix-ms")?;
     // 기본 7일 — `proto/job.proto` 의 "기본 issued_at + 7일" 주석 그대로.
+    //
+    // ★ 이것은 `CLAUDE.md` §1 의 "지어내지 않는다" 위반이 **아니다** —
+    //   규범이 그 기본값을 정해 뒀으므로 옮겨 적는 것이다. 다만
+    //   **제출자가 말하지 않은 값이 서명 대상에 들어간다**는 사실은
+    //   같으므로, 그 경로를 실제로 도는 테스트를 둔다
+    //   (`tests/submit.rs::omitting_the_expiry_uses_the_documented_seven_day_default`).
     let expires_at_unix_ms = match flags.get("--expires-at-unix-ms") {
         Some(raw) => raw
             .parse::<u64>()
             .map_err(|e| format!("--expires-at-unix-ms 파싱 실패: {e}"))?,
         None => issued_at_unix_ms + 7 * 24 * 60 * 60 * 1000,
     };
+
+    // ★★ **발급 < 만료 를 여기서 본다** (2026-09-07 독립 검수 지적).
+    //
+    //   전에는 이 검사가 **없었다.** 역전된 시각도 그대로 서명한 뒤
+    //   바깥 `verify` 에 넘겼다. 파일은 안 남지만(검증이 쓰기보다 앞이다)
+    //   **서명은 이미 한 뒤**이고, 무엇보다 그 경로를 도는 테스트가
+    //   하나도 없었다.
+    //
+    //   `stage-job` 이 Lease 시각에 대해 하는 것과 같은 검사다 — 같은
+    //   성격의 값에 한쪽만 검사가 있으면, 있는 쪽을 보고 없는 쪽도
+    //   막힌다고 믿게 된다.
+    if issued_at_unix_ms >= expires_at_unix_ms {
+        return Err(format!(
+            "SUBMIT_REFUSED: 발급({issued_at_unix_ms})이 만료({expires_at_unix_ms}) 보다 뒤이거나 같다 — 만들자마자 만료된 Manifest 는 아무도 못 쓴다"
+        ));
+    }
 
     // ── 스케줄에 필요한 선언 ────────────────────────────────────────
     //
