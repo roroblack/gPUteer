@@ -143,6 +143,60 @@
 - 리포트: 없음(검수 결과 반영)
 
 
+---
+
+## 2026-09-08 00:20 — 검수 4번. **내 주석 두 개가 사실보다 강했다**
+
+- 계획: `docs/runbooks/검수_대기열.md` 4번 (`stage-job`)
+- 스트림: 검증
+- 수행: 판정 **`CHANGES_REQUESTED`**, 지적 넷. 셋은 **주석이 코드보다
+  많이 주장한다**는 것이었다.
+- 검증: ★★ **① 시계를 안 읽는다는 주장이 틀렸다.**
+
+```text
+적어 뒀던 것  "신선도 판정에 쓰는 지금은 관측이지 durable 기록이 아니다.
+              재시도 때 값이 달라도 저장되는 것이 안 바뀐다"
+사실          그 값이 evaluated_at_unix_ms 로 들어가 **어느 노드가
+              신선한가**를 가른다 (stage_job.rs:105 -> :168)
+반례(검수)    관측 시각이 다른 노드 A·B 중 A 가 먼저 신선도 한계를 넘으면
+              첫 호출은 A, 재시도는 B 또는 NoEligible 이 된다.
+              같은 operation key·같은 Lease 시각을 줘도 결과가 갈린다
+```
+
+  이 명령이 실제로 보장하는 것은 **"같은 입력이면 같은 저장"** 이 아니라
+  **"중복 예약은 안 생긴다"** 다. 그렇게 고쳐 적었다.
+
+  ★★ **② "그 사이 서명자가 폐기됐을 수 있다" 도 과장이었다.** 재검증이
+  다시 보는 것은 **지금의 keyring 파일과 지금 시각**뿐이다 — revocation
+  registry 도 `revoked_at` 도 membership 상태도 안 읽는다. 반례: 권한
+  시스템에서 폐기해도 keyring 에 키가 남아 있으면 그대로 통과한다.
+  "운영자가 keyring 에서 빼거나 바꿨으면 잡는다" 로 정정했다.
+
+  ★★★ **③ 테스트 이름이 거짓말이었다 — 고치다 발견했다.**
+  `a_job_that_is_not_queued_is_not_staged` 가 실제로는 **노드 예약
+  관문**에 먼저 걸리고 있었다:
+
+```text
+STAGE_REFUSED: durable staging failed:
+  node is already reserved: node=node-stage-a, job=...
+```
+
+  `scheduler_tick.rs` 에서 겪은 것과 **같은 함정**이다 — 뒤 관문을
+  재려는데 앞 관문이 먼저 걸린다. 이름을
+  `a_second_stage_of_the_same_job_is_blocked_by_the_node_reservation_not_by_the_state`
+  로 바꾸고, **상태 관문을 따로 재려면 노드가 하나 더 있는 fixture 가
+  필요하다는 사실**을 주석에 적었다. "재려던 것을 잰다" 고 거짓으로
+  적지 않는다.
+- 결정: `!ok` 만 보던 테스트 둘에 이유 단언을 넣었다. `-p gputeer-cli`
+  **76 passed · 0 failed · 경고 0**.
+
+  ★ 검수가 지적한 `operation_key` 문제(키를 바꿔 재시도하면 "예약 실패"
+  를 받는데 durable 상태는 "예약 성공" 인 모순)는 **고치지 않았다** —
+  멱등 재시도 규약을 새로 정하는 일이고 이 조각 밖이다. 사실만 주석에
+  남겼다.
+- 리포트: 없음(검수 결과 반영)
+
+
 ## 2026-09-07 12:44 — V-12(elastic 추론 admission) 실행계획서 작성 — 코드 0줄
 - 계획: `docs/plans/2026-09-07_1244_elastic_추론_admission_v1.md` (이 세션이 만든 것. 단계 착수 아님)
 - 스트림: 문서 (`docs/plans/` · `docs/vision/`)

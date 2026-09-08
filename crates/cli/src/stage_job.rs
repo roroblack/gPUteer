@@ -100,15 +100,46 @@ pub fn run(args: &[String]) -> Result<String, String> {
         max_total_duration_seconds: u64_flag(&flags, "--lease-max-total-duration-seconds")?,
     };
 
-    // ★ 신선도 판정에 쓰는 "지금" 은 다르다 — 그건 **관측**이지 durable
-    //   기록이 아니다. 재시도 때 값이 달라도 저장되는 것이 안 바뀐다.
+    // ★★ **"재시도 때 값이 달라도 저장되는 것이 안 바뀐다" 고 적어 뒀던
+    //   것을 지운다 — 틀렸다** (2026-09-07 독립 검수 지적).
+    //
+    //   이 값은 아래에서 `evaluated_at_unix_ms` 로 들어가 **어느 노드가
+    //   신선한가**를 가른다. 그래서 durable 결과에 영향을 준다.
+    //
+    //   반례(검수 제시): 관측 시각이 다른 노드 A·B 가 있고 A 가 먼저
+    //   신선도 한계를 넘으면, 첫 호출은 A 를 고르고 재시도는 B 를 고르거나
+    //   `NoEligible` 이 된다. **같은 operation key 와 같은 Lease 시각을
+    //   줘도** 예약 payload 가 달라져 conflict 나 다른 실패가 된다.
+    //
+    //   ★ 즉 이 명령이 보장하는 것은 **"같은 입력이면 같은 저장"** 이
+    //     아니라 **"중복 예약은 안 생긴다"** 다. 전자는 시계를 읽는 한
+    //     성립하지 않는다. 후자는 `DoD-47` 의 CAS·operation key 가 지킨다.
+    //
+    //   ★ 아래 Manifest 재검증도 같은 시각을 쓴다. 첫 호출이 예약을
+    //     commit 한 뒤 응답이 유실되고, 재시도가 Manifest 만료 뒤에
+    //     실행되면 **멱등 결과를 돌려주기 전에** `STAGE_REFUSED` 가
+    //     된다. 이것도 호출자 관점의 멱등성을 깬다.
     let now_unix_ms = now_unix_ms();
 
     // ── 저장된 Manifest 를 **지금 다시** 검증한다 ────────────────────
     //
     // `plan-job` 과 같은 이유다(`DoD-50`: raw binding 은 재검증 전
     // scheduler/Grant 에 쓸 수 없다). 계획할 때 믿었다고 예약할 때도
-    // 믿는 것이 아니다 — 그 사이 서명자가 폐기됐을 수 있다.
+    // 믿는 것이 아니다.
+    //
+    // ★★ **여기 "그 사이 서명자가 폐기됐을 수 있다" 고 적혀 있었다 —
+    //   과장이다** (2026-09-07 독립 검수 지적).
+    //
+    //   이 재검증이 실제로 다시 보는 것은 **지금의 keyring 파일과 지금
+    //   시각**뿐이다. 폐기 상태를 읽는 곳이 없다 — revocation registry 도,
+    //   `revoked_at` 도, membership 상태도 안 본다.
+    //
+    //   반례(검수 제시): 권한 시스템에서 서명자를 폐기하되
+    //   `submitters.keyring` 에 공개키를 그대로 두면 **계속 통과한다.**
+    //
+    //   ★ 즉 "폐기를 잡는다" 가 아니라 **"운영자가 keyring 에서 그 키를
+    //     빼거나 바꿨으면 잡는다"** 다. 그 운영 절차는 코드가 강제하지
+    //     않는다. 진짜 폐기 검사는 membership 계층이 생겨야 한다.
     let jobs = CoordinatorJobStore::open(control_db)
         .map_err(|e| format!("job store 를 열지 못했다({control_db}): {e}"))?;
     if !jobs.is_durable() {

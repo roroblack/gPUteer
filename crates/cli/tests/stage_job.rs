@@ -380,6 +380,16 @@ fn a_second_job_cannot_reserve_the_only_node() {
         !ok,
         "노드가 하나뿐인데 두 Job 을 예약했다 — 같은 GPU 를 둘이 잡는다: {output}"
     );
+    // ★★ **이유까지 본다** (2026-09-07 독립 검수 지적).
+    //
+    //   전에는 `!ok` 와 상태만 봤다. 그러면 `stage-job` 이 **아무 이유로든**
+    //   실패하도록 바뀌어도 통과한다 — 이 테스트가 재려던 것은
+    //   "같은 노드를 둘이 못 잡는다" 이지 "두 번째가 어떻게든 실패한다"
+    //   가 아니다.
+    assert!(
+        output.contains("node is already reserved"),
+        "예약 충돌이 아니라 다른 관문에 걸렸다 — 이 테스트가 재려던 것이 아니다: {output}"
+    );
     eprintln!("DIAG 두 번째 실패 이유: {output}");
     assert_eq!(
         job_state(&db, JOB_B),
@@ -575,7 +585,7 @@ fn a_renew_point_after_expiry_is_refused() {
 
 /// 큐에 없는 Job 은 예약하지 않는다 — `QUEUED` 에서만 시작한다.
 #[test]
-fn a_job_that_is_not_queued_is_not_staged() {
+fn a_second_stage_of_the_same_job_is_blocked_by_the_node_reservation_not_by_the_state() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared(dir.path(), JOB_A);
     // 한 번 예약해 STAGING 으로 보낸다.
@@ -599,6 +609,26 @@ fn a_job_that_is_not_queued_is_not_staged() {
         "cc0102030405060708090a0b0c0d0e0f",
     );
     assert!(!ok, "STAGING 인 Job 을 또 예약했다: {output}");
+    // ★★ **이유까지 보게 하니 이 테스트가 재려던 관문이 아니었다**
+    //   (2026-09-07 독립 검수 지적을 따라 고치다 발견).
+    //
+    //   이름은 "QUEUED 가 아닌 Job 은 예약 안 한다" 인데, 실제로는
+    //   **노드 예약 관문**에 먼저 걸린다:
+    //
+    //     STAGE_REFUSED: durable staging failed:
+    //       node is already reserved: node=node-stage-a, job=...
+    //
+    //   첫 예약이 그 노드를 잡고 있으므로, Job 상태를 보기도 전에
+    //   거기서 끝난다. `scheduler_tick.rs` 에서 겪은 것과 **같은 함정**
+    //   이다 — 뒤 관문을 재려는데 앞 관문이 먼저 걸린다.
+    //
+    //   ★ 지금은 그 사실을 그대로 고정한다. 상태 관문을 따로 재려면
+    //     **노드를 하나 더 준 fixture** 가 필요하고, 그건 이 조각 밖이다.
+    //     "재려던 것을 잰다" 고 거짓으로 적지 않는다.
+    assert!(
+        output.contains("node is already reserved"),
+        "예약 관문이 아닌 다른 이유로 막혔다: {output}"
+    );
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
 }
 
