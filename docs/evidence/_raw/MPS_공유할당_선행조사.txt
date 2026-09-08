@@ -1,0 +1,67 @@
+=== MPS 로 VRAM 상한을 강제할 수 있는가 — 선행 조사 ===
+일시   2026-09-08
+기계   remote5090 (Ubuntu 24.04, RTX 5090 32GB, driver 580.173.02)
+계정   <remote5090-user> (sudo 없음)
+
+=== 왜 재려 하나 ===
+
+지금 GPU 할당은 **노드 단위 Exclusive 고정**이다. 4GB 작업 하나가
+32GB 카드를 통째로 독점한다.
+
+`proto/common.proto:168` 은 세 모드를 정의해 뒀다:
+
+  EXCLUSIVE     한 노드에 한 작업            <- 지금 이것만 돈다
+  SHARED        "Linux+MPS memory limit 확인 시에만"
+  PARTITIONED   MIG 지원 GPU
+
+★ `SHARED` 의 조건이 **"확인 시에만"** 이다. 그 확인을 한 적이 없다.
+  `CLAUDE.md` §0.4 가 "MPS 는 Linux 전용" 이라고만 적어 뒀지, **실제로
+  상한이 걸리는지는 안 쟀다.**
+
+=== 위험 없이 확인한 것 ===
+
+  MPS 도구        /usr/bin/nvidia-cuda-mps-control  있음
+  compute_mode    Default  (EXCLUSIVE_PROCESS 가 아니라 MPS 사용 가능)
+  driver          580.173.02
+
+=== ★ 실측을 하지 않았다 — 남의 작업이 돌고 있다 ===
+
+  nvidia-smi --query-compute-apps
+    833585, 4342 MiB
+
+  ps -o user=,etime=,cmd= -p 833585
+    <remote5090-user2>  04:25:13  /home/<remote5090-user2>/.venv-wiki-whisper/bin/python
+                     /home/<remote5090-user2>/wiki/scripts/whisper_worker.py --mode ...
+
+★★ **우리 계정(<remote5090-user>)이 아니라 `<remote5090-user2>` 의 작업이고, 4시간 25분째
+  돌고 있다.** MPS 데몬은 GPU 전역 상태를 바꾸므로, 띄우면 그 작업을
+  죽이거나 방해할 수 있다.
+
+  `ENV-03` 이 이 기계를 "사용자 소유의 공유·비영구 기계이고 다른
+  사용자·서비스가 이미 돌고 있다" 고 적어 뒀다. 그 조건이 지금 그대로
+  관측됐다.
+
+  **그래서 안 했다.** `CLAUDE.md` §0.1 — 남의 하드웨어를 인질로 잡지
+  않는다. 4시간짜리 남의 작업을 우리 실험으로 날리는 것은 정확히 그
+  규칙이 금지하는 것이다.
+
+=== 재려면 무엇이 필요한가 ===
+
+  1. GPU 가 비었을 때 (또는 소유자 동의)
+  2. MPS 데몬 기동:  nvidia-cuda-mps-control -d
+  3. 상한 설정:      CUDA_MPS_PINNED_DEVICE_MEM_LIMIT
+  4. 상한보다 큰 할당을 시도하는 프로세스를 띄워 **실제로 거부되는지**
+  5. ★ 대조군 필수 — 상한 없이 같은 할당을 하면 성공해야 한다.
+     없으면 "원래 안 되는 것" 과 구분이 안 된다
+  6. 정리:          echo quit | nvidia-cuda-mps-control
+
+=== 결과가 무엇을 가르나 ===
+
+  상한이 걸린다   -> 리눅스 노드에 한해 SHARED 를 열 근거가 생긴다.
+                     32GB 카드에 8GB 작업 셋이 동시에 돈다
+  안 걸린다       -> Exclusive 고정이 옳았다는 것이 **실측으로** 확정된다.
+                     지금은 "아마 안 될 것 같아서" 인데 그것과 다르다
+  부분적          -> 조건을 명시해 제한적으로 연다
+
+★ 어느 쪽이든 지금의 "모른다" 보다 낫다. 다만 **남의 작업을 죽여 가며
+  얻을 값은 아니다.**
