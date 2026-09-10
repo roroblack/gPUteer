@@ -277,6 +277,13 @@ fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
     ))
     .expect("올바른 값의 중복을 거부했다");
     assert!(config.corrupt_own_signature, "마지막 값을 쓰지 않았다");
+    // 반대 방향도 — 마지막 값이 false 면 false 다(재검수 20).
+    let config = parse_config_from_args(&with(
+        legacy_lane(),
+        &["--corrupt-own-signature", "true", "--corrupt-own-signature", "false"],
+    ))
+    .expect("올바른 값의 중복을 거부했다");
+    assert!(!config.corrupt_own_signature, "마지막 값을 쓰지 않았다");
 }
 
 /// "항상 무시 6" 은 `--lease-db` 가 **없어도** 거부한다. 이게 없으면 9개를 전부

@@ -1,0 +1,1739 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08a63-733d-7281-8aa7-f94f7a60f90f
+--------
+user
+동의가 아니라 **반박**을 원한다. 재검수 18 이 둘을 짚었고(결함 ㉒) 고쳤다.
+이번 수정이 **또 과장인지**, 그리고 **새로 만든 문제**가 있는지 봐 달라.
+
+# 배경
+
+```text
+지적 1  같은 키를 두 번 주면(--x tru --x false) 앞 값이 map.insert 로 사라져
+        INVALID_BOOL 을 피했다(Coordinator · Agent)
+        -> parse_flags 가 **덮어써진 앞 값**을 따로 모으고, bool_flag 가 그것까지
+           검사한다. "마지막 값을 쓴다" 는 규칙은 그대로다 — selftest 시나리오 34 가
+           중복 덮어쓰기를 실제로 쓴다(재검수 17 이 짚은 단서)
+지적 2  ㉑ 의 경계를 테스트가 다 못 고정했다
+        -> "항상 무시 6" 을 --lease-db 없이도 거부 · 식별자 누락 셋 각각 ·
+           STORED_LANE_ONLY 네 이름 각각 · 중복 뒤에 숨은 잘못된 불리언
+기록만  --renew-extension-ms 가 저장소 없는 갱신에서 하드코딩 60초에 밀린다 ·
+        Resume 에서 heartbeat 저장소를 받아 두고 버린다 — 고치지 않았다
+```
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/coordinator/src/lib.rs   (Flags · parse_flags · bool_flag · parse_config_from_args)
+crates/agent/src/lib.rs         (Flags · parse_flags · bool_flag · parse_config_from_args)
+crates/coordinator/tests/stored_lane_flags.rs
+crates/agent/tests/unknown_flags.rs
+crates/cli/src/coordinator_agent_selftest.rs   (시나리오 34 의 중복 인자만)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md   (㉑ · ㉒)
+```
+
+# 물을 것 — 네 가지
+
+1. **중복 키 처리가 닫혔나.** 앞 값이 **불리언이 아닌** 키(숫자·문자열)에서도
+   잘못된 값이 사라지는 경로가 있나? 그것을 지금 막아야 하나, 아니면 불리언만
+   막고 나머지는 적어 두는 것이 맞나 — 판정해 달라.
+
+2. **selftest 34 가 여전히 동작하나** — 중복을 쓰는 방식이 이번 변경으로
+   거부될 수 있나?
+
+3. **새 테스트가 각 경계를 고정하나.** 되돌리면 실패하는 구조인가?
+
+4. **기록만 한 두 사례의 서술이 정확한가**, 그리고 새로 만든 결함이 있나.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든
+것과 결함이 없는 것은 다르다 — 그 둘을 구분해 써라.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 과 구체적 입력을 붙여라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 파일과 범위만 읽고, 중복 값 검증·시나리오 34 호환성·테스트의 회귀 방어력을 반례 중심으로 확인하겠습니다. 실제 결함과 검증하지 못한 부분을 구분해 판정하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'rg -n "struct Flags|fn parse_flags|fn bool_flag|fn parse_config_from_args|㉑|㉒|시나리오 34|scenario 34|34" crates/coordinator/src/lib.rs crates/agent/src/lib.rs crates/cli/src/coordinator_agent_selftest.rs docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1964ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+crates/coordinator/src/lib.rs:51://     (8134afa) → 그대로 유지(9c0239e). 그 사이 `orchestrate` 의 경고
+crates/coordinator/src/lib.rs:479:    // ★ 결함 ㉑(재검수 15) — Resume 은 저장된 예약 분기보다 먼저 반환한다.
+crates/coordinator/src/lib.rs:2519:///   id = "L:51234", attempt = 0            -> "...\0L:51234"
+crates/coordinator/src/lib.rs:2520:///   id = "L:5",     attempt = 0x31323334   -> "...\0L:5" + "1234"
+crates/coordinator/src/lib.rs:2523:///   두 번째의 4바이트가 ASCII `"1234"` 라 첫 번째와 완전히 같아진다.
+crates/coordinator/src/lib.rs:2553:pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, String> {
+crates/coordinator/src/lib.rs:2652:    // ★★ 재검수 15(결함 ㉑) — 처음엔 control DB 가 있다는 것만 보고 아래를
+crates/coordinator/src/lib.rs:2839:struct Flags(
+crates/coordinator/src/lib.rs:2843:    //   false 가 되면 부정 테스트가 무력화된다(재검수 15, 결함 ㉑).
+crates/coordinator/src/lib.rs:2845:    // ★ 네 번째 칸 — 같은 키를 두 번 줬을 때 **덮어써진 앞 값**(결함 ㉒,
+crates/coordinator/src/lib.rs:2846:    //   재검수 18). 마지막 값을 쓰는 규칙은 그대로 둔다(selftest 34 가 쓴다).
+crates/coordinator/src/lib.rs:2880:    fn bool_flag(&self, key: &str) -> bool {
+crates/coordinator/src/lib.rs:2968:fn parse_flags(args: &[String]) -> Result<Flags, String> {
+crates/agent/src/lib.rs:2143:///   id = "L:51234", attempt = 0            -> "...\0L:51234"
+crates/agent/src/lib.rs:2144:///   id = "L:5",     attempt = 0x31323334   -> "...\0L:5" + "1234"
+crates/agent/src/lib.rs:2147:///   두 번째의 4바이트가 ASCII `"1234"` 라 첫 번째와 완전히 같아진다.
+crates/agent/src/lib.rs:2195:pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
+crates/agent/src/lib.rs:2363:struct Flags(
+crates/agent/src/lib.rs:2367:    //   false 가 되면 부정 테스트가 무력화된다(재검수 15, 결함 ㉑).
+crates/agent/src/lib.rs:2369:    // ★ 네 번째 칸 — 같은 키를 두 번 줬을 때 **덮어써진 앞 값**(결함 ㉒,
+crates/agent/src/lib.rs:2370:    //   재검수 18). 마지막 값을 쓰는 규칙은 그대로 둔다(selftest 34 가 쓴다).
+crates/agent/src/lib.rs:2403:    fn bool_flag(&self, key: &str) -> bool {
+crates/agent/src/lib.rs:2467:fn parse_flags(args: &[String]) -> Result<Flags, String> {
+crates/cli/src/coordinator_agent_selftest.rs:2512:    // ── 34. 같은 lease_id를 다른 holder identity로 주장 ─────────────
+crates/cli/src/coordinator_agent_selftest.rs:2518:    let wrong_holder_34 = run_handshake(
+crates/cli/src/coordinator_agent_selftest.rs:2539:    if wrong_holder_34.coordinator_success
+crates/cli/src/coordinator_agent_selftest.rs:2540:        || !wrong_holder_34
+crates/cli/src/coordinator_agent_selftest.rs:2543:        || !wrong_holder_34
+crates/cli/src/coordinator_agent_selftest.rs:2546:        || wrong_holder_34.agent_success
+crates/cli/src/coordinator_agent_selftest.rs:2549:            "같은 lease_id의 다른 holder_node_id가 Coordinator에서 거부되지 않았다(34).\n\
+crates/cli/src/coordinator_agent_selftest.rs:2552:            wrong_holder_34.coordinator_success,
+crates/cli/src/coordinator_agent_selftest.rs:2553:            wrong_holder_34.coordinator_stdout,
+crates/cli/src/coordinator_agent_selftest.rs:2554:            wrong_holder_34.coordinator_stderr,
+crates/cli/src/coordinator_agent_selftest.rs:2555:            wrong_holder_34.agent_success,
+crates/cli/src/coordinator_agent_selftest.rs:2556:            wrong_holder_34.agent_stdout,
+crates/cli/src/coordinator_agent_selftest.rs:2557:            wrong_holder_34.agent_stderr
+crates/cli/src/coordinator_agent_selftest.rs:2561:        "34) 같은 lease_id를 다른 holder_node_id로 재접속 주장 시 Coordinator의 기존 IdentityConflict 거부 확인\n",
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:956:# 결함 ㉑ — ⑯ 확장의 관문이 lane 조건을 틀리게 그렸다 (재검수 15)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1014:- [x] selftest **97/97** — ㉑ 뒤에도 기존 시나리오를 안 막는다(이번에는 selftest 인자를
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1026:# 결함 ㉒ — 불리언 검사를 중복 키가 피해 가고, ㉑ 의 경계를 테스트가 다 못 고정한다 (재검수 18)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1030:  값으로 받는다. ★ selftest 시나리오 34 가 중복 덮어쓰기를 **실제로 쓴다**
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1064:  중복을 통째로 거부하면 selftest 34 가 깨진다
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Content crates/coordinator/tests/stored_lane_flags.rs; Get-Content crates/agent/tests/unknown_flags.rs' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2021ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+//! ?�★ **coordinator-stub ?� 받아 ?�고 말없??버리???�래그�? ?�작 ?�에 거�??�다**
+//! (결함 ???�장, 2026-09-10 ?��???14).
+//!
+//! ?????�?�된 ?�약 lane ??`--manifest-file` ?�나�?막았?? ?��??��? 같�?
+//! ?�형????찾았????그중 가???�쁜 것�? `--corrupt-lease-signature` ?�??
+//! ?�?�된 ?�약 lane ?�서 그것??주면 **?�상 ?�명???��???*, �??�래그로
+//! 부??경로�??�려???�스?��? ?�무것도 ???�게 ?�다.
+//!
+//! ???�정 ?�서�?**직접** 부른다 ???�로?�스�??�울 ?�요가 ?�는 ?�정?�다.
+//! ??�?경우�?**�??�름?�로** 거�??�는지 본다. "뭔�? 거�??�다" �?보면
+//!   목록?�서 ?�나가 빠져???�른 ?�유�??�과?�다.
+
+use gputeer_coordinator::parse_config_from_args;
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// ?�?�된 ?�약 lane ???�상 ?�자.
+fn stored_lane(job: &str, attempt: &str, lease: &str) -> Vec<String> {
+    let peer = gputeer_crypto::SigningKey::from_bytes(&[7u8; 32]).verifying_key();
+    let own_seed = "11".repeat(32);
+    let peer_hex = hex(peer.as_bytes());
+    [
+        "--listen", "127.0.0.1:0",
+        "--own-seed", own_seed.as_str(),
+        "--peer-pubkey", peer_hex.as_str(),
+        "--coordinator-device-id", "01JCOORDINATORFLAGS000001",
+        "--agent-device-id", "01JAGENTFLAGS00000000001",
+        "--grant-id", "01JGRANTFLAGS00000000001",
+        "--attempt-id", attempt,
+        "--lease-id", lease,
+        "--job-id", job,
+        "--lease-db", "lease.sqlite3",
+        "--grant-from-control-db", "control.sqlite3",
+        "--stored-grant-job-id", "J",
+        "--stored-grant-attempt-id", "A",
+        "--stored-grant-lease-id", "L",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// ?�거??lane ???�상 ?�자 ???�?�된 ?�약 ?�래그�? ?�다.
+fn legacy_lane() -> Vec<String> {
+    let mut args = stored_lane("J", "A", "L");
+    let cut = args
+        .iter()
+        .position(|a| a == "--grant-from-control-db")
+        .expect("?�치");
+    args.truncate(cut);
+    args
+}
+
+fn with(mut base: Vec<String>, extra: &[&str]) -> Vec<String> {
+    base.extend(extra.iter().map(|s| s.to_string()));
+    base
+}
+
+fn refused_by_name(args: Vec<String>, code: &str, name: &str) {
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("{name} �?받아?��???),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with(&format!("STARTUP_REFUSED: {code}")),
+        "{name}: ?�른 ?�유�?거�??�다 ??{error}"
+    );
+    assert!(error.contains(name), "{name}: 거�????�는???�름?????�다 ??{error}");
+}
+
+const NOT_APPLIED: [(&str, &str); 9] = [
+    ("--manifest-file", "m.pb"),
+    ("--corrupt-manifest-signature", "true"),
+    ("--corrupt-manifest-hash", "true"),
+    ("--corrupt-lease-signature", "true"),
+    ("--expire-lease", "true"),
+    ("--lease-ttl-ms", "1"),
+    ("--fence-epoch", "999"),
+    ("--max-total-duration-seconds", "1"),
+    ("--renewed-fence-epoch", "999"),
+];
+
+#[test]
+fn the_plain_stored_lane_parses() {
+    parse_config_from_args(&stored_lane("J", "A", "L")).expect("?�상 ?�자�?거�??�다");
+}
+
+#[test]
+fn each_flag_the_stored_lane_does_not_apply_is_refused_by_name() {
+    for (flag, value) in NOT_APPLIED {
+        refused_by_name(
+            with(stored_lane("J", "A", "L"), &[flag, value]),
+            "STORED_LANE_IGNORES",
+            flag,
+        );
+    }
+}
+
+/// ???��???같�? ?�래그�? **?�거??lane** ?�서??받는?? �?lane ?� ?�용?�다.
+///
+/// ?�게 ?�으�?"�??�래그들???�제??거�??�다" �?고쳐?????�스?��? ?�과?�다.
+#[test]
+fn the_same_flags_are_accepted_on_the_legacy_lane() {
+    for (flag, value) in NOT_APPLIED {
+        parse_config_from_args(&with(legacy_lane(), &[flag, value]))
+            .unwrap_or_else(|e| panic!("?�거??lane ?�서 {flag} �?거�??�다: {e}"));
+    }
+}
+
+#[test]
+fn an_id_that_disagrees_with_the_stored_one_is_refused() {
+    refused_by_name(stored_lane("OTHER", "A", "L"), "STORED_LANE_ID_CONFLICT", "--job-id");
+    refused_by_name(stored_lane("J", "OTHER", "L"), "STORED_LANE_ID_CONFLICT", "--attempt-id");
+    refused_by_name(stored_lane("J", "A", "OTHER"), "STORED_LANE_ID_CONFLICT", "--lease-id");
+}
+
+#[test]
+fn an_unknown_flag_is_refused_by_name_on_either_lane() {
+    refused_by_name(
+        with(stored_lane("J", "A", "L"), &["--manifest-fiel", "m.pb"]),
+        "UNKNOWN_FLAGS",
+        "--manifest-fiel",
+    );
+    refused_by_name(
+        with(legacy_lane(), &["--renew-roundz", "3"]),
+        "UNKNOWN_FLAGS",
+        "--renew-roundz",
+    );
+}
+
+/// ??`--session-id` ??Coordinator 가 **?�느 lane ?�서??* ?��? ?�았??
+///
+/// 처음??"?�중 Agent ?�용" ?�로 분류?�는?? �??�드�??�는 코드가 ?�?�소
+/// ?�디?�도 ?�었???�조는 Agent 가 보낸 hello ?� ?�청 ?�이?�서�??�다).
+/// ?�드�?지?�으??--multi-agent ?�도 모르???�름?�다.
+#[test]
+fn session_id_is_not_a_coordinator_flag_on_any_lane() {
+    refused_by_name(
+        with(legacy_lane(), &["--session-id", "s"]),
+        "UNKNOWN_FLAGS",
+        "--session-id",
+    );
+    refused_by_name(
+        with(legacy_lane(), &["--multi-agent", "true", "--session-id", "s"]),
+        "UNKNOWN_FLAGS",
+        "--session-id",
+    );
+}
+
+#[test]
+fn multi_agent_only_flags_are_refused_on_the_sequential_lane() {
+    for (flag, value) in [("--extra-agents", "x"), ("--require-concurrent-sessions", "2")] {
+        refused_by_name(with(legacy_lane(), &[flag, value]), "MULTI_AGENT_ONLY", flag);
+        // ?��???--multi-agent lane ?�서???�힌??
+        parse_config_from_args(&with(legacy_lane(), &["--multi-agent", "true", flag, value]))
+            .unwrap_or_else(|e| panic!("--multi-agent ?�데 {flag} �?거�??�다: {e}"));
+    }
+}
+
+// ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// 결함 ??(?��???15) ??lane 조건???�실??맞춘 ??// ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+
+fn without(mut args: Vec<String>, flag: &str) -> Vec<String> {
+    let at = args.iter().position(|a| a == flag).expect("�??�래그�? ?�어???�다");
+    args.drain(at..at + 2);
+    args
+}
+
+#[test]
+fn an_absent_stored_id_is_refused() {
+    refused_by_name(
+        without(stored_lane("J", "A", "L"), "--stored-grant-job-id"),
+        "STORED_LANE_ID_MISSING",
+        "--stored-grant-job-id",
+    );
+}
+
+/// ???��???`--lease-db` 가 **?�으�?* 갱신 경로가 ???�을 ?�제�??�다.
+///
+/// 처음???�?�된 ?�약 lane ?�면 무조�?거�??�다. `fence_epoch` ???�?�소가
+/// ?�을 ??갱신??기�? epoch ?�고, ?�머지 ?��? `build_renew_result` 가 ?�다.
+#[test]
+fn lease_db_dependent_flags_are_accepted_without_a_lease_db() {
+    for (flag, value) in [
+        ("--fence-epoch", "3"),
+        ("--max-total-duration-seconds", "60"),
+        ("--renewed-fence-epoch", "3"),
+    ] {
+        let args = with(without(stored_lane("J", "A", "L"), "--lease-db"), &[flag, value]);
+        parse_config_from_args(&args)
+            .unwrap_or_else(|e| panic!("--lease-db ?�이 준 {flag} �?거�??�다: {e}"));
+    }
+}
+
+/// Resume ?� ?�?�된 ?�약 분기보다 먼�? 반환?�다 ???�서???�별?��? ?�구?��?
+/// ?�고, �?조합 ?�체??**?�작 관�?*??거�??�다.
+#[test]
+fn resume_with_a_control_db_is_refused_at_startup_not_by_the_stored_lane_checks() {
+    // ?????�스?�만 `run()` ???�제�?부른다. `run()` ?� ?�작 관문보??**먼�?**
+    //   Lease ?�?�소�??��?�? ?��? 경로�?주면 ?�?�소 ?�에 DB ?�일???�긴????    //   처음??그렇�??�서 `crates/coordinator/lease.sqlite3` 가 ?�겼??
+    let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+    let lease_db = dir.path().join("lease.sqlite3");
+    let mut args = legacy_lane();
+    let at = args.iter().position(|a| a == "--lease-db").expect("--lease-db");
+    args[at + 1] = lease_db.to_str().expect("경로").to_string();
+    args.extend(
+        ["--resume-protocol", "true", "--grant-from-control-db", "control.sqlite3"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let config = parse_config_from_args(&args).expect("Resume ?�면 ?�별?��? ?�구?��? ?�는??);
+    let error = gputeer_coordinator::run(config).expect_err("?�작 관문이 거�??�야 ?�다");
+    assert!(
+        error.contains("--resume-protocol") && error.contains("--grant-from-control-db"),
+        "?�른 ?�유�?거�??�다: {error}"
+    );
+}
+
+#[test]
+fn stored_lane_only_flags_are_refused_on_the_legacy_lane() {
+    refused_by_name(
+        with(legacy_lane(), &["--stored-grant-ttl-ms", "1"]),
+        "STORED_LANE_ONLY",
+        "--stored-grant-ttl-ms",
+    );
+}
+
+/// `--corrupt-own-signature tru` 가 조용??false 가 ?�면 �??�래그로 ?�려??/// 부??경로가 ?�무것도 ???�다(?��???15).
+#[test]
+fn an_invalid_bool_is_refused_by_name() {
+    refused_by_name(
+        with(legacy_lane(), &["--corrupt-own-signature", "tru"]),
+        "INVALID_BOOL",
+        "--corrupt-own-signature",
+    );
+    // ?��???false ??값이??
+    parse_config_from_args(&with(legacy_lane(), &["--corrupt-own-signature", "false"]))
+        .expect("false �?거�??�다");
+}
+
+#[test]
+fn a_neighbor_report_db_without_expected_reports_is_refused() {
+    refused_by_name(
+        with(legacy_lane(), &["--neighbor-report-db", "reports.sqlite3"]),
+        "NEEDS_EXPECT",
+        "--neighbor-report-db",
+    );
+    // ?��???기�?값이 ?�으�?받는??
+    parse_config_from_args(&with(
+        legacy_lane(),
+        &["--expect-neighbor-reports", "1", "--neighbor-report-db", "reports.sqlite3"],
+    ))
+    .expect("기�?값이 ?�는??거�??�다");
+}
+
+// ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+// 결함 ??(?��???18) ??중복 ??· 경계 ?�스??공백
+// ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+
+/// 같�? ?��? ??�?주면 ??값이 ??�� **검???�에** ?�라졌다.
+#[test]
+fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
+    refused_by_name(
+        with(legacy_lane(), &["--corrupt-own-signature", "tru", "--corrupt-own-signature", "false"]),
+        "INVALID_BOOL",
+        "--corrupt-own-signature",
+    );
+    // ?��????�바�?값의 중복?� 받는??마�?�?값을 ?�다).
+    let config = parse_config_from_args(&with(
+        legacy_lane(),
+        &["--corrupt-own-signature", "false", "--corrupt-own-signature", "true"],
+    ))
+    .expect("?�바�?값의 중복??거�??�다");
+    assert!(config.corrupt_own_signature, "마�?�?값을 ?��? ?�았??);
+}
+
+/// "??�� 무시 6" ?� `--lease-db` 가 **?�어??* 거�??�다. ?�게 ?�으�?9개�? ?��?
+/// "--lease-db ?�을 ?�만" ?�로 바꿔???�른 ?�스?��? ?�과?�다.
+#[test]
+fn never_applied_flags_are_refused_without_a_lease_db_too() {
+    for (flag, value) in &NOT_APPLIED[..6] {
+        refused_by_name(
+            with(without(stored_lane("J", "A", "L"), "--lease-db"), &[flag, value]),
+            "STORED_LANE_IGNORES",
+            flag,
+        );
+    }
+}
+
+#[test]
+fn every_absent_stored_id_is_refused_by_name() {
+    for flag in ["--stored-grant-job-id", "--stored-grant-attempt-id", "--stored-grant-lease-id"] {
+        refused_by_name(without(stored_lane("J", "A", "L"), flag), "STORED_LANE_ID_MISSING", flag);
+    }
+}
+
+#[test]
+fn every_stored_lane_only_flag_is_refused_on_the_legacy_lane() {
+    for (flag, value) in [
+        ("--stored-grant-job-id", "J"),
+        ("--stored-grant-attempt-id", "A"),
+        ("--stored-grant-lease-id", "L"),
+        ("--stored-grant-ttl-ms", "1"),
+    ] {
+        refused_by_name(with(legacy_lane(), &[flag, value]), "STORED_LANE_ONLY", flag);
+    }
+}
+//! ??**agent-stub ?� 모르???�래그�? 받아 ?��? ?�는??* (결함 ???�장??Agent �?
+//! 2026-09-10).
+//!
+//! Coordinator ?�서가 모르???�름??조용??받아 ?�던 것을 ?��???14 가 짚었??
+//! Agent ?�서??같�? 모양?�었????`--send-attempt-reprot true` 같�? ?��?�?주면
+//! 보고�?켰다�?믿�?�??�무 ?�도 ???�어?�다.
+
+use gputeer_agent::parse_config_from_args;
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn base() -> Vec<String> {
+    let peer = gputeer_crypto::SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+    let own_seed = "22".repeat(32);
+    let peer_hex = hex(peer.as_bytes());
+    [
+        "--connect", "127.0.0.1:9",
+        "--own-seed", own_seed.as_str(),
+        "--peer-pubkey", peer_hex.as_str(),
+        "--coordinator-device-id", "01JCOORDINATORAGENTFLAG01",
+        "--agent-device-id", "01JAGENTAGENTFLAG00000001",
+        "--fence-db", "fence.sqlite3",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+#[test]
+fn the_plain_arguments_parse() {
+    parse_config_from_args(&base()).expect("?�상 ?�자�?거�??�다");
+}
+
+#[test]
+fn a_misspelled_flag_is_refused_by_name() {
+    let mut args = base();
+    args.extend(["--send-attempt-reprot".to_string(), "true".to_string()]);
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("?��?�?받아?��???),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("STARTUP_REFUSED: UNKNOWN_FLAGS"),
+        "?�른 ?�유�?거�??�다: {error}"
+    );
+    assert!(error.contains("--send-attempt-reprot"), "?�름?????�다: {error}");
+}
+
+/// ???��????�바�??�름?� 받는?? ?�으�?"모르??것이???�는 것이????///   거�?" 로도 ???�스?��? ?�과?�다.
+#[test]
+fn the_correct_spelling_is_accepted() {
+    let mut args = base();
+    args.extend(["--send-attempt-report".to_string(), "true".to_string()]);
+    let config = parse_config_from_args(&args).expect("?�바�??�름??거�??�다");
+    assert!(config.send_attempt_report);
+}
+
+/// `true`/`false` 가 ?�닌 불리?��? 조용??false 가 ?��? ?�는???��???15).
+#[test]
+fn an_invalid_bool_is_refused_by_name() {
+    let mut args = base();
+    args.extend(["--send-attempt-report".to_string(), "tru".to_string()]);
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("?�못??불리?�을 받아?��???),
+        Err(error) => error,
+    };
+    assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+    assert!(error.contains("--send-attempt-report"), "{error}");
+}
+
+/// 같�? ?��? ??�?줘도 ?�의 ?�못??값이 검???�에 ?�라지지 ?�는???��???18).
+#[test]
+fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
+    let mut args = base();
+    args.extend(
+        ["--send-attempt-report", "tru", "--send-attempt-report", "false"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("중복 ?�에 ?��? ?�못??불리?�을 받아?��???),
+        Err(error) => error,
+    };
+    assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+    assert!(error.contains("--send-attempt-report"), "{error}");
+}
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md'; "'$a=Get-Content -Encoding utf8 $p; 955..($a.Length-1) | ForEach-Object { '"'{0}:{1}' -f ("'$_+1),$a[$_] }; $p='"'crates/cli/src/coordinator_agent_selftest.rs'; "'$a=Get-Content -Encoding utf8 $p; 2511..2538 | ForEach-Object { '"'{0}:{1}' -f ("'$_+1),$a[$_] }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'crates/coordinator/src/lib.rs'; "'$a=Get-Content -Encoding utf8 $p; 2552..3034 | ForEach-Object { if ($_ -lt $a.Length) { '"'{0}:{1}' -f ("'$_+1),$a[$_] } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'crates/agent/src/lib.rs'; "'$a=Get-Content -Encoding utf8 $p; 2194..2510 | ForEach-Object { if ($_ -lt $a.Length) { '"'{0}:{1}' -f ("'$_+1),$a[$_] } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 3142ms:
+2195:pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
+2196:    let flags = parse_flags(args)?;
+2197:
+2198:    let config = AgentConfig {
+2199:        coordinator_addr: flags.require("--connect")?,
+2200:        own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+2201:        coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+2202:        // �� �ָ� None ? Manifest �� �Ƿ� ���� fail closed �� �ź��Ѵ�.
+2203:        submitter_verifying_key: match flags.get("--submitter-pubkey") {
+2204:            Some(hex) => Some(hex_to_verifying_key(hex)?),
+2205:            None => None,
+2206:        },
+2207:        execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+2208:        send_attempt_report: flags.bool_flag("--send-attempt-report"),
+2209:        corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
+2210:        corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
+2211:        corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
+2212:        corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
+2213:        workload_cgroup_parent: flags.get("--workload-cgroup-parent")
+2214:            .map(std::path::PathBuf::from),
+2215:        multi_agent: flags.bool_flag("--multi-agent"),
+2216:        // �� �Ľ� ���и� 0 ���� ���� �ʴ´�(2026-08-30 ���� �˼� 3����).
+2217:        //   �߸� �� ���� "���� ����" ���� ������ �ٲ��, ��ڴ� ������
+2218:        //   ��ٰ� �ϴµ� �����δ� �� �� ���°� �ȴ�.
+2219:        heartbeat_interval_ms: match flags.get("--heartbeat-interval-ms") {
+2220:            Some(raw) => raw.parse::<u64>().map_err(|_| {
+2221:                format!("--heartbeat-interval-ms �� ���ڷ� ���� ���ߴ�: {raw:?}")
+2222:            })?,
+2223:            None => 0,
+2224:        },
+2225:        heartbeat_rounds: match flags.get("--heartbeat-rounds") {
+2226:            Some(v) => v
+2227:                .parse()
+2228:                .map_err(|e| format!("--heartbeat-rounds �Ľ� ����: {e}"))?,
+2229:            None => 0,
+2230:        },
+2231:        neighbor_report_rounds: match flags.get("--neighbor-report-rounds") {
+2232:            Some(v) => v
+2233:                .parse()
+2234:                .map_err(|e| format!("--neighbor-report-rounds �Ľ� ����: {e}"))?,
+2235:            None => 0,
+2236:        },
+2237:        // �� heartbeat ���ݰ� ���� ������ **������ 0 ���� ����߸��� �ʴ´�** ?
+2238:        //   �߸� �� ���� "���� ����" �� �Ǹ� ��ڴ� ������ ��ٰ� �ϴµ�
+2239:        //   �����δ� �� �� ���°� �ȴ�.
+2240:        neighbor_report_interval_ms: match flags.get("--neighbor-report-interval-ms") {
+2241:            Some(raw) => raw.parse::<u64>().map_err(|_| {
+2242:                format!("--neighbor-report-interval-ms �� ���ڷ� ���� ���ߴ�: {raw:?}")
+2243:            })?,
+2244:            None => 0,
+2245:        },
+2246:        neighbor_report_target_node_id: flags.get("--neighbor-report-target").cloned(),
+2247:        corrupt_neighbor_report_coordinator: flags
+2248:            .bool_flag("--corrupt-neighbor-report-coordinator"),
+2249:        owner_panel_state: owner_panel::OwnerPanelState::new(),
+2250:        owner_panel_port: flags.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port �Ľ� ����: {e}"))?,
+2251:        // �⺻ 256MiB. Job Object Ŀ�� �����̶� VRAM �� �뷫
+2252:        // `RAM ���� - 2000MiB` �� ���� ���ѵȴ�(ADR-027) ? �� ����
+2253:        // ���� ��ü�� �����ϱ� ���� �ּҰ��̰� ��å�� �ƴϴ�.
+2254:        workload_commit_limit_bytes: flags
+2255:            .u64_opt_flag("--workload-commit-limit-bytes")?
+2256:            .unwrap_or(256 * 1024 * 1024),
+2257:        coordinator_device_id: flags.require("--coordinator-device-id")?,
+2258:        agent_device_id: flags.require("--agent-device-id")?,
+2259:        corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
+2260:        expect_replay: flags.bool_flag("--expect-replay"),
+2261:        do_renew: flags.bool_flag("--do-renew"),
+2262:        renew_request_epoch_override: flags.u64_opt_flag("--renew-request-epoch-override")?,
+2263:        corrupt_renew_request_signature: flags.bool_flag("--corrupt-renew-request-signature"),
+2264:        fence_db_path: match flags.get("--fence-db") {
+2265:            Some(v) => PathBuf::from(v),
+2266:            None => default_fence_db_path(),
+2267:        },
+2268:        checkpoint_root: match flags.get("--checkpoint-root") {
+2269:            Some(v) => PathBuf::from(v),
+2270:            None => default_checkpoint_root(),
+2271:        },
+2272:        renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+2273:        renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
+2274:        expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
+2275:        revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
+2276:        max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
+2277:        max_reconnect_duration_seconds: flags
+2278:            .u64_flag_with_default("--max-reconnect-duration-seconds", 60)?,
+2279:        retry_base_ms: flags.u64_flag_with_default("--retry-base-ms", 250)?,
+2280:        retry_cap_ms: flags.u64_flag_with_default("--retry-cap-ms", 5_000)?,
+2281:        connection_attempt: 0,
+2282:        reconnect_enabled: !flags.bool_flag("--disable-reconnect"),
+2283:        recover_ambiguous_renew_from_durable_lease: flags
+2284:            .bool_flag("--recover-ambiguous-renew-from-durable-lease"),
+2285:        drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
+2286:        reuse_renew_nonce_after_reconnect: flags.bool_flag("--reuse-renew-nonce-after-reconnect"),
+2287:        resume_protocol: flags.bool_flag("--resume-protocol"),
+2288:        session_id: flags.get("--session-id")
+2289:            .cloned()
+2290:            .unwrap_or_else(|| "resume-session".into()),
+2291:        resume_lease_id: flags.get("--resume-lease-id")
+2292:            .cloned()
+2293:            .unwrap_or_default(),
+2294:        resume_job_id: flags.get("--resume-job-id").cloned().unwrap_or_default(),
+2295:        resume_attempt_id: flags.get("--resume-attempt-id")
+2296:            .cloned()
+2297:            .unwrap_or_default(),
+2298:        resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
+2299:    };
+2300:
+2301:    // �� ���� ? Ȯ��(2026-09-10) ? �𸣴� �̸��� �޾� ���� �ʴ´�.
+2302:    let bad_bools = flags.bad_bools();
+2303:    if !bad_bools.is_empty() {
+2304:        return Err(format!(
+2305:            "STARTUP_REFUSED: INVALID_BOOL ? {bad_bools:?} �� true �� false �� �ƴϴ�. \
+2306:             ������ false �� ������ �� �� �� ���� �� ������"
+2307:        ));
+2308:    }
+2309:    let unread = flags.unread();
+2310:    if !unread.is_empty() {
+2311:        return Err(format!(
+2312:            "STARTUP_REFUSED: UNKNOWN_FLAGS ? �� ������ ���� �ʴ� �÷��� {unread:?}. \
+2313:             ��Ÿ�̰ų� ���� �����̴� ? �޾� �θ� ������ ��������"
+2314:        ));
+2315:    }
+2316:    Ok(config)
+2317:}
+2318:
+2319:/// CLI ���ڸ� [`parse_config_from_args`] �� �������� �ٲ� �� �����Ѵ�.
+2320:/// �Ľ� ��ü�� �� �Լ��� ���� �ʴ´�.
+2321:///
+2322:/// `crates/coordinator/src/lib.rs::run_from_args` �� ���� ������
+2323:/// `crates/cli` ��� ����(Agent ��Ʈ��)�� ���� �ǹ̸� �����Ѵ�.
+2324:///
+2325:/// �� �� �Լ� ��ü���� ������ ���� ? ������ [`run`] �� �ѱ� ���̰�
+2326:///   ������ �ű⿡ �ִ�. ���� selftest �� `run()` �� ������ ������
+2327:///   �����Ѵ�. ���̺귯�� ȣ���ڿ��Ը� ���̴� ���� multi-agent lane
+2328:///   �������� �����̴�.
+2329:pub fn run_from_args(args: &[String]) -> Result<(), String> {
+2330:    let config = parse_config_from_args(args)?;
+2331:
+2332:    run(config)
+2333:}
+2334:
+2335:/// `--fence-db` �� �� �ָ� �� ���μ������� ������ �ӽ� SQLite ������
+2336:/// ����� ? ����(����� �ó������� �ƴ�) selftest �ó������� �׻�
+2337:/// �� watermark ���� �����ؾ� �ϹǷ�, PID �� �����ص� �����ϵ���
+2338:/// �߱� �ð�(������)�� ���´�.
+2339:fn default_fence_db_path() -> PathBuf {
+2340:    let pid = std::process::id();
+2341:    let nanos = std::time::SystemTime::now()
+2342:        .duration_since(std::time::UNIX_EPOCH)
+2343:        .map(|d| d.as_nanos())
+2344:        .unwrap_or(0);
+2345:    std::env::temp_dir().join(format!("gputeer-fence-{pid}-{nanos}.sqlite3"))
+2346:}
+2347:
+2348:/// `--checkpoint-root`�� ������ ���� ȣ�⵵ �����ϰ� �����ϵ���
+2349:/// ���μ����� �ӽ� root�� �����. selftest�� root�� �˻��ؾ� �ϴ� ��쿡��
+2350:/// �������� `--checkpoint-root`�� �����Ѵ�.
+2351:fn default_checkpoint_root() -> PathBuf {
+2352:    let pid = std::process::id();
+2353:    let nanos = std::time::SystemTime::now()
+2354:        .duration_since(std::time::UNIX_EPOCH)
+2355:        .map(|d| d.as_nanos())
+2356:        .unwrap_or(0);
+2357:    std::env::temp_dir().join(format!("gputeer-checkpoints-{pid}-{nanos}"))
+2358:}
+2359:
+2360:/// �� �� ��° ĭ�� **���� Ű**��. ������ �� ���� �� �� ���� �� ���� Ű�� ��
+2361:///   ������ �𸣴� �̸��̴� ? Coordinator �ʰ� ���� ����(���� ? Ȯ��,
+2362:///   2026-09-10). ������ ��Ÿ�� ������ �������.
+2363:struct Flags(
+2364:    std::collections::HashMap<String, String>,
+2365:    std::cell::RefCell<std::collections::HashSet<String>>,
+2366:    // �� �� ��° ĭ ? `true`/`false` �� �ƴ� �Ҹ��� ��. `--x tru` �� ������
+2367:    //   false �� �Ǹ� ���� �׽�Ʈ�� ����ȭ�ȴ�(��˼� 15, ���� ?).
+2368:    std::cell::RefCell<Vec<String>>,
+2369:    // �� �� ��° ĭ ? ���� Ű�� �� �� ���� �� **������� �� ��**(���� ?,
+2370:    //   ��˼� 18). ������ ���� ���� ��Ģ�� �״�� �д�(selftest 34 �� ����).
+2371:    //   �ٸ� `--x tru --x false` �� `tru` �� �˻� ���� ������� �� �ȴ�.
+2372:    Vec<(String, String)>,
+2373:);
+2374:
+2375:impl Flags {
+2376:    /// ���� �а� **�о��ٰ� ���´�.**
+2377:    fn get(&self, key: &str) -> Option<&String> {
+2378:        self.1.borrow_mut().insert(key.to_string());
+2379:        self.0.get(key)
+2380:    }
+2381:
+2382:    /// �� ���� ������ ���� Ű ? �̸���.
+2383:    fn unread(&self) -> Vec<String> {
+2384:        let read = self.1.borrow();
+2385:        let mut keys: Vec<String> = self
+2386:            .0
+2387:            .keys()
+2388:            .filter(|key| !read.contains(*key))
+2389:            .cloned()
+2390:            .collect();
+2391:        keys.sort();
+2392:        keys
+2393:    }
+2394:
+2395:    fn require(&self, key: &str) -> Result<String, String> {
+2396:        self.get(key)
+2397:            .cloned()
+2398:            .ok_or_else(|| format!("�ʼ� ���� ����: {key}"))
+2399:    }
+2400:
+2401:    /// `crates/coordinator/src/lib.rs::Flags::bool_flag` �� ���� ? ����
+2402:    /// �ִ� boolean �÷���(`--flag true`). �� �ָ� `false`.
+2403:    fn bool_flag(&self, key: &str) -> bool {
+2404:        for (_, earlier) in self.3.iter().filter(|(k, _)| k == key) {
+2405:            if earlier != "true" && earlier != "false" {
+2406:                self.2.borrow_mut().push(format!("{key}={earlier}"));
+2407:            }
+2408:        }
+2409:        match self.get(key).map(String::as_str) {
+2410:            None | Some("false") => false,
+2411:            Some("true") => true,
+2412:            Some(other) => {
+2413:                self.2.borrow_mut().push(format!("{key}={other}"));
+2414:                false
+2415:            }
+2416:        }
+2417:    }
+2418:
+2419:    /// `true`/`false` �� �ƴϾ��� �Ҹ��� ����.
+2420:    fn bad_bools(&self) -> Vec<String> {
+2421:        self.2.borrow().clone()
+2422:    }
+2423:
+2424:    /// �ݺ� Lease ����(2026-08-19) ? �� �ָ� `default`(�պ� Ƚ��).
+2425:    /// �⺻�� 1�� ���� ���� �պ� �ó������� �����ϰ� �����Ѵ�.
+2426:    fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+2427:        match self.get(key) {
+2428:            None => Ok(default),
+2429:            Some(v) => v
+2430:                .parse::<u32>()
+2431:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2432:        }
+2433:    }
+2434:
+2435:    /// �� �׽�Ʈ ���� ? ���� ��û epoch ���� ����(�ܰ� 5). �� �ָ�
+2436:    ///   `None`(���� ���� Lease �� ���� epoch �� �״�� ����).
+2437:    fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+2438:        match self.get(key) {
+2439:            None => Ok(default),
+2440:            Some(v) => v
+2441:                .parse::<u64>()
+2442:                .map_err(|e| format!("{key} parse failed: {e}")),
+2443:        }
+2444:    }
+2445:
+2446:    fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+2447:        match self.get(key) {
+2448:            None => Ok(None),
+2449:            Some(v) => v
+2450:                .parse::<u64>()
+2451:                .map(Some)
+2452:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2453:        }
+2454:    }
+2455:
+2456:    fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+2457:        match self.get(key) {
+2458:            None => Ok(None),
+2459:            Some(v) => v
+2460:                .parse::<u32>()
+2461:                .map(Some)
+2462:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2463:        }
+2464:    }
+2465:}
+2466:
+2467:fn parse_flags(args: &[String]) -> Result<Flags, String> {
+2468:    let mut map = std::collections::HashMap::new();
+2469:    let mut earlier: Vec<(String, String)> = Vec::new();
+2470:    let mut i = 0;
+2471:    while i < args.len() {
+2472:        let key = &args[i];
+2473:        if !key.starts_with("--") {
+2474:            return Err(format!("�÷��װ� �ƴ� ����: {key}"));
+2475:        }
+2476:        let value = args
+2477:            .get(i + 1)
+2478:            .ok_or_else(|| format!("{key} �ڿ� ���� ����"))?;
+2479:        if let Some(previous) = map.insert(key.clone(), value.clone()) {
+2480:            earlier.push((key.clone(), previous));
+2481:        }
+2482:        i += 2;
+2483:    }
+2484:    Ok(Flags(map, Default::default(), Default::default(), earlier))
+2485:}
+2486:
+2487:fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
+2488:    let bytes = hex_decode(hex)?;
+2489:    <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| "seed �� ��Ȯ�� 32����Ʈ���� �Ѵ�".into())
+2490:}
+2491:
+2492:fn hex_to_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
+2493:    let seed = hex_to_seed(hex)?;
+2494:    VerifyingKey::from_bytes(&seed).map_err(|e| format!("��ȿ���� ���� ����Ű: {e}"))
+2495:}
+2496:
+2497:fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
+2498:    // �� ���� ��(2026-09-10) ? ����Ʈ�� �ڸ��� �ʴ´�. `gputeer_crypto::hex`
+2499:    //   �� �� ����Ʈ�� �����Ƿ� ���� ��踦 ���� �� ����.
+2500:    gputeer_crypto::hex::decode_even(hex).map_err(|e| e.to_string())
+2501:}
+2502:
+2503:#[cfg(test)]
+2504:mod tests {
+2505:
+2506:    use super::*;
+2507:    use std::net::{TcpListener, TcpStream};
+2508:    use std::thread;
+2509:    use std::time::Instant;
+2510:
+2511:    #[test]
+
+ succeeded in 3475ms:
+956:# ���� ? ? ? Ȯ���� ������ lane ������ Ʋ���� �׷ȴ� (��˼� 15)
+957:
+958:## 1. ��ġ
+959:```text
+960:crates/coordinator/src/lib.rs   parse_config_from_args �� ? Ȯ�� ���� �� Flags::bool_flag
+961:```
+962:
+963:## 2. ���� (��˼� 15 �� �� �Է�)
+964:```text
+965:Resume + ����� ����    --resume-protocol true --lease-db <db> --grant-from-control-db c
+966:                        (--stored-grant-* ����) -> STORED_LANE_ID_MISSING
+967:                        �׷��� Resume �� ����� ���� �б⺸�� **����** ��ȯ�Ѵ�.
+968:                        ������ ���� �ĺ��ڸ� �䱸�ϴ� ���̴�
+969:--renewed-fence-epoch   --lease-db ���� ����� ���� lane �� ���� ��ΰ� �� ����
+970:                        **������ ����**. �׷��� "����� ���� lane �� ���� �� �Ѵ�"
+971:                        ��Ͽ� �־� ���ۺ��� �ź��ߴ�
+972:�߸��� �Ҹ���           --corrupt-own-signature tru -> ���� ���� false. Ű�� ��������
+973:                        UNKNOWN_FLAGS �� ����Ѵ� ? **���� �׽�Ʈ�� ������ ����ȭ**
+974:���Ǻ� ����             --neighbor-report-db �� �ְ� �Ű� ��밪 0 -> ����Ҹ� �� ����
+975:                        ���Ž� lane �� --stored-grant-ttl-ms -> ���� ���� ����� ���� �б��
+976:�׽�Ʈ ����             STORED_LANE_ID_MISSING �� ��Ű�� �׽�Ʈ�� ����
+977:```
+978:
+979:## 3. ����
+980:�ڡ� **���� Ʋ�� ����** ? ��˼� 14 �� ǥ�� **�״�� �Ű��.** ����� �� �ʵ尡
+981:  ������ �� �ܰ�(���š�revoke)���� ���̴��� Ȯ������ �ʾҴ�. **"�ʱ� Grant ��������
+982:  ���õȴ�" �� "���� ��ü���� ���õȴ�" �� ȥ���ߴ�.**
+983:�� �׸��� "�̸� �˻�" �� �ذ��ϴ� ���� **�𸣴� �̸�**���̴�. �˷��� �̸���
+984:  **�߸��� ��**, **������ �� �¾� �� ���̴� ��**�� ������ ������ ������� ?
+985:  "������ ���ø� ���� �ذ��ߴ�" �� �����ϸ� �����̴�.
+986:
+987:## 4. ���赵
+988:- [x] ���뼺 ���� ? ���� ȣ��(Resume + control DB, ����� ���� ����)�� ���´�
+989:- [x] ���� �ŷڵ� ���� ? �߸��� �Ҹ����� ���� �׽�Ʈ�� ����ȭ�Ѵ�
+990:
+991:## 6. ��ġ
+992:- [ ] ��ġ�� ���� ���� (��˼� 15 ����)
+993:- [x] �ʵ帶�� **���� ���ó**�� �ô�(`coordinator/src/lib.rs`):
+994:  ```text
+995:  �׻� ���� 6    manifest-file �� corrupt-manifest-* �� corrupt-lease-signature ��
+996:                 expire-lease �� lease-ttl-ms ? ���Ž� issue_grant��issue_lease��
+997:                 load_signed_manifest ������ ������
+998:  --lease-db ���� ���� ���� 3
+999:                 fence-epoch(����� ���� �� ������ ��� epoch, 1636��) ��
+1000:                 max-total-duration �� renewed-fence-epoch(build_renew_result ��
+1001:                 ����� ���� ����)
+1002:  ```
+1003:- [x] Resume �̸� �ļ��� ����� ���� �˻縦 �ǳʶٰ�, **���� ����**��
+1004:  Resume + control DB �� �ź��Ѵ� ? Resume �� control DB �� �ƹ��� �� ����
+1005:- [x] `bool_flag` �� true/false �� �ƴ� ���� ���� ���� �ΰ� `INVALID_BOOL` �� �ź�
+1006:  (Coordinator��Agent) ? ȣ��� 33���� ��ġ�� �ʰ� �� ������
+1007:- [x] `NEEDS_EXPECT`(��밪 ���� `--neighbor-report-db`) �� `STORED_LANE_ONLY`
+1008:  (���Ž� lane �� `--stored-grant-*`) �� `STORED_LANE_ID_MISSING` �׽�Ʈ
+1009:  �� �̿� �Ű� ��Ģ�� selftest���׽�Ʈ�� `--neighbor-report-db` ���� ���� ����
+1010:    ��밪�� ���� �شٴ� ���� **���� Ȯ���ϰ�** �״�
+1011:- [x] �����̼� **8/8** ����. �� �� ���� ù ���࿡�� **�������� �� �ƴ�** ? ġȯ
+1012:  ������ ���Ͽ� �� �� �־���. ����Ⱑ "NOT APPLIED" �� ���� ������ ���� ������
+1013:  ���� �ʾҰ�, ������ �ٿ� �ٽ� ���ȴ�
+1014:- [x] selftest **97/97** ? ? �ڿ��� ���� �ó������� �� ���´�(�̹����� selftest ���ڸ�
+1015:  ��ġ�� �ʾҴ�)
+1016:- �� **�� �׽�Ʈ�� ����� �ȿ� ������ �����.** Resume �׽�Ʈ�� `run()` �� ������
+1017:  �θ��µ� `--lease-db lease.sqlite3` ��� ��θ� ���, `run()` �� ���� ��������
+1018:  **����** Lease ����Ҹ� ���� -> `crates/coordinator/lease.sqlite3`. `git status`
+1019:  ���� �ô�. �ӽ� ���͸� ��η� ��ġ�� ������ ������ ������
+1020:- [ ] **�� �� �� ? ���� ���� ��ü.** �̸� �� �Ҹ��� �� �� ���� ���� ��Ģ�� ��������,
+1021:  ���� �÷��װ� **������ �� �¾� �� ���̴�** ���(��: ������ �� �ϴµ�
+1022:  `--renew-rounds`)�� ������ ���� �ʾҴ�. "������ ���ø� ���� �ذ�" �� �ƴϴ�
+1023:
+1024:---
+1025:
+1026:# ���� ? ? �Ҹ��� �˻縦 �ߺ� Ű�� ���� ����, ? �� ��踦 �׽�Ʈ�� �� �� �����Ѵ� (��˼� 18)
+1027:
+1028:�� ���� �� ��˼� 17(Agent �𸣴� �÷���)�� **ACCEPTED** ����. �ٸ� �ܼ� ���� ����� ?
+1029:  �ߺ� Ű�� �� ���� ������(`parse_flags` �� `map.insert`), `--` �� �����ϴ� ��ū��
+1030:  ������ �޴´�. �� selftest �ó����� 34 �� �ߺ� ����⸦ **������ ����**
+1031:  (`coordinator_agent_selftest.rs:2533` �� `wrong_holder_id`) ? �ߺ��� ��°��
+1032:  �ź��ϸ� �� �ó������� ������.
+1033:
+1034:## 1. ��ġ
+1035:```text
+1036:crates/coordinator/src/lib.rs �� crates/agent/src/lib.rs   parse_flags �� bool_flag
+1037:crates/coordinator/tests/stored_lane_flags.rs
+1038:```
+1039:
+1040:## 2. ���� (��˼� 18)
+1041:```text
+1042:�ߺ� Ű   --corrupt-own-signature tru --corrupt-own-signature false
+1043:          -> �� ���� map.insert �� ����� bool_flag �� false �� ����. INVALID_BOOL ����
+1044:          (Agent: --send-attempt-report tru --send-attempt-report false �� ����)
+1045:�׽�Ʈ    "�׻� ���� 6" �� --lease-db **����** �ź��ϴ��� �� ��� ? 9���� ����
+1046:          "--lease-db ���� ����" ���� �ٲ㵵 ����Ѵ�
+1047:          STORED_LANE_ID_MISSING �� job ��, STORED_LANE_ONLY �� ttl �� ���
+1048:```
+1049:��ϸ� �� �ܿ�(���� ���� ? ������ ���� �ʴ´ٰ� �̹� ������):
+1050:```text
+1051:--renew-extension-ms   ����� ���� ���ſ��� 1�ʸ� �൵ **�ϵ��ڵ��� 60��**�� ���δ�
+1052:                       (coordinator/lib.rs:2184��2214)
+1053:Resume + heartbeat     --expect-heartbeats �� --liveness-db �� �޾� �ΰ� ���š�����Ұ� ����
+1054:--do-renew false --renew-rounds 7 �� revoke ���� --revoke-delay-ms
+1055:```
+1056:
+1057:## 4. ���赵
+1058:- [x] ���� �ŷڵ� ���� ? �ߺ� Ű�� ���� �׽�Ʈ�� ����ȭ�� �� �ִ�
+1059:
+1060:## 6. ��ġ
+1061:- [ ] ��ġ�� ���� ���� (��˼� 18 ����)
+1062:- [x] `parse_flags` �� **������� �� ��**�� ���� ������, `bool_flag` �� �װͱ���
+1063:  �˻��Ѵ�(Coordinator��Agent ���� ���). **������ ���� ���� ��Ģ�� �״��**�� ?
+1064:  �ߺ��� ��°�� �ź��ϸ� selftest 34 �� ������
+1065:- [x] ��� �׽�Ʈ �� ? �ߺ� �ڿ� ���� �߸��� �Ҹ���(�� �ļ�) �� "�׻� ���� 6" ��
+1066:  `--lease-db` ���̵� �ź� �� �ĺ��� ���� �� ���� �� `STORED_LANE_ONLY` �� �̸� ����.
+1067:  �ߺ� �׽�Ʈ���� **������**(�ùٸ� ���� �ߺ��� �ް� ������ ���� ����)�� �ٿ���
+1068:- [x] �����̼� **4/4** �� selftest **97/97**
+1069:- [ ] **�� �� ��** ? �Ҹ����� �ƴ� Ű(���ڡ����ڿ�)�� �� ���� ������ ������ ����
+1070:  ���δ�. �� ���� **�߸��� ��**�̾ �˻����� �ʴ´�. ��ϸ� �� �ܿ� ��(�� 2. ����)�� �״�δ�
+1071:
+1072:---
+1073:
+1074:# �� �� ����Ʈ���� ���� �� ��ü�� ����
+1075:
+1076:`RULE.md` ��230 �� ���� ����Ʈ�� **�߰� ���, ��ġ�� ������** ����� �Ѵ�.
+1077:�ټ� �� ���� ��ģ �ڿ� ���.
+1078:
+1079:�� �׷����� �����ϰ� ���´� ? **�˼��� ������ ������ �� �����ϴ���
+1080:���� ��Ģ�� Ȯ������ �ʾҴ�.** ����ڰ� "���� ���� ���� ���� üũ�ϸ鼭"
+1081:��� �����ϰ� ������ Ȯ���ߴ�.
+1082:
+1083:���� ���� �ݺ����� �ʰ�, �˼� ��⿭ ���Ͽ� "������ ������ **��ġ�� ����**
+1084:���� ����Ʈ�� ����" �� �ִ´�.
+2512:    // ���� 34. ���� lease_id�� �ٸ� holder identity�� ���� ��������������������������
+2513:    // `get_or_issue()`�� ���� holder_node_id IdentityConflict�� ����
+2514:    // Coordinator �߱� ȣ��ο��� �����ϴ��� Ȯ���Ѵ�. �� Agent�� ����
+2515:    // �߸��� identity�� ����� Grant�� holder �������� ���� ��������
+2516:    // �ʵ��� �Ѵ� ? �ź� ��ü�� Coordinator���� Ȯ���ϴ� �ó�������.
+2517:    let wrong_holder_id = "01JOTHERAGENTSELFTEST00000001";
+2518:    let wrong_holder_34 = run_handshake(
+2519:        &fixture,
+2520:        &[
+2521:            "--lease-db",
+2522:            lease_db_33,
+2523:            "--fence-epoch",
+2524:            "5",
+2525:            "--agent-device-id",
+2526:            wrong_holder_id,
+2527:            "--do-renew",
+2528:            "false",
+2529:        ],
+2530:        &[
+2531:            "--fence-db",
+2532:            fence_db_33,
+2533:            "--agent-device-id",
+2534:            wrong_holder_id,
+2535:            "--do-renew",
+2536:            "false",
+2537:        ],
+2538:    )?;
+2539:    if wrong_holder_34.coordinator_success
+
+ succeeded in 3685ms:
+2553:pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, String> {
+2554:    let flags = parse_flags(args)?;
+2555:
+2556:    let config = CoordinatorConfig {
+2557:        listen: flags.require("--listen")?,
+2558:        own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+2559:        agent_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+2560:        coordinator_device_id: flags.require("--coordinator-device-id")?,
+2561:        agent_device_id: flags.require("--agent-device-id")?,
+2562:        grant_id: flags.require("--grant-id")?,
+2563:        attempt_id: flags.require("--attempt-id")?,
+2564:        corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
+2565:        send_grant_twice: flags.bool_flag("--send-grant-twice"),
+2566:        disconnect_after_ack: flags.bool_flag("--disconnect-after-ack"),
+2567:        drop_connection_after_ack_once: flags.bool_flag("--drop-connection-after-ack-once"),
+2568:        max_connections: flags.u32_flag_with_default("--max-connections", 1)?,
+2569:        accept_timeout_ms: flags.u64_flag_with_default("--accept-timeout-ms", 30_000)?,
+2570:        revoke_before_drop: flags.bool_flag("--revoke-before-drop"),
+2571:        pause_before_next_accept_ms: flags
+2572:            .u64_flag_with_default("--pause-before-next-accept-ms", 0)?,
+2573:        lease_id: flags.require("--lease-id")?,
+2574:        job_id: flags.require("--job-id")?,
+2575:        fence_epoch: flags.u64_flag("--fence-epoch")?,
+2576:        // Manifest �輱 ? �� �ָ� ���� ��� �״��(manifest �ʵ� ����).
+2577:        manifest_file: flags.get("--manifest-file").map(PathBuf::from),
+2578:        corrupt_manifest_signature: flags.bool_flag("--corrupt-manifest-signature"),
+2579:        corrupt_manifest_hash: flags.bool_flag("--corrupt-manifest-hash"),
+2580:        corrupt_lease_signature: flags.bool_flag("--corrupt-lease-signature"),
+2581:        expire_lease: flags.bool_flag("--expire-lease"),
+2582:        do_renew: flags.bool_flag("--do-renew"),
+2583:        renewed_fence_epoch: flags.u64_flag("--renewed-fence-epoch")?,
+2584:        renew_outcome_override: flags.i32_opt_flag("--renew-outcome-override")?,
+2585:        corrupt_renew_result_signature: flags.bool_flag("--corrupt-renew-result-signature"),
+2586:        corrupt_renewed_lease_signature: flags.bool_flag("--corrupt-renewed-lease-signature"),
+2587:        corrupt_renew_result_nonce: flags.bool_flag("--corrupt-renew-result-nonce"),
+2588:        drop_after_renew_commit_before_result_once: flags
+2589:            .bool_flag("--drop-after-renew-commit-before-result-once"),
+2590:        renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
+2591:        renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+2592:        lease_db_path: flags.get("--lease-db").map(PathBuf::from),
+2593:        // �� ����� ���࿡�� �߱�(2026-09-03). �� �ָ� ���� ��� �״�δ�.
+2594:        grant_from_control_db: flags.get("--grant-from-control-db").map(PathBuf::from),
+2595:        stored_grant_job_id: flags.get("--stored-grant-job-id").cloned().unwrap_or_default(),
+2596:        stored_grant_attempt_id: flags.get("--stored-grant-attempt-id")
+2597:            .cloned()
+2598:            .unwrap_or_default(),
+2599:        stored_grant_lease_id: flags.get("--stored-grant-lease-id")
+2600:            .cloned()
+2601:            .unwrap_or_default(),
+2602:        stored_grant_ttl_ms: flags
+2603:            .u64_opt_flag("--stored-grant-ttl-ms")?
+2604:            .unwrap_or(60_000),
+2605:        allow_unsafe_legacy_mode: flags.bool_flag("--i-understand-legacy-mode-is-unsafe"),
+2606:        max_total_duration_seconds: flags
+2607:            .u64_flag_with_default("--max-total-duration-seconds", 86_400)?,
+2608:        revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
+2609:        revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
+2610:        expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
+2611:        liveness_db_path: flags.get("--liveness-db").cloned(),
+2612:        expect_neighbor_reports: flags
+2613:            .u32_flag_with_default("--expect-neighbor-reports", 0)?,
+2614:        neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
+2615:        expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
+2616:        extra_agents: flags.get("--extra-agents").cloned(),
+2617:        require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
+2618:        multi_agent: flags.bool_flag("--multi-agent"),
+2619:        revoke_lease_id_override: flags.get("--revoke-lease-id").cloned(),
+2620:        revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
+2621:        corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),
+2622:        lease_ttl_ms: flags.u64_flag_with_default("--lease-ttl-ms", 60_000)?,
+2623:        revoke_delay_ms: flags.u64_flag_with_default("--revoke-delay-ms", 0)?,
+2624:        renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
+2625:        resume_protocol: flags.bool_flag("--resume-protocol"),
+2626:    };
+2627:
+2628:    // �ڡ� ���� ? Ȯ��(2026-09-10 ��˼� 14) ? **�޾� �ΰ� ������ ������ �ʴ´�.**
+2629:    //
+2630:    //   ? �� ����� ���� lane �� `--manifest-file` �ϳ��� ���Ҵ�. ��˼���
+2631:    //   ���� ������ �� ã�Ҵ�: �� lane �� �������� �ʴ� �׽�Ʈ�� ����
+2632:    //   �÷���(�� `--corrupt-lease-signature` �� �൵ ���� ������ ����
+2633:    //   **���� �׽�Ʈ ��ü�� ����ȭ**�ƴ�), ���尪�� �浹�ϴ� �ĺ���,
+2634:    //   ���� lane �� �� �д� ���� Agent ����, �׸��� **�𸣴� �̸�**.
+2635:    //
+2636:    //   �� ���⼭ �ź��ϴ� ���� **�ļ��� �� �� �ִ� ��**���̴�. ����
+2637:    //     �⺻���� ���Ƶ� "���" �� ����� ���⼭�� ���δ�.
+2638:    let bad_bools = flags.bad_bools();
+2639:    if !bad_bools.is_empty() {
+2640:        return Err(format!(
+2641:            "STARTUP_REFUSED: INVALID_BOOL ? {bad_bools:?} �� true �� false �� �ƴϴ�. \
+2642:             ������ false �� ������ �� �� �� ���� �� ������"
+2643:        ));
+2644:    }
+2645:    let unread = flags.unread();
+2646:    if !unread.is_empty() {
+2647:        return Err(format!(
+2648:            "STARTUP_REFUSED: UNKNOWN_FLAGS ? �� ������ ���� �ʴ� �÷��� {unread:?}. \
+2649:             ��Ÿ�̰ų� ���� �����̴� ? �޾� �θ� ������ ��������"
+2650:        ));
+2651:    }
+2652:    // �ڡ� ��˼� 15(���� ?) ? ó���� control DB �� �ִٴ� �͸� ���� �Ʒ���
+2653:    //   �� �ɾ���. �� ������ Ʋ�ȴ�:
+2654:    //     �� Resume �� ����� ���� �б⺸�� **����** ��ȯ�Ѵ� ? �ű⼭�� ��
+2655:    //       �˻���� ���� ����. �� ���� ��ü�� ���� ����(`run`)�� �ź��Ѵ�
+2656:    //     �� ��� ���� **Lease ����Ұ� ���� ��** ���� ��ΰ� ������ ����
+2657:    //       (`fence_epoch` �� ��� epoch, �������� `build_renew_result`).
+2658:    //       "�ʱ� Grant �������� ����" �� "���� ��ü���� ����" �� �ٸ���
+2659:    if config.grant_from_control_db.is_some() && !config.resume_protocol {
+2660:        // ���� **��� �ܰ迡����** �������� �ʴ� �͵� ? ���Ž� �߱�
+2661:        // (`issue_grant`��`issue_lease`��`load_signed_manifest`)������ ������.
+2662:        const NEVER_APPLIED_ON_STORED_LANE: [&str; 6] = [
+2663:            "--manifest-file",
+2664:            "--corrupt-manifest-signature",
+2665:            "--corrupt-manifest-hash",
+2666:            "--corrupt-lease-signature",
+2667:            "--expire-lease",
+2668:            "--lease-ttl-ms",
+2669:        ];
+2670:        // Lease ����Ұ� ������ ���尪�� ������ �������� �ʴ� �͵�.
+2671:        const IGNORED_WITH_LEASE_DB: [&str; 3] = [
+2672:            "--fence-epoch",
+2673:            "--max-total-duration-seconds",
+2674:            "--renewed-fence-epoch",
+2675:        ];
+2676:        let with_lease_db = config.lease_db_path.is_some();
+2677:        let given: Vec<&str> = NEVER_APPLIED_ON_STORED_LANE
+2678:            .iter()
+2679:            .chain(IGNORED_WITH_LEASE_DB.iter().filter(|_| with_lease_db))
+2680:            .copied()
+2681:            .filter(|flag| flags.0.contains_key(*flag))
+2682:            .collect();
+2683:        if !given.is_empty() {
+2684:            return Err(format!(
+2685:                "STARTUP_REFUSED: STORED_LANE_IGNORES ? ����� ���� lane(--grant-from-control-db)�� \
+2686:                 {given:?} �� �������� �ʴ´�. ����� ����� ������ ? �޾� �θ� ������ ��������"
+2687:            ));
+2688:        }
+2689:        for (name, cli, stored) in [
+2690:            ("job", &config.job_id, &config.stored_grant_job_id),
+2691:            ("attempt", &config.attempt_id, &config.stored_grant_attempt_id),
+2692:            ("lease", &config.lease_id, &config.stored_grant_lease_id),
+2693:        ] {
+2694:            if stored.is_empty() {
+2695:                return Err(format!(
+2696:                    "STARTUP_REFUSED: STORED_LANE_ID_MISSING ? --stored-grant-{name}-id �� ����"
+2697:                ));
+2698:            }
+2699:            if cli != stored {
+2700:                return Err(format!(
+2701:                    "STARTUP_REFUSED: STORED_LANE_ID_CONFLICT ? --{name}-id {cli} �� \
+2702:                     --stored-grant-{name}-id {stored} �� �ٸ���. ���尪�� ���̹Ƿ� �ٸ� ���� �޾� ���� �ʴ´�"
+2703:                ));
+2704:            }
+2705:        }
+2706:    }
+2707:    // ����� ���� lane �ۿ��� �� --stored-grant-* �� �ƹ��� �� �д´�.
+2708:    if config.grant_from_control_db.is_none() {
+2709:        const STORED_LANE_ONLY: [&str; 4] = [
+2710:            "--stored-grant-job-id",
+2711:            "--stored-grant-attempt-id",
+2712:            "--stored-grant-lease-id",
+2713:            "--stored-grant-ttl-ms",
+2714:        ];
+2715:        let given: Vec<&str> = STORED_LANE_ONLY
+2716:            .iter()
+2717:            .copied()
+2718:            .filter(|flag| flags.0.contains_key(*flag))
+2719:            .collect();
+2720:        if !given.is_empty() {
+2721:            return Err(format!(
+2722:                "STARTUP_REFUSED: STORED_LANE_ONLY ? {given:?} �� --grant-from-control-db �� \
+2723:                 ���� ���� ������. ���Ž� lane �� �޾� �ΰ� ������"
+2724:            ));
+2725:        }
+2726:    }
+2727:    // �̿� �Ű��� ������� ������ ����Ҹ� ���� �ʴ´�(��˼� 15).
+2728:    if config.expect_neighbor_reports == 0 && flags.0.contains_key("--neighbor-report-db") {
+2729:        return Err(
+2730:            "STARTUP_REFUSED: NEEDS_EXPECT ? --neighbor-report-db �� --expect-neighbor-reports �� \
+2731:             0 ���� Ŭ ���� ������. �޾� �ΰ� ������ �ʴ´�"
+2732:                .to_string(),
+2733:        );
+2734:    }
+2735:    if !config.multi_agent {
+2736:        // �� `--session-id` �� ���� ���� ? Coordinator �� **��� lane ������**
+2737:        //   ���� �ʴ� �̸��̶� �������� ����, ���� �𸣴� �÷��׷� �źεȴ�.
+2738:        const MULTI_AGENT_ONLY: [&str; 2] = ["--extra-agents", "--require-concurrent-sessions"];
+2739:        let given: Vec<&str> = MULTI_AGENT_ONLY
+2740:            .iter()
+2741:            .copied()
+2742:            .filter(|flag| flags.0.contains_key(*flag))
+2743:            .collect();
+2744:        if !given.is_empty() {
+2745:            return Err(format!(
+2746:                "STARTUP_REFUSED: MULTI_AGENT_ONLY ? {given:?} �� --multi-agent lane ������ ������. \
+2747:                 ���� lane �� �޾� �ΰ� ������"
+2748:            ));
+2749:        }
+2750:    }
+2751:    Ok(config)
+2752:}
+2753:
+2754:/// CLI ���ڸ� [`parse_config_from_args`] �� �������� �ٲ� �� �����Ѵ�.
+2755:/// �Ľ� ��ü�� �� �Լ��� ���� �ʴ´�.
+2756:///
+2757:/// `crates/cli` �� �� �Լ��� ȣ���ϱ⸸ �ϰ� ���� �ǹ̴� ����
+2758:/// (Coordinator ��Ʈ��)�� �����Ѵ�(`docs/contracts/01_��Ʈ��_������.md`).
+2759:///
+2760:/// �� ���⿡�� lane ������ �ִ� ? CLI �� ������ �̰��� ���� �ɸ��Ƿ�,
+2761:///   �� lane �������� ������ **���̺귯�� ȣ���ڿ��Ը�** ���δ�.
+2762:///   �׷��� ������ `tests/neighbor_report_lane_guard.rs` �� ���� ���.
+2763:pub fn run_from_args(args: &[String]) -> Result<(), String> {
+2764:    let config = parse_config_from_args(args)?;
+2765:
+2766:    // �� **multi-agent lane �� �̿� �Ű��� �ٷ��� �ʴ´�**(���� �˼� 5����
+2767:    //   ����). �� lane ���� ���� ������ ���µ� �÷��״� �޾Ƶ鿩����
+2768:    //   **������ ����**�ƴ�.
+2769:    //
+2770:    //   �� 8���� ���� ? �� lane �� ���� `run()` �� �б⸦ ��ģ��.
+2771:    //     �� ������ �׺��� ���̶� CLI ��ο��� ���� �ɸ���, lane ������
+2772:    //     ��ü���� ���� ������ ���� �ִ�.
+2773:    //
+2774:    //   �������� ���� ������ **�ź��Ѵ�.** �޾� ���� �� �ϴ� ���� ����
+2775:    //   ���ڴ� ? ��ڴ� �Ű��� ���̴� �� �ȴ�.
+2776:    // �� `kind=storage` �� ���� �ʴ´�(���� �˼� 11����) ? �̰� �����
+2777:    //   ������ �ƴ϶� **���� �浹**�̴�. ������ �ٸ��� �̸��� �޶�� �Ѵ�.
+2778:    if let Some(message) = unsupported_neighbor_report_lane(&config, lane_from_config(&config)) {
+2779:        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+2780:        return Err(message);
+2781:    }
+2782:    if let Some(message) = unsupported_attempt_report_lane(&config, lane_from_config(&config)) {
+2783:        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+2784:        return Err(message);
+2785:    }
+2786:    run(config)
+2787:}
+2788:
+2789:/// �ĺ��� ���� ���� ? �� ���� �ĺ��� �� ���� �����ǹǷ� ��� ������
+2790:/// ������ �ѱ�� ����Ҹ� ��Ǯ����.
+2791:pub const MAX_DEVICE_ID_LEN: usize = 64;
+2792:
+2793:
+2794:/// Agent �ĺ��ڷ� �� �� �ִ� ����ΰ�.
+2795:///
+2796:/// # �� �˻��ϴ°�
+2797:///
+2798:/// �� 2026-08-30 ���� �˼� ����. `scoped_id()` �� �� ���� �ĺ��� �� ��
+2799:///   (`lease_id`��`job_id`��`attempt_id`��`grant_id`)�� �״�� �����Ѵ�.
+2800:///   "����� ���� ª�� �̸�" �̶�� ������ ����� ���ݴµ�, �� ������
+2801:///   �ڵ尡 �������� ������ ������ �ƴ϶� ����̴�.
+2802:///
+2803:/// ```text
+2804:/// `;` `=`   --extra-agents ������ �浹�Ѵ�(id=key;id2=key2)
+2805:/// ����      �α� �� ���� ���� �ٷ� �ɰ� �������Ľ� ȥ���� �����
+2806:/// �ſ� �� �� �� ���� ������ ������ ������ �ѱ�� ����Ҹ� ��Ǯ����
+2807:/// ��� ���� checkpoint ���͸� �̸����� �귯 ����
+2808:/// ```
+2809:///
+2810:/// �����ڿ� `-`��`_`��`.` �� ����Ѵ�. �� ����Ұ� ���� ULID �迭
+2811:/// �ĺ��ڴ� ���� �� �ȿ� ����.
+2812:///
+2813:/// �� �� ������ `MAX_DEVICE_ID_LEN` ����� ���� �����鼭 ��������
+2814:///   �з��� �־��� ? ����� ���� ���¸� �˻����� �ʴ´�.
+2815:pub fn validate_device_id(device_id: &str) -> Result<(), String> {
+2816:    if device_id.is_empty() {
+2817:        return Err("DEVICE_ID_REJECTED: �����".to_string());
+2818:    }
+2819:    if device_id.len() > MAX_DEVICE_ID_LEN {
+2820:        return Err(format!(
+2821:            "DEVICE_ID_REJECTED: {}�ڴ� ? ���� {MAX_DEVICE_ID_LEN}��.              �� ���� �ĺ��� �� ���� �����ȴ�",
+2822:            device_id.len()
+2823:        ));
+2824:    }
+2825:    if let Some(bad) = device_id
+2826:        .chars()
+2827:        .find(|c| !(c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.'))
+2828:    {
+2829:        return Err(format!(
+2830:            "DEVICE_ID_REJECTED: {bad:?} �� �� �� ����({device_id:?}) ?              �����ڿ� - _ . �� ����Ѵ�"
+2831:        ));
+2832:    }
+2833:    Ok(())
+2834:}
+2835:
+2836:/// �� �� ��° ĭ�� **���� Ű**��. ������ �� ���� �� �� ���� �� ���� Ű��
+2837:///   �� ������ �𸣴� �̸��̴� ? ���� ? Ȯ��(2026-09-10 ��˼� 14).
+2838:///   ������ `--manifest-fiel m.pb` ���� ��Ÿ�� ������ �������.
+2839:struct Flags(
+2840:    std::collections::HashMap<String, String>,
+2841:    std::cell::RefCell<std::collections::HashSet<String>>,
+2842:    // �� �� ��° ĭ ? `true`/`false` �� �ƴ� �Ҹ��� ��. `--x tru` �� ������
+2843:    //   false �� �Ǹ� ���� �׽�Ʈ�� ����ȭ�ȴ�(��˼� 15, ���� ?).
+2844:    std::cell::RefCell<Vec<String>>,
+2845:    // �� �� ��° ĭ ? ���� Ű�� �� �� ���� �� **������� �� ��**(���� ?,
+2846:    //   ��˼� 18). ������ ���� ���� ��Ģ�� �״�� �д�(selftest 34 �� ����).
+2847:    //   �ٸ� `--x tru --x false` �� `tru` �� �˻� ���� ������� �� �ȴ�.
+2848:    Vec<(String, String)>,
+2849:);
+2850:
+2851:impl Flags {
+2852:    /// ���� �а� **�о��ٰ� ���´�.**
+2853:    fn get(&self, key: &str) -> Option<&String> {
+2854:        self.1.borrow_mut().insert(key.to_string());
+2855:        self.0.get(key)
+2856:    }
+2857:
+2858:    /// �� ���� ������ ���� Ű ? �̸���.
+2859:    fn unread(&self) -> Vec<String> {
+2860:        let read = self.1.borrow();
+2861:        let mut keys: Vec<String> = self
+2862:            .0
+2863:            .keys()
+2864:            .filter(|key| !read.contains(*key))
+2865:            .cloned()
+2866:            .collect();
+2867:        keys.sort();
+2868:        keys
+2869:    }
+2870:
+2871:    fn require(&self, key: &str) -> Result<String, String> {
+2872:        self.get(key)
+2873:            .cloned()
+2874:            .ok_or_else(|| format!("�ʼ� ���� ����: {key}"))
+2875:    }
+2876:
+2877:    /// ���� �ִ� boolean �÷���(`--flag true`). �� �ָ� `false`.
+2878:    /// �׽�Ʈ ���� �ź� ��� �÷���(�ܰ� 5)���� ���� ? �ٸ� ���
+2879:    /// �÷��״� ������ �ʼ� ���� ������(`require`).
+2880:    fn bool_flag(&self, key: &str) -> bool {
+2881:        for (_, earlier) in self.3.iter().filter(|(k, _)| k == key) {
+2882:            if earlier != "true" && earlier != "false" {
+2883:                self.2.borrow_mut().push(format!("{key}={earlier}"));
+2884:            }
+2885:        }
+2886:        match self.get(key).map(String::as_str) {
+2887:            None | Some("false") => false,
+2888:            Some("true") => true,
+2889:            Some(other) => {
+2890:                self.2.borrow_mut().push(format!("{key}={other}"));
+2891:                false
+2892:            }
+2893:        }
+2894:    }
+2895:
+2896:    /// `true`/`false` �� �ƴϾ��� �Ҹ��� ����.
+2897:    fn bad_bools(&self) -> Vec<String> {
+2898:        self.2.borrow().clone()
+2899:    }
+2900:
+2901:    /// ���� �÷���. �� �ָ� `0`(fence_epoch �� ù �߱� �⺻�� ?
+2902:    /// `FenceWatermark` �� 0 ���� �����ϹǷ� `0` �� �׻� ��ȿ�� ù
+2903:    /// epoch ��).
+2904:    fn u64_flag(&self, key: &str) -> Result<u64, String> {
+2905:        match self.get(key) {
+2906:            None => Ok(0),
+2907:            Some(v) => v
+2908:                .parse::<u64>()
+2909:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2910:        }
+2911:    }
+2912:
+2913:    fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+2914:        match self.get(key) {
+2915:            None => Ok(None),
+2916:            Some(v) => v
+2917:                .parse::<u64>()
+2918:                .map(Some)
+2919:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2920:        }
+2921:    }
+2922:
+2923:    /// �ݺ� Lease ����(2026-08-19) ? �� �ָ� `default`(�պ� Ƚ��).
+2924:    /// �⺻�� 1�� ���� ���� �պ� �ó������� �����ϰ� �����Ѵ�.
+2925:    fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+2926:        match self.get(key) {
+2927:            None => Ok(default),
+2928:            Some(v) => v
+2929:                .parse::<u32>()
+2930:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2931:        }
+2932:    }
+2933:
+2934:    /// `max_total_duration_seconds`(2026-08-19) ? �� �ָ� `default`
+2935:    /// (���� �ϵ��ڵ� �� 86,400�� = 24�ð��� ����, ȸ�� ����).
+2936:    fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+2937:        match self.get(key) {
+2938:            None => Ok(default),
+2939:            Some(v) => v
+2940:                .parse::<u64>()
+2941:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2942:        }
+2943:    }
+2944:
+2945:    /// �� �׽�Ʈ ���� ? `RenewOutcome` ���� ����(�ܰ� 5). �� �ָ� `None`
+2946:    ///   (���� ���� ���).
+2947:    fn i32_opt_flag(&self, key: &str) -> Result<Option<i32>, String> {
+2948:        match self.get(key) {
+2949:            None => Ok(None),
+2950:            Some(v) => v
+2951:                .parse::<i32>()
+2952:                .map(Some)
+2953:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2954:        }
+2955:    }
+2956:
+2957:    fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+2958:        match self.get(key) {
+2959:            None => Ok(None),
+2960:            Some(v) => v
+2961:                .parse::<u32>()
+2962:                .map(Some)
+2963:                .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2964:        }
+2965:    }
+2966:}
+2967:
+2968:fn parse_flags(args: &[String]) -> Result<Flags, String> {
+2969:    let mut map = std::collections::HashMap::new();
+2970:    let mut earlier: Vec<(String, String)> = Vec::new();
+2971:    let mut i = 0;
+2972:    while i < args.len() {
+2973:        let key = &args[i];
+2974:        if !key.starts_with("--") {
+2975:            return Err(format!("�÷��װ� �ƴ� ����: {key}"));
+2976:        }
+2977:        let value = args
+2978:            .get(i + 1)
+2979:            .ok_or_else(|| format!("{key} �ڿ� ���� ����"))?;
+2980:        if let Some(previous) = map.insert(key.clone(), value.clone()) {
+2981:            earlier.push((key.clone(), previous));
+2982:        }
+2983:        i += 2;
+2984:    }
+2985:    Ok(Flags(map, Default::default(), Default::default(), earlier))
+2986:}
+2987:
+2988:fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
+2989:    let bytes = hex_decode(hex)?;
+2990:    <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| "seed �� ��Ȯ�� 32����Ʈ���� �Ѵ�".into())
+2991:}
+2992:
+2993:fn hex_to_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
+2994:    let seed = hex_to_seed(hex)?;
+2995:    VerifyingKey::from_bytes(&seed).map_err(|e| format!("��ȿ���� ���� ����Ű: {e}"))
+2996:}
+2997:
+2998:fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
+2999:    // �� ���� ��(2026-09-10) ? ����Ʈ�� �ڸ��� �ʴ´�. `gputeer_crypto::hex`
+3000:    //   �� �� ����Ʈ�� �����Ƿ� ���� ��踦 ���� �� ����.
+3001:    gputeer_crypto::hex::decode_even(hex).map_err(|e| e.to_string())
+3002:}
+3003:
+3004:#[cfg(test)]
+3005:mod tests {
+3006:    use super::*;
+3007:
+3008:    /// �� �ڵ��� ���� �˼�(2026-08-19, p108) ���� ? `u32_from_stored()`
+3009:    /// �� ������ fail closed �ϴ���(���˻� `as u32` ĳ��������
+3010:    /// �ǵ��ư��� �ʴ���) ��谪���� �����Ѵ�.
+3011:    #[test]
+3012:    fn u32_from_stored_accepts_max_total_duration_seconds_default() {
+3013:        assert_eq!(
+3014:            u32_from_stored(86_400, "max_total_duration_seconds"),
+3015:            Ok(86_400)
+3016:        );
+3017:    }
+3018:
+3019:    #[test]
+3020:    fn u32_from_stored_accepts_u32_max() {
+3021:        assert_eq!(u32_from_stored(u64::from(u32::MAX), "x"), Ok(u32::MAX));
+3022:    }
+3023:
+3024:    #[test]
+3025:    fn u32_from_stored_rejects_values_above_u32_max_instead_of_truncating() {
+3026:        let result = u32_from_stored(u64::from(u32::MAX) + 1, "x");
+3027:        assert!(
+3028:            result.is_err(),
+3029:            "u32::MAX �� �Ѵ� ���� ������ �߸��� �ʰ� �źεž� �Ѵ�: {result:?}"
+3030:        );
+3031:    }
+3032:
+3033:    #[test]
+3034:    fn revoke_notice_uses_issued_lease_identity_and_epoch() {
+3035:        let key = SigningKey::from_bytes(&[7u8; 32]);
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import json; from pathlib import Path; p=Path('crates/coordinator/src/lib.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for i in range(2838,2990))))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import json; from pathlib import Path; p=Path('crates/agent/src/lib.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for i in range(2194,2362))))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import json; from pathlib import Path; p=Path('docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md'); a=p.read_text(encoding='utf-8').splitlines(); print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for i in range(955,1072))))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 3471ms:
+"956:# \uacb0\ud568 \u3251 \u2014 \u246f \ud655\uc7a5\uc758 \uad00\ubb38\uc774 lane \uc870\uac74\uc744 \ud2c0\ub9ac\uac8c \uadf8\ub838\ub2e4 (\uc7ac\uac80\uc218 15)\n957:\n958:## 1. \uc704\uce58\n959:```text\n960:crates/coordinator/src/lib.rs   parse_config_from_args \uc758 \u246f \ud655\uc7a5 \uad00\ubb38 \u00b7 Flags::bool_flag\n961:```\n962:\n963:## 2. \uc7ac\ud604 (\uc7ac\uac80\uc218 15 \uac00 \uc900 \uc785\ub825)\n964:```text\n965:Resume + \uc800\uc7a5\ub41c \uc608\uc57d    --resume-protocol true --lease-db <db> --grant-from-control-db c\n966:                        (--stored-grant-* \uc5c6\uc74c) -> STORED_LANE_ID_MISSING\n967:                        \uadf8\ub7f0\ub370 Resume \uc740 \uc800\uc7a5\ub41c \uc608\uc57d \ubd84\uae30\ubcf4\ub2e4 **\uba3c\uc800** \ubc18\ud658\ud55c\ub2e4.\n968:                        \uc4f0\uc9c0\ub3c4 \uc54a\uc744 \uc2dd\ubcc4\uc790\ub97c \uc694\uad6c\ud558\ub294 \uac83\uc774\ub2e4\n969:--renewed-fence-epoch   --lease-db \uc5c6\ub294 \uc800\uc7a5\ub41c \uc608\uc57d lane \uc758 \uac31\uc2e0 \uacbd\ub85c\uac00 \uc774 \uac12\uc744\n970:                        **\uc2e4\uc81c\ub85c \uc4f4\ub2e4**. \uadf8\ub7f0\ub370 \"\uc800\uc7a5\ub41c \uc608\uc57d lane \uc740 \uc801\uc6a9 \uc548 \ud55c\ub2e4\"\n971:                        \ubaa9\ub85d\uc5d0 \ub123\uc5b4 \uc2dc\uc791\ubd80\ud130 \uac70\ubd80\ud588\ub2e4\n972:\uc798\ubabb\ub41c \ubd88\ub9ac\uc5b8           --corrupt-own-signature tru -> \uc624\ub958 \uc5c6\uc774 false. \ud0a4\ub294 \uc77d\ud614\uc73c\ub2c8\n973:                        UNKNOWN_FLAGS \ub3c4 \ud1b5\uacfc\ud55c\ub2e4 \u2014 **\ubd80\uc815 \ud14c\uc2a4\ud2b8\ub97c \uc870\uc6a9\ud788 \ubb34\ub825\ud654**\n974:\uc870\uac74\ubd80 \uc801\uc6a9             --neighbor-report-db \ub9cc \uc8fc\uace0 \uc2e0\uace0 \uae30\ub300\uac12 0 -> \uc800\uc7a5\uc18c\ub97c \uc548 \uc5f0\ub2e4\n975:                        \ub808\uac70\uc2dc lane \uc758 --stored-grant-ttl-ms -> \uc4f0\ub294 \uacf3\uc774 \uc800\uc7a5\ub41c \uc608\uc57d \ubd84\uae30\ubfd0\n976:\ud14c\uc2a4\ud2b8 \uacf5\ubc31             STORED_LANE_ID_MISSING \uc744 \uc9c0\ud0a4\ub294 \ud14c\uc2a4\ud2b8\uac00 \uc5c6\ub2e4\n977:```\n978:\n979:## 3. \uc2e4\uce21\n980:\u2605\u2605 **\ub0b4\uac00 \ud2c0\ub9b0 \uc774\uc720** \u2014 \uc7ac\uac80\uc218 14 \uc758 \ud45c\ub97c **\uadf8\ub300\ub85c \uc62e\uacbc\ub2e4.** \ubaa9\ub85d\uc758 \uac01 \ud544\ub4dc\uac00\n981:  \uc138\uc158\uc758 \ub4a4 \ub2e8\uacc4(\uac31\uc2e0\u00b7revoke)\uc5d0\uc11c \uc4f0\uc774\ub294\uc9c0 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4. **\"\ucd08\uae30 Grant \uc870\ub9bd\uc5d0\uc11c\n982:  \ubb34\uc2dc\ub41c\ub2e4\" \uc640 \"\uc138\uc158 \uc804\uccb4\uc5d0\uc11c \ubb34\uc2dc\ub41c\ub2e4\" \ub97c \ud63c\ub3d9\ud588\ub2e4.**\n983:\u2605 \uadf8\ub9ac\uace0 \"\uc774\ub984 \uac80\uc0ac\" \uac00 \ud574\uacb0\ud558\ub294 \uac83\uc740 **\ubaa8\ub974\ub294 \uc774\ub984**\ubfd0\uc774\ub2e4. \uc54c\ub824\uc9c4 \uc774\ub984\uc758\n984:  **\uc798\ubabb\ub41c \uac12**, **\uc870\uac74\uc774 \uc548 \ub9de\uc544 \uc548 \uc4f0\uc774\ub294 \uac12**\uc740 \uc5ec\uc804\ud788 \uc870\uc6a9\ud788 \uc0ac\ub77c\uc9c4\ub2e4 \u2014\n985:  \"\uc870\uc6a9\ud55c \ubb34\uc2dc\ub97c \uc804\ubd80 \ud574\uacb0\ud588\ub2e4\" \ub85c \uc124\uba85\ud558\uba74 \uacfc\uc7a5\uc774\ub2e4.\n986:\n987:## 4. \uc704\ud5d8\ub3c4\n988:- [x] \uac00\uc6a9\uc131 \uc800\ud558 \u2014 \uc815\uc0c1 \ud638\ucd9c(Resume + control DB, \uc800\uc7a5\uc18c \uc5c6\ub294 \uac31\uc2e0)\uc744 \ub9c9\ub294\ub2e4\n989:- [x] \uac80\uc99d \uc2e0\ub8b0\ub3c4 \uc800\ud558 \u2014 \uc798\ubabb\ub41c \ubd88\ub9ac\uc5b8\uc774 \ubd80\uc815 \ud14c\uc2a4\ud2b8\ub97c \ubb34\ub825\ud654\ud55c\ub2e4\n990:\n991:## 6. \uc870\uce58\n992:- [ ] \uace0\uce58\uae30 \uc804\uc5d0 \uc4f4\ub2e4 (\uc7ac\uac80\uc218 15 \uc9c1\ud6c4)\n993:- [x] \ud544\ub4dc\ub9c8\ub2e4 **\uc2e4\uc81c \uc0ac\uc6a9\ucc98**\ub97c \ubd24\ub2e4(`coordinator/src/lib.rs`):\n994:  ```text\n995:  \ud56d\uc0c1 \ubb34\uc2dc 6    manifest-file \u00b7 corrupt-manifest-* \u00b7 corrupt-lease-signature \u00b7\n996:                 expire-lease \u00b7 lease-ttl-ms \u2014 \ub808\uac70\uc2dc issue_grant\u00b7issue_lease\u00b7\n997:                 load_signed_manifest \uc5d0\uc11c\ub9cc \uc77d\ud78c\ub2e4\n998:  --lease-db \uc788\uc744 \ub54c\ub9cc \ubb34\uc2dc 3\n999:                 fence-epoch(\uc800\uc7a5\uc18c \uc5c6\uc744 \ub54c \uac31\uc2e0\uc758 \uae30\ub300 epoch, 1636\uc904) \u00b7\n1000:                 max-total-duration \u00b7 renewed-fence-epoch(build_renew_result \uc758\n1001:                 \uc800\uc7a5\uc18c \uc5c6\ub294 \uac08\ub798)\n1002:  ```\n1003:- [x] Resume \uc774\uba74 \ud30c\uc11c\uc758 \uc800\uc7a5\ub41c \uc608\uc57d \uac80\uc0ac\ub97c \uac74\ub108\ub6f0\uace0, **\uc2dc\uc791 \uad00\ubb38**\uc774\n1004:  Resume + control DB \ub97c \uac70\ubd80\ud55c\ub2e4 \u2014 Resume \uc740 control DB \ub97c \uc544\ubb34\ub3c4 \uc548 \uc5f0\ub2e4\n1005:- [x] `bool_flag` \uac00 true/false \uac00 \uc544\ub2cc \uac12\uc744 \ub530\ub85c \uc801\uc5b4 \ub450\uace0 `INVALID_BOOL` \ub85c \uac70\ubd80\n1006:  (Coordinator\u00b7Agent) \u2014 \ud638\ucd9c\ubd80 33\uacf3\uc744 \uace0\uce58\uc9c0 \uc54a\uace0 \ud55c \uacf3\uc5d0\uc11c\n1007:- [x] `NEEDS_EXPECT`(\uae30\ub300\uac12 \uc5c6\ub294 `--neighbor-report-db`) \u00b7 `STORED_LANE_ONLY`\n1008:  (\ub808\uac70\uc2dc lane \uc758 `--stored-grant-*`) \u00b7 `STORED_LANE_ID_MISSING` \ud14c\uc2a4\ud2b8\n1009:  \u2605 \uc774\uc6c3 \uc2e0\uace0 \uaddc\uce59\uc740 selftest\u00b7\ud14c\uc2a4\ud2b8\uc758 `--neighbor-report-db` \uc5ec\uc12f \uacf3\uc774 \uc804\ubd80\n1010:    \uae30\ub300\uac12\uacfc \uac19\uc774 \uc900\ub2e4\ub294 \uac83\uc744 **\uba3c\uc800 \ud655\uc778\ud558\uace0** \ucf30\ub2e4\n1011:- [x] \ubba4\ud14c\uc774\uc158 **8/8** \uc7a1\ud798. \u2605 \ud55c \uc885\uc740 \uccab \uc2e4\ud589\uc5d0\uc11c **\uc801\uc6a9\uc870\ucc28 \uc548 \ub410\ub2e4** \u2014 \uce58\ud658\n1012:  \ubb38\uc7a5\uc774 \ud30c\uc77c\uc5d0 \ub450 \ubc88 \uc788\uc5c8\ub2e4. \uc2e4\ud589\uae30\uac00 \"NOT APPLIED\" \ub85c \ub530\ub85c \ubcf4\uace0\ud574 \uc7a1\ud78c \uac83\uc73c\ub85c\n1013:  \uc138\uc9c0 \uc54a\uc558\uace0, \ubb38\ub9e5\uc744 \ubd99\uc5ec \ub2e4\uc2dc \ub3cc\ub838\ub2e4\n1014:- [x] selftest **97/97** \u2014 \u3251 \ub4a4\uc5d0\ub3c4 \uae30\uc874 \uc2dc\ub098\ub9ac\uc624\ub97c \uc548 \ub9c9\ub294\ub2e4(\uc774\ubc88\uc5d0\ub294 selftest \uc778\uc790\ub97c\n1015:  \uace0\uce58\uc9c0 \uc54a\uc558\ub2e4)\n1016:- \u2605 **\ub0b4 \ud14c\uc2a4\ud2b8\uac00 \uc800\uc7a5\uc18c \uc548\uc5d0 \ud30c\uc77c\uc744 \ub0a8\uacbc\ub2e4.** Resume \ud14c\uc2a4\ud2b8\ub9cc `run()` \uc744 \uc2e4\uc81c\ub85c\n1017:  \ubd80\ub974\ub294\ub370 `--lease-db lease.sqlite3` \uc0c1\ub300 \uacbd\ub85c\ub97c \uc92c\uace0, `run()` \uc740 \uc2dc\uc791 \uad00\ubb38\ubcf4\ub2e4\n1018:  **\uba3c\uc800** Lease \uc800\uc7a5\uc18c\ub97c \uc5f0\ub2e4 -> `crates/coordinator/lease.sqlite3`. `git status`\n1019:  \uc5d0\uc11c \ubd24\ub2e4. \uc784\uc2dc \ub514\ub809\ud130\ub9ac \uacbd\ub85c\ub85c \uace0\uce58\uace0 \ub5a8\uc5b4\uc9c4 \ud30c\uc77c\uc744 \uc9c0\uc6e0\ub2e4\n1020:- [ ] **\uc548 \ud55c \uac83 \u2014 \uac19\uc740 \uc720\ud615 \uc804\uccb4.** \uc774\ub984 \u00b7 \ubd88\ub9ac\uc5b8 \u00b7 \uba87 \uac00\uc9c0 \uc870\uac74 \uaddc\uce59\uc740 \ub9c9\uc558\uc9c0\ub9cc,\n1021:  \uc22b\uc790 \ud50c\ub798\uadf8\uac00 **\uc870\uac74\uc774 \uc548 \ub9de\uc544 \uc548 \uc4f0\uc774\ub294** \uacbd\uc6b0(\uc608: \uac31\uc2e0\uc744 \uc548 \ud558\ub294\ub370\n1022:  `--renew-rounds`)\ub294 \uc804\uc218\ub85c \ub9c9\uc9c0 \uc54a\uc558\ub2e4. \"\uc870\uc6a9\ud55c \ubb34\uc2dc\ub97c \uc804\ubd80 \ud574\uacb0\" \uc774 \uc544\ub2c8\ub2e4\n1023:\n1024:---\n1025:\n1026:# \uacb0\ud568 \u3252 \u2014 \ubd88\ub9ac\uc5b8 \uac80\uc0ac\ub97c \uc911\ubcf5 \ud0a4\uac00 \ud53c\ud574 \uac00\uace0, \u3251 \uc758 \uacbd\uacc4\ub97c \ud14c\uc2a4\ud2b8\uac00 \ub2e4 \ubabb \uace0\uc815\ud55c\ub2e4 (\uc7ac\uac80\uc218 18)\n1027:\n1028:\u2605 \uac19\uc740 \ub0a0 \uc7ac\uac80\uc218 17(Agent \ubaa8\ub974\ub294 \ud50c\ub798\uadf8)\uc740 **ACCEPTED** \uc600\ub2e4. \ub2e4\ub9cc \ub2e8\uc11c \ub458\uc744 \ub0a8\uacbc\ub2e4 \u2014\n1029:  \uc911\ubcf5 \ud0a4\ub294 \uc55e \uac12\uc744 \ubc84\ub9ac\uace0(`parse_flags` \uc758 `map.insert`), `--` \ub85c \uc2dc\uc791\ud558\ub294 \ud1a0\ud070\ub3c4\n1030:  \uac12\uc73c\ub85c \ubc1b\ub294\ub2e4. \u2605 selftest \uc2dc\ub098\ub9ac\uc624 34 \uac00 \uc911\ubcf5 \ub36e\uc5b4\uc4f0\uae30\ub97c **\uc2e4\uc81c\ub85c \uc4f4\ub2e4**\n1031:  (`coordinator_agent_selftest.rs:2533` \uc758 `wrong_holder_id`) \u2014 \uc911\ubcf5\uc744 \ud1b5\uc9f8\ub85c\n1032:  \uac70\ubd80\ud558\uba74 \uadf8 \uc2dc\ub098\ub9ac\uc624\uac00 \uae68\uc9c4\ub2e4.\n1033:\n1034:## 1. \uc704\uce58\n1035:```text\n1036:crates/coordinator/src/lib.rs \u00b7 crates/agent/src/lib.rs   parse_flags \u00b7 bool_flag\n1037:crates/coordinator/tests/stored_lane_flags.rs\n1038:```\n1039:\n1040:## 2. \uc7ac\ud604 (\uc7ac\uac80\uc218 18)\n1041:```text\n1042:\uc911\ubcf5 \ud0a4   --corrupt-own-signature tru --corrupt-own-signature false\n1043:          -> \uc55e \uac12\uc774 map.insert \ub85c \uc0ac\ub77c\uc838 bool_flag \ub294 false \ub9cc \ubcf8\ub2e4. INVALID_BOOL \uc5c6\uc74c\n1044:          (Agent: --send-attempt-report tru --send-attempt-report false \ub3c4 \uac19\ub2e4)\n1045:\ud14c\uc2a4\ud2b8    \"\ud56d\uc0c1 \ubb34\uc2dc 6\" \uc744 --lease-db **\uc5c6\uc774** \uac70\ubd80\ud558\ub294\uc9c0 \uc548 \uc7b0\ub2e4 \u2014 9\uac1c\ub97c \uc804\ubd80\n1046:          \"--lease-db \uc788\uc744 \ub54c\ub9cc\" \uc73c\ub85c \ubc14\uafd4\ub3c4 \ud1b5\uacfc\ud55c\ub2e4\n1047:          STORED_LANE_ID_MISSING \uc740 job \ub9cc, STORED_LANE_ONLY \ub294 ttl \ub9cc \uc7b0\ub2e4\n1048:```\n1049:\uae30\ub85d\ub9cc \ud560 \uc794\uc5ec(\uac19\uc740 \uc720\ud615 \u2014 \uc804\uc218\ub85c \ub9c9\uc9c0 \uc54a\ub294\ub2e4\uace0 \uc774\ubbf8 \uc801\uc5c8\ub2e4):\n1050:```text\n1051:--renew-extension-ms   \uc800\uc7a5\uc18c \uc5c6\ub294 \uac31\uc2e0\uc5d0\uc11c 1\ucd08\ub97c \uc918\ub3c4 **\ud558\ub4dc\ucf54\ub529\ub41c 60\ucd08**\uac00 \uc4f0\uc778\ub2e4\n1052:                       (coordinator/lib.rs:2184\u00b72214)\n1053:Resume + heartbeat     --expect-heartbeats \u00b7 --liveness-db \ub97c \ubc1b\uc544 \ub450\uace0 \uc218\uc2e0\u00b7\uc800\uc7a5\uc18c\uac00 \uc5c6\ub2e4\n1054:--do-renew false --renew-rounds 7 \u00b7 revoke \uc5c6\ub294 --revoke-delay-ms\n1055:```\n1056:\n1057:## 4. \uc704\ud5d8\ub3c4\n1058:- [x] \uac80\uc99d \uc2e0\ub8b0\ub3c4 \uc800\ud558 \u2014 \uc911\ubcf5 \ud0a4\ub85c \ubd80\uc815 \ud14c\uc2a4\ud2b8\ub97c \ubb34\ub825\ud654\ud560 \uc218 \uc788\ub2e4\n1059:\n1060:## 6. \uc870\uce58\n1061:- [ ] \uace0\uce58\uae30 \uc804\uc5d0 \uc4f4\ub2e4 (\uc7ac\uac80\uc218 18 \uc9c1\ud6c4)\n1062:- [x] `parse_flags` \uac00 **\ub36e\uc5b4\uc368\uc9c4 \uc55e \uac12**\uc744 \ub530\ub85c \ubaa8\uc73c\uace0, `bool_flag` \uac00 \uadf8\uac83\uae4c\uc9c0\n1063:  \uac80\uc0ac\ud55c\ub2e4(Coordinator\u00b7Agent \uac19\uc740 \ubaa8\uc591). **\ub9c8\uc9c0\ub9c9 \uac12\uc744 \uc4f0\ub294 \uaddc\uce59\uc740 \uadf8\ub300\ub85c**\ub2e4 \u2014\n1064:  \uc911\ubcf5\uc744 \ud1b5\uc9f8\ub85c \uac70\ubd80\ud558\uba74 selftest 34 \uac00 \uae68\uc9c4\ub2e4\n1065:- [x] \uacbd\uacc4 \ud14c\uc2a4\ud2b8 \ub137 \u2014 \uc911\ubcf5 \ub4a4\uc5d0 \uc228\uc740 \uc798\ubabb\ub41c \ubd88\ub9ac\uc5b8(\ub450 \ud30c\uc11c) \u00b7 \"\ud56d\uc0c1 \ubb34\uc2dc 6\" \uc744\n1066:  `--lease-db` \uc5c6\uc774\ub3c4 \uac70\ubd80 \u00b7 \uc2dd\ubcc4\uc790 \ub204\ub77d \uc14b \uac01\uac01 \u00b7 `STORED_LANE_ONLY` \ub124 \uc774\ub984 \uac01\uac01.\n1067:  \uc911\ubcf5 \ud14c\uc2a4\ud2b8\uc5d0\ub294 **\ub300\uc870\uad70**(\uc62c\ubc14\ub978 \uac12\uc758 \uc911\ubcf5\uc740 \ubc1b\uace0 \ub9c8\uc9c0\ub9c9 \uac12\uc744 \uc4f4\ub2e4)\uc744 \ubd99\uc600\ub2e4\n1068:- [x] \ubba4\ud14c\uc774\uc158 **4/4** \u00b7 selftest **97/97**\n1069:- [ ] **\uc548 \ud55c \uac83** \u2014 \ubd88\ub9ac\uc5b8\uc774 \uc544\ub2cc \ud0a4(\uc22b\uc790\u00b7\ubb38\uc790\uc5f4)\uc758 \uc55e \uac12\uc740 \uc5ec\uc804\ud788 \ub9c8\uc9c0\ub9c9 \uac12\uc5d0\n1070:  \ub36e\uc778\ub2e4. \uadf8 \uac12\uc774 **\uc798\ubabb\ub41c \uac12**\uc774\uc5b4\ub3c4 \uac80\uc0ac\ud558\uc9c0 \uc54a\ub294\ub2e4. \uae30\ub85d\ub9cc \ud55c \uc794\uc5ec \uc14b(\uc704 2. \uc7ac\ud604)\ub3c4 \uadf8\ub300\ub85c\ub2e4\n1071:\n1072:---"
+
+ succeeded in 3623ms:
+"2839:struct Flags(\n2840:    std::collections::HashMap<String, String>,\n2841:    std::cell::RefCell<std::collections::HashSet<String>>,\n2842:    // \u2605 \uc138 \ubc88\uc9f8 \uce78 \u2014 `true`/`false` \uac00 \uc544\ub2cc \ubd88\ub9ac\uc5b8 \uac12. `--x tru` \uac00 \uc870\uc6a9\ud788\n2843:    //   false \uac00 \ub418\uba74 \ubd80\uc815 \ud14c\uc2a4\ud2b8\uac00 \ubb34\ub825\ud654\ub41c\ub2e4(\uc7ac\uac80\uc218 15, \uacb0\ud568 \u3251).\n2844:    std::cell::RefCell<Vec<String>>,\n2845:    // \u2605 \ub124 \ubc88\uc9f8 \uce78 \u2014 \uac19\uc740 \ud0a4\ub97c \ub450 \ubc88 \uc92c\uc744 \ub54c **\ub36e\uc5b4\uc368\uc9c4 \uc55e \uac12**(\uacb0\ud568 \u3252,\n2846:    //   \uc7ac\uac80\uc218 18). \ub9c8\uc9c0\ub9c9 \uac12\uc744 \uc4f0\ub294 \uaddc\uce59\uc740 \uadf8\ub300\ub85c \ub454\ub2e4(selftest 34 \uac00 \uc4f4\ub2e4).\n2847:    //   \ub2e4\ub9cc `--x tru --x false` \uc758 `tru` \uac00 \uac80\uc0ac \uc804\uc5d0 \uc0ac\ub77c\uc9c0\uba74 \uc548 \ub41c\ub2e4.\n2848:    Vec<(String, String)>,\n2849:);\n2850:\n2851:impl Flags {\n2852:    /// \uac12\uc744 \uc77d\uace0 **\uc77d\uc5c8\ub2e4\uace0 \uc801\ub294\ub2e4.**\n2853:    fn get(&self, key: &str) -> Option<&String> {\n2854:        self.1.borrow_mut().insert(key.to_string());\n2855:        self.0.get(key)\n2856:    }\n2857:\n2858:    /// \ud55c \ubc88\ub3c4 \uc77d\ud788\uc9c0 \uc54a\uc740 \ud0a4 \u2014 \uc774\ub984\uc21c.\n2859:    fn unread(&self) -> Vec<String> {\n2860:        let read = self.1.borrow();\n2861:        let mut keys: Vec<String> = self\n2862:            .0\n2863:            .keys()\n2864:            .filter(|key| !read.contains(*key))\n2865:            .cloned()\n2866:            .collect();\n2867:        keys.sort();\n2868:        keys\n2869:    }\n2870:\n2871:    fn require(&self, key: &str) -> Result<String, String> {\n2872:        self.get(key)\n2873:            .cloned()\n2874:            .ok_or_else(|| format!(\"\ud544\uc218 \uc778\uc790 \ub204\ub77d: {key}\"))\n2875:    }\n2876:\n2877:    /// \uac12\uc774 \uc788\ub294 boolean \ud50c\ub798\uadf8(`--flag true`). \uc548 \uc8fc\uba74 `false`.\n2878:    /// \ud14c\uc2a4\ud2b8 \uc804\uc6a9 \uac70\ubd80 \uacbd\ub85c \ud50c\ub798\uadf8(\ub2e8\uacc4 5)\uc5d0\ub9cc \uc4f4\ub2e4 \u2014 \ub2e4\ub978 \ubaa8\ub4e0\n2879:    /// \ud50c\ub798\uadf8\ub294 \uc5ec\uc804\ud788 \ud544\uc218 \uac12\uc744 \uac00\uc9c4\ub2e4(`require`).\n2880:    fn bool_flag(&self, key: &str) -> bool {\n2881:        for (_, earlier) in self.3.iter().filter(|(k, _)| k == key) {\n2882:            if earlier != \"true\" && earlier != \"false\" {\n2883:                self.2.borrow_mut().push(format!(\"{key}={earlier}\"));\n2884:            }\n2885:        }\n2886:        match self.get(key).map(String::as_str) {\n2887:            None | Some(\"false\") => false,\n2888:            Some(\"true\") => true,\n2889:            Some(other) => {\n2890:                self.2.borrow_mut().push(format!(\"{key}={other}\"));\n2891:                false\n2892:            }\n2893:        }\n2894:    }\n2895:\n2896:    /// `true`/`false` \uac00 \uc544\ub2c8\uc5c8\ub358 \ubd88\ub9ac\uc5b8 \uac12\ub4e4.\n2897:    fn bad_bools(&self) -> Vec<String> {\n2898:        self.2.borrow().clone()\n2899:    }\n2900:\n2901:    /// \uc815\uc218 \ud50c\ub798\uadf8. \uc548 \uc8fc\uba74 `0`(fence_epoch \uc758 \uccab \ubc1c\uae09 \uae30\ubcf8\uac12 \u2014\n2902:    /// `FenceWatermark` \ub294 0 \uc5d0\uc11c \uc2dc\uc791\ud558\ubbc0\ub85c `0` \uc740 \ud56d\uc0c1 \uc720\ud6a8\ud55c \uccab\n2903:    /// epoch \ub2e4).\n2904:    fn u64_flag(&self, key: &str) -> Result<u64, String> {\n2905:        match self.get(key) {\n2906:            None => Ok(0),\n2907:            Some(v) => v\n2908:                .parse::<u64>()\n2909:                .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\")),\n2910:        }\n2911:    }\n2912:\n2913:    fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {\n2914:        match self.get(key) {\n2915:            None => Ok(None),\n2916:            Some(v) => v\n2917:                .parse::<u64>()\n2918:                .map(Some)\n2919:                .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\")),\n2920:        }\n2921:    }\n2922:\n2923:    /// \ubc18\ubcf5 Lease \uac31\uc2e0(2026-08-19) \u2014 \uc548 \uc8fc\uba74 `default`(\uc655\ubcf5 \ud69f\uc218).\n2924:    /// \uae30\ubcf8\uac12 1\uc740 \uae30\uc874 \ub2e8\uc77c \uc655\ubcf5 \uc2dc\ub098\ub9ac\uc624\uc640 \ub3d9\uc77c\ud558\uac8c \ub3d9\uc791\ud55c\ub2e4.\n2925:    fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {\n2926:        match self.get(key) {\n2927:            None => Ok(default),\n2928:            Some(v) => v\n2929:                .parse::<u32>()\n2930:                .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\")),\n2931:        }\n2932:    }\n2933:\n2934:    /// `max_total_duration_seconds`(2026-08-19) \u2014 \uc548 \uc8fc\uba74 `default`\n2935:    /// (\uae30\uc874 \ud558\ub4dc\ucf54\ub529 \uac12 86,400\ucd08 = 24\uc2dc\uac04\uacfc \ub3d9\uc77c, \ud68c\uadc0 \uc5c6\uc74c).\n2936:    fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {\n2937:        match self.get(key) {\n2938:            None => Ok(default),\n2939:            Some(v) => v\n2940:                .parse::<u64>()\n2941:                .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\")),\n2942:        }\n2943:    }\n2944:\n2945:    /// \u2605 \ud14c\uc2a4\ud2b8 \uc804\uc6a9 \u2014 `RenewOutcome` \uac15\uc81c \uc8fc\uc785(\ub2e8\uacc4 5). \uc548 \uc8fc\uba74 `None`\n2946:    ///   (\uc815\uc0c1 \ud310\uc815 \uc0ac\uc6a9).\n2947:    fn i32_opt_flag(&self, key: &str) -> Result<Option<i32>, String> {\n2948:        match self.get(key) {\n2949:            None => Ok(None),\n2950:            Some(v) => v\n2951:                .parse::<i32>()\n2952:                .map(Some)\n2953:                .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\")),\n2954:        }\n2955:    }\n2956:\n2957:    fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {\n2958:        match self.get(key) {\n2959:            None => Ok(None),\n2960:            Some(v) => v\n2961:                .parse::<u32>()\n2962:                .map(Some)\n2963:                .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\")),\n2964:        }\n2965:    }\n2966:}\n2967:\n2968:fn parse_flags(args: &[String]) -> Result<Flags, String> {\n2969:    let mut map = std::collections::HashMap::new();\n2970:    let mut earlier: Vec<(String, String)> = Vec::new();\n2971:    let mut i = 0;\n2972:    while i < args.len() {\n2973:        let key = &args[i];\n2974:        if !key.starts_with(\"--\") {\n2975:            return Err(format!(\"\ud50c\ub798\uadf8\uac00 \uc544\ub2cc \uc778\uc790: {key}\"));\n2976:        }\n2977:        let value = args\n2978:            .get(i + 1)\n2979:            .ok_or_else(|| format!(\"{key} \ub4a4\uc5d0 \uac12\uc774 \uc5c6\ub2e4\"))?;\n2980:        if let Some(previous) = map.insert(key.clone(), value.clone()) {\n2981:            earlier.push((key.clone(), previous));\n2982:        }\n2983:        i += 2;\n2984:    }\n2985:    Ok(Flags(map, Default::default(), Default::default(), earlier))\n2986:}\n2987:\n2988:fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {\n2989:    let bytes = hex_decode(hex)?;\n2990:    <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| \"seed \ub294 \uc815\ud655\ud788 32\ubc14\uc774\ud2b8\uc5ec\uc57c \ud55c\ub2e4\".into())"
+
+ succeeded in 3765ms:
+"2195:pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {\n2196:    let flags = parse_flags(args)?;\n2197:\n2198:    let config = AgentConfig {\n2199:        coordinator_addr: flags.require(\"--connect\")?,\n2200:        own_seed: hex_to_seed(&flags.require(\"--own-seed\")?)?,\n2201:        coordinator_verifying_key: hex_to_verifying_key(&flags.require(\"--peer-pubkey\")?)?,\n2202:        // \uc548 \uc8fc\uba74 None \u2014 Manifest \uac00 \uc2e4\ub824 \uc624\uba74 fail closed \ub85c \uac70\ubd80\ud55c\ub2e4.\n2203:        submitter_verifying_key: match flags.get(\"--submitter-pubkey\") {\n2204:            Some(hex) => Some(hex_to_verifying_key(hex)?),\n2205:            None => None,\n2206:        },\n2207:        execute_workload: flags.bool_flag(\"--i-understand-this-executes-untrusted-code\"),\n2208:        send_attempt_report: flags.bool_flag(\"--send-attempt-report\"),\n2209:        corrupt_heartbeat_fence: flags.bool_flag(\"--corrupt-heartbeat-fence\"),\n2210:        corrupt_heartbeat_coordinator: flags.bool_flag(\"--corrupt-heartbeat-coordinator\"),\n2211:        corrupt_heartbeat_device: flags.bool_flag(\"--corrupt-heartbeat-device\"),\n2212:        corrupt_hello_mode: flags.bool_flag(\"--corrupt-hello-mode\"),\n2213:        workload_cgroup_parent: flags.get(\"--workload-cgroup-parent\")\n2214:            .map(std::path::PathBuf::from),\n2215:        multi_agent: flags.bool_flag(\"--multi-agent\"),\n2216:        // \u2605 \ud30c\uc2f1 \uc2e4\ud328\ub97c 0 \uc73c\ub85c \uc811\uc9c0 \uc54a\ub294\ub2e4(2026-08-30 \ub3c5\ub9bd \uac80\uc218 3\ub77c\uc6b4\ub4dc).\n2217:        //   \uc798\ubabb \uc4f4 \uac12\uc774 \"\uac04\uaca9 \uc5c6\uc74c\" \uc73c\ub85c \uc870\uc6a9\ud788 \ubc14\ub00c\uba74, \uc6b4\uc601\uc790\ub294 \uac04\uaca9\uc744\n2218:        //   \uc92c\ub2e4\uace0 \ubbff\ub294\ub370 \uc2e4\uc81c\ub85c\ub294 \uc548 \uc900 \uc0c1\ud0dc\uac00 \ub41c\ub2e4.\n2219:        heartbeat_interval_ms: match flags.get(\"--heartbeat-interval-ms\") {\n2220:            Some(raw) => raw.parse::<u64>().map_err(|_| {\n2221:                format!(\"--heartbeat-interval-ms \ub97c \uc22b\uc790\ub85c \uc77d\uc9c0 \ubabb\ud588\ub2e4: {raw:?}\")\n2222:            })?,\n2223:            None => 0,\n2224:        },\n2225:        heartbeat_rounds: match flags.get(\"--heartbeat-rounds\") {\n2226:            Some(v) => v\n2227:                .parse()\n2228:                .map_err(|e| format!(\"--heartbeat-rounds \ud30c\uc2f1 \uc2e4\ud328: {e}\"))?,\n2229:            None => 0,\n2230:        },\n2231:        neighbor_report_rounds: match flags.get(\"--neighbor-report-rounds\") {\n2232:            Some(v) => v\n2233:                .parse()\n2234:                .map_err(|e| format!(\"--neighbor-report-rounds \ud30c\uc2f1 \uc2e4\ud328: {e}\"))?,\n2235:            None => 0,\n2236:        },\n2237:        // \u2605 heartbeat \uac04\uaca9\uacfc \uac19\uc740 \uc774\uc720\ub85c **\uc870\uc6a9\ud788 0 \uc73c\ub85c \ub5a8\uc5b4\ub728\ub9ac\uc9c0 \uc54a\ub294\ub2e4** \u2014\n2238:        //   \uc798\ubabb \uc4f4 \uac12\uc774 \"\uac04\uaca9 \uc5c6\uc74c\" \uc774 \ub418\uba74 \uc6b4\uc601\uc790\ub294 \uac04\uaca9\uc744 \uc92c\ub2e4\uace0 \ubbff\ub294\ub370\n2239:        //   \uc2e4\uc81c\ub85c\ub294 \uc548 \uc900 \uc0c1\ud0dc\uac00 \ub41c\ub2e4.\n2240:        neighbor_report_interval_ms: match flags.get(\"--neighbor-report-interval-ms\") {\n2241:            Some(raw) => raw.parse::<u64>().map_err(|_| {\n2242:                format!(\"--neighbor-report-interval-ms \ub97c \uc22b\uc790\ub85c \uc77d\uc9c0 \ubabb\ud588\ub2e4: {raw:?}\")\n2243:            })?,\n2244:            None => 0,\n2245:        },\n2246:        neighbor_report_target_node_id: flags.get(\"--neighbor-report-target\").cloned(),\n2247:        corrupt_neighbor_report_coordinator: flags\n2248:            .bool_flag(\"--corrupt-neighbor-report-coordinator\"),\n2249:        owner_panel_state: owner_panel::OwnerPanelState::new(),\n2250:        owner_panel_port: flags.get(\"--owner-panel-port\").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!(\"--owner-panel-port \ud30c\uc2f1 \uc2e4\ud328: {e}\"))?,\n2251:        // \uae30\ubcf8 256MiB. Job Object \ucee4\ubc0b \uc0c1\ud55c\uc774\ub77c VRAM \uc740 \ub300\ub7b5\n2252:        // `RAM \uc0c1\ud55c - 2000MiB` \ub85c \uac04\uc811 \uc81c\ud55c\ub41c\ub2e4(ADR-027) \u2014 \uc774 \uac12\uc740\n2253:        // \uc2e4\ud589 \uc790\uccb4\ub97c \uc99d\uba85\ud558\uae30 \uc704\ud55c \ucd5c\uc18c\uac12\uc774\uace0 \uc815\ucc45\uc774 \uc544\ub2c8\ub2e4.\n2254:        workload_commit_limit_bytes: flags\n2255:            .u64_opt_flag(\"--workload-commit-limit-bytes\")?\n2256:            .unwrap_or(256 * 1024 * 1024),\n2257:        coordinator_device_id: flags.require(\"--coordinator-device-id\")?,\n2258:        agent_device_id: flags.require(\"--agent-device-id\")?,\n2259:        corrupt_own_signature: flags.bool_flag(\"--corrupt-own-signature\"),\n2260:        expect_replay: flags.bool_flag(\"--expect-replay\"),\n2261:        do_renew: flags.bool_flag(\"--do-renew\"),\n2262:        renew_request_epoch_override: flags.u64_opt_flag(\"--renew-request-epoch-override\")?,\n2263:        corrupt_renew_request_signature: flags.bool_flag(\"--corrupt-renew-request-signature\"),\n2264:        fence_db_path: match flags.get(\"--fence-db\") {\n2265:            Some(v) => PathBuf::from(v),\n2266:            None => default_fence_db_path(),\n2267:        },\n2268:        checkpoint_root: match flags.get(\"--checkpoint-root\") {\n2269:            Some(v) => PathBuf::from(v),\n2270:            None => default_checkpoint_root(),\n2271:        },\n2272:        renew_rounds: flags.u32_flag_with_default(\"--renew-rounds\", 1)?,\n2273:        renew_delay_ms: flags.u64_flag_with_default(\"--renew-delay-ms\", 0)?,\n2274:        expect_revoke_after_round: flags.u32_opt_flag(\"--expect-revoke-after-round\")?,\n2275:        revoke_signer_id_override: flags.get(\"--revoke-signer-id\").cloned(),\n2276:        max_reconnect_attempts: flags.u32_flag_with_default(\"--max-reconnect-attempts\", 8)?,\n2277:        max_reconnect_duration_seconds: flags\n2278:            .u64_flag_with_default(\"--max-reconnect-duration-seconds\", 60)?,\n2279:        retry_base_ms: flags.u64_flag_with_default(\"--retry-base-ms\", 250)?,\n2280:        retry_cap_ms: flags.u64_flag_with_default(\"--retry-cap-ms\", 5_000)?,\n2281:        connection_attempt: 0,\n2282:        reconnect_enabled: !flags.bool_flag(\"--disable-reconnect\"),\n2283:        recover_ambiguous_renew_from_durable_lease: flags\n2284:            .bool_flag(\"--recover-ambiguous-renew-from-durable-lease\"),\n2285:        drop_after_renew_request_once: flags.bool_flag(\"--drop-after-renew-request-once\"),\n2286:        reuse_renew_nonce_after_reconnect: flags.bool_flag(\"--reuse-renew-nonce-after-reconnect\"),\n2287:        resume_protocol: flags.bool_flag(\"--resume-protocol\"),\n2288:        session_id: flags.get(\"--session-id\")\n2289:            .cloned()\n2290:            .unwrap_or_else(|| \"resume-session\".into()),\n2291:        resume_lease_id: flags.get(\"--resume-lease-id\")\n2292:            .cloned()\n2293:            .unwrap_or_default(),\n2294:        resume_job_id: flags.get(\"--resume-job-id\").cloned().unwrap_or_default(),\n2295:        resume_attempt_id: flags.get(\"--resume-attempt-id\")\n2296:            .cloned()\n2297:            .unwrap_or_default(),\n2298:        resume_fence_epoch: flags.u64_flag_with_default(\"--resume-fence-epoch\", 0)?,\n2299:    };\n2300:\n2301:    // \u2605 \uacb0\ud568 \u246f \ud655\uc7a5(2026-09-10) \u2014 \ubaa8\ub974\ub294 \uc774\ub984\uc744 \ubc1b\uc544 \ub450\uc9c0 \uc54a\ub294\ub2e4.\n2302:    let bad_bools = flags.bad_bools();\n2303:    if !bad_bools.is_empty() {\n2304:        return Err(format!(\n2305:            \"STARTUP_REFUSED: INVALID_BOOL \u2014 {bad_bools:?} \ub294 true \ub3c4 false \ub3c4 \uc544\ub2c8\ub2e4. \\\n2306:             \uc870\uc6a9\ud788 false \ub85c \uc77d\uc73c\uba74 \ucf20 \uc904 \uc548 \uac83\uc774 \uc548 \ucf1c\uc9c4\ub2e4\"\n2307:        ));\n2308:    }\n2309:    let unread = flags.unread();\n2310:    if !unread.is_empty() {\n2311:        return Err(format!(\n2312:            \"STARTUP_REFUSED: UNKNOWN_FLAGS \u2014 \uc774 \uba85\ub839\uc774 \uc77d\uc9c0 \uc54a\ub294 \ud50c\ub798\uadf8 {unread:?}. \\\n2313:             \uc624\ud0c0\uc774\uac70\ub098 \uc5c6\ub294 \uc124\uc815\uc774\ub2e4 \u2014 \ubc1b\uc544 \ub450\uba74 \ub9d0\uc5c6\uc774 \ubc84\ub824\uc9c4\ub2e4\"\n2314:        ));\n2315:    }\n2316:    Ok(config)\n2317:}\n2318:\n2319:/// CLI \uc778\uc790\ub97c [`parse_config_from_args`] \ub85c \uc124\uc815\uc73c\ub85c \ubc14\uafbc \ub4a4 \uc2e4\ud589\ud55c\ub2e4.\n2320:/// \ud30c\uc2f1 \uc790\uccb4\ub294 \uc774 \ud568\uc218\uac00 \ud558\uc9c0 \uc54a\ub294\ub2e4.\n2321:///\n2322:/// `crates/coordinator/src/lib.rs::run_from_args` \uc640 \uac19\uc740 \uc774\uc720\ub85c\n2323:/// `crates/cli` \ub300\uc2e0 \uc5ec\uae30(Agent \uc2a4\ud2b8\ub9bc)\uac00 \uc778\uc790 \uc758\ubbf8\ub97c \uc815\uc758\ud55c\ub2e4.\n2324:///\n2325:/// \u2605 \uc774 \ud568\uc218 \uc790\uccb4\uc5d0\ub294 \uad00\ubb38\uc774 \uc5c6\ub2e4 \u2014 \uc124\uc815\uc744 [`run`] \uc5d0 \ub118\uae38 \ubfd0\uc774\uace0\n2326:///   \uad00\ubb38\uc740 \uac70\uae30\uc5d0 \uc788\ub2e4. \ub530\ub77c\uc11c selftest \ub3c4 `run()` \uc758 \uad00\ubb38\uc740 \uc2e4\uc81c\ub85c\n2327:///   \uc2e4\ud589\ud55c\ub2e4. \ub77c\uc774\ube0c\ub7ec\ub9ac \ud638\ucd9c\uc790\uc5d0\uac8c\ub9cc \ubcf4\uc774\ub294 \uac83\uc740 multi-agent lane\n2328:///   \uc9c4\uc785\uc810\uc758 \uad00\ubb38\uc774\ub2e4.\n2329:pub fn run_from_args(args: &[String]) -> Result<(), String> {\n2330:    let config = parse_config_from_args(args)?;\n2331:\n2332:    run(config)\n2333:}\n2334:\n2335:/// `--fence-db` \ub97c \uc548 \uc8fc\uba74 \ub9e4 \ud504\ub85c\uc138\uc2a4\ub9c8\ub2e4 \uace0\uc720\ud55c \uc784\uc2dc SQLite \ud30c\uc77c\uc744\n2336:/// \ub9cc\ub4e0\ub2e4 \u2014 \uae30\uc874(\uc7ac\uc2dc\uc791 \uc2dc\ub098\ub9ac\uc624\uac00 \uc544\ub2cc) selftest \uc2dc\ub098\ub9ac\uc624\ub294 \ud56d\uc0c1\n2337:/// \ube48 watermark \uc5d0\uc11c \uc2dc\uc791\ud574\uc57c \ud558\ubbc0\ub85c, PID \ub97c \uc7ac\uc0ac\uc6a9\ud574\ub3c4 \uc548\uc804\ud558\ub3c4\ub85d\n2338:/// \ubc1c\uae09 \uc2dc\uac01(\ub098\ub178\ucd08)\ub3c4 \uc11e\ub294\ub2e4.\n2339:fn default_fence_db_path() -> PathBuf {\n2340:    let pid = std::process::id();\n2341:    let nanos = std::time::SystemTime::now()\n2342:        .duration_since(std::time::UNIX_EPOCH)\n2343:        .map(|d| d.as_nanos())\n2344:        .unwrap_or(0);\n2345:    std::env::temp_dir().join(format!(\"gputeer-fence-{pid}-{nanos}.sqlite3\"))\n2346:}\n2347:\n2348:/// `--checkpoint-root`\ub97c \uc0dd\ub7b5\ud55c \uae30\uc874 \ud638\ucd9c\ub3c4 \uc548\uc804\ud558\uac8c \ub3d9\uc791\ud558\ub3c4\ub85d\n2349:/// \ud504\ub85c\uc138\uc2a4\ubcc4 \uc784\uc2dc root\ub97c \ub9cc\ub4e0\ub2e4. selftest\uac00 root\ub97c \uac80\uc0ac\ud574\uc57c \ud558\ub294 \uacbd\uc6b0\uc5d0\ub294\n2350:/// \uba85\uc2dc\uc801\uc778 `--checkpoint-root`\ub97c \uc804\ub2ec\ud55c\ub2e4.\n2351:fn default_checkpoint_root() -> PathBuf {\n2352:    let pid = std::process::id();\n2353:    let nanos = std::time::SystemTime::now()\n2354:        .duration_since(std::time::UNIX_EPOCH)\n2355:        .map(|d| d.as_nanos())\n2356:        .unwrap_or(0);\n2357:    std::env::temp_dir().join(format!(\"gputeer-checkpoints-{pid}-{nanos}\"))\n2358:}\n2359:\n2360:/// \u2605 \ub450 \ubc88\uc9f8 \uce78\uc740 **\uc77d\uc740 \ud0a4**\ub2e4. \uc124\uc815\uc744 \ub2e4 \ub9cc\ub4e0 \ub4a4 \ud55c \ubc88\ub3c4 \uc548 \uc77d\ud78c \ud0a4\ub294 \uc774\n2361:///   \uba85\ub839\uc774 \ubaa8\ub974\ub294 \uc774\ub984\uc774\ub2e4 \u2014 Coordinator \ucabd\uacfc \uac19\uc740 \uc774\uc720(\uacb0\ud568 \u246f \ud655\uc7a5,\n2362:///   2026-09-10). \uc804\uc5d0\ub294 \uc624\ud0c0\uac00 \uc870\uc6a9\ud788 \uc0ac\ub77c\uc84c\ub2e4."
+
+codex
+불리언의 앞 값은 모두 보존·검사되지만, 숫자와 문자열은 여전히 마지막 값만 검증합니다. 보고서도 이 한계를 명시하고 있어 범위 전체를 닫았다는 주장은 아닙니다. 새 테스트는 지적된 경계를 각각 건드리고 있으며, 이제 기록만 한 두 사례의 실제 분기와 대조군 범위를 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command 'rg -n "renew_extension_ms|60_000|expect_heartbeats|liveness_db_path|resume_protocol|run_resume|build_renew_result" crates/coordinator/src/lib.rs' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import json; from pathlib import Path; p=Path('crates/coordinator/tests/stored_lane_flags.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for i in range(len(a))))); p=Path('crates/agent/tests/unknown_flags.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for i in range(len(a)))))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2138ms:
+"1://! \u2605\u2605 **coordinator-stub \uc740 \ubc1b\uc544 \ub450\uace0 \ub9d0\uc5c6\uc774 \ubc84\ub9ac\ub294 \ud50c\ub798\uadf8\ub97c \uc2dc\uc791 \uc804\uc5d0 \uac70\ubd80\ud55c\ub2e4**\n2://! (\uacb0\ud568 \u246f \ud655\uc7a5, 2026-09-10 \uc7ac\uac80\uc218 14).\n3://!\n4://! \u246f \ub294 \uc800\uc7a5\ub41c \uc608\uc57d lane \uc758 `--manifest-file` \ud558\ub098\ub9cc \ub9c9\uc558\ub2e4. \uc7ac\uac80\uc218\uac00 \uac19\uc740\n5://! \uc720\ud615\uc744 \ub354 \ucc3e\uc558\ub2e4 \u2014 \uadf8\uc911 \uac00\uc7a5 \ub098\uc05c \uac83\uc740 `--corrupt-lease-signature` \uc600\ub2e4.\n6://! \uc800\uc7a5\ub41c \uc608\uc57d lane \uc5d0\uc11c \uadf8\uac83\uc744 \uc8fc\uba74 **\uc815\uc0c1 \uc11c\uba85\uc774 \ub098\uac00\uc11c**, \uadf8 \ud50c\ub798\uadf8\ub85c\n7://! \ubd80\uc815 \uacbd\ub85c\ub97c \uc7ac\ub824\ub358 \ud14c\uc2a4\ud2b8\uac00 \uc544\ubb34\uac83\ub3c4 \uc548 \uc7ac\uac8c \ub41c\ub2e4.\n8://!\n9://! \u2605 \uc124\uc815 \ud30c\uc11c\ub97c **\uc9c1\uc811** \ubd80\ub978\ub2e4 \u2014 \ud504\ub85c\uc138\uc2a4\ub97c \ub744\uc6b8 \ud544\uc694\uac00 \uc5c6\ub294 \ud310\uc815\uc774\ub2e4.\n10://! \u2605 \uac01 \uacbd\uc6b0\ub97c **\uadf8 \uc774\ub984\uc73c\ub85c** \uac70\ubd80\ud558\ub294\uc9c0 \ubcf8\ub2e4. \"\ubb54\uac00 \uac70\ubd80\ub410\ub2e4\" \ub9cc \ubcf4\uba74\n11://!   \ubaa9\ub85d\uc5d0\uc11c \ud558\ub098\uac00 \ube60\uc838\ub3c4 \ub2e4\ub978 \uc774\uc720\ub85c \ud1b5\uacfc\ud55c\ub2e4.\n12:\n13:use gputeer_coordinator::parse_config_from_args;\n14:\n15:fn hex(bytes: &[u8]) -> String {\n16:    bytes.iter().map(|b| format!(\"{b:02x}\")).collect()\n17:}\n18:\n19:/// \uc800\uc7a5\ub41c \uc608\uc57d lane \uc758 \uc815\uc0c1 \uc778\uc790.\n20:fn stored_lane(job: &str, attempt: &str, lease: &str) -> Vec<String> {\n21:    let peer = gputeer_crypto::SigningKey::from_bytes(&[7u8; 32]).verifying_key();\n22:    let own_seed = \"11\".repeat(32);\n23:    let peer_hex = hex(peer.as_bytes());\n24:    [\n25:        \"--listen\", \"127.0.0.1:0\",\n26:        \"--own-seed\", own_seed.as_str(),\n27:        \"--peer-pubkey\", peer_hex.as_str(),\n28:        \"--coordinator-device-id\", \"01JCOORDINATORFLAGS000001\",\n29:        \"--agent-device-id\", \"01JAGENTFLAGS00000000001\",\n30:        \"--grant-id\", \"01JGRANTFLAGS00000000001\",\n31:        \"--attempt-id\", attempt,\n32:        \"--lease-id\", lease,\n33:        \"--job-id\", job,\n34:        \"--lease-db\", \"lease.sqlite3\",\n35:        \"--grant-from-control-db\", \"control.sqlite3\",\n36:        \"--stored-grant-job-id\", \"J\",\n37:        \"--stored-grant-attempt-id\", \"A\",\n38:        \"--stored-grant-lease-id\", \"L\",\n39:    ]\n40:    .iter()\n41:    .map(|s| s.to_string())\n42:    .collect()\n43:}\n44:\n45:/// \ub808\uac70\uc2dc lane \uc758 \uc815\uc0c1 \uc778\uc790 \u2014 \uc800\uc7a5\ub41c \uc608\uc57d \ud50c\ub798\uadf8\uac00 \uc5c6\ub2e4.\n46:fn legacy_lane() -> Vec<String> {\n47:    let mut args = stored_lane(\"J\", \"A\", \"L\");\n48:    let cut = args\n49:        .iter()\n50:        .position(|a| a == \"--grant-from-control-db\")\n51:        .expect(\"\uc704\uce58\");\n52:    args.truncate(cut);\n53:    args\n54:}\n55:\n56:fn with(mut base: Vec<String>, extra: &[&str]) -> Vec<String> {\n57:    base.extend(extra.iter().map(|s| s.to_string()));\n58:    base\n59:}\n60:\n61:fn refused_by_name(args: Vec<String>, code: &str, name: &str) {\n62:    let error = match parse_config_from_args(&args) {\n63:        Ok(_) => panic!(\"{name} \ub97c \ubc1b\uc544\ub4e4\uc600\ub2e4\"),\n64:        Err(error) => error,\n65:    };\n66:    assert!(\n67:        error.starts_with(&format!(\"STARTUP_REFUSED: {code}\")),\n68:        \"{name}: \ub2e4\ub978 \uc774\uc720\ub85c \uac70\ubd80\ud588\ub2e4 \u2014 {error}\"\n69:    );\n70:    assert!(error.contains(name), \"{name}: \uac70\ubd80\ub294 \ud588\ub294\ub370 \uc774\ub984\uc744 \uc548 \ub304\ub2e4 \u2014 {error}\");\n71:}\n72:\n73:const NOT_APPLIED: [(&str, &str); 9] = [\n74:    (\"--manifest-file\", \"m.pb\"),\n75:    (\"--corrupt-manifest-signature\", \"true\"),\n76:    (\"--corrupt-manifest-hash\", \"true\"),\n77:    (\"--corrupt-lease-signature\", \"true\"),\n78:    (\"--expire-lease\", \"true\"),\n79:    (\"--lease-ttl-ms\", \"1\"),\n80:    (\"--fence-epoch\", \"999\"),\n81:    (\"--max-total-duration-seconds\", \"1\"),\n82:    (\"--renewed-fence-epoch\", \"999\"),\n83:];\n84:\n85:#[test]\n86:fn the_plain_stored_lane_parses() {\n87:    parse_config_from_args(&stored_lane(\"J\", \"A\", \"L\")).expect(\"\uc815\uc0c1 \uc778\uc790\ub97c \uac70\ubd80\ud588\ub2e4\");\n88:}\n89:\n90:#[test]\n91:fn each_flag_the_stored_lane_does_not_apply_is_refused_by_name() {\n92:    for (flag, value) in NOT_APPLIED {\n93:        refused_by_name(\n94:            with(stored_lane(\"J\", \"A\", \"L\"), &[flag, value]),\n95:            \"STORED_LANE_IGNORES\",\n96:            flag,\n97:        );\n98:    }\n99:}\n100:\n101:/// \u2605 \ub300\uc870 \u2014 \uac19\uc740 \ud50c\ub798\uadf8\ub97c **\ub808\uac70\uc2dc lane** \uc5d0\uc11c\ub294 \ubc1b\ub294\ub2e4. \uadf8 lane \uc740 \uc801\uc6a9\ud55c\ub2e4.\n102:///\n103:/// \uc774\uac8c \uc5c6\uc73c\uba74 \"\uadf8 \ud50c\ub798\uadf8\ub4e4\uc744 \uc5b8\uc81c\ub098 \uac70\ubd80\ud55c\ub2e4\" \ub85c \uace0\uccd0\ub3c4 \uc704 \ud14c\uc2a4\ud2b8\uac00 \ud1b5\uacfc\ud55c\ub2e4.\n104:#[test]\n105:fn the_same_flags_are_accepted_on_the_legacy_lane() {\n106:    for (flag, value) in NOT_APPLIED {\n107:        parse_config_from_args(&with(legacy_lane(), &[flag, value]))\n108:            .unwrap_or_else(|e| panic!(\"\ub808\uac70\uc2dc lane \uc5d0\uc11c {flag} \ub97c \uac70\ubd80\ud588\ub2e4: {e}\"));\n109:    }\n110:}\n111:\n112:#[test]\n113:fn an_id_that_disagrees_with_the_stored_one_is_refused() {\n114:    refused_by_name(stored_lane(\"OTHER\", \"A\", \"L\"), \"STORED_LANE_ID_CONFLICT\", \"--job-id\");\n115:    refused_by_name(stored_lane(\"J\", \"OTHER\", \"L\"), \"STORED_LANE_ID_CONFLICT\", \"--attempt-id\");\n116:    refused_by_name(stored_lane(\"J\", \"A\", \"OTHER\"), \"STORED_LANE_ID_CONFLICT\", \"--lease-id\");\n117:}\n118:\n119:#[test]\n120:fn an_unknown_flag_is_refused_by_name_on_either_lane() {\n121:    refused_by_name(\n122:        with(stored_lane(\"J\", \"A\", \"L\"), &[\"--manifest-fiel\", \"m.pb\"]),\n123:        \"UNKNOWN_FLAGS\",\n124:        \"--manifest-fiel\",\n125:    );\n126:    refused_by_name(\n127:        with(legacy_lane(), &[\"--renew-roundz\", \"3\"]),\n128:        \"UNKNOWN_FLAGS\",\n129:        \"--renew-roundz\",\n130:    );\n131:}\n132:\n133:/// \u2605 `--session-id` \ub294 Coordinator \uac00 **\uc5b4\ub290 lane \uc5d0\uc11c\ub3c4** \uc77d\uc9c0 \uc54a\uc558\ub2e4.\n134:///\n135:/// \ucc98\uc74c\uc5d4 \"\ub2e4\uc911 Agent \uc804\uc6a9\" \uc73c\ub85c \ubd84\ub958\ud588\ub294\ub370, \uadf8 \ud544\ub4dc\ub97c \uc77d\ub294 \ucf54\ub4dc\uac00 \uc800\uc7a5\uc18c\n136:/// \uc5b4\ub514\uc5d0\ub3c4 \uc5c6\uc5c8\ub2e4(\ub300\uc870\ub294 Agent \uac00 \ubcf4\ub0b8 hello \uc640 \uc694\uccad \uc0ac\uc774\uc5d0\uc11c\ub9cc \ud55c\ub2e4).\n137:/// \ud544\ub4dc\ub97c \uc9c0\uc6e0\uc73c\ub2c8 --multi-agent \uc5ec\ub3c4 \ubaa8\ub974\ub294 \uc774\ub984\uc774\ub2e4.\n138:#[test]\n139:fn session_id_is_not_a_coordinator_flag_on_any_lane() {\n140:    refused_by_name(\n141:        with(legacy_lane(), &[\"--session-id\", \"s\"]),\n142:        \"UNKNOWN_FLAGS\",\n143:        \"--session-id\",\n144:    );\n145:    refused_by_name(\n146:        with(legacy_lane(), &[\"--multi-agent\", \"true\", \"--session-id\", \"s\"]),\n147:        \"UNKNOWN_FLAGS\",\n148:        \"--session-id\",\n149:    );\n150:}\n151:\n152:#[test]\n153:fn multi_agent_only_flags_are_refused_on_the_sequential_lane() {\n154:    for (flag, value) in [(\"--extra-agents\", \"x\"), (\"--require-concurrent-sessions\", \"2\")] {\n155:        refused_by_name(with(legacy_lane(), &[flag, value]), \"MULTI_AGENT_ONLY\", flag);\n156:        // \ub300\uc870 \u2014 --multi-agent lane \uc5d0\uc11c\ub294 \uc77d\ud78c\ub2e4.\n157:        parse_config_from_args(&with(legacy_lane(), &[\"--multi-agent\", \"true\", flag, value]))\n158:            .unwrap_or_else(|e| panic!(\"--multi-agent \uc778\ub370 {flag} \ub97c \uac70\ubd80\ud588\ub2e4: {e}\"));\n159:    }\n160:}\n161:\n162:// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n163:// \uacb0\ud568 \u3251 (\uc7ac\uac80\uc218 15) \u2014 lane \uc870\uac74\uc744 \uc0ac\uc2e4\uc5d0 \ub9de\ucd98 \ub4a4\n164:// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n165:\n166:fn without(mut args: Vec<String>, flag: &str) -> Vec<String> {\n167:    let at = args.iter().position(|a| a == flag).expect(\"\uadf8 \ud50c\ub798\uadf8\uac00 \uc788\uc5b4\uc57c \ud55c\ub2e4\");\n168:    args.drain(at..at + 2);\n169:    args\n170:}\n171:\n172:#[test]\n173:fn an_absent_stored_id_is_refused() {\n174:    refused_by_name(\n175:        without(stored_lane(\"J\", \"A\", \"L\"), \"--stored-grant-job-id\"),\n176:        \"STORED_LANE_ID_MISSING\",\n177:        \"--stored-grant-job-id\",\n178:    );\n179:}\n180:\n181:/// \u2605 \ub300\uc870 \u2014 `--lease-db` \uac00 **\uc5c6\uc73c\uba74** \uac31\uc2e0 \uacbd\ub85c\uac00 \uc774 \uc14b\uc744 \uc2e4\uc81c\ub85c \uc4f4\ub2e4.\n182:///\n183:/// \ucc98\uc74c\uc5d4 \uc800\uc7a5\ub41c \uc608\uc57d lane \uc774\uba74 \ubb34\uc870\uac74 \uac70\ubd80\ud588\ub2e4. `fence_epoch` \ub294 \uc800\uc7a5\uc18c\uac00\n184:/// \uc5c6\uc744 \ub54c \uac31\uc2e0\uc758 \uae30\ub300 epoch \uc774\uace0, \ub098\uba38\uc9c0 \ub458\uc740 `build_renew_result` \uac00 \uc4f4\ub2e4.\n185:#[test]\n186:fn lease_db_dependent_flags_are_accepted_without_a_lease_db() {\n187:    for (flag, value) in [\n188:        (\"--fence-epoch\", \"3\"),\n189:        (\"--max-total-duration-seconds\", \"60\"),\n190:        (\"--renewed-fence-epoch\", \"3\"),\n191:    ] {\n192:        let args = with(without(stored_lane(\"J\", \"A\", \"L\"), \"--lease-db\"), &[flag, value]);\n193:        parse_config_from_args(&args)\n194:            .unwrap_or_else(|e| panic!(\"--lease-db \uc5c6\uc774 \uc900 {flag} \ub97c \uac70\ubd80\ud588\ub2e4: {e}\"));\n195:    }\n196:}\n197:\n198:/// Resume \uc740 \uc800\uc7a5\ub41c \uc608\uc57d \ubd84\uae30\ubcf4\ub2e4 \uba3c\uc800 \ubc18\ud658\ud55c\ub2e4 \u2014 \ud30c\uc11c\ub294 \uc2dd\ubcc4\uc790\ub97c \uc694\uad6c\ud558\uc9c0\n199:/// \uc54a\uace0, \uadf8 \uc870\ud569 \uc790\uccb4\ub294 **\uc2dc\uc791 \uad00\ubb38**\uc774 \uac70\ubd80\ud55c\ub2e4.\n200:#[test]\n201:fn resume_with_a_control_db_is_refused_at_startup_not_by_the_stored_lane_checks() {\n202:    // \u2605 \uc774 \ud14c\uc2a4\ud2b8\ub9cc `run()` \uc744 \uc2e4\uc81c\ub85c \ubd80\ub978\ub2e4. `run()` \uc740 \uc2dc\uc791 \uad00\ubb38\ubcf4\ub2e4 **\uba3c\uc800**\n203:    //   Lease \uc800\uc7a5\uc18c\ub97c \uc5f4\ubbc0\ub85c, \uc0c1\ub300 \uacbd\ub85c\ub97c \uc8fc\uba74 \uc800\uc7a5\uc18c \uc548\uc5d0 DB \ud30c\uc77c\uc744 \ub0a8\uae34\ub2e4 \u2014\n204:    //   \ucc98\uc74c\uc5d0 \uadf8\ub807\uac8c \ud574\uc11c `crates/coordinator/lease.sqlite3` \uac00 \uc0dd\uacbc\ub2e4.\n205:    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n206:    let lease_db = dir.path().join(\"lease.sqlite3\");\n207:    let mut args = legacy_lane();\n208:    let at = args.iter().position(|a| a == \"--lease-db\").expect(\"--lease-db\");\n209:    args[at + 1] = lease_db.to_str().expect(\"\uacbd\ub85c\").to_string();\n210:    args.extend(\n211:        [\"--resume-protocol\", \"true\", \"--grant-from-control-db\", \"control.sqlite3\"]\n212:            .iter()\n213:            .map(|s| s.to_string()),\n214:    );\n215:    let config = parse_config_from_args(&args).expect(\"Resume \uc774\uba74 \uc2dd\ubcc4\uc790\ub97c \uc694\uad6c\ud558\uc9c0 \uc54a\ub294\ub2e4\");\n216:    let error = gputeer_coordinator::run(config).expect_err(\"\uc2dc\uc791 \uad00\ubb38\uc774 \uac70\ubd80\ud574\uc57c \ud55c\ub2e4\");\n217:    assert!(\n218:        error.contains(\"--resume-protocol\") && error.contains(\"--grant-from-control-db\"),\n219:        \"\ub2e4\ub978 \uc774\uc720\ub85c \uac70\ubd80\ud588\ub2e4: {error}\"\n220:    );\n221:}\n222:\n223:#[test]\n224:fn stored_lane_only_flags_are_refused_on_the_legacy_lane() {\n225:    refused_by_name(\n226:        with(legacy_lane(), &[\"--stored-grant-ttl-ms\", \"1\"]),\n227:        \"STORED_LANE_ONLY\",\n228:        \"--stored-grant-ttl-ms\",\n229:    );\n230:}\n231:\n232:/// `--corrupt-own-signature tru` \uac00 \uc870\uc6a9\ud788 false \uac00 \ub418\uba74 \uadf8 \ud50c\ub798\uadf8\ub85c \uc7ac\ub824\ub358\n233:/// \ubd80\uc815 \uacbd\ub85c\uac00 \uc544\ubb34\uac83\ub3c4 \uc548 \uc7b0\ub2e4(\uc7ac\uac80\uc218 15).\n234:#[test]\n235:fn an_invalid_bool_is_refused_by_name() {\n236:    refused_by_name(\n237:        with(legacy_lane(), &[\"--corrupt-own-signature\", \"tru\"]),\n238:        \"INVALID_BOOL\",\n239:        \"--corrupt-own-signature\",\n240:    );\n241:    // \ub300\uc870 \u2014 false \ub294 \uac12\uc774\ub2e4.\n242:    parse_config_from_args(&with(legacy_lane(), &[\"--corrupt-own-signature\", \"false\"]))\n243:        .expect(\"false \ub97c \uac70\ubd80\ud588\ub2e4\");\n244:}\n245:\n246:#[test]\n247:fn a_neighbor_report_db_without_expected_reports_is_refused() {\n248:    refused_by_name(\n249:        with(legacy_lane(), &[\"--neighbor-report-db\", \"reports.sqlite3\"]),\n250:        \"NEEDS_EXPECT\",\n251:        \"--neighbor-report-db\",\n252:    );\n253:    // \ub300\uc870 \u2014 \uae30\ub300\uac12\uc774 \uc788\uc73c\uba74 \ubc1b\ub294\ub2e4.\n254:    parse_config_from_args(&with(\n255:        legacy_lane(),\n256:        &[\"--expect-neighbor-reports\", \"1\", \"--neighbor-report-db\", \"reports.sqlite3\"],\n257:    ))\n258:    .expect(\"\uae30\ub300\uac12\uc774 \uc788\ub294\ub370 \uac70\ubd80\ud588\ub2e4\");\n259:}\n260:\n261:// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n262:// \uacb0\ud568 \u3252 (\uc7ac\uac80\uc218 18) \u2014 \uc911\ubcf5 \ud0a4 \u00b7 \uacbd\uacc4 \ud14c\uc2a4\ud2b8 \uacf5\ubc31\n263:// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n264:\n265:/// \uac19\uc740 \ud0a4\ub97c \ub450 \ubc88 \uc8fc\uba74 \uc55e \uac12\uc774 \ub36e\uc5ec **\uac80\uc0ac \uc804\uc5d0** \uc0ac\ub77c\uc84c\ub2e4.\n266:#[test]\n267:fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {\n268:    refused_by_name(\n269:        with(legacy_lane(), &[\"--corrupt-own-signature\", \"tru\", \"--corrupt-own-signature\", \"false\"]),\n270:        \"INVALID_BOOL\",\n271:        \"--corrupt-own-signature\",\n272:    );\n273:    // \ub300\uc870 \u2014 \uc62c\ubc14\ub978 \uac12\uc758 \uc911\ubcf5\uc740 \ubc1b\ub294\ub2e4(\ub9c8\uc9c0\ub9c9 \uac12\uc744 \uc4f4\ub2e4).\n274:    let config = parse_config_from_args(&with(\n275:        legacy_lane(),\n276:        &[\"--corrupt-own-signature\", \"false\", \"--corrupt-own-signature\", \"true\"],\n277:    ))\n278:    .expect(\"\uc62c\ubc14\ub978 \uac12\uc758 \uc911\ubcf5\uc744 \uac70\ubd80\ud588\ub2e4\");\n279:    assert!(config.corrupt_own_signature, \"\ub9c8\uc9c0\ub9c9 \uac12\uc744 \uc4f0\uc9c0 \uc54a\uc558\ub2e4\");\n280:}\n281:\n282:/// \"\ud56d\uc0c1 \ubb34\uc2dc 6\" \uc740 `--lease-db` \uac00 **\uc5c6\uc5b4\ub3c4** \uac70\ubd80\ud55c\ub2e4. \uc774\uac8c \uc5c6\uc73c\uba74 9\uac1c\ub97c \uc804\ubd80\n283:/// \"--lease-db \uc788\uc744 \ub54c\ub9cc\" \uc73c\ub85c \ubc14\uafd4\ub3c4 \ub2e4\ub978 \ud14c\uc2a4\ud2b8\uac00 \ud1b5\uacfc\ud55c\ub2e4.\n284:#[test]\n285:fn never_applied_flags_are_refused_without_a_lease_db_too() {\n286:    for (flag, value) in &NOT_APPLIED[..6] {\n287:        refused_by_name(\n288:            with(without(stored_lane(\"J\", \"A\", \"L\"), \"--lease-db\"), &[flag, value]),\n289:            \"STORED_LANE_IGNORES\",\n290:            flag,\n291:        );\n292:    }\n293:}\n294:\n295:#[test]\n296:fn every_absent_stored_id_is_refused_by_name() {\n297:    for flag in [\"--stored-grant-job-id\", \"--stored-grant-attempt-id\", \"--stored-grant-lease-id\"] {\n298:        refused_by_name(without(stored_lane(\"J\", \"A\", \"L\"), flag), \"STORED_LANE_ID_MISSING\", flag);\n299:    }\n300:}\n301:\n302:#[test]\n303:fn every_stored_lane_only_flag_is_refused_on_the_legacy_lane() {\n304:    for (flag, value) in [\n305:        (\"--stored-grant-job-id\", \"J\"),\n306:        (\"--stored-grant-attempt-id\", \"A\"),\n307:        (\"--stored-grant-lease-id\", \"L\"),\n308:        (\"--stored-grant-ttl-ms\", \"1\"),\n309:    ] {\n310:        refused_by_name(with(legacy_lane(), &[flag, value]), \"STORED_LANE_ONLY\", flag);\n311:    }\n312:}"
+"1://! \u2605 **agent-stub \uc740 \ubaa8\ub974\ub294 \ud50c\ub798\uadf8\ub97c \ubc1b\uc544 \ub450\uc9c0 \uc54a\ub294\ub2e4** (\uacb0\ud568 \u246f \ud655\uc7a5\uc758 Agent \ucabd,\n2://! 2026-09-10).\n3://!\n4://! Coordinator \ud30c\uc11c\uac00 \ubaa8\ub974\ub294 \uc774\ub984\uc744 \uc870\uc6a9\ud788 \ubc1b\uc544 \ub450\ub358 \uac83\uc744 \uc7ac\uac80\uc218 14 \uac00 \uc9da\uc5c8\ub2e4.\n5://! Agent \ud30c\uc11c\ub3c4 \uac19\uc740 \ubaa8\uc591\uc774\uc5c8\ub2e4 \u2014 `--send-attempt-reprot true` \uac19\uc740 \uc624\ud0c0\ub97c \uc8fc\uba74\n6://! \ubcf4\uace0\ub97c \ucf30\ub2e4\uace0 \ubbff\uc9c0\ub9cc \uc544\ubb34 \uc77c\ub3c4 \uc548 \uc77c\uc5b4\ub09c\ub2e4.\n7:\n8:use gputeer_agent::parse_config_from_args;\n9:\n10:fn hex(bytes: &[u8]) -> String {\n11:    bytes.iter().map(|b| format!(\"{b:02x}\")).collect()\n12:}\n13:\n14:fn base() -> Vec<String> {\n15:    let peer = gputeer_crypto::SigningKey::from_bytes(&[9u8; 32]).verifying_key();\n16:    let own_seed = \"22\".repeat(32);\n17:    let peer_hex = hex(peer.as_bytes());\n18:    [\n19:        \"--connect\", \"127.0.0.1:9\",\n20:        \"--own-seed\", own_seed.as_str(),\n21:        \"--peer-pubkey\", peer_hex.as_str(),\n22:        \"--coordinator-device-id\", \"01JCOORDINATORAGENTFLAG01\",\n23:        \"--agent-device-id\", \"01JAGENTAGENTFLAG00000001\",\n24:        \"--fence-db\", \"fence.sqlite3\",\n25:    ]\n26:    .iter()\n27:    .map(|s| s.to_string())\n28:    .collect()\n29:}\n30:\n31:#[test]\n32:fn the_plain_arguments_parse() {\n33:    parse_config_from_args(&base()).expect(\"\uc815\uc0c1 \uc778\uc790\ub97c \uac70\ubd80\ud588\ub2e4\");\n34:}\n35:\n36:#[test]\n37:fn a_misspelled_flag_is_refused_by_name() {\n38:    let mut args = base();\n39:    args.extend([\"--send-attempt-reprot\".to_string(), \"true\".to_string()]);\n40:    let error = match parse_config_from_args(&args) {\n41:        Ok(_) => panic!(\"\uc624\ud0c0\ub97c \ubc1b\uc544\ub4e4\uc600\ub2e4\"),\n42:        Err(error) => error,\n43:    };\n44:    assert!(\n45:        error.starts_with(\"STARTUP_REFUSED: UNKNOWN_FLAGS\"),\n46:        \"\ub2e4\ub978 \uc774\uc720\ub85c \uac70\ubd80\ud588\ub2e4: {error}\"\n47:    );\n48:    assert!(error.contains(\"--send-attempt-reprot\"), \"\uc774\ub984\uc744 \uc548 \ub304\ub2e4: {error}\");\n49:}\n50:\n51:/// \u2605 \ub300\uc870 \u2014 \uc62c\ubc14\ub978 \uc774\ub984\uc740 \ubc1b\ub294\ub2e4. \uc5c6\uc73c\uba74 \"\ubaa8\ub974\ub294 \uac83\uc774\ub4e0 \uc544\ub294 \uac83\uc774\ub4e0 \ub2e4\n52:///   \uac70\ubd80\" \ub85c\ub3c4 \uc704 \ud14c\uc2a4\ud2b8\uac00 \ud1b5\uacfc\ud55c\ub2e4.\n53:#[test]\n54:fn the_correct_spelling_is_accepted() {\n55:    let mut args = base();\n56:    args.extend([\"--send-attempt-report\".to_string(), \"true\".to_string()]);\n57:    let config = parse_config_from_args(&args).expect(\"\uc62c\ubc14\ub978 \uc774\ub984\uc744 \uac70\ubd80\ud588\ub2e4\");\n58:    assert!(config.send_attempt_report);\n59:}\n60:\n61:/// `true`/`false` \uac00 \uc544\ub2cc \ubd88\ub9ac\uc5b8\uc740 \uc870\uc6a9\ud788 false \uac00 \ub418\uc9c0 \uc54a\ub294\ub2e4(\uc7ac\uac80\uc218 15).\n62:#[test]\n63:fn an_invalid_bool_is_refused_by_name() {\n64:    let mut args = base();\n65:    args.extend([\"--send-attempt-report\".to_string(), \"tru\".to_string()]);\n66:    let error = match parse_config_from_args(&args) {\n67:        Ok(_) => panic!(\"\uc798\ubabb\ub41c \ubd88\ub9ac\uc5b8\uc744 \ubc1b\uc544\ub4e4\uc600\ub2e4\"),\n68:        Err(error) => error,\n69:    };\n70:    assert!(error.starts_with(\"STARTUP_REFUSED: INVALID_BOOL\"), \"{error}\");\n71:    assert!(error.contains(\"--send-attempt-report\"), \"{error}\");\n72:}\n73:\n74:/// \uac19\uc740 \ud0a4\ub97c \ub450 \ubc88 \uc918\ub3c4 \uc55e\uc758 \uc798\ubabb\ub41c \uac12\uc774 \uac80\uc0ac \uc804\uc5d0 \uc0ac\ub77c\uc9c0\uc9c0 \uc54a\ub294\ub2e4(\uc7ac\uac80\uc218 18).\n75:#[test]\n76:fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {\n77:    let mut args = base();\n78:    args.extend(\n79:        [\"--send-attempt-report\", \"tru\", \"--send-attempt-report\", \"false\"]\n80:            .iter()\n81:            .map(|s| s.to_string()),\n82:    );\n83:    let error = match parse_config_from_args(&args) {\n84:        Ok(_) => panic!(\"\uc911\ubcf5 \ub4a4\uc5d0 \uc228\uc740 \uc798\ubabb\ub41c \ubd88\ub9ac\uc5b8\uc744 \ubc1b\uc544\ub4e4\uc600\ub2e4\"),\n85:        Err(error) => error,\n86:    };\n87:    assert!(error.starts_with(\"STARTUP_REFUSED: INVALID_BOOL\"), \"{error}\");\n88:    assert!(error.contains(\"--send-attempt-report\"), \"{error}\");\n89:}"
+
+ succeeded in 2206ms:
+175:    /// Test-only: after `build_renew_result()` has durably committed a renewed
+180:    pub renew_extension_ms: u64,
+236:    pub expect_heartbeats: u32,
+243:    pub liveness_db_path: Option<String>,
+299:    pub resume_protocol: bool,
+482:    if config.resume_protocol && config.grant_from_control_db.is_some() {
+687:    if config.resume_protocol {
+745:    if config.resume_protocol {
+864:    if config.resume_protocol {
+1048:    //   `expect_heartbeats == 0`(기본값)이면 이 구간은 통째로 없다 —
+1056:    let mut liveness_store = match &config.liveness_db_path {
+1057:        Some(path) if config.expect_heartbeats > 0 => Some(
+1070:    for _ in 0..config.expect_heartbeats {
+1685:            let result = build_renew_result(
+2104:fn build_renew_result(
+2184:                now + config.renew_extension_ms,
+2185:                now + config.renew_extension_ms / 2,
+2214:                    expires_at_unix_ms: now + 60_000,
+2242:/// `build_renew_result` 의 두 정상 경로(레거시·저장소 갱신 성공)가
+2337:        expires_at_unix_ms: now + 60_000,
+2590:        renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
+2604:            .unwrap_or(60_000),
+2610:        expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
+2611:        liveness_db_path: flags.get("--liveness-db").cloned(),
+2622:        lease_ttl_ms: flags.u64_flag_with_default("--lease-ttl-ms", 60_000)?,
+2625:        resume_protocol: flags.bool_flag("--resume-protocol"),
+2657:    //       (`fence_epoch` 는 기대 epoch, 나머지는 `build_renew_result`).
+2659:    if config.grant_from_control_db.is_some() && !config.resume_protocol {
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import json; from pathlib import Path; p=Path('crates/coordinator/src/lib.rs'); a=p.read_text(encoding='utf-8').splitlines(); spans=[(470,493),(670,704),(732,755),(842,893),(1039,1085),(2103,2241)]; print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for lo,hi in spans for i in range(lo,hi))))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1858ms:
+"471:        let message = \"--manifest-file \uc740 --grant-from-control-db \uc640 \ud568\uaed8 \uc4f8 \uc218 \uc5c6\ub2e4 \u2014 \\\n472:             \uc800\uc7a5\ub41c \uc608\uc57d lane \uc740 Grant \uc5d0 Manifest \ub97c \uc2e3\uc9c0 \uc54a\uc73c\ubbc0\ub85c(grant_from_stored.rs) \\\n473:             \ubc1b\uc544 \ub450\uba74 \ub9d0\uc5c6\uc774 \ubc84\ub824\uc9c4\ub2e4\"\n474:            .to_string();\n475:        eprintln!(\"STARTUP_REFUSED reason=lane error={message}\");\n476:        return Err(message);\n477:    }\n478:\n479:    // \u2605 \uacb0\ud568 \u3251(\uc7ac\uac80\uc218 15) \u2014 Resume \uc740 \uc800\uc7a5\ub41c \uc608\uc57d \ubd84\uae30\ubcf4\ub2e4 \uba3c\uc800 \ubc18\ud658\ud55c\ub2e4.\n480:    //   control DB \ub97c \uc918\ub3c4 \uc544\ubb34\ub3c4 \uc548 \uc5f0\ub2e4(\ubcf4\uace0 \uc218\uc2e0\uacfc \uac19\uc774 \uc8fc\uba74 \ubc14\ub85c \uc704\n481:    //   \uad00\ubb38\uc774 \uba3c\uc800 \uac70\ubd80\ud55c\ub2e4). \ubc1b\uc544 \ub450\uace0 \ubc84\ub9ac\uc9c0 \uc54a\ub294\ub2e4.\n482:    if config.resume_protocol && config.grant_from_control_db.is_some() {\n483:        let message = \"--grant-from-control-db \ub294 --resume-protocol \uacfc \ud568\uaed8 \uc4f8 \uc218 \uc5c6\ub2e4 \u2014 \\\n484:             Resume \uc740 \uc800\uc7a5\ub41c \uc608\uc57d\uc5d0\uc11c Grant \ub97c \ub9cc\ub4e4\uae30 \uc804\uc5d0 \ubc18\ud658\ud558\ubbc0\ub85c control DB \uac00 \ubc84\ub824\uc9c4\ub2e4\"\n485:            .to_string();\n486:        eprintln!(\"STARTUP_REFUSED reason=lane error={message}\");\n487:        return Err(message);\n488:    }\n489:\n490:    // \u2605 **\uc774\uc6c3 \uc2e0\uace0 \uc800\uc7a5\uc18c\ub97c listener bind \ubcf4\ub2e4 \uba3c\uc800 \uc5f0\ub2e4**(\ub3c5\ub9bd \uac80\uc218\n491:    //   4\u00b75\ub77c\uc6b4\ub4dc \uc9c0\uc801). 4\ub77c\uc6b4\ub4dc \uc218\uc815\uc740 \uc774 \ube14\ub85d\uc744 bind **\ub4a4\uc5d0** \ub450\uc5b4\n492:    //   \uc8fc\uc11d\uacfc \ucf54\ub4dc\uac00 \uc5b4\uae0b\ub098 \uc788\uc5c8\ub2e4 \u2014 \uc18c\ucf13\uc774 \uc5f4\ub9b0 \ub4a4 \uc8fd\uc73c\uba74 \uadf8 \uc0ac\uc774\uc5d0\n493:    //   \ub4e4\uc5b4\uc628 \uc5f0\uacb0\uc774 \uc788\uc744 \uc218 \uc788\ub2e4. lease store \uac00 \uc774\ubbf8 \ubc14\ub85c \uc704\uc5d0\uc11c\n671:) -> Option<String> {\n672:    if config.expect_neighbor_reports == 0 {\n673:        return None;\n674:    }\n675:    if lane == NeighborReportLane::MultiAgent {\n676:        return Some(\n677:            \"multi-agent lane \uc740 \uc774\uc6c3 \uc2e0\uace0 \uc218\uc2e0\uc744 \uad6c\ud604\ud558\uc9c0 \uc54a\uc558\ub2e4 \u2014 --expect-neighbor-reports \uc640 \ud568\uaed8 \uc4f8 \uc218 \uc5c6\ub2e4\"\n678:                .to_string(),\n679:        );\n680:    }\n681:    // \u2605 \uc21c\ucc28 lane \uc548\uc5d0\ub3c4 **\uc2e0\uace0 \uc218\uc2e0 \ub8e8\ud504\uc5d0 \ub2ff\uc9c0 \ubabb\ud560 \uc218 \uc788\ub294** \uad6c\uc131\uc774 \uc788\ub2e4\n682:    //   (\ub3c5\ub9bd \uac80\uc218 11\ub77c\uc6b4\ub4dc). resume \uacbd\ub85c\ub294 \uadf8\ubcf4\ub2e4 \uba3c\uc800 \ubc18\ud658\ud558\uace0, \uc138 test\n683:    //   hook \uc740 ACK \uc9c1\ud6c4 \uc138\uc158\uc744 \ub05d\ub0bc \uc218 \uc788\ub2e4 \u2014 \uc14b \uc911 \ub458\uc740 \ud56d\uc0c1 \ub05d\ub0b4\uace0,\n684:    //   `--drop-connection-after-ack-once` \ub294 `max_connections > 1` \uc774\uace0 \uccab\n685:    //   \uc5f0\uacb0\uc77c \ub54c\ub9cc \ub05d\ub0b8\ub2e4(13\ub77c\uc6b4\ub4dc \uc815\uc815 \u2014 \uc804\uc5d0 \"\uc138 hook \uc740 ACK \uc9c1\ud6c4 \ub05d\ub0b8\ub2e4\"\n686:    //   \uace0 \ubb49\ub6b1\uadf8\ub838\ub2e4). \ub2ff\ub294\ub2e4\uace0 **\ubcf4\uc7a5\ud560 \uc218 \uc5c6\uc73c\uba74** \ubc1b\uc9c0 \uc54a\ub294\ub2e4.\n687:    if config.resume_protocol {\n688:        return Some(\n689:            \"resume \uacbd\ub85c\ub294 \uc774\uc6c3 \uc2e0\uace0 \uc218\uc2e0\uc5d0 \ub2ff\uae30 \uc804\uc5d0 \ubc18\ud658\ud55c\ub2e4 \u2014 --expect-neighbor-reports \uc640 --resume-protocol \uc744 \ud568\uaed8 \uc904 \uc218 \uc5c6\ub2e4\"\n690:                .to_string(),\n691:        );\n692:    }\n693:    for (enabled, flag) in [\n694:        (config.send_grant_twice, \"--send-grant-twice\"),\n695:        (config.disconnect_after_ack, \"--disconnect-after-ack\"),\n696:        (\n697:            config.drop_connection_after_ack_once,\n698:            \"--drop-connection-after-ack-once\",\n699:        ),\n700:    ] {\n701:        if enabled {\n702:            // \u2605 \uc870\uac74 \uc5c6\uc774 \uac70\ubd80\ud55c\ub2e4. `--drop-connection-after-ack-once` \ub294\n703:            //   `max_connections > 1 && connection_attempt == 0` \uc77c \ub54c\ub9cc\n704:            //   \uc2e4\uc81c\ub85c \ub04a\uc9c0\ub9cc(12\ub77c\uc6b4\ub4dc \uc815\uc815 \u2014 \uc804\uc5d0 \"\ud56d\uc0c1 \ub05d\ub0b8\ub2e4\" \uace0 \uc37c\ub2e4),\n733:        return Some(\n734:            \"multi-agent lane \uc740 AttemptReport \uc218\uc2e0\uc744 \uad6c\ud604\ud558\uc9c0 \uc54a\uc558\ub2e4 \u2014 --expect-attempt-reports \uc640 \ud568\uaed8 \uc4f8 \uc218 \uc5c6\ub2e4\"\n735:                .to_string(),\n736:        );\n737:    }\n738:    if config.grant_from_control_db.is_none() {\n739:        return Some(\n740:            \"--expect-attempt-reports \ub294 --grant-from-control-db \uac00 \uc788\uc5b4\uc57c \ud55c\ub2e4 \u2014 \\\n741:             \uc885\ub8cc \uc99d\uac70\ub294 \uadf8 control DB \uc5d0 \uc800\uc7a5\ub41c Attempt\u00b7\uc608\uc57d\uc5d0 \uacb0\ud569\ud574\uc57c\ub9cc \uc800\uc7a5\ub41c\ub2e4\"\n742:                .to_string(),\n743:        );\n744:    }\n745:    if config.resume_protocol {\n746:        return Some(\n747:            \"resume \uacbd\ub85c\ub294 AttemptReport \uc218\uc2e0\uc5d0 \ub2ff\uae30 \uc804\uc5d0 \ubc18\ud658\ud55c\ub2e4 \u2014 --expect-attempt-reports \uc640 --resume-protocol \uc744 \ud568\uaed8 \uc904 \uc218 \uc5c6\ub2e4\"\n748:                .to_string(),\n749:        );\n750:    }\n751:    for (enabled, flag) in [\n752:        (config.send_grant_twice, \"--send-grant-twice\"),\n753:        (config.disconnect_after_ack, \"--disconnect-after-ack\"),\n754:        (\n755:            config.drop_connection_after_ack_once,\n843:        SessionHandlerError::Legacy(message) => {\n844:            classify_legacy_session_error(message, lease_store.is_some())\n845:        }\n846:        SessionHandlerError::Classified(error) => error,\n847:    })\n848:}\n849:\n850:#[allow(clippy::too_many_arguments)]\n851:fn serve_one_connection_impl(\n852:    config: &CoordinatorConfig,\n853:    stream: &mut std::net::TcpStream,\n854:    lease_store: &mut Option<CoordinatorLeaseStore>,\n855:    neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,\n856:    attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,\n857:    signing_key: &SigningKey,\n858:    agent_keys: &InMemoryKeyring,\n859:    replay: &mut InMemoryReplayGuard,\n860:    clock: &SystemClock,\n861:    connection_attempt: u32,\n862:) -> Result<(), SessionHandlerError> {\n863:    let now = clock.now_unix_ms();\n864:    if config.resume_protocol {\n865:        return serve_resume_connection(\n866:            config,\n867:            stream,\n868:            lease_store,\n869:            signing_key,\n870:            agent_keys,\n871:            replay,\n872:            clock,\n873:            connection_attempt,\n874:        );\n875:    }\n876:    let mut grant = match &config.grant_from_control_db {\n877:        // \u2605 **\uc800\uc7a5\ub41c \uc608\uc57d\uc5d0\uc11c \uc870\ub9bd\ud55c\ub2e4.** \ub300\uc870\u00b7\uc870\ub9bd\uc740 `grant_from_stored`\n878:        //   \uac00 \ud558\uace0 \uc774 lane \uc740 \uc804\uc1a1\ub9cc \ud55c\ub2e4 \u2014 CLI `issue-grant` \uc640 **\uac19\uc740\n879:        //   \ud568\uc218**\uc5ec\uc11c \ub450 \ubc8c\uc774 \uc0dd\uae30\uc9c0 \uc54a\ub294\ub2e4.\n880:        Some(control_db) => {\n881:            let jobs = crate::job_store::CoordinatorJobStore::open(control_db)\n882:                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(\"job store: {e}\"))))?;\n883:            let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)\n884:                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(\"staging store: {e}\"))))?;\n885:            let leases = CoordinatorLeaseStore::open(control_db)\n886:                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(\"lease store: {e}\"))))?;\n887:            crate::grant_from_stored::signed_grant_from_stored(\n888:                &jobs,\n889:                &staging,\n890:                &leases,\n891:                &crate::grant_from_stored::StoredGrantRequest {\n892:                    job_id: config.stored_grant_job_id.clone(),\n893:                    attempt_id: config.stored_grant_attempt_id.clone(),\n1040:\n1041:    // \u2605 \ub178\ub4dc \uc0dd\uc874 \ubcf4\uace0 (2026-08-29, ADR-033 \u00a77 \uc55e \ub2e8\uacc4).\n1042:    //\n1043:    //   \uc774 stub \ud504\ub85c\ud1a0\ucf5c\uc5d0\ub294 \ube44\ub3d9\uae30 multiplexing \uc774 \uc5c6\uc73c\ubbc0\ub85c, ACK \ub4a4\u00b7\n1044:    //   \uac31\uc2e0 \uc55e\uc758 **\uace0\uc815 \uc704\uce58**\ub85c \ubc1b\ub294\ub2e4. \uc2e4\uc81c \uc6b4\uc601\uc5d0\uc11c\ub294 \uc8fc\uae30\uc801\uc73c\ub85c\n1045:    //   \ube44\ub3d9\uae30\ub85c \uc640\uc57c \ud558\uc9c0\ub9cc, \uadf8\ub7ec\ub824\uba74 \ud504\ub808\uc784 \ub2e4\uc911\ud654\uac00 \uba3c\uc800 \ud544\uc694\ud558\ub2e4 \u2014\n1046:    //   \uadf8 \ubc30\uc120\uc744 \ud749\ub0b4 \ub0b4\uc9c0 \uc54a\uace0 \uc9c0\uae08 \ud45c\ud604 \uac00\ub2a5\ud55c \uac83\ub9cc \ud55c\ub2e4.\n1047:    //\n1048:    //   `expect_heartbeats == 0`(\uae30\ubcf8\uac12)\uc774\uba74 \uc774 \uad6c\uac04\uc740 \ud1b5\uc9f8\ub85c \uc5c6\ub2e4 \u2014\n1049:    //   \uae30\uc874 \uc2dc\ub098\ub9ac\uc624\uc640 \ubc14\uc774\ud2b8 \ub2e8\uc704\ub85c \uac19\uac8c \ub3d9\uc791\ud55c\ub2e4.\n1050:    // \u2605 \uad00\uce21\uc744 \ub0a8\uae38 \uacf3\uc744 **\ub8e8\ud504 \ubc16\uc5d0\uc11c** \ud55c \ubc88 \uc5f0\ub2e4. \ud68c\ucc28\ub9c8\ub2e4 \uc5f4\uba74\n1051:    //   heartbeat \ud558\ub098\uc5d0 \ud30c\uc77c \uc5f4\uae30\uac00 \ud558\ub098\uc529 \ubd99\ub294\ub2e4.\n1052:    //\n1053:    //   \uc800\uc7a5\uc18c \uc5f4\uae30 \uc2e4\ud328\ub294 `Storage` \ub85c \ubd84\ub958\ud574 fail-closed \ud55c\ub2e4\n1054:    //   (`DoD-37` \uc774 \uc138\uc6b4 \uaddc\uce59) \u2014 \uad00\uce21\uc744 \ubabb \ub0a8\uae30\ub294 \ucc44\ub85c \"\uc0b4\uc544 \uc788\ub2e4\" \ub97c\n1055:    //   \uacc4\uc18d \ubc1b\uc544\ub4e4\uc774\uba74, \uadf8 \uc0ac\uc2e4\uc774 \uc5b4\ub514\uc5d0\ub3c4 \uc548 \ub0a8\ub294\ub2e4.\n1056:    let mut liveness_store = match &config.liveness_db_path {\n1057:        Some(path) if config.expect_heartbeats > 0 => Some(\n1058:            crate::node_liveness_store::CoordinatorNodeLivenessStore::open(path).map_err(\n1059:                |error| {\n1060:                    SessionHandlerError::Classified(storage_error(\n1061:                        \"liveness store open\",\n1062:                        error,\n1063:                    ))\n1064:                },\n1065:            )?,\n1066:        ),\n1067:        _ => None,\n1068:    };\n1069:\n1070:    for _ in 0..config.expect_heartbeats {\n1071:        let message = read_frame(\n1072:            stream,\n1073:            1,\n1074:            KeyDirectorySource::Provided(agent_keys),\n1075:            replay,\n1076:            clock,\n1077:        )\n1078:        .map_err(|e| format!(\"NodeHeartbeat \ud504\ub808\uc784 \uc77d\uae30/\uac80\uc99d \uc2e4\ud328: {e}\"))?;\n1079:\n1080:        // \u2605 `require_replay_checked()` \u2014 ACK\u00b7\uac31\uc2e0\uacfc \uac19\uc740 \uc774\uc720(\u00a710).\n1081:        //   heartbeat \ub97c \uc7ac\uc0dd\ud560 \uc218 \uc788\uc73c\uba74 \uc774\ubbf8 \uc8fd\uc740 \ub178\ub4dc\ub97c \uc0b4\uc544 \uc788\ub294\n1082:        //   \uac83\ucc98\ub7fc \ubcf4\uc774\uac8c \ub9cc\ub4e4 \uc218 \uc788\ub2e4.\n1083:        let heartbeat = match &message {\n1084:            IngressMessage::NodeHeartbeat(verified) => verified\n1085:                .require_replay_checked()\n2104:fn build_renew_result(\n2105:    config: &CoordinatorConfig,\n2106:    lease_store: &mut Option<CoordinatorLeaseStore>,\n2107:    key: &SigningKey,\n2108:    now: u64,\n2109:    lease_id: &str,\n2110:    request_nonce: Vec<u8>,\n2111:) -> Result<pb::RenewLeaseResult, String> {\n2112:    let request_nonce = if config.corrupt_renew_result_nonce {\n2113:        request_nonce.iter().map(|b| b ^ 0xFF).collect()\n2114:    } else {\n2115:        request_nonce\n2116:    };\n2117:\n2118:    let policy_override = |outcome: i32, request_nonce: Vec<u8>| pb::RenewLeaseResult {\n2119:        outcome,\n2120:        detail: \"policy override\".into(),\n2121:        schema_version: 1,\n2122:        coordinator_id: config.coordinator_device_id.clone(),\n2123:        issued_at_unix_ms: now,\n2124:        request_nonce,\n2125:        ..Default::default()\n2126:    };\n2127:\n2128:    let max_duration_exceeded_result = |request_nonce: Vec<u8>| pb::RenewLeaseResult {\n2129:        outcome: 6, // RENEW_OUTCOME_MAX_DURATION_EXCEEDED\n2130:        detail: \"max total duration exceeded\".into(),\n2131:        schema_version: 1,\n2132:        coordinator_id: config.coordinator_device_id.clone(),\n2133:        issued_at_unix_ms: now,\n2134:        request_nonce,\n2135:        ..Default::default()\n2136:    };\n2137:\n2138:    let revoked_result = |request_nonce: Vec<u8>, revoked_at_unix_ms: u64| {\n2139:        pb::RenewLeaseResult {\n2140:            outcome: 8, // RENEW_OUTCOME_REVOKED\n2141:            detail: format!(\"lease revoked at unix ms: {revoked_at_unix_ms}\"),\n2142:            schema_version: 1,\n2143:            coordinator_id: config.coordinator_device_id.clone(),\n2144:            issued_at_unix_ms: now,\n2145:            request_nonce,\n2146:            ..Default::default()\n2147:        }\n2148:    };\n2149:\n2150:    let mut result = match lease_store {\n2151:        // \u2605 \ucf54\ub371\uc2a4 \ub3c5\ub9bd \uac80\uc218(2026-08-19, p114) \uc9c0\uc801 \u2014 override \uac00\n2152:        //   \uc788\uc73c\uba74 \uc800\uc7a5\uc18c\ub97c **\uc804\ud600 \uac74\ub4dc\ub9ac\uc9c0 \uc54a\ub294\ub2e4**(\ub808\uac70\uc2dc `None`\n2153:        //   \uacbd\ub85c\uc640 \uac19\uc740 \uacc4\uc57d: \"\uac70\ubd80 \uc751\ub2f5\uc778\ub370 \uc800\uc7a5\uc18c\ub294 \uac31\uc2e0\ub428\" \uc774\ub77c\ub294\n2154:        //   \uc0c1\ud0dc \ubd88\uc77c\uce58\ub97c \ub9cc\ub4e4\uc9c0 \uc54a\ub294\ub2e4). \ub2e4\ub9cc \uc2e4\uc81c \ucd08\uacfc\ub294 override\n2155:        //   \ubcf4\ub2e4 \uc5ec\uc804\ud788 \uc6b0\uc120\ud574\uc57c \ud558\ubbc0\ub85c, \uc77d\uae30 \uc804\uc6a9 `get()` \uc73c\ub85c\n2156:        //   \uba3c\uc800 \ud655\uc778\ub9cc \ud55c\ub2e4 \u2014 \uc800\uc7a5\uc18c\ub97c \ubc14\uafb8\ub294 \uac74 override \uac00 \uc5c6\uc744\n2157:        //   \ub54c `renew_existing_within_duration()` \ud558\ub098\ubfd0\uc774\ub2e4.\n2158:        Some(store) => match config.renew_outcome_override {\n2159:            Some(outcome) => {\n2160:                let stored = store\n2161:                    .get(lease_id)\n2162:                    .map_err(|e| format!(\"lease store \uc870\ud68c \uc2e4\ud328: {e}\"))?\n2163:                    .ok_or_else(|| {\n2164:                        format!(\"RenewLeaseRequest.lease_id({lease_id}) \uac00 lease store \uc5d0 \uc5c6\ub2e4\")\n2165:                    })?;\n2166:                if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {\n2167:                    revoked_result(request_nonce, revoked_at_unix_ms)\n2168:                } else if stored.expires_at_unix_ms <= now {\n2169:                    return Err(format!(\n2170:                        \"lease store expired during renewal: {}\",\n2171:                        LeaseStoreError::Expired {\n2172:                            expires_at_unix_ms: stored.expires_at_unix_ms,\n2173:                        }\n2174:                    ));\n2175:                } else if stored.is_max_duration_exceeded(now) {\n2176:                    max_duration_exceeded_result(request_nonce)\n2177:                } else {\n2178:                    policy_override(outcome, request_nonce)\n2179:                }\n2180:            }\n2181:            None => match store.renew_existing_within_duration(\n2182:                lease_id,\n2183:                now,\n2184:                now + config.renew_extension_ms,\n2185:                now + config.renew_extension_ms / 2,\n2186:            ) {\n2187:                Err(LeaseStoreError::Revoked { revoked_at_unix_ms }) => {\n2188:                    revoked_result(request_nonce, revoked_at_unix_ms)\n2189:                }\n2190:                Err(LeaseStoreError::Expired { expires_at_unix_ms }) => {\n2191:                    return Err(format!(\n2192:                        \"lease store expired during renewal: {}\",\n2193:                        LeaseStoreError::Expired { expires_at_unix_ms }\n2194:                    ));\n2195:                }\n2196:                Err(error) => return Err(format!(\"lease store \uac31\uc2e0 \uc2e4\ud328: {error}\")),\n2197:                Ok(RenewDecision::MaxDurationExceeded(_)) => {\n2198:                    max_duration_exceeded_result(request_nonce)\n2199:                }\n2200:                Ok(RenewDecision::Renewed(resolved)) => {\n2201:                    build_renewed_lease_result(config, key, now, resolved, request_nonce)?\n2202:                }\n2203:            },\n2204:        },\n2205:        None => match config.renew_outcome_override {\n2206:            Some(outcome) => policy_override(outcome, request_nonce),\n2207:            None => {\n2208:                let resolved = StoredLease {\n2209:                    lease_id: config.lease_id.clone(),\n2210:                    job_id: config.job_id.clone(),\n2211:                    attempt_id: config.attempt_id.clone(),\n2212:                    holder_node_id: config.agent_device_id.clone(),\n2213:                    fence_epoch: config.renewed_fence_epoch,\n2214:                    expires_at_unix_ms: now + 60_000,\n2215:                    issuing_coordinator_id: config.coordinator_device_id.clone(),\n2216:                    coordinator_term: 1,\n2217:                    issued_at_unix_ms: now,\n2218:                    renew_after_unix_ms: now + 30_000,\n2219:                    max_total_duration_seconds: config.max_total_duration_seconds,\n2220:                    revoked_at_unix_ms: None,\n2221:                };\n2222:                build_renewed_lease_result(config, key, now, resolved, request_nonce)?\n2223:            }\n2224:        },\n2225:    };\n2226:\n2227:    result.coordinator_signature = sign(key, &result).to_vec();\n2228:\n2229:    if config.corrupt_renew_result_signature {\n2230:        let last = result\n2231:            .coordinator_signature\n2232:            .last_mut()\n2233:            .expect(\"RenewLeaseResult coordinator_signature \ub294 \ube44\uc5b4 \uc788\uc9c0 \uc54a\ub2e4\");\n2234:        *last ^= 0x01;\n2235:    }\n2236:\n2237:    Ok(result)\n2238:}\n2239:\n2240:/// \uc815\uc0c1 \uac31\uc2e0(`RENEW_OUTCOME_RENEWED`) \uacb0\uacfc\ub97c \ub9cc\ub4e0\ub2e4 \u2014 \uc0c8 `Lease` \ub97c\n2241:/// \ub3c5\ub9bd\uc801\uc73c\ub85c \uc11c\uba85\ud574 \ub2f4\ub294\ub2e4(\uaddc\uce59 i, nested \uc11c\uba85\uc740 outer \uc11c\uba85\uacfc \ubcc4\uac1c)."
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command 'rg -n "serve_resume_connection|NodeHeartbeat|liveness|heartbeat" crates/coordinator/src/lib.rs' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 3882ms:
+40:pub mod node_liveness_store;
+50://     조용히 옮겨갔다 — `multi_agent`(eba4114) → `node_liveness_store`
+235:    /// ACK 뒤에 받을 `NodeHeartbeat` 개수. 0 이면 이 구간이 없다.
+236:    pub expect_heartbeats: u32,
+237:    /// heartbeat 관측을 남길 SQLite 경로.
+242:    ///   `NodeRecord.last_heartbeat_unix_ms` 공백이 정확히 그것이다.
+243:    pub liveness_db_path: Option<String>,
+244:    /// ACK·heartbeat 뒤에 받을 `NeighborUnreachableReport` 개수.
+256:    /// ACK·heartbeat·이웃 신고 뒤에 받을 `AttemptReport` 개수.
+865:        return serve_resume_connection(
+1048:    //   `expect_heartbeats == 0`(기본값)이면 이 구간은 통째로 없다 —
+1051:    //   heartbeat 하나에 파일 열기가 하나씩 붙는다.
+1056:    let mut liveness_store = match &config.liveness_db_path {
+1057:        Some(path) if config.expect_heartbeats > 0 => Some(
+1058:            crate::node_liveness_store::CoordinatorNodeLivenessStore::open(path).map_err(
+1061:                        "liveness store open",
+1070:    for _ in 0..config.expect_heartbeats {
+1078:        .map_err(|e| format!("NodeHeartbeat 프레임 읽기/검증 실패: {e}"))?;
+1081:        //   heartbeat 를 재생할 수 있으면 이미 죽은 노드를 살아 있는
+1083:        let heartbeat = match &message {
+1084:            IngressMessage::NodeHeartbeat(verified) => verified
+1086:                .map_err(|e| format!("NodeHeartbeat replay 검사 실패: {e:?}"))?,
+1087:            other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
+1095:        //   `NodeHeartbeat::signer_id()` 가 `device_id` 라, 다른 이름을
+1105:        if heartbeat.device_id != config.agent_device_id {
+1108:                config.agent_device_id, heartbeat.device_id
+1112:        // 다른 Coordinator 로 보낸 heartbeat 를 이쪽으로 돌려쓸 수 없다.
+1113:        if heartbeat.coordinator_device_id != config.coordinator_device_id {
+1116:                config.coordinator_device_id, heartbeat.coordinator_device_id
+1136:            if heartbeat.fence_epoch != lease.fence_epoch {
+1139:                    lease.fence_epoch, heartbeat.fence_epoch
+1148:        //   판정은 여전히 여기서 하지 않는다 — `classify_node_liveness`
+1151:        if let Some(store) = liveness_store.as_mut() {
+1153:                IngressMessage::NodeHeartbeat(verified) => verified,
+1154:                other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
+1162:                crate::node_liveness_store::NodeLivenessStoreError::DeviceChanged {
+1165:                | crate::node_liveness_store::NodeLivenessStoreError::InvalidHeartbeat {
+1168:                | crate::node_liveness_store::NodeLivenessStoreError::SignerIsNotTheDevice {
+1173:                    SessionHandlerError::Classified(storage_error("liveness observe", other))
+1177:                "HEARTBEAT_STORED node_id={} last_heartbeat_unix_ms={} advanced={}",
+1178:                observed.stored.node_id, observed.stored.last_heartbeat_unix_ms, observed.advanced
+1184:            heartbeat.node_id,
+1185:            heartbeat.device_id,
+1186:            heartbeat.fence_epoch,
+1187:            heartbeat.running_attempts,
+1188:            heartbeat.issued_at_unix_ms
+1203:    // ★ 저장소는 heartbeat 와 같은 이유로 **루프 밖에서** 한 번 연다.
+1244:        // ★ 이 대조는 **지금 도달 불가다** — heartbeat 경로와 같은 이유로
+1300:                    //   heartbeat 경로에서 정확히 이 지적을 했다.
+1334:                    //   기록하면 깨진 DB 에 계속 쓰게 된다. heartbeat 경로도
+1381:    // ★ 자리는 heartbeat·이웃 신고와 같은 이유로 **고정 순차 위치**다 —
+1419:        // ★ 이 대조는 **지금 도달 불가다** — heartbeat·이웃 신고 경로와
+1449:        // ★ Lease 가 없으면 **거부한다** — heartbeat 경로와 같은 이유로,
+1509:                //   Agent 들의 작업까지 끊긴다 — heartbeat·이웃 신고
+1788:fn serve_resume_connection(
+2610:        expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
+2611:        liveness_db_path: flags.get("--liveness-db").cloned(),
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import json; from pathlib import Path; a=Path('crates/coordinator/src/lib.rs').read_text(encoding='utf-8').splitlines(); print(json.dumps('\\n'.join(f'{i+1}:{a[i]}' for i in range(1787,2010))))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 3450ms:
+"1788:fn serve_resume_connection(\n1789:    config: &CoordinatorConfig,\n1790:    stream: &mut std::net::TcpStream,\n1791:    lease_store: &mut Option<CoordinatorLeaseStore>,\n1792:    signing_key: &SigningKey,\n1793:    agent_keys: &InMemoryKeyring,\n1794:    replay: &mut InMemoryReplayGuard,\n1795:    clock: &SystemClock,\n1796:    connection_attempt: u32,\n1797:) -> Result<(), SessionHandlerError> {\n1798:    let hello_message = read_frame(\n1799:        stream,\n1800:        1,\n1801:        KeyDirectorySource::Provided(agent_keys),\n1802:        replay,\n1803:        clock,\n1804:    )\n1805:    .map_err(|e| format!(\"AgentSessionHello \ud504\ub808\uc784 \uc77d\uae30/\uac80\uc99d \uc2e4\ud328: {e}\"))?;\n1806:    let hello = match hello_message {\n1807:        IngressMessage::SessionHello(verified) => verified\n1808:            .require_replay_checked()\n1809:            .map_err(|e| format!(\"AgentSessionHello replay \uac80\uc0ac \uc2e4\ud328: {e:?}\"))?\n1810:            .clone(),\n1811:        other => {\n1812:            return Err(SessionHandlerError::Legacy(format!(\n1813:                \"Resume lane\uc5d0\uc11c Hello\uac00 \uc544\ub2cc \ud504\ub808\uc784 \uc218\uc2e0: {other:?}\"\n1814:            )))\n1815:        }\n1816:    };\n1817:    // \u2605 \ub9ac\ud130\ub7f4 2 \ub300\uc2e0 \uacf5\uc6a9 \uc0c1\uc218(2026-08-30 \ub3c5\ub9bd \uac80\uc218 \uc9c0\uc801).\n1818:    if hello.mode != gputeer_protocol::constants::MODE_RESUME {\n1819:        return Err(SessionHandlerError::Legacy(format!(\n1820:            \"AgentSessionHello.mode must be RESUME, got {}\",\n1821:            hello.mode\n1822:        )));\n1823:    }\n1824:    if hello.node_id != config.agent_device_id {\n1825:        return Err(SessionHandlerError::Legacy(format!(\n1826:            \"AgentSessionHello.node_id \ubd88\uc77c\uce58: \uae30\ub300\uac12 {} != {}\",\n1827:            config.agent_device_id, hello.node_id\n1828:        )));\n1829:    }\n1830:    if hello.connection_attempt != connection_attempt {\n1831:        return Err(SessionHandlerError::Legacy(format!(\n1832:            \"AgentSessionHello.connection_attempt \ubd88\uc77c\uce58: \uae30\ub300\uac12 {} != {}\",\n1833:            connection_attempt, hello.connection_attempt\n1834:        )));\n1835:    }\n1836:    if hello.session_id.is_empty() {\n1837:        return Err(SessionHandlerError::Legacy(\n1838:            \"AgentSessionHello.session_id\uac00 \ube44\uc5b4 \uc788\ub2e4\".into(),\n1839:        ));\n1840:    }\n1841:\n1842:    let request_message = read_frame(\n1843:        stream,\n1844:        1,\n1845:        KeyDirectorySource::Provided(agent_keys),\n1846:        replay,\n1847:        clock,\n1848:    )\n1849:    .map_err(|e| format!(\"ResumeLeaseRequest \ud504\ub808\uc784 \uc77d\uae30/\uac80\uc99d \uc2e4\ud328: {e}\"))?;\n1850:    let request = match request_message {\n1851:        IngressMessage::LeaseResume(verified) => verified\n1852:            .require_replay_checked()\n1853:            .map_err(|e| format!(\"ResumeLeaseRequest replay \uac80\uc0ac \uc2e4\ud328: {e:?}\"))?\n1854:            .clone(),\n1855:        other => {\n1856:            return Err(SessionHandlerError::Legacy(format!(\n1857:                \"Resume lane\uc5d0\uc11c ResumeLeaseRequest\uac00 \uc544\ub2cc \ud504\ub808\uc784 \uc218\uc2e0: {other:?}\"\n1858:            )))\n1859:        }\n1860:    };\n1861:    if request.node_id != hello.node_id\n1862:        || request.session_id != hello.session_id\n1863:        || request.connection_attempt != hello.connection_attempt\n1864:    {\n1865:        return Err(SessionHandlerError::Legacy(\n1866:            \"ResumeLeaseRequest\uc640 AgentSessionHello \uc0c1\uad00\uad00\uacc4\uac00 \uc77c\uce58\ud558\uc9c0 \uc54a\ub294\ub2e4\".into(),\n1867:        ));\n1868:    }\n1869:\n1870:    let now = clock.now_unix_ms();\n1871:    let mut result = pb::ResumeLeaseResult {\n1872:        schema_version: 1,\n1873:        coordinator_id: config.coordinator_device_id.clone(),\n1874:        issued_at_unix_ms: now,\n1875:        request_nonce: request.request_nonce.clone(),\n1876:        ..Default::default()\n1877:    };\n1878:    let decision = match lease_store.as_ref() {\n1879:        Some(store) => store.classify_resume(\n1880:            &ResumeRequestIdentity {\n1881:                lease_id: request.lease_id.clone(),\n1882:                node_id: request.node_id.clone(),\n1883:                job_id: request.job_id.clone(),\n1884:                attempt_id: request.attempt_id.clone(),\n1885:                fence_epoch: request.fence_epoch,\n1886:            },\n1887:            now,\n1888:        ),\n1889:        None => Err(LeaseStoreError::Io(\n1890:            \"resume requires a durable lease store\".into(),\n1891:        )),\n1892:    };\n1893:    match decision {\n1894:        Ok(ResumeDecision::Resumed(stored)) => {\n1895:            result.outcome = 1;\n1896:            result.detail = \"resume accepted; lease expiry was not extended\".into();\n1897:            result.lease = Some(stored_to_signed_lease(config, signing_key, stored)?);\n1898:        }\n1899:        Ok(ResumeDecision::UnknownLease) => {\n1900:            result.outcome = 5;\n1901:            result.detail = \"lease_id is not present in the durable store\".into();\n1902:        }\n1903:        Ok(ResumeDecision::IdentityConflict {\n1904:            field,\n1905:            stored,\n1906:            requested,\n1907:        }) => {\n1908:            result.outcome = 6;\n1909:            result.detail =\n1910:                format!(\"identity conflict in {field}: stored={stored} requested={requested}\");\n1911:        }\n1912:        Ok(ResumeDecision::Revoked { stored }) => {\n1913:            result.outcome = 2;\n1914:            result.detail = format!(\"lease revoked at {:?}\", stored.revoked_at_unix_ms);\n1915:        }\n1916:        Ok(ResumeDecision::Expired { stored }) => {\n1917:            result.outcome = 3;\n1918:            result.detail = format!(\"lease expired at {}\", stored.expires_at_unix_ms);\n1919:        }\n1920:        Ok(ResumeDecision::Superseded { stored }) => {\n1921:            result.outcome = 4;\n1922:            result.detail = format!(\"request epoch is below stored epoch {}\", stored.fence_epoch);\n1923:        }\n1924:        Ok(ResumeDecision::EpochAhead { stored }) => {\n1925:            result.outcome = 8;\n1926:            result.detail = format!(\"request epoch is above stored epoch {}\", stored.fence_epoch);\n1927:        }\n1928:        Err(error) => {\n1929:            return Err(SessionHandlerError::Classified(\n1930:                classify_resume_store_error(error),\n1931:            ));\n1932:        }\n1933:    }\n1934:    result.coordinator_signature = sign(signing_key, &result).to_vec();\n1935:    let frame = write_frame(FrameType::LeaseResumeResult, &result.encode_to_vec())\n1936:        .map_err(|e| format!(\"ResumeLeaseResult \ud504\ub808\uc784 \uc778\ucf54\ub529 \uc2e4\ud328: {e}\"))?;\n1937:    stream\n1938:        .write_all(&frame)\n1939:        .map_err(|e| format!(\"ResumeLeaseResult \uc804\uc1a1 \uc2e4\ud328: {e}\"))?;\n1940:    stream.flush().map_err(|e| e.to_string())?;\n1941:    println!(\n1942:        \"RESUME_RESULT ok=true outcome={} lease_id={} connection_attempt={}\",\n1943:        result.outcome, request.lease_id, connection_attempt\n1944:    );\n1945:    println!(\n1946:        \"RESULT ok=true resume_outcome={} lease_id={}\",\n1947:        result.outcome, request.lease_id\n1948:    );\n1949:    Ok(())\n1950:}\n1951:\n1952:fn send_revoke_notice(\n1953:    config: &CoordinatorConfig,\n1954:    grant: &pb::ExecutionGrant,\n1955:    lease_store: &mut Option<CoordinatorLeaseStore>,\n1956:    key: &SigningKey,\n1957:    stream: &mut std::net::TcpStream,\n1958:) -> Result<(), String> {\n1959:    let lease = grant\n1960:        .lease\n1961:        .as_ref()\n1962:        .ok_or_else(|| \"revoke \ub300\uc0c1 Grant\uc5d0 Lease\uac00 \uc5c6\ub2e4\".to_string())?;\n1963:\n1964:    // Persist the actual Grant lease id before constructing or sending any\n1965:    // wire notice. Test-only notice overrides must never change this key.\n1966:    if let Some(store) = lease_store {\n1967:        store\n1968:            .mark_revoked(&lease.lease_id, SystemClock.now_unix_ms())\n1969:            .map_err(|e| format!(\"lease store revoke \uc800\uc7a5 \uc2e4\ud328: {e}\"))?;\n1970:    }\n1971:\n1972:    if config.revoke_delay_ms != 0 {\n1973:        std::thread::sleep(Duration::from_millis(config.revoke_delay_ms));\n1974:    }\n1975:\n1976:    let notice = build_revoke_notice(\n1977:        lease,\n1978:        config.revoke_lease_id_override.as_deref(),\n1979:        config.revoke_fence_epoch_override,\n1980:        key,\n1981:        SystemClock.now_unix_ms(),\n1982:        config.corrupt_revoke_signature,\n1983:    )?;\n1984:\n1985:    let frame = write_frame(FrameType::LeaseRevoke, &notice.encode_to_vec())\n1986:        .map_err(|e| format!(\"RevokeLeaseNotice \ud504\ub808\uc784 \uc778\ucf54\ub529 \uc2e4\ud328: {e}\"))?;\n1987:    stream\n1988:        .write_all(&frame)\n1989:        .map_err(|e| format!(\"RevokeLeaseNotice \uc804\uc1a1 \uc2e4\ud328: {e}\"))?;\n1990:    stream.flush().map_err(|e| e.to_string())?;\n1991:    println!(\n1992:        \"REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}\",\n1993:        notice.lease_id, notice.fence_epoch, notice.cause\n1994:    );\n1995:    Ok(())\n1996:}\n1997:\n1998:fn build_revoke_notice(\n1999:    lease: &pb::Lease,\n2000:    lease_id_override: Option<&str>,\n2001:    fence_epoch_override: Option<u64>,\n2002:    key: &SigningKey,\n2003:    now_unix_ms: u64,\n2004:    corrupt_signature: bool,\n2005:) -> Result<pb::RevokeLeaseNotice, String> {\n2006:    let mut notice = pb::RevokeLeaseNotice {\n2007:        schema_version: 1,\n2008:        lease_id: lease_id_override\n2009:            .map(str::to_owned)\n2010:            .unwrap_or_else(|| lease.lease_id.clone()),"
+
+codex
+**㉒의 수정 범위는 타당합니다. 다만 “중복 키 문제 전체를 닫았다”거나 “양쪽 파서의 마지막 값 우선 규칙을 테스트로 고정했다”는 평가는 과장입니다.** 새 실행 결함은 확인한 범위에서 못 찾았습니다.
+
+아래 입력은 각 테스트의 정상 기본 인자에 추가하는 값입니다. `정상 seed`는 `"11"`을 32번 반복한 문자열입니다.
+
+1. **불리언 우회는 닫혔고, 비불리언 우회는 남았습니다. 이번에는 기록으로 남기는 판정이 맞습니다.**
+
+   `crates/coordinator/src/lib.rs:2881`, `crates/agent/src/lib.rs:2404`는 덮어써진 **모든** 앞 값을 검사합니다. 따라서 `--corrupt-own-signature tru --corrupt-own-signature false`와 Agent의 `--send-attempt-report true --send-attempt-report tru --send-attempt-report false`는 거부됩니다. 다른 필드의 파싱 오류가 먼저 반환될 수는 있지만, 잘못된 불리언을 포함한 설정이 성공하는 우회는 아닙니다.
+
+   반면 다음은 마지막 값만 검증하므로 파싱을 통과합니다.
+
+   | 입력 | 근거 |
+   |---|---|
+   | 양쪽: `--renew-rounds nope --renew-rounds 1` | `crates/coordinator/src/lib.rs:2925`, `crates/agent/src/lib.rs:2426` |
+   | 양쪽: `--own-seed zz --own-seed 정상seed` | `crates/coordinator/src/lib.rs:2558`, `crates/agent/src/lib.rs:2200` |
+
+   이것은 남은 검증 공백이지만 이번 변경이 만든 회귀는 아닙니다. 보고서 `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1069`도 정확히 인정합니다. **㉒의 불리언 수정 승인에 비불리언 전수 검증까지 요구할 근거는 부족합니다.** 다만 selftest 34는 *유효한 문자열의 덮어쓰기*만 정당화합니다. 잘못된 숫자·문자열까지 허용해야 한다는 근거는 아닙니다.
+
+2. **selftest 34의 중복 방식은 이번 변경으로 거부되지 않습니다.**
+
+   `crates/cli/src/coordinator_agent_selftest.rs:2525`와 `:2533`의 추가 인자는 양쪽 모두 `--agent-device-id 01JOTHERAGENTSELFTEST00000001`입니다. 문자열은 여전히 마지막 값이 선택됩니다(`crates/coordinator/src/lib.rs:2980`, `crates/agent/src/lib.rs:2479`).
+
+   함께 주는 `--do-renew false`도 유효한 불리언입니다. **보여 준 중복 인자에 대한 파서 호환성은 유지됩니다.** 시나리오 전체의 실제 성공은 이번 검수에서 실행 확인하지 않았습니다.
+
+3. **새 테스트는 지적된 회귀를 잡습니다. 다만 대조군은 양쪽에 완비되어 있지 않습니다.**
+
+   | 경계와 구체적 입력 | 테스트 위치 | 되돌렸을 때 |
+   |---|---|---|
+   | `tru → false` 중복 | `crates/coordinator/tests/stored_lane_flags.rs:267`, `crates/agent/tests/unknown_flags.rs:76` | 앞 값 저장 또는 검사를 없애면 설정이 성공해 테스트 실패 |
+   | 저장된 예약 기본 인자에서 `--lease-db` 제거 후, `NOT_APPLIED` 앞 여섯 쌍을 하나씩 추가 | `crates/coordinator/tests/stored_lane_flags.rs:285` | 여섯 항목까지 DB 존재 조건에 묶으면 테스트 실패 |
+   | `--stored-grant-job-id`, `--stored-grant-attempt-id`, `--stored-grant-lease-id`를 각각 제거 | 같은 파일 `:296` | 누락 검사를 없애면 성공하거나 다른 오류 코드가 나와 테스트 실패 |
+   | 레거시에 `--stored-grant-job-id J`, `--stored-grant-attempt-id A`, `--stored-grant-lease-id L`, `--stored-grant-ttl-ms 1`을 각각 추가 | 같은 파일 `:303` | 해당 이름을 거부 목록에서 빼면 테스트 실패 |
+
+   오류 코드와 해당 이름을 함께 검사하므로 다른 거부 이유로 우연히 통과하기 어렵습니다(`crates/coordinator/tests/stored_lane_flags.rs:61`).
+
+   **남은 테스트 공백:** Coordinator는 `false → true`를 받아 최종 `true`인지 확인하지만(`:276`), Agent에는 유효한 중복 대조군이 없습니다. 예를 들어 Agent가 `--send-attempt-report false --send-attempt-report true`까지 `INVALID_BOOL`로 거부하도록 잘못 바뀌어도 이 파일의 테스트는 잡지 못합니다. Coordinator 역시 `true → false` 대조군은 없습니다.
+
+   따라서 보고서 `…결함_5건.md:1067`의 “대조군을 붙였다”는 말은 **Coordinator에는 맞지만, 두 파서 모두를 고정했다는 뜻으로 확대하면 과장**입니다. 현재 구현의 오류는 아니며, 보강할 가치가 있는 테스트 공백입니다.
+
+4. **기록만 한 두 사례는 조건을 명확히 하면 정확합니다.**
+
+   `crates/coordinator/src/lib.rs:2205`의 **Lease 저장소 없음 + 갱신 결과 override 없음** 분기에서는 `--do-renew true --renew-extension-ms 1000`을 주어도 만료가 `now + 60_000`이고, 다음 갱신 시점도 `now + 30_000`입니다(`:2214`, `:2218`). 저장소가 있는 정상 갱신 분기는 설정값을 사용합니다(`:2184`). 따라서 보고서 `…결함_5건.md:1051`은 정상 갱신에 대한 설명으로 맞습니다. 거부 결과 override까지 포함해 항상 60초짜리 Lease를 만든다는 뜻은 아닙니다.
+
+   `--resume-protocol true --lease-db lease.sqlite3 --expect-heartbeats 1 --liveness-db live.sqlite3`에서, control DB 등 다른 거부 조건을 주지 않으면 heartbeat 설정은 파싱됩니다(`crates/coordinator/src/lib.rs:2610`). 하지만 Resume은 `:864`에서 별도 처리로 들어가 `:1949`에서 종료하므로 heartbeat 저장소 열기(`:1056`)와 수신 루프(`:1070`)에 도달하지 않습니다. 보고서 `…결함_5건.md:1053`은 맞습니다. 정확히는 **저장소 경로 설정을 받고 사용하지 않는 것**입니다.
+
+지정한 여섯 파일 안에서 파서, 새 테스트, 시나리오 34의 인자, 두 잔여 사례의 관련 실행 분기를 확인했습니다. 읽기 전용 환경이므로 테스트·뮤테이션·selftest는 재실행하지 않았고, 보고서의 `4/4`, `97/97`을 독립 검증한 것은 아닙니다. **이번 변경이 만든 실행 결함의 반례는 못 찾았습니다. 결함이 없음을 증명했다는 판정은 아닙니다.**
+
+ACCEPTED
+tokens used
+95,658
+**㉒의 수정 범위는 타당합니다. 다만 “중복 키 문제 전체를 닫았다”거나 “양쪽 파서의 마지막 값 우선 규칙을 테스트로 고정했다”는 평가는 과장입니다.** 새 실행 결함은 확인한 범위에서 못 찾았습니다.
+
+아래 입력은 각 테스트의 정상 기본 인자에 추가하는 값입니다. `정상 seed`는 `"11"`을 32번 반복한 문자열입니다.
+
+1. **불리언 우회는 닫혔고, 비불리언 우회는 남았습니다. 이번에는 기록으로 남기는 판정이 맞습니다.**
+
+   `crates/coordinator/src/lib.rs:2881`, `crates/agent/src/lib.rs:2404`는 덮어써진 **모든** 앞 값을 검사합니다. 따라서 `--corrupt-own-signature tru --corrupt-own-signature false`와 Agent의 `--send-attempt-report true --send-attempt-report tru --send-attempt-report false`는 거부됩니다. 다른 필드의 파싱 오류가 먼저 반환될 수는 있지만, 잘못된 불리언을 포함한 설정이 성공하는 우회는 아닙니다.
+
+   반면 다음은 마지막 값만 검증하므로 파싱을 통과합니다.
+
+   | 입력 | 근거 |
+   |---|---|
+   | 양쪽: `--renew-rounds nope --renew-rounds 1` | `crates/coordinator/src/lib.rs:2925`, `crates/agent/src/lib.rs:2426` |
+   | 양쪽: `--own-seed zz --own-seed 정상seed` | `crates/coordinator/src/lib.rs:2558`, `crates/agent/src/lib.rs:2200` |
+
+   이것은 남은 검증 공백이지만 이번 변경이 만든 회귀는 아닙니다. 보고서 `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1069`도 정확히 인정합니다. **㉒의 불리언 수정 승인에 비불리언 전수 검증까지 요구할 근거는 부족합니다.** 다만 selftest 34는 *유효한 문자열의 덮어쓰기*만 정당화합니다. 잘못된 숫자·문자열까지 허용해야 한다는 근거는 아닙니다.
+
+2. **selftest 34의 중복 방식은 이번 변경으로 거부되지 않습니다.**
+
+   `crates/cli/src/coordinator_agent_selftest.rs:2525`와 `:2533`의 추가 인자는 양쪽 모두 `--agent-device-id 01JOTHERAGENTSELFTEST00000001`입니다. 문자열은 여전히 마지막 값이 선택됩니다(`crates/coordinator/src/lib.rs:2980`, `crates/agent/src/lib.rs:2479`).
+
+   함께 주는 `--do-renew false`도 유효한 불리언입니다. **보여 준 중복 인자에 대한 파서 호환성은 유지됩니다.** 시나리오 전체의 실제 성공은 이번 검수에서 실행 확인하지 않았습니다.
+
+3. **새 테스트는 지적된 회귀를 잡습니다. 다만 대조군은 양쪽에 완비되어 있지 않습니다.**
+
+   | 경계와 구체적 입력 | 테스트 위치 | 되돌렸을 때 |
+   |---|---|---|
+   | `tru → false` 중복 | `crates/coordinator/tests/stored_lane_flags.rs:267`, `crates/agent/tests/unknown_flags.rs:76` | 앞 값 저장 또는 검사를 없애면 설정이 성공해 테스트 실패 |
+   | 저장된 예약 기본 인자에서 `--lease-db` 제거 후, `NOT_APPLIED` 앞 여섯 쌍을 하나씩 추가 | `crates/coordinator/tests/stored_lane_flags.rs:285` | 여섯 항목까지 DB 존재 조건에 묶으면 테스트 실패 |
+   | `--stored-grant-job-id`, `--stored-grant-attempt-id`, `--stored-grant-lease-id`를 각각 제거 | 같은 파일 `:296` | 누락 검사를 없애면 성공하거나 다른 오류 코드가 나와 테스트 실패 |
+   | 레거시에 `--stored-grant-job-id J`, `--stored-grant-attempt-id A`, `--stored-grant-lease-id L`, `--stored-grant-ttl-ms 1`을 각각 추가 | 같은 파일 `:303` | 해당 이름을 거부 목록에서 빼면 테스트 실패 |
+
+   오류 코드와 해당 이름을 함께 검사하므로 다른 거부 이유로 우연히 통과하기 어렵습니다(`crates/coordinator/tests/stored_lane_flags.rs:61`).
+
+   **남은 테스트 공백:** Coordinator는 `false → true`를 받아 최종 `true`인지 확인하지만(`:276`), Agent에는 유효한 중복 대조군이 없습니다. 예를 들어 Agent가 `--send-attempt-report false --send-attempt-report true`까지 `INVALID_BOOL`로 거부하도록 잘못 바뀌어도 이 파일의 테스트는 잡지 못합니다. Coordinator 역시 `true → false` 대조군은 없습니다.
+
+   따라서 보고서 `…결함_5건.md:1067`의 “대조군을 붙였다”는 말은 **Coordinator에는 맞지만, 두 파서 모두를 고정했다는 뜻으로 확대하면 과장**입니다. 현재 구현의 오류는 아니며, 보강할 가치가 있는 테스트 공백입니다.
+
+4. **기록만 한 두 사례는 조건을 명확히 하면 정확합니다.**
+
+   `crates/coordinator/src/lib.rs:2205`의 **Lease 저장소 없음 + 갱신 결과 override 없음** 분기에서는 `--do-renew true --renew-extension-ms 1000`을 주어도 만료가 `now + 60_000`이고, 다음 갱신 시점도 `now + 30_000`입니다(`:2214`, `:2218`). 저장소가 있는 정상 갱신 분기는 설정값을 사용합니다(`:2184`). 따라서 보고서 `…결함_5건.md:1051`은 정상 갱신에 대한 설명으로 맞습니다. 거부 결과 override까지 포함해 항상 60초짜리 Lease를 만든다는 뜻은 아닙니다.
+
+   `--resume-protocol true --lease-db lease.sqlite3 --expect-heartbeats 1 --liveness-db live.sqlite3`에서, control DB 등 다른 거부 조건을 주지 않으면 heartbeat 설정은 파싱됩니다(`crates/coordinator/src/lib.rs:2610`). 하지만 Resume은 `:864`에서 별도 처리로 들어가 `:1949`에서 종료하므로 heartbeat 저장소 열기(`:1056`)와 수신 루프(`:1070`)에 도달하지 않습니다. 보고서 `…결함_5건.md:1053`은 맞습니다. 정확히는 **저장소 경로 설정을 받고 사용하지 않는 것**입니다.
+
+지정한 여섯 파일 안에서 파서, 새 테스트, 시나리오 34의 인자, 두 잔여 사례의 관련 실행 분기를 확인했습니다. 읽기 전용 환경이므로 테스트·뮤테이션·selftest는 재실행하지 않았고, 보고서의 `4/4`, `97/97`을 독립 검증한 것은 아닙니다. **이번 변경이 만든 실행 결함의 반례는 못 찾았습니다. 결함이 없음을 증명했다는 판정은 아닙니다.**
+
+ACCEPTED

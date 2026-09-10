@@ -87,3 +87,18 @@ fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
     assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
     assert!(error.contains("--send-attempt-report"), "{error}");
 }
+
+/// ★ 대조 — **올바른** 값의 중복은 받고 마지막 값을 쓴다(재검수 20).
+///
+/// 이게 없으면 "중복이면 전부 INVALID_BOOL" 로 잘못 바뀌어도 위 테스트가 통과한다.
+#[test]
+fn a_valid_duplicate_bool_is_accepted_and_the_last_value_wins() {
+    let mut args = base();
+    args.extend(
+        ["--send-attempt-report", "false", "--send-attempt-report", "true"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let config = parse_config_from_args(&args).expect("올바른 값의 중복을 거부했다");
+    assert!(config.send_attempt_report, "마지막 값을 쓰지 않았다");
+}
