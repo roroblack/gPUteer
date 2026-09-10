@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-10 21:46 — 결함 ⑱ 실측(재현됨) · 설계 선택지 · 재검수 47 ACCEPTED
+
+- 계획: `docs/plans/2026-09-10_2142_결함18_ACK_시한_설계_선택지.md` (사용자 결정 대기)
+- 스트림: Agent · Coordinator · QA
+- 수행: ⑱ 을 selftest 80번과 같은 레거시 lane 에서 워크로드 길이만 바꿔 교대로 쟀다. 약 20초 워크로드
+  2/2 에서 Coordinator 가 +10.1초에 ACK 읽기 시한으로 실패했고, 약 5초는 2/2 통과했다. Agent 는
+  Coordinator 가 실패한 뒤에도 `RESULT ok=true` 로 끝났다 — Agent 의 성공 출력은 ACK 도달의 증거가
+  아니다. 선택지 넷(C 시한만 Lease 에 · A ACK 를 실행 전으로 + 보고 대기를 Lease 에 · E A + 실행 중
+  heartbeat · B A + 보고는 별도 연결)을 규범(`state-machines.md` §3)과 proto 에 대조해 적었다. 구현은
+  결정 뒤다. 재검수 47 은 ㊶ 을 ACCEPTED 했다
+- 검증: 원문 `docs/evidence/_raw/결함18_ACK_시한_실측_2026-09-10.txt`. 코드는 바꾸지 않았다
+- 리포트: 결함 ⑱ §3 · 설계 선택지 문서
+
+---
+
 ## 2026-09-10 21:41 — 재검수 46 대응(결함 ㊶) · 설명 요청 45 결과 보존
 
 - 계획: `docs/runbooks/검수_대기열.md` 의 재검수 46 · 설명 요청 45

@@ -1,0 +1,102 @@
+# 결함 ⑱ 실측 — 레거시 lane(--manifest-file) · 워크로드 길이만 바꿔 교대로
+시각 2026-09-10T21:39:04
+commit f57513e04c561aca79ff2dd467f9ed68d02ba28b
+binary C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe mtime 2026-09-10T21:38:00
+platform Windows-11-10.0.26200-SP0 · python 3.12.7
+키: selftest Fixture 와 같은 라벨의 blake3 시드 · selftest 80번과 같은 플래그 + --checkpoint-root
+
+=== A1-short: ping -n 6 (워크로드 예상 약 5초) ===
+submit: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe submit --job-id 01JJOBSELFTEST00000000001 --entrypoint C:\WINDOWS\system32\cmd.exe --args /c,ping,-n,6,127.0.0.1 --submitter-device-id 01JSUBMITSELFTEST0000000001 --submitter-seed 1da01dd3deb46516f7f262cc8156a4629d8fb847cdcf23926b423638a57e8da5 --issued-at-unix-ms 1789043944861 --out C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\A1-short.manifest
+coordinator: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe coordinator-stub --listen 127.0.0.1:0 --own-seed d4767e74f9c2c26e841bc935e7ef6214bdd608084b61b8594e2ad625f22d5d7d --peer-pubkey 02b8280da8634e25dfad20a5b190330db65a258bb4bf99e62a3ed2f03078d001 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --grant-id 01JGRANTSELFTEST000000001 --attempt-id 01JATTEMPTSELFTEST00000001 --lease-id 01JLEASESELFTEST000000001 --job-id 01JJOBSELFTEST00000000001 --manifest-file C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\A1-short.manifest --i-understand-legacy-mode-is-unsafe true
+agent: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe agent-stub --connect 127.0.0.1:56342 --own-seed f72ffed994c774473f64a68cce44d652d3cb039663bcb5955e490832f1f0582e --peer-pubkey ff4c30f73eca6f123d106c855d146b7b2b0739a3bfb23d188fb51195ef74dd53 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --submitter-pubkey a972df03780e407dcf104d982d09898ab44e546d7951bf239f2cc223e4b2f1c0 --i-understand-this-executes-untrusted-code true --checkpoint-root C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\A1-short-ckpt --disable-reconnect true
+coordinator 종료 +5.45s exit=0
+agent       종료 +5.45s exit=0
+--- coord_out ---
+[+  0.08s] CONNECTION_ATTEMPT 0 peer=127.0.0.1:56344
+[+  5.36s] RESULT ok=true grant_id=01JGRANTSELFTEST000000001 attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+--- coord_err ---
+[+  0.05s] 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+--- agent_out ---
+[+  0.05s] OWNER_PANEL listening=http://127.0.0.1:56343/
+[+  0.09s] LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASESELFTEST000000001 issued_at_unix_ms=1789043945632 expires_at_unix_ms=1789044005632
+[+  0.11s] MANIFEST_ACCEPTED job_id=01JJOBSELFTEST00000000001 entrypoint=C:\WINDOWS\system32\cmd.exe args=5 env_vars=0
+[+  0.12s] JOB_STARTED checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 job_id=01JJOBSELFTEST00000000001 attempt_id=01JATTEMPTSELFTEST00000001 grant_id=01JGRANTSELFTEST000000001 state=WRITING
+[+  5.26s] WORKLOAD_EXITED job_id=01JJOBSELFTEST00000000001 exit_code=0 commit_limit_bytes=268435456 peak_commit_bytes=8892416
+[+  5.34s] WORKLOAD_ARTIFACTS checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 files=3 bytes=637
+[+  5.34s] WORKLOAD_RESULT ok=true job_id=01JJOBSELFTEST00000000001
+[+  5.34s] RESULT ok=true grant_id=01JGRANTSELFTEST000000001 attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+--- agent_err ---
+
+=== B1-long: ping -n 21 (워크로드 예상 약 20초) ===
+submit: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe submit --job-id 01JJOBSELFTEST00000000001 --entrypoint C:\WINDOWS\system32\cmd.exe --args /c,ping,-n,21,127.0.0.1 --submitter-device-id 01JSUBMITSELFTEST0000000001 --submitter-seed 1da01dd3deb46516f7f262cc8156a4629d8fb847cdcf23926b423638a57e8da5 --issued-at-unix-ms 1789043951021 --out C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\B1-long.manifest
+coordinator: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe coordinator-stub --listen 127.0.0.1:0 --own-seed d4767e74f9c2c26e841bc935e7ef6214bdd608084b61b8594e2ad625f22d5d7d --peer-pubkey 02b8280da8634e25dfad20a5b190330db65a258bb4bf99e62a3ed2f03078d001 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --grant-id 01JGRANTSELFTEST000000001 --attempt-id 01JATTEMPTSELFTEST00000001 --lease-id 01JLEASESELFTEST000000001 --job-id 01JJOBSELFTEST00000000001 --manifest-file C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\B1-long.manifest --i-understand-legacy-mode-is-unsafe true
+agent: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe agent-stub --connect 127.0.0.1:59577 --own-seed f72ffed994c774473f64a68cce44d652d3cb039663bcb5955e490832f1f0582e --peer-pubkey ff4c30f73eca6f123d106c855d146b7b2b0739a3bfb23d188fb51195ef74dd53 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --submitter-pubkey a972df03780e407dcf104d982d09898ab44e546d7951bf239f2cc223e4b2f1c0 --i-understand-this-executes-untrusted-code true --checkpoint-root C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\B1-long-ckpt --disable-reconnect true
+coordinator 종료 +10.09s exit=1
+agent       종료 +20.58s exit=0
+--- coord_out ---
+[+  0.09s] CONNECTION_ATTEMPT 0 peer=127.0.0.1:59579
+--- coord_err ---
+[+  0.03s] 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+[+ 10.09s] SESSION_ERROR peer=127.0.0.1:59579 connection_attempt=0 kind=transport error=transport: session I/O: ACK 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+[+ 10.09s] coordinator-stub 실패: transport: session I/O: ACK 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+--- agent_out ---
+[+  0.05s] OWNER_PANEL listening=http://127.0.0.1:59578/
+[+  0.14s] LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASESELFTEST000000001 issued_at_unix_ms=1789043951154 expires_at_unix_ms=1789044011154
+[+  0.16s] MANIFEST_ACCEPTED job_id=01JJOBSELFTEST00000000001 entrypoint=C:\WINDOWS\system32\cmd.exe args=5 env_vars=0
+[+  0.16s] JOB_STARTED checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 job_id=01JJOBSELFTEST00000000001 attempt_id=01JATTEMPTSELFTEST00000001 grant_id=01JGRANTSELFTEST000000001 state=WRITING
+[+ 20.47s] WORKLOAD_EXITED job_id=01JJOBSELFTEST00000000001 exit_code=0 commit_limit_bytes=268435456 peak_commit_bytes=7864320
+[+ 20.58s] WORKLOAD_ARTIFACTS checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 files=3 bytes=1329
+[+ 20.58s] WORKLOAD_RESULT ok=true job_id=01JJOBSELFTEST00000000001
+[+ 20.58s] RESULT ok=true grant_id=01JGRANTSELFTEST000000001 attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+--- agent_err ---
+
+=== A2-short: ping -n 6 (워크로드 예상 약 5초) ===
+submit: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe submit --job-id 01JJOBSELFTEST00000000001 --entrypoint C:\WINDOWS\system32\cmd.exe --args /c,ping,-n,6,127.0.0.1 --submitter-device-id 01JSUBMITSELFTEST0000000001 --submitter-seed 1da01dd3deb46516f7f262cc8156a4629d8fb847cdcf23926b423638a57e8da5 --issued-at-unix-ms 1789043971635 --out C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\A2-short.manifest
+coordinator: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe coordinator-stub --listen 127.0.0.1:0 --own-seed d4767e74f9c2c26e841bc935e7ef6214bdd608084b61b8594e2ad625f22d5d7d --peer-pubkey 02b8280da8634e25dfad20a5b190330db65a258bb4bf99e62a3ed2f03078d001 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --grant-id 01JGRANTSELFTEST000000001 --attempt-id 01JATTEMPTSELFTEST00000001 --lease-id 01JLEASESELFTEST000000001 --job-id 01JJOBSELFTEST00000000001 --manifest-file C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\A2-short.manifest --i-understand-legacy-mode-is-unsafe true
+agent: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe agent-stub --connect 127.0.0.1:65439 --own-seed f72ffed994c774473f64a68cce44d652d3cb039663bcb5955e490832f1f0582e --peer-pubkey ff4c30f73eca6f123d106c855d146b7b2b0739a3bfb23d188fb51195ef74dd53 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --submitter-pubkey a972df03780e407dcf104d982d09898ab44e546d7951bf239f2cc223e4b2f1c0 --i-understand-this-executes-untrusted-code true --checkpoint-root C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\A2-short-ckpt --disable-reconnect true
+coordinator 종료 +5.48s exit=0
+agent       종료 +5.48s exit=0
+--- coord_out ---
+[+  0.08s] CONNECTION_ATTEMPT 0 peer=127.0.0.1:65441
+[+  5.38s] RESULT ok=true grant_id=01JGRANTSELFTEST000000001 attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+--- coord_err ---
+[+  0.05s] 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+--- agent_out ---
+[+  0.05s] OWNER_PANEL listening=http://127.0.0.1:65440/
+[+  0.11s] LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASESELFTEST000000001 issued_at_unix_ms=1789043971748 expires_at_unix_ms=1789044031748
+[+  0.11s] MANIFEST_ACCEPTED job_id=01JJOBSELFTEST00000000001 entrypoint=C:\WINDOWS\system32\cmd.exe args=5 env_vars=0
+[+  0.12s] JOB_STARTED checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 job_id=01JJOBSELFTEST00000000001 attempt_id=01JATTEMPTSELFTEST00000001 grant_id=01JGRANTSELFTEST000000001 state=WRITING
+[+  5.25s] WORKLOAD_EXITED job_id=01JJOBSELFTEST00000000001 exit_code=0 commit_limit_bytes=268435456 peak_commit_bytes=8892416
+[+  5.36s] WORKLOAD_ARTIFACTS checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 files=3 bytes=637
+[+  5.36s] WORKLOAD_RESULT ok=true job_id=01JJOBSELFTEST00000000001
+[+  5.36s] RESULT ok=true grant_id=01JGRANTSELFTEST000000001 attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+--- agent_err ---
+
+=== B2-long: ping -n 21 (워크로드 예상 약 20초) ===
+submit: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe submit --job-id 01JJOBSELFTEST00000000001 --entrypoint C:\WINDOWS\system32\cmd.exe --args /c,ping,-n,21,127.0.0.1 --submitter-device-id 01JSUBMITSELFTEST0000000001 --submitter-seed 1da01dd3deb46516f7f262cc8156a4629d8fb847cdcf23926b423638a57e8da5 --issued-at-unix-ms 1789043977150 --out C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\B2-long.manifest
+coordinator: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe coordinator-stub --listen 127.0.0.1:0 --own-seed d4767e74f9c2c26e841bc935e7ef6214bdd608084b61b8594e2ad625f22d5d7d --peer-pubkey 02b8280da8634e25dfad20a5b190330db65a258bb4bf99e62a3ed2f03078d001 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --grant-id 01JGRANTSELFTEST000000001 --attempt-id 01JATTEMPTSELFTEST00000001 --lease-id 01JLEASESELFTEST000000001 --job-id 01JJOBSELFTEST00000000001 --manifest-file C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\B2-long.manifest --i-understand-legacy-mode-is-unsafe true
+agent: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe agent-stub --connect 127.0.0.1:65442 --own-seed f72ffed994c774473f64a68cce44d652d3cb039663bcb5955e490832f1f0582e --peer-pubkey ff4c30f73eca6f123d106c855d146b7b2b0739a3bfb23d188fb51195ef74dd53 --coordinator-device-id 01JCOORDSELFTEST0000000001 --agent-device-id 01JAGENTSELFTEST00000000001 --submitter-pubkey a972df03780e407dcf104d982d09898ab44e546d7951bf239f2cc223e4b2f1c0 --i-understand-this-executes-untrusted-code true --checkpoint-root C:\Users\PLAYDA~1\AppData\Local\Temp\tmptd5p_9jb\B2-long-ckpt --disable-reconnect true
+coordinator 종료 +10.08s exit=1
+agent       종료 +20.44s exit=0
+--- coord_out ---
+[+  0.06s] CONNECTION_ATTEMPT 0 peer=127.0.0.1:65444
+--- coord_err ---
+[+  0.03s] 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+[+ 10.06s] SESSION_ERROR peer=127.0.0.1:65444 connection_attempt=0 kind=transport error=transport: session I/O: ACK 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+[+ 10.06s] coordinator-stub 실패: transport: session I/O: ACK 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+--- agent_out ---
+[+  0.03s] OWNER_PANEL listening=http://127.0.0.1:65443/
+[+  0.09s] LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASESELFTEST000000001 issued_at_unix_ms=1789043977249 expires_at_unix_ms=1789044037249
+[+  0.09s] MANIFEST_ACCEPTED job_id=01JJOBSELFTEST00000000001 entrypoint=C:\WINDOWS\system32\cmd.exe args=5 env_vars=0
+[+  0.11s] JOB_STARTED checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 job_id=01JJOBSELFTEST00000000001 attempt_id=01JATTEMPTSELFTEST00000001 grant_id=01JGRANTSELFTEST000000001 state=WRITING
+[+ 20.31s] WORKLOAD_EXITED job_id=01JJOBSELFTEST00000000001 exit_code=0 commit_limit_bytes=268435456 peak_commit_bytes=8908800
+[+ 20.44s] WORKLOAD_ARTIFACTS checkpoint_id=start-002efc0c793b0bac17fb789147d6bd741bb993c6b8db05fc9d5ed56464f66597 files=3 bytes=1329
+[+ 20.44s] WORKLOAD_RESULT ok=true job_id=01JJOBSELFTEST00000000001
+[+ 20.44s] RESULT ok=true grant_id=01JGRANTSELFTEST000000001 attempt_id=01JATTEMPTSELFTEST00000001 agent_device_id=01JAGENTSELFTEST00000000001
+--- agent_err ---
+
+=== 요약 ===
+A1-short  ping -n  6  coordinator exit=0  agent exit=0
+B1-long   ping -n 21  coordinator exit=1  agent exit=0
+A2-short  ping -n  6  coordinator exit=0  agent exit=0
+B2-long   ping -n 21  coordinator exit=1  agent exit=0
