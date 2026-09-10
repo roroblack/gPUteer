@@ -34,7 +34,10 @@
 //!
 //! ```text
 //! 임시 파일   create_new(true) 로 **배타 생성**한다. 이미 있으면 이름을
-//!             바꿔 다시 시도한다 — 남의 임시 파일을 덮지 않는다
+//!             바꿔 다시 시도한다 — 남의 임시 파일을 덮지 않는다.
+//!             이름은 `<대상>.tmp.<pid>.<seq>.<n>` — seq 는 호출마다 받는 프로세스
+//!             전역 번호라, 같은 프로세스의 동시 쓰기끼리 같은 이름을 두고
+//!             부딪히지 않는다(결함 ㊱)
 //! 덮어쓰기 X  temp 를 target 에 **hard_link** 한다. 대상이 있으면
 //!             링크가 실패한다 — **확인과 확정이 한 번의 원자적 연산**이다
 //! 덮어쓰기 O  `fs::rename` 한 번으로 바꾼다. **먼저 지우지 않는다** —
@@ -75,8 +78,10 @@
 //!
 //! ★ 테스트가 지키는 것과 못 지키는 것:
 //!   ```text
-//!   지킨다   임시 이름 배타 생성 — 1차 구현이 쓰던 이름(`.tmp.<pid>`)과
-//!            지금 이름(`.tmp.<pid>.0`)의 남의 파일을 **둘 다** 안 건드린다
+//!   지킨다   임시 이름 배타 생성 — 1차 구현의 이름(`.tmp.<pid>`) · 2차 구현의
+//!            이름(`.tmp.<pid>.0`) · 지금 이름(`.tmp.<pid>.<seq>.0`)의 남의 파일을
+//!            안 건드린다
+//!   지킨다   같은 프로세스 안에서 임시 이름을 다시 쓰지 않는다(결함 ㊱)
 //!   지킨다   덮어쓰기 금지에서 동시 쓰기 16개 중 정확히 하나만 이긴다.
 //!            ★ 확인과 확정이 갈라진 1차 구현은 여럿이 이길 **수 있다** —
 //!              스케줄에 달려 있어 매번 잡는다는 보장은 없다
@@ -94,6 +99,10 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// 임시 이름의 프로세스 전역 번호 — 호출마다 하나씩 받는다(결함 ㊱).
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 파일 교체·삭제. 테스트가 실패를 **주입**할 수 있게 한 벌로 묶는다.
 ///
@@ -236,8 +245,14 @@ fn create_exclusive_temp(
     what: &str,
 ) -> Result<(PathBuf, std::fs::File), String> {
     let pid = std::process::id();
+    // ★ 결함 ㊱ — 전에는 호출마다 `.tmp.<pid>.0` 부터 시도해, 같은 프로세스의 다른 쓰기가
+    //   방금 만들고 지우는 이름과 겹쳤다. Windows 에서 그 순간 create_new 가 AlreadyExists 가
+    //   아니라 PermissionDenied 를 돌려주는 것을 경쟁 실험이 관측했다(커널 안의 상태는 못 봤다).
+    //   호출마다 전역 번호를 받아 같은 프로세스 안에서는 같은 이름을 시도하지 않게 한다.
+    //   앞 실행이 남긴 파일은 여전히 아래 create_new 가 비켜 간다.
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
     for attempt in 0..64u32 {
-        let candidate = dir.join(format!("{stem}.tmp.{pid}.{attempt}"));
+        let candidate = dir.join(format!("{stem}.tmp.{pid}.{seq}.{attempt}"));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -434,6 +449,50 @@ mod tests {
             );
             let left = temps_left(dir.path());
             assert!(left.is_empty(), "round {round}: 임시 파일이 남았다 {left:?}");
+        }
+    }
+
+    /// ★ 결함 ㊱ — 같은 프로세스 안에서 임시 이름을 **다시 쓰지 않는다**.
+    ///   전에는 호출마다 `.tmp.<pid>.0` 부터 시도해, 방금 지운 이름을 다음 호출이 곧바로 다시 썼다 —
+    ///   동시 쓰기가 같은 이름을 두고 만들고 지우기를 번갈아 했다.
+    #[test]
+    fn a_temp_name_is_not_reused_within_a_process() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("첫 임시");
+        drop(file);
+        std::fs::remove_file(&first).expect("지우기");
+        let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("둘째 임시");
+        drop(file);
+        assert_ne!(first, second, "지운 임시 이름을 다시 썼다 — 동시 쓰기가 같은 이름을 두고 부딪힌다");
+    }
+
+    /// ★ 결함 ㊱ — **지금 이름**(`.tmp.<pid>.<seq>.0`)의 남의 파일도 안 건드린다.
+    ///   번호는 프로세스 전역이라 다른 테스트가 먼저 가져갈 수 있다 — 그래서 앞으로 받을 번호
+    ///   범위 전체에 미리 깔아 둔다. 이 쓰기는 그중 하나와 부딪혀 다음 attempt 로 넘어가야 한다.
+    #[test]
+    fn leftover_temps_under_the_current_name_are_kept() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let target = dir.path().join("y.pb");
+        let pid = std::process::id();
+        let start = TEMP_SEQ.load(Ordering::Relaxed);
+        let sentinels: Vec<PathBuf> = (start..start + 256)
+            .map(|seq| dir.path().join(format!("y.pb.tmp.{pid}.{seq}.0")))
+            .collect();
+        for path in &sentinels {
+            std::fs::write(path, b"sentinel").expect("잔여 파일");
+        }
+
+        let warning = write_new(target.to_str().unwrap(), b"new", false, "T", "X").expect("쓰기");
+
+        assert_eq!(warning, None);
+        assert_eq!(std::fs::read(&target).expect("산출물"), b"new");
+        for path in &sentinels {
+            assert_eq!(
+                std::fs::read(path).expect("★ 지금 이름의 남의 파일이 사라졌다"),
+                b"sentinel",
+                "{} 가 바뀌었다",
+                path.display()
+            );
         }
     }
 }
