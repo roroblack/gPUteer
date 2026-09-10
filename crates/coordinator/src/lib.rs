@@ -738,6 +738,14 @@ pub(crate) fn unsupported_heartbeat_lane(
     config: &CoordinatorConfig,
     lane: NeighborReportLane,
 ) -> Option<String> {
+    // ★ 결함 ㊲ — 라이브러리 호출자는 CLI 파서의 NEEDS_EXPECT 를 지나쳐 올 수 있다. 저장소 경로가
+    //   있는데 heartbeat 를 기대하지 않으면 그 경로는 열리지 않고 버려진다.
+    if config.expect_heartbeats == 0 && config.liveness_db_path.is_some() {
+        return Some(
+            "--liveness-db 는 --expect-heartbeats 가 0 보다 클 때만 열린다 — 받아 두고 버리지 않는다"
+                .to_string(),
+        );
+    }
     if config.expect_heartbeats == 0 {
         return None;
     }
@@ -3275,6 +3283,19 @@ mod tests {
             unsupported_heartbeat_lane(&not_expecting, lane_from_config(&not_expecting)),
             None
         );
+    }
+
+    /// ★ 결함 ㊲ — CLI 파서를 지나쳐 liveness 경로만 넘기면 **공통 관문**이 막는다.
+    #[test]
+    fn a_liveness_path_without_expected_heartbeats_is_refused_by_the_common_guard() {
+        let mut config = legacy_renew_config(&[]);
+        config.liveness_db_path = Some("live.sqlite3".into());
+        let message = unsupported_heartbeat_lane(&config, lane_from_config(&config))
+            .expect("막아야 한다");
+        assert!(message.contains("--liveness-db"), "{message}");
+        // 대조 — 기대하면 받는다.
+        config.expect_heartbeats = 1;
+        assert_eq!(unsupported_heartbeat_lane(&config, lane_from_config(&config)), None);
     }
 }
 

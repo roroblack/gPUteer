@@ -333,13 +333,17 @@ fn the_stored_lane_without_a_submitter_keyring_is_refused() {
 }
 
 /// ★ 결함 ㉞ — 숫자 인자의 **앞 값**이 잘못됐으면 뒤의 중복에 가려도 거부한다.
-///   세 읽기 함수(기본값 u64 · 선택 u64 · 기본값 u32)를 하나씩 본다.
+///   숫자 읽기 여섯(기본값 u64 · 선택 u64 · 기본값 u32 · u64 · 선택 i32 · 선택 u32)을 하나씩 본다
+///   (구현 검수 41 — 처음엔 셋만 쟀다. 나머지 셋의 앞 값 검사를 지워도 통과했다).
 #[test]
 fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
     for (base, flag) in [
         (legacy_lane(), "--renew-extension-ms"),
         (stored_lane("J", "A", "L"), "--stored-grant-ttl-ms"),
         (legacy_lane(), "--expect-attempt-reports"),
+        (legacy_lane(), "--fence-epoch"),
+        (legacy_lane(), "--renew-outcome-override"),
+        (legacy_lane(), "--revoke-after-round"),
     ] {
         let error = match parse_config_from_args(&with(base, &[flag, "abc", flag, "5"])) {
             Ok(_) => panic!("{flag}: 잘못된 앞 값을 받아들였다"),

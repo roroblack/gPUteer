@@ -104,7 +104,8 @@ fn a_valid_duplicate_bool_is_accepted_and_the_last_value_wins() {
 }
 
 /// ★ 결함 ㉞ — 숫자 인자의 **앞 값**이 잘못됐으면 뒤의 중복에 가려도 거부한다.
-///   네 읽기 함수(기본값 u32 · 기본값 u64 · 선택 u64 · 선택 u32)를 하나씩 본다.
+///   네 읽기 함수(기본값 u32 · 기본값 u64 · 선택 u64 · 선택 u32)와 **직접 parse 하는 다섯 곳**을
+///   하나씩 본다(구현 검수 41 — 처음엔 직접 parse 다섯을 빠뜨렸다).
 #[test]
 fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
     for flag in [
@@ -112,6 +113,11 @@ fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
         "--retry-base-ms",
         "--workload-commit-limit-bytes",
         "--expect-revoke-after-round",
+        "--heartbeat-interval-ms",
+        "--heartbeat-rounds",
+        "--neighbor-report-rounds",
+        "--neighbor-report-interval-ms",
+        "--owner-panel-port",
     ] {
         let mut args = base();
         args.extend([flag, "abc", flag, "5"].iter().map(|s| s.to_string()));
@@ -123,10 +129,12 @@ fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
     }
 }
 
-/// 대조 — 올바른 중복은 받는다. 없으면 "중복이면 거부" 로도 위가 통과한다.
+/// 대조 — 올바른 중복은 받고 **마지막 값**을 쓴다. 없으면 "중복이면 거부" 로도 위가 통과한다
+/// (구현 검수 41 — 처음엔 수락만 봤다).
 #[test]
 fn a_valid_numeric_duplicate_is_accepted() {
     let mut args = base();
     args.extend(["--renew-rounds", "3", "--renew-rounds", "2"].iter().map(|s| s.to_string()));
-    parse_config_from_args(&args).expect("올바른 중복을 거부했다");
+    let config = parse_config_from_args(&args).expect("올바른 중복을 거부했다");
+    assert_eq!(config.renew_rounds, 2, "마지막 값을 쓰지 않았다");
 }

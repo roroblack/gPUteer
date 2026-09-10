@@ -25,6 +25,32 @@
 
 ---
 
+## 2026-09-10 21:08 — 구현 검수 41 대응. ㉞ ㉟ 가 빠뜨린 경로 둘 · 절반만 잰 테스트 (결함 ㊲)
+
+- 계획: `docs/runbooks/검수_대기열.md` 의 구현 검수 41
+- 스트림: Coordinator · Agent · QA
+- 수행: 41 은 ㉝ 의 식이 저장소 분기와 같다고 확인했다. 나머지를 고쳤다(결함 ㊲).
+  ```text
+  ㉞ 누락   Agent 의 --heartbeat-interval-ms · --heartbeat-rounds · --neighbor-report-rounds ·
+           --neighbor-report-interval-ms · --owner-panel-port 가 get() 뒤 직접 parse 해 앞 값 검사를
+           건너뛰었다 -> checked_get::<T> 로 앞 값을 본 뒤 꺼낸다
+  ㉟ 누락   NEEDS_EXPECT 가 CLI 파서에만 있어 run(config) 직접 호출은 liveness 경로를 버렸다 ->
+           공통 관문(unsupported_heartbeat_lane)이 liveness_db_path 가 있는데 기대가 0 이면 거부
+  테스트    Coordinator 숫자 읽기 여섯 전부 · Agent 직접 parse 다섯 전부 · Agent 대조군이 마지막 값을
+           단언 · heartbeat 통합 테스트를 점유된 포트로(관문이 bind 전인지 가린다) · run(config) 직접
+  ```
+  ★ **바로 아래 20:50 항목의 "별개 문제" 를 정정한다** — 파일을 안 건드렸다는 것만으로 ㉞ 의 간접
+    영향을 배제하지 못한다. 대신 결함 ㊱ 실험 2 가 ㉞ 코드가 **없는** 독립 프로그램에서도 같은 실패를
+    재현했다(스레드 16개 × 200라운드, 실행 3회에 2 · 5 · 6 라운드). 원인은 여전히 가설이다. 추가 전용이라
+    20:50 항목은 고치지 않는다
+  ★ 스크립트 이름을 다시 써서(fix_37.py) 기다리던 연쇄가 옛 파일을 집을 수 있는 경쟁을 스스로 만들었다 —
+    출력의 적용 순서로 새 스크립트가 돈 것을 확인했다
+- 검증: 워크스페이스 `-j 2 --no-fail-fast` 1100 passed · 0 failed · ignored 1 · 경고 0.
+  뮤테이션 6/6. selftest exit 0(시나리오 줄 97)
+- 리포트: 결함 ㊲ · ㊱ 실험 2 · ㉞ 조치 칸
+
+---
+
 ## 2026-09-10 20:50 — 기록만 해 둔 잔여 결함 셋을 고쳤다(㉝ ㉞ ㉟) · out_file 간헐 실패 기록(㊱)
 
 - 계획: 결함 리포트 ㉒ 에 "기록만 할 잔여" 로 남긴 셋

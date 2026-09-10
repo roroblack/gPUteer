@@ -2216,19 +2216,19 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         // ★ 파싱 실패를 0 으로 접지 않는다(2026-08-30 독립 검수 3라운드).
         //   잘못 쓴 값이 "간격 없음" 으로 조용히 바뀌면, 운영자는 간격을
         //   줬다고 믿는데 실제로는 안 준 상태가 된다.
-        heartbeat_interval_ms: match flags.get("--heartbeat-interval-ms") {
+        heartbeat_interval_ms: match flags.checked_get::<u64>("--heartbeat-interval-ms")? {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 format!("--heartbeat-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
             })?,
             None => 0,
         },
-        heartbeat_rounds: match flags.get("--heartbeat-rounds") {
+        heartbeat_rounds: match flags.checked_get::<u32>("--heartbeat-rounds")? {
             Some(v) => v
                 .parse()
                 .map_err(|e| format!("--heartbeat-rounds 파싱 실패: {e}"))?,
             None => 0,
         },
-        neighbor_report_rounds: match flags.get("--neighbor-report-rounds") {
+        neighbor_report_rounds: match flags.checked_get::<u32>("--neighbor-report-rounds")? {
             Some(v) => v
                 .parse()
                 .map_err(|e| format!("--neighbor-report-rounds 파싱 실패: {e}"))?,
@@ -2237,7 +2237,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         // ★ heartbeat 간격과 같은 이유로 **조용히 0 으로 떨어뜨리지 않는다** —
         //   잘못 쓴 값이 "간격 없음" 이 되면 운영자는 간격을 줬다고 믿는데
         //   실제로는 안 준 상태가 된다.
-        neighbor_report_interval_ms: match flags.get("--neighbor-report-interval-ms") {
+        neighbor_report_interval_ms: match flags.checked_get::<u64>("--neighbor-report-interval-ms")? {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 format!("--neighbor-report-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
             })?,
@@ -2247,7 +2247,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         corrupt_neighbor_report_coordinator: flags
             .bool_flag("--corrupt-neighbor-report-coordinator"),
         owner_panel_state: owner_panel::OwnerPanelState::new(),
-        owner_panel_port: flags.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
+        owner_panel_port: flags.checked_get::<u16>("--owner-panel-port")?.map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
         // `RAM 상한 - 2000MiB` 로 간접 제한된다(ADR-027) — 이 값은
         // 실행 자체를 증명하기 위한 최소값이고 정책이 아니다.
@@ -2429,6 +2429,16 @@ impl Flags {
             })?;
         }
         Ok(())
+    }
+
+    /// ★ 결함 ㊲ — 숫자 읽기 함수를 안 거치고 **직접** parse 하는 자리용. 앞 값을 먼저 본다.
+    ///   (구현 검수 41 이 다섯 곳을 찾았다 — ㉞ 가 숫자 읽기 함수만 고쳤다)
+    fn checked_get<T: std::str::FromStr>(&self, key: &str) -> Result<Option<&String>, String>
+    where
+        T::Err: std::fmt::Display,
+    {
+        self.earlier_must_parse::<T>(key)?;
+        Ok(self.get(key))
     }
 
     /// `true`/`false` 가 아니었던 불리언 값들.
