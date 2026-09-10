@@ -331,3 +331,31 @@ fn the_stored_lane_without_a_submitter_keyring_is_refused() {
         "--submitter-keyring",
     );
 }
+
+/// ★ 결함 ㉞ — 숫자 인자의 **앞 값**이 잘못됐으면 뒤의 중복에 가려도 거부한다.
+///   세 읽기 함수(기본값 u64 · 선택 u64 · 기본값 u32)를 하나씩 본다.
+#[test]
+fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
+    for (base, flag) in [
+        (legacy_lane(), "--renew-extension-ms"),
+        (stored_lane("J", "A", "L"), "--stored-grant-ttl-ms"),
+        (legacy_lane(), "--expect-attempt-reports"),
+    ] {
+        let error = match parse_config_from_args(&with(base, &[flag, "abc", flag, "5"])) {
+            Ok(_) => panic!("{flag}: 잘못된 앞 값을 받아들였다"),
+            Err(e) => e,
+        };
+        assert!(error.contains(flag) && error.contains("abc"), "{flag}: 이유를 안 말한다: {error}");
+    }
+}
+
+/// 대조 — 올바른 중복은 받고 **마지막 값**을 쓴다. 없으면 "중복이면 거부" 로도 위가 통과한다.
+#[test]
+fn a_valid_numeric_duplicate_still_uses_the_last_value() {
+    let config = parse_config_from_args(&with(
+        legacy_lane(),
+        &["--renew-extension-ms", "7", "--renew-extension-ms", "5"],
+    ))
+    .expect("올바른 중복을 거부했다");
+    assert_eq!(config.renew_extension_ms, 5);
+}

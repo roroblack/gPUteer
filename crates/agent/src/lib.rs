@@ -2416,6 +2416,21 @@ impl Flags {
         }
     }
 
+    /// ★ 결함 ㉞ — 같은 키를 두 번 줬을 때 **덮어써진 앞 값**도 같은 타입으로 읽어 본다.
+    ///   마지막 값을 쓰는 규칙은 그대로다. 앞 값이 잘못됐으면 거부한다 — 뒤의 중복에
+    ///   가려 조용히 사라지면 오타를 모른다(㉒ 가 불리언에서 막은 것과 같은 모양).
+    fn earlier_must_parse<T: std::str::FromStr>(&self, key: &str) -> Result<(), String>
+    where
+        T::Err: std::fmt::Display,
+    {
+        for (_, earlier) in self.3.iter().filter(|(k, _)| k == key) {
+            earlier.parse::<T>().map_err(|e| {
+                format!("{key} 앞 값 {earlier:?} 파싱 실패: {e} — 같은 키를 두 번 줬다. 앞 값도 검사한다")
+            })?;
+        }
+        Ok(())
+    }
+
     /// `true`/`false` 가 아니었던 불리언 값들.
     fn bad_bools(&self) -> Vec<String> {
         self.2.borrow().clone()
@@ -2424,6 +2439,7 @@ impl Flags {
     /// 반복 Lease 갱신(2026-08-19) — 안 주면 `default`(왕복 횟수).
     /// 기본값 1은 기존 단일 왕복 시나리오와 동일하게 동작한다.
     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+        self.earlier_must_parse::<u32>(key)?;
         match self.get(key) {
             None => Ok(default),
             Some(v) => v
@@ -2435,6 +2451,7 @@ impl Flags {
     /// ★ 테스트 전용 — 갱신 요청 epoch 강제 주입(단계 5). 안 주면
     ///   `None`(보유 중인 Lease 의 실제 epoch 을 그대로 쓴다).
     fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+        self.earlier_must_parse::<u64>(key)?;
         match self.get(key) {
             None => Ok(default),
             Some(v) => v
@@ -2444,6 +2461,7 @@ impl Flags {
     }
 
     fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+        self.earlier_must_parse::<u64>(key)?;
         match self.get(key) {
             None => Ok(None),
             Some(v) => v
@@ -2454,6 +2472,7 @@ impl Flags {
     }
 
     fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+        self.earlier_must_parse::<u32>(key)?;
         match self.get(key) {
             None => Ok(None),
             Some(v) => v
