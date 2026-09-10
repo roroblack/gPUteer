@@ -1,0 +1,88 @@
+x600 WSL2 에서 GPU 와 MPS 를 직접 확인한 기록
+측정일 2026-09-08 · 측정자 claude-code 세션 · 기계 x600 (Windows 11 + WSL2 Ubuntu)
+실행 방법  E:\gputeer-work\wslgpu.cmd · wslmps.cmd · wslmps2.cmd (x600 의 C: 미사용)
+
+────────────────────────────────────────────────────────────────────
+왜 쟀나
+────────────────────────────────────────────────────────────────────
+`proto/common.proto:168` 이 `GPU_ALLOCATION_MODE_SHARED` 의 조건을
+"Linux + MPS memory limit **확인 시에만**" 이라고 적어 뒀다. 그 확인을
+한 적이 없다. remote5090(리눅스+GPU 기계)는 남의 whisper 작업이
+4시간 넘게 점유 중이라 `scripts/mps_vram_limit_probe.sh` 가 스스로
+`exit 3` 로 거부한다. 그래서 x600 의 WSL2 에서 잴 수 있는지 봤다.
+
+────────────────────────────────────────────────────────────────────
+결과 1 — GPU 는 WSL 에 **보인다**. 문서가 틀렸다
+────────────────────────────────────────────────────────────────────
+  uname            Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+  nvidia-smi       NVIDIA GeForce RTX 4070 SUPER, 12282 MiB, 595.79
+  nvidia-smi -L    GPU 0: ... (UUID: GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93)
+  /dev/dxg         crw-rw-rw- 1 root root 10, 258   (WSL GPU 통로가 열려 있다)
+  /usr/lib/wsl/lib libcuda.so.1 · libnvidia-ml.so.1 · libnvcuvid.so.1 등
+
+  ★ 그리고 **실제로 VRAM 을 잡았다.** torch 없이 ctypes 로 libcuda 를
+    직접 불렀다(torch 는 이 배포판에 없다):
+
+      cuInit / cuDeviceGet / cuCtxCreate_v2  전부 성공
+      cuMemGetInfo_v2   free=11051MiB  total=12281MiB
+      cuMemAlloc_v2 1GiB -> rc=0 (ok)
+
+    "보인다" 가 아니라 **연산 컨텍스트를 만들고 메모리를 잡았다.**
+
+  ==> `CLAUDE.md` 의 "GPU 는 WSL 에 노출되지 않으므로 GPU 관련 Linux
+      검증은 여전히 없다" 와 "WSL 에는 GPU 가 안 보인다" 는 **거짓이다.**
+      2026-08-30 에 쓸 당시에는 참이었을 수 있으나 지금은 아니다.
+
+────────────────────────────────────────────────────────────────────
+결과 2 — 그래도 MPS 는 **여기서 못 잰다**. 이건 확정이다
+────────────────────────────────────────────────────────────────────
+근거를 두 갈래로 잡았다. 하나만으로는 "안 깔린 것" 과 "지원 안 하는 것"
+을 구분할 수 없기 때문이다.
+
+  (가) 바이너리가 없다 — 그리고 **받을 곳도 없다**
+       ls /usr/lib/wsl/lib | grep -i mps   -> 하나도 없음
+       find /usr /opt -name 'nvidia-cuda-mps*'  -> 없음
+       dpkg -S nvidia-cuda-mps-control  -> no path found
+
+       ★ 이게 결정적인 이유: WSL 에서는 드라이버 유저스페이스 전체가
+         호스트 Windows 드라이버에서 온다. `which nvidia-smi` 가
+         `/usr/lib/wsl/lib/nvidia-smi` 다. 네이티브 리눅스라면 MPS 는
+         드라이버 패키지에 같이 들어온다. **그 번들에 MPS 가 없다**는
+         것은 "설치를 빠뜨렸다" 가 아니라 "WSL 드라이버가 안 준다" 다.
+       ★ apt 로 리눅스 NVIDIA 드라이버를 깔아 채우는 것은 **하면 안 된다**
+         — NVIDIA 가 WSL 에서 금지한다. 깔면 지금 되는 통로가 깨진다.
+
+  (나) MPS 의 전제인 compute mode 변경이 **거부된다**
+       sudo -n /usr/lib/wsl/lib/nvidia-smi -c EXCLUSIVE_PROCESS
+         -> Unable to set the compute mode for GPU 00000000:70:00.0:
+            Insufficient Permissions
+            Terminating early due to previous errors.
+       확인:  compute_mode = Default  (안 바뀌었다)
+
+       ★ root 로 실행했는데도 거부된다. 리눅스 쪽에 권한이 없어서가
+         아니라 **GPU 의 주인이 Windows 호스트 드라이버**이기 때문이다.
+
+  참고로 WSL 에서 같이 막혀 있는 것들 (같은 원인):
+       mig.mode.current   [N/A]
+       accounting.mode    Disabled
+       compute-apps 조회  빈 목록  (호스트 쪽 프로세스가 안 보인다)
+
+────────────────────────────────────────────────────────────────────
+그래서 무엇이 결정됐나
+────────────────────────────────────────────────────────────────────
+1. `GPU_ALLOCATION_MODE_SHARED` 는 **여전히 못 쓴다.** 조건인 MPS VRAM
+   상한 실측이 이 기계에서 불가능함이 확정됐다. `CLAUDE.md` §0.4 의
+   "MPS 는 Linux 전용" 에 한 줄을 더해야 한다 — **WSL2 는 그 Linux 가
+   아니다.**
+
+2. 이건 `ENVIRONMENT-BLOCKED` 다. `CLAUDE.md` §4 에 따라 PASS 로 세지
+   않는다. MPS 실측은 **네이티브 리눅스 + 전용 GPU** 가 있어야 한다 —
+   지금은 remote5090 뿐이고 그건 남의 작업이 비어야 한다.
+
+3. ★ 대신 **막혀 있던 다른 것들이 열렸다.** GPU 가 WSL 에 보이므로,
+   MPS 를 빼면 리눅스 GPU 검증을 x600 에서 반복 가능하게 할 수 있다:
+     - NVML 리눅스 경로 (`crates/runtime-nvml`)
+     - cgroup 자원 상한과 GPU 를 **같은 실행에서** 확인
+     - `preflight_probe` 의 리눅스 실측
+   지금까지 이것들이 "리눅스+GPU 기계가 없다" 로 막혀 있었는데,
+   그 전제가 틀렸다.
