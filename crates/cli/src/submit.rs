@@ -35,6 +35,9 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 /// `gputeer submit` 진입점.
+/// 만료를 안 주면 쓰는 기본 기간. `proto/job.proto` 의 "기본 issued_at + 7일".
+const SEVEN_DAYS_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
 pub fn run(args: &[String]) -> Result<String, String> {
     let flags = parse_flags(args)?;
 
@@ -75,7 +78,23 @@ pub fn run(args: &[String]) -> Result<String, String> {
         Some(raw) => raw
             .parse::<u64>()
             .map_err(|e| format!("--expires-at-unix-ms 파싱 실패: {e}"))?,
-        None => issued_at_unix_ms + 7 * 24 * 60 * 60 * 1000,
+        // ★★ 2026-09-10 독립 검수 지적 — 여기가 `issued + 7일` 이었고
+        //   **덧셈이 넘칠 수 있었다.** `--issued-at-unix-ms` 는 u64 를
+        //   그대로 받으므로 큰 값을 주면:
+        //     오버플로 검사 켜진 빌드   panic (스택 트레이스가 나온다)
+        //     꺼진 빌드                 값이 되감겨 만료가 발급보다 앞서고,
+        //                               아래 역전 검사에 걸려 거부된다
+        //   **빌드 설정에 따라 동작이 달라졌다.** 재현했다:
+        //     --issued-at-unix-ms 18446744073709551615
+        //     -> panicked at submit.rs:78 "attempt to add with overflow"
+        //   사용자 입력으로 패닉이 나면 그건 오류 보고가 아니다.
+        None => issued_at_unix_ms
+            .checked_add(SEVEN_DAYS_MS)
+            .ok_or_else(|| {
+                format!(
+                    "SUBMIT_REFUSED: ISSUED_AT_TOO_LARGE — --issued-at-unix-ms({issued_at_unix_ms})에 기본 만료 7일을 더하면 u64 를 넘는다. 만료를 직접 주거나 발급 시각을 확인하라"
+                )
+            })?,
     };
 
     // ★★ **발급 < 만료 를 여기서 본다** (2026-09-07 독립 검수 지적).
@@ -220,8 +239,22 @@ pub fn run(args: &[String]) -> Result<String, String> {
     )
     .map_err(|e| format!("방금 서명한 Manifest 에서 실행 지시를 만들 수 없다: {e}"))?;
 
-    std::fs::write(&out_path, manifest.encode_to_vec())
-        .map_err(|e| format!("Manifest 파일 쓰기 실패({out_path}): {e}"))?;
+    // ★★ 2026-09-10 — 여기도 `fs::write` 한 줄이었다. `issue-grant` 에서
+    //   같은 줄이 독립 검수에 걸렸고(멀쩡한 산출물을 말없이 덮고, 중간에
+    //   실패하면 잘린 채 남는다), **이 파일에도 똑같이 있었다.**
+    //   한쪽만 고치면 다음 사람이 다른 쪽을 다시 발견한다 — 그래서
+    //   도우미를 `crate::out_file` 한 곳에 뒀다.
+    let overwrite = matches!(
+        flags.get("--overwrite-existing-manifest").map(String::as_str),
+        Some("true")
+    );
+    crate::out_file::write_new(
+        &out_path,
+        &manifest.encode_to_vec(),
+        overwrite,
+        "SUBMIT_REFUSED",
+        "Manifest",
+    )?;
 
     Ok(format!(
         "SUBMITTED job_id={} entrypoint={} args={} env_vars={} out={}",

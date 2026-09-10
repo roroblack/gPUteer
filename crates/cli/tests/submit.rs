@@ -46,7 +46,7 @@ fn now_unix_ms() -> u64 {
 }
 
 /// 올바른 선언 여덟 축. 개별 테스트가 이 중 하나만 바꿔 쓴다.
-const GOOD: [(&str, &str); 8] = [
+const GOOD: [(&str, &str); 11] = [
     ("--workload-class", "TRAINING"),
     ("--side-effect-class", "PURE"),
     ("--dataset-sensitivity", "INTERNAL"),
@@ -55,6 +55,10 @@ const GOOD: [(&str, &str); 8] = [
     ("--minimum-key-protection", "K1"),
     ("--gpu-count", "1"),
     ("--gpu-min-vram-bytes", "8589934592"),
+    // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
+    ("--cpu-cores", "4"),
+    ("--ram-bytes", "8589934592"),
+    ("--workspace-bytes", "10737418240"),
 ];
 
 fn submit(out: &std::path::Path, override_flag: Option<(&str, &str)>) -> (bool, String) {
@@ -216,4 +220,247 @@ fn an_expiry_equal_to_the_issue_time_is_refused_too() {
         submit_with_times(&out, &issued.to_string(), Some(&issued.to_string()));
     assert!(!ok, "발급 == 만료 를 받아들였다: {output}");
     assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// 이미 있는 Manifest 파일을 말없이 덮지 않는다.
+///
+/// ★★ 2026-09-10 — `issue-grant` 에서 독립 검수가 찾은 결함이
+///   **이 명령에도 똑같이 있었다.** `fs::write` 한 줄이라 (1) 기존 파일을
+///   말없이 덮고 (2) 중간에 실패하면 잘린 채 남았다.
+///   고치면서 도우미를 `crate::out_file` 한 곳으로 모았다 — 한쪽만
+///   고쳐지는 것이 이 결함이 두 곳에 생긴 방식이기 때문이다.
+#[test]
+fn an_existing_manifest_file_is_not_clobbered() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("manifest.pb");
+
+    let (ok, output) = submit(&out, None);
+    assert!(ok, "정상 경로가 실패했다: {output}");
+    let first = std::fs::read(&out).expect("첫 Manifest");
+    assert!(!first.is_empty(), "첫 Manifest 가 비어 있다");
+
+    let (ok2, output2) = submit(&out, None);
+    assert!(!ok2, "이미 있는 파일을 말없이 덮었다: {output2}");
+    assert!(
+        output2.contains("SUBMIT_REFUSED: OUT_EXISTS"),
+        "거부했는데 이유가 파일 존재가 아니다: {output2}"
+    );
+
+    // ★ 핵심 — 원래 파일이 바이트 그대로 남아야 한다.
+    let after = std::fs::read(&out).expect("거부 뒤에도 파일이 있어야 한다");
+    assert_eq!(first, after, "거부했는데 기존 파일이 바뀌었다");
+
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("디렉터리")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.contains(".tmp."))
+        .collect();
+    assert!(leftovers.is_empty(), "임시 파일이 남았다: {leftovers:?}");
+}
+
+/// 명시적으로 요청하면 덮어쓴다.
+///
+/// ★ 대조군. 없으면 "항상 거부" 로 고쳐도 위 테스트가 통과한다.
+#[test]
+fn an_explicit_flag_allows_replacing_the_manifest() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("manifest.pb");
+    std::fs::write(&out, b"stale bytes").expect("미리 쓴다");
+
+    // ★ `submit()` 헬퍼는 값을 **교체**만 할 수 있어 새 플래그를 못 넣는다.
+    //   그래서 여기서는 직접 부른다.
+    let issued = now_unix_ms().saturating_sub(60_000).to_string();
+    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+    let mut args: Vec<String> = vec![
+        "submit".into(), "--job-id".into(), JOB.into(),
+        "--entrypoint".into(), "python".into(),
+        "--submitter-device-id".into(), SUBMITTER.into(),
+        "--submitter-seed".into(), SEED.into(),
+        "--issued-at-unix-ms".into(), issued,
+        "--expires-at-unix-ms".into(), expires,
+        "--out".into(), out.to_str().unwrap().into(),
+        "--overwrite-existing-manifest".into(), "true".into(),
+    ];
+    for (name, value) in GOOD {
+        args.push(name.into());
+        args.push(value.into());
+    }
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (ok, output) = run_cli(&borrowed);
+    assert!(ok, "명시적 덮어쓰기가 실패했다: {output}");
+    let bytes = std::fs::read(&out).expect("Manifest 를 읽는다");
+    assert_ne!(bytes, b"stale bytes", "덮어쓴다고 했는데 옛 내용이 그대로다");
+    assert!(!bytes.is_empty(), "덮어썼는데 비어 있다");
+}
+
+/// 선언한 값이 **실제로 서명 대상에 들어갔는지** 확인한다.
+///
+/// ★★ 2026-09-10 독립 검수 지적. 그전까지 정상 경로 테스트는
+///   "성공했다 + 파일이 있다" 만 봤다. 그러면 **매핑이 틀려도 통과한다** —
+///   예를 들어 `TRAINING` 을 `Inference` 로 잘못 넣어도 성공은 성공이다.
+///   "받아들였다" 와 "요청한 값을 서명했다" 는 다른 말이다.
+#[test]
+fn the_declared_values_are_the_ones_that_get_signed() {
+    use gputeer_protocol::pb;
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("declared.pb");
+
+    let (ok, output) = submit(&out, None);
+    assert!(ok, "정상 선언이 실패했다: {output}");
+
+    let bytes = std::fs::read(&out).expect("Manifest 읽기");
+    let m = <pb::JobManifest as prost::Message>::decode(bytes.as_slice()).expect("디코드");
+
+    // 여섯 축을 **하나씩** 대조한다. GOOD 에 적힌 그 값이어야 한다.
+    assert_eq!(
+        m.workload.as_ref().expect("workload").class,
+        pb::WorkloadClass::Training as i32,
+        "workload.class 가 선언과 다르다"
+    );
+    assert_eq!(
+        m.side_effect_class,
+        pb::SideEffectClass::Pure as i32,
+        "side_effect_class 가 선언과 다르다"
+    );
+    assert_eq!(
+        m.dataset.as_ref().expect("dataset").sensitivity,
+        pb::Sensitivity::Internal as i32,
+        "dataset.sensitivity 가 선언과 다르다"
+    );
+    assert_eq!(
+        m.minimum_security_tier,
+        pb::SecurityTier::S2 as i32,
+        "minimum_security_tier 가 선언과 다르다"
+    );
+    assert_eq!(
+        m.minimum_isolation_class,
+        pb::IsolationClass::Contained as i32,
+        "minimum_isolation_class 가 선언과 다르다"
+    );
+    assert_eq!(
+        m.minimum_key_protection,
+        pb::KeyProtection::K1 as i32,
+        "minimum_key_protection 이 선언과 다르다"
+    );
+
+    // 자원도 같이 본다 — 여기도 "넣었다" 와 "그 값이다" 는 다르다.
+    let r = m.resources.as_ref().expect("resources");
+    assert_eq!(r.cpu_cores, 4, "cpu_cores 가 선언과 다르다");
+    assert_eq!(r.ram_bytes, 8_589_934_592, "ram_bytes 가 선언과 다르다");
+    assert_eq!(
+        r.workspace_bytes, 10_737_418_240,
+        "workspace_bytes 가 선언과 다르다"
+    );
+}
+
+/// 대소문자를 다르게 써도 **서명 대상 바이트가 같다.**
+///
+/// ★ 검수가 물었다 — 대소문자를 안 가리는 게 의도라면, 같은 선언인데
+///   서명이 달라지지는 않는지. 코드를 보면 원래 철자를 저장하지 않으므로
+///   같아야 한다. 그런데 **그것을 고정하는 테스트가 없었다.**
+#[test]
+fn declaration_case_does_not_change_the_signed_bytes() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let issued = now_unix_ms().saturating_sub(60_000).to_string();
+    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+
+    let run_with = |out: &std::path::Path, upper: bool| {
+        let mut args: Vec<String> = vec![
+            "submit".into(), "--job-id".into(), JOB.into(),
+            "--entrypoint".into(), "python".into(),
+            "--submitter-device-id".into(), SUBMITTER.into(),
+            "--submitter-seed".into(), SEED.into(),
+            "--issued-at-unix-ms".into(), issued.clone(),
+            "--expires-at-unix-ms".into(), expires.clone(),
+            "--out".into(), out.to_str().unwrap().into(),
+        ];
+        for (name, value) in GOOD {
+            args.push(name.into());
+            args.push(if upper {
+                value.to_uppercase()
+            } else {
+                value.to_lowercase()
+            });
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_cli(&borrowed)
+    };
+
+    let up = dir.path().join("upper.pb");
+    let low = dir.path().join("lower.pb");
+    let (ok1, o1) = run_with(&up, true);
+    assert!(ok1, "대문자 선언이 거부됐다: {o1}");
+    let (ok2, o2) = run_with(&low, false);
+    assert!(ok2, "소문자 선언이 거부됐다: {o2}");
+
+    // ★ 핵심 — 바이트가 **완전히** 같아야 한다. 서명까지 포함해서.
+    assert_eq!(
+        std::fs::read(&up).expect("upper"),
+        std::fs::read(&low).expect("lower"),
+        "같은 선언인데 대소문자에 따라 서명 대상이 달라진다"
+    );
+}
+
+/// 발급 시각이 너무 커서 기본 만료를 더할 수 없으면 **거부한다**.
+///
+/// ★★ 2026-09-10 독립 검수 지적. 그전에는 `issued + 7일` 이 그냥
+///   덧셈이라 넘칠 수 있었고, **재현했다**:
+///     --issued-at-unix-ms 18446744073709551615
+///     -> panicked at submit.rs:78 "attempt to add with overflow"
+///   오버플로 검사가 꺼진 빌드에서는 panic 대신 값이 되감겨 역전 검사에
+///   걸린다 — 즉 **빌드 설정에 따라 오류 동작이 달랐다.**
+///   사용자 입력으로 패닉이 나면 그건 오류 보고가 아니다.
+#[test]
+fn an_issued_time_too_large_for_the_default_expiry_is_refused_not_a_panic() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("overflow.pb");
+    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+
+    // 만료를 **안 주고** 발급만 최대값으로 준다 — 기본값 계산이 도는 경로다.
+    let mut args: Vec<String> = vec![
+        "submit".into(), "--job-id".into(), JOB.into(),
+        "--entrypoint".into(), "python".into(),
+        "--submitter-device-id".into(), SUBMITTER.into(),
+        "--submitter-seed".into(), SEED.into(),
+        "--issued-at-unix-ms".into(), u64::MAX.to_string(),
+        "--out".into(), out.to_str().unwrap().into(),
+    ];
+    for (name, value) in GOOD {
+        args.push(name.into());
+        args.push(value.into());
+    }
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (ok, output) = run_cli(&borrowed);
+
+    assert!(!ok, "넘치는 발급 시각을 받아들였다: {output}");
+    assert!(
+        output.contains("SUBMIT_REFUSED: ISSUED_AT_TOO_LARGE"),
+        "거부는 했는데 이유가 오버플로가 아니다 — panic 이었을 수 있다: {output}"
+    );
+    assert!(
+        !output.contains("panicked"),
+        "패닉으로 죽었다 — 오류 보고가 아니다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+
+    // 대조 — 만료를 직접 주면 그 큰 발급 시각도 문제가 아니다…가 아니라
+    // 역전 검사에 걸린다. 어느 쪽이든 **패닉이 아니어야** 한다.
+    let mut args2: Vec<String> = vec![
+        "submit".into(), "--job-id".into(), JOB.into(),
+        "--entrypoint".into(), "python".into(),
+        "--submitter-device-id".into(), SUBMITTER.into(),
+        "--submitter-seed".into(), SEED.into(),
+        "--issued-at-unix-ms".into(), u64::MAX.to_string(),
+        "--expires-at-unix-ms".into(), expires,
+        "--out".into(), out.to_str().unwrap().into(),
+    ];
+    for (name, value) in GOOD {
+        args2.push(name.into());
+        args2.push(value.into());
+    }
+    let borrowed2: Vec<&str> = args2.iter().map(String::as_str).collect();
+    let (ok2, output2) = run_cli(&borrowed2);
+    assert!(!ok2, "발급이 만료보다 뒤인데 받아들였다: {output2}");
+    assert!(!output2.contains("panicked"), "여기서도 패닉이 났다: {output2}");
 }
