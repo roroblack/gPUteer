@@ -42,7 +42,7 @@ const LEASE: &str = "01JLEASEGRANT000000000001";
 const GRANT: &str = "01JGRANTGRANT000000000001";
 const AXES: &str = "vram,gpu_count,cpu,ram,workspace";
 
-/// ★ 고정 상수다 — 시계를 읽으면 재발급이 멱등하지 않다.
+/// ★ 고정 상수다 — 시계를 읽으면 재발급 결과가 같다고 보장할 수 없다(재검수 30).
 ///   `--lease-*` 와 `--grant-*` 를 **손으로** 골라, 기대값을 검사 대상의
 ///   출력에서 만들지 않는다.
 const LEASE_ISSUED: u64 = 1_800_000_000_000;

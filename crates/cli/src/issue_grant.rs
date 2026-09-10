@@ -80,8 +80,10 @@ pub fn run(args: &[String]) -> Result<String, String> {
     );
 
     // ★ Grant 시각도 절대값이다. `stage-job` 에서 배운 것과 같은 이유 —
-    //   시계를 읽으면 같은 입력으로 두 번 발급했을 때 결과가 달라지고,
-    //   그러면 "같은 입력이면 같은 Grant" 를 확인할 방법이 없어진다.
+    //   실시간 시각을 결과에 반영하면 같은 명시적 입력으로도 Grant 가 달라질 수
+    //   있다. 시각을 통제하고 결과를 재현하기 위해 절대값을 인자로 받는다
+    //   (재검수 30·31 — 한때 "테스트로 고정할 수 없다" 고 적었는데, 시계 대역을
+    //   고정하면 테스트할 수 있다. 설계 이유를 다른 방법의 불가능으로 넓힌 것이었다).
     let issued_at_unix_ms = u64_flag(&flags, "--grant-issued-at-unix-ms")?;
     let expires_at_unix_ms = u64_flag(&flags, "--grant-expires-at-unix-ms")?;
     if issued_at_unix_ms >= expires_at_unix_ms {

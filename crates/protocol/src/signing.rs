@@ -715,7 +715,7 @@ pub fn signing_input<M: Signable + ?Sized>(msg: &M) -> Vec<u8> {
 /// # `now_unix_ms` 를 인자로 받는 이유
 ///
 /// 테스트가 시각을 통제할 수 있어야 한다. 함수 안에서 시계를 읽으면
-/// 만료·skew 경계를 테스트할 수 없고, 그러면 그 경로는 영영 검증되지 않는다.
+/// 만료·skew 경계를 원하는 시각에 맞춰 테스트하기 어렵다.
 pub fn verify<M: Signable + Clone>(
     msg: &M,
     max_supported_schema_version: u32,
