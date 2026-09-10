@@ -158,3 +158,102 @@ fn multi_agent_only_flags_are_refused_on_the_sequential_lane() {
             .unwrap_or_else(|e| panic!("--multi-agent 인데 {flag} 를 거부했다: {e}"));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// 결함 ㉑ (재검수 15) — lane 조건을 사실에 맞춘 뒤
+// ─────────────────────────────────────────────────────────────────────
+
+fn without(mut args: Vec<String>, flag: &str) -> Vec<String> {
+    let at = args.iter().position(|a| a == flag).expect("그 플래그가 있어야 한다");
+    args.drain(at..at + 2);
+    args
+}
+
+#[test]
+fn an_absent_stored_id_is_refused() {
+    refused_by_name(
+        without(stored_lane("J", "A", "L"), "--stored-grant-job-id"),
+        "STORED_LANE_ID_MISSING",
+        "--stored-grant-job-id",
+    );
+}
+
+/// ★ 대조 — `--lease-db` 가 **없으면** 갱신 경로가 이 셋을 실제로 쓴다.
+///
+/// 처음엔 저장된 예약 lane 이면 무조건 거부했다. `fence_epoch` 는 저장소가
+/// 없을 때 갱신의 기대 epoch 이고, 나머지 둘은 `build_renew_result` 가 쓴다.
+#[test]
+fn lease_db_dependent_flags_are_accepted_without_a_lease_db() {
+    for (flag, value) in [
+        ("--fence-epoch", "3"),
+        ("--max-total-duration-seconds", "60"),
+        ("--renewed-fence-epoch", "3"),
+    ] {
+        let args = with(without(stored_lane("J", "A", "L"), "--lease-db"), &[flag, value]);
+        parse_config_from_args(&args)
+            .unwrap_or_else(|e| panic!("--lease-db 없이 준 {flag} 를 거부했다: {e}"));
+    }
+}
+
+/// Resume 은 저장된 예약 분기보다 먼저 반환한다 — 파서는 식별자를 요구하지
+/// 않고, 그 조합 자체는 **시작 관문**이 거부한다.
+#[test]
+fn resume_with_a_control_db_is_refused_at_startup_not_by_the_stored_lane_checks() {
+    // ★ 이 테스트만 `run()` 을 실제로 부른다. `run()` 은 시작 관문보다 **먼저**
+    //   Lease 저장소를 열므로, 상대 경로를 주면 저장소 안에 DB 파일을 남긴다 —
+    //   처음에 그렇게 해서 `crates/coordinator/lease.sqlite3` 가 생겼다.
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let lease_db = dir.path().join("lease.sqlite3");
+    let mut args = legacy_lane();
+    let at = args.iter().position(|a| a == "--lease-db").expect("--lease-db");
+    args[at + 1] = lease_db.to_str().expect("경로").to_string();
+    args.extend(
+        ["--resume-protocol", "true", "--grant-from-control-db", "control.sqlite3"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let config = parse_config_from_args(&args).expect("Resume 이면 식별자를 요구하지 않는다");
+    let error = gputeer_coordinator::run(config).expect_err("시작 관문이 거부해야 한다");
+    assert!(
+        error.contains("--resume-protocol") && error.contains("--grant-from-control-db"),
+        "다른 이유로 거부했다: {error}"
+    );
+}
+
+#[test]
+fn stored_lane_only_flags_are_refused_on_the_legacy_lane() {
+    refused_by_name(
+        with(legacy_lane(), &["--stored-grant-ttl-ms", "1"]),
+        "STORED_LANE_ONLY",
+        "--stored-grant-ttl-ms",
+    );
+}
+
+/// `--corrupt-own-signature tru` 가 조용히 false 가 되면 그 플래그로 재려던
+/// 부정 경로가 아무것도 안 잰다(재검수 15).
+#[test]
+fn an_invalid_bool_is_refused_by_name() {
+    refused_by_name(
+        with(legacy_lane(), &["--corrupt-own-signature", "tru"]),
+        "INVALID_BOOL",
+        "--corrupt-own-signature",
+    );
+    // 대조 — false 는 값이다.
+    parse_config_from_args(&with(legacy_lane(), &["--corrupt-own-signature", "false"]))
+        .expect("false 를 거부했다");
+}
+
+#[test]
+fn a_neighbor_report_db_without_expected_reports_is_refused() {
+    refused_by_name(
+        with(legacy_lane(), &["--neighbor-report-db", "reports.sqlite3"]),
+        "NEEDS_EXPECT",
+        "--neighbor-report-db",
+    );
+    // 대조 — 기대값이 있으면 받는다.
+    parse_config_from_args(&with(
+        legacy_lane(),
+        &["--expect-neighbor-reports", "1", "--neighbor-report-db", "reports.sqlite3"],
+    ))
+    .expect("기대값이 있는데 거부했다");
+}

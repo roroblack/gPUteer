@@ -476,6 +476,17 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         return Err(message);
     }
 
+    // ★ 결함 ㉑(재검수 15) — Resume 은 저장된 예약 분기보다 먼저 반환한다.
+    //   control DB 를 줘도 아무도 안 연다(보고 수신과 같이 주면 바로 위
+    //   관문이 먼저 거부한다). 받아 두고 버리지 않는다.
+    if config.resume_protocol && config.grant_from_control_db.is_some() {
+        let message = "--grant-from-control-db 는 --resume-protocol 과 함께 쓸 수 없다 — \
+             Resume 은 저장된 예약에서 Grant 를 만들기 전에 반환하므로 control DB 가 버려진다"
+            .to_string();
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+
     // ★ **이웃 신고 저장소를 listener bind 보다 먼저 연다**(독립 검수
     //   4·5라운드 지적). 4라운드 수정은 이 블록을 bind **뒤에** 두어
     //   주석과 코드가 어긋나 있었다 — 소켓이 열린 뒤 죽으면 그 사이에
@@ -2624,6 +2635,13 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
     //
     //   ★ 여기서 거부하는 것은 **파서가 볼 수 있는 것**뿐이다. 값이
     //     기본값과 같아도 "줬다" 는 사실은 여기서만 보인다.
+    let bad_bools = flags.bad_bools();
+    if !bad_bools.is_empty() {
+        return Err(format!(
+            "STARTUP_REFUSED: INVALID_BOOL — {bad_bools:?} 는 true 도 false 도 아니다. \
+             조용히 false 로 읽으면 켠 줄 안 것이 안 켜진다"
+        ));
+    }
     let unread = flags.unread();
     if !unread.is_empty() {
         return Err(format!(
@@ -2631,23 +2649,34 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
              오타이거나 없는 설정이다 — 받아 두면 말없이 버려진다"
         ));
     }
-    if config.grant_from_control_db.is_some() {
-        // 저장된 예약 분기(`grant_from_stored`)가 적용하지 않는 것들.
-        // 저장된 사실이 권위다 — 다른 값을 받아 두고 말하지 않으면 운영자는
-        // 그 값이 쓰였다고 믿는다.
-        const NOT_APPLIED_ON_STORED_LANE: [&str; 9] = [
+    // ★★ 재검수 15(결함 ㉑) — 처음엔 control DB 가 있다는 것만 보고 아래를
+    //   다 걸었다. 두 가지가 틀렸다:
+    //     · Resume 은 저장된 예약 분기보다 **먼저** 반환한다 — 거기서는 이
+    //       검사들이 뜻이 없다. 그 조합 자체는 시작 관문(`run`)이 거부한다
+    //     · 목록 셋은 **Lease 저장소가 없을 때** 갱신 경로가 실제로 쓴다
+    //       (`fence_epoch` 는 기대 epoch, 나머지는 `build_renew_result`).
+    //       "초기 Grant 조립에서 무시" 와 "세션 전체에서 무시" 는 다르다
+    if config.grant_from_control_db.is_some() && !config.resume_protocol {
+        // 세션 **어느 단계에서도** 적용하지 않는 것들 — 레거시 발급
+        // (`issue_grant`·`issue_lease`·`load_signed_manifest`)에서만 읽힌다.
+        const NEVER_APPLIED_ON_STORED_LANE: [&str; 6] = [
             "--manifest-file",
             "--corrupt-manifest-signature",
             "--corrupt-manifest-hash",
             "--corrupt-lease-signature",
             "--expire-lease",
             "--lease-ttl-ms",
+        ];
+        // Lease 저장소가 있으면 저장값이 권위라 적용하지 않는 것들.
+        const IGNORED_WITH_LEASE_DB: [&str; 3] = [
             "--fence-epoch",
             "--max-total-duration-seconds",
             "--renewed-fence-epoch",
         ];
-        let given: Vec<&str> = NOT_APPLIED_ON_STORED_LANE
+        let with_lease_db = config.lease_db_path.is_some();
+        let given: Vec<&str> = NEVER_APPLIED_ON_STORED_LANE
             .iter()
+            .chain(IGNORED_WITH_LEASE_DB.iter().filter(|_| with_lease_db))
             .copied()
             .filter(|flag| flags.0.contains_key(*flag))
             .collect();
@@ -2674,6 +2703,34 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
                 ));
             }
         }
+    }
+    // 저장된 예약 lane 밖에서 준 --stored-grant-* 는 아무도 안 읽는다.
+    if config.grant_from_control_db.is_none() {
+        const STORED_LANE_ONLY: [&str; 4] = [
+            "--stored-grant-job-id",
+            "--stored-grant-attempt-id",
+            "--stored-grant-lease-id",
+            "--stored-grant-ttl-ms",
+        ];
+        let given: Vec<&str> = STORED_LANE_ONLY
+            .iter()
+            .copied()
+            .filter(|flag| flags.0.contains_key(*flag))
+            .collect();
+        if !given.is_empty() {
+            return Err(format!(
+                "STARTUP_REFUSED: STORED_LANE_ONLY — {given:?} 는 --grant-from-control-db 가 \
+                 있을 때만 읽힌다. 레거시 lane 은 받아 두고 버린다"
+            ));
+        }
+    }
+    // 이웃 신고를 기대하지 않으면 저장소를 열지 않는다(재검수 15).
+    if config.expect_neighbor_reports == 0 && flags.0.contains_key("--neighbor-report-db") {
+        return Err(
+            "STARTUP_REFUSED: NEEDS_EXPECT — --neighbor-report-db 는 --expect-neighbor-reports 가 \
+             0 보다 클 때만 열린다. 받아 두고 버리지 않는다"
+                .to_string(),
+        );
     }
     if !config.multi_agent {
         // ★ `--session-id` 는 여기 없다 — Coordinator 가 **어느 lane 에서도**
@@ -2782,6 +2839,9 @@ pub fn validate_device_id(device_id: &str) -> Result<(), String> {
 struct Flags(
     std::collections::HashMap<String, String>,
     std::cell::RefCell<std::collections::HashSet<String>>,
+    // ★ 세 번째 칸 — `true`/`false` 가 아닌 불리언 값. `--x tru` 가 조용히
+    //   false 가 되면 부정 테스트가 무력화된다(재검수 15, 결함 ㉑).
+    std::cell::RefCell<Vec<String>>,
 );
 
 impl Flags {
@@ -2814,7 +2874,19 @@ impl Flags {
     /// 테스트 전용 거부 경로 플래그(단계 5)에만 쓴다 — 다른 모든
     /// 플래그는 여전히 필수 값을 가진다(`require`).
     fn bool_flag(&self, key: &str) -> bool {
-        self.get(key).map(|v| v == "true").unwrap_or(false)
+        match self.get(key).map(String::as_str) {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                self.2.borrow_mut().push(format!("{key}={other}"));
+                false
+            }
+        }
+    }
+
+    /// `true`/`false` 가 아니었던 불리언 값들.
+    fn bad_bools(&self) -> Vec<String> {
+        self.2.borrow().clone()
     }
 
     /// 정수 플래그. 안 주면 `0`(fence_epoch 의 첫 발급 기본값 —
@@ -2898,7 +2970,7 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
         map.insert(key.clone(), value.clone());
         i += 2;
     }
-    Ok(Flags(map, Default::default()))
+    Ok(Flags(map, Default::default(), Default::default()))
 }
 
 fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {

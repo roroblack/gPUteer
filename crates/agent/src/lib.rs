@@ -2200,7 +2200,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
         coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
         // 안 주면 None — Manifest 가 실려 오면 fail closed 로 거부한다.
-        submitter_verifying_key: match flags.0.get("--submitter-pubkey") {
+        submitter_verifying_key: match flags.get("--submitter-pubkey") {
             Some(hex) => Some(hex_to_verifying_key(hex)?),
             None => None,
         },
@@ -2210,27 +2210,25 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
         corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
         corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
-        workload_cgroup_parent: flags
-            .0
-            .get("--workload-cgroup-parent")
+        workload_cgroup_parent: flags.get("--workload-cgroup-parent")
             .map(std::path::PathBuf::from),
         multi_agent: flags.bool_flag("--multi-agent"),
         // ★ 파싱 실패를 0 으로 접지 않는다(2026-08-30 독립 검수 3라운드).
         //   잘못 쓴 값이 "간격 없음" 으로 조용히 바뀌면, 운영자는 간격을
         //   줬다고 믿는데 실제로는 안 준 상태가 된다.
-        heartbeat_interval_ms: match flags.0.get("--heartbeat-interval-ms") {
+        heartbeat_interval_ms: match flags.get("--heartbeat-interval-ms") {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 format!("--heartbeat-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
             })?,
             None => 0,
         },
-        heartbeat_rounds: match flags.0.get("--heartbeat-rounds") {
+        heartbeat_rounds: match flags.get("--heartbeat-rounds") {
             Some(v) => v
                 .parse()
                 .map_err(|e| format!("--heartbeat-rounds 파싱 실패: {e}"))?,
             None => 0,
         },
-        neighbor_report_rounds: match flags.0.get("--neighbor-report-rounds") {
+        neighbor_report_rounds: match flags.get("--neighbor-report-rounds") {
             Some(v) => v
                 .parse()
                 .map_err(|e| format!("--neighbor-report-rounds 파싱 실패: {e}"))?,
@@ -2239,17 +2237,17 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         // ★ heartbeat 간격과 같은 이유로 **조용히 0 으로 떨어뜨리지 않는다** —
         //   잘못 쓴 값이 "간격 없음" 이 되면 운영자는 간격을 줬다고 믿는데
         //   실제로는 안 준 상태가 된다.
-        neighbor_report_interval_ms: match flags.0.get("--neighbor-report-interval-ms") {
+        neighbor_report_interval_ms: match flags.get("--neighbor-report-interval-ms") {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 format!("--neighbor-report-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
             })?,
             None => 0,
         },
-        neighbor_report_target_node_id: flags.0.get("--neighbor-report-target").cloned(),
+        neighbor_report_target_node_id: flags.get("--neighbor-report-target").cloned(),
         corrupt_neighbor_report_coordinator: flags
             .bool_flag("--corrupt-neighbor-report-coordinator"),
         owner_panel_state: owner_panel::OwnerPanelState::new(),
-        owner_panel_port: flags.0.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
+        owner_panel_port: flags.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
         // `RAM 상한 - 2000MiB` 로 간접 제한된다(ADR-027) — 이 값은
         // 실행 자체를 증명하기 위한 최소값이고 정책이 아니다.
@@ -2263,18 +2261,18 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         do_renew: flags.bool_flag("--do-renew"),
         renew_request_epoch_override: flags.u64_opt_flag("--renew-request-epoch-override")?,
         corrupt_renew_request_signature: flags.bool_flag("--corrupt-renew-request-signature"),
-        fence_db_path: match flags.0.get("--fence-db") {
+        fence_db_path: match flags.get("--fence-db") {
             Some(v) => PathBuf::from(v),
             None => default_fence_db_path(),
         },
-        checkpoint_root: match flags.0.get("--checkpoint-root") {
+        checkpoint_root: match flags.get("--checkpoint-root") {
             Some(v) => PathBuf::from(v),
             None => default_checkpoint_root(),
         },
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
-        revoke_signer_id_override: flags.0.get("--revoke-signer-id").cloned(),
+        revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
         max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
         max_reconnect_duration_seconds: flags
             .u64_flag_with_default("--max-reconnect-duration-seconds", 60)?,
@@ -2287,24 +2285,34 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
         reuse_renew_nonce_after_reconnect: flags.bool_flag("--reuse-renew-nonce-after-reconnect"),
         resume_protocol: flags.bool_flag("--resume-protocol"),
-        session_id: flags
-            .0
-            .get("--session-id")
+        session_id: flags.get("--session-id")
             .cloned()
             .unwrap_or_else(|| "resume-session".into()),
-        resume_lease_id: flags
-            .0
-            .get("--resume-lease-id")
+        resume_lease_id: flags.get("--resume-lease-id")
             .cloned()
             .unwrap_or_default(),
-        resume_job_id: flags.0.get("--resume-job-id").cloned().unwrap_or_default(),
-        resume_attempt_id: flags
-            .0
-            .get("--resume-attempt-id")
+        resume_job_id: flags.get("--resume-job-id").cloned().unwrap_or_default(),
+        resume_attempt_id: flags.get("--resume-attempt-id")
             .cloned()
             .unwrap_or_default(),
         resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
     };
+
+    // ★ 결함 ⑯ 확장(2026-09-10) — 모르는 이름을 받아 두지 않는다.
+    let bad_bools = flags.bad_bools();
+    if !bad_bools.is_empty() {
+        return Err(format!(
+            "STARTUP_REFUSED: INVALID_BOOL — {bad_bools:?} 는 true 도 false 도 아니다. \
+             조용히 false 로 읽으면 켠 줄 안 것이 안 켜진다"
+        ));
+    }
+    let unread = flags.unread();
+    if !unread.is_empty() {
+        return Err(format!(
+            "STARTUP_REFUSED: UNKNOWN_FLAGS — 이 명령이 읽지 않는 플래그 {unread:?}. \
+             오타이거나 없는 설정이다 — 받아 두면 말없이 버려진다"
+        ));
+    }
     Ok(config)
 }
 
@@ -2349,12 +2357,39 @@ fn default_checkpoint_root() -> PathBuf {
     std::env::temp_dir().join(format!("gputeer-checkpoints-{pid}-{nanos}"))
 }
 
-struct Flags(std::collections::HashMap<String, String>);
+/// ★ 두 번째 칸은 **읽은 키**다. 설정을 다 만든 뒤 한 번도 안 읽힌 키는 이
+///   명령이 모르는 이름이다 — Coordinator 쪽과 같은 이유(결함 ⑯ 확장,
+///   2026-09-10). 전에는 오타가 조용히 사라졌다.
+struct Flags(
+    std::collections::HashMap<String, String>,
+    std::cell::RefCell<std::collections::HashSet<String>>,
+    // ★ 세 번째 칸 — `true`/`false` 가 아닌 불리언 값. `--x tru` 가 조용히
+    //   false 가 되면 부정 테스트가 무력화된다(재검수 15, 결함 ㉑).
+    std::cell::RefCell<Vec<String>>,
+);
 
 impl Flags {
+    /// 값을 읽고 **읽었다고 적는다.**
+    fn get(&self, key: &str) -> Option<&String> {
+        self.1.borrow_mut().insert(key.to_string());
+        self.0.get(key)
+    }
+
+    /// 한 번도 읽히지 않은 키 — 이름순.
+    fn unread(&self) -> Vec<String> {
+        let read = self.1.borrow();
+        let mut keys: Vec<String> = self
+            .0
+            .keys()
+            .filter(|key| !read.contains(*key))
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
     fn require(&self, key: &str) -> Result<String, String> {
-        self.0
-            .get(key)
+        self.get(key)
             .cloned()
             .ok_or_else(|| format!("필수 인자 누락: {key}"))
     }
@@ -2362,13 +2397,25 @@ impl Flags {
     /// `crates/coordinator/src/lib.rs::Flags::bool_flag` 와 동일 — 값이
     /// 있는 boolean 플래그(`--flag true`). 안 주면 `false`.
     fn bool_flag(&self, key: &str) -> bool {
-        self.0.get(key).map(|v| v == "true").unwrap_or(false)
+        match self.get(key).map(String::as_str) {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                self.2.borrow_mut().push(format!("{key}={other}"));
+                false
+            }
+        }
+    }
+
+    /// `true`/`false` 가 아니었던 불리언 값들.
+    fn bad_bools(&self) -> Vec<String> {
+        self.2.borrow().clone()
     }
 
     /// 반복 Lease 갱신(2026-08-19) — 안 주면 `default`(왕복 횟수).
     /// 기본값 1은 기존 단일 왕복 시나리오와 동일하게 동작한다.
     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(default),
             Some(v) => v
                 .parse::<u32>()
@@ -2379,7 +2426,7 @@ impl Flags {
     /// ★ 테스트 전용 — 갱신 요청 epoch 강제 주입(단계 5). 안 주면
     ///   `None`(보유 중인 Lease 의 실제 epoch 을 그대로 쓴다).
     fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(default),
             Some(v) => v
                 .parse::<u64>()
@@ -2388,7 +2435,7 @@ impl Flags {
     }
 
     fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .parse::<u64>()
@@ -2398,7 +2445,7 @@ impl Flags {
     }
 
     fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .parse::<u32>()
@@ -2422,7 +2469,7 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
         map.insert(key.clone(), value.clone());
         i += 2;
     }
-    Ok(Flags(map))
+    Ok(Flags(map, Default::default(), Default::default()))
 }
 
 fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
