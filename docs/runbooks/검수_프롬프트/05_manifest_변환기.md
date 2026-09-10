@@ -63,3 +63,29 @@ crates/coordinator/src/manifest_requirements.rs   (496줄, 테스트 포함)
 값이 나온다)을 붙여라.
 
 마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+
+---
+
+## ★ 2026-09-10 정정 — 읽을 파일이 잘못 지정돼 있었다
+
+첫 시도에서 검수자가 **판정을 내리지 못하고 질문으로 끝냈다.** 이유가
+정당하다 — enum 정의와 `GpuRequest` 가 `proto/job.proto` 가 아니라
+**`proto/common.proto`** 에 있는데, 읽기를 두 파일로 제한해 뒀다.
+
+**읽어도 되는 파일에 `proto/common.proto` 를 더한다.** 특히 이 둘을 보라:
+
+```text
+common.proto:189   uint32 min_count = 2;              // 기본 1
+common.proto:191   GpuAllocationMode allocation_mode; // 미지정 시 EXCLUSIVE
+```
+
+`min_count == 0 -> 1` 치환이 규범을 옮긴 것인지 지어낸 것인지 판정하라.
+
+★ 그리고 이 세션이 그 과정에서 하나 찾았다. 확인해 달라:
+  **변환기가 `allocation_mode` 를 아예 안 옮긴다.** 그런데
+  `crates/scheduler/src/scope.rs:202` 는 그 값을 필수로 요구한다
+  (`MissingFact(JobAllocationMode)`). proto 는 "미지정 시 EXCLUSIVE"
+  라고 적었는데 변환기는 그 규범을 옮기지 않는다.
+  이것이 결함인가, 아니면 scope 커널이 다른 입력 구조를 쓰므로
+  무관한가?

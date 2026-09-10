@@ -1,0 +1,1129 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0873c-a3d1-7411-b515-e3dda243e1d5
+--------
+user
+동의가 아니라 **반박**을 원한다. 내가 "확인한다" 와 "못 한다" 로 갈라
+적은 경계가 **실제 코드와 맞는지**, 그리고 그 경계가 남기는 위험이
+무엇인지 찾아 달라.
+
+# 배경
+
+`issue-grant` 는 저장된 예약 사실만으로 서명된 `ExecutionGrant` 를
+발급한다. 서명한 직후 **자기 출력을 스스로 검증**한다:
+
+```text
+crates/coordinator/src/grant_from_stored.rs:251
+    verify_own_output(&grant, request.issued_at_unix_ms)?;
+crates/coordinator/src/grant_from_stored.rs:259
+    fn verify_own_output(...)
+```
+
+내가 주석에 적은 경계는 이것이다:
+
+```text
+확인한다   구조 · schema_version · 수명 · canonical 인코딩
+못 한다    **이 키가 정말 issuing_coordinator_id 의 것인가**
+```
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/coordinator/src/grant_from_stored.rs   (320줄)
+crates/cli/src/issue_grant.rs                 (188줄)
+```
+
+# 물을 것 — 네 가지
+
+1. `verify_own_output()` 이 실제로 확인하는 것이 내가 적은 네 가지와
+   **일치하나**? 더 적게 확인하거나(주석이 과장) 더 많이 확인하면
+   (주석이 축소) 그 차이를 파일:줄로 지목하라.
+
+2. "이 키가 정말 `issuing_coordinator_id` 의 것인가" 를 확인하지
+   못한다는 것이 **실제로 어떤 위험을 남기나**? 잘못된 키로 서명된
+   Grant 가 나가는 구체적 시나리오를 만들 수 있나, 아니면 호출부의
+   다른 성질 때문에 실질적으로 불가능한가? 코드로 따라가서 답하라.
+
+3. 자기 검증이 **실패했을 때** 어떻게 되나? `?` 로 전파되는데, 그
+   시점에 이미 저장소에 남은 부작용이 있나? 있으면 서명 실패가
+   "발급 안 됨" 이 아니라 "반쯤 발급됨" 이 된다.
+
+4. 자기 자신의 출력을 자기가 검증하는 것은 **원리적으로 약하다**(같은
+   버그가 양쪽에 있으면 못 잡는다). 이 코드에서 그 약점이 실제로
+   드러나는 자리가 있나?
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 없는 문제를
+지어내지 마라 — "확인했고 주석과 코드가 일치한다" 도 유효한 답이다.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 과 구체적 반례를 붙여라.
+
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 두 파일만 읽고, 자기 검증의 범위와 키·저장 부작용의 흐름을 확인하겠습니다. 외부 구현이 필요한 판단은 확인된 사실과 구분하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$paths = @('"'crates/coordinator/src/grant_from_stored.rs', 'crates/cli/src/issue_grant.rs'); foreach ("'$path in $paths) { $lineNo = 0; Get-Content -LiteralPath $path | ForEach-Object { $lineNo++; '"'{0}:{1}: {2}' -f "'$path, $lineNo, $_ } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1348ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+crates/coordinator/src/grant_from_stored.rs:1: //! ?�?�된 ?�약?�서 **?�명??`ExecutionGrant`** �?만든??
+crates/coordinator/src/grant_from_stored.rs:2: //!
+crates/coordinator/src/grant_from_stored.rs:3: //! # ????CLI 가 ?�니???�기 ?�는가
+crates/coordinator/src/grant_from_stored.rs:4: //!
+crates/coordinator/src/grant_from_stored.rs:5: //! 처음?�는 `gputeer issue-grant` ?�에�??�었?? 그런??`coordinator-stub`
+crates/coordinator/src/grant_from_stored.rs:6: //! ??같�? ?�을 ?�야 ?�는 ?�간(?�?�된 ?�약??Agent ?�게 ?�제�?보내�?
+crates/coordinator/src/grant_from_stored.rs:7: //! **??번째 복사�?*????참이?�다.
+crates/coordinator/src/grant_from_stored.rs:8: //!
+crates/coordinator/src/grant_from_stored.rs:9: //! ???�?�소??�??�정???��? ??�?겪었????`DoD-67` ?�서 ?�속???�정??//! CLI ?� ?�?�소 ??곳에 ?�었?��? ?�쪽�??�아 `--job-db ""` 가 조용??//! ?�공?�고, `StoredLease ??pb::Lease` 변?��? **??�?*�?복사???�었??
+crates/coordinator/src/grant_from_stored.rs:10: //!
+crates/coordinator/src/grant_from_stored.rs:11: //! # ?????�만 믿�? ?�는??//!
+crates/coordinator/src/grant_from_stored.rs:12: //! Attempt·Lease·?�약?� ?�로 ?�른 ?�이?? ?�이 ?�긋???�으�?�??�체가
+crates/coordinator/src/grant_from_stored.rs:13: //! ?�실?�고, 그때 ?�쪽�??�으�??�는 ?��??�을 가?�하�??�다.
+crates/coordinator/src/grant_from_stored.rs:14: //!
+crates/coordinator/src/grant_from_stored.rs:15: //! ```text
+crates/coordinator/src/grant_from_stored.rs:16: //! Job ?�태            STAGING ?�어???�다 ???�약 ?�이 Grant �??�면
+crates/coordinator/src/grant_from_stored.rs:17: //!                     Agent ???�기가 �??�드�???권한???�다�?믿는??//! Attempt ??Lease     job_id · attempt_id · lease_id · fence epoch
+crates/coordinator/src/grant_from_stored.rs:18: //! ?�약(node)          Lease ??보유 ?�드????Attempt �?걸려 ?�는가
+crates/coordinator/src/grant_from_stored.rs:19: //! Lease ?�태          ?�기?��? ?�았�? 발급 ?�각???�직 ??만료?�는가
+crates/coordinator/src/grant_from_stored.rs:20: //! Grant ?�명          Lease 보다 ?�래 ?��? ?�는가
+crates/coordinator/src/grant_from_stored.rs:21: //! ```
+crates/coordinator/src/grant_from_stored.rs:22: //!
+crates/coordinator/src/grant_from_stored.rs:23: //! # ??모듈???��? ?�는 �?//!
+crates/coordinator/src/grant_from_stored.rs:24: //! ```text
+crates/coordinator/src/grant_from_stored.rs:25: //! ???�다   ?�?�소 ?�기·?�속???�정   ?�출부가 ???�?�소�?받는??//! ???�다   ?�송                      ?�일�??��? wire �?보낼지???�출부??//! ???�다   Manifest ?�기             ?�출???�명 ?�본???�요?�다 ??별도 조각
+crates/coordinator/src/grant_from_stored.rs:26: //! ???�다   ResourceScope 채우�?     GPU scope ??authoritative provenance
+crates/coordinator/src/grant_from_stored.rs:27: //!                                     가 ?�어 막�? ?�다(`DoD-55`)
+crates/coordinator/src/grant_from_stored.rs:28: //! ```
+crates/coordinator/src/grant_from_stored.rs:29: 
+crates/coordinator/src/grant_from_stored.rs:30: use gputeer_crypto::{sign, SigningKey};
+crates/coordinator/src/grant_from_stored.rs:31: use gputeer_protocol::pb;
+crates/coordinator/src/grant_from_stored.rs:32: 
+crates/coordinator/src/grant_from_stored.rs:33: use crate::job_store::{CoordinatorJobStore, JobState};
+crates/coordinator/src/grant_from_stored.rs:34: use crate::lease_store::CoordinatorLeaseStore;
+crates/coordinator/src/grant_from_stored.rs:35: use crate::staging_store::CoordinatorStagingStore;
+crates/coordinator/src/grant_from_stored.rs:36: use crate::unsigned_lease_from_stored;
+crates/coordinator/src/grant_from_stored.rs:37: 
+crates/coordinator/src/grant_from_stored.rs:38: /// ?�출부가 ?�하??�? **??모듈?� ?�계�??��? ?�는??**
+crates/coordinator/src/grant_from_stored.rs:39: ///
+crates/coordinator/src/grant_from_stored.rs:40: /// ???�각???��?값으�?받는 ?�유 ???�계�??�으�?같�? ?�력?�로 ??�?///   발급?�을 ??결과가 ?�라지�? 그러�?"같�? ?�력?�면 같�? Grant" �?///   ?�인??방법???�어진다(`stage-job` ?�서 ?�합 ?�스?��? �?문제�?///   ?�제�??�았??.
+crates/coordinator/src/grant_from_stored.rs:41: #[derive(Debug, Clone, PartialEq, Eq)]
+crates/coordinator/src/grant_from_stored.rs:42: pub struct StoredGrantRequest {
+crates/coordinator/src/grant_from_stored.rs:43:     pub job_id: String,
+crates/coordinator/src/grant_from_stored.rs:44:     pub attempt_id: String,
+crates/coordinator/src/grant_from_stored.rs:45:     pub lease_id: String,
+crates/coordinator/src/grant_from_stored.rs:46:     pub grant_id: String,
+crates/coordinator/src/grant_from_stored.rs:47:     pub issued_at_unix_ms: u64,
+crates/coordinator/src/grant_from_stored.rs:48:     pub expires_at_unix_ms: u64,
+crates/coordinator/src/grant_from_stored.rs:49:     /// ??**nonce ???�?�된 ?�실???�니???�송 계약?�다.**
+crates/coordinator/src/grant_from_stored.rs:50:     ///
+crates/coordinator/src/grant_from_stored.rs:51:     ///   처음?�는 ??모듈??`(grant_id, attempt_id)` �?직접 뽑았??
+crates/coordinator/src/grant_from_stored.rs:52:     ///   그랬?�니 wire �?보낼 ??Agent 가 거�??�다 ??    ///   `GRANT_REJECTED: nonce does not match connection attempt`.
+crates/coordinator/src/grant_from_stored.rs:53:     ///   Agent ??**?�결 ?�도 번호**?�서 ?�도??값을 기�??�다.
+crates/coordinator/src/grant_from_stored.rs:54:     ///
+crates/coordinator/src/grant_from_stored.rs:55:     ///   ???�비?��? ?�구?�는 것이 ?�르??
+crates/coordinator/src/grant_from_stored.rs:56:     ///     · ?�일�?????`issue-grant`) ???�결 개념???�다.
+crates/coordinator/src/grant_from_stored.rs:57:     ///       같�? ?�력?�면 같�? Grant ?�야 ?�발급이 멱등?�다.
+crates/coordinator/src/grant_from_stored.rs:58:     ///     · wire �?보낼 ????Agent ?� ?�의???�도?�을 ?�야 ?�다.
+crates/coordinator/src/grant_from_stored.rs:59:     ///
+crates/coordinator/src/grant_from_stored.rs:60:     ///   그래????모듈???�하지 ?�고 **?�출부가 준??** ?�기???�나�?    ///   고르�??�른 ?�비?��? 조용??깨진??
+crates/coordinator/src/grant_from_stored.rs:61:     pub nonce: Vec<u8>,
+crates/coordinator/src/grant_from_stored.rs:62: }
+crates/coordinator/src/grant_from_stored.rs:63: 
+crates/coordinator/src/grant_from_stored.rs:64: /// ?�?�된 ?�약???�어 ?�조한 ???�명??Grant �?만든??
+crates/coordinator/src/grant_from_stored.rs:65: ///
+crates/coordinator/src/grant_from_stored.rs:66: /// nested Lease �?**먼�?** ?�성???�명?�다 ??그래??outer Grant ???�명??/// 최종 nested 바이?��? ??��??
+crates/coordinator/src/grant_from_stored.rs:67: pub fn signed_grant_from_stored(
+crates/coordinator/src/grant_from_stored.rs:68:     jobs: &CoordinatorJobStore,
+crates/coordinator/src/grant_from_stored.rs:69:     staging: &CoordinatorStagingStore,
+crates/coordinator/src/grant_from_stored.rs:70:     leases: &CoordinatorLeaseStore,
+crates/coordinator/src/grant_from_stored.rs:71:     request: &StoredGrantRequest,
+crates/coordinator/src/grant_from_stored.rs:72:     key: &SigningKey,
+crates/coordinator/src/grant_from_stored.rs:73: ) -> Result<pb::ExecutionGrant, String> {
+crates/coordinator/src/grant_from_stored.rs:74:     if request.issued_at_unix_ms >= request.expires_at_unix_ms {
+crates/coordinator/src/grant_from_stored.rs:75:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:76:             "Grant 발급 ?�각({})??만료({}) 보다 ?�서지 ?�는??,
+crates/coordinator/src/grant_from_stored.rs:77:             request.issued_at_unix_ms, request.expires_at_unix_ms
+crates/coordinator/src/grant_from_stored.rs:78:         ));
+crates/coordinator/src/grant_from_stored.rs:79:     }
+crates/coordinator/src/grant_from_stored.rs:80: 
+crates/coordinator/src/grant_from_stored.rs:81:     let job = jobs
+crates/coordinator/src/grant_from_stored.rs:82:         .get(&request.job_id)
+crates/coordinator/src/grant_from_stored.rs:83:         .map_err(|e| format!("Job 조회 ?�패: {e}"))?
+crates/coordinator/src/grant_from_stored.rs:84:         .ok_or_else(|| format!("GRANT_REFUSED: {} �?모른??, request.job_id))?;
+crates/coordinator/src/grant_from_stored.rs:85:     if job.state != JobState::Staging {
+crates/coordinator/src/grant_from_stored.rs:86:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:87:             "GRANT_REFUSED: Job ??STAGING ???�니???�재 {:?}) ???�약 ?�이 Grant �?만들지 ?�는??,
+crates/coordinator/src/grant_from_stored.rs:88:             job.state
+crates/coordinator/src/grant_from_stored.rs:89:         ));
+crates/coordinator/src/grant_from_stored.rs:90:     }
+crates/coordinator/src/grant_from_stored.rs:91: 
+crates/coordinator/src/grant_from_stored.rs:92:     let attempt = staging
+crates/coordinator/src/grant_from_stored.rs:93:         .get_attempt(&request.attempt_id)
+crates/coordinator/src/grant_from_stored.rs:94:         .map_err(|e| format!("Attempt 조회 ?�패: {e}"))?
+crates/coordinator/src/grant_from_stored.rs:95:         .ok_or_else(|| {
+crates/coordinator/src/grant_from_stored.rs:96:             format!(
+crates/coordinator/src/grant_from_stored.rs:97:                 "GRANT_REFUSED: Attempt {} 가 ?�?�소???�다",
+crates/coordinator/src/grant_from_stored.rs:98:                 request.attempt_id
+crates/coordinator/src/grant_from_stored.rs:99:             )
+crates/coordinator/src/grant_from_stored.rs:100:         })?;
+crates/coordinator/src/grant_from_stored.rs:101:     let stored_lease = leases
+crates/coordinator/src/grant_from_stored.rs:102:         .get(&request.lease_id)
+crates/coordinator/src/grant_from_stored.rs:103:         .map_err(|e| format!("Lease 조회 ?�패: {e}"))?
+crates/coordinator/src/grant_from_stored.rs:104:         .ok_or_else(|| format!("GRANT_REFUSED: Lease {} 가 ?�?�소???�다", request.lease_id))?;
+crates/coordinator/src/grant_from_stored.rs:105: 
+crates/coordinator/src/grant_from_stored.rs:106:     // ?�?� ???�만 믿�? ?�는???�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+crates/coordinator/src/grant_from_stored.rs:107:     for (label, left, right) in [
+crates/coordinator/src/grant_from_stored.rs:108:         (
+crates/coordinator/src/grant_from_stored.rs:109:             "job_id",
+crates/coordinator/src/grant_from_stored.rs:110:             attempt.job_id.as_str(),
+crates/coordinator/src/grant_from_stored.rs:111:             stored_lease.job_id.as_str(),
+crates/coordinator/src/grant_from_stored.rs:112:         ),
+crates/coordinator/src/grant_from_stored.rs:113:         (
+crates/coordinator/src/grant_from_stored.rs:114:             "attempt_id",
+crates/coordinator/src/grant_from_stored.rs:115:             attempt.attempt_id.as_str(),
+crates/coordinator/src/grant_from_stored.rs:116:             stored_lease.attempt_id.as_str(),
+crates/coordinator/src/grant_from_stored.rs:117:         ),
+crates/coordinator/src/grant_from_stored.rs:118:         (
+crates/coordinator/src/grant_from_stored.rs:119:             "lease_id",
+crates/coordinator/src/grant_from_stored.rs:120:             attempt.lease_id.as_str(),
+crates/coordinator/src/grant_from_stored.rs:121:             stored_lease.lease_id.as_str(),
+crates/coordinator/src/grant_from_stored.rs:122:         ),
+crates/coordinator/src/grant_from_stored.rs:123:     ] {
+crates/coordinator/src/grant_from_stored.rs:124:         if left != right {
+crates/coordinator/src/grant_from_stored.rs:125:             return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:126:                 "GRANT_REFUSED: Attempt ?� Lease ??{label} 가 ?�르??Attempt {left:?}, Lease {right:?}) ?????�이 같�? ?�약??가리키지 ?�는??
+crates/coordinator/src/grant_from_stored.rs:127:             ));
+crates/coordinator/src/grant_from_stored.rs:128:         }
+crates/coordinator/src/grant_from_stored.rs:129:     }
+crates/coordinator/src/grant_from_stored.rs:130:     // ?�★ **?�래 ???�조는 ?�스?�로 고정?��? ?�았?????�인지 ?�는??**
+crates/coordinator/src/grant_from_stored.rs:131:     //
+crates/coordinator/src/grant_from_stored.rs:132:     //   뮤테?�션 G5(fence ?��??�거)·G6(?�약 존재 ?�인 ?�거)�?걸어??    //   `issue_grant` 10건이 ?��? ?�과?�다. ?��?�??�과?�킨 �??�니??    //   **�??�태�??�상 경로�?만들 ???�어??*????Attempt·Lease·
+crates/coordinator/src/grant_from_stored.rs:133:     //   ?�약?� `staging_store.rs` ??**??`BEGIN IMMEDIATE` ?�에???�께**
+crates/coordinator/src/grant_from_stored.rs:134:     //   ?�인??`:605`·`:915`·`:1985`). ?�이 ?�긋?�려�?DB �?직접
+crates/coordinator/src/grant_from_stored.rs:135:     //   조작?�야 ?�다.
+crates/coordinator/src/grant_from_stored.rs:136:     //
+crates/coordinator/src/grant_from_stored.rs:137:     //   그래???�건 **?�력 검증이 ?�니???�상 방어**?? 값어치�? ?�다??    //   ?��? ?�니지�? "?�스?��? 지?�고 ?�다" �?말하�?거짓?�다.
+crates/coordinator/src/grant_from_stored.rs:138:     //   고정?�려�?rusqlite �??�을 직접 망�??�리???�스?��? ?�요?�고
+crates/coordinator/src/grant_from_stored.rs:139:     //   ??crate ???�합 ?�스?�에??�??�존?�이 ?�다.
+crates/coordinator/src/grant_from_stored.rs:140:     if attempt.fence_epoch != stored_lease.fence_epoch {
+crates/coordinator/src/grant_from_stored.rs:141:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:142:             "GRANT_REFUSED: Attempt ?� Lease ??fence epoch 가 ?�르??Attempt {}, Lease {}) ???�래???�쪽?�로 Grant �?만들�?fencing ??무의미해진다",
+crates/coordinator/src/grant_from_stored.rs:143:             attempt.fence_epoch, stored_lease.fence_epoch
+crates/coordinator/src/grant_from_stored.rs:144:         ));
+crates/coordinator/src/grant_from_stored.rs:145:     }
+crates/coordinator/src/grant_from_stored.rs:146:     if attempt.job_id != request.job_id {
+crates/coordinator/src/grant_from_stored.rs:147:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:148:             "GRANT_REFUSED: Attempt 가 ?�른 Job ??것이??{} != {})",
+crates/coordinator/src/grant_from_stored.rs:149:             attempt.job_id, request.job_id
+crates/coordinator/src/grant_from_stored.rs:150:         ));
+crates/coordinator/src/grant_from_stored.rs:151:     }
+crates/coordinator/src/grant_from_stored.rs:152: 
+crates/coordinator/src/grant_from_stored.rs:153:     let reservation = staging
+crates/coordinator/src/grant_from_stored.rs:154:         .get_node_reservation(&stored_lease.holder_node_id)
+crates/coordinator/src/grant_from_stored.rs:155:         .map_err(|e| format!("?�약 조회 ?�패: {e}"))?
+crates/coordinator/src/grant_from_stored.rs:156:         .ok_or_else(|| {
+crates/coordinator/src/grant_from_stored.rs:157:             format!(
+crates/coordinator/src/grant_from_stored.rs:158:                 "GRANT_REFUSED: {} ???�약???�다 ??Lease ???�는???�드가 ???��? ?�다",
+crates/coordinator/src/grant_from_stored.rs:159:                 stored_lease.holder_node_id
+crates/coordinator/src/grant_from_stored.rs:160:             )
+crates/coordinator/src/grant_from_stored.rs:161:         })?;
+crates/coordinator/src/grant_from_stored.rs:162:     if reservation.job_id != request.job_id || reservation.attempt_id != request.attempt_id {
+crates/coordinator/src/grant_from_stored.rs:163:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:164:             "GRANT_REFUSED: {} ???�약?� ?�른 Attempt ??것이??job {}, attempt {})",
+crates/coordinator/src/grant_from_stored.rs:165:             stored_lease.holder_node_id, reservation.job_id, reservation.attempt_id
+crates/coordinator/src/grant_from_stored.rs:166:         ));
+crates/coordinator/src/grant_from_stored.rs:167:     }
+crates/coordinator/src/grant_from_stored.rs:168: 
+crates/coordinator/src/grant_from_stored.rs:169:     // ?�?� ?�태 관�??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+crates/coordinator/src/grant_from_stored.rs:170:     if let Some(revoked_at) = stored_lease.revoked_at_unix_ms {
+crates/coordinator/src/grant_from_stored.rs:171:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:172:             "GRANT_REFUSED: Lease 가 {revoked_at} ???�기?�다 ???�기??Lease �?Grant �?만들지 ?�는??
+crates/coordinator/src/grant_from_stored.rs:173:         ));
+crates/coordinator/src/grant_from_stored.rs:174:     }
+crates/coordinator/src/grant_from_stored.rs:175:     // ??경계 ?�함(`<=`) ??`DoD-26`·`DoD-32`·`DoD-34` 가 ?�착?�킨 규칙�?    //   같다. ?�확??만료 ?�각??Lease �??�기?�만 ?�효�?보면, Agent ??    //   같�? ?�간 �?Lease �?거�??�다.
+crates/coordinator/src/grant_from_stored.rs:176:     if stored_lease.expires_at_unix_ms <= request.issued_at_unix_ms {
+crates/coordinator/src/grant_from_stored.rs:177:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:178:             "GRANT_REFUSED: 발급 ?�각({})??Lease 가 ?��? 만료??만료 {})",
+crates/coordinator/src/grant_from_stored.rs:179:             request.issued_at_unix_ms, stored_lease.expires_at_unix_ms
+crates/coordinator/src/grant_from_stored.rs:180:         ));
+crates/coordinator/src/grant_from_stored.rs:181:     }
+crates/coordinator/src/grant_from_stored.rs:182:     if request.expires_at_unix_ms > stored_lease.expires_at_unix_ms {
+crates/coordinator/src/grant_from_stored.rs:183:         return Err(format!(
+crates/coordinator/src/grant_from_stored.rs:184:             "GRANT_REFUSED: Grant 만료({})가 Lease 만료({}) 보다 ??��",
+crates/coordinator/src/grant_from_stored.rs:185:             request.expires_at_unix_ms, stored_lease.expires_at_unix_ms
+crates/coordinator/src/grant_from_stored.rs:186:         ));
+crates/coordinator/src/grant_from_stored.rs:187:     }
+crates/coordinator/src/grant_from_stored.rs:188: 
+crates/coordinator/src/grant_from_stored.rs:189:     // ?�?� ?�명 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+crates/coordinator/src/grant_from_stored.rs:190:     let mut lease = unsigned_lease_from_stored(&stored_lease)?;
+crates/coordinator/src/grant_from_stored.rs:191:     lease.coordinator_signature = sign(key, &lease).to_vec();
+crates/coordinator/src/grant_from_stored.rs:192: 
+crates/coordinator/src/grant_from_stored.rs:193:     let mut grant = pb::ExecutionGrant {
+crates/coordinator/src/grant_from_stored.rs:194:         schema_version: 2,
+crates/coordinator/src/grant_from_stored.rs:195:         grant_id: request.grant_id.clone(),
+crates/coordinator/src/grant_from_stored.rs:196:         attempt_id: attempt.attempt_id.clone(),
+crates/coordinator/src/grant_from_stored.rs:197:         coordinator_device_id: stored_lease.issuing_coordinator_id.clone(),
+crates/coordinator/src/grant_from_stored.rs:198:         // ??리터??1 ???�니???�?�된 term ?�다. `coordinator-stub` ??        //   기존 `issue_grant()` ???�기??1 ??박아 ?�는??
+crates/coordinator/src/grant_from_stored.rs:199:         coordinator_term: stored_lease.coordinator_term,
+crates/coordinator/src/grant_from_stored.rs:200:         issued_at_unix_ms: request.issued_at_unix_ms,
+crates/coordinator/src/grant_from_stored.rs:201:         expires_at_unix_ms: request.expires_at_unix_ms,
+crates/coordinator/src/grant_from_stored.rs:202:         nonce: request.nonce.clone(),
+crates/coordinator/src/grant_from_stored.rs:203:         // ??비트??v2 Grant ?�명 ?�?�이?? ??경로??**?�?�소?�서�?*
+crates/coordinator/src/grant_from_stored.rs:204:         // Lease �??�으므�??�직?�게 true ??
+crates/coordinator/src/grant_from_stored.rs:205:         lease_from_durable_store: true,
+crates/coordinator/src/grant_from_stored.rs:206:         lease: Some(lease),
+crates/coordinator/src/grant_from_stored.rs:207:         ..Default::default()
+crates/coordinator/src/grant_from_stored.rs:208:     };
+crates/coordinator/src/grant_from_stored.rs:209:     grant.coordinator_signature = sign(key, &grant).to_vec();
+crates/coordinator/src/grant_from_stored.rs:210: 
+crates/coordinator/src/grant_from_stored.rs:211:     // ?�?� 방금 만든 것을 바로 ?�시 검증한???�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+crates/coordinator/src/grant_from_stored.rs:212:     //
+crates/coordinator/src/grant_from_stored.rs:213:     // ??`gputeer submit` ???��? ?�는 ?�이??"?�명?�자마자 깨진 ?�일??    //   ?�보?�는 것보???�기???�패?�는 ?�이 ?�씬 ?�다"). ??경로?�는
+crates/coordinator/src/grant_from_stored.rs:214:     //   그게 **?�었??* ????뮤테?�션???�니??코드�??��????�고 보다가
+crates/coordinator/src/grant_from_stored.rs:215:     //   찾았??
+crates/coordinator/src/grant_from_stored.rs:216:     //
+crates/coordinator/src/grant_from_stored.rs:217:     //   ?�인?�는 것과 �??�는 것을 ?�확???�는??
+crates/coordinator/src/grant_from_stored.rs:218:     //
+crates/coordinator/src/grant_from_stored.rs:219:     //   ?�인?�다   구조·`schema_version`·?�명·canonical ?�코??
+crates/coordinator/src/grant_from_stored.rs:220:     //              그리�?**?�명???�제�?검증되?��?**(2026-09-07 추�?).
+crates/coordinator/src/grant_from_stored.rs:221:     //              nested Lease ??같이 본다.
+crates/coordinator/src/grant_from_stored.rs:222:     //   �??�다    **???��? ?�말 `issuing_coordinator_id` ??것인가.**
+crates/coordinator/src/grant_from_stored.rs:223:     //              ??모듈?�는 key directory 가 ?�다 ???�출부가 준
+crates/coordinator/src/grant_from_stored.rs:224:     //              ?��? 그�?�??�다.
+crates/coordinator/src/grant_from_stored.rs:225:     //
+crates/coordinator/src/grant_from_stored.rs:226:     //   ?�★ **"?�험?��? ?�다" �??�었??것을 고친??* (2026-09-07 ?�립
+crates/coordinator/src/grant_from_stored.rs:227:     //     검??지??. ?�뚱???�로 ?�명?�면 ?�기?�는 ?�과?�고 ?�중??    //     Agent 가 거�??�다. ?�증 ?�회???�니지�?**?�험???�는 것�?
+crates/coordinator/src/grant_from_stored.rs:228:     //     ?�니??*:
+crates/coordinator/src/grant_from_stored.rs:229:     //
+crates/coordinator/src/grant_from_stored.rs:230:     //       · ?�영?�는 ?�효??Grant �?만든 �??�다
+crates/coordinator/src/grant_from_stored.rs:231:     //       · ?�패가 Agent ?�계까�? 밀???�인 ?�악????��진다
+crates/coordinator/src/grant_from_stored.rs:232:     //       · `--out` ??기존 ?�일???�었?�면 �??�는 Grant �???��??    //
+crates/coordinator/src/grant_from_stored.rs:233:     //     ?�으?�면 Coordinator 공개??목록???�요?�고 ?�직 ?�다.
+crates/coordinator/src/grant_from_stored.rs:234:     verify_own_output(&grant, key, request.issued_at_unix_ms)?;
+crates/coordinator/src/grant_from_stored.rs:235:     Ok(grant)
+crates/coordinator/src/grant_from_stored.rs:236: }
+crates/coordinator/src/grant_from_stored.rs:237: 
+crates/coordinator/src/grant_from_stored.rs:238: /// 방금 ?�명??Grant �?**?�명까�?** ?�기 검증한??
+crates/coordinator/src/grant_from_stored.rs:239: ///
+crates/coordinator/src/grant_from_stored.rs:240: /// ?�★ **2026-09-07 ?�립 검?��? ???�수�?반려?�다.** ?�에??///   `AlwaysValid`(?�명???��????�는 검증자)�??�다. 검?��? 반�?�?///   보�?????///
+crates/coordinator/src/grant_from_stored.rs:241: ///   > `sign()` ??버그 ?�문???�못??preimage �??�명?�거??64바이??///   > ?�레기�? 반환?�도, 검증기가 ?�명??**?��? ?�으므�?* ?�과?�다.
+crates/coordinator/src/grant_from_stored.rs:242: ///
+crates/coordinator/src/grant_from_stored.rs:243: ///   �?�?검?�는 "?�명 ?�성�?검�??�쪽??같�? 버그가 ?�으�?�??�는??
+crates/coordinator/src/grant_from_stored.rs:244: ///   보다???�했?? **?�성기의 ?�독 버그조차 �??�았??**
+crates/coordinator/src/grant_from_stored.rs:245: ///
+crates/coordinator/src/grant_from_stored.rs:246: ///   지금�? ?�명?????�에??공개?��? ?�출??**?�제�?검증한??**
+crates/coordinator/src/grant_from_stored.rs:247: ///   그러�??�명 ?�성�?canonical preimage ??불일치�? ?�는??
+crates/coordinator/src/grant_from_stored.rs:248: ///
+crates/coordinator/src/grant_from_stored.rs:249: /// ???�전??�??�는 것�? 그�?로다 ??**??공개?��? ?�말
+crates/coordinator/src/grant_from_stored.rs:250: ///   `issuing_coordinator_id` ???�뢰???�인가.** ??모듈?�는 key
+crates/coordinator/src/grant_from_stored.rs:251: ///   directory 가 ?�고 ?�출부가 준 ?��? 그�?�??�다. 그건 별도 검?��?
+crates/coordinator/src/grant_from_stored.rs:252: ///   ?�요?�고 ???�?�소???�직 ?�다.
+crates/coordinator/src/grant_from_stored.rs:253: fn verify_own_output(
+crates/coordinator/src/grant_from_stored.rs:254:     grant: &pb::ExecutionGrant,
+crates/coordinator/src/grant_from_stored.rs:255:     key: &gputeer_crypto::SigningKey,
+crates/coordinator/src/grant_from_stored.rs:256:     at_unix_ms: u64,
+crates/coordinator/src/grant_from_stored.rs:257: ) -> Result<(), String> {
+crates/coordinator/src/grant_from_stored.rs:258:     // ?�명?????�의 공개?��? ???�원 모두???�록?�다 ??Grant ?� nested
+crates/coordinator/src/grant_from_stored.rs:259:     // Lease ???�명???�름???��? ???�는?? ?�기???�인?�려??것�?
+crates/coordinator/src/grant_from_stored.rs:260:     // "???�로 ?�명??것이 그�?�?검증되?��?" 뿐이??
+crates/coordinator/src/grant_from_stored.rs:261:     let mut ring = gputeer_crypto::InMemoryKeyring::new();
+crates/coordinator/src/grant_from_stored.rs:262:     let public = key.verifying_key();
+crates/coordinator/src/grant_from_stored.rs:263:     ring.insert(grant.coordinator_device_id.clone(), public);
+crates/coordinator/src/grant_from_stored.rs:264:     if let Some(lease) = grant.lease.as_ref() {
+crates/coordinator/src/grant_from_stored.rs:265:         ring.insert(lease.issuing_coordinator_id.clone(), public);
+crates/coordinator/src/grant_from_stored.rs:266:     }
+crates/coordinator/src/grant_from_stored.rs:267:     let verifier = gputeer_crypto::Ed25519Verifier::new(&ring);
+crates/coordinator/src/grant_from_stored.rs:268: 
+crates/coordinator/src/grant_from_stored.rs:269:     gputeer_protocol::verify(
+crates/coordinator/src/grant_from_stored.rs:270:         grant,
+crates/coordinator/src/grant_from_stored.rs:271:         2,
+crates/coordinator/src/grant_from_stored.rs:272:         &verifier,
+crates/coordinator/src/grant_from_stored.rs:273:         at_unix_ms,
+crates/coordinator/src/grant_from_stored.rs:274:         &mut gputeer_protocol::signing::NoReplayCheck,
+crates/coordinator/src/grant_from_stored.rs:275:     )
+crates/coordinator/src/grant_from_stored.rs:276:     .map_err(|e| format!("방금 만든 Grant 가 ?�기 검증을 ?�과?��? 못했?? {e:?}"))?;
+crates/coordinator/src/grant_from_stored.rs:277: 
+crates/coordinator/src/grant_from_stored.rs:278:     let lease = grant
+crates/coordinator/src/grant_from_stored.rs:279:         .lease
+crates/coordinator/src/grant_from_stored.rs:280:         .as_ref()
+crates/coordinator/src/grant_from_stored.rs:281:         .ok_or_else(|| "방금 만든 Grant ??Lease 가 ?�다".to_string())?;
+crates/coordinator/src/grant_from_stored.rs:282:     gputeer_protocol::verify(
+crates/coordinator/src/grant_from_stored.rs:283:         lease,
+crates/coordinator/src/grant_from_stored.rs:284:         1,
+crates/coordinator/src/grant_from_stored.rs:285:         &verifier,
+crates/coordinator/src/grant_from_stored.rs:286:         at_unix_ms,
+crates/coordinator/src/grant_from_stored.rs:287:         &mut gputeer_protocol::signing::NoReplayCheck,
+crates/coordinator/src/grant_from_stored.rs:288:     )
+crates/coordinator/src/grant_from_stored.rs:289:     .map_err(|e| format!("방금 만든 nested Lease 가 ?�기 검증을 ?�과?��? 못했?? {e:?}"))?;
+crates/coordinator/src/grant_from_stored.rs:290:     Ok(())
+crates/coordinator/src/grant_from_stored.rs:291: }
+crates/coordinator/src/grant_from_stored.rs:292: 
+crates/coordinator/src/grant_from_stored.rs:293: /// `(grant_id, attempt_id)` ?�서 16바이??nonce �?결정?�으�?뽑는??
+crates/coordinator/src/grant_from_stored.rs:294: ///
+crates/coordinator/src/grant_from_stored.rs:295: /// ??**무작?��? ?�니??** 같�? ?�력?�면 같�? Grant �??�야 ?�발급이
+crates/coordinator/src/grant_from_stored.rs:296: ///   멱등?��?�?그것???�스?�로 ?�인?????�다. ?�생 방어??nonce ??///   ?�측 불�??�성???�니??**?�신 측의 replay ?�?�소**가 맡는??///   (`crates/crypto` ??`DurableReplayGuard`).
+crates/coordinator/src/grant_from_stored.rs:297: ///
+crates/coordinator/src/grant_from_stored.rs:298: /// 길이 ?�리?�스�?붙여 ?�접 값이 ?�로 ?�며?��? ?�게 ?�다.
+crates/coordinator/src/grant_from_stored.rs:299: pub fn derive_stored_grant_nonce(grant_id: &str, attempt_id: &str) -> Vec<u8> {
+crates/coordinator/src/grant_from_stored.rs:300:     let mut input = Vec::new();
+crates/coordinator/src/grant_from_stored.rs:301:     for part in [
+crates/coordinator/src/grant_from_stored.rs:302:         b"gputeer/v1/grant-nonce".as_slice(),
+crates/coordinator/src/grant_from_stored.rs:303:         grant_id.as_bytes(),
+crates/coordinator/src/grant_from_stored.rs:304:         attempt_id.as_bytes(),
+crates/coordinator/src/grant_from_stored.rs:305:     ] {
+crates/coordinator/src/grant_from_stored.rs:306:         input.extend_from_slice(&(part.len() as u64).to_le_bytes());
+crates/coordinator/src/grant_from_stored.rs:307:         input.extend_from_slice(part);
+crates/coordinator/src/grant_from_stored.rs:308:     }
+crates/coordinator/src/grant_from_stored.rs:309:     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+crates/coordinator/src/grant_from_stored.rs:310: }
+crates/cli/src/issue_grant.rs:1: //! `gputeer issue-grant` ???�약??Job ??**?�?�된 Lease** �??�명??//! `ExecutionGrant` �?만든??
+crates/cli/src/issue_grant.rs:2: //!
+crates/cli/src/issue_grant.rs:3: //! ```text
+crates/cli/src/issue_grant.rs:4: //! stage-job    CAS ?�약 + Attempt/Lease/fence epoch          (STAGING)
+crates/cli/src/issue_grant.rs:5: //! issue-grant  ?�?�된 것을 ?�어 Grant �??�명?�다             <- ?�기
+crates/cli/src/issue_grant.rs:6: //! ```
+crates/cli/src/issue_grant.rs:7: //!
+crates/cli/src/issue_grant.rs:8: //! # ??지금까지 Grant ??명령�?값으�?만들?�졌??//!
+crates/cli/src/issue_grant.rs:9: //! `coordinator-stub` ??`issue_grant()` ??`config.grant_id`·
+crates/cli/src/issue_grant.rs:10: //! `config.attempt_id` �?그�?�??�고 **`coordinator_term` ??리터??1
+crates/cli/src/issue_grant.rs:11: //! �?박아 ?�는??** selftest �??�현 가?�하�?만드???�는 충분?��?�?
+crates/cli/src/issue_grant.rs:12: //! �?Grant ???�?�소가 ?�는 ?�실�??�무 관계�? ?�다.
+crates/cli/src/issue_grant.rs:13: //!
+crates/cli/src/issue_grant.rs:14: //! ??명령?� 반�?????**?�?�된 것만 ?�다.** Attempt·Lease·fence epoch·
+crates/cli/src/issue_grant.rs:15: //! coordinator term ???��? `stage-job` ??커밋???�에???�온??
+crates/cli/src/issue_grant.rs:16: //!
+crates/cli/src/issue_grant.rs:17: //! # ?????�만 믿�? ?�는??//!
+crates/cli/src/issue_grant.rs:18: //! Attempt ?� Lease ???�른 ?�이?? ?�이 ?�긋???�으�?�??�체가 ?�실
+crates/cli/src/issue_grant.rs:19: //! ?�고, 그때 ?�쪽�??�으�??�는 ?��??�을 가?�하�??�다. 그래??발급
+crates/cli/src/issue_grant.rs:20: //! ?�에 ?�조한??
+crates/cli/src/issue_grant.rs:21: //!
+crates/cli/src/issue_grant.rs:22: //! ```text
+crates/cli/src/issue_grant.rs:23: //! Attempt.job_id      == Lease.job_id
+crates/cli/src/issue_grant.rs:24: //! Attempt.attempt_id  == Lease.attempt_id
+crates/cli/src/issue_grant.rs:25: //! Attempt.fence_epoch == Lease.fence_epoch
+crates/cli/src/issue_grant.rs:26: //! Attempt.lease_id    == Lease.lease_id
+crates/cli/src/issue_grant.rs:27: //! ?�약(node)          == Lease.holder_node_id ?� 같�? ?�드
+crates/cli/src/issue_grant.rs:28: //! ```
+crates/cli/src/issue_grant.rs:29: //!
+crates/cli/src/issue_grant.rs:30: //! # ??명령???��? ?�는 �?//!
+crates/cli/src/issue_grant.rs:31: //! ```text
+crates/cli/src/issue_grant.rs:32: //! ???�다   Agent ?�게 보내�?      wire dispatch ?????? ?�일�??�다
+crates/cli/src/issue_grant.rs:33: //! ???�다   Manifest �??�기        Grant ??Manifest �??�으?�면
+crates/cli/src/issue_grant.rs:34: //!                                   ?�출???�명 ?�본???�요?�고, 그건
+crates/cli/src/issue_grant.rs:35: //!                                   별도 조각?�다
+crates/cli/src/issue_grant.rs:36: //! ???�다   ResourceScope 채우�?   GPU scope ??authoritative provenance
+crates/cli/src/issue_grant.rs:37: //!                                   가 ?�어 막�? ?�다(`DoD-55`)
+crates/cli/src/issue_grant.rs:38: //! ```
+crates/cli/src/issue_grant.rs:39: //!
+crates/cli/src/issue_grant.rs:40: //! # ??개인?��? 명령줄에 ?��? ?�는??//!
+crates/cli/src/issue_grant.rs:41: //! ???�?�소??기존 관례(`--own-seed <hex32>`)??**개인?��? ?�로?�스
+crates/cli/src/issue_grant.rs:42: //! 목록???�다.** 같�? 기계???�른 ?�용?��? `ps`/?�업 관리자�?본다.
+crates/cli/src/issue_grant.rs:43: //! 그래????명령?� **?�일 경로**�?받는?????�일 권한??경계가 ?�다.
+crates/cli/src/issue_grant.rs:44: //!
+crates/cli/src/issue_grant.rs:45: //! ??그렇?�고 ?�전??것�? ?�니?? ?�문 seed ?�일?� `KeyProtection::K0`
+crates/cli/src/issue_grant.rs:46: //!   ?�고, ???�?�소가 K1(DPAPI·systemd-creds)??가졌�?�?�??�?�소?�서
+crates/cli/src/issue_grant.rs:47: //!   **개인?��? 꺼내 ?�명?�는 공개 경로가 ?�직 ?�다.** 명령줄보???�다??//!   것이지 보호?�다???�이 ?�니??
+crates/cli/src/issue_grant.rs:48: 
+crates/cli/src/issue_grant.rs:49: use std::collections::BTreeMap;
+crates/cli/src/issue_grant.rs:50: 
+crates/cli/src/issue_grant.rs:51: use gputeer_coordinator::grant_from_stored::{
+crates/cli/src/issue_grant.rs:52:     derive_stored_grant_nonce, signed_grant_from_stored, StoredGrantRequest,
+crates/cli/src/issue_grant.rs:53: };
+crates/cli/src/issue_grant.rs:54: use gputeer_coordinator::job_store::CoordinatorJobStore;
+crates/cli/src/issue_grant.rs:55: use gputeer_coordinator::lease_store::CoordinatorLeaseStore;
+crates/cli/src/issue_grant.rs:56: use gputeer_coordinator::staging_store::CoordinatorStagingStore;
+crates/cli/src/issue_grant.rs:57: use gputeer_crypto::SigningKey;
+crates/cli/src/issue_grant.rs:58: use prost::Message;
+crates/cli/src/issue_grant.rs:59: 
+crates/cli/src/issue_grant.rs:60: /// `gputeer issue-grant` 진입??
+crates/cli/src/issue_grant.rs:61: pub fn run(args: &[String]) -> Result<String, String> {
+crates/cli/src/issue_grant.rs:62:     let flags = parse_flags(args)?;
+crates/cli/src/issue_grant.rs:63: 
+crates/cli/src/issue_grant.rs:64:     let job_id = require(&flags, "--job-id")?;
+crates/cli/src/issue_grant.rs:65:     let control_db = require(&flags, "--control-db")?;
+crates/cli/src/issue_grant.rs:66:     let attempt_id = require(&flags, "--attempt-id")?;
+crates/cli/src/issue_grant.rs:67:     let lease_id = require(&flags, "--lease-id")?;
+crates/cli/src/issue_grant.rs:68:     let grant_id = require(&flags, "--grant-id")?;
+crates/cli/src/issue_grant.rs:69:     let out_path = require(&flags, "--out")?;
+crates/cli/src/issue_grant.rs:70: 
+crates/cli/src/issue_grant.rs:71:     // ??Grant ?�각???��?값이?? `stage-job` ?�서 배운 것과 같�? ?�유 ??    //   ?�계�??�으�?같�? ?�력?�로 ??�?발급?�을 ??결과가 ?�라지�?
+crates/cli/src/issue_grant.rs:72:     //   그러�?"같�? ?�력?�면 같�? Grant" �??�인??방법???�어진다.
+crates/cli/src/issue_grant.rs:73:     let issued_at_unix_ms = u64_flag(&flags, "--grant-issued-at-unix-ms")?;
+crates/cli/src/issue_grant.rs:74:     let expires_at_unix_ms = u64_flag(&flags, "--grant-expires-at-unix-ms")?;
+crates/cli/src/issue_grant.rs:75:     if issued_at_unix_ms >= expires_at_unix_ms {
+crates/cli/src/issue_grant.rs:76:         return Err(format!(
+crates/cli/src/issue_grant.rs:77:             "Grant 발급 ?�각({issued_at_unix_ms})??만료({expires_at_unix_ms}) 보다 ?�서지 ?�는??
+crates/cli/src/issue_grant.rs:78:         ));
+crates/cli/src/issue_grant.rs:79:     }
+crates/cli/src/issue_grant.rs:80: 
+crates/cli/src/issue_grant.rs:81:     let key = load_signing_key(require(&flags, "--coordinator-key-file")?)?;
+crates/cli/src/issue_grant.rs:82: 
+crates/cli/src/issue_grant.rs:83:     // ?�?� ?�?�된 ?�실???�는???�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+crates/cli/src/issue_grant.rs:84:     let jobs = CoordinatorJobStore::open(control_db)
+crates/cli/src/issue_grant.rs:85:         .map_err(|e| format!("job store �??��? 못했??{control_db}): {e}"))?;
+crates/cli/src/issue_grant.rs:86:     if !jobs.is_durable() {
+crates/cli/src/issue_grant.rs:87:         return Err(format!(
+crates/cli/src/issue_grant.rs:88:             "--control-db 가 ?�속???�니??{control_db:?}) ???�는 ?�약?�로 Grant �?만들�??�다"
+crates/cli/src/issue_grant.rs:89:         ));
+crates/cli/src/issue_grant.rs:90:     }
+crates/cli/src/issue_grant.rs:91:     drop(jobs);
+crates/cli/src/issue_grant.rs:92:     let jobs = CoordinatorJobStore::open(control_db)
+crates/cli/src/issue_grant.rs:93:         .map_err(|e| format!("job store �??�시 ?��? 못했??{control_db}): {e}"))?;
+crates/cli/src/issue_grant.rs:94:     let staging = CoordinatorStagingStore::open(control_db)
+crates/cli/src/issue_grant.rs:95:         .map_err(|e| format!("staging store �??��? 못했??{control_db}): {e}"))?;
+crates/cli/src/issue_grant.rs:96:     let leases = CoordinatorLeaseStore::open(control_db)
+crates/cli/src/issue_grant.rs:97:         .map_err(|e| format!("lease store �??��? 못했??{control_db}): {e}"))?;
+crates/cli/src/issue_grant.rs:98: 
+crates/cli/src/issue_grant.rs:99:     // ???�조�? 조립?� **coordinator 가 ?�다.** `coordinator-stub` ??같�?
+crates/cli/src/issue_grant.rs:100:     //   ?�수�?부르�?�???벌이 ?�기지 ?�는??모듈 문서 참조).
+crates/cli/src/issue_grant.rs:101:     let grant = signed_grant_from_stored(
+crates/cli/src/issue_grant.rs:102:         &jobs,
+crates/cli/src/issue_grant.rs:103:         &staging,
+crates/cli/src/issue_grant.rs:104:         &leases,
+crates/cli/src/issue_grant.rs:105:         &StoredGrantRequest {
+crates/cli/src/issue_grant.rs:106:             job_id: job_id.to_string(),
+crates/cli/src/issue_grant.rs:107:             attempt_id: attempt_id.to_string(),
+crates/cli/src/issue_grant.rs:108:             lease_id: lease_id.to_string(),
+crates/cli/src/issue_grant.rs:109:             grant_id: grant_id.to_string(),
+crates/cli/src/issue_grant.rs:110:             issued_at_unix_ms,
+crates/cli/src/issue_grant.rs:111:             expires_at_unix_ms,
+crates/cli/src/issue_grant.rs:112:             // ?�일�??�는 경로?�는 ?�결 개념???�다 ??같�? ?�력?�면
+crates/cli/src/issue_grant.rs:113:             // 같�? Grant 가 ?�오?�록 결정?�으�??�도?�다.
+crates/cli/src/issue_grant.rs:114:             nonce: derive_stored_grant_nonce(grant_id, attempt_id),
+crates/cli/src/issue_grant.rs:115:         },
+crates/cli/src/issue_grant.rs:116:         &key,
+crates/cli/src/issue_grant.rs:117:     )?;
+crates/cli/src/issue_grant.rs:118:     let lease = grant.lease.as_ref().expect("?�명 경로가 Lease �??�는??);
+crates/cli/src/issue_grant.rs:119:     let summary = format!(
+crates/cli/src/issue_grant.rs:120:         "GRANTED job_id={job_id} grant_id={grant_id} attempt={} lease={} node={} fence={} term={} out={out_path}",
+crates/cli/src/issue_grant.rs:121:         grant.attempt_id,
+crates/cli/src/issue_grant.rs:122:         lease.lease_id,
+crates/cli/src/issue_grant.rs:123:         lease.holder_node_id,
+crates/cli/src/issue_grant.rs:124:         lease.fence_epoch,
+crates/cli/src/issue_grant.rs:125:         grant.coordinator_term
+crates/cli/src/issue_grant.rs:126:     );
+crates/cli/src/issue_grant.rs:127: 
+crates/cli/src/issue_grant.rs:128:     std::fs::write(out_path, grant.encode_to_vec())
+crates/cli/src/issue_grant.rs:129:         .map_err(|e| format!("Grant ?�일 ?�기 ?�패({out_path}): {e}"))?;
+crates/cli/src/issue_grant.rs:130: 
+crates/cli/src/issue_grant.rs:131:     Ok(summary)
+crates/cli/src/issue_grant.rs:132: }
+crates/cli/src/issue_grant.rs:133: 
+crates/cli/src/issue_grant.rs:134: /// ?�명?��? **?�일?�서** ?�는?? 명령줄에 ?��? ?�는 ?�유??모듈 문서 참조.
+crates/cli/src/issue_grant.rs:135: fn load_signing_key(path: &str) -> Result<SigningKey, String> {
+crates/cli/src/issue_grant.rs:136:     let raw = std::fs::read_to_string(path)
+crates/cli/src/issue_grant.rs:137:         .map_err(|e| format!("?�명???�일???��? 못했??{path}): {e}"))?;
+crates/cli/src/issue_grant.rs:138:     let hex = raw.trim();
+crates/cli/src/issue_grant.rs:139:     if hex.len() != 64 {
+crates/cli/src/issue_grant.rs:140:         return Err(format!(
+crates/cli/src/issue_grant.rs:141:             "?�명???�일?� 64?�리 hex(32바이?? ?�나?�야 ?�다({path}, 길이 {})",
+crates/cli/src/issue_grant.rs:142:             hex.len()
+crates/cli/src/issue_grant.rs:143:         ));
+crates/cli/src/issue_grant.rs:144:     }
+crates/cli/src/issue_grant.rs:145:     let mut seed = [0u8; 32];
+crates/cli/src/issue_grant.rs:146:     for (i, byte) in seed.iter_mut().enumerate() {
+crates/cli/src/issue_grant.rs:147:         *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+crates/cli/src/issue_grant.rs:148:             .map_err(|e| format!("?�명??hex ?�싱 ?�패({path}): {e}"))?;
+crates/cli/src/issue_grant.rs:149:     }
+crates/cli/src/issue_grant.rs:150:     Ok(SigningKey::from_bytes(&seed))
+crates/cli/src/issue_grant.rs:151: }
+crates/cli/src/issue_grant.rs:152: 
+crates/cli/src/issue_grant.rs:153: fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {
+crates/cli/src/issue_grant.rs:154:     require(flags, key)?
+crates/cli/src/issue_grant.rs:155:         .parse::<u64>()
+crates/cli/src/issue_grant.rs:156:         .map_err(|e| format!("{key} ?�싱 ?�패: {e}"))
+crates/cli/src/issue_grant.rs:157: }
+crates/cli/src/issue_grant.rs:158: 
+crates/cli/src/issue_grant.rs:159: fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+crates/cli/src/issue_grant.rs:160:     let mut out = BTreeMap::new();
+crates/cli/src/issue_grant.rs:161:     let mut i = 0;
+crates/cli/src/issue_grant.rs:162:     while i < args.len() {
+crates/cli/src/issue_grant.rs:163:         let key = &args[i];
+crates/cli/src/issue_grant.rs:164:         if !key.starts_with("--") {
+crates/cli/src/issue_grant.rs:165:             return Err(format!("?????�는 ?�자: {key}"));
+crates/cli/src/issue_grant.rs:166:         }
+crates/cli/src/issue_grant.rs:167:         let value = args
+crates/cli/src/issue_grant.rs:168:             .get(i + 1)
+crates/cli/src/issue_grant.rs:169:             .ok_or_else(|| format!("{key} ??값이 ?�다"))?;
+crates/cli/src/issue_grant.rs:170:         out.insert(key.clone(), value.clone());
+crates/cli/src/issue_grant.rs:171:         i += 2;
+crates/cli/src/issue_grant.rs:172:     }
+crates/cli/src/issue_grant.rs:173:     Ok(out)
+crates/cli/src/issue_grant.rs:174: }
+crates/cli/src/issue_grant.rs:175: 
+crates/cli/src/issue_grant.rs:176: fn require<'a>(flags: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str, String> {
+crates/cli/src/issue_grant.rs:177:     flags
+crates/cli/src/issue_grant.rs:178:         .get(key)
+crates/cli/src/issue_grant.rs:179:         .map(String::as_str)
+crates/cli/src/issue_grant.rs:180:         .ok_or_else(|| format!("{key} 가 ?�요?�다"))
+crates/cli/src/issue_grant.rs:181: }
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$lineNo = 0; Get-Content -LiteralPath '"'crates/coordinator/src/grant_from_stored.rs' -Encoding UTF8 | ForEach-Object { "'$lineNo++; '"'{0}: {1}' -f "'$lineNo, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$lineNo = 0; Get-Content -LiteralPath '"'crates/cli/src/issue_grant.rs' -Encoding UTF8 | ForEach-Object { "'$lineNo++; '"'{0}: {1}' -f "'$lineNo, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1461ms:
+1: //! ����� ���࿡�� **������ `ExecutionGrant`** �� �����.
+2: //!
+3: //! # �� �� CLI �� �ƴ϶� ���� �ִ°�
+4: //!
+5: //! ó������ `gputeer issue-grant` �ȿ��� �־���. �׷��� `coordinator-stub`
+6: //! �� ���� ���� �ؾ� �ϴ� ����(����� ������ Agent ���� ������ ������)
+7: //! **�� ��° ���纻**�� �� ���̾���.
+8: //!
+9: //! �� ����Ҵ� �� ������ �̹� �� �� �޾��� ? `DoD-67` ���� ���Ӽ� ������
+10: //! CLI �� ����� �� ���� �ξ��ٰ� ���ʸ� ���� `--job-db ""` �� ������
+11: //! �����߰�, `StoredLease �� pb::Lease` ��ȯ�� **�� ��**�� ����� �־���.
+12: //!
+13: //! # �� �� �ุ ���� �ʴ´�
+14: //!
+15: //! Attempt��Lease�������� ���� �ٸ� ���̴�. ���� ��߳� ������ �� ��ü��
+16: //! ����̰�, �׶� ���ʸ� ������ ���� �ϰ����� �����ϰ� �ȴ�.
+17: //!
+18: //! ```text
+19: //! Job ����            STAGING �̾�� �Ѵ� ? ���� ���� Grant �� ����
+20: //!                     Agent �� �ڱⰡ �� ��带 �� ������ �ִٰ� �ϴ´�
+21: //! Attempt �� Lease     job_id �� attempt_id �� lease_id �� fence epoch
+22: //! ����(node)          Lease �� ���� ��忡 �� Attempt �� �ɷ� �ִ°�
+23: //! Lease ����          ������ �ʾҰ�, �߱� �ð��� ���� �� ����ƴ°�
+24: //! Grant ����          Lease ���� ���� ���� �ʴ°�
+25: //! ```
+26: //!
+27: //! # �� ����� ���� �ʴ� ��
+28: //!
+29: //! ```text
+30: //! �� �Ѵ�   ����� ���⡤���Ӽ� ����   ȣ��ΰ� �� ����Ҹ� �޴´�
+31: //! �� �Ѵ�   ����                      ���Ϸ� ���� wire �� �������� ȣ��δ�
+32: //! �� �Ѵ�   Manifest �Ʊ�             ������ ���� ������ �ʿ��ϴ� ? ���� ����
+33: //! �� �Ѵ�   ResourceScope ä���      GPU scope �� authoritative provenance
+34: //!                                     �� ���� ���� �ִ�(`DoD-55`)
+35: //! ```
+36: 
+37: use gputeer_crypto::{sign, SigningKey};
+38: use gputeer_protocol::pb;
+39: 
+40: use crate::job_store::{CoordinatorJobStore, JobState};
+41: use crate::lease_store::CoordinatorLeaseStore;
+42: use crate::staging_store::CoordinatorStagingStore;
+43: use crate::unsigned_lease_from_stored;
+44: 
+45: /// ȣ��ΰ� ���ϴ� ��. **�� ����� �ð踦 ���� �ʴ´�.**
+46: ///
+47: /// �� �ð��� ���밪���� �޴� ���� ? �ð踦 ������ ���� �Է����� �� ��
+48: ///   �߱����� �� ����� �޶�����, �׷��� "���� �Է��̸� ���� Grant" ��
+49: ///   Ȯ���� ����� ��������(`stage-job` ���� ���� �׽�Ʈ�� �� ������
+50: ///   ������ ��Ҵ�).
+51: #[derive(Debug, Clone, PartialEq, Eq)]
+52: pub struct StoredGrantRequest {
+53:     pub job_id: String,
+54:     pub attempt_id: String,
+55:     pub lease_id: String,
+56:     pub grant_id: String,
+57:     pub issued_at_unix_ms: u64,
+58:     pub expires_at_unix_ms: u64,
+59:     /// �� **nonce �� ����� ����� �ƴ϶� ���� ����̴�.**
+60:     ///
+61:     ///   ó������ �� ����� `(grant_id, attempt_id)` �� ���� �̾Ҵ�.
+62:     ///   �׷����� wire �� ���� �� Agent �� �ź��ߴ� ?
+63:     ///   `GRANT_REJECTED: nonce does not match connection attempt`.
+64:     ///   Agent �� **���� �õ� ��ȣ**���� ������ ���� ����Ѵ�.
+65:     ///
+66:     ///   �� �Һ��ڰ� �䱸�ϴ� ���� �ٸ���:
+67:     ///     �� ���Ϸ� �� ��(`issue-grant`) ? ���� ������ ����.
+68:     ///       ���� �Է��̸� ���� Grant ���� ��߱��� ����ϴ�.
+69:     ///     �� wire �� ���� �� ? Agent �� ���ǵ� �������� ��� �Ѵ�.
+70:     ///
+71:     ///   �׷��� �� ����� ������ �ʰ� **ȣ��ΰ� �ش�.** ���⼭ �ϳ���
+72:     ///   ������ �ٸ� �Һ��ڰ� ������ ������.
+73:     pub nonce: Vec<u8>,
+74: }
+75: 
+76: /// ����� ������ �о� ������ �� ������ Grant �� �����.
+77: ///
+78: /// nested Lease �� **����** �ϼ��� �����Ѵ� ? �׷��� outer Grant �� ������
+79: /// ���� nested ����Ʈ�� ���´�.
+80: pub fn signed_grant_from_stored(
+81:     jobs: &CoordinatorJobStore,
+82:     staging: &CoordinatorStagingStore,
+83:     leases: &CoordinatorLeaseStore,
+84:     request: &StoredGrantRequest,
+85:     key: &SigningKey,
+86: ) -> Result<pb::ExecutionGrant, String> {
+87:     if request.issued_at_unix_ms >= request.expires_at_unix_ms {
+88:         return Err(format!(
+89:             "Grant �߱� �ð�({})�� ����({}) ���� �ռ��� �ʴ´�",
+90:             request.issued_at_unix_ms, request.expires_at_unix_ms
+91:         ));
+92:     }
+93: 
+94:     let job = jobs
+95:         .get(&request.job_id)
+96:         .map_err(|e| format!("Job ��ȸ ����: {e}"))?
+97:         .ok_or_else(|| format!("GRANT_REFUSED: {} �� �𸥴�", request.job_id))?;
+98:     if job.state != JobState::Staging {
+99:         return Err(format!(
+100:             "GRANT_REFUSED: Job �� STAGING �� �ƴϴ�(���� {:?}) ? ���� ���� Grant �� ������ �ʴ´�",
+101:             job.state
+102:         ));
+103:     }
+104: 
+105:     let attempt = staging
+106:         .get_attempt(&request.attempt_id)
+107:         .map_err(|e| format!("Attempt ��ȸ ����: {e}"))?
+108:         .ok_or_else(|| {
+109:             format!(
+110:                 "GRANT_REFUSED: Attempt {} �� ����ҿ� ����",
+111:                 request.attempt_id
+112:             )
+113:         })?;
+114:     let stored_lease = leases
+115:         .get(&request.lease_id)
+116:         .map_err(|e| format!("Lease ��ȸ ����: {e}"))?
+117:         .ok_or_else(|| format!("GRANT_REFUSED: Lease {} �� ����ҿ� ����", request.lease_id))?;
+118: 
+119:     // ���� �� �ุ ���� �ʴ´� ����������������������������������������������������������������������������������
+120:     for (label, left, right) in [
+121:         (
+122:             "job_id",
+123:             attempt.job_id.as_str(),
+124:             stored_lease.job_id.as_str(),
+125:         ),
+126:         (
+127:             "attempt_id",
+128:             attempt.attempt_id.as_str(),
+129:             stored_lease.attempt_id.as_str(),
+130:         ),
+131:         (
+132:             "lease_id",
+133:             attempt.lease_id.as_str(),
+134:             stored_lease.lease_id.as_str(),
+135:         ),
+136:     ] {
+137:         if left != right {
+138:             return Err(format!(
+139:                 "GRANT_REFUSED: Attempt �� Lease �� {label} �� �ٸ���(Attempt {left:?}, Lease {right:?}) ? �� ���� ���� ������ ����Ű�� �ʴ´�"
+140:             ));
+141:         }
+142:     }
+143:     // �ڡ� **�Ʒ� �� ������ �׽�Ʈ�� �������� �ʾҴ� ? ������ ���´�.**
+144:     //
+145:     //   �����̼� G5(fence ���� ����)��G6(���� ���� Ȯ�� ����)�� �ɾ
+146:     //   `issue_grant` 10���� ���� ����Ѵ�. ������ �����Ų �� �ƴ϶�
+147:     //   **�� ���¸� ���� ��η� ���� �� ���**�� ? Attempt��Lease��
+148:     //   ������ `staging_store.rs` �� **�� `BEGIN IMMEDIATE` �ȿ��� �Բ�**
+149:     //   ���δ�(`:605`��`:915`��`:1985`). ���� ��߳����� DB �� ����
+150:     //   �����ؾ� �Ѵ�.
+151:     //
+152:     //   �׷��� �̰� **�Է� ������ �ƴ϶� �ջ� ���**��. ����ġ�� ���ٴ�
+153:     //   ���� �ƴ�����, "�׽�Ʈ�� ��Ű�� �ִ�" �� ���ϸ� �����̴�.
+154:     //   �����Ϸ��� rusqlite �� ���� ���� �����߸��� �׽�Ʈ�� �ʿ��ϰ�
+155:     //   �� crate �� ���� �׽�Ʈ���� �� �������� ����.
+156:     if attempt.fence_epoch != stored_lease.fence_epoch {
+157:         return Err(format!(
+158:             "GRANT_REFUSED: Attempt �� Lease �� fence epoch �� �ٸ���(Attempt {}, Lease {}) ? ������ �������� Grant �� ����� fencing �� ���ǹ�������",
+159:             attempt.fence_epoch, stored_lease.fence_epoch
+160:         ));
+161:     }
+162:     if attempt.job_id != request.job_id {
+163:         return Err(format!(
+164:             "GRANT_REFUSED: Attempt �� �ٸ� Job �� ���̴�({} != {})",
+165:             attempt.job_id, request.job_id
+166:         ));
+167:     }
+168: 
+169:     let reservation = staging
+170:         .get_node_reservation(&stored_lease.holder_node_id)
+171:         .map_err(|e| format!("���� ��ȸ ����: {e}"))?
+172:         .ok_or_else(|| {
+173:             format!(
+174:                 "GRANT_REFUSED: {} �� ������ ���� ? Lease �� �ִµ� ��尡 �� ���� �ִ�",
+175:                 stored_lease.holder_node_id
+176:             )
+177:         })?;
+178:     if reservation.job_id != request.job_id || reservation.attempt_id != request.attempt_id {
+179:         return Err(format!(
+180:             "GRANT_REFUSED: {} �� ������ �ٸ� Attempt �� ���̴�(job {}, attempt {})",
+181:             stored_lease.holder_node_id, reservation.job_id, reservation.attempt_id
+182:         ));
+183:     }
+184: 
+185:     // ���� ���� ���� ������������������������������������������������������������������������������������������������������
+186:     if let Some(revoked_at) = stored_lease.revoked_at_unix_ms {
+187:         return Err(format!(
+188:             "GRANT_REFUSED: Lease �� {revoked_at} �� ���ƴ� ? ���� Lease �� Grant �� ������ �ʴ´�"
+189:         ));
+190:     }
+191:     // �� ��� ����(`<=`) ? `DoD-26`��`DoD-32`��`DoD-34` �� ������Ų ��Ģ��
+192:     //   ����. ��Ȯ�� ���� �ð��� Lease �� ���⼭�� ��ȿ�� ����, Agent ��
+193:     //   ���� ���� �� Lease �� �ź��Ѵ�.
+194:     if stored_lease.expires_at_unix_ms <= request.issued_at_unix_ms {
+195:         return Err(format!(
+196:             "GRANT_REFUSED: �߱� �ð�({})�� Lease �� �̹� �����(���� {})",
+197:             request.issued_at_unix_ms, stored_lease.expires_at_unix_ms
+198:         ));
+199:     }
+200:     if request.expires_at_unix_ms > stored_lease.expires_at_unix_ms {
+201:         return Err(format!(
+202:             "GRANT_REFUSED: Grant ����({})�� Lease ����({}) ���� �ʴ�",
+203:             request.expires_at_unix_ms, stored_lease.expires_at_unix_ms
+204:         ));
+205:     }
+206: 
+207:     // ���� ���� ����������������������������������������������������������������������������������������������������������������
+208:     let mut lease = unsigned_lease_from_stored(&stored_lease)?;
+209:     lease.coordinator_signature = sign(key, &lease).to_vec();
+210: 
+211:     let mut grant = pb::ExecutionGrant {
+212:         schema_version: 2,
+213:         grant_id: request.grant_id.clone(),
+214:         attempt_id: attempt.attempt_id.clone(),
+215:         coordinator_device_id: stored_lease.issuing_coordinator_id.clone(),
+216:         // �� ���ͷ� 1 �� �ƴ϶� ����� term �̴�. `coordinator-stub` ��
+217:         //   ���� `issue_grant()` �� ���⿡ 1 �� �ھ� �ִ´�.
+218:         coordinator_term: stored_lease.coordinator_term,
+219:         issued_at_unix_ms: request.issued_at_unix_ms,
+220:         expires_at_unix_ms: request.expires_at_unix_ms,
+221:         nonce: request.nonce.clone(),
+222:         // �� ��Ʈ�� v2 Grant ���� ����̴�. �� ��δ� **����ҿ�����**
+223:         // Lease �� �����Ƿ� �����ϰ� true ��.
+224:         lease_from_durable_store: true,
+225:         lease: Some(lease),
+226:         ..Default::default()
+227:     };
+228:     grant.coordinator_signature = sign(key, &grant).to_vec();
+229: 
+230:     // ���� ��� ���� ���� �ٷ� �ٽ� �����Ѵ� ������������������������������������������������������
+231:     //
+232:     // �� `gputeer submit` �� �̹� �ϴ� ���̴�("�������ڸ��� ���� ������
+233:     //   �������� �ͺ��� ���⼭ �����ϴ� ���� �ξ� �δ�"). �� ��ο���
+234:     //   �װ� **������** ? �� �����̼��� �ƴ϶� �ڵ带 ������ ���� ���ٰ�
+235:     //   ã�Ҵ�.
+236:     //
+237:     //   Ȯ���ϴ� �Ͱ� �� �ϴ� ���� ��Ȯ�� ���´�:
+238:     //
+239:     //   Ȯ���Ѵ�   ������`schema_version`��������canonical ���ڵ�,
+240:     //              �׸��� **������ ������ �����Ǵ°�**(2026-09-07 �߰�).
+241:     //              nested Lease �� ���� ����.
+242:     //   �� �Ѵ�    **�� Ű�� ���� `issuing_coordinator_id` �� ���ΰ�.**
+243:     //              �� ��⿡�� key directory �� ���� ? ȣ��ΰ� ��
+244:     //              Ű�� �״�� ����.
+245:     //
+246:     //   �ڡ� **"�������� �ʴ�" �� ������ ���� ��ģ��** (2026-09-07 ����
+247:     //     �˼� ����). ������ Ű�� �����ϸ� ���⼭�� ����ϰ� ���߿�
+248:     //     Agent �� �ź��Ѵ�. ���� ��ȸ�� �ƴ����� **������ ���� ����
+249:     //     �ƴϴ�**:
+250:     //
+251:     //       �� ��ڴ� ��ȿ�� Grant �� ���� �� �ȴ�
+252:     //       �� ���а� Agent �ܰ���� �з� ���� �ľ��� �ʾ�����
+253:     //       �� `--out` �� ���� ������ �־��ٸ� �� ���� Grant �� ���δ�
+254:     //
+255:     //     �������� Coordinator ����Ű ����� �ʿ��ϰ� ���� ����.
+256:     verify_own_output(&grant, key, request.issued_at_unix_ms)?;
+257:     Ok(grant)
+258: }
+259: 
+260: /// ��� ������ Grant �� **��������** �ڱ� �����Ѵ�.
+261: ///
+262: /// �ڡ� **2026-09-07 ���� �˼��� �� �Լ��� �ݷ��ߴ�.** ������
+263: ///   `AlwaysValid`(������ ������ �ʴ� ������)�� ���. �˼��� �ݷʸ�
+264: ///   ������ ?
+265: ///
+266: ///   > `sign()` �� ���� ������ �߸��� preimage �� �����ϰų� 64����Ʈ
+267: ///   > �����⸦ ��ȯ�ص�, �����Ⱑ ������ **���� �����Ƿ�** ����Ѵ�.
+268: ///
+269: ///   �� �� �˻�� "���� ������ ���� ���ʿ� ���� ���װ� ������ �� ��´�"
+270: ///   ���ٵ� ���ߴ�. **�������� �ܵ� �������� �� ��Ҵ�.**
+271: ///
+272: ///   ������ ������ �� Ű���� ����Ű�� ������ **������ �����Ѵ�.**
+273: ///   �׷��� ���� ������ canonical preimage �� ����ġ�� ��´�.
+274: ///
+275: /// �� ������ �� �ϴ� ���� �״�δ� ? **�� ����Ű�� ����
+276: ///   `issuing_coordinator_id` �� �ŷڵ� Ű�ΰ�.** �� ��⿡�� key
+277: ///   directory �� ���� ȣ��ΰ� �� Ű�� �״�� ����. �װ� ���� �˻簡
+278: ///   �ʿ��ϰ� �� ����ҿ� ���� ����.
+279: fn verify_own_output(
+280:     grant: &pb::ExecutionGrant,
+281:     key: &gputeer_crypto::SigningKey,
+282:     at_unix_ms: u64,
+283: ) -> Result<(), String> {
+284:     // ������ �� Ű�� ����Ű�� �� �ſ� ��ο� ����Ѵ� ? Grant �� nested
+285:     // Lease �� ������ �̸��� �ٸ� �� �ִµ�, ���⼭ Ȯ���Ϸ��� ����
+286:     // "�� Ű�� ������ ���� �״�� �����Ǵ°�" ���̴�.
+287:     let mut ring = gputeer_crypto::InMemoryKeyring::new();
+288:     let public = key.verifying_key();
+289:     ring.insert(grant.coordinator_device_id.clone(), public);
+290:     if let Some(lease) = grant.lease.as_ref() {
+291:         ring.insert(lease.issuing_coordinator_id.clone(), public);
+292:     }
+293:     let verifier = gputeer_crypto::Ed25519Verifier::new(&ring);
+294: 
+295:     gputeer_protocol::verify(
+296:         grant,
+297:         2,
+298:         &verifier,
+299:         at_unix_ms,
+300:         &mut gputeer_protocol::signing::NoReplayCheck,
+301:     )
+302:     .map_err(|e| format!("��� ���� Grant �� �ڱ� ������ ������� ���ߴ�: {e:?}"))?;
+303: 
+304:     let lease = grant
+305:         .lease
+306:         .as_ref()
+307:         .ok_or_else(|| "��� ���� Grant �� Lease �� ����".to_string())?;
+308:     gputeer_protocol::verify(
+309:         lease,
+310:         1,
+311:         &verifier,
+312:         at_unix_ms,
+313:         &mut gputeer_protocol::signing::NoReplayCheck,
+314:     )
+315:     .map_err(|e| format!("��� ���� nested Lease �� �ڱ� ������ ������� ���ߴ�: {e:?}"))?;
+316:     Ok(())
+317: }
+318: 
+319: /// `(grant_id, attempt_id)` ���� 16����Ʈ nonce �� ���������� �̴´�.
+320: ///
+321: /// �� **�������� �ƴϴ�.** ���� �Է��̸� ���� Grant �� ���� ��߱���
+322: ///   ��������� �װ��� �׽�Ʈ�� Ȯ���� �� �ִ�. ��� ���� nonce ��
+323: ///   ���� �Ұ��ɼ��� �ƴ϶� **���� ���� replay �����**�� �ô´�
+324: ///   (`crates/crypto` �� `DurableReplayGuard`).
+325: ///
+326: /// ���� �����Ƚ��� �ٿ� ���� ���� ���� ������� �ʰ� �Ѵ�.
+327: pub fn derive_stored_grant_nonce(grant_id: &str, attempt_id: &str) -> Vec<u8> {
+328:     let mut input = Vec::new();
+329:     for part in [
+330:         b"gputeer/v1/grant-nonce".as_slice(),
+331:         grant_id.as_bytes(),
+332:         attempt_id.as_bytes(),
+333:     ] {
+334:         input.extend_from_slice(&(part.len() as u64).to_le_bytes());
+335:         input.extend_from_slice(part);
+336:     }
+337:     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+338: }
+
+ succeeded in 1447ms:
+1: //! `gputeer issue-grant` ? ����� Job �� **����� Lease** �� ������
+2: //! `ExecutionGrant` �� �����.
+3: //!
+4: //! ```text
+5: //! stage-job    CAS ���� + Attempt/Lease/fence epoch          (STAGING)
+6: //! issue-grant  ����� ���� �о� Grant �� �����Ѵ�             <- ����
+7: //! ```
+8: //!
+9: //! # �� ���ݱ��� Grant �� ������ ������ ���������
+10: //!
+11: //! `coordinator-stub` �� `issue_grant()` �� `config.grant_id`��
+12: //! `config.attempt_id` �� �״�� ���� **`coordinator_term` �� ���ͷ� 1
+13: //! �� �ھ� �ִ´�.** selftest �� ���� �����ϰ� ����� ���� ���������,
+14: //! �� Grant �� ����Ұ� �ƴ� ��ǰ� �ƹ� ���谡 ����.
+15: //!
+16: //! �� ������ �ݴ�� ? **����� �͸� ����.** Attempt��Lease��fence epoch��
+17: //! coordinator term �� ���� `stage-job` �� Ŀ���� �࿡�� ���´�.
+18: //!
+19: //! # �� �� �ุ ���� �ʴ´�
+20: //!
+21: //! Attempt �� Lease �� �ٸ� ���̴�. ���� ��߳� ������ �� ��ü�� ���
+22: //! �̰�, �׶� ���ʸ� ������ ���� �ϰ����� �����ϰ� �ȴ�. �׷��� �߱�
+23: //! ���� �����Ѵ�:
+24: //!
+25: //! ```text
+26: //! Attempt.job_id      == Lease.job_id
+27: //! Attempt.attempt_id  == Lease.attempt_id
+28: //! Attempt.fence_epoch == Lease.fence_epoch
+29: //! Attempt.lease_id    == Lease.lease_id
+30: //! ����(node)          == Lease.holder_node_id �� ���� ���
+31: //! ```
+32: //!
+33: //! # �� ������ ���� �ʴ� ��
+34: //!
+35: //! ```text
+36: //! �� �Ѵ�   Agent ���� ������       wire dispatch �� �� ��. ���Ϸ� ����
+37: //! �� �Ѵ�   Manifest �� �Ʊ�        Grant �� Manifest �� ��������
+38: //!                                   ������ ���� ������ �ʿ��ϰ�, �װ�
+39: //!                                   ���� �����̴�
+40: //! �� �Ѵ�   ResourceScope ä���    GPU scope �� authoritative provenance
+41: //!                                   �� ���� ���� �ִ�(`DoD-55`)
+42: //! ```
+43: //!
+44: //! # �� ����Ű�� �����ٿ� ���� �ʴ´�
+45: //!
+46: //! �� ������� ���� ����(`--own-seed <hex32>`)�� **����Ű�� ���μ���
+47: //! ��Ͽ� ���.** ���� ����� �ٸ� ����ڰ� `ps`/�۾� �����ڷ� ����.
+48: //! �׷��� �� ������ **���� ���**�� �޴´� ? ���� ������ ��谡 �ȴ�.
+49: //!
+50: //! �� �׷��ٰ� ������ ���� �ƴϴ�. �� seed ������ `KeyProtection::K0`
+51: //!   �̰�, �� ����Ұ� K1(DPAPI��systemd-creds)�� �������� �� ����ҿ���
+52: //!   **����Ű�� ���� �����ϴ� ���� ��ΰ� ���� ����.** �����ٺ��� ���ٴ�
+53: //!   ������ ��ȣ�ȴٴ� ���� �ƴϴ�.
+54: 
+55: use std::collections::BTreeMap;
+56: 
+57: use gputeer_coordinator::grant_from_stored::{
+58:     derive_stored_grant_nonce, signed_grant_from_stored, StoredGrantRequest,
+59: };
+60: use gputeer_coordinator::job_store::CoordinatorJobStore;
+61: use gputeer_coordinator::lease_store::CoordinatorLeaseStore;
+62: use gputeer_coordinator::staging_store::CoordinatorStagingStore;
+63: use gputeer_crypto::SigningKey;
+64: use prost::Message;
+65: 
+66: /// `gputeer issue-grant` ������.
+67: pub fn run(args: &[String]) -> Result<String, String> {
+68:     let flags = parse_flags(args)?;
+69: 
+70:     let job_id = require(&flags, "--job-id")?;
+71:     let control_db = require(&flags, "--control-db")?;
+72:     let attempt_id = require(&flags, "--attempt-id")?;
+73:     let lease_id = require(&flags, "--lease-id")?;
+74:     let grant_id = require(&flags, "--grant-id")?;
+75:     let out_path = require(&flags, "--out")?;
+76: 
+77:     // �� Grant �ð��� ���밪�̴�. `stage-job` ���� ��� �Ͱ� ���� ���� ?
+78:     //   �ð踦 ������ ���� �Է����� �� �� �߱����� �� ����� �޶�����,
+79:     //   �׷��� "���� �Է��̸� ���� Grant" �� Ȯ���� ����� ��������.
+80:     let issued_at_unix_ms = u64_flag(&flags, "--grant-issued-at-unix-ms")?;
+81:     let expires_at_unix_ms = u64_flag(&flags, "--grant-expires-at-unix-ms")?;
+82:     if issued_at_unix_ms >= expires_at_unix_ms {
+83:         return Err(format!(
+84:             "Grant �߱� �ð�({issued_at_unix_ms})�� ����({expires_at_unix_ms}) ���� �ռ��� �ʴ´�"
+85:         ));
+86:     }
+87: 
+88:     let key = load_signing_key(require(&flags, "--coordinator-key-file")?)?;
+89: 
+90:     // ���� ����� ����� �д´� ��������������������������������������������������������������������������������
+91:     let jobs = CoordinatorJobStore::open(control_db)
+92:         .map_err(|e| format!("job store �� ���� ���ߴ�({control_db}): {e}"))?;
+93:     if !jobs.is_durable() {
+94:         return Err(format!(
+95:             "--control-db �� ������ �ƴϴ�({control_db:?}) ? ���� �������� Grant �� ����� �ȴ�"
+96:         ));
+97:     }
+98:     drop(jobs);
+99:     let jobs = CoordinatorJobStore::open(control_db)
+100:         .map_err(|e| format!("job store �� �ٽ� ���� ���ߴ�({control_db}): {e}"))?;
+101:     let staging = CoordinatorStagingStore::open(control_db)
+102:         .map_err(|e| format!("staging store �� ���� ���ߴ�({control_db}): {e}"))?;
+103:     let leases = CoordinatorLeaseStore::open(control_db)
+104:         .map_err(|e| format!("lease store �� ���� ���ߴ�({control_db}): {e}"))?;
+105: 
+106:     // �� ������ ������ **coordinator �� �Ѵ�.** `coordinator-stub` �� ����
+107:     //   �Լ��� �θ��Ƿ� �� ���� ������ �ʴ´�(��� ���� ����).
+108:     let grant = signed_grant_from_stored(
+109:         &jobs,
+110:         &staging,
+111:         &leases,
+112:         &StoredGrantRequest {
+113:             job_id: job_id.to_string(),
+114:             attempt_id: attempt_id.to_string(),
+115:             lease_id: lease_id.to_string(),
+116:             grant_id: grant_id.to_string(),
+117:             issued_at_unix_ms,
+118:             expires_at_unix_ms,
+119:             // ���Ϸ� ���� ��ο��� ���� ������ ���� ? ���� �Է��̸�
+120:             // ���� Grant �� �������� ���������� �����Ѵ�.
+121:             nonce: derive_stored_grant_nonce(grant_id, attempt_id),
+122:         },
+123:         &key,
+124:     )?;
+125:     let lease = grant.lease.as_ref().expect("���� ��ΰ� Lease �� �ִ´�");
+126:     let summary = format!(
+127:         "GRANTED job_id={job_id} grant_id={grant_id} attempt={} lease={} node={} fence={} term={} out={out_path}",
+128:         grant.attempt_id,
+129:         lease.lease_id,
+130:         lease.holder_node_id,
+131:         lease.fence_epoch,
+132:         grant.coordinator_term
+133:     );
+134: 
+135:     std::fs::write(out_path, grant.encode_to_vec())
+136:         .map_err(|e| format!("Grant ���� ���� ����({out_path}): {e}"))?;
+137: 
+138:     Ok(summary)
+139: }
+140: 
+141: /// ����Ű�� **���Ͽ���** �д´�. �����ٿ� ���� �ʴ� ������ ��� ���� ����.
+142: fn load_signing_key(path: &str) -> Result<SigningKey, String> {
+143:     let raw = std::fs::read_to_string(path)
+144:         .map_err(|e| format!("����Ű ������ ���� ���ߴ�({path}): {e}"))?;
+145:     let hex = raw.trim();
+146:     if hex.len() != 64 {
+147:         return Err(format!(
+148:             "����Ű ������ 64�ڸ� hex(32����Ʈ) �ϳ����� �Ѵ�({path}, ���� {})",
+149:             hex.len()
+150:         ));
+151:     }
+152:     let mut seed = [0u8; 32];
+153:     for (i, byte) in seed.iter_mut().enumerate() {
+154:         *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+155:             .map_err(|e| format!("����Ű hex �Ľ� ����({path}): {e}"))?;
+156:     }
+157:     Ok(SigningKey::from_bytes(&seed))
+158: }
+159: 
+160: fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {
+161:     require(flags, key)?
+162:         .parse::<u64>()
+163:         .map_err(|e| format!("{key} �Ľ� ����: {e}"))
+164: }
+165: 
+166: fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+167:     let mut out = BTreeMap::new();
+168:     let mut i = 0;
+169:     while i < args.len() {
+170:         let key = &args[i];
+171:         if !key.starts_with("--") {
+172:             return Err(format!("�� �� ���� ����: {key}"));
+173:         }
+174:         let value = args
+175:             .get(i + 1)
+176:             .ok_or_else(|| format!("{key} �� ���� ����"))?;
+177:         out.insert(key.clone(), value.clone());
+178:         i += 2;
+179:     }
+180:     Ok(out)
+181: }
+182: 
+183: fn require<'a>(flags: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str, String> {
+184:     flags
+185:         .get(key)
+186:         .map(String::as_str)
+187:         .ok_or_else(|| format!("{key} �� �ʿ��ϴ�"))
+188: }
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; p=pathlib.Path('crates/coordinator/src/grant_from_stored.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(json.dumps({str(i+1):s for i,s in enumerate(a) if 229 <= i < 278},ensure_ascii=True))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 862ms:
+{"230": "    // \u2500\u2500 \ubc29\uae08 \ub9cc\ub4e0 \uac83\uc744 \ubc14\ub85c \ub2e4\uc2dc \uac80\uc99d\ud55c\ub2e4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500", "231": "    //", "232": "    // \u2605 `gputeer submit` \uc774 \uc774\ubbf8 \ud558\ub294 \uc77c\uc774\ub2e4(\"\uc11c\uba85\ud558\uc790\ub9c8\uc790 \uae68\uc9c4 \ud30c\uc77c\uc744", "233": "    //   \ub0b4\ubcf4\ub0b4\ub294 \uac83\ubcf4\ub2e4 \uc5ec\uae30\uc11c \uc2e4\ud328\ud558\ub294 \ud3b8\uc774 \ud6e8\uc52c \uc2f8\ub2e4\"). \uc774 \uacbd\ub85c\uc5d0\ub294", "234": "    //   \uadf8\uac8c **\uc5c6\uc5c8\ub2e4** \u2014 \ub0b4 \ubba4\ud14c\uc774\uc158\uc774 \uc544\ub2c8\ub77c \ucf54\ub4dc\ub97c \ub098\ub780\ud788 \ub193\uace0 \ubcf4\ub2e4\uac00", "235": "    //   \ucc3e\uc558\ub2e4.", "236": "    //", "237": "    //   \ud655\uc778\ud558\ub294 \uac83\uacfc \ubabb \ud558\ub294 \uac83\uc744 \uc815\ud655\ud788 \uc801\ub294\ub2e4:", "238": "    //", "239": "    //   \ud655\uc778\ud55c\ub2e4   \uad6c\uc870\u00b7`schema_version`\u00b7\uc218\uba85\u00b7canonical \uc778\ucf54\ub529,", "240": "    //              \uadf8\ub9ac\uace0 **\uc11c\uba85\uc774 \uc2e4\uc81c\ub85c \uac80\uc99d\ub418\ub294\uac00**(2026-09-07 \ucd94\uac00).", "241": "    //              nested Lease \ub3c4 \uac19\uc774 \ubcf8\ub2e4.", "242": "    //   \ubabb \ud55c\ub2e4    **\uc774 \ud0a4\uac00 \uc815\ub9d0 `issuing_coordinator_id` \uc758 \uac83\uc778\uac00.**", "243": "    //              \uc774 \ubaa8\ub4c8\uc5d0\ub294 key directory \uac00 \uc5c6\ub2e4 \u2014 \ud638\ucd9c\ubd80\uac00 \uc900", "244": "    //              \ud0a4\ub97c \uadf8\ub300\ub85c \uc4f4\ub2e4.", "245": "    //", "246": "    //   \u2605\u2605 **\"\uc704\ud5d8\ud558\uc9c0 \uc54a\ub2e4\" \uace0 \uc801\uc5c8\ub358 \uac83\uc744 \uace0\uce5c\ub2e4** (2026-09-07 \ub3c5\ub9bd", "247": "    //     \uac80\uc218 \uc9c0\uc801). \uc5c9\ub6b1\ud55c \ud0a4\ub85c \uc11c\uba85\ud558\uba74 \uc5ec\uae30\uc11c\ub294 \ud1b5\uacfc\ud558\uace0 \ub098\uc911\uc5d0", "248": "    //     Agent \uac00 \uac70\ubd80\ud55c\ub2e4. \uc778\uc99d \uc6b0\ud68c\ub294 \uc544\ub2c8\uc9c0\ub9cc **\uc704\ud5d8\uc774 \uc5c6\ub294 \uac83\uc740", "249": "    //     \uc544\ub2c8\ub2e4**:", "250": "    //", "251": "    //       \u00b7 \uc6b4\uc601\uc790\ub294 \uc720\ud6a8\ud55c Grant \ub97c \ub9cc\ub4e0 \uc904 \uc548\ub2e4", "252": "    //       \u00b7 \uc2e4\ud328\uac00 Agent \ub2e8\uacc4\uae4c\uc9c0 \ubc00\ub824 \uc6d0\uc778 \ud30c\uc545\uc774 \ub2a6\uc5b4\uc9c4\ub2e4", "253": "    //       \u00b7 `--out` \uc5d0 \uae30\uc874 \ud30c\uc77c\uc774 \uc788\uc5c8\ub2e4\uba74 \ubabb \uc4f0\ub294 Grant \ub85c \ub36e\uc778\ub2e4", "254": "    //", "255": "    //     \ub2eb\uc73c\ub824\uba74 Coordinator \uacf5\uac1c\ud0a4 \ubaa9\ub85d\uc774 \ud544\uc694\ud558\uace0 \uc544\uc9c1 \uc5c6\ub2e4.", "256": "    verify_own_output(&grant, key, request.issued_at_unix_ms)?;", "257": "    Ok(grant)", "258": "}", "259": "", "260": "/// \ubc29\uae08 \uc11c\uba85\ud55c Grant \ub97c **\uc11c\uba85\uae4c\uc9c0** \uc790\uae30 \uac80\uc99d\ud55c\ub2e4.", "261": "///", "262": "/// \u2605\u2605 **2026-09-07 \ub3c5\ub9bd \uac80\uc218\uac00 \uc774 \ud568\uc218\ub97c \ubc18\ub824\ud588\ub2e4.** \uc804\uc5d0\ub294", "263": "///   `AlwaysValid`(\uc11c\uba85\uc744 \uc77d\uc9c0\ub3c4 \uc54a\ub294 \uac80\uc99d\uc790)\ub97c \uc37c\ub2e4. \uac80\uc218\uac00 \ubc18\ub840\ub97c", "264": "///   \ubcf4\uc600\ub2e4 \u2014", "265": "///", "266": "///   > `sign()` \uc774 \ubc84\uadf8 \ub54c\ubb38\uc5d0 \uc798\ubabb\ub41c preimage \ub97c \uc11c\uba85\ud558\uac70\ub098 64\ubc14\uc774\ud2b8", "267": "///   > \uc4f0\ub808\uae30\ub97c \ubc18\ud658\ud574\ub3c4, \uac80\uc99d\uae30\uac00 \uc11c\uba85\uc744 **\uc77d\uc9c0 \uc54a\uc73c\ubbc0\ub85c** \ud1b5\uacfc\ud55c\ub2e4.", "268": "///", "269": "///   \uc989 \uadf8 \uac80\uc0ac\ub294 \"\uc11c\uba85 \uc0dd\uc131\uacfc \uac80\uc99d \uc591\ucabd\uc5d0 \uac19\uc740 \ubc84\uadf8\uac00 \uc788\uc73c\uba74 \ubabb \uc7a1\ub294\ub2e4\"", "270": "///   \ubcf4\ub2e4\ub3c4 \uc57d\ud588\ub2e4. **\uc0dd\uc131\uae30\uc758 \ub2e8\ub3c5 \ubc84\uadf8\uc870\ucc28 \ubabb \uc7a1\uc558\ub2e4.**", "271": "///", "272": "///   \uc9c0\uae08\uc740 \uc11c\uba85\uc5d0 \uc4f4 \ud0a4\uc5d0\uc11c \uacf5\uac1c\ud0a4\ub97c \ub3c4\ucd9c\ud574 **\uc2e4\uc81c\ub85c \uac80\uc99d\ud55c\ub2e4.**", "273": "///   \uadf8\ub7ec\uba74 \uc11c\uba85 \uc0dd\uc131\uacfc canonical preimage \uc758 \ubd88\uc77c\uce58\ub97c \uc7a1\ub294\ub2e4.", "274": "///", "275": "/// \u2605 \uc5ec\uc804\ud788 \ubabb \ud558\ub294 \uac83\uc740 \uadf8\ub300\ub85c\ub2e4 \u2014 **\uc774 \uacf5\uac1c\ud0a4\uac00 \uc815\ub9d0", "276": "///   `issuing_coordinator_id` \uc758 \uc2e0\ub8b0\ub41c \ud0a4\uc778\uac00.** \uc774 \ubaa8\ub4c8\uc5d0\ub294 key", "277": "///   directory \uac00 \uc5c6\uace0 \ud638\ucd9c\ubd80\uac00 \uc900 \ud0a4\ub97c \uadf8\ub300\ub85c \uc4f4\ub2e4. \uadf8\uac74 \ubcc4\ub3c4 \uac80\uc0ac\uac00", "278": "///   \ud544\uc694\ud558\uace0 \uc774 \uc800\uc7a5\uc18c\uc5d0 \uc544\uc9c1 \uc5c6\ub2e4."}
+
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 6:57 AM.
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 6:57 AM.
+tokens used
+32,365

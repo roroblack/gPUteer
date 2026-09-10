@@ -1,0 +1,1137 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08733-0c6a-7ec3-94f4-2a9035a2a64f
+--------
+user
+동의가 아니라 **반박**을 원한다. 내 테스트가 **자기가 잰다고 말한 것을
+실제로 재고 있는지**를 확인해 달라.
+
+# 배경 — 내 테스트가 이미 한 번 거짓말했다
+
+`scheduler-tick` 은 운영자가 식별자를 주지 않아도 스스로 Job 을 골라
+예약한다. 관문이 여럿이고, 그중 둘의 위치가 중요하다:
+
+```text
+crates/cli/src/scheduler_tick.rs:101
+    --lease-renew-after-ms 가 0 이거나 --lease-ttl-ms 이상이면 거부
+crates/cli/src/scheduler_tick.rs:146
+    "큐에 너무 오래 있었다" — 지금 예약하면 이미 만료된 Lease 를 준다
+```
+
+**처음 쓴 테스트는 엉뚱한 관문을 재고 있었다.** `--lease-ttl-ms 1` 만
+줬는데 `--lease-renew-after-ms` 는 기본값(300000)이 남아 있었다. 앞에
+있는 :101 검사에서 먼저 걸렸고, **내 단언이 그 메시지도 받아 줘서
+통과했다.** 큐 나이 관문(:146)은 한 번도 안 실행됐는데 "검증했다" 고
+적을 뻔했다.
+
+지금은 `--lease-ttl-ms 2 --lease-renew-after-ms 1` 로 고치고, 단언도
+특정 문구("너무 오래 있었다")를 요구하도록 바꿨다.
+
+★ **이 함정의 이름을 붙이면 `!ok` 트랩이다** — 실패했다는 것만 확인하고
+**왜** 실패했는지는 안 보는 것. 이 저장소에서 이 함정에 다섯 번 걸렸다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/cli/src/scheduler_tick.rs      (365줄)
+crates/cli/tests/scheduler_tick.rs    (503줄)
+```
+
+다른 crate 로 범위를 넓히지 마라.
+
+# 물을 것 — 네 가지
+
+1. **`crates/cli/tests/scheduler_tick.rs` 의 모든 실패-확인 단언을 하나씩 보고**,
+   실패 사유까지 확인하는 것과 `!ok` 만 보는 것을 갈라라. 후자가 있으면
+   그 줄을 지목하고, **그 테스트가 통과하면서도 의도한 관문이 안 도는
+   입력**을 하나 제시하라.
+
+2. `scheduler_tick.rs` 의 관문 **순서**를 코드에서 확인하고, 뒤에 있는
+   관문을 재려는 테스트가 앞 관문에 걸릴 수 있는 조합이 남아 있는지
+   보라. (내가 고친 것은 :101 대 :146 한 쌍뿐이다. 다른 쌍은 안 봤다.)
+
+3. 특정 문구를 요구하는 단언들이 있는데, 그 문구가 **다른 관문의
+   메시지에도 들어 있지 않은가**? 들어 있으면 그 단언은 여전히 두
+   관문을 구분하지 못한다.
+
+4. 반대 방향도 보라 — 성공을 확인하는 테스트가 **실제로 예약이 생긴
+   것**을 보나, 아니면 종료 코드만 보나?
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 단언을 몇 개 봤고
+어떤 기준으로 갈랐는지 쓰면 된다. 없는 문제를 지어내지 마라.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 과 **그 테스트를 통과시키면서 관문은 안 도는
+구체적 입력**을 붙여라. 못 만들면 그 사실도 적어라.
+
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 두 파일만 읽고, 실패 단언별로 실제 도달하는 관문과 메시지를 대조하겠습니다. 성공 단언도 예약 생성까지 확인하는지 살펴보겠습니다.
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$paths = @('"'crates/cli/src/scheduler_tick.rs', 'crates/cli/tests/scheduler_tick.rs'); foreach ("'$p in $paths) { Write-Output $p; $n = 0; Get-Content -LiteralPath $p -Encoding UTF8 | ForEach-Object { $n++; '"'{0,4}: {1}' -f "'$n, $_ } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2291ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+crates/cli/src/scheduler_tick.rs
+   1: //! `gputeer scheduler-tick` ? ť���� **�� ��**�� ���� ������� �����Ѵ�.
+   2: //!
+   3: //! ```text
+   4: //! plan-job        ��ڰ� Job �ϳ��� ť�� �ø���              (QUEUED)
+   5: //! scheduler-tick  ť�� ���� ������ ��� �����Ѵ�               (STAGING)
+   6: //! ```
+   7: //!
+   8: //! # �� �� "����" �� �ƴ϶� "�� ��(tick)" �ΰ�
+   9: //!
+  10: //! ������ ���� **Ʋ���⵵ ����** ? ���и� ��� �ٷ���, �󸶳� ����
+  11: //! ����, ���� �������� ���� ��å�̰� �� ����ҿ� �� �Թ��� ����.
+  12: //! �� �� ���� �ͺ��� �����ϰ� �����, ������ �װ��� �ݺ��ϴ� ����
+  13: //! �����Ⱑ �ȴ�. �ݴ�� �ϸ� �������� ��å�� �˸����� ������ ������.
+  14: //!
+  15: //! # �ڡ� �ĺ��ڸ� **����� ��ǿ��� �����Ѵ�**
+  16: //!
+  17: //! `stage-job` �� ��ڰ� `--attempt-id`��`--lease-id`��`--operation-key`
+  18: //! �� Lease �ð� ���� ���� �ش�. ����� �θ��� �װ� �´� ? ��� ��
+  19: //! ���� ���� ����� �ʴ´�.
+  20: //!
+  21: //! �׷��� **������ ���� ���� �� ���� ��𼱰� ������ �Ѵ�.** �ð質
+  22: //! ������ ����� ��õ����� �޶�����, �׷��� ������� operation key ��
+  23: //! ����ϴ� ����� **������**�� �ȴ�(`stage-job` ���� ���� �׽�Ʈ��
+  24: //! ��Ȯ�� �װ� ��Ҵ�).
+  25: //!
+  26: //! �׷��� ���� `(job_id, plan_id)` ���� �����Ѵ�:
+  27: //!
+  28: //! ```text
+  29: //! attempt_id      BLAKE3("attempt", job_id, plan_id) -> 26��
+  30: //! lease_id        BLAKE3("lease",   job_id, plan_id) -> 26��
+  31: //! operation_key   BLAKE3("operation", job_id, plan_id)[..16]
+  32: //! Lease �߱� �ð�  job.queued_at_unix_ms  (����� ���)
+  33: //! Lease ���š�����  queued_at + ��ڰ� �� ������
+  34: //! ```
+  35: //!
+  36: //! ���� Job �� ���� ��ȹ���� �ٽ� tick �ϸ� **����Ʈ���� ���� ��û**��
+  37: //! �ǰ�, ����Ұ� ���� ����� �״�� �����ش�.
+  38: //!
+  39: //! �� **`plan_id` �� ���� ����� �� ���� ���� ���� �ʴ� ? ó����
+  40: //!   �� ������ �����̾���.**
+  41: //!
+  42: //!   ���� �̷��� ������: "inventory �� �ٲ�� ��ȹ�� �޶����� �ٸ�
+  43: //!   Attempt �� �����Ƿ� ���� ��ȹ�� ������ �������� �ʴ´�."
+  44: //!   �� ��Ȳ�� **�׽�Ʈ�� ������� �� �������** ? ����Ұ� �� �տ���
+  45: //!   ���´�:
+  46: //!
+  47: //!   ```text
+  48: //!   PLAN_REFUSED: queued Job plan conflict: stored=e4b3f8a4..., requested=18b096ec...
+  49: //!   ```
+  50: //!
+  51: //!   QUEUED �� Job �� ��ȹ�� **�ٲ��� �ʴ´�.** �׷��� ���� `plan_id`
+  52: //!   �� `job_id` �� �̹� ��������, ������ �־ ���� �޶��� ����
+  53: //!   ����. �����̼����� ��°�� ���� �׽�Ʈ�� �ϳ��� �� ������ ?
+  54: //!   **������ �ʰ� ���´�.**
+  55: //!
+  56: //!   �׷��� ���� �δ� ����: ����Ұ� ������ ���ȹ�� ����ϸ� �׶���
+  57: //!   ���� ���� �ǰ�, �׶� ���Դ� �ͺ��� ���� �ִ� ���� �����ϴ�.
+  58: //!   �ٸ� **���� ���𰡸� ���� �ִٰ� ���� �ʴ´�.**
+  59: //!
+  60: //! �� 26�ڴ� **ULID ����� �� ULID �� �ƴϴ�.** �ð� ������ ����.
+  61: //!   `fenced_operation.rs` �� ���� 26 �� �䱸�ϹǷ� ����� �����,
+  62: //!   �ð� ������ �ʿ������� �׶� ��¥ ULID �� �߱��ؾ� �Ѵ�.
+  63: //!
+  64: //! # �� ������ ���� �ʴ� ��
+  65: //!
+  66: //! ```text
+  67: //! �� �Ѵ�   �ݺ�            �� �� ����. ������ ���� �����̴�
+  68: //! �� �Ѵ�   ���� �� ó��    ť�� **�� �� �ϳ�**�� ����
+  69: //! �� �Ѵ�   Grant �߱ޡ�����  issue-grant / coordinator-stub �� ���̴�
+  70: //! �� �Ѵ�   ������ Job ����  QUEUED->FAILED ������ ���� ��δ�
+  71: //! ```
+  72: 
+  73: use std::collections::BTreeMap;
+  74: 
+  75: use gputeer_coordinator::inventory_store::CoordinatorInventoryStore;
+  76: use gputeer_coordinator::job_store::CoordinatorJobStore;
+  77: use gputeer_coordinator::manifest_requirements::job_requirements_from_manifest;
+  78: use gputeer_coordinator::orchestrate::{
+  79:     orchestrate_placement_to_staging, PlacementToStagingInput, PlacementToStagingOutcome,
+  80:     StagingIssuanceInput,
+  81: };
+  82: use gputeer_coordinator::staging_store::CoordinatorStagingStore;
+  83: use gputeer_crypto::{Ed25519Verifier, PersistentKeyring, PlaintextPolicy};
+  84: use gputeer_protocol::signing::{verify, NoReplayCheck};
+  85: use gputeer_scheduler::{BestFitPolicy, FitAxis, Policy};
+  86: 
+  87: /// `gputeer scheduler-tick` ������.
+  88: pub fn run(args: &[String]) -> Result<String, String> {
+  89:     let flags = parse_flags(args)?;
+  90: 
+  91:     let control_db = require(&flags, "--control-db")?;
+  92:     let keyring_path = require(&flags, "--submitter-keyring")?;
+  93:     let submitter_member = require(&flags, "--submitter-member")?;
+  94:     let max_snapshot_age_ms = u64_flag(&flags, "--max-snapshot-age-ms")?;
+  95:     let best_fit_policy = parse_axes(require(&flags, "--best-fit-axes")?)?;
+  96:     let coordinator_id = require(&flags, "--coordinator-id")?;
+  97:     let coordinator_term = u64_flag(&flags, "--coordinator-term")?;
+  98:     let lease_ttl_ms = u64_flag(&flags, "--lease-ttl-ms")?;
+  99:     let lease_renew_after_ms = u64_flag(&flags, "--lease-renew-after-ms")?;
+ 100:     let max_total_duration_seconds = u64_flag(&flags, "--lease-max-total-duration-seconds")?;
+ 101:     if lease_renew_after_ms == 0 || lease_renew_after_ms >= lease_ttl_ms {
+ 102:         return Err(format!(
+ 103:             "--lease-renew-after-ms({lease_renew_after_ms}) �� 0 ���� ũ�� --lease-ttl-ms({lease_ttl_ms}) ���� �۾ƾ� �Ѵ� ? ���� ������ ���� �ڸ� ������ ��ȸ�� ����"
+ 104:         ));
+ 105:     }
+ 106: 
+ 107:     // �� �ż��� ������ ���� "����". durable ������δ� �� ����.
+ 108:     let now_unix_ms = now_unix_ms();
+ 109: 
+ 110:     let jobs = CoordinatorJobStore::open(control_db)
+ 111:         .map_err(|e| format!("job store �� ���� ���ߴ�({control_db}): {e}"))?;
+ 112:     if !jobs.is_durable() {
+ 113:         return Err(format!(
+ 114:             "--control-db �� ������ �ƴϴ�({control_db:?}) ? ������ ���μ����� �Բ� �������"
+ 115:         ));
+ 116:     }
+ 117: 
+ 118:     // ���� ť�� �� �� �ϳ� ������������������������������������������������������������������������������������������
+ 119:     //
+ 120:     // `list_queued()` �� `(queued_at, job_id)` ���� ������ FIFO ��.
+ 121:     let queued = jobs
+ 122:         .list_queued()
+ 123:         .map_err(|e| format!("ť ��ȸ ����: {e}"))?;
+ 124:     let Some(job) = queued.into_iter().next() else {
+ 125:         // �� �� ť�� **������ �ƴϴ�.** ������ �̰� ���з� ���� ����
+ 126:         //   ���� ���°� ��ַ� ���δ�.
+ 127:         return Ok("TICK_IDLE ť�� �����".to_string());
+ 128:     };
+ 129:     let job_id = job.job_id.clone();
+ 130:     let plan_id = job
+ 131:         .plan_id
+ 132:         .clone()
+ 133:         .ok_or_else(|| format!("TICK_REFUSED: {job_id} �� QUEUED �ε� plan_id �� ����"))?;
+ 134:     let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
+ 135:         format!("TICK_REFUSED: {job_id} �� QUEUED �ε� queued_at �� ����")
+ 136:     })?;
+ 137: 
+ 138:     // ���� Lease �ð��� ����� ��ǿ��� �����Ѵ� ����������������������������������������������
+ 139:     //
+ 140:     // �� `queued_at` �� �߱� �ð����� ����. ����Ұ� "Lease �߱� �ð���
+ 141:     //   ť ���Ժ��� �ռ� �� ����" �� �䱸�ϴµ�, **���� ���̸� ��
+ 142:     //   ��踦 ��Ȯ�� ����**�ϸ鼭�� �ð踦 �� �д´�.
+ 143:     let expires_at = queued_at.saturating_add(lease_ttl_ms);
+ 144:     if expires_at <= now_unix_ms {
+ 145:         return Err(format!(
+ 146:             "TICK_REFUSED: {job_id} �� ť�� �ʹ� ���� �־���(ť ���� {queued_at}, �� ������ Lease ���� {expires_at}, ���� {now_unix_ms}) ? ���� �����ϸ� �̹� ����� Lease �� �ش�"
+ 147:         ));
+ 148:     }
+ 149: 
+ 150:     let binding = jobs
+ 151:         .get_manifest_binding(&job_id)
+ 152:         .map_err(|e| format!("Manifest binding ��ȸ ����: {e}"))?
+ 153:         .ok_or_else(|| format!("TICK_REFUSED: {job_id} �� ����� Manifest �� ����"))?;
+ 154:     drop(jobs);
+ 155: 
+ 156:     // ���� ����� Manifest �� ���� �ٽ� �����Ѵ� ����������������������������������������������
+ 157:     let policy = if flags
+ 158:         .get("--i-understand-plaintext-keyring-is-unsafe")
+ 159:         .map(String::as_str)
+ 160:         == Some("true")
+ 161:     {
+ 162:         eprintln!(
+ 163:             "���: ��(K0) ������ keyring �� ����ߴ� ? �� ������ �� �� �ִ� ����� ������ ����Ű�� �ŷ� ��Ͽ� ���� �� �ִ�"
+ 164:         );
+ 165:         PlaintextPolicy::Allow
+ 166:     } else {
+ 167:         PlaintextPolicy::Reject
+ 168:     };
+ 169:     let keyring = PersistentKeyring::load(keyring_path, policy)
+ 170:         .map_err(|e| format!("������ keyring �� ���� ���ߴ�({keyring_path}): {e:?}"))?;
+ 171:     let verified = verify(
+ 172:         &binding.manifest,
+ 173:         1,
+ 174:         &Ed25519Verifier::new(&keyring),
+ 175:         now_unix_ms,
+ 176:         &mut NoReplayCheck,
+ 177:     )
+ 178:     .map_err(|e| format!("TICK_REFUSED: ����� Manifest �� ���� �ٽ� �������� ���ߴ�: {e:?}"))?;
+ 179:     let job_requirements = job_requirements_from_manifest(&verified, submitter_member)
+ 180:         .map_err(|e| format!("TICK_REFUSED: {e}"))?;
+ 181: 
+ 182:     // ���� ���� ����������������������������������������������������������������������������������������������������������������
+ 183:     let mut inventory = CoordinatorInventoryStore::open(control_db)
+ 184:         .map_err(|e| format!("inventory store �� ���� ���ߴ�({control_db}): {e}"))?;
+ 185:     let mut staging = CoordinatorStagingStore::open(control_db)
+ 186:         .map_err(|e| format!("staging store �� ���� ���ߴ�({control_db}): {e}"))?;
+ 187: 
+ 188:     let attempt_id = derive_id("attempt", &job_id, &plan_id);
+ 189:     let lease_id = derive_id("lease", &job_id, &plan_id);
+ 190: 
+ 191:     let outcome = orchestrate_placement_to_staging(
+ 192:         &mut inventory,
+ 193:         &mut staging,
+ 194:         &PlacementToStagingInput {
+ 195:             job_id: job_id.clone(),
+ 196:             job_requirements,
+ 197:             hard_filter_policy: Policy {
+ 198:                 maximum_snapshot_age_ms: max_snapshot_age_ms,
+ 199:             },
+ 200:             best_fit_policy,
+ 201:             evaluated_at_unix_ms: now_unix_ms,
+ 202:             issuance: StagingIssuanceInput {
+ 203:                 operation_key: derive_operation_key(&job_id, &plan_id),
+ 204:                 attempt_id: attempt_id.clone(),
+ 205:                 lease_id: lease_id.clone(),
+ 206:                 issuing_coordinator_id: coordinator_id.to_string(),
+ 207:                 coordinator_term,
+ 208:                 issued_at_unix_ms: queued_at,
+ 209:                 renew_after_unix_ms: queued_at.saturating_add(lease_renew_after_ms),
+ 210:                 expires_at_unix_ms: expires_at,
+ 211:                 max_total_duration_seconds,
+ 212:             },
+ 213:         },
+ 214:     )
+ 215:     .map_err(|e| format!("TICK_REFUSED: {e}"))?;
+ 216: 
+ 217:     match outcome {
+ 218:         PlacementToStagingOutcome::NoEligible { eligibility } => {
+ 219:             let mut lines = vec![format!(
+ 220:                 "TICK_REFUSED: {job_id} �� �´� ��尡 ���� ? {} �� �ĺ��� �ô�",
+ 221:                 eligibility.rejected.len()
+ 222:             )];
+ 223:             for rejected in &eligibility.rejected {
+ 224:                 lines.push(format!(
+ 225:                     "  {} ? {}",
+ 226:                     rejected.node_id,
+ 227:                     rejected
+ 228:                         .reasons
+ 229:                         .iter()
+ 230:                         .map(|r| format!("{r:?}"))
+ 231:                         .collect::<Vec<_>>()
+ 232:                         .join(", ")
+ 233:                 ));
+ 234:             }
+ 235:             Err(lines.join("\n"))
+ 236:         }
+ 237:         PlacementToStagingOutcome::Staged {
+ 238:             selected_node_id,
+ 239:             selected_gpu_ids,
+ 240:             stage,
+ 241:             ..
+ 242:         } => Ok(format!(
+ 243:             "TICK_STAGED job_id={job_id} plan={plan_id} node={selected_node_id} gpus=[{}] attempt={} lease={} fence={} created={}",
+ 244:             selected_gpu_ids.join(","),
+ 245:             stage.attempt.attempt_id,
+ 246:             stage.lease.lease_id,
+ 247:             stage.lease.fence_epoch,
+ 248:             stage.created
+ 249:         )),
+ 250:     }
+ 251: }
+ 252: 
+ 253: /// Crockford base32 ? ULID �� ���� ���ĺ��̴�(`I`��`L`��`O`��`U` ����).
+ 254: const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+ 255: 
+ 256: /// `(kind, job_id, plan_id)` ���� **26�� �ĺ���**�� ���������� �����.
+ 257: ///
+ 258: /// �� **ULID ����� �� ULID �� �ƴϴ�** ? �ð� ������ ����.
+ 259: ///   `fenced_operation.rs` �� ���� 26 �� �䱸�ؼ� ����� �����.
+ 260: ///   �ð� ������ ������ �ʿ������� ��¥ ULID �߱ޱⰡ �־�� �ϰ�,
+ 261: ///   �׶��� �� �Լ��� ������ �Ѵ�.
+ 262: ///
+ 263: /// �� ����Ʈ�� 32 �� ���� �������� �����Ƿ� **�յ����� �ʴ�**(256 ��
+ 264: ///   32 �� ����� ��� �յ�������, �� ������ ����� �ʴ´�). �� ����
+ 265: ///   ����� �ƴϰ� ���� �Ұ��ɼ��� �䱸������ �ʴ´� ? ���� �Է¿�
+ 266: ///   ���� ���� ������ �͸� �ʿ��ϴ�.
+ 267: fn derive_id(kind: &str, job_id: &str, plan_id: &str) -> String {
+ 268:     let digest = derive_digest(kind, job_id, plan_id);
+ 269:     digest[..26]
+ 270:         .iter()
+ 271:         .map(|b| CROCKFORD[(*b % 32) as usize] as char)
+ 272:         .collect()
+ 273: }
+ 274: 
+ 275: fn derive_operation_key(job_id: &str, plan_id: &str) -> [u8; 16] {
+ 276:     let digest = derive_digest("operation", job_id, plan_id);
+ 277:     let mut out = [0u8; 16];
+ 278:     out.copy_from_slice(&digest[..16]);
+ 279:     out
+ 280: }
+ 281: 
+ 282: /// ���� �����Ƚ��� �ٿ� ���� ���� ���� ������� �ʰ� �Ѵ�.
+ 283: fn derive_digest(kind: &str, job_id: &str, plan_id: &str) -> [u8; 32] {
+ 284:     let mut input = Vec::new();
+ 285:     for part in [
+ 286:         b"gputeer/v1/scheduler-tick".as_slice(),
+ 287:         kind.as_bytes(),
+ 288:         job_id.as_bytes(),
+ 289:         plan_id.as_bytes(),
+ 290:     ] {
+ 291:         input.extend_from_slice(&(part.len() as u64).to_le_bytes());
+ 292:         input.extend_from_slice(part);
+ 293:     }
+ 294:     gputeer_protocol::canonical::blake3_256(&input)
+ 295: }
+ 296: 
+ 297: /// `stage-job` �� ���� ��Ģ ? �ټ� ���� �ߺ� ���� ���� �����ؾ� �Ѵ�.
+ 298: fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
+ 299:     let names: Vec<&str> = raw.split(',').map(str::trim).collect();
+ 300:     if names.len() != 5 {
+ 301:         return Err(format!(
+ 302:             "--best-fit-axes �� �ټ� ���� ���� �����ؾ� �Ѵ�(���� ���� {}) ? vram,gpu_count,cpu,ram,workspace",
+ 303:             names.len()
+ 304:         ));
+ 305:     }
+ 306:     let mut axes = Vec::with_capacity(5);
+ 307:     for name in &names {
+ 308:         let axis = match name.to_ascii_lowercase().as_str() {
+ 309:             "vram" => FitAxis::Vram,
+ 310:             "gpu_count" => FitAxis::GpuCount,
+ 311:             "cpu" => FitAxis::Cpu,
+ 312:             "ram" => FitAxis::Ram,
+ 313:             "workspace" => FitAxis::Workspace,
+ 314:             other => {
+ 315:                 return Err(format!(
+ 316:                     "--best-fit-axes �� �𸣴� �� {other:?} ? vram, gpu_count, cpu, ram, workspace"
+ 317:                 ))
+ 318:             }
+ 319:         };
+ 320:         if axes.contains(&axis) {
+ 321:             return Err(format!("--best-fit-axes �� {name:?} �� �� �� ���´�"));
+ 322:         }
+ 323:         axes.push(axis);
+ 324:     }
+ 325:     Ok(BestFitPolicy {
+ 326:         axis_order: [axes[0], axes[1], axes[2], axes[3], axes[4]],
+ 327:     })
+ 328: }
+ 329: 
+ 330: fn now_unix_ms() -> u64 {
+ 331:     std::time::SystemTime::now()
+ 332:         .duration_since(std::time::UNIX_EPOCH)
+ 333:         .expect("system clock before unix epoch")
+ 334:         .as_millis() as u64
+ 335: }
+ 336: 
+ 337: fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {
+ 338:     require(flags, key)?
+ 339:         .parse::<u64>()
+ 340:         .map_err(|e| format!("{key} �Ľ� ����: {e}"))
+ 341: }
+ 342: 
+ 343: fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+ 344:     let mut out = BTreeMap::new();
+ 345:     let mut i = 0;
+ 346:     while i < args.len() {
+ 347:         let key = &args[i];
+ 348:         if !key.starts_with("--") {
+ 349:             return Err(format!("�� �� ���� ����: {key}"));
+ 350:         }
+ 351:         let value = args
+ 352:             .get(i + 1)
+ 353:             .ok_or_else(|| format!("{key} �� ���� ����"))?;
+ 354:         out.insert(key.clone(), value.clone());
+ 355:         i += 2;
+ 356:     }
+ 357:     Ok(out)
+ 358: }
+ 359: 
+ 360: fn require<'a>(flags: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str, String> {
+ 361:     flags
+ 362:         .get(key)
+ 363:         .map(String::as_str)
+ 364:         .ok_or_else(|| format!("{key} �� �ʿ��ϴ�"))
+ 365: }
+crates/cli/tests/scheduler_tick.rs
+   1: //! `gputeer scheduler-tick` ? **������ ��� �����Ѵ�.**
+   2: //!
+   3: //! �� **�����߽��� ����̴�.** `stage-job` �� ��ڰ� �ĺ��ڿ� �ð���
+   4: //!   ���� �ֹǷ� ��õ��� ���� ���̸� ���� �����. tick �� �װ���
+   5: //!   **������ ������** �ϴµ�, �ð質 ������ ����� ��õ����� �޶���
+   6: //!   ������� operation key �� ����ϴ� ����� �������� �ȴ�.
+   7: //!
+   8: //!   �׷��� ���� `(job_id, plan_id)` �� ����� `queued_at` ���� �����Ѵ�.
+   9: //!   �� ������ �װ� ������ �����ϴ��� ���.
+  10: 
+  11: use std::path::{Path, PathBuf};
+  12: use std::process::Command;
+  13: 
+  14: use gputeer_coordinator::job_store::{CoordinatorJobStore, JobState};
+  15: 
+  16: fn cli_bin() -> PathBuf {
+  17:     let mut path = std::env::current_exe().expect("test executable");
+  18:     path.pop();
+  19:     if path.ends_with("deps") {
+  20:         path.pop();
+  21:     }
+  22:     path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+  23: }
+  24: 
+  25: const NODE: &str = "node-tick-a";
+  26: const SUBMITTER: &str = "01JSUBMITTERTICK00000001";
+  27: const SEED: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc11";
+  28: const OWNER: &str = "owner-tick";
+  29: const COORDINATOR: &str = "01JCOORDINATORTICK000001";
+  30: const AXES: &str = "vram,gpu_count,cpu,ram,workspace";
+  31: const JOB_A: &str = "01JJOBTICKA0000000000001";
+  32: const JOB_B: &str = "01JJOBTICKB0000000000001";
+  33: 
+  34: fn run_cli(args: &[&str]) -> (bool, String) {
+  35:     let out = Command::new(cli_bin()).args(args).output().expect("gputeer ����");
+  36:     (
+  37:         out.status.success(),
+  38:         format!(
+  39:             "{}{}",
+  40:             String::from_utf8_lossy(&out.stdout),
+  41:             String::from_utf8_lossy(&out.stderr)
+  42:         ),
+  43:     )
+  44: }
+  45: 
+  46: fn now_unix_ms() -> u64 {
+  47:     std::time::SystemTime::now()
+  48:         .duration_since(std::time::UNIX_EPOCH)
+  49:         .expect("unix epoch")
+  50:         .as_millis() as u64
+  51: }
+  52: 
+  53: fn write_keyring(dir: &Path) -> PathBuf {
+  54:     let keyring = dir.join("submitters.keyring");
+  55:     let mut seed = [0u8; 32];
+  56:     for (i, byte) in seed.iter_mut().enumerate() {
+  57:         *byte = u8::from_str_radix(&SEED[i * 2..i * 2 + 2], 16).expect("seed hex");
+  58:     }
+  59:     let mut ring = gputeer_crypto::PersistentKeyring::new(
+  60:         &keyring,
+  61:         gputeer_crypto::KeyProtection::K0Plaintext,
+  62:         gputeer_crypto::PlaintextPolicy::Allow,
+  63:     )
+  64:     .expect("keyring ����");
+  65:     ring.insert_public(
+  66:         SUBMITTER,
+  67:         gputeer_crypto::SigningKey::from_bytes(&seed).verifying_key(),
+  68:     )
+  69:     .expect("����Ű ���");
+  70:     ring.save().expect("keyring ����");
+  71:     keyring
+  72: }
+  73: 
+  74: /// `gpu_count` �� ��� ���� ���Ѵ� ? �� Job �� ���� �����Ϸ��� ���� �ʿ��ϴ�.
+  75: fn write_bootstrap(dir: &Path, nodes: usize) -> PathBuf {
+  76:     let key: String = gputeer_crypto::SigningKey::from_bytes(&[31u8; 32])
+  77:         .verifying_key()
+  78:         .to_bytes()
+  79:         .iter()
+  80:         .map(|b| format!("{b:02x}"))
+  81:         .collect();
+  82:     let observed = now_unix_ms();
+  83:     let agents: Vec<String> = (0..nodes)
+  84:         .map(|i| {
+  85:             let node = if i == 0 {
+  86:                 NODE.to_string()
+  87:             } else {
+  88:                 format!("{NODE}-{i}")
+  89:             };
+  90:             let gpu = format!("{node}-gpu-0");
+  91:             let device = format!("device-tick-{i}");
+  92:             let node_key = if i == 0 {
+  93:                 key.clone()
+  94:             } else {
+  95:                 gputeer_crypto::SigningKey::from_bytes(&[40u8 + i as u8; 32])
+  96:                     .verifying_key()
+  97:                     .to_bytes()
+  98:                     .iter()
+  99:                     .map(|b| format!("{b:02x}"))
+ 100:                     .collect()
+ 101:             };
+ 102:             format!(
+ 103:                 r#"    {{
+ 104:       "registry": {{
+ 105:         "node_id": "{node}", "device_id": "{device}",
+ 106:         "owner_member_id": "{OWNER}", "verifying_key_hex": "{node_key}",
+ 107:         "node_state": "ONLINE", "risk_state": "NORMAL",
+ 108:         "security_tier": "S2", "isolation_class": "CONTAINED",
+ 109:         "key_protection": "K1"
+ 110:       }},
+ 111:       "inventory": {{
+ 112:         "inventory_revision": 1, "observed_at_unix_ms": {observed},
+ 113:         "gpus": [{{ "gpu_id": "{gpu}", "model": "RTX 4070 SUPER",
+ 114:                     "healthy": true, "available_vram_bytes": 12884901888 }}],
+ 115:         "available_cpu_cores": 16, "available_ram_bytes": 34359738368,
+ 116:         "available_workspace_bytes": 107374182400,
+ 117:         "allowed_workload_classes": ["TRAINING"],
+ 118:         "third_party_workloads_opt_in": true
+ 119:       }}
+ 120:     }}"#
+ 121:             )
+ 122:         })
+ 123:         .collect();
+ 124:     let path = dir.join("bootstrap.json");
+ 125:     std::fs::write(
+ 126:         &path,
+ 127:         format!(
+ 128:             "{{\n  \"schema_version\": 1,\n  \"agents\": [\n{}\n  ]\n}}",
+ 129:             agents.join(",\n")
+ 130:         ),
+ 131:     )
+ 132:     .expect("���� ����");
+ 133:     path
+ 134: }
+ 135: 
+ 136: const DECLARATIONS: [&str; 16] = [
+ 137:     "--workload-class", "TRAINING",
+ 138:     "--side-effect-class", "PURE",
+ 139:     "--dataset-sensitivity", "INTERNAL",
+ 140:     "--minimum-security-tier", "S2",
+ 141:     "--minimum-isolation-class", "CONTAINED",
+ 142:     "--minimum-key-protection", "K1",
+ 143:     "--gpu-count", "1",
+ 144:     "--gpu-min-vram-bytes", "8589934592",
+ 145: ];
+ 146: 
+ 147: /// �� Job �� `submit` -> `import-manifest` -> `plan-job` ���� �ø���.
+ 148: fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
+ 149:     let manifest = dir.join(format!("{job_id}.pb"));
+ 150:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+ 151:     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+ 152:     let mut args: Vec<&str> = vec![
+ 153:         "submit", "--job-id", job_id, "--entrypoint", "python",
+ 154:         "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
+ 155:         "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
+ 156:         "--out", manifest.to_str().unwrap(),
+ 157:     ];
+ 158:     args.extend_from_slice(&DECLARATIONS);
+ 159:     let (ok, out) = run_cli(&args);
+ 160:     assert!(ok, "submit ����: {out}");
+ 161: 
+ 162:     let (ok, out) = run_cli(&[
+ 163:         "import-manifest", "--manifest", manifest.to_str().unwrap(),
+ 164:         "--submitter-keyring", keyring.to_str().unwrap(),
+ 165:         "--job-db", db.to_str().unwrap(), "--idempotency-key", idem,
+ 166:         "--i-understand-plaintext-keyring-is-unsafe", "true",
+ 167:     ]);
+ 168:     assert!(ok, "import-manifest ����: {out}");
+ 169: 
+ 170:     let (ok, out) = run_cli(&[
+ 171:         "plan-job", "--job-id", job_id, "--control-db", db.to_str().unwrap(),
+ 172:         "--submitter-keyring", keyring.to_str().unwrap(),
+ 173:         "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
+ 174:         "--i-understand-plaintext-keyring-is-unsafe", "true",
+ 175:     ]);
+ 176:     assert!(ok, "plan-job ����: {out}");
+ 177: }
+ 178: 
+ 179: fn tick(keyring: &Path, db: &Path, extra: &[&str]) -> (bool, String) {
+ 180:     let mut args: Vec<&str> = vec![
+ 181:         "scheduler-tick",
+ 182:         "--control-db", db.to_str().unwrap(),
+ 183:         "--submitter-keyring", keyring.to_str().unwrap(),
+ 184:         "--submitter-member", OWNER,
+ 185:         "--max-snapshot-age-ms", "86400000",
+ 186:         "--best-fit-axes", AXES,
+ 187:         "--coordinator-id", COORDINATOR,
+ 188:         "--coordinator-term", "3",
+ 189:         "--lease-ttl-ms", "600000",
+ 190:         "--lease-renew-after-ms", "300000",
+ 191:         "--lease-max-total-duration-seconds", "86400",
+ 192:         "--i-understand-plaintext-keyring-is-unsafe", "true",
+ 193:     ];
+ 194:     args.extend_from_slice(extra);
+ 195:     run_cli(&args)
+ 196: }
+ 197: 
+ 198: fn job_state(db: &Path, job_id: &str) -> Option<JobState> {
+ 199:     let store = CoordinatorJobStore::open(db).expect("job store");
+ 200:     store.get(job_id).expect("��ȸ").map(|job| job.state)
+ 201: }
+ 202: 
+ 203: /// inventory �� �ְ� Job �ϳ��� ť�� �ø���.
+ 204: fn prepared(dir: &Path, nodes: usize) -> (PathBuf, PathBuf) {
+ 205:     let db = dir.join("control.sqlite3");
+ 206:     let bootstrap = write_bootstrap(dir, nodes);
+ 207:     let (ok, out) = run_cli(&[
+ 208:         "import-inventory",
+ 209:         "--inventory", bootstrap.to_str().unwrap(),
+ 210:         "--inventory-db", db.to_str().unwrap(),
+ 211:     ]);
+ 212:     assert!(ok, "import-inventory ����: {out}");
+ 213:     let keyring = write_keyring(dir);
+ 214:     queue_job(dir, &keyring, &db, JOB_A, "0102030405060708090a0b0c0d0e0f10");
+ 215:     (keyring, db)
+ 216: }
+ 217: 
+ 218: // ������������������������������������������������������������������������������������������������������������������������������������������
+ 219: 
+ 220: /// �ڡ� **��ڰ� �ĺ��ڸ� �� �൵ ������ ��� �����Ѵ�.**
+ 221: #[test]
+ 222: fn a_tick_picks_a_queued_job_and_stages_it_without_operator_identifiers() {
+ 223:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 224:     let (keyring, db) = prepared(dir.path(), 1);
+ 225:     assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+ 226: 
+ 227:     let (ok, output) = tick(&keyring, &db, &[]);
+ 228:     assert!(ok, "tick ����: {output}");
+ 229:     assert!(output.contains("TICK_STAGED"), "����� �ٸ���: {output}");
+ 230:     assert!(output.contains(NODE), "��� ������� �� ���Ѵ�: {output}");
+ 231:     assert!(output.contains("created=true"), "���� ������ �ƴϴ�: {output}");
+ 232:     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+ 233: }
+ 234: 
+ 235: /// �ڡ� **���� Job �� �ٽ� tick �ص� ���� Attempt ��.**
+ 236: ///
+ 237: /// �ð質 ������ �ĺ��ڸ� ����� �� ��° tick ��
+ 238: /// `operation key payload conflict` �� �����ϰų� �� Attempt �� �����.
+ 239: #[test]
+ 240: fn ticking_the_same_job_twice_returns_the_same_attempt() {
+ 241:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 242:     let (keyring, db) = prepared(dir.path(), 1);
+ 243: 
+ 244:     // ���� **��** ���¸� �� �д� ? �̰� ������ �������̴�.
+ 245:     let snapshot_before_tick = dir.path().join("before.sqlite3");
+ 246:     std::fs::copy(&db, &snapshot_before_tick).expect("DB ����");
+ 247: 
+ 248:     let (ok, first) = tick(&keyring, &db, &[]);
+ 249:     assert!(ok, "1ȸ�� ����: {first}");
+ 250:     // �� ��°�� Job �� �̹� STAGING �̹Ƿ� ť���� ������ ? ���޴�.
+ 251:     let (ok, second) = tick(&keyring, &db, &[]);
+ 252:     assert!(ok, "2ȸ�� ����: {second}");
+ 253:     assert!(
+ 254:         second.contains("TICK_IDLE"),
+ 255:         "����� Job �� ���� ť�� �ִ�: {second}"
+ 256:     );
+ 257: 
+ 258:     // �� �׷��� **�ĺ��� ���� ��ü**�� ���� �����ؾ� �Ѵ�.
+ 259:     //
+ 260:     //   �� ó������ `prepared()` �� �ٽ� �ҷ� �� DB �� ����� ���ߴµ�
+ 261:     //     **�װ� ���� �Է��� �ƴϾ���** ? `submit` �� `issued_at` ��
+ 262:     //     ���� �ð��� �־� Manifest ����Ʈ�� �޶�����, �׷���
+ 263:     //     `manifest_hash` -> `plan_id` -> Attempt �� ���� �޶�����.
+ 264:     //     �װ� ������ �ƴ϶� **�ǵ��� ����**�̴�(�ٸ� ��ȹ�̸� �ٸ�
+ 265:     //     Attempt ���� �Ѵ�). �� ������ Ʋ�ȴ�.
+ 266:     //
+ 267:     //   ��¥ "���� �Է�" �� **���� �� DB �� �״�� ����**�ϴ� ���̴�.
+ 268:     let _ = &first;
+ 269:     let replay_db = dir.path().join("replay.sqlite3");
+ 270:     std::fs::copy(&snapshot_before_tick, &replay_db).expect("DB ����");
+ 271:     let (ok, replay) = tick(&keyring, &replay_db, &[]);
+ 272:     assert!(ok, "������ tick ����: {replay}");
+ 273: 
+ 274:     let field = |line: &str, key: &str| -> String {
+ 275:         line.split_whitespace()
+ 276:             .find_map(|t| t.strip_prefix(key).map(str::to_string))
+ 277:             .unwrap_or_else(|| panic!("{key} �� ��¿� ����: {line}"))
+ 278:     };
+ 279:     assert_eq!(
+ 280:         field(&first, "attempt="),
+ 281:         field(&replay, "attempt="),
+ 282:         "���� (job_id, plan_id) �ε� Attempt �� �޶����� ? �ð質 ������ ���"
+ 283:     );
+ 284:     assert_eq!(
+ 285:         field(&first, "lease="),
+ 286:         field(&replay, "lease="),
+ 287:         "���� (job_id, plan_id) �ε� Lease �� �޶�����"
+ 288:     );
+ 289: }
+ 290: 
+ 291: /// ť�� ��� **������ �ƴϴ�.**
+ 292: ///
+ 293: /// ������ �̰� ���з� ���� ���� ���� ���°� ��ַ� ���δ�.
+ 294: #[test]
+ 295: fn an_empty_queue_is_idle_not_an_error() {
+ 296:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 297:     let db = dir.path().join("control.sqlite3");
+ 298:     let bootstrap = write_bootstrap(dir.path(), 1);
+ 299:     let (ok, out) = run_cli(&[
+ 300:         "import-inventory",
+ 301:         "--inventory", bootstrap.to_str().unwrap(),
+ 302:         "--inventory-db", db.to_str().unwrap(),
+ 303:     ]);
+ 304:     assert!(ok, "import-inventory ����: {out}");
+ 305:     let keyring = write_keyring(dir.path());
+ 306: 
+ 307:     let (ok, output) = tick(&keyring, &db, &[]);
+ 308:     assert!(ok, "�� ť�� ������ �ٷ��: {output}");
+ 309:     assert!(output.contains("TICK_IDLE"), "����� �ٸ���: {output}");
+ 310: }
+ 311: 
+ 312: /// �ڡ� **ã�� ���� ? �ĺ� ������ ���� ������ �𸥴�.**
+ 313: ///
+ 314: /// ��尡 **��**�ε� �� ��° tick �� �����Ѵ�:
+ 315: ///
+ 316: /// ```text
+ 317: /// TICK_REFUSED: node is already reserved: node=node-tick-a, ...
+ 318: /// ```
+ 319: ///
+ 320: /// `evaluate_eligibility`/`rank_best_fit` �� **inventory ��** ����.
+ 321: /// ������ staging ������� �ٸ� ���̺��� �ְ�, ���� �մ� ���� ����.
+ 322: /// �׷��� best-fit �� �� ���� ��带 ��� ���� �������� ������ ?
+ 323: /// **��� �ִ� ��尡 �־ �׷���.**
+ 324: ///
+ 325: /// �������� ������ ����(���� ������ �ߺ��� ���´�). �׷��� **������
+ 326: /// ������ ť �� �տ��� ���� �����** ? �̰� �� ����ȭ�� ������ ����
+ 327: /// �����̴�.
+ 328: ///
+ 329: /// �� ��ġ���� ������ �ʿ��ϴ� ? ����� ��带 `pool_snapshot()` ����
+ 330: ///   ���°�, hard-filter ���� �Ÿ��°�, �ƴϸ� orchestrate �� ������
+ 331: ///   �ĺ��� ��õ��ϴ°�. ���� �ǹ̰� �ٸ��� �Թ��� ���� ����.
+ 332: ///   **�׷��� ���� ��ġ�� �ʰ�, ���� ������ �׽�Ʈ�� �����Ѵ�** ?
+ 333: ///   �޿�� �� �׽�Ʈ�� �����ϸ� ������ ���� ��ġ��� �˸���
+ 334: ///   (`runtime-linux` �� "Ż���� �����ϱ⸦ ����ϴ� �׽�Ʈ" �� ����
+ 335: ///   ��ġ).
+ 336: #[test]
+ 337: fn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {
+ 338:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 339:     let (keyring, db) = prepared(dir.path(), 2);
+ 340:     // �� ��° Job �� ���̾� ť�� �ø���.
+ 341:     queue_job(dir.path(), &keyring, &db, JOB_B, "1102030405060708090a0b0c0d0e0f10");
+ 342: 
+ 343:     let (ok, first) = tick(&keyring, &db, &[]);
+ 344:     assert!(ok, "1ȸ�� ����: {first}");
+ 345:     assert!(
+ 346:         first.contains(&format!("job_id={JOB_A}")),
+ 347:         "���� ���� Job �� �� �����: {first}"
+ 348:     );
+ 349: 
+ 350:     // �� ��尡 ���ε��� �� ��°�� ������ ? �� ������ �����̴�.
+ 351:     let (ok, second) = tick(&keyring, &db, &[]);
+ 352:     assert!(
+ 353:         !ok,
+ 354:         "������ �ĺ� ���ÿ� �ݿ��Ǳ� �����ߴ� ? �� �׽�Ʈ�� �� ������ ���� ���Ķ�: {second}"
+ 355:     );
+ 356:     assert!(
+ 357:         second.contains("already reserved"),
+ 358:         "���� ������ ������ �ƴϴ�: {second}"
+ 359:     );
+ 360: 
+ 361:     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+ 362:     assert_eq!(
+ 363:         job_state(&db, JOB_B),
+ 364:         Some(JobState::Queued),
+ 365:         "�� ��° Job �� ť�� ���ƾ� �Ѵ�"
+ 366:     );
+ 367: }
+ 368: 
+ 369: /// �ڡ� **ť�� �ʹ� ���� �־����� �������� �ʴ´�.**
+ 370: ///
+ 371: /// Lease �߱� �ð��� `queued_at` ���� ���Ƿ�, TTL �� ª���� ����
+ 372: /// �����ص� **�̹� ����� Lease** �� �ְ� �ȴ�. �װ� �ָ� Agent ��
+ 373: /// ���ڸ��� �ź��Ѵ� ? ������ ������ �ʰ� �ź� ������ ���Ѵ�.
+ 374: #[test]
+ 375: fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
+ 376:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 377:     let (keyring, db) = prepared(dir.path(), 1);
+ 378: 
+ 379:     // �ڡ� **ó�� �� �� �׽�Ʈ�� ������ ������ ��� �־���.**
+ 380:     //
+ 381:     //   `--lease-ttl-ms 1` �� ��µ� `--lease-renew-after-ms` �� �⺻
+ 382:     //   300000 �� ���� �־���. ���� ������ �˻簡 **����** �����Ƿ�
+ 383:     //   (`scheduler_tick.rs:85` �� `:128` ���� ���̴�) �ű⼭ �ɷȰ�,
+ 384:     //   �� �ܾ��� "�۾ƾ� �Ѵ�" �� �޾� �༭ **����ߴ�.**
+ 385:     //   �� �����̼� T3(ť ���� �˻縦 ��°�� ����)�� �� ������ ����
+ 386:     //   �������� �˾Ҵ� ? ����� ���� �ϳ��� �� ��� �־���.
+ 387:     //
+ 388:     //   ���� ���� �˻縦 **����ϴ�** ���� �ش�(1 < 2).
+ 389:     let (ok, output) = tick(
+ 390:         &keyring,
+ 391:         &db,
+ 392:         &["--lease-ttl-ms", "2", "--lease-renew-after-ms", "1"],
+ 393:     );
+ 394:     assert!(!ok, "����� Lease �� �����ߴ�: {output}");
+ 395:     assert!(
+ 396:         output.contains("�ʹ� ���� �־���"),
+ 397:         "ť ���̰� �ƴ϶� �ٸ� ������ �ɷȴ�: {output}"
+ 398:     );
+ 399:     assert_eq!(
+ 400:         job_state(&db, JOB_A),
+ 401:         Some(JobState::Queued),
+ 402:         "�ź��ߴµ� ���°� �ٲ����"
+ 403:     );
+ 404: 
+ 405:     // ���� ? �˳��� TTL �̸� ����ȴ�. ������ "�׻� �ź�" �ε� ����Ѵ�.
+ 406:     //
+ 407:     // �ڡ� **�� ������ ��ü�� �ν��ߴ�** (2026-09-07 ���� �˼� ����).
+ 408:     //   `assert!(ok)` �� �ô�. �˼��� �ݷʸ� ����� ������ ? ������
+ 409:     //   ���� ��η� �� ���� `TICK_IDLE` �� ���� ��ȯ�ϵ��� �ٲ�
+ 410:     //   **���� �ڵ�� 0 �̶� �� �ܾ��� ����Ѵ�.** �׷��� "�׻� �ź�"
+ 411:     //   ȸ�ʹ� ��Ƶ� **"�ƹ��͵� ���� �� ��" ȸ�ʹ� �� ��´�.**
+ 412:     //
+ 413:     //   �������� �δ� ������ �ٷ� �� �� ��°�ε�, �װ� �� ��� �־���.
+ 414:     let (ok, output) = tick(&keyring, &db, &[]);
+ 415:     assert!(ok, "�˳��� TTL ������ �ź��ߴ�: {output}");
+ 416:     assert!(
+ 417:         output.contains("TICK_STAGED"),
+ 418:         "�����ߴٴµ� ������ �� �ߴ� ? TICK_IDLE �� ������ �� �ִ�: {output}"
+ 419:     );
+ 420:     assert_eq!(
+ 421:         job_state(&db, JOB_A),
+ 422:         Some(JobState::Staging),
+ 423:         "TICK_STAGED ��� ����µ� Job ���°� �� �ٲ����"
+ 424:     );
+ 425: }
+ 426: 
+ 427: /// �ڡ� **Lease �߱� �ð��� ���� `queued_at` �ΰ� ? ����� ������ ���.**
+ 428: ///
+ 429: /// �� ����� �����߽��ε� **�ƹ� �׽�Ʈ�� �� ��� �־���** ? ���
+ 430: /// �׽�Ʈ�� attempt/lease **�ĺ���**�� ���ϰ�, �ĺ��ڴ� �ð�����
+ 431: /// �������� �����Ƿ� �߱� �ð��� �ð�� �ٲ㵵 ����ߴ�(�����̼� T2).
+ 432: ///
+ 433: /// ���� ����Ҹ� ���� ���� ���� ����.
+ 434: #[test]
+ 435: fn the_stored_lease_is_issued_at_the_moment_the_job_entered_the_queue() {
+ 436:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 437:     let (keyring, db) = prepared(dir.path(), 1);
+ 438: 
+ 439:     let queued_at = {
+ 440:         let store = CoordinatorJobStore::open(&db).expect("job store");
+ 441:         store
+ 442:             .get(JOB_A)
+ 443:             .expect("��ȸ")
+ 444:             .expect("Job")
+ 445:             .queued_at_unix_ms
+ 446:             .expect("queued_at")
+ 447:     };
+ 448: 
+ 449:     let (ok, output) = tick(&keyring, &db, &[]);
+ 450:     assert!(ok, "tick ����: {output}");
+ 451:     let lease_id = output
+ 452:         .split_whitespace()
+ 453:         .find_map(|t| t.strip_prefix("lease="))
+ 454:         .expect("��¿� lease= �� ����")
+ 455:         .to_string();
+ 456: 
+ 457:     let stored = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db)
+ 458:         .expect("lease store")
+ 459:         .get(&lease_id)
+ 460:         .expect("��ȸ")
+ 461:         .expect("Lease");
+ 462: 
+ 463:     assert_eq!(
+ 464:         stored.issued_at_unix_ms, queued_at,
+ 465:         "�߱� �ð��� ť ���� �ð��� �ƴϴ� ? �ð踦 �о���"
+ 466:     );
+ 467:     assert_eq!(
+ 468:         stored.expires_at_unix_ms,
+ 469:         queued_at + 600_000,
+ 470:         "���ᰡ queued_at + TTL �� �ƴϴ�"
+ 471:     );
+ 472:     assert_eq!(
+ 473:         stored.renew_after_unix_ms,
+ 474:         queued_at + 300_000,
+ 475:         "���� ������ queued_at + �������� �ƴϴ�"
+ 476:     );
+ 477: }
+ 478: 
+ 479: /// ���� ������ ���� �ڸ� �޾� ���� �ʴ´�.
+ 480: #[test]
+ 481: fn a_renew_offset_at_or_after_the_ttl_is_refused() {
+ 482:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 483:     let (keyring, db) = prepared(dir.path(), 1);
+ 484: 
+ 485:     for renew in ["600000", "700000", "0"] {
+ 486:         let (ok, output) = tick(&keyring, &db, &["--lease-renew-after-ms", renew]);
+ 487:         assert!(!ok, "--lease-renew-after-ms {renew} �� �޾Ƶ鿴��: {output}");
+ 488:         assert!(output.contains("�۾ƾ� �Ѵ�"), "������ �� ���Ѵ�: {output}");
+ 489:         assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+ 490:     }
+ 491: }
+ 492: 
+ 493: /// �񿵼� DB �� �ź��Ѵ�.
+ 494: #[test]
+ 495: fn a_non_durable_control_db_is_refused() {
+ 496:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 497:     let keyring = write_keyring(dir.path());
+ 498:     for label in [":memory:", ""] {
+ 499:         let (ok, output) = run_cli(&[
+ 500:             "scheduler-tick",
+ 501:             "--control-db", label,
+ 502:             "--submitter-keyring", keyring.to_str().unwrap(),
+ 503:             "--submitter-member", OWNER,
+ 504:             "--max-snapshot-age-ms", "86400000",
+ 505:             "--best-fit-axes", AXES,
+ 506:             "--coordinator-id", COORDINATOR,
+ 507:             "--coordinator-term", "3",
+ 508:             "--lease-ttl-ms", "600000",
+ 509:             "--lease-renew-after-ms", "300000",
+ 510:             "--lease-max-total-duration-seconds", "86400",
+ 511:             "--i-understand-plaintext-keyring-is-unsafe", "true",
+ 512:         ]);
+ 513:         assert!(!ok, "{label:?} �� �޾Ƶ鿴��: {output}");
+ 514:         assert!(
+ 515:             output.contains("������ �ƴϴ�"),
+ 516:             "{label:?}: ������ �� ���Ѵ�: {output}"
+ 517:         );
+ 518:     }
+ 519: }
+ 520: 
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; paths=['crates/cli/src/scheduler_tick.rs','crates/cli/tests/scheduler_tick.rs']; print(json.dumps({p:pathlib.Path(p).read_text(encoding='utf-8') for p in paths}))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1390ms:
+{"crates/cli/src/scheduler_tick.rs": "//! `gputeer scheduler-tick` \u2014 \ud050\uc5d0\uc11c **\ud55c \uac74**\uc744 \uaebc\ub0b4 \uc608\uc57d\uae4c\uc9c0 \uc9c4\ud589\ud55c\ub2e4.\n//!\n//! ```text\n//! plan-job        \uc6b4\uc601\uc790\uac00 Job \ud558\ub098\ub97c \ud050\uc5d0 \uc62c\ub9b0\ub2e4              (QUEUED)\n//! scheduler-tick  \ud050\ub97c \ubcf4\uace0 \uc2a4\uc2a4\ub85c \uace8\ub77c \uc608\uc57d\ud55c\ub2e4               (STAGING)\n//! ```\n//!\n//! # \u2605 \uc65c \"\ub370\ubaac\" \uc774 \uc544\ub2c8\ub77c \"\ud55c \ubc88(tick)\" \uc778\uac00\n//!\n//! \ub8e8\ud504\ub294 \uc27d\uace0 **\ud2c0\ub9ac\uae30\ub3c4 \uc27d\ub2e4** \u2014 \uc2e4\ud328\ub97c \uc5b4\ub5bb\uac8c \ub2e4\ub8f0\uc9c0, \uc5bc\ub9c8\ub098 \uc790\uc8fc\n//! \ub3cc\uc9c0, \uc5b8\uc81c \uba48\ucd9c\uc9c0\uac00 \uc804\ubd80 \uc815\ucc45\uc774\uace0 \uc774 \uc800\uc7a5\uc18c\uc5d0 \uadf8 \uaddc\ubc94\uc774 \uc5c6\ub2e4.\n//! \ud55c \ubc88 \ub3c4\ub294 \uac83\ubd80\ud130 \uc815\uc9c1\ud558\uac8c \ub9cc\ub4e4\uba74, \ub8e8\ud504\ub294 \uadf8\uac83\uc744 \ubc18\ubcf5\ud558\ub294 \uc587\uc740\n//! \uaecd\ub370\uae30\uac00 \ub41c\ub2e4. \ubc18\ub300\ub85c \ud558\uba74 \uaecd\ub370\uae30\uc758 \uc815\ucc45\uc774 \uc54c\ub9f9\uc774\uc758 \uacb0\ud568\uc744 \uac00\ub9b0\ub2e4.\n//!\n//! # \u2605\u2605 \uc2dd\ubcc4\uc790\ub97c **\uc800\uc7a5\ub41c \uc0ac\uc2e4\uc5d0\uc11c \uc720\ub3c4\ud55c\ub2e4**\n//!\n//! `stage-job` \uc740 \uc6b4\uc601\uc790\uac00 `--attempt-id`\u00b7`--lease-id`\u00b7`--operation-key`\n//! \uc640 Lease \uc2dc\uac01 \uc14b\uc744 \uc9c1\uc811 \uc900\ub2e4. \uc0ac\ub78c\uc774 \ubd80\ub974\uba74 \uadf8\uac8c \ub9de\ub2e4 \u2014 \uc9c0\uc5b4\ub0bc \uc218\n//! \uc5c6\ub294 \uac83\uc744 \uc9c0\uc5b4\ub0b4\uc9c0 \uc54a\ub294\ub2e4.\n//!\n//! \uadf8\ub7f0\ub370 **\uc2a4\uc2a4\ub85c \ub3c4\ub294 \uac83\uc740 \uadf8 \uac12\uc744 \uc5b4\ub514\uc120\uac00 \ub9cc\ub4e4\uc5b4\uc57c \ud55c\ub2e4.** \uc2dc\uacc4\ub098\n//! \ub09c\uc218\ub85c \ub9cc\ub4e4\uba74 \uc7ac\uc2dc\ub3c4\ub9c8\ub2e4 \ub2ec\ub77c\uc9c0\uace0, \uadf8\ub7ec\uba74 \uc800\uc7a5\uc18c\uc758 operation key \uac00\n//! \uc57d\uc18d\ud558\ub294 \uba71\ub4f1\uc774 **\uac70\uc9d3\ub9d0**\uc774 \ub41c\ub2e4(`stage-job` \uc5d0\uc11c \ud1b5\ud569 \ud14c\uc2a4\ud2b8\uac00\n//! \uc815\ud655\ud788 \uadf8\uac78 \uc7a1\uc558\ub2e4).\n//!\n//! \uadf8\ub798\uc11c \uc804\ubd80 `(job_id, plan_id)` \uc5d0\uc11c \uc720\ub3c4\ud55c\ub2e4:\n//!\n//! ```text\n//! attempt_id      BLAKE3(\"attempt\", job_id, plan_id) -> 26\uc790\n//! lease_id        BLAKE3(\"lease\",   job_id, plan_id) -> 26\uc790\n//! operation_key   BLAKE3(\"operation\", job_id, plan_id)[..16]\n//! Lease \ubc1c\uae09 \uc2dc\uac01  job.queued_at_unix_ms  (\uc800\uc7a5\ub41c \uc0ac\uc2e4)\n//! Lease \uac31\uc2e0\u00b7\ub9cc\ub8cc  queued_at + \uc6b4\uc601\uc790\uac00 \uc900 \uc624\ud504\uc14b\n//! ```\n//!\n//! \uac19\uc740 Job \uc744 \uac19\uc740 \uacc4\ud68d\uc73c\ub85c \ub2e4\uc2dc tick \ud558\uba74 **\ubc14\uc774\ud2b8\uae4c\uc9c0 \uac19\uc740 \uc694\uccad**\uc774\n//! \ub418\uace0, \uc800\uc7a5\uc18c\uac00 \ucd5c\ucd08 \uacb0\uacfc\ub97c \uadf8\ub300\ub85c \ub3cc\ub824\uc900\ub2e4.\n//!\n//! \u2605 **`plan_id` \ub294 \uc624\ub298 \ubc29\uc5b4\uc77c \ubfd0 \uc9d0\uc744 \uc9c0\uace0 \uc788\uc9c0 \uc54a\ub2e4 \u2014 \ucc98\uc74c\uc5d0\n//!   \uc4f4 \uc124\uba85\uc774 \uacfc\uc7a5\uc774\uc5c8\ub2e4.**\n//!\n//!   \uc6d0\ub798 \uc774\ub807\uac8c \uc801\uc5c8\ub2e4: \"inventory \uac00 \ubc14\ub00c\uc5b4 \uacc4\ud68d\uc774 \ub2ec\ub77c\uc9c0\uba74 \ub2e4\ub978\n//!   Attempt \uac00 \ub098\uc624\ubbc0\ub85c \ub0a1\uc740 \uacc4\ud68d\uc758 \uc608\uc57d\uc744 \uc7ac\uc0ac\uc6a9\ud558\uc9c0 \uc54a\ub294\ub2e4.\"\n//!   \uadf8 \uc0c1\ud669\uc744 **\ud14c\uc2a4\ud2b8\ub85c \ub9cc\ub4e4\ub824\ub2e4 \ubabb \ub9cc\ub4e4\uc5c8\ub2e4** \u2014 \uc800\uc7a5\uc18c\uac00 \ub354 \uc55e\uc5d0\uc11c\n//!   \ub9c9\ub294\ub2e4:\n//!\n//!   ```text\n//!   PLAN_REFUSED: queued Job plan conflict: stored=e4b3f8a4..., requested=18b096ec...\n//!   ```\n//!\n//!   QUEUED \uc778 Job \uc758 \uacc4\ud68d\uc740 **\ubc14\ub00c\uc9c0 \uc54a\ub294\ub2e4.** \uadf8\ub7ec\ub2c8 \uc624\ub298 `plan_id`\n//!   \ub294 `job_id` \ub85c \uc774\ubbf8 \uc815\ud574\uc9c0\uace0, \uc720\ub3c4\uc5d0 \ub123\uc5b4\ub3c4 \uac12\uc774 \ub2ec\ub77c\uc9c8 \uc77c\uc774\n//!   \uc5c6\ub2e4. \ubba4\ud14c\uc774\uc158\uc73c\ub85c \ud1b5\uc9f8\ub85c \ube7c\ub3c4 \ud14c\uc2a4\ud2b8\uac00 \ud558\ub098\ub3c4 \uc548 \uae68\uc9c4\ub2e4 \u2014\n//!   **\uc228\uae30\uc9c0 \uc54a\uace0 \uc801\ub294\ub2e4.**\n//!\n//!   \uadf8\ub798\ub3c4 \ub0a8\uaca8 \ub450\ub294 \uc774\uc720: \uc800\uc7a5\uc18c\uac00 \uc5b8\uc820\uac00 \uc7ac\uacc4\ud68d\uc744 \ud5c8\uc6a9\ud558\uba74 \uadf8\ub54c\ub294\n//!   \uc9d0\uc744 \uc9c0\uac8c \ub418\uace0, \uadf8\ub54c \ube7c\uba39\ub294 \uac83\ubcf4\ub2e4 \uc9c0\uae08 \uc788\ub294 \ud3b8\uc774 \uc548\uc804\ud558\ub2e4.\n//!   \ub2e4\ub9cc **\uc9c0\uae08 \ubb34\uc5b8\uac00\ub97c \ub9c9\uace0 \uc788\ub2e4\uace0 \uc4f0\uc9c0 \uc54a\ub294\ub2e4.**\n//!\n//! \u2605 26\uc790\ub294 **ULID \ubaa8\uc591\uc77c \ubfd0 ULID \uac00 \uc544\ub2c8\ub2e4.** \uc2dc\uac04 \uc21c\uc11c\uac00 \uc5c6\ub2e4.\n//!   `fenced_operation.rs` \uac00 \uae38\uc774 26 \uc744 \uc694\uad6c\ud558\ubbc0\ub85c \ubaa8\uc591\uc744 \ub9de\ucdc4\uace0,\n//!   \uc2dc\uac04 \uc815\ub82c\uc774 \ud544\uc694\ud574\uc9c0\uba74 \uadf8\ub54c \uc9c4\uc9dc ULID \ub97c \ubc1c\uae09\ud574\uc57c \ud55c\ub2e4.\n//!\n//! # \uc774 \uba85\ub839\uc774 \ud558\uc9c0 \uc54a\ub294 \uac83\n//!\n//! ```text\n//! \uc548 \ud55c\ub2e4   \ubc18\ubcf5            \ud55c \ubc88 \ub3c8\ub2e4. \ub8e8\ud504\ub294 \ubcc4\ub3c4 \uc870\uac01\uc774\ub2e4\n//! \uc548 \ud55c\ub2e4   \uc5ec\ub7ec \uac74 \ucc98\ub9ac    \ud050\uc758 **\ub9e8 \uc55e \ud558\ub098**\ub9cc \ubcf8\ub2e4\n//! \uc548 \ud55c\ub2e4   Grant \ubc1c\uae09\u00b7\uc804\uc1a1  issue-grant / coordinator-stub \uc758 \uc77c\uc774\ub2e4\n//! \uc548 \ud55c\ub2e4   \uc2e4\ud328\ud55c Job \uc815\ub9ac  QUEUED->FAILED \ud310\uc815\uc740 \ubcc4\ub3c4 \uacbd\ub85c\ub2e4\n//! ```\n\nuse std::collections::BTreeMap;\n\nuse gputeer_coordinator::inventory_store::CoordinatorInventoryStore;\nuse gputeer_coordinator::job_store::CoordinatorJobStore;\nuse gputeer_coordinator::manifest_requirements::job_requirements_from_manifest;\nuse gputeer_coordinator::orchestrate::{\n    orchestrate_placement_to_staging, PlacementToStagingInput, PlacementToStagingOutcome,\n    StagingIssuanceInput,\n};\nuse gputeer_coordinator::staging_store::CoordinatorStagingStore;\nuse gputeer_crypto::{Ed25519Verifier, PersistentKeyring, PlaintextPolicy};\nuse gputeer_protocol::signing::{verify, NoReplayCheck};\nuse gputeer_scheduler::{BestFitPolicy, FitAxis, Policy};\n\n/// `gputeer scheduler-tick` \uc9c4\uc785\uc810.\npub fn run(args: &[String]) -> Result<String, String> {\n    let flags = parse_flags(args)?;\n\n    let control_db = require(&flags, \"--control-db\")?;\n    let keyring_path = require(&flags, \"--submitter-keyring\")?;\n    let submitter_member = require(&flags, \"--submitter-member\")?;\n    let max_snapshot_age_ms = u64_flag(&flags, \"--max-snapshot-age-ms\")?;\n    let best_fit_policy = parse_axes(require(&flags, \"--best-fit-axes\")?)?;\n    let coordinator_id = require(&flags, \"--coordinator-id\")?;\n    let coordinator_term = u64_flag(&flags, \"--coordinator-term\")?;\n    let lease_ttl_ms = u64_flag(&flags, \"--lease-ttl-ms\")?;\n    let lease_renew_after_ms = u64_flag(&flags, \"--lease-renew-after-ms\")?;\n    let max_total_duration_seconds = u64_flag(&flags, \"--lease-max-total-duration-seconds\")?;\n    if lease_renew_after_ms == 0 || lease_renew_after_ms >= lease_ttl_ms {\n        return Err(format!(\n            \"--lease-renew-after-ms({lease_renew_after_ms}) \ub294 0 \ubcf4\ub2e4 \ud06c\uace0 --lease-ttl-ms({lease_ttl_ms}) \ubcf4\ub2e4 \uc791\uc544\uc57c \ud55c\ub2e4 \u2014 \uac31\uc2e0 \uc2dc\uc810\uc774 \ub9cc\ub8cc \ub4a4\uba74 \uac31\uc2e0\ud560 \uae30\ud68c\uac00 \uc5c6\ub2e4\"\n        ));\n    }\n\n    // \u2605 \uc2e0\uc120\ub3c4 \ud310\uc815\uc5d0 \uc4f0\ub294 \"\uc9c0\uae08\". durable \uae30\ub85d\uc73c\ub85c\ub294 \uc548 \uc4f4\ub2e4.\n    let now_unix_ms = now_unix_ms();\n\n    let jobs = CoordinatorJobStore::open(control_db)\n        .map_err(|e| format!(\"job store \ub97c \uc5f4\uc9c0 \ubabb\ud588\ub2e4({control_db}): {e}\"))?;\n    if !jobs.is_durable() {\n        return Err(format!(\n            \"--control-db \uac00 \uc601\uc18d\uc774 \uc544\ub2c8\ub2e4({control_db:?}) \u2014 \uc608\uc57d\uc774 \ud504\ub85c\uc138\uc2a4\uc640 \ud568\uaed8 \uc0ac\ub77c\uc9c4\ub2e4\"\n        ));\n    }\n\n    // \u2500\u2500 \ud050\uc758 \ub9e8 \uc55e \ud558\ub098 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    //\n    // `list_queued()` \ub294 `(queued_at, job_id)` \uc21c\uc758 \uacb0\uc815\uc801 FIFO \ub2e4.\n    let queued = jobs\n        .list_queued()\n        .map_err(|e| format!(\"\ud050 \uc870\ud68c \uc2e4\ud328: {e}\"))?;\n    let Some(job) = queued.into_iter().next() else {\n        // \u2605 \ube48 \ud050\ub294 **\uc624\ub958\uac00 \uc544\ub2c8\ub2e4.** \ub8e8\ud504\uac00 \uc774\uac78 \uc2e4\ud328\ub85c \uc138\uba74 \uc815\uc0c1\n        //   \uc720\ud734 \uc0c1\ud0dc\uac00 \uc7a5\uc560\ub85c \ubcf4\uc778\ub2e4.\n        return Ok(\"TICK_IDLE \ud050\uac00 \ube44\uc5c8\ub2e4\".to_string());\n    };\n    let job_id = job.job_id.clone();\n    let plan_id = job\n        .plan_id\n        .clone()\n        .ok_or_else(|| format!(\"TICK_REFUSED: {job_id} \uac00 QUEUED \uc778\ub370 plan_id \uac00 \uc5c6\ub2e4\"))?;\n    let queued_at = job.queued_at_unix_ms.ok_or_else(|| {\n        format!(\"TICK_REFUSED: {job_id} \uac00 QUEUED \uc778\ub370 queued_at \uc774 \uc5c6\ub2e4\")\n    })?;\n\n    // \u2500\u2500 Lease \uc2dc\uac01\uc744 \uc800\uc7a5\ub41c \uc0ac\uc2e4\uc5d0\uc11c \uc720\ub3c4\ud55c\ub2e4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    //\n    // \u2605 `queued_at` \uc744 \ubc1c\uae09 \uc2dc\uac01\uc73c\ub85c \uc4f4\ub2e4. \uc800\uc7a5\uc18c\uac00 \"Lease \ubc1c\uae09 \uc2dc\uac01\uc740\n    //   \ud050 \uc9c4\uc785\ubcf4\ub2e4 \uc55e\uc124 \uc218 \uc5c6\ub2e4\" \uace0 \uc694\uad6c\ud558\ub294\ub370, **\uac19\uc740 \uac12\uc774\uba74 \uadf8\n    //   \uacbd\uacc4\ub97c \uc815\ud655\ud788 \ub9cc\uc871**\ud558\uba74\uc11c\ub3c4 \uc2dc\uacc4\ub97c \uc548 \uc77d\ub294\ub2e4.\n    let expires_at = queued_at.saturating_add(lease_ttl_ms);\n    if expires_at <= now_unix_ms {\n        return Err(format!(\n            \"TICK_REFUSED: {job_id} \ub294 \ud050\uc5d0 \ub108\ubb34 \uc624\ub798 \uc788\uc5c8\ub2e4(\ud050 \uc9c4\uc785 {queued_at}, \uc774 \uc124\uc815\uc758 Lease \ub9cc\ub8cc {expires_at}, \uc9c0\uae08 {now_unix_ms}) \u2014 \uc9c0\uae08 \uc608\uc57d\ud558\uba74 \uc774\ubbf8 \ub9cc\ub8cc\ub41c Lease \ub97c \uc900\ub2e4\"\n        ));\n    }\n\n    let binding = jobs\n        .get_manifest_binding(&job_id)\n        .map_err(|e| format!(\"Manifest binding \uc870\ud68c \uc2e4\ud328: {e}\"))?\n        .ok_or_else(|| format!(\"TICK_REFUSED: {job_id} \uc5d0 \uc800\uc7a5\ub41c Manifest \uac00 \uc5c6\ub2e4\"))?;\n    drop(jobs);\n\n    // \u2500\u2500 \uc800\uc7a5\ub41c Manifest \ub97c \uc9c0\uae08 \ub2e4\uc2dc \uac80\uc99d\ud55c\ub2e4 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let policy = if flags\n        .get(\"--i-understand-plaintext-keyring-is-unsafe\")\n        .map(String::as_str)\n        == Some(\"true\")\n    {\n        eprintln!(\n            \"\uacbd\uace0: \ud3c9\ubb38(K0) \uc81c\ucd9c\uc790 keyring \uc744 \ud5c8\uc6a9\ud588\ub2e4 \u2014 \uc774 \ud30c\uc77c\uc744 \uc4f8 \uc218 \uc788\ub294 \uc0ac\ub78c\uc740 \uc784\uc758\uc758 \uacf5\uac1c\ud0a4\ub97c \uc2e0\ub8b0 \ubaa9\ub85d\uc5d0 \ub123\uc744 \uc218 \uc788\ub2e4\"\n        );\n        PlaintextPolicy::Allow\n    } else {\n        PlaintextPolicy::Reject\n    };\n    let keyring = PersistentKeyring::load(keyring_path, policy)\n        .map_err(|e| format!(\"\uc81c\ucd9c\uc790 keyring \uc744 \uc5f4\uc9c0 \ubabb\ud588\ub2e4({keyring_path}): {e:?}\"))?;\n    let verified = verify(\n        &binding.manifest,\n        1,\n        &Ed25519Verifier::new(&keyring),\n        now_unix_ms,\n        &mut NoReplayCheck,\n    )\n    .map_err(|e| format!(\"TICK_REFUSED: \uc800\uc7a5\ub41c Manifest \ub97c \uc9c0\uae08 \ub2e4\uc2dc \uac80\uc99d\ud558\uc9c0 \ubabb\ud588\ub2e4: {e:?}\"))?;\n    let job_requirements = job_requirements_from_manifest(&verified, submitter_member)\n        .map_err(|e| format!(\"TICK_REFUSED: {e}\"))?;\n\n    // \u2500\u2500 \uc608\uc57d \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    let mut inventory = CoordinatorInventoryStore::open(control_db)\n        .map_err(|e| format!(\"inventory store \ub97c \uc5f4\uc9c0 \ubabb\ud588\ub2e4({control_db}): {e}\"))?;\n    let mut staging = CoordinatorStagingStore::open(control_db)\n        .map_err(|e| format!(\"staging store \ub97c \uc5f4\uc9c0 \ubabb\ud588\ub2e4({control_db}): {e}\"))?;\n\n    let attempt_id = derive_id(\"attempt\", &job_id, &plan_id);\n    let lease_id = derive_id(\"lease\", &job_id, &plan_id);\n\n    let outcome = orchestrate_placement_to_staging(\n        &mut inventory,\n        &mut staging,\n        &PlacementToStagingInput {\n            job_id: job_id.clone(),\n            job_requirements,\n            hard_filter_policy: Policy {\n                maximum_snapshot_age_ms: max_snapshot_age_ms,\n            },\n            best_fit_policy,\n            evaluated_at_unix_ms: now_unix_ms,\n            issuance: StagingIssuanceInput {\n                operation_key: derive_operation_key(&job_id, &plan_id),\n                attempt_id: attempt_id.clone(),\n                lease_id: lease_id.clone(),\n                issuing_coordinator_id: coordinator_id.to_string(),\n                coordinator_term,\n                issued_at_unix_ms: queued_at,\n                renew_after_unix_ms: queued_at.saturating_add(lease_renew_after_ms),\n                expires_at_unix_ms: expires_at,\n                max_total_duration_seconds,\n            },\n        },\n    )\n    .map_err(|e| format!(\"TICK_REFUSED: {e}\"))?;\n\n    match outcome {\n        PlacementToStagingOutcome::NoEligible { eligibility } => {\n            let mut lines = vec![format!(\n                \"TICK_REFUSED: {job_id} \uc5d0 \ub9de\ub294 \ub178\ub4dc\uac00 \uc5c6\ub2e4 \u2014 {} \uac1c \ud6c4\ubcf4\ub97c \ubd24\ub2e4\",\n                eligibility.rejected.len()\n            )];\n            for rejected in &eligibility.rejected {\n                lines.push(format!(\n                    \"  {} \u2014 {}\",\n                    rejected.node_id,\n                    rejected\n                        .reasons\n                        .iter()\n                        .map(|r| format!(\"{r:?}\"))\n                        .collect::<Vec<_>>()\n                        .join(\", \")\n                ));\n            }\n            Err(lines.join(\"\\n\"))\n        }\n        PlacementToStagingOutcome::Staged {\n            selected_node_id,\n            selected_gpu_ids,\n            stage,\n            ..\n        } => Ok(format!(\n            \"TICK_STAGED job_id={job_id} plan={plan_id} node={selected_node_id} gpus=[{}] attempt={} lease={} fence={} created={}\",\n            selected_gpu_ids.join(\",\"),\n            stage.attempt.attempt_id,\n            stage.lease.lease_id,\n            stage.lease.fence_epoch,\n            stage.created\n        )),\n    }\n}\n\n/// Crockford base32 \u2014 ULID \uac00 \uc4f0\ub294 \uc54c\ud30c\ubcb3\uc774\ub2e4(`I`\u00b7`L`\u00b7`O`\u00b7`U` \uc5c6\uc74c).\nconst CROCKFORD: &[u8; 32] = b\"0123456789ABCDEFGHJKMNPQRSTVWXYZ\";\n\n/// `(kind, job_id, plan_id)` \uc5d0\uc11c **26\uc790 \uc2dd\ubcc4\uc790**\ub97c \uacb0\uc815\uc801\uc73c\ub85c \ub9cc\ub4e0\ub2e4.\n///\n/// \u2605 **ULID \ubaa8\uc591\uc77c \ubfd0 ULID \uac00 \uc544\ub2c8\ub2e4** \u2014 \uc2dc\uac04 \uc21c\uc11c\uac00 \uc5c6\ub2e4.\n///   `fenced_operation.rs` \uac00 \uae38\uc774 26 \uc744 \uc694\uad6c\ud574\uc11c \ubaa8\uc591\uc744 \ub9de\ucdc4\ub2e4.\n///   \uc2dc\uac04 \uc815\ub82c\uc774 \uc2e4\uc81c\ub85c \ud544\uc694\ud574\uc9c0\uba74 \uc9c4\uc9dc ULID \ubc1c\uae09\uae30\uac00 \uc788\uc5b4\uc57c \ud558\uace0,\n///   \uadf8\ub54c\ub294 \uc774 \ud568\uc218\ub97c \uc9c0\uc6cc\uc57c \ud55c\ub2e4.\n///\n/// \u2605 \ubc14\uc774\ud2b8\ub97c 32 \ub85c \ub098\ub208 \ub098\uba38\uc9c0\ub85c \uace0\ub974\ubbc0\ub85c **\uade0\ub4f1\ud558\uc9c0 \uc54a\ub2e4**(256 \uc740\n///   32 \uc758 \ubc30\uc218\ub77c \uc0ac\uc2e4 \uade0\ub4f1\ud558\uc9c0\ub9cc, \uadf8 \uc131\uc9c8\uc5d0 \uae30\ub300\uc9c0 \uc54a\ub294\ub2e4). \uc774 \uac12\uc740\n///   \ube44\ubc00\uc774 \uc544\ub2c8\uace0 \ucd94\uce21 \ubd88\uac00\ub2a5\uc131\uc744 \uc694\uad6c\ud558\uc9c0\ub3c4 \uc54a\ub294\ub2e4 \u2014 \uac19\uc740 \uc785\ub825\uc5d0\n///   \uac19\uc740 \uac12\uc774 \ub098\uc624\ub294 \uac83\ub9cc \ud544\uc694\ud558\ub2e4.\nfn derive_id(kind: &str, job_id: &str, plan_id: &str) -> String {\n    let digest = derive_digest(kind, job_id, plan_id);\n    digest[..26]\n        .iter()\n        .map(|b| CROCKFORD[(*b % 32) as usize] as char)\n        .collect()\n}\n\nfn derive_operation_key(job_id: &str, plan_id: &str) -> [u8; 16] {\n    let digest = derive_digest(\"operation\", job_id, plan_id);\n    let mut out = [0u8; 16];\n    out.copy_from_slice(&digest[..16]);\n    out\n}\n\n/// \uae38\uc774 \ud504\ub9ac\ud53d\uc2a4\ub97c \ubd99\uc5ec \uc778\uc811 \uac12\uc774 \uc11c\ub85c \uc2a4\uba70\ub4e4\uc9c0 \uc54a\uac8c \ud55c\ub2e4.\nfn derive_digest(kind: &str, job_id: &str, plan_id: &str) -> [u8; 32] {\n    let mut input = Vec::new();\n    for part in [\n        b\"gputeer/v1/scheduler-tick\".as_slice(),\n        kind.as_bytes(),\n        job_id.as_bytes(),\n        plan_id.as_bytes(),\n    ] {\n        input.extend_from_slice(&(part.len() as u64).to_le_bytes());\n        input.extend_from_slice(part);\n    }\n    gputeer_protocol::canonical::blake3_256(&input)\n}\n\n/// `stage-job` \uacfc \uac19\uc740 \uaddc\uce59 \u2014 \ub2e4\uc12f \ucd95\uc744 \uc911\ubcf5 \uc5c6\uc774 \uc804\ubd80 \ub098\uc5f4\ud574\uc57c \ud55c\ub2e4.\nfn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {\n    let names: Vec<&str> = raw.split(',').map(str::trim).collect();\n    if names.len() != 5 {\n        return Err(format!(\n            \"--best-fit-axes \ub294 \ub2e4\uc12f \ucd95\uc744 \uc804\ubd80 \ub098\uc5f4\ud574\uc57c \ud55c\ub2e4(\ubc1b\uc740 \uac1c\uc218 {}) \u2014 vram,gpu_count,cpu,ram,workspace\",\n            names.len()\n        ));\n    }\n    let mut axes = Vec::with_capacity(5);\n    for name in &names {\n        let axis = match name.to_ascii_lowercase().as_str() {\n            \"vram\" => FitAxis::Vram,\n            \"gpu_count\" => FitAxis::GpuCount,\n            \"cpu\" => FitAxis::Cpu,\n            \"ram\" => FitAxis::Ram,\n            \"workspace\" => FitAxis::Workspace,\n            other => {\n                return Err(format!(\n                    \"--best-fit-axes \uc5d0 \ubaa8\ub974\ub294 \ucd95 {other:?} \u2014 vram, gpu_count, cpu, ram, workspace\"\n                ))\n            }\n        };\n        if axes.contains(&axis) {\n            return Err(format!(\"--best-fit-axes \uc5d0 {name:?} \uac00 \ub450 \ubc88 \ub098\uc628\ub2e4\"));\n        }\n        axes.push(axis);\n    }\n    Ok(BestFitPolicy {\n        axis_order: [axes[0], axes[1], axes[2], axes[3], axes[4]],\n    })\n}\n\nfn now_unix_ms() -> u64 {\n    std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .expect(\"system clock before unix epoch\")\n        .as_millis() as u64\n}\n\nfn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {\n    require(flags, key)?\n        .parse::<u64>()\n        .map_err(|e| format!(\"{key} \ud30c\uc2f1 \uc2e4\ud328: {e}\"))\n}\n\nfn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {\n    let mut out = BTreeMap::new();\n    let mut i = 0;\n    while i < args.len() {\n        let key = &args[i];\n        if !key.starts_with(\"--\") {\n            return Err(format!(\"\uc54c \uc218 \uc5c6\ub294 \uc778\uc790: {key}\"));\n        }\n        let value = args\n            .get(i + 1)\n            .ok_or_else(|| format!(\"{key} \uc5d0 \uac12\uc774 \uc5c6\ub2e4\"))?;\n        out.insert(key.clone(), value.clone());\n        i += 2;\n    }\n    Ok(out)\n}\n\nfn require<'a>(flags: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str, String> {\n    flags\n        .get(key)\n        .map(String::as_str)\n        .ok_or_else(|| format!(\"{key} \uac00 \ud544\uc694\ud558\ub2e4\"))\n}\n", "crates/cli/tests/scheduler_tick.rs": "//! `gputeer scheduler-tick` \u2014 **\uc2a4\uc2a4\ub85c \uace8\ub77c \uc608\uc57d\ud55c\ub2e4.**\n//!\n//! \u2605 **\ubb34\uac8c\uc911\uc2ec\uc740 \uba71\ub4f1\uc774\ub2e4.** `stage-job` \uc740 \uc6b4\uc601\uc790\uac00 \uc2dd\ubcc4\uc790\uc640 \uc2dc\uac01\uc744\n//!   \uc9c1\uc811 \uc8fc\ubbc0\ub85c \uc7ac\uc2dc\ub3c4\uac00 \uac19\uc740 \uac12\uc774\uba74 \uac19\uc740 \uacb0\uacfc\ub2e4. tick \uc740 \uadf8\uac83\uc744\n//!   **\uc2a4\uc2a4\ub85c \ub9cc\ub4e4\uc5b4\uc57c** \ud558\ub294\ub370, \uc2dc\uacc4\ub098 \ub09c\uc218\ub85c \ub9cc\ub4e4\uba74 \uc7ac\uc2dc\ub3c4\ub9c8\ub2e4 \ub2ec\ub77c\uc838\n//!   \uc800\uc7a5\uc18c\uc758 operation key \uac00 \uc57d\uc18d\ud558\ub294 \uba71\ub4f1\uc774 \uac70\uc9d3\ub9d0\uc774 \ub41c\ub2e4.\n//!\n//!   \uadf8\ub798\uc11c \uc804\ubd80 `(job_id, plan_id)` \uc640 \uc800\uc7a5\ub41c `queued_at` \uc5d0\uc11c \uc720\ub3c4\ud55c\ub2e4.\n//!   \uc774 \ud30c\uc77c\uc774 \uadf8\uac8c \uc2e4\uc81c\ub85c \uc131\ub9bd\ud558\ub294\uc9c0 \uc7b0\ub2e4.\n\nuse std::path::{Path, PathBuf};\nuse std::process::Command;\n\nuse gputeer_coordinator::job_store::{CoordinatorJobStore, JobState};\n\nfn cli_bin() -> PathBuf {\n    let mut path = std::env::current_exe().expect(\"test executable\");\n    path.pop();\n    if path.ends_with(\"deps\") {\n        path.pop();\n    }\n    path.join(if cfg!(windows) { \"gputeer.exe\" } else { \"gputeer\" })\n}\n\nconst NODE: &str = \"node-tick-a\";\nconst SUBMITTER: &str = \"01JSUBMITTERTICK00000001\";\nconst SEED: &str = \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc11\";\nconst OWNER: &str = \"owner-tick\";\nconst COORDINATOR: &str = \"01JCOORDINATORTICK000001\";\nconst AXES: &str = \"vram,gpu_count,cpu,ram,workspace\";\nconst JOB_A: &str = \"01JJOBTICKA0000000000001\";\nconst JOB_B: &str = \"01JJOBTICKB0000000000001\";\n\nfn run_cli(args: &[&str]) -> (bool, String) {\n    let out = Command::new(cli_bin()).args(args).output().expect(\"gputeer \uc2e4\ud589\");\n    (\n        out.status.success(),\n        format!(\n            \"{}{}\",\n            String::from_utf8_lossy(&out.stdout),\n            String::from_utf8_lossy(&out.stderr)\n        ),\n    )\n}\n\nfn now_unix_ms() -> u64 {\n    std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .expect(\"unix epoch\")\n        .as_millis() as u64\n}\n\nfn write_keyring(dir: &Path) -> PathBuf {\n    let keyring = dir.join(\"submitters.keyring\");\n    let mut seed = [0u8; 32];\n    for (i, byte) in seed.iter_mut().enumerate() {\n        *byte = u8::from_str_radix(&SEED[i * 2..i * 2 + 2], 16).expect(\"seed hex\");\n    }\n    let mut ring = gputeer_crypto::PersistentKeyring::new(\n        &keyring,\n        gputeer_crypto::KeyProtection::K0Plaintext,\n        gputeer_crypto::PlaintextPolicy::Allow,\n    )\n    .expect(\"keyring \uc0dd\uc131\");\n    ring.insert_public(\n        SUBMITTER,\n        gputeer_crypto::SigningKey::from_bytes(&seed).verifying_key(),\n    )\n    .expect(\"\uacf5\uac1c\ud0a4 \ub4f1\ub85d\");\n    ring.save().expect(\"keyring \uc800\uc7a5\");\n    keyring\n}\n\n/// `gpu_count` \ub85c \ub178\ub4dc \uc218\ub97c \uc815\ud55c\ub2e4 \u2014 \ub450 Job \uc744 \uac01\uac01 \uc608\uc57d\ud558\ub824\uba74 \ub458\uc774 \ud544\uc694\ud558\ub2e4.\nfn write_bootstrap(dir: &Path, nodes: usize) -> PathBuf {\n    let key: String = gputeer_crypto::SigningKey::from_bytes(&[31u8; 32])\n        .verifying_key()\n        .to_bytes()\n        .iter()\n        .map(|b| format!(\"{b:02x}\"))\n        .collect();\n    let observed = now_unix_ms();\n    let agents: Vec<String> = (0..nodes)\n        .map(|i| {\n            let node = if i == 0 {\n                NODE.to_string()\n            } else {\n                format!(\"{NODE}-{i}\")\n            };\n            let gpu = format!(\"{node}-gpu-0\");\n            let device = format!(\"device-tick-{i}\");\n            let node_key = if i == 0 {\n                key.clone()\n            } else {\n                gputeer_crypto::SigningKey::from_bytes(&[40u8 + i as u8; 32])\n                    .verifying_key()\n                    .to_bytes()\n                    .iter()\n                    .map(|b| format!(\"{b:02x}\"))\n                    .collect()\n            };\n            format!(\n                r#\"    {{\n      \"registry\": {{\n        \"node_id\": \"{node}\", \"device_id\": \"{device}\",\n        \"owner_member_id\": \"{OWNER}\", \"verifying_key_hex\": \"{node_key}\",\n        \"node_state\": \"ONLINE\", \"risk_state\": \"NORMAL\",\n        \"security_tier\": \"S2\", \"isolation_class\": \"CONTAINED\",\n        \"key_protection\": \"K1\"\n      }},\n      \"inventory\": {{\n        \"inventory_revision\": 1, \"observed_at_unix_ms\": {observed},\n        \"gpus\": [{{ \"gpu_id\": \"{gpu}\", \"model\": \"RTX 4070 SUPER\",\n                    \"healthy\": true, \"available_vram_bytes\": 12884901888 }}],\n        \"available_cpu_cores\": 16, \"available_ram_bytes\": 34359738368,\n        \"available_workspace_bytes\": 107374182400,\n        \"allowed_workload_classes\": [\"TRAINING\"],\n        \"third_party_workloads_opt_in\": true\n      }}\n    }}\"#\n            )\n        })\n        .collect();\n    let path = dir.join(\"bootstrap.json\");\n    std::fs::write(\n        &path,\n        format!(\n            \"{{\\n  \\\"schema_version\\\": 1,\\n  \\\"agents\\\": [\\n{}\\n  ]\\n}}\",\n            agents.join(\",\\n\")\n        ),\n    )\n    .expect(\"\ubb38\uc11c \uc4f0\uae30\");\n    path\n}\n\nconst DECLARATIONS: [&str; 16] = [\n    \"--workload-class\", \"TRAINING\",\n    \"--side-effect-class\", \"PURE\",\n    \"--dataset-sensitivity\", \"INTERNAL\",\n    \"--minimum-security-tier\", \"S2\",\n    \"--minimum-isolation-class\", \"CONTAINED\",\n    \"--minimum-key-protection\", \"K1\",\n    \"--gpu-count\", \"1\",\n    \"--gpu-min-vram-bytes\", \"8589934592\",\n];\n\n/// \ud55c Job \uc744 `submit` -> `import-manifest` -> `plan-job` \uae4c\uc9c0 \uc62c\ub9b0\ub2e4.\nfn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {\n    let manifest = dir.join(format!(\"{job_id}.pb\"));\n    let issued = now_unix_ms().saturating_sub(60_000).to_string();\n    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();\n    let mut args: Vec<&str> = vec![\n        \"submit\", \"--job-id\", job_id, \"--entrypoint\", \"python\",\n        \"--submitter-device-id\", SUBMITTER, \"--submitter-seed\", SEED,\n        \"--issued-at-unix-ms\", &issued, \"--expires-at-unix-ms\", &expires,\n        \"--out\", manifest.to_str().unwrap(),\n    ];\n    args.extend_from_slice(&DECLARATIONS);\n    let (ok, out) = run_cli(&args);\n    assert!(ok, \"submit \uc2e4\ud328: {out}\");\n\n    let (ok, out) = run_cli(&[\n        \"import-manifest\", \"--manifest\", manifest.to_str().unwrap(),\n        \"--submitter-keyring\", keyring.to_str().unwrap(),\n        \"--job-db\", db.to_str().unwrap(), \"--idempotency-key\", idem,\n        \"--i-understand-plaintext-keyring-is-unsafe\", \"true\",\n    ]);\n    assert!(ok, \"import-manifest \uc2e4\ud328: {out}\");\n\n    let (ok, out) = run_cli(&[\n        \"plan-job\", \"--job-id\", job_id, \"--control-db\", db.to_str().unwrap(),\n        \"--submitter-keyring\", keyring.to_str().unwrap(),\n        \"--submitter-member\", OWNER, \"--max-snapshot-age-ms\", \"86400000\",\n        \"--i-understand-plaintext-keyring-is-unsafe\", \"true\",\n    ]);\n    assert!(ok, \"plan-job \uc2e4\ud328: {out}\");\n}\n\nfn tick(keyring: &Path, db: &Path, extra: &[&str]) -> (bool, String) {\n    let mut args: Vec<&str> = vec![\n        \"scheduler-tick\",\n        \"--control-db\", db.to_str().unwrap(),\n        \"--submitter-keyring\", keyring.to_str().unwrap(),\n        \"--submitter-member\", OWNER,\n        \"--max-snapshot-age-ms\", \"86400000\",\n        \"--best-fit-axes\", AXES,\n        \"--coordinator-id\", COORDINATOR,\n        \"--coordinator-term\", \"3\",\n        \"--lease-ttl-ms\", \"600000\",\n        \"--lease-renew-after-ms\", \"300000\",\n        \"--lease-max-total-duration-seconds\", \"86400\",\n        \"--i-understand-plaintext-keyring-is-unsafe\", \"true\",\n    ];\n    args.extend_from_slice(extra);\n    run_cli(&args)\n}\n\nfn job_state(db: &Path, job_id: &str) -> Option<JobState> {\n    let store = CoordinatorJobStore::open(db).expect(\"job store\");\n    store.get(job_id).expect(\"\uc870\ud68c\").map(|job| job.state)\n}\n\n/// inventory \ub97c \ub123\uace0 Job \ud558\ub098\ub97c \ud050\uc5d0 \uc62c\ub9b0\ub2e4.\nfn prepared(dir: &Path, nodes: usize) -> (PathBuf, PathBuf) {\n    let db = dir.join(\"control.sqlite3\");\n    let bootstrap = write_bootstrap(dir, nodes);\n    let (ok, out) = run_cli(&[\n        \"import-inventory\",\n        \"--inventory\", bootstrap.to_str().unwrap(),\n        \"--inventory-db\", db.to_str().unwrap(),\n    ]);\n    assert!(ok, \"import-inventory \uc2e4\ud328: {out}\");\n    let keyring = write_keyring(dir);\n    queue_job(dir, &keyring, &db, JOB_A, \"0102030405060708090a0b0c0d0e0f10\");\n    (keyring, db)\n}\n\n// \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n/// \u2605\u2605 **\uc6b4\uc601\uc790\uac00 \uc2dd\ubcc4\uc790\ub97c \uc548 \uc918\ub3c4 \uc2a4\uc2a4\ub85c \uace8\ub77c \uc608\uc57d\ud55c\ub2e4.**\n#[test]\nfn a_tick_picks_a_queued_job_and_stages_it_without_operator_identifiers() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let (keyring, db) = prepared(dir.path(), 1);\n    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));\n\n    let (ok, output) = tick(&keyring, &db, &[]);\n    assert!(ok, \"tick \uc2e4\ud328: {output}\");\n    assert!(output.contains(\"TICK_STAGED\"), \"\ucd9c\ub825\uc774 \ub2e4\ub974\ub2e4: {output}\");\n    assert!(output.contains(NODE), \"\uc5b4\ub290 \ub178\ub4dc\uc778\uc9c0 \uc548 \ub9d0\ud55c\ub2e4: {output}\");\n    assert!(output.contains(\"created=true\"), \"\ucd5c\ucd08 \uc608\uc57d\uc774 \uc544\ub2c8\ub2e4: {output}\");\n    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));\n}\n\n/// \u2605\u2605 **\uac19\uc740 Job \uc744 \ub2e4\uc2dc tick \ud574\ub3c4 \uac19\uc740 Attempt \ub2e4.**\n///\n/// \uc2dc\uacc4\ub098 \ub09c\uc218\ub85c \uc2dd\ubcc4\uc790\ub97c \ub9cc\ub4e4\uba74 \ub450 \ubc88\uc9f8 tick \uc774\n/// `operation key payload conflict` \ub85c \uc2e4\ud328\ud558\uac70\ub098 \uc0c8 Attempt \ub97c \ub9cc\ub4e0\ub2e4.\n#[test]\nfn ticking_the_same_job_twice_returns_the_same_attempt() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let (keyring, db) = prepared(dir.path(), 1);\n\n    // \uc608\uc57d **\uc804** \uc0c1\ud0dc\ub97c \ub5a0 \ub454\ub2e4 \u2014 \uc774\uac8c \uc7ac\ud604\uc758 \uae30\uc900\uc810\uc774\ub2e4.\n    let snapshot_before_tick = dir.path().join(\"before.sqlite3\");\n    std::fs::copy(&db, &snapshot_before_tick).expect(\"DB \ubcf5\uc0ac\");\n\n    let (ok, first) = tick(&keyring, &db, &[]);\n    assert!(ok, \"1\ud68c\ucc28 \uc2e4\ud328: {first}\");\n    // \ub450 \ubc88\uc9f8\ub294 Job \uc774 \uc774\ubbf8 STAGING \uc774\ubbc0\ub85c \ud050\uc5d0\uc11c \ube60\uc84c\ub2e4 \u2014 \uc720\ud734\ub2e4.\n    let (ok, second) = tick(&keyring, &db, &[]);\n    assert!(ok, \"2\ud68c\ucc28 \uc2e4\ud328: {second}\");\n    assert!(\n        second.contains(\"TICK_IDLE\"),\n        \"\uc608\uc57d\ub41c Job \uc774 \uc544\uc9c1 \ud050\uc5d0 \uc788\ub2e4: {second}\"\n    );\n\n    // \u2605 \uadf8\ub7ec\ub098 **\uc2dd\ubcc4\uc790 \uc720\ub3c4 \uc790\uccb4**\ub294 \uc7ac\ud604 \uac00\ub2a5\ud574\uc57c \ud55c\ub2e4.\n    //\n    //   \u2605 \ucc98\uc74c\uc5d0\ub294 `prepared()` \ub97c \ub2e4\uc2dc \ubd88\ub7ec \uc0c8 DB \ub97c \ub9cc\ub4e4\uace0 \ube44\uad50\ud588\ub294\ub370\n    //     **\uadf8\uac74 \uac19\uc740 \uc785\ub825\uc774 \uc544\ub2c8\uc5c8\ub2e4** \u2014 `submit` \uc774 `issued_at` \uc5d0\n    //     \ud604\uc7ac \uc2dc\uac01\uc744 \ub123\uc5b4 Manifest \ubc14\uc774\ud2b8\uac00 \ub2ec\ub77c\uc9c0\uace0, \uadf8\ub7ec\uba74\n    //     `manifest_hash` -> `plan_id` -> Attempt \uac00 \uc804\ubd80 \ub2ec\ub77c\uc9c4\ub2e4.\n    //     \uadf8\uac74 \uacb0\ud568\uc774 \uc544\ub2c8\ub77c **\uc758\ub3c4\ud55c \ub3d9\uc791**\uc774\ub2e4(\ub2e4\ub978 \uacc4\ud68d\uc774\uba74 \ub2e4\ub978\n    //     Attempt \uc5ec\uc57c \ud55c\ub2e4). \ub0b4 \uc804\uc81c\uac00 \ud2c0\ub838\ub2e4.\n    //\n    //   \uc9c4\uc9dc \"\uac19\uc740 \uc785\ub825\" \uc740 **\uc608\uc57d \uc804 DB \ub97c \uadf8\ub300\ub85c \ubcf5\uc0ac**\ud558\ub294 \uac83\uc774\ub2e4.\n    let _ = &first;\n    let replay_db = dir.path().join(\"replay.sqlite3\");\n    std::fs::copy(&snapshot_before_tick, &replay_db).expect(\"DB \ubcf5\uc0ac\");\n    let (ok, replay) = tick(&keyring, &replay_db, &[]);\n    assert!(ok, \"\ubcf5\uc81c\ubcf8 tick \uc2e4\ud328: {replay}\");\n\n    let field = |line: &str, key: &str| -> String {\n        line.split_whitespace()\n            .find_map(|t| t.strip_prefix(key).map(str::to_string))\n            .unwrap_or_else(|| panic!(\"{key} \uac00 \ucd9c\ub825\uc5d0 \uc5c6\ub2e4: {line}\"))\n    };\n    assert_eq!(\n        field(&first, \"attempt=\"),\n        field(&replay, \"attempt=\"),\n        \"\uac19\uc740 (job_id, plan_id) \uc778\ub370 Attempt \uac00 \ub2ec\ub77c\uc84c\ub2e4 \u2014 \uc2dc\uacc4\ub098 \ub09c\uc218\ub97c \uc37c\ub2e4\"\n    );\n    assert_eq!(\n        field(&first, \"lease=\"),\n        field(&replay, \"lease=\"),\n        \"\uac19\uc740 (job_id, plan_id) \uc778\ub370 Lease \uac00 \ub2ec\ub77c\uc84c\ub2e4\"\n    );\n}\n\n/// \ud050\uac00 \ube44\uba74 **\uc624\ub958\uac00 \uc544\ub2c8\ub2e4.**\n///\n/// \ub8e8\ud504\uac00 \uc774\uac78 \uc2e4\ud328\ub85c \uc138\uba74 \uc815\uc0c1 \uc720\ud734 \uc0c1\ud0dc\uac00 \uc7a5\uc560\ub85c \ubcf4\uc778\ub2e4.\n#[test]\nfn an_empty_queue_is_idle_not_an_error() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let db = dir.path().join(\"control.sqlite3\");\n    let bootstrap = write_bootstrap(dir.path(), 1);\n    let (ok, out) = run_cli(&[\n        \"import-inventory\",\n        \"--inventory\", bootstrap.to_str().unwrap(),\n        \"--inventory-db\", db.to_str().unwrap(),\n    ]);\n    assert!(ok, \"import-inventory \uc2e4\ud328: {out}\");\n    let keyring = write_keyring(dir.path());\n\n    let (ok, output) = tick(&keyring, &db, &[]);\n    assert!(ok, \"\ube48 \ud050\ub97c \uc624\ub958\ub85c \ub2e4\ub918\ub2e4: {output}\");\n    assert!(output.contains(\"TICK_IDLE\"), \"\ucd9c\ub825\uc774 \ub2e4\ub974\ub2e4: {output}\");\n}\n\n/// \u2605\u2605 **\ucc3e\uc740 \uacf5\ubc31 \u2014 \ud6c4\ubcf4 \uc120\ud0dd\uc774 \uae30\uc874 \uc608\uc57d\uc744 \ubaa8\ub978\ub2e4.**\n///\n/// \ub178\ub4dc\uac00 **\ub458**\uc778\ub370 \ub450 \ubc88\uc9f8 tick \uc774 \uc2e4\ud328\ud55c\ub2e4:\n///\n/// ```text\n/// TICK_REFUSED: node is already reserved: node=node-tick-a, ...\n/// ```\n///\n/// `evaluate_eligibility`/`rank_best_fit` \uc740 **inventory \ub9cc** \ubcf8\ub2e4.\n/// \uc608\uc57d\uc740 staging \uc800\uc7a5\uc18c\uc758 \ub2e4\ub978 \ud14c\uc774\ube14\uc5d0 \uc788\uace0, \ub458\uc744 \uc787\ub294 \uac83\uc774 \uc5c6\ub2e4.\n/// \uadf8\ub798\uc11c best-fit \uc774 \ub298 \uac19\uc740 \ub178\ub4dc\ub97c \uace8\ub77c \uc608\uc57d \uad00\ubb38\uc5d0\uc11c \ub9c9\ud78c\ub2e4 \u2014\n/// **\ube44\uc5b4 \uc788\ub294 \ub178\ub4dc\uac00 \uc788\uc5b4\ub3c4 \uadf8\ub807\ub2e4.**\n///\n/// \uc548\uc804\uc5d0\ub294 \ubb38\uc81c\uac00 \uc5c6\ub2e4(\uc608\uc57d \uad00\ubb38\uc774 \uc911\ubcf5\uc744 \ub9c9\ub294\ub2e4). \uadf8\ub7ec\ub098 **\ub8e8\ud504\ub97c\n/// \ub3cc\ub9ac\uba74 \ud050 \ub9e8 \uc55e\uc5d0\uc11c \uc601\uc601 \uba48\ucd98\ub2e4** \u2014 \uc774\uac8c \u2463 \ub370\ubaac\ud654\uc758 \uc2e4\uc9c8\uc801 \ucc28\ub2e8\n/// \uc694\uc778\uc774\ub2e4.\n///\n/// \u2605 \uace0\uce58\ub824\uba74 \uacb0\uc815\uc774 \ud544\uc694\ud558\ub2e4 \u2014 \uc608\uc57d\ub41c \ub178\ub4dc\ub97c `pool_snapshot()` \uc5d0\uc11c\n///   \ube7c\ub294\uac00, hard-filter \uc5d0\uc11c \uac70\ub974\ub294\uac00, \uc544\ub2c8\uba74 orchestrate \uac00 \ucc28\uc21c\uc704\n///   \ud6c4\ubcf4\ub85c \uc7ac\uc2dc\ub3c4\ud558\ub294\uac00. \uc14b\uc774 \uc758\ubbf8\uac00 \ub2e4\ub974\uace0 \uaddc\ubc94\uc774 \uc544\uc9c1 \uc5c6\ub2e4.\n///   **\uadf8\ub798\uc11c \uc9c0\uae08 \uace0\uce58\uc9c0 \uc54a\uace0, \uc9c0\uae08 \ub3d9\uc791\uc744 \ud14c\uc2a4\ud2b8\ub85c \uace0\uc815\ud55c\ub2e4** \u2014\n///   \uba54\uc6b0\uba74 \uc774 \ud14c\uc2a4\ud2b8\uac00 \uc2e4\ud328\ud558\uba70 \ubb38\uc11c\ub3c4 \uac19\uc774 \uace0\uce58\ub77c\uace0 \uc54c\ub9b0\ub2e4\n///   (`runtime-linux` \uc758 \"\ud0c8\ucd9c\uc774 \uc131\uacf5\ud558\uae30\ub97c \uae30\ub300\ud558\ub294 \ud14c\uc2a4\ud2b8\" \uc640 \uac19\uc740\n///   \uc7a5\uce58).\n#[test]\nfn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let (keyring, db) = prepared(dir.path(), 2);\n    // \ub450 \ubc88\uc9f8 Job \uc744 \ub4a4\uc774\uc5b4 \ud050\uc5d0 \uc62c\ub9b0\ub2e4.\n    queue_job(dir.path(), &keyring, &db, JOB_B, \"1102030405060708090a0b0c0d0e0f10\");\n\n    let (ok, first) = tick(&keyring, &db, &[]);\n    assert!(ok, \"1\ud68c\ucc28 \uc2e4\ud328: {first}\");\n    assert!(\n        first.contains(&format!(\"job_id={JOB_A}\")),\n        \"\uba3c\uc800 \ub4e4\uc5b4\uc628 Job \uc744 \uc548 \uace8\ub790\ub2e4: {first}\"\n    );\n\n    // \u2605 \ub178\ub4dc\uac00 \ub458\uc778\ub370\ub3c4 \ub450 \ubc88\uc9f8\ub294 \ub9c9\ud78c\ub2e4 \u2014 \uc704 \ubb38\uc11c\uc758 \uacf5\ubc31\uc774\ub2e4.\n    let (ok, second) = tick(&keyring, &db, &[]);\n    assert!(\n        !ok,\n        \"\uc608\uc57d\uc774 \ud6c4\ubcf4 \uc120\ud0dd\uc5d0 \ubc18\uc601\ub418\uae30 \uc2dc\uc791\ud588\ub2e4 \u2014 \uc774 \ud14c\uc2a4\ud2b8\uc640 \uc704 \ubb38\uc11c\ub97c \uac19\uc774 \uace0\uccd0\ub77c: {second}\"\n    );\n    assert!(\n        second.contains(\"already reserved\"),\n        \"\ub9c9\ud78c \uc774\uc720\uac00 \uc608\uc57d\uc774 \uc544\ub2c8\ub2e4: {second}\"\n    );\n\n    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));\n    assert_eq!(\n        job_state(&db, JOB_B),\n        Some(JobState::Queued),\n        \"\ub450 \ubc88\uc9f8 Job \uc740 \ud050\uc5d0 \ub0a8\uc544\uc57c \ud55c\ub2e4\"\n    );\n}\n\n/// \u2605\u2605 **\ud050\uc5d0 \ub108\ubb34 \uc624\ub798 \uc788\uc5c8\uc73c\uba74 \uc608\uc57d\ud558\uc9c0 \uc54a\ub294\ub2e4.**\n///\n/// Lease \ubc1c\uae09 \uc2dc\uac01\uc744 `queued_at` \uc73c\ub85c \uc4f0\ubbc0\ub85c, TTL \uc774 \uc9e7\uc73c\uba74 \uc9c0\uae08\n/// \uc608\uc57d\ud574\ub3c4 **\uc774\ubbf8 \ub9cc\ub8cc\ub41c Lease** \ub97c \uc8fc\uac8c \ub41c\ub2e4. \uadf8\uac78 \uc8fc\uba74 Agent \ub294\n/// \ubc1b\uc790\ub9c8\uc790 \uac70\ubd80\ud55c\ub2e4 \u2014 \uc870\uc6a9\ud788 \ub9cc\ub4e4\uc9c0 \uc54a\uace0 \uac70\ubd80 \uc774\uc720\ub97c \ub9d0\ud55c\ub2e4.\n#[test]\nfn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let (keyring, db) = prepared(dir.path(), 1);\n\n    // \u2605\u2605 **\ucc98\uc74c \uc4f4 \uc774 \ud14c\uc2a4\ud2b8\ub294 \uc5c9\ub6b1\ud55c \uad00\ubb38\uc744 \uc7ac\uace0 \uc788\uc5c8\ub2e4.**\n    //\n    //   `--lease-ttl-ms 1` \ub9cc \uc92c\ub294\ub370 `--lease-renew-after-ms` \ub294 \uae30\ubcf8\n    //   300000 \uc774 \ub0a8\uc544 \uc788\uc5c8\ub2e4. \uac31\uc2e0 \uc624\ud504\uc14b \uac80\uc0ac\uac00 **\uba3c\uc800** \uc788\uc73c\ubbc0\ub85c\n    //   (`scheduler_tick.rs:85` \uac00 `:128` \ubcf4\ub2e4 \uc55e\uc774\ub2e4) \uac70\uae30\uc11c \uac78\ub838\uace0,\n    //   \ub0b4 \ub2e8\uc5b8\uc774 \"\uc791\uc544\uc57c \ud55c\ub2e4\" \ub3c4 \ubc1b\uc544 \uc918\uc11c **\ud1b5\uacfc\ud588\ub2e4.**\n    //   \ub0b4 \ubba4\ud14c\uc774\uc158 T3(\ud050 \ub098\uc774 \uac80\uc0ac\ub97c \ud1b5\uc9f8\ub85c \uc9c0\uc6c0)\uc774 \uc548 \uc7a1\ud788\ub294 \uac83\uc744\n    //   \ubcf4\uace0\uc11c\uc57c \uc54c\uc558\ub2e4 \u2014 \uc7ac\ub824\ub358 \uac83\uc744 \ud558\ub098\ub3c4 \uc548 \uc7ac\uace0 \uc788\uc5c8\ub2e4.\n    //\n    //   \uc774\uc81c \uac31\uc2e0 \uac80\uc0ac\ub97c **\ud1b5\uacfc\ud558\ub294** \uac12\uc744 \uc900\ub2e4(1 < 2).\n    let (ok, output) = tick(\n        &keyring,\n        &db,\n        &[\"--lease-ttl-ms\", \"2\", \"--lease-renew-after-ms\", \"1\"],\n    );\n    assert!(!ok, \"\ub9cc\ub8cc\ub420 Lease \ub85c \uc608\uc57d\ud588\ub2e4: {output}\");\n    assert!(\n        output.contains(\"\ub108\ubb34 \uc624\ub798 \uc788\uc5c8\ub2e4\"),\n        \"\ud050 \ub098\uc774\uac00 \uc544\ub2c8\ub77c \ub2e4\ub978 \uad00\ubb38\uc5d0 \uac78\ub838\ub2e4: {output}\"\n    );\n    assert_eq!(\n        job_state(&db, JOB_A),\n        Some(JobState::Queued),\n        \"\uac70\ubd80\ud588\ub294\ub370 \uc0c1\ud0dc\uac00 \ubc14\ub00c\uc5c8\ub2e4\"\n    );\n\n    // \ub300\uc870 \u2014 \ub109\ub109\ud55c TTL \uc774\uba74 \uc608\uc57d\ub41c\ub2e4. \uc5c6\uc73c\uba74 \"\ud56d\uc0c1 \uac70\ubd80\" \ub85c\ub3c4 \ud1b5\uacfc\ud55c\ub2e4.\n    //\n    // \u2605\u2605 **\uc774 \ub300\uc870\uad70 \uc790\uccb4\uac00 \ubd80\uc2e4\ud588\ub2e4** (2026-09-07 \ub3c5\ub9bd \uac80\uc218 \uc9c0\uc801).\n    //   `assert!(ok)` \ub9cc \ubd24\ub2e4. \uac80\uc218\uac00 \ubc18\ub840\ub97c \ub9cc\ub4e4\uc5b4 \ubcf4\uc600\ub2e4 \u2014 \uad6c\ud604\uc774\n    //   \uc608\uc57d \uacbd\ub85c\ub85c \uc548 \ub4e4\uc5b4\uac00\uace0 `TICK_IDLE` \uc744 \uc870\uae30 \ubc18\ud658\ud558\ub3c4\ub85d \ubc14\ub00c\uc5b4\ub3c4\n    //   **\uc885\ub8cc \ucf54\ub4dc\ub294 0 \uc774\ub77c \uc774 \ub2e8\uc5b8\uc774 \ud1b5\uacfc\ud55c\ub2e4.** \uadf8\ub7ec\uba74 \"\ud56d\uc0c1 \uac70\ubd80\"\n    //   \ud68c\uadc0\ub294 \uc7a1\uc544\ub3c4 **\"\uc544\ubb34\uac83\ub3c4 \uc608\uc57d \uc548 \ud568\" \ud68c\uadc0\ub294 \ubabb \uc7a1\ub294\ub2e4.**\n    //\n    //   \ub300\uc870\uad70\uc744 \ub450\ub294 \ubaa9\uc801\uc774 \ubc14\ub85c \uadf8 \ub450 \ubc88\uc9f8\uc778\ub370, \uadf8\uac78 \ubabb \uc7ac\uace0 \uc788\uc5c8\ub2e4.\n    let (ok, output) = tick(&keyring, &db, &[]);\n    assert!(ok, \"\ub109\ub109\ud55c TTL \uc5d0\uc11c\ub3c4 \uac70\ubd80\ud588\ub2e4: {output}\");\n    assert!(\n        output.contains(\"TICK_STAGED\"),\n        \"\uc131\uacf5\ud588\ub2e4\ub294\ub370 \uc608\uc57d\uc744 \uc548 \ud588\ub2e4 \u2014 TICK_IDLE \ub85c \ube60\uc84c\uc744 \uc218 \uc788\ub2e4: {output}\"\n    );\n    assert_eq!(\n        job_state(&db, JOB_A),\n        Some(JobState::Staging),\n        \"TICK_STAGED \ub77c\uace0 \ucc0d\uc5c8\ub294\ub370 Job \uc0c1\ud0dc\uac00 \uc548 \ubc14\ub00c\uc5c8\ub2e4\"\n    );\n}\n\n/// \u2605\u2605 **Lease \ubc1c\uae09 \uc2dc\uac01\uc774 \uc815\ub9d0 `queued_at` \uc778\uac00 \u2014 \uc800\uc7a5\ub41c \uac12\uc73c\ub85c \uc7b0\ub2e4.**\n///\n/// \uc774 \ubaa8\ub4c8\uc758 \ubb34\uac8c\uc911\uc2ec\uc778\ub370 **\uc544\ubb34 \ud14c\uc2a4\ud2b8\ub3c4 \uc548 \uc7ac\uace0 \uc788\uc5c8\ub2e4** \u2014 \uba71\ub4f1\n/// \ud14c\uc2a4\ud2b8\ub294 attempt/lease **\uc2dd\ubcc4\uc790**\ub9cc \ube44\uad50\ud558\uace0, \uc2dd\ubcc4\uc790\ub294 \uc2dc\uac01\uc5d0\uc11c\n/// \uc720\ub3c4\ub418\uc9c0 \uc54a\uc73c\ubbc0\ub85c \ubc1c\uae09 \uc2dc\uac01\uc744 \uc2dc\uacc4\ub85c \ubc14\uafd4\ub3c4 \ud1b5\uacfc\ud588\ub2e4(\ubba4\ud14c\uc774\uc158 T2).\n///\n/// \uc774\uc81c \uc800\uc7a5\uc18c\ub97c \uc5f4\uc5b4 \uc2e4\uc81c \ud589\uc744 \ubcf8\ub2e4.\n#[test]\nfn the_stored_lease_is_issued_at_the_moment_the_job_entered_the_queue() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let (keyring, db) = prepared(dir.path(), 1);\n\n    let queued_at = {\n        let store = CoordinatorJobStore::open(&db).expect(\"job store\");\n        store\n            .get(JOB_A)\n            .expect(\"\uc870\ud68c\")\n            .expect(\"Job\")\n            .queued_at_unix_ms\n            .expect(\"queued_at\")\n    };\n\n    let (ok, output) = tick(&keyring, &db, &[]);\n    assert!(ok, \"tick \uc2e4\ud328: {output}\");\n    let lease_id = output\n        .split_whitespace()\n        .find_map(|t| t.strip_prefix(\"lease=\"))\n        .expect(\"\ucd9c\ub825\uc5d0 lease= \uac00 \uc5c6\ub2e4\")\n        .to_string();\n\n    let stored = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db)\n        .expect(\"lease store\")\n        .get(&lease_id)\n        .expect(\"\uc870\ud68c\")\n        .expect(\"Lease\");\n\n    assert_eq!(\n        stored.issued_at_unix_ms, queued_at,\n        \"\ubc1c\uae09 \uc2dc\uac01\uc774 \ud050 \uc9c4\uc785 \uc2dc\uac01\uc774 \uc544\ub2c8\ub2e4 \u2014 \uc2dc\uacc4\ub97c \uc77d\uc5c8\ub2e4\"\n    );\n    assert_eq!(\n        stored.expires_at_unix_ms,\n        queued_at + 600_000,\n        \"\ub9cc\ub8cc\uac00 queued_at + TTL \uc774 \uc544\ub2c8\ub2e4\"\n    );\n    assert_eq!(\n        stored.renew_after_unix_ms,\n        queued_at + 300_000,\n        \"\uac31\uc2e0 \uc2dc\uc810\uc774 queued_at + \uc624\ud504\uc14b\uc774 \uc544\ub2c8\ub2e4\"\n    );\n}\n\n/// \uac31\uc2e0 \uc2dc\uc810\uc774 \ub9cc\ub8cc \ub4a4\uba74 \ubc1b\uc544 \uc8fc\uc9c0 \uc54a\ub294\ub2e4.\n#[test]\nfn a_renew_offset_at_or_after_the_ttl_is_refused() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let (keyring, db) = prepared(dir.path(), 1);\n\n    for renew in [\"600000\", \"700000\", \"0\"] {\n        let (ok, output) = tick(&keyring, &db, &[\"--lease-renew-after-ms\", renew]);\n        assert!(!ok, \"--lease-renew-after-ms {renew} \ub97c \ubc1b\uc544\ub4e4\uc600\ub2e4: {output}\");\n        assert!(output.contains(\"\uc791\uc544\uc57c \ud55c\ub2e4\"), \"\uc774\uc720\ub97c \uc548 \ub9d0\ud55c\ub2e4: {output}\");\n        assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));\n    }\n}\n\n/// \ube44\uc601\uc18d DB \ub294 \uac70\ubd80\ud55c\ub2e4.\n#[test]\nfn a_non_durable_control_db_is_refused() {\n    let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n    let keyring = write_keyring(dir.path());\n    for label in [\":memory:\", \"\"] {\n        let (ok, output) = run_cli(&[\n            \"scheduler-tick\",\n            \"--control-db\", label,\n            \"--submitter-keyring\", keyring.to_str().unwrap(),\n            \"--submitter-member\", OWNER,\n            \"--max-snapshot-age-ms\", \"86400000\",\n            \"--best-fit-axes\", AXES,\n            \"--coordinator-id\", COORDINATOR,\n            \"--coordinator-term\", \"3\",\n            \"--lease-ttl-ms\", \"600000\",\n            \"--lease-renew-after-ms\", \"300000\",\n            \"--lease-max-total-duration-seconds\", \"86400\",\n            \"--i-understand-plaintext-keyring-is-unsafe\", \"true\",\n        ]);\n        assert!(!ok, \"{label:?} \ub97c \ubc1b\uc544\ub4e4\uc600\ub2e4: {output}\");\n        assert!(\n            output.contains(\"\uc601\uc18d\uc774 \uc544\ub2c8\ub2e4\"),\n            \"{label:?}: \uc774\uc720\ub97c \uc548 \ub9d0\ud55c\ub2e4: {output}\"\n        );\n    }\n}\n\n"}
+
+codex
+실패를 확인하는 네 곳 모두 뒤에서 사유 문구도 검사합니다. 다만 그 문구가 고정된 오류 메시지에만 나타나는지는 별개입니다. 앞쪽 축 파서가 입력값을 오류에 그대로 넣으므로, 그 경로로도 단언을 통과시킬 수 있는지 확인하고 있습니다. 현재 고정 입력에서 발생하는 문제와 입력을 바꿨을 때의 반례를 구분하겠습니다.
+codex
+**순수한 `!ok` 단언은 없습니다. 하지만 부분 문자열만으로 실패 관문을 식별한다는 보장은 깨집니다.** 앞쪽 축 파서가 잘못된 입력값을 오류 메시지에 그대로 넣기 때문입니다.
+
+지정한 두 파일만 정적으로 확인했습니다. 현재 테스트 파일은 519줄입니다. 아래 반례는 **구현과 단언을 유지하고, 실패를 기대하는 호출의 인자만 바꾸는 경우**입니다. 현재 고정된 입력이 이미 잘못된 관문에서 통과한다는 뜻은 아닙니다. 테스트 실행은 하지 않았습니다.
+
+**1. 실패 단언 전수 분류**
+
+`crates/cli/tests/scheduler_tick.rs`에서 실패 단언은 **4곳, 반복문을 펼치면 7회**입니다.
+
+| 실패 단언 | 사유 확인 | 분류 |
+|---|---|---|
+| `:353` | `:357` — `already reserved` | 사유도 확인 |
+| `:394` | `:396` — `너무 오래 있었다` | 사유도 확인 |
+| `:487` — 갱신값 3개 | `:488` — `작아야 한다` | 사유도 확인 |
+| `:513` — DB값 2개 | `:515` — `영속이 아니다` | 사유도 확인 |
+
+`!ok`만으로 끝나는 경우는 **0곳**입니다.
+
+**2. 관문 순서**
+
+`crates/cli/src/scheduler_tick.rs`의 실제 순서는 다음과 같습니다.
+
+`parse_flags(:89)` → 필수값·숫자·축 검사(`:91`, **축은 `:95`**) → 갱신 오프셋(`:101`) → DB 열기·영속성(`:110`, `:112`) → 큐 조회·빈 큐 성공 반환(`:121`, `:127`) → plan_id·queued_at 존재(`:130`) → 큐 나이(`:144`) → Manifest binding(`:150`) → keyring·서명·요구사항(`:169`) → 저장소 열기(`:183`) → 예약 함수 호출(`:191`).
+
+예약 함수 내부의 관문 순서는 다른 crate를 읽지 않았으므로 판단하지 않았습니다.
+
+현재 입력에서 갱신값·축 설정 때문에 뒤 관문을 잘못 검증하는 사례는 찾지 못했습니다. 다만 다음 입력에서는 **축 검사에서 종료해도 사유 단언까지 통과합니다.**
+
+**3. 발견한 공통 결함: 오류에 반영된 입력과 오류 사유를 구별하지 못함**
+
+근거는 `crates/cli/src/scheduler_tick.rs:315`입니다.
+
+```rust
+"--best-fit-axes 에 모르는 축 {other:?} — vram, gpu_count, cpu, ram, workspace"
+```
+
+축을 다섯 개 주되 첫 축을 검사 문구로 만들면, 개수 검사를 통과하고 이 오류가 발생합니다.
+
+| 지적 위치 | 구체적 입력 변경 | 실행되지 않는 관문 |
+|---|---|---|
+| `crates/cli/tests/scheduler_tick.rs:357` | `:351`의 두 번째 tick에 `["--best-fit-axes", "already reserved,gpu_count,cpu,ram,workspace"]` 추가 | 예약 함수 호출 `src:191` |
+| `crates/cli/tests/scheduler_tick.rs:396` | `:392`의 TTL·갱신 인자는 유지하고 `["--best-fit-axes", "너무 오래 있었다,gpu_count,cpu,ram,workspace"]` 추가 | 큐 나이 `src:144` |
+| `crates/cli/tests/scheduler_tick.rs:488` | `:486`에서 각 갱신값은 유지하고 `["--best-fit-axes", "작아야 한다,gpu_count,cpu,ram,workspace"]` 추가 | 갱신 오프셋 `src:101` |
+| `crates/cli/tests/scheduler_tick.rs:515` | `:505`의 `AXES`를 `"영속이 아니다,gpu_count,cpu,ram,workspace"`로 교체 | DB 영속성 `src:112` |
+
+예를 들어 첫 번째 오류는 다음과 같습니다.
+
+```text
+--best-fit-axes 에 모르는 축 "already reserved" — vram, gpu_count, cpu, ram, workspace
+```
+
+종료는 실패이고 `already reserved`도 포함합니다. 첫 tick은 그대로 성공했고, 두 번째 tick은 DB를 건드리기 전에 종료하므로 `JOB_A=Staging`, `JOB_B=Queued` 단언도 유지됩니다.
+
+나머지도 마찬가지입니다. 큐 나이 테스트의 정상 TTL 대조 호출(`:414`)은 변경하지 않으므로 정상 예약까지 진행합니다. 갱신 테스트의 Job 상태 역시 그대로입니다.
+
+**서로 다른 고정 오류 문구끼리의 중복은 확인한 범위에서 없었습니다.** 발견한 충돌은 입력값을 포함하는 다른 관문의 메시지입니다. 사유를 구분하려면 오류 코드나 진단 메시지의 시작 형식까지 확인해야 합니다.
+
+**4. 성공 단언은 어디까지 보는가**
+
+| 위치 — `crates/cli/tests/scheduler_tick.rs` | 실제 확인 범위 |
+|---|---|
+| `:228` | `TICK_STAGED`, 노드, `created=true`, DB의 `Staging` 상태 |
+| `:249`, `:272` | 최초·복제본 출력의 Attempt/Lease ID 일치. 저장된 예약 행은 조회하지 않음 |
+| `:252`, `:308` | 성공 종료와 `TICK_IDLE`. 유휴 동작을 검증하므로 적절함 |
+| `:344` | 선택한 Job 출력과, 이후 `:361`의 DB `Staging` 상태 |
+| `:415` | `TICK_STAGED`와 DB `Staging` 상태 |
+| `:450` | 출력의 Lease ID로 **실제 Lease 행을 조회**하고 발급·만료·갱신 시각 비교 |
+
+따라서 scheduler-tick 성공 호출 **8곳 중 종료 코드만으로 끝나는 곳은 없습니다.** 다만 ID 재현 테스트(`:249`, `:272`)는 저장 결과까지 검증하지 않습니다. 현재 구현에서 입력만으로 이 테스트 전체를 통과하면서 예약을 생략하는 반례는 만들지 못했습니다. 이를 추가 결함으로 단정하지 않습니다.
+
+CHANGES_REQUESTED
+tokens used
+33,417
+**순수한 `!ok` 단언은 없습니다. 하지만 부분 문자열만으로 실패 관문을 식별한다는 보장은 깨집니다.** 앞쪽 축 파서가 잘못된 입력값을 오류 메시지에 그대로 넣기 때문입니다.
+
+지정한 두 파일만 정적으로 확인했습니다. 현재 테스트 파일은 519줄입니다. 아래 반례는 **구현과 단언을 유지하고, 실패를 기대하는 호출의 인자만 바꾸는 경우**입니다. 현재 고정된 입력이 이미 잘못된 관문에서 통과한다는 뜻은 아닙니다. 테스트 실행은 하지 않았습니다.
+
+**1. 실패 단언 전수 분류**
+
+`crates/cli/tests/scheduler_tick.rs`에서 실패 단언은 **4곳, 반복문을 펼치면 7회**입니다.
+
+| 실패 단언 | 사유 확인 | 분류 |
+|---|---|---|
+| `:353` | `:357` — `already reserved` | 사유도 확인 |
+| `:394` | `:396` — `너무 오래 있었다` | 사유도 확인 |
+| `:487` — 갱신값 3개 | `:488` — `작아야 한다` | 사유도 확인 |
+| `:513` — DB값 2개 | `:515` — `영속이 아니다` | 사유도 확인 |
+
+`!ok`만으로 끝나는 경우는 **0곳**입니다.
+
+**2. 관문 순서**
+
+`crates/cli/src/scheduler_tick.rs`의 실제 순서는 다음과 같습니다.
+
+`parse_flags(:89)` → 필수값·숫자·축 검사(`:91`, **축은 `:95`**) → 갱신 오프셋(`:101`) → DB 열기·영속성(`:110`, `:112`) → 큐 조회·빈 큐 성공 반환(`:121`, `:127`) → plan_id·queued_at 존재(`:130`) → 큐 나이(`:144`) → Manifest binding(`:150`) → keyring·서명·요구사항(`:169`) → 저장소 열기(`:183`) → 예약 함수 호출(`:191`).
+
+예약 함수 내부의 관문 순서는 다른 crate를 읽지 않았으므로 판단하지 않았습니다.
+
+현재 입력에서 갱신값·축 설정 때문에 뒤 관문을 잘못 검증하는 사례는 찾지 못했습니다. 다만 다음 입력에서는 **축 검사에서 종료해도 사유 단언까지 통과합니다.**
+
+**3. 발견한 공통 결함: 오류에 반영된 입력과 오류 사유를 구별하지 못함**
+
+근거는 `crates/cli/src/scheduler_tick.rs:315`입니다.
+
+```rust
+"--best-fit-axes 에 모르는 축 {other:?} — vram, gpu_count, cpu, ram, workspace"
+```
+
+축을 다섯 개 주되 첫 축을 검사 문구로 만들면, 개수 검사를 통과하고 이 오류가 발생합니다.
+
+| 지적 위치 | 구체적 입력 변경 | 실행되지 않는 관문 |
+|---|---|---|
+| `crates/cli/tests/scheduler_tick.rs:357` | `:351`의 두 번째 tick에 `["--best-fit-axes", "already reserved,gpu_count,cpu,ram,workspace"]` 추가 | 예약 함수 호출 `src:191` |
+| `crates/cli/tests/scheduler_tick.rs:396` | `:392`의 TTL·갱신 인자는 유지하고 `["--best-fit-axes", "너무 오래 있었다,gpu_count,cpu,ram,workspace"]` 추가 | 큐 나이 `src:144` |
+| `crates/cli/tests/scheduler_tick.rs:488` | `:486`에서 각 갱신값은 유지하고 `["--best-fit-axes", "작아야 한다,gpu_count,cpu,ram,workspace"]` 추가 | 갱신 오프셋 `src:101` |
+| `crates/cli/tests/scheduler_tick.rs:515` | `:505`의 `AXES`를 `"영속이 아니다,gpu_count,cpu,ram,workspace"`로 교체 | DB 영속성 `src:112` |
+
+예를 들어 첫 번째 오류는 다음과 같습니다.
+
+```text
+--best-fit-axes 에 모르는 축 "already reserved" — vram, gpu_count, cpu, ram, workspace
+```
+
+종료는 실패이고 `already reserved`도 포함합니다. 첫 tick은 그대로 성공했고, 두 번째 tick은 DB를 건드리기 전에 종료하므로 `JOB_A=Staging`, `JOB_B=Queued` 단언도 유지됩니다.
+
+나머지도 마찬가지입니다. 큐 나이 테스트의 정상 TTL 대조 호출(`:414`)은 변경하지 않으므로 정상 예약까지 진행합니다. 갱신 테스트의 Job 상태 역시 그대로입니다.
+
+**서로 다른 고정 오류 문구끼리의 중복은 확인한 범위에서 없었습니다.** 발견한 충돌은 입력값을 포함하는 다른 관문의 메시지입니다. 사유를 구분하려면 오류 코드나 진단 메시지의 시작 형식까지 확인해야 합니다.
+
+**4. 성공 단언은 어디까지 보는가**
+
+| 위치 — `crates/cli/tests/scheduler_tick.rs` | 실제 확인 범위 |
+|---|---|
+| `:228` | `TICK_STAGED`, 노드, `created=true`, DB의 `Staging` 상태 |
+| `:249`, `:272` | 최초·복제본 출력의 Attempt/Lease ID 일치. 저장된 예약 행은 조회하지 않음 |
+| `:252`, `:308` | 성공 종료와 `TICK_IDLE`. 유휴 동작을 검증하므로 적절함 |
+| `:344` | 선택한 Job 출력과, 이후 `:361`의 DB `Staging` 상태 |
+| `:415` | `TICK_STAGED`와 DB `Staging` 상태 |
+| `:450` | 출력의 Lease ID로 **실제 Lease 행을 조회**하고 발급·만료·갱신 시각 비교 |
+
+따라서 scheduler-tick 성공 호출 **8곳 중 종료 코드만으로 끝나는 곳은 없습니다.** 다만 ID 재현 테스트(`:249`, `:272`)는 저장 결과까지 검증하지 않습니다. 현재 구현에서 입력만으로 이 테스트 전체를 통과하면서 예약을 생략하는 반례는 만들지 못했습니다. 이를 추가 결함으로 단정하지 않습니다.
+
+CHANGES_REQUESTED

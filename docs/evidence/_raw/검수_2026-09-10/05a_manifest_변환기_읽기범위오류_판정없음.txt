@@ -1,0 +1,1333 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a088ba-ce18-72a3-b0b6-6b822c750b76
+--------
+user
+동의가 아니라 **반박**을 원한다. 이 변환기가 **조용히 값을 지어내는
+자리**가 있는지 찾아 달라.
+
+# 배경
+
+`job_requirements_from_manifest()` 는 서명이 검증된 `JobManifest` 를
+스케줄러가 쓰는 `JobRequirements` 로 바꾼다. 순수 함수다 — 시계·I/O·DB 가
+없다.
+
+이 저장소의 가장 강한 규칙 하나가 여기 걸려 있다
+(`CLAUDE.md` §1 — **"지어내지 않는다"**):
+
+> 값을 모르면 **비워 둔다.** 추정으로 채우면 그 오류가 조용히 스케줄링
+> 결정까지 간다.
+
+그래서 이 변환기는 **`UNSPECIFIED` 를 값으로 바꾸지 않는다.** 선언 안 된
+축은 기본값으로 메우지 않고 `Unspecified(...)` 오류로 거부한다.
+
+각 enum 변환 함수는 **exhaustive `match`** 다 — proto 에 새 변형이 생기면
+컴파일이 깨져서 알게 된다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/coordinator/src/manifest_requirements.rs   (496줄, 테스트 포함)
+```
+
+이 파일 하나만 본다. `proto/job.proto` 의 enum 정의를 확인해야 하면
+그것만 추가로 본다.
+
+# 물을 것 — 네 가지
+
+1. **지어내는 자리가 있나.** 선언되지 않은 축이 오류가 아니라 **어떤
+   값으로** 넘어가는 경로가 하나라도 있으면 파일:줄로 지목하라.
+   특히 `manifest_requirements.rs:125` 근처 — proto 가 "기본 1" 이라
+   적었다는 이유로 `0` 을 `1` 로 바꾸는 곳이 있다. **그게 정당한가,
+   아니면 지어내기인가?** proto 를 직접 확인하고 답하라.
+
+2. **`match` 가 정말 exhaustive 인가.** `_ =>` 나 catch-all 이 섞여 있으면
+   proto 에 변형이 추가돼도 컴파일이 안 깨진다 — 그러면 새 값이 조용히
+   기존 분기로 흡수된다. 지목하라.
+
+3. **`submitter_member_id` 를 인자로 받는다.** 메시지 안에서 읽지 않고
+   바깥에서 받는 이유가 파일 머리말에 적혀 있다. 그 이유가 **코드와
+   맞는가**? 받은 값을 검증 없이 그대로 쓰는가, 아니면 대조하는가?
+   검증 없이 쓴다면 잘못된 값을 넣었을 때 무슨 일이 생기나?
+
+4. **테스트가 축을 전수로 덮는가.** 이 파일의 테스트가 각 enum 의
+   **모든 변형**을 도는가, 아니면 대표값 몇 개만 보는가? 안 덮인 변형이
+   있으면 지목하라. 그리고 `manifest_requirements.rs:317` 근처가
+   "기대값을 손으로 적는다" 고 했는데, 실제로 그런가 — 변환 함수를 다시
+   돌려 기대값을 만드는 테스트가 있으면 그건 **자기가 자기를 확인하는
+   것**이라 아무것도 증명하지 않는다.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** enum 을 몇 개 봤고
+각각 몇 개 변형인지 쓰면 된다. 없는 문제를 지어내지 마라.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 과 **구체적 입력**(이런 Manifest 를 넣으면 이런
+값이 나온다)을 붙여라.
+
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 변환기 파일과 `proto/job.proto`만 읽고, 기본값 처리·enum 분기·호출자 ID·테스트 기대값을 대조하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n=0; Get-Content crates/coordinator/src/manifest_requirements.rs | ForEach-Object { $n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n=0; Get-Content proto/job.proto | ForEach-Object { $n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1513ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: // gPUteer ??Job Manifest ?� Execution Grant
+   2: //
+   3: // 규범 문서: docs/protocol/signing.md
+   4: // ?�계 근거: gputeer_master_implementation_plan_v5.md §15
+   5: //
+   6: // ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
+   7: // ???�심 ?�계: ??개의 문서, ??개의 ?�명  (계획??§15.1, ADR-021)      ??
+   8: // ??                                                                     ??
+   9: // ?? JobManifest    "???�람?????�업???�청?�다"                       ??
+  10: // ??                ?�명??submitter · ?�명 김 (기본 7??                ??
+  11: // ??                60�??�계 규칙 ?�용 ????· replay 캐시 ?�???�님     ??
+  12: // ??                ?�사?�이 ?�상 (?�나??Manifest ???�러 Attempt)       ??
+  13: // ??                                                                     ??
+  14: // ?? ExecutionGrant "지�????�드?�서 ??attempt�??�행?�라"             ??
+  15: // ??                ?�명??Coordinator · ?�명 짧음 (기본 60�?           ??
+  16: // ??                60�??�계 규칙 ?�용 · replay 캐시 ?�??              ??
+  17: // ??                ?�사?��? 공격                                        ??
+  18: // ??                                                                     ??
+  19: // ?? v5 초안?� ?��? ?�쳐?�고 Manifest??60�?규칙??걸었??              ??
+  20: // ?? ?�에?????�간 ?�기하???�상 Job??배치 ?�점??100% 거�??�다.       ??
+  21: // ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
+  22: 
+  23: syntax = "proto3";
+  24: 
+  25: package gputeer.v1;
+  26: 
+  27: import "common.proto";
+  28: import "lease.proto";   // Lease ??ExecutionGrant 가 참조?�다
+  29: 
+  30: option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
+  31: 
+  32: // ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??
+  33: // JobManifest ???�수�? submitter가 ?�명?�다.
+  34: //
+  35: // manifest_hash ?�드가 ?�다???�에 주의.
+  36: //   ?�시�?메시지 ?�에 ?�으�?"?�시 계산 ???�기 ?�신???�함?�는가"?�는
+  37: //   ?�환???�긴?? manifest_hash??signing.md 규칙 3?�로 ?�출?�는 값이�?
+  38: //   메시지 밖에???�룬??
+  39: // ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??
+  40: 
+  41: message JobManifest {
+  42:   // --- ?�별 ---
+  43:   // signing.md 규칙 4. 검증자가 ??값보????���?SCHEMA_TOO_NEW �?반환?�다.
+  44:   uint32 schema_version = 1; // ?�재 1
+  45:   string job_id = 2;
+  46:   string team_id = 3;
+  47: 
+  48:   // --- ?�행 ?�??---
+  49:   ExecutionEnvironment env = 10;
+  50:   repeated Digest input_artifacts = 11;
+  51:   DatasetRef dataset = 12;
+  52:   string entrypoint = 13;
+  53:   repeated string args = 14;
+  54:   // canonical ?�코????key 바이???�름차순?�로 ?�렬?�다 (signing.md 규칙 2c).
+  55:   map<string, string> env_vars = 15;
+  56: 
+  57:   // --- ?�원 ?�구 ---
+  58:   ResourceRequest resources = 20;
+  59:   WorkloadHint workload = 21;
+  60: 
+  61:   // --- ?�능 ---
+  62:   uint32 deadline_minutes = 30;
+  63:   Preference preference = 31;
+  64:   // ???�간???�겨 ?�에 ?�으�?QUEUED ??FAILED. 0 = deadline???�름
+  65:   uint32 max_queue_minutes = 32;
+  66: 
+  67:   // --- 복구 ---
+  68:   // 로컬 체크?�인??주기. ?�격 복제 주기??§18.4 ?�산 모델??별도 ?�출?�다.
+  69:   uint32 checkpoint_interval_minutes = 40;
+  70:   Durability durability = 41;
+  71:   PartitionBehavior on_partition = 42;
+  72:   // ???�간 ?�상??진행 ?�실???�용?��? ?�는?? ?�산 모델???�한 ?�력.
+  73:   uint32 max_data_loss_minutes = 43;
+  74: 
+  75:   // --- 보안 ---
+  76:   IsolationClass minimum_isolation_class = 50;
+  77:   SecurityTier minimum_security_tier = 51;
+  78:   KeyProtection minimum_key_protection = 52;
+  79:   SideEffectClass side_effect_class = 53;
+  80:   NetworkPolicy network = 54;
+  81:   ArtifactScope artifact_scope = 55;
+  82:   // side_effect_class == SIDE_EFFECTING ?�고 §15.6??(a)/(b) 경로�?
+  83:   // ?��? ?�는 경우 반드??true ?�야 ?�출???�락?�다.
+  84:   // fencing?�로 ?��? 부?�용 중복??막을 ???�다???�실??명시???�락.
+  85:   bool acknowledge_duplicate_risk = 56;
+  86: 
+  87:   // --- 발급 (?�수�? ---
+  88:   string submitter_device_id = 60;
+  89:   uint64 issued_at_unix_ms = 61;
+  90:   // 기본 issued_at + 7?? 최�? 30??
+  91:   uint64 expires_at_unix_ms = 62;
+  92: 
+  93:   // --- ?�명 ---
+  94:   // canonical ?�코?�에???�외?�다 (signing.md 규칙 1).
+  95:   // domain_tag = "gputeer/v1/manifest"
+  96:   bytes submitter_signature = 90;
+  97: }
+  98: 
+  99: // ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??
+ 100: // ExecutionGrant ???�수�? Coordinator가 ?�명?�다.
+ 101: // ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??
+ 102: 
+ 103: message ExecutionGrant {
+ 104:   uint32 schema_version = 1; // ?�재 2
+ 105:   string grant_id = 2;
+ 106: 
+ 107:   // submitter ?�명???�함??채로 그�?�??�달?�다. ?�서명하지 ?�는??
+ 108:   JobManifest manifest = 3;
+ 109:   // signing.md 규칙 3?�로 계산??값의 ?�본. 참조??
+ 110:   // Agent??검�?13?�계?�서 반드???�계?�해 ?�조한??(?�뢰?��? ?�는??.
+ 111:   Digest manifest_hash = 4;
+ 112: 
+ 113:   string attempt_id = 5;
+ 114:   Lease lease = 6;
+ 115:   repeated PeerHint peers = 7;
+ 116:   EphemeralCredential creds = 8;
+ 117: 
+ 118:   // ??Grant�??�행?????�용?�는 ?�정 �? Coordinator가 계산???�려준??
+ 119:   GrantedExecutionPlan plan = 9;
+ 120: 
+ 121:   // --- 발급 (?�수�? ---
+ 122:   string coordinator_device_id = 20;
+ 123:   uint64 coordinator_term = 21;
+ 124:   uint64 issued_at_unix_ms = 22;
+ 125:   // 기본 issued_at + 60�?
+ 126:   uint64 expires_at_unix_ms = 23;
+ 127:   // 16바이?? replay 캐시 ?�??(§25.4).
+ 128:   bytes nonce = 24;
+ 129: 
+ 130:   // ??Grant??Lease가 Coordinator??durable Lease store?�서
+ 131:   // get_or_issue()�??�석?�음???��??�다. Agent??Ambiguous Renew
+ 132:   // 복구 ?�접?�에?????�명??값이 true??경우?�만 ??Renew�?보낸??
+ 133:   bool lease_from_durable_store = 25;
+ 134: 
+ 135:   // domain_tag = "gputeer/v2/grant"
+ 136:   bytes coordinator_signature = 90;
+ 137: }
+ 138: 
+ 139: // Coordinator가 ?�정???�려주는 ?�행 ?�라미터.
+ 140: // Agent가 ?�스�?계산?��? ?�는??(?�드마다 ?�른 결론???�오�????��?�?.
+ 141: message GrantedExecutionPlan {
+ 142:   ExecutionMode mode = 1;
+ 143:   GpuAllocationMode gpu_allocation = 2;
+ 144:   repeated string assigned_gpu_uuids = 3;
+ 145: 
+ 146:   // §18.4 ?�산 모델???�출???�제 ?�격 복제 주기.
+ 147:   // manifest.checkpoint_interval_minutes ?� ?��? ???�다.
+ 148:   uint32 remote_replication_interval_minutes = 10;
+ 149:   // ??Job???�???�구?�는 COMMITTED 조건.
+ 150:   Durability effective_durability = 11;
+ 151: 
+ 152:   // §13.4 배치 근거. 감사?� UI ?�명???�용?�다.
+ 153:   PlacementRationale rationale = 20;
+ 154: }
+ 155: 
+ 156: // "????GPU가 ?�택?�는가"�???�� ?�명?????�어???�다 (계획??§26.3).
+ 157: // ?�성 Coordinator ?��??�도 ?�인?? ?�른 Coordinator가 같�? ?�냅?�으�?
+ 158: // ?�계?�해 ?�조할 ???�다.
+ 159: message PlacementRationale {
+ 160:   uint64 t_est_seconds = 1;
+ 161:   // ?_ln × 1e6. 부?�소?�점 금�? 규칙(signing.md 규칙 2g).
+ 162:   uint64 sigma_ln_ppm = 2;
+ 163:   // §12.3???�느 ?�계?�서 ?�온 추정?��?.
+ 164:   EstimationStage stage = 3;
+ 165: 
+ 166:   uint64 p_within_estimate_ppm = 10;
+ 167:   uint64 p_survival_ppm = 11;
+ 168:   uint64 p_success_ppm = 12;
+ 169:   uint64 target_confidence_ppm = 13;
+ 170: 
+ 171:   // ??배치가 exploration budget?�로 ?�뤄졌는지 (§13.4 P0-Fix #3).
+ 172:   // true�?target_confidence�??�용?��? ?�았?�는 ?�이??
+ 173:   bool is_exploration = 20;
+ 174: 
+ 175:   // ?�락???�보?� ?�유. 공정??감사??
+ 176:   repeated RejectedCandidate rejected = 30;
+ 177: }
+ 178: 
+ 179: enum EstimationStage {
+ 180:   ESTIMATION_STAGE_UNSPECIFIED = 0;
+ 181:   ESTIMATION_STAGE_DECLARED = 1;   // ?_rel 0.35
+ 182:   ESTIMATION_STAGE_CALIBRATED = 2; // ?_rel 0.15
+ 183:   ESTIMATION_STAGE_HISTORICAL = 3; // ?_rel 0.08
+ 184: }
+ 185: 
+ 186: message RejectedCandidate {
+ 187:   string node_id = 1;
+ 188:   RejectReason reason = 2;
+ 189:   string detail = 3;
+ 190: }
+ 191: 
+ 192: enum RejectReason {
+ 193:   REJECT_REASON_UNSPECIFIED = 0;
+ 194:   REJECT_REASON_TIER_INSUFFICIENT = 1;
+ 195:   REJECT_REASON_ISOLATION_INSUFFICIENT = 2;
+ 196:   REJECT_REASON_KEY_PROTECTION_INSUFFICIENT = 3;
+ 197:   REJECT_REASON_RESOURCE_INSUFFICIENT = 4;
+ 198:   REJECT_REASON_CUDA_INCOMPATIBLE = 5;
+ 199:   REJECT_REASON_UNAVAILABLE_WINDOW = 6;
+ 200:   REJECT_REASON_UNHEALTHY = 7;
+ 201:   REJECT_REASON_WORKLOAD_CLASS_DENIED = 8;
+ 202:   REJECT_REASON_THIRD_PARTY_NOT_OPTED_IN = 9;
+ 203:   // T_est × (1 + ?_rel) > deadline. ?�률 계산 ?�전???�린??(§13.2).
+ 204:   REJECT_REASON_DEADLINE_INFEASIBLE = 10;
+ 205:   // §18.4 체크?�인???�산 모델 ?�반.
+ 206:   REJECT_REASON_CHECKPOINT_BUDGET = 11;
+ 207:   // ?� 구성???�구 durability�?만족?????�다 (§13.2).
+ 208:   REJECT_REASON_DURABILITY_UNSATISFIABLE = 12;
+ 209:   // P(?�공) < target_confidence.
+ 210:   REJECT_REASON_CONFIDENCE_BELOW_TARGET = 13;
+ 211:   REJECT_REASON_QUARANTINED = 14;
+ 212: }
+ 213: 
+ 214: // ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??
+ 215: // Job ?�출 결과
+ 216: // ?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═?�═??
+ 217: 
+ 218: message SubmitJobResult {
+ 219:   SubmitOutcome outcome = 1;
+ 220:   string job_id = 2;
+ 221:   string detail = 3;
+ 222:   // outcome == UNAVAILABLE ?????�상 복구 ?�각 (?� 가?�성 ?��?�?기�?).
+ 223:   uint64 estimated_available_at_unix_ms = 4;
+ 224: }
+ 225: 
+ 226: enum SubmitOutcome {
+ 227:   SUBMIT_OUTCOME_UNSPECIFIED = 0;
+ 228:   SUBMIT_OUTCOME_ACCEPTED = 1;
+ 229:   // quorum ?�실. Job?� ?�성?��? ?�는??(계획??§27.2).
+ 230:   SUBMIT_OUTCOME_UNAVAILABLE = 2;
+ 231:   // Hard Filter�?만족?�는 ?�드가 ?�??물리?�으�?존재?��? ?�는??
+ 232:   SUBMIT_OUTCOME_INFEASIBLE = 3;
+ 233:   // side_effecting?�데 acknowledge_duplicate_risk 가 ?�다 ??
+ 234:   SUBMIT_OUTCOME_POLICY_VIOLATION = 4;
+ 235:   SUBMIT_OUTCOME_INVALID_MANIFEST = 5;
+ 236: }
+
+ succeeded in 1534ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: //! 검증된 `JobManifest` �?scheduler ??`JobRequirements` �???��??
+   2: //! **?�수 변?�기**.
+   3: //!
+   4: //! # ?�것????별도 조각?��?
+   5: //!
+   6: //! ?�러 evidence 가 "`JobManifest` ??`JobRequirements` 변?�기가 ?�다" �?
+   7: //! ?�어 ?�?? 그게 ?�어???�?�된 Job ??scheduler ???�울 ???�었??
+   8: //!
+   9: //! # ??모듈???��? ?�는 �?
+  10: //!
+  11: //! ```text
+  12: //! ???�다   ?�명 검�?         `&Verified<M>` �?받는?????��? ?�난 ?�이??
+  13: //! ???�다   device?�member ?�석  caller 가 ?�긴 값을 ??뿐이???�래 참조)
+  14: //! ???�다   ?�계 ?�기·I/O·DB    ?�수 ?�수??
+  15: //! ???�다   ?�보 ?�택           그건 `evaluate_eligibility()` ???�이??
+  16: //! ```
+  17: //!
+  18: //! # ??`submitter_member_id` �????�자�?받는가
+  19: //!
+  20: //! **`JobManifest` ??�?값이 ?�다.** `team_id` ?� `submitter_device_id`
+  21: //! ???��?�?멤버 ?�별?�는 ?�다. scheduler ??그것?�로 "????Job ?��?"
+  22: //! �??�정?��?�?`filter.rs` ???�드 ?�유?��? ?�르�????? ?�으�?
+  23: //! `MissingFact::JobSubmitterMemberId` �??�보가 ?��? ?�어진다.
+  24: //!
+  25: //! device?�member �?권위 ?�게 ?�석?�는 경로?????�?�소???�직 ?�다
+  26: //! (멤버??? ?�용??결정 4건과 `COMMITTED` 부?�로 막�? ?�다). 그래??
+  27: //! **??커널?� 그것???�석?��? ?�고 ?�구?�다** ???�출부가 ?�디??
+  28: //! 가?�왔?��? 진술?�야 ?�고, ?�늘 ?�직??출처???�영???�언뿐이??
+  29: //! ?�기??몰래 `team_id` �?멤버�??�면 �??�간 ?�는 권위�?지?�낸??
+  30: //!
+  31: //! # ??`UNSPECIFIED` �?값으�?바꾸지 ?�는??
+  32: //!
+  33: //! proto ??모든 분류 축이 `*_UNSPECIFIED = 0` ??갖는?? 그것??
+  34: //! "기본�? ?�로 ??���??�출?��? **말하지 ?��? 것을 말한 것으�?*
+  35: //! 만든?????�컨?� `SIDE_EFFECT_CLASS_UNSPECIFIED` �?`Pure` �??�으�?
+  36: //! ?��? 부?�용???�언?��? ?��? Job ??"부?�용 ?�음" ?�로 ?��?줄된??
+  37: //! `CLAUDE.md` §1 ??모르�?비워 ?�고, ?�기?�는 **거�??�다.**
+  38: 
+  39: use gputeer_protocol::{pb, Verified};
+  40: use gputeer_scheduler::{
+  41:     IsolationClass, JobRequirements, KeyProtection, SecurityTier, Sensitivity, SideEffectClass,
+  42:     WorkloadClass,
+  43: };
+  44: 
+  45: /// 변?�할 ???�는 ?�유. ?�영?��? **무엇??고쳐???�는지**�??�눈??
+  46: #[derive(Debug, Clone, PartialEq, Eq)]
+  47: pub enum ManifestConversionError {
+  48:     /// ?�출?��? ?�언?��? ?��? 축이?? Manifest �??�시 만들?�야 ?�다.
+  49:     Unspecified(&'static str),
+  50:     /// ??빌드가 모르??enum 값이?????�출?��? ???�로???�키마�? ?�다.
+  51:     UnknownEnumValue { field: &'static str, value: i32 },
+  52:     /// 메시지 ?�체가 ?�다(`resources` 처럼 중첩 메시지가 ?�째�?빠졌??.
+  53:     MissingMessage(&'static str),
+  54:     /// caller 가 ?�겨???�는 값이 비었??
+  55:     MissingCallerFact(&'static str),
+  56: }
+  57: 
+  58: impl std::fmt::Display for ManifestConversionError {
+  59:     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+  60:         match self {
+  61:             Self::Unspecified(field) => write!(
+  62:                 f,
+  63:                 "Manifest 가 {field} �??�언?��? ?�았????말하지 ?��? 것을 기본값으�?채우지 ?�는??
+  64:             ),
+  65:             Self::UnknownEnumValue { field, value } => write!(
+  66:                 f,
+  67:                 "??빌드가 모르??{field} �?{value}) ?????�로???�키마로 ?�명??Manifest ?????�다"
+  68:             ),
+  69:             Self::MissingMessage(name) => {
+  70:                 write!(f, "Manifest ??{name} ???�째�??�다")
+  71:             }
+  72:             Self::MissingCallerFact(name) => write!(
+  73:                 f,
+  74:                 "{name} ?� Manifest ???�다 ???�출부가 권위 ?�는 출처?�서 가?��? ?�겨???�다"
+  75:             ),
+  76:         }
+  77:     }
+  78: }
+  79: 
+  80: impl std::error::Error for ManifestConversionError {}
+  81: 
+  82: /// 검증된 Manifest �?scheduler ?�력?�로 ??��??
+  83: ///
+  84: /// `submitter_member_id` ??**caller 가 ?�석??�?*?�다 ??모듈 문서??
+  85: /// "???�자�?받는가" �?보라.
+  86: pub fn job_requirements_from_manifest(
+  87:     manifest: &Verified<pb::JobManifest>,
+  88:     submitter_member_id: &str,
+  89: ) -> Result<JobRequirements, ManifestConversionError> {
+  90:     // ???�기 ?�에?�는 ?�떤 ?�드???��? ?�았????`Verified::get()` ??
+  91:     //   ?�일???�구??`CLAUDE.md` §0.2).
+  92:     let m = manifest.get();
+  93: 
+  94:     if submitter_member_id.trim().is_empty() {
+  95:         return Err(ManifestConversionError::MissingCallerFact(
+  96:             "submitter_member_id",
+  97:         ));
+  98:     }
+  99: 
+ 100:     let resources = m
+ 101:         .resources
+ 102:         .as_ref()
+ 103:         .ok_or(ManifestConversionError::MissingMessage("resources"))?;
+ 104:     let gpu = resources
+ 105:         .gpu
+ 106:         .as_ref()
+ 107:         .ok_or(ManifestConversionError::MissingMessage("resources.gpu"))?;
+ 108:     let workload = m
+ 109:         .workload
+ 110:         .as_ref()
+ 111:         .ok_or(ManifestConversionError::MissingMessage("workload"))?;
+ 112:     let dataset = m
+ 113:         .dataset
+ 114:         .as_ref()
+ 115:         .ok_or(ManifestConversionError::MissingMessage("dataset"))?;
+ 116: 
+ 117:     Ok(JobRequirements {
+ 118:         submitter_member_id: Some(submitter_member_id.to_string()),
+ 119:         workload_class: Some(workload_class(workload.class)?),
+ 120:         side_effect_class: Some(side_effect_class(m.side_effect_class)?),
+ 121:         sensitivity: Some(sensitivity(dataset.sensitivity)?),
+ 122:         minimum_security_tier: Some(security_tier(m.minimum_security_tier)?),
+ 123:         minimum_isolation_class: Some(isolation_class(m.minimum_isolation_class)?),
+ 124:         minimum_key_protection: Some(key_protection(m.minimum_key_protection)?),
+ 125:         // ??proto 가 "기본 1" ?�라 ?�었?��?�?0 ?� 미선?�이 ?�니??
+ 126:         //   **?�언??기본�?*?�다. ?�건 지?�내??것이 ?�니??규범??
+ 127:         //   그�?�???��??것이??`proto/common.proto` GpuRequest.min_count).
+ 128:         minimum_gpu_count: Some(if gpu.min_count == 0 { 1 } else { gpu.min_count }),
+ 129:         // 0 ?� "VRAM ?�한 ?�음" ?�다 ??규범???�한???�구?��? ?�는??
+ 130:         minimum_vram_bytes_per_gpu: Some(gpu.min_vram_bytes),
+ 131:         // proto: "�?목록 = ?�약 ?�음".
+ 132:         allowed_gpu_models: gpu.allowed_gpu_models.clone(),
+ 133:         cpu_cores: Some(resources.cpu_cores),
+ 134:         ram_bytes: Some(resources.ram_bytes),
+ 135:         workspace_bytes: Some(resources.workspace_bytes),
+ 136:     })
+ 137: }
+ 138: 
+ 139: // ---------------------------------------------------------------- enum �?
+ 140: //
+ 141: // ??�??�수가 **exhaustive `match`** ?? proto ????변?�이 ?�겨
+ 142: //   `crates/protocol` ??그것???�게 ?�면 **컴파?�이 깨진??* ???�으�?
+ 143: //   ???��? 조용???�는 것을 막는?????�?�소?�서 ??�?겪었??.
+ 144: 
+ 145: fn workload_class(value: i32) -> Result<WorkloadClass, ManifestConversionError> {
+ 146:     let parsed = pb::WorkloadClass::try_from(value).map_err(|_| {
+ 147:         ManifestConversionError::UnknownEnumValue {
+ 148:             field: "workload.class",
+ 149:             value,
+ 150:         }
+ 151:     })?;
+ 152:     match parsed {
+ 153:         pb::WorkloadClass::Unspecified => {
+ 154:             Err(ManifestConversionError::Unspecified("workload.class"))
+ 155:         }
+ 156:         pb::WorkloadClass::Training => Ok(WorkloadClass::Training),
+ 157:         pb::WorkloadClass::Inference => Ok(WorkloadClass::Inference),
+ 158:         pb::WorkloadClass::Preprocessing => Ok(WorkloadClass::Preprocessing),
+ 159:         pb::WorkloadClass::Evaluation => Ok(WorkloadClass::Evaluation),
+ 160:         pb::WorkloadClass::Rendering => Ok(WorkloadClass::Rendering),
+ 161:         pb::WorkloadClass::Other => Ok(WorkloadClass::Other),
+ 162:     }
+ 163: }
+ 164: 
+ 165: fn side_effect_class(value: i32) -> Result<SideEffectClass, ManifestConversionError> {
+ 166:     let parsed = pb::SideEffectClass::try_from(value).map_err(|_| {
+ 167:         ManifestConversionError::UnknownEnumValue {
+ 168:             field: "side_effect_class",
+ 169:             value,
+ 170:         }
+ 171:     })?;
+ 172:     match parsed {
+ 173:         pb::SideEffectClass::Unspecified => {
+ 174:             Err(ManifestConversionError::Unspecified("side_effect_class"))
+ 175:         }
+ 176:         pb::SideEffectClass::Pure => Ok(SideEffectClass::Pure),
+ 177:         pb::SideEffectClass::Idempotent => Ok(SideEffectClass::Idempotent),
+ 178:         pb::SideEffectClass::SideEffecting => Ok(SideEffectClass::SideEffecting),
+ 179:     }
+ 180: }
+ 181: 
+ 182: fn sensitivity(value: i32) -> Result<Sensitivity, ManifestConversionError> {
+ 183:     let parsed =
+ 184:         pb::Sensitivity::try_from(value).map_err(|_| ManifestConversionError::UnknownEnumValue {
+ 185:             field: "dataset.sensitivity",
+ 186:             value,
+ 187:         })?;
+ 188:     match parsed {
+ 189:         pb::Sensitivity::Unspecified => {
+ 190:             Err(ManifestConversionError::Unspecified("dataset.sensitivity"))
+ 191:         }
+ 192:         pb::Sensitivity::Public => Ok(Sensitivity::Public),
+ 193:         pb::Sensitivity::Internal => Ok(Sensitivity::Internal),
+ 194:         pb::Sensitivity::Sensitive => Ok(Sensitivity::Sensitive),
+ 195:     }
+ 196: }
+ 197: 
+ 198: fn security_tier(value: i32) -> Result<SecurityTier, ManifestConversionError> {
+ 199:     let parsed =
+ 200:         pb::SecurityTier::try_from(value).map_err(|_| ManifestConversionError::UnknownEnumValue {
+ 201:             field: "minimum_security_tier",
+ 202:             value,
+ 203:         })?;
+ 204:     match parsed {
+ 205:         pb::SecurityTier::Unspecified => Err(ManifestConversionError::Unspecified(
+ 206:             "minimum_security_tier",
+ 207:         )),
+ 208:         pb::SecurityTier::S0 => Ok(SecurityTier::S0),
+ 209:         pb::SecurityTier::S1 => Ok(SecurityTier::S1),
+ 210:         pb::SecurityTier::S2 => Ok(SecurityTier::S2),
+ 211:         pb::SecurityTier::S3 => Ok(SecurityTier::S3),
+ 212:         pb::SecurityTier::S4 => Ok(SecurityTier::S4),
+ 213:         pb::SecurityTier::S5 => Ok(SecurityTier::S5),
+ 214:     }
+ 215: }
+ 216: 
+ 217: fn isolation_class(value: i32) -> Result<IsolationClass, ManifestConversionError> {
+ 218:     let parsed = pb::IsolationClass::try_from(value).map_err(|_| {
+ 219:         ManifestConversionError::UnknownEnumValue {
+ 220:             field: "minimum_isolation_class",
+ 221:             value,
+ 222:         }
+ 223:     })?;
+ 224:     match parsed {
+ 225:         pb::IsolationClass::Unspecified => Err(ManifestConversionError::Unspecified(
+ 226:             "minimum_isolation_class",
+ 227:         )),
+ 228:         pb::IsolationClass::Restricted => Ok(IsolationClass::Restricted),
+ 229:         pb::IsolationClass::Contained => Ok(IsolationClass::Contained),
+ 230:         pb::IsolationClass::Virtualized => Ok(IsolationClass::Virtualized),
+ 231:     }
+ 232: }
+ 233: 
+ 234: fn key_protection(value: i32) -> Result<KeyProtection, ManifestConversionError> {
+ 235:     let parsed = pb::KeyProtection::try_from(value).map_err(|_| {
+ 236:         ManifestConversionError::UnknownEnumValue {
+ 237:             field: "minimum_key_protection",
+ 238:             value,
+ 239:         }
+ 240:     })?;
+ 241:     match parsed {
+ 242:         pb::KeyProtection::Unspecified => Err(ManifestConversionError::Unspecified(
+ 243:             "minimum_key_protection",
+ 244:         )),
+ 245:         pb::KeyProtection::K0 => Ok(KeyProtection::K0),
+ 246:         pb::KeyProtection::K1 => Ok(KeyProtection::K1),
+ 247:         pb::KeyProtection::K2 => Ok(KeyProtection::K2),
+ 248:     }
+ 249: }
+ 250: 
+ 251: #[cfg(test)]
+ 252: mod tests {
+ 253:     use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
+ 254:     use gputeer_protocol::signing::{verify, NoReplayCheck};
+ 255: 
+ 256:     use super::*;
+ 257: 
+ 258:     const DEVICE: &str = "01JSUBMITTERCONVERT00001";
+ 259:     const MEMBER: &str = "member-alice";
+ 260: 
+ 261:     /// 모든 축이 채워�?Manifest. `tweak` ?�로 ??군데�?비워 반�?�?만든??
+ 262:     fn verified(tweak: impl FnOnce(&mut pb::JobManifest)) -> Verified<pb::JobManifest> {
+ 263:         let key = SigningKey::from_bytes(&[11u8; 32]);
+ 264:         let mut manifest = pb::JobManifest {
+ 265:             schema_version: 1,
+ 266:             job_id: "01JJOBCONVERT00000000001".to_string(),
+ 267:             team_id: "team-a".to_string(),
+ 268:             entrypoint: "train.py".to_string(),
+ 269:             submitter_device_id: DEVICE.to_string(),
+ 270:             issued_at_unix_ms: 10,
+ 271:             expires_at_unix_ms: 10_000,
+ 272:             resources: Some(pb::ResourceRequest {
+ 273:                 gpu: Some(pb::GpuRequest {
+ 274:                     min_vram_bytes: 8 * 1024 * 1024 * 1024,
+ 275:                     min_count: 2,
+ 276:                     allowed_gpu_models: vec!["RTX 4070 SUPER".to_string()],
+ 277:                     ..Default::default()
+ 278:                 }),
+ 279:                 cpu_cores: 8,
+ 280:                 ram_bytes: 16 * 1024 * 1024 * 1024,
+ 281:                 workspace_bytes: 64 * 1024 * 1024 * 1024,
+ 282:                 ..Default::default()
+ 283:             }),
+ 284:             workload: Some(pb::WorkloadHint {
+ 285:                 class: pb::WorkloadClass::Training as i32,
+ 286:                 ..Default::default()
+ 287:             }),
+ 288:             dataset: Some(pb::DatasetRef {
+ 289:                 sensitivity: pb::Sensitivity::Internal as i32,
+ 290:                 ..Default::default()
+ 291:             }),
+ 292:             side_effect_class: pb::SideEffectClass::Pure as i32,
+ 293:             minimum_security_tier: pb::SecurityTier::S2 as i32,
+ 294:             minimum_isolation_class: pb::IsolationClass::Contained as i32,
+ 295:             minimum_key_protection: pb::KeyProtection::K1 as i32,
+ 296:             ..Default::default()
+ 297:         };
+ 298:         tweak(&mut manifest);
+ 299:         manifest.submitter_signature = sign(&key, &manifest).to_vec();
+ 300:         let mut keys = InMemoryKeyring::new();
+ 301:         keys.insert(DEVICE, key.verifying_key());
+ 302:         verify(
+ 303:             &manifest,
+ 304:             1,
+ 305:             &Ed25519Verifier::new(keys),
+ 306:             100,
+ 307:             &mut NoReplayCheck,
+ 308:         )
+ 309:         .expect("test Manifest signature must verify")
+ 310:     }
+ 311: 
+ 312:     #[test]
+ 313:     fn a_complete_manifest_becomes_complete_requirements() {
+ 314:         let requirements =
+ 315:             job_requirements_from_manifest(&verified(|_| {}), MEMBER).expect("변???�패");
+ 316: 
+ 317:         // ??기�?값을 **?�으�?* ?�는?? 변???�수�??�시 ?�려 만들�?
+ 318:         //   �??�수가 ?��??�게 ?�?�도 ?�과?�다(???�?�소?�서 ??�??�왔??.
+ 319:         assert_eq!(requirements.submitter_member_id.as_deref(), Some(MEMBER));
+ 320:         assert_eq!(requirements.workload_class, Some(WorkloadClass::Training));
+ 321:         assert_eq!(requirements.side_effect_class, Some(SideEffectClass::Pure));
+ 322:         assert_eq!(requirements.sensitivity, Some(Sensitivity::Internal));
+ 323:         assert_eq!(requirements.minimum_security_tier, Some(SecurityTier::S2));
+ 324:         assert_eq!(
+ 325:             requirements.minimum_isolation_class,
+ 326:             Some(IsolationClass::Contained)
+ 327:         );
+ 328:         assert_eq!(requirements.minimum_key_protection, Some(KeyProtection::K1));
+ 329:         assert_eq!(requirements.minimum_gpu_count, Some(2));
+ 330:         assert_eq!(
+ 331:             requirements.minimum_vram_bytes_per_gpu,
+ 332:             Some(8 * 1024 * 1024 * 1024)
+ 333:         );
+ 334:         assert_eq!(requirements.allowed_gpu_models, vec!["RTX 4070 SUPER"]);
+ 335:         assert_eq!(requirements.cpu_cores, Some(8));
+ 336:         assert_eq!(requirements.ram_bytes, Some(16 * 1024 * 1024 * 1024));
+ 337:         assert_eq!(requirements.workspace_bytes, Some(64 * 1024 * 1024 * 1024));
+ 338:     }
+ 339: 
+ 340:     /// ?�★ **?�언?��? ?��? 축�? 기본값으�?채우지 ?�는??**
+ 341:     ///
+ 342:     /// ?�섯 �?각각??`UNSPECIFIED` �??�고 **각각 �??�름?�로** 거�??�는지
+ 343:     /// 본다. "뭔�? 거�??�다" �?보면 ?�섯 �??�나�?막는 구현?? ??축을
+ 344:     /// 막으면서 ?�른 �??�름??보고?�는 구현???�과?�다.
+ 345:     #[test]
+ 346:     fn every_unspecified_axis_is_refused_by_its_own_name() {
+ 347:         type Blank = Box<dyn Fn(&mut pb::JobManifest)>;
+ 348:         let cases: Vec<(&'static str, Blank)> = vec![
+ 349:             (
+ 350:                 "workload.class",
+ 351:                 Box::new(|m: &mut pb::JobManifest| {
+ 352:                     m.workload.as_mut().unwrap().class = pb::WorkloadClass::Unspecified as i32;
+ 353:                 }),
+ 354:             ),
+ 355:             (
+ 356:                 "side_effect_class",
+ 357:                 Box::new(|m: &mut pb::JobManifest| {
+ 358:                     m.side_effect_class = pb::SideEffectClass::Unspecified as i32;
+ 359:                 }),
+ 360:             ),
+ 361:             (
+ 362:                 "dataset.sensitivity",
+ 363:                 Box::new(|m: &mut pb::JobManifest| {
+ 364:                     m.dataset.as_mut().unwrap().sensitivity = pb::Sensitivity::Unspecified as i32;
+ 365:                 }),
+ 366:             ),
+ 367:             (
+ 368:                 "minimum_security_tier",
+ 369:                 Box::new(|m: &mut pb::JobManifest| {
+ 370:                     m.minimum_security_tier = pb::SecurityTier::Unspecified as i32;
+ 371:                 }),
+ 372:             ),
+ 373:             (
+ 374:                 "minimum_isolation_class",
+ 375:                 Box::new(|m: &mut pb::JobManifest| {
+ 376:                     m.minimum_isolation_class = pb::IsolationClass::Unspecified as i32;
+ 377:                 }),
+ 378:             ),
+ 379:             (
+ 380:                 "minimum_key_protection",
+ 381:                 Box::new(|m: &mut pb::JobManifest| {
+ 382:                     m.minimum_key_protection = pb::KeyProtection::Unspecified as i32;
+ 383:                 }),
+ 384:             ),
+ 385:         ];
+ 386:         for (field, blank) in cases {
+ 387:             let manifest = verified(|m| blank(m));
+ 388:             assert_eq!(
+ 389:                 job_requirements_from_manifest(&manifest, MEMBER),
+ 390:                 Err(ManifestConversionError::Unspecified(field)),
+ 391:                 "{field} �?비웠?�데 �??�름?�로 거�??��? ?�았??
+ 392:             );
+ 393:         }
+ 394:     }
+ 395: 
+ 396:     /// 중첩 메시지가 ?�째�??�으�?그것???�름?�로 말한??
+ 397:     #[test]
+ 398:     fn a_missing_nested_message_is_named() {
+ 399:         assert_eq!(
+ 400:             job_requirements_from_manifest(&verified(|m| m.resources = None), MEMBER),
+ 401:             Err(ManifestConversionError::MissingMessage("resources"))
+ 402:         );
+ 403:         assert_eq!(
+ 404:             job_requirements_from_manifest(
+ 405:                 &verified(|m| m.resources.as_mut().unwrap().gpu = None),
+ 406:                 MEMBER
+ 407:             ),
+ 408:             Err(ManifestConversionError::MissingMessage("resources.gpu"))
+ 409:         );
+ 410:         assert_eq!(
+ 411:             job_requirements_from_manifest(&verified(|m| m.workload = None), MEMBER),
+ 412:             Err(ManifestConversionError::MissingMessage("workload"))
+ 413:         );
+ 414:         assert_eq!(
+ 415:             job_requirements_from_manifest(&verified(|m| m.dataset = None), MEMBER),
+ 416:             Err(ManifestConversionError::MissingMessage("dataset"))
+ 417:         );
+ 418:     }
+ 419: 
+ 420:     /// ??`submitter_member_id` ??Manifest ??**?�다.** caller 가 ??주면
+ 421:     ///   `team_id` �?몰래 ?�체하지 ?�고 거�??�다 ??그게 ?�는 권위�?
+ 422:     ///   지?�내??것이??
+ 423:     #[test]
+ 424:     fn an_absent_submitter_member_is_refused_rather_than_taken_from_team_id() {
+ 425:         for blank in ["", "   "] {
+ 426:             assert_eq!(
+ 427:                 job_requirements_from_manifest(&verified(|_| {}), blank),
+ 428:                 Err(ManifestConversionError::MissingCallerFact(
+ 429:                     "submitter_member_id"
+ 430:                 )),
+ 431:                 "{blank:?} �?받아?��???
+ 432:             );
+ 433:         }
+ 434:         // ?��???Manifest ??team_id 가 결과???�어 ?�어가지 ?�는??
+ 435:         let requirements = job_requirements_from_manifest(&verified(|_| {}), MEMBER).unwrap();
+ 436:         assert_eq!(requirements.submitter_member_id.as_deref(), Some(MEMBER));
+ 437:         assert_ne!(requirements.submitter_member_id.as_deref(), Some("team-a"));
+ 438:     }
+ 439: 
+ 440:     /// proto 가 "기본 1" ?�라 ?��? 것�? 지?�내??것이 ?�니??규범?�다.
+ 441:     #[test]
+ 442:     fn a_zero_gpu_count_becomes_the_documented_default_of_one() {
+ 443:         let requirements = job_requirements_from_manifest(
+ 444:             &verified(|m| m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_count = 0),
+ 445:             MEMBER,
+ 446:         )
+ 447:         .expect("변???�패");
+ 448:         assert_eq!(requirements.minimum_gpu_count, Some(1));
+ 449: 
+ 450:         // ?��???0 ???�닌 값�? 그�?�?간다. ?�니�?"??�� 1" 로도 ?�과?�다.
+ 451:         let requirements = job_requirements_from_manifest(
+ 452:             &verified(|m| m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_count = 4),
+ 453:             MEMBER,
+ 454:         )
+ 455:         .expect("변???�패");
+ 456:         assert_eq!(requirements.minimum_gpu_count, Some(4));
+ 457:     }
+ 458: 
+ 459:     /// �?모델 목록?� "?�약 ?�음" ?�다 ??proto 가 그렇�??�었??
+ 460:     #[test]
+ 461:     fn an_empty_model_list_means_no_constraint() {
+ 462:         let requirements = job_requirements_from_manifest(
+ 463:             &verified(|m| {
+ 464:                 m.resources
+ 465:                     .as_mut()
+ 466:                     .unwrap()
+ 467:                     .gpu
+ 468:                     .as_mut()
+ 469:                     .unwrap()
+ 470:                     .allowed_gpu_models
+ 471:                     .clear()
+ 472:             }),
+ 473:             MEMBER,
+ 474:         )
+ 475:         .expect("변???�패");
+ 476:         assert!(requirements.allowed_gpu_models.is_empty());
+ 477:     }
+ 478: 
+ 479:     /// ??빌드가 모르??enum 값을 조용???�기지 ?�는??
+ 480:     ///
+ 481:     /// ?????�로???�키마로 ?�명??Manifest �?"기본�? ?�로 ?�으�?
+ 482:     ///   ??보안 축을 구버?�이 무시?�다(`CLAUDE.md` §0.2).
+ 483:     #[test]
+ 484:     fn an_enum_value_this_build_does_not_know_is_refused() {
+ 485:         let error =
+ 486:             job_requirements_from_manifest(&verified(|m| m.minimum_security_tier = 99), MEMBER)
+ 487:                 .expect_err("모르??값을 받아?��???);
+ 488:         assert_eq!(
+ 489:             error,
+ 490:             ManifestConversionError::UnknownEnumValue {
+ 491:                 field: "minimum_security_tier",
+ 492:                 value: 99
+ 493:             }
+ 494:         );
+ 495:     }
+ 496: 
+ 497:     /// ?�★ **?�섯 축의 모든 ?�효 변?�이 ??값으�??�어가?��?.**
+ 498:     ///
+ 499:     /// 2026-09-07 ?�립 검??지?�으�?추�??�다. 그전까�? ???�일??
+ 500:     /// 직접 검?�한 것�? **30�??�효 변??�?12�?*뿐이?�다 ??
+ 501:     /// `Unspecified` ?�섯�??�공 경로??**?�?�값 ?�섯**. ?�머지 18개는
+ 502:     /// ?�무????봤다.
+ 503:     ///
+ 504:     /// ???��? evidence 초안??"�??�수 뮤테?�션???�렸?? �??�었?�데,
+ 505:     ///   �?'?�수' ??**거�? �??�섯**?�었지 **�??�른**???�니?�다.
+ 506:     ///   검?��? �?차이�?짚었??
+ 507:     ///
+ 508:     /// ?�★ 기�?값을 **?�으�??�는??** 변???�수�??�시 ?�려 기�?값을
+ 509:     ///   만들�??�기가 ?�기�??�인?�는 것이???�무것도 증명?��? ?�는??
+ 510:     #[test]
+ 511:     fn every_valid_variant_of_every_axis_maps_to_its_own_value() {
+ 512:         // workload.class ??proto ???�섯 변??
+ 513:         for (raw, want) in [
+ 514:             (pb::WorkloadClass::Training, WorkloadClass::Training),
+ 515:             (pb::WorkloadClass::Inference, WorkloadClass::Inference),
+ 516:             (
+ 517:                 pb::WorkloadClass::Preprocessing,
+ 518:                 WorkloadClass::Preprocessing,
+ 519:             ),
+ 520:             (pb::WorkloadClass::Evaluation, WorkloadClass::Evaluation),
+ 521:             (pb::WorkloadClass::Rendering, WorkloadClass::Rendering),
+ 522:             (pb::WorkloadClass::Other, WorkloadClass::Other),
+ 523:         ] {
+ 524:             let got = job_requirements_from_manifest(
+ 525:                 &verified(|m| m.workload.as_mut().unwrap().class = raw as i32),
+ 526:                 MEMBER,
+ 527:             )
+ 528:             .unwrap_or_else(|e| panic!("workload.class {raw:?} �?거�??�다: {e:?}"));
+ 529:             assert_eq!(
+ 530:                 got.workload_class,
+ 531:                 Some(want),
+ 532:                 "workload.class {raw:?} 가 ?�뚱??값으�?갔다"
+ 533:             );
+ 534:         }
+ 535: 
+ 536:         for (raw, want) in [
+ 537:             (pb::SideEffectClass::Pure, SideEffectClass::Pure),
+ 538:             (
+ 539:                 pb::SideEffectClass::Idempotent,
+ 540:                 SideEffectClass::Idempotent,
+ 541:             ),
+ 542:             (
+ 543:                 pb::SideEffectClass::SideEffecting,
+ 544:                 SideEffectClass::SideEffecting,
+ 545:             ),
+ 546:         ] {
+ 547:             let got =
+ 548:                 job_requirements_from_manifest(&verified(|m| m.side_effect_class = raw as i32), MEMBER)
+ 549:                     .unwrap_or_else(|e| panic!("side_effect_class {raw:?} �?거�??�다: {e:?}"));
+ 550:             assert_eq!(got.side_effect_class, Some(want));
+ 551:         }
+ 552: 
+ 553:         for (raw, want) in [
+ 554:             (pb::Sensitivity::Public, Sensitivity::Public),
+ 555:             (pb::Sensitivity::Internal, Sensitivity::Internal),
+ 556:             (pb::Sensitivity::Sensitive, Sensitivity::Sensitive),
+ 557:         ] {
+ 558:             let got = job_requirements_from_manifest(
+ 559:                 &verified(|m| m.dataset.as_mut().unwrap().sensitivity = raw as i32),
+ 560:                 MEMBER,
+ 561:             )
+ 562:             .unwrap_or_else(|e| panic!("sensitivity {raw:?} �?거�??�다: {e:?}"));
+ 563:             assert_eq!(got.sensitivity, Some(want));
+ 564:         }
+ 565: 
+ 566:         for (raw, want) in [
+ 567:             (pb::SecurityTier::S0, SecurityTier::S0),
+ 568:             (pb::SecurityTier::S1, SecurityTier::S1),
+ 569:             (pb::SecurityTier::S2, SecurityTier::S2),
+ 570:             (pb::SecurityTier::S3, SecurityTier::S3),
+ 571:             (pb::SecurityTier::S4, SecurityTier::S4),
+ 572:             (pb::SecurityTier::S5, SecurityTier::S5),
+ 573:         ] {
+ 574:             let got = job_requirements_from_manifest(
+ 575:                 &verified(|m| m.minimum_security_tier = raw as i32),
+ 576:                 MEMBER,
+ 577:             )
+ 578:             .unwrap_or_else(|e| panic!("security_tier {raw:?} �?거�??�다: {e:?}"));
+ 579:             assert_eq!(got.minimum_security_tier, Some(want));
+ 580:         }
+ 581: 
+ 582:         for (raw, want) in [
+ 583:             (pb::IsolationClass::Restricted, IsolationClass::Restricted),
+ 584:             (pb::IsolationClass::Contained, IsolationClass::Contained),
+ 585:             (
+ 586:                 pb::IsolationClass::Virtualized,
+ 587:                 IsolationClass::Virtualized,
+ 588:             ),
+ 589:         ] {
+ 590:             let got = job_requirements_from_manifest(
+ 591:                 &verified(|m| m.minimum_isolation_class = raw as i32),
+ 592:                 MEMBER,
+ 593:             )
+ 594:             .unwrap_or_else(|e| panic!("isolation_class {raw:?} �?거�??�다: {e:?}"));
+ 595:             assert_eq!(got.minimum_isolation_class, Some(want));
+ 596:         }
+ 597: 
+ 598:         for (raw, want) in [
+ 599:             (pb::KeyProtection::K0, KeyProtection::K0),
+ 600:             (pb::KeyProtection::K1, KeyProtection::K1),
+ 601:             (pb::KeyProtection::K2, KeyProtection::K2),
+ 602:         ] {
+ 603:             let got = job_requirements_from_manifest(
+ 604:                 &verified(|m| m.minimum_key_protection = raw as i32),
+ 605:                 MEMBER,
+ 606:             )
+ 607:             .unwrap_or_else(|e| panic!("key_protection {raw:?} �?거�??�다: {e:?}"));
+ 608:             assert_eq!(got.minimum_key_protection, Some(want));
+ 609:         }
+ 610:     }
+ 611: }
+
+codex
+실제 `proto/job.proto`에는 대상 enum과 `GpuRequest` 정의가 없고, 변환기 127줄은 `proto/common.proto`를 가리킵니다. 기본값과 enum을 직접 대조하려면 읽기 범위를 `proto/common.proto`의 해당 정의까지 넓혀도 될까요?
+- 해당 정의까지 확인
+- 처음 지정한 두 파일로 제한
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$n=0; Get-Content -Encoding UTF8 crates/coordinator/src/manifest_requirements.rs | ForEach-Object { $n++; if ($n -le 145 -or ($n -ge 340 -and $n -le 511)) { '"'{0,4}: {1}' -f "'$n, $_ } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1091ms:
+   1: //! ������ `JobManifest` �� scheduler �� `JobRequirements` �� �ű��
+   2: //! **���� ��ȯ��**.
+   3: //!
+   4: //! # �̰��� �� ���� �����ΰ�
+   5: //!
+   6: //! ���� evidence �� "`JobManifest` �� `JobRequirements` ��ȯ�Ⱑ ����" ��
+   7: //! ���� �״�. �װ� ��� ����� Job �� scheduler �� �¿� �� ������.
+   8: //!
+   9: //! # �� ����� ���� �ʴ� ��
+  10: //!
+  11: //! ```text
+  12: //! �� �Ѵ�   ���� ����          `&Verified<M>` �� �޴´� ? �̹� ���� ���̴�
+  13: //! �� �Ѵ�   device��member �ؼ�  caller �� �ѱ� ���� �� ���̴�(�Ʒ� ����)
+  14: //! �� �Ѵ�   �ð� �б⡤I/O��DB    ���� �Լ���
+  15: //! �� �Ѵ�   �ĺ� ����           �װ� `evaluate_eligibility()` �� ���̴�
+  16: //! ```
+  17: //!
+  18: //! # �� `submitter_member_id` �� �� ���ڷ� �޴°�
+  19: //!
+  20: //! **`JobManifest` �� �� ���� ����.** `team_id` �� `submitter_device_id`
+  21: //! �� ������ ��� �ĺ��ڴ� ����. scheduler �� �װ����� "��3�� Job �ΰ�"
+  22: //! �� �����ϹǷ�(`filter.rs` ? ��� �����ڿ� �ٸ��� ��3��) ������
+  23: //! `MissingFact::JobSubmitterMemberId` �� �ĺ��� ���� ��������.
+  24: //!
+  25: //! device��member �� ���� �ְ� �ؼ��ϴ� ��δ� �� ����ҿ� ���� ����
+  26: //! (������� ����� ���� 4�ǰ� `COMMITTED` ����� ���� �ִ�). �׷���
+  27: //! **�� Ŀ���� �װ��� �ؼ����� �ʰ� �䱸�Ѵ�** ? ȣ��ΰ� ���
+  28: //! �����Դ��� �����ؾ� �ϰ�, ���� ������ ��ó�� ��� ������̴�.
+  29: //! ���⼭ ���� `team_id` �� ����� ���� �� ���� ���� ������ �����.
+  30: //!
+  31: //! # �� `UNSPECIFIED` �� ������ �ٲ��� �ʴ´�
+  32: //!
+  33: //! proto �� ��� �з� ���� `*_UNSPECIFIED = 0` �� ���´�. �װ���
+  34: //! "�⺻��" ���� �ű�� �����ڰ� **������ ���� ���� ���� ������**
+  35: //! ����� ? ������ `SIDE_EFFECT_CLASS_UNSPECIFIED` �� `Pure` �� ������,
+  36: //! �ܺ� ���ۿ��� �������� ���� Job �� "���ۿ� ����" ���� �����ٵȴ�.
+  37: //! `CLAUDE.md` ��1 ? �𸣸� ��� �ΰ�, ���⼭�� **�ź��Ѵ�.**
+  38: 
+  39: use gputeer_protocol::{pb, Verified};
+  40: use gputeer_scheduler::{
+  41:     IsolationClass, JobRequirements, KeyProtection, SecurityTier, Sensitivity, SideEffectClass,
+  42:     WorkloadClass,
+  43: };
+  44: 
+  45: /// ��ȯ�� �� ���� ����. ��ڰ� **������ ���ľ� �ϴ���**�� ������.
+  46: #[derive(Debug, Clone, PartialEq, Eq)]
+  47: pub enum ManifestConversionError {
+  48:     /// �����ڰ� �������� ���� ���̴�. Manifest �� �ٽ� ������ �Ѵ�.
+  49:     Unspecified(&'static str),
+  50:     /// �� ���尡 �𸣴� enum ���̴� ? �����ڰ� �� ���ο� ��Ű���� ���.
+  51:     UnknownEnumValue { field: &'static str, value: i32 },
+  52:     /// �޽��� ��ü�� ����(`resources` ó�� ��ø �޽����� ��°�� ������).
+  53:     MissingMessage(&'static str),
+  54:     /// caller �� �Ѱܾ� �ϴ� ���� �����.
+  55:     MissingCallerFact(&'static str),
+  56: }
+  57: 
+  58: impl std::fmt::Display for ManifestConversionError {
+  59:     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+  60:         match self {
+  61:             Self::Unspecified(field) => write!(
+  62:                 f,
+  63:                 "Manifest �� {field} �� �������� �ʾҴ� ? ������ ���� ���� �⺻������ ä���� �ʴ´�"
+  64:             ),
+  65:             Self::UnknownEnumValue { field, value } => write!(
+  66:                 f,
+  67:                 "�� ���尡 �𸣴� {field} ��({value}) ? �� ���ο� ��Ű���� ������ Manifest �� �� �ִ�"
+  68:             ),
+  69:             Self::MissingMessage(name) => {
+  70:                 write!(f, "Manifest �� {name} �� ��°�� ����")
+  71:             }
+  72:             Self::MissingCallerFact(name) => write!(
+  73:                 f,
+  74:                 "{name} �� Manifest �� ���� ? ȣ��ΰ� ���� �ִ� ��ó���� ������ �Ѱܾ� �Ѵ�"
+  75:             ),
+  76:         }
+  77:     }
+  78: }
+  79: 
+  80: impl std::error::Error for ManifestConversionError {}
+  81: 
+  82: /// ������ Manifest �� scheduler �Է����� �ű��.
+  83: ///
+  84: /// `submitter_member_id` �� **caller �� �ؼ��� ��**�̴� ? ��� ������
+  85: /// "�� ���ڷ� �޴°�" �� ����.
+  86: pub fn job_requirements_from_manifest(
+  87:     manifest: &Verified<pb::JobManifest>,
+  88:     submitter_member_id: &str,
+  89: ) -> Result<JobRequirements, ManifestConversionError> {
+  90:     // �� ���� �������� � �ʵ嵵 ���� �ʾҴ� ? `Verified::get()` ��
+  91:     //   ������ �Ա���(`CLAUDE.md` ��0.2).
+  92:     let m = manifest.get();
+  93: 
+  94:     if submitter_member_id.trim().is_empty() {
+  95:         return Err(ManifestConversionError::MissingCallerFact(
+  96:             "submitter_member_id",
+  97:         ));
+  98:     }
+  99: 
+ 100:     let resources = m
+ 101:         .resources
+ 102:         .as_ref()
+ 103:         .ok_or(ManifestConversionError::MissingMessage("resources"))?;
+ 104:     let gpu = resources
+ 105:         .gpu
+ 106:         .as_ref()
+ 107:         .ok_or(ManifestConversionError::MissingMessage("resources.gpu"))?;
+ 108:     let workload = m
+ 109:         .workload
+ 110:         .as_ref()
+ 111:         .ok_or(ManifestConversionError::MissingMessage("workload"))?;
+ 112:     let dataset = m
+ 113:         .dataset
+ 114:         .as_ref()
+ 115:         .ok_or(ManifestConversionError::MissingMessage("dataset"))?;
+ 116: 
+ 117:     Ok(JobRequirements {
+ 118:         submitter_member_id: Some(submitter_member_id.to_string()),
+ 119:         workload_class: Some(workload_class(workload.class)?),
+ 120:         side_effect_class: Some(side_effect_class(m.side_effect_class)?),
+ 121:         sensitivity: Some(sensitivity(dataset.sensitivity)?),
+ 122:         minimum_security_tier: Some(security_tier(m.minimum_security_tier)?),
+ 123:         minimum_isolation_class: Some(isolation_class(m.minimum_isolation_class)?),
+ 124:         minimum_key_protection: Some(key_protection(m.minimum_key_protection)?),
+ 125:         // �� proto �� "�⺻ 1" �̶� �������Ƿ� 0 �� �̼����� �ƴ϶�
+ 126:         //   **����� �⺻��**�̴�. �̰� ����� ���� �ƴ϶� �Թ���
+ 127:         //   �״�� �ű�� ���̴�(`proto/common.proto` GpuRequest.min_count).
+ 128:         minimum_gpu_count: Some(if gpu.min_count == 0 { 1 } else { gpu.min_count }),
+ 129:         // 0 �� "VRAM ���� ����" �̴� ? �Թ��� ������ �䱸���� �ʴ´�.
+ 130:         minimum_vram_bytes_per_gpu: Some(gpu.min_vram_bytes),
+ 131:         // proto: "�� ��� = ���� ����".
+ 132:         allowed_gpu_models: gpu.allowed_gpu_models.clone(),
+ 133:         cpu_cores: Some(resources.cpu_cores),
+ 134:         ram_bytes: Some(resources.ram_bytes),
+ 135:         workspace_bytes: Some(resources.workspace_bytes),
+ 136:     })
+ 137: }
+ 138: 
+ 139: // ---------------------------------------------------------------- enum ��
+ 140: //
+ 141: // �� �� �Լ��� **exhaustive `match`** ��. proto �� �� ������ ����
+ 142: //   `crates/protocol` �� �װ��� �˰� �Ǹ� **�������� ������** ? ������
+ 143: //   �� ǥ�� ������ ���� ���� ���´�(�� ����ҿ��� �� �� �޾���).
+ 144: 
+ 145: fn workload_class(value: i32) -> Result<WorkloadClass, ManifestConversionError> {
+ 340:     /// �ڡ� **�������� ���� ���� �⺻������ ä���� �ʴ´�.**
+ 341:     ///
+ 342:     /// ���� �� ������ `UNSPECIFIED` �� �ΰ� **���� �� �̸�����** �źεǴ���
+ 343:     /// ����. "���� �źεƴ�" �� ���� ���� �� �ϳ��� ���� ������, �� ����
+ 344:     /// �����鼭 �ٸ� �� �̸��� �����ϴ� ������ ����Ѵ�.
+ 345:     #[test]
+ 346:     fn every_unspecified_axis_is_refused_by_its_own_name() {
+ 347:         type Blank = Box<dyn Fn(&mut pb::JobManifest)>;
+ 348:         let cases: Vec<(&'static str, Blank)> = vec![
+ 349:             (
+ 350:                 "workload.class",
+ 351:                 Box::new(|m: &mut pb::JobManifest| {
+ 352:                     m.workload.as_mut().unwrap().class = pb::WorkloadClass::Unspecified as i32;
+ 353:                 }),
+ 354:             ),
+ 355:             (
+ 356:                 "side_effect_class",
+ 357:                 Box::new(|m: &mut pb::JobManifest| {
+ 358:                     m.side_effect_class = pb::SideEffectClass::Unspecified as i32;
+ 359:                 }),
+ 360:             ),
+ 361:             (
+ 362:                 "dataset.sensitivity",
+ 363:                 Box::new(|m: &mut pb::JobManifest| {
+ 364:                     m.dataset.as_mut().unwrap().sensitivity = pb::Sensitivity::Unspecified as i32;
+ 365:                 }),
+ 366:             ),
+ 367:             (
+ 368:                 "minimum_security_tier",
+ 369:                 Box::new(|m: &mut pb::JobManifest| {
+ 370:                     m.minimum_security_tier = pb::SecurityTier::Unspecified as i32;
+ 371:                 }),
+ 372:             ),
+ 373:             (
+ 374:                 "minimum_isolation_class",
+ 375:                 Box::new(|m: &mut pb::JobManifest| {
+ 376:                     m.minimum_isolation_class = pb::IsolationClass::Unspecified as i32;
+ 377:                 }),
+ 378:             ),
+ 379:             (
+ 380:                 "minimum_key_protection",
+ 381:                 Box::new(|m: &mut pb::JobManifest| {
+ 382:                     m.minimum_key_protection = pb::KeyProtection::Unspecified as i32;
+ 383:                 }),
+ 384:             ),
+ 385:         ];
+ 386:         for (field, blank) in cases {
+ 387:             let manifest = verified(|m| blank(m));
+ 388:             assert_eq!(
+ 389:                 job_requirements_from_manifest(&manifest, MEMBER),
+ 390:                 Err(ManifestConversionError::Unspecified(field)),
+ 391:                 "{field} �� ����µ� �� �̸����� �ź����� �ʾҴ�"
+ 392:             );
+ 393:         }
+ 394:     }
+ 395: 
+ 396:     /// ��ø �޽����� ��°�� ������ �װ͵� �̸����� ���Ѵ�.
+ 397:     #[test]
+ 398:     fn a_missing_nested_message_is_named() {
+ 399:         assert_eq!(
+ 400:             job_requirements_from_manifest(&verified(|m| m.resources = None), MEMBER),
+ 401:             Err(ManifestConversionError::MissingMessage("resources"))
+ 402:         );
+ 403:         assert_eq!(
+ 404:             job_requirements_from_manifest(
+ 405:                 &verified(|m| m.resources.as_mut().unwrap().gpu = None),
+ 406:                 MEMBER
+ 407:             ),
+ 408:             Err(ManifestConversionError::MissingMessage("resources.gpu"))
+ 409:         );
+ 410:         assert_eq!(
+ 411:             job_requirements_from_manifest(&verified(|m| m.workload = None), MEMBER),
+ 412:             Err(ManifestConversionError::MissingMessage("workload"))
+ 413:         );
+ 414:         assert_eq!(
+ 415:             job_requirements_from_manifest(&verified(|m| m.dataset = None), MEMBER),
+ 416:             Err(ManifestConversionError::MissingMessage("dataset"))
+ 417:         );
+ 418:     }
+ 419: 
+ 420:     /// �� `submitter_member_id` �� Manifest �� **����.** caller �� �� �ָ�
+ 421:     ///   `team_id` �� ���� ��ü���� �ʰ� �ź��Ѵ� ? �װ� ���� ������
+ 422:     ///   ����� ���̴�.
+ 423:     #[test]
+ 424:     fn an_absent_submitter_member_is_refused_rather_than_taken_from_team_id() {
+ 425:         for blank in ["", "   "] {
+ 426:             assert_eq!(
+ 427:                 job_requirements_from_manifest(&verified(|_| {}), blank),
+ 428:                 Err(ManifestConversionError::MissingCallerFact(
+ 429:                     "submitter_member_id"
+ 430:                 )),
+ 431:                 "{blank:?} �� �޾Ƶ鿴��"
+ 432:             );
+ 433:         }
+ 434:         // ���� ? Manifest �� team_id �� ����� ���� ���� �ʴ´�.
+ 435:         let requirements = job_requirements_from_manifest(&verified(|_| {}), MEMBER).unwrap();
+ 436:         assert_eq!(requirements.submitter_member_id.as_deref(), Some(MEMBER));
+ 437:         assert_ne!(requirements.submitter_member_id.as_deref(), Some("team-a"));
+ 438:     }
+ 439: 
+ 440:     /// proto �� "�⺻ 1" �̶� ���� ���� ����� ���� �ƴ϶� �Թ��̴�.
+ 441:     #[test]
+ 442:     fn a_zero_gpu_count_becomes_the_documented_default_of_one() {
+ 443:         let requirements = job_requirements_from_manifest(
+ 444:             &verified(|m| m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_count = 0),
+ 445:             MEMBER,
+ 446:         )
+ 447:         .expect("��ȯ ����");
+ 448:         assert_eq!(requirements.minimum_gpu_count, Some(1));
+ 449: 
+ 450:         // ���� ? 0 �� �ƴ� ���� �״�� ����. �ƴϸ� "�׻� 1" �ε� ����Ѵ�.
+ 451:         let requirements = job_requirements_from_manifest(
+ 452:             &verified(|m| m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_count = 4),
+ 453:             MEMBER,
+ 454:         )
+ 455:         .expect("��ȯ ����");
+ 456:         assert_eq!(requirements.minimum_gpu_count, Some(4));
+ 457:     }
+ 458: 
+ 459:     /// �� �� ����� "���� ����" �̴� ? proto �� �׷��� ������.
+ 460:     #[test]
+ 461:     fn an_empty_model_list_means_no_constraint() {
+ 462:         let requirements = job_requirements_from_manifest(
+ 463:             &verified(|m| {
+ 464:                 m.resources
+ 465:                     .as_mut()
+ 466:                     .unwrap()
+ 467:                     .gpu
+ 468:                     .as_mut()
+ 469:                     .unwrap()
+ 470:                     .allowed_gpu_models
+ 471:                     .clear()
+ 472:             }),
+ 473:             MEMBER,
+ 474:         )
+ 475:         .expect("��ȯ ����");
+ 476:         assert!(requirements.allowed_gpu_models.is_empty());
+ 477:     }
+ 478: 
+ 479:     /// �� ���尡 �𸣴� enum ���� ������ �ѱ��� �ʴ´�.
+ 480:     ///
+ 481:     /// �� �� ���ο� ��Ű���� ������ Manifest �� "�⺻��" ���� ������
+ 482:     ///   �� ���� ���� �������� �����Ѵ�(`CLAUDE.md` ��0.2).
+ 483:     #[test]
+ 484:     fn an_enum_value_this_build_does_not_know_is_refused() {
+ 485:         let error =
+ 486:             job_requirements_from_manifest(&verified(|m| m.minimum_security_tier = 99), MEMBER)
+ 487:                 .expect_err("�𸣴� ���� �޾Ƶ鿴��");
+ 488:         assert_eq!(
+ 489:             error,
+ 490:             ManifestConversionError::UnknownEnumValue {
+ 491:                 field: "minimum_security_tier",
+ 492:                 value: 99
+ 493:             }
+ 494:         );
+ 495:     }
+ 496: 
+ 497:     /// �ڡ� **���� ���� ��� ��ȿ ������ �� ������ �Ѿ�°�.**
+ 498:     ///
+ 499:     /// 2026-09-07 ���� �˼� �������� �߰��ߴ�. �������� �� ������
+ 500:     /// ���� �˻��� ���� **30�� ��ȿ ���� �� 12��**���̾��� ?
+ 501:     /// `Unspecified` ������ ���� ����� **��ǥ�� ����**. ������ 18����
+ 502:     /// �ƹ��� �� �ô�.
+ 503:     ///
+ 504:     /// �� ���� evidence �ʾȿ� "�� ���� �����̼��� ���ȴ�" �� �����µ�,
+ 505:     ///   �� '����' �� **�ź� �� ����**�̾��� **�� ����**�� �ƴϾ���.
+ 506:     ///   �˼��� �� ���̸� ¤����.
+ 507:     ///
+ 508:     /// �ڡ� ��밪�� **������ ���´�.** ��ȯ �Լ��� �ٽ� ���� ��밪��
+ 509:     ///   ����� �ڱⰡ �ڱ⸦ Ȯ���ϴ� ���̶� �ƹ��͵� �������� �ʴ´�.
+ 510:     #[test]
+ 511:     fn every_valid_variant_of_every_axis_maps_to_its_own_value() {
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"from pathlib import Path; import json; p=Path('crates/coordinator/src/manifest_requirements.rs'); s=p.read_text(encoding='utf-8').splitlines(); print(json.dumps({i+1:l for i,l in enumerate(s) if i<38 or 496<=i}, ensure_ascii=True))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 958ms:
+{"1": "//! \uac80\uc99d\ub41c `JobManifest` \ub97c scheduler \uc758 `JobRequirements` \ub85c \uc62e\uae30\ub294", "2": "//! **\uc21c\uc218 \ubcc0\ud658\uae30**.", "3": "//!", "4": "//! # \uc774\uac83\uc774 \uc65c \ubcc4\ub3c4 \uc870\uac01\uc778\uac00", "5": "//!", "6": "//! \uc5ec\ub7ec evidence \uac00 \"`JobManifest` \u2192 `JobRequirements` \ubcc0\ud658\uae30\uac00 \uc5c6\ub2e4\" \uace0", "7": "//! \uc801\uc5b4 \ub480\ub2e4. \uadf8\uac8c \uc5c6\uc5b4\uc11c \uc800\uc7a5\ub41c Job \uc744 scheduler \uc5d0 \ud0dc\uc6b8 \uc218 \uc5c6\uc5c8\ub2e4.", "8": "//!", "9": "//! # \uc774 \ubaa8\ub4c8\uc774 \ud558\uc9c0 \uc54a\ub294 \uac83", "10": "//!", "11": "//! ```text", "12": "//! \uc548 \ud55c\ub2e4   \uc11c\uba85 \uac80\uc99d          `&Verified<M>` \ub9cc \ubc1b\ub294\ub2e4 \u2014 \uc774\ubbf8 \ub05d\ub09c \uc77c\uc774\ub2e4", "13": "//! \uc548 \ud55c\ub2e4   device\u2192member \ud574\uc11d  caller \uac00 \ub118\uae34 \uac12\uc744 \uc4f8 \ubfd0\uc774\ub2e4(\uc544\ub798 \ucc38\uc870)", "14": "//! \uc548 \ud55c\ub2e4   \uc2dc\uacc4 \uc77d\uae30\u00b7I/O\u00b7DB    \uc21c\uc218 \ud568\uc218\ub2e4", "15": "//! \uc548 \ud55c\ub2e4   \ud6c4\ubcf4 \uc120\ud0dd           \uadf8\uac74 `evaluate_eligibility()` \uc758 \uc77c\uc774\ub2e4", "16": "//! ```", "17": "//!", "18": "//! # \u2605 `submitter_member_id` \ub97c \uc65c \uc778\uc790\ub85c \ubc1b\ub294\uac00", "19": "//!", "20": "//! **`JobManifest` \uc5d0 \uadf8 \uac12\uc774 \uc5c6\ub2e4.** `team_id` \uc640 `submitter_device_id`", "21": "//! \ub294 \uc788\uc9c0\ub9cc \uba64\ubc84 \uc2dd\ubcc4\uc790\ub294 \uc5c6\ub2e4. scheduler \ub294 \uadf8\uac83\uc73c\ub85c \"\uc81c3\uc790 Job \uc778\uac00\"", "22": "//! \ub97c \ud310\uc815\ud558\ubbc0\ub85c(`filter.rs` \u2014 \ub178\ub4dc \uc18c\uc720\uc790\uc640 \ub2e4\ub974\uba74 \uc81c3\uc790) \uc5c6\uc73c\uba74", "23": "//! `MissingFact::JobSubmitterMemberId` \ub85c \ud6c4\ubcf4\uac00 \uc804\ubd80 \ub5a8\uc5b4\uc9c4\ub2e4.", "24": "//!", "25": "//! device\u2192member \ub97c \uad8c\uc704 \uc788\uac8c \ud574\uc11d\ud558\ub294 \uacbd\ub85c\ub294 \uc774 \uc800\uc7a5\uc18c\uc5d0 \uc544\uc9c1 \uc5c6\ub2e4", "26": "//! (\uba64\ubc84\uc2ed\uc740 \uc0ac\uc6a9\uc790 \uacb0\uc815 4\uac74\uacfc `COMMITTED` \ubd80\uc7ac\ub85c \ub9c9\ud600 \uc788\ub2e4). \uadf8\ub798\uc11c", "27": "//! **\uc774 \ucee4\ub110\uc740 \uadf8\uac83\uc744 \ud574\uc11d\ud558\uc9c0 \uc54a\uace0 \uc694\uad6c\ud55c\ub2e4** \u2014 \ud638\ucd9c\ubd80\uac00 \uc5b4\ub514\uc11c", "28": "//! \uac00\uc838\uc654\ub294\uc9c0 \uc9c4\uc220\ud574\uc57c \ud558\uace0, \uc624\ub298 \uc815\uc9c1\ud55c \ucd9c\ucc98\ub294 \uc6b4\uc601\uc790 \uc120\uc5b8\ubfd0\uc774\ub2e4.", "29": "//! \uc5ec\uae30\uc11c \ubab0\ub798 `team_id` \ub97c \uba64\ubc84\ub85c \uc4f0\uba74 \uadf8 \uc21c\uac04 \uc5c6\ub294 \uad8c\uc704\ub97c \uc9c0\uc5b4\ub0b8\ub2e4.", "30": "//!", "31": "//! # \u2605 `UNSPECIFIED` \ub97c \uac12\uc73c\ub85c \ubc14\uafb8\uc9c0 \uc54a\ub294\ub2e4", "32": "//!", "33": "//! proto \uc758 \ubaa8\ub4e0 \ubd84\ub958 \ucd95\uc774 `*_UNSPECIFIED = 0` \uc744 \uac16\ub294\ub2e4. \uadf8\uac83\uc744", "34": "//! \"\uae30\ubcf8\uac12\" \uc73c\ub85c \uc62e\uae30\uba74 \uc81c\ucd9c\uc790\uac00 **\ub9d0\ud558\uc9c0 \uc54a\uc740 \uac83\uc744 \ub9d0\ud55c \uac83\uc73c\ub85c**", "35": "//! \ub9cc\ub4e0\ub2e4 \u2014 \uc608\ucee8\ub300 `SIDE_EFFECT_CLASS_UNSPECIFIED` \ub97c `Pure` \ub85c \uc77d\uc73c\uba74,", "36": "//! \uc678\ubd80 \ubd80\uc791\uc6a9\uc744 \uc120\uc5b8\ud558\uc9c0 \uc54a\uc740 Job \uc774 \"\ubd80\uc791\uc6a9 \uc5c6\uc74c\" \uc73c\ub85c \uc2a4\ucf00\uc904\ub41c\ub2e4.", "37": "//! `CLAUDE.md` \u00a71 \u2014 \ubaa8\ub974\uba74 \ube44\uc6cc \ub450\uace0, \uc5ec\uae30\uc11c\ub294 **\uac70\ubd80\ud55c\ub2e4.**", "38": "", "497": "    /// \u2605\u2605 **\uc5ec\uc12f \ucd95\uc758 \ubaa8\ub4e0 \uc720\ud6a8 \ubcc0\ud615\uc774 \uc81c \uac12\uc73c\ub85c \ub118\uc5b4\uac00\ub294\uac00.**", "498": "    ///", "499": "    /// 2026-09-07 \ub3c5\ub9bd \uac80\uc218 \uc9c0\uc801\uc73c\ub85c \ucd94\uac00\ud588\ub2e4. \uadf8\uc804\uae4c\uc9c0 \uc774 \ud30c\uc77c\uc774", "500": "    /// \uc9c1\uc811 \uac80\uc0ac\ud55c \uac83\uc740 **30\uac1c \uc720\ud6a8 \ubcc0\ud615 \uc911 12\uac1c**\ubfd0\uc774\uc5c8\ub2e4 \u2014", "501": "    /// `Unspecified` \uc5ec\uc12f\uacfc \uc131\uacf5 \uacbd\ub85c\uc758 **\ub300\ud45c\uac12 \uc5ec\uc12f**. \ub098\uba38\uc9c0 18\uac1c\ub294", "502": "    /// \uc544\ubb34\ub3c4 \uc548 \ubd24\ub2e4.", "503": "    ///", "504": "    /// \u2605 \ub0b4\uac00 evidence \ucd08\uc548\uc5d0 \"\ucd95 \uc804\uc218 \ubba4\ud14c\uc774\uc158\uc744 \ub3cc\ub838\ub2e4\" \uace0 \uc801\uc5c8\ub294\ub370,", "505": "    ///   \uadf8 '\uc804\uc218' \ub294 **\uac70\ubd80 \ucd95 \uc5ec\uc12f**\uc774\uc5c8\uc9c0 **\uac12 \uc11c\ub978**\uc774 \uc544\ub2c8\uc5c8\ub2e4.", "506": "    ///   \uac80\uc218\uac00 \uadf8 \ucc28\uc774\ub97c \uc9da\uc5c8\ub2e4.", "507": "    ///", "508": "    /// \u2605\u2605 \uae30\ub300\uac12\uc744 **\uc190\uc73c\ub85c \uc801\ub294\ub2e4.** \ubcc0\ud658 \ud568\uc218\ub97c \ub2e4\uc2dc \ub3cc\ub824 \uae30\ub300\uac12\uc744", "509": "    ///   \ub9cc\ub4e4\uba74 \uc790\uae30\uac00 \uc790\uae30\ub97c \ud655\uc778\ud558\ub294 \uac83\uc774\ub77c \uc544\ubb34\uac83\ub3c4 \uc99d\uba85\ud558\uc9c0 \uc54a\ub294\ub2e4.", "510": "    #[test]", "511": "    fn every_valid_variant_of_every_axis_maps_to_its_own_value() {", "512": "        // workload.class \u2014 proto \uc758 \uc5ec\uc12f \ubcc0\ud615", "513": "        for (raw, want) in [", "514": "            (pb::WorkloadClass::Training, WorkloadClass::Training),", "515": "            (pb::WorkloadClass::Inference, WorkloadClass::Inference),", "516": "            (", "517": "                pb::WorkloadClass::Preprocessing,", "518": "                WorkloadClass::Preprocessing,", "519": "            ),", "520": "            (pb::WorkloadClass::Evaluation, WorkloadClass::Evaluation),", "521": "            (pb::WorkloadClass::Rendering, WorkloadClass::Rendering),", "522": "            (pb::WorkloadClass::Other, WorkloadClass::Other),", "523": "        ] {", "524": "            let got = job_requirements_from_manifest(", "525": "                &verified(|m| m.workload.as_mut().unwrap().class = raw as i32),", "526": "                MEMBER,", "527": "            )", "528": "            .unwrap_or_else(|e| panic!(\"workload.class {raw:?} \ub97c \uac70\ubd80\ud588\ub2e4: {e:?}\"));", "529": "            assert_eq!(", "530": "                got.workload_class,", "531": "                Some(want),", "532": "                \"workload.class {raw:?} \uac00 \uc5c9\ub6b1\ud55c \uac12\uc73c\ub85c \uac14\ub2e4\"", "533": "            );", "534": "        }", "535": "", "536": "        for (raw, want) in [", "537": "            (pb::SideEffectClass::Pure, SideEffectClass::Pure),", "538": "            (", "539": "                pb::SideEffectClass::Idempotent,", "540": "                SideEffectClass::Idempotent,", "541": "            ),", "542": "            (", "543": "                pb::SideEffectClass::SideEffecting,", "544": "                SideEffectClass::SideEffecting,", "545": "            ),", "546": "        ] {", "547": "            let got =", "548": "                job_requirements_from_manifest(&verified(|m| m.side_effect_class = raw as i32), MEMBER)", "549": "                    .unwrap_or_else(|e| panic!(\"side_effect_class {raw:?} \ub97c \uac70\ubd80\ud588\ub2e4: {e:?}\"));", "550": "            assert_eq!(got.side_effect_class, Some(want));", "551": "        }", "552": "", "553": "        for (raw, want) in [", "554": "            (pb::Sensitivity::Public, Sensitivity::Public),", "555": "            (pb::Sensitivity::Internal, Sensitivity::Internal),", "556": "            (pb::Sensitivity::Sensitive, Sensitivity::Sensitive),", "557": "        ] {", "558": "            let got = job_requirements_from_manifest(", "559": "                &verified(|m| m.dataset.as_mut().unwrap().sensitivity = raw as i32),", "560": "                MEMBER,", "561": "            )", "562": "            .unwrap_or_else(|e| panic!(\"sensitivity {raw:?} \ub97c \uac70\ubd80\ud588\ub2e4: {e:?}\"));", "563": "            assert_eq!(got.sensitivity, Some(want));", "564": "        }", "565": "", "566": "        for (raw, want) in [", "567": "            (pb::SecurityTier::S0, SecurityTier::S0),", "568": "            (pb::SecurityTier::S1, SecurityTier::S1),", "569": "            (pb::SecurityTier::S2, SecurityTier::S2),", "570": "            (pb::SecurityTier::S3, SecurityTier::S3),", "571": "            (pb::SecurityTier::S4, SecurityTier::S4),", "572": "            (pb::SecurityTier::S5, SecurityTier::S5),", "573": "        ] {", "574": "            let got = job_requirements_from_manifest(", "575": "                &verified(|m| m.minimum_security_tier = raw as i32),", "576": "                MEMBER,", "577": "            )", "578": "            .unwrap_or_else(|e| panic!(\"security_tier {raw:?} \ub97c \uac70\ubd80\ud588\ub2e4: {e:?}\"));", "579": "            assert_eq!(got.minimum_security_tier, Some(want));", "580": "        }", "581": "", "582": "        for (raw, want) in [", "583": "            (pb::IsolationClass::Restricted, IsolationClass::Restricted),", "584": "            (pb::IsolationClass::Contained, IsolationClass::Contained),", "585": "            (", "586": "                pb::IsolationClass::Virtualized,", "587": "                IsolationClass::Virtualized,", "588": "            ),", "589": "        ] {", "590": "            let got = job_requirements_from_manifest(", "591": "                &verified(|m| m.minimum_isolation_class = raw as i32),", "592": "                MEMBER,", "593": "            )", "594": "            .unwrap_or_else(|e| panic!(\"isolation_class {raw:?} \ub97c \uac70\ubd80\ud588\ub2e4: {e:?}\"));", "595": "            assert_eq!(got.minimum_isolation_class, Some(want));", "596": "        }", "597": "", "598": "        for (raw, want) in [", "599": "            (pb::KeyProtection::K0, KeyProtection::K0),", "600": "            (pb::KeyProtection::K1, KeyProtection::K1),", "601": "            (pb::KeyProtection::K2, KeyProtection::K2),", "602": "        ] {", "603": "            let got = job_requirements_from_manifest(", "604": "                &verified(|m| m.minimum_key_protection = raw as i32),", "605": "                MEMBER,", "606": "            )", "607": "            .unwrap_or_else(|e| panic!(\"key_protection {raw:?} \ub97c \uac70\ubd80\ud588\ub2e4: {e:?}\"));", "608": "            assert_eq!(got.minimum_key_protection, Some(want));", "609": "        }", "610": "    }", "611": "}"}
+
+codex
+현재 파일은 496줄이 아니라 611줄이며, 511줄부터 여섯 enum의 정상 변형을 나열한 테스트가 추가돼 있습니다. enum `match`에는 catch-all이 없고, 호출자 ID는 공백 여부만 검사한 뒤 그대로 저장합니다. 기본값의 정당성은 실제 정의가 있는 `common.proto`의 읽기 범위 확인이 필요합니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"from pathlib import Path; import re,json; s=Path('crates/coordinator/src/manifest_requirements.rs').read_text(encoding='utf-8'); a=s.split('#[cfg(test)]')[0]; out={}; names=['WorkloadClass','SideEffectClass','Sensitivity','SecurityTier','IsolationClass','KeyProtection']; t=s[s.index('fn every_valid_variant_of_every_axis_maps_to_its_own_value'):]; out['enum_arms']={n:re.findall(r'pb::'+n+r'::(\\w+)\\s*=>',a) for n in names}; out['success_test_inputs']={n:re.findall(r'pb::'+n+r'::(\\w+)',t) for n in names}; out['wildcard_match_arms']=re.findall(r'"'^.*_'"\\s*=>.*"'$'"',s,re.M); out['lines']=len(s.splitlines()); print(json.dumps(out)); p=Path('proto/job.proto'); print(json.dumps({i+1:l for i,l in enumerate(p.read_text(encoding='utf-8').splitlines()) if 22<=i<97},ensure_ascii=True))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 966ms:
+{"enum_arms": {"WorkloadClass": ["Unspecified", "Training", "Inference", "Preprocessing", "Evaluation", "Rendering", "Other"], "SideEffectClass": ["Unspecified", "Pure", "Idempotent", "SideEffecting"], "Sensitivity": ["Unspecified", "Public", "Internal", "Sensitive"], "SecurityTier": ["Unspecified", "S0", "S1", "S2", "S3", "S4", "S5"], "IsolationClass": ["Unspecified", "Restricted", "Contained", "Virtualized"], "KeyProtection": ["Unspecified", "K0", "K1", "K2"]}, "success_test_inputs": {"WorkloadClass": ["Training", "Inference", "Preprocessing", "Evaluation", "Rendering", "Other"], "SideEffectClass": ["Pure", "Idempotent", "SideEffecting"], "Sensitivity": ["Public", "Internal", "Sensitive"], "SecurityTier": ["S0", "S1", "S2", "S3", "S4", "S5"], "IsolationClass": ["Restricted", "Contained", "Virtualized"], "KeyProtection": ["K0", "K1", "K2"]}, "wildcard_match_arms": [], "lines": 611}
+{"23": "syntax = \"proto3\";", "24": "", "25": "package gputeer.v1;", "26": "", "27": "import \"common.proto\";", "28": "import \"lease.proto\";   // Lease \u2014 ExecutionGrant \uac00 \ucc38\uc870\ud55c\ub2e4", "29": "", "30": "option go_package = \"github.com/gputeer/gputeer/proto/v1;gputeerv1\";", "31": "", "32": "// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550", "33": "// JobManifest \u2014 \uc7a5\uc218\uba85. submitter\uac00 \uc11c\uba85\ud55c\ub2e4.", "34": "//", "35": "// manifest_hash \ud544\ub4dc\uac00 \uc5c6\ub2e4\ub294 \uc810\uc5d0 \uc8fc\uc758.", "36": "//   \ud574\uc2dc\ub97c \uba54\uc2dc\uc9c0 \uc548\uc5d0 \ub123\uc73c\uba74 \"\ud574\uc2dc \uacc4\uc0b0 \uc2dc \uc790\uae30 \uc790\uc2e0\uc744 \ud3ec\ud568\ud558\ub294\uac00\"\ub77c\ub294", "37": "//   \uc21c\ud658\uc774 \uc0dd\uae34\ub2e4. manifest_hash\ub294 signing.md \uaddc\uce59 3\uc73c\ub85c \ub3c4\ucd9c\ub418\ub294 \uac12\uc774\uba70", "38": "//   \uba54\uc2dc\uc9c0 \ubc16\uc5d0\uc11c \ub2e4\ub8ec\ub2e4.", "39": "// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550", "40": "", "41": "message JobManifest {", "42": "  // --- \uc2dd\ubcc4 ---", "43": "  // signing.md \uaddc\uce59 4. \uac80\uc99d\uc790\uac00 \uc774 \uac12\ubcf4\ub2e4 \ub0ae\uc73c\uba74 SCHEMA_TOO_NEW \ub97c \ubc18\ud658\ud55c\ub2e4.", "44": "  uint32 schema_version = 1; // \ud604\uc7ac 1", "45": "  string job_id = 2;", "46": "  string team_id = 3;", "47": "", "48": "  // --- \uc2e4\ud589 \ub300\uc0c1 ---", "49": "  ExecutionEnvironment env = 10;", "50": "  repeated Digest input_artifacts = 11;", "51": "  DatasetRef dataset = 12;", "52": "  string entrypoint = 13;", "53": "  repeated string args = 14;", "54": "  // canonical \uc778\ucf54\ub529 \uc2dc key \ubc14\uc774\ud2b8 \uc624\ub984\ucc28\uc21c\uc73c\ub85c \uc815\ub82c\ub41c\ub2e4 (signing.md \uaddc\uce59 2c).", "55": "  map<string, string> env_vars = 15;", "56": "", "57": "  // --- \uc790\uc6d0 \uc694\uad6c ---", "58": "  ResourceRequest resources = 20;", "59": "  WorkloadHint workload = 21;", "60": "", "61": "  // --- \uc131\ub2a5 ---", "62": "  uint32 deadline_minutes = 30;", "63": "  Preference preference = 31;", "64": "  // \uc774 \uc2dc\uac04\uc744 \ub118\uaca8 \ud050\uc5d0 \ub0a8\uc73c\uba74 QUEUED \u2192 FAILED. 0 = deadline\uc744 \ub530\ub984", "65": "  uint32 max_queue_minutes = 32;", "66": "", "67": "  // --- \ubcf5\uad6c ---", "68": "  // \ub85c\uceec \uccb4\ud06c\ud3ec\uc778\ud2b8 \uc8fc\uae30. \uc6d0\uaca9 \ubcf5\uc81c \uc8fc\uae30\ub294 \u00a718.4 \uc608\uc0b0 \ubaa8\ub378\uc774 \ubcc4\ub3c4 \uc0b0\ucd9c\ud55c\ub2e4.", "69": "  uint32 checkpoint_interval_minutes = 40;", "70": "  Durability durability = 41;", "71": "  PartitionBehavior on_partition = 42;", "72": "  // \uc774 \uc2dc\uac04 \uc774\uc0c1\uc758 \uc9c4\ud589 \uc190\uc2e4\uc744 \ud5c8\uc6a9\ud558\uc9c0 \uc54a\ub294\ub2e4. \uc608\uc0b0 \ubaa8\ub378\uc758 \uc0c1\ud55c \uc785\ub825.", "73": "  uint32 max_data_loss_minutes = 43;", "74": "", "75": "  // --- \ubcf4\uc548 ---", "76": "  IsolationClass minimum_isolation_class = 50;", "77": "  SecurityTier minimum_security_tier = 51;", "78": "  KeyProtection minimum_key_protection = 52;", "79": "  SideEffectClass side_effect_class = 53;", "80": "  NetworkPolicy network = 54;", "81": "  ArtifactScope artifact_scope = 55;", "82": "  // side_effect_class == SIDE_EFFECTING \uc774\uace0 \u00a715.6\uc758 (a)/(b) \uacbd\ub85c\ub97c", "83": "  // \uc4f0\uc9c0 \uc54a\ub294 \uacbd\uc6b0 \ubc18\ub4dc\uc2dc true \uc5ec\uc57c \uc81c\ucd9c\uc774 \uc218\ub77d\ub41c\ub2e4.", "84": "  // fencing\uc73c\ub85c \uc678\ubd80 \ubd80\uc791\uc6a9 \uc911\ubcf5\uc744 \ub9c9\uc744 \uc218 \uc5c6\ub2e4\ub294 \uc0ac\uc2e4\uc758 \uba85\uc2dc\uc801 \uc218\ub77d.", "85": "  bool acknowledge_duplicate_risk = 56;", "86": "", "87": "  // --- \ubc1c\uae09 (\uc7a5\uc218\uba85) ---", "88": "  string submitter_device_id = 60;", "89": "  uint64 issued_at_unix_ms = 61;", "90": "  // \uae30\ubcf8 issued_at + 7\uc77c. \ucd5c\ub300 30\uc77c.", "91": "  uint64 expires_at_unix_ms = 62;", "92": "", "93": "  // --- \uc11c\uba85 ---", "94": "  // canonical \uc778\ucf54\ub529\uc5d0\uc11c \uc81c\uc678\ub41c\ub2e4 (signing.md \uaddc\uce59 1).", "95": "  // domain_tag = \"gputeer/v1/manifest\"", "96": "  bytes submitter_signature = 90;", "97": "}"}
+
+codex
+코드에 열거된 변형은 `UNSPECIFIED` 포함 30개이고, 테스트도 그 30개를 모두 다룹니다. 기대값을 변환 함수로 재생성하는 테스트는 없습니다. 남은 쟁점은 GPU 수와 자원량의 0 처리입니다. 현재 허용된 두 파일만으로는 proto가 그 값에 어떤 의미를 부여했는지 확인할 수 없어 판정을 보류하고 있습니다.
+
+codex
+검토 중 읽기 범위와 실제 파일이 어긋나는 점을 확인했습니다.
+
+- 현재 변환기는 **611줄**입니다. 511줄부터 전수 테스트가 있으며, 코드에 열거된 6개 enum의 **30개 변형**을 모두 검사합니다. 기대값도 수기로 작성돼 있습니다.
+- enum 변환에 catch-all은 없습니다.
+- `manifest_requirements.rs:94`는 호출자 ID의 공백 여부만 검사하고, `:118`은 받은 문자열을 그대로 저장합니다.
+- `manifest_requirements.rs:128`의 `min_count=0 → Some(1)`은 확인했지만, 정당성은 아직 판정할 수 없습니다.
+
+**`proto/job.proto`에는 대상 enum과 `GpuRequest` 정의가 없습니다.** 변환기 127줄이 지목하는 파일은 `proto/common.proto`입니다. 사용자가 읽기를 두 파일로 제한했으므로 아직 열지 않았습니다.
+
+`proto/common.proto`의 해당 enum과 자원 요청 정의까지 읽어도 될까요?
+tokens used
+36,589
+검토 중 읽기 범위와 실제 파일이 어긋나는 점을 확인했습니다.
+
+- 현재 변환기는 **611줄**입니다. 511줄부터 전수 테스트가 있으며, 코드에 열거된 6개 enum의 **30개 변형**을 모두 검사합니다. 기대값도 수기로 작성돼 있습니다.
+- enum 변환에 catch-all은 없습니다.
+- `manifest_requirements.rs:94`는 호출자 ID의 공백 여부만 검사하고, `:118`은 받은 문자열을 그대로 저장합니다.
+- `manifest_requirements.rs:128`의 `min_count=0 → Some(1)`은 확인했지만, 정당성은 아직 판정할 수 없습니다.
+
+**`proto/job.proto`에는 대상 enum과 `GpuRequest` 정의가 없습니다.** 변환기 127줄이 지목하는 파일은 `proto/common.proto`입니다. 사용자가 읽기를 두 파일로 제한했으므로 아직 열지 않았습니다.
+
+`proto/common.proto`의 해당 enum과 자원 요청 정의까지 읽어도 될까요?

@@ -1,0 +1,1651 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08941-4a61-76f0-90bf-33e5a605d778
+--------
+user
+동의가 아니라 **반박**을 원한다. 이 명령의 테스트가 **부족하다는 것을
+증명해** 달라 — 129줄로 322줄을 덮는다고 주장하고 있다.
+
+# 배경 — 이 명령은 얼마 전까지 테스트가 **하나도 없었다**
+
+`submit` 은 제출자가 Job 선언을 만들어 **서명**하는 명령이다. 이 사슬의
+입구이고, 여기서 잘못 들어간 값이 뒤의 모든 판단에 그대로 간다.
+
+이번에 선언 축 여섯을 받도록 넓혔다:
+
+```text
+--workload-class          --side-effect-class
+--dataset-sensitivity     --minimum-security-tier
+--minimum-isolation-class --minimum-key-protection
+```
+
+★ **2026-09-03 까지 `crates/cli/tests/submit.rs` 파일 자체가 없었다.**
+이번에 129줄을 새로 썼다. 그 129줄이 실제로 무엇을 고정하는지가 이
+검수의 핵심이다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/cli/src/submit.rs      (322줄)
+crates/cli/tests/submit.rs    (129줄)
+```
+
+# 물을 것 — 네 가지
+
+1. **덮이지 않은 축이 있나.** 여섯 축 각각에 대해, 테스트가
+   ① 올바른 값을 받아들이는지 ② 오타를 거부하는지 **둘 다** 확인하는가?
+   한쪽만 있는 축을 지목하라. 특히 `a_misspelled_declaration_is_refused_at_submit_time`
+   이 도는 축이 여섯 개 전부인지 세어 보라 — 몇 개만 돌면서 이름이
+   전부를 뜻하는 것처럼 읽힌다면 그건 **거짓말하는 테스트 이름**이다.
+
+2. **대소문자를 안 가린다**(`declarations_are_case_insensitive`).
+   그게 의도인가? 의도라면 `submit` 이 만든 서명 대상 값이 대소문자에
+   따라 달라지지 않는지 확인하라 — 달라지면 **같은 선언인데 서명이
+   달라진다.**
+
+3. **거부가 서명 전에 일어나는가.** 잘못된 축을 줬을 때, 파일이 안
+   만들어지는지까지 확인하는가? 서명 파일을 만들어 놓고 나서 거부하면
+   부분 산출물이 남는다. 코드에서 순서를 따라가라.
+
+4. **시각 인자.** `--issued-at-unix-ms` 는 필수인데
+   `--expires-at-unix-ms` 는 선택이다. 안 주면 무엇이 되나 —
+   기본값을 **지어내는가**(`CLAUDE.md` §1 위반), 아니면 만료 없음을
+   뜻하는가? 그리고 발급 > 만료 인 값을 주면 거부하는가?
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 축 여섯 개를 각각
+어떻게 확인했는지 쓰면 된다. 없는 문제를 지어내지 마라.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 과 **구체적 명령줄**(이 인자로 부르면 이렇게 된다)을
+붙여라.
+
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 두 파일만 읽고, 여섯 축의 테스트 범위와 파싱·서명·파일 생성 순서를 대조하겠습니다. 실제 결함과 테스트가 보장하지 못하는 부분을 구분해 적겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n=0; Get-Content -LiteralPath '"'crates/cli/src/submit.rs' | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n=0; Get-Content -LiteralPath '"'crates/cli/tests/submit.rs' | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2588ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: //! `gputeer submit` ???�출?��? ?�업???�명???�일�??�보?�다.
+   2: //!
+   3: //! # ??별도 명령?��?
+   4: //!
+   5: //! `JobManifest` ??**?�출?��? ?�명?�는 메시지**??`signing.md`).
+   6: //! 그런??�???조각?�서??Coordinator 가 `--submitter-seed` �??�출??//! 개인?��? 받아 직접 ?�명?�다 ???�스??배선?�었지�? �?모양??그�?�?//! ?�으�?**Coordinator 가 ?�출???��? 갖는 구조**가 ?�다. 그러�?Agent
+   7: //! ??"nested Manifest ?�립 검�? ???�무것도 증명?��? 못한??
+   8: //!
+   9: //! ??명령??�??��? Coordinator 밖으�?꺼낸??
+  10: //!
+  11: //! ```text
+  12: //! ?�전   Coordinator 가 ?�출???��? 갖고 ?�명           (?�험??배선)
+  13: //! ?�제   ?�출?��? ?�명???�일??Coordinator 가 ?�어 ?�름 (?�바�?권한)
+  14: //! ```
+  15: //!
+  16: //! # ??명령???��? ?�는 �?//!
+  17: //! ```text
+  18: //! ?�트?�크 ?�송      ?�일로만 ?�다. wire ingress ???�속 조각?�다
+  19: //! ?�원 ?�구 채우�?  GPU/VRAM/?�이?�셋 ?�구???�직 ??경로???�다
+  20: //! ??보�?           seed �??�자�?받는?? ?�영??key protection ?� ?�속
+  21: //! ```
+  22: //!
+  23: //! ??**seed �?명령�??�자�?받는 것�? ?�영 방식???�니??** 명령줄�?
+  24: //!   ?�로?�스 목록·???�력???�는?? 지금�? selftest ?�현?�을 ?�한
+  25: //!   배선?�며, ?�제 ??보�??� `crates/crypto` ??`PersistentKeyring`
+  26: //!   계열�???��???�다.
+  27: 
+  28: use std::collections::BTreeMap;
+  29: 
+  30: use gputeer_crypto::{sign, SigningKey};
+  31: use gputeer_protocol::pb;
+  32: use prost::Message;
+  33: 
+  34: /// `gputeer submit` 진입??
+  35: pub fn run(args: &[String]) -> Result<String, String> {
+  36:     let flags = parse_flags(args)?;
+  37: 
+  38:     let job_id = require(&flags, "--job-id")?;
+  39:     let entrypoint = require(&flags, "--entrypoint")?;
+  40:     let submitter_device_id = require(&flags, "--submitter-device-id")?;
+  41:     let seed_hex = require(&flags, "--submitter-seed")?;
+  42:     let out_path = require(&flags, "--out")?;
+  43: 
+  44:     // ?�표�??�눈?? �?조각?� 버리지 ?�는????�??�자???�당?�고,
+  45:     // `derive_execution_spec()` ??그것???�용?�다.
+  46:     let args_list: Vec<String> = match flags.get("--args") {
+  47:         Some(raw) if !raw.is_empty() => raw.split(',').map(str::to_owned).collect(),
+  48:         _ => Vec::new(),
+  49:     };
+  50: 
+  51:     // `KEY=VALUE` �??�표�??�눈?? �?`=` �?경계????값에 `=` 가
+  52:     // ?�는 것�? ?�당?�다(`--env FLAGS=--a=1`).
+  53:     let mut env_vars: BTreeMap<String, String> = BTreeMap::new();
+  54:     if let Some(raw) = flags.get("--env") {
+  55:         for pair in raw.split(',').filter(|p| !p.is_empty()) {
+  56:             let (name, value) = pair
+  57:                 .split_once('=')
+  58:                 .ok_or_else(|| format!("--env ??��??'=' 가 ?�다: {pair:?}"))?;
+  59:             env_vars.insert(name.to_owned(), value.to_owned());
+  60:         }
+  61:     }
+  62: 
+  63:     let issued_at_unix_ms = require_u64(&flags, "--issued-at-unix-ms")?;
+  64:     // 기본 7????`proto/job.proto` ??"기본 issued_at + 7?? 주석 그�?�?
+  65:     //
+  66:     // ???�것?� `CLAUDE.md` §1 ??"지?�내지 ?�는?? ?�반??**?�니??* ??    //   규범??�?기본값을 ?�해 ?�?��?�???�� ?�는 것이?? ?�만
+  67:     //   **?�출?��? 말하지 ?��? 값이 ?�명 ?�?�에 ?�어간다**???�실?�
+  68:     //   같으므�? �?경로�??�제�??�는 ?�스?��? ?�다
+  69:     //   (`tests/submit.rs::omitting_the_expiry_uses_the_documented_seven_day_default`).
+  70:     let expires_at_unix_ms = match flags.get("--expires-at-unix-ms") {
+  71:         Some(raw) => raw
+  72:             .parse::<u64>()
+  73:             .map_err(|e| format!("--expires-at-unix-ms ?�싱 ?�패: {e}"))?,
+  74:         None => issued_at_unix_ms + 7 * 24 * 60 * 60 * 1000,
+  75:     };
+  76: 
+  77:     // ?�★ **발급 < 만료 �??�기??본다** (2026-09-07 ?�립 검??지??.
+  78:     //
+  79:     //   ?�에????검?��? **?�었??** ??��???�각??그�?�??�명????    //   바깥 `verify` ???�겼?? ?�일?� ???��?�?검증이 ?�기보다 ?�이??
+  80:     //   **?�명?� ?��? ????*?�고, 무엇보다 �?경로�??�는 ?�스?��?
+  81:     //   ?�나???�었??
+  82:     //
+  83:     //   `stage-job` ??Lease ?�각???�???�는 것과 같�? 검?�다 ??같�?
+  84:     //   ?�격??값에 ?�쪽�?검?��? ?�으�? ?�는 쪽을 보고 ?�는 쪽도
+  85:     //   막힌?�고 믿게 ?�다.
+  86:     if issued_at_unix_ms >= expires_at_unix_ms {
+  87:         return Err(format!(
+  88:             "SUBMIT_REFUSED: 발급({issued_at_unix_ms})??만료({expires_at_unix_ms}) 보다 ?�이거나 같다 ??만들?�마??만료??Manifest ???�무??�??�다"
+  89:         ));
+  90:     }
+  91: 
+  92:     // ?�?� ?��?줄에 ?�요???�언 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+  93:     //
+  94:     // ??**?��? ?�택 ?�항?�다. 그러????주면 ??Job ?� ?��?줄되지
+  95:     //   ?�는??** proto ??분류 축�? 모두 `*_UNSPECIFIED = 0` ?�고,
+  96:     //   `manifest_requirements.rs` 가 그것??값으�?바꾸지 ?�고 거�??�다
+  97:     //   ???�출?��? **말하지 ?��? 것을 말한 것으�?* 만들지 ?�기
+  98:     //   ?�해?�다(`CLAUDE.md` §1).
+  99:     //
+ 100:     //   그래???�기?�도 기본값을 지?�내지 ?�는?? ??주면 ??준 ?��?    //   ?�명?�고, `gputeer plan-job` ??**?�느 축이 비었?��? ?�름??    //   ?��?* 거�??�다.
+ 101:     //
+ 102:     //   ????조각 ?�까지 `submit` ?� ??축들??**?�언??방법 ?�체가
+ 103:     //     ?�었??* ??�???명령??만든 ?�떤 Manifest ???��?줄될 ??    //     ?�었?? 변?�기??fail-closed 규칙??�??�실???�러?�다.
+ 104:     let workload_class = enum_flag(&flags, "--workload-class", &[
+ 105:         ("TRAINING", pb::WorkloadClass::Training as i32),
+ 106:         ("INFERENCE", pb::WorkloadClass::Inference as i32),
+ 107:         ("PREPROCESSING", pb::WorkloadClass::Preprocessing as i32),
+ 108:         ("EVALUATION", pb::WorkloadClass::Evaluation as i32),
+ 109:         ("RENDERING", pb::WorkloadClass::Rendering as i32),
+ 110:         ("OTHER", pb::WorkloadClass::Other as i32),
+ 111:     ])?;
+ 112:     let side_effect_class = enum_flag(&flags, "--side-effect-class", &[
+ 113:         ("PURE", pb::SideEffectClass::Pure as i32),
+ 114:         ("IDEMPOTENT", pb::SideEffectClass::Idempotent as i32),
+ 115:         ("SIDE_EFFECTING", pb::SideEffectClass::SideEffecting as i32),
+ 116:     ])?;
+ 117:     let sensitivity = enum_flag(&flags, "--dataset-sensitivity", &[
+ 118:         ("PUBLIC", pb::Sensitivity::Public as i32),
+ 119:         ("INTERNAL", pb::Sensitivity::Internal as i32),
+ 120:         ("SENSITIVE", pb::Sensitivity::Sensitive as i32),
+ 121:     ])?;
+ 122:     let minimum_security_tier = enum_flag(&flags, "--minimum-security-tier", &[
+ 123:         ("S0", pb::SecurityTier::S0 as i32),
+ 124:         ("S1", pb::SecurityTier::S1 as i32),
+ 125:         ("S2", pb::SecurityTier::S2 as i32),
+ 126:         ("S3", pb::SecurityTier::S3 as i32),
+ 127:         ("S4", pb::SecurityTier::S4 as i32),
+ 128:         ("S5", pb::SecurityTier::S5 as i32),
+ 129:     ])?;
+ 130:     let minimum_isolation_class = enum_flag(&flags, "--minimum-isolation-class", &[
+ 131:         ("RESTRICTED", pb::IsolationClass::Restricted as i32),
+ 132:         ("CONTAINED", pb::IsolationClass::Contained as i32),
+ 133:         ("VIRTUALIZED", pb::IsolationClass::Virtualized as i32),
+ 134:     ])?;
+ 135:     let minimum_key_protection = enum_flag(&flags, "--minimum-key-protection", &[
+ 136:         ("K0", pb::KeyProtection::K0 as i32),
+ 137:         ("K1", pb::KeyProtection::K1 as i32),
+ 138:         ("K2", pb::KeyProtection::K2 as i32),
+ 139:     ])?;
+ 140: 
+ 141:     // ?�원 ?�구. `--gpu-count` �?준 경우?�만 `ResourceRequest` �?만든??    // ????주면 메시지 ?�체가 ?�고 변?�기가 그렇�?보고?�다.
+ 142:     let resources = match flags.get("--gpu-count") {
+ 143:         None => None,
+ 144:         Some(_) => Some(pb::ResourceRequest {
+ 145:             gpu: Some(pb::GpuRequest {
+ 146:                 min_count: u32_flag(&flags, "--gpu-count")?.unwrap_or(0),
+ 147:                 min_vram_bytes: u64_flag(&flags, "--gpu-min-vram-bytes")?.unwrap_or(0),
+ 148:                 allowed_gpu_models: match flags.get("--allowed-gpu-models") {
+ 149:                     Some(raw) if !raw.is_empty() => {
+ 150:                         raw.split(',').map(|s| s.trim().to_string()).collect()
+ 151:                     }
+ 152:                     _ => Vec::new(),
+ 153:                 },
+ 154:                 ..Default::default()
+ 155:             }),
+ 156:             cpu_cores: u32_flag(&flags, "--cpu-cores")?.unwrap_or(0),
+ 157:             ram_bytes: u64_flag(&flags, "--ram-bytes")?.unwrap_or(0),
+ 158:             workspace_bytes: u64_flag(&flags, "--workspace-bytes")?.unwrap_or(0),
+ 159:             ..Default::default()
+ 160:         }),
+ 161:     };
+ 162: 
+ 163:     let mut manifest = pb::JobManifest {
+ 164:         schema_version: 1,
+ 165:         job_id: job_id.clone(),
+ 166:         entrypoint,
+ 167:         args: args_list,
+ 168:         env_vars: env_vars.into_iter().collect(),
+ 169:         submitter_device_id,
+ 170:         issued_at_unix_ms,
+ 171:         expires_at_unix_ms,
+ 172:         side_effect_class,
+ 173:         minimum_security_tier,
+ 174:         minimum_isolation_class,
+ 175:         minimum_key_protection,
+ 176:         resources,
+ 177:         workload: if workload_class == 0 {
+ 178:             None
+ 179:         } else {
+ 180:             Some(pb::WorkloadHint {
+ 181:                 class: workload_class,
+ 182:                 ..Default::default()
+ 183:             })
+ 184:         },
+ 185:         dataset: if sensitivity == 0 {
+ 186:             None
+ 187:         } else {
+ 188:             Some(pb::DatasetRef {
+ 189:                 sensitivity,
+ 190:                 ..Default::default()
+ 191:             })
+ 192:         },
+ 193:         ..Default::default()
+ 194:     };
+ 195: 
+ 196:     let seed = hex_to_seed(&seed_hex)?;
+ 197:     let key = SigningKey::from_bytes(&seed);
+ 198:     manifest.submitter_signature = sign(&key, &manifest).to_vec();
+ 199: 
+ 200:     // ???�명 ?�에 바로 ?�기 검증한?? ?�명?�자마자 깨진 ?�일???�보?�는
+ 201:     //   것보?? ?�기???�패?�는 ?�이 ?�씬 ?�다.
+ 202:     let derived = gputeer_protocol::execution_spec::derive_execution_spec(
+ 203:         &gputeer_protocol::verify(
+ 204:             &manifest,
+ 205:             1,
+ 206:             &AlwaysValid,
+ 207:             issued_at_unix_ms,
+ 208:             &mut gputeer_protocol::signing::NoReplayCheck,
+ 209:         )
+ 210:         .map_err(|e| format!("방금 ?�명??Manifest 가 ?�기 검증을 ?�과?��? 못했?? {e:?}"))?,
+ 211:     )
+ 212:     .map_err(|e| format!("방금 ?�명??Manifest ?�서 ?�행 지?��? 만들 ???�다: {e}"))?;
+ 213: 
+ 214:     // ?�★ 2026-09-10 ???�기??`fs::write` ??줄이?�다. `issue-grant` ?�서
+ 215:     //   같�? 줄이 ?�립 검?�에 걸렸�?멀쩡한 ?�출물을 말없????��, 중간??    //   ?�패?�면 ?�린 �??�는??, **???�일?�도 ?�같???�었??**
+ 216:     //   ?�쪽�?고치�??�음 ?�람???�른 쪽을 ?�시 발견?�다 ??그래??    //   ?�우미�? `crate::out_file` ??곳에 ?�??
+ 217:     let overwrite = matches!(
+ 218:         flags.get("--overwrite-existing-manifest").map(String::as_str),
+ 219:         Some("true")
+ 220:     );
+ 221:     crate::out_file::write_new(
+ 222:         &out_path,
+ 223:         &manifest.encode_to_vec(),
+ 224:         overwrite,
+ 225:         "SUBMIT_REFUSED",
+ 226:         "Manifest",
+ 227:     )?;
+ 228: 
+ 229:     Ok(format!(
+ 230:         "SUBMITTED job_id={} entrypoint={} args={} env_vars={} out={}",
+ 231:         job_id,
+ 232:         derived.entrypoint,
+ 233:         derived.args.len(),
+ 234:         derived.env_vars.len(),
+ 235:         out_path
+ 236:     ))
+ 237: }
+ 238: 
+ 239: /// ?�기 검�??�용 ???�명??방금 ?�리가 만들?�으므�??�기???�시 Ed25519
+ 240: /// �??�는 것�? 목적???�니?? ?�인?�려??것�? **구조?� ?�명**?�다
+ 241: /// (`schema_version`·만료·canonical ?�코?�·파???��???.
+ 242: ///
+ 243: /// ???�것??Agent 쪽에???�면 ???�다. ?�기?�만 ?�이???�유??"?��?
+ 244: ///   방금 만든 �? ?�기 ?�문?�다.
+ 245: struct AlwaysValid;
+ 246: 
+ 247: impl gputeer_protocol::signing::SignatureVerifier for AlwaysValid {
+ 248:     fn verify_signature(
+ 249:         &self,
+ 250:         _signer_id: &str,
+ 251:         _message: &[u8],
+ 252:         _signature: &[u8],
+ 253:     ) -> Result<(), gputeer_protocol::VerifyOutcome> {
+ 254:         Ok(())
+ 255:     }
+ 256: }
+ 257: 
+ 258: fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+ 259:     let mut out = BTreeMap::new();
+ 260:     let mut i = 0;
+ 261:     while i < args.len() {
+ 262:         let key = &args[i];
+ 263:         if !key.starts_with("--") {
+ 264:             return Err(format!("?�래그�? ?�닌 ?�자: {key:?}"));
+ 265:         }
+ 266:         let value = args
+ 267:             .get(i + 1)
+ 268:             .ok_or_else(|| format!("{key} ??값이 ?�다"))?;
+ 269:         out.insert(key.clone(), value.clone());
+ 270:         i += 2;
+ 271:     }
+ 272:     Ok(out)
+ 273: }
+ 274: 
+ 275: /// ?�름?�로 받�? enum 값을 번호�???��?? **??주면 0(UNSPECIFIED)** ?�고
+ 276: /// 그건 "?�언?��? ?�았?? ???�실 그�?로다 ??기본값을 지?�내지 ?�는??
+ 277: ///
+ 278: /// 모르???�름?� 거�??�다. ?��?�?조용??`UNSPECIFIED` �??�리�?/// ?�출?�는 ?�언?�다�?믿는???��?줄러??�?본다.
+ 279: fn enum_flag(
+ 280:     flags: &BTreeMap<String, String>,
+ 281:     key: &str,
+ 282:     table: &[(&str, i32)],
+ 283: ) -> Result<i32, String> {
+ 284:     let Some(raw) = flags.get(key) else {
+ 285:         return Ok(0);
+ 286:     };
+ 287:     table
+ 288:         .iter()
+ 289:         .find(|(name, _)| name.eq_ignore_ascii_case(raw))
+ 290:         .map(|(_, value)| *value)
+ 291:         .ok_or_else(|| {
+ 292:             format!(
+ 293:                 "{key} �?{raw:?} �?모른?????????�는 �? {}",
+ 294:                 table
+ 295:                     .iter()
+ 296:                     .map(|(name, _)| *name)
+ 297:                     .collect::<Vec<_>>()
+ 298:                     .join(", ")
+ 299:             )
+ 300:         })
+ 301: }
+ 302: 
+ 303: fn u32_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<Option<u32>, String> {
+ 304:     flags
+ 305:         .get(key)
+ 306:         .map(|raw| {
+ 307:             raw.parse::<u32>()
+ 308:                 .map_err(|e| format!("{key} ?�싱 ?�패: {e}"))
+ 309:         })
+ 310:         .transpose()
+ 311: }
+ 312: 
+ 313: fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<Option<u64>, String> {
+ 314:     flags
+ 315:         .get(key)
+ 316:         .map(|raw| {
+ 317:             raw.parse::<u64>()
+ 318:                 .map_err(|e| format!("{key} ?�싱 ?�패: {e}"))
+ 319:         })
+ 320:         .transpose()
+ 321: }
+ 322: 
+ 323: fn require(flags: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+ 324:     flags
+ 325:         .get(key)
+ 326:         .cloned()
+ 327:         .ok_or_else(|| format!("{key} 가 ?�요?�다"))
+ 328: }
+ 329: 
+ 330: fn require_u64(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {
+ 331:     require(flags, key)?
+ 332:         .parse::<u64>()
+ 333:         .map_err(|e| format!("{key} ?�싱 ?�패: {e}"))
+ 334: }
+ 335: 
+ 336: fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
+ 337:     if hex.len() != 64 {
+ 338:         return Err(format!("seed ??64?�리 hex ?�야 ?�다(길이 {})", hex.len()));
+ 339:     }
+ 340:     let mut seed = [0u8; 32];
+ 341:     for (index, slot) in seed.iter_mut().enumerate() {
+ 342:         *slot = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+ 343:             .map_err(|e| format!("seed hex ?�싱 ?�패: {e}"))?;
+ 344:     }
+ 345:     Ok(seed)
+ 346: }
+
+ succeeded in 2592ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: //! `gputeer submit` ??**?�언??축이 진짜 �?값인가.**
+   2: //!
+   3: //! ????명령?� ?�슬??모든 ?�스?��? 거쳐 가?�데??**?�기 ?�스?��?
+   4: //!   ?�었??** ?�른 ?�스?�들?� ?��? ?�바�?값을 주�?�??��?�?거�??�는
+   5: //!   경로�???번도 밟�? ?�았??
+   6: //!
+   7: //! ??**??중요?��?.** �??�름???�못 ?�면 조용??기본값으�??�어지??//!   ?�계가 ?�한?? 그러�?`TRAINING` ???�려??Job ??`UNSPECIFIED` �?//!   ?�출?�고 ?�중??`plan-job` ??"축이 비었?? �?거�??�다 ???�영?�는
+   8: //!   **?��?가 ?�니???�서 결함?�로 ?�해?�다.** ?�출 ?�점??거�??�야
+   9: //!   무엇???�못?�는지 ?????�다.
+  10: 
+  11: use std::path::PathBuf;
+  12: use std::process::Command;
+  13: 
+  14: fn cli_bin() -> PathBuf {
+  15:     let mut path = std::env::current_exe().expect("test executable");
+  16:     path.pop();
+  17:     if path.ends_with("deps") {
+  18:         path.pop();
+  19:     }
+  20:     path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+  21: }
+  22: 
+  23: const JOB: &str = "01JJOBSUBMIT000000000001";
+  24: const SUBMITTER: &str = "01JSUBMITTERSUB000000001";
+  25: const SEED: &str = "1111111111111111111111111111111111111111111111111111111111111122";
+  26: 
+  27: fn run_cli(args: &[&str]) -> (bool, String) {
+  28:     let out = Command::new(cli_bin()).args(args).output().expect("gputeer ?�행");
+  29:     (
+  30:         out.status.success(),
+  31:         format!(
+  32:             "{}{}",
+  33:             String::from_utf8_lossy(&out.stdout),
+  34:             String::from_utf8_lossy(&out.stderr)
+  35:         ),
+  36:     )
+  37: }
+  38: 
+  39: fn now_unix_ms() -> u64 {
+  40:     std::time::SystemTime::now()
+  41:         .duration_since(std::time::UNIX_EPOCH)
+  42:         .expect("unix epoch")
+  43:         .as_millis() as u64
+  44: }
+  45: 
+  46: /// ?�바�??�언 ?�덟 �? 개별 ?�스?��? ??�??�나�?바꿔 ?�다.
+  47: const GOOD: [(&str, &str); 11] = [
+  48:     ("--workload-class", "TRAINING"),
+  49:     ("--side-effect-class", "PURE"),
+  50:     ("--dataset-sensitivity", "INTERNAL"),
+  51:     ("--minimum-security-tier", "S2"),
+  52:     ("--minimum-isolation-class", "CONTAINED"),
+  53:     ("--minimum-key-protection", "K1"),
+  54:     ("--gpu-count", "1"),
+  55:     ("--gpu-min-vram-bytes", "8589934592"),
+  56:     // ??2026-09-10 ??변?�기가 ?�략???�원?????�상 0 ?�로 채우지 ?�는??
+  57:     ("--cpu-cores", "4"),
+  58:     ("--ram-bytes", "8589934592"),
+  59:     ("--workspace-bytes", "10737418240"),
+  60: ];
+  61: 
+  62: fn submit(out: &std::path::Path, override_flag: Option<(&str, &str)>) -> (bool, String) {
+  63:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+  64:     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+  65:     let mut args: Vec<String> = vec![
+  66:         "submit".into(), "--job-id".into(), JOB.into(),
+  67:         "--entrypoint".into(), "python".into(),
+  68:         "--submitter-device-id".into(), SUBMITTER.into(),
+  69:         "--submitter-seed".into(), SEED.into(),
+  70:         "--issued-at-unix-ms".into(), issued,
+  71:         "--expires-at-unix-ms".into(), expires,
+  72:         "--out".into(), out.to_str().unwrap().into(),
+  73:     ];
+  74:     for (name, value) in GOOD {
+  75:         let value = match override_flag {
+  76:             Some((k, v)) if k == name => v,
+  77:             _ => value,
+  78:         };
+  79:         args.push(name.into());
+  80:         args.push(value.into());
+  81:     }
+  82:     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+  83:     run_cli(&borrowed)
+  84: }
+  85: 
+  86: /// ?�★ **?��????�출 ?�점??거�??�다** ??조용??기본값으�??�어지지 ?�는??
+  87: #[test]
+  88: fn a_misspelled_declaration_is_refused_at_submit_time() {
+  89:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+  90: 
+  91:     // ?��????�바�?값이�??�일???�온?? ?�으�?"??�� 거�?" 로도 ?�과?�다.
+  92:     let good = dir.path().join("good.pb");
+  93:     let (ok, output) = submit(&good, None);
+  94:     assert!(ok, "?�바�??�언?�데 거�??�다: {output}");
+  95:     assert!(good.exists(), "?�공?�는???�일???�다");
+  96: 
+  97:     // ?�섯 enum �?각각??**그럴??�� ?��?**�?준??
+  98:     for (flag, typo) in [
+  99:         ("--workload-class", "TRAINNG"),          // 글??빠짐
+ 100:         ("--side-effect-class", "PURE_"),         // 꼬리 붙음
+ 101:         ("--dataset-sensitivity", "INTERNALL"),   // 글??겹침
+ 102:         ("--minimum-security-tier", "S22"),       // ?�자 겹침
+ 103:         ("--minimum-isolation-class", "CONTAIN"), // ?�림
+ 104:         ("--minimum-key-protection", "K"),        // ?�림
+ 105:     ] {
+ 106:         let out = dir.path().join("typo.pb");
+ 107:         let _ = std::fs::remove_file(&out);
+ 108:         let (ok, output) = submit(&out, Some((flag, typo)));
+ 109:         assert!(!ok, "{flag} {typo:?} �?받아?��??? {output}");
+ 110:         assert!(
+ 111:             output.contains(typo) && output.contains("모른??),
+ 112:             "{flag}: 무엇???�못?�는지 ??말한?? {output}"
+ 113:         );
+ 114:         assert!(
+ 115:             !out.exists(),
+ 116:             "{flag}: 거�??�는??Manifest ?�일???�겼??
+ 117:         );
+ 118:     }
+ 119: }
+ 120: 
+ 121: /// ?�?�문?�는 받아 준????거�???**?��?**?�만 걸려???�다.
+ 122: ///
+ 123: /// ???�조�? ?�으�????�스?��? "값을 ?�무것도 �??�아본다" 로도 ?�과?�다.
+ 124: #[test]
+ 125: fn declarations_are_case_insensitive() {
+ 126:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+ 127:     let out = dir.path().join("lower.pb");
+ 128:     let (ok, output) = submit(&out, Some(("--workload-class", "training")));
+ 129:     assert!(ok, "?�문?��? 거�??�다: {output}");
+ 130:     assert!(out.exists());
+ 131: }
+ 132: 
+ 133: /// ?�각 ?�자�?직접 ?�제?�는 ?�출 ??기본 helper ????�� 만료�?준??
+ 134: fn submit_with_times(
+ 135:     out: &std::path::Path,
+ 136:     issued: &str,
+ 137:     expires: Option<&str>,
+ 138: ) -> (bool, String) {
+ 139:     let mut args: Vec<String> = vec![
+ 140:         "submit".into(), "--job-id".into(), JOB.into(),
+ 141:         "--entrypoint".into(), "python".into(),
+ 142:         "--submitter-device-id".into(), SUBMITTER.into(),
+ 143:         "--submitter-seed".into(), SEED.into(),
+ 144:         "--issued-at-unix-ms".into(), issued.into(),
+ 145:         "--out".into(), out.to_str().unwrap().into(),
+ 146:     ];
+ 147:     if let Some(e) = expires {
+ 148:         args.push("--expires-at-unix-ms".into());
+ 149:         args.push(e.into());
+ 150:     }
+ 151:     for (name, value) in GOOD {
+ 152:         args.push((*name).into());
+ 153:         args.push((*value).into());
+ 154:     }
+ 155:     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+ 156:     run_cli(&borrowed)
+ 157: }
+ 158: 
+ 159: /// ?�★ **만료�??�략?�는 경로�??�제�??�다** (2026-09-07 검??지??.
+ 160: ///
+ 161: /// 기본 helper 가 **??��** 만료�?주기 ?�문?? ?�략 경로(`issued + 7??)??/// ?�스?�에????번도 ?�행?��? ?�고 ?�었?? ?�출?��? 말하지 ?��? 값이
+ 162: /// ?�명 ?�?�에 ?�어가???�리?�데 ?�무????보고 ?�었??
+ 163: #[test]
+ 164: fn omitting_the_expiry_uses_the_documented_seven_day_default() {
+ 165:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+ 166:     let out = dir.path().join("no-expiry.pb");
+ 167:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+ 168: 
+ 169:     let (ok, output) = submit_with_times(&out, &issued, None);
+ 170:     assert!(ok, "만료�??�략?�는??거�??�다: {output}");
+ 171:     assert!(out.exists(), "?�공?�다?�데 ?�일???�다");
+ 172: 
+ 173:     // ???�말 7?�이 ?�어갔는지 **?�명??바이?�에??* ?�인?�다.
+ 174:     //   "?�공?�다" �?보면 0 ???�어가???�과?�다.
+ 175:     let bytes = std::fs::read(&out).expect("Manifest ?�기");
+ 176:     let manifest = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(bytes.as_slice())
+ 177:         .expect("Manifest ?�코??);
+ 178:     let want: u64 = issued.parse::<u64>().unwrap() + 7 * 24 * 60 * 60 * 1000;
+ 179:     assert_eq!(
+ 180:         manifest.expires_at_unix_ms, want,
+ 181:         "?�략 ??기본값이 규범(issued + 7??�??�르??
+ 182:     );
+ 183: }
+ 184: 
+ 185: /// ?�★ **발급??만료보다 ?�면 거�??�다** (2026-09-07 검??지??.
+ 186: ///
+ 187: /// ?�에????검?��? **?�었�?* �?경로�??�는 ?�스?�도 ?�었??
+ 188: /// ??��???�각??그�?�??�명????바깥 검증에 ?�겼??
+ 189: #[test]
+ 190: fn a_manifest_that_expires_before_it_is_issued_is_refused_before_signing() {
+ 191:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+ 192:     let out = dir.path().join("reversed.pb");
+ 193:     let issued = now_unix_ms();
+ 194: 
+ 195:     let (ok, output) = submit_with_times(
+ 196:         &out,
+ 197:         &issued.to_string(),
+ 198:         Some(&(issued - 1).to_string()),
+ 199:     );
+ 200:     assert!(!ok, "만료가 발급보다 ?�인??받아?��??? {output}");
+ 201:     // ???�유까�? 본다 ???�른 관문에 걸려??!ok ??참이??
+ 202:     assert!(
+ 203:         output.contains("발급") && output.contains("만료"),
+ 204:         "?�각 ?�서가 ?�니???�른 ?�유�?막혔?? {output}"
+ 205:     );
+ 206:     assert!(!out.exists(), "거�??�는???�일???�겼??);
+ 207: }
+ 208: 
+ 209: /// 발급�?만료가 **같아??* 거�??�다 ??만들?�마??만료??것이??
+ 210: #[test]
+ 211: fn an_expiry_equal_to_the_issue_time_is_refused_too() {
+ 212:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+ 213:     let out = dir.path().join("equal.pb");
+ 214:     let issued = now_unix_ms();
+ 215: 
+ 216:     let (ok, output) =
+ 217:         submit_with_times(&out, &issued.to_string(), Some(&issued.to_string()));
+ 218:     assert!(!ok, "발급 == 만료 �?받아?��??? {output}");
+ 219:     assert!(!out.exists(), "거�??�는???�일???�겼??);
+ 220: }
+ 221: 
+ 222: /// ?��? ?�는 Manifest ?�일??말없????? ?�는??
+ 223: ///
+ 224: /// ?�★ 2026-09-10 ??`issue-grant` ?�서 ?�립 검?��? 찾�? 결함??///   **??명령?�도 ?�같???�었??** `fs::write` ??줄이??(1) 기존 ?�일??///   말없????�� (2) 중간???�패?�면 ?�린 �??�았??
+ 225: ///   고치면서 ?�우미�? `crate::out_file` ??곳으�?모았?????�쪽�?///   고쳐지??것이 ??결함????곳에 ?�긴 방식?�기 ?�문?�다.
+ 226: #[test]
+ 227: fn an_existing_manifest_file_is_not_clobbered() {
+ 228:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+ 229:     let out = dir.path().join("manifest.pb");
+ 230: 
+ 231:     let (ok, output) = submit(&out, None);
+ 232:     assert!(ok, "?�상 경로가 ?�패?�다: {output}");
+ 233:     let first = std::fs::read(&out).expect("�?Manifest");
+ 234:     assert!(!first.is_empty(), "�?Manifest 가 비어 ?�다");
+ 235: 
+ 236:     let (ok2, output2) = submit(&out, None);
+ 237:     assert!(!ok2, "?��? ?�는 ?�일??말없????��?? {output2}");
+ 238:     assert!(
+ 239:         output2.contains("SUBMIT_REFUSED: OUT_EXISTS"),
+ 240:         "거�??�는???�유가 ?�일 존재가 ?�니?? {output2}"
+ 241:     );
+ 242: 
+ 243:     // ???�심 ???�래 ?�일??바이??그�?�??�아???�다.
+ 244:     let after = std::fs::read(&out).expect("거�? ?�에???�일???�어???�다");
+ 245:     assert_eq!(first, after, "거�??�는??기존 ?�일??바뀌었??);
+ 246: 
+ 247:     let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+ 248:         .expect("?�렉?�리")
+ 249:         .filter_map(|e| e.ok())
+ 250:         .map(|e| e.file_name().to_string_lossy().to_string())
+ 251:         .filter(|n| n.contains(".tmp."))
+ 252:         .collect();
+ 253:     assert!(leftovers.is_empty(), "?�시 ?�일???�았?? {leftovers:?}");
+ 254: }
+ 255: 
+ 256: /// 명시?�으�??�청?�면 ??��?�다.
+ 257: ///
+ 258: /// ???�조군. ?�으�?"??�� 거�?" �?고쳐?????�스?��? ?�과?�다.
+ 259: #[test]
+ 260: fn an_explicit_flag_allows_replacing_the_manifest() {
+ 261:     let dir = tempfile::tempdir().expect("?�시 ?�렉?�리");
+ 262:     let out = dir.path().join("manifest.pb");
+ 263:     std::fs::write(&out, b"stale bytes").expect("미리 ?�다");
+ 264: 
+ 265:     // ??`submit()` ?�퍼??값을 **교체**�??????�어 ???�래그�? �??�는??
+ 266:     //   그래???�기?�는 직접 부른다.
+ 267:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+ 268:     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+ 269:     let mut args: Vec<String> = vec![
+ 270:         "submit".into(), "--job-id".into(), JOB.into(),
+ 271:         "--entrypoint".into(), "python".into(),
+ 272:         "--submitter-device-id".into(), SUBMITTER.into(),
+ 273:         "--submitter-seed".into(), SEED.into(),
+ 274:         "--issued-at-unix-ms".into(), issued,
+ 275:         "--expires-at-unix-ms".into(), expires,
+ 276:         "--out".into(), out.to_str().unwrap().into(),
+ 277:         "--overwrite-existing-manifest".into(), "true".into(),
+ 278:     ];
+ 279:     for (name, value) in GOOD {
+ 280:         args.push(name.into());
+ 281:         args.push(value.into());
+ 282:     }
+ 283:     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+ 284:     let (ok, output) = run_cli(&borrowed);
+ 285:     assert!(ok, "명시????��?�기가 ?�패?�다: {output}");
+ 286:     let bytes = std::fs::read(&out).expect("Manifest �??�는??);
+ 287:     assert_ne!(bytes, b"stale bytes", "??��?�다�??�는?????�용??그�?로다");
+ 288:     assert!(!bytes.is_empty(), "??��?�는??비어 ?�다");
+ 289: }
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$n=0; Get-Content -LiteralPath '"'crates/cli/src/submit.rs' -Encoding UTF8 | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$n=0; Get-Content -LiteralPath '"'crates/cli/tests/submit.rs' -Encoding UTF8 | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2019ms:
+   1: //! `gputeer submit` ? �����ڰ� �۾��� ������ ���Ϸ� ��������.
+   2: //!
+   3: //! # �� ���� �����ΰ�
+   4: //!
+   5: //! `JobManifest` �� **�����ڰ� �����ϴ� �޽���**��(`signing.md`).
+   6: //! �׷��� �� �� ���������� Coordinator �� `--submitter-seed` �� ������
+   7: //! ����Ű�� �޾� ���� �����ߴ� ? �׽�Ʈ �輱�̾�����, �� ����� �״��
+   8: //! ������ **Coordinator �� ������ Ű�� ���� ����**�� �ȴ�. �׷��� Agent
+   9: //! �� "nested Manifest ���� ����" �� �ƹ��͵� �������� ���Ѵ�.
+  10: //!
+  11: //! �� ������ �� Ű�� Coordinator ������ ������.
+  12: //!
+  13: //! ```text
+  14: //! ����   Coordinator �� ������ Ű�� ���� ����           (������ �輱)
+  15: //! ����   �����ڰ� ������ ������ Coordinator �� �Ǿ� ���� (�ùٸ� ����)
+  16: //! ```
+  17: //!
+  18: //! # �� ������ ���� �ʴ� ��
+  19: //!
+  20: //! ```text
+  21: //! ��Ʈ��ũ ����      ���Ϸθ� ����. wire ingress �� �ļ� �����̴�
+  22: //! �ڿ� �䱸 ä���   GPU/VRAM/�����ͼ� �䱸�� ���� �� ��ο� ����
+  23: //! Ű ����           seed �� ���ڷ� �޴´�. ��� key protection �� �ļ�
+  24: //! ```
+  25: //!
+  26: //! �� **seed �� ������ ���ڷ� �޴� ���� � ����� �ƴϴ�.** ��������
+  27: //!   ���μ��� ��ϡ��� �̷¿� ���´�. ������ selftest �������� ����
+  28: //!   �輱�̸�, ���� Ű ������ `crates/crypto` �� `PersistentKeyring`
+  29: //!   �迭�� �Űܾ� �Ѵ�.
+  30: 
+  31: use std::collections::BTreeMap;
+  32: 
+  33: use gputeer_crypto::{sign, SigningKey};
+  34: use gputeer_protocol::pb;
+  35: use prost::Message;
+  36: 
+  37: /// `gputeer submit` ������.
+  38: pub fn run(args: &[String]) -> Result<String, String> {
+  39:     let flags = parse_flags(args)?;
+  40: 
+  41:     let job_id = require(&flags, "--job-id")?;
+  42:     let entrypoint = require(&flags, "--entrypoint")?;
+  43:     let submitter_device_id = require(&flags, "--submitter-device-id")?;
+  44:     let seed_hex = require(&flags, "--submitter-seed")?;
+  45:     let out_path = require(&flags, "--out")?;
+  46: 
+  47:     // ��ǥ�� ������. �� ������ ������ �ʴ´� ? �� ���ڴ� �����ϰ�,
+  48:     // `derive_execution_spec()` �� �װ��� ����Ѵ�.
+  49:     let args_list: Vec<String> = match flags.get("--args") {
+  50:         Some(raw) if !raw.is_empty() => raw.split(',').map(str::to_owned).collect(),
+  51:         _ => Vec::new(),
+  52:     };
+  53: 
+  54:     // `KEY=VALUE` �� ��ǥ�� ������. ù `=` �� ���� ? ���� `=` ��
+  55:     // �ִ� ���� �����ϴ�(`--env FLAGS=--a=1`).
+  56:     let mut env_vars: BTreeMap<String, String> = BTreeMap::new();
+  57:     if let Some(raw) = flags.get("--env") {
+  58:         for pair in raw.split(',').filter(|p| !p.is_empty()) {
+  59:             let (name, value) = pair
+  60:                 .split_once('=')
+  61:                 .ok_or_else(|| format!("--env �׸� '=' �� ����: {pair:?}"))?;
+  62:             env_vars.insert(name.to_owned(), value.to_owned());
+  63:         }
+  64:     }
+  65: 
+  66:     let issued_at_unix_ms = require_u64(&flags, "--issued-at-unix-ms")?;
+  67:     // �⺻ 7�� ? `proto/job.proto` �� "�⺻ issued_at + 7��" �ּ� �״��.
+  68:     //
+  69:     // �� �̰��� `CLAUDE.md` ��1 �� "����� �ʴ´�" ������ **�ƴϴ�** ?
+  70:     //   �Թ��� �� �⺻���� ���� �����Ƿ� �Ű� ���� ���̴�. �ٸ�
+  71:     //   **�����ڰ� ������ ���� ���� ���� ��� ����**�� �����
+  72:     //   �����Ƿ�, �� ��θ� ������ ���� �׽�Ʈ�� �д�
+  73:     //   (`tests/submit.rs::omitting_the_expiry_uses_the_documented_seven_day_default`).
+  74:     let expires_at_unix_ms = match flags.get("--expires-at-unix-ms") {
+  75:         Some(raw) => raw
+  76:             .parse::<u64>()
+  77:             .map_err(|e| format!("--expires-at-unix-ms �Ľ� ����: {e}"))?,
+  78:         None => issued_at_unix_ms + 7 * 24 * 60 * 60 * 1000,
+  79:     };
+  80: 
+  81:     // �ڡ� **�߱� < ���� �� ���⼭ ����** (2026-09-07 ���� �˼� ����).
+  82:     //
+  83:     //   ������ �� �˻簡 **������.** ������ �ð��� �״�� ������ ��
+  84:     //   �ٱ� `verify` �� �Ѱ��. ������ �� ������(������ ���⺸�� ���̴�)
+  85:     //   **������ �̹� �� ��**�̰�, �������� �� ��θ� ���� �׽�Ʈ��
+  86:     //   �ϳ��� ������.
+  87:     //
+  88:     //   `stage-job` �� Lease �ð��� ���� �ϴ� �Ͱ� ���� �˻�� ? ����
+  89:     //   ������ ���� ���ʸ� �˻簡 ������, �ִ� ���� ���� ���� �ʵ�
+  90:     //   �����ٰ� �ϰ� �ȴ�.
+  91:     if issued_at_unix_ms >= expires_at_unix_ms {
+  92:         return Err(format!(
+  93:             "SUBMIT_REFUSED: �߱�({issued_at_unix_ms})�� ����({expires_at_unix_ms}) ���� ���̰ų� ���� ? �����ڸ��� ����� Manifest �� �ƹ��� �� ����"
+  94:         ));
+  95:     }
+  96: 
+  97:     // ���� �����ٿ� �ʿ��� ���� ��������������������������������������������������������������������������������
+  98:     //
+  99:     // �� **���� ���� �����̴�. �׷��� �� �ָ� �� Job �� �����ٵ���
+ 100:     //   �ʴ´�.** proto �� �з� ���� ��� `*_UNSPECIFIED = 0` �̰�,
+ 101:     //   `manifest_requirements.rs` �� �װ��� ������ �ٲ��� �ʰ� �ź��Ѵ�
+ 102:     //   ? �����ڰ� **������ ���� ���� ���� ������** ������ �ʱ�
+ 103:     //   ���ؼ���(`CLAUDE.md` ��1).
+ 104:     //
+ 105:     //   �׷��� ���⼭�� �⺻���� ����� �ʴ´�. �� �ָ� �� �� ���
+ 106:     //   �����ǰ�, `gputeer plan-job` �� **��� ���� ������� �̸���
+ 107:     //   ���** �ź��Ѵ�.
+ 108:     //
+ 109:     //   �� �� ���� ������ `submit` �� �� ����� **������ ��� ��ü��
+ 110:     //     ������** ? �� �� ������ ���� � Manifest �� �����ٵ� ��
+ 111:     //     ������. ��ȯ���� fail-closed ��Ģ�� �� ����� �巯�´�.
+ 112:     let workload_class = enum_flag(&flags, "--workload-class", &[
+ 113:         ("TRAINING", pb::WorkloadClass::Training as i32),
+ 114:         ("INFERENCE", pb::WorkloadClass::Inference as i32),
+ 115:         ("PREPROCESSING", pb::WorkloadClass::Preprocessing as i32),
+ 116:         ("EVALUATION", pb::WorkloadClass::Evaluation as i32),
+ 117:         ("RENDERING", pb::WorkloadClass::Rendering as i32),
+ 118:         ("OTHER", pb::WorkloadClass::Other as i32),
+ 119:     ])?;
+ 120:     let side_effect_class = enum_flag(&flags, "--side-effect-class", &[
+ 121:         ("PURE", pb::SideEffectClass::Pure as i32),
+ 122:         ("IDEMPOTENT", pb::SideEffectClass::Idempotent as i32),
+ 123:         ("SIDE_EFFECTING", pb::SideEffectClass::SideEffecting as i32),
+ 124:     ])?;
+ 125:     let sensitivity = enum_flag(&flags, "--dataset-sensitivity", &[
+ 126:         ("PUBLIC", pb::Sensitivity::Public as i32),
+ 127:         ("INTERNAL", pb::Sensitivity::Internal as i32),
+ 128:         ("SENSITIVE", pb::Sensitivity::Sensitive as i32),
+ 129:     ])?;
+ 130:     let minimum_security_tier = enum_flag(&flags, "--minimum-security-tier", &[
+ 131:         ("S0", pb::SecurityTier::S0 as i32),
+ 132:         ("S1", pb::SecurityTier::S1 as i32),
+ 133:         ("S2", pb::SecurityTier::S2 as i32),
+ 134:         ("S3", pb::SecurityTier::S3 as i32),
+ 135:         ("S4", pb::SecurityTier::S4 as i32),
+ 136:         ("S5", pb::SecurityTier::S5 as i32),
+ 137:     ])?;
+ 138:     let minimum_isolation_class = enum_flag(&flags, "--minimum-isolation-class", &[
+ 139:         ("RESTRICTED", pb::IsolationClass::Restricted as i32),
+ 140:         ("CONTAINED", pb::IsolationClass::Contained as i32),
+ 141:         ("VIRTUALIZED", pb::IsolationClass::Virtualized as i32),
+ 142:     ])?;
+ 143:     let minimum_key_protection = enum_flag(&flags, "--minimum-key-protection", &[
+ 144:         ("K0", pb::KeyProtection::K0 as i32),
+ 145:         ("K1", pb::KeyProtection::K1 as i32),
+ 146:         ("K2", pb::KeyProtection::K2 as i32),
+ 147:     ])?;
+ 148: 
+ 149:     // �ڿ� �䱸. `--gpu-count` �� �� ��쿡�� `ResourceRequest` �� �����
+ 150:     // ? �� �ָ� �޽��� ��ü�� ���� ��ȯ�Ⱑ �׷��� �����Ѵ�.
+ 151:     let resources = match flags.get("--gpu-count") {
+ 152:         None => None,
+ 153:         Some(_) => Some(pb::ResourceRequest {
+ 154:             gpu: Some(pb::GpuRequest {
+ 155:                 min_count: u32_flag(&flags, "--gpu-count")?.unwrap_or(0),
+ 156:                 min_vram_bytes: u64_flag(&flags, "--gpu-min-vram-bytes")?.unwrap_or(0),
+ 157:                 allowed_gpu_models: match flags.get("--allowed-gpu-models") {
+ 158:                     Some(raw) if !raw.is_empty() => {
+ 159:                         raw.split(',').map(|s| s.trim().to_string()).collect()
+ 160:                     }
+ 161:                     _ => Vec::new(),
+ 162:                 },
+ 163:                 ..Default::default()
+ 164:             }),
+ 165:             cpu_cores: u32_flag(&flags, "--cpu-cores")?.unwrap_or(0),
+ 166:             ram_bytes: u64_flag(&flags, "--ram-bytes")?.unwrap_or(0),
+ 167:             workspace_bytes: u64_flag(&flags, "--workspace-bytes")?.unwrap_or(0),
+ 168:             ..Default::default()
+ 169:         }),
+ 170:     };
+ 171: 
+ 172:     let mut manifest = pb::JobManifest {
+ 173:         schema_version: 1,
+ 174:         job_id: job_id.clone(),
+ 175:         entrypoint,
+ 176:         args: args_list,
+ 177:         env_vars: env_vars.into_iter().collect(),
+ 178:         submitter_device_id,
+ 179:         issued_at_unix_ms,
+ 180:         expires_at_unix_ms,
+ 181:         side_effect_class,
+ 182:         minimum_security_tier,
+ 183:         minimum_isolation_class,
+ 184:         minimum_key_protection,
+ 185:         resources,
+ 186:         workload: if workload_class == 0 {
+ 187:             None
+ 188:         } else {
+ 189:             Some(pb::WorkloadHint {
+ 190:                 class: workload_class,
+ 191:                 ..Default::default()
+ 192:             })
+ 193:         },
+ 194:         dataset: if sensitivity == 0 {
+ 195:             None
+ 196:         } else {
+ 197:             Some(pb::DatasetRef {
+ 198:                 sensitivity,
+ 199:                 ..Default::default()
+ 200:             })
+ 201:         },
+ 202:         ..Default::default()
+ 203:     };
+ 204: 
+ 205:     let seed = hex_to_seed(&seed_hex)?;
+ 206:     let key = SigningKey::from_bytes(&seed);
+ 207:     manifest.submitter_signature = sign(&key, &manifest).to_vec();
+ 208: 
+ 209:     // �� ���� �ڿ� �ٷ� �ڱ� �����Ѵ�. �������ڸ��� ���� ������ ��������
+ 210:     //   �ͺ���, ���⼭ �����ϴ� ���� �ξ� �δ�.
+ 211:     let derived = gputeer_protocol::execution_spec::derive_execution_spec(
+ 212:         &gputeer_protocol::verify(
+ 213:             &manifest,
+ 214:             1,
+ 215:             &AlwaysValid,
+ 216:             issued_at_unix_ms,
+ 217:             &mut gputeer_protocol::signing::NoReplayCheck,
+ 218:         )
+ 219:         .map_err(|e| format!("��� ������ Manifest �� �ڱ� ������ ������� ���ߴ�: {e:?}"))?,
+ 220:     )
+ 221:     .map_err(|e| format!("��� ������ Manifest ���� ���� ���ø� ���� �� ����: {e}"))?;
+ 222: 
+ 223:     // �ڡ� 2026-09-10 ? ���⵵ `fs::write` �� ���̾���. `issue-grant` ����
+ 224:     //   ���� ���� ���� �˼��� �ɷȰ�(������ ���⹰�� ������ ����, �߰���
+ 225:     //   �����ϸ� �߸� ä ���´�), **�� ���Ͽ��� �Ȱ��� �־���.**
+ 226:     //   ���ʸ� ��ġ�� ���� ����� �ٸ� ���� �ٽ� �߰��Ѵ� ? �׷���
+ 227:     //   ����̸� `crate::out_file` �� ���� �״�.
+ 228:     let overwrite = matches!(
+ 229:         flags.get("--overwrite-existing-manifest").map(String::as_str),
+ 230:         Some("true")
+ 231:     );
+ 232:     crate::out_file::write_new(
+ 233:         &out_path,
+ 234:         &manifest.encode_to_vec(),
+ 235:         overwrite,
+ 236:         "SUBMIT_REFUSED",
+ 237:         "Manifest",
+ 238:     )?;
+ 239: 
+ 240:     Ok(format!(
+ 241:         "SUBMITTED job_id={} entrypoint={} args={} env_vars={} out={}",
+ 242:         job_id,
+ 243:         derived.entrypoint,
+ 244:         derived.args.len(),
+ 245:         derived.env_vars.len(),
+ 246:         out_path
+ 247:     ))
+ 248: }
+ 249: 
+ 250: /// �ڱ� ���� ���� ? ������ ��� �츮�� ��������Ƿ� ���⼭ �ٽ� Ed25519
+ 251: /// �� ���� ���� ������ �ƴϴ�. Ȯ���Ϸ��� ���� **������ ����**�̴�
+ 252: /// (`schema_version`�����ᡤcanonical ���ڵ����Ļ� �ϰ���).
+ 253: ///
+ 254: /// �� �̰��� Agent �ʿ��� ���� �� �ȴ�. ���⼭�� ���̴� ������ "����
+ 255: ///   ��� ���� ��" �̱� �����̴�.
+ 256: struct AlwaysValid;
+ 257: 
+ 258: impl gputeer_protocol::signing::SignatureVerifier for AlwaysValid {
+ 259:     fn verify_signature(
+ 260:         &self,
+ 261:         _signer_id: &str,
+ 262:         _message: &[u8],
+ 263:         _signature: &[u8],
+ 264:     ) -> Result<(), gputeer_protocol::VerifyOutcome> {
+ 265:         Ok(())
+ 266:     }
+ 267: }
+ 268: 
+ 269: fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+ 270:     let mut out = BTreeMap::new();
+ 271:     let mut i = 0;
+ 272:     while i < args.len() {
+ 273:         let key = &args[i];
+ 274:         if !key.starts_with("--") {
+ 275:             return Err(format!("�÷��װ� �ƴ� ����: {key:?}"));
+ 276:         }
+ 277:         let value = args
+ 278:             .get(i + 1)
+ 279:             .ok_or_else(|| format!("{key} �� ���� ����"))?;
+ 280:         out.insert(key.clone(), value.clone());
+ 281:         i += 2;
+ 282:     }
+ 283:     Ok(out)
+ 284: }
+ 285: 
+ 286: /// �̸����� ���� enum ���� ��ȣ�� �ű��. **�� �ָ� 0(UNSPECIFIED)** �̰�
+ 287: /// �װ� "�������� �ʾҴ�" �� ��� �״�δ� ? �⺻���� ����� �ʴ´�.
+ 288: ///
+ 289: /// �𸣴� �̸��� �ź��Ѵ�. ��Ÿ�� ������ `UNSPECIFIED` �� �긮��
+ 290: /// �����ڴ� �����ߴٰ� �ϴµ� �����ٷ��� �� ����.
+ 291: fn enum_flag(
+ 292:     flags: &BTreeMap<String, String>,
+ 293:     key: &str,
+ 294:     table: &[(&str, i32)],
+ 295: ) -> Result<i32, String> {
+ 296:     let Some(raw) = flags.get(key) else {
+ 297:         return Ok(0);
+ 298:     };
+ 299:     table
+ 300:         .iter()
+ 301:         .find(|(name, _)| name.eq_ignore_ascii_case(raw))
+ 302:         .map(|(_, value)| *value)
+ 303:         .ok_or_else(|| {
+ 304:             format!(
+ 305:                 "{key} �� {raw:?} �� �𸥴� ? �� �� �ִ� ��: {}",
+ 306:                 table
+ 307:                     .iter()
+ 308:                     .map(|(name, _)| *name)
+ 309:                     .collect::<Vec<_>>()
+ 310:                     .join(", ")
+ 311:             )
+ 312:         })
+ 313: }
+ 314: 
+ 315: fn u32_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<Option<u32>, String> {
+ 316:     flags
+ 317:         .get(key)
+ 318:         .map(|raw| {
+ 319:             raw.parse::<u32>()
+ 320:                 .map_err(|e| format!("{key} �Ľ� ����: {e}"))
+ 321:         })
+ 322:         .transpose()
+ 323: }
+ 324: 
+ 325: fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<Option<u64>, String> {
+ 326:     flags
+ 327:         .get(key)
+ 328:         .map(|raw| {
+ 329:             raw.parse::<u64>()
+ 330:                 .map_err(|e| format!("{key} �Ľ� ����: {e}"))
+ 331:         })
+ 332:         .transpose()
+ 333: }
+ 334: 
+ 335: fn require(flags: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+ 336:     flags
+ 337:         .get(key)
+ 338:         .cloned()
+ 339:         .ok_or_else(|| format!("{key} �� �ʿ��ϴ�"))
+ 340: }
+ 341: 
+ 342: fn require_u64(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {
+ 343:     require(flags, key)?
+ 344:         .parse::<u64>()
+ 345:         .map_err(|e| format!("{key} �Ľ� ����: {e}"))
+ 346: }
+ 347: 
+ 348: fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
+ 349:     if hex.len() != 64 {
+ 350:         return Err(format!("seed �� 64�ڸ� hex ���� �Ѵ�(���� {})", hex.len()));
+ 351:     }
+ 352:     let mut seed = [0u8; 32];
+ 353:     for (index, slot) in seed.iter_mut().enumerate() {
+ 354:         *slot = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+ 355:             .map_err(|e| format!("seed hex �Ľ� ����: {e}"))?;
+ 356:     }
+ 357:     Ok(seed)
+ 358: }
+
+ succeeded in 2045ms:
+   1: //! `gputeer submit` ? **������ ���� ��¥ �� ���ΰ�.**
+   2: //!
+   3: //! �� �� ������ �罽�� ��� �׽�Ʈ�� ���� ���µ��� **�ڱ� �׽�Ʈ��
+   4: //!   ������.** �ٸ� �׽�Ʈ���� ���� �ùٸ� ���� �ֹǷ� ��Ÿ�� �ź��ϴ�
+   5: //!   ��θ� �� ���� ���� �ʾҴ�.
+   6: //!
+   7: //! �� **�� �߿��Ѱ�.** �� �̸��� �߸� ���� ������ �⺻������ ��������
+   8: //!   ���谡 ���ѵ�, �׷��� `TRAINING` �� ������ Job �� `UNSPECIFIED` ��
+   9: //!   ����ǰ� ���߿� `plan-job` �� "���� �����" �� �ź��Ѵ� ? ��ڴ�
+  10: //!   **��Ÿ�� �ƴ϶� �ļ� �������� �����Ѵ�.** ���� ������ �ź��ؾ�
+  11: //!   ������ �߸��ƴ��� �� �� �ִ�.
+  12: 
+  13: use std::path::PathBuf;
+  14: use std::process::Command;
+  15: 
+  16: fn cli_bin() -> PathBuf {
+  17:     let mut path = std::env::current_exe().expect("test executable");
+  18:     path.pop();
+  19:     if path.ends_with("deps") {
+  20:         path.pop();
+  21:     }
+  22:     path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+  23: }
+  24: 
+  25: const JOB: &str = "01JJOBSUBMIT000000000001";
+  26: const SUBMITTER: &str = "01JSUBMITTERSUB000000001";
+  27: const SEED: &str = "1111111111111111111111111111111111111111111111111111111111111122";
+  28: 
+  29: fn run_cli(args: &[&str]) -> (bool, String) {
+  30:     let out = Command::new(cli_bin()).args(args).output().expect("gputeer ����");
+  31:     (
+  32:         out.status.success(),
+  33:         format!(
+  34:             "{}{}",
+  35:             String::from_utf8_lossy(&out.stdout),
+  36:             String::from_utf8_lossy(&out.stderr)
+  37:         ),
+  38:     )
+  39: }
+  40: 
+  41: fn now_unix_ms() -> u64 {
+  42:     std::time::SystemTime::now()
+  43:         .duration_since(std::time::UNIX_EPOCH)
+  44:         .expect("unix epoch")
+  45:         .as_millis() as u64
+  46: }
+  47: 
+  48: /// �ùٸ� ���� ���� ��. ���� �׽�Ʈ�� �� �� �ϳ��� �ٲ� ����.
+  49: const GOOD: [(&str, &str); 11] = [
+  50:     ("--workload-class", "TRAINING"),
+  51:     ("--side-effect-class", "PURE"),
+  52:     ("--dataset-sensitivity", "INTERNAL"),
+  53:     ("--minimum-security-tier", "S2"),
+  54:     ("--minimum-isolation-class", "CONTAINED"),
+  55:     ("--minimum-key-protection", "K1"),
+  56:     ("--gpu-count", "1"),
+  57:     ("--gpu-min-vram-bytes", "8589934592"),
+  58:     // �� 2026-09-10 ? ��ȯ�Ⱑ ������ �ڿ��� �� �̻� 0 ���� ä���� �ʴ´�.
+  59:     ("--cpu-cores", "4"),
+  60:     ("--ram-bytes", "8589934592"),
+  61:     ("--workspace-bytes", "10737418240"),
+  62: ];
+  63: 
+  64: fn submit(out: &std::path::Path, override_flag: Option<(&str, &str)>) -> (bool, String) {
+  65:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+  66:     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+  67:     let mut args: Vec<String> = vec![
+  68:         "submit".into(), "--job-id".into(), JOB.into(),
+  69:         "--entrypoint".into(), "python".into(),
+  70:         "--submitter-device-id".into(), SUBMITTER.into(),
+  71:         "--submitter-seed".into(), SEED.into(),
+  72:         "--issued-at-unix-ms".into(), issued,
+  73:         "--expires-at-unix-ms".into(), expires,
+  74:         "--out".into(), out.to_str().unwrap().into(),
+  75:     ];
+  76:     for (name, value) in GOOD {
+  77:         let value = match override_flag {
+  78:             Some((k, v)) if k == name => v,
+  79:             _ => value,
+  80:         };
+  81:         args.push(name.into());
+  82:         args.push(value.into());
+  83:     }
+  84:     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+  85:     run_cli(&borrowed)
+  86: }
+  87: 
+  88: /// �ڡ� **��Ÿ�� ���� ������ �źεȴ�** ? ������ �⺻������ �������� �ʴ´�.
+  89: #[test]
+  90: fn a_misspelled_declaration_is_refused_at_submit_time() {
+  91:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+  92: 
+  93:     // ���� ? �ùٸ� ���̸� ������ ���´�. ������ "�׻� �ź�" �ε� ����Ѵ�.
+  94:     let good = dir.path().join("good.pb");
+  95:     let (ok, output) = submit(&good, None);
+  96:     assert!(ok, "�ùٸ� �����ε� �ź��ߴ�: {output}");
+  97:     assert!(good.exists(), "�����ߴµ� ������ ����");
+  98: 
+  99:     // ���� enum �� ������ **�׷����� ��Ÿ**�� �ش�.
+ 100:     for (flag, typo) in [
+ 101:         ("--workload-class", "TRAINNG"),          // ���� ����
+ 102:         ("--side-effect-class", "PURE_"),         // ���� ����
+ 103:         ("--dataset-sensitivity", "INTERNALL"),   // ���� ��ħ
+ 104:         ("--minimum-security-tier", "S22"),       // ���� ��ħ
+ 105:         ("--minimum-isolation-class", "CONTAIN"), // �߸�
+ 106:         ("--minimum-key-protection", "K"),        // �߸�
+ 107:     ] {
+ 108:         let out = dir.path().join("typo.pb");
+ 109:         let _ = std::fs::remove_file(&out);
+ 110:         let (ok, output) = submit(&out, Some((flag, typo)));
+ 111:         assert!(!ok, "{flag} {typo:?} �� �޾Ƶ鿴��: {output}");
+ 112:         assert!(
+ 113:             output.contains(typo) && output.contains("�𸥴�"),
+ 114:             "{flag}: ������ �߸��ƴ��� �� ���Ѵ�: {output}"
+ 115:         );
+ 116:         assert!(
+ 117:             !out.exists(),
+ 118:             "{flag}: �ź��ߴµ� Manifest ������ �����"
+ 119:         );
+ 120:     }
+ 121: }
+ 122: 
+ 123: /// ��ҹ��ڴ� �޾� �ش� ? �źδ� **��Ÿ**���� �ɷ��� �Ѵ�.
+ 124: ///
+ 125: /// �� ������ ������ �� �׽�Ʈ�� "���� �ƹ��͵� �� �˾ƺ���" �ε� ����Ѵ�.
+ 126: #[test]
+ 127: fn declarations_are_case_insensitive() {
+ 128:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 129:     let out = dir.path().join("lower.pb");
+ 130:     let (ok, output) = submit(&out, Some(("--workload-class", "training")));
+ 131:     assert!(ok, "�ҹ��ڸ� �ź��ߴ�: {output}");
+ 132:     assert!(out.exists());
+ 133: }
+ 134: 
+ 135: /// �ð� ���ڸ� ���� �����ϴ� ���� ? �⺻ helper �� �׻� ���Ḧ �ش�.
+ 136: fn submit_with_times(
+ 137:     out: &std::path::Path,
+ 138:     issued: &str,
+ 139:     expires: Option<&str>,
+ 140: ) -> (bool, String) {
+ 141:     let mut args: Vec<String> = vec![
+ 142:         "submit".into(), "--job-id".into(), JOB.into(),
+ 143:         "--entrypoint".into(), "python".into(),
+ 144:         "--submitter-device-id".into(), SUBMITTER.into(),
+ 145:         "--submitter-seed".into(), SEED.into(),
+ 146:         "--issued-at-unix-ms".into(), issued.into(),
+ 147:         "--out".into(), out.to_str().unwrap().into(),
+ 148:     ];
+ 149:     if let Some(e) = expires {
+ 150:         args.push("--expires-at-unix-ms".into());
+ 151:         args.push(e.into());
+ 152:     }
+ 153:     for (name, value) in GOOD {
+ 154:         args.push((*name).into());
+ 155:         args.push((*value).into());
+ 156:     }
+ 157:     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+ 158:     run_cli(&borrowed)
+ 159: }
+ 160: 
+ 161: /// �ڡ� **���Ḧ �����ϴ� ��θ� ������ ����** (2026-09-07 �˼� ����).
+ 162: ///
+ 163: /// �⺻ helper �� **�׻�** ���Ḧ �ֱ� ������, ���� ���(`issued + 7��`)��
+ 164: /// �׽�Ʈ���� �� ���� ������� �ʰ� �־���. �����ڰ� ������ ���� ����
+ 165: /// ���� ��� ���� �ڸ��ε� �ƹ��� �� ���� �־���.
+ 166: #[test]
+ 167: fn omitting_the_expiry_uses_the_documented_seven_day_default() {
+ 168:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 169:     let out = dir.path().join("no-expiry.pb");
+ 170:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+ 171: 
+ 172:     let (ok, output) = submit_with_times(&out, &issued, None);
+ 173:     assert!(ok, "���Ḧ �����ߴµ� �ź��ߴ�: {output}");
+ 174:     assert!(out.exists(), "�����ߴٴµ� ������ ����");
+ 175: 
+ 176:     // �� ���� 7���� ������ **������ ����Ʈ����** Ȯ���Ѵ�.
+ 177:     //   "�����ߴ�" �� ���� 0 �� ���� ����Ѵ�.
+ 178:     let bytes = std::fs::read(&out).expect("Manifest �б�");
+ 179:     let manifest = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(bytes.as_slice())
+ 180:         .expect("Manifest ���ڵ�");
+ 181:     let want: u64 = issued.parse::<u64>().unwrap() + 7 * 24 * 60 * 60 * 1000;
+ 182:     assert_eq!(
+ 183:         manifest.expires_at_unix_ms, want,
+ 184:         "���� �� �⺻���� �Թ�(issued + 7��)�� �ٸ���"
+ 185:     );
+ 186: }
+ 187: 
+ 188: /// �ڡ� **�߱��� ���Ẹ�� �ڸ� �ź��Ѵ�** (2026-09-07 �˼� ����).
+ 189: ///
+ 190: /// ������ �� �˻簡 **������** �� ��θ� ���� �׽�Ʈ�� ������.
+ 191: /// ������ �ð��� �״�� ������ �� �ٱ� ������ �Ѱ��.
+ 192: #[test]
+ 193: fn a_manifest_that_expires_before_it_is_issued_is_refused_before_signing() {
+ 194:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 195:     let out = dir.path().join("reversed.pb");
+ 196:     let issued = now_unix_ms();
+ 197: 
+ 198:     let (ok, output) = submit_with_times(
+ 199:         &out,
+ 200:         &issued.to_string(),
+ 201:         Some(&(issued - 1).to_string()),
+ 202:     );
+ 203:     assert!(!ok, "���ᰡ �߱޺��� ���ε� �޾Ƶ鿴��: {output}");
+ 204:     // �� �������� ���� ? �ٸ� ������ �ɷ��� !ok �� ���̴�.
+ 205:     assert!(
+ 206:         output.contains("�߱�") && output.contains("����"),
+ 207:         "�ð� ������ �ƴ϶� �ٸ� ������ ������: {output}"
+ 208:     );
+ 209:     assert!(!out.exists(), "�ź��ߴµ� ������ �����");
+ 210: }
+ 211: 
+ 212: /// �߱ް� ���ᰡ **���Ƶ�** �ź��Ѵ� ? �����ڸ��� ����� ���̴�.
+ 213: #[test]
+ 214: fn an_expiry_equal_to_the_issue_time_is_refused_too() {
+ 215:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 216:     let out = dir.path().join("equal.pb");
+ 217:     let issued = now_unix_ms();
+ 218: 
+ 219:     let (ok, output) =
+ 220:         submit_with_times(&out, &issued.to_string(), Some(&issued.to_string()));
+ 221:     assert!(!ok, "�߱� == ���� �� �޾Ƶ鿴��: {output}");
+ 222:     assert!(!out.exists(), "�ź��ߴµ� ������ �����");
+ 223: }
+ 224: 
+ 225: /// �̹� �ִ� Manifest ������ ������ ���� �ʴ´�.
+ 226: ///
+ 227: /// �ڡ� 2026-09-10 ? `issue-grant` ���� ���� �˼��� ã�� ������
+ 228: ///   **�� ���ɿ��� �Ȱ��� �־���.** `fs::write` �� ���̶� (1) ���� ������
+ 229: ///   ������ ���� (2) �߰��� �����ϸ� �߸� ä ���Ҵ�.
+ 230: ///   ��ġ�鼭 ����̸� `crate::out_file` �� ������ ��Ҵ� ? ���ʸ�
+ 231: ///   �������� ���� �� ������ �� ���� ���� ����̱� �����̴�.
+ 232: #[test]
+ 233: fn an_existing_manifest_file_is_not_clobbered() {
+ 234:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 235:     let out = dir.path().join("manifest.pb");
+ 236: 
+ 237:     let (ok, output) = submit(&out, None);
+ 238:     assert!(ok, "���� ��ΰ� �����ߴ�: {output}");
+ 239:     let first = std::fs::read(&out).expect("ù Manifest");
+ 240:     assert!(!first.is_empty(), "ù Manifest �� ��� �ִ�");
+ 241: 
+ 242:     let (ok2, output2) = submit(&out, None);
+ 243:     assert!(!ok2, "�̹� �ִ� ������ ������ ������: {output2}");
+ 244:     assert!(
+ 245:         output2.contains("SUBMIT_REFUSED: OUT_EXISTS"),
+ 246:         "�ź��ߴµ� ������ ���� ���簡 �ƴϴ�: {output2}"
+ 247:     );
+ 248: 
+ 249:     // �� �ٽ� ? ���� ������ ����Ʈ �״�� ���ƾ� �Ѵ�.
+ 250:     let after = std::fs::read(&out).expect("�ź� �ڿ��� ������ �־�� �Ѵ�");
+ 251:     assert_eq!(first, after, "�ź��ߴµ� ���� ������ �ٲ����");
+ 252: 
+ 253:     let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+ 254:         .expect("���͸�")
+ 255:         .filter_map(|e| e.ok())
+ 256:         .map(|e| e.file_name().to_string_lossy().to_string())
+ 257:         .filter(|n| n.contains(".tmp."))
+ 258:         .collect();
+ 259:     assert!(leftovers.is_empty(), "�ӽ� ������ ���Ҵ�: {leftovers:?}");
+ 260: }
+ 261: 
+ 262: /// ���������� ��û�ϸ� �����.
+ 263: ///
+ 264: /// �� ������. ������ "�׻� �ź�" �� ���ĵ� �� �׽�Ʈ�� ����Ѵ�.
+ 265: #[test]
+ 266: fn an_explicit_flag_allows_replacing_the_manifest() {
+ 267:     let dir = tempfile::tempdir().expect("�ӽ� ���͸�");
+ 268:     let out = dir.path().join("manifest.pb");
+ 269:     std::fs::write(&out, b"stale bytes").expect("�̸� ����");
+ 270: 
+ 271:     // �� `submit()` ���۴� ���� **��ü**�� �� �� �־� �� �÷��׸� �� �ִ´�.
+ 272:     //   �׷��� ���⼭�� ���� �θ���.
+ 273:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+ 274:     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+ 275:     let mut args: Vec<String> = vec![
+ 276:         "submit".into(), "--job-id".into(), JOB.into(),
+ 277:         "--entrypoint".into(), "python".into(),
+ 278:         "--submitter-device-id".into(), SUBMITTER.into(),
+ 279:         "--submitter-seed".into(), SEED.into(),
+ 280:         "--issued-at-unix-ms".into(), issued,
+ 281:         "--expires-at-unix-ms".into(), expires,
+ 282:         "--out".into(), out.to_str().unwrap().into(),
+ 283:         "--overwrite-existing-manifest".into(), "true".into(),
+ 284:     ];
+ 285:     for (name, value) in GOOD {
+ 286:         args.push(name.into());
+ 287:         args.push(value.into());
+ 288:     }
+ 289:     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+ 290:     let (ok, output) = run_cli(&borrowed);
+ 291:     assert!(ok, "������ ����Ⱑ �����ߴ�: {output}");
+ 292:     let bytes = std::fs::read(&out).expect("Manifest �� �д´�");
+ 293:     assert_ne!(bytes, b"stale bytes", "����ٰ� �ߴµ� �� ������ �״�δ�");
+ 294:     assert!(!bytes.is_empty(), "�����µ� ��� �ִ�");
+ 295: }
+
+codex
+현재 파일은 소스 358줄, 테스트 295줄로 제시된 분량과 다릅니다. 오타 테스트는 이미 여섯 축을 모두 돌며 파일 미생성도 확인합니다. 남아 있는 핵심 공백은 정상 선언이 정확한 값으로 저장됐는지, 대소문자만 바꿨을 때 서명 대상이 동일한지를 비교하지 않는다는 점입니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; p=pathlib.Path('crates/cli/src/submit.rs'); s=p.read_text(encoding='utf-8').splitlines(); print(json.dumps({str(i):s[i-1] for i in [67,69,70,71,78,91,301,302]},ensure_ascii=True))\" " in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1838ms:
+{"67": "    // \uae30\ubcf8 7\uc77c \u2014 `proto/job.proto` \uc758 \"\uae30\ubcf8 issued_at + 7\uc77c\" \uc8fc\uc11d \uadf8\ub300\ub85c.", "69": "    // \u2605 \uc774\uac83\uc740 `CLAUDE.md` \u00a71 \uc758 \"\uc9c0\uc5b4\ub0b4\uc9c0 \uc54a\ub294\ub2e4\" \uc704\ubc18\uc774 **\uc544\ub2c8\ub2e4** \u2014", "70": "    //   \uaddc\ubc94\uc774 \uadf8 \uae30\ubcf8\uac12\uc744 \uc815\ud574 \ub480\uc73c\ubbc0\ub85c \uc62e\uaca8 \uc801\ub294 \uac83\uc774\ub2e4. \ub2e4\ub9cc", "71": "    //   **\uc81c\ucd9c\uc790\uac00 \ub9d0\ud558\uc9c0 \uc54a\uc740 \uac12\uc774 \uc11c\uba85 \ub300\uc0c1\uc5d0 \ub4e4\uc5b4\uac04\ub2e4**\ub294 \uc0ac\uc2e4\uc740", "78": "        None => issued_at_unix_ms + 7 * 24 * 60 * 60 * 1000,", "91": "    if issued_at_unix_ms >= expires_at_unix_ms {", "301": "        .find(|(name, _)| name.eq_ignore_ascii_case(raw))", "302": "        .map(|(_, value)| *value)"}
+
+codex
+**CHANGES_REQUESTED입니다. 다만 “오타 테스트가 여섯 축을 덮지 않는다”는 지적은 현재 파일에서는 성립하지 않습니다.** 실제 파일은 소스 **358줄**, 테스트 **295줄**입니다. 지정한 두 파일만 정적으로 검토했으며, 테스트·명령 실행과 과거 이력 확인은 하지 않았습니다.
+
+아래는 재현용 PowerShell 공통 인자입니다. 각 출력 경로는 아직 존재하지 않는다고 가정합니다.
+
+```powershell
+$base = @(
+  'submit',
+  '--job-id', '01JJOBSUBMIT000000000001',
+  '--entrypoint', 'python',
+  '--submitter-device-id', '01JSUBMITTERSUB000000001',
+  '--submitter-seed', '1111111111111111111111111111111111111111111111111111111111111122',
+  '--workload-class', 'TRAINING',
+  '--side-effect-class', 'PURE',
+  '--dataset-sensitivity', 'INTERNAL',
+  '--minimum-security-tier', 'S2',
+  '--minimum-isolation-class', 'CONTAINED',
+  '--minimum-key-protection', 'K1',
+  '--gpu-count', '1',
+  '--gpu-min-vram-bytes', '8589934592',
+  '--cpu-cores', '4',
+  '--ram-bytes', '8589934592',
+  '--workspace-bytes', '10737418240'
+)
+$times = @('--issued-at-unix-ms', '1788994800000',
+           '--expires-at-unix-ms', '1789599600000')
+```
+
+뒤에 같은 플래그를 붙이면 마지막 값으로 교체됩니다. 근거는 [crates/cli/src/submit.rs:280](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:280)의 `out.insert`입니다.
+
+**1. 여섯 축 모두 정상값 수락과 오타 거부는 검사한다. 그러나 선언값의 정확한 저장은 검사하지 않는다.**
+
+정상 대조군은 [crates/cli/tests/submit.rs:95](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:95)에서 여섯 축을 함께 넣고 성공·파일 존재를 확인합니다. 오타 루프는 같은 파일 **100–106줄의 정확히 6개**입니다.
+
+| 축 | 수락하는 테스트 입력 | 거부하는 테스트 입력 | 입력 정의 위치 |
+|---|---|---|---|
+| workload | `TRAINING` | `TRAINNG` | `crates/cli/tests/submit.rs:50`, `:101` |
+| side effect | `PURE` | `PURE_` | `crates/cli/tests/submit.rs:51`, `:102` |
+| sensitivity | `INTERNAL` | `INTERNALL` | `crates/cli/tests/submit.rs:52`, `:103` |
+| security | `S2` | `S22` | `crates/cli/tests/submit.rs:53`, `:104` |
+| isolation | `CONTAINED` | `CONTAIN` | `crates/cli/tests/submit.rs:54`, `:105` |
+| key protection | `K1` | `K` | `crates/cli/tests/submit.rs:55`, `:106` |
+
+따라서 **한쪽만 검사하는 축은 없으며**, `a_misspelled_declaration_is_refused_at_submit_time`을 축 누락 때문에 거짓말하는 이름이라고 부를 근거도 없습니다.
+
+실제 공백은 **“받아들였다”와 “요청한 값을 서명했다”를 구분하지 않는 것**입니다. 정상 경로는 여섯 필드를 디코딩해 기대 enum과 비교하지 않습니다. 예컨대 [crates/cli/src/submit.rs:113](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:113)의 `TRAINING` 매핑을 잘못 `Inference`로 바꿔도, 이 테스트의 성공·파일 존재 assertion 자체는 그 오류를 식별하지 못합니다.
+
+```powershell
+gputeer @base @times --out good.pb
+```
+
+현재 코드는 `Training`을 넣습니다. 하지만 테스트는 `good.pb`의 `workload.class == Training`을 확인하지 않습니다. 나머지 다섯 축도 같습니다. 허용 이름도 총 24개 중 축별 대표값 **6개만** 성공 입력으로 사용합니다. 보완은 정상 선언의 여섯 필드 값 검증과 나머지 허용값 수락 검사입니다.
+
+**2. 대소문자 무시는 의도적이다. 서명 대상이 달라지는 결함은 못 찾았지만, 테스트는 동일성을 보장하지 않는다.**
+
+[crates/cli/src/submit.rs:301](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:301)은 `eq_ignore_ascii_case`로 비교하고 다음 줄에서 동일한 enum 정수를 반환합니다. 원래 철자는 Manifest에 저장하지 않습니다. 변환한 값은 **181–198줄**에서 Manifest에 들어가고 **207줄**에서 서명됩니다.
+
+```powershell
+gputeer @base @times --out upper.pb
+gputeer @base @times --workload-class training --out lower.pb
+```
+
+두 호출은 다른 입력을 고정했으므로, 이 파일에서 구성하는 **서명 대상 필드 값이 같습니다**. 대소문자 때문에 서명 대상이 달라지는 경로는 발견하지 못했습니다.
+
+그러나 [crates/cli/tests/submit.rs:130](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:130)은 `workload=training` **한 축만** 바꾸고 성공·파일 존재만 봅니다. 나머지 다섯 축의 소문자·혼합 대소문자와 서명 대상·서명 동일성 비교가 없습니다. 이름은 이 실제 검사 범위보다 넓습니다.
+
+여섯 축을 각각 바꾸어 비교해야 합니다. 이때 기존 helper는 호출마다 현재 시각을 다시 생성하므로(`crates/cli/tests/submit.rs:65`), 위 명령처럼 **발급·만료도 고정**해야 합니다.
+
+**3. 잘못된 선언은 서명 전에 거부하며, 파일 미생성 검사도 있다.**
+
+예를 들어 다음 호출입니다.
+
+```powershell
+gputeer @base @times --minimum-key-protection K --out typo.pb
+```
+
+코드 순서는 다음과 같습니다.
+
+- `crates/cli/src/submit.rs:143`: enum 변환 실패를 `?`로 반환.
+- `crates/cli/src/submit.rs:205`: seed 처리.
+- `crates/cli/src/submit.rs:207`: 서명.
+- `crates/cli/src/submit.rs:232`: 출력 파일 쓰기.
+
+다른 다섯 축도 같은 구조입니다. 잘못된 선언이면 서명과 파일 쓰기에 도달하지 않습니다.
+
+[crates/cli/tests/submit.rs:110](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:110)은 각 오타에 대해 실패·오타를 포함한 오류 메시지·**출력 파일 부재**까지 검사합니다. 이 항목의 누락은 못 찾았습니다. 다만 파일 부재 assertion만으로 내부 서명 호출 여부까지 증명되는 것은 아니며, **서명 전 거부는 코드 순서로 확인했습니다.**
+
+**4. 만료 생략은 7일 기본값이며, 역전·동일 시각도 이미 검사한다. 남은 실제 결함은 기본값 계산의 오버플로다.**
+
+[crates/cli/src/submit.rs:66](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:66)에서 발급은 필수입니다. **78줄**에서 만료 생략을 `issued + 604800000`으로 처리합니다.
+
+```powershell
+gputeer @base --issued-at-unix-ms 1788994800000 --out default.pb
+```
+
+코드가 설정하는 만료는 **1789599600000**입니다. **만료 없음이 아닙니다.** [crates/cli/tests/submit.rs:178](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:178)은 파일을 디코딩해 이 계산값을 검증합니다.
+
+소스 **67–70줄**은 이를 `proto/job.proto`에 규정된 기본값이라고 설명합니다. 해당 규범과 `CLAUDE.md`는 읽기 허용 범위 밖이므로, **문서에 실제로 규정됐는지 또는 §1 위반인지는 확정하지 못했습니다.**
+
+```powershell
+gputeer @base --issued-at-unix-ms 1788994800000 --expires-at-unix-ms 1788994799999 --out reversed.pb
+gputeer @base --issued-at-unix-ms 1788994800000 --expires-at-unix-ms 1788994800000 --out equal.pb
+```
+
+두 경우 모두 `crates/cli/src/submit.rs:91`에서 서명 전에 거부합니다. 테스트도 각각 `crates/cli/tests/submit.rs:193`, `:214`에 있으며 파일 부재까지 확인합니다.
+
+반면 다음 입력은 빠져 있습니다.
+
+```powershell
+gputeer @base --issued-at-unix-ms 18446744073709551615 --out overflow.pb
+```
+
+발급값은 유효한 `u64`지만, **`crates/cli/src/submit.rs:78`의 덧셈이 오버플로**합니다. 오버플로 검사가 켜진 빌드는 정상 오류 반환 대신 panic하고, 꺼진 빌드는 만료가 `604799999`로 돌아간 뒤 시각 역전으로 거부합니다. 빌드 설정에 따라 오류 동작이 달라집니다. 현재 테스트에는 이 경계값이 없습니다. `checked_add`로 명시적으로 거부하고 해당 입력을 검사해야 합니다.
+
+CHANGES_REQUESTED
+tokens used
+55,862
+**CHANGES_REQUESTED입니다. 다만 “오타 테스트가 여섯 축을 덮지 않는다”는 지적은 현재 파일에서는 성립하지 않습니다.** 실제 파일은 소스 **358줄**, 테스트 **295줄**입니다. 지정한 두 파일만 정적으로 검토했으며, 테스트·명령 실행과 과거 이력 확인은 하지 않았습니다.
+
+아래는 재현용 PowerShell 공통 인자입니다. 각 출력 경로는 아직 존재하지 않는다고 가정합니다.
+
+```powershell
+$base = @(
+  'submit',
+  '--job-id', '01JJOBSUBMIT000000000001',
+  '--entrypoint', 'python',
+  '--submitter-device-id', '01JSUBMITTERSUB000000001',
+  '--submitter-seed', '1111111111111111111111111111111111111111111111111111111111111122',
+  '--workload-class', 'TRAINING',
+  '--side-effect-class', 'PURE',
+  '--dataset-sensitivity', 'INTERNAL',
+  '--minimum-security-tier', 'S2',
+  '--minimum-isolation-class', 'CONTAINED',
+  '--minimum-key-protection', 'K1',
+  '--gpu-count', '1',
+  '--gpu-min-vram-bytes', '8589934592',
+  '--cpu-cores', '4',
+  '--ram-bytes', '8589934592',
+  '--workspace-bytes', '10737418240'
+)
+$times = @('--issued-at-unix-ms', '1788994800000',
+           '--expires-at-unix-ms', '1789599600000')
+```
+
+뒤에 같은 플래그를 붙이면 마지막 값으로 교체됩니다. 근거는 [crates/cli/src/submit.rs:280](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:280)의 `out.insert`입니다.
+
+**1. 여섯 축 모두 정상값 수락과 오타 거부는 검사한다. 그러나 선언값의 정확한 저장은 검사하지 않는다.**
+
+정상 대조군은 [crates/cli/tests/submit.rs:95](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:95)에서 여섯 축을 함께 넣고 성공·파일 존재를 확인합니다. 오타 루프는 같은 파일 **100–106줄의 정확히 6개**입니다.
+
+| 축 | 수락하는 테스트 입력 | 거부하는 테스트 입력 | 입력 정의 위치 |
+|---|---|---|---|
+| workload | `TRAINING` | `TRAINNG` | `crates/cli/tests/submit.rs:50`, `:101` |
+| side effect | `PURE` | `PURE_` | `crates/cli/tests/submit.rs:51`, `:102` |
+| sensitivity | `INTERNAL` | `INTERNALL` | `crates/cli/tests/submit.rs:52`, `:103` |
+| security | `S2` | `S22` | `crates/cli/tests/submit.rs:53`, `:104` |
+| isolation | `CONTAINED` | `CONTAIN` | `crates/cli/tests/submit.rs:54`, `:105` |
+| key protection | `K1` | `K` | `crates/cli/tests/submit.rs:55`, `:106` |
+
+따라서 **한쪽만 검사하는 축은 없으며**, `a_misspelled_declaration_is_refused_at_submit_time`을 축 누락 때문에 거짓말하는 이름이라고 부를 근거도 없습니다.
+
+실제 공백은 **“받아들였다”와 “요청한 값을 서명했다”를 구분하지 않는 것**입니다. 정상 경로는 여섯 필드를 디코딩해 기대 enum과 비교하지 않습니다. 예컨대 [crates/cli/src/submit.rs:113](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:113)의 `TRAINING` 매핑을 잘못 `Inference`로 바꿔도, 이 테스트의 성공·파일 존재 assertion 자체는 그 오류를 식별하지 못합니다.
+
+```powershell
+gputeer @base @times --out good.pb
+```
+
+현재 코드는 `Training`을 넣습니다. 하지만 테스트는 `good.pb`의 `workload.class == Training`을 확인하지 않습니다. 나머지 다섯 축도 같습니다. 허용 이름도 총 24개 중 축별 대표값 **6개만** 성공 입력으로 사용합니다. 보완은 정상 선언의 여섯 필드 값 검증과 나머지 허용값 수락 검사입니다.
+
+**2. 대소문자 무시는 의도적이다. 서명 대상이 달라지는 결함은 못 찾았지만, 테스트는 동일성을 보장하지 않는다.**
+
+[crates/cli/src/submit.rs:301](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:301)은 `eq_ignore_ascii_case`로 비교하고 다음 줄에서 동일한 enum 정수를 반환합니다. 원래 철자는 Manifest에 저장하지 않습니다. 변환한 값은 **181–198줄**에서 Manifest에 들어가고 **207줄**에서 서명됩니다.
+
+```powershell
+gputeer @base @times --out upper.pb
+gputeer @base @times --workload-class training --out lower.pb
+```
+
+두 호출은 다른 입력을 고정했으므로, 이 파일에서 구성하는 **서명 대상 필드 값이 같습니다**. 대소문자 때문에 서명 대상이 달라지는 경로는 발견하지 못했습니다.
+
+그러나 [crates/cli/tests/submit.rs:130](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:130)은 `workload=training` **한 축만** 바꾸고 성공·파일 존재만 봅니다. 나머지 다섯 축의 소문자·혼합 대소문자와 서명 대상·서명 동일성 비교가 없습니다. 이름은 이 실제 검사 범위보다 넓습니다.
+
+여섯 축을 각각 바꾸어 비교해야 합니다. 이때 기존 helper는 호출마다 현재 시각을 다시 생성하므로(`crates/cli/tests/submit.rs:65`), 위 명령처럼 **발급·만료도 고정**해야 합니다.
+
+**3. 잘못된 선언은 서명 전에 거부하며, 파일 미생성 검사도 있다.**
+
+예를 들어 다음 호출입니다.
+
+```powershell
+gputeer @base @times --minimum-key-protection K --out typo.pb
+```
+
+코드 순서는 다음과 같습니다.
+
+- `crates/cli/src/submit.rs:143`: enum 변환 실패를 `?`로 반환.
+- `crates/cli/src/submit.rs:205`: seed 처리.
+- `crates/cli/src/submit.rs:207`: 서명.
+- `crates/cli/src/submit.rs:232`: 출력 파일 쓰기.
+
+다른 다섯 축도 같은 구조입니다. 잘못된 선언이면 서명과 파일 쓰기에 도달하지 않습니다.
+
+[crates/cli/tests/submit.rs:110](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:110)은 각 오타에 대해 실패·오타를 포함한 오류 메시지·**출력 파일 부재**까지 검사합니다. 이 항목의 누락은 못 찾았습니다. 다만 파일 부재 assertion만으로 내부 서명 호출 여부까지 증명되는 것은 아니며, **서명 전 거부는 코드 순서로 확인했습니다.**
+
+**4. 만료 생략은 7일 기본값이며, 역전·동일 시각도 이미 검사한다. 남은 실제 결함은 기본값 계산의 오버플로다.**
+
+[crates/cli/src/submit.rs:66](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/submit.rs:66)에서 발급은 필수입니다. **78줄**에서 만료 생략을 `issued + 604800000`으로 처리합니다.
+
+```powershell
+gputeer @base --issued-at-unix-ms 1788994800000 --out default.pb
+```
+
+코드가 설정하는 만료는 **1789599600000**입니다. **만료 없음이 아닙니다.** [crates/cli/tests/submit.rs:178](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/submit.rs:178)은 파일을 디코딩해 이 계산값을 검증합니다.
+
+소스 **67–70줄**은 이를 `proto/job.proto`에 규정된 기본값이라고 설명합니다. 해당 규범과 `CLAUDE.md`는 읽기 허용 범위 밖이므로, **문서에 실제로 규정됐는지 또는 §1 위반인지는 확정하지 못했습니다.**
+
+```powershell
+gputeer @base --issued-at-unix-ms 1788994800000 --expires-at-unix-ms 1788994799999 --out reversed.pb
+gputeer @base --issued-at-unix-ms 1788994800000 --expires-at-unix-ms 1788994800000 --out equal.pb
+```
+
+두 경우 모두 `crates/cli/src/submit.rs:91`에서 서명 전에 거부합니다. 테스트도 각각 `crates/cli/tests/submit.rs:193`, `:214`에 있으며 파일 부재까지 확인합니다.
+
+반면 다음 입력은 빠져 있습니다.
+
+```powershell
+gputeer @base --issued-at-unix-ms 18446744073709551615 --out overflow.pb
+```
+
+발급값은 유효한 `u64`지만, **`crates/cli/src/submit.rs:78`의 덧셈이 오버플로**합니다. 오버플로 검사가 켜진 빌드는 정상 오류 반환 대신 panic하고, 꺼진 빌드는 만료가 `604799999`로 돌아간 뒤 시각 역전으로 거부합니다. 빌드 설정에 따라 오류 동작이 달라집니다. 현재 테스트에는 이 경계값이 없습니다. `checked_add`로 명시적으로 거부하고 해당 입력을 검사해야 합니다.
+
+CHANGES_REQUESTED
