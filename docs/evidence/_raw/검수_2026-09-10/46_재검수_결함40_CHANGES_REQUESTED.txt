@@ -1,0 +1,1068 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08b52-4e13-7e63-80da-89b4342cd7d7
+--------
+user
+동의가 아니라 **반박**을 원한다. 재검수 44 가 하나를 짚었고, 고쳤다(결함 ㊵).
+
+# 44 의 지적과 이번 수정
+
+```text
+crates/cli/src/out_file.rs 모듈 문서
+  전  "64 후보  같은 이름·같은 pid 의 잔여가 64개면 target 이 없어도 실패한다"
+  후  "한 호출이 받은 대상 · pid · seq 의 후보 0~63 이 모두 이미 있으면 target 이 없어도 실패한다"
+```
+
+주석만 바뀌었다 — 되돌리면 실패하는 테스트는 없다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/cli/src/out_file.rs     (모듈 문서 · create_exclusive_temp · create_exclusive_temp_with_seq)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md   (결함 ㊵ 절만)
+docs/history/HISTORY.md        (맨 위 항목만)
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt
+```
+
+# 물을 것 — 둘
+
+1. **44 의 지적이 닫혔나.** 새 문장이 구현(`create_exclusive_temp_with_seq` 의 반복 · 오류 분기)과 맞나 —
+   AlreadyExists 가 아닌 오류에서의 동작까지 포함해서.
+2. 위 범위에서 같은 부류(관측을 원인 · 필연 · 보편으로 넓히는 문장, 한계를 실제보다 넓거나 좁게 적는 문장)가
+   또 있나. 범위 밖에서 보면 "범위 밖 관찰" 로 따로 적어라.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 을 인용하라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 파일의 해당 범위만 읽고, 새 문장을 반복·오류 분기와 대조해 반례가 있는지 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'create_exclusive_temp|AlreadyExists|㊵|"'^#|''^//!|''^/'"\\*|"'^'"\\*/' crates/cli/src/out_file.rs docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md docs/history/HISTORY.md docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1151ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+crates/cli/src/out_file.rs:1://! 서명된 산출물을 파일로 내보낸다 — **기존 파일을 조용히 망가뜨리지 않는다.**
+crates/cli/src/out_file.rs:2://!
+crates/cli/src/out_file.rs:3://! # 왜 이 모듈이 있나
+crates/cli/src/out_file.rs:4://!
+crates/cli/src/out_file.rs:5://! ★★ 2026-09-10 독립 검수가 `issue-grant` 에서 찾은 결함이다. 그 명령은
+crates/cli/src/out_file.rs:6://!   `std::fs::write(out_path, ..)` 한 줄로 산출물을 내보냈고, 그것이 두
+crates/cli/src/out_file.rs:7://!   가지를 한꺼번에 잘못했다:
+crates/cli/src/out_file.rs:8://!
+crates/cli/src/out_file.rs:9://!   1. **기존 파일을 말없이 덮었다.** 운영자가 서명 키를 잘못 주면 그
+crates/cli/src/out_file.rs:10://!      명령은 그것을 잡지 못하고 성공을 찍으면서 **멀쩡하던 산출물을
+crates/cli/src/out_file.rs:11://!      못 쓰는 것으로 바꿔 놓는다.**
+crates/cli/src/out_file.rs:12://!   2. **먼저 자르고 쓴다.** 중간에 실패하면 기존 파일이 **잘린 채** 남는다.
+crates/cli/src/out_file.rs:13://!      `CLAUDE.md` §0.3 이 경고하는 모양이다.
+crates/cli/src/out_file.rs:14://!
+crates/cli/src/out_file.rs:15://! ★★ **그리고 `submit` 에 똑같은 줄이 있었다.** 한쪽만 고치면 다음
+crates/cli/src/out_file.rs:16://!   사람이 다른 쪽을 다시 발견한다 — 애초에 이 결함이 두 곳에 생긴
+crates/cli/src/out_file.rs:17://!   방식이 그것이다. 그래서 도우미를 한 곳에 둔다.
+crates/cli/src/out_file.rs:18://!
+crates/cli/src/out_file.rs:19://! # ★★ 1차 수정이 모자랐다 — 재검수가 셋을 더 찾았다 (2026-09-10)
+crates/cli/src/out_file.rs:20://!
+crates/cli/src/out_file.rs:21://! ```text
+crates/cli/src/out_file.rs:22://! ① 존재 확인과 확정 사이가 벌어져 있었다
+crates/cli/src/out_file.rs:23://!    `target.exists()` 로 보고 나서 `rename` 했다. 그 사이에 다른
+crates/cli/src/out_file.rs:24://!    프로세스가 만들면 **말없이 덮는다** — 막으려던 바로 그 일이다
+crates/cli/src/out_file.rs:25://! ② 임시 파일을 배타적으로 안 만들었다
+crates/cli/src/out_file.rs:26://!    `<이름>.tmp.<pid>` 를 `fs::write` 로 만들었다. 같은 이름이 이미
+crates/cli/src/out_file.rs:27://!    있으면(앞 실행이 죽어 남긴 것) 그것을 덮었다
+crates/cli/src/out_file.rs:28://! ③ 덮어쓰기에서 **원본을 먼저 지웠다**
+crates/cli/src/out_file.rs:29://!    `remove_file` 뒤 `rename` 사이에 **아무것도 없는 창**이 생긴다.
+crates/cli/src/out_file.rs:30://!    그 순간 프로세스가 죽으면 원본도 새것도 없다
+crates/cli/src/out_file.rs:31://! ```
+crates/cli/src/out_file.rs:32://!
+crates/cli/src/out_file.rs:33://! # 지금 어떻게 하나
+crates/cli/src/out_file.rs:34://!
+crates/cli/src/out_file.rs:35://! ```text
+crates/cli/src/out_file.rs:36://! 임시 파일   create_new(true) 로 **배타 생성**한다. 이미 있으면 이름을
+crates/cli/src/out_file.rs:37://!             바꿔 다시 시도한다 — 남의 임시 파일을 덮지 않는다.
+crates/cli/src/out_file.rs:38://!             이름은 `<대상>.tmp.<pid>.<seq>.<n>` — seq 는 호출마다 받는 프로세스
+crates/cli/src/out_file.rs:39://!             전역 번호라, 같은 프로세스의 동시 쓰기끼리 같은 이름을 두고
+crates/cli/src/out_file.rs:40://!             부딪히지 않는다(결함 ㊱). 번호가 소진되면 0 으로 돌지 않고
+crates/cli/src/out_file.rs:41://!             실패한다(결함 ㊴)
+crates/cli/src/out_file.rs:42://! 덮어쓰기 X  temp 를 target 에 **hard_link** 한다. 대상이 있으면
+crates/cli/src/out_file.rs:43://!             링크가 실패한다 — **확인과 확정이 한 번의 원자적 연산**이다
+crates/cli/src/out_file.rs:44://! 덮어쓰기 O  `fs::rename` 한 번으로 바꾼다. **먼저 지우지 않는다** —
+crates/cli/src/out_file.rs:45://!             그래서 교체가 실패하면 기존 파일이 그대로 남는다
+crates/cli/src/out_file.rs:46://! ```
+crates/cli/src/out_file.rs:47://!
+crates/cli/src/out_file.rs:48://! ★★ 2026-09-10 재검수 11 — 여기 "std 의 rename 은 두 플랫폼 다 대상을
+crates/cli/src/out_file.rs:49://!   원자적으로 교체한다" 고 적었었다. **보장 범위를 넘었다.** std 문서는
+crates/cli/src/out_file.rs:50://!   모든 파일시스템에서 원자성을 약속하지 않고, Windows 구현은
+crates/cli/src/out_file.rs:51://!   `MoveFileExW` 말고 다른 경로도 쓴다. 이 모듈이 말할 수 있는 것은
+crates/cli/src/out_file.rs:52://!   "먼저 지우지 않으므로 **실패하면 원본이 남는다**" 까지다.
+crates/cli/src/out_file.rs:53://!
+crates/cli/src/out_file.rs:54://! ★ 왜 hard_link 인가 — Rust 표준 라이브러리에 **덮어쓰지 않는 rename 이
+crates/cli/src/out_file.rs:55://!   없다.** `rename_noreplace` 는 아직 제안 단계다(rust-lang/libs-team#131).
+crates/cli/src/out_file.rs:56://!   플랫폼별로는 있다 — Linux `renameat2(RENAME_NOREPLACE)`, macOS
+crates/cli/src/out_file.rs:57://!   `renameatx_np(RENAME_EXCL)`, Windows 는 `MOVEFILE_REPLACE_EXISTING` 을
+crates/cli/src/out_file.rs:58://!   빼면 그게 기본 동작이다. 표준만으로 그 성질을 얻는 방법이 hard_link 다
+crates/cli/src/out_file.rs:59://!   — `link()` 는 EEXIST 로, `CreateHardLinkW` 는 실패로 끝난다.
+crates/cli/src/out_file.rs:60://!
+crates/cli/src/out_file.rs:61://! ★ 한계를 적어 둔다 — hard_link 를 **지원하지 않는 파일시스템**(FAT32,
+crates/cli/src/out_file.rs:62://!   일부 네트워크 마운트)에서는 이 경로가 실패한다. 그때는 오류가
+crates/cli/src/out_file.rs:63://!   그대로 올라가고 산출물이 안 생긴다. **조용히 덮는 것보다 낫다.**
+crates/cli/src/out_file.rs:64://!
+crates/cli/src/out_file.rs:65://! ★ 한계 둘 더(재검수 11):
+crates/cli/src/out_file.rs:66://!   ```text
+crates/cli/src/out_file.rs:67://!   남은 링크   hard_link 뒤 임시 이름을 못 지우면 **산출물과 같은 파일을
+crates/cli/src/out_file.rs:68://!               가리키는 링크**가 남는다. 그 링크에 누가 쓰면 산출물도
+crates/cli/src/out_file.rs:69://!               바뀐다. 못 지운 사실을 **경고로 돌려준다**
+crates/cli/src/out_file.rs:70://!   64 후보     한 호출이 받은 대상 · pid · seq 의 후보 0~63 이 모두 이미 있으면
+crates/cli/src/out_file.rs:71://!               target 이 없어도 실패한다(결함 ㊵ — 전에는 seq 조건 없이 "같은 이름 ·
+crates/cli/src/out_file.rs:72://!               같은 pid 의 잔여가 64개면" 이라 적었다). 가용성 한계이고 덮어쓰는
+crates/cli/src/out_file.rs:73://!               경로는 아니다
+crates/cli/src/out_file.rs:74://!   ```
+crates/cli/src/out_file.rs:75://!
+crates/cli/src/out_file.rs:76://! ★★ **경고를 여기서 출력하지 않는다**(재검수 13). 처음엔 `eprintln!` 으로
+crates/cli/src/out_file.rs:77://!   찍었는데, 그 매크로는 stderr 쓰기가 실패하면 **패닉**한다. 산출물이 이미
+crates/cli/src/out_file.rs:78://!   확정됐는데 경고 때문에 실패로 끝나면 "못 지워도 실패로 돌리지 않는다"
+crates/cli/src/out_file.rs:79://!   는 계약이 깨진다. 경고는 반환값에 담고, 부르는 쪽이 **자기 요약에**
+crates/cli/src/out_file.rs:80://!   싣는다([`with_warning`]).
+crates/cli/src/out_file.rs:81://!
+crates/cli/src/out_file.rs:82://! ★ 테스트가 지키는 것과 못 지키는 것:
+crates/cli/src/out_file.rs:83://!   ```text
+crates/cli/src/out_file.rs:84://!   지킨다   임시 이름 배타 생성 — 1차 구현의 이름(`.tmp.<pid>`) · 2차 구현의
+crates/cli/src/out_file.rs:85://!            이름(`.tmp.<pid>.0`) · 지금 이름(`.tmp.<pid>.<seq>.0`)의 남의 파일을
+crates/cli/src/out_file.rs:86://!            안 건드린다
+crates/cli/src/out_file.rs:87://!   지킨다   같은 프로세스 안에서 임시 이름을 다시 쓰지 않는다(결함 ㊱)
+crates/cli/src/out_file.rs:88://!   지킨다   덮어쓰기 금지에서 동시 쓰기 16개 중 정확히 하나만 이긴다.
+crates/cli/src/out_file.rs:89://!            ★ 확인과 확정이 갈라진 1차 구현은 여럿이 이길 **수 있다** —
+crates/cli/src/out_file.rs:90://!              스케줄에 달려 있어 매번 잡는다는 보장은 없다
+crates/cli/src/out_file.rs:91://!   지킨다   먼저 지우지 않는다 — 교체를 주입해 실패시키면 원본이 남는다
+crates/cli/src/out_file.rs:92://!            (재검수 13 전에는 "코드로만 지킨다" 였다)
+crates/cli/src/out_file.rs:93://!   지킨다   정리 실패를 말한다 — 성공 경로는 경고를 돌려주고, 실패
+crates/cli/src/out_file.rs:94://!            경로는 오류에 덧붙인다
+crates/cli/src/out_file.rs:95://!   ```
+crates/cli/src/out_file.rs:96://!
+crates/cli/src/out_file.rs:97://! ```text
+crates/cli/src/out_file.rs:98://! 안 한다  fsync — 이건 체크포인트가 아니다. 전원이 끊기면 다시 발급하면 된다
+crates/cli/src/out_file.rs:99://!          (`crates/checkpoint` 의 `ADR-026` 절차는 그쪽에서 쓴다)
+crates/cli/src/out_file.rs:100://! 안 한다  내용 검증 — 부르는 쪽이 이미 서명하고 자기 검증했다
+crates/cli/src/out_file.rs:101://! ```
+crates/cli/src/out_file.rs:176:    let (tmp, mut file) = create_exclusive_temp(dir, &stem, code, what)?;
+crates/cli/src/out_file.rs:210:        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(with_cleanup(
+crates/cli/src/out_file.rs:244:fn create_exclusive_temp(
+crates/cli/src/out_file.rs:251:    //   이름을 두고 경쟁했다. 그 경쟁 실험(Windows)에서 create_new 가 AlreadyExists 가 아니라
+crates/cli/src/out_file.rs:258:    create_exclusive_temp_with_seq(dir, stem, seq, code, what)
+crates/cli/src/out_file.rs:270:fn create_exclusive_temp_with_seq(
+crates/cli/src/out_file.rs:286:            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+crates/cli/src/out_file.rs:300:#[cfg(test)]
+crates/cli/src/out_file.rs:485:        let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("첫 임시");
+crates/cli/src/out_file.rs:488:        let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("둘째 임시");
+crates/cli/src/out_file.rs:505:            create_exclusive_temp_with_seq(dir.path(), "y.pb", seq, "T", "X").expect("임시 생성");
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1:# 2026-09-10 — 독립 검수가 찾은 결함 (재검수 포함 40건)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:8:## 0. 어디서 나왔나
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:36:# 결함 ① — 테스트가 엉뚱한 관문을 재면서 통과했다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:38:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:44:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:55:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:65:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:69:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:74:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:95:# 결함 ② — 잘못된 키로 멀쩡한 Grant 파일을 날린다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:97:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:102:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:109:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:116:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:122:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:125:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:136:# 결함 ③ — "QUEUED 에서만 예약한다" 관문이 한 번도 안 돌았다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:138:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:144:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:153:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:161:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:164:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:167:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:220:# 결함 ④ — 선언하지 않은 자원이 "0을 요구한다" 로 넘어갔다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:222:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:227:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:238:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:255:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:260:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:263:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:282:# 결함 ⑤ — 같은 덮어쓰기 결함이 `submit` 에도 있었다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:284:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:289:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:292:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:296:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:299:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:302:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:312:# 결함 ⑥ — 사용자 입력으로 패닉이 난다 (만료 기본값 오버플로)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:314:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:319:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:329:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:337:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:342:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:345:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:354:# 결함 ⑦ — 정상 경로 테스트가 "선언한 값이 서명됐는지" 를 안 봤다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:356:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:361:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:366:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:373:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:376:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:379:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:392:# 결함 ⑧ — 1차 수정이 모자랐다 (원자적 파일 쓰기)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:394:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:399:## 2. 재검수가 짚은 셋
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:411:## 3. 실측 — 최신 자료로 확인한 것
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:423:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:426:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:431:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:439:# 결함 ⑨ — seed 검사가 바이트 길이만 보고 문자 경계를 갈랐다 (패닉)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:441:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:446:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:453:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:458:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:461:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:464:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:473:# 결함 ⑩ — 선언한 자원을 말없이 버렸다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:475:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:480:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:488:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:491:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:495:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:498:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:506:# 결함 ⑪ — 값 대조 테스트가 "누가 서명했는지" 를 안 봤다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:508:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:513:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:519:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:522:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:525:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:528:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:535:# 결함 ⑫ — `Shared` 거부의 근거를 규범의 반만 적었다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:537:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:544:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:551:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:561:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:565:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:568:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:590:# 결함 ⑬ — `issue-grant` 에 ⑨ 와 같은 패닉이 남아 있었다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:592:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:597:## 2. 재현 (재검수 11 이 준 입력)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:602:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:609:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:612:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:634:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:648:# 결함 ⑭ — ⑧ 의 세 수정을 지키는 테스트가 없다, 그리고 주석이 과했다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:650:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:656:## 2. 재현 (재검수 11)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:674:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:677:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:681:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:696:# 결함 ⑮ — ⑩ 의 경계 둘이 테스트로 안 고정됐다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:698:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:703:## 2. 재현 (재검수 11)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:712:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:715:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:723:# 결함 ⑯ — `--manifest-file` 이 저장된 예약 lane 에서 말없이 버려진다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:725:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:731:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:735:## 3. 실측 — 검수가 아니라 이 세션이 §A1 1.5 를 하다 밟았다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:745:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:748:## 5. 내가 잘못 보고했던 수치의 정정
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:753:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:830:# 결함 ⑰ — ⑭ 의 대응이 또 모자랐다 (재검수 13)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:832:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:839:## 2. 재현 (재검수 13)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:854:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:860:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:863:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:876:# 결함 ⑱ — Agent 가 워크로드를 **ACK 전에** 끝까지 돌린다. Coordinator 는 10초만 기다린다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:878:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:887:## 2. 재현 (재검수 14 의 입력)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:891:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:896:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:902:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:909:# 결함 ⑲ — 종료를 관측하고도 산출물 처리가 실패하면 보고가 사라진다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:911:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:919:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:923:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:926:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:929:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:934:# 결함 ⑳ — 저장까지 성공한 뒤의 정상 종료를 재접속 사유로 오인할 수 있다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:936:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:942:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:947:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:956:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:959:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:964:# 결함 ㉑ — ⑯ 확장의 관문이 lane 조건을 틀리게 그렸다 (재검수 15)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:966:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:971:## 2. 재현 (재검수 15 가 준 입력)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:987:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:995:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:999:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1034:# 결함 ㉒ — 불리언 검사를 중복 키가 피해 가고, ㉑ 의 경계를 테스트가 다 못 고정한다 (재검수 18)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1042:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1048:## 2. 재현 (재검수 18)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1065:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1068:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1084:# 결함 ㉓ — P0-02 초안이 원문에 있는 기록을 "없다" 고 적고, 기록 없는 명령으로 판정 범위를 정했다 (재검수 27)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1089:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1094:## 2. 재현 (재검수 27)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1105:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1112:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1115:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1123:# 결함 ㉔ — DoD-68 초안·scheduler_tick 주석에 같은 부류 셋, 그리고 오류 분류 주석이 실행 순서와 어긋난다 (재검수 28)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1128:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1134:## 2. 재현 (재검수 28)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1149:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1161:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1164:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1176:# 결함 ㉕ — 일부 오류에 붙인 코드를 오류 체계 전체로, 시계 재조회를 값 변경의 필연으로 적었다 (재검수 30)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1180:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1186:## 2. 재현 (재검수 30)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1197:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1200:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1214:# 결함 ㉖ — ㉕ 를 전수로 고치며 "테스트로 고정할 수 없다" 를 새로 만들었다 (재검수 31)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1219:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1225:## 2. 재현 (재검수 31)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1233:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1236:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1244:# 결함 ㉗ — 넓힌 읽기 범위의 기존 주석 셋: 계약 확대 · 한 사례의 일반화 · 가능한 결과를 필연으로 (재검수 32)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1250:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1257:## 2. 재현 (재검수 32)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1270:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1273:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1279:# 결함 ㉘ — 운영자가 무엇을 믿는지를 단정했다 (재검수 33)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1283:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1290:## 2. 재현 (재검수 33)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1297:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1300:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1308:# 결함 ㉙ — "늘" 만 지워 충돌의 필연이 남았다 (재검수 34)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1312:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1317:## 2. 재현 (재검수 34)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1324:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1327:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1334:# 결함 ㉚ — 성공 한 번에서 원인을 확정하고, 두 관문을 한 원인으로 섞었다 (구현 검수 37)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1338:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1345:## 2. 재현 (구현 검수 37)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1357:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1360:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1368:# 결함 ㉛ — 성공 관측 한 번으로 남은 일의 규모와 완전성을 확정했다 (재검수 38)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1373:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1380:## 2. 재현 (재검수 38)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1387:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1390:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1398:# 결함 ㉜ — 재접속 가능성을 테스트 실패로 확정했다 (재검수 39)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1402:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1409:## 2. 재현 (재검수 39)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1416:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1419:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1426:# 결함 ㉝ — 저장소 없는 갱신이 --renew-extension-ms 를 받아 두고 60초로 고정한다 (㉒ 에 기록만 한 잔여)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1431:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1438:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1442:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1446:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1449:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1459:# 결함 ㉞ — 숫자 인자를 두 번 주면 앞 값이 검사 없이 사라진다 (㉒ 의 "안 한 것")
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1463:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1472:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1476:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1479:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1482:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1493:# 결함 ㉟ — heartbeat 수신에 닿지 못하는 구성을 받아 두고, 저장소 경로를 말없이 버린다 (㉒ 에 기록만 한 잔여)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1499:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1506:## 2. 재현 (코드 경로)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1513:## 3. 실측
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1516:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1519:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1532:# 결함 ㊱ — out_file 경쟁 테스트가 Windows 에서 간헐적으로 "액세스 거부" 로 실패한다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1538:## 1. 위치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1540:crates/cli/src/out_file.rs  create_exclusive_temp — `<대상>.tmp.<pid>.<n>` 을 create_new 로 만든다.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1541:                            AlreadyExists 만 다음 번호로 넘기고, 그 밖의 오류는 곧바로 실패로 반환한다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1546:## 2. 재현
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1551:## 3. 실측 · 가설
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1554:AlreadyExists 가 아니라 PermissionDenied 를 돌려주고, 위 반복문은 그것을 다음 번호로 넘기지 않는다.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1561:  AlreadyExists 는 2단계가 만든 파일을 안 지운 **실험 설계 결함**이라 아무것도 말하지 않는다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1572:  "외부 프로세스 없이 재현된다" 고 적어 외부 개입을 배제한 것처럼 썼다). 한 스레드가 AlreadyExists 로
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1577:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1580:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1595:# 결함 ㊲ — ㉞ ㉟ 가 경로 둘을 빠뜨렸고, 테스트가 절반만 쟀다 (구현 검수 41)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1599:## 1. 위치 · 2. 재현 (구현 검수 41)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1613:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1616:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1629:# 결함 ㊳ — ㊱ 실험 2 에서 외부 프로세스의 개입을 배제했다고 적었다 (재검수 42)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1634:## 1. 위치 · 2. 재현 (재검수 42)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1641:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1644:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1651:# 결함 ㊴ — ㊱ 수정의 주석 · 비재사용 보장 · 보호 테스트가 저마다 한 칸씩 넓었다 (재검수 43)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1655:## 1. 위치 · 2. 재현 (재검수 43)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1666:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1669:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1673:- [x] 후보 생성을 떼어 냈다(`create_exclusive_temp_with_seq`) — 테스트가 번호 7777 의 `.0` 에 파일을 깔고,
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1681:# 결함 ㊵ — out_file 모듈 문서의 "잔여 64개면 실패" 에서 seq 조건이 빠졌다 (재검수 44)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1685:## 1. 위치 · 2. 재현 (재검수 44)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1692:## 4. 위험도
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1695:## 6. 조치
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1701:# ★ 이 리포트들이 늦은 것 자체에 대해
+docs/history/HISTORY.md:1:# 작업 이력
+docs/history/HISTORY.md:16:## YYYY-MM-DD HH:mm — <작업 제목>
+docs/history/HISTORY.md:28:## 2026-09-10 21:33 — 재검수 44 대응(결함 ㊵) · ID 26자 규범 미강제 조사(결함 리포트 새 파일)
+docs/history/HISTORY.md:34:  0~63 으로 좁혔다(결함 ㊵).
+docs/history/HISTORY.md:40:- 리포트: 결함 ㊵ · ID 26자 결함 리포트
+docs/history/HISTORY.md:44:## 2026-09-10 21:26 — 재검수 43 대응(결함 ㊴). 번호 소진 · 정한 번호로 재는 보호 테스트 · 주석
+docs/history/HISTORY.md:52:  보호 테스트 전역 번호를 읽기만 해 다른 테스트가 번호를 가져가면 **빈 통과** -> create_exclusive_temp_with_seq
+docs/history/HISTORY.md:64:## 2026-09-10 21:16 — 재검수 42 대응(결함 ㊳) · out_file 임시 이름에 프로세스 전역 번호(결함 ㊱ 수정)
+docs/history/HISTORY.md:84:## 2026-09-10 21:08 — 구현 검수 41 대응. ㉞ ㉟ 가 빠뜨린 경로 둘 · 절반만 잰 테스트 (결함 ㊲)
+docs/history/HISTORY.md:110:## 2026-09-10 20:50 — 기록만 해 둔 잔여 결함 셋을 고쳤다(㉝ ㉞ ㉟) · out_file 간헐 실패 기록(㊱)
+docs/history/HISTORY.md:134:## 2026-09-10 20:25 — 재검수 40 ACCEPTED. §A1 1.5 선행 조각(저장된 Grant 에 Manifest 싣기)의 검수가 끝났다
+docs/history/HISTORY.md:148:## 2026-09-10 20:23 — 재검수 39 대응. 결함 ⑳ 절의 두 문장
+docs/history/HISTORY.md:164:## 2026-09-10 20:20 — 재검수 38 대응. 남은 일의 규모를 확정한 문단 · ⑳ 10회 반복
+docs/history/HISTORY.md:184:## 2026-09-10 20:15 — 구현 검수 37 대응. 바로 아래 항목의 설명 두 곳을 정정한다
+docs/history/HISTORY.md:207:## 2026-09-10 20:08 — 저장된 예약 Grant 에 Manifest 싣기(§A1 1.5 선행) — 두 프로세스 정상 경로 첫 증명
+docs/history/HISTORY.md:230:## 2026-09-10 18:50 — 재검수 35 ACCEPTED. DoD-68 을 evidence 로(PASS), 대기열이 비었다
+docs/history/HISTORY.md:246:## 2026-09-10 18:45 — 재검수 34 대응. 절대어만 지우고 남긴 필연
+docs/history/HISTORY.md:258:## 2026-09-10 18:42 — 재검수 33 대응. 운영자의 믿음을 단정한 문장
+docs/history/HISTORY.md:272:## 2026-09-10 18:38 — 재검수 32 대응. 넓힌 읽기 범위의 기존 주석 셋
+docs/history/HISTORY.md:287:## 2026-09-10 18:32 — 재검수 31 대응. 전수 수정이 만든 "테스트로 고정할 수 없다"
+docs/history/HISTORY.md:301:## 2026-09-10 18:26 — 재검수 29 ACCEPTED(P0-02 를 evidence 로) · 30 대응(오류 코드 범위 · 시계 필연)
+docs/history/HISTORY.md:321:## 2026-09-10 18:03 — 재검수 27·28 대응. P0-02 의 "원문에 없다" 와 scheduler_tick 오류 분류 주석
+docs/history/HISTORY.md:345:## 2026-09-11 00:30 — 재검수 25·26 대응. P0-02 front-matter 와 scheduler_tick 주석
+docs/history/HISTORY.md:361:## 2026-09-10 23:50 — 재검수 23·24 대응. 짚인 곳 말고 확정 표현을 전수로 봄
+docs/history/HISTORY.md:377:## 2026-09-10 23:10 — 재검수 22 대응. 같은 부류의 문장이 또 둘, 검수를 둘로 나눔
+docs/history/HISTORY.md:392:## 2026-09-10 22:40 — 재검수 20 ACCEPTED. 21 대응(DoD-68 문장 둘 · plan_id 주석)
+docs/history/HISTORY.md:407:## 2026-09-10 22:00 — 재검수 17 ACCEPTED. 18·19 대응(중복 키 · 경계 테스트 · 초안 문장)
+docs/history/HISTORY.md:427:## 2026-09-10 21:00 — 재검수 15·16 대응. lane 조건을 사용처로 다시 그림(㉑), Agent 파서
+docs/history/HISTORY.md:449:## 2026-09-10 19:30 — 재검수 13·14 대응. 받아 두고 버리는 플래그, evidence 초안 둘
+docs/history/HISTORY.md:474:## 2026-09-10 17:00 — 재검수 9~12 대응. 결함 ⑫~⑯, 그리고 §A1 1.5 의 선행 조각
+docs/history/HISTORY.md:499:## 2026-09-10 09:30 — 문서 셋을 빠뜨린 것을 사용자 지시로 발견해 채웠다
+docs/history/HISTORY.md:517:## 2026-09-10 08:00 — 밀린 검수 1~5번 소화. 결함 다섯 건 발견·수정
+docs/history/HISTORY.md:539:## 2026-09-09 01:30 — 정지 보장 4층 설계. GPU·시한 실측 넷
+docs/history/HISTORY.md:567:## 2026-09-07 18:10 — 검수 1번 CHANGES_REQUESTED. 지적 셋 다 사실이었다
+docs/history/HISTORY.md:612:## 2026-09-07 18:35 — 검수 2번. 내가 넣은 **대조군 자체가 부실했다**
+docs/history/HISTORY.md:649:## 2026-09-07 19:00 — 검수 3번. **내가 넣은 자기 검증이 서명을 안 보고 있었다**
+docs/history/HISTORY.md:687:## 2026-09-08 00:20 — 검수 4번. **내 주석 두 개가 사실보다 강했다**
+docs/history/HISTORY.md:743:## 2026-09-08 02:30 — 사용자 질문이 목록의 공백을 찾았다. MPS 실측은 **안 했다**
+docs/history/HISTORY.md:799:## 2026-09-08 01:30 — 검수 8건 완주. **8건 전부 `CHANGES_REQUESTED`**
+docs/history/HISTORY.md:842:## 2026-09-07 12:44 — V-12(elastic 추론 admission) 실행계획서 작성 — 코드 0줄
+docs/history/HISTORY.md:863:## 2026-09-07 04:10 — 소크 800회로 0.4% 흔들림을 특정하고, **고치지 않았다**
+docs/history/HISTORY.md:890:## 2026-09-07 04:20 — ★ 정정: 다른 세션의 기록이 내 커밋에 섞였다
+docs/history/HISTORY.md:914:## 2026-09-07 03:30 — 7번은 이미 돼 있었고, 대신 상태 enum 중복을 막았다
+docs/history/HISTORY.md:956:## 2026-09-07 02:50 — GPU 확인을 실행 경로에 붙였다. 다만 아직 안 돈다
+docs/history/HISTORY.md:1006:## 2026-09-07 00:30 — NVML 실측을 환경 셋으로 넓혔다. MIG 는 못 잰다
+docs/history/HISTORY.md:1046:## 2026-09-06 12:00 — 경로 탈출 차단을 사양대로 다듬고, NVML 을 실물 GPU 로 쟀다
+docs/history/HISTORY.md:1089:## 2026-09-06 11:00 — 서명 검증 관문 65개를 망가뜨렸더니 10개가 안 잡혔다
+docs/history/HISTORY.md:1139:## 2026-09-06 10:00 — 실행 사슬의 빈 칸을 메웠다. 다만 끝까지 이어지는 건 아직 못 봤다
+docs/history/HISTORY.md:1178:## 2026-09-06 09:00 — 체크포인트 확정 절차, 그리고 지나가다 찾은 경로 탈출
+docs/history/HISTORY.md:1218:## 2026-09-06 08:00 — 병렬 다섯 갈래 착수, 문서 감사에서 낡은 서술 22건
+docs/history/HISTORY.md:1255:## 2026-09-06 07:00 — 빈 폴더 하나와 규칙 아닌 45줄을 정리했다
+docs/history/HISTORY.md:1279:## 2026-09-06 06:00 — 구현 남은 목록을 코드로 만들고, 낡은 수치 넷을 고쳤다
+docs/history/HISTORY.md:1324:## 2026-09-06 05:00 — 검수 프롬프트 여덟 개를 다 쓰고, 문서의 죽은 인용을 잡게 했다
+docs/history/HISTORY.md:1352:## 2026-09-06 04:00 — "아직 없다" 는 주장을 기계가 검사하게 만들었다
+docs/history/HISTORY.md:1386:## 2026-09-06 03:00 — 검수 프롬프트를 저장소에 남기고, 결정 대기 6건을 한 장으로 만들었다
+docs/history/HISTORY.md:1411:## 2026-09-06 02:10 — 밀린 검수를 "내일 판단할 것" 에서 "그냥 실행" 으로 바꿨다
+docs/history/HISTORY.md:1435:## 2026-09-06 01:30 — 할 일 목록을 감사했더니 "진짜 뿌리" 가 틀려 있었다
+docs/history/HISTORY.md:1467:## 2026-09-06 00:20 — `P0-02` 원인을 한 DLL 로 지목하고, evidence 를 못 쓴 이유까지 적었다
+docs/history/HISTORY.md:1493:## 2026-09-05 00:30 — Linux 실측: 세 환경이 맞아떨어졌다
+docs/history/HISTORY.md:1507:## 2026-09-04 23:20 — x600 실측: 두 번째 Windows 기계와 실물 GPU
+docs/history/HISTORY.md:1522:## 2026-09-04 20:00 — 자기 검수: 뮤테이션 22건 중 21건
+docs/history/HISTORY.md:1537:## 2026-09-03 22:00 — 실행 사슬: 투입부터 전송까지 (검수 대기)
+docs/history/HISTORY.md:1556:## (기록 공백) 2026-08-25 ~ 2026-09-01
+docs/history/HISTORY.md:1562:## 2026-08-24 21:10 — 체크포인트 읽기 경로에 심볼릭 링크 방어 연결
+docs/history/HISTORY.md:1586:## 2026-08-24 20:15 — schema 지문 가드의 문서화된 한계 강제
+docs/history/HISTORY.md:1609:## 2026-08-24 19:40 — FencedOperation 판정 순수 kernel (`77c4460`)
+docs/history/HISTORY.md:1628:## 2026-08-24 19:10 — watch cursor 연속성 순수 kernel (`20584c7`)
+docs/history/HISTORY.md:1643:## 2026-08-24 18:40 — membership 규범 조사·초안 v0/v1 보존 (`c129d58`)
+docs/history/HISTORY.md:1657:## 2026-08-24 18:30 — Elastic 추론 노드 admission 확장 vision 등록 반영 (`72f3a5f`)
+docs/history/HISTORY.md:1666:## 2026-08-24 18:20 — durable_replay_process 락 대기 증거 보강 (`04691f2`)
+docs/history/HISTORY.md:1684:## 2026-08-24 18:00 — GPU ScopeCandidate 순수 kernel — evidence 기록 (`DoD-55`)
+docs/history/HISTORY.md:1706:## 2026-08-24 16:55 — resolved-input effective replica count 순수 kernel — evidence 기록 (`DoD-54`)
+docs/history/HISTORY.md:1729:## 2026-08-24 16:10 — verified ReplicaAck durable checkpoint/root binding — evidence 기록 (`DoD-53`)
+docs/history/HISTORY.md:1752:## 2026-08-24 15:37 — verified CheckpointManifest durable binding — evidence 기록 (`DoD-52`)
+docs/history/HISTORY.md:1774:## 2026-08-24 15:28 — Elastic 추론 노드 admission 확장 vision 등록 (V-12)
+docs/history/HISTORY.md:1798:## 2026-08-24 12:57 — verified terminal AttemptReport durable binding — evidence 기록 (`DoD-51`)
+docs/history/HISTORY.md:1819:## 2026-08-24 12:19 — verified signed JobManifest durable binding — evidence 기록 (`DoD-50`)
+docs/history/HISTORY.md:1842:## 2026-08-24 11:30 — selected GPU durable reservation binding — evidence 기록 (`DoD-49`)
+docs/history/HISTORY.md:1865:## 2026-08-24 10:54 — deterministic selected GPU assignment 순수 kernel — evidence 기록 (`DoD-48`, `DoD-46` 계약 불일치 3번 선행 작업)
+docs/history/HISTORY.md:1889:## 2026-08-21 16:04 — scheduler inventory revision 기반 CAS reservation — evidence 기록 (`DoD-47`, scheduler 로드맵 조각 5b)
+docs/history/HISTORY.md:1908:## 2026-08-21 15:24 — scheduler 로컬 placement-to-staging orchestration kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-46`, scheduler 로드맵 조각 5)
+docs/history/HISTORY.md:1934:## 2026-08-21 13:26 — scheduler 순수 deterministic resource best-fit kernel — 구현 + 독립 검수 3라운드 + evidence 기록 (`DoD-45`, scheduler 로드맵 조각 4)
+docs/history/HISTORY.md:1963:## 2026-08-21 12:45 — scheduler durable Agent inventory 저장소 kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-44`, scheduler 로드맵 조각 3a)
+docs/history/HISTORY.md:1988:## 2026-08-21 11:58 — scheduler single-node local atomic STAGING kernel — 구현 + 독립 검수 + evidence 기록 (`DoD-43`, scheduler 로드맵 조각 2b-1)
+docs/history/HISTORY.md:2019:## 2026-08-21 11:02 — scheduler durable Job/Queue truth — 구현 + 독립 검수 + evidence 기록 (`DoD-42`, scheduler 로드맵 조각 2a)
+docs/history/HISTORY.md:2050:## 2026-08-21 10:27 — scheduler 순수 hard-filter kernel — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-41`, scheduler 로드맵 조각 1)
+docs/history/HISTORY.md:2079:## 2026-08-20 18:00 — Lease store 동시 최초 발급 안전성 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-40`, 로드맵 조각 7 재정의·자동 재접속 루프 로드맵 마무리)
+docs/history/HISTORY.md:2120:## 2026-08-20 16:40 — Ambiguous Renew 복구 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-39`)
+docs/history/HISTORY.md:2157:## 2026-08-20 14:10 — Agent Resume 통합 — 구현 1라운드 + 독립 검수 1라운드 + evidence 기록 (`DoD-38`)
+docs/history/HISTORY.md:2192:## 2026-08-20 13:10 — Coordinator dispatcher 정교화 — 구현 2라운드 + 독립 검수 2라운드 + evidence 기록 (`DoD-37`)
+docs/history/HISTORY.md:2227:## 2026-08-20 12:00 — Resume 프로토콜 — 구현 2라운드 + 독립 검수 3라운드 + evidence 기록 (`DoD-36`)
+docs/history/HISTORY.md:2271:## 2026-08-20 10:01 — 자동 재접속 최소 경로 — 구현 3라운드 + 독립 검수 3라운드 + evidence 기록 (`DoD-35`)
+docs/history/HISTORY.md:2312:## 2026-08-20 07:26 — Agent 쪽 갱신 직전 만료 재확인 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-34`)
+docs/history/HISTORY.md:2345:## 2026-08-20 07:09 — marker-only checkpoint GC 회귀 테스트 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-33`)
+docs/history/HISTORY.md:2378:## 2026-08-20 06:47 — 만료된 Lease 갱신 경로 fail-closed — 설계 조사 + 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-32`)
+docs/history/HISTORY.md:2412:## 2026-08-20 06:11 — terminal outcome 다회차 교착 회귀 테스트 보강 — 구현 + 독립 검수 2라운드 + evidence 기록 (`DoD-31`)
+docs/history/HISTORY.md:2449:## 2026-08-20 05:30 — Job 시작 WRITING 마커 — 구현 + 독립 검수 1라운드 + 감독자 재검증 + evidence 기록 (`DoD-30`)
+docs/history/HISTORY.md:2486:## 2026-08-20 04:37 — 레거시 lease 경로 명시적 opt-in — 구현 2라운드 + 독립 검수 3라운드 + 감독자 재검증 + evidence 기록 (`DoD-29`)
+docs/history/HISTORY.md:2524:## 2026-08-20 04:24 — check_schema.py CI 연결 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-28`)
+docs/history/HISTORY.md:2554:## 2026-08-20 04:15 — 백로그 정리 + 자동 재접속 루프·Job 시작 마커 설계 + REVOKED signed outcome (`DoD-27`)
+docs/history/HISTORY.md:2588:## 2026-08-20 02:00 — 만료된 Lease 재접속 거부 — 구현 + 독립 검수 2라운드 + evidence 기록 (`DoD-26`)
+docs/history/HISTORY.md:2616:## 2026-08-19 19:15 — Coordinator Lease revoke 영속화 — 구현 + 독립 검수 1라운드 + evidence 기록 (`DoD-25`)
+docs/history/HISTORY.md:2647:## 2026-08-19 18:30 — Lease 재접속 최소 조각 — 독립 검수 1라운드 + evidence 기록 (`DoD-24`)
+docs/history/HISTORY.md:2671:## 2026-08-19 18:14 — Active Lease process-restart rehydration 최소 조각
+docs/history/HISTORY.md:2685:## 2026-08-19 18:00 — Coordinator SUPERSEDED 정책 — 독립 검수 2라운드 + evidence 기록 (`DoD-23`)
+docs/history/HISTORY.md:2718:## 2026-08-19 17:25 — 영속 Lease lower epoch SUPERSEDED 정책
+docs/history/HISTORY.md:2733:## 2026-08-19 16:10 — Lease revoke 최소 조각 — 독립 검수 3라운드 + evidence 기록 (`DoD-22`)
+docs/history/HISTORY.md:2761:## 2026-08-19 15:32 — Lease revoke 최소 조각
+docs/history/HISTORY.md:2775:## 2026-08-19 13:00 — `write_once()` 동시 호출 계약 — 락 강제 + GC 조정 (`DoD-21`)
+docs/history/HISTORY.md:2805:## 2026-08-19 11:05 — `remote5090` 원격 Linux+GPU 기계 실측 — D-3 부분 해소 (`ENV-03`)
+docs/history/HISTORY.md:2832:## 2026-08-19 01:10 — 자율 세션 종료 리포트 제출 (`DoD-13`~`DoD-20`, 8건 소급)
+docs/history/HISTORY.md:2843:## 2026-08-19 01:02 — `check_schema.py` — 실행 환경 오류를 `exit(2)` 로 통일 (`DoD-20`)
+docs/history/HISTORY.md:2856:## 2026-08-19 00:53 — `tools/canonical/check_schema.py` 신규 구현 (`DoD-20`)
+docs/history/HISTORY.md:2871:## 2026-08-19 00:33 — 오래된 테스트 공백 3건 보강 (`DoD-19`)
+docs/history/HISTORY.md:2886:## 2026-08-19 00:13 — `max_total_duration_seconds` 갱신 차단 정책 (`DoD-18`)
+docs/history/HISTORY.md:2900:## 2026-08-18 23:20 — `RevokeLeaseNotice` framed ingress 커버리지 (`DoD-17`)
+docs/history/HISTORY.md:2911:## 2026-08-18 22:39 — Coordinator 영속 Lease 저장소 (`DoD-16`)
+docs/history/HISTORY.md:2923:## 2026-08-18 22:20 — 같은 연결에서 반복 Lease 갱신 (`DoD-15`)
+docs/history/HISTORY.md:2936:## 2026-08-18 17:36 — Agent 쪽 durable FenceWatermark (`DoD-14`)
+docs/history/HISTORY.md:2953:## 2026-08-19 05:00 — Lease 갱신 최소 조각 계획 수립 — `RenewLeaseResult` 미서명 공백 발견
+docs/history/HISTORY.md:3036:## 2026-08-19 03:40 — `AgentGrantAck` Python 참조 구현 교차검증 공백 해소, 부수 flaky 테스트 안정화
+docs/history/HISTORY.md:3076:## 2026-08-19 03:05 — P0-08 schema v1 → v2 승격 완료 — ★ review-강제 대상 v1 evidence 부채 0건 달성
+docs/history/HISTORY.md:3125:## 2026-08-19 02:35 — P0-07 schema v1 → v2 승격 완료 (기존 재실측 근거 재사용, 1라운드 ACCEPTED)
+docs/history/HISTORY.md:3163:## 2026-08-19 02:05 — P0-03a schema v1 → v2 승격 완료 (축소 규모 재확인)
+docs/history/HISTORY.md:3201:## 2026-08-19 01:35 — P0-03 schema v1 → v2 승격 완료 — kill_chaos 카오스 메커니즘이 시간 기반→이벤트 기반으로 바뀐 것을 정밀화
+docs/history/HISTORY.md:3245:## 2026-08-19 00:55 — P0-01 schema v1 → v2 승격 완료 — 하드웨어 재실측 없이, 디스크 100% 소진 사고 정리
+docs/history/HISTORY.md:3288:## 2026-08-19 00:10 — DoD-08 schema v1 → v2 승격 완료 (여덟 번째, DoD 전체 완료) — write_once 경쟁 분기의 진짜 잔여 결함 발견·수정
+docs/history/HISTORY.md:3333:## 2026-08-18 23:20 — DoD-07 schema v1 → v2 승격 완료 (일곱 번째) — coordinator/agent 신설로 stale 해진 limitation 5건 정정
+docs/history/HISTORY.md:3373:## 2026-08-18 22:40 — DoD-05 schema v1 → v2 승격 완료 (DoD-01·02·03·04·06 에 이은 여섯 번째) — 남은 참조 구현 공백 1건 발견
+docs/history/HISTORY.md:3424:## 2026-08-18 21:55 — DoD-06 schema v1 → v2 승격 완료 — DoD-03·04·06 3라운드 재검수 사이클 종료, 진짜 코드 결함 또 발견
+docs/history/HISTORY.md:3463:## 2026-08-18 21:10 — DoD-04 schema v1 → v2 승격 완료 (DoD-01·02·03 에 이은 네 번째)
+docs/history/HISTORY.md:3505:## 2026-08-18 20:15 — DoD-03 schema v1 → v2 승격 완료 (DoD-01·DoD-02 에 이은 세 번째)
+docs/history/HISTORY.md:3548:## 2026-08-18 19:20 — Lease 최소 조각 코덱스 검수 `ACCEPTED`
+docs/history/HISTORY.md:3570:## 2026-08-18 19:00 — coordinator/agent 에 Lease 최소 조각 추가 (테스트+개발 병행)
+docs/history/HISTORY.md:3623:## 2026-08-18 18:20 — DoD-02 schema v1 → v2 승격 + 진짜 코드 결함 발견·수정
+docs/history/HISTORY.md:3670:## 2026-08-18 17:20 — DoD-01 schema v1 → v2 첫 승격 (사용자 승인 후 재개)
+docs/history/HISTORY.md:3726:## 2026-08-18 16:25 — `artifact_beneath` 재검수: 표현 정밀화 후 코덱스 `ACCEPTED` 흐름 마무리
+docs/history/HISTORY.md:3755:## 2026-08-18 16:10 — `artifact_beneath` 코덱스 검수: 미연결 primitive 명시 + 침묵 스킵 제거
+docs/history/HISTORY.md:3800:## 2026-08-18 15:45 — `artifact_scope` TOCTOU 방어 실제 구현 — Windows reparse point 차단
+docs/history/HISTORY.md:3850:## 2026-08-18 15:05 — `runtime-windows` 수정 재검수 `ACCEPTED`
+docs/history/HISTORY.md:3875:## 2026-08-18 14:50 — `runtime-windows` 코덱스 검수: 명령줄 인용 버그 2건 + `TerminateProcess` 미확인 수정
+docs/history/HISTORY.md:3922:## 2026-08-18 14:15 — `crates/runtime-windows` 신설 — VRAM 판정을 실제 Job Object 로 연결
+docs/history/HISTORY.md:3981:## 2026-08-18 13:05 — x600 WSL2 시도 — 시스템 설정 변경이라 자율 실행 보류
+docs/history/HISTORY.md:4003:## 2026-08-18 13:00 — coordinator/agent 핸드셰이크 단계 5 코덱스 검수 `ACCEPTED` — 계획 완전 종료
+docs/history/HISTORY.md:4030:## 2026-08-18 12:40 — coordinator/agent 핸드셰이크 단계 5: 거부 경로 3종 완료 — 계획 전 단계 종료
+docs/history/HISTORY.md:4078:## 2026-08-18 11:55 — coordinator-agent-selftest 코덱스 검수: stderr 파이프 교착 위험 수정
+docs/history/HISTORY.md:4108:## 2026-08-18 11:20 — coordinator/agent 핸드셰이크 단계 3·4: 별도 프로세스 실제 handshake 성공
+docs/history/HISTORY.md:4149:## 2026-08-18 10:05 — coordinator/agent 핸드셰이크 단계 1·2: `AgentGrantAck` 서명 대상 메시지 + framed_ingress 배선
+docs/history/HISTORY.md:4197:## 2026-08-18 09:10 — `DurableReplayGuard` 별도 프로세스 replay 경쟁 실측 추가
+docs/history/HISTORY.md:4235:## 2026-08-18 08:30 — ENV-02 도 ACCEPTED — 이 저장소의 v1 evidence 16건 전부 addendum 재검수 완료
+docs/history/HISTORY.md:4264:## 2026-08-18 08:20 — ENV-01 ACCEPTED, ENV-02 인용 오류 1건 더 정정
+docs/history/HISTORY.md:4281:## 2026-08-18 08:10 — ENV-01·ENV-02 재검수: "Rust 없음" 이 둘 다 stale — PATH 미등록과 미설치 혼동
+docs/history/HISTORY.md:4306:## 2026-08-18 08:00 — coordinator/agent 최소 핸드셰이크 계획서 작성
+docs/history/HISTORY.md:4335:## 2026-08-18 07:55 — P0-07 재실측 addendum ACCEPTED (4라운드) — 이번 세션의 evidence 작업 마무리
+docs/history/HISTORY.md:4359:## 2026-08-18 07:45 — P0-07 재실측 addendum 3라운드: 절 제목이 본문과 모순됐다
+docs/history/HISTORY.md:4376:## 2026-08-18 07:35 — P0-07 재실측 addendum 2라운드: 통계량 자체도 잘못 계산했었다
+docs/history/HISTORY.md:4399:## 2026-08-18 07:20 — P0-07 재실측 addendum 정정: "재확인" 과 "불일치 해소" 를 혼동했었다
+docs/history/HISTORY.md:4424:## 2026-08-18 06:48 — P0-07 실제 재실측: x600 GPU 로 σ 재확인, status 를 PASS 로 복원
+docs/history/HISTORY.md:4455:## 2026-08-18 02:30 — P0-06·P0-07 도 ACCEPTED — RULE.md §7.3 review-required v1 evidence 전체(14건) 재검수 완료
+docs/history/HISTORY.md:4494:## 2026-08-18 02:15 — P0-07 의 status 를 PASS → INCONCLUSIVE 로 정정
+docs/history/HISTORY.md:4527:## 2026-08-18 02:00 — P0-06·P0-07 1라운드 정정 — P0-07 에서 raw_output/artifact 수치 불일치 발견
+docs/history/HISTORY.md:4558:## 2026-08-18 01:50 — P0-03a 도 3라운드 만에 ACCEPTED — v1 evidence 12건 addendum ACCEPTED 누적
+docs/history/HISTORY.md:4575:## 2026-08-18 01:40 — P0-01 ACCEPTED, P0-03a 는 근거 과장 1건 더 정정
+docs/history/HISTORY.md:4591:## 2026-08-18 01:30 — P0-01·P0-03a 1라운드 정정 (P0-01 은 GPU 하드웨어라 재실측 불가)
+docs/history/HISTORY.md:4618:## 2026-08-18 01:20 — DoD-01·P0-08 둘 다 3라운드 만에 ACCEPTED — v1 evidence 10건 addendum ACCEPTED 누적
+docs/history/HISTORY.md:4640:## 2026-08-18 01:10 — DoD-01·P0-08 2라운드: 인용 정밀도 오류 정정
+docs/history/HISTORY.md:4662:## 2026-08-18 01:00 — DoD-01·P0-08 1라운드 정정
+docs/history/HISTORY.md:4688:## 2026-08-18 00:50 — DoD-07 도 2라운드 만에 ACCEPTED — v1 evidence 8건 addendum ACCEPTED 누적
+docs/history/HISTORY.md:4705:## 2026-08-18 00:40 — DoD-08 1라운드 만에 ACCEPTED, DoD-07 1라운드 정정
+docs/history/HISTORY.md:4722:## 2026-08-18 00:30 — DoD-02 도 4라운드 만에 ACCEPTED — v1 evidence 6건 재검수 사이클 종료
+docs/history/HISTORY.md:4751:## 2026-08-18 00:20 — DoD-05 ACCEPTED, DoD-02 는 HISTORY.md 줄 번호 불안정성 문제로 4라운드째
+docs/history/HISTORY.md:4770:## 2026-08-18 00:10 — DoD-02·DoD-05 2라운드 재검수 — 자체 만든 과장 하나를 발견
+docs/history/HISTORY.md:4792:## 2026-08-17 23:55 — 다음 v1 evidence 2건(DoD-02·DoD-05) 재검수 착수
+docs/history/HISTORY.md:4825:## 2026-08-17 23:45 — DoD-03 도 4라운드 만에 ACCEPTED — evidence 4건 재검수 사이클 종료
+docs/history/HISTORY.md:4846:## 2026-08-17 23:35 — v1 evidence 3라운드 재검수 완료 — DoD-04·DoD-06 ACCEPTED, DoD-03 만 잔류
+docs/history/HISTORY.md:4870:## 2026-08-17 23:20 — v1 evidence 4건 재검수 완료 라운드 — P0-03 addendum 최초 ACCEPTED
+docs/history/HISTORY.md:4905:## 2026-08-17 23:10 — v1 evidence 4건 독립 재검수(코덱스), HASH_VERIFIED~COMMITTED 결정적 kill 테스트 신설
+docs/history/HISTORY.md:4958:## 2026-08-17 22:20 — gputeer selftest 에 127.0.0.1 루프백 TCP 왕복 추가, 종료 코드 결함 자체 발견·수정 (293 tests green, selftest 25개 검사)
+docs/history/HISTORY.md:5000:## 2026-08-17 21:30 — runtime-policy 독립 검수 반영 (293 tests green)
+docs/history/HISTORY.md:5036:## 2026-08-17 20:10 — framed_ingress 독립 검수 반영 (283 tests green)
+docs/history/HISTORY.md:5074:## 2026-08-17 18:40 — 프레이밍·디스패치 · 정책 강제 계층 (278 tests green)
+docs/history/HISTORY.md:5100:## 2026-08-17 16:20 — 검증 진입점 · 체크포인트 실패 경로 (248 tests green)
+docs/history/HISTORY.md:5128:## 2026-08-17 14:10 — 영속 replay 저장소 · 키 관리 · 두 구현의 계약 일치 (DoD-10, 229 tests green)
+docs/history/HISTORY.md:5158:## 2026-08-17 12:40 — ★ 독립 검수 강제(schema v2) · replay 방어 4건 · 재개 선택 필터 (203 tests green)
+docs/history/HISTORY.md:5184:## 2026-08-16 18:20 — ★ 독립 검수(Codex) 지적 7건 시정 (DoD-08 PASS, 167 tests green)
+docs/history/HISTORY.md:5226:## 2026-08-16 16:40 — T2 증거 메시지 시각 정책 (ADR-029 · DoD-07 PASS, 143 tests green)
+docs/history/HISTORY.md:5264:## 2026-08-16 15:40 — ★ 서명 재사용 취약점 발견·시정 (ADR-028 · DoD-06 PASS, 129 tests green)
+docs/history/HISTORY.md:5305:## 2026-08-16 14:30 — T1 서명 대상 확장 + 규칙 j 신설 (DoD-05 PASS, 117 tests green)
+docs/history/HISTORY.md:5329:## 2026-08-16 13:30 — 스트림 소유권 위반 시정 + 실행계획 v2 (105 tests green)
+docs/history/HISTORY.md:5352:## 2026-08-16 12:40 — Ed25519 서명·검증 + Verified<M> (DoD-04 PASS, 100 tests green)
+docs/history/HISTORY.md:5378:## 2026-08-16 11:30 — P0-08 스키마 진화 (PASS, 78 tests green)
+docs/history/HISTORY.md:5402:## 2026-08-16 10:40 — 서명 밖 필드 6건 제거 (DoD-03 PASS, 70 tests green)
+docs/history/HISTORY.md:5422:## 2026-08-16 09:30 — prost 연동 계층 (DoD-02 PASS, 55 tests green)
+docs/history/HISTORY.md:5447:## 2026-08-16 08:10 — P0-03 카오스 테스트 완주 (38 tests green)
+docs/history/HISTORY.md:5463:## 2026-08-16 07:00 — P0 스파이크 3건 (P0-01 PASS · P0-07 PASS · P0-06 FAIL-SCOPE)
+docs/history/HISTORY.md:5481:## 2026-08-16 06:20 — Rust 구현 착수: protocol + checkpoint (31 tests green)
+docs/history/HISTORY.md:5496:## 2026-08-16 05:30 — 원격 GPU 기계(x600) 실측, BLOCKED 7건 중 4건 해제
+docs/history/HISTORY.md:5509:## 2026-08-15 14:10 — P0-03a Windows 파일시스템 원자성 조사
+docs/history/HISTORY.md:5522:## 2026-08-15 13:45 — 환경 실측 (ENV-01)
+docs/history/HISTORY.md:5531:## 2026-08-15 — 저장소 골격 수립
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:15:# 43 의 지적과 이번 수정
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:24:  -> create_exclusive_temp_with_seq(dir, stem, seq, ..) 로 가르고, 테스트가 번호 7777 을 정해 .0 에 파일을
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:31:# 읽을 파일 — 이것만 읽어라
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:34:crates/cli/src/out_file.rs     (모듈 문서 · TEMP_SEQ · create_exclusive_temp · next_temp_seq ·
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:35:                                create_exclusive_temp_with_seq · 테스트 모듈 전체)
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:41:# 물을 것 — 셋
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:48:# 못 찾았으면
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:53:# 답의 형식
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:253:  174:     let (tmp, mut file) = create_exclusive_temp(dir, &stem, code, what)?;
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:287:  208:         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(with_cleanup(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:321:  242: fn create_exclusive_temp(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:328:  249:     //   �̸��� �ΰ� �����ߴ�. �� ���� ����(Windows)���� create_new �� AlreadyExists �� �ƴ϶�
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:335:  256:     create_exclusive_temp_with_seq(dir, stem, seq, code, what)
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:347:  268: fn create_exclusive_temp_with_seq(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:363:  284:             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:562:  483:         let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("ù �ӽ�");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:565:  486:         let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("��° �ӽ�");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:582:  503:             create_exclusive_temp_with_seq(dir.path(), "y.pb", seq, "T", "X").expect("�ӽ� ����");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:657:   36:   ��ȣ �׽�Ʈ ���� ��ȣ�� �б⸸ �� �ٸ� �׽�Ʈ�� ��ȣ�� �������� **�� ���** -> create_exclusive_temp_with_seq
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:729:   41: crates/cli/src/out_file.rs     (��� ���� �� TEMP_SEQ �� create_exclusive_temp �� �׽�Ʈ ��� ��ü)
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:948:  260:   173:     let (tmp, mut file) = create_exclusive_temp(dir, &stem, code, what)?;
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:982:  294:   207:         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(with_cleanup(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:1016:  328:   241: fn create_exclusive_temp(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:1024:  336:   249:     //   ??? ????? ????? ????? ?????. Windows ???? ?? ???? create_new ?? AlreadyExists ??
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:1037:  349:   262:             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:1236:  548:   461:         let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("u ???");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:1239:  551:   464:         let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("??�� ???");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6195: 5507:  4902: 1537:crates/cli/src/out_file.rs  create_exclusive_temp ? `<???>.tmp.<pid>.<n>` ?? create_new ?? ?????.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6196: 5508:  4903: 1538:                            AlreadyExists ?? ???? ????? ????, ?? ???? ?????? ???? ?????? ??????
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6209: 5521:  4916: 1551:AlreadyExists ?? ???? PermissionDenied ?? ???????, ?? ??????? ????? ???? ????? ????? ?????.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6216: 5528:  4923: 1558:  AlreadyExists ?? 2??? ???? ?????? ?? ???? **???? ???? ????**??? ?????? ?????? ?????
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6933: 6245:  5640: 1540:crates/cli/src/out_file.rs  create_exclusive_temp ? `<???>.tmp.<pid>.<n>` ?? create_new ?? ?????.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6934: 6246:  5641: 1541:                            AlreadyExists ?? ???? ????? ????, ?? ???? ?????? ???? ???��? ??????
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6947: 6259:  5654: 1554:AlreadyExists ?? ???? PermissionDenied ?? ???????, ?? ??????? ????? ???? ????? ????? ??��?.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6954: 6266:  5661: 1561:  AlreadyExists ?? 2??? ???? ?????? ?? ???? **???? ???? ????**??? ?????? ?????? ??��?
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:6963: 6275:  5670: 1570:  ?? ??? ???��??? ???? **???? ???��????? ??????????????** ???????. ?? ?????? AlreadyExists ??
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9276: 8588: 173:     let (tmp, mut file) = create_exclusive_temp(dir, &stem, code, what)?;
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9310: 8622: 207:         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(with_cleanup(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9344: 8656: 241: fn create_exclusive_temp(
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9352: 8664: 249:     //   ��� ����� ����� �̸��� ���ƴ�. Windows ���� �� ���� create_new �� AlreadyExists ��
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9365: 8677: 262:             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9564: 8876: 461:         let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("ù �ӽ�");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9567: 8879: 464:         let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("��° �ӽ�");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9612: 8924: 1540: crates/cli/src/out_file.rs  create_exclusive_temp ? `<���>.tmp.<pid>.<n>` �� create_new �� �����.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9613: 8925: 1541:                             AlreadyExists �� ���� ��ȣ�� �ѱ��, �� ���� ������ ��ٷ� ���з� ��ȯ�Ѵ�
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9626: 8938: 1554: AlreadyExists �� �ƴ϶� PermissionDenied �� �����ְ�, �� �ݺ����� �װ��� ���� ��ȣ�� �ѱ��� �ʴ´�.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9633: 8945: 1561:   AlreadyExists �� 2�ܰ谡 ���� ������ �� ���� **���� ���� ����**�̶� �ƹ��͵� ������ �ʴ´�
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:9644: 8956: 1572:   "�ܺ� ���μ��� ���� �����ȴ�" �� ���� �ܺ� ������ ������ ��ó�� ���). �� �����尡 AlreadyExists ��
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10100: 9412: 461:         let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("ù �ӽ�");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10103: 9415: 464:         let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("��° �ӽ�");
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10150: 9462: 1540: crates/cli/src/out_file.rs  create_exclusive_temp ? `<���>.tmp.<pid>.<n>` �� create_new �� �����.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10151: 9463: 1541:                             AlreadyExists �� ���� ��ȣ�� �ѱ��, �� ���� ������ ��ٷ� ���з� ��ȯ�Ѵ�
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10164: 9476: 1554: AlreadyExists �� �ƴ϶� PermissionDenied �� �����ְ�, �� �ݺ����� �װ��� ���� ��ȣ�� �ѱ��� �ʴ´�.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10171: 9483: 1561:   AlreadyExists �� 2�ܰ谡 ���� ������ �� ���� **���� ���� ����**�̶� �ƹ��͵� ������ �ʴ´�
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10182: 9494: 1572:   "�ܺ� ���μ��� ���� �����ȴ�" �� ���� �ܺ� ������ ������ ��ó�� ���). �� �����尡 AlreadyExists ��
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10378:"1532: # \uacb0\ud568 \u32b1 \u2014 out_file \uacbd\uc7c1 \ud14c\uc2a4\ud2b8\uac00 Windows \uc5d0\uc11c \uac04\ud5d0\uc801\uc73c\ub85c \"\uc561\uc138\uc2a4 \uac70\ubd80\" \ub85c \uc2e4\ud328\ud55c\ub2e4\n1533: \n1534: \u2605 \uac80\uc218\uac00 \uc544\ub2c8\ub77c \uacb0\ud568 \u325e \uc758 \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 \uc2e4\ud589\uc774 \ubc1f\uc558\ub2e4. \u325e \ub294 \uc778\uc790 \ud30c\uc11c\ub9cc \ubc14\uafe8\uace0 `out_file.rs` \ub294\n1535:   \uac74\ub4dc\ub9ac\uc9c0 \uc54a\uc558\ub2e4. \u2605 \ud30c\uc77c\uc744 \uc548 \uac74\ub4dc\ub838\ub2e4\ub294 \uac83\ub9cc\uc73c\ub85c \uac04\uc811 \uc601\ud5a5\uc744 \ubc30\uc81c\ud558\uc9c0\ub294 \ubabb\ud55c\ub2e4(\uad6c\ud604 \uac80\uc218 41) \u2014\n1536:   \uc544\ub798 \uc2e4\ud5d8 2 \uac00 \u325e \ucf54\ub4dc\uac00 **\uc5c6\ub294** \ub3c5\ub9bd \ud504\ub85c\uadf8\ub7a8\uc5d0\uc11c\ub3c4 \uac19\uc740 \uc2e4\ud328\ub97c \uc7ac\ud604\ud588\ub2e4\ub294 \uac83\uae4c\uc9c0\ub2e4.\n1537: \n1538: ## 1. \uc704\uce58\n1539: ```text\n1540: crates/cli/src/out_file.rs  create_exclusive_temp \u2014 `<\ub300\uc0c1>.tmp.<pid>.<n>` \uc744 create_new \ub85c \ub9cc\ub4e0\ub2e4.\n1541:                             AlreadyExists \ub9cc \ub2e4\uc74c \ubc88\ud638\ub85c \ub118\uae30\uace0, \uadf8 \ubc16\uc758 \uc624\ub958\ub294 \uace7\ubc14\ub85c \uc2e4\ud328\ub85c \ubc18\ud658\ud55c\ub2e4\n1542: crates/cli/src/out_file.rs  tests::concurrent_writers_without_overwrite_leave_exactly_one_winner\n1543:                             \u2014 \ud55c \ud504\ub85c\uc138\uc2a4\uc758 \uc2a4\ub808\ub4dc 16\uac1c \u00d7 20\ub77c\uc6b4\ub4dc. \uc2a4\ub808\ub4dc\ub07c\ub9ac pid \uac00 \uac19\ub2e4\n1544: ```\n1545: \n1546: ## 2. \uc7ac\ud604\n1547: \uac1c\ubc1c \uae30\uacc4(Windows)\uc5d0\uc11c \uadf8 \ud14c\uc2a4\ud2b8\ub9cc **10\ud68c \ubc18\ubcf5 \u2014 3\ud68c \uc2e4\ud328**. \uc14b \ub2e4\n1548: `T: X \uc784\uc2dc \ud30c\uc77c\uc744 \ub9cc\ub4e4\uc9c0 \ubabb\ud588\ub2e4(...race.pb.tmp.<pid>.<n>): \uc561\uc138\uc2a4\uac00 \uac70\ubd80\ub418\uc5c8\uc2b5\ub2c8\ub2e4. (os error 5)`,\n1549: \uc2e4\ud328 \ub77c\uc6b4\ub4dc\ub294 3 \u00b7 6 \u00b7 15 \ub85c \ub9e4\ubc88 \ub2ec\ub790\ub2e4. \uadf8 \uc9c1\ud6c4 \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 \uc804\uccb4 \uc2e4\ud589\uc5d0\uc11c\ub294 \ud1b5\uacfc\ud588\ub2e4.\n1550: \n1551: ## 3. \uc2e4\uce21 \u00b7 \uac00\uc124\n1552: \uc2e4\ud328 \ube48\ub3c4(10\ud68c \uc911 3\ud68c)\uc640 \uba54\uc2dc\uc9c0\ub294 \uc7b0 \uac83\uc774\ub2e4. **\uc6d0\uc778\uc740 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4.** \uac00\uc124: \ub2e4\ub978 \uc2a4\ub808\ub4dc\uac00 \ubc29\uae08\n1553: \uc9c0\uc6b4 \uac19\uc740 \uc774\ub984\uc774 Windows \uc5d0\uc11c \uc0ad\uc81c \ub300\uae30(delete-pending) \uc0c1\ud0dc\ub85c \ub0a8\uc544 \uc788\uc744 \ub54c create_new \uac00\n1554: AlreadyExists \uac00 \uc544\ub2c8\ub77c PermissionDenied \ub97c \ub3cc\ub824\uc8fc\uace0, \uc704 \ubc18\ubcf5\ubb38\uc740 \uadf8\uac83\uc744 \ub2e4\uc74c \ubc88\ud638\ub85c \ub118\uae30\uc9c0 \uc54a\ub294\ub2e4.\n1555: \u2605 \uc2e4\uc81c CLI \ub294 \ud638\ucd9c\ub9c8\ub2e4 \ubcc4\ub3c4 \ud504\ub85c\uc138\uc2a4\ub77c pid \uac00 \ub2e4\ub974\ub2e4 \u2014 \uc81c\ud488 \uacbd\ub85c\uc5d0\uc11c\ub3c4 \ub098\ub294\uc9c0\ub294 **\ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4**\n1556: \u2605 20:46 \uac00\uc124\uc758 \ud55c \ud615\ud0dc\ub97c \uc7c0\ub2e4 \u2014 \uc2a4\ud06c\ub798\uce58\ud328\ub4dc\uc5d0\uc11c \ub3c5\ub9bd Rust \ud504\ub85c\uadf8\ub7a8(cargo \ubc16)\uc744 3\ud68c \uc2e4\ud589\ud588\ub2e4.\n1557:   \uac19\uc740 \ud504\ub85c\uc138\uc2a4\uac00 \ud578\ub4e4\uc744 \uc5f0 \ucc44 `remove_file` \ud55c \ub4a4 \uac19\uc740 \uc774\ub984\uc744 `create_new` \ub85c \ub2e4\uc2dc \ub9cc\ub4e4\uba74 **\uc131\uacf5\ud588\ub2e4**\n1558:   (3\ud68c \ubaa8\ub450). \uc989 \"\uac19\uc740 \ud504\ub85c\uc138\uc2a4\uc758 \uc5f4\ub9b0 \ud578\ub4e4 \ub54c\ubb38\uc5d0 \uc774\ub984\uc774 \uc0ad\uc81c \ub300\uae30\ub85c \ub0a8\ub294\ub2e4\" \ub294 \ud615\ud0dc\ub294 **\uc774 \uc2dc\ud5d8\uc774\n1559:   \uc7ac\ud604\ud558\uc9c0 \ubabb\ud588\ub2e4.** \uac00\uc124\uc774 \uc8fd\uc740 \uac83\uc740 \uc544\ub2c8\ub2e4 \u2014 \uc7ac\uc9c0 \uc54a\uc740 \uac83: \ub2e4\ub978 \ud504\ub85c\uc138\uc2a4(\uc608: \ubc31\uc2e0)\uac00 \uacf5\uc720 \uc0ad\uc81c \uc5c6\uc774\n1560:   \uc5f0 \ud578\ub4e4 \u00b7 \uc2a4\ub808\ub4dc 16\uac1c\uac00 \ub3d9\uc2dc\uc5d0 \ubd80\ub52a\ud788\ub294 \ud0c0\uc774\ubc0d. \u2605 \uadf8 \uc2e4\ud5d8\uc758 3\ub2e8\uacc4(\ud578\ub4e4\uc744 \ub2eb\uc740 \ub4a4 \ub2e4\uc2dc \ub9cc\ub4e4\uae30)\uac00 \ub0b8\n1561:   AlreadyExists \ub294 2\ub2e8\uacc4\uac00 \ub9cc\ub4e0 \ud30c\uc77c\uc744 \uc548 \uc9c0\uc6b4 **\uc2e4\ud5d8 \uc124\uacc4 \uacb0\ud568**\uc774\ub77c \uc544\ubb34\uac83\ub3c4 \ub9d0\ud558\uc9c0 \uc54a\ub294\ub2e4\n1562: \u2605 20:57 \uc2e4\ud5d8 2 \u2014 `write_new_with(overwrite=false)` \uc808\ucc28(\uc784\uc2dc \uc0dd\uc131 \u00b7 \uc4f0\uae30 \u00b7 \ud558\ub4dc \ub9c1\ud06c \u00b7 \uc784\uc2dc \uc0ad\uc81c)\ub97c\n1563:   cargo \ubc16 \ub3c5\ub9bd Rust \ub85c \uadf8\ub300\ub85c \ub530\ub77c \ud588\ub2e4(\uc6d0\ubb38\uc740 \uc138\uc158 \uc2a4\ud06c\ub798\uce58\ud328\ub4dc `exp36b/\uacb0\uacfc_\uc6d0\ubb38.txt`).\n1564:   ```text\n1565:   1\ubd80  \ud558\ub4dc \ub9c1\ud06c \ub4a4 \ub300\uc0c1\uc5d0 \ud578\ub4e4(\uacf5\uc720 \uc5c6\uc74c \u00b7 \uc77d\uae30 \u00b7 \uc77d\uae30\uc4f0\uae30 \u00b7 \uc77d\uae30\uc4f0\uae30\uc0ad\uc81c)\uc744 \uc954 \ucc44 \uc784\uc2dc \uc774\ub984\uc744 \uc9c0\uc6b0\uace0\n1566:        \ub2e4\uc2dc \ub9cc\ub4e0\ub2e4 -> \ub124 \uacbd\uc6b0 \ubaa8\ub450 \uace7\ubc14\ub85c \uc131\uacf5(3\ud68c \uc2e4\ud589). \uc678\ubd80 \ud578\ub4e4 \ud615\ud0dc\ub294 \uc774 \uc2dc\ud5d8\uc774 \uc7ac\ud604 \ubabb \ud588\ub2e4\n1567:   2\ubd80  \uc2a4\ub808\ub4dc 16\uac1c \u00d7 200\ub77c\uc6b4\ub4dc \uacbd\uc7c1 -> PermissionDenied(os error 5) \ub77c\uc6b4\ub4dc 2 \u00b7 5 \u00b7 6 (\uc2e4\ud589 3\ud68c).\n1568:        \uc2e4\ud328\ub294 \ubaa8\ub450 attempt 1~4 \uc5d0\uc11c, attempt 0 \uc5d0\uc11c\ub294 \ud55c \ubc88\ub3c4 \uc5c6\uc5c8\ub2e4\n1569:   ```\n1570:   \u2192 \ubcc4\ub3c4 \uacbd\uc7c1 \ud504\ub85c\uc138\uc2a4\ub97c \ub123\uc9c0 \uc54a\uc740 **\ub2e8\uc77c \ud504\ub85c\uc138\uc2a4 \u00b7 16\uc2a4\ub808\ub4dc** \ud504\ub85c\uadf8\ub7a8\uc5d0\uc11c\ub3c4 \uac19\uc740 \uc624\ub958\ub97c \uad00\uce21\ud588\ub2e4.\n1571:   **\uc678\ubd80 \ud504\ub85c\uc138\uc2a4(\uc608: \ubc31\uc2e0)\uc758 \uac1c\uc785 \uc5ec\ubd80\uc640 \ucee4\ub110 \uc548\uc758 \uc6d0\uc778\uc740 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4**(\uc7ac\uac80\uc218 42 \u2014 \uc804\uc5d0\ub294\n1572:   \"\uc678\ubd80 \ud504\ub85c\uc138\uc2a4 \uc5c6\uc774 \uc7ac\ud604\ub41c\ub2e4\" \uace0 \uc801\uc5b4 \uc678\ubd80 \uac1c\uc785\uc744 \ubc30\uc81c\ud55c \uac83\ucc98\ub7fc \uc37c\ub2e4). \ud55c \uc2a4\ub808\ub4dc\uac00 AlreadyExists \ub85c\n1573:   \ub2e4\uc74c \ubc88\ud638\ub85c \ub118\uc5b4\uac04 \ub4a4, \uadf8 \ubc88\ud638\ub97c \ub2e4\ub978 \uc2a4\ub808\ub4dc\uac00 \ubc29\uae08 \ub9cc\ub4e4\uace0 \uc9c0\uc6b0\ub294 \uc21c\uac04\uacfc \uacb9\uce5c \uac83\uc73c\ub85c **\ubcf4\uc778\ub2e4** \u2014\n1574:   \ucee4\ub110 \uc548\uc758 \uc815\ud655\ud55c \uc0c1\ud0dc\ub294 \ubcf4\uc9c0 \ubabb\ud588\ub2e4. \uc2e4\uc81c CLI \ub294 \ud638\ucd9c\ub9c8\ub2e4 pid \uac00 \ub2ec\ub77c \uc774\ub984\uc774 \uacb9\uce58\uc9c0 \uc54a\ub294\ub2e4\uace0\n1575:   \ubcf4\uc9c0\ub9cc **\ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4**\n1576: \n1577: ## 4. \uc704\ud5d8\ub3c4\n1578: - [x] \uac80\uc99d \uc2e0\ub8b0\ub3c4 \uc800\ud558 \u2014 \uac04\ud5d0 \uc2e4\ud328\ub294 \ub2e4\ub978 \ud68c\uadc0\ub97c \uac00\ub9b0\ub2e4\n1579: \n1580: ## 6. \uc870\uce58\n1581: - [x] \uace0\uce58\uae30 \uc804\uc5d0 \uc4f4\ub2e4\n1582: - [x] \uc774\ub984\uc5d0 **\ud504\ub85c\uc138\uc2a4 \uc804\uc5ed \ubc88\ud638**\ub97c \ub354\ud588\ub2e4 \u2014 `<\ub300\uc0c1>.tmp.<pid>.<seq>.<n>`. \uac19\uc740 \ud504\ub85c\uc138\uc2a4 \uc548\uc758 \ub3d9\uc2dc \uc4f0\uae30\ub294\n1583:   \uac19\uc740 \uc774\ub984\uc744 \uc2dc\ub3c4\ud558\uc9c0 \uc54a\ub294\ub2e4. \uc55e \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc740 \uc5ec\uc804\ud788 create_new \uac00 \ube44\ucf1c \uac04\ub2e4.\n1584:   PermissionDenied \ub97c \ub2e4\uc74c \ubc88\ud638\ub85c \ub118\uae30\ub294 \ucabd\uc740 \ud0dd\ud558\uc9c0 \uc54a\uc558\ub2e4 \u2014 \uad8c\ud55c \uc5c6\ub294 \ub514\ub809\ud130\ub9ac\uc5d0\uc11c 64\ubc88\uc744 \ud5db\ub3cc\uba70\n1585:   \uc9c4\uc9dc \uc6d0\uc778\uc744 \uac00\ub9b0\ub2e4\n1586: - [x] \uacb0\uc815\uc801 \ud68c\uadc0 \ud14c\uc2a4\ud2b8 `a_temp_name_is_not_reused_within_a_process`(\uc9c0\uc6b4 \uc774\ub984\uc744 \ub2e4\uc74c \ud638\ucd9c\uc774 \ub2e4\uc2dc \uc4f0\uc9c0\n1587:   \uc54a\ub294\ub2e4) \u00b7 \uc9c0\uae08 \uc774\ub984\uc758 \ub0a8\uc740 \ud30c\uc77c \ubcf4\ud638 `leftover_temps_under_the_current_name_are_kept`. \ubba4\ud14c\uc774\uc158: \uc774\ub984\uc744\n1588:   \uc774\uc804 \ubaa8\uc591\uc73c\ub85c \ub418\ub3cc\ub9ac\uba74 \ud68c\uadc0 \ud14c\uc2a4\ud2b8\uac00 \uc2e4\ud328\ud55c\ub2e4(\uadf8 \uc2e4\ud589\uc5d0\uc11c\ub294 \uacbd\uc7c1 \ud14c\uc2a4\ud2b8\ub3c4 \uc2e4\ud328\ud588\ub2e4)\n1589: - [x] \uce21\uc815: \uc218\uc815 \ub4a4 \uacbd\uc7c1 \ud14c\uc2a4\ud2b8 20\ud68c \u2014 **20\ud68c \ud1b5\uacfc**(\uc218\uc815 \uc804 10\ud68c \uc911 3\ud68c \uc2e4\ud328). \u2605 \ub450 \uce21\uc815\uc740 **\uad50\ub300\ub85c \uc7ac\uc9c0\n1590:   \uc54a\uc558\ub2e4**(\uc218\uc815 \uc804 10\ud68c \u2192 \uc218\uc815 \ub4a4 20\ud68c, \uac19\uc740 \uae30\uacc4 \u00b7 \ub2e4\ub978 \uc2dc\uac01) \u2014 \ube44\uad50\ub294 \ubc29\ud5a5\ub9cc \ub9d0\ud55c\ub2e4. \uc6d0\uc778(\uc0ad\uc81c \ub300\uae30\n1591:   \ub4f1)\uacfc \uc678\ubd80 \ud504\ub85c\uc138\uc2a4\uc758 \uac1c\uc785\uc740 \uc5ec\uc804\ud788 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4\n1592: \n1593: ---\n1594: \n1651: # \uacb0\ud568 \u32b4 \u2014 \u32b1 \uc218\uc815\uc758 \uc8fc\uc11d \u00b7 \ube44\uc7ac\uc0ac\uc6a9 \ubcf4\uc7a5 \u00b7 \ubcf4\ud638 \ud14c\uc2a4\ud2b8\uac00 \uc800\ub9c8\ub2e4 \ud55c \uce78\uc529 \ub113\uc5c8\ub2e4 (\uc7ac\uac80\uc218 43)\n1652: \n1653: \u2605 42 \uc758 \uc9c0\uc801(\u32b3)\uc740 \ub2eb\ud614\ub2e4. \uce21\uc815 \uae30\ub85d\ub3c4 \ubc94\uc704 \uc548\uc774\ub77c\uace0 \ud588\ub2e4. \ub098\uba38\uc9c0\uac00 \uc774\ub807\ub2e4.\n1654: \n1655: ## 1. \uc704\uce58 \u00b7 2. \uc7ac\ud604 (\uc7ac\uac80\uc218 43)\n1656: ```text\n1657: out_file.rs \uc8fc\uc11d   \"\ub2e4\ub978 \uc4f0\uae30\uac00 \ubc29\uae08 \ub9cc\ub4e4\uace0 \uc9c0\uc6b0\ub294 \uc774\ub984\uacfc \uacb9\ucce4\ub2e4 \u2026 \uadf8 \uc21c\uac04 PermissionDenied\" \u2014 \uae30\ub85d\uc5d0 \uc788\ub294 \uac83\uc740\n1658:                    \uacbd\uc7c1 \uc911\uc758 \uc624\ub958\uc640 attempt \ubc88\ud638\ubfd0\uc774\ub2e4. \uc0ad\uc81c\uc640\uc758 \uc815\ud655\ud55c \uc2dc\uac04 \uad00\uacc4\ub294 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4\n1659: \ube44\uc7ac\uc0ac\uc6a9 \ubcf4\uc7a5      TEMP_SEQ.fetch_add \ub294 2^64 \ubc88\uc9f8\uc5d0 0 \uc73c\ub85c \ub3c8\ub2e4 \u2014 \uba3c\uc800 \ubc1b\uc740 \ud638\ucd9c\uc774 \uc544\uc9c1 \uc9c4\ud589 \uc911\uc774\uba74 \uac19\uc740 \ud6c4\ubcf4\ub97c\n1660:                    \ub2e4\uc2dc \uc2dc\ub3c4\ud560 \uc218 \uc788\ub2e4. \ubaa8\ub4c8 \ubb38\uc11c\uc640 HISTORY 21:16 \ud56d\ubaa9\uc758 \ubb34\uc870\uac74\uc801 \uc11c\uc220(\"\ubd80\ub52a\ud788\uc9c0 \uc54a\ub294\ub2e4 \u00b7\n1661:                    \uc5c6\uc5b4\uc9c4\ub2e4\")\uc758 \ubc18\ub840\ub2e4(\uc2e4\uc6a9\uc801\uc73c\ub85c \uba3c \ud55c\uacc4)\n1662: \ubcf4\ud638 \ud14c\uc2a4\ud2b8        leftover_temps_under_the_current_name_are_kept \uac00 load \ub85c \ubc88\ud638\ub97c \uc77d\uae30\ub9cc \ud55c\ub2e4 \u2014 \uadf8 \uc0ac\uc774 \ub2e4\ub978 \ud14c\uc2a4\ud2b8\uac00\n1663:                    \ubc88\ud638 320 \uac1c\ub97c \uac00\uc838\uac00\uba74 \uc4f0\uae30\ub294 \uae54\uc544 \ub454 256 \ubc94\uc704 \ubc16\uc744 \ubc1b\uc544 **\ucda9\ub3cc \uc5c6\uc774 \ud1b5\uacfc**\ud55c\ub2e4(\ube48 \ud1b5\uacfc)\n1664: ```\n1665: \n1666: ## 4. \uc704\ud5d8\ub3c4\n1667: - [x] \uac80\uc99d \uc2e0\ub8b0\ub3c4 \uc800\ud558 \u2014 \ubcf4\ud638 \ud14c\uc2a4\ud2b8\uac00 \uc2a4\ucf00\uc904\uc5d0 \ub530\ub77c \uc544\ubb34\uac83\ub3c4 \uc7ac\uc9c0 \uc54a\ub294\ub2e4\n1668: \n1669: ## 6. \uc870\uce58\n1670: - [x] \uace0\uce58\uae30 \uc804\uc5d0 \uc4f4\ub2e4 (\uc7ac\uac80\uc218 43 \uc9c1\ud6c4)\n1671: - [x] \ubc88\ud638 \ud560\ub2f9\uc744 \ub5bc\uc5b4 \ub0c8\ub2e4 \u2014 `next_temp_seq`(`fetch_update` + `checked_add`, \uc18c\uc9c4\ub418\uba74 None -> \ud638\ucd9c \uc2e4\ud328).\n1672:   `the_temp_sequence_fails_instead_of_wrapping`\n1673: - [x] \ud6c4\ubcf4 \uc0dd\uc131\uc744 \ub5bc\uc5b4 \ub0c8\ub2e4(`create_exclusive_temp_with_seq`) \u2014 \ud14c\uc2a4\ud2b8\uac00 \ubc88\ud638 7777 \uc758 `.0` \uc5d0 \ud30c\uc77c\uc744 \uae54\uace0,\n1674:   `.1` \uc744 \uace0\ub974\ub294\uc9c0\uc640 \uae50 \ud30c\uc77c\uc774 \uadf8\ub300\ub85c\uc778\uc9c0 \uc9c1\uc811 \ub2e8\uc5b8\ud55c\ub2e4. \ubba4\ud14c\uc774\uc158 3/3(\ubc88\ud638 \uc21c\ud658 \u00b7 \ubc30\ud0c0 \uc0dd\uc131\uc744\n1675:   \ub36e\uc5b4\uc4f0\uae30\ub85c \u00b7 \uc774\ub984\uc5d0\uc11c \ubc88\ud638 \uc81c\uac70)\n1676: - [x] \uc8fc\uc11d\uc744 \"\uacbd\uc7c1 \uc2e4\ud5d8\uc5d0\uc11c PermissionDenied \ub97c \uad00\uce21\ud588\ub2e4. \uc0ad\uc81c\uc640\uc758 \uc815\ud655\ud55c \uc2dc\uac04 \uad00\uacc4\ub294 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4\" \ub85c.\n1677:   HISTORY 21:16 \ud56d\ubaa9\uc740 \uace0\uce58\uc9c0 \uc54a\ub294\ub2e4(\ucd94\uac00 \uc804\uc6a9) \u2014 \uc0c8 \ud56d\ubaa9\uc5d0 \uc815\uc815\n1678: \n1679: ---\n1680: "
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10381:"1: # \uc791\uc5c5 \uc774\ub825\n2: \n3: > **\ucd5c\uc885 \uac31\uc2e0** \ub9e8 \uc704 \ud56d\ubaa9\uc758 \ub0a0\uc9dc\ub2e4(\uba38\ub9ac\ub9d0\uc5d0 \ub530\ub85c \uc801\uc9c0 \uc54a\ub294\ub2e4 \u2014 \uc801\uc73c\uba74\n4: > \uac31\uc2e0\ud560 \ub54c\ub9c8\ub2e4 \uc774 \uc904\uc744 **\uace0\uccd0\uc57c** \ud558\uace0, \uadf8\uac74 \uc774 \ud30c\uc77c\uc758 \ucd94\uac00-\uc804\uc6a9\n5: > \uaddc\uce59\uacfc \uc815\uba74\uc73c\ub85c \ubd80\ub52a\uce5c\ub2e4) \u00b7 **\uc131\uaca9** \uc77c\uc9c0(\ucd94\uac00\ub9cc, \uc218\uc815 \uae08\uc9c0) \u00b7\n6: > **\uc9dd** [`\uc870\uac01_\uc774\ub825.md`](\uc870\uac01_\uc774\ub825.md) \uc740 \uac19\uc740 \uc77c\uc744 **\uc870\uac01 \ubc88\ud638 \uc21c**\uc73c\ub85c\n7: > \ubcf8\ub2e4. \uc774 \ud30c\uc77c\uc740 **\ub0a0\uc9dc \uc21c**\uc774\ub2e4 \u00b7 **\uac80\uc0ac** `check_docs.py` \uac00\n8: > git \uc73c\ub85c append-only \ub97c \ud655\uc778\ud55c\ub2e4\n9: \n10: > \u2605 **\ucd94\uac00\ub9cc \ud55c\ub2e4. \uae30\uc874 \uae30\ub85d\uc744 \uc218\uc815\ud558\uc9c0 \uc54a\ub294\ub2e4.**\n11: > \ucd5c\uc2e0\uc774 \uc704\ub85c \uc624\ub3c4\ub85d **\uc5ed\uc21c**\uc73c\ub85c \uc313\ub294\ub2e4.\n12: \n13: \ud615\uc2dd:\n14: \n15: ```markdown\n16: ## YYYY-MM-DD HH:mm \u2014 <\uc791\uc5c5 \uc81c\ubaa9>\n17: - \uacc4\ud68d: <docs/plans/ \ubb38\uc11c\uba85> \uc758 <\ub2e8\uacc4>\n18: - \uc2a4\ud2b8\ub9bc: <RULE.md \u00a74.1 \uc758 \uc2a4\ud2b8\ub9bc\uba85>\n19: - \uc218\ud589: <\ud575\uc2ec \ubcc0\uacbd \uc694\uc57d>\n20: - \uac80\uc99d: <\uc131\uacf5/\uc2e4\ud328 + \ubc29\ubc95>\n21: - \ub9ac\ud3ec\ud2b8: <docs/reports/ \ud30c\uc77c\uba85>\n22: ```\n23: \n24: ---\n25: \n26: ---\n27: \n28: ## 2026-09-10 21:26 \u2014 \uc7ac\uac80\uc218 43 \ub300\uc751(\uacb0\ud568 \u32b4). \ubc88\ud638 \uc18c\uc9c4 \u00b7 \uc815\ud55c \ubc88\ud638\ub85c \uc7ac\ub294 \ubcf4\ud638 \ud14c\uc2a4\ud2b8 \u00b7 \uc8fc\uc11d\n29: \n30: - \uacc4\ud68d: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` \uc758 \uc7ac\uac80\uc218 43\n31: - \uc2a4\ud2b8\ub9bc: CLI \u00b7 QA\n32: - \uc218\ud589: 43 \uc740 \u32b3 \uc774 \ub2eb\ud614\uace0 \u32b1 \uc758 \uce21\uc815 \uae30\ub85d\ub3c4 \ubc94\uc704 \uc548\uc774\ub77c\uace0 \ud588\ub2e4. \uc14b\uc744 \ub354 \uc9da\uc5c8\ub2e4(\uacb0\ud568 \u32b4).\n33:   ```text\n34:   \uc8fc\uc11d      \"\uadf8 \uc21c\uac04 PermissionDenied\" -> \uacbd\uc7c1 \uc2e4\ud5d8\uc5d0\uc11c \uad00\uce21\ud588\uace0, \uc0ad\uc81c\uc640\uc758 \uc815\ud655\ud55c \uc2dc\uac04 \uad00\uacc4\ub294 \ud655\uc778 \uc548 \ud588\ub2e4\n35:   \ubc88\ud638 \uc21c\ud658 fetch_add \ub294 2^64 \ubc88\uc9f8\uc5d0 0 \uc73c\ub85c \ub3c8\ub2e4 -> next_temp_seq(fetch_update + checked_add), \uc18c\uc9c4\ub418\uba74 \uc2e4\ud328\n36:   \ubcf4\ud638 \ud14c\uc2a4\ud2b8 \uc804\uc5ed \ubc88\ud638\ub97c \uc77d\uae30\ub9cc \ud574 \ub2e4\ub978 \ud14c\uc2a4\ud2b8\uac00 \ubc88\ud638\ub97c \uac00\uc838\uac00\uba74 **\ube48 \ud1b5\uacfc** -> create_exclusive_temp_with_seq\n37:             \uc5d0 \ud14c\uc2a4\ud2b8\uac00 \uc815\ud55c \ubc88\ud638\ub97c \uc8fc\uace0, .0 \uacfc \ubd80\ub52a\ud600 .1 \uc744 \uace0\ub974\ub294\uc9c0 \uc9c1\uc811 \ub2e8\uc5b8\n38:   ```\n39:   \u2605 **\ubc14\ub85c \uc544\ub798 21:16 \ud56d\ubaa9\uc744 \uc815\uc815\ud55c\ub2e4** \u2014 \"\uac19\uc740 \ud504\ub85c\uc138\uc2a4\uc758 \ub3d9\uc2dc \uc4f0\uae30\uac00 \u2026 \ubc88\uac08\uc544 \ud558\ub358 \uac83\uc774 **\uc5c6\uc5b4\uc9c4\ub2e4**\" \ub294\n40:     \ubc88\ud638\uac00 \uc21c\ud658\ud558\uae30 \uc804\uae4c\uc9c0\ub9cc \ub9de\uc558\ub2e4(\uc774\uc81c \uc18c\uc9c4\ub418\uba74 \uc2e4\ud328\ud558\ubbc0\ub85c \ucc38\uc774 \ub41c\ub2e4). \ucd94\uac00 \uc804\uc6a9\uc774\ub77c 21:16 \ud56d\ubaa9\uc740\n41:     \uace0\uce58\uc9c0 \uc54a\ub294\ub2e4\n42: - \uac80\uc99d: \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 `-j 2 --no-fail-fast` 1103 passed \u00b7 0 failed \u00b7 ignored 1 \u00b7 \uacbd\uace0 0.\n43:   \ubba4\ud14c\uc774\uc158 3/3(\ubc88\ud638 \uc21c\ud658 \u00b7 \ubc30\ud0c0 \uc0dd\uc131\uc744 \ub36e\uc5b4\uc4f0\uae30\ub85c \u00b7 \uc774\ub984\uc5d0\uc11c \ubc88\ud638 \uc81c\uac70). selftest exit 0(\uc2dc\ub098\ub9ac\uc624 \uc904 97)\n44: - \ub9ac\ud3ec\ud2b8: \uacb0\ud568 \u32b4\n45: \n46: ---\n47: \n48: ## 2026-09-10 21:16 \u2014 \uc7ac\uac80\uc218 42 \ub300\uc751(\uacb0\ud568 \u32b3) \u00b7 out_file \uc784\uc2dc \uc774\ub984\uc5d0 \ud504\ub85c\uc138\uc2a4 \uc804\uc5ed \ubc88\ud638(\uacb0\ud568 \u32b1 \uc218\uc815)\n49: \n50: - \uacc4\ud68d: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` \uc758 \uc7ac\uac80\uc218 42 \u00b7 \uacb0\ud568 \u32b1\n51: - \uc2a4\ud2b8\ub9bc: CLI \u00b7 QA\n52: - \uc218\ud589: 42 \ub294 41 \uc758 \ucf54\ub4dc \uc9c0\uc801 1~4 \uac00 \ub2eb\ud614\uace0, \ub450 \ud30c\uc11c \uc804\uccb4(Agent \uc815\uc218 \uc635\uc158 15 \u00b7 Coordinator 19)\uc5d0\uc11c\n53:   \ucd94\uac00 \uc22b\uc790 \uc6b0\ud68c\ub97c \ucc3e\uc9c0 \ubabb\ud588\ub2e4\uace0 \ud588\ub2e4. \ub0a8\uc740 \uac83\uc740 41 \uc758 5\ubc88\uc744 \uace0\uce58\uba70 **\ub0b4\uac00 \uc0c8\ub85c \uc4f4** \u32b1 \uc758\n54:   \"\uc678\ubd80 \ud504\ub85c\uc138\uc2a4 \uc5c6\uc774 \u2026 \uc7ac\ud604\ub41c\ub2e4\" \u2014 \ud55c \ud504\ub85c\uc138\uc2a4\uc758 \uc2a4\ub808\ub4dc\ub85c \uc2e4\ud5d8\uc744 \uc9f0\ub2e4\ub294 \uac83\ub9cc\uc73c\ub85c \ubc31\uc2e0 \uac19\uc740 \uc678\ubd80\n55:   \uac1c\uc785\uc744 \ubc30\uc81c\ud558\uc9c0 \ubabb\ud55c\ub2e4. \"\uc678\ubd80 \ud504\ub85c\uc138\uc2a4\uc758 \uac1c\uc785 \uc5ec\ubd80\uc640 \ucee4\ub110 \uc548\uc758 \uc6d0\uc778\uc740 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4\" \ub85c \uc881\ud614\ub2e4(\uacb0\ud568 \u32b3).\n56:   \uacb0\ud568 \u32b1 \uc744 \uace0\ucce4\ub2e4 \u2014 `out_file` \uc758 \uc784\uc2dc \uc774\ub984\uc744 `<\ub300\uc0c1>.tmp.<pid>.<seq>.<n>` \uc73c\ub85c \ubc14\uafd4 \ud638\ucd9c\ub9c8\ub2e4 \ud504\ub85c\uc138\uc2a4\n57:   \uc804\uc5ed \ubc88\ud638\ub97c \ubc1b\ub294\ub2e4. \uac19\uc740 \ud504\ub85c\uc138\uc2a4\uc758 \ub3d9\uc2dc \uc4f0\uae30\uac00 \uac19\uc740 \uc774\ub984\uc744 \ub450\uace0 \ub9cc\ub4e4\uace0 \uc9c0\uc6b0\uae30\ub97c \ubc88\uac08\uc544 \ud558\ub358 \uac83\uc774\n58:   \uc5c6\uc5b4\uc9c4\ub2e4. PermissionDenied \ub97c \ub2e4\uc74c \ubc88\ud638\ub85c \ub118\uae30\ub294 \ucabd\uc740 \ud0dd\ud558\uc9c0 \uc54a\uc558\ub2e4(\uad8c\ud55c \uc5c6\ub294 \ub514\ub809\ud130\ub9ac\uc5d0\uc11c \ud5db\ub3c8\ub2e4).\n59:   \ud68c\uadc0 \ud14c\uc2a4\ud2b8 \u00b7 \uc9c0\uae08 \uc774\ub984\uc758 \ub0a8\uc740 \ud30c\uc77c \ubcf4\ud638 \ud14c\uc2a4\ud2b8\ub97c \ub354\ud588\uace0, \uc774\ub984\uc744 \uc774\uc804 \ubaa8\uc591\uc73c\ub85c \ub418\ub3cc\ub9ac\ub294 \ubba4\ud14c\uc774\uc158\uc5d0\uc11c\n60:   \ud68c\uadc0 \ud14c\uc2a4\ud2b8\uac00 \uc2e4\ud328\ud588\ub2e4. \uc218\uc815 \ub4a4 \uacbd\uc7c1 \ud14c\uc2a4\ud2b8 20\ud68c \ubaa8\ub450 \ud1b5\uacfc(\uc218\uc815 \uc804 10\ud68c \uc911 3\ud68c \uc2e4\ud328).\n61:   \u2605 \ub450 \uce21\uc815\uc740 \uad50\ub300\ub85c \uc7ac\uc9c0 \uc54a\uc558\ub2e4 \u2014 \ube44\uad50\ub294 \ubc29\ud5a5\ub9cc \ub9d0\ud55c\ub2e4. \uc6d0\uc778(\uc0ad\uc81c \ub300\uae30 \ub4f1)\uc740 \uc5ec\uc804\ud788 \uac00\uc124\uc774\ub2e4\n62: - \uac80\uc99d: \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 `-j 2 --no-fail-fast` 1102 passed \u00b7 0 failed \u00b7 ignored 1 \u00b7 \uacbd\uace0 0.\n63:   selftest exit 0(\uc2dc\ub098\ub9ac\uc624 \uc904 97)\n64: - \ub9ac\ud3ec\ud2b8: \uacb0\ud568 \u32b1 \uc870\uce58 \uce78 \u00b7 \uacb0\ud568 \u32b3\n65: \n66: ---\n67: \n68: ## 2026-09-10 21:08 \u2014 \uad6c\ud604 \uac80\uc218 41 \ub300\uc751. \u325e \u325f \uac00 \ube60\ub728\ub9b0 \uacbd\ub85c \ub458 \u00b7 \uc808\ubc18\ub9cc \uc7b0 \ud14c\uc2a4\ud2b8 (\uacb0\ud568 \u32b2)\n69: \n70: - \uacc4\ud68d: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` \uc758 \uad6c\ud604 \uac80\uc218 41\n71: - \uc2a4\ud2b8\ub9bc: Coordinator \u00b7 Agent \u00b7 QA\n72: - \uc218\ud589: 41 \uc740 \u325d \uc758 \uc2dd\uc774 \uc800\uc7a5\uc18c \ubd84\uae30\uc640 \uac19\ub2e4\uace0 \ud655\uc778\ud588\ub2e4. \ub098\uba38\uc9c0\ub97c \uace0\ucce4\ub2e4(\uacb0\ud568 \u32b2).\n73:   ```text\n74:   \u325e \ub204\ub77d   Agent \uc758 --heartbeat-interval-ms \u00b7 --heartbeat-rounds \u00b7 --neighbor-report-rounds \u00b7\n75:            --neighbor-report-interval-ms \u00b7 --owner-panel-port \uac00 get() \ub4a4 \uc9c1\uc811 parse \ud574 \uc55e \uac12 \uac80\uc0ac\ub97c\n76:            \uac74\ub108\ub6f0\uc5c8\ub2e4 -> checked_get::<T> \ub85c \uc55e \uac12\uc744 \ubcf8 \ub4a4 \uaebc\ub0b8\ub2e4\n77:   \u325f \ub204\ub77d   NEEDS_EXPECT \uac00 CLI \ud30c\uc11c\uc5d0\ub9cc \uc788\uc5b4 run(config) \uc9c1\uc811 \ud638\ucd9c\uc740 liveness \uacbd\ub85c\ub97c \ubc84\ub838\ub2e4 ->\n78:            \uacf5\ud1b5 \uad00\ubb38(unsupported_heartbeat_lane)\uc774 liveness_db_path \uac00 \uc788\ub294\ub370 \uae30\ub300\uac00 0 \uc774\uba74 \uac70\ubd80\n79:   \ud14c\uc2a4\ud2b8    Coordinator \uc22b\uc790 \uc77d\uae30 \uc5ec\uc12f \uc804\ubd80 \u00b7 Agent \uc9c1\uc811 parse \ub2e4\uc12f \uc804\ubd80 \u00b7 Agent \ub300\uc870\uad70\uc774 \ub9c8\uc9c0\ub9c9 \uac12\uc744\n80:            \ub2e8\uc5b8 \u00b7 heartbeat \ud1b5\ud569 \ud14c\uc2a4\ud2b8\ub97c \uc810\uc720\ub41c \ud3ec\ud2b8\ub85c(\uad00\ubb38\uc774 bind \uc804\uc778\uc9c0 \uac00\ub9b0\ub2e4) \u00b7 run(config) \uc9c1\uc811\n81:   ```\n82:   \u2605 **\ubc14\ub85c \uc544\ub798 20:50 \ud56d\ubaa9\uc758 \"\ubcc4\uac1c \ubb38\uc81c\" \ub97c \uc815\uc815\ud55c\ub2e4** \u2014 \ud30c\uc77c\uc744 \uc548 \uac74\ub4dc\ub838\ub2e4\ub294 \uac83\ub9cc\uc73c\ub85c \u325e \uc758 \uac04\uc811\n83:     \uc601\ud5a5\uc744 \ubc30\uc81c\ud558\uc9c0 \ubabb\ud55c\ub2e4. \ub300\uc2e0 \uacb0\ud568 \u32b1 \uc2e4\ud5d8 2 \uac00 \u325e \ucf54\ub4dc\uac00 **\uc5c6\ub294** \ub3c5\ub9bd \ud504\ub85c\uadf8\ub7a8\uc5d0\uc11c\ub3c4 \uac19\uc740 \uc2e4\ud328\ub97c\n84:     \uc7ac\ud604\ud588\ub2e4(\uc2a4\ub808\ub4dc 16\uac1c \u00d7 200\ub77c\uc6b4\ub4dc, \uc2e4\ud589 3\ud68c\uc5d0 2 \u00b7 5 \u00b7 6 \ub77c\uc6b4\ub4dc). \uc6d0\uc778\uc740 \uc5ec\uc804\ud788 \uac00\uc124\uc774\ub2e4. \ucd94\uac00 \uc804\uc6a9\uc774\ub77c\n85:     20:50 \ud56d\ubaa9\uc740 \uace0\uce58\uc9c0 \uc54a\ub294\ub2e4\n86:   \u2605 \uc2a4\ud06c\ub9bd\ud2b8 \uc774\ub984\uc744 \ub2e4\uc2dc \uc368\uc11c(fix_37.py) \uae30\ub2e4\ub9ac\ub358 \uc5f0\uc1c4\uac00 \uc61b \ud30c\uc77c\uc744 \uc9d1\uc744 \uc218 \uc788\ub294 \uacbd\uc7c1\uc744 \uc2a4\uc2a4\ub85c \ub9cc\ub4e4\uc5c8\ub2e4 \u2014\n87:     \ucd9c\ub825\uc758 \uc801\uc6a9 \uc21c\uc11c\ub85c \uc0c8 \uc2a4\ud06c\ub9bd\ud2b8\uac00 \ub3c8 \uac83\uc744 \ud655\uc778\ud588\ub2e4\n88: - \uac80\uc99d: \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 `-j 2 --no-fail-fast` 1100 passed \u00b7 0 failed \u00b7 ignored 1 \u00b7 \uacbd\uace0 0.\n89:   \ubba4\ud14c\uc774\uc158 6/6. selftest exit 0(\uc2dc\ub098\ub9ac\uc624 \uc904 97)\n90: - \ub9ac\ud3ec\ud2b8: \uacb0\ud568 \u32b2 \u00b7 \u32b1 \uc2e4\ud5d8 2 \u00b7 \u325e \uc870\uce58 \uce78\n91: \n92: ---\n93: \n94: ## 2026-09-10 20:50 \u2014 \uae30\ub85d\ub9cc \ud574 \ub454 \uc794\uc5ec \uacb0\ud568 \uc14b\uc744 \uace0\ucce4\ub2e4(\u325d \u325e \u325f) \u00b7 out_file \uac04\ud5d0 \uc2e4\ud328 \uae30\ub85d(\u32b1)\n95: \n96: - \uacc4\ud68d: \uacb0\ud568 \ub9ac\ud3ec\ud2b8 \u3252 \uc5d0 \"\uae30\ub85d\ub9cc \ud560 \uc794\uc5ec\" \ub85c \ub0a8\uae34 \uc14b\n97: - \uc2a4\ud2b8\ub9bc: Coordinator \u00b7 Agent \u00b7 QA\n98: - \uc218\ud589: \uacb0\ud568 \u2471 \uc758 \uc124\uacc4 \uc120\ud0dd\uc740 \uc0ac\uc6a9\uc790 \uacb0\uc815\uc774\ub77c \uae30\ub2e4\ub9ac\uace0, \uacb0\uc815 \uc5c6\uc774 \uace0\uce60 \uc218 \uc788\ub294 \uc14b\uc744 \uba3c\uc800 \ud588\ub2e4 \u2014\n99:   \ubaa8\ub450 **\ubc1b\uc544 \ub450\uace0 \ub9d0\uc5c6\uc774 \ubc84\ub9ac\ub294 \uc124\uc815**(\u246f \u00b7 \u3251 \uacfc \uac19\uc740 \ubd80\ub958)\uc774\ub2e4.\n100:   ```text\n101:   \u325d  \uc800\uc7a5\uc18c \uc5c6\ub294 \uac31\uc2e0\uc774 --renew-extension-ms \ub97c 60\ucd08\ub85c \uace0\uc815\ud574 \ubc84\ub838\ub2e4 -> \uc800\uc7a5\uc18c \ubd84\uae30\uc640 \uac19\uc740 \uc2dd\n102:   \u325e  \uc22b\uc790 \uc778\uc790\ub97c \ub450 \ubc88 \uc8fc\uba74 \uc55e \uac12\uc774 \uac80\uc0ac \uc5c6\uc774 \uc0ac\ub77c\uc84c\ub2e4 -> \ub450 \ud30c\uc11c\uac00 \uc55e \uac12\ub3c4 \ud30c\uc2f1\ud574 \ubcf8\ub2e4\n103:   \u325f  --liveness-db \ub97c heartbeat \uae30\ub300 \uc5c6\uc774 \ubc1b\uc544 \ub450\uace0 \u00b7 Resume \u00b7 hook \uc14b \u00b7 multi-agent \uac00 heartbeat\n104:       \uc218\uc2e0\uc5d0 \ub2ff\uc9c0 \ubabb\ud558\ub294\ub370 \ubc1b\uc544 \ub480\ub2e4 -> NEEDS_EXPECT + unsupported_heartbeat_lane\n105:   ```\n106:   \u325e \uc758 \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 \uc2e4\ud589\uc774 **\ubcc4\uac1c \ubb38\uc81c**\ub97c \ubc1f\uc558\ub2e4 \u2014 `out_file` \uacbd\uc7c1 \ud14c\uc2a4\ud2b8\uac00 Windows \uc5d0\uc11c 10\ud68c \uc911\n107:   3\ud68c \"\uc561\uc138\uc2a4 \uac70\ubd80\" \ub85c \uc2e4\ud328\ud55c\ub2e4(\uacb0\ud568 \u32b1, \uc6d0\uc778\uc740 \uac00\uc124). \u325e \uac00 \uac74\ub4dc\ub9ac\uc9c0 \uc54a\uc740 \ud30c\uc77c\uc774\ub2e4.\n108:   \u2605 \u325d \uc758 \uccab \ubba4\ud14c\uc774\uc158\uc740 sed \ub85c \uac78\uc5c8\ub294\ub370 \uc791\uc5c5 \ud2b8\ub9ac\uac00 CRLF \ub77c \uc904\ub05d \ud328\ud134\uc774 \ud55c \uc904\uc744 \ub193\ucce4\ub2e4 \u2014 \ubc14\uc774\ud2b8\ub97c\n109:     \ubcf4\uc874\ud558\ub294 \uc2a4\ud06c\ub9bd\ud2b8\ub85c \ub2e4\uc2dc \uc7c0\ub2e4. \uc791\uc5c5 \ud2b8\ub9ac\uc5d0\ub294 \uc774\uc804\ubd80\ud130 CRLF 73 \u00b7 \ud63c\ud569 55 \ud30c\uc77c\uc774 \uc788\ub2e4(git \uc774 \ucee4\ubc0b\n110:     \ub54c LF \ub85c \ub418\ub3cc\ub824 \uc800\uc7a5\uc18c \ub0b4\uc6a9\uc740 \uba40\uca61\ud558\ub2e4) \u2014 \uc774\ubc88\uc5d0 \uc190\ub300\uc9c0 \uc54a\uc558\ub2e4\n111: - \uac80\uc99d: \u325d \ucee4\ubc0b 3413e5b(\uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 1089 \u00b7 selftest 97/97 \u00b7 \ubba4\ud14c\uc774\uc158 \uc7a1\ud798) \u00b7 \u325e \ucee4\ubc0b 1af32f9(1093 \u00b7\n112:   \ubba4\ud14c\uc774\uc158 \uc7a1\ud798) \u00b7 \u325f \ub294 \uc774 \ud56d\ubaa9\uacfc \uac19\uc740 \ucee4\ubc0b \u2014 \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 `-j 2 --no-fail-fast` 1098 passed \u00b7\n113:   0 failed \u00b7 ignored 1 \u00b7 \uacbd\uace0 0, \ubba4\ud14c\uc774\uc158 4/4, selftest exit 0(\uc2dc\ub098\ub9ac\uc624 \uc904 97)\n114: - \ub9ac\ud3ec\ud2b8: \uacb0\ud568 \u325d \u325e \u325f \u32b1\n115: \n116: ---\n117: \n118: ## 2026-09-10 20:25 \u2014 \uc7ac\uac80\uc218 40 ACCEPTED. \u00a7A1 1.5 \uc120\ud589 \uc870\uac01(\uc800\uc7a5\ub41c Grant \uc5d0 Manifest \uc2e3\uae30)\uc758 \uac80\uc218\uac00 \ub05d\ub0ac\ub2e4\n119: \n120: - \uacc4\ud68d: `docs/plans/2026-09-10_1854_\uc800\uc7a5\ub41c_\uc608\uc57d_Grant_\uc5d0_Manifest_\uc2e3\uae30.md`\n121: - \uc2a4\ud2b8\ub9bc: QA\n122: - \uc218\ud589: 40 \uc774 39 \uc758 \ub450 \uc9c0\uc801(\uacb0\ud568 \u2473 \uc808)\uc774 \ub2eb\ud614\ub2e4\uace0 \ud588\ub2e4 \u2014 **ACCEPTED**. \uc774 \uc870\uac01\uc758 \uac80\uc218 \uc5f0\uc1c4\ub294\n123:   \uc124\uacc4 \ub17c\uc758 36(B \ud655\uc815) -> \uad6c\ud604 \uac80\uc218 37(\uad6c\ud604 \ubc18\ub840 \uc5c6\uc74c \u00b7 \uc124\uba85 \ub458) -> \uc7ac\uac80\uc218 38 \u00b7 39(\uc124\uba85) -> 40 \uc774\ub2e4.\n124:   \u2605 40 \uc740 \uc2a4\uc2a4\ub85c \"\ucd94\uac00 \ubc18\ub840\ub97c \ucc3e\uc9c0 \ubabb\ud588\ub2e4\ub294 \ud310\uc815\uc774\uba70 \uacb0\ud568\uc774 \uc5c6\ub2e4\ub294 \uc99d\uba85\uc740 \uc544\ub2c8\ub2e4\" \ub77c\uace0 \ud55c\uc815\ud588\ub2e4.\n125:   \u2605 \ub0a8\uc740 \uac83: \uacb0\ud568 \u2471(ACK \uc804 \uc2e4\ud589 \u00b7 10\ucd08 \uc2dc\ud55c)\uc758 \uc124\uacc4 \uc120\ud0dd\uc740 **\uc0ac\uc6a9\uc790 \uacb0\uc815**\uc774\ub2e4 \u2014 ACK \ub97c \uc2e4\ud589 \uc804\uc73c\ub85c \u00b7\n126:     \ubcf4\uace0\ub97c \ubcc4\ub3c4 \uc5f0\uacb0\ub85c \u00b7 \uc2dc\ud55c\uc744 Lease \uc5d0 \ub9de\ucd98\ub2e4. \u2472 \u00b7 \u2473 \u00b7 DB \uacb0\ud569 \u00b7 \uc608\uc57d \ud574\uc81c \uc870\uac74 3 \ub3c4 \uadf8\ub300\ub85c\ub2e4\n127: - \uac80\uc99d: \ubb38\uc11c\ub9cc \ubc14\ub00c\uc5c8\ub2e4. \ub9c8\uc9c0\ub9c9 \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 \ud14c\uc2a4\ud2b8\ub294 4296d92 \uc758 1087 passed(-j 2)\n128: - \ub9ac\ud3ec\ud2b8: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` 40 \ud589\n129: \n130: ---\n131: \n132: ## 2026-09-10 20:23 \u2014 \uc7ac\uac80\uc218 39 \ub300\uc751. \uacb0\ud568 \u2473 \uc808\uc758 \ub450 \ubb38\uc7a5\n133: \n134: - \uacc4\ud68d: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` \uc758 \uc7ac\uac80\uc218 39\n135: - \uc2a4\ud2b8\ub9bc: QA\n136: - \uc218\ud589: 39 \ub294 38 \uc758 \ub450 \uc9c0\uc801\uc774 \ub2eb\ud614\ub2e4\uace0 \ud588\ub2e4. \ub0a8\uc740 \uac83\uc740 \uacb0\ud568 \u2473 \uc808 \u2014\n137:   \"\uc815\uc0c1 \uacbd\ub85c \ud14c\uc2a4\ud2b8\uac00 \uc0dd\uae30\uba74 \uac04\ud5d0 \uc2e4\ud328\ub85c \ub098\ud0c0\ub0a0 \uc790\ub9ac\ub2e4\" \ub294 \uc7ac\uc811\uc18d **\uac00\ub2a5\uc131**\uc744 \ud14c\uc2a4\ud2b8 **\uc2e4\ud328**\ub85c\n138:   \ud655\uc815\ud588\ub2e4. \"\uc7ac\uc811\uc18d \uacbd\ub85c\ub97c \ucf54\ub4dc\ub85c \ud655\uc778\ud588\uace0, \ud14c\uc2a4\ud2b8 \uc2e4\ud328\ub85c \ub4dc\ub7ec\ub098\ub294\uc9c0\ub294 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4\" \ub85c\n139:   \uc881\ud614\ub2e4(\uacb0\ud568 \u325c). 10\ud68c \ubc18\ubcf5 \uae30\ub85d\ub3c4 \"10\ud68c \ubaa8\ub450 \ud14c\uc2a4\ud2b8\uac00 \ud1b5\uacfc\ud588\ub2e4. \uc7ac\uc811\uc18d \ubc1c\uc0dd \uc5ec\ubd80\uc640 \ub0b4\ubd80 \uacb0\uacfc\ub294\n140:   \ud655\uc778\ud558\uc9c0 \ubabb\ud588\ub2e4\" \ub85c \uacbd\uacc4\ub97c \ub354 \uadf8\uc5c8\ub2e4.\n141:   \u2605 \ubc14\ub85c \uc544\ub798 20:20 \ud56d\ubaa9\uc758 \"\uc7ac\uc811\uc18d\uc774 \uc2e4\ud328\ub85c \uc774\uc5b4\uc9c4 \uacbd\uc6b0\uac00 10\ud68c \uc911 \uc5c6\uc5c8\ub2e4\ub294 \uac83\uae4c\uc9c0\ub2e4\" \ub294 **\ud14c\uc2a4\ud2b8\n142:     \uc2e4\ud328** \ub85c \uc77d\uc744 \ub54c\ub9cc \ub9de\ub2e4 \u2014 \ucd94\uac00 \uc804\uc6a9\uc774\ub77c \uace0\uce58\uc9c0 \uc54a\uace0 \uc5ec\uae30 \uc801\ub294\ub2e4\n143: - \uac80\uc99d: \ubb38\uc11c\ub9cc \ubc14\ub00c\uc5c8\ub2e4 \u2014 \uc7ac\uac80\uc218 40 \uc774 \ud310\uc815\ud55c\ub2e4\n144: - \ub9ac\ud3ec\ud2b8: \uacb0\ud568 \u325c \u00b7 \uacb0\ud568 \u2473 \u00a73\n145: \n146: ---\n147: \n148: ## 2026-09-10 20:20 \u2014 \uc7ac\uac80\uc218 38 \ub300\uc751. \ub0a8\uc740 \uc77c\uc758 \uaddc\ubaa8\ub97c \ud655\uc815\ud55c \ubb38\ub2e8 \u00b7 \u2473 10\ud68c \ubc18\ubcf5\n149: \n150: - \uacc4\ud68d: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` \uc758 \uc7ac\uac80\uc218 38"
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10384:"1: //! \uc11c\uba85\ub41c \uc0b0\ucd9c\ubb3c\uc744 \ud30c\uc77c\ub85c \ub0b4\ubcf4\ub0b8\ub2e4 \u2014 **\uae30\uc874 \ud30c\uc77c\uc744 \uc870\uc6a9\ud788 \ub9dd\uac00\ub728\ub9ac\uc9c0 \uc54a\ub294\ub2e4.**\n2: //!\n3: //! # \uc65c \uc774 \ubaa8\ub4c8\uc774 \uc788\ub098\n4: //!\n5: //! \u2605\u2605 2026-09-10 \ub3c5\ub9bd \uac80\uc218\uac00 `issue-grant` \uc5d0\uc11c \ucc3e\uc740 \uacb0\ud568\uc774\ub2e4. \uadf8 \uba85\ub839\uc740\n6: //!   `std::fs::write(out_path, ..)` \ud55c \uc904\ub85c \uc0b0\ucd9c\ubb3c\uc744 \ub0b4\ubcf4\ub0c8\uace0, \uadf8\uac83\uc774 \ub450\n7: //!   \uac00\uc9c0\ub97c \ud55c\uaebc\ubc88\uc5d0 \uc798\ubabb\ud588\ub2e4:\n8: //!\n9: //!   1. **\uae30\uc874 \ud30c\uc77c\uc744 \ub9d0\uc5c6\uc774 \ub36e\uc5c8\ub2e4.** \uc6b4\uc601\uc790\uac00 \uc11c\uba85 \ud0a4\ub97c \uc798\ubabb \uc8fc\uba74 \uadf8\n10: //!      \uba85\ub839\uc740 \uadf8\uac83\uc744 \uc7a1\uc9c0 \ubabb\ud558\uace0 \uc131\uacf5\uc744 \ucc0d\uc73c\uba74\uc11c **\uba40\uca61\ud558\ub358 \uc0b0\ucd9c\ubb3c\uc744\n11: //!      \ubabb \uc4f0\ub294 \uac83\uc73c\ub85c \ubc14\uafd4 \ub193\ub294\ub2e4.**\n12: //!   2. **\uba3c\uc800 \uc790\ub974\uace0 \uc4f4\ub2e4.** \uc911\uac04\uc5d0 \uc2e4\ud328\ud558\uba74 \uae30\uc874 \ud30c\uc77c\uc774 **\uc798\ub9b0 \ucc44** \ub0a8\ub294\ub2e4.\n13: //!      `CLAUDE.md` \u00a70.3 \uc774 \uacbd\uace0\ud558\ub294 \ubaa8\uc591\uc774\ub2e4.\n14: //!\n15: //! \u2605\u2605 **\uadf8\ub9ac\uace0 `submit` \uc5d0 \ub611\uac19\uc740 \uc904\uc774 \uc788\uc5c8\ub2e4.** \ud55c\ucabd\ub9cc \uace0\uce58\uba74 \ub2e4\uc74c\n16: //!   \uc0ac\ub78c\uc774 \ub2e4\ub978 \ucabd\uc744 \ub2e4\uc2dc \ubc1c\uacac\ud55c\ub2e4 \u2014 \uc560\ucd08\uc5d0 \uc774 \uacb0\ud568\uc774 \ub450 \uacf3\uc5d0 \uc0dd\uae34\n17: //!   \ubc29\uc2dd\uc774 \uadf8\uac83\uc774\ub2e4. \uadf8\ub798\uc11c \ub3c4\uc6b0\ubbf8\ub97c \ud55c \uacf3\uc5d0 \ub454\ub2e4.\n18: //!\n19: //! # \u2605\u2605 1\ucc28 \uc218\uc815\uc774 \ubaa8\uc790\ub790\ub2e4 \u2014 \uc7ac\uac80\uc218\uac00 \uc14b\uc744 \ub354 \ucc3e\uc558\ub2e4 (2026-09-10)\n20: //!\n21: //! ```text\n22: //! \u2460 \uc874\uc7ac \ud655\uc778\uacfc \ud655\uc815 \uc0ac\uc774\uac00 \ubc8c\uc5b4\uc838 \uc788\uc5c8\ub2e4\n23: //!    `target.exists()` \ub85c \ubcf4\uace0 \ub098\uc11c `rename` \ud588\ub2e4. \uadf8 \uc0ac\uc774\uc5d0 \ub2e4\ub978\n24: //!    \ud504\ub85c\uc138\uc2a4\uac00 \ub9cc\ub4e4\uba74 **\ub9d0\uc5c6\uc774 \ub36e\ub294\ub2e4** \u2014 \ub9c9\uc73c\ub824\ub358 \ubc14\ub85c \uadf8 \uc77c\uc774\ub2e4\n25: //! \u2461 \uc784\uc2dc \ud30c\uc77c\uc744 \ubc30\ud0c0\uc801\uc73c\ub85c \uc548 \ub9cc\ub4e4\uc5c8\ub2e4\n26: //!    `<\uc774\ub984>.tmp.<pid>` \ub97c `fs::write` \ub85c \ub9cc\ub4e4\uc5c8\ub2e4. \uac19\uc740 \uc774\ub984\uc774 \uc774\ubbf8\n27: //!    \uc788\uc73c\uba74(\uc55e \uc2e4\ud589\uc774 \uc8fd\uc5b4 \ub0a8\uae34 \uac83) \uadf8\uac83\uc744 \ub36e\uc5c8\ub2e4\n28: //! \u2462 \ub36e\uc5b4\uc4f0\uae30\uc5d0\uc11c **\uc6d0\ubcf8\uc744 \uba3c\uc800 \uc9c0\uc6e0\ub2e4**\n29: //!    `remove_file` \ub4a4 `rename` \uc0ac\uc774\uc5d0 **\uc544\ubb34\uac83\ub3c4 \uc5c6\ub294 \ucc3d**\uc774 \uc0dd\uae34\ub2e4.\n30: //!    \uadf8 \uc21c\uac04 \ud504\ub85c\uc138\uc2a4\uac00 \uc8fd\uc73c\uba74 \uc6d0\ubcf8\ub3c4 \uc0c8\uac83\ub3c4 \uc5c6\ub2e4\n31: //! ```\n32: //!\n33: //! # \uc9c0\uae08 \uc5b4\ub5bb\uac8c \ud558\ub098\n34: //!\n35: //! ```text\n36: //! \uc784\uc2dc \ud30c\uc77c   create_new(true) \ub85c **\ubc30\ud0c0 \uc0dd\uc131**\ud55c\ub2e4. \uc774\ubbf8 \uc788\uc73c\uba74 \uc774\ub984\uc744\n37: //!             \ubc14\uafd4 \ub2e4\uc2dc \uc2dc\ub3c4\ud55c\ub2e4 \u2014 \ub0a8\uc758 \uc784\uc2dc \ud30c\uc77c\uc744 \ub36e\uc9c0 \uc54a\ub294\ub2e4.\n38: //!             \uc774\ub984\uc740 `<\ub300\uc0c1>.tmp.<pid>.<seq>.<n>` \u2014 seq \ub294 \ud638\ucd9c\ub9c8\ub2e4 \ubc1b\ub294 \ud504\ub85c\uc138\uc2a4\n39: //!             \uc804\uc5ed \ubc88\ud638\ub77c, \uac19\uc740 \ud504\ub85c\uc138\uc2a4\uc758 \ub3d9\uc2dc \uc4f0\uae30\ub07c\ub9ac \uac19\uc740 \uc774\ub984\uc744 \ub450\uace0\n40: //!             \ubd80\ub52a\ud788\uc9c0 \uc54a\ub294\ub2e4(\uacb0\ud568 \u32b1). \ubc88\ud638\uac00 \uc18c\uc9c4\ub418\uba74 0 \uc73c\ub85c \ub3cc\uc9c0 \uc54a\uace0\n41: //!             \uc2e4\ud328\ud55c\ub2e4(\uacb0\ud568 \u32b4)\n42: //! \ub36e\uc5b4\uc4f0\uae30 X  temp \ub97c target \uc5d0 **hard_link** \ud55c\ub2e4. \ub300\uc0c1\uc774 \uc788\uc73c\uba74\n43: //!             \ub9c1\ud06c\uac00 \uc2e4\ud328\ud55c\ub2e4 \u2014 **\ud655\uc778\uacfc \ud655\uc815\uc774 \ud55c \ubc88\uc758 \uc6d0\uc790\uc801 \uc5f0\uc0b0**\uc774\ub2e4\n44: //! \ub36e\uc5b4\uc4f0\uae30 O  `fs::rename` \ud55c \ubc88\uc73c\ub85c \ubc14\uafbc\ub2e4. **\uba3c\uc800 \uc9c0\uc6b0\uc9c0 \uc54a\ub294\ub2e4** \u2014\n45: //!             \uadf8\ub798\uc11c \uad50\uccb4\uac00 \uc2e4\ud328\ud558\uba74 \uae30\uc874 \ud30c\uc77c\uc774 \uadf8\ub300\ub85c \ub0a8\ub294\ub2e4\n46: //! ```\n47: //!\n48: //! \u2605\u2605 2026-09-10 \uc7ac\uac80\uc218 11 \u2014 \uc5ec\uae30 \"std \uc758 rename \uc740 \ub450 \ud50c\ub7ab\ud3fc \ub2e4 \ub300\uc0c1\uc744\n49: //!   \uc6d0\uc790\uc801\uc73c\ub85c \uad50\uccb4\ud55c\ub2e4\" \uace0 \uc801\uc5c8\uc5c8\ub2e4. **\ubcf4\uc7a5 \ubc94\uc704\ub97c \ub118\uc5c8\ub2e4.** std \ubb38\uc11c\ub294\n50: //!   \ubaa8\ub4e0 \ud30c\uc77c\uc2dc\uc2a4\ud15c\uc5d0\uc11c \uc6d0\uc790\uc131\uc744 \uc57d\uc18d\ud558\uc9c0 \uc54a\uace0, Windows \uad6c\ud604\uc740\n51: //!   `MoveFileExW` \ub9d0\uace0 \ub2e4\ub978 \uacbd\ub85c\ub3c4 \uc4f4\ub2e4. \uc774 \ubaa8\ub4c8\uc774 \ub9d0\ud560 \uc218 \uc788\ub294 \uac83\uc740\n52: //!   \"\uba3c\uc800 \uc9c0\uc6b0\uc9c0 \uc54a\uc73c\ubbc0\ub85c **\uc2e4\ud328\ud558\uba74 \uc6d0\ubcf8\uc774 \ub0a8\ub294\ub2e4**\" \uae4c\uc9c0\ub2e4.\n53: //!\n54: //! \u2605 \uc65c hard_link \uc778\uac00 \u2014 Rust \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac\uc5d0 **\ub36e\uc5b4\uc4f0\uc9c0 \uc54a\ub294 rename \uc774\n55: //!   \uc5c6\ub2e4.** `rename_noreplace` \ub294 \uc544\uc9c1 \uc81c\uc548 \ub2e8\uacc4\ub2e4(rust-lang/libs-team#131).\n56: //!   \ud50c\ub7ab\ud3fc\ubcc4\ub85c\ub294 \uc788\ub2e4 \u2014 Linux `renameat2(RENAME_NOREPLACE)`, macOS\n57: //!   `renameatx_np(RENAME_EXCL)`, Windows \ub294 `MOVEFILE_REPLACE_EXISTING` \uc744\n58: //!   \ube7c\uba74 \uadf8\uac8c \uae30\ubcf8 \ub3d9\uc791\uc774\ub2e4. \ud45c\uc900\ub9cc\uc73c\ub85c \uadf8 \uc131\uc9c8\uc744 \uc5bb\ub294 \ubc29\ubc95\uc774 hard_link \ub2e4\n59: //!   \u2014 `link()` \ub294 EEXIST \ub85c, `CreateHardLinkW` \ub294 \uc2e4\ud328\ub85c \ub05d\ub09c\ub2e4.\n60: //!\n61: //! \u2605 \ud55c\uacc4\ub97c \uc801\uc5b4 \ub454\ub2e4 \u2014 hard_link \ub97c **\uc9c0\uc6d0\ud558\uc9c0 \uc54a\ub294 \ud30c\uc77c\uc2dc\uc2a4\ud15c**(FAT32,\n62: //!   \uc77c\ubd80 \ub124\ud2b8\uc6cc\ud06c \ub9c8\uc6b4\ud2b8)\uc5d0\uc11c\ub294 \uc774 \uacbd\ub85c\uac00 \uc2e4\ud328\ud55c\ub2e4. \uadf8\ub54c\ub294 \uc624\ub958\uac00\n63: //!   \uadf8\ub300\ub85c \uc62c\ub77c\uac00\uace0 \uc0b0\ucd9c\ubb3c\uc774 \uc548 \uc0dd\uae34\ub2e4. **\uc870\uc6a9\ud788 \ub36e\ub294 \uac83\ubcf4\ub2e4 \ub0ab\ub2e4.**\n64: //!\n65: //! \u2605 \ud55c\uacc4 \ub458 \ub354(\uc7ac\uac80\uc218 11):\n66: //!   ```text\n67: //!   \ub0a8\uc740 \ub9c1\ud06c   hard_link \ub4a4 \uc784\uc2dc \uc774\ub984\uc744 \ubabb \uc9c0\uc6b0\uba74 **\uc0b0\ucd9c\ubb3c\uacfc \uac19\uc740 \ud30c\uc77c\uc744\n68: //!               \uac00\ub9ac\ud0a4\ub294 \ub9c1\ud06c**\uac00 \ub0a8\ub294\ub2e4. \uadf8 \ub9c1\ud06c\uc5d0 \ub204\uac00 \uc4f0\uba74 \uc0b0\ucd9c\ubb3c\ub3c4\n69: //!               \ubc14\ub010\ub2e4. \ubabb \uc9c0\uc6b4 \uc0ac\uc2e4\uc744 **\uacbd\uace0\ub85c \ub3cc\ub824\uc900\ub2e4**\n70: //!   64 \ud6c4\ubcf4     \uac19\uc740 \uc774\ub984\u00b7\uac19\uc740 pid \uc758 \uc794\uc5ec\uac00 64\uac1c\uba74 target \uc774 \uc5c6\uc5b4\ub3c4\n71: //!               \uc2e4\ud328\ud55c\ub2e4. \uac00\uc6a9\uc131 \ud55c\uacc4\uc774\uace0 \ub36e\uc5b4\uc4f0\ub294 \uacbd\ub85c\ub294 \uc544\ub2c8\ub2e4\n72: //!   ```\n73: //!\n74: //! \u2605\u2605 **\uacbd\uace0\ub97c \uc5ec\uae30\uc11c \ucd9c\ub825\ud558\uc9c0 \uc54a\ub294\ub2e4**(\uc7ac\uac80\uc218 13). \ucc98\uc74c\uc5d4 `eprintln!` \uc73c\ub85c\n75: //!   \ucc0d\uc5c8\ub294\ub370, \uadf8 \ub9e4\ud06c\ub85c\ub294 stderr \uc4f0\uae30\uac00 \uc2e4\ud328\ud558\uba74 **\ud328\ub2c9**\ud55c\ub2e4. \uc0b0\ucd9c\ubb3c\uc774 \uc774\ubbf8\n76: //!   \ud655\uc815\ub410\ub294\ub370 \uacbd\uace0 \ub54c\ubb38\uc5d0 \uc2e4\ud328\ub85c \ub05d\ub098\uba74 \"\ubabb \uc9c0\uc6cc\ub3c4 \uc2e4\ud328\ub85c \ub3cc\ub9ac\uc9c0 \uc54a\ub294\ub2e4\"\n77: //!   \ub294 \uacc4\uc57d\uc774 \uae68\uc9c4\ub2e4. \uacbd\uace0\ub294 \ubc18\ud658\uac12\uc5d0 \ub2f4\uace0, \ubd80\ub974\ub294 \ucabd\uc774 **\uc790\uae30 \uc694\uc57d\uc5d0**\n78: //!   \uc2e3\ub294\ub2e4([`with_warning`]).\n79: //!\n80: //! \u2605 \ud14c\uc2a4\ud2b8\uac00 \uc9c0\ud0a4\ub294 \uac83\uacfc \ubabb \uc9c0\ud0a4\ub294 \uac83:\n81: //!   ```text\n82: //!   \uc9c0\ud0a8\ub2e4   \uc784\uc2dc \uc774\ub984 \ubc30\ud0c0 \uc0dd\uc131 \u2014 1\ucc28 \uad6c\ud604\uc758 \uc774\ub984(`.tmp.<pid>`) \u00b7 2\ucc28 \uad6c\ud604\uc758\n83: //!            \uc774\ub984(`.tmp.<pid>.0`) \u00b7 \uc9c0\uae08 \uc774\ub984(`.tmp.<pid>.<seq>.0`)\uc758 \ub0a8\uc758 \ud30c\uc77c\uc744\n84: //!            \uc548 \uac74\ub4dc\ub9b0\ub2e4\n85: //!   \uc9c0\ud0a8\ub2e4   \uac19\uc740 \ud504\ub85c\uc138\uc2a4 \uc548\uc5d0\uc11c \uc784\uc2dc \uc774\ub984\uc744 \ub2e4\uc2dc \uc4f0\uc9c0 \uc54a\ub294\ub2e4(\uacb0\ud568 \u32b1)\n86: //!   \uc9c0\ud0a8\ub2e4   \ub36e\uc5b4\uc4f0\uae30 \uae08\uc9c0\uc5d0\uc11c \ub3d9\uc2dc \uc4f0\uae30 16\uac1c \uc911 \uc815\ud655\ud788 \ud558\ub098\ub9cc \uc774\uae34\ub2e4.\n87: //!            \u2605 \ud655\uc778\uacfc \ud655\uc815\uc774 \uac08\ub77c\uc9c4 1\ucc28 \uad6c\ud604\uc740 \uc5ec\ub7ff\uc774 \uc774\uae38 **\uc218 \uc788\ub2e4** \u2014\n88: //!              \uc2a4\ucf00\uc904\uc5d0 \ub2ec\ub824 \uc788\uc5b4 \ub9e4\ubc88 \uc7a1\ub294\ub2e4\ub294 \ubcf4\uc7a5\uc740 \uc5c6\ub2e4\n89: //!   \uc9c0\ud0a8\ub2e4   \uba3c\uc800 \uc9c0\uc6b0\uc9c0 \uc54a\ub294\ub2e4 \u2014 \uad50\uccb4\ub97c \uc8fc\uc785\ud574 \uc2e4\ud328\uc2dc\ud0a4\uba74 \uc6d0\ubcf8\uc774 \ub0a8\ub294\ub2e4\n90: //!            (\uc7ac\uac80\uc218 13 \uc804\uc5d0\ub294 \"\ucf54\ub4dc\ub85c\ub9cc \uc9c0\ud0a8\ub2e4\" \uc600\ub2e4)\n91: //!   \uc9c0\ud0a8\ub2e4   \uc815\ub9ac \uc2e4\ud328\ub97c \ub9d0\ud55c\ub2e4 \u2014 \uc131\uacf5 \uacbd\ub85c\ub294 \uacbd\uace0\ub97c \ub3cc\ub824\uc8fc\uace0, \uc2e4\ud328\n92: //!            \uacbd\ub85c\ub294 \uc624\ub958\uc5d0 \ub367\ubd99\uc778\ub2e4\n93: //!   ```\n94: //!\n95: //! ```text\n96: //! \uc548 \ud55c\ub2e4  fsync \u2014 \uc774\uac74 \uccb4\ud06c\ud3ec\uc778\ud2b8\uac00 \uc544\ub2c8\ub2e4. \uc804\uc6d0\uc774 \ub04a\uae30\uba74 \ub2e4\uc2dc \ubc1c\uae09\ud558\uba74 \ub41c\ub2e4\n97: //!          (`crates/checkpoint` \uc758 `ADR-026` \uc808\ucc28\ub294 \uadf8\ucabd\uc5d0\uc11c \uc4f4\ub2e4)\n98: //! \uc548 \ud55c\ub2e4  \ub0b4\uc6a9 \uac80\uc99d \u2014 \ubd80\ub974\ub294 \ucabd\uc774 \uc774\ubbf8 \uc11c\uba85\ud558\uace0 \uc790\uae30 \uac80\uc99d\ud588\ub2e4\n99: //! ```\n100: \n101: use std::io::Write;\n102: use std::path::{Path, PathBuf};\n103: use std::sync::atomic::{AtomicU64, Ordering};\n104: \n105: /// \uc784\uc2dc \uc774\ub984\uc758 \ud504\ub85c\uc138\uc2a4 \uc804\uc5ed \ubc88\ud638 \u2014 \ud638\ucd9c\ub9c8\ub2e4 \ud558\ub098\uc529 \ubc1b\ub294\ub2e4(\uacb0\ud568 \u32b1).\n106: static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);\n107: \n108: /// \ud30c\uc77c \uad50\uccb4\u00b7\uc0ad\uc81c. \ud14c\uc2a4\ud2b8\uac00 \uc2e4\ud328\ub97c **\uc8fc\uc785**\ud560 \uc218 \uc788\uac8c \ud55c \ubc8c\ub85c \ubb36\ub294\ub2e4.\n109: ///\n110: /// \u2605 \uad50\uccb4\uc640 \uc0ad\uc81c\ub97c \ub530\ub85c \uc8fc\uc785\ud560 \uc218 \uc788\uc5b4\uc57c \"\uba3c\uc800 \uc9c0\uc6b0\uc9c0 \uc54a\ub294\ub2e4\" \ub97c \uc7b4 \uc218 \uc788\ub2e4\n111: ///   \u2014 \uad50\uccb4\ub9cc \uc2e4\ud328\uc2dc\ud0a4\uace0 \uc0ad\uc81c\ub294 \uc9c4\uc9dc\ub85c \ub450\uba74, \ub300\uc0c1\uc744 \uba3c\uc800 \uc9c0\uc6b0\ub294 \uad6c\ud604\uc740\n112: ///   \uc6d0\ubcf8\uc744 \uc783\ub294\ub2e4.\n113: struct FsOps {\n114:     remove: fn(&Path) -> std::io::Result<()>,\n115:     rename: fn(&Path, &Path) -> std::io::Result<()>,\n116: }\n117: \n118: fn real_remove(path: &Path) -> std::io::Result<()> {\n119:     std::fs::remove_file(path)\n120: }\n121: \n122: fn real_rename(from: &Path, to: &Path) -> std::io::Result<()> {\n123:     std::fs::rename(from, to)\n124: }\n125: \n126: const REAL_FS: FsOps = FsOps {\n127:     remove: real_remove,\n128:     rename: real_rename,\n129: };\n130: \n131: /// \uc0b0\ucd9c\ubb3c\uc744 \uc6d0\uc790\uc801\uc73c\ub85c \ub0b4\ubcf4\ub0b8\ub2e4.\n132: ///\n133: /// `code` \ub294 \uac70\ubd80 \uba54\uc2dc\uc9c0\uc758 \uc811\ub450\uc5b4\ub2e4(`\"SUBMIT_REFUSED\"` \ucc98\ub7fc). \uba85\ub839\ub9c8\ub2e4\n134: /// \ub2e4\ub974\ubbc0\ub85c \uc778\uc790\ub85c \ubc1b\ub294\ub2e4 \u2014 \uba54\uc2dc\uc9c0 \uba38\ub9ac\uc5d0 \uc548\uc815\uc801\uc778 \ucf54\ub4dc\ub97c \ub450\ub294 \uac83\uc740\n135: /// \uc774 \uc800\uc7a5\uc18c\uc758 \uad00\ub840\uc774\uace0, \ud14c\uc2a4\ud2b8\uac00 **\uc904 \uc2dc\uc791**\uc73c\ub85c \uc0ac\uc720\ub97c \ud655\uc778\ud560 \uc218\n136: /// \uc788\uac8c \ud574 \uc900\ub2e4.\n137: ///\n138: /// `what` \uc740 \uc0ac\ub78c\uc774 \uc77d\uc744 \uc0b0\ucd9c\ubb3c \uc774\ub984(`\"Manifest\"`, `\"Grant\"`).\n139: ///\n140: /// \uc131\uacf5\ud558\uba74 `Ok(None)`, \uc131\uacf5\ud588\uc9c0\ub9cc \uc54c\ub9b4 \uac83\uc774 \uc788\uc73c\uba74 `Ok(Some(\uacbd\uace0))` \ub2e4.\n141: pub fn write_new(\n142:     out_path: &str,\n143:     bytes: &[u8],\n144:     overwrite: bool,\n145:     code: &str,\n146:     what: &str,\n147: ) -> Result<Option<String>, String> {\n148:     write_new_with(&REAL_FS, out_path, bytes, overwrite, code, what)\n149: }\n150: \n151: /// \uacbd\uace0\uac00 \uc788\uc73c\uba74 \uc694\uc57d \ub4a4\uc5d0 \ubd99\uc778\ub2e4 \u2014 \ubd80\ub974\ub294 \ucabd\ub9c8\ub2e4 \ub530\ub85c \ucd9c\ub825\ud558\uc9c0 \uc54a\uac8c.\n152: pub fn with_warning(summary: String, warning: Option<String>) -> String {\n153:     match warning {\n154:         Some(warning) => format!(\"{summary}\\n{warning}\"),\n155:         None => summary,\n156:     }\n157: }\n158: \n159: fn write_new_with(\n160:     fs: &FsOps,\n161:     out_path: &str,\n162:     bytes: &[u8],\n163:     overwrite: bool,\n164:     code: &str,\n165:     what: &str,\n166: ) -> Result<Option<String>, String> {\n167:     let target = Path::new(out_path);\n168:     let dir = target.parent().unwrap_or_else(|| Path::new(\".\"));\n169:     let stem = target\n170:         .file_name()\n171:         .map(|n| n.to_string_lossy().to_string())\n172:         .unwrap_or_else(|| \"out\".into());\n173: \n174:     let (tmp, mut file) = create_exclusive_temp(dir, &stem, code, what)?;\n175: \n176:     let write_result = file\n177:         .write_all(bytes)\n178:         .and_then(|()| file.flush())\n179:         .map_err(|e| format!(\"{code}: {what} \uc784\uc2dc \ud30c\uc77c \uc4f0\uae30 \uc2e4\ud328({}): {e}\", tmp.display()));\n180:     drop(file);\n181:     if let Err(e) = write_result {\n182:         return Err(with_cleanup(fs, e, &tmp));\n183:     }\n184: \n185:     if overwrite {\n186:         // \u2605 \uba3c\uc800 \uc9c0\uc6b0\uc9c0 \uc54a\ub294\ub2e4. rename \uc774 \ud55c \ubc88\uc5d0 \uad50\uccb4\ud55c\ub2e4 \u2014 \uc2e4\ud328\ud558\uba74 \uc6d0\ubcf8\uc774 \ub0a8\ub294\ub2e4.\n187:         return (fs.rename)(&tmp, target).map(|()| None).map_err(|e| {\n188:             with_cleanup(\n189:                 fs,\n190:                 format!(\"{code}: {what} \ud30c\uc77c \ud655\uc815 \uc2e4\ud328({out_path}): {e}\"),\n191:                 &tmp,\n192:             )\n193:         });\n194:     }\n195: \n196:     // \u2605 \ub300\uc0c1\uc774 \uc788\uc73c\uba74 \uc5ec\uae30\uc11c \uc2e4\ud328\ud55c\ub2e4 \u2014 \ud655\uc778\uacfc \ud655\uc815\uc774 \ud55c \uc5f0\uc0b0\uc774\ub2e4.\n197:     match std::fs::hard_link(&tmp, target) {\n198:         Ok(()) => match (fs.remove)(&tmp) {\n199:             Ok(()) => Ok(None),\n200:             // \uc0b0\ucd9c\ubb3c\uc740 \uc774\ubbf8 \uc644\uc131\ub410\ub2e4. \uc2e4\ud328\ub85c \ub3cc\ub9ac\uc9c0 \uc54a\uace0 **\ub9d0\ud55c\ub2e4**.\n201:             Err(e) => Ok(Some(format!(\n202:                 \"{code}: \uacbd\uace0 \u2014 \uc784\uc2dc \ub9c1\ud06c {} \ub97c \uc9c0\uc6b0\uc9c0 \ubabb\ud588\ub2e4: {e}. \\\n203:                  \uc0b0\ucd9c\ubb3c\uacfc \uac19\uc740 \ud30c\uc77c\uc744 \uac00\ub9ac\ud0a4\ubbc0\ub85c \uc5ec\uae30\uc5d0 \uc4f0\uba74 \uc0b0\ucd9c\ubb3c\ub3c4 \ubc14\ub010\ub2e4. \\\n204:                  \uc9c0\uc6cc\ub3c4 \uc0b0\ucd9c\ubb3c\uc740 \ub0a8\ub294\ub2e4\",\n205:                 tmp.display()\n206:             ))),\n207:         },\n208:         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(with_cleanup(\n209:             fs,\n210:             format!(\n211:                 \"{code}: OUT_EXISTS \u2014 {out_path} \uc5d0 \ud30c\uc77c\uc774 \uc774\ubbf8 \uc788\ub2e4. \ub36e\uc5b4\uc4f0\ub824\uba74 \uba85\uc2dc\uc801\uc73c\ub85c \ud5c8\uc6a9\ud574\uc57c \ud55c\ub2e4 (\uc798\ubabb\ub41c \uc778\uc790\ub85c \uba40\uca61\ud55c {what} \ub97c \ub0a0\ub9ac\ub294 \uac83\uc744 \ub9c9\ub294\ub2e4)\"\n212:             ),\n213:             &tmp,\n214:         )),\n215:         Err(e) => Err(with_cleanup(\n216:             fs,\n217:             format!(\n218:                 \"{code}: {what} \ud30c\uc77c \ud655\uc815 \uc2e4\ud328({out_path}): {e} \u2014 \uc774 \ud30c\uc77c\uc2dc\uc2a4\ud15c\uc774 hard link \ub97c \uc9c0\uc6d0\ud558\uc9c0 \uc54a\uc744 \uc218 \uc788\ub2e4\"\n219:             ),\n220:             &tmp,\n221:         )),\n222:     }\n223: }\n224: \n225: /// \uc2e4\ud328 \uacbd\ub85c\uc758 \uc815\ub9ac. \uc815\ub9ac\uae4c\uc9c0 \uc2e4\ud328\ud558\uba74 **\ub450 \uc624\ub958\ub97c \ub2e4** \ubcf4\uace0\ud55c\ub2e4 \u2014\n226: /// \ud55c\ucabd\uc744 \ubb35\uc73c\uba74 \ub0a8\uc740 \uc784\uc2dc \ud30c\uc77c\uc758 \uc6d0\uc778\uc744 \ub193\uce5c\ub2e4.\n227: fn with_cleanup(fs: &FsOps, error: String, tmp: &Path) -> String {\n228:     match (fs.remove)(tmp) {\n229:         Ok(()) => error,\n230:         Err(cleanup) if cleanup.kind() == std::io::ErrorKind::NotFound => error,\n231:         Err(cleanup) => format!(\n232:             \"{error} / \uadf8\ub9ac\uace0 \uc784\uc2dc \ud30c\uc77c {} \ub3c4 \uc9c0\uc6b0\uc9c0 \ubabb\ud588\ub2e4: {cleanup}\",\n233:             tmp.display()\n234:         ),\n235:     }\n236: }\n237: \n238: /// \uc784\uc2dc \ud30c\uc77c\uc744 **\ubc30\ud0c0\uc801\uc73c\ub85c** \ub9cc\ub4e0\ub2e4.\n239: ///\n240: /// \u2605 \uc55e \uc2e4\ud589\uc774 \uc8fd\uc5b4 \ub0a8\uae34 \uac19\uc740 \uc774\ub984\uc744 \ub36e\uc9c0 \uc54a\ub294\ub2e4. \uc774\ubbf8 \uc788\uc73c\uba74 \uc774\ub984\uc744\n241: ///   \ubc14\uafd4 \ub2e4\uc2dc \uc2dc\ub3c4\ud55c\ub2e4. \uc2dc\ub3c4 \ud69f\uc218\ub97c \uc81c\ud55c\ud574 \ubb34\ud55c \ub8e8\ud504\ub97c \ub9cc\ub4e4\uc9c0 \uc54a\ub294\ub2e4.\n242: fn create_exclusive_temp(\n243:     dir: &Path,\n244:     stem: &str,\n245:     code: &str,\n246:     what: &str,\n247: ) -> Result<(PathBuf, std::fs::File), String> {\n248:     // \u2605 \uacb0\ud568 \u32b1 \u2014 \uc804\uc5d0\ub294 \ud638\ucd9c\ub9c8\ub2e4 `.tmp.<pid>.0` \ubd80\ud130 \uc2dc\ub3c4\ud574, \uac19\uc740 \ud504\ub85c\uc138\uc2a4\uc758 \ub3d9\uc2dc \uc4f0\uae30\uac00 \uac19\uc740\n249:     //   \uc774\ub984\uc744 \ub450\uace0 \uacbd\uc7c1\ud588\ub2e4. \uadf8 \uacbd\uc7c1 \uc2e4\ud5d8(Windows)\uc5d0\uc11c create_new \uac00 AlreadyExists \uac00 \uc544\ub2c8\ub77c\n250:     //   PermissionDenied \ub97c \ub3cc\ub824\uc8fc\ub294 \uac83\uc744 \uad00\uce21\ud588\ub2e4 \u2014 \uc0ad\uc81c\uc640\uc758 \uc815\ud655\ud55c \uc2dc\uac04 \uad00\uacc4\uc640 \ucee4\ub110 \uc548\uc758 \uc0c1\ud0dc\ub294\n251:     //   \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4(\uacb0\ud568 \u32b4). \ud638\ucd9c\ub9c8\ub2e4 \uc804\uc5ed \ubc88\ud638\ub97c \ubc1b\uc544 \uac19\uc740 \ud504\ub85c\uc138\uc2a4 \uc548\uc5d0\uc11c\ub294 \uac19\uc740 \uc774\ub984\uc744\n252:     //   \uc2dc\ub3c4\ud558\uc9c0 \uc54a\uac8c \ud55c\ub2e4. \uc55e \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc740 \uc544\ub798 create_new \uac00 \ube44\ucf1c \uac04\ub2e4.\n253:     let seq = next_temp_seq(&TEMP_SEQ).ok_or_else(|| {\n254:         format!(\"{code}: {what} \uc784\uc2dc \uc774\ub984 \ubc88\ud638\ub97c \ub2e4 \uc37c\ub2e4 \u2014 \uac19\uc740 \uc774\ub984\uc744 \ub2e4\uc2dc \uc4f0\uc9c0 \uc54a\uc73c\ub824\uace0 \uc2e4\ud328\ud55c\ub2e4\")\n255:     })?;\n256:     create_exclusive_temp_with_seq(dir, stem, seq, code, what)\n257: }\n258: \n259: /// \ud504\ub85c\uc138\uc2a4 \uc804\uc5ed \ubc88\ud638\ub97c \ud558\ub098 \ubc1b\ub294\ub2e4. **\uc18c\uc9c4\ub418\uba74 `None`** \u2014 \ud55c \ubc14\ud034 \ub3cc\uc544 0 \uc73c\ub85c \uac00\uba74 \uba3c\uc800 \ubc1b\uc740\n260: /// \ud638\ucd9c\uacfc \uac19\uc740 \uc774\ub984\uc744 \uc2dc\ub3c4\ud560 \uc218 \uc788\ub2e4(\uacb0\ud568 \u32b4).\n261: fn next_temp_seq(counter: &AtomicU64) -> Option<u64> {\n262:     counter\n263:         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))\n264:         .ok()\n265: }\n266: \n267: /// \uc815\ud574\uc9c4 \ubc88\ud638\ub85c \ud6c4\ubcf4\ub97c \ub9cc\ub4e0\ub2e4. \uc55e \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc740 create_new \uac00 \ube44\ucf1c \uac04\ub2e4.\n268: fn create_exclusive_temp_with_seq(\n269:     dir: &Path,\n270:     stem: &str,\n271:     seq: u64,\n272:     code: &str,\n273:     what: &str,\n274: ) -> Result<(PathBuf, std::fs::File), String> {\n275:     let pid = std::process::id();\n276:     for attempt in 0..64u32 {\n277:         let candidate = dir.join(format!(\"{stem}.tmp.{pid}.{seq}.{attempt}\"));\n278:         match std::fs::OpenOptions::new()\n279:             .write(true)\n280:             .create_new(true)\n281:             .open(&candidate)\n282:         {\n283:             Ok(file) => return Ok((candidate, file)),\n284:             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,\n285:             Err(e) => {\n286:                 return Err(format!(\n287:                     \"{code}: {what} \uc784\uc2dc \ud30c\uc77c\uc744 \ub9cc\ub4e4\uc9c0 \ubabb\ud588\ub2e4({}): {e}\",\n288:                     candidate.display()\n289:                 ))\n290:             }\n291:         }\n292:     }\n293:     Err(format!(\n294:         \"{code}: {what} \uc784\uc2dc \ud30c\uc77c \uc774\ub984\uc744 64\ubc88 \uc2dc\ub3c4\ud574\ub3c4 \ube44\uc5b4 \uc788\ub294 \uac83\uc744 \ubabb \ucc3e\uc558\ub2e4 \u2014 \uc55e\uc120 \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc774 \uc313\uc600\uc744 \uc218 \uc788\ub2e4\"\n295:     ))\n296: }\n297: \n298: #[cfg(test)]\n299: mod tests {\n300:     use super::*;\n301: \n302:     fn failing_rename(_: &Path, _: &Path) -> std::io::Result<()> {\n303:         Err(std::io::Error::other(\"\uc8fc\uc785\ud55c \uad50\uccb4 \uc2e4\ud328\"))\n304:     }\n305: \n306:     fn failing_remove(_: &Path) -> std::io::Result<()> {\n307:         Err(std::io::Error::other(\"\uc8fc\uc785\ud55c \uc0ad\uc81c \uc2e4\ud328\"))\n308:     }\n309: \n310:     fn temps_left(dir: &Path) -> Vec<String> {\n311:         std::fs::read_dir(dir)\n312:             .expect(\"\ubaa9\ub85d\")\n313:             .filter_map(Result::ok)\n314:             .map(|e| e.file_name().to_string_lossy().to_string())\n315:             .filter(|n| n.contains(\".tmp.\"))\n316:             .collect()\n317:     }\n318: \n319:     /// \u2605 \uacb0\ud568 \u246d\u00b7\u2470 \u2014 \uc784\uc2dc \uc774\ub984\uc744 **\ubc30\ud0c0\uc801\uc73c\ub85c** \ub9cc\ub4e0\ub2e4.\n320:     ///\n321:     /// 1\ucc28 \uad6c\ud604\uc740 `<\uc774\ub984>.tmp.<pid>` \uc5d0 `fs::write` \ub85c \uc37c\ub2e4 \u2014 \uac19\uc740 \uc774\ub984\uc774\n322:     /// \uc788\uc73c\uba74 \ub36e\uace0, \ud655\uc815\ud558\uba74\uc11c \uce58\uc6e0\ub2e4. \uc9c0\uae08\uc740 `.tmp.<pid>.<n>` \uc744\n323:     /// `create_new` \ub85c \ub9cc\ub4e0\ub2e4. **\ub450 \uc774\ub984 \ubaa8\ub450**\uc5d0 \ub0a8\uc758 \ud30c\uc77c\uc744 \ubbf8\ub9ac \ub450\uace0 \ub458 \ub2e4\n324:     /// \ub0a8\ub294\uc9c0 \ubcf8\ub2e4.\n325:     ///\n326:     /// \u2605\u2605 \uc7ac\uac80\uc218 13 \u2014 \ucc98\uc74c\uc5d4 `.0` \ud558\ub098\ub9cc \ub480\ub2e4. 1\ucc28 \uad6c\ud604\uc758 **\uc2e4\uc81c \uc774\ub984**\uc744\n327:     ///   \uc548 \ub46c\uc11c, 1\ucc28 \uad6c\ud604\uc73c\ub85c \ub418\ub3cc\ub9ac\uba74 \uadf8 \uad6c\ud604\uc740 \ub2e4\ub978 \uc774\ub984\uc5d0 \uc4f0\uace0 `.0` \uc744\n328:     ///   \uc548 \uac74\ub4dc\ub824 **\ud14c\uc2a4\ud2b8\uac00 \ud1b5\uacfc\ud588\ub2e4.** \ub0b4 \ubba4\ud14c\uc774\uc158\uc740 \uc774\ub984\uc740 \uadf8\ub300\ub85c \ub450\uace0\n329:     ///   \uc0dd\uc131 \ubc29\uc2dd\ub9cc \ubc14\uafd4\uc11c \uadf8 \ucc28\uc774\ub97c \ubabb \ubd24\ub2e4.\n330:     #[test]\n331:     fn leftover_temps_under_both_the_old_and_new_names_are_kept() {\n332:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n333:         let target = dir.path().join(\"x.pb\");\n334:         let pid = std::process::id();\n335:         let old_name = dir.path().join(format!(\"x.pb.tmp.{pid}\"));\n336:         let new_name = dir.path().join(format!(\"x.pb.tmp.{pid}.0\"));\n337:         std::fs::write(&old_name, b\"sentinel-old\").expect(\"\uc794\uc5ec \ud30c\uc77c\");\n338:         std::fs::write(&new_name, b\"sentinel-new\").expect(\"\uc794\uc5ec \ud30c\uc77c\");\n339: \n340:         let warning = write_new(target.to_str().unwrap(), b\"new\", false, \"T\", \"X\").expect(\"\uc4f0\uae30\");\n341: \n342:         assert_eq!(warning, None);\n343:         assert_eq!(std::fs::read(&target).expect(\"\uc0b0\ucd9c\ubb3c\"), b\"new\");\n344:         assert_eq!(\n345:             std::fs::read(&old_name).expect(\"\u2605 1\ucc28 \uad6c\ud604 \uc774\ub984\uc758 \ub0a8\uc758 \ud30c\uc77c\uc774 \uc0ac\ub77c\uc84c\ub2e4\"),\n346:             b\"sentinel-old\"\n347:         );\n348:         assert_eq!(\n349:             std::fs::read(&new_name).expect(\"\u2605 \uc9c0\uae08 \uc774\ub984\uc758 \ub0a8\uc758 \ud30c\uc77c\uc774 \uc0ac\ub77c\uc84c\ub2e4\"),\n350:             b\"sentinel-new\"\n351:         );\n352:     }\n353: \n354:     /// \u2605 \uacb0\ud568 \u2470 \u2014 **\uba3c\uc800 \uc9c0\uc6b0\uc9c0 \uc54a\ub294\ub2e4.** \uad50\uccb4\uac00 \uc2e4\ud328\ud558\uba74 \uc6d0\ubcf8\uc774 \uadf8\ub300\ub85c \ub0a8\ub294\ub2e4.\n355:     ///\n356:     /// 1\ucc28 \uad6c\ud604\uc740 `remove_file(target)` \ub4a4 `rename` \ud588\ub2e4. \uad50\uccb4\uac00 \uc2e4\ud328\ud558\uba74\n357:     /// \uc6d0\ubcf8\ub3c4 \uc0c8\uac83\ub3c4 \uc5c6\ub2e4. \uc5ec\uae30\uc11c\ub294 **\uad50\uccb4\ub9cc** \uc8fc\uc785\ud574 \uc2e4\ud328\uc2dc\ud0a4\uace0 \uc0ad\uc81c\ub294\n358:     /// \uc9c4\uc9dc\ub85c \ub454\ub2e4 \u2014 \ub300\uc0c1\uc744 \uba3c\uc800 \uc9c0\uc6b0\ub294 \uad6c\ud604\uc740 \uc774 \ud14c\uc2a4\ud2b8\uc5d0\uc11c \uc6d0\ubcf8\uc744 \uc783\ub294\ub2e4.\n359:     #[test]\n360:     fn a_failed_replace_leaves_the_original_in_place() {\n361:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n362:         let target = dir.path().join(\"x.pb\");\n363:         std::fs::write(&target, b\"original\").expect(\"\uc6d0\ubcf8\");\n364:         let fs = FsOps {\n365:             remove: real_remove,\n366:             rename: failing_rename,\n367:         };\n368: \n369:         let error = write_new_with(&fs, target.to_str().unwrap(), b\"new\", true, \"T\", \"X\")\n370:             .expect_err(\"\uad50\uccb4\uac00 \uc2e4\ud328\ud588\ub294\ub370 \uc131\uacf5\uc774\ub77c \ud588\ub2e4\");\n371: \n372:         assert!(error.contains(\"\uc8fc\uc785\ud55c \uad50\uccb4 \uc2e4\ud328\"), \"{error}\");\n373:         assert_eq!(\n374:             std::fs::read(&target).expect(\"\u2605 \uc6d0\ubcf8\uc774 \uc0ac\ub77c\uc84c\ub2e4\"),\n375:             b\"original\"\n376:         );\n377:         assert!(temps_left(dir.path()).is_empty(), \"\uc784\uc2dc \ud30c\uc77c\uc774 \ub0a8\uc558\ub2e4\");\n378:     }\n379: \n380:     /// \u2605 \uacb0\ud568 \u2470 \u2014 hard link \ub4a4 \uc784\uc2dc \uc774\ub984\uc744 \ubabb \uc9c0\uc6b0\uba74 **\uc131\uacf5\uc774\ub418 \uacbd\uace0\ub97c\n381:     /// \ub3cc\ub824\uc900\ub2e4.** \ucd9c\ub825\ud558\uc9c0 \uc54a\ub294\ub2e4(`eprintln!` \uc740 \ud328\ub2c9\ud560 \uc218 \uc788\ub2e4).\n382:     #[test]\n383:     fn a_leftover_link_is_reported_back_not_printed() {\n384:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n385:         let target = dir.path().join(\"x.pb\");\n386:         let fs = FsOps {\n387:             remove: failing_remove,\n388:             rename: real_rename,\n389:         };\n390: \n391:         let warning = write_new_with(&fs, target.to_str().unwrap(), b\"new\", false, \"T\", \"X\")\n392:             .expect(\"\uc0b0\ucd9c\ubb3c\uc740 \ud655\uc815\ub410\ub2e4 \u2014 \uc2e4\ud328\ub85c \ub3cc\ub9ac\uba74 \uc548 \ub41c\ub2e4\")\n393:             .expect(\"\ubabb \uc9c0\uc6b4 \uc784\uc2dc \ub9c1\ud06c\ub97c \ub9d0\ud558\uc9c0 \uc54a\uc558\ub2e4\");\n394: \n395:         assert!(\n396:             warning.contains(\"\uc784\uc2dc \ub9c1\ud06c\") && warning.contains(\"\uc8fc\uc785\ud55c \uc0ad\uc81c \uc2e4\ud328\"),\n397:             \"{warning}\"\n398:         );\n399:         assert_eq!(std::fs::read(&target).expect(\"\uc0b0\ucd9c\ubb3c\"), b\"new\");\n400:         assert_eq!(\n401:             with_warning(\"\uc694\uc57d\".into(), Some(warning.clone())),\n402:             format!(\"\uc694\uc57d\\n{warning}\")\n403:         );\n404:     }\n405: \n406:     /// \u2605 \uacb0\ud568 \u2470 \u2014 \uc2e4\ud328 \uacbd\ub85c\uc5d0\uc11c \uc815\ub9ac\uae4c\uc9c0 \uc2e4\ud328\ud558\uba74 **\ub450 \uc624\ub958\ub97c \ub2e4** \ubcf4\uace0\ud55c\ub2e4.\n407:     #[test]\n408:     fn a_failed_cleanup_is_added_to_the_error() {\n409:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n410:         let target = dir.path().join(\"x.pb\");\n411:         std::fs::write(&target, b\"original\").expect(\"\uc6d0\ubcf8\");\n412:         let fs = FsOps {\n413:             remove: failing_remove,\n414:             rename: failing_rename,\n415:         };\n416: \n417:         let error = write_new_with(&fs, target.to_str().unwrap(), b\"new\", true, \"T\", \"X\")\n418:             .expect_err(\"\uad50\uccb4\uac00 \uc2e4\ud328\ud588\ub294\ub370 \uc131\uacf5\uc774\ub77c \ud588\ub2e4\");\n419: \n420:         assert!(\n421:             error.contains(\"\uc8fc\uc785\ud55c \uad50\uccb4 \uc2e4\ud328\") && error.contains(\"\uc8fc\uc785\ud55c \uc0ad\uc81c \uc2e4\ud328\"),\n422:             \"\ub450 \uc624\ub958 \uc911 \ud558\ub098\ub97c \ubb35\uc5c8\ub2e4: {error}\"\n423:         );\n424:         assert_eq!(std::fs::read(&target).expect(\"\uc6d0\ubcf8\"), b\"original\");\n425:     }\n426: \n427:     /// \u2605 \uacb0\ud568 \u246d \u2014 \ub36e\uc5b4\uc4f0\uae30 \uae08\uc9c0\uc5d0\uc11c **\ub3d9\uc2dc\uc5d0** \uc4f0\uba74 \uc815\ud655\ud788 \ud558\ub098\ub9cc \uc774\uae34\ub2e4.\n428:     ///\n429:     /// 1\ucc28 \uad6c\ud604\uc740 `exists()` \ub85c \ubcf4\uace0 `rename` \ud588\ub2e4. \ub458 \uc0ac\uc774\uc5d0 \ub2e4\ub978 \uc4f0\uae30\uac00\n430:     /// \ub07c\uba74 **\ub098\uc911 \uac83\uc774 \uc55e\uc758 \uac83\uc744 \ub9d0\uc5c6\uc774 \ub36e\ub294\ub2e4.** \uc21c\ucc28\ub85c \ub450 \ubc88 \uc4f0\ub294 \uae30\uc874\n431:     /// \ud14c\uc2a4\ud2b8\ub294 \uadf8 \uad6c\ud604\ub3c4 \ud1b5\uacfc\uc2dc\ucf30\ub2e4. \uc5ec\uae30\uc11c\ub294 16\uac1c\ub97c \ud55c\uaebc\ubc88\uc5d0 \ud480\uc5b4 \ub193\ub294\ub2e4.\n432:     ///\n433:     /// \u2605 1\ucc28 \uad6c\ud604\uc740 \uc5ec\ub7ff\uc774 \uc774\uae38 **\uc218 \uc788\ub2e4** \u2014 \uc2a4\ub808\ub4dc\uac00 \ucc28\ub840\ub85c \ub3cc\uba74 \ud558\ub098\ub9cc\n434:     ///   \uc774\uae34\ub2e4(\uc7ac\uac80\uc218 13). \ubba4\ud14c\uc774\uc158\uc73c\ub85c 3\ud68c \uc911 3\ud68c \uc7a1\uc558\uc9c0\ub9cc \"\ub298 \uc7a1\ub294\ub2e4\" \uc758\n435:     ///   \uc99d\uba85\uc740 \uc544\ub2c8\ub2e4. \uc62c\ubc14\ub978 \uad6c\ud604\uc740 \ub9e4\ubc88 \ud1b5\uacfc\ud574\uc57c \ud55c\ub2e4.\n436:     #[test]\n437:     fn concurrent_writers_without_overwrite_leave_exactly_one_winner() {\n438:         const WRITERS: u8 = 16;\n439:         for round in 0..20 {\n440:             let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n441:             let target = dir.path().join(\"race.pb\").to_str().unwrap().to_string();\n442:             let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS as usize));\n443:             let handles: Vec<_> = (0..WRITERS)\n444:                 .map(|i| {\n445:                     let barrier = barrier.clone();\n446:                     let target = target.clone();\n447:                     std::thread::spawn(move || {\n448:                         barrier.wait();\n449:                         (i, write_new(&target, &[i; 64], false, \"T\", \"X\"))\n450:                     })\n451:                 })\n452:                 .collect();\n453:             let results: Vec<(u8, Result<Option<String>, String>)> =\n454:                 handles.into_iter().map(|h| h.join().expect(\"\uc2a4\ub808\ub4dc\")).collect();\n455: \n456:             let winners: Vec<u8> = results\n457:                 .iter()\n458:                 .filter(|(_, r)| r.is_ok())\n459:                 .map(|(i, _)| *i)\n460:                 .collect();\n461:             assert_eq!(winners.len(), 1, \"round {round}: \uc774\uae34 \uc4f0\uae30\uac00 {winners:?} \ub2e4\");\n462:             for (i, result) in &results {\n463:                 if let Err(e) = result {\n464:                     assert!(e.contains(\"OUT_EXISTS\"), \"round {round} writer {i}: {e}\");\n465:                 }\n466:             }\n467:             assert_eq!(\n468:                 std::fs::read(&target).expect(\"\uc0b0\ucd9c\ubb3c\"),\n469:                 vec![winners[0]; 64],\n470:                 \"round {round}: \uc0b0\ucd9c\ubb3c\uc774 \uc774\uae34 \uc4f0\uae30\uc758 \uac83\uc774 \uc544\ub2c8\ub2e4\"\n471:             );\n472:             let left = temps_left(dir.path());\n473:             assert!(left.is_empty(), \"round {round}: \uc784\uc2dc \ud30c\uc77c\uc774 \ub0a8\uc558\ub2e4 {left:?}\");\n474:         }\n475:     }\n476: \n477:     /// \u2605 \uacb0\ud568 \u32b1 \u2014 \uac19\uc740 \ud504\ub85c\uc138\uc2a4 \uc548\uc5d0\uc11c \uc784\uc2dc \uc774\ub984\uc744 **\ub2e4\uc2dc \uc4f0\uc9c0 \uc54a\ub294\ub2e4**.\n478:     ///   \uc804\uc5d0\ub294 \ud638\ucd9c\ub9c8\ub2e4 `.tmp.<pid>.0` \ubd80\ud130 \uc2dc\ub3c4\ud574, \ubc29\uae08 \uc9c0\uc6b4 \uc774\ub984\uc744 \ub2e4\uc74c \ud638\ucd9c\uc774 \uace7\ubc14\ub85c \ub2e4\uc2dc \uc37c\ub2e4 \u2014\n479:     ///   \ub3d9\uc2dc \uc4f0\uae30\uac00 \uac19\uc740 \uc774\ub984\uc744 \ub450\uace0 \ub9cc\ub4e4\uace0 \uc9c0\uc6b0\uae30\ub97c \ubc88\uac08\uc544 \ud588\ub2e4.\n480:     #[test]\n481:     fn a_temp_name_is_not_reused_within_a_process() {\n482:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n483:         let (first, file) = create_exclusive_temp(dir.path(), \"x.pb\", \"T\", \"X\").expect(\"\uccab \uc784\uc2dc\");\n484:         drop(file);\n485:         std::fs::remove_file(&first).expect(\"\uc9c0\uc6b0\uae30\");\n486:         let (second, file) = create_exclusive_temp(dir.path(), \"x.pb\", \"T\", \"X\").expect(\"\ub458\uc9f8 \uc784\uc2dc\");\n487:         drop(file);\n488:         assert_ne!(first, second, \"\uc9c0\uc6b4 \uc784\uc2dc \uc774\ub984\uc744 \ub2e4\uc2dc \uc37c\ub2e4 \u2014 \ub3d9\uc2dc \uc4f0\uae30\uac00 \uac19\uc740 \uc774\ub984\uc744 \ub450\uace0 \ubd80\ub52a\ud78c\ub2e4\");\n489:     }\n490: \n491:     /// \u2605 \uacb0\ud568 \u32b1 \u00b7 \u32b4 \u2014 **\uc9c0\uae08 \uc774\ub984**(`.tmp.<pid>.<seq>.0`)\uc758 \ub0a8\uc758 \ud30c\uc77c\ub3c4 \uc548 \uac74\ub4dc\ub9b0\ub2e4.\n492:     ///   \ubc88\ud638\ub97c \ud14c\uc2a4\ud2b8\uac00 **\uc815\ud574\uc11c** \uc900\ub2e4 \u2014 \uc804\uc5ed \ubc88\ud638\ub97c \uc77d\uae30\ub9cc \ud558\ub358 \uccab \ud310\uc740 \ub2e4\ub978 \ud14c\uc2a4\ud2b8\uac00 \ubc88\ud638\ub97c\n493:     ///   \uac00\uc838\uac00\uba74 \ucda9\ub3cc \uc5c6\uc774 \ud1b5\uacfc\ud560 \uc218 \uc788\uc5c8\ub2e4(\uc7ac\uac80\uc218 43).\n494:     #[test]\n495:     fn leftover_temps_under_the_current_name_are_kept() {\n496:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n497:         let pid = std::process::id();\n498:         let seq = 7_777;\n499:         let sentinel = dir.path().join(format!(\"y.pb.tmp.{pid}.{seq}.0\"));\n500:         std::fs::write(&sentinel, b\"sentinel\").expect(\"\uc794\uc5ec \ud30c\uc77c\");\n501: \n502:         let (made, file) =\n503:             create_exclusive_temp_with_seq(dir.path(), \"y.pb\", seq, \"T\", \"X\").expect(\"\uc784\uc2dc \uc0dd\uc131\");\n504:         drop(file);\n505: \n506:         assert_eq!(\n507:             made,\n508:             dir.path().join(format!(\"y.pb.tmp.{pid}.{seq}.1\")),\n509:             \"\ub0a8\uc740 \ud30c\uc77c\uacfc \ubd80\ub52a\ud78c \ub4a4 \ub2e4\uc74c \ud6c4\ubcf4\ub85c \ub118\uc5b4\uac00\uc9c0 \uc54a\uc558\ub2e4\"\n510:         );\n511:         assert_eq!(std::fs::read(&sentinel).expect(\"\u2605 \ub0a8\uc758 \ud30c\uc77c\uc774 \uc0ac\ub77c\uc84c\ub2e4\"), b\"sentinel\");\n512:     }\n513: \n514:     /// \u2605 \uacb0\ud568 \u32b4 \u2014 \ubc88\ud638\uac00 \uc18c\uc9c4\ub418\uba74 0 \uc73c\ub85c \ub3cc\uc9c0 \uc54a\uace0 \uc2e4\ud328\ud55c\ub2e4.\n515:     #[test]\n516:     fn the_temp_sequence_fails_instead_of_wrapping() {\n517:         let counter = AtomicU64::new(u64::MAX - 1);\n518:         assert_eq!(next_temp_seq(&counter), Some(u64::MAX - 1));\n519:         assert_eq!(next_temp_seq(&counter), None, \"\ub9c8\uc9c0\ub9c9 \ubc88\ud638 \ub4a4\uc5d0 \ub418\ub3cc\uc544\uac14\ub2e4\");\n520:         assert_eq!(next_temp_seq(&counter), None);\n521:     }\n522: }"
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10411:   “해당 호출의 `stem·pid·seq`에 대한 후보 0~63이 모두 `AlreadyExists`를 반환하면 실패한다”로 좁혀야 합니다. 실행 관측이 아니라 코드에서 도출한 반례입니다.
+docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10450:   “해당 호출의 `stem·pid·seq`에 대한 후보 0~63이 모두 `AlreadyExists`를 반환하면 실패한다”로 좁혀야 합니다. 실행 관측이 아니라 코드에서 도출한 반례입니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'crates/cli/src/out_file.rs'; "'$s=Get-Content -LiteralPath $p -Encoding UTF8; for($i=0;$i -lt 101;$i++){ '"'{0}:{1}' -f ("'$i+1),$s[$i] }; for($i=243;$i -lt 299;$i++){ '"'{0}:{1}' -f ("'$i+1),$s[$i] }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md'; "'$s=Get-Content -LiteralPath $p -Encoding UTF8; $show=$false; for($i=0;$i -lt $s.Count;$i++){ if($s[$i] -match '"'"'^# 결함 ㊵'"'){"'$show=$true}; if($show){ if($s[$i] -match '"'"'^# '"' -and "'$s[$i] -notmatch '"'"'^# 결함 ㊵'"'){break}; '{0}:{1}' -f ("'$i+1),$s[$i] } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'docs/history/HISTORY.md'; "'$s=Get-Content -LiteralPath $p -Encoding UTF8; $found=$false; for($i=0;$i -lt $s.Count;$i++){if($s[$i] -match '"'"'^## '"'){if("'$found){break};$found=$true}; '"'{0}:{1}' -f ("'$i+1),$s[$i]}' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$p='"'docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt'; "'$s=Get-Content -LiteralPath $p -Encoding UTF8; for($i=10390;$i -lt $s.Count;$i++){ '"'{0}:{1}' -f ("'$i+1),$s[$i] }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 3288ms:
+1://! ������ ���⹰�� ���Ϸ� �������� ? **���� ������ ������ �����߸��� �ʴ´�.**
+2://!
+3://! # �� �� ����� �ֳ�
+4://!
+5://! �ڡ� 2026-09-10 ���� �˼��� `issue-grant` ���� ã�� �����̴�. �� ������
+6://!   `std::fs::write(out_path, ..)` �� �ٷ� ���⹰�� �����°�, �װ��� ��
+7://!   ������ �Ѳ����� �߸��ߴ�:
+8://!
+9://!   1. **���� ������ ������ ������.** ��ڰ� ���� Ű�� �߸� �ָ� ��
+10://!      ������ �װ��� ���� ���ϰ� ������ �����鼭 **�����ϴ� ���⹰��
+11://!      �� ���� ������ �ٲ� ���´�.**
+12://!   2. **���� �ڸ��� ����.** �߰��� �����ϸ� ���� ������ **�߸� ä** ���´�.
+13://!      `CLAUDE.md` ��0.3 �� ����ϴ� ����̴�.
+14://!
+15://! �ڡ� **�׸��� `submit` �� �Ȱ��� ���� �־���.** ���ʸ� ��ġ�� ����
+16://!   ����� �ٸ� ���� �ٽ� �߰��Ѵ� ? ���ʿ� �� ������ �� ���� ����
+17://!   ����� �װ��̴�. �׷��� ����̸� �� ���� �д�.
+18://!
+19://! # �ڡ� 1�� ������ ���ڶ��� ? ��˼��� ���� �� ã�Ҵ� (2026-09-10)
+20://!
+21://! ```text
+22://! �� ���� Ȯ�ΰ� Ȯ�� ���̰� ������ �־���
+23://!    `target.exists()` �� ���� ���� `rename` �ߴ�. �� ���̿� �ٸ�
+24://!    ���μ����� ����� **������ ���´�** ? �������� �ٷ� �� ���̴�
+25://! �� �ӽ� ������ ��Ÿ������ �� �������
+26://!    `<�̸�>.tmp.<pid>` �� `fs::write` �� �������. ���� �̸��� �̹�
+27://!    ������(�� ������ �׾� ���� ��) �װ��� ������
+28://! �� ����⿡�� **������ ���� ������**
+29://!    `remove_file` �� `rename` ���̿� **�ƹ��͵� ���� â**�� �����.
+30://!    �� ���� ���μ����� ������ ������ ���͵� ����
+31://! ```
+32://!
+33://! # ���� ��� �ϳ�
+34://!
+35://! ```text
+36://! �ӽ� ����   create_new(true) �� **��Ÿ ����**�Ѵ�. �̹� ������ �̸���
+37://!             �ٲ� �ٽ� �õ��Ѵ� ? ���� �ӽ� ������ ���� �ʴ´�.
+38://!             �̸��� `<���>.tmp.<pid>.<seq>.<n>` ? seq �� ȣ�⸶�� �޴� ���μ���
+39://!             ���� ��ȣ��, ���� ���μ����� ���� ���Ⳣ�� ���� �̸��� �ΰ�
+40://!             �ε����� �ʴ´�(���� ?). ��ȣ�� �����Ǹ� 0 ���� ���� �ʰ�
+41://!             �����Ѵ�(���� ?)
+42://! ����� X  temp �� target �� **hard_link** �Ѵ�. ����� ������
+43://!             ��ũ�� �����Ѵ� ? **Ȯ�ΰ� Ȯ���� �� ���� ������ ����**�̴�
+44://! ����� O  `fs::rename` �� ������ �ٲ۴�. **���� ������ �ʴ´�** ?
+45://!             �׷��� ��ü�� �����ϸ� ���� ������ �״�� ���´�
+46://! ```
+47://!
+48://! �ڡ� 2026-09-10 ��˼� 11 ? ���� "std �� rename �� �� �÷��� �� �����
+49://!   ���������� ��ü�Ѵ�" �� ��������. **���� ������ �Ѿ���.** std ������
+50://!   ��� ���Ͻý��ۿ��� ���ڼ��� ������� �ʰ�, Windows ������
+51://!   `MoveFileExW` ���� �ٸ� ��ε� ����. �� ����� ���� �� �ִ� ����
+52://!   "���� ������ �����Ƿ� **�����ϸ� ������ ���´�**" ������.
+53://!
+54://! �� �� hard_link �ΰ� ? Rust ǥ�� ���̺귯���� **����� �ʴ� rename ��
+55://!   ����.** `rename_noreplace` �� ���� ���� �ܰ��(rust-lang/libs-team#131).
+56://!   �÷������δ� �ִ� ? Linux `renameat2(RENAME_NOREPLACE)`, macOS
+57://!   `renameatx_np(RENAME_EXCL)`, Windows �� `MOVEFILE_REPLACE_EXISTING` ��
+58://!   ���� �װ� �⺻ �����̴�. ǥ�ظ����� �� ������ ��� ����� hard_link ��
+59://!   ? `link()` �� EEXIST ��, `CreateHardLinkW` �� ���з� ������.
+60://!
+61://! �� �Ѱ踦 ���� �д� ? hard_link �� **�������� �ʴ� ���Ͻý���**(FAT32,
+62://!   �Ϻ� ��Ʈ��ũ ����Ʈ)������ �� ��ΰ� �����Ѵ�. �׶��� ������
+63://!   �״�� �ö󰡰� ���⹰�� �� �����. **������ ���� �ͺ��� ����.**
+64://!
+65://! �� �Ѱ� �� ��(��˼� 11):
+66://!   ```text
+67://!   ���� ��ũ   hard_link �� �ӽ� �̸��� �� ����� **���⹰�� ���� ������
+68://!               ����Ű�� ��ũ**�� ���´�. �� ��ũ�� ���� ���� ���⹰��
+69://!               �ٲ��. �� ���� ����� **����� �����ش�**
+70://!   64 �ĺ�     �� ȣ���� ���� ��� �� pid �� seq �� �ĺ� 0~63 �� ��� �̹� ������
+71://!               target �� ��� �����Ѵ�(���� ? ? ������ seq ���� ���� "���� �̸� ��
+72://!               ���� pid �� �ܿ��� 64����" �̶� ������). ���뼺 �Ѱ��̰� �����
+73://!               ��δ� �ƴϴ�
+74://!   ```
+75://!
+76://! �ڡ� **����� ���⼭ ������� �ʴ´�**(��˼� 13). ó���� `eprintln!` ����
+77://!   ����µ�, �� ��ũ�δ� stderr ���Ⱑ �����ϸ� **�д�**�Ѵ�. ���⹰�� �̹�
+78://!   Ȯ���ƴµ� ��� ������ ���з� ������ "�� ������ ���з� ������ �ʴ´�"
+79://!   �� ����� ������. ����� ��ȯ���� ���, �θ��� ���� **�ڱ� ��࿡**
+80://!   �ƴ´�([`with_warning`]).
+81://!
+82://! �� �׽�Ʈ�� ��Ű�� �Ͱ� �� ��Ű�� ��:
+83://!   ```text
+84://!   ��Ų��   �ӽ� �̸� ��Ÿ ���� ? 1�� ������ �̸�(`.tmp.<pid>`) �� 2�� ������
+85://!            �̸�(`.tmp.<pid>.0`) �� ���� �̸�(`.tmp.<pid>.<seq>.0`)�� ���� ������
+86://!            �� �ǵ帰��
+87://!   ��Ų��   ���� ���μ��� �ȿ��� �ӽ� �̸��� �ٽ� ���� �ʴ´�(���� ?)
+88://!   ��Ų��   ����� �������� ���� ���� 16�� �� ��Ȯ�� �ϳ��� �̱��.
+89://!            �� Ȯ�ΰ� Ȯ���� ������ 1�� ������ ������ �̱� **�� �ִ�** ?
+90://!              �����ٿ� �޷� �־� �Ź� ��´ٴ� ������ ����
+91://!   ��Ų��   ���� ������ �ʴ´� ? ��ü�� ������ ���н�Ű�� ������ ���´�
+92://!            (��˼� 13 ������ "�ڵ�θ� ��Ų��" ����)
+93://!   ��Ų��   ���� ���и� ���Ѵ� ? ���� ��δ� ����� �����ְ�, ����
+94://!            ��δ� ������ �����δ�
+95://!   ```
+96://!
+97://! ```text
+98://! �� �Ѵ�  fsync ? �̰� üũ����Ʈ�� �ƴϴ�. ������ ����� �ٽ� �߱��ϸ� �ȴ�
+99://!          (`crates/checkpoint` �� `ADR-026` ������ ���ʿ��� ����)
+100://! �� �Ѵ�  ���� ���� ? �θ��� ���� �̹� �����ϰ� �ڱ� �����ߴ�
+101://! ```
+244:fn create_exclusive_temp(
+245:    dir: &Path,
+246:    stem: &str,
+247:    code: &str,
+248:    what: &str,
+249:) -> Result<(PathBuf, std::fs::File), String> {
+250:    // �� ���� ? ? ������ ȣ�⸶�� `.tmp.<pid>.0` ���� �õ���, ���� ���μ����� ���� ���Ⱑ ����
+251:    //   �̸��� �ΰ� �����ߴ�. �� ���� ����(Windows)���� create_new �� AlreadyExists �� �ƴ϶�
+252:    //   PermissionDenied �� �����ִ� ���� �����ߴ� ? �������� ��Ȯ�� �ð� ����� Ŀ�� ���� ���´�
+253:    //   Ȯ������ �ʾҴ�(���� ?). ȣ�⸶�� ���� ��ȣ�� �޾� ���� ���μ��� �ȿ����� ���� �̸���
+254:    //   �õ����� �ʰ� �Ѵ�. �� ������ ���� ������ �Ʒ� create_new �� ���� ����.
+255:    let seq = next_temp_seq(&TEMP_SEQ).ok_or_else(|| {
+256:        format!("{code}: {what} �ӽ� �̸� ��ȣ�� �� ��� ? ���� �̸��� �ٽ� ���� �������� �����Ѵ�")
+257:    })?;
+258:    create_exclusive_temp_with_seq(dir, stem, seq, code, what)
+259:}
+260:
+261:/// ���μ��� ���� ��ȣ�� �ϳ� �޴´�. **�����Ǹ� `None`** ? �� ���� ���� 0 ���� ���� ���� ����
+262:/// ȣ��� ���� �̸��� �õ��� �� �ִ�(���� ?).
+263:fn next_temp_seq(counter: &AtomicU64) -> Option<u64> {
+264:    counter
+265:        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+266:        .ok()
+267:}
+268:
+269:/// ������ ��ȣ�� �ĺ��� �����. �� ������ ���� ������ create_new �� ���� ����.
+270:fn create_exclusive_temp_with_seq(
+271:    dir: &Path,
+272:    stem: &str,
+273:    seq: u64,
+274:    code: &str,
+275:    what: &str,
+276:) -> Result<(PathBuf, std::fs::File), String> {
+277:    let pid = std::process::id();
+278:    for attempt in 0..64u32 {
+279:        let candidate = dir.join(format!("{stem}.tmp.{pid}.{seq}.{attempt}"));
+280:        match std::fs::OpenOptions::new()
+281:            .write(true)
+282:            .create_new(true)
+283:            .open(&candidate)
+284:        {
+285:            Ok(file) => return Ok((candidate, file)),
+286:            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+287:            Err(e) => {
+288:                return Err(format!(
+289:                    "{code}: {what} �ӽ� ������ ������ ���ߴ�({}): {e}",
+290:                    candidate.display()
+291:                ))
+292:            }
+293:        }
+294:    }
+295:    Err(format!(
+296:        "{code}: {what} �ӽ� ���� �̸��� 64�� �õ��ص� ��� �ִ� ���� �� ã�Ҵ� ? �ռ� ������ ���� ������ �׿��� �� �ִ�"
+297:    ))
+298:}
+299:
+
+ succeeded in 3461ms:
+1681:# ���� ? ? out_file ��� ������ "�ܿ� 64���� ����" ���� seq ������ ������ (��˼� 44)
+1682:
+1683:�� 43 �� ���� ������. ��ȣ �Ҵ� �� �ĺ� ���� �и����� ���� �ݷʵ� ã�� ���ߴٰ� �ߴ�.
+1684:
+1685:## 1. ��ġ �� 2. ���� (��˼� 44)
+1686:```text
+1687:crates/cli/src/out_file.rs:70  "64 �ĺ�  ���� �̸������� pid �� �ܿ��� 64���� target �� ��� �����Ѵ�"
+1688:  -> �ĺ����� seq �� ����. `x.pb.tmp.<pid>.10.0~63` �� ���� �־ �̹� ȣ���� seq=11 �� ������
+1689:     `.11.0` �� �����. ���� ������ "�� ȣ���� ��� �� pid �� seq �ĺ� 0~63 �� ��� �̹� ���� ��" ��
+1690:```
+1691:
+1692:## 4. ���赵
+1693:- [x] ���� �ŷڵ� ����(���뼺 �Ѱ踦 �������� �а� ����)
+1694:
+1695:## 6. ��ġ
+1696:- [x] ��ġ�� ���� ���� (��˼� 44 ����)
+1697:- [x] ������ �� ȣ���� ��� �� pid �� seq �ĺ� 0~63 ���� ������(�ּ��� ? �ǵ����� �����ϴ� �׽�Ʈ�� ����)
+1698:
+1699:---
+1700:
+
+ succeeded in 3459ms:
+1:# �۾� �̷�
+2:
+3:> **���� ����** �� �� �׸��� ��¥��(�Ӹ����� ���� ���� �ʴ´� ? ������
+4:> ������ ������ �� ���� **���ľ�** �ϰ�, �װ� �� ������ �߰�-����
+5:> ��Ģ�� �������� �ε�ģ��) �� **����** ����(�߰���, ���� ����) ��
+6:> **¦** [`����_�̷�.md`](����_�̷�.md) �� ���� ���� **���� ��ȣ ��**����
+7:> ����. �� ������ **��¥ ��**�̴� �� **�˻�** `check_docs.py` ��
+8:> git ���� append-only �� Ȯ���Ѵ�
+9:
+10:> �� **�߰��� �Ѵ�. ���� ����� �������� �ʴ´�.**
+11:> �ֽ��� ���� ������ **����**���� �״´�.
+12:
+13:����:
+14:
+15:```markdown
+16:## YYYY-MM-DD HH:mm ? <�۾� ����>
+17:- ��ȹ: <docs/plans/ ������> �� <�ܰ�>
+18:- ��Ʈ��: <RULE.md ��4.1 �� ��Ʈ����>
+19:- ����: <�ٽ� ���� ���>
+20:- ����: <����/���� + ���>
+21:- ����Ʈ: <docs/reports/ ���ϸ�>
+22:```
+23:
+24:---
+25:
+26:---
+27:
+
+ succeeded in 3682ms:
+10391:                                                                       ^
+10392:SyntaxError: leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers
+10393:
+10394:codex
+10395:���� ��ȣ �׽�Ʈ������ ���� ��ȣ�� �ٸ� �׽�Ʈ�� �Һ��ص� �浹 �˻簡 ������ �ʽ��ϴ�. ���� ��迡���� `MAX-1`�� ���������� ��ȯ�ϰ� ���� `None`�� �����ϴ� �帧�Դϴ�. �ٸ� ��� ������ ������ �̸������� pid�� �ܿ��� 64���� �����Ѵ١��� ������ �� `seq` ������ ���߷�, �ڵ庸�� �а� �����ϰ� �ֽ��ϴ�.
+10396:
+10397:exec
+10398:"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c 'import pathlib,json; a=pathlib.Path(''docs/evidence/_raw/�˼�_2026-09-10/43_��˼�_����38_36����_CHANGES_REQUESTED.txt'').read_text(encoding=''utf-8'').splitlines(); print(json.dumps(''\\n''.join(f''{i}: {s}'' for i,s in enumerate(a,1) if i>=9608),ensure_ascii=True))'" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+10399: succeeded in 799ms:
+10400:"9608: **42\uc758 \uc6d0\ub798 \uc9c0\uc801\uc740 \ub2eb\ud614\uc2b5\ub2c8\ub2e4. \ub2e4\ub9cc \uc0c8 \ud14c\uc2a4\ud2b8\uc758 \ube48 \ud1b5\uacfc \uacbd\ub85c\uc640 \ube44\uc7ac\uc0ac\uc6a9 \ubcf4\uc7a5\uc758 \ud55c\uacc4\uac00 \ub0a8\uc544 \uc804\uccb4 \uc2b9\uc778\uc740 \uc5b4\ub835\uc2b5\ub2c8\ub2e4.**\n9609: \n9610: 1. **42 \ub300\uc751 \ubb38\uc7a5\uc740 \uc801\uc808\ud558\uc9c0\ub9cc, \ucf54\ub4dc \uc8fc\uc11d\uc5d0\uc11c \uad00\uce21 \ubc94\uc704\uac00 \ub2e4\uc2dc \ub113\uc5b4\uc84c\uc2b5\ub2c8\ub2e4. [P3]**\n9611: \n9612:    [\ubcf4\uace0\uc11c:1570](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_\uac80\uc218\uac00_\ucc3e\uc740_\uacb0\ud568_5\uac74.md:1570)\uc740 \uc2e4\ud5d8 \uad6c\uc131\uacfc \uc678\ubd80 \uac1c\uc785 \ubbf8\ud655\uc778\uc744 \uad6c\ubd84\ud569\ub2c8\ub2e4. \uc774\ub294 [42 \uc6d0\ubb38:7447](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/\uac80\uc218_2026-09-10/42_\uc7ac\uac80\uc218_41\uc758_\ub2e4\uc12f_CHANGES_REQUESTED.txt:7447)\uc758 \uc694\uad6c\ub97c \ucda9\uc871\ud569\ub2c8\ub2e4.\n9613: \n9614:    \uadf8\ub7ec\ub098 [out_file.rs:248](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:248)\uc740 \ub2e4\ub978 \uc4f0\uae30\uac00 \ub9cc\ub4e4\uace0 \uc9c0\uc6b0\ub294 **\u201c\uadf8 \uc21c\uac04\u201d**\uc758 \uc624\ub958\ub97c \uad00\uce21\ud588\ub2e4\uace0 \uc801\uc2b5\ub2c8\ub2e4. \uae30\ub85d\uc5d0 \uc788\ub294 \uac83\uc740 \uacbd\uc7c1 \uc911 \uc624\ub958\uc640 attempt \ubc88\ud638\uc774\uba70, \ud574\ub2f9 \ud0c0\uc774\ubc0d \uc124\uba85\uc740 [\ubcf4\uace0\uc11c:1573](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_\uac80\uc218\uac00_\ucc3e\uc740_\uacb0\ud568_5\uac74.md:1573)\uc5d0\uc11c\ub3c4 **\u201c\ubcf4\uc778\ub2e4\u201d**\uc785\ub2c8\ub2e4. \ucee4\ub110 \uc0c1\ud0dc \ubbf8\ud655\uc778\uc774\ub77c\ub294 \uad04\ud638\ub9cc\uc73c\ub85c \uc774 \ucc28\uc774\uac00 \ud574\uc18c\ub418\uc9c0\ub294 \uc54a\uc2b5\ub2c8\ub2e4. \u201c\uc774\ub984 \uc7ac\uc0ac\uc6a9\uc774 \uac00\ub2a5\ud55c \uacbd\uc7c1 \uc2e4\ud5d8\uc5d0\uc11c PermissionDenied\ub97c \uad00\uce21\ud588\ub2e4. \uc0ad\uc81c\uc640\uc758 \uc815\ud655\ud55c \uc2dc\uac04 \uad00\uacc4\ub294 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4\u201d \uc815\ub3c4\ub85c \uc881\ud600\uc57c \ud569\ub2c8\ub2e4.\n9615: \n9616: 2. **\u32b1 \uc218\uc815\uc740 \uc21c\ud658 \uc804\uc5d0\ub294 \ud0c0\ub2f9\ud558\uc9c0\ub9cc, \uc601\uad6c\uc801\uc778 \ube44\uc7ac\uc0ac\uc6a9\uc740 \ubcf4\uc7a5\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. [P3]**\n9617: \n9618:    [out_file.rs:253](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:253)\uc758 \uc6d0\uc790\uc801 \uc99d\uac00\ub85c \uc21c\ud658 \uc804 \ud638\ucd9c\ub4e4\uc740 \uc11c\ub85c \ub2e4\ub978 `seq`\ub97c \ubc1b\uc2b5\ub2c8\ub2e4. \uc774 \uc6a9\ub3c4\uc5d0\ub294 `Relaxed`\ub85c \ucda9\ubd84\ud569\ub2c8\ub2e4. \uc0dd\uc131 \uc2e4\ud328 \ud6c4\ubcf4\ub294 \uc7ac\uc2dc\ub3c4\ud558\uac70\ub098 \ubc18\ud658\ud558\uba70, \uc815\ub9ac \ub300\uc0c1\uc73c\ub85c \ub118\uae30\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4([out_file.rs:261](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:261)). \uc774 \uc870\uac74\uc5d0\uc11c \uc218\uc815 \ub54c\ubb38\uc5d0 \ub2e4\ub978 \ud638\ucd9c\uc758 \uc784\uc2dc \ud30c\uc77c\uc744 \uc9c0\uc6b0\ub294 \uacbd\ub85c\ub294 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.\n9619: \n9620:    \ub2e4\ub9cc `fetch_add`\ub294 \uc624\ubc84\ud50c\ub85c\uc5d0\uc11c \uc21c\ud658\ud569\ub2c8\ub2e4. \ucd5c\ucd08 `seq=0` \uc774\ud6c4 **2\u2076\u2074\ubc88 \ub354 \ud560\ub2f9\ud558\uba74 \ub2e4\uc2dc 0**\uc785\ub2c8\ub2e4. \uba3c\uc800 \ubc1b\uc740 \ud638\ucd9c\uc774 \uc544\uc9c1 \uc9c4\ud589 \uc911\uc774\uba74 \ub450 \ud638\ucd9c\uc774 \uac19\uc740 \ud6c4\ubcf4\ub97c \uc2dc\ub3c4\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4. `create_new`\uac00 \uae30\uc874 \ud30c\uc77c \ub36e\uc5b4\uc4f0\uae30\ub97c \ub9c9\uc9c0\ub9cc, \uc774\ub984 \ucda9\ub3cc \uc790\uccb4\uac00 \ub2e4\uc2dc \uac00\ub2a5\ud574\uc9d1\ub2c8\ub2e4. \ud30c\uc77c \uc548\uc5d0\ub294 \uba85\uc2dc\uc801\uc778 \ubc88\ud638 \ucd08\uae30\ud654 \uacbd\ub85c\ub294 \uc5c6\uc5c8\uc2b5\ub2c8\ub2e4.\n9621: \n9622:    \uc2e4\uc6a9\uc801\uc73c\ub85c \uadf9\ud788 \uba3c \ud55c\uacc4\uc9c0\ub9cc, [out_file.rs:38](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:38)\uacfc [HISTORY.md:36](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:36)\uc758 \ubb34\uc870\uac74\uc801\uc778 \uc124\uba85\uc5d0\ub294 \ubc18\ub840\uc785\ub2c8\ub2e4. \uc18c\uc9c4 \uc2dc \uc2e4\ud328\uc2dc\ud0a4\uac70\ub098, \ubcf4\uc7a5\uc744 \ubc88\ud638 \uc21c\ud658 \uc804\uc73c\ub85c \ud55c\uc815\ud574\uc57c \ud569\ub2c8\ub2e4.\n9623: \n9624: 3. **`leftover_temps_under_the_current_name_are_kept`\ub294 \ucda9\ub3cc\uc744 \uac80\uc0ac\ud558\uc9c0 \uc54a\uace0 \ud1b5\uacfc\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4. [P2]**\n9625: \n9626:    [out_file.rs:477](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:477)\uc758 `load`\ub294 \ubc88\ud638\ub97c \uc608\uc57d\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \ub2e4\uc74c \uc2a4\ucf00\uc904\uc774 \uac00\ub2a5\ud569\ub2c8\ub2e4.\n9627: \n9628:    - \ud14c\uc2a4\ud2b8\uac00 `start`\ub97c \uc77d\uace0 \uc911\ub2e8\ub429\ub2c8\ub2e4.\n9629:    - \uacbd\uc7c1 \ud14c\uc2a4\ud2b8\uac00 16\uc2a4\ub808\ub4dc \u00d7 20\ub77c\uc6b4\ub4dc\ub85c \ubc88\ud638 **320\uac1c**\ub97c \uc18c\ube44\ud569\ub2c8\ub2e4([out_file.rs:416](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:416)).\n9630:    - \ubcf4\ud638 \ud14c\uc2a4\ud2b8\uac00 \uc7ac\uac1c\ub418\uc5b4 `start`\ubd80\ud130 256\uac1c\uc758 sentinel\uc744 \ub9cc\ub4e4\uace0 \uc4f0\uae30\ub97c \ud638\ucd9c\ud569\ub2c8\ub2e4.\n9631:    - \uc4f0\uae30\ub294 \uc900\ube44\ud55c \ubc94\uc704 \ubc16 \ubc88\ud638\ub97c \ubc1b\uc544 \ucda9\ub3cc \uc5c6\uc774 \uc131\uacf5\ud569\ub2c8\ub2e4.\n9632: \n9633:    \uc774\ud6c4 \uac80\uc0ac\ub294 \uc0b0\ucd9c\ubb3c\uacfc sentinel \ub0b4\uc6a9\ub9cc \ud655\uc778\ud558\ubbc0\ub85c \ubaa8\ub450 \ud1b5\uacfc\ud569\ub2c8\ub2e4([out_file.rs:485](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:485)). **\ud14c\uc2a4\ud2b8 \uc2e4\ud328\uac00 \uc544\ub2c8\ub77c \uac80\uc99d\uc758 \ube48 \ud1b5\uacfc**\uc785\ub2c8\ub2e4. \ubc30\ud0c0 \uc0dd\uc131\uc744 \ub36e\uc5b4\uc4f0\ub294 \uc0dd\uc131\uc73c\ub85c \ubc14\uafb8\ub294 \ud68c\uadc0\ub3c4 \uc774 \uc2a4\ucf00\uc904\uc5d0\uc11c\ub294 \ub193\uce60 \uc218 \uc788\uc2b5\ub2c8\ub2e4.\n9634: \n9635:    \ubc94\uc704 \ud655\ub300\ubcf4\ub2e4, \ubc88\ud638 \ud560\ub2f9\uacfc \ud6c4\ubcf4 \uc0dd\uc131 \ubd80\ubd84\uc744 \ubd84\ub9ac\ud574 \ud14c\uc2a4\ud2b8\uac00 \uc608\uc57d\ud55c \ubc88\ud638\uc5d0 sentinel\uc744 \ubc30\uce58\ud558\uace0 \uc2e4\uc81c \ucda9\ub3cc\u00b7\ub2e4\uc74c \ud6c4\ubcf4 \uc120\ud0dd\uc744 \ud655\uc778\ud558\ub294 \ud3b8\uc774 \ud655\uc2e4\ud569\ub2c8\ub2e4.\n9636: \n9637:    \ubc18\uba74 [out_file.rs:459](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:459)\uc758 \ube44\uc7ac\uc0ac\uc6a9 \ud14c\uc2a4\ud2b8\ub294 \uad6c\ud615 \uc774\ub984\uc73c\ub85c \ub418\ub3cc\ub9ac\ub294 \ud68c\uadc0\ub97c \uc9c1\uc811 \uad6c\ubcc4\ud569\ub2c8\ub2e4. \ub2e4\ub978 \ud14c\uc2a4\ud2b8\uc758 \ubc88\ud638 \uc18c\ube44\ub3c4 \uc21c\ud658 \uc804\uc5d0\ub294 \uc774 \ud310\ubcc4\uc744 \ubb34\ub108\ub728\ub9ac\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \ub2e4\ub9cc \uc774 \ubba4\ud14c\uc774\uc158 \uc131\uacf5\uc774 sentinel \ud14c\uc2a4\ud2b8\uc758 \ud310\ubcc4\ub825\uae4c\uc9c0 \uc99d\uba85\ud558\uc9c0\ub294 \uc54a\uc2b5\ub2c8\ub2e4.\n9638: \n9639: 4. **\uce21\uc815 \uae30\ub85d\uc740 \ub300\uccb4\ub85c \ubc94\uc704 \uc548\uc785\ub2c8\ub2e4.**\n9640: \n9641:    [\ubcf4\uace0\uc11c:1589](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_\uac80\uc218\uac00_\ucc3e\uc740_\uacb0\ud568_5\uac74.md:1589)\uc740 \uac19\uc740 \uae30\uacc4\u00b7\ub2e4\ub978 \uc2dc\uac01\uc758 \ube44\uad50\uc774\uba70 \uc6d0\uc778\uacfc \uc678\ubd80 \uac1c\uc785\uc740 \ubbf8\ud655\uc778\uc774\ub77c\uace0 \uba85\uc2dc\ud569\ub2c8\ub2e4. 20\ud68c \ud1b5\uacfc\ub294 **\uc218\uc815 \ud6c4 \ud574\ub2f9 \uc2e4\ud589\ub4e4\uc5d0\uc11c \ud14c\uc2a4\ud2b8 \uc2e4\ud328\ub97c \uad00\uce21\ud558\uc9c0 \uc54a\uc558\ub2e4\ub294 \uadfc\uac70**\uc785\ub2c8\ub2e4.\n9642: \n9643:    \uc624\ub958 \uac00\ub2a5\uc131\uc758 \uc18c\uba78, \uc218\uc815\ub9cc\uc758 \uc778\uacfc \ud6a8\uacfc, \uc0ad\uc81c \ub300\uae30 \uac00\uc124, \uc2e4\uc81c CLI\uc5d0\uc11c\uc758 \uc7ac\ud604\u00b7\ud574\uacb0\uc744 \uc785\uc99d\ud558\uc9c0\ub294 \uc54a\uc2b5\ub2c8\ub2e4. \u201c\ube44\uad50\ub294 \ubc29\ud5a5\ub9cc \ub9d0\ud55c\ub2e4\u201d\ub3c4 **\uad00\uce21\ub41c \uc2e4\ud328 \ube44\uc728\uc758 \ubc29\ud5a5**\uc73c\ub85c \uc77d\uc5b4\uc57c \ud569\ub2c8\ub2e4. \uc774 \uc81c\ud55c\uc744 \ub118\uc5b4\uc11c\ub294 \ucd94\uac00 \uce21\uc815 \uc8fc\uc7a5\uc740 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.\n9644: \n9645: \uc774\ubc88 \uac80\ud1a0\ub294 \uc9c0\uc815\ud55c \ucf54\ub4dc\u00b7\ud14c\uc2a4\ud2b8\uc640 \ubb38\uc11c \ubc94\uc704\uc758 \uc815\uc801 \uac80\ud1a0\uc785\ub2c8\ub2e4. \ud14c\uc2a4\ud2b8\u00b7\ubba4\ud14c\uc774\uc158\u00b7\uacbd\uc7c1 \uc2e4\ud5d8\uc740 \uc7ac\uc2e4\ud589\ud558\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \uc704 \uc2a4\ucf00\uc904\uc740 \ucf54\ub4dc\uc5d0\uc11c \ub3c4\ucd9c\ud55c \ubc18\ub840\uc774\uba70 \uc2e4\ud589 \uad00\uce21\uc740 \uc544\ub2d9\ub2c8\ub2e4. \uadf8 \ubc16\uc758 \ubc18\ub840\ub97c \ucc3e\uc9c0 \ubabb\ud55c \uac83\uc744 \uacb0\ud568 \ubd80\uc7ac\uc758 \uc99d\uba85\uc73c\ub85c \ud310\ub2e8\ud558\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4.\n9646: \n9647: CHANGES_REQUESTED"
+10401:
+10402:codex
+10403:**43�� �� ���� ��ü�� �����ٰ� �Ǵ��մϴ�. �ٸ� ���� �������� ���� ������ �����ϰ� ���� ���� ���� �ϳ��� ã�ҽ��ϴ�.**
+10404:
+10405:1. **[P3] ���ܿ��� 64���� �����Ѵ١��� �������� `seq` ������ �������ϴ�.**
+10406:
+10407:   [out_file.rs:70](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:70)�� ������ �̸������� pid�� �ܿ��� 64���� target�� ��� �����Ѵ١��� �����մϴ�. ���� �ĺ����� `seq`�� ���ϴ�([out_file.rs:277](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:277)).
+10408:
+10409:   �ݷ�: `x.pb.tmp.<pid>.10.0`���� `.10.63`���� ���� �־, �̹� ȣ���� `seq=11`�� ������ `.11.0`�� ������ �� �ֽ��ϴ�. **���� ���pid�� �ܿ� 64�������� ���а� �������� �ʽ��ϴ�.**
+10410:
+10411:   ���ش� ȣ���� `stem��pid��seq`�� ���� �ĺ� 0~63�� ��� `AlreadyExists`�� ��ȯ�ϸ� �����Ѵ١��� ������ �մϴ�. ���� ������ �ƴ϶� �ڵ忡�� ������ �ݷ��Դϴ�.
+10412:
+10413:2. **43�� �������ð� ���� ������ �������ϴ�.**
+10414:
+10415:   [out_file.rs:248](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:248)�� ���� ������ ���� ������ ���� ������Ŀ�� ���� ��Ȯ���� �����մϴ�. [������:1570](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_�˼���_ã��_����_5��.md:1570)�� �ܺ� ���� ��Ȯ���� �����մϴ�.
+10416:
+10417:   [HISTORY.md:39](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:39)�� ������ **ȣ�Ⳣ�� ������ �ӽ� �ĺ� �̸��� �������� �ʴ´ٴ� ����**���δ� Ÿ���մϴ�. �̸� `PermissionDenied` ��ü�� �Ҹ��̳� ���� ��� ������ �������� ���� �ٰŴ� �����ϴ�.
+10418:
+10419:3. **��ȣ �Ҵ硤�ĺ� ������ �и����� ���� �ݷʴ� ã�� ���߽��ϴ�.**
+10420:
+10421:   [out_file.rs:261](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:261)�� ��� ������ ������ �����ϴ�.
+10422:
+10423:   - ���� `MAX-1`: `Some(MAX-1)`�� ��ȯ�ϰ� ���¸� `MAX`�� �ٲߴϴ�.
+10424:   - ���� `MAX`: ���� ��� `None`�Դϴ�. **`MAX` ��ü�� �Ҵ����� �ʴ� ���� ǥ��**�Դϴ�.
+10425:   - ������ ��ȣ�� ���ÿ� ��û�ص� �� ȣ�⸸ �޽��ϴ�. ��ȣ ������ �ʿ��� ���ڼ����� `Relaxed`�� ����ϸ�, ���� Ŭ������ ����࿡�� ���ۿ��� �����ϴ�.
+10426:
+10427:   [out_file.rs:253](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:253)�� ������ ������ ������ ��ȯ�ϰ� �ĺ� ���� ���� �����ϴ�. �ĺ� ������ �����ص� ��ȣ�� �ǵ����� �ʽ��ϴ�. �ٸ� ������ 64�� �ĺ� ������ �����մϴ�([out_file.rs:284](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:284)).
+10428:
+10429:4. **���� ��ȣ �׽�Ʈ�� ���� �� ��� ��δ� �������ϴ�. �߰����� ���� ��δ� ã�� ���߽��ϴ�.**
+10430:
+10431:   [out_file.rs:495](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:495)�� ���� �ӽ� ���͸��� `7777.0`�� �غ��ϰ�, ���� ��ȣ�� ȣ���Ͽ� `7777.1` ���ð� sentinel ������ ���� �˻��մϴ�. �ٸ� �׽�Ʈ�� ���� ��ȣ�� �Һ��ص� �� ������ �ٲ��� �ʽ��ϴ�. ���� �׽�Ʈ ���� ���� ī���͸� ����մϴ�([out_file.rs:516](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:516)).
+10432:
+10433:   ���� ���� �׽�Ʈ�� �����尡 ���� ����Ǹ� �߸��� ������ ��ĥ �� �ֽ��ϴ�. �̴� �̹� [out_file.rs:433](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:433)�� ���õ� �Ѱ��̸�, �̹� ������ ���� ���� �� ����� �ƴմϴ�.
+10434:
+10435:���� ����� ��� ��������ȣ �Ҵ硤�ĺ� �������׽�Ʈ ��ü�� ���� ���� �κ��� �����߽��ϴ�. �׽�Ʈ�������̼ǡ����� ������ ��������� �ʾ�����, [HISTORY.md:42](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:42)�� ����� ������θ� Ȯ���߽��ϴ�. �߰� ���� �ݷʸ� ã�� ���ߴٴ� �Ǵ��� ���� ������ ������ �ƴմϴ�.
+10436:
+10437:��ȸ �Ǽ��� HISTORY�� ��° ���� �׸� ��µƽ��ϴ�. ���� ������ ��� ��ȸ������, �ش� ������ ���� �ٰŷ� ������� �ʾҽ��ϴ�.
+10438:
+10439:CHANGES_REQUESTED
+10440:tokens used
+10441:41,832
+10442:**43�� �� ���� ��ü�� �����ٰ� �Ǵ��մϴ�. �ٸ� ���� �������� ���� ������ �����ϰ� ���� ���� ���� �ϳ��� ã�ҽ��ϴ�.**
+10443:
+10444:1. **[P3] ���ܿ��� 64���� �����Ѵ١��� �������� `seq` ������ �������ϴ�.**
+10445:
+10446:   [out_file.rs:70](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:70)�� ������ �̸������� pid�� �ܿ��� 64���� target�� ��� �����Ѵ١��� �����մϴ�. ���� �ĺ����� `seq`�� ���ϴ�([out_file.rs:277](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:277)).
+10447:
+10448:   �ݷ�: `x.pb.tmp.<pid>.10.0`���� `.10.63`���� ���� �־, �̹� ȣ���� `seq=11`�� ������ `.11.0`�� ������ �� �ֽ��ϴ�. **���� ���pid�� �ܿ� 64�������� ���а� �������� �ʽ��ϴ�.**
+10449:
+10450:   ���ش� ȣ���� `stem��pid��seq`�� ���� �ĺ� 0~63�� ��� `AlreadyExists`�� ��ȯ�ϸ� �����Ѵ١��� ������ �մϴ�. ���� ������ �ƴ϶� �ڵ忡�� ������ �ݷ��Դϴ�.
+10451:
+10452:2. **43�� �������ð� ���� ������ �������ϴ�.**
+10453:
+10454:   [out_file.rs:248](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:248)�� ���� ������ ���� ������ ���� ������Ŀ�� ���� ��Ȯ���� �����մϴ�. [������:1570](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_�˼���_ã��_����_5��.md:1570)�� �ܺ� ���� ��Ȯ���� �����մϴ�.
+10455:
+10456:   [HISTORY.md:39](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:39)�� ������ **ȣ�Ⳣ�� ������ �ӽ� �ĺ� �̸��� �������� �ʴ´ٴ� ����**���δ� Ÿ���մϴ�. �̸� `PermissionDenied` ��ü�� �Ҹ��̳� ���� ��� ������ �������� ���� �ٰŴ� �����ϴ�.
+10457:
+10458:3. **��ȣ �Ҵ硤�ĺ� ������ �и����� ���� �ݷʴ� ã�� ���߽��ϴ�.**
+10459:
+10460:   [out_file.rs:261](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:261)�� ��� ������ ������ �����ϴ�.
+10461:
+10462:   - ���� `MAX-1`: `Some(MAX-1)`�� ��ȯ�ϰ� ���¸� `MAX`�� �ٲߴϴ�.
+10463:   - ���� `MAX`: ���� ��� `None`�Դϴ�. **`MAX` ��ü�� �Ҵ����� �ʴ� ���� ǥ��**�Դϴ�.
+10464:   - ������ ��ȣ�� ���ÿ� ��û�ص� �� ȣ�⸸ �޽��ϴ�. ��ȣ ������ �ʿ��� ���ڼ����� `Relaxed`�� ����ϸ�, ���� Ŭ������ ����࿡�� ���ۿ��� �����ϴ�.
+10465:
+10466:   [out_file.rs:253](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:253)�� ������ ������ ������ ��ȯ�ϰ� �ĺ� ���� ���� �����ϴ�. �ĺ� ������ �����ص� ��ȣ�� �ǵ����� �ʽ��ϴ�. �ٸ� ������ 64�� �ĺ� ������ �����մϴ�([out_file.rs:284](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:284)).
+10467:
+10468:4. **���� ��ȣ �׽�Ʈ�� ���� �� ��� ��δ� �������ϴ�. �߰����� ���� ��δ� ã�� ���߽��ϴ�.**
+10469:
+10470:   [out_file.rs:495](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:495)�� ���� �ӽ� ���͸��� `7777.0`�� �غ��ϰ�, ���� ��ȣ�� ȣ���Ͽ� `7777.1` ���ð� sentinel ������ ���� �˻��մϴ�. �ٸ� �׽�Ʈ�� ���� ��ȣ�� �Һ��ص� �� ������ �ٲ��� �ʽ��ϴ�. ���� �׽�Ʈ ���� ���� ī���͸� ����մϴ�([out_file.rs:516](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:516)).
+10471:
+10472:   ���� ���� �׽�Ʈ�� �����尡 ���� ����Ǹ� �߸��� ������ ��ĥ �� �ֽ��ϴ�. �̴� �̹� [out_file.rs:433](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:433)�� ���õ� �Ѱ��̸�, �̹� ������ ���� ���� �� ����� �ƴմϴ�.
+10473:
+10474:���� ����� ��� ��������ȣ �Ҵ硤�ĺ� �������׽�Ʈ ��ü�� ���� ���� �κ��� �����߽��ϴ�. �׽�Ʈ�������̼ǡ����� ������ ��������� �ʾ�����, [HISTORY.md:42](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:42)�� ����� ������θ� Ȯ���߽��ϴ�. �߰� ���� �ݷʸ� ã�� ���ߴٴ� �Ǵ��� ���� ������ ������ �ƴմϴ�.
+10475:
+10476:��ȸ �Ǽ��� HISTORY�� ��° ���� �׸� ��µƽ��ϴ�. ���� ������ ��� ��ȸ������, �ش� ������ ���� �ٰŷ� ������� �ʾҽ��ϴ�.
+10477:
+10478:CHANGES_REQUESTED
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; specs=[('crates/cli/src/out_file.rs',244,298),('docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md',1681,1698),('docs/history/HISTORY.md',28,44),('docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt',10442,10478)]; print(json.dumps([{ 'file':p,'lines':[str(i+1)+':'+v for i,v in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines()) if a<=i+1<=b]} for p,a,b in specs],ensure_ascii=True))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1011ms:
+[{"file": "crates/cli/src/out_file.rs", "lines": ["244:fn create_exclusive_temp(", "245:    dir: &Path,", "246:    stem: &str,", "247:    code: &str,", "248:    what: &str,", "249:) -> Result<(PathBuf, std::fs::File), String> {", "250:    // \u2605 \uacb0\ud568 \u32b1 \u2014 \uc804\uc5d0\ub294 \ud638\ucd9c\ub9c8\ub2e4 `.tmp.<pid>.0` \ubd80\ud130 \uc2dc\ub3c4\ud574, \uac19\uc740 \ud504\ub85c\uc138\uc2a4\uc758 \ub3d9\uc2dc \uc4f0\uae30\uac00 \uac19\uc740", "251:    //   \uc774\ub984\uc744 \ub450\uace0 \uacbd\uc7c1\ud588\ub2e4. \uadf8 \uacbd\uc7c1 \uc2e4\ud5d8(Windows)\uc5d0\uc11c create_new \uac00 AlreadyExists \uac00 \uc544\ub2c8\ub77c", "252:    //   PermissionDenied \ub97c \ub3cc\ub824\uc8fc\ub294 \uac83\uc744 \uad00\uce21\ud588\ub2e4 \u2014 \uc0ad\uc81c\uc640\uc758 \uc815\ud655\ud55c \uc2dc\uac04 \uad00\uacc4\uc640 \ucee4\ub110 \uc548\uc758 \uc0c1\ud0dc\ub294", "253:    //   \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4(\uacb0\ud568 \u32b4). \ud638\ucd9c\ub9c8\ub2e4 \uc804\uc5ed \ubc88\ud638\ub97c \ubc1b\uc544 \uac19\uc740 \ud504\ub85c\uc138\uc2a4 \uc548\uc5d0\uc11c\ub294 \uac19\uc740 \uc774\ub984\uc744", "254:    //   \uc2dc\ub3c4\ud558\uc9c0 \uc54a\uac8c \ud55c\ub2e4. \uc55e \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc740 \uc544\ub798 create_new \uac00 \ube44\ucf1c \uac04\ub2e4.", "255:    let seq = next_temp_seq(&TEMP_SEQ).ok_or_else(|| {", "256:        format!(\"{code}: {what} \uc784\uc2dc \uc774\ub984 \ubc88\ud638\ub97c \ub2e4 \uc37c\ub2e4 \u2014 \uac19\uc740 \uc774\ub984\uc744 \ub2e4\uc2dc \uc4f0\uc9c0 \uc54a\uc73c\ub824\uace0 \uc2e4\ud328\ud55c\ub2e4\")", "257:    })?;", "258:    create_exclusive_temp_with_seq(dir, stem, seq, code, what)", "259:}", "260:", "261:/// \ud504\ub85c\uc138\uc2a4 \uc804\uc5ed \ubc88\ud638\ub97c \ud558\ub098 \ubc1b\ub294\ub2e4. **\uc18c\uc9c4\ub418\uba74 `None`** \u2014 \ud55c \ubc14\ud034 \ub3cc\uc544 0 \uc73c\ub85c \uac00\uba74 \uba3c\uc800 \ubc1b\uc740", "262:/// \ud638\ucd9c\uacfc \uac19\uc740 \uc774\ub984\uc744 \uc2dc\ub3c4\ud560 \uc218 \uc788\ub2e4(\uacb0\ud568 \u32b4).", "263:fn next_temp_seq(counter: &AtomicU64) -> Option<u64> {", "264:    counter", "265:        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))", "266:        .ok()", "267:}", "268:", "269:/// \uc815\ud574\uc9c4 \ubc88\ud638\ub85c \ud6c4\ubcf4\ub97c \ub9cc\ub4e0\ub2e4. \uc55e \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc740 create_new \uac00 \ube44\ucf1c \uac04\ub2e4.", "270:fn create_exclusive_temp_with_seq(", "271:    dir: &Path,", "272:    stem: &str,", "273:    seq: u64,", "274:    code: &str,", "275:    what: &str,", "276:) -> Result<(PathBuf, std::fs::File), String> {", "277:    let pid = std::process::id();", "278:    for attempt in 0..64u32 {", "279:        let candidate = dir.join(format!(\"{stem}.tmp.{pid}.{seq}.{attempt}\"));", "280:        match std::fs::OpenOptions::new()", "281:            .write(true)", "282:            .create_new(true)", "283:            .open(&candidate)", "284:        {", "285:            Ok(file) => return Ok((candidate, file)),", "286:            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,", "287:            Err(e) => {", "288:                return Err(format!(", "289:                    \"{code}: {what} \uc784\uc2dc \ud30c\uc77c\uc744 \ub9cc\ub4e4\uc9c0 \ubabb\ud588\ub2e4({}): {e}\",", "290:                    candidate.display()", "291:                ))", "292:            }", "293:        }", "294:    }", "295:    Err(format!(", "296:        \"{code}: {what} \uc784\uc2dc \ud30c\uc77c \uc774\ub984\uc744 64\ubc88 \uc2dc\ub3c4\ud574\ub3c4 \ube44\uc5b4 \uc788\ub294 \uac83\uc744 \ubabb \ucc3e\uc558\ub2e4 \u2014 \uc55e\uc120 \uc2e4\ud589\uc774 \ub0a8\uae34 \ud30c\uc77c\uc774 \uc313\uc600\uc744 \uc218 \uc788\ub2e4\"", "297:    ))", "298:}"]}, {"file": "docs/reports/debugs/2026-09-10_0900_\uac80\uc218\uac00_\ucc3e\uc740_\uacb0\ud568_5\uac74.md", "lines": ["1681:# \uacb0\ud568 \u32b5 \u2014 out_file \ubaa8\ub4c8 \ubb38\uc11c\uc758 \"\uc794\uc5ec 64\uac1c\uba74 \uc2e4\ud328\" \uc5d0\uc11c seq \uc870\uac74\uc774 \ube60\uc84c\ub2e4 (\uc7ac\uac80\uc218 44)", "1682:", "1683:\u2605 43 \uc758 \uc14b\uc740 \ub2eb\ud614\ub2e4. \ubc88\ud638 \ud560\ub2f9 \u00b7 \ud6c4\ubcf4 \uc0dd\uc131 \ubd84\ub9ac\uc5d0\uc11c \uad6c\ud604 \ubc18\ub840\ub3c4 \ucc3e\uc9c0 \ubabb\ud588\ub2e4\uace0 \ud588\ub2e4.", "1684:", "1685:## 1. \uc704\uce58 \u00b7 2. \uc7ac\ud604 (\uc7ac\uac80\uc218 44)", "1686:```text", "1687:crates/cli/src/out_file.rs:70  \"64 \ud6c4\ubcf4  \uac19\uc740 \uc774\ub984\u00b7\uac19\uc740 pid \uc758 \uc794\uc5ec\uac00 64\uac1c\uba74 target \uc774 \uc5c6\uc5b4\ub3c4 \uc2e4\ud328\ud55c\ub2e4\"", "1688:  -> \ud6c4\ubcf4\uc5d0\ub294 seq \ub3c4 \ub4e4\uc5b4\uac04\ub2e4. `x.pb.tmp.<pid>.10.0~63` \uc774 \ub0a8\uc544 \uc788\uc5b4\ub3c4 \uc774\ubc88 \ud638\ucd9c\uc774 seq=11 \uc744 \ubc1b\uc73c\uba74", "1689:     `.11.0` \uc744 \ub9cc\ub4e0\ub2e4. \uc2e4\ud328 \uc870\uac74\uc740 \"\uadf8 \ud638\ucd9c\uc758 \ub300\uc0c1 \u00b7 pid \u00b7 seq \ud6c4\ubcf4 0~63 \uc774 \ubaa8\ub450 \uc774\ubbf8 \uc788\uc744 \ub54c\" \ub2e4", "1690:```", "1691:", "1692:## 4. \uc704\ud5d8\ub3c4", "1693:- [x] \ubb38\uc11c \uc2e0\ub8b0\ub3c4 \uc800\ud558(\uac00\uc6a9\uc131 \ud55c\uacc4\ub97c \uc2e4\uc81c\ubcf4\ub2e4 \ub113\uac8c \uc801\uc74c)", "1694:", "1695:## 6. \uc870\uce58", "1696:- [x] \uace0\uce58\uae30 \uc804\uc5d0 \uc4f4\ub2e4 (\uc7ac\uac80\uc218 44 \uc9c1\ud6c4)", "1697:- [x] \ubb38\uc7a5\uc744 \uadf8 \ud638\ucd9c\uc758 \ub300\uc0c1 \u00b7 pid \u00b7 seq \ud6c4\ubcf4 0~63 \uc73c\ub85c \uc881\ud614\ub2e4(\uc8fc\uc11d\ub9cc \u2014 \ub418\ub3cc\ub9ac\uba74 \uc2e4\ud328\ud558\ub294 \ud14c\uc2a4\ud2b8\ub294 \uc5c6\ub2e4)", "1698:"]}, {"file": "docs/history/HISTORY.md", "lines": ["28:## 2026-09-10 21:33 \u2014 \uc7ac\uac80\uc218 44 \ub300\uc751(\uacb0\ud568 \u32b5) \u00b7 ID 26\uc790 \uaddc\ubc94 \ubbf8\uac15\uc81c \uc870\uc0ac(\uacb0\ud568 \ub9ac\ud3ec\ud2b8 \uc0c8 \ud30c\uc77c)", "29:", "30:- \uacc4\ud68d: `docs/runbooks/\uac80\uc218_\ub300\uae30\uc5f4.md` \uc758 \uc7ac\uac80\uc218 44 \u00b7 \uc0ac\uc6a9\uc790 \uc694\uccad(ID 26\uc790 \uaddc\ubc94 \uc785\uad6c \uc870\uc0ac)", "31:- \uc2a4\ud2b8\ub9bc: CLI \u00b7 QA", "32:- \uc218\ud589: 44 \ub294 43 \uc758 \uc14b\uc774 \ub2eb\ud614\uace0 \ubc88\ud638 \ud560\ub2f9 \u00b7 \ud6c4\ubcf4 \uc0dd\uc131 \ubd84\ub9ac\uc5d0\uc11c \uad6c\ud604 \ubc18\ub840\ub97c \ubabb \ucc3e\uc558\ub2e4\uace0 \ud588\ub2e4. \ubaa8\ub4c8 \ubb38\uc11c\uc758", "33:  \"\uac19\uc740 \uc774\ub984 \u00b7 \uac19\uc740 pid \uc758 \uc794\uc5ec\uac00 64\uac1c\uba74 \uc2e4\ud328\" \uc5d0\uc11c seq \uc870\uac74\uc774 \ube60\uc84c\ub2e4 \u2014 \uadf8 \ud638\ucd9c\uc758 \ub300\uc0c1 \u00b7 pid \u00b7 seq \ud6c4\ubcf4", "34:  0~63 \uc73c\ub85c \uc881\ud614\ub2e4(\uacb0\ud568 \u32b5).", "35:  \uc0ac\uc6a9\uc790 \uc694\uccad\uc73c\ub85c ID 26\uc790 \uaddc\ubc94(`proto/common.proto:20`)\uc758 \uc785\uad6c\ub97c \uc870\uc0ac\ud574", "36:  `docs/reports/debugs/2026-09-10_2128_ID_26\uc790_\uaddc\ubc94_\ubbf8\uac15\uc81c.md` \uc5d0 \uc801\uc5c8\ub2e4 \u2014 26\uc790 \uac80\uc0ac\ub294 \ub450 \ucee4\ub110\uc5d0\ub9cc \uc788\uace0 \ub458 \ub2e4", "37:  \uc81c\ud488 \ucf54\ub4dc\uac00 \ubd80\ub974\uc9c0 \uc54a\uc73c\uba70, \uc785\uad6c(CLI \u00b7 \ud30c\uc77c \ubc18\uc785 \u00b7 \uc11c\uba85 \uba54\uc2dc\uc9c0 \u00b7 \uc800\uc7a5\uc18c)\ub294 \ube44\uc5b4 \uc788\uc9c0 \uc54a\uc740\uc9c0\ub9cc \ubcf8\ub2e4.", "38:  Agent \uc758 checkpoint_id \ub294 70\uc790\ub2e4. \uac15\uc81c \ubc94\uc704\ub294 \uc0ac\uc6a9\uc790\uac00 \uc815\ud55c\ub2e4 \u2014 \uc0ac\uc6a9\uc790\uac00 \ucf54\ub371\uc2a4 \uc124\uba85\uc744 \uc694\uccad\ud574 45 \ub97c \ub3cc\ub9b0\ub2e4", "39:- \uac80\uc99d: \uc8fc\uc11d \u00b7 \ubb38\uc11c\ub9cc \ubc14\ub00c\uc5c8\ub2e4. check_docs \ub294 \ucee4\ubc0b \uc9c1\uc804", "40:- \ub9ac\ud3ec\ud2b8: \uacb0\ud568 \u32b5 \u00b7 ID 26\uc790 \uacb0\ud568 \ub9ac\ud3ec\ud2b8", "41:", "42:---", "43:", "44:## 2026-09-10 21:26 \u2014 \uc7ac\uac80\uc218 43 \ub300\uc751(\uacb0\ud568 \u32b4). \ubc88\ud638 \uc18c\uc9c4 \u00b7 \uc815\ud55c \ubc88\ud638\ub85c \uc7ac\ub294 \ubcf4\ud638 \ud14c\uc2a4\ud2b8 \u00b7 \uc8fc\uc11d"]}, {"file": "docs/evidence/_raw/\uac80\uc218_2026-09-10/44_\uc7ac\uac80\uc218_\uacb0\ud56839_CHANGES_REQUESTED.txt", "lines": ["10442:**43\uc758 \uc138 \uc218\uc815 \uc790\uccb4\ub294 \ub2eb\ud614\ub2e4\uace0 \ud310\ub2e8\ud569\ub2c8\ub2e4. \ub2e4\ub9cc \uc9c0\uc815 \ubc94\uc704\uc5d0\uc11c \uc2e4\ud328 \uc870\uac74\uc744 \uacfc\ub3c4\ud558\uac8c \ub113\ud78c \ubb38\uc11c \uc124\uba85 \ud558\ub098\ub97c \ucc3e\uc558\uc2b5\ub2c8\ub2e4.**", "10443:", "10444:1. **[P3] \u201c\uc794\uc5ec\uac00 64\uac1c\uba74 \uc2e4\ud328\ud55c\ub2e4\u201d\ub294 \uc124\uba85\uc5d0\uc11c `seq` \uc870\uac74\uc774 \ube60\uc84c\uc2b5\ub2c8\ub2e4.**", "10445:", "10446:   [out_file.rs:70](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:70)\uc740 \u201c\uac19\uc740 \uc774\ub984\u00b7\uac19\uc740 pid\uc758 \uc794\uc5ec\uac00 64\uac1c\uba74 target\uc774 \uc5c6\uc5b4\ub3c4 \uc2e4\ud328\ud55c\ub2e4\u201d\uace0 \ub2e8\uc815\ud569\ub2c8\ub2e4. \uc2e4\uc81c \ud6c4\ubcf4\uc5d0\ub294 `seq`\ub3c4 \ub4e4\uc5b4\uac11\ub2c8\ub2e4([out_file.rs:277](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:277)).", "10447:", "10448:   \ubc18\ub840: `x.pb.tmp.<pid>.10.0`\ubd80\ud130 `.10.63`\uae4c\uc9c0 \ub0a8\uc544 \uc788\uc5b4\ub3c4, \uc774\ubc88 \ud638\ucd9c\uc774 `seq=11`\uc744 \ubc1b\uc73c\uba74 `.11.0`\uc744 \uc0dd\uc131\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4. **\uac19\uc740 \ub300\uc0c1\u00b7pid\uc758 \uc794\uc5ec 64\uac1c\ub9cc\uc73c\ub85c \uc2e4\ud328\uac00 \uacb0\uc815\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.**", "10449:", "10450:   \u201c\ud574\ub2f9 \ud638\ucd9c\uc758 `stem\u00b7pid\u00b7seq`\uc5d0 \ub300\ud55c \ud6c4\ubcf4 0~63\uc774 \ubaa8\ub450 `AlreadyExists`\ub97c \ubc18\ud658\ud558\uba74 \uc2e4\ud328\ud55c\ub2e4\u201d\ub85c \uc881\ud600\uc57c \ud569\ub2c8\ub2e4. \uc2e4\ud589 \uad00\uce21\uc774 \uc544\ub2c8\ub77c \ucf54\ub4dc\uc5d0\uc11c \ub3c4\ucd9c\ud55c \ubc18\ub840\uc785\ub2c8\ub2e4.", "10451:", "10452:2. **43\uc758 \uad00\uce21\u00b7\uc2dc\uac04 \uad00\uacc4 \uc9c0\uc801\uc740 \ub2eb\ud614\uc2b5\ub2c8\ub2e4.**", "10453:", "10454:   [out_file.rs:248](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:248)\uc740 \uacbd\uc7c1 \uc2e4\ud5d8\uc758 \uc624\ub958 \uad00\uce21\uacfc \uc0ad\uc81c \uc2dc\uc810\u00b7\ucee4\ub110 \uc0c1\ud0dc \ubbf8\ud655\uc778\uc744 \uad6c\ubd84\ud569\ub2c8\ub2e4. [\ubcf4\uace0\uc11c:1570](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_\uac80\uc218\uac00_\ucc3e\uc740_\uacb0\ud568_5\uac74.md:1570)\ub3c4 \uc678\ubd80 \uac1c\uc785 \ubbf8\ud655\uc778\uc744 \uc720\uc9c0\ud569\ub2c8\ub2e4.", "10455:", "10456:   [HISTORY.md:39](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:39)\uc758 \uc815\uc815\uc740 **\ud638\ucd9c\ub07c\ub9ac \ub3d9\uc77c\ud55c \uc784\uc2dc \ud6c4\ubcf4 \uc774\ub984\uc744 \uc7ac\uc0ac\uc6a9\ud558\uc9c0 \uc54a\ub294\ub2e4\ub294 \ubcf4\uc7a5**\uc73c\ub85c\ub294 \ud0c0\ub2f9\ud569\ub2c8\ub2e4. \uc774\ub97c `PermissionDenied` \uc804\uccb4\uc758 \uc18c\uba78\uc774\ub098 \uc0ad\uc81c \ub300\uae30 \uac00\uc124\uc758 \uc785\uc99d\uc73c\ub85c \uc77d\uc744 \uadfc\uac70\ub294 \uc5c6\uc2b5\ub2c8\ub2e4.", "10457:", "10458:3. **\ubc88\ud638 \ud560\ub2f9\u00b7\ud6c4\ubcf4 \uc0dd\uc131\uc758 \ubd84\ub9ac\uc5d0\uc11c \uad6c\ud604 \ubc18\ub840\ub294 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.**", "10459:", "10460:   [out_file.rs:261](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:261)\uc758 \uacbd\uacc4 \ub3d9\uc791\uc740 \ub2e4\uc74c\uacfc \uac19\uc2b5\ub2c8\ub2e4.", "10461:", "10462:   - \uc0c1\ud0dc `MAX-1`: `Some(MAX-1)`\uc744 \ubc18\ud658\ud558\uace0 \uc0c1\ud0dc\ub97c `MAX`\ub85c \ubc14\uafc9\ub2c8\ub2e4.", "10463:   - \uc0c1\ud0dc `MAX`: \uc774\ud6c4 \uacc4\uc18d `None`\uc785\ub2c8\ub2e4. **`MAX` \uc790\uccb4\ub294 \ud560\ub2f9\ud558\uc9c0 \uc54a\ub294 \uc18c\uc9c4 \ud45c\uc2dd**\uc785\ub2c8\ub2e4.", "10464:   - \ub9c8\uc9c0\ub9c9 \ubc88\ud638\ub97c \ub3d9\uc2dc\uc5d0 \uc694\uccad\ud574\ub3c4 \ud55c \ud638\ucd9c\ub9cc \ubc1b\uc2b5\ub2c8\ub2e4. \ubc88\ud638 \uad6c\ubcc4\uc5d0 \ud544\uc694\ud55c \uc6d0\uc790\uc131\uc5d0\ub294 `Relaxed`\ub85c \ucda9\ubd84\ud558\uba70, \uac31\uc2e0 \ud074\ub85c\uc800\uc758 \uc7ac\uc2e4\ud589\uc5d0\ub3c4 \ubd80\uc791\uc6a9\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.", "10465:", "10466:   [out_file.rs:253](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:253)\uc740 \uc18c\uc9c4\uc744 \uba85\uc2dc\ud55c \uc624\ub958\ub97c \ubc18\ud658\ud558\uace0 \ud6c4\ubcf4 \uc0dd\uc131 \uc804\uc5d0 \ub05d\ub0a9\ub2c8\ub2e4. \ud6c4\ubcf4 \uc0dd\uc131\uc5d0 \uc2e4\ud328\ud574\ub3c4 \ubc88\ud638\ub97c \ub418\ub3cc\ub9ac\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \ub2e4\ub978 \uc624\ub958\uc640 64\uac1c \ud6c4\ubcf4 \uc18c\uc9c4\ub3c4 \uad6c\ubd84\ud569\ub2c8\ub2e4([out_file.rs:284](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:284)).", "10467:", "10468:4. **\uace0\uc815 \ubc88\ud638 \ud14c\uc2a4\ud2b8\uc758 \uae30\uc874 \ube48 \ud1b5\uacfc \uacbd\ub85c\ub294 \ub2eb\ud614\uc2b5\ub2c8\ub2e4. \ucd94\uac00\uc801\uc778 \uac19\uc740 \uacbd\ub85c\ub294 \ucc3e\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4.**", "10469:", "10470:   [out_file.rs:495](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:495)\uc740 \ub3c5\ub9bd \uc784\uc2dc \ub514\ub809\ud130\ub9ac\uc5d0 `7777.0`\uc744 \uc900\ube44\ud558\uace0, \uac19\uc740 \ubc88\ud638\ub85c \ud638\ucd9c\ud558\uc5ec `7777.1` \uc120\ud0dd\uacfc sentinel \ubcf4\uc874\uc744 \uc9c1\uc811 \uac80\uc0ac\ud569\ub2c8\ub2e4. \ub2e4\ub978 \ud14c\uc2a4\ud2b8\uac00 \uc804\uc5ed \ubc88\ud638\ub97c \uc18c\ube44\ud574\ub3c4 \uc774 \uc870\uac74\uc740 \ubc14\ub00c\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \uc18c\uc9c4 \ud14c\uc2a4\ud2b8 \uc5ed\uc2dc \uc9c0\uc5ed \uce74\uc6b4\ud130\ub97c \uc0ac\uc6a9\ud569\ub2c8\ub2e4([out_file.rs:516](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:516)).", "10471:", "10472:   \uae30\uc874 \uacbd\uc7c1 \ud14c\uc2a4\ud2b8\ub294 \uc2a4\ub808\ub4dc\uac00 \uc21c\ucc28 \uc2e4\ud589\ub418\uba74 \uc798\ubabb\ub41c \uad6c\ud604\uc744 \ub193\uce60 \uc218 \uc788\uc2b5\ub2c8\ub2e4. \uc774\ub294 \uc774\ubbf8 [out_file.rs:433](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:433)\uc5d0 \uba85\uc2dc\ub41c \ud55c\uacc4\uc774\uba70, \uc774\ubc88 \uc218\uc815\uc774 \uc0c8\ub85c \ub9cc\ub4e0 \ube48 \ud1b5\uacfc\ub294 \uc544\ub2d9\ub2c8\ub2e4.", "10473:", "10474:\uc815\uc801 \uac80\ud1a0\ub85c \ubaa8\ub4c8 \ubb38\uc11c\u00b7\ubc88\ud638 \ud560\ub2f9\u00b7\ud6c4\ubcf4 \uc0dd\uc131\u00b7\ud14c\uc2a4\ud2b8 \uc804\uccb4\uc640 \uc9c0\uc815 \ubb38\uc11c \ubd80\ubd84\uc744 \ub300\uc870\ud588\uc2b5\ub2c8\ub2e4. \ud14c\uc2a4\ud2b8\u00b7\ubba4\ud14c\uc774\uc158\u00b7\uacbd\uc7c1 \uc2e4\ud5d8\uc740 \uc7ac\uc2e4\ud589\ud558\uc9c0 \uc54a\uc558\uc73c\uba70, [HISTORY.md:42](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/history/HISTORY.md:42)\uc758 \uacb0\uacfc\ub294 \uae30\ub85d\uc73c\ub85c\ub9cc \ud655\uc778\ud588\uc2b5\ub2c8\ub2e4. \ucd94\uac00 \uad6c\ud604 \ubc18\ub840\ub97c \ucc3e\uc9c0 \ubabb\ud588\ub2e4\ub294 \ud310\ub2e8\uc740 \uacb0\ud568 \ubd80\uc7ac\uc758 \uc99d\uba85\uc774 \uc544\ub2d9\ub2c8\ub2e4.", "10475:", "10476:\uc870\ud68c \uc2e4\uc218\ub85c HISTORY\uc758 \uc14b\uc9f8 \uc774\ud6c4 \ud56d\ubaa9\ub3c4 \ucd9c\ub825\ub410\uc2b5\ub2c8\ub2e4. \uc9c0\uc815 \ubc94\uc704\ub97c \ubc97\uc5b4\ub09c \uc870\ud68c\uc600\uc73c\uba70, \ud574\ub2f9 \ub0b4\uc6a9\uc740 \ud310\uc815 \uadfc\uac70\ub85c \uc0ac\uc6a9\ud558\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4.", "10477:", "10478:CHANGES_REQUESTED"]}]
+
+codex
+`seq` 누락은 수정됐습니다. 다만 보고서의 “실패 조건은 … 모두 이미 있을 때”는 더 좁은 주장입니다. 구현은 첫 후보에서 `AlreadyExists`가 아닌 오류를 받아도 즉시 실패하므로, 후보 64개가 모두 존재할 필요는 없습니다.
+
+codex
+**44의 `seq` 누락 지적은 닫혔습니다. 다만 같은 부류의 문서 문제는 남아 있습니다.**
+
+1. **새 문장 자체는 구현과 맞습니다.**  
+   [out_file.rs:70](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:70)은 해당 호출의 후보로 조건을 한정했고, “그때만 실패한다”고 하지는 않습니다.
+
+   [out_file.rs:278](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:278)의 반복은 다음과 같습니다.
+
+   - 생성 성공: 즉시 성공 반환.
+   - `AlreadyExists`: 다음 후보로 진행.
+   - 그 밖의 오류: 즉시 오류 반환.
+   - 64개 모두 `AlreadyExists`: 반복 뒤 후보 소진 오류 반환.
+
+   따라서 다른 오류가 먼저 발생하면 64개를 모두 시도하지 않지만, **실패한다는 새 문장의 결론과 모순되지는 않습니다.** 근거는 [out_file.rs:285](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:285), [out_file.rs:295](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:295)입니다.
+
+2. **[P3] 보고서가 충분조건을 전체 실패 조건처럼 좁혀 적습니다.**  
+   [2026-09-10_0900_검수가_찾은_결함_5건.md:1689](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1689)의 **“실패 조건은 … 후보 0~63이 모두 이미 있을 때다”**가 문제입니다.
+
+   반례는 첫 후보에서 `PermissionDenied`를 반환하는 경우입니다. 나머지 63개가 비어 있어도 [out_file.rs:287](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:287)에서 즉시 실패합니다. 이는 코드 분기에서 도출한 반례이며, 이번에 실행하여 관측한 결과는 아닙니다.
+
+   같은 줄의 “seq=11을 받으면 `.11.0`을 **만든다**”도 성공을 단정합니다. 44 원문은 **“생성할 수 있습니다”**라고만 했습니다([44_재검수_결함39_CHANGES_REQUESTED.txt:10448](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10448)).
+
+   다음처럼 고치면 정확합니다.
+
+   > seq=11이면 `.11.0`을 생성할 수 있으므로, 다른 seq의 잔여 64개만으로 실패가 결정되지는 않는다. 후보 0~63이 모두 `AlreadyExists`를 반환하면 후보 소진으로 실패하며, 다른 오류에서는 즉시 실패한다.
+
+추가로 [out_file.rs:36](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:36)의 “이미 있으면 이름을 바꿔 다시 시도한다”도 **“`AlreadyExists`이면 다음 후보를 시도한다”**로 한정해야 오류 분기까지 정확히 설명합니다.
+
+지정한 모듈 문서·두 함수와 번호 할당 부분, 보고서 ㊵ 절, HISTORY 최상단 항목, 44의 최종 판정을 정적으로 대조했습니다. 그 밖의 확정 가능한 같은 부류의 결함은 찾지 못했습니다. 테스트·경쟁 실험은 실행하지 않았으며, 결함 부재를 증명한 것은 아닙니다. 첫 위치 검색에서 범위 밖 내용도 출력됐지만 판정 근거에서는 제외했습니다.
+
+CHANGES_REQUESTED
+tokens used
+39,403
+**44의 `seq` 누락 지적은 닫혔습니다. 다만 같은 부류의 문서 문제는 남아 있습니다.**
+
+1. **새 문장 자체는 구현과 맞습니다.**  
+   [out_file.rs:70](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:70)은 해당 호출의 후보로 조건을 한정했고, “그때만 실패한다”고 하지는 않습니다.
+
+   [out_file.rs:278](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:278)의 반복은 다음과 같습니다.
+
+   - 생성 성공: 즉시 성공 반환.
+   - `AlreadyExists`: 다음 후보로 진행.
+   - 그 밖의 오류: 즉시 오류 반환.
+   - 64개 모두 `AlreadyExists`: 반복 뒤 후보 소진 오류 반환.
+
+   따라서 다른 오류가 먼저 발생하면 64개를 모두 시도하지 않지만, **실패한다는 새 문장의 결론과 모순되지는 않습니다.** 근거는 [out_file.rs:285](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:285), [out_file.rs:295](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:295)입니다.
+
+2. **[P3] 보고서가 충분조건을 전체 실패 조건처럼 좁혀 적습니다.**  
+   [2026-09-10_0900_검수가_찾은_결함_5건.md:1689](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1689)의 **“실패 조건은 … 후보 0~63이 모두 이미 있을 때다”**가 문제입니다.
+
+   반례는 첫 후보에서 `PermissionDenied`를 반환하는 경우입니다. 나머지 63개가 비어 있어도 [out_file.rs:287](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:287)에서 즉시 실패합니다. 이는 코드 분기에서 도출한 반례이며, 이번에 실행하여 관측한 결과는 아닙니다.
+
+   같은 줄의 “seq=11을 받으면 `.11.0`을 **만든다**”도 성공을 단정합니다. 44 원문은 **“생성할 수 있습니다”**라고만 했습니다([44_재검수_결함39_CHANGES_REQUESTED.txt:10448](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/검수_2026-09-10/44_재검수_결함39_CHANGES_REQUESTED.txt:10448)).
+
+   다음처럼 고치면 정확합니다.
+
+   > seq=11이면 `.11.0`을 생성할 수 있으므로, 다른 seq의 잔여 64개만으로 실패가 결정되지는 않는다. 후보 0~63이 모두 `AlreadyExists`를 반환하면 후보 소진으로 실패하며, 다른 오류에서는 즉시 실패한다.
+
+추가로 [out_file.rs:36](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/out_file.rs:36)의 “이미 있으면 이름을 바꿔 다시 시도한다”도 **“`AlreadyExists`이면 다음 후보를 시도한다”**로 한정해야 오류 분기까지 정확히 설명합니다.
+
+지정한 모듈 문서·두 함수와 번호 할당 부분, 보고서 ㊵ 절, HISTORY 최상단 항목, 44의 최종 판정을 정적으로 대조했습니다. 그 밖의 확정 가능한 같은 부류의 결함은 찾지 못했습니다. 테스트·경쟁 실험은 실행하지 않았으며, 결함 부재를 증명한 것은 아닙니다. 첫 위치 검색에서 범위 밖 내용도 출력됐지만 판정 근거에서는 제외했습니다.
+
+CHANGES_REQUESTED
