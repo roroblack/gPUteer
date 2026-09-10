@@ -73,6 +73,11 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let lease_id = require(&flags, "--lease-id")?;
     let grant_id = require(&flags, "--grant-id")?;
     let out_path = require(&flags, "--out")?;
+    // ★ 기본값은 **덮어쓰지 않는다.** 위 `write_grant_file` 주석 참조.
+    let overwrite = matches!(
+        flags.get("--overwrite-existing-grant").map(String::as_str),
+        Some("true")
+    );
 
     // ★ Grant 시각도 절대값이다. `stage-job` 에서 배운 것과 같은 이유 —
     //   시계를 읽으면 같은 입력으로 두 번 발급했을 때 결과가 달라지고,
@@ -132,16 +137,22 @@ pub fn run(args: &[String]) -> Result<String, String> {
         grant.coordinator_term
     );
 
-    std::fs::write(out_path, grant.encode_to_vec())
-        .map_err(|e| format!("Grant 파일 쓰기 실패({out_path}): {e}"))?;
+    // ★ 공유 도우미를 쓴다 — `crate::out_file` 주석에 왜인지 적어 뒀다.
+    crate::out_file::write_new(
+        out_path,
+        &grant.encode_to_vec(),
+        overwrite,
+        "GRANT_REFUSED",
+        "Grant",
+    )?;
 
     Ok(summary)
 }
 
-/// 서명키를 **파일에서** 읽는다. 명령줄에 두지 않는 이유는 모듈 문서 참조.
+/// 서명키를 **파일에서만** 읽는다. 명령줄에 남기지 않는 것이 목적이다.
 fn load_signing_key(path: &str) -> Result<SigningKey, String> {
     let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("서명키 파일을 읽지 못했다({path}): {e}"))?;
+        .map_err(|e| format!("서명키 파일을 열지 못했다({path}): {e}"))?;
     let hex = raw.trim();
     if hex.len() != 64 {
         return Err(format!(

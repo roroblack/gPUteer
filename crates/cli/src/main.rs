@@ -40,6 +40,7 @@ mod import_inventory;
 mod import_manifest;
 mod plan_job;
 mod issue_grant;
+mod out_file;
 mod scheduler_tick;
 mod stage_job;
 mod submit;
@@ -65,7 +66,8 @@ gputeer — gPUteer CLI
     gputeer issue-grant --job-id <id> --control-db <path> \
         --attempt-id <ulid> --lease-id <ulid> --grant-id <id> \
         --grant-issued-at-unix-ms <ms> --grant-expires-at-unix-ms <ms> \
-        --coordinator-key-file <path> --out <path>
+        --coordinator-key-file <path> --out <path> \
+        [--overwrite-existing-grant true]
     gputeer scheduler-tick --control-db <path> --submitter-keyring <path> \
         --submitter-member <id> --max-snapshot-age-ms <ms> \
         --best-fit-axes <a,b,c,d,e> --coordinator-id <id> --coordinator-term <n> \

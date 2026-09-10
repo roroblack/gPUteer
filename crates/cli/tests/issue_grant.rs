@@ -167,6 +167,13 @@ fn staged(dir: &Path) -> (PathBuf, PathBuf) {
         "1",
         "--gpu-min-vram-bytes",
         "8589934592",
+        // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
+        "--cpu-cores",
+        "4",
+        "--ram-bytes",
+        "8589934592",
+        "--workspace-bytes",
+        "10737418240",
     ]);
     assert!(ok, "submit 실패: {out}");
 
@@ -300,6 +307,9 @@ fn queue_only(dir: &Path, db: &Path, job_id: &str, idem: &str) {
         "--dataset-sensitivity", "INTERNAL", "--minimum-security-tier", "S2",
         "--minimum-isolation-class", "CONTAINED", "--minimum-key-protection", "K1",
         "--gpu-count", "1", "--gpu-min-vram-bytes", "8589934592",
+        // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
+        "--cpu-cores", "4", "--ram-bytes", "8589934592",
+        "--workspace-bytes", "10737418240",
     ]);
     assert!(ok, "submit 실패: {out}");
 
@@ -825,4 +835,77 @@ fn an_attempt_belonging_to_another_job_yields_no_grant() {
         "재려던 관문이 아니라 다른 곳에서 막혔다: {output}"
     );
     assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// 이미 있는 출력 파일을 말없이 덮지 않는다.
+///
+/// ★★ 2026-09-10 독립 검수 지적의 회귀 테스트다.
+///
+/// 검수가 든 반례: 운영자가 `--coordinator-key-file` 에 **엉뚱한 키**를 주면
+/// 이 명령은 그것을 잡지 못한다(발급자 이름에 그 키의 공개키를 등록해
+/// 자기 검증하므로 자기 검증도 못 잡는다). 그러면 `GRANTED` 를 찍으면서
+/// **멀쩡하던 Grant 파일을 못 쓰는 것으로 바꿔 놓는다.**
+///
+/// ★ 키와 신원의 불일치 자체는 여기서 못 고친다 — Coordinator 공개키
+///   목록이 있어야 하고 아직 없다. 고칠 수 있는 것은 **그 실수가 기존
+///   파일을 파괴하지 않게** 하는 것이고, 이 테스트가 그것을 고정한다.
+#[test]
+fn an_existing_out_file_is_not_clobbered() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+    let out = dir.path().join("grant.pb");
+
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(ok, "정상 경로가 실패했다: {output}");
+    let first = std::fs::read(&out).expect("첫 Grant 를 읽는다");
+    assert!(!first.is_empty(), "첫 Grant 가 비어 있다");
+
+    // 같은 자리에 다시 낸다 — 거부해야 한다.
+    let (ok2, output2) = issue(&db, &key_file, &out, &[]);
+    assert!(!ok2, "이미 있는 파일을 말없이 덮었다: {output2}");
+    assert!(
+        output2.contains("GRANT_REFUSED: OUT_EXISTS"),
+        "거부했는데 이유가 파일 존재가 아니다: {output2}"
+    );
+
+    // ★ 핵심 — 원래 파일이 **바이트 그대로** 남아야 한다.
+    let after = std::fs::read(&out).expect("거부 뒤에도 파일이 있어야 한다");
+    assert_eq!(first, after, "거부했는데 기존 파일이 바뀌었다");
+
+    // 임시 파일이 남지 않는다.
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("디렉터리")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.contains(".tmp."))
+        .collect();
+    assert!(leftovers.is_empty(), "임시 파일이 남았다: {leftovers:?}");
+}
+
+/// 명시적으로 요청하면 덮어쓴다.
+///
+/// ★ 이 대조군이 없으면 "항상 거부" 로 고쳐도 위 테스트가 통과한다.
+#[test]
+fn an_explicit_flag_allows_replacing_the_file() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+    let out = dir.path().join("grant.pb");
+
+    // 운영자가 손으로 만들어 둔 것을 흉내낸다.
+    std::fs::write(&out, b"stale bytes that are not a grant").expect("미리 쓴다");
+
+    let (ok, output) = issue(
+        &db,
+        &key_file,
+        &out,
+        &["--overwrite-existing-grant", "true"],
+    );
+    assert!(ok, "명시적 덮어쓰기가 실패했다: {output}");
+
+    let bytes = std::fs::read(&out).expect("Grant 를 읽는다");
+    assert_ne!(
+        bytes, b"stale bytes that are not a grant",
+        "덮어쓴다고 했는데 옛 내용이 그대로다"
+    );
+    assert!(!bytes.is_empty(), "덮어썼는데 비어 있다");
 }
