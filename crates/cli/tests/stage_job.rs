@@ -41,7 +41,8 @@ const ATTEMPT: &str = "01JATTEMPTSTAGE00000000001";
 const LEASE: &str = "01JLEASESTAGE000000000001";
 const AXES: &str = "vram,gpu_count,cpu,ram,workspace";
 /// ★ Lease 시각은 **고정 상수**다. 시계를 읽으면 재시도마다 값이 달라져
-///   operation key 의 멱등 약속이 깨진다(통합 테스트가 그걸 잡았다).
+///   같은 operation key 의 재시도를 저장소가 같은 요청으로 받지 않는다
+///   (통합 테스트가 그걸 잡았다. 재검수 28 — 전에는 "멱등 약속이 깨진다" 고 적었다).
 const LEASE_ISSUED: &str = "1800000000000";
 const LEASE_RENEW: &str = "1800000300000";
 const LEASE_EXPIRES: &str = "1800000600000";
