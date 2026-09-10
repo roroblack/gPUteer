@@ -37,7 +37,8 @@
 //!             바꿔 다시 시도한다 — 남의 임시 파일을 덮지 않는다.
 //!             이름은 `<대상>.tmp.<pid>.<seq>.<n>` — seq 는 호출마다 받는 프로세스
 //!             전역 번호라, 같은 프로세스의 동시 쓰기끼리 같은 이름을 두고
-//!             부딪히지 않는다(결함 ㊱)
+//!             부딪히지 않는다(결함 ㊱). 번호가 소진되면 0 으로 돌지 않고
+//!             실패한다(결함 ㊴)
 //! 덮어쓰기 X  temp 를 target 에 **hard_link** 한다. 대상이 있으면
 //!             링크가 실패한다 — **확인과 확정이 한 번의 원자적 연산**이다
 //! 덮어쓰기 O  `fs::rename` 한 번으로 바꾼다. **먼저 지우지 않는다** —
@@ -244,13 +245,34 @@ fn create_exclusive_temp(
     code: &str,
     what: &str,
 ) -> Result<(PathBuf, std::fs::File), String> {
+    // ★ 결함 ㊱ — 전에는 호출마다 `.tmp.<pid>.0` 부터 시도해, 같은 프로세스의 동시 쓰기가 같은
+    //   이름을 두고 경쟁했다. 그 경쟁 실험(Windows)에서 create_new 가 AlreadyExists 가 아니라
+    //   PermissionDenied 를 돌려주는 것을 관측했다 — 삭제와의 정확한 시간 관계와 커널 안의 상태는
+    //   확인하지 않았다(결함 ㊴). 호출마다 전역 번호를 받아 같은 프로세스 안에서는 같은 이름을
+    //   시도하지 않게 한다. 앞 실행이 남긴 파일은 아래 create_new 가 비켜 간다.
+    let seq = next_temp_seq(&TEMP_SEQ).ok_or_else(|| {
+        format!("{code}: {what} 임시 이름 번호를 다 썼다 — 같은 이름을 다시 쓰지 않으려고 실패한다")
+    })?;
+    create_exclusive_temp_with_seq(dir, stem, seq, code, what)
+}
+
+/// 프로세스 전역 번호를 하나 받는다. **소진되면 `None`** — 한 바퀴 돌아 0 으로 가면 먼저 받은
+/// 호출과 같은 이름을 시도할 수 있다(결함 ㊴).
+fn next_temp_seq(counter: &AtomicU64) -> Option<u64> {
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+        .ok()
+}
+
+/// 정해진 번호로 후보를 만든다. 앞 실행이 남긴 파일은 create_new 가 비켜 간다.
+fn create_exclusive_temp_with_seq(
+    dir: &Path,
+    stem: &str,
+    seq: u64,
+    code: &str,
+    what: &str,
+) -> Result<(PathBuf, std::fs::File), String> {
     let pid = std::process::id();
-    // ★ 결함 ㊱ — 전에는 호출마다 `.tmp.<pid>.0` 부터 시도해, 같은 프로세스의 다른 쓰기가
-    //   방금 만들고 지우는 이름과 겹쳤다. Windows 에서 그 순간 create_new 가 AlreadyExists 가
-    //   아니라 PermissionDenied 를 돌려주는 것을 경쟁 실험이 관측했다(커널 안의 상태는 못 봤다).
-    //   호출마다 전역 번호를 받아 같은 프로세스 안에서는 같은 이름을 시도하지 않게 한다.
-    //   앞 실행이 남긴 파일은 여전히 아래 create_new 가 비켜 간다.
-    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
     for attempt in 0..64u32 {
         let candidate = dir.join(format!("{stem}.tmp.{pid}.{seq}.{attempt}"));
         match std::fs::OpenOptions::new()
@@ -466,33 +488,35 @@ mod tests {
         assert_ne!(first, second, "지운 임시 이름을 다시 썼다 — 동시 쓰기가 같은 이름을 두고 부딪힌다");
     }
 
-    /// ★ 결함 ㊱ — **지금 이름**(`.tmp.<pid>.<seq>.0`)의 남의 파일도 안 건드린다.
-    ///   번호는 프로세스 전역이라 다른 테스트가 먼저 가져갈 수 있다 — 그래서 앞으로 받을 번호
-    ///   범위 전체에 미리 깔아 둔다. 이 쓰기는 그중 하나와 부딪혀 다음 attempt 로 넘어가야 한다.
+    /// ★ 결함 ㊱ · ㊴ — **지금 이름**(`.tmp.<pid>.<seq>.0`)의 남의 파일도 안 건드린다.
+    ///   번호를 테스트가 **정해서** 준다 — 전역 번호를 읽기만 하던 첫 판은 다른 테스트가 번호를
+    ///   가져가면 충돌 없이 통과할 수 있었다(재검수 43).
     #[test]
     fn leftover_temps_under_the_current_name_are_kept() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
-        let target = dir.path().join("y.pb");
         let pid = std::process::id();
-        let start = TEMP_SEQ.load(Ordering::Relaxed);
-        let sentinels: Vec<PathBuf> = (start..start + 256)
-            .map(|seq| dir.path().join(format!("y.pb.tmp.{pid}.{seq}.0")))
-            .collect();
-        for path in &sentinels {
-            std::fs::write(path, b"sentinel").expect("잔여 파일");
-        }
+        let seq = 7_777;
+        let sentinel = dir.path().join(format!("y.pb.tmp.{pid}.{seq}.0"));
+        std::fs::write(&sentinel, b"sentinel").expect("잔여 파일");
 
-        let warning = write_new(target.to_str().unwrap(), b"new", false, "T", "X").expect("쓰기");
+        let (made, file) =
+            create_exclusive_temp_with_seq(dir.path(), "y.pb", seq, "T", "X").expect("임시 생성");
+        drop(file);
 
-        assert_eq!(warning, None);
-        assert_eq!(std::fs::read(&target).expect("산출물"), b"new");
-        for path in &sentinels {
-            assert_eq!(
-                std::fs::read(path).expect("★ 지금 이름의 남의 파일이 사라졌다"),
-                b"sentinel",
-                "{} 가 바뀌었다",
-                path.display()
-            );
-        }
+        assert_eq!(
+            made,
+            dir.path().join(format!("y.pb.tmp.{pid}.{seq}.1")),
+            "남은 파일과 부딪힌 뒤 다음 후보로 넘어가지 않았다"
+        );
+        assert_eq!(std::fs::read(&sentinel).expect("★ 남의 파일이 사라졌다"), b"sentinel");
+    }
+
+    /// ★ 결함 ㊴ — 번호가 소진되면 0 으로 돌지 않고 실패한다.
+    #[test]
+    fn the_temp_sequence_fails_instead_of_wrapping() {
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(next_temp_seq(&counter), Some(u64::MAX - 1));
+        assert_eq!(next_temp_seq(&counter), None, "마지막 번호 뒤에 되돌아갔다");
+        assert_eq!(next_temp_seq(&counter), None);
     }
 }
