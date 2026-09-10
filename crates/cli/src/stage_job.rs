@@ -78,9 +78,11 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //   같은 입력의 재현을 호출자가 보장하지 못한다(재검수 30 — 전에는 "매번
     //   달라진다 · 멱등하다고 말해 놓고 안 지키는 셈" 이라 적었다).
     //
-    //   `orchestrate` 자신도 "시계를 읽지 않는다" 고 계약에 적었다.
-    //   CLI 가 대신 읽어 주면 그 계약을 우회하는 것이다. 그래서 세 시각을
-    //   **절대값으로** 받는다 — 운영자가 정하고, 재시도는 같은 값을 준다.
+    //   그래서 재시도에서 Lease 시각을 재현하기 위해 세 시각을 **절대값으로**
+    //   받는다 — 운영자가 정하고, 재시도는 같은 값을 준다. (`orchestrate` 가 "시계를
+    //   읽지 않는다" 는 것은 함수 안의 조회 금지다. 호출자가 읽어 인자로 넘기는 것까지
+    //   막지 않는다 — `scheduler_tick` 은 신선도 판정용 현재 시각을 그렇게 넘긴다.
+    //   재검수 32 — 전에는 CLI 가 읽으면 "그 계약을 우회한다" 고 적었다)
     let issued_at_unix_ms = u64_flag(&flags, "--lease-issued-at-unix-ms")?;
     let renew_after_unix_ms = u64_flag(&flags, "--lease-renew-after-unix-ms")?;
     let expires_at_unix_ms = u64_flag(&flags, "--lease-expires-at-unix-ms")?;

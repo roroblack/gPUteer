@@ -104,9 +104,11 @@ pub struct LossEstimate {
 ///
 /// # 시계가 거꾸로 간 경우
 ///
-/// ★ `now` 가 기준 시각보다 이전이면 **음수 대신 0** 을 낸다. 뺄셈이
-///   underflow 하면 u64 가 거대한 값으로 감싸돌아 "3억 년 손실" 같은
-///   숫자가 화면에 뜬다. 시계 보정·NTP 점프로 실제로 일어날 수 있다.
+/// ★ `now` 가 기준 시각보다 이전이면 **음수 대신 0** 을 낸다(`saturating_sub`).
+///   일반 뺄셈이었다면 overflow 검사 설정에 따라 panic 하거나 거대한 값으로
+///   감싸돌 수 있다 — 감싸돌면 "3억 년 손실" 같은 숫자가 화면까지 갈 수 있다.
+///   시계 보정·NTP 점프로 `now` 가 기준보다 이전이 되는 일은 일어날 수 있다
+///   (재검수 32 — 전에는 감싸돌아 화면에 뜬다고만 적었다).
 pub fn estimate_loss(workload: &RunningWorkload, now_unix_ms: u64) -> LossEstimate {
     let (baseline, nothing_committed_yet) = match workload.last_checkpoint_at_unix_ms {
         Some(at) => (at, false),
