@@ -140,6 +140,30 @@ pub enum ScopeError {
     },
     /// `[N/A]` 또는 caller의 mode claim만으로 MIG partition을 입증할 수 없다.
     PartitionedAllocationUnproven,
+    /// 노드 단위 VRAM 예산을 강제할 수단이 입증되지 않았다.
+    ///
+    /// ★ 2026-09-09 추가. 이 자리가 **비어 있었다.** `Partitioned` 는 바로
+    ///   위에서 거부하는데 `Shared` 는 아무 관문도 없어서, 노드가 Shared 를
+    ///   광고하면 경고 없이 그대로 배치됐다. `proto/common.proto` 가
+    ///   "Linux + MPS memory limit 확인 시에만" 이라고 적어 뒀지만 그것을
+    ///   **강제하는 코드가 저장소에 없었다** — 규범만 있고 관문이 없었다.
+    ///
+    /// 실측이 말해 주는 것(2026-09-08~09, x600):
+    /// ```text
+    /// MPS        WSL2 에서 **불가능**하다. 드라이버 번들에 MPS 바이너리가
+    ///            없고 root 로도 compute mode 를 못 바꾼다
+    /// 가로채기   유저스페이스 CUDA 심볼 가로채기로 한 프로세스의 동시
+    ///            VRAM 사용량 상한은 실제로 걸렸다. 그러나 카운터가
+    ///            **프로세스 로컬**이라 노드 단위 예산은 강제하지 못한다
+    ///            — 프로세스를 여덟 개 띄우면 상한이 여덟 배가 된다
+    /// ```
+    /// 즉 오늘 어느 플랫폼에서도 "이 노드의 VRAM 합이 용량을 넘지 않는다"
+    /// 를 강제할 수단이 없다. `CLAUDE.md` §0.4 — 강제할 수 없는 것을
+    /// 보장으로 선언하지 않는다.
+    ///
+    /// 근거  `docs/evidence/_raw/WSL_GPU_MPS_실측_2026-09-08.txt`
+    ///       `docs/evidence/_raw/VRAM_유저스페이스_가로채기_실측_2026-09-08.txt`
+    SharedAllocationUnproven,
 }
 
 /// 고정 관측에서 deterministic `ScopeCandidate`를 계산한다.
@@ -180,6 +204,9 @@ pub fn gpu_scope_candidate(
         .ok_or(ScopeError::MissingFact(ScopeMissingFact::JobAllocationMode))?;
     if allocation_mode == GpuAllocationMode::Partitioned {
         return Err(ScopeError::PartitionedAllocationUnproven);
+    }
+    if allocation_mode == GpuAllocationMode::Shared {
+        return Err(ScopeError::SharedAllocationUnproven);
     }
 
     let cpu_cores = resources

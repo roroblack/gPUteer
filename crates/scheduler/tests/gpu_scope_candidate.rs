@@ -425,6 +425,49 @@ fn partitioned_allocation_is_rejected_even_when_input_claims_mig_support() {
 }
 
 #[test]
+fn shared_allocation_is_rejected_even_when_input_claims_shared_support() {
+    // ★ 2026-09-09 — 이 자리가 **비어 있었다.** 바로 위 `Partitioned` 는
+    //   거부를 검사하는데 `Shared` 는 아무도 안 쟀다. 그래서 관문이 없다는
+    //   것조차 아무 테스트도 알려주지 않았다 — 51건이 전부 통과하면서.
+    //
+    //   `proto/common.proto` 는 "Linux + MPS memory limit 확인 시에만"
+    //   이라고 적어 뒀는데, 그것을 강제하는 코드가 저장소에 없었다.
+    //   ★ 실측(2026-09-08~09, x600)이 그 조건을 오늘 만족시킬 수 없음을
+    //     보였다 — MPS 는 WSL 에서 불가능하고, 유저스페이스 가로채기는
+    //     카운터가 프로세스 로컬이라 노드 단위 예산을 못 지킨다.
+    let mut input = snapshot(vec![gpu("gpu-a", 10_000)]);
+    input.gpus.as_mut().unwrap()[0]
+        .allocation_modes
+        .as_mut()
+        .unwrap()
+        .insert(GpuAllocationMode::Shared);
+    let mut required = requirements(1, 1);
+    required.allocation_mode = Some(GpuAllocationMode::Shared);
+
+    assert_eq!(
+        evaluate(&input, &required, &resources()),
+        Err(ScopeError::SharedAllocationUnproven)
+    );
+}
+
+#[test]
+fn refusing_shared_does_not_refuse_exclusive() {
+    // ★ 대조군. 이게 없으면 "전부 거부한다" 로 고쳐도 위 테스트가 통과한다.
+    //   그리고 **거부가 아니라 성공을 확인해야** 한다 — `is_err()` 가
+    //   아닌 것만 보면 다른 이유로 실패하는 것과 구분되지 않는다.
+    let input = snapshot(vec![gpu("gpu-a", 10_000)]);
+    let required = requirements(1, 1);
+
+    let candidate = evaluate(&input, &required, &resources())
+        .expect("Exclusive 는 통과해야 한다 — 통과 못 하면 관문이 아니라 고장이다");
+    assert_eq!(
+        candidate.selected_gpu_ids,
+        vec!["gpu-a".to_string()],
+        "통과했다면 실제로 그 GPU 를 골라야 한다"
+    );
+}
+
+#[test]
 fn unhealthy_or_incompatible_gpus_never_enter_the_candidate() {
     let mut unhealthy = gpu("gpu-unhealthy", 10_000);
     unhealthy.healthy = Some(false);
