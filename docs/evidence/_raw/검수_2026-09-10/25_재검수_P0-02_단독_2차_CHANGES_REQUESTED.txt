@@ -1,0 +1,1022 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08a7a-c548-7bc0-b495-3a63c75b6824
+--------
+user
+동의가 아니라 **반박**을 원한다. `P0-02` evidence 초안을 **이것만 따로** 봐 달라.
+재검수 23 이 결론의 과장은 없다고 하면서 **front-matter 가 원문과 충돌한다**고
+짚었고, 고쳤다.
+
+# 23 의 지적과 이번 수정
+
+```text
+permissions  "권한은 전부 원복" -> C: 쪽은 원복, E: 의 actemp·pyembed 는 재현용으로 남김
+command      "경로는 전부 E: 아래 — C: 는 안 씀" -> 프로브는 E:, 설치형 Python 은 C:,
+             embeddable·TEMP 는 E:
+hardware     gpu-probe·UUID·compute capability 가 이 스파이크 원문에 없다
+             -> 다른 날의 측정 원문 둘을 인용(DoD-56 NVML 관측 · ENV-02),
+                원문 어디에도 없는 "64x64" 는 뺐다
+platform     Windows 에디션 · cargo 버전 -> "원문에 기록 없음" 으로
+낡은 주석    "아래 review_outcome: PENDING" · 검사기 거부 -> 당시 기록임을 밝힘
+```
+
+★ `status: INCONCLUSIVE` 는 유지한다. 머리의 판정 요약 블록은 과장의 기록으로
+남겼다 — 판정 대상이 아니다. **본문과 front-matter** 를 봐라.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md
+docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt
+docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt
+docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt
+docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt
+docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt
+docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt
+docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt
+docs/evidence/_raw/ENV-02_probe.txt
+crates/runtime-windows/src/appcontainer.rs     (가둠 테스트만)
+```
+
+# 물을 것 — 세 가지
+
+1. **23 의 지적이 닫혔나.** 새로 인용한 두 원문이 적힌 값(UUID·드라이버·VRAM·
+   compute capability 8.9)을 실제로 받치나?
+
+2. **front-matter 와 본문의 모든 문장이 원문 범위 안인가** — 23 이 짚지 않은
+   자리도. 훑은 범위를 적어라.
+
+3. **evidence 로 옮겨도 되나.** 옮길 때 front-matter 에서 무엇을 바꿔야 하나.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든
+것과 결함이 없는 것은 다르다 — 그 둘을 구분해 써라.
+
+# 답의 형식
+
+각 지적마다 문서의 해당 줄을 인용하고, 왜 측정을 넘어서는지 쓰라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 파일만 읽고, 머리의 판정 요약 블록을 제외한 front-matter와 본문을 원문에 대조하겠습니다. 새 하드웨어 인용의 근거와 evidence로 옮길 때 필요한 변경도 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$paths = @('"'docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md','docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt','docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt','docs/evidence/_raw/ENV-02_probe.txt'); foreach ("'$p in $paths) { $lines = Get-Content -LiteralPath $p -Encoding UTF8; Write-Output "$p`t$($lines.Count) lines" }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1914ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+docs/plans/2026-09-06_0020_P0-02_evidence_�ʾ�_�˼����.md	403 lines
+docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt	22 lines
+docs/evidence/_raw/P0-02_appcontainer_cuda_1��.txt	58 lines
+docs/evidence/_raw/P0-02_appcontainer_cuda_2��.txt	97 lines
+docs/evidence/_raw/P0-02_appcontainer_cuda_3��_�����Ұ�.txt	80 lines
+docs/evidence/_raw/P0-02_appcontainer_cuda_4��_����.txt	64 lines
+docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt	93 lines
+docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt	14 lines
+docs/evidence/_raw/ENV-02_probe.txt	27 lines
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$p = '"'docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md'; "'$i = 0; Get-Content -LiteralPath $p -Encoding UTF8 | ForEach-Object { $i++; '"'{0,4}: {1}' -f "'$i, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1444ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: <!--
+   2: �ڡڡ� 2026-09-10 ���� �˼� ���� ? CHANGES_REQUESTED
+   3: 
+   4:   �˼��ڰ� �ʾ� 1���� ���� 5���� **����** �а� �����ߴ�. �Ʒ� ������
+   5:   ��ġ�� �ʰ� �״�� �ΰ�, ������ �������� ���ߴ����� ���� ���´�.
+   6:   (������ ���� �ٵ����� ������ �����ߴ����� �������.)
+   7: 
+   8:   ���� �������� ���ϰ� �� ���� �� ������������������������������������������������������������������
+   9:   �� 1. "���� ������ ���д�. **���� �� ���� ���� �ڸ����� �׾���**" ��
+  10:   ��    -> Ʋ�ȴ�. ������ ������ �����Ѵ�:                          ��
+  11:   ��         1��  0xC0000135 ? "��ũ��Ʈ�� �������� �� ��"          ��
+  12:   ��         2��  "_ctypes DLL �ʱ�ȭ ����"                         ��
+  13:   ��         4��  ������ import ���� �ִ�                           ��
+  14:   ��         5��6�� DLL �ε� ����                                    ��
+  15:   ��       **���� �ܰ��� Ž���� ���� ���� �ݺ� �������� �ô�.**     ��
+  16:   ��                                                               ��
+  17:   �� 2. "���� ���� **ole32 �ϳ���**"                                ��
+  18:   ��    -> ������ `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带      ��
+  19:   ��       ��´�. ���� �ڵ常���� **������ �ʱ�ȭ �Լ��� ��ġ**,   ��
+  20:   ��       **_ctypes ���п��� �ΰ�**, **�ٸ� ����� ����**����      ��
+  21:   ��       Ȯ���� �� ����.                                          ��
+  22:   ��       �´� ����: "������ DLL �� ole32 �ε忡���� 1114 ��       ��
+  23:   ��       ����������, _ctypes ���п��� ����� �߰� Ȯ���� �ʿ�"    ��
+  24:   ��                                                               ��
+  25:   �� 3. "**�Ұ���** ���� �� (���� ���� ����)"                       ��
+  26:   ��    -> "**������** �� ���濡�� ���а� ���ӵƴ�" �� �´�.        ��
+  27:   ��       �õ��� �� ����� �ƴ����� ���� ������ �Ұŵ� �ƴϴ�.     ��
+  28:   ��                                                               ��
+  29:   �� 4. "combase �� �Ǵµ� **���Ž� ������ �� �ȴ�**"               ��
+  30:   ��    -> �ε� ���� ����� **COM ��� ������ ���� ����� �ƴϴ�.** ��
+  31:   ����������������������������������������������������������������������������������������������������������������������������������
+  32: 
+  33:   �ڡ� �ݴ� ���� ������ �ִ� ? ������ �� �߿��ϴ�.
+  34: 
+  35:     ���� "package identity ���ɼ��� �������� ���� ���з� Ȯ���ϸ�
+  36:     ���� ���� ���� ������� ���� ��" �̶�� ��µ�, �˼��ڰ� ���ߴ�:
+  37: 
+  38:     > **���� ������ �𸣴� �Ͱ� ������ �������� ���и� ������ ����
+  39:     > �縳�Ѵ�.**
+  40: 
+  41:     �� ������ ���̸� ������ �ٰŰ� �ִ� ? "���� x600 ȯ�桤������
+  42:     CPython �����ǡ���ϵ� �������� ctypes/torch ��ΰ� CUDA ȣ��
+  43:     ���� ������" ��� ������� `FAIL-SCOPE` �� �޹�ħ�Ѵ�.
+  44:     �� ���� ������ **���� ����** �Ἥ �տ��� ������ �� ������ �ٽ�
+  45:       ��ȴ�. ��ü ������ ���� `INCONCLUSIVE` �� ������ �����ϴ�.
+  46: 
+  47:   �� �˼��ڰ� **Ȯ���� �� ��**�� ���� �д� ? �ʾ��� �Ѱ踦 ��������
+  48:     �ʾҴ�. "Ȯ������ �ʾ����Ƿ� �������θ� ���´�"(172~175��),
+  49:     "package identity ���� ������ ���ɼ�"(196��)�� ���õ� �ְ�,
+  50:     �������� '������ ��� �а�' �� **ã�� ���ߴ�**�� �ߴ�.
+  51: 
+  52:   ���� ���� docs/evidence/_raw/�˼�_2026-09-10/08_P0-02_evidence_CHANGES_REQUESTED.txt
+  53: 
+  54: �ڡڡ� 2026-09-10 17:30 ? **���� 8 �� ������ �ݿ��ߴ�.** �� ������ ������
+  55:   ������� �״�� �д�. ������ ������ ���ߴ� ��� **������ �ٽ� ����
+  56:   ������ �������**(���� ���):
+  57:     docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt
+  58:     ����      �ٱ� exit 0("host only" ����) �� ���� exit 1
+  59:     �����̼�  SECURITY_CAPABILITIES ������ �� -> ���� exit 0 -> �׽�Ʈ ����
+  60:   �� x600 ������ �ٽ� ���� �ʾҴ�.
+  61: 
+  62: �ڡڡ� 2026-09-10 ��˼� 16 ? CHANGES_REQUESTED (�ݿ����� �ٽ� �ô�)
+  63:   �������� ��: ���� ������ ����� ��ġ �� ���� ��� �Ѱ� ���� �� ole32 �ΰ� ��
+  64:   combase ��� ���� ���� �� "���� �ܰ��� Ž��" �� ���� ������ FAIL-SCOPE �ٰ�.
+  65:   ���Ҵ� ��:
+  66:     ���� ����     "ȣ��Ʈ ���� ���� **�ź�**" ? ������ ���� �ڵ���̴�. ����
+  67:                   �Ӽ� ������ �ٸ� �ܰ谡 �������� ���ɼ��� �� ��¸����� �� ����
+  68:     ȯ�� ����     claim �� "x600 ���� Ȯ��" ��Ͽ� ���� ����� ������ ��� �־���
+  69:     �� ǥ��       review_scope �� "�Ұ��� ���� ��"
+  70:     ����          �ļ� ��ȹ�� "DllMain �� �������� **�ź�**�Ǵ���" ? ���� �Լ���
+  71:                   '�ź�' �� ���� ���� ���ߴ�
+  72:     ���� �浹     "�� �����δ� FAIL-SCOPE" �� "ȸ�� �Ұ��� FAIL-SCOPE" �� �յڷ� �浹
+  73:   -> �ټ� ���� ���ƴ�. ������ **���� �ڵ� ����**���� �����(������ Ư���Ϸ���
+  74:      �ڽ��� ���� ����� �޾ƾ� �Ѵ� ? ���� �� �ߴ�)
+  75: 
+  76: �ڡڡ� 2026-09-10 ��˼� 19 ? CHANGES_REQUESTED (3�� �ݿ���)
+  77:   16 �� ������ ��κ� �����ٰ� �����޾Ҵ�. ���� �� ��:
+  78:     limitations  "Process Monitor �� ���� **�źε� ����**�� ���� �ȴ�" ? �źθ� �����ߴ�
+  79:     ����         "���μ������� ���� SID �� �� SID �� ��Ģ�� �ɸ� **�� Job �ϳ��� ������**"
+  80:                  ? ���� ������ "�������� �̸��� ������ SID �� ����" �� ������, Job ��
+  81:                  ���ܵ� outbound ���ѵ� ���� �ʾҴ�. ���� ������ ����ó�� ���
+  82:     ����         platform �� "�� ��� �� �� ���忡���� ���", review_scope �� "���� ����
+  83:                  ������ ����" ? ��� ��������(x600 �� Python��DLL) �� ������
+  84:   -> �� �� ���ƴ�. �� 16 ���� ��δ� �� ���� �̸� �������� Ʋ���� �˼��ڰ� �� �о���
+  85: 
+  86: �ڡڡ� 2026-09-10 ��˼� 21 ? �� �ʾȿ��� **�߰� ������ �䱸�� �ٰŸ� �� ã�Ҵ�**
+  87:   (���� ��ü�� DoD-68 �� �� ���� ������ CHANGES_REQUESTED). 16 ���� ��ȩ �׸����
+  88:   ������ �����ٰ� �ߴ�. �� ���� ���� ���� �ź��� **����**���� Ȯ���� ���� �ƴϴ�
+  89:   ? ������ �׷��� ���´�. ���� 21_��˼�_evidence_�ʾ�_4��_CHANGES_REQUESTED.txt
+  90: 
+  91: �ڡڡ� 2026-09-10 ��˼� 22 ? �� �ʾȿ��� **�� �߰� ������ ������.** 21 ������
+  92:   ������ ���� ������ ���� ������front-matter �� �� �ٲ����(�Ӹ� ��ϻ�)��
+  93:   Ȯ���ߴ�. front-matter �� review_* �� �ֽ� ������ ����Ű�� �ʴ´ٴ� �͸� ¤����
+  94:   -> review_artifact �� 22 ��������, reviewer_tool �� ��˼� �̷��� ������.
+  95:   �� 21��22 �� �� �ʾ��� �� �������� �޾Ƽ� **P0-02 �ܵ� ACCEPTED �� ���� ����.**
+  96:     ���� �˼�(23)�� P0-02 �� ���� �޴´�
+  97: 
+  98: �ڡڡ� 2026-09-10 ��˼� 23(P0-02 �ܵ�) ? CHANGES_REQUESTED
+  99:   ����� ������ �� ���ٰ� �ߴ�. **front-matter �� ������ �浹�ߴ�**:
+ 100:     permissions  "���� �� �� ���� ������ **����** ����" ? 3�� ������ E: ��(actemp ��
+ 101:                  pyembed)�� ���������� ����ٰ� ������
+ 102:     command      "��δ� **����** E: �Ʒ� ? C: �� �� ����" ? ��ġ�� Python �� C: ����
+ 103:     hardware     gpu-probe �� UUID �� compute capability �� "64x64" �� �� ���� ������ ����
+ 104:     ���� �ּ�    "�Ʒ� review_outcome: PENDING" �� �˻�� �ź� ������ ��� ���¿���
+ 105:   -> �� �� ���ƴ�. �ϵ����� **�ٸ� ���� ���� ����**�� �ο��߰�(DoD-56 �� ENV-02),
+ 106:      ���� ��𿡵� ���� ��� ũ��� ����
+ 107: -->
+ 108: 
+ 109: <!--
+ 110: �ڡ� �̰��� **���� evidence �� �ƴϴ�.** docs/evidence/ �� �θ�
+ 111:     verify_evidence.py �� �ź��Ѵ� ? �׸��� �װ� �Ǵ�.
+ 112: 
+ 113:     �ź� ������ ������ �޾� �ô�:
+ 114:         ! reviewer_id �� human:/agent:/service: �� �ϳ��� �����ؾ� �Ѵ�
+ 115:         ! review_artifact �� docs/evidence/_raw/ �Ʒ����� �Ѵ�
+ 116:     �� (���� 2026-09-06 ��� ����̴�. ���� front-matter �� �� ������ ä���� ?
+ 117:       �˻��� �ٽ� ���� ������ �ʾҴ�. ��˼� 23)
+ 118: 
+ 119:     �� ������ `RULE.md` ��7.3 �� **���� ����� �ƴϴ�**(������ `P0-*`��
+ 120:     `DoD-*` �� `PASS` ���̰� �̰� `INCONCLUSIVE` ��). �׷��� schema v2 ��
+ 121:     `reviewer_*` �� �ʼ��� �䱸�Ѵ� ? �� "�˼��� �ʿ� ���µ��� �˼� ĭ��
+ 122:     ä���� �ϴ�" ĭ�� ���´�.
+ 123: 
+ 124:     �� �� ĭ�� ä����� �˻�⸦ ��ġ�� �ʴ´�. ���⼭ �˻�⸦ ��ġ��
+ 125:       **���� �ɸ� ��Ģ�� ���� Ǫ�� ��**�� �ǰ�, �� �������ʹ� ��Ģ��
+ 126:       ��Ģ�� �ƴϰ� �ȴ�. ��Ű�� ������ ���� �ʿ������� �˼��� �и���
+ 127:       ���� �Ǵ��Ѵ�.
+ 128: 
+ 129:     �׷��� �ʾ����� �����. 2026-09-07 15:43 ���� ���� �˼� ��⿭��
+ 130:     �� ������ �ְ�(`DoD-68` ����), ������ ������ `review_*` �� ä��
+ 131:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` �� �ű��.
+ 132:     �� �Űܵ� `status` �� `INCONCLUSIVE` �� ? �˼��� �ٴ´ٰ� ������
+ 133:       ������ ���� ������ ���� �������� �ʴ´�.
+ 134: 
+ 135:     �� (��� ���) �׶� review_outcome �� PENDING �̾��� ? **��Ű���� ���� ��**�̴�.
+ 136:       ������ ���� ����(CHANGES_REQUESTED)�� ��� �ִ�.
+ 137:       �ű� �� �ݵ�� ���� �������� �ٲ۴�.
+ 138: -->
+ 139: 
+ 140: ---
+ 141: schema_version: 2
+ 142: id: P0-02
+ 143: claim: "���ؼ� ��32 �� `P0-02`(Windows AppContainer + CUDA, S2 ������)�� �����ߴ�. **x600(RTX 4070 SUPER �� �� Windows ���� �� package identity ���� AppContainer)����** �������� ���������� SID�������̳� �� ���μ��� ���ࡤPython ���ࡤC Ȯ�� �ε�(`zlib`��`_socket`)�� Ȯ���ߴ�. **������ ���� ��迡�� ���� ���** ? �����̳� �ȿ��� ȣ��Ʈ �ӽ� ������ `type` �ϸ� ���� �ڵ� 1, �ٱ������� 0, ���� �Ӽ��� ���� ���ʵ� 0 �̴�(`P0-02_����_����_�����_2026-09-10.txt`). �� �ź� **����**(���� �ڵ塤�޽���)�� ������ ���� ? ���� �ڵ尡 ���� �Ӽ��� ���� �����ٴ� �ͱ�����. �׷��� x600 ���� **`torch.cuda.is_available()` ���� �������� ���ߴ�** ? `torch/__init__.py:14` �� `import ctypes` �� `_ctypes.pyd` �ʱ�ȭ ����(1114)�� �״´�. DLL �� �ϳ��� ���� ���� **������ DLL �� `ole32.dll` �ε忡���� 1114 �� �����ƴ�** ? `_ctypes` ���п��� �ΰ��� Ȯ������ �ʾҴ�. `combase.dll` �� **�ε�**�ƴ�(COM ��� ������ �� ���). �� �׷��Ƿ� �� ������ũ�� **��ü ������ ������ ���ߴ�** ? `status: INCONCLUSIVE`. �� ���� ������ ���� ������ decision �� ������"
+ 144: status: INCONCLUSIVE
+ 145: commit: 52d72b9
+ 146: 
+ 147: executor_id: "agent:claude-code"
+ 148: executor_tool: "claude-code ���� ? SSH �� x600 ���� ����. AppContainer primitive(�ű� 300�� ��)�����κ� 2�� �ż�, ���� ���� ����"
+ 149: executor_model: "claude-opus-5"
+ 150: executed_at: "2026-09-06T00:20:00+09:00"
+ 151: 
+ 152: review_required: false
+ 153: reviewer_id: "agent:codex-cli"
+ 154: reviewer_tool: "codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) ? 2026-09-10 ���� ��⿭ 8��, ��˼� 16��19��21��22 (21��22 �� �� �ʾȿ� �߰� ���� ����)"
+ 155: reviewer_model: "gpt-6-astra"
+ 156: review_context: "fresh-read-only"
+ 157: review_outcome: "CHANGES_REQUESTED"
+ 158: review_scope: >
+ 159:   `RULE.md` ��7.3 �� **`P0-*`��`DoD-*` �� `status: PASS`** �� ���ؼ��� ����
+ 160:   �˼��� �����Ѵ�. �� ������ `INCONCLUSIVE` �� **���� ����� �ƴϴ�** ?
+ 161:   �׷��� �޴´�.
+ 162: 
+ 163:   �� ������ �ƴѵ� �� �޳�. ���� ���� �Ǵ� �� **"AppContainer ��ü��
+ 164:   �����Ѵ�"** �� ������ ����ϱ� �����̴�. x600 �� ���� ���� ����(Python��DLL)�� ���� ��
+ 165:   ��衤�� Windows ���忡�� ���԰�, `ole32` ���а� �� ���� �����̸�
+ 166:   �� ������ ���� ��ü�� Ʋ����.
+ 167: 
+ 168:   �˼��ڿ��� Ư�� �� ��:
+ 169:     1. "�Ǵ� ��" ����� ������ �����Ǵ°� ? Ư�� ���� �׽�Ʈ��
+ 170:        �����̳� �ۿ����� ������� �ʴ°�(ù ���� ��Ȯ�� �׷���)
+ 171:     2. ������ �� ���濡 ���� **����**�� �ִ°�, �ƴϸ� "�� �ôµ� ��
+ 172:        �ƴ�" �ΰ�
+ 173:     3. ����� ������ �Ѿ�� �ʴ°� ? package identity ������ ��𼱰�
+ 174:        ���ó�� ���� ���� ������
+ 175: review_artifact: "docs/evidence/_raw/�˼�_2026-09-10/22_��˼�_DoD68_5����_plan_id_�ּ�_CHANGES_REQUESTED.txt"
+ 176: 
+ 177: raw_output_artifact: "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+ 178: raw_output_digest: "sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3"
+ 179: raw_output_bytes: 4346
+ 180: 
+ 181: artifacts:
+ 182:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+ 183:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_1��.txt"
+ 184:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_2��.txt"
+ 185:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_3��_�����Ұ�.txt"
+ 186:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_4��_����.txt"
+ 187:   - "docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt"
+ 188:   - "docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt"
+ 189:   - "docs/evidence/_raw/ENV-02_probe.txt"
+ 190:   - "crates/runtime-windows/src/appcontainer.rs"
+ 191:   - "crates/runtime-windows/src/bin/p0_02_probe.rs"
+ 192:   - "crates/runtime-windows/src/bin/dll_probe.rs"
+ 193: 
+ 194: binary_digests:
+ 195:   toolchain: "������ ��� ���� ? �۾� ȯ�� ���� x600������ ��� cargo 1.97.1 (��˼� 23)"
+ 196: protocol_versions:
+ 197:   schema_version: "proto ���� ����"
+ 198:   canonical_spec: "canonical ���� ����"
+ 199: platform: >
+ 200:   **x600 (Windows 11 ? ������� �� �����鿡 ����, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** ����
+ 201:   SSH �� ���� �����ߴ�. ���� ���(GPU ����)������ AppContainer primitive ��
+ 202:   ���� �׽�Ʈ�� ���ȴ�.
+ 203: 
+ 204:   �� **x600 �� Python��DLL ������ �� ��� �� �� Windows ���忡���� ���**(���� ������
+ 205:   ���� ��迡�� ���� ���). `ole32` �ʱ�ȭ ���а� ��
+ 206:   ���� �������� �Ϲ������� Ȯ������ �ʾҴ�(`CLAUDE.md` ��4 ? ǥ���� ������
+ 207:   �۴ٰ� ���Ѵ�).
+ 208: hardware: >
+ 209:   RTX 4070 SUPER �ǹ�. UUID������̹���VRAM �� `DoD-56_nvml_observation_x600_2026-08-29.txt`,
+ 210:   compute capability 8.9 �� `ENV-02_probe.txt` �� �ִ� ? **�� ������ũ�� �ٸ� ����
+ 211:   ����**�̴�. �� ������ũ�� ����(1��)�� ��ġ�� ���� �����̳� **��** ���ؼ���
+ 212:   `torch 2.11.0+cu128` �� `cuda_available=True` �� `device_count=1` �� ��ġ �̸� ��
+ 213:   `matmul_sum=262144.0` �� `compute=ok` ��. �� ��� ũ��� ������ ����(��˼� 23 ?
+ 214:   ������ "64x64" �� ������)
+ 215: network_profile: "���� ? ���μ��� ������ DLL �ε常 ���"
+ 216: command: |
+ 217:   # x600 ���� ? ���κ�� E:\gputeer-work �Ʒ����� ���ȴ�. ��ġ�� Python �� C:, embeddable��TEMP �� E: �� ���(1����3�� ����. ��˼� 23)
+ 218:   target\debug\p0_02_probe.exe <python ���> [<temp ���>] [<capability SID>]
+ 219:   # ȯ�溯��
+ 220:   #   P0_02_CODE     �����̳� �ȿ��� ���� Python �� ��
+ 221:   #   P0_02_RAW_CMD  ������ ��ü ��ü(dll_probe �� ���� ��)
+ 222:   target\debug\dll_probe.exe <dll ���> [...]
+ 223: 
+ 224: raw_output: |
+ 225:   === �����̳� �� (���ؼ�) ===
+ 226:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+ 227:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+ 228: 
+ 229:   === �����̳� �� ? �Ǵ� �� ===
+ 230:   import sys           ok (exit 0)
+ 231:   import zlib          ok (exit 0)   <- .pyd, C Ȯ��
+ 232:   import _socket       ok (exit 0)   <- .pyd, C Ȯ��
+ 233:   ȣ��Ʈ �ӽ� ���� type  ���� exit 1 �� �ٱ� exit 0 �� ���� �Ӽ� ���� ���� 0  <- ����(���� �ڵ����)
+ 234:                        ���� P0-02_����_����_�����_2026-09-10.txt (���� ���)
+ 235: 
+ 236:   === �����̳� �� ? DLL ���� ===
+ 237:   libffi-8.dll      ok=true
+ 238:   python313.dll     ok=true
+ 239:   vcruntime140.dll  ok=true
+ 240:   oleaut32.dll      ok=true
+ 241:   combase.dll       ok=true      <- **�ε常** �ƴ�. COM ��� ������ �� ���
+ 242:   rpcrt4.dll        ok=true
+ 243:   shcore.dll        ok=true
+ 244:   advapi32.dll      ok=true
+ 245:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)
+ 246:   _ctypes.pyd       ok=false error=1114
+ 247: 
+ 248:   === ������ �� ���� ? ���� ���� ���а� �̾����� (������ **�Ұ��� ���� �ƴϴ�**) ===
+ 249:   ���� ��� ��ȸ ����   C:\Users\<x600-user> ���� 4���� RX        -> ���� ����
+ 250:                         (�ڽ��� �� ��θ� ������ ��ȸ�ߴ��� ���� ����� ����)
+ 251:   �����̳� TEMP ����    E: �� ����� (F) + ȯ�� ����        -> ���� ����
+ 252:                         (�ڽ��� �� ���� �޾� �ű� ����� ���� ����� ����)
+ 253:   capability ����       ǥ�� SID �� ����                    -> ���� ����
+ 254:                         (�� **�� �ѷ� �� Ǯ�ȴ�**������. COM capability �� �� �غô�)
+ 255:   Python ������         embeddable 3.13.7 ���� ����         -> ���� ����
+ 256:                         (���� ������ ���� �и��ϴ�. �� CPython 3.13 �����δ� �Ϲ�ȭ �� �Ѵ�)
+ 257: 
+ 258: negative_tests: >
+ 259:   �� ������ũ�� negative test �� **����**�̴� ?
+ 260:   `the_container_cannot_read_a_file_the_host_can` �� �����̳� �ȿ���
+ 261:   ȣ��Ʈ �ӽ� ������ `type` �ϸ� **0 �� �ƴ� ���� �ڵ�**�� �������� ����
+ 262:   (�� �ź� **����**������ �ܾ����� �ʴ´� ? ��˼� 16). **������ ���� �д�**(�ٱ�
+ 263:   ������ ������) ? ������ "��ΰ� Ʋ���� ����" �ε� ����Ѵ�.
+ 264:   �� �� �׽�Ʈ�� �����̼����� �����ߴ�: ���� �Ӽ� ������ ��°�� �ǳʶٸ�
+ 265:   ������ �����Ѵ�. �� 2026-09-10 �˼� 8 �� "�� ����� ������ ����" �� ¤��
+ 266:   **�ٽ� ���� ������ �����**(���� ���) ? ����: �ٱ� exit 0 �� ���� exit 1 /
+ 267:   ���� �Ӽ� ������ �� �����̼�: ���� exit 0 -> �׽�Ʈ ����.
+ 268:   `docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt`. x600 ������ �ٽ�
+ 269:   ���� �ʾҴ�. ó�� �� ����(`cmd /c exit 42` �� ���� �ڵ常 Ȯ��)��
+ 270:   **�����̳� �ۿ����� ���**�� �ƹ��͵� ���� ���߰�, �� �����̼��� �װ���
+ 271:   �巯�´�.
+ 272: 
+ 273:   �� �ۿ�: �������� �̸��� ������ SID �� ������(����� �� ��ȭ�� ��Ģ��
+ 274:   ������ �����̳ʸ� ����Ű�� �ʰ�), �������� ������ �������.
+ 275: 
+ 276: limitations: >
+ 277:   �ڡ� **�� ������ũ�� �ڱ� ������ ������ ���ߴ�.** `P0-02` ��
+ 278:   "AppContainer ���� CUDA �� �Ǵ°�" �� ���µ�, **CUDA ��ó���� ����
+ 279:   ���ߴ�** ? �� ���� `import ctypes` ���� ������.
+ 280: 
+ 281:   �� **`ole32` �ε尡 �� 1114 ����, �װ��� `_ctypes` ������ ��������
+ 282:   �𸥴�.** ����(`dll_probe`)�� `LoadLibraryW` �ϳ��� Win32 ���� �ڵ���̶�
+ 283:   ������ �ʱ�ȭ �Լ��� ��ġ �� �ΰ� �� �ٸ� ����� ���縦 Ȯ������ ���Ѵ�
+ 284:   (2026-09-10 �˼� 8. ������ "���� ���� ole32 �ϳ�" ��� ������). Process
+ 285:   Monitor ������ �ε� ���� ������ ���١������� ������ ���ΰ� ���� ��ġ�� Ȯ���ؾ�
+ 286:   �Ѵ�(��˼� 19 ? ������ "���� �źε� ������ ���� �ȴ�" �� �źθ� �����ߴ�).
+ 287: 
+ 288:   �ڡ� **2026-09-07 ���� �˼� ���� ? �� ������ ���� ����� �Ѵ�.**
+ 289: 
+ 290:       ��ü P0-02 ����("AppContainer ���� CUDA �� �Ǵ°�")
+ 291:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 292: 
+ 293:       **���� ������ �� ����**
+ 294:         x600 �� �� Windows ���� �� package identity ���� bare
+ 295:         AppContainer �� ������ �� CPython 3.13 ������
+ 296:         -> CUDA ȣ�� **����** ������.
+ 297:            �� ���� ���� **���� �ܰ��� Ž��**�̾��� ? 1���� ��ũ��Ʈ�� ��������
+ 298:              �� �߰�(0xC0000135), 2������ `_ctypes` �ʱ�ȭ ����, 4���� ������
+ 299:              import ��, 5��6���� DLL �ε� �����̴�. ���� ���и� ���� �� ������
+ 300:              ���� �ƴϴ�(�˼� 8. ������ "���� �� ���� ���� �ڸ����� �׾���"
+ 301:              �� ������)
+ 302: 
+ 303:       �˼� �Ǵ�: ���� ������ �ΰ�� �ƴϴ�. �ٸ� `FAIL-SCOPE` �� ��
+ 304:       �� �ִ� ��쵵 **�� ���� �������� scope �� ������ ����**�̰�,
+ 305:       S2 ��ü�� AppContainer �Ϲݿ� ���� `FAIL-SCOPE` �ٰŴ� ����.
+ 306: 
+ 307:   �� **������ ������ ������� ���� �ʴ´�.** �츮 �����̳ʴ�
+ 308:   `CreateAppContainerProfile` �� ���� **package identity ���� ��
+ 309:   AppContainer** �̰�, Store ���� package identity �� ���� COM �� ���� ?
+ 310:   �� ������ �� �ִ�. �׷��� **Ȯ������ �ʾ����Ƿ� �������θ� ���´�.**
+ 311: 
+ 312:   �� x600 �� Python��DLL ������ **�� ��� �� �� Windows ����**�� �����. �ٸ�
+ 313:   ���忡�� ������ �𸥴�. ���� ������ ���� ��迡�� ���.
+ 314: 
+ 315:   �� `P0-02` üũ����Ʈ �� **�� �� ��**: filesystem allowlist �� ������
+ 316:   ����, outbound ���� ����, "Create Process in Sandbox API ���� ����
+ 317:   ��Ȯ��". GPU ����̹� capability �ĺ��� **���۵� �� �ߴ�** ? �� �տ���
+ 318:   ������ �����̴�.
+ 319: 
+ 320:   �� C: �� Python Ʈ��(27112 files) �� ���� 4�� ��� �� ALL APPLICATION PACKAGES ��
+ 321:   �� ������ �����ߴ�. **E: �� actemp �� pyembed �� ���������� �����**(3�� ����
+ 322:   70~73��. ��˼� 23 ? ������ "���� ����" �̶� ������). ���� `S-1-15-3-65536-...` ��
+ 323:   Windows �� ���� �δ� capability ACE �̰� �츮�� ���� ���� �ƴϴ�.
+ 324: 
+ 325: decision: >
+ 326:   **`P0-02` �� DoD �� ���� �������� �ʴ´�.**
+ 327: 
+ 328:       ���� -> S2 ���� ����, ������ ȯ�濡���� enable
+ 329:       ���� -> S2 �� EXPERIMENTAL �� ����, S1 �� ������ Windows ����Ƽ�� ���
+ 330: 
+ 331:   �ڡ� **������ �ѷ� ������**(2026-09-10 �˼� 8 ? "���� ������ �𸣴�
+ 332:   �Ͱ� ������ �������� ���и� ������ ���� �縳�Ѵ�"):
+ 333: 
+ 334:       ��ü ����(AppContainer ���� CUDA �� �Ǵ°�)
+ 335:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 336:       �� ����(x600 �� �� ���� �� package identity ���� �� ������ �� CPython 3.13 ��
+ 337:               ��ϵ� ���� `p0_02_probe.exe` + `P0_02_CODE` �� Python �� �� ��
+ 338:               ��� `import torch` -> `import ctypes`)
+ 339:         -> ctypes/torch ��ΰ� CUDA ȣ�� **����** ������.
+ 340:            **�� �����δ� FAIL-SCOPE �� �޹�ħ�Ѵ�**
+ 341: 
+ 342:   �� ������ "package identity ���ɼ��� �������� ���� ���з� Ȯ���ϸ� ����
+ 343:     ���� ���� ������� ���� ��" �̶�� ������. **���� ���� �� ����**���� ?
+ 344:     ������ �𸣴� ���� ���� ������ ���� ������ ���� �ʴ´�.
+ 345:   �� �׷��� S2 **��ü**�� ���� ������ �ƴϴ�. package identity �� COM
+ 346:     capability �� �ٸ� Windows ���带 ���� �ʾҴ�.
+ 347: 
+ 348:   �� �� ���� ������ ������ **�̹� �����ϴ�**(��). ���� ������ �װ���
+ 349:     ������ ���� �ƴ϶� **�ٸ� ����**�� ���� ��� ���̰�, �� ����� S2 ��ü
+ 350:     �Ǵܿ� ���δ�(��˼� 16 ? ������ "ȸ�� �Ұ��� FAIL-SCOPE" �� ������ �ɾ�
+ 351:     ���� ������ �浹�ߴ�):
+ 352:     1. Process Monitor ������ `ole32` �ε� ���� ������ ���١������� ������
+ 353:        ���� ��ġ�� Ȯ���Ѵ�(�� ������ "DllMain �� �������� �źεǴ���" ���
+ 354:        ������ ? ���� �Լ��� '�ź�' �� ���� ���� �����ߴ�)
+ 355:     2. package identity �� COM capability �� �ٸ� Windows ���� ������ ���� ���
+ 356:     3. �� ����� S2 ��ü�� EXPERIMENTAL �� Ȯ������ ���Ѵ�
+ 357: 
+ 358:   �� �� ������ **S2 �� ���¸� �ٲ��� �ʴ´�.** ���� ����(EXPERIMENTAL)��
+ 359:   �� ������ ������� �ʴ´�.
+ 360: ---
+ 361: 
+ 362: # P0-02 ? Windows AppContainer + CUDA
+ 363: 
+ 364: ## �� ��
+ 365: 
+ 366: AppContainer �� ���������(x600) ȣ��Ʈ ������ �� �д� ������ ���̴µ�
+ 367: (���� �ڵ� ����, ���� ���), **�� �ȿ��� torch ��
+ 368: import �� �� ����.** ������ DLL �� `ole32.dll` �ε忡�� 1114 �� �����ƴ� ?
+ 369: `_ctypes` ���п��� �ΰ��� Ȯ������ �ʾҴ�.
+ 370: 
+ 371: ## �� �̰� �
+ 372: 
+ 373: 2026-09-05 ����ڰ� ��ȭ���� ������ `netsh advfirewall` �� **��� ����**
+ 374: �ƿ��ٿ�� ������ �������� Ȯ���ߴ�. �׷��� �װ����δ� `NetworkPolicy` ��
+ 375: ������ �� ���� ? ���� PC ���� `python.exe` �� ��°�� ������ ��������
+ 376: �ٸ� �۾����� �����(`CLAUDE.md` ��0.1).
+ 377: 
+ 378: AppContainer �� **�������ϸ���** SID �� �ش�(���� �̸��̸� ���� SID ��).
+ 379: **Job ���� ���� ���������� ���� ������** �� SID �� ��Ģ�� �ɾ� �� Job ��
+ 380: ���� ���� ������ �� �ִ� ? �� Job �� ���ܵ� outbound ���ѵ� **���� �ʾҴ�**
+ 381: (��˼� 19 ? ������ "���μ������� ���� SID �� �� Job �ϳ��� ������" �� ����ó��
+ 382: ������). �׷��� ��ȭ�� ������ ���� **�ĺ�**�̰�, �װ��� ��
+ 383: ������ũ�� ���� �� ������.
+ 384: 
+ 385: ## ��� ������
+ 386: 
+ 387: `import _ctypes` �� ���� DLL �� �� ���� �õ��� **���� ������ �����.**
+ 388: �׷��� `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带 ��� `dll_probe` ��
+ 389: ����� �����̳� �ȿ��� DLL �� �ϳ��� ������. �׷��� ���� �ʾ�����
+ 390: "`_ctypes` �� �� �ȴ�" ���� ������ ���̴�.
+ 391: 
+ 392: ## �� ������ �������� �ʴ� ��
+ 393: 
+ 394: **"AppContainer ���� CUDA �� �� �ȴ�" �� �������� �ʾҴ�.** CUDA ��
+ 395: �õ����� �� �ߴ�.
+ 396: 
+ 397: **"AppContainer ���� ����Ƽ�� �ڵ尡 �� ����" �� �ƴϴ�.** C Ȯ��
+ 398: (`zlib`��`_socket`)�� �ε�ȴ�. `combase.dll` �� **�ε�**�ȴ�(��� ������
+ 399: �� ���). ������ DLL �� 1114 �� ���� ���� `ole32` �� `_ctypes` �� ? �ٸ�
+ 400: ��ְ� ���ٴ� ���� �ƴϴ�.
+ 401: 
+ 402: **Python��DLL ������ x600 �� ��� �� �� Windows ����**�� �����. ���� ������
+ 403: ���� ��迡�� ���(x600 ���� �ٽ� ���� �ʾҴ�).
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $p = '"'docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md'; "'$i = 0; Get-Content -LiteralPath $p -Encoding UTF8 | ForEach-Object { $i++; if ($i -ge 109) { '"'{0,4}: {1}' -f "'$i, $_ } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2024ms:
+�Ӽ��� ������ �� �����ϴ�. �Ӽ� ������ �� ��� ����� �ٽ� ������ ���ؼ��� �����˴ϴ�.
+��ġ ��:2 ����:1
++ [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $p = 'docs/ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [], RuntimeException
+    + FullyQualifiedErrorId : PropertySetterNotSupportedInConstrainedLanguage
+ 
+ 109: <!--
+ 110: �ڡ� �̰��� **���� evidence �� �ƴϴ�.** docs/evidence/ �� �θ�
+ 111:     verify_evidence.py �� �ź��Ѵ� ? �׸��� �װ� �Ǵ�.
+ 112: 
+ 113:     �ź� ������ ������ �޾� �ô�:
+ 114:         ! reviewer_id �� human:/agent:/service: �� �ϳ��� �����ؾ� �Ѵ�
+ 115:         ! review_artifact �� docs/evidence/_raw/ �Ʒ����� �Ѵ�
+ 116:     �� (���� 2026-09-06 ��� ����̴�. ���� front-matter �� �� ������ ä���� ?
+ 117:       �˻��� �ٽ� ���� ������ �ʾҴ�. ��˼� 23)
+ 118: 
+ 119:     �� ������ `RULE.md` ��7.3 �� **���� ����� �ƴϴ�**(������ `P0-*`��
+ 120:     `DoD-*` �� `PASS` ���̰� �̰� `INCONCLUSIVE` ��). �׷��� schema v2 ��
+ 121:     `reviewer_*` �� �ʼ��� �䱸�Ѵ� ? �� "�˼��� �ʿ� ���µ��� �˼� ĭ��
+ 122:     ä���� �ϴ�" ĭ�� ���´�.
+ 123: 
+ 124:     �� �� ĭ�� ä����� �˻�⸦ ��ġ�� �ʴ´�. ���⼭ �˻�⸦ ��ġ��
+ 125:       **���� �ɸ� ��Ģ�� ���� Ǫ�� ��**�� �ǰ�, �� �������ʹ� ��Ģ��
+ 126:       ��Ģ�� �ƴϰ� �ȴ�. ��Ű�� ������ ���� �ʿ������� �˼��� �и���
+ 127:       ���� �Ǵ��Ѵ�.
+ 128: 
+ 129:     �׷��� �ʾ����� �����. 2026-09-07 15:43 ���� ���� �˼� ��⿭��
+ 130:     �� ������ �ְ�(`DoD-68` ����), ������ ������ `review_*` �� ä��
+ 131:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` �� �ű��.
+ 132:     �� �Űܵ� `status` �� `INCONCLUSIVE` �� ? �˼��� �ٴ´ٰ� ������
+ 133:       ������ ���� ������ ���� �������� �ʴ´�.
+ 134: 
+ 135:     �� (��� ���) �׶� review_outcome �� PENDING �̾��� ? **��Ű���� ���� ��**�̴�.
+ 136:       ������ ���� ����(CHANGES_REQUESTED)�� ��� �ִ�.
+ 137:       �ű� �� �ݵ�� ���� �������� �ٲ۴�.
+ 138: -->
+ 139: 
+ 140: ---
+ 141: schema_version: 2
+ 142: id: P0-02
+ 143: claim: "���ؼ� ��32 �� `P0-02`(Windows AppContainer + CUDA, S2 ������)�� �����ߴ�. **x600(RTX 4070 SUPER �� �� Windows ���� �� package identity ���� AppContainer)����** �������� ���������� SID�������̳� �� ���μ��� ���ࡤPython ���ࡤC Ȯ�� �ε�(`zlib`��`_socket`)�� Ȯ���ߴ�. **������ ���� ��迡�� ���� ���** ? �����̳� �ȿ��� ȣ��Ʈ �ӽ� ������ `type` �ϸ� ���� �ڵ� 1, �ٱ������� 0, ���� �Ӽ��� ���� ���ʵ� 0 �̴�(`P0-02_����_����_�����_2026-09-10.txt`). �� �ź� **����**(���� �ڵ塤�޽���)�� ������ ���� ? ���� �ڵ尡 ���� �Ӽ��� ���� �����ٴ� �ͱ�����. �׷��� x600 ���� **`torch.cuda.is_available()` ���� �������� ���ߴ�** ? `torch/__init__.py:14` �� `import ctypes` �� `_ctypes.pyd` �ʱ�ȭ ����(1114)�� �״´�. DLL �� �ϳ��� ���� ���� **������ DLL �� `ole32.dll` �ε忡���� 1114 �� �����ƴ�** ? `_ctypes` ���п��� �ΰ��� Ȯ������ �ʾҴ�. `combase.dll` �� **�ε�**�ƴ�(COM ��� ������ �� ���). �� �׷��Ƿ� �� ������ũ�� **��ü ������ ������ ���ߴ�** ? `status: INCONCLUSIVE`. �� ���� ������ ���� ������ decision �� ������"
+ 144: status: INCONCLUSIVE
+ 145: commit: 52d72b9
+ 146: 
+ 147: executor_id: "agent:claude-code"
+ 148: executor_tool: "claude-code ���� ? SSH �� x600 ���� ����. AppContainer primitive(�ű� 300�� ��)�����κ� 2�� �ż�, ���� ���� ����"
+ 149: executor_model: "claude-opus-5"
+ 150: executed_at: "2026-09-06T00:20:00+09:00"
+ 151: 
+ 152: review_required: false
+ 153: reviewer_id: "agent:codex-cli"
+ 154: reviewer_tool: "codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) ? 2026-09-10 ���� ��⿭ 8��, ��˼� 16��19��21��22 (21��22 �� �� �ʾȿ� �߰� ���� ����)"
+ 155: reviewer_model: "gpt-6-astra"
+ 156: review_context: "fresh-read-only"
+ 157: review_outcome: "CHANGES_REQUESTED"
+ 158: review_scope: >
+ 159:   `RULE.md` ��7.3 �� **`P0-*`��`DoD-*` �� `status: PASS`** �� ���ؼ��� ����
+ 160:   �˼��� �����Ѵ�. �� ������ `INCONCLUSIVE` �� **���� ����� �ƴϴ�** ?
+ 161:   �׷��� �޴´�.
+ 162: 
+ 163:   �� ������ �ƴѵ� �� �޳�. ���� ���� �Ǵ� �� **"AppContainer ��ü��
+ 164:   �����Ѵ�"** �� ������ ����ϱ� �����̴�. x600 �� ���� ���� ����(Python��DLL)�� ���� ��
+ 165:   ��衤�� Windows ���忡�� ���԰�, `ole32` ���а� �� ���� �����̸�
+ 166:   �� ������ ���� ��ü�� Ʋ����.
+ 167: 
+ 168:   �˼��ڿ��� Ư�� �� ��:
+ 169:     1. "�Ǵ� ��" ����� ������ �����Ǵ°� ? Ư�� ���� �׽�Ʈ��
+ 170:        �����̳� �ۿ����� ������� �ʴ°�(ù ���� ��Ȯ�� �׷���)
+ 171:     2. ������ �� ���濡 ���� **����**�� �ִ°�, �ƴϸ� "�� �ôµ� ��
+ 172:        �ƴ�" �ΰ�
+ 173:     3. ����� ������ �Ѿ�� �ʴ°� ? package identity ������ ��𼱰�
+ 174:        ���ó�� ���� ���� ������
+ 175: review_artifact: "docs/evidence/_raw/�˼�_2026-09-10/22_��˼�_DoD68_5����_plan_id_�ּ�_CHANGES_REQUESTED.txt"
+ 176: 
+ 177: raw_output_artifact: "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+ 178: raw_output_digest: "sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3"
+ 179: raw_output_bytes: 4346
+ 180: 
+ 181: artifacts:
+ 182:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+ 183:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_1��.txt"
+ 184:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_2��.txt"
+ 185:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_3��_�����Ұ�.txt"
+ 186:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_4��_����.txt"
+ 187:   - "docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt"
+ 188:   - "docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt"
+ 189:   - "docs/evidence/_raw/ENV-02_probe.txt"
+ 190:   - "crates/runtime-windows/src/appcontainer.rs"
+ 191:   - "crates/runtime-windows/src/bin/p0_02_probe.rs"
+ 192:   - "crates/runtime-windows/src/bin/dll_probe.rs"
+ 193: 
+ 194: binary_digests:
+ 195:   toolchain: "������ ��� ���� ? �۾� ȯ�� ���� x600������ ��� cargo 1.97.1 (��˼� 23)"
+ 196: protocol_versions:
+ 197:   schema_version: "proto ���� ����"
+ 198:   canonical_spec: "canonical ���� ����"
+ 199: platform: >
+ 200:   **x600 (Windows 11 ? ������� �� �����鿡 ����, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** ����
+ 201:   SSH �� ���� �����ߴ�. ���� ���(GPU ����)������ AppContainer primitive ��
+ 202:   ���� �׽�Ʈ�� ���ȴ�.
+ 203: 
+ 204:   �� **x600 �� Python��DLL ������ �� ��� �� �� Windows ���忡���� ���**(���� ������
+ 205:   ���� ��迡�� ���� ���). `ole32` �ʱ�ȭ ���а� ��
+ 206:   ���� �������� �Ϲ������� Ȯ������ �ʾҴ�(`CLAUDE.md` ��4 ? ǥ���� ������
+ 207:   �۴ٰ� ���Ѵ�).
+ 208: hardware: >
+ 209:   RTX 4070 SUPER �ǹ�. UUID������̹���VRAM �� `DoD-56_nvml_observation_x600_2026-08-29.txt`,
+ 210:   compute capability 8.9 �� `ENV-02_probe.txt` �� �ִ� ? **�� ������ũ�� �ٸ� ����
+ 211:   ����**�̴�. �� ������ũ�� ����(1��)�� ��ġ�� ���� �����̳� **��** ���ؼ���
+ 212:   `torch 2.11.0+cu128` �� `cuda_available=True` �� `device_count=1` �� ��ġ �̸� ��
+ 213:   `matmul_sum=262144.0` �� `compute=ok` ��. �� ��� ũ��� ������ ����(��˼� 23 ?
+ 214:   ������ "64x64" �� ������)
+ 215: network_profile: "���� ? ���μ��� ������ DLL �ε常 ���"
+ 216: command: |
+ 217:   # x600 ���� ? ���κ�� E:\gputeer-work �Ʒ����� ���ȴ�. ��ġ�� Python �� C:, embeddable��TEMP �� E: �� ���(1����3�� ����. ��˼� 23)
+ 218:   target\debug\p0_02_probe.exe <python ���> [<temp ���>] [<capability SID>]
+ 219:   # ȯ�溯��
+ 220:   #   P0_02_CODE     �����̳� �ȿ��� ���� Python �� ��
+ 221:   #   P0_02_RAW_CMD  ������ ��ü ��ü(dll_probe �� ���� ��)
+ 222:   target\debug\dll_probe.exe <dll ���> [...]
+ 223: 
+ 224: raw_output: |
+ 225:   === �����̳� �� (���ؼ�) ===
+ 226:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+ 227:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+ 228: 
+ 229:   === �����̳� �� ? �Ǵ� �� ===
+ 230:   import sys           ok (exit 0)
+ 231:   import zlib          ok (exit 0)   <- .pyd, C Ȯ��
+ 232:   import _socket       ok (exit 0)   <- .pyd, C Ȯ��
+ 233:   ȣ��Ʈ �ӽ� ���� type  ���� exit 1 �� �ٱ� exit 0 �� ���� �Ӽ� ���� ���� 0  <- ����(���� �ڵ����)
+ 234:                        ���� P0-02_����_����_�����_2026-09-10.txt (���� ���)
+ 235: 
+ 236:   === �����̳� �� ? DLL ���� ===
+ 237:   libffi-8.dll      ok=true
+ 238:   python313.dll     ok=true
+ 239:   vcruntime140.dll  ok=true
+ 240:   oleaut32.dll      ok=true
+ 241:   combase.dll       ok=true      <- **�ε常** �ƴ�. COM ��� ������ �� ���
+ 242:   rpcrt4.dll        ok=true
+ 243:   shcore.dll        ok=true
+ 244:   advapi32.dll      ok=true
+ 245:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)
+ 246:   _ctypes.pyd       ok=false error=1114
+ 247: 
+ 248:   === ������ �� ���� ? ���� ���� ���а� �̾����� (������ **�Ұ��� ���� �ƴϴ�**) ===
+ 249:   ���� ��� ��ȸ ����   C:\Users\<x600-user> ���� 4���� RX        -> ���� ����
+ 250:                         (�ڽ��� �� ��θ� ������ ��ȸ�ߴ��� ���� ����� ����)
+ 251:   �����̳� TEMP ����    E: �� ����� (F) + ȯ�� ����        -> ���� ����
+ 252:                         (�ڽ��� �� ���� �޾� �ű� ����� ���� ����� ����)
+ 253:   capability ����       ǥ�� SID �� ����                    -> ���� ����
+ 254:                         (�� **�� �ѷ� �� Ǯ�ȴ�**������. COM capability �� �� �غô�)
+ 255:   Python ������         embeddable 3.13.7 ���� ����         -> ���� ����
+ 256:                         (���� ������ ���� �и��ϴ�. �� CPython 3.13 �����δ� �Ϲ�ȭ �� �Ѵ�)
+ 257: 
+ 258: negative_tests: >
+ 259:   �� ������ũ�� negative test �� **����**�̴� ?
+ 260:   `the_container_cannot_read_a_file_the_host_can` �� �����̳� �ȿ���
+ 261:   ȣ��Ʈ �ӽ� ������ `type` �ϸ� **0 �� �ƴ� ���� �ڵ�**�� �������� ����
+ 262:   (�� �ź� **����**������ �ܾ����� �ʴ´� ? ��˼� 16). **������ ���� �д�**(�ٱ�
+ 263:   ������ ������) ? ������ "��ΰ� Ʋ���� ����" �ε� ����Ѵ�.
+ 264:   �� �� �׽�Ʈ�� �����̼����� �����ߴ�: ���� �Ӽ� ������ ��°�� �ǳʶٸ�
+ 265:   ������ �����Ѵ�. �� 2026-09-10 �˼� 8 �� "�� ����� ������ ����" �� ¤��
+ 266:   **�ٽ� ���� ������ �����**(���� ���) ? ����: �ٱ� exit 0 �� ���� exit 1 /
+ 267:   ���� �Ӽ� ������ �� �����̼�: ���� exit 0 -> �׽�Ʈ ����.
+ 268:   `docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt`. x600 ������ �ٽ�
+ 269:   ���� �ʾҴ�. ó�� �� ����(`cmd /c exit 42` �� ���� �ڵ常 Ȯ��)��
+ 270:   **�����̳� �ۿ����� ���**�� �ƹ��͵� ���� ���߰�, �� �����̼��� �װ���
+ 271:   �巯�´�.
+ 272: 
+ 273:   �� �ۿ�: �������� �̸��� ������ SID �� ������(����� �� ��ȭ�� ��Ģ��
+ 274:   ������ �����̳ʸ� ����Ű�� �ʰ�), �������� ������ �������.
+ 275: 
+ 276: limitations: >
+ 277:   �ڡ� **�� ������ũ�� �ڱ� ������ ������ ���ߴ�.** `P0-02` ��
+ 278:   "AppContainer ���� CUDA �� �Ǵ°�" �� ���µ�, **CUDA ��ó���� ����
+ 279:   ���ߴ�** ? �� ���� `import ctypes` ���� ������.
+ 280: 
+ 281:   �� **`ole32` �ε尡 �� 1114 ����, �װ��� `_ctypes` ������ ��������
+ 282:   �𸥴�.** ����(`dll_probe`)�� `LoadLibraryW` �ϳ��� Win32 ���� �ڵ���̶�
+ 283:   ������ �ʱ�ȭ �Լ��� ��ġ �� �ΰ� �� �ٸ� ����� ���縦 Ȯ������ ���Ѵ�
+ 284:   (2026-09-10 �˼� 8. ������ "���� ���� ole32 �ϳ�" ��� ������). Process
+ 285:   Monitor ������ �ε� ���� ������ ���١������� ������ ���ΰ� ���� ��ġ�� Ȯ���ؾ�
+ 286:   �Ѵ�(��˼� 19 ? ������ "���� �źε� ������ ���� �ȴ�" �� �źθ� �����ߴ�).
+ 287: 
+ 288:   �ڡ� **2026-09-07 ���� �˼� ���� ? �� ������ ���� ����� �Ѵ�.**
+ 289: 
+ 290:       ��ü P0-02 ����("AppContainer ���� CUDA �� �Ǵ°�")
+ 291:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 292: 
+ 293:       **���� ������ �� ����**
+ 294:         x600 �� �� Windows ���� �� package identity ���� bare
+ 295:         AppContainer �� ������ �� CPython 3.13 ������
+ 296:         -> CUDA ȣ�� **����** ������.
+ 297:            �� ���� ���� **���� �ܰ��� Ž��**�̾��� ? 1���� ��ũ��Ʈ�� ��������
+ 298:              �� �߰�(0xC0000135), 2������ `_ctypes` �ʱ�ȭ ����, 4���� ������
+ 299:              import ��, 5��6���� DLL �ε� �����̴�. ���� ���и� ���� �� ������
+ 300:              ���� �ƴϴ�(�˼� 8. ������ "���� �� ���� ���� �ڸ����� �׾���"
+ 301:              �� ������)
+ 302: 
+ 303:       �˼� �Ǵ�: ���� ������ �ΰ�� �ƴϴ�. �ٸ� `FAIL-SCOPE` �� ��
+ 304:       �� �ִ� ��쵵 **�� ���� �������� scope �� ������ ����**�̰�,
+ 305:       S2 ��ü�� AppContainer �Ϲݿ� ���� `FAIL-SCOPE` �ٰŴ� ����.
+ 306: 
+ 307:   �� **������ ������ ������� ���� �ʴ´�.** �츮 �����̳ʴ�
+ 308:   `CreateAppContainerProfile` �� ���� **package identity ���� ��
+ 309:   AppContainer** �̰�, Store ���� package identity �� ���� COM �� ���� ?
+ 310:   �� ������ �� �ִ�. �׷��� **Ȯ������ �ʾ����Ƿ� �������θ� ���´�.**
+ 311: 
+ 312:   �� x600 �� Python��DLL ������ **�� ��� �� �� Windows ����**�� �����. �ٸ�
+ 313:   ���忡�� ������ �𸥴�. ���� ������ ���� ��迡�� ���.
+ 314: 
+ 315:   �� `P0-02` üũ����Ʈ �� **�� �� ��**: filesystem allowlist �� ������
+ 316:   ����, outbound ���� ����, "Create Process in Sandbox API ���� ����
+ 317:   ��Ȯ��". GPU ����̹� capability �ĺ��� **���۵� �� �ߴ�** ? �� �տ���
+ 318:   ������ �����̴�.
+ 319: 
+ 320:   �� C: �� Python Ʈ��(27112 files) �� ���� 4�� ��� �� ALL APPLICATION PACKAGES ��
+ 321:   �� ������ �����ߴ�. **E: �� actemp �� pyembed �� ���������� �����**(3�� ����
+ 322:   70~73��. ��˼� 23 ? ������ "���� ����" �̶� ������). ���� `S-1-15-3-65536-...` ��
+ 323:   Windows �� ���� �δ� capability ACE �̰� �츮�� ���� ���� �ƴϴ�.
+ 324: 
+ 325: decision: >
+ 326:   **`P0-02` �� DoD �� ���� �������� �ʴ´�.**
+ 327: 
+ 328:       ���� -> S2 ���� ����, ������ ȯ�濡���� enable
+ 329:       ���� -> S2 �� EXPERIMENTAL �� ����, S1 �� ������ Windows ����Ƽ�� ���
+ 330: 
+ 331:   �ڡ� **������ �ѷ� ������**(2026-09-10 �˼� 8 ? "���� ������ �𸣴�
+ 332:   �Ͱ� ������ �������� ���и� ������ ���� �縳�Ѵ�"):
+ 333: 
+ 334:       ��ü ����(AppContainer ���� CUDA �� �Ǵ°�)
+ 335:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 336:       �� ����(x600 �� �� ���� �� package identity ���� �� ������ �� CPython 3.13 ��
+ 337:               ��ϵ� ���� `p0_02_probe.exe` + `P0_02_CODE` �� Python �� �� ��
+ 338:               ��� `import torch` -> `import ctypes`)
+ 339:         -> ctypes/torch ��ΰ� CUDA ȣ�� **����** ������.
+ 340:            **�� �����δ� FAIL-SCOPE �� �޹�ħ�Ѵ�**
+ 341: 
+ 342:   �� ������ "package identity ���ɼ��� �������� ���� ���з� Ȯ���ϸ� ����
+ 343:     ���� ���� ������� ���� ��" �̶�� ������. **���� ���� �� ����**���� ?
+ 344:     ������ �𸣴� ���� ���� ������ ���� ������ ���� �ʴ´�.
+ 345:   �� �׷��� S2 **��ü**�� ���� ������ �ƴϴ�. package identity �� COM
+ 346:     capability �� �ٸ� Windows ���带 ���� �ʾҴ�.
+ 347: 
+ 348:   �� �� ���� ������ ������ **�̹� �����ϴ�**(��). ���� ������ �װ���
+ 349:     ������ ���� �ƴ϶� **�ٸ� ����**�� ���� ��� ���̰�, �� ����� S2 ��ü
+ 350:     �Ǵܿ� ���δ�(��˼� 16 ? ������ "ȸ�� �Ұ��� FAIL-SCOPE" �� ������ �ɾ�
+ 351:     ���� ������ �浹�ߴ�):
+ 352:     1. Process Monitor ������ `ole32` �ε� ���� ������ ���١������� ������
+ 353:        ���� ��ġ�� Ȯ���Ѵ�(�� ������ "DllMain �� �������� �źεǴ���" ���
+ 354:        ������ ? ���� �Լ��� '�ź�' �� ���� ���� �����ߴ�)
+ 355:     2. package identity �� COM capability �� �ٸ� Windows ���� ������ ���� ���
+ 356:     3. �� ����� S2 ��ü�� EXPERIMENTAL �� Ȯ������ ���Ѵ�
+ 357: 
+ 358:   �� �� ������ **S2 �� ���¸� �ٲ��� �ʴ´�.** ���� ����(EXPERIMENTAL)��
+ 359:   �� ������ ������� �ʴ´�.
+ 360: ---
+ 361: 
+ 362: # P0-02 ? Windows AppContainer + CUDA
+ 363: 
+ 364: ## �� ��
+ 365: 
+ 366: AppContainer �� ���������(x600) ȣ��Ʈ ������ �� �д� ������ ���̴µ�
+ 367: (���� �ڵ� ����, ���� ���), **�� �ȿ��� torch ��
+ 368: import �� �� ����.** ������ DLL �� `ole32.dll` �ε忡�� 1114 �� �����ƴ� ?
+ 369: `_ctypes` ���п��� �ΰ��� Ȯ������ �ʾҴ�.
+ 370: 
+ 371: ## �� �̰� �
+ 372: 
+ 373: 2026-09-05 ����ڰ� ��ȭ���� ������ `netsh advfirewall` �� **��� ����**
+ 374: �ƿ��ٿ�� ������ �������� Ȯ���ߴ�. �׷��� �װ����δ� `NetworkPolicy` ��
+ 375: ������ �� ���� ? ���� PC ���� `python.exe` �� ��°�� ������ ��������
+ 376: �ٸ� �۾����� �����(`CLAUDE.md` ��0.1).
+ 377: 
+ 378: AppContainer �� **�������ϸ���** SID �� �ش�(���� �̸��̸� ���� SID ��).
+ 379: **Job ���� ���� ���������� ���� ������** �� SID �� ��Ģ�� �ɾ� �� Job ��
+ 380: ���� ���� ������ �� �ִ� ? �� Job �� ���ܵ� outbound ���ѵ� **���� �ʾҴ�**
+ 381: (��˼� 19 ? ������ "���μ������� ���� SID �� �� Job �ϳ��� ������" �� ����ó��
+ 382: ������). �׷��� ��ȭ�� ������ ���� **�ĺ�**�̰�, �װ��� ��
+ 383: ������ũ�� ���� �� ������.
+ 384: 
+ 385: ## ��� ������
+ 386: 
+ 387: `import _ctypes` �� ���� DLL �� �� ���� �õ��� **���� ������ �����.**
+ 388: �׷��� `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带 ��� `dll_probe` ��
+ 389: ����� �����̳� �ȿ��� DLL �� �ϳ��� ������. �׷��� ���� �ʾ�����
+ 390: "`_ctypes` �� �� �ȴ�" ���� ������ ���̴�.
+ 391: 
+ 392: ## �� ������ �������� �ʴ� ��
+ 393: 
+ 394: **"AppContainer ���� CUDA �� �� �ȴ�" �� �������� �ʾҴ�.** CUDA ��
+ 395: �õ����� �� �ߴ�.
+ 396: 
+ 397: **"AppContainer ���� ����Ƽ�� �ڵ尡 �� ����" �� �ƴϴ�.** C Ȯ��
+ 398: (`zlib`��`_socket`)�� �ε�ȴ�. `combase.dll` �� **�ε�**�ȴ�(��� ������
+ 399: �� ���). ������ DLL �� 1114 �� ���� ���� `ole32` �� `_ctypes` �� ? �ٸ�
+ 400: ��ְ� ���ٴ� ���� �ƴϴ�.
+ 401: 
+ 402: **Python��DLL ������ x600 �� ��� �� �� Windows ����**�� �����. ���� ������
+ 403: ���� ��迡�� ���(x600 ���� �ٽ� ���� �ʾҴ�).
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; p=pathlib.Path('docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md'); print(json.dumps('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1) if i>=109)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1007ms:
+"109: <!--\n110: \u2605\u2605 \uc774\uac83\uc740 **\uc544\uc9c1 evidence \uac00 \uc544\ub2c8\ub2e4.** docs/evidence/ \uc5d0 \ub450\uba74\n111:     verify_evidence.py \uac00 \uac70\ubd80\ud55c\ub2e4 \u2014 \uadf8\ub9ac\uace0 \uadf8\uac8c \uc633\ub2e4.\n112: \n113:     \uac70\ubd80 \uc0ac\uc720\ub97c \uc2e4\uc81c\ub85c \ubc1b\uc544 \ubd24\ub2e4:\n114:         ! reviewer_id \ub294 human:/agent:/service: \uc911 \ud558\ub098\ub85c \uc2dc\uc791\ud574\uc57c \ud55c\ub2e4\n115:         ! review_artifact \ub294 docs/evidence/_raw/ \uc544\ub798\uc5ec\uc57c \ud55c\ub2e4\n116:     \u2605 (\uc704\ub294 2026-09-06 \ub2f9\uc2dc \uae30\ub85d\uc774\ub2e4. \uc9c0\uae08 front-matter \ub294 \ub450 \uc870\uac74\uc744 \ucc44\uc6e0\ub2e4 \u2014\n117:       \uac80\uc0ac\uae30\ub85c \ub2e4\uc2dc \ub3cc\ub824 \ubcf4\uc9c0\ub294 \uc54a\uc558\ub2e4. \uc7ac\uac80\uc218 23)\n118: \n119:     \uc774 \uc870\uac01\uc740 `RULE.md` \u00a77.3 \uc758 **\uac15\uc81c \ub300\uc0c1\uc774 \uc544\ub2c8\ub2e4**(\uac15\uc81c\ub294 `P0-*`\u00b7\n120:     `DoD-*` \uc758 `PASS` \ubfd0\uc774\uace0 \uc774\uac74 `INCONCLUSIVE` \ub2e4). \uadf8\ub798\ub3c4 schema v2 \ub294\n121:     `reviewer_*` \ub97c \ud544\uc218\ub85c \uc694\uad6c\ud55c\ub2e4 \u2014 \uc989 \"\uac80\uc218\uac00 \ud544\uc694 \uc5c6\ub294\ub370\ub3c4 \uac80\uc218 \uce78\uc740\n122:     \ucc44\uc6cc\uc57c \ud558\ub294\" \uce78\uc774 \ub0a8\ub294\ub2e4.\n123: \n124:     \u2605 \uadf8 \uce78\uc744 \ucc44\uc6b0\ub824\uace0 \uac80\uc0ac\uae30\ub97c \uace0\uce58\uc9c0 \uc54a\ub294\ub2e4. \uc5ec\uae30\uc11c \uac80\uc0ac\uae30\ub97c \uace0\uce58\uba74\n125:       **\ub0b4\uac00 \uac78\ub9b0 \uaddc\uce59\uc744 \ub0b4\uac00 \ud478\ub294 \uac83**\uc774 \ub418\uace0, \uadf8 \ub2e4\uc74c\ubd80\ud130\ub294 \uaddc\uce59\uc774\n126:       \uaddc\uce59\uc774 \uc544\ub2c8\uac8c \ub41c\ub2e4. \uc2a4\ud0a4\ub9c8 \uc190\uc9c8\uc774 \uc815\ub9d0 \ud544\uc694\ud55c\uc9c0\ub294 \uac80\uc218\uc640 \ubd84\ub9ac\ud574\n127:       \ub530\ub85c \ud310\ub2e8\ud55c\ub2e4.\n128: \n129:     \uadf8\ub798\uc11c \ucd08\uc548\uc73c\ub85c \ub0a8\uae34\ub2e4. 2026-09-07 15:43 \uc774\ud6c4 \uc21c\ucc28 \uac80\uc218 \ub300\uae30\uc5f4\uc5d0\n130:     \uc774 \ubb38\uc11c\ub3c4 \ub123\uace0(`DoD-68` \ub2e4\uc74c), \ud310\uc815\uc774 \ub098\uc624\uba74 `review_*` \ub97c \ucc44\uc6cc\n131:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` \ub85c \uc62e\uae34\ub2e4.\n132:     \u2605 \uc62e\uaca8\ub3c4 `status` \ub294 `INCONCLUSIVE` \ub2e4 \u2014 \uac80\uc218\uac00 \ubd99\ub294\ub2e4\uace0 \uce21\uc815\uc774\n133:       \ub2f5\ud558\uc9c0 \ubabb\ud55c \uc9c8\ubb38\uc5d0 \ub2f5\uc774 \uc0dd\uae30\uc9c0\ub294 \uc54a\ub294\ub2e4.\n134: \n135:     \u2605 (\ub2f9\uc2dc \uae30\ub85d) \uadf8\ub54c review_outcome \uc740 PENDING \uc774\uc5c8\ub2e4 \u2014 **\uc2a4\ud0a4\ub9c8\uc5d0 \uc5c6\ub294 \uac12**\uc774\ub2e4.\n136:       \uc9c0\uae08\uc740 \uc2e4\uc81c \ud310\uc815(CHANGES_REQUESTED)\uc774 \ub4e4\uc5b4 \uc788\ub2e4.\n137:       \uc62e\uae38 \ub54c \ubc18\ub4dc\uc2dc \uc2e4\uc81c \ud310\uc815\uc73c\ub85c \ubc14\uafbc\ub2e4.\n138: -->\n139: \n140: ---\n141: schema_version: 2\n142: id: P0-02\n143: claim: \"\uae30\uc900\uc120 \u00a732 \uc758 `P0-02`(Windows AppContainer + CUDA, S2 \uc2e4\ud5d8\uc801)\ub97c \uc2e4\uce21\ud588\ub2e4. **x600(RTX 4070 SUPER \u00b7 \uadf8 Windows \ube4c\ub4dc \u00b7 package identity \uc5c6\ub294 AppContainer)\uc5d0\uc11c** \ud504\ub85c\ud30c\uc77c \uc0dd\uc131\u00b7\uace0\uc720 SID\u00b7\ucee8\ud14c\uc774\ub108 \uc548 \ud504\ub85c\uc138\uc2a4 \uc2e4\ud589\u00b7Python \uc2e4\ud589\u00b7C \ud655\uc7a5 \ub85c\ub4dc(`zlib`\u00b7`_socket`)\ub97c \ud655\uc778\ud588\ub2e4. **\uac00\ub460\uc740 \uac1c\ubc1c \uae30\uacc4\uc5d0\uc11c \ub530\ub85c \uc7c0\ub2e4** \u2014 \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c \ud638\uc2a4\ud2b8 \uc784\uc2dc \ud30c\uc77c\uc744 `type` \ud558\uba74 \uc885\ub8cc \ucf54\ub4dc 1, \ubc14\uae65\uc5d0\uc11c\ub294 0, \ubcf4\uc548 \uc18d\uc131\uc744 \ube7c\uba74 \uc548\ucabd\ub3c4 0 \uc774\ub2e4(`P0-02_\uac00\ub460_\ub300\uc870_\uc7ac\uc2e4\uce21_2026-09-10.txt`). \u2605 \uac70\ubd80 **\uc774\uc720**(\uc624\ub958 \ucf54\ub4dc\u00b7\uba54\uc2dc\uc9c0)\ub294 \uc6d0\ubb38\uc5d0 \uc5c6\ub2e4 \u2014 \uc885\ub8cc \ucf54\ub4dc\uac00 \ubcf4\uc548 \uc18d\uc131\uc5d0 \ub530\ub77c \uac08\ub9b0\ub2e4\ub294 \uac83\uae4c\uc9c0\ub2e4. \uadf8\ub7ec\ub098 x600 \uc5d0\uc11c **`torch.cuda.is_available()` \uae4c\uc9c0 \ub3c4\ub2ec\ud558\uc9c0 \ubabb\ud588\ub2e4** \u2014 `torch/__init__.py:14` \uc758 `import ctypes` \uac00 `_ctypes.pyd` \ucd08\uae30\ud654 \uc2e4\ud328(1114)\ub85c \uc8fd\ub294\ub2e4. DLL \uc744 \ud558\ub098\uc529 \uc5f4\uc5b4 \ubcf4\ub2c8 **\uc2dc\ud5d8\ud55c DLL \uc911 `ole32.dll` \ub85c\ub4dc\uc5d0\uc11c\ub3c4 1114 \uac00 \uad00\uce21\ub410\ub2e4** \u2014 `_ctypes` \uc2e4\ud328\uc640\uc758 \uc778\uacfc\ub294 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4. `combase.dll` \uc740 **\ub85c\ub4dc**\ub410\ub2e4(COM \uae30\ub2a5 \uc2e4\ud589\uc740 \uc548 \uc7c0\ub2e4). \u2605 \uadf8\ub7ec\ubbc0\ub85c \uc774 \uc2a4\ud30c\uc774\ud06c\ub294 **\uc804\uccb4 \uc9c8\ubb38\uc5d0 \ub2f5\ud558\uc9c0 \ubabb\ud588\ub2e4** \u2014 `status: INCONCLUSIVE`. \uc7b0 \uc881\uc740 \uad6c\uc131\uc5d0 \ub300\ud55c \ud310\uc815\uc740 decision \uc5d0 \uac00\ub978\ub2e4\"\n144: status: INCONCLUSIVE\n145: commit: 52d72b9\n146: \n147: executor_id: \"agent:claude-code\"\n148: executor_tool: \"claude-code \uc138\uc158 \u2014 SSH \ub85c x600 \uc6d0\uaca9 \uc2e4\uce21. AppContainer primitive(\uc2e0\uaddc 300\uc5ec \uc904)\u00b7\ud504\ub85c\ube0c 2\uc885 \uc2e0\uc124, \uc5ec\uc12f \ucc28\ub840 \uce21\uc815\"\n149: executor_model: \"claude-opus-5\"\n150: executed_at: \"2026-09-06T00:20:00+09:00\"\n151: \n152: review_required: false\n153: reviewer_id: \"agent:codex-cli\"\n154: reviewer_tool: \"codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) \u2014 2026-09-10 \uc21c\ucc28 \ub300\uae30\uc5f4 8\ubc88, \uc7ac\uac80\uc218 16\u00b719\u00b721\u00b722 (21\u00b722 \ub294 \uc774 \ucd08\uc548\uc5d0 \ucd94\uac00 \uc9c0\uc801 \uc5c6\uc74c)\"\n155: reviewer_model: \"gpt-6-astra\"\n156: review_context: \"fresh-read-only\"\n157: review_outcome: \"CHANGES_REQUESTED\"\n158: review_scope: >\n159:   `RULE.md` \u00a77.3 \uc740 **`P0-*`\u00b7`DoD-*` \uc758 `status: PASS`** \uc5d0 \ub300\ud574\uc11c\ub9cc \ub3c5\ub9bd\n160:   \uac80\uc218\ub97c \uac15\uc81c\ud55c\ub2e4. \uc774 \ubb38\uc11c\ub294 `INCONCLUSIVE` \ub77c **\uac15\uc81c \ub300\uc0c1\uc774 \uc544\ub2c8\ub2e4** \u2014\n161:   \uadf8\ub798\ub3c4 \ubc1b\ub294\ub2e4.\n162: \n163:   \u2605 \uac15\uc81c\uac00 \uc544\ub2cc\ub370 \uc65c \ubc1b\ub098. \uc5ec\uae30 \uc801\ud78c \ud310\ub2e8 \uc911 **\"AppContainer \uc790\uccb4\ub294\n164:   \ub3d9\uc791\ud55c\ub2e4\"** \uac00 \ubc18\uc99d\uc5d0 \ucde8\uc57d\ud558\uae30 \ub54c\ubb38\uc774\ub2e4. x600 \uc758 \uc5ec\uc12f \ucc28\ub840 \uce21\uc815(Python\u00b7DLL)\uc774 \uc804\ubd80 \ud55c\n165:   \uae30\uacc4\u00b7\ud55c Windows \ube4c\ub4dc\uc5d0\uc11c \ub098\uc654\uace0, `ole32` \uc2e4\ud328\uac00 \uc774 \ube4c\ub4dc \uace0\uc720\uc774\uba74\n166:   \uc774 \ubb38\uc11c\uc758 \ubc29\ud5a5 \uc790\uccb4\uac00 \ud2c0\ub9b0\ub2e4.\n167: \n168:   \uac80\uc218\uc790\uc5d0\uac8c \ud2b9\ud788 \ubcfc \uac83:\n169:     1. \"\ub418\ub294 \uac83\" \ubaa9\ub85d\uc774 \uc2e4\uc81c\ub85c \uc7ac\ud604\ub418\ub294\uac00 \u2014 \ud2b9\ud788 \uac00\ub460 \ud14c\uc2a4\ud2b8\uac00\n170:        \ucee8\ud14c\uc774\ub108 \ubc16\uc5d0\uc11c\ub3c4 \ud1b5\uacfc\ud558\uc9c0 \uc54a\ub294\uac00(\uccab \ud310\uc774 \uc815\ud655\ud788 \uadf8\ub7ac\ub2e4)\n171:     2. \uc2dc\ud5d8\ud55c \ub124 \ubcc0\uacbd\uc5d0 \uac01\uac01 **\ub300\uc870**\uac00 \uc788\ub294\uac00, \uc544\ub2c8\uba74 \"\ud574 \ubd24\ub294\ub370 \uc548\n172:        \ub410\ub2e4\" \uc778\uac00\n173:     3. \uacb0\ub860\uc774 \uce21\uc815\uc744 \ub118\uc5b4\uc11c\uc9c0 \uc54a\ub294\uac00 \u2014 package identity \uac00\uc124\uc744 \uc5b4\ub514\uc120\uac00\n174:        \uacb0\ub860\ucc98\ub7fc \uc4f0\uace0 \uc788\uc9c0 \uc54a\uc740\uac00\n175: review_artifact: \"docs/evidence/_raw/\uac80\uc218_2026-09-10/22_\uc7ac\uac80\uc218_DoD68_5\ucc28\uc640_plan_id_\uc8fc\uc11d_CHANGES_REQUESTED.txt\"\n176: \n177: raw_output_artifact: \"docs/evidence/_raw/P0-02_appcontainer_cuda_5\ucc28_\uc6d0\uc778\uc9c0\ubaa9.txt\"\n178: raw_output_digest: \"sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3\"\n179: raw_output_bytes: 4346\n180: \n181: artifacts:\n182:   - \"docs/evidence/_raw/P0-02_appcontainer_cuda_5\ucc28_\uc6d0\uc778\uc9c0\ubaa9.txt\"\n183:   - \"docs/evidence/_raw/P0-02_appcontainer_cuda_1\ucc28.txt\"\n184:   - \"docs/evidence/_raw/P0-02_appcontainer_cuda_2\ucc28.txt\"\n185:   - \"docs/evidence/_raw/P0-02_appcontainer_cuda_3\ucc28_\uac00\uc124\uc18c\uac70.txt\"\n186:   - \"docs/evidence/_raw/P0-02_appcontainer_cuda_4\ucc28_\uac10\ubcc4.txt\"\n187:   - \"docs/evidence/_raw/P0-02_\uac00\ub460_\ub300\uc870_\uc7ac\uc2e4\uce21_2026-09-10.txt\"\n188:   - \"docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt\"\n189:   - \"docs/evidence/_raw/ENV-02_probe.txt\"\n190:   - \"crates/runtime-windows/src/appcontainer.rs\"\n191:   - \"crates/runtime-windows/src/bin/p0_02_probe.rs\"\n192:   - \"crates/runtime-windows/src/bin/dll_probe.rs\"\n193: \n194: binary_digests:\n195:   toolchain: \"\uc6d0\ubb38\uc5d0 \uae30\ub85d \uc5c6\uc74c \u2014 \uc791\uc5c5 \ud658\uacbd \uae30\uc900 x600\u00b7\uac1c\ubc1c \uae30\uacc4 cargo 1.97.1 (\uc7ac\uac80\uc218 23)\"\n196: protocol_versions:\n197:   schema_version: \"proto \ubcc0\uacbd \uc5c6\uc74c\"\n198:   canonical_spec: \"canonical \ubcc0\uacbd \uc5c6\uc74c\"\n199: platform: >\n200:   **x600 (Windows 11 \u2014 \uc5d0\ub514\uc158\uc740 \uc774 \uc6d0\ubb38\ub4e4\uc5d0 \uc5c6\ub2e4, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** \uc5d0\uc11c\n201:   SSH \ub85c \uc6d0\uaca9 \uc2e4\uce21\ud588\ub2e4. \uac1c\ubc1c \uae30\uacc4(GPU \uc5c6\uc74c)\uc5d0\uc11c\ub294 AppContainer primitive \uc758\n202:   \ub2e8\uc704 \ud14c\uc2a4\ud2b8\ub9cc \ub3cc\ub838\ub2e4.\n203: \n204:   \u2605 **x600 \uc758 Python\u00b7DLL \uce21\uc815\uc740 \ud55c \uae30\uacc4 \u00b7 \ud55c Windows \ube4c\ub4dc\uc5d0\uc11c\ub9cc \uc7c0\ub2e4**(\uac00\ub460 \ub300\uc870\ub294\n205:   \uac1c\ubc1c \uae30\uacc4\uc5d0\uc11c \ub530\ub85c \uc7c0\ub2e4). `ole32` \ucd08\uae30\ud654 \uc2e4\ud328\uac00 \uc774\n206:   \ube4c\ub4dc \uace0\uc720\uc778\uc9c0 \uc77c\ubc18\uc801\uc778\uc9c0 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4(`CLAUDE.md` \u00a74 \u2014 \ud45c\ubcf8\uc774 \uc791\uc73c\uba74\n207:   \uc791\ub2e4\uace0 \ub9d0\ud55c\ub2e4).\n208: hardware: >\n209:   RTX 4070 SUPER \uc2e4\ubb3c. UUID\u00b7\ub4dc\ub77c\uc774\ubc84\u00b7VRAM \uc740 `DoD-56_nvml_observation_x600_2026-08-29.txt`,\n210:   compute capability 8.9 \ub294 `ENV-02_probe.txt` \uc5d0 \uc788\ub2e4 \u2014 **\uc774 \uc2a4\ud30c\uc774\ud06c\uc640 \ub2e4\ub978 \ub0a0\uc758\n211:   \uce21\uc815**\uc774\ub2e4. \uc774 \uc2a4\ud30c\uc774\ud06c\uc758 \uc6d0\ubb38(1\ucc28)\uc774 \ubc1b\uce58\ub294 \uac83\uc740 \ucee8\ud14c\uc774\ub108 **\ubc16** \uae30\uc900\uc120\uc758\n212:   `torch 2.11.0+cu128` \u00b7 `cuda_available=True` \u00b7 `device_count=1` \u00b7 \uc7a5\uce58 \uc774\ub984 \u00b7\n213:   `matmul_sum=262144.0` \u00b7 `compute=ok` \ub2e4. \u2605 \ud589\ub82c \ud06c\uae30\ub294 \uc6d0\ubb38\uc5d0 \uc5c6\ub2e4(\uc7ac\uac80\uc218 23 \u2014\n214:   \uc804\uc5d0\ub294 \"64x64\" \ub77c \uc801\uc5c8\ub2e4)\n215: network_profile: \"\uc5c6\uc74c \u2014 \ud504\ub85c\uc138\uc2a4 \uc0dd\uc131\uacfc DLL \ub85c\ub4dc\ub9cc \uc7b0\ub2e4\"\n216: command: |\n217:   # x600 \uc5d0\uc11c \u2014 \ud504\ub85c\ube0c\ub294 E:\\gputeer-work \uc544\ub798\uc5d0\uc11c \ub3cc\ub838\ub2e4. \uc124\uce58\ud615 Python \uc740 C:, embeddable\u00b7TEMP \ub294 E: \ub97c \uc37c\ub2e4(1\ucc28\u00b73\ucc28 \uc6d0\ubb38. \uc7ac\uac80\uc218 23)\n218:   target\\debug\\p0_02_probe.exe <python \uacbd\ub85c> [<temp \uacbd\ub85c>] [<capability SID>]\n219:   # \ud658\uacbd\ubcc0\uc218\n220:   #   P0_02_CODE     \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c \ub3cc\ub9b4 Python \ud55c \uc904\n221:   #   P0_02_RAW_CMD  \uba85\ub839\uc904 \uc804\uccb4 \uad50\uccb4(dll_probe \ub97c \ub3cc\ub9b4 \ub54c)\n222:   target\\debug\\dll_probe.exe <dll \uacbd\ub85c> [...]\n223: \n224: raw_output: |\n225:   === \ucee8\ud14c\uc774\ub108 \ubc16 (\uae30\uc900\uc120) ===\n226:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;\n227:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok\n228: \n229:   === \ucee8\ud14c\uc774\ub108 \uc548 \u2014 \ub418\ub294 \uac83 ===\n230:   import sys           ok (exit 0)\n231:   import zlib          ok (exit 0)   <- .pyd, C \ud655\uc7a5\n232:   import _socket       ok (exit 0)   <- .pyd, C \ud655\uc7a5\n233:   \ud638\uc2a4\ud2b8 \uc784\uc2dc \ud30c\uc77c type  \uc548\ucabd exit 1 \u00b7 \ubc14\uae65 exit 0 \u00b7 \ubcf4\uc548 \uc18d\uc131 \ube7c\uba74 \uc548\ucabd 0  <- \uac00\ub460(\uc885\ub8cc \ucf54\ub4dc\uae4c\uc9c0)\n234:                        \uc6d0\ubb38 P0-02_\uac00\ub460_\ub300\uc870_\uc7ac\uc2e4\uce21_2026-09-10.txt (\uac1c\ubc1c \uae30\uacc4)\n235: \n236:   === \ucee8\ud14c\uc774\ub108 \uc548 \u2014 DLL \ub2e8\uc704 ===\n237:   libffi-8.dll      ok=true\n238:   python313.dll     ok=true\n239:   vcruntime140.dll  ok=true\n240:   oleaut32.dll      ok=true\n241:   combase.dll       ok=true      <- **\ub85c\ub4dc\ub9cc** \ub410\ub2e4. COM \uae30\ub2a5 \uc2e4\ud589\uc740 \uc548 \uc7c0\ub2e4\n242:   rpcrt4.dll        ok=true\n243:   shcore.dll        ok=true\n244:   advapi32.dll      ok=true\n245:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)\n246:   _ctypes.pyd       ok=false error=1114\n247: \n248:   === \uc2dc\ud5d8\ud55c \ub124 \ubcc0\uacbd \u2014 \uc804\ubd80 \uac19\uc740 \uc2e4\ud328\uac00 \uc774\uc5b4\uc84c\ub2e4 (\uac00\uc124\uc744 **\uc18c\uac70\ud55c \uac83\uc774 \uc544\ub2c8\ub2e4**) ===\n249:   \uc0c1\uc704 \uacbd\ub85c \uc21c\ud68c \uad8c\ud55c   C:\\Users\\<x600-user> \uc774\ud558 4\uac1c\uc5d0 RX        -> \uac19\uc740 \uc2e4\ud328\n250:                         (\uc790\uc2dd\uc774 \uadf8 \uacbd\ub85c\ub97c \uc2e4\uc81c\ub85c \uc21c\ud68c\ud588\ub294\uc9c0 \ubcf4\uc778 \ucd9c\ub825\uc740 \uc5c6\ub2e4)\n251:   \ucee8\ud14c\uc774\ub108 TEMP \ubd80\uc7ac    E: \uc5d0 \ub9cc\ub4e4\uc5b4 (F) + \ud658\uacbd \uc8fc\uc785        -> \uac19\uc740 \uc2e4\ud328\n252:                         (\uc790\uc2dd\uc774 \uadf8 \uac12\uc744 \ubc1b\uc544 \uac70\uae30 \uc37c\ub294\uc9c0 \ubcf4\uc778 \ucd9c\ub825\uc740 \uc5c6\ub2e4)\n253:   capability \ubd80\uc7ac       \ud45c\uc900 SID \ub458 \uc8fc\uc785                    -> \uac19\uc740 \uc2e4\ud328\n254:                         (\u2605 **\uc774 \ub458\ub85c \uc548 \ud480\ub838\ub2e4**\uae4c\uc9c0\ub2e4. COM capability \ub294 \uc548 \ud574\ubd24\ub2e4)\n255:   Python \ubc30\ud3ec\ud310         embeddable 3.13.7 \uc0c8\ub85c \ubc1b\uc74c         -> \uac19\uc740 \uc2e4\ud328\n256:                         (\uc548\ud30e \ub300\uc870\uac00 \uac00\uc7a5 \ubd84\uba85\ud558\ub2e4. \ub450 CPython 3.13 \ubc16\uc73c\ub85c\ub294 \uc77c\ubc18\ud654 \ubabb \ud55c\ub2e4)\n257: \n258: negative_tests: >\n259:   \uc774 \uc2a4\ud30c\uc774\ud06c\uc758 negative test \ub294 **\uac00\ub460**\uc774\ub2e4 \u2014\n260:   `the_container_cannot_read_a_file_the_host_can` \uc774 \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c\n261:   \ud638\uc2a4\ud2b8 \uc784\uc2dc \ud30c\uc77c\uc744 `type` \ud558\uba74 **0 \uc774 \uc544\ub2cc \uc885\ub8cc \ucf54\ub4dc**\uac00 \ub098\uc624\ub294\uc9c0 \ubcf8\ub2e4\n262:   (\u2605 \uac70\ubd80 **\uc774\uc720**\uae4c\uc9c0\ub294 \ub2e8\uc5b8\ud558\uc9c0 \uc54a\ub294\ub2e4 \u2014 \uc7ac\uac80\uc218 16). **\ub300\uc870\ub97c \uac19\uc774 \ub454\ub2e4**(\ubc14\uae65\n263:   \uc5d0\uc11c\ub294 \uc77d\ud78c\ub2e4) \u2014 \uc5c6\uc73c\uba74 \"\uacbd\ub85c\uac00 \ud2c0\ub824\uc11c \uc2e4\ud328\" \ub85c\ub3c4 \ud1b5\uacfc\ud55c\ub2e4.\n264:   \u2605 \uc774 \ud14c\uc2a4\ud2b8\ub294 \ubba4\ud14c\uc774\uc158\uc73c\ub85c \uac80\uc99d\ud588\ub2e4: \ubcf4\uc548 \uc18d\uc131 \uc801\uc6a9\uc744 \ud1b5\uc9f8\ub85c \uac74\ub108\ub6f0\uba74\n265:   \uc2e4\uc81c\ub85c \uc2e4\ud328\ud55c\ub2e4. \u2605 2026-09-10 \uac80\uc218 8 \uc774 \"\uadf8 \uacb0\uacfc\uac00 \uc6d0\ubb38\uc5d0 \uc5c6\ub2e4\" \uace0 \uc9da\uc5b4\n266:   **\ub2e4\uc2dc \ub3cc\ub824 \uc6d0\ubb38\uc744 \ub0a8\uacbc\ub2e4**(\uac1c\ubc1c \uae30\uacc4) \u2014 \uc815\uc0c1: \ubc14\uae65 exit 0 \u00b7 \uc548\ucabd exit 1 /\n267:   \ubcf4\uc548 \uc18d\uc131 \ubd80\ucc29\ub9cc \ube80 \ubba4\ud14c\uc774\uc158: \uc548\ucabd exit 0 -> \ud14c\uc2a4\ud2b8 \uc2e4\ud328.\n268:   `docs/evidence/_raw/P0-02_\uac00\ub460_\ub300\uc870_\uc7ac\uc2e4\uce21_2026-09-10.txt`. x600 \uc5d0\uc11c\ub294 \ub2e4\uc2dc\n269:   \uc7ac\uc9c0 \uc54a\uc558\ub2e4. \ucc98\uc74c \uc4f4 \ubc84\uc804(`cmd /c exit 42` \uc758 \uc885\ub8cc \ucf54\ub4dc\ub9cc \ud655\uc778)\uc740\n270:   **\ucee8\ud14c\uc774\ub108 \ubc16\uc5d0\uc11c\ub3c4 \ud1b5\uacfc**\ud574 \uc544\ubb34\uac83\ub3c4 \uc7ac\uc9c0 \ubabb\ud588\uace0, \uadf8 \ubba4\ud14c\uc774\uc158\uc774 \uadf8\uac83\uc744\n271:   \ub4dc\ub7ec\ub0c8\ub2e4.\n272: \n273:   \uadf8 \ubc16\uc5d0: \ud504\ub85c\ud30c\uc77c \uc774\ub984\uc774 \uac19\uc73c\uba74 SID \ub3c4 \uac19\uc740\uc9c0(\uc7ac\uc2dc\uc791 \ub4a4 \ubc29\ud654\ubcbd \uaddc\uce59\uc774\n274:   \uc5c9\ub6b1\ud55c \ucee8\ud14c\uc774\ub108\ub97c \uac00\ub9ac\ud0a4\uc9c0 \uc54a\uac8c), \ud504\ub85c\ud30c\uc77c \ud3f4\ub354\uac00 \uc0dd\uae30\ub294\uc9c0.\n275: \n276: limitations: >\n277:   \u2605\u2605 **\uc774 \uc2a4\ud30c\uc774\ud06c\ub294 \uc790\uae30 \uc9c8\ubb38\uc5d0 \ub2f5\ud558\uc9c0 \ubabb\ud588\ub2e4.** `P0-02` \ub294\n278:   \"AppContainer \uc5d0\uc11c CUDA \uac00 \ub418\ub294\uac00\" \ub97c \ubb3b\ub294\ub370, **CUDA \uadfc\ucc98\uc5d0\ub3c4 \uac00\uc9c0\n279:   \ubabb\ud588\ub2e4** \u2014 \uadf8 \uc55e\uc758 `import ctypes` \uc5d0\uc11c \ub9c9\ud78c\ub2e4.\n280: \n281:   \u2605 **`ole32` \ub85c\ub4dc\uac00 \uc65c 1114 \uc778\uc9c0, \uadf8\uac83\uc774 `_ctypes` \uc2e4\ud328\uc758 \uc6d0\uc778\uc778\uc9c0\n282:   \ubaa8\ub978\ub2e4.** \ub3c4\uad6c(`dll_probe`)\ub294 `LoadLibraryW` \ud558\ub098\uc640 Win32 \uc624\ub958 \ucf54\ub4dc\ubfd0\uc774\ub77c\n283:   \uc2e4\ud328\ud55c \ucd08\uae30\ud654 \ud568\uc218\uc758 \uc704\uce58 \u00b7 \uc778\uacfc \u00b7 \ub2e4\ub978 \uc7a5\uc560\uc758 \ubd80\uc7ac\ub97c \ud655\uc815\ud558\uc9c0 \ubabb\ud55c\ub2e4\n284:   (2026-09-10 \uac80\uc218 8. \uc804\uc5d0\ub294 \"\ub9c9\ud78c \uac83\uc740 ole32 \ud558\ub098\" \ub77c\uace0 \uc801\uc5c8\ub2e4). Process\n285:   Monitor \ub4f1\uc73c\ub85c \ub85c\ub4dc \uc2e4\ud328 \uacfc\uc815\uc758 \uc811\uadfc\u00b7\uc624\ub958\ub97c \uc870\uc0ac\ud574 \uc6d0\uc778\uacfc \uc2e4\ud328 \uc704\uce58\ub97c \ud655\uc778\ud574\uc57c\n286:   \ud55c\ub2e4(\uc7ac\uac80\uc218 19 \u2014 \uc804\uc5d0\ub294 \"\uc2e4\uc81c \uac70\ubd80\ub41c \uc811\uadfc\uc744 \ubd10\uc57c \uc548\ub2e4\" \uace0 \uac70\ubd80\ub97c \uc804\uc81c\ud588\ub2e4).\n287: \n288:   \u2605\u2605 **2026-09-07 \ub3c5\ub9bd \uac80\uc218 \uc9c0\uc801 \u2014 \ub450 \ubc94\uc704\ub97c \uac08\ub77c \uc801\uc5b4\uc57c \ud55c\ub2e4.**\n289: \n290:       \uc804\uccb4 P0-02 \uc9c8\ubb38(\"AppContainer \uc5d0\uc11c CUDA \uac00 \ub418\ub294\uac00\")\n291:         -> INCONCLUSIVE. CUDA \ub97c \ubd80\ub974\uc9c0\ub3c4 \ubabb\ud588\ub2e4\n292: \n293:       **\uc624\ub298 \uc2e4\uc81c\ub85c \uc7b0 \uad6c\uc131**\n294:         x600 \uc758 \uadf8 Windows \ube4c\ub4dc \u00b7 package identity \uc5c6\ub294 bare\n295:         AppContainer \u00b7 \uc2dc\ud5d8\ud55c \ub450 CPython 3.13 \ubc30\ud3ec\ud310\n296:         -> CUDA \ud638\ucd9c **\uc804\uc5d0** \ub9c9\ud614\ub2e4.\n297:            \u2605 \uc5ec\uc12f \ubc88\uc740 **\uc5ec\uc12f \ub2e8\uacc4\uc758 \ud0d0\uc0c9**\uc774\uc5c8\ub2e4 \u2014 1\ucc28\ub294 \uc2a4\ud06c\ub9bd\ud2b8\uac00 \uc2dc\uc791\uc870\ucc28\n298:              \ubabb \ud588\uace0(0xC0000135), 2\ucc28\ubd80\ud130 `_ctypes` \ucd08\uae30\ud654 \uc2e4\ud328, 4\ucc28\ub294 \uc131\uacf5\ud55c\n299:              import \ub4e4, 5\u00b76\ucc28\ub294 DLL \ub85c\ub4dc \uac10\ubcc4\uc774\ub2e4. \uac19\uc740 \uc2e4\ud328\ub97c \uc5ec\uc12f \ubc88 \uc7ac\ud604\ud55c\n300:              \uac83\uc774 \uc544\ub2c8\ub2e4(\uac80\uc218 8. \uc804\uc5d0\ub294 \"\uc5ec\uc12f \ubc88 \uc804\ubd80 \uac19\uc740 \uc790\ub9ac\uc5d0\uc11c \uc8fd\uc5c8\ub2e4\"\n301:              \uace0 \uc801\uc5c8\ub2e4)\n302: \n303:       \uac80\uc218 \ud310\ub2e8: \ud310\uc815 \ubcf4\ub958\uac00 \ud551\uacc4\ub294 \uc544\ub2c8\ub2e4. \ub2e4\ub9cc `FAIL-SCOPE` \ub97c \uc4f8\n304:       \uc218 \uc788\ub294 \uacbd\uc6b0\ub3c4 **\uc774 \uc881\uc740 \uad6c\uc131\uc73c\ub85c scope \ub97c \uba85\uc2dc\ud560 \ub54c\ubfd0**\uc774\uace0,\n305:       S2 \uc804\uccb4\ub098 AppContainer \uc77c\ubc18\uc5d0 \ub300\ud55c `FAIL-SCOPE` \uadfc\uac70\ub294 \uc5c6\ub2e4.\n306: \n307:   \u2605 **\uc720\ub825\ud55c \uac00\uc124\uc744 \uacb0\ub860\uc73c\ub85c \uc4f0\uc9c0 \uc54a\ub294\ub2e4.** \uc6b0\ub9ac \ucee8\ud14c\uc774\ub108\ub294\n308:   `CreateAppContainerProfile` \ub85c \ub9cc\ub4e0 **package identity \uc5c6\ub294 \ub9e8\n309:   AppContainer** \uc774\uace0, Store \uc571\uc740 package identity \ub97c \uac16\uace0 COM \uc744 \uc4f4\ub2e4 \u2014\n310:   \uadf8 \ucc28\uc774\uc77c \uc218 \uc788\ub2e4. \uadf8\ub7ec\ub098 **\ud655\uc778\ud558\uc9c0 \uc54a\uc558\uc73c\ubbc0\ub85c \ucd94\uce21\uc73c\ub85c\ub9cc \uc801\ub294\ub2e4.**\n311: \n312:   \u2605 x600 \uc758 Python\u00b7DLL \uce21\uc815\uc740 **\ud55c \uae30\uacc4 \u00b7 \ud55c Windows \ube4c\ub4dc**\uc758 \uacb0\uacfc\ub2e4. \ub2e4\ub978\n313:   \ube4c\ub4dc\uc5d0\uc11c \uac19\uc740\uc9c0 \ubaa8\ub978\ub2e4. \uac00\ub460 \ub300\uc870\ub294 \uac1c\ubc1c \uae30\uacc4\uc5d0\uc11c \uc7c0\ub2e4.\n314: \n315:   \u2605 `P0-02` \uccb4\ud06c\ub9ac\uc2a4\ud2b8 \uc911 **\uc548 \ud55c \uac83**: filesystem allowlist \uc758 \uc644\uc804\ud55c\n316:   \ud615\ud0dc, outbound \uc81c\ud55c \uc2e4\uce21, \"Create Process in Sandbox API \ud604\uc7ac \uc0c1\ud0dc\n317:   \uc7ac\ud655\uc778\". GPU \ub4dc\ub77c\uc774\ubc84 capability \uc2dd\ubcc4\uc740 **\uc2dc\uc791\ub3c4 \ubabb \ud588\ub2e4** \u2014 \uadf8 \uc55e\uc5d0\uc11c\n318:   \ub9c9\ud614\uae30 \ub54c\ubb38\uc774\ub2e4.\n319: \n320:   \u2605 C: \uc758 Python \ud2b8\ub9ac(27112 files) \u00b7 \uc0c1\uc704 4\uac1c \uacbd\ub85c \u00b7 ALL APPLICATION PACKAGES \uc5d0\n321:   \uc900 \uad8c\ud55c\uc740 \uc6d0\ubcf5\ud588\ub2e4. **E: \uc758 actemp \u00b7 pyembed \ub294 \uc7ac\ud604\uc6a9\uc73c\ub85c \ub0a8\uacbc\ub2e4**(3\ucc28 \uc6d0\ubb38\n322:   70~73\ud589. \uc7ac\uac80\uc218 23 \u2014 \uc804\uc5d0\ub294 \"\uc804\ubd80 \uc6d0\ubcf5\" \uc774\ub77c \uc801\uc5c8\ub2e4). \ub0a8\uc740 `S-1-15-3-65536-...` \ub294\n323:   Windows \uac00 \uc6d0\ub798 \ub450\ub294 capability ACE \uc774\uace0 \uc6b0\ub9ac\uac00 \ub9cc\ub4e0 \uac83\uc774 \uc544\ub2c8\ub2e4.\n324: \n325: decision: >\n326:   **`P0-02` \uc758 DoD \ub97c \uc544\uc9c1 \uc801\uc6a9\ud558\uc9c0 \uc54a\ub294\ub2e4.**\n327: \n328:       \uc131\uacf5 -> S2 \uc124\uacc4 \uc720\uc9c0, \uac80\uc99d\ub41c \ud658\uacbd\uc5d0\uc11c\ub9cc enable\n329:       \uc2e4\ud328 -> S2 \ub97c EXPERIMENTAL \ub85c \uc720\uc9c0, S1 \uc774 \uc720\uc77c\ud55c Windows \ub124\uc774\ud2f0\ube0c \uacbd\ub85c\n330: \n331:   \u2605\u2605 **\ubc94\uc704\ub97c \ub458\ub85c \uac00\ub978\ub2e4**(2026-09-10 \uac80\uc218 8 \u2014 \"\uc2e4\ud328 \uc6d0\uc778\uc744 \ubaa8\ub974\ub294\n332:   \uac83\uacfc \uc2dc\ud5d8\ud55c \uad6c\uc131\uc5d0\uc11c \uc2e4\ud328\ub97c \uad00\uce21\ud55c \uac83\uc740 \uc591\ub9bd\ud55c\ub2e4\"):\n333: \n334:       \uc804\uccb4 \uc9c8\ubb38(AppContainer \uc5d0\uc11c CUDA \uac00 \ub418\ub294\uac00)\n335:         -> INCONCLUSIVE. CUDA \ub97c \ubd80\ub974\uc9c0\ub3c4 \ubabb\ud588\ub2e4\n336:       \uc7b0 \uad6c\uc131(x600 \u00b7 \uadf8 \ube4c\ub4dc \u00b7 package identity \uc5c6\uc74c \u00b7 \uc2dc\ud5d8\ud55c \ub450 CPython 3.13 \u00b7\n337:               \uae30\ub85d\ub41c \uba85\ub839 `p0_02_probe.exe` + `P0_02_CODE` \uc758 Python \ud55c \uc904 \u00b7\n338:               \uacbd\ub85c `import torch` -> `import ctypes`)\n339:         -> ctypes/torch \uacbd\ub85c\uac00 CUDA \ud638\ucd9c **\uc804\uc5d0** \ub9c9\ud614\ub2e4.\n340:            **\uc774 \ubc94\uc704\ub85c\ub294 FAIL-SCOPE \ub97c \ub4b7\ubc1b\uce68\ud55c\ub2e4**\n341: \n342:   \u2605 \uc804\uc5d0\ub294 \"package identity \uac00\ub2a5\uc131\uc774 \ub0a8\uc558\uc73c\ub2c8 \uc9c0\uae08 \uc2e4\ud328\ub85c \ud655\uc815\ud558\uba74 \uc7ac\uc9c0\n343:     \uc54a\uc740 \uac83\uc744 \uacb0\ub860\uc73c\ub85c \uc4f0\ub294 \uac83\" \uc774\ub77c\uace0 \uc801\uc5c8\ub2e4. **\ubc94\uc704 \uc5c6\uc774 \uc4f4 \ubcf4\ub958**\uc600\ub2e4 \u2014\n344:     \uc6d0\uc778\uc744 \ubaa8\ub974\ub294 \uac83\uc740 \uc881\uc740 \uad6c\uc131\uc758 \uc2e4\ud328 \uad00\uce21\uc744 \ub9c9\uc9c0 \uc54a\ub294\ub2e4.\n345:   \u2605 \uadf8\ub798\ub3c4 S2 **\uc804\uccb4**\uc5d0 \ub300\ud55c \ud310\uc815\uc740 \uc544\ub2c8\ub2e4. package identity \u00b7 COM\n346:     capability \u00b7 \ub2e4\ub978 Windows \ube4c\ub4dc\ub97c \uc7ac\uc9c0 \uc54a\uc558\ub2e4.\n347: \n348:   \u2605 \uadf8 \uc881\uc740 \ubc94\uc704\uc758 \ud310\uc815\uc740 **\uc774\ubbf8 \uac00\ub2a5\ud558\ub2e4**(\uc704). \ub2e4\uc74c \uac78\uc74c\uc740 \uadf8\uac83\uc744\n349:     \ub4a4\uc9d1\ub294 \uac83\uc774 \uc544\ub2c8\ub77c **\ub2e4\ub978 \uad6c\uc131**\uc744 \ub530\ub85c \uc7ac\ub294 \uac83\uc774\uace0, \uadf8 \uacb0\uacfc\uac00 S2 \uc804\uccb4\n350:     \ud310\ub2e8\uc5d0 \uc4f0\uc778\ub2e4(\uc7ac\uac80\uc218 16 \u2014 \uc804\uc5d0\ub294 \"\ud68c\ud53c \ubd88\uac00\uba74 FAIL-SCOPE\" \ub85c \uc870\uac74\uc744 \uac78\uc5b4\n351:     \uc55e\uc758 \ud310\uc815\uacfc \ucda9\ub3cc\ud588\ub2e4):\n352:     1. Process Monitor \ub4f1\uc73c\ub85c `ole32` \ub85c\ub4dc \uc2e4\ud328 \uacfc\uc815\uc758 \uc811\uadfc\u00b7\uc624\ub958\ub97c \uc870\uc0ac\ud574\n353:        \uc2e4\ud328 \uc704\uce58\ub97c \ud655\uc778\ud55c\ub2e4(\u2605 \uc804\uc5d0\ub294 \"DllMain \uc774 \ubb34\uc5c7\uc5d0\uc11c \uac70\ubd80\ub418\ub294\uc9c0\" \ub77c\uace0\n354:        \uc801\uc5c8\ub2e4 \u2014 \uc2e4\ud328 \ud568\uc218\uc640 '\uac70\ubd80' \ub97c \uc870\uc0ac \uc804\uc5d0 \uc804\uc81c\ud588\ub2e4)\n355:     2. package identity \u00b7 COM capability \u00b7 \ub2e4\ub978 Windows \ube4c\ub4dc \uad6c\uc131\uc744 \ub530\ub85c \uc7b0\ub2e4\n356:     3. \uadf8 \uacb0\uacfc\ub85c S2 \uc804\uccb4\ub97c EXPERIMENTAL \ub85c \ud655\uc815\ud560\uc9c0 \uc815\ud55c\ub2e4\n357: \n358:   \u2605 \uadf8 \uc804\uae4c\uc9c0 **S2 \uc758 \uc0c1\ud0dc\ub97c \ubc14\uafb8\uc9c0 \uc54a\ub294\ub2e4.** \uc9c0\uae08 \uc0c1\ud0dc(EXPERIMENTAL)\uac00\n359:   \uc774 \uce21\uc815\uacfc \ubaa8\uc21c\ub418\uc9c0 \uc54a\ub294\ub2e4.\n360: ---\n361: \n362: # P0-02 \u2014 Windows AppContainer + CUDA\n363: \n364: ## \ud55c \uc904\n365: \n366: AppContainer \ub294 \ub9cc\ub4e4\uc5b4\uc9c0\uace0(x600) \ud638\uc2a4\ud2b8 \ud30c\uc77c\uc744 \ubabb \uc77d\ub294 \uac83\uc73c\ub85c \ubcf4\uc774\ub294\ub370\n367: (\uc885\ub8cc \ucf54\ub4dc \uc218\uc900, \uac1c\ubc1c \uae30\uacc4), **\uadf8 \uc548\uc5d0\uc11c torch \ub97c\n368: import \ud560 \uc218 \uc5c6\ub2e4.** \uc2dc\ud5d8\ud55c DLL \uc911 `ole32.dll` \ub85c\ub4dc\uc5d0\uc11c 1114 \uac00 \uad00\uce21\ub410\ub2e4 \u2014\n369: `_ctypes` \uc2e4\ud328\uc640\uc758 \uc778\uacfc\ub294 \ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4.\n370: \n371: ## \uc65c \uc774\uac78 \uc7c0\ub098\n372: \n373: 2026-09-05 \uc0ac\uc6a9\uc790\uac00 \ubc29\ud654\ubcbd\uc744 \uc2e4\uce21\ud574 `netsh advfirewall` \uc758 **\uacbd\ub85c \ub2e8\uc704**\n374: \uc544\uc6c3\ubc14\uc6b4\ub4dc \ucc28\ub2e8\uc774 \ub3d9\uc791\ud568\uc744 \ud655\uc778\ud588\ub2e4. \uadf8\ub7ec\ub098 \uadf8\uac83\uc73c\ub85c\ub294 `NetworkPolicy` \ub97c\n375: \uac15\uc81c\ud560 \uc218 \uc5c6\ub2e4 \u2014 \ub0a8\uc758 PC \uc5d0\uc11c `python.exe` \ub97c \ud1b5\uc9f8\ub85c \ub9c9\uc73c\uba74 \uc18c\uc720\uc790\uc758\n376: \ub2e4\ub978 \uc791\uc5c5\uae4c\uc9c0 \ub04a\uae34\ub2e4(`CLAUDE.md` \u00a70.1).\n377: \n378: AppContainer \ub294 **\ud504\ub85c\ud30c\uc77c\ub9c8\ub2e4** SID \ub97c \uc900\ub2e4(\uac19\uc740 \uc774\ub984\uc774\uba74 \uac19\uc740 SID \ub2e4).\n379: **Job \ub9c8\ub2e4 \ubcc4\ub3c4 \ud504\ub85c\ud30c\uc77c\uc744 \uc4f0\ub294 \uc124\uacc4\ub77c\uba74** \uadf8 SID \uc5d0 \uaddc\uce59\uc744 \uac78\uc5b4 \uadf8 Job \ub9cc\n380: \ub9c9\ub294 \uac83\uc744 \uac80\ud1a0\ud560 \uc218 \uc788\ub2e4 \u2014 \u2605 Job \ubcc4 \ucc28\ub2e8\ub3c4 outbound \uc81c\ud55c\ub3c4 **\uc7ac\uc9c0 \uc54a\uc558\ub2e4**\n381: (\uc7ac\uac80\uc218 19 \u2014 \uc804\uc5d0\ub294 \"\ud504\ub85c\uc138\uc2a4\ub9c8\ub2e4 \uace0\uc720 SID \u00b7 \uadf8 Job \ud558\ub098\ub9cc \ub9c9\ud78c\ub2e4\" \uace0 \ubcf4\uc7a5\ucc98\ub7fc\n382: \uc801\uc5c8\ub2e4). \uadf8\ub798\uc11c \ubc29\ud654\ubcbd \uac15\uc81c\uc758 \uc120\ud589 **\ud6c4\ubcf4**\uc774\uace0, \uadf8\uac83\uc774 \uc774\n383: \uc2a4\ud30c\uc774\ud06c\ub97c \uc9c0\uae08 \ud55c \uc774\uc720\ub2e4.\n384: \n385: ## \uc5b4\ub5bb\uac8c \uc881\ud614\ub098\n386: \n387: `import _ctypes` \ub294 \uc5ec\ub7ec DLL \uc744 \ud55c \ubc88\uc5d0 \uc2dc\ub3c4\ud574 **\uc2e4\ud328 \uc9c0\uc810\uc744 \uac10\ucd98\ub2e4.**\n388: \uadf8\ub798\uc11c `LoadLibraryW` \ud558\ub098\ub9cc \ud558\uace0 Win32 \uc624\ub958 \ucf54\ub4dc\ub97c \ucc0d\ub294 `dll_probe` \ub97c\n389: \ub9cc\ub4e4\uc5b4 \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c DLL \uc744 \ud558\ub098\uc529 \uc5f4\uc5c8\ub2e4. \uadf8\ub807\uac8c \ud558\uc9c0 \uc54a\uc558\uc73c\uba74\n390: \"`_ctypes` \uac00 \uc548 \ub41c\ub2e4\" \uc5d0\uc11c \uba48\ucdc4\uc744 \uac83\uc774\ub2e4.\n391: \n392: ## \uc774 \uc2e4\ud5d8\uc774 \uc99d\uba85\ud558\uc9c0 \uc54a\ub294 \uac83\n393: \n394: **\"AppContainer \uc5d0\uc11c CUDA \uac00 \uc548 \ub41c\ub2e4\" \ub97c \uc99d\uba85\ud558\uc9c0 \uc54a\uc558\ub2e4.** CUDA \ub97c\n395: \uc2dc\ub3c4\uc870\ucc28 \ubabb \ud588\ub2e4.\n396: \n397: **\"AppContainer \uc5d0\uc11c \ub124\uc774\ud2f0\ube0c \ucf54\ub4dc\uac00 \uc548 \ub3c8\ub2e4\" \ub3c4 \uc544\ub2c8\ub2e4.** C \ud655\uc7a5\n398: (`zlib`\u00b7`_socket`)\uc740 \ub85c\ub4dc\ub41c\ub2e4. `combase.dll` \ub3c4 **\ub85c\ub4dc**\ub41c\ub2e4(\uae30\ub2a5 \uc2e4\ud589\uc740\n399: \uc548 \uc7c0\ub2e4). \uc2dc\ud5d8\ud55c DLL \uc911 1114 \uac00 \ub098\uc628 \uac83\uc740 `ole32` \uc640 `_ctypes` \ub2e4 \u2014 \ub2e4\ub978\n400: \uc7a5\uc560\uac00 \uc5c6\ub2e4\ub294 \ub73b\uc740 \uc544\ub2c8\ub2e4.\n401: \n402: **Python\u00b7DLL \uce21\uc815\uc740 x600 \ud55c \uae30\uacc4 \u00b7 \ud55c Windows \ube4c\ub4dc**\uc758 \uacb0\uacfc\ub2e4. \uac00\ub460 \ub300\uc870\ub294\n403: \uac1c\ubc1c \uae30\uacc4\uc5d0\uc11c \uc7c0\ub2e4(x600 \uc5d0\uc11c \ub2e4\uc2dc \uc7ac\uc9c0 \uc54a\uc558\ub2e4)."
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; paths=['docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt']; print(json.dumps('\\n\\n'.join(p+'\\n'+'\\n'.join(f'{i}: {s}' for i,s in enumerate(pathlib.Path(p).read_text(encoding=\\'utf-8\\').splitlines(),1)) for p in paths)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; paths=['docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt','docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt','docs/evidence/_raw/ENV-02_probe.txt']; print(json.dumps('\\n\\n'.join(p+'\\n'+'\\n'.join(f'{i}: {s}' for i,s in enumerate(pathlib.Path(p).read_text(encoding=\\'utf-8\\').splitlines(),1)) for p in paths)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 1153ms:
+  File "<string>", line 1
+    import pathlib,json; paths=['docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_1��.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_2��.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_3��_�����Ұ�.txt']; print(json.dumps('\n\n'.join(p+'\n'+'\n'.join(f'{i}: {s}' for i,s in enumerate(pathlib.Path(p).read_text(encoding=\'utf-8\').splitlines(),1)) for p in paths)))
+                                                                                                                                                                                                                                                                                                                                                                          ^
+SyntaxError: unexpected character after line continuation character
+
+ exited 1 in 1163ms:
+  File "<string>", line 1
+    import pathlib,json; paths=['docs/evidence/_raw/P0-02_appcontainer_cuda_4��_����.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt','docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt','docs/evidence/_raw/ENV-02_probe.txt']; print(json.dumps('\n\n'.join(p+'\n'+'\n'.join(f'{i}: {s}' for i,s in enumerate(pathlib.Path(p).read_text(encoding=\'utf-8\').splitlines(),1)) for p in paths)))
+                                                                                                                                                                                                                                                                                                                                                                            ^
+SyntaxError: unexpected character after line continuation character
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "rg -n 'cfg\\(test\\)|fn .*|the_container_cannot_read|SECURITY_CAPABILITIES' crates/runtime-windows/src/appcontainer.rs" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1183ms:
+69:fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
+88:    pub fn create(name: &str, display: &str, description: &str) -> Result<Self, AppContainerError> {
+134:    pub fn sid(&self) -> *mut core::ffi::c_void {
+142:    pub fn sid_string(&self) -> Option<String> {
+162:    fn drop(&mut self) {
+188:pub fn run_in_container(
+194:    use windows_sys::Win32::Security::SECURITY_CAPABILITIES;
+199:        PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTUPINFOEXW,
+202:    let mut caps = SECURITY_CAPABILITIES {
+234:            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+236:            std::mem::size_of::<SECURITY_CAPABILITIES>(),
+305:pub fn run_in_container_capture(
+321:pub fn run_in_container_capture_with_caps(
+336:        SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+343:        PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES,
+399:    let mut caps = SECURITY_CAPABILITIES {
+428:            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
+430:            std::mem::size_of::<SECURITY_CAPABILITIES>(),
+502:#[cfg(test)]
+510:    fn a_profile_can_be_created_and_yields_an_appcontainer_sid() {
+540:    fn the_container_cannot_read_a_file_the_host_can() {
+590:    fn the_profile_creates_a_folder_but_that_does_not_mean_it_is_usable() {
+611:    fn the_same_name_yields_the_same_sid() {
+
+codex
+新たに引用された値だけでなく、実行環境や測定対象の書き方も確認しています。現時点で、cargo は「原文に記録なし」とした後にも具体的な版が残っているため、その扱いを原文と突き合わせます。
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; paths=['docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt']; print(json.dumps('\\n\\n'.join(p+'\\n'+'\\n'.join(f'{i}: {s}' for i,s in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines(),1)) for p in paths)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; paths=['docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt','docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt','docs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt','docs/evidence/_raw/ENV-02_probe.txt']; print(json.dumps('\\n\\n'.join(p+'\\n'+'\\n'.join(f'{i}: {s}' for i,s in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines(),1)) for p in paths)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1410ms:
+"docs/evidence/_raw/P0-02_\uac00\ub460_\ub300\uc870_\uc7ac\uc2e4\uce21_2026-09-10.txt\n1: P0-02 \uac00\ub460 \ub300\uc870 \uc7ac\uc2e4\uce21 \u2014 2026-09-10 (\uac1c\ubc1c \uae30\uacc4, Windows 11)\n2: \uac80\uc218 8\ubc88 \uc9c0\uc801: \"\ubc14\uae65 \ub300\uc870\uc640 \ubba4\ud14c\uc774\uc158 \uac80\uc99d\uc744 \ud588\ub2e4\ub294 \uc11c\uc220\uc740 \uc788\uc9c0\ub9cc \uc2e4\uc81c \uacb0\uacfc\ub294 \uc6d0\ubb38\uc5d0 \uc5c6\ub2e4\"\n3: \uba85\ub839: cargo test -p gputeer-runtime-windows --lib the_container_cannot_read_a_file_the_host_can -- --nocapture\n4: \ud14c\uc2a4\ud2b8: crates/runtime-windows/src/appcontainer.rs  the_container_cannot_read_a_file_the_host_can\n5:   \ubc14\uae65  std::process::Command cmd.exe /c type <\uc784\uc2dc \ud30c\uc77c>   -> \uc131\uacf5\ud574\uc57c \ud55c\ub2e4(\ub300\uc870)\n6:   \uc548\ucabd  run_in_container(profile, \"cmd.exe /c type <\uac19\uc740 \ud30c\uc77c>\") -> 0 \uc774 \uc544\ub2c8\uc5b4\uc57c \ud55c\ub2e4\n7: \u2605 \ud55c\uacc4: \uac1c\ubc1c \uae30\uacc4\uc5d0\uc11c \uc7c0\ub2e4(GPU \uc5c6\uc74c). x600 \uc5d0\uc11c \ub2e4\uc2dc \uc7ac\uc9c0 \uc54a\uc558\ub2e4.\n8: \n9: === 1) \uc815\uc0c1 (exit=0) ===\n10: test appcontainer::tests::the_container_cannot_read_a_file_the_host_can ... ok\n11: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s\n12: CONFINE outside_exit=Some(0) outside_stdout=\"host only\" inside_exit=1\n13: \n14: === 2) \ubba4\ud14c\uc774\uc158 A1 \u2014 run_in_container \uc5d0\uc11c SECURITY_CAPABILITIES \ubd80\ucc29\ub9cc \uac74\ub108\ub700 (exit=101) ===\n15: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s\n16: CONFINE outside_exit=Some(0) outside_stdout=\"host only\" inside_exit=0\n17: thread 'appcontainer::tests::the_container_cannot_read_a_file_the_host_can' (6916) panicked at crates\\runtime-windows\\src\\appcontainer.rs:569:9:\n18: assertion `left != right` failed: AppContainer \uc548\uc5d0\uc11c \ud638\uc2a4\ud2b8 \ud30c\uc77c\uc744 \uc77d\uc5c8\ub2e4 \u2014 \uac00\ub46c\uc9c0\uc9c0 \uc54a\uc558\ub2e4\n19:   left: 0\n20: \n21: \ud310\uc815: \uc815\uc0c1\uc5d0\uc11c \ubc14\uae65\uc740 \uc77d\uace0 \uc548\ucabd\uc740 \ubabb \uc77d\uc5c8\ub2e4. \ubcf4\uc548 \uc18d\uc131\uc744 \ube7c\uba74 \uc548\ucabd\ub3c4 \uc77d\uc5b4\n22: \ud14c\uc2a4\ud2b8\uac00 \uc2e4\ud328\ud55c\ub2e4 \u2014 \uac00\ub460\uc744 \uc7ac\ub294 \ud14c\uc2a4\ud2b8\ub2e4.\n\ndocs/evidence/_raw/P0-02_appcontainer_cuda_1\ucc28.txt\n1: === P0-02 \u00b7 AppContainer + CUDA \u2014 1\ucc28 \uc2e4\uce21 ===\n2: \uc77c\uc2dc   2026-09-05\n3: \uae30\uacc4   x600 (Windows 11, RTX 4070 SUPER, driver 595.79, CUDA 13.2)\n4: \ub3c4\uad6c   target/debug/p0_02_probe.exe (crates/runtime-windows/src/bin/)\n5: Python C:/Users/<x600-user>/AppData/Local/Programs/Python/Python313/python.exe\n6:        torch 2.11.0+cu128\n7: \n8: \ucd9c\ub825\n9: \n10:   P0_02 profile_sid=S-1-15-2-1410904197-4105201817-3202243263-3239620330\n11:                     -932966420-3733530804-2953875994\n12: \n13:   P0_02 outside exit=Some(0)\n14:     torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;\n15:     device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok\n16: \n17:   P0_02_RESULT stage=inside ok=false\n18:     exit=3221225781 exit_hex=0xC0000135\n19:     meaning=STATUS_DLL_NOT_FOUND - \ud544\uc694\ud55c DLL \uc744 \ubabb \uc77d\uc5c8\ub2e4(\uacbd\ub85c ACL)\n20:     detail=\uacb0\uacfc \ud30c\uc77c\uc774 \ube44\uc5c8\ub2e4 - \uc2a4\ud06c\ub9bd\ud2b8\uac00 \uc2dc\uc791\ud558\uc9c0 \ubabb\ud588\ub2e4\n21: \n22: === \ud655\uc778\ub41c \uac83 ===\n23: \n24: 1. AppContainer \ud504\ub85c\ud30c\uc77c\uc774 \ub9cc\ub4e4\uc5b4\uc9c0\uace0 \uace0\uc720 SID \ub97c \uc900\ub2e4(S-1-15-2-...).\n25:    \uadf8 SID \uc5d0 \ubc29\ud654\ubcbd \uaddc\uce59\uc744 \uac78\uba74 **\uadf8 Job \ud558\ub098\ub9cc** \ub9c9\uc744 \uc218 \uc788\ub2e4 \u2014\n26:    \uacbd\ub85c \ub2e8\uc704(program=)\uac00 \ubabb \ud558\ub358 \uc77c\uc774\ub2e4.\n27: \n28: 2. AppContainer \uc548\uc5d0\uc11c \ud504\ub85c\uc138\uc2a4\uac00 \uc2e4\uc81c\ub85c \ub728\uace0, **\uac00\ub46c\uc9c4\ub2e4.**\n29:    \ucee8\ud14c\uc774\ub108\ub294 \ud638\uc2a4\ud2b8\uc758 \uc784\uc2dc \ud30c\uc77c\uc744 \ubabb \uc77d\ub294\ub2e4(\ub2e8\uc704 \ud14c\uc2a4\ud2b8\uac00 \uace0\uc815).\n30: \n31: 3. \ubc14\uae65 \uae30\uc900\uc120\uc774 \ud655\uc2e4\ud558\ub2e4 \u2014 \uac19\uc740 \uc2a4\ud06c\ub9bd\ud2b8\uac00 \ucee8\ud14c\uc774\ub108 \ubc16\uc5d0\uc11c\ub294\n32:    CUDA \ub97c \ubcf4\uace0 \uc2e4\uc81c\ub85c \uacc4\uc0b0\uae4c\uc9c0 \ud55c\ub2e4(matmul_sum=262144.0).\n33:    **\uadf8\ub798\uc11c \uc548\ucabd \uc2e4\ud328\ub97c \"\uc774 \uae30\uacc4\uac00 \uc6d0\ub798 \uc548 \ub418\ub294 \uac83\" \uc73c\ub85c \uc624\ud574\ud560 \uc218 \uc5c6\ub2e4.**\n34: \n35: === \u2605\u2605 \uc544\uc9c1 \ub2f5 \ubabb \ud55c \uac83 \u2014 \uadf8\ub9ac\uace0 \uc65c \ubabb \ud588\ub294\uc9c0 ===\n36: \n37: **\"AppContainer \uc5d0\uc11c CUDA \uac00 \ub418\ub294\uac00\" \ub294 \uc544\uc9c1 \ubaa8\ub978\ub2e4.**\n38: \n39: \ub354 \uc55e\uc5d0\uc11c \ub9c9\ud614\uae30 \ub54c\ubb38\uc774\ub2e4. `0xC0000135`(STATUS_DLL_NOT_FOUND)\ub294 CUDA \uc640\n40: \uc544\ubb34 \uc0c1\uad00\uc774 \uc5c6\ub2e4 \u2014 **Python \uc774 \uc790\uae30 DLL \uc744 \ubabb \uc77d\uc5b4 \uc2dc\uc791\uc870\ucc28 \ubabb \ud588\ub2e4.**\n41: Python \uc124\uce58 \ud3f4\ub354\uc5d0 `ALL APPLICATION PACKAGES` \uad8c\ud55c\uc774 \uc5c6\uc5b4\uc11c\ub2e4.\n42: \n43: \u2605 \uc774 \uad6c\ubd84\uc774 \uc911\uc694\ud558\ub2e4. \uc885\ub8cc \ucf54\ub4dc\ub9cc \ubcf4\uace0 \"AppContainer \uc5d0\uc11c CUDA \uc2e4\ud328\" \ub85c\n44:   \uc801\uc5c8\uc73c\uba74 **\uac70\uc9d3\uc744 \uae30\ub85d\ud560 \ubed4\ud588\ub2e4.** \uadf8\ub798\uc11c \ud504\ub85c\ube0c\uac00 \uc885\ub8cc \ucf54\ub4dc\ub97c \ud574\uc124\ud55c\ub2e4.\n45: \n46: === \ub2e4\uc74c\uc5d0 \ud544\uc694\ud55c \uac83 ===\n47: \n48: `P0-02` \uccb4\ud06c\ub9ac\uc2a4\ud2b8\uc758 \"filesystem allowlist\" \uac00 \ubc14\ub85c \uc774\uac83\uc774\ub2e4:\n49: \n50:   - Python \uc124\uce58 \ud3f4\ub354\uc5d0 \ucee8\ud14c\uc774\ub108 SID \uc77d\uae30\u00b7\uc2e4\ud589 \uad8c\ud55c\n51:   - torch \ud328\ud0a4\uc9c0 \ud3f4\ub354(site-packages)\uc640 \uadf8 CUDA DLL\n52:   - \uadf8\ub2e4\uc74c\uc5d0\uc57c \"GPU \ub4dc\ub77c\uc774\ubc84 \uc811\uadfc\uc5d0 \ud544\uc694\ud55c capability\" \ub97c \uc2dd\ubcc4\ud560 \uc218 \uc788\ub2e4\n53: \n54: \u2605 \uadf8 \uad8c\ud55c \ubd80\uc5ec\ub294 **\uc0ac\uc6a9\uc790 \uc18c\uc720 \ub514\ub809\ud130\ub9ac\uc758 ACL \ubcc0\uacbd**\uc774\ub77c \uc774 \uc138\uc158\uc774\n55:   \uc2e4\ud589\ud558\uc9c0 \uc54a\ub294\ub2e4. \ud544\uc694\ud558\uba74 \uc815\ud655\ud55c \uba85\ub839\uc744 \uc900\ube44\ud55c\ub2e4.\n56: \n57: \u2605 capability \ub294 \uc5ec\uc804\ud788 **\ube48 \ubaa9\ub85d**\uc73c\ub85c \ub744\uc6e0\ub2e4 \u2014 \ubb34\uc5c7\uc774 \ud544\uc694\ud55c\uc9c0 \ubaa8\ub974\ub294\n58:   \uc0c1\ud0dc\uc5d0\uc11c \uc9c0\uc5b4\ub0b4\uc9c0 \uc54a\ub294\ub2e4. DLL \ubcbd\uc744 \ub118\uc740 \ub4a4\uc5d0\uc57c \uadf8 \uc9c8\ubb38\uc5d0 \ub2f5\ud560 \uc218 \uc788\ub2e4.\n\ndocs/evidence/_raw/P0-02_appcontainer_cuda_2\ucc28.txt\n1: === P0-02 \u00b7 AppContainer + CUDA \u2014 2\ucc28 \uc2e4\uce21 ===\n2: \uc77c\uc2dc   2026-09-05\n3: \uae30\uacc4   x600 (RTX 4070 SUPER, driver 595.79, CUDA 13.2)\n4: \ucc28\uc774   1\ucc28 \ub300\ube44 (a) Python \ud2b8\ub9ac\uc5d0 \ucee8\ud14c\uc774\ub108 SID \uc77d\uae30+\uc2e4\ud589 \uad8c\ud55c \ubd80\uc5ec\n5:               (b) \ud504\ub85c\ube0c\uac00 \ud30c\uc77c\uc744 \uc548 \uc4f0\uace0 `-c` + stdout \ud30c\uc774\ud504\ub85c \ubc14\ub01c\n6: \uad8c\ud55c   \ubd80\uc5ec 27112 files -> \uc2e4\uce21 -> **\uc6d0\ubcf5 27112 files** (\ub0a8\uae30\uc9c0 \uc54a\uc558\ub2e4)\n7: \n8: --- \ubc14\uae65 \uae30\uc900\uc120 ---\n9:   torch=2.11.0+cu128 ; cuda_available=True\n10: \n11: --- \ucee8\ud14c\uc774\ub108 \uc548 ---\n12:   exit=1\n13:   Failed to find real location of ...\\Python313\\python.exe\n14:   Traceback (most recent call last):\n15:     File \"<string>\", line 1, in <module>\n16:       import torch; ...\n17:     File \"...\\site-packages\\torch\\__init__.py\", line 14, in <module>\n18:       import ctypes\n19:     File \"...\\Lib\\ctypes\\__init__.py\", line 10, in <module>\n20:       from _ctypes import Union, Structure, Array\n21:   ImportError: DLL load failed while importing _ctypes:\n22:     A dynamic link library (DLL) initialization routine failed.\n23: \n24: === \ubcbd\uc774 \ud55c \uce78 \ub354 \ubc00\ub838\ub2e4 ===\n25: \n26:   1\ucc28   0xC0000135 STATUS_DLL_NOT_FOUND   \u2014 Python \uc774 **\uc2dc\uc791\uc870\ucc28** \ubabb \ud568\n27:   2\ucc28   Python \uc2dc\uc791 O -> import torch O -> **_ctypes DLL \ucd08\uae30\ud654 \uc2e4\ud328**\n28: \n29: \uc989 \"AppContainer \uc5d0\uc11c CUDA \uac00 \ub418\ub294\uac00\" \ub294 **\uc5ec\uc804\ud788 \ubaa8\ub978\ub2e4.** CUDA \uadfc\ucc98\uc5d0\ub3c4\n30: \ubabb \uac14\ub2e4 \u2014 \uadf8 \uc804\uc5d0 \ud45c\uc900 \ub77c\uc774\ube0c\ub7ec\ub9ac `ctypes` \uac00 \uc2e4\ud328\ud55c\ub2e4.\n31: \n32: \u2605 \"not found\" \uac00 \uc544\ub2c8\ub77c **\"initialization routine failed\"** \ub2e4. DLL \uc740\n33:   \ucc3e\uc558\uace0 \ub85c\ub4dc\uae4c\uc9c0 \uac14\ub294\ub370 \ucd08\uae30\ud654\uac00 \uc2e4\ud328\ud588\ub2e4\ub294 \ub73b\uc774\ub77c, \uacbd\ub85c \uad8c\ud55c\uc774 \uc544\ub2c8\ub77c\n34:   **\ucee8\ud14c\uc774\ub108\uc5d0 \uc5c6\ub294 \ub2e4\ub978 \ubb34\uc5b8\uac00**\ub97c \uc694\uad6c\ud55c\ub2e4\ub294 \uc2e0\ud638\ub2e4.\n35: \n36: \u2605 `Failed to find real location of python.exe` \ub3c4 \uac19\uc774 \ub098\uc628\ub2e4 \u2014 \ucee8\ud14c\uc774\ub108\uac00\n37:   \uc790\uae30 \uc2e4\ud589 \ud30c\uc77c\uc758 \uc2e4\uc81c \uacbd\ub85c\ub97c \ud574\uc11d\ud558\uc9c0 \ubabb\ud55c\ub2e4. \uc0c1\uc704 \ub514\ub809\ud130\ub9ac \uc21c\ud68c \uad8c\ud55c\uc774\ub098\n38:   \uc7ac\ubd84\uc11d \uc9c0\uc810 \ud574\uc11d\uacfc \uad00\ub828\uc774 \uc788\uc744 \uc218 \uc788\ub2e4(\ud655\uc778 \uc548 \ud568 \u2014 **\ucd94\uce21\uc774\ub2e4**).\n39: \n40: === \ub2e4\uc74c\uc5d0 \ud655\uc778\ud560 \uac83 (\uc544\uc9c1 \uc548 \ud568) ===\n41: \n42: - `ALL APPLICATION PACKAGES` \uc5d0 \uad8c\ud55c\uc744 \uc8fc\uba74 \ub2ec\ub77c\uc9c0\ub294\uac00\n43:   (\uc9c0\uae08\uc740 **\uc774 \ucee8\ud14c\uc774\ub108 SID \ud558\ub098**\uc5d0\ub9cc \uc92c\ub2e4)\n44: - \ucee8\ud14c\uc774\ub108\uac00 \uc4f8 \uc218 \uc788\ub294 TEMP \uac00 \ud544\uc694\ud55c\uac00 \u2014 libffi \ucd08\uae30\ud654\uac00 \uc784\uc2dc \ud30c\uc77c\uc744\n45:   \uc694\uad6c\ud560 \uc218 \uc788\ub2e4\n46: - \uc0c1\uc704 \uacbd\ub85c(`C:\\Users\\<x600-user>\\AppData\\Local\\Programs`) \uc21c\ud68c \uad8c\ud55c\n47: - capability \ub97c \ud558\ub098\uc529 \ub123\uc5b4 \ubcf4\uae30 \u2014 \ub2e4\ub9cc **\uc9c0\uc5b4\ub0b4\uc9c0 \uc54a\uace0** \uc2e4\ud328\uac00 \uac00\ub9ac\ud0a4\ub294\n48:   \uac83\ubd80\ud130 \ub123\ub294\ub2e4\n49: \n50: \u2605 \uc774 \uc2e4\uce21\uc740 `P0-02` \uccb4\ud06c\ub9ac\uc2a4\ud2b8\uc758 \"GPU \ub4dc\ub77c\uc774\ubc84 \uc811\uadfc\uc5d0 \ud544\uc694\ud55c capability\n51:   \uc2dd\ubcc4\" \uc774 **\uc9c4\ud589 \uc911**\uc774\ub77c\ub294 \ub73b\uc774\uc9c0 \uc644\ub8cc\uac00 \uc544\ub2c8\ub2e4. \uc9c0\uae08\uae4c\uc9c0 \uc2dd\ubcc4\ub41c \uac83\uc740\n52:   \"capability \uc774\uc804\uc5d0 \ud30c\uc77c \uc811\uadfc\uc774 \uba3c\uc800 \ubb38\uc81c\" \ub77c\ub294 \uc0ac\uc2e4\ubfd0\uc774\ub2e4.\n53: \n54: === \uc2e4\ud589\uc790 \uae30\ub85d ===\n55: \n56: \uc774\ubc88 \uc2e4\uce21\uc740 \uc138\uc158(agent:claude-code)\uc774 SSH \ub85c \uc9c1\uc811 \uc218\ud589\ud588\ub2e4 \u2014\n57: `icacls` \ubd80\uc5ec\u00b7\ud504\ub85c\ube0c\u00b7\uc6d0\ubcf5 \uc138 \ub2e8\uacc4 \ubaa8\ub450. \ud30c\uc77c ACL \uc740 \uc0ac\uc6a9\uc790 \uc18c\uc720\n58: \ub514\ub809\ud130\ub9ac\uc5d0 \ub300\ud55c \uac83\uc774\uace0 \ub418\ub3cc\ub838\ub2e4.\n59: \n60: === 3\ucc28: ALL APPLICATION PACKAGES \ub85c\ub3c4 \uac19\uc740 \ubcbd ===\n61: \n62: \uac19\uc740 Python \ud2b8\ub9ac\uc5d0 `*S-1-15-2-1`(ALL APPLICATION PACKAGES)\ub85c \ub2e4\uc2dc \uad8c\ud55c\uc744\n63: \uc8fc\uace0 \uc7ac\uc2e4\ud589\ud588\ub2e4. 27112 files \uc131\uacf5.\n64: \n65:   \uacb0\uacfc: **\uc644\uc804\ud788 \uac19\ub2e4** \u2014 _ctypes DLL initialization routine failed.\n66: \n67: \u2605 \uadf8 \uc0ac\uc774 `*S-1-15-4096` \ud45c\uae30\ub85c \uc2dc\ub3c4\ud55c \uac83\uc740 \ubb38\ubc95 \uc624\ub958\ub85c \uc2e4\ud328\ud588\uace0\n68:   (0 files), \uadf8\ub54c \ud504\ub85c\ube0c\uac00 \ub2e4\uc2dc `0xC0000135` \ub85c \ub3cc\uc544\uac14\ub2e4.\n69:   **\uc774\uac83\uc774 \ub300\uc870 \uc5ed\ud560\uc744 \ud588\ub2e4** \u2014 \uad8c\ud55c\uc774 \uc788\uace0 \uc5c6\uace0\uac00 1\ucc28/2\ucc28 \ucc28\uc774\uc758\n70:   \uc6d0\uc778\uc784\uc744 \ud655\uc778\ud574 \uc900\ub2e4.\n71: \n72: === \uadf8\ub798\uc11c \uc54c\uac8c \ub41c \uac83 ===\n73: \n74: **\ud30c\uc77c \uad8c\ud55c \ubb38\uc81c\uac00 \uc544\ub2c8\ub2e4.** \uc11c\ub85c \ub2e4\ub978 \ub450 \uc8fc\uccb4(\ucee8\ud14c\uc774\ub108 \uc804\uc6a9 SID,\n75: ALL APPLICATION PACKAGES)\uc5d0 \ub611\uac19\uc774 \uc77d\uae30+\uc2e4\ud589\uc744 \uc92c\ub294\ub370 \uac19\uc740 \uc9c0\uc810\uc5d0\uc11c\n76: \uac19\uc740 \ubc29\uc2dd\uc73c\ub85c \uc2e4\ud328\ud55c\ub2e4.\n77: \n78: \uc989 CPython \uc758 `_ctypes` \uac00 AppContainer \uc548\uc5d0\uc11c **\ucd08\uae30\ud654 \uc790\uccb4\ub97c \ubabb \ud55c\ub2e4.**\n79: `torch/__init__.py` \uac00 14\ubc88\uc9f8 \uc904\uc5d0\uc11c `import ctypes` \ub97c \ud558\ubbc0\ub85c,\n80: **torch \ub294 \uc774 \uc0c1\ud0dc\uc758 AppContainer \uc5d0\uc11c import \uc870\ucc28 \ub418\uc9c0 \uc54a\ub294\ub2e4.**\n81: \n82: \u2605 \uc774\uac83\uc740 `P0-02` \uc758 DoD \uc5d0 \uc9c1\uc811 \ub2ff\ub294 \uc0ac\uc2e4\uc774\ub2e4:\n83:     \uc131\uacf5 -> S2 \uc124\uacc4 \uc720\uc9c0, \uac80\uc99d\ub41c \ud658\uacbd\uc5d0\uc11c\ub9cc enable\n84:     \uc2e4\ud328 -> S2 \ub97c EXPERIMENTAL \ub85c \uc720\uc9c0, S1 \uc774 \uc720\uc77c\ud55c Windows \ub124\uc774\ud2f0\ube0c \uacbd\ub85c\n85: \n86:   \ub2e4\ub9cc **\uc544\uc9c1 \"\uc2e4\ud328\" \ub85c \ud655\uc815\ud558\uc9c0 \uc54a\ub294\ub2e4.** \ub0a8\uc740 \uac00\ub2a5\uc131\uc774 \uc788\ub2e4:\n87:     - \ucee8\ud14c\uc774\ub108\uac00 \uc4f8 \uc218 \uc788\ub294 TEMP/\uc791\uc5c5 \ub514\ub809\ud130\ub9ac \ubd80\uc5ec\n88:     - capability \ub97c \uc2e4\uc81c\ub85c \ub123\uc5b4 \ubcf4\uae30(\uc9c0\uae08\uc740 \ube48 \ubaa9\ub85d)\n89:     - Python embeddable \ubc30\ud3ec\ud310 \ub4f1 \ub2e4\ub978 Python \uc73c\ub85c \uc2dc\ub3c4\n90:   \uc774\uac83\ub4e4\uc744 \uc548 \ud574 \ubcf4\uace0 \"AppContainer \uc5d0\uc11c torch \ub294 \ubd88\uac00\" \ub77c\uace0 \uc801\uc73c\uba74\n91:   **\uc7ac\uc9c0 \uc54a\uc740 \uac83\uc744 \uacb0\ub860\uc73c\ub85c \uc4f0\ub294 \uac83**\uc774\ub2e4.\n92: \n93: === \uad8c\ud55c \uc815\ub9ac ===\n94: \n95:   \ucee8\ud14c\uc774\ub108 \uc804\uc6a9 SID : \ubd80\uc5ec -> \uc6d0\ubcf5 (27112 files)\n96:   ALL APPLICATION PACKAGES : \ubd80\uc5ec -> \uc6d0\ubcf5 (27112 files)\n97:   \ucd5c\uc885 \ud655\uc778: icacls \ucd9c\ub825\uc5d0 `S-1-15` \ud56d\ubaa9 \uc5c6\uc74c \u2014 **\ub0a8\uc740 \uad8c\ud55c \uc5c6\ub2e4**\n\ndocs/evidence/_raw/P0-02_appcontainer_cuda_3\ucc28_\uac00\uc124\uc18c\uac70.txt\n1: === P0-02 \u00b7 AppContainer + CUDA \u2014 \uac00\uc124 \ub137\uc744 \uc804\ubd80 \uc18c\uac70\ud588\ub2e4 ===\n2: \uc77c\uc2dc   2026-09-05\n3: \uae30\uacc4   x600 (RTX 4070 SUPER, driver 595.79, CUDA 13.2)\n4: \uc2e4\ud589   \uc138\uc158(agent:claude-code)\uc774 SSH \ub85c \uc9c1\uc811 \u2014 \uad8c\ud55c \ubd80\uc5ec\u00b7\uce21\uc815\u00b7\uc6d0\ubcf5 \uc804\ubd80\n5: \n6: === \ubcbd\uc740 \ud558\ub098\ub2e4 ===\n7: \n8:   ImportError: DLL load failed while importing _ctypes:\n9:     A dynamic link library (DLL) initialization routine failed.\n10: \n11: `torch/__init__.py` \uac00 14\ubc88\uc9f8 \uc904\uc5d0\uc11c `import ctypes` \ub97c \ud558\ubbc0\ub85c,\n12: **\uc774 \ubcbd\uc744 \ubabb \ub118\uc73c\uba74 torch \ub294 import \uc870\ucc28 \uc548 \ub41c\ub2e4.** CUDA \uadfc\ucc98\uc5d0\ub3c4 \ubabb \uac04\ub2e4.\n13: \n14: === \uc18c\uac70\ud55c \uac00\uc124 \ub137 \u2014 \uac01\uac01 \ub300\uc870\uac00 \uc788\ub2e4 ===\n15: \n16: \uac00\uc124 1 \u00b7 \uc0c1\uc704 \uacbd\ub85c \uc21c\ud68c \uad8c\ud55c\uc774 \uc5c6\ub2e4\n17:   \uadfc\uac70\uc600\ub358 \uac83: `Failed to find real location of python.exe` \uac00 \uac19\uc774 \ub72c\ub2e4\n18:   \ud55c \uc77c: C:\\Users\\<x600-user> \u00b7 \\AppData \u00b7 \\Local \u00b7 \\Programs \uc5d0 \uac01\uac01 RX \ubd80\uc5ec\n19:   \uacb0\uacfc: **\uac19\uc740 \uc2e4\ud328.** \uc18c\uac70.\n20: \n21: \uac00\uc124 2 \u00b7 \ucee8\ud14c\uc774\ub108\uac00 \uc4f8 \uc218 \uc788\ub294 TEMP \uac00 \uc5c6\ub2e4\n22:   \uadfc\uac70\uc600\ub358 \uac83: libffi \ucd08\uae30\ud654\uac00 \uc784\uc2dc \uacbd\ub85c\ub97c \uc694\uad6c\ud55c\ub2e4\uace0 \uc54c\ub824\uc838 \uc788\ub2e4\n23:   \ud55c \uc77c: E:\\gputeer-work\\tmp\\actemp \ub97c \ub9cc\ub4e4\uc5b4 \ucee8\ud14c\uc774\ub108 SID \uc5d0 (F) \ubd80\uc5ec,\n24:         \ud504\ub85c\ube0c\uac00 TEMP/TMP \ub97c \uadf8\ub9ac\ub85c \ubc14\uafd4 \uc790\uc2dd\uc5d0\uac8c \ubb3c\ub824\uc90c\n25:   \uacb0\uacfc: **\uac19\uc740 \uc2e4\ud328.** \uc18c\uac70.\n26: \n27: \uac00\uc124 3 \u00b7 capability \uac00 \uc5c6\ub2e4\n28:   \uadfc\uac70\uc600\ub358 \uac83: \uc9c0\uae08\uae4c\uc9c0 \ube48 \ubaa9\ub85d\uc73c\ub85c\ub9cc \ub744\uc6e0\ub2e4\n29:   \ud55c \uc77c: `run_in_container_capture_with_caps()` \ub97c \ub9cc\ub4e4\uc5b4 \ud45c\uc900 SID \ub97c\n30:         \uc2e4\uc81c\ub85c \uc8fc\uc785 \u2014 S-1-15-3-1(internetClient), \uadf8\ub9ac\uace0 \uc571 \uc804\uc6a9 \ud615\ud0dc \ud558\ub098\n31:   \uacb0\uacfc: **\ub458 \ub2e4 \uac19\uc740 \uc2e4\ud328.** \uc18c\uac70.\n32:   \u2605 capability \ubcc0\ud658\uc5d0 \uc2e4\ud328\ud558\uba74 **\uc870\uc6a9\ud788 \ube7c\uc9c0 \uc54a\uace0 \uc624\ub958\ub97c \ub0b8\ub2e4** \u2014 \uc870\uc6a9\ud788\n33:     \ube60\uc9c0\uba74 \"\uc92c\ub294\ub370\ub3c4 \uc548 \ub41c\ub2e4\" \ub294 \uac70\uc9d3 \uacb0\ub860\uc744 \uc4f0\uac8c \ub41c\ub2e4.\n34: \n35: \uac00\uc124 4 \u00b7 \uc774 Python \uc124\uce58\uac00 \ud2b9\uc774\ud558\ub2e4\n36:   \ud55c \uc77c: python.org \uc758 **embeddable 3.13.7** \uc744 E: \uc5d0 \uc0c8\ub85c \ubc1b\uc544 \ucee8\ud14c\uc774\ub108\n37:         SID \uc5d0 RX \ubd80\uc5ec\ud558\uace0 `import ctypes` \ub9cc \uc2dc\ud5d8\n38:   \uacb0\uacfc:\n39:       \ubc14\uae65  ctypes=ok\n40:       \uc548    ImportError: DLL load failed while importing _ctypes ...\n41:   **\uae68\ub057\ud55c \ubc30\ud3ec\ud310\uc5d0\uc11c\ub3c4 \uac19\ub2e4.** \uc18c\uac70.\n42: \n43: === \ub300\uc870\uac00 \uc788\uc5c8\ub2e4 ===\n44: \n45: \uc911\uac04\uc5d0 SID \ud45c\uae30\ub97c \ud2c0\ub824(`*S-1-15-4096`) \uad8c\ud55c \ubd80\uc5ec\uac00 0 files \ub85c \uc2e4\ud328\ud55c \uc801\uc774\n46: \uc788\ub294\ub370, \uadf8\ub54c \ud504\ub85c\ube0c\uac00 \ub2e4\uc2dc `0xC0000135`(DLL not found)\ub85c \ub3cc\uc544\uac14\ub2e4.\n47: **\uc758\ub3c4\uce58 \uc54a\uc558\uc9c0\ub9cc \uc88b\uc740 \ub300\uc870\ub2e4** \u2014 \uad8c\ud55c\uc774 \uc2e4\uc81c\ub85c \ud6a8\uacfc\ub97c \ub0b4\uace0 \uc788\uc5c8\uace0,\n48: \uc9c0\uae08 \ubcf4\ub294 `_ctypes` \uc2e4\ud328\ub294 \uad8c\ud55c \ubd80\uc871\uacfc\ub294 **\ub2e4\ub978 \uce35**\uc784\uc744 \ud655\uc778\ud574 \uc900\ub2e4.\n49: \n50: === \uadf8\ub798\uc11c \ubb34\uc5c7\uc744 \uc54c\uc558\ub098 ===\n51: \n52: **CPython \uc758 `_ctypes` \uac00 AppContainer \uc548\uc5d0\uc11c \ucd08\uae30\ud654\ub418\uc9c0 \uc54a\ub294\ub2e4** \u2014\n53: Python \ubc30\ud3ec\ud310\u00b7ACL \uc8fc\uccb4\u00b7\uc0c1\uc704 \uacbd\ub85c \uad8c\ud55c\u00b7TEMP\u00b7capability \uc5b4\ub290 \uac83\uc73c\ub85c\ub3c4\n54: \ubc14\ub00c\uc9c0 \uc54a\uc558\ub2e4.\n55: \n56: \u2605 \uc774\uac83\uc744 \uace7\ubc14\ub85c \"`P0-02` \uc2e4\ud328\" \ub85c \uc801\uc9c0\ub294 \uc54a\ub294\ub2e4. \uc548 \ud574 \ubcf8 \uac83\uc774 \ub0a8\uc544 \uc788\ub2e4:\n57:   - `_ctypes` \uac00 \uc5b4\ub290 DLL \uc5d0\uc11c \uc2e4\ud328\ud558\ub294\uc9c0 \uc881\ud788\uae30(libffi-8.dll \uc758\uc874)\n58:   - Process Monitor \ub4f1\uc73c\ub85c \uc2e4\uc81c \uac70\ubd80\ub41c \uc811\uadfc\uc744 \uc9c1\uc811 \uad00\uce21\n59:   - Windows \ubc84\uc804\u00b7\ube4c\ub4dc\uc5d0 \ub530\ub978 \ucc28\uc774\n60:   \uc774\uac83\ub4e4\uc744 \uc548 \ud558\uace0 \"AppContainer \uc5d0\uc11c CPython \ubd88\uac00\" \ub77c\uace0 \uc4f0\uba74 **\ub124 \ubc88\n61:   \uc2dc\ub3c4\ud55c \uac83\uc73c\ub85c \uc77c\ubc18 \uba85\uc81c\ub97c \uc8fc\uc7a5\ud558\ub294 \uac83**\uc774 \ub41c\ub2e4.\n62: \n63: \u2605 \ub2e4\ub9cc \ubc29\ud5a5\uc740 \ub69c\ub837\ud558\ub2e4. `P0-02` \uc758 DoD \ub294 \uc774\ub807\uac8c \uc801\ud600 \uc788\ub2e4:\n64:       \uc131\uacf5 -> S2 \uc124\uacc4 \uc720\uc9c0, \uac80\uc99d\ub41c \ud658\uacbd\uc5d0\uc11c\ub9cc enable\n65:       \uc2e4\ud328 -> S2 \ub97c EXPERIMENTAL \ub85c \uc720\uc9c0, S1 \uc774 \uc720\uc77c\ud55c Windows \ub124\uc774\ud2f0\ube0c \uacbd\ub85c\n66:   \ud604\uc7ac \uadfc\uac70\ub294 **\ud6c4\uc790 \ucabd\uc73c\ub85c \uae30\uc6b4\ub2e4.**\n67: \n68: === \uad8c\ud55c \uc815\ub9ac ===\n69: \n70:   C:\\...\\Python313               \ubd80\uc5ec -> \uc6d0\ubcf5 (27112 files)\n71:   C:\\Users\\<x600-user> \uc774\ud558 4\uac1c \uc0c1\uc704    \ubd80\uc5ec -> \uc6d0\ubcf5 (\uac01 1)\n72:   ALL APPLICATION PACKAGES       \ubd80\uc5ec -> \uc6d0\ubcf5 (27112 files)\n73:   E: \ucabd(actemp \u00b7 pyembed)        E \ub4dc\ub77c\uc774\ube0c\ub77c \ub0a8\uaca8 \ub460 \u2014 \uc7ac\ud604\uc5d0 \uc4f4\ub2e4\n74: \n75:   \ucd5c\uc885 \ud655\uc778:\n76:     Python313        S-1-15 \ud56d\ubaa9 0\n77:     C:\\Users\\<x600-user>    S-1-15-3-65536-... 1\uac1c \ub0a8\uc74c\n78:                      \u2605 \uc774\uac74 **\ub0b4\uac00 \ub9cc\ub4e0 \uac8c \uc544\ub2c8\ub2e4.** Windows \uac00 \uc6d0\ub798 \ub450\ub294\n79:                        capability ACE \uc774\uace0, \ub0b4 \ucee8\ud14c\uc774\ub108 SID \ub294 `S-1-15-2-`\n80:                        \ub85c \uc2dc\uc791\ud55c\ub2e4. \uac74\ub4dc\ub9ac\uc9c0 \uc54a\uc558\ub2e4."
+
+ succeeded in 1377ms:
+"docs/evidence/_raw/P0-02_appcontainer_cuda_4\ucc28_\uac10\ubcc4.txt\n1: === P0-02 \u00b7 \uac10\ubcc4 \uc9c4\ub2e8 \u2014 \ub9c9\ud78c \uac83\uc740 `_ctypes` **\ud558\ub098**\ub2e4 ===\n2: \uc77c\uc2dc   2026-09-05\n3: \uae30\uacc4   x600 (RTX 4070 SUPER)\n4: Python E:\\gputeer-work\\tmp\\pyembed (python.org embeddable 3.13.7, E: \uc5d0 \uc0c8\ub85c \ubc1b\uc74c)\n5: \uc124\uc815   \ucee8\ud14c\uc774\ub108 SID \uc5d0 pyembed RX \u00b7 actemp \ub97c TEMP \ub85c \uc9c0\uc815 \u00b7 capability \uc5c6\uc74c\n6: \n7: === \ub124 \uac00\uc9c0\ub97c \uac01\uac01 \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c \ub3cc\ub838\ub2e4 ===\n8: \n9:   \ucf54\ub4dc                     \ubc14\uae65      \ucee8\ud14c\uc774\ub108 \uc548\n10:   import sys               pure=ok   **ok  (exit 0)**\n11:   import zlib              zlib=ok   **ok  (exit 0)**\n12:   import _socket           socket=ok **ok  (exit 0)**\n13:   import _ctypes           _ctypes=ok  **\uc2e4\ud328 (exit 1)**\n14: \n15: \uc804\uccb4 \ucd9c\ub825 \ud655\uc778(\ucee8\ud14c\uc774\ub108 \uc548):\n16: \n17:   P0_02_RESULT stage=inside ok=true exit=0 meaning=\uc815\uc0c1\n18:     output=Failed to find real location of ...\\pyembed\\python.exe\n19:            exts=ok zlib _socket\n20: \n21:   -> `exts=ok zlib _socket` \uc774 **\ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c \uc2e4\uc81c\ub85c \ucc0d\ud614\ub2e4.**\n22: \n23: === \uadf8\ub798\uc11c \ud310\uc774 \ubc14\ub010\ub2e4 ===\n24: \n25: \uc55e\uc120 \uae30\ub85d\ub4e4\uc740 \"AppContainer \uc548\uc5d0\uc11c Python \uc774 \uc548 \ub41c\ub2e4\" \ub294 \ucabd\uc73c\ub85c \uc77d\ud790 \uc218\n26: \uc788\uc5c8\ub2e4. **\ud2c0\ub838\ub2e4.**\n27: \n28:   \ub41c\ub2e4   AppContainer \uc548\uc5d0\uc11c Python \uc774 \ub3cc\uace0, **C \ud655\uc7a5 \ubaa8\ub4c8\ub3c4 \ub85c\ub4dc\ub41c\ub2e4**\n29:          (`zlib`\u00b7`_socket` \uc740 \ub458 \ub2e4 .pyd \ub2e4)\n30:   \uc548 \ub41c\ub2e4 `_ctypes` **\ud558\ub098**\n31: \n32: \uc989 \ubb38\uc81c\ub294 \"\uc0cc\ub4dc\ubc15\uc2a4\uc5d0\uc11c \ub124\uc774\ud2f0\ube0c \ucf54\ub4dc\uac00 \uc548 \ub3c8\ub2e4\" \uac00 \uc544\ub2c8\ub77c\n33: **`_ctypes`/libffi \uac00 AppContainer \uc5d0\uc11c \ucd08\uae30\ud654\ub418\uc9c0 \uc54a\ub294\ub2e4** \ub294 \ud6e8\uc52c \uc881\uc740\n34: \uc0ac\uc2e4\uc774\ub2e4.\n35: \n36: \u2605\u2605 **`Failed to find real location of python.exe` \ub294 \ubb34\ud574\ud55c \uc7a1\uc74c\uc774\ub2e4.**\n37:   \uc131\uacf5\ud55c \uc2e4\ud589(exit 0)\uc5d0\uc11c\ub3c4 \ub611\uac19\uc774 \ub098\uc628\ub2e4. \uc55e \uae30\ub85d\uc5d0\uc11c \uc774 \ubb38\uc7a5\uc744 \uc2e4\ud328\uc758\n38:   \ub2e8\uc11c\ub85c \uc758\uc2ec\ud588\ub294\ub370(\uac00\uc124 1\uc758 \uadfc\uac70\uc600\ub2e4) **\uc544\ub2c8\uc5c8\ub2e4.** \uc2e4\ud328 \uba54\uc2dc\uc9c0 \uc606\uc5d0\n39:   \uac19\uc774 \uc788\ub2e4\uace0 \uc6d0\uc778\uc778 \uac83\uc740 \uc544\ub2c8\ub2e4 \u2014 \ub300\uc870\ub97c \ubcf4\uace0\uc11c\uc57c \uc54c\uc558\ub2e4.\n40: \n41: === P0-02 \uc5d0 \ub300\ud574 \uc9c0\uae08 \ub9d0\ud560 \uc218 \uc788\ub294 \uac83 ===\n42: \n43: `torch/__init__.py` \ub294 14\ubc88\uc9f8 \uc904\uc5d0\uc11c `import ctypes` \ub97c \ud55c\ub2e4. \uadf8\ub7ec\ubbc0\ub85c\n44: **\uc774 \ubcbd\uc774 \uadf8\ub300\ub85c\uba74 torch \ub294 AppContainer \uc5d0\uc11c import \ub418\uc9c0 \uc54a\ub294\ub2e4** \u2014\n45: CUDA \uac00 \ub418\ub294\uc9c0 \uc5ec\ubd80\ub294 \uadf8 \ub4a4\uc758 \uc9c8\ubb38\uc774\ub77c **\uc544\uc9c1 \ub2f5\uc774 \uc5c6\ub2e4.**\n46: \n47: \ub2e4\ub9cc \ub0a8\uc740 \uacfc\uc81c\uac00 \ud6e8\uc52c \uc881\uc544\uc84c\ub2e4:\n48: \n49:   \uc804    \"AppContainer + CUDA \uac00 \ub418\ub294\uac00\" (\ub9c9\uc5f0)\n50:   \ud6c4    \"`_ctypes`/libffi \ub97c AppContainer \uc5d0\uc11c \ucd08\uae30\ud654\uc2dc\ud0ac \uc218 \uc788\ub294\uac00\"\n51: \n52: \u2605 \uc774\uac83\uc744 \"S2 \uc2e4\ud328\" \ub85c \ud655\uc815\ud558\uc9c0 \uc54a\ub294\ub2e4. \uc544\uc9c1 \uc548 \ubcf8 \uac83:\n53:   - `_ctypes.pyd` \uac00 \uc758\uc874\ud558\ub294 `libffi-8.dll` \uc758 \ucd08\uae30\ud654\uac00 \ubb34\uc5c7\uc744 \uc694\uad6c\ud558\ub294\uc9c0\n54:     (Process Monitor \ub4f1\uc73c\ub85c \uc9c1\uc811 \uad00\uce21)\n55:   - Windows \ube4c\ub4dc/\ubc84\uc804\uc5d0 \ub530\ub978 \ucc28\uc774\n56:   - libffi \ub97c \uc4f0\uc9c0 \uc54a\ub294 \ub300\uccb4 \uacbd\ub85c\uac00 \uc788\ub294\uc9c0\n57:   \ub124 \ubc88 \uc2dc\ub3c4\ud55c \uac83\uc73c\ub85c \"\ubd88\uac00\" \ub77c\ub294 \uc77c\ubc18 \uba85\uc81c\ub97c \uc4f0\uc9c0 \uc54a\ub294\ub2e4.\n58: \n59: === \uc774 \uc2e4\uce21\uc774 \uc774\uc804 \uae30\ub85d\uc744 \uc815\uc815\ud558\ub294 \ubd80\ubd84 ===\n60: \n61: `P0-02_appcontainer_cuda_2\ucc28.txt` \uc640 `..._3\ucc28_\uac00\uc124\uc18c\uac70.txt` \ub294\n62: \"CPython \uc758 `_ctypes` \uac00 \ucd08\uae30\ud654\ub418\uc9c0 \uc54a\ub294\ub2e4\" \uae4c\uc9c0\ub294 \ub9de\uac8c \uc801\uc5c8\uc9c0\ub9cc,\n63: `Failed to find real location` \uc744 \ub2e8\uc11c\ub85c \ub2e4\ub8ec \ubd80\ubd84(\uac00\uc124 1)\uc740\n64: **\uadfc\uac70\uac00 \uc5c6\uc5c8\ub2e4** \u2014 \uc774 \uac10\ubcc4\uc5d0\uc11c \uadf8 \uba54\uc2dc\uc9c0\uac00 \uc131\uacf5 \uc2dc\uc5d0\ub3c4 \ub098\uc634\uc744 \ud655\uc778\ud588\ub2e4.\n\ndocs/evidence/_raw/P0-02_appcontainer_cuda_5\ucc28_\uc6d0\uc778\uc9c0\ubaa9.txt\n1: === P0-02 \u00b7 \uc6d0\uc778\uc744 \ud55c DLL \ub85c \uc9c0\ubaa9\ud588\ub2e4 ===\n2: \uc77c\uc2dc   2026-09-05\n3: \uae30\uacc4   x600 (RTX 4070 SUPER)\n4: \ub3c4\uad6c   `dll_probe` \uc2e0\uc124 \u2014 `LoadLibraryW` \ud558\ub098\ub9cc \ud558\uace0 Win32 \uc624\ub958 \ucf54\ub4dc\ub97c \ucc0d\ub294\ub2e4\n5:        (Python \uc744 \uac70\uce58\uba74 `import _ctypes` \uac00 \uc5ec\ub7ec DLL \uc744 \ud55c \ubc88\uc5d0 \uc2dc\ub3c4\ud574\n6:         \ub204\uac00 \uc2e4\ud328\ud588\ub294\uc9c0 \uad6c\ubd84\uc774 \uc548 \ub41c\ub2e4)\n7: \n8: === \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c DLL \uc744 \ud558\ub098\uc529 \uc5f4\uc5c8\ub2e4 ===\n9: \n10:   libffi-8.dll                  ok=true\n11:   python313.dll                 ok=true\n12:   vcruntime140.dll              ok=true\n13:   oleaut32.dll                  ok=true\n14:   **ole32.dll                   ok=false  error=1114**\n15:   **_ctypes.pyd                 ok=false  error=1114**\n16: \n17:   1114 = ERROR_DLL_INIT_FAILED (DLL \ucd08\uae30\ud654 \ub8e8\ud2f4\uc774 \uc2e4\ud328\ud588\ub2e4)\n18: \n19: \ubc14\uae65 \ub300\uc870: `libffi-8.dll`\u00b7`_ctypes.pyd` \ub458 \ub2e4 ok=true.\n20: \n21: === \uc9c0\ubaa9 ===\n22: \n23: **`ole32.dll` \uc774 AppContainer \uc548\uc5d0\uc11c \ucd08\uae30\ud654\ub418\uc9c0 \uc54a\ub294\ub2e4.**\n24: \n25: `_ctypes.pyd` \ub294 COM \uc9c0\uc6d0 \ub54c\ubb38\uc5d0 `ole32` \ub97c \uc694\uad6c\ud55c\ub2e4. \uadf8\ub798\uc11c\n26: `import _ctypes` \uac00 1114 \ub85c \uc8fd\uace0, `torch/__init__.py:14` \uc758\n27: `import ctypes` \uac00 \uadf8\uac83\uc744 \ud0c0\uace0, \uacb0\uad6d **torch \uac00 import \ub418\uc9c0 \uc54a\ub294\ub2e4.**\n28: \n29: \u2605 \uc55e \ub2e8\uacc4\uae4c\uc9c0\ub294 \"`_ctypes` \uac00 \uc548 \ub41c\ub2e4\" \uc600\ub2e4. \uc774\uc81c **\uc65c \uc548 \ub418\ub294\uc9c0**\uae4c\uc9c0\n30:   \uc654\ub2e4 \u2014 libffi \ub3c4, python313 \ub3c4, vcruntime \ub3c4 \uc544\ub2c8\uace0 `ole32` \ub2e4.\n31: \n32: \u2605 **\uc774 \ud504\ub85c\ube0c\uac00 \uc5c6\uc5c8\uc73c\uba74 \ubabb \ucc3e\uc558\ub2e4.** `import _ctypes` \ub294 \uc5ec\ub7ec DLL \uc744\n33:   \ud55c \ubc88\uc5d0 \uc2dc\ub3c4\ud574 \uc2e4\ud328 \uc9c0\uc810\uc744 \uac10\ucd98\ub2e4. \ud558\ub098\uc529 \uc5f4\uc5b4 \ubcf4\ub294 \uac83\uc774 \uc720\uc77c\ud55c \ubc29\ubc95\n34:   \uc774\uc5c8\ub2e4.\n35: \n36: === \uadf8\ub798\uc11c P0-02 \ub294 ===\n37: \n38: `P0-02` \uc758 DoD:\n39:     \uc131\uacf5 -> S2 \uc124\uacc4 \uc720\uc9c0, \uac80\uc99d\ub41c \ud658\uacbd\uc5d0\uc11c\ub9cc enable\n40:     \uc2e4\ud328 -> S2 \ub97c EXPERIMENTAL \ub85c \uc720\uc9c0, S1 \uc774 \uc720\uc77c\ud55c Windows \ub124\uc774\ud2f0\ube0c \uacbd\ub85c\n41: \n42: \uc9c0\uae08 \uadfc\uac70\ub294 **\ud6c4\uc790 \ucabd\uc73c\ub85c \uac15\ud558\uac8c \uae30\uc6b4\ub2e4.** \ub2e4\ub9cc \uc544\uc9c1 \ud655\uc815\ud558\uc9c0 \uc54a\ub294\ub2e4:\n43: \n44:   - `ole32` \uac00 **\uc65c** \uc2e4\ud328\ud558\ub294\uc9c0\ub294 \ubaa8\ub978\ub2e4(\uc5b4\ub5a4 \uc790\uc6d0\uc744 \uc694\uad6c\ud558\ub294\uc9c0).\n45:     Process Monitor \ub4f1\uc73c\ub85c \uc2e4\uc81c \uac70\ubd80\ub41c \uc811\uadfc\uc744 \ubd10\uc57c \uc548\ub2e4.\n46:   - COM capability \ub97c \uc8fc\uba74 \ub2ec\ub77c\uc9c8 \uc218 \uc788\ub2e4 \u2014 \ub2e4\ub9cc \uadf8\ub7f0 capability \uac00\n47:     \uc788\ub294\uc9c0, \uc788\ub2e4\uba74 \ubb34\uc5c7\uc778\uc9c0 **\ud655\uc778\ud558\uc9c0 \uc54a\uc558\ub2e4.** \uc9c0\uc5b4\ub0b4\uc9c0 \uc54a\ub294\ub2e4.\n48:   - Windows \ube4c\ub4dc/\ubc84\uc804 \ucc28\uc774\ub294 \uc548 \ubd24\ub2e4.\n49: \n50: \u2605 \uadf8\ub7ec\ub098 \ubc29\ud5a5\uc740 \ubd84\uba85\ud558\ub2e4. **AppContainer \ub294 \uc784\uc758\uc758 \ub370\uc2a4\ud06c\ud1b1 Python \uc744\n51:   \ub2f4\ub3c4\ub85d \ub9cc\ub4e4\uc5b4\uc9c4 \uac83\uc774 \uc544\ub2c8\ub2e4** \u2014 \uc774 \uacb0\uacfc\ub294 \uadf8 \uc124\uacc4 \uc758\ub3c4\uc640 \uc77c\uce58\ud55c\ub2e4.\n52:   torch \ucc98\ub7fc COM \uc744 \uac04\uc811\uc801\uc73c\ub85c \ub04c\uc5b4\uc624\ub294 \uc2a4\ud0dd\uc744 \uadf8\ub300\ub85c \ub123\ub294 \uac83\uc740,\n53:   \uc801\uc5b4\ub3c4 \uc9c0\uae08 \uc544\ub294 \ubc94\uc704\uc5d0\uc11c\ub294 \ub9c9\ud600 \uc788\ub2e4.\n54: \n55: === \ub418\ub294 \uac83\ub3c4 \ubd84\uba85\ud788 \uc801\ub294\ub2e4 ===\n56: \n57:   AppContainer \ud504\ub85c\ud30c\uc77c \uc0dd\uc131 \u00b7 \uace0\uc720 SID          O\n58:   \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c \ud504\ub85c\uc138\uc2a4 \uc2e4\ud589                   O\n59:   **\uac00\ub460**(\ud638\uc2a4\ud2b8 \ud30c\uc77c\uc744 \ubabb \uc77d\ub294\ub2e4)               O \u2014 \ubba4\ud14c\uc774\uc158\uc73c\ub85c \uace0\uc815\n60:   Python \uc2e4\ud589 \u00b7 \uc21c\uc218 \ud30c\uc774\uc36c \ucf54\ub4dc                  O\n61:   **C \ud655\uc7a5 \ub85c\ub4dc**(zlib \u00b7 _socket)                 O\n62:   ole32 / _ctypes / torch                        X\n63: \n64: \uc989 \"\uc0cc\ub4dc\ubc15\uc2a4\uc5d0\uc11c \ub124\uc774\ud2f0\ube0c \ucf54\ub4dc\uac00 \uc548 \ub3c8\ub2e4\" \uac00 \uc544\ub2c8\ub2e4. **COM \uc744 \uc694\uad6c\ud558\ub294\n65: \uacbd\ub85c\ub9cc** \ub9c9\ud78c\ub2e4.\n66: \n67: === 6\ucc28: COM \uacc4\uc5f4\uc744 \ub354 \uac08\ub790\ub2e4 \u2014 ole32 **\ud558\ub098**\ub2e4 ===\n68: \n69: \ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c:\n70: \n71:   combase.dll    ok=true    <- **\uc2e4\uc81c COM \ub7f0\ud0c0\uc784\uc774\ub2e4**\n72:   rpcrt4.dll     ok=true\n73:   shcore.dll     ok=true\n74:   advapi32.dll   ok=true\n75:   **ole32.dll    ok=false  error=1114**\n76: \n77: \u2605 \uc694\uc998 Windows \uc5d0\uc11c COM \ubcf8\uccb4\ub294 `combase.dll` \uc774\uace0 `ole32` \ub294 \uadf8 \uc704\uc758\n78:   \ub808\uac70\uc2dc \uacc4\uce35(OLE\u00b7\ud074\ub9bd\ubcf4\ub4dc\u00b7drag&drop\u00b7moniker)\uc774\ub2e4. **\ubcf8\uccb4\ub294 \ub418\ub294\ub370\n79:   \ub808\uac70\uc2dc \uacc4\uce35\ub9cc \uc548 \ub41c\ub2e4.**\n80: \n81: \uc989 \"AppContainer \uc5d0\uc11c COM \uc774 \uc548 \ub41c\ub2e4\" \uac00 \uc544\ub2c8\ub2e4. \ub354 \uc881\uac8c\n82: **`ole32.dll` \uc758 DllMain \uc774 \uc774 \ucee8\ud14c\uc774\ub108\uc5d0\uc11c \uc2e4\ud328\ud55c\ub2e4.**\n83: \n84: \u2605 \uc65c \uc2e4\ud328\ud558\ub294\uc9c0\ub294 **\uc5ec\uc804\ud788 \ubaa8\ub978\ub2e4.** \uc774 \ud504\ub85c\ube0c\ub85c \uac08 \uc218 \uc788\ub294 \uac00\uc7a5 \ubbf8\uc138\ud55c\n85:   \uc9c0\uc810\uc774 \uc5ec\uae30\ub2e4 \u2014 \ub354 \uac00\ub824\uba74 Process Monitor \ub85c \uac70\ubd80\ub41c \uc811\uadfc\uc744 \uc9c1\uc811 \ubd10\uc57c\n86:   \ud55c\ub2e4. \uc548 \ud588\ub2e4.\n87: \n88: \u2605 \ud55c \uac00\uc9c0 \uc720\ub825\ud55c \ubc29\ud5a5\uc740 \uc801\uc5b4 \ub454\ub2e4(**\ucd94\uce21\uc774\uba70 \ud655\uc778 \uc548 \ud588\ub2e4**):\n89:   \uc6b0\ub9ac \ucee8\ud14c\uc774\ub108\ub294 `CreateAppContainerProfile` \ub85c \ub9cc\ub4e0 **package identity\n90:   \uac00 \uc5c6\ub294 \ub9e8 AppContainer** \ub2e4. Store \uc571\uc740 package identity \ub97c \uac16\uace0\n91:   \ub3cc\uba70 COM \uc744 \uc4f4\ub2e4. \uadf8 \ucc28\uc774\uc77c \uc218 \uc788\ub2e4. \ud655\uc778\ud558\ub824\uba74 Store \uc571 \ucabd\uc744 \uc7ac\uc57c\n92:   \ud558\ub294\ub370 \uadf8\uac74 \uc548 \ud588\ub2e4 \u2014 **\uadf8\ub798\uc11c \uc774 \ubb38\uc11c\ub294 \uadf8 \uac00\uc124\uc744 \uacb0\ub860\uc73c\ub85c \uc4f0\uc9c0\n93:   \uc54a\ub294\ub2e4.**\n\ndocs/evidence/_raw/DoD-56_nvml_observation_x600_2026-08-29.txt\n1: GPU_PROBE_OK driver_version=595.79 cuda_driver_version=13020 devices=1\n2: GPU uuid=GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93 index=0 name=\"NVIDIA GeForce RTX 4070 SUPER\" total_vram_bytes=12878610432 free_vram_bytes=12581863424 used_vram_bytes=296747008 compute_capability=8.9 mig=(\uc9c0\uc6d0 \uc548 \ud568)\n3: EXIT=0 \n4: uuid, name, driver_version, memory.total [MiB], memory.used [MiB], compute_cap\n5: GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93, NVIDIA GeForce RTX 4070 SUPER, 595.79, 12282 MiB, 0 MiB, 8.9\n6: === \uac1c\ubc1c \uae30\uacc4(GPU \uc5c6\uc74c) \u2014 \ud655\uc778 \ubd88\uac00\ub85c \uc2e4\ud328\ud574\uc57c \ud55c\ub2e4 ===\n7: gpu-probe \uc2e4\ud328: GPU_PROBE_UNKNOWN NVML \uc744 \uc5f4 \uc218 \uc5c6\uc5b4 \uc774 \uae30\uacc4\uc758 GPU \uc720\ubb34\ub97c \ud655\uc778\ud558\uc9c0 \ubabb\ud588\ub2e4 (GPU \uac00 0\uac1c\ub77c\ub294 \ub73b\uc774 \uc544\ub2c8\ub2e4) \u2014 nvml.dll: LoadLibraryExW failed / C:\\Program Files/NVIDIA Corporation/NVSMI/nvml.dll: LoadLibraryExW failed\n8: EXIT=1\n9: \n10: === cargo test -p gputeer-runtime-nvml ===\n11: test tests::mig_states_are_three_not_two ... ok\n12: test tests::missing_nvml_is_an_error_not_an_empty_list ... ok\n13: test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n14: test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\ndocs/evidence/_raw/ENV-02_probe.txt\n1: === ssh x600 (10.20.20.1, user <x600-user>) \u2014 2026-08-16 ===\n2: name, memory.total [MiB], memory.free [MiB], driver_version, compute_cap\n3: NVIDIA GeForce RTX 4070 SUPER, 12282 MiB, 11832 MiB, 595.79, 8.9\n4: | NVIDIA-SMI 595.79                 Driver Version: 595.79         CUDA Version: 13.2     |\n5: \n6: === \uc885\ud569 (\uc55e\uc120 \uc870\uc0ac \uacb0\uacfc) ===\n7: HOST=<x600-hostname>   USER=<x600-user>\n8: OS=Microsoft Windows 11 Pro build 26200\n9: GPU: NVIDIA GeForce RTX 4070 SUPER | driver 32.0.15.9579\n10: GPU: AMD Radeon 760M Graphics (integrated)\n11: CPU: AMD Ryzen 5 8600G w/ Radeon 760M Graphics\n12: RAM: 23.1 GB\n13: HypervisorPresent=True\n14: Hyper-V Requirements: A hypervisor has been detected.\n15: wsl --list --verbose : (\ube48 \ucd9c\ub825 \u2014 \ubc30\ud3ec\ud310 \ubbf8\uc124\uce58)\n16: Python 3.14.2\n17: DISK  C: NTFS free 8.1/237.5 GB   F: NTFS free 168/953.9 GB\n18:       D: NTFS free 11.1/60.4 GB   E: NTFS free 74.4/195.3 GB\n19: TOOLS nvidia-smi => C:\\WINDOWS\\system32\\nvidia-smi.exe\n20:       python     => C:\\Users\\<x600-user>\\AppData\\Local\\Programs\\Python\\Python314\\python.exe\n21:       git        => C:\\Program Files\\Git\\cmd\\git.exe\n22:       wsl        => C:\\WINDOWS\\system32\\wsl.exe\n23:       cargo/rustc/rustup => NOT FOUND\n24:       docker     => NOT FOUND\n25: \n26: === ssh runpod-gpu (<external-gpu-public-ip>:<port>) ===\n27: ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused"
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,json; p=pathlib.Path('crates/runtime-windows/src/appcontainer.rs'); print(json.dumps('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1) if 528<=i<=588)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import pathlib,hashlib; p=pathlib.Path('docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt'); b=p.read_bytes(); print('bytes='+str(len(b))); print('sha256='+hashlib.sha256(b).hexdigest())\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1350ms:
+"528:     /// \u2605 \ucc98\uc74c\uc5d0 \uc4f4 \ud14c\uc2a4\ud2b8\ub294 `cmd /c exit 42` \uc758 \uc885\ub8cc \ucf54\ub4dc\ub9cc \ubd24\ub2e4. \uadf8\uac74\n529:     ///   **\ucee8\ud14c\uc774\ub108 \ubc16\uc5d0\uc11c\ub3c4 42 \ub97c \uc900\ub2e4** \u2014 \ubcf4\uc548 \uc18d\uc131\uc744 \ud1b5\uc9f8\ub85c \uc548 \ubd99\uc774\ub294\n530:     ///   \ubba4\ud14c\uc774\uc158(A1)\uc744 \uac78\uc5b4\ub3c4 \ud1b5\uacfc\ud588\ub2e4. **\uac00\ub46c\uc9c4 \uac83\uc744 \ud558\ub098\ub3c4 \uc548 \uc7ac\uace0\n531:     ///   \uc788\uc5c8\ub2e4.**\n532:     ///\n533:     ///   \uac07\ud614\ub2e4\ub294 \uac83\uc744 \uc7ac\ub824\uba74 **\ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c\ub9cc \uc2e4\ud328\ud558\ub294 \uac83**\uc744 \uc2dc\ucf1c\uc57c\n534:     ///   \ud55c\ub2e4. \uc784\uc2dc \ub514\ub809\ud130\ub9ac\ub294 `ALL APPLICATION PACKAGES` \uc5d0 \uc5f4\ub824 \uc788\uc9c0\n535:     ///   \uc54a\uc73c\ubbc0\ub85c, \uadf8 \uc548\uc758 \ud30c\uc77c\uc744 \uc77d\ub294 \uac83\uc774 \uc815\ud655\ud788 \uadf8\ub7f0 \uc77c\uc774\ub2e4.\n536:     ///\n537:     /// \u2605 **\ub300\uc870\ub97c \uac19\uc774 \ub454\ub2e4** \u2014 \uac19\uc740 \uba85\ub839\uc744 \ucee8\ud14c\uc774\ub108 **\ubc16\uc5d0\uc11c** \ub3cc\ub9ac\uba74\n538:     ///   \uc131\uacf5\ud574\uc57c \ud55c\ub2e4. \uc5c6\uc73c\uba74 \"\uacbd\ub85c\uac00 \ud2c0\ub824\uc11c \uc2e4\ud328\" \ub85c\ub3c4 \ud1b5\uacfc\ud55c\ub2e4.\n539:     #[test]\n540:     fn the_container_cannot_read_a_file_the_host_can() {\n541:         let dir = tempfile::tempdir().expect(\"\uc784\uc2dc \ub514\ub809\ud130\ub9ac\");\n542:         let secret = dir.path().join(\"host-only.txt\");\n543:         std::fs::write(&secret, b\"host only\").expect(\"\ud30c\uc77c \uc4f0\uae30\");\n544:         let command = format!(\"cmd.exe /c type \\\"{}\\\"\", secret.display());\n545: \n546:         // \ub300\uc870 \u2014 \ucee8\ud14c\uc774\ub108 **\ubc16**\uc5d0\uc11c\ub294 \uc77d\ud78c\ub2e4.\n547:         let outside = std::process::Command::new(\"cmd.exe\")\n548:             .args([\"/c\", \"type\", secret.to_str().unwrap()])\n549:             .output()\n550:             .expect(\"\ubc14\uae65\uc5d0\uc11c \uc2e4\ud589\");\n551:         assert!(\n552:             outside.status.success(),\n553:             \"\ucee8\ud14c\uc774\ub108 \ubc16\uc5d0\uc11c\ub3c4 \ubabb \uc77d\uc5c8\ub2e4 \u2014 \uc774 \ud14c\uc2a4\ud2b8\ub294 \uc544\ubb34\uac83\ub3c4 \uc7ac\uc9c0 \ubabb\ud55c\ub2e4: {:?}\",\n554:             String::from_utf8_lossy(&outside.stderr)\n555:         );\n556: \n557:         let profile = AppContainerProfile::create(\"gputeer-test-confine\", \"c\", \"\ud14c\uc2a4\ud2b8\")\n558:             .expect(\"\ud504\ub85c\ud30c\uc77c \uc0dd\uc131\");\n559:         let exit = run_in_container(&profile, &command, None).expect(\"\ucee8\ud14c\uc774\ub108 \uc548\uc5d0\uc11c \uc2e4\ud589\");\n560:         // \u2605 2026-09-10 \u2014 \uac12\uc744 **\ucc0d\ub294\ub2e4.** \uc804\uc5d0\ub294 \ud1b5\uacfc \uc5ec\ubd80\ub9cc \ub0a8\uc544\uc11c \uac80\uc218\uac00\n561:         //   \"\ubc14\uae65 \ub300\uc870 \uacb0\uacfc\uac00 \uc6d0\ubb38\uc5d0 \uc5c6\ub2e4\" \uace0 \uc9da\uc5c8\ub2e4(P0-02 \uac80\uc218 8\ubc88).\n562:         eprintln!(\n563:             \"CONFINE outside_exit={:?} outside_stdout={:?} inside_exit={exit}\",\n564:             outside.status.code(),\n565:             String::from_utf8_lossy(&outside.stdout).trim()\n566:         );\n567: \n568:         assert_ne!(\n569:             exit, 0,\n570:             \"AppContainer \uc548\uc5d0\uc11c \ud638\uc2a4\ud2b8 \ud30c\uc77c\uc744 \uc77d\uc5c8\ub2e4 \u2014 \uac00\ub46c\uc9c0\uc9c0 \uc54a\uc558\ub2e4\"\n571:         );\n572:     }\n573: \n574:     /// \u2605\u2605 **\ucee8\ud14c\uc774\ub108\uac00 \uc4f8 \uc218 \uc788\ub294 \ud3f4\ub354\uac00 \uc0dd\uae30\ub294\uac00.**\n575:     ///\n576:     /// \uc774\uac8c \uc788\uc73c\uba74 **\ud30c\uc77c ACL \ucf54\ub4dc\ub97c \uc548 \uc368\ub3c4 \ub41c\ub2e4** \u2014 Windows \uac00\n577:     /// `%LOCALAPPDATA%\\Packages\\<\uc774\ub984>\\` \uc744 \ub9cc\ub4e4\uace0 \uadf8 \ucee8\ud14c\uc774\ub108\uc5d0 \uad8c\ud55c\uc744\n578:     /// \uc900\ub2e4. Python \uc2a4\ud06c\ub9bd\ud2b8\uc640 \uacb0\uacfc \ud30c\uc77c\uc744 \uac70\uae30 \ub450\uba74 `P0-02` \uc758 \ub098\uba38\uc9c0\ub97c\n579:     /// ACL \uc5c6\uc774 \uc7b4 \uc218 \uc788\ub2e4.\n580:     ///\n581:     /// \u2605\u2605 **\uc774 \ud14c\uc2a4\ud2b8\uc758 \uc6d0\ub798 \uc774\ub984\uc740 \uac70\uc9d3\ub9d0\uc774\uc5c8\ub2e4**(`..._the_container_can_use`).\n582:     ///   \ud3f4\ub354\uac00 **\uc788\ub294\uc9c0\ub9cc** \uc7ac\uba74\uc11c **\uc4f8 \uc218 \uc788\ub294\uc9c0** \uc7ac\ub294 \uac83\ucc98\ub7fc \uc774\ub984\uc744\n583:     ///   \ubd99\uc600\ub2e4. 2026-09-05 x600 \uc2e4\uce21\uc774 \uadf8 \ucc28\uc774\ub97c \ub4dc\ub7ec\ub0c8\ub2e4 \u2014 \ud3f4\ub354\ub294\n584:     ///   \uc788\ub294\ub370 \ucee8\ud14c\uc774\ub108\uac00 \uadf8 \uc548\uc758 \ud30c\uc77c\uc744 **\ubabb \uc77d\uc5c8\ub2e4**\n585:     ///   (`[Errno 13] Permission denied`).\n586:     ///\n587:     ///   \uc774\ub984\uc744 \uc0ac\uc2e4\ub85c \ubc14\uafe8\ub2e4 \u2014 **\ud3f4\ub354\uac00 \uc0dd\uae34\ub2e4\ub294 \uac83\uae4c\uc9c0\ub9cc** \uc7b0\ub2e4.\n588:     ///   \uadf8\ub798\uc11c \ud504\ub85c\ube0c\ub294 \uc774\uc81c \uadf8 \ud3f4\ub354\ub97c \uc548 \uc4f0\uace0 stdout \uc73c\ub85c \ubc1b\ub294\ub2e4."
+
+ succeeded in 1349ms:
+bytes=4346
+sha256=5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3
+
+codex
+UUID·드라이버·VRAM·compute capability 8.9는 새 원문이 받칩니다. 다만 `ENV-02`에 Windows 11 Pro가 실제로 적혀 있어 “에디션은 이 원문들에 없다”는 문장은 충돌합니다. 또 두 Python 배포판에서 실행한 명령이 달라, 본문의 실패 범위가 그 차이를 보존하는지 확인하고 있습니다.
+
+codex
+**23의 지적은 일부만 닫혔습니다. 현재 상태로 evidence 이동을 승인하기는 어렵습니다.** 확인된 원문 충돌과, 근거를 찾지 못한 서술을 구분했습니다.
+
+1. **Windows 에디션: 새 인용 원문과 충돌합니다.**
+
+   [초안 200행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:200):
+   > “Windows 11 — 에디션은 이 원문들에 없다”
+
+   `ENV-02_probe.txt` **8행에 `OS=Microsoft Windows 11 Pro build 26200`이 있습니다.** 따라서 인용 원문 전체를 뜻한다면 틀립니다. 다만 이것은 앞선 조사 기록이지, 9월 5일 스파이크 당시에도 같은 에디션·빌드였음을 확인하는 출력은 아닙니다.
+
+   “P0-02 측정 원문에는 에디션·빌드 번호가 없다. ENV-02의 앞선 조사에는 Windows 11 Pro build 26200으로 기록되어 있다”로 구분해야 합니다.
+
+2. **cargo 버전: ‘기록 없음’ 뒤에 미확인 값을 여전히 단정합니다.**
+
+   [초안 195행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:195):
+   > “원문에 기록 없음 — 작업 환경 기준 x600·개발 기계 cargo 1.97.1”
+
+   허용된 원문에서 **두 기계의 cargo 1.97.1을 확인하지 못했습니다.** ENV-02 23행은 당시 `cargo/rustc/rustup => NOT FOUND`라고 합니다. 이전 날짜의 부재가 이후 설치를 반증하지는 않지만, 1.97.1을 뒷받침하지도 않습니다.
+
+   측정에 사용한 버전으로 읽힐 구체적인 값은 빼고 “측정 당시 cargo 버전은 원문에 기록 없음”으로 끝내야 합니다. **버전이 틀렸다고 입증한 것은 아니며, 근거가 없는 상태입니다.**
+
+3. **실행 시각: 측정 날짜와 문서 작성 시각이 구분되지 않았습니다.**
+
+   [초안 150행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:150):
+   > `executed_at: "2026-09-06T00:20:00+09:00"`
+
+   P0-02 1~5차 원문은 모두 **2행에 `2026-09-05`**, 가둠 재실측은 **1행에 `2026-09-10`**을 기록합니다. 지정 원문에는 위의 정확한 시각이 없습니다.
+
+   이 값이 작성 시각인지 별도 실행 시각인지 확인할 수 없습니다. 여러 날짜의 측정을 담으면서 하나의 미확인 시각을 실행 시각으로 제시하고 있습니다. 원문이 제공하는 날짜와 재실측 날짜를 구분하고, 정확한 시각은 근거 없이 채우지 않아야 합니다.
+
+4. **두 배포판의 실패를 묶으면서 실행 경로 차이가 사라졌습니다.**
+
+   [초안 336~339행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:336):
+   > “시험한 두 CPython 3.13 … 경로 `import torch` -> `import ctypes`”  
+   > “ctypes/torch 경로가 CUDA 호출 전에 막혔다.”
+
+   설치형 Python의 `torch → ctypes` traceback은 **2차 15~22행**이 받칩니다. 그러나 embeddable은 **3차 35~40행에 `import ctypes`만 시험했다고 명시**합니다. 두 배포판 모두에서 torch 경로를 직접 실행한 것처럼 묶으면 측정을 넘어섭니다.
+
+   “설치형은 `import torch` 중 ctypes에서 실패했고, embeddable은 직접 실행한 `import ctypes`에서 실패했다”로 나누면 됩니다. **좁은 구성의 실패 관측이나 `INCONCLUSIVE`를 뒤집는 지적은 아닙니다.**
+
+5. **그 밖에 원문 근거를 찾지 못한 구체적인 서술이 있습니다.**
+
+   - [217~221행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:217): “프로브는 `E:\gputeer-work` 아래에서 돌렸다”, `P0_02_CODE`·`P0_02_RAW_CMD` 설명. 원문은 **설치형 Python의 C: 경로와 embeddable·TEMP의 E: 경로**를 받칩니다. 하지만 프로브 실행 디렉터리와 두 환경변수의 실제 사용 명령은 찾지 못했습니다. 기록된 실행과 재현용 명령 설명을 구분해야 합니다.
+   - [373~374행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:373): “2026-09-05 사용자가 … 아웃바운드 차단이 동작함을 확인했다.” 지정 원문에는 해당 방화벽 측정이 없습니다. 이번 evidence가 입증한 사실로 취급할 수 없으며, 별도 근거가 필요한 배경 서술입니다.
+
+   **이 두 항목은 거짓이라는 반례를 찾은 것이 아니라, 허용된 자료로 입증하지 못한 것입니다.**
+
+23의 수정 중 다음은 닫혔다고 봅니다.
+
+- **권한 원복:** 3차 70~80행이 C: 원복과 E:의 actemp·pyembed 잔존을 받칩니다.
+- **하드웨어 인용:** DoD-56 **1~5행**에 UUID `GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93`, 드라이버 `595.79`, 총 VRAM `12878610432 bytes` / `12282 MiB`가 있습니다. ENV-02 **2~4행**은 compute capability `8.9`를 받칩니다. 다른 날의 관측이라고 구분한 것은 적절합니다.
+- **행렬 크기:** 1차 14~15행은 결과값만 제공합니다. `64x64` 삭제는 맞습니다.
+- **낡은 주석:** 116~117행과 135~137행의 당시 기록이라는 설명으로 과거 상태와 현재 상태는 구분됩니다. 검사기 통과 여부는 여전히 미확인입니다.
+
+확인 범위는 초안 **109~403행 전체**, 지정된 원문 **8개 전체**, `appcontainer.rs`의 가둠 테스트와 관련 주석입니다. 머리의 판정 요약 **1~107행은 판정에서 제외**했습니다. 가둠의 정상·뮤테이션 종료 코드, import/DLL 결과, 네 변경의 제한적 해석, ole32 인과 미확정에는 추가 반례를 찾지 못했습니다. 5차 원문의 **4346 bytes와 SHA-256도 front-matter와 일치**합니다. 다른 코드·정책·검수 파일은 열지 않았고 재실행하지 않았으므로, 규칙 인용이나 실행자 모델·CLI 버전·commit의 정확성까지 검증한 것은 아닙니다.
+
+이동하려면 위 서술을 고친 뒤, front-matter의 `reviewer_*`, `review_context`, `review_scope`, `review_artifact`, `review_outcome`을 **실제로 완료된 P0-02 단독 검수 기록에 맞춰** 갱신해야 합니다. 현재 154·175행은 22차 검수를 가리킵니다. 이번 판정은 `CHANGES_REQUESTED`이며, **이동을 이유로 `ACCEPTED`로 바꾸면 안 됩니다.** `status: INCONCLUSIVE`는 유지하고, 원문 파일을 바꾸지 않는다면 검증한 digest·bytes도 유지합니다. 검사기 적합성은 이번 허용 범위에서 확인하지 못했습니다.
+
+CHANGES_REQUESTED
+tokens used
+60,581
+**23의 지적은 일부만 닫혔습니다. 현재 상태로 evidence 이동을 승인하기는 어렵습니다.** 확인된 원문 충돌과, 근거를 찾지 못한 서술을 구분했습니다.
+
+1. **Windows 에디션: 새 인용 원문과 충돌합니다.**
+
+   [초안 200행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:200):
+   > “Windows 11 — 에디션은 이 원문들에 없다”
+
+   `ENV-02_probe.txt` **8행에 `OS=Microsoft Windows 11 Pro build 26200`이 있습니다.** 따라서 인용 원문 전체를 뜻한다면 틀립니다. 다만 이것은 앞선 조사 기록이지, 9월 5일 스파이크 당시에도 같은 에디션·빌드였음을 확인하는 출력은 아닙니다.
+
+   “P0-02 측정 원문에는 에디션·빌드 번호가 없다. ENV-02의 앞선 조사에는 Windows 11 Pro build 26200으로 기록되어 있다”로 구분해야 합니다.
+
+2. **cargo 버전: ‘기록 없음’ 뒤에 미확인 값을 여전히 단정합니다.**
+
+   [초안 195행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:195):
+   > “원문에 기록 없음 — 작업 환경 기준 x600·개발 기계 cargo 1.97.1”
+
+   허용된 원문에서 **두 기계의 cargo 1.97.1을 확인하지 못했습니다.** ENV-02 23행은 당시 `cargo/rustc/rustup => NOT FOUND`라고 합니다. 이전 날짜의 부재가 이후 설치를 반증하지는 않지만, 1.97.1을 뒷받침하지도 않습니다.
+
+   측정에 사용한 버전으로 읽힐 구체적인 값은 빼고 “측정 당시 cargo 버전은 원문에 기록 없음”으로 끝내야 합니다. **버전이 틀렸다고 입증한 것은 아니며, 근거가 없는 상태입니다.**
+
+3. **실행 시각: 측정 날짜와 문서 작성 시각이 구분되지 않았습니다.**
+
+   [초안 150행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:150):
+   > `executed_at: "2026-09-06T00:20:00+09:00"`
+
+   P0-02 1~5차 원문은 모두 **2행에 `2026-09-05`**, 가둠 재실측은 **1행에 `2026-09-10`**을 기록합니다. 지정 원문에는 위의 정확한 시각이 없습니다.
+
+   이 값이 작성 시각인지 별도 실행 시각인지 확인할 수 없습니다. 여러 날짜의 측정을 담으면서 하나의 미확인 시각을 실행 시각으로 제시하고 있습니다. 원문이 제공하는 날짜와 재실측 날짜를 구분하고, 정확한 시각은 근거 없이 채우지 않아야 합니다.
+
+4. **두 배포판의 실패를 묶으면서 실행 경로 차이가 사라졌습니다.**
+
+   [초안 336~339행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:336):
+   > “시험한 두 CPython 3.13 … 경로 `import torch` -> `import ctypes`”  
+   > “ctypes/torch 경로가 CUDA 호출 전에 막혔다.”
+
+   설치형 Python의 `torch → ctypes` traceback은 **2차 15~22행**이 받칩니다. 그러나 embeddable은 **3차 35~40행에 `import ctypes`만 시험했다고 명시**합니다. 두 배포판 모두에서 torch 경로를 직접 실행한 것처럼 묶으면 측정을 넘어섭니다.
+
+   “설치형은 `import torch` 중 ctypes에서 실패했고, embeddable은 직접 실행한 `import ctypes`에서 실패했다”로 나누면 됩니다. **좁은 구성의 실패 관측이나 `INCONCLUSIVE`를 뒤집는 지적은 아닙니다.**
+
+5. **그 밖에 원문 근거를 찾지 못한 구체적인 서술이 있습니다.**
+
+   - [217~221행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:217): “프로브는 `E:\gputeer-work` 아래에서 돌렸다”, `P0_02_CODE`·`P0_02_RAW_CMD` 설명. 원문은 **설치형 Python의 C: 경로와 embeddable·TEMP의 E: 경로**를 받칩니다. 하지만 프로브 실행 디렉터리와 두 환경변수의 실제 사용 명령은 찾지 못했습니다. 기록된 실행과 재현용 명령 설명을 구분해야 합니다.
+   - [373~374행](/C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:373): “2026-09-05 사용자가 … 아웃바운드 차단이 동작함을 확인했다.” 지정 원문에는 해당 방화벽 측정이 없습니다. 이번 evidence가 입증한 사실로 취급할 수 없으며, 별도 근거가 필요한 배경 서술입니다.
+
+   **이 두 항목은 거짓이라는 반례를 찾은 것이 아니라, 허용된 자료로 입증하지 못한 것입니다.**
+
+23의 수정 중 다음은 닫혔다고 봅니다.
+
+- **권한 원복:** 3차 70~80행이 C: 원복과 E:의 actemp·pyembed 잔존을 받칩니다.
+- **하드웨어 인용:** DoD-56 **1~5행**에 UUID `GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93`, 드라이버 `595.79`, 총 VRAM `12878610432 bytes` / `12282 MiB`가 있습니다. ENV-02 **2~4행**은 compute capability `8.9`를 받칩니다. 다른 날의 관측이라고 구분한 것은 적절합니다.
+- **행렬 크기:** 1차 14~15행은 결과값만 제공합니다. `64x64` 삭제는 맞습니다.
+- **낡은 주석:** 116~117행과 135~137행의 당시 기록이라는 설명으로 과거 상태와 현재 상태는 구분됩니다. 검사기 통과 여부는 여전히 미확인입니다.
+
+확인 범위는 초안 **109~403행 전체**, 지정된 원문 **8개 전체**, `appcontainer.rs`의 가둠 테스트와 관련 주석입니다. 머리의 판정 요약 **1~107행은 판정에서 제외**했습니다. 가둠의 정상·뮤테이션 종료 코드, import/DLL 결과, 네 변경의 제한적 해석, ole32 인과 미확정에는 추가 반례를 찾지 못했습니다. 5차 원문의 **4346 bytes와 SHA-256도 front-matter와 일치**합니다. 다른 코드·정책·검수 파일은 열지 않았고 재실행하지 않았으므로, 규칙 인용이나 실행자 모델·CLI 버전·commit의 정확성까지 검증한 것은 아닙니다.
+
+이동하려면 위 서술을 고친 뒤, front-matter의 `reviewer_*`, `review_context`, `review_scope`, `review_artifact`, `review_outcome`을 **실제로 완료된 P0-02 단독 검수 기록에 맞춰** 갱신해야 합니다. 현재 154·175행은 22차 검수를 가리킵니다. 이번 판정은 `CHANGES_REQUESTED`이며, **이동을 이유로 `ACCEPTED`로 바꾸면 안 됩니다.** `status: INCONCLUSIVE`는 유지하고, 원문 파일을 바꾸지 않는다면 검증한 digest·bytes도 유지합니다. 검사기 적합성은 이번 허용 범위에서 확인하지 못했습니다.
+
+CHANGES_REQUESTED
