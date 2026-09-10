@@ -1,0 +1,1239 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0894e-4154-7181-8af9-1eae482d0983
+--------
+user
+동의가 아니라 **반박**을 원한다. 이 실측 기록이 **잰 것보다 많이
+주장하는 자리**를 찾아 달라.
+
+# 배경 — 이 문서는 강제 검수 대상이 아니다
+
+`RULE.md` §7.3 은 `status: PASS` 에만 독립 검수를 강제한다. 이 문서는
+`INCONCLUSIVE` 라 대상이 아니다. **그래도 받는 이유**는 하나다 —
+
+> **"AppContainer 자체는 동작한다"** 는 서술이 반증에 취약하다.
+> 여섯 번의 측정이 전부 **한 기계 · 한 Windows 빌드**에서 나왔다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md
+docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt
+```
+
+원문이 더 필요하면 `docs/evidence/_raw/P0-02_appcontainer_cuda_*.txt`
+안에서만 찾아라. 코드로는 넓히지 마라.
+
+# 물을 것 — 네 가지
+
+1. **"되는 것" 목록이 실제로 재현된 것인가.** 특히 **가둠**(컨테이너
+   안에서 호스트 파일을 못 읽는다)이 핵심이다. 이 테스트에는 이력이
+   있다 — **첫 판은 컨테이너 밖에서도 통과하는 공허한 테스트였다**
+   (`cmd /c exit 42` 의 종료 코드만 봤다). 지금 판이 그 함정을 정말
+   벗어났는지, **대조**(밖에서는 읽힌다)가 실제로 있는지 확인하라.
+
+2. **소거한 가설 넷에 각각 대조가 있나.** 문서는 네 가설(상위 경로 권한 ·
+   컨테이너 TEMP · capability 주입 · 다른 Python 배포판)을 소거했다고
+   적었다. 각각이 **"해 봤는데 안 됐다"** 인지 **"바꿨는데도 같은
+   실패였다"** 인지 원문에서 확인하라. 전자는 소거가 아니다.
+
+3. **결론이 측정을 넘어서지 않는가.** 문서 안에
+   **package identity 가설**이 나온다. 그것이 어디에서는 "추측이며 확인
+   안 했다" 라고 적혀 있는데, **다른 자리에서 결론처럼 쓰이고 있지
+   않은가**? 한 문서 안에서 같은 것을 두 가지 무게로 말하면 읽는 사람은
+   무거운 쪽으로 기억한다.
+
+4. **`status: INCONCLUSIVE` 가 맞는 판정인가.** 근거는 "S2 를
+   EXPERIMENTAL 로 유지" 쪽으로 기운다고 적혀 있다. 그런데도 확정하지
+   않은 이유가 **정당한가**, 아니면 판정을 미루는 핑계인가? 반대로,
+   지금 자료로 `FAIL-SCOPE` 를 쓸 수 있다고 볼 근거가 있나?
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 원문 몇 개를 봤고
+각각에서 무엇을 확인했는지 쓰면 된다. 없는 문제를 지어내지 마라.
+
+# 답의 형식
+
+각 지적마다 문서나 원문의 **해당 줄을 인용**하라.
+
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 문서와 5차 원문부터 읽고, 주장과 대조 실험을 줄 단위로 확인하겠습니다. 추가 확인은 허용한 원문 파일 안으로만 제한하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$paths = @('"'docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md', 'docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt'); foreach ("'$p in $paths) { Write-Output ('"'FILE: ' + "'$p); $n = 0; Get-Content -LiteralPath $p -Encoding UTF8 | ForEach-Object { $n++; '"'{0,4}: {1}' -f "'$n, $_ } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1909ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+FILE: docs/plans/2026-09-06_0020_P0-02_evidence_�ʾ�_�˼����.md
+   1: <!--
+   2: �ڡ� �̰��� **���� evidence �� �ƴϴ�.** docs/evidence/ �� �θ�
+   3:     verify_evidence.py �� �ź��Ѵ� ? �׸��� �װ� �Ǵ�.
+   4: 
+   5:     �ź� ������ ������ �޾� �ô�:
+   6:         ! reviewer_id �� human:/agent:/service: �� �ϳ��� �����ؾ� �Ѵ�
+   7:         ! review_artifact �� docs/evidence/_raw/ �Ʒ����� �Ѵ�
+   8: 
+   9:     �� ������ `RULE.md` ��7.3 �� **���� ����� �ƴϴ�**(������ `P0-*`��
+  10:     `DoD-*` �� `PASS` ���̰� �̰� `INCONCLUSIVE` ��). �׷��� schema v2 ��
+  11:     `reviewer_*` �� �ʼ��� �䱸�Ѵ� ? �� "�˼��� �ʿ� ���µ��� �˼� ĭ��
+  12:     ä���� �ϴ�" ĭ�� ���´�.
+  13: 
+  14:     �� �� ĭ�� ä����� �˻�⸦ ��ġ�� �ʴ´�. ���⼭ �˻�⸦ ��ġ��
+  15:       **���� �ɸ� ��Ģ�� ���� Ǫ�� ��**�� �ǰ�, �� �������ʹ� ��Ģ��
+  16:       ��Ģ�� �ƴϰ� �ȴ�. ��Ű�� ������ ���� �ʿ������� �˼��� �и���
+  17:       ���� �Ǵ��Ѵ�.
+  18: 
+  19:     �׷��� �ʾ����� �����. 2026-09-07 15:43 ���� ���� �˼� ��⿭��
+  20:     �� ������ �ְ�(`DoD-68` ����), ������ ������ `review_*` �� ä��
+  21:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` �� �ű��.
+  22:     �� �Űܵ� `status` �� `INCONCLUSIVE` �� ? �˼��� �ٴ´ٰ� ������
+  23:       ������ ���� ������ ���� �������� �ʴ´�.
+  24: 
+  25:     �� �Ʒ� review_outcome: PENDING �� **��Ű���� ���� ��**�̴�.
+  26:       �ű� �� �ݵ�� ���� �������� �ٲ۴�.
+  27: -->
+  28: 
+  29: ---
+  30: schema_version: 2
+  31: id: P0-02
+  32: claim: "���ؼ� ��32 �� `P0-02`(Windows AppContainer + CUDA, S2 ������)�� �ǹ� GPU ��迡�� �����ߴ�. **AppContainer ��ü�� �����Ѵ�** ? �������� ���������� SID�������̳� �� ���μ��� ���ࡤ**����**(ȣ��Ʈ ���� ���� �ź�)��Python ���ࡤC Ȯ�� �ε�(`zlib`��`_socket`)�� ���� Ȯ�εƴ�. �׷��� **`torch.cuda.is_available()` ���� �������� ���ߴ�** ? `torch/__init__.py:14` �� `import ctypes` �� `_ctypes.pyd` �ʱ�ȭ ����(1114)�� �װ�, �� ������ DLL ������ ���� ��� **`ole32.dll` �ϳ�**�� �� �����̳ʿ��� DllMain �� �����Ѵ�(COM ��ü�� `combase.dll` �� ���� �ε�ȴ�). �� �׷��Ƿ� �� ������ũ�� **�ڱ� ������ ������ ���ߴ�** ? `status: INCONCLUSIVE`"
+  33: status: INCONCLUSIVE
+  34: commit: 52d72b9
+  35: 
+  36: executor_id: "agent:claude-code"
+  37: executor_tool: "claude-code ���� ? SSH �� x600 ���� ����. AppContainer primitive(�ű� 300�� ��)�����κ� 2�� �ż�, ���� ���� ����"
+  38: executor_model: "claude-opus-5"
+  39: executed_at: "2026-09-06T00:20:00+09:00"
+  40: 
+  41: review_required: false
+  42: reviewer_id: "agent:codex-cli"
+  43: reviewer_tool: "codex exec --sandbox read-only ? ���� �� ���ȴ�. ���� ���� 2026-09-07 15:43"
+  44: reviewer_model: "gpt-5.6-sol"
+  45: review_context: "fresh-read-only"
+  46: review_outcome: "PENDING"
+  47: review_scope: >
+  48:   `RULE.md` ��7.3 �� **`P0-*`��`DoD-*` �� `status: PASS`** �� ���ؼ��� ����
+  49:   �˼��� �����Ѵ�. �� ������ `INCONCLUSIVE` �� **���� ����� �ƴϴ�** ?
+  50:   �׷��� �޴´�.
+  51: 
+  52:   �� ������ �ƴѵ� �� �޳�. ���� ���� �Ǵ� �� **"AppContainer ��ü��
+  53:   �����Ѵ�"** �� ������ ����ϱ� �����̴�. ���� ���� ������ ���� ��
+  54:   ��衤�� Windows ���忡�� ���԰�, `ole32` ���а� �� ���� �����̸�
+  55:   �� ������ ���� ��ü�� Ʋ����.
+  56: 
+  57:   �˼��ڿ��� Ư�� �� ��:
+  58:     1. "�Ǵ� ��" ����� ������ �����Ǵ°� ? Ư�� ���� �׽�Ʈ��
+  59:        �����̳� �ۿ����� ������� �ʴ°�(ù ���� ��Ȯ�� �׷���)
+  60:     2. �Ұ��� ���� �ݿ� ���� **����**�� �ִ°�, �ƴϸ� "�� �ôµ� ��
+  61:        �ƴ�" �ΰ�
+  62:     3. ����� ������ �Ѿ�� �ʴ°� ? package identity ������ ��𼱰�
+  63:        ���ó�� ���� ���� ������
+  64: review_artifact: "���� ? ���� �˼��� �� �޾Ҵ�. �ű� �� ���� receipt ��η� �ٲ۴�"
+  65: 
+  66: raw_output_artifact: "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+  67: raw_output_digest: "sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3"
+  68: raw_output_bytes: 4346
+  69: 
+  70: artifacts:
+  71:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+  72:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_1��.txt"
+  73:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_2��.txt"
+  74:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_3��_�����Ұ�.txt"
+  75:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_4��_����.txt"
+  76:   - "crates/runtime-windows/src/appcontainer.rs"
+  77:   - "crates/runtime-windows/src/bin/p0_02_probe.rs"
+  78:   - "crates/runtime-windows/src/bin/dll_probe.rs"
+  79: 
+  80: binary_digests:
+  81:   toolchain: "x600 cargo 1.97.1 (����), ���� ��� cargo 1.97.1"
+  82: protocol_versions:
+  83:   schema_version: "proto ���� ����"
+  84:   canonical_spec: "canonical ���� ����"
+  85: platform: >
+  86:   **x600 (Windows 11 Pro, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** ����
+  87:   SSH �� ���� �����ߴ�. ���� ���(GPU ����)������ AppContainer primitive ��
+  88:   ���� �׽�Ʈ�� ���ȴ�.
+  89: 
+  90:   �� **�� ��� �� �� Windows ���忡���� ���.** `ole32` �ʱ�ȭ ���а� ��
+  91:   ���� �������� �Ϲ������� Ȯ������ �ʾҴ�(`CLAUDE.md` ��4 ? ǥ���� ������
+  92:   �۴ٰ� ���Ѵ�).
+  93: hardware: >
+  94:   RTX 4070 SUPER �ǹ�. `gpu-probe` �� UUID��VRAM��compute capability 8.9 ��
+  95:   �о���, �����̳� **��** ���ؼ����� `torch 2.11.0+cu128` ��
+  96:   `cuda_available=True` �� 64x64 matmul(`matmul_sum=262144.0`)���� ������
+  97:   ����ߴ�.
+  98: network_profile: "���� ? ���μ��� ������ DLL �ε常 ���"
+  99: command: |
+ 100:   # x600 ���� (��δ� ���� E:\gputeer-work �Ʒ� ? C: �� ���� �ʴ´�)
+ 101:   target\debug\p0_02_probe.exe <python ���> [<temp ���>] [<capability SID>]
+ 102:   # ȯ�溯��
+ 103:   #   P0_02_CODE     �����̳� �ȿ��� ���� Python �� ��
+ 104:   #   P0_02_RAW_CMD  ������ ��ü ��ü(dll_probe �� ���� ��)
+ 105:   target\debug\dll_probe.exe <dll ���> [...]
+ 106: 
+ 107: raw_output: |
+ 108:   === �����̳� �� (���ؼ�) ===
+ 109:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+ 110:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+ 111: 
+ 112:   === �����̳� �� ? �Ǵ� �� ===
+ 113:   import sys           ok (exit 0)
+ 114:   import zlib          ok (exit 0)   <- .pyd, C Ȯ��
+ 115:   import _socket       ok (exit 0)   <- .pyd, C Ȯ��
+ 116:   ȣ��Ʈ �ӽ� ���� �б�  �źε�        <- ���� Ȯ��
+ 117: 
+ 118:   === �����̳� �� ? DLL ���� ===
+ 119:   libffi-8.dll      ok=true
+ 120:   python313.dll     ok=true
+ 121:   vcruntime140.dll  ok=true
+ 122:   oleaut32.dll      ok=true
+ 123:   combase.dll       ok=true      <- ���� COM ��Ÿ��
+ 124:   rpcrt4.dll        ok=true
+ 125:   shcore.dll        ok=true
+ 126:   advapi32.dll      ok=true
+ 127:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)
+ 128:   _ctypes.pyd       ok=false error=1114
+ 129: 
+ 130:   === �Ұ��� ���� �� (���� ���� ����) ===
+ 131:   ���� ��� ��ȸ ����   C:\Users\<x600-user> ���� 4���� RX        -> ���� ����
+ 132:   �����̳� TEMP ����    E: �� ����� (F) + ȯ�� ����        -> ���� ����
+ 133:   capability ����       ǥ�� SID ���� ����                  -> ���� ����
+ 134:   Python ������         embeddable 3.13.7 ���� ����         -> ���� ����
+ 135: 
+ 136: negative_tests: >
+ 137:   �� ������ũ�� negative test �� **����**�̴� ?
+ 138:   `the_container_cannot_read_a_file_the_host_can` �� �����̳� �ȿ���
+ 139:   ȣ��Ʈ �ӽ� ���� �бⰡ �źε��� Ȯ���Ѵ�. **������ ���� �д�**(�ٱ�
+ 140:   ������ ������) ? ������ "��ΰ� Ʋ���� ����" �ε� ����Ѵ�.
+ 141:   �� �� �׽�Ʈ�� �����̼����� �����ߴ�: ���� �Ӽ� ������ ��°�� �ǳʶٸ�
+ 142:   ������ �����Ѵ�. ó�� �� ����(`cmd /c exit 42` �� ���� �ڵ常 Ȯ��)��
+ 143:   **�����̳� �ۿ����� ���**�� �ƹ��͵� ���� ���߰�, �� �����̼��� �װ���
+ 144:   �巯�´�.
+ 145: 
+ 146:   �� �ۿ�: �������� �̸��� ������ SID �� ������(����� �� ��ȭ�� ��Ģ��
+ 147:   ������ �����̳ʸ� ����Ű�� �ʰ�), �������� ������ �������.
+ 148: 
+ 149: limitations: >
+ 150:   �ڡ� **�� ������ũ�� �ڱ� ������ ������ ���ߴ�.** `P0-02` ��
+ 151:   "AppContainer ���� CUDA �� �Ǵ°�" �� ���µ�, **CUDA ��ó���� ����
+ 152:   ���ߴ�** ? �� ���� `import ctypes` ���� ������.
+ 153: 
+ 154:   �� **�� `ole32` �� �����ϴ��� �𸥴�.** DLL �������� �������� ��
+ 155:   DllMain �� ������ �䱸�ϴ� �źεǴ����� �������� �ʾҴ�. Process
+ 156:   Monitor ������ ���� �źε� ������ ���� �ȴ�.
+ 157: 
+ 158:   �ڡ� **2026-09-07 ���� �˼� ���� ? �� ������ ���� ����� �Ѵ�.**
+ 159: 
+ 160:       ��ü P0-02 ����("AppContainer ���� CUDA �� �Ǵ°�")
+ 161:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 162: 
+ 163:       **���� ������ �� ����**
+ 164:         x600 �� �� Windows ���� �� package identity ���� bare
+ 165:         AppContainer �� ������ �� CPython 3.13 ������
+ 166:         -> **���� ������ ���д�.** ���� �� ���� ���� �ڸ����� �׾���
+ 167: 
+ 168:       �˼� �Ǵ�: ���� ������ �ΰ�� �ƴϴ�. �ٸ� `FAIL-SCOPE` �� ��
+ 169:       �� �ִ� ��쵵 **�� ���� �������� scope �� ������ ����**�̰�,
+ 170:       S2 ��ü�� AppContainer �Ϲݿ� ���� `FAIL-SCOPE` �ٰŴ� ����.
+ 171: 
+ 172:   �� **������ ������ ������� ���� �ʴ´�.** �츮 �����̳ʴ�
+ 173:   `CreateAppContainerProfile` �� ���� **package identity ���� ��
+ 174:   AppContainer** �̰�, Store ���� package identity �� ���� COM �� ���� ?
+ 175:   �� ������ �� �ִ�. �׷��� **Ȯ������ �ʾ����Ƿ� �������θ� ���´�.**
+ 176: 
+ 177:   �� **�� ��� �� �� Windows ����**�� �����. �ٸ� ���忡�� ������ �𸥴�.
+ 178: 
+ 179:   �� `P0-02` üũ����Ʈ �� **�� �� ��**: filesystem allowlist �� ������
+ 180:   ����, outbound ���� ����, "Create Process in Sandbox API ���� ����
+ 181:   ��Ȯ��". GPU ����̹� capability �ĺ��� **���۵� �� �ߴ�** ? �� �տ���
+ 182:   ������ �����̴�.
+ 183: 
+ 184:   �� ���� �� �� ���� ������ ���� �����ߴ�(Python Ʈ�� 27112 files ��
+ 185:   ���� 4�� �� ALL APPLICATION PACKAGES). ���� `S-1-15-3-65536-...` ��
+ 186:   Windows �� ���� �δ� capability ACE �̰� �츮�� ���� ���� �ƴϴ�.
+ 187: 
+ 188: decision: >
+ 189:   **`P0-02` �� DoD �� ���� �������� �ʴ´�.**
+ 190: 
+ 191:       ���� -> S2 ���� ����, ������ ȯ�濡���� enable
+ 192:       ���� -> S2 �� EXPERIMENTAL �� ����, S1 �� ������ Windows ����Ƽ�� ���
+ 193: 
+ 194:   �ٰŴ� **���� ������ ���ϰ� ����** ? ǥ�� CPython ������ ��
+ 195:   �����̳ʿ��� import ���� ���� �ʴ´�. �׷��� ������ `ole32` DllMain
+ 196:   �� ������ �������� �װ��� **package identity ���� ������ ���ɼ�**��
+ 197:   ���� �־�, ���� "����" �� Ȯ���ϸ� **���� ���� ���� ������� ���� ��**��
+ 198:   �ȴ�.
+ 199: 
+ 200:   ���� �� ������ ������ ������:
+ 201:     1. Process Monitor �� `ole32` DllMain �� �������� �źεǴ��� ����
+ 202:     2. �� ����� ȸ�� �����ϸ� -> �ٽ� ��� PASS/���� ����
+ 203:     3. ȸ�� �Ұ��� -> `status: FAIL-SCOPE` �� �°��ϰ� S2 ��
+ 204:        EXPERIMENTAL �� Ȯ��, ���ؼ� ��32 �� �ݿ�
+ 205: 
+ 206:   �� �� ������ **S2 �� ���¸� �ٲ��� �ʴ´�.** ���� ����(EXPERIMENTAL)��
+ 207:   �� ������ ������� �ʴ´�.
+ 208: ---
+ 209: 
+ 210: # P0-02 ? Windows AppContainer + CUDA
+ 211: 
+ 212: ## �� ��
+ 213: 
+ 214: AppContainer �� ��������� ���α���� �ϴµ�, **�� �ȿ��� torch ��
+ 215: import �� �� ����** ? `ole32.dll` �� �ʱ�ȭ���� �ʱ� �����̴�.
+ 216: 
+ 217: ## �� �̰� �
+ 218: 
+ 219: 2026-09-05 ����ڰ� ��ȭ���� ������ `netsh advfirewall` �� **��� ����**
+ 220: �ƿ��ٿ�� ������ �������� Ȯ���ߴ�. �׷��� �װ����δ� `NetworkPolicy` ��
+ 221: ������ �� ���� ? ���� PC ���� `python.exe` �� ��°�� ������ ��������
+ 222: �ٸ� �۾����� �����(`CLAUDE.md` ��0.1).
+ 223: 
+ 224: AppContainer �� ���μ������� **���� SID** �� �ֹǷ� �� SID �� ��Ģ�� �ɸ�
+ 225: �� Job �ϳ��� ������. �׷��� ��ȭ�� ������ ���� �����̰�, �װ��� ��
+ 226: ������ũ�� ���� �� ������.
+ 227: 
+ 228: ## ��� ������
+ 229: 
+ 230: `import _ctypes` �� ���� DLL �� �� ���� �õ��� **���� ������ �����.**
+ 231: �׷��� `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带 ��� `dll_probe` ��
+ 232: ����� �����̳� �ȿ��� DLL �� �ϳ��� ������. �׷��� ���� �ʾ�����
+ 233: "`_ctypes` �� �� �ȴ�" ���� ������ ���̴�.
+ 234: 
+ 235: ## �� ������ �������� �ʴ� ��
+ 236: 
+ 237: **"AppContainer ���� CUDA �� �� �ȴ�" �� �������� �ʾҴ�.** CUDA ��
+ 238: �õ����� �� �ߴ�.
+ 239: 
+ 240: **"AppContainer ���� ����Ƽ�� �ڵ尡 �� ����" �� �ƴϴ�.** C Ȯ��
+ 241: (`zlib`��`_socket`)�� �ε�ȴ�. COM ��ü(`combase.dll`)�� �ε�ȴ�.
+ 242: ���� ���� `ole32` �ϳ���.
+ 243: 
+ 244: **�� ��� �� �� Windows ����**�� �����.
+FILE: docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt
+   1: === P0-02 �� ������ �� DLL �� �����ߴ� ===
+   2: �Ͻ�   2026-09-05
+   3: ���   x600 (RTX 4070 SUPER)
+   4: ����   `dll_probe` �ż� ? `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带 ��´�
+   5:        (Python �� ��ġ�� `import _ctypes` �� ���� DLL �� �� ���� �õ���
+   6:         ���� �����ߴ��� ������ �� �ȴ�)
+   7: 
+   8: === �����̳� �ȿ��� DLL �� �ϳ��� ������ ===
+   9: 
+  10:   libffi-8.dll                  ok=true
+  11:   python313.dll                 ok=true
+  12:   vcruntime140.dll              ok=true
+  13:   oleaut32.dll                  ok=true
+  14:   **ole32.dll                   ok=false  error=1114**
+  15:   **_ctypes.pyd                 ok=false  error=1114**
+  16: 
+  17:   1114 = ERROR_DLL_INIT_FAILED (DLL �ʱ�ȭ ��ƾ�� �����ߴ�)
+  18: 
+  19: �ٱ� ����: `libffi-8.dll`��`_ctypes.pyd` �� �� ok=true.
+  20: 
+  21: === ���� ===
+  22: 
+  23: **`ole32.dll` �� AppContainer �ȿ��� �ʱ�ȭ���� �ʴ´�.**
+  24: 
+  25: `_ctypes.pyd` �� COM ���� ������ `ole32` �� �䱸�Ѵ�. �׷���
+  26: `import _ctypes` �� 1114 �� �װ�, `torch/__init__.py:14` ��
+  27: `import ctypes` �� �װ��� Ÿ��, �ᱹ **torch �� import ���� �ʴ´�.**
+  28: 
+  29: �� �� �ܰ������ "`_ctypes` �� �� �ȴ�" ����. ���� **�� �� �Ǵ���**����
+  30:   �Դ� ? libffi ��, python313 ��, vcruntime �� �ƴϰ� `ole32` ��.
+  31: 
+  32: �� **�� ���κ갡 �������� �� ã�Ҵ�.** `import _ctypes` �� ���� DLL ��
+  33:   �� ���� �õ��� ���� ������ �����. �ϳ��� ���� ���� ���� ������ ���
+  34:   �̾���.
+  35: 
+  36: === �׷��� P0-02 �� ===
+  37: 
+  38: `P0-02` �� DoD:
+  39:     ���� -> S2 ���� ����, ������ ȯ�濡���� enable
+  40:     ���� -> S2 �� EXPERIMENTAL �� ����, S1 �� ������ Windows ����Ƽ�� ���
+  41: 
+  42: ���� �ٰŴ� **���� ������ ���ϰ� ����.** �ٸ� ���� Ȯ������ �ʴ´�:
+  43: 
+  44:   - `ole32` �� **��** �����ϴ����� �𸥴�(� �ڿ��� �䱸�ϴ���).
+  45:     Process Monitor ������ ���� �źε� ������ ���� �ȴ�.
+  46:   - COM capability �� �ָ� �޶��� �� �ִ� ? �ٸ� �׷� capability ��
+  47:     �ִ���, �ִٸ� �������� **Ȯ������ �ʾҴ�.** ����� �ʴ´�.
+  48:   - Windows ����/���� ���̴� �� �ô�.
+  49: 
+  50: �� �׷��� ������ �и��ϴ�. **AppContainer �� ������ ����ũ�� Python ��
+  51:   �㵵�� ������� ���� �ƴϴ�** ? �� ����� �� ���� �ǵ��� ��ġ�Ѵ�.
+  52:   torch ó�� COM �� ���������� ������� ������ �״�� �ִ� ����,
+  53:   ��� ���� �ƴ� ���������� ���� �ִ�.
+  54: 
+  55: === �Ǵ� �͵� �и��� ���´� ===
+  56: 
+  57:   AppContainer �������� ���� �� ���� SID          O
+  58:   �����̳� �ȿ��� ���μ��� ����                   O
+  59:   **����**(ȣ��Ʈ ������ �� �д´�)               O ? �����̼����� ����
+  60:   Python ���� �� ���� ���̽� �ڵ�                  O
+  61:   **C Ȯ�� �ε�**(zlib �� _socket)                 O
+  62:   ole32 / _ctypes / torch                        X
+  63: 
+  64: �� "����ڽ����� ����Ƽ�� �ڵ尡 �� ����" �� �ƴϴ�. **COM �� �䱸�ϴ�
+  65: ��θ�** ������.
+  66: 
+  67: === 6��: COM �迭�� �� ������ ? ole32 **�ϳ�**�� ===
+  68: 
+  69: �����̳� �ȿ���:
+  70: 
+  71:   combase.dll    ok=true    <- **���� COM ��Ÿ���̴�**
+  72:   rpcrt4.dll     ok=true
+  73:   shcore.dll     ok=true
+  74:   advapi32.dll   ok=true
+  75:   **ole32.dll    ok=false  error=1114**
+  76: 
+  77: �� ���� Windows ���� COM ��ü�� `combase.dll` �̰� `ole32` �� �� ����
+  78:   ���Ž� ����(OLE��Ŭ�����塤drag&drop��moniker)�̴�. **��ü�� �Ǵµ�
+  79:   ���Ž� ������ �� �ȴ�.**
+  80: 
+  81: �� "AppContainer ���� COM �� �� �ȴ�" �� �ƴϴ�. �� ����
+  82: **`ole32.dll` �� DllMain �� �� �����̳ʿ��� �����Ѵ�.**
+  83: 
+  84: �� �� �����ϴ����� **������ �𸥴�.** �� ���κ�� �� �� �ִ� ���� �̼���
+  85:   ������ ����� ? �� ������ Process Monitor �� �źε� ������ ���� ����
+  86:   �Ѵ�. �� �ߴ�.
+  87: 
+  88: �� �� ���� ������ ������ ���� �д�(**�����̸� Ȯ�� �� �ߴ�**):
+  89:   �츮 �����̳ʴ� `CreateAppContainerProfile` �� ���� **package identity
+  90:   �� ���� �� AppContainer** ��. Store ���� package identity �� ����
+  91:   ���� COM �� ����. �� ������ �� �ִ�. Ȯ���Ϸ��� Store �� ���� ���
+  92:   �ϴµ� �װ� �� �ߴ� ? **�׷��� �� ������ �� ������ ������� ����
+  93:   �ʴ´�.**
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; paths=[Path('docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md'),Path('docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt')]; [(print('FILE: '+str(p)),[print(f'{n:4}: {line}') for n,line in enumerate(p.read_text(encoding='utf-8').splitlines(),1)]) for p in paths]\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1067ms:
+FILE: docs\plans\2026-09-06_0020_P0-02_evidence_초안_검수대기.md
+   1: <!--
+   2: ★★ 이것은 **아직 evidence 가 아니다.** docs/evidence/ 에 두면
+   3:     verify_evidence.py 가 거부한다 — 그리고 그게 옳다.
+   4: 
+   5:     거부 사유를 실제로 받아 봤다:
+   6:         ! reviewer_id 는 human:/agent:/service: 중 하나로 시작해야 한다
+   7:         ! review_artifact 는 docs/evidence/_raw/ 아래여야 한다
+   8: 
+   9:     이 조각은 `RULE.md` §7.3 의 **강제 대상이 아니다**(강제는 `P0-*`·
+  10:     `DoD-*` 의 `PASS` 뿐이고 이건 `INCONCLUSIVE` 다). 그래도 schema v2 는
+  11:     `reviewer_*` 를 필수로 요구한다 — 즉 "검수가 필요 없는데도 검수 칸은
+  12:     채워야 하는" 칸이 남는다.
+  13: 
+  14:     ★ 그 칸을 채우려고 검사기를 고치지 않는다. 여기서 검사기를 고치면
+  15:       **내가 걸린 규칙을 내가 푸는 것**이 되고, 그 다음부터는 규칙이
+  16:       규칙이 아니게 된다. 스키마 손질이 정말 필요한지는 검수와 분리해
+  17:       따로 판단한다.
+  18: 
+  19:     그래서 초안으로 남긴다. 2026-09-07 15:43 이후 순차 검수 대기열에
+  20:     이 문서도 넣고(`DoD-68` 다음), 판정이 나오면 `review_*` 를 채워
+  21:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` 로 옮긴다.
+  22:     ★ 옮겨도 `status` 는 `INCONCLUSIVE` 다 — 검수가 붙는다고 측정이
+  23:       답하지 못한 질문에 답이 생기지는 않는다.
+  24: 
+  25:     ★ 아래 review_outcome: PENDING 은 **스키마에 없는 값**이다.
+  26:       옮길 때 반드시 실제 판정으로 바꾼다.
+  27: -->
+  28: 
+  29: ---
+  30: schema_version: 2
+  31: id: P0-02
+  32: claim: "기준선 §32 의 `P0-02`(Windows AppContainer + CUDA, S2 실험적)를 실물 GPU 기계에서 실측했다. **AppContainer 자체는 동작한다** — 프로파일 생성·고유 SID·컨테이너 안 프로세스 실행·**가둠**(호스트 파일 접근 거부)·Python 실행·C 확장 로드(`zlib`·`_socket`)가 전부 확인됐다. 그러나 **`torch.cuda.is_available()` 까지 도달하지 못했다** — `torch/__init__.py:14` 의 `import ctypes` 가 `_ctypes.pyd` 초기화 실패(1114)로 죽고, 그 원인을 DLL 단위로 좁힌 결과 **`ole32.dll` 하나**가 이 컨테이너에서 DllMain 에 실패한다(COM 본체인 `combase.dll` 은 정상 로드된다). ★ 그러므로 이 스파이크는 **자기 질문에 답하지 못했다** — `status: INCONCLUSIVE`"
+  33: status: INCONCLUSIVE
+  34: commit: 52d72b9
+  35: 
+  36: executor_id: "agent:claude-code"
+  37: executor_tool: "claude-code 세션 — SSH 로 x600 원격 실측. AppContainer primitive(신규 300여 줄)·프로브 2종 신설, 여섯 차례 측정"
+  38: executor_model: "claude-opus-5"
+  39: executed_at: "2026-09-06T00:20:00+09:00"
+  40: 
+  41: review_required: false
+  42: reviewer_id: "agent:codex-cli"
+  43: reviewer_tool: "codex exec --sandbox read-only — 아직 안 돌렸다. 쿼터 복구 2026-09-07 15:43"
+  44: reviewer_model: "gpt-5.6-sol"
+  45: review_context: "fresh-read-only"
+  46: review_outcome: "PENDING"
+  47: review_scope: >
+  48:   `RULE.md` §7.3 은 **`P0-*`·`DoD-*` 의 `status: PASS`** 에 대해서만 독립
+  49:   검수를 강제한다. 이 문서는 `INCONCLUSIVE` 라 **강제 대상이 아니다** —
+  50:   그래도 받는다.
+  51: 
+  52:   ★ 강제가 아닌데 왜 받나. 여기 적힌 판단 중 **"AppContainer 자체는
+  53:   동작한다"** 가 반증에 취약하기 때문이다. 여섯 번의 측정이 전부 한
+  54:   기계·한 Windows 빌드에서 나왔고, `ole32` 실패가 이 빌드 고유이면
+  55:   이 문서의 방향 자체가 틀린다.
+  56: 
+  57:   검수자에게 특히 볼 것:
+  58:     1. "되는 것" 목록이 실제로 재현되는가 — 특히 가둠 테스트가
+  59:        컨테이너 밖에서도 통과하지 않는가(첫 판이 정확히 그랬다)
+  60:     2. 소거한 가설 넷에 각각 **대조**가 있는가, 아니면 "해 봤는데 안
+  61:        됐다" 인가
+  62:     3. 결론이 측정을 넘어서지 않는가 — package identity 가설을 어디선가
+  63:        결론처럼 쓰고 있지 않은가
+  64: review_artifact: "없다 — 아직 검수를 안 받았다. 옮길 때 실제 receipt 경로로 바꾼다"
+  65: 
+  66: raw_output_artifact: "docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt"
+  67: raw_output_digest: "sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3"
+  68: raw_output_bytes: 4346
+  69: 
+  70: artifacts:
+  71:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt"
+  72:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt"
+  73:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt"
+  74:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt"
+  75:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt"
+  76:   - "crates/runtime-windows/src/appcontainer.rs"
+  77:   - "crates/runtime-windows/src/bin/p0_02_probe.rs"
+  78:   - "crates/runtime-windows/src/bin/dll_probe.rs"
+  79: 
+  80: binary_digests:
+  81:   toolchain: "x600 cargo 1.97.1 (원격), 개발 기계 cargo 1.97.1"
+  82: protocol_versions:
+  83:   schema_version: "proto 변경 없음"
+  84:   canonical_spec: "canonical 변경 없음"
+  85: platform: >
+  86:   **x600 (Windows 11 Pro, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** 에서
+  87:   SSH 로 원격 실측했다. 개발 기계(GPU 없음)에서는 AppContainer primitive 의
+  88:   단위 테스트만 돌렸다.
+  89: 
+  90:   ★ **한 기계 · 한 Windows 빌드에서만 쟀다.** `ole32` 초기화 실패가 이
+  91:   빌드 고유인지 일반적인지 확인하지 않았다(`CLAUDE.md` §4 — 표본이 작으면
+  92:   작다고 말한다).
+  93: hardware: >
+  94:   RTX 4070 SUPER 실물. `gpu-probe` 로 UUID·VRAM·compute capability 8.9 를
+  95:   읽었고, 컨테이너 **밖** 기준선에서 `torch 2.11.0+cu128` ·
+  96:   `cuda_available=True` · 64x64 matmul(`matmul_sum=262144.0`)까지 실제로
+  97:   계산했다.
+  98: network_profile: "없음 — 프로세스 생성과 DLL 로드만 잰다"
+  99: command: |
+ 100:   # x600 에서 (경로는 전부 E:\gputeer-work 아래 — C: 는 쓰지 않는다)
+ 101:   target\debug\p0_02_probe.exe <python 경로> [<temp 경로>] [<capability SID>]
+ 102:   # 환경변수
+ 103:   #   P0_02_CODE     컨테이너 안에서 돌릴 Python 한 줄
+ 104:   #   P0_02_RAW_CMD  명령줄 전체 교체(dll_probe 를 돌릴 때)
+ 105:   target\debug\dll_probe.exe <dll 경로> [...]
+ 106: 
+ 107: raw_output: |
+ 108:   === 컨테이너 밖 (기준선) ===
+ 109:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+ 110:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+ 111: 
+ 112:   === 컨테이너 안 — 되는 것 ===
+ 113:   import sys           ok (exit 0)
+ 114:   import zlib          ok (exit 0)   <- .pyd, C 확장
+ 115:   import _socket       ok (exit 0)   <- .pyd, C 확장
+ 116:   호스트 임시 파일 읽기  거부됨        <- 가둠 확인
+ 117: 
+ 118:   === 컨테이너 안 — DLL 단위 ===
+ 119:   libffi-8.dll      ok=true
+ 120:   python313.dll     ok=true
+ 121:   vcruntime140.dll  ok=true
+ 122:   oleaut32.dll      ok=true
+ 123:   combase.dll       ok=true      <- 실제 COM 런타임
+ 124:   rpcrt4.dll        ok=true
+ 125:   shcore.dll        ok=true
+ 126:   advapi32.dll      ok=true
+ 127:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)
+ 128:   _ctypes.pyd       ok=false error=1114
+ 129: 
+ 130:   === 소거한 가설 넷 (각각 대조 있음) ===
+ 131:   상위 경로 순회 권한   C:\Users\<x600-user> 이하 4개에 RX        -> 같은 실패
+ 132:   컨테이너 TEMP 부재    E: 에 만들어 (F) + 환경 주입        -> 같은 실패
+ 133:   capability 부재       표준 SID 실제 주입                  -> 같은 실패
+ 134:   Python 배포판         embeddable 3.13.7 새로 받음         -> 같은 실패
+ 135: 
+ 136: negative_tests: >
+ 137:   이 스파이크의 negative test 는 **가둠**이다 —
+ 138:   `the_container_cannot_read_a_file_the_host_can` 이 컨테이너 안에서
+ 139:   호스트 임시 파일 읽기가 거부됨을 확인한다. **대조를 같이 둔다**(바깥
+ 140:   에서는 읽힌다) — 없으면 "경로가 틀려서 실패" 로도 통과한다.
+ 141:   ★ 이 테스트는 뮤테이션으로 검증했다: 보안 속성 적용을 통째로 건너뛰면
+ 142:   실제로 실패한다. 처음 쓴 버전(`cmd /c exit 42` 의 종료 코드만 확인)은
+ 143:   **컨테이너 밖에서도 통과**해 아무것도 재지 못했고, 그 뮤테이션이 그것을
+ 144:   드러냈다.
+ 145: 
+ 146:   그 밖에: 프로파일 이름이 같으면 SID 도 같은지(재시작 뒤 방화벽 규칙이
+ 147:   엉뚱한 컨테이너를 가리키지 않게), 프로파일 폴더가 생기는지.
+ 148: 
+ 149: limitations: >
+ 150:   ★★ **이 스파이크는 자기 질문에 답하지 못했다.** `P0-02` 는
+ 151:   "AppContainer 에서 CUDA 가 되는가" 를 묻는데, **CUDA 근처에도 가지
+ 152:   못했다** — 그 앞의 `import ctypes` 에서 막힌다.
+ 153: 
+ 154:   ★ **왜 `ole32` 가 실패하는지 모른다.** DLL 단위까지 좁혔지만 그
+ 155:   DllMain 이 무엇을 요구하다 거부되는지는 관측하지 않았다. Process
+ 156:   Monitor 등으로 실제 거부된 접근을 봐야 안다.
+ 157: 
+ 158:   ★★ **2026-09-07 독립 검수 지적 — 두 범위를 갈라 적어야 한다.**
+ 159: 
+ 160:       전체 P0-02 질문("AppContainer 에서 CUDA 가 되는가")
+ 161:         -> INCONCLUSIVE. CUDA 를 부르지도 못했다
+ 162: 
+ 163:       **오늘 실제로 잰 구성**
+ 164:         x600 의 그 Windows 빌드 · package identity 없는 bare
+ 165:         AppContainer · 시험한 두 CPython 3.13 배포판
+ 166:         -> **재현 가능한 실패다.** 여섯 번 전부 같은 자리에서 죽었다
+ 167: 
+ 168:       검수 판단: 판정 보류가 핑계는 아니다. 다만 `FAIL-SCOPE` 를 쓸
+ 169:       수 있는 경우도 **이 좁은 구성으로 scope 를 명시할 때뿐**이고,
+ 170:       S2 전체나 AppContainer 일반에 대한 `FAIL-SCOPE` 근거는 없다.
+ 171: 
+ 172:   ★ **유력한 가설을 결론으로 쓰지 않는다.** 우리 컨테이너는
+ 173:   `CreateAppContainerProfile` 로 만든 **package identity 없는 맨
+ 174:   AppContainer** 이고, Store 앱은 package identity 를 갖고 COM 을 쓴다 —
+ 175:   그 차이일 수 있다. 그러나 **확인하지 않았으므로 추측으로만 적는다.**
+ 176: 
+ 177:   ★ **한 기계 · 한 Windows 빌드**의 결과다. 다른 빌드에서 같은지 모른다.
+ 178: 
+ 179:   ★ `P0-02` 체크리스트 중 **안 한 것**: filesystem allowlist 의 완전한
+ 180:   형태, outbound 제한 실측, "Create Process in Sandbox API 현재 상태
+ 181:   재확인". GPU 드라이버 capability 식별은 **시작도 못 했다** — 그 앞에서
+ 182:   막혔기 때문이다.
+ 183: 
+ 184:   ★ 실측 중 준 파일 권한은 전부 원복했다(Python 트리 27112 files ·
+ 185:   상위 4개 · ALL APPLICATION PACKAGES). 남은 `S-1-15-3-65536-...` 는
+ 186:   Windows 가 원래 두는 capability ACE 이고 우리가 만든 것이 아니다.
+ 187: 
+ 188: decision: >
+ 189:   **`P0-02` 의 DoD 를 아직 적용하지 않는다.**
+ 190: 
+ 191:       성공 -> S2 설계 유지, 검증된 환경에서만 enable
+ 192:       실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+ 193: 
+ 194:   근거는 **후자 쪽으로 강하게 기운다** — 표준 CPython 스택이 이
+ 195:   컨테이너에서 import 조차 되지 않는다. 그러나 원인이 `ole32` DllMain
+ 196:   한 곳으로 좁혀졌고 그것이 **package identity 부재 때문일 가능성**이
+ 197:   남아 있어, 지금 "실패" 로 확정하면 **재지 않은 것을 결론으로 쓰는 것**이
+ 198:   된다.
+ 199: 
+ 200:   다음 한 걸음이 판정을 가른다:
+ 201:     1. Process Monitor 로 `ole32` DllMain 이 무엇에서 거부되는지 관측
+ 202:     2. 그 결과로 회피 가능하면 -> 다시 재고 PASS/실패 판정
+ 203:     3. 회피 불가면 -> `status: FAIL-SCOPE` 로 승격하고 S2 를
+ 204:        EXPERIMENTAL 로 확정, 기준선 §32 에 반영
+ 205: 
+ 206:   ★ 그 전까지 **S2 의 상태를 바꾸지 않는다.** 지금 상태(EXPERIMENTAL)가
+ 207:   이 측정과 모순되지 않는다.
+ 208: ---
+ 209: 
+ 210: # P0-02 — Windows AppContainer + CUDA
+ 211: 
+ 212: ## 한 줄
+ 213: 
+ 214: AppContainer 는 만들어지고 가두기까지 하는데, **그 안에서 torch 를
+ 215: import 할 수 없다** — `ole32.dll` 이 초기화되지 않기 때문이다.
+ 216: 
+ 217: ## 왜 이걸 쟀나
+ 218: 
+ 219: 2026-09-05 사용자가 방화벽을 실측해 `netsh advfirewall` 의 **경로 단위**
+ 220: 아웃바운드 차단이 동작함을 확인했다. 그러나 그것으로는 `NetworkPolicy` 를
+ 221: 강제할 수 없다 — 남의 PC 에서 `python.exe` 를 통째로 막으면 소유자의
+ 222: 다른 작업까지 끊긴다(`CLAUDE.md` §0.1).
+ 223: 
+ 224: AppContainer 는 프로세스마다 **고유 SID** 를 주므로 그 SID 에 규칙을 걸면
+ 225: 그 Job 하나만 막힌다. 그래서 방화벽 강제의 선행 조건이고, 그것이 이
+ 226: 스파이크를 지금 한 이유다.
+ 227: 
+ 228: ## 어떻게 좁혔나
+ 229: 
+ 230: `import _ctypes` 는 여러 DLL 을 한 번에 시도해 **실패 지점을 감춘다.**
+ 231: 그래서 `LoadLibraryW` 하나만 하고 Win32 오류 코드를 찍는 `dll_probe` 를
+ 232: 만들어 컨테이너 안에서 DLL 을 하나씩 열었다. 그렇게 하지 않았으면
+ 233: "`_ctypes` 가 안 된다" 에서 멈췄을 것이다.
+ 234: 
+ 235: ## 이 실험이 증명하지 않는 것
+ 236: 
+ 237: **"AppContainer 에서 CUDA 가 안 된다" 를 증명하지 않았다.** CUDA 를
+ 238: 시도조차 못 했다.
+ 239: 
+ 240: **"AppContainer 에서 네이티브 코드가 안 돈다" 도 아니다.** C 확장
+ 241: (`zlib`·`_socket`)은 로드된다. COM 본체(`combase.dll`)도 로드된다.
+ 242: 막힌 것은 `ole32` 하나다.
+ 243: 
+ 244: **한 기계 · 한 Windows 빌드**의 결과다.
+FILE: docs\evidence\_raw\P0-02_appcontainer_cuda_5차_원인지목.txt
+   1: === P0-02 · 원인을 한 DLL 로 지목했다 ===
+   2: 일시   2026-09-05
+   3: 기계   x600 (RTX 4070 SUPER)
+   4: 도구   `dll_probe` 신설 — `LoadLibraryW` 하나만 하고 Win32 오류 코드를 찍는다
+   5:        (Python 을 거치면 `import _ctypes` 가 여러 DLL 을 한 번에 시도해
+   6:         누가 실패했는지 구분이 안 된다)
+   7: 
+   8: === 컨테이너 안에서 DLL 을 하나씩 열었다 ===
+   9: 
+  10:   libffi-8.dll                  ok=true
+  11:   python313.dll                 ok=true
+  12:   vcruntime140.dll              ok=true
+  13:   oleaut32.dll                  ok=true
+  14:   **ole32.dll                   ok=false  error=1114**
+  15:   **_ctypes.pyd                 ok=false  error=1114**
+  16: 
+  17:   1114 = ERROR_DLL_INIT_FAILED (DLL 초기화 루틴이 실패했다)
+  18: 
+  19: 바깥 대조: `libffi-8.dll`·`_ctypes.pyd` 둘 다 ok=true.
+  20: 
+  21: === 지목 ===
+  22: 
+  23: **`ole32.dll` 이 AppContainer 안에서 초기화되지 않는다.**
+  24: 
+  25: `_ctypes.pyd` 는 COM 지원 때문에 `ole32` 를 요구한다. 그래서
+  26: `import _ctypes` 가 1114 로 죽고, `torch/__init__.py:14` 의
+  27: `import ctypes` 가 그것을 타고, 결국 **torch 가 import 되지 않는다.**
+  28: 
+  29: ★ 앞 단계까지는 "`_ctypes` 가 안 된다" 였다. 이제 **왜 안 되는지**까지
+  30:   왔다 — libffi 도, python313 도, vcruntime 도 아니고 `ole32` 다.
+  31: 
+  32: ★ **이 프로브가 없었으면 못 찾았다.** `import _ctypes` 는 여러 DLL 을
+  33:   한 번에 시도해 실패 지점을 감춘다. 하나씩 열어 보는 것이 유일한 방법
+  34:   이었다.
+  35: 
+  36: === 그래서 P0-02 는 ===
+  37: 
+  38: `P0-02` 의 DoD:
+  39:     성공 -> S2 설계 유지, 검증된 환경에서만 enable
+  40:     실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+  41: 
+  42: 지금 근거는 **후자 쪽으로 강하게 기운다.** 다만 아직 확정하지 않는다:
+  43: 
+  44:   - `ole32` 가 **왜** 실패하는지는 모른다(어떤 자원을 요구하는지).
+  45:     Process Monitor 등으로 실제 거부된 접근을 봐야 안다.
+  46:   - COM capability 를 주면 달라질 수 있다 — 다만 그런 capability 가
+  47:     있는지, 있다면 무엇인지 **확인하지 않았다.** 지어내지 않는다.
+  48:   - Windows 빌드/버전 차이는 안 봤다.
+  49: 
+  50: ★ 그러나 방향은 분명하다. **AppContainer 는 임의의 데스크톱 Python 을
+  51:   담도록 만들어진 것이 아니다** — 이 결과는 그 설계 의도와 일치한다.
+  52:   torch 처럼 COM 을 간접적으로 끌어오는 스택을 그대로 넣는 것은,
+  53:   적어도 지금 아는 범위에서는 막혀 있다.
+  54: 
+  55: === 되는 것도 분명히 적는다 ===
+  56: 
+  57:   AppContainer 프로파일 생성 · 고유 SID          O
+  58:   컨테이너 안에서 프로세스 실행                   O
+  59:   **가둠**(호스트 파일을 못 읽는다)               O — 뮤테이션으로 고정
+  60:   Python 실행 · 순수 파이썬 코드                  O
+  61:   **C 확장 로드**(zlib · _socket)                 O
+  62:   ole32 / _ctypes / torch                        X
+  63: 
+  64: 즉 "샌드박스에서 네이티브 코드가 안 돈다" 가 아니다. **COM 을 요구하는
+  65: 경로만** 막힌다.
+  66: 
+  67: === 6차: COM 계열을 더 갈랐다 — ole32 **하나**다 ===
+  68: 
+  69: 컨테이너 안에서:
+  70: 
+  71:   combase.dll    ok=true    <- **실제 COM 런타임이다**
+  72:   rpcrt4.dll     ok=true
+  73:   shcore.dll     ok=true
+  74:   advapi32.dll   ok=true
+  75:   **ole32.dll    ok=false  error=1114**
+  76: 
+  77: ★ 요즘 Windows 에서 COM 본체는 `combase.dll` 이고 `ole32` 는 그 위의
+  78:   레거시 계층(OLE·클립보드·drag&drop·moniker)이다. **본체는 되는데
+  79:   레거시 계층만 안 된다.**
+  80: 
+  81: 즉 "AppContainer 에서 COM 이 안 된다" 가 아니다. 더 좁게
+  82: **`ole32.dll` 의 DllMain 이 이 컨테이너에서 실패한다.**
+  83: 
+  84: ★ 왜 실패하는지는 **여전히 모른다.** 이 프로브로 갈 수 있는 가장 미세한
+  85:   지점이 여기다 — 더 가려면 Process Monitor 로 거부된 접근을 직접 봐야
+  86:   한다. 안 했다.
+  87: 
+  88: ★ 한 가지 유력한 방향은 적어 둔다(**추측이며 확인 안 했다**):
+  89:   우리 컨테이너는 `CreateAppContainerProfile` 로 만든 **package identity
+  90:   가 없는 맨 AppContainer** 다. Store 앱은 package identity 를 갖고
+  91:   돌며 COM 을 쓴다. 그 차이일 수 있다. 확인하려면 Store 앱 쪽을 재야
+  92:   하는데 그건 안 했다 — **그래서 이 문서는 그 가설을 결론으로 쓰지
+  93:   않는다.**
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "rg --files docs/evidence/_raw -g 'P0-02_appcontainer_cuda_*.txt'" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1343ms:
+docs/evidence/_raw\P0-02_appcontainer_cuda_5차_원인지목.txt
+docs/evidence/_raw\P0-02_appcontainer_cuda_4차_감별.txt
+docs/evidence/_raw\P0-02_appcontainer_cuda_3차_가설소거.txt
+docs/evidence/_raw\P0-02_appcontainer_cuda_2차.txt
+docs/evidence/_raw\P0-02_appcontainer_cuda_1차.txt
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; paths=sorted(p for p in Path('docs/evidence/_raw').glob('P0-02_appcontainer_cuda_*.txt') if '_5차_' not in p.name); [(print('FILE: '+str(p)),[print(f'{n:4}: {line}') for n,line in enumerate(p.read_text(encoding='utf-8').splitlines(),1)]) for p in paths]\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1253ms:
+FILE: docs\evidence\_raw\P0-02_appcontainer_cuda_1차.txt
+   1: === P0-02 · AppContainer + CUDA — 1차 실측 ===
+   2: 일시   2026-09-05
+   3: 기계   x600 (Windows 11, RTX 4070 SUPER, driver 595.79, CUDA 13.2)
+   4: 도구   target/debug/p0_02_probe.exe (crates/runtime-windows/src/bin/)
+   5: Python C:/Users/<x600-user>/AppData/Local/Programs/Python/Python313/python.exe
+   6:        torch 2.11.0+cu128
+   7: 
+   8: 출력
+   9: 
+  10:   P0_02 profile_sid=S-1-15-2-1410904197-4105201817-3202243263-3239620330
+  11:                     -932966420-3733530804-2953875994
+  12: 
+  13:   P0_02 outside exit=Some(0)
+  14:     torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+  15:     device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+  16: 
+  17:   P0_02_RESULT stage=inside ok=false
+  18:     exit=3221225781 exit_hex=0xC0000135
+  19:     meaning=STATUS_DLL_NOT_FOUND - 필요한 DLL 을 못 읽었다(경로 ACL)
+  20:     detail=결과 파일이 비었다 - 스크립트가 시작하지 못했다
+  21: 
+  22: === 확인된 것 ===
+  23: 
+  24: 1. AppContainer 프로파일이 만들어지고 고유 SID 를 준다(S-1-15-2-...).
+  25:    그 SID 에 방화벽 규칙을 걸면 **그 Job 하나만** 막을 수 있다 —
+  26:    경로 단위(program=)가 못 하던 일이다.
+  27: 
+  28: 2. AppContainer 안에서 프로세스가 실제로 뜨고, **가둬진다.**
+  29:    컨테이너는 호스트의 임시 파일을 못 읽는다(단위 테스트가 고정).
+  30: 
+  31: 3. 바깥 기준선이 확실하다 — 같은 스크립트가 컨테이너 밖에서는
+  32:    CUDA 를 보고 실제로 계산까지 한다(matmul_sum=262144.0).
+  33:    **그래서 안쪽 실패를 "이 기계가 원래 안 되는 것" 으로 오해할 수 없다.**
+  34: 
+  35: === ★★ 아직 답 못 한 것 — 그리고 왜 못 했는지 ===
+  36: 
+  37: **"AppContainer 에서 CUDA 가 되는가" 는 아직 모른다.**
+  38: 
+  39: 더 앞에서 막혔기 때문이다. `0xC0000135`(STATUS_DLL_NOT_FOUND)는 CUDA 와
+  40: 아무 상관이 없다 — **Python 이 자기 DLL 을 못 읽어 시작조차 못 했다.**
+  41: Python 설치 폴더에 `ALL APPLICATION PACKAGES` 권한이 없어서다.
+  42: 
+  43: ★ 이 구분이 중요하다. 종료 코드만 보고 "AppContainer 에서 CUDA 실패" 로
+  44:   적었으면 **거짓을 기록할 뻔했다.** 그래서 프로브가 종료 코드를 해설한다.
+  45: 
+  46: === 다음에 필요한 것 ===
+  47: 
+  48: `P0-02` 체크리스트의 "filesystem allowlist" 가 바로 이것이다:
+  49: 
+  50:   - Python 설치 폴더에 컨테이너 SID 읽기·실행 권한
+  51:   - torch 패키지 폴더(site-packages)와 그 CUDA DLL
+  52:   - 그다음에야 "GPU 드라이버 접근에 필요한 capability" 를 식별할 수 있다
+  53: 
+  54: ★ 그 권한 부여는 **사용자 소유 디렉터리의 ACL 변경**이라 이 세션이
+  55:   실행하지 않는다. 필요하면 정확한 명령을 준비한다.
+  56: 
+  57: ★ capability 는 여전히 **빈 목록**으로 띄웠다 — 무엇이 필요한지 모르는
+  58:   상태에서 지어내지 않는다. DLL 벽을 넘은 뒤에야 그 질문에 답할 수 있다.
+FILE: docs\evidence\_raw\P0-02_appcontainer_cuda_2차.txt
+   1: === P0-02 · AppContainer + CUDA — 2차 실측 ===
+   2: 일시   2026-09-05
+   3: 기계   x600 (RTX 4070 SUPER, driver 595.79, CUDA 13.2)
+   4: 차이   1차 대비 (a) Python 트리에 컨테이너 SID 읽기+실행 권한 부여
+   5:               (b) 프로브가 파일을 안 쓰고 `-c` + stdout 파이프로 바뀜
+   6: 권한   부여 27112 files -> 실측 -> **원복 27112 files** (남기지 않았다)
+   7: 
+   8: --- 바깥 기준선 ---
+   9:   torch=2.11.0+cu128 ; cuda_available=True
+  10: 
+  11: --- 컨테이너 안 ---
+  12:   exit=1
+  13:   Failed to find real location of ...\Python313\python.exe
+  14:   Traceback (most recent call last):
+  15:     File "<string>", line 1, in <module>
+  16:       import torch; ...
+  17:     File "...\site-packages\torch\__init__.py", line 14, in <module>
+  18:       import ctypes
+  19:     File "...\Lib\ctypes\__init__.py", line 10, in <module>
+  20:       from _ctypes import Union, Structure, Array
+  21:   ImportError: DLL load failed while importing _ctypes:
+  22:     A dynamic link library (DLL) initialization routine failed.
+  23: 
+  24: === 벽이 한 칸 더 밀렸다 ===
+  25: 
+  26:   1차   0xC0000135 STATUS_DLL_NOT_FOUND   — Python 이 **시작조차** 못 함
+  27:   2차   Python 시작 O -> import torch O -> **_ctypes DLL 초기화 실패**
+  28: 
+  29: 즉 "AppContainer 에서 CUDA 가 되는가" 는 **여전히 모른다.** CUDA 근처에도
+  30: 못 갔다 — 그 전에 표준 라이브러리 `ctypes` 가 실패한다.
+  31: 
+  32: ★ "not found" 가 아니라 **"initialization routine failed"** 다. DLL 은
+  33:   찾았고 로드까지 갔는데 초기화가 실패했다는 뜻이라, 경로 권한이 아니라
+  34:   **컨테이너에 없는 다른 무언가**를 요구한다는 신호다.
+  35: 
+  36: ★ `Failed to find real location of python.exe` 도 같이 나온다 — 컨테이너가
+  37:   자기 실행 파일의 실제 경로를 해석하지 못한다. 상위 디렉터리 순회 권한이나
+  38:   재분석 지점 해석과 관련이 있을 수 있다(확인 안 함 — **추측이다**).
+  39: 
+  40: === 다음에 확인할 것 (아직 안 함) ===
+  41: 
+  42: - `ALL APPLICATION PACKAGES` 에 권한을 주면 달라지는가
+  43:   (지금은 **이 컨테이너 SID 하나**에만 줬다)
+  44: - 컨테이너가 쓸 수 있는 TEMP 가 필요한가 — libffi 초기화가 임시 파일을
+  45:   요구할 수 있다
+  46: - 상위 경로(`C:\Users\<x600-user>\AppData\Local\Programs`) 순회 권한
+  47: - capability 를 하나씩 넣어 보기 — 다만 **지어내지 않고** 실패가 가리키는
+  48:   것부터 넣는다
+  49: 
+  50: ★ 이 실측은 `P0-02` 체크리스트의 "GPU 드라이버 접근에 필요한 capability
+  51:   식별" 이 **진행 중**이라는 뜻이지 완료가 아니다. 지금까지 식별된 것은
+  52:   "capability 이전에 파일 접근이 먼저 문제" 라는 사실뿐이다.
+  53: 
+  54: === 실행자 기록 ===
+  55: 
+  56: 이번 실측은 세션(agent:claude-code)이 SSH 로 직접 수행했다 —
+  57: `icacls` 부여·프로브·원복 세 단계 모두. 파일 ACL 은 사용자 소유
+  58: 디렉터리에 대한 것이고 되돌렸다.
+  59: 
+  60: === 3차: ALL APPLICATION PACKAGES 로도 같은 벽 ===
+  61: 
+  62: 같은 Python 트리에 `*S-1-15-2-1`(ALL APPLICATION PACKAGES)로 다시 권한을
+  63: 주고 재실행했다. 27112 files 성공.
+  64: 
+  65:   결과: **완전히 같다** — _ctypes DLL initialization routine failed.
+  66: 
+  67: ★ 그 사이 `*S-1-15-4096` 표기로 시도한 것은 문법 오류로 실패했고
+  68:   (0 files), 그때 프로브가 다시 `0xC0000135` 로 돌아갔다.
+  69:   **이것이 대조 역할을 했다** — 권한이 있고 없고가 1차/2차 차이의
+  70:   원인임을 확인해 준다.
+  71: 
+  72: === 그래서 알게 된 것 ===
+  73: 
+  74: **파일 권한 문제가 아니다.** 서로 다른 두 주체(컨테이너 전용 SID,
+  75: ALL APPLICATION PACKAGES)에 똑같이 읽기+실행을 줬는데 같은 지점에서
+  76: 같은 방식으로 실패한다.
+  77: 
+  78: 즉 CPython 의 `_ctypes` 가 AppContainer 안에서 **초기화 자체를 못 한다.**
+  79: `torch/__init__.py` 가 14번째 줄에서 `import ctypes` 를 하므로,
+  80: **torch 는 이 상태의 AppContainer 에서 import 조차 되지 않는다.**
+  81: 
+  82: ★ 이것은 `P0-02` 의 DoD 에 직접 닿는 사실이다:
+  83:     성공 -> S2 설계 유지, 검증된 환경에서만 enable
+  84:     실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+  85: 
+  86:   다만 **아직 "실패" 로 확정하지 않는다.** 남은 가능성이 있다:
+  87:     - 컨테이너가 쓸 수 있는 TEMP/작업 디렉터리 부여
+  88:     - capability 를 실제로 넣어 보기(지금은 빈 목록)
+  89:     - Python embeddable 배포판 등 다른 Python 으로 시도
+  90:   이것들을 안 해 보고 "AppContainer 에서 torch 는 불가" 라고 적으면
+  91:   **재지 않은 것을 결론으로 쓰는 것**이다.
+  92: 
+  93: === 권한 정리 ===
+  94: 
+  95:   컨테이너 전용 SID : 부여 -> 원복 (27112 files)
+  96:   ALL APPLICATION PACKAGES : 부여 -> 원복 (27112 files)
+  97:   최종 확인: icacls 출력에 `S-1-15` 항목 없음 — **남은 권한 없다**
+FILE: docs\evidence\_raw\P0-02_appcontainer_cuda_3차_가설소거.txt
+   1: === P0-02 · AppContainer + CUDA — 가설 넷을 전부 소거했다 ===
+   2: 일시   2026-09-05
+   3: 기계   x600 (RTX 4070 SUPER, driver 595.79, CUDA 13.2)
+   4: 실행   세션(agent:claude-code)이 SSH 로 직접 — 권한 부여·측정·원복 전부
+   5: 
+   6: === 벽은 하나다 ===
+   7: 
+   8:   ImportError: DLL load failed while importing _ctypes:
+   9:     A dynamic link library (DLL) initialization routine failed.
+  10: 
+  11: `torch/__init__.py` 가 14번째 줄에서 `import ctypes` 를 하므로,
+  12: **이 벽을 못 넘으면 torch 는 import 조차 안 된다.** CUDA 근처에도 못 간다.
+  13: 
+  14: === 소거한 가설 넷 — 각각 대조가 있다 ===
+  15: 
+  16: 가설 1 · 상위 경로 순회 권한이 없다
+  17:   근거였던 것: `Failed to find real location of python.exe` 가 같이 뜬다
+  18:   한 일: C:\Users\<x600-user> · \AppData · \Local · \Programs 에 각각 RX 부여
+  19:   결과: **같은 실패.** 소거.
+  20: 
+  21: 가설 2 · 컨테이너가 쓸 수 있는 TEMP 가 없다
+  22:   근거였던 것: libffi 초기화가 임시 경로를 요구한다고 알려져 있다
+  23:   한 일: E:\gputeer-work\tmp\actemp 를 만들어 컨테이너 SID 에 (F) 부여,
+  24:         프로브가 TEMP/TMP 를 그리로 바꿔 자식에게 물려줌
+  25:   결과: **같은 실패.** 소거.
+  26: 
+  27: 가설 3 · capability 가 없다
+  28:   근거였던 것: 지금까지 빈 목록으로만 띄웠다
+  29:   한 일: `run_in_container_capture_with_caps()` 를 만들어 표준 SID 를
+  30:         실제로 주입 — S-1-15-3-1(internetClient), 그리고 앱 전용 형태 하나
+  31:   결과: **둘 다 같은 실패.** 소거.
+  32:   ★ capability 변환에 실패하면 **조용히 빼지 않고 오류를 낸다** — 조용히
+  33:     빠지면 "줬는데도 안 된다" 는 거짓 결론을 쓰게 된다.
+  34: 
+  35: 가설 4 · 이 Python 설치가 특이하다
+  36:   한 일: python.org 의 **embeddable 3.13.7** 을 E: 에 새로 받아 컨테이너
+  37:         SID 에 RX 부여하고 `import ctypes` 만 시험
+  38:   결과:
+  39:       바깥  ctypes=ok
+  40:       안    ImportError: DLL load failed while importing _ctypes ...
+  41:   **깨끗한 배포판에서도 같다.** 소거.
+  42: 
+  43: === 대조가 있었다 ===
+  44: 
+  45: 중간에 SID 표기를 틀려(`*S-1-15-4096`) 권한 부여가 0 files 로 실패한 적이
+  46: 있는데, 그때 프로브가 다시 `0xC0000135`(DLL not found)로 돌아갔다.
+  47: **의도치 않았지만 좋은 대조다** — 권한이 실제로 효과를 내고 있었고,
+  48: 지금 보는 `_ctypes` 실패는 권한 부족과는 **다른 층**임을 확인해 준다.
+  49: 
+  50: === 그래서 무엇을 알았나 ===
+  51: 
+  52: **CPython 의 `_ctypes` 가 AppContainer 안에서 초기화되지 않는다** —
+  53: Python 배포판·ACL 주체·상위 경로 권한·TEMP·capability 어느 것으로도
+  54: 바뀌지 않았다.
+  55: 
+  56: ★ 이것을 곧바로 "`P0-02` 실패" 로 적지는 않는다. 안 해 본 것이 남아 있다:
+  57:   - `_ctypes` 가 어느 DLL 에서 실패하는지 좁히기(libffi-8.dll 의존)
+  58:   - Process Monitor 등으로 실제 거부된 접근을 직접 관측
+  59:   - Windows 버전·빌드에 따른 차이
+  60:   이것들을 안 하고 "AppContainer 에서 CPython 불가" 라고 쓰면 **네 번
+  61:   시도한 것으로 일반 명제를 주장하는 것**이 된다.
+  62: 
+  63: ★ 다만 방향은 뚜렷하다. `P0-02` 의 DoD 는 이렇게 적혀 있다:
+  64:       성공 -> S2 설계 유지, 검증된 환경에서만 enable
+  65:       실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+  66:   현재 근거는 **후자 쪽으로 기운다.**
+  67: 
+  68: === 권한 정리 ===
+  69: 
+  70:   C:\...\Python313               부여 -> 원복 (27112 files)
+  71:   C:\Users\<x600-user> 이하 4개 상위    부여 -> 원복 (각 1)
+  72:   ALL APPLICATION PACKAGES       부여 -> 원복 (27112 files)
+  73:   E: 쪽(actemp · pyembed)        E 드라이브라 남겨 둠 — 재현에 쓴다
+  74: 
+  75:   최종 확인:
+  76:     Python313        S-1-15 항목 0
+  77:     C:\Users\<x600-user>    S-1-15-3-65536-... 1개 남음
+  78:                      ★ 이건 **내가 만든 게 아니다.** Windows 가 원래 두는
+  79:                        capability ACE 이고, 내 컨테이너 SID 는 `S-1-15-2-`
+  80:                        로 시작한다. 건드리지 않았다.
+FILE: docs\evidence\_raw\P0-02_appcontainer_cuda_4차_감별.txt
+   1: === P0-02 · 감별 진단 — 막힌 것은 `_ctypes` **하나**다 ===
+   2: 일시   2026-09-05
+   3: 기계   x600 (RTX 4070 SUPER)
+   4: Python E:\gputeer-work\tmp\pyembed (python.org embeddable 3.13.7, E: 에 새로 받음)
+   5: 설정   컨테이너 SID 에 pyembed RX · actemp 를 TEMP 로 지정 · capability 없음
+   6: 
+   7: === 네 가지를 각각 컨테이너 안에서 돌렸다 ===
+   8: 
+   9:   코드                     바깥      컨테이너 안
+  10:   import sys               pure=ok   **ok  (exit 0)**
+  11:   import zlib              zlib=ok   **ok  (exit 0)**
+  12:   import _socket           socket=ok **ok  (exit 0)**
+  13:   import _ctypes           _ctypes=ok  **실패 (exit 1)**
+  14: 
+  15: 전체 출력 확인(컨테이너 안):
+  16: 
+  17:   P0_02_RESULT stage=inside ok=true exit=0 meaning=정상
+  18:     output=Failed to find real location of ...\pyembed\python.exe
+  19:            exts=ok zlib _socket
+  20: 
+  21:   -> `exts=ok zlib _socket` 이 **컨테이너 안에서 실제로 찍혔다.**
+  22: 
+  23: === 그래서 판이 바뀐다 ===
+  24: 
+  25: 앞선 기록들은 "AppContainer 안에서 Python 이 안 된다" 는 쪽으로 읽힐 수
+  26: 있었다. **틀렸다.**
+  27: 
+  28:   된다   AppContainer 안에서 Python 이 돌고, **C 확장 모듈도 로드된다**
+  29:          (`zlib`·`_socket` 은 둘 다 .pyd 다)
+  30:   안 된다 `_ctypes` **하나**
+  31: 
+  32: 즉 문제는 "샌드박스에서 네이티브 코드가 안 돈다" 가 아니라
+  33: **`_ctypes`/libffi 가 AppContainer 에서 초기화되지 않는다** 는 훨씬 좁은
+  34: 사실이다.
+  35: 
+  36: ★★ **`Failed to find real location of python.exe` 는 무해한 잡음이다.**
+  37:   성공한 실행(exit 0)에서도 똑같이 나온다. 앞 기록에서 이 문장을 실패의
+  38:   단서로 의심했는데(가설 1의 근거였다) **아니었다.** 실패 메시지 옆에
+  39:   같이 있다고 원인인 것은 아니다 — 대조를 보고서야 알았다.
+  40: 
+  41: === P0-02 에 대해 지금 말할 수 있는 것 ===
+  42: 
+  43: `torch/__init__.py` 는 14번째 줄에서 `import ctypes` 를 한다. 그러므로
+  44: **이 벽이 그대로면 torch 는 AppContainer 에서 import 되지 않는다** —
+  45: CUDA 가 되는지 여부는 그 뒤의 질문이라 **아직 답이 없다.**
+  46: 
+  47: 다만 남은 과제가 훨씬 좁아졌다:
+  48: 
+  49:   전    "AppContainer + CUDA 가 되는가" (막연)
+  50:   후    "`_ctypes`/libffi 를 AppContainer 에서 초기화시킬 수 있는가"
+  51: 
+  52: ★ 이것을 "S2 실패" 로 확정하지 않는다. 아직 안 본 것:
+  53:   - `_ctypes.pyd` 가 의존하는 `libffi-8.dll` 의 초기화가 무엇을 요구하는지
+  54:     (Process Monitor 등으로 직접 관측)
+  55:   - Windows 빌드/버전에 따른 차이
+  56:   - libffi 를 쓰지 않는 대체 경로가 있는지
+  57:   네 번 시도한 것으로 "불가" 라는 일반 명제를 쓰지 않는다.
+  58: 
+  59: === 이 실측이 이전 기록을 정정하는 부분 ===
+  60: 
+  61: `P0-02_appcontainer_cuda_2차.txt` 와 `..._3차_가설소거.txt` 는
+  62: "CPython 의 `_ctypes` 가 초기화되지 않는다" 까지는 맞게 적었지만,
+  63: `Failed to find real location` 을 단서로 다룬 부분(가설 1)은
+  64: **근거가 없었다** — 이 감별에서 그 메시지가 성공 시에도 나옴을 확인했다.
+
+codex
+원문 5개를 모두 확인했습니다. Python·C 확장에는 안팎 대조 출력이 있지만, 가둠의 바깥 대조와 뮤테이션은 실행 결과 없이 서술로만 남아 있습니다. 또 “여섯 번 전부 같은 자리에서 죽었다”는 문장은 1차의 시작 실패와 4차의 성공 출력에 맞지 않습니다. 가설별로 실제 바꾼 범위와 소거했다고 주장한 범위를 구분해 정리하겠습니다.
+
+codex
+**수정이 필요합니다.** 가둠의 대조는 원문에서 확인되지 않고, 가설을 소거했다는 범위와 반복 재현 횟수에는 과장이 있습니다. 다만 package identity를 원인으로 확정한 문장은 찾지 못했고, 전체 질문의 `INCONCLUSIVE`는 타당합니다.
+
+아래에서 ‘초안’과 ‘1~5차’는 지정한 파일을 뜻합니다.
+
+1. **“가둠을 확인했다”는 주장에 비해 검증 기록이 부족합니다. 테스트가 여전히 공허하다고 단정할 근거도 없습니다.**
+
+   [초안 138–144행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:138)은 다음을 주장합니다.
+
+   > “대조를 같이 둔다(바깥에서는 읽힌다)”  
+   > “보안 속성 적용을 통째로 건너뛰면 실제로 실패한다.”
+
+   그러나 원문에서 찾은 것은 1차 28–29행의 “호스트의 임시 파일을 못 읽는다(단위 테스트가 고정)”와 5차 59행의 **“가둠 … O — 뮤테이션으로 고정”**이라는 요약뿐입니다. 같은 파일을 바깥에서 읽은 결과, 안쪽 접근 거부 결과, 보안 속성을 제거했을 때 테스트가 실패한 결과는 원문 5개 어디에도 없습니다.
+
+   따라서 **바깥 대조와 뮤테이션 검증을 했다는 서술은 있지만, 실제 결과는 확인할 수 없습니다.** 현재 테스트가 첫 판의 함정을 벗어났다고 독립 확인하기에는 부족합니다. 해당 결과를 붙이거나 “실행자 서술상 확인, 대조 출력 미첨부”로 낮춰야 합니다.
+
+   반면 Python·C 확장 실행은 근거가 있습니다. [4차 9–21행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt:9)은 `sys`, `zlib`, `_socket`의 바깥 성공과 안쪽 `exit 0`을 나란히 기록하고, 안쪽 출력 **“exts=ok zlib _socket”**도 제시합니다. 이 부분에서 공허한 테스트라는 문제는 찾지 못했습니다. 다만 이를 포함한 초안 32행의 **“AppContainer 자체는 동작한다”**는 “시험한 환경에서 나열한 동작을 확인했다”로 한정하는 편이 정확합니다.
+
+2. **네 가설 모두 변경 후 비교한 기록은 있습니다. 그러나 “각각 대조 있음”과 “전부 소거”는 같은 말이 아닙니다.**
+
+   [3차 14–41행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt:14)을 기준으로 보면 다음과 같습니다.
+
+   | 가설 | 원문에 있는 변경·결과 | 이 기록으로 말할 수 있는 범위 |
+   |---|---|---|
+   | 상위 경로 권한 | 18–19행: 네 경로에 “각각 RX 부여”, “같은 실패” | 권한 부여 후에도 실패했다는 비교는 있음. 자식이 필요한 경로를 실제로 순회할 수 있었는지 확인한 출력은 없음. |
+   | 컨테이너 TEMP | 23–25행: 디렉터리 생성·SID에 `(F)` 부여, “TEMP/TMP를 … 자식에게 물려줌”, “같은 실패” | 설정 변경 후 비교는 있음. 자식이 그 값을 받았고 그 경로에 실제 쓰기가 됐는지 확인한 출력은 없음. |
+   | capability | 29–31행: `internetClient`와 “앱 전용 형태 하나” 주입, “둘 다 같은 실패” | **시험한 두 capability로 해결되지 않았다**까지임. capability 부재라는 가설 전체를 소거하지는 못함. |
+   | Python 배포판 | 36–41행: 새 embeddable 3.13.7에서 “바깥 ctypes=ok”, 안쪽 `_ctypes` 실패 | 네 항목 중 안팎 대조가 가장 명확함. 기존 설치만의 문제라는 설명은 약해지지만, 두 CPython 3.13 배포판 밖으로 일반화할 수는 없음. |
+
+   특히 capability 소거는 문서 내부에서도 반박됩니다. 5차 46–47행은 다음 가능성을 남깁니다.
+
+   > “COM capability를 주면 달라질 수 있다 … 있는지, 있다면 무엇인지 확인하지 않았다.”
+
+   또한 3차 45–48행의 **“권한 부여가 0 files로 실패 … 다시 `0xC0000135` … 좋은 대조”**는 Python 파일 접근 권한의 효과를 보여 줍니다. 이것이 TEMP나 capability 변경의 유효성까지 검증해 주지는 않습니다.
+
+   따라서 초안 130행의 **“소거한 가설 넷 (각각 대조 있음)”**은 “시험한 네 변경에서 실패 지속”으로 고쳐야 합니다. 단순히 시도만 했다는 기록은 아니지만, 넓은 가설의 소거를 입증한 기록도 아닙니다.
+
+3. **package identity를 확정 원인으로 쓴 문장은 찾지 못했습니다. 대신 DLL 로드 결과를 원인·기능 판정으로 확장한 문장이 있습니다.**
+
+   초안 172–175행은 **“확인하지 않았으므로 추측으로만 적는다”**, 196행도 **“package identity 부재 때문일 가능성”**이라고 명시합니다. [5차 88–93행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt:88) 역시 **“추측이며 확인 안 했다”**입니다. 질문하신 직접적인 ‘가설의 결론 둔갑’은 확인하지 못했습니다.
+
+   그러나 다른 원인 서술은 측정보다 강합니다. 5차 4행은 도구를 다음처럼 설명합니다.
+
+   > “`LoadLibraryW` 하나만 하고 Win32 오류 코드를 찍는다”
+
+   실제 결과는 14–15행의 `ole32.dll`, `_ctypes.pyd`에 대한 **`ok=false error=1114`**입니다. 그런데 초안 32행은 **“`ole32.dll` 하나가 … DllMain에 실패한다”**, 242행은 **“막힌 것은 `ole32` 하나다”**라고 씁니다.
+
+   기록은 `ole32` 로드 시 초기화 실패를 관측했다는 근거입니다. **오류 코드만으로 실패한 초기화 함수의 위치, `_ctypes` 실패와의 인과관계, 다른 장애의 부재까지 확정한 것은 아닙니다.** “시험한 DLL 중 `ole32` 로드에서도 1114가 관측됐으며, `_ctypes` 실패와의 관계는 추가 확인이 필요하다”가 측정에 맞습니다.
+
+   같은 이유로 5차 71행의 **“combase.dll ok=true”**를 78–79행의 **“본체는 되는데 레거시 계층만 안 된다”**로 확장하면 안 됩니다. 로드 성공 기록은 COM 기능 실행의 성공 기록이 아닙니다.
+
+4. **전체 `INCONCLUSIVE`는 정당하지만, 좁은 구성의 실패 판정까지 원인 규명 뒤로 미루는 논리는 부당합니다. 반복 횟수 표현도 바로잡아야 합니다.**
+
+   초안 160–170행은 이미 적절하게 구분합니다.
+
+   > 전체 질문 → “INCONCLUSIVE. CUDA를 부르지도 못했다”  
+   > “`FAIL-SCOPE`를 쓸 수 있는 경우도 이 좁은 구성으로 scope를 명시할 때뿐”
+
+   현재 자료는 CUDA 자체의 가능 여부나 S2 전체의 불가능을 결정하지 못합니다. 그 의미에서 보류는 핑계가 아닙니다.
+
+   그러나 초안 194–198행은 package identity 가능성이 남아 있으므로 **“지금 ‘실패’로 확정하면 재지 않은 것을 결론으로 쓰는 것”**이라고 합니다. 이는 범위를 생략해 앞의 구분을 다시 흐립니다. **실패 원인을 모르는 것과 시험한 구성에서 실패를 관측한 것은 양립합니다.** 현재 x600 환경·시험한 CPython 배포판·기록된 설정에서 `ctypes`/torch 경로가 CUDA 호출 전에 막혔다는 범위라면 `FAIL-SCOPE`를 뒷받침할 근거가 있습니다.
+
+   초안 200–204행의 **“회피 불가면 → … FAIL-SCOPE … S2를 EXPERIMENTAL로 확정”**도 범위를 붙여야 합니다. 한 구성에서 회피책을 찾지 못한 결과만으로 S2 전체를 판정할 수는 없습니다.
+
+   아울러 초안 166행의 다음 문장은 원문과 맞지 않습니다.
+
+   > “재현 가능한 실패다. 여섯 번 전부 같은 자리에서 죽었다”
+
+   [1차 17–20행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt:17)은 **`0xC0000135`**, **“스크립트가 시작하지 못했다”**입니다. [2차 26–27행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt:26)도 직접 **“1차 … 시작조차 못 함 / 2차 … _ctypes DLL 초기화 실패”**로 구분합니다. 4차에는 성공한 import들이 있고, 5·6차는 DLL 로드 감별입니다. **여섯 단계의 탐색을 동일 실패의 여섯 번 반복 재현으로 셀 수 없습니다.**
+
+확인 범위는 초안 1개와 원문 **5개 전부**입니다. 1차에서 GPU 바깥 기준선과 초기 실패, 2차에서 권한 변경과 실패 단계 변화, 3차에서 네 가설의 변경·비교, 4차에서 Python·C 확장 안팎 대조, 5차에서 DLL 결과·그 안에 포함된 6차·package identity 가설을 확인했습니다. 코드와 다른 문서는 읽지 않았고 재실행하지 않았습니다.
+
+CHANGES_REQUESTED
+tokens used
+30,453
+**수정이 필요합니다.** 가둠의 대조는 원문에서 확인되지 않고, 가설을 소거했다는 범위와 반복 재현 횟수에는 과장이 있습니다. 다만 package identity를 원인으로 확정한 문장은 찾지 못했고, 전체 질문의 `INCONCLUSIVE`는 타당합니다.
+
+아래에서 ‘초안’과 ‘1~5차’는 지정한 파일을 뜻합니다.
+
+1. **“가둠을 확인했다”는 주장에 비해 검증 기록이 부족합니다. 테스트가 여전히 공허하다고 단정할 근거도 없습니다.**
+
+   [초안 138–144행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:138)은 다음을 주장합니다.
+
+   > “대조를 같이 둔다(바깥에서는 읽힌다)”  
+   > “보안 속성 적용을 통째로 건너뛰면 실제로 실패한다.”
+
+   그러나 원문에서 찾은 것은 1차 28–29행의 “호스트의 임시 파일을 못 읽는다(단위 테스트가 고정)”와 5차 59행의 **“가둠 … O — 뮤테이션으로 고정”**이라는 요약뿐입니다. 같은 파일을 바깥에서 읽은 결과, 안쪽 접근 거부 결과, 보안 속성을 제거했을 때 테스트가 실패한 결과는 원문 5개 어디에도 없습니다.
+
+   따라서 **바깥 대조와 뮤테이션 검증을 했다는 서술은 있지만, 실제 결과는 확인할 수 없습니다.** 현재 테스트가 첫 판의 함정을 벗어났다고 독립 확인하기에는 부족합니다. 해당 결과를 붙이거나 “실행자 서술상 확인, 대조 출력 미첨부”로 낮춰야 합니다.
+
+   반면 Python·C 확장 실행은 근거가 있습니다. [4차 9–21행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt:9)은 `sys`, `zlib`, `_socket`의 바깥 성공과 안쪽 `exit 0`을 나란히 기록하고, 안쪽 출력 **“exts=ok zlib _socket”**도 제시합니다. 이 부분에서 공허한 테스트라는 문제는 찾지 못했습니다. 다만 이를 포함한 초안 32행의 **“AppContainer 자체는 동작한다”**는 “시험한 환경에서 나열한 동작을 확인했다”로 한정하는 편이 정확합니다.
+
+2. **네 가설 모두 변경 후 비교한 기록은 있습니다. 그러나 “각각 대조 있음”과 “전부 소거”는 같은 말이 아닙니다.**
+
+   [3차 14–41행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt:14)을 기준으로 보면 다음과 같습니다.
+
+   | 가설 | 원문에 있는 변경·결과 | 이 기록으로 말할 수 있는 범위 |
+   |---|---|---|
+   | 상위 경로 권한 | 18–19행: 네 경로에 “각각 RX 부여”, “같은 실패” | 권한 부여 후에도 실패했다는 비교는 있음. 자식이 필요한 경로를 실제로 순회할 수 있었는지 확인한 출력은 없음. |
+   | 컨테이너 TEMP | 23–25행: 디렉터리 생성·SID에 `(F)` 부여, “TEMP/TMP를 … 자식에게 물려줌”, “같은 실패” | 설정 변경 후 비교는 있음. 자식이 그 값을 받았고 그 경로에 실제 쓰기가 됐는지 확인한 출력은 없음. |
+   | capability | 29–31행: `internetClient`와 “앱 전용 형태 하나” 주입, “둘 다 같은 실패” | **시험한 두 capability로 해결되지 않았다**까지임. capability 부재라는 가설 전체를 소거하지는 못함. |
+   | Python 배포판 | 36–41행: 새 embeddable 3.13.7에서 “바깥 ctypes=ok”, 안쪽 `_ctypes` 실패 | 네 항목 중 안팎 대조가 가장 명확함. 기존 설치만의 문제라는 설명은 약해지지만, 두 CPython 3.13 배포판 밖으로 일반화할 수는 없음. |
+
+   특히 capability 소거는 문서 내부에서도 반박됩니다. 5차 46–47행은 다음 가능성을 남깁니다.
+
+   > “COM capability를 주면 달라질 수 있다 … 있는지, 있다면 무엇인지 확인하지 않았다.”
+
+   또한 3차 45–48행의 **“권한 부여가 0 files로 실패 … 다시 `0xC0000135` … 좋은 대조”**는 Python 파일 접근 권한의 효과를 보여 줍니다. 이것이 TEMP나 capability 변경의 유효성까지 검증해 주지는 않습니다.
+
+   따라서 초안 130행의 **“소거한 가설 넷 (각각 대조 있음)”**은 “시험한 네 변경에서 실패 지속”으로 고쳐야 합니다. 단순히 시도만 했다는 기록은 아니지만, 넓은 가설의 소거를 입증한 기록도 아닙니다.
+
+3. **package identity를 확정 원인으로 쓴 문장은 찾지 못했습니다. 대신 DLL 로드 결과를 원인·기능 판정으로 확장한 문장이 있습니다.**
+
+   초안 172–175행은 **“확인하지 않았으므로 추측으로만 적는다”**, 196행도 **“package identity 부재 때문일 가능성”**이라고 명시합니다. [5차 88–93행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt:88) 역시 **“추측이며 확인 안 했다”**입니다. 질문하신 직접적인 ‘가설의 결론 둔갑’은 확인하지 못했습니다.
+
+   그러나 다른 원인 서술은 측정보다 강합니다. 5차 4행은 도구를 다음처럼 설명합니다.
+
+   > “`LoadLibraryW` 하나만 하고 Win32 오류 코드를 찍는다”
+
+   실제 결과는 14–15행의 `ole32.dll`, `_ctypes.pyd`에 대한 **`ok=false error=1114`**입니다. 그런데 초안 32행은 **“`ole32.dll` 하나가 … DllMain에 실패한다”**, 242행은 **“막힌 것은 `ole32` 하나다”**라고 씁니다.
+
+   기록은 `ole32` 로드 시 초기화 실패를 관측했다는 근거입니다. **오류 코드만으로 실패한 초기화 함수의 위치, `_ctypes` 실패와의 인과관계, 다른 장애의 부재까지 확정한 것은 아닙니다.** “시험한 DLL 중 `ole32` 로드에서도 1114가 관측됐으며, `_ctypes` 실패와의 관계는 추가 확인이 필요하다”가 측정에 맞습니다.
+
+   같은 이유로 5차 71행의 **“combase.dll ok=true”**를 78–79행의 **“본체는 되는데 레거시 계층만 안 된다”**로 확장하면 안 됩니다. 로드 성공 기록은 COM 기능 실행의 성공 기록이 아닙니다.
+
+4. **전체 `INCONCLUSIVE`는 정당하지만, 좁은 구성의 실패 판정까지 원인 규명 뒤로 미루는 논리는 부당합니다. 반복 횟수 표현도 바로잡아야 합니다.**
+
+   초안 160–170행은 이미 적절하게 구분합니다.
+
+   > 전체 질문 → “INCONCLUSIVE. CUDA를 부르지도 못했다”  
+   > “`FAIL-SCOPE`를 쓸 수 있는 경우도 이 좁은 구성으로 scope를 명시할 때뿐”
+
+   현재 자료는 CUDA 자체의 가능 여부나 S2 전체의 불가능을 결정하지 못합니다. 그 의미에서 보류는 핑계가 아닙니다.
+
+   그러나 초안 194–198행은 package identity 가능성이 남아 있으므로 **“지금 ‘실패’로 확정하면 재지 않은 것을 결론으로 쓰는 것”**이라고 합니다. 이는 범위를 생략해 앞의 구분을 다시 흐립니다. **실패 원인을 모르는 것과 시험한 구성에서 실패를 관측한 것은 양립합니다.** 현재 x600 환경·시험한 CPython 배포판·기록된 설정에서 `ctypes`/torch 경로가 CUDA 호출 전에 막혔다는 범위라면 `FAIL-SCOPE`를 뒷받침할 근거가 있습니다.
+
+   초안 200–204행의 **“회피 불가면 → … FAIL-SCOPE … S2를 EXPERIMENTAL로 확정”**도 범위를 붙여야 합니다. 한 구성에서 회피책을 찾지 못한 결과만으로 S2 전체를 판정할 수는 없습니다.
+
+   아울러 초안 166행의 다음 문장은 원문과 맞지 않습니다.
+
+   > “재현 가능한 실패다. 여섯 번 전부 같은 자리에서 죽었다”
+
+   [1차 17–20행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt:17)은 **`0xC0000135`**, **“스크립트가 시작하지 못했다”**입니다. [2차 26–27행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt:26)도 직접 **“1차 … 시작조차 못 함 / 2차 … _ctypes DLL 초기화 실패”**로 구분합니다. 4차에는 성공한 import들이 있고, 5·6차는 DLL 로드 감별입니다. **여섯 단계의 탐색을 동일 실패의 여섯 번 반복 재현으로 셀 수 없습니다.**
+
+확인 범위는 초안 1개와 원문 **5개 전부**입니다. 1차에서 GPU 바깥 기준선과 초기 실패, 2차에서 권한 변경과 실패 단계 변화, 3차에서 네 가설의 변경·비교, 4차에서 Python·C 확장 안팎 대조, 5차에서 DLL 결과·그 안에 포함된 6차·package identity 가설을 확인했습니다. 코드와 다른 문서는 읽지 않았고 재실행하지 않았습니다.
+
+CHANGES_REQUESTED

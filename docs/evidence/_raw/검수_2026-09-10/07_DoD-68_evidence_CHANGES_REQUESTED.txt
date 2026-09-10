@@ -1,0 +1,539 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0894a-2719-7702-aa73-9f02d992ea0f
+--------
+user
+동의가 아니라 **반박**을 원한다. 이 evidence 초안의 **서술이 측정을
+넘어서는 자리**를 찾아 달라.
+
+# 앞선 검수를 먼저 확인하라
+
+이 문서는 앞의 여섯(01~06)이 다룬 코드 전체를 하나의 evidence 로 묶는다.
+**앞엣것들의 판정이 나온 뒤에 돌린다.** 그 판정에서 나온 지적이 이 초안에
+반영돼 있어야 한다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md
+```
+
+코드 확인이 필요하면 그 문서가 **직접 인용한 파일:줄만** 본다. 인용하지
+않은 곳으로 넓히지 마라.
+
+# 이 저장소가 evidence 에 요구하는 것
+
+```text
+claim            측정한 것보다 넓게 쓰지 않는다
+negative_tests   실패도 확인했는가. 그리고 그 실패가 **의도한 이유로**
+                 나는지까지 확인했는가
+limitations      안 한 것 · 못 한 것 · 한 기계에서만 잰 것
+decision         근거가 결론을 실제로 받치는가
+```
+
+# 물을 것 — 네 가지
+
+1. **`claim` 이 과장인가.** 이 문서가 주장하는 것과 실제로 측정한 것을
+   나란히 놓아라. "부품이 이어졌다" 는 서술이 있는데, **Job 이 실제로
+   끝까지 돈 것은 아니다** — 그 구분이 문서에 분명한가, 아니면 읽는
+   사람이 "이제 Job 이 돈다" 고 오해할 여지가 있나?
+
+2. **`negative_tests` 가 이유까지 보는가.** 이 사슬에서 **`!ok` 트랩**이
+   반복해서 나왔다 — 실패했다는 것만 확인하고 왜 실패했는지는 안 보는
+   것. 문서가 나열한 negative test 중 그 함정에 빠진 것이 있으면
+   지목하라.
+
+3. **`limitations` 에 빠진 것.** 이 초안이 **안 적은** 한계를 찾아라.
+   힌트가 될 만한 것: 예약 해제가 오늘 불가능하다는 사실, 노드 단위로만
+   잠근다는 사실, 실행 종료 보고가 없다는 사실이 각각 적혀 있는가?
+   없으면 그것이 빠진 한계다.
+
+4. **뮤테이션 22건 중 21건이 잡혔다고 적혀 있다.** 안 잡힌 하나가
+   무엇이고, 그것을 **한계로 정직하게 적었는가**, 아니면 넘어갔는가?
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 없는 문제를
+지어내지 마라.
+
+# 답의 형식
+
+각 지적마다 문서의 **해당 줄을 인용**하고, 왜 측정을 넘어서는지 쓰라.
+
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 초안만 읽고, 앞선 검수 판정의 반영 여부와 네 가지 항목을 확인하겠습니다. 코드 확인이 필요하면 문서가 직접 인용한 파일·줄로 범위를 제한하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$reviewPath = '"'docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md'; "'$reviewLines = Get-Content -LiteralPath $reviewPath -Encoding UTF8; for ($reviewIndex = 0; $reviewIndex -lt $reviewLines.Count; $reviewIndex++) { '"'{0,4}: {1}' -f ("'$reviewIndex + 1), $reviewLines[$reviewIndex] }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1741ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: <!--
+   2: �ڡڡ� 2026-09-10 ���� ? **�� �ʾ��� ���� �� ����� ũ�� �ٲ����.**
+   3: 
+   4:   �Ʒ� ������ 2026-09-03 �� �� �״�� �ΰ�, �ٲ� �͸� ���� ���´�.
+   5:   ������ `review_scope` �� "�� �� ���� ���� ���Ͱ� �����" �� �ϴµ�
+   6:   **�װ� ���� �����̴�.**
+   7: 
+   8:   ���� ������ �ٲ���� ������������������������������������������������������������������������������������������
+   9:   �� 1. �˼��� ������ ���Ҵ�. ���� �ִ� ���� ���Ͱ� �ƴ϶�        ��
+  10:   ��    **CLI ����**�̾��� ? 0.148.0 -> 0.153.4 �� �ø���          ��
+  11:   ��    `gpt-6-astra` �� �ٷ� �����ߴ�.                            ��
+  12:   ��                                                               ��
+  13:   ��      1 plan-job ���� �ڵ�    ACCEPTED                         ��
+  14:   ��      2 scheduler-tick ����   CHANGES_REQUESTED -> ����        ��
+  15:   ��      3 issue-grant �ڱ⼭��  CHANGES_REQUESTED -> ����        ��
+  16:   ��      4 stage-job             CHANGES_REQUESTED -> ����        ��
+  17:   ��      5 Manifest ��ȯ��       CHANGES_REQUESTED -> ����        ��
+  18:   ��      6 submit                ���� ��                          ��
+  19:   ��                                                               ��
+  20:   �� 2. **�� �ټ��� ���� ���� �ټ� ���� ã�Ҵ�.** �� �ʾ���        ��
+  21:   ��    "�ƴ�" �� ���� ���� ���� �ȿ� �־���:                      ��
+  22:   ��      �� �׽�Ʈ�� ������ ������ ��鼭 ����ߴ�(scheduler-tick) ��
+  23:   ��      �� �߸��� Ű�� ������ ���⹰�� ������(issue-grant)        ��
+  24:   ��      �� "QUEUED ������" ������ �� ���� �� ���Ҵ�(stage-job)    ��
+  25:   ��      �� ���� �� �� �ڿ��� "0�� �䱸" �� �Ѿ��(��ȯ��)       ��
+  26:   ��      �� ���� ����Ⱑ submit ���� �־���(�� ������ �߰�)     ��
+  27:   ��    ��: docs/reports/debugs/2026-09-10_0900_�˼���_ã��_����_5��.md ��
+  28:   ��                                                               ��
+  29:   �� 3. **�׷��� `commit: f79b485` �� �� �̻� ���� �ʴ´�.**       ��
+  30:   ��    �� Ŀ���� �ڵ忡�� �� ������ ��� �ִ�. ���� Ʈ������      ��
+  31:   ��    ������ ������ **Ŀ�Ե��� �ʾҴ�**(2026-09-10 ���� ��Ŀ��   ��
+  32:   ��    34��). evidence �� Ŀ���� �����Ѿ� �ϹǷ�,                 ��
+  33:   ��    **�� �ʾ��� evidence �� �ø��� ���� Ŀ���� ����Ǿ��      ��
+  34:   ��    �Ѵ�.** �װ� ����� ���� �����̴�.                         ��
+  35:   ��                                                               ��
+  36:   �� 4. ��ũ�����̽� 1030 passed �� 0 failed(���� �ݿ� ��).         ��
+  37:   ��    �ʾ� ������ 922/918 �� 2026-09-03 ���� ���̴�.             ��
+  38:   ����������������������������������������������������������������������������������������������������������������������������������
+  39: 
+  40:   �� **claim �� ���� �� ���ƴ�.** 6�� ������ ������ 7��(�� ����)��
+  41:     ���� ���� ��ĥ��, �ƴϸ� 7�� �˼��ڿ��� �� ���� ����°�� ����
+  42:     �Ǵ��� ������ ���ؾ� �Ѵ�. ���ڰ� ���ٰ� ���� ? ���� ���� ��ġ��
+  43:     �˼��ڰ� **������ ����**�� ���� �ǰ�, �� �ʾ��� ���� ������
+  44:     �����ߴ����� �������.
+  45: 
+  46: �ڡ� �̰��� **���� evidence �� �ƴϴ�.** docs/evidence/ �� �θ�
+  47:     verify_evidence.py �� �ź��Ѵ� ? �׸��� �װ� �Ǵ�.
+  48: 
+  49:     schema v2(ADR-030)���� "������ ������ �˼��� ����" �� ���°�
+  50:     **����.** review_artifact �� �ʼ��ε� �� ���� �˻簡 "����:�� ��ġ��
+  51:     �ϳ��� ���� ? ��ü�� �ݷ� ���� �˼��� ������ �����̴�" �� �䱸�Ѵ�.
+  52:     ���� ���� �α׸� �� ĭ�� ���� ������ ���ĸ� ���ߴ� ���̴�.
+  53: 
+  54:     �׷��� �ʾ����� �����. 2026-09-07 15:43 ���� ������ �˼��� �ް�
+  55:     ACCEPTED �� ������ review_* �� ä�� docs/evidence/ �� �ű��
+  56:     status �� PASS �� �ø���. �ݷ��Ǹ� ��ġ�� �ٽ� �޴´�.
+  57: 
+  58:     �� �Ʒ� review_outcome: PENDING �� **��Ű���� ���� ��**�̴�.
+  59:       �ű� �� �ݵ�� ���� �������� �ٲ۴�.
+  60: -->
+  61: 
+  62: ---
+  63: schema_version: 2
+  64: id: DoD-68
+  65: claim: "��ǰ�� �� �ִµ� �̾����� �ʾ� Job �� �ϳ��� ���� �� ���� ���¿���, **�� ���� ���� ����**�� �մ� ���� ���� ���� ������� ? `plan-job`(����� Job �� ������ ť�� ������) �� `stage-job`(`orchestrate` �� ù production ȣ����) �� `issue-grant`(����� ������ ��Ǹ����� ������ Grant) �� `scheduler-tick`(��ڰ� �ĺ��ڸ� �� �൵ ������ ��� �����Ѵ�) �� `JobManifest -> JobRequirements` ���� ��ȯ�� �� `submit` �� ���� �� Ȯ��. �׸��� `coordinator-stub --grant-from-control-db` �� �� Grant �� **���� OS ���μ����� Agent �� ���� TCP �� �޾� ����**�ϴ� �ͱ��� Ȯ���ߴ�. �� �� ������ **���� �˼��� ���� ���ߴ�** ? �׷��� `status: INCONCLUSIVE` ��. ������ ������ �˼��� ����"
+  66: status: INCONCLUSIVE
+  67: commit: f79b485
+  68: 
+  69: executor_id: "agent:claude-code"
+  70: executor_tool: "claude-code ���� ? CLI ���� 4�� �ż� + coordinator ��� 2�� �ż�, ���� �׽�Ʈ 37��, �����̼� 9��"
+  71: executor_model: "claude-opus-5"
+  72: executed_at: "2026-09-03T17:40:00+09:00"
+  73: 
+  74: review_required: true
+  75: reviewer_id: "agent:codex-cli"
+  76: reviewer_tool: "codex exec --sandbox read-only ? 3���� ���� ����, ���� ���� ���� ���� �������� �ߴ�"
+  77: reviewer_model: "gpt-5.6-sol"
+  78: review_context: "fresh-read-only"
+  79: review_outcome: "PENDING"
+  80: review_scope: >
+  81:   �ڡ� **�˼��� ���� ���ߴ�. �׷��� �� ������ PASS �� �ƴϴ�.**
+  82: 
+  83:   ���ա����� ���硤��� ���� �� ������ **���ÿ�** �ɾ��µ� �� �� ����
+  84:   ���� ���Ͱ� �����(���� 2026-09-07 15:43). `DoD-65` ���� 3����
+  85:   ������ ȿ�����̾��� ���� �״�� ���� �ߴµ�, **�׶��� ������ ���̸�
+  86:   �� �ô�** ? �׶��� ����� ���� �� ������ ������ crate �ݿ� ��ģ
+  87:   ���� ���� ����. ���� �˼� �ϳ��� 131k ��ū�� ���. ������ �ϳ���
+  88:   �������� �ּ� �ϳ��� ������ �޾��� ���̴�. **�� �Ǵ� ������.**
+  89: 
+  90:   �� ��° ����(��ȸ ����)�� �ڵ��� ��ü ���Ͱ� "���� ��ȸ �����
+  91:   ã�ƶ�" �� ���� �������� �з��� �ź��ߴ� ? �ڱ� ����� �˼��ε�
+  92:   ��Ž������, ǥ���� �ٲ� �ٽ� �ɾ��� �װ͵� ���Ϳ� �ɷȴ�.
+  93: 
+  94:   �˼� ��� �� ����Ұ� ����� �� ���� �������� **�ڱ� �˼�**�� �ߴ�.
+  95:   �װ��� ã�� ���� �Ʒ� negative_tests �� limitations �� �ִ� ?
+  96:   ���� �˼��� ������� ���ϸ�, ����Ѵٰ� ���� �ʴ´�.
+  97: 
+  98: raw_output_artifact: "docs/evidence/_raw/DoD-68_����_�罽.txt"
+  99: raw_output_digest: "sha256:911ecb14c7e2e92592a6388796e4c276568aa2b820189b30085049e47d28001f"
+ 100: raw_output_bytes: 10812
+ 101: 
+ 102: artifacts:
+ 103:   - "docs/evidence/_raw/DoD-68_����_�罽.txt"
+ 104:   - "docs/evidence/_raw/DoD-68_x600_����.txt"
+ 105:   - "docs/evidence/_raw/DoD-68_�˼�_�ߴ�.txt"
+ 106:   - "crates/cli/src/plan_job.rs"
+ 107:   - "crates/cli/src/stage_job.rs"
+ 108:   - "crates/cli/src/issue_grant.rs"
+ 109:   - "crates/cli/src/scheduler_tick.rs"
+ 110:   - "crates/coordinator/src/manifest_requirements.rs"
+ 111:   - "crates/coordinator/src/grant_from_stored.rs"
+ 112: 
+ 113: binary_digests:
+ 114:   toolchain: "Windows ���� ��� cargo 1.97.1"
+ 115:   gputeer_exe: "8169984 bytes, debug ������"
+ 116: protocol_versions:
+ 117:   schema_version: "proto ���� ����"
+ 118:   canonical_spec: "canonical ���� ���� ����(52�� �״��)"
+ 119: platform: >
+ 120:   **�� Windows ��迡�� �����ߴ�** ? ���� ���� x600(RTX 4070 SUPER).
+ 121:   x600 ���� ��ũ�����̽� 922 passed / 0 failed / ��� 0 ���� ����
+ 122:   ���� **��Ȯ�� ���Ұ�**, coordinator-agent-selftest 97 �ó�������
+ 123:   ����ߴ�(2026-09-04).
+ 124: 
+ 125:   �ڡ� **Linux �� ���**(2026-09-05, x600 WSL2, Ŀ�� 6.18.33.2, cargo
+ 126:   1.89.0) ? `--exclude gputeer-runtime-windows` �� 918 passed / 0
+ 127:   failed / ��� 0. Windows �� **���� �ҽ� Ʈ��**�� �����Ѵ�.
+ 128: 
+ 129:   �� �ռ� �̰��� "WSL �� �׾���" �� ������ ���� **�����̾���** ? �׶�
+ 130:   x600 ��ü�� �������� ���̾���. ��谡 ���ƿ��� `wsl.exe -e` �� �ٷ�
+ 131:   �����ߴ�.
+ 132: 
+ 133:   �ڡ� **�÷��� ���̰� ���� �����ȴ�**(�̸� ����):
+ 134: 
+ 135:       Windows 914 - 28(Windows ����) = 886
+ 136:       Linux    910 - 24(Linux ����)  = 886   <- ��ġ
+ 137: 
+ 138:   �׸��� ���� ������ ���� **¦**�̴� ? junction �ź� <-> symlink �ź�,
+ 139:   Job Object ���� <-> cgroup ����, DPAPI K1 <-> systemd-creds K1.
+ 140:   **������ ���� ���� �׽�Ʈ�� ����**(`CLAUDE.md` ��4 �� ����ϴ� ����
+ 141:   ��Ȯ�� �װ��̴�).
+ 142: hardware: >
+ 143:   ���� ���� GPU ����. **x600 �� RTX 4070 SUPER �ǹ�**(driver 595.79,
+ 144:   CUDA 13020)�̰� �ű⼭ `gpu-probe` �� ���� ���� �о��� ? UUID
+ 145:   `GPU-09a269a7-...`, total 12878610432, free 12581863424, cc 8.9,
+ 146:   MIG ������.
+ 147: 
+ 148:   �ڡ� **�� �ǹ� ������ `import-inventory` �� ���ȴ�.** ���ݱ��� inventory
+ 149:   �� ���� ������ �� JSON �̾��� ? `gpu_id` �� ó������ ��¥ NVML UUID ��.
+ 150:   1���� `BOOTSTRAP_REJECTED: verifying_key_hex �� Ed25519 ����Ű��
+ 151:   �ƴϴ�` �� ������(���� ä�� `0x31` �ݺ��� ��ȿ�� � ���� �ƴϴ� ?
+ 152:   **��¥ ������ �ɸ� ������ ���а� �ƴϴ�**). ���� Ű�� �ٲٴ�
+ 153:   `IMPORTED entries=1 registered=1 inventories_updated=1`.
+ 154: 
+ 155:   �� �罽�� �޺κ�(plan-job ����)�� x600 ���� **���ϸ����δ� �� ������**
+ 156:   ? keyring �� ����� CLI ��ΰ� �����(�׽�Ʈ�� Rust API �� �����).
+ 157:   �� �κ��� x600 �� ���� �׽�Ʈ �ȿ��� ���Ҵ�(922�ǿ� ����).
+ 158: network_profile: >
+ 159:   grant_over_wire �� ���� 127.0.0.1 TCP �� ����(���� ���μ��� 2��).
+ 160:   �������� ���ϰ� SQLite �� ����.
+ 161: command: |
+ 162:   cargo test --workspace
+ 163:   cargo test -p gputeer-cli --test plan_job --test stage_job --test issue_grant --test grant_over_wire --test scheduler_tick
+ 164:   # �����̼� 9�� ? scratchpad/mutate.py
+ 165: 
+ 166: raw_output: |
+ 167:   === cargo test --workspace ===
+ 168:   915 passed / 0 failed / ��� 0   (���� �� 906)
+ 169: 
+ 170:   === �ű� ���� �׽�Ʈ 37�� ===
+ 171:   plan_job        10 passed
+ 172:   stage_job        7 passed
+ 173:   issue_grant     10 passed
+ 174:   grant_over_wire  2 passed
+ 175:   scheduler_tick   8 passed
+ 176: 
+ 177:   === �����̼� 9�� (�ڱ� �˼� 2ȸ��) ===
+ 178:   M1 �̼��� workload �� Training ����       ����
+ 179:   M2 �𸣴� enum ���� ������ ���           ����
+ 180:   G5 Attempt/Lease fence ���� ����          �� ���� (limitations ����)
+ 181:   G6 ���� ���� Ȯ�� ����                    �� ���� (limitations ����)
+ 182:   G7 ���� Lease �ε� �߱�                 ���� (1ȸ���� �� ������)
+ 183:   T1 �ĺ��ڿ��� plan_id �� ����             �� ���� (limitations ����)
+ 184:   T2 Lease �߱� �ð��� �ð��               ���� (1ȸ���� �� ������)
+ 185:   T3 ť�� ���� �־ ����                  ���� (1ȸ���� �� ������)
+ 186:   P3 ���� 0 �̾ ť�� �ø���              ����
+ 187: 
+ 188: negative_tests: >
+ 189:   �ź� ��� ���ַ� ®��. ��ǥ���� ��:
+ 190:   --job-db "" �� �޾Ƶ����� �ʴ´�(SQLite �� �� ��ε� �ӽ� DB �� ����
+ 191:   �ش� ? ������� is_durable() �� ��� ���´�);
+ 192:   ���� ���� �ϳ��� ��� **��� ������ �̸��� ���** �ź��Ѵ�;
+ 193:   ���� �ĺ��� 0 �̸� ť�� �� �ø���(�����̼� P3 �� Ȯ��);
+ 194:   ���� ���� �����ڰ� keyring ���� ������� ��ȹ�� �������� �ʴ´�;
+ 195:   ���� Lease �δ� Grant �� �� ���� ? **��� ������ ������ �߱޵Ǵ�
+ 196:   ����**�� ���� �״�(�װ� ������ "�׻� �ź�" �ε� ����Ѵ�);
+ 197:   Grant �� Lease ���� ���� ��� �ź��Ѵ�;
+ 198:   ť�� TTL ���� ���� �־����� �������� �ʴ´�(�̹� ����� Lease ��
+ 199:   �ְ� �ǹǷ�);
+ 200:   �� ť�� **������ �ƴϴ�** ? TICK_IDLE. ������ �̰� ���з� ���� ����
+ 201:   ���ް� ��ַ� ���δ�;
+ 202:   ����� ���� �� ��° Job �� �� ��´�.
+ 203: 
+ 204: limitations: >
+ 205:   �ڡ� **�����̼� 3���� �� ������, �� ������ ���� �ٸ���.**
+ 206: 
+ 207:   G5(Attempt/Lease fence ����)��G6(���� ���� Ȯ��) ? ����
+ 208:   staging_store.rs �� **�� BEGIN IMMEDIATE �ȿ��� �Բ�** ���̹Ƿ�
+ 209:   ��߳� ���¸� ���� ��η� ���� �� ����. �̰� �Է� ������ �ƴ϶�
+ 210:   **�ջ� ���**��. ����ġ�� ���ٴ� ���� �ƴ����� "�׽�Ʈ�� ��Ű��
+ 211:   �ִ�" �� ���ϸ� �����̴�.
+ 212: 
+ 213:   T1(�������� plan_id ����) ? ó���� "���� ��ȹ�� ������ ��������
+ 214:   �ʴ´�" �� �����µ� **�� ��Ȳ�� ������� ����Ұ� �� �տ���
+ 215:   ���Ҵ�**(queued Job plan conflict). QUEUED �� Job �� ��ȹ�� ��
+ 216:   �ٲ��. �׷��� plan_id �� ���� ����� �� ���� ���� ���� �ʴ� ?
+ 217:   �ּ��� ��Ƿ� ���ƴ�.
+ 218: 
+ 219:   �ڡ� **����ȭ�� ������ ���� ���� ? �ĺ� ������ ���� ������ �𸥴�.**
+ 220:   ��尡 ���ε��� �� ��° tick �� "node is already reserved" �� ������.
+ 221:   evaluate_eligibility/rank_best_fit �� inventory �� ���� ������
+ 222:   staging ������� �ٸ� ���̺��� �־� ���� �մ� ���� ����. ������
+ 223:   ����������(���� ������ �ߺ��� ���´�) **������ ������ ť �� �տ���
+ 224:   ���� �����.** ��ġ���� �Թ� ������ �ʿ���(������ pool_snapshot ����
+ 225:   ���°� �� hard-filter ���� �Ÿ��°� �� ������ ��õ��ΰ�) ��ġ�� �ʰ�
+ 226:   **���� ������ �׽�Ʈ�� ����**�ߴ�.
+ 227: 
+ 228:   �� **scheduler �� node_id �� Agent �� device id �� �ٸ� �̸� �����ε�
+ 229:   �մ� ���� ����.** ������ ��ڰ� ���� ���� �����ؾ߸� wire ��ΰ�
+ 230:   �̾�����. �������� ���谡 �ƴϴ�.
+ 231: 
+ 232:   �� **issue-grant �� Ű�� ���� �� Coordinator �� ������ �� ����.**
+ 233:   �ڱ� ������ �ٿ����� Ȯ���ϴ� ���� ���������������ڵ��̴�. ������ Ű��
+ 234:   �����ϸ� ����ϰ� ���߿� Agent �� �ź��Ѵ� ? �������� ������(�ƹ���
+ 235:   �� ���� Grant ��) ��ڴ� ��ȿ�� ���� ���� �� �ȴ�. ��������
+ 236:   Coordinator ����Ű ����� �ʿ��ϰ� �� ����ҿ� ����.
+ 237: 
+ 238:   �� plan_job.rs �� **�׽�Ʈ�� �������� ���� �бⰡ �ϳ� ��** �ִ�
+ 239:   (���� ���� �����ڿ� ����� ������ ��) ? �ڵ� �ּ��� ���� �״�.
+ 240: 
+ 241:   �� ���� entrypoint ������ ������ ����. �� �罽�� **����� Grant ����**��.
+ 242: 
+ 243: decision: >
+ 244:   �� ������ **�κ� �Ϸ�**�� ����Ѵ�. �罽�� ������ �̾����� ���μ���
+ 245:   ��踦 �Ѵ� �ͱ��� Ȯ��������, **���� �˼��� ���� PASS �� �� ��
+ 246:   ����**(ADR-030).
+ 247: 
+ 248:   2026-09-07 15:43 ���� ���Ͱ� ���ƿ��� **������** �˼��� ������ ?
+ 249:   ���� 3������ �̹��� ������ �����̴� ? ACCEPTED �� ������ �� ������
+ 250:   PASS �� �°��Ѵ�. �ݷ��Ǹ� ��ġ�� �ٽ� �޴´�.
+ 251: 
+ 252:   �׶����� **�� �罽 ���� �� ����� ���� �ʴ´�.** �˼� ���� ������
+ 253:   ���߿� ��� ���� Ʋ�ȴ��� �������� ���������.
+ 254: ---
+ 255: 
+ 256: # DoD-68 ? ���� �罽: ���Ժ��� ���۱���
+ 257: 
+ 258: ## ������ �޶����°�
+ 259: 
+ 260: ���� �� �� ����ҿ��� ��ǰ�� ���� �� �־����� **Job �� �ϳ��� ���� ��
+ 261: ������.** �� ������ ���� �־���.
+ 262: 
+ 263: ```text
+ 264: ��  Job ����          ������ Manifest �� �޾� ���� ����ҿ� �ִ� ��ΰ� ����
+ 265: ��  scheduler ����    ����� Job �� ť�� ������ �ʴ´�
+ 266: ��  Grant �߱�        ����� ���࿡�� Grant �� ����� ��ΰ� ����
+ 267: ��  ����ȭ            ������ ������ �θ��� ������ �ƹ��͵� �� �����δ�
+ 268: ```
+ 269: 
+ 270: ���� �̷��� �̾�����.
+ 271: 
+ 272: ```text
+ 273: submit �� import-manifest �� import-inventory �� plan-job �� stage-job
+ 274:                                                     �� issue-grant (���Ϸ�)
+ 275: coordinator-stub --grant-from-control-db ����TCP������ agent-stub
+ 276: scheduler-tick                                    (��~�� �� ������ �� �� ����)
+ 277: ```
+ 278: 
+ 279: ## �� ������ �������� �ʴ� ��
+ 280: 
+ 281: **Job �� ������ ������� �ʴ´�.** �� �罽�� ���� "Agent �� Grant ��
+ 282: �޾Ƶ鿴��" ���� "�н��� ���Ҵ�" �� �ƴϴ�. entrypoint ���μ��� ���ࡤ
+ 283: GPU Ȯ�Ρ�runtime �ݸ������ ������ ���� ������ ����.
+ 284: 
+ 285: **������ ���� �ʴ´�.** `scheduler-tick` �� �� ���̴�. ������ ���θ�
+ 286: �� limitations �� ���� ���� ������ ť �� �տ��� �����.
+ 287: 
+ 288: **���� �˼��� ���� �ʾҴ�.** ���� ���� ��� �Ǵ��� ���� ����� ������
+ 289: Ȯ���� ���̴�. �� ������� ���簡 �ݺ��ؼ� ���� �� ���� **�ڱ� �˼���
+ 290: ��ġ�� ���� �� �ִ�**�� ���̴� ? Ư�� ������ ���� �ʿ���.
+ 291: 
+ 292: ## �ڱ� �˼��� ã�� ��
+ 293: 
+ 294: �˼��� �� �޴� ��� �� ����Ұ� ����� �� ���� �������� �Ⱦ���.
+ 295: 
+ 296: **�����̼��� �� �׽�Ʈ ���� ��Ҵ�.** ���� ���� ����
+ 297: `a_job_that_waited_longer_than_the_lease_ttl_is_refused` �� **������
+ 298: ������ ��� �־���** ���̴� ? `--lease-ttl-ms 1` �� �ְ� ���� ��������
+ 299: �⺻���� ���ܼ�, �� �տ� �ִ� ���� �˻翡 �ɷȴµ� �� �ܾ��� �� �޽�����
+ 300: �޾� �༭ ����ߴ�. ����� ���� �ϳ��� �� ���.
+ 301: 
+ 302: **�����߽��� �� ������ �־���.** "Lease �߱� �ð� = ����� queued_at" ��
+ 303: �� ����� �ٽ��ε�, ��� �׽�Ʈ�� �ĺ��ڸ� ���ϰ� �ĺ��ڴ� �ð�����
+ 304: �������� �ʴ´� ? �ð�� �ٲ㵵 ����ߴ�.
+ 305: 
+ 306: **�� ������ �����̾���.** `plan_id` �� ���� �� ���� ����� �ƴϾ���,
+ 307: �װ� **�׽�Ʈ�� �������** �˾Ҵ�(limitations ����).
+ 308: 
+ 309: **`submit` ���� �ְ� Grant �߱� ��ο� ���� �ڱ� ����**�� ã�� �ٿ��� ?
+ 310: �� �ڵ带 ������ ���� ���ٰ� �߰��ߴ�.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"from pathlib import Path; import json; p=Path('docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md'); b=p.read_bytes(); print(json.dumps({'lines':dict(enumerate(b.decode('cp949').splitlines(),1))}, ensure_ascii=True))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 1401ms:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+UnicodeDecodeError: 'cp949' codec can't decode byte 0xe2 in position 5: illegal multibyte sequence
+decoding with 'cp949' codec failed
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"from pathlib import Path; import json; p=Path('docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md'); print(json.dumps(p.read_text(encoding='utf-8').splitlines(), ensure_ascii=True))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1389ms:
+["<!--", "\u2605\u2605\u2605 2026-09-10 \uac31\uc2e0 \u2014 **\uc774 \ucd08\uc548\uc740 \uc4f0\uc778 \ub4a4 \uc0ac\uc2e4\uc774 \ud06c\uac8c \ubc14\ub00c\uc5c8\ub2e4.**", "", "  \uc544\ub798 \ubcf8\ubb38\uc740 2026-09-03 \uc5d0 \uc4f4 \uadf8\ub300\ub85c \ub450\uace0, \ubc14\ub010 \uac83\ub9cc \uc5ec\uae30 \uc801\ub294\ub2e4.", "  \ubcf8\ubb38\uc758 `review_scope` \uac00 \"\uc14b \ub2e4 \ud310\uc815 \uc804\uc5d0 \ucffc\ud130\uac00 \ub04a\uacbc\ub2e4\" \uace0 \ud558\ub294\ub370", "  **\uadf8\uac74 \uc774\uc81c \uc61b\ub9d0\uc774\ub2e4.**", "", "  \u250c\u2500 \ubb34\uc5c7\uc774 \ubc14\ub00c\uc5c8\ub098 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510", "  \u2502 1. \uac80\uc218\uac00 \uc2e4\uc81c\ub85c \ub3cc\uc558\ub2e4. \ub9c9\uace0 \uc788\ub358 \uac83\uc740 \ucffc\ud130\uac00 \uc544\ub2c8\ub77c        \u2502", "  \u2502    **CLI \ubc84\uc804**\uc774\uc5c8\ub2e4 \u2014 0.148.0 -> 0.153.4 \ub85c \uc62c\ub9ac\ub2c8          \u2502", "  \u2502    `gpt-6-astra` \uac00 \ubc14\ub85c \ub3d9\uc791\ud588\ub2e4.                            \u2502", "  \u2502                                                               \u2502", "  \u2502      1 plan-job \uc8fd\uc740 \ucf54\ub4dc    ACCEPTED                         \u2502", "  \u2502      2 scheduler-tick \uad00\ubb38   CHANGES_REQUESTED -> \uc218\uc815        \u2502", "  \u2502      3 issue-grant \uc790\uae30\uc11c\uba85  CHANGES_REQUESTED -> \uc218\uc815        \u2502", "  \u2502      4 stage-job             CHANGES_REQUESTED -> \uc218\uc815        \u2502", "  \u2502      5 Manifest \ubcc0\ud658\uae30       CHANGES_REQUESTED -> \uc218\uc815        \u2502", "  \u2502      6 submit                \uc9c4\ud589 \uc911                          \u2502", "  \u2502                                                               \u2502", "  \u2502 2. **\uadf8 \ub2e4\uc12f\uc774 \uc2e4\uc81c \uacb0\ud568 \ub2e4\uc12f \uac74\uc744 \ucc3e\uc558\ub2e4.** \uc774 \ucd08\uc548\uc774        \u2502", "  \u2502    \"\ub410\ub2e4\" \uace0 \uc801\uc740 \uc5ec\uc12f \uba85\ub839 \uc548\uc5d0 \uc788\uc5c8\ub2e4:                      \u2502", "  \u2502      \u00b7 \ud14c\uc2a4\ud2b8\uac00 \uc5c9\ub6b1\ud55c \uad00\ubb38\uc744 \uc7ac\uba74\uc11c \ud1b5\uacfc\ud588\ub2e4(scheduler-tick) \u2502", "  \u2502      \u00b7 \uc798\ubabb\ub41c \ud0a4\ub85c \uba40\uca61\ud55c \uc0b0\ucd9c\ubb3c\uc744 \ub0a0\ub9b0\ub2e4(issue-grant)        \u2502", "  \u2502      \u00b7 \"QUEUED \uc5d0\uc11c\ub9cc\" \uad00\ubb38\uc774 \ud55c \ubc88\ub3c4 \uc548 \ub3cc\uc558\ub2e4(stage-job)    \u2502", "  \u2502      \u00b7 \uc120\uc5b8 \uc548 \ud55c \uc790\uc6d0\uc774 \"0\uc744 \uc694\uad6c\" \ub85c \ub118\uc5b4\uac14\ub2e4(\ubcc0\ud658\uae30)       \u2502", "  \u2502      \u00b7 \uac19\uc740 \ub36e\uc5b4\uc4f0\uae30\uac00 submit \uc5d0\ub3c4 \uc788\uc5c8\ub2e4(\uc774 \uc138\uc158\uc774 \ubc1c\uacac)     \u2502", "  \u2502    \uc0c1\uc138: docs/reports/debugs/2026-09-10_0900_\uac80\uc218\uac00_\ucc3e\uc740_\uacb0\ud568_5\uac74.md \u2502", "  \u2502                                                               \u2502", "  \u2502 3. **\uadf8\ub798\uc11c `commit: f79b485` \ub294 \ub354 \uc774\uc0c1 \ub9de\uc9c0 \uc54a\ub294\ub2e4.**       \u2502", "  \u2502    \uadf8 \ucee4\ubc0b\uc758 \ucf54\ub4dc\uc5d0\ub294 \uc704 \uacb0\ud568\uc774 \ub4e4\uc5b4 \uc788\ub2e4. \uc9c0\uae08 \ud2b8\ub9ac\uc5d0\ub294      \u2502", "  \u2502    \uc218\uc815\uc774 \uc788\uc73c\ub098 **\ucee4\ubc0b\ub418\uc9c0 \uc54a\uc558\ub2e4**(2026-09-10 \uae30\uc900 \ubbf8\ucee4\ubc0b   \u2502", "  \u2502    34\uac1c). evidence \ub294 \ucee4\ubc0b\uc744 \uac00\ub9ac\ucf1c\uc57c \ud558\ubbc0\ub85c,                 \u2502", "  \u2502    **\uc774 \ucd08\uc548\uc744 evidence \ub85c \uc62c\ub9ac\uae30 \uc804\uc5d0 \ucee4\ubc0b\uc774 \uc120\ud589\ub418\uc5b4\uc57c      \u2502", "  \u2502    \ud55c\ub2e4.** \uadf8\uac74 \uc0ac\uc6a9\uc790 \uc2b9\uc778 \uc0ac\ud56d\uc774\ub2e4.                         \u2502", "  \u2502                                                               \u2502", "  \u2502 4. \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 1030 passed \u00b7 0 failed(\uc218\uc815 \ubc18\uc601 \ud6c4).         \u2502", "  \u2502    \ucd08\uc548 \ubcf8\ubb38\uc758 922/918 \uc740 2026-09-03 \uc2dc\uc810 \uac12\uc774\ub2e4.             \u2502", "  \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518", "", "  \u2605 **claim \uc744 \uc544\uc9c1 \uc548 \uace0\ucce4\ub2e4.** 6\ubc88 \ud310\uc815\uc774 \ub098\uc624\uace0 7\ubc88(\uc774 \ubb38\uc11c)\uc774", "    \ub3cc\uae30 \uc804\uc5d0 \uace0\uce60\uc9c0, \uc544\ub2c8\uba74 7\ubc88 \uac80\uc218\uc790\uc5d0\uac8c \uc774 \uac31\uc2e0 \ube14\ub85d\uc9f8\ub85c \ubcf4\uc5ec", "    \ud310\ub2e8\uc744 \ubc1b\uc744\uc9c0 \uc815\ud574\uc57c \ud55c\ub2e4. \ud6c4\uc790\uac00 \ub0ab\ub2e4\uace0 \ubcf8\ub2e4 \u2014 \ub0b4\uac00 \uba3c\uc800 \uace0\uce58\uba74", "    \uac80\uc218\uc790\uac00 **\uace0\uccd0\uc9c4 \uc11c\uc220**\uc744 \ubcf4\uac8c \ub418\uace0, \uc774 \ucd08\uc548\uc774 \uc6d0\ub798 \ubb34\uc5c7\uc744", "    \uacfc\uc7a5\ud588\ub294\uc9c0\ub294 \uc0ac\ub77c\uc9c4\ub2e4.", "", "\u2605\u2605 \uc774\uac83\uc740 **\uc544\uc9c1 evidence \uac00 \uc544\ub2c8\ub2e4.** docs/evidence/ \uc5d0 \ub450\uba74", "    verify_evidence.py \uac00 \uac70\ubd80\ud55c\ub2e4 \u2014 \uadf8\ub9ac\uace0 \uadf8\uac8c \uc633\ub2e4.", "", "    schema v2(ADR-030)\uc5d0\ub294 \"\uce21\uc815\uc740 \ub05d\ub0ac\uace0 \uac80\uc218\ub9cc \uc5c6\ub2e4\" \ub294 \uc0c1\ud0dc\uac00", "    **\uc5c6\ub2e4.** review_artifact \ub294 \ud544\uc218\uc778\ub370 \uadf8 \ub0b4\uc6a9 \uac80\uc0ac\uac00 \"\ud30c\uc77c:\uc904 \uc704\uce58\uac00", "    \ud558\ub098\ub3c4 \uc5c6\ub2e4 \u2014 \uad6c\uccb4\uc801 \ubc18\ub840 \uc5c6\ub294 \uac80\uc218\ub294 \ud615\uc2dd\uc801 \uc2b9\uc778\uc774\ub2e4\" \ub97c \uc694\uad6c\ud55c\ub2e4.", "    \ucffc\ud130 \uc18c\uc9c4 \ub85c\uadf8\ub97c \uadf8 \uce78\uc5d0 \ub07c\uc6cc \ub123\uc73c\uba74 \ud615\uc2dd\ub9cc \ub9de\ucd94\ub294 \uc9d3\uc774\ub2e4.", "", "    \uadf8\ub798\uc11c \ucd08\uc548\uc73c\ub85c \ub0a8\uae34\ub2e4. 2026-09-07 15:43 \uc774\ud6c4 \uc21c\ucc28\ub85c \uac80\uc218\ub97c \ubc1b\uace0", "    ACCEPTED \uac00 \ub098\uc624\uba74 review_* \ub97c \ucc44\uc6cc docs/evidence/ \ub85c \uc62e\uae30\uace0", "    status \ub97c PASS \ub85c \uc62c\ub9b0\ub2e4. \ubc18\ub824\ub418\uba74 \uace0\uce58\uace0 \ub2e4\uc2dc \ubc1b\ub294\ub2e4.", "", "    \u2605 \uc544\ub798 review_outcome: PENDING \uc740 **\uc2a4\ud0a4\ub9c8\uc5d0 \uc5c6\ub294 \uac12**\uc774\ub2e4.", "      \uc62e\uae38 \ub54c \ubc18\ub4dc\uc2dc \uc2e4\uc81c \ud310\uc815\uc73c\ub85c \ubc14\uafbc\ub2e4.", "-->", "", "---", "schema_version: 2", "id: DoD-68", "claim: \"\ubd80\ud488\uc740 \ub2e4 \uc788\ub294\ub370 \uc774\uc5b4\uc9c0\uc9c0 \uc54a\uc544 Job \uc744 \ud558\ub098\ub3c4 \ub3cc\ub9b4 \uc218 \uc5c6\ub358 \uc0c1\ud0dc\uc5d0\uc11c, **\ub124 \uac1c\uc758 \ub04a\uae34 \uace0\ub9ac**\ub97c \uc787\ub294 \uba85\ub839 \uc5ec\uc12f \uac1c\ub97c \ub9cc\ub4e4\uc5c8\ub2e4 \u2014 `plan-job`(\uc800\uc7a5\ub41c Job \uc774 \uc2e4\uc81c\ub85c \ud050\uc5d0 \uc624\ub978\ub2e4) \u00b7 `stage-job`(`orchestrate` \uc758 \uccab production \ud638\ucd9c\uc790) \u00b7 `issue-grant`(\uc800\uc7a5\ub41c \uc608\uc57d\uc758 \uc0ac\uc2e4\ub9cc\uc73c\ub85c \uc11c\uba85\ub41c Grant) \u00b7 `scheduler-tick`(\uc6b4\uc601\uc790\uac00 \uc2dd\ubcc4\uc790\ub97c \uc548 \uc918\ub3c4 \uc2a4\uc2a4\ub85c \uace8\ub77c \uc608\uc57d\ud55c\ub2e4) \u00b7 `JobManifest -> JobRequirements` \uc21c\uc218 \ubcc0\ud658\uae30 \u00b7 `submit` \uc758 \uc120\uc5b8 \ucd95 \ud655\uc7a5. \uadf8\ub9ac\uace0 `coordinator-stub --grant-from-control-db` \ub85c \uadf8 Grant \ub97c **\ubcc4\ub3c4 OS \ud504\ub85c\uc138\uc2a4\uc778 Agent \uac00 \uc2e4\uc81c TCP \ub85c \ubc1b\uc544 \uc218\uc6a9**\ud558\ub294 \uac83\uae4c\uc9c0 \ud655\uc778\ud588\ub2e4. \u2605 \uc774 \ubb38\uc11c\ub294 **\ub3c5\ub9bd \uac80\uc218\ub97c \ubc1b\uc9c0 \ubabb\ud588\ub2e4** \u2014 \uadf8\ub798\uc11c `status: INCONCLUSIVE` \ub2e4. \uce21\uc815\uc740 \ub05d\ub0ac\uace0 \uac80\uc218\ub9cc \uc5c6\ub2e4\"", "status: INCONCLUSIVE", "commit: f79b485", "", "executor_id: \"agent:claude-code\"", "executor_tool: \"claude-code \uc138\uc158 \u2014 CLI \uba85\ub839 4\uac74 \uc2e0\uc124 + coordinator \ubaa8\ub4c8 2\uac74 \uc2e0\uc124, \ud1b5\ud569 \ud14c\uc2a4\ud2b8 37\uac74, \ubba4\ud14c\uc774\uc158 9\uac74\"", "executor_model: \"claude-opus-5\"", "executed_at: \"2026-09-03T17:40:00+09:00\"", "", "review_required: true", "reviewer_id: \"agent:codex-cli\"", "reviewer_tool: \"codex exec --sandbox read-only \u2014 3\uac08\ub798 \ub3d9\uc2dc \uc2e4\ud589, \uc804\ubd80 \ud310\uc815 \uc804\uc5d0 \ucffc\ud130 \uc18c\uc9c4\uc73c\ub85c \uc911\ub2e8\"", "reviewer_model: \"gpt-5.6-sol\"", "review_context: \"fresh-read-only\"", "review_outcome: \"PENDING\"", "review_scope: >", "  \u2605\u2605 **\uac80\uc218\ub97c \ubc1b\uc9c0 \ubabb\ud588\ub2e4. \uadf8\ub798\uc11c \uc774 \ubb38\uc11c\ub294 PASS \uac00 \uc544\ub2c8\ub2e4.**", "", "  \uc885\ud569\u00b7\uc11c\uc220 \uac10\uc0ac\u00b7\uacbd\uacc4 \uc870\ud569 \uc138 \uac08\ub798\ub97c **\ub3d9\uc2dc\uc5d0** \uac78\uc5c8\ub294\ub370 \uc14b \ub2e4 \ud310\uc815", "  \uc804\uc5d0 \ucffc\ud130\uac00 \ub04a\uacbc\ub2e4(\ubcf5\uad6c 2026-09-07 15:43). `DoD-65` \uc5d0\uc11c 3\uac08\ub798", "  \ubcd1\ub82c\uc774 \ud6a8\uacfc\uc801\uc774\uc5c8\ub358 \uac83\uc744 \uadf8\ub300\ub85c \ub530\ub77c \ud588\ub294\ub370, **\uadf8\ub54c\uc640 \uc9c0\uae08\uc758 \ucc28\uc774\ub97c", "  \uc548 \ubd24\ub2e4** \u2014 \uadf8\ub54c\ub294 \ub300\uc0c1\uc774 \ud30c\uc77c \uba87 \uac1c\uc600\uace0 \uc9c0\uae08\uc740 crate \ub137\uc5d0 \uac78\uce5c", "  \uba85\ub839 \uc5ec\uc12f \uac1c\ub2e4. \uc885\ud569 \uac80\uc218 \ud558\ub098\uac00 131k \ud1a0\ud070\uc744 \uc37c\ub2e4. \uc21c\ucc28\ub85c \ud558\ub098\uc529", "  \ub3cc\ub838\uc73c\uba74 \ucd5c\uc18c \ud558\ub098\ub294 \ud310\uc815\uc744 \ubc1b\uc558\uc744 \uac83\uc774\ub2e4. **\ub0b4 \ud310\ub2e8 \ucc29\uc624\ub2e4.**", "", "  \ub124 \ubc88\uc9f8 \uac08\ub798(\uc6b0\ud68c \uc870\uc0ac)\ub294 \ucf54\ub371\uc2a4 \uc790\uccb4 \ud544\ud130\uac00 \"\uad00\ubb38 \uc6b0\ud68c \ubc29\ubc95\uc744", "  \ucc3e\uc544\ub77c\" \ub97c \ubcf4\uc548 \uc704\ud5d8\uc73c\ub85c \ubd84\ub958\ud574 \uac70\ubd80\ud588\ub2e4 \u2014 \uc790\uae30 \uc800\uc7a5\uc18c \uac80\uc218\uc778\ub370", "  \uc624\ud0d0\uc774\uc9c0\ub9cc, \ud45c\ud604\uc744 \ubc14\uafd4 \ub2e4\uc2dc \uac78\uc5c8\uace0 \uadf8\uac83\ub3c4 \ucffc\ud130\uc5d0 \uac78\ub838\ub2e4.", "", "  \uac80\uc218 \ub300\uc2e0 \uc774 \uc800\uc7a5\uc18c\uac00 \uae30\ub85d\ud574 \ub454 \uc2e4\ud328 \ud328\ud134\uc73c\ub85c **\uc790\uae30 \uac80\uc218**\ub97c \ud588\ub2e4.", "  \uadf8\uac83\uc774 \ucc3e\uc740 \uac83\uc740 \uc544\ub798 negative_tests \uc640 limitations \uc5d0 \uc788\ub2e4 \u2014", "  \ub3c5\ub9bd \uac80\uc218\ub97c \ub300\uc2e0\ud558\uc9c0 \ubabb\ud558\uba70, \ub300\uc2e0\ud55c\ub2e4\uace0 \uc801\uc9c0 \uc54a\ub294\ub2e4.", "", "raw_output_artifact: \"docs/evidence/_raw/DoD-68_\uc2e4\ud589_\uc0ac\uc2ac.txt\"", "raw_output_digest: \"sha256:911ecb14c7e2e92592a6388796e4c276568aa2b820189b30085049e47d28001f\"", "raw_output_bytes: 10812", "", "artifacts:", "  - \"docs/evidence/_raw/DoD-68_\uc2e4\ud589_\uc0ac\uc2ac.txt\"", "  - \"docs/evidence/_raw/DoD-68_x600_\uc2e4\uce21.txt\"", "  - \"docs/evidence/_raw/DoD-68_\uac80\uc218_\uc911\ub2e8.txt\"", "  - \"crates/cli/src/plan_job.rs\"", "  - \"crates/cli/src/stage_job.rs\"", "  - \"crates/cli/src/issue_grant.rs\"", "  - \"crates/cli/src/scheduler_tick.rs\"", "  - \"crates/coordinator/src/manifest_requirements.rs\"", "  - \"crates/coordinator/src/grant_from_stored.rs\"", "", "binary_digests:", "  toolchain: \"Windows \uac1c\ubc1c \uae30\uacc4 cargo 1.97.1\"", "  gputeer_exe: \"8169984 bytes, debug \ud504\ub85c\ud544\"", "protocol_versions:", "  schema_version: \"proto \ubcc0\uacbd \uc5c6\uc74c\"", "  canonical_spec: \"canonical \ubca1\ud130 \ubcc0\uacbd \uc5c6\uc74c(52\uac74 \uadf8\ub300\ub85c)\"", "platform: >", "  **\ub450 Windows \uae30\uacc4\uc5d0\uc11c \uce21\uc815\ud588\ub2e4** \u2014 \uac1c\ubc1c \uae30\uacc4\uc640 x600(RTX 4070 SUPER).", "  x600 \uc5d0\uc11c \uc6cc\ud06c\uc2a4\ud398\uc774\uc2a4 922 passed / 0 failed / \uacbd\uace0 0 \uc73c\ub85c \uac1c\ubc1c", "  \uae30\uacc4\uc640 **\uc815\ud655\ud788 \uac19\uc558\uace0**, coordinator-agent-selftest 97 \uc2dc\ub098\ub9ac\uc624\ub3c4", "  \ud1b5\uacfc\ud588\ub2e4(2026-09-04).", "", "  \u2605\u2605 **Linux \ub3c4 \uc7c0\ub2e4**(2026-09-05, x600 WSL2, \ucee4\ub110 6.18.33.2, cargo", "  1.89.0) \u2014 `--exclude gputeer-runtime-windows` \ub85c 918 passed / 0", "  failed / \uacbd\uace0 0. Windows \uc640 **\uac19\uc740 \uc18c\uc2a4 \ud2b8\ub9ac**\ub97c \uacf5\uc720\ud55c\ub2e4.", "", "  \u2605 \uc55e\uc11c \uc774\uac83\uc744 \"WSL \uc774 \uc8fd\uc5c8\ub2e4\" \uace0 \uc801\uc5c8\ub358 \uac83\uc740 **\uc624\uc9c4\uc774\uc5c8\ub2e4** \u2014 \uadf8\ub54c", "  x600 \uc790\uccb4\uac00 \ub0b4\ub824\uac00\ub294 \uc911\uc774\uc5c8\ub2e4. \uae30\uacc4\uac00 \ub3cc\uc544\uc624\uc790 `wsl.exe -e` \uac00 \ubc14\ub85c", "  \uc751\ub2f5\ud588\ub2e4.", "", "  \u2605\u2605 **\ud50c\ub7ab\ud3fc \ucc28\uc774\uac00 \uc804\ubd80 \uc124\uba85\ub41c\ub2e4**(\uc774\ub984 \uae30\uc900):", "", "      Windows 914 - 28(Windows \uc804\uc6a9) = 886", "      Linux    910 - 24(Linux \uc804\uc6a9)  = 886   <- \uc77c\uce58", "", "  \uadf8\ub9ac\uace0 \uc591\ucabd \uc804\uc6a9\uc740 \uc11c\ub85c **\uc9dd**\uc774\ub2e4 \u2014 junction \uac70\ubd80 <-> symlink \uac70\ubd80,", "  Job Object \uc0c1\ud55c <-> cgroup \uc0c1\ud55c, DPAPI K1 <-> systemd-creds K1.", "  **\uc870\uc6a9\ud788 \ube60\uc9c4 \uacf5\uc720 \ud14c\uc2a4\ud2b8\ub294 \uc5c6\ub2e4**(`CLAUDE.md` \u00a74 \uac00 \uacbd\uacc4\ud558\ub294 \uac83\uc774", "  \uc815\ud655\ud788 \uadf8\uac83\uc774\ub2e4).", "hardware: >", "  \uac1c\ubc1c \uae30\uacc4\ub294 GPU \uc5c6\uc74c. **x600 \uc740 RTX 4070 SUPER \uc2e4\ubb3c**(driver 595.79,", "  CUDA 13020)\uc774\uace0 \uac70\uae30\uc11c `gpu-probe` \uac00 \uc2e4\uc81c \uac12\uc744 \uc77d\uc5c8\ub2e4 \u2014 UUID", "  `GPU-09a269a7-...`, total 12878610432, free 12581863424, cc 8.9,", "  MIG \ubbf8\uc9c0\uc6d0.", "", "  \u2605\u2605 **\uadf8 \uc2e4\ubb3c \uac12\uc73c\ub85c `import-inventory` \ub97c \ub3cc\ub838\ub2e4.** \uc9c0\uae08\uae4c\uc9c0 inventory", "  \ub294 \uc804\ubd80 \uc190\uc73c\ub85c \uc4f4 JSON \uc774\uc5c8\ub2e4 \u2014 `gpu_id` \uac00 \ucc98\uc74c\uc73c\ub85c \uc9c4\uc9dc NVML UUID \ub2e4.", "  1\ucc28\ub294 `BOOTSTRAP_REJECTED: verifying_key_hex \uac00 Ed25519 \uacf5\uac1c\ud0a4\uac00", "  \uc544\ub2c8\ub2e4` \ub85c \ub9c9\ud614\ub2e4(\ub0b4\uac00 \ucc44\uc6b4 `0x31` \ubc18\ubcf5\uc774 \uc720\ud6a8\ud55c \uace1\uc120 \uc810\uc774 \uc544\ub2c8\ub2e4 \u2014", "  **\uc9c4\uc9dc \uad00\ubb38\uc5d0 \uac78\ub9b0 \uac83\uc774\uc9c0 \uc2e4\ud328\uac00 \uc544\ub2c8\ub2e4**). \uc2e4\uc81c \ud0a4\ub85c \ubc14\uafb8\ub2c8", "  `IMPORTED entries=1 registered=1 inventories_updated=1`.", "", "  \u2605 \uc0ac\uc2ac\uc758 \ub4b7\ubd80\ubd84(plan-job \uc774\ud6c4)\uc740 x600 \uc5d0\uc11c **\ud30c\uc77c\ub9cc\uc73c\ub85c\ub294 \ubabb \ub3cc\ub9b0\ub2e4**", "  \u2014 keyring \uc744 \ub9cc\ub4dc\ub294 CLI \uacbd\ub85c\uac00 \uc5c6\uc5b4\uc11c\ub2e4(\ud14c\uc2a4\ud2b8\ub294 Rust API \ub85c \ub9cc\ub4e0\ub2e4).", "  \uadf8 \ubd80\ubd84\uc740 x600 \uc758 \ud1b5\ud569 \ud14c\uc2a4\ud2b8 \uc548\uc5d0\uc11c \ub3cc\uc558\ub2e4(922\uac74\uc5d0 \ud3ec\ud568).", "network_profile: >", "  grant_over_wire \ub9cc \uc2e4\uc81c 127.0.0.1 TCP \ub97c \uc4f4\ub2e4(\ubcc4\ub3c4 \ud504\ub85c\uc138\uc2a4 2\uac1c).", "  \ub098\uba38\uc9c0\ub294 \ud30c\uc77c\uacfc SQLite \ub9cc \uc4f4\ub2e4.", "command: |", "  cargo test --workspace", "  cargo test -p gputeer-cli --test plan_job --test stage_job --test issue_grant --test grant_over_wire --test scheduler_tick", "  # \ubba4\ud14c\uc774\uc158 9\uac74 \u2014 scratchpad/mutate.py", "", "raw_output: |", "  === cargo test --workspace ===", "  915 passed / 0 failed / \uacbd\uace0 0   (\ucc29\uc218 \uc804 906)", "", "  === \uc2e0\uaddc \ud1b5\ud569 \ud14c\uc2a4\ud2b8 37\uac74 ===", "  plan_job        10 passed", "  stage_job        7 passed", "  issue_grant     10 passed", "  grant_over_wire  2 passed", "  scheduler_tick   8 passed", "", "  === \ubba4\ud14c\uc774\uc158 9\uac74 (\uc790\uae30 \uac80\uc218 2\ud68c\ucc28) ===", "  M1 \ubbf8\uc120\uc5b8 workload \ub97c Training \uc73c\ub85c       \uc7a1\ud798", "  M2 \ubaa8\ub974\ub294 enum \uac12\uc744 \uc870\uc6a9\ud788 \ud1b5\uacfc           \uc7a1\ud798", "  G5 Attempt/Lease fence \ub300\uc870 \uc81c\uac70          \uc548 \uc7a1\ud798 (limitations \ucc38\uc870)", "  G6 \uc608\uc57d \uc874\uc7ac \ud655\uc778 \uc81c\uac70                    \uc548 \uc7a1\ud798 (limitations \ucc38\uc870)", "  G7 \ud3d0\uae30\ub41c Lease \ub85c\ub3c4 \ubc1c\uae09                 \uc7a1\ud798 (1\ud68c\ucc28\uc5d4 \uc548 \uc7a1\ud614\ub2e4)", "  T1 \uc2dd\ubcc4\uc790\uc5d0\uc11c plan_id \ub97c \ube80\ub2e4             \uc548 \uc7a1\ud798 (limitations \ucc38\uc870)", "  T2 Lease \ubc1c\uae09 \uc2dc\uac01\uc744 \uc2dc\uacc4\ub85c               \uc7a1\ud798 (1\ud68c\ucc28\uc5d4 \uc548 \uc7a1\ud614\ub2e4)", "  T3 \ud050\uc5d0 \uc624\ub798 \uc788\uc5b4\ub3c4 \uc608\uc57d                  \uc7a1\ud798 (1\ud68c\ucc28\uc5d4 \uc548 \uc7a1\ud614\ub2e4)", "  P3 \uc801\uaca9 0 \uc774\uc5b4\ub3c4 \ud050\uc5d0 \uc62c\ub9b0\ub2e4              \uc7a1\ud798", "", "negative_tests: >", "  \uac70\ubd80 \uacbd\ub85c \uc704\uc8fc\ub85c \uc9f0\ub2e4. \ub300\ud45c\uc801\uc778 \uac83:", "  --job-db \"\" \ub97c \ubc1b\uc544\ub4e4\uc774\uc9c0 \uc54a\ub294\ub2e4(SQLite \ub294 \ube48 \uacbd\ub85c\ub3c4 \uc784\uc2dc DB \ub85c \uc5f4\uc5b4", "  \uc900\ub2e4 \u2014 \uc800\uc7a5\uc18c\uc758 is_durable() \uc5d0 \ubb3c\uc5b4\uc11c \ub9c9\ub294\ub2e4);", "  \uc120\uc5b8 \ucd95\uc774 \ud558\ub098\ub77c\ub3c4 \ube44\uba74 **\uc5b4\ub290 \ucd95\uc778\uc9c0 \uc774\ub984\uc744 \ub300\uba70** \uac70\ubd80\ud55c\ub2e4;", "  \uc801\uaca9 \ud6c4\ubcf4\uac00 0 \uc774\uba74 \ud050\uc5d0 \uc548 \uc62c\ub9b0\ub2e4(\ubba4\ud14c\uc774\uc158 P3 \ub85c \ud655\uc778);", "  \uc81c\ucd9c \uc2dc\uc810 \uc11c\uba85\uc790\uac00 keyring \uc5d0\uc11c \uc0ac\ub77c\uc9c0\uba74 \uacc4\ud68d\uc744 \uc9c4\ud589\ud558\uc9c0 \uc54a\ub294\ub2e4;", "  \ud3d0\uae30\ub41c Lease \ub85c\ub294 Grant \ub97c \ubabb \ub0b8\ub2e4 \u2014 **\ud3d0\uae30 \uc804\uc5d0\ub294 \uc2e4\uc81c\ub85c \ubc1c\uae09\ub418\ub294", "  \ub300\uc870**\ub97c \uac19\uc774 \ub480\ub2e4(\uadf8\uac8c \uc5c6\uc73c\uba74 \"\ud56d\uc0c1 \uac70\ubd80\" \ub85c\ub3c4 \ud1b5\uacfc\ud55c\ub2e4);", "  Grant \uac00 Lease \ubcf4\ub2e4 \uc624\ub798 \uc0b4\uba74 \uac70\ubd80\ud55c\ub2e4;", "  \ud050\uc5d0 TTL \ubcf4\ub2e4 \uc624\ub798 \uc788\uc5c8\uc73c\uba74 \uc608\uc57d\ud558\uc9c0 \uc54a\ub294\ub2e4(\uc774\ubbf8 \ub9cc\ub8cc\ub41c Lease \ub97c", "  \uc8fc\uac8c \ub418\ubbc0\ub85c);", "  \ube48 \ud050\ub294 **\uc624\ub958\uac00 \uc544\ub2c8\ub2e4** \u2014 TICK_IDLE. \ub8e8\ud504\uac00 \uc774\uac78 \uc2e4\ud328\ub85c \uc138\uba74 \uc815\uc0c1", "  \uc720\ud734\uac00 \uc7a5\uc560\ub85c \ubcf4\uc778\ub2e4;", "  \uc608\uc57d\ub41c \ub178\ub4dc\ub294 \ub450 \ubc88\uc9f8 Job \uc774 \ubabb \uc7a1\ub294\ub2e4.", "", "limitations: >", "  \u2605\u2605 **\ubba4\ud14c\uc774\uc158 3\uac74\uc774 \uc548 \uc7a1\ud788\uace0, \uadf8 \uc774\uc720\uac00 \uc11c\ub85c \ub2e4\ub974\ub2e4.**", "", "  G5(Attempt/Lease fence \ub300\uc870)\u00b7G6(\uc608\uc57d \uc874\uc7ac \ud655\uc778) \u2014 \uc14b\uc774", "  staging_store.rs \uc758 **\ud55c BEGIN IMMEDIATE \uc548\uc5d0\uc11c \ud568\uaed8** \uc4f0\uc774\ubbc0\ub85c", "  \uc5b4\uae0b\ub09c \uc0c1\ud0dc\ub97c \uc815\uc0c1 \uacbd\ub85c\ub85c \ub9cc\ub4e4 \uc218 \uc5c6\ub2e4. \uc774\uac74 \uc785\ub825 \uac80\uc99d\uc774 \uc544\ub2c8\ub77c", "  **\uc190\uc0c1 \ubc29\uc5b4**\ub2e4. \uac12\uc5b4\uce58\uac00 \uc5c6\ub2e4\ub294 \ub73b\uc740 \uc544\ub2c8\uc9c0\ub9cc \"\ud14c\uc2a4\ud2b8\uac00 \uc9c0\ud0a4\uace0", "  \uc788\ub2e4\" \uace0 \ub9d0\ud558\uba74 \uac70\uc9d3\uc774\ub2e4.", "", "  T1(\uc720\ub3c4\uc5d0\uc11c plan_id \uc81c\uac70) \u2014 \ucc98\uc74c\uc5d4 \"\ub0a1\uc740 \uacc4\ud68d\uc758 \uc608\uc57d\uc744 \uc7ac\uc0ac\uc6a9\ud558\uc9c0", "  \uc54a\ub294\ub2e4\" \uace0 \uc801\uc5c8\ub294\ub370 **\uadf8 \uc0c1\ud669\uc744 \ub9cc\ub4e4\ub824\ub2c8 \uc800\uc7a5\uc18c\uac00 \ub354 \uc55e\uc5d0\uc11c", "  \ub9c9\uc558\ub2e4**(queued Job plan conflict). QUEUED \uc778 Job \uc758 \uacc4\ud68d\uc740 \uc548", "  \ubc14\ub010\ub2e4. \uadf8\ub7ec\ub2c8 plan_id \ub294 \uc624\ub298 \ubc29\uc5b4\uc77c \ubfd0 \uc9d0\uc744 \uc9c0\uace0 \uc788\uc9c0 \uc54a\ub2e4 \u2014", "  \uc8fc\uc11d\uc744 \uc0ac\uc2e4\ub85c \uace0\ucce4\ub2e4.", "", "  \u2605\u2605 **\ub370\ubaac\ud654\uc758 \uc2e4\uc9c8\uc801 \ucc28\ub2e8 \uc694\uc778 \u2014 \ud6c4\ubcf4 \uc120\ud0dd\uc774 \uae30\uc874 \uc608\uc57d\uc744 \ubaa8\ub978\ub2e4.**", "  \ub178\ub4dc\uac00 \ub458\uc778\ub370\ub3c4 \ub450 \ubc88\uc9f8 tick \uc774 \"node is already reserved\" \ub85c \ub9c9\ud78c\ub2e4.", "  evaluate_eligibility/rank_best_fit \uc740 inventory \ub9cc \ubcf4\uace0 \uc608\uc57d\uc740", "  staging \uc800\uc7a5\uc18c\uc758 \ub2e4\ub978 \ud14c\uc774\ube14\uc5d0 \uc788\uc5b4 \ub458\uc744 \uc787\ub294 \uac83\uc774 \uc5c6\ub2e4. \uc548\uc804\uc5d4", "  \ubb38\uc81c\uc5c6\uc9c0\ub9cc(\uc608\uc57d \uad00\ubb38\uc774 \uc911\ubcf5\uc744 \ub9c9\ub294\ub2e4) **\ub8e8\ud504\ub97c \ub3cc\ub9ac\uba74 \ud050 \ub9e8 \uc55e\uc5d0\uc11c", "  \uc601\uc601 \uba48\ucd98\ub2e4.** \uace0\uce58\ub824\uba74 \uaddc\ubc94 \uacb0\uc815\uc774 \ud544\uc694\ud574(\uc608\uc57d\uc744 pool_snapshot \uc5d0\uc11c", "  \ube7c\ub294\uac00 \u00b7 hard-filter \uc5d0\uc11c \uac70\ub974\ub294\uac00 \u00b7 \ucc28\uc21c\uc704 \uc7ac\uc2dc\ub3c4\uc778\uac00) \uace0\uce58\uc9c0 \uc54a\uace0", "  **\ud604\uc7ac \ub3d9\uc791\uc744 \ud14c\uc2a4\ud2b8\ub85c \uace0\uc815**\ud588\ub2e4.", "", "  \u2605 **scheduler \uc758 node_id \uc640 Agent \uc758 device id \ub294 \ub2e4\ub978 \uc774\ub984 \uacf5\uac04\uc778\ub370", "  \uc787\ub294 \uac83\uc774 \uc5c6\ub2e4.** \uc624\ub298\uc740 \uc6b4\uc601\uc790\uac00 \ub458\uc744 \uac19\uac8c \uc120\uc5b8\ud574\uc57c\ub9cc wire \uacbd\ub85c\uac00", "  \uc774\uc5b4\uc9c4\ub2e4. \uc81c\uc57d\uc774\uc9c0 \uc124\uacc4\uac00 \uc544\ub2c8\ub2e4.", "", "  \u2605 **issue-grant \ub294 \ud0a4\uac00 \uc815\ub9d0 \uadf8 Coordinator \uc758 \uac83\uc778\uc9c0 \ubabb \ubcf8\ub2e4.**", "  \uc790\uae30 \uac80\uc99d\uc744 \ubd99\uc600\uc9c0\ub9cc \ud655\uc778\ud558\ub294 \uac83\uc740 \uad6c\uc870\u00b7\uc218\uba85\u00b7\uc778\ucf54\ub529\uc774\ub2e4. \uc5c9\ub6b1\ud55c \ud0a4\ub85c", "  \uc11c\uba85\ud558\uba74 \ud1b5\uacfc\ud558\uace0 \ub098\uc911\uc5d0 Agent \uac00 \uac70\ubd80\ud55c\ub2e4 \u2014 \uc704\ud5d8\ud558\uc9c4 \uc54a\uc9c0\ub9cc(\uc544\ubb34\ub3c4", "  \ubabb \uc4f0\ub294 Grant \ub2e4) \uc6b4\uc601\uc790\ub294 \uc720\ud6a8\ud55c \uac83\uc744 \ub9cc\ub4e0 \uc904 \uc548\ub2e4. \ub2eb\uc73c\ub824\uba74", "  Coordinator \uacf5\uac1c\ud0a4 \ubaa9\ub85d\uc774 \ud544\uc694\ud558\uace0 \uc774 \uc800\uc7a5\uc18c\uc5d0 \uc5c6\ub2e4.", "", "  \u2605 plan_job.rs \uc5d0 **\ud14c\uc2a4\ud2b8\ub85c \uace0\uc815\ub418\uc9c0 \uc54a\uc740 \ubd84\uae30\uac00 \ud558\ub098 \ub354** \uc788\ub2e4", "  (\uc81c\ucd9c \uc2dc\uc810 \uc11c\uba85\uc790\uc640 \uc7ac\uac80\uc99d \uc11c\uba85\uc790 \ube44\uad50) \u2014 \ucf54\ub4dc \uc8fc\uc11d\uc5d0 \uc801\uc5b4 \ub480\ub2e4.", "", "  \u2605 \uc2e4\uc81c entrypoint \uc2e4\ud589\uc740 \uc5ec\uc804\ud788 \uc5c6\ub2e4. \uc774 \uc0ac\uc2ac\uc740 **\uc608\uc57d\uacfc Grant \uae4c\uc9c0**\ub2e4.", "", "decision: >", "  \uc774 \uc870\uac01\uc740 **\ubd80\ubd84 \uc644\ub8cc**\ub85c \uae30\ub85d\ud55c\ub2e4. \uc0ac\uc2ac\uc740 \uc2e4\uc81c\ub85c \uc774\uc5b4\uc84c\uace0 \ud504\ub85c\uc138\uc2a4", "  \uacbd\uacc4\ub97c \ub118\ub294 \uac83\uae4c\uc9c0 \ud655\uc778\ud588\uc9c0\ub9cc, **\ub3c5\ub9bd \uac80\uc218\uac00 \uc5c6\uc5b4 PASS \ub85c \uc140 \uc218", "  \uc5c6\ub2e4**(ADR-030).", "", "  2026-09-07 15:43 \uc774\ud6c4 \ucffc\ud130\uac00 \ub3cc\uc544\uc624\uba74 **\uc21c\ucc28\ub85c** \uac80\uc218\ub97c \ub3cc\ub9ac\uace0 \u2014", "  \ubcd1\ub82c 3\uac08\ub798\uac00 \uc774\ubc88\uc5d0 \uc2e4\ud328\ud55c \uc6d0\uc778\uc774\ub2e4 \u2014 ACCEPTED \ub97c \ubc1b\uc73c\uba74 \uc774 \ubb38\uc11c\ub97c", "  PASS \ub85c \uc2b9\uaca9\ud55c\ub2e4. \ubc18\ub824\ub418\uba74 \uace0\uce58\uace0 \ub2e4\uc2dc \ubc1b\ub294\ub2e4.", "", "  \uadf8\ub54c\uae4c\uc9c0 **\uc774 \uc0ac\uc2ac \uc704\uc5d0 \uc0c8 \uae30\ub2a5\uc744 \uc313\uc9c0 \uc54a\ub294\ub2e4.** \uac80\uc218 \uc5c6\uc774 \uc313\uc73c\uba74", "  \ub098\uc911\uc5d0 \uc5b4\ub290 \uce35\uc774 \ud2c0\ub838\ub294\uc9c0 \uac00\ub824\ub0b4\uae30 \uc5b4\ub824\uc6cc\uc9c4\ub2e4.", "---", "", "# DoD-68 \u2014 \uc2e4\ud589 \uc0ac\uc2ac: \ud22c\uc785\ubd80\ud130 \uc804\uc1a1\uae4c\uc9c0", "", "## \ubb34\uc5c7\uc774 \ub2ec\ub77c\uc84c\ub294\uac00", "", "\ucc29\uc218 \uc804 \uc774 \uc800\uc7a5\uc18c\uc5d0\ub294 \ubd80\ud488\uc774 \uac70\uc758 \ub2e4 \uc788\uc5c8\uc9c0\ub9cc **Job \uc744 \ud558\ub098\ub3c4 \ub3cc\ub9b4 \uc218", "\uc5c6\uc5c8\ub2e4.** \ub124 \uace0\ub9ac\uac00 \ub04a\uaca8 \uc788\uc5c8\ub2e4.", "", "```text", "\u2460  Job \ud22c\uc785          \uc11c\uba85\ub41c Manifest \ub97c \ubc1b\uc544 \uc601\uc18d \uc800\uc7a5\uc18c\uc5d0 \ub123\ub294 \uacbd\ub85c\uac00 \uc5c6\ub2e4", "\u2461  scheduler \uc5f0\uacb0    \uc800\uc7a5\ub41c Job \uc774 \ud050\uc5d0 \uc624\ub974\uc9c0 \uc54a\ub294\ub2e4", "\u2462  Grant \ubc1c\uae09        \uc800\uc7a5\ub41c \uc608\uc57d\uc5d0\uc11c Grant \ub97c \ub9cc\ub4dc\ub294 \uacbd\ub85c\uac00 \uc5c6\ub2e4", "\u2463  \ub370\ubaac\ud654            \ub204\uad70\uac00 \uc190\uc73c\ub85c \ubd80\ub974\uc9c0 \uc54a\uc73c\uba74 \uc544\ubb34\uac83\ub3c4 \uc548 \uc6c0\uc9c1\uc778\ub2e4", "```", "", "\uc774\uc81c \uc774\ub807\uac8c \uc774\uc5b4\uc9c4\ub2e4.", "", "```text", "submit \u2192 import-manifest \u2192 import-inventory \u2192 plan-job \u2192 stage-job", "                                                    \u2198 issue-grant (\ud30c\uc77c\ub85c)", "coordinator-stub --grant-from-control-db \u2500\u2500TCP\u2500\u2500\u25b6 agent-stub", "scheduler-tick                                    (\u2460~\u2462 \uc744 \uc2a4\uc2a4\ub85c \ud55c \ubc88 \ub3c8\ub2e4)", "```", "", "## \uc774 \uc2e4\ud5d8\uc774 \uc99d\uba85\ud558\uc9c0 \uc54a\ub294 \uac83", "", "**Job \uc774 \uc2e4\uc81c\ub85c \uc2e4\ud589\ub418\uc9c0 \uc54a\ub294\ub2e4.** \uc774 \uc0ac\uc2ac\uc758 \ub05d\uc740 \"Agent \uac00 Grant \ub97c", "\ubc1b\uc544\ub4e4\uc600\ub2e4\" \uc774\uc9c0 \"\ud559\uc2b5\uc774 \ub3cc\uc558\ub2e4\" \uac00 \uc544\ub2c8\ub2e4. entrypoint \ud504\ub85c\uc138\uc2a4 \uc2e4\ud589\u00b7", "GPU \ud655\uc778\u00b7runtime \uaca9\ub9ac\u00b7\uacb0\uacfc \ubcf4\uace0\ub294 \uc804\ubd80 \uc5ec\uc804\ud788 \uc5c6\ub2e4.", "", "**\ub8e8\ud504\uac00 \ub3cc\uc9c0 \uc54a\ub294\ub2e4.** `scheduler-tick` \uc740 \ud55c \ubc88\uc774\ub2e4. \ub8e8\ud504\ub85c \uac10\uc2f8\uba74", "\uc704 limitations \uc758 \uc608\uc57d \uacf5\ubc31 \ub54c\ubb38\uc5d0 \ud050 \ub9e8 \uc55e\uc5d0\uc11c \uba48\ucd98\ub2e4.", "", "**\ub3c5\ub9bd \uac80\uc218\ub97c \ubc1b\uc9c0 \uc54a\uc558\ub2e4.** \uc5ec\uae30 \uc801\ud78c \ubaa8\ub4e0 \ud310\ub2e8\uc740 \ub9cc\ub4e0 \uc0ac\ub78c\uc774 \uc2a4\uc2a4\ub85c", "\ud655\uc778\ud55c \uac83\uc774\ub2e4. \uc774 \uc800\uc7a5\uc18c\uc758 \uc5ed\uc0ac\uac00 \ubc18\ubcf5\ud574\uc11c \ubcf4\uc5ec \uc900 \uac83\uc740 **\uc790\uae30 \uac80\uc218\uac00", "\ub193\uce58\ub294 \uac83\uc774 \ub298 \uc788\ub2e4**\ub294 \uac83\uc774\ub2e4 \u2014 \ud2b9\ud788 \uc11c\uc220\uc758 \uacfc\uc7a5 \ucabd\uc5d0\uc11c.", "", "## \uc790\uae30 \uac80\uc218\uac00 \ucc3e\uc740 \uac83", "", "\uac80\uc218\ub97c \ubabb \ubc1b\ub294 \ub300\uc2e0 \uc774 \uc800\uc7a5\uc18c\uac00 \uae30\ub85d\ud574 \ub454 \uc2e4\ud328 \ud328\ud134\uc73c\ub85c \ud6d1\uc5c8\ub2e4.", "", "**\ubba4\ud14c\uc774\uc158\uc774 \ub0b4 \ud14c\uc2a4\ud2b8 \ub137\uc744 \uc7a1\uc558\ub2e4.** \uac00\uc7a5 \ub098\uc05c \uac83\uc740", "`a_job_that_waited_longer_than_the_lease_ttl_is_refused` \uac00 **\uc5c9\ub6b1\ud55c", "\uad00\ubb38\uc744 \uc7ac\uace0 \uc788\uc5c8\ub358** \uac83\uc774\ub2e4 \u2014 `--lease-ttl-ms 1` \ub9cc \uc8fc\uace0 \uac31\uc2e0 \uc624\ud504\uc14b\uc740", "\uae30\ubcf8\uac12\uc744 \ub0a8\uaca8\uc11c, \ub354 \uc55e\uc5d0 \uc788\ub294 \uac31\uc2e0 \uac80\uc0ac\uc5d0 \uac78\ub838\ub294\ub370 \ub0b4 \ub2e8\uc5b8\uc774 \uadf8 \uba54\uc2dc\uc9c0\ub3c4", "\ubc1b\uc544 \uc918\uc11c \ud1b5\uacfc\ud588\ub2e4. \uc7ac\ub824\ub358 \uac83\uc744 \ud558\ub098\ub3c4 \uc548 \uc7c0\ub2e4.", "", "**\ubb34\uac8c\uc911\uc2ec\uc774 \uc548 \uc7ac\uc9c0\uace0 \uc788\uc5c8\ub2e4.** \"Lease \ubc1c\uae09 \uc2dc\uac01 = \uc800\uc7a5\ub41c queued_at\" \uc774", "\uc774 \ubaa8\ub4c8\uc758 \ud575\uc2ec\uc778\ub370, \uba71\ub4f1 \ud14c\uc2a4\ud2b8\ub294 \uc2dd\ubcc4\uc790\ub9cc \ube44\uad50\ud558\uace0 \uc2dd\ubcc4\uc790\ub294 \uc2dc\uac01\uc5d0\uc11c", "\uc720\ub3c4\ub418\uc9c0 \uc54a\ub294\ub2e4 \u2014 \uc2dc\uacc4\ub85c \ubc14\uafd4\ub3c4 \ud1b5\uacfc\ud588\ub2e4.", "", "**\ub0b4 \uc11c\uc220\uc774 \uacfc\uc7a5\uc774\uc5c8\ub2e4.** `plan_id` \uc5d0 \ub300\ud574 \uc4f4 \uac83\uc774 \uc0ac\uc2e4\uc774 \uc544\ub2c8\uc5c8\uace0,", "\uadf8\uac78 **\ud14c\uc2a4\ud2b8\ub97c \ub9cc\ub4e4\ub824\ub2e4** \uc54c\uc558\ub2e4(limitations \ucc38\uc870).", "", "**`submit` \uc5d0\ub294 \uc788\uace0 Grant \ubc1c\uae09 \uacbd\ub85c\uc5d4 \uc5c6\ub358 \uc790\uae30 \uac80\uc99d**\uc744 \ucc3e\uc544 \ubd99\uc600\ub2e4 \u2014", "\ub450 \ucf54\ub4dc\ub97c \ub098\ub780\ud788 \ub193\uace0 \ubcf4\ub2e4\uac00 \ubc1c\uacac\ud588\ub2e4."]
+
+codex
+초안에는 06 검수가 아직 “진행 중”이고, 앞선 지적을 `claim`에 반영하지 않았다고 적혀 있습니다. 또한 요청에 나온 “22건 중 21건” 대신 이 파일에는 “9건 중 3건 미검출”이 기록돼 있습니다. 이 불일치를 먼저 지적하고, 나머지는 문서에서 확인되는 문제와 코드 확인 없이는 단정할 수 없는 부분을 구분하겠습니다.
+
+codex
+**CHANGES_REQUESTED입니다.** 지정한 초안 310행만 확인했습니다. 문서에는 06 검수가 아직 진행 중이라고 적혀 있어, 선행 검수 완료와 지적 반영을 전제로 한 최종 검수는 할 수 없습니다. 아래는 초안 자체에서 확인되는 문제입니다.
+
+1. **앞선 검수에서 깨진 주장을 그대로 유지하고 있습니다.**
+
+   [13–18행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:13)은 02~05를 `CHANGES_REQUESTED -> 수정`, 06을 `진행 중`으로 기록합니다. [40행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:40)은 **“claim 을 아직 안 고쳤다”**고 명시합니다.
+
+   그런데 [65행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:65)은 여전히 **“측정은 끝났고 검수만 없다”**고 주장합니다. 문서 자체가 테스트의 잘못된 관문 검증과 구현 결함을 발견했다고 기록한 이상, 남은 일이 검수뿐이라는 결론은 성립하지 않습니다.
+
+   [29–37행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:29)은 기존 커밋에 결함이 있고 수정은 미커밋이라고 하면서 수정 후 `1030 passed`를 제시합니다. 하지만 본문은 여전히 `commit: f79b485`입니다. **어느 코드의 어떤 측정이 현재 claim을 받치는지 연결되지 않습니다.** 앞선 최종 판정과 수정 후 측정을 같은 코드 버전에 맞춰 반영해야 합니다.
+
+2. **“네 고리를 이었다”는 범위가 측정보다 넓습니다. 다만 Job 실행 미검증은 분명히 적혀 있습니다.**
+
+   | 주장 | 문서가 실제로 인정한 측정 범위 |
+   |---|---|
+   | [65행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:65): **“네 개의 끊긴 고리를 잇는”** | [267행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:267)의 네 번째 고리는 **“데몬화”**인데, 285–286행은 **“루프가 돌지 않는다”**, 감싸도 큐 앞에서 멈춘다고 명시 |
+   | 65행: Agent가 TCP로 Grant를 받아 수용 | [281–283행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:281): **“Job 이 실제로 실행되지 않는다”**, 실행·격리·결과 보고는 없음 |
+   | [244–245행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:244): **“사슬은 실제로 이어졌고”** | [155–157행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:155): x600에서는 `plan-job` 이후를 파일만으로 구동하지 못했고, keyring을 Rust API로 만드는 통합 테스트에서 확인 |
+
+   **Job이 끝까지 실행됐다고 문서 전체가 주장한다는 지적은 하지 않겠습니다.** 명시적인 부정이 있습니다. 문제는 첫 claim이 그 경계를 충분히 드러내지 않고, 미완료인 데몬화까지 연결 완료 범위에 넣는다는 점입니다. claim과 decision을 “테스트에서 준비한 상태를 바탕으로 예약·Grant 수용까지 확인, 단발 tick이며 Job 실행과 데몬화는 미완료”로 좁혀야 합니다.
+
+3. **negative test 목록만으로는 의도한 실패 이유를 검증했다고 볼 수 없습니다.**
+
+   [194–202행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:194):
+
+   > “제출 시점 서명자가 keyring 에서 사라지면 계획을 진행하지 않는다”  
+   > “Grant 가 Lease 보다 오래 살면 거부한다”  
+   > “예약된 노드는 두 번째 Job 이 못 잡는다”
+
+   이 서술에는 각각 **서명자 부재·수명 초과·예약 충돌이라는 이유를 어떻게 구별해 확인했는지**가 없습니다. 다른 관문에서 먼저 실패해도 만족하는 설명입니다. 195–196행의 폐기 전 발급 대조는 “항상 거부”를 배제하지만, 그것만으로 폐기 후 실패 이유까지 특정하지는 못합니다.
+
+   실제 함정의 사례는 [297–300행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:297)에 있습니다.
+
+   > “더 앞에 있는 갱신 검사에 걸렸는데 내 단언이 그 메시지도 받아 줘서 통과했다.”
+
+   다만 이것은 과거 사례이며, 185행은 해당 뮤테이션이 이후 잡혔다고 기록합니다. **현재 테스트에도 `!ok`만 남았다고 단정할 수는 없습니다.** 문서에 테스트 코드의 직접적인 파일:줄 인용이 없어 코드는 열지 않았습니다. 현재의 이유별 단언과 선행 조건 충족 근거를 문서에 연결해야 합니다.
+
+4. **예약 해제 불가와 잠금 단위의 한계가 명시돼 있지 않습니다. 종료 보고 부재는 적혀 있습니다.**
+
+   [219–226행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:219)은 **“후보 선택이 기존 예약을 모른다”**, **“큐 맨 앞에서 영영 멈춘다”**고 설명합니다. 그러나 다음은 별도로 명시하지 않습니다.
+
+   - 현재 예약을 해제할 수 없다는 한계.
+   - GPU별 예약이 아닌 노드 전체 단위 잠금이라는 한계.
+
+   후보 선택 문제만 설명하면 후보 필터를 고치는 것으로 예약 재사용 문제까지 해결되는 듯 읽힐 수 있습니다. “예약된 노드”라는 표현도 잠금의 자원 단위를 설명하지는 않습니다. 두 구현 사실은 이번 허용 범위에서 독립 확인하지 못했으며, **문서에 명시가 없다는 점**을 확인했습니다.
+
+   반면 [283행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:283)은 **“결과 보고는 전부 여전히 없다”**고 적습니다. 따라서 종료·결과 보고 부재가 문서 전체에서 누락됐다는 지적은 하지 않겠습니다.
+
+5. **“22건 중 21건 검출”은 이 파일에서 찾지 못했습니다.**
+
+   [177–186행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:177)은 **“뮤테이션 9건”**을 나열하고, 미검출은 다음 세 건입니다.
+
+   - G5: Attempt/Lease fence 대조 제거.
+   - G6: 예약 존재 확인 제거.
+   - T1: 식별자에서 `plan_id` 제거.
+
+   [205–217행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:205)은 세 건을 모두 한계로 공개하며, G5·G6에는 **“‘테스트가 지키고 있다’고 말하면 거짓”**이라고까지 적습니다. **여기 기록된 미검출을 숨겼다는 문제는 찾지 못했습니다.** 다만 요청에 나온 22건의 결과와 미검출 한 건은 이 초안으로 식별할 수 없습니다. 해당 결과의 반영이 필요합니다.
+
+CHANGES_REQUESTED
+tokens used
+22,042
+**CHANGES_REQUESTED입니다.** 지정한 초안 310행만 확인했습니다. 문서에는 06 검수가 아직 진행 중이라고 적혀 있어, 선행 검수 완료와 지적 반영을 전제로 한 최종 검수는 할 수 없습니다. 아래는 초안 자체에서 확인되는 문제입니다.
+
+1. **앞선 검수에서 깨진 주장을 그대로 유지하고 있습니다.**
+
+   [13–18행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:13)은 02~05를 `CHANGES_REQUESTED -> 수정`, 06을 `진행 중`으로 기록합니다. [40행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:40)은 **“claim 을 아직 안 고쳤다”**고 명시합니다.
+
+   그런데 [65행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:65)은 여전히 **“측정은 끝났고 검수만 없다”**고 주장합니다. 문서 자체가 테스트의 잘못된 관문 검증과 구현 결함을 발견했다고 기록한 이상, 남은 일이 검수뿐이라는 결론은 성립하지 않습니다.
+
+   [29–37행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:29)은 기존 커밋에 결함이 있고 수정은 미커밋이라고 하면서 수정 후 `1030 passed`를 제시합니다. 하지만 본문은 여전히 `commit: f79b485`입니다. **어느 코드의 어떤 측정이 현재 claim을 받치는지 연결되지 않습니다.** 앞선 최종 판정과 수정 후 측정을 같은 코드 버전에 맞춰 반영해야 합니다.
+
+2. **“네 고리를 이었다”는 범위가 측정보다 넓습니다. 다만 Job 실행 미검증은 분명히 적혀 있습니다.**
+
+   | 주장 | 문서가 실제로 인정한 측정 범위 |
+   |---|---|
+   | [65행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:65): **“네 개의 끊긴 고리를 잇는”** | [267행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:267)의 네 번째 고리는 **“데몬화”**인데, 285–286행은 **“루프가 돌지 않는다”**, 감싸도 큐 앞에서 멈춘다고 명시 |
+   | 65행: Agent가 TCP로 Grant를 받아 수용 | [281–283행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:281): **“Job 이 실제로 실행되지 않는다”**, 실행·격리·결과 보고는 없음 |
+   | [244–245행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:244): **“사슬은 실제로 이어졌고”** | [155–157행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:155): x600에서는 `plan-job` 이후를 파일만으로 구동하지 못했고, keyring을 Rust API로 만드는 통합 테스트에서 확인 |
+
+   **Job이 끝까지 실행됐다고 문서 전체가 주장한다는 지적은 하지 않겠습니다.** 명시적인 부정이 있습니다. 문제는 첫 claim이 그 경계를 충분히 드러내지 않고, 미완료인 데몬화까지 연결 완료 범위에 넣는다는 점입니다. claim과 decision을 “테스트에서 준비한 상태를 바탕으로 예약·Grant 수용까지 확인, 단발 tick이며 Job 실행과 데몬화는 미완료”로 좁혀야 합니다.
+
+3. **negative test 목록만으로는 의도한 실패 이유를 검증했다고 볼 수 없습니다.**
+
+   [194–202행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:194):
+
+   > “제출 시점 서명자가 keyring 에서 사라지면 계획을 진행하지 않는다”  
+   > “Grant 가 Lease 보다 오래 살면 거부한다”  
+   > “예약된 노드는 두 번째 Job 이 못 잡는다”
+
+   이 서술에는 각각 **서명자 부재·수명 초과·예약 충돌이라는 이유를 어떻게 구별해 확인했는지**가 없습니다. 다른 관문에서 먼저 실패해도 만족하는 설명입니다. 195–196행의 폐기 전 발급 대조는 “항상 거부”를 배제하지만, 그것만으로 폐기 후 실패 이유까지 특정하지는 못합니다.
+
+   실제 함정의 사례는 [297–300행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:297)에 있습니다.
+
+   > “더 앞에 있는 갱신 검사에 걸렸는데 내 단언이 그 메시지도 받아 줘서 통과했다.”
+
+   다만 이것은 과거 사례이며, 185행은 해당 뮤테이션이 이후 잡혔다고 기록합니다. **현재 테스트에도 `!ok`만 남았다고 단정할 수는 없습니다.** 문서에 테스트 코드의 직접적인 파일:줄 인용이 없어 코드는 열지 않았습니다. 현재의 이유별 단언과 선행 조건 충족 근거를 문서에 연결해야 합니다.
+
+4. **예약 해제 불가와 잠금 단위의 한계가 명시돼 있지 않습니다. 종료 보고 부재는 적혀 있습니다.**
+
+   [219–226행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:219)은 **“후보 선택이 기존 예약을 모른다”**, **“큐 맨 앞에서 영영 멈춘다”**고 설명합니다. 그러나 다음은 별도로 명시하지 않습니다.
+
+   - 현재 예약을 해제할 수 없다는 한계.
+   - GPU별 예약이 아닌 노드 전체 단위 잠금이라는 한계.
+
+   후보 선택 문제만 설명하면 후보 필터를 고치는 것으로 예약 재사용 문제까지 해결되는 듯 읽힐 수 있습니다. “예약된 노드”라는 표현도 잠금의 자원 단위를 설명하지는 않습니다. 두 구현 사실은 이번 허용 범위에서 독립 확인하지 못했으며, **문서에 명시가 없다는 점**을 확인했습니다.
+
+   반면 [283행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:283)은 **“결과 보고는 전부 여전히 없다”**고 적습니다. 따라서 종료·결과 보고 부재가 문서 전체에서 누락됐다는 지적은 하지 않겠습니다.
+
+5. **“22건 중 21건 검출”은 이 파일에서 찾지 못했습니다.**
+
+   [177–186행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:177)은 **“뮤테이션 9건”**을 나열하고, 미검출은 다음 세 건입니다.
+
+   - G5: Attempt/Lease fence 대조 제거.
+   - G6: 예약 존재 확인 제거.
+   - T1: 식별자에서 `plan_id` 제거.
+
+   [205–217행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:205)은 세 건을 모두 한계로 공개하며, G5·G6에는 **“‘테스트가 지키고 있다’고 말하면 거짓”**이라고까지 적습니다. **여기 기록된 미검출을 숨겼다는 문제는 찾지 못했습니다.** 다만 요청에 나온 22건의 결과와 미검출 한 건은 이 초안으로 식별할 수 없습니다. 해당 결과의 반영이 필요합니다.
+
+CHANGES_REQUESTED
