@@ -53,6 +53,24 @@ pub enum ManifestConversionError {
     MissingMessage(&'static str),
     /// caller 가 넘겨야 하는 값이 비었다.
     MissingCallerFact(&'static str),
+    /// 수치 자원을 선언하지 않았다.
+    ///
+    /// ★★ 2026-09-10 독립 검수 지적으로 생겼다. proto3 의 숫자에는
+    ///   "없음" 이 없어서 **생략과 0 이 구분되지 않는다.** 그전에는
+    ///   생략된 CPU·RAM·workspace 를 `Some(0)` 으로 넘겼고, 그것은
+    ///   scheduler 에게 **"이 Job 은 0 개를 요구한다"** 는 선언된
+    ///   사실로 읽혔다. 그러면 CPU 여유가 없는 노드에도 맞는다.
+    ///
+    ///   `CLAUDE.md` §1 — 값을 모르면 비워 둔다. 추정으로 채우면 그
+    ///   오류가 조용히 스케줄링 결정까지 간다.
+    ///
+    /// ★ 규범이 답을 준다. proto 는 **기본값을 의도한 자리마다 주석을
+    ///   달아 뒀다** — `min_count` 는 "기본 1", `allocation_mode` 는
+    ///   "미지정 시 EXCLUSIVE", `allowed_gpu_models` 는 "빈 목록 =
+    ///   제약 없음", `max_egress_bps` 는 "0 = 노드 정책을 따름".
+    ///   그런데 `cpu_cores`·`ram_bytes`·`workspace_bytes` 에는 **없다.**
+    ///   즉 그 셋에 의미를 준 것은 규범이 아니라 이 파일이었다.
+    UndeclaredAmount(&'static str),
 }
 
 impl std::fmt::Display for ManifestConversionError {
@@ -65,6 +83,10 @@ impl std::fmt::Display for ManifestConversionError {
             Self::UnknownEnumValue { field, value } => write!(
                 f,
                 "이 빌드가 모르는 {field} 값({value}) — 더 새로운 스키마로 서명된 Manifest 일 수 있다"
+            ),
+            Self::UndeclaredAmount(field) => write!(
+                f,
+                "Manifest 가 {field} 를 선언하지 않았다(0) — 0 을 요구량으로 읽으면 자원이 없는 노드에도 맞는다"
             ),
             Self::MissingMessage(name) => {
                 write!(f, "Manifest 에 {name} 이 통째로 없다")
@@ -130,10 +152,30 @@ pub fn job_requirements_from_manifest(
         minimum_vram_bytes_per_gpu: Some(gpu.min_vram_bytes),
         // proto: "빈 목록 = 제약 없음".
         allowed_gpu_models: gpu.allowed_gpu_models.clone(),
-        cpu_cores: Some(resources.cpu_cores),
-        ram_bytes: Some(resources.ram_bytes),
-        workspace_bytes: Some(resources.workspace_bytes),
+        // ★ 0 은 "0 개를 요구한다" 가 아니라 **선언하지 않았다** 이다.
+        //   proto 가 이 셋에는 기본값 주석을 안 달았다 — 위
+        //   `UndeclaredAmount` 주석 참조.
+        cpu_cores: Some(nonzero(resources.cpu_cores as u64, "resources.cpu_cores")? as u32),
+        ram_bytes: Some(nonzero(resources.ram_bytes, "resources.ram_bytes")?),
+        workspace_bytes: Some(nonzero(
+            resources.workspace_bytes,
+            "resources.workspace_bytes",
+        )?),
     })
+}
+
+/// 0 이면 **선언하지 않은 것**으로 보고 거부한다.
+///
+/// ★ `min_vram_bytes` 에는 쓰지 않는다 — 그쪽은 "하한 없음" 이라는
+///   읽기가 실제로 쓸모가 있고, 0 말고 그것을 표현할 방법이 없다.
+///   다만 그 읽기도 규범에 근거가 없다(`proto/common.proto:188` 에
+///   주석이 없다). 그건 규범 결정이라 여기서 정하지 않는다 —
+///   `docs/plans/_열린_작업.md` 에 올려 뒀다.
+fn nonzero(value: u64, field: &'static str) -> Result<u64, ManifestConversionError> {
+    if value == 0 {
+        return Err(ManifestConversionError::UndeclaredAmount(field));
+    }
+    Ok(value)
 }
 
 // ---------------------------------------------------------------- enum 축

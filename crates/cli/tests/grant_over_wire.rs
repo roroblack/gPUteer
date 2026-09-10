@@ -160,6 +160,11 @@ fn staged_control_db(dir: &Path) -> PathBuf {
         "--dataset-sensitivity", "INTERNAL", "--minimum-security-tier", "S2",
         "--minimum-isolation-class", "CONTAINED", "--minimum-key-protection", "K1",
         "--gpu-count", "1", "--gpu-min-vram-bytes", "8589934592",
+        // ★ 2026-09-10 — 이 셋을 안 주고 있었다. 그전에는 변환기가
+        //   생략을 `Some(0)` 으로 채워 줘서 통과했다. 독립 검수가
+        //   그 채움을 지적해 이제 거부한다 — 그래서 여기서 선언한다.
+        "--cpu-cores", "4", "--ram-bytes", "8589934592",
+        "--workspace-bytes", "10737418240",
     ]);
     assert!(ok, "submit 실패: {out}");
 

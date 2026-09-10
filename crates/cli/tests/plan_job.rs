@@ -161,7 +161,7 @@ fn submit_manifest(dir: &Path, name: &str, declarations: &[&str]) -> PathBuf {
 }
 
 /// 스케줄 가능한 완전한 선언.
-const FULL: [&str; 16] = [
+const FULL: [&str; 22] = [
     "--workload-class",
     "TRAINING",
     "--side-effect-class",
@@ -178,6 +178,13 @@ const FULL: [&str; 16] = [
     "1",
     "--gpu-min-vram-bytes",
     "8589934592",
+    // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
+    "--cpu-cores",
+    "4",
+    "--ram-bytes",
+    "8589934592",
+    "--workspace-bytes",
+    "10737418240",
 ];
 
 /// `submit` -> `import-manifest` -> `import-inventory` 까지 준비한다.

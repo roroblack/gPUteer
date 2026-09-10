@@ -136,7 +136,7 @@ fn write_keyring(dir: &Path) -> PathBuf {
     keyring
 }
 
-const DECLARATIONS: [&str; 16] = [
+const DECLARATIONS: [&str; 22] = [
     "--workload-class",
     "TRAINING",
     "--side-effect-class",
@@ -153,6 +153,13 @@ const DECLARATIONS: [&str; 16] = [
     "1",
     "--gpu-min-vram-bytes",
     "8589934592",
+    // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
+    "--cpu-cores",
+    "4",
+    "--ram-bytes",
+    "8589934592",
+    "--workspace-bytes",
+    "10737418240",
 ];
 
 /// 한 Job 을 `submit` -> `import-manifest` -> `plan-job` 까지 올린다.
@@ -281,6 +288,89 @@ fn prepared(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
     assert!(ok, "import-inventory 실패: {output}");
     queue_job(dir, &keyring, &db, job_id, "0102030405060708090a0b0c0d0e0f10");
     (keyring, db)
+}
+
+/// 노드가 **둘**인 풀을 만든다.
+///
+/// ★★ 2026-09-10 독립 검수 지적 때문에 생겼다. 노드가 하나면
+///   "이미 예약된 노드" 관문이 늘 먼저 걸려서, **`QUEUED` 에서만
+///   예약한다는 관문이 한 번도 안 돈다.** 그 관문을 재려면 빈 노드가
+///   남아 있어야 한다.
+///
+/// ★ 문자열을 잘라 붙이지 않는다 — 처음에 그렇게 했다가 JSON 이 깨졌다.
+///   `agent_json()` 으로 두 개를 만들어 합친다.
+fn prepared_two_nodes(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
+    let keyring = write_keyring(dir);
+    let db = dir.join("control.sqlite3");
+    let bootstrap = dir.join("bootstrap_two.json");
+    let body = format!(
+        "{{
+  \"schema_version\": 1,
+  \"agents\": [
+{},
+{}
+  ]
+}}",
+        agent_json(NODE, GPU, "device-stage", 13),
+        // ★ 키가 달라야 한다 — inventory 가 신원 충돌을 거부한다(DoD-44).
+        //   처음에 같은 키를 썼다가 BOOTSTRAP_REJECTED 를 받았다.
+        agent_json("node-stage-b", "node-stage-b-gpu-0", "device-stage-b", 14),
+    );
+    std::fs::write(&bootstrap, body).expect("두 노드 문서 쓰기");
+
+    let (ok, output) = run_cli(&[
+        "import-inventory",
+        "--inventory",
+        bootstrap.to_str().unwrap(),
+        "--inventory-db",
+        db.to_str().unwrap(),
+    ]);
+    assert!(ok, "import-inventory 실패(노드 둘): {output}");
+    queue_job(dir, &keyring, &db, job_id, "0102030405060708090a0b0c0d0e0f10");
+    (keyring, db)
+}
+
+/// agent 하나의 JSON. `write_bootstrap` 과 같은 값을 쓴다.
+fn agent_json(node_id: &str, gpu_id: &str, device_id: &str, seed_byte: u8) -> String {
+    let key: String = gputeer_crypto::SigningKey::from_bytes(&[seed_byte; 32])
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let observed = now_unix_ms();
+    format!(
+        r#"    {{
+      "registry": {{
+        "node_id": "{node_id}",
+        "device_id": "{device_id}",
+        "owner_member_id": "{OWNER}",
+        "verifying_key_hex": "{key}",
+        "node_state": "ONLINE",
+        "risk_state": "NORMAL",
+        "security_tier": "S2",
+        "isolation_class": "CONTAINED",
+        "key_protection": "K1"
+      }},
+      "inventory": {{
+        "inventory_revision": 1,
+        "observed_at_unix_ms": {observed},
+        "gpus": [
+          {{
+            "gpu_id": "{gpu_id}",
+            "model": "RTX 4070 SUPER",
+            "healthy": true,
+            "available_vram_bytes": 12884901888
+          }}
+        ],
+        "available_cpu_cores": 16,
+        "available_ram_bytes": 34359738368,
+        "available_workspace_bytes": 107374182400,
+        "allowed_workload_classes": ["TRAINING"],
+        "third_party_workloads_opt_in": true
+      }}
+    }}"#
+    )
 }
 
 const JOB_A: &str = "01JJOBSTAGEA00000000001";
@@ -713,4 +803,73 @@ fn a_malformed_operation_key_is_refused() {
         "aa0102030405060708090a0b0c0d0e0f",
     );
     assert!(ok, "올바른 키인데 거부했다: {output}");
+}
+
+/// ★★ 오늘 CLI 로는 **상태 관문에 도달할 수 없다** — 그 사실을 고정한다.
+///
+/// 2026-09-10 독립 검수가 짚었다: 기존 테스트
+/// (`a_second_stage_of_the_same_job_is_blocked_by_the_node_reservation_not_by_the_state`)
+/// 는 이름 그대로 **노드 점유**로 막히는 것을 잰다. 그래서 "`QUEUED` 에서만
+/// 예약한다" 는 관문이 CLI 테스트에서는 한 번도 안 돈다.
+///
+/// 확인해 보니 그 관문 자체는 **저장소 계층에서 재고 있다** —
+/// `crates/coordinator/src/staging_store.rs` 의 테스트가
+/// `JobNotQueued(Staging)` 과 `JobNotQueued(Submitted)` 를 둘 다 보고,
+/// 동시 경쟁에서 정확히 하나만 성공하는 것까지 확인한다. 공백은
+/// "관문이 없다" 가 아니라 "CLI 경로로 그 관문에 못 닿는다" 다.
+///
+/// **왜 못 닿나** — 순서가 이렇다:
+/// ```text
+/// reserve_node_and_stage_queued_with_lease
+///   1. 노드 점유 검사   -> NodeAlreadyReserved
+///   2. stage_new_in_transaction 안에서 상태 검사 -> JobNotQueued
+/// ```
+/// 그리고 **후보 선택이 예약을 안 본다.** 노드가 둘이어도 늘 같은 노드를
+/// 고르므로, 두 번째 시도는 언제나 1번에서 죽는다.
+///
+/// ★★ **이 테스트는 덫이다.** 후보 선택이 예약을 알게 되면(`B′`,
+///   `docs/plans/_열린_작업.md` §A1 4번) 두 번째 시도가 빈 노드를 골라
+///   2번에 닿게 되고, **이 테스트가 깨진다.** 그때가 CLI 쪽 상태 관문
+///   테스트를 추가할 시점이다. 깨지면 지우지 말고 뒤집어라.
+#[test]
+fn today_a_restage_cannot_reach_the_state_gate_because_selection_ignores_reservations() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared_two_nodes(dir.path(), JOB_A);
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+
+    // 첫 예약 — 노드 하나를 잡는다. 다른 하나는 비어 있다.
+    let (ok, output) = stage(
+        &keyring,
+        &db,
+        JOB_A,
+        ATTEMPT,
+        LEASE,
+        "aa0102030405060708090a0b0c0d0e0f",
+    );
+    assert!(ok, "첫 예약이 실패했다: {output}");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+
+    // 두 번째 — 빈 노드가 **남아 있는데도** 같은 노드를 고른다.
+    let (ok2, output2) = stage(
+        &keyring,
+        &db,
+        JOB_A,
+        "01JATTEMPTSTAGE0000000002",
+        "01JLEASESTAGE00000000002",
+        "bb0102030405060708090a0b0c0d0e0f",
+    );
+    assert!(!ok2, "큐를 떠난 Job 을 다시 예약했다: {output2}");
+
+    // ★ 오늘의 사실 — 막은 것은 **점유**다.
+    assert!(
+        output2.contains("node is already reserved"),
+        "점유가 아닌 이유로 막혔다 — 후보 선택이 예약을 보게 됐다면 이 테스트를 뒤집어라: {output2}"
+    );
+    assert!(
+        !output2.contains("Job is not QUEUED"),
+        "상태 관문에 닿았다 — 후보 선택이 바뀐 것이다. CLI 쪽 상태 관문 테스트를 추가할 때다: {output2}"
+    );
+
+    // 어느 쪽 이유든 상태는 그대로여야 한다.
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
 }
