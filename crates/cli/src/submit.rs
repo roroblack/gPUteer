@@ -106,7 +106,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //
     //   `stage-job` 이 Lease 시각에 대해 하는 것과 같은 검사다 — 같은
     //   성격의 값에 한쪽만 검사가 있으면, 있는 쪽을 보고 없는 쪽도
-    //   막힌다고 믿게 된다.
+    //   막힌다고 오해할 우려가 있다(재검수 33 — 전에는 "믿게 된다" 고 단정했다).
     if issued_at_unix_ms >= expires_at_unix_ms {
         return Err(format!(
             "SUBMIT_REFUSED: 발급({issued_at_unix_ms})이 만료({expires_at_unix_ms}) 보다 뒤이거나 같다 — 만들자마자 만료된 Manifest 는 아무도 못 쓴다"
