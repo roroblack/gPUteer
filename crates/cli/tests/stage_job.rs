@@ -830,22 +830,24 @@ fn a_malformed_operation_key_is_refused() {
 /// 2026-09-10 독립 검수가 짚었다: 기존 테스트
 /// (`a_second_stage_of_the_same_job_is_blocked_by_the_node_reservation_not_by_the_state`)
 /// 는 이름 그대로 **노드 점유**로 막히는 것을 잰다. 그래서 "`QUEUED` 에서만
-/// 예약한다" 는 관문이 CLI 테스트에서는 한 번도 안 돈다.
+/// 예약한다" 는 관문이 **그 테스트에서는** 안 돈다.
 ///
 /// 확인해 보니 그 관문 자체는 **저장소 계층에서 재고 있다** —
 /// `crates/coordinator/src/staging_store.rs` 의 테스트가
 /// `JobNotQueued(Staging)` 과 `JobNotQueued(Submitted)` 를 둘 다 보고,
-/// 동시 경쟁에서 정확히 하나만 성공하는 것까지 확인한다. 공백은
-/// "관문이 없다" 가 아니라 "CLI 경로로 그 관문에 못 닿는다" 다.
+/// 동시 경쟁에서 정확히 하나만 성공하는 것까지 확인한다. 그리고 **CLI 로도
+/// 닿는다** — `SUBMITTED` Job 을 빈 노드에 걸면 된다(아래 새 테스트).
+/// ★ 재검수 14 — 여기 "CLI 경로로 그 관문에 못 닿는다" 가 남아 있었다.
+///   테스트 이름만 좁히고 이 설명을 안 읽었다.
 ///
-/// **왜 못 닿나** — 순서가 이렇다:
+/// **이 fixture 에서 왜 못 닿나** — 순서가 이렇다:
 /// ```text
 /// reserve_node_and_stage_queued_with_lease
 ///   1. 노드 점유 검사   -> NodeAlreadyReserved
 ///   2. stage_new_in_transaction 안에서 상태 검사 -> JobNotQueued
 /// ```
 /// 그리고 **후보 선택이 예약을 안 본다.** 노드가 둘이어도 늘 같은 노드를
-/// 고르므로, 두 번째 시도는 언제나 1번에서 죽는다.
+/// 고르므로, 이 fixture 의 두 번째 시도는 늘 1번에서 죽는다.
 ///
 /// ★★ **이 테스트는 덫이다.** 후보 선택이 예약을 알게 되면(`B′`,
 ///   `docs/plans/_열린_작업.md` §A1 4번) 두 번째 시도가 빈 노드를 골라

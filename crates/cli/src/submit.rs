@@ -278,7 +278,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         flags.get("--overwrite-existing-manifest").map(String::as_str),
         Some("true")
     );
-    crate::out_file::write_new(
+    let warning = crate::out_file::write_new(
         &out_path,
         &manifest.encode_to_vec(),
         overwrite,
@@ -286,13 +286,17 @@ pub fn run(args: &[String]) -> Result<String, String> {
         "Manifest",
     )?;
 
-    Ok(format!(
-        "SUBMITTED job_id={} entrypoint={} args={} env_vars={} out={}",
-        job_id,
-        derived.entrypoint,
-        derived.args.len(),
-        derived.env_vars.len(),
-        out_path
+    // ★ 결함 ⑰ — 경고는 도우미가 출력하지 않는다. 요약에 싣는다.
+    Ok(crate::out_file::with_warning(
+        format!(
+            "SUBMITTED job_id={} entrypoint={} args={} env_vars={} out={}",
+            job_id,
+            derived.entrypoint,
+            derived.args.len(),
+            derived.env_vars.len(),
+            out_path
+        ),
+        warning,
     ))
 }
 

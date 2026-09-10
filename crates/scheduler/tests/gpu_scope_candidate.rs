@@ -436,7 +436,8 @@ fn shared_allocation_is_rejected_even_when_input_claims_shared_support() {
     //     (가) 동일 소유자 경로까지 막는 **잠정 제한**이다 — `scope.rs` 의
     //     `SharedAllocationUnproven` 주석 참조.
     //   ★ (나) 는 실측(2026-09-08~09, **x600 WSL2**)이 거기서 만족시킬 수
-    //     없음을 보였다 — MPS 는 WSL 에서 불가능하고, 유저스페이스 가로채기는
+    //     없음을 보였다 — 그 구성에서 MPS 를 구동하지 못했고(재검수 14 —
+    //     전에는 "불가능" 이라 적었다), 유저스페이스 가로채기는
     //     카운터가 프로세스 로컬이라 노드 단위 예산을 못 지킨다.
     //     네이티브 Linux + MPS 는 재지 않았다(재검수 12 가 일반화를 짚었다).
     let mut input = snapshot(vec![gpu("gpu-a", 10_000)]);

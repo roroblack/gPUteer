@@ -297,7 +297,10 @@ pub struct CoordinatorConfig {
     /// Explicit opt-in Hello-first Resume lane. The default remains the
     /// historical server-first Grant/ACK lane.
     pub resume_protocol: bool,
-    pub session_id: String,
+    // ★ 2026-09-10 — 여기 `session_id: String` 이 있었다. **어디서도 읽지
+    //   않았다**(Resume 대조는 Agent 가 보낸 hello 와 요청 사이에서만 한다).
+    //   결함 ⑯ 확장으로 모르는 플래그를 거부하면서 지웠다 — 받아 두기만 하는
+    //   설정은 쓰이는 것처럼 읽힌다.
 }
 
 /// A failure isolated to one accepted Coordinator session.
@@ -2560,7 +2563,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         job_id: flags.require("--job-id")?,
         fence_epoch: flags.u64_flag("--fence-epoch")?,
         // Manifest 배선 — 안 주면 기존 경로 그대로(manifest 필드 없음).
-        manifest_file: flags.0.get("--manifest-file").map(PathBuf::from),
+        manifest_file: flags.get("--manifest-file").map(PathBuf::from),
         corrupt_manifest_signature: flags.bool_flag("--corrupt-manifest-signature"),
         corrupt_manifest_hash: flags.bool_flag("--corrupt-manifest-hash"),
         corrupt_lease_signature: flags.bool_flag("--corrupt-lease-signature"),
@@ -2575,18 +2578,14 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
             .bool_flag("--drop-after-renew-commit-before-result-once"),
         renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
-        lease_db_path: flags.0.get("--lease-db").map(PathBuf::from),
+        lease_db_path: flags.get("--lease-db").map(PathBuf::from),
         // ★ 저장된 예약에서 발급(2026-09-03). 안 주면 기존 경로 그대로다.
-        grant_from_control_db: flags.0.get("--grant-from-control-db").map(PathBuf::from),
-        stored_grant_job_id: flags.0.get("--stored-grant-job-id").cloned().unwrap_or_default(),
-        stored_grant_attempt_id: flags
-            .0
-            .get("--stored-grant-attempt-id")
+        grant_from_control_db: flags.get("--grant-from-control-db").map(PathBuf::from),
+        stored_grant_job_id: flags.get("--stored-grant-job-id").cloned().unwrap_or_default(),
+        stored_grant_attempt_id: flags.get("--stored-grant-attempt-id")
             .cloned()
             .unwrap_or_default(),
-        stored_grant_lease_id: flags
-            .0
-            .get("--stored-grant-lease-id")
+        stored_grant_lease_id: flags.get("--stored-grant-lease-id")
             .cloned()
             .unwrap_or_default(),
         stored_grant_ttl_ms: flags
@@ -2598,27 +2597,100 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         revoke_after_round: flags.u32_opt_flag("--revoke-after-round")?,
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
-        liveness_db_path: flags.0.get("--liveness-db").cloned(),
+        liveness_db_path: flags.get("--liveness-db").cloned(),
         expect_neighbor_reports: flags
             .u32_flag_with_default("--expect-neighbor-reports", 0)?,
-        neighbor_report_db_path: flags.0.get("--neighbor-report-db").cloned(),
+        neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
-        extra_agents: flags.0.get("--extra-agents").cloned(),
+        extra_agents: flags.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
-        revoke_lease_id_override: flags.0.get("--revoke-lease-id").cloned(),
+        revoke_lease_id_override: flags.get("--revoke-lease-id").cloned(),
         revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
         corrupt_revoke_signature: flags.bool_flag("--corrupt-revoke-signature"),
         lease_ttl_ms: flags.u64_flag_with_default("--lease-ttl-ms", 60_000)?,
         revoke_delay_ms: flags.u64_flag_with_default("--revoke-delay-ms", 0)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
         resume_protocol: flags.bool_flag("--resume-protocol"),
-        session_id: flags
-            .0
-            .get("--session-id")
-            .cloned()
-            .unwrap_or_else(|| "legacy-session".into()),
     };
+
+    // ★★ 결함 ⑯ 확장(2026-09-10 재검수 14) — **받아 두고 말없이 버리지 않는다.**
+    //
+    //   ⑯ 는 저장된 예약 lane 의 `--manifest-file` 하나만 막았다. 재검수가
+    //   같은 유형을 더 찾았다: 그 lane 이 적용하지 않는 테스트용 변조
+    //   플래그(★ `--corrupt-lease-signature` 를 줘도 정상 서명이 나가
+    //   **부정 테스트 자체가 무력화**됐다), 저장값과 충돌하는 식별자,
+    //   순차 lane 이 안 읽는 다중 Agent 설정, 그리고 **모르는 이름**.
+    //
+    //   ★ 여기서 거부하는 것은 **파서가 볼 수 있는 것**뿐이다. 값이
+    //     기본값과 같아도 "줬다" 는 사실은 여기서만 보인다.
+    let unread = flags.unread();
+    if !unread.is_empty() {
+        return Err(format!(
+            "STARTUP_REFUSED: UNKNOWN_FLAGS — 이 명령이 읽지 않는 플래그 {unread:?}. \
+             오타이거나 없는 설정이다 — 받아 두면 말없이 버려진다"
+        ));
+    }
+    if config.grant_from_control_db.is_some() {
+        // 저장된 예약 분기(`grant_from_stored`)가 적용하지 않는 것들.
+        // 저장된 사실이 권위다 — 다른 값을 받아 두고 말하지 않으면 운영자는
+        // 그 값이 쓰였다고 믿는다.
+        const NOT_APPLIED_ON_STORED_LANE: [&str; 9] = [
+            "--manifest-file",
+            "--corrupt-manifest-signature",
+            "--corrupt-manifest-hash",
+            "--corrupt-lease-signature",
+            "--expire-lease",
+            "--lease-ttl-ms",
+            "--fence-epoch",
+            "--max-total-duration-seconds",
+            "--renewed-fence-epoch",
+        ];
+        let given: Vec<&str> = NOT_APPLIED_ON_STORED_LANE
+            .iter()
+            .copied()
+            .filter(|flag| flags.0.contains_key(*flag))
+            .collect();
+        if !given.is_empty() {
+            return Err(format!(
+                "STARTUP_REFUSED: STORED_LANE_IGNORES — 저장된 예약 lane(--grant-from-control-db)은 \
+                 {given:?} 를 적용하지 않는다. 저장된 사실이 권위다 — 받아 두면 말없이 버려진다"
+            ));
+        }
+        for (name, cli, stored) in [
+            ("job", &config.job_id, &config.stored_grant_job_id),
+            ("attempt", &config.attempt_id, &config.stored_grant_attempt_id),
+            ("lease", &config.lease_id, &config.stored_grant_lease_id),
+        ] {
+            if stored.is_empty() {
+                return Err(format!(
+                    "STARTUP_REFUSED: STORED_LANE_ID_MISSING — --stored-grant-{name}-id 가 없다"
+                ));
+            }
+            if cli != stored {
+                return Err(format!(
+                    "STARTUP_REFUSED: STORED_LANE_ID_CONFLICT — --{name}-id {cli} 와 \
+                     --stored-grant-{name}-id {stored} 가 다르다. 저장값이 쓰이므로 다른 값을 받아 두지 않는다"
+                ));
+            }
+        }
+    }
+    if !config.multi_agent {
+        // ★ `--session-id` 는 여기 없다 — Coordinator 가 **어느 lane 에서도**
+        //   읽지 않는 이름이라 설정에서 뺐고, 이제 모르는 플래그로 거부된다.
+        const MULTI_AGENT_ONLY: [&str; 2] = ["--extra-agents", "--require-concurrent-sessions"];
+        let given: Vec<&str> = MULTI_AGENT_ONLY
+            .iter()
+            .copied()
+            .filter(|flag| flags.0.contains_key(*flag))
+            .collect();
+        if !given.is_empty() {
+            return Err(format!(
+                "STARTUP_REFUSED: MULTI_AGENT_ONLY — {given:?} 는 --multi-agent lane 에서만 읽힌다. \
+                 순차 lane 은 받아 두고 버린다"
+            ));
+        }
+    }
     Ok(config)
 }
 
@@ -2704,12 +2776,36 @@ pub fn validate_device_id(device_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-struct Flags(std::collections::HashMap<String, String>);
+/// ★ 두 번째 칸은 **읽은 키**다. 설정을 다 만든 뒤 한 번도 안 읽힌 키는
+///   이 명령이 모르는 이름이다 — 결함 ⑯ 확장(2026-09-10 재검수 14).
+///   전에는 `--manifest-fiel m.pb` 같은 오타가 조용히 사라졌다.
+struct Flags(
+    std::collections::HashMap<String, String>,
+    std::cell::RefCell<std::collections::HashSet<String>>,
+);
 
 impl Flags {
+    /// 값을 읽고 **읽었다고 적는다.**
+    fn get(&self, key: &str) -> Option<&String> {
+        self.1.borrow_mut().insert(key.to_string());
+        self.0.get(key)
+    }
+
+    /// 한 번도 읽히지 않은 키 — 이름순.
+    fn unread(&self) -> Vec<String> {
+        let read = self.1.borrow();
+        let mut keys: Vec<String> = self
+            .0
+            .keys()
+            .filter(|key| !read.contains(*key))
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
     fn require(&self, key: &str) -> Result<String, String> {
-        self.0
-            .get(key)
+        self.get(key)
             .cloned()
             .ok_or_else(|| format!("필수 인자 누락: {key}"))
     }
@@ -2718,14 +2814,14 @@ impl Flags {
     /// 테스트 전용 거부 경로 플래그(단계 5)에만 쓴다 — 다른 모든
     /// 플래그는 여전히 필수 값을 가진다(`require`).
     fn bool_flag(&self, key: &str) -> bool {
-        self.0.get(key).map(|v| v == "true").unwrap_or(false)
+        self.get(key).map(|v| v == "true").unwrap_or(false)
     }
 
     /// 정수 플래그. 안 주면 `0`(fence_epoch 의 첫 발급 기본값 —
     /// `FenceWatermark` 는 0 에서 시작하므로 `0` 은 항상 유효한 첫
     /// epoch 다).
     fn u64_flag(&self, key: &str) -> Result<u64, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(0),
             Some(v) => v
                 .parse::<u64>()
@@ -2734,7 +2830,7 @@ impl Flags {
     }
 
     fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .parse::<u64>()
@@ -2746,7 +2842,7 @@ impl Flags {
     /// 반복 Lease 갱신(2026-08-19) — 안 주면 `default`(왕복 횟수).
     /// 기본값 1은 기존 단일 왕복 시나리오와 동일하게 동작한다.
     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(default),
             Some(v) => v
                 .parse::<u32>()
@@ -2757,7 +2853,7 @@ impl Flags {
     /// `max_total_duration_seconds`(2026-08-19) — 안 주면 `default`
     /// (기존 하드코딩 값 86,400초 = 24시간과 동일, 회귀 없음).
     fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(default),
             Some(v) => v
                 .parse::<u64>()
@@ -2768,7 +2864,7 @@ impl Flags {
     /// ★ 테스트 전용 — `RenewOutcome` 강제 주입(단계 5). 안 주면 `None`
     ///   (정상 판정 사용).
     fn i32_opt_flag(&self, key: &str) -> Result<Option<i32>, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .parse::<i32>()
@@ -2778,7 +2874,7 @@ impl Flags {
     }
 
     fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
-        match self.0.get(key) {
+        match self.get(key) {
             None => Ok(None),
             Some(v) => v
                 .parse::<u32>()
@@ -2802,7 +2898,7 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
         map.insert(key.clone(), value.clone());
         i += 2;
     }
-    Ok(Flags(map))
+    Ok(Flags(map, Default::default()))
 }
 
 fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {

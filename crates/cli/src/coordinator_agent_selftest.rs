@@ -675,8 +675,10 @@ fn run_resume_case(
     let mut coordinator_args = vec![
         "--resume-protocol".to_string(),
         "true".to_string(),
-        "--session-id".to_string(),
-        session_id.to_string(),
+        // ★ 2026-09-10 — 여기 `--session-id` 를 Coordinator 에도 넘겼었다.
+        //   Coordinator 는 그 값을 **어디서도 읽지 않았다**(대조는 Agent 가 보낸
+        //   hello 와 요청 사이에서만 한다). 결함 ⑯ 확장으로 모르는 플래그를
+        //   거부하게 되면서 드러났다 — Agent 쪽 `--session-id` 는 실제로 쓰인다.
         "--max-connections".to_string(),
         "1".to_string(),
         "--accept-timeout-ms".to_string(),
@@ -745,8 +747,7 @@ fn run_resume_storage_failure_case(
     let coordinator_args = [
         "--resume-protocol",
         "true",
-        "--session-id",
-        session_id,
+        // ★ `--session-id` 는 Agent 에만 준다 — 위 같은 자리의 주석 참조.
         "--max-connections",
         "2",
         "--accept-timeout-ms",

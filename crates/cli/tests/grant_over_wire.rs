@@ -539,8 +539,8 @@ fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, Stri
 /// ★ 그래서 1.5 는 "정상 경로 시나리오 하나" 가 아니었다. **Manifest 싣기가
 ///   먼저다**(결함 리포트 ⑯).
 ///
-/// ★★ **Manifest 싣기가 들어오면 이 테스트가 깨진다.** 그때 지우지 말고
-///   뒤집어라 — 정상 경로 테스트가 볼 것:
+/// ★★ **이 fixture 가 Manifest 를 받도록 바뀌면 이 테스트가 깨진다.** 그때
+///   지우지 말고 뒤집어라 — 정상 경로 테스트가 볼 것:
 ///   ```text
 ///   Agent       WORKLOAD_RESULT ok=true · ATTEMPT_REPORT_SENT
 ///   Coordinator ATTEMPT_REPORT_STORED
@@ -548,6 +548,13 @@ fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, Stri
 ///               outcome·fence_epoch·started/finished 가 **보낸 줄의 값과 같다**
 ///   대조군      보고만 끄면 행이 없다
 ///   ```
+///
+/// ★ 재검수 14 — 로그만 보면 판별력이 약하다. Manifest 와 무관한 이유(예: Grant
+///   서명 손상)로도 깨지고, 미래 구현이 "`--manifest-file` 을 줄 때만 싣기" 면
+///   안 깨질 수 있다. 그래서 **저장된 Grant 자체**도 본다 — Coordinator 가 쓰는
+///   것과 같은 함수(`signed_grant_from_stored`)로 만드는 `issue-grant` 를 같은
+///   DB 에 돌려 `manifest` 가 비었는지 직접 확인한다. 깨지면 **이유부터** 보라.
+///   또 Manifest 가 실려도 보고까지 가려면 결함 ⑱⑲⑳ 이 남아 있다.
 ///
 /// ★ **Windows 전용이다** — 실행 관문이 리눅스에서는 cgroup 을 요구한다.
 #[cfg(windows)]
@@ -575,6 +582,35 @@ fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
         gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
             .expect("저장소 열기");
     assert_eq!(store.get_report_binding(ATTEMPT, NODE).expect("조회"), None);
+
+    // ★ 저장된 Grant 자체를 본다 — Coordinator 와 같은 함수다.
+    let key = dir.path().join("coordinator.key");
+    std::fs::write(&key, COORD_SEED).expect("키 파일");
+    let grant_file = dir.path().join("stored-grant.pb");
+    let now = now_unix_ms();
+    let issued = (now + 1_000).to_string();
+    let expires = (now + 60_000).to_string();
+    let (ok, out) = run_cli(&[
+        "issue-grant",
+        "--job-id", JOB,
+        "--control-db", db.to_str().unwrap(),
+        "--attempt-id", ATTEMPT,
+        "--lease-id", LEASE,
+        "--grant-id", GRANT,
+        "--grant-issued-at-unix-ms", &issued,
+        "--grant-expires-at-unix-ms", &expires,
+        "--coordinator-key-file", key.to_str().unwrap(),
+        "--out", grant_file.to_str().unwrap(),
+    ]);
+    assert!(ok, "저장된 예약에서 Grant 를 못 만들었다: {out}");
+    let grant = <gputeer_protocol::pb::ExecutionGrant as prost::Message>::decode(
+        std::fs::read(&grant_file).expect("Grant 읽기").as_slice(),
+    )
+    .expect("Grant 디코드");
+    assert!(
+        grant.manifest.is_none() && grant.manifest_hash.is_none(),
+        "저장된 Grant 에 Manifest 가 실렸다 — Manifest 싣기가 들어온 것이다. 이 테스트를 뒤집어라"
+    );
 }
 
 /// ★ 결함 ⑯ — 저장된 예약 lane 에 `--manifest-file` 을 주면 **시작 전에** 거부한다.

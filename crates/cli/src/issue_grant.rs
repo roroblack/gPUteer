@@ -138,7 +138,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     );
 
     // ★ 공유 도우미를 쓴다 — `crate::out_file` 주석에 왜인지 적어 뒀다.
-    crate::out_file::write_new(
+    let warning = crate::out_file::write_new(
         out_path,
         &grant.encode_to_vec(),
         overwrite,
@@ -146,7 +146,8 @@ pub fn run(args: &[String]) -> Result<String, String> {
         "Grant",
     )?;
 
-    Ok(summary)
+    // ★ 결함 ⑰ — 경고는 도우미가 출력하지 않는다. 요약에 싣는다.
+    Ok(crate::out_file::with_warning(summary, warning))
 }
 
 /// 서명키를 **파일에서만** 읽는다. 명령줄에 남기지 않는 것이 목적이다.
