@@ -165,11 +165,41 @@ pub fn run(args: &[String]) -> Result<String, String> {
         ("K2", pb::KeyProtection::K2 as i32),
     ])?;
 
-    // 자원 요구. `--gpu-count` 를 준 경우에만 `ResourceRequest` 를 만든다
-    // — 안 주면 메시지 자체가 없고 변환기가 그렇게 보고한다.
-    let resources = match flags.get("--gpu-count") {
-        None => None,
-        Some(_) => Some(pb::ResourceRequest {
+    // 자원 요구.
+    //
+    // ★★ 2026-09-10 독립 재검수 지적 — 여기가 **선언한 값을 버렸다.**
+    //   전에는 `--gpu-count` 하나가 자원 전체의 스위치였다. 그래서
+    //   `--gpu-count` 만 빼고 `--cpu-cores 4 --ram-bytes ...` 를 주면
+    //   **그 셋을 말없이 버리고** `resources: None` 을 만들었다.
+    //   숫자 파싱조차 안 했으므로 `--cpu-cores abc` 도 조용히 지나갔다.
+    //
+    //   이제 **자원 플래그가 하나라도 있으면** 자원을 선언한 것으로 보고,
+    //   변환기가 요구하는 셋(cpu·ram·workspace)이 다 있는지 여기서 본다.
+    //   ★ 여기서 막는 이유 — 뒤에서 막으면 **서명은 이미 한 뒤**다.
+    const RESOURCE_FLAGS: [&str; 6] = [
+        "--gpu-count",
+        "--gpu-min-vram-bytes",
+        "--allowed-gpu-models",
+        "--cpu-cores",
+        "--ram-bytes",
+        "--workspace-bytes",
+    ];
+    let declared_any_resource = RESOURCE_FLAGS.iter().any(|f| flags.contains_key(*f));
+    if declared_any_resource {
+        let missing: Vec<&str> = ["--cpu-cores", "--ram-bytes", "--workspace-bytes"]
+            .into_iter()
+            .filter(|f| !flags.contains_key(*f))
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "SUBMIT_REFUSED: RESOURCE_PARTIAL — 자원을 선언하면서 {missing:?} 를 빠뜨렸다. 빠진 값을 0 으로 채우지 않는다 — 그러면 자원이 없는 노드에도 맞는다"
+            ));
+        }
+    }
+    let resources = if !declared_any_resource {
+        None
+    } else {
+        Some(pb::ResourceRequest {
             gpu: Some(pb::GpuRequest {
                 min_count: u32_flag(&flags, "--gpu-count")?.unwrap_or(0),
                 min_vram_bytes: u64_flag(&flags, "--gpu-min-vram-bytes")?.unwrap_or(0),
@@ -185,7 +215,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             ram_bytes: u64_flag(&flags, "--ram-bytes")?.unwrap_or(0),
             workspace_bytes: u64_flag(&flags, "--workspace-bytes")?.unwrap_or(0),
             ..Default::default()
-        }),
+        })
     };
 
     let mut manifest = pb::JobManifest {
@@ -365,13 +395,33 @@ fn require_u64(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, Strin
 }
 
 fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
-    if hex.len() != 64 {
-        return Err(format!("seed 는 64자리 hex 여야 한다(길이 {})", hex.len()));
+    // ★★ 2026-09-10 독립 재검수 지적 — 여기가 **패닉했다.**
+    //   `hex.len()` 은 **바이트** 길이인데 아래 슬라이스도 바이트로
+    //   자른다. 한글 한 글자(3바이트) + '1' 61개 = 정확히 64바이트라
+    //   길이 검사를 통과하고, 첫 `hex[0..2]` 가 문자 경계를 갈라
+    //   패닉했다. 오버플로 패닉과는 **다른 경로**다.
+    //
+    //   그래서 먼저 **ASCII hex 인지**를 본다. 그러면 바이트와 문자가
+    //   1:1 이 되어 아래 슬라이스가 안전해진다.
+    let bytes = hex.as_bytes();
+    if bytes.len() != 64 {
+        return Err(format!(
+            "SUBMIT_REFUSED: SEED_LENGTH — seed 는 64자리 hex 여야 한다(받은 바이트 {})",
+            bytes.len()
+        ));
+    }
+    if let Some(bad) = bytes.iter().find(|b| !b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "SUBMIT_REFUSED: SEED_NOT_HEX — seed 에 hex 가 아닌 바이트(0x{bad:02x})가 있다"
+        ));
     }
     let mut seed = [0u8; 32];
     for (index, slot) in seed.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
-            .map_err(|e| format!("seed hex 파싱 실패: {e}"))?;
+        // 위에서 전부 ASCII 임을 확인했으므로 바이트 슬라이스가 안전하다.
+        let pair = std::str::from_utf8(&bytes[index * 2..index * 2 + 2])
+            .map_err(|e| format!("SUBMIT_REFUSED: SEED_NOT_HEX — {e}"))?;
+        *slot = u8::from_str_radix(pair, 16)
+            .map_err(|e| format!("SUBMIT_REFUSED: SEED_NOT_HEX — {e}"))?;
     }
     Ok(seed)
 }

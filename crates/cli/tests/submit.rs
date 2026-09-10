@@ -464,3 +464,165 @@ fn an_issued_time_too_large_for_the_default_expiry_is_refused_not_a_panic() {
     assert!(!ok2, "발급이 만료보다 뒤인데 받아들였다: {output2}");
     assert!(!output2.contains("panicked"), "여기서도 패닉이 났다: {output2}");
 }
+
+/// 64**바이트**지만 hex 가 아닌 seed 는 **패닉이 아니라 거부**한다.
+///
+/// ★★ 2026-09-10 독립 재검수가 찾았다. `hex.len()` 은 바이트 길이인데
+///   슬라이스도 바이트로 잘랐다. 한글 한 글자(3바이트) + '1' 61개 =
+///   정확히 64바이트라 길이 검사를 통과하고, 첫 `hex[0..2]` 가
+///   **문자 경계를 갈라 패닉**했다.
+///   ★ 만료 오버플로 패닉과 **다른 경로**다 — 그건 산술, 이건 문자열이다.
+#[test]
+fn a_sixty_four_byte_but_non_hex_seed_is_refused_not_a_panic() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+
+    // "가"(3바이트) + '1' 61개 = 64바이트. 문자 수는 62 다.
+    let multibyte = format!("가{}", "1".repeat(61));
+    assert_eq!(multibyte.len(), 64, "이 테스트의 전제가 깨졌다");
+
+    for bad_seed in [
+        multibyte.as_str(),
+        // ASCII 지만 hex 가 아닌 것도 같이 본다.
+        "zz0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    ] {
+        let out = dir.path().join("seed.pb");
+        let _ = std::fs::remove_file(&out);
+        let issued = now_unix_ms().saturating_sub(60_000).to_string();
+        let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+        let mut args: Vec<String> = vec![
+            "submit".into(), "--job-id".into(), JOB.into(),
+            "--entrypoint".into(), "python".into(),
+            "--submitter-device-id".into(), SUBMITTER.into(),
+            "--submitter-seed".into(), bad_seed.into(),
+            "--issued-at-unix-ms".into(), issued,
+            "--expires-at-unix-ms".into(), expires,
+            "--out".into(), out.to_str().unwrap().into(),
+        ];
+        for (name, value) in GOOD {
+            args.push(name.into());
+            args.push(value.into());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (ok, output) = run_cli(&borrowed);
+
+        assert!(!ok, "hex 가 아닌 seed 를 받아들였다: {output}");
+        assert!(
+            !output.contains("panicked"),
+            "패닉으로 죽었다 — 오류 보고가 아니다: {output}"
+        );
+        assert!(
+            output.contains("SUBMIT_REFUSED: SEED_"),
+            "거부는 했는데 이유가 seed 가 아니다: {output}"
+        );
+        assert!(!out.exists(), "거부했는데 파일을 남겼다");
+    }
+}
+
+/// 자원을 **일부만** 선언하면 거부한다 — 선언한 값을 버리지 않는다.
+///
+/// ★★ 2026-09-10 독립 재검수가 찾았다. `--gpu-count` 하나가 자원 전체의
+///   스위치여서, 그것만 빼고 `--cpu-cores 4 --ram-bytes ...` 를 주면
+///   **선언한 셋을 말없이 버리고** `resources: None` 을 만들었다.
+///   숫자 파싱조차 안 했다.
+#[test]
+fn declaring_only_some_resources_is_refused_rather_than_silently_dropped() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let issued = now_unix_ms().saturating_sub(60_000).to_string();
+    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+
+    let run = |out: &std::path::Path, resource_flags: &[(&str, &str)]| {
+        let mut args: Vec<String> = vec![
+            "submit".into(), "--job-id".into(), JOB.into(),
+            "--entrypoint".into(), "python".into(),
+            "--submitter-device-id".into(), SUBMITTER.into(),
+            "--submitter-seed".into(), SEED.into(),
+            "--issued-at-unix-ms".into(), issued.clone(),
+            "--expires-at-unix-ms".into(), expires.clone(),
+            "--out".into(), out.to_str().unwrap().into(),
+        ];
+        // 여섯 enum 축만 GOOD 에서 가져온다(자원은 인자로 받는다).
+        for (name, value) in GOOD {
+            if name.starts_with("--gpu") || name.starts_with("--cpu")
+                || name.starts_with("--ram") || name.starts_with("--workspace") {
+                continue;
+            }
+            args.push(name.into());
+            args.push(value.into());
+        }
+        for (name, value) in resource_flags {
+            args.push((*name).into());
+            args.push((*value).into());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_cli(&borrowed)
+    };
+
+    // ★ 검수가 든 반례 그대로 — gpu-count 만 빼고 셋을 준다.
+    let partial = dir.path().join("partial.pb");
+    let (ok, output) = run(&partial, &[
+        ("--cpu-cores", "4"),
+        ("--ram-bytes", "8589934592"),
+        ("--workspace-bytes", "10737418240"),
+    ]);
+    assert!(ok, "cpu·ram·workspace 를 다 줬는데 거부했다: {output}");
+    let m = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(
+        std::fs::read(&partial).expect("읽기").as_slice(),
+    ).expect("디코드");
+    let r = m.resources.as_ref().expect("★ 선언한 자원이 버려졌다");
+    assert_eq!(r.cpu_cores, 4, "선언한 cpu_cores 가 버려졌다");
+    assert_eq!(r.ram_bytes, 8_589_934_592, "선언한 ram_bytes 가 버려졌다");
+
+    // ★ 반대로 일부만 주면 **거부**해야 한다 — 0 으로 채우지 않는다.
+    let missing = dir.path().join("missing.pb");
+    let (ok2, output2) = run(&missing, &[("--gpu-count", "1")]);
+    assert!(!ok2, "자원을 일부만 선언했는데 받아들였다: {output2}");
+    assert!(
+        output2.contains("SUBMIT_REFUSED: RESOURCE_PARTIAL"),
+        "거부는 했는데 이유가 부분 선언이 아니다: {output2}"
+    );
+    assert!(!missing.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// 서명이 **선언한 seed 의 공개키로** 검증된다.
+///
+/// ★★ 2026-09-10 독립 재검수 지적. 값 대조 테스트가 필드는 봤지만
+///   **누가 서명했는지**는 안 봤다. 올바른 필드를 다른 키로 서명하는
+///   회귀를 못 잡는다 — `submit` 의 자기 검증도 `AlwaysValid` 라
+///   보완하지 못한다.
+#[test]
+fn the_signature_verifies_with_the_declared_seeds_public_key() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let out = dir.path().join("signed.pb");
+    let (ok, output) = submit(&out, None);
+    assert!(ok, "정상 경로가 실패했다: {output}");
+
+    let bytes = std::fs::read(&out).expect("Manifest 읽기");
+    let manifest =
+        <gputeer_protocol::pb::JobManifest as prost::Message>::decode(bytes.as_slice())
+            .expect("디코드");
+
+    // 선언한 seed 에서 공개키를 도출해 그 키만 담은 keyring 으로 검증한다.
+    let mut seed = [0u8; 32];
+    for (i, byte) in seed.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&SEED[i * 2..i * 2 + 2], 16).expect("seed hex");
+    }
+    let mut ring = gputeer_crypto::InMemoryKeyring::new();
+    ring.insert(
+        SUBMITTER.to_string(),
+        gputeer_crypto::SigningKey::from_bytes(&seed).verifying_key(),
+    );
+    let verifier = gputeer_crypto::Ed25519Verifier::new(&ring);
+
+    let verified = gputeer_protocol::verify(
+        &manifest,
+        1,
+        &verifier,
+        manifest.issued_at_unix_ms,
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    );
+    assert!(
+        verified.is_ok(),
+        "선언한 seed 의 공개키로 서명이 검증되지 않는다: {:?}",
+        verified.err()
+    );
+}
