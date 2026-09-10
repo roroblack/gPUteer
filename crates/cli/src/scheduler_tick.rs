@@ -1,3 +1,22 @@
+//! ★★ 2026-09-10 독립 검수 지적 — 거부 사유에 **안정적인 코드**를 붙였다.
+//!
+//! 그전에는 인자 검사 오류가 사용자 입력을 그대로 메시지에 넣었다:
+//!
+//! ```text
+//! --best-fit-axes 에 모르는 축 "already reserved" — vram, gpu_count, ...
+//! ```
+//!
+//! 그래서 `--best-fit-axes "already reserved,..."` 를 주면 **축 파서에서
+//! 죽으면서도** 테스트의 `output.contains("already reserved")` 를 통과했다.
+//! 즉 테스트가 **엉뚱한 관문을 재고 있어도 초록이었다.**
+//!
+//! 이제 두 무리를 코드로 가른다:
+//! ```text
+//! TICK_ARGS_REFUSED: <CODE>   인자·설정 검사 (DB 를 열기 전)
+//! TICK_REFUSED: <CODE>        실행 중 관문
+//! ```
+//! 테스트는 `.contains()` 가 아니라 **오류 줄의 시작**으로 확인한다
+//! (`tests/scheduler_tick.rs` 의 `refused_with()`).
 //! `gputeer scheduler-tick` — 큐에서 **한 건**을 꺼내 예약까지 진행한다.
 //!
 //! ```text
@@ -100,7 +119,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let max_total_duration_seconds = u64_flag(&flags, "--lease-max-total-duration-seconds")?;
     if lease_renew_after_ms == 0 || lease_renew_after_ms >= lease_ttl_ms {
         return Err(format!(
-            "--lease-renew-after-ms({lease_renew_after_ms}) 는 0 보다 크고 --lease-ttl-ms({lease_ttl_ms}) 보다 작아야 한다 — 갱신 시점이 만료 뒤면 갱신할 기회가 없다"
+            "TICK_ARGS_REFUSED: RENEW_AFTER_NOT_BEFORE_TTL — --lease-renew-after-ms({lease_renew_after_ms}) 는 0 보다 크고 --lease-ttl-ms({lease_ttl_ms}) 보다 작아야 한다. 갱신 시점이 만료 뒤면 갱신할 기회가 없다"
         ));
     }
 
@@ -111,7 +130,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         .map_err(|e| format!("job store 를 열지 못했다({control_db}): {e}"))?;
     if !jobs.is_durable() {
         return Err(format!(
-            "--control-db 가 영속이 아니다({control_db:?}) — 예약이 프로세스와 함께 사라진다"
+            "TICK_ARGS_REFUSED: CONTROL_DB_NOT_DURABLE — --control-db 가 영속이 아니다({control_db:?}). 예약이 프로세스와 함께 사라진다"
         ));
     }
 
@@ -143,7 +162,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let expires_at = queued_at.saturating_add(lease_ttl_ms);
     if expires_at <= now_unix_ms {
         return Err(format!(
-            "TICK_REFUSED: {job_id} 는 큐에 너무 오래 있었다(큐 진입 {queued_at}, 이 설정의 Lease 만료 {expires_at}, 지금 {now_unix_ms}) — 지금 예약하면 이미 만료된 Lease 를 준다"
+            "TICK_REFUSED: QUEUE_TOO_OLD — {job_id} 는 큐에 너무 오래 있었다(큐 진입 {queued_at}, 이 설정의 Lease 만료 {expires_at}, 지금 {now_unix_ms}). 지금 예약하면 이미 만료된 Lease 를 준다"
         ));
     }
 
@@ -299,7 +318,7 @@ fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
     let names: Vec<&str> = raw.split(',').map(str::trim).collect();
     if names.len() != 5 {
         return Err(format!(
-            "--best-fit-axes 는 다섯 축을 전부 나열해야 한다(받은 개수 {}) — vram,gpu_count,cpu,ram,workspace",
+            "TICK_ARGS_REFUSED: AXES_COUNT — --best-fit-axes 는 다섯 축을 전부 나열해야 한다(받은 개수 {}). vram,gpu_count,cpu,ram,workspace",
             names.len()
         ));
     }
@@ -313,12 +332,12 @@ fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
             "workspace" => FitAxis::Workspace,
             other => {
                 return Err(format!(
-                    "--best-fit-axes 에 모르는 축 {other:?} — vram, gpu_count, cpu, ram, workspace"
+                    "TICK_ARGS_REFUSED: AXES_UNKNOWN — --best-fit-axes 에 모르는 축 {other:?}. vram, gpu_count, cpu, ram, workspace"
                 ))
             }
         };
         if axes.contains(&axis) {
-            return Err(format!("--best-fit-axes 에 {name:?} 가 두 번 나온다"));
+            return Err(format!("TICK_ARGS_REFUSED: AXES_DUPLICATE — --best-fit-axes 에 {name:?} 가 두 번 나온다"));
         }
         axes.push(axis);
     }
@@ -346,7 +365,7 @@ fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
     while i < args.len() {
         let key = &args[i];
         if !key.starts_with("--") {
-            return Err(format!("알 수 없는 인자: {key}"));
+            return Err(format!("TICK_ARGS_REFUSED: UNKNOWN_FLAG — 알 수 없는 인자: {key}"));
         }
         let value = args
             .get(i + 1)

@@ -43,6 +43,21 @@ fn run_cli(args: &[&str]) -> (bool, String) {
     )
 }
 
+/// 거부 사유를 **오류 줄의 시작**으로 확인한다.
+///
+/// ★★ `output.contains("사유")` 로 보면 안 된다. 2026-09-10 독립 검수가
+///   찾아낸 함정이다 — 인자 검사 오류가 사용자 입력을 메시지에 그대로
+///   넣으므로, `--best-fit-axes "already reserved,..."` 처럼 주면
+///   **축 파서에서 죽으면서도** `contains("already reserved")` 를 통과한다.
+///   그러면 테스트는 초록인데 재려던 관문은 한 번도 안 돈다.
+///
+/// 그래서 코드를 줄 **머리**에서 본다. 사용자 입력은 코드 뒤에만 들어가므로
+/// 앞 관문의 오류가 뒤 관문의 코드를 흉내낼 수 없다.
+fn refused_with(output: &str, code: &str) -> bool {
+    let want = format!("scheduler-tick 실패: {code}");
+    output.lines().any(|line| line.starts_with(&want))
+}
+
 fn now_unix_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -133,7 +148,7 @@ fn write_bootstrap(dir: &Path, nodes: usize) -> PathBuf {
     path
 }
 
-const DECLARATIONS: [&str; 16] = [
+const DECLARATIONS: [&str; 22] = [
     "--workload-class", "TRAINING",
     "--side-effect-class", "PURE",
     "--dataset-sensitivity", "INTERNAL",
@@ -142,6 +157,9 @@ const DECLARATIONS: [&str; 16] = [
     "--minimum-key-protection", "K1",
     "--gpu-count", "1",
     "--gpu-min-vram-bytes", "8589934592",
+    // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
+    "--cpu-cores", "4", "--ram-bytes", "8589934592",
+    "--workspace-bytes", "10737418240",
 ];
 
 /// 한 Job 을 `submit` -> `import-manifest` -> `plan-job` 까지 올린다.
@@ -354,7 +372,7 @@ fn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {
         "예약이 후보 선택에 반영되기 시작했다 — 이 테스트와 위 문서를 같이 고쳐라: {second}"
     );
     assert!(
-        second.contains("already reserved"),
+        refused_with(&second, "TICK_REFUSED:") && second.contains("already reserved"),
         "막힌 이유가 예약이 아니다: {second}"
     );
 
@@ -393,7 +411,7 @@ fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
     );
     assert!(!ok, "만료될 Lease 로 예약했다: {output}");
     assert!(
-        output.contains("너무 오래 있었다"),
+        refused_with(&output, "TICK_REFUSED: QUEUE_TOO_OLD"),
         "큐 나이가 아니라 다른 관문에 걸렸다: {output}"
     );
     assert_eq!(
@@ -485,7 +503,10 @@ fn a_renew_offset_at_or_after_the_ttl_is_refused() {
     for renew in ["600000", "700000", "0"] {
         let (ok, output) = tick(&keyring, &db, &["--lease-renew-after-ms", renew]);
         assert!(!ok, "--lease-renew-after-ms {renew} 를 받아들였다: {output}");
-        assert!(output.contains("작아야 한다"), "이유를 안 말한다: {output}");
+        assert!(
+            refused_with(&output, "TICK_ARGS_REFUSED: RENEW_AFTER_NOT_BEFORE_TTL"),
+            "이유를 안 말한다: {output}"
+        );
         assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
     }
 }
@@ -512,9 +533,83 @@ fn a_non_durable_control_db_is_refused() {
         ]);
         assert!(!ok, "{label:?} 를 받아들였다: {output}");
         assert!(
-            output.contains("영속이 아니다"),
+            refused_with(&output, "TICK_ARGS_REFUSED: CONTROL_DB_NOT_DURABLE"),
             "{label:?}: 이유를 안 말한다: {output}"
         );
     }
 }
 
+/// 앞 관문의 오류가 뒤 관문의 사유를 흉내내지 못한다.
+///
+/// ★★ 2026-09-10 독립 검수가 찾은 함정의 회귀 테스트다.
+///
+/// 인자 검사 오류는 사용자 입력을 메시지에 넣는다. 그래서 뒤 관문의 사유
+/// 문구를 입력에 심으면, **인자 검사에서 죽으면서도** 그 문구가 출력에
+/// 나타난다. 사유를 `output.contains()` 로 보던 시절에는 그것만으로 테스트가
+/// 통과했다 — 재려던 관문은 한 번도 안 돌았는데.
+///
+/// ★ 이 테스트를 만들면서 두 번 고쳤다. 그 과정이 교훈이다:
+///   1차: 사유 문구만 심었다. **뮤테이션이 안 잡혔다** — 단언이 코드를
+///        보는데 사유 문구를 심었으니, 헬퍼가 `contains` 든 `starts_with`
+///        든 결과가 같았다. "줄 시작으로 본다" 를 아무것도 증명 못 했다.
+///   2차: 코드를 축 이름에 심었다. **전제가 깨졌다** — 축 파서가 입력을
+///        소문자로 바꿔서 `TICK_REFUSED:` 가 `tick_refused:` 가 됐다.
+///        (뜻밖의 방어다. 축 경로로는 코드를 못 심는다.)
+///   3차: **입력을 그대로 출력하는 자리**를 찾았다 — 알 수 없는 인자
+///        오류다. 거기로 심는다.
+#[test]
+fn an_argument_error_cannot_impersonate_a_later_gate() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    // ── 갈래 1 — 사유 문구를 축 이름에 심는다 ────────────────
+    //    검수가 지적한 바로 그 입력이다.
+    for planted in ["already reserved", "너무 오래 있었다", "작아야 한다", "영속이 아니다"] {
+        let axes = format!("{planted},gpu_count,cpu,ram,workspace");
+        let (ok, output) = tick(&keyring, &db, &["--best-fit-axes", &axes]);
+
+        assert!(!ok, "잘못된 축을 받아들였다: {output}");
+        assert!(
+            output.contains(planted),
+            "심은 문구가 출력에 없다 — 이 테스트의 전제가 깨졌다: {output}"
+        );
+        assert!(
+            refused_with(&output, "TICK_ARGS_REFUSED: AXES_UNKNOWN"),
+            "축 파서에서 죽지 않았다: {output}"
+        );
+        // ★ 문구는 있어도 뒤 관문의 코드로는 인정되지 않는다.
+        assert!(
+            !refused_with(&output, "TICK_REFUSED:"),
+            "축 오류가 실행 중 관문을 흉내냈다: {output}"
+        );
+        assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+    }
+
+    // ── 갈래 2 — 코드 자체를 심는다 ──────────────────────────
+    //    ★ 이 갈래만이 `refused_with()` 가 **줄 시작**으로 본다는 것을
+    //      증명한다. 알 수 없는 인자 오류는 입력을 소문자화하지 않고
+    //      그대로 넣으므로, 대문자 코드가 출력에 그대로 나타난다.
+    for planted in [
+        "TICK_REFUSED:",
+        "TICK_REFUSED: QUEUE_TOO_OLD",
+        "TICK_ARGS_REFUSED: CONTROL_DB_NOT_DURABLE",
+    ] {
+        let (ok, output) = tick(&keyring, &db, &[planted]);
+
+        assert!(!ok, "알 수 없는 인자를 받아들였다: {output}");
+        assert!(
+            output.contains(planted),
+            "심은 코드가 출력에 그대로 안 나온다 — 이 갈래의 전제가 깨졌다: {output}"
+        );
+        assert!(
+            refused_with(&output, "TICK_ARGS_REFUSED: UNKNOWN_FLAG"),
+            "인자 검사에서 죽지 않았다: {output}"
+        );
+        // ★★ 핵심 단언. `contains` 로 보면 여기서 속는다.
+        assert!(
+            !refused_with(&output, planted),
+            "심은 코드가 진짜 거부 코드로 인정됐다 — 사유 확인이 줄 시작을 안 본다: {output}"
+        );
+        assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+    }
+}
