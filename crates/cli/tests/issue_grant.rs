@@ -139,10 +139,10 @@ fn staged_until(dir: &Path, manifest_expires: u64) -> (PathBuf, PathBuf) {
     // submit
     let manifest = dir.join("manifest.pb");
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
-    // ★ Grant 시각이 고정 상수(2027년 무렵)라, Manifest 가 그보다 먼저 만료되면
-    //   발급이 거부된다(Grant 만료 <= Manifest 만료 · 발급 시각 기준 재검증 —
-    //   §A1 1.5 선행). JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로
-    //   만료를 Lease 만료 뒤로 둔다.
+    // ★ Grant 시각이 고정 상수(2027년 무렵)라, Manifest 가 그 시각 전에 만료되면
+    //   **발급 시각 기준 재검증**에서 거부된다(§A1 1.5 선행). 새 수명 비교(Grant 만료 <=
+    //   Manifest 만료)까지는 가지 않는다 — 그 비교는 경계 테스트가 따로 잰다(구현 검수 37).
+    //   JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로 만료를 Lease 만료 뒤로 둔다.
     let expires = manifest_expires.to_string();
     let (ok, out) = run_cli(&[
         "submit",
@@ -324,10 +324,10 @@ fn issue_full(
 fn queue_only(dir: &Path, db: &Path, job_id: &str, idem: &str) {
     let manifest = dir.join(format!("{job_id}.pb"));
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
-    // ★ Grant 시각이 고정 상수(2027년 무렵)라, Manifest 가 그보다 먼저 만료되면
-    //   발급이 거부된다(Grant 만료 <= Manifest 만료 · 발급 시각 기준 재검증 —
-    //   §A1 1.5 선행). JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로
-    //   만료를 Lease 만료 뒤로 둔다.
+    // ★ Grant 시각이 고정 상수(2027년 무렵)라, Manifest 가 그 시각 전에 만료되면
+    //   **발급 시각 기준 재검증**에서 거부된다(§A1 1.5 선행). 새 수명 비교(Grant 만료 <=
+    //   Manifest 만료)까지는 가지 않는다 — 그 비교는 경계 테스트가 따로 잰다(구현 검수 37).
+    //   JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로 만료를 Lease 만료 뒤로 둔다.
     let expires = (LEASE_EXPIRES + 3_600_000).to_string();
     let (ok, out) = run_cli(&[
         "submit", "--job-id", job_id, "--entrypoint", "python",

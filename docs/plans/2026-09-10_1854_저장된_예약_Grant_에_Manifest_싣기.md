@@ -151,5 +151,7 @@ coordinator-stub      저장된 예약 lane 에서 --submitter-keyring 필수(ST
 ```
 
 ★ `tests/issue_grant.rs` 의 Grant 시각은 고정 상수(2027년 무렵)라, 준비 코드의 Manifest 가
-  "지금 + 7일" 에 만료되면 새 수명 규칙에 걸린다. JobManifest 는 LongLived("지금 < 만료" 만
-  본다)라 만료를 Lease 만료 뒤로 옮겼다 — 새 규칙이 실제로 작동한 결과다.
+  "지금 + 7일" 에 만료되면 **발급 시각 기준 재검증**에서 거부된다 — 새 수명 비교(Grant 만료 <=
+  Manifest 만료)까지는 가지 않는다. 그 비교는 경계 테스트가 따로 잰다. JobManifest 는
+  LongLived("지금 < 만료" 만 본다)라 만료를 Lease 만료 뒤로 옮겼다(구현 검수 37 — 전에는
+  "새 규칙이 실제로 작동한 결과" 라 적어 두 관문을 섞었다).

@@ -583,8 +583,9 @@ fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, Stri
 ///
 /// ★★ 2026-09-10 — **뒤집었다**(§A1 1.5 선행). 위 문단은 뒤집기 전의 기록이다 — 저장된
 ///   Grant 가 이제 제출자 서명 Manifest 를 싣는다(발급 시각 기준 재검증 뒤). 아래가 그
-///   문단이 적어 둔 정상 경로다. ★ 워크로드가 짧아(`cmd /c exit 0`) 결함 ⑱(ACK 전 실행 ·
-///   10초 시한)을 밟지 않는다 — 이 테스트의 통과가 ⑱ 이 풀렸다는 뜻은 아니다.
+///   문단이 적어 둔 정상 경로다. ★ 지금까지의 실행에서는 결함 ⑱(ACK 전 실행 · 10초
+///   시한)에 따른 실패가 관측되지 않았다. 짧은 워크로드(`cmd /c exit 0`)의 통과는 ⑱
+///   해결을 입증하지 않는다(구현 검수 37 — 전에는 "짧아서 밟지 않는다" 고 원인을 확정했다).
 #[cfg(windows)]
 #[test]
 fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
