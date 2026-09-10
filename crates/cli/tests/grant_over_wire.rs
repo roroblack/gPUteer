@@ -267,6 +267,20 @@ fn drain(child: &mut Child) -> (thread::JoinHandle<String>, thread::JoinHandle<S
 /// Coordinator 를 띄우고 `READY <addr>` 를 기다린다.
 fn spawn_coordinator(db: &Path, fence_dir: &Path, extra: &[&str]) -> (Spawned, String) {
     let lease_db = fence_dir.join("coordinator-lease.sqlite3");
+    // ★ 저장된 예약 lane 은 제출자 keyring 을 요구한다(§A1 1.5 선행). 준비 코드가
+    //   만든 것이 있으면 그것을, 없으면(빈 DB 대조군) 빈 keyring 을 쓴다 — 거부
+    //   사유가 keyring 이 아니라 **예약 부재**로 남아야 대조군이 뜻을 가진다.
+    let keyring = fence_dir.join("submitters.keyring");
+    if !keyring.exists() {
+        gputeer_crypto::PersistentKeyring::new(
+            &keyring,
+            gputeer_crypto::KeyProtection::K0Plaintext,
+            gputeer_crypto::PlaintextPolicy::Allow,
+        )
+        .expect("빈 keyring 생성")
+        .save()
+        .expect("빈 keyring 저장");
+    }
     let mut child = Command::new(cli_bin())
         .args([
             "coordinator-stub",
@@ -299,6 +313,10 @@ fn spawn_coordinator(db: &Path, fence_dir: &Path, extra: &[&str]) -> (Spawned, S
             ATTEMPT,
             "--stored-grant-lease-id",
             LEASE,
+            "--submitter-keyring",
+            keyring.to_str().unwrap(),
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
         ])
         .args(extra)
         .stdout(Stdio::piped())
@@ -371,6 +389,7 @@ fn an_agent_process_accepts_a_grant_built_from_the_stored_reservation() {
     let (coordinator, addr) = spawn_coordinator(&db, dir.path(), &[]);
 
     let fence_db = dir.path().join("agent-fence.sqlite3");
+    let submitter_pub = pub_hex(SEED);
     let mut agent = Command::new(cli_bin())
         .args([
             "agent-stub",
@@ -386,6 +405,10 @@ fn an_agent_process_accepts_a_grant_built_from_the_stored_reservation() {
             AGENT_DEVICE,
             "--fence-db",
             fence_db.to_str().unwrap(),
+            // ★ 저장된 Grant 가 이제 제출자 서명 Manifest 를 싣는다(§A1 1.5 선행).
+            //   Agent 는 검증할 키가 없으면 그 Manifest 를 거부한다.
+            "--submitter-pubkey",
+            &submitter_pub,
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -557,9 +580,14 @@ fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, Stri
 ///   또 Manifest 가 실려도 보고까지 가려면 결함 ⑱⑲⑳ 이 남아 있다.
 ///
 /// ★ **Windows 전용이다** — 실행 관문이 리눅스에서는 cgroup 을 요구한다.
+///
+/// ★★ 2026-09-10 — **뒤집었다**(§A1 1.5 선행). 위 문단은 뒤집기 전의 기록이다 — 저장된
+///   Grant 가 이제 제출자 서명 Manifest 를 싣는다(발급 시각 기준 재검증 뒤). 아래가 그
+///   문단이 적어 둔 정상 경로다. ★ 워크로드가 짧아(`cmd /c exit 0`) 결함 ⑱(ACK 전 실행 ·
+///   10초 시한)을 밟지 않는다 — 이 테스트의 통과가 ⑱ 이 풀렸다는 뜻은 아니다.
 #[cfg(windows)]
 #[test]
-fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
+fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
     let (coordinator, addr) =
@@ -568,28 +596,96 @@ fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
     let (_, coordinator_output) = finish(coordinator, "coordinator-stub");
     let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
 
-    assert!(!agent_ok, "Agent 가 성공했다 — Manifest 싣기가 들어온 것이다. 이 테스트를 뒤집어라\n{both}");
+    assert!(agent_ok, "Agent 가 실패했다\n{both}");
+    assert!(agent_output.contains("MANIFEST_ACCEPTED"), "Agent 가 Manifest 를 받지 않았다\n{both}");
     assert!(
-        !agent_output.contains("MANIFEST_ACCEPTED") && !agent_output.contains("WORKLOAD_"),
-        "Agent 가 Manifest 를 받았다 — 이 테스트를 뒤집어라\n{both}"
+        agent_output.contains("WORKLOAD_RESULT ok=true"),
+        "워크로드가 성공하지 않았다\n{both}"
     );
+    let sent = agent_output
+        .lines()
+        .find(|line| line.starts_with("ATTEMPT_REPORT_SENT "))
+        .unwrap_or_else(|| panic!("보고를 보내지 않았다\n{both}"));
     assert!(
-        agent_output.contains("ATTEMPT_REPORT_REFUSED"),
-        "보고할 것이 없을 때 거부하지 않고 다른 이유로 끝났다\n{both}"
+        coordinator_output.contains("ATTEMPT_REPORT_STORED"),
+        "Coordinator 가 저장하지 않았다\n{both}"
     );
+
+    // DB 의 행이 **보낸 줄의 값과 같다**.
+    let field = |name: &str| -> String {
+        let prefix = format!("{name}=");
+        sent.split_whitespace()
+            .find_map(|kv| kv.strip_prefix(prefix.as_str()).map(str::to_string))
+            .unwrap_or_else(|| panic!("{name} 가 보낸 줄에 없다: {sent}"))
+    };
+    let store =
+        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+            .expect("저장소 열기");
+    let binding = store
+        .get_report_binding(ATTEMPT, NODE)
+        .expect("조회")
+        .unwrap_or_else(|| panic!("보고 행이 없다\n{both}"));
+    let report = &binding.report;
+    assert_eq!(report.job_id, field("job_id"));
+    assert_eq!(report.attempt_id, field("attempt_id"));
+    assert_eq!(report.node_id, field("node_id"));
+    assert_eq!(report.fence_epoch.to_string(), field("fence_epoch"));
+    assert_eq!(report.outcome.to_string(), field("outcome"));
+    assert_eq!(report.started_at_unix_ms.to_string(), field("started_at_unix_ms"));
+    assert_eq!(report.finished_at_unix_ms.to_string(), field("finished_at_unix_ms"));
+    assert_eq!(binding.bound_fence_epoch.to_string(), field("fence_epoch"));
+
+    // ★ 저장된 Grant 자체를 본다 — Agent 는 hash 없음을 통과시키므로
+    //   (`verify_nested_manifest`) Agent 성공만으로는 hash 채우기가 빠진 것을 못 잡는다.
+    let grant = issue_stored_grant(&db, dir.path());
+    let stored = gputeer_coordinator::job_store::CoordinatorJobStore::open(&db)
+        .expect("job store")
+        .get_manifest_binding(JOB)
+        .expect("binding 조회")
+        .expect("binding 이 있다");
+    assert_eq!(grant.manifest.as_ref(), Some(&stored.manifest), "저장된 Manifest 가 그대로 실리지 않았다");
+    let hash = grant.manifest_hash.as_ref().expect("manifest_hash 가 없다");
+    assert_eq!(hash.algo, 1, "hash 알고리즘이 BLAKE3-256(1) 이 아니다");
+    assert_eq!(hash.value, stored.manifest_hash.to_vec(), "hash 가 저장된 값과 다르다");
+}
+
+/// ★ 대조군 — 보고만 끄면 워크로드는 **성공하는데** 행이 없다.
+///   실행 자체가 실패해서 행이 없는 경우와 가르려고 `WORKLOAD_RESULT ok=true` 를 같이
+///   본다(설계 논의 36).
+#[cfg(windows)]
+#[test]
+fn with_the_report_off_the_workload_runs_but_no_report_row_is_stored() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
+    let (coordinator, addr) = spawn_coordinator(&db, dir.path(), &[]);
+    let (agent_ok, agent_output) = run_executing_agent(&addr, dir.path(), false);
+    let (_, coordinator_output) = finish(coordinator, "coordinator-stub");
+    let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
+
+    assert!(agent_ok, "Agent 가 실패했다\n{both}");
+    assert!(
+        agent_output.contains("WORKLOAD_RESULT ok=true"),
+        "워크로드가 성공하지 않았다 — 행이 없는 이유가 보고 끄기가 아닐 수 있다\n{both}"
+    );
+    assert!(!agent_output.contains("ATTEMPT_REPORT_SENT"), "\n{both}");
     assert!(!coordinator_output.contains("ATTEMPT_REPORT_STORED"), "\n{both}");
     let store =
         gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
             .expect("저장소 열기");
-    assert_eq!(store.get_report_binding(ATTEMPT, NODE).expect("조회"), None);
+    assert!(store.get_report_binding(ATTEMPT, NODE).expect("조회").is_none());
+}
 
-    // ★ 저장된 Grant 자체를 본다 — Coordinator 와 같은 함수다.
-    let key = dir.path().join("coordinator.key");
+/// 저장된 예약에서 `issue-grant` 로 Grant 를 만들어 읽는다 — Coordinator 가 쓰는 것과
+/// 같은 함수(`signed_grant_from_stored`)다.
+#[cfg(windows)]
+fn issue_stored_grant(db: &Path, dir: &Path) -> gputeer_protocol::pb::ExecutionGrant {
+    let key = dir.join("coordinator.key");
     std::fs::write(&key, COORD_SEED).expect("키 파일");
-    let grant_file = dir.path().join("stored-grant.pb");
+    let grant_file = dir.join("stored-grant.pb");
     let now = now_unix_ms();
     let issued = (now + 1_000).to_string();
     let expires = (now + 60_000).to_string();
+    let keyring = dir.join("submitters.keyring");
     let (ok, out) = run_cli(&[
         "issue-grant",
         "--job-id", JOB,
@@ -601,16 +697,14 @@ fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
         "--grant-expires-at-unix-ms", &expires,
         "--coordinator-key-file", key.to_str().unwrap(),
         "--out", grant_file.to_str().unwrap(),
+        "--submitter-keyring", keyring.to_str().unwrap(),
+        "--i-understand-plaintext-keyring-is-unsafe", "true",
     ]);
     assert!(ok, "저장된 예약에서 Grant 를 못 만들었다: {out}");
-    let grant = <gputeer_protocol::pb::ExecutionGrant as prost::Message>::decode(
+    <gputeer_protocol::pb::ExecutionGrant as prost::Message>::decode(
         std::fs::read(&grant_file).expect("Grant 읽기").as_slice(),
     )
-    .expect("Grant 디코드");
-    assert!(
-        grant.manifest.is_none() && grant.manifest_hash.is_none(),
-        "저장된 Grant 에 Manifest 가 실렸다 — Manifest 싣기가 들어온 것이다. 이 테스트를 뒤집어라"
-    );
+    .expect("Grant 디코드")
 }
 
 /// ★ 결함 ⑯ — 저장된 예약 lane 에 `--manifest-file` 을 주면 **시작 전에** 거부한다.

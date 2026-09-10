@@ -32,7 +32,7 @@ Grant 조립   crates/coordinator/src/grant_from_stored.rs  "안 한다: Manifes
              호출부 둘 — crates/cli/src/issue_grant.rs · crates/coordinator/src/lib.rs
 ```
 
-## 3. 선택지
+## 3. 선택지 (★ 36 이전 초안 — 7 절이 대체한다)
 
 ```text
 A  싣기만 한다        기본 lane 과 같은 모양 · keyring 인자 불필요
@@ -62,7 +62,7 @@ B 에서 싣기 전에 대조할 것(초안):
 
 ⑱⑲⑳ · ResourceScope · K1(DPAPI·systemd-creds) keyring 에서 꺼내기 · 데몬화
 
-## 5. 검증 계획
+## 5. 검증 계획 (★ 36 이전 초안 — 7 절이 대체한다)
 
 ```text
 덫 테스트를 **뒤집는다** — 그 테스트가 적어 둔 정상 경로 목록 그대로:
@@ -79,3 +79,77 @@ B 에서 싣기 전에 대조할 것(초안):
 ## 6. 코덱스에게 물을 것
 
 `docs/runbooks/검수_프롬프트/` 의 설계 논의 프롬프트에 적는다.
+
+## 7. 설계 논의 36 반영 (코덱스 CHANGES_REQUESTED — B 는 맞고 근거·검증을 고치라고 했다)
+
+원문 `docs/evidence/_raw/검수_2026-09-10/36_설계논의_저장된_Grant_Manifest_CHANGES_REQUESTED.txt`
+
+### 7.1 초안이 틀린 곳
+
+```text
+A 의 손실      "저장소가 손상·변조돼도 Coordinator 는 모른다" -> 과장이다. get_manifest_binding()
+               이 본문 디코딩 · job_id · 제출자 id · 제출 당시 서명자 id · 저장 hash 대 재계산
+               hash 를 이미 거부한다(job_store.rs fetch_manifest_binding). A 가 빠뜨리는 것은
+               **지금 신뢰하는 제출자 키와 지금 시각으로 다시 검증하는 단계**다
+"Agent 가 거부한다"  조건부다 — Agent 는 자기에게 설정된 공개키 하나로 검증한다. Coordinator
+               쪽 신뢰 목록에서 빠진 제출자도 Agent 설정이 그대로면 통과할 수 있다
+서명자 비교    plan_job.rs 에 재사용할 비교는 **없다** — 도달 불가라 이미 지웠다. 저장소가
+               보장하는 불변조건이다
+hash           저장소가 같은 식(BLAKE3_256(signing_input))으로 재계산해 대조한 값을 돌려준다.
+               그 값을 그대로 쓴다. 새로 계산해 덮어쓰지 않는다
+⑱              짧은 워크로드(cmd /c exit 0)는 10초 안에 끝날 수 있어 **이 테스트를 반드시
+               막지는 않는다.** 반대로 이 테스트의 통과로 ⑱ 이 풀렸다고 말하지 않는다
+```
+
+### 7.2 B 의 절차 (구현할 것)
+
+```text
+1  get_manifest_binding(job_id)
+     Ok(None) · LegacyManifestMissing · ManifestCorrupt -> GRANT_REFUSED
+2  제출자 keyring 으로 verify(manifest, 1, 검증기, request.issued_at_unix_ms, NoReplayCheck)
+     실패(서명 · 만료 · 모르는 제출자) -> GRANT_REFUSED
+3  ★ 새 정책: Grant 만료 <= min(Lease 만료, Manifest 만료). 넘으면 GRANT_REFUSED
+     (Agent 는 수신 시각으로 Manifest 를 검증하므로, Grant 는 유효한데 Manifest 가 만료된
+      구간이 생길 수 있다 — 36 의 지적. 기존 코드에 이 검사는 없다)
+4  grant.manifest = binding.manifest · grant.manifest_hash = {algo 1, binding.manifest_hash}
+     outer 서명 **전에** 채운다. verify_own_output 의 protocol 검증이 hash 일치를 다시 본다
+호출부 둘   issue-grant 와 coordinator-stub --grant-from-control-db 에 --submitter-keyring
+            (평문 K0 는 --i-understand-plaintext-keyring-is-unsafe true 로만) — 없으면 거부
+```
+
+### 7.3 검증 계획 (판별력을 따져 다시 짰다)
+
+```text
+정상      덫 테스트를 뒤집는다. Agent WORKLOAD_RESULT ok=true · ATTEMPT_REPORT_SENT,
+          Coordinator ATTEMPT_REPORT_STORED, DB 보고 행 = 보낸 값
+          대조군(보고 끔)에서도 WORKLOAD_RESULT ok=true 를 확인한다 — 실행 실패로 행이 없는
+          경우와 가른다
+Grant     issue-grant 산출물에 manifest 와 manifest_hash 가 **각각** 있고, algo=1 · 값이
+          저장된 hash 와 같은지 직접 단언한다(Agent 는 hash 없음을 통과시키므로 Agent 성공만
+          으로는 hash 채우기 제거를 못 잡는다)
+부정 1    본문과 저장 hash 를 **함께** 바꿔 저장소 검사는 통과시키고 서명만 무효로 만든다 ->
+          get_manifest_binding() 성공을 먼저 확인한 뒤 GRANT_REFUSED
+부정 2    정상 DB 를 만든 **뒤** 발급용 keyring 에서 제출자를 뺀다 -> GRANT_REFUSED
+부정 3    Grant 만료 > Manifest 만료 -> GRANT_REFUSED · 같으면 통과(경계)
+뮤테이션  재검증 제거 -> 부정 1·2 가 실패 · 수명 검사 제거 -> 부정 3 이 실패 ·
+          hash 채우기 제거 -> Grant 단언이 실패
+```
+
+## 8. 구현 (2026-09-10)
+
+```text
+grant_from_stored.rs  signed_grant_from_stored 가 제출자 키 디렉터리를 받는다. 서명 전에
+                      binding 읽기 -> 발급 시각 기준 재검증 -> Grant 만료 <= Manifest 만료 ->
+                      저장된 hash 와 Manifest 를 싣는다
+issue-grant           --submitter-keyring 필수(평문은 --i-understand-plaintext-keyring-is-unsafe)
+coordinator-stub      저장된 예약 lane 에서 --submitter-keyring 필수(STORED_LANE_KEYRING_MISSING),
+                      두 인자는 STORED_LANE_ONLY 에 넣었다(레거시 lane 은 거부)
+테스트                덫을 뒤집은 정상 경로 + 보고 끈 대조군(grant_over_wire, Windows) ·
+                      Grant 단언 · 서명만 무효 · 제출자 제외 · 수명 경계(issue_grant) ·
+                      keyring 누락(stored_lane_flags). 기존 fixture 는 서명된 Manifest 를 묶거나
+                      keyring 인자를 더했다
+```
+
+★ `tests/issue_grant.rs` 의 Grant 시각은 고정 상수(2027년 무렵)라, 준비 코드의 Manifest 가
+  "지금 + 7일" 에 만료되면 새 수명 규칙에 걸린다. JobManifest 는 LongLived("지금 < 만료" 만
+  본다)라 만료를 Lease 만료 뒤로 옮겼다 — 새 규칙이 실제로 작동한 결과다.

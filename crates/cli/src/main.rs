@@ -66,8 +66,8 @@ gputeer — gPUteer CLI
     gputeer issue-grant --job-id <id> --control-db <path> \
         --attempt-id <ulid> --lease-id <ulid> --grant-id <id> \
         --grant-issued-at-unix-ms <ms> --grant-expires-at-unix-ms <ms> \
-        --coordinator-key-file <path> --out <path> \
-        [--overwrite-existing-grant true]
+        --coordinator-key-file <path> --out <path> --submitter-keyring <path> \
+        [--i-understand-plaintext-keyring-is-unsafe true] [--overwrite-existing-grant true]
     gputeer scheduler-tick --control-db <path> --submitter-keyring <path> \
         --submitter-member <id> --max-snapshot-age-ms <ms> \
         --best-fit-axes <a,b,c,d,e> --coordinator-id <id> --coordinator-term <n> \

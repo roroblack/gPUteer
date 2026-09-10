@@ -40,7 +40,12 @@ use gputeer_coordinator::inventory_store::{
 };
 use gputeer_coordinator::job_store::{AcceptedJobSubmission, CoordinatorJobStore};
 use gputeer_coordinator::staging_store::{CoordinatorStagingStore, StageQueuedRequest};
-use gputeer_crypto::{sign, FrameType, SigningKey};
+use gputeer_crypto::{
+    sign, Ed25519Verifier, FrameType, InMemoryKeyring, KeyProtection, PersistentKeyring,
+    PlaintextPolicy, SigningKey,
+};
+use gputeer_protocol::canonical::blake3_256;
+use gputeer_protocol::signing::{signing_input, verify, NoReplayCheck};
 use gputeer_protocol::nonce::derive_replay_nonce;
 use gputeer_protocol::pb;
 use prost::Message;
@@ -56,6 +61,8 @@ const GRANT_ID: &str = "grant-1";
 
 const COORDINATOR_SEED: [u8; 32] = [0x31; 32];
 const AGENT_SEED: [u8; 32] = [0x41; 32];
+const SUBMITTER_ID: &str = "submitter-1";
+const SUBMITTER_SEED: [u8; 32] = [0x51; 32];
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -113,16 +120,35 @@ fn prepare_control_db(path: &Path) {
         .expect("update inventory");
     drop(inventory);
 
+    // ★ 저장된 예약 lane 은 이제 제출자 서명 Manifest 를 **지금** 다시 검증해
+    //   싣는다(§A1 1.5 선행). 그래서 hash 만 있는 Job 이 아니라 서명된 Manifest 를
+    //   묶어 저장한다 — 없으면 `LegacyManifestMissing` 으로 발급이 거부된다.
+    let submitter = SigningKey::from_bytes(&SUBMITTER_SEED);
+    let mut manifest = pb::JobManifest {
+        schema_version: 1,
+        job_id: JOB_ID.into(),
+        entrypoint: "train.py".into(),
+        submitter_device_id: SUBMITTER_ID.into(),
+        issued_at_unix_ms: now.saturating_sub(60_000),
+        expires_at_unix_ms: now + 7 * 24 * 3_600_000,
+        ..Default::default()
+    };
+    manifest.submitter_signature = sign(&submitter, &manifest).to_vec();
+    let mut ring = InMemoryKeyring::new();
+    ring.insert(SUBMITTER_ID, submitter.verifying_key());
+    let verified = verify(&manifest, 1, &Ed25519Verifier::new(ring), now, &mut NoReplayCheck)
+        .expect("fixture Manifest 서명이 검증된다");
     let mut jobs = CoordinatorJobStore::open(path).expect("job store");
-    jobs.submit_accepted(
+    jobs.submit_verified_manifest(
         &AcceptedJobSubmission {
             idempotency_key: [1; 16],
             job_id: JOB_ID.into(),
-            submitter_device_id: "submitter-1".into(),
-            manifest_hash: [1; 32],
+            submitter_device_id: SUBMITTER_ID.into(),
+            manifest_hash: blake3_256(&signing_input(&manifest)),
             deadline_unix_ms: Some(now + 3_600_000),
             max_queue_duration_ms: Some(3_600_000),
         },
+        &verified,
         now,
     )
     .expect("submit");
@@ -174,6 +200,7 @@ fn reserve_loopback_port() -> SocketAddr {
 struct Fixture {
     _dir: tempfile::TempDir,
     control_db: PathBuf,
+    keyring: PathBuf,
     address: SocketAddr,
 }
 
@@ -181,9 +208,20 @@ fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let control_db = dir.path().join("control.sqlite3");
     prepare_control_db(&control_db);
+    let keyring = dir.path().join("submitters.keyring");
+    let mut ring = PersistentKeyring::new(
+        &keyring,
+        KeyProtection::K0Plaintext,
+        PlaintextPolicy::Allow,
+    )
+    .expect("keyring 생성");
+    ring.insert_public(SUBMITTER_ID, SigningKey::from_bytes(&SUBMITTER_SEED).verifying_key())
+        .expect("공개키 등록");
+    ring.save().expect("keyring 저장");
     Fixture {
         _dir: dir,
         control_db,
+        keyring,
         address: reserve_loopback_port(),
     }
 }
@@ -223,6 +261,10 @@ fn coordinator_args(fixture: &Fixture, expect_attempt_reports: u32) -> Vec<Strin
         ATTEMPT_ID,
         "--stored-grant-lease-id",
         LEASE_ID,
+        "--submitter-keyring",
+        fixture.keyring.to_str().expect("경로"),
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
         "--expect-attempt-reports",
         &expect_attempt_reports.to_string(),
         "--max-connections",

@@ -30,13 +30,16 @@
 //! 예약(node)          == Lease.holder_node_id 와 같은 노드
 //! ```
 //!
+//! # Manifest 를 싣는다 (2026-09-10)
+//!
+//! 저장된 제출자 서명 Manifest 를 `--submitter-keyring` 으로 **발급 시각 기준**
+//! 다시 검증한 뒤 싣는다(`grant_from_stored` 모듈 문서). 평문 keyring 은
+//! `--i-understand-plaintext-keyring-is-unsafe true` 로만 받는다.
+//!
 //! # 이 명령이 하지 않는 것
 //!
 //! ```text
 //! 안 한다   Agent 에게 보내기       wire dispatch 는 ④ 다. 파일로 낸다
-//! 안 한다   Manifest 를 싣기        Grant 에 Manifest 를 실으려면
-//!                                   제출자 서명 원본이 필요하고, 그건
-//!                                   별도 조각이다
 //! 안 한다   ResourceScope 채우기    GPU scope 는 authoritative provenance
 //!                                   가 없어 막혀 있다(`DoD-55`)
 //! ```
@@ -60,7 +63,7 @@ use gputeer_coordinator::grant_from_stored::{
 use gputeer_coordinator::job_store::CoordinatorJobStore;
 use gputeer_coordinator::lease_store::CoordinatorLeaseStore;
 use gputeer_coordinator::staging_store::CoordinatorStagingStore;
-use gputeer_crypto::SigningKey;
+use gputeer_crypto::{PersistentKeyring, PlaintextPolicy, SigningKey};
 use prost::Message;
 
 /// `gputeer issue-grant` 진입점.
@@ -110,6 +113,12 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let leases = CoordinatorLeaseStore::open(control_db)
         .map_err(|e| format!("lease store 를 열지 못했다({control_db}): {e}"))?;
 
+    // ── 제출자 keyring — 저장된 Manifest 를 **지금** 다시 검증한다 ────
+    //
+    // ★ 키·저장소 검사 **뒤에** 연다. 앞의 거부(키 hex · 비영속 DB)가 먼저 나와야
+    //   그 테스트들이 자기 관문을 잰다.
+    let submitters = load_submitter_keyring(&flags)?;
+
     // ★ 대조와 조립은 **coordinator 가 한다.** `coordinator-stub` 도 같은
     //   함수를 부르므로 두 벌이 생기지 않는다(모듈 문서 참조).
     let grant = signed_grant_from_stored(
@@ -128,6 +137,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             nonce: derive_stored_grant_nonce(grant_id, attempt_id),
         },
         &key,
+        &submitters,
     )?;
     let lease = grant.lease.as_ref().expect("서명 경로가 Lease 를 넣는다");
     let summary = format!(
@@ -175,6 +185,27 @@ fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> 
     require(flags, key)?
         .parse::<u64>()
         .map_err(|e| format!("{key} 파싱 실패: {e}"))
+}
+
+/// 저장된 Manifest 를 다시 검증할 제출자 keyring 을 연다.
+///
+/// `plan-job`·`scheduler-tick` 과 같은 규칙 — 평문(K0)은 명시적으로 허용했을 때만.
+fn load_submitter_keyring(flags: &BTreeMap<String, String>) -> Result<PersistentKeyring, String> {
+    let path = require(flags, "--submitter-keyring")?;
+    let policy = if flags
+        .get("--i-understand-plaintext-keyring-is-unsafe")
+        .map(String::as_str)
+        == Some("true")
+    {
+        eprintln!(
+            "경고: 평문(K0) 제출자 keyring 을 허용했다 — 이 파일을 쓸 수 있는 사람은 임의의 공개키를 신뢰 목록에 넣을 수 있다"
+        );
+        PlaintextPolicy::Allow
+    } else {
+        PlaintextPolicy::Reject
+    };
+    PersistentKeyring::load(path, policy)
+        .map_err(|e| format!("제출자 keyring 을 열지 못했다({path}): {e:?}"))
 }
 
 fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {

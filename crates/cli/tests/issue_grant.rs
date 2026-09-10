@@ -82,6 +82,11 @@ fn seed_bytes(hex: &str) -> [u8; 32] {
 /// 준비: inventory 반입 → submit → import-manifest → plan-job → stage-job.
 /// 반환은 `(control-db, coordinator 키 파일)`.
 fn staged(dir: &Path) -> (PathBuf, PathBuf) {
+    staged_until(dir, LEASE_EXPIRES + 3_600_000)
+}
+
+/// 같은 준비를 하되 Manifest 만료를 고른다(Grant 만료 경계를 재려고).
+fn staged_until(dir: &Path, manifest_expires: u64) -> (PathBuf, PathBuf) {
     let db = dir.join("control.sqlite3");
 
     // inventory
@@ -134,7 +139,11 @@ fn staged(dir: &Path) -> (PathBuf, PathBuf) {
     // submit
     let manifest = dir.join("manifest.pb");
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
-    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+    // ★ Grant 시각이 고정 상수(2027년 무렵)라, Manifest 가 그보다 먼저 만료되면
+    //   발급이 거부된다(Grant 만료 <= Manifest 만료 · 발급 시각 기준 재검증 —
+    //   §A1 1.5 선행). JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로
+    //   만료를 Lease 만료 뒤로 둔다.
+    let expires = manifest_expires.to_string();
     let (ok, out) = run_cli(&[
         "submit",
         "--job-id",
@@ -267,6 +276,20 @@ fn staged(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn issue(db: &Path, key_file: &Path, out: &Path, extra: &[&str]) -> (bool, String) {
+    // ★ 저장된 Manifest 를 다시 검증할 제출자 keyring — 준비 코드가 DB 옆에 만든다.
+    issue_full(db, key_file, out, &db.with_file_name("submitters.keyring"), GRANT_EXPIRES, extra)
+}
+
+/// keyring 과 Grant 만료를 고르는 발급. 같은 플래그를 두 번 주지 않으려고 따로 둔다.
+fn issue_full(
+    db: &Path,
+    key_file: &Path,
+    out: &Path,
+    keyring: &Path,
+    grant_expires: u64,
+    extra: &[&str],
+) -> (bool, String) {
+    let expires = grant_expires.to_string();
     let mut args: Vec<&str> = vec![
         "issue-grant",
         "--job-id",
@@ -282,11 +305,15 @@ fn issue(db: &Path, key_file: &Path, out: &Path, extra: &[&str]) -> (bool, Strin
         "--grant-issued-at-unix-ms",
         "1800000010000",
         "--grant-expires-at-unix-ms",
-        "1800000070000",
+        &expires,
         "--coordinator-key-file",
         key_file.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ];
     args.extend_from_slice(extra);
     run_cli(&args)
@@ -297,7 +324,11 @@ fn issue(db: &Path, key_file: &Path, out: &Path, extra: &[&str]) -> (bool, Strin
 fn queue_only(dir: &Path, db: &Path, job_id: &str, idem: &str) {
     let manifest = dir.join(format!("{job_id}.pb"));
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
-    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+    // ★ Grant 시각이 고정 상수(2027년 무렵)라, Manifest 가 그보다 먼저 만료되면
+    //   발급이 거부된다(Grant 만료 <= Manifest 만료 · 발급 시각 기준 재검증 —
+    //   §A1 1.5 선행). JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로
+    //   만료를 Lease 만료 뒤로 둔다.
+    let expires = (LEASE_EXPIRES + 3_600_000).to_string();
     let (ok, out) = run_cli(&[
         "submit", "--job-id", job_id, "--entrypoint", "python",
         "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
@@ -470,6 +501,10 @@ fn a_queued_but_unstaged_job_gets_no_grant() {
         key_file.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
+        "--submitter-keyring",
+        db.with_file_name("submitters.keyring").to_str().unwrap(),
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(!ok, "예약 없는 Job 에 Grant 를 냈다: {output}");
     assert!(
@@ -509,6 +544,10 @@ fn an_unknown_job_gets_no_grant() {
         key_file.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
+        "--submitter-keyring",
+        db.with_file_name("submitters.keyring").to_str().unwrap(),
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(!ok, "모르는 Job 으로 발급했다: {output}");
     assert!(output.contains("모른다"), "이유를 안 말한다: {output}");
@@ -661,6 +700,10 @@ fn a_non_durable_control_db_is_refused() {
             key_file.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
+            "--submitter-keyring",
+            dir.path().join("submitters.keyring").to_str().unwrap(),
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
         ]);
         assert!(!ok, "{label:?} 를 받아들였다: {output}");
         assert!(
@@ -908,4 +951,141 @@ fn an_explicit_flag_allows_replacing_the_file() {
         "덮어쓴다고 했는데 옛 내용이 그대로다"
     );
     assert!(!bytes.is_empty(), "덮어썼는데 비어 있다");
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// §A1 1.5 선행 — 저장된 제출자 서명 Manifest 를 **지금** 다시 검증해 싣는다
+// (설계 docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md §7)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Grant 에 저장된 Manifest 와 그 hash 가 **각각** 실린다.
+///
+/// ★ Agent 는 `Manifest 있음 + hash 없음` 을 통과시킨다. 그래서 Agent 성공으로는 hash
+///   채우기가 빠진 것을 못 잡는다 — 여기서 알고리즘과 값을 직접 본다(설계 논의 36).
+#[test]
+fn the_grant_carries_the_stored_manifest_and_its_hash() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+    let out = dir.path().join("grant.pb");
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(ok, "정상 경로가 실패했다: {output}");
+
+    let grant = pb::ExecutionGrant::decode(std::fs::read(&out).expect("Grant 읽기").as_slice())
+        .expect("Grant 디코드");
+    let stored = gputeer_coordinator::job_store::CoordinatorJobStore::open(&db)
+        .expect("job store")
+        .get_manifest_binding(JOB)
+        .expect("binding 조회")
+        .expect("binding 이 있다");
+    assert_eq!(grant.manifest.as_ref(), Some(&stored.manifest), "저장된 Manifest 가 그대로 실리지 않았다");
+    let hash = grant.manifest_hash.as_ref().expect("manifest_hash 가 없다");
+    assert_eq!(hash.algo, 1, "hash 알고리즘이 BLAKE3-256(1) 이 아니다");
+    assert_eq!(hash.value, stored.manifest_hash.to_vec(), "hash 가 저장된 값과 다르다");
+}
+
+/// ★ 저장소 검사는 통과하고 **서명만** 무효인 Manifest 는 싣지 않는다.
+///
+/// 본문과 저장 hash 를 **함께** 바꾼다. 본문만 바꾸면 저장소가 `HashMismatch` 로 먼저
+/// 막아, 재검증을 지워도 이 테스트가 통과한다(설계 논의 36). 그래서
+/// `get_manifest_binding()` 성공을 먼저 확인한다.
+#[test]
+fn a_stored_manifest_whose_signature_no_longer_verifies_gets_no_grant() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+    let out = dir.path().join("grant.pb");
+
+    let stored = gputeer_coordinator::job_store::CoordinatorJobStore::open(&db)
+        .expect("job store")
+        .get_manifest_binding(JOB)
+        .expect("binding 조회")
+        .expect("binding 이 있다");
+    let mut tampered = stored.manifest.clone();
+    tampered.entrypoint = "tampered.exe".to_string();
+    let hash = gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(
+        &tampered,
+    ));
+    let connection = rusqlite::Connection::open(&db).expect("DB 열기");
+    connection
+        .execute(
+            "UPDATE coordinator_job_manifests SET manifest_body = ?2 WHERE job_id = ?1",
+            rusqlite::params![JOB, tampered.encode_to_vec()],
+        )
+        .expect("본문 변조");
+    connection
+        .execute(
+            "UPDATE coordinator_jobs SET manifest_hash = ?2 WHERE job_id = ?1",
+            rusqlite::params![JOB, hash.to_vec()],
+        )
+        .expect("hash 변조");
+    drop(connection);
+
+    // 저장소 검사는 통과한다 — 재려는 것은 그 **뒤**의 재검증이다.
+    let rebound = gputeer_coordinator::job_store::CoordinatorJobStore::open(&db)
+        .expect("job store")
+        .get_manifest_binding(JOB)
+        .expect("저장소 일관성 검사는 통과해야 한다")
+        .expect("binding 이 있다");
+    assert_eq!(rebound.manifest.entrypoint, "tampered.exe");
+
+    let (ok, output) = issue(&db, &key_file, &out, &[]);
+    assert!(!ok, "서명이 깨진 Manifest 로 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("GRANT_REFUSED") && output.contains("다시 검증하지 못했다"),
+        "거부는 했는데 재검증 때문이 아니다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+}
+
+/// ★ 정상 DB 를 만든 **뒤** 발급용 keyring 에서 제출자를 뺀다 — 저장될 때는 유효했어도
+///   지금 신뢰하지 않는 제출자의 Manifest 는 싣지 않는다.
+#[test]
+fn a_submitter_no_longer_in_the_keyring_gets_no_grant() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged(dir.path());
+    let out = dir.path().join("grant.pb");
+    let empty = dir.path().join("empty.keyring");
+    gputeer_crypto::PersistentKeyring::new(
+        &empty,
+        gputeer_crypto::KeyProtection::K0Plaintext,
+        gputeer_crypto::PlaintextPolicy::Allow,
+    )
+    .expect("빈 keyring 생성")
+    .save()
+    .expect("빈 keyring 저장");
+
+    let (ok, output) = issue_full(&db, &key_file, &out, &empty, GRANT_EXPIRES, &[]);
+    assert!(!ok, "keyring 에 없는 제출자의 Manifest 로 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("GRANT_REFUSED") && output.contains("다시 검증하지 못했다"),
+        "거부는 했는데 재검증 때문이 아니다: {output}"
+    );
+    assert!(!out.exists(), "거부했는데 파일을 남겼다");
+
+    // 대조 — 제출자가 있는 keyring 이면 발급된다. 없으면 "항상 거부" 로도 통과한다.
+    assert!(issue(&db, &key_file, &out, &[]).0, "정상 경로가 실패했다");
+}
+
+/// ★ Grant 가 Manifest 보다 오래 살면 싣지 않는다 — Agent 는 받는 시각으로 Manifest 를
+///   검증하므로, 그 구간에는 Grant 는 유효한데 Manifest 는 만료다(설계 논의 36).
+///   경계는 Lease 와 같은 모양이다 — 같으면 받고, 1ms 라도 늦으면 거부한다.
+#[test]
+fn a_grant_that_outlives_its_manifest_is_refused_at_the_boundary() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, key_file) = staged_until(dir.path(), GRANT_EXPIRES);
+    let keyring = db.with_file_name("submitters.keyring");
+
+    let same = dir.path().join("same.pb");
+    let (ok, output) = issue_full(&db, &key_file, &same, &keyring, GRANT_EXPIRES, &[]);
+    assert!(ok, "Grant 만료 == Manifest 만료 인데 거부했다: {output}");
+
+    // Lease 만료보다는 이르다 — 거부 사유가 Lease 가 아니라 Manifest 여야 한다.
+    assert!(GRANT_EXPIRES + 1 < LEASE_EXPIRES);
+    let later = dir.path().join("later.pb");
+    let (ok, output) = issue_full(&db, &key_file, &later, &keyring, GRANT_EXPIRES + 1, &[]);
+    assert!(!ok, "Manifest 보다 오래 사는 Grant 를 냈다: {output}");
+    assert!(
+        output.contains("GRANT_REFUSED") && output.contains("Manifest 만료"),
+        "거부는 했는데 Manifest 수명 때문이 아니다: {output}"
+    );
+    assert!(!later.exists(), "거부했는데 파일을 남겼다");
 }

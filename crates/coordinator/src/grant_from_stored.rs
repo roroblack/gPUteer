@@ -24,17 +24,33 @@
 //! Grant 수명          Lease 보다 오래 살지 않는가
 //! ```
 //!
+//! # Manifest 를 싣는다 (2026-09-10 · §A1 1.5 선행 · 결함 ⑯)
+//!
+//! 저장된 binding 은 **raw** 다(`DoD-50`). 싣기 전에 호출부가 준 제출자 키
+//! 디렉터리로 **발급 시각 기준** 다시 검증한다 — `plan-job`·`scheduler-tick`
+//! 과 같은 방식이다. 저장소가 이미 보는 것(본문 디코딩·job_id·제출자·제출 당시
+//! 서명자·hash 일치)은 여기서 다시 보지 않는다.
+//!
+//! ```text
+//! binding 없음 · 옛 Job · 손상      GRANT_REFUSED
+//! 지금 다시 검증 실패               GRANT_REFUSED (모르는 제출자 · 만료 포함)
+//! Grant 만료 > Manifest 만료        GRANT_REFUSED — Agent 는 받는 시각으로 검증한다
+//! ```
+//!
+//! ★ Coordinator 의 재검증 결과는 Grant 에 싣지 않는다. Agent 는 자기에게 설정된
+//!   제출자 키로 **따로** 검증한다 — 두 관문은 서로 다르다(설계 논의 36).
+//!   설계 `docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md` §7
+//!
 //! # 이 모듈이 하지 않는 것
 //!
 //! ```text
 //! 안 한다   저장소 열기·영속성 판정   호출부가 연 저장소를 받는다
 //! 안 한다   전송                      파일로 낼지 wire 로 보낼지는 호출부다
-//! 안 한다   Manifest 싣기             제출자 서명 원본이 필요하다 — 별도 조각
 //! 안 한다   ResourceScope 채우기      GPU scope 는 authoritative provenance
 //!                                     가 없어 막혀 있다(`DoD-55`)
 //! ```
 
-use gputeer_crypto::{sign, SigningKey};
+use gputeer_crypto::{sign, Ed25519Verifier, KeyDirectory, SigningKey};
 use gputeer_protocol::pb;
 
 use crate::job_store::{CoordinatorJobStore, JobState};
@@ -78,12 +94,16 @@ pub struct StoredGrantRequest {
 ///
 /// nested Lease 를 **먼저** 완성해 서명한다 — 그래야 outer Grant 의 서명이
 /// 최종 nested 바이트를 덮는다.
-pub fn signed_grant_from_stored(
+///
+/// 제출자 서명 Manifest 는 `submitters` 로 **발급 시각 기준** 다시 검증한 뒤
+/// 싣는다(모듈 문서 "Manifest 를 싣는다").
+pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     jobs: &CoordinatorJobStore,
     staging: &CoordinatorStagingStore,
     leases: &CoordinatorLeaseStore,
     request: &StoredGrantRequest,
     key: &SigningKey,
+    submitters: &K,
 ) -> Result<pb::ExecutionGrant, String> {
     if request.issued_at_unix_ms >= request.expires_at_unix_ms {
         return Err(format!(
@@ -205,6 +225,42 @@ pub fn signed_grant_from_stored(
         ));
     }
 
+    // ── 제출자 서명 Manifest — 싣기 전에 **지금** 다시 검증한다 ──────
+    //
+    // 저장소가 보는 것(본문·job_id·제출자·서명자·hash 일치)은 다시 보지 않는다 —
+    // 어긋나면 `get_manifest_binding()` 이 오류를 낸다.
+    let binding = jobs
+        .get_manifest_binding(&request.job_id)
+        .map_err(|e| format!("GRANT_REFUSED: 저장된 Manifest 를 읽지 못했다: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "GRANT_REFUSED: {} 의 저장된 Manifest 가 없다",
+                request.job_id
+            )
+        })?;
+    let verified = gputeer_protocol::verify(
+        &binding.manifest,
+        1,
+        &Ed25519Verifier::new(submitters),
+        request.issued_at_unix_ms,
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .map_err(|e| {
+        format!(
+            "GRANT_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?} — 저장될 때는 유효했더라도 그 사이 제출자가 신뢰 목록에서 빠졌거나 Manifest 가 만료됐을 수 있다"
+        )
+    })?;
+    // ★ Agent 는 **받는 시각**으로 Manifest 를 검증한다. Grant 가 Manifest 보다
+    //   오래 살면 Grant 는 유효한데 Manifest 는 만료된 구간이 생긴다(설계 논의 36).
+    //   Lease 경계와 같은 모양으로 막는다.
+    let manifest_expires_at = verified.get().expires_at_unix_ms;
+    if request.expires_at_unix_ms > manifest_expires_at {
+        return Err(format!(
+            "GRANT_REFUSED: Grant 만료({})가 Manifest 만료({manifest_expires_at}) 보다 늦다",
+            request.expires_at_unix_ms
+        ));
+    }
+
     // ── 서명 ────────────────────────────────────────────────────────
     let mut lease = unsigned_lease_from_stored(&stored_lease)?;
     lease.coordinator_signature = sign(key, &lease).to_vec();
@@ -224,6 +280,13 @@ pub fn signed_grant_from_stored(
         // Lease 를 읽으므로 정직하게 true 다.
         lease_from_durable_store: true,
         lease: Some(lease),
+        // ★ outer 서명 **전에** 싣는다 — 그래야 Grant 서명이 최종 nested 바이트와
+        //   hash 를 덮는다. hash 는 저장소가 재계산해 대조한 값을 그대로 쓴다.
+        manifest_hash: Some(pb::Digest {
+            algo: 1, // HASH_ALGORITHM_BLAKE3_256
+            value: binding.manifest_hash.to_vec(),
+        }),
+        manifest: Some(binding.manifest),
         ..Default::default()
     };
     grant.coordinator_signature = sign(key, &grant).to_vec();

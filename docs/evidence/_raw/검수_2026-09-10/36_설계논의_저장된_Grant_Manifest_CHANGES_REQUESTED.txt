@@ -1,0 +1,3103 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08abe-0671-7f80-8562-61873c0f9928
+--------
+user
+동의가 아니라 **반박**을 원한다. 이것은 판정이 아니라 **설계 논의**다 — 구현 전에 틀린
+전제를 찾고 싶다.
+
+# 대상
+
+```text
+docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md
+```
+
+저장된 예약에서 만드는 Grant 에 제출자 서명 Manifest 를 싣는 조각이다. 초안은 "싣기 전에
+Coordinator 가 제출자 keyring 으로 다시 검증한다(B)" 를 제안한다.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md
+crates/coordinator/src/grant_from_stored.rs
+crates/coordinator/src/lib.rs                  (load_signed_manifest · issue_grant · 870~915행)
+crates/coordinator/src/job_store.rs            (StoredManifestBinding · get_manifest_binding · 손상 검사)
+crates/agent/src/lib.rs                        (verify_nested_manifest)
+crates/cli/src/scheduler_tick.rs               (저장된 Manifest 재검증 부분)
+crates/cli/src/plan_job.rs                     (제출 시점 서명자와 재검증 서명자 비교)
+crates/cli/src/issue_grant.rs
+crates/cli/tests/grant_over_wire.rs            (덫 테스트와 그 주석)
+```
+
+# 물을 것 — 넷
+
+1. **A 와 B 중 무엇이 맞나.** 초안의 "A 를 고르면 잃는 것" 이 코드로 사실인가.
+2. **B 의 대조 목록에 빠진 것이 있나.** 특히 저장된 hash 와 재계산 hash 의 관계, 제출 시점
+   서명자 비교, Manifest 만료와 Grant 수명의 관계.
+3. **결함 ⑱(Agent 가 ACK 전에 워크로드를 끝까지 돌리고 Coordinator 는 10초만 기다린다)이
+   이 조각의 정상 경로 테스트를 막나.** 덫 테스트의 워크로드는 `cmd /c exit 0` 이다.
+4. **검증 계획의 뮤테이션이 판별력이 있나.** 되돌려도 통과하는 테스트가 끼어 있지 않은가.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 을 인용하라. 못 찾은 것은 못 찾았다고, 어디까지 봤는지 적어라.
+마지막 줄에 `ACCEPTED`(이 설계로 구현을 시작해도 된다) 또는 `CHANGES_REQUESTED` 를 써라.
+
+codex
+지정한 파일과 범위만 읽고, A/B의 전제와 테스트의 판별력을 코드에 대조하겠습니다. 구현은 변경하지 않겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$p = '"'docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md'; "'$n = 0; Get-Content -LiteralPath $p -Encoding UTF8 | ForEach-Object { $n++; '"'{0,5}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1842ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+    1: # ����� ���� Grant �� ������ ���� Manifest �Ʊ� ? ��A1 1.5 �� ���� ����
+    2: 
+    3: > **�ۼ�** 2026-09-10 18:54 �� **����** ���� �ʾ�(�ڵ��� ���� ��) ��
+    4: > **����** `docs/plans/_����_�۾�.md` ��A1 1.5 �� ���� ?
+    5: 
+    6: ## 1. �� ����
+    7: 
+    8: ����� ���� ���(`--grant-from-control-db` �� `issue-grant`)�� Grant ���� Manifest �� ����.
+    9: �׷��� Agent �� ������ ���� ����, ������ ���ᵵ ���� ? ��A1 1.5 �� **ù** �������̴�.
+   10: ������ ����� �� �׽�Ʈ
+   11: `crates/cli/tests/grant_over_wire.rs::today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report`
+   12: �� �����Ѵ�. DoD-68 �罽�� �˼��� 2026-09-10 �� ����(��˼� 35) ������ �� �ְ� �ƴ�.
+   13: 
+   14: �� Manifest �� ù �������� **��**�̴�. ���� �ڿ��� ?(ACK �� ���� �� 10�� ����) �� ? �� ? ��
+   15: ���´� ? �� ������ ������ �ƴϴ�.
+   16: 
+   17: ## 2. ���� �ڵ尡 �ϴ� �� (�о Ȯ���� ��)
+   18: 
+   19: ```text
+   20: �⺻ lane    crates/coordinator/src/lib.rs  load_signed_manifest �� issue_grant
+   21:              Manifest �� **�������� �ʰ�** �Ǿ� ������. manifest_hash �� outer Grant ����
+   22:              **����** ä���(BLAKE3_256(signing_input(manifest)))
+   23: Agent        crates/agent/src/lib.rs  verify_nested_manifest
+   24:              ������ ����Ű �ϳ��� **����** ���� �� Manifest.job_id == Lease.job_id ��
+   25:              manifest_hash ���� ������ protocol �� check_derived_consistency �� �Ѵ�
+   26: �����       crates/coordinator/src/job_store.rs  StoredManifestBinding
+   27:              { manifest, manifest_hash, signer_id_at_submission }
+   28:              DoD-50: raw binding �� key directory ����� �� scheduler/Grant �� ���� �ʴ´�
+   29: scheduler    crates/cli/src/scheduler_tick.rs  ����� Manifest �� ������ keyring
+   30:              (PersistentKeyring, �� K0 �� opt-in)���� **�ٽ� ������ ��** �䱸������ �̴´�
+   31: Grant ����   crates/coordinator/src/grant_from_stored.rs  "�� �Ѵ�: Manifest �Ʊ�"
+   32:              ȣ��� �� ? crates/cli/src/issue_grant.rs �� crates/coordinator/src/lib.rs
+   33: ```
+   34: 
+   35: ## 3. ������
+   36: 
+   37: ```text
+   38: A  �Ʊ⸸ �Ѵ�        �⺻ lane �� ���� ��� �� keyring ���� ���ʿ�
+   39:                       �Ҵ� ��: DoD-50 �� "����� ���� Grant �� ���� �ʴ´�" �� ��߳���.
+   40:                       ����Ұ� �ջ󡤺����ŵ� Coordinator �� �� ä ������ ������
+   41:                       (Agent �� �ź��ϱ� �Ѵ� ? �׷��� ������ �̹� �� �ڴ�)
+   42: B  �Ʊ� ���� �����   Coordinator �� ������ keyring ���� ����� Manifest �� �ٽ� �����Ѵ�
+   43:                       (scheduler_tick �� ���� ���). DoD-50 �� ��Ų��
+   44:                       �Ҵ� ��: ȣ��� �ѿ� keyring ����(K0 opt-in ����)�� �þ��
+   45: ```
+   46: 
+   47: **����: B.** Agent �� ���� ������ �״�δ� ? Coordinator �� ����� ����� Grant �� ����
+   48: �ʴ´�("�����ߴ�" ��Ʈ ����). �׷��� Agent �� Coordinator �� ���� �ϴ� ������ ������ �ʴ´�.
+   49: 
+   50: B ���� �Ʊ� ���� ������ ��(�ʾ�):
+   51: 
+   52: ```text
+   53: 1  binding �� �ִ�                       ������ GRANT_REFUSED
+   54: 2  ������ keyring ���� ���� ����         ���и� GRANT_REFUSED (���� ����)
+   55: 3  Manifest.job_id == request.job_id
+   56: 4  ���� ���� ������ == ���� ������ ������  plan_job.rs �� ���� �񱳰� �ִ� ? ���� ���� Ȯ��
+   57: 5  manifest_hash �� ������ ä���       ����� hash �͵� �����ϴ°�? (job_store �� load ��
+   58:                                           HashMismatch �� �˻��ϴ��� Ȯ�� �ʿ�)
+   59: ```
+   60: 
+   61: ## 4. ���� ��
+   62: 
+   63: ??? �� ResourceScope �� K1(DPAPI��systemd-creds) keyring ���� ������ �� ����ȭ
+   64: 
+   65: ## 5. ���� ��ȹ
+   66: 
+   67: ```text
+   68: �� �׽�Ʈ�� **�����´�** ? �� �׽�Ʈ�� ���� �� ���� ��� ��� �״��:
+   69:   Agent       WORKLOAD_RESULT ok=true �� ATTEMPT_REPORT_SENT
+   70:   Coordinator ATTEMPT_REPORT_STORED
+   71:   DB          get_report_binding �� Some �̰� ���尪�� ���� �ٰ� ����
+   72:   ������      ������ ���� ���� ����
+   73:   �׸��� issue-grant �� ���� ����� Grant ��ü�� manifest �� �ִ��� ���� ����
+   74: ���� ���   ������� Manifest �� ���� -> GRANT_REFUSED (Agent ���� ���� �ʴ´�)
+   75:             keyring �� ���� ������ -> GRANT_REFUSED
+   76: �����̼�   ����� ���� -> ���� �׽�Ʈ ���� �� hash ä��� ���� -> Agent �� DerivedMismatch �� �ź�
+   77: ```
+   78: 
+   79: ## 6. �ڵ������� ���� ��
+   80: 
+   81: `docs/runbooks/�˼�_������Ʈ/` �� ���� ���� ������Ʈ�� ���´�.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'rg -n "load_signed_manifest|issue_grant|StoredManifestBinding|get_manifest_binding|verify_nested_manifest|manifest|signer|10|exit 0|⑱|trap" crates/coordinator/src/grant_from_stored.rs crates/coordinator/src/lib.rs crates/coordinator/src/job_store.rs crates/agent/src/lib.rs crates/cli/src/scheduler_tick.rs crates/cli/src/plan_job.rs crates/cli/src/issue_grant.rs crates/cli/tests/grant_over_wire.rs' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1672ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+crates/cli/src/scheduler_tick.rs:1://! ★★ 2026-09-10 독립 검수 지적 — **일부** 거부 사유에 안정적인 코드를 붙였다.
+crates/cli/src/scheduler_tick.rs:71://!   과장이었다(2026-09-10 재검수 21 — "짐을 지고 있지 않다" 고 적었다).
+crates/cli/src/scheduler_tick.rs:112:use gputeer_coordinator::manifest_requirements::job_requirements_from_manifest;
+crates/cli/src/scheduler_tick.rs:186:        .get_manifest_binding(&job_id)
+crates/cli/src/scheduler_tick.rs:207:        &binding.manifest,
+crates/cli/src/scheduler_tick.rs:214:    let job_requirements = job_requirements_from_manifest(&verified, submitter_member)
+crates/cli/src/issue_grant.rs:11://! `coordinator-stub` 의 `issue_grant()` 는 `config.grant_id`·
+crates/cli/src/issue_grant.rs:166:    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+crates/cli/src/plan_job.rs:27://! `DoD-50` 이 `get_manifest_binding()` 을 만들면서 명시했다 — 반환값은
+crates/cli/src/plan_job.rs:58:use gputeer_coordinator::manifest_requirements::job_requirements_from_manifest;
+crates/cli/src/plan_job.rs:89:        .get_manifest_binding(job_id)
+crates/cli/src/plan_job.rs:111:        &binding.manifest,
+crates/cli/src/plan_job.rs:130:    //       job_store.rs:906   manifest.submitter_device_id == job.submitter_device_id
+crates/cli/src/plan_job.rs:131:    //       job_store.rs:912   signer_id_at_submission      == job.submitter_device_id
+crates/cli/src/plan_job.rs:133:    //   그리고 `Verified::signer_id()` 는 **메시지의 필드**에서 온다
+crates/cli/src/plan_job.rs:138:    //     "추상 메서드 `msg.signer_id()` 를 복사한다" 만 보여 줄 뿐
+crates/cli/src/plan_job.rs:144:    //             fn signer_id(&self) -> &str { &self.submitter_device_id }
+crates/cli/src/plan_job.rs:154:    //   `tampering_the_stored_signer_is_stopped_by_the_store_before_planning`
+crates/cli/src/plan_job.rs:158:    let requirements = job_requirements_from_manifest(&verified, submitter_member)
+crates/cli/src/plan_job.rs:201:    let plan_id = derive_plan_id(job_id, &binding.manifest_hash, &snapshot, &report);
+crates/cli/src/plan_job.rs:252:    manifest_hash: &[u8; 32],
+crates/cli/src/plan_job.rs:263:    push(manifest_hash);
+crates/cli/tests/grant_over_wire.rs:4://! submit → import-manifest → import-inventory → plan-job → stage-job
+crates/cli/tests/grant_over_wire.rs:8://! ★ **무게중심은 서명이 아니라 수용이다.** `issue_grant.rs` 는 우리가
+crates/cli/tests/grant_over_wire.rs:121:    let bootstrap = dir.join("bootstrap.json");
+crates/cli/tests/grant_over_wire.rs:123:        &bootstrap,
+crates/cli/tests/grant_over_wire.rs:141:        "available_workspace_bytes": 107374182400,
+crates/cli/tests/grant_over_wire.rs:154:        bootstrap.to_str().unwrap(),
+crates/cli/tests/grant_over_wire.rs:160:    let manifest = dir.join("manifest.pb");
+crates/cli/tests/grant_over_wire.rs:167:        "--out", manifest.to_str().unwrap(),
+crates/cli/tests/grant_over_wire.rs:172:        // ★ 2026-09-10 — 이 셋을 안 주고 있었다. 그전에는 변환기가
+crates/cli/tests/grant_over_wire.rs:176:        "--workspace-bytes", "10737418240",
+crates/cli/tests/grant_over_wire.rs:199:        "import-manifest", "--manifest", manifest.to_str().unwrap(),
+crates/cli/tests/grant_over_wire.rs:202:        "--idempotency-key", "0102030405060708090a0b0c0d0e0f10",
+crates/cli/tests/grant_over_wire.rs:205:    assert!(ok, "import-manifest 실패: {out}");
+crates/cli/tests/grant_over_wire.rs:217:    //   ★ 처음에는 `now - 1000` 을 썼다가 저장소가 거부했다:
+crates/cli/tests/grant_over_wire.rs:233:        "--operation-key", "aa0102030405060708090a0b0c0d0e0f",
+crates/cli/tests/grant_over_wire.rs:553:///   서명 손상)로도 깨지고, 미래 구현이 "`--manifest-file` 을 줄 때만 싣기" 면
+crates/cli/tests/grant_over_wire.rs:556:///   DB 에 돌려 `manifest` 가 비었는지 직접 확인한다. 깨지면 **이유부터** 보라.
+crates/cli/tests/grant_over_wire.rs:557:///   또 Manifest 가 실려도 보고까지 가려면 결함 ⑱⑲⑳ 이 남아 있다.
+crates/cli/tests/grant_over_wire.rs:562:fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
+crates/cli/tests/grant_over_wire.rs:611:        grant.manifest.is_none() && grant.manifest_hash.is_none(),
+crates/cli/tests/grant_over_wire.rs:616:/// ★ 결함 ⑯ — 저장된 예약 lane 에 `--manifest-file` 을 주면 **시작 전에** 거부한다.
+crates/cli/tests/grant_over_wire.rs:622:fn a_manifest_file_on_the_stored_lane_is_refused_at_startup() {
+crates/cli/tests/grant_over_wire.rs:642:        "--manifest-file", dir.path().join("m.pb").to_str().unwrap(),
+crates/cli/tests/grant_over_wire.rs:647:        output.contains("STARTUP_REFUSED") && output.contains("--manifest-file"),
+crates/coordinator/src/grant_from_stored.rs:147:    //   `issue_grant` 10건이 전부 통과한다. 억지로 통과시킨 게 아니라
+crates/coordinator/src/grant_from_stored.rs:218:        //   기존 `issue_grant()` 는 여기에 1 을 박아 넣는다.
+crates/coordinator/src/lib.rs:33:pub mod checkpoint_manifest_store;
+crates/coordinator/src/lib.rs:38:pub mod manifest_requirements;
+crates/coordinator/src/lib.rs:66:const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/coordinator/src/lib.rs:116:    /// ★ `None` 이면 `manifest` 필드를 비운 채 보낸다 — 기존 시나리오가
+crates/coordinator/src/lib.rs:121:    pub manifest_file: Option<PathBuf>,
+crates/coordinator/src/lib.rs:123:    pub corrupt_manifest_signature: bool,
+crates/coordinator/src/lib.rs:124:    /// 테스트 전용 — `manifest_hash` 를 실제 Manifest 와 다르게 채운다.
+crates/coordinator/src/lib.rs:125:    pub corrupt_manifest_hash: bool,
+crates/coordinator/src/lib.rs:300:    // ★ 2026-09-10 — 여기 `session_id: String` 이 있었다. **어디서도 읽지
+crates/coordinator/src/lib.rs:465:    // ★ 결함 ⑯(2026-09-10) — 저장된 예약 lane 은 Grant 에 Manifest 를 싣지
+crates/coordinator/src/lib.rs:467:    //   `--manifest-file` 을 같이 주면 받아 두고 **말없이 버렸다** — Manifest
+crates/coordinator/src/lib.rs:468:    //   부착은 레거시 `issue_grant()` 안에만 있다. 운영자는 실었다고 믿는다.
+crates/coordinator/src/lib.rs:470:    if config.grant_from_control_db.is_some() && config.manifest_file.is_some() {
+crates/coordinator/src/lib.rs:471:        let message = "--manifest-file 은 --grant-from-control-db 와 함께 쓸 수 없다 — \
+crates/coordinator/src/lib.rs:908:        None => issue_grant(config, lease_store, signing_key, now, connection_attempt)?,
+crates/coordinator/src/lib.rs:947:    //   grant_id 대조 같은 부작용을 실행하지 않는다(§10).
+crates/coordinator/src/lib.rs:1080:        // ★ `require_replay_checked()` — ACK·갱신과 같은 이유(§10).
+crates/coordinator/src/lib.rs:1095:        //   `NodeHeartbeat::signer_id()` 가 `device_id` 라, 다른 이름을
+crates/coordinator/src/lib.rs:1245:        //   사실대로 적는다. `NeighborUnreachableReport::signer_id()` 가
+crates/coordinator/src/lib.rs:1424:        //   `AttemptReport::signer_id()` 가 `node_id` 라, 다른 이름을 실으면
+crates/coordinator/src/lib.rs:1529:             signer_id={} created={}",
+crates/coordinator/src/lib.rs:1534:            result.binding.signer_id_at_submission,
+crates/coordinator/src/lib.rs:1605:            // ★ `require_replay_checked()` — ACK 와 같은 이유(§10).
+crates/coordinator/src/lib.rs:1756:    std::thread::sleep(Duration::from_millis(100));
+crates/coordinator/src/lib.rs:1763:/// `RevokeLeaseNotice::signer_id()`는 현재 프로토콜 계약상 `lease_id`를
+crates/coordinator/src/lib.rs:2321:fn issue_grant(
+crates/coordinator/src/lib.rs:2350:    if let Some(manifest) = load_signed_manifest(config)? {
+crates/coordinator/src/lib.rs:2351:        // `manifest_hash` 는 Agent 가 재계산해 대조한다(`CLAUDE.md` §0.2).
+crates/coordinator/src/lib.rs:2353:        let mut digest = blake3_256(&signing_input(&manifest)).to_vec();
+crates/coordinator/src/lib.rs:2354:        if config.corrupt_manifest_hash {
+crates/coordinator/src/lib.rs:2357:        grant.manifest_hash = Some(pb::Digest {
+crates/coordinator/src/lib.rs:2361:        grant.manifest = Some(manifest);
+crates/coordinator/src/lib.rs:2381:fn load_signed_manifest(config: &CoordinatorConfig) -> Result<Option<pb::JobManifest>, String> {
+crates/coordinator/src/lib.rs:2382:    let Some(path) = config.manifest_file.as_ref() else {
+crates/coordinator/src/lib.rs:2387:    let mut manifest = pb::JobManifest::decode(bytes.as_slice())
+crates/coordinator/src/lib.rs:2393:    if config.corrupt_manifest_signature {
+crates/coordinator/src/lib.rs:2394:        let last = manifest
+crates/coordinator/src/lib.rs:2400:    Ok(Some(manifest))
+crates/coordinator/src/lib.rs:2497:/// ★ 코덱스 독립 검수(2026-08-19, p108) 지적 — 전에는 `as u32` 로
+crates/coordinator/src/lib.rs:2576:        // Manifest 배선 — 안 주면 기존 경로 그대로(manifest 필드 없음).
+crates/coordinator/src/lib.rs:2577:        manifest_file: flags.get("--manifest-file").map(PathBuf::from),
+crates/coordinator/src/lib.rs:2578:        corrupt_manifest_signature: flags.bool_flag("--corrupt-manifest-signature"),
+crates/coordinator/src/lib.rs:2579:        corrupt_manifest_hash: flags.bool_flag("--corrupt-manifest-hash"),
+crates/coordinator/src/lib.rs:2628:    // ★★ 결함 ⑯ 확장(2026-09-10 재검수 14) — **받아 두고 말없이 버리지 않는다.**
+crates/coordinator/src/lib.rs:2630:    //   ⑯ 는 저장된 예약 lane 의 `--manifest-file` 하나만 막았다. 재검수가
+crates/coordinator/src/lib.rs:2661:        // (`issue_grant`·`issue_lease`·`load_signed_manifest`)에서만 읽힌다.
+crates/coordinator/src/lib.rs:2663:            "--manifest-file",
+crates/coordinator/src/lib.rs:2664:            "--corrupt-manifest-signature",
+crates/coordinator/src/lib.rs:2665:            "--corrupt-manifest-hash",
+crates/coordinator/src/lib.rs:2837:///   이 명령이 모르는 이름이다 — 결함 ⑯ 확장(2026-09-10 재검수 14).
+crates/coordinator/src/lib.rs:2838:///   전에는 `--manifest-fiel m.pb` 같은 오타가 조용히 사라졌다.
+crates/coordinator/src/lib.rs:2999:    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+crates/coordinator/src/lib.rs:3008:    /// ★ 코덱스 독립 검수(2026-08-19, p108) 지적 — `u32_from_stored()`
+crates/agent/src/lib.rs:22:use gputeer_checkpoint::writer::{manifest_for, write_checkpoint};
+crates/agent/src/lib.rs:37:const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/agent/src/lib.rs:275:    /// ★ 테스트 전용 — V-08(`signer_id() == lease_id`) 때문에 잘못된
+crates/agent/src/lib.rs:277:    pub revoke_signer_id_override: Option<String>,
+crates/agent/src/lib.rs:356:/// 않으며, 시작 디렉터리에는 데이터 파일과 `manifest.json`도 없으므로
+crates/agent/src/lib.rs:391:    //   지적). 그 lane 은 `Hello -> Grant -> ACK` 을 하고 끝나므로(10라운드
+crates/agent/src/lib.rs:751:    // ★ 코덱스 독립 검수(2026-08-19, p102) 지적 — `--fence-db :memory:`
+crates/agent/src/lib.rs:824:    //   검증한다 — `to_fields.rs` 의 "manifest 와 lease 는 각자
+crates/agent/src/lib.rs:846:    //   있다(`to_fields.rs` — "manifest 와 lease 는 각자 독립적으로
+crates/agent/src/lib.rs:851:    let workload = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)?;
+crates/agent/src/lib.rs:926:        //        `issue_grant.rs:40`·`grant_from_stored.rs:33` 이 "안
+crates/agent/src/lib.rs:1033:    // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
+crates/agent/src/lib.rs:1039:    if let Some(test_signer_id) = &config.revoke_signer_id_override {
+crates/agent/src/lib.rs:1040:        coordinator_keys.insert(test_signer_id.clone(), config.coordinator_verifying_key);
+crates/agent/src/lib.rs:1339:            //   replay guard 가 Duplicate 로 거부한다(설계 `p105`
+crates/agent/src/lib.rs:1386:        // ★ `require_replay_checked()` — Grant 와 같은 이유(§10).
+crates/agent/src/lib.rs:1585:/// `manifest_hash` 대조는 이 함수가 아니라 프로토콜 계층이 한다 —
+crates/agent/src/lib.rs:1587:fn verify_nested_manifest(
+crates/agent/src/lib.rs:1593:    let Some(manifest) = grant.manifest.as_ref() else {
+crates/agent/src/lib.rs:1606:    submitter_keyring.insert(manifest.submitter_device_id.clone(), submitter_key);
+crates/agent/src/lib.rs:1608:    let verified = verify(manifest, 1, &verifier, now_unix_ms, replay)
+crates/agent/src/lib.rs:1611:    // ★ `manifest_hash` 재계산 대조는 **여기서 하지 않는다.**
+crates/agent/src/lib.rs:1626:    //   규범은 `manifest 있음 + hash 없음 -> 통과(주장을 안 했으므로)`
+crates/agent/src/lib.rs:1943:    let manifest = manifest_for(
+crates/agent/src/lib.rs:1951:    write_checkpoint(checkpoint_root, &manifest, files, 0).map_err(|error| {
+crates/agent/src/lib.rs:2010:/// ★ 코덱스 독립 검수(2026-08-19, p102) 지적 — 전에는 `{e:?}` 하나로
+crates/agent/src/lib.rs:2170:/// 설계 `p105` 가 코드 경로로 확정한 결함). `round` 를 입력에 섞어
+crates/agent/src/lib.rs:2256:            .unwrap_or(256 * 1024 * 1024),
+crates/agent/src/lib.rs:2275:        revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
+crates/agent/src/lib.rs:2301:    // ★ 결함 ⑯ 확장(2026-09-10) — 모르는 이름을 받아 두지 않는다.
+crates/agent/src/lib.rs:2362:///   2026-09-10). 전에는 오타가 조용히 사라졌다.
+crates/agent/src/lib.rs:2498:    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+crates/agent/src/lib.rs:2529:        let refused = TcpStream::connect_timeout(&address, Duration::from_millis(100));
+crates/agent/src/lib.rs:2558:            workload_commit_limit_bytes: 256 * 1024 * 1024,
+crates/agent/src/lib.rs:2571:            revoke_signer_id_override: None,
+crates/agent/src/lib.rs:2575:            retry_cap_ms: 100,
+crates/agent/src/lib.rs:2601:            thread::sleep(Duration::from_millis(10));
+crates/agent/src/lib.rs:2618:                    thread::sleep(Duration::from_millis(10));
+crates/agent/src/lib.rs:2707:            expires_at_unix_ms: 10_000,
+crates/agent/src/lib.rs:2739:        let result = validate_revoke_notice(&held_lease(), &revoke("lease-a", 7), 10_000);
+crates/coordinator/src/job_store.rs:107:    pub manifest_hash: [u8; 32],
+crates/coordinator/src/job_store.rs:109:    /// `None` represents the manifest's `max_queue_minutes == 0` contract:
+crates/coordinator/src/job_store.rs:118:    pub manifest_hash: [u8; 32],
+crates/coordinator/src/job_store.rs:136:            && self.manifest_hash == submission.manifest_hash
+crates/coordinator/src/job_store.rs:151:/// callers must verify `manifest` again against the then-authoritative key
+crates/coordinator/src/job_store.rs:154:pub struct StoredManifestBinding {
+crates/coordinator/src/job_store.rs:155:    pub manifest: pb::JobManifest,
+crates/coordinator/src/job_store.rs:156:    pub manifest_hash: [u8; 32],
+crates/coordinator/src/job_store.rs:157:    pub signer_id_at_submission: String,
+crates/coordinator/src/job_store.rs:163:    pub binding: StoredManifestBinding,
+crates/coordinator/src/job_store.rs:247:                write!(f, "supplied manifest_hash does not match the verified Manifest")
+crates/coordinator/src/job_store.rs:301:        JobStoreError::CorruptData("manifest_hash must contain exactly 32 bytes".to_string())
+crates/coordinator/src/job_store.rs:320:                manifest_hash BLOB NOT NULL,
+crates/coordinator/src/job_store.rs:340:            CREATE TABLE IF NOT EXISTS coordinator_job_manifests (
+crates/coordinator/src/job_store.rs:342:                verified_signer_id TEXT NOT NULL,
+crates/coordinator/src/job_store.rs:343:                manifest_body BLOB NOT NULL
+crates/coordinator/src/job_store.rs:405:    pub fn get_manifest_binding(
+crates/coordinator/src/job_store.rs:408:    ) -> Result<Option<StoredManifestBinding>, JobStoreError> {
+crates/coordinator/src/job_store.rs:412:        fetch_manifest_binding(&self.connection, &job).map(Some)
+crates/coordinator/src/job_store.rs:483:            manifest_hash: submission.manifest_hash,
+crates/coordinator/src/job_store.rs:500:                    job_id, submitter_device_id, manifest_hash, state,
+crates/coordinator/src/job_store.rs:508:                    stored.manifest_hash.as_slice(),
+crates/coordinator/src/job_store.rs:533:    pub fn submit_verified_manifest(
+crates/coordinator/src/job_store.rs:536:        manifest: &Verified<pb::JobManifest>,
+crates/coordinator/src/job_store.rs:539:        self.submit_verified_manifest_inner(submission, manifest, submitted_at_unix_ms, None)
+crates/coordinator/src/job_store.rs:542:    fn submit_verified_manifest_inner(
+crates/coordinator/src/job_store.rs:553:        let manifest = verified.get();
+crates/coordinator/src/job_store.rs:554:        validate_manifest_identity(submission, manifest, verified.signer_id())?;
+crates/coordinator/src/job_store.rs:555:        let derived_hash = derive_manifest_hash(manifest);
+crates/coordinator/src/job_store.rs:556:        if submission.manifest_hash != derived_hash {
+crates/coordinator/src/job_store.rs:559:        let manifest_body = manifest.encode_to_vec();
+crates/coordinator/src/job_store.rs:587:            let binding = fetch_manifest_binding(&transaction, &stored)?;
+crates/coordinator/src/job_store.rs:588:            if binding.manifest != *manifest
+crates/coordinator/src/job_store.rs:589:                || binding.signer_id_at_submission != verified.signer_id()
+crates/coordinator/src/job_store.rs:613:            manifest_hash: derived_hash,
+crates/coordinator/src/job_store.rs:630:                "INSERT INTO coordinator_job_manifests(
+crates/coordinator/src/job_store.rs:631:                    job_id, verified_signer_id, manifest_body
+crates/coordinator/src/job_store.rs:633:                rusqlite::params![stored.job_id, verified.signer_id(), manifest_body],
+crates/coordinator/src/job_store.rs:647:            binding: StoredManifestBinding {
+crates/coordinator/src/job_store.rs:648:                manifest: manifest.clone(),
+crates/coordinator/src/job_store.rs:649:                manifest_hash: derived_hash,
+crates/coordinator/src/job_store.rs:650:                signer_id_at_submission: verified.signer_id().to_string(),
+crates/coordinator/src/job_store.rs:832:fn validate_manifest_identity(
+crates/coordinator/src/job_store.rs:834:    manifest: &pb::JobManifest,
+crates/coordinator/src/job_store.rs:835:    verified_signer_id: &str,
+crates/coordinator/src/job_store.rs:837:    if manifest.job_id != submission.job_id {
+crates/coordinator/src/job_store.rs:840:    if manifest.submitter_device_id != submission.submitter_device_id {
+crates/coordinator/src/job_store.rs:845:    if verified_signer_id != submission.submitter_device_id {
+crates/coordinator/src/job_store.rs:847:            "verified signer_id",
+crates/coordinator/src/job_store.rs:853:fn derive_manifest_hash(manifest: &pb::JobManifest) -> [u8; 32] {
+crates/coordinator/src/job_store.rs:854:    blake3_256(&signing_input(manifest))
+crates/coordinator/src/job_store.rs:861:                job_id, submitter_device_id, manifest_hash, state,
+crates/coordinator/src/job_store.rs:869:                stored.manifest_hash.as_slice(),
+crates/coordinator/src/job_store.rs:881:fn fetch_manifest_binding(
+crates/coordinator/src/job_store.rs:884:) -> Result<StoredManifestBinding, JobStoreError> {
+crates/coordinator/src/job_store.rs:887:            "SELECT verified_signer_id, manifest_body
+crates/coordinator/src/job_store.rs:888:             FROM coordinator_job_manifests WHERE job_id = ?1",
+crates/coordinator/src/job_store.rs:897:    let (signer_id_at_submission, body) = row;
+crates/coordinator/src/job_store.rs:899:        return Err(manifest_corrupt(job, ManifestCorruption::EmptyBody));
+crates/coordinator/src/job_store.rs:901:    let manifest = pb::JobManifest::decode(body.as_slice())
+crates/coordinator/src/job_store.rs:902:        .map_err(|_| manifest_corrupt(job, ManifestCorruption::UndecodableBody))?;
+crates/coordinator/src/job_store.rs:903:    if manifest.job_id != job.job_id {
+crates/coordinator/src/job_store.rs:904:        return Err(manifest_corrupt(job, ManifestCorruption::JobIdMismatch));
+crates/coordinator/src/job_store.rs:906:    if manifest.submitter_device_id != job.submitter_device_id {
+crates/coordinator/src/job_store.rs:907:        return Err(manifest_corrupt(
+crates/coordinator/src/job_store.rs:912:    if signer_id_at_submission != job.submitter_device_id {
+crates/coordinator/src/job_store.rs:913:        return Err(manifest_corrupt(job, ManifestCorruption::SignerIdMismatch));
+crates/coordinator/src/job_store.rs:915:    let derived_hash = derive_manifest_hash(&manifest);
+crates/coordinator/src/job_store.rs:916:    if derived_hash != job.manifest_hash {
+crates/coordinator/src/job_store.rs:917:        return Err(manifest_corrupt(job, ManifestCorruption::HashMismatch));
+crates/coordinator/src/job_store.rs:919:    Ok(StoredManifestBinding {
+crates/coordinator/src/job_store.rs:920:        manifest,
+crates/coordinator/src/job_store.rs:921:        manifest_hash: derived_hash,
+crates/coordinator/src/job_store.rs:922:        signer_id_at_submission,
+crates/coordinator/src/job_store.rs:926:fn manifest_corrupt(job: &StoredJob, kind: ManifestCorruption) -> JobStoreError {
+crates/coordinator/src/job_store.rs:985:                queue_failure_detail = ?8, failed_at_unix_ms = ?9, revision = ?10
+crates/coordinator/src/job_store.rs:1013:    manifest_hash: Vec<u8>,
+crates/coordinator/src/job_store.rs:1100:            manifest_hash: decode_hash(self.manifest_hash)?,
+crates/coordinator/src/job_store.rs:1140:const SELECT_JOB_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
+crates/coordinator/src/job_store.rs:1145:const SELECT_QUEUED_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
+crates/coordinator/src/job_store.rs:1154:        manifest_hash: row.get(2)?,
+crates/coordinator/src/job_store.rs:1162:        plan_id: row.get(10)?,
+crates/coordinator/src/job_store.rs:1178:    fn verified_manifest(
+crates/coordinator/src/job_store.rs:1185:        let mut manifest = pb::JobManifest {
+crates/coordinator/src/job_store.rs:1191:            issued_at_unix_ms: 10,
+crates/coordinator/src/job_store.rs:1192:            expires_at_unix_ms: 10_000,
+crates/coordinator/src/job_store.rs:1195:        manifest.submitter_signature = sign(&key, &manifest).to_vec();
+crates/coordinator/src/job_store.rs:1199:            &manifest,
+crates/coordinator/src/job_store.rs:1202:            100,
+crates/coordinator/src/job_store.rs:1216:            manifest_hash: derive_manifest_hash(verified.get()),
+crates/coordinator/src/job_store.rs:1217:            deadline_unix_ms: Some(10_000),
+crates/coordinator/src/job_store.rs:1236:            manifest_hash: [7; 32],
+crates/coordinator/src/job_store.rs:1237:            deadline_unix_ms: Some(10_000),
+crates/coordinator/src/job_store.rs:1249:        store.submit_accepted(submission, 100).unwrap();
+crates/coordinator/src/job_store.rs:1271:    fn verified_manifest_body_signature_and_derived_hash_survive_reopen() {
+crates/coordinator/src/job_store.rs:1274:        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1276:        let original_manifest = verified.get().clone();
+crates/coordinator/src/job_store.rs:1280:                .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1283:            assert_eq!(result.binding.manifest, original_manifest);
+crates/coordinator/src/job_store.rs:1284:            assert_eq!(result.binding.manifest_hash, request.manifest_hash);
+crates/coordinator/src/job_store.rs:1285:            assert_eq!(result.binding.signer_id_at_submission, MANIFEST_DEVICE);
+crates/coordinator/src/job_store.rs:1289:        let binding = reopened.get_manifest_binding("job-bound").unwrap().unwrap();
+crates/coordinator/src/job_store.rs:1290:        assert_eq!(binding.manifest, original_manifest);
+crates/coordinator/src/job_store.rs:1292:            binding.manifest.submitter_signature,
+crates/coordinator/src/job_store.rs:1293:            original_manifest.submitter_signature
+crates/coordinator/src/job_store.rs:1296:            binding.manifest_hash,
+crates/coordinator/src/job_store.rs:1297:            derive_manifest_hash(&binding.manifest)
+crates/coordinator/src/job_store.rs:1299:        assert_eq!(binding.signer_id_at_submission, MANIFEST_DEVICE);
+crates/coordinator/src/job_store.rs:1304:        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1318:                    request.manifest_hash[0] ^= 0xff;
+crates/coordinator/src/job_store.rs:1324:                store.submit_verified_manifest(&request, &verified, 100),
+crates/coordinator/src/job_store.rs:1329:            assert_eq!(table_count(&store, "coordinator_job_manifests"), 0);
+crates/coordinator/src/job_store.rs:1335:    fn verified_manifest_replay_returns_original_and_changed_manifest_conflicts() {
+crates/coordinator/src/job_store.rs:1337:        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1340:            .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1343:            .submit_verified_manifest(&request, &verified, 999)
+crates/coordinator/src/job_store.rs:1350:        assert_eq!(table_count(&store, "coordinator_job_manifests"), 1);
+crates/coordinator/src/job_store.rs:1353:        let changed = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "changed");
+crates/coordinator/src/job_store.rs:1356:            store.submit_verified_manifest(&changed_same_key, &changed, 200),
+crates/coordinator/src/job_store.rs:1362:            store.submit_verified_manifest(&changed_other_key, &changed, 200),
+crates/coordinator/src/job_store.rs:1368:            store.get_manifest_binding("job-bound").unwrap().unwrap(),
+crates/coordinator/src/job_store.rs:1374:    fn fault_after_manifest_insert_rolls_back_job_body_and_idempotency() {
+crates/coordinator/src/job_store.rs:1376:        let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1379:            store.submit_verified_manifest_inner(
+crates/coordinator/src/job_store.rs:1382:                100,
+crates/coordinator/src/job_store.rs:1388:        assert_eq!(table_count(&store, "coordinator_job_manifests"), 0);
+crates/coordinator/src/job_store.rs:1393:    fn empty_and_undecodable_manifest_bodies_fail_closed() {
+crates/coordinator/src/job_store.rs:1399:            let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1402:                .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1407:                    "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+crates/coordinator/src/job_store.rs:1412:                store.get_manifest_binding(&request.job_id),
+crates/coordinator/src/job_store.rs:1424:        let verified = verified_manifest("job-hash", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1427:            .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1434:                "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+crates/coordinator/src/job_store.rs:1439:            store.get_manifest_binding(&request.job_id),
+crates/coordinator/src/job_store.rs:1446:        let verified = verified_manifest("job-identity", MANIFEST_DEVICE, 8, "original");
+crates/coordinator/src/job_store.rs:1449:            .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1453:        let changed_hash = derive_manifest_hash(&changed_identity);
+crates/coordinator/src/job_store.rs:1457:                "UPDATE coordinator_jobs SET manifest_hash = ?1 WHERE job_id = ?2",
+crates/coordinator/src/job_store.rs:1464:                "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+crates/coordinator/src/job_store.rs:1469:            store.get_manifest_binding(&request.job_id),
+crates/coordinator/src/job_store.rs:1476:        let verified = verified_manifest("job-device-identity", MANIFEST_DEVICE, 9, "original");
+crates/coordinator/src/job_store.rs:1479:            .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1483:        let changed_hash = derive_manifest_hash(&changed_identity);
+crates/coordinator/src/job_store.rs:1487:                "UPDATE coordinator_jobs SET manifest_hash = ?1 WHERE job_id = ?2",
+crates/coordinator/src/job_store.rs:1494:                "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+crates/coordinator/src/job_store.rs:1499:            store.get_manifest_binding(&request.job_id),
+crates/coordinator/src/job_store.rs:1508:    fn device_signer_corruption_and_legacy_missing_body_fail_closed() {
+crates/coordinator/src/job_store.rs:1510:        let verified = verified_manifest("job-device", MANIFEST_DEVICE, 7, "original");
+crates/coordinator/src/job_store.rs:1513:            .submit_verified_manifest(&request, &verified, 100)
+crates/coordinator/src/job_store.rs:1518:                "UPDATE coordinator_job_manifests SET verified_signer_id = 'other-device' WHERE job_id = ?1",
+crates/coordinator/src/job_store.rs:1523:            store.get_manifest_binding(&request.job_id),
+crates/coordinator/src/job_store.rs:1531:        store.submit_accepted(&legacy, 100).unwrap();
+crates/coordinator/src/job_store.rs:1533:            store.get_manifest_binding("legacy-job"),
+crates/coordinator/src/job_store.rs:1551:                        manifest_hash BLOB NOT NULL, state TEXT NOT NULL,
+crates/coordinator/src/job_store.rs:1567:                        job_id, submitter_device_id, manifest_hash, state,
+crates/coordinator/src/job_store.rs:1570:                    rusqlite::params![[4u8; 32].as_slice(), encode_u64(100), encode_u64(0)],
+crates/coordinator/src/job_store.rs:1580:            store.get_manifest_binding("old-job"),
+crates/coordinator/src/job_store.rs:1591:        let first = store.submit_accepted(&request, 100).unwrap();
+crates/coordinator/src/job_store.rs:1595:        assert_eq!(retry.job.submitted_at_unix_ms, 100);
+crates/coordinator/src/job_store.rs:1603:        store.submit_accepted(&original, 100).unwrap();
+crates/coordinator/src/job_store.rs:1605:        changed.manifest_hash = [8; 32];
+crates/coordinator/src/job_store.rs:1611:        assert_eq!(store.get("job-1").unwrap().unwrap().manifest_hash, [7; 32]);
+crates/coordinator/src/job_store.rs:1617:        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+crates/coordinator/src/job_store.rs:1632:            store.submit_accepted(&request, 100),
+crates/coordinator/src/job_store.rs:1638:            store.submit_accepted(&request, 100),
+crates/coordinator/src/job_store.rs:1644:            store.submit_accepted(&request, 100),
+crates/coordinator/src/job_store.rs:1655:        request.manifest_hash = [0; 32];
+crates/coordinator/src/job_store.rs:1656:        let stored = store.submit_accepted(&request, 100).unwrap().job;
+crates/coordinator/src/job_store.rs:1657:        assert_eq!(stored.manifest_hash, [0; 32]);
+crates/coordinator/src/job_store.rs:1664:        store.submit_accepted(&request, 100).unwrap();
+crates/coordinator/src/job_store.rs:1680:        store.submit_accepted(&request, 100).unwrap();
+crates/coordinator/src/job_store.rs:1696:        store.submit_accepted(&request, 100).unwrap();
+crates/coordinator/src/job_store.rs:1712:            store.fail_queued("job-1", QueueFailure::DeadlinePassed, 10_000),
+crates/coordinator/src/job_store.rs:1717:            .fail_queued("job-1", QueueFailure::DeadlinePassed, 10_001)
+crates/coordinator/src/job_store.rs:1793:            store.fail_queued("job-1", QueueFailure::DeadlinePassed, 10_001),
+crates/coordinator/src/job_store.rs:1804:            store.submit_accepted(&request, 100).unwrap();
+crates/coordinator/src/job_store.rs:1820:        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/coordinator/src/grant_from_stored.rs'); print('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md'); print('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1807ms:
+1: # 저장된 예약 Grant 에 제출자 서명 Manifest 싣기 — §A1 1.5 의 선행 조각
+2: 
+3: > **작성** 2026-09-10 18:54 · **성격** 설계 초안(코덱스 논의 전) ·
+4: > **상위** `docs/plans/_열린_작업.md` §A1 1.5 · 결함 ⑯
+5: 
+6: ## 1. 왜 지금
+7: 
+8: 저장된 예약 경로(`--grant-from-control-db` · `issue-grant`)의 Grant 에는 Manifest 가 없다.
+9: 그래서 Agent 가 실행할 것이 없고, 보고할 종료도 없다 — §A1 1.5 의 **첫** 차단점이다.
+10: 오늘의 사실은 덫 테스트
+11: `crates/cli/tests/grant_over_wire.rs::today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report`
+12: 가 고정한다. DoD-68 사슬의 검수가 2026-09-10 에 끝나(재검수 35) 착수할 수 있게 됐다.
+13: 
+14: ★ Manifest 는 첫 차단점일 **뿐**이다. 부착 뒤에도 ⑱(ACK 전 실행 · 10초 시한) · ⑲ · ⑳ 이
+15: 남는다 — 이 조각의 범위가 아니다.
+16: 
+17: ## 2. 지금 코드가 하는 것 (읽어서 확인한 것)
+18: 
+19: ```text
+20: 기본 lane    crates/coordinator/src/lib.rs  load_signed_manifest · issue_grant
+21:              Manifest 를 **검증하지 않고** 실어 나른다. manifest_hash 를 outer Grant 서명
+22:              **전에** 채운다(BLAKE3_256(signing_input(manifest)))
+23: Agent        crates/agent/src/lib.rs  verify_nested_manifest
+24:              제출자 공개키 하나로 **독립** 검증 · Manifest.job_id == Lease.job_id ·
+25:              manifest_hash 재계산 대조는 protocol 의 check_derived_consistency 가 한다
+26: 저장소       crates/coordinator/src/job_store.rs  StoredManifestBinding
+27:              { manifest, manifest_hash, signer_id_at_submission }
+28:              DoD-50: raw binding 은 key directory 재검증 전 scheduler/Grant 에 쓰지 않는다
+29: scheduler    crates/cli/src/scheduler_tick.rs  저장된 Manifest 를 제출자 keyring
+30:              (PersistentKeyring, 평문 K0 는 opt-in)으로 **다시 검증한 뒤** 요구사항을 뽑는다
+31: Grant 조립   crates/coordinator/src/grant_from_stored.rs  "안 한다: Manifest 싣기"
+32:              호출부 둘 — crates/cli/src/issue_grant.rs · crates/coordinator/src/lib.rs
+33: ```
+34: 
+35: ## 3. 선택지
+36: 
+37: ```text
+38: A  싣기만 한다        기본 lane 과 같은 모양 · keyring 인자 불필요
+39:                       잃는 것: DoD-50 의 "재검증 전에 Grant 에 쓰지 않는다" 와 어긋난다.
+40:                       저장소가 손상·변조돼도 Coordinator 는 모른 채 서명해 보낸다
+41:                       (Agent 가 거부하긴 한다 — 그러나 서명은 이미 한 뒤다)
+42: B  싣기 전에 재검증   Coordinator 가 제출자 keyring 으로 저장된 Manifest 를 다시 검증한다
+43:                       (scheduler_tick 과 같은 방식). DoD-50 을 지킨다
+44:                       잃는 것: 호출부 둘에 keyring 인자(K0 opt-in 포함)가 늘어난다
+45: ```
+46: 
+47: **제안: B.** Agent 의 독립 검증은 그대로다 — Coordinator 의 재검증 결과를 Grant 에 싣지
+48: 않는다("검증했다" 비트 없음). 그래야 Agent 가 Coordinator 의 말을 믿는 구조가 생기지 않는다.
+49: 
+50: B 에서 싣기 전에 대조할 것(초안):
+51: 
+52: ```text
+53: 1  binding 이 있다                       없으면 GRANT_REFUSED
+54: 2  제출자 keyring 으로 서명 검증         실패면 GRANT_REFUSED (만료 포함)
+55: 3  Manifest.job_id == request.job_id
+56: 4  제출 시점 서명자 == 지금 검증한 서명자  plan_job.rs 에 같은 비교가 있다 — 재사용 여부 확인
+57: 5  manifest_hash 를 재계산해 채운다       저장된 hash 와도 대조하는가? (job_store 가 load 시
+58:                                           HashMismatch 를 검사하는지 확인 필요)
+59: ```
+60: 
+61: ## 4. 범위 밖
+62: 
+63: ⑱⑲⑳ · ResourceScope · K1(DPAPI·systemd-creds) keyring 에서 꺼내기 · 데몬화
+64: 
+65: ## 5. 검증 계획
+66: 
+67: ```text
+68: 덫 테스트를 **뒤집는다** — 그 테스트가 적어 둔 정상 경로 목록 그대로:
+69:   Agent       WORKLOAD_RESULT ok=true · ATTEMPT_REPORT_SENT
+70:   Coordinator ATTEMPT_REPORT_STORED
+71:   DB          get_report_binding 이 Some 이고 저장값이 보낸 줄과 같다
+72:   대조군      보고만 끄면 행이 없다
+73:   그리고 issue-grant 로 만든 저장된 Grant 자체에 manifest 가 있는지 직접 본다
+74: 부정 경로   저장소의 Manifest 를 변조 -> GRANT_REFUSED (Agent 까지 가지 않는다)
+75:             keyring 에 없는 제출자 -> GRANT_REFUSED
+76: 뮤테이션   재검증 제거 -> 변조 테스트 실패 · hash 채우기 제거 -> Agent 가 DerivedMismatch 로 거부
+77: ```
+78: 
+79: ## 6. 코덱스에게 물을 것
+80: 
+81: `docs/runbooks/검수_프롬프트/` 의 설계 논의 프롬프트에 적는다.
+
+ succeeded in 1822ms:
+1: //! 저장된 예약에서 **서명된 `ExecutionGrant`** 를 만든다.
+2: //!
+3: //! # ★ 왜 CLI 가 아니라 여기 있는가
+4: //!
+5: //! 처음에는 `gputeer issue-grant` 안에만 있었다. 그런데 `coordinator-stub`
+6: //! 이 같은 일을 해야 하는 순간(저장된 예약을 Agent 에게 실제로 보내기)
+7: //! **두 번째 복사본**이 될 참이었다.
+8: //!
+9: //! 이 저장소는 그 함정을 이미 두 번 겪었다 — `DoD-67` 에서 영속성 판정을
+10: //! CLI 와 저장소 두 곳에 두었다가 한쪽만 낡아 `--job-db ""` 가 조용히
+11: //! 성공했고, `StoredLease → pb::Lease` 변환은 **세 벌**로 복사돼 있었다.
+12: //!
+13: //! # ★ 한 행만 믿지 않는다
+14: //!
+15: //! Attempt·Lease·예약은 서로 다른 행이다. 셋이 어긋나 있으면 그 자체가
+16: //! 사실이고, 그때 한쪽만 읽으면 없는 일관성을 가정하게 된다.
+17: //!
+18: //! ```text
+19: //! Job 상태            STAGING 이어야 한다 — 예약 없이 Grant 를 내면
+20: //!                     Agent 는 자기가 그 노드를 쓸 권한이 있다고 믿는다
+21: //! Attempt ↔ Lease     job_id · attempt_id · lease_id · fence epoch
+22: //! 예약(node)          Lease 의 보유 노드에 이 Attempt 로 걸려 있는가
+23: //! Lease 상태          폐기되지 않았고, 발급 시각에 아직 안 만료됐는가
+24: //! Grant 수명          Lease 보다 오래 살지 않는가
+25: //! ```
+26: //!
+27: //! # 이 모듈이 하지 않는 것
+28: //!
+29: //! ```text
+30: //! 안 한다   저장소 열기·영속성 판정   호출부가 연 저장소를 받는다
+31: //! 안 한다   전송                      파일로 낼지 wire 로 보낼지는 호출부다
+32: //! 안 한다   Manifest 싣기             제출자 서명 원본이 필요하다 — 별도 조각
+33: //! 안 한다   ResourceScope 채우기      GPU scope 는 authoritative provenance
+34: //!                                     가 없어 막혀 있다(`DoD-55`)
+35: //! ```
+36: 
+37: use gputeer_crypto::{sign, SigningKey};
+38: use gputeer_protocol::pb;
+39: 
+40: use crate::job_store::{CoordinatorJobStore, JobState};
+41: use crate::lease_store::CoordinatorLeaseStore;
+42: use crate::staging_store::CoordinatorStagingStore;
+43: use crate::unsigned_lease_from_stored;
+44: 
+45: /// 호출부가 정하는 값. **이 모듈은 시계를 읽지 않는다.**
+46: ///
+47: /// ★ 시각을 절대값으로 받는 이유 — 실시간 시각을 결과에 반영하면 같은 명시적
+48: ///   입력으로도 Grant 가 달라질 수 있다. 시각을 통제하고 결과를 재현하기 위해
+49: ///   절대값을 인자로 받는다(`stage-job` 에서 통합 테스트가 달라진 사례를 실제로
+50: ///   잡았다. 재검수 30·31 — 한때 "테스트로 고정할 수 없다" 고 적었는데, 시계 대역을
+51: ///   고정하면 테스트할 수 있다).
+52: #[derive(Debug, Clone, PartialEq, Eq)]
+53: pub struct StoredGrantRequest {
+54:     pub job_id: String,
+55:     pub attempt_id: String,
+56:     pub lease_id: String,
+57:     pub grant_id: String,
+58:     pub issued_at_unix_ms: u64,
+59:     pub expires_at_unix_ms: u64,
+60:     /// ★ **nonce 는 저장된 사실이 아니라 전송 계약이다.**
+61:     ///
+62:     ///   처음에는 이 모듈이 `(grant_id, attempt_id)` 로 직접 뽑았다.
+63:     ///   그랬더니 wire 로 보낼 때 Agent 가 거부했다 —
+64:     ///   `GRANT_REJECTED: nonce does not match connection attempt`.
+65:     ///   Agent 는 **연결 시도 번호**에서 유도한 값을 기대한다.
+66:     ///
+67:     ///   두 소비자가 요구하는 것이 다르다:
+68:     ///     · 파일로 낼 때(`issue-grant`) — 연결 개념이 없다.
+69:     ///       같은 입력이면 같은 Grant 여야 재발급이 멱등하다.
+70:     ///     · wire 로 보낼 때 — Agent 와 합의된 유도식을 써야 한다.
+71:     ///
+72:     ///   그래서 이 모듈이 정하지 않고 **호출부가 준다.** 여기서 하나를
+73:     ///   고르면 다른 소비자가 조용히 깨진다.
+74:     pub nonce: Vec<u8>,
+75: }
+76: 
+77: /// 저장된 예약을 읽어 대조한 뒤 서명된 Grant 를 만든다.
+78: ///
+79: /// nested Lease 를 **먼저** 완성해 서명한다 — 그래야 outer Grant 의 서명이
+80: /// 최종 nested 바이트를 덮는다.
+81: pub fn signed_grant_from_stored(
+82:     jobs: &CoordinatorJobStore,
+83:     staging: &CoordinatorStagingStore,
+84:     leases: &CoordinatorLeaseStore,
+85:     request: &StoredGrantRequest,
+86:     key: &SigningKey,
+87: ) -> Result<pb::ExecutionGrant, String> {
+88:     if request.issued_at_unix_ms >= request.expires_at_unix_ms {
+89:         return Err(format!(
+90:             "Grant 발급 시각({})이 만료({}) 보다 앞서지 않는다",
+91:             request.issued_at_unix_ms, request.expires_at_unix_ms
+92:         ));
+93:     }
+94: 
+95:     let job = jobs
+96:         .get(&request.job_id)
+97:         .map_err(|e| format!("Job 조회 실패: {e}"))?
+98:         .ok_or_else(|| format!("GRANT_REFUSED: {} 를 모른다", request.job_id))?;
+99:     if job.state != JobState::Staging {
+100:         return Err(format!(
+101:             "GRANT_REFUSED: Job 이 STAGING 이 아니다(현재 {:?}) — 예약 없이 Grant 를 만들지 않는다",
+102:             job.state
+103:         ));
+104:     }
+105: 
+106:     let attempt = staging
+107:         .get_attempt(&request.attempt_id)
+108:         .map_err(|e| format!("Attempt 조회 실패: {e}"))?
+109:         .ok_or_else(|| {
+110:             format!(
+111:                 "GRANT_REFUSED: Attempt {} 가 저장소에 없다",
+112:                 request.attempt_id
+113:             )
+114:         })?;
+115:     let stored_lease = leases
+116:         .get(&request.lease_id)
+117:         .map_err(|e| format!("Lease 조회 실패: {e}"))?
+118:         .ok_or_else(|| format!("GRANT_REFUSED: Lease {} 가 저장소에 없다", request.lease_id))?;
+119: 
+120:     // ── 한 행만 믿지 않는다 ─────────────────────────────────────────
+121:     for (label, left, right) in [
+122:         (
+123:             "job_id",
+124:             attempt.job_id.as_str(),
+125:             stored_lease.job_id.as_str(),
+126:         ),
+127:         (
+128:             "attempt_id",
+129:             attempt.attempt_id.as_str(),
+130:             stored_lease.attempt_id.as_str(),
+131:         ),
+132:         (
+133:             "lease_id",
+134:             attempt.lease_id.as_str(),
+135:             stored_lease.lease_id.as_str(),
+136:         ),
+137:     ] {
+138:         if left != right {
+139:             return Err(format!(
+140:                 "GRANT_REFUSED: Attempt 와 Lease 의 {label} 가 다르다(Attempt {left:?}, Lease {right:?}) — 두 행이 같은 예약을 가리키지 않는다"
+141:             ));
+142:         }
+143:     }
+144:     // ★★ **아래 두 대조는 테스트로 고정되지 않았다 — 왜인지 적는다.**
+145:     //
+146:     //   뮤테이션 G5(fence 대조 제거)·G6(예약 존재 확인 제거)를 걸어도
+147:     //   `issue_grant` 10건이 전부 통과한다. 억지로 통과시킨 게 아니라
+148:     //   **그 상태를 정상 경로로 만들 수 없어서**다 — Attempt·Lease·
+149:     //   예약은 `staging_store.rs` 의 **한 `BEGIN IMMEDIATE` 안에서 함께**
+150:     //   쓰인다(`:605`·`:915`·`:1985`). 셋이 어긋나려면 DB 를 직접
+151:     //   조작해야 한다.
+152:     //
+153:     //   그래서 이건 **입력 검증이 아니라 손상 방어**다. 값어치가 없다는
+154:     //   뜻은 아니지만, "테스트가 지키고 있다" 고 말하면 거짓이다.
+155:     //   고정하려면 rusqlite 로 행을 직접 망가뜨리는 테스트가 필요하고
+156:     //   이 crate 의 통합 테스트에는 그 의존성이 없다.
+157:     if attempt.fence_epoch != stored_lease.fence_epoch {
+158:         return Err(format!(
+159:             "GRANT_REFUSED: Attempt 와 Lease 의 fence epoch 가 다르다(Attempt {}, Lease {}) — 오래된 한쪽으로 Grant 를 만들면 fencing 이 무의미해진다",
+160:             attempt.fence_epoch, stored_lease.fence_epoch
+161:         ));
+162:     }
+163:     if attempt.job_id != request.job_id {
+164:         return Err(format!(
+165:             "GRANT_REFUSED: Attempt 가 다른 Job 의 것이다({} != {})",
+166:             attempt.job_id, request.job_id
+167:         ));
+168:     }
+169: 
+170:     let reservation = staging
+171:         .get_node_reservation(&stored_lease.holder_node_id)
+172:         .map_err(|e| format!("예약 조회 실패: {e}"))?
+173:         .ok_or_else(|| {
+174:             format!(
+175:                 "GRANT_REFUSED: {} 에 예약이 없다 — Lease 는 있는데 노드가 안 잡혀 있다",
+176:                 stored_lease.holder_node_id
+177:             )
+178:         })?;
+179:     if reservation.job_id != request.job_id || reservation.attempt_id != request.attempt_id {
+180:         return Err(format!(
+181:             "GRANT_REFUSED: {} 의 예약은 다른 Attempt 의 것이다(job {}, attempt {})",
+182:             stored_lease.holder_node_id, reservation.job_id, reservation.attempt_id
+183:         ));
+184:     }
+185: 
+186:     // ── 상태 관문 ───────────────────────────────────────────────────
+187:     if let Some(revoked_at) = stored_lease.revoked_at_unix_ms {
+188:         return Err(format!(
+189:             "GRANT_REFUSED: Lease 가 {revoked_at} 에 폐기됐다 — 폐기된 Lease 로 Grant 를 만들지 않는다"
+190:         ));
+191:     }
+192:     // ★ 경계 포함(`<=`) — `DoD-26`·`DoD-32`·`DoD-34` 가 정착시킨 규칙과
+193:     //   같다. 정확히 만료 시각인 Lease 를 여기서만 유효로 보면, Agent 는
+194:     //   같은 순간 그 Lease 를 거부한다.
+195:     if stored_lease.expires_at_unix_ms <= request.issued_at_unix_ms {
+196:         return Err(format!(
+197:             "GRANT_REFUSED: 발급 시각({})에 Lease 가 이미 만료다(만료 {})",
+198:             request.issued_at_unix_ms, stored_lease.expires_at_unix_ms
+199:         ));
+200:     }
+201:     if request.expires_at_unix_ms > stored_lease.expires_at_unix_ms {
+202:         return Err(format!(
+203:             "GRANT_REFUSED: Grant 만료({})가 Lease 만료({}) 보다 늦다",
+204:             request.expires_at_unix_ms, stored_lease.expires_at_unix_ms
+205:         ));
+206:     }
+207: 
+208:     // ── 서명 ────────────────────────────────────────────────────────
+209:     let mut lease = unsigned_lease_from_stored(&stored_lease)?;
+210:     lease.coordinator_signature = sign(key, &lease).to_vec();
+211: 
+212:     let mut grant = pb::ExecutionGrant {
+213:         schema_version: 2,
+214:         grant_id: request.grant_id.clone(),
+215:         attempt_id: attempt.attempt_id.clone(),
+216:         coordinator_device_id: stored_lease.issuing_coordinator_id.clone(),
+217:         // ★ 리터럴 1 이 아니라 저장된 term 이다. `coordinator-stub` 의
+218:         //   기존 `issue_grant()` 는 여기에 1 을 박아 넣는다.
+219:         coordinator_term: stored_lease.coordinator_term,
+220:         issued_at_unix_ms: request.issued_at_unix_ms,
+221:         expires_at_unix_ms: request.expires_at_unix_ms,
+222:         nonce: request.nonce.clone(),
+223:         // 이 비트는 v2 Grant 서명 대상이다. 이 경로는 **저장소에서만**
+224:         // Lease 를 읽으므로 정직하게 true 다.
+225:         lease_from_durable_store: true,
+226:         lease: Some(lease),
+227:         ..Default::default()
+228:     };
+229:     grant.coordinator_signature = sign(key, &grant).to_vec();
+230: 
+231:     // ── 방금 만든 것을 바로 다시 검증한다 ───────────────────────────
+232:     //
+233:     // ★ `gputeer submit` 이 이미 하는 일이다("서명하자마자 깨진 파일을
+234:     //   내보내는 것보다 여기서 실패하는 편이 훨씬 싸다"). 이 경로에는
+235:     //   그게 **없었다** — 내 뮤테이션이 아니라 코드를 나란히 놓고 보다가
+236:     //   찾았다.
+237:     //
+238:     //   확인하는 것과 못 하는 것을 정확히 적는다:
+239:     //
+240:     //   확인한다   구조·`schema_version`·수명·canonical 인코딩,
+241:     //              그리고 **서명이 실제로 검증되는가**(2026-09-07 추가).
+242:     //              nested Lease 도 같이 본다.
+243:     //   못 한다    **이 키가 정말 `issuing_coordinator_id` 의 것인가.**
+244:     //              이 모듈에는 key directory 가 없다 — 호출부가 준
+245:     //              키를 그대로 쓴다.
+246:     //
+247:     //   ★★ **"위험하지 않다" 고 적었던 것을 고친다** (2026-09-07 독립
+248:     //     검수 지적). 엉뚱한 키로 서명하면 여기서는 통과하고 나중에
+249:     //     Agent 가 거부한다. 인증 우회는 아니지만 **위험이 없는 것은
+250:     //     아니다**:
+251:     //
+252:     //       · 운영자는 유효한 Grant 를 만든 줄 안다
+253:     //       · 실패가 Agent 단계까지 밀려 원인 파악이 늦어진다
+254:     //       · `--out` 에 기존 파일이 있었다면 못 쓰는 Grant 로 덮인다
+255:     //
+256:     //     닫으려면 Coordinator 공개키 목록이 필요하고 아직 없다.
+257:     verify_own_output(&grant, key, request.issued_at_unix_ms)?;
+258:     Ok(grant)
+259: }
+260: 
+261: /// 방금 서명한 Grant 를 **서명까지** 자기 검증한다.
+262: ///
+263: /// ★★ **2026-09-07 독립 검수가 이 함수를 반려했다.** 전에는
+264: ///   `AlwaysValid`(서명을 읽지도 않는 검증자)를 썼다. 검수가 반례를
+265: ///   보였다 —
+266: ///
+267: ///   > `sign()` 이 버그 때문에 잘못된 preimage 를 서명하거나 64바이트
+268: ///   > 쓰레기를 반환해도, 검증기가 서명을 **읽지 않으므로** 통과한다.
+269: ///
+270: ///   즉 그 검사는 "서명 생성과 검증 양쪽에 같은 버그가 있으면 못 잡는다"
+271: ///   보다도 약했다. **생성기의 단독 버그조차 못 잡았다.**
+272: ///
+273: ///   지금은 서명에 쓴 키에서 공개키를 도출해 **실제로 검증한다.**
+274: ///   그러면 서명 생성과 canonical preimage 의 불일치를 잡는다.
+275: ///
+276: /// ★ 여전히 못 하는 것은 그대로다 — **이 공개키가 정말
+277: ///   `issuing_coordinator_id` 의 신뢰된 키인가.** 이 모듈에는 key
+278: ///   directory 가 없고 호출부가 준 키를 그대로 쓴다. 그건 별도 검사가
+279: ///   필요하고 이 저장소에 아직 없다.
+280: fn verify_own_output(
+281:     grant: &pb::ExecutionGrant,
+282:     key: &gputeer_crypto::SigningKey,
+283:     at_unix_ms: u64,
+284: ) -> Result<(), String> {
+285:     // 서명에 쓴 키의 공개키를 두 신원 모두에 등록한다 — Grant 와 nested
+286:     // Lease 는 서명자 이름이 다를 수 있는데, 여기서 확인하려는 것은
+287:     // "이 키로 서명한 것이 그대로 검증되는가" 뿐이다.
+288:     let mut ring = gputeer_crypto::InMemoryKeyring::new();
+289:     let public = key.verifying_key();
+290:     ring.insert(grant.coordinator_device_id.clone(), public);
+291:     if let Some(lease) = grant.lease.as_ref() {
+292:         ring.insert(lease.issuing_coordinator_id.clone(), public);
+293:     }
+294:     let verifier = gputeer_crypto::Ed25519Verifier::new(&ring);
+295: 
+296:     gputeer_protocol::verify(
+297:         grant,
+298:         2,
+299:         &verifier,
+300:         at_unix_ms,
+301:         &mut gputeer_protocol::signing::NoReplayCheck,
+302:     )
+303:     .map_err(|e| format!("방금 만든 Grant 가 자기 검증을 통과하지 못했다: {e:?}"))?;
+304: 
+305:     let lease = grant
+306:         .lease
+307:         .as_ref()
+308:         .ok_or_else(|| "방금 만든 Grant 에 Lease 가 없다".to_string())?;
+309:     gputeer_protocol::verify(
+310:         lease,
+311:         1,
+312:         &verifier,
+313:         at_unix_ms,
+314:         &mut gputeer_protocol::signing::NoReplayCheck,
+315:     )
+316:     .map_err(|e| format!("방금 만든 nested Lease 가 자기 검증을 통과하지 못했다: {e:?}"))?;
+317:     Ok(())
+318: }
+319: 
+320: /// `(grant_id, attempt_id)` 에서 16바이트 nonce 를 결정적으로 뽑는다.
+321: ///
+322: /// ★ **무작위가 아니다.** 같은 입력이면 같은 Grant 를 내야 재발급이
+323: ///   멱등해지고 그것을 테스트로 확인할 수 있다. 재생 방어는 nonce 의
+324: ///   예측 불가능성이 아니라 **수신 측의 replay 저장소**가 맡는다
+325: ///   (`crates/crypto` 의 `DurableReplayGuard`).
+326: ///
+327: /// 길이 프리픽스를 붙여 인접 값이 서로 스며들지 않게 한다.
+328: pub fn derive_stored_grant_nonce(grant_id: &str, attempt_id: &str) -> Vec<u8> {
+329:     let mut input = Vec::new();
+330:     for part in [
+331:         b"gputeer/v1/grant-nonce".as_slice(),
+332:         grant_id.as_bytes(),
+333:         attempt_id.as_bytes(),
+334:     ] {
+335:         input.extend_from_slice(&(part.len() as u64).to_le_bytes());
+336:         input.extend_from_slice(part);
+337:     }
+338:     gputeer_protocol::canonical::blake3_256(&input)[..16].to_vec()
+339: }
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/coordinator/src/lib.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(str(p)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 59<=i<68)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 869<=i<960)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 2320<=i<2401))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/coordinator/src/job_store.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(str(p)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 144<=i<166)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 394<=i<415)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 831<=i<856)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 880<=i<928)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 1389<=i<1540))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/cli/src/plan_job.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(str(p)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 0<=i<45)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 75<=i<164))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/cli/src/scheduler_tick.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(str(p)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 167<=i<219))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/cli/src/issue_grant.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(str(p)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 0<=i<260))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/agent/src/lib.rs'); a=p.read_text(encoding='utf-8').splitlines(); print(str(p)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 1699<=i<1820))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 4360ms:
+crates\cli\src\plan_job.rs
+1: //! `gputeer plan-job` — 저장된 Job 을 **실제로 스케줄 가능한지 확인해**
+2: //! `SUBMITTED → PLANNING → QUEUED` 로 올린다.
+3: //!
+4: //! # ★ `QUEUED` 는 아무 때나 붙일 수 있는 딱지가 아니다
+5: //!
+6: //! `job_store.rs` 의 `enqueue()` 문서가 못박아 뒀다 — 이 전이는
+7: //! **`PLAN_READY`, 즉 실행 가능한 계획이 최소 하나 있다**는 뜻이고
+8: //! `plan_id` 가 그 계획을 가리킨다.
+9: //!
+10: //! 그래서 이 명령은 아무 문자열이나 넣고 상태만 올리지 않는다. 실제로
+11: //! 후보를 계산해 **하나라도 적격일 때만** 올린다. 적격이 하나도 없으면
+12: //! 올리지 않고 **왜 떨어졌는지 노드별로 말한다** — 그게 운영자가 다음에
+13: //! 무엇을 고쳐야 하는지다.
+14: //!
+15: //! ```text
+16: //! 1  job store 에서 저장된 Manifest binding 을 꺼낸다
+17: //! 2  운영자 keyring 으로 **다시 검증한다**            <- 아래 참조
+18: //! 3  Verified 뒤에만 JobRequirements 로 옮긴다
+19: //! 4  같은 control DB 의 inventory 로 pool_snapshot 을 만든다
+20: //! 5  evaluate_eligibility() 로 후보를 가린다
+21: //! 6  적격이 있으면 start_planning + enqueue(plan_id)
+22: //!    없으면 아무 상태도 안 바꾸고 이유를 보고한다
+23: //! ```
+24: //!
+25: //! # ★ 왜 저장된 Manifest 를 **다시** 검증하는가
+26: //!
+27: //! `DoD-50` 이 `get_manifest_binding()` 을 만들면서 명시했다 — 반환값은
+28: //! **raw** 이고 "authoritative key directory 재검증 전 scheduler/Grant 에
+29: //! 사용할 수 없다". 저장은 그때 검증됐다는 사실을 기록할 뿐이고, **지금**
+30: //! 그 서명자를 여전히 믿는지는 다른 질문이다(그 사이 폐기·격리됐을 수
+31: //! 있다). 그래서 이 명령은 운영자 keyring 으로 다시 검증하고,
+32: //! `Verified<M>` 를 새로 얻은 뒤에만 필드를 읽는다.
+33: //!
+34: //! 저장 당시의 서명자와 지금 검증된 서명자가 다르면 거부한다 — 같은
+35: //! `job_id` 에 다른 사람의 서명이 붙는 것을 그냥 지나치지 않는다.
+36: //!
+37: //! # ★ 왜 DB 가 **하나**인가
+38: //!
+39: //! staging 예약이 자기 연결로 inventory 테이블을 읽는다
+40: //! (`staging_store.rs`). job 과 inventory 가 다른 파일이면 후보는 골라도
+41: //! 예약이 안 붙는다 — `tests/shared_control_db.rs` 가 그 사실을 재고
+42: //! 있다. 그래서 이 명령은 `--control-db` **하나**만 받는다.
+43: //!
+44: //! # 이 명령이 하지 않는 것
+45: //!
+76: 
+77:     let now_unix_ms = now_unix_ms();
+78: 
+79:     let mut jobs = CoordinatorJobStore::open(control_db)
+80:         .map_err(|e| format!("job store 를 열지 못했다({control_db}): {e}"))?;
+81:     // 영속성 판정은 저장소에 물어본다 — 여기서 다시 만들지 않는다.
+82:     if !jobs.is_durable() {
+83:         return Err(format!(
+84:             "--control-db 가 영속이 아니다({control_db:?}) — 올린 상태가 프로세스와 함께 사라지는데 로그에는 성공으로 찍힌다"
+85:         ));
+86:     }
+87: 
+88:     let binding = jobs
+89:         .get_manifest_binding(job_id)
+90:         .map_err(|e| format!("Manifest binding 조회 실패: {e}"))?
+91:         .ok_or_else(|| format!("PLAN_REFUSED: {job_id} 에 저장된 Manifest 가 없다"))?;
+92: 
+93:     // ── 2. 지금 다시 검증한다 ────────────────────────────────────────
+94:     let policy = if flags
+95:         .get("--i-understand-plaintext-keyring-is-unsafe")
+96:         .map(String::as_str)
+97:         == Some("true")
+98:     {
+99:         eprintln!(
+100:             "경고: 평문(K0) 제출자 keyring 을 허용했다 — 이 파일을 쓸 수 있는 사람은 임의의 공개키를 신뢰 목록에 넣을 수 있다"
+101:         );
+102:         PlaintextPolicy::Allow
+103:     } else {
+104:         PlaintextPolicy::Reject
+105:     };
+106:     let keyring = PersistentKeyring::load(keyring_path, policy)
+107:         .map_err(|e| format!("제출자 keyring 을 열지 못했다({keyring_path}): {e:?}"))?;
+108:     let verifier = Ed25519Verifier::new(&keyring);
+109: 
+110:     let verified = verify(
+111:         &binding.manifest,
+112:         1,
+113:         &verifier,
+114:         now_unix_ms,
+115:         &mut NoReplayCheck,
+116:     )
+117:     .map_err(|e| {
+118:         format!(
+119:             "PLAN_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?} — 저장될 때는 유효했더라도 그 사이 서명자가 폐기·격리됐거나 Manifest 가 만료됐을 수 있다"
+120:         )
+121:     })?;
+122: 
+123:     // ★★ **여기 있던 "저장 당시 서명자 == 지금 검증된 서명자" 대조를
+124:     //   지웠다 — 도달할 수 없는 코드였다.**
+125:     //
+126:     //   뮤테이션으로 지워도 아무 테스트가 안 깨지길래 "DB 변조 방어라
+127:     //   재기 어렵다" 고 적어 뒀는데, 실제로 변조해 보니 **더 앞에서
+128:     //   막혔다.** 저장소의 load 가 이미 둘을 강제한다:
+129:     //
+130:     //       job_store.rs:906   manifest.submitter_device_id == job.submitter_device_id
+131:     //       job_store.rs:912   signer_id_at_submission      == job.submitter_device_id
+132:     //
+133:     //   그리고 `Verified::signer_id()` 는 **메시지의 필드**에서 온다
+134:     //   (`signing.rs:843`).
+135:     //
+136:     //   ★★ **어느 필드인지가 증명의 마지막 칸이다** (2026-09-07 독립
+137:     //     검수 지적). 처음엔 `signing.rs:843` 까지만 적었는데, 그 줄은
+138:     //     "추상 메서드 `msg.signer_id()` 를 복사한다" 만 보여 줄 뿐
+139:     //     `JobManifest` 가 **무엇을** 돌려주는지는 말하지 않는다.
+140:     //     그 칸이 비면 증명이 형식적으로 성립하지 않는다.
+141:     //
+142:     //       signable.rs:61-63
+143:     //         impl Signable for pb::JobManifest {
+144:     //             fn signer_id(&self) -> &str { &self.submitter_device_id }
+145:     //
+146:     //   넷을 합치면 두 값은 항상 같다.
+147:     //
+148:     //   ★ `DoD-62` 에서 **똑같은 실수를 했다** — 거기서도 내가 넣은
+149:     //     재대조를 `fetch_report_binding` 이 이미 하고 있었다. 두 번째다.
+150:     //     패턴이 보인다: **"한 번 더 확인해서 나쁠 것 없다" 가 아니다.**
+151:     //     도달 못 하는 검사는 지키는 게 없으면서 지키는 것처럼 읽힌다.
+152:     //
+153:     //   지금 이 자리를 지키는 것은 저장소의 대조이고, 그것이 느슨해지면
+154:     //   `tampering_the_stored_signer_is_stopped_by_the_store_before_planning`
+155:     //   이 실패하며 알려 준다.
+156: 
+157:     // ── 3. Verified 뒤에만 필드를 읽는다 ─────────────────────────────
+158:     let requirements = job_requirements_from_manifest(&verified, submitter_member)
+159:         .map_err(|e| format!("PLAN_REFUSED: {e}"))?;
+160: 
+161:     // ── 4~5. 같은 DB 의 inventory 로 후보를 가린다 ───────────────────
+162:     let snapshot = {
+163:         let mut inventory = CoordinatorInventoryStore::open(control_db)
+164:             .map_err(|e| format!("inventory store 를 열지 못했다({control_db}): {e}"))?;
+
+ succeeded in 4400ms:
+crates\coordinator\src\lib.rs
+60: pub mod staging_store;
+61: use lease_store::{
+62:     CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision, ResumeRequestIdentity,
+63:     StoredLease,
+64: };
+65: 
+66: const IO_TIMEOUT: Duration = Duration::from_secs(10);
+67: 
+68: #[derive(Clone)]
+870:             agent_keys,
+871:             replay,
+872:             clock,
+873:             connection_attempt,
+874:         );
+875:     }
+876:     let mut grant = match &config.grant_from_control_db {
+877:         // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
+878:         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
+879:         //   함수**여서 두 벌이 생기지 않는다.
+880:         Some(control_db) => {
+881:             let jobs = crate::job_store::CoordinatorJobStore::open(control_db)
+882:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("job store: {e}"))))?;
+883:             let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)
+884:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("staging store: {e}"))))?;
+885:             let leases = CoordinatorLeaseStore::open(control_db)
+886:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("lease store: {e}"))))?;
+887:             crate::grant_from_stored::signed_grant_from_stored(
+888:                 &jobs,
+889:                 &staging,
+890:                 &leases,
+891:                 &crate::grant_from_stored::StoredGrantRequest {
+892:                     job_id: config.stored_grant_job_id.clone(),
+893:                     attempt_id: config.stored_grant_attempt_id.clone(),
+894:                     lease_id: config.stored_grant_lease_id.clone(),
+895:                     grant_id: config.grant_id.clone(),
+896:                     issued_at_unix_ms: now,
+897:                     expires_at_unix_ms: now.saturating_add(config.stored_grant_ttl_ms),
+898:                     // ★ **기존 handshake 의 유도식을 그대로 쓴다.** Agent 가
+899:                     //   연결 시도 번호에서 같은 값을 다시 만들어 대조한다 —
+900:                     //   저장된 사실로 뽑으면 그 대조가 깨진다(통합 테스트가
+901:                     //   `nonce does not match connection attempt` 로 잡았다).
+902:                     nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
+903:                 },
+904:                 signing_key,
+905:             )
+906:             .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Protocol(e)))?
+907:         }
+908:         None => issue_grant(config, lease_store, signing_key, now, connection_attempt)?,
+909:     };
+910: 
+911:     if config.corrupt_own_signature {
+912:         let last = grant
+913:             .coordinator_signature
+914:             .last_mut()
+915:             .ok_or_else(|| "coordinator_signature 가 비어 있다".to_string())?;
+916:         *last ^= 0x01;
+917:     }
+918: 
+919:     let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
+920:         .map_err(|e| format!("Grant 프레임 인코딩 실패: {e}"))?;
+921:     stream
+922:         .write_all(&frame)
+923:         .map_err(|e| format!("Grant 전송 실패: {e}"))?;
+924: 
+925:     // ★ replay 시나리오 — **똑같은 wire bytes** 를 다시 쓴다. `grant` 를
+926:     //   다시 인코딩하지 않는다 — 그러면 "논리적으로 같은 재발급" 이지
+927:     //   "같은 프레임의 replay" 가 아니게 된다. 검증 대상은 "같은 서명
+928:     //   바이트가 두 번 오면 두 번째가 거부되는가" 다.
+929:     if config.send_grant_twice {
+930:         stream
+931:             .write_all(&frame)
+932:             .map_err(|e| format!("replay Grant 전송 실패: {e}"))?;
+933:     }
+934:     stream.flush().map_err(|e| e.to_string())?;
+935: 
+936:     let received = read_frame(
+937:         stream,
+938:         1,
+939:         KeyDirectorySource::Provided(agent_keys),
+940:         replay,
+941:         clock,
+942:     )
+943:     .map_err(|e| format!("ACK 프레임 읽기/검증 실패: {e}"))?;
+944: 
+945:     // ★ `require_replay_checked()` 를 반드시 거친다 — replay 상태가
+946:     //   `permits_side_effects()` 를 만족하지 못한 `Verified<M>` 로
+947:     //   grant_id 대조 같은 부작용을 실행하지 않는다(§10).
+948:     let ack = match &received {
+949:         IngressMessage::GrantAck(verified) => verified
+950:             .require_replay_checked()
+951:             .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
+952:         other => return Err(format!("예상하지 못한 응답 타입: {other:?}").into()),
+953:     };
+954: 
+955:     if !ack.accepted {
+956:         return Err("Agent 가 Grant 를 accepted=false 로 응답했다"
+957:             .to_string()
+958:             .into());
+959:     }
+960:     if ack.grant_id != grant.grant_id {
+2321: fn issue_grant(
+2322:     config: &CoordinatorConfig,
+2323:     lease_store: &mut Option<CoordinatorLeaseStore>,
+2324:     key: &SigningKey,
+2325:     now: u64,
+2326:     connection_attempt: u32,
+2327: ) -> Result<pb::ExecutionGrant, String> {
+2328:     let lease = issue_lease(config, lease_store, key, now)?;
+2329: 
+2330:     let mut grant = pb::ExecutionGrant {
+2331:         schema_version: 2,
+2332:         grant_id: config.grant_id.clone(),
+2333:         attempt_id: config.attempt_id.clone(),
+2334:         coordinator_device_id: config.coordinator_device_id.clone(),
+2335:         coordinator_term: 1,
+2336:         issued_at_unix_ms: now,
+2337:         expires_at_unix_ms: now + 60_000,
+2338:         nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
+2339:         // This bit is part of the v2 Grant signature.  It reports the store
+2340:         // actually used for this issue_lease() call, not the legacy opt-in.
+2341:         lease_from_durable_store: lease_store.is_some(),
+2342:         lease: Some(lease),
+2343:         ..Default::default()
+2344:     };
+2345: 
+2346:     // ★ Manifest 는 **제출자가 서명한 별도 메시지**다. Coordinator 는
+2347:     //   그것을 실어 나르기만 한다 — 그래서 여기서 outer Grant 서명
+2348:     //   **전에** nested 서명을 먼저 완성해야 한다(그래야 Grant 서명이
+2349:     //   최종 nested 바이트를 덮는다).
+2350:     if let Some(manifest) = load_signed_manifest(config)? {
+2351:         // `manifest_hash` 는 Agent 가 재계산해 대조한다(`CLAUDE.md` §0.2).
+2352:         // 여기서는 그 대조 대상을 정직하게 채운다.
+2353:         let mut digest = blake3_256(&signing_input(&manifest)).to_vec();
+2354:         if config.corrupt_manifest_hash {
+2355:             digest[0] ^= 0x01;
+2356:         }
+2357:         grant.manifest_hash = Some(pb::Digest {
+2358:             algo: 1, // HASH_ALGORITHM_BLAKE3_256
+2359:             value: digest,
+2360:         });
+2361:         grant.manifest = Some(manifest);
+2362:     }
+2363: 
+2364:     grant.coordinator_signature = sign(key, &grant).to_vec();
+2365:     Ok(grant)
+2366: }
+2367: 
+2368: /// 제출자가 서명해 둔 Manifest 파일을 읽는다.
+2369: ///
+2370: /// ★ **Coordinator 는 이 Manifest 를 만들지도, 서명하지도 않는다.**
+2371: ///   읽어서 그대로 실어 나른다. 서명 검증도 하지 않는다 — 그것은
+2372: ///   Agent 가 제출자 공개키로 독립적으로 할 일이다. Coordinator 가
+2373: ///   "검증했다" 고 대신 말해 주면 Agent 가 그 말을 믿게 되고, 그
+2374: ///   순간 독립 검증이 사라진다.
+2375: ///
+2376: /// ★ 처음 배선에서는 `--submitter-seed` 로 **제출자 개인키를 받아
+2377: ///   여기서 직접 서명**했다. 테스트 편의였지만 그 구조가 남으면
+2378: ///   같은 주체가 서명하고 실어 나르는 셈이라 Agent 의 독립 검증이
+2379: ///   아무것도 증명하지 못한다. `gputeer submit` 으로 키를 밖으로
+2380: ///   꺼내고 이 함수는 읽기만 한다.
+2381: fn load_signed_manifest(config: &CoordinatorConfig) -> Result<Option<pb::JobManifest>, String> {
+2382:     let Some(path) = config.manifest_file.as_ref() else {
+2383:         return Ok(None);
+2384:     };
+2385:     let bytes = std::fs::read(path)
+2386:         .map_err(|e| format!("Manifest 파일 읽기 실패({}): {e}", path.display()))?;
+2387:     let mut manifest = pb::JobManifest::decode(bytes.as_slice())
+2388:         .map_err(|e| format!("Manifest 디코딩 실패({}): {e}", path.display()))?;
+2389: 
+2390:     // 실어 나르는 도중 위조가 일어나는 상황을 재현한다. 서명은 파일에
+2391:     // 이미 들어 있으므로 Coordinator 는 그것을 **깨뜨릴 수만** 있고
+2392:     // 새로 만들 수는 없다 — 그것이 이 구조의 요점이다.
+2393:     if config.corrupt_manifest_signature {
+2394:         let last = manifest
+2395:             .submitter_signature
+2396:             .last_mut()
+2397:             .ok_or_else(|| "submitter_signature 가 비어 있어 손상시킬 수 없다".to_string())?;
+2398:         *last ^= 0x01;
+2399:     }
+2400:     Ok(Some(manifest))
+2401: }
+
+ succeeded in 4749ms:
+crates\coordinator\src\job_store.rs
+145:     /// `false` means the idempotency key replayed the original durable result.
+146:     pub created: bool,
+147: }
+148: 
+149: /// A durable protobuf body that was accepted through [`Verified`] at submission
+150: /// time. This type is deliberately not `Verified<JobManifest>`: after restart,
+151: /// callers must verify `manifest` again against the then-authoritative key
+152: /// directory before using any field for scheduling or grant construction.
+153: #[derive(Debug, Clone, PartialEq)]
+154: pub struct StoredManifestBinding {
+155:     pub manifest: pb::JobManifest,
+156:     pub manifest_hash: [u8; 32],
+157:     pub signer_id_at_submission: String,
+158: }
+159: 
+160: #[derive(Debug, Clone, PartialEq)]
+161: pub struct ManifestBoundSubmitResult {
+162:     pub job: StoredJob,
+163:     pub binding: StoredManifestBinding,
+164:     /// `false` means the idempotency key replayed the original durable result.
+165:     pub created: bool,
+166: }
+395:         }
+396:     }
+397: 
+398:     pub fn get(&self, job_id: &str) -> Result<Option<StoredJob>, JobStoreError> {
+399:         fetch_job(&self.connection, job_id)
+400:     }
+401: 
+402:     /// Loads a durable Manifest binding without claiming that its signature is
+403:     /// still valid. Existing hash-only Jobs fail closed with
+404:     /// [`JobStoreError::LegacyManifestMissing`].
+405:     pub fn get_manifest_binding(
+406:         &self,
+407:         job_id: &str,
+408:     ) -> Result<Option<StoredManifestBinding>, JobStoreError> {
+409:         let Some(job) = fetch_job(&self.connection, job_id)? else {
+410:             return Ok(None);
+411:         };
+412:         fetch_manifest_binding(&self.connection, &job).map(Some)
+413:     }
+414: 
+415:     /// Returns the durable queue in deterministic FIFO order. `job_id` is the
+832: fn validate_manifest_identity(
+833:     submission: &AcceptedJobSubmission,
+834:     manifest: &pb::JobManifest,
+835:     verified_signer_id: &str,
+836: ) -> Result<(), JobStoreError> {
+837:     if manifest.job_id != submission.job_id {
+838:         return Err(JobStoreError::ManifestIdentityMismatch("job_id"));
+839:     }
+840:     if manifest.submitter_device_id != submission.submitter_device_id {
+841:         return Err(JobStoreError::ManifestIdentityMismatch(
+842:             "submitter_device_id",
+843:         ));
+844:     }
+845:     if verified_signer_id != submission.submitter_device_id {
+846:         return Err(JobStoreError::ManifestIdentityMismatch(
+847:             "verified signer_id",
+848:         ));
+849:     }
+850:     Ok(())
+851: }
+852: 
+853: fn derive_manifest_hash(manifest: &pb::JobManifest) -> [u8; 32] {
+854:     blake3_256(&signing_input(manifest))
+855: }
+856: 
+881: fn fetch_manifest_binding(
+882:     connection: &Connection,
+883:     job: &StoredJob,
+884: ) -> Result<StoredManifestBinding, JobStoreError> {
+885:     let row = connection
+886:         .query_row(
+887:             "SELECT verified_signer_id, manifest_body
+888:              FROM coordinator_job_manifests WHERE job_id = ?1",
+889:             rusqlite::params![job.job_id],
+890:             |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+891:         )
+892:         .optional()
+893:         .map_err(map_sql_error)?
+894:         .ok_or_else(|| JobStoreError::LegacyManifestMissing {
+895:             job_id: job.job_id.clone(),
+896:         })?;
+897:     let (signer_id_at_submission, body) = row;
+898:     if body.is_empty() {
+899:         return Err(manifest_corrupt(job, ManifestCorruption::EmptyBody));
+900:     }
+901:     let manifest = pb::JobManifest::decode(body.as_slice())
+902:         .map_err(|_| manifest_corrupt(job, ManifestCorruption::UndecodableBody))?;
+903:     if manifest.job_id != job.job_id {
+904:         return Err(manifest_corrupt(job, ManifestCorruption::JobIdMismatch));
+905:     }
+906:     if manifest.submitter_device_id != job.submitter_device_id {
+907:         return Err(manifest_corrupt(
+908:             job,
+909:             ManifestCorruption::SubmitterDeviceIdMismatch,
+910:         ));
+911:     }
+912:     if signer_id_at_submission != job.submitter_device_id {
+913:         return Err(manifest_corrupt(job, ManifestCorruption::SignerIdMismatch));
+914:     }
+915:     let derived_hash = derive_manifest_hash(&manifest);
+916:     if derived_hash != job.manifest_hash {
+917:         return Err(manifest_corrupt(job, ManifestCorruption::HashMismatch));
+918:     }
+919:     Ok(StoredManifestBinding {
+920:         manifest,
+921:         manifest_hash: derived_hash,
+922:         signer_id_at_submission,
+923:     })
+924: }
+925: 
+926: fn manifest_corrupt(job: &StoredJob, kind: ManifestCorruption) -> JobStoreError {
+927:     JobStoreError::ManifestCorrupt {
+928:         job_id: job.job_id.clone(),
+1390:     }
+1391: 
+1392:     #[test]
+1393:     fn empty_and_undecodable_manifest_bodies_fail_closed() {
+1394:         for (body, expected) in [
+1395:             (Vec::new(), ManifestCorruption::EmptyBody),
+1396:             (vec![0x12, 0x05, b'a'], ManifestCorruption::UndecodableBody),
+1397:         ] {
+1398:             let (mut store, _dir) = open_temp();
+1399:             let verified = verified_manifest("job-bound", MANIFEST_DEVICE, 7, "original");
+1400:             let request = bound_submission(&verified, 1);
+1401:             store
+1402:                 .submit_verified_manifest(&request, &verified, 100)
+1403:                 .unwrap();
+1404:             store
+1405:                 .connection
+1406:                 .execute(
+1407:                     "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+1408:                     rusqlite::params![body, request.job_id],
+1409:                 )
+1410:                 .unwrap();
+1411:             assert_eq!(
+1412:                 store.get_manifest_binding(&request.job_id),
+1413:                 Err(JobStoreError::ManifestCorrupt {
+1414:                     job_id: request.job_id.clone(),
+1415:                     kind: expected,
+1416:                 })
+1417:             );
+1418:         }
+1419:     }
+1420: 
+1421:     #[test]
+1422:     fn body_hash_and_job_identity_corruption_fail_closed_independently() {
+1423:         let (mut store, _dir) = open_temp();
+1424:         let verified = verified_manifest("job-hash", MANIFEST_DEVICE, 7, "original");
+1425:         let request = bound_submission(&verified, 1);
+1426:         store
+1427:             .submit_verified_manifest(&request, &verified, 100)
+1428:             .unwrap();
+1429:         let mut changed_body = verified.get().clone();
+1430:         changed_body.team_id = "tampered-team".to_string();
+1431:         store
+1432:             .connection
+1433:             .execute(
+1434:                 "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+1435:                 rusqlite::params![changed_body.encode_to_vec(), request.job_id],
+1436:             )
+1437:             .unwrap();
+1438:         assert_eq!(
+1439:             store.get_manifest_binding(&request.job_id),
+1440:             Err(JobStoreError::ManifestCorrupt {
+1441:                 job_id: request.job_id.clone(),
+1442:                 kind: ManifestCorruption::HashMismatch,
+1443:             })
+1444:         );
+1445: 
+1446:         let verified = verified_manifest("job-identity", MANIFEST_DEVICE, 8, "original");
+1447:         let request = bound_submission(&verified, 2);
+1448:         store
+1449:             .submit_verified_manifest(&request, &verified, 100)
+1450:             .unwrap();
+1451:         let mut changed_identity = verified.get().clone();
+1452:         changed_identity.job_id = "body-points-elsewhere".to_string();
+1453:         let changed_hash = derive_manifest_hash(&changed_identity);
+1454:         store
+1455:             .connection
+1456:             .execute(
+1457:                 "UPDATE coordinator_jobs SET manifest_hash = ?1 WHERE job_id = ?2",
+1458:                 rusqlite::params![changed_hash.as_slice(), request.job_id],
+1459:             )
+1460:             .unwrap();
+1461:         store
+1462:             .connection
+1463:             .execute(
+1464:                 "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+1465:                 rusqlite::params![changed_identity.encode_to_vec(), request.job_id],
+1466:             )
+1467:             .unwrap();
+1468:         assert_eq!(
+1469:             store.get_manifest_binding(&request.job_id),
+1470:             Err(JobStoreError::ManifestCorrupt {
+1471:                 job_id: request.job_id.clone(),
+1472:                 kind: ManifestCorruption::JobIdMismatch,
+1473:             })
+1474:         );
+1475: 
+1476:         let verified = verified_manifest("job-device-identity", MANIFEST_DEVICE, 9, "original");
+1477:         let request = bound_submission(&verified, 3);
+1478:         store
+1479:             .submit_verified_manifest(&request, &verified, 100)
+1480:             .unwrap();
+1481:         let mut changed_identity = verified.get().clone();
+1482:         changed_identity.submitter_device_id = "body-device-elsewhere".to_string();
+1483:         let changed_hash = derive_manifest_hash(&changed_identity);
+1484:         store
+1485:             .connection
+1486:             .execute(
+1487:                 "UPDATE coordinator_jobs SET manifest_hash = ?1 WHERE job_id = ?2",
+1488:                 rusqlite::params![changed_hash.as_slice(), request.job_id],
+1489:             )
+1490:             .unwrap();
+1491:         store
+1492:             .connection
+1493:             .execute(
+1494:                 "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+1495:                 rusqlite::params![changed_identity.encode_to_vec(), request.job_id],
+1496:             )
+1497:             .unwrap();
+1498:         assert_eq!(
+1499:             store.get_manifest_binding(&request.job_id),
+1500:             Err(JobStoreError::ManifestCorrupt {
+1501:                 job_id: request.job_id.clone(),
+1502:                 kind: ManifestCorruption::SubmitterDeviceIdMismatch,
+1503:             })
+1504:         );
+1505:     }
+1506: 
+1507:     #[test]
+1508:     fn device_signer_corruption_and_legacy_missing_body_fail_closed() {
+1509:         let (mut store, _dir) = open_temp();
+1510:         let verified = verified_manifest("job-device", MANIFEST_DEVICE, 7, "original");
+1511:         let request = bound_submission(&verified, 1);
+1512:         store
+1513:             .submit_verified_manifest(&request, &verified, 100)
+1514:             .unwrap();
+1515:         store
+1516:             .connection
+1517:             .execute(
+1518:                 "UPDATE coordinator_job_manifests SET verified_signer_id = 'other-device' WHERE job_id = ?1",
+1519:                 rusqlite::params![request.job_id],
+1520:             )
+1521:             .unwrap();
+1522:         assert_eq!(
+1523:             store.get_manifest_binding(&request.job_id),
+1524:             Err(JobStoreError::ManifestCorrupt {
+1525:                 job_id: request.job_id.clone(),
+1526:                 kind: ManifestCorruption::SignerIdMismatch,
+1527:             })
+1528:         );
+1529: 
+1530:         let legacy = submission("legacy-job", 2);
+1531:         store.submit_accepted(&legacy, 100).unwrap();
+1532:         assert_eq!(
+1533:             store.get_manifest_binding("legacy-job"),
+1534:             Err(JobStoreError::LegacyManifestMissing {
+1535:                 job_id: "legacy-job".to_string()
+1536:             })
+1537:         );
+1538:         assert!(store.get("legacy-job").unwrap().is_some());
+1539:     }
+1540: 
+
+ succeeded in 5084ms:
+crates\cli\src\issue_grant.rs
+1: //! `gputeer issue-grant` — 예약된 Job 의 **저장된 Lease** 로 서명된
+2: //! `ExecutionGrant` 를 만든다.
+3: //!
+4: //! ```text
+5: //! stage-job    CAS 예약 + Attempt/Lease/fence epoch          (STAGING)
+6: //! issue-grant  저장된 것을 읽어 Grant 를 서명한다             <- 여기
+7: //! ```
+8: //!
+9: //! # ★ 지금까지 Grant 는 명령줄 값으로 만들어졌다
+10: //!
+11: //! `coordinator-stub` 의 `issue_grant()` 는 `config.grant_id`·
+12: //! `config.attempt_id` 를 그대로 쓰고 **`coordinator_term` 을 리터럴 1
+13: //! 로 박아 넣는다.** selftest 를 재현 가능하게 만드는 데는 충분하지만,
+14: //! 그 Grant 는 저장소가 아는 사실과 아무 관계가 없다.
+15: //!
+16: //! 이 명령은 반대다 — **저장된 것만 쓴다.** Attempt·Lease·fence epoch·
+17: //! coordinator term 이 전부 `stage-job` 이 커밋한 행에서 나온다.
+18: //!
+19: //! # ★ 한 행만 믿지 않는다
+20: //!
+21: //! Attempt 와 Lease 는 다른 행이다. 둘이 어긋나 있으면 그 자체가 사실
+22: //! 이고, 그때 한쪽만 읽으면 없는 일관성을 가정하게 된다. 그래서 발급
+23: //! 전에 대조한다:
+24: //!
+25: //! ```text
+26: //! Attempt.job_id      == Lease.job_id
+27: //! Attempt.attempt_id  == Lease.attempt_id
+28: //! Attempt.fence_epoch == Lease.fence_epoch
+29: //! Attempt.lease_id    == Lease.lease_id
+30: //! 예약(node)          == Lease.holder_node_id 와 같은 노드
+31: //! ```
+32: //!
+33: //! # 이 명령이 하지 않는 것
+34: //!
+35: //! ```text
+36: //! 안 한다   Agent 에게 보내기       wire dispatch 는 ④ 다. 파일로 낸다
+37: //! 안 한다   Manifest 를 싣기        Grant 에 Manifest 를 실으려면
+38: //!                                   제출자 서명 원본이 필요하고, 그건
+39: //!                                   별도 조각이다
+40: //! 안 한다   ResourceScope 채우기    GPU scope 는 authoritative provenance
+41: //!                                   가 없어 막혀 있다(`DoD-55`)
+42: //! ```
+43: //!
+44: //! # ★ 개인키를 명령줄에 두지 않는다
+45: //!
+46: //! 이 저장소의 기존 관례(`--own-seed <hex32>`)는 **개인키가 프로세스
+47: //! 목록에 뜬다.** 같은 기계의 다른 사용자가 `ps`/작업 관리자로 본다.
+48: //! 그래서 이 명령은 **파일 경로**를 받는다 — 파일 권한이 경계가 된다.
+49: //!
+50: //! ★ 그렇다고 안전한 것은 아니다. 평문 seed 파일은 `KeyProtection::K0`
+51: //!   이고, 이 저장소가 K1(DPAPI·systemd-creds)을 가졌지만 그 저장소에서
+52: //!   **개인키를 꺼내 서명하는 공개 경로가 아직 없다.** 명령줄보다 낫다는
+53: //!   것이지 보호된다는 뜻이 아니다.
+54: 
+55: use std::collections::BTreeMap;
+56: 
+57: use gputeer_coordinator::grant_from_stored::{
+58:     derive_stored_grant_nonce, signed_grant_from_stored, StoredGrantRequest,
+59: };
+60: use gputeer_coordinator::job_store::CoordinatorJobStore;
+61: use gputeer_coordinator::lease_store::CoordinatorLeaseStore;
+62: use gputeer_coordinator::staging_store::CoordinatorStagingStore;
+63: use gputeer_crypto::SigningKey;
+64: use prost::Message;
+65: 
+66: /// `gputeer issue-grant` 진입점.
+67: pub fn run(args: &[String]) -> Result<String, String> {
+68:     let flags = parse_flags(args)?;
+69: 
+70:     let job_id = require(&flags, "--job-id")?;
+71:     let control_db = require(&flags, "--control-db")?;
+72:     let attempt_id = require(&flags, "--attempt-id")?;
+73:     let lease_id = require(&flags, "--lease-id")?;
+74:     let grant_id = require(&flags, "--grant-id")?;
+75:     let out_path = require(&flags, "--out")?;
+76:     // ★ 기본값은 **덮어쓰지 않는다.** 위 `write_grant_file` 주석 참조.
+77:     let overwrite = matches!(
+78:         flags.get("--overwrite-existing-grant").map(String::as_str),
+79:         Some("true")
+80:     );
+81: 
+82:     // ★ Grant 시각도 절대값이다. `stage-job` 에서 배운 것과 같은 이유 —
+83:     //   실시간 시각을 결과에 반영하면 같은 명시적 입력으로도 Grant 가 달라질 수
+84:     //   있다. 시각을 통제하고 결과를 재현하기 위해 절대값을 인자로 받는다
+85:     //   (재검수 30·31 — 한때 "테스트로 고정할 수 없다" 고 적었는데, 시계 대역을
+86:     //   고정하면 테스트할 수 있다. 설계 이유를 다른 방법의 불가능으로 넓힌 것이었다).
+87:     let issued_at_unix_ms = u64_flag(&flags, "--grant-issued-at-unix-ms")?;
+88:     let expires_at_unix_ms = u64_flag(&flags, "--grant-expires-at-unix-ms")?;
+89:     if issued_at_unix_ms >= expires_at_unix_ms {
+90:         return Err(format!(
+91:             "Grant 발급 시각({issued_at_unix_ms})이 만료({expires_at_unix_ms}) 보다 앞서지 않는다"
+92:         ));
+93:     }
+94: 
+95:     let key = load_signing_key(require(&flags, "--coordinator-key-file")?)?;
+96: 
+97:     // ── 저장된 사실을 읽는다 ────────────────────────────────────────
+98:     let jobs = CoordinatorJobStore::open(control_db)
+99:         .map_err(|e| format!("job store 를 열지 못했다({control_db}): {e}"))?;
+100:     if !jobs.is_durable() {
+101:         return Err(format!(
+102:             "--control-db 가 영속이 아니다({control_db:?}) — 없는 예약으로 Grant 를 만들게 된다"
+103:         ));
+104:     }
+105:     drop(jobs);
+106:     let jobs = CoordinatorJobStore::open(control_db)
+107:         .map_err(|e| format!("job store 를 다시 열지 못했다({control_db}): {e}"))?;
+108:     let staging = CoordinatorStagingStore::open(control_db)
+109:         .map_err(|e| format!("staging store 를 열지 못했다({control_db}): {e}"))?;
+110:     let leases = CoordinatorLeaseStore::open(control_db)
+111:         .map_err(|e| format!("lease store 를 열지 못했다({control_db}): {e}"))?;
+112: 
+113:     // ★ 대조와 조립은 **coordinator 가 한다.** `coordinator-stub` 도 같은
+114:     //   함수를 부르므로 두 벌이 생기지 않는다(모듈 문서 참조).
+115:     let grant = signed_grant_from_stored(
+116:         &jobs,
+117:         &staging,
+118:         &leases,
+119:         &StoredGrantRequest {
+120:             job_id: job_id.to_string(),
+121:             attempt_id: attempt_id.to_string(),
+122:             lease_id: lease_id.to_string(),
+123:             grant_id: grant_id.to_string(),
+124:             issued_at_unix_ms,
+125:             expires_at_unix_ms,
+126:             // 파일로 내는 경로에는 연결 개념이 없다 — 같은 입력이면
+127:             // 같은 Grant 가 나오도록 결정적으로 유도한다.
+128:             nonce: derive_stored_grant_nonce(grant_id, attempt_id),
+129:         },
+130:         &key,
+131:     )?;
+132:     let lease = grant.lease.as_ref().expect("서명 경로가 Lease 를 넣는다");
+133:     let summary = format!(
+134:         "GRANTED job_id={job_id} grant_id={grant_id} attempt={} lease={} node={} fence={} term={} out={out_path}",
+135:         grant.attempt_id,
+136:         lease.lease_id,
+137:         lease.holder_node_id,
+138:         lease.fence_epoch,
+139:         grant.coordinator_term
+140:     );
+141: 
+142:     // ★ 공유 도우미를 쓴다 — `crate::out_file` 주석에 왜인지 적어 뒀다.
+143:     let warning = crate::out_file::write_new(
+144:         out_path,
+145:         &grant.encode_to_vec(),
+146:         overwrite,
+147:         "GRANT_REFUSED",
+148:         "Grant",
+149:     )?;
+150: 
+151:     // ★ 결함 ⑰ — 경고는 도우미가 출력하지 않는다. 요약에 싣는다.
+152:     Ok(crate::out_file::with_warning(summary, warning))
+153: }
+154: 
+155: /// 서명키를 **파일에서만** 읽는다. 명령줄에 남기지 않는 것이 목적이다.
+156: fn load_signing_key(path: &str) -> Result<SigningKey, String> {
+157:     let raw = std::fs::read_to_string(path)
+158:         .map_err(|e| format!("서명키 파일을 열지 못했다({path}): {e}"))?;
+159:     let hex = raw.trim();
+160:     if hex.len() != 64 {
+161:         return Err(format!(
+162:             "서명키 파일은 64자리 hex(32바이트) 하나여야 한다({path}, 길이 {})",
+163:             hex.len()
+164:         ));
+165:     }
+166:     // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+167:     //   가 한 바이트씩 읽으므로 문자 경계를 가를 수 없다.
+168:     let seed = gputeer_crypto::hex::decode_fixed::<32>(hex).map_err(|e| {
+169:         format!("GRANT_REFUSED: KEY_NOT_HEX — 서명키 hex 파싱 실패({path}): {e}")
+170:     })?;
+171:     Ok(SigningKey::from_bytes(&seed))
+172: }
+173: 
+174: fn u64_flag(flags: &BTreeMap<String, String>, key: &str) -> Result<u64, String> {
+175:     require(flags, key)?
+176:         .parse::<u64>()
+177:         .map_err(|e| format!("{key} 파싱 실패: {e}"))
+178: }
+179: 
+180: fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+181:     let mut out = BTreeMap::new();
+182:     let mut i = 0;
+183:     while i < args.len() {
+184:         let key = &args[i];
+185:         if !key.starts_with("--") {
+186:             return Err(format!("알 수 없는 인자: {key}"));
+187:         }
+188:         let value = args
+189:             .get(i + 1)
+190:             .ok_or_else(|| format!("{key} 에 값이 없다"))?;
+191:         out.insert(key.clone(), value.clone());
+192:         i += 2;
+193:     }
+194:     Ok(out)
+195: }
+196: 
+197: fn require<'a>(flags: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str, String> {
+198:     flags
+199:         .get(key)
+200:         .map(String::as_str)
+201:         .ok_or_else(|| format!("{key} 가 필요하다"))
+202: }
+
+ succeeded in 5155ms:
+crates\cli\src\scheduler_tick.rs
+168:         .ok_or_else(|| format!("TICK_REFUSED: {job_id} 가 QUEUED 인데 plan_id 가 없다"))?;
+169:     let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
+170:         format!("TICK_REFUSED: {job_id} 가 QUEUED 인데 queued_at 이 없다")
+171:     })?;
+172: 
+173:     // ── Lease 시각을 저장된 사실에서 유도한다 ───────────────────────
+174:     //
+175:     // ★ `queued_at` 을 발급 시각으로 쓴다. 저장소가 "Lease 발급 시각은
+176:     //   큐 진입보다 앞설 수 없다" 고 요구하는데, **같은 값이면 그
+177:     //   경계를 정확히 만족**하면서도 시계를 안 읽는다.
+178:     let expires_at = queued_at.saturating_add(lease_ttl_ms);
+179:     if expires_at <= now_unix_ms {
+180:         return Err(format!(
+181:             "TICK_REFUSED: QUEUE_TOO_OLD — {job_id} 는 큐에 너무 오래 있었다(큐 진입 {queued_at}, 이 설정의 Lease 만료 {expires_at}, 지금 {now_unix_ms}). 지금 예약하면 이미 만료된 Lease 를 준다"
+182:         ));
+183:     }
+184: 
+185:     let binding = jobs
+186:         .get_manifest_binding(&job_id)
+187:         .map_err(|e| format!("Manifest binding 조회 실패: {e}"))?
+188:         .ok_or_else(|| format!("TICK_REFUSED: {job_id} 에 저장된 Manifest 가 없다"))?;
+189:     drop(jobs);
+190: 
+191:     // ── 저장된 Manifest 를 지금 다시 검증한다 ───────────────────────
+192:     let policy = if flags
+193:         .get("--i-understand-plaintext-keyring-is-unsafe")
+194:         .map(String::as_str)
+195:         == Some("true")
+196:     {
+197:         eprintln!(
+198:             "경고: 평문(K0) 제출자 keyring 을 허용했다 — 이 파일을 쓸 수 있는 사람은 임의의 공개키를 신뢰 목록에 넣을 수 있다"
+199:         );
+200:         PlaintextPolicy::Allow
+201:     } else {
+202:         PlaintextPolicy::Reject
+203:     };
+204:     let keyring = PersistentKeyring::load(keyring_path, policy)
+205:         .map_err(|e| format!("제출자 keyring 을 열지 못했다({keyring_path}): {e:?}"))?;
+206:     let verified = verify(
+207:         &binding.manifest,
+208:         1,
+209:         &Ed25519Verifier::new(&keyring),
+210:         now_unix_ms,
+211:         &mut NoReplayCheck,
+212:     )
+213:     .map_err(|e| format!("TICK_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?}"))?;
+214:     let job_requirements = job_requirements_from_manifest(&verified, submitter_member)
+215:         .map_err(|e| format!("TICK_REFUSED: {e}"))?;
+216: 
+217:     // ── 예약 ────────────────────────────────────────────────────────
+218:     let mut inventory = CoordinatorInventoryStore::open(control_db)
+219:         .map_err(|e| format!("inventory store 를 열지 못했다({control_db}): {e}"))?;
+
+ succeeded in 5019ms:
+crates\agent\src\lib.rs
+1700: /// ID는 Job ID를 경로 성분으로 직접 사용하지 않는다. 대신 domain tag와
+1701: /// 세 문자열을 각각 u64 big-endian 길이 접두사로 구분한 바이트열에
+1702: /// BLAKE3-256을 적용하고, 64자리 hex digest 앞에 `start-`를 붙인다.
+1703: /// 길이 접두사는 필드 경계가 모호해지는 충돌을 막고, 전체 digest는
+1704: /// 예측 가능한 Job ID 경로와 임의 문자열 충돌을 피한다.
+1705: pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> String {
+1706:     let mut input = Vec::with_capacity(
+1707:         b"gputeer/job-start-checkpoint/v1\0".len()
+1708:             + 3 * std::mem::size_of::<u64>()
+1709:             + job_id.len()
+1710:             + attempt_id.len()
+1711:             + grant_id.len(),
+1712:     );
+1713:     input.extend_from_slice(b"gputeer/job-start-checkpoint/v1\0");
+1714:     for value in [job_id, attempt_id, grant_id] {
+1715:         input.extend_from_slice(&(value.len() as u64).to_be_bytes());
+1716:         input.extend_from_slice(value.as_bytes());
+1717:     }
+1718: 
+1719:     let digest = gputeer_protocol::canonical::blake3_256(&input);
+1720:     let hex = digest
+1721:         .iter()
+1722:         .map(|byte| format!("{byte:02x}"))
+1723:         .collect::<String>();
+1724:     format!("start-{hex}")
+1725: }
+1726: 
+1727: /// 실행 후 보고할 것들.
+1728: struct WorkloadReport {
+1729:     exit_code: u32,
+1730:     file_count: usize,
+1731:     total_bytes: usize,
+1732:     /// 자식을 띄우기 **직전에** 읽은 시계. 호출부가 준 값을 그대로
+1733:     /// 돌려준다 — 여기서 다시 계산하지 않는다.
+1734:     started_at_unix_ms: u64,
+1735:     /// 자식을 **거둔 직후**에 읽은 시계.
+1736:     ///
+1737:     /// ★ `started + 걸린시간` 이 아니다(`CLAUDE.md` §1). 산출물 수집과
+1738:     ///   체크포인트 확정은 프로세스가 끝난 **뒤** 일이므로, 그 뒤에 시계를
+1739:     ///   읽으면 "언제 끝났나" 가 아니라 "언제 정리가 끝났나" 가 된다.
+1740:     finished_at_unix_ms: u64,
+1741: }
+1742: 
+1743: /// 실행 -> 산출물 수집 -> 체크포인트 확정까지.
+1744: ///
+1745: /// `Ok(None)` 은 **오류가 아니라 기본값**이다 — 운영자가 실행을
+1746: /// 명시적으로 켜지 않았다는 뜻이다. 위험한 동작은 기본으로 켜져
+1747: /// 있지 않다(`DoD-29` 와 같은 원칙).
+1748: ///
+1749: /// ★ 이 함수는 작업 디렉터리를 **지우지 않는다.** 삭제는 호출부가
+1750: ///   성공·실패 관계없이 한다 — 여기서 지우면 중간에 `?` 로 나가는
+1751: ///   경로가 삭제를 건너뛰게 된다.
+1752: #[allow(clippy::too_many_arguments)]
+1753: fn run_and_capture_workload(
+1754:     spec: &gputeer_protocol::execution_spec::ExecutionSpec,
+1755:     policy: exec::ExecutionPolicy,
+1756:     checkpoint_root: &std::path::Path,
+1757:     checkpoint_id: &str,
+1758:     lease: &pb::Lease,
+1759:     attempt_id: &str,
+1760:     run_dir: &std::path::Path,
+1761:     panel: &owner_panel::OwnerPanelState,
+1762:     submitter_device_id: &str,
+1763:     started_at_unix_ms: u64,
+1764:     clock: &SystemClock,
+1765: ) -> Result<Option<WorkloadReport>, String> {
+1766:     // ★ 자식이 뜨는 **즉시** 소유자 화면에 올린다. `execute()` 가
+1767:     //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
+1768:     //   소유자는 도는 동안 멈출 수 있어야 한다(`CLAUDE.md` §0.1).
+1769:     let outcome = match exec::execute_with_control(spec, policy, |stopper| {
+1770:         panel.register(owner_panel::RunningWorkload {
+1771:             job_id: spec.job_id.clone(),
+1772:             attempt_id: attempt_id.to_string(),
+1773:             submitter_device_id: submitter_device_id.to_string(),
+1774:             started_at_unix_ms,
+1775:             entrypoint: spec.entrypoint.clone(),
+1776:             // 이 조각에는 실행 중 체크포인트가 없다 — 산출물은 끝난 뒤에
+1777:             // 확정된다. 그러므로 도는 동안은 "확정된 것이 하나도 없다"
+1778:             // 가 사실이고, 화면도 그렇게 보여야 한다.
+1779:             last_checkpoint_at_unix_ms: None,
+1780:             stopper,
+1781:         });
+1782:     }) {
+1783:         Ok(outcome) => outcome,
+1784:         Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
+1785:         // ★ 여기서도 종료 시각을 읽지 않는다. 실행 자체가 **일어나지
+1786:         //   않았거나**(NotOptedIn·UnsupportedPlatform·LimitNotApplied·
+1787:         //   SpawnFailed) 종료를 **관측하지 못한** 경우(WaitFailed·
+1788:         //   ExitCodeUnavailable)이므로, 보고할 종료가 없다.
+1789:         Err(other) => {
+1790:             // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
+1791:             // 소유자 화면에 영원히 남는다.
+1792:             panel.unregister(attempt_id);
+1793:             return Err(other.to_string());
+1794:         }
+1795:     };
+1796:     // ★ 종료 시각을 **여기서** 읽는다 — `execute_with_control()` 가
+1797:     //   돌아온 직후이자 산출물 수집 전이다. 아래 `collect_...` 와
+1798:     //   `finalize_...` 뒤로 미루면 그 값은 "언제 끝났나" 가 아니라
+1799:     //   "언제 정리까지 끝났나" 가 된다.
+1800:     let finished_at_unix_ms = clock.now_unix_ms();
+1801:     // 프로세스는 끝났다. 산출물 확정이 남았지만 **멈출 대상은 이미
+1802:     // 없으므로** 화면에서 뺀다 — 못 멈추는 정지 버튼을 보이지 않는다.
+1803:     panel.unregister(attempt_id);
+1804:     println!(
+1805:         "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
+1806:         spec.job_id, outcome.exit_code, outcome.commit_limit_bytes, outcome.peak_commit_bytes
+1807:     );
+1808: 
+1809:     let files = collect_workload_artifacts(run_dir, spec, &outcome)?;
+1810:     finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)?;
+1811:     Ok(Some(WorkloadReport {
+1812:         exit_code: outcome.exit_code,
+1813:         file_count: files.len(),
+1814:         total_bytes: files.iter().map(|(_, data)| data.len()).sum(),
+1815:         started_at_unix_ms,
+1816:         finished_at_unix_ms,
+1817:     }))
+1818: }
+1819: 
+1820: /// 작업 출력을 받는 루트. 체크포인트 루트의 **형제** 디렉터리다.
+
+codex
+초안의 두 전제가 코드와 다릅니다. 저장소는 이미 hash와 서명자 식별자의 일관성을 검사하고, `plan_job.rs`의 추가 서명자 비교는 중복이라 삭제돼 있습니다. hash를 생략하면 Agent가 거부한다는 뮤테이션 전제도 이어서 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('crates/coordinator/src/job_store.rs'); a=p.read_text(encoding='utf-8').splitlines(); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 401<=i<413 or 852<=i<855 or 880<=i<925 or 1420<=i<1445 or 1507<=i<1540))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2040ms:
+402:     /// Loads a durable Manifest binding without claiming that its signature is
+403:     /// still valid. Existing hash-only Jobs fail closed with
+404:     /// [`JobStoreError::LegacyManifestMissing`].
+405:     pub fn get_manifest_binding(
+406:         &self,
+407:         job_id: &str,
+408:     ) -> Result<Option<StoredManifestBinding>, JobStoreError> {
+409:         let Some(job) = fetch_job(&self.connection, job_id)? else {
+410:             return Ok(None);
+411:         };
+412:         fetch_manifest_binding(&self.connection, &job).map(Some)
+413:     }
+853: fn derive_manifest_hash(manifest: &pb::JobManifest) -> [u8; 32] {
+854:     blake3_256(&signing_input(manifest))
+855: }
+881: fn fetch_manifest_binding(
+882:     connection: &Connection,
+883:     job: &StoredJob,
+884: ) -> Result<StoredManifestBinding, JobStoreError> {
+885:     let row = connection
+886:         .query_row(
+887:             "SELECT verified_signer_id, manifest_body
+888:              FROM coordinator_job_manifests WHERE job_id = ?1",
+889:             rusqlite::params![job.job_id],
+890:             |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+891:         )
+892:         .optional()
+893:         .map_err(map_sql_error)?
+894:         .ok_or_else(|| JobStoreError::LegacyManifestMissing {
+895:             job_id: job.job_id.clone(),
+896:         })?;
+897:     let (signer_id_at_submission, body) = row;
+898:     if body.is_empty() {
+899:         return Err(manifest_corrupt(job, ManifestCorruption::EmptyBody));
+900:     }
+901:     let manifest = pb::JobManifest::decode(body.as_slice())
+902:         .map_err(|_| manifest_corrupt(job, ManifestCorruption::UndecodableBody))?;
+903:     if manifest.job_id != job.job_id {
+904:         return Err(manifest_corrupt(job, ManifestCorruption::JobIdMismatch));
+905:     }
+906:     if manifest.submitter_device_id != job.submitter_device_id {
+907:         return Err(manifest_corrupt(
+908:             job,
+909:             ManifestCorruption::SubmitterDeviceIdMismatch,
+910:         ));
+911:     }
+912:     if signer_id_at_submission != job.submitter_device_id {
+913:         return Err(manifest_corrupt(job, ManifestCorruption::SignerIdMismatch));
+914:     }
+915:     let derived_hash = derive_manifest_hash(&manifest);
+916:     if derived_hash != job.manifest_hash {
+917:         return Err(manifest_corrupt(job, ManifestCorruption::HashMismatch));
+918:     }
+919:     Ok(StoredManifestBinding {
+920:         manifest,
+921:         manifest_hash: derived_hash,
+922:         signer_id_at_submission,
+923:     })
+924: }
+925: 
+1421:     #[test]
+1422:     fn body_hash_and_job_identity_corruption_fail_closed_independently() {
+1423:         let (mut store, _dir) = open_temp();
+1424:         let verified = verified_manifest("job-hash", MANIFEST_DEVICE, 7, "original");
+1425:         let request = bound_submission(&verified, 1);
+1426:         store
+1427:             .submit_verified_manifest(&request, &verified, 100)
+1428:             .unwrap();
+1429:         let mut changed_body = verified.get().clone();
+1430:         changed_body.team_id = "tampered-team".to_string();
+1431:         store
+1432:             .connection
+1433:             .execute(
+1434:                 "UPDATE coordinator_job_manifests SET manifest_body = ?1 WHERE job_id = ?2",
+1435:                 rusqlite::params![changed_body.encode_to_vec(), request.job_id],
+1436:             )
+1437:             .unwrap();
+1438:         assert_eq!(
+1439:             store.get_manifest_binding(&request.job_id),
+1440:             Err(JobStoreError::ManifestCorrupt {
+1441:                 job_id: request.job_id.clone(),
+1442:                 kind: ManifestCorruption::HashMismatch,
+1443:             })
+1444:         );
+1445: 
+1508:     fn device_signer_corruption_and_legacy_missing_body_fail_closed() {
+1509:         let (mut store, _dir) = open_temp();
+1510:         let verified = verified_manifest("job-device", MANIFEST_DEVICE, 7, "original");
+1511:         let request = bound_submission(&verified, 1);
+1512:         store
+1513:             .submit_verified_manifest(&request, &verified, 100)
+1514:             .unwrap();
+1515:         store
+1516:             .connection
+1517:             .execute(
+1518:                 "UPDATE coordinator_job_manifests SET verified_signer_id = 'other-device' WHERE job_id = ?1",
+1519:                 rusqlite::params![request.job_id],
+1520:             )
+1521:             .unwrap();
+1522:         assert_eq!(
+1523:             store.get_manifest_binding(&request.job_id),
+1524:             Err(JobStoreError::ManifestCorrupt {
+1525:                 job_id: request.job_id.clone(),
+1526:                 kind: ManifestCorruption::SignerIdMismatch,
+1527:             })
+1528:         );
+1529: 
+1530:         let legacy = submission("legacy-job", 2);
+1531:         store.submit_accepted(&legacy, 100).unwrap();
+1532:         assert_eq!(
+1533:             store.get_manifest_binding("legacy-job"),
+1534:             Err(JobStoreError::LegacyManifestMissing {
+1535:                 job_id: "legacy-job".to_string()
+1536:             })
+1537:         );
+1538:         assert!(store.get("legacy-job").unwrap().is_some());
+1539:     }
+1540: 
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "rg -n \"verify_nested_manifest|manifest_hash|DerivedMismatch|run_and_capture_workload|GrantAck|ATTEMPT_REPORT_SENT|WORKLOAD_RESULT|set_read_timeout|IO_TIMEOUT\" crates/agent/src/lib.rs crates/coordinator/src/lib.rs; python -X utf8 -c \"from pathlib import Path; p=Path('crates/cli/tests/grant_over_wire.rs'); a=p.read_text(encoding='utf-8').splitlines(); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if i<260 or 260<=i<400 or 510<=i<616))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1814ms:
+crates/coordinator/src/lib.rs:5://! 서명해 발급하고, Agent 가 돌려준 `AgentGrantAck` 를 검증해
+crates/coordinator/src/lib.rs:66:const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/coordinator/src/lib.rs:124:    /// 테스트 전용 — `manifest_hash` 를 실제 Manifest 와 다르게 채운다.
+crates/coordinator/src/lib.rs:125:    pub corrupt_manifest_hash: bool,
+crates/coordinator/src/lib.rs:824:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:827:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:949:        IngressMessage::GrantAck(verified) => verified
+crates/coordinator/src/lib.rs:1023:            .set_read_timeout(Some(Duration::from_secs(2)))
+crates/coordinator/src/lib.rs:1383:    //   둔다(`crates/agent/src/lib.rs` 의 `ATTEMPT_REPORT_SENT`).
+crates/coordinator/src/lib.rs:2351:        // `manifest_hash` 는 Agent 가 재계산해 대조한다(`CLAUDE.md` §0.2).
+crates/coordinator/src/lib.rs:2354:        if config.corrupt_manifest_hash {
+crates/coordinator/src/lib.rs:2357:        grant.manifest_hash = Some(pb::Digest {
+crates/coordinator/src/lib.rs:2579:        corrupt_manifest_hash: flags.bool_flag("--corrupt-manifest-hash"),
+crates/agent/src/lib.rs:5://! `ExecutionGrant` 를 검증하고, 서명된 `AgentGrantAck` 를 돌려주는
+crates/agent/src/lib.rs:37:const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/agent/src/lib.rs:350:/// `AgentGrantAck` 를 돌려준다. 성공하면 `stdout` 에
+crates/agent/src/lib.rs:768:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:771:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:851:    let workload = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)?;
+crates/agent/src/lib.rs:965:        let outcome = run_and_capture_workload(
+crates/agent/src/lib.rs:1001:                    println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id);
+crates/agent/src/lib.rs:1004:                        "WORKLOAD_RESULT ok=false job_id={} exit_code={}",
+crates/agent/src/lib.rs:1044:    let mut ack = pb::AgentGrantAck {
+crates/agent/src/lib.rs:1065:    let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
+crates/agent/src/lib.rs:1233:            "ATTEMPT_REPORT_SENT job_id={} attempt_id={} node_id={} fence_epoch={} \
+crates/agent/src/lib.rs:1281:            .set_read_timeout(Some(Duration::from_secs(5)))
+crates/agent/src/lib.rs:1585:/// `manifest_hash` 대조는 이 함수가 아니라 프로토콜 계층이 한다 —
+crates/agent/src/lib.rs:1587:fn verify_nested_manifest(
+crates/agent/src/lib.rs:1611:    // ★ `manifest_hash` 재계산 대조는 **여기서 하지 않는다.**
+crates/agent/src/lib.rs:1617:    //   다르면 `DerivedMismatch` 로 Grant 자체를 거부한다(2026-08-16
+crates/agent/src/lib.rs:1753:fn run_and_capture_workload(
+crates/agent/src/lib.rs:1916:    files.push((WORKLOAD_RESULT_FILENAME.to_string(), result_bytes));
+crates/agent/src/lib.rs:1958:const WORKLOAD_RESULT_FILENAME: &str = "workload-result.json";
+crates/agent/src/lib.rs:2095:        .set_read_timeout(Some(Duration::from_millis(50)))
+crates/agent/src/lib.rs:2627:            .set_read_timeout(Some(Duration::from_secs(2)))
+crates/agent/src/lib.rs:2690:            IngressMessage::GrantAck(verified) => verified
+crates/agent/src/lib.rs:2694:            other => panic!("expected GrantAck, got {other:?}; Agent result: {agent_result:?}"),
+1: //! **저장된 예약에서 만든 Grant 를 Agent 가 실제로 받아들이는가.**
+2: //!
+3: //! ```text
+4: //! submit → import-manifest → import-inventory → plan-job → stage-job
+5: //!   → coordinator-stub --grant-from-control-db  ──TCP──▶  agent-stub
+6: //! ```
+7: //!
+8: //! ★ **무게중심은 서명이 아니라 수용이다.** `issue_grant.rs` 는 우리가
+9: //!   만든 Grant 를 우리가 검증했다 — 같은 코드의 두 방향일 뿐이다. 여기서는
+10: //!   **별도 OS 프로세스인 Agent** 가 자기 규칙(서명·nested Lease 독립
+11: //!   검증·fence watermark·만료·`lease_from_durable_store`)으로 판정한다.
+12: //!
+13: //! ★ Lease 시각을 **지금 기준**으로 잡는다. `stage-job`/`issue-grant`
+14: //!   테스트는 고정 상수를 썼는데(멱등 확인이 목적), 여기서는 Agent 가
+15: //!   자기 시계로 만료를 보므로 미래 상수를 쓰면 잴 수 없다.
+16: 
+17: use std::io::{BufRead, BufReader, Read};
+18: use std::path::{Path, PathBuf};
+19: use std::process::{Child, Command, Stdio};
+20: use std::sync::mpsc;
+21: use std::thread;
+22: use std::time::{Duration, Instant};
+23: 
+24: use gputeer_crypto::SigningKey;
+25: 
+26: fn cli_bin() -> PathBuf {
+27:     let mut path = std::env::current_exe().expect("test executable");
+28:     path.pop();
+29:     if path.ends_with("deps") {
+30:         path.pop();
+31:     }
+32:     path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+33: }
+34: 
+35: /// ★★ **scheduler 의 `node_id` 와 Agent 의 device id 는 다른 이름
+36: ///   공간인데, 둘을 잇는 것이 아직 없다.**
+37: ///
+38: ///   Agent 는 받은 Lease 의 `holder_node_id` 를 자기 `--agent-device-id`
+39: ///   와 대조한다. 그런데 그 값은 `stage-job` 이 고른 **inventory 의
+40: ///   node_id** 다. 처음에 `node-wire-a` 로 두었더니 Agent 가 거부했다:
+41: ///   `LEASE_REJECTED: holder_node_id 가 이 Agent 가 아니다`.
+42: ///
+43: ///   그래서 **오늘은 운영자가 inventory 의 `node_id` 를 그 노드에서
+44: ///   도는 Agent 의 device id 와 같게 선언해야** 이 경로가 이어진다.
+45: ///   그건 제약이지 설계가 아니다 — 여러 evidence 가 "authoritative
+46: ///   device→member projection" 과 "node/device/session routing" 이
+47: ///   없다고 적어 둔 것의 구체적인 얼굴이다.
+48: ///
+49: ///   이 테스트는 그 제약을 **지키는 값으로** 돌아간다. 숨기려는 게
+50: ///   아니라, 지금 이어지는 유일한 방법이 이것임을 코드로 남긴다.
+51: const NODE: &str = "01JAGENTWIRE00000000001";
+52: const GPU: &str = "01JAGENTWIRE00000000001-gpu-0";
+53: const JOB: &str = "01JJOBWIRE0000000000001";
+54: const SUBMITTER: &str = "01JSUBMITTERWIRE00000001";
+55: const SEED: &str = "99999999999999999999999999999999999999999999999999999999999999cc";
+56: const OWNER: &str = "owner-wire";
+57: /// Coordinator 의 **장치 식별자**. Agent 가 Grant 의
+58: /// `coordinator_device_id` 를 이 값과 대조하므로 `stage-job` 의
+59: /// `--coordinator-id` 와 반드시 같아야 한다.
+60: const COORDINATOR: &str = "01JCOORDINATORWIRE000001";
+61: /// ★ `NODE` 와 **같은 값**이어야 한다 — 위 주석 참조.
+62: const AGENT_DEVICE: &str = NODE;
+63: const COORD_SEED: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaadd";
+64: const AGENT_SEED: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbee";
+65: const ATTEMPT: &str = "01JATTEMPTWIRE00000000001";
+66: const LEASE: &str = "01JLEASEWIRE0000000000001";
+67: const GRANT: &str = "01JGRANTWIRE0000000000001";
+68: const AXES: &str = "vram,gpu_count,cpu,ram,workspace";
+69: 
+70: fn seed_bytes(hex: &str) -> [u8; 32] {
+71:     let mut out = [0u8; 32];
+72:     for (i, byte) in out.iter_mut().enumerate() {
+73:         *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("seed hex");
+74:     }
+75:     out
+76: }
+77: 
+78: fn pub_hex(seed: &str) -> String {
+79:     SigningKey::from_bytes(&seed_bytes(seed))
+80:         .verifying_key()
+81:         .to_bytes()
+82:         .iter()
+83:         .map(|b| format!("{b:02x}"))
+84:         .collect()
+85: }
+86: 
+87: fn now_unix_ms() -> u64 {
+88:     std::time::SystemTime::now()
+89:         .duration_since(std::time::UNIX_EPOCH)
+90:         .expect("unix epoch")
+91:         .as_millis() as u64
+92: }
+93: 
+94: fn run_cli(args: &[&str]) -> (bool, String) {
+95:     let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+96:     (
+97:         out.status.success(),
+98:         format!(
+99:             "{}{}",
+100:             String::from_utf8_lossy(&out.stdout),
+101:             String::from_utf8_lossy(&out.stderr)
+102:         ),
+103:     )
+104: }
+105: 
+106: /// 다섯 명령으로 예약까지 만든다. Lease 시각은 **지금 기준**이다.
+107: fn staged_control_db(dir: &Path) -> PathBuf {
+108:     staged_control_db_running(dir, "python", None)
+109: }
+110: 
+111: /// 같은 준비를 하되 Manifest 의 entrypoint·인자를 고른다.
+112: ///
+113: /// ★ 기존 두 테스트는 실행하지 않으므로 `python` 이 무엇이든 상관없다.
+114: ///   실제로 실행하는 테스트는 **확실히 있고 바로 끝나는** 명령을 줘야 한다
+115: ///   — 인자 없는 `python` 은 표준입력을 기다릴 수 있다.
+116: fn staged_control_db_running(dir: &Path, entrypoint: &str, args_csv: Option<&str>) -> PathBuf {
+117:     let db = dir.join("control.sqlite3");
+118: 
+119:     let node_key = pub_hex("2121212121212121212121212121212121212121212121212121212121212121");
+120:     let observed = now_unix_ms();
+121:     let bootstrap = dir.join("bootstrap.json");
+122:     std::fs::write(
+123:         &bootstrap,
+124:         format!(
+125:             r#"{{
+126:   "schema_version": 1,
+127:   "agents": [
+128:     {{
+129:       "registry": {{
+130:         "node_id": "{NODE}", "device_id": "device-wire",
+131:         "owner_member_id": "{OWNER}", "verifying_key_hex": "{node_key}",
+132:         "node_state": "ONLINE", "risk_state": "NORMAL",
+133:         "security_tier": "S2", "isolation_class": "CONTAINED",
+134:         "key_protection": "K1"
+135:       }},
+136:       "inventory": {{
+137:         "inventory_revision": 1, "observed_at_unix_ms": {observed},
+138:         "gpus": [{{ "gpu_id": "{GPU}", "model": "RTX 4070 SUPER",
+139:                     "healthy": true, "available_vram_bytes": 12884901888 }}],
+140:         "available_cpu_cores": 16, "available_ram_bytes": 34359738368,
+141:         "available_workspace_bytes": 107374182400,
+142:         "allowed_workload_classes": ["TRAINING"],
+143:         "third_party_workloads_opt_in": true
+144:       }}
+145:     }}
+146:   ]
+147: }}"#
+148:         ),
+149:     )
+150:     .expect("문서 쓰기");
+151:     let (ok, out) = run_cli(&[
+152:         "import-inventory",
+153:         "--inventory",
+154:         bootstrap.to_str().unwrap(),
+155:         "--inventory-db",
+156:         db.to_str().unwrap(),
+157:     ]);
+158:     assert!(ok, "import-inventory 실패: {out}");
+159: 
+160:     let manifest = dir.join("manifest.pb");
+161:     let issued = now_unix_ms().saturating_sub(60_000).to_string();
+162:     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+163:     let mut submit_args: Vec<&str> = vec![
+164:         "submit", "--job-id", JOB, "--entrypoint", entrypoint,
+165:         "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
+166:         "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
+167:         "--out", manifest.to_str().unwrap(),
+168:         "--workload-class", "TRAINING", "--side-effect-class", "PURE",
+169:         "--dataset-sensitivity", "INTERNAL", "--minimum-security-tier", "S2",
+170:         "--minimum-isolation-class", "CONTAINED", "--minimum-key-protection", "K1",
+171:         "--gpu-count", "1", "--gpu-min-vram-bytes", "8589934592",
+172:         // ★ 2026-09-10 — 이 셋을 안 주고 있었다. 그전에는 변환기가
+173:         //   생략을 `Some(0)` 으로 채워 줘서 통과했다. 독립 검수가
+174:         //   그 채움을 지적해 이제 거부한다 — 그래서 여기서 선언한다.
+175:         "--cpu-cores", "4", "--ram-bytes", "8589934592",
+176:         "--workspace-bytes", "10737418240",
+177:     ];
+178:     if let Some(args_csv) = args_csv {
+179:         submit_args.extend(["--args", args_csv]);
+180:     }
+181:     let (ok, out) = run_cli(&submit_args);
+182:     assert!(ok, "submit 실패: {out}");
+183: 
+184:     let keyring = dir.join("submitters.keyring");
+185:     let mut ring = gputeer_crypto::PersistentKeyring::new(
+186:         &keyring,
+187:         gputeer_crypto::KeyProtection::K0Plaintext,
+188:         gputeer_crypto::PlaintextPolicy::Allow,
+189:     )
+190:     .expect("keyring 생성");
+191:     ring.insert_public(
+192:         SUBMITTER,
+193:         SigningKey::from_bytes(&seed_bytes(SEED)).verifying_key(),
+194:     )
+195:     .expect("공개키 등록");
+196:     ring.save().expect("keyring 저장");
+197: 
+198:     let (ok, out) = run_cli(&[
+199:         "import-manifest", "--manifest", manifest.to_str().unwrap(),
+200:         "--submitter-keyring", keyring.to_str().unwrap(),
+201:         "--job-db", db.to_str().unwrap(),
+202:         "--idempotency-key", "0102030405060708090a0b0c0d0e0f10",
+203:         "--i-understand-plaintext-keyring-is-unsafe", "true",
+204:     ]);
+205:     assert!(ok, "import-manifest 실패: {out}");
+206: 
+207:     let (ok, out) = run_cli(&[
+208:         "plan-job", "--job-id", JOB, "--control-db", db.to_str().unwrap(),
+209:         "--submitter-keyring", keyring.to_str().unwrap(),
+210:         "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
+211:         "--i-understand-plaintext-keyring-is-unsafe", "true",
+212:     ]);
+213:     assert!(ok, "plan-job 실패: {out}");
+214: 
+215:     // ★ 지금 기준 — Agent 가 자기 시계로 만료를 본다.
+216:     //
+217:     //   ★ 처음에는 `now - 1000` 을 썼다가 저장소가 거부했다:
+218:     //     `staging clock moved backwards: issued=..., queued=...`.
+219:     //     **Lease 발급 시각은 Job 이 큐에 들어간 시각보다 앞설 수 없다** —
+220:     //     방금 `plan-job` 이 큐에 넣었으므로 과거를 주면 안 된다.
+221:     //     몰랐던 계약이고 이 테스트가 알려 줬다.
+222:     let now = now_unix_ms();
+223:     let lease_issued = now.to_string();
+224:     let lease_renew = (now + 300_000).to_string();
+225:     let lease_expires = (now + 600_000).to_string();
+226:     let (ok, out) = run_cli(&[
+227:         "stage-job", "--job-id", JOB, "--control-db", db.to_str().unwrap(),
+228:         "--submitter-keyring", keyring.to_str().unwrap(),
+229:         "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
+230:         "--best-fit-axes", AXES,
+231:         "--coordinator-id", COORDINATOR, "--coordinator-term", "7",
+232:         "--attempt-id", ATTEMPT, "--lease-id", LEASE,
+233:         "--operation-key", "aa0102030405060708090a0b0c0d0e0f",
+234:         "--lease-issued-at-unix-ms", &lease_issued,
+235:         "--lease-renew-after-unix-ms", &lease_renew,
+236:         "--lease-expires-at-unix-ms", &lease_expires,
+237:         "--lease-max-total-duration-seconds", "86400",
+238:         "--i-understand-plaintext-keyring-is-unsafe", "true",
+239:     ]);
+240:     assert!(ok, "stage-job 실패: {out}");
+241:     db
+242: }
+243: 
+244: struct Spawned {
+245:     child: Child,
+246:     stdout: thread::JoinHandle<String>,
+247:     stderr: thread::JoinHandle<String>,
+248: }
+249: 
+250: fn drain(child: &mut Child) -> (thread::JoinHandle<String>, thread::JoinHandle<String>) {
+251:     let out = child.stdout.take().expect("piped stdout");
+252:     let err = child.stderr.take().expect("piped stderr");
+253:     (
+254:         thread::spawn(move || {
+255:             let mut s = String::new();
+256:             let _ = BufReader::new(out).read_to_string(&mut s);
+257:             s
+258:         }),
+259:         thread::spawn(move || {
+260:             let mut s = String::new();
+261:             let _ = BufReader::new(err).read_to_string(&mut s);
+262:             s
+263:         }),
+264:     )
+265: }
+266: 
+267: /// Coordinator 를 띄우고 `READY <addr>` 를 기다린다.
+268: fn spawn_coordinator(db: &Path, fence_dir: &Path, extra: &[&str]) -> (Spawned, String) {
+269:     let lease_db = fence_dir.join("coordinator-lease.sqlite3");
+270:     let mut child = Command::new(cli_bin())
+271:         .args([
+272:             "coordinator-stub",
+273:             "--listen",
+274:             "127.0.0.1:0",
+275:             "--own-seed",
+276:             COORD_SEED,
+277:             "--peer-pubkey",
+278:             &pub_hex(AGENT_SEED),
+279:             "--coordinator-device-id",
+280:             COORDINATOR,
+281:             "--agent-device-id",
+282:             AGENT_DEVICE,
+283:             "--grant-id",
+284:             GRANT,
+285:             "--attempt-id",
+286:             ATTEMPT,
+287:             "--lease-id",
+288:             LEASE,
+289:             "--job-id",
+290:             JOB,
+291:             "--lease-db",
+292:             lease_db.to_str().unwrap(),
+293:             // ★ 이 조각의 대상 — 저장된 예약에서 조립한다.
+294:             "--grant-from-control-db",
+295:             db.to_str().unwrap(),
+296:             "--stored-grant-job-id",
+297:             JOB,
+298:             "--stored-grant-attempt-id",
+299:             ATTEMPT,
+300:             "--stored-grant-lease-id",
+301:             LEASE,
+302:         ])
+303:         .args(extra)
+304:         .stdout(Stdio::piped())
+305:         .stderr(Stdio::piped())
+306:         .spawn()
+307:         .expect("coordinator-stub spawn");
+308: 
+309:     // READY 한 줄만 먼저 읽는다.
+310:     let stdout_pipe = child.stdout.take().expect("piped stdout");
+311:     let (tx, rx) = mpsc::channel();
+312:     let stdout = thread::spawn(move || {
+313:         let mut reader = BufReader::new(stdout_pipe);
+314:         let mut ready = String::new();
+315:         let _ = reader.read_line(&mut ready);
+316:         let _ = tx.send(ready.clone());
+317:         let mut rest = String::new();
+318:         let _ = reader.read_to_string(&mut rest);
+319:         format!("{ready}{rest}")
+320:     });
+321:     let err_pipe = child.stderr.take().expect("piped stderr");
+322:     let stderr = thread::spawn(move || {
+323:         let mut s = String::new();
+324:         let _ = BufReader::new(err_pipe).read_to_string(&mut s);
+325:         s
+326:     });
+327: 
+328:     let ready = rx
+329:         .recv_timeout(Duration::from_secs(30))
+330:         .expect("Coordinator 가 READY 를 안 냈다");
+331:     let addr = ready
+332:         .trim()
+333:         .strip_prefix("READY ")
+334:         .unwrap_or_else(|| panic!("READY 줄이 아니다: {ready:?}"))
+335:         .to_string();
+336:     (
+337:         Spawned {
+338:             child,
+339:             stdout,
+340:             stderr,
+341:         },
+342:         addr,
+343:     )
+344: }
+345: 
+346: fn finish(mut s: Spawned, label: &str) -> (bool, String) {
+347:     let deadline = Instant::now() + Duration::from_secs(60);
+348:     loop {
+349:         match s.child.try_wait().expect("try_wait") {
+350:             Some(status) => {
+351:                 let out = s.stdout.join().unwrap_or_default();
+352:                 let err = s.stderr.join().unwrap_or_default();
+353:                 return (status.success(), format!("{out}{err}"));
+354:             }
+355:             None if Instant::now() >= deadline => {
+356:                 let _ = s.child.kill();
+357:                 panic!("{label} 가 60초 안에 끝나지 않았다");
+358:             }
+359:             None => thread::sleep(Duration::from_millis(50)),
+360:         }
+361:     }
+362: }
+363: 
+364: // ─────────────────────────────────────────────────────────────────────
+365: 
+366: /// ★★ **저장된 예약으로 만든 Grant 를 별도 프로세스인 Agent 가 받아들인다.**
+367: #[test]
+368: fn an_agent_process_accepts_a_grant_built_from_the_stored_reservation() {
+369:     let dir = tempfile::tempdir().expect("임시 디렉터리");
+370:     let db = staged_control_db(dir.path());
+371:     let (coordinator, addr) = spawn_coordinator(&db, dir.path(), &[]);
+372: 
+373:     let fence_db = dir.path().join("agent-fence.sqlite3");
+374:     let mut agent = Command::new(cli_bin())
+375:         .args([
+376:             "agent-stub",
+377:             "--connect",
+378:             &addr,
+379:             "--own-seed",
+380:             AGENT_SEED,
+381:             "--peer-pubkey",
+382:             &pub_hex(COORD_SEED),
+383:             "--coordinator-device-id",
+384:             COORDINATOR,
+385:             "--agent-device-id",
+386:             AGENT_DEVICE,
+387:             "--fence-db",
+388:             fence_db.to_str().unwrap(),
+389:         ])
+390:         .stdout(Stdio::piped())
+391:         .stderr(Stdio::piped())
+392:         .spawn()
+393:         .expect("agent-stub spawn");
+394:     let (a_out, a_err) = drain(&mut agent);
+395:     let agent_status = agent.wait().expect("agent wait");
+396:     let agent_output = format!(
+397:         "{}{}",
+398:         a_out.join().unwrap_or_default(),
+399:         a_err.join().unwrap_or_default()
+400:     );
+511:     }
+512:     let mut agent = Command::new(cli_bin())
+513:         .args(&args)
+514:         .stdout(Stdio::piped())
+515:         .stderr(Stdio::piped())
+516:         .spawn()
+517:         .expect("agent-stub spawn");
+518:     let (a_out, a_err) = drain(&mut agent);
+519:     let status = agent.wait().expect("agent wait");
+520:     (
+521:         status.success(),
+522:         format!(
+523:             "{}{}",
+524:             a_out.join().unwrap_or_default(),
+525:             a_err.join().unwrap_or_default()
+526:         ),
+527:     )
+528: }
+529: 
+530: /// ★★ **덫 — 오늘은 저장된 예약에서 시작하면 보고할 종료가 없다.**
+531: ///
+532: /// §A1 1.5("종료 보고가 별도 프로세스 둘 사이의 실제 소켓을 건너 저장되는가")
+533: /// 를 재려고 실행과 보고를 켰더니 Agent 가 **아무것도 실행하지 않았다.**
+534: /// 저장된 예약에서 만든 Grant 에는 Manifest 가 없다 —
+535: /// `grant_from_stored.rs` 가 "안 한다: Manifest 싣기 — 별도 조각" 이라고 적어
+536: /// 둔 그대로다. 실행할 것이 없으니 관측한 종료도 없고, Agent 는 지어내지
+537: /// 않고 거부한다(`ATTEMPT_REPORT_REFUSED`).
+538: ///
+539: /// ★ 그래서 1.5 는 "정상 경로 시나리오 하나" 가 아니었다. **Manifest 싣기가
+540: ///   먼저다**(결함 리포트 ⑯).
+541: ///
+542: /// ★★ **이 fixture 가 Manifest 를 받도록 바뀌면 이 테스트가 깨진다.** 그때
+543: ///   지우지 말고 뒤집어라 — 정상 경로 테스트가 볼 것:
+544: ///   ```text
+545: ///   Agent       WORKLOAD_RESULT ok=true · ATTEMPT_REPORT_SENT
+546: ///   Coordinator ATTEMPT_REPORT_STORED
+547: ///   DB          get_report_binding(ATTEMPT, NODE) 가 Some 이고, 저장된
+548: ///               outcome·fence_epoch·started/finished 가 **보낸 줄의 값과 같다**
+549: ///   대조군      보고만 끄면 행이 없다
+550: ///   ```
+551: ///
+552: /// ★ 재검수 14 — 로그만 보면 판별력이 약하다. Manifest 와 무관한 이유(예: Grant
+553: ///   서명 손상)로도 깨지고, 미래 구현이 "`--manifest-file` 을 줄 때만 싣기" 면
+554: ///   안 깨질 수 있다. 그래서 **저장된 Grant 자체**도 본다 — Coordinator 가 쓰는
+555: ///   것과 같은 함수(`signed_grant_from_stored`)로 만드는 `issue-grant` 를 같은
+556: ///   DB 에 돌려 `manifest` 가 비었는지 직접 확인한다. 깨지면 **이유부터** 보라.
+557: ///   또 Manifest 가 실려도 보고까지 가려면 결함 ⑱⑲⑳ 이 남아 있다.
+558: ///
+559: /// ★ **Windows 전용이다** — 실행 관문이 리눅스에서는 cgroup 을 요구한다.
+560: #[cfg(windows)]
+561: #[test]
+562: fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
+563:     let dir = tempfile::tempdir().expect("임시 디렉터리");
+564:     let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
+565:     let (coordinator, addr) =
+566:         spawn_coordinator(&db, dir.path(), &["--expect-attempt-reports", "1"]);
+567:     let (agent_ok, agent_output) = run_executing_agent(&addr, dir.path(), true);
+568:     let (_, coordinator_output) = finish(coordinator, "coordinator-stub");
+569:     let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
+570: 
+571:     assert!(!agent_ok, "Agent 가 성공했다 — Manifest 싣기가 들어온 것이다. 이 테스트를 뒤집어라\n{both}");
+572:     assert!(
+573:         !agent_output.contains("MANIFEST_ACCEPTED") && !agent_output.contains("WORKLOAD_"),
+574:         "Agent 가 Manifest 를 받았다 — 이 테스트를 뒤집어라\n{both}"
+575:     );
+576:     assert!(
+577:         agent_output.contains("ATTEMPT_REPORT_REFUSED"),
+578:         "보고할 것이 없을 때 거부하지 않고 다른 이유로 끝났다\n{both}"
+579:     );
+580:     assert!(!coordinator_output.contains("ATTEMPT_REPORT_STORED"), "\n{both}");
+581:     let store =
+582:         gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+583:             .expect("저장소 열기");
+584:     assert_eq!(store.get_report_binding(ATTEMPT, NODE).expect("조회"), None);
+585: 
+586:     // ★ 저장된 Grant 자체를 본다 — Coordinator 와 같은 함수다.
+587:     let key = dir.path().join("coordinator.key");
+588:     std::fs::write(&key, COORD_SEED).expect("키 파일");
+589:     let grant_file = dir.path().join("stored-grant.pb");
+590:     let now = now_unix_ms();
+591:     let issued = (now + 1_000).to_string();
+592:     let expires = (now + 60_000).to_string();
+593:     let (ok, out) = run_cli(&[
+594:         "issue-grant",
+595:         "--job-id", JOB,
+596:         "--control-db", db.to_str().unwrap(),
+597:         "--attempt-id", ATTEMPT,
+598:         "--lease-id", LEASE,
+599:         "--grant-id", GRANT,
+600:         "--grant-issued-at-unix-ms", &issued,
+601:         "--grant-expires-at-unix-ms", &expires,
+602:         "--coordinator-key-file", key.to_str().unwrap(),
+603:         "--out", grant_file.to_str().unwrap(),
+604:     ]);
+605:     assert!(ok, "저장된 예약에서 Grant 를 못 만들었다: {out}");
+606:     let grant = <gputeer_protocol::pb::ExecutionGrant as prost::Message>::decode(
+607:         std::fs::read(&grant_file).expect("Grant 읽기").as_slice(),
+608:     )
+609:     .expect("Grant 디코드");
+610:     assert!(
+611:         grant.manifest.is_none() && grant.manifest_hash.is_none(),
+612:         "저장된 Grant 에 Manifest 가 실렸다 — Manifest 싣기가 들어온 것이다. 이 테스트를 뒤집어라"
+613:     );
+614: }
+615: 
+616: /// ★ 결함 ⑯ — 저장된 예약 lane 에 `--manifest-file` 을 주면 **시작 전에** 거부한다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; a=Path('crates/agent/src/lib.rs').read_text(encoding='utf-8').splitlines(); print('crates/agent/src/lib.rs'); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 819<=i<858)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 929<=i<1080)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 1179<=i<1260)); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 1573<=i<1668))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; a=Path('crates/cli/tests/grant_over_wire.rs').read_text(encoding='utf-8').splitlines(); print('crates/cli/tests/grant_over_wire.rs'); print('\\n'.join(f'{i+1}: {s}' for i,s in enumerate(a) if 456<=i<513))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1920ms:
+crates/agent/src/lib.rs
+820: 
+821:     // ★ `Lease` 는 outer `Grant` 와 **별도로 서명된** 메시지다(§6 규칙
+822:     //   i — 중첩 메시지는 각자 서명된다). outer Grant 서명이 유효해도
+823:     //   nested Lease 서명이 위조됐을 수 있으므로 반드시 독립적으로
+824:     //   검증한다 — `to_fields.rs` 의 "manifest 와 lease 는 각자
+825:     //   독립적으로 검증해야 한다(MUST)" 를 실제로 이행한다
+826:     //   (2026-08-18, 코덱스 설계 · `p67` 프롬프트).
+827:     let mut held_lease = verify_and_record_lease(
+828:         &grant,
+829:         &config,
+830:         &coordinator_keys,
+831:         clock.now_unix_ms(),
+832:         &mut replay,
+833:         &mut fence_watermark,
+834:     )?;
+835:     budget.update_lease_deadline(held_lease.expires_at_unix_ms, clock.now_unix_ms(), policy);
+836:     println!(
+837:         "LEASE_ACCEPTED connection_attempt={} lease_id={} issued_at_unix_ms={} expires_at_unix_ms={}",
+838:         config.connection_attempt,
+839:         held_lease.lease_id,
+840:         held_lease.issued_at_unix_ms,
+841:         held_lease.expires_at_unix_ms
+842:     );
+843: 
+844:     // ★ nested `JobManifest` 도 `Lease` 와 **똑같이** 독립 검증한다.
+845:     //   outer Grant 서명이 유효해도 nested Manifest 서명은 위조됐을 수
+846:     //   있다(`to_fields.rs` — "manifest 와 lease 는 각자 독립적으로
+847:     //   검증해야 한다(MUST)").
+848:     //
+849:     //   ACK·checkpoint **전에** 한다 — 실행 지시를 신뢰할 수 없으면
+850:     //   시작 사실조차 남기지 않는다.
+851:     let workload = verify_nested_manifest(&grant, &config, clock.now_unix_ms(), &mut replay)?;
+852:     if let Some(spec) = workload.as_ref().map(|w| &w.spec) {
+853:         println!(
+854:             "MANIFEST_ACCEPTED job_id={} entrypoint={} args={} env_vars={}",
+855:             spec.job_id,
+856:             spec.entrypoint,
+857:             spec.args.len(),
+858:             spec.env_vars.len()
+930:         //
+931:         //   ★ 최소 VRAM 은 **요구하지 않는다**(0). Grant 에 그 값을 담을
+932:         //     칸이 아직 없기 때문이다. 없는 값을 지어내지 않는다
+933:         //     (`CLAUDE.md` §1). 칸이 생기면 그때 채운다.
+934:         let gpu_requirements = grant
+935:             .plan
+936:             .as_ref()
+937:             .filter(|plan| !plan.assigned_gpu_uuids.is_empty())
+938:             .map(|plan| gputeer_runtime_nvml::preflight::GpuRequirements {
+939:                 required_gpu_count: plan.assigned_gpu_uuids.len() as u32,
+940:                 minimum_free_vram_bytes_per_gpu: 0,
+941:                 selected_gpu_uuids: plan.assigned_gpu_uuids.clone(),
+942:             });
+943: 
+944:         let policy = exec::ExecutionPolicy {
+945:             opted_in: config.execute_workload,
+946:             commit_limit_bytes: config.workload_commit_limit_bytes,
+947:             gpu_requirements,
+948:             capture_dir: Some(run_dir.clone()),
+949:             // ★ attempt 별로 갈라야 한다 — 같은 Job 의 두 attempt 가 같은
+950:             //   격리 이름을 받으면 하나를 멈출 때 다른 하나도 죽는다.
+951:             isolation: exec::IsolationIdentity {
+952:                 grant_id: grant.grant_id.clone(),
+953:                 attempt_id: grant.attempt_id.clone(),
+954:             },
+955:             cgroup_parent: config.workload_cgroup_parent.clone(),
+956:         };
+957:         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
+958:         //   작업 디렉터리를 지운다.
+959:         //
+960:         //   초안은 사이사이에 `?` 를 둔 평범한 직선 코드였는데,
+961:         //   중간에서 실패하면 삭제에 **도달하지 못해** 제출자의
+962:         //   stdout 이 남의 PC 에 남았다(2026-08-29, 독립 검수 지적).
+963:         //   `CLAUDE.md` §0.5 는 성공했을 때만 치우라고 하지 않는다 —
+964:         //   오히려 실패했을 때 남는 것이 더 위험하다.
+965:         let outcome = run_and_capture_workload(
+966:             spec,
+967:             policy,
+968:             &config.checkpoint_root,
+969:             &checkpoint_id,
+970:             &held_lease,
+971:             &grant.attempt_id,
+972:             &run_dir,
+973:             &config.owner_panel_state,
+974:             &loaded.submitter_device_id,
+975:             clock.now_unix_ms(),
+976:             clock,
+977:         );
+978:         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
+979:         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
+980:         let cleanup = remove_dir_if_present(&run_dir);
+981:         let outcome = match (outcome, cleanup) {
+982:             (Ok(value), Ok(())) => value,
+983:             (Ok(_), Err(cleanup_error)) => return Err(cleanup_error),
+984:             (Err(run_error), Ok(())) => return Err(run_error),
+985:             (Err(run_error), Err(cleanup_error)) => {
+986:                 return Err(format!("{run_error} / 그리고 {cleanup_error}"))
+987:             }
+988:         };
+989: 
+990:         match outcome {
+991:             Some(report) => {
+992:                 println!(
+993:                     "WORKLOAD_ARTIFACTS checkpoint_id={} files={} bytes={}",
+994:                     checkpoint_id, report.file_count, report.total_bytes
+995:                 );
+996:                 // ★ 종료 코드 0 과 그 외를 **구분해서** 보고한다.
+997:                 //   `state-machines.md` §3 이 WORKLOAD_EXITED_OK 와
+998:                 //   WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
+999:                 //   (전이 자체는 아직 구현하지 않는다.)
+1000:                 if report.exit_code == 0 {
+1001:                     println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id);
+1002:                 } else {
+1003:                     println!(
+1004:                         "WORKLOAD_RESULT ok=false job_id={} exit_code={}",
+1005:                         spec.job_id, report.exit_code
+1006:                     );
+1007:                 }
+1008:                 // ★ **관측한 것만** 담는다. `job_id`·`fence_epoch` 은
+1009:                 //   Coordinator 가 서명해 준 Lease 에서, `attempt_id` 는
+1010:                 //   같은 Grant 에서 온다 — 여기서 새로 만들지 않는다.
+1011:                 //   `issued_at_unix_ms` 는 실제로 보낼 때 읽는다.
+1012:                 terminal_observation = Some(crate::report::TerminalObservation {
+1013:                     job_id: held_lease.job_id.clone(),
+1014:                     attempt_id: grant.attempt_id.clone(),
+1015:                     node_id: config.agent_device_id.clone(),
+1016:                     fence_epoch: held_lease.fence_epoch,
+1017:                     exit_code: report.exit_code,
+1018:                     started_at_unix_ms: report.started_at_unix_ms,
+1019:                     finished_at_unix_ms: report.finished_at_unix_ms,
+1020:                     issued_at_unix_ms: 0,
+1021:                 });
+1022:             }
+1023:             None => {
+1024:                 println!(
+1025:                     "WORKLOAD_SKIPPED job_id={} reason=not_opted_in",
+1026:                     spec.job_id
+1027:                 );
+1028:             }
+1029:         }
+1030:     }
+1031: 
+1032:     // RevokeLeaseNotice는 coordinator_device_id가 아닌 lease_id를
+1033:     // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
+1034:     // 보유 Lease id 아래에서 같은 Coordinator 키로 검증한다.
+1035:     coordinator_keys.insert(
+1036:         held_lease.lease_id.clone(),
+1037:         config.coordinator_verifying_key,
+1038:     );
+1039:     if let Some(test_signer_id) = &config.revoke_signer_id_override {
+1040:         coordinator_keys.insert(test_signer_id.clone(), config.coordinator_verifying_key);
+1041:     }
+1042: 
+1043:     let now = clock.now_unix_ms();
+1044:     let mut ack = pb::AgentGrantAck {
+1045:         schema_version: 1,
+1046:         grant_id: grant.grant_id.clone(),
+1047:         attempt_id: grant.attempt_id.clone(),
+1048:         agent_device_id: config.agent_device_id.clone(),
+1049:         issued_at_unix_ms: now,
+1050:         expires_at_unix_ms: now + 60_000,
+1051:         nonce: derive_nonce("grant-ack", &grant.grant_id, config.connection_attempt),
+1052:         accepted: true,
+1053:         ..Default::default()
+1054:     };
+1055:     ack.agent_signature = sign(&signing_key, &ack).to_vec();
+1056: 
+1057:     if config.corrupt_own_signature {
+1058:         let last = ack
+1059:             .agent_signature
+1060:             .last_mut()
+1061:             .ok_or_else(|| "agent_signature 가 비어 있다".to_string())?;
+1062:         *last ^= 0x01;
+1063:     }
+1064: 
+1065:     let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
+1066:         .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
+1067:     stream
+1068:         .write_all(&frame)
+1069:         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
+1070:     stream.flush().map_err(|e| e.to_string())?;
+1071: 
+1072:     // ★ 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계).
+1073:     //
+1074:     //   ACK 뒤·갱신 앞의 고정 위치로 보낸다. 이 stub 프로토콜에는
+1075:     //   비동기 multiplexing 이 없어 주기적 전송을 표현할 수 없다 —
+1076:     //   할 수 없는 것을 하는 척하지 않고, 표현 가능한 순차 위치에 둔다.
+1077:     //
+1078:     //   `heartbeat_rounds == 0`(기본값)이면 이 구간이 통째로 없다.
+1079:     for round in 0..config.heartbeat_rounds {
+1080:         // 첫 회차는 기다리지 않는다 — 간격은 회차 **사이**의 것이다.
+1180:         report.reporter_signature = sign(&signing_key, &report).to_vec();
+1181:         let frame = write_frame(
+1182:             FrameType::NeighborUnreachableReport,
+1183:             &report.encode_to_vec(),
+1184:         )
+1185:         .map_err(|e| {
+1186:             format!("NeighborUnreachableReport 프레임 인코딩 실패(round={round}): {e}")
+1187:         })?;
+1188:         stream
+1189:             .write_all(&frame)
+1190:             .map_err(|e| format!("NeighborUnreachableReport 전송 실패(round={round}): {e}"))?;
+1191:         stream.flush().map_err(|e| e.to_string())?;
+1192:         println!(
+1193:             "NEIGHBOR_REPORT_SENT round={round} unreachable_node_id={} observed_at_unix_ms={}",
+1194:             report.unreachable_node_id, report.observed_at_unix_ms
+1195:         );
+1196:     }
+1197: 
+1198:     // ── 종료 보고(`AttemptReport`) ───────────────────────────────────
+1199:     //
+1200:     // ★ **관측한 종료가 없으면 보내지 않는다.** 실행이 꺼져 있거나
+1201:     //   Grant 에 Manifest 가 없었으면 `terminal_observation` 이 `None`
+1202:     //   이고, 그때 빈 보고를 만들어 보내면 그것이 지어낸 값이다
+1203:     //   (`CLAUDE.md` §1). 켜 놓고 보낼 것이 없으면 **오류로 끝낸다** —
+1204:     //   조용히 건너뛰면 운영자는 보고가 간 줄 안다.
+1205:     //
+1206:     // ★ 자리는 heartbeat·이웃 신고와 같은 이유로 **고정 순차 위치**다.
+1207:     //   이 stub 프로토콜에는 비동기 다중화가 없어 "끝나는 즉시" 를
+1208:     //   표현할 수 없다 — 표현할 수 없는 것을 하는 척하지 않는다.
+1209:     if config.send_attempt_report {
+1210:         let Some(observed) = terminal_observation.as_ref() else {
+1211:             return Err(
+1212:                 "ATTEMPT_REPORT_REFUSED: 관측된 워크로드 종료가 없다 — \
+1213:                  보고할 사실이 없으면 보내지 않는다"
+1214:                     .to_string(),
+1215:             );
+1216:         };
+1217:         // 발행 시각만 지금 읽는다. 시작·종료는 그때 관측한 값 그대로다.
+1218:         let attempt_report = report::build_signed_attempt_report(
+1219:             &signing_key,
+1220:             &crate::report::TerminalObservation {
+1221:                 issued_at_unix_ms: clock.now_unix_ms(),
+1222:                 ..observed.clone()
+1223:             },
+1224:         )
+1225:         .map_err(|error| error.to_string())?;
+1226:         let frame =
+1227:             report::attempt_report_frame(&attempt_report).map_err(|error| error.to_string())?;
+1228:         stream
+1229:             .write_all(&frame)
+1230:             .map_err(|e| format!("AttemptReport 전송 실패: {e}"))?;
+1231:         stream.flush().map_err(|e| e.to_string())?;
+1232:         println!(
+1233:             "ATTEMPT_REPORT_SENT job_id={} attempt_id={} node_id={} fence_epoch={} \
+1234:              outcome={} exit_code={} started_at_unix_ms={} finished_at_unix_ms={} \
+1235:              issued_at_unix_ms={}",
+1236:             attempt_report.job_id,
+1237:             attempt_report.attempt_id,
+1238:             attempt_report.node_id,
+1239:             attempt_report.fence_epoch,
+1240:             attempt_report.outcome,
+1241:             observed.exit_code,
+1242:             attempt_report.started_at_unix_ms,
+1243:             attempt_report.finished_at_unix_ms,
+1244:             attempt_report.issued_at_unix_ms
+1245:         );
+1246:     }
+1247: 
+1248:     if config.reconnect_enabled
+1249:         && !config.do_renew
+1250:         && !config.expect_replay
+1251:         && config.expect_revoke_after_round.is_none()
+1252:         && peer_closed_after_ack(&stream)?
+1253:     {
+1254:         return Err("RETRYABLE_CONNECTION: coordinator disconnected after ACK".into());
+1255:     }
+1256: 
+1257:     let mut revoked = false;
+1258:     if config.expect_revoke_after_round == Some(0) {
+1259:         let notice = receive_and_validate_revoke(
+1260:             &mut stream,
+1574: ///
+1575: /// # 검사 순서
+1576: ///
+1577: /// ```text
+1578: /// 1  Manifest 가 없다                 -> Ok(None). 기존 경로 그대로
+1579: /// 2  Manifest 는 있는데 제출자 키가 없다 -> 거부. 검증 못 하는 지시는 안 받는다
+1580: /// 3  제출자 서명 검증 (Verified<M> 획득)
+1581: /// 4  job_id 가 Lease 의 job_id 와 같은가
+1582: /// 5  실행 지시 도출 (derive_execution_spec)
+1583: /// ```
+1584: ///
+1585: /// `manifest_hash` 대조는 이 함수가 아니라 프로토콜 계층이 한다 —
+1586: /// 아래 본문 주석 참조.
+1587: fn verify_nested_manifest(
+1588:     grant: &pb::ExecutionGrant,
+1589:     config: &AgentConfig,
+1590:     now_unix_ms: u64,
+1591:     replay: &mut InMemoryReplayGuard,
+1592: ) -> Result<Option<VerifiedWorkload>, String> {
+1593:     let Some(manifest) = grant.manifest.as_ref() else {
+1594:         return Ok(None);
+1595:     };
+1596: 
+1597:     // 검증할 수단이 없으면 받아들이지 않는다. 조용히 무시하면 "실행
+1598:     // 지시가 없는 것" 과 "검증 못 한 실행 지시가 온 것" 이 구분되지 않는다.
+1599:     let Some(submitter_key) = config.submitter_verifying_key else {
+1600:         return Err(
+1601:             "MANIFEST_REJECTED: Grant 에 Manifest 가 있는데 제출자 공개키가 설정되지 않았다".into(),
+1602:         );
+1603:     };
+1604: 
+1605:     let mut submitter_keyring = InMemoryKeyring::new();
+1606:     submitter_keyring.insert(manifest.submitter_device_id.clone(), submitter_key);
+1607:     let verifier = Ed25519Verifier::new(&submitter_keyring);
+1608:     let verified = verify(manifest, 1, &verifier, now_unix_ms, replay)
+1609:         .map_err(|e| format!("MANIFEST_REJECTED: Manifest 서명 검증 실패: {e:?}"))?;
+1610: 
+1611:     // ★ `manifest_hash` 재계산 대조는 **여기서 하지 않는다.**
+1612:     //
+1613:     //   `CLAUDE.md` §0.2 가 요구하는 그 검사는 이미 프로토콜 계층에 있다 —
+1614:     //   `crates/protocol/src/signable.rs` 의
+1615:     //   `ExecutionGrant::check_derived_consistency()` 가 Grant 검증 중에
+1616:     //   `BLAKE3_256(sig_input_of(JobManifest))` 를 재계산해 대조하고,
+1617:     //   다르면 `DerivedMismatch` 로 Grant 자체를 거부한다(2026-08-16
+1618:     //   독립 검수가 "규범은 요구하는데 코드가 없다" 고 지적해 추가된 것).
+1619:     //
+1620:     //   ★ 처음엔 여기에도 같은 대조를 넣었다가 뺐다. 뮤테이션으로
+1621:     //   확인해 보니 그 코드는 **도달하지 않았다** — 프로토콜 계층이
+1622:     //   먼저 거부하기 때문이다. 도달하지 않는 방어를 남겨 두면
+1623:     //   "구현했다" 와 "강제한다" 를 혼동하게 된다.
+1624:     //
+1625:     //   같은 이유로 "hash 가 반드시 있어야 한다" 도 넣지 않는다.
+1626:     //   규범은 `manifest 있음 + hash 없음 -> 통과(주장을 안 했으므로)`
+1627:     //   라고 정했다. 그보다 엄격한 규칙을 여기서 발명하지 않는다.
+1628: 
+1629:     // 같은 Grant 안의 Lease 와 같은 Job 이어야 한다.
+1630:     if let Some(lease) = grant.lease.as_ref() {
+1631:         if verified.get().job_id != lease.job_id {
+1632:             return Err(format!(
+1633:                 "MANIFEST_REJECTED: Manifest job_id({})가 Lease job_id({})와 다르다",
+1634:                 verified.get().job_id,
+1635:                 lease.job_id
+1636:             ));
+1637:         }
+1638:     }
+1639: 
+1640:     let spec = gputeer_protocol::execution_spec::derive_execution_spec(&verified)
+1641:         .map_err(|e| format!("MANIFEST_REJECTED: 실행 지시를 만들 수 없다: {e}"))?;
+1642:     // ★ 제출자 신원을 여기서 같이 꺼낸다. `ExecutionSpec` 에는 없는데,
+1643:     //   Owner Panel 은 소유자에게 **누가** 내 GPU 를 쓰는지 보여야
+1644:     //   한다(`CLAUDE.md` §0.1). 검증을 통과한 뒤에만 읽는다.
+1645:     Ok(Some(VerifiedWorkload {
+1646:         submitter_device_id: verified.get().submitter_device_id.clone(),
+1647:         spec,
+1648:     }))
+1649: }
+1650: 
+1651: /// 검증을 통과한 실행 지시와, 그것을 낸 사람.
+1652: struct VerifiedWorkload {
+1653:     spec: gputeer_protocol::execution_spec::ExecutionSpec,
+1654:     /// 소유자 화면에 보여줄 제출자. `ExecutionSpec` 에는 없다 —
+1655:     /// 실행에는 필요 없지만 **소유자에게는 필요한** 사실이다.
+1656:     submitter_device_id: String,
+1657: }
+1658: 
+1659: fn verify_and_record_lease(
+1660:     grant: &pb::ExecutionGrant,
+1661:     config: &AgentConfig,
+1662:     coordinator_keys: &InMemoryKeyring,
+1663:     now: u64,
+1664:     replay: &mut InMemoryReplayGuard,
+1665:     watermark: &mut DurableFenceWatermark,
+1666: ) -> Result<pb::Lease, String> {
+1667:     let lease = grant
+1668:         .lease
+
+ succeeded in 1957ms:
+crates/cli/tests/grant_over_wire.rs
+457: 
+458:     assert!(
+459:         !agent_status.success(),
+460:         "예약이 없는데 Agent 가 성공했다\n--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}"
+461:     );
+462:     assert!(
+463:         coordinator_output.contains("GRANT_REFUSED") || coordinator_output.contains("를 모른다"),
+464:         "Coordinator 가 발급 거부 사유를 안 남겼다: {coordinator_output}"
+465:     );
+466: }
+467: 
+468: // ─────────────────────────────────────────────────────────────────────
+469: // 종료 보고가 **별도 프로세스 둘 사이의 실제 소켓**을 건너 저장되는가
+470: // (`docs/plans/_열린_작업.md` §A1 1.5)
+471: // ─────────────────────────────────────────────────────────────────────
+472: 
+473: /// Windows 에 확실히 있는 실행 파일.
+474: #[cfg(windows)]
+475: fn cmd_exe() -> String {
+476:     let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+477:     format!(r"{root}\System32\cmd.exe")
+478: }
+479: 
+480: /// 실행을 켠 Agent 를 띄우고 끝날 때까지 기다린다. `send_report` 만 다르다.
+481: #[cfg(windows)]
+482: fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, String) {
+483:     let fence_db = dir.join("agent-fence.sqlite3");
+484:     // ★ 기본값은 `%TEMP%` 아래 매번 새 이름이라 테스트가 끝나도 남는다.
+485:     let checkpoint_root = dir.join("agent-checkpoints");
+486:     let coordinator_pub = pub_hex(COORD_SEED);
+487:     let submitter_pub = pub_hex(SEED);
+488:     let mut args: Vec<&str> = vec![
+489:         "agent-stub",
+490:         "--connect",
+491:         addr,
+492:         "--own-seed",
+493:         AGENT_SEED,
+494:         "--peer-pubkey",
+495:         &coordinator_pub,
+496:         "--coordinator-device-id",
+497:         COORDINATOR,
+498:         "--agent-device-id",
+499:         AGENT_DEVICE,
+500:         "--fence-db",
+501:         fence_db.to_str().unwrap(),
+502:         "--checkpoint-root",
+503:         checkpoint_root.to_str().unwrap(),
+504:         "--submitter-pubkey",
+505:         &submitter_pub,
+506:         "--i-understand-this-executes-untrusted-code",
+507:         "true",
+508:     ];
+509:     if send_report {
+510:         args.extend(["--send-attempt-report", "true"]);
+511:     }
+512:     let mut agent = Command::new(cli_bin())
+513:         .args(&args)
+
+codex
+hash 생략과 잘못된 hash는 다른 경우입니다. Agent 주석은 “Manifest 있음 + hash 없음”을 허용한다고 명시하므로, 초안의 생략 뮤테이션은 정상 경로 테스트를 통과할 수 있습니다. 또 `cmd /c exit 0`에서는 ⑱을 정상 경로 테스트의 필수 선행 수정으로 볼 근거가 없습니다. 수명 정책과 검증 단계별로 구별되는 테스트 입력을 정리하겠습니다.
+
+codex
+**B를 선택하되, 근거와 검증 계획은 고쳐야 합니다.** 현재 초안에는 이미 삭제된 비교를 재사용한다는 전제와, 통과할 수 있는 뮤테이션을 실패한다고 보는 전제가 있습니다.
+
+1. **A의 손실을 “저장소 변조를 Coordinator가 전혀 모른다”로 설명하면 틀립니다.**
+
+   `get_manifest_binding()`으로 읽는다면 A에서도 본문 디코딩, Job ID, 제출자 ID, 제출 당시 서명자 ID, 저장 hash와 재계산 hash의 불일치를 거부합니다. 실제 본문 변조를 `HashMismatch`로 잡는 테스트도 있습니다. 따라서 초안의 “손상·변조돼도 모른 채 서명한다”는 주장은 범위가 너무 넓습니다. ([job_store.rs:881](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:881), [job_store.rs:1422](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:1422))
+
+   **A가 생략하는 것은 저장소의 일관성 검사 이후, 현재 신뢰하는 제출자 키와 검증 시각으로 Manifest를 재검증하는 단계입니다.** 저장소 계약은 Grant 구성 전에 이 재검증을 요구하고, scheduler도 실제로 수행합니다. 이것이 B를 선택할 근거입니다. 기본 lane이 검증 없이 운반한다는 사실은 맞지만, 저장소 계약을 무시할 근거는 아닙니다. ([job_store.rs:149](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:149), [scheduler_tick.rs:204](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/scheduler_tick.rs:204), [coordinator/src/lib.rs:2381](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2381))
+
+   “Agent가 거부하긴 한다”도 조건부입니다. Agent는 Coordinator의 제출자 keyring을 조회하지 않고, 자신에게 설정된 공개키 하나로 검증합니다. Coordinator 쪽 신뢰 목록에서 제외된 제출자라도 Agent의 키 설정이 그대로라면 같은 거부 결과를 보장하지 않습니다. B와 Agent 독립 검증은 서로 다른 관문입니다. ([agent/src/lib.rs:1599](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1599))
+
+2. **B의 대조 목록은 검사 추가보다 책임과 수명 정책을 확정해야 합니다.**
+
+   - **hash 대조는 이미 있습니다.** 저장소는 `BLAKE3_256(signing_input(manifest))`를 계산해 저장된 Job hash와 비교하고, 일치한 재계산 값을 `binding.manifest_hash`로 반환합니다. 따라서 동일한 binding을 수정 없이 싣는다면 그 값을 사용할 수 있습니다. 다시 계산하더라도 저장소의 불일치 거부를 우회해 새 hash로 덮어서는 안 됩니다. Manifest와 hash는 outer 서명 전에 채워야 합니다. ([job_store.rs:853](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:853), [job_store.rs:915](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:915), [coordinator/src/lib.rs:2350](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2350))
+
+   - **“plan_job.rs에 같은 서명자 비교가 있다”는 사실과 반대입니다.** 해당 비교는 도달 불가능한 중복 검사라 삭제됐습니다. 저장소가 Manifest 제출자와 제출 당시 서명자를 같은 Job 제출자에 묶고, `plan_job.rs` 주석은 검증된 서명자 ID도 Manifest의 제출자 필드에서 온다고 설명합니다. 재사용할 비교는 없습니다. 목록에는 “저장소가 보장하는 불변조건”으로 적는 편이 정확합니다. ([job_store.rs:906](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:906), [plan_job.rs:123](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/plan_job.rs:123))
+
+   - **Manifest 만료와 Grant 만료의 관계가 빠졌습니다.** “발급 시점에 Manifest가 유효하다”만으로는 “Grant 유효기간 전체에 Manifest가 유효하다”가 성립하지 않습니다. 현재 조립기는 `Grant 만료 ≤ Lease 만료`만 검사하고, Agent는 수신 시각으로 Manifest를 검증합니다. 따라서 Grant는 아직 유효한데 Manifest 만료 때문에 사용할 수 없는 구간이 생길 수 있습니다. ([grant_from_stored.rs:195](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:195), [agent/src/lib.rs:851](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:851), [agent/src/lib.rs:1608](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1608))
+
+     제안은 **`Grant 만료 ≤ min(Lease 만료, Manifest 만료)`를 요구하고 초과 요청은 거부**하는 것입니다. 이는 이번 설계에 추가할 정책이지, 읽은 코드에서 확인한 기존 규칙은 아닙니다. 아울러 검증 시각을 명시해야 합니다. 기존 조립기의 명시적 시각 계약을 유지한다면 `request.issued_at_unix_ms`를 사용하고, 저장 Manifest 재사용에는 scheduler처럼 `NoReplayCheck`를 쓰는 것이 일관됩니다. 만료 직전·정확한 만료·Grant가 Manifest보다 오래 사는 경우를 별도로 검증하십시오. ([grant_from_stored.rs:45](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:45), [grant_from_stored.rs:257](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:257), [scheduler_tick.rs:206](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/scheduler_tick.rs:206))
+
+   - **binding 부재는 `None`만이 아닙니다.** Job은 있는데 Manifest가 없으면 `LegacyManifestMissing` 오류입니다. 초안의 `GRANT_REFUSED` 약속에는 이 경우와 손상 오류의 처리도 포함해야 합니다. ([job_store.rs:402](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:402), [job_store.rs:894](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:894))
+
+3. **⑱은 이 짧은 정상 경로 테스트를 반드시 막는 선행 결함이 아닙니다.**
+
+   Agent가 실행·산출물 처리를 마친 뒤 ACK를 보내는 순서는 사실입니다. Coordinator의 읽기 제한도 10초입니다. 그러나 덫 테스트는 Windows의 `cmd.exe /c exit 0`을 실행하도록 준비돼 있고, 실행 및 보고 옵션과 제출자 공개키도 이미 전달합니다. **ACK까지의 전체 처리가 10초 안에 끝나면 이 결함을 밟지 않고 정상 경로를 검증할 수 있습니다.** ([agent/src/lib.rs:965](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:965), [agent/src/lib.rs:1044](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1044), [coordinator/src/lib.rs:66](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:66), [coordinator/src/lib.rs:824](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:824), [grant_over_wire.rs:482](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:482), [grant_over_wire.rs:564](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:564))
+
+   따라서 “⑱이 남아 있으므로 정상 경로 테스트는 못 한다”는 결론은 지지되지 않습니다. 반대로 이 테스트의 성공으로 장시간 워크로드 문제가 해결됐다고 말해서도 안 됩니다. 덫 주석의 “⑱⑲⑳이 남는다”는 문장 자체는 이 fixture가 반드시 막힌다는 증거가 아닙니다. ([grant_over_wire.rs:557](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:557))
+
+4. **제시된 두 뮤테이션은 그대로는 판별력이 부족합니다.**
+
+   - **`재검증 제거 → 변조 테스트 실패`는 변조 방법에 달렸습니다.** 본문만 바꾸고 저장 hash를 유지하면 저장소에서 먼저 거부합니다. 그러면 B의 재검증을 제거해도 부정 테스트는 계속 통과합니다. B를 검증하려면 본문과 저장 hash를 함께 바꿔 저장소 일관성 검사를 통과시키되, 제출자 서명은 유효하지 않게 해야 합니다. 먼저 `get_manifest_binding()` 성공을 확인한 뒤 재검증에서 거부되는지 보십시오. 정상 DB를 만든 **뒤** 발급용 keyring에서 제출자를 제외하는 경우도 재검증 제거를 구별할 수 있습니다. ([job_store.rs:915](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:915), [job_store.rs:1429](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:1429), [scheduler_tick.rs:204](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/scheduler_tick.rs:204))
+
+   - **`hash 채우기 제거 → Agent가 DerivedMismatch`는 잘못된 기대입니다.** Agent 주석은 `Manifest 있음 + hash 없음 → 통과`를 명시하며, 해당 함수에도 hash 필수 검사가 없습니다. 따라서 hash를 생략해도 실행·보고 성공 테스트는 통과할 수 있습니다. 생성된 Grant에 **Manifest와 hash가 각각 존재하고**, hash 알고리즘과 값이 기대값과 일치하는지를 직접 단언해야 합니다. 기존의 `manifest.is_none() && manifest_hash.is_none()`를 단순히 부정하는 것으로는 부족합니다. ([agent/src/lib.rs:1611](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1611), [agent/src/lib.rs:1625](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1625), [grant_over_wire.rs:610](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:610))
+
+   - **잘못된 hash와 생략도 구별해야 합니다.** 잘못된 hash를 넣는 경우에는 조립기의 기존 `verify_own_output()`이 Grant를 검증하므로 Agent 도달 전에 실패할 수 있습니다. Agent의 거부를 별도로 검증하려면 생성기 자기 검증 이후의 전송용 객체에 잘못된 hash를 넣고 outer 서명을 유효하게 만드는 fixture가 필요합니다. 단순 바이트 변조에 따른 서명 실패를 hash 검증 성공으로 세면 안 됩니다. ([grant_from_stored.rs:257](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:257), [grant_from_stored.rs:296](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:296), [agent/src/lib.rs:1615](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1615))
+
+   정상 경로의 로그·DB 값 대조 계획은 유지할 만합니다. 보고를 끈 대조군에서도 `WORKLOAD_RESULT ok=true`를 확인해야, 실행 자체가 실패해서 행이 없는 경우와 구별됩니다. ([grant_over_wire.rs:542](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:542), [agent/src/lib.rs:1209](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1209))
+
+지정된 아홉 파일 안에서 검토했습니다. 테스트·뮤테이션은 실행하지 않았습니다. 허용 목록 밖의 protocol/crypto 구현은 읽지 않았으므로, hash 생략 규약과 `Verified::signer_id()`의 내부 동작은 각각 Agent와 `plan_job.rs`에 적힌 설명까지 확인했습니다. Manifest–Grant 수명 관계를 강제하는 기존 검사는 읽은 범위에서 찾지 못했습니다.
+
+CHANGES_REQUESTED
+tokens used
+58,098
+**B를 선택하되, 근거와 검증 계획은 고쳐야 합니다.** 현재 초안에는 이미 삭제된 비교를 재사용한다는 전제와, 통과할 수 있는 뮤테이션을 실패한다고 보는 전제가 있습니다.
+
+1. **A의 손실을 “저장소 변조를 Coordinator가 전혀 모른다”로 설명하면 틀립니다.**
+
+   `get_manifest_binding()`으로 읽는다면 A에서도 본문 디코딩, Job ID, 제출자 ID, 제출 당시 서명자 ID, 저장 hash와 재계산 hash의 불일치를 거부합니다. 실제 본문 변조를 `HashMismatch`로 잡는 테스트도 있습니다. 따라서 초안의 “손상·변조돼도 모른 채 서명한다”는 주장은 범위가 너무 넓습니다. ([job_store.rs:881](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:881), [job_store.rs:1422](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:1422))
+
+   **A가 생략하는 것은 저장소의 일관성 검사 이후, 현재 신뢰하는 제출자 키와 검증 시각으로 Manifest를 재검증하는 단계입니다.** 저장소 계약은 Grant 구성 전에 이 재검증을 요구하고, scheduler도 실제로 수행합니다. 이것이 B를 선택할 근거입니다. 기본 lane이 검증 없이 운반한다는 사실은 맞지만, 저장소 계약을 무시할 근거는 아닙니다. ([job_store.rs:149](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:149), [scheduler_tick.rs:204](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/scheduler_tick.rs:204), [coordinator/src/lib.rs:2381](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2381))
+
+   “Agent가 거부하긴 한다”도 조건부입니다. Agent는 Coordinator의 제출자 keyring을 조회하지 않고, 자신에게 설정된 공개키 하나로 검증합니다. Coordinator 쪽 신뢰 목록에서 제외된 제출자라도 Agent의 키 설정이 그대로라면 같은 거부 결과를 보장하지 않습니다. B와 Agent 독립 검증은 서로 다른 관문입니다. ([agent/src/lib.rs:1599](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1599))
+
+2. **B의 대조 목록은 검사 추가보다 책임과 수명 정책을 확정해야 합니다.**
+
+   - **hash 대조는 이미 있습니다.** 저장소는 `BLAKE3_256(signing_input(manifest))`를 계산해 저장된 Job hash와 비교하고, 일치한 재계산 값을 `binding.manifest_hash`로 반환합니다. 따라서 동일한 binding을 수정 없이 싣는다면 그 값을 사용할 수 있습니다. 다시 계산하더라도 저장소의 불일치 거부를 우회해 새 hash로 덮어서는 안 됩니다. Manifest와 hash는 outer 서명 전에 채워야 합니다. ([job_store.rs:853](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:853), [job_store.rs:915](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:915), [coordinator/src/lib.rs:2350](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:2350))
+
+   - **“plan_job.rs에 같은 서명자 비교가 있다”는 사실과 반대입니다.** 해당 비교는 도달 불가능한 중복 검사라 삭제됐습니다. 저장소가 Manifest 제출자와 제출 당시 서명자를 같은 Job 제출자에 묶고, `plan_job.rs` 주석은 검증된 서명자 ID도 Manifest의 제출자 필드에서 온다고 설명합니다. 재사용할 비교는 없습니다. 목록에는 “저장소가 보장하는 불변조건”으로 적는 편이 정확합니다. ([job_store.rs:906](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:906), [plan_job.rs:123](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/plan_job.rs:123))
+
+   - **Manifest 만료와 Grant 만료의 관계가 빠졌습니다.** “발급 시점에 Manifest가 유효하다”만으로는 “Grant 유효기간 전체에 Manifest가 유효하다”가 성립하지 않습니다. 현재 조립기는 `Grant 만료 ≤ Lease 만료`만 검사하고, Agent는 수신 시각으로 Manifest를 검증합니다. 따라서 Grant는 아직 유효한데 Manifest 만료 때문에 사용할 수 없는 구간이 생길 수 있습니다. ([grant_from_stored.rs:195](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:195), [agent/src/lib.rs:851](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:851), [agent/src/lib.rs:1608](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1608))
+
+     제안은 **`Grant 만료 ≤ min(Lease 만료, Manifest 만료)`를 요구하고 초과 요청은 거부**하는 것입니다. 이는 이번 설계에 추가할 정책이지, 읽은 코드에서 확인한 기존 규칙은 아닙니다. 아울러 검증 시각을 명시해야 합니다. 기존 조립기의 명시적 시각 계약을 유지한다면 `request.issued_at_unix_ms`를 사용하고, 저장 Manifest 재사용에는 scheduler처럼 `NoReplayCheck`를 쓰는 것이 일관됩니다. 만료 직전·정확한 만료·Grant가 Manifest보다 오래 사는 경우를 별도로 검증하십시오. ([grant_from_stored.rs:45](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:45), [grant_from_stored.rs:257](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:257), [scheduler_tick.rs:206](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/scheduler_tick.rs:206))
+
+   - **binding 부재는 `None`만이 아닙니다.** Job은 있는데 Manifest가 없으면 `LegacyManifestMissing` 오류입니다. 초안의 `GRANT_REFUSED` 약속에는 이 경우와 손상 오류의 처리도 포함해야 합니다. ([job_store.rs:402](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:402), [job_store.rs:894](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:894))
+
+3. **⑱은 이 짧은 정상 경로 테스트를 반드시 막는 선행 결함이 아닙니다.**
+
+   Agent가 실행·산출물 처리를 마친 뒤 ACK를 보내는 순서는 사실입니다. Coordinator의 읽기 제한도 10초입니다. 그러나 덫 테스트는 Windows의 `cmd.exe /c exit 0`을 실행하도록 준비돼 있고, 실행 및 보고 옵션과 제출자 공개키도 이미 전달합니다. **ACK까지의 전체 처리가 10초 안에 끝나면 이 결함을 밟지 않고 정상 경로를 검증할 수 있습니다.** ([agent/src/lib.rs:965](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:965), [agent/src/lib.rs:1044](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1044), [coordinator/src/lib.rs:66](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:66), [coordinator/src/lib.rs:824](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/lib.rs:824), [grant_over_wire.rs:482](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:482), [grant_over_wire.rs:564](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:564))
+
+   따라서 “⑱이 남아 있으므로 정상 경로 테스트는 못 한다”는 결론은 지지되지 않습니다. 반대로 이 테스트의 성공으로 장시간 워크로드 문제가 해결됐다고 말해서도 안 됩니다. 덫 주석의 “⑱⑲⑳이 남는다”는 문장 자체는 이 fixture가 반드시 막힌다는 증거가 아닙니다. ([grant_over_wire.rs:557](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:557))
+
+4. **제시된 두 뮤테이션은 그대로는 판별력이 부족합니다.**
+
+   - **`재검증 제거 → 변조 테스트 실패`는 변조 방법에 달렸습니다.** 본문만 바꾸고 저장 hash를 유지하면 저장소에서 먼저 거부합니다. 그러면 B의 재검증을 제거해도 부정 테스트는 계속 통과합니다. B를 검증하려면 본문과 저장 hash를 함께 바꿔 저장소 일관성 검사를 통과시키되, 제출자 서명은 유효하지 않게 해야 합니다. 먼저 `get_manifest_binding()` 성공을 확인한 뒤 재검증에서 거부되는지 보십시오. 정상 DB를 만든 **뒤** 발급용 keyring에서 제출자를 제외하는 경우도 재검증 제거를 구별할 수 있습니다. ([job_store.rs:915](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:915), [job_store.rs:1429](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/job_store.rs:1429), [scheduler_tick.rs:204](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/src/scheduler_tick.rs:204))
+
+   - **`hash 채우기 제거 → Agent가 DerivedMismatch`는 잘못된 기대입니다.** Agent 주석은 `Manifest 있음 + hash 없음 → 통과`를 명시하며, 해당 함수에도 hash 필수 검사가 없습니다. 따라서 hash를 생략해도 실행·보고 성공 테스트는 통과할 수 있습니다. 생성된 Grant에 **Manifest와 hash가 각각 존재하고**, hash 알고리즘과 값이 기대값과 일치하는지를 직접 단언해야 합니다. 기존의 `manifest.is_none() && manifest_hash.is_none()`를 단순히 부정하는 것으로는 부족합니다. ([agent/src/lib.rs:1611](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1611), [agent/src/lib.rs:1625](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1625), [grant_over_wire.rs:610](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:610))
+
+   - **잘못된 hash와 생략도 구별해야 합니다.** 잘못된 hash를 넣는 경우에는 조립기의 기존 `verify_own_output()`이 Grant를 검증하므로 Agent 도달 전에 실패할 수 있습니다. Agent의 거부를 별도로 검증하려면 생성기 자기 검증 이후의 전송용 객체에 잘못된 hash를 넣고 outer 서명을 유효하게 만드는 fixture가 필요합니다. 단순 바이트 변조에 따른 서명 실패를 hash 검증 성공으로 세면 안 됩니다. ([grant_from_stored.rs:257](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:257), [grant_from_stored.rs:296](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/coordinator/src/grant_from_stored.rs:296), [agent/src/lib.rs:1615](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1615))
+
+   정상 경로의 로그·DB 값 대조 계획은 유지할 만합니다. 보고를 끈 대조군에서도 `WORKLOAD_RESULT ok=true`를 확인해야, 실행 자체가 실패해서 행이 없는 경우와 구별됩니다. ([grant_over_wire.rs:542](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/cli/tests/grant_over_wire.rs:542), [agent/src/lib.rs:1209](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/crates/agent/src/lib.rs:1209))
+
+지정된 아홉 파일 안에서 검토했습니다. 테스트·뮤테이션은 실행하지 않았습니다. 허용 목록 밖의 protocol/crypto 구현은 읽지 않았으므로, hash 생략 규약과 `Verified::signer_id()`의 내부 동작은 각각 Agent와 `plan_job.rs`에 적힌 설명까지 확인했습니다. Manifest–Grant 수명 관계를 강제하는 기존 검사는 읽은 범위에서 찾지 못했습니다.
+
+CHANGES_REQUESTED

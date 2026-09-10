@@ -25,6 +25,29 @@
 
 ---
 
+## 2026-09-10 20:08 — 저장된 예약 Grant 에 Manifest 싣기(§A1 1.5 선행) — 두 프로세스 정상 경로 첫 증명
+
+- 계획: `docs/plans/2026-09-10_1854_저장된_예약_Grant_에_Manifest_싣기.md` (§7 · §8)
+- 스트림: Coordinator · QA
+- 수행: 설계 논의 36(코덱스 CHANGES_REQUESTED — B 는 맞고 근거 · 수명 정책 · 뮤테이션 판별력을
+  고치라고 했다)을 반영해 구현했다. `signed_grant_from_stored` 가 제출자 키 디렉터리를 받아, 서명
+  전에 binding 을 읽고 **발급 시각 기준으로 다시 검증**한 뒤, Grant 만료 <= Manifest 만료를 보고,
+  저장된 hash 와 Manifest 를 싣는다. `issue-grant` 와 `coordinator-stub` 저장된 예약 lane 은
+  `--submitter-keyring` 을 요구한다(레거시 lane 에서는 거부).
+  덫 테스트를 뒤집었다 — 별도 OS 프로세스 둘이 실제 소켓으로 `MANIFEST_ACCEPTED -> WORKLOAD_RESULT
+  ok=true -> ATTEMPT_REPORT_SENT -> ATTEMPT_REPORT_STORED` 를 거쳤고, DB 행이 보낸 줄의 값과 같다.
+  ★ 워크로드가 짧아(`cmd /c exit 0`) 결함 ⑱ 을 밟지 않았을 뿐이다 — ⑱⑲⑳ · DB 결합은 그대로다.
+  ★ `tests/issue_grant.rs` 의 고정 Grant 시각(2027년 무렵)이 "지금 + 7일" 에 만료되는 fixture
+    Manifest 와 부딪혔다 — 새 수명 규칙이 실제로 작동한 결과라 fixture 의 만료를 옮겼다
+  ★ 편집 도중 heredoc 이 역슬래시 이스케이프를 바꿔 교체 대상을 못 찾은 일이 한 번 있었다 —
+    스크립트가 쓰기 전에 전부 대조하도록 짜여 있어 파일은 바뀌지 않았다. 파일로 옮겨 다시 돌렸다
+- 검증: coordinator+cli `-j 2 --no-fail-fast` 372 passed · 0 failed · 경고 0. 뮤테이션 **4/4**
+  (재검증 제거 · 수명 검사 제거 · hash 제거 · Manifest 싣기 전체 제거 — 모두 컴파일되고 테스트가
+  실패했다. 원본 복구 확인). 워크스페이스 전체는 커밋 메시지에 적는다
+- 리포트: 결함 ⑯ 조치 칸 · `docs/plans/_열린_작업.md` §A1 1.5
+
+---
+
 ## 2026-09-10 18:50 — 재검수 35 ACCEPTED. DoD-68 을 evidence 로(PASS), 대기열이 비었다
 
 - 계획: `docs/runbooks/검수_대기열.md` 의 재검수 35

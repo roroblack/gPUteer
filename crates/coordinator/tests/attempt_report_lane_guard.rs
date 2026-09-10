@@ -82,6 +82,8 @@ fn the_multi_agent_lane_is_refused_from_both_entry_points() {
         "1",
         "--grant-from-control-db",
         &db,
+        "--submitter-keyring",
+        "submitters.keyring",
         // ★ 저장된 예약 lane 은 식별자를 요구한다(결함 ⑯ 확장) — args() 와 같은 값.
         "--stored-grant-job-id",
         "01JJOBREPORTGUARD0000001",
@@ -106,6 +108,8 @@ fn the_multi_agent_lane_is_refused_from_both_entry_points() {
         "1",
         "--grant-from-control-db",
         &db,
+        "--submitter-keyring",
+        "submitters.keyring",
         // ★ 저장된 예약 lane 은 식별자를 요구한다(결함 ⑯ 확장) — args() 와 같은 값.
         "--stored-grant-job-id",
         "01JJOBREPORTGUARD0000001",
@@ -130,6 +134,8 @@ fn the_resume_lane_is_refused() {
         "1",
         "--grant-from-control-db",
         &db,
+        "--submitter-keyring",
+        "submitters.keyring",
         // ★ 저장된 예약 lane 은 식별자를 요구한다(결함 ⑯ 확장) — args() 와 같은 값.
         "--stored-grant-job-id",
         "01JJOBREPORTGUARD0000001",
@@ -165,6 +171,8 @@ fn flags_that_may_end_the_session_after_ack_are_refused() {
             "1",
             "--grant-from-control-db",
             &db,
+            "--submitter-keyring",
+            "submitters.keyring",
             // ★ 저장된 예약 lane 은 식별자를 요구한다(결함 ⑯ 확장) — args() 와 같은 값.
             "--stored-grant-job-id",
             "01JJOBREPORTGUARD0000001",

@@ -36,6 +36,7 @@ fn stored_lane(job: &str, attempt: &str, lease: &str) -> Vec<String> {
         "--stored-grant-job-id", "J",
         "--stored-grant-attempt-id", "A",
         "--stored-grant-lease-id", "L",
+        "--submitter-keyring", "submitters.keyring",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -313,7 +314,20 @@ fn every_stored_lane_only_flag_is_refused_on_the_legacy_lane() {
         ("--stored-grant-attempt-id", "A"),
         ("--stored-grant-lease-id", "L"),
         ("--stored-grant-ttl-ms", "1"),
+        ("--submitter-keyring", "k.keyring"),
+        ("--i-understand-plaintext-keyring-is-unsafe", "true"),
     ] {
         refused_by_name(with(legacy_lane(), &[flag, value]), "STORED_LANE_ONLY", flag);
     }
+}
+
+/// ★ 저장된 예약 lane 은 제출자 keyring 이 **없으면** 시작하지 않는다(§A1 1.5 선행).
+///   저장된 Manifest 를 싣기 전에 지금 신뢰하는 제출자 키로 다시 검증해야 한다.
+#[test]
+fn the_stored_lane_without_a_submitter_keyring_is_refused() {
+    refused_by_name(
+        without(stored_lane("J", "A", "L"), "--submitter-keyring"),
+        "STORED_LANE_KEYRING_MISSING",
+        "--submitter-keyring",
+    );
 }

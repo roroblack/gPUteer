@@ -215,6 +215,11 @@ pub struct CoordinatorConfig {
     pub stored_grant_lease_id: String,
     /// Grant 수명(발급 시각 기준). 저장된 Lease 만료를 넘으면 거부된다.
     pub stored_grant_ttl_ms: u64,
+    /// 저장된 예약 lane 에서 저장된 Manifest 를 **지금** 다시 검증할 제출자 keyring.
+    /// 그 lane 에서는 필수다(`STORED_LANE_KEYRING_MISSING`).
+    pub stored_grant_submitter_keyring: Option<PathBuf>,
+    /// 평문(K0) 제출자 keyring 을 허용한다.
+    pub stored_grant_allow_plaintext_keyring: bool,
 
     // ── max_total_duration_seconds 갱신 차단 (2026-08-19, `docs/plans/2026-08-19_2350_...`) ──
     /// 최초 발급 시 후보값으로만 쓰인다 — 이미 저장소에 있는 Lease 의
@@ -462,14 +467,16 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         return Err(message);
     }
 
-    // ★ 결함 ⑯(2026-09-10) — 저장된 예약 lane 은 Grant 에 Manifest 를 싣지
-    //   않는다(`grant_from_stored.rs` 의 "안 한다: Manifest 싣기"). 그런데
+    // ★ 결함 ⑯(2026-09-10) — 저장된 예약 lane 은 **저장된** Manifest 만 싣는다
+    //   (2026-09-10 저녁부터 — 그 전에는 아예 싣지 않았다. `grant_from_stored.rs`
+    //   모듈 문서 "Manifest 를 싣는다"). 그런데
     //   `--manifest-file` 을 같이 주면 받아 두고 **말없이 버렸다** — Manifest
-    //   부착은 레거시 `issue_grant()` 안에만 있다. 운영자는 실었다고 믿는다.
+    //   파일은 레거시 `issue_grant()` 만 싣는다. 받아 두면 운영자가 그 파일이 실렸다고
+    //   오인할 우려가 있다(결함 ㉘ 과 같은 부류라 좁혔다).
     //   조용히 버리는 대신 bind 전에 거부한다(`CLAUDE.md` §3).
     if config.grant_from_control_db.is_some() && config.manifest_file.is_some() {
         let message = "--manifest-file 은 --grant-from-control-db 와 함께 쓸 수 없다 — \
-             저장된 예약 lane 은 Grant 에 Manifest 를 싣지 않으므로(grant_from_stored.rs) \
+             저장된 예약 lane 은 저장된 Manifest 만 실으므로(grant_from_stored.rs) \
              받아 두면 말없이 버려진다"
             .to_string();
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
@@ -884,6 +891,25 @@ fn serve_one_connection_impl(
                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("staging store: {e}"))))?;
             let leases = CoordinatorLeaseStore::open(control_db)
                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("lease store: {e}"))))?;
+            // ★ 저장된 Manifest 를 싣기 전에 **지금** 다시 검증할 제출자 keyring.
+            //   못 열면 설정 문제라 fail-closed 로 끝낸다(Storage).
+            let keyring_path = config.stored_grant_submitter_keyring.as_ref().ok_or_else(|| {
+                SessionHandlerError::Classified(CoordinatorSessionError::Storage(
+                    "--submitter-keyring 이 없다 — 시작 관문이 막았어야 한다".to_string(),
+                ))
+            })?;
+            let policy = if config.stored_grant_allow_plaintext_keyring {
+                gputeer_crypto::PlaintextPolicy::Allow
+            } else {
+                gputeer_crypto::PlaintextPolicy::Reject
+            };
+            let submitters = gputeer_crypto::PersistentKeyring::load(keyring_path, policy)
+                .map_err(|e| {
+                    SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(
+                        "제출자 keyring({}): {e:?}",
+                        keyring_path.display()
+                    )))
+                })?;
             crate::grant_from_stored::signed_grant_from_stored(
                 &jobs,
                 &staging,
@@ -902,6 +928,7 @@ fn serve_one_connection_impl(
                     nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
                 },
                 signing_key,
+                &submitters,
             )
             .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Protocol(e)))?
         }
@@ -2592,6 +2619,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         lease_db_path: flags.get("--lease-db").map(PathBuf::from),
         // ★ 저장된 예약에서 발급(2026-09-03). 안 주면 기존 경로 그대로다.
         grant_from_control_db: flags.get("--grant-from-control-db").map(PathBuf::from),
+        stored_grant_submitter_keyring: flags.get("--submitter-keyring").map(PathBuf::from),
+        stored_grant_allow_plaintext_keyring: flags.bool_flag("--i-understand-plaintext-keyring-is-unsafe"),
         stored_grant_job_id: flags.get("--stored-grant-job-id").cloned().unwrap_or_default(),
         stored_grant_attempt_id: flags.get("--stored-grant-attempt-id")
             .cloned()
@@ -2703,14 +2732,25 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
                 ));
             }
         }
+        // ★ §A1 1.5 선행 — 저장된 Manifest 를 싣기 전에 **지금** 신뢰하는 제출자
+        //   키로 다시 검증한다. keyring 이 없으면 시작하지 않는다.
+        if config.stored_grant_submitter_keyring.is_none() {
+            return Err(
+                "STARTUP_REFUSED: STORED_LANE_KEYRING_MISSING — --submitter-keyring 이 없다. \
+                 저장된 Manifest 를 싣기 전에 지금 신뢰하는 제출자 키로 다시 검증해야 한다"
+                    .to_string(),
+            );
+        }
     }
-    // 저장된 예약 lane 밖에서 준 --stored-grant-* 는 아무도 안 읽는다.
+    // 저장된 예약 lane 밖에서 준 --stored-grant-* · 제출자 keyring 은 아무도 안 읽는다.
     if config.grant_from_control_db.is_none() {
-        const STORED_LANE_ONLY: [&str; 4] = [
+        const STORED_LANE_ONLY: [&str; 6] = [
             "--stored-grant-job-id",
             "--stored-grant-attempt-id",
             "--stored-grant-lease-id",
             "--stored-grant-ttl-ms",
+            "--submitter-keyring",
+            "--i-understand-plaintext-keyring-is-unsafe",
         ];
         let given: Vec<&str> = STORED_LANE_ONLY
             .iter()
