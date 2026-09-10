@@ -557,6 +557,13 @@ mod tests {
         let profile = AppContainerProfile::create("gputeer-test-confine", "c", "테스트")
             .expect("프로파일 생성");
         let exit = run_in_container(&profile, &command, None).expect("컨테이너 안에서 실행");
+        // ★ 2026-09-10 — 값을 **찍는다.** 전에는 통과 여부만 남아서 검수가
+        //   "바깥 대조 결과가 원문에 없다" 고 짚었다(P0-02 검수 8번).
+        eprintln!(
+            "CONFINE outside_exit={:?} outside_stdout={:?} inside_exit={exit}",
+            outside.status.code(),
+            String::from_utf8_lossy(&outside.stdout).trim()
+        );
 
         assert_ne!(
             exit, 0,

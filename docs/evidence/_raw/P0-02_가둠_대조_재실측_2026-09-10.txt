@@ -1,0 +1,22 @@
+P0-02 가둠 대조 재실측 — 2026-09-10 (개발 기계, Windows 11)
+검수 8번 지적: "바깥 대조와 뮤테이션 검증을 했다는 서술은 있지만 실제 결과는 원문에 없다"
+명령: cargo test -p gputeer-runtime-windows --lib the_container_cannot_read_a_file_the_host_can -- --nocapture
+테스트: crates/runtime-windows/src/appcontainer.rs  the_container_cannot_read_a_file_the_host_can
+  바깥  std::process::Command cmd.exe /c type <임시 파일>   -> 성공해야 한다(대조)
+  안쪽  run_in_container(profile, "cmd.exe /c type <같은 파일>") -> 0 이 아니어야 한다
+★ 한계: 개발 기계에서 쟀다(GPU 없음). x600 에서 다시 재지 않았다.
+
+=== 1) 정상 (exit=0) ===
+test appcontainer::tests::the_container_cannot_read_a_file_the_host_can ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s
+CONFINE outside_exit=Some(0) outside_stdout="host only" inside_exit=1
+
+=== 2) 뮤테이션 A1 — run_in_container 에서 SECURITY_CAPABILITIES 부착만 건너뜀 (exit=101) ===
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s
+CONFINE outside_exit=Some(0) outside_stdout="host only" inside_exit=0
+thread 'appcontainer::tests::the_container_cannot_read_a_file_the_host_can' (6916) panicked at crates\runtime-windows\src\appcontainer.rs:569:9:
+assertion `left != right` failed: AppContainer 안에서 호스트 파일을 읽었다 — 가둬지지 않았다
+  left: 0
+
+판정: 정상에서 바깥은 읽고 안쪽은 못 읽었다. 보안 속성을 빼면 안쪽도 읽어
+테스트가 실패한다 — 가둠을 재는 테스트다.
