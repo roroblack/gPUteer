@@ -319,7 +319,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **52건**(2026-08-31 실측). `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **세 환경에서 실측**(2026-09-05) — 개발 기계 Windows **922 passed**, x600 Windows **922 passed**, x600 WSL2 Linux **918 passed**(`--exclude gputeer-runtime-windows`). 전부 0 failed · 경고 0. `coordinator-agent-selftest` **97/97**(x600 재실행). ★★ **플랫폼 차이가 전부 설명된다** — 이름 기준 Windows 914-28=886, Linux 910-24=886 으로 일치하고 양쪽 전용은 서로 짝이다(junction<->symlink, Job Object<->cgroup, DPAPI<->systemd-creds). 조용히 빠진 공유 테스트는 없다. canonical 벡터 **52건** 은 2026-09-01 값 그대로(오늘 안 쟀다). ★ **2026-09-06 개발 기계 재실측 — 926 passed · 0 failed · 경고 0**(P0-02 의 AppContainer 코드가 들어와 922 -> 926). 커밋 **293개**(여기 276 이라고 적혀 있었다). ★★ **2026-09-10 재실측 — 개발 기계 1038 passed · 0 failed · 경고 0**(ignored 1). 926 -> 1038 의 증가분은 실행 사슬 6조각과 검수 1~5번·재검수 9·10 이 요구한 회귀 테스트다. ★ **x600 WSL2 는 2026-09-09 에 1014 passed** — 그때는 **GPU 가 보이는 상태**에서 처음 쟀고(이전 918 은 GPU 없는 상태였다), `ignored` 1건은 부모가 자식 프로세스로 부르는 도우미라 **조용한 스킵이 아니다**. GPU 유무로 갈리는 스킵은 없었다. 근거 `docs/evidence/_raw/리눅스_GPU_워크스페이스_테스트_2026-09-09.txt` |
+| **Rust 구현** | 🟡 **진행 중** — **세 환경에서 실측**(2026-09-05) — 개발 기계 Windows **922 passed**, x600 Windows **922 passed**, x600 WSL2 Linux **918 passed**(`--exclude gputeer-runtime-windows`). 전부 0 failed · 경고 0. `coordinator-agent-selftest` **97/97**(x600 재실행). ★★ **플랫폼 차이가 전부 설명된다** — 이름 기준 Windows 914-28=886, Linux 910-24=886 으로 일치하고 양쪽 전용은 서로 짝이다(junction<->symlink, Job Object<->cgroup, DPAPI<->systemd-creds). 조용히 빠진 공유 테스트는 없다. canonical 벡터 **52건** 은 2026-09-01 값 그대로(오늘 안 쟀다). ★ **2026-09-06 개발 기계 재실측 — 926 passed · 0 failed · 경고 0**(P0-02 의 AppContainer 코드가 들어와 922 -> 926). 커밋 **293개**(여기 276 이라고 적혀 있었다). ★★ **2026-09-10 재실측 — 개발 기계 1055 passed · 0 failed · 경고 0**(ignored 1). 926 -> 1055 의 증가분은 실행 사슬 6조각과 검수 1~5번·재검수 9~12 가 요구한 회귀 테스트다. ★ **x600 WSL2 는 2026-09-09 에 1014 passed** — 그때는 **GPU 가 보이는 상태**에서 처음 쟀고(이전 918 은 GPU 없는 상태였다), `ignored` 1건은 부모가 자식 프로세스로 부르는 도우미라 **조용한 스킵이 아니다**. GPU 유무로 갈리는 스킵은 없었다. 근거 `docs/evidence/_raw/리눅스_GPU_워크스페이스_테스트_2026-09-09.txt` |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** · **`write_once()` 동시 동일-이름 호출 명시적 거부(2026-08-19, `DoD-21`)** — 프로세스 간 파일 잠금 + 성공 시 자가 정리 + GC 의 죽은 락 회수 |
@@ -733,6 +733,17 @@ store_verified_terminal_report()   호출부가 **테스트 하나뿐**이다
 `RuntimeStopProof::ProvenByCaller` 를 정직하게 쓸 근거가 Coordinator 에
 **도착하지 않기 때문**이지, 아무도 종료를 관측하지 않아서가 아니다.
 `DoD-62` 가 일부러 그렇게 만들었다(종료 증명 없이 풀면 중복 실행 위험).
+
+★★ **2026-09-10 — 보고는 이제 있다. 그런데 저장된 예약에서 시작하면 그
+  앞에서 끊긴다.** 발신(`agent/lib.rs:1209` `--send-attempt-report`)과
+  수신(`coordinator/lib.rs` `--expect-attempt-reports`)은 2026-09-06 에
+  들어왔다. 두 프로세스로 이어 보려 했더니 **저장된 예약에서 만든 Grant 에
+  Manifest 가 없어** Agent 가 실행할 것이 없었다(`grant_from_stored.rs`
+  "안 한다: Manifest 싣기"). 즉 저장된 예약 경로의 진짜 빈 칸은
+  **Manifest 싣기**다. 덫 테스트
+  `crates/cli/tests/grant_over_wire.rs::today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report`
+  가 오늘의 사실을 고정한다. 그 과정에서 `--manifest-file` 이 그 lane 에서
+  말없이 버려지던 것도 찾아 막았다(결함 ⑯).
 
 ★ **그래서 다음 조각이 훨씬 작아졌다.** "Agent 실행" 은 하루를 넘는
   일이었지만, 남은 것은 **이미 관측한 값을 서명해 이미 있는 프레임으로

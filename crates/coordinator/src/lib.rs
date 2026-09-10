@@ -459,6 +459,20 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         return Err(message);
     }
 
+    // ★ 결함 ⑯(2026-09-10) — 저장된 예약 lane 은 Grant 에 Manifest 를 싣지
+    //   않는다(`grant_from_stored.rs` 의 "안 한다: Manifest 싣기"). 그런데
+    //   `--manifest-file` 을 같이 주면 받아 두고 **말없이 버렸다** — Manifest
+    //   부착은 레거시 `issue_grant()` 안에만 있다. 운영자는 실었다고 믿는다.
+    //   조용히 버리는 대신 bind 전에 거부한다(`CLAUDE.md` §3).
+    if config.grant_from_control_db.is_some() && config.manifest_file.is_some() {
+        let message = "--manifest-file 은 --grant-from-control-db 와 함께 쓸 수 없다 — \
+             저장된 예약 lane 은 Grant 에 Manifest 를 싣지 않으므로(grant_from_stored.rs) \
+             받아 두면 말없이 버려진다"
+            .to_string();
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+
     // ★ **이웃 신고 저장소를 listener bind 보다 먼저 연다**(독립 검수
     //   4·5라운드 지적). 4라운드 수정은 이 블록을 bind **뒤에** 두어
     //   주석과 코드가 어긋나 있었다 — 소켓이 열린 뒤 죽으면 그 사이에
@@ -2802,13 +2816,9 @@ fn hex_to_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
-        return Err("hex 문자열 길이가 홀수다".into());
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string()))
-        .collect()
+    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+    //   가 한 바이트씩 읽으므로 문자 경계를 가를 수 없다.
+    gputeer_crypto::hex::decode_even(hex).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

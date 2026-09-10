@@ -2436,13 +2436,9 @@ fn hex_to_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
 }
 
 fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
-        return Err("hex 문자열 길이가 홀수다".into());
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string()))
-        .collect()
+    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+    //   가 한 바이트씩 읽으므로 문자 경계를 가를 수 없다.
+    gputeer_crypto::hex::decode_even(hex).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

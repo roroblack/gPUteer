@@ -164,6 +164,12 @@ const DECLARATIONS: [&str; 22] = [
 
 /// 한 Job 을 `submit` -> `import-manifest` -> `plan-job` 까지 올린다.
 fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
+    import_job(dir, keyring, db, job_id, idem);
+    plan_job(keyring, db, job_id);
+}
+
+/// `submit` -> `import-manifest` 까지만 — Job 은 `SUBMITTED` 로 남는다.
+fn import_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
     let manifest = dir.join(format!("{job_id}.pb"));
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
@@ -202,7 +208,9 @@ fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
         "true",
     ]);
     assert!(ok, "import-manifest 실패: {output}");
+}
 
+fn plan_job(keyring: &Path, db: &Path, job_id: &str) {
     let (ok, output) = run_cli(&[
         "plan-job",
         "--job-id",
@@ -300,6 +308,13 @@ fn prepared(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
 /// ★ 문자열을 잘라 붙이지 않는다 — 처음에 그렇게 했다가 JSON 이 깨졌다.
 ///   `agent_json()` 으로 두 개를 만들어 합친다.
 fn prepared_two_nodes(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
+    let (keyring, db) = two_node_pool(dir);
+    queue_job(dir, &keyring, &db, job_id, "0102030405060708090a0b0c0d0e0f10");
+    (keyring, db)
+}
+
+/// 노드 둘을 inventory 에 올린 풀. Job 은 아직 없다.
+fn two_node_pool(dir: &Path) -> (PathBuf, PathBuf) {
     let keyring = write_keyring(dir);
     let db = dir.join("control.sqlite3");
     let bootstrap = dir.join("bootstrap_two.json");
@@ -326,7 +341,6 @@ fn prepared_two_nodes(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
         db.to_str().unwrap(),
     ]);
     assert!(ok, "import-inventory 실패(노드 둘): {output}");
-    queue_job(dir, &keyring, &db, job_id, "0102030405060708090a0b0c0d0e0f10");
     (keyring, db)
 }
 
@@ -805,7 +819,13 @@ fn a_malformed_operation_key_is_refused() {
     assert!(ok, "올바른 키인데 거부했다: {output}");
 }
 
-/// ★★ 오늘 CLI 로는 **상태 관문에 도달할 수 없다** — 그 사실을 고정한다.
+/// ★★ 이 fixture 로 **재예약**하면 점유 관문이 먼저 걸린다 — 그 사실을 고정한다.
+///
+/// ★★ 2026-09-10 재검수 12 — 여기 "오늘 CLI 로는 상태 관문에 도달할 수
+///   없다" 고 적었었다. **과한 일반화였다.** CLI 로 닿는 입력이 있고
+///   `a_submitted_job_is_refused_by_the_state_gate_even_on_a_free_node` 가
+///   그것을 잰다. 이 테스트가 고정하는 것은 **이 재예약 fixture 에서의
+///   순서**뿐이다.
 ///
 /// 2026-09-10 독립 검수가 짚었다: 기존 테스트
 /// (`a_second_stage_of_the_same_job_is_blocked_by_the_node_reservation_not_by_the_state`)
@@ -829,10 +849,9 @@ fn a_malformed_operation_key_is_refused() {
 ///
 /// ★★ **이 테스트는 덫이다.** 후보 선택이 예약을 알게 되면(`B′`,
 ///   `docs/plans/_열린_작업.md` §A1 4번) 두 번째 시도가 빈 노드를 골라
-///   2번에 닿게 되고, **이 테스트가 깨진다.** 그때가 CLI 쪽 상태 관문
-///   테스트를 추가할 시점이다. 깨지면 지우지 말고 뒤집어라.
+///   2번에 닿게 되고, **이 테스트가 깨진다.** 깨지면 지우지 말고 뒤집어라.
 #[test]
-fn today_a_restage_cannot_reach_the_state_gate_because_selection_ignores_reservations() {
+fn a_restage_on_this_fixture_hits_occupancy_before_the_state_gate() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared_two_nodes(dir.path(), JOB_A);
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
@@ -867,9 +886,46 @@ fn today_a_restage_cannot_reach_the_state_gate_because_selection_ignores_reserva
     );
     assert!(
         !output2.contains("Job is not QUEUED"),
-        "상태 관문에 닿았다 — 후보 선택이 바뀐 것이다. CLI 쪽 상태 관문 테스트를 추가할 때다: {output2}"
+        "상태 관문에 닿았다 — 후보 선택이 바뀐 것이다. 이 테스트를 뒤집을 때다: {output2}"
     );
 
     // 어느 쪽 이유든 상태는 그대로여야 한다.
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+}
+
+/// ★★ **CLI 로 상태 관문에 닿는다 — `SUBMITTED` Job 은 빈 노드가 있어도
+///   예약하지 않는다.**
+///
+/// 2026-09-10 재검수 12 가 준 입력 그대로다: `plan-job` 을 건너뛰어 Job 을
+/// `SUBMITTED` 로 둔 채 빈 노드에 `stage-job`. 점유가 없으니 점유 관문을
+/// 지나 **상태 관문**에서 막혀야 한다.
+///
+/// ★ 검수자는 "CLI 의 다른 선행 검사까지 통과하는지는 확인 못 했다" 고
+///   했다. 그래서 이유를 **특정해서** 본다 — 다른 관문에서 먼저 막혀도
+///   `!ok` 는 참이기 때문이다(결함 ① 이 정확히 그 모양이었다).
+#[test]
+fn a_submitted_job_is_refused_by_the_state_gate_even_on_a_free_node() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = two_node_pool(dir.path());
+    import_job(dir.path(), &keyring, &db, JOB_A, "0102030405060708090a0b0c0d0e0f10");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Submitted));
+
+    let (ok, output) = stage(
+        &keyring,
+        &db,
+        JOB_A,
+        ATTEMPT,
+        LEASE,
+        "aa0102030405060708090a0b0c0d0e0f",
+    );
+    assert!(!ok, "SUBMITTED Job 을 예약했다: {output}");
+    assert!(
+        output.contains("Job is not QUEUED"),
+        "상태 관문이 아닌 이유로 막혔다: {output}"
+    );
+    assert!(
+        !output.contains("node is already reserved"),
+        "점유가 먼저 걸렸다 — 이 테스트의 전제가 깨졌다: {output}"
+    );
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Submitted));
 }

@@ -581,6 +581,30 @@ fn declaring_only_some_resources_is_refused_rather_than_silently_dropped() {
         "거부는 했는데 이유가 부분 선언이 아니다: {output2}"
     );
     assert!(!missing.exists(), "거부했는데 파일을 남겼다");
+
+    // ★ 2026-09-10 재검수 11 — 경계 둘을 더 고정한다(결함 ⑮).
+    //
+    //   (1) GPU 모델 목록만 준 것도 **자원을 선언한 것**이다.
+    //       `RESOURCE_FLAGS` 에서 이 항목이 빠지면 여기서 잡힌다.
+    let models_only = dir.path().join("models_only.pb");
+    let (ok3, output3) = run(&models_only, &[("--allowed-gpu-models", "RTX 4070 SUPER")]);
+    assert!(!ok3, "GPU 모델만 선언했는데 받아들였다: {output3}");
+    assert!(
+        output3.contains("SUBMIT_REFUSED: RESOURCE_PARTIAL"),
+        "거부는 했는데 이유가 부분 선언이 아니다: {output3}"
+    );
+    assert!(!models_only.exists(), "거부했는데 파일을 남겼다");
+
+    //   (2) 자원 플래그를 **하나도** 안 주면 정상이고 `resources` 가 없다.
+    //       "하나라도 있으면 선언" 판정이 늘 참이 되는 회귀를 여기서 잡는다.
+    let none = dir.path().join("none.pb");
+    let no_flags: [(&str, &str); 0] = [];
+    let (ok4, output4) = run(&none, &no_flags);
+    assert!(ok4, "자원을 안 쓰는 제출을 막았다: {output4}");
+    let m4 = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(
+        std::fs::read(&none).expect("읽기").as_slice(),
+    ).expect("디코드");
+    assert!(m4.resources.is_none(), "선언하지 않은 자원이 생겼다: {:?}", m4.resources);
 }
 
 /// 서명이 **선언한 seed 의 공개키로** 검증된다.

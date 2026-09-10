@@ -105,6 +105,15 @@ fn run_cli(args: &[&str]) -> (bool, String) {
 
 /// 다섯 명령으로 예약까지 만든다. Lease 시각은 **지금 기준**이다.
 fn staged_control_db(dir: &Path) -> PathBuf {
+    staged_control_db_running(dir, "python", None)
+}
+
+/// 같은 준비를 하되 Manifest 의 entrypoint·인자를 고른다.
+///
+/// ★ 기존 두 테스트는 실행하지 않으므로 `python` 이 무엇이든 상관없다.
+///   실제로 실행하는 테스트는 **확실히 있고 바로 끝나는** 명령을 줘야 한다
+///   — 인자 없는 `python` 은 표준입력을 기다릴 수 있다.
+fn staged_control_db_running(dir: &Path, entrypoint: &str, args_csv: Option<&str>) -> PathBuf {
     let db = dir.join("control.sqlite3");
 
     let node_key = pub_hex("2121212121212121212121212121212121212121212121212121212121212121");
@@ -151,8 +160,8 @@ fn staged_control_db(dir: &Path) -> PathBuf {
     let manifest = dir.join("manifest.pb");
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
-    let (ok, out) = run_cli(&[
-        "submit", "--job-id", JOB, "--entrypoint", "python",
+    let mut submit_args: Vec<&str> = vec![
+        "submit", "--job-id", JOB, "--entrypoint", entrypoint,
         "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
         "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
         "--out", manifest.to_str().unwrap(),
@@ -165,7 +174,11 @@ fn staged_control_db(dir: &Path) -> PathBuf {
         //   그 채움을 지적해 이제 거부한다 — 그래서 여기서 선언한다.
         "--cpu-cores", "4", "--ram-bytes", "8589934592",
         "--workspace-bytes", "10737418240",
-    ]);
+    ];
+    if let Some(args_csv) = args_csv {
+        submit_args.extend(["--args", args_csv]);
+    }
+    let (ok, out) = run_cli(&submit_args);
     assert!(ok, "submit 실패: {out}");
 
     let keyring = dir.join("submitters.keyring");
@@ -252,7 +265,7 @@ fn drain(child: &mut Child) -> (thread::JoinHandle<String>, thread::JoinHandle<S
 }
 
 /// Coordinator 를 띄우고 `READY <addr>` 를 기다린다.
-fn spawn_coordinator(db: &Path, fence_dir: &Path) -> (Spawned, String) {
+fn spawn_coordinator(db: &Path, fence_dir: &Path, extra: &[&str]) -> (Spawned, String) {
     let lease_db = fence_dir.join("coordinator-lease.sqlite3");
     let mut child = Command::new(cli_bin())
         .args([
@@ -287,6 +300,7 @@ fn spawn_coordinator(db: &Path, fence_dir: &Path) -> (Spawned, String) {
             "--stored-grant-lease-id",
             LEASE,
         ])
+        .args(extra)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -354,7 +368,7 @@ fn finish(mut s: Spawned, label: &str) -> (bool, String) {
 fn an_agent_process_accepts_a_grant_built_from_the_stored_reservation() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let db = staged_control_db(dir.path());
-    let (coordinator, addr) = spawn_coordinator(&db, dir.path());
+    let (coordinator, addr) = spawn_coordinator(&db, dir.path(), &[]);
 
     let fence_db = dir.path().join("agent-fence.sqlite3");
     let mut agent = Command::new(cli_bin())
@@ -410,7 +424,7 @@ fn without_a_stored_reservation_the_coordinator_refuses_to_build_a_grant() {
             .expect("job store 생성"),
     );
 
-    let (coordinator, addr) = spawn_coordinator(&empty, dir.path());
+    let (coordinator, addr) = spawn_coordinator(&empty, dir.path(), &[]);
     let fence_db = dir.path().join("agent-fence.sqlite3");
     let mut agent = Command::new(cli_bin())
         .args([
@@ -449,4 +463,153 @@ fn without_a_stored_reservation_the_coordinator_refuses_to_build_a_grant() {
         coordinator_output.contains("GRANT_REFUSED") || coordinator_output.contains("를 모른다"),
         "Coordinator 가 발급 거부 사유를 안 남겼다: {coordinator_output}"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 종료 보고가 **별도 프로세스 둘 사이의 실제 소켓**을 건너 저장되는가
+// (`docs/plans/_열린_작업.md` §A1 1.5)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Windows 에 확실히 있는 실행 파일.
+#[cfg(windows)]
+fn cmd_exe() -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    format!(r"{root}\System32\cmd.exe")
+}
+
+/// 실행을 켠 Agent 를 띄우고 끝날 때까지 기다린다. `send_report` 만 다르다.
+#[cfg(windows)]
+fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, String) {
+    let fence_db = dir.join("agent-fence.sqlite3");
+    // ★ 기본값은 `%TEMP%` 아래 매번 새 이름이라 테스트가 끝나도 남는다.
+    let checkpoint_root = dir.join("agent-checkpoints");
+    let coordinator_pub = pub_hex(COORD_SEED);
+    let submitter_pub = pub_hex(SEED);
+    let mut args: Vec<&str> = vec![
+        "agent-stub",
+        "--connect",
+        addr,
+        "--own-seed",
+        AGENT_SEED,
+        "--peer-pubkey",
+        &coordinator_pub,
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        AGENT_DEVICE,
+        "--fence-db",
+        fence_db.to_str().unwrap(),
+        "--checkpoint-root",
+        checkpoint_root.to_str().unwrap(),
+        "--submitter-pubkey",
+        &submitter_pub,
+        "--i-understand-this-executes-untrusted-code",
+        "true",
+    ];
+    if send_report {
+        args.extend(["--send-attempt-report", "true"]);
+    }
+    let mut agent = Command::new(cli_bin())
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("agent-stub spawn");
+    let (a_out, a_err) = drain(&mut agent);
+    let status = agent.wait().expect("agent wait");
+    (
+        status.success(),
+        format!(
+            "{}{}",
+            a_out.join().unwrap_or_default(),
+            a_err.join().unwrap_or_default()
+        ),
+    )
+}
+
+/// ★★ **덫 — 오늘은 저장된 예약에서 시작하면 보고할 종료가 없다.**
+///
+/// §A1 1.5("종료 보고가 별도 프로세스 둘 사이의 실제 소켓을 건너 저장되는가")
+/// 를 재려고 실행과 보고를 켰더니 Agent 가 **아무것도 실행하지 않았다.**
+/// 저장된 예약에서 만든 Grant 에는 Manifest 가 없다 —
+/// `grant_from_stored.rs` 가 "안 한다: Manifest 싣기 — 별도 조각" 이라고 적어
+/// 둔 그대로다. 실행할 것이 없으니 관측한 종료도 없고, Agent 는 지어내지
+/// 않고 거부한다(`ATTEMPT_REPORT_REFUSED`).
+///
+/// ★ 그래서 1.5 는 "정상 경로 시나리오 하나" 가 아니었다. **Manifest 싣기가
+///   먼저다**(결함 리포트 ⑯).
+///
+/// ★★ **Manifest 싣기가 들어오면 이 테스트가 깨진다.** 그때 지우지 말고
+///   뒤집어라 — 정상 경로 테스트가 볼 것:
+///   ```text
+///   Agent       WORKLOAD_RESULT ok=true · ATTEMPT_REPORT_SENT
+///   Coordinator ATTEMPT_REPORT_STORED
+///   DB          get_report_binding(ATTEMPT, NODE) 가 Some 이고, 저장된
+///               outcome·fence_epoch·started/finished 가 **보낸 줄의 값과 같다**
+///   대조군      보고만 끄면 행이 없다
+///   ```
+///
+/// ★ **Windows 전용이다** — 실행 관문이 리눅스에서는 cgroup 을 요구한다.
+#[cfg(windows)]
+#[test]
+fn today_a_stored_grant_carries_no_manifest_so_there_is_no_exit_to_report() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
+    let (coordinator, addr) =
+        spawn_coordinator(&db, dir.path(), &["--expect-attempt-reports", "1"]);
+    let (agent_ok, agent_output) = run_executing_agent(&addr, dir.path(), true);
+    let (_, coordinator_output) = finish(coordinator, "coordinator-stub");
+    let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
+
+    assert!(!agent_ok, "Agent 가 성공했다 — Manifest 싣기가 들어온 것이다. 이 테스트를 뒤집어라\n{both}");
+    assert!(
+        !agent_output.contains("MANIFEST_ACCEPTED") && !agent_output.contains("WORKLOAD_"),
+        "Agent 가 Manifest 를 받았다 — 이 테스트를 뒤집어라\n{both}"
+    );
+    assert!(
+        agent_output.contains("ATTEMPT_REPORT_REFUSED"),
+        "보고할 것이 없을 때 거부하지 않고 다른 이유로 끝났다\n{both}"
+    );
+    assert!(!coordinator_output.contains("ATTEMPT_REPORT_STORED"), "\n{both}");
+    let store =
+        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+            .expect("저장소 열기");
+    assert_eq!(store.get_report_binding(ATTEMPT, NODE).expect("조회"), None);
+}
+
+/// ★ 결함 ⑯ — 저장된 예약 lane 에 `--manifest-file` 을 주면 **시작 전에** 거부한다.
+///
+/// 전에는 받아 두고 말없이 버렸다. 관문이 없으면 이 Coordinator 는 READY 를
+/// 내고 연결을 기다리다 `--accept-timeout-ms` 뒤에 끝난다 — 그래서 시한을
+/// 짧게 준다(관문을 지우는 뮤테이션에서 테스트가 멈추지 않게).
+#[test]
+fn a_manifest_file_on_the_stored_lane_is_refused_at_startup() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("empty.sqlite3");
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (ok, output) = run_cli(&[
+        "coordinator-stub",
+        "--listen", "127.0.0.1:0",
+        "--own-seed", COORD_SEED,
+        "--peer-pubkey", &pub_hex(AGENT_SEED),
+        "--coordinator-device-id", COORDINATOR,
+        "--agent-device-id", AGENT_DEVICE,
+        "--grant-id", GRANT,
+        "--attempt-id", ATTEMPT,
+        "--lease-id", LEASE,
+        "--job-id", JOB,
+        "--lease-db", lease_db.to_str().unwrap(),
+        "--grant-from-control-db", db.to_str().unwrap(),
+        "--stored-grant-job-id", JOB,
+        "--stored-grant-attempt-id", ATTEMPT,
+        "--stored-grant-lease-id", LEASE,
+        "--manifest-file", dir.path().join("m.pb").to_str().unwrap(),
+        "--accept-timeout-ms", "2000",
+    ]);
+    assert!(!ok, "두 플래그를 같이 줬는데 시작했다: {output}");
+    assert!(
+        output.contains("STARTUP_REFUSED") && output.contains("--manifest-file"),
+        "시작은 막았는데 이유가 이 관문이 아니다: {output}"
+    );
+    assert!(!output.contains("READY"), "소켓을 연 뒤에 거부했다: {output}");
 }

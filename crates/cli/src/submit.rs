@@ -403,25 +403,17 @@ fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
     //
     //   그래서 먼저 **ASCII hex 인지**를 본다. 그러면 바이트와 문자가
     //   1:1 이 되어 아래 슬라이스가 안전해진다.
-    let bytes = hex.as_bytes();
-    if bytes.len() != 64 {
-        return Err(format!(
-            "SUBMIT_REFUSED: SEED_LENGTH — seed 는 64자리 hex 여야 한다(받은 바이트 {})",
-            bytes.len()
-        ));
-    }
-    if let Some(bad) = bytes.iter().find(|b| !b.is_ascii_hexdigit()) {
-        return Err(format!(
-            "SUBMIT_REFUSED: SEED_NOT_HEX — seed 에 hex 가 아닌 바이트(0x{bad:02x})가 있다"
-        ));
-    }
-    let mut seed = [0u8; 32];
-    for (index, slot) in seed.iter_mut().enumerate() {
-        // 위에서 전부 ASCII 임을 확인했으므로 바이트 슬라이스가 안전하다.
-        let pair = std::str::from_utf8(&bytes[index * 2..index * 2 + 2])
-            .map_err(|e| format!("SUBMIT_REFUSED: SEED_NOT_HEX — {e}"))?;
-        *slot = u8::from_str_radix(pair, 16)
-            .map_err(|e| format!("SUBMIT_REFUSED: SEED_NOT_HEX — {e}"))?;
-    }
-    Ok(seed)
+    //
+    //   ★ 결함 ⑬ — 같은 모양이 여섯 곳 더 있었다. 그래서 해석 자체를
+    //     `gputeer_crypto::hex` 한 곳으로 옮겼다. 오류 코드는 그대로 둔다.
+    use gputeer_crypto::hex::{decode_fixed, HexError};
+    decode_fixed::<32>(hex).map_err(|e| match e {
+        HexError::Length { actual, .. } => format!(
+            "SUBMIT_REFUSED: SEED_LENGTH — seed 는 64자리 hex 여야 한다(받은 바이트 {actual})"
+        ),
+        HexError::NotHex { byte, .. } => format!(
+            "SUBMIT_REFUSED: SEED_NOT_HEX — seed 에 hex 가 아닌 바이트(0x{byte:02x})가 있다"
+        ),
+        HexError::OddLength { .. } => format!("SUBMIT_REFUSED: SEED_LENGTH — {e}"),
+    })
 }

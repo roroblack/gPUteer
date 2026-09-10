@@ -245,11 +245,10 @@ fn parse_verifying_key(hex: &str) -> Result<Vec<u8>, String> {
             hex.len()
         ));
     }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
-            .map_err(|e| format!("verifying_key_hex 파싱 실패: {e}"))?;
-    }
+    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+    //   가 한 바이트씩 읽으므로 문자 경계를 가를 수 없다.
+    let out = gputeer_crypto::hex::decode_fixed::<32>(hex)
+        .map_err(|e| format!("verifying_key_hex 파싱 실패: {e}"))?;
     gputeer_crypto::VerifyingKey::from_bytes(&out)
         .map_err(|e| format!("verifying_key_hex 가 Ed25519 공개키가 아니다: {e}"))?;
     Ok(out.to_vec())

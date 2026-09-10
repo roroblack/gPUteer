@@ -33,6 +33,7 @@
 
 pub mod durable_replay;
 pub mod framed_ingress;
+pub mod hex;
 pub mod ingress;
 pub mod keyring;
 pub mod replay;

@@ -286,12 +286,10 @@ fn parse_key16(hex: &str) -> Result<[u8; 16], String> {
             hex.len()
         ));
     }
-    let mut out = [0u8; 16];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
-            .map_err(|e| format!("--operation-key hex 파싱 실패: {e}"))?;
-    }
-    Ok(out)
+    // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
+    //   가 한 바이트씩 읽으므로 문자 경계를 가를 수 없다.
+    gputeer_crypto::hex::decode_fixed::<16>(hex)
+        .map_err(|e| format!("--operation-key hex 파싱 실패: {e}"))
 }
 
 fn now_unix_ms() -> u64 {
