@@ -854,8 +854,8 @@ fn today_a_restage_cannot_reach_the_state_gate_because_selection_ignores_reserva
         &keyring,
         &db,
         JOB_A,
-        "01JATTEMPTSTAGE0000000002",
-        "01JLEASESTAGE00000000002",
+        "01JATTEMPTSTAGE00000000004",
+        "01JLEASESTAGE000000000004",
         "bb0102030405060708090a0b0c0d0e0f",
     );
     assert!(!ok2, "큐를 떠난 Job 을 다시 예약했다: {output2}");

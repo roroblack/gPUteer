@@ -430,9 +430,12 @@ fn shared_allocation_is_rejected_even_when_input_claims_shared_support() {
     //   거부를 검사하는데 `Shared` 는 아무도 안 쟀다. 그래서 관문이 없다는
     //   것조차 아무 테스트도 알려주지 않았다 — 51건이 전부 통과하면서.
     //
-    //   `proto/common.proto` 는 "Linux + MPS memory limit 확인 시에만"
-    //   이라고 적어 뒀는데, 그것을 강제하는 코드가 저장소에 없었다.
-    //   ★ 실측(2026-09-08~09, x600)이 그 조건을 오늘 만족시킬 수 없음을
+    //   ★★ 이 거부는 규범보다 **좁다**(2026-09-10 재검수). proto 가 SHARED
+    //     를 여는 조건은 "동일 소유자 Job 간, **또는** Linux+MPS 확인" 둘인데
+    //     이 커널에는 둘 다 판단할 입력 칸이 없어서 전부 거부한다.
+    //     (가) 동일 소유자 경로까지 막는 **잠정 제한**이다 — `scope.rs` 의
+    //     `SharedAllocationUnproven` 주석 참조.
+    //   ★ (나) 는 실측(2026-09-08~09, x600)이 오늘 만족시킬 수 없음을
     //     보였다 — MPS 는 WSL 에서 불가능하고, 유저스페이스 가로채기는
     //     카운터가 프로세스 로컬이라 노드 단위 예산을 못 지킨다.
     let mut input = snapshot(vec![gpu("gpu-a", 10_000)]);

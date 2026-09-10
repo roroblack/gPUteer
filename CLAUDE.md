@@ -206,6 +206,12 @@
     ★ 그리고 이 실측은 SHARED 를 여는 근거로 **아직 모자란다** — 노드
       단위 예산에는 다중 프로세스 회계가 필요한데 이 방식엔 없다.
     docs/plans/2026-09-08_1900_예약가시성_B프라임_과_SHARED_재정의.md
+    ★★ **2026-09-10 재검수 10 정정 — 위 인용이 규범의 반이다.**
+      `proto/common.proto:172` 원문은 "동일 소유자 Job 간, **또는**
+      Linux+MPS 확인 시에만" 이다. 넣은 `SharedAllocationUnproven` 은
+      둘 다 판단할 입력 칸이 없어 **전부** 거부한다 — 규범을 옮긴 게
+      아니라 동일 소유자 경로까지 막는 **잠정 제한**이다.
+      docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md ⑫
   ★ **2026-08-16 정정 (ADR-027, P0-06 실측).** Windows Job Object 는
   WDDM 메모리 모델 때문에 **VRAM 을 간접적으로 제한한다** (`VRAM 최대 ≈ RAM 제한 − 2000MiB`).
   그러나 **quota 가 아니라 총 커밋 상한**이고, 거칠고, Windows 전용이므로
@@ -313,7 +319,7 @@ canonical 인코딩이 깨지므로 **비율은 ppm 정수, 시각은 밀리초 
 | canonical 참조 구현 | **완료** — self-test 12/12. JobManifest·Lease **전 필드** |
 | 테스트 벡터 | **완료** — `tests/vectors/canonical_v1.json` **52건**(2026-08-31 실측). `--verify` 가 재생성 대조 |
 | 저장소 골격 | **완료** |
-| **Rust 구현** | 🟡 **진행 중** — **세 환경에서 실측**(2026-09-05) — 개발 기계 Windows **922 passed**, x600 Windows **922 passed**, x600 WSL2 Linux **918 passed**(`--exclude gputeer-runtime-windows`). 전부 0 failed · 경고 0. `coordinator-agent-selftest` **97/97**(x600 재실행). ★★ **플랫폼 차이가 전부 설명된다** — 이름 기준 Windows 914-28=886, Linux 910-24=886 으로 일치하고 양쪽 전용은 서로 짝이다(junction<->symlink, Job Object<->cgroup, DPAPI<->systemd-creds). 조용히 빠진 공유 테스트는 없다. canonical 벡터 **52건** 은 2026-09-01 값 그대로(오늘 안 쟀다). ★ **2026-09-06 개발 기계 재실측 — 926 passed · 0 failed · 경고 0**(P0-02 의 AppContainer 코드가 들어와 922 -> 926). 커밋 **293개**(여기 276 이라고 적혀 있었다). ★★ **2026-09-10 재실측 — 개발 기계 1030 passed · 0 failed · 경고 0.** 926 -> 1030 의 증가분은 실행 사슬 6조각과 검수 1~5번이 요구한 회귀 테스트다. ★ **x600 WSL2 는 2026-09-09 에 1014 passed** — 그때는 **GPU 가 보이는 상태**에서 처음 쟀고(이전 918 은 GPU 없는 상태였다), `ignored` 1건은 부모가 자식 프로세스로 부르는 도우미라 **조용한 스킵이 아니다**. GPU 유무로 갈리는 스킵은 없었다. 근거 `docs/evidence/_raw/리눅스_GPU_워크스페이스_테스트_2026-09-09.txt` |
+| **Rust 구현** | 🟡 **진행 중** — **세 환경에서 실측**(2026-09-05) — 개발 기계 Windows **922 passed**, x600 Windows **922 passed**, x600 WSL2 Linux **918 passed**(`--exclude gputeer-runtime-windows`). 전부 0 failed · 경고 0. `coordinator-agent-selftest` **97/97**(x600 재실행). ★★ **플랫폼 차이가 전부 설명된다** — 이름 기준 Windows 914-28=886, Linux 910-24=886 으로 일치하고 양쪽 전용은 서로 짝이다(junction<->symlink, Job Object<->cgroup, DPAPI<->systemd-creds). 조용히 빠진 공유 테스트는 없다. canonical 벡터 **52건** 은 2026-09-01 값 그대로(오늘 안 쟀다). ★ **2026-09-06 개발 기계 재실측 — 926 passed · 0 failed · 경고 0**(P0-02 의 AppContainer 코드가 들어와 922 -> 926). 커밋 **293개**(여기 276 이라고 적혀 있었다). ★★ **2026-09-10 재실측 — 개발 기계 1038 passed · 0 failed · 경고 0**(ignored 1). 926 -> 1038 의 증가분은 실행 사슬 6조각과 검수 1~5번·재검수 9·10 이 요구한 회귀 테스트다. ★ **x600 WSL2 는 2026-09-09 에 1014 passed** — 그때는 **GPU 가 보이는 상태**에서 처음 쟀고(이전 918 은 GPU 없는 상태였다), `ignored` 1건은 부모가 자식 프로세스로 부르는 도우미라 **조용한 스킵이 아니다**. GPU 유무로 갈리는 스킵은 없었다. 근거 `docs/evidence/_raw/리눅스_GPU_워크스페이스_테스트_2026-09-09.txt` |
 | ├ `crates/protocol` | canonical · prost 연동 · 서명 대상 완전성 · **Ed25519 + `Verified<M>`** · **`AgentGrantAck` 서명 대상 메시지**(coordinator/agent 핸드셰이크용, 2026-08-18) |
 | ├ `crates/crypto` | Ed25519Verifier · DurableReplayGuard · PersistentKeyring · replay 계약 적합성 · `ingress` 진입점 · **`framed_ingress` 프레이밍·디스패치**(`FrameType::GrantAck` 포함) · **별도 OS 프로세스 8개로 replay 락 경합 실측**(2026-08-18) |
 | ├ `crates/checkpoint` | ADR-026 원자적 쓰기 · kill 카오스 · 경로 탈출 차단 · 재개 job/attempt 필터 · 실패 마커 · 상태 사이드카 · 동시 GC 경합 · **`chaos-hooks`(비기본) self-kill 훅으로 HASH_VERIFIED~COMMITTED 결정적 kill** · **`write_once()` 동시 동일-이름 호출 명시적 거부(2026-08-19, `DoD-21`)** — 프로세스 간 파일 잠금 + 성공 시 자가 정리 + GC 의 죽은 락 회수 |
@@ -683,6 +689,9 @@ SHARED 를 여는가      ★★ **2026-09-08 새로 올라온 결정.** MPS 를
                      정할 것  `proto/common.proto:168` 의 SHARED 조건을
                        "Linux+MPS 확인 시에만" -> "회계는 항상, 강제는
                        플랫폼별 등급"(runtime-policy 어휘)으로 바꾸는가
+                     ★ 바꿀 대상은 **뒤 조건(MPS)** 이다. 앞 조건(동일
+                       소유자 Job 간)은 proto 에 이미 있고, 지금 커널이
+                       그것까지 막는 것은 입력 칸이 없어서다(결함 ⑫)
                      ★ 등급을 낮게 붙이는 것이지 **강제한다고 선언하는 게
                        아니다** — §0.4 는 선언하지 말라는 것이지 하지 말라는
                        것이 아니다

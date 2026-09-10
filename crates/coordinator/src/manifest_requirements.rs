@@ -435,6 +435,42 @@ mod tests {
         }
     }
 
+    /// ★★ 선언하지 않은 자원량은 0 으로 채우지 않는다 — 셋 **각각**.
+    ///
+    /// 2026-09-10 재검수가 짚었다: `UndeclaredAmount` 를 넣었는데 그것을
+    /// 되돌려도 실패하는 테스트가 없었다. 위 fixture 가 셋 다 양수라서다.
+    /// 셋을 한꺼번에 0 으로 두면 첫 번째 검사만 있어도 통과하므로 하나씩 둔다.
+    #[test]
+    fn each_undeclared_resource_amount_is_refused_by_its_own_name() {
+        let cases: [(&str, fn(&mut pb::ResourceRequest)); 3] = [
+            ("resources.cpu_cores", |r| r.cpu_cores = 0),
+            ("resources.ram_bytes", |r| r.ram_bytes = 0),
+            ("resources.workspace_bytes", |r| r.workspace_bytes = 0),
+        ];
+        for (field, zero) in cases {
+            let manifest = verified(|m| zero(m.resources.as_mut().unwrap()));
+            assert_eq!(
+                job_requirements_from_manifest(&manifest, MEMBER),
+                Err(ManifestConversionError::UndeclaredAmount(field)),
+                "{field} 를 0 으로 뒀는데 그 이름으로 거부하지 않았다"
+            );
+        }
+    }
+
+    /// 대조군 — `min_vram_bytes` 0 은 **일부러** 받는다("하한 없음").
+    ///
+    /// ★ 이게 없으면 "0 이면 전부 거부" 로 바꿔도 위 테스트가 통과한다.
+    ///   같은 0 인데 결과가 달라야 한다 — 경로가 갈라지는 대조군이다.
+    #[test]
+    fn a_zero_vram_floor_is_still_accepted_as_no_floor() {
+        let manifest = verified(|m| {
+            m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_vram_bytes = 0;
+        });
+        let requirements = job_requirements_from_manifest(&manifest, MEMBER)
+            .expect("VRAM 하한 0 은 받아야 한다");
+        assert_eq!(requirements.minimum_vram_bytes_per_gpu, Some(0));
+    }
+
     /// 중첩 메시지가 통째로 없으면 그것도 이름으로 말한다.
     #[test]
     fn a_missing_nested_message_is_named() {
