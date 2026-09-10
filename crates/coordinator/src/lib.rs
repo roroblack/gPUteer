@@ -2238,11 +2238,14 @@ fn build_renew_result(
                     attempt_id: config.attempt_id.clone(),
                     holder_node_id: config.agent_device_id.clone(),
                     fence_epoch: config.renewed_fence_epoch,
-                    expires_at_unix_ms: now + 60_000,
+                    // ★ 결함 ㉝ — 저장소 분기와 같은 식이다. 전에는 60초로 고정해
+                    //   `--renew-extension-ms` 를 받아 두고 버렸다(기본값이 60초라
+                    //   기본 설정에서는 차이가 안 보였다).
+                    expires_at_unix_ms: now + config.renew_extension_ms,
                     issuing_coordinator_id: config.coordinator_device_id.clone(),
                     coordinator_term: 1,
                     issued_at_unix_ms: now,
-                    renew_after_unix_ms: now + 30_000,
+                    renew_after_unix_ms: now + config.renew_extension_ms / 2,
                     max_total_duration_seconds: config.max_total_duration_seconds,
                     revoked_at_unix_ms: None,
                 };
@@ -3104,6 +3107,59 @@ mod tests {
             sign(&key, &notice).to_vec(),
             "override가 적용된 최종 payload에 대한 서명이어야 한다"
         );
+    }
+
+    /// 저장소 없는 갱신(레거시 lane)의 설정 — `--renew-extension-ms` 만 고른다.
+    fn legacy_renew_config(extra: &[&str]) -> CoordinatorConfig {
+        let peer = SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+        let peer_hex: String = peer.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let own_seed = "11".repeat(32);
+        let mut args: Vec<String> = [
+            "--listen", "127.0.0.1:0",
+            "--own-seed", own_seed.as_str(),
+            "--peer-pubkey", peer_hex.as_str(),
+            "--coordinator-device-id", "01JCOORDRENEWEXT00000001",
+            "--agent-device-id", "01JAGENTRENEWEXT00000001",
+            "--grant-id", "01JGRANTRENEWEXT00000001",
+            "--attempt-id", "01JATTEMPTRENEWEXT000001",
+            "--lease-id", "01JLEASERENEWEXT00000001",
+            "--job-id", "01JJOBRENEWEXT0000000001",
+            "--i-understand-legacy-mode-is-unsafe", "true",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        parse_config_from_args(&args).expect("설정 파싱")
+    }
+
+    /// ★ 결함 ㉝ — 저장소 없는 갱신도 `--renew-extension-ms` 로 만료·갱신 시점을 정한다.
+    ///   전에는 60초로 고정해 이 인자를 받아 두고 버렸다. 60초가 아닌 값을 줘야 그 버림이
+    ///   드러난다.
+    #[test]
+    fn the_renew_extension_is_applied_without_a_lease_store() {
+        let config = legacy_renew_config(&["--renew-extension-ms", "1000"]);
+        let key = SigningKey::from_bytes(&[5u8; 32]);
+        let now = 1_800_000_000_000;
+        let result = build_renew_result(&config, &mut None, &key, now, &config.lease_id, vec![1u8; 16])
+            .expect("갱신 결과");
+        assert_eq!(result.outcome, 1, "RENEWED 가 아니다: {result:?}");
+        let lease = result.lease.expect("갱신된 Lease 가 없다");
+        assert_eq!(lease.expires_at_unix_ms, now + 1_000, "만료가 --renew-extension-ms 를 따르지 않는다");
+        assert_eq!(lease.renew_after_unix_ms, now + 500, "갱신 시점이 --renew-extension-ms / 2 가 아니다");
+    }
+
+    /// 대조 — 인자를 안 주면 기본값 60초 그대로다. 없으면 "항상 1초" 같은 고정으로도 위가 통과한다.
+    #[test]
+    fn the_default_renew_extension_is_still_sixty_seconds_without_a_lease_store() {
+        let config = legacy_renew_config(&[]);
+        let key = SigningKey::from_bytes(&[5u8; 32]);
+        let now = 1_800_000_000_000;
+        let result = build_renew_result(&config, &mut None, &key, now, &config.lease_id, vec![1u8; 16])
+            .expect("갱신 결과");
+        let lease = result.lease.expect("갱신된 Lease 가 없다");
+        assert_eq!(lease.expires_at_unix_ms, now + 60_000);
+        assert_eq!(lease.renew_after_unix_ms, now + 30_000);
     }
 }
 
