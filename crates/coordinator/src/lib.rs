@@ -466,6 +466,11 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
         return Err(message);
     }
+    // ★ 결함 ㉟ — heartbeat 도 같은 자리에서 본다.
+    if let Some(message) = unsupported_heartbeat_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
 
     // ★ 결함 ⑯(2026-09-10) — 저장된 예약 lane 은 **저장된** Manifest 만 싣는다
     //   (2026-09-10 저녁부터 — 그 전에는 아예 싣지 않았다. `grant_from_stored.rs`
@@ -721,6 +726,50 @@ pub(crate) fn unsupported_neighbor_report_lane(
 
 /// 종료 보고 옵션이 **이 lane 에서 실제로 동작하는가**를 본다.
 ///
+/// ★ 결함 ㉟ — heartbeat 수신 구간에 **닿지 못하는** 구성을 시작 전에 거부한다.
+///   종료 보고 관문(아래 `unsupported_attempt_report_lane`)과 같은 목록이다 — 받아 두고
+///   안 받으면 운영자는 생존 관측이 쌓이는 줄 안다.
+///
+///   `serve_one_connection` 에서 Resume 은 heartbeat 구간보다 먼저 반환하고, 아래 hook
+///   셋은 그 구간 앞에서 세션을 끝낼 수 있다(`--send-grant-twice` · `--disconnect-after-ack`
+///   는 항상, `--drop-connection-after-ack-once` 는 조건부). multi-agent lane 의 세션 루프에는
+///   heartbeat 수신 구간이 없다.
+pub(crate) fn unsupported_heartbeat_lane(
+    config: &CoordinatorConfig,
+    lane: NeighborReportLane,
+) -> Option<String> {
+    if config.expect_heartbeats == 0 {
+        return None;
+    }
+    if lane == NeighborReportLane::MultiAgent {
+        return Some(
+            "multi-agent lane 은 heartbeat 수신을 구현하지 않았다 — --expect-heartbeats 와 함께 쓸 수 없다"
+                .to_string(),
+        );
+    }
+    if config.resume_protocol {
+        return Some(
+            "resume 경로는 heartbeat 수신에 닿기 전에 반환한다 — --expect-heartbeats 와 --resume-protocol 을 함께 줄 수 없다"
+                .to_string(),
+        );
+    }
+    for (enabled, flag) in [
+        (config.send_grant_twice, "--send-grant-twice"),
+        (config.disconnect_after_ack, "--disconnect-after-ack"),
+        (
+            config.drop_connection_after_ack_once,
+            "--drop-connection-after-ack-once",
+        ),
+    ] {
+        if enabled {
+            return Some(format!(
+                "{flag} 는 heartbeat 수신 구간보다 먼저 세션을 끝낼 수 있다 — --expect-heartbeats 와 함께 줄 수 없다"
+            ));
+        }
+    }
+    None
+}
+
 /// ★ 이웃 신고 관문(`unsupported_neighbor_report_lane`)과 같은 이유로
 ///   있다 — 받아 놓고 안 하는 것이 가장 나쁘다. 여기서는 그보다 하나 더
 ///   본다: 증거를 결합할 **예약이 있는 control DB** 가 없으면 저장 자체가
@@ -2775,6 +2824,14 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
                 .to_string(),
         );
     }
+    // ★ 결함 ㉟ — 생존 보고를 기대하지 않으면 저장소를 열지 않는다(위 이웃 신고와 같은 모양).
+    if config.expect_heartbeats == 0 && flags.0.contains_key("--liveness-db") {
+        return Err(
+            "STARTUP_REFUSED: NEEDS_EXPECT — --liveness-db 는 --expect-heartbeats 가 \
+             0 보다 클 때만 열린다. 받아 두고 버리지 않는다"
+                .to_string(),
+        );
+    }
     if !config.multi_agent {
         // ★ `--session-id` 는 여기 없다 — Coordinator 가 **어느 lane 에서도**
         //   읽지 않는 이름이라 설정에서 뺐고, 이제 모르는 플래그로 거부된다.
@@ -2823,6 +2880,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         return Err(message);
     }
     if let Some(message) = unsupported_attempt_report_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+    // ★ 결함 ㉟ — heartbeat 도 같은 자리에서 본다.
+    if let Some(message) = unsupported_heartbeat_lane(&config, lane_from_config(&config)) {
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
         return Err(message);
     }
@@ -3181,6 +3243,38 @@ mod tests {
         let lease = result.lease.expect("갱신된 Lease 가 없다");
         assert_eq!(lease.expires_at_unix_ms, now + 60_000);
         assert_eq!(lease.renew_after_unix_ms, now + 30_000);
+    }
+
+    /// ★ 결함 ㉟ — heartbeat 수신에 닿지 못하는 구성은 관문이 막는다.
+    #[test]
+    fn heartbeats_on_an_unreachable_lane_are_refused() {
+        let resume = legacy_renew_config(&["--expect-heartbeats", "1", "--resume-protocol", "true"]);
+        let message = unsupported_heartbeat_lane(&resume, lane_from_config(&resume))
+            .expect("resume 을 막아야 한다");
+        assert!(message.contains("resume"), "{message}");
+        for flag in ["--send-grant-twice", "--disconnect-after-ack", "--drop-connection-after-ack-once"] {
+            let config = legacy_renew_config(&["--expect-heartbeats", "1", flag, "true"]);
+            let message = unsupported_heartbeat_lane(&config, lane_from_config(&config))
+                .unwrap_or_else(|| panic!("{flag} 를 막아야 한다"));
+            assert!(message.contains(flag), "{message}");
+        }
+        let plain = legacy_renew_config(&["--expect-heartbeats", "1"]);
+        let message = unsupported_heartbeat_lane(&plain, NeighborReportLane::MultiAgent)
+            .expect("multi-agent 를 막아야 한다");
+        assert!(message.contains("multi-agent"), "{message}");
+    }
+
+    /// 대조 — 닿는 구성과, heartbeat 를 기대하지 않는 구성에는 끼어들지 않는다.
+    ///   없으면 관문을 "항상 거부" 로 바꿔도 위 테스트가 통과한다.
+    #[test]
+    fn the_heartbeat_guard_stays_out_of_reachable_or_unexpecting_sessions() {
+        let plain = legacy_renew_config(&["--expect-heartbeats", "1"]);
+        assert_eq!(unsupported_heartbeat_lane(&plain, lane_from_config(&plain)), None);
+        let not_expecting = legacy_renew_config(&["--resume-protocol", "true"]);
+        assert_eq!(
+            unsupported_heartbeat_lane(&not_expecting, lane_from_config(&not_expecting)),
+            None
+        );
     }
 }
 

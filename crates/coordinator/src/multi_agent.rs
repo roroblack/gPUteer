@@ -91,6 +91,13 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
     ) {
         return Err(message);
     }
+    // ★ 결함 ㉟ — heartbeat 수신 구간도 이 lane 에는 없다.
+    if let Some(message) = crate::unsupported_heartbeat_lane(
+        &config,
+        crate::NeighborReportLane::MultiAgent,
+    ) {
+        return Err(message);
+    }
     let agents = parse_agent_directory(
         &config.agent_device_id,
         config.agent_verifying_key,

@@ -359,3 +359,19 @@ fn a_valid_numeric_duplicate_still_uses_the_last_value() {
     .expect("올바른 중복을 거부했다");
     assert_eq!(config.renew_extension_ms, 5);
 }
+
+/// ★ 결함 ㉟ (가) — 생존 보고를 기대하지 않으면 `--liveness-db` 를 받아 두지 않는다.
+#[test]
+fn a_liveness_db_without_expected_heartbeats_is_refused() {
+    refused_by_name(
+        with(legacy_lane(), &["--liveness-db", "live.sqlite3"]),
+        "NEEDS_EXPECT",
+        "--liveness-db",
+    );
+    // 대조 — 기대하면 받는다. 없으면 "항상 거부" 로도 위가 통과한다.
+    parse_config_from_args(&with(
+        legacy_lane(),
+        &["--expect-heartbeats", "1", "--liveness-db", "live.sqlite3"],
+    ))
+    .expect("정상 구성을 거부했다");
+}
