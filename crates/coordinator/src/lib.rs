@@ -2842,6 +2842,10 @@ struct Flags(
     // ★ 세 번째 칸 — `true`/`false` 가 아닌 불리언 값. `--x tru` 가 조용히
     //   false 가 되면 부정 테스트가 무력화된다(재검수 15, 결함 ㉑).
     std::cell::RefCell<Vec<String>>,
+    // ★ 네 번째 칸 — 같은 키를 두 번 줬을 때 **덮어써진 앞 값**(결함 ㉒,
+    //   재검수 18). 마지막 값을 쓰는 규칙은 그대로 둔다(selftest 34 가 쓴다).
+    //   다만 `--x tru --x false` 의 `tru` 가 검사 전에 사라지면 안 된다.
+    Vec<(String, String)>,
 );
 
 impl Flags {
@@ -2874,6 +2878,11 @@ impl Flags {
     /// 테스트 전용 거부 경로 플래그(단계 5)에만 쓴다 — 다른 모든
     /// 플래그는 여전히 필수 값을 가진다(`require`).
     fn bool_flag(&self, key: &str) -> bool {
+        for (_, earlier) in self.3.iter().filter(|(k, _)| k == key) {
+            if earlier != "true" && earlier != "false" {
+                self.2.borrow_mut().push(format!("{key}={earlier}"));
+            }
+        }
         match self.get(key).map(String::as_str) {
             None | Some("false") => false,
             Some("true") => true,
@@ -2958,6 +2967,7 @@ impl Flags {
 
 fn parse_flags(args: &[String]) -> Result<Flags, String> {
     let mut map = std::collections::HashMap::new();
+    let mut earlier: Vec<(String, String)> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let key = &args[i];
@@ -2967,10 +2977,12 @@ fn parse_flags(args: &[String]) -> Result<Flags, String> {
         let value = args
             .get(i + 1)
             .ok_or_else(|| format!("{key} 뒤에 값이 없다"))?;
-        map.insert(key.clone(), value.clone());
+        if let Some(previous) = map.insert(key.clone(), value.clone()) {
+            earlier.push((key.clone(), previous));
+        }
         i += 2;
     }
-    Ok(Flags(map, Default::default(), Default::default()))
+    Ok(Flags(map, Default::default(), Default::default(), earlier))
 }
 
 fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {

@@ -1,0 +1,1805 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08a59-6624-7603-9d95-8d5514d3f7dd
+--------
+user
+동의가 아니라 **반박**을 원한다. 재검수 16 이 두 evidence 초안의 본문에
+**옛 결론이 살아 있다**고 짚었고, 고쳤다. 이번이 세 번째다. **아직 측정보다
+강한 문장**, 또는 **서로 충돌하는 문장**이 남았는지 봐 달라.
+
+# 배경 — 16 의 지적과 이번 수정
+
+```text
+DoD-68
+  decision     "독립 검수가 없어 … 쿼터가 돌아오면" -> 검수 7·재검수 16 모두
+               CHANGES_REQUESTED, 수정본 재검수 대기
+  도식         scheduler-tick "①~③ 을 스스로 돈다" -> "큐에서 골라 한 번 예약"
+  limitations  "뮤테이션 3건이 안 잡힌다"(현재형) -> 1차엔 3건, G5·G6 은 이튿날
+               고정, 지금 남은 것은 T1 하나
+  front-matter executed_at 옆에 재측정 시각·커밋 주석
+P0-02
+  claim        x600 측정과 개발 기계의 가둠 대조를 **분리**
+  가둠         "접근 거부" -> **종료 코드 수준**(이유는 원문에 없다)
+  review_scope "소거한 가설 넷" -> "시험한 네 변경"
+  후속 계획    "DllMain 이 무엇에서 거부되는지" -> "로드 실패 과정의 접근·오류를
+               조사해 실패 위치 확인"
+  FAIL-SCOPE   좁은 구성의 판정은 이미 가능 · 다음 걸음은 다른 구성 측정 — 둘을 가름
+  끝 문장     "한 기계" 가 어느 측정인지 명시
+```
+
+두 초안 머리의 판정 요약 블록(7·8·16)은 **과장의 기록으로 일부러 남겼다.**
+판정 대상이 아니다. **본문과 front-matter** 를 봐라.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md
+docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md
+docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt
+docs/evidence/_raw/검수_2026-09-10/16_재검수_evidence_초안_둘.txt
+```
+
+# 물을 것 — 세 가지
+
+1. **16 의 지적이 본문에서 닫혔나.** 지적마다 대조하라.
+
+2. **본문 안에서 서로 충돌하는 문장이 남았나.** 세 번 고친 문서라 한쪽만
+   고쳐진 곳이 있기 쉽다 — claim · raw_output · negative_tests · limitations ·
+   decision · 본문을 서로 대조하라.
+
+3. **evidence 로 옮겨도 되나.** 안 되면 무엇이 남았나 — 문장 문제인지, 측정이
+   더 필요한지 구분해 적어라.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든
+것과 결함이 없는 것은 다르다 — 그 둘을 구분해 써라.
+
+# 답의 형식
+
+각 지적마다 문서의 해당 줄을 인용하고, 왜 측정을 넘어서는지 쓰라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 네 파일만 읽고, 머리의 판정 요약 블록은 제외하겠습니다. 16의 지적별 수정 여부와 본문·front-matter 사이의 충돌을 줄 번호로 대조하고, 남은 문장 문제와 추가 측정이 필요한 부분을 구분하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content -LiteralPath '"'docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt' -Encoding UTF8 | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content -LiteralPath '"'docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md' -Encoding UTF8 | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content -LiteralPath '"'docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md' -Encoding UTF8 | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command '$n = 0; Get-Content -LiteralPath '"'docs/evidence/_raw/검수_2026-09-10/16_재검수_evidence_초안_둘.txt' -Encoding UTF8 | ForEach-Object { "'$n++; '"'{0,4}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 2271ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: P0-02 ���� ���� ����� ? 2026-09-10 (���� ���, Windows 11)
+   2: �˼� 8�� ����: "�ٱ� ������ �����̼� ������ �ߴٴ� ������ ������ ���� ����� ������ ����"
+   3: ����: cargo test -p gputeer-runtime-windows --lib the_container_cannot_read_a_file_the_host_can -- --nocapture
+   4: �׽�Ʈ: crates/runtime-windows/src/appcontainer.rs  the_container_cannot_read_a_file_the_host_can
+   5:   �ٱ�  std::process::Command cmd.exe /c type <�ӽ� ����>   -> �����ؾ� �Ѵ�(����)
+   6:   ����  run_in_container(profile, "cmd.exe /c type <���� ����>") -> 0 �� �ƴϾ�� �Ѵ�
+   7: �� �Ѱ�: ���� ��迡�� ���(GPU ����). x600 ���� �ٽ� ���� �ʾҴ�.
+   8: 
+   9: === 1) ���� (exit=0) ===
+  10: test appcontainer::tests::the_container_cannot_read_a_file_the_host_can ... ok
+  11: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s
+  12: CONFINE outside_exit=Some(0) outside_stdout="host only" inside_exit=1
+  13: 
+  14: === 2) �����̼� A1 ? run_in_container ���� SECURITY_CAPABILITIES ������ �ǳʶ� (exit=101) ===
+  15: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s
+  16: CONFINE outside_exit=Some(0) outside_stdout="host only" inside_exit=0
+  17: thread 'appcontainer::tests::the_container_cannot_read_a_file_the_host_can' (6916) panicked at crates\runtime-windows\src\appcontainer.rs:569:9:
+  18: assertion `left != right` failed: AppContainer �ȿ��� ȣ��Ʈ ������ �о��� ? �������� �ʾҴ�
+  19:   left: 0
+  20: 
+  21: ����: ���󿡼� �ٱ��� �а� ������ �� �о���. ���� �Ӽ��� ���� ���ʵ� �о�
+  22: �׽�Ʈ�� �����Ѵ� ? ������ ��� �׽�Ʈ��.
+
+ exited 1 in 2219ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+Get-Content : 'docs/evidence/_raw/�˼�_2026-09-10/16_��˼�_evidence_�ʾ�_��.txt' ��δ� �������� �����Ƿ� ã�� �� ����
+�ϴ�.
+��ġ ��:2 ����:9
++ $n = 0; Get-Content -LiteralPath 'docs/evidence/_raw/�˼�_2026-09-10/16 ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (docs/evidence/_...idence_�ʾ�_��.txt:String) [Get-Content], ItemNotFound
+Ex    ception
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetContentCommand
+ 
+
+ succeeded in 2293ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: <!--
+   2: �ڡڡ� 2026-09-10 ���� �˼� ���� ? CHANGES_REQUESTED
+   3: 
+   4:   �˼��ڰ� �ʾ� 1���� ���� 5���� **����** �а� �����ߴ�. �Ʒ� ������
+   5:   ��ġ�� �ʰ� �״�� �ΰ�, ������ �������� ���ߴ����� ���� ���´�.
+   6:   (������ ���� �ٵ����� ������ �����ߴ����� �������.)
+   7: 
+   8:   ���� �������� ���ϰ� �� ���� �� ������������������������������������������������������������������
+   9:   �� 1. "���� ������ ���д�. **���� �� ���� ���� �ڸ����� �׾���**" ��
+  10:   ��    -> Ʋ�ȴ�. ������ ������ �����Ѵ�:                          ��
+  11:   ��         1��  0xC0000135 ? "��ũ��Ʈ�� �������� �� ��"          ��
+  12:   ��         2��  "_ctypes DLL �ʱ�ȭ ����"                         ��
+  13:   ��         4��  ������ import ���� �ִ�                           ��
+  14:   ��         5��6�� DLL �ε� ����                                    ��
+  15:   ��       **���� �ܰ��� Ž���� ���� ���� �ݺ� �������� �ô�.**     ��
+  16:   ��                                                               ��
+  17:   �� 2. "���� ���� **ole32 �ϳ���**"                                ��
+  18:   ��    -> ������ `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带      ��
+  19:   ��       ��´�. ���� �ڵ常���� **������ �ʱ�ȭ �Լ��� ��ġ**,   ��
+  20:   ��       **_ctypes ���п��� �ΰ�**, **�ٸ� ����� ����**����      ��
+  21:   ��       Ȯ���� �� ����.                                          ��
+  22:   ��       �´� ����: "������ DLL �� ole32 �ε忡���� 1114 ��       ��
+  23:   ��       ����������, _ctypes ���п��� ����� �߰� Ȯ���� �ʿ�"    ��
+  24:   ��                                                               ��
+  25:   �� 3. "**�Ұ���** ���� �� (���� ���� ����)"                       ��
+  26:   ��    -> "**������** �� ���濡�� ���а� ���ӵƴ�" �� �´�.        ��
+  27:   ��       �õ��� �� ����� �ƴ����� ���� ������ �Ұŵ� �ƴϴ�.     ��
+  28:   ��                                                               ��
+  29:   �� 4. "combase �� �Ǵµ� **���Ž� ������ �� �ȴ�**"               ��
+  30:   ��    -> �ε� ���� ����� **COM ��� ������ ���� ����� �ƴϴ�.** ��
+  31:   ����������������������������������������������������������������������������������������������������������������������������������
+  32: 
+  33:   �ڡ� �ݴ� ���� ������ �ִ� ? ������ �� �߿��ϴ�.
+  34: 
+  35:     ���� "package identity ���ɼ��� �������� ���� ���з� Ȯ���ϸ�
+  36:     ���� ���� ���� ������� ���� ��" �̶�� ��µ�, �˼��ڰ� ���ߴ�:
+  37: 
+  38:     > **���� ������ �𸣴� �Ͱ� ������ �������� ���и� ������ ����
+  39:     > �縳�Ѵ�.**
+  40: 
+  41:     �� ������ ���̸� ������ �ٰŰ� �ִ� ? "���� x600 ȯ�桤������
+  42:     CPython �����ǡ���ϵ� �������� ctypes/torch ��ΰ� CUDA ȣ��
+  43:     ���� ������" ��� ������� `FAIL-SCOPE` �� �޹�ħ�Ѵ�.
+  44:     �� ���� ������ **���� ����** �Ἥ �տ��� ������ �� ������ �ٽ�
+  45:       ��ȴ�. ��ü ������ ���� `INCONCLUSIVE` �� ������ �����ϴ�.
+  46: 
+  47:   �� �˼��ڰ� **Ȯ���� �� ��**�� ���� �д� ? �ʾ��� �Ѱ踦 ��������
+  48:     �ʾҴ�. "Ȯ������ �ʾ����Ƿ� �������θ� ���´�"(172~175��),
+  49:     "package identity ���� ������ ���ɼ�"(196��)�� ���õ� �ְ�,
+  50:     �������� '������ ��� �а�' �� **ã�� ���ߴ�**�� �ߴ�.
+  51: 
+  52:   ���� ���� docs/evidence/_raw/�˼�_2026-09-10/08_P0-02_evidence_CHANGES_REQUESTED.txt
+  53: 
+  54: �ڡڡ� 2026-09-10 17:30 ? **���� 8 �� ������ �ݿ��ߴ�.** �� ������ ������
+  55:   ������� �״�� �д�. ������ ������ ���ߴ� ��� **������ �ٽ� ����
+  56:   ������ �������**(���� ���):
+  57:     docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt
+  58:     ����      �ٱ� exit 0("host only" ����) �� ���� exit 1
+  59:     �����̼�  SECURITY_CAPABILITIES ������ �� -> ���� exit 0 -> �׽�Ʈ ����
+  60:   �� x600 ������ �ٽ� ���� �ʾҴ�.
+  61: 
+  62: �ڡڡ� 2026-09-10 ��˼� 16 ? CHANGES_REQUESTED (�ݿ����� �ٽ� �ô�)
+  63:   �������� ��: ���� ������ ����� ��ġ �� ���� ��� �Ѱ� ���� �� ole32 �ΰ� ��
+  64:   combase ��� ���� ���� �� "���� �ܰ��� Ž��" �� ���� ������ FAIL-SCOPE �ٰ�.
+  65:   ���Ҵ� ��:
+  66:     ���� ����     "ȣ��Ʈ ���� ���� **�ź�**" ? ������ ���� �ڵ���̴�. ����
+  67:                   �Ӽ� ������ �ٸ� �ܰ谡 �������� ���ɼ��� �� ��¸����� �� ����
+  68:     ȯ�� ����     claim �� "x600 ���� Ȯ��" ��Ͽ� ���� ����� ������ ��� �־���
+  69:     �� ǥ��       review_scope �� "�Ұ��� ���� ��"
+  70:     ����          �ļ� ��ȹ�� "DllMain �� �������� **�ź�**�Ǵ���" ? ���� �Լ���
+  71:                   '�ź�' �� ���� ���� ���ߴ�
+  72:     ���� �浹     "�� �����δ� FAIL-SCOPE" �� "ȸ�� �Ұ��� FAIL-SCOPE" �� �յڷ� �浹
+  73:   -> �ټ� ���� ���ƴ�. ������ **���� �ڵ� ����**���� �����(������ Ư���Ϸ���
+  74:      �ڽ��� ���� ����� �޾ƾ� �Ѵ� ? ���� �� �ߴ�)
+  75: -->
+  76: 
+  77: <!--
+  78: �ڡ� �̰��� **���� evidence �� �ƴϴ�.** docs/evidence/ �� �θ�
+  79:     verify_evidence.py �� �ź��Ѵ� ? �׸��� �װ� �Ǵ�.
+  80: 
+  81:     �ź� ������ ������ �޾� �ô�:
+  82:         ! reviewer_id �� human:/agent:/service: �� �ϳ��� �����ؾ� �Ѵ�
+  83:         ! review_artifact �� docs/evidence/_raw/ �Ʒ����� �Ѵ�
+  84: 
+  85:     �� ������ `RULE.md` ��7.3 �� **���� ����� �ƴϴ�**(������ `P0-*`��
+  86:     `DoD-*` �� `PASS` ���̰� �̰� `INCONCLUSIVE` ��). �׷��� schema v2 ��
+  87:     `reviewer_*` �� �ʼ��� �䱸�Ѵ� ? �� "�˼��� �ʿ� ���µ��� �˼� ĭ��
+  88:     ä���� �ϴ�" ĭ�� ���´�.
+  89: 
+  90:     �� �� ĭ�� ä����� �˻�⸦ ��ġ�� �ʴ´�. ���⼭ �˻�⸦ ��ġ��
+  91:       **���� �ɸ� ��Ģ�� ���� Ǫ�� ��**�� �ǰ�, �� �������ʹ� ��Ģ��
+  92:       ��Ģ�� �ƴϰ� �ȴ�. ��Ű�� ������ ���� �ʿ������� �˼��� �и���
+  93:       ���� �Ǵ��Ѵ�.
+  94: 
+  95:     �׷��� �ʾ����� �����. 2026-09-07 15:43 ���� ���� �˼� ��⿭��
+  96:     �� ������ �ְ�(`DoD-68` ����), ������ ������ `review_*` �� ä��
+  97:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` �� �ű��.
+  98:     �� �Űܵ� `status` �� `INCONCLUSIVE` �� ? �˼��� �ٴ´ٰ� ������
+  99:       ������ ���� ������ ���� �������� �ʴ´�.
+ 100: 
+ 101:     �� �Ʒ� review_outcome: PENDING �� **��Ű���� ���� ��**�̴�.
+ 102:       �ű� �� �ݵ�� ���� �������� �ٲ۴�.
+ 103: -->
+ 104: 
+ 105: ---
+ 106: schema_version: 2
+ 107: id: P0-02
+ 108: claim: "���ؼ� ��32 �� `P0-02`(Windows AppContainer + CUDA, S2 ������)�� �����ߴ�. **x600(RTX 4070 SUPER �� �� Windows ���� �� package identity ���� AppContainer)����** �������� ���������� SID�������̳� �� ���μ��� ���ࡤPython ���ࡤC Ȯ�� �ε�(`zlib`��`_socket`)�� Ȯ���ߴ�. **������ ���� ��迡�� ���� ���** ? �����̳� �ȿ��� ȣ��Ʈ �ӽ� ������ `type` �ϸ� ���� �ڵ� 1, �ٱ������� 0, ���� �Ӽ��� ���� ���ʵ� 0 �̴�(`P0-02_����_����_�����_2026-09-10.txt`). �� �ź� **����**(���� �ڵ塤�޽���)�� ������ ���� ? ���� �ڵ尡 ���� �Ӽ��� ���� �����ٴ� �ͱ�����. �׷��� x600 ���� **`torch.cuda.is_available()` ���� �������� ���ߴ�** ? `torch/__init__.py:14` �� `import ctypes` �� `_ctypes.pyd` �ʱ�ȭ ����(1114)�� �״´�. DLL �� �ϳ��� ���� ���� **������ DLL �� `ole32.dll` �ε忡���� 1114 �� �����ƴ�** ? `_ctypes` ���п��� �ΰ��� Ȯ������ �ʾҴ�. `combase.dll` �� **�ε�**�ƴ�(COM ��� ������ �� ���). �� �׷��Ƿ� �� ������ũ�� **��ü ������ ������ ���ߴ�** ? `status: INCONCLUSIVE`. �� ���� ������ ���� ������ decision �� ������"
+ 109: status: INCONCLUSIVE
+ 110: commit: 52d72b9
+ 111: 
+ 112: executor_id: "agent:claude-code"
+ 113: executor_tool: "claude-code ���� ? SSH �� x600 ���� ����. AppContainer primitive(�ű� 300�� ��)�����κ� 2�� �ż�, ���� ���� ����"
+ 114: executor_model: "claude-opus-5"
+ 115: executed_at: "2026-09-06T00:20:00+09:00"
+ 116: 
+ 117: review_required: false
+ 118: reviewer_id: "agent:codex-cli"
+ 119: reviewer_tool: "codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) ? 2026-09-10 ���� ��⿭ 8��"
+ 120: reviewer_model: "gpt-6-astra"
+ 121: review_context: "fresh-read-only"
+ 122: review_outcome: "CHANGES_REQUESTED"
+ 123: review_scope: >
+ 124:   `RULE.md` ��7.3 �� **`P0-*`��`DoD-*` �� `status: PASS`** �� ���ؼ��� ����
+ 125:   �˼��� �����Ѵ�. �� ������ `INCONCLUSIVE` �� **���� ����� �ƴϴ�** ?
+ 126:   �׷��� �޴´�.
+ 127: 
+ 128:   �� ������ �ƴѵ� �� �޳�. ���� ���� �Ǵ� �� **"AppContainer ��ü��
+ 129:   �����Ѵ�"** �� ������ ����ϱ� �����̴�. ���� ���� ������ ���� ��
+ 130:   ��衤�� Windows ���忡�� ���԰�, `ole32` ���а� �� ���� �����̸�
+ 131:   �� ������ ���� ��ü�� Ʋ����.
+ 132: 
+ 133:   �˼��ڿ��� Ư�� �� ��:
+ 134:     1. "�Ǵ� ��" ����� ������ �����Ǵ°� ? Ư�� ���� �׽�Ʈ��
+ 135:        �����̳� �ۿ����� ������� �ʴ°�(ù ���� ��Ȯ�� �׷���)
+ 136:     2. ������ �� ���濡 ���� **����**�� �ִ°�, �ƴϸ� "�� �ôµ� ��
+ 137:        �ƴ�" �ΰ�
+ 138:     3. ����� ������ �Ѿ�� �ʴ°� ? package identity ������ ��𼱰�
+ 139:        ���ó�� ���� ���� ������
+ 140: review_artifact: "docs/evidence/_raw/�˼�_2026-09-10/08_P0-02_evidence_CHANGES_REQUESTED.txt"
+ 141: 
+ 142: raw_output_artifact: "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+ 143: raw_output_digest: "sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3"
+ 144: raw_output_bytes: 4346
+ 145: 
+ 146: artifacts:
+ 147:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_5��_��������.txt"
+ 148:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_1��.txt"
+ 149:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_2��.txt"
+ 150:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_3��_�����Ұ�.txt"
+ 151:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_4��_����.txt"
+ 152:   - "docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt"
+ 153:   - "crates/runtime-windows/src/appcontainer.rs"
+ 154:   - "crates/runtime-windows/src/bin/p0_02_probe.rs"
+ 155:   - "crates/runtime-windows/src/bin/dll_probe.rs"
+ 156: 
+ 157: binary_digests:
+ 158:   toolchain: "x600 cargo 1.97.1 (����), ���� ��� cargo 1.97.1"
+ 159: protocol_versions:
+ 160:   schema_version: "proto ���� ����"
+ 161:   canonical_spec: "canonical ���� ����"
+ 162: platform: >
+ 163:   **x600 (Windows 11 Pro, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** ����
+ 164:   SSH �� ���� �����ߴ�. ���� ���(GPU ����)������ AppContainer primitive ��
+ 165:   ���� �׽�Ʈ�� ���ȴ�.
+ 166: 
+ 167:   �� **�� ��� �� �� Windows ���忡���� ���.** `ole32` �ʱ�ȭ ���а� ��
+ 168:   ���� �������� �Ϲ������� Ȯ������ �ʾҴ�(`CLAUDE.md` ��4 ? ǥ���� ������
+ 169:   �۴ٰ� ���Ѵ�).
+ 170: hardware: >
+ 171:   RTX 4070 SUPER �ǹ�. `gpu-probe` �� UUID��VRAM��compute capability 8.9 ��
+ 172:   �о���, �����̳� **��** ���ؼ����� `torch 2.11.0+cu128` ��
+ 173:   `cuda_available=True` �� 64x64 matmul(`matmul_sum=262144.0`)���� ������
+ 174:   ����ߴ�.
+ 175: network_profile: "���� ? ���μ��� ������ DLL �ε常 ���"
+ 176: command: |
+ 177:   # x600 ���� (��δ� ���� E:\gputeer-work �Ʒ� ? C: �� ���� �ʴ´�)
+ 178:   target\debug\p0_02_probe.exe <python ���> [<temp ���>] [<capability SID>]
+ 179:   # ȯ�溯��
+ 180:   #   P0_02_CODE     �����̳� �ȿ��� ���� Python �� ��
+ 181:   #   P0_02_RAW_CMD  ������ ��ü ��ü(dll_probe �� ���� ��)
+ 182:   target\debug\dll_probe.exe <dll ���> [...]
+ 183: 
+ 184: raw_output: |
+ 185:   === �����̳� �� (���ؼ�) ===
+ 186:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+ 187:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+ 188: 
+ 189:   === �����̳� �� ? �Ǵ� �� ===
+ 190:   import sys           ok (exit 0)
+ 191:   import zlib          ok (exit 0)   <- .pyd, C Ȯ��
+ 192:   import _socket       ok (exit 0)   <- .pyd, C Ȯ��
+ 193:   ȣ��Ʈ �ӽ� ���� type  ���� exit 1 �� �ٱ� exit 0 �� ���� �Ӽ� ���� ���� 0  <- ����(���� �ڵ����)
+ 194:                        ���� P0-02_����_����_�����_2026-09-10.txt (���� ���)
+ 195: 
+ 196:   === �����̳� �� ? DLL ���� ===
+ 197:   libffi-8.dll      ok=true
+ 198:   python313.dll     ok=true
+ 199:   vcruntime140.dll  ok=true
+ 200:   oleaut32.dll      ok=true
+ 201:   combase.dll       ok=true      <- **�ε常** �ƴ�. COM ��� ������ �� ���
+ 202:   rpcrt4.dll        ok=true
+ 203:   shcore.dll        ok=true
+ 204:   advapi32.dll      ok=true
+ 205:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)
+ 206:   _ctypes.pyd       ok=false error=1114
+ 207: 
+ 208:   === ������ �� ���� ? ���� ���� ���а� �̾����� (������ **�Ұ��� ���� �ƴϴ�**) ===
+ 209:   ���� ��� ��ȸ ����   C:\Users\<x600-user> ���� 4���� RX        -> ���� ����
+ 210:                         (�ڽ��� �� ��θ� ������ ��ȸ�ߴ��� ���� ����� ����)
+ 211:   �����̳� TEMP ����    E: �� ����� (F) + ȯ�� ����        -> ���� ����
+ 212:                         (�ڽ��� �� ���� �޾� �ű� ����� ���� ����� ����)
+ 213:   capability ����       ǥ�� SID �� ����                    -> ���� ����
+ 214:                         (�� **�� �ѷ� �� Ǯ�ȴ�**������. COM capability �� �� �غô�)
+ 215:   Python ������         embeddable 3.13.7 ���� ����         -> ���� ����
+ 216:                         (���� ������ ���� �и��ϴ�. �� CPython 3.13 �����δ� �Ϲ�ȭ �� �Ѵ�)
+ 217: 
+ 218: negative_tests: >
+ 219:   �� ������ũ�� negative test �� **����**�̴� ?
+ 220:   `the_container_cannot_read_a_file_the_host_can` �� �����̳� �ȿ���
+ 221:   ȣ��Ʈ �ӽ� ������ `type` �ϸ� **0 �� �ƴ� ���� �ڵ�**�� �������� ����
+ 222:   (�� �ź� **����**������ �ܾ����� �ʴ´� ? ��˼� 16). **������ ���� �д�**(�ٱ�
+ 223:   ������ ������) ? ������ "��ΰ� Ʋ���� ����" �ε� ����Ѵ�.
+ 224:   �� �� �׽�Ʈ�� �����̼����� �����ߴ�: ���� �Ӽ� ������ ��°�� �ǳʶٸ�
+ 225:   ������ �����Ѵ�. �� 2026-09-10 �˼� 8 �� "�� ����� ������ ����" �� ¤��
+ 226:   **�ٽ� ���� ������ �����**(���� ���) ? ����: �ٱ� exit 0 �� ���� exit 1 /
+ 227:   ���� �Ӽ� ������ �� �����̼�: ���� exit 0 -> �׽�Ʈ ����.
+ 228:   `docs/evidence/_raw/P0-02_����_����_�����_2026-09-10.txt`. x600 ������ �ٽ�
+ 229:   ���� �ʾҴ�. ó�� �� ����(`cmd /c exit 42` �� ���� �ڵ常 Ȯ��)��
+ 230:   **�����̳� �ۿ����� ���**�� �ƹ��͵� ���� ���߰�, �� �����̼��� �װ���
+ 231:   �巯�´�.
+ 232: 
+ 233:   �� �ۿ�: �������� �̸��� ������ SID �� ������(����� �� ��ȭ�� ��Ģ��
+ 234:   ������ �����̳ʸ� ����Ű�� �ʰ�), �������� ������ �������.
+ 235: 
+ 236: limitations: >
+ 237:   �ڡ� **�� ������ũ�� �ڱ� ������ ������ ���ߴ�.** `P0-02` ��
+ 238:   "AppContainer ���� CUDA �� �Ǵ°�" �� ���µ�, **CUDA ��ó���� ����
+ 239:   ���ߴ�** ? �� ���� `import ctypes` ���� ������.
+ 240: 
+ 241:   �� **`ole32` �ε尡 �� 1114 ����, �װ��� `_ctypes` ������ ��������
+ 242:   �𸥴�.** ����(`dll_probe`)�� `LoadLibraryW` �ϳ��� Win32 ���� �ڵ���̶�
+ 243:   ������ �ʱ�ȭ �Լ��� ��ġ �� �ΰ� �� �ٸ� ����� ���縦 Ȯ������ ���Ѵ�
+ 244:   (2026-09-10 �˼� 8. ������ "���� ���� ole32 �ϳ�" ��� ������). Process
+ 245:   Monitor ������ ���� �źε� ������ ���� �ȴ�.
+ 246: 
+ 247:   �ڡ� **2026-09-07 ���� �˼� ���� ? �� ������ ���� ����� �Ѵ�.**
+ 248: 
+ 249:       ��ü P0-02 ����("AppContainer ���� CUDA �� �Ǵ°�")
+ 250:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 251: 
+ 252:       **���� ������ �� ����**
+ 253:         x600 �� �� Windows ���� �� package identity ���� bare
+ 254:         AppContainer �� ������ �� CPython 3.13 ������
+ 255:         -> CUDA ȣ�� **����** ������.
+ 256:            �� ���� ���� **���� �ܰ��� Ž��**�̾��� ? 1���� ��ũ��Ʈ�� ��������
+ 257:              �� �߰�(0xC0000135), 2������ `_ctypes` �ʱ�ȭ ����, 4���� ������
+ 258:              import ��, 5��6���� DLL �ε� �����̴�. ���� ���и� ���� �� ������
+ 259:              ���� �ƴϴ�(�˼� 8. ������ "���� �� ���� ���� �ڸ����� �׾���"
+ 260:              �� ������)
+ 261: 
+ 262:       �˼� �Ǵ�: ���� ������ �ΰ�� �ƴϴ�. �ٸ� `FAIL-SCOPE` �� ��
+ 263:       �� �ִ� ��쵵 **�� ���� �������� scope �� ������ ����**�̰�,
+ 264:       S2 ��ü�� AppContainer �Ϲݿ� ���� `FAIL-SCOPE` �ٰŴ� ����.
+ 265: 
+ 266:   �� **������ ������ ������� ���� �ʴ´�.** �츮 �����̳ʴ�
+ 267:   `CreateAppContainerProfile` �� ���� **package identity ���� ��
+ 268:   AppContainer** �̰�, Store ���� package identity �� ���� COM �� ���� ?
+ 269:   �� ������ �� �ִ�. �׷��� **Ȯ������ �ʾ����Ƿ� �������θ� ���´�.**
+ 270: 
+ 271:   �� x600 �� Python��DLL ������ **�� ��� �� �� Windows ����**�� �����. �ٸ�
+ 272:   ���忡�� ������ �𸥴�. ���� ������ ���� ��迡�� ���.
+ 273: 
+ 274:   �� `P0-02` üũ����Ʈ �� **�� �� ��**: filesystem allowlist �� ������
+ 275:   ����, outbound ���� ����, "Create Process in Sandbox API ���� ����
+ 276:   ��Ȯ��". GPU ����̹� capability �ĺ��� **���۵� �� �ߴ�** ? �� �տ���
+ 277:   ������ �����̴�.
+ 278: 
+ 279:   �� ���� �� �� ���� ������ ���� �����ߴ�(Python Ʈ�� 27112 files ��
+ 280:   ���� 4�� �� ALL APPLICATION PACKAGES). ���� `S-1-15-3-65536-...` ��
+ 281:   Windows �� ���� �δ� capability ACE �̰� �츮�� ���� ���� �ƴϴ�.
+ 282: 
+ 283: decision: >
+ 284:   **`P0-02` �� DoD �� ���� �������� �ʴ´�.**
+ 285: 
+ 286:       ���� -> S2 ���� ����, ������ ȯ�濡���� enable
+ 287:       ���� -> S2 �� EXPERIMENTAL �� ����, S1 �� ������ Windows ����Ƽ�� ���
+ 288: 
+ 289:   �ڡ� **������ �ѷ� ������**(2026-09-10 �˼� 8 ? "���� ������ �𸣴�
+ 290:   �Ͱ� ������ �������� ���и� ������ ���� �縳�Ѵ�"):
+ 291: 
+ 292:       ��ü ����(AppContainer ���� CUDA �� �Ǵ°�)
+ 293:         -> INCONCLUSIVE. CUDA �� �θ����� ���ߴ�
+ 294:       �� ����(x600 �� �� ���� �� package identity ���� �� ������ �� CPython 3.13 ��
+ 295:               ��ϵ� ���� `p0_02_probe.exe` + `P0_02_CODE` �� Python �� �� ��
+ 296:               ��� `import torch` -> `import ctypes`)
+ 297:         -> ctypes/torch ��ΰ� CUDA ȣ�� **����** ������.
+ 298:            **�� �����δ� FAIL-SCOPE �� �޹�ħ�Ѵ�**
+ 299: 
+ 300:   �� ������ "package identity ���ɼ��� �������� ���� ���з� Ȯ���ϸ� ����
+ 301:     ���� ���� ������� ���� ��" �̶�� ������. **���� ���� �� ����**���� ?
+ 302:     ������ �𸣴� ���� ���� ������ ���� ������ ���� �ʴ´�.
+ 303:   �� �׷��� S2 **��ü**�� ���� ������ �ƴϴ�. package identity �� COM
+ 304:     capability �� �ٸ� Windows ���带 ���� �ʾҴ�.
+ 305: 
+ 306:   �� �� ���� ������ ������ **�̹� �����ϴ�**(��). ���� ������ �װ���
+ 307:     ������ ���� �ƴ϶� **�ٸ� ����**�� ���� ��� ���̰�, �� ����� S2 ��ü
+ 308:     �Ǵܿ� ���δ�(��˼� 16 ? ������ "ȸ�� �Ұ��� FAIL-SCOPE" �� ������ �ɾ�
+ 309:     ���� ������ �浹�ߴ�):
+ 310:     1. Process Monitor ������ `ole32` �ε� ���� ������ ���١������� ������
+ 311:        ���� ��ġ�� Ȯ���Ѵ�(�� ������ "DllMain �� �������� �źεǴ���" ���
+ 312:        ������ ? ���� �Լ��� '�ź�' �� ���� ���� �����ߴ�)
+ 313:     2. package identity �� COM capability �� �ٸ� Windows ���� ������ ���� ���
+ 314:     3. �� ����� S2 ��ü�� EXPERIMENTAL �� Ȯ������ ���Ѵ�
+ 315: 
+ 316:   �� �� ������ **S2 �� ���¸� �ٲ��� �ʴ´�.** ���� ����(EXPERIMENTAL)��
+ 317:   �� ������ ������� �ʴ´�.
+ 318: ---
+ 319: 
+ 320: # P0-02 ? Windows AppContainer + CUDA
+ 321: 
+ 322: ## �� ��
+ 323: 
+ 324: AppContainer �� ���������(x600) ȣ��Ʈ ������ �� �д� ������ ���̴µ�
+ 325: (���� �ڵ� ����, ���� ���), **�� �ȿ��� torch ��
+ 326: import �� �� ����.** ������ DLL �� `ole32.dll` �ε忡�� 1114 �� �����ƴ� ?
+ 327: `_ctypes` ���п��� �ΰ��� Ȯ������ �ʾҴ�.
+ 328: 
+ 329: ## �� �̰� �
+ 330: 
+ 331: 2026-09-05 ����ڰ� ��ȭ���� ������ `netsh advfirewall` �� **��� ����**
+ 332: �ƿ��ٿ�� ������ �������� Ȯ���ߴ�. �׷��� �װ����δ� `NetworkPolicy` ��
+ 333: ������ �� ���� ? ���� PC ���� `python.exe` �� ��°�� ������ ��������
+ 334: �ٸ� �۾����� �����(`CLAUDE.md` ��0.1).
+ 335: 
+ 336: AppContainer �� ���μ������� **���� SID** �� �ֹǷ� �� SID �� ��Ģ�� �ɸ�
+ 337: �� Job �ϳ��� ������. �׷��� ��ȭ�� ������ ���� �����̰�, �װ��� ��
+ 338: ������ũ�� ���� �� ������.
+ 339: 
+ 340: ## ��� ������
+ 341: 
+ 342: `import _ctypes` �� ���� DLL �� �� ���� �õ��� **���� ������ �����.**
+ 343: �׷��� `LoadLibraryW` �ϳ��� �ϰ� Win32 ���� �ڵ带 ��� `dll_probe` ��
+ 344: ����� �����̳� �ȿ��� DLL �� �ϳ��� ������. �׷��� ���� �ʾ�����
+ 345: "`_ctypes` �� �� �ȴ�" ���� ������ ���̴�.
+ 346: 
+ 347: ## �� ������ �������� �ʴ� ��
+ 348: 
+ 349: **"AppContainer ���� CUDA �� �� �ȴ�" �� �������� �ʾҴ�.** CUDA ��
+ 350: �õ����� �� �ߴ�.
+ 351: 
+ 352: **"AppContainer ���� ����Ƽ�� �ڵ尡 �� ����" �� �ƴϴ�.** C Ȯ��
+ 353: (`zlib`��`_socket`)�� �ε�ȴ�. `combase.dll` �� **�ε�**�ȴ�(��� ������
+ 354: �� ���). ������ DLL �� 1114 �� ���� ���� `ole32` �� `_ctypes` �� ? �ٸ�
+ 355: ��ְ� ���ٴ� ���� �ƴϴ�.
+ 356: 
+ 357: **Python��DLL ������ x600 �� ��� �� �� Windows ����**�� �����. ���� ������
+ 358: ���� ��迡�� ���(x600 ���� �ٽ� ���� �ʾҴ�).
+
+ succeeded in 2313ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+   1: <!--
+   2: �ڡڡ� 2026-09-10 ���� ? **�� �ʾ��� ���� �� ����� ũ�� �ٲ����.**
+   3: 
+   4:   �Ʒ� ������ 2026-09-03 �� �� �״�� �ΰ�, �ٲ� �͸� ���� ���´�.
+   5:   ������ `review_scope` �� "�� �� ���� ���� ���Ͱ� �����" �� �ϴµ�
+   6:   **�װ� ���� �����̴�.**
+   7: 
+   8:   ���� ������ �ٲ���� ������������������������������������������������������������������������������������������
+   9:   �� 1. �˼��� ������ ���Ҵ�. ���� �ִ� ���� ���Ͱ� �ƴ϶�        ��
+  10:   ��    **CLI ����**�̾��� ? 0.148.0 -> 0.153.4 �� �ø���          ��
+  11:   ��    `gpt-6-astra` �� �ٷ� �����ߴ�.                            ��
+  12:   ��                                                               ��
+  13:   ��      1 plan-job ���� �ڵ�    ACCEPTED                         ��
+  14:   ��      2 scheduler-tick ����   CHANGES_REQUESTED -> ����        ��
+  15:   ��      3 issue-grant �ڱ⼭��  CHANGES_REQUESTED -> ����        ��
+  16:   ��      4 stage-job             CHANGES_REQUESTED -> ����        ��
+  17:   ��      5 Manifest ��ȯ��       CHANGES_REQUESTED -> ����        ��
+  18:   ��      6 submit                ���� ��                          ��
+  19:   ��                                                               ��
+  20:   �� 2. **�� �ټ��� ���� ���� �ټ� ���� ã�Ҵ�.** �� �ʾ���        ��
+  21:   ��    "�ƴ�" �� ���� ���� ���� �ȿ� �־���:                      ��
+  22:   ��      �� �׽�Ʈ�� ������ ������ ��鼭 ����ߴ�(scheduler-tick) ��
+  23:   ��      �� �߸��� Ű�� ������ ���⹰�� ������(issue-grant)        ��
+  24:   ��      �� "QUEUED ������" ������ �� ���� �� ���Ҵ�(stage-job)    ��
+  25:   ��      �� ���� �� �� �ڿ��� "0�� �䱸" �� �Ѿ��(��ȯ��)       ��
+  26:   ��      �� ���� ����Ⱑ submit ���� �־���(�� ������ �߰�)     ��
+  27:   ��    ��: docs/reports/debugs/2026-09-10_0900_�˼���_ã��_����_5��.md ��
+  28:   ��                                                               ��
+  29:   �� 3. **�׷��� `commit: f79b485` �� �� �̻� ���� �ʴ´�.**       ��
+  30:   ��    �� Ŀ���� �ڵ忡�� �� ������ ��� �ִ�. ���� Ʈ������      ��
+  31:   ��    ������ ������ **Ŀ�Ե��� �ʾҴ�**(2026-09-10 ���� ��Ŀ��   ��
+  32:   ��    34��). evidence �� Ŀ���� �����Ѿ� �ϹǷ�,                 ��
+  33:   ��    **�� �ʾ��� evidence �� �ø��� ���� Ŀ���� ����Ǿ��      ��
+  34:   ��    �Ѵ�.** �װ� ����� ���� �����̴�.                         ��
+  35:   ��                                                               ��
+  36:   �� 4. ��ũ�����̽� 1030 passed �� 0 failed(���� �ݿ� ��).         ��
+  37:   ��    �ʾ� ������ 922/918 �� 2026-09-03 ���� ���̴�.             ��
+  38:   ����������������������������������������������������������������������������������������������������������������������������������
+  39: 
+  40:   �� **claim �� ���� �� ���ƴ�.** 6�� ������ ������ 7��(�� ����)��
+  41:     ���� ���� ��ĥ��, �ƴϸ� 7�� �˼��ڿ��� �� ���� ����°�� ����
+  42:     �Ǵ��� ������ ���ؾ� �Ѵ�. ���ڰ� ���ٰ� ���� ? ���� ���� ��ġ��
+  43:     �˼��ڰ� **������ ����**�� ���� �ǰ�, �� �ʾ��� ���� ������
+  44:     �����ߴ����� �������.
+  45: 
+  46: �ڡڡ� 2026-09-10 ���� �˼� ���� (7��) ? CHANGES_REQUESTED
+  47: 
+  48:   �� ����, �˼��ڰ� **Ȯ���� �� ��**���� ? �� �ʾ��� �ڱ� �Ѱ踦
+  49:     ������ �ʾҴ�. �̰��� �����̼� �� ��(G5��G6��T1)�� ���� �����ϰ�,
+  50:     G5��G6 ���� "'�׽�Ʈ�� ��Ű�� �ִ�' �� ���ϸ� ����" �̶������
+  51:     ���� �״�. �˼��ڰ� "����ٴ� ������ ã�� ���ߴ�" �� �ߴ�.
+  52: 
+  53:   ���� �׷��� **�� ���� ��**�� �ִ� ������������������������������������������������������������������
+  54:   �� 1. **������ ������ �� ���ٴ� �Ѱ踦 �� ������.**               ��
+  55:   ��    219~226���� "�ĺ� ������ ���� ������ �𸥴�" �� �����Ѵ�.   ��
+  56:   ��    �׷��� **�ĺ� ���͸� ��ġ�� ���� ������� Ǯ���� ��ó��**  ��
+  57:   ��    ������. �����δ� ���� ��� ��ü�� production �� ����.        ��
+  58:   ��                                                               ��
+  59:   �� 2. **��� ������ GPU �� �ƴ϶� ��� ��ü��� ���� �� ������.**  ��
+  60:   ��    "����� ���" ��� ǥ���� �ڿ� ������ �������� �ʴ´�.      ��
+  61:   ��    ���� ����� **�ٸ� GPU ��** �� ����.                        ��
+  62:   ��                                                               ��
+  63:   �� 3. **���� ������ "��� ������ Ȯ���ߴ���" �� �� ������.**     ��
+  64:   ��    ��: "���� ���� �����ڰ� keyring ���� ������� ��ȹ��        ��
+  65:   ��         �������� �ʴ´�"                                       ��
+  66:   ��    �� ������ **�ٸ� �������� ���� �����ص� �����Ѵ�.**         ��
+  67:   ��    �ڡ� �˼� 2���� ���� �ڵ忡�� ã�� �Ͱ� **���� �η�**�� ?     ��
+  68:   ��      �� �ʾ��� 297~300�࿡ �� ������ ������ ���� �״µ���      ��
+  69:   ��      ������ ������ �� ����̾���.                              ��
+  70:   ��                                                               ��
+  71:   �� 4. ��û�� �ִ� "22�� �� 21�� ����" �� �� �ʾȿ��� ã�� ��      ��
+  72:   ��    ����. �ʾ��� **�����̼� 9��**�� ������. ���ڸ� ����� �Ѵ�. ��
+  73:   ����������������������������������������������������������������������������������������������������������������������������������
+  74: 
+  75:   ���� ���� docs/evidence/_raw/�˼�_2026-09-10/07_DoD-68_evidence_CHANGES_REQUESTED.txt
+  76: 
+  77: �ڡڡ� 2026-09-10 17:30 ? **���� 7 �� ������ �ݿ��ߴ�.** �� �� ������
+  78:   ��ġ�� �ʴ´� ? ������ �����̾������� ����̴�. �ٲ� ��:
+  79:     claim         �� ���� -> ��. ����ȭ�������� �����̶�� ���� claim �ȿ� �д�
+  80:     commit        f79b485 -> 0d6a6ed. �� ������ �� ������ raw_output ���� ������
+  81:     �����̼�      1�� 9�� -> ���� 22��(21 ����, ���� �ϳ� T1)
+  82:     negative      �� ���忡 ����:�� �� Ư���ϴ� ����
+  83:     limitations   ���� ���� �Ұ� �� ��� ���� ��� �߰�
+  84:   �� �� �ʾ��� **���� PASS �� �ƴϴ�** ? ��˼� 13��14 �� �� �罽�� ��������
+  85:     ���� �ִ�.
+  86: 
+  87: �ڡڡ� 2026-09-10 ��˼� 16 ? CHANGES_REQUESTED (�ݿ����� �ٽ� �ô�)
+  88:   �������� ��: claim ���(�� �� ����ȭ������ �̿�) �� ���� �׽�Ʈ ���� �ο��
+  89:   ���� �ܾ� �� ���� ���� �Ұ��� ��� ���� ���.
+  90:   ���Ҵ� �� ? **���� �������⿡ �� ����� ��� �־���**:
+  91:     decision   "���� �˼��� ���� PASS �� �� �� ���� �� ���Ͱ� ���ƿ���" �״��
+  92:     ����       scheduler-tick �� "��~�� �� ������ ����" ? �����δ� �� �� ����
+  93:     limitations "�����̼� 3���� �� ������" �� ������ ? G5��G6 �� ��Ʊ�� ���ƴ�
+  94:     executed_at ù ���� �ð��� ? ������ �ð���Ŀ���� front-matter �� ����
+  95:   -> �� ���� ���ƴ�. ���� docs/evidence/_raw/�˼�_2026-09-10/16_��˼�_evidence_�ʾ�_��.txt
+  96: 
+  97: �ڡ� �̰��� **���� evidence �� �ƴϴ�.** docs/evidence/ �� �θ�
+  98:     verify_evidence.py �� �ź��Ѵ� ? �׸��� �װ� �Ǵ�.
+  99: 
+ 100:     schema v2(ADR-030)���� "������ ������ �˼��� ����" �� ���°�
+ 101:     **����.** review_artifact �� �ʼ��ε� �� ���� �˻簡 "����:�� ��ġ��
+ 102:     �ϳ��� ���� ? ��ü�� �ݷ� ���� �˼��� ������ �����̴�" �� �䱸�Ѵ�.
+ 103:     ���� ���� �α׸� �� ĭ�� ���� ������ ���ĸ� ���ߴ� ���̴�.
+ 104: 
+ 105:     �׷��� �ʾ����� �����. 2026-09-07 15:43 ���� ������ �˼��� �ް�
+ 106:     ACCEPTED �� ������ review_* �� ä�� docs/evidence/ �� �ű��
+ 107:     status �� PASS �� �ø���. �ݷ��Ǹ� ��ġ�� �ٽ� �޴´�.
+ 108: 
+ 109:     �� �Ʒ� review_outcome: PENDING �� **��Ű���� ���� ��**�̴�.
+ 110:       �ű� �� �ݵ�� ���� �������� �ٲ۴�.
+ 111: -->
+ 112: 
+ 113: ---
+ 114: schema_version: 2
+ 115: id: DoD-68
+ 116: claim: "��ǰ�� �� �ִµ� �̾����� �ʾ� Job �� �ϳ��� ���� �� ���� ���¿���, ���� ���� �� �� **��**(�� ���� �� �� scheduler ���� �� �� Grant �߱�)�� �մ� ���� ���� ���� ������� ? `plan-job` �� `stage-job`(`orchestrate` �� ù production ȣ����) �� `issue-grant`(����� ������ ��Ǹ����� ������ Grant) �� `scheduler-tick`(�ĺ��� ���� ������ ��� **�� ��** �����Ѵ�) �� `JobManifest -> JobRequirements` ��ȯ�� �� `submit` �� ���� �� Ȯ��. **�׽�Ʈ�� �غ��� ���¿���** `coordinator-stub --grant-from-control-db` �� �� Grant �� ���� OS ���μ����� Agent �� ���� TCP �� �޾� �����ϴ� �ͱ��� Ȯ���ߴ�. �� **�� ����ȭ�� ���� ���ߴ�** ? tick �� �ܹ��̰� ������ ���θ� ť �� �տ��� �����. �� **�� �罽�� Job �� ������� �ʴ´�** ? ����� ���� Grant �� Manifest �� ����(2026-09-10 Ȯ��). �� ���� �˼�(8��)�� ��˼�(9~16)�� �� �罽���� ������ ã�� ���ư� ������ ��˼��� ���Ҵ� ? �׷��� `status: INCONCLUSIVE` ��"
+ 117: status: INCONCLUSIVE
+ 118: commit: 0d6a6ed
+ 119: 
+ 120: executor_id: "agent:claude-code"
+ 121: executor_tool: "claude-code ���� ? CLI ���� 4�� �ż� + coordinator ��� 2�� �ż�, ���� �׽�Ʈ 37��, �����̼� ���� 22��(3����, 21 ����)"
+ 122: executor_model: "claude-opus-5"
+ 123: executed_at: "2026-09-03T17:40:00+09:00"
+ 124: # �� ù ���� �ð��̴�. 2026-09-10 ������(commit 0d6a6ed)�� raw_output ù ���Ͽ� �ִ�
+ 125: 
+ 126: review_required: true
+ 127: reviewer_id: "agent:codex-cli"
+ 128: reviewer_tool: "codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) ? 2026-09-10 ���� ��⿭. 2026-09-03 �� 3���� ���� ������ ���� ���ͷ� �ߴܵƾ���"
+ 129: reviewer_model: "gpt-6-astra"
+ 130: review_context: "fresh-read-only"
+ 131: review_outcome: "CHANGES_REQUESTED"
+ 132: review_artifact: "docs/evidence/_raw/�˼�_2026-09-10/07_DoD-68_evidence_CHANGES_REQUESTED.txt"
+ 133: review_scope: >
+ 134:   �� 2026-09-10 ? �˼��� �޾Ҵ�(���� 7: CHANGES_REQUESTED, �� �Ӹ� ����).
+ 135:   �Ʒ��� 2026-09-03 ��� ����̴�.
+ 136: 
+ 137:   �ڡ� **�˼��� ���� ���ߴ�. �׷��� �� ������ PASS �� �ƴϴ�.**
+ 138: 
+ 139:   ���ա����� ���硤��� ���� �� ������ **���ÿ�** �ɾ��µ� �� �� ����
+ 140:   ���� ���Ͱ� �����(���� 2026-09-07 15:43). `DoD-65` ���� 3����
+ 141:   ������ ȿ�����̾��� ���� �״�� ���� �ߴµ�, **�׶��� ������ ���̸�
+ 142:   �� �ô�** ? �׶��� ����� ���� �� ������ ������ crate �ݿ� ��ģ
+ 143:   ���� ���� ����. ���� �˼� �ϳ��� 131k ��ū�� ���. ������ �ϳ���
+ 144:   �������� �ּ� �ϳ��� ������ �޾��� ���̴�. **�� �Ǵ� ������.**
+ 145: 
+ 146:   �� ��° ����(��ȸ ����)�� �ڵ��� ��ü ���Ͱ� "���� ��ȸ �����
+ 147:   ã�ƶ�" �� ���� �������� �з��� �ź��ߴ� ? �ڱ� ����� �˼��ε�
+ 148:   ��Ž������, ǥ���� �ٲ� �ٽ� �ɾ��� �װ͵� ���Ϳ� �ɷȴ�.
+ 149: 
+ 150:   �˼� ��� �� ����Ұ� ����� �� ���� �������� **�ڱ� �˼�**�� �ߴ�.
+ 151:   �װ��� ã�� ���� �Ʒ� negative_tests �� limitations �� �ִ� ?
+ 152:   ���� �˼��� ������� ���ϸ�, ����Ѵٰ� ���� �ʴ´�.
+ 153: 
+ 154: raw_output_artifact: "docs/evidence/_raw/DoD-68_����_�罽.txt"
+ 155: raw_output_digest: "sha256:911ecb14c7e2e92592a6388796e4c276568aa2b820189b30085049e47d28001f"
+ 156: raw_output_bytes: 10812
+ 157: 
+ 158: artifacts:
+ 159:   - "docs/evidence/_raw/DoD-68_����_�罽.txt"
+ 160:   - "docs/evidence/_raw/DoD-68_x600_����.txt"
+ 161:   - "docs/evidence/_raw/DoD-68_�˼�_�ߴ�.txt"
+ 162:   - "crates/cli/src/plan_job.rs"
+ 163:   - "crates/cli/src/stage_job.rs"
+ 164:   - "crates/cli/src/issue_grant.rs"
+ 165:   - "crates/cli/src/scheduler_tick.rs"
+ 166:   - "crates/coordinator/src/manifest_requirements.rs"
+ 167:   - "crates/coordinator/src/grant_from_stored.rs"
+ 168: 
+ 169: binary_digests:
+ 170:   toolchain: "Windows ���� ��� cargo 1.97.1"
+ 171:   gputeer_exe: "8169984 bytes, debug ������"
+ 172: protocol_versions:
+ 173:   schema_version: "proto ���� ����"
+ 174:   canonical_spec: "canonical ���� ���� ����(52�� �״��)"
+ 175: platform: >
+ 176:   **�� Windows ��迡�� �����ߴ�** ? ���� ���� x600(RTX 4070 SUPER).
+ 177:   x600 ���� ��ũ�����̽� 922 passed / 0 failed / ��� 0 ���� ����
+ 178:   ���� **��Ȯ�� ���Ұ�**, coordinator-agent-selftest 97 �ó�������
+ 179:   ����ߴ�(2026-09-04).
+ 180: 
+ 181:   �ڡ� **Linux �� ���**(2026-09-05, x600 WSL2, Ŀ�� 6.18.33.2, cargo
+ 182:   1.89.0) ? `--exclude gputeer-runtime-windows` �� 918 passed / 0
+ 183:   failed / ��� 0. Windows �� **���� �ҽ� Ʈ��**�� �����Ѵ�.
+ 184: 
+ 185:   �� �ռ� �̰��� "WSL �� �׾���" �� ������ ���� **�����̾���** ? �׶�
+ 186:   x600 ��ü�� �������� ���̾���. ��谡 ���ƿ��� `wsl.exe -e` �� �ٷ�
+ 187:   �����ߴ�.
+ 188: 
+ 189:   �ڡ� **�÷��� ���̰� ���� �����ȴ�**(�̸� ����):
+ 190: 
+ 191:       Windows 914 - 28(Windows ����) = 886
+ 192:       Linux    910 - 24(Linux ����)  = 886   <- ��ġ
+ 193: 
+ 194:   �׸��� ���� ������ ���� **¦**�̴� ? junction �ź� <-> symlink �ź�,
+ 195:   Job Object ���� <-> cgroup ����, DPAPI K1 <-> systemd-creds K1.
+ 196:   **������ ���� ���� �׽�Ʈ�� ����**(`CLAUDE.md` ��4 �� ����ϴ� ����
+ 197:   ��Ȯ�� �װ��̴�).
+ 198: hardware: >
+ 199:   ���� ���� GPU ����. **x600 �� RTX 4070 SUPER �ǹ�**(driver 595.79,
+ 200:   CUDA 13020)�̰� �ű⼭ `gpu-probe` �� ���� ���� �о��� ? UUID
+ 201:   `GPU-09a269a7-...`, total 12878610432, free 12581863424, cc 8.9,
+ 202:   MIG ������.
+ 203: 
+ 204:   �ڡ� **�� �ǹ� ������ `import-inventory` �� ���ȴ�.** ���ݱ��� inventory
+ 205:   �� ���� ������ �� JSON �̾��� ? `gpu_id` �� ó������ ��¥ NVML UUID ��.
+ 206:   1���� `BOOTSTRAP_REJECTED: verifying_key_hex �� Ed25519 ����Ű��
+ 207:   �ƴϴ�` �� ������(���� ä�� `0x31` �ݺ��� ��ȿ�� � ���� �ƴϴ� ?
+ 208:   **��¥ ������ �ɸ� ������ ���а� �ƴϴ�**). ���� Ű�� �ٲٴ�
+ 209:   `IMPORTED entries=1 registered=1 inventories_updated=1`.
+ 210: 
+ 211:   �� �罽�� �޺κ�(plan-job ����)�� x600 ���� **���ϸ����δ� �� ������**
+ 212:   ? keyring �� ����� CLI ��ΰ� �����(�׽�Ʈ�� Rust API �� �����).
+ 213:   �� �κ��� x600 �� ���� �׽�Ʈ �ȿ��� ���Ҵ�(922�ǿ� ����).
+ 214: network_profile: >
+ 215:   grant_over_wire �� ���� 127.0.0.1 TCP �� ����(���� ���μ��� 2��).
+ 216:   �������� ���ϰ� SQLite �� ����.
+ 217: command: |
+ 218:   cargo test --workspace
+ 219:   cargo test -p gputeer-cli --test plan_job --test stage_job --test issue_grant --test grant_over_wire --test scheduler_tick
+ 220:   # �����̼� ���� 22�� ? 3����(2026-09-03~04). 1�� 9���� scratchpad/mutate.py
+ 221: 
+ 222: raw_output: |
+ 223:   === 2026-09-10 ������ (commit 0d6a6ed ? �˼� 1~12 ���� �ݿ�) ===
+ 224:   cargo test --workspace   1055 passed / 0 failed / ignored 1 / ��� 0
+ 225:   �� �Ʒ��� **2026-09-03 f79b485 ����** ���̴�. �� �ڵ忡�� �˼��� ã��
+ 226:     ������ ��� �־��� ? �� ���� ���� �ڵ��� �������� ���� ����.
+ 227: 
+ 228:   === cargo test --workspace (f79b485) ===
+ 229:   915 passed / 0 failed / ��� 0   (���� �� 906)
+ 230: 
+ 231:   === �ű� ���� �׽�Ʈ 37�� ===
+ 232:   plan_job        10 passed
+ 233:   stage_job        7 passed
+ 234:   issue_grant     10 passed
+ 235:   grant_over_wire  2 passed
+ 236:   scheduler_tick   8 passed
+ 237: 
+ 238:   === �����̼� 1�� 9�� (2026-09-03, �ڱ� �˼� 2ȸ�� ����) ===
+ 239:   M1 �̼��� workload �� Training ����       ����
+ 240:   M2 �𸣴� enum ���� ������ ���           ����
+ 241:   G5 Attempt/Lease fence ���� ����          �� ���� (limitations ����)
+ 242:   G6 ���� ���� Ȯ�� ����                    �� ���� (limitations ����)
+ 243:   G7 ���� Lease �ε� �߱�                 ���� (1ȸ���� �� ������)
+ 244:   T1 �ĺ��ڿ��� plan_id �� ����             �� ���� (limitations ����)
+ 245:   T2 Lease �߱� �ð��� �ð��               ���� (1ȸ���� �� ������)
+ 246:   T3 ť�� ���� �־ ����                  ���� (1ȸ���� �� ������)
+ 247:   P3 ���� 0 �̾ ť�� �ø���              ����
+ 248: 
+ 249:   === �����̼� ���� 22�� (2026-09-04, 3����) ===
+ 250:   1��  9�� (���� ���� ��)          8 ����  G5��G6 �� DB ���� �׽�Ʈ�� ����(bbe7785)
+ 251:   2��  6�� (�� ���� ����)          6 ����  (a77e865)
+ 252:   3��  7�� (��ȯ�� ���� + submit)  7 ����  (2306ebd)
+ 253:   ���� 22�� �� 21��. ���� �ϳ��� **T1** ? ����Ұ� �� ��Ȳ ��ü�� ����
+ 254:   ���������� �� ���(limitations)
+ 255: 
+ 256: negative_tests: >
+ 257:   �ź� ��� ���ַ� ®��. ��ǥ���� ��:
+ 258:   --job-db "" �� �޾Ƶ����� �ʴ´�(SQLite �� �� ��ε� �ӽ� DB �� ����
+ 259:   �ش� ? ������� is_durable() �� ��� ���´�);
+ 260:   ���� ���� �ϳ��� ��� **��� ������ �̸��� ���** �ź��Ѵ�;
+ 261:   ���� �ĺ��� 0 �̸� ť�� �� �ø���(�����̼� P3 �� Ȯ��);
+ 262:   ���� ���� �����ڰ� keyring ���� ������� ��ȹ�� �������� �ʴ´� ? ������
+ 263:   `UnknownSigner` �� **Ư���Ѵ�**(`crates/cli/tests/plan_job.rs:467`. ���� ID ��
+ 264:   �ٸ� Ű�� ������ ������ `InvalidSignature` �� ������);
+ 265:   ���� Lease �δ� Grant �� �� ���� ? **��� ������ ������ �߱޵Ǵ�
+ 266:   ����**�� ���� �״�(�װ� ������ "�׻� �ź�" �ε� ����Ѵ�);
+ 267:   Grant �� Lease ���� ���� ��� �ź��Ѵ� ? ���� `���� �ʴ�` �� ����, **��Ȯ��
+ 268:   Lease ���� �ð��� ����ϴ� ����**�� �д�(`crates/cli/tests/issue_grant.rs:542`);
+ 269:   ť�� TTL ���� ���� �־����� �������� �ʴ´�(�̹� ����� Lease ��
+ 270:   �ְ� �ǹǷ�);
+ 271:   �� ť�� **������ �ƴϴ�** ? TICK_IDLE. ������ �̰� ���з� ���� ����
+ 272:   ���ް� ��ַ� ���δ�;
+ 273:   ����� ���� �� ��° Job �� �� ��´� ? ���� `node is already reserved` ��
+ 274:   ���� �� ��° Job �� `QUEUED` �� ������ ����(`crates/cli/tests/stage_job.rs:452`).
+ 275:   �� �� ���� ������ Ư���ϰ� �� ���� **2026-09-04~07** �̴�. �� ������ `!ok`
+ 276:     �� �ô� ? �˼� 2���� ã�� ������ ���� ����̴�.
+ 277: 
+ 278: limitations: >
+ 279:   �ڡ� **�����̼� ? 1��(2026-09-03)������ 3���� �� ������. ���� ���� ����
+ 280:   T1 �ϳ���**(���� 22�� �� 21��, raw_output ����).
+ 281: 
+ 282:   G5(Attempt/Lease fence ����)��G6(���� ���� Ȯ��) ? ��ÿ��� ����
+ 283:   staging_store.rs �� **�� BEGIN IMMEDIATE �ȿ��� �Բ�** ���� ��߳� ���¸�
+ 284:   ���� ��η� ���� �� ���ٰ� ���� "�׽�Ʈ�� ��Ű�� �ִٰ� ���ϸ� ����" �̶�
+ 285:   ������. **��Ʊ�� DB �� ���� �����ϴ� �׽�Ʈ�� �����ߴ�**(bbe7785) ? ������
+ 286:   ������. �Է� ������ �ƴ϶� **�ջ� ���**��� ������ �״�δ�.
+ 287: 
+ 288:   T1(�������� plan_id ����) ? ó���� "���� ��ȹ�� ������ ��������
+ 289:   �ʴ´�" �� �����µ� **�� ��Ȳ�� ������� ����Ұ� �� �տ���
+ 290:   ���Ҵ�**(queued Job plan conflict). QUEUED �� Job �� ��ȹ�� ��
+ 291:   �ٲ��. �׷��� plan_id �� ���� ����� �� ���� ���� ���� �ʴ� ?
+ 292:   �ּ��� ��Ƿ� ���ƴ�.
+ 293: 
+ 294:   �ڡ� **����ȭ�� ������ ���� ���� ? �ĺ� ������ ���� ������ �𸥴�.**
+ 295:   ��尡 ���ε��� �� ��° tick �� "node is already reserved" �� ������.
+ 296:   evaluate_eligibility/rank_best_fit �� inventory �� ���� ������
+ 297:   staging ������� �ٸ� ���̺��� �־� ���� �մ� ���� ����. ������
+ 298:   ����������(���� ������ �ߺ��� ���´�) **������ ������ ť �� �տ���
+ 299:   ���� �����.** ��ġ���� �Թ� ������ �ʿ���(������ pool_snapshot ����
+ 300:   ���°� �� hard-filter ���� �Ÿ��°� �� ������ ��õ��ΰ�) ��ġ�� �ʰ�
+ 301:   **���� ������ �׽�Ʈ�� ����**�ߴ�.
+ 302: 
+ 303:   �ڡ� **������ ������ �� ����**(2026-09-10 �˼� 7 �������� �߰�). �ĺ�
+ 304:   ������ ���ĵ� ���� ������ �� Ǯ���� ? ���� ��ΰ� production �� ����.
+ 305:   `reservation_release.rs` �� ������ `RuntimeStopProof` �� �䱸�ϰ� ����
+ 306:   ������ ���� "���� �� ��" �̴�. ���� ������ 2026-09-06 �� �������� ��
+ 307:   ������ ���� �ʴ´�.
+ 308: 
+ 309:   �ڡ� **��� ������ GPU �� �ƴ϶� ��� ��ü��.** "����� ���" �� GPU ��
+ 310:   ���� �ƴ϶� **���**�� ��ٴ� ? ���� ����� �ٸ� GPU �� �� ����
+ 311:   (`DoD-47` �� node-exclusive reservation).
+ 312: 
+ 313:   �� **scheduler �� node_id �� Agent �� device id �� �ٸ� �̸� �����ε�
+ 314:   �մ� ���� ����.** ������ ��ڰ� ���� ���� �����ؾ߸� wire ��ΰ�
+ 315:   �̾�����. �������� ���谡 �ƴϴ�.
+ 316: 
+ 317:   �� **issue-grant �� Ű�� ���� �� Coordinator �� ������ �� ����.**
+ 318:   �ڱ� ������ �ٿ����� Ȯ���ϴ� ���� ���������������ڵ��̴�. ������ Ű��
+ 319:   �����ϸ� ����ϰ� ���߿� Agent �� �ź��Ѵ� ? �������� ������(�ƹ���
+ 320:   �� ���� Grant ��) ��ڴ� ��ȿ�� ���� ���� �� �ȴ�. ��������
+ 321:   Coordinator ����Ű ����� �ʿ��ϰ� �� ����ҿ� ����.
+ 322: 
+ 323:   �� plan_job.rs �� **�׽�Ʈ�� �������� ���� �бⰡ �ϳ� ��** �ִ�
+ 324:   (���� ���� �����ڿ� ����� ������ ��) ? �ڵ� �ּ��� ���� �״�.
+ 325: 
+ 326:   �� �� �罽�δ� **Job �� ������� �ʴ´�.** Agent �� ���� �ڵ�� �ִ�
+ 327:   (`agent/src/exec.rs`, 2026-09-06 Ȯ��) ? �׷��� ����� ���࿡�� ���� Grant
+ 328:   �� Manifest �� ���� ������ ���� ����(2026-09-10 Ȯ��, `grant_over_wire.rs`
+ 329:   �� �� �׽�Ʈ). �� �罽�� **����� Grant �������**��.
+ 330: 
+ 331: decision: >
+ 332:   �� ������ **�κ� �Ϸ�**�� ����Ѵ�. �� ���� �� **��**�� �̾�����, �׽�Ʈ��
+ 333:   �غ��� ���¿��� ���μ��� ��踦 �Ѵ� ��(Grant ����)���� Ȯ��������, **PASS ��
+ 334:   �� �� ����** ? ���� �˼� 7(2026-09-10)�� CHANGES_REQUESTED ����, �� �ݿ�����
+ 335:   �� ��˼� 16 �� CHANGES_REQUESTED ����(ADR-030).
+ 336: 
+ 337:   ������ ��˼����� ACCEPTED �� ������ �� ������ PASS �� �°��Ѵ�. �ݷ��Ǹ�
+ 338:   ��ġ�� �ٽ� �޴´� ? **������**(���� 3������ 2026-09-03 �� ������ �����̴�).
+ 339: 
+ 340:   �׶����� **�� �罽 ���� �� ����� ���� �ʴ´�.** �˼� ���� ������
+ 341:   ���߿� ��� ���� Ʋ�ȴ��� �������� ���������.
+ 342: ---
+ 343: 
+ 344: # DoD-68 ? ���� �罽: ���Ժ��� ���۱���
+ 345: 
+ 346: ## ������ �޶����°�
+ 347: 
+ 348: ���� �� �� ����ҿ��� ��ǰ�� ���� �� �־����� **Job �� �ϳ��� ���� ��
+ 349: ������.** �� ������ ���� �־���.
+ 350: 
+ 351: ```text
+ 352: ��  Job ����          ������ Manifest �� �޾� ���� ����ҿ� �ִ� ��ΰ� ����
+ 353: ��  scheduler ����    ����� Job �� ť�� ������ �ʴ´�
+ 354: ��  Grant �߱�        ����� ���࿡�� Grant �� ����� ��ΰ� ����
+ 355: ��  ����ȭ            ������ ������ �θ��� ������ �ƹ��͵� �� �����δ�
+ 356: ```
+ 357: 
+ 358: ���� ��~�� �� �̷��� �̾�����. **�� ����ȭ�� �����̴�.**
+ 359: 
+ 360: ```text
+ 361: submit �� import-manifest �� import-inventory �� plan-job �� stage-job
+ 362:                                                     �� issue-grant (���Ϸ�)
+ 363: coordinator-stub --grant-from-control-db ����TCP������ agent-stub
+ 364: scheduler-tick                                    (ť���� ������ ��� �� �� �����Ѵ�)
+ 365: ```
+ 366: 
+ 367: ## �� ������ �������� �ʴ� ��
+ 368: 
+ 369: **Job �� ������ ������� �ʴ´�.** �� �罽�� ���� "Agent �� Grant ��
+ 370: �޾Ƶ鿴��" ���� "�н��� ���Ҵ�" �� �ƴϴ�. Agent �� ���ࡤ�ݸ������� ����
+ 371: �ڵ�� 2026-09-06 �� ��������, **�� �罽(����� ����)������ Grant ��
+ 372: Manifest �� ���� �ű� ���� �ʴ´�**(2026-09-10).
+ 373: 
+ 374: **������ ���� �ʴ´�.** `scheduler-tick` �� �� ���̴�. ������ ���θ�
+ 375: �� limitations �� ���� ���� ������ ť �� �տ��� �����.
+ 376: 
+ 377: **���� �˼��� 2026-09-10 �� �޾Ұ� ������ ���Դ�.** �Ʒ� "�ڱ� �˼��� ã��
+ 378: ��" �� �� ���� ���� ����� ������ Ȯ���� ���̴�. �� ������� ���簡 �ݺ��ؼ� ���� �� ���� **�ڱ� �˼���
+ 379: ��ġ�� ���� �� �ִ�**�� ���̴� ? Ư�� ������ ���� �ʿ���.
+ 380: 
+ 381: ## �ڱ� �˼��� ã�� ��
+ 382: 
+ 383: �˼��� �� �޴� ��� �� ����Ұ� ����� �� ���� �������� �Ⱦ���.
+ 384: 
+ 385: **�����̼��� �� �׽�Ʈ ���� ��Ҵ�.** ���� ���� ����
+ 386: `a_job_that_waited_longer_than_the_lease_ttl_is_refused` �� **������
+ 387: ������ ��� �־���** ���̴� ? `--lease-ttl-ms 1` �� �ְ� ���� ��������
+ 388: �⺻���� ���ܼ�, �� �տ� �ִ� ���� �˻翡 �ɷȴµ� �� �ܾ��� �� �޽�����
+ 389: �޾� �༭ ����ߴ�. ����� ���� �ϳ��� �� ���.
+ 390: 
+ 391: **�����߽��� �� ������ �־���.** "Lease �߱� �ð� = ����� queued_at" ��
+ 392: �� ����� �ٽ��ε�, ��� �׽�Ʈ�� �ĺ��ڸ� ���ϰ� �ĺ��ڴ� �ð�����
+ 393: �������� �ʴ´� ? �ð�� �ٲ㵵 ����ߴ�.
+ 394: 
+ 395: **�� ������ �����̾���.** `plan_id` �� ���� �� ���� ����� �ƴϾ���,
+ 396: �װ� **�׽�Ʈ�� �������** �˾Ҵ�(limitations ����).
+ 397: 
+ 398: **`submit` ���� �ְ� Grant �߱� ��ο� ���� �ڱ� ����**�� ã�� �ٿ��� ?
+ 399: �� �ڵ带 ������ ���� ���ٰ� �߰��ߴ�.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md'); print('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1) if i>=113))\" " in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1503ms:
+113: ---
+114: schema_version: 2
+115: id: DoD-68
+116: claim: "부품은 다 있는데 이어지지 않아 Job 을 하나도 돌릴 수 없던 상태에서, 끊긴 고리 넷 중 **셋**(① 투입 · ② scheduler 연결 · ③ Grant 발급)을 잇는 명령 여섯 개를 만들었다 — `plan-job` · `stage-job`(`orchestrate` 의 첫 production 호출자) · `issue-grant`(저장된 예약의 사실만으로 서명된 Grant) · `scheduler-tick`(식별자 없이 스스로 골라 **한 번** 예약한다) · `JobManifest -> JobRequirements` 변환기 · `submit` 의 선언 축 확장. **테스트가 준비한 상태에서** `coordinator-stub --grant-from-control-db` 로 그 Grant 를 별도 OS 프로세스인 Agent 가 실제 TCP 로 받아 수용하는 것까지 확인했다. ★ **④ 데몬화는 잇지 못했다** — tick 은 단발이고 루프로 감싸면 큐 맨 앞에서 멈춘다. ★ **이 사슬로 Job 은 실행되지 않는다** — 저장된 예약 Grant 에 Manifest 가 없다(2026-09-10 확인). ★ 독립 검수(8건)와 재검수(9~16)가 이 사슬에서 결함을 찾아 고쳤고 수정본 재검수가 남았다 — 그래서 `status: INCONCLUSIVE` 다"
+117: status: INCONCLUSIVE
+118: commit: 0d6a6ed
+119: 
+120: executor_id: "agent:claude-code"
+121: executor_tool: "claude-code 세션 — CLI 명령 4건 신설 + coordinator 모듈 2건 신설, 통합 테스트 37건, 뮤테이션 누적 22건(3라운드, 21 잡힘)"
+122: executor_model: "claude-opus-5"
+123: executed_at: "2026-09-03T17:40:00+09:00"
+124: # ★ 첫 실행 시각이다. 2026-09-10 재측정(commit 0d6a6ed)은 raw_output 첫 블록에 있다
+125: 
+126: review_required: true
+127: reviewer_id: "agent:codex-cli"
+128: reviewer_tool: "codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) — 2026-09-10 순차 대기열. 2026-09-03 의 3갈래 동시 실행은 전부 쿼터로 중단됐었다"
+129: reviewer_model: "gpt-6-astra"
+130: review_context: "fresh-read-only"
+131: review_outcome: "CHANGES_REQUESTED"
+132: review_artifact: "docs/evidence/_raw/검수_2026-09-10/07_DoD-68_evidence_CHANGES_REQUESTED.txt"
+133: review_scope: >
+134:   ★ 2026-09-10 — 검수를 받았다(판정 7: CHANGES_REQUESTED, 위 머리 블록).
+135:   아래는 2026-09-03 당시 기록이다.
+136: 
+137:   ★★ **검수를 받지 못했다. 그래서 이 문서는 PASS 가 아니다.**
+138: 
+139:   종합·서술 감사·경계 조합 세 갈래를 **동시에** 걸었는데 셋 다 판정
+140:   전에 쿼터가 끊겼다(복구 2026-09-07 15:43). `DoD-65` 에서 3갈래
+141:   병렬이 효과적이었던 것을 그대로 따라 했는데, **그때와 지금의 차이를
+142:   안 봤다** — 그때는 대상이 파일 몇 개였고 지금은 crate 넷에 걸친
+143:   명령 여섯 개다. 종합 검수 하나가 131k 토큰을 썼다. 순차로 하나씩
+144:   돌렸으면 최소 하나는 판정을 받았을 것이다. **내 판단 착오다.**
+145: 
+146:   네 번째 갈래(우회 조사)는 코덱스 자체 필터가 "관문 우회 방법을
+147:   찾아라" 를 보안 위험으로 분류해 거부했다 — 자기 저장소 검수인데
+148:   오탐이지만, 표현을 바꿔 다시 걸었고 그것도 쿼터에 걸렸다.
+149: 
+150:   검수 대신 이 저장소가 기록해 둔 실패 패턴으로 **자기 검수**를 했다.
+151:   그것이 찾은 것은 아래 negative_tests 와 limitations 에 있다 —
+152:   독립 검수를 대신하지 못하며, 대신한다고 적지 않는다.
+153: 
+154: raw_output_artifact: "docs/evidence/_raw/DoD-68_실행_사슬.txt"
+155: raw_output_digest: "sha256:911ecb14c7e2e92592a6388796e4c276568aa2b820189b30085049e47d28001f"
+156: raw_output_bytes: 10812
+157: 
+158: artifacts:
+159:   - "docs/evidence/_raw/DoD-68_실행_사슬.txt"
+160:   - "docs/evidence/_raw/DoD-68_x600_실측.txt"
+161:   - "docs/evidence/_raw/DoD-68_검수_중단.txt"
+162:   - "crates/cli/src/plan_job.rs"
+163:   - "crates/cli/src/stage_job.rs"
+164:   - "crates/cli/src/issue_grant.rs"
+165:   - "crates/cli/src/scheduler_tick.rs"
+166:   - "crates/coordinator/src/manifest_requirements.rs"
+167:   - "crates/coordinator/src/grant_from_stored.rs"
+168: 
+169: binary_digests:
+170:   toolchain: "Windows 개발 기계 cargo 1.97.1"
+171:   gputeer_exe: "8169984 bytes, debug 프로필"
+172: protocol_versions:
+173:   schema_version: "proto 변경 없음"
+174:   canonical_spec: "canonical 벡터 변경 없음(52건 그대로)"
+175: platform: >
+176:   **두 Windows 기계에서 측정했다** — 개발 기계와 x600(RTX 4070 SUPER).
+177:   x600 에서 워크스페이스 922 passed / 0 failed / 경고 0 으로 개발
+178:   기계와 **정확히 같았고**, coordinator-agent-selftest 97 시나리오도
+179:   통과했다(2026-09-04).
+180: 
+181:   ★★ **Linux 도 쟀다**(2026-09-05, x600 WSL2, 커널 6.18.33.2, cargo
+182:   1.89.0) — `--exclude gputeer-runtime-windows` 로 918 passed / 0
+183:   failed / 경고 0. Windows 와 **같은 소스 트리**를 공유한다.
+184: 
+185:   ★ 앞서 이것을 "WSL 이 죽었다" 고 적었던 것은 **오진이었다** — 그때
+186:   x600 자체가 내려가는 중이었다. 기계가 돌아오자 `wsl.exe -e` 가 바로
+187:   응답했다.
+188: 
+189:   ★★ **플랫폼 차이가 전부 설명된다**(이름 기준):
+190: 
+191:       Windows 914 - 28(Windows 전용) = 886
+192:       Linux    910 - 24(Linux 전용)  = 886   <- 일치
+193: 
+194:   그리고 양쪽 전용은 서로 **짝**이다 — junction 거부 <-> symlink 거부,
+195:   Job Object 상한 <-> cgroup 상한, DPAPI K1 <-> systemd-creds K1.
+196:   **조용히 빠진 공유 테스트는 없다**(`CLAUDE.md` §4 가 경계하는 것이
+197:   정확히 그것이다).
+198: hardware: >
+199:   개발 기계는 GPU 없음. **x600 은 RTX 4070 SUPER 실물**(driver 595.79,
+200:   CUDA 13020)이고 거기서 `gpu-probe` 가 실제 값을 읽었다 — UUID
+201:   `GPU-09a269a7-...`, total 12878610432, free 12581863424, cc 8.9,
+202:   MIG 미지원.
+203: 
+204:   ★★ **그 실물 값으로 `import-inventory` 를 돌렸다.** 지금까지 inventory
+205:   는 전부 손으로 쓴 JSON 이었다 — `gpu_id` 가 처음으로 진짜 NVML UUID 다.
+206:   1차는 `BOOTSTRAP_REJECTED: verifying_key_hex 가 Ed25519 공개키가
+207:   아니다` 로 막혔다(내가 채운 `0x31` 반복이 유효한 곡선 점이 아니다 —
+208:   **진짜 관문에 걸린 것이지 실패가 아니다**). 실제 키로 바꾸니
+209:   `IMPORTED entries=1 registered=1 inventories_updated=1`.
+210: 
+211:   ★ 사슬의 뒷부분(plan-job 이후)은 x600 에서 **파일만으로는 못 돌린다**
+212:   — keyring 을 만드는 CLI 경로가 없어서다(테스트는 Rust API 로 만든다).
+213:   그 부분은 x600 의 통합 테스트 안에서 돌았다(922건에 포함).
+214: network_profile: >
+215:   grant_over_wire 만 실제 127.0.0.1 TCP 를 쓴다(별도 프로세스 2개).
+216:   나머지는 파일과 SQLite 만 쓴다.
+217: command: |
+218:   cargo test --workspace
+219:   cargo test -p gputeer-cli --test plan_job --test stage_job --test issue_grant --test grant_over_wire --test scheduler_tick
+220:   # 뮤테이션 누적 22건 — 3라운드(2026-09-03~04). 1차 9건은 scratchpad/mutate.py
+221: 
+222: raw_output: |
+223:   === 2026-09-10 재측정 (commit 0d6a6ed — 검수 1~12 대응 반영) ===
+224:   cargo test --workspace   1055 passed / 0 failed / ignored 1 / 경고 0
+225:   ★ 아래는 **2026-09-03 f79b485 시점** 값이다. 그 코드에는 검수가 찾은
+226:     결함이 들어 있었다 — 두 값을 같은 코드의 측정으로 읽지 마라.
+227: 
+228:   === cargo test --workspace (f79b485) ===
+229:   915 passed / 0 failed / 경고 0   (착수 전 906)
+230: 
+231:   === 신규 통합 테스트 37건 ===
+232:   plan_job        10 passed
+233:   stage_job        7 passed
+234:   issue_grant     10 passed
+235:   grant_over_wire  2 passed
+236:   scheduler_tick   8 passed
+237: 
+238:   === 뮤테이션 1차 9건 (2026-09-03, 자기 검수 2회차 시점) ===
+239:   M1 미선언 workload 를 Training 으로       잡힘
+240:   M2 모르는 enum 값을 조용히 통과           잡힘
+241:   G5 Attempt/Lease fence 대조 제거          안 잡힘 (limitations 참조)
+242:   G6 예약 존재 확인 제거                    안 잡힘 (limitations 참조)
+243:   G7 폐기된 Lease 로도 발급                 잡힘 (1회차엔 안 잡혔다)
+244:   T1 식별자에서 plan_id 를 뺀다             안 잡힘 (limitations 참조)
+245:   T2 Lease 발급 시각을 시계로               잡힘 (1회차엔 안 잡혔다)
+246:   T3 큐에 오래 있어도 예약                  잡힘 (1회차엔 안 잡혔다)
+247:   P3 적격 0 이어도 큐에 올린다              잡힘
+248: 
+249:   === 뮤테이션 누적 22건 (2026-09-04, 3라운드) ===
+250:   1차  9건 (내가 고른 것)          8 잡힘  G5·G6 은 DB 변조 테스트로 고정(bbe7785)
+251:   2차  6건 (안 고른 관문)          6 잡힘  (a77e865)
+252:   3차  7건 (변환기 전수 + submit)  7 잡힘  (2306ebd)
+253:   누적 22건 중 21건. 남은 하나는 **T1** — 저장소가 그 상황 자체를 막아
+254:   원리적으로 못 잰다(limitations)
+255: 
+256: negative_tests: >
+257:   거부 경로 위주로 짰다. 대표적인 것:
+258:   --job-db "" 를 받아들이지 않는다(SQLite 는 빈 경로도 임시 DB 로 열어
+259:   준다 — 저장소의 is_durable() 에 물어서 막는다);
+260:   선언 축이 하나라도 비면 **어느 축인지 이름을 대며** 거부한다;
+261:   적격 후보가 0 이면 큐에 안 올린다(뮤테이션 P3 로 확인);
+262:   제출 시점 서명자가 keyring 에서 사라지면 계획을 진행하지 않는다 — 이유를
+263:   `UnknownSigner` 로 **특정한다**(`crates/cli/tests/plan_job.rs:467`. 같은 ID 에
+264:   다른 키를 넣으면 나오는 `InvalidSignature` 와 가른다);
+265:   폐기된 Lease 로는 Grant 를 못 낸다 — **폐기 전에는 실제로 발급되는
+266:   대조**를 같이 뒀다(그게 없으면 "항상 거부" 로도 통과한다);
+267:   Grant 가 Lease 보다 오래 살면 거부한다 — 이유 `보다 늦다` 를 보고, **정확히
+268:   Lease 만료 시각은 허용하는 대조**를 둔다(`crates/cli/tests/issue_grant.rs:542`);
+269:   큐에 TTL 보다 오래 있었으면 예약하지 않는다(이미 만료된 Lease 를
+270:   주게 되므로);
+271:   빈 큐는 **오류가 아니다** — TICK_IDLE. 루프가 이걸 실패로 세면 정상
+272:   유휴가 장애로 보인다;
+273:   예약된 노드는 두 번째 Job 이 못 잡는다 — 이유 `node is already reserved` 를
+274:   보고 두 번째 Job 이 `QUEUED` 로 남는지 본다(`crates/cli/tests/stage_job.rs:452`).
+275:   ★ 이 셋이 이유를 특정하게 된 것은 **2026-09-04~07** 이다. 그 전에는 `!ok`
+276:     만 봤다 — 검수 2번이 찾은 함정과 같은 모양이다.
+277: 
+278: limitations: >
+279:   ★★ **뮤테이션 — 1차(2026-09-03)에서는 3건이 안 잡혔다. 지금 남은 것은
+280:   T1 하나다**(누적 22건 중 21건, raw_output 참조).
+281: 
+282:   G5(Attempt/Lease fence 대조)·G6(예약 존재 확인) — 당시에는 셋이
+283:   staging_store.rs 의 **한 BEGIN IMMEDIATE 안에서 함께** 쓰여 어긋난 상태를
+284:   정상 경로로 만들 수 없다고 보고 "테스트가 지키고 있다고 말하면 거짓" 이라
+285:   적었다. **이튿날 DB 를 직접 변조하는 테스트로 고정했다**(bbe7785) — 지금은
+286:   잡힌다. 입력 검증이 아니라 **손상 방어**라는 성격은 그대로다.
+287: 
+288:   T1(유도에서 plan_id 제거) — 처음엔 "낡은 계획의 예약을 재사용하지
+289:   않는다" 고 적었는데 **그 상황을 만들려니 저장소가 더 앞에서
+290:   막았다**(queued Job plan conflict). QUEUED 인 Job 의 계획은 안
+291:   바뀐다. 그러니 plan_id 는 오늘 방어일 뿐 짐을 지고 있지 않다 —
+292:   주석을 사실로 고쳤다.
+293: 
+294:   ★★ **데몬화의 실질적 차단 요인 — 후보 선택이 기존 예약을 모른다.**
+295:   노드가 둘인데도 두 번째 tick 이 "node is already reserved" 로 막힌다.
+296:   evaluate_eligibility/rank_best_fit 은 inventory 만 보고 예약은
+297:   staging 저장소의 다른 테이블에 있어 둘을 잇는 것이 없다. 안전엔
+298:   문제없지만(예약 관문이 중복을 막는다) **루프를 돌리면 큐 맨 앞에서
+299:   영영 멈춘다.** 고치려면 규범 결정이 필요해(예약을 pool_snapshot 에서
+300:   빼는가 · hard-filter 에서 거르는가 · 차순위 재시도인가) 고치지 않고
+301:   **현재 동작을 테스트로 고정**했다.
+302: 
+303:   ★★ **예약을 해제할 수 없다**(2026-09-10 검수 7 지적으로 추가). 후보
+304:   선택을 고쳐도 예약 재사용은 안 풀린다 — 해제 경로가 production 에 없다.
+305:   `reservation_release.rs` 의 관문은 `RuntimeStopProof` 를 요구하고 오늘
+306:   정직한 값은 "증명 못 함" 이다. 종료 보고는 2026-09-06 에 생겼지만 그
+307:   관문을 열지 않는다.
+308: 
+309:   ★★ **잠금 단위가 GPU 가 아니라 노드 전체다.** "예약된 노드" 는 GPU 한
+310:   장이 아니라 **노드**를 잠근다 — 같은 노드의 다른 GPU 도 못 쓴다
+311:   (`DoD-47` 의 node-exclusive reservation).
+312: 
+313:   ★ **scheduler 의 node_id 와 Agent 의 device id 는 다른 이름 공간인데
+314:   잇는 것이 없다.** 오늘은 운영자가 둘을 같게 선언해야만 wire 경로가
+315:   이어진다. 제약이지 설계가 아니다.
+316: 
+317:   ★ **issue-grant 는 키가 정말 그 Coordinator 의 것인지 못 본다.**
+318:   자기 검증을 붙였지만 확인하는 것은 구조·수명·인코딩이다. 엉뚱한 키로
+319:   서명하면 통과하고 나중에 Agent 가 거부한다 — 위험하진 않지만(아무도
+320:   못 쓰는 Grant 다) 운영자는 유효한 것을 만든 줄 안다. 닫으려면
+321:   Coordinator 공개키 목록이 필요하고 이 저장소에 없다.
+322: 
+323:   ★ plan_job.rs 에 **테스트로 고정되지 않은 분기가 하나 더** 있다
+324:   (제출 시점 서명자와 재검증 서명자 비교) — 코드 주석에 적어 뒀다.
+325: 
+326:   ★ 이 사슬로는 **Job 이 실행되지 않는다.** Agent 의 실행 코드는 있다
+327:   (`agent/src/exec.rs`, 2026-09-06 확인) — 그러나 저장된 예약에서 만든 Grant
+328:   에 Manifest 가 없어 실행할 것이 없다(2026-09-10 확인, `grant_over_wire.rs`
+329:   의 덫 테스트). 이 사슬은 **예약과 Grant 수용까지**다.
+330: 
+331: decision: >
+332:   이 조각은 **부분 완료**로 기록한다. 네 고리 중 **셋**이 이어졌고, 테스트가
+333:   준비한 상태에서 프로세스 경계를 넘는 것(Grant 수용)까지 확인했지만, **PASS 로
+334:   셀 수 없다** — 독립 검수 7(2026-09-10)이 CHANGES_REQUESTED 였고, 그 반영본을
+335:   본 재검수 16 도 CHANGES_REQUESTED 였다(ADR-030).
+336: 
+337:   수정본 재검수에서 ACCEPTED 를 받으면 이 문서를 PASS 로 승격한다. 반려되면
+338:   고치고 다시 받는다 — **순차로**(병렬 3갈래가 2026-09-03 에 실패한 원인이다).
+339: 
+340:   그때까지 **이 사슬 위에 새 기능을 쌓지 않는다.** 검수 없이 쌓으면
+341:   나중에 어느 층이 틀렸는지 가려내기 어려워진다.
+342: ---
+343: 
+344: # DoD-68 — 실행 사슬: 투입부터 전송까지
+345: 
+346: ## 무엇이 달라졌는가
+347: 
+348: 착수 전 이 저장소에는 부품이 거의 다 있었지만 **Job 을 하나도 돌릴 수
+349: 없었다.** 네 고리가 끊겨 있었다.
+350: 
+351: ```text
+352: ①  Job 투입          서명된 Manifest 를 받아 영속 저장소에 넣는 경로가 없다
+353: ②  scheduler 연결    저장된 Job 이 큐에 오르지 않는다
+354: ③  Grant 발급        저장된 예약에서 Grant 를 만드는 경로가 없다
+355: ④  데몬화            누군가 손으로 부르지 않으면 아무것도 안 움직인다
+356: ```
+357: 
+358: 이제 ①~③ 이 이렇게 이어진다. **④ 데몬화는 아직이다.**
+359: 
+360: ```text
+361: submit → import-manifest → import-inventory → plan-job → stage-job
+362:                                                     ↘ issue-grant (파일로)
+363: coordinator-stub --grant-from-control-db ──TCP──▶ agent-stub
+364: scheduler-tick                                    (큐에서 스스로 골라 한 번 예약한다)
+365: ```
+366: 
+367: ## 이 실험이 증명하지 않는 것
+368: 
+369: **Job 이 실제로 실행되지 않는다.** 이 사슬의 끝은 "Agent 가 Grant 를
+370: 받아들였다" 이지 "학습이 돌았다" 가 아니다. Agent 쪽 실행·격리·종료 보고
+371: 코드는 2026-09-06 에 생겼지만, **이 사슬(저장된 예약)에서는 Grant 에
+372: Manifest 가 없어 거기 닿지 않는다**(2026-09-10).
+373: 
+374: **루프가 돌지 않는다.** `scheduler-tick` 은 한 번이다. 루프로 감싸면
+375: 위 limitations 의 예약 공백 때문에 큐 맨 앞에서 멈춘다.
+376: 
+377: **독립 검수는 2026-09-10 에 받았고 결함이 나왔다.** 아래 "자기 검수가 찾은
+378: 것" 은 그 전에 만든 사람이 스스로 확인한 것이다. 이 저장소의 역사가 반복해서 보여 준 것은 **자기 검수가
+379: 놓치는 것이 늘 있다**는 것이다 — 특히 서술의 과장 쪽에서.
+380: 
+381: ## 자기 검수가 찾은 것
+382: 
+383: 검수를 못 받는 대신 이 저장소가 기록해 둔 실패 패턴으로 훑었다.
+384: 
+385: **뮤테이션이 내 테스트 넷을 잡았다.** 가장 나쁜 것은
+386: `a_job_that_waited_longer_than_the_lease_ttl_is_refused` 가 **엉뚱한
+387: 관문을 재고 있었던** 것이다 — `--lease-ttl-ms 1` 만 주고 갱신 오프셋은
+388: 기본값을 남겨서, 더 앞에 있는 갱신 검사에 걸렸는데 내 단언이 그 메시지도
+389: 받아 줘서 통과했다. 재려던 것을 하나도 안 쟀다.
+390: 
+391: **무게중심이 안 재지고 있었다.** "Lease 발급 시각 = 저장된 queued_at" 이
+392: 이 모듈의 핵심인데, 멱등 테스트는 식별자만 비교하고 식별자는 시각에서
+393: 유도되지 않는다 — 시계로 바꿔도 통과했다.
+394: 
+395: **내 서술이 과장이었다.** `plan_id` 에 대해 쓴 것이 사실이 아니었고,
+396: 그걸 **테스트를 만들려다** 알았다(limitations 참조).
+397: 
+398: **`submit` 에는 있고 Grant 발급 경로엔 없던 자기 검증**을 찾아 붙였다 —
+399: 두 코드를 나란히 놓고 보다가 발견했다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md'); print('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt'); print('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -X utf8 -c \"from pathlib import Path; p=Path('docs/evidence/_raw/검수_2026-09-10/16_재검수_evidence_초안_둘.txt'); print('\\n'.join(f'{i}: {s}' for i,s in enumerate(p.read_text(encoding='utf-8').splitlines(),1)))\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1601ms:
+1: P0-02 가둠 대조 재실측 — 2026-09-10 (개발 기계, Windows 11)
+2: 검수 8번 지적: "바깥 대조와 뮤테이션 검증을 했다는 서술은 있지만 실제 결과는 원문에 없다"
+3: 명령: cargo test -p gputeer-runtime-windows --lib the_container_cannot_read_a_file_the_host_can -- --nocapture
+4: 테스트: crates/runtime-windows/src/appcontainer.rs  the_container_cannot_read_a_file_the_host_can
+5:   바깥  std::process::Command cmd.exe /c type <임시 파일>   -> 성공해야 한다(대조)
+6:   안쪽  run_in_container(profile, "cmd.exe /c type <같은 파일>") -> 0 이 아니어야 한다
+7: ★ 한계: 개발 기계에서 쟀다(GPU 없음). x600 에서 다시 재지 않았다.
+8: 
+9: === 1) 정상 (exit=0) ===
+10: test appcontainer::tests::the_container_cannot_read_a_file_the_host_can ... ok
+11: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s
+12: CONFINE outside_exit=Some(0) outside_stdout="host only" inside_exit=1
+13: 
+14: === 2) 뮤테이션 A1 — run_in_container 에서 SECURITY_CAPABILITIES 부착만 건너뜀 (exit=101) ===
+15: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.14s
+16: CONFINE outside_exit=Some(0) outside_stdout="host only" inside_exit=0
+17: thread 'appcontainer::tests::the_container_cannot_read_a_file_the_host_can' (6916) panicked at crates\runtime-windows\src\appcontainer.rs:569:9:
+18: assertion `left != right` failed: AppContainer 안에서 호스트 파일을 읽었다 — 가둬지지 않았다
+19:   left: 0
+20: 
+21: 판정: 정상에서 바깥은 읽고 안쪽은 못 읽었다. 보안 속성을 빼면 안쪽도 읽어
+22: 테스트가 실패한다 — 가둠을 재는 테스트다.
+
+ succeeded in 1680ms:
+1: <!--
+2: ★★★ 2026-09-10 독립 검수 판정 — CHANGES_REQUESTED
+3: 
+4:   검수자가 초안 1개와 원문 5개를 **전부** 읽고 판정했다. 아래 본문은
+5:   고치지 않고 그대로 두고, 무엇이 측정보다 강했는지만 여기 적는다.
+6:   (본문을 먼저 다듬으면 무엇을 과장했는지가 사라진다.)
+7: 
+8:   ┌─ 측정보다 강하게 쓴 문장 넷 ────────────────────────────────┐
+9:   │ 1. "재현 가능한 실패다. **여섯 번 전부 같은 자리에서 죽었다**" │
+10:   │    -> 틀렸다. 원문이 스스로 구분한다:                          │
+11:   │         1차  0xC0000135 — "스크립트가 시작조차 못 함"          │
+12:   │         2차  "_ctypes DLL 초기화 실패"                         │
+13:   │         4차  성공한 import 들이 있다                           │
+14:   │         5·6차 DLL 로드 감별                                    │
+15:   │       **여섯 단계의 탐색을 여섯 번의 반복 재현으로 셌다.**     │
+16:   │                                                               │
+17:   │ 2. "막힌 것은 **ole32 하나다**"                                │
+18:   │    -> 도구는 `LoadLibraryW` 하나만 하고 Win32 오류 코드를      │
+19:   │       찍는다. 오류 코드만으로 **실패한 초기화 함수의 위치**,   │
+20:   │       **_ctypes 실패와의 인과**, **다른 장애의 부재**까지      │
+21:   │       확정할 수 없다.                                          │
+22:   │       맞는 문장: "시험한 DLL 중 ole32 로드에서도 1114 가       │
+23:   │       관측됐으며, _ctypes 실패와의 관계는 추가 확인이 필요"    │
+24:   │                                                               │
+25:   │ 3. "**소거한** 가설 넷 (각각 대조 있음)"                       │
+26:   │    -> "**시험한** 네 변경에서 실패가 지속됐다" 가 맞다.        │
+27:   │       시도만 한 기록은 아니지만 넓은 가설의 소거도 아니다.     │
+28:   │                                                               │
+29:   │ 4. "combase 는 되는데 **레거시 계층만 안 된다**"               │
+30:   │    -> 로드 성공 기록은 **COM 기능 실행의 성공 기록이 아니다.** │
+31:   └───────────────────────────────────────────────────────────────┘
+32: 
+33:   ★★ 반대 방향 지적도 있다 — 이쪽이 더 중요하다.
+34: 
+35:     내가 "package identity 가능성이 남았으니 지금 실패로 확정하면
+36:     재지 않은 것을 결론으로 쓰는 것" 이라고 썼는데, 검수자가 답했다:
+37: 
+38:     > **실패 원인을 모르는 것과 시험한 구성에서 실패를 관측한 것은
+39:     > 양립한다.**
+40: 
+41:     즉 범위를 붙이면 판정할 근거가 있다 — "현재 x600 환경·시험한
+42:     CPython 배포판·기록된 설정에서 ctypes/torch 경로가 CUDA 호출
+43:     전에 막혔다" 라는 범위라면 `FAIL-SCOPE` 를 뒷받침한다.
+44:     ★ 내가 보류를 **범위 없이** 써서 앞에서 스스로 한 구분을 다시
+45:       흐렸다. 전체 질문에 대한 `INCONCLUSIVE` 는 여전히 정당하다.
+46: 
+47:   ★ 검수자가 **확인해 준 것**도 적어 둔다 — 초안이 한계를 숨기지는
+48:     않았다. "확인하지 않았으므로 추측으로만 적는다"(172~175행),
+49:     "package identity 부재 때문일 가능성"(196행)이 명시돼 있고,
+50:     질문받은 '가설의 결론 둔갑' 은 **찾지 못했다**고 했다.
+51: 
+52:   판정 원문 docs/evidence/_raw/검수_2026-09-10/08_P0-02_evidence_CHANGES_REQUESTED.txt
+53: 
+54: ★★★ 2026-09-10 17:30 — **판정 8 을 본문에 반영했다.** 위 블록은 과장의
+55:   기록으로 그대로 둔다. 가둠은 문장을 낮추는 대신 **대조를 다시 돌려
+56:   원문을 만들었다**(개발 기계):
+57:     docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt
+58:     정상      바깥 exit 0("host only" 읽음) · 안쪽 exit 1
+59:     뮤테이션  SECURITY_CAPABILITIES 부착만 뺌 -> 안쪽 exit 0 -> 테스트 실패
+60:   ★ x600 에서는 다시 재지 않았다.
+61: 
+62: ★★★ 2026-09-10 재검수 16 — CHANGES_REQUESTED (반영본을 다시 봤다)
+63:   인정받은 것: 가둠 원문이 주장과 일치 · 개발 기계 한계 명시 · ole32 인과 ·
+64:   combase 기능 주장 낮춤 · "여섯 단계의 탐색" · 좁은 구성의 FAIL-SCOPE 근거.
+65:   남았던 것:
+66:     가둠 이유     "호스트 파일 접근 **거부**" — 원문은 종료 코드뿐이다. 보안
+67:                   속성 때문에 다른 단계가 실패했을 가능성을 이 출력만으로 못 뺀다
+68:     환경 섞임     claim 의 "x600 에서 확인" 목록에 개발 기계의 가둠이 들어 있었다
+69:     옛 표현       review_scope 의 "소거한 가설 넷"
+70:     전제          후속 계획의 "DllMain 이 무엇에서 **거부**되는지" — 실패 함수와
+71:                   '거부' 를 조사 전에 정했다
+72:     조건 충돌     "이 범위로는 FAIL-SCOPE" 와 "회피 불가면 FAIL-SCOPE" 가 앞뒤로 충돌
+73:   -> 다섯 곳을 고쳤다. 가둠은 **종료 코드 수준**으로 낮췄다(이유를 특정하려면
+74:      자식의 오류 출력을 받아야 한다 — 아직 안 했다)
+75: -->
+76: 
+77: <!--
+78: ★★ 이것은 **아직 evidence 가 아니다.** docs/evidence/ 에 두면
+79:     verify_evidence.py 가 거부한다 — 그리고 그게 옳다.
+80: 
+81:     거부 사유를 실제로 받아 봤다:
+82:         ! reviewer_id 는 human:/agent:/service: 중 하나로 시작해야 한다
+83:         ! review_artifact 는 docs/evidence/_raw/ 아래여야 한다
+84: 
+85:     이 조각은 `RULE.md` §7.3 의 **강제 대상이 아니다**(강제는 `P0-*`·
+86:     `DoD-*` 의 `PASS` 뿐이고 이건 `INCONCLUSIVE` 다). 그래도 schema v2 는
+87:     `reviewer_*` 를 필수로 요구한다 — 즉 "검수가 필요 없는데도 검수 칸은
+88:     채워야 하는" 칸이 남는다.
+89: 
+90:     ★ 그 칸을 채우려고 검사기를 고치지 않는다. 여기서 검사기를 고치면
+91:       **내가 걸린 규칙을 내가 푸는 것**이 되고, 그 다음부터는 규칙이
+92:       규칙이 아니게 된다. 스키마 손질이 정말 필요한지는 검수와 분리해
+93:       따로 판단한다.
+94: 
+95:     그래서 초안으로 남긴다. 2026-09-07 15:43 이후 순차 검수 대기열에
+96:     이 문서도 넣고(`DoD-68` 다음), 판정이 나오면 `review_*` 를 채워
+97:     `docs/evidence/P0-02_windows_appcontainer_cuda.md` 로 옮긴다.
+98:     ★ 옮겨도 `status` 는 `INCONCLUSIVE` 다 — 검수가 붙는다고 측정이
+99:       답하지 못한 질문에 답이 생기지는 않는다.
+100: 
+101:     ★ 아래 review_outcome: PENDING 은 **스키마에 없는 값**이다.
+102:       옮길 때 반드시 실제 판정으로 바꾼다.
+103: -->
+104: 
+105: ---
+106: schema_version: 2
+107: id: P0-02
+108: claim: "기준선 §32 의 `P0-02`(Windows AppContainer + CUDA, S2 실험적)를 실측했다. **x600(RTX 4070 SUPER · 그 Windows 빌드 · package identity 없는 AppContainer)에서** 프로파일 생성·고유 SID·컨테이너 안 프로세스 실행·Python 실행·C 확장 로드(`zlib`·`_socket`)를 확인했다. **가둠은 개발 기계에서 따로 쟀다** — 컨테이너 안에서 호스트 임시 파일을 `type` 하면 종료 코드 1, 바깥에서는 0, 보안 속성을 빼면 안쪽도 0 이다(`P0-02_가둠_대조_재실측_2026-09-10.txt`). ★ 거부 **이유**(오류 코드·메시지)는 원문에 없다 — 종료 코드가 보안 속성에 따라 갈린다는 것까지다. 그러나 x600 에서 **`torch.cuda.is_available()` 까지 도달하지 못했다** — `torch/__init__.py:14` 의 `import ctypes` 가 `_ctypes.pyd` 초기화 실패(1114)로 죽는다. DLL 을 하나씩 열어 보니 **시험한 DLL 중 `ole32.dll` 로드에서도 1114 가 관측됐다** — `_ctypes` 실패와의 인과는 확인하지 않았다. `combase.dll` 은 **로드**됐다(COM 기능 실행은 안 쟀다). ★ 그러므로 이 스파이크는 **전체 질문에 답하지 못했다** — `status: INCONCLUSIVE`. 잰 좁은 구성에 대한 판정은 decision 에 가른다"
+109: status: INCONCLUSIVE
+110: commit: 52d72b9
+111: 
+112: executor_id: "agent:claude-code"
+113: executor_tool: "claude-code 세션 — SSH 로 x600 원격 실측. AppContainer primitive(신규 300여 줄)·프로브 2종 신설, 여섯 차례 측정"
+114: executor_model: "claude-opus-5"
+115: executed_at: "2026-09-06T00:20:00+09:00"
+116: 
+117: review_required: false
+118: reviewer_id: "agent:codex-cli"
+119: reviewer_tool: "codex exec -m gpt-6-astra --sandbox read-only (CLI 0.153.4) — 2026-09-10 순차 대기열 8번"
+120: reviewer_model: "gpt-6-astra"
+121: review_context: "fresh-read-only"
+122: review_outcome: "CHANGES_REQUESTED"
+123: review_scope: >
+124:   `RULE.md` §7.3 은 **`P0-*`·`DoD-*` 의 `status: PASS`** 에 대해서만 독립
+125:   검수를 강제한다. 이 문서는 `INCONCLUSIVE` 라 **강제 대상이 아니다** —
+126:   그래도 받는다.
+127: 
+128:   ★ 강제가 아닌데 왜 받나. 여기 적힌 판단 중 **"AppContainer 자체는
+129:   동작한다"** 가 반증에 취약하기 때문이다. 여섯 번의 측정이 전부 한
+130:   기계·한 Windows 빌드에서 나왔고, `ole32` 실패가 이 빌드 고유이면
+131:   이 문서의 방향 자체가 틀린다.
+132: 
+133:   검수자에게 특히 볼 것:
+134:     1. "되는 것" 목록이 실제로 재현되는가 — 특히 가둠 테스트가
+135:        컨테이너 밖에서도 통과하지 않는가(첫 판이 정확히 그랬다)
+136:     2. 시험한 네 변경에 각각 **대조**가 있는가, 아니면 "해 봤는데 안
+137:        됐다" 인가
+138:     3. 결론이 측정을 넘어서지 않는가 — package identity 가설을 어디선가
+139:        결론처럼 쓰고 있지 않은가
+140: review_artifact: "docs/evidence/_raw/검수_2026-09-10/08_P0-02_evidence_CHANGES_REQUESTED.txt"
+141: 
+142: raw_output_artifact: "docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt"
+143: raw_output_digest: "sha256:5323ea3b58318027374af28f056aa51c77f67c1541d48e9f1c817db4835b06d3"
+144: raw_output_bytes: 4346
+145: 
+146: artifacts:
+147:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_5차_원인지목.txt"
+148:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_1차.txt"
+149:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_2차.txt"
+150:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_3차_가설소거.txt"
+151:   - "docs/evidence/_raw/P0-02_appcontainer_cuda_4차_감별.txt"
+152:   - "docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt"
+153:   - "crates/runtime-windows/src/appcontainer.rs"
+154:   - "crates/runtime-windows/src/bin/p0_02_probe.rs"
+155:   - "crates/runtime-windows/src/bin/dll_probe.rs"
+156: 
+157: binary_digests:
+158:   toolchain: "x600 cargo 1.97.1 (원격), 개발 기계 cargo 1.97.1"
+159: protocol_versions:
+160:   schema_version: "proto 변경 없음"
+161:   canonical_spec: "canonical 변경 없음"
+162: platform: >
+163:   **x600 (Windows 11 Pro, RTX 4070 SUPER, driver 595.79, CUDA 13.2)** 에서
+164:   SSH 로 원격 실측했다. 개발 기계(GPU 없음)에서는 AppContainer primitive 의
+165:   단위 테스트만 돌렸다.
+166: 
+167:   ★ **한 기계 · 한 Windows 빌드에서만 쟀다.** `ole32` 초기화 실패가 이
+168:   빌드 고유인지 일반적인지 확인하지 않았다(`CLAUDE.md` §4 — 표본이 작으면
+169:   작다고 말한다).
+170: hardware: >
+171:   RTX 4070 SUPER 실물. `gpu-probe` 로 UUID·VRAM·compute capability 8.9 를
+172:   읽었고, 컨테이너 **밖** 기준선에서 `torch 2.11.0+cu128` ·
+173:   `cuda_available=True` · 64x64 matmul(`matmul_sum=262144.0`)까지 실제로
+174:   계산했다.
+175: network_profile: "없음 — 프로세스 생성과 DLL 로드만 잰다"
+176: command: |
+177:   # x600 에서 (경로는 전부 E:\gputeer-work 아래 — C: 는 쓰지 않는다)
+178:   target\debug\p0_02_probe.exe <python 경로> [<temp 경로>] [<capability SID>]
+179:   # 환경변수
+180:   #   P0_02_CODE     컨테이너 안에서 돌릴 Python 한 줄
+181:   #   P0_02_RAW_CMD  명령줄 전체 교체(dll_probe 를 돌릴 때)
+182:   target\debug\dll_probe.exe <dll 경로> [...]
+183: 
+184: raw_output: |
+185:   === 컨테이너 밖 (기준선) ===
+186:   torch=2.11.0+cu128 ; cuda_available=True ; device_count=1 ;
+187:   device_name=NVIDIA GeForce RTX 4070 SUPER ; matmul_sum=262144.0 ; compute=ok
+188: 
+189:   === 컨테이너 안 — 되는 것 ===
+190:   import sys           ok (exit 0)
+191:   import zlib          ok (exit 0)   <- .pyd, C 확장
+192:   import _socket       ok (exit 0)   <- .pyd, C 확장
+193:   호스트 임시 파일 type  안쪽 exit 1 · 바깥 exit 0 · 보안 속성 빼면 안쪽 0  <- 가둠(종료 코드까지)
+194:                        원문 P0-02_가둠_대조_재실측_2026-09-10.txt (개발 기계)
+195: 
+196:   === 컨테이너 안 — DLL 단위 ===
+197:   libffi-8.dll      ok=true
+198:   python313.dll     ok=true
+199:   vcruntime140.dll  ok=true
+200:   oleaut32.dll      ok=true
+201:   combase.dll       ok=true      <- **로드만** 됐다. COM 기능 실행은 안 쟀다
+202:   rpcrt4.dll        ok=true
+203:   shcore.dll        ok=true
+204:   advapi32.dll      ok=true
+205:   ole32.dll         ok=false error=1114  (ERROR_DLL_INIT_FAILED)
+206:   _ctypes.pyd       ok=false error=1114
+207: 
+208:   === 시험한 네 변경 — 전부 같은 실패가 이어졌다 (가설을 **소거한 것이 아니다**) ===
+209:   상위 경로 순회 권한   C:\Users\<x600-user> 이하 4개에 RX        -> 같은 실패
+210:                         (자식이 그 경로를 실제로 순회했는지 보인 출력은 없다)
+211:   컨테이너 TEMP 부재    E: 에 만들어 (F) + 환경 주입        -> 같은 실패
+212:                         (자식이 그 값을 받아 거기 썼는지 보인 출력은 없다)
+213:   capability 부재       표준 SID 둘 주입                    -> 같은 실패
+214:                         (★ **이 둘로 안 풀렸다**까지다. COM capability 는 안 해봤다)
+215:   Python 배포판         embeddable 3.13.7 새로 받음         -> 같은 실패
+216:                         (안팎 대조가 가장 분명하다. 두 CPython 3.13 밖으로는 일반화 못 한다)
+217: 
+218: negative_tests: >
+219:   이 스파이크의 negative test 는 **가둠**이다 —
+220:   `the_container_cannot_read_a_file_the_host_can` 이 컨테이너 안에서
+221:   호스트 임시 파일을 `type` 하면 **0 이 아닌 종료 코드**가 나오는지 본다
+222:   (★ 거부 **이유**까지는 단언하지 않는다 — 재검수 16). **대조를 같이 둔다**(바깥
+223:   에서는 읽힌다) — 없으면 "경로가 틀려서 실패" 로도 통과한다.
+224:   ★ 이 테스트는 뮤테이션으로 검증했다: 보안 속성 적용을 통째로 건너뛰면
+225:   실제로 실패한다. ★ 2026-09-10 검수 8 이 "그 결과가 원문에 없다" 고 짚어
+226:   **다시 돌려 원문을 남겼다**(개발 기계) — 정상: 바깥 exit 0 · 안쪽 exit 1 /
+227:   보안 속성 부착만 뺀 뮤테이션: 안쪽 exit 0 -> 테스트 실패.
+228:   `docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt`. x600 에서는 다시
+229:   재지 않았다. 처음 쓴 버전(`cmd /c exit 42` 의 종료 코드만 확인)은
+230:   **컨테이너 밖에서도 통과**해 아무것도 재지 못했고, 그 뮤테이션이 그것을
+231:   드러냈다.
+232: 
+233:   그 밖에: 프로파일 이름이 같으면 SID 도 같은지(재시작 뒤 방화벽 규칙이
+234:   엉뚱한 컨테이너를 가리키지 않게), 프로파일 폴더가 생기는지.
+235: 
+236: limitations: >
+237:   ★★ **이 스파이크는 자기 질문에 답하지 못했다.** `P0-02` 는
+238:   "AppContainer 에서 CUDA 가 되는가" 를 묻는데, **CUDA 근처에도 가지
+239:   못했다** — 그 앞의 `import ctypes` 에서 막힌다.
+240: 
+241:   ★ **`ole32` 로드가 왜 1114 인지, 그것이 `_ctypes` 실패의 원인인지
+242:   모른다.** 도구(`dll_probe`)는 `LoadLibraryW` 하나와 Win32 오류 코드뿐이라
+243:   실패한 초기화 함수의 위치 · 인과 · 다른 장애의 부재를 확정하지 못한다
+244:   (2026-09-10 검수 8. 전에는 "막힌 것은 ole32 하나" 라고 적었다). Process
+245:   Monitor 등으로 실제 거부된 접근을 봐야 안다.
+246: 
+247:   ★★ **2026-09-07 독립 검수 지적 — 두 범위를 갈라 적어야 한다.**
+248: 
+249:       전체 P0-02 질문("AppContainer 에서 CUDA 가 되는가")
+250:         -> INCONCLUSIVE. CUDA 를 부르지도 못했다
+251: 
+252:       **오늘 실제로 잰 구성**
+253:         x600 의 그 Windows 빌드 · package identity 없는 bare
+254:         AppContainer · 시험한 두 CPython 3.13 배포판
+255:         -> CUDA 호출 **전에** 막혔다.
+256:            ★ 여섯 번은 **여섯 단계의 탐색**이었다 — 1차는 스크립트가 시작조차
+257:              못 했고(0xC0000135), 2차부터 `_ctypes` 초기화 실패, 4차는 성공한
+258:              import 들, 5·6차는 DLL 로드 감별이다. 같은 실패를 여섯 번 재현한
+259:              것이 아니다(검수 8. 전에는 "여섯 번 전부 같은 자리에서 죽었다"
+260:              고 적었다)
+261: 
+262:       검수 판단: 판정 보류가 핑계는 아니다. 다만 `FAIL-SCOPE` 를 쓸
+263:       수 있는 경우도 **이 좁은 구성으로 scope 를 명시할 때뿐**이고,
+264:       S2 전체나 AppContainer 일반에 대한 `FAIL-SCOPE` 근거는 없다.
+265: 
+266:   ★ **유력한 가설을 결론으로 쓰지 않는다.** 우리 컨테이너는
+267:   `CreateAppContainerProfile` 로 만든 **package identity 없는 맨
+268:   AppContainer** 이고, Store 앱은 package identity 를 갖고 COM 을 쓴다 —
+269:   그 차이일 수 있다. 그러나 **확인하지 않았으므로 추측으로만 적는다.**
+270: 
+271:   ★ x600 의 Python·DLL 측정은 **한 기계 · 한 Windows 빌드**의 결과다. 다른
+272:   빌드에서 같은지 모른다. 가둠 대조는 개발 기계에서 쟀다.
+273: 
+274:   ★ `P0-02` 체크리스트 중 **안 한 것**: filesystem allowlist 의 완전한
+275:   형태, outbound 제한 실측, "Create Process in Sandbox API 현재 상태
+276:   재확인". GPU 드라이버 capability 식별은 **시작도 못 했다** — 그 앞에서
+277:   막혔기 때문이다.
+278: 
+279:   ★ 실측 중 준 파일 권한은 전부 원복했다(Python 트리 27112 files ·
+280:   상위 4개 · ALL APPLICATION PACKAGES). 남은 `S-1-15-3-65536-...` 는
+281:   Windows 가 원래 두는 capability ACE 이고 우리가 만든 것이 아니다.
+282: 
+283: decision: >
+284:   **`P0-02` 의 DoD 를 아직 적용하지 않는다.**
+285: 
+286:       성공 -> S2 설계 유지, 검증된 환경에서만 enable
+287:       실패 -> S2 를 EXPERIMENTAL 로 유지, S1 이 유일한 Windows 네이티브 경로
+288: 
+289:   ★★ **범위를 둘로 가른다**(2026-09-10 검수 8 — "실패 원인을 모르는
+290:   것과 시험한 구성에서 실패를 관측한 것은 양립한다"):
+291: 
+292:       전체 질문(AppContainer 에서 CUDA 가 되는가)
+293:         -> INCONCLUSIVE. CUDA 를 부르지도 못했다
+294:       잰 구성(x600 · 그 빌드 · package identity 없음 · 시험한 두 CPython 3.13 ·
+295:               기록된 명령 `p0_02_probe.exe` + `P0_02_CODE` 의 Python 한 줄 ·
+296:               경로 `import torch` -> `import ctypes`)
+297:         -> ctypes/torch 경로가 CUDA 호출 **전에** 막혔다.
+298:            **이 범위로는 FAIL-SCOPE 를 뒷받침한다**
+299: 
+300:   ★ 전에는 "package identity 가능성이 남았으니 지금 실패로 확정하면 재지
+301:     않은 것을 결론으로 쓰는 것" 이라고 적었다. **범위 없이 쓴 보류**였다 —
+302:     원인을 모르는 것은 좁은 구성의 실패 관측을 막지 않는다.
+303:   ★ 그래도 S2 **전체**에 대한 판정은 아니다. package identity · COM
+304:     capability · 다른 Windows 빌드를 재지 않았다.
+305: 
+306:   ★ 그 좁은 범위의 판정은 **이미 가능하다**(위). 다음 걸음은 그것을
+307:     뒤집는 것이 아니라 **다른 구성**을 따로 재는 것이고, 그 결과가 S2 전체
+308:     판단에 쓰인다(재검수 16 — 전에는 "회피 불가면 FAIL-SCOPE" 로 조건을 걸어
+309:     앞의 판정과 충돌했다):
+310:     1. Process Monitor 등으로 `ole32` 로드 실패 과정의 접근·오류를 조사해
+311:        실패 위치를 확인한다(★ 전에는 "DllMain 이 무엇에서 거부되는지" 라고
+312:        적었다 — 실패 함수와 '거부' 를 조사 전에 전제했다)
+313:     2. package identity · COM capability · 다른 Windows 빌드 구성을 따로 잰다
+314:     3. 그 결과로 S2 전체를 EXPERIMENTAL 로 확정할지 정한다
+315: 
+316:   ★ 그 전까지 **S2 의 상태를 바꾸지 않는다.** 지금 상태(EXPERIMENTAL)가
+317:   이 측정과 모순되지 않는다.
+318: ---
+319: 
+320: # P0-02 — Windows AppContainer + CUDA
+321: 
+322: ## 한 줄
+323: 
+324: AppContainer 는 만들어지고(x600) 호스트 파일을 못 읽는 것으로 보이는데
+325: (종료 코드 수준, 개발 기계), **그 안에서 torch 를
+326: import 할 수 없다.** 시험한 DLL 중 `ole32.dll` 로드에서 1114 가 관측됐다 —
+327: `_ctypes` 실패와의 인과는 확인하지 않았다.
+328: 
+329: ## 왜 이걸 쟀나
+330: 
+331: 2026-09-05 사용자가 방화벽을 실측해 `netsh advfirewall` 의 **경로 단위**
+332: 아웃바운드 차단이 동작함을 확인했다. 그러나 그것으로는 `NetworkPolicy` 를
+333: 강제할 수 없다 — 남의 PC 에서 `python.exe` 를 통째로 막으면 소유자의
+334: 다른 작업까지 끊긴다(`CLAUDE.md` §0.1).
+335: 
+336: AppContainer 는 프로세스마다 **고유 SID** 를 주므로 그 SID 에 규칙을 걸면
+337: 그 Job 하나만 막힌다. 그래서 방화벽 강제의 선행 조건이고, 그것이 이
+338: 스파이크를 지금 한 이유다.
+339: 
+340: ## 어떻게 좁혔나
+341: 
+342: `import _ctypes` 는 여러 DLL 을 한 번에 시도해 **실패 지점을 감춘다.**
+343: 그래서 `LoadLibraryW` 하나만 하고 Win32 오류 코드를 찍는 `dll_probe` 를
+344: 만들어 컨테이너 안에서 DLL 을 하나씩 열었다. 그렇게 하지 않았으면
+345: "`_ctypes` 가 안 된다" 에서 멈췄을 것이다.
+346: 
+347: ## 이 실험이 증명하지 않는 것
+348: 
+349: **"AppContainer 에서 CUDA 가 안 된다" 를 증명하지 않았다.** CUDA 를
+350: 시도조차 못 했다.
+351: 
+352: **"AppContainer 에서 네이티브 코드가 안 돈다" 도 아니다.** C 확장
+353: (`zlib`·`_socket`)은 로드된다. `combase.dll` 도 **로드**된다(기능 실행은
+354: 안 쟀다). 시험한 DLL 중 1114 가 나온 것은 `ole32` 와 `_ctypes` 다 — 다른
+355: 장애가 없다는 뜻은 아니다.
+356: 
+357: **Python·DLL 측정은 x600 한 기계 · 한 Windows 빌드**의 결과다. 가둠 대조는
+358: 개발 기계에서 쟀다(x600 에서 다시 재지 않았다).
+
+ exited 1 in 1678ms:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "C:\Users\playdata2\anaconda3\Lib\pathlib.py", line 1027, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\playdata2\anaconda3\Lib\pathlib.py", line 1013, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'docs\\evidence\\_raw\\검수_2026-09-10\\16_재검수_evidence_초안_둘.txt'
+
+codex
+이미 두 군데에서 잔여 문제를 찾았습니다. P0-02의 limitations에는 여전히 “실제 거부된 접근”이라는 전제가 있고, 본문은 “프로세스마다 고유 SID”라며 Job 하나만 차단된다고 단정하지만 negative_tests는 같은 프로파일 이름의 SID 재사용을 서술합니다.
+
+지정한 16 원문 경로는 파일이 없어 읽지 못했습니다. 다른 파일은 열지 않고, 우선 사용자 메시지에 열거된 16의 지적과 현재 초안을 대조하고 있습니다.
+
+codex
+지정한 `docs/evidence/_raw/검수_2026-09-10/16_재검수_evidence_초안_둘.txt`가 없습니다. 이 파일의 정확한 경로 또는 원문 텍스트를 알려 주세요. 나머지 지정 파일 검토는 계속하겠습니다.
+codex
+DoD-68의 decision·도식·뮤테이션 잔여 건수는 서로 맞도록 수정됐습니다. 다만 “현재 저장소 경로에서 상태를 만들지 못했다”를 “원리적으로 못 잰다”로 넓힌 문장과, 순차 검수였다면 판정을 받았을 것이라는 단정은 남아 있습니다.
+
+P0-02의 좁은 범위 FAIL-SCOPE와 전체 질문 INCONCLUSIVE는 이제 충돌하지 않습니다. 남은 문제는 접근 거부를 전제한 문장, Job별 차단 보장, 그리고 front-matter의 측정 환경 범위입니다.
+
+codex
+**아직 수정이 필요합니다.** 16이 지목한 문장들은 대부분 고쳐졌지만, P0-02에는 접근 거부를 전제한 문장과 Job별 차단을 보장하는 문장이 남았습니다. DoD-68에도 관측 범위를 넘는 단정이 있습니다.
+
+단, 지정한 `16_재검수_evidence_초안_둘.txt`는 해당 경로에 없어 읽지 못했습니다. 아래의 “16 대응”은 **사용자 메시지에 열거된 지적**과의 대조입니다. 16 원문 전체에 대한 종결 확인은 아닙니다. 다른 파일은 열지 않았습니다.
+
+줄 번호는 [DoD-68 초안](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:113)을 D, [P0-02 초안](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:105)을 P, [가둠 재실측 원문](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt:1)을 R로 표시합니다. 머리의 판정 요약 블록은 판정에서 제외했습니다.
+
+**16의 지적별 대조 결과입니다.**
+
+| 지적 | 현재 해당 줄 인용 | 판정 |
+|---|---|---|
+| D — 검수 부재라는 옛 decision | D334–337: “독립 검수 7… CHANGES_REQUESTED”, “재검수 16 도 CHANGES_REQUESTED”, “수정본 재검수에서 ACCEPTED” | 닫힘. 검수 부재와 반려 상태를 구분한다. |
+| D — scheduler-tick의 범위 | D364: “큐에서 스스로 골라 한 번 예약한다” | 닫힘. D116의 “한 번”, D374의 “④ 데몬화” 미완료 설명과 맞는다. |
+| D — 뮤테이션 3건이 현재도 미검출 | D279–286: “1차…3건이 안 잡혔다. 지금 남은 것은 T1 하나다”, “이튿날 DB 를 직접 변조하는 테스트로 고정했다” | 닫힘. D249–254의 누적 21/22와 맞는다. 다만 T1의 **측정 불가능성 표현**은 별도 문제다. |
+| D — 실행 시점 혼합 | D123–124: `2026-09-03T17:40:00+09:00`, “첫 실행 시각…2026-09-10 재측정(commit 0d6a6ed)” | 날짜·커밋 분리는 됐다. 재측정의 시·분·초는 없으므로, “재측정 시각까지 추가됐다”고는 확인할 수 없다. |
+| P — x600과 개발 기계 혼합 | P108: “x600…에서”, “가둠은 개발 기계에서 따로 쟀다” | claim에서는 닫힘. front-matter 다른 곳에는 범위가 빠져 있다. 아래 3번. |
+| P — 가둠을 접근 거부로 단정 | P108: “종료 코드가 보안 속성에 따라 갈린다는 것까지다”; P221–222: “0 이 아닌 종료 코드”, “거부 이유까지는 단언하지 않는다” | 해당 구절은 닫힘. R12·16의 출력과 맞는다. |
+| P — 소거한 가설 넷 | P136: “시험한 네 변경”; P208: “가설을 소거한 것이 아니다” | 닫힘. 변경 시험과 넓은 가설 소거를 구분한다. |
+| P — DllMain·거부를 선결한 후속 계획 | P310–312: “로드 실패 과정의 접근·오류를 조사해 실패 위치를 확인한다” | 후속 계획에서는 닫힘. limitations에는 같은 전제가 남았다. 아래 1번. |
+| P — FAIL-SCOPE의 조건 충돌 | P298: “이 범위로는 FAIL-SCOPE”; P306: “그 좁은 범위의 판정은 이미 가능하다” | 닫힘. 다른 구성의 후속 측정이 현재 관측의 판정 조건으로 남아 있지 않다. |
+| P — 끝 문장의 ‘한 기계’ | P357–358: “Python·DLL 측정은 x600 한 기계…가둠 대조는 개발 기계” | 닫힘. 측정 대상을 명시한다. |
+
+**남은 지적은 다섯 가지입니다.**
+
+1. **P0-02의 limitations가 여전히 ‘접근 거부’를 조사 전 사실로 둡니다.**
+
+   > P241–245: “`ole32` 로드가 왜 1114 인지…모른다.”  
+   > “Process Monitor 등으로 **실제 거부된 접근을 봐야 안다.**”
+
+   앞에서는 원인을 모른다고 하고, 뒤에서는 거부된 접근이 존재한다고 전제합니다. P205–206에 제시된 `error=1114`는 로드 실패 관측이지 접근 거부 관측이 아닙니다. 실패 위치와 거부를 선결하지 않도록 고친 P310–312와도 어긋납니다.
+
+   **문장 수정으로 닫을 수 있습니다.** “로드 실패 과정의 접근·오류를 조사해 원인과 실패 위치를 확인해야 한다”로 맞추면 됩니다. 접근 거부를 실제 결론으로 유지하려면 추가 관측이 필요합니다.
+
+2. **P0-02는 프로파일 SID의 성질에서 Job 하나만 차단된다는 보장으로 넘어갑니다.**
+
+   > P336–337: “AppContainer 는 **프로세스마다 고유 SID** 를 주므로 그 SID 에 규칙을 걸면 **그 Job 하나만 막힌다.**”
+
+   그런데 같은 문서가 다음을 적습니다.
+
+   > P233–234: “프로파일 이름이 같으면 **SID 도 같은지**”  
+   > P274–275: “안 한 것…**outbound 제한 실측**”
+
+   문서 자체가 SID 재사용을 서술하면서 프로세스별 고유성을 단정합니다. 두 Job이 같은 프로파일을 공유하는 경우를 배제하는 조건도 없습니다. 따라서 SID 확인에서 **Job 단위 방화벽 격리 보장**까지 도출할 수 없습니다.
+
+   **현재 evidence를 정리하는 데는 문장 수정이면 됩니다.** “Job마다 별도 프로파일을 사용하는 설계에서 SID 기반 차단을 검토한다. Job별 차단은 미측정”처럼 설계 조건과 관측을 나눠야 합니다. 현재 보장을 유지하려면 프로파일 할당 관계와 여러 Job 사이의 차단 대조 측정이 필요합니다.
+
+3. **P0-02의 측정 환경 구분이 front-matter 전체로 전파되지 않았습니다.**
+
+   > P167: “**한 기계 · 한 Windows 빌드에서만 쟀다.**”
+
+   이는 범위를 붙인 다음 문장과 다릅니다.
+
+   > P271–272: “**x600 의 Python·DLL 측정은** 한 기계 · 한 Windows 빌드의 결과다…가둠 대조는 개발 기계에서 쟀다.”
+
+   P167을 전체 실측에 대한 문장으로 읽으면 P108·194·226 및 R1·7과 충돌합니다. 문맥상 Python·DLL 측정을 뜻했을 수 있지만, 그 제한이 문장에 없습니다. P129–130의 “여섯 번의 측정이 전부 한 기계”에도 무엇을 세는지 명시하는 편이 정확합니다.
+
+   **추가 측정 없이 고칠 수 있는 범위 표기 문제입니다.** P167에도 P271처럼 “x600의 Python·DLL 측정”을 붙이면 됩니다.
+
+4. **DoD-68의 ‘원리적으로 못 잰다’는 서술이 제시된 실패 경험보다 강합니다.**
+
+   > D253–254: “남은 하나는 T1 — 저장소가 그 상황 자체를 막아 **원리적으로 못 잰다**”  
+   > D288–290: “그 상황을 만들려니 **저장소가 더 앞에서 막았다**”
+
+   후자가 뒷받침하는 것은 현재 시도한 경로에서 해당 상태를 만들지 못했다는 것입니다. 가능한 측정 방법 전체가 없다는 결론은 아닙니다. 같은 limitations의 D282–286은 G5·G6에서 정상 경로의 상태 생성 불가를 DB 변조 테스트로 넘어갔다고 설명합니다. 그것이 T1에도 가능하다는 증거는 아니지만, **상태 생성 실패와 원리적 측정 불가능성을 동일시할 수 없다는 반례**는 됩니다.
+
+   **문장 수정으로 닫을 수 있습니다.** “현재 저장소 경로로 해당 상태를 구성하지 못해, 수행한 뮤테이션 검사에서는 검출하지 못했다” 정도가 제시된 근거에 맞습니다. T1 검출 자체를 주장하려면 별도 검증이 필요합니다.
+
+5. **DoD-68의 review_scope에는 실행하지 않은 대안의 성공을 확정하는 문장이 남았습니다.**
+
+   > D143–144: “순차로 하나씩 돌렸으면 **최소 하나는 판정을 받았을 것이다.**”
+
+   동시 실행에서 판정을 받지 못했다는 기록만으로, 같은 당시 조건에서 순차 실행이 반드시 하나 이상의 판정을 냈을 것이라고 확정할 수 없습니다. 현재 읽을 수 있는 지정 파일에는 그 반사실을 검증한 근거가 없습니다.
+
+   **문장 문제입니다.** “순차 실행으로 자원 경합을 줄이는 편이 나았을 수 있다” 또는 실제 후속 방침만 남기면 됩니다. 이는 과거 기록임이 명시돼 있으므로 현재 검수 상태와의 충돌은 아닙니다. 다만 front-matter에 남은 과도한 확신입니다.
+
+**현재 상태로 evidence로 옮기는 데 동의하지 않습니다.** 위 문제들은 주장을 관측 범위로 낮추면 추가 측정 없이 수정할 수 있습니다. 접근 거부 원인, Job별 방화벽 격리, T1 검출을 더 강하게 주장하려는 경우에만 그에 맞는 측정이 필요합니다. 전체 AppContainer/CUDA 질문에 답하기 위한 다른 구성 측정은, 현재의 좁은 실패 관측을 기록하기 위한 선행 조건은 아닙니다.
+
+확인한 범위에서는 DoD-68의 현재 뮤테이션 건수·단발 예약·Grant 수용까지라는 한계, P0-02의 DLL 로드와 기능 실행 구분·좁은 FAIL-SCOPE와 전체 INCONCLUSIVE 사이에서 **추가 충돌을 찾지 못했습니다.** 두 초안의 front-matter와 본문, 가둠 출력은 대조했지만, 누락된 16 원문과 읽기 대상 밖의 코드·다른 실측 원문·커밋 및 digest의 정합성은 검증하지 않았습니다. 이 범위에서 반례를 더 찾지 못한 것이 결함 부재를 뜻하지는 않습니다.
+
+CHANGES_REQUESTED
+tokens used
+36,332
+**아직 수정이 필요합니다.** 16이 지목한 문장들은 대부분 고쳐졌지만, P0-02에는 접근 거부를 전제한 문장과 Job별 차단을 보장하는 문장이 남았습니다. DoD-68에도 관측 범위를 넘는 단정이 있습니다.
+
+단, 지정한 `16_재검수_evidence_초안_둘.txt`는 해당 경로에 없어 읽지 못했습니다. 아래의 “16 대응”은 **사용자 메시지에 열거된 지적**과의 대조입니다. 16 원문 전체에 대한 종결 확인은 아닙니다. 다른 파일은 열지 않았습니다.
+
+줄 번호는 [DoD-68 초안](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-03_1740_DoD-68_evidence_초안_검수대기.md:113)을 D, [P0-02 초안](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/plans/2026-09-06_0020_P0-02_evidence_초안_검수대기.md:105)을 P, [가둠 재실측 원문](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/docs/evidence/_raw/P0-02_가둠_대조_재실측_2026-09-10.txt:1)을 R로 표시합니다. 머리의 판정 요약 블록은 판정에서 제외했습니다.
+
+**16의 지적별 대조 결과입니다.**
+
+| 지적 | 현재 해당 줄 인용 | 판정 |
+|---|---|---|
+| D — 검수 부재라는 옛 decision | D334–337: “독립 검수 7… CHANGES_REQUESTED”, “재검수 16 도 CHANGES_REQUESTED”, “수정본 재검수에서 ACCEPTED” | 닫힘. 검수 부재와 반려 상태를 구분한다. |
+| D — scheduler-tick의 범위 | D364: “큐에서 스스로 골라 한 번 예약한다” | 닫힘. D116의 “한 번”, D374의 “④ 데몬화” 미완료 설명과 맞는다. |
+| D — 뮤테이션 3건이 현재도 미검출 | D279–286: “1차…3건이 안 잡혔다. 지금 남은 것은 T1 하나다”, “이튿날 DB 를 직접 변조하는 테스트로 고정했다” | 닫힘. D249–254의 누적 21/22와 맞는다. 다만 T1의 **측정 불가능성 표현**은 별도 문제다. |
+| D — 실행 시점 혼합 | D123–124: `2026-09-03T17:40:00+09:00`, “첫 실행 시각…2026-09-10 재측정(commit 0d6a6ed)” | 날짜·커밋 분리는 됐다. 재측정의 시·분·초는 없으므로, “재측정 시각까지 추가됐다”고는 확인할 수 없다. |
+| P — x600과 개발 기계 혼합 | P108: “x600…에서”, “가둠은 개발 기계에서 따로 쟀다” | claim에서는 닫힘. front-matter 다른 곳에는 범위가 빠져 있다. 아래 3번. |
+| P — 가둠을 접근 거부로 단정 | P108: “종료 코드가 보안 속성에 따라 갈린다는 것까지다”; P221–222: “0 이 아닌 종료 코드”, “거부 이유까지는 단언하지 않는다” | 해당 구절은 닫힘. R12·16의 출력과 맞는다. |
+| P — 소거한 가설 넷 | P136: “시험한 네 변경”; P208: “가설을 소거한 것이 아니다” | 닫힘. 변경 시험과 넓은 가설 소거를 구분한다. |
+| P — DllMain·거부를 선결한 후속 계획 | P310–312: “로드 실패 과정의 접근·오류를 조사해 실패 위치를 확인한다” | 후속 계획에서는 닫힘. limitations에는 같은 전제가 남았다. 아래 1번. |
+| P — FAIL-SCOPE의 조건 충돌 | P298: “이 범위로는 FAIL-SCOPE”; P306: “그 좁은 범위의 판정은 이미 가능하다” | 닫힘. 다른 구성의 후속 측정이 현재 관측의 판정 조건으로 남아 있지 않다. |
+| P — 끝 문장의 ‘한 기계’ | P357–358: “Python·DLL 측정은 x600 한 기계…가둠 대조는 개발 기계” | 닫힘. 측정 대상을 명시한다. |
+
+**남은 지적은 다섯 가지입니다.**
+
+1. **P0-02의 limitations가 여전히 ‘접근 거부’를 조사 전 사실로 둡니다.**
+
+   > P241–245: “`ole32` 로드가 왜 1114 인지…모른다.”  
+   > “Process Monitor 등으로 **실제 거부된 접근을 봐야 안다.**”
+
+   앞에서는 원인을 모른다고 하고, 뒤에서는 거부된 접근이 존재한다고 전제합니다. P205–206에 제시된 `error=1114`는 로드 실패 관측이지 접근 거부 관측이 아닙니다. 실패 위치와 거부를 선결하지 않도록 고친 P310–312와도 어긋납니다.
+
+   **문장 수정으로 닫을 수 있습니다.** “로드 실패 과정의 접근·오류를 조사해 원인과 실패 위치를 확인해야 한다”로 맞추면 됩니다. 접근 거부를 실제 결론으로 유지하려면 추가 관측이 필요합니다.
+
+2. **P0-02는 프로파일 SID의 성질에서 Job 하나만 차단된다는 보장으로 넘어갑니다.**
+
+   > P336–337: “AppContainer 는 **프로세스마다 고유 SID** 를 주므로 그 SID 에 규칙을 걸면 **그 Job 하나만 막힌다.**”
+
+   그런데 같은 문서가 다음을 적습니다.
+
+   > P233–234: “프로파일 이름이 같으면 **SID 도 같은지**”  
+   > P274–275: “안 한 것…**outbound 제한 실측**”
+
+   문서 자체가 SID 재사용을 서술하면서 프로세스별 고유성을 단정합니다. 두 Job이 같은 프로파일을 공유하는 경우를 배제하는 조건도 없습니다. 따라서 SID 확인에서 **Job 단위 방화벽 격리 보장**까지 도출할 수 없습니다.
+
+   **현재 evidence를 정리하는 데는 문장 수정이면 됩니다.** “Job마다 별도 프로파일을 사용하는 설계에서 SID 기반 차단을 검토한다. Job별 차단은 미측정”처럼 설계 조건과 관측을 나눠야 합니다. 현재 보장을 유지하려면 프로파일 할당 관계와 여러 Job 사이의 차단 대조 측정이 필요합니다.
+
+3. **P0-02의 측정 환경 구분이 front-matter 전체로 전파되지 않았습니다.**
+
+   > P167: “**한 기계 · 한 Windows 빌드에서만 쟀다.**”
+
+   이는 범위를 붙인 다음 문장과 다릅니다.
+
+   > P271–272: “**x600 의 Python·DLL 측정은** 한 기계 · 한 Windows 빌드의 결과다…가둠 대조는 개발 기계에서 쟀다.”
+
+   P167을 전체 실측에 대한 문장으로 읽으면 P108·194·226 및 R1·7과 충돌합니다. 문맥상 Python·DLL 측정을 뜻했을 수 있지만, 그 제한이 문장에 없습니다. P129–130의 “여섯 번의 측정이 전부 한 기계”에도 무엇을 세는지 명시하는 편이 정확합니다.
+
+   **추가 측정 없이 고칠 수 있는 범위 표기 문제입니다.** P167에도 P271처럼 “x600의 Python·DLL 측정”을 붙이면 됩니다.
+
+4. **DoD-68의 ‘원리적으로 못 잰다’는 서술이 제시된 실패 경험보다 강합니다.**
+
+   > D253–254: “남은 하나는 T1 — 저장소가 그 상황 자체를 막아 **원리적으로 못 잰다**”  
+   > D288–290: “그 상황을 만들려니 **저장소가 더 앞에서 막았다**”
+
+   후자가 뒷받침하는 것은 현재 시도한 경로에서 해당 상태를 만들지 못했다는 것입니다. 가능한 측정 방법 전체가 없다는 결론은 아닙니다. 같은 limitations의 D282–286은 G5·G6에서 정상 경로의 상태 생성 불가를 DB 변조 테스트로 넘어갔다고 설명합니다. 그것이 T1에도 가능하다는 증거는 아니지만, **상태 생성 실패와 원리적 측정 불가능성을 동일시할 수 없다는 반례**는 됩니다.
+
+   **문장 수정으로 닫을 수 있습니다.** “현재 저장소 경로로 해당 상태를 구성하지 못해, 수행한 뮤테이션 검사에서는 검출하지 못했다” 정도가 제시된 근거에 맞습니다. T1 검출 자체를 주장하려면 별도 검증이 필요합니다.
+
+5. **DoD-68의 review_scope에는 실행하지 않은 대안의 성공을 확정하는 문장이 남았습니다.**
+
+   > D143–144: “순차로 하나씩 돌렸으면 **최소 하나는 판정을 받았을 것이다.**”
+
+   동시 실행에서 판정을 받지 못했다는 기록만으로, 같은 당시 조건에서 순차 실행이 반드시 하나 이상의 판정을 냈을 것이라고 확정할 수 없습니다. 현재 읽을 수 있는 지정 파일에는 그 반사실을 검증한 근거가 없습니다.
+
+   **문장 문제입니다.** “순차 실행으로 자원 경합을 줄이는 편이 나았을 수 있다” 또는 실제 후속 방침만 남기면 됩니다. 이는 과거 기록임이 명시돼 있으므로 현재 검수 상태와의 충돌은 아닙니다. 다만 front-matter에 남은 과도한 확신입니다.
+
+**현재 상태로 evidence로 옮기는 데 동의하지 않습니다.** 위 문제들은 주장을 관측 범위로 낮추면 추가 측정 없이 수정할 수 있습니다. 접근 거부 원인, Job별 방화벽 격리, T1 검출을 더 강하게 주장하려는 경우에만 그에 맞는 측정이 필요합니다. 전체 AppContainer/CUDA 질문에 답하기 위한 다른 구성 측정은, 현재의 좁은 실패 관측을 기록하기 위한 선행 조건은 아닙니다.
+
+확인한 범위에서는 DoD-68의 현재 뮤테이션 건수·단발 예약·Grant 수용까지라는 한계, P0-02의 DLL 로드와 기능 실행 구분·좁은 FAIL-SCOPE와 전체 INCONCLUSIVE 사이에서 **추가 충돌을 찾지 못했습니다.** 두 초안의 front-matter와 본문, 가둠 출력은 대조했지만, 누락된 16 원문과 읽기 대상 밖의 코드·다른 실측 원문·커밋 및 digest의 정합성은 검증하지 않았습니다. 이 범위에서 반례를 더 찾지 못한 것이 결함 부재를 뜻하지는 않습니다.
+
+CHANGES_REQUESTED

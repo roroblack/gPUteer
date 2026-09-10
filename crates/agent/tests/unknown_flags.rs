@@ -70,3 +70,20 @@ fn an_invalid_bool_is_refused_by_name() {
     assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
     assert!(error.contains("--send-attempt-report"), "{error}");
 }
+
+/// 같은 키를 두 번 줘도 앞의 잘못된 값이 검사 전에 사라지지 않는다(재검수 18).
+#[test]
+fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
+    let mut args = base();
+    args.extend(
+        ["--send-attempt-report", "tru", "--send-attempt-report", "false"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("중복 뒤에 숨은 잘못된 불리언을 받아들였다"),
+        Err(error) => error,
+    };
+    assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+    assert!(error.contains("--send-attempt-report"), "{error}");
+}

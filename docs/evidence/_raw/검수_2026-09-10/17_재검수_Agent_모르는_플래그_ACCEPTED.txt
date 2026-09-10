@@ -1,0 +1,2961 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a08a54-004b-7881-8f9b-f3156869e123
+--------
+user
+동의가 아니라 **반박**을 원한다. Coordinator 파서가 모르는 플래그를 받아
+두던 것(재검수 14)을 고치면서, Agent 파서도 같은 모양이라 같은 방법으로
+고쳤다. 이 수정이 **멀쩡한 호출을 막는지**, 그리고 **여전히 조용히 사라지는
+플래그가 있는지** 봐 달라.
+
+# 배경
+
+```text
+전     parse_flags 가 아무 이름이나 HashMap 에 넣고, 설정 파서가 필요한 것만
+       flags.0.get(...) 으로 골라 읽었다. `--send-attempt-reprot true` 같은
+       오타는 조용히 사라지고 운영자는 보고를 켰다고 믿는다
+지금   Flags 가 **읽은 키를 기록**한다. 설정을 다 만든 뒤 한 번도 안 읽힌
+       키가 있으면 STARTUP_REFUSED: UNKNOWN_FLAGS
+★     Coordinator 쪽에서 정규식이 새 `get` 메서드의 본문까지 바꿔 자기 재귀가
+       났었다. Agent 쪽은 치환을 먼저 하고 메서드를 뒤에 넣었다
+★     전제 — 설정 파서가 **모든 플래그를 조건 없이 한 자리에서** 읽는다.
+       이 전제가 깨지면 멀쩡한 플래그가 "모르는 이름" 으로 거부된다
+```
+
+수정 쪽이 잰 것: Agent 테스트, selftest, 뮤테이션. 믿지 말고 구조로 판정하라.
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/agent/src/lib.rs      (Flags · parse_flags · parse_config_from_args 와
+                              그 안에서 부르는 도우미들)
+crates/agent/tests/unknown_flags.rs
+crates/cli/src/coordinator_agent_selftest.rs   (Agent 에 넘기는 인자만)
+```
+
+# 물을 것 — 네 가지
+
+1. **전제가 성립하나.** `parse_config_from_args` 안에서, 또는 거기서 부르는
+   도우미 안에서 어떤 플래그가 **조건부로만** 읽히나(`if`·`match` 가지,
+   `and_then` 안, 다른 플래그 값에 따라)? 그렇다면 그 조건이 아닐 때 준
+   그 플래그는 거부된다 — 구체적 인자로 보여라.
+
+2. **여전히 조용히 사라지는 것이 있나.** 읽기는 하는데 값을 버리는 플래그,
+   또는 Flags 를 거치지 않고 인자를 직접 보는 경로.
+
+3. **selftest 가 Agent 에 넘기는 인자 중 거부될 것이 있나.** 수정 쪽은
+   selftest 를 돌렸다고 한다 — 그 결과를 믿지 말고 인자 목록으로 대조하라.
+
+4. **새 테스트가 관문을 고정하나** — 관문을 끄면 실패하고, "전부 거부" 로
+   바꾸면 대조 테스트가 실패하는 구조인가.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든
+것과 결함이 없는 것은 다르다 — 그 둘을 구분해 써라.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 과 구체적 입력을 붙여라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 세 파일만 읽고, 플래그를 읽는 분기와 최종 관문을 추적하겠습니다. 테스트 실행 결과 대신 코드와 구체적 인자로 반례를 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'struct Flags|impl Flags|fn parse_flags|fn parse_config_from_args|flags\\.|UNKNOWN_FLAGS|"'^fn |''^pub fn |''^    fn '"' crates/agent/src/lib.rs" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1793ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+47:    fn from(value: String) -> Self {
+59:    fn from(value: &str) -> Self {
+80:    fn new(policy: &RetryPolicy) -> Self {
+89:    fn update_lease_deadline(
+106:    fn exhausted(&self) -> bool {
+365:pub fn run(config: AgentConfig) -> Result<(), String> {
+557:fn run_resume_connection(
+727:fn fresh_nonce() -> Result<Vec<u8>, String> {
+733:fn run_one_connection(
+1509:fn receive_and_validate_revoke(
+1533:fn validate_revoke_notice(
+1559:fn lease_is_expired(lease: &pb::Lease, now_unix_ms: u64) -> bool {
+1587:fn verify_nested_manifest(
+1659:fn verify_and_record_lease(
+1705:pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> String {
+1753:fn run_and_capture_workload(
+1846:fn workload_run_root(checkpoint_root: &std::path::Path) -> Result<PathBuf, String> {
+1867:fn remove_dir_if_present(dir: &std::path::Path) -> Result<(), String> {
+1884:fn collect_workload_artifacts(
+1936:fn finalize_workload_checkpoint(
+1975:fn derive_owner_panel_token(own_seed: &[u8; 32]) -> String {
+1982:fn record_start_checkpoint(
+2019:fn fence_error_message(prefix: &str, error: DurableFenceError) -> String {
+2028:fn next_connection_attempt(counter: &mut u32) -> u32 {
+2034:fn connect_with_timeout(address: &str, timeout: Duration) -> Result<TcpStream, String> {
+2057:fn classify_framing_error(error: FramingError, phase: &str) -> String {
+2080:fn classify_renew_result_error(error: FramingError) -> String {
+2093:fn peer_closed_after_ack(stream: &TcpStream) -> Result<bool, String> {
+2158:fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
+2175:fn derive_renew_nonce(lease_id: &str, connection_attempt: u32, round: u64) -> Vec<u8> {
+2195:pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
+2199:        coordinator_addr: flags.require("--connect")?,
+2200:        own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+2201:        coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+2203:        submitter_verifying_key: match flags.get("--submitter-pubkey") {
+2207:        execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+2208:        send_attempt_report: flags.bool_flag("--send-attempt-report"),
+2209:        corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
+2210:        corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
+2211:        corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
+2212:        corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
+2213:        workload_cgroup_parent: flags.get("--workload-cgroup-parent")
+2215:        multi_agent: flags.bool_flag("--multi-agent"),
+2219:        heartbeat_interval_ms: match flags.get("--heartbeat-interval-ms") {
+2225:        heartbeat_rounds: match flags.get("--heartbeat-rounds") {
+2231:        neighbor_report_rounds: match flags.get("--neighbor-report-rounds") {
+2240:        neighbor_report_interval_ms: match flags.get("--neighbor-report-interval-ms") {
+2246:        neighbor_report_target_node_id: flags.get("--neighbor-report-target").cloned(),
+2250:        owner_panel_port: flags.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
+2257:        coordinator_device_id: flags.require("--coordinator-device-id")?,
+2258:        agent_device_id: flags.require("--agent-device-id")?,
+2259:        corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
+2260:        expect_replay: flags.bool_flag("--expect-replay"),
+2261:        do_renew: flags.bool_flag("--do-renew"),
+2262:        renew_request_epoch_override: flags.u64_opt_flag("--renew-request-epoch-override")?,
+2263:        corrupt_renew_request_signature: flags.bool_flag("--corrupt-renew-request-signature"),
+2264:        fence_db_path: match flags.get("--fence-db") {
+2268:        checkpoint_root: match flags.get("--checkpoint-root") {
+2272:        renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+2273:        renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
+2274:        expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
+2275:        revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
+2276:        max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
+2279:        retry_base_ms: flags.u64_flag_with_default("--retry-base-ms", 250)?,
+2280:        retry_cap_ms: flags.u64_flag_with_default("--retry-cap-ms", 5_000)?,
+2282:        reconnect_enabled: !flags.bool_flag("--disable-reconnect"),
+2285:        drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
+2286:        reuse_renew_nonce_after_reconnect: flags.bool_flag("--reuse-renew-nonce-after-reconnect"),
+2287:        resume_protocol: flags.bool_flag("--resume-protocol"),
+2288:        session_id: flags.get("--session-id")
+2291:        resume_lease_id: flags.get("--resume-lease-id")
+2294:        resume_job_id: flags.get("--resume-job-id").cloned().unwrap_or_default(),
+2295:        resume_attempt_id: flags.get("--resume-attempt-id")
+2298:        resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
+2302:    let bad_bools = flags.bad_bools();
+2309:    let unread = flags.unread();
+2312:            "STARTUP_REFUSED: UNKNOWN_FLAGS — 이 명령이 읽지 않는 플래그 {unread:?}. \
+2329:pub fn run_from_args(args: &[String]) -> Result<(), String> {
+2339:fn default_fence_db_path() -> PathBuf {
+2351:fn default_checkpoint_root() -> PathBuf {
+2363:struct Flags(
+2371:impl Flags {
+2373:    fn get(&self, key: &str) -> Option<&String> {
+2379:    fn unread(&self) -> Vec<String> {
+2391:    fn require(&self, key: &str) -> Result<String, String> {
+2399:    fn bool_flag(&self, key: &str) -> bool {
+2411:    fn bad_bools(&self) -> Vec<String> {
+2417:    fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+2428:    fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+2437:    fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+2447:    fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+2458:fn parse_flags(args: &[String]) -> Result<Flags, String> {
+2475:fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
+2480:fn hex_to_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
+2485:fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
+2500:    fn nonce_attempt_counter_ignores_failed_connects() {
+2691:    fn held_lease() -> pb::Lease {
+2700:    fn revoke(lease_id: &str, fence_epoch: u64) -> pb::RevokeLeaseNotice {
+2709:    fn revoke_notice_matching_lease_and_epoch_is_applicable() {
+2714:    fn revoke_notice_with_wrong_lease_id_is_rejected() {
+2720:    fn revoke_notice_with_wrong_fence_epoch_is_rejected() {
+2726:    fn revoke_notice_for_expired_lease_is_rejected() {
+2739:    fn workload_run_root_is_never_inside_the_checkpoint_root() {
+2768:    fn filesystem_root_as_checkpoint_root_is_refused() {
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Content crates/agent/tests/unknown_flags.rs' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1390ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+//! ??**agent-stub ?� 모르???�래그�? 받아 ?��? ?�는??* (결함 ???�장??Agent �?
+//! 2026-09-10).
+//!
+//! Coordinator ?�서가 모르???�름??조용??받아 ?�던 것을 ?��???14 가 짚었??
+//! Agent ?�서??같�? 모양?�었????`--send-attempt-reprot true` 같�? ?��?�?주면
+//! 보고�?켰다�?믿�?�??�무 ?�도 ???�어?�다.
+
+use gputeer_agent::parse_config_from_args;
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn base() -> Vec<String> {
+    let peer = gputeer_crypto::SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+    let own_seed = "22".repeat(32);
+    let peer_hex = hex(peer.as_bytes());
+    [
+        "--connect", "127.0.0.1:9",
+        "--own-seed", own_seed.as_str(),
+        "--peer-pubkey", peer_hex.as_str(),
+        "--coordinator-device-id", "01JCOORDINATORAGENTFLAG01",
+        "--agent-device-id", "01JAGENTAGENTFLAG00000001",
+        "--fence-db", "fence.sqlite3",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+#[test]
+fn the_plain_arguments_parse() {
+    parse_config_from_args(&base()).expect("?�상 ?�자�?거�??�다");
+}
+
+#[test]
+fn a_misspelled_flag_is_refused_by_name() {
+    let mut args = base();
+    args.extend(["--send-attempt-reprot".to_string(), "true".to_string()]);
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("?��?�?받아?��???),
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("STARTUP_REFUSED: UNKNOWN_FLAGS"),
+        "?�른 ?�유�?거�??�다: {error}"
+    );
+    assert!(error.contains("--send-attempt-reprot"), "?�름?????�다: {error}");
+}
+
+/// ???��????�바�??�름?� 받는?? ?�으�?"모르??것이???�는 것이????///   거�?" 로도 ???�스?��? ?�과?�다.
+#[test]
+fn the_correct_spelling_is_accepted() {
+    let mut args = base();
+    args.extend(["--send-attempt-report".to_string(), "true".to_string()]);
+    let config = parse_config_from_args(&args).expect("?�바�??�름??거�??�다");
+    assert!(config.send_attempt_report);
+}
+
+/// `true`/`false` 가 ?�닌 불리?��? 조용??false 가 ?��? ?�는???��???15).
+#[test]
+fn an_invalid_bool_is_refused_by_name() {
+    let mut args = base();
+    args.extend(["--send-attempt-report".to_string(), "tru".to_string()]);
+    let error = match parse_config_from_args(&args) {
+        Ok(_) => panic!("?�못??불리?�을 받아?��???),
+        Err(error) => error,
+    };
+    assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+    assert!(error.contains("--send-attempt-report"), "{error}");
+}
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "rg -n 'agent|--|args\\(' crates/cli/src/coordinator_agent_selftest.rs" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1598ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+1://! `gputeer coordinator-agent-selftest` — coordinator/agent 프로세스 경계 실측.
+3://! `docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md` 단계 4·5.
+7://! 이 서브커맨드는 그 다음 한 걸음이다 — `coordinator-stub`/`agent-stub`
+14://! 정직하게 동작하는 coordinator/agent 프로세스는 자기 서명을 절대
+16://! (`--corrupt-own-signature`, `--send-grant-twice`, `--expect-replay`)
+18://! — `crates/coordinator/src/lib.rs`·`crates/agent/src/lib.rs` 참조.
+79:    agent_seed: [u8; 32],
+81:    agent_pub_hex: String,
+83:    agent_device_id: &'static str,
+104:        let coordinator_seed = seed_from_label("coordinator-agent-selftest/coordinator");
+105:        let agent_seed = seed_from_label("coordinator-agent-selftest/agent");
+109:        let agent_pub = gputeer_crypto::SigningKey::from_bytes(&agent_seed).verifying_key();
+110:        let submitter_seed = seed_from_label("coordinator-agent-selftest/submitter");
+116:            agent_seed,
+118:            agent_pub_hex: to_hex(agent_pub.as_bytes()),
+120:            agent_device_id: "01JAGENTSELFTEST00000000001",
+133:            "{RESULT_OK_MARKER} grant_id={} attempt_id={} agent_device_id={}",
+134:            self.grant_id, self.attempt_id, self.agent_device_id
+145:    agent_pid: u32,
+149:    agent_success: bool,
+150:    agent_stdout: String,
+151:    agent_stderr: String,
+154:/// coordinator-stub/agent-stub 을 별도 프로세스로 한 번 띄워 끝까지
+155:/// 실행하고 결과를 모은다. `extra_coordinator_args`/`extra_agent_args`
+157:/// This selftest intentionally has two lanes: scenarios with `--lease-db`
+161:/// `--i-understand-legacy-mode-is-unsafe true`; that opt-in is deliberate when
+190:        .args([
+192:            "--job-id",
+194:            "--entrypoint",
+196:            "--args",
+198:            "--submitter-device-id",
+200:            "--submitter-seed",
+202:            "--issued-at-unix-ms",
+204:            "--out",
+228:    extra_agent_args: &[&str],
+233:        extra_agent_args,
+242:    extra_agent_args: &[&str],
+247:        extra_agent_args,
+256:    extra_agent_args: &[&str],
+263:        extra_agent_args,
+292:    let mut args: Vec<&str> = vec!["coordinator-stub", "--listen", listen, "--own-seed"];
+295:    args.push("--peer-pubkey");
+296:    args.push(&fixture.agent_pub_hex);
+297:    args.push("--coordinator-device-id");
+299:    args.push("--agent-device-id");
+300:    args.push(fixture.agent_device_id);
+301:    args.push("--grant-id");
+303:    args.push("--attempt-id");
+305:    args.push("--lease-id");
+307:    args.push("--job-id");
+310:    if !extra_coordinator_args.contains(&"--lease-db") {
+311:        args.extend_from_slice(&["--i-understand-legacy-mode-is-unsafe", "true"]);
+315:    args.extend_from_slice(&["--accept-timeout-ms", "3000"]);
+318:        .args(&args)
+336:fn run_agent_only(
+339:    extra_agent_args: &[&str],
+341:    let mut args: Vec<&str> = vec!["agent-stub", "--connect", connect, "--own-seed"];
+342:    let seed_hex = to_hex(&fixture.agent_seed);
+344:    args.push("--peer-pubkey");
+346:    args.push("--coordinator-device-id");
+348:    args.push("--agent-device-id");
+349:    args.push(fixture.agent_device_id);
+350:    args.push("--disable-reconnect");
+352:    args.extend_from_slice(extra_agent_args);
+355:        .args(&args)
+359:        .map_err(|e| format!("agent-stub 단독 실행 실패: {e}"))?;
+370:    extra_agent_args: &[&str],
+378:        "--listen",
+380:        "--own-seed",
+385:    coordinator_args.push("--peer-pubkey");
+386:    coordinator_args.push(&fixture.agent_pub_hex);
+387:    coordinator_args.push("--coordinator-device-id");
+389:    coordinator_args.push("--agent-device-id");
+390:    coordinator_args.push(fixture.agent_device_id);
+391:    coordinator_args.push("--grant-id");
+393:    coordinator_args.push("--attempt-id");
+395:    coordinator_args.push("--lease-id");
+397:    coordinator_args.push("--job-id");
+400:    if !extra_coordinator_args.contains(&"--lease-db") {
+401:        coordinator_args.extend_from_slice(&["--i-understand-legacy-mode-is-unsafe", "true"]);
+405:        .args(&coordinator_args)
+436:    //   채울 만큼 stderr 에 쓰다가 블로킹되고, agent 는 coordinator 의
+469:    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", &address, "--own-seed"];
+470:    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+471:    agent_args.push(&agent_own_seed_hex);
+472:    agent_args.push("--peer-pubkey");
+473:    agent_args.push(&fixture.coordinator_pub_hex);
+474:    agent_args.push("--coordinator-device-id");
+475:    agent_args.push(fixture.coordinator_device_id);
+476:    agent_args.push("--agent-device-id");
+477:    agent_args.push(fixture.agent_device_id);
+478:    agent_args.extend_from_slice(extra_agent_args);
+483:        agent_args.extend_from_slice(&["--disable-reconnect", "true"]);
+486:    let agent: Child = Command::new(&fixture.exe)
+487:        .args(&agent_args)
+491:        .map_err(|e| format!("agent-stub 스폰 실패: {e}"))?;
+497:    let agent_pid = agent.id();
+498:    if coordinator_pid == agent_pid || coordinator_pid == self_pid || agent_pid == self_pid {
+500:            "PID 가 구분되지 않는다: self={self_pid} coordinator={coordinator_pid} agent={agent_pid}"
+504:    let agent_output = match agent.wait_with_output_until(handshake_deadline) {
+509:            return Err(format!("agent-stub wait failed: {error}"));
+531:        agent_pid,
+535:        agent_success: agent_output.status.success(),
+536:        agent_stdout: String::from_utf8_lossy(&agent_output.stdout).into_owned(),
+537:        agent_stderr: String::from_utf8_lossy(&agent_output.stderr).into_owned(),
+545:    extra_agent_args: &[&str],
+550:    let mut agent_args = extra_agent_args.to_vec();
+551:    agent_args.extend_from_slice(&["--checkpoint-root", root]);
+552:    run_handshake(fixture, extra_coordinator_args, &agent_args)
+588:fn assert_no_agent_ack_or_marker(
+595:        || outcome.agent_success
+596:        || outcome.agent_stdout.contains("JOB_STARTED ")
+601:            "{label}: 거부 경로에서 marker 또는 ACK/성공 결과가 관측됐다. entries={} coordinator_success={} agent_success={} coordinator_stdout={} agent_stdout={} agent_stderr={}",
+604:            outcome.agent_success,
+606:            outcome.agent_stdout,
+607:            outcome.agent_stderr
+631:            "--lease-db",
+633:            "--fence-epoch",
+635:            "--lease-ttl-ms",
+637:            "--do-renew",
+640:        &["--fence-db", fence_db, "--do-renew", "false"],
+642:    if !seeded.coordinator_success || !seeded.agent_success {
+644:            "resume seed handshake failed: coordinator={} stdout={} stderr={}; agent={} stdout={} stderr={}",
+648:            seeded.agent_success,
+649:            seeded.agent_stdout,
+650:            seeded.agent_stderr
+676:        "--resume-protocol".to_string(),
+678:        // ★ 2026-09-10 — 여기 `--session-id` 를 Coordinator 에도 넘겼었다.
+681:        //   거부하게 되면서 드러났다 — Agent 쪽 `--session-id` 는 실제로 쓰인다.
+682:        "--max-connections".to_string(),
+684:        "--accept-timeout-ms".to_string(),
+688:        coordinator_args.extend(["--lease-db".to_string(), lease_db.to_string()]);
+691:    let mut agent_args = vec![
+692:        "--resume-protocol".to_string(),
+694:        "--session-id".to_string(),
+696:        "--resume-lease-id".to_string(),
+698:        "--resume-job-id".to_string(),
+700:        "--resume-attempt-id".to_string(),
+702:        "--resume-fence-epoch".to_string(),
+704:        "--fence-db".to_string(),
+708:        agent_args.extend(["--disable-reconnect".to_string(), "true".to_string()]);
+710:        agent_args.extend([
+711:            "--max-reconnect-attempts".to_string(),
+713:            "--max-reconnect-duration-seconds".to_string(),
+715:            "--retry-base-ms".to_string(),
+717:            "--retry-cap-ms".to_string(),
+721:    let agent_refs: Vec<&str> = agent_args.iter().map(String::as_str).collect();
+725:        &agent_refs,
+748:        "--resume-protocol",
+750:        // ★ `--session-id` 는 Agent 에만 준다 — 위 같은 자리의 주석 참조.
+751:        "--max-connections",
+753:        "--accept-timeout-ms",
+755:        "--lease-db",
+758:    let agent_args = [
+759:        "--resume-protocol",
+761:        "--session-id",
+763:        "--resume-lease-id",
+765:        "--resume-job-id",
+767:        "--resume-attempt-id",
+769:        "--resume-fence-epoch",
+771:        "--fence-db",
+773:        "--disable-reconnect",
+784:        &agent_args,
+795:    agent_should_succeed: bool,
+807:    let agent_output = format!("{}\n{}", outcome.agent_stdout, outcome.agent_stderr);
+808:    let refusal_matches = expected_refusal.is_none_or(|expected| agent_output.contains(expected));
+809:    let retried_to_exhaustion = agent_output.contains("ReconnectExhausted:");
+816:        || outcome.agent_success != agent_should_succeed
+817:        || (agent_should_succeed && !outcome.agent_stdout.contains(&marker))
+818:        || (!agent_should_succeed && outcome.agent_stdout.contains("RESULT ok=true"))
+824:            "{scenario}) Resume outcome mismatch: expected={} expected_refusal={:?} retried_to_exhaustion={} accepted_connection_count={} coordinator_success={} coordinator_stdout={} coordinator_stderr={} agent_success={} agent_stdout={} agent_stderr={}",
+832:            outcome.agent_success,
+833:            outcome.agent_stdout,
+834:            outcome.agent_stderr
+848:    if !normal.coordinator_success || !normal.agent_success {
+852:             agent exit={} stdout={} stderr={}",
+856:            normal.agent_success,
+857:            normal.agent_stdout,
+858:            normal.agent_stderr
+862:    if !normal.coordinator_stdout.contains(&expected) || !normal.agent_stdout.contains(&expected) {
+865:             coordinator stdout: {}\nagent stdout: {}",
+866:            normal.coordinator_stdout, normal.agent_stdout
+870:        "1) 정상 handshake 성공 (self={} coordinator={} agent={}, grant_id={})\n",
+871:        normal.self_pid, normal.coordinator_pid, normal.agent_pid, fixture.grant_id
+875:    let forged_grant = run_handshake(&fixture, &["--corrupt-own-signature", "true"], &[])?;
+876:    if forged_grant.agent_success || forged_grant.agent_stdout.contains(RESULT_OK_MARKER) {
+879:             agent exit={} stdout={} stderr={}",
+880:            forged_grant.agent_success, forged_grant.agent_stdout, forged_grant.agent_stderr
+899:    // ── 3. 위조 agent_signature — Coordinator 가 성공 처리하지 않는다 ──
+903:    let forged_ack = run_handshake(&fixture, &[], &["--corrupt-own-signature", "true"])?;
+906:            "위조된 agent_signature 가 거부되지 않았다 — Coordinator 가 성공을 주장했다.\n\
+913:    report.push_str("3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)\n");
+918:        &["--send-grant-twice", "true"],
+919:        &["--expect-replay", "true"],
+921:    if replay.agent_success || !replay.agent_stderr.contains("REPLAY_REJECTED:") {
+924:             agent exit={} stdout={} stderr={}",
+925:            replay.agent_success, replay.agent_stdout, replay.agent_stderr
+942:    let forged_lease = run_handshake(&fixture, &["--corrupt-lease-signature", "true"], &[])?;
+943:    if forged_lease.agent_success || !forged_lease.agent_stderr.contains("LEASE_REJECTED:") {
+947:             agent exit={} stdout={} stderr={}",
+948:            forged_lease.agent_success, forged_lease.agent_stdout, forged_lease.agent_stderr
+957:    let expired_lease = run_handshake(&fixture, &["--expire-lease", "true"], &[])?;
+958:    if expired_lease.agent_success || !expired_lease.agent_stderr.contains("LEASE_REJECTED:") {
+961:             agent exit={} stdout={} stderr={}",
+962:            expired_lease.agent_success, expired_lease.agent_stdout, expired_lease.agent_stderr
+974:        &["--do-renew", "true", "--renewed-fence-epoch", "0"],
+975:        &["--do-renew", "true"],
+977:    if !renew_ok.coordinator_success || !renew_ok.agent_success {
+981:             agent exit={} stdout={} stderr={}",
+985:            renew_ok.agent_success,
+986:            renew_ok.agent_stdout,
+987:            renew_ok.agent_stderr
+991:        .agent_stdout
+995:            "정상 Lease 갱신인데 Agent 가 RENEW_RESULT 를 찍지 않았다.\nagent stdout: {}",
+996:            renew_ok.agent_stdout
+1004:        &["--do-renew", "true", "--renewed-fence-epoch", "0"],
+1006:            "--do-renew",
+1008:            "--corrupt-renew-request-signature",
+1039:            "--do-renew",
+1041:            "--renewed-fence-epoch",
+1043:            "--corrupt-renew-result-signature",
+1046:        &["--do-renew", "true"],
+1048:    if forged_renew_result.agent_success
+1050:            .agent_stderr
+1055:             agent exit={} stdout={} stderr={}",
+1056:            forged_renew_result.agent_success,
+1057:            forged_renew_result.agent_stdout,
+1058:            forged_renew_result.agent_stderr
+1069:            "--do-renew",
+1071:            "--renewed-fence-epoch",
+1073:            "--corrupt-renewed-lease-signature",
+1076:        &["--do-renew", "true"],
+1078:    if forged_renewed_lease.agent_success
+1080:            .agent_stderr
+1086:             agent exit={} stdout={} stderr={}",
+1087:            forged_renewed_lease.agent_success,
+1088:            forged_renewed_lease.agent_stdout,
+1089:            forged_renewed_lease.agent_stderr
+1101:            "--fence-epoch",
+1103:            "--do-renew",
+1105:            "--renewed-fence-epoch",
+1108:        &["--do-renew", "true"],
+1110:    if downgrade.agent_success
+1112:            .agent_stderr
+1117:             agent exit={} stdout={} stderr={}",
+1118:            downgrade.agent_success, downgrade.agent_stdout, downgrade.agent_stderr
+1129:            "--do-renew",
+1131:            "--renewed-fence-epoch",
+1133:            "--renew-outcome-override",
+1136:        &["--do-renew", "true"],
+1138:    if superseded.agent_success || !superseded.agent_stderr.contains("RENEW_REFUSED:SUPERSEDED") {
+1141:             agent exit={} stdout={} stderr={}",
+1142:            superseded.agent_success, superseded.agent_stdout, superseded.agent_stderr
+1153:            "--do-renew",
+1155:            "--renewed-fence-epoch",
+1157:            "--renew-outcome-override",
+1160:        &["--do-renew", "true"],
+1162:    if quarantined.agent_success
+1164:            .agent_stderr
+1169:             agent exit={} stdout={} stderr={}",
+1170:            quarantined.agent_success, quarantined.agent_stdout, quarantined.agent_stderr
+1186:            "--do-renew",
+1188:            "--renewed-fence-epoch",
+1190:            "--corrupt-renew-result-nonce",
+1193:        &["--do-renew", "true"],
+1195:    if wrong_nonce.agent_success
+1197:            .agent_stderr
+1202:             agent exit={} stdout={} stderr={}",
+1203:            wrong_nonce.agent_success, wrong_nonce.agent_stdout, wrong_nonce.agent_stderr
+1218:        &["--do-renew", "true", "--renewed-fence-epoch", "5"],
+1219:        &["--do-renew", "true"],
+1221:    if upgrade.agent_success
+1223:            .agent_stderr
+1229:             agent exit={} stdout={} stderr={}",
+1230:            upgrade.agent_success, upgrade.agent_stdout, upgrade.agent_stderr
+1243:        &["--do-renew", "true", "--renewed-fence-epoch", "0"],
+1244:        &["--do-renew", "true", "--renew-request-epoch-override", "99"],
+1268:    // 지금까지의 시나리오는 매번 새 `--fence-db` 임시 파일(기본값)을
+1271:    // 서로 다른 `agent-stub` **프로세스**(별도 PID)가 순서대로 열어,
+1314:        &["--fence-epoch", "5", "--do-renew", "false"],
+1315:        &["--do-renew", "false", "--fence-db", fence_db],
+1317:    if !restart_first.coordinator_success || !restart_first.agent_success {
+1321:             agent exit={} stdout={} stderr={}",
+1325:            restart_first.agent_success,
+1326:            restart_first.agent_stdout,
+1327:            restart_first.agent_stderr
+1333:        &["--fence-epoch", "3", "--do-renew", "false"],
+1334:        &["--do-renew", "false", "--fence-db", fence_db],
+1336:    if restart_second.agent_pid == restart_first.agent_pid {
+1338:            "재시작 방어 시나리오의 2차 agent PID 가 1차와 같다 — 별도 프로세스가 \
+1339:             아니다.\n1차 agent_pid={} 2차 agent_pid={}",
+1340:            restart_first.agent_pid, restart_second.agent_pid
+1350:    if restart_second.agent_success
+1352:            .agent_stderr
+1355:            .agent_stderr
+1362:             1차 agent_pid={} 2차 agent_pid={}\n\
+1363:             2차 agent exit={} stdout={} stderr={}",
+1364:            restart_first.agent_pid,
+1365:            restart_second.agent_pid,
+1366:            restart_second.agent_success,
+1367:            restart_second.agent_stdout,
+1368:            restart_second.agent_stderr
+1389:    // ── 18. `--fence-db :memory:` 는 fail closed — 코덱스 독립 검수(2026-08-19, p102) 지적 ──
+1398:        run_agent_alone(&fixture, &["--fence-db", ":memory:"])?;
+1401:            "--fence-db :memory: 가 fail closed 되지 않았다.\nexit ok={memory_ok} stderr={memory_stderr}"
+1405:        "18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)\n",
+1423:            "--fence-epoch",
+1425:            "--do-renew",
+1427:            "--renewed-fence-epoch",
+1429:            "--renew-rounds",
+1432:        &["--do-renew", "true", "--renew-rounds", "3"],
+1434:    if !repeated.coordinator_success || !repeated.agent_success {
+1438:             agent exit={} stdout={} stderr={}",
+1442:            repeated.agent_success,
+1443:            repeated.agent_stdout,
+1444:            repeated.agent_stderr
+1447:    let agent_renewed_count = repeated
+1448:        .agent_stdout
+1457:    let agent_result_count = repeated
+1458:        .agent_stdout
+1462:    if agent_renewed_count != 3 || coordinator_renewed_count != 3 || agent_result_count != 1 {
+1464:            "3회 반복 갱신의 출력 횟수가 기대와 다르다 — agent RENEWED={agent_renewed_count}(기대 3), \
+1465:             coordinator RENEW_RESULT={coordinator_renewed_count}(기대 3), agent 최종 RESULT={agent_result_count}(기대 1).\n\
+1466:             agent stdout={}\ncoordinator stdout={}",
+1467:            repeated.agent_stdout, repeated.coordinator_stdout
+1478:    // 지금까지의 시나리오는 `--lease-db` 를 안 주므로 Coordinator 가
+1493:    //   watermark 에도 5 가 남는다(같은 --fence-db 재사용).
+1516:            "--lease-db",
+1518:            "--fence-epoch",
+1520:            "--do-renew",
+1522:            "--renewed-fence-epoch",
+1525:        &["--fence-db", fence_db_20, "--do-renew", "true"],
+1527:    if !issue_first.coordinator_success || !issue_first.agent_success {
+1531:             agent exit={} stdout={} stderr={}",
+1535:            issue_first.agent_success,
+1536:            issue_first.agent_stdout,
+1537:            issue_first.agent_stderr
+1544:            "--lease-db",
+1546:            "--fence-epoch",
+1548:            "--do-renew",
+1551:        &["--fence-db", fence_db_20, "--do-renew", "false"],
+1560:    if !issue_second.coordinator_success || !issue_second.agent_success {
+1567:             agent exit={} stdout={} stderr={}",
+1573:            issue_second.agent_success,
+1574:            issue_second.agent_stdout,
+1575:            issue_second.agent_stderr
+1611:            "--lease-db",
+1613:            "--fence-epoch",
+1615:            "--do-renew",
+1618:        &["--fence-db", fence_db_21, "--do-renew", "false"],
+1620:    if !renew_first.coordinator_success || !renew_first.agent_success {
+1624:             agent exit={} stdout={} stderr={}",
+1628:            renew_first.agent_success,
+1629:            renew_first.agent_stdout,
+1630:            renew_first.agent_stderr
+1637:            "--lease-db",
+1639:            "--fence-epoch",
+1641:            "--do-renew",
+1644:        &["--fence-db", fence_db_21, "--do-renew", "true"],
+1653:    if !renew_second.coordinator_success || !renew_second.agent_success {
+1660:             agent exit={} stdout={} stderr={}",
+1666:            renew_second.agent_success,
+1667:            renew_second.agent_stdout,
+1668:            renew_second.agent_stderr
+1680:    // (`--max-total-duration-seconds 2`)를 CLI 로 주고, 이 selftest
+1682:    // Agent 프로세스로 갱신을 시도한다. `--renew-rounds` 만 늘리는
+1698:            "--lease-db",
+1700:            "--fence-epoch",
+1702:            "--max-total-duration-seconds",
+1704:            "--do-renew",
+1707:        &["--do-renew", "false"],
+1709:    if !issue_22.coordinator_success || !issue_22.agent_success {
+1713:             agent exit={} stdout={} stderr={}",
+1717:            issue_22.agent_success,
+1718:            issue_22.agent_stdout,
+1719:            issue_22.agent_stderr
+1743:            "--lease-db",
+1745:            "--fence-epoch",
+1747:            "--max-total-duration-seconds",
+1749:            "--do-renew",
+1751:            "--renewed-fence-epoch",
+1754:        &["--do-renew", "true"],
+1764:        || renew_22.agent_success
+1766:            .agent_stderr
+1773:             agent exit={} stdout={} stderr={}",
+1779:            renew_22.agent_success,
+1780:            renew_22.agent_stdout,
+1781:            renew_22.agent_stderr
+1820:            "--lease-db",
+1822:            "--fence-epoch",
+1824:            "--max-total-duration-seconds",
+1826:            "--do-renew",
+1829:        &["--do-renew", "false"],
+1831:    if !issue_23.coordinator_success || !issue_23.agent_success {
+1835:             agent exit={} stdout={} stderr={}",
+1839:            issue_23.agent_success,
+1840:            issue_23.agent_stdout,
+1841:            issue_23.agent_stderr
+1848:            "--lease-db",
+1850:            "--fence-epoch",
+1852:            "--max-total-duration-seconds",
+1854:            "--do-renew",
+1856:            "--renewed-fence-epoch",
+1859:        &["--do-renew", "true"],
+1868:    if !renew_23.coordinator_success || !renew_23.agent_success {
+1873:             agent exit={} stdout={} stderr={}",
+1879:            renew_23.agent_success,
+1880:            renew_23.agent_stdout,
+1881:            renew_23.agent_stderr
+1891:    // 처음 구현은 `lease_store=Some` 이고 `--renew-outcome-override`
+1906:            "--lease-db",
+1908:            "--fence-epoch",
+1910:            "--max-total-duration-seconds",
+1912:            "--do-renew",
+1915:        &["--do-renew", "false"],
+1917:    if !issue_24.coordinator_success || !issue_24.agent_success {
+1921:             agent exit={} stdout={} stderr={}",
+1925:            issue_24.agent_success,
+1926:            issue_24.agent_stdout,
+1927:            issue_24.agent_stderr
+1948:            "--lease-db",
+1950:            "--fence-epoch",
+1952:            "--max-total-duration-seconds",
+1954:            "--do-renew",
+1956:            "--renewed-fence-epoch",
+1958:            "--renew-outcome-override",
+1961:        &["--do-renew", "true"],
+1970:    if override_24.agent_success
+1972:            .agent_stderr
+1979:             agent exit={} stdout={} stderr={}",
+1983:            override_24.agent_success,
+1984:            override_24.agent_stdout,
+1985:            override_24.agent_stderr
+2034:            "--lease-db",
+2036:            "--fence-epoch",
+2038:            "--do-renew",
+2041:        &["--fence-db", fence_db_25, "--do-renew", "false"],
+2043:    if !issue_25.coordinator_success || !issue_25.agent_success {
+2047:             agent exit={} stdout={} stderr={}",
+2051:            issue_25.agent_success,
+2052:            issue_25.agent_stdout,
+2053:            issue_25.agent_stderr
+2060:            "--lease-db",
+2062:            "--fence-epoch",
+2064:            "--do-renew",
+2066:            "--renewed-fence-epoch",
+2070:            "--fence-db",
+2072:            "--do-renew",
+2074:            "--renew-request-epoch-override",
+2083:        || superseded_25.agent_success
+2085:            .agent_stderr
+2088:            .agent_stderr
+2094:             agent exit={} stdout={} stderr={}",
+2098:            superseded_25.agent_success,
+2099:            superseded_25.agent_stdout,
+2100:            superseded_25.agent_stderr
+2122:            "--lease-db",
+2124:            "--fence-epoch",
+2126:            "--do-renew",
+2129:        &["--fence-db", fence_db_26, "--do-renew", "false"],
+2131:    if !issue_26.coordinator_success || !issue_26.agent_success {
+2135:             agent exit={} stdout={} stderr={}",
+2139:            issue_26.agent_success,
+2140:            issue_26.agent_stdout,
+2141:            issue_26.agent_stderr
+2147:            "--lease-db",
+2149:            "--fence-epoch",
+2151:            "--do-renew",
+2154:        &["--fence-db", fence_db_26, "--do-renew", "true"],
+2160:        || !same_epoch_26.agent_success
+2162:            .agent_stdout
+2168:             agent exit={} stdout={} stderr={}",
+2172:            same_epoch_26.agent_success,
+2173:            same_epoch_26.agent_stdout,
+2174:            same_epoch_26.agent_stderr
+2184:    // Scenarios 27-31 intentionally omit `--lease-db`; run_handshake() adds
+2187:    // 27: intentionally uses that no-`--lease-db` contract lane.
+2191:            "--do-renew",
+2193:            "--renewed-fence-epoch",
+2195:            "--revoke-after-round",
+2197:            "--renew-rounds",
+2201:            "--do-renew",
+2203:            "--renew-rounds",
+2205:            "--expect-revoke-after-round",
+2210:        || !revoke_ok.agent_success
+2211:        || !revoke_ok.agent_stdout.contains("REVOKE_RESULT ok=true")
+2213:            .agent_stdout
+2216:            .agent_stdout
+2229:             agent exit={} stdout={} stderr={}",
+2233:            revoke_ok.agent_success,
+2234:            revoke_ok.agent_stdout,
+2235:            revoke_ok.agent_stderr
+2246:    // 28: intentionally uses that no-`--lease-db` contract lane.
+2250:            "--revoke-after-round",
+2252:            "--corrupt-revoke-signature",
+2255:        &["--do-renew", "false", "--expect-revoke-after-round", "0"],
+2257:    if forged_revoke.agent_success
+2259:            .agent_stderr
+2263:            "위조된 revoke 서명이 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+2264:            forged_revoke.agent_success, forged_revoke.agent_stdout, forged_revoke.agent_stderr
+2269:    // 29: intentionally uses that no-`--lease-db` contract lane.
+2274:            "--revoke-after-round",
+2276:            "--revoke-lease-id",
+2280:            "--do-renew",
+2282:            "--expect-revoke-after-round",
+2284:            "--revoke-signer-id",
+2288:    if wrong_id_revoke.agent_success
+2290:            .agent_stderr
+2294:            "잘못된 revoke lease_id가 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+2295:            wrong_id_revoke.agent_success,
+2296:            wrong_id_revoke.agent_stdout,
+2297:            wrong_id_revoke.agent_stderr
+2302:    // 30: intentionally uses that no-`--lease-db` contract lane.
+2305:        &["--revoke-after-round", "0", "--revoke-fence-epoch", "6"],
+2306:        &["--do-renew", "false", "--expect-revoke-after-round", "0"],
+2308:    if wrong_epoch_revoke.agent_success
+2310:            .agent_stderr
+2314:            "잘못된 revoke fence_epoch이 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+2315:            wrong_epoch_revoke.agent_success,
+2316:            wrong_epoch_revoke.agent_stdout,
+2317:            wrong_epoch_revoke.agent_stderr
+2324:    // 31: intentionally uses that no-`--lease-db` contract lane.
+2328:            "--revoke-after-round",
+2330:            "--lease-ttl-ms",
+2332:            "--revoke-delay-ms",
+2335:        &["--do-renew", "false", "--expect-revoke-after-round", "0"],
+2337:    if expired_revoke.agent_success
+2339:            .agent_stderr
+2343:            "이미 만료된 Lease에 대한 revoke가 거부되지 않았다.\nagent exit={} stdout={} stderr={}",
+2344:            expired_revoke.agent_success, expired_revoke.agent_stdout, expired_revoke.agent_stderr
+2358:            "--lease-db",
+2360:            "--fence-epoch",
+2362:            "--do-renew",
+2364:            "--renewed-fence-epoch",
+2366:            "--renew-rounds",
+2370:            "--fence-db",
+2372:            "--do-renew",
+2374:            "--renew-request-epoch-override",
+2376:            "--renew-rounds",
+2392:        || superseded_multi_round.agent_success
+2394:            .agent_stderr
+2397:            .agent_stdout
+2403:             agent exit={} stdout={} stderr={}",
+2407:            superseded_multi_round.agent_success,
+2408:            superseded_multi_round.agent_stdout,
+2409:            superseded_multi_round.agent_stderr
+2440:            "--lease-db",
+2442:            "--fence-epoch",
+2444:            "--do-renew",
+2446:            "--disconnect-after-ack",
+2449:        &["--fence-db", fence_db_33, "--do-renew", "true"],
+2455:        || disconnected_33.agent_success
+2456:        || disconnected_33.agent_stdout.contains(RESULT_OK_MARKER)
+2461:             agent exit={} stdout={} stderr={}",
+2465:            disconnected_33.agent_success,
+2466:            disconnected_33.agent_stdout,
+2467:            disconnected_33.agent_stderr
+2474:            "--lease-db",
+2476:            "--fence-epoch",
+2478:            "--do-renew",
+2481:        &["--fence-db", fence_db_33, "--do-renew", "false"],
+2484:        || rehydrated_33.agent_pid == disconnected_33.agent_pid
+2486:        || !rehydrated_33.agent_success
+2487:        || !rehydrated_33.agent_stdout.contains(RESULT_OK_MARKER)
+2492:             1차 coordinator_pid={} agent_pid={}\n\
+2493:             2차 coordinator_pid={} agent_pid={}\n\
+2495:             agent exit={} stdout={} stderr={}",
+2497:            disconnected_33.agent_pid,
+2499:            rehydrated_33.agent_pid,
+2503:            rehydrated_33.agent_success,
+2504:            rehydrated_33.agent_stdout,
+2505:            rehydrated_33.agent_stderr
+2521:            "--lease-db",
+2523:            "--fence-epoch",
+2525:            "--agent-device-id",
+2527:            "--do-renew",
+2531:            "--fence-db",
+2533:            "--agent-device-id",
+2535:            "--do-renew",
+2546:        || wrong_holder_34.agent_success
+2551:             agent exit={} stdout={} stderr={}",
+2555:            wrong_holder_34.agent_success,
+2556:            wrong_holder_34.agent_stdout,
+2557:            wrong_holder_34.agent_stderr
+2579:            "--lease-db",
+2581:            "--fence-epoch",
+2583:            "--revoke-after-round",
+2585:            "--do-renew",
+2589:            "--fence-db",
+2591:            "--do-renew",
+2593:            "--expect-revoke-after-round",
+2598:        || !revoked_first_35.agent_success
+2600:            .agent_stdout
+2606:             agent exit={} stdout={} stderr={}",
+2610:            revoked_first_35.agent_success,
+2611:            revoked_first_35.agent_stdout,
+2612:            revoked_first_35.agent_stderr
+2631:            "--lease-db",
+2633:            "--fence-epoch",
+2635:            "--do-renew",
+2638:        &["--fence-db", fence_db_35, "--do-renew", "false"],
+2645:        || revoked_second_35.agent_success
+2647:            .agent_stderr
+2652:        || revoked_second_35.agent_stdout.contains(RESULT_OK_MARKER)
+2657:             agent exit={} stdout={} stderr={}",
+2661:            revoked_second_35.agent_success,
+2662:            revoked_second_35.agent_stdout,
+2663:            revoked_second_35.agent_stderr
+2689:            "--lease-db",
+2691:            "--fence-epoch",
+2693:            "--lease-ttl-ms",
+2695:            "--disconnect-after-ack",
+2697:            "--do-renew",
+2700:        &["--fence-db", fence_db_36, "--do-renew", "false"],
+2706:        || !issued_short_36.agent_success
+2707:        || !issued_short_36.agent_stdout.contains(RESULT_OK_MARKER)
+2712:             agent exit={} stdout={} stderr={}",
+2716:            issued_short_36.agent_success,
+2717:            issued_short_36.agent_stdout,
+2718:            issued_short_36.agent_stderr
+2728:            "--lease-db",
+2730:            "--fence-epoch",
+2732:            "--do-renew",
+2735:        &["--fence-db", fence_db_36, "--do-renew", "false"],
+2742:        || expired_reconnect_36.agent_success
+2743:        || expired_reconnect_36.agent_stdout.contains(RESULT_OK_MARKER)
+2751:             agent exit={} stdout={} stderr={}",
+2755:            expired_reconnect_36.agent_success,
+2756:            expired_reconnect_36.agent_stdout,
+2757:            expired_reconnect_36.agent_stderr
+2784:            "--lease-db",
+2786:            "--fence-epoch",
+2788:            "--do-renew",
+2790:            "--renew-rounds",
+2792:            "--revoke-before-renew",
+2796:            "--fence-db",
+2798:            "--do-renew",
+2800:            "--renew-rounds",
+2814:        || revoked_renew_37.agent_success
+2816:            .agent_stderr
+2819:            .agent_stderr
+2825:             agent exit={} stdout={} stderr={}",
+2829:            revoked_renew_37.agent_success,
+2830:            revoked_renew_37.agent_stdout,
+2831:            revoked_renew_37.agent_stderr
+2843:        || legacy_rejected.agent_success
+2844:        || legacy_rejected.agent_exit_code.unwrap_or(0) == 0
+2849:             agent exit={:?} elapsed_ms={} stdout={} stderr={}",
+2853:            legacy_rejected.agent_exit_code,
+2854:            legacy_rejected.agent_elapsed_ms,
+2855:            legacy_rejected.agent_stdout,
+2856:            legacy_rejected.agent_stderr
+2860:        "38) --lease-db 및 legacy opt-in 없는 Coordinator가 bind 전에 즉시 실패하고, Agent도 비리스닝 주소 연결 후 {}ms 안에 exit={}로 비정상 종료함\n",
+2861:        legacy_rejected.agent_elapsed_ms,
+2862:        legacy_rejected.agent_exit_code.unwrap_or(-1),
+2871:        || !started_39.agent_success
+2872:        || !started_39.agent_stdout.contains("state=WRITING")
+2875:            "정상 Grant의 WRITING 시작 경로가 실패했다(39). coordinator={} agent={} stdout={} stderr={}",
+2877:            started_39.agent_success,
+2878:            started_39.agent_stdout,
+2879:            started_39.agent_stderr
+2883:        gputeer_agent::start_checkpoint_id(fixture.job_id, fixture.attempt_id, fixture.grant_id);
+2884:    let started_id_39 = started_checkpoint_id(&started_39.agent_stdout)
+2924:        &["--corrupt-lease-signature", "true"],
+2927:    if forged_lease_40.agent_success || !forged_lease_40.agent_stderr.contains("LEASE_REJECTED:") {
+2929:            "위조 Lease가 marker 이전에 거부되지 않았다(40): agent={} stderr={}",
+2930:            forged_lease_40.agent_success, forged_lease_40.agent_stderr
+2933:    assert_no_agent_ack_or_marker(
+2946:        &["--expire-lease", "true"],
+2949:    if expired_lease_41.agent_success || !expired_lease_41.agent_stderr.contains("LEASE_REJECTED:")
+2952:            "만료 Lease가 marker 이전에 거부되지 않았다(41): agent={} stderr={}",
+2953:            expired_lease_41.agent_success, expired_lease_41.agent_stderr
+2956:    assert_no_agent_ack_or_marker(
+2975:        &["--lease-db", lease_db_42_str, "--revoke-after-round", "0"],
+2976:        &["--expect-revoke-after-round", "0"],
+2978:    if !first_42.coordinator_success || !first_42.agent_success {
+2980:            "revoke 상태를 준비하는 첫 handshake가 실패했다(42): coordinator={} stdout={} stderr={} agent={} stdout={} stderr={}",
+2984:            first_42.agent_success,
+2985:            first_42.agent_stdout,
+2986:            first_42.agent_stderr
+2994:        &["--lease-db", lease_db_42_str],
+2997:    assert_no_agent_ack_or_marker(&revoked_42, checkpoint_root_42.path(), "revoked Lease(42)")?;
+3007:    let first_id_43 = started_checkpoint_id(&retry_first_43.agent_stdout)
+3009:    let second_id_43 = started_checkpoint_id(&retry_second_43.agent_stdout)
+3016:    if !retry_first_43.agent_success
+3017:        || !retry_second_43.agent_success
+3026:            "동일 attempt retry가 멱등 처리되지 않았다(43): first_id={} second_id={} entries={} first_agent={} second_agent={}",
+3030:            retry_first_43.agent_success,
+3031:            retry_second_43.agent_success
+3044:    if marker_failure_44.agent_success
+3046:            .agent_stderr
+3052:        || marker_failure_44.agent_stdout.contains("JOB_STARTED ")
+3056:            "marker 생성 실패가 fail-closed가 아니다(44): coordinator={} agent={} coordinator_stdout={} agent_stdout={} agent_stderr={}",
+3058:            marker_failure_44.agent_success,
+3060:            marker_failure_44.agent_stdout,
+3061:            marker_failure_44.agent_stderr
+3067:    // 기존 단일 회차의 --renew-outcome-override 3 트리거를 그대로
+3080:            "--lease-db",
+3082:            "--fence-epoch",
+3084:            "--do-renew",
+3086:            "--renewed-fence-epoch",
+3088:            "--renew-outcome-override",
+3090:            "--renew-rounds",
+3093:        &["--do-renew", "true", "--renew-rounds", "2"],
+3107:        || quarantined_multi_round.agent_success
+3109:            .agent_stderr
+3112:            .agent_stdout
+3118:             agent exit={} stdout={} stderr={}",
+3122:            quarantined_multi_round.agent_success,
+3123:            quarantined_multi_round.agent_stdout,
+3124:            quarantined_multi_round.agent_stderr
+3128:        "45) renew_rounds=2의 첫 회차 QUARANTINED(--renew-outcome-override 3) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
+3132:    // 기존 22번의 --max-total-duration-seconds 2 + 실제 2.2초 경과
+3145:            "--lease-db",
+3147:            "--fence-epoch",
+3149:            "--max-total-duration-seconds",
+3151:            "--do-renew",
+3154:        &["--do-renew", "false"],
+3156:    if !issue_max_duration_46.coordinator_success || !issue_max_duration_46.agent_success {
+3160:             agent exit={} stdout={} stderr={}",
+3164:            issue_max_duration_46.agent_success,
+3165:            issue_max_duration_46.agent_stdout,
+3166:            issue_max_duration_46.agent_stderr
+3174:            "--lease-db",
+3176:            "--fence-epoch",
+3178:            "--max-total-duration-seconds",
+3180:            "--do-renew",
+3182:            "--renewed-fence-epoch",
+3184:            "--renew-rounds",
+3187:        &["--do-renew", "true", "--renew-rounds", "2"],
+3201:        || max_duration_multi_round.agent_success
+3203:            .agent_stderr
+3206:            .agent_stdout
+3212:             agent exit={} stdout={} stderr={}",
+3216:            max_duration_multi_round.agent_success,
+3217:            max_duration_multi_round.agent_stdout,
+3218:            max_duration_multi_round.agent_stderr
+3222:        "46) renew_rounds=2의 첫 회차 MAX_DURATION_EXCEEDED(--max-total-duration-seconds 2, 2.2초 경과) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인\n",
+3238:            "--lease-db",
+3240:            "--lease-ttl-ms",
+3242:            "--renew-delay-ms",
+3244:            "--do-renew",
+3247:        &["--do-renew", "true"],
+3254:        || expired_renew_47.agent_success
+3259:             agent exit={} stdout={} stderr={}",
+3263:            expired_renew_47.agent_success,
+3264:            expired_renew_47.agent_stdout,
+3265:            expired_renew_47.agent_stderr
+3286:            "--lease-db",
+3288:            "--lease-ttl-ms",
+3290:            "--do-renew",
+3293:        &["--do-renew", "true", "--renew-delay-ms", "1000"],
+3297:        || local_expired_renew_48.agent_success
+3299:            .agent_stderr
+3312:             agent exit={} stdout={} stderr={}",
+3317:            local_expired_renew_48.agent_success,
+3318:            local_expired_renew_48.agent_stdout,
+3319:            local_expired_renew_48.agent_stderr
+3342:            "--lease-db",
+3344:            "--max-connections",
+3346:            "--accept-timeout-ms",
+3348:            "--drop-connection-after-ack-once",
+3350:            "--do-renew",
+3353:        &["--fence-db", fence_db_49, "--do-renew", "false"],
+3356:        || !reconnect_ok_49.agent_success
+3368:            .agent_stdout
+3374:            "49) reconnect success failed: coordinator={:?} agent={:?}",
+3375:            reconnect_ok_49.coordinator_stdout, reconnect_ok_49.agent_stderr
+3385:            "--max-connections",
+3387:            "--accept-timeout-ms",
+3389:            "--disconnect-after-ack",
+3391:            "--do-renew",
+3395:            "--max-reconnect-attempts",
+3397:            "--max-reconnect-duration-seconds",
+3399:            "--retry-base-ms",
+3401:            "--retry-cap-ms",
+3403:            "--do-renew",
+3407:    if exhausted_50.agent_success
+3408:        || exhausted_50.agent_stdout.contains(RESULT_OK_MARKER)
+3410:        || !exhausted_50.agent_stderr.contains("ReconnectExhausted")
+3413:            "50) reconnect exhaustion failed: coordinator={:?} agent={:?}",
+3414:            exhausted_50.coordinator_stderr, exhausted_50.agent_stderr
+3424:            "--lease-db",
+3426:            "--max-connections",
+3428:            "--accept-timeout-ms",
+3430:            "--drop-connection-after-ack-once",
+3432:            "--revoke-before-drop",
+3434:            "--do-renew",
+3438:            "--max-reconnect-attempts",
+3440:            "--max-reconnect-duration-seconds",
+3442:            "--retry-base-ms",
+3444:            "--retry-cap-ms",
+3446:            "--fence-db",
+3448:            "--do-renew",
+3453:        || revoke_51.agent_success
+3455:        || revoke_51.agent_stdout.contains(RESULT_OK_MARKER)
+3459:            "51) reconnect revoke failed: coordinator={:?} agent={:?}",
+3460:            revoke_51.coordinator_stderr, revoke_51.agent_stderr
+3480:            "--lease-db",
+3482:            "--max-connections",
+3484:            "--accept-timeout-ms",
+3486:            "--drop-connection-after-ack-once",
+3488:            "--lease-ttl-ms",
+3490:            "--pause-before-next-accept-ms",
+3492:            "--do-renew",
+3496:            "--max-reconnect-attempts",
+3498:            "--max-reconnect-duration-seconds",
+3500:            "--retry-base-ms",
+3502:            "--retry-cap-ms",
+3504:            "--fence-db",
+3506:            "--do-renew",
+3511:        || expire_52.agent_success
+3513:        || expire_52.agent_stdout.contains(RESULT_OK_MARKER)
+3517:            "52) reconnect expiry failed: coordinator={:?} agent={:?}",
+3518:            expire_52.coordinator_stderr, expire_52.agent_stderr
+3545:        "53) 명시적 --resume-protocol Hello-first Resume 성공(RESUMED), 저장된 expires_at 유지\n",
+3697:            "60) Resume without durable store did not fail closed: coordinator_success={} stdout={:?} stderr={:?} agent_success={} agent_stderr={:?}",
+3701:            unavailable_60.agent_success,
+3702:            unavailable_60.agent_stderr,
+3718:            "--lease-db",
+3720:            "--max-connections",
+3722:            "--accept-timeout-ms",
+3724:            "--do-renew",
+3730:        || !transport_61.second_agent_success
+3743:            .second_agent_stdout
+3749:            "61) transport isolation failed: coordinator={:?} stderr={:?} agent={:?}",
+3752:            transport_61.second_agent_stderr
+3768:            "--lease-db",
+3770:            "--max-connections",
+3772:            "--accept-timeout-ms",
+3774:            "--do-renew",
+3780:        || protocol_62.first_agent_success
+3781:        || !protocol_62.second_agent_success
+3794:            .second_agent_stdout
+3803:            protocol_62.first_agent_stderr,
+3804:            protocol_62.second_agent_stderr
+3820:        &["--lease-db", missing_lease_db_63, "--max-connections", "2"],
+3831:    report.push_str("63) 존재하지 않는 --lease-db 부모 경로의 SQLite open 오류를 storage로 로그하고 bind/accept 전에 fail-closed 종료\n");
+3869:            "64) Resume storage fail-closed failed: coordinator_success={} stdout={:?} stderr={:?} agent_success={} agent_stderr={:?}",
+3873:            resume_storage_64.agent_success,
+3874:            resume_storage_64.agent_stderr,
+3895:            "--lease-db",
+3897:            "--max-connections",
+3899:            "--accept-timeout-ms",
+3901:            "--drop-after-renew-commit-before-result-once",
+3903:            "--do-renew",
+3907:            "--fence-db",
+3909:            "--do-renew",
+3911:            "--recover-ambiguous-renew-from-durable-lease",
+3913:            "--max-reconnect-attempts",
+3915:            "--max-reconnect-duration-seconds",
+3917:            "--retry-base-ms",
+3919:            "--retry-cap-ms",
+3930:        &recovered_65.agent_stdout,
+3948:        || !recovered_65.agent_success
+3954:        || recovered_65.agent_stdout.matches("LEASE_ACCEPTED").count() != 2
+3956:            .agent_stdout
+3964:            "65) ambiguous renew recovery failed: committed_expiry={} regranted_expiry={} first_nonce={} second_nonce={} coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
+3972:            recovered_65.agent_success,
+3973:            recovered_65.agent_stdout,
+3974:            recovered_65.agent_stderr,
+3994:            "--lease-db",
+3996:            "--max-connections",
+3998:            "--accept-timeout-ms",
+4000:            "--drop-after-renew-commit-before-result-once",
+4002:            "--revoke-before-drop",
+4004:            "--do-renew",
+4008:            "--fence-db",
+4010:            "--do-renew",
+4012:            "--recover-ambiguous-renew-from-durable-lease",
+4014:            "--max-reconnect-attempts",
+4016:            "--max-reconnect-duration-seconds",
+4018:            "--retry-base-ms",
+4020:            "--retry-cap-ms",
+4030:    if revoked_66.agent_success
+4034:        || !revoked_66.agent_stderr.contains("ReconnectExhausted")
+4035:        || revoked_66.agent_stdout.contains("RENEW_RESULT ok=true")
+4038:            "66) revoke bypassed ambiguous recovery: record={:?} coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+4042:            revoked_66.agent_stdout,
+4043:            revoked_66.agent_stderr,
+4063:            "--lease-db",
+4065:            "--max-connections",
+4067:            "--accept-timeout-ms",
+4069:            "--drop-after-renew-commit-before-result-once",
+4071:            "--renew-extension-ms",
+4073:            "--pause-before-next-accept-ms",
+4075:            "--lease-ttl-ms",
+4077:            "--do-renew",
+4081:            "--fence-db",
+4083:            "--do-renew",
+4085:            "--recover-ambiguous-renew-from-durable-lease",
+4087:            "--max-reconnect-attempts",
+4089:            "--max-reconnect-duration-seconds",
+4091:            "--retry-base-ms",
+4093:            "--retry-cap-ms",
+4097:    if expired_67.agent_success
+4100:        || !expired_67.agent_stderr.contains("ReconnectExhausted")
+4102:            .agent_stdout
+4106:            "67) expiry bypassed ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+4109:            expired_67.agent_stdout,
+4110:            expired_67.agent_stderr,
+4130:            "--lease-db",
+4132:            "--max-connections",
+4134:            "--accept-timeout-ms",
+4136:            "--drop-after-renew-commit-before-result-once",
+4138:            "--max-total-duration-seconds",
+4140:            "--pause-before-next-accept-ms",
+4142:            "--do-renew",
+4146:            "--fence-db",
+4148:            "--do-renew",
+4150:            "--recover-ambiguous-renew-from-durable-lease",
+4152:            "--max-reconnect-attempts",
+4154:            "--max-reconnect-duration-seconds",
+4156:            "--retry-base-ms",
+4158:            "--retry-cap-ms",
+4163:        || maxed_68.agent_success
+4168:            .agent_stderr
+4170:        || maxed_68.agent_stderr.contains("ReconnectExhausted")
+4173:            "68) max-duration bypassed ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+4176:            maxed_68.agent_stdout,
+4177:            maxed_68.agent_stderr,
+4197:            "--lease-db",
+4199:            "--max-connections",
+4201:            "--accept-timeout-ms",
+4203:            "--drop-after-renew-commit-before-result-once",
+4205:            "--do-renew",
+4209:            "--fence-db",
+4211:            "--do-renew",
+4213:            "--recover-ambiguous-renew-from-durable-lease",
+4215:            "--reuse-renew-nonce-after-reconnect",
+4217:            "--max-reconnect-attempts",
+4219:            "--max-reconnect-duration-seconds",
+4221:            "--retry-base-ms",
+4223:            "--retry-cap-ms",
+4229:        || replayed_69.agent_success
+4234:        || !replayed_69.agent_stderr.contains("ReconnectExhausted")
+4237:            "69) same nonce was not rejected: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+4240:            replayed_69.agent_stdout,
+4241:            replayed_69.agent_stderr,
+4258:            "--max-connections",
+4260:            "--accept-timeout-ms",
+4262:            "--do-renew",
+4266:            "--fence-db",
+4268:            "--do-renew",
+4270:            "--drop-after-renew-request-once",
+4272:            "--max-reconnect-attempts",
+4274:            "--max-reconnect-duration-seconds",
+4276:            "--retry-base-ms",
+4278:            "--retry-cap-ms",
+4282:    if legacy_70.agent_success
+4284:            .agent_stderr
+4286:        || legacy_70.agent_stderr.contains("ReconnectExhausted")
+4294:            "70) unsafe legacy mode entered ambiguous recovery: coordinator_stdout={:?} coordinator_stderr={:?} agent_stdout={:?} agent_stderr={:?}",
+4297:            legacy_70.agent_stdout,
+4298:            legacy_70.agent_stderr,
+4301:    report.push_str("70) 명시적 unsafe legacy(--lease-db 없음)에서 request flush 뒤 결과 유실을 만들어도 durable recovery gate가 꺼져 connection_attempt=0 한 번만 실행\n");
+4320:            "--lease-db",
+4322:            "--max-connections",
+4324:            "--accept-timeout-ms",
+4326:            "--drop-after-renew-commit-before-result-once",
+4328:            "--do-renew",
+4332:            "--fence-db",
+4334:            "--do-renew",
+4336:            "--recover-ambiguous-renew-from-durable-lease",
+4338:            "--max-reconnect-attempts",
+4340:            "--max-reconnect-duration-seconds",
+4342:            "--retry-base-ms",
+4344:            "--retry-cap-ms",
+4350:        || exhausted_71.agent_success
+4351:        || !exhausted_71.agent_stderr.contains("ReconnectExhausted")
+4360:            "71) max-connections exhaustion was not bounded: elapsed={:?} coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
+4365:            exhausted_71.agent_success,
+4366:            exhausted_71.agent_stdout,
+4367:            exhausted_71.agent_stderr,
+4388:            "--max-connections",
+4390:            "--accept-timeout-ms",
+4392:            "--do-renew",
+4396:            "--fence-db",
+4398:            "--do-renew",
+4400:            "--drop-after-renew-request-once",
+4402:            "--recover-ambiguous-renew-from-durable-lease",
+4404:            "--max-reconnect-attempts",
+4406:            "--max-reconnect-duration-seconds",
+4408:            "--retry-base-ms",
+4410:            "--retry-cap-ms",
+4414:    if legacy_recovery_72.agent_success
+4417:            .agent_stderr
+4420:            .agent_stderr
+4428:            .agent_stdout
+4431:            .agent_stdout
+4437:            "72) legacy Coordinator was accepted as durable recovery authority: coordinator_success={} stdout={:?} stderr={:?} agent_success={} stdout={:?} stderr={:?}",
+4441:            legacy_recovery_72.agent_success,
+4442:            legacy_recovery_72.agent_stdout,
+4443:            legacy_recovery_72.agent_stderr,
+4483:    let agent_output_73 = format!(
+4485:        stale_resume_73.agent_stdout, stale_resume_73.agent_stderr
+4488:    if !agent_output_73.contains("RESUME_REJECTED: fence_epoch")
+4489:        || agent_output_73.contains("FENCE_STORAGE_ERROR")
+4492:            "73) Resume 이 durable fence watermark 를 거치지 않았다: agent_stdout={:?} agent_stderr={:?}",
+4493:            stale_resume_73.agent_stdout, stale_resume_73.agent_stderr
+4522:        "train.py,--epochs,3",
+4528:        "--manifest-file".to_string(),
+4535:    let manifest_agent_args = ["--submitter-pubkey", fixture.submitter_pub_hex.as_str()];
+4538:    let manifest_74 = run_handshake(&fixture, &manifest_coordinator_refs, &manifest_agent_args)?;
+4539:    if !manifest_74.agent_success
+4540:        || !manifest_74.agent_stdout.contains("MANIFEST_ACCEPTED")
+4542:            .agent_stdout
+4544:        || !manifest_74.agent_stdout.contains(RESULT_OK_MARKER)
+4547:            "74) nested Manifest 정상 경로 실패: agent_success={} stdout={:?} stderr={:?}",
+4548:            manifest_74.agent_success, manifest_74.agent_stdout, manifest_74.agent_stderr
+4557:    forged_args.push("--corrupt-manifest-signature".to_string());
+4560:    let manifest_75 = run_handshake(&fixture, &forged_refs, &manifest_agent_args)?;
+4561:    let out_75 = format!("{}\n{}", manifest_75.agent_stdout, manifest_75.agent_stderr);
+4562:    if manifest_75.agent_success
+4564:        || manifest_75.agent_stdout.contains("MANIFEST_ACCEPTED")
+4565:        || manifest_75.agent_stdout.contains(RESULT_OK_MARKER)
+4568:            "75) 위조된 nested Manifest 서명이 통과했다: agent_success={} stdout={:?} stderr={:?}",
+4569:            manifest_75.agent_success, manifest_75.agent_stdout, manifest_75.agent_stderr
+4590:    bad_hash_args.push("--corrupt-manifest-hash".to_string());
+4593:    let manifest_76 = run_handshake(&fixture, &bad_hash_refs, &manifest_agent_args)?;
+4594:    let out_76 = format!("{}\n{}", manifest_76.agent_stdout, manifest_76.agent_stderr);
+4595:    if manifest_76.agent_success
+4598:        || manifest_76.agent_stdout.contains("MANIFEST_ACCEPTED")
+4601:            "76) Manifest 와 다른 manifest_hash 가 통과했다: agent_success={} stdout={:?} stderr={:?}",
+4602:            manifest_76.agent_success, manifest_76.agent_stdout, manifest_76.agent_stderr
+4613:    let out_77 = format!("{}\n{}", manifest_77.agent_stdout, manifest_77.agent_stderr);
+4614:    if manifest_77.agent_success
+4616:        || manifest_77.agent_stdout.contains("MANIFEST_ACCEPTED")
+4619:            "77) 제출자 공개키 없이 Manifest 를 받아들였다: agent_success={} stdout={:?} stderr={:?}",
+4620:            manifest_77.agent_success, manifest_77.agent_stdout, manifest_77.agent_stderr
+4641:        "train.py,--epochs,3",
+4646:        vec!["--manifest-file".to_string(), wrong_job_path_str.clone()];
+4648:    let manifest_78 = run_handshake(&fixture, &wrong_job_refs, &manifest_agent_args)?;
+4649:    let out_78 = format!("{}\n{}", manifest_78.agent_stdout, manifest_78.agent_stderr);
+4650:    if manifest_78.agent_success
+4653:        || manifest_78.agent_stdout.contains("MANIFEST_ACCEPTED")
+4656:            "78) Lease 와 다른 job_id 의 Manifest 가 통과했다: agent_success={} stdout={:?} stderr={:?}",
+4657:            manifest_78.agent_success, manifest_78.agent_stdout, manifest_78.agent_stderr
+4692:        vec!["--manifest-file".to_string(), exec_ok_str.clone()];
+4700:    let exec_79 = run_handshake(&fixture, &exec_coordinator_refs, &manifest_agent_args)?;
+4701:    if !exec_79.agent_success
+4702:        || !exec_79.agent_stdout.contains("WORKLOAD_SKIPPED")
+4703:        || !exec_79.agent_stdout.contains("reason=not_opted_in")
+4704:        || exec_79.agent_stdout.contains("WORKLOAD_EXITED")
+4708:            exec_79.agent_stdout, exec_79.agent_stderr
+4717:        "--submitter-pubkey",
+4719:        "--i-understand-this-executes-untrusted-code",
+4723:    if !exec_80.agent_success
+4724:        || !exec_80.agent_stdout.contains("WORKLOAD_EXITED")
+4725:        || !exec_80.agent_stdout.contains("exit_code=0")
+4726:        || !exec_80.agent_stdout.contains("WORKLOAD_RESULT ok=true")
+4730:            exec_80.agent_stdout, exec_80.agent_stderr
+4734:    if exec_80.agent_stdout.contains("commit_limit_bytes=0") {
+4737:            exec_80.agent_stdout
+4760:    let fail_args: Vec<String> = vec!["--manifest-file".to_string(), exec_fail_str.clone()];
+4763:    if !exec_81.agent_stdout.contains("exit_code=7")
+4764:        || !exec_81.agent_stdout.contains("WORKLOAD_RESULT ok=false")
+4765:        || exec_81.agent_stdout.contains("WORKLOAD_RESULT ok=true")
+4769:            exec_81.agent_stdout, exec_81.agent_stderr
+4779:        "--submitter-pubkey",
+4781:        "--i-understand-this-executes-untrusted-code",
+4783:        "--workload-commit-limit-bytes",
+4787:    let out_82 = format!("{}\n{}", exec_82.agent_stdout, exec_82.agent_stderr);
+4788:    if exec_82.agent_success
+4795:        || exec_82.agent_stdout.contains("WORKLOAD_EXITED")
+4798:            "82) 상한 없이 실행됐거나 거부가 보고되지 않았다: agent_success={} stdout={:?} stderr={:?}",
+4799:            exec_82.agent_success, exec_82.agent_stdout, exec_82.agent_stderr
+4829:        "--manifest-file".to_string(),
+4831:        "--fence-epoch".to_string(),
+4844:    if !exec_83.agent_success || !exec_83.agent_stdout.contains("WORKLOAD_ARTIFACTS") {
+4847:            exec_83.agent_stdout, exec_83.agent_stderr
+4850:    let checkpoint_id_83 = started_checkpoint_id(&exec_83.agent_stdout)
+4851:        .ok_or_else(|| format!("83) checkpoint_id 를 찾을 수 없다: {:?}", exec_83.agent_stdout))?;
+4933:    if !exec_84.agent_success || !exec_84.agent_stdout.contains("WORKLOAD_RESULT ok=false") {
+4936:            exec_84.agent_stdout, exec_84.agent_stderr
+4939:    let checkpoint_id_84 = started_checkpoint_id(&exec_84.agent_stdout)
+4940:        .ok_or_else(|| format!("84) checkpoint_id 를 찾을 수 없다: {:?}", exec_84.agent_stdout))?;
+4962:    let heartbeat_coord: Vec<&str> = vec!["--expect-heartbeats", "2"];
+4963:    let heartbeat_agent: Vec<&str> = vec!["--heartbeat-rounds", "2"];
+4964:    let hb_85 = run_handshake(&fixture, &heartbeat_coord, &heartbeat_agent)?;
+4965:    if !hb_85.coordinator_success || !hb_85.agent_success {
+4967:            "85) heartbeat 왕복 실패: coord_stdout={:?} coord_stderr={:?} agent_stderr={:?}",
+4968:            hb_85.coordinator_stdout, hb_85.coordinator_stderr, hb_85.agent_stderr
+4999:    let mismatch_agent: Vec<&str> = vec!["--heartbeat-rounds", "1"];
+5000:    let hb_86 = run_handshake(&fixture, &heartbeat_coord, &mismatch_agent)?;
+5026:    let wrong_fence_agent: Vec<&str> = vec![
+5027:        "--heartbeat-rounds",
+5029:        "--corrupt-heartbeat-fence",
+5032:    let one_heartbeat: Vec<&str> = vec!["--expect-heartbeats", "1"];
+5033:    let hb_87 = run_handshake(&fixture, &one_heartbeat, &wrong_fence_agent)?;
+5056:    let wrong_coord_agent: Vec<&str> = vec![
+5057:        "--heartbeat-rounds",
+5059:        "--corrupt-heartbeat-coordinator",
+5062:    let hb_89 = run_handshake(&fixture, &one_heartbeat, &wrong_coord_agent)?;
+5091:    let wrong_device_agent: Vec<&str> = vec![
+5092:        "--heartbeat-rounds",
+5094:        "--corrupt-heartbeat-device",
+5097:    let hb_90 = run_handshake(&fixture, &one_heartbeat, &wrong_device_agent)?;
+5109:    //   `device_id != config.agent_device_id` 대조까지 가지도 못한다.
+5151:        &["--expect-heartbeats", "2", "--liveness-db", liveness_db],
+5156:        &["--heartbeat-rounds", "2", "--heartbeat-interval-ms", "5"],
+5158:    if !hb_92.coordinator_success || !hb_92.agent_success {
+5160:            "92) 정상 heartbeat 왕복이 실패했다: coordinator={:?} agent={:?}",
+5161:            hb_92.coordinator_stderr, hb_92.agent_stderr
+5240:            "--expect-neighbor-reports",
+5242:            "--neighbor-report-db",
+5248:            "--neighbor-report-rounds",
+5250:            "--neighbor-report-interval-ms",
+5252:            "--neighbor-report-target",
+5256:    if !nb_93.coordinator_success || !nb_93.agent_success {
+5258:            "93) 정상 이웃 신고 왕복이 실패했다: coordinator={:?} agent={:?}",
+5259:            nb_93.coordinator_stderr, nb_93.agent_stderr
+5369:    if row_93.reporter_node_id != fixture.agent_device_id
+5370:        || row_93.reporter_device_id != fixture.agent_device_id
+5379:        || body_93.reporter_node_id != fixture.agent_device_id
+5380:        || body_93.reporter_device_id != fixture.agent_device_id
+5399:            "--expect-neighbor-reports",
+5401:            "--neighbor-report-db",
+5405:            "--neighbor-report-rounds",
+5407:            "--neighbor-report-target",
+5409:            "--corrupt-neighbor-report-coordinator",
+5480:            vec!["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+5482:        ("경로 부재", vec!["--expect-neighbor-reports", "1"]),
+5522:            vec!["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+5524:        ("경로 부재", "kind=storage", vec!["--expect-neighbor-reports", "1"]),
+5526:            "multi-agent 조합",
+5529:                "--expect-neighbor-reports",
+5531:                "--neighbor-report-db",
+5533:                "--multi-agent",
+5576:        ("대상 없음", vec!["--neighbor-report-rounds", "1"]),
+5579:            vec!["--neighbor-report-rounds", "1", "--neighbor-report-target", "   "],
+5582:            "multi-agent 와 함께",
+5584:                "--neighbor-report-rounds",
+5586:                "--neighbor-report-target",
+5588:                "--multi-agent",
+5595:                "--neighbor-report-rounds",
+5597:                "--neighbor-report-target",
+5599:                "--resume-protocol",
+5614:        let (ok, out, err) = run_agent_only(&fixture, &watch_addr, &extra)?;
+5633:        "96) 잘못된 신고 구성(대상 없음/공백/multi-agent/resume)이면 Agent 가 연결조차 하지 않는다",
+5637:    // ── 97) multi-agent lane 은 이웃 신고 수신을 받아들이지 않는다 ──
+5646:            "--expect-neighbor-reports",
+5648:            "--neighbor-report-db",
+5650:            "--multi-agent",
+5655:        return Err(format!("97) multi-agent 와 함께 정상 종료했다: {out_97:?}"));
+5663:            "97) multi-agent lane 이 READY 까지 갔다 — 조합을 거부해야 한다: {out_97:?}"
+5668:    if !err_97.contains("multi-agent") || !err_97.contains("STARTUP_REFUSED") {
+5671:    report.push_str("97) 구현하지 않은 lane 조합(multi-agent)은 조용히 무시하지 않고 거부한다 — 순서는 95 가 잰다");
+5674:    report.push_str(&run_multi_agent_scenario(&fixture)?);
+5683:    first_agent_success: bool,
+5684:    first_agent_stderr: String,
+5685:    second_agent_success: bool,
+5686:    second_agent_stdout: String,
+5687:    second_agent_stderr: String,
+5702:        "--listen",
+5704:        "--own-seed",
+5706:        "--peer-pubkey",
+5707:        fixture.agent_pub_hex.as_str(),
+5708:        "--coordinator-device-id",
+5710:        "--agent-device-id",
+5711:        fixture.agent_device_id,
+5712:        "--grant-id",
+5714:        "--attempt-id",
+5716:        "--lease-id",
+5718:        "--job-id",
+5725:    if !extra_coordinator_args.contains(&"--lease-db") {
+5727:            "--i-understand-legacy-mode-is-unsafe".to_owned(),
+5733:        .args(&coordinator_args)
+5785:        run_wire_agent_client(&address, fixture, 0, true)?
+5787:    let second_wire = run_wire_agent_client(&address, fixture, 1, false)?;
+5804:        first_agent_success: first_wire.success,
+5805:        first_agent_stderr: first_wire.stderr,
+5806:        second_agent_success: second_wire.success,
+5807:        second_agent_stdout: second_wire.stdout,
+5808:        second_agent_stderr: second_wire.stderr,
+5823:fn run_wire_agent_client(
+5874:        agent_device_id: fixture.agent_device_id.to_owned(),
+5881:    let agent_key = gputeer_crypto::SigningKey::from_bytes(&fixture.agent_seed);
+5882:    ack.agent_signature = gputeer_crypto::sign(&agent_key, &ack).to_vec();
+5885:            .agent_signature
+5905:            format!("{RESULT_OK_MARKER} wire_agent=true\n")
+5917:    //   이 계산이 agent·coordinator·selftest 세 군데에 복사돼 있었고,
+5973:        "--listen",
+5975:        "--own-seed",
+5977:        "--peer-pubkey",
+5978:        fixture.agent_pub_hex.as_str(),
+5979:        "--coordinator-device-id",
+5981:        "--agent-device-id",
+5982:        fixture.agent_device_id,
+5983:        "--grant-id",
+5985:        "--attempt-id",
+5987:        "--lease-id",
+5989:        "--job-id",
+5997:        .args(args)
+6007:        agent_success: false,
+6008:        agent_exit_code: None,
+6009:        agent_elapsed_ms: 0,
+6010:        agent_stdout: String::new(),
+6011:        agent_stderr: String::new(),
+6019:    agent_success: bool,
+6020:    agent_exit_code: Option<i32>,
+6021:    agent_elapsed_ms: u128,
+6022:    agent_stdout: String,
+6023:    agent_stderr: String,
+6035:        "--listen",
+6037:        "--own-seed",
+6039:        "--peer-pubkey",
+6040:        fixture.agent_pub_hex.as_str(),
+6041:        "--coordinator-device-id",
+6043:        "--agent-device-id",
+6044:        fixture.agent_device_id,
+6045:        "--grant-id",
+6047:        "--attempt-id",
+6049:        "--lease-id",
+6051:        "--job-id",
+6055:        .args(args)
+6087:    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:0", "--own-seed"];
+6088:    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+6089:    agent_args.push(&agent_own_seed_hex);
+6090:    agent_args.push("--peer-pubkey");
+6091:    agent_args.push(&fixture.coordinator_pub_hex);
+6092:    agent_args.push("--coordinator-device-id");
+6093:    agent_args.push(fixture.coordinator_device_id);
+6094:    agent_args.push("--agent-device-id");
+6095:    agent_args.push(fixture.agent_device_id);
+6097:    let mut agent = Command::new(&fixture.exe)
+6098:        .args(&agent_args)
+6103:    let agent_started = std::time::Instant::now();
+6104:    let agent_deadline = agent_started + std::time::Duration::from_secs(5);
+6106:        if agent
+6113:        if std::time::Instant::now() >= agent_deadline {
+6114:            let _ = agent.kill();
+6115:            let _ = agent.wait();
+6123:    let agent_elapsed_ms = agent_started.elapsed().as_millis();
+6124:    let agent_output = agent
+6132:        agent_success: agent_output.status.success(),
+6133:        agent_exit_code: agent_output.status.code(),
+6134:        agent_elapsed_ms,
+6135:        agent_stdout: String::from_utf8_lossy(&agent_output.stdout).into_owned(),
+6136:        agent_stderr: String::from_utf8_lossy(&agent_output.stderr).into_owned(),
+6140:/// 시나리오 18 전용 — Agent 하나만 단독으로 띄워 `--fence-db :memory:`
+6143:/// 검사가 `TcpStream::connect()` 보다 먼저 실행되므로(`crates/agent/src/lib.rs`),
+6144:/// `--connect` 주소가 실제로 열려 있지 않아도 상관없다.
+6145:fn run_agent_alone(
+6147:    extra_agent_args: &[&str],
+6149:    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:1", "--own-seed"];
+6150:    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+6151:    agent_args.push(&agent_own_seed_hex);
+6152:    agent_args.push("--peer-pubkey");
+6153:    agent_args.push(&fixture.coordinator_pub_hex);
+6154:    agent_args.push("--coordinator-device-id");
+6155:    agent_args.push(fixture.coordinator_device_id);
+6156:    agent_args.push("--agent-device-id");
+6157:    agent_args.push(fixture.agent_device_id);
+6158:    agent_args.extend_from_slice(extra_agent_args);
+6161:        .args(&agent_args)
+6163:        .map_err(|e| format!("agent-stub 단독 실행 실패: {e}"))?;
+6192:fn run_multi_agent_scenario(fixture: &Fixture) -> Result<String, String> {
+6194:    let second_seed = seed_from_label("coordinator-agent-selftest/agent-2");
+6201:    let extra_agents = format!("{second_device_id}={second_pub_hex}");
+6204:        .args([
+6206:            "--listen",
+6208:            "--own-seed",
+6210:            "--peer-pubkey",
+6211:            &fixture.agent_pub_hex,
+6212:            "--coordinator-device-id",
+6214:            "--agent-device-id",
+6215:            fixture.agent_device_id,
+6216:            "--grant-id",
+6218:            "--attempt-id",
+6220:            "--lease-id",
+6222:            "--job-id",
+6224:            "--multi-agent",
+6226:            "--extra-agents",
+6227:            &extra_agents,
+6232:            "--require-concurrent-sessions",
+6234:            "--max-connections",
+6236:            "--accept-timeout-ms",
+6238:            "--i-understand-legacy-mode-is-unsafe",
+6277:    let spawn_agent = |device_id: &str, seed_hex: &str| -> Result<std::process::Child, String> {
+6279:            .args([
+6280:                "agent-stub",
+6281:                "--connect",
+6283:                "--own-seed",
+6285:                "--peer-pubkey",
+6287:                "--coordinator-device-id",
+6289:                "--agent-device-id",
+6291:                "--multi-agent",
+6297:            .map_err(|e| format!("88) agent-stub({device_id}) 스폰 실패: {e}"))
+6299:    let agent_seed_hex = to_hex(&fixture.agent_seed);
+6300:    let first_agent = spawn_agent(fixture.agent_device_id, &agent_seed_hex)?;
+6301:    let second_agent = spawn_agent(second_device_id, &second_seed_hex)?;
+6303:    let first_out = first_agent
+6306:    let second_out = second_agent
+6351:    for device_id in [fixture.agent_device_id, second_device_id] {
+6352:        if !coordinator_stdout.contains(&format!("agent_device_id={device_id}")) {
+6389:    //   수만 개만 시도해도 충돌한다(`agent-47131` 과 `agent-71872` 가
+6397:        (fixture.agent_device_id, &first_lease),
+6407:    let mode_report = run_wrong_hello_mode_case(fixture, &extra_agents, &coordinator_seed_hex)?;
+6425:    extra_agents: &str,
+6429:        .args([
+6431:            "--listen",
+6433:            "--own-seed",
+6435:            "--peer-pubkey",
+6436:            &fixture.agent_pub_hex,
+6437:            "--coordinator-device-id",
+6439:            "--agent-device-id",
+6440:            fixture.agent_device_id,
+6441:            "--grant-id",
+6443:            "--attempt-id",
+6445:            "--lease-id",
+6447:            "--job-id",
+6449:            "--multi-agent",
+6451:            "--extra-agents",
+6452:            extra_agents,
+6453:            "--max-connections",
+6455:            "--accept-timeout-ms",
+6457:            "--i-understand-legacy-mode-is-unsafe",
+6497:    let agent_out = Command::new(&fixture.exe)
+6498:        .args([
+6499:            "agent-stub",
+6500:            "--connect",
+6502:            "--own-seed",
+6503:            &to_hex(&fixture.agent_seed),
+6504:            "--peer-pubkey",
+6506:            "--coordinator-device-id",
+6508:            "--agent-device-id",
+6509:            fixture.agent_device_id,
+6510:            "--multi-agent",
+6513:            "--corrupt-hello-mode",
+6517:        .map_err(|e| format!("91) agent-stub 실행 실패: {e}"))?;
+6540:    if agent_out.status.success() {
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$n=0; Get-Content -Encoding UTF8 crates/agent/src/lib.rs | ForEach-Object { $n++; if ($n -ge 2195 -and $n -le 2496) { '"'{0}: {1}' -f "'$n, $_ } }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command '$n=0; Get-Content -Encoding UTF8 crates/agent/tests/unknown_flags.rs | ForEach-Object { $n++; '"'{0}: {1}' -f "'$n, $_ }' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "rg -n 'run_handshake|run_agent_only|run_agent_alone|agent_args|agent-stub|let .*agent|resume_args' crates/cli/src/coordinator_agent_selftest.rs" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1483ms:
+7://! 이 서브커맨드는 그 다음 한 걸음이다 — `coordinator-stub`/`agent-stub`
+104:        let coordinator_seed = seed_from_label("coordinator-agent-selftest/coordinator");
+105:        let agent_seed = seed_from_label("coordinator-agent-selftest/agent");
+109:        let agent_pub = gputeer_crypto::SigningKey::from_bytes(&agent_seed).verifying_key();
+110:        let submitter_seed = seed_from_label("coordinator-agent-selftest/submitter");
+154:/// coordinator-stub/agent-stub 을 별도 프로세스로 한 번 띄워 끝까지
+155:/// 실행하고 결과를 모은다. `extra_coordinator_args`/`extra_agent_args`
+160:/// `run_handshake()` automatically adds
+225:fn run_handshake(
+228:    extra_agent_args: &[&str],
+230:    run_handshake_internal(
+233:        extra_agent_args,
+242:    extra_agent_args: &[&str],
+244:    run_handshake_internal(
+247:        extra_agent_args,
+253:fn run_handshake_internal(
+256:    extra_agent_args: &[&str],
+260:    run_handshake_internal_with_ready_hook(
+263:        extra_agent_args,
+275:/// ★ `run_handshake` 는 `READY` 를 기다리므로 이 경우에 쓸 수 없다 —
+336:fn run_agent_only(
+339:    extra_agent_args: &[&str],
+341:    let mut args: Vec<&str> = vec!["agent-stub", "--connect", connect, "--own-seed"];
+342:    let seed_hex = to_hex(&fixture.agent_seed);
+352:    args.extend_from_slice(extra_agent_args);
+359:        .map_err(|e| format!("agent-stub 단독 실행 실패: {e}"))?;
+367:fn run_handshake_internal_with_ready_hook(
+370:    extra_agent_args: &[&str],
+469:    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", &address, "--own-seed"];
+470:    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+471:    agent_args.push(&agent_own_seed_hex);
+472:    agent_args.push("--peer-pubkey");
+473:    agent_args.push(&fixture.coordinator_pub_hex);
+474:    agent_args.push("--coordinator-device-id");
+475:    agent_args.push(fixture.coordinator_device_id);
+476:    agent_args.push("--agent-device-id");
+477:    agent_args.push(fixture.agent_device_id);
+478:    agent_args.extend_from_slice(extra_agent_args);
+481:    // reconnect helper does not go through run_handshake().
+483:        agent_args.extend_from_slice(&["--disable-reconnect", "true"]);
+486:    let agent: Child = Command::new(&fixture.exe)
+487:        .args(&agent_args)
+491:        .map_err(|e| format!("agent-stub 스폰 실패: {e}"))?;
+497:    let agent_pid = agent.id();
+504:    let agent_output = match agent.wait_with_output_until(handshake_deadline) {
+509:            return Err(format!("agent-stub wait failed: {error}"));
+541:fn run_handshake_with_checkpoint_root(
+545:    extra_agent_args: &[&str],
+550:    let mut agent_args = extra_agent_args.to_vec();
+551:    agent_args.extend_from_slice(&["--checkpoint-root", root]);
+552:    run_handshake(fixture, extra_coordinator_args, &agent_args)
+628:    let seeded = run_handshake(
+691:    let mut agent_args = vec![
+708:        agent_args.extend(["--disable-reconnect".to_string(), "true".to_string()]);
+710:        agent_args.extend([
+721:    let agent_refs: Vec<&str> = agent_args.iter().map(String::as_str).collect();
+722:    run_handshake_internal(
+758:    let agent_args = [
+781:    run_handshake_internal_with_ready_hook(
+784:        &agent_args,
+807:    let agent_output = format!("{}\n{}", outcome.agent_stdout, outcome.agent_stderr);
+808:    let refusal_matches = expected_refusal.is_none_or(|expected| agent_output.contains(expected));
+809:    let retried_to_exhaustion = agent_output.contains("ReconnectExhausted:");
+847:    let normal = run_handshake(&fixture, &[], &[])?;
+875:    let forged_grant = run_handshake(&fixture, &["--corrupt-own-signature", "true"], &[])?;
+903:    let forged_ack = run_handshake(&fixture, &[], &["--corrupt-own-signature", "true"])?;
+916:    let replay = run_handshake(
+942:    let forged_lease = run_handshake(&fixture, &["--corrupt-lease-signature", "true"], &[])?;
+957:    let expired_lease = run_handshake(&fixture, &["--expire-lease", "true"], &[])?;
+972:    let renew_ok = run_handshake(
+1002:    let forged_renew_req = run_handshake(
+1036:    let forged_renew_result = run_handshake(
+1066:    let forged_renewed_lease = run_handshake(
+1098:    let downgrade = run_handshake(
+1126:    let superseded = run_handshake(
+1150:    let quarantined = run_handshake(
+1183:    let wrong_nonce = run_handshake(
+1216:    let upgrade = run_handshake(
+1241:    let epoch_mismatch = run_handshake(
+1271:    // 서로 다른 `agent-stub` **프로세스**(별도 PID)가 순서대로 열어,
+1312:    let restart_first = run_handshake(
+1331:    let restart_second = run_handshake(
+1398:        run_agent_alone(&fixture, &["--fence-db", ":memory:"])?;
+1420:    let repeated = run_handshake(
+1447:    let agent_renewed_count = repeated
+1457:    let agent_result_count = repeated
+1513:    let issue_first = run_handshake(
+1541:    let issue_second = run_handshake(
+1608:    let renew_first = run_handshake(
+1634:    let renew_second = run_handshake(
+1695:    let issue_22 = run_handshake(
+1740:    let renew_22 = run_handshake(
+1817:    let issue_23 = run_handshake(
+1845:    let renew_23 = run_handshake(
+1903:    let issue_24 = run_handshake(
+1945:    let override_24 = run_handshake(
+2031:    let issue_25 = run_handshake(
+2057:    let superseded_25 = run_handshake(
+2119:    let issue_26 = run_handshake(
+2144:    let same_epoch_26 = run_handshake(
+2184:    // Scenarios 27-31 intentionally omit `--lease-db`; run_handshake() adds
+2188:    let revoke_ok = run_handshake(
+2247:    let forged_revoke = run_handshake(
+2271:    let wrong_id_revoke = run_handshake(
+2303:    let wrong_epoch_revoke = run_handshake(
+2325:    let expired_revoke = run_handshake(
+2355:    let superseded_multi_round = run_handshake(
+2437:    let disconnected_33 = run_handshake(
+2471:    let rehydrated_33 = run_handshake(
+2518:    let wrong_holder_34 = run_handshake(
+2576:    let revoked_first_35 = run_handshake(
+2628:    let revoked_second_35 = run_handshake(
+2686:    let issued_short_36 = run_handshake(
+2725:    let expired_reconnect_36 = run_handshake(
+2781:    let revoked_renew_37 = run_handshake(
+2869:        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_39.path(), &[], &[])?;
+2884:    let started_id_39 = started_checkpoint_id(&started_39.agent_stdout)
+2921:    let forged_lease_40 = run_handshake_with_checkpoint_root(
+2943:    let expired_lease_41 = run_handshake_with_checkpoint_root(
+2972:    let first_42 = run_handshake_with_checkpoint_root(
+2991:    let revoked_42 = run_handshake_with_checkpoint_root(
+3004:        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
+3006:        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
+3007:    let first_id_43 = started_checkpoint_id(&retry_first_43.agent_stdout)
+3009:    let second_id_43 = started_checkpoint_id(&retry_second_43.agent_stdout)
+3043:        run_handshake_with_checkpoint_root(&fixture, &failed_root_44, &[], &[])?;
+3077:    let quarantined_multi_round = run_handshake(
+3142:    let issue_max_duration_46 = run_handshake(
+3171:    let max_duration_multi_round = run_handshake(
+3235:    let expired_renew_47 = run_handshake(
+3283:    let local_expired_renew_48 = run_handshake(
+4483:    let agent_output_73 = format!(
+4535:    let manifest_agent_args = ["--submitter-pubkey", fixture.submitter_pub_hex.as_str()];
+4538:    let manifest_74 = run_handshake(&fixture, &manifest_coordinator_refs, &manifest_agent_args)?;
+4560:    let manifest_75 = run_handshake(&fixture, &forged_refs, &manifest_agent_args)?;
+4561:    let out_75 = format!("{}\n{}", manifest_75.agent_stdout, manifest_75.agent_stderr);
+4593:    let manifest_76 = run_handshake(&fixture, &bad_hash_refs, &manifest_agent_args)?;
+4594:    let out_76 = format!("{}\n{}", manifest_76.agent_stdout, manifest_76.agent_stderr);
+4612:    let manifest_77 = run_handshake(&fixture, &manifest_coordinator_refs, &[])?;
+4613:    let out_77 = format!("{}\n{}", manifest_77.agent_stdout, manifest_77.agent_stderr);
+4648:    let manifest_78 = run_handshake(&fixture, &wrong_job_refs, &manifest_agent_args)?;
+4649:    let out_78 = format!("{}\n{}", manifest_78.agent_stdout, manifest_78.agent_stderr);
+4700:    let exec_79 = run_handshake(&fixture, &exec_coordinator_refs, &manifest_agent_args)?;
+4722:    let exec_80 = run_handshake(&fixture, &exec_coordinator_refs, &exec_on)?;
+4762:    let exec_81 = run_handshake(&fixture, &fail_refs, &exec_on)?;
+4786:    let exec_82 = run_handshake(&fixture, &exec_coordinator_refs, &no_limit)?;
+4787:    let out_82 = format!("{}\n{}", exec_82.agent_stdout, exec_82.agent_stderr);
+4838:    let exec_83 = run_handshake_with_checkpoint_root(
+4850:    let checkpoint_id_83 = started_checkpoint_id(&exec_83.agent_stdout)
+4927:    let exec_84 = run_handshake_with_checkpoint_root(
+4939:    let checkpoint_id_84 = started_checkpoint_id(&exec_84.agent_stdout)
+4963:    let heartbeat_agent: Vec<&str> = vec!["--heartbeat-rounds", "2"];
+4964:    let hb_85 = run_handshake(&fixture, &heartbeat_coord, &heartbeat_agent)?;
+4999:    let mismatch_agent: Vec<&str> = vec!["--heartbeat-rounds", "1"];
+5000:    let hb_86 = run_handshake(&fixture, &heartbeat_coord, &mismatch_agent)?;
+5026:    let wrong_fence_agent: Vec<&str> = vec![
+5033:    let hb_87 = run_handshake(&fixture, &one_heartbeat, &wrong_fence_agent)?;
+5056:    let wrong_coord_agent: Vec<&str> = vec![
+5062:    let hb_89 = run_handshake(&fixture, &one_heartbeat, &wrong_coord_agent)?;
+5091:    let wrong_device_agent: Vec<&str> = vec![
+5097:    let hb_90 = run_handshake(&fixture, &one_heartbeat, &wrong_device_agent)?;
+5149:    let hb_92 = run_handshake(
+5237:    let nb_93 = run_handshake(
+5396:    let nb_94 = run_handshake(
+5475:    // ★ Coordinator 만 띄워 본다 — run_handshake 는 READY 를 기다리는데,
+5614:        let (ok, out, err) = run_agent_only(&fixture, &watch_addr, &extra)?;
+5787:    let second_wire = run_wire_agent_client(&address, fixture, 1, false)?;
+5881:    let agent_key = gputeer_crypto::SigningKey::from_bytes(&fixture.agent_seed);
+6087:    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:0", "--own-seed"];
+6088:    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+6089:    agent_args.push(&agent_own_seed_hex);
+6090:    agent_args.push("--peer-pubkey");
+6091:    agent_args.push(&fixture.coordinator_pub_hex);
+6092:    agent_args.push("--coordinator-device-id");
+6093:    agent_args.push(fixture.coordinator_device_id);
+6094:    agent_args.push("--agent-device-id");
+6095:    agent_args.push(fixture.agent_device_id);
+6097:    let mut agent = Command::new(&fixture.exe)
+6098:        .args(&agent_args)
+6103:    let agent_started = std::time::Instant::now();
+6104:    let agent_deadline = agent_started + std::time::Duration::from_secs(5);
+6114:            let _ = agent.kill();
+6115:            let _ = agent.wait();
+6123:    let agent_elapsed_ms = agent_started.elapsed().as_millis();
+6124:    let agent_output = agent
+6145:fn run_agent_alone(
+6147:    extra_agent_args: &[&str],
+6149:    let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:1", "--own-seed"];
+6150:    let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+6151:    agent_args.push(&agent_own_seed_hex);
+6152:    agent_args.push("--peer-pubkey");
+6153:    agent_args.push(&fixture.coordinator_pub_hex);
+6154:    agent_args.push("--coordinator-device-id");
+6155:    agent_args.push(fixture.coordinator_device_id);
+6156:    agent_args.push("--agent-device-id");
+6157:    agent_args.push(fixture.agent_device_id);
+6158:    agent_args.extend_from_slice(extra_agent_args);
+6161:        .args(&agent_args)
+6163:        .map_err(|e| format!("agent-stub 단독 실행 실패: {e}"))?;
+6194:    let second_seed = seed_from_label("coordinator-agent-selftest/agent-2");
+6201:    let extra_agents = format!("{second_device_id}={second_pub_hex}");
+6277:    let spawn_agent = |device_id: &str, seed_hex: &str| -> Result<std::process::Child, String> {
+6280:                "agent-stub",
+6297:            .map_err(|e| format!("88) agent-stub({device_id}) 스폰 실패: {e}"))
+6299:    let agent_seed_hex = to_hex(&fixture.agent_seed);
+6300:    let first_agent = spawn_agent(fixture.agent_device_id, &agent_seed_hex)?;
+6301:    let second_agent = spawn_agent(second_device_id, &second_seed_hex)?;
+6303:    let first_out = first_agent
+6306:    let second_out = second_agent
+6407:    let mode_report = run_wrong_hello_mode_case(fixture, &extra_agents, &coordinator_seed_hex)?;
+6497:    let agent_out = Command::new(&fixture.exe)
+6499:            "agent-stub",
+6517:        .map_err(|e| format!("91) agent-stub 실행 실패: {e}"))?;
+
+ succeeded in 1816ms:
+1: //! �� **agent-stub �� �𸣴� �÷��׸� �޾� ���� �ʴ´�** (���� ? Ȯ���� Agent ��,
+2: //! 2026-09-10).
+3: //!
+4: //! Coordinator �ļ��� �𸣴� �̸��� ������ �޾� �δ� ���� ��˼� 14 �� ¤����.
+5: //! Agent �ļ��� ���� ����̾��� ? `--send-attempt-reprot true` ���� ��Ÿ�� �ָ�
+6: //! ������ �״ٰ� ������ �ƹ� �ϵ� �� �Ͼ��.
+7: 
+8: use gputeer_agent::parse_config_from_args;
+9: 
+10: fn hex(bytes: &[u8]) -> String {
+11:     bytes.iter().map(|b| format!("{b:02x}")).collect()
+12: }
+13: 
+14: fn base() -> Vec<String> {
+15:     let peer = gputeer_crypto::SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+16:     let own_seed = "22".repeat(32);
+17:     let peer_hex = hex(peer.as_bytes());
+18:     [
+19:         "--connect", "127.0.0.1:9",
+20:         "--own-seed", own_seed.as_str(),
+21:         "--peer-pubkey", peer_hex.as_str(),
+22:         "--coordinator-device-id", "01JCOORDINATORAGENTFLAG01",
+23:         "--agent-device-id", "01JAGENTAGENTFLAG00000001",
+24:         "--fence-db", "fence.sqlite3",
+25:     ]
+26:     .iter()
+27:     .map(|s| s.to_string())
+28:     .collect()
+29: }
+30: 
+31: #[test]
+32: fn the_plain_arguments_parse() {
+33:     parse_config_from_args(&base()).expect("���� ���ڸ� �ź��ߴ�");
+34: }
+35: 
+36: #[test]
+37: fn a_misspelled_flag_is_refused_by_name() {
+38:     let mut args = base();
+39:     args.extend(["--send-attempt-reprot".to_string(), "true".to_string()]);
+40:     let error = match parse_config_from_args(&args) {
+41:         Ok(_) => panic!("��Ÿ�� �޾Ƶ鿴��"),
+42:         Err(error) => error,
+43:     };
+44:     assert!(
+45:         error.starts_with("STARTUP_REFUSED: UNKNOWN_FLAGS"),
+46:         "�ٸ� ������ �ź��ߴ�: {error}"
+47:     );
+48:     assert!(error.contains("--send-attempt-reprot"), "�̸��� �� ����: {error}");
+49: }
+50: 
+51: /// �� ���� ? �ùٸ� �̸��� �޴´�. ������ "�𸣴� ���̵� �ƴ� ���̵� ��
+52: ///   �ź�" �ε� �� �׽�Ʈ�� ����Ѵ�.
+53: #[test]
+54: fn the_correct_spelling_is_accepted() {
+55:     let mut args = base();
+56:     args.extend(["--send-attempt-report".to_string(), "true".to_string()]);
+57:     let config = parse_config_from_args(&args).expect("�ùٸ� �̸��� �ź��ߴ�");
+58:     assert!(config.send_attempt_report);
+59: }
+60: 
+61: /// `true`/`false` �� �ƴ� �Ҹ����� ������ false �� ���� �ʴ´�(��˼� 15).
+62: #[test]
+63: fn an_invalid_bool_is_refused_by_name() {
+64:     let mut args = base();
+65:     args.extend(["--send-attempt-report".to_string(), "tru".to_string()]);
+66:     let error = match parse_config_from_args(&args) {
+67:         Ok(_) => panic!("�߸��� �Ҹ����� �޾Ƶ鿴��"),
+68:         Err(error) => error,
+69:     };
+70:     assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+71:     assert!(error.contains("--send-attempt-report"), "{error}");
+72: }
+
+ succeeded in 1925ms:
+2195: pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
+2196:     let flags = parse_flags(args)?;
+2197: 
+2198:     let config = AgentConfig {
+2199:         coordinator_addr: flags.require("--connect")?,
+2200:         own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+2201:         coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+2202:         // �� �ָ� None ? Manifest �� �Ƿ� ���� fail closed �� �ź��Ѵ�.
+2203:         submitter_verifying_key: match flags.get("--submitter-pubkey") {
+2204:             Some(hex) => Some(hex_to_verifying_key(hex)?),
+2205:             None => None,
+2206:         },
+2207:         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+2208:         send_attempt_report: flags.bool_flag("--send-attempt-report"),
+2209:         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),2307:         ));2322: /// `crates/coordinator/src/lib.rs::run_from_args` �� ���� ������
+2323: /// `crates/cli` ��� ����(Agent ��Ʈ��)�� ���� �ǹ̸� �����Ѵ�.
+2324: ///
+2325: /// �� �� �Լ� ��ü���� ������ ���� ? ������ [`run`] �� �ѱ� ���̰�
+2326: ///   ������ �ű⿡ �ִ�. ���� selftest �� `run()` �� ������ ������
+2327: ///   �����Ѵ�. ���̺귯�� ȣ���ڿ��Ը� ���̴� ���� multi-agent lane
+2328: ///   �������� �����̴�.
+2329: pub fn run_from_args(args: &[String]) -> Result<(), String> {
+2330:     let config = parse_config_from_args(args)?;
+2331: 
+2332:     run(config)
+2333: }
+2334: 
+2335: /// `--fence-db` �� �� �ָ� �� ���μ������� ������ �ӽ� SQLite ������
+2336: /// ����� ? ����(����� �ó������� �ƴ�) selftest �ó������� �׻�
+2337: /// �� watermark ���� �����ؾ� �ϹǷ�, PID �� �����ص� �����ϵ���
+2338: /// �߱� �ð�(������)�� ���´�.
+2339: fn default_fence_db_path() -> PathBuf {
+2340:     let pid = std::process::id();
+2341:     let nanos = std::time::SystemTime::now()
+2342:         .duration_since(std::time::UNIX_EPOCH)
+2343:         .map(|d| d.as_nanos())
+2344:         .unwrap_or(0);
+2345:     std::env::temp_dir().join(format!("gputeer-fence-{pid}-{nanos}.sqlite3"))
+2346: }
+2347: 
+2348: /// `--checkpoint-root`�� ������ ���� ȣ�⵵ �����ϰ� �����ϵ���
+2349: /// ���μ����� �ӽ� root�� �����. selftest�� root�� �˻��ؾ� �ϴ� ��쿡��
+2350: /// �������� `--checkpoint-root`�� �����Ѵ�.
+2351: fn default_checkpoint_root() -> PathBuf {
+2352:     let pid = std::process::id();
+2353:     let nanos = std::time::SystemTime::now()
+2354:         .duration_since(std::time::UNIX_EPOCH)
+2355:         .map(|d| d.as_nanos())
+2356:         .unwrap_or(0);
+2357:     std::env::temp_dir().join(format!("gputeer-checkpoints-{pid}-{nanos}"))
+2358: }
+2359: 
+2360: /// �� �� ��° ĭ�� **���� Ű**��. ������ �� ���� �� �� ���� �� ���� Ű�� ��
+2361: ///   ������ �𸣴� �̸��̴� ? Coordinator �ʰ� ���� ����(���� ? Ȯ��,
+2362: ///   2026-09-10). ������ ��Ÿ�� ������ �������.
+2363: struct Flags(
+2364:     std::collections::HashMap<String, String>,
+2365:     std::cell::RefCell<std::collections::HashSet<String>>,
+2366:     // �� �� ��° ĭ ? `true`/`false` �� �ƴ� �Ҹ��� ��. `--x tru` �� ������
+2367:     //   false �� �Ǹ� ���� �׽�Ʈ�� ����ȭ�ȴ�(��˼� 15, ���� ?).
+2368:     std::cell::RefCell<Vec<String>>,
+2369: );
+2370: 
+2371: impl Flags {
+2372:     /// ���� �а� **�о��ٰ� ���´�.**
+2373:     fn get(&self, key: &str) -> Option<&String> {
+2374:         self.1.borrow_mut().insert(key.to_string());
+2375:         self.0.get(key)
+2376:     }
+2377: 
+2378:     /// �� ���� ������ ���� Ű ? �̸���.
+2379:     fn unread(&self) -> Vec<String> {
+2380:         let read = self.1.borrow();
+2381:         let mut keys: Vec<String> = self
+2382:             .0
+2383:             .keys()
+2384:             .filter(|key| !read.contains(*key))
+2385:             .cloned()
+2386:             .collect();
+2387:         keys.sort();
+2388:         keys
+2389:     }
+2390: 
+2391:     fn require(&self, key: &str) -> Result<String, String> {
+2392:         self.get(key)
+2393:             .cloned()
+2394:             .ok_or_else(|| format!("�ʼ� ���� ����: {key}"))
+2395:     }
+2396: 
+2397:     /// `crates/coordinator/src/lib.rs::Flags::bool_flag` �� ���� ? ����
+2398:     /// �ִ� boolean �÷���(`--flag true`). �� �ָ� `false`.
+2399:     fn bool_flag(&self, key: &str) -> bool {
+2400:         match self.get(key).map(String::as_str) {
+2401:             None | Some("false") => false,
+2402:             Some("true") => true,
+2403:             Some(other) => {
+2404:                 self.2.borrow_mut().push(format!("{key}={other}"));
+2405:                 false
+2406:             }
+2407:         }
+2408:     }
+2409: 
+2410:     /// `true`/`false` �� �ƴϾ��� �Ҹ��� ����.
+2411:     fn bad_bools(&self) -> Vec<String> {
+2412:         self.2.borrow().clone()
+2413:     }
+2414: 
+2415:     /// �ݺ� Lease ����(2026-08-19) ? �� �ָ� `default`(�պ� Ƚ��).
+2416:     /// �⺻�� 1�� ���� ���� �պ� �ó������� �����ϰ� �����Ѵ�.
+2417:     fn u32_flag_with_default(&self, key: &str, default: u32) -> Result<u32, String> {
+2418:         match self.get(key) {
+2419:             None => Ok(default),
+2420:             Some(v) => v
+2421:                 .parse::<u32>()
+2422:                 .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2423:         }
+2424:     }
+2425: 
+2426:     /// �� �׽�Ʈ ���� ? ���� ��û epoch ���� ����(�ܰ� 5). �� �ָ�
+2427:     ///   `None`(���� ���� Lease �� ���� epoch �� �״�� ����).
+2428:     fn u64_flag_with_default(&self, key: &str, default: u64) -> Result<u64, String> {
+2429:         match self.get(key) {
+2430:             None => Ok(default),
+2431:             Some(v) => v
+2432:                 .parse::<u64>()
+2433:                 .map_err(|e| format!("{key} parse failed: {e}")),
+2434:         }
+2435:     }
+2436: 
+2437:     fn u64_opt_flag(&self, key: &str) -> Result<Option<u64>, String> {
+2438:         match self.get(key) {
+2439:             None => Ok(None),
+2440:             Some(v) => v
+2441:                 .parse::<u64>()
+2442:                 .map(Some)
+2443:                 .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2444:         }
+2445:     }
+2446: 
+2447:     fn u32_opt_flag(&self, key: &str) -> Result<Option<u32>, String> {
+2448:         match self.get(key) {
+2449:             None => Ok(None),
+2450:             Some(v) => v
+2451:                 .parse::<u32>()
+2452:                 .map(Some)
+2453:                 .map_err(|e| format!("{key} �Ľ� ����: {e}")),
+2454:         }
+2455:     }
+2456: }
+2457: 
+2458: fn parse_flags(args: &[String]) -> Result<Flags, String> {
+2459:     let mut map = std::collections::HashMap::new();
+2460:     let mut i = 0;
+2461:     while i < args.len() {
+2462:         let key = &args[i];
+2463:         if !key.starts_with("--") {
+2464:             return Err(format!("�÷��װ� �ƴ� ����: {key}"));
+2465:         }
+2466:         let value = args
+2467:             .get(i + 1)
+2468:             .ok_or_else(|| format!("{key} �ڿ� ���� ����"))?;
+2469:         map.insert(key.clone(), value.clone());
+2470:         i += 2;
+2471:     }
+2472:     Ok(Flags(map, Default::default(), Default::default()))
+2473: }
+2474: 
+2475: fn hex_to_seed(hex: &str) -> Result<[u8; 32], String> {
+2476:     let bytes = hex_decode(hex)?;
+2477:     <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| "seed �� ��Ȯ�� 32����Ʈ���� �Ѵ�".into())
+2478: }
+2479: 
+2480: fn hex_to_verifying_key(hex: &str) -> Result<VerifyingKey, String> {
+2481:     let seed = hex_to_seed(hex)?;
+2482:     VerifyingKey::from_bytes(&seed).map_err(|e| format!("��ȿ���� ���� ����Ű: {e}"))
+2483: }
+2484: 
+2485: fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
+2486:     // �� ���� ��(2026-09-10) ? ����Ʈ�� �ڸ��� �ʴ´�. `gputeer_crypto::hex`
+2487:     //   �� �� ����Ʈ�� �����Ƿ� ���� ��踦 ���� �� ����.
+2488:     gputeer_crypto::hex::decode_even(hex).map_err(|e| e.to_string())
+2489: }
+2490: 
+2491: #[cfg(test)]
+2492: mod tests {
+2493: 
+2494:     use super::*;
+2495:     use std::net::{TcpListener, TcpStream};
+2496:     use std::thread;
+
+codex
+설정 생성부에서는 다른 플래그 값에 따라 읽기를 건너뛰는 분기를 찾지 못했습니다. 다만 읽기 기록을 시작하기 전 `parse_flags`가 중복 키를 덮어쓰고, 다음 토큰이 `--...`여도 값으로 받습니다. 이 두 경로가 관문에서 무엇을 숨기는지와 selftest의 실제 전달 인자를 더 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+p=Path('crates/cli/src/coordinator_agent_selftest.rs')
+s=p.read_text(encoding='utf-8')
+lines=s.splitlines()
+for a,b in [(225,270),(336,353),(469,484),(541,553),(620,642),(685,786),(4715,4722),(4777,4787),(5573,5607),(6277,6296),(6497,6516)]:
+ for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
+'@ | python -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ exited 1 in 1418ms:
+225: fn run_handshake(
+226:     fixture: &Fixture,
+227:     extra_coordinator_args: &[&str],
+228:     extra_agent_args: &[&str],
+229: ) -> Result<HandshakeOutcome, String> {
+230:     run_handshake_internal(
+231:         fixture,
+232:         extra_coordinator_args,
+233:         extra_agent_args,
+234:         HANDSHAKE_HARD_TIMEOUT,
+235:         true,
+236:     )
+237: }
+238: 
+239: fn run_reconnect_case(
+240:     fixture: &Fixture,
+241:     extra_coordinator_args: &[&str],
+242:     extra_agent_args: &[&str],
+243: ) -> Result<HandshakeOutcome, String> {
+244:     run_handshake_internal(
+245:         fixture,
+246:         extra_coordinator_args,
+247:         extra_agent_args,
+248:         Duration::from_secs(120),
+249:         false,
+250:     )
+251: }
+252: 
+253: fn run_handshake_internal(
+254:     fixture: &Fixture,
+255:     extra_coordinator_args: &[&str],
+256:     extra_agent_args: &[&str],
+257:     hard_timeout: Duration,
+258:     disable_reconnect: bool,
+259: ) -> Result<HandshakeOutcome, String> {
+260:     run_handshake_internal_with_ready_hook(
+261:         fixture,
+262:         extra_coordinator_args,
+263:         extra_agent_args,
+264:         hard_timeout,
+265:         disable_reconnect,
+266:         None,
+267:     )
+268: }
+269: 
+270: const NEWLINE: char = '\n';
+336: fn run_agent_only(
+337:     fixture: &Fixture,
+338:     connect: &str,
+339:     extra_agent_args: &[&str],
+340: ) -> Result<(bool, String, String), String> {
+341:     let mut args: Vec<&str> = vec!["agent-stub", "--connect", connect, "--own-seed"];
+342:     let seed_hex = to_hex(&fixture.agent_seed);
+343:     args.push(&seed_hex);
+344:     args.push("--peer-pubkey");
+345:     args.push(&fixture.coordinator_pub_hex);
+346:     args.push("--coordinator-device-id");
+347:     args.push(fixture.coordinator_device_id);
+348:     args.push("--agent-device-id");
+349:     args.push(fixture.agent_device_id);
+350:     args.push("--disable-reconnect");
+351:     args.push("true");
+352:     args.extend_from_slice(extra_agent_args);
+353: 
+469:     let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", &address, "--own-seed"];
+470:     let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+471:     agent_args.push(&agent_own_seed_hex);
+472:     agent_args.push("--peer-pubkey");
+473:     agent_args.push(&fixture.coordinator_pub_hex);
+474:     agent_args.push("--coordinator-device-id");
+475:     agent_args.push(fixture.coordinator_device_id);
+476:     agent_args.push("--agent-device-id");
+477:     agent_args.push(fixture.agent_device_id);
+478:     agent_args.extend_from_slice(extra_agent_args);
+479:     // Preserve the historical DoD-24 meaning: this hook is a deliberate
+480:     // successful ACK-then-close test, not a reconnect scenario. The new
+481:     // reconnect helper does not go through run_handshake().
+482:     if disable_reconnect {
+483:         agent_args.extend_from_slice(&["--disable-reconnect", "true"]);
+484:     }
+541: fn run_handshake_with_checkpoint_root(
+542:     fixture: &Fixture,
+543:     checkpoint_root: &Path,
+544:     extra_coordinator_args: &[&str],
+545:     extra_agent_args: &[&str],
+546: ) -> Result<HandshakeOutcome, String> {
+547:     let root = checkpoint_root
+548:         .to_str()
+549:         .ok_or_else(|| format!("checkpoint root�� UTF-8�� �ƴϴ�: {checkpoint_root:?}"))?;
+550:     let mut agent_args = extra_agent_args.to_vec();
+551:     agent_args.extend_from_slice(&["--checkpoint-root", root]);
+552:     run_handshake(fixture, extra_coordinator_args, &agent_args)
+553: }
+620:     let lease_db = lease_db
+621:         .to_str()
+622:         .ok_or_else(|| format!("lease DB path is not UTF-8: {lease_db:?}"))?;
+623:     let fence_db = fence_db
+624:         .to_str()
+625:         .ok_or_else(|| format!("fence DB path is not UTF-8: {fence_db:?}"))?;
+626:     let fence_epoch = fence_epoch.to_string();
+627:     let lease_ttl_ms = lease_ttl_ms.to_string();
+628:     let seeded = run_handshake(
+629:         fixture,
+630:         &[
+631:             "--lease-db",
+632:             lease_db,
+633:             "--fence-epoch",
+634:             &fence_epoch,
+635:             "--lease-ttl-ms",
+636:             &lease_ttl_ms,
+637:             "--do-renew",
+638:             "false",
+639:         ],
+640:         &["--fence-db", fence_db, "--do-renew", "false"],
+641:     )?;
+642:     if !seeded.coordinator_success || !seeded.agent_success {
+685:         "5000".to_string(),
+686:     ];
+687:     if !unavailable_without_store {
+688:         coordinator_args.extend(["--lease-db".to_string(), lease_db.to_string()]);
+689:     }
+690:     let coordinator_refs: Vec<&str> = coordinator_args.iter().map(String::as_str).collect();
+691:     let mut agent_args = vec![
+692:         "--resume-protocol".to_string(),
+693:         "true".to_string(),
+694:         "--session-id".to_string(),
+695:         session_id.to_string(),
+696:         "--resume-lease-id".to_string(),
+697:         lease_id.to_string(),
+698:         "--resume-job-id".to_string(),
+699:         job_id.to_string(),
+700:         "--resume-attempt-id".to_string(),
+701:         attempt_id.to_string(),
+702:         "--resume-fence-epoch".to_string(),
+703:         epoch,
+704:         "--fence-db".to_string(),
+705:         fence_db.to_string(),
+706:     ];
+707:     if disable_reconnect {
+708:         agent_args.extend(["--disable-reconnect".to_string(), "true".to_string()]);
+709:     } else {
+710:         agent_args.extend([
+711:             "--max-reconnect-attempts".to_string(),
+712:             "2".to_string(),
+713:             "--max-reconnect-duration-seconds".to_string(),
+714:             "5".to_string(),
+715:             "--retry-base-ms".to_string(),
+716:             "1".to_string(),
+717:             "--retry-cap-ms".to_string(),
+718:             "1".to_string(),
+719:         ]);
+720:     }
+721:     let agent_refs: Vec<&str> = agent_args.iter().map(String::as_str).collect();
+722:     run_handshake_internal(
+723:         fixture,
+724:         &coordinator_refs,
+725:         &agent_refs,
+726:         HANDSHAKE_HARD_TIMEOUT,
+727:         disable_reconnect,
+728:     )
+729: }
+730: 
+731: /// Start a healthy Resume Coordinator, wait until it has opened and bound the
+732: /// lease DB, then corrupt the already-open SQLite file before the request is
+733: /// sent. This exercises the dispatcher classification during Resume rather
+734: /// than the startup-open failure covered by scenario 63.
+735: fn run_resume_storage_failure_case(
+736:     fixture: &Fixture,
+737:     lease_db: &Path,
+738:     fence_db: &Path,
+739: ) -> Result<HandshakeOutcome, String> {
+740:     let lease_db = lease_db.to_str().ok_or_else(|| {
+741:         format!("resume storage-failure lease DB path is not UTF-8: {lease_db:?}")
+742:     })?;
+743:     let fence_db = fence_db.to_str().ok_or_else(|| {
+744:         format!("resume storage-failure fence DB path is not UTF-8: {fence_db:?}")
+745:     })?;
+746:     let session_id = "resume-session-64";
+747:     let coordinator_args = [
+748:         "--resume-protocol",
+749:         "true",
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+UnicodeEncodeError: 'cp949' codec can't encode character '\u2014' in position 47: illegal multibyte sequence
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+import re,sys
+sys.stdout.reconfigure(encoding='utf-8')
+s=Path('crates/cli/src/coordinator_agent_selftest.rs').read_text(encoding='utf-8')
+# Preserve positions while excluding comments from delimiter scanning.
+pat=re.compile(r'//["'^'"\\n]*|/\\*.*?\\*/|\"(?:\\\\.|["'^"'"\\\\])*\"',re.S)
+masked=pat.sub(lambda m: ' '*len(m[0]) if m[0].startswith('/') else m[0],s)
+def args_at(start):
+ depth=0; begins=start+1; out=[]; in_str=False; esc=False
+ for i in range(start+1,len(masked)):
+  c=masked[i]
+  if in_str:
+   if esc: esc=False
+   elif c=='\\\\': esc=True
+   elif c=='\"': in_str=False
+   continue
+  if c=='\"': in_str=True; continue
+  if c in '([{': depth+=1
+  elif c in ')]}':
+   if c==')' and depth==0:
+    out.append((begins,i)); return out
+   depth-=1
+  elif c==',' and depth==0: out.append((begins,i)); begins=i+1
+for m in re.finditer(r'\\b(run_handshake(?:_internal(?:_with_ready_hook)?|_with_checkpoint_root)?|run_reconnect_case|run_agent_only|run_agent_alone)\\s*\\(',masked):
+ if masked[max(0,m.start()-3):m.start()]=='fn ': continue
+ name=m[1]; aa=args_at(m.end()-1)
+ idx=3 if name=='run_handshake_with_checkpoint_root' else 1 if name=='run_agent_alone' else 2
+ if len(aa)>idx:
+  a,b=aa[idx]; raw=masked[a:b].strip()
+  print(f'{s.count(chr(10),0,a)+1}: {name}: '+re.sub(r'\\s+',' ',raw))
+'@ | python -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1431ms:
+232: run_handshake_internal: extra_agent_args
+246: run_handshake_internal: extra_agent_args
+262: run_handshake_internal_with_ready_hook: extra_agent_args
+552: run_handshake: &agent_args
+639: run_handshake: &["--fence-db", fence_db, "--do-renew", "false"]
+724: run_handshake_internal: &agent_refs
+783: run_handshake_internal_with_ready_hook: &agent_args
+847: run_handshake: &[]
+875: run_handshake: &[]
+903: run_handshake: &["--corrupt-own-signature", "true"]
+918: run_handshake: &["--expect-replay", "true"]
+942: run_handshake: &[]
+957: run_handshake: &[]
+974: run_handshake: &["--do-renew", "true"]
+1004: run_handshake: &[ "--do-renew", "true", "--corrupt-renew-request-signature", "true", ]
+1045: run_handshake: &["--do-renew", "true"]
+1075: run_handshake: &["--do-renew", "true"]
+1107: run_handshake: &["--do-renew", "true"]
+1135: run_handshake: &["--do-renew", "true"]
+1159: run_handshake: &["--do-renew", "true"]
+1192: run_handshake: &["--do-renew", "true"]
+1218: run_handshake: &["--do-renew", "true"]
+1243: run_handshake: &["--do-renew", "true", "--renew-request-epoch-override", "99"]
+1314: run_handshake: &["--do-renew", "false", "--fence-db", fence_db]
+1333: run_handshake: &["--do-renew", "false", "--fence-db", fence_db]
+1398: run_agent_alone: &["--fence-db", ":memory:"]
+1431: run_handshake: &["--do-renew", "true", "--renew-rounds", "3"]
+1524: run_handshake: &["--fence-db", fence_db_20, "--do-renew", "true"]
+1550: run_handshake: &["--fence-db", fence_db_20, "--do-renew", "false"]
+1617: run_handshake: &["--fence-db", fence_db_21, "--do-renew", "false"]
+1643: run_handshake: &["--fence-db", fence_db_21, "--do-renew", "true"]
+1706: run_handshake: &["--do-renew", "false"]
+1753: run_handshake: &["--do-renew", "true"]
+1828: run_handshake: &["--do-renew", "false"]
+1858: run_handshake: &["--do-renew", "true"]
+1914: run_handshake: &["--do-renew", "false"]
+1960: run_handshake: &["--do-renew", "true"]
+2040: run_handshake: &["--fence-db", fence_db_25, "--do-renew", "false"]
+2068: run_handshake: &[ "--fence-db", fence_db_25, "--do-renew", "true", "--renew-request-epoch-override", "4", ]
+2128: run_handshake: &["--fence-db", fence_db_26, "--do-renew", "false"]
+2153: run_handshake: &["--fence-db", fence_db_26, "--do-renew", "true"]
+2199: run_handshake: &[ "--do-renew", "true", "--renew-rounds", "2", "--expect-revoke-after-round", "0", ]
+2254: run_handshake: &["--do-renew", "false", "--expect-revoke-after-round", "0"]
+2278: run_handshake: &[ "--do-renew", "false", "--expect-revoke-after-round", "0", "--revoke-signer-id", wrong_revoke_lease_id, ]
+2305: run_handshake: &["--do-renew", "false", "--expect-revoke-after-round", "0"]
+2334: run_handshake: &["--do-renew", "false", "--expect-revoke-after-round", "0"]
+2368: run_handshake: &[ "--fence-db", fence_db_25, "--do-renew", "true", "--renew-request-epoch-override", "4", "--renew-rounds", "2", ]
+2448: run_handshake: &["--fence-db", fence_db_33, "--do-renew", "true"]
+2480: run_handshake: &["--fence-db", fence_db_33, "--do-renew", "false"]
+2529: run_handshake: &[ "--fence-db", fence_db_33, "--agent-device-id", wrong_holder_id, "--do-renew", "false", ]
+2587: run_handshake: &[ "--fence-db", fence_db_35, "--do-renew", "false", "--expect-revoke-after-round", "0", ]
+2637: run_handshake: &["--fence-db", fence_db_35, "--do-renew", "false"]
+2699: run_handshake: &["--fence-db", fence_db_36, "--do-renew", "false"]
+2734: run_handshake: &["--fence-db", fence_db_36, "--do-renew", "false"]
+2794: run_handshake: &[ "--fence-db", fence_db_37, "--do-renew", "true", "--renew-rounds", "2", ]
+2869: run_handshake_with_checkpoint_root: &[]
+2924: run_handshake_with_checkpoint_root: &[]
+2946: run_handshake_with_checkpoint_root: &[]
+2975: run_handshake_with_checkpoint_root: &["--expect-revoke-after-round", "0"]
+2994: run_handshake_with_checkpoint_root: &[]
+3004: run_handshake_with_checkpoint_root: &[]
+3006: run_handshake_with_checkpoint_root: &[]
+3043: run_handshake_with_checkpoint_root: &[]
+3092: run_handshake: &["--do-renew", "true", "--renew-rounds", "2"]
+3153: run_handshake: &["--do-renew", "false"]
+3186: run_handshake: &["--do-renew", "true", "--renew-rounds", "2"]
+3246: run_handshake: &["--do-renew", "true"]
+3292: run_handshake: &["--do-renew", "true", "--renew-delay-ms", "1000"]
+3352: run_reconnect_case: &["--fence-db", fence_db_49, "--do-renew", "false"]
+3393: run_reconnect_case: &[ "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3", "--retry-base-ms", "10", "--retry-cap-ms", "25", "--do-renew", "false", ]
+3436: run_reconnect_case: &[ "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3", "--retry-base-ms", "10", "--retry-cap-ms", "25", "--fence-db", fence_db_49, "--do-renew", "false", ]
+3494: run_reconnect_case: &[ "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "3", "--retry-base-ms", "10", "--retry-cap-ms", "25", "--fence-db", fence_db_52, "--do-renew", "false", ]
+3905: run_reconnect_case: &[ "--fence-db", fence_db_65, "--do-renew", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4006: run_reconnect_case: &[ "--fence-db", fence_db_66, "--do-renew", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4079: run_reconnect_case: &[ "--fence-db", fence_db_67, "--do-renew", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4144: run_reconnect_case: &[ "--fence-db", fence_db_68, "--do-renew", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4207: run_reconnect_case: &[ "--fence-db", fence_db_69, "--do-renew", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--reuse-renew-nonce-after-reconnect", "true", "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4264: run_reconnect_case: &[ "--fence-db", fence_db_70, "--do-renew", "true", "--drop-after-renew-request-once", "true", "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4330: run_reconnect_case: &[ "--fence-db", fence_db_71, "--do-renew", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--max-reconnect-attempts", "3", "--max-reconnect-duration-seconds", "3", "--retry-base-ms", "10", "--retry-cap-ms", "25", ]
+4394: run_reconnect_case: &[ "--fence-db", fence_db_72, "--do-renew", "true", "--drop-after-renew-request-once", "true", "--recover-ambiguous-renew-from-durable-lease", "true", "--max-reconnect-attempts", "2", "--max-reconnect-duration-seconds", "5", "--retry-base-ms", "1", "--retry-cap-ms", "1", ]
+4538: run_handshake: &manifest_agent_args
+4560: run_handshake: &manifest_agent_args
+4593: run_handshake: &manifest_agent_args
+4612: run_handshake: &[]
+4648: run_handshake: &manifest_agent_args
+4700: run_handshake: &manifest_agent_args
+4722: run_handshake: &exec_on
+4762: run_handshake: &exec_on
+4786: run_handshake: &no_limit
+4841: run_handshake_with_checkpoint_root: &exec_on
+4930: run_handshake_with_checkpoint_root: &exec_on
+4964: run_handshake: &heartbeat_agent
+5000: run_handshake: &mismatch_agent
+5033: run_handshake: &wrong_fence_agent
+5062: run_handshake: &wrong_coord_agent
+5097: run_handshake: &wrong_device_agent
+5151: run_handshake: &["--heartbeat-rounds", "2", "--heartbeat-interval-ms", "5"]
+5244: run_handshake: &[ "--neighbor-report-rounds", "2", "--neighbor-report-interval-ms", "5", "--neighbor-report-target", TARGET_93, ]
+5403: run_handshake: &[ "--neighbor-report-rounds", "1", "--neighbor-report-target", TARGET_93, "--corrupt-neighbor-report-coordinator", "true", ]
+5614: run_agent_only: &extra
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+lines=Path('crates/cli/src/coordinator_agent_selftest.rs').read_text(encoding='utf-8').splitlines()
+for a,b in [(758,786),(4715,4722),(4777,4787),(5026,5032),(5056,5062),(5091,5097),(5573,5607),(6277,6296),(6497,6516)]:
+ for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
+'@ | python -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1139ms:
+758:     let agent_args = [
+759:         "--resume-protocol",
+760:         "true",
+761:         "--session-id",
+762:         session_id,
+763:         "--resume-lease-id",
+764:         fixture.lease_id,
+765:         "--resume-job-id",
+766:         fixture.job_id,
+767:         "--resume-attempt-id",
+768:         fixture.attempt_id,
+769:         "--resume-fence-epoch",
+770:         "7",
+771:         "--fence-db",
+772:         fence_db,
+773:         "--disable-reconnect",
+774:         "true",
+775:     ];
+776:     let lease_db_path = lease_db.to_owned();
+777:     let corrupt_after_ready = move |_address: &str| {
+778:         std::fs::write(&lease_db_path, b"not a sqlite database")
+779:             .map_err(|error| format!("resume storage-failure DB corruption failed: {error}"))
+780:     };
+781:     run_handshake_internal_with_ready_hook(
+782:         fixture,
+783:         &coordinator_args,
+784:         &agent_args,
+785:         Duration::from_secs(120),
+786:         true,
+4715:     // 80) opt-in 하면 실제로 프로세스가 뜨고 종료 코드 0 을 관측한다.
+4716:     let exec_on: Vec<&str> = vec![
+4717:         "--submitter-pubkey",
+4718:         fixture.submitter_pub_hex.as_str(),
+4719:         "--i-understand-this-executes-untrusted-code",
+4720:         "true",
+4721:     ];
+4722:     let exec_80 = run_handshake(&fixture, &exec_coordinator_refs, &exec_on)?;
+4777:     //     (CLAUDE.md §0.4).
+4778:     let no_limit: Vec<&str> = vec![
+4779:         "--submitter-pubkey",
+4780:         fixture.submitter_pub_hex.as_str(),
+4781:         "--i-understand-this-executes-untrusted-code",
+4782:         "true",
+4783:         "--workload-commit-limit-bytes",
+4784:         "0",
+4785:     ];
+4786:     let exec_82 = run_handshake(&fixture, &exec_coordinator_refs, &no_limit)?;
+4787:     let out_82 = format!("{}\n{}", exec_82.agent_stdout, exec_82.agent_stderr);
+5026:     let wrong_fence_agent: Vec<&str> = vec![
+5027:         "--heartbeat-rounds",
+5028:         "1",
+5029:         "--corrupt-heartbeat-fence",
+5030:         "true",
+5031:     ];
+5032:     let one_heartbeat: Vec<&str> = vec!["--expect-heartbeats", "1"];
+5056:     let wrong_coord_agent: Vec<&str> = vec![
+5057:         "--heartbeat-rounds",
+5058:         "1",
+5059:         "--corrupt-heartbeat-coordinator",
+5060:         "true",
+5061:     ];
+5062:     let hb_89 = run_handshake(&fixture, &one_heartbeat, &wrong_coord_agent)?;
+5091:     let wrong_device_agent: Vec<&str> = vec![
+5092:         "--heartbeat-rounds",
+5093:         "1",
+5094:         "--corrupt-heartbeat-device",
+5095:         "true",
+5096:     ];
+5097:     let hb_90 = run_handshake(&fixture, &one_heartbeat, &wrong_device_agent)?;
+5573:     //   listener 를 들고, 그 주소를 주고, accept 가 한 건도 없었는지 본다.
+5574:     //   고정 포트를 비어 있다고 가정하던 앞선 판은 그것을 증명하지 못했다.
+5575:     for (label, extra) in [
+5576:         ("대상 없음", vec!["--neighbor-report-rounds", "1"]),
+5577:         (
+5578:             "대상이 공백",
+5579:             vec!["--neighbor-report-rounds", "1", "--neighbor-report-target", "   "],
+5580:         ),
+5581:         (
+5582:             "multi-agent 와 함께",
+5583:             vec![
+5584:                 "--neighbor-report-rounds",
+5585:                 "1",
+5586:                 "--neighbor-report-target",
+5587:                 TARGET_93,
+5588:                 "--multi-agent",
+5589:                 "true",
+5590:             ],
+5591:         ),
+5592:         (
+5593:             "resume lane 과 함께",
+5594:             vec![
+5595:                 "--neighbor-report-rounds",
+5596:                 "1",
+5597:                 "--neighbor-report-target",
+5598:                 TARGET_93,
+5599:                 "--resume-protocol",
+5600:                 "true",
+5601:             ],
+5602:         ),
+5603:     ] {
+5604:         let watcher = std::net::TcpListener::bind("127.0.0.1:0")
+5605:             .map_err(|e| format!("96) listener 준비 실패: {e}"))?;
+5606:         let watch_addr = watcher
+5607:             .local_addr()
+6277:     let spawn_agent = |device_id: &str, seed_hex: &str| -> Result<std::process::Child, String> {
+6278:         Command::new(&fixture.exe)
+6279:             .args([
+6280:                 "agent-stub",
+6281:                 "--connect",
+6282:                 &address,
+6283:                 "--own-seed",
+6284:                 seed_hex,
+6285:                 "--peer-pubkey",
+6286:                 &fixture.coordinator_pub_hex,
+6287:                 "--coordinator-device-id",
+6288:                 fixture.coordinator_device_id,
+6289:                 "--agent-device-id",
+6290:                 device_id,
+6291:                 "--multi-agent",
+6292:                 "true",
+6293:             ])
+6294:             .stdout(Stdio::piped())
+6295:             .stderr(Stdio::piped())
+6296:             .spawn()
+6497:     let agent_out = Command::new(&fixture.exe)
+6498:         .args([
+6499:             "agent-stub",
+6500:             "--connect",
+6501:             &address,
+6502:             "--own-seed",
+6503:             &to_hex(&fixture.agent_seed),
+6504:             "--peer-pubkey",
+6505:             &fixture.coordinator_pub_hex,
+6506:             "--coordinator-device-id",
+6507:             fixture.coordinator_device_id,
+6508:             "--agent-device-id",
+6509:             fixture.agent_device_id,
+6510:             "--multi-agent",
+6511:             "true",
+6512:             // 이 한 줄이 검사 대상이다 — Resume lane 값으로 서명해 보낸다.
+6513:             "--corrupt-hello-mode",
+6514:             "true",
+6515:         ])
+6516:         .output()
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+import re,sys
+sys.stdout.reconfigure(encoding='utf-8')
+s=Path('crates/agent/src/lib.rs').read_text(encoding='utf-8')
+a=s.index('pub fn parse_config_from_args('); b=s.index('pub fn run_from_args',a)
+keys=sorted(set(re.findall(r'\"(--[a-z0-9-]+)\"',s[a:b])))
+print('Recognized flag count:',len(keys))
+print('\\n'.join(keys))
+lines=Path('crates/cli/src/coordinator_agent_selftest.rs').read_text(encoding='utf-8').splitlines()
+for a,b in [(2518,2542),(5149,5157),(5237,5255),(5396,5413),(6087,6098),(6145,6162)]:
+ for n in range(a,b+1): print(f'{n}: {lines[n-1]}')
+'@ | python -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "rg -n 'args\\b|env::args|\\.0\\b|and_then|flags\\b' crates/agent/src/lib.rs" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+ succeeded in 1225ms:
+216:    /// ★ 주소는 받지 않는다 — `127.0.0.1` 고정이다(`CLAUDE.md` §0.1).
+433:                    "OWNER_PANEL_REFUSED: 소유자 패널을 127.0.0.1:{port} 에 띄우지 못했다 \
+854:            "MANIFEST_ACCEPTED job_id={} entrypoint={} args={} env_vars={}",
+857:            spec.args.len(),
+1306:        0..0
+1919:    files.sort_by(|left, right| left.0.cmp(&right.0));
+2192:/// ★ `run_from_args` 에서 떼어냈다(독립 검수 7라운드). 관문이 실제로
+2195:pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
+2196:    let flags = parse_flags(args)?;
+2199:        coordinator_addr: flags.require("--connect")?,
+2200:        own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+2201:        coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+2203:        submitter_verifying_key: match flags.get("--submitter-pubkey") {
+2207:        execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+2208:        send_attempt_report: flags.bool_flag("--send-attempt-report"),
+2209:        corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
+2210:        corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
+2211:        corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
+2212:        corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
+2213:        workload_cgroup_parent: flags.get("--workload-cgroup-parent")
+2215:        multi_agent: flags.bool_flag("--multi-agent"),
+2219:        heartbeat_interval_ms: match flags.get("--heartbeat-interval-ms") {
+2225:        heartbeat_rounds: match flags.get("--heartbeat-rounds") {
+2231:        neighbor_report_rounds: match flags.get("--neighbor-report-rounds") {
+2240:        neighbor_report_interval_ms: match flags.get("--neighbor-report-interval-ms") {
+2246:        neighbor_report_target_node_id: flags.get("--neighbor-report-target").cloned(),
+2247:        corrupt_neighbor_report_coordinator: flags
+2250:        owner_panel_port: flags.get("--owner-panel-port").map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
+2254:        workload_commit_limit_bytes: flags
+2257:        coordinator_device_id: flags.require("--coordinator-device-id")?,
+2258:        agent_device_id: flags.require("--agent-device-id")?,
+2259:        corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
+2260:        expect_replay: flags.bool_flag("--expect-replay"),
+2261:        do_renew: flags.bool_flag("--do-renew"),
+2262:        renew_request_epoch_override: flags.u64_opt_flag("--renew-request-epoch-override")?,
+2263:        corrupt_renew_request_signature: flags.bool_flag("--corrupt-renew-request-signature"),
+2264:        fence_db_path: match flags.get("--fence-db") {
+2268:        checkpoint_root: match flags.get("--checkpoint-root") {
+2272:        renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
+2273:        renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
+2274:        expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
+2275:        revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
+2276:        max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
+2277:        max_reconnect_duration_seconds: flags
+2279:        retry_base_ms: flags.u64_flag_with_default("--retry-base-ms", 250)?,
+2280:        retry_cap_ms: flags.u64_flag_with_default("--retry-cap-ms", 5_000)?,
+2282:        reconnect_enabled: !flags.bool_flag("--disable-reconnect"),
+2283:        recover_ambiguous_renew_from_durable_lease: flags
+2285:        drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
+2286:        reuse_renew_nonce_after_reconnect: flags.bool_flag("--reuse-renew-nonce-after-reconnect"),
+2287:        resume_protocol: flags.bool_flag("--resume-protocol"),
+2288:        session_id: flags.get("--session-id")
+2291:        resume_lease_id: flags.get("--resume-lease-id")
+2294:        resume_job_id: flags.get("--resume-job-id").cloned().unwrap_or_default(),
+2295:        resume_attempt_id: flags.get("--resume-attempt-id")
+2298:        resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
+2302:    let bad_bools = flags.bad_bools();
+2309:    let unread = flags.unread();
+2319:/// CLI 인자를 [`parse_config_from_args`] 로 설정으로 바꾼 뒤 실행한다.
+2322:/// `crates/coordinator/src/lib.rs::run_from_args` 와 같은 이유로
+2329:pub fn run_from_args(args: &[String]) -> Result<(), String> {
+2330:    let config = parse_config_from_args(args)?;
+2375:        self.0.get(key)
+2382:            .0
+2458:fn parse_flags(args: &[String]) -> Result<Flags, String> {
+2461:    while i < args.len() {
+2462:        let key = &args[i];
+2466:        let value = args
+2514:        let reserved = TcpListener::bind("127.0.0.1:0").expect("reserve loopback port");
+
+ succeeded in 1432ms:
+Recognized flag count: 47
+--agent-device-id
+--checkpoint-root
+--connect
+--coordinator-device-id
+--corrupt-heartbeat-coordinator
+--corrupt-heartbeat-device
+--corrupt-heartbeat-fence
+--corrupt-hello-mode
+--corrupt-neighbor-report-coordinator
+--corrupt-own-signature
+--corrupt-renew-request-signature
+--disable-reconnect
+--do-renew
+--drop-after-renew-request-once
+--expect-replay
+--expect-revoke-after-round
+--fence-db
+--heartbeat-interval-ms
+--heartbeat-rounds
+--i-understand-this-executes-untrusted-code
+--max-reconnect-attempts
+--max-reconnect-duration-seconds
+--multi-agent
+--neighbor-report-interval-ms
+--neighbor-report-rounds
+--neighbor-report-target
+--own-seed
+--owner-panel-port
+--peer-pubkey
+--recover-ambiguous-renew-from-durable-lease
+--renew-delay-ms
+--renew-request-epoch-override
+--renew-rounds
+--resume-attempt-id
+--resume-fence-epoch
+--resume-job-id
+--resume-lease-id
+--resume-protocol
+--retry-base-ms
+--retry-cap-ms
+--reuse-renew-nonce-after-reconnect
+--revoke-signer-id
+--send-attempt-report
+--session-id
+--submitter-pubkey
+--workload-cgroup-parent
+--workload-commit-limit-bytes
+2518:     let wrong_holder_34 = run_handshake(
+2519:         &fixture,
+2520:         &[
+2521:             "--lease-db",
+2522:             lease_db_33,
+2523:             "--fence-epoch",
+2524:             "5",
+2525:             "--agent-device-id",
+2526:             wrong_holder_id,
+2527:             "--do-renew",
+2528:             "false",
+2529:         ],
+2530:         &[
+2531:             "--fence-db",
+2532:             fence_db_33,
+2533:             "--agent-device-id",
+2534:             wrong_holder_id,
+2535:             "--do-renew",
+2536:             "false",
+2537:         ],
+2538:     )?;
+2539:     if wrong_holder_34.coordinator_success
+2540:         || !wrong_holder_34
+2541:             .coordinator_stderr
+2542:             .contains("holder_node_id")
+5149:     let hb_92 = run_handshake(
+5150:         &fixture,
+5151:         &["--expect-heartbeats", "2", "--liveness-db", liveness_db],
+5152:         // ★ 회차 사이에 간격을 둔다. 없으면 두 heartbeat 가 같은
+5153:         //   밀리초에 나가고, 저장소가 두 번째를 "진행 없음" 으로 옳게
+5154:         //   판정한다 — 실제 시스템은 초 단위로 보내므로 그 상황이
+5155:         //   현실과 다르다.
+5156:         &["--heartbeat-rounds", "2", "--heartbeat-interval-ms", "5"],
+5157:     )?;
+5237:     let nb_93 = run_handshake(
+5238:         &fixture,
+5239:         &[
+5240:             "--expect-neighbor-reports",
+5241:             "2",
+5242:             "--neighbor-report-db",
+5243:             neighbor_db,
+5244:         ],
+5245:         // 회차 사이 간격 — heartbeat 와 같은 이유다. 없으면 두 신고가 같은
+5246:         // 밀리초에 나가고, 저장소가 두 번째를 "진행 없음" 으로 옳게 판정한다.
+5247:         &[
+5248:             "--neighbor-report-rounds",
+5249:             "2",
+5250:             "--neighbor-report-interval-ms",
+5251:             "5",
+5252:             "--neighbor-report-target",
+5253:             TARGET_93,
+5254:         ],
+5255:     )?;
+5396:     let nb_94 = run_handshake(
+5397:         &fixture,
+5398:         &[
+5399:             "--expect-neighbor-reports",
+5400:             "1",
+5401:             "--neighbor-report-db",
+5402:             neighbor_db,
+5403:         ],
+5404:         &[
+5405:             "--neighbor-report-rounds",
+5406:             "1",
+5407:             "--neighbor-report-target",
+5408:             TARGET_93,
+5409:             "--corrupt-neighbor-report-coordinator",
+5410:             "true",
+5411:         ],
+5412:     )?;
+5413:     if nb_94.coordinator_success {
+6087:     let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:0", "--own-seed"];
+6088:     let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+6089:     agent_args.push(&agent_own_seed_hex);
+6090:     agent_args.push("--peer-pubkey");
+6091:     agent_args.push(&fixture.coordinator_pub_hex);
+6092:     agent_args.push("--coordinator-device-id");
+6093:     agent_args.push(fixture.coordinator_device_id);
+6094:     agent_args.push("--agent-device-id");
+6095:     agent_args.push(fixture.agent_device_id);
+6096: 
+6097:     let mut agent = Command::new(&fixture.exe)
+6098:         .args(&agent_args)
+6145: fn run_agent_alone(
+6146:     fixture: &Fixture,
+6147:     extra_agent_args: &[&str],
+6148: ) -> Result<(bool, String, String), String> {
+6149:     let mut agent_args: Vec<&str> = vec!["agent-stub", "--connect", "127.0.0.1:1", "--own-seed"];
+6150:     let agent_own_seed_hex = to_hex(&fixture.agent_seed);
+6151:     agent_args.push(&agent_own_seed_hex);
+6152:     agent_args.push("--peer-pubkey");
+6153:     agent_args.push(&fixture.coordinator_pub_hex);
+6154:     agent_args.push("--coordinator-device-id");
+6155:     agent_args.push(fixture.coordinator_device_id);
+6156:     agent_args.push("--agent-device-id");
+6157:     agent_args.push(fixture.agent_device_id);
+6158:     agent_args.extend_from_slice(extra_agent_args);
+6159: 
+6160:     let output = Command::new(&fixture.exe)
+6161:         .args(&agent_args)
+6162:         .output()
+
+codex
+**정상 호출을 `UNKNOWN_FLAGS`로 잘못 거부하는 반례는 찾지 못했습니다.** 다만 이 관문이 원본 인자의 모든 누락·덮어쓰기를 잡는다는 주장은 성립하지 않습니다.
+
+아래 `B`는 `crates/agent/tests/unknown_flags.rs:14`의 `base()` 인자 전체이고, `B + …`는 뒤에 해당 토큰을 붙인 입력입니다. 실행 결과가 아니라 지정한 세 파일의 구조로 판정했습니다.
+
+1. **조건부 읽기 때문에 정상 플래그가 거부되는 경로는 찾지 못했습니다.**
+
+   `crates/agent/src/lib.rs:2198`의 설정 생성부에서 47개 플래그를 확인했습니다. `match`·`map`은 이미 조회한 **값**을 분기 처리하며, 다른 플래그 조회를 그 안에 숨기지 않습니다. 예를 들어 `B + --do-renew false --renew-rounds 3`도 두 키 모두 읽습니다(`lib.rs:2261`, `lib.rs:2272`). `B + --resume-protocol false --resume-job-id job1`도 같습니다(`lib.rs:2287`, `lib.rs:2294`).
+
+   도우미도 모두 `self.get(key)`를 먼저 호출합니다(`lib.rs:2391`, `lib.rs:2399`, `lib.rs:2417`, `lib.rs:2428`, `lib.rs:2437`, `lib.rs:2447`). 앞선 `?`가 이후 조회를 막을 수 있지만, 이때는 이미 파싱 오류로 반환하므로 정상 플래그를 UNKNOWN으로 오인하는 경로가 아닙니다. `get` 본문은 `self.0.get(key)`여서 자기 재귀도 없습니다(`lib.rs:2375`).
+
+2. **설정으로 읽은 값을 버리는 경로는 못 찾았지만, 조회 전에 사라지는 값은 있습니다.**
+
+   `crates/agent/src/lib.rs:2469`의 `map.insert`가 중복 키의 이전 값을 버립니다.
+
+   ```text
+   B + --send-attempt-report tru --send-attempt-report false
+   ```
+
+   이 입력은 `send_attempt_report=false`로 파싱됩니다. `tru`는 불리언 검사 전에 없어져 `INVALID_BOOL`에도 걸리지 않습니다(`lib.rs:2400`, `lib.rs:2302`). 따라서 검증 대상은 **각 인자 출현이 아니라 키마다 마지막 값**입니다.
+
+   또한 `lib.rs:2466`은 다음 토큰이 `--`로 시작해도 값으로 받습니다.
+
+   ```text
+   B + --session-id --send-attempt-reprot
+   ```
+
+   이는 `session_id="--send-attempt-reprot"`로 파싱되고 UNKNOWN 오류가 없습니다(`lib.rs:2288`). 다만 이것은 **키로 등록된 미지 플래그가 빠져나간 반례는 아닙니다.** 현 문법에서는 문자열 값입니다. 값 누락까지 탐지하려면 별도 문법 정책이 필요합니다.
+
+   이 두 동작을 이번 수정의 회귀로 판단할 근거는 없습니다. 특히 중복 덮어쓰기는 selftest가 실제 사용합니다. 기본 `--agent-device-id`를 추가하고(`coordinator_agent_selftest.rs:476`), 시나리오 34에서 같은 키에 `wrong_holder_id`를 덧붙입니다(`coordinator_agent_selftest.rs:2533`). 중복을 무조건 거부하는 후속 수정은 이 호출을 막습니다.
+
+   허용된 범위에서 `parse_flags` 외에 원본 인자를 직접 해석하는 우회 경로는 찾지 못했습니다.
+
+3. **selftest가 Agent에 전달하는 이름 중 새 관문으로 거부될 것은 찾지 못했습니다.**
+
+   `crates/cli/src/coordinator_agent_selftest.rs`의 기본 인자, 추가 인자, 재연결·Resume·체크포인트 도우미, 직접 실행 호출을 대조했습니다. 예를 들면:
+
+   - `--disable-reconnect true`(`selftest.rs:483`) → `crates/agent/src/lib.rs:2282`
+   - `--heartbeat-rounds 2 --heartbeat-interval-ms 5`(`selftest.rs:5156`) → `lib.rs:2225`, `lib.rs:2219`
+   - `--multi-agent true --corrupt-hello-mode true`(`selftest.rs:6510`, `selftest.rs:6513`) → `lib.rs:2215`, `lib.rs:2212`
+   - `--workload-commit-limit-bytes 0`(`selftest.rs:4783`) → `lib.rs:2254`
+
+   마지막처럼 실행 단계에서 거부를 의도한 입력도 **이름 자체는 알려진 플래그**입니다. 여기서는 selftest 전체 성공 여부까지 판정하지 않았습니다.
+
+4. **새 테스트는 요청한 두 방향으로 관문을 고정합니다.**
+
+   `crates/agent/tests/unknown_flags.rs:37`의 입력은 `B + --send-attempt-reprot true`입니다. UNKNOWN 관문을 없애면 `Ok`가 되어 41행에서 실패합니다. 오류 종류와 오타 이름도 확인합니다(45·48행).
+
+   반대로 전부 거부하도록 바꾸면 `B`를 받는 32행 테스트와 `B + --send-attempt-report true`를 받는 54행 테스트가 실패합니다. 후자는 성공 여부뿐 아니라 설정값이 실제 `true`인지도 확인합니다(58행).
+
+   다만 이 테스트들이 47개 이름 전체의 수용성이나 2번의 중복·값 경계를 고정하지는 않습니다.
+
+이번 UNKNOWN 관문 수정의 차단 결함은 찾지 못했습니다. 이는 지정 범위에서 반례를 못 찾았다는 판정이며, 파서 전체에 결함이 없다는 증명은 아닙니다.
+
+ACCEPTED
+tokens used
+44,180
+**정상 호출을 `UNKNOWN_FLAGS`로 잘못 거부하는 반례는 찾지 못했습니다.** 다만 이 관문이 원본 인자의 모든 누락·덮어쓰기를 잡는다는 주장은 성립하지 않습니다.
+
+아래 `B`는 `crates/agent/tests/unknown_flags.rs:14`의 `base()` 인자 전체이고, `B + …`는 뒤에 해당 토큰을 붙인 입력입니다. 실행 결과가 아니라 지정한 세 파일의 구조로 판정했습니다.
+
+1. **조건부 읽기 때문에 정상 플래그가 거부되는 경로는 찾지 못했습니다.**
+
+   `crates/agent/src/lib.rs:2198`의 설정 생성부에서 47개 플래그를 확인했습니다. `match`·`map`은 이미 조회한 **값**을 분기 처리하며, 다른 플래그 조회를 그 안에 숨기지 않습니다. 예를 들어 `B + --do-renew false --renew-rounds 3`도 두 키 모두 읽습니다(`lib.rs:2261`, `lib.rs:2272`). `B + --resume-protocol false --resume-job-id job1`도 같습니다(`lib.rs:2287`, `lib.rs:2294`).
+
+   도우미도 모두 `self.get(key)`를 먼저 호출합니다(`lib.rs:2391`, `lib.rs:2399`, `lib.rs:2417`, `lib.rs:2428`, `lib.rs:2437`, `lib.rs:2447`). 앞선 `?`가 이후 조회를 막을 수 있지만, 이때는 이미 파싱 오류로 반환하므로 정상 플래그를 UNKNOWN으로 오인하는 경로가 아닙니다. `get` 본문은 `self.0.get(key)`여서 자기 재귀도 없습니다(`lib.rs:2375`).
+
+2. **설정으로 읽은 값을 버리는 경로는 못 찾았지만, 조회 전에 사라지는 값은 있습니다.**
+
+   `crates/agent/src/lib.rs:2469`의 `map.insert`가 중복 키의 이전 값을 버립니다.
+
+   ```text
+   B + --send-attempt-report tru --send-attempt-report false
+   ```
+
+   이 입력은 `send_attempt_report=false`로 파싱됩니다. `tru`는 불리언 검사 전에 없어져 `INVALID_BOOL`에도 걸리지 않습니다(`lib.rs:2400`, `lib.rs:2302`). 따라서 검증 대상은 **각 인자 출현이 아니라 키마다 마지막 값**입니다.
+
+   또한 `lib.rs:2466`은 다음 토큰이 `--`로 시작해도 값으로 받습니다.
+
+   ```text
+   B + --session-id --send-attempt-reprot
+   ```
+
+   이는 `session_id="--send-attempt-reprot"`로 파싱되고 UNKNOWN 오류가 없습니다(`lib.rs:2288`). 다만 이것은 **키로 등록된 미지 플래그가 빠져나간 반례는 아닙니다.** 현 문법에서는 문자열 값입니다. 값 누락까지 탐지하려면 별도 문법 정책이 필요합니다.
+
+   이 두 동작을 이번 수정의 회귀로 판단할 근거는 없습니다. 특히 중복 덮어쓰기는 selftest가 실제 사용합니다. 기본 `--agent-device-id`를 추가하고(`coordinator_agent_selftest.rs:476`), 시나리오 34에서 같은 키에 `wrong_holder_id`를 덧붙입니다(`coordinator_agent_selftest.rs:2533`). 중복을 무조건 거부하는 후속 수정은 이 호출을 막습니다.
+
+   허용된 범위에서 `parse_flags` 외에 원본 인자를 직접 해석하는 우회 경로는 찾지 못했습니다.
+
+3. **selftest가 Agent에 전달하는 이름 중 새 관문으로 거부될 것은 찾지 못했습니다.**
+
+   `crates/cli/src/coordinator_agent_selftest.rs`의 기본 인자, 추가 인자, 재연결·Resume·체크포인트 도우미, 직접 실행 호출을 대조했습니다. 예를 들면:
+
+   - `--disable-reconnect true`(`selftest.rs:483`) → `crates/agent/src/lib.rs:2282`
+   - `--heartbeat-rounds 2 --heartbeat-interval-ms 5`(`selftest.rs:5156`) → `lib.rs:2225`, `lib.rs:2219`
+   - `--multi-agent true --corrupt-hello-mode true`(`selftest.rs:6510`, `selftest.rs:6513`) → `lib.rs:2215`, `lib.rs:2212`
+   - `--workload-commit-limit-bytes 0`(`selftest.rs:4783`) → `lib.rs:2254`
+
+   마지막처럼 실행 단계에서 거부를 의도한 입력도 **이름 자체는 알려진 플래그**입니다. 여기서는 selftest 전체 성공 여부까지 판정하지 않았습니다.
+
+4. **새 테스트는 요청한 두 방향으로 관문을 고정합니다.**
+
+   `crates/agent/tests/unknown_flags.rs:37`의 입력은 `B + --send-attempt-reprot true`입니다. UNKNOWN 관문을 없애면 `Ok`가 되어 41행에서 실패합니다. 오류 종류와 오타 이름도 확인합니다(45·48행).
+
+   반대로 전부 거부하도록 바꾸면 `B`를 받는 32행 테스트와 `B + --send-attempt-report true`를 받는 54행 테스트가 실패합니다. 후자는 성공 여부뿐 아니라 설정값이 실제 `true`인지도 확인합니다(58행).
+
+   다만 이 테스트들이 47개 이름 전체의 수용성이나 2번의 중복·값 경계를 고정하지는 않습니다.
+
+이번 UNKNOWN 관문 수정의 차단 결함은 찾지 못했습니다. 이는 지정 범위에서 반례를 못 찾았다는 판정이며, 파서 전체에 결함이 없다는 증명은 아닙니다.
+
+ACCEPTED

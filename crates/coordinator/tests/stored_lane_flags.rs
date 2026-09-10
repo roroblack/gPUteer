@@ -257,3 +257,56 @@ fn a_neighbor_report_db_without_expected_reports_is_refused() {
     ))
     .expect("기대값이 있는데 거부했다");
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// 결함 ㉒ (재검수 18) — 중복 키 · 경계 테스트 공백
+// ─────────────────────────────────────────────────────────────────────
+
+/// 같은 키를 두 번 주면 앞 값이 덮여 **검사 전에** 사라졌다.
+#[test]
+fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
+    refused_by_name(
+        with(legacy_lane(), &["--corrupt-own-signature", "tru", "--corrupt-own-signature", "false"]),
+        "INVALID_BOOL",
+        "--corrupt-own-signature",
+    );
+    // 대조 — 올바른 값의 중복은 받는다(마지막 값을 쓴다).
+    let config = parse_config_from_args(&with(
+        legacy_lane(),
+        &["--corrupt-own-signature", "false", "--corrupt-own-signature", "true"],
+    ))
+    .expect("올바른 값의 중복을 거부했다");
+    assert!(config.corrupt_own_signature, "마지막 값을 쓰지 않았다");
+}
+
+/// "항상 무시 6" 은 `--lease-db` 가 **없어도** 거부한다. 이게 없으면 9개를 전부
+/// "--lease-db 있을 때만" 으로 바꿔도 다른 테스트가 통과한다.
+#[test]
+fn never_applied_flags_are_refused_without_a_lease_db_too() {
+    for (flag, value) in &NOT_APPLIED[..6] {
+        refused_by_name(
+            with(without(stored_lane("J", "A", "L"), "--lease-db"), &[flag, value]),
+            "STORED_LANE_IGNORES",
+            flag,
+        );
+    }
+}
+
+#[test]
+fn every_absent_stored_id_is_refused_by_name() {
+    for flag in ["--stored-grant-job-id", "--stored-grant-attempt-id", "--stored-grant-lease-id"] {
+        refused_by_name(without(stored_lane("J", "A", "L"), flag), "STORED_LANE_ID_MISSING", flag);
+    }
+}
+
+#[test]
+fn every_stored_lane_only_flag_is_refused_on_the_legacy_lane() {
+    for (flag, value) in [
+        ("--stored-grant-job-id", "J"),
+        ("--stored-grant-attempt-id", "A"),
+        ("--stored-grant-lease-id", "L"),
+        ("--stored-grant-ttl-ms", "1"),
+    ] {
+        refused_by_name(with(legacy_lane(), &[flag, value]), "STORED_LANE_ONLY", flag);
+    }
+}
