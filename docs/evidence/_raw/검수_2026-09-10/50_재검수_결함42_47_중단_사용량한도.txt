@@ -1,0 +1,64 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a09dd1-11af-7712-aaef-d6e3acc6c06a
+--------
+user
+동의가 아니라 **반박**을 원한다. 구현 검수 49 가 여섯을 짚었고, 고쳤다(결함 ㊷~㊼).
+
+# 49 의 지적과 이번 수정
+
+```text
+㊷ ㊸  ACK 전송 실패가 정리를 건너뜀 · 관문 거부 + 정리 실패에서 사유 소실
+       -> crates/agent/src/lib.rs  fail_after_cleanup — 둘 다 정리 뒤 보고, 정리 실패면 둘 다 남긴다
+㊹     PostAckWait 가 Lease 만료 뒤를 "받지 않는다" 는 틀림
+       -> 동작은 그대로, 주석 · 설계 문서를 무응답 시한으로 좁혔다
+㊺     [P1] 실행 뒤 재접속 억제가 peek 에만 있었다
+       -> run_one_connection 을 바깥 · 안으로 나눠, 워크로드를 띄운 연결의 모든 오류에서 RETRYABLE_ · AMBIGUOUS_RENEW
+          표지를 바꾼다(WORKLOAD_ALREADY_RAN)
+㊻     테스트 공백 -> P1 이 ACK_SENT < WORKLOAD_SPAWNED 를 직접 본다 · N4(Revoke 읽기 실패) · N5(첫 읽기 뒤 10초 복원) ·
+                     시간을 출력 줄 도착 시각(프로토콜 사건)에 묶었다
+㊼     문장 정정(기동 실패 서술 · 첫 preflight 한정 · §5 표기)
+```
+
+# 읽을 파일 — 이것만 읽어라
+
+```text
+crates/agent/src/lib.rs        run_one_connection · not_retried_after_workload · run_one_connection_inner 의 워크로드 블록 ·
+                               send_grant_ack · fail_after_cleanup · peer_closed_after_ack 조건 · defect_42_45_tests
+crates/agent/src/exec.rs       preflight 문서
+crates/coordinator/src/lib.rs  PostAckWait
+crates/cli/tests/ack_before_execution.rs
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md   (결함 ㊷~㊼ 절만)
+docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md
+docs/plans/2026-09-10_2142_결함18_ACK_시한_설계_선택지.md     (§7 만)
+docs/history/HISTORY.md        (맨 위 항목만)
+docs/evidence/_raw/검수_2026-09-10/49_구현검수_결함18_설계A_CHANGES_REQUESTED.txt
+```
+
+# 물을 것
+
+1. **49 의 여섯이 닫혔나.** 고친 코드 · 문장이 또 새 단정이나 새 빈 통과를 만들지 않았나.
+2. **㊺ 의 변환이 맞나** — 워크로드를 띄운 **뒤**의 오류만 바뀌나(띄우기 전의 재접속 · 재조회는 그대로인가).
+   `workload_started` 가 true 가 되는 시점과 ACK · 기동 실패 · NotOptedIn 의 관계. 표지 치환이 다른 분류를 망가뜨리나.
+3. **새 테스트가 공허하지 않나** — N4 · N5 · P1 의 순서 검사 · 시간 경계. 뮤테이션 결과(HISTORY 맨 위)와 대조.
+4. 같은 부류(관측을 원인 · 필연 · 보편으로 넓히는 문장, 한계를 실제보다 넓거나 좁게 적는 문장)가 또 있나.
+   범위 밖에서 보면 "범위 밖 관찰" 로 따로 적어라.
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 을 인용하라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 2:21 PM.
+ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 2:21 PM.
