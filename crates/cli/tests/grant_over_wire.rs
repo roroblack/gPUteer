@@ -635,6 +635,16 @@ fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
     assert_eq!(report.started_at_unix_ms.to_string(), field("started_at_unix_ms"));
     assert_eq!(report.finished_at_unix_ms.to_string(), field("finished_at_unix_ms"));
     assert_eq!(binding.bound_fence_epoch.to_string(), field("fence_epoch"));
+    // B+E — Agent 는 v2 로 보내고 종료 코드의 존재 여부를 적는다. 두 프로세스를 건너 저장된 행에서 본다.
+    assert_eq!(report.schema_version, 2, "Agent 가 v2 로 보내지 않았다\n{both}");
+    assert_eq!(
+        report.exit_observation,
+        gputeer_protocol::pb::ExitObservation::ObservedWithCode as i32,
+        "종료 코드를 관측했는데 OBSERVED_WITH_CODE 가 아니다\n{both}"
+    );
+    assert_eq!(report.exit_code.to_string(), field("exit_code"));
+    assert_eq!(report.exit_observation.to_string(), field("exit_observation"));
+    assert_eq!(report.schema_version.to_string(), field("schema_version"));
 
     // ★ 저장된 Grant 자체를 본다 — Agent 는 hash 없음을 통과시키므로
     //   (`verify_nested_manifest`) Agent 성공만으로는 hash 채우기가 빠진 것을 못 잡는다.

@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-09-14 18:33 — B+E 구현 단계 2(종료 코드의 존재 여부 · Agent v2 발신) · 재검수 56 대응(결함 75 · 76)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §6
+- 스트림: Protocol · Crypto · Agent · Runtime(Linux · Windows) · QA
+- 수행: 56(코덱스알트)은 71~74 가 닫혔다고 하고, 새 벡터 14개가 Rust 와 대조되지 않고(75) Ack 수명 테스트가 선언값을 고정하지
+  않는다(76)고 했다 — 고치기 전에 기록했다. 75 는 v39~v41b 를 Rust 메시지로 만들어 canonical · sig_input 을 대조하고, 76 은 Ack 의
+  ShortLived · session_nonce 일치 · 실제 검증기의 수락 · 중복 거부를 값으로 고정했다. 이어서 단계 2 — 신호 종료를 -1 로 합성하지 않고
+  (runtime-linux wait_status), exec 가 코드 조회 실패를 NoCode 로 · 메모리 관측 실패를 별도 칸으로 가르고(ExitCodeUnavailable 제거),
+  Agent 가 v2 로 보낸다(exit_observation · 코드 없음은 FAILED)
+- 검증: be_s4a 87 passed · be_s4b 13 passed · be_s5 25 passed · 뮤테이션 4/4(75 · 76). 커밋 40840c0 의 워크스페이스 전체는 1132 passed · 0 failed · ignored 1 · 경고 0 ·
+  selftest exit 0(시나리오 줄 97) — ★ 이번 단계 2 편집 뒤의 워크스페이스 전체는 아직 안 돌렸다. **리눅스 미실행** — runtime-linux
+  교차 check 만 통과, agent 리눅스 경로는 리눅스 타깃 표준 라이브러리 오류로 컴파일도 확인 못 함
+- 원본: `docs/evidence/_raw/B+E_구현단계2_시험_2026-09-14.txt` · `docs/evidence/_raw/검수_2026-09-10/56_재검수_결함71_74_계약적용_CHANGES_REQUESTED_알트.txt`
+- 리포트: 결함 75 · 76
+
+---
+
 ## 2026-09-14 18:17 — B+E 계약 단계 1 적용(worktree feat/b-e-contract) · 재검수 55 대응(결함 71~74)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §5.7 · §5.8 · 제안서 조건 (a)~(e)

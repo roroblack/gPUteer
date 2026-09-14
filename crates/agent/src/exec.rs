@@ -46,11 +46,33 @@ pub const STDOUT_FILENAME: &str = "stdout.log";
 /// 자식의 표준 오류를 받는 파일 이름.
 pub const STDERR_FILENAME: &str = "stderr.log";
 
+/// 종료를 관측한 결과 — 종료 코드의 **존재 여부**를 보존한다(B+E 계획서 §5.7 (3) · 결함 69).
+///
+/// ★ 숫자로 "없음" 을 나타내지 않는다. 0 은 정상 종료이고, Linux 의 합성값 -1 은 u32 로 옮기면
+///   Windows 에서 실제로 관측할 수 있는 u32::MAX 와 같아진다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExitObserved {
+    /// 종료 코드를 관측했다 — 값 그대로다.
+    Code(u32),
+    /// 종료는 관측했지만 코드가 없다 — Linux 신호 종료, 또는 `wait()` 뒤 코드 조회 실패.
+    NoCode { detail: String },
+}
+
+impl ExitObserved {
+    /// 관측한 종료 코드. 없으면 `None`.
+    pub fn code(&self) -> Option<u32> {
+        match self {
+            Self::Code(code) => Some(*code),
+            Self::NoCode { .. } => None,
+        }
+    }
+}
+
 /// 프로세스를 실제로 띄운 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionOutcome {
-    /// 프로세스가 끝난 뒤의 종료 코드.
-    pub exit_code: u32,
+    /// 프로세스가 끝난 뒤의 종료 관측.
+    pub exit: ExitObserved,
     /// 이 실행에 실제로 걸린 커밋 메모리 상한(바이트).
     ///
     /// "상한을 걸었다" 는 주장을 값으로 남긴다 — 0 이면 안 걸린 것이고,
@@ -62,7 +84,11 @@ pub struct ExecutionOutcome {
     ///   하드 리밋이 아니라 소프트 제한이며, 이 저장소는 이미 700~850KiB
     ///   오버슈트를 실측했다(`ADR-027`). 넘었다고 결함이 아니다 —
     ///   "상한이 하드하다" 고 쓰지 않기 위해 값을 그대로 남긴다.
-    pub peak_commit_bytes: u64,
+    ///
+    /// 모르면 `None` 이다 — 0 으로 채우지 않는다(`CLAUDE.md` §1).
+    pub peak_commit_bytes: Option<u64>,
+    /// 종료 뒤 메모리 관측이 실패했으면 그 사유. 실패해도 종료 관측(`exit`)은 그대로 남긴다(결함 69 (ii)).
+    pub memory_observation_error: Option<String>,
 }
 
 /// 실행하지 못한 이유. **전부 "실행 안 함" 이다** — 부분 실행이 없다.
@@ -81,8 +107,9 @@ pub enum ExecutionError {
     /// ★ 이 경우 자식이 **아직 살아 있을 수 있다.** "실패" 로 뭉개면
     ///   고아 프로세스가 남은 것을 못 본다.
     WaitFailed { detail: String },
-    /// 종료 코드를 읽지 못했다.
-    ExitCodeUnavailable { detail: String },
+    // ★ `ExitCodeUnavailable` 은 없앴다(결함 69, 2026-09-14). `wait()` 뒤 코드 조회 실패는 **종료를 관측한** 것이라
+    //   실행 오류가 아니라 `Ok` 의 `ExitObserved::NoCode` 다. 메모리 관측 실패도 오류가 아니라
+    //   `memory_observation_error` 다 — 전에는 둘 다 여기로 와 종료 보고가 사라졌다.
     /// 소유자의 정지 요청을 실행하지 못했다.
     ///
     /// ★ 이건 다른 오류들보다 심각하다. 소유자가 "비워라" 라고 했는데
@@ -132,9 +159,6 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "EXEC_FAILED:WAIT: 종료를 관측하지 못했다(자식이 살아 있을 수 있다) — {detail}"
             ),
-            Self::ExitCodeUnavailable { detail } => {
-                write!(f, "EXEC_FAILED:EXIT_CODE: {detail}")
-            }
             Self::StopFailed { detail } => write!(
                 f,
                 "OWNER_STOP_FAILED: 소유자의 정지 요청을 실행하지 못했다 — {detail}"
@@ -501,23 +525,27 @@ mod platform {
         child.wait().map_err(|e| ExecutionError::WaitFailed {
             detail: e.to_string(),
         })?;
-        let exit_code = child
-            .exit_code()
-            .map_err(|e| ExecutionError::ExitCodeUnavailable {
-                detail: e.to_string(),
-            })?;
-        let (peak, limit) = child.query_memory_limits().map_err(|e| {
-            // 여기까지 왔으면 자식은 이미 끝났다. 관측 실패를 실행 실패로
-            // 뭉개지 않고 별도로 보고한다.
-            ExecutionError::ExitCodeUnavailable {
-                detail: format!("종료 코드는 {exit_code} 인데 메모리 관측에 실패했다: {e}"),
-            }
-        })?;
+        // ★ 결함 69 (i) — `wait()` 은 성공했다. 종료는 관측했고 코드만 못 읽었다 -> NoCode.
+        //   전에는 실행 오류로 돌려 종료 보고가 아예 사라졌다.
+        let exit = match child.exit_code() {
+            Ok(code) => super::ExitObserved::Code(code),
+            Err(e) => super::ExitObserved::NoCode {
+                detail: format!("wait() 뒤 종료 코드 조회 실패: {e}"),
+            },
+        };
+        // ★ 결함 69 (ii) — 메모리 관측 실패는 종료 관측과 따로 남긴다. 코드는 코드대로 보고한다.
+        let (commit_limit_bytes, peak_commit_bytes, memory_observation_error) =
+            match child.query_memory_limits() {
+                Ok((peak, limit)) => (limit as u64, Some(peak as u64), None),
+                // 상한은 이 실행에 걸어 둔 정책 값을 남긴다 — Linux 경로가 memory.max 를 못 읽을 때와 같다.
+                Err(e) => (policy.commit_limit_bytes, None, Some(e.to_string())),
+            };
 
         Ok(ExecutionOutcome {
-            exit_code,
-            commit_limit_bytes: limit as u64,
-            peak_commit_bytes: peak as u64,
+            exit,
+            commit_limit_bytes,
+            peak_commit_bytes,
+            memory_observation_error,
         })
     }
 }
@@ -600,20 +628,30 @@ mod platform {
         });
 
         let limit = child.memory_limit_bytes().unwrap_or(policy.commit_limit_bytes);
-        let exit_code = child.wait().map_err(|error| ExecutionError::WaitFailed {
+        // ★ 결함 69 — 신호 종료를 -1 로 합성하지 않는다(`wait_status`). 전에는 -1 을 u32 로 옮겨
+        //   OBSERVED_WITH_CODE / 4294967295 로 보고될 수 있었다.
+        let exit = match child.wait_status().map_err(|error| ExecutionError::WaitFailed {
             detail: error.to_string(),
-        })?;
+        })? {
+            gputeer_runtime_linux::ChildExit::Code(code) => super::ExitObserved::Code(code as u32),
+            gputeer_runtime_linux::ChildExit::Signaled(signal) => super::ExitObserved::NoCode {
+                detail: match signal {
+                    Some(signal) => format!("신호 {signal} 로 끝났다 — 종료 코드가 없다"),
+                    None => "신호로 끝났다(번호 미상) — 종료 코드가 없다".to_string(),
+                },
+            },
+        };
         // ★ peak 는 `wait()` **뒤에** 읽는다. 자식이 살아 있는 동안 읽으면
         //   최종값이 아니다. cgroup 은 프로세스가 끝나도 우리가 지울
         //   때까지 남아 있으므로 여기서 읽을 수 있다.
-        let peak = child.peak_memory_bytes().unwrap_or(0);
+        // 모르면 None — 전에는 0 으로 채웠다(`CLAUDE.md` §1).
+        let peak = child.peak_memory_bytes();
 
         Ok(ExecutionOutcome {
-            // 종료 코드는 i32 다(신호로 죽으면 -1). u32 로 옮기며 부호를
-            // 잃지 않게 as 캐스트로 비트 그대로 보존한다.
-            exit_code: exit_code as u32,
+            exit,
             commit_limit_bytes: limit,
             peak_commit_bytes: peak,
+            memory_observation_error: None,
         })
     }
 }

@@ -181,6 +181,15 @@ impl CgroupStopper {
     }
 }
 
+/// 자식의 종료 관측 — 종료 코드의 **존재 여부**를 보존한다(B+E 계획서 §5.7 (3) · 결함 69).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildExit {
+    /// 스스로 끝났다 — `status.code()` 가 있다.
+    Code(i32),
+    /// 신호로 끝났다 — 종료 코드가 **없다**. 신호 번호를 알면 담는다.
+    Signaled(Option<i32>),
+}
+
 impl ConstrainedChild {
     /// 정지 손잡이를 만든다. `wait()` 으로 붙잡히기 **전에** 부른다.
     pub fn stopper(&self) -> CgroupStopper {
@@ -196,7 +205,23 @@ impl ConstrainedChild {
         })?;
         // ★ 신호로 죽은 경우 `code()` 가 `None` 이다. 0 으로 접으면
         //   강제 종료가 "정상 완료" 로 기록된다.
+        // ★ 결함 69 — 이 -1 은 **합성값**이다. 종료 보고에는 쓰지 않는다 — [`Self::wait_status`] 를 쓴다.
         Ok(status.code().unwrap_or(-1))
+    }
+
+    /// 자식이 끝날 때까지 기다리고, 종료 코드의 **존재 여부**를 보존해 돌려준다(결함 69).
+    ///
+    /// ★ [`Self::wait`] 의 -1 은 u32 로 옮기면 4294967295 가 되어, Windows 에서 실제로 관측한 u32::MAX 와
+    ///   숫자로 구별되지 않는다. 보고는 숫자를 보고 추측하지 않고 이 값을 쓴다.
+    pub fn wait_status(&mut self) -> Result<ChildExit, CgroupError> {
+        use std::os::unix::process::ExitStatusExt;
+        let status = self.child.wait().map_err(|e| CgroupError::WaitFailed {
+            detail: e.to_string(),
+        })?;
+        Ok(match status.code() {
+            Some(code) => ChildExit::Code(code),
+            None => ChildExit::Signaled(status.signal()),
+        })
     }
 
     /// 이 cgroup 이 관측한 메모리 최대치(바이트).

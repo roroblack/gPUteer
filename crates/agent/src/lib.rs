@@ -1075,13 +1075,17 @@ fn run_one_connection_inner(
                 //   `state-machines.md` §3 이 WORKLOAD_EXITED_OK 와
                 //   WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
                 //   (전이 자체는 아직 구현하지 않는다.)
-                if report.exit_code == 0 {
-                    println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id);
-                } else {
-                    println!(
+                match report.exit.code() {
+                    Some(0) => println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id),
+                    Some(code) => println!(
                         "WORKLOAD_RESULT ok=false job_id={} exit_code={}",
-                        spec.job_id, report.exit_code
-                    );
+                        spec.job_id, code
+                    ),
+                    // 종료는 관측했지만 코드가 없다(신호 종료 · 코드 조회 실패) — 성공으로 세지 않는다(결함 69).
+                    None => println!(
+                        "WORKLOAD_RESULT ok=false job_id={} exit_code=none",
+                        spec.job_id
+                    ),
                 }
                 // ★ **관측한 것만** 담는다. `job_id`·`fence_epoch` 은
                 //   Coordinator 가 서명해 준 Lease 에서, `attempt_id` 는
@@ -1092,7 +1096,7 @@ fn run_one_connection_inner(
                     attempt_id: grant.attempt_id.clone(),
                     node_id: config.agent_device_id.clone(),
                     fence_epoch: held_lease.fence_epoch,
-                    exit_code: report.exit_code,
+                    exit_code: report.exit.code(),
                     started_at_unix_ms: report.started_at_unix_ms,
                     finished_at_unix_ms: report.finished_at_unix_ms,
                     issued_at_unix_ms: 0,
@@ -1286,14 +1290,17 @@ fn run_one_connection_inner(
         stream.flush().map_err(|e| e.to_string())?;
         println!(
             "ATTEMPT_REPORT_SENT job_id={} attempt_id={} node_id={} fence_epoch={} \
-             outcome={} exit_code={} started_at_unix_ms={} finished_at_unix_ms={} \
+             outcome={} exit_code={} exit_observation={} schema_version={} \
+             started_at_unix_ms={} finished_at_unix_ms={} \
              issued_at_unix_ms={}",
             attempt_report.job_id,
             attempt_report.attempt_id,
             attempt_report.node_id,
             attempt_report.fence_epoch,
             attempt_report.outcome,
-            observed.exit_code,
+            attempt_report.exit_code,
+            attempt_report.exit_observation,
+            attempt_report.schema_version,
             attempt_report.started_at_unix_ms,
             attempt_report.finished_at_unix_ms,
             attempt_report.issued_at_unix_ms
@@ -1786,7 +1793,8 @@ pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> St
 
 /// 실행 후 보고할 것들.
 struct WorkloadReport {
-    exit_code: u32,
+    /// 종료 관측 — 코드가 없을 수 있다(신호 종료 · 코드 조회 실패, 결함 69).
+    exit: exec::ExitObserved,
     file_count: usize,
     total_bytes: usize,
     /// 자식을 띄우기 **직전에** 읽은 시계. 호출부가 준 값을 그대로
@@ -1846,8 +1854,10 @@ fn run_and_capture_workload(
         Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
         // ★ 여기서도 종료 시각을 읽지 않는다. 실행 자체가 **일어나지
         //   않았거나**(NotOptedIn·UnsupportedPlatform·LimitNotApplied·
-        //   SpawnFailed) 종료를 **관측하지 못한** 경우(WaitFailed·
-        //   ExitCodeUnavailable)이므로, 보고할 종료가 없다.
+        //   SpawnFailed) 종료를 **관측하지 못한** 경우(WaitFailed)이므로,
+        //   보고할 종료가 없다.
+        //   ★ 종료를 관측했지만 코드가 없는 경우는 여기로 오지 않는다 — `Ok` 로 돌아와
+        //     OBSERVED_NO_CODE 로 보고된다(결함 69).
         Err(other) => {
             // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
             // 소유자 화면에 영원히 남는다.
@@ -1863,15 +1873,30 @@ fn run_and_capture_workload(
     // 프로세스는 끝났다. 산출물 확정이 남았지만 **멈출 대상은 이미
     // 없으므로** 화면에서 뺀다 — 못 멈추는 정지 버튼을 보이지 않는다.
     panel.unregister(attempt_id);
+    // ★ 코드가 없으면 `exit_code=none` 이다 — 0 이나 -1 로 채우지 않는다(결함 69). 최대 메모리도 모르면 `unknown`.
     println!(
         "WORKLOAD_EXITED job_id={} exit_code={} commit_limit_bytes={} peak_commit_bytes={}",
-        spec.job_id, outcome.exit_code, outcome.commit_limit_bytes, outcome.peak_commit_bytes
+        spec.job_id,
+        outcome
+            .exit
+            .code()
+            .map_or_else(|| "none".to_string(), |code| code.to_string()),
+        outcome.commit_limit_bytes,
+        outcome
+            .peak_commit_bytes
+            .map_or_else(|| "unknown".to_string(), |peak| peak.to_string())
     );
+    if let exec::ExitObserved::NoCode { detail } = &outcome.exit {
+        println!("WORKLOAD_EXIT_CODE_UNAVAILABLE job_id={} detail={detail}", spec.job_id);
+    }
+    if let Some(error) = &outcome.memory_observation_error {
+        println!("WORKLOAD_MEMORY_OBSERVATION_FAILED job_id={} detail={error}", spec.job_id);
+    }
 
     let files = collect_workload_artifacts(run_dir, spec, &outcome)?;
     finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)?;
     Ok(Some(WorkloadReport {
-        exit_code: outcome.exit_code,
+        exit: outcome.exit.clone(),
         file_count: files.len(),
         total_bytes: files.iter().map(|(_, data)| data.len()).sum(),
         started_at_unix_ms,
@@ -1976,9 +2001,15 @@ fn collect_workload_artifacts(
     let result = serde_json::json!({
         "job_id": spec.job_id,
         "entrypoint": spec.entrypoint,
-        "exit_code": outcome.exit_code,
+        // 코드가 없으면 null — 0 으로 채우지 않는다. 그 사유는 exit_code_unavailable 에(결함 69).
+        "exit_code": outcome.exit.code(),
+        "exit_code_unavailable": match &outcome.exit {
+            exec::ExitObserved::NoCode { detail } => Some(detail.as_str()),
+            exec::ExitObserved::Code(_) => None,
+        },
         "commit_limit_bytes": outcome.commit_limit_bytes,
         "peak_commit_bytes": outcome.peak_commit_bytes,
+        "memory_observation_error": outcome.memory_observation_error,
     });
     let mut result_bytes = serde_json::to_vec_pretty(&result)
         .map_err(|error| format!("작업 결과를 JSON 으로 바꾸지 못했다: {error}"))?;

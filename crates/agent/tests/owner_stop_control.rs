@@ -83,7 +83,8 @@ fn the_owner_can_stop_a_running_workload() {
         started.elapsed()
     );
     assert_eq!(
-        outcome.exit_code, EXIT_CODE_OWNER_STOPPED,
+        outcome.exit,
+        gputeer_agent::exec::ExitObserved::Code(EXIT_CODE_OWNER_STOPPED),
         "소유자 정지 종료 코드가 아니다 — 자식이 스스로 끝났다면 이 검사는 공허하다"
     );
 }
@@ -130,7 +131,7 @@ fn refused_executions_hand_out_no_stopper() {
 
         let error = match result {
             Err(error) => error,
-            Ok(outcome) => panic!("{name}: 거부돼야 하는데 실행됐다(exit={})", outcome.exit_code),
+            Ok(outcome) => panic!("{name}: 거부돼야 하는데 실행됐다(exit={:?})", outcome.exit),
         };
         assert!(
             error.to_string().contains(expected),

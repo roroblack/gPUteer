@@ -45,6 +45,19 @@ fn expect_hex(name: &str) -> String {
         .to_string()
 }
 
+/// 벡터의 다른 hex 필드(`sig_input_hex` 등).
+fn expect_vector_field(name: &str, field: &str) -> String {
+    vectors()["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == name)
+        .unwrap_or_else(|| panic!("벡터 없음: {name}"))[field]
+        .as_str()
+        .unwrap_or_else(|| panic!("{name} 에 {field} 가 없다"))
+        .to_string()
+}
+
 fn digest(b: u8) -> Option<pb::Digest> {
     Some(pb::Digest {
         algo: 1,
@@ -780,4 +793,113 @@ fn neighbor_unreachable_report_matches_reference() {
         expect_hex("v38b_neighbor_unreachable_different_target"),
         "지목 노드가 다른 신고가 참조 구현과 다르다"
     );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ 결함 75 (재검수 56) — B+E 계약 단계 1 의 새 벡터 14개를 **Rust 메시지로** 대조한다
+//
+// Python `--verify` 는 Python 끼리의 재생성 대조다. 이 대조가 없으면 Rust 의
+// `to_canonical_fields` 가 참조 구현과 갈라져도(예: Ack 의 `created` 를 뒤집어도)
+// 아무것도 실패하지 않는다. canonical 과 sig_input(domain · 버전 포함) 을 둘 다 본다.
+// ══════════════════════════════════════════════════════════════════
+
+fn assert_matches_reference<M: gputeer_protocol::signing::Signable + ToCanonicalFields>(name: &str, msg: &M) {
+    assert_eq!(
+        hex(&canonical_encode(&ToCanonicalFields::to_canonical_fields(msg), &[])),
+        expect_hex(name),
+        "{name} canonical 이 Python 참조 구현과 다르다"
+    );
+    assert_eq!(
+        hex(&gputeer_protocol::signing::signing_input(msg)),
+        expect_vector_field(name, "sig_input_hex"),
+        "{name} sig_input 이 Python 참조 구현과 다르다"
+    );
+}
+
+/// 참조 구현 `_report_base` 와 같은 값.
+fn b_e_report(schema_version: u32, outcome: i32, exit_observation: i32, exit_code: u32, stage: i32) -> pb::AttemptReport {
+    pb::AttemptReport {
+        schema_version,
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        node_id: "node-1".into(),
+        fence_epoch: 42,
+        outcome,
+        started_at_unix_ms: 1_755_100_800_000,
+        finished_at_unix_ms: 1_755_104_400_000,
+        issued_at_unix_ms: 1_755_104_401_000,
+        exit_observation,
+        exit_code,
+        finalization_failure_stage: stage,
+        node_signature: vec![b'R'; 64],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn b_e_attempt_report_vectors_match_reference() {
+    for (name, report) in [
+        ("v39_attempt_report_v1_completed", b_e_report(1, 1, 0, 0, 0)),
+        ("v39a_attempt_report_v2_completed_default_fields", b_e_report(2, 1, 0, 0, 0)),
+        ("v39b_attempt_report_v2_completed", b_e_report(2, 1, 2, 0, 0)),
+        ("v39c_attempt_report_v2_failed_exit7_read_outputs", b_e_report(2, 2, 2, 7, 1)),
+        ("v39d_attempt_report_v2_failed_exit8_read_outputs", b_e_report(2, 2, 2, 8, 1)),
+        ("v39e_attempt_report_v2_output_finalization_read_outputs", b_e_report(2, 6, 2, 0, 1)),
+        ("v39f_attempt_report_v2_output_finalization_encode_result", b_e_report(2, 6, 2, 0, 2)),
+        ("v39g_attempt_report_v2_output_finalization_commit_checkpoint", b_e_report(2, 6, 2, 0, 3)),
+        ("v39h_attempt_report_v2_failed_not_observed", b_e_report(2, 2, 1, 0, 0)),
+        ("v39i_attempt_report_v2_failed_observed_no_code", b_e_report(2, 2, 3, 0, 0)),
+    ] {
+        assert_matches_reference(name, &report);
+    }
+}
+
+#[test]
+fn b_e_attempt_report_ack_vectors_match_reference() {
+    let ack = pb::AttemptReportAck {
+        schema_version: 1,
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        node_id: "node-1".into(),
+        fence_epoch: 42,
+        report_hash: Some(pb::Digest {
+            algo: 1,
+            value: (0u8..32).collect(),
+        }),
+        created: true,
+        coordinator_id: "coordinator-1".into(),
+        issued_at_unix_ms: 1_755_104_402_000,
+        session_nonce: (48u8..64).collect(),
+        coordinator_signature: vec![b'A'; 64],
+        ..Default::default()
+    };
+    assert_matches_reference("v40_attempt_report_ack", &ack);
+    // `created` 하나만 바꾼 대조쌍 — 이 필드가 바이트에 닿지 않으면 재전송 응답과 첫 저장 응답을 서명으로 구별할 수 없다.
+    let replay = pb::AttemptReportAck {
+        created: false,
+        ..ack.clone()
+    };
+    assert_ne!(
+        hex(&canonical_encode(&ToCanonicalFields::to_canonical_fields(&ack), &[])),
+        hex(&canonical_encode(&ToCanonicalFields::to_canonical_fields(&replay), &[])),
+        "created 를 바꿨는데 canonical 이 같다"
+    );
+    assert_matches_reference("v40b_attempt_report_ack_replay_created_false", &replay);
+}
+
+#[test]
+fn b_e_session_hello_mode_vectors_match_reference() {
+    let hello = |mode: i32| pb::AgentSessionHello {
+        schema_version: 1,
+        mode,
+        session_id: "01JBXSESSION00000000000001".into(),
+        node_id: "node-1".into(),
+        connection_attempt: 2,
+        issued_at_unix_ms: 1_755_103_900_000,
+        nonce: (0u8..16).collect(),
+        node_signature: vec![0x11; 64],
+        ..Default::default()
+    };
+    assert_matches_reference("v41_agent_session_hello_renew", &hello(gputeer_protocol::constants::MODE_RENEW as i32));
+    assert_matches_reference("v41b_agent_session_hello_report", &hello(gputeer_protocol::constants::MODE_REPORT as i32));
 }

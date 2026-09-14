@@ -43,8 +43,9 @@
 //! # outcome 으로 무엇을 쓸 수 있나 (알려진 한계)
 //!
 //! ```text
-//! COMPLETED         exit_code == 0
-//! FAILED            exit_code != 0
+//! COMPLETED         종료 코드 0 을 관측
+//! FAILED            0 이 아닌 코드를 관측, 또는 종료는 관측했지만 코드가 없다(OBSERVED_NO_CODE —
+//!                   신호 종료 · 코드 조회 실패. B+E schema_version 2, 결함 69)
 //! INTERRUPTED       ★ 만들 수 없다
 //! CANCELLED         ★ 만들 수 없다
 //! STALE_COMPLETED   ★ 만들 수 없다
@@ -65,7 +66,11 @@ use prost::Message;
 /// ★ 상수를 여기 두는 이유는 이것이 **이 발신자가 무엇을 쓰는가**이지
 ///   프로토콜 상수가 아니기 때문이다. 프레임 상한 같은 협상 대상 값은
 ///   `crates/protocol/src/constants.rs` 가 소유한다(`RULE.md` §3.1).
-pub const ATTEMPT_REPORT_SCHEMA_VERSION: u32 = 1;
+///
+/// ★ 1 -> 2 (2026-09-14, B+E) — 종료 관측의 존재 여부(필드 14 · 15)를 싣는다. 받는 쪽은 v2 까지 읽는다
+///   (`gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION`). 옛 Coordinator 는 v2 를 거부한다 —
+///   계획서 조건 (a).
+pub const ATTEMPT_REPORT_SCHEMA_VERSION: u32 = 2;
 
 /// 워크로드가 끝났다는 **관측**. 전부 실제로 본 값이다.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,8 +84,8 @@ pub struct TerminalObservation {
     pub node_id: String,
     /// 보유 Lease 의 세대.
     pub fence_epoch: u64,
-    /// `exec` 가 관측한 종료 코드.
-    pub exit_code: u32,
+    /// `exec` 가 관측한 종료 코드. `None` 은 "종료는 관측했지만 코드가 없다" 이다(결함 69) — 미관측이 아니다.
+    pub exit_code: Option<u32>,
     /// 자식을 띄우기 **직전에** 읽은 시계.
     pub started_at_unix_ms: u64,
     /// 자식을 거둔 **직후에** 읽은 시계.
@@ -157,11 +162,11 @@ impl std::error::Error for AttemptReportError {}
 /// `WORKLOAD_EXITED_ERROR` 를 다른 전이로 두는 것과 같은 구분이다.
 /// 모듈 문서의 "알려진 한계" 를 함께 읽는다 — 나머지 세 outcome 은
 /// 이 계층이 관측할 수 없어 **만들지 않는다.**
-pub fn outcome_for_exit_code(exit_code: u32) -> pb::AttemptOutcome {
-    if exit_code == 0 {
-        pb::AttemptOutcome::Completed
-    } else {
-        pb::AttemptOutcome::Failed
+pub fn outcome_for_exit_code(exit_code: Option<u32>) -> pb::AttemptOutcome {
+    match exit_code {
+        Some(0) => pb::AttemptOutcome::Completed,
+        // 코드가 없는 종료는 성공으로 세지 않는다 — 0 이라는 관측이 없다.
+        Some(_) | None => pb::AttemptOutcome::Failed,
     }
 }
 
@@ -202,6 +207,13 @@ pub fn build_signed_attempt_report(
         node_id: observation.node_id.clone(),
         fence_epoch: observation.fence_epoch,
         outcome: outcome_for_exit_code(observation.exit_code) as i32,
+        // v2 — 종료 관측의 **존재 여부**를 그대로 옮긴다(B+E 계획서 §5.7 (3)). 코드가 없으면 NO_CODE 로 적고
+        //   exit_code 는 기본값이다 — 숫자로 "없음" 을 나타내지 않는다.
+        exit_observation: match observation.exit_code {
+            Some(_) => pb::ExitObservation::ObservedWithCode,
+            None => pb::ExitObservation::ObservedNoCode,
+        } as i32,
+        exit_code: observation.exit_code.unwrap_or(0),
         // ★ 아래 넷은 **비운다.** 이유는 모듈 문서에 있다.
         final_step: 0,
         started_at_unix_ms: observation.started_at_unix_ms,
@@ -250,7 +262,7 @@ mod tests {
             attempt_id: ATTEMPT.into(),
             node_id: NODE.into(),
             fence_epoch: 7,
-            exit_code: 0,
+            exit_code: Some(0),
             started_at_unix_ms: 1_000,
             finished_at_unix_ms: 1_500,
             issued_at_unix_ms: 1_600,
@@ -290,13 +302,45 @@ mod tests {
 
     #[test]
     fn exit_code_zero_is_completed_and_anything_else_is_failed() {
-        assert_eq!(outcome_for_exit_code(0), pb::AttemptOutcome::Completed);
-        assert_eq!(outcome_for_exit_code(1), pb::AttemptOutcome::Failed);
+        assert_eq!(outcome_for_exit_code(Some(0)), pb::AttemptOutcome::Completed);
+        assert_eq!(outcome_for_exit_code(Some(1)), pb::AttemptOutcome::Failed);
         assert_eq!(
-            outcome_for_exit_code(u32::MAX),
+            outcome_for_exit_code(Some(u32::MAX)),
             pb::AttemptOutcome::Failed,
             "0 이 아닌 모든 값은 실패다"
         );
+        assert_eq!(
+            outcome_for_exit_code(None),
+            pb::AttemptOutcome::Failed,
+            "코드가 없는 종료는 성공이 아니다"
+        );
+    }
+
+    /// 결함 69 — 종료는 관측했지만 코드가 없으면 v2 FAILED + OBSERVED_NO_CODE + 코드 기본값으로 보고한다.
+    ///   전에는 이 경우 보고 자체를 만들지 않았다(Windows) 또는 -1 을 u32 로 옮겨 코드처럼 보고했다(Linux).
+    #[test]
+    fn an_observed_exit_without_a_code_is_a_failed_v2_report_with_no_code() {
+        let mut observed = observation();
+        observed.exit_code = None;
+        let report = build_signed_attempt_report(&key(), &observed).expect("코드 없는 종료도 보고한다");
+        assert_eq!(report.schema_version, 2);
+        assert_eq!(report.outcome, pb::AttemptOutcome::Failed as i32);
+        assert_eq!(report.exit_observation, pb::ExitObservation::ObservedNoCode as i32);
+        assert_eq!(report.exit_code, 0);
+        assert_eq!(report.finalization_failure_stage, 0);
+    }
+
+    /// 관측한 코드는 숫자 그대로 옮긴다 — Windows 에서 실제로 볼 수 있는 u32::MAX 포함(결함 69).
+    #[test]
+    fn an_observed_code_is_carried_as_is_including_u32_max() {
+        for code in [0, 7, u32::MAX] {
+            let mut observed = observation();
+            observed.exit_code = Some(code);
+            let report = build_signed_attempt_report(&key(), &observed).expect("관측한 코드");
+            assert_eq!(report.schema_version, 2);
+            assert_eq!(report.exit_observation, pb::ExitObservation::ObservedWithCode as i32);
+            assert_eq!(report.exit_code, code);
+        }
     }
 
     #[test]
