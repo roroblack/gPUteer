@@ -1,0 +1,284 @@
+# 결함 ⑲ — 시험 원본 (2026-09-14 18:51)
+# passed=119 failed=0 ignored=0 warning 줄=0
+
+# 뮤테이션 결함 ⑲ · 77 — 2026-09-14 18:47
+baseline -p gputeer-agent --lib defect_19_tests exit=0
+baseline -p gputeer-agent --lib report::tests exit=0
+baseline -p gputeer-agent --test exit_code_preservation exit=0
+caught        M12 확정 실패를 다시 Agent 오류로 되돌림(⑲ 핵심)  -> test defect_19_tests::a_real_exit_with_a_blocked_checkpoint_still_yields_a_report ... FAILED
+caught        M13 코드 0 + 확정 실패를 COMPLETED 로  -> test report::tests::a_finalization_failure_after_an_observed_exit_is_still_reported ... FAILED
+caught        M14 체크포인트 확정 실패를 READ_OUTPUTS 로 잘못 분류  -> test defect_19_tests::a_blocked_checkpoint_is_commit_checkpoint ... FAILED | test defect_19_tests::a_real_exit_with_a_blocked_checkpoint_still_yields_a_report ... FAILED
+caught        M15 기다린 뒤에도 259 를 거부(결함 77 이전)  -> test an_exit_code_of_259_is_kept_as_a_code ... FAILED
+합계 caught 4/4
+
+
+# ── cargo test ──
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\runtime-windows)
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\checkpoint)
+   Compiling gputeer-agent v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\agent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.81s
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_agent-795e53b84d357b44.exe)
+
+running 35 tests
+test multi_agent::tests::each_agent_derives_a_distinct_hello_nonce ... ok
+test defect_42_45_tests::errors_after_the_workload_ran_are_not_retried ... ok
+test multi_agent::tests::hello_and_ack_nonces_do_not_collide ... ok
+test multi_agent::tests::this_lane_uses_a_distinct_session_mode ... ok
+test owner_panel::tests::a_backwards_clock_does_not_produce_a_giant_number ... ok
+test owner_panel::tests::an_empty_token_is_refused_at_bind_time ... ok
+test owner_panel::tests::host_check_accepts_loopback_and_rejects_names ... ok
+test owner_panel::tests::json_values_are_escaped ... ok
+test owner_panel::tests::loss_is_measured_from_the_last_checkpoint ... ok
+test owner_panel::tests::two_attempts_of_one_job_are_both_visible ... ok
+test owner_panel::tests::with_no_checkpoint_everything_since_start_is_lost ... ok
+test report::tests::a_backwards_clock_between_start_and_finish_is_refused_with_both_values ... ok
+test defect_42_45_tests::a_successful_cleanup_returns_the_original_error_and_removes_the_directory ... ok
+test defect_19_tests::a_blocked_checkpoint_is_commit_checkpoint ... ok
+test defect_19_tests::an_unreadable_output_is_read_outputs ... ok
+test report::tests::a_built_report_verifies_under_the_signing_node_identity ... ok
+test report::tests::an_empty_identity_field_is_refused_by_name ... ok
+test report::tests::a_field_changed_after_signing_no_longer_verifies ... ok
+test report::tests::a_finalization_failure_after_an_observed_exit_is_still_reported ... ok
+test report::tests::an_observed_exit_without_a_code_is_a_failed_v2_report_with_no_code ... ok
+test report::tests::an_issue_time_before_the_finish_time_is_refused_with_both_values ... ok
+test report::tests::an_observed_code_is_carried_as_is_including_u32_max ... ok
+test tests::filesystem_root_as_checkpoint_root_is_refused ... ok
+test report::tests::exit_code_zero_is_completed_and_anything_else_is_failed ... ok
+test tests::revoke_notice_matching_lease_and_epoch_is_applicable ... ok
+test report::tests::unobserved_fields_stay_empty ... ok
+test tests::revoke_notice_with_wrong_fence_epoch_is_rejected ... ok
+test report::tests::observed_timestamps_are_copied_not_recomputed ... ok
+test tests::revoke_notice_for_expired_lease_is_rejected ... ok
+test tests::revoke_notice_with_wrong_lease_id_is_rejected ... ok
+test tests::workload_run_root_is_never_inside_the_checkpoint_root ... ok
+test defect_42_45_tests::a_cleanup_failure_keeps_the_original_refusal ... ok
+test defect_19_tests::a_real_exit_with_a_blocked_checkpoint_still_yields_a_report ... ok
+test defect_19_tests::an_unblocked_run_finalizes ... ok
+test tests::nonce_attempt_counter_ignores_failed_connects ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.37s
+
+     Running tests\attempt_report_send.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_send-e647d98c243cc7e3.exe)
+
+running 2 tests
+test the_flag_without_an_observed_exit_refuses_instead_of_inventing_one ... ok
+test without_the_flag_nothing_extra_follows_the_ack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests\exit_code_preservation.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\exit_code_preservation-d40c2497ae019c4e.exe)
+
+running 3 tests
+test an_exit_code_of_259_is_kept_as_a_code ... ok
+test an_exit_code_of_u32_max_is_kept_as_a_code ... ok
+test ordinary_exit_codes_are_kept ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\gpu_preflight_gate.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gpu_preflight_gate-e9d740ce7f6c7f33.exe)
+
+running 5 tests
+test opt_in_is_still_checked_before_everything ... ok
+test the_cheap_gate_runs_first ... ok
+test the_two_refusals_are_not_interchangeable ... ok
+test a_workload_that_asks_for_a_gpu_that_is_not_here_does_not_start ... ok
+test no_gpu_requirement_means_no_gpu_gate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\neighbor_report_lane_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\neighbor_report_lane_guard-5a244155a24e288f.exe)
+
+running 4 tests
+test the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off ... ok
+test run_refuses_unsupported_lane_combinations_before_connecting ... ok
+test run_refuses_a_missing_or_blank_target_before_connecting ... ok
+test the_report_guard_stays_out_of_a_lane_that_wants_no_reports ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.02s
+
+     Running tests\owner_panel_http.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_panel_http-5edf6f3e7b3e571f.exe)
+
+running 8 tests
+test the_panel_binds_only_to_loopback ... ok
+test a_request_without_a_host_header_is_refused ... ok
+test the_workload_list_is_served_over_loopback ... ok
+test an_absurd_content_length_is_refused_without_allocating ... ok
+test a_request_with_a_foreign_host_header_is_refused ... ok
+test stopping_an_unknown_workload_reports_failure_not_success ... ok
+test the_html_page_carries_its_defensive_headers ... ok
+test a_stop_without_the_token_is_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\owner_panel_startup.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_panel_startup-a52c129ffaab5e1e.exe)
+
+running 7 tests
+test the_page_actually_shows_what_the_owner_needs ... ok
+test consecutive_requests_are_served ... ok
+OWNER_PANEL listening=http://127.0.0.1:60057/
+test a_taken_port_makes_the_agent_refuse_to_start ... ok
+OWNER_PANEL listening=http://127.0.0.1:60060/
+OWNER_PANEL listening=http://127.0.0.1:60070/
+OWNER_PANEL listening=http://127.0.0.1:60072/
+test the_panel_token_is_stable_across_restarts ... ok
+test a_different_seed_yields_a_different_token ... ok
+test without_execution_no_panel_is_opened ... ok
+test enabling_execution_starts_the_panel_even_without_a_port ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.73s
+
+     Running tests\owner_stop_control.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_stop_control-1fbd844031a4dbf5.exe)
+
+running 5 tests
+test owner_stop_exit_code_is_not_success ... ok
+test stop_failure_is_distinguishable_in_logs ... ok
+test refused_executions_hand_out_no_stopper ... ok
+test stopping_twice_is_not_an_error ... ok
+test the_owner_can_stop_a_running_workload ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\unknown_flags.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\unknown_flags-6db1360ae58d40c8.exe)
+
+running 8 tests
+test a_valid_numeric_duplicate_is_accepted ... ok
+test an_invalid_bool_is_refused_by_name ... ok
+test a_misspelled_flag_is_refused_by_name ... ok
+test a_valid_duplicate_bool_is_accepted_and_the_last_value_wins ... ok
+test an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused ... ok
+test the_plain_arguments_parse ... ok
+test the_correct_spelling_is_accepted ... ok
+test an_invalid_number_hidden_by_a_later_duplicate_is_still_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_agent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\runtime-windows)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.79s
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_runtime_windows-d9d07fd7fba02832.exe)
+
+running 8 tests
+test windows_impl::tests::simple_args_are_not_quoted ... ok
+test windows_impl::tests::backslash_before_embedded_quote_uses_2n_plus_1_rule ... ok
+test windows_impl::tests::empty_arg_is_wrapped_in_quotes ... ok
+test windows_impl::tests::trailing_backslash_before_closing_quote_is_doubled ... ok
+test appcontainer::tests::the_profile_creates_a_folder_but_that_does_not_mean_it_is_usable ... ok
+�׼����� �źεǾ����ϴ�.
+test appcontainer::tests::a_profile_can_be_created_and_yields_an_appcontainer_sid ... ok
+test appcontainer::tests::the_same_name_yields_the_same_sid ... ok
+test appcontainer::tests::the_container_cannot_read_a_file_the_host_can ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running unittests src\bin\alloc_fixture.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\alloc_fixture-142ed372b7eed7f5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\dll_probe.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\dll_probe-8e8fed9a4476e940.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\p0_02_probe.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\p0_02_probe-63578251eb108d27.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\artifact_beneath.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\artifact_beneath-70287ff9dd04fa3a.exe)
+
+running 3 tests
+test normal_path_without_reparse_point_opens_successfully ... ok
+test junction_as_intermediate_directory_is_rejected ... ok
+test junction_inside_allowed_dir_pointing_outside_is_rejected ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests\commit_cap.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\commit_cap-02b60809bf52d4d0.exe)
+
+running 2 tests
+test unconstrained_child_allocates_far_more_than_the_cap ... ok
+test constrained_child_is_capped_near_the_limit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+     Running tests\owner_stop.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_stop-c70a5e536c1ce2ee.exe)
+
+running 5 tests
+test stopper_outlives_the_child_handle ... ok
+test terminating_twice_is_not_an_error ... ok
+
+Ping 127.0.0.1 
+Ping 127.0.0.1 32����Ʈ ������ ���:
+32����Ʈ ������ ���:
+127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+
+Ping 127.0.0.1 32����Ʈ ������ ���:
+127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+test terminating_the_job_kills_grandchildren_too ... ok
+test a_blocked_wait_can_be_released_from_another_thread ... ok
+test dropping_every_handle_kills_the_workload ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+   Doc-tests gputeer_runtime_windows
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.58s
+     Running tests\ack_before_execution.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\ack_before_execution-72ce49cd1bb4c2cb.exe)
+
+running 7 tests
+test a_refused_preflight_sends_no_ack ... ok
+test a_revoke_read_failure_after_the_workload_does_not_reconnect_and_run_it_again ... ok
+test a_connection_that_ran_the_workload_does_not_reconnect_and_run_it_again ... ok
+test the_read_timeout_returns_to_the_io_timeout_after_the_first_read ... ok
+test a_workload_longer_than_the_io_timeout_is_acknowledged_before_it_runs ... ok
+test the_first_read_after_ack_waits_for_the_workload_within_the_lease ... ok
+test the_first_read_after_ack_gives_up_at_lease_expiry ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.09s
+
+     Running tests\grant_over_wire.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\grant_over_wire-b468dfb326e4063c.exe)
+
+running 6 tests
+test a_manifest_file_on_the_stored_lane_is_refused_at_startup ... ok
+test an_agent_process_accepts_a_grant_built_from_the_stored_reservation ... ok
+test with_the_report_off_the_workload_runs_but_no_report_row_is_stored ... ok
+test a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire ... ok
+test a_workload_longer_than_the_io_timeout_still_gets_its_report_stored ... ok
+test without_a_stored_reservation_the_coordinator_refuses_to_build_a_grant ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.00s
+
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\coordinator)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.03s
+     Running tests\attempt_report_ingress.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_ingress-0a7826e9dc935abe.exe)
+
+running 11 tests
+test a_report_from_another_fence_epoch_is_refused_by_fence_epoch ... ok
+test a_forged_signature_is_refused_before_the_store ... ok
+test a_report_for_another_attempt_is_refused_by_attempt_id ... ok
+test a_non_terminal_outcome_is_refused_with_the_outcome_value ... ok
+test a_second_report_that_contradicts_the_first_is_refused ... ok
+test a_report_for_another_job_is_refused_by_job_id ... ok
+test a_signed_terminal_report_crosses_the_wire_and_lands_in_the_store ... ok
+test a_session_that_expects_no_reports_behaves_exactly_as_before ... ok
+test a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store ... ok
+test a_v2_report_with_an_observed_zero_exit_crosses_the_wire_and_is_stored ... ok
+test the_same_report_sent_twice_is_idempotent ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.92s
+

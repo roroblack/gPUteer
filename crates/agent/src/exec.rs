@@ -522,12 +522,15 @@ mod platform {
                 detail: e.to_string(),
             })?;
 
-        child.wait().map_err(|e| ExecutionError::WaitFailed {
-            detail: e.to_string(),
-        })?;
-        // ★ 결함 69 (i) — `wait()` 은 성공했다. 종료는 관측했고 코드만 못 읽었다 -> NoCode.
-        //   전에는 실행 오류로 돌려 종료 보고가 아예 사라졌다.
-        let exit = match child.exit_code() {
+        // ★ 결함 77 — 기다리기와 코드 조회를 한 호출로 묶는다. 기다리기가 끝났으면 259 도 실제 종료 코드다
+        //   (`exit_code()` 의 STILL_ACTIVE 가드를 여기서 쓰면 실제 값 259 를 "코드 없음" 으로 바꾼다 — 재검수 57 실측).
+        // ★ 결함 69 (i) — 기다리기는 성공했는데 코드만 못 읽었으면 NoCode. 전에는 실행 오류로 돌려 종료 보고가 사라졌다.
+        //   기다리기 자체의 실패는 여전히 오류다 — 자식이 살아 있을 수 있어 종료를 보고하지 않는다.
+        let exit = match child
+            .wait_then_exit_code()
+            .map_err(|e| ExecutionError::WaitFailed {
+                detail: e.to_string(),
+            })? {
             Ok(code) => super::ExitObserved::Code(code),
             Err(e) => super::ExitObserved::NoCode {
                 detail: format!("wait() 뒤 종료 코드 조회 실패: {e}"),

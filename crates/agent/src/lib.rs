@@ -1076,6 +1076,11 @@ fn run_one_connection_inner(
                 //   WORKLOAD_EXITED_ERROR 를 다른 전이로 두는 이유다.
                 //   (전이 자체는 아직 구현하지 않는다.)
                 match report.exit.code() {
+                    // 결함 ⑲ — 코드 0 이어도 산출물을 확정하지 못했으면 성공이 아니다.
+                    Some(0) if report.finalization_failure.is_some() => println!(
+                        "WORKLOAD_RESULT ok=false job_id={} exit_code=0 finalization_failed=true",
+                        spec.job_id
+                    ),
                     Some(0) => println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id),
                     Some(code) => println!(
                         "WORKLOAD_RESULT ok=false job_id={} exit_code={}",
@@ -1097,6 +1102,7 @@ fn run_one_connection_inner(
                     node_id: config.agent_device_id.clone(),
                     fence_epoch: held_lease.fence_epoch,
                     exit_code: report.exit.code(),
+                    finalization_failure: report.finalization_failure.as_ref().map(|(stage, _)| *stage),
                     started_at_unix_ms: report.started_at_unix_ms,
                     finished_at_unix_ms: report.finished_at_unix_ms,
                     issued_at_unix_ms: 0,
@@ -1298,7 +1304,12 @@ fn run_one_connection_inner(
             attempt_report.node_id,
             attempt_report.fence_epoch,
             attempt_report.outcome,
-            attempt_report.exit_code,
+            // 결함 80 — 코드가 없으면 none 이다(WORKLOAD_EXITED 와 같은 표현). 기본값 0 을 코드처럼 찍지 않는다.
+            if attempt_report.exit_observation == pb::ExitObservation::ObservedWithCode as i32 {
+                attempt_report.exit_code.to_string()
+            } else {
+                "none".to_string()
+            },
             attempt_report.exit_observation,
             attempt_report.schema_version,
             attempt_report.started_at_unix_ms,
@@ -1795,6 +1806,8 @@ pub fn start_checkpoint_id(job_id: &str, attempt_id: &str, grant_id: &str) -> St
 struct WorkloadReport {
     /// 종료 관측 — 코드가 없을 수 있다(신호 종료 · 코드 조회 실패, 결함 69).
     exit: exec::ExitObserved,
+    /// 종료 뒤 산출물 확정이 실패했으면 그 단계와 사유(결함 ⑲). 있으면 `file_count` · `total_bytes` 는 0 이다.
+    finalization_failure: Option<(pb::FinalizationFailureStage, String)>,
     file_count: usize,
     total_bytes: usize,
     /// 자식을 띄우기 **직전에** 읽은 시계. 호출부가 준 값을 그대로
@@ -1893,15 +1906,58 @@ fn run_and_capture_workload(
         println!("WORKLOAD_MEMORY_OBSERVATION_FAILED job_id={} detail={error}", spec.job_id);
     }
 
-    let files = collect_workload_artifacts(run_dir, spec, &outcome)?;
-    finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)?;
+    // ★ 결함 ⑲ — 여기부터의 실패는 **종료를 관측한 뒤**의 일이다. 전에는 `?` 로 돌려 Agent 오류가 됐고,
+    //   그러면 종료 보고가 만들어지지 않아 관측한 종료까지 사라졌다. 이제 실패 단계를 보고에 싣는다.
+    //   ★ 확정 재시도는 없다 — 한 번 시도한 결과로 확정한다(계획서 §7, D3 "재시도를 끝낸 뒤" 의 재시도 횟수는 0).
+    let (file_count, total_bytes, finalization_failure) = match finalize_workload_outputs(
+        run_dir,
+        spec,
+        &outcome,
+        checkpoint_root,
+        checkpoint_id,
+        lease,
+        attempt_id,
+    ) {
+        Ok(files) => (files.len(), files.iter().map(|(_, data)| data.len()).sum(), None),
+        Err((stage, detail)) => {
+            println!(
+                "WORKLOAD_FINALIZATION_FAILED job_id={} stage={} detail={detail}",
+                spec.job_id,
+                stage.as_str_name()
+            );
+            (0, 0, Some((stage, detail)))
+        }
+    };
     Ok(Some(WorkloadReport {
         exit: outcome.exit.clone(),
-        file_count: files.len(),
-        total_bytes: files.iter().map(|(_, data)| data.len()).sum(),
+        finalization_failure,
+        file_count,
+        total_bytes,
         started_at_unix_ms,
         finished_at_unix_ms,
     }))
+}
+
+/// 산출물 수집 -> 체크포인트 확정. 실패하면 **어느 단계에서** 실패했는지 돌려준다(결함 ⑲ · 계획서 §5.7 (1)).
+///
+/// ```text
+/// READ_OUTPUTS       작업 출력(stdout · stderr) 읽기 실패
+/// ENCODE_RESULT      작업 결과를 JSON 으로 바꾸기 실패
+/// COMMIT_CHECKPOINT  데이터 파일 · 매니페스트 확정 실패
+/// ```
+fn finalize_workload_outputs(
+    run_dir: &std::path::Path,
+    spec: &gputeer_protocol::execution_spec::ExecutionSpec,
+    outcome: &exec::ExecutionOutcome,
+    checkpoint_root: &std::path::Path,
+    checkpoint_id: &str,
+    lease: &pb::Lease,
+    attempt_id: &str,
+) -> Result<Vec<(String, Vec<u8>)>, (pb::FinalizationFailureStage, String)> {
+    let files = collect_workload_artifacts(run_dir, spec, outcome)?;
+    finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)
+        .map_err(|detail| (pb::FinalizationFailureStage::CommitCheckpoint, detail))?;
+    Ok(files)
 }
 
 /// 작업 출력을 받는 루트. 체크포인트 루트의 **형제** 디렉터리다.
@@ -1980,7 +2036,7 @@ fn collect_workload_artifacts(
     run_dir: &std::path::Path,
     spec: &gputeer_protocol::execution_spec::ExecutionSpec,
     outcome: &exec::ExecutionOutcome,
-) -> Result<Vec<(String, Vec<u8>)>, String> {
+) -> Result<Vec<(String, Vec<u8>)>, (pb::FinalizationFailureStage, String)> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
 
     for name in [exec::STDOUT_FILENAME, exec::STDERR_FILENAME] {
@@ -1989,7 +2045,10 @@ fn collect_workload_artifacts(
             Ok(data) => files.push((name.to_string(), data)),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(format!("작업 출력 읽기 실패({path:?}): {error}"));
+                return Err((
+                    pb::FinalizationFailureStage::ReadOutputs,
+                    format!("작업 출력 읽기 실패({path:?}): {error}"),
+                ));
             }
         }
     }
@@ -2012,7 +2071,12 @@ fn collect_workload_artifacts(
         "memory_observation_error": outcome.memory_observation_error,
     });
     let mut result_bytes = serde_json::to_vec_pretty(&result)
-        .map_err(|error| format!("작업 결과를 JSON 으로 바꾸지 못했다: {error}"))?;
+        .map_err(|error| {
+            (
+                pb::FinalizationFailureStage::EncodeResult,
+                format!("작업 결과를 JSON 으로 바꾸지 못했다: {error}"),
+            )
+        })?;
     result_bytes.push(b'\n');
     files.push((WORKLOAD_RESULT_FILENAME.to_string(), result_bytes));
 
@@ -2964,6 +3028,121 @@ mod tests {
 }
 
 /// 결함 ㊷ ㊸ ㊺ (구현 검수 49) 의 단위 테스트.
+#[cfg(test)]
+mod defect_19_tests {
+    //! 결함 ⑲ — 산출물 확정 실패가 **어느 단계**인지 가른다. 단계가 틀리면 보고의 outcome(6 · FAILED)과 단계 값이 틀린다.
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn spec() -> gputeer_protocol::execution_spec::ExecutionSpec {
+        gputeer_protocol::execution_spec::ExecutionSpec {
+            job_id: "job-19".into(),
+            entrypoint: "prog".into(),
+            args: Vec::new(),
+            env_vars: BTreeMap::new(),
+        }
+    }
+
+    fn outcome() -> exec::ExecutionOutcome {
+        exec::ExecutionOutcome {
+            exit: exec::ExitObserved::Code(0),
+            commit_limit_bytes: 1,
+            peak_commit_bytes: None,
+            memory_observation_error: None,
+        }
+    }
+
+    fn lease() -> pb::Lease {
+        pb::Lease {
+            job_id: "job-19".into(),
+            fence_epoch: 3,
+            ..Default::default()
+        }
+    }
+
+    /// stdout 자리에 **디렉터리**가 있으면 읽기가 NotFound 가 아닌 오류로 실패한다 -> READ_OUTPUTS.
+    #[test]
+    fn an_unreadable_output_is_read_outputs() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(run.path().join(exec::STDOUT_FILENAME)).unwrap();
+        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), root.path(), "ckpt-19", &lease(), "attempt-19")
+            .expect_err("디렉터리를 파일로 읽을 수 없다");
+        assert_eq!(error.0, pb::FinalizationFailureStage::ReadOutputs, "{}", error.1);
+    }
+
+    /// 체크포인트 디렉터리 자리에 **파일**이 있으면 확정이 실패한다 -> COMMIT_CHECKPOINT.
+    #[test]
+    fn a_blocked_checkpoint_is_commit_checkpoint() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("ckpt-19"), b"not a directory").unwrap();
+        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), root.path(), "ckpt-19", &lease(), "attempt-19")
+            .expect_err("파일 위에 체크포인트를 만들 수 없다");
+        assert_eq!(error.0, pb::FinalizationFailureStage::CommitCheckpoint, "{}", error.1);
+    }
+
+    /// 대조 — 막힌 곳이 없으면 확정이 성공하고 파일 목록을 돌려준다(위 두 테스트가 무조건 실패하는 fixture 가 아님을 확인).
+    #[test]
+    fn an_unblocked_run_finalizes() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
+        let files = finalize_workload_outputs(run.path(), &spec(), &outcome(), root.path(), "ckpt-19", &lease(), "attempt-19")
+            .expect("막힌 곳이 없으면 확정한다");
+        assert!(files.iter().any(|(name, _)| name == exec::STDOUT_FILENAME));
+    }
+
+    /// ★ 결함 ⑲ 의 핵심 — **실제로 끝난 프로세스**의 산출물 확정이 실패해도 `run_and_capture_workload` 는 Agent 오류가
+    ///   아니라 확정 실패 단계를 실은 보고를 돌려준다. 이 변경을 `?` 로 되돌리면 여기서 실패한다.
+    ///   실행에 Job Object 가 필요해 Windows 에서만 돈다(리눅스는 cgroup 위임이 필요하다).
+    #[cfg(windows)]
+    #[test]
+    fn a_real_exit_with_a_blocked_checkpoint_still_yields_a_report() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("ckpt-19"), b"not a directory").unwrap();
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        let spec = gputeer_protocol::execution_spec::ExecutionSpec {
+            job_id: "job-19".into(),
+            entrypoint: format!("{system_root}\\System32\\cmd.exe"),
+            args: vec!["/c".into(), "exit".into(), "0".into()],
+            env_vars: BTreeMap::new(),
+        };
+        let policy = exec::ExecutionPolicy {
+            opted_in: true,
+            commit_limit_bytes: 256 * 1024 * 1024,
+            gpu_requirements: None,
+            capture_dir: Some(run.path().to_path_buf()),
+            isolation: exec::IsolationIdentity {
+                grant_id: "grant-19".into(),
+                attempt_id: "attempt-19".into(),
+            },
+            cgroup_parent: None,
+        };
+        let report = run_and_capture_workload(
+            &spec,
+            policy,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+            run.path(),
+            &owner_panel::OwnerPanelState::new(),
+            "submitter-19",
+            1,
+            &SystemClock,
+        )
+        .expect("확정 실패는 Agent 오류가 아니다 — 종료를 관측했으면 보고한다")
+        .expect("opt-in 했으니 실행됐다");
+        assert_eq!(report.exit, exec::ExitObserved::Code(0));
+        let (stage, _) = report
+            .finalization_failure
+            .expect("확정 실패가 보고에 실려야 한다");
+        assert_eq!(stage, pb::FinalizationFailureStage::CommitCheckpoint);
+    }
+}
+
 #[cfg(test)]
 mod defect_42_45_tests {
     use super::*;

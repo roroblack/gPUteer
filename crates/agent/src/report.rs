@@ -86,6 +86,10 @@ pub struct TerminalObservation {
     pub fence_epoch: u64,
     /// `exec` 가 관측한 종료 코드. `None` 은 "종료는 관측했지만 코드가 없다" 이다(결함 69) — 미관측이 아니다.
     pub exit_code: Option<u32>,
+    /// 종료를 관측한 **뒤** 산출물 확정이 실패한 단계(결함 ⑲). `None` 은 "이 보고가 확정 실패를 적지 않았다" 이다.
+    ///
+    /// ★ 전에는 이 실패가 Agent 오류로 끝나 종료 보고 자체가 사라졌다 — 종료를 관측한 사실까지 잃었다.
+    pub finalization_failure: Option<pb::FinalizationFailureStage>,
     /// 자식을 띄우기 **직전에** 읽은 시계.
     pub started_at_unix_ms: u64,
     /// 자식을 거둔 **직후에** 읽은 시계.
@@ -163,10 +167,25 @@ impl std::error::Error for AttemptReportError {}
 /// 모듈 문서의 "알려진 한계" 를 함께 읽는다 — 나머지 세 outcome 은
 /// 이 계층이 관측할 수 없어 **만들지 않는다.**
 pub fn outcome_for_exit_code(exit_code: Option<u32>) -> pb::AttemptOutcome {
-    match exit_code {
-        Some(0) => pb::AttemptOutcome::Completed,
+    outcome_for(exit_code, None)
+}
+
+/// 종료 관측과 산출물 확정 결과를 outcome 으로 옮긴다(state-machines.md §3 · 계획서 §5.7 (2)).
+///
+/// ```text
+/// 코드 0 · 확정 성공        COMPLETED
+/// 코드 0 · 확정 실패        OUTPUT_FINALIZATION_FAILED   RUNNING -> FAILED (OUTPUT_FINALIZATION_FAILED)
+/// 그 밖(코드 != 0 · 코드 없음) FAILED — 확정 실패가 겹쳤으면 단계도 적는다(공존하는 실패, 결함 66)
+/// ```
+pub fn outcome_for(
+    exit_code: Option<u32>,
+    finalization_failure: Option<pb::FinalizationFailureStage>,
+) -> pb::AttemptOutcome {
+    match (exit_code, finalization_failure) {
+        (Some(0), None) => pb::AttemptOutcome::Completed,
+        (Some(0), Some(_)) => pb::AttemptOutcome::OutputFinalizationFailed,
         // 코드가 없는 종료는 성공으로 세지 않는다 — 0 이라는 관측이 없다.
-        Some(_) | None => pb::AttemptOutcome::Failed,
+        _ => pb::AttemptOutcome::Failed,
     }
 }
 
@@ -206,7 +225,7 @@ pub fn build_signed_attempt_report(
         attempt_id: observation.attempt_id.clone(),
         node_id: observation.node_id.clone(),
         fence_epoch: observation.fence_epoch,
-        outcome: outcome_for_exit_code(observation.exit_code) as i32,
+        outcome: outcome_for(observation.exit_code, observation.finalization_failure) as i32,
         // v2 — 종료 관측의 **존재 여부**를 그대로 옮긴다(B+E 계획서 §5.7 (3)). 코드가 없으면 NO_CODE 로 적고
         //   exit_code 는 기본값이다 — 숫자로 "없음" 을 나타내지 않는다.
         exit_observation: match observation.exit_code {
@@ -214,6 +233,9 @@ pub fn build_signed_attempt_report(
             None => pb::ExitObservation::ObservedNoCode,
         } as i32,
         exit_code: observation.exit_code.unwrap_or(0),
+        finalization_failure_stage: observation
+            .finalization_failure
+            .map_or(0, |stage| stage as i32),
         // ★ 아래 넷은 **비운다.** 이유는 모듈 문서에 있다.
         final_step: 0,
         started_at_unix_ms: observation.started_at_unix_ms,
@@ -263,6 +285,7 @@ mod tests {
             node_id: NODE.into(),
             fence_epoch: 7,
             exit_code: Some(0),
+            finalization_failure: None,
             started_at_unix_ms: 1_000,
             finished_at_unix_ms: 1_500,
             issued_at_unix_ms: 1_600,
@@ -328,6 +351,29 @@ mod tests {
         assert_eq!(report.exit_observation, pb::ExitObservation::ObservedNoCode as i32);
         assert_eq!(report.exit_code, 0);
         assert_eq!(report.finalization_failure_stage, 0);
+    }
+
+    /// 결함 ⑲ — 종료를 관측한 뒤 확정이 실패해도 보고를 만든다. 코드 0 이면 outcome 6, 아니면 FAILED + 단계.
+    ///   만든 보고는 받는 쪽과 같은 조합 규칙을 통과한다(서명 전 자기 검사).
+    #[test]
+    fn a_finalization_failure_after_an_observed_exit_is_still_reported() {
+        use pb::FinalizationFailureStage as S;
+        for (code, stage, outcome, expected_observation) in [
+            (Some(0), S::ReadOutputs, pb::AttemptOutcome::OutputFinalizationFailed, pb::ExitObservation::ObservedWithCode),
+            (Some(0), S::CommitCheckpoint, pb::AttemptOutcome::OutputFinalizationFailed, pb::ExitObservation::ObservedWithCode),
+            (Some(7), S::EncodeResult, pb::AttemptOutcome::Failed, pb::ExitObservation::ObservedWithCode),
+            (None, S::ReadOutputs, pb::AttemptOutcome::Failed, pb::ExitObservation::ObservedNoCode),
+        ] {
+            let mut observed = observation();
+            observed.exit_code = code;
+            observed.finalization_failure = Some(stage);
+            let report = build_signed_attempt_report(&key(), &observed)
+                .unwrap_or_else(|e| panic!("{code:?} {stage:?}: 확정 실패도 보고해야 한다: {e}"));
+            assert_eq!(report.outcome, outcome as i32, "{code:?} {stage:?}");
+            assert_eq!(report.exit_observation, expected_observation as i32, "{code:?} {stage:?}");
+            assert_eq!(report.finalization_failure_stage, stage as i32, "{code:?} {stage:?}");
+        }
+        assert_eq!(outcome_for(Some(0), None), pb::AttemptOutcome::Completed);
     }
 
     /// 관측한 코드는 숫자 그대로 옮긴다 — Windows 에서 실제로 볼 수 있는 u32::MAX 포함(결함 69).

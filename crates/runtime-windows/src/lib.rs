@@ -136,7 +136,28 @@ mod windows_impl {
             Ok(())
         }
 
+        /// 자식이 끝날 때까지 기다린 **뒤** 종료 코드를 읽는다 — 순서를 한 호출로 강제한다(결함 77, 재검수 57).
+        ///
+        /// 바깥 `Err` 는 기다리기 자체의 실패(종료를 관측하지 못했다), 안쪽 `Err` 는 종료는 관측했는데 코드를 못 읽은 것이다.
+        ///
+        /// ★ 기다리기가 끝났으면 259 도 **실제 종료 코드**다. [`Self::exit_code`] 의 STILL_ACTIVE 가드는 wait 전에 부른
+        ///   실수를 막는 것이라, wait 뒤에 걸면 실제 값을 버린다 — 재검수 57 이 `cmd.exe /d /c exit 259` 로
+        ///   WaitForSingleObject=0 · GetExitCodeProcess 성공 · 259 를 실측했고, 그 값이 "코드 없음" 으로 보고되고 있었다.
+        pub fn wait_then_exit_code(&self) -> std::io::Result<std::io::Result<u32>> {
+            self.wait()?;
+            let mut code: u32 = 0;
+            let ok = unsafe {
+                windows_sys::Win32::System::Threading::GetExitCodeProcess(self.process, &mut code)
+            };
+            if ok == 0 {
+                return Ok(Err(std::io::Error::last_os_error()));
+            }
+            Ok(Ok(code))
+        }
+
         /// 자식의 종료 코드를 읽는다. **`wait()` 이 끝난 뒤에만 부른다.**
+        ///
+        /// ★ 종료 보고에는 [`Self::wait_then_exit_code`] 를 쓴다 — 이 함수는 실제 종료 코드 259 를 오류로 바꾼다(결함 77).
         ///
         /// ★ 아직 살아 있는 프로세스에 `GetExitCodeProcess` 를 부르면
         ///   `STILL_ACTIVE`(259)가 돌아온다. 그걸 진짜 종료 코드로 쓰면
