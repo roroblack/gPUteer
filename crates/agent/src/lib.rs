@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gputeer_checkpoint::durability::record_initial_state;
-use gputeer_checkpoint::writer::{manifest_for, write_checkpoint};
+use gputeer_checkpoint::writer::{manifest_for, write_checkpoint_phased, WritePhase};
 pub mod exec;
 pub mod multi_agent;
 pub mod owner_panel;
@@ -967,6 +967,8 @@ fn run_one_connection_inner(
     //   어긋나 Coordinator 가 `AttemptReport` 를 ACK 로 읽으려다 실패한다.
     //   사실만 들고 있다가 ACK·heartbeat·이웃 신고 뒤에 보낸다.
     let mut terminal_observation: Option<crate::report::TerminalObservation> = None;
+    // ★ 결함 82 — 작업 디렉터리 삭제 실패. 종료 보고를 보낸 **뒤에** 오류로 알린다.
+    let mut pending_cleanup_failure: Option<String> = None;
     // ★ 결함 ⑱ — 워크로드가 있으면 ACK 는 실행 **전**에 간다(아래). 보낸 것을 여기 담는다.
     let mut sent_ack: Option<pb::AgentGrantAck> = None;
     // ★ `execution_attempted`(인자) — 이 연결에서 워크로드를 띄우려 했는가. 바깥 `run_one_connection` 이
@@ -1079,14 +1081,11 @@ fn run_one_connection_inner(
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
         let cleanup = remove_dir_if_present(&run_dir);
-        let outcome = match (outcome, cleanup) {
-            (Ok(value), Ok(())) => value,
-            (Ok(_), Err(cleanup_error)) => return Err(cleanup_error),
-            (Err(run_error), Ok(())) => return Err(run_error),
-            (Err(run_error), Err(cleanup_error)) => {
-                return Err(format!("{run_error} / 그리고 {cleanup_error}"))
-            }
-        };
+        let (outcome, cleanup_failure) = merge_run_and_cleanup(outcome, cleanup)?;
+        if let Some(error) = &cleanup_failure {
+            println!("WORKLOAD_CLEANUP_FAILED job_id={} detail={error}", spec.job_id);
+        }
+        pending_cleanup_failure = cleanup_failure;
 
         match outcome {
             Some(report) => {
@@ -1339,6 +1338,13 @@ fn run_one_connection_inner(
             attempt_report.finished_at_unix_ms,
             attempt_report.issued_at_unix_ms
         );
+    }
+
+    // ★ 결함 82 — 작업 디렉터리 삭제 실패는 종료 보고를 처리한 **뒤에** 알린다. 남의 PC 에 남은 출력을 조용히 넘기지 않는다(§0.5).
+    if let Some(error) = pending_cleanup_failure.take() {
+        return Err(format!(
+            "WORKLOAD_CLEANUP_FAILED: 작업 디렉터리를 지우지 못했다(종료 보고는 처리했다): {error}"
+        ));
     }
 
     // ★ 워크로드를 띄운 연결에서는 끊김을 재접속 사유로 쓰지 않는다 — 재접속은 같은 Grant 로
@@ -1870,6 +1876,8 @@ fn run_and_capture_workload(
     // ★ 자식이 뜨는 **즉시** 소유자 화면에 올린다. `execute()` 가
     //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
     //   소유자는 도는 동안 멈출 수 있어야 한다(`CLAUDE.md` §0.1).
+    // 결함 84 — 캡처를 켰으면 실행기가 출력 파일을 만든다. 없으면 잃은 것이다.
+    let outputs_captured = policy.capture_dir.is_some();
     let outcome = match exec::execute_with_control(spec, policy, |stopper| {
         // ★ 자식이 **막 떴다**(결함 ㊻ — ACK_SENT 와 순서를 비교하는 표지).
         println!("WORKLOAD_SPAWNED job_id={} attempt_id={}", spec.job_id, attempt_id);
@@ -1931,17 +1939,25 @@ fn run_and_capture_workload(
 
     // ★ 결함 ⑲ — 여기부터의 실패는 **종료를 관측한 뒤**의 일이다. 전에는 `?` 로 돌려 Agent 오류가 됐고,
     //   그러면 종료 보고가 만들어지지 않아 관측한 종료까지 사라졌다. 이제 실패 단계를 보고에 싣는다.
-    //   ★ 확정 재시도는 없다 — 한 번 시도한 결과로 확정한다(계획서 §7, D3 "재시도를 끝낸 뒤" 의 재시도 횟수는 0).
+    //   ★ 상위 확정 작업(finalize_workload_outputs)은 다시 부르지 않는다 — 내부 포인터 교체는 최대 5회 시도한다
+    //     (checkpoint atomic.rs). D3 "재시도를 끝낸 뒤" 는 그 뒤다(결함 86 — 전에는 "재시도 0회" 로 넓게 적었다).
     let (file_count, total_bytes, finalization_failure) = match finalize_workload_outputs(
         run_dir,
         spec,
         &outcome,
+        outputs_captured,
         checkpoint_root,
         checkpoint_id,
         lease,
         attempt_id,
     ) {
-        Ok(files) => (files.len(), files.iter().map(|(_, data)| data.len()).sum(), None),
+        Ok((files, publish_failure)) => {
+            // 결함 83 — 해시 검증 뒤의 공개 실패는 확정 실패가 아니다(보고는 COMPLETED). 그래도 알린다.
+            if let Some(detail) = publish_failure {
+                println!("WORKLOAD_CHECKPOINT_PUBLISH_FAILED job_id={} detail={detail}", spec.job_id);
+            }
+            (files.len(), files.iter().map(|(_, data)| data.len()).sum(), None)
+        }
         Err((stage, detail)) => {
             println!(
                 "WORKLOAD_FINALIZATION_FAILED job_id={} stage={} detail={detail}",
@@ -1961,6 +1977,22 @@ fn run_and_capture_workload(
     }))
 }
 
+/// 실행 결과와 작업 디렉터리 삭제 결과를 합친다(결함 82, 재검수 58).
+///
+/// ★ 종료를 관측한 결과(`Ok(..)`)는 삭제가 실패해도 **버리지 않는다** — 삭제 실패는 따로 돌려주고, 호출부가 종료 보고를
+///   처리한 **뒤에** 오류로 끝낸다. 전에는 삭제 실패가 먼저 반환돼 ⑲ 가 막으려던 "종료 보고 소실" 이 다시 생겼다.
+fn merge_run_and_cleanup(
+    outcome: Result<Option<WorkloadReport>, String>,
+    cleanup: Result<(), String>,
+) -> Result<(Option<WorkloadReport>, Option<String>), String> {
+    match (outcome, cleanup) {
+        (Ok(value), Ok(())) => Ok((value, None)),
+        (Ok(value), Err(cleanup_error)) => Ok((value, Some(cleanup_error))),
+        (Err(run_error), Ok(())) => Err(run_error),
+        (Err(run_error), Err(cleanup_error)) => Err(format!("{run_error} / 그리고 {cleanup_error}")),
+    }
+}
+
 /// 산출물 수집 -> 체크포인트 확정. 실패하면 **어느 단계에서** 실패했는지 돌려준다(결함 ⑲ · 계획서 §5.7 (1)).
 ///
 /// ```text
@@ -1972,15 +2004,17 @@ fn finalize_workload_outputs(
     run_dir: &std::path::Path,
     spec: &gputeer_protocol::execution_spec::ExecutionSpec,
     outcome: &exec::ExecutionOutcome,
+    outputs_captured: bool,
     checkpoint_root: &std::path::Path,
     checkpoint_id: &str,
     lease: &pb::Lease,
     attempt_id: &str,
-) -> Result<Vec<(String, Vec<u8>)>, (pb::FinalizationFailureStage, String)> {
-    let files = collect_workload_artifacts(run_dir, spec, outcome)?;
-    finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)
+) -> Result<(Vec<(String, Vec<u8>)>, Option<String>), (pb::FinalizationFailureStage, String)> {
+    let files = collect_workload_artifacts(run_dir, spec, outcome, outputs_captured)?;
+    // Ok(Some(..)) 는 해시 검증 뒤의 공개 실패다(결함 83) — 확정 실패가 아니다.
+    let publish_failure = finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)
         .map_err(|detail| (pb::FinalizationFailureStage::CommitCheckpoint, detail))?;
-    Ok(files)
+    Ok((files, publish_failure))
 }
 
 /// 작업 출력을 받는 루트. 체크포인트 루트의 **형제** 디렉터리다.
@@ -2059,6 +2093,7 @@ fn collect_workload_artifacts(
     run_dir: &std::path::Path,
     spec: &gputeer_protocol::execution_spec::ExecutionSpec,
     outcome: &exec::ExecutionOutcome,
+    outputs_captured: bool,
 ) -> Result<Vec<(String, Vec<u8>)>, (pb::FinalizationFailureStage, String)> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -2066,7 +2101,9 @@ fn collect_workload_artifacts(
         let path = run_dir.join(name);
         match fs::read(&path) {
             Ok(data) => files.push((name.to_string(), data)),
-            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            // ★ 결함 84 — 캡처를 켰으면 실행기가 이 파일을 만들었다. 없으면 **잃은 것**이다(READ_OUTPUTS).
+            //   캡처를 안 켰을 때만 "관측하지 않았다" 로 건너뛴다.
+            Err(error) if error.kind() == ErrorKind::NotFound && !outputs_captured => {}
             Err(error) => {
                 return Err((
                     pb::FinalizationFailureStage::ReadOutputs,
@@ -2127,7 +2164,7 @@ fn finalize_workload_checkpoint(
     lease: &pb::Lease,
     attempt_id: &str,
     files: &[(String, Vec<u8>)],
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let manifest = manifest_for(
         checkpoint_id,
         &lease.job_id,
@@ -2136,10 +2173,17 @@ fn finalize_workload_checkpoint(
         lease.fence_epoch,
         files,
     );
-    write_checkpoint(checkpoint_root, &manifest, files, 0).map_err(|error| {
-        format!("작업 결과 체크포인트 확정 실패(checkpoint_id={checkpoint_id}): {error}")
-    })?;
-    Ok(())
+    match write_checkpoint_phased(checkpoint_root, &manifest, files, 0) {
+        Ok(_) => Ok(None),
+        // ★ 결함 83 — 해시 검증까지 끝난 뒤의 실패(LATEST 교체 · COMMITTED 기록)는 산출물 확정 실패가 아니다.
+        //   규범의 정상 완료 조건은 HASH_VERIFIED 다. 공개 실패는 checkpoint 쪽 `.publication-failed` 가 재개 후보에서 뺀다.
+        Err((WritePhase::Publish, error)) => Ok(Some(format!(
+            "체크포인트 공개 실패(checkpoint_id={checkpoint_id}): {error}"
+        ))),
+        Err((WritePhase::StoreAndVerify, error)) => Err(format!(
+            "작업 결과 체크포인트 확정 실패(checkpoint_id={checkpoint_id}): {error}"
+        )),
+    }
 }
 
 /// 작업 실행 결과를 적는 파일 이름.
@@ -3097,7 +3141,7 @@ mod defect_19_tests {
         let run = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(run.path().join(exec::STDOUT_FILENAME)).unwrap();
-        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), root.path(), "ckpt-19", &lease(), "attempt-19")
+        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
             .expect_err("디렉터리를 파일로 읽을 수 없다");
         assert_eq!(error.0, pb::FinalizationFailureStage::ReadOutputs, "{}", error.1);
     }
@@ -3108,7 +3152,10 @@ mod defect_19_tests {
         let run = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("ckpt-19"), b"not a directory").unwrap();
-        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), root.path(), "ckpt-19", &lease(), "attempt-19")
+        // 캡처한 출력은 있어야 한다 — 없으면 결함 84 규칙(READ_OUTPUTS)이 먼저 걸려 확정 단계까지 가지 않는다.
+        std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
+        std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
+        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
             .expect_err("파일 위에 체크포인트를 만들 수 없다");
         assert_eq!(error.0, pb::FinalizationFailureStage::CommitCheckpoint, "{}", error.1);
     }
@@ -3119,9 +3166,62 @@ mod defect_19_tests {
         let run = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
-        let files = finalize_workload_outputs(run.path(), &spec(), &outcome(), root.path(), "ckpt-19", &lease(), "attempt-19")
+        std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
+        let (files, publish_failure) = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
             .expect("막힌 곳이 없으면 확정한다");
         assert!(files.iter().any(|(name, _)| name == exec::STDOUT_FILENAME));
+        assert!(publish_failure.is_none());
+    }
+
+    /// 결함 84 — 캡처를 켰는데 출력 파일이 **없으면** 잃은 것이다 -> READ_OUTPUTS.
+    #[test]
+    fn a_lost_captured_output_is_read_outputs() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
+            .expect_err("캡처했는데 출력이 없으면 확정하지 않는다");
+        assert_eq!(error.0, pb::FinalizationFailureStage::ReadOutputs, "{}", error.1);
+    }
+
+    /// 대조 — 캡처를 안 켰으면 출력 파일 부재는 실패가 아니다(관측하지 않았다).
+    #[test]
+    fn an_uncaptured_missing_output_is_not_a_failure() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        finalize_workload_outputs(run.path(), &spec(), &outcome(), false, root.path(), "ckpt-19", &lease(), "attempt-19")
+            .expect("캡처하지 않은 출력은 요구하지 않는다");
+    }
+
+    /// 결함 83 — LATEST 자리를 막아 **해시 검증 뒤** 공개가 실패하면 확정 실패가 아니다(보고는 COMPLETED).
+    #[test]
+    fn a_publish_failure_after_hash_verification_is_not_a_finalization_failure() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
+        std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
+        std::fs::create_dir(root.path().join(gputeer_checkpoint::writer::POINTER_FILENAME)).unwrap();
+        let (_, publish_failure) = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
+            .expect("검증까지 끝난 산출물은 확정 실패가 아니다");
+        assert!(publish_failure.is_some(), "공개 실패는 알려야 한다");
+    }
+
+    /// 결함 82 — 삭제가 실패해도 종료 관측 보고는 살아남고, 삭제 실패는 따로 돌아온다.
+    #[test]
+    fn a_cleanup_failure_keeps_the_observed_report() {
+        let report = WorkloadReport {
+            exit: exec::ExitObserved::Code(0),
+            finalization_failure: None,
+            file_count: 1,
+            total_bytes: 5,
+            started_at_unix_ms: 1,
+            finished_at_unix_ms: 2,
+        };
+        let (kept, cleanup) = merge_run_and_cleanup(Ok(Some(report)), Err("삭제 실패".to_string()))
+            .expect("종료 관측 보고는 살아야 한다");
+        assert!(kept.is_some());
+        assert_eq!(cleanup.as_deref(), Some("삭제 실패"));
+        assert!(merge_run_and_cleanup(Err("실행 실패".to_string()), Ok(())).is_err());
+        assert!(merge_run_and_cleanup(Err("실행 실패".to_string()), Err("삭제 실패".to_string())).is_err());
     }
 
     /// ★ 결함 ⑲ 의 핵심 — **실제로 끝난 프로세스**의 산출물 확정이 실패해도 `run_and_capture_workload` 는 Agent 오류가

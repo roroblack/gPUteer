@@ -20,7 +20,10 @@ pub use durability::{
     ReplicaEvaluationError, ReplicaEvaluationScope, ReplicaExclusionReason, ReplicaKind,
     ResolvedHolderObservation,
 };
-pub use writer::{find_resume_point, manifest_for, read_pointer, startup_gc, write_checkpoint};
+pub use writer::{
+    find_resume_point, manifest_for, read_pointer, startup_gc, write_checkpoint, write_checkpoint_phased,
+    WritePhase,
+};
 
 use std::path::PathBuf;
 

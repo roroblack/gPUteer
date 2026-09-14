@@ -88,6 +88,41 @@ pub fn write_checkpoint(
     files: &[(String, Vec<u8>)],
     slow_ms: u64,
 ) -> Result<PathBuf, CheckpointError> {
+    write_checkpoint_phased(root, manifest, files, slow_ms).map_err(|(_, error)| error)
+}
+
+/// [`write_checkpoint`] 가 **어느 단계에서** 실패했나(결함 83, 재검수 58).
+///
+/// ★ 규범의 정상 완료 조건은 최종 산출물의 HASH_VERIFIED 다(state-machines.md §3). 그래서 해시 검증까지 끝난 뒤의
+///   실패(LATEST 교체 · COMMITTED 기록)를 저장 · 검증 실패와 같은 칸에 넣으면 검증까지 끝난 산출물을 "확정 실패" 로 적게 된다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WritePhase {
+    /// 데이터 · 매니페스트 기록, 해시 검증, HASH_VERIFIED 상태 기록까지 — 여기서 실패하면 산출물이 검증되지 않았다.
+    StoreAndVerify,
+    /// HASH_VERIFIED 뒤의 공개(LATEST 교체) · COMMITTED 기록 — 산출물은 이미 저장 · 검증됐다.
+    /// 실패하면 `.publication-failed` 가 남아 재개 후보에서 빠진다(아래 `fail_after_materialization`).
+    Publish,
+}
+
+/// [`write_checkpoint`] 와 같지만 실패한 단계를 함께 돌려준다.
+pub fn write_checkpoint_phased(
+    root: &Path,
+    manifest: &CheckpointManifest,
+    files: &[(String, Vec<u8>)],
+    slow_ms: u64,
+) -> Result<PathBuf, (WritePhase, CheckpointError)> {
+    let mut phase = WritePhase::StoreAndVerify;
+    let result = write_checkpoint_inner(root, manifest, files, slow_ms, &mut phase);
+    result.map_err(|error| (phase, error))
+}
+
+fn write_checkpoint_inner(
+    root: &Path,
+    manifest: &CheckpointManifest,
+    files: &[(String, Vec<u8>)],
+    slow_ms: u64,
+    phase: &mut WritePhase,
+) -> Result<PathBuf, CheckpointError> {
     // ★★ **매니페스트는 바깥에서 온 값이다** (2026-09-06 신설).
     //
     //   여기 검증 없이 `root.join(&manifest.checkpoint_id)` 만 있었다.
@@ -143,6 +178,9 @@ pub fn write_checkpoint(
     ) {
         return Err(fail_after_materialization(&dir, error));
     }
+
+    // ★ 결함 83 — 여기부터는 공개 단계다. 산출물은 저장 · 해시 검증을 마쳤다.
+    *phase = WritePhase::Publish;
 
     if let Err(error) = replace_with_retry(
         root,

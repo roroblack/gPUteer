@@ -1,0 +1,362 @@
+# 결함 82 · 83 · 84 · 86 — 시험 원본 (2026-09-14 19:11)
+# passed=184 failed=0 ignored=0 warning 줄=0
+
+# 뮤테이션 결함 82 · 83 · 84 — 2026-09-14 19:10
+baseline -p gputeer-agent --lib defect_19_tests exit=0
+baseline -p gputeer-checkpoint --test write_phase exit=0
+caught        M18 삭제 실패가 다시 보고를 버린다(결함 82 이전)  -> test defect_19_tests::a_cleanup_failure_keeps_the_observed_report ... FAILED
+caught        M19 공개 단계 실패를 확정 실패로(결함 83 이전)  -> test defect_19_tests::a_publish_failure_after_hash_verification_is_not_a_finalization_failure ... FAILED
+caught        M20 캡처했는데 없는 출력을 건너뛴다(결함 84 이전)  -> test defect_19_tests::a_lost_captured_output_is_read_outputs ... FAILED
+caught        M21 checkpoint 가 공개 단계를 표시하지 않는다  -> test a_blocked_pointer_fails_in_the_publish_phase ... FAILED
+합계 caught 4/4
+
+
+# ── cargo test ──
+   Compiling gputeer-agent v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\agent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.37s
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_agent-795e53b84d357b44.exe)
+
+running 39 tests
+test defect_19_tests::a_cleanup_failure_keeps_the_observed_report ... ok
+test defect_19_tests::a_lost_captured_output_is_read_outputs ... ok
+test defect_19_tests::an_unreadable_output_is_read_outputs ... ok
+test defect_42_45_tests::errors_after_the_workload_ran_are_not_retried ... ok
+test defect_42_45_tests::a_successful_cleanup_returns_the_original_error_and_removes_the_directory ... ok
+test multi_agent::tests::each_agent_derives_a_distinct_hello_nonce ... ok
+test multi_agent::tests::hello_and_ack_nonces_do_not_collide ... ok
+test multi_agent::tests::this_lane_uses_a_distinct_session_mode ... ok
+test owner_panel::tests::a_backwards_clock_does_not_produce_a_giant_number ... ok
+test owner_panel::tests::an_empty_token_is_refused_at_bind_time ... ok
+test owner_panel::tests::host_check_accepts_loopback_and_rejects_names ... ok
+test owner_panel::tests::json_values_are_escaped ... ok
+test owner_panel::tests::loss_is_measured_from_the_last_checkpoint ... ok
+test owner_panel::tests::two_attempts_of_one_job_are_both_visible ... ok
+test owner_panel::tests::with_no_checkpoint_everything_since_start_is_lost ... ok
+test report::tests::a_backwards_clock_between_start_and_finish_is_refused_with_both_values ... ok
+test defect_19_tests::a_blocked_checkpoint_is_commit_checkpoint ... ok
+test report::tests::a_built_report_verifies_under_the_signing_node_identity ... ok
+test report::tests::a_field_changed_after_signing_no_longer_verifies ... ok
+test report::tests::an_issue_time_before_the_finish_time_is_refused_with_both_values ... ok
+test report::tests::an_empty_identity_field_is_refused_by_name ... ok
+test report::tests::an_observed_exit_without_a_code_is_a_failed_v2_report_with_no_code ... ok
+test report::tests::exit_code_zero_is_completed_and_anything_else_is_failed ... ok
+test report::tests::a_finalization_failure_after_an_observed_exit_is_still_reported ... ok
+test report::tests::an_observed_code_is_carried_as_is_including_u32_max ... ok
+test tests::filesystem_root_as_checkpoint_root_is_refused ... ok
+test report::tests::observed_timestamps_are_copied_not_recomputed ... ok
+test report::tests::unobserved_fields_stay_empty ... ok
+test tests::revoke_notice_for_expired_lease_is_rejected ... ok
+test tests::revoke_notice_matching_lease_and_epoch_is_applicable ... ok
+test tests::revoke_notice_with_wrong_fence_epoch_is_rejected ... ok
+test tests::revoke_notice_with_wrong_lease_id_is_rejected ... ok
+test defect_42_45_tests::a_cleanup_failure_keeps_the_original_refusal ... ok
+test tests::workload_run_root_is_never_inside_the_checkpoint_root ... ok
+test defect_19_tests::a_real_exit_with_a_blocked_checkpoint_still_yields_a_report ... ok
+test defect_19_tests::an_uncaptured_missing_output_is_not_a_failure ... ok
+test defect_19_tests::an_unblocked_run_finalizes ... ok
+test defect_19_tests::a_publish_failure_after_hash_verification_is_not_a_finalization_failure ... ok
+test tests::nonce_attempt_counter_ignores_failed_connects ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.47s
+
+     Running tests\attempt_report_send.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_send-e647d98c243cc7e3.exe)
+
+running 2 tests
+test the_flag_without_an_observed_exit_refuses_instead_of_inventing_one ... ok
+test without_the_flag_nothing_extra_follows_the_ack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\exit_code_preservation.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\exit_code_preservation-d40c2497ae019c4e.exe)
+
+running 3 tests
+test an_exit_code_of_u32_max_is_kept_as_a_code ... ok
+test an_exit_code_of_259_is_kept_as_a_code ... ok
+test ordinary_exit_codes_are_kept ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\gpu_preflight_gate.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gpu_preflight_gate-e9d740ce7f6c7f33.exe)
+
+running 5 tests
+test opt_in_is_still_checked_before_everything ... ok
+test the_cheap_gate_runs_first ... ok
+test the_two_refusals_are_not_interchangeable ... ok
+test a_workload_that_asks_for_a_gpu_that_is_not_here_does_not_start ... ok
+test no_gpu_requirement_means_no_gpu_gate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\neighbor_report_lane_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\neighbor_report_lane_guard-5a244155a24e288f.exe)
+
+running 4 tests
+test the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off ... ok
+test run_refuses_a_missing_or_blank_target_before_connecting ... ok
+test run_refuses_unsupported_lane_combinations_before_connecting ... ok
+test the_report_guard_stays_out_of_a_lane_that_wants_no_reports ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+
+     Running tests\owner_panel_http.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_panel_http-5edf6f3e7b3e571f.exe)
+
+running 8 tests
+test the_panel_binds_only_to_loopback ... ok
+test the_workload_list_is_served_over_loopback ... ok
+test an_absurd_content_length_is_refused_without_allocating ... ok
+test a_request_with_a_foreign_host_header_is_refused ... ok
+test a_request_without_a_host_header_is_refused ... ok
+test stopping_an_unknown_workload_reports_failure_not_success ... ok
+test the_html_page_carries_its_defensive_headers ... ok
+test a_stop_without_the_token_is_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\owner_panel_startup.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_panel_startup-a52c129ffaab5e1e.exe)
+
+running 7 tests
+test the_page_actually_shows_what_the_owner_needs ... ok
+test consecutive_requests_are_served ... ok
+test a_taken_port_makes_the_agent_refuse_to_start ... ok
+OWNER_PANEL listening=http://127.0.0.1:55549/
+OWNER_PANEL listening=http://127.0.0.1:55546/
+OWNER_PANEL listening=http://127.0.0.1:55568/
+OWNER_PANEL listening=http://127.0.0.1:55570/
+test the_panel_token_is_stable_across_restarts ... ok
+test a_different_seed_yields_a_different_token ... ok
+test without_execution_no_panel_is_opened ... ok
+test enabling_execution_starts_the_panel_even_without_a_port ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.89s
+
+     Running tests\owner_stop_control.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_stop_control-1fbd844031a4dbf5.exe)
+
+running 5 tests
+test owner_stop_exit_code_is_not_success ... ok
+test stop_failure_is_distinguishable_in_logs ... ok
+test refused_executions_hand_out_no_stopper ... ok
+test stopping_twice_is_not_an_error ... ok
+test the_owner_can_stop_a_running_workload ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\unknown_flags.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\unknown_flags-6db1360ae58d40c8.exe)
+
+running 8 tests
+test an_invalid_bool_is_refused_by_name ... ok
+test a_valid_numeric_duplicate_is_accepted ... ok
+test a_valid_duplicate_bool_is_accepted_and_the_last_value_wins ... ok
+test an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused ... ok
+test a_misspelled_flag_is_refused_by_name ... ok
+test the_correct_spelling_is_accepted ... ok
+test the_plain_arguments_parse ... ok
+test an_invalid_number_hidden_by_a_later_duplicate_is_still_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests gputeer_agent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\checkpoint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.66s
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_checkpoint-37c32445ced6f429.exe)
+
+running 4 tests
+test commit::tests::content_addressed_names_cannot_collide_with_reserved_suffixes ... ok
+test commit::tests::stored_name_round_trips_through_logical_name_of ... ok
+test commit::tests::logical_name_of_rejects_names_this_procedure_did_not_make ... ok
+test platform::tests::rollout_status_covers_windows_and_linux ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\ckpt_writer.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\ckpt_writer-8dd4d1cc81cffc8c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\staged_ckpt_writer.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\staged_ckpt_writer-279eff254680f409.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\codex_findings.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\codex_findings-fda5ff4bb640ed59.exe)
+
+running 13 tests
+test k2_zero_attempts_returns_error_not_panic ... ok
+test k1f_registered_file_named_like_a_lock_file_is_preserved ... ok
+test k4_write_once_must_reject_path_traversal ... ok
+test k1e_gc_partial_reclaims_dead_locks_but_preserves_held_ones ... ok
+test k1d_lock_is_released_when_holder_is_dropped_so_next_writer_proceeds ... ok
+test k1_write_once_must_detect_content_mismatch ... ok
+test k1c_concurrent_same_name_writers_only_one_writer_wins ... ok
+test k1b_write_once_is_idempotent_for_identical_content ... ok
+test k3_documents_rename_then_syncdir_failure_semantics ... ok
+test k2b_normal_policy_still_works ... ok
+test write_once_leaves_no_tmp_behind ... ok
+test k4c_data_file_named_like_a_lock_file_is_rejected ... ok
+test k4b_normal_names_including_subdirs_still_work ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\durability_chaos.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\durability_chaos-08fa42e5680f8ff9.exe)
+
+running 17 tests
+test durability_requirements_match_baseline ... ok
+test allowed_transitions_follow_normative_table ... ok
+test negative_partial_can_never_become_canonical_candidate ... ok
+test negative_undefined_transitions_are_rejected ... ok
+test manifest_json_roundtrip ... ok
+test adr026_write_once_is_idempotent_for_same_name ... ok
+test replica_counting_applies_all_normative_rules ... ok
+test gc_removes_orphan_tmp_files ... ok
+test negative_hash_mismatch_is_detected ... ok
+test hash_verification_passes_for_intact_files ... ok
+test pointer_replace_exhaustion_is_explicit_error_not_silent ... ok
+test sync_dir_works_on_this_platform ... ok
+test manifest_last_rule_identifies_partial_checkpoints ... ok
+test startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint ... ok
+test pointer_replace_retries_and_eventually_reports_error ... ok
+test write_once_survives_readers_with_no_share_delete ... ok
+test adr026_write_once_succeeds_while_readers_hold_files_open ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.15s
+
+     Running tests\effective_replica_kernel.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\effective_replica_kernel-095df436ac6dc993.exe)
+
+running 13 tests
+test empty_input_is_zero_and_only_local_requirement_is_met ... ok
+test duplicate_selected_holder_fails_closed_instead_of_counting ... ok
+test durability_thresholds_use_effective_distinct_domain_count ... ok
+test distinct_holders_in_one_failure_domain_count_once_deterministically ... ok
+test empty_required_identifiers_fail_closed ... ok
+test invalid_unresolved_and_ambiguous_membership_never_count ... ok
+test mixed_checkpoint_or_root_fails_closed_with_canonical_error ... ok
+test non_local_kind_does_not_require_irrelevant_ephemeral_resolution ... ok
+test only_ephemeral_worker_local_is_excluded ... ok
+test same_device_different_kinds_are_never_separate_replicas ... ok
+test unresolved_or_ambiguous_authority_facts_never_count ... ok
+test selected_old_observation_wins_over_newer_superseded_without_ttl_or_latest_rule ... ok
+test report_is_identical_for_every_input_permutation ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\kill_chaos.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\kill_chaos-216b8ec60bf97334.exe)
+
+running 7 tests
+test negative_missing_data_file_is_rejected_from_resume ... ok
+test negative_pointer_to_nonexistent_checkpoint_does_not_break_resume ... ok
+test negative_tampered_committed_checkpoint_is_rejected_from_resume ... ok
+test startup_gc_removes_partial_but_keeps_committed ... ok
+test resume_point_is_valid_and_monotonic_across_restarts ... ok
+test pointer_always_references_a_valid_checkpoint ... ok
+test kill_during_write_never_produces_corrupt_checkpoint ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+
+     Running tests\resume_selection.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\resume_selection-aa90a0ed4d7630bd.exe)
+
+running 7 tests
+test no_candidates_returns_none ... ok
+test w3_manifest_id_must_match_directory_name ... ok
+test w2_empty_manifest_must_not_be_a_resume_candidate ... ok
+test w1b_resume_must_not_pick_another_attempt ... ok
+test w1_resume_must_not_pick_another_job ... ok
+test unfiltered_api_documents_its_danger ... ok
+test normal_resume_still_picks_highest_step ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests\staged_commit.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\staged_commit-d0f74bc75711adad.exe)
+
+running 14 tests
+test commit_with_nothing_staged_is_rejected_and_gc_removes_the_directory ... ok
+test duplicate_logical_name_is_rejected_even_for_identical_content ... ok
+test commit_refuses_when_a_finalized_data_file_disappeared_before_the_manifest ... ok
+test commit_refuses_when_a_finalized_data_file_changed_before_the_manifest ... ok
+test crash_while_writing_manifest_leaves_tmp_residue_and_gc_removes_everything ... ok
+test unsafe_checkpoint_ids_are_rejected_without_creating_anything ... ok
+test unsafe_logical_names_are_rejected_without_touching_the_directory ... ok
+test committed_checkpoint_is_a_resume_candidate_and_gc_never_touches_it ... ok
+test staged_names_are_content_addressed_and_reversible ... ok
+test reusing_a_committed_checkpoint_id_is_rejected ... ok
+test manifest_appears_only_after_every_data_file_is_final ... ok
+test crash_between_data_files_leaves_no_manifest_and_gc_removes_everything ... ok
+test crash_after_all_data_files_but_before_manifest_is_still_partial ... ok
+test restaging_the_same_content_after_a_crash_is_idempotent ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+     Running tests\state_table_parity.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\state_table_parity-922d8e49dff7fce0.exe)
+
+running 10 tests
+test every_documented_attempt_transition_is_allowed ... ok
+test attempt_terminal_states_agree_with_the_table ... ok
+test every_implemented_transition_is_documented ... ok
+test attempt_parser_is_not_vacuous ... ok
+test every_documented_transition_is_allowed_by_implementation ... ok
+test every_implemented_attempt_transition_is_documented ... ok
+test every_implemented_attempt_trigger_is_documented ... ok
+test parser_is_not_vacuous ... ok
+test partial_never_gets_promoted ... ok
+test unchecked_contract_items_are_declared ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\symlink_defense.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\symlink_defense-5b77aa7964d87b4c.exe)
+
+running 4 tests
+test reading_a_missing_file_must_not_create_it ... ok
+test the_write_variant_still_creates_by_contract ... ok
+test checkpoint_data_read_through_junction_is_rejected ... ok
+test checkpoint_manifest_read_from_junction_directory_is_rejected ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests\symlink_defense_linux.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\symlink_defense_linux-a7d1bcf296089af6.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\write_failure.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\write_failure-63989bdce11fd34f.exe)
+
+running 5 tests
+test registered_tmp_suffix_is_preserved ... ok
+test successful_write_records_file_operation_states ... ok
+test unregistered_tmp_suffix_is_removed ... ok
+test concurrent_startup_gc_treats_not_found_as_normal_race ... ok
+test pointer_failure_leaves_residue_marked_and_unselectable ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+
+     Running tests\write_phase.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\write_phase-a7149928ee6f8a44.exe)
+
+running 3 tests
+test a_blocked_checkpoint_dir_fails_in_the_store_phase ... ok
+test an_unblocked_write_succeeds ... ok
+test a_blocked_pointer_fails_in_the_publish_phase ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+
+     Running tests\writer_path_escape.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\writer_path_escape-077463a5ccb94702.exe)
+
+running 6 tests
+test a_bare_parent_component_is_refused ... ok
+test a_backslash_separator_is_refused_too ... ok
+test a_path_separator_is_refused ... ok
+test an_empty_checkpoint_id_is_refused ... ok
+test a_parent_traversal_is_refused ... ok
+test the_ordinary_checkpoint_id_shape_still_works ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+   Doc-tests gputeer_checkpoint
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
