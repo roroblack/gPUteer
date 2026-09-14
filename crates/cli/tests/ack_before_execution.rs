@@ -11,7 +11,9 @@
 //! N5  첫 읽기 뒤에는 시한이 10초로 돌아온다(결함 ㊻)
 //! ```
 //!
-//! ★ 시간은 **프로토콜 사건**(출력 줄이 도착한 시각)에 묶는다 — 프로세스 기동 시간이 섞이지 않게(결함 ㊻).
+//! ★ 시한은 Coordinator 가 찍은 값으로 본다 — 남은 Lease · 계산한 시한 · 소켓에 실제 걸린 시한 · Coordinator 안에서 잰 경과
+//!   (POST_ACK_WAIT_ARMED · RESTORED · ENDED). 부모 쪽 시각(독자 스레드 · try_wait)은 P1 의 순서 비교와 전체 중단용으로만
+//!   쓴다(결함 62 — 전에는 "프로토콜 사건에 묶는다" 고 적었는데 실제로는 부모 쪽 시각이었다).
 //! 실측과 설계는 `docs/plans/2026-09-10_2142_결함18_ACK_시한_설계_선택지.md` §7.
 //! ★ Windows 전용이다 — 실행 관문이 리눅스에서는 cgroup 을 요구한다(`grant_over_wire.rs` 와 같다).
 #![cfg(windows)]
@@ -240,8 +242,6 @@ struct Finished {
     killed: bool,
     lines: Lines,
     stderr: String,
-    /// 프로세스가 끝난 것을 본 시각.
-    ended: Instant,
 }
 
 impl Finished {
@@ -276,13 +276,11 @@ fn wait(mut p: Proc, limit: Duration) -> Finished {
         }
         thread::sleep(Duration::from_millis(50));
     };
-    let ended = Instant::now();
     Finished {
         success,
         killed,
         lines: p.stdout.join().unwrap_or_default(),
         stderr: p.stderr.join().unwrap_or_default(),
-        ended,
     }
 }
 
@@ -297,6 +295,14 @@ fn field_u64(line: &str, key: &str) -> u64 {
 
 /// Windows 의 시한 오류(WSAETIMEDOUT). EOF 와 구분하려고 본다(결함 53).
 const TIMED_OUT: &str = "os error 10060";
+
+/// `needles` 를 **모두** 담은 첫 줄(stdout · stderr 전체) — 오류 문구와 코드가 같은 오류 레코드에 있는지 본다(결함 62).
+fn line_with(fin: &Finished, needles: &[&str]) -> Option<String> {
+    fin.output()
+        .lines()
+        .find(|line| needles.iter().all(|n| line.contains(n)))
+        .map(str::to_owned)
+}
 
 fn both(agent: &Finished, coordinator: &Finished) -> String {
     format!(
@@ -424,24 +430,29 @@ fn the_first_read_after_ack_gives_up_at_lease_expiry() {
         !coordinator.success && !coordinator.output().contains("HEARTBEAT_ACCEPTED"),
         "Lease 가 끝난 뒤에 온 heartbeat 를 받았다\n{all}"
     );
+    // ★ 결함 61 · 62 — 고정 창 · 부모 쪽 시각 대신 Coordinator 가 **같은 순간에** 찍은 값을 서로 대조한다.
     assert!(
-        coordinator.output().contains(TIMED_OUT),
-        "첫 읽기 시한이 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
+        line_with(&coordinator, &["NodeHeartbeat 프레임 읽기/검증 실패", TIMED_OUT]).is_some(),
+        "첫 읽기의 시한 오류가 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
     );
-    let (armed_line, armed_at) = coordinator
-        .first("POST_ACK_WAIT_ARMED")
+    let armed = line_with(&coordinator, &["POST_ACK_WAIT_ARMED"])
         .unwrap_or_else(|| panic!("ACK 검증 뒤 첫 읽기 시한을 걸지 않았다\n{all}"));
-    let wait_ms = field_u64(&coordinator.lines[armed_line].1, "wait_ms=");
-    // Lease 20초는 발급 시점부터다 — 발급 -> ACK 사이가 몇 초 걸려도 남은 시간은 10초보다 길고 20초 이하다.
+    let wait_ms = field_u64(&armed, "wait_ms=");
+    let remaining_ms = field_u64(&armed, "remaining_lease_ms=");
+    let applied_ms = field_u64(&armed, "applied_ms=");
+    // 전제 — 남은 Lease 가 10초보다 길어야 "10초가 아니라 Lease" 를 구별할 수 있다(Lease 20초, 발급 -> ACK 는 보통 1초 안).
     assert!(
-        (12_000..=20_000).contains(&wait_ms),
-        "첫 읽기 시한이 남은 Lease 가 아니다(wait_ms={wait_ms})\n{all}"
+        remaining_ms > 10_000,
+        "전제가 깨졌다 — 남은 Lease 가 10초 이하라 이 테스트가 판별하지 못한다(remaining_lease_ms={remaining_ms})\n{all}"
     );
-    let waited = coordinator.ended.saturating_duration_since(armed_at);
-    let wait = Duration::from_millis(wait_ms);
+    assert_eq!(wait_ms, remaining_ms, "첫 읽기 시한이 남은 Lease 가 아니다\n{all}");
+    assert_eq!(applied_ms, wait_ms, "계산한 시한이 소켓에 걸리지 않았다\n{all}");
+    let ended = line_with(&coordinator, &["POST_ACK_WAIT_ENDED", "phase=armed"])
+        .unwrap_or_else(|| panic!("첫 읽기 시한 단계에서 끝나지 않았다\n{all}"));
+    let since_ms = field_u64(&ended, "since_set_ms=");
     assert!(
-        waited + Duration::from_secs(2) >= wait && waited <= wait + Duration::from_secs(4),
-        "설정한 시한({wait:?})대로 기다리지 않았다({waited:?}) — 느슨한 대조다\n{all}"
+        since_ms + 500 >= wait_ms && since_ms <= wait_ms + 2_000,
+        "Coordinator 안에서 잰 경과({since_ms}ms)가 건 시한({wait_ms}ms)과 맞지 않는다\n{all}"
     );
 }
 
@@ -551,20 +562,21 @@ fn the_read_timeout_returns_to_the_io_timeout_after_the_first_read() {
     );
     assert!(!coordinator.success, "두 번째 읽기가 10초를 넘겨 기다렸다\n{all}");
     // ★ 결함 ㊿ · 53 · 55 — EOF 가 아니라 **시한 오류**로 끝났는지, 복원값이 10초인지 Coordinator 가 찍은 값으로 본다.
+    // ★ 결함 62 — 오류 문구와 10060 을 **같은 오류 줄**에서, 경과는 Coordinator 안의 시계로 본다.
     assert!(
-        coordinator.output().contains("NodeHeartbeat 프레임 읽기/검증 실패")
-            && coordinator.output().contains(TIMED_OUT),
+        line_with(&coordinator, &["NodeHeartbeat 프레임 읽기/검증 실패", TIMED_OUT]).is_some(),
         "두 번째 heartbeat 읽기의 시한 오류가 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
     );
-    let (restored_line, restored_at) = coordinator
-        .first("POST_ACK_WAIT_RESTORED")
+    let restored = line_with(&coordinator, &["POST_ACK_WAIT_RESTORED"])
         .unwrap_or_else(|| panic!("첫 읽기 뒤 시한을 되돌리지 않았다\n{all}"));
-    let restored_ms = field_u64(&coordinator.lines[restored_line].1, "timeout_ms=");
-    assert_eq!(restored_ms, 10_000, "되돌린 시한이 10초가 아니다\n{all}");
-    let waited = coordinator.ended.saturating_duration_since(restored_at);
+    assert_eq!(field_u64(&restored, "timeout_ms="), 10_000, "되돌린 시한이 10초가 아니다\n{all}");
+    assert_eq!(field_u64(&restored, "applied_ms="), 10_000, "되돌린 시한이 소켓에 걸리지 않았다\n{all}");
+    let ended = line_with(&coordinator, &["POST_ACK_WAIT_ENDED", "phase=restored"])
+        .unwrap_or_else(|| panic!("되돌린 시한 단계에서 끝나지 않았다\n{all}"));
+    let since_ms = field_u64(&ended, "since_set_ms=");
     assert!(
-        waited >= Duration::from_secs(8) && waited < Duration::from_secs(14),
-        "되돌린 시한대로 기다리지 않았다({waited:?}) — 느슨한 대조다\n{all}"
+        (9_500..=12_000).contains(&since_ms),
+        "Coordinator 안에서 잰 경과({since_ms}ms)가 되돌린 10초 시한과 맞지 않는다\n{all}"
     );
     assert!(!agent.killed, "Agent 가 시한 안에 끝나지 않았다\n{all}");
 }

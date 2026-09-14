@@ -881,6 +881,9 @@ fn classify_legacy_session_error(
 /// ★ 이 연결은 순차로 처리되므로 기다리는 동안 다른 연결을 받지 못한다(설계 문서 §3 의 A).
 struct PostAckWait {
     armed: bool,
+    /// 마지막으로 시한을 건 단계와 시각 — 끝날 때(Drop) 경과를 **Coordinator 안에서** 잰다(결함 62).
+    phase: &'static str,
+    set_at: Option<std::time::Instant>,
 }
 
 impl PostAckWait {
@@ -890,14 +893,34 @@ impl PostAckWait {
         now_unix_ms: u64,
     ) -> Result<Self, String> {
         let Some(wait) = post_ack_first_read_wait(grant, now_unix_ms)? else {
-            return Ok(Self { armed: false });
+            return Ok(Self {
+                armed: false,
+                phase: "none",
+                set_at: None,
+            });
         };
         stream
             .set_read_timeout(Some(wait))
             .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 설정 실패: {e}"))?;
-        // ★ 결함 54 · 55 — 테스트가 시각을 재 추정하지 않고 **설정값**을 직접 보게 한다.
-        println!("POST_ACK_WAIT_ARMED wait_ms={}", wait.as_millis());
-        Ok(Self { armed: true })
+        // ★ 결함 54 · 55 · 61 — 테스트가 시각을 재 추정하지 않고 **같은 순간의 값**을 보게 한다: 남은 Lease ·
+        //   계산한 시한 · 소켓에 실제로 걸린 시한(read_timeout 을 다시 읽는다).
+        let remaining_lease_ms = grant
+            .lease
+            .as_ref()
+            .map_or(0, |lease| lease.expires_at_unix_ms.saturating_sub(now_unix_ms));
+        let applied_ms = stream
+            .read_timeout()
+            .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 조회 실패: {e}"))?
+            .map_or(0, |d| d.as_millis());
+        println!(
+            "POST_ACK_WAIT_ARMED wait_ms={} remaining_lease_ms={remaining_lease_ms} applied_ms={applied_ms}",
+            wait.as_millis()
+        );
+        Ok(Self {
+            armed: true,
+            phase: "armed",
+            set_at: Some(std::time::Instant::now()),
+        })
     }
 
     fn after_read(&mut self, stream: &std::net::TcpStream) -> Result<(), String> {
@@ -906,11 +929,34 @@ impl PostAckWait {
             stream
                 .set_read_timeout(Some(restored))
                 .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 복원 실패: {e}"))?;
-            // ★ 결함 53 · 55 — 복원한 **값**을 찍는다(테스트가 시각 대신 이것을 본다).
-            println!("POST_ACK_WAIT_RESTORED timeout_ms={}", restored.as_millis());
+            // ★ 결함 53 · 55 · 62 — 복원한 **값**과 소켓에 실제로 걸린 값을 찍는다(테스트가 시각 대신 이것을 본다).
+            let applied_ms = stream
+                .read_timeout()
+                .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 조회 실패: {e}"))?
+                .map_or(0, |d| d.as_millis());
+            println!(
+                "POST_ACK_WAIT_RESTORED timeout_ms={} applied_ms={applied_ms}",
+                restored.as_millis()
+            );
             self.armed = false;
+            self.phase = "restored";
+            self.set_at = Some(std::time::Instant::now());
         }
         Ok(())
+    }
+}
+
+/// ★ 결함 62 — 끝날 때(읽기 실패로 빠져나가든 정상으로 끝나든) 마지막으로 시한을 건 뒤의 경과를 **Coordinator 안의
+///   시계로** 찍는다. 테스트는 부모 쪽 시각(독자 스레드 · try_wait) 대신 이 값을 본다.
+impl Drop for PostAckWait {
+    fn drop(&mut self) {
+        if let Some(at) = self.set_at {
+            println!(
+                "POST_ACK_WAIT_ENDED phase={} since_set_ms={}",
+                self.phase,
+                at.elapsed().as_millis()
+            );
+        }
     }
 }
 

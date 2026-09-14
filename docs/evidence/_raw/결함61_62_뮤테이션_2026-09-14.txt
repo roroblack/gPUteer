@@ -1,0 +1,23 @@
+=== 1. mutations
+[M1 ACK 를 워크로드 뒤로 되돌린다] caught=True compile_error=False failed=['a_workload_longer_than_the_io_timeout_is_acknowledged_before_it_runs', 'a_workload_longer_than_the_io_timeout_still_gets_its_report_stored', 'the_first_read_after_ack_gives_up_at_lease_expiry', 'the_first_read_after_ack_waits_for_the_workload_within_the_lease'] missing=[]
+[M2 첫 읽기 시한을 10초로 되돌린다] caught=True compile_error=False failed=['a_workload_longer_than_the_io_timeout_still_gets_its_report_stored', 'post_ack_wait_tests::the_first_read_waits_for_the_remaining_lease', 'the_first_read_after_ack_gives_up_at_lease_expiry', 'the_first_read_after_ack_waits_for_the_workload_within_the_lease'] missing=[]
+[M3 첫 읽기 시한의 Lease 상한을 없앤다] caught=True compile_error=False failed=['post_ack_wait_tests::the_first_read_never_waits_less_than_the_io_timeout', 'post_ack_wait_tests::the_first_read_waits_for_the_remaining_lease', 'the_first_read_after_ack_gives_up_at_lease_expiry'] missing=[]
+[M4 ACK 전 preflight 를 뺀다] caught=True compile_error=False failed=['a_refused_preflight_sends_no_ack'] missing=[]
+[M5 peek 재접속 억제를 뺀다] caught=True compile_error=False failed=['a_connection_that_ran_the_workload_does_not_reconnect_and_run_it_again', 'with_the_report_off_the_workload_runs_but_no_report_row_is_stored'] missing=[]
+[M6 실행 시도 뒤 오류의 재접속 불가 변환을 뺀다] caught=True compile_error=False failed=['a_revoke_read_failure_after_the_workload_does_not_reconnect_and_run_it_again'] missing=[]
+[M7 첫 읽기 뒤 10초 복원을 뺀다] caught=True compile_error=False failed=['the_read_timeout_returns_to_the_io_timeout_after_the_first_read'] missing=[]
+[M8 정리 실패 때 앞선 사유를 버린다] caught=True compile_error=False failed=['defect_42_45_tests::a_cleanup_failure_keeps_the_original_refusal'] missing=[]
+[M9 첫 읽기 뒤 복원값을 1초로 바꾼다] caught=True compile_error=False failed=['the_read_timeout_returns_to_the_io_timeout_after_the_first_read'] missing=[]
+[M10 첫 읽기 시한의 10초 하한을 뺀다] caught=True compile_error=False failed=['post_ack_wait_tests::the_first_read_never_waits_less_than_the_io_timeout'] missing=[]
+[M11 만료된 Lease 거부를 뺀다] caught=True compile_error=False failed=['post_ack_wait_tests::an_expired_lease_is_refused_instead_of_waited_for'] missing=[]
+[M12 계산한 첫 읽기 시한을 소켓에 걸지 않는다] caught=True compile_error=False failed=['a_workload_longer_than_the_io_timeout_still_gets_its_report_stored', 'the_first_read_after_ack_gives_up_at_lease_expiry', 'the_first_read_after_ack_waits_for_the_workload_within_the_lease'] missing=[]
+restored True
+MUTATIONS 12/12 caught
+=== 2. workspace
+exit=0
+=== 3. selftest
+exit=0 시나리오 줄 97
+=== 4. check_docs
+오류 0 · 경고 0
+
+[exited with code 0]
