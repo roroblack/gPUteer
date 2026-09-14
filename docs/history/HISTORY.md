@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-14 19:31 — B+E 구현 단계 5a(RENEW 세션 — Coordinator) · 재검수 59 대응(결함 87 · 89 · 90 · 91)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §9 · §7(정정)
+- 스트림: Coordinator · Checkpoint · Agent · QA
+- 수행: 59(코덱스알트)가 D2 와 82~86 에서 다섯을 지적했다 — 고치기 전에 87~91 로 기록. Coordinator 가 Hello 의 mode 로 FRESH · RENEW
+  를 가르게 하고 RENEW 세션(새 연결로 갱신 한 건)을 넣었다. 적용 직후 새 RENEW 코드에서도 87 부류(오류 문구에 "lease store")를 찾아
+  Hello · RENEW 오류 분류를 코드로 옮겼다(87). HELLO_MISSING 과 HELLO_REJECTED 를 원인대로 가르고(89), 검증 상태 마커 실패를 Publish 로
+  옮기고(90), 문구를 고쳤다(91). 88(Hello replay 영속화)은 열린 항목
+- 검증: 487 passed · 0 failed · ignored 0 · 경고 0 · selftest 시나리오 줄 97 · 뮤테이션 6/6. 59bff5e 워크스페이스 전체는
+  1156 passed · 0 failed · ignored 1 · 경고 0 · selftest exit 0(97). ★ 이번 편집 뒤 워크스페이스 전체는 커밋 뒤에 돌린다. 리눅스 미실행
+- 원본: `docs/evidence/_raw/B+E_RENEW_5a_결함87_91_시험_2026-09-14.txt` · `docs/evidence/_raw/검수_2026-09-10/59_재검수_D2_결함82_86_CHANGES_REQUESTED_알트.txt`
+- 리포트: 결함 87~91
+
+---
+
 ## 2026-09-14 19:11 — 재검수 58 대응(결함 82 · 83 · 84 · 86) — ⑲ 의 남은 경로
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §7(정정)

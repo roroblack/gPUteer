@@ -94,12 +94,12 @@ pub fn write_checkpoint(
 /// [`write_checkpoint`] 가 **어느 단계에서** 실패했나(결함 83, 재검수 58).
 ///
 /// ★ 규범의 정상 완료 조건은 최종 산출물의 HASH_VERIFIED 다(state-machines.md §3). 그래서 해시 검증까지 끝난 뒤의
-///   실패(LATEST 교체 · COMMITTED 기록)를 저장 · 검증 실패와 같은 칸에 넣으면 검증까지 끝난 산출물을 "확정 실패" 로 적게 된다.
+///   실패(검증 상태 마커 · LATEST 교체 · COMMITTED 기록)를 저장 · 검증 실패와 같은 칸에 넣으면 검증까지 끝난 산출물을 "확정 실패" 로 적게 된다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePhase {
-    /// 데이터 · 매니페스트 기록, 해시 검증, HASH_VERIFIED 상태 기록까지 — 여기서 실패하면 산출물이 검증되지 않았다.
+    /// 데이터 · 매니페스트 기록과 파일 해시 검증까지 — 여기서 실패하면 산출물이 검증되지 않았다.
     StoreAndVerify,
-    /// HASH_VERIFIED 뒤의 공개(LATEST 교체) · COMMITTED 기록 — 산출물은 이미 저장 · 검증됐다.
+    /// 파일 해시 검증 뒤의 상태 기록(HASH_VERIFIED 마커) · 공개(LATEST 교체) · COMMITTED 기록 — 산출물은 이미 저장 · 검증됐다(결함 90).
     /// 실패하면 `.publication-failed` 가 남아 재개 후보에서 빠진다(아래 `fail_after_materialization`).
     Publish,
 }
@@ -171,6 +171,10 @@ fn write_checkpoint_inner(
         return Err(fail_after_materialization(&dir, error));
     }
 
+    // ★ 결함 83 · 90 — 여기부터는 파일 해시 검증 **뒤**다. 뒤의 실패(HASH_VERIFIED 상태 마커 기록 · LATEST 교체 · COMMITTED
+    //   기록)는 산출물 저장 · 검증 실패가 아니다. 전에는 이 표시를 마커 기록 뒤에 두어 마커 실패가 확정 실패로 분류됐다(재검수 59).
+    *phase = WritePhase::Publish;
+
     if let Err(error) = record_state_transition(
         &dir,
         DurabilityState::LocalWritten,
@@ -178,9 +182,6 @@ fn write_checkpoint_inner(
     ) {
         return Err(fail_after_materialization(&dir, error));
     }
-
-    // ★ 결함 83 — 여기부터는 공개 단계다. 산출물은 저장 · 해시 검증을 마쳤다.
-    *phase = WritePhase::Publish;
 
     if let Err(error) = replace_with_retry(
         root,

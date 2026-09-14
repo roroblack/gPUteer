@@ -331,15 +331,20 @@ fn write_frame_body(stream: &mut TcpStream, frame_type: FrameType, body: &[u8]) 
 
 /// Grant 를 받고 유효한 `AgentGrantAck` 로 답한다.
 fn handshake(stream: &mut TcpStream) -> pb::ExecutionGrant {
+    handshake_at(stream, 0)
+}
+
+/// `connection_attempt` 번째 연결의 handshake — Hello 와 ACK nonce 가 그 번호를 쓴다(Coordinator 가 대조한다).
+fn handshake_at(stream: &mut TcpStream, connection_attempt: u32) -> pb::ExecutionGrant {
     // D2 — 모든 연결은 Agent 의 Hello(FRESH) 로 시작한다.
     let hello_key = SigningKey::from_bytes(&AGENT_SEED);
     let mut hello = pb::AgentSessionHello {
         schema_version: 1,
         mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
         node_id: NODE_ID.into(),
-        connection_attempt: 0,
+        connection_attempt,
         issued_at_unix_ms: now_ms(),
-        nonce: (100u8..116).collect(),
+        nonce: (100u8..116).map(|b| b.wrapping_add((connection_attempt as u8).wrapping_mul(16))).collect(),
         ..Default::default()
     };
     hello.node_signature = sign(&hello_key, &hello).to_vec();
@@ -362,7 +367,7 @@ fn handshake(stream: &mut TcpStream) -> pb::ExecutionGrant {
         agent_device_id: NODE_ID.into(),
         issued_at_unix_ms: now,
         expires_at_unix_ms: now + 60_000,
-        nonce: derive_replay_nonce("grant-ack", &grant.grant_id, 0),
+        nonce: derive_replay_nonce("grant-ack", &grant.grant_id, connection_attempt),
         accepted: true,
         ..Default::default()
     };
@@ -762,6 +767,185 @@ fn a_hello_for_another_mode_is_refused() {
         .expect_err("다른 mode 의 Hello 는 거부돼야 한다");
     assert!(error.contains("HELLO_REJECTED: mode 불일치"), "{error}");
     assert!(stored_binding(&fixture.control_db).is_none());
+}
+
+// ── B+E 구현 단계 5a — RENEW 세션(새 연결로 갱신만) ─────────────────────
+
+/// 연결 둘(FRESH 한 번 · RENEW 한 번)을 받는 Coordinator. `with_lease_db` 면 같은 control DB 를 lease 저장소로 쓴다 —
+/// staging 저장소가 Lease 를 `coordinator_leases` 에 넣으므로 저장된 예약의 Lease 를 RENEW 가 찾는다.
+fn spawn_coordinator_for_renew(
+    fixture: &Fixture,
+    with_lease_db: bool,
+) -> std::thread::JoinHandle<Result<(), String>> {
+    let mut args = coordinator_args(fixture, 0);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--max-connections")
+        .expect("--max-connections");
+    args[at + 1] = "2".into();
+    if with_lease_db {
+        args.push("--lease-db".into());
+        args.push(fixture.control_db.to_str().expect("경로").into());
+    }
+    std::thread::spawn(move || {
+        let config = gputeer_coordinator::parse_config_from_args(&args).expect("설정 파싱");
+        gputeer_coordinator::run(config)
+    })
+}
+
+fn send_hello(stream: &mut TcpStream, mode: i32, connection_attempt: u32, nonce_start: u8) {
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode,
+        node_id: NODE_ID.into(),
+        connection_attempt,
+        issued_at_unix_ms: now_ms(),
+        nonce: (nonce_start..nonce_start + 16).collect(),
+        ..Default::default()
+    };
+    hello.node_signature = sign(&key, &hello).to_vec();
+    write_frame_body(stream, FrameType::SessionHello, &hello.encode_to_vec());
+}
+
+fn signed_renew_request(fence_epoch: u64, nonce_start: u8) -> pb::RenewLeaseRequest {
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut request = pb::RenewLeaseRequest {
+        schema_version: 1,
+        lease_id: LEASE_ID.into(),
+        fence_epoch,
+        node_id: NODE_ID.into(),
+        issued_at_unix_ms: now_ms(),
+        nonce: (nonce_start..nonce_start + 16).collect(),
+        ..Default::default()
+    };
+    request.node_signature = sign(&key, &request).to_vec();
+    request
+}
+
+/// 연결 1 은 FRESH(Grant -> ACK), 연결 2 는 RENEW 로 갱신 요청 하나를 보낸다. 받은 응답을 돌려준다.
+fn fresh_then_renew(fixture: &Fixture, fence_epoch: u64) -> (pb::RenewLeaseRequest, pb::RenewLeaseResult) {
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let mut renew = connect_when_ready(fixture.address);
+    send_hello(&mut renew, gputeer_protocol::constants::MODE_RENEW, 1, 140);
+    let request = signed_renew_request(fence_epoch, 160);
+    write_frame_body(&mut renew, FrameType::LeaseRenew, &request.encode_to_vec());
+    let (frame_type, body) = read_frame_body(&mut renew);
+    assert_eq!(frame_type, FrameType::LeaseRenewResult as u8, "RENEW 세션의 응답은 갱신 결과다");
+    (request, pb::RenewLeaseResult::decode(body.as_slice()).expect("갱신 결과 디코드"))
+}
+
+/// 단계 5a — 실행 중 Agent 가 **새 연결**(RENEW)로 저장된 Lease 를 갱신한다. 결과는 Coordinator 가 서명하고 요청 nonce 를 되돌린다.
+#[test]
+fn a_renew_session_on_a_new_connection_renews_the_stored_lease() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_renew(&fixture, true);
+    let (request, result) = fresh_then_renew(&fixture, fence_epoch);
+
+    assert_eq!(result.outcome, 1, "RENEWED 여야 한다: {result:?}");
+    assert_eq!(result.request_nonce, request.nonce, "요청 nonce 를 되돌려야 한다");
+    let lease = result.lease.clone().expect("갱신된 Lease 가 실린다");
+    assert!(lease.expires_at_unix_ms > now_ms(), "갱신된 만료가 지금보다 뒤다");
+    let mut ring = InMemoryKeyring::new();
+    ring.insert(COORDINATOR_ID, SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key());
+    verify(&result, 1, &Ed25519Verifier::new(ring), now_ms(), &mut NoReplayCheck)
+        .expect("Coordinator 가 서명한 갱신 결과다");
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+/// 단계 5a — 낮은 세대의 갱신은 연결을 끊지 않고 서명된 SUPERSEDED 로 답한다(FRESH 연결 안의 갱신과 같은 규칙).
+#[test]
+fn a_renew_session_with_a_lower_fence_epoch_is_superseded() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    assert!(fence_epoch > 0, "fixture 의 세대가 0 이면 더 낮은 세대를 만들 수 없다");
+    let handle = spawn_coordinator_for_renew(&fixture, true);
+    let (_, result) = fresh_then_renew(&fixture, fence_epoch - 1);
+    assert_eq!(result.outcome, 2, "SUPERSEDED 여야 한다: {result:?}");
+    assert!(result.lease.is_none(), "물러나라는 응답에 새 Lease 를 싣지 않는다");
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+/// 단계 5a — 영속 lease 저장소 없이 들어온 RENEW 는 거부한다. 연결 밖 갱신을 판정할 근거가 없다.
+#[test]
+fn a_renew_session_without_a_lease_db_is_refused() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_renew(&fixture, false);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let mut renew = connect_when_ready(fixture.address);
+    send_hello(&mut renew, gputeer_protocol::constants::MODE_RENEW, 1, 140);
+    write_frame_body(
+        &mut renew,
+        FrameType::LeaseRenew,
+        &signed_renew_request(fence_epoch, 160).encode_to_vec(),
+    );
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("저장소 없는 RENEW 는 거부돼야 한다");
+    assert!(error.contains("RENEW_SESSION_REFUSED"), "{error}");
+}
+
+/// 결함 87 — 첫 프레임의 **내용**이 오류 분류를 바꾸지 못한다. 등록된 Agent 가 job_id 에 "lease store" 를 넣은 서명된 보고를
+///   Hello 대신 보내도, 리스너 전체를 멈추는 Storage 가 아니라 그 연결만의 Protocol 오류다 — 다음 정상 연결을 받는다.
+#[test]
+fn a_first_frame_whose_content_mentions_the_lease_store_does_not_stop_the_listener() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    // 연결 둘 · 보고 기대 0 · lease 저장소 없음(분류기가 "lease store" 로 Storage 를 고르던 경로 그대로).
+    let handle = spawn_coordinator_for_renew(&fixture, false);
+    {
+        let mut first = connect_when_ready(fixture.address);
+        let mut report = terminal_report(fence_epoch);
+        report.job_id = "lease store".into();
+        let report = signed_report(report);
+        write_frame_body(&mut first, FrameType::AttemptReport, &report.encode_to_vec());
+        // Coordinator 가 이 연결을 닫을 때까지 기다린다 — 먼저 끊으면 다른 원인(끊김)이 섞인다.
+        let mut probe = [0u8; 1];
+        let _closed_by_coordinator = first.read(&mut probe);
+    }
+    let mut second = connect_when_ready(fixture.address);
+    handshake_at(&mut second, 1);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "받은 메시지의 내용 때문에 리스너가 멈췄다: {outcome:?}");
+}
+
+/// 결함 89 — 도착했지만 검증에 실패한 Hello(서명 변조)는 HELLO_MISSING 이 아니라 HELLO_REJECTED 다.
+#[test]
+fn a_hello_with_a_broken_signature_is_rejected_not_missing() {
+    let fixture = fixture();
+    let handle = spawn_coordinator(&fixture, 1);
+    let mut stream = connect_when_ready(fixture.address);
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        node_id: NODE_ID.into(),
+        connection_attempt: 0,
+        issued_at_unix_ms: now_ms(),
+        nonce: (180u8..196).collect(),
+        ..Default::default()
+    };
+    hello.node_signature = sign(&key, &hello).to_vec();
+    hello.node_signature[0] ^= 0x01;
+    write_frame_body(&mut stream, FrameType::SessionHello, &hello.encode_to_vec());
+
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("서명이 틀린 Hello 는 거부돼야 한다");
+    assert!(error.contains("HELLO_REJECTED"), "{error}");
+    assert!(!error.contains("HELLO_MISSING"), "검증 실패를 Hello 부재로 적었다: {error}");
 }
 
 /// 첫 증거와 **내용이 다른** 두 번째 보고는 거부된다.

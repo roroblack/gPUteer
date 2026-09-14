@@ -1060,8 +1060,28 @@ fn serve_one_connection_impl(
             connection_attempt,
         );
     }
-    // ★ D2 (B+E 구현 단계 4) — 순차 lane 도 Agent 의 Hello(FRESH) 로 시작한다. Grant 를 쓰기 **전에** 읽고 검증한다.
-    read_fresh_hello(config, stream, agent_keys, replay, clock, connection_attempt)?;
+    // ★ D2 (B+E 구현 단계 4) — 순차 lane 도 Agent 의 Hello 로 시작한다. Grant 를 쓰기 **전에** 읽고 검증한다.
+    // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
+    let hello = read_session_hello(config, stream, agent_keys, replay, clock)?;
+    if hello.mode == gputeer_protocol::constants::MODE_RENEW {
+        return serve_renew_session(config, stream, lease_store, signing_key, agent_keys, replay, clock);
+    }
+    if hello.mode != gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
+        return Err(session_protocol_error(format!(
+            "HELLO_REJECTED: mode 불일치 — 순차 lane 은 FRESH({}) · RENEW({}) 만 받는다, 받은 값 {}",
+            gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+            gputeer_protocol::constants::MODE_RENEW,
+            hello.mode
+        )));
+    }
+    // FRESH 만 연결 번호를 대조한다 — Grant nonce 가 이 번호로 만들어진다. RENEW 는 실행 중 Agent 가 따로 여는 연결이라
+    // Coordinator 의 연결 번호를 알 수 없다(단계 5a).
+    if hello.connection_attempt != connection_attempt {
+        return Err(session_protocol_error(format!(
+            "HELLO_REJECTED: connection_attempt 불일치 — 기대값 {} != {}",
+            connection_attempt, hello.connection_attempt
+        )));
+    }
     let mut grant = match &config.grant_from_control_db {
         // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
@@ -2009,19 +2029,55 @@ fn accept_with_deadline(
     }
 }
 
-/// D2 — 순차 lane 의 첫 프레임. 서명 · replay · mode · node_id · connection_attempt 를 대조한다(Resume lane 과 같은 규칙).
+/// 세션 오류를 **상대 메시지 내용과 무관하게** 분류한다(결함 87, 재검수 59).
 ///
-/// ★ 옛 Agent 는 Hello 없이 Grant 를 기다린다 — 그러면 이 읽기가 소켓 시한에 걸린다. 그 오류에 `HELLO_MISSING` 이라는
-///   이름을 붙여 **명시적 실패**로 끝낸다(D2 결정 — 서로 상대가 먼저 말하기를 기다리다 원인 모를 시간 초과로 끝나지 않게).
-/// ★ session_id 는 대조하지 않는다 — FRESH 는 아직 세션 복원 대상이 아니다(Resume lane 만 요구한다).
-fn read_fresh_hello(
+/// ★ `classify_legacy_session_error` 는 오류 문자열의 낱말("lease store" · "stream" 등)로 Storage · Transport 를 가른다. 상대가
+///   보낸 메시지 내용(예: 서명된 보고의 job_id="lease store")이 그 문자열에 섞이면 Storage 로 판정돼 accept 루프 전체가 멈췄다.
+///   Hello · RENEW 세션은 분류를 여기서 정하고, 상대 메시지의 내용을 오류 문자열에 넣지 않는다.
+fn session_protocol_error(message: impl std::fmt::Display) -> SessionHandlerError {
+    SessionHandlerError::Classified(protocol_error("session", message))
+}
+
+/// 프레임 읽기 오류를 원인대로 가른다 — 받지 못한 것(끊김 · 소켓 시한)은 Transport, 도착했지만 검증에 실패한 것은 Protocol(결함 89).
+fn session_framing_error(
+    missing_label: &str,
+    rejected_label: &str,
+    error: &gputeer_crypto::FramingError,
+) -> SessionHandlerError {
+    match error {
+        gputeer_crypto::FramingError::Truncated | gputeer_crypto::FramingError::Io(_) => {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!("{missing_label}: {error}"),
+            ))
+        }
+        _ => session_protocol_error(format!("{rejected_label}: {error}")),
+    }
+}
+
+/// B+E 구현 단계 5a — RENEW 세션: Hello(RENEW) -> RenewLeaseRequest -> RenewLeaseResult -> 닫는다(제안서의 세션 표).
+///
+/// ★ 실행 중 Agent 가 **새 연결**로 Lease 만 갱신한다 — FRESH 연결을 붙잡지 않고도 Lease 보다 긴 작업을 이어 가게 하는 쪽이다.
+///   Agent 쪽 갱신 스레드는 다음 조각(5b)이다.
+/// ★ 영속 lease 저장소가 있어야 받는다 — 연결 밖에서 온 갱신은 **저장된** Lease(보유자 · 세대 · 만료 · revoke)로만 판정한다.
+///   레거시(저장소 없음)는 이 프로세스가 발급한 Lease 를 연결 밖에서 기억하지 못한다.
+/// ★ 판정 규칙은 FRESH 연결 안의 갱신과 같다 — 낮은 세대는 서명된 SUPERSEDED, 높은 세대는 거부, 결과는 같은 `build_renew_result`.
+///   만료된 Lease 는 여기서 먼저 거부한다 — `build_renew_result` 의 만료 오류는 문자열로 나와 저장소 장애와 가를 수 없다.
+/// ★ 아직 하지 않는다: 갱신 수신을 생존 관측으로 기록하기(제안서 — 다음 조각).
+fn serve_renew_session(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
+    lease_store: &mut Option<CoordinatorLeaseStore>,
+    signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
-    connection_attempt: u32,
 ) -> Result<(), SessionHandlerError> {
+    if lease_store.is_none() {
+        return Err(session_protocol_error(
+            "RENEW_SESSION_REFUSED: --lease-db 없이 RENEW 세션을 받지 않는다 — 연결 밖 갱신은 저장된 Lease 로만 판정한다",
+        ));
+    }
     let message = read_frame(
         stream,
         1,
@@ -2030,46 +2086,137 @@ fn read_fresh_hello(
         clock,
     )
     .map_err(|e| {
-        format!(
-            "HELLO_MISSING: 순차 lane 의 첫 프레임은 Agent 의 Hello(FRESH) 여야 한다 \
-             — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다: {e}"
+        session_framing_error(
+            "RENEW_SESSION: 갱신 요청을 받지 못했다(연결 끊김 · 소켓 시한)",
+            "RENEW_SESSION: 갱신 요청을 검증하지 못했다(서명 · 시각 · replay · 형식)",
+            &e,
+        )
+    })?;
+    let request = match &message {
+        IngressMessage::LeaseRenew(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| session_protocol_error(format!("RENEW_SESSION: replay 검사 실패: {e:?}")))?
+            .clone(),
+        // ★ 결함 87 — 받은 프레임의 **내용**을 오류에 넣지 않는다.
+        _ => return Err(session_protocol_error("RENEW_SESSION: 갱신 요청이 아닌 프레임이다")),
+    };
+    if request.node_id != config.agent_device_id {
+        return Err(session_protocol_error(format!(
+            "RENEW_SESSION: node_id 불일치 — 기대값 {}",
+            config.agent_device_id
+        )));
+    }
+    let stored = lease_store
+        .as_ref()
+        .expect("저장소는 위에서 확인했다")
+        .get(&request.lease_id)
+        .map_err(|e| SessionHandlerError::Classified(storage_error("lease store", e)))?
+        .ok_or_else(|| session_protocol_error("RENEW_SESSION: 저장된 Lease 가 아니다(모르는 lease_id)"))?;
+    if stored.holder_node_id != request.node_id {
+        return Err(session_protocol_error("RENEW_SESSION: 이 Lease 의 보유자가 아니다"));
+    }
+    let now = clock.now_unix_ms();
+    let result = if request.fence_epoch < stored.fence_epoch {
+        // 정상적인 failover 경합 — 연결을 끊지 않고 서명된 SUPERSEDED 로 Agent 가 스스로 물러나게 한다(FRESH 갱신과 같다).
+        build_signed_policy_renew_result(
+            config,
+            signing_key,
+            now,
+            2, // RENEW_OUTCOME_SUPERSEDED
+            "a higher fence epoch already exists",
+            request.nonce.clone(),
+        )
+        .map_err(session_protocol_error)?
+    } else if request.fence_epoch > stored.fence_epoch {
+        return Err(session_protocol_error(format!(
+            "RENEW_SESSION: fence_epoch 가 저장된 값({})보다 높다",
+            stored.fence_epoch
+        )));
+    } else if stored.revoked_at_unix_ms.is_none() && stored.expires_at_unix_ms <= now {
+        // `<=` 경계 — DoD-26 · DoD-32 와 같은 규칙. revoke 된 Lease 는 아래에서 서명된 REVOKED 로 답한다.
+        return Err(session_protocol_error("RENEW_SESSION: Lease 가 이미 만료됐다"));
+    } else {
+        // 여기서 나는 오류는 저장소 조회 · 갱신 실패다 — fail-closed(DoD-37).
+        build_renew_result(
+            config,
+            lease_store,
+            signing_key,
+            now,
+            &request.lease_id,
+            request.nonce.clone(),
+        )
+        .map_err(|e| SessionHandlerError::Classified(storage_error("lease store renew", e)))?
+    };
+    let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec())
+        .map_err(|e| session_protocol_error(format!("RenewLeaseResult 프레임 인코딩 실패: {e}")))?;
+    stream
+        .write_all(&frame)
+        .and_then(|()| stream.flush())
+        .map_err(|e| {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!("RenewLeaseResult 전송 실패: {e}"),
+            ))
+        })?;
+    println!(
+        "RENEW_SESSION_RESULT outcome={} lease_id={} request_nonce={}",
+        result.outcome,
+        request.lease_id,
+        hex_bytes(&result.request_nonce)
+    );
+    Ok(())
+}
+
+/// D2 — 순차 lane 의 첫 프레임. 서명 · replay · node_id 를 대조한다(Resume lane 과 같은 규칙).
+/// mode 와 connection_attempt 는 호출부가 본다 — 세션 종류마다 규칙이 다르다(B+E 구현 단계 5a).
+///
+/// ★ 결함 89 — **받지 못한 것**(끊김 · 소켓 시한)만 HELLO_MISSING 이다. 도착했는데 서명 · 시각 · replay 검증에 실패한 것은
+///   HELLO_REJECTED 다 — 둘을 한 이름으로 부르면 검증 실패를 "옛 Agent" 로 오진한다.
+/// ★ 결함 87 — 분류를 여기서 정하고 받은 프레임의 내용을 오류에 넣지 않는다([`session_protocol_error`]).
+/// ★ session_id 는 대조하지 않는다 — FRESH 는 세션 복원 대상이 아니다(Resume lane 만 요구한다).
+fn read_session_hello(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    agent_keys: &InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+) -> Result<pb::AgentSessionHello, SessionHandlerError> {
+    let message = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| {
+        session_framing_error(
+            "HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다)",
+            "HELLO_REJECTED: 첫 프레임을 Hello 로 검증하지 못했다(서명 · 시각 · replay · 형식)",
+            &e,
         )
     })?;
     let hello = match message {
         IngressMessage::SessionHello(verified) => verified
             .require_replay_checked()
-            .map_err(|e| format!("AgentSessionHello replay 검사 실패: {e:?}"))?
+            .map_err(|e| session_protocol_error(format!("HELLO_REJECTED: replay 검사 실패: {e:?}")))?
             .clone(),
-        other => {
-            return Err(SessionHandlerError::Legacy(format!(
-                "HELLO_MISSING: 첫 프레임이 Hello 가 아니다 — {other:?}"
-            )))
+        _ => {
+            return Err(session_protocol_error(
+                "HELLO_MISSING: 첫 프레임이 Hello 가 아니다 — 모든 연결은 Agent 의 Hello 로 시작한다(D2)",
+            ))
         }
     };
-    if hello.mode != gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
-        return Err(SessionHandlerError::Legacy(format!(
-            "HELLO_REJECTED: mode 불일치 — 순차 lane 은 FRESH({}) 만 받는다, 받은 값 {}",
-            gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
-            hello.mode
-        )));
-    }
     if hello.node_id != config.agent_device_id {
-        return Err(SessionHandlerError::Legacy(format!(
-            "HELLO_REJECTED: node_id 불일치 — 기대값 {} != {}",
-            config.agent_device_id, hello.node_id
-        )));
-    }
-    if hello.connection_attempt != connection_attempt {
-        return Err(SessionHandlerError::Legacy(format!(
-            "HELLO_REJECTED: connection_attempt 불일치 — 기대값 {} != {}",
-            connection_attempt, hello.connection_attempt
+        return Err(session_protocol_error(format!(
+            "HELLO_REJECTED: node_id 불일치 — 기대값 {}",
+            config.agent_device_id
         )));
     }
     println!(
         "SESSION_HELLO_ACCEPTED mode={} node_id={} connection_attempt={}",
         hello.mode, hello.node_id, hello.connection_attempt
     );
-    Ok(())
+    Ok(hello)
 }
 
 /// Hello-first dispatcher for the explicit Resume lane. This is deliberately

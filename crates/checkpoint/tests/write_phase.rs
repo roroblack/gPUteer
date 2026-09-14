@@ -40,3 +40,17 @@ fn an_unblocked_write_succeeds() {
     let manifest = manifest_for("ckpt-83", "job-83", "attempt-83", 0, 1, &files);
     write_checkpoint_phased(root.path(), &manifest, &files, 0).expect("막힌 곳이 없으면 확정한다");
 }
+
+/// 결함 90 (재검수 59) — 파일 검증은 성공하고 **검증 상태 마커** 기록만 실패하면 Publish 다(산출물은 검증됐다).
+#[test]
+fn a_blocked_hash_verified_marker_fails_after_verification() {
+    use gputeer_checkpoint::durability::{state_marker_name, DurabilityState};
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("ckpt-83");
+    std::fs::create_dir_all(dir.join(state_marker_name(DurabilityState::HashVerified))).unwrap();
+    let files = files();
+    let manifest = manifest_for("ckpt-83", "job-83", "attempt-83", 0, 1, &files);
+    let (phase, error) = write_checkpoint_phased(root.path(), &manifest, &files, 0)
+        .expect_err("검증 상태 마커 자리가 디렉터리면 마커 기록이 실패한다");
+    assert_eq!(phase, WritePhase::Publish, "{error}");
+}

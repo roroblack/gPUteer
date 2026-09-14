@@ -1343,7 +1343,13 @@ fn run_one_connection_inner(
     // ★ 결함 82 — 작업 디렉터리 삭제 실패는 종료 보고를 처리한 **뒤에** 알린다. 남의 PC 에 남은 출력을 조용히 넘기지 않는다(§0.5).
     if let Some(error) = pending_cleanup_failure.take() {
         return Err(format!(
-            "WORKLOAD_CLEANUP_FAILED: 작업 디렉터리를 지우지 못했다(종료 보고는 처리했다): {error}"
+            "WORKLOAD_CLEANUP_FAILED: 작업 디렉터리를 지우지 못했다({}): {error}",
+            // 결함 91 — 보내는 설정일 때만 "보냈다" 다. 보낼 관측이 없으면 이 자리에 오기 전에 ATTEMPT_REPORT_REFUSED 로 끝난다.
+            if config.send_attempt_report {
+                "종료 보고는 보냈다"
+            } else {
+                "종료 보고를 보내는 설정이 아니다 — 보고 없음"
+            }
         ));
     }
 
@@ -1939,8 +1945,8 @@ fn run_and_capture_workload(
 
     // ★ 결함 ⑲ — 여기부터의 실패는 **종료를 관측한 뒤**의 일이다. 전에는 `?` 로 돌려 Agent 오류가 됐고,
     //   그러면 종료 보고가 만들어지지 않아 관측한 종료까지 사라졌다. 이제 실패 단계를 보고에 싣는다.
-    //   ★ 상위 확정 작업(finalize_workload_outputs)은 다시 부르지 않는다 — 내부 포인터 교체는 최대 5회 시도한다
-    //     (checkpoint atomic.rs). D3 "재시도를 끝낸 뒤" 는 그 뒤다(결함 86 — 전에는 "재시도 0회" 로 넓게 적었다).
+    //   ★ 상위 확정 작업(finalize_workload_outputs)은 다시 부르지 않는다 — 포인터 rename 은 최대 5회 반복한다
+    //     (checkpoint atomic.rs — 임시 파일 생성 · 쓰기 · sync 실패는 그 반복 전에 반환한다, 결함 91). D3 "재시도를 끝낸 뒤" 는 그 뒤다(결함 86 — 전에는 "재시도 0회" 로 넓게 적었다).
     let (file_count, total_bytes, finalization_failure) = match finalize_workload_outputs(
         run_dir,
         spec,
@@ -1952,7 +1958,7 @@ fn run_and_capture_workload(
         attempt_id,
     ) {
         Ok((files, publish_failure)) => {
-            // 결함 83 — 해시 검증 뒤의 공개 실패는 확정 실패가 아니다(보고는 COMPLETED). 그래도 알린다.
+            // 결함 83 · 90 — 파일 해시 검증 뒤의 실패는 확정 실패가 아니다(exit 0 이면 COMPLETED, 아니면 FAILED — 결함 91). 그래도 알린다.
             if let Some(detail) = publish_failure {
                 println!("WORKLOAD_CHECKPOINT_PUBLISH_FAILED job_id={} detail={detail}", spec.job_id);
             }
@@ -2175,7 +2181,7 @@ fn finalize_workload_checkpoint(
     );
     match write_checkpoint_phased(checkpoint_root, &manifest, files, 0) {
         Ok(_) => Ok(None),
-        // ★ 결함 83 — 해시 검증까지 끝난 뒤의 실패(LATEST 교체 · COMMITTED 기록)는 산출물 확정 실패가 아니다.
+        // ★ 결함 83 · 90 — 파일 해시 검증 뒤의 실패(검증 상태 마커 · LATEST 교체 · COMMITTED 기록)는 산출물 확정 실패가 아니다.
         //   규범의 정상 완료 조건은 HASH_VERIFIED 다. 공개 실패는 checkpoint 쪽 `.publication-failed` 가 재개 후보에서 뺀다.
         Err((WritePhase::Publish, error)) => Ok(Some(format!(
             "체크포인트 공개 실패(checkpoint_id={checkpoint_id}): {error}"
