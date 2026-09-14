@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-09-14 12:38 — B+E 구현 계획 · 제안서 정정(mode 번호 · D2 · Ack 수명 분류)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md`
+- 스트림: Protocol · Agent · Coordinator
+- 수행: 계약 단계에서 고칠 자리를 코드로 찾아 계획에 적었다(canonical.rs · signable.rs · to_fields.rs · constants.rs ·
+  framed_ingress.rs · reference_canonical.py · 벡터 · protocol 테스트 셋). 그 과정에서 제안서를 고쳤다 — mode 1 은 코드에서
+  `MODE_MULTI_AGENT_GRANT` 로 다중 Agent lane(Hello -> Grant -> ACK)에 쓰이고 있어, D2 는 "새 흐름" 이 아니라 "순차 lane 도
+  그 방식으로" 에 가깝다. AttemptReportAck 는 ShortLived(session_nonce 가 replay nonce). D3 가 proto 에 들어갈 수 있어
+  D3 결정 전에는 계약 단계를 커밋하지 않는다
+- 검증: 문서만 바뀌었다
+- 리포트: 계획 문서 · 제안서
+
+---
+
 ## 2026-09-14 12:35 — B+E 변경 제안 승인 · D1~D3 설명 요청 · 재검수 50 중단(사용량 한도)
 
 - 계획: `docs/contracts/proposals/2026-09-14_1118_보고_연결과_받았다_응답.md`
