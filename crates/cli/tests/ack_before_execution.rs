@@ -388,7 +388,7 @@ fn a_refused_preflight_sends_no_ack() {
 
 /// N2 — Lease 20초 · 워크로드 약 30초. ACK 다음 첫 읽기(heartbeat)는 Lease 만료 무렵 포기한다 —
 ///   10초(`IO_TIMEOUT`)에 포기하지도, 워크로드가 끝날 때까지 기다리지도 않는다.
-///   ★ 시간은 Coordinator 가 연결을 받은 사건(CONNECTION_ATTEMPT)부터 잰다.
+///   ★ 시간은 ACK 가 간 사건(Agent 의 ACK_SENT)부터 잰다 — 연결 수락 -> ACK 사이 지연이 섞이지 않게(결함 51).
 #[test]
 fn the_first_read_after_ack_gives_up_at_lease_expiry() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
@@ -411,10 +411,10 @@ fn the_first_read_after_ack_gives_up_at_lease_expiry() {
         !coordinator.success && !coordinator.output().contains("HEARTBEAT_ACCEPTED"),
         "Lease 가 끝난 뒤에 온 heartbeat 를 받았다\n{all}"
     );
-    let (_, accepted_at) = coordinator
-        .first("CONNECTION_ATTEMPT")
-        .unwrap_or_else(|| panic!("CONNECTION_ATTEMPT 가 없다\n{all}"));
-    let waited = coordinator.ended.saturating_duration_since(accepted_at);
+    let (_, acked_at) = agent
+        .first("ACK_SENT")
+        .unwrap_or_else(|| panic!("ACK_SENT 가 없다 — ACK 단계에 닿지 않았다\n{all}"));
+    let waited = coordinator.ended.saturating_duration_since(acked_at);
     assert!(
         waited >= Duration::from_secs(15),
         "Lease 만료가 아니라 10초 시한에 포기했다({waited:?})\n{all}"
@@ -454,7 +454,8 @@ fn a_connection_that_ran_the_workload_does_not_reconnect_and_run_it_again() {
 }
 
 /// N4 — 결함 ㊺. Agent 가 Revoke 를 기다리는데 Coordinator 가 ACK 직후 끊는다. Revoke 읽기 실패는
-///   원래 재접속 가능 오류지만, 워크로드를 띄운 연결이므로 재접속하지 않고 실패로 끝난다.
+///   원래 재접속 가능 오류지만, 실행을 시도한 연결이므로 재접속하지 않고 실패로 끝난다.
+///   ★ 결함 ㊾ — 억제된 오류가 **Revoke 읽기의 transport 오류**인지 본다(다른 실패가 대신 통과시키지 않게).
 #[test]
 fn a_revoke_read_failure_after_the_workload_does_not_reconnect_and_run_it_again() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
@@ -481,8 +482,14 @@ fn a_revoke_read_failure_after_the_workload_does_not_reconnect_and_run_it_again(
         "Revoke 읽기 실패 뒤 재접속해 워크로드를 다시 돌렸다\n{all}"
     );
     assert!(
-        !agent.success && agent.output().contains("WORKLOAD_ALREADY_RAN"),
+        !agent.success && agent.output().contains("WORKLOAD_EXECUTION_ATTEMPTED"),
         "재접속을 억제한 사유가 보고되지 않았다\n{all}"
+    );
+    assert!(
+        agent
+            .output()
+            .contains("RETRYABLE(억제)_CONNECTION: RevokeLeaseNotice 프레임 읽기/검증 실패"),
+        "억제된 오류가 Revoke 읽기 실패가 아니다 — 다른 실패가 이 테스트를 대신 통과시켰다\n{all}"
     );
     assert_eq!(
         coordinator.count("CONNECTION_ATTEMPT"),
@@ -523,4 +530,16 @@ fn the_read_timeout_returns_to_the_io_timeout_after_the_first_read() {
         "첫 heartbeat 만 받고 두 번째에서 포기해야 한다\n{all}"
     );
     assert!(!coordinator.success, "두 번째 읽기가 10초를 넘겨 기다렸다\n{all}");
+    // ★ 결함 ㊿ — 실패 원인과 시간까지 본다. 복원값이 10초가 아니거나 다른 이유의 EOF 면 여기서 걸린다.
+    assert!(
+        coordinator.output().contains("NodeHeartbeat 프레임 읽기/검증 실패"),
+        "두 번째 heartbeat 읽기의 시한이 아니라 다른 이유로 끝났다\n{all}"
+    );
+    let (_, first_at) = coordinator.first("HEARTBEAT_ACCEPTED").expect("HEARTBEAT_ACCEPTED");
+    let waited = coordinator.ended.saturating_duration_since(first_at);
+    assert!(
+        waited >= Duration::from_secs(8) && waited < Duration::from_millis(12_500),
+        "첫 읽기 뒤 시한이 10초로 돌아오지 않았다({waited:?})\n{all}"
+    );
+    assert!(!agent.killed, "Agent 가 시한 안에 끝나지 않았다\n{all}");
 }

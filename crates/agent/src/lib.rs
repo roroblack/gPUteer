@@ -734,6 +734,9 @@ fn fresh_nonce() -> Result<Vec<u8>, String> {
 ///   돌려보내지 않는다. 바깥 루프(`run()`)는 재접속하면 같은 Grant 로 처음부터 다시 돌고, 그러면
 ///   워크로드가 두 번 실행된다(`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
 ///   첫 커밋(391e49d)은 peek 경로 하나만 막았고 Revoke 읽기 실패 · 갱신 응답 유실 복구가 남아 있었다.
+///   ★ 결함 ㊽ (재검수 50) — 기준은 **실행을 시도했는가**다(두 번째 관문 거부 · 기동 실패도 포함). 기동
+///     성공만 세면 그 사이 실패가 재접속으로 이어져 같은 Grant 를 다시 받는데, 기동 실패가 정말 아무것도
+///     남기지 않았는지 이 층에서 확인할 수 없어 보수적으로 막는다. 전에는 "워크로드를 이미 띄웠다" 고 적었다.
 #[allow(clippy::too_many_arguments)]
 fn run_one_connection(
     config: AgentConfig,
@@ -747,7 +750,7 @@ fn run_one_connection(
     budget: &mut RetryBudget,
     policy: &RetryPolicy,
 ) -> Result<(), String> {
-    let mut workload_started = false;
+    let mut execution_attempted = false;
     let result = run_one_connection_inner(
         config,
         stream,
@@ -759,10 +762,10 @@ fn run_one_connection(
         fence_watermark,
         budget,
         policy,
-        &mut workload_started,
+        &mut execution_attempted,
     );
     result.map_err(|error| {
-        if workload_started {
+        if execution_attempted {
             not_retried_after_workload(&error)
         } else {
             error
@@ -773,8 +776,8 @@ fn run_one_connection(
 /// 재접속 · 재조회 표지를 바꿔 `SessionError::from` 이 Fatal 로 분류하게 한다(결함 ㊺).
 fn not_retried_after_workload(error: &str) -> String {
     format!(
-        "WORKLOAD_ALREADY_RAN: 이 연결에서 워크로드를 이미 띄웠다 — 재접속하면 같은 Grant 로 \
-         다시 실행하므로 재시도하지 않는다: {}",
+        "WORKLOAD_EXECUTION_ATTEMPTED: 이 연결에서 워크로드 실행을 시도했다(기동 성공 여부와 무관) — 재접속하면 같은 Grant 로 \
+         다시 실행할 수 있으므로 재시도하지 않는다: {}",
         error
             .replace("RETRYABLE_", "RETRYABLE(억제)_")
             .replace("AMBIGUOUS_RENEW", "AMBIGUOUS(억제)_RENEW")
@@ -793,7 +796,7 @@ fn run_one_connection_inner(
     mut fence_watermark: &mut DurableFenceWatermark,
     budget: &mut RetryBudget,
     policy: &RetryPolicy,
-    workload_started: &mut bool,
+    execution_attempted: &mut bool,
 ) -> Result<(), String> {
     // ★ fail closed — fence watermark 저장소를 **네트워크 연결보다
     //   먼저** 연다. 열 수 없는 저장소로 epoch 를 검증하는 척하지
@@ -942,7 +945,7 @@ fn run_one_connection_inner(
     let mut terminal_observation: Option<crate::report::TerminalObservation> = None;
     // ★ 결함 ⑱ — 워크로드가 있으면 ACK 는 실행 **전**에 간다(아래). 보낸 것을 여기 담는다.
     let mut sent_ack: Option<pb::AgentGrantAck> = None;
-    // ★ `workload_started`(인자) — 이 연결에서 워크로드를 띄우려 했는가. 바깥 `run_one_connection` 이
+    // ★ `execution_attempted`(인자) — 이 연결에서 워크로드를 띄우려 했는가. 바깥 `run_one_connection` 이
     //   그 뒤의 **모든** 오류를 재접속 불가로 바꾼다(결함 ㊺).
     if let Some(loaded) = workload.as_ref() {
         let spec = &loaded.spec;
@@ -1027,7 +1030,7 @@ fn run_one_connection_inner(
             send_grant_ack(&mut stream, signing_key, &grant, &config, clock)
                 .map_err(|ack_error| fail_after_cleanup(ack_error, &run_dir))?,
         );
-        *workload_started = will_execute;
+        *execution_attempted = will_execute;
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
         //   작업 디렉터리를 지운다.
         //
@@ -1298,13 +1301,13 @@ fn run_one_connection_inner(
 
     // ★ 워크로드를 띄운 연결에서는 끊김을 재접속 사유로 쓰지 않는다 — 재접속은 같은 Grant 로
     //   처음부터 다시 돌고, 그러면 워크로드가 **두 번** 실행된다. 설계 A 로 ACK 가 실행 전에 가면
-    //   기본 Coordinator 는 ACK 직후 닫으므로 실행이 끝날 즈음엔 거의 항상 닫혀 있다
+    //   기본 Coordinator 는 ACK 직후 닫으므로 실행이 끝날 즈음엔 닫혀 있을 수 있다(빈도는 재지 않았다 — 결함 52)
     //   (`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
     if config.reconnect_enabled
         && !config.do_renew
         && !config.expect_replay
         && config.expect_revoke_after_round.is_none()
-        && !*workload_started
+        && !*execution_attempted
         && peer_closed_after_ack(&stream)?
     {
         return Err("RETRYABLE_CONNECTION: coordinator disconnected after ACK".into());
@@ -2982,7 +2985,7 @@ mod defect_42_45_tests {
                 matches!(SessionError::from(mapped.clone()), SessionError::Fatal(_)),
                 "{mapped}"
             );
-            assert!(mapped.starts_with("WORKLOAD_ALREADY_RAN"), "{mapped}");
+            assert!(mapped.starts_with("WORKLOAD_EXECUTION_ATTEMPTED"), "{mapped}");
         }
     }
 }
