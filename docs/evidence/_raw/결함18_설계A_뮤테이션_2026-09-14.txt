@@ -1,0 +1,17 @@
+ok --no-fail-fast
+exit=0
+[M1 ACK 를 워크로드 뒤로 되돌린다] caught=True compile_error=False failed=['a_workload_longer_than_the_io_timeout_is_acknowledged_before_it_runs', 'a_workload_longer_than_the_io_timeout_still_gets_its_report_stored', 'the_first_read_after_ack_gives_up_at_lease_expiry', 'the_first_read_after_ack_waits_for_the_workload_within_the_lease'] missing=[]
+[M2 첫 읽기 시한을 10초로 되돌린다] caught=True compile_error=False failed=['a_workload_longer_than_the_io_timeout_still_gets_its_report_stored', 'the_first_read_after_ack_gives_up_at_lease_expiry', 'the_first_read_after_ack_waits_for_the_workload_within_the_lease'] missing=[]
+[M3 첫 읽기 시한의 Lease 상한을 없앤다] caught=True compile_error=False failed=['the_first_read_after_ack_gives_up_at_lease_expiry'] missing=[]
+[M4 ACK 전 preflight 를 뺀다] caught=True compile_error=False failed=['a_refused_preflight_sends_no_ack'] missing=[]
+[M5 실행 뒤 재접속 억제를 뺀다] caught=True compile_error=False failed=['a_connection_that_ran_the_workload_does_not_reconnect_and_run_it_again', 'with_the_report_off_the_workload_runs_but_no_report_row_is_stored'] missing=[]
+restored True
+MUTATIONS 5/5 caught
+ M crates/agent/src/exec.rs
+ M crates/agent/src/lib.rs
+ M crates/cli/tests/grant_over_wire.rs
+ M crates/coordinator/src/lib.rs
+?? crates/cli/tests/ack_before_execution.rs
+?? "docs/runbooks/\352\262\200\354\210\230_\355\224\204\353\241\254\355\224\204\355\212\270/49_\352\265\254\355\230\204\352\262\200\354\210\230_\352\262\260\355\225\25018_\354\204\244\352\263\204A.md"
+
+[exited with code 0]

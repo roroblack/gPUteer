@@ -866,6 +866,59 @@ fn classify_legacy_session_error(
     }
 }
 
+/// ★★ 결함 ⑱ (설계 A, 2026-09-14) — ACK **다음 첫 읽기**의 시한.
+///
+/// Manifest 가 실린 Grant 면 Agent 는 ACK 를 보낸 **뒤** 워크로드를 돌리고, 끝난 뒤에야
+/// heartbeat · 이웃 신고 · 종료 보고 · 갱신 요청 중 첫 프레임을 보낸다. 그 첫 읽기를 10초
+/// (`IO_TIMEOUT`)로 두면 10초보다 긴 작업이 전부 끊긴다. 그래서 첫 읽기만 **Lease 만료까지 남은
+/// 시간**(10초보다 짧아지지는 않는다)으로 두고, 읽고 나면 다시 10초로 되돌린다.
+///
+/// ★ 이 연결에서 Lease 만료 뒤에 오는 것을 받지 않는다는 뜻이다. 규범의 STALE 제출
+///   (`state-machines.md` §3 — Lease 를 잃고도 계속 돌아 나중에 내는 것)을 막는 것이 아니다 —
+///   그 제출은 다른 연결로 와야 하고, 그 자리는 설계 B+E 의 보고 연결이다.
+/// ★ 이 연결은 순차로 처리되므로 기다리는 동안 다른 연결을 받지 못한다(설계 문서 §3 의 A).
+struct PostAckWait {
+    armed: bool,
+}
+
+impl PostAckWait {
+    fn arm(
+        stream: &std::net::TcpStream,
+        grant: &pb::ExecutionGrant,
+        now_unix_ms: u64,
+    ) -> Result<Self, String> {
+        if grant.manifest.is_none() {
+            return Ok(Self { armed: false });
+        }
+        let lease = grant
+            .lease
+            .as_ref()
+            .ok_or_else(|| "POST_ACK_WAIT: Manifest 가 실린 Grant 에 Lease 가 없다".to_string())?;
+        let remaining_ms = lease.expires_at_unix_ms.saturating_sub(now_unix_ms);
+        if remaining_ms == 0 {
+            return Err(format!(
+                "POST_ACK_WAIT_REFUSED: Lease 가 이미 만료됐다(expires_at_unix_ms={} now={now_unix_ms})",
+                lease.expires_at_unix_ms
+            ));
+        }
+        let wait = Duration::from_millis(remaining_ms).max(IO_TIMEOUT);
+        stream
+            .set_read_timeout(Some(wait))
+            .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 설정 실패: {e}"))?;
+        Ok(Self { armed: true })
+    }
+
+    fn after_read(&mut self, stream: &std::net::TcpStream) -> Result<(), String> {
+        if self.armed {
+            stream
+                .set_read_timeout(Some(IO_TIMEOUT))
+                .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 복원 실패: {e}"))?;
+            self.armed = false;
+        }
+        Ok(())
+    }
+}
+
 /// Dispatch and serve exactly one accepted connection. The implementation is
 /// deliberately sequential; the outer loop owns accept/count/error isolation.
 #[allow(clippy::too_many_arguments)]
@@ -1068,6 +1121,10 @@ fn serve_one_connection_impl(
             .into());
     }
 
+    // ★★ 결함 ⑱ (설계 A) — Manifest 가 실렸으면 Agent 는 ACK 뒤에 워크로드를 돌린다. 그래서
+    //   ACK **다음 첫 읽기**는 10초가 아니라 Lease 만료까지 기다린다. 이유 · 한계는 `PostAckWait`.
+    let mut post_ack_wait = PostAckWait::arm(stream, &grant, clock.now_unix_ms())?;
+
     if config.drop_connection_after_ack_once
         && config.max_connections > 1
         && connection_attempt == 0
@@ -1160,6 +1217,7 @@ fn serve_one_connection_impl(
             clock,
         )
         .map_err(|e| format!("NodeHeartbeat 프레임 읽기/검증 실패: {e}"))?;
+        post_ack_wait.after_read(stream)?;
 
         // ★ `require_replay_checked()` — ACK·갱신과 같은 이유(§10).
         //   heartbeat 를 재생할 수 있으면 이미 죽은 노드를 살아 있는
@@ -1304,6 +1362,7 @@ fn serve_one_connection_impl(
             clock,
         )
         .map_err(|e| format!("NeighborUnreachableReport 프레임 읽기/검증 실패: {e}"))?;
+        post_ack_wait.after_read(stream)?;
 
         // ★ `require_replay_checked()` — 이 메시지는 `ShortLived` 다.
         //   재생을 허용하면 **오래된 관측을 지금 것처럼** 보이게 만들 수
@@ -1487,6 +1546,7 @@ fn serve_one_connection_impl(
             clock,
         )
         .map_err(|e| format!("AttemptReport 프레임 읽기/검증 실패: {e}"))?;
+        post_ack_wait.after_read(stream)?;
 
         let verified = match &message {
             IngressMessage::AttemptReport(verified) => verified,
@@ -1685,6 +1745,7 @@ fn serve_one_connection_impl(
                 clock,
             )
             .map_err(|e| format!("RenewLeaseRequest 프레임 읽기/검증 실패: {e}"))?;
+            post_ack_wait.after_read(stream)?;
 
             // ★ `require_replay_checked()` — ACK 와 같은 이유(§10).
             let renew_req = match &renew_msg {

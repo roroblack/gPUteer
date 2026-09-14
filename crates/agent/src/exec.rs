@@ -360,6 +360,20 @@ pub fn execute_with_control(
     policy: ExecutionPolicy,
     on_started: impl FnOnce(WorkloadStopper),
 ) -> Result<ExecutionOutcome, ExecutionError> {
+    // ★ 사전 관문은 `preflight` 한 곳에 있다 — Agent 가 ACK **전에** 같은 함수를 부른다(결함 ⑱).
+    preflight(&policy)?;
+    platform::execute(spec, &policy, on_started)
+}
+
+/// 자식을 띄우기 **전에** 판정할 수 있는 관문 — opt-in · 상한 값 · GPU 요구.
+///
+/// ★ 결함 ⑱ (설계 A, 2026-09-14) — Agent 는 이 함수로 Grant 를 받아들일 수 있는지 먼저 보고
+///   ACK 를 보낸 **뒤에** 실행한다. 규범(`docs/protocol/state-machines.md` §3)에서 Grant 수락
+///   (GRANT_ACCEPTED)은 프로세스 기동(PROCESS_STARTED) **전**의 사건이다.
+///   [`execute_with_control`] 도 같은 함수를 부른다 — 관문을 두 벌 두지 않는다.
+///
+/// 플랫폼 지원 · 실제 상한 적용 · 기동은 여기서 보지 않는다 — 띄워 봐야 아는 것이다.
+pub fn preflight(policy: &ExecutionPolicy) -> Result<(), ExecutionError> {
     if !policy.opted_in {
         return Err(ExecutionError::NotOptedIn);
     }
@@ -394,7 +408,7 @@ pub fn execute_with_control(
             });
         }
     }
-    platform::execute(spec, &policy, on_started)
+    Ok(())
 }
 
 #[cfg(windows)]

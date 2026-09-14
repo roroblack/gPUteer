@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-09-14 11:17 — 결함 ⑱ 설계 A 구현 · 실행 뒤 재접속 억제
+
+- 계획: `docs/plans/2026-09-10_2142_결함18_ACK_시한_설계_선택지.md` §7
+- 스트림: Agent · Coordinator
+- 수행: 사전 관문을 `exec::preflight` 로 떼어 Agent 가 ACK **전에** 본다 — 거부면 ACK 없이 끝, NotOptedIn 은
+  ACK 하고 실행만 건너뛴다. ACK 는 실행 전에 간다(`send_grant_ack`). Coordinator 는 Manifest 가 실린 Grant 면
+  ACK 다음 첫 읽기만 Lease 만료까지 기다리고 다시 10초로(`PostAckWait`). 워크로드를 띄운 연결에서는 끊김을
+  재접속 사유로 쓰지 않는다(새 결함 `2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`). proto 는 안 바꿨다
+- 검증: 워크스페이스 `-j 2 --no-fail-fast` 1109 passed · 0 failed · ignored 1 · 경고 0 · selftest exit 0(시나리오 줄 97) · 뮤테이션 5/5. 뮤테이션 — M1 ACK 를 워크로드 뒤로 되돌린다; M2 첫 읽기 시한을 10초로 되돌린다; M3 첫 읽기 시한의 Lease 상한을 없앤다; M4 ACK 전 preflight 를 뺀다; M5 실행 뒤 재접속 억제를 뺀다
+  ★ 첫 뮤테이션 실행은 3/5 로 보였다 — `cargo test --test A --test B` 가 `--no-fail-fast` 없이 첫 대상의
+    실패에서 멈춰 grant_over_wire(P3)가 **돌지 않았다**(뮤테이션 스크립트 결함 — P3 가 통과한 것이 아니다).
+    P3 단독 실행에서 M1 이 잡히는 것(Coordinator ACK 읽기 10초 os 10060)을 보고 `--no-fail-fast` 로 다시 쟀다
+- 리포트: 결함 ⑱ §6 · 새 결함 §6 · 설계 문서 §7 "A 결과"
+
+---
+
 ## 2026-09-14 10:55 — 결함 ⑱ 설계 결정(A 먼저 · 목표 B+E) · 새 결함: 재접속이 워크로드를 다시 돌린다
 
 - 계획: `docs/plans/2026-09-10_2142_결함18_ACK_시한_설계_선택지.md` §7

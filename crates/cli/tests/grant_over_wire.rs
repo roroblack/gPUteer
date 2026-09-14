@@ -744,3 +744,30 @@ fn a_manifest_file_on_the_stored_lane_is_refused_at_startup() {
     );
     assert!(!output.contains("READY"), "소켓을 연 뒤에 거부했다: {output}");
 }
+
+/// ★★ 결함 ⑱ (설계 A, 2026-09-14) — **10초보다 긴** 워크로드(약 15초)도 ACK 를 거쳐 종료 보고가
+///   저장된다. 고치기 전에는 Coordinator 가 ACK 읽기 10초 시한에 먼저 걸렸다
+///   (`docs/evidence/_raw/결함18_ACK_시한_실측_2026-09-10.txt`). 이 lane 의 Lease 는 600초라 기다림이
+///   Lease 에 닿지 않는다.
+#[cfg(windows)]
+#[test]
+fn a_workload_longer_than_the_io_timeout_still_gets_its_report_stored() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,ping,-n,16,127.0.0.1"));
+    let (coordinator, addr) =
+        spawn_coordinator(&db, dir.path(), &["--expect-attempt-reports", "1"]);
+    let (agent_ok, agent_output) = run_executing_agent(&addr, dir.path(), true);
+    let (coordinator_ok, coordinator_output) = finish(coordinator, "coordinator-stub");
+    let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
+
+    assert!(agent_ok, "Agent 가 실패했다\n{both}");
+    assert!(coordinator_ok, "Coordinator 가 실패했다\n{both}");
+    assert!(
+        agent_output.contains("WORKLOAD_EXITED") && agent_output.contains("exit_code=0"),
+        "워크로드가 끝까지 돌지 않았다\n{both}"
+    );
+    assert!(
+        coordinator_output.contains("ATTEMPT_REPORT_STORED"),
+        "10초보다 긴 워크로드의 종료 보고가 저장되지 않았다\n{both}"
+    );
+}

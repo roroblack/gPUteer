@@ -887,6 +887,12 @@ fn run_one_connection(
     //   어긋나 Coordinator 가 `AttemptReport` 를 ACK 로 읽으려다 실패한다.
     //   사실만 들고 있다가 ACK·heartbeat·이웃 신고 뒤에 보낸다.
     let mut terminal_observation: Option<crate::report::TerminalObservation> = None;
+    // ★ 결함 ⑱ — 워크로드가 있으면 ACK 는 실행 **전**에 간다(아래). 보낸 것을 여기 담는다.
+    let mut sent_ack: Option<pb::AgentGrantAck> = None;
+    // ★ 이 연결에서 워크로드를 실제로 띄우려 했는가. 그랬다면 연결 끊김을 재접속 사유로
+    //   쓰지 않는다 — 재접속하면 같은 Grant 로 **다시 실행한다**
+    //   (`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
+    let mut workload_started = false;
     if let Some(loaded) = workload.as_ref() {
         let spec = &loaded.spec;
         // 자식의 출력을 받을 별도 작업 디렉터리.
@@ -954,6 +960,21 @@ fn run_one_connection(
             },
             cgroup_parent: config.workload_cgroup_parent.clone(),
         };
+        // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
+        //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
+        //   ACK 읽기 시한에 먼저 걸렸다(실측 `docs/evidence/_raw/결함18_ACK_시한_실측_2026-09-10.txt`).
+        //   관문이 거부하면 지금처럼 ACK 없이 끝낸다 — 받아들이지 못할 Grant 에 "받았다" 고
+        //   답하지 않는다. opt-in 이 꺼져 있으면 실행만 건너뛰고 ACK 는 보낸다(전과 같다).
+        let will_execute = match exec::preflight(&policy) {
+            Ok(()) => true,
+            Err(exec::ExecutionError::NotOptedIn) => false,
+            Err(refused) => {
+                remove_dir_if_present(&run_dir)?;
+                return Err(refused.to_string());
+            }
+        };
+        sent_ack = Some(send_grant_ack(&mut stream, signing_key, &grant, &config, clock)?);
+        workload_started = will_execute;
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
         //   작업 디렉터리를 지운다.
         //
@@ -1040,34 +1061,11 @@ fn run_one_connection(
         coordinator_keys.insert(test_signer_id.clone(), config.coordinator_verifying_key);
     }
 
-    let now = clock.now_unix_ms();
-    let mut ack = pb::AgentGrantAck {
-        schema_version: 1,
-        grant_id: grant.grant_id.clone(),
-        attempt_id: grant.attempt_id.clone(),
-        agent_device_id: config.agent_device_id.clone(),
-        issued_at_unix_ms: now,
-        expires_at_unix_ms: now + 60_000,
-        nonce: derive_nonce("grant-ack", &grant.grant_id, config.connection_attempt),
-        accepted: true,
-        ..Default::default()
+    // ★ 워크로드가 있으면 ACK 는 이미 실행 **전**에 갔다(결함 ⑱). 없으면 여기서 보낸다.
+    let ack = match sent_ack {
+        Some(sent) => sent,
+        None => send_grant_ack(&mut stream, signing_key, &grant, &config, clock)?,
     };
-    ack.agent_signature = sign(&signing_key, &ack).to_vec();
-
-    if config.corrupt_own_signature {
-        let last = ack
-            .agent_signature
-            .last_mut()
-            .ok_or_else(|| "agent_signature 가 비어 있다".to_string())?;
-        *last ^= 0x01;
-    }
-
-    let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
-        .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
-    stream
-        .write_all(&frame)
-        .map_err(|e| format!("ACK 전송 실패: {e}"))?;
-    stream.flush().map_err(|e| e.to_string())?;
 
     // ★ 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계).
     //
@@ -1245,10 +1243,15 @@ fn run_one_connection(
         );
     }
 
+    // ★ 워크로드를 띄운 연결에서는 끊김을 재접속 사유로 쓰지 않는다 — 재접속은 같은 Grant 로
+    //   처음부터 다시 돌고, 그러면 워크로드가 **두 번** 실행된다. 설계 A 로 ACK 가 실행 전에 가면
+    //   기본 Coordinator 는 ACK 직후 닫으므로 실행이 끝날 즈음엔 거의 항상 닫혀 있다
+    //   (`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
     if config.reconnect_enabled
         && !config.do_renew
         && !config.expect_replay
         && config.expect_revoke_after_round.is_none()
+        && !workload_started
         && peer_closed_after_ack(&stream)?
     {
         return Err("RETRYABLE_CONNECTION: coordinator disconnected after ACK".into());
@@ -2085,6 +2088,49 @@ fn classify_renew_result_error(error: FramingError) -> String {
         }
         other => format!("RenewLeaseResult 프레임 읽기/검증 실패: {other}"),
     }
+}
+
+/// 서명된 `AgentGrantAck` 를 만들어 보낸다.
+///
+/// ★ 결함 ⑱ (설계 A) — 워크로드가 있으면 **사전 관문 뒤 · 실행 전**에, 없으면 Grant 처리 끝에
+///   부른다. 한 연결에서 한 번만 부른다 — 두 번 보내면 Coordinator 가 두 번째를 다음 프레임으로
+///   읽으려다 실패한다.
+fn send_grant_ack(
+    stream: &mut TcpStream,
+    signing_key: &SigningKey,
+    grant: &pb::ExecutionGrant,
+    config: &AgentConfig,
+    clock: &SystemClock,
+) -> Result<pb::AgentGrantAck, String> {
+    let now = clock.now_unix_ms();
+    let mut ack = pb::AgentGrantAck {
+        schema_version: 1,
+        grant_id: grant.grant_id.clone(),
+        attempt_id: grant.attempt_id.clone(),
+        agent_device_id: config.agent_device_id.clone(),
+        issued_at_unix_ms: now,
+        expires_at_unix_ms: now + 60_000,
+        nonce: derive_nonce("grant-ack", &grant.grant_id, config.connection_attempt),
+        accepted: true,
+        ..Default::default()
+    };
+    ack.agent_signature = sign(signing_key, &ack).to_vec();
+
+    if config.corrupt_own_signature {
+        let last = ack
+            .agent_signature
+            .last_mut()
+            .ok_or_else(|| "agent_signature 가 비어 있다".to_string())?;
+        *last ^= 0x01;
+    }
+
+    let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
+        .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("ACK 전송 실패: {e}"))?;
+    stream.flush().map_err(|e| e.to_string())?;
+    Ok(ack)
 }
 
 /// A coordinator that deliberately drops the transport after ACK is detected
