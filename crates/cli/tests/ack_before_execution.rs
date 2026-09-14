@@ -286,6 +286,18 @@ fn wait(mut p: Proc, limit: Duration) -> Finished {
     }
 }
 
+/// `key=` 다음의 정수를 읽는다.
+fn field_u64(line: &str, key: &str) -> u64 {
+    line.split_whitespace()
+        .find_map(|part| part.strip_prefix(key))
+        .unwrap_or_else(|| panic!("{key} 가 없다: {line}"))
+        .parse()
+        .unwrap_or_else(|e| panic!("{key} 가 정수가 아니다({e}): {line}"))
+}
+
+/// Windows 의 시한 오류(WSAETIMEDOUT). EOF 와 구분하려고 본다(결함 53).
+const TIMED_OUT: &str = "os error 10060";
+
 fn both(agent: &Finished, coordinator: &Finished) -> String {
     format!(
         "--- agent (success={}, killed={}) ---\n{}\n--- coordinator (success={}, killed={}) ---\n{}",
@@ -388,7 +400,8 @@ fn a_refused_preflight_sends_no_ack() {
 
 /// N2 — Lease 20초 · 워크로드 약 30초. ACK 다음 첫 읽기(heartbeat)는 Lease 만료 무렵 포기한다 —
 ///   10초(`IO_TIMEOUT`)에 포기하지도, 워크로드가 끝날 때까지 기다리지도 않는다.
-///   ★ 시간은 ACK 가 간 사건(Agent 의 ACK_SENT)부터 잰다 — 연결 수락 -> ACK 사이 지연이 섞이지 않게(결함 51).
+///   ★ 결함 54 · 55 — 시각을 재 추정하지 않고 Coordinator 가 찍은 **설정값**(POST_ACK_WAIT_ARMED wait_ms)과
+///     시한 오류(os error 10060)를 본다. 시각은 설정값과 느슨하게만 대조한다.
 #[test]
 fn the_first_read_after_ack_gives_up_at_lease_expiry() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
@@ -411,17 +424,24 @@ fn the_first_read_after_ack_gives_up_at_lease_expiry() {
         !coordinator.success && !coordinator.output().contains("HEARTBEAT_ACCEPTED"),
         "Lease 가 끝난 뒤에 온 heartbeat 를 받았다\n{all}"
     );
-    let (_, acked_at) = agent
-        .first("ACK_SENT")
-        .unwrap_or_else(|| panic!("ACK_SENT 가 없다 — ACK 단계에 닿지 않았다\n{all}"));
-    let waited = coordinator.ended.saturating_duration_since(acked_at);
     assert!(
-        waited >= Duration::from_secs(15),
-        "Lease 만료가 아니라 10초 시한에 포기했다({waited:?})\n{all}"
+        coordinator.output().contains(TIMED_OUT),
+        "첫 읽기 시한이 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
     );
+    let (armed_line, armed_at) = coordinator
+        .first("POST_ACK_WAIT_ARMED")
+        .unwrap_or_else(|| panic!("ACK 검증 뒤 첫 읽기 시한을 걸지 않았다\n{all}"));
+    let wait_ms = field_u64(&coordinator.lines[armed_line].1, "wait_ms=");
+    // Lease 20초는 발급 시점부터다 — 발급 -> ACK 사이가 몇 초 걸려도 남은 시간은 10초보다 길고 20초 이하다.
     assert!(
-        waited < Duration::from_secs(28),
-        "Lease 만료에서 멈추지 않고 더 기다렸다({waited:?})\n{all}"
+        (12_000..=20_000).contains(&wait_ms),
+        "첫 읽기 시한이 남은 Lease 가 아니다(wait_ms={wait_ms})\n{all}"
+    );
+    let waited = coordinator.ended.saturating_duration_since(armed_at);
+    let wait = Duration::from_millis(wait_ms);
+    assert!(
+        waited + Duration::from_secs(2) >= wait && waited <= wait + Duration::from_secs(4),
+        "설정한 시한({wait:?})대로 기다리지 않았다({waited:?}) — 느슨한 대조다\n{all}"
     );
 }
 
@@ -530,16 +550,21 @@ fn the_read_timeout_returns_to_the_io_timeout_after_the_first_read() {
         "첫 heartbeat 만 받고 두 번째에서 포기해야 한다\n{all}"
     );
     assert!(!coordinator.success, "두 번째 읽기가 10초를 넘겨 기다렸다\n{all}");
-    // ★ 결함 ㊿ — 실패 원인과 시간까지 본다. 복원값이 10초가 아니거나 다른 이유의 EOF 면 여기서 걸린다.
+    // ★ 결함 ㊿ · 53 · 55 — EOF 가 아니라 **시한 오류**로 끝났는지, 복원값이 10초인지 Coordinator 가 찍은 값으로 본다.
     assert!(
-        coordinator.output().contains("NodeHeartbeat 프레임 읽기/검증 실패"),
-        "두 번째 heartbeat 읽기의 시한이 아니라 다른 이유로 끝났다\n{all}"
+        coordinator.output().contains("NodeHeartbeat 프레임 읽기/검증 실패")
+            && coordinator.output().contains(TIMED_OUT),
+        "두 번째 heartbeat 읽기의 시한 오류가 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
     );
-    let (_, first_at) = coordinator.first("HEARTBEAT_ACCEPTED").expect("HEARTBEAT_ACCEPTED");
-    let waited = coordinator.ended.saturating_duration_since(first_at);
+    let (restored_line, restored_at) = coordinator
+        .first("POST_ACK_WAIT_RESTORED")
+        .unwrap_or_else(|| panic!("첫 읽기 뒤 시한을 되돌리지 않았다\n{all}"));
+    let restored_ms = field_u64(&coordinator.lines[restored_line].1, "timeout_ms=");
+    assert_eq!(restored_ms, 10_000, "되돌린 시한이 10초가 아니다\n{all}");
+    let waited = coordinator.ended.saturating_duration_since(restored_at);
     assert!(
-        waited >= Duration::from_secs(8) && waited < Duration::from_millis(12_500),
-        "첫 읽기 뒤 시한이 10초로 돌아오지 않았다({waited:?})\n{all}"
+        waited >= Duration::from_secs(8) && waited < Duration::from_secs(14),
+        "되돌린 시한대로 기다리지 않았다({waited:?}) — 느슨한 대조다\n{all}"
     );
     assert!(!agent.killed, "Agent 가 시한 안에 끝나지 않았다\n{all}");
 }

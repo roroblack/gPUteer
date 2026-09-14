@@ -889,36 +889,54 @@ impl PostAckWait {
         grant: &pb::ExecutionGrant,
         now_unix_ms: u64,
     ) -> Result<Self, String> {
-        if grant.manifest.is_none() {
+        let Some(wait) = post_ack_first_read_wait(grant, now_unix_ms)? else {
             return Ok(Self { armed: false });
-        }
-        let lease = grant
-            .lease
-            .as_ref()
-            .ok_or_else(|| "POST_ACK_WAIT: Manifest 가 실린 Grant 에 Lease 가 없다".to_string())?;
-        let remaining_ms = lease.expires_at_unix_ms.saturating_sub(now_unix_ms);
-        if remaining_ms == 0 {
-            return Err(format!(
-                "POST_ACK_WAIT_REFUSED: Lease 가 이미 만료됐다(expires_at_unix_ms={} now={now_unix_ms})",
-                lease.expires_at_unix_ms
-            ));
-        }
-        let wait = Duration::from_millis(remaining_ms).max(IO_TIMEOUT);
+        };
         stream
             .set_read_timeout(Some(wait))
             .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 설정 실패: {e}"))?;
+        // ★ 결함 54 · 55 — 테스트가 시각을 재 추정하지 않고 **설정값**을 직접 보게 한다.
+        println!("POST_ACK_WAIT_ARMED wait_ms={}", wait.as_millis());
         Ok(Self { armed: true })
     }
 
     fn after_read(&mut self, stream: &std::net::TcpStream) -> Result<(), String> {
         if self.armed {
+            let restored = IO_TIMEOUT;
             stream
-                .set_read_timeout(Some(IO_TIMEOUT))
+                .set_read_timeout(Some(restored))
                 .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 복원 실패: {e}"))?;
+            // ★ 결함 53 · 55 — 복원한 **값**을 찍는다(테스트가 시각 대신 이것을 본다).
+            println!("POST_ACK_WAIT_RESTORED timeout_ms={}", restored.as_millis());
             self.armed = false;
         }
         Ok(())
     }
+}
+
+/// ACK 다음 첫 읽기의 무응답 시한 — **순수 계산**(결함 55, 단위 테스트가 직접 본다).
+///
+/// Manifest 가 없으면 `None`(워크로드가 없으니 늘릴 이유가 없다). 있으면 Lease 만료까지 남은 시간,
+/// 단 `IO_TIMEOUT` 보다 짧게 두지 않는다. 이미 만료됐으면 기다리지 않고 거부한다.
+fn post_ack_first_read_wait(
+    grant: &pb::ExecutionGrant,
+    now_unix_ms: u64,
+) -> Result<Option<Duration>, String> {
+    if grant.manifest.is_none() {
+        return Ok(None);
+    }
+    let lease = grant
+        .lease
+        .as_ref()
+        .ok_or_else(|| "POST_ACK_WAIT: Manifest 가 실린 Grant 에 Lease 가 없다".to_string())?;
+    let remaining_ms = lease.expires_at_unix_ms.saturating_sub(now_unix_ms);
+    if remaining_ms == 0 {
+        return Err(format!(
+            "POST_ACK_WAIT_REFUSED: Lease 가 이미 만료됐다(expires_at_unix_ms={} now={now_unix_ms})",
+            lease.expires_at_unix_ms
+        ));
+    }
+    Ok(Some(Duration::from_millis(remaining_ms).max(IO_TIMEOUT)))
 }
 
 /// Dispatch and serve exactly one accepted connection. The implementation is
@@ -3407,5 +3425,49 @@ mod device_id_validation_tests {
         ] {
             assert!(validate_device_id(value).is_ok(), "{value:?} 가 거부됐다");
         }
+    }
+}
+
+/// 결함 55 (재검수 52) — ACK 다음 첫 읽기 시한의 계산을 직접 본다(시각을 재 추정하지 않는다).
+#[cfg(test)]
+mod post_ack_wait_tests {
+    use super::*;
+
+    fn grant(manifest: bool, expires_at_unix_ms: u64) -> pb::ExecutionGrant {
+        pb::ExecutionGrant {
+            manifest: manifest.then(pb::JobManifest::default),
+            lease: Some(pb::Lease {
+                expires_at_unix_ms,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn without_a_manifest_the_first_read_is_not_extended() {
+        assert_eq!(post_ack_first_read_wait(&grant(false, 50_000), 1_000), Ok(None));
+    }
+
+    #[test]
+    fn the_first_read_waits_for_the_remaining_lease() {
+        assert_eq!(
+            post_ack_first_read_wait(&grant(true, 21_000), 1_000),
+            Ok(Some(Duration::from_millis(20_000)))
+        );
+    }
+
+    #[test]
+    fn the_first_read_never_waits_less_than_the_io_timeout() {
+        assert_eq!(
+            post_ack_first_read_wait(&grant(true, 6_000), 1_000),
+            Ok(Some(IO_TIMEOUT))
+        );
+    }
+
+    #[test]
+    fn an_expired_lease_is_refused_instead_of_waited_for() {
+        let refused = post_ack_first_read_wait(&grant(true, 1_000), 1_000).expect_err("만료");
+        assert!(refused.contains("POST_ACK_WAIT_REFUSED"), "{refused}");
     }
 }
