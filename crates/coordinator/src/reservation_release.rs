@@ -199,6 +199,8 @@ pub enum ReservationReleaseError {
     InvalidInput(&'static str),
     /// terminal 이 아닌 outcome 으로는 풀 수 없다.
     NotTerminalOutcome(i32),
+    /// 서명은 유효하지만 필드 조합 규칙을 어긴다(B+E 계획서 §5.7 (4) — 해제 진입도 같은 검사).
+    ReportRule(gputeer_protocol::attempt_report_rules::ReportRuleError),
     /// ★ 실행이 실제로 멈췄다는 증명이 없다 — **오늘 모든 정직한 호출**이
     ///   여기서 막힌다.
     RuntimeStopNotProven,
@@ -505,7 +507,8 @@ fn validate_input(report: &pb::AttemptReport) -> Result<(), ReservationReleaseEr
     if !attempt_report_store::is_terminal_outcome(report.outcome) {
         return Err(ReservationReleaseError::NotTerminalOutcome(report.outcome));
     }
-    Ok(())
+    gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report)
+        .map_err(ReservationReleaseError::ReportRule)
 }
 
 /// 예약이 이 보고서의 것인지 본다.

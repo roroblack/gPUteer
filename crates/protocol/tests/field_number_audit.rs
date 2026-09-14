@@ -266,6 +266,8 @@ const AUDITED: &[(&str, &str, u32)] = &[
     // 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계)
     ("lease.proto", "NodeHeartbeat", 90),
     ("lease.proto", "NeighborUnreachableReport", 90),
+    // B+E 계약 단계 1 (2026-09-14)
+    ("artifact.proto", "AttemptReportAck", 90),
 ];
 
 #[test]

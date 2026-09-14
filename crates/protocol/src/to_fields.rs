@@ -440,6 +440,10 @@ impl ToCanonicalFields for pb::AttemptReport {
         put_uint(&mut f, 11, self.final_step);
         put_uint(&mut f, 12, self.started_at_unix_ms);
         put_uint(&mut f, 13, self.finished_at_unix_ms);
+        // B+E 계약 단계 1 — v2 필드. 기본값이면 생략되어 v1 canonical 과 같다(규칙 b).
+        put_uint(&mut f, 14, self.exit_observation as i32 as u64);
+        put_uint(&mut f, 15, self.exit_code as u64);
+        put_uint(&mut f, 16, self.finalization_failure_stage as i32 as u64);
 
         put_repeated_msg(&mut f, 20, &self.artifacts);
         put_msg(&mut f, 21, &self.final_checkpoint);
@@ -534,6 +538,26 @@ impl ToCanonicalFields for pb::RenewLeaseResult {
         // ★ 요청 nonce 를 echo 하는 필드다 — 서명 밖이면 오래된
         //   결과를 새 요청의 응답인 것처럼 재사용할 수 있다.
         put_bytes(&mut f, 8, &self.request_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::AttemptReportAck {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.fence_epoch);
+        put_msg(&mut f, 6, &self.report_hash);
+        put_bool(&mut f, 7, self.created);
+        put_str(&mut f, 8, &self.coordinator_id);
+        put_uint(&mut f, 9, self.issued_at_unix_ms);
+        put_bytes(&mut f, 10, &self.session_nonce);
         f
     }
     fn schema_version(&self) -> u32 {

@@ -251,6 +251,7 @@ STARTING | FAILED | START_FAILED | 환경 준비 실패 또는 프로세스 기�
 RUNNING | COMPLETED | WORKLOAD_EXITED_OK | exit code 0 AND 최종 artifact HASH_VERIFIED | AttemptReport 제출 | COMMITTED
 RUNNING | FAILED | WORKLOAD_EXITED_ERROR | exit code != 0 | 로그 보존 | COMMITTED
 RUNNING | FAILED | WATCHDOG_KILLED | no-progress 판정 | process tree 종료, VRAM 반환 확인 | COMMITTED
+RUNNING | FAILED | OUTPUT_FINALIZATION_FAILED | exit code 0 AND 필요한 산출물 확정 실패(확정 재시도를 끝낸 뒤) | 종료 관측 보존, 재실행 판단은 별도 | COMMITTED
 RUNNING | PAUSED | PAUSE_REQUESTED | - | checkpoint 생성 | DURABLE
 RUNNING | STALE | LEASE_EXPIRED | lease 만료 AND Coordinator 도달 불가 | side_effect_class 에 따라 계속 또는 정지 | LOCAL
 PAUSED | RUNNING | RESUME_REQUESTED | 새 lease 발급 | - | COMMITTED

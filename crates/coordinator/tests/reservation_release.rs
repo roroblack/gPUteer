@@ -495,6 +495,50 @@ fn a_non_terminal_outcome_cannot_release() {
     assert!(reservation_exists(&fixture.path));
 }
 
+/// 결함 74 — 권한 관문(실행 종료 · 키 디렉터리 · 산출물)을 **모두 충족**해도, 필드 조합 규칙을 어긴 보고로는 풀지
+/// 못한다. `is_err()` 가 아니라 거부 **종류**를 본다 — 앞선 관문이 먼저 거부해도 통과하는 테스트가 되지 않게.
+#[test]
+fn a_report_that_breaks_the_field_rules_cannot_release_even_when_the_gates_pass() {
+    let fixture = prepare_fixture();
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let mut report = pb::AttemptReport {
+        schema_version: 1,
+        job_id: JOB_ID.into(),
+        attempt_id: ATTEMPT_ID.into(),
+        node_id: NODE_ID.into(),
+        fence_epoch: staged_fence_epoch(&fixture.path),
+        outcome: pb::AttemptOutcome::Failed as i32,
+        final_step: 10,
+        started_at_unix_ms: 210,
+        finished_at_unix_ms: 300,
+        issued_at_unix_ms: 301,
+        // v1 에 v2 필드 — 서명은 유효하다.
+        exit_observation: pb::ExitObservation::ObservedWithCode as i32,
+        exit_code: 7,
+        ..Default::default()
+    };
+    report.node_signature = sign(&key, &report).to_vec();
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(NODE_ID, key.verifying_key());
+    let verified = verify(
+        &report,
+        gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
+        &Ed25519Verifier::new(keys),
+        999,
+        &mut NoReplayCheck,
+    )
+    .expect("서명은 유효해야 한다");
+
+    let mut store = CoordinatorReservationReleaseStore::open(&fixture.path).unwrap();
+    assert_eq!(
+        store.release_for_verified_terminal_report(&verified, fully_authorized(), RELEASED_AT),
+        Err(ReservationReleaseError::ReportRule(
+            gputeer_protocol::attempt_report_rules::ReportRuleError::V1UsesNewFields
+        )),
+    );
+    assert!(reservation_exists(&fixture.path));
+}
+
 // ---------------------------------------------------------------------------
 // ★ 남의 예약을 지우지 않는다
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 #
-# blake3-256: 20a16bfbe862183736dbf8af308322761993de13b9a0b105da368ad9c7d9d021
+# blake3-256: e71fab9493bb4d6ed539cab5d880d5bd7de600808fb28940236be537d8403164
 
 artifact.proto::ArtifactRef
   1 uint32 schema_version
@@ -35,11 +35,26 @@ artifact.proto::AttemptReport
   11 uint64 final_step
   12 uint64 started_at_unix_ms
   13 uint64 finished_at_unix_ms
+  14 ExitObservation exit_observation
+  15 uint32 exit_code
+  16 FinalizationFailureStage finalization_failure_stage
   20 repeated ArtifactRef artifacts
   21 CheckpointManifest final_checkpoint
   30 repeated ReportedMetric metrics
   40 uint64 issued_at_unix_ms
   90 bytes node_signature
+artifact.proto::AttemptReportAck
+  1 uint32 schema_version
+  2 string job_id
+  3 string attempt_id
+  4 string node_id
+  5 uint64 fence_epoch
+  6 Digest report_hash
+  7 bool created
+  8 string coordinator_id
+  9 uint64 issued_at_unix_ms
+  10 bytes session_nonce
+  90 bytes coordinator_signature
 artifact.proto::CanonicalDecision
   1 uint32 schema_version
   2 string job_id

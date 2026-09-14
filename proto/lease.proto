@@ -121,8 +121,13 @@ message RenewLeaseResult {
 
 enum SessionMode {
   SESSION_MODE_UNSPECIFIED = 0;
+  // 코드 이름 MODE_MULTI_AGENT_GRANT. B+E(2026-09-14 결정 D2)로 순차 lane 도 이 Hello 로 시작한다.
   SESSION_MODE_FRESH = 1;
   SESSION_MODE_RESUME = 2;
+  // ★ B+E 계약 단계 1 — 새 연결로 Lease 갱신만 한다: Hello -> RenewLeaseRequest -> RenewLeaseResult.
+  SESSION_MODE_RENEW = 3;
+  // ★ B+E 계약 단계 1 — 새 연결로 종료 보고만 한다: Hello -> AttemptReport -> AttemptReportAck.
+  SESSION_MODE_REPORT = 4;
 }
 
 message AgentSessionHello {

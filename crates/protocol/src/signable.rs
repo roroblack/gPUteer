@@ -508,6 +508,35 @@ impl Signable for pb::AttemptReport {
     }
 }
 
+/// B+E 계약 단계 1 — Coordinator 가 서명하는 "받았다" 응답. `RenewLeaseResult` 와 같은 모양이다 — 요청 쪽(REPORT 세션
+/// Hello)의 nonce 를 echo 한 `session_nonce` 를 replay nonce 로 쓰고, 발급 즉시 소비되므로 단수명이다.
+impl Signable for pb::AttemptReportAck {
+    const DOMAIN: Domain = Domain::AttemptReportAck;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.coordinator_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS)
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.coordinator_id
+    }
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.session_nonce)
+    }
+}
+
 impl Signable for pb::CanonicalDecision {
     const DOMAIN: Domain = Domain::Canonical;
     const LIFETIME: Lifetime = Lifetime::Evidence;

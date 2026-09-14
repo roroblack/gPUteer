@@ -135,7 +135,12 @@ pub fn transition_triggers(from: AttemptState, to: AttemptState) -> &'static [&'
         (Starting, Running) => &["PROCESS_STARTED"],
         (Starting, Failed) => &["START_FAILED"],
         (Running, Completed) => &["WORKLOAD_EXITED_OK"],
-        (Running, Failed) => &["WORKLOAD_EXITED_ERROR", "WATCHDOG_KILLED"],
+        (Running, Failed) => &[
+            "WORKLOAD_EXITED_ERROR",
+            "WATCHDOG_KILLED",
+            // B+E(결정 D3) — 정상 종료 뒤 필요한 산출물 확정 실패.
+            "OUTPUT_FINALIZATION_FAILED",
+        ],
         (Running, Paused) => &["PAUSE_REQUESTED"],
         (Running, Stale) => &["LEASE_EXPIRED"],
         (Paused, Running) => &["RESUME_REQUESTED"],

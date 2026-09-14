@@ -1,0 +1,1052 @@
+# B+E 계약 단계 1 — 시험 원본 (2026-09-14 18:17)
+# 명령: CARGO_INCREMENTAL=0 cargo test -j 2 --no-fail-fast -p gputeer-protocol -p gputeer-crypto -p gputeer-coordinator -p gputeer-agent
+# 합계 passed=692 failed=0 ignored=1 warning 줄=0
+
+# 뮤테이션 B+E 단계 1 — 2026-09-14 18:15
+baseline -p gputeer-protocol --lib attempt_report_rules exit=0
+baseline -p gputeer-coordinator --lib attempt_report_store exit=0
+baseline -p gputeer-coordinator --test reservation_release exit=0
+baseline -p gputeer-coordinator --test attempt_report_ingress exit=0
+caught        M1 v1 이 UNSPECIFIED 를 받는다(앞선 검사 · v1 분기 둘 다)  -> test attempt_report_rules::tests::v1_unspecified_outcome_is_refused_with_its_own_error ... FAILED
+caught        M2 FAILED + 코드 0 거부로 되돌림(결함 72 이전)  -> test attempt_report_rules::tests::v2_failed_keeps_a_coexisting_finalization_failure ... FAILED
+caught        M3 저장 진입의 규칙 검사 제거  -> test attempt_report_store::tests::signed_reports_that_break_the_field_rules_create_no_row ... FAILED
+caught        M4 재조회 뒤 재검증 제거  -> test attempt_report_store::tests::a_stored_body_that_breaks_the_field_rules_fails_closed ... FAILED
+caught        M5 해제 진입의 규칙 검사 제거  -> test a_report_that_breaks_the_field_rules_cannot_release_even_when_the_gates_pass ... FAILED
+caught        M6 수신 단계의 규칙 검사 제거  -> test a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store ... FAILED
+caught        M7 수신 지원 버전을 1 로 되돌림  -> test a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store ... FAILED | test a_v2_report_with_an_observed_zero_exit_crosses_the_wire_and_is_stored ... FAILED
+합계 caught 7/7
+
+
+# ── cargo test 출력 ──
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\coordinator)
+   Compiling gputeer-protocol v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.35s
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_agent-795e53b84d357b44.exe)
+
+running 28 tests
+test multi_agent::tests::this_lane_uses_a_distinct_session_mode ... ok
+test multi_agent::tests::hello_and_ack_nonces_do_not_collide ... ok
+test owner_panel::tests::a_backwards_clock_does_not_produce_a_giant_number ... ok
+test owner_panel::tests::host_check_accepts_loopback_and_rejects_names ... ok
+test owner_panel::tests::an_empty_token_is_refused_at_bind_time ... ok
+test multi_agent::tests::each_agent_derives_a_distinct_hello_nonce ... ok
+test defect_42_45_tests::errors_after_the_workload_ran_are_not_retried ... ok
+test owner_panel::tests::json_values_are_escaped ... ok
+test owner_panel::tests::loss_is_measured_from_the_last_checkpoint ... ok
+test owner_panel::tests::two_attempts_of_one_job_are_both_visible ... ok
+test owner_panel::tests::with_no_checkpoint_everything_since_start_is_lost ... ok
+test report::tests::a_backwards_clock_between_start_and_finish_is_refused_with_both_values ... ok
+test report::tests::exit_code_zero_is_completed_and_anything_else_is_failed ... ok
+test report::tests::an_issue_time_before_the_finish_time_is_refused_with_both_values ... ok
+test report::tests::an_empty_identity_field_is_refused_by_name ... ok
+test tests::filesystem_root_as_checkpoint_root_is_refused ... ok
+test report::tests::unobserved_fields_stay_empty ... ok
+test tests::revoke_notice_for_expired_lease_is_rejected ... ok
+test report::tests::observed_timestamps_are_copied_not_recomputed ... ok
+test defect_42_45_tests::a_successful_cleanup_returns_the_original_error_and_removes_the_directory ... ok
+test tests::revoke_notice_matching_lease_and_epoch_is_applicable ... ok
+test tests::workload_run_root_is_never_inside_the_checkpoint_root ... ok
+test tests::revoke_notice_with_wrong_fence_epoch_is_rejected ... ok
+test tests::revoke_notice_with_wrong_lease_id_is_rejected ... ok
+test defect_42_45_tests::a_cleanup_failure_keeps_the_original_refusal ... ok
+test report::tests::a_field_changed_after_signing_no_longer_verifies ... ok
+test report::tests::a_built_report_verifies_under_the_signing_node_identity ... ok
+test tests::nonce_attempt_counter_ignores_failed_connects ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.37s
+
+     Running tests\attempt_report_send.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_send-e647d98c243cc7e3.exe)
+
+running 2 tests
+test the_flag_without_an_observed_exit_refuses_instead_of_inventing_one ... ok
+test without_the_flag_nothing_extra_follows_the_ack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests\gpu_preflight_gate.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gpu_preflight_gate-e9d740ce7f6c7f33.exe)
+
+running 5 tests
+test opt_in_is_still_checked_before_everything ... ok
+test the_two_refusals_are_not_interchangeable ... ok
+test the_cheap_gate_runs_first ... ok
+test a_workload_that_asks_for_a_gpu_that_is_not_here_does_not_start ... ok
+test no_gpu_requirement_means_no_gpu_gate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\neighbor_report_lane_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\neighbor_report_lane_guard-5a244155a24e288f.exe)
+
+running 4 tests
+test the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off ... ok
+test run_refuses_unsupported_lane_combinations_before_connecting ... ok
+test run_refuses_a_missing_or_blank_target_before_connecting ... ok
+test the_report_guard_stays_out_of_a_lane_that_wants_no_reports ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+
+     Running tests\owner_panel_http.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_panel_http-5edf6f3e7b3e571f.exe)
+
+running 8 tests
+test the_panel_binds_only_to_loopback ... ok
+test an_absurd_content_length_is_refused_without_allocating ... ok
+test a_request_with_a_foreign_host_header_is_refused ... ok
+test the_workload_list_is_served_over_loopback ... ok
+test stopping_an_unknown_workload_reports_failure_not_success ... ok
+test the_html_page_carries_its_defensive_headers ... ok
+test a_stop_without_the_token_is_refused ... ok
+test a_request_without_a_host_header_is_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\owner_panel_startup.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_panel_startup-a52c129ffaab5e1e.exe)
+
+running 7 tests
+test the_page_actually_shows_what_the_owner_needs ... ok
+test consecutive_requests_are_served ... ok
+OWNER_PANEL listening=http://127.0.0.1:54029/
+test a_taken_port_makes_the_agent_refuse_to_start ... ok
+OWNER_PANEL listening=http://127.0.0.1:54031/
+OWNER_PANEL listening=http://127.0.0.1:54042/
+OWNER_PANEL listening=http://127.0.0.1:54043/
+test the_panel_token_is_stable_across_restarts ... ok
+test a_different_seed_yields_a_different_token ... ok
+test enabling_execution_starts_the_panel_even_without_a_port ... ok
+test without_execution_no_panel_is_opened ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.03s
+
+     Running tests\owner_stop_control.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\owner_stop_control-1fbd844031a4dbf5.exe)
+
+running 5 tests
+test stop_failure_is_distinguishable_in_logs ... ok
+test owner_stop_exit_code_is_not_success ... ok
+test refused_executions_hand_out_no_stopper ... ok
+test stopping_twice_is_not_an_error ... ok
+test the_owner_can_stop_a_running_workload ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\unknown_flags.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\unknown_flags-6db1360ae58d40c8.exe)
+
+running 8 tests
+test a_valid_numeric_duplicate_is_accepted ... ok
+test a_misspelled_flag_is_refused_by_name ... ok
+test an_invalid_bool_is_refused_by_name ... ok
+test an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused ... ok
+test the_correct_spelling_is_accepted ... ok
+test a_valid_duplicate_bool_is_accepted_and_the_last_value_wins ... ok
+test the_plain_arguments_parse ... ok
+test an_invalid_number_hidden_by_a_later_duplicate_is_still_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_coordinator-4e80b1a575507b7e.exe)
+
+running 158 tests
+test attempt_report_store::tests::failure_after_insert_rolls_back_report_and_preserves_control_state ... ok
+test attempt_report_store::tests::a_v2_output_finalization_failure_is_stored_and_replays ... ok
+test attempt_report_store::tests::attempt_node_and_verified_signer_are_bound_to_durable_owner ... ok
+test attempt_report_store::tests::a_stored_body_that_breaks_the_field_rules_fails_closed ... ok
+test attempt_report_store::tests::exact_replay_returns_first_row_and_changed_body_or_signature_conflicts ... ok
+test attempt_report_store::tests::signature_and_binding_survive_reopen_without_state_or_release_side_effects ... ok
+test checkpoint_manifest_store::tests::complete_signed_manifest_and_store_derived_hash_survive_reopen ... ok
+test attempt_report_store::tests::missing_or_different_reservation_owner_creates_no_row ... ok
+test attempt_report_store::tests::unspecified_and_unknown_outcomes_create_no_row ... ok
+test checkpoint_manifest_store::tests::current_attempt_binding_corruption_fails_closed ... ok
+test checkpoint_manifest_store::tests::exact_replay_returns_first_row_and_changed_body_or_signature_conflicts ... ok
+test attempt_report_store::tests::signed_reports_that_break_the_field_rules_create_no_row ... ok
+test attempt_report_store::tests::wrong_job_attempt_and_stale_fence_create_no_row ... ok
+test checkpoint_manifest_store::tests::failure_after_insert_rolls_back_manifest_and_preserves_reservation ... ok
+test checkpoint_manifest_store::tests::producer_signer_mismatch_with_durable_owner_creates_no_row ... ok
+test device_id_validation_tests::ordinary_identifiers_pass ... ok
+test device_id_validation_tests::the_forbidden_shapes_are_actually_refused ... ok
+test checkpoint_manifest_store::tests::storage_has_no_checkpoint_state_or_control_state_side_effects ... ok
+test attempt_report_store::tests::all_five_known_terminal_outcomes_are_stored ... ok
+test inventory_store::tests::a_bootstrap_import_produces_schedulable_candidates ... ok
+test inventory_store::tests::a_failing_entry_rolls_back_every_earlier_entry ... ok
+test inventory_store::tests::a_bad_bootstrap_entry_is_rejected_without_waiting_for_the_write_lock ... ok
+test checkpoint_manifest_store::tests::missing_or_different_reservation_owner_creates_no_row ... ok
+test inventory_store::tests::bad_input_is_rejected_without_waiting_for_the_write_lock ... ok
+test inventory_store::tests::importing_the_same_bootstrap_twice_creates_nothing_new ... ok
+test inventory_store::tests::corrupt_payload_and_observation_markers_fail_closed ... ok
+test inventory_store::tests::invalid_registry_and_inventory_inputs_have_no_side_effects ... ok
+test inventory_store::tests::maximum_revision_timestamp_and_resource_values_round_trip ... ok
+test checkpoint_manifest_store::tests::wrong_job_attempt_and_stale_fence_create_no_row ... ok
+test inventory_store::tests::every_replacement_fault_rolls_back_parent_and_all_children ... ok
+test inventory_store::tests::multiple_agents_reopen_and_project_in_node_order ... ok
+test inventory_store::tests::registry_retry_is_idempotent_and_every_identity_conflict_preserves_row ... ok
+test inventory_store::tests::same_revision_requires_byte_equivalent_normalized_payload ... ok
+test inventory_store::tests::the_two_halves_of_an_entry_must_name_the_same_node ... ok
+test inventory_store::tests::stale_and_future_observation_times_are_preserved_and_rejected_by_scheduler ... ok
+test inventory_store::tests::corrupted_enum_key_revision_and_gpu_child_fail_closed_after_reopen ... ok
+test job_store::tests::blank_identity_and_zero_queue_duration_fail_closed ... ok
+test inventory_store::tests::two_connections_competing_for_one_revision_leave_one_complete_payload ... ok
+test inventory_store::tests::unknown_and_explicit_zero_facts_remain_distinct_in_projection ... ok
+test job_store::tests::changed_payload_with_same_idempotency_key_is_rejected_without_overwrite ... ok
+test job_store::tests::clock_rollback_does_not_advance_state ... ok
+test job_store::tests::deadline_boundary_is_strict_and_one_millisecond_after_fails ... ok
+test job_store::tests::device_signer_corruption_and_legacy_missing_body_fail_closed ... ok
+test job_store::tests::body_hash_and_job_identity_corruption_fail_closed_independently ... ok
+test job_store::tests::corrupted_state_and_truncated_integer_fail_closed ... ok
+test job_store::tests::fault_after_manifest_insert_rolls_back_job_body_and_idempotency ... ok
+test job_store::tests::fixed_width_zero_bytes_are_not_invented_as_an_invalid_encoding ... ok
+test job_store::tests::file_store_survives_reopen_and_reports_durable ... ok
+test job_store::tests::empty_and_undecodable_manifest_bodies_fail_closed ... ok
+test checkpoint_manifest_store::tests::missing_or_unspecified_root_and_blank_identity_create_no_row ... ok
+test job_store::tests::no_independent_timeout_never_turns_into_zero_duration_timeout ... ok
+test job_store::tests::only_normative_initial_transition_order_is_allowed ... ok
+test job_store::tests::opens_pre_staging_schema_and_preserves_existing_job ... ok
+test job_store::tests::identity_and_supplied_hash_mismatches_create_no_rows ... ok
+test job_store::tests::permanent_infeasibility_requires_reason_and_stays_distinct ... ok
+test job_store::tests::planning_and_enqueue_retries_are_idempotent_but_plan_change_is_not ... ok
+test attempt_report_store::tests::corrupt_body_hash_identity_signer_and_fence_fail_closed ... ok
+test job_store::tests::same_job_id_with_another_key_is_rejected ... ok
+test job_store::tests::queue_timeout_boundary_is_strict_and_one_millisecond_after_fails ... ok
+test job_store::tests::submission_retry_returns_original_timestamp_and_no_duplicate ... ok
+test job_store::tests::u64_max_timestamp_round_trips_without_sqlite_integer_truncation ... ok
+test job_store::tests::verified_manifest_body_signature_and_derived_hash_survive_reopen ... ok
+test job_store::tests::verified_manifest_replay_returns_original_and_changed_manifest_conflicts ... ok
+test job_store::tests::queue_is_deterministic_fifo_with_job_id_tie_breaker ... ok
+test lease_store::tests::conflicting_attempt_id_is_rejected_without_overwrite ... ok
+test lease_store::tests::conflicting_holder_node_id_is_rejected_without_overwrite ... ok
+test job_store::tests::terminal_retry_returns_original_and_different_reason_cannot_overwrite ... ok
+test lease_store::tests::conflicting_identity_is_rejected_without_overwrite ... ok
+test lease_store::tests::conflicting_issuing_coordinator_id_is_rejected_without_overwrite ... ok
+test lease_store::tests::is_durable_reports_true_for_file_backed_db ... ok
+test lease_store::tests::classify_resume_obeys_identity_revoke_expiry_and_epoch_order ... ok
+test lease_store::tests::expired_existing_lease_is_rejected_without_overwrite ... ok
+test lease_store::tests::expiry_boundary_is_inclusive ... ok
+test lease_store::tests::open_insert_reopen_get_preserves_all_fields ... ok
+test lease_store::tests::mark_revoked_persists_and_is_idempotent ... ok
+test lease_store::tests::renew_expiry_at_now_returns_expired_without_update ... ok
+test lease_store::tests::renew_missing_lease_id_is_not_found_and_creates_nothing ... ok
+test lease_store::tests::opens_old_schema_and_preserves_existing_lease_as_active ... ok
+test lease_store::tests::renew_existing_updates_only_expiry_fields ... ok
+test lease_store::tests::renew_expiry_one_millisecond_after_now_succeeds ... ok
+test lease_store::tests::renew_within_duration_missing_lease_id_is_not_found ... ok
+test lease_store::tests::renew_within_duration_boundary_is_inclusive_of_the_limit ... ok
+test lease_store::tests::renew_within_duration_refuses_and_does_not_extend_when_exceeded ... ok
+test lease_store::tests::renew_within_duration_extends_expiry_when_not_exceeded ... ok
+test lease_store::tests::renew_within_duration_treats_clock_rollback_as_exceeded ... ok
+test manifest_requirements::tests::a_complete_manifest_becomes_complete_requirements ... ok
+test manifest_requirements::tests::a_zero_gpu_count_becomes_the_documented_default_of_one ... ok
+test manifest_requirements::tests::a_zero_vram_floor_is_still_accepted_as_no_floor ... ok
+test manifest_requirements::tests::a_missing_nested_message_is_named ... ok
+test manifest_requirements::tests::an_empty_model_list_means_no_constraint ... ok
+test lease_store::tests::same_identity_reissue_returns_stored_value_not_candidate ... ok
+test manifest_requirements::tests::an_enum_value_this_build_does_not_know_is_refused ... ok
+test manifest_requirements::tests::an_absent_submitter_member_is_refused_rather_than_taken_from_team_id ... ok
+test lease_store::tests::revoked_lease_cannot_be_reissued_or_overwritten ... ok
+test multi_agent::tests::a_duplicate_device_id_is_refused ... ok
+test multi_agent::tests::a_single_identity_is_refused ... ok
+test multi_agent::tests::different_base_ids_stay_different ... ok
+test multi_agent::tests::each_agent_gets_a_distinct_id ... ok
+test multi_agent::tests::every_listed_agent_is_registered ... ok
+test multi_agent::tests::shadowing_the_primary_identity_is_refused ... ok
+test multi_agent::tests::the_same_agent_always_gets_the_same_id ... ok
+test lease_store::tests::revoked_lease_cannot_be_renewed ... ok
+test lease_store::tests::u64_max_fields_round_trip_without_truncation ... ok
+test manifest_requirements::tests::each_undeclared_resource_amount_is_refused_by_its_own_name ... ok
+test lease_store::tests::unexpired_existing_lease_is_reissued ... ok
+test manifest_requirements::tests::every_unspecified_axis_is_refused_by_its_own_name ... ok
+test manifest_requirements::tests::every_valid_variant_of_every_axis_maps_to_its_own_value ... ok
+test orchestrate::tests::invalid_ranking_policy_fails_closed_before_staging ... ok
+test orchestrate::tests::corrupt_inventory_fails_closed_before_staging ... ok
+test orchestrate::tests::one_candidate_bypasses_ranking_and_stages_that_node ... ok
+test post_ack_wait_tests::an_expired_lease_is_refused_instead_of_waited_for ... ok
+test post_ack_wait_tests::the_first_read_never_waits_less_than_the_io_timeout ... ok
+test post_ack_wait_tests::the_first_read_waits_for_the_remaining_lease ... ok
+test post_ack_wait_tests::without_a_manifest_the_first_read_is_not_extended ... ok
+test orchestrate::tests::operation_replay_returns_the_original_durable_staging_result ... ok
+test orchestrate::tests::concurrent_orchestration_of_one_gpu_stages_exactly_one_job ... ok
+test orchestrate::tests::multiple_candidates_stage_the_best_fit_winner ... ok
+test orchestrate::tests::zero_candidates_preserves_queued_job_and_creates_no_attempt ... ok
+test orchestrate::tests::staging_validation_error_does_not_claim_success_or_consume_epoch ... ok
+test orchestrate::tests::single_and_ranked_winner_use_the_same_gpu_assignment_rule ... ok
+test replica_ack_store::tests::complete_signed_ack_and_store_derived_hash_survive_reopen ... ok
+test replica_ack_store::tests::failure_after_insert_rolls_back_and_control_rows_are_unchanged ... ok
+test replica_ack_store::tests::exact_replay_returns_first_row_changed_replay_conflicts_and_later_ack_is_separate ... ok
+test staging_store::tests::changed_operation_payload_and_reused_attempt_or_lease_ids_fail_closed ... ok
+test replica_ack_store::tests::list_is_deterministic_and_does_not_filter_replica_claims ... ok
+test staging_store::tests::concurrent_distinct_jobs_reserving_one_gpu_commit_exactly_once ... ok
+test staging_store::tests::corrupt_or_max_counter_fails_without_partial_state ... ok
+test staging_store::tests::distinct_nodes_do_not_share_a_global_reservation_lock ... ok
+test staging_store::tests::corrupt_inventory_and_reservation_revision_or_owner_fail_closed ... ok
+test staging_store::tests::every_injected_write_failure_rolls_back_job_attempt_lease_counter_and_operation ... ok
+test staging_store::tests::exact_reserved_replay_survives_inventory_refresh_but_changed_revision_conflicts ... ok
+test replica_ack_store::tests::missing_corrupt_or_changed_checkpoint_anchor_fails_closed ... ok
+test staging_store::tests::failure_after_gpu_binding_insert_rolls_back_every_staging_side_effect ... ok
+test staging_store::tests::failure_after_reservation_insert_rolls_back_reservation_and_all_staging_state ... ok
+test replica_ack_store::tests::missing_anchor_wrong_root_sha256_and_wrong_length_create_no_row ... ok
+test staging_store::tests::invalid_state_identity_lifetime_and_clock_leave_state_unchanged ... ok
+test staging_store::tests::existing_lease_watermark_is_used_and_corrupt_or_max_epoch_rolls_back ... ok
+test staging_store::tests::reopen_preserves_all_state_and_standalone_stores_read_and_mutate_the_lease ... ok
+test staging_store::tests::revision_zero_and_multiple_gpu_ids_survive_reopen_in_canonical_order ... ok
+test staging_store::tests::selected_gpu_binding_is_in_operation_payload_and_replay_returns_original ... ok
+test staging_store::tests::sequential_distinct_jobs_cannot_reserve_the_same_node_gpu ... ok
+test tests::a_liveness_path_without_expected_heartbeats_is_refused_by_the_common_guard ... ok
+test tests::heartbeats_on_an_unreachable_lane_are_refused ... ok
+test tests::revoke_notice_test_overrides_are_signed_payload_values ... ok
+test tests::revoke_notice_uses_issued_lease_identity_and_epoch ... ok
+test tests::the_default_renew_extension_is_still_sixty_seconds_without_a_lease_store ... ok
+test tests::the_heartbeat_guard_stays_out_of_reachable_or_unexpecting_sessions ... ok
+test tests::the_renew_extension_is_applied_without_a_lease_store ... ok
+test tests::u32_from_stored_accepts_max_total_duration_seconds_default ... ok
+test tests::u32_from_stored_accepts_u32_max ... ok
+test tests::u32_from_stored_rejects_values_above_u32_max_instead_of_truncating ... ok
+test staging_store::tests::success_is_consistent_and_identical_retry_does_not_consume_epoch ... ok
+test checkpoint_manifest_store::tests::corrupt_body_hash_identity_signer_fence_and_root_fail_closed ... ok
+test staging_store::tests::stale_or_missing_inventory_fails_before_any_staging_side_effect ... ok
+test staging_store::tests::two_connections_stage_one_queued_job_exactly_once ... ok
+test staging_store::tests::invalid_or_missing_selected_gpu_ids_fail_before_staging ... ok
+test staging_store::tests::missing_blank_noncanonical_or_gapped_stored_gpu_binding_fails_closed ... ok
+test replica_ack_store::tests::corrupt_body_hash_identity_signer_time_and_root_fail_closed ... ok
+
+test result: ok. 158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.06s
+
+     Running tests\attempt_report_ingress.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_ingress-b2316752ec9c4402.exe)
+
+running 9 tests
+test a_report_for_another_job_is_refused_by_job_id ... ok
+test a_non_terminal_outcome_is_refused_with_the_outcome_value ... ok
+test a_report_from_another_fence_epoch_is_refused_by_fence_epoch ... ok
+test a_forged_signature_is_refused_before_the_store ... ok
+test a_report_for_another_attempt_is_refused_by_attempt_id ... ok
+test a_second_report_that_contradicts_the_first_is_refused ... ok
+test a_session_that_expects_no_reports_behaves_exactly_as_before ... ok
+test a_signed_terminal_report_crosses_the_wire_and_lands_in_the_store ... ok
+test the_same_report_sent_twice_is_idempotent ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s
+
+     Running tests\attempt_report_lane_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_lane_guard-91334101acacabf6.exe)
+
+running 5 tests
+test the_guard_stays_out_of_a_session_that_expects_no_reports ... ok
+test the_multi_agent_lane_is_refused_from_both_entry_points ... ok
+test the_resume_lane_is_refused ... ok
+test flags_that_may_end_the_session_after_ack_are_refused ... ok
+test reports_without_a_control_db_are_refused_before_bind ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\attempt_state_parity.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_state_parity-97174f478804985d.exe)
+
+running 3 tests
+test every_stored_state_maps_to_a_normative_state ... ok
+test the_stored_enum_is_a_strict_subset_of_the_normative_one ... ok
+test the_normative_enum_still_has_the_states_this_crate_expects ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\heartbeat_lane_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\heartbeat_lane_guard-cd1bab8d8d6a8083.exe)
+
+running 3 tests
+test a_liveness_path_without_expected_heartbeats_is_refused_by_run_before_bind ... ok
+test heartbeats_on_the_multi_agent_lane_are_refused_from_both_entry_points ... ok
+test heartbeats_with_the_resume_lane_are_refused_before_bind ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\job_store_concurrent_submit.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\job_store_concurrent_submit-1d2232d99c09b7d1.exe)
+
+running 2 tests
+test concurrent_identical_submit_creates_once_and_replays_once ... ok
+test concurrent_key_reuse_with_changed_payload_has_one_winner_and_no_overwrite ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests\lease_store_concurrent_issue.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\lease_store_concurrent_issue-fd6a2c56a0076943.exe)
+
+running 2 tests
+test complete_winner_assertion_rejects_each_loser_marker ... ok
+test concurrent_first_issue_has_one_complete_winner ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.62s
+
+     Running tests\neighbor_report_lane_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\neighbor_report_lane_guard-8f50bced3bbbf08c.exe)
+
+running 6 tests
+test run_refuses_the_multi_agent_combination ... ok
+test run_refuses_the_resume_combination ... ok
+test the_report_guard_stays_out_of_a_lane_that_wants_no_reports ... ok
+test the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off ... ok
+test flags_that_may_end_the_session_after_ack_are_refused ... ok
+test the_lane_guard_runs_before_bind_for_every_lane ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\neighbor_report_store.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\neighbor_report_store-28755206389573ca.exe)
+
+running 33 tests
+test a_different_device_cannot_take_over_an_existing_reporter_machine ... ok
+test a_body_whose_hash_no_longer_matches_is_refused ... ok
+test a_body_that_disagrees_with_its_index_columns_is_refused ... ok
+test a_newer_observation_replaces_the_older_one ... ok
+test a_corrupted_row_is_reported_as_corruption_not_as_a_device_conflict ... ok
+test a_machine_with_mixed_devices_is_refused_even_for_the_first_sorted_device ... ok
+test a_node_cannot_report_itself_as_unreachable ... ok
+test a_report_addressed_to_another_coordinator_is_refused ... ok
+test a_report_survives_a_restart ... ok
+test a_stored_device_that_disagrees_with_the_body_is_refused ... ok
+test an_in_memory_store_is_not_durable ... ok
+test a_stored_observation_time_that_disagrees_with_the_body_is_refused ... ok
+test an_older_observation_never_overwrites_a_newer_one ... ok
+test another_device_cannot_claim_a_machine_through_a_different_target ... ok
+test asking_about_a_node_nobody_reported_is_not_an_error ... ok
+test each_empty_identity_field_is_refused_on_its_own ... ok
+test corruption_is_caught_on_the_single_row_path_too ... ok
+test one_device_can_still_claim_two_machines_and_the_store_makes_that_visible ... ok
+test one_neighbor_can_report_about_several_nodes ... ok
+test opening_without_a_coordinator_identity_is_refused ... ok
+test a_corrupted_time_column_cannot_hide_a_row_from_eviction ... ok
+test a_corrupted_eviction_candidate_is_refused_not_silently_dropped ... ok
+test reports_from_different_neighbors_about_one_node_are_all_kept ... ok
+test an_observation_older_than_everything_stored_does_not_evict ... ok
+test rows_written_for_another_coordinator_are_refused_on_read_too ... ok
+test the_same_observation_time_is_not_a_new_observation ... ok
+test the_stored_body_and_hash_are_pinned_to_fixed_bytes ... ok
+test a_single_insert_at_the_bound_evicts_exactly_one_row ... ok
+test over_the_bound_an_observation_not_newer_than_the_doomed_set_is_refused ... ok
+test a_store_already_over_the_bound_is_brought_back_under_it ... ok
+test eviction_drops_the_oldest_observation_of_that_device ... ok
+test reaching_the_quota_does_not_block_updating_an_existing_report ... ok
+test one_device_cannot_grow_the_store_without_bound ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.78s
+
+     Running tests\node_liveness_store.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\node_liveness_store-dd7167bc019a73f7.exe)
+
+running 16 tests
+test a_heartbeat_without_a_timestamp_is_refused ... ok
+test a_different_device_claiming_the_same_node_is_refused ... ok
+test a_late_older_heartbeat_does_not_move_the_clock_backwards ... ok
+test a_pointless_or_unknown_rebind_is_refused ... ok
+test a_newer_heartbeat_advances ... ok
+test a_corrupted_row_fails_closed ... ok
+test a_pending_rebind_can_be_cancelled ... ok
+test a_mistaken_rebind_can_be_retargeted ... ok
+test a_same_millisecond_tie_uses_the_same_rule_as_the_kernel ... ok
+test an_identical_timestamp_does_not_advance ... ok
+test an_observation_survives_a_restart ... ok
+test a_tampered_body_is_caught_by_the_hash ... ok
+test stored_facts_feed_the_liveness_kernel ... ok
+test without_an_approval_a_device_change_is_still_refused ... ok
+test an_approved_rebind_only_admits_the_named_device ... ok
+test each_node_keeps_exactly_one_row ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests\reservation_release.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\reservation_release-c6f20831d1bd2624.exe)
+
+running 21 tests
+test a_report_from_an_older_fence_is_caught_by_the_evidence_check ... ok
+test a_report_that_breaks_the_field_rules_cannot_release_even_when_the_gates_pass ... ok
+test a_non_terminal_outcome_cannot_release ... ok
+test a_refused_release_leaves_no_trace ... ok
+test a_moved_attempt_fence_blocks_the_release ... ok
+test a_non_completed_outcome_does_not_need_the_artifact_guard ... ok
+test a_failure_between_the_deletes_and_the_insert_rolls_everything_back ... ok
+test a_missing_reservation_without_a_release_record_fails_closed ... ok
+test an_in_memory_store_is_not_durable ... ok
+test a_report_that_does_not_match_the_stored_evidence_cannot_release ... ok
+test a_verified_terminal_report_releases_the_reservation ... ok
+test releasing_removes_the_reserved_gpu_rows_too ... ok
+test after_release_another_job_can_reserve_the_same_node ... ok
+test releasing_twice_with_the_same_evidence_is_idempotent ... ok
+test a_reservation_held_by_another_attempt_is_never_deleted ... ok
+test the_authorization_gate_is_checked_before_the_evidence ... ok
+test the_release_record_survives_reopening_the_store ... ok
+test todays_honest_caller_cannot_release_anything ... ok
+test without_stored_terminal_evidence_the_reservation_is_not_released ... ok
+test two_concurrent_releases_produce_exactly_one_release ... ok
+test each_missing_declaration_blocks_on_its_own ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.78s
+
+     Running tests\stored_lane_flags.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\stored_lane_flags-7f90f30d7ed4805f.exe)
+
+running 21 tests
+test an_absent_stored_id_is_refused ... ok
+test a_valid_numeric_duplicate_still_uses_the_last_value ... ok
+test a_neighbor_report_db_without_expected_reports_is_refused ... ok
+test a_liveness_db_without_expected_heartbeats_is_refused ... ok
+test an_invalid_bool_is_refused_by_name ... ok
+test an_id_that_disagrees_with_the_stored_one_is_refused ... ok
+test an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused ... ok
+test an_unknown_flag_is_refused_by_name_on_either_lane ... ok
+test an_invalid_number_hidden_by_a_later_duplicate_is_still_refused ... ok
+test every_absent_stored_id_is_refused_by_name ... ok
+test lease_db_dependent_flags_are_accepted_without_a_lease_db ... ok
+test stored_lane_only_flags_are_refused_on_the_legacy_lane ... ok
+test every_stored_lane_only_flag_is_refused_on_the_legacy_lane ... ok
+test session_id_is_not_a_coordinator_flag_on_any_lane ... ok
+test multi_agent_only_flags_are_refused_on_the_sequential_lane ... ok
+test the_plain_stored_lane_parses ... ok
+test the_stored_lane_without_a_submitter_keyring_is_refused ... ok
+test never_applied_flags_are_refused_without_a_lease_db_too ... ok
+test each_flag_the_stored_lane_does_not_apply_is_refused_by_name ... ok
+test the_same_flags_are_accepted_on_the_legacy_lane ... ok
+test resume_with_a_control_db_is_refused_at_startup_not_by_the_stored_lane_checks ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_crypto-394ae996915f77ab.exe)
+
+running 5 tests
+test hex::tests::a_multibyte_character_in_the_middle_is_found_where_it_is ... ok
+test hex::tests::a_multibyte_character_that_fits_the_length_is_an_error_not_a_panic ... ok
+test hex::tests::length_and_odd_length_are_named ... ok
+test hex::tests::a_sign_is_not_a_hex_digit ... ok
+test hex::tests::valid_hex_decodes_in_either_case ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\durable_replay_process_fixture.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\durable_replay_process_fixture-3da4e569280da7e8.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\durable_replay.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\durable_replay-39bd7a9c537044df.exe)
+
+running 12 tests
+test crash_child_writes_uncommitted_record ... ignored
+test durable_guard_says_it_is_durable ... ok
+test invalid_nonce_does_not_consume_a_valid_nonce_slot ... ok
+
+running 1 test
+test cache_full_does_not_evict_unexpired_entries ... ok
+test first_use_is_fresh_and_restart_is_duplicate ... ok
+test key_contains_device_domain_and_nonce ... ok
+test crash_recovery_discards_uncommitted_partial_record ... ok
+test clock_state_survives_restart_and_blocks_bad_gc ... ok
+test gc_releases_quota_only_after_expiration ... ok
+test two_connections_share_state_sequentially ... ok
+test two_connections_with_different_nonces_both_succeed ... ok
+test signer_quota_does_not_starve_other_signers ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests\durable_replay_process.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\durable_replay_process-05adc100d4be155a.exe)
+
+running 4 tests
+test separate_processes_same_nonce_have_exactly_one_fresh ... ok
+test separate_processes_distinct_nonces_are_all_fresh ... ok
+test separate_process_lock_timeout_is_not_duplicate ... ok
+test separate_processes_all_initial_attempts_lock_timeout_then_retry_idempotently ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+
+     Running tests\durable_replay_race.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\durable_replay_race-1e1253ee6916c105.exe)
+
+running 3 tests
+test concurrent_same_nonce_yields_exactly_one_fresh ... ok
+test concurrent_distinct_nonces_all_succeed ... ok
+test concurrent_gc_never_drops_unexpired_entries ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.88s
+
+     Running tests\ed25519_verify.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\ed25519_verify-52624bcf4d7116b8.exe)
+
+running 20 tests
+test schema_too_new_is_rejected_and_not_reported_as_signature_failure ... ok
+test short_lived::no_replay_check_taints_the_verified_value ... ok
+test expired_manifest_is_rejected ... ok
+test short_lived::replay_key_is_namespaced_by_device ... ok
+test short_lived::short_lived_enforces_clock_skew ... ok
+test short_lived::default_ttl_masks_forward_skew_with_expiry ... ok
+test signing_input_is_stable_before_and_after_signing ... ok
+test signature_by_different_key_is_rejected ... ok
+test long_lived_manifest_ignores_clock_skew ... ok
+test unknown_signer_is_rejected ... ok
+test verify_outcome_matches_proto_enum ... ok
+test verify_outcome_surface_is_complete ... ok
+test version_check_precedes_signature_check ... ok
+test short_lived::working_replay_guard_rejects_reuse ... ok
+test wrong_length_signature_is_rejected ... ok
+test signature_from_another_domain_does_not_verify ... ok
+test tampered_field_breaks_signature ... ok
+test valid_manifest_verifies ... ok
+test short_lived::short_lived_requires_16_byte_nonce ... ok
+test tampering_security_fields_breaks_signature ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests\framed_ingress.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\framed_ingress-e4a692e6af9a3449.exe)
+
+running 31 tests
+test a_neighbor_report_body_sent_as_a_heartbeat_frame_is_rejected ... ok
+test a_report_from_a_signer_absent_from_the_directory_is_rejected ... ok
+test a_stale_neighbor_report_is_rejected ... ok
+test a_forged_neighbor_report_is_rejected ... ok
+test frame_too_large_leaves_the_stream_desynced_by_design ... ok
+test frame_exactly_at_the_limit_is_not_rejected_for_size ... ok
+test frame_type_mismatch_fails_at_nested_message_decode ... ok
+test distinct_types_with_colliding_wire_fields_are_rejected_by_domain_tag ... ok
+test a_report_signed_by_the_wrong_key_is_rejected ... ok
+test a_signed_neighbor_report_dispatches ... ok
+test forged_resume_signature_is_rejected ... ok
+test forged_signature_is_rejected_through_the_framing_layer ... ok
+test forged_revoke_lease_notice_signature_is_rejected ... ok
+test oversized_frame_is_rejected_before_reading_body ... ok
+test normal_grant_frame_dispatches_to_the_right_variant ... ok
+test normal_lease_frame_dispatches_to_the_right_variant ... ok
+test normal_renew_lease_result_frame_dispatches_to_the_right_variant ... ok
+test truncated_header_is_rejected ... ok
+test truncated_body_is_rejected ... ok
+test normal_revoke_lease_notice_frame_dispatches_to_the_right_variant ... ok
+test normal_grant_ack_frame_dispatches_to_the_right_variant ... ok
+test unknown_frame_type_is_rejected ... ok
+test write_frame_accepts_bodies_within_the_limit ... ok
+test write_frame_rejects_bodies_over_the_limit ... ok
+test zero_length_frame_does_not_panic ... ok
+test the_framing_layer_does_not_check_the_target_coordinator_today ... ok
+test unknown_frame_type_does_not_desync_the_stream ... ok
+test replaying_a_neighbor_report_is_rejected ... ok
+test one_device_key_can_sign_many_reporter_node_ids_today ... ok
+test two_consecutive_frames_are_read_independently ... ok
+test resume_frames_round_trip_and_preserve_payloads ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\keyring.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\keyring-72ef0df3e28fcfe0.exe)
+
+running 9 tests
+test plaintext_storage_is_rejected_without_explicit_opt_in ... ok
+test unsupported_platform_and_call_failure_are_different_errors ... ok
+test private_key_never_appears_in_debug_or_display_output ... ok
+test quarantine_is_distinguishable_in_directory_but_rejects_verification ... ok
+test revoked_key_rejects_a_message_signed_before_revocation ... ok
+test corrupted_key_file_is_rejected_instead_of_silently_loaded ... ok
+test a_public_key_only_entry_cannot_be_swapped_in_either ... ok
+test another_signers_keypair_cannot_be_transplanted_into_this_slot ... ok
+test rotation_accepts_both_keys_during_grace_and_rejects_old_key_afterward ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\lifetime_policy.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\lifetime_policy-90e69c4c8f01fb42.exe)
+
+running 19 tests
+test all_six_evidence_messages_are_marked_evidence ... ok
+test execution_grant_is_short_lived ... ok
+test evidence_must_expose_observation_time ... ok
+test default_ttl_masks_forward_skew_for_real_grant ... ok
+test forward_skew_is_reachable_with_longer_ttl ... ok
+test renew_lease_without_issued_at_is_immediately_expired ... ok
+test renew_lease_expiry_is_derived_from_ttl ... ok
+test replica_ack_stays_valid_forever_even_if_replica_is_gone ... ok
+test grant_rejects_message_from_the_future ... ok
+test evidence_has_no_replay_defense_and_says_so ... ok
+test valid_grant_verifies ... ok
+test verify_accepts_grant_with_correct_manifest_hash ... ok
+test verify_allows_manifest_without_hash ... ok
+test verify_catches_swapped_nested_manifest ... ok
+test verify_rejects_grant_with_wrong_manifest_hash ... ok
+test verify_rejects_hash_without_manifest ... ok
+test evidence_does_not_expire ... ok
+test the_three_lifetimes_actually_behave_differently ... ok
+test grant_nonce_comes_from_signed_message_field ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\replay_binding.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\replay_binding-4384db160915f7e9.exe)
+
+running 10 tests
+test caller_cannot_choose_a_different_nonce ... ok
+test retain_until_is_expiry_plus_skew ... ok
+test signer_can_issue_a_new_grant_with_a_fresh_nonce ... ok
+test nonce_namespace_is_per_device ... ok
+test same_message_verified_twice_is_rejected ... ok
+test storage_failure_fails_closed ... ok
+test failed_verification_does_not_consume_the_nonce ... ok
+test cache_full_rejects_instead_of_evicting ... ok
+test no_replay_check_and_working_guard_differ ... ok
+test storage_failure_is_distinguishable_from_replay ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\replay_contract.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\replay_contract-fd947d9d93ed3ee9.exe)
+
+running 9 tests
+test extreme_retain_until_agrees ... ok
+test short_nonce_is_rejected_by_both ... ok
+test cache_full_agrees_and_never_evicts ... ok
+test signer_quota_agrees ... ok
+test fresh_then_duplicate_agrees ... ok
+test namespacing_agrees ... ok
+test extreme_gc_time_agrees ... ok
+test gc_expiry_and_rollback_agree ... ok
+test zero_capacity_is_rejected_by_both ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests\replay_guard.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\replay_guard-d0f1c635c30aea65.exe)
+
+running 14 tests
+test gc_removes_only_expired_entries ... ok
+test cache_full_never_evicts_unexpired_entries ... ok
+test first_use_is_fresh_and_reuse_is_duplicate ... ok
+test gc_keeps_an_entry_that_is_one_millisecond_from_expiry ... ok
+test default_capacity_matches_spec ... ok
+test gc_refuses_to_delete_while_clock_goes_backwards ... ok
+test gc_clamps_forward_clock_jumps ... ok
+test gc_resumes_after_clock_recovers ... ok
+test key_is_namespaced_by_device_and_domain ... ok
+test one_device_cannot_starve_others ... ok
+test repeated_bogus_gc_still_drains_the_cache ... ok
+test restart_opens_a_replay_window ... ok
+test signer_quota_is_released_by_gc ... ok
+test failed_verification_does_not_touch_the_guard ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\verification_ingress.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\verification_ingress-eb3bf39a1ca6e9fa.exe)
+
+running 9 tests
+test protobuf_decode_failure_is_not_a_verify_outcome ... ok
+test system_clock_is_available_but_the_entrypoint_accepts_injected_clock ... ok
+test forged_signature_is_rejected ... ok
+test expired_message_is_rejected ... ok
+test valid_bytes_become_verified_with_effective_replay_guard ... ok
+test lock_timeout_is_rejected_without_retry ... ok
+test not_applicable_is_visible_and_does_not_permit_side_effects ... ok
+test replay_is_rejected_on_the_second_ingress ... ok
+test persistent_keyring_and_durable_replay_are_wired_at_the_boundary ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests\verify_gate_audit.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\verify_gate_audit-47e4c49a8aff7176.exe)
+
+running 6 tests
+test a_caller_cannot_switch_off_the_schema_gate - should panic ... ok
+test the_schema_gate_still_fires_within_range ... ok
+test a_valid_signature_with_a_trailing_byte_is_rejected ... ok
+test a_short_lived_message_without_a_nonce_is_rejected ... ok
+test an_over_long_short_lived_ttl_is_refused_by_policy ... ok
+test a_key_whose_validity_has_not_started_is_not_accepted ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests src\lib.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\gputeer_protocol-5afe83c5188b3c89.exe)
+
+running 16 tests
+test attempt_report_rules::tests::v1_reports_keep_working_and_cannot_use_new_fields ... ok
+test attempt_report_rules::tests::unknown_enum_values_are_refused ... ok
+test attempt_report_rules::tests::v2_output_finalization_failed_needs_an_observed_zero_exit_and_a_stage ... ok
+test attempt_report_rules::tests::v2_completed_and_stale_completed_need_an_observed_zero_exit_and_no_failure ... ok
+test attempt_report_rules::tests::v2_failed_keeps_a_coexisting_finalization_failure ... ok
+test attempt_report_rules::tests::v1_unspecified_outcome_is_refused_with_its_own_error ... ok
+test attempt_report_rules::tests::v2_common_rules ... ok
+test attempt_state::tests::completed_is_not_terminal_because_duplicates_must_be_reconciled ... ok
+test attempt_report_rules::tests::v2_interrupted_and_cancelled_do_not_force_an_exit_code ... ok
+test attempt_state::tests::shortcuts_that_skip_a_gate_are_rejected ... ok
+test attempt_state::tests::terminal_states_have_no_outgoing_transitions ... ok
+test nonce::tests::component_boundaries_do_not_blur ... ok
+test nonce::tests::derivation_is_deterministic ... ok
+test nonce::tests::the_attempt_number_always_matters ... ok
+test nonce::tests::the_reported_collision_is_gone ... ok
+test nonce::tests::the_nonce_is_sixteen_bytes ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\canonical_vectors.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\canonical_vectors-311a0884b87f6c41.exe)
+
+running 19 tests
+test minimal_varint_roundtrip ... ok
+test negative_non_minimal_varint_is_rejected ... ok
+test negative_cross_domain_signature_input_differs ... ok
+test domain_tags_are_32_bytes_and_unique ... ok
+test negative_truncated_varint_is_rejected ... ok
+test rule_c2_does_not_erase_the_key_itself ... ok
+test rule_c2_empty_map_value_is_omitted_inside_the_entry ... ok
+test determinism_100_iterations ... ok
+test rule_c2_non_empty_map_value_is_still_encoded ... ok
+test v06_explicit_defaults_are_omitted ... ok
+test v08_signature_field_is_excluded ... ok
+test domain_tags_match_the_norm_document_and_the_python_reference ... ok
+test v04_repeated_order_is_preserved ... ok
+test v01_minimal_manifest_matches_reference ... ok
+test v10_domain_separation ... ok
+test v01_sig_input_and_digest_match_reference ... ok
+test v11_schema_version_separation ... ok
+test v03_map_insertion_order_is_irrelevant ... ok
+test v13_merkle_promotion_matches_reference ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\codex_findings.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\codex_findings-58f41b86b5faf4f4.exe)
+
+running 6 tests
+test c1c_derived_hash_exclusion_is_top_level_only ... ok
+test c1_signature_only_nested_message_leaks_into_canonical ... ok
+test c1b_top_level_signature_field_is_correctly_excluded ... ok
+test d1_derived_hash_fields_must_not_apply_to_nested_messages ... ok
+test encoder_always_emits_minimal_varint ... ok
+test c3_map_entry_with_empty_value_is_preserved ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\execution_spec_kernel.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\execution_spec_kernel-8a976386dabee7df.exe)
+
+running 15 tests
+test derives_entrypoint_and_args_in_order ... ok
+test blank_entrypoint_is_rejected ... ok
+test empty_argument_is_allowed ... ok
+test blank_job_id_is_rejected ... ok
+test blank_env_var_name_is_rejected ... ok
+test entrypoint_is_not_duplicated_into_args ... ok
+test env_var_name_with_equals_is_rejected ... ok
+test env_var_insertion_order_does_not_matter ... ok
+test env_vars_are_sorted_by_key_bytes ... ok
+test equals_in_env_var_value_is_allowed ... ok
+test missing_executable_is_not_detected_here ... ok
+test nul_byte_is_rejected_everywhere_it_can_appear ... ok
+test path_shape_is_not_policed_here ... ok
+test large_argument_list_is_not_policed_here ... ok
+test repeated_derivation_is_identical ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\fenced_operation_kernel.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\fenced_operation_kernel-3318648141ffcb61.exe)
+
+running 12 tests
+test a_higher_fence_with_the_same_operation_id_is_a_new_pair ... ok
+test a_lower_fence_is_stale_even_when_its_pair_was_previously_observed ... ok
+test a_new_valid_key_is_accepted_with_or_without_prior_observations ... ok
+test a_structurally_valid_but_incorrect_operation_id_is_rejected ... ok
+test an_out_of_contract_attempt_id_width_is_rejected ... ok
+test missing_identity_or_digest_fails_closed ... ok
+test normative_utf8_concatenation_and_big_endian_sequence_are_derived_directly ... ok
+test invalid_input_is_not_hidden_by_a_stale_fence ... ok
+test out_of_contract_identity_widths_are_rejected_before_hashing ... ok
+test only_an_exact_blake3_256_digest_is_accepted ... ok
+test sequence_monotonicity_is_not_inferred ... ok
+test the_exact_fence_and_operation_id_pair_is_an_idempotent_retransmission ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\field_number_audit.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\field_number_audit-e993d01d8c41c096.exe)
+
+running 10 tests
+test derived_hash_fields_are_actually_excluded ... ok
+test lease_field_numbers_match_proto ... ok
+test every_impl_is_audited ... ok
+test job_manifest_field_numbers_match_proto ... ok
+test unimplemented_list_has_no_stale_entries ... ok
+test parsers_are_not_vacuous ... ok
+test common_message_field_numbers_match_proto ... ok
+test grant_and_control_field_numbers_match_proto ... ok
+test artifact_and_lease_field_numbers_match_proto ... ok
+test every_unsigned_field_is_declared_in_unimplemented_list ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\lifetime_consistency.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\lifetime_consistency-f1805d31b62486ca.exe)
+
+running 4 tests
+test messages_whose_replay_would_forge_facts_must_stay_shortlived ... ok
+test evidence_and_shortlived_differ_in_what_they_check ... ok
+test declared_lifetime_matches_message_capability ... ok
+test every_signable_is_covered ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\membership_resolution.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\membership_resolution-ded6e8371ecc9289.exe)
+
+running 16 tests
+test ambiguity_is_not_resolved_in_favor_of_active ... ok
+test binding_without_member_fact_is_unresolved ... ok
+test active_member_is_authorized ... ok
+test blank_ids_are_rejected ... ok
+test exact_duplicate_input_is_an_error_not_ambiguous ... ok
+test device_bound_to_two_subjects_is_ambiguous ... ok
+test generation_mismatch_is_unresolved_not_authorized ... ok
+test only_active_state_is_current_authority ... ok
+test repeated_calls_are_identical ... ok
+test revision_value_does_not_change_the_verdict ... ok
+test revoked_old_generation_does_not_block_new_generation ... ok
+test same_subject_in_two_states_is_ambiguous ... ok
+test stale_view_error_is_not_an_authorization_outcome ... ok
+test stale_view_is_refused_not_silently_downgraded ... ok
+test unknown_device_is_unresolved_not_denied ... ok
+test other_devices_do_not_leak_into_the_verdict ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\participation_model.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\participation_model-35560492528f01c4.exe)
+
+running 7 tests
+test an_absent_value_is_an_error_not_a_default ... ok
+test surrounding_whitespace_is_tolerated ... ok
+test there_is_no_default_see_the_compile_fail_doctest ... ok
+test spelling_variants_are_not_silently_accepted ... ok
+test only_the_private_team_assumes_mutual_trust ... ok
+test an_unknown_value_is_rejected_with_the_offending_text ... ok
+test the_two_canonical_spellings_round_trip ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\prost_canonical.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\prost_canonical-c89934278158208c.exe)
+
+running 25 tests
+test default_valued_fields_are_omitted_in_prost_path ... ok
+test artifact_scope_is_signed ... ok
+test execution_environment_is_signed ... ok
+test dataset_ref_is_signed ... ok
+test input_artifacts_are_signed_and_order_is_preserved ... ok
+test lease_canonical_is_deterministic_and_excludes_signature ... ok
+test lease_scope_is_signed ... ok
+test dataset_vector_matches_reference ... ok
+test execution_environment_vector_matches_reference ... ok
+test network_policy_is_signed ... ok
+test prost_and_canonical_may_coincide_for_simple_messages ... ok
+test input_artifacts_vector_matches_reference ... ok
+test hashmap_insertion_order_does_not_affect_canonical ... ok
+test nested_messages_and_enums_round_through_prost ... ok
+test signature_field_excluded_in_prost_path ... ok
+test every_field_in_full_manifest_affects_canonical ... ok
+test unimplemented_field_list_is_empty ... ok
+test lease_scope_vector_matches_reference ... ok
+test prost_message_produces_same_canonical_as_reference ... ok
+test prost_message_produces_same_sig_input_and_digest ... ok
+test security_field_vectors_match_reference ... ok
+test v02_full_manifest_matches_reference ... ok
+test v02b_full_lease_matches_reference ... ok
+test hashmap_canonical_is_stable_across_many_rebuilds ... ok
+test prost_encode_is_not_deterministic_for_maps ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\replay_nonce_derivation.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\replay_nonce_derivation-bcaaf512f35bee3d.exe)
+
+running 4 tests
+test the_attempt_occupies_its_slot_even_when_zero ... ok
+test the_nonce_is_sixteen_bytes ... ok
+test the_tag_separates_purposes_that_share_an_id ... ok
+test derivation_matches_the_normative_byte_layout ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\schema_evolution.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\schema_evolution-5d291185239ca9f4.exe)
+
+running 6 tests
+test q6_version_downgrade_breaks_signature ... ok
+test q2_unknown_fields_are_invisible_to_canonical ... ok
+test q5_version_check_must_precede_signature_check ... ok
+test q4_field_addition_without_version_bump_is_undetectable ... ok
+test q3_version_bump_is_detectable_and_signature_bound ... ok
+test q1_prost_accepts_and_drops_unknown_fields ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\schema_fingerprint.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\schema_fingerprint-c2f0e13d733d2225.exe)
+
+running 8 tests
+test guard_rejects_reserved_mutation_before_it_can_be_invisible ... ok
+test parser_explicitly_skips_valid_reserved_declarations ... ok
+test guard_rejects_nested_message_mutation_before_silent_overwrite ... ok
+test parser_nested_message_failure_mode_is_recorded ... ok
+test support_check_ignores_keywords_in_comments_and_strings ... ok
+test parser_is_not_vacuous ... ok
+test proto_schema_uses_only_fingerprint_guard_supported_syntax ... ok
+test proto_schema_matches_recorded_fingerprint ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\stream_ownership.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\stream_ownership-2fd70456d394ed16.exe)
+
+running 5 tests
+test parser_is_not_vacuous ... ok
+test protocol_does_not_depend_on_crypto_libraries ... ok
+test crypto_depends_on_protocol_not_the_reverse ... ok
+test protocol_is_a_leaf_crate ... ok
+test every_crate_is_covered_by_ownership_rules ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\t1_signing_targets.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\t1_signing_targets-34aa1df796cfa2cc.exe)
+
+running 16 tests
+test domain_coverage_is_explicit ... ok
+test checkpoint_file_order_is_preserved ... ok
+test nested_message_content_does_affect_outer_canonical ... ok
+test checkpoint_manifest_matches_reference ... ok
+test renew_lease_request_matches_reference ... ok
+test node_heartbeat_matches_reference ... ok
+test neighbor_unreachable_report_matches_reference ... ok
+test nested_signature_is_excluded_from_outer_canonical ... ok
+test revoke_lease_notice_matches_reference ... ok
+test agent_grant_ack_matches_reference ... ok
+test rule_j_handles_i64_min_without_panic ... ok
+test rule_j_zero_is_omitted ... ok
+test resume_protocol_messages_match_reference ... ok
+test renew_lease_result_matches_reference ... ok
+test rule_j_signed_integers_match_reference ... ok
+test rule_j_sign_affects_canonical ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\t1b_grant_and_control.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\t1b_grant_and_control-62f991c95b28fa8d.exe)
+
+running 13 tests
+test all_domain_tags_are_distinct ... ok
+test derived_hash_messages_override_consistency_check ... ok
+test manifest_hash_formula_matches_spec ... ok
+test grant_manifest_hash_can_be_wrong_without_breaking_signature ... ok
+test every_grant_field_affects_canonical ... ok
+test signatures_do_not_transfer_between_control_messages ... ok
+test derived_hash_and_nested_signature_are_both_excluded ... ok
+test multi_signature_field_is_excluded ... ok
+test change_coordinator_set_matches_reference_and_preserves_order ... ok
+test quarantine_verdict_matches_reference ... ok
+test execution_grant_matches_reference ... ok
+test nested_manifest_content_does_affect_grant_canonical ... ok
+test membership_messages_have_distinct_canonicals ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\watch_cursor_continuity.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\watch_cursor_continuity-648162fa0c156703.exe)
+
+running 8 tests
+test advanced_term_is_indeterminate_without_a_normative_index_relation ... ok
+test absent_previous_cursor_uses_first_event_as_subscription_anchor ... ok
+test consecutive_events_are_safe_to_continue ... ok
+test gap_requires_resynchronization ... ok
+test missing_kind_or_cursor_is_indeterminate_and_fails_closed ... ok
+test duplicate_and_index_or_term_regression_require_resynchronization ... ok
+test reset_dominates_every_four_event_permutation_with_the_identical_report ... ok
+test non_reset_event_order_is_stream_semantics_and_is_not_canonicalized ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_agent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests gputeer_coordinator
+
+running 1 test
+test crates\coordinator\src\replica_ack_store.rs - replica_ack_store::CoordinatorReplicaAckStore::store_verified_ack (line 224) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+   Doc-tests gputeer_crypto
+
+running 2 tests
+test crates\crypto\src\ingress.rs - ingress::decode_and_verify (line 139) - compile fail ... ok
+test crates\crypto\src\ingress.rs - ingress::decode_and_verify (line 151) ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+   Doc-tests gputeer_protocol
+
+running 3 tests
+test crates\protocol\src\execution_spec.rs - execution_spec::derive_execution_spec (line 128) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 606) - compile fail ... ok
+test crates\protocol\src\signing.rs - signing::Verified (line 618) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+

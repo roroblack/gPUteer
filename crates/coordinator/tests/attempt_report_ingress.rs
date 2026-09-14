@@ -639,6 +639,66 @@ fn a_non_terminal_outcome_is_refused_with_the_outcome_value() {
     assert!(stored_binding(&fixture.control_db).is_none());
 }
 
+/// B+E 조건 (a) — 이 수신 경로는 schema_version 2 보고를 읽는다. 지원 버전을 1 로 두면 SCHEMA_TOO_NEW 로 거부된다.
+#[test]
+fn a_v2_report_with_an_observed_zero_exit_crosses_the_wire_and_is_stored() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let mut report = terminal_report(fence_epoch);
+    report.schema_version = 2;
+    report.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+    let report = signed_report(report);
+
+    let handle = spawn_coordinator(&fixture, 1);
+    let mut stream = connect_when_ready(fixture.address);
+    handshake(&mut stream);
+    write_frame_body(
+        &mut stream,
+        FrameType::AttemptReport,
+        &report.encode_to_vec(),
+    );
+
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "정상 v2 보고가 거부됐다: {outcome:?}");
+    assert_eq!(stored_binding(&fixture.control_db), Some(report));
+}
+
+/// 필드 조합 규칙(§5.7 (4)) — 수신 단계가 저장소를 **건드리기 전에** 거부한다. 저장소도 같은 검사를 하므로,
+/// 거부 문구에 저장소의 말("field combination rejected")이 없는 것까지 본다 — 수신 검사를 지우면 그 말로 바뀐다.
+#[test]
+fn a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let mut report = terminal_report(fence_epoch);
+    report.schema_version = 2;
+    // 종료를 관측하지 못했는데 COMPLETED — 허용 표 밖이다.
+    report.exit_observation = pb::ExitObservation::NotObserved as i32;
+    let report = signed_report(report);
+
+    let handle = spawn_coordinator(&fixture, 1);
+    let mut stream = connect_when_ready(fixture.address);
+    handshake(&mut stream);
+    write_frame_body(
+        &mut stream,
+        FrameType::AttemptReport,
+        &report.encode_to_vec(),
+    );
+
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("허용 표 밖의 보고는 거부돼야 한다");
+    assert!(
+        error.contains("ATTEMPT_REPORT_REJECTED: ATTEMPT_REPORT_RULE: 허용하지 않는 조합"),
+        "수신 단계의 규칙 거부여야 한다: {error}"
+    );
+    assert!(
+        !error.contains("field combination rejected"),
+        "저장소까지 가서 거부됐다 — 수신 검사가 빠졌다: {error}"
+    );
+    assert!(stored_binding(&fixture.control_db).is_none());
+}
+
 /// 첫 증거와 **내용이 다른** 두 번째 보고는 거부된다.
 ///
 /// ★ 이것이 없으면 노드가 같은 Attempt 에 대해 "성공" 을 보내고 나중에

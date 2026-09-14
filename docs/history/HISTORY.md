@@ -25,6 +25,26 @@
 
 ---
 
+## 2026-09-14 18:17 — B+E 계약 단계 1 적용(worktree feat/b-e-contract) · 재검수 55 대응(결함 71~74)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §5.7 · §5.8 · 제안서 조건 (a)~(e)
+- 스트림: Protocol · Crypto · Coordinator · Agent · QA
+- 수행: 55 가 §5.7 에서 반례 둘(v1 UNSPECIFIED 통과 · FAILED + 코드 0 과잉 거부 — watchdog) · 빠진 적용 지점(Agent 저장 보고 재전송) ·
+  테스트 판별 조건을 찾았다(결함 71~74, 고치기 전에 기록). §5.8 로 고치고 계약을 **적용**했다 — proto(SessionMode 3 · 4 ·
+  AttemptReport 필드 14~16 · enum 두 개 · outcome 6 · AttemptReportAck) · signing.md · state-machines.md · canonical · 참조 구현 ·
+  벡터(기존 52 불변 · 14 추가) · FrameType 17 · 조합 규칙 함수 `crates/protocol/src/attempt_report_rules.rs`. 그 함수를 수신 ·
+  저장 진입 · 재조회 · 해제 진입 · Agent 서명 전에 부른다. 수신 지원 버전 1 -> 2. proto 지문 재기록(schema_version 을 2 로 올린
+  변경이다 — AttemptReport v2 · 새 메시지 AttemptReportAck v1)
+- 하지 않음: Agent 는 아직 v1 로 보낸다 · exec 종료 코드 존재 여부 분리 · RENEW/REPORT 세션 · outbox · D1 과거 배정 검증 ·
+  실패 원인 필드(결함 72 의 대가 — 열린 항목)
+- 검증: 네 크레이트 692 passed · 0 failed · ignored 1 · 경고 0 · 뮤테이션 7/7 · 참조 구현 --verify 66 일치 ·
+  --self-test 통과 · check_schema 오류 0 · check_docs 이상 없음. ★ 워크스페이스 전체 · selftest 는 **이 커밋 전에 돌리지 않았다** —
+  C: 여유 공간이 0 이 되어 빌드가 멈췄고(os error 112), 이 저장소의 빌드 캐시만 지워 1.4GB 로 네 크레이트만 쟀다
+- 원본: `docs/evidence/_raw/B+E_계약단계1_시험_2026-09-14.txt` · `docs/evidence/_raw/검수_2026-09-10/55_재검수_결함65_70_계약개정_CHANGES_REQUESTED.txt`
+- 리포트: 결함 71~74
+
+---
+
 ## 2026-09-14 17:34 — 재검수 54 대응(결함 65~70) · B+E 계약 초안 개정(§5.7) — proto 적용 전
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §5.7 · 제안서 조건 (d)(e)

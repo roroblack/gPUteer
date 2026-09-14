@@ -116,3 +116,13 @@ pub const MODE_MULTI_AGENT_GRANT: i32 = 1;
 /// 다중 Agent lane 과 **반드시 달라야 한다.** 같으면 한쪽 lane 용으로
 /// 서명된 Hello 를 다른 lane 이 자기 것으로 받아들인다.
 pub const MODE_RESUME: i32 = 2;
+
+/// `AgentSessionHello.mode` — 새 연결로 Lease 갱신만 한다(B+E 계약 단계 1).
+pub const MODE_RENEW: i32 = 3;
+
+/// `AgentSessionHello.mode` — 새 연결로 종료 보고만 한다(B+E 계약 단계 1).
+pub const MODE_REPORT: i32 = 4;
+
+/// `AttemptReport` 가 쓰는 가장 높은 schema_version — 2 부터 종료 관측 · 확정 실패 단계 필드가 있다(B+E 계약 단계 1).
+/// ★ 소비 경로(Coordinator 의 AttemptReport 읽기 등)는 이 값을 지원 버전으로 넘긴다 — 숫자를 경로마다 적지 않는다.
+pub const ATTEMPT_REPORT_MAX_SCHEMA_VERSION: u32 = 2;

@@ -278,8 +278,9 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `NeighborUnreachableReport` | `gputeer/v1/neighbor-unreachable` |
 | `ResumeLeaseRequest` | `gputeer/v1/lease-resume` |
 | `ResumeLeaseResult` | `gputeer/v1/lease-resume-result` |
+| `AttemptReportAck` | `gputeer/v1/attempt-report-ack` |
 
-**총 30종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
+**총 31종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
 `policy` · `quarantine`(2개 메시지)이 tag 를 공유했다. **ADR-028 로 분리했다** —
 사유는 §5.1. `AgentGrantAck` 는 coordinator/agent 최소 핸드셰이크
 (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md, 2026-08-18)로
@@ -293,7 +294,9 @@ tag 를 공유하지 않는다. 공유하면 요청 서명이 응답 검증도 �
 교차 재생(cross-message replay)이 가능해진다. Resume 프로토콜의
 `AgentSessionHello`·`ResumeLeaseRequest`·`ResumeLeaseResult`가 조각 3에서
 각각 독립 tag를 추가해 29종이 됐고, 2026-08-30 이웃 신고
-(`gputeer/v1/neighbor-unreachable`)가 더해져 현재 총 30종이다.
+(`gputeer/v1/neighbor-unreachable`)가 더해져 30종이 됐고, 2026-09-14 B+E 계약 단계 1 의 `AttemptReportAck`
+(`gputeer/v1/attempt-report-ack` — Coordinator 가 서명하는 "받았다" 응답)가 더해져 현재 총 31종이다.
+`AttemptReport`(Agent 서명)와 tag 를 공유하지 않는다 — 공유하면 보고 서명이 응답 검증도 통과할 수 있다.
 
 **한 문맥의 서명을 다른 문맥에서 검증하면 domain_tag가 달라 반드시 실패한다.**
 이것이 없으면 예컨대 Lease 서명을 Manifest 서명으로 재사용하는 공격이 가능하다.

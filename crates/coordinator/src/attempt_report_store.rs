@@ -57,6 +57,8 @@ pub enum AttemptReportCorruption {
     FenceEpochEncoding,
     FenceEpochMismatch,
     InvalidOutcome,
+    /// 저장본이 필드 조합 규칙(`attempt_report_rules`)을 어긴다 — 저장 진입에서 막았어야 할 것이 들어 있다.
+    ReportRule,
     MissingAttempt,
 }
 
@@ -64,6 +66,8 @@ pub enum AttemptReportCorruption {
 pub enum AttemptReportStoreError {
     InvalidInput(&'static str),
     InvalidOutcome(i32),
+    /// 서명은 유효하지만 필드 조합 규칙을 어긴다(B+E 계획서 §5.7 · §5.8, 결함 70 · 71 · 72).
+    ReportRule(gputeer_protocol::attempt_report_rules::ReportRuleError),
     AttemptNotFound {
         attempt_id: String,
     },
@@ -97,6 +101,7 @@ impl std::fmt::Display for AttemptReportStoreError {
                     "AttemptReport outcome is not a known terminal value: {outcome}"
                 )
             }
+            Self::ReportRule(rule) => write!(f, "AttemptReport field combination rejected: {rule}"),
             Self::AttemptNotFound { attempt_id } => {
                 write!(f, "AttemptReport references missing Attempt: {attempt_id}")
             }
@@ -298,7 +303,10 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
     if report.node_id.trim().is_empty() {
         return Err(AttemptReportStoreError::InvalidInput("node_id"));
     }
-    validate_terminal_outcome(report.outcome)
+    validate_terminal_outcome(report.outcome)?;
+    // ★ `Verified` 는 서명 통과이지 조합 규칙 통과가 아니다 — 저장 진입이 직접 부른다(§5.7 (4)).
+    gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report)
+        .map_err(AttemptReportStoreError::ReportRule)
 }
 
 /// terminal outcome 인가.
@@ -316,7 +324,9 @@ fn validate_terminal_outcome(outcome: i32) -> Result<(), AttemptReportStoreError
         | Ok(pb::AttemptOutcome::Failed)
         | Ok(pb::AttemptOutcome::Interrupted)
         | Ok(pb::AttemptOutcome::Cancelled)
-        | Ok(pb::AttemptOutcome::StaleCompleted) => Ok(()),
+        | Ok(pb::AttemptOutcome::StaleCompleted)
+        // B+E — 산출물 확정 실패도 끝난 Attempt 다(state-machines.md §3 RUNNING -> FAILED). v1 에서 쓰면 조합 규칙이 거부한다.
+        | Ok(pb::AttemptOutcome::OutputFinalizationFailed) => Ok(()),
         Ok(pb::AttemptOutcome::Unspecified) | Err(_) => {
             Err(AttemptReportStoreError::InvalidOutcome(outcome))
         }
@@ -425,6 +435,10 @@ pub(crate) fn fetch_report_binding(
         .map_err(|_| corrupt(AttemptReportCorruption::UndecodableBody))?;
     if validate_terminal_outcome(report.outcome).is_err() {
         return Err(corrupt(AttemptReportCorruption::InvalidOutcome));
+    }
+    // 재조회 뒤 재검증(§5.7 (4)) — 저장 진입과 같은 함수다. 어긋나면 손상으로 보고 fail-closed.
+    if gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(&report).is_err() {
+        return Err(corrupt(AttemptReportCorruption::ReportRule));
     }
     if report.job_id != row_job_id {
         return Err(corrupt(AttemptReportCorruption::JobIdMismatch));
@@ -665,6 +679,38 @@ mod tests {
         )
     }
 
+    /// B+E 필드(14 · 15 · 16)나 v2 를 쓰는 보고 — 서명 뒤 v2 까지 읽는 검증기로 통과시킨다.
+    fn base_report(schema_version: u32, outcome: pb::AttemptOutcome) -> pb::AttemptReport {
+        pb::AttemptReport {
+            schema_version,
+            job_id: JOB_ID.into(),
+            attempt_id: ATTEMPT_ID.into(),
+            node_id: NODE_ID.into(),
+            fence_epoch: 1,
+            outcome: outcome as i32,
+            final_step: 10,
+            started_at_unix_ms: 210,
+            finished_at_unix_ms: 300,
+            issued_at_unix_ms: 301,
+            ..Default::default()
+        }
+    }
+
+    fn verified_custom(mut report: pb::AttemptReport, key_seed: u8) -> Verified<pb::AttemptReport> {
+        let key = SigningKey::from_bytes(&[key_seed; 32]);
+        report.node_signature = sign(&key, &report).to_vec();
+        let mut keys = InMemoryKeyring::new();
+        keys.insert(NODE_ID, key.verifying_key());
+        verify(
+            &report,
+            gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
+            &Ed25519Verifier::new(keys),
+            999,
+            &mut NoReplayCheck,
+        )
+        .expect("테스트 보고는 서명 검증을 통과해야 한다")
+    }
+
     fn report_count(store: &CoordinatorAttemptReportStore) -> u64 {
         store
             .connection
@@ -737,6 +783,77 @@ mod tests {
             );
             assert_eq!(report_count(&store), 0);
         }
+    }
+
+    /// 결함 70 · 74 — 서명은 유효하지만 조합 규칙을 어긴 보고는 행을 만들지 않고, 거부 **종류**가 규칙 위반이다.
+    #[test]
+    fn signed_reports_that_break_the_field_rules_create_no_row() {
+        use gputeer_protocol::attempt_report_rules::ReportRuleError as R;
+        let mut v1_new_field = base_report(1, pb::AttemptOutcome::Failed);
+        v1_new_field.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+        v1_new_field.exit_code = 7;
+        let v1_new_outcome = base_report(1, pb::AttemptOutcome::OutputFinalizationFailed);
+        let mut v2_unobserved_completion = base_report(2, pb::AttemptOutcome::Completed);
+        v2_unobserved_completion.exit_observation = pb::ExitObservation::NotObserved as i32;
+        for (report, expected) in [
+            (v1_new_field, R::V1UsesNewFields),
+            (v1_new_outcome, R::V1UsesNewOutcome),
+            (
+                v2_unobserved_completion,
+                R::CombinationRejected {
+                    outcome: pb::AttemptOutcome::Completed as i32,
+                    exit_observation: pb::ExitObservation::NotObserved as i32,
+                    exit_code: 0,
+                    stage: 0,
+                },
+            ),
+        ] {
+            let fixture = prepare_fixture();
+            let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+            assert_eq!(
+                store.store_verified_terminal_report(&verified_custom(report, 7)),
+                Err(AttemptReportStoreError::ReportRule(expected))
+            );
+            assert_eq!(report_count(&store), 0);
+        }
+    }
+
+    /// v2 산출물 확정 실패(outcome 6)는 terminal 증거로 저장되고, 같은 보고 재제출은 재조회 검사를 지나 첫 행을 돌려준다.
+    #[test]
+    fn a_v2_output_finalization_failure_is_stored_and_replays() {
+        let fixture = prepare_fixture();
+        let mut report = base_report(2, pb::AttemptOutcome::OutputFinalizationFailed);
+        report.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+        report.finalization_failure_stage = pb::FinalizationFailureStage::ReadOutputs as i32;
+        let verified = verified_custom(report, 7);
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let first = store.store_verified_terminal_report(&verified).unwrap();
+        assert!(first.created);
+        assert_eq!(first.binding.report, verified.get().clone());
+        let again = store.store_verified_terminal_report(&verified).unwrap();
+        assert!(!again.created);
+        assert_eq!(report_count(&store), 1);
+    }
+
+    /// 재조회 뒤 재검증(§5.7 (4)) — 규칙을 어긴 저장본은 손상으로 fail-closed.
+    #[test]
+    fn a_stored_body_that_breaks_the_field_rules_fails_closed() {
+        let fixture = prepare_fixture();
+        let report = completed_report(1);
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store.store_verified_terminal_report(&report).unwrap();
+        let mut changed = report.get().clone();
+        // v1 에 v2 필드 — 저장 진입이면 거부됐을 몸통.
+        changed.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+        rewrite_body(&store, &changed);
+        assert_eq!(
+            store.get_report_binding(ATTEMPT_ID, NODE_ID),
+            Err(AttemptReportStoreError::Corrupt {
+                attempt_id: ATTEMPT_ID.into(),
+                node_id: NODE_ID.into(),
+                kind: AttemptReportCorruption::ReportRule,
+            })
+        );
     }
 
     #[test]

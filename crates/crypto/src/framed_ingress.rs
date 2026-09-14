@@ -105,6 +105,8 @@ pub enum FrameType {
     ///   몫이고 아직 없다 — `crates/scheduler/src/reassignment.rs` 가
     ///   그것을 호출부 진술로 요구하는 이유다.
     NeighborUnreachableReport = 16,
+    /// B+E 계약 단계 1 — Coordinator 가 서명하는 "받았다" 응답(REPORT 세션).
+    AttemptReportAck = 17,
 }
 
 impl FrameType {
@@ -126,6 +128,7 @@ impl FrameType {
             14 => Self::LeaseResumeResult,
             15 => Self::NodeHeartbeat,
             16 => Self::NeighborUnreachableReport,
+            17 => Self::AttemptReportAck,
             _ => return None,
         })
     }
@@ -202,6 +205,7 @@ pub enum IngressMessage {
     LeaseResumeResult(Verified<pb::ResumeLeaseResult>),
     NodeHeartbeat(Verified<pb::NodeHeartbeat>),
     NeighborUnreachableReport(Verified<pb::NeighborUnreachableReport>),
+    AttemptReportAck(Verified<pb::AttemptReportAck>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -322,6 +326,7 @@ pub fn read_frame<R: Read>(
             NeighborUnreachableReport,
             pb::NeighborUnreachableReport
         ),
+        FrameType::AttemptReportAck => verify_as!(AttemptReportAck, pb::AttemptReportAck),
     }
 }
 

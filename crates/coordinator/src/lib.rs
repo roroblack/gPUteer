@@ -1609,9 +1609,10 @@ fn serve_one_connection_impl(
     //   `Verified::require_replay_checked()` 문서가 말하는
     //   "소비 측이 자기 멱등성을 갖춘다" 가 바로 이 자리다.
     for _ in 0..config.expect_attempt_reports {
+        // ★ B+E 조건 (a) — 이 소비 경로는 v2 까지 읽는다. 더 새 버전은 SCHEMA_TOO_NEW 로 거부된다(§0.2).
         let message = read_frame(
             stream,
-            1,
+            gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
             KeyDirectorySource::Provided(agent_keys),
             replay,
             clock,
@@ -1700,6 +1701,13 @@ fn serve_one_connection_impl(
             .into());
         }
 
+        // 필드 조합 규칙 — 저장소도 같은 함수를 부른다(§5.7 (4)). 여기서 먼저 보는 이유는 위 terminal 판정과 같다.
+        if let Err(rule) =
+            gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report)
+        {
+            return Err(format!("ATTEMPT_REPORT_REJECTED: {rule}").into());
+        }
+
         // ★ 대조를 전부 통과한 뒤에만 남긴다. 먼저 저장하면 거부될 보고가
         //   사실로 기록된다.
         //
@@ -1725,6 +1733,7 @@ fn serve_one_connection_impl(
                 //   경로가 이미 같은 이유로 이렇게 가른다.
                 E::InvalidInput(_)
                 | E::InvalidOutcome(_)
+                | E::ReportRule(_)
                 | E::AttemptNotFound { .. }
                 | E::ReservationNotFound { .. }
                 | E::BindingMismatch(_)

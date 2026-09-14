@@ -304,11 +304,29 @@ SCHEMAS = {
         (11, "final_step", "uint", None),
         (12, "started_at_unix_ms", "uint", None),
         (13, "finished_at_unix_ms", "uint", None),
+        # B+E 계약 단계 1 — schema_version 2 필드. 기본값이면 생략(규칙 b) -> v1 canonical 불변
+        (14, "exit_observation", "enum", None),
+        (15, "exit_code", "uint", None),
+        (16, "finalization_failure_stage", "enum", None),
         (20, "artifacts", "repeated_message", "ArtifactRef"),
         (21, "final_checkpoint", "message", "CheckpointManifest"),
         (30, "metrics", "repeated_message", "ReportedMetric"),
         (40, "issued_at_unix_ms", "uint", None),
         (90, "node_signature", "bytes", None),
+    ],
+    # B+E 계약 단계 1 — Coordinator 가 서명하는 "받았다" 응답
+    "AttemptReportAck": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "fence_epoch", "uint", None),
+        (6, "report_hash", "message", "Digest"),
+        (7, "created", "bool", None),
+        (8, "coordinator_id", "string", None),
+        (9, "issued_at_unix_ms", "uint", None),
+        (10, "session_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
     ],
     "CanonicalDecision": [
         (1, "schema_version", "uint", None),
@@ -693,6 +711,7 @@ DOMAIN_TAGS = {
     "ReplicaAck": b"gputeer/v1/replica-ack",
     "ArtifactRef": b"gputeer/v1/artifact",
     "AttemptReport": b"gputeer/v1/attempt-report",
+    "AttemptReportAck": b"gputeer/v1/attempt-report-ack",
     "CanonicalDecision": b"gputeer/v1/canonical",
     "Genesis": b"gputeer/v1/genesis",
     # ★ ADR-028 (2026-08-16) — membership/policy/quarantine 3종을 9종으로 분리.
@@ -1719,6 +1738,80 @@ def build_vectors():
         "NeighborUnreachableReport",
         _neighbor_other_target,
     )
+
+    # ══════════════════════════════════════════════════════════════
+    # 39~41 — B+E 계약 단계 1 (2026-09-14, 계획서 §5.4 · §5.7 (6))
+    # ══════════════════════════════════════════════════════════════
+    _report_base = {
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        "started_at_unix_ms": 1_755_100_800_000,
+        "finished_at_unix_ms": 1_755_104_400_000,
+        "issued_at_unix_ms": 1_755_104_401_000,
+        "node_signature": b"R" * 64,
+    }
+
+    def _report(**kw):
+        d = dict(_report_base)
+        d.update(kw)
+        return d
+
+    add("v39_attempt_report_v1_completed", "v1 COMPLETED — 새 필드 없음", "AttemptReport",
+        _report(schema_version=1, outcome=1))
+    add("v39a_attempt_report_v2_completed_default_fields",
+        "v2 인데 새 필드가 모두 기본값 — v1 과 schema_version 만 달라 canonical 이 달라야 한다(버전이 서명에 들어간다)",
+        "AttemptReport", _report(schema_version=2, outcome=1),
+        ["MUST_DIFFER:v39_attempt_report_v1_completed"])
+    add("v39b_attempt_report_v2_completed", "v2 COMPLETED · OBSERVED_WITH_CODE · exit 0", "AttemptReport",
+        _report(schema_version=2, outcome=1, exit_observation=2, exit_code=0))
+    add("v39c_attempt_report_v2_failed_exit7_read_outputs",
+        "v2 FAILED · exit 7 · 공존하는 확정 실패 READ_OUTPUTS(재검수 54 반례)", "AttemptReport",
+        _report(schema_version=2, outcome=2, exit_observation=2, exit_code=7, finalization_failure_stage=1))
+    add("v39d_attempt_report_v2_failed_exit8_read_outputs",
+        "v39c 에서 exit_code 만 바꾼 변조 — canonical 이 달라야 한다", "AttemptReport",
+        _report(schema_version=2, outcome=2, exit_observation=2, exit_code=8, finalization_failure_stage=1),
+        ["MUST_DIFFER:v39c_attempt_report_v2_failed_exit7_read_outputs"])
+    add("v39e_attempt_report_v2_output_finalization_read_outputs", "v2 outcome 6 · READ_OUTPUTS", "AttemptReport",
+        _report(schema_version=2, outcome=6, exit_observation=2, finalization_failure_stage=1))
+    add("v39f_attempt_report_v2_output_finalization_encode_result", "v2 outcome 6 · ENCODE_RESULT", "AttemptReport",
+        _report(schema_version=2, outcome=6, exit_observation=2, finalization_failure_stage=2))
+    add("v39g_attempt_report_v2_output_finalization_commit_checkpoint", "v2 outcome 6 · COMMIT_CHECKPOINT",
+        "AttemptReport",
+        _report(schema_version=2, outcome=6, exit_observation=2, finalization_failure_stage=3))
+    add("v39h_attempt_report_v2_failed_not_observed", "v2 FAILED · NOT_OBSERVED", "AttemptReport",
+        _report(schema_version=2, outcome=2, exit_observation=1))
+    add("v39i_attempt_report_v2_failed_observed_no_code", "v2 FAILED · OBSERVED_NO_CODE(신호 종료 등)",
+        "AttemptReport", _report(schema_version=2, outcome=2, exit_observation=3))
+
+    _ack = {
+        "schema_version": 1,
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        "report_hash": {"algo": 1, "value": bytes(range(32))},
+        "created": True,
+        "coordinator_id": "coordinator-1",
+        "issued_at_unix_ms": 1_755_104_402_000,
+        "session_nonce": bytes(range(48, 64)),
+        "coordinator_signature": b"A" * 64,
+    }
+    add("v40_attempt_report_ack", "AttemptReportAck canonical vector", "AttemptReportAck", _ack)
+    _ack_replay = dict(_ack)
+    _ack_replay["created"] = False
+    add("v40b_attempt_report_ack_replay_created_false",
+        "같은 보고의 재전송 응답(created=false) — canonical 이 달라야 한다", "AttemptReportAck", _ack_replay,
+        ["MUST_DIFFER:v40_attempt_report_ack"])
+
+    _hello_renew = dict(_hello)
+    _hello_renew["mode"] = 3
+    add("v41_agent_session_hello_renew", "AgentSessionHello RENEW(3)", "AgentSessionHello", _hello_renew)
+    _hello_report = dict(_hello)
+    _hello_report["mode"] = 4
+    add("v41b_agent_session_hello_report", "AgentSessionHello REPORT(4)", "AgentSessionHello", _hello_report,
+        ["MUST_DIFFER:v41_agent_session_hello_renew"])
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

@@ -260,6 +260,16 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    // B+E 계약 단계 1 — "받았다" 응답. ShortLived 여야 한다 — 재생할 수 있으면 다른 세션의 보고를 받았다고 믿게 된다.
+    check(
+        "AttemptReportAck",
+        &pb::AttemptReportAck {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            session_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
 }
 
 /// ★ `Signable` 을 구현한 메시지가 위 테스트에 **전부** 있는가.

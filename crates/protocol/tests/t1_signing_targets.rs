@@ -638,6 +638,8 @@ fn domain_coverage_is_explicit() {
             Some("NeighborUnreachableReport"),
             true,
         ),
+        // B+E 계약 단계 1 (2026-09-14) — "받았다" 응답
+        (Domain::AttemptReportAck, Some("AttemptReportAck"), true),
     ];
 
     // ★ 수동으로 적은 28 같은 숫자를 쓰지 않는다. 그 숫자를 두면
@@ -678,8 +680,9 @@ fn domain_coverage_is_explicit() {
 
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
+    // 26 -> 27 (2026-09-14) — B+E 계약 단계 1 의 AttemptReportAck.
     assert_eq!(
-        implemented, 26,
+        implemented, 27,
         "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
     assert_eq!(

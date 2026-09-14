@@ -111,6 +111,8 @@ pub enum AttemptReportError {
     },
     /// 프레임 인코딩 실패.
     Frame(String),
+    /// 만든 보고가 필드 조합 규칙을 어긴다 — 보내는 쪽 자기 검사(B+E 계획서 §5.7 (4)). 서명하지 않는다.
+    Rule(gputeer_protocol::attempt_report_rules::ReportRuleError),
 }
 
 impl std::fmt::Display for AttemptReportError {
@@ -142,6 +144,7 @@ impl std::fmt::Display for AttemptReportError {
             Self::Frame(detail) => {
                 write!(f, "ATTEMPT_REPORT_REFUSED: 프레임 인코딩 실패: {detail}")
             }
+            Self::Rule(rule) => write!(f, "ATTEMPT_REPORT_REFUSED: {rule}"),
         }
     }
 }
@@ -209,6 +212,9 @@ pub fn build_signed_attempt_report(
         issued_at_unix_ms: observation.issued_at_unix_ms,
         ..Default::default()
     };
+    // 보내는 쪽 자기 검사 — 받는 쪽과 같은 함수다. 어기면 서명하지 않는다.
+    gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(&report)
+        .map_err(AttemptReportError::Rule)?;
     report.node_signature = sign(key, &report).to_vec();
     Ok(report)
 }
