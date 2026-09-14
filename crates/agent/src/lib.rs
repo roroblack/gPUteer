@@ -842,6 +842,29 @@ fn run_one_connection_inner(
         );
     }
 
+    // ★ D2 (B+E 구현 단계 4, 2026-09-14) — **모든 연결은 Agent 의 Hello 로 시작한다.** 순차 lane 도 다중 Agent lane 과
+    //   같은 Hello(FRESH) -> Grant 순서다. 한 리스너가 FRESH · RESUME · RENEW · REPORT 를 가르려면 Agent 가 먼저 말해야 한다
+    //   (제안서 결정 D2 — 설정 분기 없음). 옛 Coordinator 는 Grant 를 먼저 쓰고 ACK 자리에서 이 Hello 를 받아 명시적으로 실패한다.
+    {
+        let mut hello = pb::AgentSessionHello {
+            schema_version: 1,
+            mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+            session_id: config.session_id.clone(),
+            node_id: config.agent_device_id.clone(),
+            connection_attempt: config.connection_attempt,
+            issued_at_unix_ms: clock.now_unix_ms(),
+            nonce: fresh_nonce()?,
+            ..Default::default()
+        };
+        hello.node_signature = sign(&signing_key, &hello).to_vec();
+        let frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+            .map_err(|e| format!("AgentSessionHello(FRESH) 프레임 인코딩 실패: {e}"))?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("AgentSessionHello(FRESH) 전송 실패: {e}"))?;
+        stream.flush().map_err(|e| e.to_string())?;
+    }
+
     let received = read_frame(
         &mut stream,
         2,
@@ -2900,6 +2923,14 @@ mod tests {
             ..Default::default()
         };
         grant.coordinator_signature = sign(&coordinator_key, &grant).to_vec();
+
+        // D2 — 실제 Agent 는 Grant 를 받기 전에 Hello(FRESH) 를 보낸다.
+        let mut hello_header = [0u8; 5];
+        std::io::Read::read_exact(&mut stream, &mut hello_header).expect("Agent Hello header");
+        assert_eq!(hello_header[0], FrameType::SessionHello as u8, "첫 프레임은 Hello 다(D2)");
+        let hello_len = u32::from_be_bytes([hello_header[1], hello_header[2], hello_header[3], hello_header[4]]) as usize;
+        let mut hello_body = vec![0u8; hello_len];
+        std::io::Read::read_exact(&mut stream, &mut hello_body).expect("Agent Hello body");
 
         let frame =
             write_frame(FrameType::Grant, &grant.encode_to_vec()).expect("encode test Grant frame");

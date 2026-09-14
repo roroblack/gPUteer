@@ -165,6 +165,10 @@ fn run_agent_session(extra: &[&str]) -> SessionOutcome {
         .set_write_timeout(Some(Duration::from_secs(10)))
         .expect("쓰기 타임아웃");
 
+    // D2 — Agent 가 먼저 Hello(FRESH) 를 보낸다.
+    let hello_type = read_frame_type(&mut stream).expect("Agent 가 Hello 를 먼저 보내야 한다");
+    assert_eq!(hello_type, FrameType::SessionHello as u8, "첫 프레임은 Hello 다(D2)");
+
     let grant = signed_grant();
     write_frame_body(&mut stream, FrameType::Grant, &grant.encode_to_vec());
 

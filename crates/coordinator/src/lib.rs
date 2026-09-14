@@ -1060,6 +1060,8 @@ fn serve_one_connection_impl(
             connection_attempt,
         );
     }
+    // ★ D2 (B+E 구현 단계 4) — 순차 lane 도 Agent 의 Hello(FRESH) 로 시작한다. Grant 를 쓰기 **전에** 읽고 검증한다.
+    read_fresh_hello(config, stream, agent_keys, replay, clock, connection_attempt)?;
     let mut grant = match &config.grant_from_control_db {
         // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
@@ -2005,6 +2007,69 @@ fn accept_with_deadline(
             Err(error) => return Err(format!("accept failed: {error}")),
         }
     }
+}
+
+/// D2 — 순차 lane 의 첫 프레임. 서명 · replay · mode · node_id · connection_attempt 를 대조한다(Resume lane 과 같은 규칙).
+///
+/// ★ 옛 Agent 는 Hello 없이 Grant 를 기다린다 — 그러면 이 읽기가 소켓 시한에 걸린다. 그 오류에 `HELLO_MISSING` 이라는
+///   이름을 붙여 **명시적 실패**로 끝낸다(D2 결정 — 서로 상대가 먼저 말하기를 기다리다 원인 모를 시간 초과로 끝나지 않게).
+/// ★ session_id 는 대조하지 않는다 — FRESH 는 아직 세션 복원 대상이 아니다(Resume lane 만 요구한다).
+fn read_fresh_hello(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    agent_keys: &InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    connection_attempt: u32,
+) -> Result<(), SessionHandlerError> {
+    let message = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| {
+        format!(
+            "HELLO_MISSING: 순차 lane 의 첫 프레임은 Agent 의 Hello(FRESH) 여야 한다 \
+             — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다: {e}"
+        )
+    })?;
+    let hello = match message {
+        IngressMessage::SessionHello(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("AgentSessionHello replay 검사 실패: {e:?}"))?
+            .clone(),
+        other => {
+            return Err(SessionHandlerError::Legacy(format!(
+                "HELLO_MISSING: 첫 프레임이 Hello 가 아니다 — {other:?}"
+            )))
+        }
+    };
+    if hello.mode != gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
+        return Err(SessionHandlerError::Legacy(format!(
+            "HELLO_REJECTED: mode 불일치 — 순차 lane 은 FRESH({}) 만 받는다, 받은 값 {}",
+            gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+            hello.mode
+        )));
+    }
+    if hello.node_id != config.agent_device_id {
+        return Err(SessionHandlerError::Legacy(format!(
+            "HELLO_REJECTED: node_id 불일치 — 기대값 {} != {}",
+            config.agent_device_id, hello.node_id
+        )));
+    }
+    if hello.connection_attempt != connection_attempt {
+        return Err(SessionHandlerError::Legacy(format!(
+            "HELLO_REJECTED: connection_attempt 불일치 — 기대값 {} != {}",
+            connection_attempt, hello.connection_attempt
+        )));
+    }
+    println!(
+        "SESSION_HELLO_ACCEPTED mode={} node_id={} connection_attempt={}",
+        hello.mode, hello.node_id, hello.connection_attempt
+    );
+    Ok(())
 }
 
 /// Hello-first dispatcher for the explicit Resume lane. This is deliberately

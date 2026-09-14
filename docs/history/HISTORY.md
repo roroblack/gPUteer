@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-14 19:05 — B+E 구현 단계 4 · D2(모든 연결은 Agent 의 Hello 로 시작한다) · 재검수 58 결함 82~86 기록
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §8 · 제안서 결정 D2
+- 스트림: Agent · Coordinator · CLI(selftest) · QA
+- 수행: 순차 lane 도 Hello(FRESH) -> Grant 순서로 바꿨다. Coordinator 는 Grant 전에 Hello 를 검증하고 없으면 HELLO_MISSING,
+  틀리면 HELLO_REJECTED 로 끝낸다. 가짜 상대 넷의 대화 순서를 맞췄다. 재검수 58(7d5a9fe, ⑲ 는 아직 못 닫는다)의 지적 다섯을
+  고치기 전에 결함 82~86 으로 기록했다 — 수정은 다음 커밋
+- 검증: agent · coordinator · cli 통합 372 passed · 0 failed · 경고 0 · 음성 두 개 통과 · selftest exit 0(시나리오 줄 97).
+  -j 1 로 쟀다(커밋 메모리 여유 1.2GB — -j 2 에서 컴파일러 메모리 오류가 났다). 7d5a9fe 워크스페이스 전체는 1147 passed · 0 failed ·
+  ignored 1 · 경고 0 · selftest exit 0(97). ★ D2 뒤 워크스페이스 전체는 이 커밋 뒤에 돌린다. 옛 Coordinator 와의 조합은 재지 않았다
+- 원본: `docs/evidence/_raw/B+E_D2_Hello_먼저_시험_2026-09-14.txt` · `docs/evidence/_raw/검수_2026-09-10/58_재검수_결함77_81_결함19_CHANGES_REQUESTED.txt`
+- 리포트: 결함 82~86(기록만)
+
+---
+
 ## 2026-09-14 18:51 — B+E 구현 단계 3 · 결함 ⑲(산출물 확정 실패가 종료 보고를 없앤다) · 재검수 57 대응(결함 77~81)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §6(정정) · §7

@@ -331,6 +331,20 @@ fn write_frame_body(stream: &mut TcpStream, frame_type: FrameType, body: &[u8]) 
 
 /// Grant 를 받고 유효한 `AgentGrantAck` 로 답한다.
 fn handshake(stream: &mut TcpStream) -> pb::ExecutionGrant {
+    // D2 — 모든 연결은 Agent 의 Hello(FRESH) 로 시작한다.
+    let hello_key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        node_id: NODE_ID.into(),
+        connection_attempt: 0,
+        issued_at_unix_ms: now_ms(),
+        nonce: (100u8..116).collect(),
+        ..Default::default()
+    };
+    hello.node_signature = sign(&hello_key, &hello).to_vec();
+    write_frame_body(stream, FrameType::SessionHello, &hello.encode_to_vec());
+
     let (frame_type, body) = read_frame_body(stream);
     assert_eq!(
         frame_type,
@@ -696,6 +710,57 @@ fn a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store() {
         !error.contains("field combination rejected"),
         "저장소까지 가서 거부됐다 — 수신 검사가 빠졌다: {error}"
     );
+    assert!(stored_binding(&fixture.control_db).is_none());
+}
+
+/// D2 — Hello 없이 다른 프레임부터 보내는 연결(D2 이전 Agent 의 모양)은 **명시적으로** 거부된다(HELLO_MISSING).
+///   서로 상대가 먼저 말하기를 기다리다 원인 모를 시간 초과로 끝나지 않게 한다.
+#[test]
+fn a_first_frame_that_is_not_a_hello_is_refused_as_hello_missing() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator(&fixture, 1);
+    let mut stream = connect_when_ready(fixture.address);
+    // Hello 대신 서명된 종료 보고부터 보낸다.
+    write_frame_body(
+        &mut stream,
+        FrameType::AttemptReport,
+        &terminal_report(fence_epoch).encode_to_vec(),
+    );
+
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("Hello 로 시작하지 않는 연결은 거부돼야 한다");
+    assert!(error.contains("HELLO_MISSING"), "거부 사유가 Hello 부재라고 말해야 한다: {error}");
+    assert!(stored_binding(&fixture.control_db).is_none());
+}
+
+/// D2 — 다른 lane(Resume) 용으로 서명한 Hello 는 mode 대조로 거부된다(HELLO_REJECTED).
+///   서명은 유효하다 — 서명 검증으로는 이 혼동을 못 잡는다.
+#[test]
+fn a_hello_for_another_mode_is_refused() {
+    let fixture = fixture();
+    let handle = spawn_coordinator(&fixture, 1);
+    let mut stream = connect_when_ready(fixture.address);
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_RESUME,
+        node_id: NODE_ID.into(),
+        connection_attempt: 0,
+        issued_at_unix_ms: now_ms(),
+        nonce: (120u8..136).collect(),
+        ..Default::default()
+    };
+    hello.node_signature = sign(&key, &hello).to_vec();
+    write_frame_body(&mut stream, FrameType::SessionHello, &hello.encode_to_vec());
+
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("다른 mode 의 Hello 는 거부돼야 한다");
+    assert!(error.contains("HELLO_REJECTED: mode 불일치"), "{error}");
     assert!(stored_binding(&fixture.control_db).is_none());
 }
 

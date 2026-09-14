@@ -5845,6 +5845,24 @@ fn run_wire_agent_client(
     coordinator_keys.insert(fixture.coordinator_device_id.to_owned(), coordinator_key);
     let mut replay = gputeer_crypto::InMemoryReplayGuard::new();
     let clock = gputeer_crypto::SystemClock;
+    // D2 — 모든 연결은 Agent 의 Hello(FRESH) 로 시작한다.
+    let hello_key = gputeer_crypto::SigningKey::from_bytes(&fixture.agent_seed);
+    let mut hello = gputeer_protocol::pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        node_id: fixture.agent_device_id.to_owned(),
+        connection_attempt,
+        issued_at_unix_ms: clock.now_unix_ms(),
+        nonce: derive_selftest_nonce("fresh-hello", fixture.agent_device_id, connection_attempt),
+        ..Default::default()
+    };
+    hello.node_signature = gputeer_crypto::sign(&hello_key, &hello).to_vec();
+    let hello_frame =
+        gputeer_crypto::write_frame(gputeer_crypto::FrameType::SessionHello, &hello.encode_to_vec())
+            .map_err(|e| format!("wire Agent Hello encode failed: {e}"))?;
+    stream
+        .write_all(&hello_frame)
+        .map_err(|e| format!("wire Agent Hello write failed: {e}"))?;
     let received = gputeer_crypto::read_frame(
         &mut stream,
         2,
