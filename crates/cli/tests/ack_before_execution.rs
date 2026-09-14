@@ -12,7 +12,8 @@
 //! ```
 //!
 //! ★ 시한은 Coordinator 가 찍은 값으로 본다 — 남은 Lease · 계산한 시한 · 소켓에 실제 걸린 시한 · Coordinator 안에서 잰 경과
-//!   (POST_ACK_WAIT_ARMED · RESTORED · ENDED). 부모 쪽 시각(독자 스레드 · try_wait)은 P1 의 순서 비교와 전체 중단용으로만
+//!   (POST_ACK_WAIT_ARMED · RESTORED · ENDED — ENDED 의 경과는 설정 · 로그 뒤부터 Drop 까지라 "실패 순간까지" 그 자체는 아니다,
+//!   결함 65). 부모 쪽 시각(독자 스레드 · try_wait)은 P1 의 순서 비교와 전체 중단용으로만
 //!   쓴다(결함 62 — 전에는 "프로토콜 사건에 묶는다" 고 적었는데 실제로는 부모 쪽 시각이었다).
 //! 실측과 설계는 `docs/plans/2026-09-10_2142_결함18_ACK_시한_설계_선택지.md` §7.
 //! ★ Windows 전용이다 — 실행 관문이 리눅스에서는 cgroup 을 요구한다(`grant_over_wire.rs` 와 같다).
