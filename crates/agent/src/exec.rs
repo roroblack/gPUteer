@@ -371,6 +371,8 @@ pub fn execute_with_control(
 ///   ACK 를 보낸 **뒤에** 실행한다. 규범(`docs/protocol/state-machines.md` §3)에서 Grant 수락
 ///   (GRANT_ACCEPTED)은 프로세스 기동(PROCESS_STARTED) **전**의 사건이다.
 ///   [`execute_with_control`] 도 같은 함수를 부른다 — 관문을 두 벌 두지 않는다.
+///   ★ 그래서 ACK 뒤에 한 번 더 돈다. GPU 는 **새로 관측**하므로 첫 검사를 통과하고 두 번째에서
+///     거부될 수 있다 — 그때는 ACK 가 이미 갔다(결함 ㊼, 구현 검수 49).
 ///
 /// 플랫폼 지원 · 실제 상한 적용 · 기동은 여기서 보지 않는다 — 띄워 봐야 아는 것이다.
 pub fn preflight(policy: &ExecutionPolicy) -> Result<(), ExecutionError> {

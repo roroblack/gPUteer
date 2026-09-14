@@ -730,7 +730,59 @@ fn fresh_nonce() -> Result<Vec<u8>, String> {
     Ok(nonce.to_vec())
 }
 
+/// ★ 결함 ㊺ (구현 검수 49) — 이 연결에서 워크로드를 띄웠으면 **어떤 오류도** 재접속 · 재조회 사유로
+///   돌려보내지 않는다. 바깥 루프(`run()`)는 재접속하면 같은 Grant 로 처음부터 다시 돌고, 그러면
+///   워크로드가 두 번 실행된다(`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
+///   첫 커밋(391e49d)은 peek 경로 하나만 막았고 Revoke 읽기 실패 · 갱신 응답 유실 복구가 남아 있었다.
+#[allow(clippy::too_many_arguments)]
 fn run_one_connection(
+    config: AgentConfig,
+    stream: TcpStream,
+    recovering_ambiguous_renew: bool,
+    signing_key: &SigningKey,
+    coordinator_keys: &mut InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    fence_watermark: &mut DurableFenceWatermark,
+    budget: &mut RetryBudget,
+    policy: &RetryPolicy,
+) -> Result<(), String> {
+    let mut workload_started = false;
+    let result = run_one_connection_inner(
+        config,
+        stream,
+        recovering_ambiguous_renew,
+        signing_key,
+        coordinator_keys,
+        replay,
+        clock,
+        fence_watermark,
+        budget,
+        policy,
+        &mut workload_started,
+    );
+    result.map_err(|error| {
+        if workload_started {
+            not_retried_after_workload(&error)
+        } else {
+            error
+        }
+    })
+}
+
+/// 재접속 · 재조회 표지를 바꿔 `SessionError::from` 이 Fatal 로 분류하게 한다(결함 ㊺).
+fn not_retried_after_workload(error: &str) -> String {
+    format!(
+        "WORKLOAD_ALREADY_RAN: 이 연결에서 워크로드를 이미 띄웠다 — 재접속하면 같은 Grant 로 \
+         다시 실행하므로 재시도하지 않는다: {}",
+        error
+            .replace("RETRYABLE_", "RETRYABLE(억제)_")
+            .replace("AMBIGUOUS_RENEW", "AMBIGUOUS(억제)_RENEW")
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_one_connection_inner(
     config: AgentConfig,
     mut stream: TcpStream,
     recovering_ambiguous_renew: bool,
@@ -741,6 +793,7 @@ fn run_one_connection(
     mut fence_watermark: &mut DurableFenceWatermark,
     budget: &mut RetryBudget,
     policy: &RetryPolicy,
+    workload_started: &mut bool,
 ) -> Result<(), String> {
     // ★ fail closed — fence watermark 저장소를 **네트워크 연결보다
     //   먼저** 연다. 열 수 없는 저장소로 epoch 를 검증하는 척하지
@@ -889,10 +942,8 @@ fn run_one_connection(
     let mut terminal_observation: Option<crate::report::TerminalObservation> = None;
     // ★ 결함 ⑱ — 워크로드가 있으면 ACK 는 실행 **전**에 간다(아래). 보낸 것을 여기 담는다.
     let mut sent_ack: Option<pb::AgentGrantAck> = None;
-    // ★ 이 연결에서 워크로드를 실제로 띄우려 했는가. 그랬다면 연결 끊김을 재접속 사유로
-    //   쓰지 않는다 — 재접속하면 같은 Grant 로 **다시 실행한다**
-    //   (`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
-    let mut workload_started = false;
+    // ★ `workload_started`(인자) — 이 연결에서 워크로드를 띄우려 했는가. 바깥 `run_one_connection` 이
+    //   그 뒤의 **모든** 오류를 재접속 불가로 바꾼다(결함 ㊺).
     if let Some(loaded) = workload.as_ref() {
         let spec = &loaded.spec;
         // 자식의 출력을 받을 별도 작업 디렉터리.
@@ -963,18 +1014,20 @@ fn run_one_connection(
         // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
         //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
         //   ACK 읽기 시한에 먼저 걸렸다(실측 `docs/evidence/_raw/결함18_ACK_시한_실측_2026-09-10.txt`).
-        //   관문이 거부하면 지금처럼 ACK 없이 끝낸다 — 받아들이지 못할 Grant 에 "받았다" 고
+        //   **이 첫 검사**가 거부하면 지금처럼 ACK 없이 끝낸다 — 받아들이지 못할 Grant 에 "받았다" 고
         //   답하지 않는다. opt-in 이 꺼져 있으면 실행만 건너뛰고 ACK 는 보낸다(전과 같다).
         let will_execute = match exec::preflight(&policy) {
             Ok(()) => true,
             Err(exec::ExecutionError::NotOptedIn) => false,
-            Err(refused) => {
-                remove_dir_if_present(&run_dir)?;
-                return Err(refused.to_string());
-            }
+            // ★ 결함 ㊸ — 정리까지 실패해도 거부 사유를 잃지 않는다.
+            Err(refused) => return Err(fail_after_cleanup(refused.to_string(), &run_dir)),
         };
-        sent_ack = Some(send_grant_ack(&mut stream, signing_key, &grant, &config, clock)?);
-        workload_started = will_execute;
+        // ★ 결함 ㊷ — ACK 전송이 실패해도 작업 디렉터리를 치운 뒤 보고한다.
+        sent_ack = Some(
+            send_grant_ack(&mut stream, signing_key, &grant, &config, clock)
+                .map_err(|ack_error| fail_after_cleanup(ack_error, &run_dir))?,
+        );
+        *workload_started = will_execute;
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
         //   작업 디렉터리를 지운다.
         //
@@ -1251,7 +1304,7 @@ fn run_one_connection(
         && !config.do_renew
         && !config.expect_replay
         && config.expect_revoke_after_round.is_none()
-        && !workload_started
+        && !*workload_started
         && peer_closed_after_ack(&stream)?
     {
         return Err("RETRYABLE_CONNECTION: coordinator disconnected after ACK".into());
@@ -1770,6 +1823,8 @@ fn run_and_capture_workload(
     //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
     //   소유자는 도는 동안 멈출 수 있어야 한다(`CLAUDE.md` §0.1).
     let outcome = match exec::execute_with_control(spec, policy, |stopper| {
+        // ★ 자식이 **막 떴다**(결함 ㊻ — ACK_SENT 와 순서를 비교하는 표지).
+        println!("WORKLOAD_SPAWNED job_id={} attempt_id={}", spec.job_id, attempt_id);
         panel.register(owner_panel::RunningWorkload {
             job_id: spec.job_id.clone(),
             attempt_id: attempt_id.to_string(),
@@ -1867,6 +1922,14 @@ fn workload_run_root(checkpoint_root: &std::path::Path) -> Result<PathBuf, Strin
 ///
 /// ★ 삭제 실패를 `let _ =` 로 버리지 않는다(`CLAUDE.md` §3).
 ///   남의 출력을 못 지우면 그건 알아야 할 사실이다.
+/// ★ 결함 ㊷ ㊸ — 앞선 실패를 보고하기 전에 작업 디렉터리를 치우고, 정리까지 실패하면 **둘 다** 남긴다.
+fn fail_after_cleanup(primary: String, run_dir: &std::path::Path) -> String {
+    match remove_dir_if_present(run_dir) {
+        Ok(()) => primary,
+        Err(cleanup_error) => format!("{primary} / 그리고 {cleanup_error}"),
+    }
+}
+
 fn remove_dir_if_present(dir: &std::path::Path) -> Result<(), String> {
     match fs::remove_dir_all(dir) {
         Ok(()) => Ok(()),
@@ -2130,6 +2193,8 @@ fn send_grant_ack(
         .write_all(&frame)
         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
     stream.flush().map_err(|e| e.to_string())?;
+    // ★ 기동 전 ACK 를 테스트가 직접 관측하는 표지(결함 ㊻) — WORKLOAD_SPAWNED 보다 먼저 찍혀야 한다.
+    println!("ACK_SENT grant_id={} attempt_id={}", ack.grant_id, ack.attempt_id);
     Ok(ack)
 }
 
@@ -2860,5 +2925,64 @@ mod tests {
             error.contains("파일시스템 루트"),
             "거부 이유가 분명하지 않다: {error}"
         );
+    }
+}
+
+/// 결함 ㊷ ㊸ ㊺ (구현 검수 49) 의 단위 테스트.
+#[cfg(test)]
+mod defect_42_45_tests {
+    use super::*;
+
+    /// ★ 결함 ㊸ — 정리가 실패해도 앞선 거부 사유가 남는다.
+    #[cfg(windows)]
+    #[test]
+    fn a_cleanup_failure_keeps_the_original_refusal() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let run_dir = dir.path().join("run");
+        std::fs::create_dir_all(&run_dir).expect("작업 디렉터리");
+        // 공유 없이 열어 둔 파일이 있으면 Windows 는 그 디렉터리를 지우지 못한다 — 정리를 실패시킨다.
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .share_mode(0)
+            .open(run_dir.join("held"))
+            .expect("파일");
+        let message = fail_after_cleanup("EXEC_REFUSED:LIMIT_NOT_APPLIED".to_string(), &run_dir);
+        drop(held);
+        assert!(message.contains("EXEC_REFUSED:LIMIT_NOT_APPLIED"), "{message}");
+        assert!(message.contains("그리고"), "정리 실패가 보고되지 않았다: {message}");
+    }
+
+    #[test]
+    fn a_successful_cleanup_returns_the_original_error_and_removes_the_directory() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let run_dir = dir.path().join("run");
+        std::fs::create_dir_all(&run_dir).expect("작업 디렉터리");
+        let message = fail_after_cleanup("ACK 전송 실패: x".to_string(), &run_dir);
+        assert_eq!(message, "ACK 전송 실패: x");
+        assert!(!run_dir.exists(), "작업 디렉터리가 남았다");
+    }
+
+    /// ★ 결함 ㊺ — 워크로드를 띄운 뒤의 오류는 재접속 · 재조회로 분류되지 않는다.
+    #[test]
+    fn errors_after_the_workload_ran_are_not_retried() {
+        assert!(matches!(
+            SessionError::from("RETRYABLE_CONNECTION: x".to_string()),
+            SessionError::Retryable(_)
+        ));
+        assert!(matches!(
+            SessionError::from("AMBIGUOUS_RENEW: z".to_string()),
+            SessionError::AmbiguousRenew(_)
+        ));
+        for raw in ["RETRYABLE_CONNECTION: x", "RETRYABLE_RESUME: y", "AMBIGUOUS_RENEW: z"] {
+            let mapped = not_retried_after_workload(raw);
+            assert!(
+                matches!(SessionError::from(mapped.clone()), SessionError::Fatal(_)),
+                "{mapped}"
+            );
+            assert!(mapped.starts_with("WORKLOAD_ALREADY_RAN"), "{mapped}");
+        }
     }
 }

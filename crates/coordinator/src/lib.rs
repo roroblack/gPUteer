@@ -873,9 +873,11 @@ fn classify_legacy_session_error(
 /// (`IO_TIMEOUT`)로 두면 10초보다 긴 작업이 전부 끊긴다. 그래서 첫 읽기만 **Lease 만료까지 남은
 /// 시간**(10초보다 짧아지지는 않는다)으로 두고, 읽고 나면 다시 10초로 되돌린다.
 ///
-/// ★ 이 연결에서 Lease 만료 뒤에 오는 것을 받지 않는다는 뜻이다. 규범의 STALE 제출
-///   (`state-machines.md` §3 — Lease 를 잃고도 계속 돌아 나중에 내는 것)을 막는 것이 아니다 —
-///   그 제출은 다른 연결로 와야 하고, 그 자리는 설계 B+E 의 보고 연결이다.
+/// ★ 결함 ㊹ — 이것은 **무응답 시한**이지 Lease 유효성 판정이 아니다. 소켓 읽기마다 적용되는 상대
+///   시한이라(`read_frame` 은 헤더와 본문을 따로 읽는다) 프레임 전체가 Lease 만료를 넘겨 도착할 수 있고,
+///   최소 10초 · `arm` 뒤의 지연(갱신 전 sleep 등)도 만료 뒤까지 기다리게 만든다. 즉 Lease 만료 뒤에
+///   도착한 프레임을 **거부하지 않는다** — 전에 "받지 않는다" 고 적었었다(구현 검수 49). 규범의 STALE
+///   제출(`state-machines.md` §3)을 이 연결이 판정하지도 않는다 — 그 자리는 설계 B+E 의 보고 연결이다.
 /// ★ 이 연결은 순차로 처리되므로 기다리는 동안 다른 연결을 받지 못한다(설계 문서 §3 의 A).
 struct PostAckWait {
     armed: bool,
@@ -1122,7 +1124,8 @@ fn serve_one_connection_impl(
     }
 
     // ★★ 결함 ⑱ (설계 A) — Manifest 가 실렸으면 Agent 는 ACK 뒤에 워크로드를 돌린다. 그래서
-    //   ACK **다음 첫 읽기**는 10초가 아니라 Lease 만료까지 기다린다. 이유 · 한계는 `PostAckWait`.
+    //   ACK **다음 첫 읽기**의 무응답 시한을 Lease 만료까지 남은 시간(최소 10초)으로 둔다.
+    //   Lease 유효성 판정이 아니다 — 이유 · 한계는 `PostAckWait`.
     let mut post_ack_wait = PostAckWait::arm(stream, &grant, clock.now_unix_ms())?;
 
     if config.drop_connection_after_ack_once
