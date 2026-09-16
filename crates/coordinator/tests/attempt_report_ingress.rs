@@ -916,6 +916,98 @@ fn a_renew_session_without_a_lease_db_is_refused() {
     assert!(error.contains("RENEW_SESSION_REFUSED"), "{error}");
 }
 
+/// 연결 `max_connections` 개 · 추가 인자를 받는 Coordinator.
+fn spawn_coordinator_with(
+    fixture: &Fixture,
+    max_connections: u32,
+    extra: &[&str],
+) -> std::thread::JoinHandle<Result<(), String>> {
+    let mut args = coordinator_args(fixture, 0);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--max-connections")
+        .expect("--max-connections");
+    args[at + 1] = max_connections.to_string();
+    args.extend(extra.iter().map(|arg| arg.to_string()));
+    std::thread::spawn(move || {
+        let config = gputeer_coordinator::parse_config_from_args(&args).expect("설정 파싱");
+        gputeer_coordinator::run(config)
+    })
+}
+
+/// 결함 104 (재검수 62) — 저장된 예약 lane 에서 저장소를 **읽다가** 난 장애(손상된 Lease 행)는 Storage(fail-closed)다 — 받을 연결이
+///   남아 있어도 리스너를 멈춘다. 전에는 모든 오류를 Protocol 로 고정해 다음 연결을 받았다.
+#[test]
+fn a_corrupt_stored_lease_row_on_the_stored_lane_stops_the_listener() {
+    let fixture = fixture();
+    {
+        let db = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
+        let changed = db
+            .execute(
+                "UPDATE coordinator_leases SET fence_epoch = X'00' WHERE lease_id = ?1",
+                [LEASE_ID],
+            )
+            .expect("Lease 행 손상");
+        assert_eq!(changed, 1, "fixture 의 Lease 행이 하나 있어야 한다");
+    }
+    let handle = spawn_coordinator_with(&fixture, 2, &[]);
+    let mut stream = connect_when_ready(fixture.address);
+    send_hello(&mut stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("손상된 저장소는 리스너를 멈춰야 한다");
+    assert!(error.contains("Lease 조회 실패"), "{error}");
+}
+
+/// 결함 105 (재검수 62) — `--revoke-before-renew` 의 revoke 저장이 락 시한으로 실패하면 Storage(fail-closed)다(결함 99 의 음성 테스트).
+///   순서로 보장한다 — Grant 를 받은 뒤 ACK 를 보류하고, 다른 연결로 BEGIN IMMEDIATE 를 잡은 다음 ACK 를 보낸다(lease 저장소 busy
+///   timeout 1초). 리스너가 멈추고 revoke 는 기록되지 않는다.
+#[test]
+fn a_revoke_store_lock_timeout_before_renew_stops_the_listener() {
+    let fixture = fixture();
+    let control_db = fixture.control_db.to_str().expect("경로").to_string();
+    let handle = spawn_coordinator_with(
+        &fixture,
+        2,
+        &["--lease-db", control_db.as_str(), "--revoke-before-renew", "true"],
+    );
+    let mut stream = connect_when_ready(fixture.address);
+    send_hello(&mut stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    let (frame_type, body) = read_frame_body(&mut stream);
+    assert_eq!(frame_type, FrameType::Grant as u8, "첫 프레임은 Grant 여야 한다");
+    let grant = pb::ExecutionGrant::decode(body.as_slice()).expect("Grant 디코드");
+
+    let lock = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
+    lock.execute_batch("BEGIN IMMEDIATE").expect("쓰기 락");
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let now = now_ms();
+    let mut ack = pb::AgentGrantAck {
+        schema_version: 1,
+        grant_id: grant.grant_id.clone(),
+        attempt_id: grant.attempt_id.clone(),
+        agent_device_id: NODE_ID.into(),
+        issued_at_unix_ms: now,
+        expires_at_unix_ms: now + 60_000,
+        nonce: derive_replay_nonce("grant-ack", &grant.grant_id, 0),
+        accepted: true,
+        ..Default::default()
+    };
+    ack.agent_signature = sign(&key, &ack).to_vec();
+    write_frame_body(&mut stream, FrameType::GrantAck, &ack.encode_to_vec());
+    let outcome = handle.join().expect("Coordinator 스레드");
+    lock.execute_batch("ROLLBACK").expect("락 해제");
+
+    let error = outcome.expect_err("revoke 저장 실패는 리스너를 멈춰야 한다");
+    assert!(error.contains("갱신 전 revoke 저장 실패"), "{error}");
+    let stored = CoordinatorLeaseStore::open(&fixture.control_db)
+        .expect("lease store")
+        .get(LEASE_ID)
+        .expect("Lease 조회")
+        .expect("Lease");
+    assert!(stored.revoked_at_unix_ms.is_none(), "실패했는데 revoke 가 기록됐다");
+}
+
 /// 결함 100 (재검수 61) — 발급한 Lease 를 **다른** lease 저장소에서 찾지 못하는 구성(--grant-from-control-db A · --lease-db B)은
 ///   구성 오류라 fail-closed(Storage)다 — 받을 연결이 남아 있어도 리스너를 멈춘다. 상대가 고른 모르는 ID(Protocol)와 다르다.
 #[test]

@@ -1140,7 +1140,15 @@ fn serve_one_connection_impl(
                 signing_key,
                 &submitters,
             )
-            .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Protocol(e)))?
+            // ★ 결함 104 (재검수 62) — 저장소를 읽다가 난 장애는 Storage(fail-closed), 저장된 사실과 맞지 않는 거부만 Protocol.
+            .map_err(|e| match e {
+                crate::grant_from_stored::StoredGrantError::Storage(message) => {
+                    SessionHandlerError::Classified(CoordinatorSessionError::Storage(message))
+                }
+                crate::grant_from_stored::StoredGrantError::Refused(message) => {
+                    SessionHandlerError::Classified(CoordinatorSessionError::Protocol(message))
+                }
+            })?
         }
         None => issue_grant(config, lease_store, signing_key, now, connection_attempt)?,
     };

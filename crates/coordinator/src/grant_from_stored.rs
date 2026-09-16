@@ -90,6 +90,40 @@ pub struct StoredGrantRequest {
     pub nonce: Vec<u8>,
 }
 
+/// 저장된 예약 Grant 를 만들지 못한 이유 — 저장소 장애와 거부를 **타입으로** 가른다(결함 104, 재검수 62).
+///
+/// ★ 전에는 전부 문자열이었고 Coordinator 가 전부 Protocol 로 고정했다 — 저장소를 **읽다가** 난 장애(손상된 행 · I/O · 락 시한)도
+///   Protocol 이 돼, 연결이 남으면 손상된 저장소를 두고 다음 연결을 받았다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredGrantError {
+    /// 저장소를 읽다가 난 장애 — 호출자는 fail-closed(Storage) 한다.
+    Storage(String),
+    /// 저장된 사실과 요청이 맞지 않아 만들지 않는다(GRANT_REFUSED · 시각 · Manifest 재검증 등) — 그 요청만의 거부다.
+    Refused(String),
+}
+
+impl std::fmt::Display for StoredGrantError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Storage(message) | Self::Refused(message) => f.write_str(message),
+        }
+    }
+}
+
+/// 문자열 오류는 거부다 — 저장소 장애는 호출 지점에서 `Storage` 로 직접 만든다.
+impl From<String> for StoredGrantError {
+    fn from(message: String) -> Self {
+        Self::Refused(message)
+    }
+}
+
+/// 파일로 내는 경로(`issue-grant`)는 문구만 쓴다.
+impl From<StoredGrantError> for String {
+    fn from(error: StoredGrantError) -> Self {
+        error.to_string()
+    }
+}
+
 /// 저장된 예약을 읽어 대조한 뒤 서명된 Grant 를 만든다.
 ///
 /// nested Lease 를 **먼저** 완성해 서명한다 — 그래야 outer Grant 의 서명이
@@ -104,28 +138,28 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     request: &StoredGrantRequest,
     key: &SigningKey,
     submitters: &K,
-) -> Result<pb::ExecutionGrant, String> {
+) -> Result<pb::ExecutionGrant, StoredGrantError> {
     if request.issued_at_unix_ms >= request.expires_at_unix_ms {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "Grant 발급 시각({})이 만료({}) 보다 앞서지 않는다",
             request.issued_at_unix_ms, request.expires_at_unix_ms
-        ));
+        )));
     }
 
     let job = jobs
         .get(&request.job_id)
-        .map_err(|e| format!("Job 조회 실패: {e}"))?
+        .map_err(|e| StoredGrantError::Storage(format!("Job 조회 실패: {e}")))?
         .ok_or_else(|| format!("GRANT_REFUSED: {} 를 모른다", request.job_id))?;
     if job.state != JobState::Staging {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Job 이 STAGING 이 아니다(현재 {:?}) — 예약 없이 Grant 를 만들지 않는다",
             job.state
-        ));
+        )));
     }
 
     let attempt = staging
         .get_attempt(&request.attempt_id)
-        .map_err(|e| format!("Attempt 조회 실패: {e}"))?
+        .map_err(|e| StoredGrantError::Storage(format!("Attempt 조회 실패: {e}")))?
         .ok_or_else(|| {
             format!(
                 "GRANT_REFUSED: Attempt {} 가 저장소에 없다",
@@ -134,7 +168,7 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         })?;
     let stored_lease = leases
         .get(&request.lease_id)
-        .map_err(|e| format!("Lease 조회 실패: {e}"))?
+        .map_err(|e| StoredGrantError::Storage(format!("Lease 조회 실패: {e}")))?
         .ok_or_else(|| format!("GRANT_REFUSED: Lease {} 가 저장소에 없다", request.lease_id))?;
 
     // ── 한 행만 믿지 않는다 ─────────────────────────────────────────
@@ -156,9 +190,9 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         ),
     ] {
         if left != right {
-            return Err(format!(
+            return Err(StoredGrantError::Refused(format!(
                 "GRANT_REFUSED: Attempt 와 Lease 의 {label} 가 다르다(Attempt {left:?}, Lease {right:?}) — 두 행이 같은 예약을 가리키지 않는다"
-            ));
+            )));
         }
     }
     // ★★ **아래 두 대조는 테스트로 고정되지 않았다 — 왜인지 적는다.**
@@ -175,21 +209,21 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     //   고정하려면 rusqlite 로 행을 직접 망가뜨리는 테스트가 필요하고
     //   이 crate 의 통합 테스트에는 그 의존성이 없다.
     if attempt.fence_epoch != stored_lease.fence_epoch {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Attempt 와 Lease 의 fence epoch 가 다르다(Attempt {}, Lease {}) — 오래된 한쪽으로 Grant 를 만들면 fencing 이 무의미해진다",
             attempt.fence_epoch, stored_lease.fence_epoch
-        ));
+        )));
     }
     if attempt.job_id != request.job_id {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Attempt 가 다른 Job 의 것이다({} != {})",
             attempt.job_id, request.job_id
-        ));
+        )));
     }
 
     let reservation = staging
         .get_node_reservation(&stored_lease.holder_node_id)
-        .map_err(|e| format!("예약 조회 실패: {e}"))?
+        .map_err(|e| StoredGrantError::Storage(format!("예약 조회 실패: {e}")))?
         .ok_or_else(|| {
             format!(
                 "GRANT_REFUSED: {} 에 예약이 없다 — Lease 는 있는데 노드가 안 잡혀 있다",
@@ -197,32 +231,32 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
             )
         })?;
     if reservation.job_id != request.job_id || reservation.attempt_id != request.attempt_id {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: {} 의 예약은 다른 Attempt 의 것이다(job {}, attempt {})",
             stored_lease.holder_node_id, reservation.job_id, reservation.attempt_id
-        ));
+        )));
     }
 
     // ── 상태 관문 ───────────────────────────────────────────────────
     if let Some(revoked_at) = stored_lease.revoked_at_unix_ms {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Lease 가 {revoked_at} 에 폐기됐다 — 폐기된 Lease 로 Grant 를 만들지 않는다"
-        ));
+        )));
     }
     // ★ 경계 포함(`<=`) — `DoD-26`·`DoD-32`·`DoD-34` 가 정착시킨 규칙과
     //   같다. 정확히 만료 시각인 Lease 를 여기서만 유효로 보면, Agent 는
     //   같은 순간 그 Lease 를 거부한다.
     if stored_lease.expires_at_unix_ms <= request.issued_at_unix_ms {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: 발급 시각({})에 Lease 가 이미 만료다(만료 {})",
             request.issued_at_unix_ms, stored_lease.expires_at_unix_ms
-        ));
+        )));
     }
     if request.expires_at_unix_ms > stored_lease.expires_at_unix_ms {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Grant 만료({})가 Lease 만료({}) 보다 늦다",
             request.expires_at_unix_ms, stored_lease.expires_at_unix_ms
-        ));
+        )));
     }
 
     // ── 제출자 서명 Manifest — 싣기 전에 **지금** 다시 검증한다 ──────
@@ -231,7 +265,8 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     // 어긋나면 `get_manifest_binding()` 이 오류를 낸다.
     let binding = jobs
         .get_manifest_binding(&request.job_id)
-        .map_err(|e| format!("GRANT_REFUSED: 저장된 Manifest 를 읽지 못했다: {e}"))?
+        // 저장된 Manifest 를 읽지 못한 것은 저장소 장애다(결함 104) — 없는 것(아래)은 거부다.
+        .map_err(|e| StoredGrantError::Storage(format!("저장된 Manifest 를 읽지 못했다: {e}")))?
         .ok_or_else(|| {
             format!(
                 "GRANT_REFUSED: {} 의 저장된 Manifest 가 없다",
@@ -255,14 +290,15 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     //   Lease 경계와 같은 모양으로 막는다.
     let manifest_expires_at = verified.get().expires_at_unix_ms;
     if request.expires_at_unix_ms > manifest_expires_at {
-        return Err(format!(
+        return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Grant 만료({})가 Manifest 만료({manifest_expires_at}) 보다 늦다",
             request.expires_at_unix_ms
-        ));
+        )));
     }
 
     // ── 서명 ────────────────────────────────────────────────────────
-    let mut lease = unsigned_lease_from_stored(&stored_lease)?;
+    // 저장값을 wire 형으로 옮기지 못한 것(u64 -> u32 범위)은 저장소 손상이다(결함 104).
+    let mut lease = unsigned_lease_from_stored(&stored_lease).map_err(StoredGrantError::Storage)?;
     lease.coordinator_signature = sign(key, &lease).to_vec();
 
     let mut grant = pb::ExecutionGrant {
