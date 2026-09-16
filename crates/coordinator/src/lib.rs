@@ -272,6 +272,13 @@ pub struct CoordinatorConfig {
     ///   그래서 `expect_attempt_reports > 0` 이면
     ///   `grant_from_control_db` 가 반드시 `Some` 이어야 한다.
     pub expect_attempt_reports: u32,
+    /// B+E 구현 단계 6 — REPORT 세션(Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck)을 받는다.
+    ///
+    /// ★ 저장소는 `expect_attempt_reports` 와 같은 control DB(`grant_from_control_db`)의 보고 저장소다. 켜지 않으면 REPORT Hello 를
+    ///   REPORT_SESSION_REFUSED 로 거부한다 — 저장하지 않을 보고에 "받았다" 고 답하지 않는다.
+    /// ★ "받았다"(Ack)는 **저장했다**는 뜻으로 한정한다(결정 D1). 저장은 **현재 예약**과 일치해야 된다 — 예약이 이미 없어진 늦은
+    ///   보고를 과거 배정 기록으로 검증하는 경로(D1 완성)는 아직 없다.
+    pub accept_report_sessions: bool,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -466,6 +473,11 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
         return Err(message);
     }
+    // ★ B+E 구현 단계 6 — REPORT 세션도 같은 자리에서 본다.
+    if let Some(message) = unsupported_report_session_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
     // ★ 결함 ㉟ — heartbeat 도 같은 자리에서 본다.
     if let Some(message) = unsupported_heartbeat_lane(&config, lane_from_config(&config)) {
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
@@ -550,7 +562,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     //
     //   경로는 `grant_from_control_db` 그대로다. 위 lane 관문이
     //   `expect_attempt_reports > 0` 이면 그 값이 `Some` 임을 보장한다.
-    let mut attempt_report_store = if config.expect_attempt_reports > 0 {
+    //   ★ B+E 구현 단계 6 — REPORT 세션도 같은 저장소다. 그 관문(`unsupported_report_session_lane`)도 control DB 를 요구한다.
+    let mut attempt_report_store = if config.expect_attempt_reports > 0 || config.accept_report_sessions {
         let path = config
             .grant_from_control_db
             .as_ref()
@@ -829,6 +842,37 @@ pub(crate) fn unsupported_attempt_report_lane(
     None
 }
 
+/// B+E 구현 단계 6 — REPORT 세션을 받을 수 없는 구성을 시작 전에 거부한다(위 관문과 같은 이유).
+///
+/// ★ ACK 직후 세션을 끝내는 hook 들은 여기서 보지 않는다 — REPORT 세션은 FRESH 연결과 **따로** 오는 새 연결이다.
+pub(crate) fn unsupported_report_session_lane(
+    config: &CoordinatorConfig,
+    lane: NeighborReportLane,
+) -> Option<String> {
+    if !config.accept_report_sessions {
+        return None;
+    }
+    if lane == NeighborReportLane::MultiAgent {
+        return Some(
+            "multi-agent lane 은 REPORT 세션을 구현하지 않았다 — --accept-report-sessions 와 함께 쓸 수 없다".to_string(),
+        );
+    }
+    if config.grant_from_control_db.is_none() {
+        return Some(
+            "--accept-report-sessions 는 --grant-from-control-db 가 있어야 한다 — \
+             종료 증거는 그 control DB 에 저장된 Attempt · 예약에 결합해야만 저장된다"
+                .to_string(),
+        );
+    }
+    if config.resume_protocol {
+        return Some(
+            "resume 경로는 Hello 의 mode 로 세션을 가르지 않는다 — --accept-report-sessions 와 --resume-protocol 을 함께 줄 수 없다"
+                .to_string(),
+        );
+    }
+    None
+}
+
 fn session_error_kind(error: &CoordinatorSessionError) -> &'static str {
     match error {
         CoordinatorSessionError::Transport(_) => "transport",
@@ -1074,11 +1118,24 @@ fn serve_one_connection_impl(
     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
         return serve_renew_session(config, stream, lease_store, signing_key, agent_keys, replay, clock);
     }
+    if hello.mode == gputeer_protocol::constants::MODE_REPORT {
+        return serve_report_session(
+            config,
+            stream,
+            attempt_report_store,
+            signing_key,
+            agent_keys,
+            replay,
+            clock,
+            &hello,
+        );
+    }
     if hello.mode != gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
         return Err(session_protocol_error(format!(
-            "HELLO_REJECTED: mode 불일치 — 순차 lane 은 FRESH({}) · RENEW({}) 만 받는다, 받은 값 {}",
+            "HELLO_REJECTED: mode 불일치 — 순차 lane 은 FRESH({}) · RENEW({}) · REPORT({}) 만 받는다, 받은 값 {}",
             gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
             gputeer_protocol::constants::MODE_RENEW,
+            gputeer_protocol::constants::MODE_REPORT,
             hello.mode
         )));
     }
@@ -2229,6 +2286,136 @@ fn serve_renew_session(
     Ok(())
 }
 
+/// B+E 구현 단계 6 — REPORT 세션: Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck -> 닫는다(제안서의 세션 표).
+///
+/// ★ 검증 순서는 FRESH 연결 안의 보고 수신과 같다 — 서명(read_frame) -> node_id -> terminal -> 필드 조합 규칙 -> 저장소(현재 Attempt ·
+///   예약과 5중 대조). 이 연결에는 Grant 가 없으므로 attempt · job · 세대의 권위는 **저장소의 예약**이다.
+/// ★ Ack 는 저장한 **뒤에만** 보낸다 — "받았다" 는 "저장했다" 다(결정 D1). 같은 바이트의 재전송은 저장소 멱등성으로 created=false 의
+///   Ack 를 받는다. report_hash 는 받은 보고의 BLAKE3-256(sig_input), session_nonce 는 이 세션 Hello 의 nonce 다 — 다른 세션의
+///   Ack 로 재생하지 못한다.
+/// ★ 저장 뒤 Ack 전송이 실패하면 Agent 는 응답을 못 받고 다시 보낸다 — 저장소가 created=false 로 같은 사실을 돌려준다.
+/// ★ 아직 하지 않는다: 예약이 없어진 늦은 보고를 과거 배정 기록으로 검증하기(D1 완성) · 예약 해제 · Attempt 전이.
+#[allow(clippy::too_many_arguments)]
+fn serve_report_session(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
+    signing_key: &SigningKey,
+    agent_keys: &InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    hello: &pb::AgentSessionHello,
+) -> Result<(), SessionHandlerError> {
+    if !config.accept_report_sessions {
+        return Err(session_protocol_error(
+            "REPORT_SESSION_REFUSED: --accept-report-sessions 없이 REPORT 세션을 받지 않는다 — 저장하지 않을 보고에 받았다고 답하지 않는다",
+        ));
+    }
+    let store = attempt_report_store.as_mut().ok_or_else(|| {
+        SessionHandlerError::Classified(storage_error(
+            "attempt report store",
+            "--accept-report-sessions 를 켰는데 저장소가 열려 있지 않다",
+        ))
+    })?;
+    let message = read_frame(
+        stream,
+        gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
+        KeyDirectorySource::Provided(agent_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| {
+        session_framing_error(
+            "REPORT_SESSION: 종료 보고를 받지 못했다(연결 끊김 · 소켓 시한)",
+            "REPORT_SESSION: 종료 보고를 검증하지 못했다(서명 · 버전 · 형식)",
+            &e,
+        )
+    })?;
+    let verified = match &message {
+        IngressMessage::AttemptReport(verified) => verified,
+        other => {
+            return Err(session_protocol_error(format!(
+                "REPORT_SESSION: 종료 보고가 아닌 프레임이다({})",
+                ingress_kind(other)
+            )))
+        }
+    };
+    // 검증을 통과한 뒤에야 필드를 본다.
+    let report = verified.get();
+    // Hello 의 node_id 는 read_session_hello 가 이미 대조했다. 보고의 서명자(node_id)도 같은 노드여야 한다.
+    if report.node_id != config.agent_device_id || report.node_id != hello.node_id {
+        return Err(session_protocol_error(format!(
+            "REPORT_SESSION_REJECTED: node_id 불일치 — 기대값 {}",
+            config.agent_device_id
+        )));
+    }
+    if !crate::attempt_report_store::is_terminal_outcome(report.outcome) {
+        return Err(session_protocol_error(
+            "REPORT_SESSION_REJECTED: terminal 이 아닌 outcome 이다 — 종료하지 않은 Attempt 의 보고를 증거로 저장하지 않는다",
+        ));
+    }
+    if let Err(rule) = gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report) {
+        return Err(session_protocol_error(format!("REPORT_SESSION_REJECTED: {rule}")));
+    }
+    let result = store.store_verified_terminal_report(verified).map_err(|error| {
+        use crate::attempt_report_store::AttemptReportStoreError as E;
+        match error {
+            // 들어온 보고가 유발한 문제 — 그 연결만의 거부다(FRESH 경로와 같은 가름).
+            E::InvalidInput(_)
+            | E::InvalidOutcome(_)
+            | E::ReportRule(_)
+            | E::AttemptNotFound { .. }
+            | E::ReservationNotFound { .. }
+            | E::BindingMismatch(_)
+            | E::ReportConflict { .. } => {
+                session_protocol_error(format!("REPORT_SESSION_REJECTED: {error}"))
+            }
+            // 진짜 저장소 장애와 이미 영속된 행의 손상은 fail-closed(DoD-37).
+            other => SessionHandlerError::Classified(storage_error("attempt report store", other)),
+        }
+    })?;
+    let report_hash = blake3_256(&signing_input(report));
+    let mut ack = pb::AttemptReportAck {
+        schema_version: 1,
+        job_id: report.job_id.clone(),
+        attempt_id: report.attempt_id.clone(),
+        node_id: report.node_id.clone(),
+        fence_epoch: report.fence_epoch,
+        report_hash: Some(pb::Digest {
+            algo: 1, // HASH_ALGORITHM_BLAKE3_256
+            value: report_hash.to_vec(),
+        }),
+        created: result.created,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: clock.now_unix_ms(),
+        session_nonce: hello.nonce.clone(),
+        ..Default::default()
+    };
+    ack.coordinator_signature = sign(signing_key, &ack).to_vec();
+    let frame = write_frame(FrameType::AttemptReportAck, &ack.encode_to_vec())
+        .map_err(|e| session_protocol_error(format!("AttemptReportAck 프레임 인코딩 실패: {e}")))?;
+    stream
+        .write_all(&frame)
+        .and_then(|()| stream.flush())
+        .map_err(|e| {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!("AttemptReportAck 전송 실패(보고는 저장됐다): {e}"),
+            ))
+        })?;
+    println!(
+        "REPORT_SESSION_ACK_SENT job_id={} attempt_id={} node_id={} fence_epoch={} created={} report_hash={} session_nonce={}",
+        ack.job_id,
+        ack.attempt_id,
+        ack.node_id,
+        ack.fence_epoch,
+        ack.created,
+        hex_bytes(&report_hash),
+        hex_bytes(&ack.session_nonce)
+    );
+    Ok(())
+}
+
 /// D2 — 순차 lane 의 첫 프레임. 서명 · replay · node_id 를 대조한다(Resume lane 과 같은 규칙).
 /// mode 와 connection_attempt 는 호출부가 본다 — 세션 종류마다 규칙이 다르다(B+E 구현 단계 5a).
 ///
@@ -3129,6 +3316,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
             .u32_flag_with_default("--expect-neighbor-reports", 0)?,
         neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
+        accept_report_sessions: flags.bool_flag("--accept-report-sessions"),
         extra_agents: flags.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
@@ -3315,6 +3503,11 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
         return Err(message);
     }
     if let Some(message) = unsupported_attempt_report_lane(&config, lane_from_config(&config)) {
+        eprintln!("STARTUP_REFUSED reason=lane error={message}");
+        return Err(message);
+    }
+    // ★ B+E 구현 단계 6 — REPORT 세션도 같은 자리에서 본다.
+    if let Some(message) = unsupported_report_session_lane(&config, lane_from_config(&config)) {
         eprintln!("STARTUP_REFUSED reason=lane error={message}");
         return Err(message);
     }

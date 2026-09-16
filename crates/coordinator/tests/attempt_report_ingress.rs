@@ -1219,6 +1219,172 @@ fn a_renew_session_for_a_lease_issued_by_another_coordinator_is_refused_before_t
     assert_eq!(after.expires_at_unix_ms, before.expires_at_unix_ms, "거부했는데 저장소의 만료가 바뀌었다");
 }
 
+// ── B+E 구현 단계 6 — REPORT 세션(새 연결로 종료 보고 · 서명된 받았다 응답) ────────────
+
+/// 연결 `max_connections` 개를 받는 Coordinator. `accept` 면 `--accept-report-sessions`.
+fn spawn_coordinator_for_reports(
+    fixture: &Fixture,
+    accept: bool,
+    max_connections: u32,
+) -> std::thread::JoinHandle<Result<(), String>> {
+    let mut args = coordinator_args(fixture, 0);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--max-connections")
+        .expect("--max-connections");
+    args[at + 1] = max_connections.to_string();
+    if accept {
+        args.push("--accept-report-sessions".into());
+        args.push("true".into());
+    }
+    std::thread::spawn(move || {
+        let config = gputeer_coordinator::parse_config_from_args(&args).expect("설정 파싱");
+        gputeer_coordinator::run(config)
+    })
+}
+
+/// REPORT 세션 하나 — Hello(REPORT, nonce `nonce_start..+16`) 와 보고를 보내고 스트림을 돌려준다.
+fn open_report_session(fixture: &Fixture, connection_attempt: u32, nonce_start: u8, report: &pb::AttemptReport) -> TcpStream {
+    let mut session = connect_when_ready(fixture.address);
+    send_hello(
+        &mut session,
+        gputeer_protocol::constants::MODE_REPORT,
+        connection_attempt,
+        nonce_start,
+    );
+    write_frame_body(&mut session, FrameType::AttemptReport, &report.encode_to_vec());
+    session
+}
+
+fn read_ack(session: &mut TcpStream) -> pb::AttemptReportAck {
+    let (frame_type, body) = read_frame_body(session);
+    assert_eq!(frame_type, FrameType::AttemptReportAck as u8, "REPORT 세션의 응답은 받았다 응답이다");
+    pb::AttemptReportAck::decode(body.as_slice()).expect("Ack 디코드")
+}
+
+/// 단계 6 — 새 연결의 Hello(REPORT) 뒤 보고를 **저장하고** 서명된 Ack 를 돌려준다. Ack 는 Hello 의 nonce 를 되돌리고, 받은 보고의
+///   BLAKE3-256(sig_input) 과 신원 · 세대를 싣는다.
+#[test]
+fn a_report_session_stores_the_report_and_answers_with_a_signed_ack() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let report = terminal_report(fence_epoch);
+    let mut session = open_report_session(&fixture, 1, 200, &report);
+    let ack = read_ack(&mut session);
+
+    let mut ring = InMemoryKeyring::new();
+    ring.insert(COORDINATOR_ID, SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key());
+    verify(&ack, 1, &Ed25519Verifier::new(ring), now_ms(), &mut NoReplayCheck)
+        .expect("Coordinator 가 서명한 Ack 다");
+    assert_eq!(ack.session_nonce, (200u8..216).collect::<Vec<u8>>(), "이 세션 Hello 의 nonce 를 되돌려야 한다");
+    let hash = ack.report_hash.clone().expect("report_hash 가 있다");
+    assert_eq!(
+        (hash.algo, hash.value),
+        (1, blake3_256(&signing_input(&report)).to_vec()),
+        "받은 보고의 BLAKE3-256(sig_input) 이다"
+    );
+    assert!(ack.created, "첫 저장이다");
+    assert_eq!(
+        (
+            ack.job_id.as_str(),
+            ack.attempt_id.as_str(),
+            ack.node_id.as_str(),
+            ack.fence_epoch,
+            ack.coordinator_id.as_str(),
+        ),
+        (JOB_ID, ATTEMPT_ID, NODE_ID, fence_epoch, COORDINATOR_ID)
+    );
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+    assert_eq!(stored_binding(&fixture.control_db), Some(report), "Ack 를 보냈으면 저장돼 있어야 한다");
+}
+
+/// 단계 6 — 같은 보고를 새 REPORT 세션으로 다시 보내면 저장소 멱등성대로 created=false 의 Ack 를 받는다(Agent 의 재전송 경로).
+#[test]
+fn the_same_report_resent_over_a_new_report_session_is_acknowledged_as_not_created() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 3);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let report = terminal_report(fence_epoch);
+    let first = {
+        let mut session = open_report_session(&fixture, 1, 200, &report);
+        read_ack(&mut session)
+    };
+    let mut session = open_report_session(&fixture, 2, 220, &report);
+    let second = read_ack(&mut session);
+    assert!(first.created, "첫 저장은 created=true");
+    assert!(!second.created, "같은 바이트의 재전송은 created=false");
+    assert_eq!(second.session_nonce, (220u8..236).collect::<Vec<u8>>(), "Ack 는 **그 세션**의 nonce 를 되돌린다");
+    assert_eq!(first.report_hash, second.report_hash);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+/// 단계 6 — `--accept-report-sessions` 없이 온 REPORT 세션은 거부하고 저장하지 않는다.
+#[test]
+fn a_report_session_without_the_flag_is_refused_and_nothing_is_stored() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, false, 2);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let _session = open_report_session(&fixture, 1, 200, &terminal_report(fence_epoch));
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("받지 않는 구성의 REPORT 세션은 거부돼야 한다");
+    assert!(error.contains("REPORT_SESSION_REFUSED"), "{error}");
+    assert!(stored_binding(&fixture.control_db).is_none(), "거부했는데 저장했다");
+}
+
+/// 단계 6 — 서명은 유효하지만 필드 조합 규칙을 어긴 보고는 Ack 없이 거부한다(v2 인데 종료 관측이 UNSPECIFIED).
+#[test]
+fn a_report_session_refuses_a_report_that_breaks_the_field_rules_without_an_ack() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let started = now_ms();
+    let broken = signed_report(pb::AttemptReport {
+        schema_version: 2,
+        job_id: JOB_ID.into(),
+        attempt_id: ATTEMPT_ID.into(),
+        node_id: NODE_ID.into(),
+        fence_epoch,
+        outcome: pb::AttemptOutcome::Completed as i32,
+        started_at_unix_ms: started,
+        finished_at_unix_ms: started + 5,
+        issued_at_unix_ms: started + 6,
+        ..Default::default()
+    });
+    let mut session = open_report_session(&fixture, 1, 200, &broken);
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("규칙을 어긴 보고는 거부돼야 한다");
+    assert!(error.contains("REPORT_SESSION_REJECTED"), "{error}");
+    let mut probe = [0u8; 1];
+    assert!(
+        !matches!(session.read(&mut probe), Ok(n) if n > 0),
+        "거부했는데 무언가(Ack)를 보냈다"
+    );
+    assert!(stored_binding(&fixture.control_db).is_none(), "거부했는데 저장했다");
+}
+
 /// 첫 증거와 **내용이 다른** 두 번째 보고는 거부된다.
 ///
 /// ★ 이것이 없으면 노드가 같은 Attempt 에 대해 "성공" 을 보내고 나중에

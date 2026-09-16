@@ -503,6 +503,17 @@ fn cmd_exe() -> String {
 /// 실행을 켠 Agent 를 띄우고 끝날 때까지 기다린다. `send_report` 만 다르다.
 #[cfg(windows)]
 fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, String) {
+    let extra: &[&str] = if send_report {
+        &["--send-attempt-report", "true"]
+    } else {
+        &[]
+    };
+    run_executing_agent_with(addr, dir, extra)
+}
+
+/// 실행을 켠 Agent 를 띄우고 끝날 때까지 기다린다. 추가 인자를 그대로 붙인다.
+#[cfg(windows)]
+fn run_executing_agent_with(addr: &str, dir: &Path, extra: &[&str]) -> (bool, String) {
     let fence_db = dir.join("agent-fence.sqlite3");
     // ★ 기본값은 `%TEMP%` 아래 매번 새 이름이라 테스트가 끝나도 남는다.
     let checkpoint_root = dir.join("agent-checkpoints");
@@ -529,9 +540,7 @@ fn run_executing_agent(addr: &str, dir: &Path, send_report: bool) -> (bool, Stri
         "--i-understand-this-executes-untrusted-code",
         "true",
     ];
-    if send_report {
-        args.extend(["--send-attempt-report", "true"]);
-    }
+    args.extend(extra.iter().copied());
     let mut agent = Command::new(cli_bin())
         .args(&args)
         .stdout(Stdio::piped())
@@ -684,6 +693,87 @@ fn with_the_report_off_the_workload_runs_but_no_report_row_is_stored() {
         gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
             .expect("저장소 열기");
     assert!(store.get_report_binding(ATTEMPT, NODE).expect("조회").is_none());
+}
+
+/// outbox 에 남은 `.report` 파일들.
+#[cfg(windows)]
+fn outbox_reports(dir: &Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir.join("agent-checkpoints").join("report-outbox"))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "report"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// B+E 구현 단계 6 — 종료 보고가 **REPORT 세션**(새 연결)으로 건너가 저장되고, Agent 는 서명된 받았다 응답을 검증한 뒤 outbox 를
+///   비운다. Coordinator 는 FRESH 에서 보고를 기다리지 않는다(ACK 뒤 닫는다) — 연결 둘(FRESH · REPORT).
+#[cfg(windows)]
+#[test]
+fn the_exit_report_crosses_a_report_session_and_the_agent_verifies_the_ack() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
+    let (coordinator, addr) = spawn_coordinator(
+        &db,
+        dir.path(),
+        &["--accept-report-sessions", "true", "--max-connections", "2"],
+    );
+    let (agent_ok, agent_output) =
+        run_executing_agent_with(&addr, dir.path(), &["--report-over-session", "true"]);
+    let (coordinator_ok, coordinator_output) = finish(coordinator, "coordinator-stub");
+    let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
+
+    assert!(agent_ok, "Agent 가 실패했다\n{both}");
+    assert!(coordinator_ok, "Coordinator 가 실패했다\n{both}");
+    assert!(agent_output.contains("WORKLOAD_RESULT ok=true"), "워크로드가 성공하지 않았다\n{both}");
+    assert!(agent_output.contains("ATTEMPT_REPORT_OUTBOX_WRITTEN"), "outbox 에 먼저 남기지 않았다\n{both}");
+    let acknowledged = agent_output
+        .lines()
+        .find(|line| line.starts_with("ATTEMPT_REPORT_ACKNOWLEDGED "))
+        .unwrap_or_else(|| panic!("받았다 응답을 검증하지 않았다\n{both}"));
+    assert!(acknowledged.contains("created=true"), "첫 저장인데 created=true 가 아니다\n{both}");
+    assert!(coordinator_output.contains("REPORT_SESSION_ACK_SENT"), "Coordinator 가 Ack 를 보내지 않았다\n{both}");
+    assert!(!agent_output.contains("ATTEMPT_REPORT_SENT "), "FRESH 연결로도 보냈다\n{both}");
+
+    let store =
+        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+            .expect("저장소 열기");
+    let binding = store
+        .get_report_binding(ATTEMPT, NODE)
+        .expect("조회")
+        .unwrap_or_else(|| panic!("보고 행이 없다\n{both}"));
+    assert_eq!(binding.report.schema_version, 2, "Agent 가 v2 로 보내지 않았다\n{both}");
+    let left = outbox_reports(dir.path());
+    assert!(left.is_empty(), "Ack 를 검증했는데 outbox 에 남았다: {left:?}\n{both}");
+}
+
+/// 단계 6 — Coordinator 가 REPORT 세션을 받지 않으면 Agent 는 **성공한 척하지 않는다** — 받았다 응답이 없다고 실패하고 보고를
+///   outbox 에 남긴다(다음 기동이 다시 보낸다).
+#[cfg(windows)]
+#[test]
+fn without_report_sessions_on_the_coordinator_the_agent_fails_and_keeps_the_report() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
+    let (coordinator, addr) = spawn_coordinator(&db, dir.path(), &["--max-connections", "2"]);
+    let (agent_ok, agent_output) = run_executing_agent_with(
+        &addr,
+        dir.path(),
+        &["--report-over-session", "true", "--report-session-attempts", "2"],
+    );
+    let (_, coordinator_output) = finish(coordinator, "coordinator-stub");
+    let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
+
+    assert!(!agent_ok, "받았다 응답 없이 성공으로 끝났다\n{both}");
+    assert!(agent_output.contains("ATTEMPT_REPORT_NOT_ACKNOWLEDGED"), "실패 사유를 말해야 한다\n{both}");
+    assert!(coordinator_output.contains("REPORT_SESSION_REFUSED"), "Coordinator 가 거부 사유를 남겨야 한다\n{both}");
+    assert_eq!(outbox_reports(dir.path()).len(), 1, "보고는 outbox 에 남아 있어야 한다\n{both}");
+    let store =
+        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+            .expect("저장소 열기");
+    assert!(store.get_report_binding(ATTEMPT, NODE).expect("조회").is_none(), "거부했는데 저장했다");
 }
 
 /// 저장된 예약에서 `issue-grant` 로 Grant 를 만들어 읽는다 — Coordinator 가 쓰는 것과

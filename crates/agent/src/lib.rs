@@ -140,6 +140,15 @@ pub struct AgentConfig {
     ///   가 꺼져 있음) Grant 에 Manifest 가 없었다면 보고할 사실이 없다 —
     ///   그때 빈 보고를 만들어 보내면 그것이 곧 지어낸 값이다.
     pub send_attempt_report: bool,
+    /// B+E 구현 단계 6 — 종료 보고를 **새 연결(REPORT 세션)** 으로 보내고 서명된 "받았다" 응답(AttemptReportAck)을 검증한다.
+    ///
+    /// ★ 보내기 **전에** 서명한 보고를 outbox 에 원자적으로 남긴다. Ack 를 검증한 뒤에만 지운다 — 못 받으면 파일이 남고 다음 기동이
+    ///   다시 보낸다. FRESH 연결로 보내는 `send_attempt_report` 와 함께 켤 수 없다.
+    pub report_over_session: bool,
+    /// 보낼 보고 저장소(outbox) 디렉터리. `None` 이면 `checkpoint_root/report-outbox`.
+    pub report_outbox_dir: Option<PathBuf>,
+    /// 한 보고의 REPORT 세션 시도 횟수 — 연결 · 전송 · 응답 수신 실패만 다시 한다. 1 이상.
+    pub report_session_attempts: u32,
     /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
     pub heartbeat_rounds: u32,
     /// heartbeat 뒤에 보낼 `NeighborUnreachableReport` 개수. 0 이면 안 보낸다.
@@ -386,6 +395,17 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             ));
         }
     }
+    // ★ B+E 구현 단계 6 — 같은 종료 보고를 두 길(FRESH 연결 · REPORT 세션)로 보내지 않는다.
+    if config.report_over_session && config.send_attempt_report {
+        return Err(
+            "REPORT_SESSION_CONFIG_REFUSED: --report-over-session 과 --send-attempt-report 를 함께 켤 수 없다 — \
+             같은 보고를 두 연결로 보내게 된다"
+                .to_string(),
+        );
+    }
+    if config.report_over_session && config.report_session_attempts == 0 {
+        return Err("REPORT_SESSION_CONFIG_REFUSED: --report-session-attempts 는 1 이상이어야 한다".to_string());
+    }
     // ★ **신고 대상은 연결하기 전에 확인한다**(독립 검수 4라운드 지적).
     //
     //   전에는 이 검사가 송신 루프 안에 있었다 — Grant/ACK 를 다 마치고
@@ -482,6 +502,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             "fence watermark 저장소가 영속이 아니다: fence_db_path={:?}",
             config.fence_db_path
         ));
+    }
+    // ★ B+E 구현 단계 6 — 지난 실행이 남긴 보낼 보고를 먼저 보낸다. 실패해도 새 작업을 막지 않는다 — 파일은 남는다.
+    if config.report_over_session {
+        flush_report_outbox(&config, &signing_key);
     }
     let mut budget = RetryBudget::new(&policy);
     if !config.reconnect_enabled {
@@ -1377,12 +1401,34 @@ fn run_one_connection_inner(
         );
     }
 
+    // ── 종료 보고 — REPORT 세션(B+E 구현 단계 6) ─────────────────────────
+    //
+    // ★ 관측한 종료가 없으면 보내지 않는다(위 FRESH 보고와 같은 이유). 서명한 보고를 outbox 에 **먼저** 남기고 새 연결로 보낸다.
+    //   Ack 를 검증하면 지운다. 못 받으면 파일을 남기고 오류로 끝낸다 — 성공한 척하지 않는다.
+    // ★ 실패로 끝나도 작업 디렉터리 삭제 실패(결함 82)를 함께 알린다 — 먼저 반환해 그 사실을 잃지 않는다.
+    if config.report_over_session {
+        let delivered = match terminal_observation.as_ref() {
+            None => Err(
+                "ATTEMPT_REPORT_REFUSED: 관측된 워크로드 종료가 없다 — 보고할 사실이 없으면 보내지 않는다".to_string(),
+            ),
+            Some(observed) => send_report_over_session(&config, &signing_key, &clock, observed),
+        };
+        if let Err(error) = delivered {
+            return Err(match pending_cleanup_failure.take() {
+                Some(cleanup) => format!(
+                    "{error} — 그리고 WORKLOAD_CLEANUP_FAILED: 작업 디렉터리를 지우지 못했다: {cleanup}"
+                ),
+                None => error,
+            });
+        }
+    }
+
     // ★ 결함 82 — 작업 디렉터리 삭제 실패는 종료 보고를 처리한 **뒤에** 알린다. 남의 PC 에 남은 출력을 조용히 넘기지 않는다(§0.5).
     if let Some(error) = pending_cleanup_failure.take() {
         return Err(format!(
             "WORKLOAD_CLEANUP_FAILED: 작업 디렉터리를 지우지 못했다({}): {error}",
             // 결함 91 — 보내는 설정일 때만 "보냈다" 다. 보낼 관측이 없으면 이 자리에 오기 전에 ATTEMPT_REPORT_REFUSED 로 끝난다.
-            if config.send_attempt_report {
+            if config.send_attempt_report || config.report_over_session {
                 "종료 보고는 보냈다"
             } else {
                 "종료 보고를 보내는 설정이 아니다 — 보고 없음"
@@ -1817,6 +1863,296 @@ fn start_renew_during_execution(
         lease
     });
     Some(RenewDuringExecution { stop, handle })
+}
+
+/// B+E 구현 단계 6 — outbox 디렉터리. 설정이 없으면 `checkpoint_root/report-outbox`.
+fn report_outbox_dir(config: &AgentConfig) -> PathBuf {
+    config
+        .report_outbox_dir
+        .clone()
+        .unwrap_or_else(|| config.checkpoint_root.join("report-outbox"))
+}
+
+/// 서명 입력의 BLAKE3-256 — Ack 의 report_hash 와 같은 계산이다. outbox 이름도 이 값의 앞 16바이트다(같은 보고는 같은 이름).
+fn attempt_report_hash(report: &pb::AttemptReport) -> [u8; 32] {
+    gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(report))
+}
+
+/// 서명한 보고를 outbox 에 **원자적으로** 남긴다 — 임시 파일에 쓰고 sync 한 뒤 이름을 바꾼다.
+///
+/// ★ 디렉터리 sync 는 하지 않는다 — Windows 에는 같은 수단이 없다(ADR-026). 전원이 끊기면 마지막 이름 바꾸기가 사라질 수 있다는 한계가
+///   남는다(이 경우 보고는 다시 만들 수 없다 — 종료 관측이 메모리에만 있었다).
+fn persist_report_to_outbox(dir: &std::path::Path, report: &pb::AttemptReport) -> Result<PathBuf, String> {
+    fs::create_dir_all(dir).map_err(|e| {
+        format!("ATTEMPT_REPORT_OUTBOX_FAILED: outbox 디렉터리를 만들지 못했다({}): {e}", dir.display())
+    })?;
+    let name: String = attempt_report_hash(report)[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let path = dir.join(format!("{name}.report"));
+    let tmp = dir.join(format!("{name}.report.tmp"));
+    let bytes = report.encode_to_vec();
+    let write = || -> std::io::Result<()> {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, &path)
+    };
+    write().map_err(|e| {
+        format!("ATTEMPT_REPORT_OUTBOX_FAILED: 보고를 outbox 에 남기지 못했다({}): {e}", path.display())
+    })?;
+    Ok(path)
+}
+
+/// 서명 · 보관 · 전송 — 워크로드를 끝낸 연결이 부른다.
+fn send_report_over_session(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    clock: &SystemClock,
+    observed: &crate::report::TerminalObservation,
+) -> Result<(), String> {
+    let attempt_report = report::build_signed_attempt_report(
+        signing_key,
+        &crate::report::TerminalObservation {
+            issued_at_unix_ms: clock.now_unix_ms(),
+            ..observed.clone()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let path = persist_report_to_outbox(&report_outbox_dir(config), &attempt_report)?;
+    println!(
+        "ATTEMPT_REPORT_OUTBOX_WRITTEN path={} job_id={} attempt_id={} outcome={} schema_version={}",
+        path.display(),
+        attempt_report.job_id,
+        attempt_report.attempt_id,
+        attempt_report.outcome,
+        attempt_report.schema_version
+    );
+    deliver_outboxed_report(config, signing_key, &attempt_report, &path)
+}
+
+/// outbox 의 보고 하나를 REPORT 세션으로 보낸다.
+///
+/// ```text
+/// 검증한 Ack          outbox 파일을 지우고 ATTEMPT_REPORT_ACKNOWLEDGED
+/// Ack 검증 실패       다시 하지 않는다(REPORT_ACK_REJECTED) — 파일은 남긴다
+/// 연결 · 전송 · 수신 실패  report_session_attempts 까지 다시 한다(REPORT_SESSION_FAILED) — 끝내 못 받으면 ATTEMPT_REPORT_NOT_ACKNOWLEDGED
+/// ```
+///
+/// ★ Coordinator 가 보고를 거부하면(예약 불일치 등) 연결이 Ack 없이 닫힌다 — Agent 쪽에서는 수신 실패와 구별되지 않아 다시 보낸다.
+fn deliver_outboxed_report(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    report: &pb::AttemptReport,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let mut last = String::new();
+    for attempt in 0..config.report_session_attempts {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(500 * u64::from(attempt)));
+        }
+        match report_session_once(config, signing_key, report) {
+            Ok(ack) => {
+                fs::remove_file(path).map_err(|e| {
+                    format!(
+                        "ATTEMPT_REPORT_OUTBOX_FAILED: Ack 를 받았는데 outbox 파일을 지우지 못했다({}): {e} — \
+                         다음 기동이 같은 보고를 다시 보낸다(저장소가 created=false 로 답한다)",
+                        path.display()
+                    )
+                })?;
+                println!(
+                    "ATTEMPT_REPORT_ACKNOWLEDGED job_id={} attempt_id={} node_id={} fence_epoch={} created={} attempt={attempt}",
+                    ack.job_id, ack.attempt_id, ack.node_id, ack.fence_epoch, ack.created
+                );
+                return Ok(());
+            }
+            Err(error) if error.starts_with("REPORT_ACK_REJECTED") => {
+                return Err(format!("{error} — 보고는 outbox 에 남아 있다({})", path.display()));
+            }
+            Err(error) => {
+                println!("REPORT_SESSION_FAILED attempt={attempt} detail={error}");
+                last = error;
+            }
+        }
+    }
+    Err(format!(
+        "ATTEMPT_REPORT_NOT_ACKNOWLEDGED: {} 번 시도했지만 받았다 응답을 받지 못했다 — 보고는 outbox 에 남아 있다({}): {last}",
+        config.report_session_attempts,
+        path.display()
+    ))
+}
+
+/// REPORT 세션 한 번: 새 연결 -> Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck 를 검증해 돌려준다.
+fn report_session_once(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    report: &pb::AttemptReport,
+) -> Result<pb::AttemptReportAck, String> {
+    let clock = SystemClock;
+    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_REPORT,
+        session_id: config.session_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        // REPORT 는 Coordinator 가 연결 번호를 대조하지 않는다 — RENEW 와 같다.
+        connection_attempt: 0,
+        issued_at_unix_ms: clock.now_unix_ms(),
+        nonce: fresh_nonce()?,
+        ..Default::default()
+    };
+    hello.node_signature = sign(signing_key, &hello).to_vec();
+    let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+        .map_err(|e| format!("Hello(REPORT) 프레임 인코딩 실패: {e}"))?;
+    let report_frame = report::attempt_report_frame(report).map_err(|error| error.to_string())?;
+    for (frame, what) in [(hello_frame, "Hello(REPORT)"), (report_frame, "AttemptReport")] {
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("{what} 전송 실패: {e}"))?;
+    }
+    stream.flush().map_err(|e| e.to_string())?;
+
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(config.coordinator_device_id.clone(), config.coordinator_verifying_key);
+    let mut replay = InMemoryReplayGuard::new();
+    let message = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&keys),
+        &mut replay,
+        &clock,
+    )
+    .map_err(|e| match e {
+        // 받지 못한 것은 다시 할 수 있다. 도착했는데 검증에 실패한 것은 다시 해도 같다.
+        FramingError::Truncated | FramingError::Io(_) => {
+            format!("AttemptReportAck 를 받지 못했다(연결 끊김 · 소켓 시한): {e}")
+        }
+        other => format!("REPORT_ACK_REJECTED: 받았다 응답을 검증하지 못했다(서명 · 시각 · 형식): {other}"),
+    })?;
+    let ack = match message {
+        IngressMessage::AttemptReportAck(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("REPORT_ACK_REJECTED: replay 검사 실패: {e:?}"))?
+            .clone(),
+        _ => return Err("REPORT_ACK_REJECTED: 받았다 응답이 아닌 프레임이다".into()),
+    };
+    verify_report_ack(&ack, &hello.nonce, report, config)?;
+    Ok(ack)
+}
+
+/// 받았다 응답의 상관관계 — 서명 검증 **뒤에** 본다.
+///
+/// ★ report_hash 는 Coordinator 가 적은 값을 믿지 않고 **보낸 보고에서 다시 계산해** 대조한다 — 저장된 것이 보낸 보고라는 증거다.
+fn verify_report_ack(
+    ack: &pb::AttemptReportAck,
+    session_nonce: &[u8],
+    report: &pb::AttemptReport,
+    config: &AgentConfig,
+) -> Result<(), String> {
+    if ack.session_nonce != session_nonce {
+        return Err("REPORT_ACK_REJECTED: session_nonce 가 이 세션의 Hello 와 다르다 — 다른 세션의 응답이다".into());
+    }
+    if ack.coordinator_id != config.coordinator_device_id {
+        return Err(format!(
+            "REPORT_ACK_REJECTED: coordinator_id 불일치 — 기대값 {}",
+            config.coordinator_device_id
+        ));
+    }
+    if (ack.job_id.as_str(), ack.attempt_id.as_str(), ack.node_id.as_str(), ack.fence_epoch)
+        != (report.job_id.as_str(), report.attempt_id.as_str(), report.node_id.as_str(), report.fence_epoch)
+    {
+        return Err("REPORT_ACK_REJECTED: job · attempt · node · 세대가 보낸 보고와 다르다".into());
+    }
+    match ack.report_hash.as_ref() {
+        Some(digest) if digest.algo == 1 && digest.value == attempt_report_hash(report) => Ok(()),
+        _ => Err(
+            "REPORT_ACK_REJECTED: report_hash 가 보낸 보고에서 다시 계산한 BLAKE3-256 과 다르다 — \
+             저장된 것이 보낸 보고라는 증거가 아니다"
+                .into(),
+        ),
+    }
+}
+
+/// B+E 구현 단계 6 — 기동할 때 outbox 에 남은 보고를 다시 보낸다(계획서 §5.8 (3)).
+///
+/// ★ 다시 열면 **같은 검사를 다시** 부른다 — 디코드 · 이 Agent 의 서명 · 필드 조합 규칙. 어기면 보내지 않고 지우지도 않는다 —
+///   이름을 `.report.rejected` 로 바꿔 보존한다(증거다) · ATTEMPT_REPORT_OUTBOX_REJECTED.
+/// ★ 보내기에 실패해도 새 작업을 막지 않는다 — 파일은 남고 ATTEMPT_REPORT_OUTBOX_PENDING 으로 알린다.
+fn flush_report_outbox(config: &AgentConfig, signing_key: &SigningKey) {
+    let dir = report_outbox_dir(config);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return,
+        Err(error) => {
+            println!(
+                "ATTEMPT_REPORT_OUTBOX_PENDING dir={} detail=outbox 를 읽지 못했다: {error}",
+                dir.display()
+            );
+            return;
+        }
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "report"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        match reopen_outboxed_report(config, signing_key, &path) {
+            Err(reason) => {
+                let rejected = path.with_extension("report.rejected");
+                match fs::rename(&path, &rejected) {
+                    Ok(()) => println!(
+                        "ATTEMPT_REPORT_OUTBOX_REJECTED path={} detail={reason}",
+                        rejected.display()
+                    ),
+                    Err(error) => println!(
+                        "ATTEMPT_REPORT_OUTBOX_REJECTED path={} detail={reason} (격리 이름 바꾸기 실패: {error})",
+                        path.display()
+                    ),
+                }
+            }
+            Ok(report) => {
+                if let Err(error) = deliver_outboxed_report(config, signing_key, &report, &path) {
+                    println!("ATTEMPT_REPORT_OUTBOX_PENDING path={} detail={error}", path.display());
+                }
+            }
+        }
+    }
+}
+
+/// outbox 파일 하나를 다시 연다 — 디코드 · 이 Agent 의 보고인지 · 서명 · 필드 조합 규칙.
+fn reopen_outboxed_report(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    path: &std::path::Path,
+) -> Result<pb::AttemptReport, String> {
+    let bytes = fs::read(path).map_err(|e| format!("읽지 못했다: {e}"))?;
+    let report = pb::AttemptReport::decode(bytes.as_slice()).map_err(|e| format!("디코드 실패: {e}"))?;
+    if report.node_id != config.agent_device_id {
+        return Err("이 Agent 의 보고가 아니다(node_id)".into());
+    }
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(config.agent_device_id.clone(), signing_key.verifying_key());
+    let verifier = Ed25519Verifier::new(&keys);
+    verify(
+        &report,
+        gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
+        &verifier,
+        SystemClock.now_unix_ms(),
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .map_err(|e| format!("서명 검증 실패: {e:?}"))?;
+    gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(&report)
+        .map_err(|rule| format!("필드 조합 규칙 위반: {rule}"))?;
+    Ok(report)
 }
 
 /// revoke 프레임을 서명 검증한 뒤 현재 보유 Lease에 적용한다.
@@ -2694,6 +3030,10 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
         send_attempt_report: flags.bool_flag("--send-attempt-report"),
+        report_over_session: flags.bool_flag("--report-over-session"),
+        report_outbox_dir: flags.get("--report-outbox").map(PathBuf::from),
+        report_session_attempts: u32::try_from(flags.u64_flag_with_default("--report-session-attempts", 3)?)
+            .map_err(|_| "--report-session-attempts 가 u32 범위를 넘는다".to_string())?,
         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
         corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
         corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
@@ -3059,6 +3399,9 @@ mod tests {
             submitter_verifying_key: None,
             execute_workload: false,
             send_attempt_report: false,
+            report_over_session: false,
+            report_outbox_dir: None,
+            report_session_attempts: 3,
             heartbeat_rounds: 0,
             heartbeat_interval_ms: 0,
             neighbor_report_rounds: 0,
@@ -3542,5 +3885,206 @@ mod defect_42_45_tests {
             );
             assert!(mapped.starts_with("WORKLOAD_EXECUTION_ATTEMPTED"), "{mapped}");
         }
+    }
+}
+
+#[cfg(test)]
+mod report_session_tests {
+    //! B+E 구현 단계 6 — REPORT 세션 · outbox. 가짜 Coordinator 는 같은 프레이밍(read_frame · write_frame)을 쓴다.
+    use super::*;
+    use std::net::TcpListener;
+
+    const COORD_SEED: [u8; 32] = [0x61; 32];
+    const AGENT_SEED: [u8; 32] = [0x62; 32];
+    const COORD_ID: &str = "coordinator-report-test";
+    const AGENT_ID: &str = "agent-report-test";
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn config(dir: &std::path::Path, addr: &str) -> AgentConfig {
+        let argv: Vec<String> = [
+            "--connect",
+            addr,
+            "--own-seed",
+            &hex(&AGENT_SEED),
+            "--peer-pubkey",
+            &hex(SigningKey::from_bytes(&COORD_SEED).verifying_key().as_bytes()),
+            "--coordinator-device-id",
+            COORD_ID,
+            "--agent-device-id",
+            AGENT_ID,
+            "--fence-db",
+            dir.join("fence.sqlite3").to_str().expect("경로"),
+            "--checkpoint-root",
+            dir.join("checkpoints").to_str().expect("경로"),
+            "--report-over-session",
+            "true",
+            "--report-session-attempts",
+            "1",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        parse_config_from_args(&argv).expect("설정 파싱")
+    }
+
+    fn signed_report() -> pb::AttemptReport {
+        let now = SystemClock.now_unix_ms();
+        report::build_signed_attempt_report(
+            &SigningKey::from_bytes(&AGENT_SEED),
+            &report::TerminalObservation {
+                job_id: "job-report-test".into(),
+                attempt_id: "attempt-report-test".into(),
+                node_id: AGENT_ID.into(),
+                fence_epoch: 3,
+                exit_code: Some(0),
+                finalization_failure: None,
+                started_at_unix_ms: now - 10,
+                finished_at_unix_ms: now - 5,
+                issued_at_unix_ms: now,
+            },
+        )
+        .expect("보고 서명")
+    }
+
+    fn signed_ack(report: &pb::AttemptReport, session_nonce: Vec<u8>, hash: Vec<u8>) -> pb::AttemptReportAck {
+        let mut ack = pb::AttemptReportAck {
+            schema_version: 1,
+            job_id: report.job_id.clone(),
+            attempt_id: report.attempt_id.clone(),
+            node_id: report.node_id.clone(),
+            fence_epoch: report.fence_epoch,
+            report_hash: Some(pb::Digest { algo: 1, value: hash }),
+            created: true,
+            coordinator_id: COORD_ID.into(),
+            issued_at_unix_ms: SystemClock.now_unix_ms(),
+            session_nonce,
+            ..Default::default()
+        };
+        ack.coordinator_signature = sign(&SigningKey::from_bytes(&COORD_SEED), &ack).to_vec();
+        ack
+    }
+
+    /// 가짜 Coordinator 하나 — Hello(REPORT) 와 보고를 검증해 읽고, `answer` 가 만든 Ack 를 보낸 뒤 닫는다.
+    fn fake_coordinator(
+        answer: impl FnOnce(&pb::AgentSessionHello, &pb::AttemptReport) -> pb::AttemptReportAck + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let addr = listener.local_addr().expect("주소").to_string();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut keys = InMemoryKeyring::new();
+            keys.insert(AGENT_ID.to_string(), SigningKey::from_bytes(&AGENT_SEED).verifying_key());
+            let mut replay = InMemoryReplayGuard::new();
+            let hello = match read_frame(&mut stream, 1, KeyDirectorySource::Provided(&keys), &mut replay, &SystemClock)
+                .expect("Hello 읽기")
+            {
+                IngressMessage::SessionHello(verified) => verified.get().clone(),
+                _ => panic!("첫 프레임은 Hello 여야 한다"),
+            };
+            assert_eq!(hello.mode, gputeer_protocol::constants::MODE_REPORT, "REPORT 세션의 Hello 다");
+            let received = match read_frame(
+                &mut stream,
+                gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
+                KeyDirectorySource::Provided(&keys),
+                &mut replay,
+                &SystemClock,
+            )
+            .expect("보고 읽기")
+            {
+                IngressMessage::AttemptReport(verified) => verified.get().clone(),
+                _ => panic!("둘째 프레임은 보고여야 한다"),
+            };
+            let ack = answer(&hello, &received);
+            let frame = write_frame(FrameType::AttemptReportAck, &ack.encode_to_vec()).expect("Ack 프레임");
+            stream.write_all(&frame).expect("Ack 전송");
+        });
+        (addr, handle)
+    }
+
+    /// 검증한 Ack 를 받으면 outbox 파일을 지운다.
+    #[test]
+    fn a_verified_ack_clears_the_outbox_file() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let report = signed_report();
+        let (addr, server) = fake_coordinator(|hello, received| {
+            signed_ack(received, hello.nonce.clone(), attempt_report_hash(received).to_vec())
+        });
+        let config = config(dir.path(), &addr);
+        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
+            .expect("검증한 Ack 를 받아야 한다");
+        server.join().expect("가짜 Coordinator");
+        assert!(!path.exists(), "검증한 Ack 뒤에는 outbox 파일이 없어야 한다");
+    }
+
+    /// report_hash 가 보낸 보고와 다르면 거부하고 파일을 남긴다 — Coordinator 가 적은 값을 믿지 않는다.
+    #[test]
+    fn an_ack_with_a_wrong_report_hash_is_rejected_and_the_outbox_file_stays() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let report = signed_report();
+        let (addr, server) = fake_coordinator(|hello, received| signed_ack(received, hello.nonce.clone(), vec![0u8; 32]));
+        let config = config(dir.path(), &addr);
+        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let error = deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
+            .expect_err("틀린 해시의 Ack 는 거부돼야 한다");
+        server.join().expect("가짜 Coordinator");
+        assert!(error.contains("REPORT_ACK_REJECTED") && error.contains("report_hash"), "{error}");
+        assert!(path.exists(), "거부했으면 보고는 outbox 에 남아야 한다");
+    }
+
+    /// 다른 세션의 nonce 를 되돌린 Ack 는 거부하고 파일을 남긴다.
+    #[test]
+    fn an_ack_for_another_session_nonce_is_rejected_and_the_outbox_file_stays() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let report = signed_report();
+        let (addr, server) = fake_coordinator(|_hello, received| {
+            signed_ack(received, vec![9u8; 16], attempt_report_hash(received).to_vec())
+        });
+        let config = config(dir.path(), &addr);
+        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let error = deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
+            .expect_err("다른 세션의 Ack 는 거부돼야 한다");
+        server.join().expect("가짜 Coordinator");
+        assert!(error.contains("REPORT_ACK_REJECTED") && error.contains("session_nonce"), "{error}");
+        assert!(path.exists(), "거부했으면 보고는 outbox 에 남아야 한다");
+    }
+
+    /// 기동 때 다시 연 outbox 파일이 서명을 어기면 보내지 않고 격리한다(지우지 않는다 — 증거다).
+    #[test]
+    fn a_tampered_outbox_file_is_quarantined_not_sent() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        // 보낼 곳이 없는 주소 — 검사를 통과했다면 연결을 시도하고 PENDING 으로 남는다.
+        let config = config(dir.path(), "127.0.0.1:9");
+        let mut report = signed_report();
+        report.job_id = "job-tampered".into(); // 서명 뒤에 바꾼다 — 필드 조합 규칙은 그대로 지킨다
+        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
+        assert!(!path.exists(), "변조된 보고를 outbox 에 그대로 두었다");
+        assert!(path.with_extension("report.rejected").exists(), "지우지 않고 격리해야 한다(증거)");
+    }
+
+    /// 검사를 통과했지만 보내지 못한 outbox 파일은 그대로 남는다(격리하지 않는다).
+    #[test]
+    fn a_valid_outbox_file_that_cannot_be_sent_stays_pending() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let config = config(dir.path(), "127.0.0.1:9");
+        let report = signed_report();
+        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
+        assert!(path.exists(), "보내지 못한 정상 보고를 지웠다");
+        assert!(!path.with_extension("report.rejected").exists(), "정상 보고를 격리했다");
+    }
+
+    /// REPORT 세션과 FRESH 보고를 함께 켜면 연결 전에 거부한다.
+    #[test]
+    fn report_over_session_with_the_fresh_report_is_refused_before_connecting() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        config.send_attempt_report = true;
+        let error = run(config).expect_err("두 길로 보내는 설정은 거부돼야 한다");
+        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED"), "{error}");
     }
 }
