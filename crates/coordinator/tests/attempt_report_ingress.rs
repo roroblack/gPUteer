@@ -39,6 +39,7 @@ use gputeer_coordinator::inventory_store::{
     AgentInventory, AgentRegistry, CoordinatorInventoryStore, GpuInventory,
 };
 use gputeer_coordinator::job_store::{AcceptedJobSubmission, CoordinatorJobStore};
+use gputeer_coordinator::lease_store::CoordinatorLeaseStore;
 use gputeer_coordinator::staging_store::{CoordinatorStagingStore, StageQueuedRequest};
 use gputeer_crypto::{
     sign, Ed25519Verifier, FrameType, InMemoryKeyring, KeyProtection, PersistentKeyring,
@@ -838,7 +839,9 @@ fn fresh_then_renew(fixture: &Fixture, fence_epoch: u64) -> (pb::RenewLeaseReque
     (request, pb::RenewLeaseResult::decode(body.as_slice()).expect("갱신 결과 디코드"))
 }
 
-/// 단계 5a — 실행 중 Agent 가 **새 연결**(RENEW)로 저장된 Lease 를 갱신한다. 결과는 Coordinator 가 서명하고 요청 nonce 를 되돌린다.
+/// 단계 5a — FRESH 연결을 닫은 뒤 **새 연결**(RENEW)로 저장된 Lease 를 갱신한다. 결과의 바깥 서명 · 요청 nonce, 그리고 중첩 Lease 의
+///   독립 서명과 Agent 가 대조하는 신원(lease · job · attempt · 발급자 · 보유자 · 세대)을 본다(결함 96). 워크로드가 도는 **동안**의
+///   갱신은 cli 통합 테스트가 본다(단계 5b).
 #[test]
 fn a_renew_session_on_a_new_connection_renews_the_stored_lease() {
     let fixture = fixture();
@@ -852,8 +855,25 @@ fn a_renew_session_on_a_new_connection_renews_the_stored_lease() {
     assert!(lease.expires_at_unix_ms > now_ms(), "갱신된 만료가 지금보다 뒤다");
     let mut ring = InMemoryKeyring::new();
     ring.insert(COORDINATOR_ID, SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key());
-    verify(&result, 1, &Ed25519Verifier::new(ring), now_ms(), &mut NoReplayCheck)
+    let verifier = Ed25519Verifier::new(ring);
+    verify(&result, 1, &verifier, now_ms(), &mut NoReplayCheck)
         .expect("Coordinator 가 서명한 갱신 결과다");
+    assert_eq!(result.coordinator_id, COORDINATOR_ID, "결과의 coordinator_id");
+    // ★ 결함 96 — 중첩 Lease 는 바깥 서명과 **따로** 검증한다(Agent 의 규칙 i). 바깥만 보면 중첩 서명이 깨져도 통과한다.
+    verify(&lease, 1, &verifier, now_ms(), &mut NoReplayCheck)
+        .expect("중첩 Lease 도 Coordinator 가 따로 서명했다");
+    assert_eq!(
+        (
+            lease.lease_id.as_str(),
+            lease.job_id.as_str(),
+            lease.attempt_id.as_str(),
+            lease.issuing_coordinator_id.as_str(),
+            lease.holder_node_id.as_str(),
+            lease.fence_epoch,
+        ),
+        (LEASE_ID, JOB_ID, ATTEMPT_ID, COORDINATOR_ID, NODE_ID, fence_epoch),
+        "Agent 가 대조하는 신원이 그대로여야 한다"
+    );
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
 }
@@ -946,6 +966,131 @@ fn a_hello_with_a_broken_signature_is_rejected_not_missing() {
         .expect_err("서명이 틀린 Hello 는 거부돼야 한다");
     assert!(error.contains("HELLO_REJECTED"), "{error}");
     assert!(!error.contains("HELLO_MISSING"), "검증 실패를 Hello 부재로 적었다: {error}");
+}
+
+/// FRESH 한 판을 ACK 까지 가되 ACK 의 grant_id 를 `grant_id` 로 바꿔 보낸다(서명은 정상). Coordinator 는 상관관계 불일치로 이
+/// 연결을 끝낸다 — 그 오류 문구에 상대가 보낸 grant_id 가 그대로 들어간다.
+fn handshake_with_ack_grant_id(stream: &mut TcpStream, grant_id: &str) {
+    send_hello(stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    let (frame_type, body) = read_frame_body(stream);
+    assert_eq!(frame_type, FrameType::Grant as u8, "첫 프레임은 Grant 여야 한다");
+    let grant = pb::ExecutionGrant::decode(body.as_slice()).expect("Grant 디코드");
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let now = now_ms();
+    let mut ack = pb::AgentGrantAck {
+        schema_version: 1,
+        grant_id: grant_id.into(),
+        attempt_id: grant.attempt_id.clone(),
+        agent_device_id: NODE_ID.into(),
+        issued_at_unix_ms: now,
+        expires_at_unix_ms: now + 60_000,
+        nonce: derive_replay_nonce("grant-ack", &grant.grant_id, 0),
+        accepted: true,
+        ..Default::default()
+    };
+    ack.agent_signature = sign(&key, &ack).to_vec();
+    write_frame_body(stream, FrameType::GrantAck, &ack.encode_to_vec());
+    // Coordinator 가 이 연결을 닫을 때까지 기다린다 — 먼저 끊으면 다른 원인(끊김)이 섞인다.
+    let mut probe = [0u8; 1];
+    let _closed_by_coordinator = stream.read(&mut probe);
+}
+
+/// 결함 92 — FRESH 연결 안의 Legacy 경로도 상대 내용으로 Storage 를 고르지 못한다. 서명된 ACK 의 grant_id 에 "lease store" 를
+///   넣으면 상관관계 불일치 문구에 그 값이 들어간다 — 그래도 그 연결만의 Protocol 오류이고 다음 정상 연결을 받는다.
+#[test]
+fn an_ack_whose_grant_id_mentions_the_lease_store_does_not_stop_the_listener() {
+    let fixture = fixture();
+    let handle = spawn_coordinator_for_renew(&fixture, false);
+    {
+        let mut first = connect_when_ready(fixture.address);
+        handshake_with_ack_grant_id(&mut first, "lease store");
+    }
+    let mut second = connect_when_ready(fixture.address);
+    handshake_at(&mut second, 1);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "받은 ACK 의 내용 때문에 리스너가 멈췄다: {outcome:?}");
+}
+
+/// 결함 92 — durable 저장소일 때 "Lease" 와 "실패" 가 함께 든 문구를 Storage 로 고르던 규칙도 없앴다. 같은 모양의 ACK 에
+///   grant_id "Lease 실패" 를 넣어 lease 저장소를 켠 Coordinator 로 보낸다.
+#[test]
+fn with_a_durable_lease_store_an_ack_mentioning_lease_failure_does_not_stop_the_listener() {
+    let fixture = fixture();
+    let handle = spawn_coordinator_for_renew(&fixture, true);
+    {
+        let mut first = connect_when_ready(fixture.address);
+        handshake_with_ack_grant_id(&mut first, "Lease 실패");
+    }
+    let mut second = connect_when_ready(fixture.address);
+    handshake_at(&mut second, 1);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "받은 ACK 의 내용 때문에 리스너가 멈췄다: {outcome:?}");
+}
+
+/// 결함 92 — 예상 밖 프레임은 **종류 이름**만 오류에 남긴다. ACK 자리에 서명된 보고를 보내고, 그 job_id 에 넣은 표지가 Coordinator
+///   의 오류 문자열에 나오지 않는지 본다(전에는 `{other:?}` 가 `Verified` 안의 메시지를 통째로 찍었다).
+#[test]
+fn an_unexpected_frame_in_place_of_the_ack_is_named_by_kind_without_its_content() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator(&fixture, 0);
+    let mut stream = connect_when_ready(fixture.address);
+    send_hello(&mut stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    let (frame_type, _) = read_frame_body(&mut stream);
+    assert_eq!(frame_type, FrameType::Grant as u8, "첫 프레임은 Grant 여야 한다");
+    let mut report = terminal_report(fence_epoch);
+    report.job_id = "PEER-CONTENT-MARKER".into();
+    write_frame_body(&mut stream, FrameType::AttemptReport, &signed_report(report).encode_to_vec());
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("ACK 자리의 보고는 거부돼야 한다");
+    assert!(error.contains("AttemptReport"), "무슨 종류가 왔는지는 말해야 한다: {error}");
+    assert!(!error.contains("PEER-CONTENT-MARKER"), "상대가 보낸 내용이 오류 문자열에 들어갔다: {error}");
+}
+
+/// 결함 94 — 다른 Coordinator 가 발급한 Lease 는 RENEW 로 갱신하지 않는다 — **저장소를 바꾸기 전에** 거부한다.
+///   같은 control DB 를 다른 신원(coordinator-elsewhere)의 Coordinator 가 열고, 보유 Agent 가 RENEW 를 첫 연결로 보낸다.
+#[test]
+fn a_renew_session_for_a_lease_issued_by_another_coordinator_is_refused_before_the_store_changes() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let before = CoordinatorLeaseStore::open(&fixture.control_db)
+        .expect("lease store")
+        .get(LEASE_ID)
+        .expect("Lease 조회")
+        .expect("fixture 가 Lease 를 만들었다");
+    assert_eq!(before.issuing_coordinator_id, COORDINATOR_ID, "fixture 전제");
+    let mut args = coordinator_args(&fixture, 0);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--coordinator-device-id")
+        .expect("--coordinator-device-id");
+    args[at + 1] = "coordinator-elsewhere".into();
+    args.push("--lease-db".into());
+    args.push(fixture.control_db.to_str().expect("경로").into());
+    let handle = std::thread::spawn(move || {
+        let config = gputeer_coordinator::parse_config_from_args(&args).expect("설정 파싱");
+        gputeer_coordinator::run(config)
+    });
+    let mut renew = connect_when_ready(fixture.address);
+    send_hello(&mut renew, gputeer_protocol::constants::MODE_RENEW, 0, 140);
+    write_frame_body(
+        &mut renew,
+        FrameType::LeaseRenew,
+        &signed_renew_request(fence_epoch, 160).encode_to_vec(),
+    );
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("다른 Coordinator 의 Lease 는 갱신하지 않는다");
+    assert!(error.contains("가 발급한 Lease 가 아니다"), "{error}");
+    let after = CoordinatorLeaseStore::open(&fixture.control_db)
+        .expect("lease store")
+        .get(LEASE_ID)
+        .expect("Lease 조회")
+        .expect("Lease");
+    assert_eq!(after.expires_at_unix_ms, before.expires_at_unix_ms, "거부했는데 저장소의 만료가 바뀌었다");
 }
 
 /// 첫 증거와 **내용이 다른** 두 번째 보고는 거부된다.

@@ -837,10 +837,16 @@ fn session_error_kind(error: &CoordinatorSessionError) -> &'static str {
     }
 }
 
-fn classify_legacy_session_error(
-    message: String,
-    durable_store_enabled: bool,
-) -> CoordinatorSessionError {
+/// Legacy 문자열 오류를 Transport · Protocol · Storage 로 가른다.
+///
+/// ★ 결함 92 (재검수 60) — Storage 는 **우리 코드가 만든 문구의 앞머리**("lease store")로만 고른다. 전에는 문자열 어디든
+///   "lease store" · "저장소" 가 있거나, durable 저장소일 때 "Lease" 와 "실패" 가 함께 있으면 Storage 였다 — 상대가 보낸 값(ACK 의
+///   grant_id, 예상 밖 프레임의 Debug 출력 등)이 문자열에 섞이면 accept 루프 전체가 멈췄다(87 과 같은 부류, FRESH 연결 안).
+///   이제 상대 내용은 분류를 Transport · Protocol 쪽으로만 바꿀 수 있다 — 리스너를 멈추지 못한다.
+/// ★ 근거: 이 함수로 오는 저장소 장애 문구는 전부 "lease store" 로 시작하고 `?` 로 앞에 다른 말 없이 올라온다(2026-09-14 소스
+///   대조 — 타입으로 강제한 것은 아니다). 다른 저장소(종료 보고 · 이웃 신고 · 생존 관측 · 저장된 예약)의 장애는 `Classified(Storage)`
+///   로 와서 이 함수를 지나지 않는다. "Lease"+"실패" 규칙에 걸리던 문구는 프레임 읽기 · 검증 오류였다.
+fn classify_legacy_session_error(message: String) -> CoordinatorSessionError {
     let lower = message.to_ascii_lowercase();
     let transport = lower.contains("truncated")
         || lower.contains("stream")
@@ -855,12 +861,10 @@ fn classify_legacy_session_error(
         || message.contains("전송 실패")
         || message.contains("flush 실패")
         || message.contains("연결에 더 이상 아무것도 오지 않았다");
-    if message.contains("lease store") || message.contains("저장소") {
+    if message.starts_with("lease store") {
         storage_error("session lease operation", message)
     } else if transport {
         transport_error("session I/O", message)
-    } else if durable_store_enabled && message.contains("Lease") && message.contains("실패") {
-        storage_error("session durable lease operation", message)
     } else {
         protocol_error("session protocol", message)
     }
@@ -1028,7 +1032,7 @@ fn serve_one_connection(
     )
     .map_err(|error| match error {
         SessionHandlerError::Legacy(message) => {
-            classify_legacy_session_error(message, lease_store.is_some())
+            classify_legacy_session_error(message)
         }
         SessionHandlerError::Classified(error) => error,
     })
@@ -1178,7 +1182,7 @@ fn serve_one_connection_impl(
         IngressMessage::GrantAck(verified) => verified
             .require_replay_checked()
             .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
-        other => return Err(format!("예상하지 못한 응답 타입: {other:?}").into()),
+        other => return Err(format!("예상하지 못한 응답 타입: {}", ingress_kind(&other)).into()),
     };
 
     if !ack.accepted {
@@ -1319,7 +1323,7 @@ fn serve_one_connection_impl(
             IngressMessage::NodeHeartbeat(verified) => verified
                 .require_replay_checked()
                 .map_err(|e| format!("NodeHeartbeat replay 검사 실패: {e:?}"))?,
-            other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
+            other => return Err(format!("예상하지 못한 heartbeat 타입: {}", ingress_kind(&other)).into()),
         };
 
         // 이 연결의 상대가 맞는가. 서명은 "이 장치가 보냈다" 를 증명할
@@ -1386,7 +1390,7 @@ fn serve_one_connection_impl(
         if let Some(store) = liveness_store.as_mut() {
             let verified = match &message {
                 IngressMessage::NodeHeartbeat(verified) => verified,
-                other => return Err(format!("예상하지 못한 heartbeat 타입: {other:?}").into()),
+                other => return Err(format!("예상하지 못한 heartbeat 타입: {}", ingress_kind(&other)).into()),
             };
             let observed = store.observe(verified).map_err(|error| match error {
                 // ★ 신원 충돌은 **저장소 장애가 아니다**(2026-08-30 독립
@@ -1469,7 +1473,7 @@ fn serve_one_connection_impl(
                 verified
             }
             other => {
-                return Err(format!("예상하지 못한 이웃 신고 타입: {other:?}").into())
+                return Err(format!("예상하지 못한 이웃 신고 타입: {}", ingress_kind(&other)).into())
             }
         };
         let report = verified.get();
@@ -1645,7 +1649,7 @@ fn serve_one_connection_impl(
         let verified = match &message {
             IngressMessage::AttemptReport(verified) => verified,
             other => {
-                return Err(format!("예상하지 못한 종료 보고 타입: {other:?}").into());
+                return Err(format!("예상하지 못한 종료 보고 타입: {}", ingress_kind(&other)).into());
             }
         };
         // 검증을 통과한 뒤에야 필드를 본다.
@@ -1854,7 +1858,7 @@ fn serve_one_connection_impl(
                 IngressMessage::LeaseRenew(verified) => verified
                     .require_replay_checked()
                     .map_err(|e| format!("RenewLeaseRequest replay 검사 실패: {e:?}"))?,
-                other => return Err(format!("예상하지 못한 갱신 요청 타입: {other:?}").into()),
+                other => return Err(format!("예상하지 못한 갱신 요청 타입: {}", ingress_kind(&other)).into()),
             };
 
             if renew_req.node_id != config.agent_device_id {
@@ -2029,6 +2033,32 @@ fn accept_with_deadline(
     }
 }
 
+/// 받은 프레임의 **종류 이름**만 돌려준다 — 오류 문자열에 상대 메시지의 내용을 넣지 않기 위해서다(결함 92, 재검수 60).
+///
+/// ★ `Verified<M>` 의 Debug 는 안의 메시지까지 찍는다. 전에는 예상 밖 프레임을 `{other:?}` 로 오류에 넣어 상대가 정한 문자열이
+///   로그와 분류기로 흘러 들어갔다.
+fn ingress_kind(message: &IngressMessage) -> &'static str {
+    match message {
+        IngressMessage::Manifest(_) => "JobManifest",
+        IngressMessage::Grant(_) => "ExecutionGrant",
+        IngressMessage::Lease(_) => "Lease",
+        IngressMessage::LeaseRenew(_) => "RenewLeaseRequest",
+        IngressMessage::LeaseRevoke(_) => "RevokeLeaseNotice",
+        IngressMessage::AttemptReport(_) => "AttemptReport",
+        IngressMessage::Checkpoint(_) => "CheckpointManifest",
+        IngressMessage::Artifact(_) => "ArtifactRef",
+        IngressMessage::ReplicaAck(_) => "ReplicaAck",
+        IngressMessage::GrantAck(_) => "AgentGrantAck",
+        IngressMessage::LeaseRenewResult(_) => "RenewLeaseResult",
+        IngressMessage::SessionHello(_) => "AgentSessionHello",
+        IngressMessage::LeaseResume(_) => "ResumeLeaseRequest",
+        IngressMessage::LeaseResumeResult(_) => "ResumeLeaseResult",
+        IngressMessage::NodeHeartbeat(_) => "NodeHeartbeat",
+        IngressMessage::NeighborUnreachableReport(_) => "NeighborUnreachableReport",
+        IngressMessage::AttemptReportAck(_) => "AttemptReportAck",
+    }
+}
+
 /// 세션 오류를 **상대 메시지 내용과 무관하게** 분류한다(결함 87, 재검수 59).
 ///
 /// ★ `classify_legacy_session_error` 는 오류 문자열의 낱말("lease store" · "stream" 등)로 Storage · Transport 를 가른다. 상대가
@@ -2058,11 +2088,13 @@ fn session_framing_error(
 /// B+E 구현 단계 5a — RENEW 세션: Hello(RENEW) -> RenewLeaseRequest -> RenewLeaseResult -> 닫는다(제안서의 세션 표).
 ///
 /// ★ 실행 중 Agent 가 **새 연결**로 Lease 만 갱신한다 — FRESH 연결을 붙잡지 않고도 Lease 보다 긴 작업을 이어 가게 하는 쪽이다.
-///   Agent 쪽 갱신 스레드는 다음 조각(5b)이다.
+///   Agent 쪽은 단계 5b 의 실행 중 갱신 스레드(`--renew-during-execution-ms`)가 연다 — FRESH 연결이 ACK 뒤 닫히는 구성에서만
+///   성립한다(결함 97 — 순차 accept 라 FRESH 를 붙잡으면 RENEW 가 대기열에서 기다린다).
 /// ★ 영속 lease 저장소가 있어야 받는다 — 연결 밖에서 온 갱신은 **저장된** Lease(보유자 · 세대 · 만료 · revoke)로만 판정한다.
 ///   레거시(저장소 없음)는 이 프로세스가 발급한 Lease 를 연결 밖에서 기억하지 못한다.
 /// ★ 판정 규칙은 FRESH 연결 안의 갱신과 같다 — 낮은 세대는 서명된 SUPERSEDED, 높은 세대는 거부, 결과는 같은 `build_renew_result`.
 ///   만료된 Lease 는 여기서 먼저 거부한다 — `build_renew_result` 의 만료 오류는 문자열로 나와 저장소 장애와 가를 수 없다.
+/// ★ 발급자를 대조한다 — 이 Coordinator 가 발급하지 않은 Lease 는 저장소를 바꾸기 전에 거부한다(결함 94, 재검수 60).
 /// ★ 아직 하지 않는다: 갱신 수신을 생존 관측으로 기록하기(제안서 — 다음 조각).
 fn serve_renew_session(
     config: &CoordinatorConfig,
@@ -2112,6 +2144,15 @@ fn serve_renew_session(
         .get(&request.lease_id)
         .map_err(|e| SessionHandlerError::Classified(storage_error("lease store", e)))?
         .ok_or_else(|| session_protocol_error("RENEW_SESSION: 저장된 Lease 가 아니다(모르는 lease_id)"))?;
+    // ★ 결함 94 (재검수 60) — 다른 Coordinator 가 발급한 Lease 를 이 Coordinator 가 갱신해 자기 서명으로 내보내지 않는다. 저장소를
+    //   **바꾸기 전에** 대조한다(FRESH 경로 `get_or_issue` 의 신원 대조와 같은 축). 통과시키면 저장소가 먼저 갱신되고, 결과의 중첩
+    //   Lease(발급자 A · 서명 B)는 Agent 가 거부한다.
+    if stored.issuing_coordinator_id != config.coordinator_device_id {
+        return Err(session_protocol_error(format!(
+            "RENEW_SESSION: 이 Coordinator({}) 가 발급한 Lease 가 아니다(issuing_coordinator_id 불일치)",
+            config.coordinator_device_id
+        )));
+    }
     if stored.holder_node_id != request.node_id {
         return Err(session_protocol_error("RENEW_SESSION: 이 Lease 의 보유자가 아니다"));
     }
@@ -2136,7 +2177,11 @@ fn serve_renew_session(
         // `<=` 경계 — DoD-26 · DoD-32 와 같은 규칙. revoke 된 Lease 는 아래에서 서명된 REVOKED 로 답한다.
         return Err(session_protocol_error("RENEW_SESSION: Lease 가 이미 만료됐다"));
     } else {
-        // 여기서 나는 오류는 저장소 조회 · 갱신 실패다 — fail-closed(DoD-37).
+        // `build_renew_result` 의 오류는 전부 Storage(fail-closed, DoD-37)로 둔다. 보유자 · 발급자 · 세대 · 만료는 위에서 먼저
+        // 걸렀으므로 남는 것은 저장소 조회 · 갱신 실패와 저장값 변환 실패(u64 -> u32, 저장소 손상 의심)로 본다.
+        // ★ 결함 98 (재검수 60) — 전에는 "저장소 조회 · 갱신 실패다" 라고 단정했다. 위의 사전 조회와 안의 실제 갱신은 **따로**
+        //   조회한다 — 이 프로세스의 연결은 순차라 겹치지 않지만, 같은 DB 를 쓰는 다른 프로세스가 그 사이에 값을 바꾸는 것은
+        //   막지 않는다.
         build_renew_result(
             config,
             lease_store,
@@ -2170,8 +2215,10 @@ fn serve_renew_session(
 /// D2 — 순차 lane 의 첫 프레임. 서명 · replay · node_id 를 대조한다(Resume lane 과 같은 규칙).
 /// mode 와 connection_attempt 는 호출부가 본다 — 세션 종류마다 규칙이 다르다(B+E 구현 단계 5a).
 ///
-/// ★ 결함 89 — **받지 못한 것**(끊김 · 소켓 시한)만 HELLO_MISSING 이다. 도착했는데 서명 · 시각 · replay 검증에 실패한 것은
-///   HELLO_REJECTED 다 — 둘을 한 이름으로 부르면 검증 실패를 "옛 Agent" 로 오진한다.
+/// ★ 결함 89 — 프레임 **읽기 오류** 중에서는 받지 못한 것(끊김 · 소켓 시한)만 HELLO_MISSING(Transport)이다. 도착했는데 서명 ·
+///   시각 · replay 검증에 실패한 것은 HELLO_REJECTED(Protocol)다 — 둘을 한 이름으로 부르면 검증 실패를 "옛 Agent" 로 오진한다.
+/// ★ 결함 93 (재검수 60) — HELLO_MISSING 은 하나 더 있다: 검증까지 통과한 **다른 종류**의 프레임이 첫 프레임이면 HELLO_MISSING
+///   (Protocol)이다(아래 `_` 갈래). 전에는 "끊김 · 소켓 시한만 HELLO_MISSING" 이라고 적었다.
 /// ★ 결함 87 — 분류를 여기서 정하고 받은 프레임의 내용을 오류에 넣지 않는다([`session_protocol_error`]).
 /// ★ session_id 는 대조하지 않는다 — FRESH 는 세션 복원 대상이 아니다(Resume lane 만 요구한다).
 fn read_session_hello(
@@ -2247,7 +2294,7 @@ fn serve_resume_connection(
             .clone(),
         other => {
             return Err(SessionHandlerError::Legacy(format!(
-                "Resume lane에서 Hello가 아닌 프레임 수신: {other:?}"
+                "Resume lane에서 Hello가 아닌 프레임 수신: {}", ingress_kind(&other)
             )))
         }
     };
@@ -2291,7 +2338,7 @@ fn serve_resume_connection(
             .clone(),
         other => {
             return Err(SessionHandlerError::Legacy(format!(
-                "Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {other:?}"
+                "Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {}", ingress_kind(&other)
             )))
         }
     };

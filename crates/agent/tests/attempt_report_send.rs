@@ -235,3 +235,46 @@ fn the_flag_without_an_observed_exit_refuses_instead_of_inventing_one() {
         outcome.frames_after_ack
     );
 }
+
+/// 결함 97 — 실행 중 갱신과 FRESH 연결을 붙잡는 설정(종료 보고)을 함께 켜면 **연결하기 전에** 거부한다.
+///   (리스너가 없는 주소를 준다 — 연결을 시도했다면 다른 오류가 난다.)
+#[test]
+fn renewing_during_execution_with_a_report_on_the_fresh_connection_is_refused_before_connecting() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let coordinator_pubkey = hex(
+        SigningKey::from_bytes(&COORDINATOR_SEED)
+            .verifying_key()
+            .as_bytes(),
+    );
+    let fence_db = dir.path().join("fence.sqlite3");
+    let checkpoints = dir.path().join("checkpoints");
+    let argv: Vec<String> = [
+        "--connect",
+        "127.0.0.1:9",
+        "--own-seed",
+        &hex(&AGENT_SEED),
+        "--peer-pubkey",
+        &coordinator_pubkey,
+        "--coordinator-device-id",
+        COORDINATOR_ID,
+        "--agent-device-id",
+        AGENT_ID,
+        "--disable-reconnect",
+        "true",
+        "--fence-db",
+        fence_db.to_str().expect("경로"),
+        "--checkpoint-root",
+        checkpoints.to_str().expect("경로"),
+        "--renew-during-execution-ms",
+        "1000",
+        "--send-attempt-report",
+        "true",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let error = gputeer_agent::run(parse_config_from_args(&argv).expect("설정 파싱"))
+        .expect_err("함께 켤 수 없는 설정이다");
+    assert!(error.contains("RENEW_DURING_EXECUTION_REFUSED"), "{error}");
+    assert!(error.contains("--send-attempt-report"), "어느 설정 때문인지 말해야 한다: {error}");
+}

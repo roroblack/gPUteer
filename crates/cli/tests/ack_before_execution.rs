@@ -353,6 +353,73 @@ fn a_workload_longer_than_the_io_timeout_is_acknowledged_before_it_runs() {
     );
 }
 
+/// B+E 구현 단계 5b — 워크로드가 도는 **동안** Agent 가 새 연결(RENEW 세션)로 Lease 를 갱신한다.
+///   Coordinator 는 FRESH 한 번 · RENEW 두 번을 받고 끝낸다(`--max-connections 3`). 그 뒤의 갱신 시도는 연결에 실패하고
+///   Agent 는 RENEW_SESSION_FAILED 를 알린 채 워크로드를 끝까지 돌린다.
+#[test]
+fn the_agent_renews_its_lease_over_new_connections_while_the_workload_runs() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 8);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--max-connections",
+            "3",
+            "--accept-timeout-ms",
+            "30000",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &["--disable-reconnect", "true", "--renew-during-execution-ms", "1500"],
+    );
+    let coordinator = wait(coordinator, Duration::from_secs(90));
+    let agent = wait(agent, Duration::from_secs(90));
+    let all = both(&agent, &coordinator);
+
+    assert!(agent.success, "Agent 가 실패했다\n{all}");
+    assert!(coordinator.success, "Coordinator 가 실패했다\n{all}");
+    assert!(
+        coordinator.count("RENEW_SESSION_RESULT outcome=1") >= 2,
+        "RENEW 세션 갱신이 두 번 이상 있어야 한다\n{all}"
+    );
+    let (spawned, _) = agent.first("WORKLOAD_SPAWNED").unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (renewed, _) = agent
+        .first("RENEW_SESSION_RESULT ok=true")
+        .unwrap_or_else(|| panic!("Agent 가 갱신 결과를 받지 못했다\n{all}"));
+    let (exited, _) = agent.first("WORKLOAD_EXITED").unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(spawned < renewed && renewed < exited, "갱신이 실행 **중**에 일어나야 한다\n{all}");
+}
+
+/// 단계 5b — Coordinator 가 RENEW 를 받지 못하면(영속 lease 저장소 없음) Agent 는 갱신 실패를 **알리고** 워크로드는 끝까지 돈다.
+///   조용히 넘기지도, 성공한 척하지도 않는다.
+#[test]
+fn a_refused_renew_session_is_reported_not_hidden() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 5);
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &["--max-connections", "2", "--accept-timeout-ms", "30000"],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &["--disable-reconnect", "true", "--renew-during-execution-ms", "1500"],
+    );
+    let coordinator = wait(coordinator, Duration::from_secs(90));
+    let agent = wait(agent, Duration::from_secs(90));
+    let all = both(&agent, &coordinator);
+
+    assert!(agent.success, "갱신이 실패해도 워크로드는 끝까지 돈다\n{all}");
+    assert!(agent.output().contains("RENEW_SESSION_FAILED"), "갱신 실패를 알려야 한다\n{all}");
+    assert!(!agent.output().contains("RENEW_SESSION_RESULT ok=true"), "거부됐는데 갱신 성공을 적었다\n{all}");
+    assert!(coordinator.output().contains("RENEW_SESSION_REFUSED"), "Coordinator 가 거부 사유를 남겨야 한다\n{all}");
+}
+
 /// P2 — 약 15초 워크로드 뒤에 오는 heartbeat 를 Coordinator 가 받는다(Lease 30초).
 #[test]
 fn the_first_read_after_ack_waits_for_the_workload_within_the_lease() {

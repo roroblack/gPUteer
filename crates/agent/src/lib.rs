@@ -266,6 +266,9 @@ pub struct AgentConfig {
     /// Test-only delay before constructing each renewal request. This makes
     /// short-TTL expiry deterministic in the process-boundary selftest.
     pub renew_delay_ms: u64,
+    /// B+E 구현 단계 5b — 워크로드가 도는 **동안** 이 간격(밀리초)마다 새 연결(RENEW 세션)로 Lease 를 갱신한다.
+    /// 0 이면 끈다(기본값). 켜려면 Coordinator 가 `--lease-db` 로 RENEW 세션을 받아야 한다.
+    pub renew_during_execution_ms: u64,
 
     // ── Lease revoke (2026-08-19) ───────────────────────────────────
     /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
@@ -363,6 +366,24 @@ pub(crate) fn unsupported_neighbor_report_lane(
 /// ★ 구현하지 않은 조합은 거부한다 — 받아 놓고 안 하는 것이 가장 나쁘다.
 ///   운영자는 신고가 모이는 줄 안다.
 pub fn run(config: AgentConfig) -> Result<(), String> {
+    // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
+    //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
+    //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
+    if config.renew_during_execution_ms > 0 {
+        let holding = [
+            (config.send_attempt_report, "--send-attempt-report"),
+            (config.heartbeat_rounds > 0, "--heartbeat-rounds"),
+            (config.do_renew, "--do-renew"),
+            (config.expect_revoke_after_round.is_some(), "--expect-revoke-after-round"),
+            (config.neighbor_report_rounds > 0, "--neighbor-report-rounds"),
+        ];
+        if let Some((_, flag)) = holding.iter().find(|(enabled, _)| *enabled) {
+            return Err(format!(
+                "RENEW_DURING_EXECUTION_REFUSED: {flag} 는 FRESH 연결을 붙잡아 RENEW 세션이 처리되지 않는다 — \
+                 --renew-during-execution-ms 와 함께 켤 수 없다(결함 97)"
+            ));
+        }
+    }
     // ★ **신고 대상은 연결하기 전에 확인한다**(독립 검수 4라운드 지적).
     //
     //   전에는 이 검사가 송신 루프 안에 있었다 — Grant/ACK 를 다 마치고
@@ -1065,6 +1086,12 @@ fn run_one_connection_inner(
         //   stdout 이 남의 PC 에 남았다(2026-08-29, 독립 검수 지적).
         //   `CLAUDE.md` §0.5 는 성공했을 때만 치우라고 하지 않는다 —
         //   오히려 실패했을 때 남는 것이 더 위험하다.
+        // ★ B+E 구현 단계 5b — 실행하는 동안만 새 연결로 갱신한다(설정으로 켤 때만).
+        let renewer = if will_execute {
+            start_renew_during_execution(&config, signing_key, &held_lease)
+        } else {
+            None
+        };
         let outcome = run_and_capture_workload(
             spec,
             policy,
@@ -1078,6 +1105,14 @@ fn run_one_connection_inner(
             clock.now_unix_ms(),
             clock,
         );
+        if let Some(renewer) = renewer {
+            renewer.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            match renewer.handle.join() {
+                // 스레드가 검증한 최신 Lease — 세대는 올라가지 않는다(상승은 verify_renew_result 가 거부한다).
+                Ok(renewed) => held_lease = renewed,
+                Err(_) => println!("RENEW_SESSION_THREAD_PANICKED — 갱신 스레드가 비정상 종료했다(보유 Lease 는 실행 전 것)"),
+            }
+        }
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
         let cleanup = remove_dir_if_present(&run_dir);
@@ -1505,91 +1540,21 @@ fn run_one_connection_inner(
             other => return Err(format!("예상하지 못한 갱신 응답 타입: {other:?}")),
         };
 
-        // ★ 서명은 이미 검증됐다 — 그 뒤에 상관관계를 확인한다.
-        //   request_nonce 가 우리가 보낸 요청과 다르면, 이 결과가 다른
-        //   갱신 요청에 대한 응답이 재사용되고 있다는 뜻이다.
-        if result.request_nonce != renew_req.nonce {
-            return Err("RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다".into());
-        }
-        if result.coordinator_id != config.coordinator_device_id {
-            return Err(format!(
-                "RENEW_REJECTED: coordinator_id 불일치: 기대값 {} != {}",
-                config.coordinator_device_id, result.coordinator_id
-            ));
-        }
-
-        match result.outcome {
-            1 => {
-                // RENEW_OUTCOME_RENEWED — nested Lease 는 outer 결과
-                // 서명과 **무관하게** 독립적으로 검증한다(규칙 i).
-                let new_lease = result.lease.clone().ok_or_else(|| {
-                    "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string()
-                })?;
-
-                let verifier = Ed25519Verifier::new(&*coordinator_keys);
-                let verified_lease = verify(&new_lease, 1, &verifier, clock.now_unix_ms(), replay)
-                    .map_err(|e| format!("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패: {e:?}"))?;
-                let new_lease = verified_lease.get();
-
-                if new_lease.lease_id != held_lease.lease_id {
-                    return Err("RENEW_REJECTED: 갱신된 Lease.lease_id 가 기존과 다르다".into());
-                }
-                if new_lease.job_id != held_lease.job_id {
-                    return Err("RENEW_REJECTED: 갱신된 Lease.job_id 가 기존과 다르다".into());
-                }
-                if new_lease.attempt_id != held_lease.attempt_id {
-                    return Err("RENEW_REJECTED: 갱신된 Lease.attempt_id 가 기존과 다르다".into());
-                }
-                if new_lease.issuing_coordinator_id != config.coordinator_device_id {
-                    return Err(
-                        "RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다"
-                            .into(),
-                    );
-                }
-                if new_lease.holder_node_id != config.agent_device_id {
-                    return Err(
-                        "RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into(),
-                    );
-                }
-
-                // ★ 코덱스 독립 검수(2026-08-19, p99) 지적 — epoch **상승**은
-                //   이 조각의 범위 밖이라 정책상 거부해야 한다(계획서 §범위
-                //   "이 조각이 결정하지 않는 것" — "높으면 이 조각에서는
-                //   정책상 거부"). `FenceWatermark.check_and_advance()` 는
-                //   `<` 만 거부하고 `>` 는 **통과시키므로**(그것이 정상적인
-                //   epoch 전진의 정의다), 그것만으로는 이 계약을 강제하지
-                //   못한다 — 여기서 명시적으로 막는다.
-                if new_lease.fence_epoch > held_lease.fence_epoch {
-                    return Err(format!(
-                        "RENEW_REJECTED: 갱신된 Lease.fence_epoch({}) 이 기존({}) 보다 높다 \
-                         — epoch 상승은 이 조각의 범위 밖이라 정책상 거부한다",
-                        new_lease.fence_epoch, held_lease.fence_epoch
-                    ));
-                }
-
-                // ★ **같은 job_id 를 resource key 로 재사용한다** —
-                //   `lease_id` 를 새 키로 쓰면 기존 watermark 와 분리되어
-                //   강등 방어가 깨진다(계획서 "FenceWatermark 재사용" 절).
-                fence_watermark
-                    .check_and_advance(&new_lease.job_id, new_lease.fence_epoch)
-                    .map_err(|e| fence_error_message("RENEW_REJECTED", e))?;
-
-                held_lease = new_lease.clone();
-                println!(
-                    "RENEW_RESULT ok=true outcome=RENEWED lease_id={} fence_epoch={}",
-                    held_lease.lease_id, held_lease.fence_epoch
-                );
-            }
-            2 => return Err("RENEW_REFUSED:SUPERSEDED".into()),
-            3 => return Err("RENEW_REFUSED:QUARANTINED".into()),
-            // ★ max_total_duration_seconds 갱신 차단(2026-08-19,
-            //   docs/plans/2026-08-19_2350_...) — 이 lease_id 로 누적
-            //   가능한 최대 시간을 넘었다. 새 lease_id 재발급은 이
-            //   조각의 범위 밖이다 — 여기서는 명시적으로 거부만 한다.
-            6 => return Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
-            8 => return Err("RENEW_REFUSED:REVOKED".into()),
-            other => return Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
-        }
+        // ★ 결과 검증은 RENEW 세션(단계 5b)과 **같은 함수**다 — 두 벌을 두지 않는다.
+        held_lease = verify_renew_result(
+            &result,
+            &renew_req.nonce,
+            &held_lease,
+            &config,
+            &*coordinator_keys,
+            &mut *replay,
+            &clock,
+            &mut *fence_watermark,
+        )?;
+        println!(
+            "RENEW_RESULT ok=true outcome=RENEWED lease_id={} fence_epoch={}",
+            held_lease.lease_id, held_lease.fence_epoch
+        );
 
         if config.expect_revoke_after_round == Some(round + 1) {
             let notice = receive_and_validate_revoke(
@@ -1612,6 +1577,236 @@ fn run_one_connection_inner(
         grant.grant_id, grant.attempt_id, ack.agent_device_id
     );
     Ok(())
+}
+
+/// 갱신 결과를 검증하고 RENEWED 면 새 Lease 를 돌려준다 — FRESH 연결 안의 갱신 루프와 RENEW 세션(B+E 구현 단계 5b)이 같이 쓴다.
+///
+/// 순서: 요청 nonce echo -> coordinator_id -> outcome. RENEWED 면 중첩 Lease 를 **독립적으로** 서명 검증하고(규칙 i) 신원 ·
+/// 세대 상승 거부 · fence watermark 를 본다. 그 밖의 outcome 은 `RENEW_REFUSED:<이름>` 오류다(전에 루프 안에 있던 코드 그대로).
+#[allow(clippy::too_many_arguments)]
+fn verify_renew_result(
+    result: &pb::RenewLeaseResult,
+    request_nonce: &[u8],
+    held_lease: &pb::Lease,
+    config: &AgentConfig,
+    coordinator_keys: &InMemoryKeyring,
+    replay: &mut InMemoryReplayGuard,
+    clock: &SystemClock,
+    fence_watermark: &mut DurableFenceWatermark,
+) -> Result<pb::Lease, String> {
+    // ★ 서명은 이미 검증됐다 — 그 뒤에 상관관계를 확인한다.
+    //   request_nonce 가 우리가 보낸 요청과 다르면, 이 결과가 다른
+    //   갱신 요청에 대한 응답이 재사용되고 있다는 뜻이다.
+    if result.request_nonce != request_nonce {
+        return Err("RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다".into());
+    }
+    if result.coordinator_id != config.coordinator_device_id {
+        return Err(format!(
+            "RENEW_REJECTED: coordinator_id 불일치: 기대값 {} != {}",
+            config.coordinator_device_id, result.coordinator_id
+        ));
+    }
+    match result.outcome {
+        1 => {
+            // RENEW_OUTCOME_RENEWED — nested Lease 는 outer 결과 서명과 **무관하게** 독립적으로 검증한다(규칙 i).
+            let new_lease = result
+                .lease
+                .clone()
+                .ok_or_else(|| "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string())?;
+            let verifier = Ed25519Verifier::new(coordinator_keys);
+            let verified_lease = verify(&new_lease, 1, &verifier, clock.now_unix_ms(), replay)
+                .map_err(|e| format!("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패: {e:?}"))?;
+            let new_lease = verified_lease.get();
+            if new_lease.lease_id != held_lease.lease_id {
+                return Err("RENEW_REJECTED: 갱신된 Lease.lease_id 가 기존과 다르다".into());
+            }
+            if new_lease.job_id != held_lease.job_id {
+                return Err("RENEW_REJECTED: 갱신된 Lease.job_id 가 기존과 다르다".into());
+            }
+            if new_lease.attempt_id != held_lease.attempt_id {
+                return Err("RENEW_REJECTED: 갱신된 Lease.attempt_id 가 기존과 다르다".into());
+            }
+            if new_lease.issuing_coordinator_id != config.coordinator_device_id {
+                return Err("RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다".into());
+            }
+            if new_lease.holder_node_id != config.agent_device_id {
+                return Err("RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into());
+            }
+            // ★ 코덱스 독립 검수(2026-08-19, p99) — epoch **상승**은 정책상 거부한다. `check_and_advance()` 는 `<` 만 거부한다.
+            if new_lease.fence_epoch > held_lease.fence_epoch {
+                return Err(format!(
+                    "RENEW_REJECTED: 갱신된 Lease.fence_epoch({}) 이 기존({}) 보다 높다 \
+                     — epoch 상승은 이 조각의 범위 밖이라 정책상 거부한다",
+                    new_lease.fence_epoch, held_lease.fence_epoch
+                ));
+            }
+            // ★ 같은 job_id 를 resource key 로 재사용한다 — lease_id 를 새 키로 쓰면 강등 방어가 깨진다.
+            fence_watermark
+                .check_and_advance(&new_lease.job_id, new_lease.fence_epoch)
+                .map_err(|e| fence_error_message("RENEW_REJECTED", e))?;
+            Ok(new_lease.clone())
+        }
+        2 => Err("RENEW_REFUSED:SUPERSEDED".into()),
+        3 => Err("RENEW_REFUSED:QUARANTINED".into()),
+        // max_total_duration_seconds 갱신 차단 — 새 lease_id 재발급은 범위 밖이다.
+        6 => Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
+        8 => Err("RENEW_REFUSED:REVOKED".into()),
+        other => Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
+    }
+}
+
+/// B+E 구현 단계 5b — RENEW 세션 한 번: 새 연결 -> Hello(RENEW) -> RenewLeaseRequest -> 서명된 RenewLeaseResult 검증.
+///
+/// ★ 이 연결은 FRESH 연결과 **따로** 연다 — 실행 중에는 FRESH 연결이 이미 닫혔을 수 있고(설계 A 뒤 ACK 직후 닫힌다),
+///   Coordinator 는 Hello 의 mode 로 이 연결을 갱신 전용으로 가른다(단계 5a).
+/// ★ 검증 도구는 이 호출 안에서 새로 만든다 — 키는 설정의 Coordinator 키, replay 는 이 연결용, fence watermark 는 같은 DB 파일을
+///   따로 연다(SQLite 연결은 스레드 사이에 옮기지 않는다). 규칙은 FRESH 갱신과 같은 `verify_renew_result` 다.
+fn renew_once_over_new_connection(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    held_lease: &pb::Lease,
+) -> Result<pb::Lease, String> {
+    let clock = SystemClock;
+    let now = clock.now_unix_ms();
+    if lease_is_expired(held_lease, now) {
+        return Err(format!(
+            "RENEW_REFUSED:LOCAL_EXPIRED: expires_at_unix_ms={} now={now}",
+            held_lease.expires_at_unix_ms
+        ));
+    }
+    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+
+    let mut hello = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_RENEW,
+        session_id: config.session_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        // RENEW 는 Coordinator 가 연결 번호를 대조하지 않는다(단계 5a) — 실행 중에는 그 번호를 알 수 없다.
+        connection_attempt: 0,
+        issued_at_unix_ms: now,
+        nonce: fresh_nonce()?,
+        ..Default::default()
+    };
+    hello.node_signature = sign(signing_key, &hello).to_vec();
+    let mut request = pb::RenewLeaseRequest {
+        schema_version: 1,
+        lease_id: held_lease.lease_id.clone(),
+        fence_epoch: held_lease.fence_epoch,
+        node_id: config.agent_device_id.clone(),
+        issued_at_unix_ms: now,
+        nonce: fresh_nonce()?,
+        ..Default::default()
+    };
+    request.node_signature = sign(signing_key, &request).to_vec();
+    for (frame_type, body, what) in [
+        (FrameType::SessionHello, hello.encode_to_vec(), "Hello(RENEW)"),
+        (FrameType::LeaseRenew, request.encode_to_vec(), "RenewLeaseRequest"),
+    ] {
+        let frame =
+            write_frame(frame_type, &body).map_err(|e| format!("{what} 프레임 인코딩 실패: {e}"))?;
+        stream
+            .write_all(&frame)
+            .map_err(|e| format!("{what} 전송 실패: {e}"))?;
+    }
+    stream.flush().map_err(|e| e.to_string())?;
+
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(config.coordinator_device_id.clone(), config.coordinator_verifying_key);
+    let mut replay = InMemoryReplayGuard::new();
+    let message = read_frame(
+        &mut stream,
+        1,
+        KeyDirectorySource::Provided(&keys),
+        &mut replay,
+        &clock,
+    )
+    .map_err(|e| format!("RenewLeaseResult 읽기/검증 실패: {e}"))?;
+    let result = match message {
+        IngressMessage::LeaseRenewResult(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("RENEW_REJECTED: RenewLeaseResult replay 검사 실패: {e:?}"))?
+            .clone(),
+        _ => return Err("RENEW_REJECTED: 갱신 결과가 아닌 프레임이다".into()),
+    };
+    let mut fence = DurableFenceWatermark::open(&config.fence_db_path)
+        .map_err(|e| format!("fence watermark 저장소 열기 실패: {e}"))?;
+    verify_renew_result(
+        &result,
+        &request.nonce,
+        held_lease,
+        config,
+        &keys,
+        &mut replay,
+        &clock,
+        &mut fence,
+    )
+}
+
+/// B+E 구현 단계 5b — 워크로드가 도는 동안 갱신하는 스레드의 손잡이.
+struct RenewDuringExecution {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: std::thread::JoinHandle<pb::Lease>,
+}
+
+/// `renew_during_execution_ms` 간격으로 RENEW 세션을 연다. 0 이면 시작하지 않는다.
+///
+/// ```text
+/// 갱신 성공        RENEW_SESSION_RESULT ok=true — 스레드가 든 Lease 를 새것으로 바꾼다
+/// 거부 · 검증 실패  RENEW_SESSION_STOPPED — RENEW_REFUSED(SUPERSEDED · REVOKED · 만료 …) 나 RENEW_REJECTED 면 더 갱신하지 않는다
+/// 그 밖의 실패     RENEW_SESSION_FAILED — 연결 · 전송 실패. 다음 주기에 다시 연다
+/// ```
+///
+/// ★ 워크로드를 **멈추지는 않는다** — Lease 를 잃었을 때 워크로드를 어떻게 할지는 정책(규범 §3 LEASE_EXPIRED · STALE)이라
+///   이 조각이 정하지 않는다. 사실을 알리는 데까지다.
+fn start_renew_during_execution(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    held_lease: &pb::Lease,
+) -> Option<RenewDuringExecution> {
+    if config.renew_during_execution_ms == 0 {
+        return None;
+    }
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let thread_stop = std::sync::Arc::clone(&stop);
+    let config = config.clone();
+    let key = signing_key.clone();
+    let mut lease = held_lease.clone();
+    let handle = std::thread::spawn(move || {
+        let interval = Duration::from_millis(config.renew_during_execution_ms);
+        let mut round: u64 = 0;
+        'renew: loop {
+            let due = std::time::Instant::now() + interval;
+            while std::time::Instant::now() < due {
+                if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
+                    break 'renew;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            match renew_once_over_new_connection(&config, &key, &lease) {
+                Ok(renewed) => {
+                    println!(
+                        "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",
+                        renewed.lease_id, renewed.fence_epoch, renewed.expires_at_unix_ms
+                    );
+                    lease = renewed;
+                }
+                Err(error) if error.starts_with("RENEW_REFUSED") || error.starts_with("RENEW_REJECTED") => {
+                    println!("RENEW_SESSION_STOPPED round={round} detail={error}");
+                    break 'renew;
+                }
+                Err(error) => println!("RENEW_SESSION_FAILED round={round} detail={error}"),
+            }
+            round += 1;
+        }
+        lease
+    });
+    Some(RenewDuringExecution { stop, handle })
 }
 
 /// revoke 프레임을 서명 검증한 뒤 현재 보유 Lease에 적용한다.
@@ -2554,6 +2749,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         },
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
+        renew_during_execution_ms: flags.u64_flag_with_default("--renew-during-execution-ms", 0)?,
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
         revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
         max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
@@ -2879,6 +3075,7 @@ mod tests {
             checkpoint_root: tempdir.path().join("checkpoints"),
             renew_rounds: 1,
             renew_delay_ms: 0,
+            renew_during_execution_ms: 0,
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
             max_reconnect_attempts: 1_000,
