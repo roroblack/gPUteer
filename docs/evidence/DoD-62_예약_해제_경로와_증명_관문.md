@@ -21,8 +21,8 @@ review_artifact: "docs/evidence/_raw/DoD-62_review_all_rounds_verbatim.txt"
 
 decision: "release 를 만들되 **오늘 쓸 수 없게** 만든다. `DoD-49` 가 미뤄 둔 이유(실행 종료 증명 부재)가 아직 해소되지 않았기 때문이다. 계획서 4조건 중 서명·identity·(job, attempt, node, fence) 일치만 코드로 확인하고, '실제 workload exit 뒤 생성됐다'(2번)와 '완료 Job 의 artifact durability guard'(4번)는 `RuntimeStopProof`·`ArtifactDurabilityGuard` 진술로 요구한다 — 기본값이 없으므로 호출부가 반드시 쓰고, 오늘 정직한 값은 전부 '아직 증명 못 함' 이다. ★ 조건 3(전이 결합)은 **진술로도 요구하지 않는다** — 이 메서드가 자기 트랜잭션을 소유하므로 호출부가 Attempt/Lease 전이를 끼워 넣을 방법이 없고, 만족시킬 수 없는 것을 요구하면 통과하려는 사람은 거짓말밖에 할 수 없다. 대신 그 사실을 문서에 적는다. artifact guard 는 `Completed` 에만 요구한다 — 실패·취소에까지 요구하면 없는 조건으로 정직한 호출을 막는다. 저장된 증거 행만으로는 풀 수 없게 재검증한 `Verified` 와의 바이트 일치를 요구한다(`attempt_report_store` 가 'raw 는 terminal decision 에 쓰지 말라' 고 적어 둔 계약). 예약이 다른 attempt 의 것이면 **지우지 않고 거부한다** — `runtime-linux` cgroup 회수에서 이미 밟았던 함정이다. Attempt fence 재대조는 따로 하지 않는다 — `fetch_report_binding` 이 이미 하므로 도달 불가능한 죽은 코드가 된다(내 뮤테이션이 잡았다)."
 raw_output_artifact: "docs/evidence/_raw/DoD-62_reservation_release_2026-08-30.txt"
-raw_output_digest: "sha256:9f2473ac7c630d7330f5d3204679f2c1063cc84c5915723d0381f097eb8d37c9"
-raw_output_bytes: 4342
+raw_output_digest: "sha256:92d2ec5bc798bb4957039533f5aac8b92648809d6ed6f22d70c9b2de17f4b2a0"
+raw_output_bytes: 4326
 
 artifacts:
   - "docs/evidence/_raw/DoD-62_reservation_release_2026-08-30.txt"

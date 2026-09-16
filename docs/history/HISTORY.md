@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-09-17 05:19 — 증거 digest 를 체크아웃 줄바꿈과 무관하게(verify_evidence LF 정규화)
+
+- 계획: `docs/plans/2026-09-17_0513_증거_digest_줄바꿈_독립.md` 전체
+- 스트림: QA
+- 수행: 새 worktree 에서 verify_evidence 가 위반 76건(LF 내보내기 7건 · 메인 체크아웃 0건)을 냈다 — 고치기 전에 결함으로 기록. 기록 digest 를
+  네 형태와 대조해 원인을 셋으로 갈랐다(LF blob 72건 · 섞인 줄바꿈으로 기록된 4건 · CRLF 로 기록된 유예 목록). 원문 · 유예 목록 digest 를
+  LF 정규화 내용으로 재게 하고 4건 · GRANDFATHER_DIGEST 를 다시 적었다. .gitattributes 는 넣지 않았다(계획서 C)
+- 검증: CRLF worktree · LF 내보내기 둘 다 위반 없음 · 부정 테스트 exit 0(수정 전 exit 1) · 섞인 줄바꿈 원본 4/4 · 뮤테이션 2/2 ·
+  check_docs 오류 0 · claims_selftest 30/30. 독립 검수 전
+- 원본: `docs/evidence/_raw/증거_digest_줄바꿈_실측_2026-09-17.txt`
+- 리포트: `docs/reports/2026-09-17_0519_증거_digest_줄바꿈_리포트.md` · 결함 `docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md`
+
+---
+
 ## 2026-09-17 04:59 — 재검수 61 대응 · 결함 99 ~ 103(저장소 오류의 타입 분류 · 정책 거부 · 5b 검증 실패 멈춤 · 97 누락)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §11

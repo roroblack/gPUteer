@@ -21,8 +21,8 @@ review_artifact: "docs/evidence/_raw/DoD-63_review_all_rounds_verbatim.txt"
 
 decision: "`lease.proto` 주석이 '이웃 신고는 pool membership 이 먼저 있어야 한다' 며 미뤄 뒀던 것을, **메시지 정의와 멤버십 해소가 다른 일**이라는 구분 위에서 앞의 것만 넣는다. 판정 필드를 하나도 두지 않는다 — `is_dead` 를 넣으면 관측이 판정으로 승격되고 `ADR-033` §7 이 금지한 것이 정확히 그것이다. 정족수 단위는 §8 조건 3 원문대로 **기계**다. `Lifetime::ShortLived` 를 쓰되 **전용 상수**(`NEIGHBOR_REPORT_TTL_MS`)로 분리한다 — `GRANT_TTL_MS` 는 'ExecutionGrant 기본 수명'(기준선 §15.4)이고 신고에 적용할 규범 근거가 없다. `last_contact_at_unix_ms`·`failed_attempt_count` 는 **뺐다** — §7·§8 이 요구하지 않고 소비자도 없는데 `last_contact_at > observed_at` 같은 모순된 값도 서명만 맞으면 통과해 공격 입력면만 넓혔다(`RULE.md` YAGNI). 강제되지 않는 것은 **테스트로 열린 채 고정한다** — 한 장치 키가 여러 기계 ID 를 서명할 수 있다는 것과 프레이밍 계층이 수신 Coordinator 를 대조하지 않는다는 것을 각각 통과하는 테스트로 남겨, 나중에 닫히면 그 테스트가 실패하며 문서도 같이 고치라고 알린다(`runtime-linux` 의 '탈출이 성공하기를 기대하는 테스트' 와 같은 장치). 부수적으로 발견한 다섯 번째·여섯 번째 목록 노후화 자리는 `Domain::ALL` 순회와 3자 대응 대조로 닫는다."
 raw_output_artifact: "docs/evidence/_raw/DoD-63_neighbor_report_2026-08-31.txt"
-raw_output_digest: "sha256:826ca796aecbefce98fdecdc5bef224fd2eba591af40697b0b380612bf912ea9"
-raw_output_bytes: 3987
+raw_output_digest: "sha256:e46334f4ee9d76bfd35a59e1395d91a3bcd6c5b621fb379042e4b4a46f381a2a"
+raw_output_bytes: 3961
 
 artifacts:
   - "docs/evidence/_raw/DoD-63_neighbor_report_2026-08-31.txt"

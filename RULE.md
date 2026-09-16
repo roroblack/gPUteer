@@ -459,7 +459,7 @@ raw_output_artifact / raw_output_digest / raw_output_bytes
 | `review_outcome == ACCEPTED` | ✅ 미수용을 `PASS` 로 셀 수 없다 |
 | `review_artifact` 가 `_raw/` 아래 존재 | ✅ 소스 파일을 receipt 로 쓰던 우회를 막는다 |
 | receipt 에 실재하는 `파일:줄` 인용 | ✅ 형식적 LGTM 을 막는다 |
-| `raw_output_digest` = 실제 sha256 | ✅ 원문 사후 변조를 잡는다 |
+| `raw_output_digest` = 원문을 **LF 정규화**(CRLF→LF)한 내용의 sha256 · `raw_output_bytes` 는 그 길이 | ✅ 원문 사후 변조를 잡는다 — 줄바꿈만 바꾼 변경은 잡지 않는다(체크아웃마다 줄바꿈이 달라 결과가 갈렸다, 2026-09-17) |
 | id 와 파일명 일치 | ✅ 파일명을 `ENV-` 로 바꿔 검수를 피하는 것을 막는다 |
 | 신원 필드의 제로폭·비ASCII 문자 | ✅ 눈으로 같은 두 신원을 막는다 |
 
@@ -478,7 +478,7 @@ raw_output_artifact / raw_output_digest / raw_output_bytes
 2026-08-17 이전 evidence 16건은 `docs/evidence/_schema_v1_grandfathered.txt` 에
 **이름으로** 적혀 있다. 그 목록에 없는 v1 evidence 는 오류다.
 
-목록 파일의 SHA-256 이 `verify_evidence.py` 에 상수로 박혀 있다.
+목록 파일(LF 정규화한 내용)의 SHA-256 이 `verify_evidence.py` 에 상수로 박혀 있다.
 **유예를 늘리려면 코드도 고쳐야 하고, 그러면 diff 에 드러난다.**
 
 검사기는 매번 남은 부채를 출력한다.

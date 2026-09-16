@@ -227,6 +227,33 @@ def main():
     errors, _ = check(m, raw_files)
     expect("raw_output_bytes 불일치", errors, "raw_output_bytes 불일치")
 
+    # ── 5b. 줄바꿈만 다른 원문 — 체크아웃마다 다른 같은 원문이다 ──
+    #   ★ 2026-09-17 — `core.autocrlf` 로 체크아웃마다 작업 트리 바이트가 다르다. 검사기는 LF 정규화 내용으로 잰다.
+    #     줄바꿈만 다르면 통과하고, 내용을 바꾸면 **어느 형태로든** 실패해야 한다.
+    key = "DoD-09_resume_selection.txt"
+    lf_raw = {k: v.replace(b"\r\n", b"\n") for k, v in raw_files.items()}
+    crlf_raw = {k: v.replace(b"\n", b"\r\n") for k, v in lf_raw.items()}
+    for label, files in (("LF", lf_raw), ("CRLF", crlf_raw)):
+        errors, _ = check(base, files)
+        expect("줄바꿈만 다른 원문(%s 체크아웃)은 통과" % label, errors, "raw_output_", want=False)
+        tampered = dict(files)
+        tampered[key] = files[key].replace(b"4 failed", b"0 failed")
+        assert tampered[key] != files[key]
+        errors, _ = check(base, tampered)
+        expect("변조한 원문(%s 체크아웃)은 실패" % label, errors, "raw_output_digest 불일치")
+    parts = lf_raw[key].split(b"\n")
+    mixed = dict(lf_raw)
+    mixed[key] = b"\n".join(
+        part + (b"\r" if i % 2 == 0 and i < len(parts) - 1 else b"") for i, part in enumerate(parts))
+    assert b"\r\n" in mixed[key] and mixed[key] != lf_raw[key]
+    errors, _ = check(base, mixed)
+    expect("줄바꿈이 섞인 원문은 통과", errors, "raw_output_", want=False)
+    lone = dict(lf_raw)
+    lone[key] = lf_raw[key].replace(b"\n", b"\r", 1)
+    assert lone[key] != lf_raw[key]
+    errors, _ = check(base, lone)
+    expect("줄바꿈 하나를 외로운 CR 로 바꾼 원문은 실패(내용이다)", errors, "raw_output_digest 불일치")
+
     # ── 6. 검수 receipt 가 형식적 LGTM ────────────────────────────
     lgtm = dict(raw_files)
     lgtm["DoD-09_review.txt"] = b"LGTM\n"
@@ -406,6 +433,27 @@ def main():
         else:
             FAILURES.append("무손상 유예 목록이 로드되지 않는다: %s" % errs)
             print("  FAIL 손대지 않은 유예 목록은 정상 로드")
+
+        # ★ 2026-09-17 — 줄바꿈만 다른 목록(LF · CRLF 체크아웃)은 같은 목록이다. 한 줄 추가는 어느 형태로든 유예를 전부 취소한다.
+        lf_list = real.replace(b"\r\n", b"\n")
+        for label, data, extra in (
+            ("LF", lf_list, b"ENV-99_fake.md\n"),
+            ("CRLF", lf_list.replace(b"\n", b"\r\n"), b"ENV-99_fake.md\r\n"),
+        ):
+            for appended, want_loaded in ((b"", True), (extra, False)):
+                io.open(fake, "wb").write(data + appended)
+                VE.GRANDFATHER_LIST = fake
+                try:
+                    got, errs = VE.load_grandfathered()
+                finally:
+                    VE.GRANDFATHER_LIST = old_list
+                name = "유예 목록(%s 체크아웃)%s" % (
+                    label, " 정상 로드" if want_loaded else "에 한 줄 추가 -> 유예 전부 취소")
+                if (not errs and bool(got)) == want_loaded and (bool(errs) != want_loaded):
+                    print("  ok   %s" % name)
+                else:
+                    FAILURES.append("%s — 오류=%s, 유예=%d건" % (name, errs, len(got)))
+                    print("  FAIL %s" % name)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

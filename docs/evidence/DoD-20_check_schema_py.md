@@ -20,8 +20,8 @@ review_scope: "descriptor 생성/파싱 방식의 타당성, protoc 없음/컴�
 review_artifact: "docs/evidence/_raw/DoD-20_review.txt"
 
 raw_output_artifact: "docs/evidence/_raw/DoD-20_check_schema_2026-08-20.txt"
-raw_output_digest: "sha256:4f37aa55722ebaa6a5c08a24292ec480d88e5c2e94d811c3510a4a5a053a676c"
-raw_output_bytes: 55534
+raw_output_digest: "sha256:baa957ce7eb0934caf0d3707fed81081212ed5952f2fc4835917f2a6200d66bc"
+raw_output_bytes: 55239
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 (8bab26f4f 2026-07-14) / protoc 25.3 (anaconda) / python 3.12.7 / google.protobuf 7.35.1"
