@@ -23,5 +23,5 @@ TOOLS nvidia-smi => C:\WINDOWS\system32\nvidia-smi.exe
       cargo/rustc/rustup => NOT FOUND
       docker     => NOT FOUND
 
-=== ssh runpod-gpu (<external-gpu-public-ip>:<port>) ===
-ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused
+=== ssh runpod-gpu (<외부 IP 가림>:<port>) ===
+ssh: connect to host <외부 IP 가림> port <port>: Connection refused

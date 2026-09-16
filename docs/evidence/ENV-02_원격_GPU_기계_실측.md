@@ -9,7 +9,7 @@ protocol_versions:
   none: "해당 없음 — 구현 미착수"
 platform: "원격 x600: Microsoft Windows 11 Pro build 26200 / NTFS · 로컬: Windows 11 Pro build 26200"
 hardware: "x600: NVIDIA GeForce RTX 4070 SUPER 12282MiB (driver 595.79, CUDA 13.2, compute_cap 8.9) + AMD Radeon 760M(내장) / AMD Ryzen 5 8600G / RAM 23.1GB"
-network_profile: "x600 = 10.20.20.1 (사설 대역, 로컬과 동일 LAN 추정) · runpod-gpu = <external-gpu-public-ip>:<port> (외부, 접속 거부됨)"
+network_profile: "x600 = 10.20.20.1 (사설 대역, 로컬과 동일 LAN 추정) · runpod-gpu = <외부 IP 가림>:<port> (외부, 접속 거부됨)"
 command: |
   cat ~/.ssh/config
   ssh -o BatchMode=yes x600 'nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version,compute_cap --format=csv'
@@ -41,8 +41,8 @@ raw_output: |
         cargo/rustc/rustup => NOT FOUND
         docker     => NOT FOUND
 
-  === ssh runpod-gpu (<external-gpu-public-ip>:<port>) ===
-  ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused
+  === ssh runpod-gpu (<외부 IP 가림>:<port>) ===
+  ssh: connect to host <외부 IP 가림> port <port>: Connection refused
 artifacts:
   - docs/evidence/_raw/ENV-02_probe.txt
 negative_tests:
@@ -74,7 +74,7 @@ decision: "P0-01·P0-02·P0-06·P0-07 의 ENVIRONMENT-BLOCKED 를 해제하고 x
 
 ```text
 x600         10.20.20.1          user <x600-user>
-runpod-gpu   <external-gpu-public-ip>:<port> user root
+runpod-gpu   <외부 IP 가림>:<port> user root
 ```
 
 두 곳 모두 접속을 시도했다. **설정에 있다는 사실만으로 사용 가능으로 판정하지 않았다** —
@@ -108,7 +108,7 @@ x600 의 SSH 기본 셸이 `cmd.exe` 라 PowerShell 스크립트를 **UTF-16LE b
 ### runpod-gpu — 사용 불가
 
 ```text
-ssh: connect to host <external-gpu-public-ip> port <port>: Connection refused
+ssh: connect to host <외부 IP 가림> port <port>: Connection refused
 ```
 
 인스턴스가 종료된 상태다. RunPod 은 재기동 시 IP·포트가 바뀌므로

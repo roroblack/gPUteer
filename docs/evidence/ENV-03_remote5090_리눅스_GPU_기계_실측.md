@@ -20,8 +20,8 @@ review_scope: "frontmatter·본문 수치가 raw 로그와 실제로 일치하�
 review_artifact: "docs/evidence/_raw/ENV-03_review.txt"
 
 raw_output_artifact: "docs/evidence/_raw/ENV-03_remote5090_2026-08-19.txt"
-raw_output_digest: "sha256:4a3322b2e0f1e0a7f3d43f4a0bcc67a2582d202da5064ed0151c1d01cf819732"
-raw_output_bytes: 23387
+raw_output_digest: "sha256:2c449011e6046d6b892383ce857cd20ae4d46aacec070927c52b3a1369ba71cb"
+raw_output_bytes: 23381
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 (8bab26f4f 2026-07-14) — rustup 으로 사용자 권한 설치, 로컬 개발 기계와 버전 동일(raw 로그에서 직접 대조)"
