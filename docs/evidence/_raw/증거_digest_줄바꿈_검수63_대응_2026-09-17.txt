@@ -1,0 +1,196 @@
+# 검수 63 결함 108~110 대응 — 시험 원본 (2026-09-17 05:36, CRLF worktree)
+# 결함 리포트 docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md
+# ★ E1 의 첫 실행은 기대 목록에 'LF 체크아웃 통과' 줄을 넣어 NOT_CAUGHT 로 찍혔다 — 기록 digest 가 LF 내용이라 정규화를 꺼도
+#   LF 입력은 옳게 통과한다. 기대가 틀렸으므로 그 줄을 빼고 다시 쟀다(검사기 · 테스트는 바꾸지 않았다).
+
+## test_verify_evidence.py
+verify_evidence.py 부정 테스트
+==============================================================
+  ok   기준선(무손상) 통과
+  ok   자기 검수(executor_id == reviewer_id)
+  ok   review_outcome != ACCEPTED 인데 PASS
+  ok   review_context != fresh-read-only
+  ok   원문 수기 변조 (digest 불일치)
+  ok   raw_output_bytes 불일치
+  ok   줄바꿈만 다른 원문(LF 체크아웃)은 통과
+  ok   변조한 원문(LF 체크아웃)은 실패
+  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+  ok   변조한 원문(CRLF 체크아웃)은 실패
+  ok   줄바꿈이 섞인 원문은 통과
+  ok   줄바꿈 하나를 외로운 CR 로 바꾼 원문은 실패(내용이다)
+  ok   형식적 LGTM (너무 짧은 receipt)
+  ok   구체적 반례 없는 receipt
+  ok   형식적 LGTM + 없는 파일 인용
+  ok   review_artifact 가 _raw/ 밖
+  ok   중복 키
+  ok   제로폭 문자로 위장한 검수자
+  ok   파일명 위장 — id 로도 강제된다
+  ok   파일명 위장 — 불일치 자체가 오류
+  ok   NTFS ADS 경로
+  ok   BOM 으로 시작하는 파일
+  ok   review_artifact 가 artifacts 에 없음
+  ok   raw_output_artifact 경로 탈출
+  ok   artifact 경로 탈출
+  ok   reviewer_id 접두사 없음
+  ok   v2 필드 누락: executor_id
+  ok   v2 필드 누락: executor_tool
+  ok   v2 필드 누락: executed_at
+  ok   v2 필드 누락: reviewer_id
+  ok   v2 필드 누락: reviewer_tool
+  ok   v2 필드 누락: review_context
+  ok   v2 필드 누락: review_outcome
+  ok   v2 필드 누락: review_scope
+  ok   v2 필드 누락: review_artifact
+  ok   v2 필드 누락: raw_output_artifact
+  ok   v2 필드 누락: raw_output_digest
+  ok   v2 필드 누락: raw_output_bytes
+  ok   유예 목록에 없는 새 v1 evidence
+  ok   유예된 v1 evidence 는 v2 검사 면제
+  ok   유예된 v1 evidence 는 v2 필드도 면제
+  ok   강제 대상이 아니면 review_outcome 을 묻지 않는다
+  ok   사라진 negative test 이름 -> 경고
+  ok   실재하는 이름은 경고하지 않는다
+  ok   유예 목록에 한 줄 추가 -> 유예 전부 취소
+  ok   손대지 않은 유예 목록은 정상 로드
+  ok   유예 목록(LF 체크아웃) 정상 로드
+  ok   유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+  ok   유예 목록(CRLF 체크아웃) 정상 로드
+  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+  ok   main() — 무손상은 0
+  ok   main() — 위반은 1
+--------------------------------------------------------------
+검사기가 위 위반을 전부 잡는다.
+
+
+## 뮤테이션
+# 뮤테이션 검수 63 결함 108 · 109 뒤 — 2026-09-17 05:32
+baseline exit=0 FAIL 줄 0
+caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1
+    FAIL 기준선(무손상) 통과
+    FAIL 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+    FAIL 줄바꿈이 섞인 원문은 통과
+    FAIL main() — 무손상은 0
+caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1
+    FAIL 손대지 않은 유예 목록은 정상 로드
+caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다(결함 108 의 가짜 구현) exit=1
+    FAIL 유예 목록에 한 줄 추가 -> 유예 전부 취소
+    FAIL 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+    FAIL 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+합계 caught 3/3
+복원 확인 True
+
+
+## verify_evidence.py
+evidence 검사 — C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol\docs\evidence
+==============================================================
+  ok   DoD-01_canonical_encode_교차검증.md          PASS
+  ok   DoD-02_prost_연동_계층.md                    PASS
+  ok   DoD-03_서명대상_완전성.md                       PASS
+        ~ negative test 'missing_from_full' 의 이름이 실행 원문에 없다 — 적기만 하고 실행하지 않았을 수 있다
+  ok   DoD-04_ed25519_검증순서.md                   PASS
+        ~ negative test 'compile_fail' 의 이름이 실행 원문에 없다 — 적기만 하고 실행하지 않았을 수 있다
+  ok   DoD-05_T1_서명대상_확장.md                     PASS
+        ~ negative test 'renew_lease_request' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+        ~ negative test 'revoke_lease_notice' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+  ok   DoD-06_domain_tag_충돌.md                  PASS
+        ~ negative test 'change_coordinator_set' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+  ok   DoD-07_시각정책_실메시지.md                      PASS
+        ~ negative test 'grant_nonce_comes_from_signed_message_field' 의 이름이 실행 원문에 없다 — 적기만 하고 실행하지 않았을 수 있다
+        ~ negative test 'evidence_is_not_replay_checked' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+  ok   DoD-08_독립검수_시정.md                        PASS
+  ok   DoD-09_재개선택_필터.md                        PASS
+  ok   DoD-10_영속_replay_저장소.md                  PASS
+  ok   DoD-11_coordinator_agent_핸드셰이크.md        PASS
+  ok   DoD-12_coordinator_agent_lease_최소_조각.md  PASS
+  ok   DoD-13_coordinator_agent_lease_갱신_최소_조각.md PASS
+  ok   DoD-14_durable_fence_watermark.md        PASS
+  ok   DoD-15_같은_연결_반복_lease_갱신.md              PASS
+  ok   DoD-16_coordinator_영속_lease_저장소.md       PASS
+  ok   DoD-17_revoke_lease_notice_framed_ingress_커버리지.md PASS
+  ok   DoD-18_max_total_duration_seconds_갱신_차단.md PASS
+  ok   DoD-19_오래된_테스트_공백_3건.md                  PASS
+  ok   DoD-20_check_schema_py.md                PASS
+  ok   DoD-21_write_once_동시_호출_계약.md            PASS
+  ok   DoD-22_lease_revoke_최소_조각.md             PASS
+  ok   DoD-23_lease_재발급_정책_superseded.md        PASS
+  ok   DoD-24_lease_재접속_최소_조각.md                PASS
+  ok   DoD-25_coordinator_lease_revoke_영속화.md   PASS
+  ok   DoD-26_만료_lease_재접속_거부.md                PASS
+  ok   DoD-27_revoked_signed_outcome.md         PASS
+  ok   DoD-28_check_schema_ci_연결.md             PASS
+  ok   DoD-29_레거시_lease_경로_명시적_opt_in.md        PASS
+  ok   DoD-30_job_시작_writing_마커.md              PASS
+  ok   DoD-31_terminal_outcome_다회차_교착_회귀.md     PASS
+  ok   DoD-32_만료_lease_갱신_fail_closed.md        PASS
+  ok   DoD-33_marker_only_checkpoint_gc_회귀.md   PASS
+  ok   DoD-34_agent_갱신_전_만료_재확인.md              PASS
+  ok   DoD-35_자동_재접속_최소_경로.md                   PASS
+  ok   DoD-36_resume_프로토콜.md                    PASS
+  ok   DoD-37_coordinator_dispatcher_정교화.md     PASS
+  ok   DoD-38_agent_resume_통합.md                PASS
+  ok   DoD-39_ambiguous_renew_복구.md             PASS
+  ok   DoD-40_lease_store_동시_발급_안전성.md          PASS
+  ok   DoD-41_scheduler_hard_filter.md          PASS
+  ok   DoD-42_scheduler_durable_job.md          PASS
+  ok   DoD-43_scheduler_staging_kernel.md       PASS
+  ok   DoD-44_scheduler_inventory_store.md      PASS
+  ok   DoD-45_scheduler_best_fit.md             PASS
+  ok   DoD-46_scheduler_local_orchestration.md  PASS
+  ok   DoD-47_scheduler_inventory_cas.md        PASS
+  ok   DoD-48_scheduler_selected_gpu_assignment.md PASS
+  ok   DoD-49_scheduler_gpu_reservation_binding.md PASS
+  ok   DoD-50_scheduler_verified_manifest_binding.md PASS
+  ok   DoD-51_scheduler_terminal_attempt_report_binding.md PASS
+  ok   DoD-52_scheduler_verified_checkpoint_manifest_binding.md PASS
+  ok   DoD-53_scheduler_verified_replica_ack_binding.md PASS
+  ok   DoD-54_effective_replica_count_kernel.md PASS
+  ok   DoD-55_gpu_scope_candidate_kernel.md     PASS
+  ok   DoD-56_nvml_실제_gpu_관측_계층.md              PASS
+  ok   DoD-57_linux_cgroup_자원_상한_강제.md          PASS
+  ok   DoD-58_다중_agent_동시_처리_lane.md            PASS
+  ok   DoD-59_linux_운영용_키_보관.md                 PASS
+  ok   DoD-60_노드_생존_판정과_관측_영속화.md               PASS
+  ok   DoD-61_재배정_관문_ADR033_8조건.md              PASS
+  ok   DoD-62_예약_해제_경로와_증명_관문.md                PASS
+  ok   DoD-63_이웃_신고_wire_메시지.md                 PASS
+  ok   DoD-64_이웃_신고_관측_저장소.md                   PASS
+  ok   DoD-65_이웃_신고_wire_연결.md                  PASS
+        ~ negative test 'coordinator' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+  ok   DoD-66_nvml_불변식_고정.md                    PASS
+        ~ 본문에 '이 실험이 증명하지 않는 것' 절이 보이지 않는다
+  ok   DoD-67_제출_manifest_운영자_반입.md             PASS
+  ok   DoD-68_실행_사슬.md                          PASS
+  ok   ENV-01_개발환경_실측.md                        PASS
+  ok   ENV-02_원격_GPU_기계_실측.md                   PASS
+  ok   ENV-03_remote5090_리눅스_GPU_기계_실측.md         PASS
+  ok   ENV-04_x600_wsl2_리눅스_반복검증_환경.md          PASS
+  ok   P0-01_windows_s1_restricted_cuda.md      PASS
+  ok   P0-02_windows_appcontainer_cuda.md       INCONCLUSIVE
+  ok   P0-03_checkpoint_durability.md           PASS
+  ok   P0-03a_windows_fs_atomicity.md           PASS
+  ok   P0-06_vram_enforcement.md                FAIL-SCOPE
+  ok   P0-07_runtime_estimation_accuracy.md     PASS
+  ok   P0-08_스키마_진화.md                          PASS
+--------------------------------------------------------------
+파일 79개
+  FAIL-SCOPE             1
+  INCONCLUSIVE           1
+  PASS                   77  <- PASS 로 계상
+PASS 로 계상되는 항목: 77 / 79
+
+스키마 위반 없음.
+
+
+## check_docs.py
+문서 구조 검사 — C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+==============================================================
+  이상 없음
+--------------------------------------------------------------
+오류 0 · 경고 0
+
+
+## claims_selftest.py
+주장 검사표 뒤집기 시험 — 30줄
+==============================================================
+  30/30 줄 전부 뒤집었을 때 실패했다 — 공허한 줄 없음
+

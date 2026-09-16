@@ -161,6 +161,20 @@ def expect(label, errors, needle, want=True):
         print("  ok   %s" % label)
 
 
+def expect_absent(label, errors, needle):
+    """`needle` 을 포함한 오류가 **하나도** 없어야 통과한다 — 기준선 필터를 쓰지 않는다.
+
+    ★ 2026-09-17 검수 63 결함 109. `expect(want=False)` 는 기준선에도 있던 오류를 빼고 본다 — 정규화를 끈 검사기에서
+      기준선과 CRLF 입력이 같은 오류를 내도 "통과" 줄이 ok 로 찍혔다. 통과를 주장하는 줄은 필터 없이 본다.
+    """
+    hits = [e for e in errors if needle in e]
+    if hits:
+        FAILURES.append("%s — 오류가 없어야 하는데 났다: %r\n      %s" % (label, needle, hits))
+        print("  FAIL %s" % label)
+    else:
+        print("  ok   %s" % label)
+
+
 def main():
     for s in (sys.stdout, sys.stderr):
         try:
@@ -235,7 +249,7 @@ def main():
     crlf_raw = {k: v.replace(b"\n", b"\r\n") for k, v in lf_raw.items()}
     for label, files in (("LF", lf_raw), ("CRLF", crlf_raw)):
         errors, _ = check(base, files)
-        expect("줄바꿈만 다른 원문(%s 체크아웃)은 통과" % label, errors, "raw_output_", want=False)
+        expect_absent("줄바꿈만 다른 원문(%s 체크아웃)은 통과" % label, errors, "raw_output_")
         tampered = dict(files)
         tampered[key] = files[key].replace(b"4 failed", b"0 failed")
         assert tampered[key] != files[key]
@@ -247,7 +261,7 @@ def main():
         part + (b"\r" if i % 2 == 0 and i < len(parts) - 1 else b"") for i, part in enumerate(parts))
     assert b"\r\n" in mixed[key] and mixed[key] != lf_raw[key]
     errors, _ = check(base, mixed)
-    expect("줄바꿈이 섞인 원문은 통과", errors, "raw_output_", want=False)
+    expect_absent("줄바꿈이 섞인 원문은 통과", errors, "raw_output_")
     lone = dict(lf_raw)
     lone[key] = lf_raw[key].replace(b"\n", b"\r", 1)
     assert lone[key] != lf_raw[key]
@@ -435,6 +449,10 @@ def main():
             print("  FAIL 손대지 않은 유예 목록은 정상 로드")
 
         # ★ 2026-09-17 — 줄바꿈만 다른 목록(LF · CRLF 체크아웃)은 같은 목록이다. 한 줄 추가는 어느 형태로든 유예를 전부 취소한다.
+        # ★ 검수 63 결함 108 — 취소는 "오류가 있다" 가 아니라 **오류 그리고 빈 유예**다. 정상은 오류 없음 **그리고** 손대지 않은 목록과
+        #   같은 집합이다. 전에는 두 조건을 bool 로 섞어 유예를 남기고 오류만 내는 구현도 통과했다.
+        expected_set, expected_errs = VE.load_grandfathered()
+        assert expected_set and not expected_errs, (expected_set, expected_errs)
         lf_list = real.replace(b"\r\n", b"\n")
         for label, data, extra in (
             ("LF", lf_list, b"ENV-99_fake.md\n"),
@@ -449,7 +467,11 @@ def main():
                     VE.GRANDFATHER_LIST = old_list
                 name = "유예 목록(%s 체크아웃)%s" % (
                     label, " 정상 로드" if want_loaded else "에 한 줄 추가 -> 유예 전부 취소")
-                if (not errs and bool(got)) == want_loaded and (bool(errs) != want_loaded):
+                if want_loaded:
+                    passed = not errs and set(got) == set(expected_set)
+                else:
+                    passed = bool(errs) and not got
+                if passed:
                     print("  ok   %s" % name)
                 else:
                     FAILURES.append("%s — 오류=%s, 유예=%d건" % (name, errs, len(got)))
