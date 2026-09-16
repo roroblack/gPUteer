@@ -1,8 +1,12 @@
 //! Durable inbox for verified terminal [`pb::AttemptReport`] evidence.
 //!
-//! This store binds a report to the existing single-node Attempt and its
-//! current node reservation. It deliberately does not transition Job or
-//! Attempt state, revoke a Lease, or release the reservation.
+//! This store binds a report to the existing single-node Attempt and, when the
+//! node's reservation still belongs to that Attempt, to the reservation too.
+//! It deliberately does not transition Job or Attempt state, revoke a Lease,
+//! or release the reservation.
+//!
+//! ★ 결정 D1 (2026-09-14) — Lease 만료 뒤 온 보고도 **과거 실행의 보고로** 저장한다. 예약이 없어졌거나 다른 실행으로 바뀐 늦은 보고는
+//!   Attempt 의 배정 기록(job · 유일한 노드 · 서명자 · 세대)으로만 결합하고 그 사실을 `bound_via` 로 남긴다.
 
 use std::path::Path;
 
@@ -14,6 +18,33 @@ use crate::staging_store::{self, StoredAttempt, StoredNodeReservation};
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// 결정 D1 — 보고를 무엇에 결합해 저장했나.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportBindingSource {
+    /// 저장할 때 그 노드의 **현재 예약**이 이 Attempt 의 것이었다 — 예약까지 대조했다.
+    CurrentReservation,
+    /// 예약이 없어졌거나 다른 실행으로 바뀐 **늦은 보고** — Attempt 의 배정 기록으로만 결합했다. 과거 실행의 보고로 저장만 한다 —
+    /// 이 보고로 예약을 풀거나 결과를 채택하지 않는다.
+    AssignmentRecord,
+}
+
+impl ReportBindingSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CurrentReservation => "current_reservation",
+            Self::AssignmentRecord => "assignment_record",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "current_reservation" => Some(Self::CurrentReservation),
+            "assignment_record" => Some(Self::AssignmentRecord),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredAttemptReportBinding {
     pub report: pb::AttemptReport,
@@ -23,6 +54,8 @@ pub struct StoredAttemptReportBinding {
     pub bound_attempt_id: String,
     pub bound_node_id: String,
     pub bound_fence_epoch: u64,
+    /// 결정 D1 — 현재 예약까지 대조했는가, 배정 기록으로만 결합했는가.
+    pub bound_via: ReportBindingSource,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +93,8 @@ pub enum AttemptReportCorruption {
     /// 저장본이 필드 조합 규칙(`attempt_report_rules`)을 어긴다 — 저장 진입에서 막았어야 할 것이 들어 있다.
     ReportRule,
     MissingAttempt,
+    /// 결합 경로 칸의 값을 모른다.
+    BindingSource,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -176,8 +211,9 @@ impl CoordinatorAttemptReportStore {
         fetch_report_binding(&self.connection, attempt_id, node_id)
     }
 
-    /// Stores terminal evidence only after binding it to the current durable
-    /// Attempt and reservation owner in one `BEGIN IMMEDIATE` transaction.
+    /// Stores terminal evidence only after binding it to the durable Attempt
+    /// (and, when it still belongs to that Attempt, the node reservation) in
+    /// one `BEGIN IMMEDIATE` transaction.
     pub fn store_verified_terminal_report(
         &mut self,
         verified: &Verified<pb::AttemptReport>,
@@ -226,19 +262,25 @@ impl CoordinatorAttemptReportStore {
             })?;
         bind_attempt(report, signer_id, &attempt)?;
 
+        // ★ 결정 D1 — 그 노드의 예약이 **이 Attempt 의 것**이면 예약까지 대조한다(어긋나면 전처럼 거부). 예약이 없어졌거나 다른 실행으로
+        //   바뀌었으면 위의 배정 기록 대조(bind_attempt)만으로 결합한다 — 과거 실행의 보고로 저장만 한다. 늦은 보고 때문에 새 작업의
+        //   예약을 건드리지 않는다(해제 API 는 현재 예약 소유를 따로 대조한다 — reservation_release::check_reservation_owner).
         let reservation = staging_store::fetch_node_reservation(&transaction, &report.node_id)
-            .map_err(map_staging_error)?
-            .ok_or_else(|| AttemptReportStoreError::ReservationNotFound {
-                node_id: report.node_id.clone(),
-            })?;
-        bind_reservation(report, &reservation)?;
+            .map_err(map_staging_error)?;
+        let bound_via = match reservation {
+            Some(reservation) if reservation.attempt_id == report.attempt_id => {
+                bind_reservation(report, &reservation)?;
+                ReportBindingSource::CurrentReservation
+            }
+            _ => ReportBindingSource::AssignmentRecord,
+        };
 
         transaction
             .execute(
                 "INSERT INTO coordinator_attempt_reports(
                     attempt_id, node_id, job_id, fence_epoch,
-                    verified_signer_id, report_hash, report_body
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    verified_signer_id, report_hash, report_body, bound_via
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     report.attempt_id,
                     report.node_id,
@@ -247,6 +289,7 @@ impl CoordinatorAttemptReportStore {
                     signer_id,
                     report_hash.as_slice(),
                     report_body,
+                    bound_via.as_str(),
                 ],
             )
             .map_err(map_sql_error)?;
@@ -262,6 +305,7 @@ impl CoordinatorAttemptReportStore {
                 bound_attempt_id: report.attempt_id.clone(),
                 bound_node_id: report.node_id.clone(),
                 bound_fence_epoch: report.fence_epoch,
+                bound_via,
             },
             created: true,
         })
@@ -286,11 +330,50 @@ pub(crate) fn initialize_report_schema(
                 verified_signer_id TEXT NOT NULL,
                 report_hash BLOB NOT NULL CHECK(length(report_hash) = 32),
                 report_body BLOB NOT NULL,
+                bound_via TEXT NOT NULL DEFAULT 'current_reservation',
                 PRIMARY KEY(attempt_id, node_id)
             );
             "#,
         )
-        .map_err(map_sql_error)
+        .map_err(map_sql_error)?;
+    migrate_bound_via_column(connection)
+}
+
+/// 결정 D1 — 결합 경로 칸이 없던 DB 에 칸을 더한다. 그 전의 행은 전부 현재 예약으로 결합됐다(그때는 그 경로뿐이었다).
+///
+/// ★ 두 프로세스가 함께 열면 둘 다 칸이 없다고 보고 더하려 할 수 있다 — 더하기가 실패하면 다시 확인해 이미 있으면 성공으로 본다.
+fn migrate_bound_via_column(connection: &Connection) -> Result<(), AttemptReportStoreError> {
+    if has_bound_via_column(connection)? {
+        return Ok(());
+    }
+    match connection.execute(
+        "ALTER TABLE coordinator_attempt_reports ADD COLUMN bound_via TEXT NOT NULL DEFAULT 'current_reservation'",
+        [],
+    ) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if has_bound_via_column(connection)? {
+                Ok(())
+            } else {
+                Err(map_sql_error(error))
+            }
+        }
+    }
+}
+
+fn has_bound_via_column(connection: &Connection) -> Result<bool, AttemptReportStoreError> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(coordinator_attempt_reports)")
+        .map_err(map_sql_error)?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(map_sql_error)?;
+    for name in names {
+        if name.map_err(map_sql_error)? == "bound_via" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReportStoreError> {
@@ -396,7 +479,7 @@ pub(crate) fn fetch_report_binding(
     let raw = connection
         .query_row(
             "SELECT attempt_id, node_id, job_id, fence_epoch,
-                    verified_signer_id, report_hash, report_body
+                    verified_signer_id, report_hash, report_body, bound_via
              FROM coordinator_attempt_reports
              WHERE attempt_id = ?1 AND node_id = ?2",
             rusqlite::params![attempt_id, node_id],
@@ -409,12 +492,13 @@ pub(crate) fn fetch_report_binding(
                     row.get::<_, String>(4)?,
                     row.get::<_, Vec<u8>>(5)?,
                     row.get::<_, Vec<u8>>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             },
         )
         .optional()
         .map_err(map_sql_error)?;
-    let Some((row_attempt_id, row_node_id, row_job_id, epoch, signer_id, hash, body)) = raw else {
+    let Some((row_attempt_id, row_node_id, row_job_id, epoch, signer_id, hash, body, bound_via_text)) = raw else {
         return Ok(None);
     };
     let corrupt = |kind| AttemptReportStoreError::Corrupt {
@@ -471,6 +555,9 @@ pub(crate) fn fetch_report_binding(
         return Err(corrupt(AttemptReportCorruption::FenceEpochMismatch));
     }
 
+    let bound_via = ReportBindingSource::parse(&bound_via_text)
+        .ok_or_else(|| corrupt(AttemptReportCorruption::BindingSource))?;
+
     Ok(Some(StoredAttemptReportBinding {
         report,
         report_hash,
@@ -479,6 +566,7 @@ pub(crate) fn fetch_report_binding(
         bound_attempt_id: row_attempt_id,
         bound_node_id: row_node_id,
         bound_fence_epoch,
+        bound_via,
     }))
 }
 
@@ -943,13 +1031,21 @@ mod tests {
         drop(store);
         let report = completed_report(1);
         let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        // ★ 결정 D1 — 예약이 없어진 늦은 보고는 거부하지 않고 배정 기록으로 결합해 저장한다. 전에는 ReservationNotFound 로 행이 없었다.
+        //   이 테스트의 이름은 DoD-51 증거가 가리켜 그대로 둔다 — 예약이 **같은 Attempt 의 것인데** 어긋나면 아래처럼 여전히 행이 없다.
+        let stored = store.store_verified_terminal_report(&report).unwrap();
+        assert!(stored.created);
+        assert_eq!(stored.binding.bound_via, ReportBindingSource::AssignmentRecord);
         assert_eq!(
-            store.store_verified_terminal_report(&report),
-            Err(AttemptReportStoreError::ReservationNotFound {
-                node_id: NODE_ID.into()
-            })
+            store
+                .get_report_binding(ATTEMPT_ID, NODE_ID)
+                .unwrap()
+                .expect("저장됐다")
+                .bound_via,
+            ReportBindingSource::AssignmentRecord,
+            "결합 경로가 저장돼야 한다"
         );
-        assert_eq!(report_count(&store), 0);
+        assert_eq!(report_count(&store), 1);
 
         let fixture = prepare_fixture();
         insert_other_job(&fixture.path);
@@ -971,6 +1067,66 @@ mod tests {
             ))
         );
         assert_eq!(report_count(&store), 0);
+    }
+
+    /// 결정 D1 — 늦은 보고도 배정 기록과 어긋나면(세대) 거부하고 행을 만들지 않는다.
+    #[test]
+    fn a_late_report_still_has_to_match_the_assignment_record() {
+        let fixture = prepare_fixture();
+        let store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store
+            .connection
+            .execute(
+                "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
+                rusqlite::params![NODE_ID],
+            )
+            .unwrap();
+        store
+            .connection
+            .execute(
+                "DELETE FROM coordinator_node_reservations WHERE node_id = ?1",
+                rusqlite::params![NODE_ID],
+            )
+            .unwrap();
+        drop(store);
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        assert_eq!(
+            store.store_verified_terminal_report(&completed_report(2)),
+            Err(AttemptReportStoreError::BindingMismatch(BindingField::FenceEpoch))
+        );
+        assert_eq!(report_count(&store), 0);
+    }
+
+    /// 결정 D1 — 예약이 그 Attempt 의 것이면 예약까지 대조한 결합으로 기록한다.
+    #[test]
+    fn a_report_with_its_current_reservation_records_the_reservation_binding() {
+        let fixture = prepare_fixture();
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let stored = store.store_verified_terminal_report(&completed_report(1)).unwrap();
+        assert_eq!(stored.binding.bound_via, ReportBindingSource::CurrentReservation);
+    }
+
+    /// 결정 D1 — 결합 경로 칸이 없던 DB 를 열면 칸을 더하고, 그 전의 행은 현재 예약 결합으로 읽는다.
+    #[test]
+    fn a_database_without_the_binding_source_column_is_migrated() {
+        let fixture = prepare_fixture();
+        {
+            let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+            store.store_verified_terminal_report(&completed_report(1)).unwrap();
+            store
+                .connection
+                .execute_batch("ALTER TABLE coordinator_attempt_reports DROP COLUMN bound_via")
+                .unwrap();
+        }
+        let store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        assert_eq!(
+            store
+                .get_report_binding(ATTEMPT_ID, NODE_ID)
+                .unwrap()
+                .expect("옛 행")
+                .bound_via,
+            ReportBindingSource::CurrentReservation
+        );
     }
 
     #[test]

@@ -276,8 +276,8 @@ pub struct CoordinatorConfig {
     ///
     /// ★ 저장소는 `expect_attempt_reports` 와 같은 control DB(`grant_from_control_db`)의 보고 저장소다. 켜지 않으면 REPORT Hello 를
     ///   REPORT_SESSION_REFUSED 로 거부한다 — 저장하지 않을 보고에 "받았다" 고 답하지 않는다.
-    /// ★ "받았다"(Ack)는 **저장했다**는 뜻으로 한정한다(결정 D1). 저장은 **현재 예약**과 일치해야 된다 — 예약이 이미 없어진 늦은
-    ///   보고를 과거 배정 기록으로 검증하는 경로(D1 완성)는 아직 없다.
+    /// ★ "받았다"(Ack)는 **저장했다**는 뜻으로 한정한다(결정 D1). 예약이 없어졌거나 다른 실행으로 바뀐 늦은 보고도 Attempt 의 배정
+    ///   기록으로 결합해 저장한다(`bound_via = assignment_record`) — 그 보고로 예약을 풀거나 결과를 채택하지 않는다.
     pub accept_report_sessions: bool,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
@@ -2289,12 +2289,14 @@ fn serve_renew_session(
 /// B+E 구현 단계 6 — REPORT 세션: Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck -> 닫는다(제안서의 세션 표).
 ///
 /// ★ 검증 순서는 FRESH 연결 안의 보고 수신과 같다 — 서명(read_frame) -> node_id -> terminal -> 필드 조합 규칙 -> 저장소(현재 Attempt ·
-///   예약과 5중 대조). 이 연결에는 Grant 가 없으므로 attempt · job · 세대의 권위는 **저장소의 예약**이다.
+///   예약). 이 연결에는 Grant 가 없으므로 attempt · job · 세대의 권위는 **저장소의 Attempt 배정 기록**이다(예약이 그 Attempt 의 것이면
+///   예약까지 대조한다 — 결정 D1).
 /// ★ Ack 는 저장한 **뒤에만** 보낸다 — "받았다" 는 "저장했다" 다(결정 D1). 같은 바이트의 재전송은 저장소 멱등성으로 created=false 의
 ///   Ack 를 받는다. report_hash 는 받은 보고의 BLAKE3-256(sig_input), session_nonce 는 이 세션 Hello 의 nonce 다 — 다른 세션의
 ///   Ack 로 재생하지 못한다.
 /// ★ 저장 뒤 Ack 전송이 실패하면 Agent 는 응답을 못 받고 다시 보낸다 — 저장소가 created=false 로 같은 사실을 돌려준다.
-/// ★ 아직 하지 않는다: 예약이 없어진 늦은 보고를 과거 배정 기록으로 검증하기(D1 완성) · 예약 해제 · Attempt 전이.
+/// ★ 결정 D1 — 예약이 없어진 늦은 보고도 배정 기록으로 결합해 저장하고 Ack 한다(`bound_via`). 늦은 보고로 예약을 해제하지 않는다.
+/// ★ 아직 하지 않는다: 예약 해제 · Attempt 전이 · 결과 채택.
 #[allow(clippy::too_many_arguments)]
 fn serve_report_session(
     config: &CoordinatorConfig,
@@ -2404,14 +2406,15 @@ fn serve_report_session(
             ))
         })?;
     println!(
-        "REPORT_SESSION_ACK_SENT job_id={} attempt_id={} node_id={} fence_epoch={} created={} report_hash={} session_nonce={}",
+        "REPORT_SESSION_ACK_SENT job_id={} attempt_id={} node_id={} fence_epoch={} created={} report_hash={} session_nonce={} bound_via={}",
         ack.job_id,
         ack.attempt_id,
         ack.node_id,
         ack.fence_epoch,
         ack.created,
         hex_bytes(&report_hash),
-        hex_bytes(&ack.session_nonce)
+        hex_bytes(&ack.session_nonce),
+        result.binding.bound_via.as_str()
     );
     Ok(())
 }

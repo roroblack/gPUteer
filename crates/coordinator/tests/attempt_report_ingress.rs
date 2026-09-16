@@ -34,7 +34,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+use gputeer_coordinator::attempt_report_store::{CoordinatorAttemptReportStore, ReportBindingSource};
 use gputeer_coordinator::inventory_store::{
     AgentInventory, AgentRegistry, CoordinatorInventoryStore, GpuInventory,
 };
@@ -1383,6 +1383,41 @@ fn a_report_session_refuses_a_report_that_breaks_the_field_rules_without_an_ack(
         "거부했는데 무언가(Ack)를 보냈다"
     );
     assert!(stored_binding(&fixture.control_db).is_none(), "거부했는데 저장했다");
+}
+
+/// 결정 D1 — 예약이 없어진 뒤 온 늦은 보고도 REPORT 세션으로 저장하고 Ack 한다(과거 실행의 보고). 결합 경로는 배정 기록이다.
+#[test]
+fn a_late_report_after_the_reservation_is_gone_is_stored_and_acknowledged() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    {
+        let db = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
+        db.busy_timeout(Duration::from_secs(5)).expect("busy timeout");
+        db.execute(
+            "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
+            [NODE_ID],
+        )
+        .expect("예약 GPU 행 삭제");
+        db.execute("DELETE FROM coordinator_node_reservations WHERE node_id = ?1", [NODE_ID])
+            .expect("예약 행 삭제");
+    }
+    let report = terminal_report(fence_epoch);
+    let mut session = open_report_session(&fixture, 1, 200, &report);
+    let ack = read_ack(&mut session);
+    assert!(ack.created, "늦은 보고도 첫 저장이다");
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+    let binding = CoordinatorAttemptReportStore::open(&fixture.control_db)
+        .expect("보고 저장소")
+        .get_report_binding(ATTEMPT_ID, NODE_ID)
+        .expect("보고 조회")
+        .expect("Ack 를 보냈으면 저장돼 있어야 한다");
+    assert_eq!(binding.bound_via, ReportBindingSource::AssignmentRecord, "배정 기록으로 결합했다고 남겨야 한다");
 }
 
 /// 첫 증거와 **내용이 다른** 두 번째 보고는 거부된다.
