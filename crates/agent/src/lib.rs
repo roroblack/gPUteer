@@ -145,7 +145,8 @@ pub struct AgentConfig {
     /// ★ 보내기 **전에** 서명한 보고를 outbox 에 원자적으로 남긴다. Ack 를 검증한 뒤에만 지운다 — 못 받으면 파일이 남고 다음 기동이
     ///   다시 보낸다. FRESH 연결로 보내는 `send_attempt_report` 와 함께 켤 수 없다.
     pub report_over_session: bool,
-    /// 보낼 보고 저장소(outbox) 디렉터리. `None` 이면 `checkpoint_root/report-outbox`.
+    /// 보낼 보고 저장소(outbox) 디렉터리. `None` 이면 체크포인트 루트의 **형제** `<checkpoint_root>.report-outbox`.
+    /// 체크포인트 루트 안은 거부한다(결함 107 — 부팅 GC 가 지운다).
     pub report_outbox_dir: Option<PathBuf>,
     /// 한 보고의 REPORT 세션 시도 횟수 — 연결 · 전송 · 응답 수신 실패만 다시 한다. 1 이상.
     pub report_session_attempts: u32,
@@ -405,6 +406,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     }
     if config.report_over_session && config.report_session_attempts == 0 {
         return Err("REPORT_SESSION_CONFIG_REFUSED: --report-session-attempts 는 1 이상이어야 한다".to_string());
+    }
+    // ★ 결함 107 — outbox 는 체크포인트 루트 **밖**이어야 한다. 위치를 못 정하거나 루트 안이면 연결하기 전에 거부한다.
+    if config.report_over_session {
+        report_outbox_dir(&config).map_err(|error| format!("REPORT_SESSION_CONFIG_REFUSED: {error}"))?;
     }
     // ★ **신고 대상은 연결하기 전에 확인한다**(독립 검수 4라운드 지적).
     //
@@ -1865,12 +1870,30 @@ fn start_renew_during_execution(
     Some(RenewDuringExecution { stop, handle })
 }
 
-/// B+E 구현 단계 6 — outbox 디렉터리. 설정이 없으면 `checkpoint_root/report-outbox`.
-fn report_outbox_dir(config: &AgentConfig) -> PathBuf {
-    config
-        .report_outbox_dir
-        .clone()
-        .unwrap_or_else(|| config.checkpoint_root.join("report-outbox"))
+/// B+E 구현 단계 6 — outbox 디렉터리. 설정이 없으면 체크포인트 루트의 **형제** `<checkpoint_root>.report-outbox`.
+///
+/// ★ 결함 107 — 처음에는 `checkpoint_root/report-outbox` 였다. `startup_gc()` 는 루트 밑 모든 디렉터리를 체크포인트로 보고
+///   매니페스트가 없으면 안의 파일을 전부 지운다 — 보내지 못한 보고와 격리한 증거(`.report.rejected`)가 사라진다.
+///   작업 출력(`workload_run_root`)과 같은 이유 · 같은 계산이다.
+/// ★ 명시한 경로가 루트 안(루트 자신 포함)이면 거부한다. 비교는 절대 경로의 **구성 요소 앞머리**다 — 대소문자만 다른 경로 ·
+///   junction · symlink 로 루트 안을 가리키는 경로는 못 잡는다(리눅스의 `std::path::absolute` 는 `..` 도 풀지 않는다).
+fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
+    let Some(explicit) = config.report_outbox_dir.as_ref() else {
+        return checkpoint_root_sibling(&config.checkpoint_root, ".report-outbox");
+    };
+    let outbox = std::path::absolute(explicit)
+        .map_err(|error| format!("--report-outbox 를 절대 경로로 바꿀 수 없다({explicit:?}): {error}"))?;
+    let root = std::path::absolute(&config.checkpoint_root).map_err(|error| {
+        format!("checkpoint root 를 절대 경로로 바꿀 수 없다({:?}): {error}", config.checkpoint_root)
+    })?;
+    if outbox.starts_with(&root) {
+        return Err(format!(
+            "--report-outbox({}) 가 체크포인트 루트({}) 안이다 — 부팅 GC 가 매니페스트 없는 디렉터리로 보고 보고를 지운다(결함 107)",
+            outbox.display(),
+            root.display()
+        ));
+    }
+    Ok(outbox)
 }
 
 /// 서명 입력의 BLAKE3-256 — Ack 의 report_hash 와 같은 계산이다. outbox 이름도 이 값의 앞 16바이트다(같은 보고는 같은 이름).
@@ -1921,7 +1944,7 @@ fn send_report_over_session(
         },
     )
     .map_err(|error| error.to_string())?;
-    let path = persist_report_to_outbox(&report_outbox_dir(config), &attempt_report)?;
+    let path = persist_report_to_outbox(&report_outbox_dir(config)?, &attempt_report)?;
     println!(
         "ATTEMPT_REPORT_OUTBOX_WRITTEN path={} job_id={} attempt_id={} outcome={} schema_version={}",
         path.display(),
@@ -2087,7 +2110,14 @@ fn verify_report_ack(
 ///   이름을 `.report.rejected` 로 바꿔 보존한다(증거다) · ATTEMPT_REPORT_OUTBOX_REJECTED.
 /// ★ 보내기에 실패해도 새 작업을 막지 않는다 — 파일은 남고 ATTEMPT_REPORT_OUTBOX_PENDING 으로 알린다.
 fn flush_report_outbox(config: &AgentConfig, signing_key: &SigningKey) {
-    let dir = report_outbox_dir(config);
+    let dir = match report_outbox_dir(config) {
+        Ok(dir) => dir,
+        Err(error) => {
+            // run() 이 연결 전에 같은 계산으로 거부하므로 여기 오지 않는다 — 와도 조용히 넘기지 않는다.
+            println!("ATTEMPT_REPORT_OUTBOX_PENDING detail=outbox 위치를 정하지 못했다: {error}");
+            return;
+        }
+    };
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return,
@@ -2591,19 +2621,24 @@ fn finalize_workload_outputs(
 /// 그럴때 적당히 루트 안에 두는 대신 오류를 낸다 — 애매하면
 /// 실행하지 않는다가 이 저장소의 기본값이다.
 fn workload_run_root(checkpoint_root: &std::path::Path) -> Result<PathBuf, String> {
+    checkpoint_root_sibling(checkpoint_root, ".workload-run")
+}
+
+/// 체크포인트 루트의 형제 디렉터리 `<부모>/<루트 이름><suffix>` — 작업 출력 · outbox(결함 107)가 같이 쓴다.
+fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> Result<PathBuf, String> {
     let absolute = std::path::absolute(checkpoint_root).map_err(|error| {
         format!("checkpoint root 를 절대 경로로 바꿀 수 없다({checkpoint_root:?}): {error}")
     })?;
     let parent = absolute.parent().ok_or_else(|| {
         format!(
-            "checkpoint root 가 파일시스템 루트라 작업 디렉터리를 밖에 둘 수 없다({absolute:?})              — 하위 디렉터리를 지정하라"
+            "checkpoint root 가 파일시스템 루트라 {suffix} 디렉터리를 밖에 둘 수 없다({absolute:?})              — 하위 디렉터리를 지정하라"
         )
     })?;
     let name = absolute.file_name().ok_or_else(|| {
         format!("checkpoint root 에서 이름을 얻을 수 없다({absolute:?})")
     })?;
     let mut sibling = name.to_os_string();
-    sibling.push(".workload-run");
+    sibling.push(suffix);
     Ok(parent.join(sibling))
 }
 
@@ -4013,7 +4048,7 @@ mod report_session_tests {
             signed_ack(received, hello.nonce.clone(), attempt_report_hash(received).to_vec())
         });
         let config = config(dir.path(), &addr);
-        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
         deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
             .expect("검증한 Ack 를 받아야 한다");
         server.join().expect("가짜 Coordinator");
@@ -4027,7 +4062,7 @@ mod report_session_tests {
         let report = signed_report();
         let (addr, server) = fake_coordinator(|hello, received| signed_ack(received, hello.nonce.clone(), vec![0u8; 32]));
         let config = config(dir.path(), &addr);
-        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
         let error = deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
             .expect_err("틀린 해시의 Ack 는 거부돼야 한다");
         server.join().expect("가짜 Coordinator");
@@ -4044,7 +4079,7 @@ mod report_session_tests {
             signed_ack(received, vec![9u8; 16], attempt_report_hash(received).to_vec())
         });
         let config = config(dir.path(), &addr);
-        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
         let error = deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
             .expect_err("다른 세션의 Ack 는 거부돼야 한다");
         server.join().expect("가짜 Coordinator");
@@ -4060,7 +4095,7 @@ mod report_session_tests {
         let config = config(dir.path(), "127.0.0.1:9");
         let mut report = signed_report();
         report.job_id = "job-tampered".into(); // 서명 뒤에 바꾼다 — 필드 조합 규칙은 그대로 지킨다
-        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
         flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
         assert!(!path.exists(), "변조된 보고를 outbox 에 그대로 두었다");
         assert!(path.with_extension("report.rejected").exists(), "지우지 않고 격리해야 한다(증거)");
@@ -4072,10 +4107,48 @@ mod report_session_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let config = config(dir.path(), "127.0.0.1:9");
         let report = signed_report();
-        let path = persist_report_to_outbox(&report_outbox_dir(&config), &report).expect("outbox");
+        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
         flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
         assert!(path.exists(), "보내지 못한 정상 보고를 지웠다");
         assert!(!path.with_extension("report.rejected").exists(), "정상 보고를 격리했다");
+    }
+
+    /// 결함 107 — 기본 outbox 에 남긴 보고는 체크포인트 루트의 부팅 GC 뒤에도 남는다.
+    ///
+    /// 대조: 같은 보고를 루트 **안** 디렉터리에 두면 GC 가 지운다 — 아래 단언이 공허하지 않다.
+    #[test]
+    fn an_outboxed_report_survives_the_checkpoint_startup_gc() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let config = config(dir.path(), "127.0.0.1:9");
+        let report = signed_report();
+        let root = std::path::absolute(&config.checkpoint_root).expect("절대 경로");
+        std::fs::create_dir_all(&root).expect("체크포인트 루트");
+        let kept = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
+        let inside = persist_report_to_outbox(&root.join("report-outbox"), &report).expect("루트 안");
+        gputeer_checkpoint::writer::startup_gc(&root).expect("부팅 GC");
+        assert!(!inside.exists(), "대조가 성립하지 않는다 — 루트 안 보고를 GC 가 지우지 않았다");
+        assert!(kept.exists(), "부팅 GC 가 보내지 못한 보고를 지웠다: {kept:?}");
+    }
+
+    /// 결함 107 — 명시한 outbox 가 체크포인트 루트 안(루트 자신 포함)이면 연결 전에 거부한다. 루트 밖은 받는다.
+    #[test]
+    fn an_explicit_outbox_inside_the_checkpoint_root_is_refused_before_connecting() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        for inside in [dir.path().join("checkpoints"), dir.path().join("checkpoints").join("outbox")] {
+            let mut config = config(dir.path(), "127.0.0.1:9");
+            config.report_outbox_dir = Some(inside.clone());
+            let error = run(config).expect_err("루트 안 outbox 는 거부돼야 한다");
+            assert!(
+                error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 107"),
+                "{inside:?}: {error}"
+            );
+        }
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        config.report_outbox_dir = Some(dir.path().join("outbox"));
+        assert_eq!(
+            report_outbox_dir(&config).expect("루트 밖 outbox 는 받아야 한다"),
+            std::path::absolute(dir.path().join("outbox")).expect("절대 경로")
+        );
     }
 
     /// REPORT 세션과 FRESH 보고를 함께 켜면 연결 전에 거부한다.

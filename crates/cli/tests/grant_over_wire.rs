@@ -698,7 +698,8 @@ fn with_the_report_off_the_workload_runs_but_no_report_row_is_stored() {
 /// outbox 에 남은 `.report` 파일들.
 #[cfg(windows)]
 fn outbox_reports(dir: &Path) -> Vec<std::path::PathBuf> {
-    std::fs::read_dir(dir.join("agent-checkpoints").join("report-outbox"))
+    // 결함 107 — outbox 는 체크포인트 루트의 형제다.
+    std::fs::read_dir(dir.join("agent-checkpoints.report-outbox"))
         .map(|entries| {
             entries
                 .filter_map(Result::ok)
