@@ -376,6 +376,8 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             (config.do_renew, "--do-renew"),
             (config.expect_revoke_after_round.is_some(), "--expect-revoke-after-round"),
             (config.neighbor_report_rounds > 0, "--neighbor-report-rounds"),
+            // 결함 103 (재검수 61) — 짝인 Coordinator --send-grant-twice 가 ACK 뒤 추가 프레임을 기다리며 FRESH 를 붙잡는다.
+            (config.expect_replay, "--expect-replay"),
         ];
         if let Some((_, flag)) = holding.iter().find(|(enabled, _)| *enabled) {
             return Err(format!(
@@ -1726,7 +1728,15 @@ fn renew_once_over_new_connection(
         &mut replay,
         &clock,
     )
-    .map_err(|e| format!("RenewLeaseResult 읽기/검증 실패: {e}"))?;
+    // ★ 결함 102 (재검수 61) — 받지 못한 것(끊김 · 소켓 시한)만 다음 주기에 다시 할 실패다. 도착했는데 서명 · 시각 · 형식 검증에
+    //   실패한 결과는 RENEW_REJECTED 로 스레드를 멈춘다 — verify_renew_result 의 거부와 같은 처리. 전에는 둘을 한 문구로 포장해
+    //   검증 실패 뒤에도 갱신 연결을 계속 열었다.
+    .map_err(|e| match e {
+        FramingError::Truncated | FramingError::Io(_) => {
+            format!("RenewLeaseResult 를 받지 못했다(연결 끊김 · 소켓 시한): {e}")
+        }
+        other => format!("RENEW_REJECTED: RenewLeaseResult 를 검증하지 못했다(서명 · 시각 · 형식): {other}"),
+    })?;
     let result = match message {
         IngressMessage::LeaseRenewResult(verified) => verified
             .require_replay_checked()
@@ -1759,7 +1769,7 @@ struct RenewDuringExecution {
 /// ```text
 /// 갱신 성공        RENEW_SESSION_RESULT ok=true — 스레드가 든 Lease 를 새것으로 바꾼다
 /// 거부 · 검증 실패  RENEW_SESSION_STOPPED — RENEW_REFUSED(SUPERSEDED · REVOKED · 만료 …) 나 RENEW_REJECTED 면 더 갱신하지 않는다
-/// 그 밖의 실패     RENEW_SESSION_FAILED — 연결 · 전송 실패. 다음 주기에 다시 연다
+/// 그 밖의 실패     RENEW_SESSION_FAILED — 연결 · 전송 실패, 결과를 받지 못함(끊김 · 시한). 다음 주기에 다시 연다(결함 102)
 /// ```
 ///
 /// ★ 워크로드를 **멈추지는 않는다** — Lease 를 잃었을 때 워크로드를 어떻게 할지는 정책(규범 §3 LEASE_EXPIRED · STALE)이라

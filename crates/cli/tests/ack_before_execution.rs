@@ -420,6 +420,52 @@ fn a_refused_renew_session_is_reported_not_hidden() {
     assert!(coordinator.output().contains("RENEW_SESSION_REFUSED"), "Coordinator 가 거부 사유를 남겨야 한다\n{all}");
 }
 
+/// 결함 102 (재검수 61) — RENEW 세션의 **바깥** 결과 서명이 깨졌으면 갱신 스레드는 멈추고(RENEW_SESSION_STOPPED · RENEW_REJECTED)
+///   연결을 다시 열지 않는다. 받지 못한 것(끊김 · 시한)만 다시 시도할 실패다.
+#[test]
+fn a_renew_result_with_a_broken_signature_stops_the_renew_thread() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 8);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--corrupt-renew-result-signature",
+            "true",
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "30000",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &["--disable-reconnect", "true", "--renew-during-execution-ms", "1500"],
+    );
+    let coordinator = wait(coordinator, Duration::from_secs(90));
+    let agent = wait(agent, Duration::from_secs(90));
+    let all = both(&agent, &coordinator);
+
+    assert!(agent.success, "갱신이 거부돼도 워크로드는 끝까지 돈다\n{all}");
+    let stopped = agent
+        .output()
+        .lines()
+        .find(|line| line.starts_with("RENEW_SESSION_STOPPED"))
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("검증 실패인데 스레드가 멈추지 않았다\n{all}"));
+    assert!(stopped.contains("RENEW_REJECTED"), "멈춘 이유가 검증 실패가 아니다: {stopped}\n{all}");
+    assert!(!agent.output().contains("RENEW_SESSION_FAILED"), "검증 실패 뒤에 다시 열었다\n{all}");
+    assert!(!agent.output().contains("RENEW_SESSION_RESULT ok=true"), "깨진 서명을 받아들였다\n{all}");
+    assert_eq!(
+        coordinator.count("RENEW_SESSION_RESULT outcome="),
+        1,
+        "RENEW 세션은 한 번만 와야 한다\n{all}"
+    );
+}
+
 /// P2 — 약 15초 워크로드 뒤에 오는 heartbeat 를 Coordinator 가 받는다(Lease 30초).
 #[test]
 fn the_first_read_after_ack_waits_for_the_workload_within_the_lease() {

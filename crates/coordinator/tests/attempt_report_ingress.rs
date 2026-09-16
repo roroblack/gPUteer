@@ -916,6 +916,40 @@ fn a_renew_session_without_a_lease_db_is_refused() {
     assert!(error.contains("RENEW_SESSION_REFUSED"), "{error}");
 }
 
+/// 결함 100 (재검수 61) — 발급한 Lease 를 **다른** lease 저장소에서 찾지 못하는 구성(--grant-from-control-db A · --lease-db B)은
+///   구성 오류라 fail-closed(Storage)다 — 받을 연결이 남아 있어도 리스너를 멈춘다. 상대가 고른 모르는 ID(Protocol)와 다르다.
+#[test]
+fn a_fresh_renew_whose_lease_lives_in_another_store_stops_the_listener() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let other_db = fixture.control_db.with_file_name("other-lease.sqlite3");
+    let mut args = coordinator_args(&fixture, 0);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--max-connections")
+        .expect("--max-connections");
+    args[at + 1] = "2".into();
+    for extra in ["--lease-db", other_db.to_str().expect("경로"), "--do-renew", "true"] {
+        args.push(extra.into());
+    }
+    let handle = std::thread::spawn(move || {
+        let config = gputeer_coordinator::parse_config_from_args(&args).expect("설정 파싱");
+        gputeer_coordinator::run(config)
+    });
+    let mut stream = connect_when_ready(fixture.address);
+    handshake(&mut stream);
+    write_frame_body(
+        &mut stream,
+        FrameType::LeaseRenew,
+        &signed_renew_request(fence_epoch, 160).encode_to_vec(),
+    );
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("구성 오류는 리스너를 멈춰야 한다");
+    assert!(error.contains("다른 저장소에서 찾는 구성 문제"), "{error}");
+}
+
 /// 결함 87 — 첫 프레임의 **내용**이 오류 분류를 바꾸지 못한다. 등록된 Agent 가 job_id 에 "lease store" 를 넣은 서명된 보고를
 ///   Hello 대신 보내도, 리스너 전체를 멈추는 Storage 가 아니라 그 연결만의 Protocol 오류다 — 다음 정상 연결을 받는다.
 #[test]

@@ -846,6 +846,10 @@ fn session_error_kind(error: &CoordinatorSessionError) -> &'static str {
 /// ★ 근거: 이 함수로 오는 저장소 장애 문구는 전부 "lease store" 로 시작하고 `?` 로 앞에 다른 말 없이 올라온다(2026-09-14 소스
 ///   대조 — 타입으로 강제한 것은 아니다). 다른 저장소(종료 보고 · 이웃 신고 · 생존 관측 · 저장된 예약)의 장애는 `Classified(Storage)`
 ///   로 와서 이 함수를 지나지 않는다. "Lease"+"실패" 규칙에 걸리던 문구는 프레임 읽기 · 검증 오류였다.
+/// ★ 결함 99 · 100 · 101 (재검수 61) — 위 근거는 **틀렸다**: `갱신 전 revoke 저장 실패` 가 저장소 문구 앞에 말을 붙였고, 구성 불일치
+///   ("lease store 에 없다")와 정책 거부(만료 · revoke)가 이 앞머리 하나에 뒤섞여 있었다. 그래서 저장소를 부르는 곳은 오류를
+///   **타입으로** 갈라 Classified 로 올리거나(99 · 100), 정책 거부에 `LEASE_POLICY_REFUSED` 앞머리를 붙인다(101). 이 함수는 남은
+///   Legacy 문자열의 마지막 판정이다.
 fn classify_legacy_session_error(message: String) -> CoordinatorSessionError {
     let lower = message.to_ascii_lowercase();
     let transport = lower.contains("truncated")
@@ -1809,7 +1813,9 @@ fn serve_one_connection_impl(
         let revoked_at = SystemClock.now_unix_ms();
         store
             .mark_revoked(&lease.lease_id, revoked_at)
-            .map_err(|e| format!("갱신 전 revoke 저장 실패: {e}"))?;
+            // ★ 결함 99 (재검수 61) — 저장소 장애를 문자열 분류에 맡기지 않는다. 전에는 이 문구 앞머리가 "lease store" 가
+            //   아니라 92 뒤로 Protocol 이 됐다 — 저장에 실패하고도 다음 연결을 받았다.
+            .map_err(|e| SessionHandlerError::Classified(storage_error("갱신 전 revoke 저장 실패", e)))?;
         println!(
             "REVOKE_STORE ok=true lease_id={} revoked_at_unix_ms={revoked_at}",
             lease.lease_id
@@ -1884,14 +1890,17 @@ fn serve_one_connection_impl(
             //   "Coordinator 가 기억하는 현재 epoch" 로 삼는다.
             let expected_epoch = match &lease_store {
                 Some(store) => {
+                    // ★ 결함 100 (재검수 61) — 요청 lease_id 는 위에서 설정값과 이미 대조했다. 여기서 저장소에 없으면 상대가 고른
+                    //   모르는 ID 가 아니라 **발급한 Lease 를 다른 저장소에서 찾는 구성 문제**다(--grant-from-control-db · --lease-db).
+                    //   문자열 분류에 맡기지 않고 Storage(fail-closed)로 올린다.
                     let stored = store
                         .get(&renew_req.lease_id)
-                        .map_err(|e| format!("lease store 조회 실패: {e}"))?
+                        .map_err(|e| SessionHandlerError::Classified(storage_error("lease store 조회 실패", e)))?
                         .ok_or_else(|| {
-                            format!(
-                                "RenewLeaseRequest.lease_id({}) 가 lease store 에 없다",
-                                renew_req.lease_id
-                            )
+                            SessionHandlerError::Classified(storage_error(
+                                "lease store",
+                                "발급한 Lease 가 이 lease 저장소에 없다 — 다른 저장소에서 찾는 구성 문제다(--grant-from-control-db · --lease-db)",
+                            ))
                         })?;
                     stored.fence_epoch
                 }
@@ -2645,13 +2654,15 @@ fn build_renew_result(
                     .get(lease_id)
                     .map_err(|e| format!("lease store 조회 실패: {e}"))?
                     .ok_or_else(|| {
-                        format!("RenewLeaseRequest.lease_id({lease_id}) 가 lease store 에 없다")
+                        format!(
+                            "lease store 에 RenewLeaseRequest.lease_id({lease_id}) 가 없다 — 발급한 Lease 를 다른 저장소에서 찾는 구성 문제다(결함 100)"
+                        )
                     })?;
                 if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
                     revoked_result(request_nonce, revoked_at_unix_ms)
                 } else if stored.expires_at_unix_ms <= now {
                     return Err(format!(
-                        "lease store expired during renewal: {}",
+                        "LEASE_POLICY_REFUSED: lease store expired during renewal: {}",
                         LeaseStoreError::Expired {
                             expires_at_unix_ms: stored.expires_at_unix_ms,
                         }
@@ -2673,7 +2684,7 @@ fn build_renew_result(
                 }
                 Err(LeaseStoreError::Expired { expires_at_unix_ms }) => {
                     return Err(format!(
-                        "lease store expired during renewal: {}",
+                        "LEASE_POLICY_REFUSED: lease store expired during renewal: {}",
                         LeaseStoreError::Expired { expires_at_unix_ms }
                     ));
                 }
@@ -2947,7 +2958,15 @@ fn issue_lease(
             };
             store
                 .get_or_issue(&candidate, now)
-                .map_err(|e| format!("lease store 최초 발급 실패: {e}"))?
+                // ★ 결함 101 (재검수 61) — 만료 · revoke · 신원 충돌은 저장된 사실과 요청이 맞지 않는 **정책 거부**다(등록된 Agent 의
+                //   정상 요청 · 도착 시각이 유발한다) — Protocol. 저장소 I/O · 락 시한만 Storage 다. 문구는 selftest 34~36 이 대조하는
+                //   "lease store 최초 발급 실패" 를 그대로 품는다.
+                .map_err(|e| match e {
+                    LeaseStoreError::Io(_) | LeaseStoreError::LockTimeout => {
+                        format!("lease store 최초 발급 실패: {e}")
+                    }
+                    policy => format!("LEASE_POLICY_REFUSED: lease store 최초 발급 실패: {policy}"),
+                })?
         }
     };
 
@@ -3622,6 +3641,26 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_config_from_args(&args).expect("설정 파싱")
+    }
+
+    /// 결함 101 (재검수 61) — 저장된 Lease 가 이미 만료된 뒤의 최초 발급 요청은 **정책 거부**(Protocol)다. 전에는
+    ///   `lease store 최초 발급 실패` 앞머리로 Storage 가 돼 등록된 Agent 의 정상 요청이 리스너를 멈췄다.
+    #[test]
+    fn an_expired_stored_lease_on_first_issue_is_a_policy_refusal_not_storage() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let db = dir.path().join("lease.sqlite3");
+        let config = legacy_renew_config(&["--lease-db", db.to_str().expect("경로"), "--lease-ttl-ms", "1000"]);
+        let key = SigningKey::from_bytes(&[5u8; 32]);
+        let now = 1_800_000_000_000;
+        let mut store = Some(CoordinatorLeaseStore::open(&db).expect("lease store"));
+        issue_lease(&config, &mut store, &key, now).expect("처음 발급");
+        let error = issue_lease(&config, &mut store, &key, now + 5_000).expect_err("만료된 Lease 는 다시 발급하지 않는다");
+        assert!(error.starts_with("LEASE_POLICY_REFUSED"), "{error}");
+        assert!(error.contains("lease store 최초 발급 실패") && error.contains("expired"), "{error}");
+        assert!(
+            matches!(classify_legacy_session_error(error), CoordinatorSessionError::Protocol(_)),
+            "정책 거부가 Storage 로 분류됐다"
+        );
     }
 
     /// ★ 결함 ㉝ — 저장소 없는 갱신도 `--renew-extension-ms` 로 만료·갱신 시점을 정한다.
