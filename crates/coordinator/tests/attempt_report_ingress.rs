@@ -1345,32 +1345,29 @@ fn a_fresh_connection_after_a_report_connection_that_dropped_before_hello_is_acc
     let mut fresh = connect_when_ready(fixture.address);
     let grant = handshake_at(&mut fresh, 0);
     assert_eq!(grant.attempt_id, ATTEMPT_ID, "끊긴 보조 연결 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    // 결함 149 — Grant nonce 도 Hello 의 번호(0)로 만들어져야 한다(받은 연결 번호는 2 다).
+    assert_eq!(grant.nonce, derive_replay_nonce("grant", GRANT_ID, 0), "Grant nonce 가 Hello 번호로 만들어지지 않았다");
     drop(fresh);
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
 }
 
-/// 결함 133 — 번호 규칙의 거부 쪽: 받은 연결 수보다 큰 번호 · 직전 FRESH 와 같은 번호(재사용)는 거부한다.
+/// 결함 133 · 145 — 번호 규칙: 받은 연결 번호보다 **앞선** 번호도 받는다(Coordinator 가 accept 하지 못한 connect 성공이 있을 수 있다) ·
+/// Grant nonce 는 그 번호로 만든다 · 직전 FRESH 와 같은 번호(재사용)는 거부한다.
 #[test]
-fn a_fresh_hello_that_skips_ahead_or_reuses_a_number_is_refused() {
+fn a_fresh_hello_that_skips_ahead_is_accepted_and_a_reused_number_is_refused() {
     let fixture = fixture();
-    let handle = spawn_coordinator_for_reports(&fixture, true, 3);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
     {
-        let mut first = connect_when_ready(fixture.address);
-        send_hello(&mut first, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 5, 40);
-        let mut rest = Vec::new();
-        let _closed = first.read_to_end(&mut rest);
-        assert!(rest.is_empty(), "받은 연결보다 큰 번호에 프레임이 왔다");
-    }
-    {
-        let mut ok = connect_when_ready(fixture.address);
-        handshake_at(&mut ok, 1);
+        let mut ahead = connect_when_ready(fixture.address);
+        let grant = handshake_at(&mut ahead, 5);
+        assert_eq!(grant.nonce, derive_replay_nonce("grant", GRANT_ID, 5), "Grant nonce 가 Hello 번호(5)로 만들어지지 않았다");
     }
     let mut reuse = connect_when_ready(fixture.address);
-    send_hello(&mut reuse, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 1, 60);
+    send_hello(&mut reuse, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 5, 60);
     let error = handle.join().expect("Coordinator 스레드").expect_err("재사용한 번호는 거부돼야 한다");
     assert!(
-        error.starts_with("protocol: ") && error.contains("connection_attempt 가 규칙을 어겼다") && error.contains("받은 1 · 직전 FRESH Some(1)"),
+        error.starts_with("protocol: ") && error.contains("connection_attempt 가 규칙을 어겼다") && error.contains("받은 5 · 직전 FRESH Some(5)"),
         "{error}"
     );
 }

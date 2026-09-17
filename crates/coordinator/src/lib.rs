@@ -1147,17 +1147,21 @@ fn serve_one_connection_impl(
     }
     // FRESH 만 연결 번호를 대조한다 — Grant nonce 가 이 번호로 만들어진다. RENEW 는 실행 중 Agent 가 따로 여는 연결이라
     // Coordinator 의 연결 번호를 알 수 없다(단계 5a).
-    // ★ 결함 124 · 133 (검수 65 · 재검수 65b) — 번호 규칙: FRESH Hello 의 번호가 **직전에 받아들인 FRESH 번호보다 크고, 받은 연결 수 이하** 면 받는다.
+    // ★ 결함 124 · 133 · 145 (검수 65 · 재검수 65b · 65c) — 번호 규칙: FRESH Hello 의 번호가 **직전에 받아들인 FRESH 번호보다 크면** 받는다.
     //   전에는 Coordinator 가 센 기대값과 **정확히 같아야** 했는데, 두 쪽이 따로 센 번호는 끊기는 연결 앞에서 어긋난다 — Hello 를 못 읽고 끝난
     //   보조 연결(REPORT)은 Coordinator 만 세고 Agent 는 안 센다. 124 의 "보조 세션 차감" 은 그 경우를 못 막았다.
-    //   증가 규칙은 같은 번호의 재사용(nonce 재사용)을 막고, 상한은 받은 적 없는 연결 수만큼 번호를 건너뛰는 것을 막는다.
+    //   133 은 "받은 연결 번호 이하" 상한도 뒀는데 그 전제(Agent 의 connect 성공 수 ≤ Coordinator 의 accept 수)가 틀렸다 — 클라이언트는 SYN-ACK 로
+    //   연결을 확정하고, 마지막 ACK · Hello 가 유실되면 서버는 accept 하지 못한다(재검수 65c · RFC 9293). 그래서 상한을 없앴다.
+    //   증가 규칙이 막는 것은 같은 번호의 재사용(= 같은 Grant · ACK nonce)이다. 번호를 건너뛰는 것은 서명한 Agent 만 할 수 있고 nonce 를 재사용하지 않는다.
+    // ★ 한계(124 이전부터): Agent 만 재기동하면 번호가 0 으로 돌아가 같은 Coordinator 실행에서는 거부된다 · 큰 번호 한 번이 뒤의 작은 번호를 막는다(서명자만)
+    //   · 양쪽을 재기동하면 같은 grant_id · 번호 0 의 nonce 가 다시 같아진다(유도 nonce 의 범위 — 결함 88 계획).
     //   아래부터 `connection_attempt` 는 **Hello 의 번호**다 — Grant · ACK nonce 와 재접속 시험 조건이 이 값을 쓴다.
-    if hello.connection_attempt > connection_attempt
-        || last_fresh_attempt.is_some_and(|last| hello.connection_attempt <= last)
-    {
+    // 받은 연결 번호(`connection_attempt` 인자)는 이제 판정에 쓰지 않는다 — 145 가 상한을 없앴다.
+    let _ = connection_attempt;
+    if last_fresh_attempt.is_some_and(|last| hello.connection_attempt <= last) {
         return Err(session_protocol_error(format!(
-            "HELLO_REJECTED: connection_attempt 가 규칙을 어겼다 — 받은 {} · 직전 FRESH {:?} · 받은 연결 번호 {}(직전보다 크고 받은 연결 번호 이하여야 한다)",
-            hello.connection_attempt, *last_fresh_attempt, connection_attempt
+            "HELLO_REJECTED: connection_attempt 가 규칙을 어겼다 — 받은 {} · 직전 FRESH {:?}(직전보다 커야 한다)",
+            hello.connection_attempt, *last_fresh_attempt
         )));
     }
     *last_fresh_attempt = Some(hello.connection_attempt);

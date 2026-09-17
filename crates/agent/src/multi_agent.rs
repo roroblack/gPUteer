@@ -47,6 +47,14 @@ use crate::{derive_nonce, AgentConfig};
 
 /// Hello -> Grant -> ACK 한 왕복.
 pub fn run_multi_agent_session(config: &AgentConfig) -> Result<(), String> {
+    // ★ 결함 148 (재검수 65c) — 이 lane 은 outbox 재전송 전에 반환하고 REPORT 를 보내지 않는다. run() 의 거부(결함 134)를 지나쳐 여기로 바로 오는
+    //   라이브러리 호출자도 막는다 — 그러지 않으면 handshake 뒤 Ok 로 끝나 보고가 남은 줄 모른다.
+    if config.report_over_session {
+        return Err(
+            "REPORT_SESSION_CONFIG_REFUSED: multi_agent lane 은 REPORT 세션을 보내지 않는다 — --report-over-session 과 함께 쓸 수 없다(결함 134 · 148)"
+                .to_string(),
+        );
+    }
     // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
     //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
     //   다시 본다.

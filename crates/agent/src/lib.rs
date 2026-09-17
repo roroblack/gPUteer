@@ -268,6 +268,9 @@ pub struct AgentConfig {
     /// Job 시작 `WRITING` 마커를 기록할 checkpoint root.
     pub checkpoint_root: PathBuf,
 
+    /// 결함 147 — `checkpoint_root` 가 기동마다 새로 만들어지는 **기본 루트**인가(`--checkpoint-root` 를 안 줬다). 이름 모양으로 추정하지 않는다.
+    pub checkpoint_root_is_default: bool,
+
     // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
     /// 같은 연결에서 `RenewLeaseRequest`/`RenewLeaseResult` 왕복을 이
     /// 횟수만큼 반복한다. `do_renew == false` 면 무시된다. 기본값 1은
@@ -427,9 +430,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             ));
         }
     }
-    // ★ 결함 134 — 125 의 파서 관문을 지나지 않는 라이브러리 호출자도 막는다: outbox 를 명시하지 않았는데 체크포인트 루트가 기동마다 바뀌는
-    //   기본 루트(`default_checkpoint_root` 모양)면 거부한다.
-    if config.report_over_session && config.report_outbox_dir.is_none() && is_default_checkpoint_root(&config.checkpoint_root) {
+    // ★ 결함 134 · 147 — 125 의 파서 관문을 지나지 않는 라이브러리 호출자도 막는다: outbox 를 명시하지 않았는데 체크포인트 루트가 기동마다 바뀌는
+    //   기본 루트면 거부한다. ★ 147 — 전에는 이름 모양(임시 디렉터리 · `gputeer-checkpoints-`)으로 추정해 `..` · 대소문자 표기로 우회되고 고정한 같은
+    //   이름을 잘못 거부했다. 이제 설정이 기본값 여부(`checkpoint_root_is_default`)를 들고 온다.
+    if config.report_over_session && config.report_outbox_dir.is_none() && config.checkpoint_root_is_default {
         return Err(
             "REPORT_SESSION_CONFIG_REFUSED: 체크포인트 루트가 기동마다 바뀌는 기본 경로다 — 못 보낸 보고를 다음 기동이 찾지 못한다(결함 125 · 134)"
                 .to_string(),
@@ -1921,25 +1925,12 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
     // ★ 결함 128 (검수 65) — 문자열 앞머리 비교는 대소문자(Windows) · junction · symlink · `..` 로 루트 안을 가리키며 통과했다.
     //   세 디렉터리를 만든 뒤 **실제 위치**(canonicalize)로 대조한다. 만드는 것은 부작용이지만 어차피 곧 쓸 자리다.
     // ★ 결함 129 (검수 65) — 체크포인트 루트뿐 아니라 **작업 출력 루트**(`<root>.workload-run`) 아래도 거부한다 — 실행 전 · 뒤에 재귀 삭제된다.
-    // ★ 결함 136 (재검수 65b) — 실제 위치만 보면 `<root>.workload-run/<id>/link`(바깥을 가리키는 링크)가 통과하는데, 작업 정리가 `<id>` 를 지우며
-    //   링크 자체가 사라진다. 그래서 **먼저** 절대 경로 문자열로 두 루트 아래인지 거부한다(삭제 범위는 경로 이름으로 정해진다).
+    // ★ 결함 136 · 146 (재검수 65b · 65c) — 실제 위치만 보면 `<root>.workload-run/<id>/link`(바깥을 가리키는 링크)가 통과하는데, 작업 정리가 `<id>` 를
+    //   지우며 링크 자체가 사라진다. 136 은 절대 경로 **문자열** 대조를 앞에 뒀는데, 대소문자 · verbatim(`\\?\`) · POSIX `..` 표기와 링크를 결합하면 문자열
+    //   대조도 실제 위치 대조도 통과했다(146). 그래서 **경로를 따라 내려가며** 대조한다 — 이름 구성 요소를 붙이기 전마다 지금까지의 접두사를 canonicalize 해
+    //   두 루트와 같거나 그 안이면 거부한다(그 이름은 GC · 작업 정리가 지우는 자리다). `..` 앞에서는 보지 않는다 — 삭제 범위 밖으로 되돌아 나가는 길이다
+    //   (`root/../outside` 는 받는다). 끝의 실제 위치 대조(아래)도 둔다.
     // ★ 한계: 검사 뒤 경로를 바꿔치기하는 경쟁(TOCTOU)은 막지 못한다 — 핸들로 고정하지 않는다. 거부되는 설정도 디렉터리를 만든 흔적이 남는다.
-    let lexical = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
-        std::path::absolute(path).map_err(|error| format!("{what} 를 절대 경로로 바꿀 수 없다({path:?}): {error}"))
-    };
-    let lexical_outbox = lexical(&outbox, "outbox")?;
-    for (guarded, label) in [
-        (lexical(&config.checkpoint_root, "checkpoint root")?, "체크포인트 루트"),
-        (lexical(&workload_run_root(&config.checkpoint_root)?, "작업 출력 루트")?, "작업 출력 루트"),
-    ] {
-        if lexical_outbox.starts_with(&guarded) {
-            return Err(format!(
-                "--report-outbox({}) 가 {label}({}) 아래 경로다(경로 이름 대조) — 부팅 GC · 작업 정리가 보고를 지운다(결함 107 · 129 · 136)",
-                outbox.display(),
-                guarded.display()
-            ));
-        }
-    }
     let real = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
         fs::create_dir_all(path).map_err(|error| format!("{what} 디렉터리를 만들지 못했다({path:?}): {error}"))?;
         fs::canonicalize(path).map_err(|error| format!("{what} 의 실제 위치를 읽지 못했다({path:?}): {error}"))
@@ -1947,6 +1938,26 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
     let real_outbox = real(&outbox, "outbox")?;
     let real_root = real(&config.checkpoint_root, "checkpoint root")?;
     let real_run_root = real(&workload_run_root(&config.checkpoint_root)?, "작업 출력 루트")?;
+    let absolute_outbox =
+        std::path::absolute(&outbox).map_err(|error| format!("outbox 를 절대 경로로 바꿀 수 없다({outbox:?}): {error}"))?;
+    let mut walked = PathBuf::new();
+    for component in absolute_outbox.components() {
+        if matches!(component, std::path::Component::Normal(_)) && walked.as_os_str().len() > 0 {
+            let real_prefix = fs::canonicalize(&walked)
+                .map_err(|error| format!("outbox 경로 중간({walked:?})의 실제 위치를 읽지 못했다: {error}"))?;
+            for (guarded, label) in [(&real_root, "체크포인트 루트"), (&real_run_root, "작업 출력 루트")] {
+                if real_prefix.starts_with(guarded) {
+                    return Err(format!(
+                        "--report-outbox({}) 가 {label}({}) 안을 지나간다(경로 중간 실제 위치 대조: {}) — 부팅 GC · 작업 정리가 그 자리를 지운다(결함 107 · 129 · 136 · 146)",
+                        outbox.display(),
+                        guarded.display(),
+                        walked.display()
+                    ));
+                }
+            }
+        }
+        walked.push(component);
+    }
     for (guarded, label) in [(&real_root, "체크포인트 루트"), (&real_run_root, "작업 출력 루트")] {
         if real_outbox.starts_with(guarded) {
             return Err(format!(
@@ -3199,6 +3210,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             Some(v) => PathBuf::from(v),
             None => default_checkpoint_root(),
         },
+        checkpoint_root_is_default: flags.get("--checkpoint-root").is_none(),
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
         renew_during_execution_ms: flags.u64_flag_with_default("--renew-during-execution-ms", 0)?,
@@ -3286,15 +3298,6 @@ fn default_fence_db_path() -> PathBuf {
 /// `--checkpoint-root`를 생략한 기존 호출도 안전하게 동작하도록
 /// 프로세스별 임시 root를 만든다. selftest가 root를 검사해야 하는 경우에는
 /// 명시적인 `--checkpoint-root`를 전달한다.
-/// 결함 134 — `default_checkpoint_root` 가 만드는 모양인가(임시 디렉터리 바로 아래 · `gputeer-checkpoints-` 로 시작).
-fn is_default_checkpoint_root(root: &std::path::Path) -> bool {
-    root.parent() == Some(std::env::temp_dir().as_path())
-        && root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("gputeer-checkpoints-"))
-}
-
 fn default_checkpoint_root() -> PathBuf {
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
@@ -3544,6 +3547,7 @@ mod tests {
             corrupt_renew_request_signature: false,
             fence_db_path: fence_path.clone(),
             checkpoint_root: tempdir.path().join("checkpoints"),
+            checkpoint_root_is_default: false,
             renew_rounds: 1,
             renew_delay_ms: 0,
             renew_during_execution_ms: 0,
@@ -4322,8 +4326,28 @@ mod report_session_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let mut default_root = config(dir.path(), "127.0.0.1:9");
         default_root.checkpoint_root = default_checkpoint_root();
+        default_root.checkpoint_root_is_default = true;
         let error = run(default_root).expect_err("기본 루트의 REPORT 는 거부돼야 한다");
         assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("134"), "{error}");
+        // 결함 147 — 기본 루트와 **똑같은 모양**이라도 기본값이 아니라고 들고 온 루트는 이 관문에서 막지 않는다. 연결 전에 끝나도록 이웃 신고 대상을 비워
+        //   다음 관문에서 멈춘다. outbox 계산이 시스템 임시 디렉터리에 만든 세 디렉터리는 끝에서 지운다.
+        let mut fixed = config(dir.path(), "127.0.0.1:9");
+        fixed.checkpoint_root = default_checkpoint_root();
+        let fixed_root = fixed.checkpoint_root.clone();
+        fixed.report_outbox_dir = None;
+        fixed.neighbor_report_rounds = 1;
+        fixed.neighbor_report_target_node_id = None;
+        let error = run(fixed).expect_err("이웃 신고 대상이 없어 멈춰야 한다");
+        // 정리는 판정과 따로 — 거부되면 디렉터리가 안 생긴다. 있는 것만 지우고(지우기 실패는 실패로), 판정은 그 뒤에 한다.
+        for suffix in ["", ".report-outbox", ".workload-run"] {
+            let mut path = fixed_root.clone().into_os_string();
+            path.push(suffix);
+            let path = PathBuf::from(path);
+            if path.exists() {
+                std::fs::remove_dir_all(&path).unwrap_or_else(|e| panic!("시험이 만든 {path:?} 를 지우지 못했다: {e}"));
+            }
+        }
+        assert!(error.contains("NEIGHBOR_REPORT_REFUSED") && !error.contains("기본 경로"), "기본값이 아닌 루트를 기본 루트로 거부했다: {error}");
         for flag in ["multi_agent", "resume_protocol"] {
             let mut config = config(dir.path(), "127.0.0.1:9");
             match flag {
@@ -4364,7 +4388,48 @@ mod report_session_tests {
         );
         config.report_outbox_dir = Some(link.clone());
         let error = report_outbox_dir(&config).expect_err("작업 출력 루트 아래 링크는 거부돼야 한다");
-        assert!(error.contains("경로 이름 대조") && error.contains("136"), "{error}");
+        assert!(error.contains("경로 중간 실제 위치 대조") && error.contains("146"), "{error}");
+        // 결함 146 · 150 — 다른 표기로 같은 링크를 가리켜도 거부한다.
+        let mut spellings: Vec<PathBuf> = Vec::new();
+        #[cfg(windows)]
+        {
+            let run_root_name = run_root.file_name().expect("이름").to_string_lossy().to_uppercase();
+            spellings.push(run_root.with_file_name(run_root_name).join("some-checkpoint").join("link"));
+            let verbatim = format!(r"\\?\{}", std::path::absolute(&link).expect("절대 경로").display());
+            spellings.push(PathBuf::from(verbatim));
+        }
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(dir.path().join("tmp")).expect("우회용");
+            spellings.push(dir.path().join("tmp").join("..").join(run_root.file_name().expect("이름")).join("some-checkpoint").join("link"));
+        }
+        for spelling in spellings {
+            config.report_outbox_dir = Some(spelling.clone());
+            let error = report_outbox_dir(&config).expect_err("다른 표기의 링크도 거부돼야 한다");
+            assert!(error.contains("경로 중간 실제 위치 대조"), "{spelling:?}: {error}");
+        }
+    }
+
+    /// 결함 146 — 루트를 지나 `..` 로 **되돌아 나가는** 경로는 삭제 범위 밖이라 받는다(이름 대조가 잘못 거부하던 모양).
+    #[test]
+    fn an_outbox_that_passes_through_the_root_and_back_out_is_accepted() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        std::fs::create_dir_all(&config.checkpoint_root).expect("루트");
+        let outbox = config.checkpoint_root.join("..").join("outside-outbox");
+        config.report_outbox_dir = Some(outbox.clone());
+        let accepted = report_outbox_dir(&config).expect("루트 밖으로 되돌아 나간 outbox 는 받아야 한다");
+        assert_eq!(accepted, std::path::absolute(&outbox).expect("절대 경로"));
+    }
+
+    /// 결함 148 — 공개 multi_agent 진입점을 직접 불러도 REPORT 세션은 거부한다.
+    #[test]
+    fn the_public_multi_agent_entry_refuses_a_report_session() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        config.multi_agent = true;
+        let error = multi_agent::run_multi_agent_session(&config).expect_err("multi_agent 진입점도 REPORT 를 거부해야 한다");
+        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("148"), "{error}");
     }
 
     /// REPORT 세션과 FRESH 보고를 함께 켜면 연결 전에 거부한다.
