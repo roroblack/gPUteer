@@ -611,9 +611,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         .set_nonblocking(true)
         .map_err(|e| format!("listener nonblocking failed: {e}"))?;
     let mut connection_count = 0u32;
-    // ★ 결함 124 (검수 65) — RENEW · REPORT 세션 수. FRESH 의 연결 번호는 "받은 연결 수 − 보조 세션 수" 다. 전에는 보조 세션도 번호를 올려,
-    //   기동 때 outbox 를 REPORT 로 보낸 Agent 의 FRESH(0) 가 기대값 1 과 달라 거부됐다.
-    let mut auxiliary_sessions = 0u32;
+    // ★ 결함 124 · 133 — 직전에 받아들인 FRESH Hello 의 연결 번호. FRESH 번호 규칙은 `serve_one_connection_impl` 의 대조에 적었다.
+    let mut last_fresh_attempt: Option<u32> = None;
     loop {
         if connection_count >= config.max_connections {
             return Err("max-connections reached before completed session".into());
@@ -638,7 +637,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &mut replay,
             &clock,
             connection_attempt,
-            &mut auxiliary_sessions,
+            &mut last_fresh_attempt,
         ) {
             Ok(()) => {
                 if connection_count >= config.max_connections {
@@ -1059,7 +1058,7 @@ fn serve_one_connection(
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
     connection_attempt: u32,
-    auxiliary_sessions: &mut u32,
+    last_fresh_attempt: &mut Option<u32>,
 ) -> Result<(), CoordinatorSessionError> {
     stream
         .set_nonblocking(false)
@@ -1082,7 +1081,7 @@ fn serve_one_connection(
         replay,
         clock,
         connection_attempt,
-        auxiliary_sessions,
+        last_fresh_attempt,
     )
     .map_err(|error| match error {
         SessionHandlerError::Legacy(message) => {
@@ -1104,7 +1103,7 @@ fn serve_one_connection_impl(
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
     connection_attempt: u32,
-    auxiliary_sessions: &mut u32,
+    last_fresh_attempt: &mut Option<u32>,
 ) -> Result<(), SessionHandlerError> {
     let now = clock.now_unix_ms();
     if config.resume_protocol {
@@ -1123,11 +1122,9 @@ fn serve_one_connection_impl(
     // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
     let hello = read_session_hello(config, stream, agent_keys, replay, clock)?;
     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
-        *auxiliary_sessions += 1;
         return serve_renew_session(config, stream, lease_store, signing_key, agent_keys, replay, clock);
     }
     if hello.mode == gputeer_protocol::constants::MODE_REPORT {
-        *auxiliary_sessions += 1;
         return serve_report_session(
             config,
             stream,
@@ -1150,15 +1147,21 @@ fn serve_one_connection_impl(
     }
     // FRESH 만 연결 번호를 대조한다 — Grant nonce 가 이 번호로 만들어진다. RENEW 는 실행 중 Agent 가 따로 여는 연결이라
     // Coordinator 의 연결 번호를 알 수 없다(단계 5a).
-    // ★ 결함 124 — 아래부터 `connection_attempt` 는 **FRESH 번호**(보조 세션을 뺀 값)다. Grant · ACK nonce 와 재접속 시험 조건이 모두 이 값을 쓴다.
-    //   Hello 를 읽지 못하고 끝난 연결은 어느 종류인지 몰라 FRESH 로 센다(전과 같다).
-    let connection_attempt = connection_attempt.saturating_sub(*auxiliary_sessions);
-    if hello.connection_attempt != connection_attempt {
+    // ★ 결함 124 · 133 (검수 65 · 재검수 65b) — 번호 규칙: FRESH Hello 의 번호가 **직전에 받아들인 FRESH 번호보다 크고, 받은 연결 수 이하** 면 받는다.
+    //   전에는 Coordinator 가 센 기대값과 **정확히 같아야** 했는데, 두 쪽이 따로 센 번호는 끊기는 연결 앞에서 어긋난다 — Hello 를 못 읽고 끝난
+    //   보조 연결(REPORT)은 Coordinator 만 세고 Agent 는 안 센다. 124 의 "보조 세션 차감" 은 그 경우를 못 막았다.
+    //   증가 규칙은 같은 번호의 재사용(nonce 재사용)을 막고, 상한은 받은 적 없는 연결 수만큼 번호를 건너뛰는 것을 막는다.
+    //   아래부터 `connection_attempt` 는 **Hello 의 번호**다 — Grant · ACK nonce 와 재접속 시험 조건이 이 값을 쓴다.
+    if hello.connection_attempt > connection_attempt
+        || last_fresh_attempt.is_some_and(|last| hello.connection_attempt <= last)
+    {
         return Err(session_protocol_error(format!(
-            "HELLO_REJECTED: connection_attempt 불일치 — 기대값 {} != {}",
-            connection_attempt, hello.connection_attempt
+            "HELLO_REJECTED: connection_attempt 가 규칙을 어겼다 — 받은 {} · 직전 FRESH {:?} · 받은 연결 번호 {}(직전보다 크고 받은 연결 번호 이하여야 한다)",
+            hello.connection_attempt, *last_fresh_attempt, connection_attempt
         )));
     }
+    *last_fresh_attempt = Some(hello.connection_attempt);
+    let connection_attempt = hello.connection_attempt;
     let mut grant = match &config.grant_from_control_db {
         // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은

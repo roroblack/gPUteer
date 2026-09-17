@@ -1325,6 +1325,56 @@ fn a_fresh_connection_after_a_report_session_keeps_connection_attempt_zero() {
     assert!(outcome.is_ok(), "{outcome:?}");
 }
 
+/// 결함 133 (재검수 65b) — Hello 도중 끊긴 보조 연결 뒤에도 FRESH(0) 를 받는다. 전에는 끊긴 연결을 FRESH 로 세어 기대값이 어긋났다.
+#[test]
+fn a_fresh_connection_after_a_report_connection_that_dropped_before_hello_is_accepted() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 3);
+    {
+        // Hello 를 보내지 않고 닫는다 — Coordinator 에게는 종류를 알 수 없는 끊긴 연결이다.
+        let dropped = connect_when_ready(fixture.address);
+        drop(dropped);
+    }
+    let report = terminal_report(fence_epoch);
+    {
+        let mut session = open_report_session(&fixture, 0, 230, &report);
+        let ack = read_ack(&mut session);
+        assert!(ack.created, "끊긴 연결 뒤의 REPORT 도 저장돼야 한다");
+    }
+    let mut fresh = connect_when_ready(fixture.address);
+    let grant = handshake_at(&mut fresh, 0);
+    assert_eq!(grant.attempt_id, ATTEMPT_ID, "끊긴 보조 연결 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    drop(fresh);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+/// 결함 133 — 번호 규칙의 거부 쪽: 받은 연결 수보다 큰 번호 · 직전 FRESH 와 같은 번호(재사용)는 거부한다.
+#[test]
+fn a_fresh_hello_that_skips_ahead_or_reuses_a_number_is_refused() {
+    let fixture = fixture();
+    let handle = spawn_coordinator_for_reports(&fixture, true, 3);
+    {
+        let mut first = connect_when_ready(fixture.address);
+        send_hello(&mut first, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 5, 40);
+        let mut rest = Vec::new();
+        let _closed = first.read_to_end(&mut rest);
+        assert!(rest.is_empty(), "받은 연결보다 큰 번호에 프레임이 왔다");
+    }
+    {
+        let mut ok = connect_when_ready(fixture.address);
+        handshake_at(&mut ok, 1);
+    }
+    let mut reuse = connect_when_ready(fixture.address);
+    send_hello(&mut reuse, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 1, 60);
+    let error = handle.join().expect("Coordinator 스레드").expect_err("재사용한 번호는 거부돼야 한다");
+    assert!(
+        error.starts_with("protocol: ") && error.contains("connection_attempt 가 규칙을 어겼다") && error.contains("받은 1 · 직전 FRESH Some(1)"),
+        "{error}"
+    );
+}
+
 /// 단계 6 — 같은 보고를 새 REPORT 세션으로 다시 보내면 저장소 멱등성대로 created=false 의 Ack 를 받는다(Agent 의 재전송 경로).
 #[test]
 fn the_same_report_resent_over_a_new_report_session_is_acknowledged_as_not_created() {

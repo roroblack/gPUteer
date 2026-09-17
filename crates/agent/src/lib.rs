@@ -411,10 +411,14 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   (연결 안 갱신 · revoke 대기 · replay 시험)을 함께 켜면 Coordinator 는 FRESH 에서 기다리고 Agent 는 REPORT Ack 를 기다린다.
     //   heartbeat · 이웃 신고는 REPORT 전에 끝나므로 여기 넣지 않는다.
     if config.report_over_session {
+        // ★ 결함 134 — multi_agent 는 outbox 재전송 전에 반환하고, resume_protocol 의 Coordinator 는 REPORT 를 받지 않는다 — 함께 켜지 않는다.
+        //   heartbeat · 이웃 신고는 **양쪽 횟수가 같을 때** REPORT 전에 끝난다(Coordinator 가 더 기다리면 이 목록으로도 못 막는다).
         let holding = [
             (config.do_renew, "--do-renew"),
             (config.expect_revoke_after_round.is_some(), "--expect-revoke-after-round"),
             (config.expect_replay, "--expect-replay"),
+            (config.multi_agent, "--multi-agent"),
+            (config.resume_protocol, "--resume-protocol"),
         ];
         if let Some((_, flag)) = holding.iter().find(|(enabled, _)| *enabled) {
             return Err(format!(
@@ -422,6 +426,14 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                  --report-over-session 과 함께 켤 수 없다(결함 127)"
             ));
         }
+    }
+    // ★ 결함 134 — 125 의 파서 관문을 지나지 않는 라이브러리 호출자도 막는다: outbox 를 명시하지 않았는데 체크포인트 루트가 기동마다 바뀌는
+    //   기본 루트(`default_checkpoint_root` 모양)면 거부한다.
+    if config.report_over_session && config.report_outbox_dir.is_none() && is_default_checkpoint_root(&config.checkpoint_root) {
+        return Err(
+            "REPORT_SESSION_CONFIG_REFUSED: 체크포인트 루트가 기동마다 바뀌는 기본 경로다 — 못 보낸 보고를 다음 기동이 찾지 못한다(결함 125 · 134)"
+                .to_string(),
+        );
     }
     // ★ 결함 107 — outbox 는 체크포인트 루트 **밖**이어야 한다. 위치를 못 정하거나 루트 안이면 연결하기 전에 거부한다.
     if config.report_over_session {
@@ -1909,6 +1921,25 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
     // ★ 결함 128 (검수 65) — 문자열 앞머리 비교는 대소문자(Windows) · junction · symlink · `..` 로 루트 안을 가리키며 통과했다.
     //   세 디렉터리를 만든 뒤 **실제 위치**(canonicalize)로 대조한다. 만드는 것은 부작용이지만 어차피 곧 쓸 자리다.
     // ★ 결함 129 (검수 65) — 체크포인트 루트뿐 아니라 **작업 출력 루트**(`<root>.workload-run`) 아래도 거부한다 — 실행 전 · 뒤에 재귀 삭제된다.
+    // ★ 결함 136 (재검수 65b) — 실제 위치만 보면 `<root>.workload-run/<id>/link`(바깥을 가리키는 링크)가 통과하는데, 작업 정리가 `<id>` 를 지우며
+    //   링크 자체가 사라진다. 그래서 **먼저** 절대 경로 문자열로 두 루트 아래인지 거부한다(삭제 범위는 경로 이름으로 정해진다).
+    // ★ 한계: 검사 뒤 경로를 바꿔치기하는 경쟁(TOCTOU)은 막지 못한다 — 핸들로 고정하지 않는다. 거부되는 설정도 디렉터리를 만든 흔적이 남는다.
+    let lexical = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
+        std::path::absolute(path).map_err(|error| format!("{what} 를 절대 경로로 바꿀 수 없다({path:?}): {error}"))
+    };
+    let lexical_outbox = lexical(&outbox, "outbox")?;
+    for (guarded, label) in [
+        (lexical(&config.checkpoint_root, "checkpoint root")?, "체크포인트 루트"),
+        (lexical(&workload_run_root(&config.checkpoint_root)?, "작업 출력 루트")?, "작업 출력 루트"),
+    ] {
+        if lexical_outbox.starts_with(&guarded) {
+            return Err(format!(
+                "--report-outbox({}) 가 {label}({}) 아래 경로다(경로 이름 대조) — 부팅 GC · 작업 정리가 보고를 지운다(결함 107 · 129 · 136)",
+                outbox.display(),
+                guarded.display()
+            ));
+        }
+    }
     let real = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
         fs::create_dir_all(path).map_err(|error| format!("{what} 디렉터리를 만들지 못했다({path:?}): {error}"))?;
         fs::canonicalize(path).map_err(|error| format!("{what} 의 실제 위치를 읽지 못했다({path:?}): {error}"))
@@ -3255,6 +3286,15 @@ fn default_fence_db_path() -> PathBuf {
 /// `--checkpoint-root`를 생략한 기존 호출도 안전하게 동작하도록
 /// 프로세스별 임시 root를 만든다. selftest가 root를 검사해야 하는 경우에는
 /// 명시적인 `--checkpoint-root`를 전달한다.
+/// 결함 134 — `default_checkpoint_root` 가 만드는 모양인가(임시 디렉터리 바로 아래 · `gputeer-checkpoints-` 로 시작).
+fn is_default_checkpoint_root(root: &std::path::Path) -> bool {
+    root.parent() == Some(std::env::temp_dir().as_path())
+        && root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("gputeer-checkpoints-"))
+}
+
 fn default_checkpoint_root() -> PathBuf {
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
@@ -4274,6 +4314,57 @@ mod report_session_tests {
         assert!(error.contains("작업 출력 루트") && error.contains("129"), "{error}");
         config.report_outbox_dir = Some(dir.path().join("elsewhere"));
         assert!(report_outbox_dir(&config).is_ok(), "루트 · 작업 출력 밖은 받아야 한다");
+    }
+
+    /// 결함 134 — 라이브러리 호출자가 기본 체크포인트 루트로 REPORT 를 켜면 run() 이 거부한다 · multi_agent · resume_protocol 조합도 거부한다.
+    #[test]
+    fn report_over_session_refuses_a_default_root_and_unsupported_lanes_in_run() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut default_root = config(dir.path(), "127.0.0.1:9");
+        default_root.checkpoint_root = default_checkpoint_root();
+        let error = run(default_root).expect_err("기본 루트의 REPORT 는 거부돼야 한다");
+        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("134"), "{error}");
+        for flag in ["multi_agent", "resume_protocol"] {
+            let mut config = config(dir.path(), "127.0.0.1:9");
+            match flag {
+                "multi_agent" => config.multi_agent = true,
+                _ => config.resume_protocol = true,
+            }
+            let error = run(config).expect_err("지원하지 않는 lane 조합은 거부돼야 한다");
+            assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 127"), "{flag}: {error}");
+        }
+    }
+
+    /// 결함 136 — 작업 출력 루트 아래 **링크**(바깥 디렉터리를 가리킨다)도 거부한다 — 실제 위치는 바깥이지만 작업 정리가 링크를 지운다.
+    #[test]
+    fn an_outbox_link_under_the_workload_run_root_that_points_outside_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        let run_root = workload_run_root(&config.checkpoint_root).expect("작업 출력 루트");
+        let checkpoint_dir = run_root.join("some-checkpoint");
+        std::fs::create_dir_all(&checkpoint_dir).expect("작업 출력 디렉터리");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("바깥 디렉터리");
+        let link = checkpoint_dir.join("link");
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&link)
+                .arg(&outside)
+                .output()
+                .expect("mklink 실행");
+            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+        assert!(
+            std::fs::canonicalize(&link).expect("링크의 실제 위치").starts_with(std::fs::canonicalize(&outside).expect("바깥")),
+            "대조: 링크의 실제 위치는 작업 출력 루트 밖이어야 한다"
+        );
+        config.report_outbox_dir = Some(link.clone());
+        let error = report_outbox_dir(&config).expect_err("작업 출력 루트 아래 링크는 거부돼야 한다");
+        assert!(error.contains("경로 이름 대조") && error.contains("136"), "{error}");
     }
 
     /// REPORT 세션과 FRESH 보고를 함께 켜면 연결 전에 거부한다.
