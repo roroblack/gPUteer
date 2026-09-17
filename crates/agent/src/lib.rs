@@ -1976,7 +1976,9 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
                 .is_symlink();
             if is_link {
                 return Err(format!(
-                    "--report-outbox({}) 경로에 링크(symlink · junction)가 있다({}) — 링크 너머의 자리가 작업 정리 · 부팅 GC 로 지워질 수 있다(결함 107 · 146 · 157).                      링크를 풀어 쓴 실제 경로를 --report-outbox 로 주고, 체크포인트 루트 · 작업 출력 루트를 다른 자리에 마운트한 경로는 쓰지 않는다                      (docs/manuals/Agent_보고_outbox_운영.md · 결함 169)",
+                    "--report-outbox({}) 경로에 링크(symlink · junction)가 있다({}) — 링크 너머의 자리가 작업 정리 · 부팅 GC 로 지워질 수 있다(결함 107 · 146 · 157). \
+                     링크를 풀어 쓴 실제 위치가 체크포인트 루트 · 작업 출력 루트 밖이면 그 실제 경로를 --report-outbox 로 주고, 루트 자신이거나 그 안이면 겹치지 않는 \
+                     별도 디렉터리를 준다. 두 루트를 다른 자리에 마운트한 경로는 쓰지 않는다(docs/manuals/Agent_보고_outbox_운영.md · 결함 169 · 181)",
                     outbox.display(),
                     walked.display()
                 ));
