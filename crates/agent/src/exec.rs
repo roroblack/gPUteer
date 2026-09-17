@@ -589,10 +589,15 @@ fn classify_linux_memory_peak(read: std::io::Result<String>) -> (Option<u64>, Op
 
 /// 결함 144 (검수 68) — 리눅스 `memory.max` 원문 읽기 결과의 분류. 숫자면 그 상한, 아니면 이 실행에 건 **정책 상한**으로 채우고 사유를 남긴다.
 /// ★ 전에는 부재 · 읽기 실패 · 해석 실패가 조용히 정책 상한이 됐다 — `memory.peak` 만 정상이면 사유 칸이 비었다.
-///   "max"(상한 없음)도 해석 실패로 사유를 남긴다 — 정책 상한을 걸었는데 max 로 읽히면 그 자체가 알릴 일이다.
+/// ★ 결함 173 (검수 68b) — 전에는 "max" 도 "해석하지 못했다" 로 적었다. `max` 는 cgroup v2 의 **유효한 "상한 없음" 표현**이라 틀린 말이다.
+///   이제 "상한 없음이 관측돼 이 실행에 건 정책 상한과 어긋난다" 로 따로 적는다. 여전히 실행 오류로 올리지는 않는다(종료 보고 경로를 건너뛰게 된다).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn classify_linux_memory_limit(read: std::io::Result<String>, policy_commit_limit_bytes: u64) -> (u64, Option<String>) {
     match read {
+        Ok(text) if text.trim() == "max" => (
+            policy_commit_limit_bytes,
+            Some("memory.max 가 max(상한 없음)로 관측됐다 — 이 실행에 건 정책 상한과 어긋난다 · 정책 상한으로 적었다".to_string()),
+        ),
         Ok(text) => match text.trim().parse::<u64>() {
             Ok(limit) => (limit, None),
             Err(_) => (
@@ -657,8 +662,12 @@ mod observation_classification_tests {
     #[test]
     fn a_linux_memory_limit_failure_keeps_the_policy_limit_and_its_reason_survives_a_good_peak() {
         assert_eq!(classify_linux_memory_limit(Ok("268435456\n".into()), 1), (268435456, None));
-        let (limit, garbage) = classify_linux_memory_limit(Ok("max\n".into()), 256);
+        // 결함 173 — max 는 "상한 없음" 으로, 진짜 해석 불가 값은 "해석하지 못했다" 로 가른다
+        let (limit, unlimited) = classify_linux_memory_limit(Ok("max\n".into()), 256);
+        assert!(limit == 256 && unlimited.as_deref().is_some_and(|e| e.contains("상한 없음") && e.contains("어긋난다")), "{unlimited:?}");
+        let (limit, garbage) = classify_linux_memory_limit(Ok("12k\n".into()), 256);
         assert!(limit == 256 && garbage.as_deref().is_some_and(|e| e.contains("memory.max") && e.contains("해석하지 못했다")), "{garbage:?}");
+        assert_ne!(unlimited, garbage, "상한 없음과 해석 불가의 사유가 같다");
         let (limit, absent) = classify_linux_memory_limit(Err(std::io::Error::from(std::io::ErrorKind::NotFound)), 256);
         assert!(limit == 256 && absent.as_deref().is_some_and(|e| e.contains("memory.max 가 없다")), "{absent:?}");
         let (limit, denied) = classify_linux_memory_limit(Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)), 256);
@@ -671,6 +680,10 @@ mod observation_classification_tests {
         let both = join_observation_errors(absent, peak_absent).expect("둘 다 사유");
         assert!(both.contains("memory.max 가 없다") && both.contains("memory.peak 가 없다"), "{both}");
         assert_eq!(join_observation_errors(None, None), None);
+        // 결함 172 (검수 68b) — memory.max 는 정상이고 peak 만 사유가 있는 조합. 이 분기만 None 으로 바꾸는 회귀를 잡는다
+        let (_, peak_denied) = classify_linux_memory_peak(Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+        assert!(peak_denied.is_some(), "시험 전제: peak 사유가 있어야 한다");
+        assert_eq!(join_observation_errors(None, peak_denied.clone()), peak_denied, "memory.max 가 정상이어도 peak 사유가 남아야 한다");
     }
 }
 
