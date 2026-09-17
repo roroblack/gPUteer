@@ -234,6 +234,14 @@ impl ConstrainedChild {
             .and_then(|text| text.trim().parse().ok())
     }
 
+    /// `memory.peak` 원문 읽기 — 실패 사유를 버리지 않는다(결함 81).
+    ///
+    /// ★ `peak_memory_bytes()` 는 부재 · 읽기 실패 · 해석 실패를 모두 `None` 으로 접는다. 보고에 "왜 비었나" 를 남기려면 원문 결과가
+    ///   필요하다 — 분류는 호출자(agent `exec::classify_linux_memory_peak`)가 한다. 부재는 보통 `memory.peak` 가 없는 커널이다.
+    pub fn read_memory_peak_file(&self) -> std::io::Result<String> {
+        std::fs::read_to_string(self.cgroup.join("memory.peak"))
+    }
+
     /// 이 cgroup 에 실제로 걸린 상한(바이트).
     pub fn memory_limit_bytes(&self) -> Option<u64> {
         std::fs::read_to_string(self.cgroup.join("memory.max"))

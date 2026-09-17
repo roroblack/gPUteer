@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-17 09:56 — 결함 79 · 81 일부 · 종료 · 메모리 관측 분류를 플랫폼 밖 순수 함수로 · 리눅스 memory.peak 실패 사유 보존
+
+- 계획: 결함 리포트 79 · 81 조치(착수 기록)
+- 스트림: Agent · QA
+- 수행: Windows 경로의 wait · 코드 조회 · 메모리 조회 결과 분류를 `classify_wait_result` · `classify_windows_memory` 로 떼어 실패 결과를 직접 넣어 시험한다(79).
+  리눅스는 runtime-linux `read_memory_peak_file` 원문을 agent `classify_linux_memory_peak` 가 부재 · 읽기 실패 · 해석 실패로 갈라
+  `memory_observation_error` 에 사유를 남긴다(81 — 전에는 늘 None). ★ OS 실패 주입은 없고, agent 의 리눅스 연결 두 줄은 타입 검사도 못 했다 — 둘 다 열린 채다
+- 검증: agent · cli 116 passed · 0 failed · 경고 0 · selftest 97 · 뮤테이션 N1~N3 3/3 · runtime-linux cross-check 통과. 리눅스 미실행
+- 원본: `docs/evidence/_raw/결함79_81_관측_분류_시험_2026-09-17.txt`
+- 리포트: 결함 리포트 77~81 절
+
+---
+
 ## 2026-09-17 09:47 — 결함 95 첫 슬라이스 · Lease 누적 시간 한도 경계를 규범에 맞춤 · 결함 88 설계 계획
 
 - 계획: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` 결함 95 조치의 (a) · `docs/plans/2026-09-17_0950_Coordinator_replay_영속화_설계.md`(88, 코드 무변경)
