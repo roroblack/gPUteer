@@ -4283,6 +4283,39 @@ mod startup_gc_tests {
         assert!(resume.is_some(), "완결 체크포인트가 재개 지점으로 찾히지 않는다");
     }
 
+    /// 결함 154 (통합 브랜치 — REPORT 세션 × 기동 GC) — outbox 가 체크포인트 루트 **안**이면(Windows 는 대소문자만 다른 표기 포함) `run()` 이
+    /// **기동 GC 전에** REPORT_SESSION_CONFIG_REFUSED 로 멈추고, 그 자리에 있던 `.report` · `.report.rejected` 가 남는다.
+    /// ★ 대조 — 같은 배치에서 REPORT 세션 없이 기동하면 기동 GC 가 그 두 파일을 지운다(시험이 공허하지 않다 · 순서가 바뀌면 여기서 드러난다).
+    #[test]
+    fn an_outbox_inside_the_root_is_refused_before_startup_gc_and_its_reports_survive() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("cp");
+        start_once(&root);
+        let mut spellings = vec![root.join("outbox-partial")];
+        #[cfg(windows)]
+        spellings.push(root.with_file_name("CP").join("OUTBOX-PARTIAL"));
+        for spelling in spellings {
+            let outbox = root.join("outbox-partial");
+            fs::create_dir_all(&outbox).expect("루트 안 outbox 자리");
+            let unsent = outbox.join("0011223344556677.report");
+            let quarantined = outbox.join("8899aabbccddeeff.report.rejected");
+            fs::write(&unsent, b"unsent").expect("보내지 못한 보고");
+            fs::write(&quarantined, b"evidence").expect("격리한 보고");
+
+            let mut config = config_stopping_after_startup(&root);
+            config.report_over_session = true;
+            config.report_outbox_dir = Some(spelling.clone());
+            let error = run(config).expect_err("루트 안 outbox 는 거부돼야 한다");
+            assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED"), "{spelling:?}: 다른 이유로 멈췄다: {error}");
+            assert!(unsent.exists() && quarantined.exists(), "{spelling:?}: 거부 전에 기동 GC 가 돌아 보고를 지웠다");
+
+            // 대조 — REPORT 세션 없이 같은 루트로 기동하면 기동 GC 가 매니페스트 없는 그 디렉터리의 두 파일을 지운다
+            let plain = run(config_stopping_after_startup(&root)).expect_err("fence :memory: 에서 멈춘다");
+            assert!(!plain.contains("REPORT_SESSION_CONFIG_REFUSED"), "대조가 REPORT 거부로 멈췄다: {plain}");
+            assert!(!unsent.exists() && !quarantined.exists(), "대조: 기동 GC 가 루트 안 보고를 지우지 않았다 — 위 보존 단언이 공허하다");
+        }
+    }
+
     /// run() 이 연결 · fence DB 보다 **먼저** 기동 GC 를 부른다 — 뒤에서 멈추는 설정이어도 PARTIAL 은 이미 치워져 있다.
     #[test]
     fn run_collects_partial_checkpoints_before_anything_else() {
