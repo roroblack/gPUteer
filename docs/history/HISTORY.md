@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-17 09:22 — 재검수 64 대응 · 결함 111 ~ 113(옛 Job 의 Manifest 부재 분류 · From<String> 통로 · 뮤테이션 원본)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12b
+- 스트림: Coordinator · QA
+- 수행: 저장된 예약 lane 에서 Manifest 행이 없는 옛 Job 을 저장소 장애가 아니라 거부로 분류했다(111). `From<String> for StoredGrantError` 를 지우고
+  거부 지점마다 Refused 를 적어 분류 누락을 컴파일 오류로 만들었다(112). 뮤테이션 원본에 패치와 실패 출력을 싣는다(113).
+  grant_from_stored.rs 의 틀린 rusqlite 주석을 정정했다
+- 검증: 323 passed · 0 failed · 경고 0 · selftest 시나리오 줄 97 · 뮤테이션 2/2 기대대로(M42 caught · M43 compile_error). 리눅스 미실행
+- 원본: `docs/evidence/_raw/B+E_결함111_113_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/64_재검수_결함104_106_CHANGES_REQUESTED_알트.txt`
+- 리포트: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` (111~113)
+
+---
+
 ## 2026-09-17 05:19 — 재검수 62 대응 · 결함 104 ~ 106(저장된 예약 lane 의 저장소 장애 타입 분류 · 99 음성 테스트 · 서술)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12

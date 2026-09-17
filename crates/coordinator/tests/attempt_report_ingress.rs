@@ -960,6 +960,40 @@ fn a_corrupt_stored_lease_row_on_the_stored_lane_stops_the_listener() {
     assert!(error.contains("Lease 조회 실패"), "{error}");
 }
 
+/// 결함 111 (재검수 64) — Manifest 행이 없는 옛 hash-only Job 은 저장소 장애가 아니라 **거부**다. 첫 연결이 거부돼도 리스너는 두 번째
+///   연결을 받는다. 104 는 이것까지 Storage 로 묶어 옛 Job 하나로 리스너를 멈췄다.
+#[test]
+fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting() {
+    let fixture = fixture();
+    {
+        let db = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
+        let changed = db
+            .execute("DELETE FROM coordinator_job_manifests WHERE job_id = ?1", [JOB_ID])
+            .expect("Manifest 행 삭제");
+        assert_eq!(changed, 1, "fixture 의 Manifest 행이 하나 있어야 한다");
+    }
+    let handle = spawn_coordinator_with(&fixture, 2, &[]);
+    let mut first = connect_when_ready(fixture.address);
+    send_hello(&mut first, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    // Coordinator 가 거부하고 닫을 때까지 기다린다. 닫힘은 EOF 로도 연결 재설정 오류로도 온다 — 어느 쪽이든 닫힌 것이다.
+    let mut rest = Vec::new();
+    let closed = first.read_to_end(&mut rest);
+    assert!(rest.is_empty(), "거부된 연결에 프레임이 왔다({} 바이트, {closed:?})", rest.len());
+    // Storage 로 분류했다면 리스너가 멈춰 이 연결이 거부되거나, 아래 join 이 저장소 문구로 끝난다.
+    let mut second = TcpStream::connect_timeout(&fixture.address, Duration::from_secs(2))
+        .expect("첫 거부 뒤에도 리스너가 두 번째 연결을 받아야 한다");
+    second.set_write_timeout(Some(Duration::from_secs(10))).expect("쓰기 타임아웃");
+    send_hello(&mut second, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 1, 120);
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("마지막 연결의 거부는 오류로 끝난다");
+    assert!(
+        error.contains("GRANT_REFUSED") && error.contains("옛 Job") && !error.contains("저장된 Manifest 를 읽지 못했다"),
+        "{error}"
+    );
+}
+
 /// 결함 105 (재검수 62) — `--revoke-before-renew` 의 revoke 저장이 락 시한으로 실패하면 Storage(fail-closed)다(결함 99 의 음성 테스트).
 ///   순서로 보장한다 — Grant 를 받은 뒤 ACK 를 보류하고, 다른 연결로 BEGIN IMMEDIATE 를 잡은 다음 ACK 를 보낸다(lease 저장소 busy
 ///   timeout 1초). 리스너가 멈추고 revoke 는 기록되지 않는다.

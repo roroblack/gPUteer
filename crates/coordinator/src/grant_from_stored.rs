@@ -53,7 +53,7 @@
 use gputeer_crypto::{sign, Ed25519Verifier, KeyDirectory, SigningKey};
 use gputeer_protocol::pb;
 
-use crate::job_store::{CoordinatorJobStore, JobState};
+use crate::job_store::{CoordinatorJobStore, JobState, JobStoreError};
 use crate::lease_store::CoordinatorLeaseStore;
 use crate::staging_store::CoordinatorStagingStore;
 use crate::unsigned_lease_from_stored;
@@ -110,12 +110,8 @@ impl std::fmt::Display for StoredGrantError {
     }
 }
 
-/// 문자열 오류는 거부다 — 저장소 장애는 호출 지점에서 `Storage` 로 직접 만든다.
-impl From<String> for StoredGrantError {
-    fn from(message: String) -> Self {
-        Self::Refused(message)
-    }
-}
+// ★ 결함 112 (재검수 64) — `From<String> for StoredGrantError`(= Refused)를 두지 않는다. 있으면 저장소 호출에 `format!` 으로 감싼 `?` 를
+//   더해도 컴파일되면서 거부로 분류된다. 지점마다 `Refused` · `Storage` 를 쓰게 해 분류 누락을 컴파일 오류로 만든다.
 
 /// 파일로 내는 경로(`issue-grant`)는 문구만 쓴다.
 impl From<StoredGrantError> for String {
@@ -149,7 +145,7 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     let job = jobs
         .get(&request.job_id)
         .map_err(|e| StoredGrantError::Storage(format!("Job 조회 실패: {e}")))?
-        .ok_or_else(|| format!("GRANT_REFUSED: {} 를 모른다", request.job_id))?;
+        .ok_or_else(|| StoredGrantError::Refused(format!("GRANT_REFUSED: {} 를 모른다", request.job_id)))?;
     if job.state != JobState::Staging {
         return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Job 이 STAGING 이 아니다(현재 {:?}) — 예약 없이 Grant 를 만들지 않는다",
@@ -161,15 +157,15 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         .get_attempt(&request.attempt_id)
         .map_err(|e| StoredGrantError::Storage(format!("Attempt 조회 실패: {e}")))?
         .ok_or_else(|| {
-            format!(
+            StoredGrantError::Refused(format!(
                 "GRANT_REFUSED: Attempt {} 가 저장소에 없다",
                 request.attempt_id
-            )
+            ))
         })?;
     let stored_lease = leases
         .get(&request.lease_id)
         .map_err(|e| StoredGrantError::Storage(format!("Lease 조회 실패: {e}")))?
-        .ok_or_else(|| format!("GRANT_REFUSED: Lease {} 가 저장소에 없다", request.lease_id))?;
+        .ok_or_else(|| StoredGrantError::Refused(format!("GRANT_REFUSED: Lease {} 가 저장소에 없다", request.lease_id)))?;
 
     // ── 한 행만 믿지 않는다 ─────────────────────────────────────────
     for (label, left, right) in [
@@ -206,8 +202,9 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     //
     //   그래서 이건 **입력 검증이 아니라 손상 방어**다. 값어치가 없다는
     //   뜻은 아니지만, "테스트가 지키고 있다" 고 말하면 거짓이다.
-    //   고정하려면 rusqlite 로 행을 직접 망가뜨리는 테스트가 필요하고
-    //   이 crate 의 통합 테스트에는 그 의존성이 없다.
+    //   고정하려면 rusqlite 로 행을 직접 망가뜨리는 테스트가 필요하다.
+    //   ★ 2026-09-17 정정 — 여기 "이 crate 의 통합 테스트에는 그 의존성이 없다" 고 적혀 있었다. 틀렸다 —
+    //     `tests/attempt_report_ingress.rs` 가 rusqlite 로 행을 망가뜨린다(결함 104 · 111). 위 두 대조를 고정하는 테스트는 아직 없다.
     if attempt.fence_epoch != stored_lease.fence_epoch {
         return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Attempt 와 Lease 의 fence epoch 가 다르다(Attempt {}, Lease {}) — 오래된 한쪽으로 Grant 를 만들면 fencing 이 무의미해진다",
@@ -225,10 +222,10 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         .get_node_reservation(&stored_lease.holder_node_id)
         .map_err(|e| StoredGrantError::Storage(format!("예약 조회 실패: {e}")))?
         .ok_or_else(|| {
-            format!(
+            StoredGrantError::Refused(format!(
                 "GRANT_REFUSED: {} 에 예약이 없다 — Lease 는 있는데 노드가 안 잡혀 있다",
                 stored_lease.holder_node_id
-            )
+            ))
         })?;
     if reservation.job_id != request.job_id || reservation.attempt_id != request.attempt_id {
         return Err(StoredGrantError::Refused(format!(
@@ -265,13 +262,20 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     // 어긋나면 `get_manifest_binding()` 이 오류를 낸다.
     let binding = jobs
         .get_manifest_binding(&request.job_id)
-        // 저장된 Manifest 를 읽지 못한 것은 저장소 장애다(결함 104) — 없는 것(아래)은 거부다.
-        .map_err(|e| StoredGrantError::Storage(format!("저장된 Manifest 를 읽지 못했다: {e}")))?
+        // 저장된 Manifest 를 읽지 못한 것은 저장소 장애다(결함 104) — 없는 것은 거부다.
+        // ★ 결함 111 (재검수 64) — Job 은 있고 Manifest 행만 없는 옛 hash-only Job 은 `Ok(None)` 이 아니라 `LegacyManifestMissing` 이다.
+        //   그것까지 Storage 로 묶어 옛 Job 하나가 리스너를 멈췄다. 본문 손상 · I/O · 락은 그대로 Storage 다.
+        .map_err(|e| match e {
+            JobStoreError::LegacyManifestMissing { job_id } => StoredGrantError::Refused(format!(
+                "GRANT_REFUSED: {job_id} 는 서명된 Manifest 없이 저장된 옛 Job 이다 — 실을 Manifest 가 없다"
+            )),
+            other => StoredGrantError::Storage(format!("저장된 Manifest 를 읽지 못했다: {other}")),
+        })?
         .ok_or_else(|| {
-            format!(
+            StoredGrantError::Refused(format!(
                 "GRANT_REFUSED: {} 의 저장된 Manifest 가 없다",
                 request.job_id
-            )
+            ))
         })?;
     let verified = gputeer_protocol::verify(
         &binding.manifest,
@@ -281,9 +285,9 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         &mut gputeer_protocol::signing::NoReplayCheck,
     )
     .map_err(|e| {
-        format!(
+        StoredGrantError::Refused(format!(
             "GRANT_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?} — 저장될 때는 유효했더라도 그 사이 제출자가 신뢰 목록에서 빠졌거나 Manifest 가 만료됐을 수 있다"
-        )
+        ))
     })?;
     // ★ Agent 는 **받는 시각**으로 Manifest 를 검증한다. Grant 가 Manifest 보다
     //   오래 살면 Grant 는 유효한데 Manifest 는 만료된 구간이 생긴다(설계 논의 36).
@@ -353,7 +357,8 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     //       · `--out` 에 기존 파일이 있었다면 못 쓰는 Grant 로 덮인다
     //
     //     닫으려면 Coordinator 공개키 목록이 필요하고 아직 없다.
-    verify_own_output(&grant, key, request.issued_at_unix_ms)?;
+    // 자기 검증 실패는 저장소 장애가 아니다 — 메모리 keyring 으로 보고, 입력 정책(수명 상한 등) 실패도 포함한다(재검수 64).
+    verify_own_output(&grant, key, request.issued_at_unix_ms).map_err(StoredGrantError::Refused)?;
     Ok(grant)
 }
 
