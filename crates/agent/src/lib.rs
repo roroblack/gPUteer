@@ -2724,11 +2724,17 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
     }
     let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(&real_root).map_err(|error| {
         format!(
-            "CHECKPOINT_STARTUP_GC_FAILED: 체크포인트 루트({})의 부분 체크포인트를 정리하지 못했다 — 시작하지 않는다: {error}",
-            root.display()
+            "CHECKPOINT_STARTUP_GC_FAILED: 체크포인트 루트({} · 실제 위치 {})의 부분 체크포인트를 정리하지 못했다 — 시작하지 않는다: {error}",
+            root.display(),
+            real_root.display()
         )
     })?;
-    println!("CHECKPOINT_STARTUP_GC root={} dirs={dirs} removed={removed}", root.display());
+    // ★ 결함 161 (재검수 66c) — 입력 경로만 찍으면 별칭일 때 실제로 정리한 자리를 알 수 없다.
+    println!(
+        "CHECKPOINT_STARTUP_GC root={} real_root={} dirs={dirs} removed={removed}",
+        root.display(),
+        real_root.display()
+    );
     Ok(CheckpointRootLock { _file: file, real_root })
 }
 
@@ -2747,7 +2753,14 @@ fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트의 실제 위치를 읽지 못했다({root:?}): {error}"))
 }
 
-/// 결함 152 — `\\?\X:\…` 에서 접두사를 떼도 같은 경로로 읽히면 뗀다. 길이(248 이상) · 끝이 점 · 공백인 이름 · 장치 이름(CON 등)이 있거나 UNC 면 그대로 둔다.
+/// 결함 160 (재검수 66c) — 접두사를 뗄 수 있는 루트 길이(접두사 제외)의 상한. 전에는 루트만 248 자 미만이면 뗐는데, 그 아래 만들어지는 경로
+/// (`<root>\start-<64>\.durability.writing.write_once.lock` 약 107 자 · `<root>.workload-run\start-<64>\stdout.log` 95 자)가 260 자를 넘어 긴 경로 opt-in 이 없는
+/// Windows 에서 열리지 않았다(이전 코드는 입력의 verbatim 접두사를 파생 경로까지 유지했다). 120 + 107 = 227 — 모르는 임시 이름 접미사에 32 자를 남긴다.
+/// 이보다 긴 루트는 verbatim 을 유지해 파생 경로도 긴 경로로 열린다.
+#[cfg_attr(not(windows), allow(dead_code))]
+const VERBATIM_STRIP_MAX_ROOT_LEN: usize = 120;
+
+/// 결함 152 · 160 — `\\?\X:\…` 에서 접두사를 떼도 같은 경로로 읽히면 뗀다. 길이(VERBATIM_STRIP_MAX_ROOT_LEN 이상) · 끝이 점 · 공백인 이름 · 장치 이름(CON 등)이 있거나 UNC 면 그대로 둔다.
 #[cfg(windows)]
 fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     let Some(text) = path.to_str() else { return path };
@@ -2762,7 +2775,7 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
         let stem = component.split('.').next().unwrap_or("").to_ascii_uppercase();
         !component.ends_with('.') && !component.ends_with(' ') && !DEVICES.contains(&stem.as_str())
     });
-    if drive_form && rest.len() < 248 && plain_components {
+    if drive_form && rest.len() < VERBATIM_STRIP_MAX_ROOT_LEN && plain_components {
         PathBuf::from(rest)
     } else {
         path
@@ -4270,6 +4283,25 @@ mod startup_gc_tests {
         }
         let long = format!(r"\\?\C:\{}", "a".repeat(260));
         assert_eq!(without_verbatim_prefix(PathBuf::from(&long)), PathBuf::from(&long));
+        // 결함 160 — 경계는 루트 길이만이 아니라 그 아래 파생 경로가 260 자 안에 들어오게 정했다. 실제 이름으로 가장 긴 파생 접미사를 계산해 확인한다.
+        let checkpoint_id = start_checkpoint_id("job", "attempt", "grant");
+        let suffixes = [
+            format!(r"\{checkpoint_id}\.durability.writing.write_once.lock"),
+            format!(r".workload-run\{checkpoint_id}\{}", exec::STDOUT_FILENAME),
+            format!(r".report-outbox\{}.report.rejected", "0".repeat(32)),
+        ];
+        let longest = suffixes.iter().map(String::len).max().expect("접미사");
+        assert!(VERBATIM_STRIP_MAX_ROOT_LEN - 1 + longest + 32 < 260, "경계 {VERBATIM_STRIP_MAX_ROOT_LEN} 에서 파생 경로가 260 자를 넘는다: 가장 긴 접미사 {longest}");
+        let just_below = format!(r"\\?\C:\{}", "b".repeat(VERBATIM_STRIP_MAX_ROOT_LEN - 4));
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(&just_below)),
+            PathBuf::from(&just_below[4..]),
+            "경계 바로 아래는 떼야 한다"
+        );
+        let at_bound = format!(r"\\?\C:\{}", "b".repeat(VERBATIM_STRIP_MAX_ROOT_LEN - 3));
+        assert_eq!(without_verbatim_prefix(PathBuf::from(&at_bound)), PathBuf::from(&at_bound), "경계부터는 verbatim 을 유지해야 한다");
+        let two_hundred = format!(r"\\?\C:\{}", "c".repeat(197));
+        assert_eq!(without_verbatim_prefix(PathBuf::from(&two_hundred)), PathBuf::from(&two_hundred), "검수 66c 반례(200 자 루트)");
     }
 
     /// 결함 138 (검수 66) — 잡혀 있는 루트를 **별칭**(Windows junction · unix symlink)으로 불러도 같은 잠금이라 시작하지 않는다.
