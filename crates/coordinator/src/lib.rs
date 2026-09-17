@@ -1152,9 +1152,12 @@ fn serve_one_connection_impl(
     //   보조 연결(REPORT)은 Coordinator 만 세고 Agent 는 안 센다. 124 의 "보조 세션 차감" 은 그 경우를 못 막았다.
     //   133 은 "받은 연결 번호 이하" 상한도 뒀는데 그 전제(Agent 의 connect 성공 수 ≤ Coordinator 의 accept 수)가 틀렸다 — 클라이언트는 SYN-ACK 로
     //   연결을 확정하고, 마지막 ACK · Hello 가 유실되면 서버는 accept 하지 못한다(재검수 65c · RFC 9293). 그래서 상한을 없앴다.
-    //   증가 규칙이 막는 것은 같은 번호의 재사용(= 같은 Grant · ACK nonce)이다. 번호를 건너뛰는 것은 서명한 Agent 만 할 수 있고 nonce 를 재사용하지 않는다.
-    // ★ 한계(124 이전부터): Agent 만 재기동하면 번호가 0 으로 돌아가 같은 Coordinator 실행에서는 거부된다 · 큰 번호 한 번이 뒤의 작은 번호를 막는다(서명자만)
-    //   · 양쪽을 재기동하면 같은 grant_id · 번호 0 의 nonce 가 다시 같아진다(유도 nonce 의 범위 — 결함 88 계획).
+    //   증가 규칙이 막는 것은 **같은 Coordinator 실행 안에서** 같은 번호의 재사용(= 같은 Grant · ACK nonce)이다.
+    // ★ 결함 156 (재검수 65d) — 여기 "번호를 건너뛰는 것은 서명한 Agent 만" · "양쪽을 재기동하면 nonce 가 같아진다" 고 적었었다 — 보장보다 강했다.
+    //   **새** 번호를 만들려면 서명키가 필요하지만, 서명은 작성자를 인증할 뿐 연결한 쪽을 증명하지 않는다. 이미 서명된 Hello · ACK 를 확보한 쪽은
+    //   (1) 도착 전 Hello 를 가로채 먼저 전달하거나 (2) **Coordinator 만** 재시작한 뒤 유효시간 안에 재전송해 같은 번호 · 같은 Grant nonce 를 받고
+    //   과거 ACK 로 대조를 통과할 수 있다 — replay guard 가 in-memory 라서다(결함 88 · 계획 `docs/plans/2026-09-17_0950_Coordinator_replay_영속화_설계.md`).
+    // ★ 한계(124 이전부터): Agent 만 재기동하면 번호가 0 으로 돌아가 같은 Coordinator 실행에서는 거부된다 · 큰 번호의 Hello 한 번(서명된 것의 재전송 포함)이 뒤의 작은 번호를 막는다.
     //   아래부터 `connection_attempt` 는 **Hello 의 번호**다 — Grant · ACK nonce 와 재접속 시험 조건이 이 값을 쓴다.
     // 받은 연결 번호(`connection_attempt` 인자)는 이제 판정에 쓰지 않는다 — 145 가 상한을 없앴다.
     let _ = connection_attempt;
