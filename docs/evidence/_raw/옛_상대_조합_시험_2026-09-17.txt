@@ -1,0 +1,170 @@
+# 옛 상대 조합 시험 원본 (2026-09-17 10:42, Windows 개발 기계)
+# 옛 바이너리: 7d5a9fe(D2 커밋 5064c1c 의 부모)를 **별도 target 디렉터리**로 빌드 — Compiling gputeer 10줄 전부 그 분리 worktree 경로
+#   sha256 182f4fe5cf73c313c3890afac4b14faee8a48ed7c9f7b8f6f41d930311037550
+# 새 바이너리: 이 worktree 를 로컬 crate 지우고 다시 빌드(Compiling 10 · 밖 0) — sha256 06a36dca9a2bed41efe65cb4687185e08389d6fb55a0f6e0ae524f58fa8ed697
+# ★ 공유 target 으로 옛 바이너리를 만든 첫 시도는 옛 · 옛(같은 해시)이라 버렸다 — 결함 130
+# 실행 1: 판정 전 테스트(새 Agent 도 실패를 기대) — 새 Agent 가 성공해 실패. 결함 131 로 기록하고 그 테스트를 덫으로 바꿨다
+# 실행 2: 덫으로 바꾼 뒤 3 passed
+
+## 새 바이너리 빌드
+   Compiling gputeer-protocol v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\protocol)
+   Compiling gputeer-runtime-policy v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-policy)
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-windows)
+   Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\crypto)
+   Compiling gputeer-runtime-nvml v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-nvml)
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\checkpoint)
+   Compiling gputeer-scheduler v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\scheduler)
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\coordinator)
+   Compiling gputeer-agent v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\agent)
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.70s
+  Executable tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+
+
+## 실행 1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+
+running 3 tests
+test a_new_agent_and_an_old_coordinator_both_fail_explicitly ... === 새 Agent · 옛 Coordinator · agent: success=true hung=false elapsed_ms=757
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-8188-1789609238036940300 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609238063 expires_at_unix_ms=1789609298063
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 Agent · 옛 Coordinator · coordinator: success=false hung=false elapsed_ms=1261
+--- stdout ---
+READY 127.0.0.1:61329
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61334
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+SESSION_ERROR peer=127.0.0.1:61334 connection_attempt=0 kind=protocol error=protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609238061, nonce: [151, 251, 71, 94, 42, 140, 254, 208, 106, 19, 185, 255, 38, 94, 25, 242], node_signature: [124, 214, 235, 4, 144, 41, 252, 60, 167, 91, 233, 57, 29, 31, 0, 3, 0, 170, 225, 196, 60, 222, 175, 144, 8, 158, 228, 197, 222, 164, 30, 143, 1, 27, 184, 72, 102, 36, 210, 180, 248, 120, 95, 28, 214, 74, 237, 98, 214, 254, 215, 188, 124, 173, 142, 106, 100, 63, 235, 168, 20, 8, 249, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+coordinator-stub 실패: protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609238061, nonce: [151, 251, 71, 94, 42, 140, 254, 208, 106, 19, 185, 255, 38, 94, 25, 242], node_signature: [124, 214, 235, 4, 144, 41, 252, 60, 167, 91, 233, 57, 29, 31, 0, 3, 0, 170, 225, 196, 60, 222, 175, 144, 8, 158, 228, 197, 222, 164, 30, 143, 1, 27, 184, 72, 102, 36, 210, 180, 248, 120, 95, 28, 214, 74, 237, 98, 214, 254, 215, 188, 124, 173, 142, 106, 100, 63, 235, 168, 20, 8, 249, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+
+
+thread 'a_new_agent_and_an_old_coordinator_both_fail_explicitly' (8584) panicked at crates\cli\tests\old_peer_combination.rs:169:5:
+새 Agent 가 옛 Coordinator 와 성공으로 끝났다 — 조합이 조용히 통과했다
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... === 옛 Agent · 새 Coordinator · agent: success=false hung=false elapsed_ms=10063
+--- stdout ---
+
+--- stderr ---
+agent-stub 실패: RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+
+=== 옛 Agent · 새 Coordinator · coordinator: success=false hung=false elapsed_ms=10084
+--- stdout ---
+READY 127.0.0.1:61335
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61336
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+SESSION_ERROR peer=127.0.0.1:61336 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 프레임이 완결되기 전에 스트림이 끊겼다
+coordinator-stub 실패: transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 프레임이 완결되기 전에 스트림이 끊겼다
+
+ok
+test the_same_new_binary_on_both_sides_succeeds ... === 새 · 새(대조) · agent: success=true hung=false elapsed_ms=158
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-18584-1789609248248653900 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609248291 expires_at_unix_ms=1789609308291
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 · 새(대조) · coordinator: success=true hung=false elapsed_ms=281
+--- stdout ---
+READY 127.0.0.1:61361
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61362
+SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+
+ok
+
+failures:
+
+failures:
+    a_new_agent_and_an_old_coordinator_both_fail_explicitly
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.63s
+
+error: test failed, to rerun pass `-p gputeer-cli --test old_peer_combination`
+
+
+## 실행 2
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.86s
+     Running tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+
+running 3 tests
+test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... === 옛 Agent · 새 Coordinator · agent: success=false hung=false elapsed_ms=10102
+--- stdout ---
+
+--- stderr ---
+agent-stub 실패: RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+
+=== 옛 Agent · 새 Coordinator · coordinator: success=false hung=false elapsed_ms=10126
+--- stdout ---
+READY 127.0.0.1:61446
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61447
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+SESSION_ERROR peer=127.0.0.1:61447 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+coordinator-stub 실패: transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+
+ok
+test the_same_new_binary_on_both_sides_succeeds ... === 새 · 새(대조) · agent: success=true hung=false elapsed_ms=112
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-21332-1789609329180968300 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609329207 expires_at_unix_ms=1789609389207
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 · 새(대조) · coordinator: success=true hung=false elapsed_ms=238
+--- stdout ---
+READY 127.0.0.1:61456
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61457
+SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+
+ok
+test today_a_new_agent_reports_success_against_an_old_coordinator_that_failed ... === 새 Agent · 옛 Coordinator · agent: success=true hung=false elapsed_ms=107
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-18128-1789609329432110700 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609329454 expires_at_unix_ms=1789609389454
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 Agent · 옛 Coordinator · coordinator: success=false hung=false elapsed_ms=150
+--- stdout ---
+READY 127.0.0.1:61458
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61459
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+SESSION_ERROR peer=127.0.0.1:61459 connection_attempt=0 kind=protocol error=protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609329452, nonce: [80, 217, 138, 68, 177, 112, 17, 124, 100, 102, 68, 210, 171, 8, 149, 174], node_signature: [224, 36, 113, 97, 112, 96, 247, 126, 137, 150, 193, 218, 108, 198, 5, 195, 88, 178, 170, 204, 123, 210, 86, 127, 39, 153, 4, 90, 65, 170, 139, 225, 179, 249, 141, 8, 164, 217, 18, 101, 170, 64, 214, 45, 220, 90, 177, 208, 252, 34, 235, 230, 173, 18, 147, 244, 90, 15, 32, 114, 115, 225, 237, 6] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+coordinator-stub 실패: protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609329452, nonce: [80, 217, 138, 68, 177, 112, 17, 124, 100, 102, 68, 210, 171, 8, 149, 174], node_signature: [224, 36, 113, 97, 112, 96, 247, 126, 137, 150, 193, 218, 108, 198, 5, 195, 88, 178, 170, 204, 123, 210, 86, 127, 39, 153, 4, 90, 65, 170, 139, 225, 179, 249, 141, 8, 164, 217, 18, 101, 170, 64, 214, 45, 220, 90, 177, 208, 252, 34, 235, 230, 173, 18, 147, 244, 90, 15, 32, 114, 115, 225, 237, 6] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.53s
+
