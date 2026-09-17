@@ -1976,7 +1976,7 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
                 .is_symlink();
             if is_link {
                 return Err(format!(
-                    "--report-outbox({}) 경로에 링크(symlink · junction)가 있다({}) — 링크 너머의 자리가 작업 정리 · 부팅 GC 로 지워질 수 있다(결함 107 · 146 · 157)",
+                    "--report-outbox({}) 경로에 링크(symlink · junction)가 있다({}) — 링크 너머의 자리가 작업 정리 · 부팅 GC 로 지워질 수 있다(결함 107 · 146 · 157).                      링크를 풀어 쓴 실제 경로를 --report-outbox 로 주고, 체크포인트 루트 · 작업 출력 루트를 다른 자리에 마운트한 경로는 쓰지 않는다                      (docs/manuals/Agent_보고_outbox_운영.md · 결함 169)",
                     outbox.display(),
                     walked.display()
                 ));
@@ -4485,7 +4485,10 @@ mod report_session_tests {
     #[test]
     fn an_outbox_that_leaves_the_root_through_a_deletable_subdirectory_is_refused() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
-        let mut config = config(dir.path(), "127.0.0.1:9");
+        // ★ 결함 171 — TMPDIR 이 symlink 인 환경에서는 기반 경로의 링크 거부가 먼저 난다. 기반 경로만 실제 위치로 바꾼 뒤 `sub/../..` 를 붙인다
+        //   (완성된 outbox 를 canonicalize 하면 시험하려는 `..` 가 사라진다).
+        let base = std::fs::canonicalize(dir.path()).expect("임시 디렉터리 실제 위치");
+        let mut config = config(&base, "127.0.0.1:9");
         std::fs::create_dir_all(config.checkpoint_root.join("sub")).expect("루트 안 하위");
         config.report_outbox_dir = Some(config.checkpoint_root.join("sub").join("..").join("..").join("outside-outbox"));
         let error = report_outbox_dir(&config).expect_err("지워질 수 있는 하위 디렉터리를 지나는 경로는 거부돼야 한다");

@@ -1157,7 +1157,8 @@ fn serve_one_connection_impl(
     //   **새** 번호를 만들려면 서명키가 필요하지만, 서명은 작성자를 인증할 뿐 연결한 쪽을 증명하지 않는다. 이미 서명된 메시지를 확보한 쪽이 할 수 있는 것은 둘이다:
     //   (1) **선행 전달** — 아직 도착하지 않은 Hello 를 가로채 먼저 보낸다. Coordinator 에게는 처음 보는 메시지라 replay 기록을 영속화해도 막지 못한다
     //       (막으려면 연결 자체의 인증 — TLS 등 — 이 필요하다).
-    //   (2) **재시작 뒤 재전송** — **Coordinator 만** 재시작한 뒤 유효시간 안에 옛 Hello · ACK 를 다시 보내 같은 번호 · 같은 Grant nonce 를 받고 대조를 통과한다.
+    //   (2) **재시작 뒤 재전송** — **Coordinator 만** 재시작한 뒤 유효시간 안에 옛 Hello · ACK 를 다시 보내 같은 번호 · 같은 Grant nonce 를 받고, **재시작한 Coordinator 가
+    //       같은 grant_id · attempt_id · Agent 신원으로 발급하면** ACK 의 nonce · 식별자 대조도 통과할 수 있다(결함 170 — 조건 없이 통과하는 것이 아니다).
     //       이것은 replay guard 가 in-memory 라서다(결함 88 — 계획은 fix/lease-max-duration-boundary 브랜치의 Coordinator replay 영속화 설계).
     //   ★ 결함 164 (재검수 65e) — 전에는 두 경우를 "in-memory 라서" 한 원인으로 묶고, 이 브랜치에 없는 계획 파일을 경로로 적었다.
     // ★ 한계(124 이전부터): Agent 만 재기동하면 번호가 0 으로 돌아가 같은 Coordinator 실행에서는 거부된다 · 큰 번호의 Hello 한 번(서명된 것의 재전송 포함)이 뒤의 작은 번호를 막는다.
