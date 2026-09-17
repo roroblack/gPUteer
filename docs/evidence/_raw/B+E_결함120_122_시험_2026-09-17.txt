@@ -1,0 +1,62 @@
+# 결함 120 · 121 · 122 (재검수 64b) — 시험 원본 (2026-09-17 09:47)
+# coordinator attempt_report_ingress passed=26 failed=0 ignored=0 warning 줄=0
+# ★ 범위: 바뀐 것은 이 테스트 파일과 grant_from_stored.rs 의 주석뿐이라 ingress 테스트만 다시 돌렸다(주석 변경도 이 실행에서 컴파일됐다).
+#   selftest · cli 는 다시 돌리지 않았다
+# ★ 결함 121 — M42 실패 출력에 Coordinator 의 실제 결과(storage: …)가 들어 있다
+
+# 뮤테이션 결함 111 · 112 (재검수 64) — 2026-09-17 09:46
+baseline -p gputeer-coordinator --test attempt_report_ingress -- legacy_job exit=0
+    test a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting ... ok
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.58s
+caught        (기대 caught) M42 옛 Job 의 Manifest 부재를 다시 Storage 로(결함 111 이전)
+    패치 -             JobStoreError::LegacyManifestMissing { job_id } => StoredGrantError::Refused(format!(
+    패치 +             JobStoreError::LegacyManifestMissing { job_id } => StoredGrantError::Storage(format!(
+    출력 test a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting ... FAILED
+    출력 thread 'a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting' (19752) panicked at crates\coordinator\tests\attempt_report_ingress.rs:996:13:
+    출력 첫 거부 뒤에도 리스너가 두 번째 연결을 받아야 한다: connection timed out — Coordinator 결과 Err("storage: GRANT_REFUSED: job-1 는 서명된 Manifest 없이 저장된 옛 Job 이다 — 실을 Manifest 가 없다")
+    출력 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+    출력 
+    출력 error: test failed, to rerun pass `-p gputeer-coordinator --test attempt_report_ingress`
+compile_error (기대 compile_error) M43 거부 지점 하나를 감싸지 않은 문자열로(결함 112 — From<String> 이 없으면 컴파일이 막는다)
+    패치 -         .ok_or_else(|| StoredGrantError::Refused(format!("GRANT_REFUSED: {} 를 모른다", request.job_id)))?;
+    패치 +         .ok_or_else(|| format!("GRANT_REFUSED: {} 를 모른다", request.job_id))?;
+    출력 error[E0277]: `?` couldn't convert the error to `StoredGrantError`
+    출력 error: could not compile `gputeer-coordinator` (lib) due to 1 previous error
+합계 기대대로 2/2
+
+
+# ── cargo test ──
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be\crates\coordinator)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.89s
+     Running tests\attempt_report_ingress.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\attempt_report_ingress-0a7826e9dc935abe.exe)
+
+running 26 tests
+test a_hello_with_a_broken_signature_is_rejected_not_missing ... ok
+test a_hello_for_another_mode_is_refused ... ok
+test a_first_frame_that_is_not_a_hello_is_refused_as_hello_missing ... ok
+test a_forged_signature_is_refused_before_the_store ... ok
+test a_corrupt_stored_lease_row_on_the_stored_lane_stops_the_listener ... ok
+test a_fresh_renew_whose_lease_lives_in_another_store_stops_the_listener ... ok
+test a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting ... ok
+test a_first_frame_whose_content_mentions_the_lease_store_does_not_stop_the_listener ... ok
+test a_non_terminal_outcome_is_refused_with_the_outcome_value ... ok
+test a_renew_session_for_a_lease_issued_by_another_coordinator_is_refused_before_the_store_changes ... ok
+test a_report_for_another_job_is_refused_by_job_id ... ok
+test a_report_for_another_attempt_is_refused_by_attempt_id ... ok
+test a_renew_session_with_a_lower_fence_epoch_is_superseded ... ok
+test a_renew_session_without_a_lease_db_is_refused ... ok
+test a_renew_session_on_a_new_connection_renews_the_stored_lease ... ok
+test a_report_from_another_fence_epoch_is_refused_by_fence_epoch ... ok
+test a_second_report_that_contradicts_the_first_is_refused ... ok
+test a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store ... ok
+test a_signed_terminal_report_crosses_the_wire_and_lands_in_the_store ... ok
+test a_session_that_expects_no_reports_behaves_exactly_as_before ... ok
+test an_unexpected_frame_in_place_of_the_ack_is_named_by_kind_without_its_content ... ok
+test a_v2_report_with_an_observed_zero_exit_crosses_the_wire_and_is_stored ... ok
+test an_ack_whose_grant_id_mentions_the_lease_store_does_not_stop_the_listener ... ok
+test the_same_report_sent_twice_is_idempotent ... ok
+test a_revoke_store_lock_timeout_before_renew_stops_the_listener ... ok
+test with_a_durable_lease_store_an_ack_mentioning_lease_failure_does_not_stop_the_listener ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.96s
+

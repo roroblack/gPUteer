@@ -265,6 +265,8 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         // 저장된 Manifest 를 읽지 못한 것은 저장소 장애다(결함 104) — 없는 것은 거부다.
         // ★ 결함 111 (재검수 64) — Job 은 있고 Manifest 행만 없는 옛 hash-only Job 은 `Ok(None)` 이 아니라 `LegacyManifestMissing` 이다.
         //   그것까지 Storage 로 묶어 옛 Job 하나가 리스너를 멈췄다. 본문 손상 · I/O · 락은 그대로 Storage 다.
+        // ★ 결함 122 (재검수 64b) — 한계: **현대 Job 의 Manifest 행이 유실된** 손상도 이 분기로 와 거부(Refused)가 된다. 저장 형식에
+        //   "Manifest 와 함께 제출됐다" 는 출처 표식이 없어 옛 Job 과 가를 수 없다. 가르려면 저장 형식을 바꿔야 한다 — 이번에 하지 않는다.
         .map_err(|e| match e {
             JobStoreError::LegacyManifestMissing { job_id } => StoredGrantError::Refused(format!(
                 "GRANT_REFUSED: {job_id} 는 서명된 Manifest 없이 저장된 옛 Job 이다 — 실을 Manifest 가 없다"

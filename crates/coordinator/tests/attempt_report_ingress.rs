@@ -975,22 +975,38 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
     let handle = spawn_coordinator_with(&fixture, 2, &[]);
     let mut first = connect_when_ready(fixture.address);
     send_hello(&mut first, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
-    // Coordinator 가 거부하고 닫을 때까지 기다린다. 닫힘은 EOF 로도 연결 재설정 오류로도 온다 — 어느 쪽이든 닫힌 것이다.
+    // Coordinator 가 거부하고 닫을 때까지 기다린다.
+    // ★ 결함 120 (재검수 64b) — 닫힘으로 인정하는 것은 EOF 와 연결 재설정 · 중단뿐이다. 시한 초과(TimedOut · WouldBlock)는 닫힘이 아니다.
     let mut rest = Vec::new();
-    let closed = first.read_to_end(&mut rest);
-    assert!(rest.is_empty(), "거부된 연결에 프레임이 왔다({} 바이트, {closed:?})", rest.len());
-    // Storage 로 분류했다면 리스너가 멈춰 이 연결이 거부되거나, 아래 join 이 저장소 문구로 끝난다.
-    let mut second = TcpStream::connect_timeout(&fixture.address, Duration::from_secs(2))
-        .expect("첫 거부 뒤에도 리스너가 두 번째 연결을 받아야 한다");
+    match first.read_to_end(&mut rest) {
+        Ok(_) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ) => {}
+        Err(error) => panic!("첫 연결이 닫히지 않았다(읽기 {:?}): {error}", error.kind()),
+    }
+    assert!(rest.is_empty(), "거부된 연결에 프레임이 왔다({} 바이트)", rest.len());
+    // Storage 로 분류했다면 리스너가 멈춰 이 연결이 거부된다 — 그때는 Coordinator 가 무엇으로 끝났는지 함께 남긴다(결함 121).
+    let mut second = match TcpStream::connect_timeout(&fixture.address, Duration::from_secs(2)) {
+        Ok(stream) => stream,
+        Err(connect_error) => {
+            let outcome = handle.join().expect("Coordinator 스레드");
+            panic!("첫 거부 뒤에도 리스너가 두 번째 연결을 받아야 한다: {connect_error} — Coordinator 결과 {outcome:?}");
+        }
+    };
     second.set_write_timeout(Some(Duration::from_secs(10))).expect("쓰기 타임아웃");
     send_hello(&mut second, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 1, 120);
     let error = handle
         .join()
         .expect("Coordinator 스레드")
         .expect_err("마지막 연결의 거부는 오류로 끝난다");
+    // ★ 결함 120 — 분류를 본다. TCP 연결 성공은 두 번째 accept 의 증거가 아니다 — Storage 로 끝난 Coordinator 가 listener 를 놓기 전에
+    //   연결이 성립할 수 있다. 그때 돌아오는 오류는 "storage: GRANT_REFUSED: … 옛 Job …" 이라 문구만으로는 가를 수 없다.
     assert!(
-        error.contains("GRANT_REFUSED") && error.contains("옛 Job") && !error.contains("저장된 Manifest 를 읽지 못했다"),
-        "{error}"
+        error.starts_with("protocol: ") && error.contains("GRANT_REFUSED") && error.contains("옛 Job"),
+        "옛 Job 의 거부는 protocol 분류여야 한다: {error}"
     );
 }
 

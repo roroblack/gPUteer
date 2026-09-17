@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-17 09:47 — 재검수 64b 대응 · 결함 120 ~ 122(111 테스트의 분류 단언 · M42 증거 · Manifest 행 유실 한계)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12b
+- 스트림: QA
+- 수행: 옛 Job 테스트가 마지막 오류의 `protocol:` 분류를 요구하고, 첫 연결 닫힘을 EOF · 연결 재설정 · 중단으로만 인정하며, 두 번째 연결이 실패하면
+  Coordinator 결과를 실패 메시지에 싣는다(120 · 121). 현대 Job 의 Manifest 행 유실도 거부로 분류되는 한계를 주석에 적었다(122)
+- 검증: attempt_report_ingress 26 passed · 0 failed · 경고 0 · 뮤테이션 M42 caught(Coordinator 결과 storage 문구 포함) · M43 compile_error.
+  selftest · cli 미실행(테스트 · 주석만 변경)
+- 원본: `docs/evidence/_raw/B+E_결함120_122_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/64b_재검수_결함111_113_CHANGES_REQUESTED.txt`
+- 리포트: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` (120~122)
+
+---
+
 ## 2026-09-17 09:22 — 재검수 64 대응 · 결함 111 ~ 113(옛 Job 의 Manifest 부재 분류 · From<String> 통로 · 뮤테이션 원본)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12b
