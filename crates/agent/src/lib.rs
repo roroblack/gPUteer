@@ -2741,9 +2741,19 @@ struct CheckpointRootLock {
 
 /// 결함 152 · 153 — 루트를 독점 · 정리하고 설정의 루트를 실제 위치로 바꾼다. run() 이 부르고 시험도 부른다.
 /// ★ 한계: canonicalize 뒤 디렉터리 자체를 바꿔치기하는 경쟁은 핸들 고정 없이 막지 못한다 — 운영 제약(루트 · 그 부모를 다른 프로세스가 바꾸지 않는다)이다.
+/// ★ 결함 199 (검수 70 · 통합) — 전에는 잠금 · 표식 · **기동 GC 를 끝낸 뒤** 루트를 실제 위치로 바꿨다. run() 의 REPORT outbox 사전 검사는 **입력** 루트
+///   기준이라, 별칭 루트 A -> R 에서 A.report-outbox 는 통과하고 GC 가 R.report-outbox(-> R 안) 의 보고를 지운 뒤에야 실제 루트 기준으로 거부됐다.
+///   이제 (1) 잠금 · 표식 · 실제 위치 확정 (2) 설정 루트를 실제 위치로 (3) **실제 루트 기준 REPORT outbox 검사** (4) 기동 GC 순서다.
+///   ★ 거부돼도 (1) 의 흔적(잠금 파일 · 빈 루트면 표식)은 남는다 — 삭제는 하지 않는다. 검사 뒤 경로를 바꿔치기하는 경쟁(TOCTOU)은 막지 못한다(잠금 중에도).
 fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock, String> {
-    let lock = claim_checkpoint_root_and_collect(&config.checkpoint_root)?;
+    let input_root = config.checkpoint_root.clone();
+    let lock = claim_checkpoint_root(&input_root)?;
     config.checkpoint_root = lock.real_root.clone();
+    if config.report_over_session {
+        report_outbox_dir(config)
+            .map_err(|error| format!("REPORT_SESSION_CONFIG_REFUSED: (실제 루트 기준 · 기동 GC 전 · 결함 199) {error}"))?;
+    }
+    collect_startup_partials(&input_root, &lock.real_root)?;
     Ok(lock)
 }
 
@@ -2765,7 +2775,16 @@ fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock
 ///   표식은 fsync 하지 않는다 — 잃으면 다음 기동이 거부한다(가용성 쪽으로 닫힌다). 이 판 이전 Agent 가 쓰던 루트도 거부된다(운영자가 확인 뒤 표식을 만든다).
 /// ★ 결함 138 (검수 66) — 잠금 · 표식은 루트를 만든 뒤 **실제 위치**(canonicalize)의 형제로 정한다. 전에는 절대 경로 문자열의 형제라 junction ·
 ///   symlink 별칭으로 부른 두 Agent 가 서로 다른 잠금을 얻고 서로의 PARTIAL 을 지울 수 있었다. GC 도 실제 위치에 돈다.
+/// ★ 결함 199 — run() 은 이 둘 사이에 실제 루트 기준 검사를 넣어야 해서 settle_checkpoint_root 가 따로 부른다. 이 묶음은 시험만 쓴다.
+#[cfg(test)]
 fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
+    let lock = claim_checkpoint_root(root)?;
+    collect_startup_partials(root, &lock.real_root)?;
+    Ok(lock)
+}
+
+/// 결함 199 — 루트 독점(잠금 · 표식 · 실제 위치)만 한다. 기동 GC 는 `collect_startup_partials` 가 따로 한다 — 그 사이에 실제 루트 기준 검사를 넣기 위해서다.
+fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
     let real_root = real_checkpoint_root(root)?;
     let lock_path = checkpoint_root_sibling(&real_root, ".agent-lock")?;
     if let Some(parent) = lock_path.parent() {
@@ -2824,7 +2843,12 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
             .and_then(|mut marker| marker.write_all(b"gputeer agent checkpoint root v1\n"))
             .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 루트 표식을 쓰지 못했다({owner_marker:?}): {error}"))?;
     }
-    let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(&real_root).map_err(|error| {
+    Ok(CheckpointRootLock { _file: file, real_root })
+}
+
+/// 결함 85 · 199 — 독점한 실제 루트의 부팅 GC. 반드시 `claim_checkpoint_root` 가 돌려준 잠금을 쥔 채로 부른다.
+fn collect_startup_partials(root: &std::path::Path, real_root: &std::path::Path) -> Result<(), String> {
+    let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(real_root).map_err(|error| {
         format!(
             "CHECKPOINT_STARTUP_GC_FAILED: 체크포인트 루트({} · 실제 위치 {})의 부분 체크포인트를 정리하지 못했다 — 시작하지 않는다: {error}",
             root.display(),
@@ -2838,7 +2862,7 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
         root.display(),
         real_root.display()
     );
-    Ok(CheckpointRootLock { _file: file, real_root })
+    Ok(())
 }
 
 /// 체크포인트 루트의 형제 디렉터리 `<부모>/<루트 이름><suffix>` — 작업 출력 · outbox(결함 107)가 같이 쓴다.
@@ -4314,6 +4338,67 @@ mod startup_gc_tests {
             assert!(!plain.contains("REPORT_SESSION_CONFIG_REFUSED"), "대조가 REPORT 거부로 멈췄다: {plain}");
             assert!(!unsent.exists() && !quarantined.exists(), "대조: 기동 GC 가 루트 안 보고를 지우지 않았다 — 위 보존 단언이 공허하다");
         }
+    }
+
+    /// 결함 199 — 디렉터리 링크(Windows junction · unix symlink)를 만든다.
+    fn link_dir(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).output().expect("mklink 실행");
+            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+    }
+
+    /// 결함 199 (검수 70 · 통합) — 별칭 루트 A -> R. 입력 루트 기준 기본 outbox(A.report-outbox)는 일반 디렉터리라 사전 검사를 통과하지만, 실제 루트 기준
+    /// 기본 outbox(R.report-outbox)는 R 안으로 가는 링크다. run() 은 **기동 GC 전에** 실제 루트 기준으로 거부하고 R 안의 보고는 남아야 한다.
+    /// ★ 대조 둘 — 입력 루트 기준 검사만으로는 통과한다 · REPORT 세션 없이 A 로 기동하면 GC 가 같은 보고를 지운다.
+    #[test]
+    fn an_alias_root_whose_real_default_outbox_links_into_the_root_is_refused_before_startup_gc() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let real = dir.path().join("real");
+        start_once(&real);
+        let alias = dir.path().join("alias");
+        link_dir(&real, &alias);
+        let inner = real.join("outbox");
+        fs::create_dir_all(&inner).expect("R 안 보고 자리");
+        let unsent = inner.join("0011223344556677.report");
+        let quarantined = inner.join("8899aabbccddeeff.report.rejected");
+        fs::write(&unsent, b"unsent").expect("보내지 못한 보고");
+        fs::write(&quarantined, b"evidence").expect("격리한 보고");
+        link_dir(&inner, &dir.path().join("real.report-outbox"));
+
+        let mut config = config_stopping_after_startup(&alias);
+        config.report_over_session = true;
+        assert!(report_outbox_dir(&config).is_ok(), "대조: 입력 루트 기준 기본 outbox 는 사전 검사를 통과해야 이 시험이 순서를 잰다");
+        let error = run(config).expect_err("실제 루트 기준 기본 outbox 는 거부돼야 한다");
+        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("199"), "실제 루트 기준 거부가 아니다: {error}");
+        assert!(unsent.exists() && quarantined.exists(), "거부 전에 기동 GC 가 돌아 R 안의 보고를 지웠다");
+
+        let plain = run(config_stopping_after_startup(&alias)).expect_err("fence :memory: 에서 멈춘다");
+        assert!(!plain.contains("REPORT_SESSION_CONFIG_REFUSED"), "대조가 REPORT 거부로 멈췄다: {plain}");
+        assert!(!unsent.exists() && !quarantined.exists(), "대조: 기동 GC 가 R 안의 보고를 지우지 않았다 — 위 보존 단언이 공허하다");
+    }
+
+    /// 결함 199 — 별칭 루트 A -> R 로 기동하며 명시 outbox 를 **실제** 작업 출력 루트(R.workload-run) 안에 주면, 입력 루트 기준(A.workload-run)으로는
+    /// 통과하지만 run() 은 실제 루트 기준으로 거부해야 한다(작업 정리가 그 보고를 지울 수 있다).
+    #[test]
+    fn an_alias_root_with_an_explicit_outbox_inside_the_real_workload_run_root_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let real = dir.path().join("real");
+        start_once(&real);
+        let alias = dir.path().join("alias");
+        link_dir(&real, &alias);
+        let outbox = dir.path().join("real.workload-run").join("some-checkpoint");
+        fs::create_dir_all(&outbox).expect("실제 작업 출력 루트 안 자리");
+
+        let mut config = config_stopping_after_startup(&alias);
+        config.report_over_session = true;
+        config.report_outbox_dir = Some(outbox);
+        assert!(report_outbox_dir(&config).is_ok(), "대조: 입력 루트 기준으로는 통과해야 이 시험이 실제 루트 기준 검사를 잰다");
+        let error = run(config).expect_err("실제 작업 출력 루트 안 outbox 는 거부돼야 한다");
+        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("199"), "실제 루트 기준 거부가 아니다: {error}");
     }
 
     /// run() 이 연결 · fence DB 보다 **먼저** 기동 GC 를 부른다 — 뒤에서 멈추는 설정이어도 PARTIAL 은 이미 치워져 있다.

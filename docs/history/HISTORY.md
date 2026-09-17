@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-17 13:36 — 검수 70 대응 · 결함 199 · 200(통합 — 실제 루트 기준 outbox 검사를 기동 GC 전에 · 기동 GC 범위)
+
+- 계획: `docs/plans/2026-09-17_0930_Agent_기동_GC_연결.md`
+- 스트림: Agent · QA
+- 수행: 루트 독점(잠금 · 표식 · 실제 위치)과 기동 GC 를 `claim_checkpoint_root` · `collect_startup_partials` 로 가르고, 설정 루트를 실제 위치로 바꾼 뒤 GC 전에 REPORT outbox 를 다시 검사한다(199). run() 을 거치는 별칭 루트 시험 둘을 더했다. 운영 문서의 기동 GC 범위를 일반 · Resume 기동으로 좁혔다(200)
+- 검증: 결함 130 절차로 488 passed · 0 failed · 경고 0 · selftest 97 · 합계 기대대로 2/2 — 검출 2 · 기대 미검출 0 · 리눅스 미실행
+- 원본: `docs/evidence/_raw/결함199_200_통합_별칭루트_실제루트기준_outbox_검사_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/70_검수_통합_결함154_CHANGES_REQUESTED_알트.txt`
+- 리포트: 결함 리포트 199 · 200
+
+---
+
 ## 2026-09-17 13:19 — 통합 브랜치 · 결함 154(REPORT outbox 거부가 기동 GC 보다 먼저)
 
 - 계획: `docs/plans/2026-09-17_0930_Agent_기동_GC_연결.md` · `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md`
