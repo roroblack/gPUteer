@@ -90,16 +90,20 @@ struct Finished {
 ///   **출력 완료 시각**을 그 마감과 비교한다. ★ 채널 시한은 읽기 스레드나 파이프를 문 후손을 끝내지 않는다(판정만 한다).
 const OUTPUT_DEADLINE: Duration = Duration::from_secs(10);
 
-/// 출력 전체와 **읽기가 끝난 시각**(EOF 를 본 시각)을 함께 보낸다(결함 193).
+/// 출력 전체와 **읽기를 끝낸 시각**을 함께 보낸다(결함 193).
+/// ★ 결함 198 (재검수 69d) — 전에는 문자열 변환 **뒤** 전송 직전에 시각을 찍고 "EOF 를 본 시각" 이라 적었다. 이제 `read_to_end` 가 돌아온 **직후**
+///   (EOF 또는 읽기 오류로 끝난 직후 · 변환 전)에 찍는다. 그래도 커널이 EOF 를 알린 정확한 순간은 아니다(스레드 스케줄 지연이 들어간다).
 fn drain(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<(String, Instant)> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut out = Vec::new();
-        let text = match pipe.read_to_end(&mut out) {
+        let result = pipe.read_to_end(&mut out);
+        let finished_reading = Instant::now();
+        let text = match result {
             Ok(_) => String::from_utf8_lossy(&out).to_string(),
             Err(error) => format!("{}<출력 읽기 실패: {error}>", String::from_utf8_lossy(&out)),
         };
-        let _receiver_may_be_gone = sender.send((text, Instant::now()));
+        let _receiver_may_be_gone = sender.send((text, finished_reading));
     });
     receiver
 }
@@ -187,11 +191,13 @@ fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: 
         let _ready_read = reader.read_line(&mut line);
         let _receiver_may_be_gone = ready_sender.send(line.clone());
         let mut rest = String::new();
-        let tail = match reader.read_to_string(&mut rest) {
+        let result = reader.read_to_string(&mut rest);
+        let finished_reading = Instant::now(); // 결함 198 — 읽기를 끝낸 직후(조합 전)
+        let tail = match result {
             Ok(_) => rest,
             Err(error) => format!("{rest}<나머지 stdout 읽기 실패: {error}>"),
         };
-        let _receiver_may_be_gone = stdout_sender.send((format!("{line}{tail}"), Instant::now()));
+        let _receiver_may_be_gone = stdout_sender.send((format!("{line}{tail}"), finished_reading));
     });
     // ★ 결함 176 — 여기서 panic 해도 `coordinator` 가드가 자식을 끝낸다.
     let ready = ready_receiver.recv_timeout(Duration::from_secs(20)).expect("coordinator READY 시한");
@@ -227,7 +233,8 @@ fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: 
     }
     let finish = |guarded: &Guarded, stdout: mpsc::Receiver<(String, Instant)>, stderr: mpsc::Receiver<(String, Instant)>| {
         let (status, hung, elapsed, observed_at) = guarded.outcome.expect("끝났다");
-        // ★ 결함 193 — 마감은 이 자식의 종료 관측 시각에 고정한다(스트림마다 새로 주지 않는다)
+        // ★ 결함 193 — 마감은 이 자식의 종료 **관측** 시각에 고정한다(스트림마다 새로 주지 않는다).
+        // ★ 결함 198 — 관측은 감시 주기(20ms)와 다른 자식을 기다린 시간만큼 실제 종료보다 늦을 수 있다 — "실제 종료 뒤 10초" 보장이 아니다
         let deadline = observed_at + OUTPUT_DEADLINE;
         let (stdout, stdout_late) = collect_by(stdout, deadline);
         let (stderr, stderr_late) = collect_by(stderr, deadline);
@@ -318,41 +325,57 @@ fn an_old_agent_and_a_new_coordinator_both_fail_explicitly() {
     );
 }
 
-/// 읽기 시한 초과의 OS 오류 번호(`FramingError::Io` 표시 끝의 `(os error N)`) — Windows `WSAETIMEDOUT` · Linux `EAGAIN` · 그 밖의 unix(BSD 계열) `EAGAIN`.
-/// ★ Windows 번호만 실행으로 봤다(2026-09-17 원본의 옛 Agent 줄). unix 번호는 set_read_timeout 문서 · errno 표 근거이고 리눅스에서 돌리지 않았다.
+/// 읽기 시한 초과의 OS 오류 번호(`FramingError::Io` 표시 **끝**의 `(os error N)`) — Windows `WSAETIMEDOUT`(10060) · unix 는 `EAGAIN`(= `EWOULDBLOCK`).
+/// ★ 결함 197 (재검수 69d) — 전에 "Linux 가 아닌 unix 는 35" 로 묶었는데 Android · Solaris · illumos 의 EAGAIN 은 11 이다. 플랫폼을 나열하고,
+///   나열하지 않은 플랫폼은 번호를 정하지 않는다 — 판정이 늘 **실패**해(조용한 통과가 아니다) 번호를 정하라고 알린다.
+/// ★ Windows 번호만 실행으로 봤다(2026-09-17 원본). unix 번호는 libc errno 정의 근거이고 unix 에서 돌리지 않았다.
 #[cfg(windows)]
 const READ_TIMEOUT_OS_ERROR: &str = "(os error 10060)";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "solaris", target_os = "illumos"))]
 const READ_TIMEOUT_OS_ERROR: &str = "(os error 11)";
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 const READ_TIMEOUT_OS_ERROR: &str = "(os error 35)";
+#[cfg(not(any(
+    windows,
+    target_os = "linux", target_os = "android", target_os = "solaris", target_os = "illumos",
+    target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"
+)))]
+const READ_TIMEOUT_OS_ERROR: &str = "<이 플랫폼의 읽기 시한 오류 번호를 정하지 않았다 — 판정은 늘 실패한다>";
 
-/// 두 쪽 IO_TIMEOUT(10초)에서 여유를 뺀 하한 — 시한 초과로 끝난 쪽은 적어도 이만큼 돌았어야 한다.
+/// 두 쪽 IO_TIMEOUT(10초)에서 여유를 뺀 하한 — 두 자식 모두 적어도 이만큼 돌았어야 한다.
+/// ★ 결함 196 — 경과는 **읽기 대기 시간이 아니라** 그 자식의 시작 ~ 종료 관측이다. 하한은 "짧게 끝난 끝" 을 떨어뜨릴 뿐 기다린 원인을 확정하지 않는다.
 const READ_TIMEOUT_FLOOR: Duration = Duration::from_secs(9);
 
 /// 옛 Agent · 새 Coordinator 가 **서로 상대 프레임을 기다리다** 끝났는지(결함 183 · 191).
 /// ★ 결함 191 (재검수 69c) — 전에는 "스트림 읽기 실패" 와 "프레임이 완결되기 전에 스트림이 끊겼다" 중 하나면 받았다. 앞의 것은 `FramingError::Io` 전체의
 ///   표시라 **reset 같은 별개의 연결 장애**도 통과했다. 이제 오류 **종류**를 본다 —
-///   (a) 적어도 한쪽은 해당 줄에 읽기 시한 오류 번호가 있고 그 자식이 READ_TIMEOUT_FLOOR 이상 돌았다(자기 시한이 먼저 걸림)
-///   (b) 다른 쪽은 역시 (a) 이거나, **완결 전 끊김(EOF)** 이다 — 먼저 시한에 걸린 쪽이 연결을 닫아 생기는 끝(2026-09-17 첫 실행에서 Coordinator 가 이쪽이었다)
+///   (a) 적어도 한쪽은 해당 줄이 읽기 시한 오류 번호로 **끝난다**(결함 196 — 줄 중간의 무관한 번호는 인정하지 않는다)
+///   (b) 다른 쪽은 역시 (a) 이거나, **완결 전 끊김(EOF)** 이다
+///   (c) **두 자식 모두** READ_TIMEOUT_FLOOR 이상 돌았다(결함 196 — 1초 만의 EOF 를 떨어뜨린다)
 ///   그 밖의 I/O 오류(reset 10054 등) · 둘 다 EOF 는 떨어진다. 검증 실패(HELLO_REJECTED) · 검증된 다른 첫 프레임은 protocol 분류라 Coordinator 쪽 조건에서 떨어진다.
+/// ★ 결함 196 (재검수 69d) — 이 판정은 "시한 · (시한 또는 EOF) **조합을 관측**했고 두 자식 모두 하한 이상 돌았다" 까지다. EOF 가 **상대의 시한 때문**이라는
+///   인과 · 사건 순서는 입증하지 않는다(공통 시간축에서 두 오류 시각을 재지 않는다). 전에 "먼저 시한에 걸린 쪽이 닫아 생긴 끝" 이라 적은 것은 판정보다 강했다.
+/// ★ 결함 195 (재검수 69d) — 옛 Agent 줄의 `RETRYABLE_CONNECTION:` 접두사를 요구하지 않는다. 재시도 분류에 WouldBlock 이 없어 unix 의 읽기 시한(EAGAIN)은
+///   접두사 없이 끝난다. 그래서 "Grant 프레임 읽기/검증 실패: <사유>" 만 본다(unix 에서 돌리지 않았다).
 fn both_waited_for_the_peer_until_a_read_timeout(agent_stderr: &str, agent_elapsed: Duration, coordinator_stderr: &str, coordinator_elapsed: Duration) -> bool {
-    const AGENT: &str = "RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: ";
+    const AGENT: &str = "Grant 프레임 읽기/검증 실패: ";
+    let ends_with_timeout = |line: &str| line.trim_end().ends_with(READ_TIMEOUT_OS_ERROR);
     let coordinator_line = |reason: &str, need_timeout: bool| {
         coordinator_stderr.lines().any(|line| {
-            line.contains("kind=transport") && line.contains("HELLO_MISSING") && line.contains(reason) && (!need_timeout || line.contains(READ_TIMEOUT_OS_ERROR))
+            line.contains("kind=transport") && line.contains("HELLO_MISSING") && line.contains(reason) && (!need_timeout || ends_with_timeout(line))
         })
     };
     let agent_line = |reason: &str, need_timeout: bool| {
         agent_stderr
             .lines()
-            .any(|line| line.contains(&format!("{AGENT}{reason}")) && (!need_timeout || line.contains(READ_TIMEOUT_OS_ERROR)))
+            .any(|line| line.contains(&format!("{AGENT}{reason}")) && (!need_timeout || ends_with_timeout(line)))
     };
-    let coordinator_timed_out = coordinator_line("스트림 읽기 실패", true) && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
-    let agent_timed_out = agent_line("스트림 읽기 실패", true) && agent_elapsed >= READ_TIMEOUT_FLOOR;
+    let both_waited_long_enough = agent_elapsed >= READ_TIMEOUT_FLOOR && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
+    let coordinator_timed_out = coordinator_line("스트림 읽기 실패", true);
+    let agent_timed_out = agent_line("스트림 읽기 실패", true);
     let coordinator_saw_close = coordinator_line("프레임이 완결되기 전에 스트림이 끊겼다", false);
     let agent_saw_close = agent_line("프레임이 완결되기 전에 스트림이 끊겼다", false);
-    (coordinator_timed_out && (agent_timed_out || agent_saw_close)) || (agent_timed_out && coordinator_saw_close)
+    both_waited_long_enough && ((coordinator_timed_out && (agent_timed_out || agent_saw_close)) || (agent_timed_out && coordinator_saw_close))
 }
 
 /// 결함 191 — 판정 함수가 관측한 끝은 받고 reset · 짧은 경과 · 둘 다 EOF 는 떨어뜨리는지(옛 바이너리 없이 늘 돈다).
@@ -377,6 +400,16 @@ fn the_wait_classifier_accepts_read_timeouts_and_rejects_other_connection_failur
     assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_close, long, &coordinator_close, long));
     // 시한 번호는 있지만 너무 일찍 끝났다
     assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_timeout, Duration::from_secs(1), &coordinator_close, long));
+    // 결함 196 — EOF 쪽이 1초 만에 끝났다(시한 쪽은 10초)
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_timeout, long, &coordinator_close, Duration::from_secs(1)));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_close, Duration::from_secs(1), &coordinator_timeout, long));
+    // 결함 196 — reset 줄 **중간**에 무관한 시한 번호가 섞였다
+    let agent_reset_with_number = format!("RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: context={t} 원격 호스트가 연결을 끊었다 (os error 10054)");
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_reset_with_number, long, &coordinator_close, long));
+    // 결함 195 — 재시도 접두사 없이 끝난 옛 Agent 시한 줄(unix 의 WouldBlock 모양)도 받는다
+    let agent_timeout_unprefixed = format!("agent-stub 실패: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 자원 일시 부족 {t}");
+    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_timeout_unprefixed, long, &coordinator_close, long));
+    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_timeout_unprefixed, long, &coordinator_timeout, long));
     // Coordinator 가 protocol 분류(검증 실패)면 떨어진다
     let coordinator_rejected = format!("SESSION_ERROR attempt=0 kind=protocol error=protocol: HELLO_REJECTED: 스트림 읽기 실패 {t}");
     assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_close, long, &coordinator_rejected, long));
