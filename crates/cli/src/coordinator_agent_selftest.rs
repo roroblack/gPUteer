@@ -3029,7 +3029,8 @@ pub fn run() -> Result<String, String> {
     let second_gc_removed_43 = retry_second_43
         .agent_stdout
         .lines()
-        .find_map(|line| line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace().find_map(|f| f.strip_prefix("removed=")))
+        // ★ 결함 167 — 출력은 `dirs= removed= root= real_root=` 순서다. 경로에 `removed=` 글자가 있어도 잘못 읽지 않게 **두 번째 토큰만** 본다.
+        .find_map(|line| line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace().nth(1)?.strip_prefix("removed="))
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
     if !retry_first_43.agent_success

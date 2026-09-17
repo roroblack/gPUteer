@@ -2730,8 +2730,9 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
         )
     })?;
     // ★ 결함 161 (재검수 66c) — 입력 경로만 찍으면 별칭일 때 실제로 정리한 자리를 알 수 없다.
+    // ★ 결함 167 (재검수 66d) — 수치 필드를 **경로보다 앞에** 둔다. 경로 이름에 ` removed=0 ` 같은 글자가 있으면 뒤에 둔 수치를 잘못 읽는다(selftest 43 은 두 번째 토큰만 읽는다).
     println!(
-        "CHECKPOINT_STARTUP_GC root={} real_root={} dirs={dirs} removed={removed}",
+        "CHECKPOINT_STARTUP_GC dirs={dirs} removed={removed} root={} real_root={}",
         root.display(),
         real_root.display()
     );
@@ -2754,9 +2755,13 @@ fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
 }
 
 /// 결함 160 (재검수 66c) — 접두사를 뗄 수 있는 루트 길이(접두사 제외)의 상한. 전에는 루트만 248 자 미만이면 뗐는데, 그 아래 만들어지는 경로
-/// (`<root>\start-<64>\.durability.writing.write_once.lock` 약 107 자 · `<root>.workload-run\start-<64>\stdout.log` 95 자)가 260 자를 넘어 긴 경로 opt-in 이 없는
-/// Windows 에서 열리지 않았다(이전 코드는 입력의 verbatim 접두사를 파생 경로까지 유지했다). 120 + 107 = 227 — 모르는 임시 이름 접미사에 32 자를 남긴다.
-/// 이보다 긴 루트는 verbatim 을 유지해 파생 경로도 긴 경로로 열린다.
+/// (`<root>\start-<64>\.durability.committed-degraded.write_once.lock` 118 자 · `<root>.workload-run\start-<64>\stdout.log` 95 자)가 260 자를 넘어 긴 경로 opt-in 이 없는
+/// Windows 에서 열리지 않았다(이전 코드는 입력의 verbatim 접두사를 파생 경로까지 유지했다). 이보다 긴 루트는 verbatim 을 유지해 파생 경로도 긴 경로로 열린다.
+/// ★ 결함 168 (재검수 66d) — 전에 최장 접미사를 107 자 · 여유 32 자라고 적었는데 틀렸다. 시험이 고정 이름 전체로 계산한 최장은 118 자(committed-degraded 마커 잠금)다.
+///   119 + 118 = 237 — 여유 22 자(시험은 20 자 이상을 단언한다). ★ 검수는 113 자(local-written)를 짚었고 처음 이 주석도 113 으로 고쳤는데 그것도 최장이 아니었다.
+///   **보장 범위는 Agent 가 쓰는 고정 이름뿐**이다(durability 마커 · 발행 실패 마커 · manifest · stdout · stderr · workload-result.json 과 그 write_once 잠금 ·
+///   outbox 파일). 가변 데이터 이름 · staged API(`.b3-<64>` 가 붙고 논리 이름이 120 바이트까지)는 이 상한으로 260 자 안에 들지 않는다 — 지금 Agent 는 staged API 를
+///   부르지 않는다. 그 이름을 쓰게 되면 최종 I/O 경로에서 긴 경로를 처리해야 한다.
 #[cfg_attr(not(windows), allow(dead_code))]
 const VERBATIM_STRIP_MAX_ROOT_LEN: usize = 120;
 
@@ -4283,15 +4288,37 @@ mod startup_gc_tests {
         }
         let long = format!(r"\\?\C:\{}", "a".repeat(260));
         assert_eq!(without_verbatim_prefix(PathBuf::from(&long)), PathBuf::from(&long));
-        // 결함 160 — 경계는 루트 길이만이 아니라 그 아래 파생 경로가 260 자 안에 들어오게 정했다. 실제 이름으로 가장 긴 파생 접미사를 계산해 확인한다.
+        // 결함 160 · 168 — 경계는 루트 길이만이 아니라 그 아래 파생 경로가 260 자 안에 들어오게 정했다. Agent 가 쓰는 **고정 이름 전부**로 가장 긴 파생 접미사를
+        //   계산해 확인한다(전에는 세 이름만 적어 최장을 놓쳤다 — 결함 168). 가변 데이터 이름 · staged API 는 범위 밖이다(상수 주석).
+        use gputeer_checkpoint::durability::{state_marker_name, DurabilityState, MANIFEST_FILENAME, PUBLICATION_FAILED_MARKER};
         let checkpoint_id = start_checkpoint_id("job", "attempt", "grant");
-        let suffixes = [
-            format!(r"\{checkpoint_id}\.durability.writing.write_once.lock"),
-            format!(r".workload-run\{checkpoint_id}\{}", exec::STDOUT_FILENAME),
-            format!(r".report-outbox\{}.report.rejected", "0".repeat(32)),
-        ];
+        let mut in_checkpoint: Vec<String> = [
+            DurabilityState::Writing,
+            DurabilityState::Partial,
+            DurabilityState::LocalWritten,
+            DurabilityState::HashVerified,
+            DurabilityState::Replicating,
+            DurabilityState::Replicated,
+            DurabilityState::Committed,
+            DurabilityState::CommittedDegraded,
+        ]
+        .into_iter()
+        .map(|state| state_marker_name(state).to_string())
+        .collect();
+        in_checkpoint.extend(
+            [PUBLICATION_FAILED_MARKER, MANIFEST_FILENAME, exec::STDOUT_FILENAME, exec::STDERR_FILENAME, WORKLOAD_RESULT_FILENAME].map(str::to_string),
+        );
+        let mut suffixes: Vec<String> = in_checkpoint
+            .iter()
+            .flat_map(|name| [format!(r"\{checkpoint_id}\{name}"), format!(r"\{checkpoint_id}\{name}.write_once.lock")])
+            .collect();
+        suffixes.extend([exec::STDOUT_FILENAME, exec::STDERR_FILENAME].map(|name| format!(r".workload-run\{checkpoint_id}\{name}")));
+        suffixes.extend(["report", "report.tmp", "report.rejected"].map(|ext| format!(r".report-outbox\{}.{ext}", "0".repeat(32))));
         let longest = suffixes.iter().map(String::len).max().expect("접미사");
-        assert!(VERBATIM_STRIP_MAX_ROOT_LEN - 1 + longest + 32 < 260, "경계 {VERBATIM_STRIP_MAX_ROOT_LEN} 에서 파생 경로가 260 자를 넘는다: 가장 긴 접미사 {longest}");
+        assert!(
+            VERBATIM_STRIP_MAX_ROOT_LEN - 1 + longest + 20 < 260,
+            "경계 {VERBATIM_STRIP_MAX_ROOT_LEN} 에서 파생 경로가 여유 20 자 안에 들지 않는다: 가장 긴 접미사 {longest}"
+        );
         let just_below = format!(r"\\?\C:\{}", "b".repeat(VERBATIM_STRIP_MAX_ROOT_LEN - 4));
         assert_eq!(
             without_verbatim_prefix(PathBuf::from(&just_below)),
