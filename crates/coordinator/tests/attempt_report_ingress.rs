@@ -997,30 +997,20 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
         }
     };
     second.set_write_timeout(Some(Duration::from_secs(10))).expect("쓰기 타임아웃");
-    // ★ 결함 123 (재검수 64c) — 두 번째 연결은 **첫 연결에서는 나올 수 없는 결과**를 만든다: 서명을 변조한 Hello -> HELLO_REJECTED.
-    //   전에는 두 연결이 같은 GRANT_REFUSED 를 만들어, Protocol 거부 뒤 곧바로 끝나는 회귀도 첫 오류로 통과했다(TCP 연결 · 쓰기 성공은
-    //   두 번째 accept 의 증거가 아니다).
-    let key = SigningKey::from_bytes(&AGENT_SEED);
-    let mut broken = pb::AgentSessionHello {
-        schema_version: 1,
-        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
-        node_id: NODE_ID.into(),
-        connection_attempt: 1,
-        issued_at_unix_ms: now_ms(),
-        nonce: (120u8..136).collect(),
-        ..Default::default()
-    };
-    broken.node_signature = sign(&key, &broken).to_vec();
-    broken.node_signature[0] ^= 0x01;
-    write_frame_body(&mut second, FrameType::SessionHello, &broken.encode_to_vec());
+    // ★ 결함 123 (재검수 64c) — 두 번째 연결은 **첫 연결에서는 나올 수 없는 결과**를 만든다.
+    // ★ 결함 132 (재검수 64d) — 서명 변조 Hello(HELLO_REJECTED)는 모자랐다: 첫 Hello 도 60초 만료로 HELLO_REJECTED 가 될 수 있다.
+    //   그래서 **서명이 유효하고 모드만 다른** Hello(RESUME)를 보낸다. "mode 불일치" 는 서명 · 시각 · replay 검증을 통과한 Hello 에서만 나오고,
+    //   첫 연결의 Hello 는 MULTI_AGENT_GRANT 라 이 문구를 만들 수 없다.
+    send_hello(&mut second, gputeer_protocol::constants::MODE_RESUME, 1, 120);
     let error = handle
         .join()
         .expect("Coordinator 스레드")
         .expect_err("마지막 연결의 거부는 오류로 끝난다");
-    // ★ 결함 120 · 123 — 분류와 **출처 연결**을 함께 본다. 첫 연결의 거부(GRANT_REFUSED · 옛 Job)나 Storage 종료는 이 단언을 통과하지 못한다.
+    // ★ 결함 120 · 123 · 132 — 분류와 **출처 연결**을 함께 본다. 첫 연결의 거부(GRANT_REFUSED · 만료 HELLO_REJECTED)나 Storage 종료는 이 단언을
+    //   통과하지 못한다.
     assert!(
-        error.starts_with("protocol: ") && error.contains("HELLO_REJECTED") && !error.contains("GRANT_REFUSED"),
-        "리스너가 두 번째 연결을 처리하고 그 연결의 거부로 끝나야 한다: {error}"
+        error.starts_with("protocol: ") && error.contains("HELLO_REJECTED: mode 불일치") && !error.contains("GRANT_REFUSED"),
+        "리스너가 두 번째 연결을 처리하고 그 연결의 거부(모드 불일치)로 끝나야 한다: {error}"
     );
 }
 
