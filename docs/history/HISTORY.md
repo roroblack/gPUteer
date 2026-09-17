@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-09-17 09:47 — 결함 95 첫 슬라이스 · Lease 누적 시간 한도 경계를 규범에 맞춤 · 결함 88 설계 계획
+
+- 계획: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` 결함 95 조치의 (a) · `docs/plans/2026-09-17_0950_Coordinator_replay_영속화_설계.md`(88, 코드 무변경)
+- 스트림: Coordinator · QA
+- 수행: `StoredLease::is_max_duration_exceeded` 가 정확히 한도인 순간을 초과로 본다(state-machines.md §5 — 갱신 `누적 < max` · 초과 `누적 >= max`).
+  틀린 경계를 고정하던 단위 테스트를 뒤집었다. renew_after 관문(b) · TTL 경계 정정(c)은 계약 절차가 먼저라 하지 않았다 — 95 는 열린 채다.
+  결함 88 은 조사 결과 유도 nonce(ACK · Grant · Renew · Heartbeat)가 영속 replay guard 와 충돌하고 §10 의 CSPRNG MUST 와도 어긋나
+  계약 변경을 앞세우는 계획(C 권장)만 썼다
+- 검증: coordinator 305 passed · cli 29 passed · 0 failed · 경고 0 · selftest 97 · 뮤테이션 M44 caught. 리눅스 미실행
+- 원본: `docs/evidence/_raw/결함95_누적한도_경계_시험_2026-09-17.txt`
+- 리포트: 결함 리포트 95 절
+
+---
+
 ## 2026-09-17 09:38 — 결함 85 · Agent 기동 GC 연결(체크포인트 루트 독점 잠금 · 부팅 시 PARTIAL 정리)
 
 - 계획: `docs/plans/2026-09-17_0930_Agent_기동_GC_연결.md`

@@ -94,10 +94,13 @@ impl StoredLease {
     /// `now_unix_ms < issued_at_unix_ms`(clock rollback) 는 경과시간을
     /// 0 으로 취급해 계속 허용하지 않고, **초과로 취급해 fail closed**
     /// 한다.
+    ///
+    /// ★ 결함 95 (재검수 60) — 경계는 **한도에 닿으면 초과**다(`elapsed >= max`). 규범 `state-machines.md` §5 가 갱신은
+    ///   `누적 < max`, MAX_DURATION_EXCEEDED 는 `누적 >= max` 로 적는다. 전에는 `>` 여서 정확히 한도인 순간에 한 번 더 갱신했다.
     pub fn is_max_duration_exceeded(&self, now_unix_ms: u64) -> bool {
         let max_duration_ms = self.max_total_duration_seconds.saturating_mul(1_000);
         match now_unix_ms.checked_sub(self.issued_at_unix_ms) {
-            Some(elapsed_ms) => elapsed_ms > max_duration_ms,
+            Some(elapsed_ms) => elapsed_ms >= max_duration_ms,
             None => true,
         }
     }
@@ -975,8 +978,10 @@ mod tests {
         assert_eq!(fetched.renew_after_unix_ms, 3_000);
     }
 
+    /// ★ 결함 95 — 이 테스트는 전에 `renew_within_duration_boundary_is_inclusive_of_the_limit` 였고 "정확히 한도면 아직 허용" 을
+    ///   요구했다. 규범(state-machines.md §5: 갱신 `누적 < max` · 초과 `누적 >= max`)과 반대였다 — 경계를 뒤집고, 한도 1ms 전의 대조를 둔다.
     #[test]
-    fn renew_within_duration_boundary_is_inclusive_of_the_limit() {
+    fn renew_within_duration_refuses_exactly_at_the_limit_and_renews_just_before() {
         let (mut s, _dir) = open_temp();
         let mut record = sample("lease-1");
         record.issued_at_unix_ms = 1_000;
@@ -984,15 +989,31 @@ mod tests {
         record.max_total_duration_seconds = 3_600;
         s.get_or_issue(&record, 0).unwrap();
 
-        // issued_at + 정확히 1시간 — 한도와 같다(아직 허용, `>` 만 거부).
-        let now = 1_000 + 3_600 * 1_000;
+        // issued_at + 정확히 1시간 — 한도에 닿았다. 갱신하지 않고 만료시각도 그대로다.
+        let at_limit = 1_000 + 3_600 * 1_000;
         let result = s
-            .renew_existing_within_duration("lease-1", now, now + 60_000, now + 30_000)
+            .renew_existing_within_duration("lease-1", at_limit, at_limit + 60_000, at_limit + 30_000)
             .unwrap();
+        assert!(
+            matches!(result, RenewDecision::MaxDurationExceeded(_)),
+            "정확히 한도인 순간은 초과다(규범 누적 >= max): {result:?}"
+        );
+        assert_eq!(
+            s.get("lease-1").unwrap().unwrap().expires_at_unix_ms,
+            4_000_000,
+            "초과 판정인데 만료시각을 바꿨다"
+        );
 
+        // 대조 — 1ms 전에는 갱신한다(누적 < max).
+        let (mut s, _dir) = open_temp();
+        s.get_or_issue(&record, 0).unwrap();
+        let just_before = at_limit - 1;
+        let result = s
+            .renew_existing_within_duration("lease-1", just_before, just_before + 60_000, just_before + 30_000)
+            .unwrap();
         assert!(
             matches!(result, RenewDecision::Renewed(_)),
-            "경계값(정확히 한도)은 아직 허용해야 한다: {result:?}"
+            "한도 1ms 전에는 갱신해야 한다: {result:?}"
         );
     }
 
