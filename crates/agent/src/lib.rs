@@ -2757,7 +2757,7 @@ fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
 /// 결함 160 (재검수 66c) — 접두사를 뗄 수 있는 루트 길이(접두사 제외)의 상한. 전에는 루트만 248 자 미만이면 뗐는데, 그 아래 만들어지는 경로
 /// (`<root>\start-<64>\.durability.committed-degraded.write_once.lock` 118 자 · `<root>.workload-run\start-<64>\stdout.log` 95 자)가 260 자를 넘어 긴 경로 opt-in 이 없는
 /// Windows 에서 열리지 않았다(이전 코드는 입력의 verbatim 접두사를 파생 경로까지 유지했다). 이보다 긴 루트는 verbatim 을 유지해 파생 경로도 긴 경로로 열린다.
-/// ★ 결함 168 (재검수 66d) — 전에 최장 접미사를 107 자 · 여유 32 자라고 적었는데 틀렸다. 시험이 고정 이름 전체로 계산한 최장은 118 자(committed-degraded 마커 잠금)다.
+/// ★ 결함 168 (재검수 66d) — 전에 최장 접미사를 107 자 · 여유 32 자라고 적었는데 틀렸다. 시험이 고정 이름 목록(결함 179 · 186 — "전체" 가 아니다)으로 계산한 최장은 118 자(committed-degraded 마커 잠금)다.
 ///   119 + 118 = 237 — 여유 22 자(시험은 20 자 이상을 단언한다). ★ 검수는 113 자(local-written)를 짚었고 처음 이 주석도 113 으로 고쳤는데 그것도 최장이 아니었다.
 ///   **보장 범위는 Agent 가 쓰는 고정 이름뿐**이다(durability 마커 · 발행 실패 마커 · manifest · stdout · stderr · workload-result.json 과 그 write_once 잠금 ·
 ///   outbox 파일). 가변 데이터 이름 · staged API(`.b3-<64>` 가 붙고 논리 이름이 120 바이트까지)는 이 상한으로 260 자 안에 들지 않는다 — 지금 Agent 는 staged API 를

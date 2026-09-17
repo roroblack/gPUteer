@@ -564,6 +564,18 @@ fn checkpoint_entries(root: &Path) -> Result<Vec<std::fs::DirEntry>, String> {
         .collect())
 }
 
+/// 기동 GC 출력 `CHECKPOINT_STARTUP_GC dirs=<정수> removed=<정수> root=… real_root=…` 에서 `removed` 를 읽는다.
+/// ★ 결함 167 — 경로에 `removed=` 글자가 있어도 잘못 읽지 않게 **두 번째 토큰만** 본다.
+/// ★ 결함 186 (재검수 66f) — 첫 토큰 `dirs=<정수>` 와 두 번째 토큰 `removed=<정수>` 를 **둘 다** 읽은 줄만 채택한다(전에는 첫 토큰을 안 봐
+///   `dirs=bad removed=0` 같은 깨진 줄도 채택해 뒤의 정상 줄을 건너뛰었다). 못 읽으면 None — 호출자가 "관측 실패" 로 따로 실패한다(결함 180).
+fn startup_gc_removed(stdout: &str) -> Option<usize> {
+    stdout.lines().find_map(|line| {
+        let mut fields = line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace();
+        fields.next()?.strip_prefix("dirs=")?.parse::<usize>().ok()?;
+        fields.next()?.strip_prefix("removed=")?.parse::<usize>().ok()
+    })
+}
+
 fn started_checkpoint_id(stdout: &str) -> Option<String> {
     stdout.lines().find_map(|line| {
         line.strip_prefix("JOB_STARTED ")?
@@ -3028,12 +3040,7 @@ pub fn run() -> Result<String, String> {
     //   이 시나리오는 "GC 로 치운 뒤 같은 checkpoint_id 로 다시 만든다" 를 잰다. write_once 멱등 자체는 checkpoint 시험
     //   (`codex_findings.rs::k1b_write_once_is_idempotent_for_identical_content` · `durability_chaos.rs::adr026_write_once_is_idempotent_for_same_name`)이 잰다.
     // ★ 결함 180 — 수치를 못 읽으면 0 으로 뭉치지 않고 "관측 실패" 로 따로 실패한다(실제 삭제 0 과 가른다). 형식이 깨진 줄은 건너뛰고 다음 줄을 본다.
-    let second_gc_removed_43 = retry_second_43
-        .agent_stdout
-        .lines()
-        // ★ 결함 167 — 출력은 `dirs= removed= root= real_root=` 순서다. 경로에 `removed=` 글자가 있어도 잘못 읽지 않게 **두 번째 토큰만** 본다.
-        .filter_map(|line| line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace().nth(1)?.strip_prefix("removed="))
-        .find_map(|value| value.parse::<usize>().ok())
+    let second_gc_removed_43 = startup_gc_removed(&retry_second_43.agent_stdout)
         .ok_or_else(|| {
             format!(
                 "두 번째 기동의 CHECKPOINT_STARTUP_GC removed= 를 읽지 못했다(43 · 관측 실패 — 삭제 0 이 아니다): agent_stdout={}",
@@ -6606,4 +6613,32 @@ fn run_wrong_hello_mode_case(
     }
 
     Ok("91) 다른 lane(Resume) 용으로 서명된 Hello 를 mode 대조로 거부\n".to_string())
+}
+
+#[cfg(test)]
+mod startup_gc_output_tests {
+    use super::startup_gc_removed;
+
+    #[test]
+    fn a_line_with_a_broken_dirs_field_is_skipped_for_the_next_valid_line() {
+        // 결함 186 — 첫 토큰이 깨진 줄의 removed=0 을 채택하면 안 된다
+        let stdout = "CHECKPOINT_STARTUP_GC dirs=bad removed=0 root=a real_root=a\n\
+                      CHECKPOINT_STARTUP_GC dirs=9 removed=3 root=b real_root=b\n";
+        assert_eq!(startup_gc_removed(stdout), Some(3));
+    }
+
+    #[test]
+    fn a_path_that_spells_removed_is_not_read_as_the_count() {
+        // 결함 167 — 경로 속 ` removed=0 dirs=9 ` 는 두 번째 토큰이 아니다
+        let stdout = "CHECKPOINT_STARTUP_GC dirs=2 removed=1 root=C:\\t\\cp removed=0 dirs=9 real_root=C:\\t\\cp removed=0 dirs=9\n";
+        assert_eq!(startup_gc_removed(stdout), Some(1));
+    }
+
+    #[test]
+    fn no_readable_line_is_an_observation_failure_not_zero() {
+        // 결함 180 — 못 읽으면 0 이 아니라 None
+        assert_eq!(startup_gc_removed("CHECKPOINT_STARTUP_GC dirs=2 removed=x root=a real_root=a\nOTHER removed=0\n"), None);
+        assert_eq!(startup_gc_removed("CHECKPOINT_STARTUP_GC removed=0 dirs=2 root=a real_root=a\n"), None);
+        assert_eq!(startup_gc_removed(""), None);
+    }
 }
