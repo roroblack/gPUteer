@@ -1304,6 +1304,74 @@ fn a_report_session_stores_the_report_and_answers_with_a_signed_ack() {
     assert_eq!(stored_binding(&fixture.control_db), Some(report), "Ack 를 보냈으면 저장돼 있어야 한다");
 }
 
+/// 결함 124 (검수 65) — 기동 때 outbox 를 REPORT 로 먼저 보낸 Agent 의 FRESH 는 연결 번호 0 으로 온다. 보조 세션은 FRESH 번호에 넣지 않는다.
+///   전에는 Coordinator 가 REPORT 도 세어 기대값 1 로 거부했다.
+#[test]
+fn a_fresh_connection_after_a_report_session_keeps_connection_attempt_zero() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
+    let report = terminal_report(fence_epoch);
+    {
+        let mut session = open_report_session(&fixture, 0, 220, &report);
+        let ack = read_ack(&mut session);
+        assert!(ack.created, "먼저 보낸 보고가 저장돼야 한다");
+    }
+    let mut fresh = connect_when_ready(fixture.address);
+    let grant = handshake_at(&mut fresh, 0);
+    assert_eq!(grant.attempt_id, ATTEMPT_ID, "REPORT 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    drop(fresh);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+/// 결함 133 (재검수 65b) — Hello 도중 끊긴 보조 연결 뒤에도 FRESH(0) 를 받는다. 전에는 끊긴 연결을 FRESH 로 세어 기대값이 어긋났다.
+#[test]
+fn a_fresh_connection_after_a_report_connection_that_dropped_before_hello_is_accepted() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 3);
+    {
+        // Hello 를 보내지 않고 닫는다 — Coordinator 에게는 종류를 알 수 없는 끊긴 연결이다.
+        let dropped = connect_when_ready(fixture.address);
+        drop(dropped);
+    }
+    let report = terminal_report(fence_epoch);
+    {
+        let mut session = open_report_session(&fixture, 0, 230, &report);
+        let ack = read_ack(&mut session);
+        assert!(ack.created, "끊긴 연결 뒤의 REPORT 도 저장돼야 한다");
+    }
+    let mut fresh = connect_when_ready(fixture.address);
+    let grant = handshake_at(&mut fresh, 0);
+    assert_eq!(grant.attempt_id, ATTEMPT_ID, "끊긴 보조 연결 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    // 결함 149 — Grant nonce 도 Hello 의 번호(0)로 만들어져야 한다(받은 연결 번호는 2 다).
+    assert_eq!(grant.nonce, derive_replay_nonce("grant", GRANT_ID, 0), "Grant nonce 가 Hello 번호로 만들어지지 않았다");
+    drop(fresh);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+/// 결함 133 · 145 — 번호 규칙: 받은 연결 번호보다 **앞선** 번호도 받는다(Coordinator 가 accept 하지 못한 connect 성공이 있을 수 있다) ·
+/// Grant nonce 는 그 번호로 만든다 · 직전 FRESH 와 같은 번호(재사용)는 거부한다.
+#[test]
+fn a_fresh_hello_that_skips_ahead_is_accepted_and_a_reused_number_is_refused() {
+    let fixture = fixture();
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
+    {
+        let mut ahead = connect_when_ready(fixture.address);
+        let grant = handshake_at(&mut ahead, 5);
+        assert_eq!(grant.nonce, derive_replay_nonce("grant", GRANT_ID, 5), "Grant nonce 가 Hello 번호(5)로 만들어지지 않았다");
+    }
+    let mut reuse = connect_when_ready(fixture.address);
+    send_hello(&mut reuse, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 5, 60);
+    let error = handle.join().expect("Coordinator 스레드").expect_err("재사용한 번호는 거부돼야 한다");
+    assert!(
+        error.starts_with("protocol: ") && error.contains("connection_attempt 가 규칙을 어겼다") && error.contains("받은 5 · 직전 FRESH Some(5)"),
+        "{error}"
+    );
+}
+
 /// 단계 6 — 같은 보고를 새 REPORT 세션으로 다시 보내면 저장소 멱등성대로 created=false 의 Ack 를 받는다(Agent 의 재전송 경로).
 #[test]
 fn the_same_report_resent_over_a_new_report_session_is_acknowledged_as_not_created() {
