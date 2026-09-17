@@ -1154,9 +1154,12 @@ fn serve_one_connection_impl(
     //   연결을 확정하고, 마지막 ACK · Hello 가 유실되면 서버는 accept 하지 못한다(재검수 65c · RFC 9293). 그래서 상한을 없앴다.
     //   증가 규칙이 막는 것은 **같은 Coordinator 실행 안에서** 같은 번호의 재사용(= 같은 Grant · ACK nonce)이다.
     // ★ 결함 156 (재검수 65d) — 여기 "번호를 건너뛰는 것은 서명한 Agent 만" · "양쪽을 재기동하면 nonce 가 같아진다" 고 적었었다 — 보장보다 강했다.
-    //   **새** 번호를 만들려면 서명키가 필요하지만, 서명은 작성자를 인증할 뿐 연결한 쪽을 증명하지 않는다. 이미 서명된 Hello · ACK 를 확보한 쪽은
-    //   (1) 도착 전 Hello 를 가로채 먼저 전달하거나 (2) **Coordinator 만** 재시작한 뒤 유효시간 안에 재전송해 같은 번호 · 같은 Grant nonce 를 받고
-    //   과거 ACK 로 대조를 통과할 수 있다 — replay guard 가 in-memory 라서다(결함 88 · 계획 `docs/plans/2026-09-17_0950_Coordinator_replay_영속화_설계.md`).
+    //   **새** 번호를 만들려면 서명키가 필요하지만, 서명은 작성자를 인증할 뿐 연결한 쪽을 증명하지 않는다. 이미 서명된 메시지를 확보한 쪽이 할 수 있는 것은 둘이다:
+    //   (1) **선행 전달** — 아직 도착하지 않은 Hello 를 가로채 먼저 보낸다. Coordinator 에게는 처음 보는 메시지라 replay 기록을 영속화해도 막지 못한다
+    //       (막으려면 연결 자체의 인증 — TLS 등 — 이 필요하다).
+    //   (2) **재시작 뒤 재전송** — **Coordinator 만** 재시작한 뒤 유효시간 안에 옛 Hello · ACK 를 다시 보내 같은 번호 · 같은 Grant nonce 를 받고 대조를 통과한다.
+    //       이것은 replay guard 가 in-memory 라서다(결함 88 — 계획은 fix/lease-max-duration-boundary 브랜치의 Coordinator replay 영속화 설계).
+    //   ★ 결함 164 (재검수 65e) — 전에는 두 경우를 "in-memory 라서" 한 원인으로 묶고, 이 브랜치에 없는 계획 파일을 경로로 적었다.
     // ★ 한계(124 이전부터): Agent 만 재기동하면 번호가 0 으로 돌아가 같은 Coordinator 실행에서는 거부된다 · 큰 번호의 Hello 한 번(서명된 것의 재전송 포함)이 뒤의 작은 번호를 막는다.
     //   아래부터 `connection_attempt` 는 **Hello 의 번호**다 — Grant · ACK nonce 와 재접속 시험 조건이 이 값을 쓴다.
     // 받은 연결 번호(`connection_attempt` 인자)는 이제 판정에 쓰지 않는다 — 145 가 상한을 없앴다.

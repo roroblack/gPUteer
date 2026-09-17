@@ -1935,7 +1935,13 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
     //   `/safe/alias -> <run_root>/<id>/link -> /reports` 는 `/` · `/safe` 만 보고 통과했고, `/safe/alias -> <run_root>/<id>` 에 `/safe/alias/../..` 도 통과했다
     //   (146 은 "`..` 앞은 삭제 범위 밖으로 나가는 길" 이라 봤는데, 링크 대상이 지워지면 틀렸다). 그래서 이름 구성 요소를 붙일 때마다 **링크(symlink ·
     //   junction)면 거부한다** — 링크를 안 거치면 실제 경로가 입력 경로의 접두사들로만 이루어져 위 대조가 전부를 본다. 그 뒤라야 `..` 앞을 안 봐도 된다
-    //   (`root/../outside` 는 받는다). ★ 제한: outbox 경로의 부모에 링크가 있는 설정도 거부된다(REPORT 세션 outbox 에 한해).
+    //   (`root/../outside` 는 받는다).
+    // ★ 결함 162 (재검수 65e) — 위 "전부를 본다" 는 **마운트 별칭이 없는 경로**에서만 참이다. Linux bind mount(`/r/cp` 를 `/safe` 에)는 링크가 아니고 canonicalize 도
+    //   바꾸지 않아 `/safe/outbox` 가 통과하는데, 보고는 `/r/cp/outbox` 로도 보여 부팅 GC 가 지운다. 경로만으로는 마운트 별칭을 알 수 없다(마운트 표 해석은 이 조각 밖) —
+    //   **체크포인트 루트 · 작업 출력 루트를 다른 자리에 마운트해 outbox 로 쓰지 않는다** 는 것이 전제다. Windows 의 name-surrogate 가 아닌 reparse point(CLOUD · WOF 등)도
+    //   링크로 보지 않는다(우회 반례는 못 만들었다).
+    // ★ 결함 163 (재검수 65e) — 운영 영향: outbox 경로의 **부모**에 링크가 있어도 거부된다 — 예: macOS `/tmp -> /private/tmp` 아래 · junction 으로 옮긴 사용자 프로필 아래의
+    //   정상 outbox. 그때는 링크를 풀어 쓴 실제 경로를 `--report-outbox` 로 준다(기본 outbox 는 체크포인트 루트의 형제라 루트 경로에 링크가 없으면 걸리지 않는다).
     // ★ 한계: 검사 뒤 경로를 바꿔치기하는 경쟁(TOCTOU)은 막지 못한다 — 핸들로 고정하지 않는다. 거부되는 설정도 디렉터리를 만든 흔적이 남는다.
     let real = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
         fs::create_dir_all(path).map_err(|error| format!("{what} 디렉터리를 만들지 못했다({path:?}): {error}"))?;
@@ -4308,10 +4314,11 @@ mod report_session_tests {
     fn an_outbox_that_reaches_the_checkpoint_root_through_another_spelling_is_refused() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         std::fs::create_dir_all(dir.path().join("other")).expect("우회용 디렉터리");
-        let mut spellings = vec![dir.path().join("other").join("..").join("checkpoints").join("outbox")];
+        // (표기, junction 인가) — ★ 결함 166 — junction 표기만 링크 거부 사유를 허용한다. 나머지는 루트 대조 사유여야 한다(어느 검사가 작동했는지 가른다).
+        let mut spellings = vec![(dir.path().join("other").join("..").join("checkpoints").join("outbox"), false)];
         #[cfg(windows)]
         {
-            spellings.push(dir.path().join("CHECKPOINTS").join("outbox"));
+            spellings.push((dir.path().join("CHECKPOINTS").join("outbox"), false));
             std::fs::create_dir_all(dir.path().join("checkpoints")).expect("루트");
             let alias = dir.path().join("alias");
             let made = std::process::Command::new("cmd")
@@ -4321,17 +4328,15 @@ mod report_session_tests {
                 .output()
                 .expect("mklink 실행");
             assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
-            spellings.push(alias.join("outbox"));
+            spellings.push((alias.join("outbox"), true));
         }
-        for outbox in spellings {
+        for (outbox, via_junction) in spellings {
             let mut config = config(dir.path(), "127.0.0.1:9");
             config.report_outbox_dir = Some(outbox.clone());
             let error = report_outbox_dir(&config).expect_err("루트 안을 가리키는 다른 표기도 거부돼야 한다");
-            // ★ 결함 157 — junction 표기는 이제 경로 중간 링크 거부가 먼저 잡는다(사유 문구가 "링크"). 둘 다 거부이고 둘 다 결함 107 을 적는다.
-            assert!(
-                (error.contains("체크포인트 루트") || error.contains("링크")) && error.contains("결함 107"),
-                "{outbox:?}: {error}"
-            );
+            // ★ 결함 157 — junction 표기는 경로 중간 링크 거부가 먼저 잡는다.
+            let expected_reason = if via_junction { "링크" } else { "체크포인트 루트" };
+            assert!(error.contains(expected_reason) && error.contains("결함 107"), "{outbox:?} ({expected_reason}): {error}");
         }
     }
 
@@ -4473,11 +4478,26 @@ mod report_session_tests {
         assert_eq!(accepted, std::path::absolute(&outbox).expect("절대 경로"));
     }
 
+    /// 결함 166 — 접두사 대조의 **고유 기여**: 링크 없이 루트 **안**의 하위 디렉터리를 지나 `..` 로 나가는 경로는 그 하위 디렉터리가 GC · 작업 정리로 지워지면
+    /// 끊긴다. 링크 거부도 최종 위치 대조(바깥)도 못 잡고 접두사 대조만 잡는다. ★ Windows 는 절대 경로를 만들 때 `..` 를 글자로 접어 이 경로가 생기지 않는다 —
+    /// 그래서 unix 에서만 뜻이 있고 이 기계에서는 돌지 않는다.
+    #[cfg(unix)]
+    #[test]
+    fn an_outbox_that_leaves_the_root_through_a_deletable_subdirectory_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        std::fs::create_dir_all(config.checkpoint_root.join("sub")).expect("루트 안 하위");
+        config.report_outbox_dir = Some(config.checkpoint_root.join("sub").join("..").join("..").join("outside-outbox"));
+        let error = report_outbox_dir(&config).expect_err("지워질 수 있는 하위 디렉터리를 지나는 경로는 거부돼야 한다");
+        assert!(error.contains("경로 중간 실제 위치 대조"), "{error}");
+    }
+
     /// 결함 148 — 공개 multi_agent 진입점을 직접 불러도 REPORT 세션은 거부한다.
     #[test]
     fn the_public_multi_agent_entry_refuses_a_report_session() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
-        // 결함 159 — "연결하기 전에" 를 관측한다: 실제 listener 를 두고, 거부 뒤 받을 연결이 없어야 한다(connect 는 accept 전에도 backlog 에 쌓인다).
+        // 결함 159 · 165 — 실제 listener 를 두고, 거부 뒤 **대기 중인 연결이 없다** 를 본다(connect 가 성립하면 accept 전에도 backlog 에 쌓인다).
+        //   이것은 "연결 시도가 한 번도 없었다" 의 증명이 아니다 — 성립하지 못한 시도는 남지 않고 100ms 는 동기화가 아니다. 검출력은 "먼저 연결한 뒤 같은 거부" 변이로 쟀다.
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         listener.set_nonblocking(true).expect("nonblocking");
         let mut config = config(dir.path(), &listener.local_addr().expect("주소").to_string());
