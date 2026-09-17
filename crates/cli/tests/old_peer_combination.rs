@@ -370,12 +370,22 @@ fn both_waited_for_the_peer_until_a_read_timeout(agent_stderr: &str, agent_elaps
             .lines()
             .any(|line| line.contains(&format!("{AGENT}{reason}")) && (!need_timeout || ends_with_timeout(line)))
     };
-    let both_waited_long_enough = agent_elapsed >= READ_TIMEOUT_FLOOR && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
-    let coordinator_timed_out = coordinator_line("스트림 읽기 실패", true);
-    let agent_timed_out = agent_line("스트림 읽기 실패", true);
-    let coordinator_saw_close = coordinator_line("프레임이 완결되기 전에 스트림이 끊겼다", false);
-    let agent_saw_close = agent_line("프레임이 완결되기 전에 스트림이 끊겼다", false);
-    both_waited_long_enough && ((coordinator_timed_out && (agent_timed_out || agent_saw_close)) || (agent_timed_out && coordinator_saw_close))
+    // ★ 결함 202 (재검수 69e) — 하한을 시한 쪽 · EOF 쪽으로 나눠 쓴다(변이가 각각을 따로 잰다). 뜻은 191 · 196 과 같다 — 두 자식 모두 하한 이상.
+    let coordinator_timed_out = coordinator_line("스트림 읽기 실패", true) && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
+    let agent_timed_out = agent_line("스트림 읽기 실패", true) && agent_elapsed >= READ_TIMEOUT_FLOOR;
+    let coordinator_saw_close = coordinator_line("프레임이 완결되기 전에 스트림이 끊겼다", false) && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
+    let agent_saw_close = agent_line("프레임이 완결되기 전에 스트림이 끊겼다", false) && agent_elapsed >= READ_TIMEOUT_FLOOR;
+    (coordinator_timed_out && (agent_timed_out || agent_saw_close)) || (agent_timed_out && coordinator_saw_close)
+}
+
+/// 결함 201 (재검수 69e) — 이 플랫폼의 읽기 시한 번호가 정해졌는지. 나열하지 않은 플랫폼에서는 **늘 도는 시험이 실패**해 알린다
+/// (판정 시험은 같은 상수를 가짜 줄에 넣어 쓰므로 그것만으로는 미지원을 드러내지 못했다).
+#[test]
+fn the_read_timeout_error_number_is_known_on_this_platform() {
+    assert!(
+        READ_TIMEOUT_OS_ERROR.starts_with("(os error ") && READ_TIMEOUT_OS_ERROR.ends_with(')'),
+        "이 플랫폼의 읽기 시한 오류 번호를 정하지 않았다: {READ_TIMEOUT_OS_ERROR}"
+    );
 }
 
 /// 결함 191 — 판정 함수가 관측한 끝은 받고 reset · 짧은 경과 · 둘 다 EOF 는 떨어뜨리는지(옛 바이너리 없이 늘 돈다).
