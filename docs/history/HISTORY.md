@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-17 09:38 — 결함 85 · Agent 기동 GC 연결(체크포인트 루트 독점 잠금 · 부팅 시 PARTIAL 정리)
+
+- 계획: `docs/plans/2026-09-17_0930_Agent_기동_GC_연결.md`
+- 스트림: Agent · QA
+- 수행: Agent 기본 lane 의 run() 이 아무것도 시작하기 전에 체크포인트 루트의 형제 `<root>.agent-lock` 을 독점하고 `startup_gc()` 로 지난 실행의
+  PARTIAL 을 치운다(CLAUDE.md §0.3). 잠금이 잡혀 있으면 CHECKPOINT_ROOT_BUSY, GC 실패면 CHECKPOINT_STARTUP_GC_FAILED 로 시작하지 않는다.
+  selftest 44 는 root 를 파일로 만들던 입력이 GC 에서 먼저 멈춰, checkpoint 디렉터리 자리를 파일로 막는 입력으로 바꿨다
+  (루트가 파일인 입력은 agent 단위 테스트로). 결함 107(outbox 를 루트 밖으로) 위에서 했다
+- 검증: agent · cli(ack_before_execution · grant_over_wire) 113 passed · 0 failed · 경고 0 · selftest 시나리오 줄 97 · 뮤테이션 G1~G3 3/3 기대대로.
+  리눅스 미실행. multi_agent lane · SENSITIVE 삭제(§0.5)는 하지 않았다
+- 원본: `docs/evidence/_raw/결함85_Agent_기동_GC_시험_2026-09-17.txt`
+- 리포트: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` (85)
+
+---
+
 ## 2026-09-17 05:39 — B+E 구현 단계 6(REPORT 세션 · outbox · 서명된 받았다 응답 검증 · 결정 D1 완성)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §13 · 제안서 흐름의 REPORT 세션 · §5.8 (3)

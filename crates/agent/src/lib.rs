@@ -453,6 +453,9 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         connect_timeout: Duration::from_secs(3),
         safety_margin_ms: 1_000,
     };
+    // ★ 결함 85 — 부팅 시 GC(CLAUDE.md §0.3). **아무것도 시작하기 전에** 체크포인트 루트를 독점하고 지난 실행의 PARTIAL 을 치운다.
+    //   잠금은 이 함수가 끝날 때까지 쥔다 — 같은 루트를 쓰는 다른 Agent 가 기동 GC 로 이 실행의 PARTIAL 을 지우지 못하게 한다.
+    let _checkpoint_root_lock = claim_checkpoint_root_and_collect(&config.checkpoint_root)?;
     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
     //   (2026-08-29, 독립 검수 지적).
     //
@@ -2624,6 +2627,56 @@ fn workload_run_root(checkpoint_root: &std::path::Path) -> Result<PathBuf, Strin
     checkpoint_root_sibling(checkpoint_root, ".workload-run")
 }
 
+/// 결함 85 — 체크포인트 루트를 이 프로세스가 독점했다는 증표. 떨어뜨리면 잠금이 풀린다(파일은 지우지 않는다).
+struct CheckpointRootLock {
+    _file: fs::File,
+}
+
+/// 결함 85 — 체크포인트 루트를 독점하고 부팅 GC(`startup_gc`)를 돌린다.
+///
+/// ★ 잠금은 루트의 **형제** 파일 `<root>.agent-lock` 이다. 루트 안에 두면 루트 항목 수를 재는 selftest(39 · 43 · 83)와 어긋나고,
+///   GC 가 파일은 건너뛰더라도 루트 네임스페이스는 `write_once()` 가 쓴다(DoD-21). outbox(결함 107) · 작업 출력과 같은 자리다.
+/// ★ 이미 잡혀 있으면 시작하지 않는다(CHECKPOINT_ROOT_BUSY) — 같은 루트를 쓰는 다른 Agent 가 쓰는 중인 PARTIAL 을 지우지 않는다
+///   (`gc_partial` 주석이 적은 경쟁). 잠금을 쓰지 않는 옛 Agent 와의 경쟁은 막지 못한다.
+/// ★ 잠금 파일은 지우지 않는다 — 지우면 다음 프로세스가 새 inode 에 잠금을 잡아 상호 배제가 깨진다(`atomic.rs` 와 같은 이유).
+/// ★ GC 가 실패하면 시작하지 않는다(CHECKPOINT_STARTUP_GC_FAILED) — 부분 데이터를 남긴 채 새 작업을 받지 않는다.
+/// ★ 이것은 PARTIAL 체크포인트 정리다. SENSITIVE 데이터셋 삭제 · 검증(§0.5)은 하지 않는다.
+fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
+    let lock_path = checkpoint_root_sibling(root, ".agent-lock")?;
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠금 파일의 부모 디렉터리를 만들지 못했다({parent:?}): {error}")
+        })?;
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠금 파일을 열지 못했다({lock_path:?}): {error}"))?;
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => {
+            return Err(format!(
+                "CHECKPOINT_ROOT_BUSY: 다른 Agent 가 체크포인트 루트를 쓰고 있다({}) — 기동 GC 가 그 실행의 PARTIAL 을 지울 수 있어 시작하지 않는다",
+                root.display()
+            ));
+        }
+        Err(fs::TryLockError::Error(error)) => {
+            return Err(format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠그지 못했다({lock_path:?}): {error}"));
+        }
+    }
+    let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(root).map_err(|error| {
+        format!(
+            "CHECKPOINT_STARTUP_GC_FAILED: 체크포인트 루트({})의 부분 체크포인트를 정리하지 못했다 — 시작하지 않는다: {error}",
+            root.display()
+        )
+    })?;
+    println!("CHECKPOINT_STARTUP_GC root={} dirs={dirs} removed={removed}", root.display());
+    Ok(CheckpointRootLock { _file: file })
+}
+
 /// 체크포인트 루트의 형제 디렉터리 `<부모>/<루트 이름><suffix>` — 작업 출력 · outbox(결함 107)가 같이 쓴다.
 fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> Result<PathBuf, String> {
     let absolute = std::path::absolute(checkpoint_root).map_err(|error| {
@@ -3920,6 +3973,110 @@ mod defect_42_45_tests {
             );
             assert!(mapped.starts_with("WORKLOAD_EXECUTION_ATTEMPTED"), "{mapped}");
         }
+    }
+}
+
+#[cfg(test)]
+mod startup_gc_tests {
+    //! 결함 85 — Agent 기동 GC. 지난 실행의 PARTIAL 은 치우고, 완결 체크포인트는 두고, 같은 루트를 쓰는 다른 Agent 가 있으면 시작하지 않는다.
+    use super::*;
+
+    const SEED: [u8; 32] = [0x71; 32];
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// 지난 실행이 죽으며 남긴 PARTIAL — 시작 마커와 데이터 조각만 있고 매니페스트가 없다.
+    fn leave_partial(root: &std::path::Path) -> PathBuf {
+        let dir = root.join("ckpt-partial");
+        fs::create_dir_all(&dir).expect("PARTIAL 디렉터리");
+        fs::write(dir.join(".durability.writing"), b"").expect("시작 마커");
+        fs::write(dir.join("shard-0.bin"), b"half").expect("데이터 조각");
+        dir
+    }
+
+    fn leave_committed(root: &std::path::Path) -> PathBuf {
+        let files = vec![("shard-0.bin".to_string(), b"whole".to_vec())];
+        let manifest =
+            gputeer_checkpoint::writer::manifest_for("ckpt-committed", "job-gc", "attempt-gc", 1, 1, &files);
+        gputeer_checkpoint::writer::write_checkpoint(root, &manifest, &files, 0).expect("완결 체크포인트")
+    }
+
+    /// 연결 전에 끝나는 설정 — fence DB 가 `:memory:` 라 기동 GC 뒤 "영속이 아니다" 로 멈춘다.
+    fn config_stopping_after_startup(root: &std::path::Path) -> AgentConfig {
+        let argv: Vec<String> = [
+            "--connect",
+            "127.0.0.1:9",
+            "--own-seed",
+            &hex(&SEED),
+            "--peer-pubkey",
+            &hex(SigningKey::from_bytes(&[0x72; 32]).verifying_key().as_bytes()),
+            "--coordinator-device-id",
+            "coordinator-gc-test",
+            "--agent-device-id",
+            "agent-gc-test",
+            "--fence-db",
+            ":memory:",
+            "--checkpoint-root",
+            root.to_str().expect("경로"),
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        parse_config_from_args(&argv).expect("설정 파싱")
+    }
+
+    /// 기동 GC 는 PARTIAL 을 지우고 완결 체크포인트는 남긴다(재개 지점으로 여전히 찾힌다).
+    #[test]
+    fn startup_collects_a_partial_checkpoint_and_keeps_a_committed_one() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        let partial = leave_partial(&root);
+        let committed = leave_committed(&root);
+        let _lock = claim_checkpoint_root_and_collect(&root).expect("기동 GC");
+        assert!(!partial.exists(), "지난 실행의 PARTIAL 이 남았다: {partial:?}");
+        assert!(committed.exists(), "완결 체크포인트를 지웠다: {committed:?}");
+        let resume = gputeer_checkpoint::writer::find_resume_point_for(&root, "job-gc", "attempt-gc").expect("재개 지점 조회");
+        assert!(resume.is_some(), "완결 체크포인트가 재개 지점으로 찾히지 않는다");
+    }
+
+    /// run() 이 연결 · fence DB 보다 **먼저** 기동 GC 를 부른다 — 뒤에서 멈추는 설정이어도 PARTIAL 은 이미 치워져 있다.
+    #[test]
+    fn run_collects_partial_checkpoints_before_anything_else() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        let partial = leave_partial(&root);
+        let error = run(config_stopping_after_startup(&root)).expect_err("fence DB 가 영속이 아니라 멈춰야 한다");
+        assert!(error.contains("영속이 아니다"), "기동 GC 뒤의 관문에서 멈추지 않았다: {error}");
+        assert!(!partial.exists(), "run() 이 기동 GC 를 부르지 않았다: {partial:?}");
+    }
+
+    /// 체크포인트 루트가 일반 파일이면 기동 GC 에서 멈춘다 — 연결하지 않고, 그 파일을 건드리지 않는다.
+    /// (selftest 44 가 전에 재던 입력이다 — 그 시나리오는 이제 marker 자리를 막아 GC 뒤의 실패를 잰다)
+    #[test]
+    fn a_checkpoint_root_that_is_a_file_stops_at_startup_gc() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("not-a-directory");
+        fs::write(&root, b"regular file").expect("루트 자리 파일");
+        let error = run(config_stopping_after_startup(&root)).expect_err("루트가 파일이면 시작하지 않아야 한다");
+        assert!(error.contains("CHECKPOINT_STARTUP_GC_FAILED"), "{error}");
+        assert_eq!(fs::read(&root).expect("루트 자리 파일"), b"regular file", "루트 자리 파일을 바꿨다");
+    }
+
+    /// 같은 루트의 잠금이 잡혀 있으면 시작하지 않고 PARTIAL 을 건드리지 않는다 — 그 PARTIAL 은 다른 Agent 가 쓰는 중일 수 있다.
+    #[test]
+    fn a_second_agent_on_the_same_checkpoint_root_refuses_and_leaves_the_partial() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        let held = claim_checkpoint_root_and_collect(&root).expect("첫 Agent 의 잠금");
+        let in_progress = leave_partial(&root);
+        let error = run(config_stopping_after_startup(&root)).expect_err("잠긴 루트에서는 시작하지 않아야 한다");
+        assert!(error.contains("CHECKPOINT_ROOT_BUSY"), "{error}");
+        assert!(in_progress.exists(), "다른 Agent 가 쓰는 중인 PARTIAL 을 지웠다");
+        drop(held);
+        let _lock = claim_checkpoint_root_and_collect(&root).expect("잠금이 풀리면 다시 잡힌다");
+        assert!(!in_progress.exists(), "잠금이 풀린 뒤의 기동 GC 는 PARTIAL 을 치워야 한다(대조)");
     }
 }
 

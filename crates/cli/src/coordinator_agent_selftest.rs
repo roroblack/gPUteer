@@ -3036,9 +3036,19 @@ pub fn run() -> Result<String, String> {
     // ── 44. marker 생성 실패는 fail-closed ───────────────────────────
     let failed_root_dir_44 = tempfile::tempdir()
         .map_err(|e| format!("fail-closed 시나리오 디렉터리 생성 실패(44): {e}"))?;
-    let failed_root_44 = failed_root_dir_44.path().join("not-a-directory");
-    std::fs::write(&failed_root_44, b"regular file")
-        .map_err(|e| format!("fail-closed용 root 파일 생성 실패(44): {e}"))?;
+    // ★ 결함 85 (2026-09-17) — 전에는 root 자체를 일반 파일로 만들었다. 이제 Agent 는 연결 전에 기동 GC 를 돌리므로 그 입력은 GC 에서 먼저
+    //   멈추고(CHECKPOINT_STARTUP_GC_FAILED · agent 단위 테스트) marker 단계에 닿지 않는다. marker 생성 실패를 계속 재려고 root 는 디렉터리로
+    //   두고 **이 Attempt 의 checkpoint 디렉터리 자리**를 일반 파일로 막는다 — GC 는 파일을 건너뛰고, create_dir_all 은 실패한다.
+    let failed_root_44 = failed_root_dir_44.path().join("checkpoints");
+    std::fs::create_dir_all(&failed_root_44)
+        .map_err(|e| format!("fail-closed용 root 디렉터리 생성 실패(44): {e}"))?;
+    let blocked_checkpoint_44 = failed_root_44.join(gputeer_agent::start_checkpoint_id(
+        fixture.job_id,
+        fixture.attempt_id,
+        fixture.grant_id,
+    ));
+    std::fs::write(&blocked_checkpoint_44, b"regular file")
+        .map_err(|e| format!("fail-closed용 checkpoint 자리 파일 생성 실패(44): {e}"))?;
     let marker_failure_44 =
         run_handshake_with_checkpoint_root(&fixture, &failed_root_44, &[], &[])?;
     if marker_failure_44.agent_success
@@ -3050,7 +3060,8 @@ pub fn run() -> Result<String, String> {
             .coordinator_stdout
             .contains(RESULT_OK_MARKER)
         || marker_failure_44.agent_stdout.contains("JOB_STARTED ")
-        || !failed_root_44.is_file()
+        || !marker_failure_44.agent_stdout.contains("CHECKPOINT_STARTUP_GC ")
+        || !blocked_checkpoint_44.is_file()
     {
         return Err(format!(
             "marker 생성 실패가 fail-closed가 아니다(44): coordinator={} agent={} coordinator_stdout={} agent_stdout={} agent_stderr={}",
@@ -3061,7 +3072,7 @@ pub fn run() -> Result<String, String> {
             marker_failure_44.agent_stderr
         ));
     }
-    report.push_str("44) checkpoint root가 일반 파일인 디스크 오류에서 marker/AgentGrantAck/JOB_STARTED 없이 fail-closed 확인\n");
+    report.push_str("44) checkpoint 디렉터리 자리가 일반 파일인 디스크 오류에서 기동 GC 통과 뒤 marker/AgentGrantAck/JOB_STARTED 없이 fail-closed 확인\n");
 
     // ── 45. QUARANTINED가 다회차 갱신의 첫 회차에 발생하면 즉시 종료 ──
     // 기존 단일 회차의 --renew-outcome-override 3 트리거를 그대로
