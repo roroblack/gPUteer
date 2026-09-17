@@ -377,8 +377,9 @@ def main():
 
     # ── 11b. 유예 목록에 있으면 v1 이어도 통과 ────────────────────
     errors, _ = check(m, raw_files, grandfathered=frozenset({PILOT}))
-    expect("유예된 v1 evidence 는 v2 검사 면제", errors, "유예 목록", want=False)
-    expect("유예된 v1 evidence 는 v2 필드도 면제", errors, "v2 필수 필드 누락", want=False)
+    # ★ 재검수 63b 결함 115 — 통과를 주장하는 줄은 기준선 필터 없이 본다(expect_absent).
+    expect_absent("유예된 v1 evidence 는 v2 검사 면제", errors, "유예 목록")
+    expect_absent("유예된 v1 evidence 는 v2 필드도 면제", errors, "v2 필수 필드 누락")
 
     # ── 12. ENV-* 는 검수 강제 대상이 아니다 ──────────────────────
     #   규칙이 과하면 우회하게 된다. 범위를 실제로 좁혔는지 확인한다.
@@ -390,8 +391,8 @@ def main():
         # PILOT 이 DoD- 로 시작하므로 강제 대상이다. 대조군으로 접두사를 비운다.
         VE.REVIEW_REQUIRED_PREFIX = ("ZZZ-",)
         errors, _ = check(m, raw_files)
-        expect("강제 대상이 아니면 review_outcome 을 묻지 않는다",
-               errors, "review_outcome", want=False)
+        expect_absent("강제 대상이 아니면 review_outcome 을 묻지 않는다",
+                      errors, "review_outcome")
     finally:
         VE.REVIEW_REQUIRED_PREFIX = saved
 
@@ -451,8 +452,14 @@ def main():
         # ★ 2026-09-17 — 줄바꿈만 다른 목록(LF · CRLF 체크아웃)은 같은 목록이다. 한 줄 추가는 어느 형태로든 유예를 전부 취소한다.
         # ★ 검수 63 결함 108 — 취소는 "오류가 있다" 가 아니라 **오류 그리고 빈 유예**다. 정상은 오류 없음 **그리고** 손대지 않은 목록과
         #   같은 집합이다. 전에는 두 조건을 bool 로 섞어 유예를 남기고 오류만 내는 구현도 통과했다.
-        expected_set, expected_errs = VE.load_grandfathered()
-        assert expected_set and not expected_errs, (expected_set, expected_errs)
+        # ★ 재검수 63b 결함 114 — 기대 집합을 **검사 대상 함수로 얻지 않는다.** 같은 함수로 얻으면 정상 로드가 틀린 집합을 내도 기대도 같이
+        #   틀려 통과한다. 목록 파일 바이트를 여기서 직접 파싱한다(주석 · 빈 줄 제외).
+        expected_set = {
+            line.strip()
+            for line in real.replace(b"\r\n", b"\n").decode("utf-8").split("\n")
+            if line.strip() and not line.strip().startswith("#")
+        }
+        assert expected_set, "유예 목록에서 항목을 하나도 못 읽었다"
         lf_list = real.replace(b"\r\n", b"\n")
         for label, data, extra in (
             ("LF", lf_list, b"ENV-99_fake.md\n"),
