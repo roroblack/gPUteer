@@ -41,7 +41,18 @@ debug/gputeer.exe   통합 테스트 · selftest 가 쓰는 실행 파일. 재�
 ## 6. 조치
 
 - [x] 고치기 전에 쓴다
-- [ ] 측정 절차 — 측정마다 로컬 crate 11개를 `cargo clean -p` 로 지우고 빌드한다. 원본에 "Compiling 줄이 로컬 crate 전부 · 전부 이 worktree 경로" 를 기계로 확인한 결과를
+- [x] (2026-09-17 10:29) 측정 절차 — 측정마다 로컬 crate 11개를 `cargo clean -p` 로 지우고 빌드한다. 원본에 "Compiling 줄이 로컬 crate 전부 · 전부 이 worktree 경로" 를 기계로 확인한 결과를
   싣고, selftest 전에 debug/gputeer.exe 의 sha256 을 남긴다
-- [ ] 위 브랜치들의 머리 커밋을 새 절차로 다시 잰다 — 기록한 수치와 같으면 그 사실을, 다르면 무엇이 달랐는지 적는다
+- [x] (2026-09-17 10:29) 다섯 브랜치 머리를 새 절차로 다시 쟀다 — **전부 0 failed · 경고 0 · selftest 97**. 범위를 넓혀 쟀기 때문에 전에 적은 수치와 개수는 직접 비교되지 않는다
+  (각 브랜치는 앞 브랜치 + 그 조각의 새 테스트 수만큼 늘었다 — 435 = 418 + REPORT 17 · 439 = 435 + 결함 85 의 4 · 442 = 439 + 79 · 81 의 3):
+
+```text
+feat/b-e-contract 2c9e1a1(코드 = 63b2ed7)                    passed 418 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97 (이전 기록 323 · 범위 다름: coordinator + cli 두 파일)
+feat/b-e-report-session 7c4a4eb(코드 = 95af3f5)              passed 435 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97 (이전 기록 414 · 범위 다름: issue_grant · shared_control_db 없음)
+feat/agent-startup-gc 1627c15                              passed 439 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97 (이전 기록 113 · 범위 다름: agent + cli 두 파일)
+fix/lease-max-duration-boundary 5fbbcd7                    passed 439 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97 (이전 기록 coordinator 305 · cli 29 · 범위 다름)
+fix/memory-observation-cause 0c45c41                       passed 442 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97 (이전 기록 116 · 범위 다름)
+```
+  원본 `docs/evidence/_raw/결함130_깨끗한_재측정_2026-09-17.txt`
+- [ ] ★ **뮤테이션 판정은 다시 돌리지 않았다** — 그 판정들은 섞인 산출물에서 났을 수 있다. 다음 조각부터 새 절차 뒤에 돌리고, 지난 판정은 "재확인 안 됨" 으로 둔다
 - [ ] 옛 상대 조합 시험의 옛 바이너리는 **별도 target 디렉터리**로 빌드한다
