@@ -3013,25 +3013,36 @@ pub fn run() -> Result<String, String> {
         .path()
         .join(&first_id_43)
         .join(".durability.writing");
+    // ★ 결함 140 (검수 66) — 두 번째 기동의 GC 가 첫 실행의 WRITING-only PARTIAL 을 지운다. 그래서 두 번째 기록은 멱등 처리가 아니라 **새 생성**이다 —
+    //   이 시나리오는 "GC 로 치운 뒤 같은 checkpoint_id 로 다시 만든다" 를 잰다. write_once 멱등 자체는 checkpoint 시험
+    //   (`codex_findings.rs::k1b_write_once_is_idempotent_for_identical_content` · `durability_chaos.rs::adr026_write_once_is_idempotent_for_same_name`)이 잰다.
+    let second_gc_removed_43 = retry_second_43
+        .agent_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace().find_map(|f| f.strip_prefix("removed=")))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
     if !retry_first_43.agent_success
         || !retry_second_43.agent_success
         || !retry_first_43.coordinator_success
         || !retry_second_43.coordinator_success
         || first_id_43 != second_id_43
+        || second_gc_removed_43 == 0
         || entries_43.len() != 1
         || std::fs::read(&marker_43).map_err(|e| format!("retry marker 읽기 실패(43): {e}"))?
             != b"Writing\n"
     {
         return Err(format!(
-            "동일 attempt retry가 멱등 처리되지 않았다(43): first_id={} second_id={} entries={} first_agent={} second_agent={}",
+            "동일 attempt 재기동이 GC 뒤 같은 자리에 다시 만들지 않았다(43): first_id={} second_id={} second_gc_removed={} entries={} first_agent={} second_agent={}",
             first_id_43,
             second_id_43,
+            second_gc_removed_43,
             entries_43.len(),
             retry_first_43.agent_success,
             retry_second_43.agent_success
         ));
     }
-    report.push_str("43) 동일 attempt 재시도에서 같은 checkpoint_id와 단일 WRITING marker만 유지되어 write_once 멱등 경로가 확인됨\n");
+    report.push_str("43) 동일 attempt 재기동에서 기동 GC가 앞 실행의 WRITING-only PARTIAL을 지운 뒤 같은 checkpoint_id로 단일 WRITING marker를 새로 만듦 확인(write_once 멱등은 checkpoint 시험이 잰다)\n");
 
     // ── 44. marker 생성 실패는 fail-closed ───────────────────────────
     let failed_root_dir_44 = tempfile::tempdir()
@@ -3042,6 +3053,11 @@ pub fn run() -> Result<String, String> {
     let failed_root_44 = failed_root_dir_44.path().join("checkpoints");
     std::fs::create_dir_all(&failed_root_44)
         .map_err(|e| format!("fail-closed용 root 디렉터리 생성 실패(44): {e}"))?;
+    // ★ 결함 137 — 비지 않은 루트는 표식이 있어야 받는다. 이 입력은 "지난 실행이 쓰던 루트" 이므로 표식을 먼저 둔다.
+    let owner_marker_44 = gputeer_agent::checkpoint_root_owner_marker(&failed_root_44)
+        .map_err(|e| format!("fail-closed용 root 표식 경로 실패(44): {e}"))?;
+    std::fs::write(&owner_marker_44, b"gputeer agent checkpoint root v1\n")
+        .map_err(|e| format!("fail-closed용 root 표식 생성 실패(44): {e}"))?;
     let blocked_checkpoint_44 = failed_root_44.join(gputeer_agent::start_checkpoint_id(
         fixture.job_id,
         fixture.attempt_id,

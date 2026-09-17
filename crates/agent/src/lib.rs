@@ -2641,8 +2641,16 @@ struct CheckpointRootLock {
 /// ★ 잠금 파일은 지우지 않는다 — 지우면 다음 프로세스가 새 inode 에 잠금을 잡아 상호 배제가 깨진다(`atomic.rs` 와 같은 이유).
 /// ★ GC 가 실패하면 시작하지 않는다(CHECKPOINT_STARTUP_GC_FAILED) — 부분 데이터를 남긴 채 새 작업을 받지 않는다.
 /// ★ 이것은 PARTIAL 체크포인트 정리다. SENSITIVE 데이터셋 삭제 · 검증(§0.5)은 하지 않는다.
+/// ★ 결함 137 (검수 66) — `startup_gc` 는 직계 하위 디렉터리의 매니페스트 없는 **모든 파일**을 지운다. 그래서 루트가 **Agent 가 만든 전용 루트**일 때만
+///   부른다: 형제 표식 `<실제 루트>.agent-root` 가 있거나, 없으면 루트가 **비어 있을 때만** 표식을 쓰고 받는다. 표식 없는 비지 않은 루트는
+///   삭제 전에 거부한다(CHECKPOINT_ROOT_NOT_OWNED) — `--checkpoint-root C:\data` 오지정이 사용자 파일 삭제가 되지 않게.
+///   표식을 루트 안에 두지 않는 이유는 잠금과 같다. 표식은 fsync 하지 않는다 — 잃으면 다음 기동이 거부한다(가용성 쪽으로 닫힌다).
+///   ★ 이 판 이전 Agent 가 쓰던 루트도 거부된다 — 운영자가 내용을 확인하고 표식 파일을 직접 만들어야 한다.
+/// ★ 결함 138 (검수 66) — 잠금 · 표식은 루트를 만든 뒤 **실제 위치**(canonicalize)의 형제로 정한다. 전에는 절대 경로 문자열의 형제라 junction ·
+///   symlink 별칭으로 부른 두 Agent 가 서로 다른 잠금을 얻고 서로의 PARTIAL 을 지울 수 있었다. GC 도 실제 위치에 돈다.
 fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
-    let lock_path = checkpoint_root_sibling(root, ".agent-lock")?;
+    let real_root = real_checkpoint_root(root)?;
+    let lock_path = checkpoint_root_sibling(&real_root, ".agent-lock")?;
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠금 파일의 부모 디렉터리를 만들지 못했다({parent:?}): {error}")
@@ -2667,7 +2675,35 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
             return Err(format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠그지 못했다({lock_path:?}): {error}"));
         }
     }
-    let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(root).map_err(|error| {
+    let owner_marker = checkpoint_root_sibling(&real_root, CHECKPOINT_ROOT_OWNER_SUFFIX)?;
+    let owned = match fs::symlink_metadata(&owner_marker) {
+        Ok(metadata) if metadata.is_file() => true,
+        Ok(_) => {
+            return Err(format!(
+                "CHECKPOINT_ROOT_NOT_OWNED: 루트 표식 자리({})가 일반 파일이 아니다 — 시작하지 않는다(결함 137)",
+                owner_marker.display()
+            ));
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(format!("CHECKPOINT_ROOT_LOCK_FAILED: 루트 표식을 확인하지 못했다({owner_marker:?}): {error}"));
+        }
+    };
+    if !owned {
+        let mut entries = fs::read_dir(&real_root)
+            .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 체크포인트 루트를 읽지 못했다({real_root:?}): {error}"))?;
+        if entries.next().is_some() {
+            return Err(format!(
+                "CHECKPOINT_ROOT_NOT_OWNED: 체크포인트 루트({})가 비어 있지 않은데 Agent 가 만든 루트라는 표식({})이 없다 — 기동 GC 가 남의 파일을 \
+                 지울 수 있어 시작하지 않는다. 전용 빈 디렉터리를 지정하라(이 판 이전 Agent 가 쓰던 루트면 내용을 확인한 뒤 표식 파일을 직접 만든다 · 결함 137)",
+                root.display(),
+                owner_marker.display()
+            ));
+        }
+        fs::write(&owner_marker, b"gputeer agent checkpoint root v1\n")
+            .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 루트 표식을 쓰지 못했다({owner_marker:?}): {error}"))?;
+    }
+    let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(&real_root).map_err(|error| {
         format!(
             "CHECKPOINT_STARTUP_GC_FAILED: 체크포인트 루트({})의 부분 체크포인트를 정리하지 못했다 — 시작하지 않는다: {error}",
             root.display()
@@ -2678,6 +2714,22 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
 }
 
 /// 체크포인트 루트의 형제 디렉터리 `<부모>/<루트 이름><suffix>` — 작업 출력 · outbox(결함 107)가 같이 쓴다.
+/// 결함 137 — 체크포인트 루트가 Agent 전용이라는 형제 표식의 접미사.
+pub const CHECKPOINT_ROOT_OWNER_SUFFIX: &str = ".agent-root";
+
+/// 결함 138 — 체크포인트 루트를 만들고 실제 위치를 돌려준다. 별칭(junction · symlink) · 표기 차이가 같은 경로로 모인다.
+fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(root)
+        .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트 디렉터리를 만들지 못했다({root:?}): {error}"))?;
+    fs::canonicalize(root)
+        .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트의 실제 위치를 읽지 못했다({root:?}): {error}"))
+}
+
+/// 결함 137 — 이 루트의 소유 표식 경로(루트를 만든다). 이 판 이전 루트를 넘겨받는 운영 절차 · selftest 가 쓴다.
+pub fn checkpoint_root_owner_marker(root: &std::path::Path) -> Result<PathBuf, String> {
+    checkpoint_root_sibling(&real_checkpoint_root(root)?, CHECKPOINT_ROOT_OWNER_SUFFIX)
+}
+
 fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> Result<PathBuf, String> {
     let absolute = std::path::absolute(checkpoint_root).map_err(|error| {
         format!("checkpoint root 를 절대 경로로 바꿀 수 없다({checkpoint_root:?}): {error}")
@@ -4028,10 +4080,19 @@ mod startup_gc_tests {
     }
 
     /// 기동 GC 는 PARTIAL 을 지우고 완결 체크포인트는 남긴다(재개 지점으로 여전히 찾힌다).
+    /// 결함 137 — 지난 실행을 흉내내려면 먼저 한 번 기동해 루트 표식을 남긴다(빈 루트만 표식을 새로 받는다).
+    fn start_once(root: &std::path::Path) {
+        match claim_checkpoint_root_and_collect(root) {
+            Ok(lock) => drop(lock),
+            Err(error) => panic!("빈 루트의 첫 기동이 거부됐다: {error}"),
+        }
+    }
+
     #[test]
     fn startup_collects_a_partial_checkpoint_and_keeps_a_committed_one() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let root = dir.path().join("checkpoints");
+        start_once(&root);
         let partial = leave_partial(&root);
         let committed = leave_committed(&root);
         let _lock = claim_checkpoint_root_and_collect(&root).expect("기동 GC");
@@ -4046,6 +4107,7 @@ mod startup_gc_tests {
     fn run_collects_partial_checkpoints_before_anything_else() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let root = dir.path().join("checkpoints");
+        start_once(&root);
         let partial = leave_partial(&root);
         let error = run(config_stopping_after_startup(&root)).expect_err("fence DB 가 영속이 아니라 멈춰야 한다");
         assert!(error.contains("영속이 아니다"), "기동 GC 뒤의 관문에서 멈추지 않았다: {error}");
@@ -4060,7 +4122,8 @@ mod startup_gc_tests {
         let root = dir.path().join("not-a-directory");
         fs::write(&root, b"regular file").expect("루트 자리 파일");
         let error = run(config_stopping_after_startup(&root)).expect_err("루트가 파일이면 시작하지 않아야 한다");
-        assert!(error.contains("CHECKPOINT_STARTUP_GC_FAILED"), "{error}");
+        // 결함 138 — 이제 GC 전에 루트를 만들고 실제 위치를 읽는 단계에서 멈춘다.
+        assert!(error.contains("CHECKPOINT_ROOT_INVALID"), "{error}");
         assert_eq!(fs::read(&root).expect("루트 자리 파일"), b"regular file", "루트 자리 파일을 바꿨다");
     }
 
@@ -4077,6 +4140,57 @@ mod startup_gc_tests {
         drop(held);
         let _lock = claim_checkpoint_root_and_collect(&root).expect("잠금이 풀리면 다시 잡힌다");
         assert!(!in_progress.exists(), "잠금이 풀린 뒤의 기동 GC 는 PARTIAL 을 치워야 한다(대조)");
+    }
+
+    /// 결함 137 (검수 66) — Agent 가 만들지 않은 비지 않은 디렉터리는 삭제 전에 거부하고 파일을 건드리지 않는다. 대조: 빈 루트는 표식을 받고 PARTIAL 을 치운다.
+    #[test]
+    fn a_non_empty_directory_that_no_agent_created_is_refused_and_left_untouched() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let data = dir.path().join("data");
+        let photos = data.join("photos");
+        fs::create_dir_all(&photos).expect("사용자 디렉터리");
+        fs::write(photos.join("family.jpg"), b"photo").expect("사용자 파일");
+        match claim_checkpoint_root_and_collect(&data) {
+            Ok(_) => panic!("표식 없는 비지 않은 디렉터리에서 기동 GC 가 돌았다"),
+            Err(error) => assert!(error.contains("CHECKPOINT_ROOT_NOT_OWNED"), "{error}"),
+        }
+        assert_eq!(fs::read(photos.join("family.jpg")).expect("사용자 파일"), b"photo", "사용자 파일을 지웠다");
+        assert!(!checkpoint_root_owner_marker(&data).expect("표식 경로").exists(), "거부했는데 표식을 썼다");
+
+        let fresh = dir.path().join("fresh");
+        start_once(&fresh);
+        assert!(checkpoint_root_owner_marker(&fresh).expect("표식 경로").is_file(), "빈 루트에 표식이 없다");
+        let partial = leave_partial(&fresh);
+        let _lock = claim_checkpoint_root_and_collect(&fresh).expect("표식 있는 루트");
+        assert!(!partial.exists(), "대조: 표식 있는 루트의 PARTIAL 은 치워야 한다");
+    }
+
+    /// 결함 138 (검수 66) — 잡혀 있는 루트를 **별칭**(Windows junction · unix symlink)으로 불러도 같은 잠금이라 시작하지 않는다.
+    #[test]
+    fn an_alias_of_a_held_checkpoint_root_is_busy() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        let held = claim_checkpoint_root_and_collect(&root).expect("첫 Agent 의 잠금");
+        let alias = dir.path().join("alias");
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&alias)
+                .arg(&root)
+                .output()
+                .expect("mklink 실행");
+            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, &alias).expect("symlink");
+        let in_progress = leave_partial(&root);
+        match claim_checkpoint_root_and_collect(&alias) {
+            Ok(_) => panic!("별칭으로 부른 두 번째 Agent 가 잠금을 얻었다"),
+            Err(error) => assert!(error.contains("CHECKPOINT_ROOT_BUSY"), "{error}"),
+        }
+        assert!(in_progress.exists(), "별칭으로 부른 Agent 가 쓰는 중인 PARTIAL 을 지웠다");
+        drop(held);
     }
 }
 
