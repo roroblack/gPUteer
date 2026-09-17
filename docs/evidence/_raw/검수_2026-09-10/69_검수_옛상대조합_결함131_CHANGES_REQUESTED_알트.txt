@@ -1,0 +1,2854 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0ad59-e6e0-7e71-b3b2-7d10be051a50
+--------
+user
+동의가 아니라 **반박**을 원한다.
+
+작업 위치: worktree `test/old-peer-combination`. 검수 대상은 0c45c41 위의 커밋 — `git show HEAD` · `git diff 0c45c41..HEAD`.
+
+# 옛 상대 조합 시험 · 결함 131
+
+```text
+crates/cli/tests/old_peer_combination.rs   옛 바이너리(GPUTEER_OLD_BINARY · #[ignore])와 새 바이너리의 coordinator-stub · agent-stub 조합 3가지
+  today_a_new_agent_reports_success_against_an_old_coordinator_that_failed   덫 — 새 Agent 성공 · 옛 Coordinator 실패를 고정(결함 131)
+  an_old_agent_and_a_new_coordinator_both_fail_explicitly                     둘 다 실패 · 60초 안에 끝남
+  the_same_new_binary_on_both_sides_succeeds                                  대조(늘 돈다)
+결함 131   새 Agent 는 ACK 를 쓴 뒤 성공으로 끝나는데 옛 Coordinator 는 ACK 자리에서 Hello 를 받아 실패 — "ACK 를 받았다" 는 서명 응답이 계약에 없다
+계획서 §8  "새 Agent 는 실패한다" 를 정정
+```
+
+물을 것:
+1. 덫 테스트가 결함 131 의 사실을 정확히 고정하나 — 새 Agent 의 성공이 우연(시한 · 출력 순서)에 기대는가. 옛 Coordinator 가 실패하는 이유가 wire 순서 차이 말고 인자 · 키 구성
+   실수일 가능성은(대조 테스트가 새 · 새만 보므로 옛 · 옛 대조가 없다).
+2. 옛 Agent · 새 Coordinator 가 "둘 다 실패" 로 끝나는 경로가 명시적 오류인가, 시한(약 10초)에 기댄 우연인가. 60초 판정이 매달림을 잡기에 충분한가.
+3. `#[ignore]` · 환경 변수 없으면 실패(expect) 설계가 조용한 통과를 막나. CI 에서 이 파일이 무엇을 세는가.
+4. 원본(`docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt`)이 "옛 바이너리가 정말 D2 이전 코드" · "새 바이너리가 이 worktree" 를 입증하나(결함 130 — 공유 target 이
+   다른 worktree 산출물을 섞는다). 해시 · Compiling 줄 외에 빠진 확인이 있나.
+5. 결함 131 서술 · 계획서 정정이 과장 · 축소된 곳이 있나(레거시 lane 만 쟀다 · 저장된 예약 lane · REPORT 세션 lane 은 안 쟀다).
+
+읽을 파일:
+
+```text
+crates/cli/tests/old_peer_combination.rs
+crates/agent/src/lib.rs (run · run_one_connection · Hello 송신) · crates/coordinator/src/lib.rs (serve_one_connection_impl)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md (131)
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md (§8)
+docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt
+```
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 을 인용하라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+지정한 worktree의 커밋과 테스트·원본 증거를 읽고, 실패 원인과 바이너리 출처를 반증하는 관점으로 확인하겠습니다. 코드로 확인되는 사실과 실행 기록만으로는 입증되지 않는 부분을 구분하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Location; git worktree list; git status --short; rg --files -g AGENTS.md' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+ exited 1 in 1541ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer                                                                                                 3e17f08 [fix/defect-18-ack-timeout]
+C:/Users/playdata2/AppData/Local/Temp/claude/C--Users-playdata2-Documents-test-workspace-gPUteer/760af870-99c0-47ab-9573-8bab06182e32/scratchpad/old_pre_d2 7d5a9fe (detached HEAD)
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be                                                                                              9adb1f3 [feat/b-e-contract]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-95                                                                                           a344fcc [fix/lease-max-duration-boundary]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat                                                                                       fe3c50b [test/old-peer-combination]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-gc                                                                                           a230be0 [feat/agent-startup-gc]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-mem                                                                                          56aad36 [fix/memory-observation-cause]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-report                                                                                       7c4a4eb [feat/b-e-report-session]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-rfix                                                                                         00a9cc0 [fix/report-session-124-129]
+C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol                                                                                    8c0705b [fix/evidence-digest-eol]
+Path                                                                 
+----                                                                 
+C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+
+
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command 'git show --stat HEAD; git diff --stat 0c45c41..HEAD; git show HEAD --format=fuller --no-ext-diff' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "Get-Content -Encoding utf8 crates/cli/tests/old_peer_combination.rs; Get-Content -Encoding utf8 'docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt'" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "Get-ChildItem -Path C:/Users/playdata2/Documents/test_workspace/gPUteer -Filter AGENTS.md -Force; rg -n '131|130|§8|옛|레거시' docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md; rg -n 'run_one_connection|pub async fn run|Hello|serve_one_connection_impl|timeout|ACK' crates/agent/src/lib.rs crates/coordinator/src/lib.rs" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+ succeeded in 1337ms:
+commit fe3c50b349fae211871a995d708832d55d8f63d1
+Author: Your Name <zweing@gmail.com>
+Date:   Thu Sep 17 11:08:26 2026 +0900
+
+    검수 프롬프트 69: 옛 상대 조합 시험 · 결함 131
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+ ...260\355\225\251_\352\262\260\355\225\250131.md" | 42 ++++++++++++++++++++++
+ 1 file changed, 42 insertions(+)
+ crates/cli/tests/old_peer_combination.rs           | 195 +++++++++++++++++++++
+ ...25\251_\354\213\234\355\227\230_2026-09-17.txt" | 170 ++++++++++++++++++
+ docs/history/HISTORY.md                            |  13 ++
+ ...265\254\355\230\204\352\263\204\355\232\215.md" |   2 +
+ ...\200_\352\262\260\355\225\250_5\352\261\264.md" |  27 +++
+ ...260\355\225\251_\352\262\260\355\225\250131.md" |  42 +++++
+ 6 files changed, 449 insertions(+)
+commit fe3c50b349fae211871a995d708832d55d8f63d1
+Author:     Your Name <zweing@gmail.com>
+AuthorDate: Thu Sep 17 11:08:26 2026 +0900
+Commit:     Your Name <zweing@gmail.com>
+CommitDate: Thu Sep 17 11:08:26 2026 +0900
+
+    검수 프롬프트 69: 옛 상대 조합 시험 · 결함 131
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+diff --git "a/docs/runbooks/\352\262\200\354\210\230_\355\224\204\353\241\254\355\224\204\355\212\270/69_\352\262\200\354\210\230_\354\230\233\354\203\201\353\214\200\354\241\260\355\225\251_\352\262\260\355\225\250131.md" "b/docs/runbooks/\352\262\200\354\210\230_\355\224\204\353\241\254\355\224\204\355\212\270/69_\352\262\200\354\210\230_\354\230\233\354\203\201\353\214\200\354\241\260\355\225\251_\352\262\260\355\225\250131.md"
+new file mode 100644
+index 0000000..bd2259f
+--- /dev/null
++++ "b/docs/runbooks/\352\262\200\354\210\230_\355\224\204\353\241\254\355\224\204\355\212\270/69_\352\262\200\354\210\230_\354\230\233\354\203\201\353\214\200\354\241\260\355\225\251_\352\262\260\355\225\250131.md"
+@@ -0,0 +1,42 @@
++동의가 아니라 **반박**을 원한다.
++
++작업 위치: worktree `test/old-peer-combination`. 검수 대상은 0c45c41 위의 커밋 — `git show HEAD` · `git diff 0c45c41..HEAD`.
++
++# 옛 상대 조합 시험 · 결함 131
++
++```text
++crates/cli/tests/old_peer_combination.rs   옛 바이너리(GPUTEER_OLD_BINARY · #[ignore])와 새 바이너리의 coordinator-stub · agent-stub 조합 3가지
++  today_a_new_agent_reports_success_against_an_old_coordinator_that_failed   덫 — 새 Agent 성공 · 옛 Coordinator 실패를 고정(결함 131)
++  an_old_agent_and_a_new_coordinator_both_fail_explicitly                     둘 다 실패 · 60초 안에 끝남
++  the_same_new_binary_on_both_sides_succeeds                                  대조(늘 돈다)
++결함 131   새 Agent 는 ACK 를 쓴 뒤 성공으로 끝나는데 옛 Coordinator 는 ACK 자리에서 Hello 를 받아 실패 — "ACK 를 받았다" 는 서명 응답이 계약에 없다
++계획서 §8  "새 Agent 는 실패한다" 를 정정
++```
++
++물을 것:
++1. 덫 테스트가 결함 131 의 사실을 정확히 고정하나 — 새 Agent 의 성공이 우연(시한 · 출력 순서)에 기대는가. 옛 Coordinator 가 실패하는 이유가 wire 순서 차이 말고 인자 · 키 구성
++   실수일 가능성은(대조 테스트가 새 · 새만 보므로 옛 · 옛 대조가 없다).
++2. 옛 Agent · 새 Coordinator 가 "둘 다 실패" 로 끝나는 경로가 명시적 오류인가, 시한(약 10초)에 기댄 우연인가. 60초 판정이 매달림을 잡기에 충분한가.
++3. `#[ignore]` · 환경 변수 없으면 실패(expect) 설계가 조용한 통과를 막나. CI 에서 이 파일이 무엇을 세는가.
++4. 원본(`docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt`)이 "옛 바이너리가 정말 D2 이전 코드" · "새 바이너리가 이 worktree" 를 입증하나(결함 130 — 공유 target 이
++   다른 worktree 산출물을 섞는다). 해시 · Compiling 줄 외에 빠진 확인이 있나.
++5. 결함 131 서술 · 계획서 정정이 과장 · 축소된 곳이 있나(레거시 lane 만 쟀다 · 저장된 예약 lane · REPORT 세션 lane 은 안 쟀다).
++
++읽을 파일:
++
++```text
++crates/cli/tests/old_peer_combination.rs
++crates/agent/src/lib.rs (run · run_one_connection · Hello 송신) · crates/coordinator/src/lib.rs (serve_one_connection_impl)
++docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md (131)
++docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md (§8)
++docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt
++```
++
++# 못 찾았으면
++
++**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
++
++# 답의 형식
++
++각 지적마다 `파일:줄` 을 인용하라.
++마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+ succeeded in 1535ms:
+//! B+E ? **�� ������ ����**���� �� ���μ����� ���������� �����ϰ� �Ŵ޸��� �ʴ��� ���.
+//!
+//! ��ȹ��(`docs/plans/2026-09-14_1238_B+E_���ſ���_��������_�޾Ҵ�����_������ȹ.md`) ��8 �� ��13 �� "�� Coordinator ���� ���� ������
+//! �� ���̳ʸ��� ���� ���� �ʾҴ�" �� ������. D2(��� ������ Agent �� Hello �� �����Ѵ�) �ڷ� wire ������ �ٲ���� ?
+//!
+//! ```text
+//! �� Agent  �� �� Coordinator   �� ���� accept �� ��ٷ� Grant �� ������ ACK �� �д´�. �� ���� Hello �� ���� ������
+//! �� Agent  �� �� Coordinator   �� ���� Hello �� ��ٸ���. �� ���� Grant �� ��ٸ���
+//! ```
+//!
+//! �� �� ���̳ʸ��� ����ҿ� ���� ? `GPUTEER_OLD_BINARY` �� D2 ���� Ŀ���� ������ `gputeer` ��θ� �ش�. �׷��� �� ���� �׽�Ʈ��
+//!   `#[ignore]` ��(`cargo test ... -- --ignored`). ������ ����� ���� �ʵ��� **������ ������ �����Ѵ�.**
+//! �� ������ "����(60��) �ȿ� �� �� ������" �� ���պ� ���� �� ���д� ? �� Agent �� �� Coordinator �� ���� 131 �� ���̴�. ���� ������ �������� �޶� �������� �ʰ� ����� �״�� �����.
+//! �� ����(�� �� ��)�� �� ���� ? �� ���а� ���� �� Ű ���� �Ǽ� ������ �ƴ��� ���δ�.
+
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+const DEADLINE: Duration = Duration::from_secs(60);
+const COORDINATOR_ID: &str = "01JCOORDOLDPEER0000000001";
+const AGENT_ID: &str = "01JAGENTOLDPEER00000000001";
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+struct Keys {
+    coordinator_seed: String,
+    agent_seed: String,
+    coordinator_pub: String,
+    agent_pub: String,
+}
+
+fn keys() -> Keys {
+    let coordinator = gputeer_protocol::canonical::blake3_256(b"old-peer-combination/coordinator");
+    let agent = gputeer_protocol::canonical::blake3_256(b"old-peer-combination/agent");
+    Keys {
+        coordinator_seed: hex(&coordinator),
+        agent_seed: hex(&agent),
+        coordinator_pub: hex(gputeer_crypto::SigningKey::from_bytes(&coordinator).verifying_key().as_bytes()),
+        agent_pub: hex(gputeer_crypto::SigningKey::from_bytes(&agent).verifying_key().as_bytes()),
+    }
+}
+
+fn old_binary() -> PathBuf {
+    let path = std::env::var_os("GPUTEER_OLD_BINARY")
+        .map(PathBuf::from)
+        .expect("GPUTEER_OLD_BINARY �� ���� ? D2 ���� Ŀ���� ������ gputeer ��θ� ��� �� ������ �� �� �ִ�");
+    assert!(path.is_file(), "GPUTEER_OLD_BINARY �� ������ �ƴϴ�: {path:?}");
+    path
+}
+
+fn new_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_gputeer"))
+}
+
+struct Finished {
+    success: bool,
+    hung: bool,
+    elapsed: Duration,
+    stdout: String,
+    stderr: String,
+}
+
+fn drain(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<String> {
+    thread::spawn(move || {
+        let mut out = Vec::new();
+        pipe.read_to_end(&mut out).expect("��� �б�");
+        String::from_utf8_lossy(&out).to_string()
+    })
+}
+
+/// ���� ������ ��ٸ��� ������ ������ ���̰� `hung=true` �� �����ش�.
+fn finish(mut child: Child, stdout: thread::JoinHandle<String>, started: Instant) -> Finished {
+    let stderr = drain(child.stderr.take().expect("stderr"));
+    let (status, hung) = loop {
+        if let Some(status) = child.try_wait().expect("���� ��ȸ") {
+            break (Some(status), false);
+        }
+        if started.elapsed() > DEADLINE {
+            child.kill().expect("���� �ʰ� ���μ��� ����");
+            child.wait().expect("���� ���");
+            break (None, true);
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    Finished {
+        success: status.is_some_and(|s| s.success()),
+        hung,
+        elapsed: started.elapsed(),
+        stdout: stdout.join().expect("stdout ������"),
+        stderr: stderr.join().expect("stderr ������"),
+    }
+}
+
+fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished, Finished) {
+    let keys = keys();
+    let coordinator_started = Instant::now();
+    let mut coordinator = Command::new(coordinator_exe)
+        .args([
+            "coordinator-stub", "--listen", "127.0.0.1:0",
+            "--own-seed", &keys.coordinator_seed, "--peer-pubkey", &keys.agent_pub,
+            "--coordinator-device-id", COORDINATOR_ID, "--agent-device-id", AGENT_ID,
+            "--grant-id", "01JGRANTOLDPEER000000001", "--attempt-id", "01JATTEMPTOLDPEER00000001",
+            "--lease-id", "01JLEASEOLDPEER000000001", "--job-id", "01JJOBOLDPEER00000000001",
+            "--i-understand-legacy-mode-is-unsafe", "true",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("coordinator-stub ����");
+    // READY ���� ���� �ް�, ������ stdout �� ���� �����尡 ������ �о� �����ش�.
+    let pipe = coordinator.stdout.take().expect("stdout");
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let coordinator_stdout = thread::spawn(move || {
+        let mut reader = BufReader::new(pipe);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("READY �� �б�");
+        ready_sender.send(line.clone()).expect("READY ����");
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest).expect("������ stdout");
+        format!("{line}{rest}")
+    });
+    let ready = ready_receiver.recv_timeout(Duration::from_secs(20)).expect("coordinator READY ����");
+    let address = ready
+        .trim()
+        .strip_prefix("READY ")
+        .unwrap_or_else(|| panic!("READY ���: {ready:?}"))
+        .to_string();
+
+    let agent_started = Instant::now();
+    let mut agent = Command::new(agent_exe)
+        .args([
+            "agent-stub", "--connect", &address,
+            "--own-seed", &keys.agent_seed, "--peer-pubkey", &keys.coordinator_pub,
+            "--coordinator-device-id", COORDINATOR_ID, "--agent-device-id", AGENT_ID,
+            "--disable-reconnect", "true",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("agent-stub ����");
+    let agent_stdout = drain(agent.stdout.take().expect("stdout"));
+    let agent = finish(agent, agent_stdout, agent_started);
+    let coordinator = finish(coordinator, coordinator_stdout, coordinator_started);
+    for (who, run) in [("agent", &agent), ("coordinator", &coordinator)] {
+        eprintln!(
+            "=== {label} �� {who}: success={} hung={} elapsed_ms={}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            run.success,
+            run.hung,
+            run.elapsed.as_millis(),
+            run.stdout,
+            run.stderr
+        );
+    }
+    (agent, coordinator)
+}
+
+/// �� Agent �� �� Coordinator ? **������ ����� �����ϴ� ��**(���� 131). �� Coordinator �� ACK �ڸ����� Hello �� �޾� �����ϴµ�, �� Agent �� Grant �� �ް�
+/// ACK �� �� �� **�������� ������** ? "ACK �� �޾Ƶ鿴��" �� ������ ������ ��࿡ ���� �˾�ç �� ����. ��ġ��(��� ����) �� �׽�Ʈ�� �����´�:
+/// Agent �� �����ؾ� �Ѵ�.
+#[test]
+#[ignore = "GPUTEER_OLD_BINARY(D2 ���� gputeer) �� �ʿ��ϴ� ? cargo test -p gputeer-cli --test old_peer_combination -- --ignored --nocapture"]
+fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
+    let (agent, coordinator) = run_pair(&old_binary(), &new_binary(), "�� Agent �� �� Coordinator");
+    assert!(!agent.hung && !coordinator.hung, "������ ����({DEADLINE:?})���� �Ŵ޷ȴ�");
+    assert!(!coordinator.success, "�� Coordinator �� �� Agent �� �������� ������ ? ������ ������ ���ϰ� �ƴ�");
+    assert!(
+        agent.success,
+        "�� Agent �� �� Coordinator �� ���з� ������ ? ���� 131 �� ���������� �� ���� �������"
+    );
+}
+
+/// �� Agent �� �� Coordinator ? �� �� �������� ������ �ʰ�, ���� �ȿ� ������.
+#[test]
+#[ignore = "GPUTEER_OLD_BINARY(D2 ���� gputeer) �� �ʿ��ϴ� ? cargo test -p gputeer-cli --test old_peer_combination -- --ignored --nocapture"]
+fn an_old_agent_and_a_new_coordinator_both_fail_explicitly() {
+    let (agent, coordinator) = run_pair(&new_binary(), &old_binary(), "�� Agent �� �� Coordinator");
+    assert!(!agent.hung && !coordinator.hung, "������ ����({DEADLINE:?})���� �Ŵ޷ȴ�");
+    assert!(!agent.success, "�� Agent �� �� Coordinator �� �������� ������");
+    assert!(!coordinator.success, "�� Coordinator �� �� Agent �� �������� ������");
+}
+
+/// ���� ? ���� �� ���̳ʸ������� �����Ѵ�.
+#[test]
+fn the_same_new_binary_on_both_sides_succeeds() {
+    let exe = new_binary();
+    let (agent, coordinator) = run_pair(&exe, &exe, "�� �� ��(����)");
+    assert!(!agent.hung && !coordinator.hung, "������ �Ŵ޷ȴ�");
+    assert!(agent.success && coordinator.success, "����(�� �� ��)�� �����ߴ� ? ���� �� Ű ������ ���� �ǽ��϶�");
+}
+# �� ��� ���� ���� ���� (2026-09-17 10:42, Windows ���� ���)
+# �� ���̳ʸ�: 7d5a9fe(D2 Ŀ�� 5064c1c �� �θ�)�� **���� target ���͸�**�� ���� ? Compiling gputeer 10�� ���� �� �и� worktree ���
+#   sha256 182f4fe5cf73c313c3890afac4b14faee8a48ed7c9f7b8f6f41d930311037550
+# �� ���̳ʸ�: �� worktree �� ���� crate ����� �ٽ� ����(Compiling 10 �� �� 0) ? sha256 06a36dca9a2bed41efe65cb4687185e08389d6fb55a0f6e0ae524f58fa8ed697
+# �� ���� target ���� �� ���̳ʸ��� ���� ù �õ��� �� �� ��(���� �ؽ�)�̶� ���ȴ� ? ���� 130
+# ���� 1: ���� �� �׽�Ʈ(�� Agent �� ���и� ���) ? �� Agent �� ������ ����. ���� 131 �� ����ϰ� �� �׽�Ʈ�� ������ �ٲ��
+# ���� 2: ������ �ٲ� �� 3 passed
+
+## �� ���̳ʸ� ����
+   Compiling gputeer-protocol v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\protocol)
+   Compiling gputeer-runtime-policy v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-policy)
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-windows)
+   Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\crypto)
+   Compiling gputeer-runtime-nvml v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-nvml)
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\checkpoint)
+   Compiling gputeer-scheduler v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\scheduler)
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\coordinator)
+   Compiling gputeer-agent v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\agent)
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.70s
+  Executable tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+
+
+## ���� 1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+
+running 3 tests
+test a_new_agent_and_an_old_coordinator_both_fail_explicitly ... === �� Agent �� �� Coordinator �� agent: success=true hung=false elapsed_ms=757
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-8188-1789609238036940300 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609238063 expires_at_unix_ms=1789609298063
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== �� Agent �� �� Coordinator �� coordinator: success=false hung=false elapsed_ms=1261
+--- stdout ---
+READY 127.0.0.1:61329
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61334
+
+--- stderr ---
+���: ���Ž� ���(--lease-db ����)�� ����Ѵ� ? revoke/����/max-duration ��ȣ�� ����
+SESSION_ERROR peer=127.0.0.1:61334 connection_attempt=0 kind=protocol error=protocol: session protocol: �������� ���� ���� Ÿ��: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609238061, nonce: [151, 251, 71, 94, 42, 140, 254, 208, 106, 19, 185, 255, 38, 94, 25, 242], node_signature: [124, 214, 235, 4, 144, 41, 252, 60, 167, 91, 233, 57, 29, 31, 0, 3, 0, 170, 225, 196, 60, 222, 175, 144, 8, 158, 228, 197, 222, 164, 30, 143, 1, 27, 184, 72, 102, 36, 210, 180, 248, 120, 95, 28, 214, 74, 237, 98, 214, 254, 215, 188, 124, 173, 142, 106, 100, 63, 235, 168, 20, 8, 249, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+coordinator-stub ����: protocol: session protocol: �������� ���� ���� Ÿ��: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609238061, nonce: [151, 251, 71, 94, 42, 140, 254, 208, 106, 19, 185, 255, 38, 94, 25, 242], node_signature: [124, 214, 235, 4, 144, 41, 252, 60, 167, 91, 233, 57, 29, 31, 0, 3, 0, 170, 225, 196, 60, 222, 175, 144, 8, 158, 228, 197, 222, 164, 30, 143, 1, 27, 184, 72, 102, 36, 210, 180, 248, 120, 95, 28, 214, 74, 237, 98, 214, 254, 215, 188, 124, 173, 142, 106, 100, 63, 235, 168, 20, 8, 249, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+
+
+thread 'a_new_agent_and_an_old_coordinator_both_fail_explicitly' (8584) panicked at crates\cli\tests\old_peer_combination.rs:169:5:
+�� Agent �� �� Coordinator �� �������� ������ ? ������ ������ ����ߴ�
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... === �� Agent �� �� Coordinator �� agent: success=false hung=false elapsed_ms=10063
+--- stdout ---
+
+--- stderr ---
+agent-stub ����: RETRYABLE_CONNECTION: Grant ������ �б�/���� ����: ��Ʈ�� �б� ����: ����� ���������κ��� ������ ���� �������� ���߰ų�, ȣ��Ʈ�κ��� ������ ���� ������ ���������ϴ�. (os error 10060)
+
+=== �� Agent �� �� Coordinator �� coordinator: success=false hung=false elapsed_ms=10084
+--- stdout ---
+READY 127.0.0.1:61335
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61336
+
+--- stderr ---
+���: ���Ž� ���(--lease-db ����)�� ����Ѵ� ? revoke/����/max-duration ��ȣ�� ����
+SESSION_ERROR peer=127.0.0.1:61336 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent �� Hello �� ���� ���ߴ�(���� ���� �� ���� ���� ? Hello �� ������ �ʴ� D2 ���� Agent �� �� �ִ�): �������� �ϰ�Ǳ� ���� ��Ʈ���� �����
+coordinator-stub ����: transport: session: HELLO_MISSING: Agent �� Hello �� ���� ���ߴ�(���� ���� �� ���� ���� ? Hello �� ������ �ʴ� D2 ���� Agent �� �� �ִ�): �������� �ϰ�Ǳ� ���� ��Ʈ���� �����
+
+ok
+test the_same_new_binary_on_both_sides_succeeds ... === �� �� ��(����) �� agent: success=true hung=false elapsed_ms=158
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-18584-1789609248248653900 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609248291 expires_at_unix_ms=1789609308291
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== �� �� ��(����) �� coordinator: success=true hung=false elapsed_ms=281
+--- stdout ---
+READY 127.0.0.1:61361
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61362
+SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+���: ���Ž� ���(--lease-db ����)�� ����Ѵ� ? revoke/����/max-duration ��ȣ�� ����
+
+ok
+
+failures:
+
+failures:
+    a_new_agent_and_an_old_coordinator_both_fail_explicitly
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.63s
+
+error: test failed, to rerun pass `-p gputeer-cli --test old_peer_combination`
+
+
+## ���� 2
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.86s
+     Running tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+
+running 3 tests
+test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... === �� Agent �� �� Coordinator �� agent: success=false hung=false elapsed_ms=10102
+--- stdout ---
+
+--- stderr ---
+agent-stub ����: RETRYABLE_CONNECTION: Grant ������ �б�/���� ����: ��Ʈ�� �б� ����: ����� ���������κ��� ������ ���� �������� ���߰ų�, ȣ��Ʈ�κ��� ������ ���� ������ ���������ϴ�. (os error 10060)
+
+=== �� Agent �� �� Coordinator �� coordinator: success=false hung=false elapsed_ms=10126
+--- stdout ---
+READY 127.0.0.1:61446
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61447
+
+--- stderr ---
+���: ���Ž� ���(--lease-db ����)�� ����Ѵ� ? revoke/����/max-duration ��ȣ�� ����
+SESSION_ERROR peer=127.0.0.1:61447 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent �� Hello �� ���� ���ߴ�(���� ���� �� ���� ���� ? Hello �� ������ �ʴ� D2 ���� Agent �� �� �ִ�): ��Ʈ�� �б� ����: ����� ���������κ��� ������ ���� �������� ���߰ų�, ȣ��Ʈ�κ��� ������ ���� ������ ���������ϴ�. (os error 10060)
+coordinator-stub ����: transport: session: HELLO_MISSING: Agent �� Hello �� ���� ���ߴ�(���� ���� �� ���� ���� ? Hello �� ������ �ʴ� D2 ���� Agent �� �� �ִ�): ��Ʈ�� �б� ����: ����� ���������κ��� ������ ���� �������� ���߰ų�, ȣ��Ʈ�κ��� ������ ���� ������ ���������ϴ�. (os error 10060)
+
+ok
+test the_same_new_binary_on_both_sides_succeeds ... === �� �� ��(����) �� agent: success=true hung=false elapsed_ms=112
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-21332-1789609329180968300 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609329207 expires_at_unix_ms=1789609389207
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== �� �� ��(����) �� coordinator: success=true hung=false elapsed_ms=238
+--- stdout ---
+READY 127.0.0.1:61456
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61457
+SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+���: ���Ž� ���(--lease-db ����)�� ����Ѵ� ? revoke/����/max-duration ��ȣ�� ����
+
+ok
+test today_a_new_agent_reports_success_against_an_old_coordinator_that_failed ... === �� Agent �� �� Coordinator �� agent: success=true hung=false elapsed_ms=107
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-18128-1789609329432110700 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609329454 expires_at_unix_ms=1789609389454
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== �� Agent �� �� Coordinator �� coordinator: success=false hung=false elapsed_ms=150
+--- stdout ---
+READY 127.0.0.1:61458
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:61459
+
+--- stderr ---
+���: ���Ž� ���(--lease-db ����)�� ����Ѵ� ? revoke/����/max-duration ��ȣ�� ����
+SESSION_ERROR peer=127.0.0.1:61459 connection_attempt=0 kind=protocol error=protocol: session protocol: �������� ���� ���� Ÿ��: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609329452, nonce: [80, 217, 138, 68, 177, 112, 17, 124, 100, 102, 68, 210, 171, 8, 149, 174], node_signature: [224, 36, 113, 97, 112, 96, 247, 126, 137, 150, 193, 218, 108, 198, 5, 195, 88, 178, 170, 204, 123, 210, 86, 127, 39, 153, 4, 90, 65, 170, 139, 225, 179, 249, 141, 8, 164, 217, 18, 101, 170, 64, 214, 45, 220, 90, 177, 208, 252, 34, 235, 230, 173, 18, 147, 244, 90, 15, 32, 114, 115, 225, 237, 6] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+coordinator-stub ����: protocol: session protocol: �������� ���� ���� Ÿ��: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609329452, nonce: [80, 217, 138, 68, 177, 112, 17, 124, 100, 102, 68, 210, 171, 8, 149, 174], node_signature: [224, 36, 113, 97, 112, 96, 247, 126, 137, 150, 193, 218, 108, 198, 5, 195, 88, 178, 170, 204, 123, 210, 86, 127, 39, 153, 4, 90, 65, 170, 139, 225, 179, 249, 141, 8, 164, 217, 18, 101, 170, 64, 214, 45, 220, 90, 177, 208, 252, 34, 235, 230, 173, 18, 147, 244, 90, 15, 32, 114, 115, 225, 237, 6] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.53s
+
+
+ succeeded in 1547ms:
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:26:                wire  위조 Ack · 다른 세션 nonce 의 Ack · report_hash 불일치 · 옛 Coordinator 의 새 mode 거부 ·
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:77:언제(결함 59)     최소 관측 필드는 **이번 계약 단계**에 넣는다 — B+E 가 이미 옛 버전과 호환되지 않는 묶음이라 AttemptReport
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:87:틀린 것(결함 63)  "B+E 가 이미 비호환이라 스큐 비용이 새로 생기지 않는다" — AttemptReport 를 schema_version 2 로 만들면 옛 소비자가
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:152:                                기존 lane 은 REPORT · FRESH 세션으로 대체한다(유지하지 않는다 — 옛 Agent 와는 명시적 실패)
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:345:★ 설정 분기가 없다(D2 결정 "항상"). 옛 Agent 는 새 Coordinator 에 HELLO_MISSING 으로 거부되고(시한까지 기다리거나 다른 프레임을
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:346:  받으면), 새 Agent 는 옛 Coordinator 가 ACK 자리에서 Hello 를 받아 실패한다 — 후자는 **테스트하지 않았다**(옛 바이너리가 없다).
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:347:  ★ 2026-09-17 10:41 정정(결함 131) — 옛 바이너리를 별도 target 으로 빌드해 쟀다. 옛 Coordinator 는 실패하지만 **새 Agent 는 성공(RESULT ok=true)으로 끝난다.**
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:348:    옛 Agent · 새 Coordinator 는 둘 다 약 10초 시한으로 실패한다. `crates/cli/tests/old_peer_combination.rs`
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:445:             `bound_via`(current_reservation · assignment_record) 칸에 남기고, 칸이 없던 DB 는 열 때 더한다(옛 행은 current_reservation).
+docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:453:★ 아직 하지 않는다: 예약 해제 · Attempt 전이 · Ack 수신을 생존 관측으로 기록 · 옛 Coordinator 와의 조합 시험 · 리눅스 실행.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:204:  - ★ **그 테스트 주석 윗부분에 옛 일반화가 남았다**(재검수 14) — "CLI 테스트
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:414:rename_noreplace   아직 제안 단계 (rust-lang/libs-team#131)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:638:  거기로 옮겼다. 부호(`+f`)를 받던 옛 동작은 거부로 좁혔다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:641:- [x] 뮤테이션 — 일곱 곳을 **하나씩** 옛 슬라이스로 되돌리니 그 칸의 테스트가
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:728:crates/coordinator/src/lib.rs:2322    Manifest 부착은 레거시 issue_grant() 안에만 있다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:807:  거부하는지, 그리고 **대조군**으로 같은 9개를 레거시 lane 에서는 받는지
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:893:개발 기계 Windows 11 · f57513e 의 debug 바이너리 · selftest 80번과 같은 레거시 lane 플래그 +
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:908:주는 레거시 lane 에서만 실행까지 간다(selftest 80번은 `cmd /c exit 0` 이라
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1012:                        레거시 lane 의 --stored-grant-ttl-ms -> 쓰는 곳이 저장된 예약 분기뿐
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1033:                 expire-lease · lease-ttl-ms — 레거시 issue_grant·issue_lease·
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1045:  (레거시 lane 의 `--stored-grant-*`) · `STORED_LANE_ID_MISSING` 테스트
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1181:  130(RENEW_AFTER) · 331·345·350(AXES_*, 122행 parse_axes 에서) · 378(UNKNOWN_FLAG) 은 open 전.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1277:  그 범위의 옛 문장에서 새 지적이 나왔다. 33 은 이번에 바꾼 줄로만 좁힌다.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1391:- [x] 코드 주석 · CLAUDE.md · 설계 §8 · fixture 주석 둘을 좁혔다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1476:- [x] 조용한 스킵(`CLAUDE.md` §3) — 운영자가 준 갱신 폭이 적용되지 않는다. 레거시(테스트) lane 이다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1482:  만료 now+1000 · 갱신 now+500) + 대조군(기본값 60초). 뮤테이션: 두 줄을 정확히 옛 고정값으로
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1546:- [x] 조용한 스킵(`CLAUDE.md` §3) — 생존 관측을 쌓는 줄 알았는데 아무것도 안 쌓인다. 레거시(테스트) lane
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1710:# 결함 131 — 새 Agent 는 옛 Coordinator 가 거부해도 성공으로 끝난다 (옛 상대 조합 시험 · 세션 자체 발견)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1712:★ 계획서 §8 이 "새 Agent 는 옛 Coordinator 가 ACK 자리에서 Hello 를 받아 실패한다 — 테스트하지 않았다(옛 바이너리가 없다)" 고 적었다. 옛 바이너리를
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1713:  **별도 target 디렉터리**로 빌드해(결함 130 — 공유 target 의 첫 시도는 옛 · 옛이었다) 처음 쟀다. 서술의 앞 절반(옛 Coordinator 실패)은 맞고 **뒤 절반(새 Agent 실패)은 틀렸다.**
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1717:새 Agent(test/old-peer-combination · 0c45c41 위) · 옛 Coordinator(7d5a9fe — D2 커밋 5064c1c 의 부모) · 레거시 lane(--lease-db 없음)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1718:  옛 Coordinator  accept 뒤 곧바로 Grant 를 보내고 ACK 자리에서 SessionHello 를 받아 "예상하지 못한 응답 타입" -> 실패(exit != 0)
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1720:옛 Agent · 새 Coordinator  둘 다 약 10초 시한으로 실패(HELLO_MISSING / Grant 읽기 시한) — 매달리지 않는다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1724:증거가 아니다" 와 같은 뿌리). 옛 Coordinator 는 Hello 를 모르므로 Agent 가 옛 상대를 알아챌 칸도 없다.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1727:- [x] 섞인 배포(옛 Coordinator · 새 Agent)에서 Agent 는 작업을 받았다고 보고하지만 Coordinator 는 그 연결을 실패로 끝냈다 — 두 쪽 사실이 어긋난다.
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1728:  레거시 lane 에서 잰 것이다. 저장된 예약 lane · 실행 lane 은 재지 않았다
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:2016:  ★ 안 한 것: multi_agent lane(체크포인트를 쓰지 않는다) · SENSITIVE 데이터셋 삭제(§0.5) · 잠금을 쓰지 않는 옛 Agent 와의 경쟁 · 리눅스
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:2169:68 [P2] 같은 절  v1 에서 새 필드를 쓰지 못하게 하는 불변식이 없다 — schema_version 1 + 새 필드로 서명하면 옛 구현이 canonical 을
+docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:2205:      옛 소비자는 값 6 만 거부하지만, 모든 새 보고를 schema_version 2 로 만들면 옛 소비자가 아는 COMPLETED · FAILED 도 거부된다.
+crates/coordinator/src/lib.rs:89:    ///   를 시험한다. 이 모드에서는 Agent 의 두 번째 ACK 를 기다리지
+crates/coordinator/src/lib.rs:93:    /// ★ 테스트 전용 — Agent의 ACK를 검증한 직후 연결을 의도적으로
+crates/coordinator/src/lib.rs:100:    pub accept_timeout_ms: u64,
+crates/coordinator/src/lib.rs:138:    // 정상 handshake(Grant/ACK) 뒤, **같은 TCP 연결**에 이어서
+crates/coordinator/src/lib.rs:234:    /// `RevokeLeaseNotice` 를 보낸다. `Some(0)` 은 Grant/ACK 직후다.
+crates/coordinator/src/lib.rs:236:    /// ★ 테스트 전용 — ACK 직후 저장소에만 revoke를 확정하고 통지는
+crates/coordinator/src/lib.rs:240:    /// ACK 뒤에 받을 `NodeHeartbeat` 개수. 0 이면 이 구간이 없다.
+crates/coordinator/src/lib.rs:249:    /// ACK·heartbeat 뒤에 받을 `NeighborUnreachableReport` 개수.
+crates/coordinator/src/lib.rs:261:    /// ACK·heartbeat·이웃 신고 뒤에 받을 `AttemptReport` 개수.
+crates/coordinator/src/lib.rs:275:    /// B+E 구현 단계 6 — REPORT 세션(Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck)을 받는다.
+crates/coordinator/src/lib.rs:277:    /// ★ 저장소는 `expect_attempt_reports` 와 같은 control DB(`grant_from_control_db`)의 보고 저장소다. 켜지 않으면 REPORT Hello 를
+crates/coordinator/src/lib.rs:307:    /// Test-only delay after Grant/ACK and before reading a renewal request.
+crates/coordinator/src/lib.rs:309:    /// Explicit opt-in Hello-first Resume lane. The default remains the
+crates/coordinator/src/lib.rs:310:    /// historical server-first Grant/ACK lane.
+crates/coordinator/src/lib.rs:622:            accept_with_deadline(&listener, Duration::from_millis(config.accept_timeout_ms))?;
+crates/coordinator/src/lib.rs:708:    //   hook 은 ACK 직후 세션을 끝낼 수 있다 — 셋 중 둘은 항상 끝내고,
+crates/coordinator/src/lib.rs:710:    //   연결일 때만 끝낸다(13라운드 정정 — 전에 "세 hook 은 ACK 직후 끝낸다"
+crates/coordinator/src/lib.rs:733:                "{flag} 는 ACK 직후 세션을 끝낼 수 있어 이웃 신고 수신에 닿는다고 보장할 수 없다 — --expect-neighbor-reports 와 함께 줄 수 없다"
+crates/coordinator/src/lib.rs:838:                "{flag} 는 ACK 직후 세션을 끝낼 수 있어 AttemptReport 수신에 닿는다고 보장할 수 없다 — --expect-attempt-reports 와 함께 줄 수 없다"
+crates/coordinator/src/lib.rs:847:/// ★ ACK 직후 세션을 끝내는 hook 들은 여기서 보지 않는다 — REPORT 세션은 FRESH 연결과 **따로** 오는 새 연결이다.
+crates/coordinator/src/lib.rs:869:            "resume 경로는 Hello 의 mode 로 세션을 가르지 않는다 — --accept-report-sessions 와 --resume-protocol 을 함께 줄 수 없다"
+crates/coordinator/src/lib.rs:887:///   "lease store" · "저장소" 가 있거나, durable 저장소일 때 "Lease" 와 "실패" 가 함께 있으면 Storage 였다 — 상대가 보낸 값(ACK 의
+crates/coordinator/src/lib.rs:905:        || lower.contains("timeout")
+crates/coordinator/src/lib.rs:921:/// ★★ 결함 ⑱ (설계 A, 2026-09-14) — ACK **다음 첫 읽기**의 시한.
+crates/coordinator/src/lib.rs:923:/// Manifest 가 실린 Grant 면 Agent 는 ACK 를 보낸 **뒤** 워크로드를 돌리고, 끝난 뒤에야
+crates/coordinator/src/lib.rs:955:            .set_read_timeout(Some(wait))
+crates/coordinator/src/lib.rs:956:            .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 설정 실패: {e}"))?;
+crates/coordinator/src/lib.rs:958:        //   계산한 시한 · 소켓에 실제로 걸린 시한(read_timeout 을 다시 읽는다).
+crates/coordinator/src/lib.rs:964:            .read_timeout()
+crates/coordinator/src/lib.rs:965:            .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 조회 실패: {e}"))?
+crates/coordinator/src/lib.rs:968:            "POST_ACK_WAIT_ARMED wait_ms={} remaining_lease_ms={remaining_lease_ms} applied_ms={applied_ms}",
+crates/coordinator/src/lib.rs:982:                .set_read_timeout(Some(restored))
+crates/coordinator/src/lib.rs:983:                .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 복원 실패: {e}"))?;
+crates/coordinator/src/lib.rs:986:                .read_timeout()
+crates/coordinator/src/lib.rs:987:                .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 조회 실패: {e}"))?
+crates/coordinator/src/lib.rs:990:                "POST_ACK_WAIT_RESTORED timeout_ms={} applied_ms={applied_ms}",
+crates/coordinator/src/lib.rs:1011:                "POST_ACK_WAIT_ENDED phase={} since_set_ms={}",
+crates/coordinator/src/lib.rs:1019:/// ACK 다음 첫 읽기의 무응답 시한 — **순수 계산**(결함 55, 단위 테스트가 직접 본다).
+crates/coordinator/src/lib.rs:1033:        .ok_or_else(|| "POST_ACK_WAIT: Manifest 가 실린 Grant 에 Lease 가 없다".to_string())?;
+crates/coordinator/src/lib.rs:1037:            "POST_ACK_WAIT_REFUSED: Lease 가 이미 만료됐다(expires_at_unix_ms={} now={now_unix_ms})",
+crates/coordinator/src/lib.rs:1063:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:1064:        .map_err(|e| transport_error("read timeout setup failed", e))?;
+crates/coordinator/src/lib.rs:1066:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:1067:        .map_err(|e| transport_error("write timeout setup failed", e))?;
+crates/coordinator/src/lib.rs:1069:    serve_one_connection_impl(
+crates/coordinator/src/lib.rs:1090:fn serve_one_connection_impl(
+crates/coordinator/src/lib.rs:1115:    // ★ D2 (B+E 구현 단계 4) — 순차 lane 도 Agent 의 Hello 로 시작한다. Grant 를 쓰기 **전에** 읽고 검증한다.
+crates/coordinator/src/lib.rs:1116:    // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
+crates/coordinator/src/lib.rs:1245:    .map_err(|e| format!("ACK 프레임 읽기/검증 실패: {e}"))?;
+crates/coordinator/src/lib.rs:1253:            .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
+crates/coordinator/src/lib.rs:1264:            "grant_id 상관관계 불일치: 보낸 값 {} != ACK 값 {}",
+crates/coordinator/src/lib.rs:1271:            "attempt_id 상관관계 불일치: 보낸 값 {} != ACK 값 {}",
+crates/coordinator/src/lib.rs:1278:            "agent_device_id 불일치: 기대값 {} != ACK 값 {}",
+crates/coordinator/src/lib.rs:1284:        return Err("ACK nonce does not match connection attempt"
+crates/coordinator/src/lib.rs:1289:    // ★★ 결함 ⑱ (설계 A) — Manifest 가 실렸으면 Agent 는 ACK 뒤에 워크로드를 돌린다. 그래서
+crates/coordinator/src/lib.rs:1290:    //   ACK **다음 첫 읽기**의 무응답 시한을 Lease 만료까지 남은 시간(최소 10초)으로 둔다.
+crates/coordinator/src/lib.rs:1309:            "DROP_CONNECTION_AFTER_ACK_ONCE coordinator_acknowledged=true grant_id={}",
+crates/coordinator/src/lib.rs:1317:            "DISCONNECT_AFTER_ACK coordinator_acknowledged=true grant_id={}",
+crates/coordinator/src/lib.rs:1324:    //   찍지 않는다.** Agent 는 첫 번째(정상) Grant 에만 ACK 를 보내고
+crates/coordinator/src/lib.rs:1330:            .set_read_timeout(Some(Duration::from_secs(2)))
+crates/coordinator/src/lib.rs:1350:    //   이 stub 프로토콜에는 비동기 multiplexing 이 없으므로, ACK 뒤·
+crates/coordinator/src/lib.rs:1388:        // ★ `require_replay_checked()` — ACK·갱신과 같은 이유(§10).
+crates/coordinator/src/lib.rs:1516:    //   4라운드 정정) — 여기서 열면 Grant/ACK 를 다 지난 뒤에야 잘못된
+crates/coordinator/src/lib.rs:1927:            // ★ `require_replay_checked()` — ACK 와 같은 이유(§10).
+crates/coordinator/src/lib.rs:2079:    // Give an ACK-only Agent enough time to distinguish a completed session
+crates/coordinator/src/lib.rs:2080:    // from the deliberate drop-after-ACK test hook.
+crates/coordinator/src/lib.rs:2093:    timeout: Duration,
+crates/coordinator/src/lib.rs:2095:    let deadline = std::time::Instant::now() + timeout;
+crates/coordinator/src/lib.rs:2101:                    return Err("accept timeout exceeded".into());
+crates/coordinator/src/lib.rs:2127:        IngressMessage::SessionHello(_) => "AgentSessionHello",
+crates/coordinator/src/lib.rs:2140:///   Hello · RENEW 세션은 분류를 여기서 정하고, 상대 메시지의 내용을 오류 문자열에 넣지 않는다.
+crates/coordinator/src/lib.rs:2162:/// B+E 구현 단계 5a — RENEW 세션: Hello(RENEW) -> RenewLeaseRequest -> RenewLeaseResult -> 닫는다(제안서의 세션 표).
+crates/coordinator/src/lib.rs:2165:///   Agent 쪽은 단계 5b 의 실행 중 갱신 스레드(`--renew-during-execution-ms`)가 연다 — FRESH 연결이 ACK 뒤 닫히는 구성에서만
+crates/coordinator/src/lib.rs:2289:/// B+E 구현 단계 6 — REPORT 세션: Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck -> 닫는다(제안서의 세션 표).
+crates/coordinator/src/lib.rs:2295:///   Ack 를 받는다. report_hash 는 받은 보고의 BLAKE3-256(sig_input), session_nonce 는 이 세션 Hello 의 nonce 다 — 다른 세션의
+crates/coordinator/src/lib.rs:2309:    hello: &pb::AgentSessionHello,
+crates/coordinator/src/lib.rs:2347:    // Hello 의 node_id 는 read_session_hello 가 이미 대조했다. 보고의 서명자(node_id)도 같은 노드여야 한다.
+crates/coordinator/src/lib.rs:2409:        "REPORT_SESSION_ACK_SENT job_id={} attempt_id={} node_id={} fence_epoch={} created={} report_hash={} session_nonce={} bound_via={}",
+crates/coordinator/src/lib.rs:2437:) -> Result<pb::AgentSessionHello, SessionHandlerError> {
+crates/coordinator/src/lib.rs:2447:            "HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다)",
+crates/coordinator/src/lib.rs:2448:            "HELLO_REJECTED: 첫 프레임을 Hello 로 검증하지 못했다(서명 · 시각 · replay · 형식)",
+crates/coordinator/src/lib.rs:2453:        IngressMessage::SessionHello(verified) => verified
+crates/coordinator/src/lib.rs:2459:                "HELLO_MISSING: 첫 프레임이 Hello 가 아니다 — 모든 연결은 Agent 의 Hello 로 시작한다(D2)",
+crates/coordinator/src/lib.rs:2476:/// Hello-first dispatcher for the explicit Resume lane. This is deliberately
+crates/coordinator/src/lib.rs:2496:    .map_err(|e| format!("AgentSessionHello 프레임 읽기/검증 실패: {e}"))?;
+crates/coordinator/src/lib.rs:2498:        IngressMessage::SessionHello(verified) => verified
+crates/coordinator/src/lib.rs:2500:            .map_err(|e| format!("AgentSessionHello replay 검사 실패: {e:?}"))?
+crates/coordinator/src/lib.rs:2504:                "Resume lane에서 Hello가 아닌 프레임 수신: {}", ingress_kind(&other)
+crates/coordinator/src/lib.rs:2511:            "AgentSessionHello.mode must be RESUME, got {}",
+crates/coordinator/src/lib.rs:2517:            "AgentSessionHello.node_id 불일치: 기대값 {} != {}",
+crates/coordinator/src/lib.rs:2523:            "AgentSessionHello.connection_attempt 불일치: 기대값 {} != {}",
+crates/coordinator/src/lib.rs:2529:            "AgentSessionHello.session_id가 비어 있다".into(),
+crates/coordinator/src/lib.rs:2557:            "ResumeLeaseRequest와 AgentSessionHello 상관관계가 일치하지 않는다".into(),
+crates/coordinator/src/lib.rs:3273:        accept_timeout_ms: flags.u64_flag_with_default("--accept-timeout-ms", 30_000)?,
+crates/coordinator/src/lib.rs:3992:/// 결함 55 (재검수 52) — ACK 다음 첫 읽기 시한의 계산을 직접 본다(시각을 재 추정하지 않는다).
+crates/coordinator/src/lib.rs:4022:    fn the_first_read_never_waits_less_than_the_io_timeout() {
+crates/coordinator/src/lib.rs:4032:        assert!(refused.contains("POST_ACK_WAIT_REFUSED"), "{refused}");
+crates/agent/src/lib.rs:69:    connect_timeout: Duration,
+crates/agent/src/lib.rs:153:    /// ACK 뒤에 보낼 `NodeHeartbeat` 개수. 0 이면 안 보낸다.
+crates/agent/src/lib.rs:180:    /// 다중 Agent lane 을 쓴다. Hello 를 먼저 보내고 Grant 를 받는다.
+crates/agent/src/lib.rs:201:    /// ★ 테스트 전용 — 다중 Agent Hello 의 `mode` 를 Resume lane 값으로
+crates/agent/src/lib.rs:205:    ///   등록된 Agent 가 Resume lane 용으로 서명한 Hello 를 보내도 다중
+crates/agent/src/lib.rs:233:    ///   전송한다 — "위조된 ACK 가 도착했을 때 Coordinator 가 실제로
+crates/agent/src/lib.rs:236:    /// ★ 테스트 전용 — 첫 ACK 를 보낸 뒤 같은 연결에서 프레임을 하나 더
+crates/agent/src/lib.rs:245:    /// ACK 를 보낸 뒤 같은 연결에 이어서 `RenewLeaseRequest` 를 보내고
+crates/agent/src/lib.rs:285:    /// `Some(0)`은 Grant/ACK 직후다. 현재 stub에는 비동기 이벤트
+crates/agent/src/lib.rs:379:    // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
+crates/agent/src/lib.rs:389:            // 결함 103 (재검수 61) — 짝인 Coordinator --send-grant-twice 가 ACK 뒤 추가 프레임을 기다리며 FRESH 를 붙잡는다.
+crates/agent/src/lib.rs:416:    //   전에는 이 검사가 송신 루프 안에 있었다 — Grant/ACK 를 다 마치고
+crates/agent/src/lib.rs:439:    //   지적). 그 lane 은 `Hello -> Grant -> ACK` 을 하고 끝나므로(10라운드
+crates/agent/src/lib.rs:440:    //   정정 — 전에 "Grant/ACK 만" 이라 썼다), 신고 옵션을 줘도 한 건도
+crates/agent/src/lib.rs:453:        connect_timeout: Duration::from_secs(3),
+crates/agent/src/lib.rs:520:        let stream = connect_with_timeout(&config.coordinator_addr, policy.connect_timeout)
+crates/agent/src/lib.rs:522:        return run_one_connection(
+crates/agent/src/lib.rs:562:            match connect_with_timeout(&config.coordinator_addr, policy.connect_timeout) {
+crates/agent/src/lib.rs:569:                    run_one_connection(
+crates/agent/src/lib.rs:631:    let mut hello = pb::AgentSessionHello {
+crates/agent/src/lib.rs:645:    let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+crates/agent/src/lib.rs:646:        .map_err(|e| format!("AgentSessionHello 프레임 인코딩 실패: {e}"))?;
+crates/agent/src/lib.rs:649:        .map_err(|e| format!("AgentSessionHello 전송 실패: {e}"))?;
+crates/agent/src/lib.rs:797:fn run_one_connection(
+crates/agent/src/lib.rs:810:    let result = run_one_connection_inner(
+crates/agent/src/lib.rs:844:fn run_one_connection_inner(
+crates/agent/src/lib.rs:880:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:883:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:900:    // ★ D2 (B+E 구현 단계 4, 2026-09-14) — **모든 연결은 Agent 의 Hello 로 시작한다.** 순차 lane 도 다중 Agent lane 과
+crates/agent/src/lib.rs:901:    //   같은 Hello(FRESH) -> Grant 순서다. 한 리스너가 FRESH · RESUME · RENEW · REPORT 를 가르려면 Agent 가 먼저 말해야 한다
+crates/agent/src/lib.rs:902:    //   (제안서 결정 D2 — 설정 분기 없음). 옛 Coordinator 는 Grant 를 먼저 쓰고 ACK 자리에서 이 Hello 를 받아 명시적으로 실패한다.
+crates/agent/src/lib.rs:904:        let mut hello = pb::AgentSessionHello {
+crates/agent/src/lib.rs:915:        let frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+crates/agent/src/lib.rs:916:            .map_err(|e| format!("AgentSessionHello(FRESH) 프레임 인코딩 실패: {e}"))?;
+crates/agent/src/lib.rs:919:            .map_err(|e| format!("AgentSessionHello(FRESH) 전송 실패: {e}"))?;
+crates/agent/src/lib.rs:932:    // ★ Grant 를 replay 검사까지 통과한 뒤에만 그 내용으로 ACK 를
+crates/agent/src/lib.rs:933:    //   만든다 — 부작용(ACK 발급)이 검증되지 않은 값에서 나오지 않는다.
+crates/agent/src/lib.rs:945:    // as false and therefore fail closed before ACK/checkpoint/new Renew.
+crates/agent/src/lib.rs:984:    //   ACK·checkpoint **전에** 한다 — 실행 지시를 신뢰할 수 없으면
+crates/agent/src/lib.rs:997:    // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
+crates/agent/src/lib.rs:999:    // record_initial_state()가 실패하면 여기서 fail-closed하여 ACK를
+crates/agent/src/lib.rs:1020:    // ★ 관측한 종료를 **여기서 보내지 않는다.** 이 지점은 아직 ACK 전이고,
+crates/agent/src/lib.rs:1021:    //   Coordinator 는 ACK 를 먼저 기다린다 — 여기서 보내면 프레임 순서가
+crates/agent/src/lib.rs:1022:    //   어긋나 Coordinator 가 `AttemptReport` 를 ACK 로 읽으려다 실패한다.
+crates/agent/src/lib.rs:1023:    //   사실만 들고 있다가 ACK·heartbeat·이웃 신고 뒤에 보낸다.
+crates/agent/src/lib.rs:1027:    // ★ 결함 ⑱ — 워크로드가 있으면 ACK 는 실행 **전**에 간다(아래). 보낸 것을 여기 담는다.
+crates/agent/src/lib.rs:1029:    // ★ `execution_attempted`(인자) — 이 연결에서 워크로드를 띄우려 했는가. 바깥 `run_one_connection` 이
+crates/agent/src/lib.rs:1098:        // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
+crates/agent/src/lib.rs:1099:        //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
+crates/agent/src/lib.rs:1100:        //   ACK 읽기 시한에 먼저 걸렸다(실측 `docs/evidence/_raw/결함18_ACK_시한_실측_2026-09-10.txt`).
+crates/agent/src/lib.rs:1101:        //   **이 첫 검사**가 거부하면 지금처럼 ACK 없이 끝낸다 — 받아들이지 못할 Grant 에 "받았다" 고
+crates/agent/src/lib.rs:1102:        //   답하지 않는다. opt-in 이 꺼져 있으면 실행만 건너뛰고 ACK 는 보낸다(전과 같다).
+crates/agent/src/lib.rs:1109:        // ★ 결함 ㊷ — ACK 전송이 실패해도 작업 디렉터리를 치운 뒤 보고한다.
+crates/agent/src/lib.rs:1222:    // ★ 워크로드가 있으면 ACK 는 이미 실행 **전**에 갔다(결함 ⑱). 없으면 여기서 보낸다.
+crates/agent/src/lib.rs:1230:    //   ACK 뒤·갱신 앞의 고정 위치로 보낸다. 이 stub 프로토콜에는
+crates/agent/src/lib.rs:1448:    //   처음부터 다시 돌고, 그러면 워크로드가 **두 번** 실행된다. 설계 A 로 ACK 가 실행 전에 가면
+crates/agent/src/lib.rs:1449:    //   기본 Coordinator 는 ACK 직후 닫으므로 실행이 끝날 즈음엔 닫혀 있을 수 있다(빈도는 재지 않았다 — 결함 52)
+crates/agent/src/lib.rs:1458:        return Err("RETRYABLE_CONNECTION: coordinator disconnected after ACK".into());
+crates/agent/src/lib.rs:1485:            .set_read_timeout(Some(Duration::from_secs(5)))
+crates/agent/src/lib.rs:1501:    // ★ Lease 갱신 (2026-08-19) — ACK 를 보낸 뒤 같은 연결에 이어서
+crates/agent/src/lib.rs:1714:/// B+E 구현 단계 5b — RENEW 세션 한 번: 새 연결 -> Hello(RENEW) -> RenewLeaseRequest -> 서명된 RenewLeaseResult 검증.
+crates/agent/src/lib.rs:1716:/// ★ 이 연결은 FRESH 연결과 **따로** 연다 — 실행 중에는 FRESH 연결이 이미 닫혔을 수 있고(설계 A 뒤 ACK 직후 닫힌다),
+crates/agent/src/lib.rs:1717:///   Coordinator 는 Hello 의 mode 로 이 연결을 갱신 전용으로 가른다(단계 5a).
+crates/agent/src/lib.rs:1733:    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+crates/agent/src/lib.rs:1735:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:1738:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:1741:    let mut hello = pb::AgentSessionHello {
+crates/agent/src/lib.rs:1764:        (FrameType::SessionHello, hello.encode_to_vec(), "Hello(RENEW)"),
+crates/agent/src/lib.rs:1965:/// 검증한 Ack          outbox 파일을 지우고 ATTEMPT_REPORT_ACKNOWLEDGED
+crates/agent/src/lib.rs:1966:/// Ack 검증 실패       다시 하지 않는다(REPORT_ACK_REJECTED) — 파일은 남긴다
+crates/agent/src/lib.rs:1967:/// 연결 · 전송 · 수신 실패  report_session_attempts 까지 다시 한다(REPORT_SESSION_FAILED) — 끝내 못 받으면 ATTEMPT_REPORT_NOT_ACKNOWLEDGED
+crates/agent/src/lib.rs:1992:                    "ATTEMPT_REPORT_ACKNOWLEDGED job_id={} attempt_id={} node_id={} fence_epoch={} created={} attempt={attempt}",
+crates/agent/src/lib.rs:1997:            Err(error) if error.starts_with("REPORT_ACK_REJECTED") => {
+crates/agent/src/lib.rs:2007:        "ATTEMPT_REPORT_NOT_ACKNOWLEDGED: {} 번 시도했지만 받았다 응답을 받지 못했다 — 보고는 outbox 에 남아 있다({}): {last}",
+crates/agent/src/lib.rs:2013:/// REPORT 세션 한 번: 새 연결 -> Hello(REPORT) -> AttemptReport -> 서명된 AttemptReportAck 를 검증해 돌려준다.
+crates/agent/src/lib.rs:2020:    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+crates/agent/src/lib.rs:2022:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:2025:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:2027:    let mut hello = pb::AgentSessionHello {
+crates/agent/src/lib.rs:2039:    let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+crates/agent/src/lib.rs:2040:        .map_err(|e| format!("Hello(REPORT) 프레임 인코딩 실패: {e}"))?;
+crates/agent/src/lib.rs:2042:    for (frame, what) in [(hello_frame, "Hello(REPORT)"), (report_frame, "AttemptReport")] {
+crates/agent/src/lib.rs:2064:        other => format!("REPORT_ACK_REJECTED: 받았다 응답을 검증하지 못했다(서명 · 시각 · 형식): {other}"),
+crates/agent/src/lib.rs:2069:            .map_err(|e| format!("REPORT_ACK_REJECTED: replay 검사 실패: {e:?}"))?
+crates/agent/src/lib.rs:2071:        _ => return Err("REPORT_ACK_REJECTED: 받았다 응답이 아닌 프레임이다".into()),
+crates/agent/src/lib.rs:2087:        return Err("REPORT_ACK_REJECTED: session_nonce 가 이 세션의 Hello 와 다르다 — 다른 세션의 응답이다".into());
+crates/agent/src/lib.rs:2091:            "REPORT_ACK_REJECTED: coordinator_id 불일치 — 기대값 {}",
+crates/agent/src/lib.rs:2098:        return Err("REPORT_ACK_REJECTED: job · attempt · node · 세대가 보낸 보고와 다르다".into());
+crates/agent/src/lib.rs:2103:            "REPORT_ACK_REJECTED: report_hash 가 보낸 보고에서 다시 계산한 BLAKE3-256 과 다르다 — \
+crates/agent/src/lib.rs:2462:        // ★ 자식이 **막 떴다**(결함 ㊻ — ACK_SENT 와 순서를 비교하는 표지).
+crates/agent/src/lib.rs:2901:fn connect_with_timeout(address: &str, timeout: Duration) -> Result<TcpStream, String> {
+crates/agent/src/lib.rs:2907:    TcpStream::connect_timeout(&socket, timeout).map_err(|e| {
+crates/agent/src/lib.rs:2992:        .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
+crates/agent/src/lib.rs:2995:        .map_err(|e| format!("ACK 전송 실패: {e}"))?;
+crates/agent/src/lib.rs:2997:    // ★ 기동 전 ACK 를 테스트가 직접 관측하는 표지(결함 ㊻) — WORKLOAD_SPAWNED 보다 먼저 찍혀야 한다.
+crates/agent/src/lib.rs:2998:    println!("ACK_SENT grant_id={} attempt_id={}", ack.grant_id, ack.attempt_id);
+crates/agent/src/lib.rs:3002:/// A coordinator that deliberately drops the transport after ACK is detected
+crates/agent/src/lib.rs:3007:        .set_read_timeout(Some(Duration::from_millis(50)))
+crates/agent/src/lib.rs:3475:        let refused = TcpStream::connect_timeout(&address, Duration::from_millis(100));
+crates/agent/src/lib.rs:3577:            .set_read_timeout(Some(Duration::from_secs(2)))
+crates/agent/src/lib.rs:3578:            .expect("set test stream read timeout");
+crates/agent/src/lib.rs:3580:            .set_write_timeout(Some(Duration::from_secs(2)))
+crates/agent/src/lib.rs:3581:            .expect("set test stream write timeout");
+crates/agent/src/lib.rs:3615:        // D2 — 실제 Agent 는 Grant 를 받기 전에 Hello(FRESH) 를 보낸다.
+crates/agent/src/lib.rs:3617:        std::io::Read::read_exact(&mut stream, &mut hello_header).expect("Agent Hello header");
+crates/agent/src/lib.rs:3618:        assert_eq!(hello_header[0], FrameType::SessionHello as u8, "첫 프레임은 Hello 다(D2)");
+crates/agent/src/lib.rs:3621:        std::io::Read::read_exact(&mut stream, &mut hello_body).expect("Agent Hello body");
+crates/agent/src/lib.rs:3645:            panic!("receive ACK from production Agent run: {error}; Agent result: {agent_result:?}")
+crates/agent/src/lib.rs:3650:                .expect("ACK replay check")
+crates/agent/src/lib.rs:3952:        let message = fail_after_cleanup("ACK 전송 실패: x".to_string(), &run_dir);
+crates/agent/src/lib.rs:3953:        assert_eq!(message, "ACK 전송 실패: x");
+crates/agent/src/lib.rs:4162:    /// 가짜 Coordinator 하나 — Hello(REPORT) 와 보고를 검증해 읽고, `answer` 가 만든 Ack 를 보낸 뒤 닫는다.
+crates/agent/src/lib.rs:4164:        answer: impl FnOnce(&pb::AgentSessionHello, &pb::AttemptReport) -> pb::AttemptReportAck + Send + 'static,
+crates/agent/src/lib.rs:4174:                .expect("Hello 읽기")
+crates/agent/src/lib.rs:4176:                IngressMessage::SessionHello(verified) => verified.get().clone(),
+crates/agent/src/lib.rs:4177:                _ => panic!("첫 프레임은 Hello 여야 한다"),
+crates/agent/src/lib.rs:4179:            assert_eq!(hello.mode, gputeer_protocol::constants::MODE_REPORT, "REPORT 세션의 Hello 다");
+crates/agent/src/lib.rs:4226:        assert!(error.contains("REPORT_ACK_REJECTED") && error.contains("report_hash"), "{error}");
+crates/agent/src/lib.rs:4243:        assert!(error.contains("REPORT_ACK_REJECTED") && error.contains("session_nonce"), "{error}");
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import sys,pathlib; sys.stdout.reconfigure(encoding='utf-8'); ps=['crates/cli/tests/old_peer_combination.rs','docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt']; [(print('\\nFILE '+p),*[print(str(i)+': '+l) for i,l in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines(),1)]) for p in ps]\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+ succeeded in 1036ms:
+
+FILE crates/cli/tests/old_peer_combination.rs
+1: //! B+E — **옛 상대와의 조합**에서 두 프로세스가 명시적으로 실패하고 매달리지 않는지 잰다.
+2: //!
+3: //! 계획서(`docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md`) §8 · §13 이 "옛 Coordinator 와의 조합 시험은
+4: //! 옛 바이너리가 없어 하지 않았다" 고 적었다. D2(모든 연결은 Agent 의 Hello 로 시작한다) 뒤로 wire 순서가 바뀌었다 —
+5: //!
+6: //! ```text
+7: //! 새 Agent  · 옛 Coordinator   옛 쪽은 accept 뒤 곧바로 Grant 를 보내고 ACK 를 읽는다. 새 쪽은 Hello 를 먼저 보낸다
+8: //! 옛 Agent  · 새 Coordinator   새 쪽은 Hello 를 기다린다. 옛 쪽은 Grant 를 기다린다
+9: //! ```
+10: //!
+11: //! ★ 옛 바이너리는 저장소에 없다 — `GPUTEER_OLD_BINARY` 에 D2 이전 커밋을 빌드한 `gputeer` 경로를 준다. 그래서 두 조합 테스트는
+12: //!   `#[ignore]` 다(`cargo test ... -- --ignored`). 조용히 통과로 세지 않도록 **변수가 없으면 실패한다.**
+13: //! ★ 판정은 "시한(60초) 안에 둘 다 끝난다" 와 조합별 성공 · 실패다 — 새 Agent · 옛 Coordinator 는 결함 131 의 덫이다. 실패 문구는 버전마다 달라 고정하지 않고 출력을 그대로 남긴다.
+14: //! ★ 대조(새 · 새)는 늘 돈다 — 두 실패가 인자 · 키 구성 실수 때문이 아님을 보인다.
+15: 
+16: use std::io::{BufRead, BufReader, Read};
+17: use std::path::{Path, PathBuf};
+18: use std::process::{Child, Command, Stdio};
+19: use std::sync::mpsc;
+20: use std::thread;
+21: use std::time::{Duration, Instant};
+22: 
+23: const DEADLINE: Duration = Duration::from_secs(60);
+24: const COORDINATOR_ID: &str = "01JCOORDOLDPEER0000000001";
+25: const AGENT_ID: &str = "01JAGENTOLDPEER00000000001";
+26: 
+27: fn hex(bytes: &[u8]) -> String {
+28:     bytes.iter().map(|b| format!("{b:02x}")).collect()
+29: }
+30: 
+31: struct Keys {
+32:     coordinator_seed: String,
+33:     agent_seed: String,
+34:     coordinator_pub: String,
+35:     agent_pub: String,
+36: }
+37: 
+38: fn keys() -> Keys {
+39:     let coordinator = gputeer_protocol::canonical::blake3_256(b"old-peer-combination/coordinator");
+40:     let agent = gputeer_protocol::canonical::blake3_256(b"old-peer-combination/agent");
+41:     Keys {
+42:         coordinator_seed: hex(&coordinator),
+43:         agent_seed: hex(&agent),
+44:         coordinator_pub: hex(gputeer_crypto::SigningKey::from_bytes(&coordinator).verifying_key().as_bytes()),
+45:         agent_pub: hex(gputeer_crypto::SigningKey::from_bytes(&agent).verifying_key().as_bytes()),
+46:     }
+47: }
+48: 
+49: fn old_binary() -> PathBuf {
+50:     let path = std::env::var_os("GPUTEER_OLD_BINARY")
+51:         .map(PathBuf::from)
+52:         .expect("GPUTEER_OLD_BINARY 가 없다 — D2 이전 커밋을 빌드한 gputeer 경로를 줘야 이 조합을 잴 수 있다");
+53:     assert!(path.is_file(), "GPUTEER_OLD_BINARY 가 파일이 아니다: {path:?}");
+54:     path
+55: }
+56: 
+57: fn new_binary() -> PathBuf {
+58:     PathBuf::from(env!("CARGO_BIN_EXE_gputeer"))
+59: }
+60: 
+61: struct Finished {
+62:     success: bool,
+63:     hung: bool,
+64:     elapsed: Duration,
+65:     stdout: String,
+66:     stderr: String,
+67: }
+68: 
+69: fn drain(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<String> {
+70:     thread::spawn(move || {
+71:         let mut out = Vec::new();
+72:         pipe.read_to_end(&mut out).expect("출력 읽기");
+73:         String::from_utf8_lossy(&out).to_string()
+74:     })
+75: }
+76: 
+77: /// 끝날 때까지 기다리되 시한을 넘으면 죽이고 `hung=true` 로 돌려준다.
+78: fn finish(mut child: Child, stdout: thread::JoinHandle<String>, started: Instant) -> Finished {
+79:     let stderr = drain(child.stderr.take().expect("stderr"));
+80:     let (status, hung) = loop {
+81:         if let Some(status) = child.try_wait().expect("상태 조회") {
+82:             break (Some(status), false);
+83:         }
+84:         if started.elapsed() > DEADLINE {
+85:             child.kill().expect("시한 초과 프로세스 종료");
+86:             child.wait().expect("종료 대기");
+87:             break (None, true);
+88:         }
+89:         thread::sleep(Duration::from_millis(50));
+90:     };
+91:     Finished {
+92:         success: status.is_some_and(|s| s.success()),
+93:         hung,
+94:         elapsed: started.elapsed(),
+95:         stdout: stdout.join().expect("stdout 스레드"),
+96:         stderr: stderr.join().expect("stderr 스레드"),
+97:     }
+98: }
+99: 
+100: fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished, Finished) {
+101:     let keys = keys();
+102:     let coordinator_started = Instant::now();
+103:     let mut coordinator = Command::new(coordinator_exe)
+104:         .args([
+105:             "coordinator-stub", "--listen", "127.0.0.1:0",
+106:             "--own-seed", &keys.coordinator_seed, "--peer-pubkey", &keys.agent_pub,
+107:             "--coordinator-device-id", COORDINATOR_ID, "--agent-device-id", AGENT_ID,
+108:             "--grant-id", "01JGRANTOLDPEER000000001", "--attempt-id", "01JATTEMPTOLDPEER00000001",
+109:             "--lease-id", "01JLEASEOLDPEER000000001", "--job-id", "01JJOBOLDPEER00000000001",
+110:             "--i-understand-legacy-mode-is-unsafe", "true",
+111:         ])
+112:         .stdout(Stdio::piped())
+113:         .stderr(Stdio::piped())
+114:         .spawn()
+115:         .expect("coordinator-stub 스폰");
+116:     // READY 줄을 먼저 받고, 나머지 stdout 은 같은 스레드가 끝까지 읽어 돌려준다.
+117:     let pipe = coordinator.stdout.take().expect("stdout");
+118:     let (ready_sender, ready_receiver) = mpsc::channel();
+119:     let coordinator_stdout = thread::spawn(move || {
+120:         let mut reader = BufReader::new(pipe);
+121:         let mut line = String::new();
+122:         reader.read_line(&mut line).expect("READY 줄 읽기");
+123:         ready_sender.send(line.clone()).expect("READY 전달");
+124:         let mut rest = String::new();
+125:         reader.read_to_string(&mut rest).expect("나머지 stdout");
+126:         format!("{line}{rest}")
+127:     });
+128:     let ready = ready_receiver.recv_timeout(Duration::from_secs(20)).expect("coordinator READY 시한");
+129:     let address = ready
+130:         .trim()
+131:         .strip_prefix("READY ")
+132:         .unwrap_or_else(|| panic!("READY 대신: {ready:?}"))
+133:         .to_string();
+134: 
+135:     let agent_started = Instant::now();
+136:     let mut agent = Command::new(agent_exe)
+137:         .args([
+138:             "agent-stub", "--connect", &address,
+139:             "--own-seed", &keys.agent_seed, "--peer-pubkey", &keys.coordinator_pub,
+140:             "--coordinator-device-id", COORDINATOR_ID, "--agent-device-id", AGENT_ID,
+141:             "--disable-reconnect", "true",
+142:         ])
+143:         .stdout(Stdio::piped())
+144:         .stderr(Stdio::piped())
+145:         .spawn()
+146:         .expect("agent-stub 스폰");
+147:     let agent_stdout = drain(agent.stdout.take().expect("stdout"));
+148:     let agent = finish(agent, agent_stdout, agent_started);
+149:     let coordinator = finish(coordinator, coordinator_stdout, coordinator_started);
+150:     for (who, run) in [("agent", &agent), ("coordinator", &coordinator)] {
+151:         eprintln!(
+152:             "=== {label} · {who}: success={} hung={} elapsed_ms={}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+153:             run.success,
+154:             run.hung,
+155:             run.elapsed.as_millis(),
+156:             run.stdout,
+157:             run.stderr
+158:         );
+159:     }
+160:     (agent, coordinator)
+161: }
+162: 
+163: /// 새 Agent · 옛 Coordinator — **오늘의 사실을 고정하는 덫**(결함 131). 옛 Coordinator 는 ACK 자리에서 Hello 를 받아 실패하는데, 새 Agent 는 Grant 를 받고
+164: /// ACK 를 쓴 뒤 **성공으로 끝난다** — "ACK 를 받아들였다" 는 서명된 응답이 계약에 없어 알아챌 수 없다. 고치면(계약 변경) 이 테스트를 뒤집는다:
+165: /// Agent 도 실패해야 한다.
+166: #[test]
+167: #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --ignored --nocapture"]
+168: fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
+169:     let (agent, coordinator) = run_pair(&old_binary(), &new_binary(), "새 Agent · 옛 Coordinator");
+170:     assert!(!agent.hung && !coordinator.hung, "조합이 시한({DEADLINE:?})까지 매달렸다");
+171:     assert!(!coordinator.success, "옛 Coordinator 가 새 Agent 와 성공으로 끝났다 — 조합이 실제로 통하게 됐다");
+172:     assert!(
+173:         agent.success,
+174:         "새 Agent 가 옛 Coordinator 와 실패로 끝났다 — 결함 131 이 고쳐졌으면 이 덫을 뒤집어라"
+175:     );
+176: }
+177: 
+178: /// 옛 Agent · 새 Coordinator — 둘 다 성공으로 끝나지 않고, 시한 안에 끝난다.
+179: #[test]
+180: #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --ignored --nocapture"]
+181: fn an_old_agent_and_a_new_coordinator_both_fail_explicitly() {
+182:     let (agent, coordinator) = run_pair(&new_binary(), &old_binary(), "옛 Agent · 새 Coordinator");
+183:     assert!(!agent.hung && !coordinator.hung, "조합이 시한({DEADLINE:?})까지 매달렸다");
+184:     assert!(!agent.success, "옛 Agent 가 새 Coordinator 와 성공으로 끝났다");
+185:     assert!(!coordinator.success, "새 Coordinator 가 옛 Agent 와 성공으로 끝났다");
+186: }
+187: 
+188: /// 대조 — 같은 새 바이너리끼리는 성공한다.
+189: #[test]
+190: fn the_same_new_binary_on_both_sides_succeeds() {
+191:     let exe = new_binary();
+192:     let (agent, coordinator) = run_pair(&exe, &exe, "새 · 새(대조)");
+193:     assert!(!agent.hung && !coordinator.hung, "대조가 매달렸다");
+194:     assert!(agent.success && coordinator.success, "대조(새 · 새)가 실패했다 — 인자 · 키 구성을 먼저 의심하라");
+195: }
+
+FILE docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt
+1: # 옛 상대 조합 시험 원본 (2026-09-17 10:42, Windows 개발 기계)
+2: # 옛 바이너리: 7d5a9fe(D2 커밋 5064c1c 의 부모)를 **별도 target 디렉터리**로 빌드 — Compiling gputeer 10줄 전부 그 분리 worktree 경로
+3: #   sha256 182f4fe5cf73c313c3890afac4b14faee8a48ed7c9f7b8f6f41d930311037550
+4: # 새 바이너리: 이 worktree 를 로컬 crate 지우고 다시 빌드(Compiling 10 · 밖 0) — sha256 06a36dca9a2bed41efe65cb4687185e08389d6fb55a0f6e0ae524f58fa8ed697
+5: # ★ 공유 target 으로 옛 바이너리를 만든 첫 시도는 옛 · 옛(같은 해시)이라 버렸다 — 결함 130
+6: # 실행 1: 판정 전 테스트(새 Agent 도 실패를 기대) — 새 Agent 가 성공해 실패. 결함 131 로 기록하고 그 테스트를 덫으로 바꿨다
+7: # 실행 2: 덫으로 바꾼 뒤 3 passed
+8: 
+9: ## 새 바이너리 빌드
+10:    Compiling gputeer-protocol v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\protocol)
+11:    Compiling gputeer-runtime-policy v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-policy)
+12:    Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-windows)
+13:    Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\crypto)
+14:    Compiling gputeer-runtime-nvml v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-nvml)
+15:    Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\checkpoint)
+16:    Compiling gputeer-scheduler v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\scheduler)
+17:    Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\coordinator)
+18:    Compiling gputeer-agent v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\agent)
+19:    Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+20:     Finished `test` profile [unoptimized + debuginfo] target(s) in 22.70s
+21:   Executable tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+22: 
+23: 
+24: ## 실행 1
+25:     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+26:      Running tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+27: 
+28: running 3 tests
+29: test a_new_agent_and_an_old_coordinator_both_fail_explicitly ... === 새 Agent · 옛 Coordinator · agent: success=true hung=false elapsed_ms=757
+30: --- stdout ---
+31: CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-8188-1789609238036940300 dirs=0 removed=0
+32: LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609238063 expires_at_unix_ms=1789609298063
+33: JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+34: ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+35: RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+36: 
+37: --- stderr ---
+38: 
+39: === 새 Agent · 옛 Coordinator · coordinator: success=false hung=false elapsed_ms=1261
+40: --- stdout ---
+41: READY 127.0.0.1:61329
+42: CONNECTION_ATTEMPT 0 peer=127.0.0.1:61334
+43: 
+44: --- stderr ---
+45: 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+46: SESSION_ERROR peer=127.0.0.1:61334 connection_attempt=0 kind=protocol error=protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609238061, nonce: [151, 251, 71, 94, 42, 140, 254, 208, 106, 19, 185, 255, 38, 94, 25, 242], node_signature: [124, 214, 235, 4, 144, 41, 252, 60, 167, 91, 233, 57, 29, 31, 0, 3, 0, 170, 225, 196, 60, 222, 175, 144, 8, 158, 228, 197, 222, 164, 30, 143, 1, 27, 184, 72, 102, 36, 210, 180, 248, 120, 95, 28, 214, 74, 237, 98, 214, 254, 215, 188, 124, 173, 142, 106, 100, 63, 235, 168, 20, 8, 249, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+47: coordinator-stub 실패: protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609238061, nonce: [151, 251, 71, 94, 42, 140, 254, 208, 106, 19, 185, 255, 38, 94, 25, 242], node_signature: [124, 214, 235, 4, 144, 41, 252, 60, 167, 91, 233, 57, 29, 31, 0, 3, 0, 170, 225, 196, 60, 222, 175, 144, 8, 158, 228, 197, 222, 164, 30, 143, 1, 27, 184, 72, 102, 36, 210, 180, 248, 120, 95, 28, 214, 74, 237, 98, 214, 254, 215, 188, 124, 173, 142, 106, 100, 63, 235, 168, 20, 8, 249, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+48: 
+49: 
+50: thread 'a_new_agent_and_an_old_coordinator_both_fail_explicitly' (8584) panicked at crates\cli\tests\old_peer_combination.rs:169:5:
+51: 새 Agent 가 옛 Coordinator 와 성공으로 끝났다 — 조합이 조용히 통과했다
+52: note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+53: FAILED
+54: test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... === 옛 Agent · 새 Coordinator · agent: success=false hung=false elapsed_ms=10063
+55: --- stdout ---
+56: 
+57: --- stderr ---
+58: agent-stub 실패: RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+59: 
+60: === 옛 Agent · 새 Coordinator · coordinator: success=false hung=false elapsed_ms=10084
+61: --- stdout ---
+62: READY 127.0.0.1:61335
+63: CONNECTION_ATTEMPT 0 peer=127.0.0.1:61336
+64: 
+65: --- stderr ---
+66: 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+67: SESSION_ERROR peer=127.0.0.1:61336 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 프레임이 완결되기 전에 스트림이 끊겼다
+68: coordinator-stub 실패: transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 프레임이 완결되기 전에 스트림이 끊겼다
+69: 
+70: ok
+71: test the_same_new_binary_on_both_sides_succeeds ... === 새 · 새(대조) · agent: success=true hung=false elapsed_ms=158
+72: --- stdout ---
+73: CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-18584-1789609248248653900 dirs=0 removed=0
+74: LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609248291 expires_at_unix_ms=1789609308291
+75: JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+76: ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+77: RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+78: 
+79: --- stderr ---
+80: 
+81: === 새 · 새(대조) · coordinator: success=true hung=false elapsed_ms=281
+82: --- stdout ---
+83: READY 127.0.0.1:61361
+84: CONNECTION_ATTEMPT 0 peer=127.0.0.1:61362
+85: SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+86: RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+87: 
+88: --- stderr ---
+89: 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+90: 
+91: ok
+92: 
+93: failures:
+94: 
+95: failures:
+96:     a_new_agent_and_an_old_coordinator_both_fail_explicitly
+97: 
+98: test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.63s
+99: 
+100: error: test failed, to rerun pass `-p gputeer-cli --test old_peer_combination`
+101: 
+102: 
+103: ## 실행 2
+104:    Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+105:     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.86s
+106:      Running tests\old_peer_combination.rs (C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer/target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+107: 
+108: running 3 tests
+109: test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... === 옛 Agent · 새 Coordinator · agent: success=false hung=false elapsed_ms=10102
+110: --- stdout ---
+111: 
+112: --- stderr ---
+113: agent-stub 실패: RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+114: 
+115: === 옛 Agent · 새 Coordinator · coordinator: success=false hung=false elapsed_ms=10126
+116: --- stdout ---
+117: READY 127.0.0.1:61446
+118: CONNECTION_ATTEMPT 0 peer=127.0.0.1:61447
+119: 
+120: --- stderr ---
+121: 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+122: SESSION_ERROR peer=127.0.0.1:61447 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+123: coordinator-stub 실패: transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+124: 
+125: ok
+126: test the_same_new_binary_on_both_sides_succeeds ... === 새 · 새(대조) · agent: success=true hung=false elapsed_ms=112
+127: --- stdout ---
+128: CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-21332-1789609329180968300 dirs=0 removed=0
+129: LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609329207 expires_at_unix_ms=1789609389207
+130: JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+131: ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+132: RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+133: 
+134: --- stderr ---
+135: 
+136: === 새 · 새(대조) · coordinator: success=true hung=false elapsed_ms=238
+137: --- stdout ---
+138: READY 127.0.0.1:61456
+139: CONNECTION_ATTEMPT 0 peer=127.0.0.1:61457
+140: SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+141: RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+142: 
+143: --- stderr ---
+144: 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+145: 
+146: ok
+147: test today_a_new_agent_reports_success_against_an_old_coordinator_that_failed ... === 새 Agent · 옛 Coordinator · agent: success=true hung=false elapsed_ms=107
+148: --- stdout ---
+149: CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-18128-1789609329432110700 dirs=0 removed=0
+150: LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789609329454 expires_at_unix_ms=1789609389454
+151: JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+152: ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+153: RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+154: 
+155: --- stderr ---
+156: 
+157: === 새 Agent · 옛 Coordinator · coordinator: success=false hung=false elapsed_ms=150
+158: --- stdout ---
+159: READY 127.0.0.1:61458
+160: CONNECTION_ATTEMPT 0 peer=127.0.0.1:61459
+161: 
+162: --- stderr ---
+163: 경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+164: SESSION_ERROR peer=127.0.0.1:61459 connection_attempt=0 kind=protocol error=protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609329452, nonce: [80, 217, 138, 68, 177, 112, 17, 124, 100, 102, 68, 210, 171, 8, 149, 174], node_signature: [224, 36, 113, 97, 112, 96, 247, 126, 137, 150, 193, 218, 108, 198, 5, 195, 88, 178, 170, 204, 123, 210, 86, 127, 39, 153, 4, 90, 65, 170, 139, 225, 179, 249, 141, 8, 164, 217, 18, 101, 170, 64, 214, 45, 220, 90, 177, 208, 252, 34, 235, 230, 173, 18, 147, 244, 90, 15, 32, 114, 115, 225, 237, 6] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+165: coordinator-stub 실패: protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789609329452, nonce: [80, 217, 138, 68, 177, 112, 17, 124, 100, 102, 68, 210, 171, 8, 149, 174], node_signature: [224, 36, 113, 97, 112, 96, 247, 126, 137, 150, 193, 218, 108, 198, 5, 195, 88, 178, 170, 204, 123, 210, 86, 127, 39, 153, 4, 90, 65, 170, 139, 225, 179, 249, 141, 8, 164, 217, 18, 101, 170, 64, 214, 45, 220, 90, 177, 208, 252, 34, 235, 230, 173, 18, 147, 244, 90, 15, 32, 114, 115, 225, 237, 6] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+166: 
+167: ok
+168: 
+169: test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.53s
+170: 
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import sys,pathlib; sys.stdout.reconfigure(encoding='utf-8'); specs=[('crates/agent/src/lib.rs',[(450,533),(790,844),(872,935),(1218,1232),(1434,1501),(1640,1712),(2984,3035)]),('crates/coordinator/src/lib.rs',[(770,940),(1180,1255),(2068,2090),(2430,2475)])]; [(print('\\nFILE '+p),*[print(str(i)+': '+l) for i,l in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines(),1) if any(a<=i<=b for a,b in ranges)]) for p,ranges in specs]\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "git -c core.quotepath=false diff 0c45c41..HEAD -- docs/history/HISTORY.md docs/plans docs/reports; rg --files --hidden -g '*AGENTS.md' -g '*.yml' -g '*.yaml' -g 'config*' .github .cargo; rg -n 'IO_TIMEOUT|serve_one_connection_impl|disable_reconnect|RESULT ok=true' crates/agent/src/lib.rs crates/coordinator/src/lib.rs; git show -s --format='%H %P %s' 5064c1c; git status --porcelain" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+ succeeded in 1097ms:
+
+FILE crates/agent/src/lib.rs
+450:         max_duration: Duration::from_secs(config.max_reconnect_duration_seconds),
+451:         base_delay: Duration::from_millis(config.retry_base_ms),
+452:         cap_delay: Duration::from_millis(config.retry_cap_ms),
+453:         connect_timeout: Duration::from_secs(3),
+454:         safety_margin_ms: 1_000,
+455:     };
+456:     // ★ 결함 85 — 부팅 시 GC(CLAUDE.md §0.3). **아무것도 시작하기 전에** 체크포인트 루트를 독점하고 지난 실행의 PARTIAL 을 치운다.
+457:     //   잠금은 이 함수가 끝날 때까지 쥔다 — 같은 루트를 쓰는 다른 Agent 가 기동 GC 로 이 실행의 PARTIAL 을 지우지 못하게 한다.
+458:     let _checkpoint_root_lock = claim_checkpoint_root_and_collect(&config.checkpoint_root)?;
+459:     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
+460:     //   (2026-08-29, 독립 검수 지적).
+461:     //
+462:     //   전에는 `--owner-panel-port` 를 안 주면 패널 없이 그냥 실행됐다.
+463:     //   그러면 남의 코드가 남의 PC 에서 도는데 소유자는 그것을 볼
+464:     //   방법도 멈출 방법도 없다 — `CLAUDE.md` §0.1 이 가장 앞에서
+465:     //   요구하는 것이 정확히 그 두 가지다.
+466:     //
+467:     //   "포트를 안 줬으니 안 띄운다" 는 편의였지, 안전한 기본값이
+468:     //   아니었다. 실행이 켜져 있으면 포트를 안 줘도 **0 으로 자동
+469:     //   기동**한다 — OS 가 고른 포트를 표준 출력에 찍으므로 소유자는
+470:     //   거기로 들어가면 된다. 실행이 꺼져 있으면(기본값) 멈출 대상이
+471:     //   없으므로 명시했을 때만 띄운다.
+472:     let panel_port = match (config.owner_panel_port, config.execute_workload) {
+473:         (Some(port), _) => Some(port),
+474:         // 실행하는데 포트를 안 줬다 — 조용히 넘어가지 않고 자동으로 연다.
+475:         (None, true) => Some(0),
+476:         (None, false) => None,
+477:     };
+478: 
+479:     if let Some(port) = panel_port {
+480:         let token = derive_owner_panel_token(&config.own_seed);
+481:         let panel = owner_panel::OwnerPanel::bind(port, config.owner_panel_state.clone(), token)
+482:             .map_err(|error| {
+483:                 format!(
+484:                     "OWNER_PANEL_REFUSED: 소유자 패널을 127.0.0.1:{port} 에 띄우지 못했다 \
+485:                      — 멈출 수 없는 작업을 시작하지 않는다: {error}"
+486:                 )
+487:             })?;
+488:         let addr = panel
+489:             .local_addr()
+490:             .map_err(|error| format!("OWNER_PANEL_REFUSED: 주소를 읽지 못했다: {error}"))?;
+491:         println!("OWNER_PANEL listening=http://{addr}/");
+492:         std::thread::Builder::new()
+493:             .name("gputeer-owner-panel".into())
+494:             .spawn(move || panel.serve_forever())
+495:             .map_err(|error| format!("OWNER_PANEL_REFUSED: 스레드 기동 실패: {error}"))?;
+496:     }
+497: 
+498:     let signing_key = SigningKey::from_bytes(&config.own_seed);
+499:     let mut coordinator_keys = InMemoryKeyring::new();
+500:     coordinator_keys.insert(
+501:         config.coordinator_device_id.clone(),
+502:         config.coordinator_verifying_key,
+503:     );
+504:     let mut replay = InMemoryReplayGuard::new();
+505:     let clock = SystemClock;
+506:     let mut fence_watermark = DurableFenceWatermark::open(&config.fence_db_path)
+507:         .map_err(|e| format!("fence watermark storage open failed: {e}"))?;
+508:     if !fence_watermark.is_durable() {
+509:         return Err(format!(
+510:             "fence watermark 저장소가 영속이 아니다: fence_db_path={:?}",
+511:             config.fence_db_path
+512:         ));
+513:     }
+514:     // ★ B+E 구현 단계 6 — 지난 실행이 남긴 보낼 보고를 먼저 보낸다. 실패해도 새 작업을 막지 않는다 — 파일은 남는다.
+515:     if config.report_over_session {
+516:         flush_report_outbox(&config, &signing_key);
+517:     }
+518:     let mut budget = RetryBudget::new(&policy);
+519:     if !config.reconnect_enabled {
+520:         let stream = connect_with_timeout(&config.coordinator_addr, policy.connect_timeout)
+521:             .map_err(|e| format!("Coordinator connect failed: {e}"))?;
+522:         return run_one_connection(
+523:             config,
+524:             stream,
+525:             false,
+526:             &signing_key,
+527:             &mut coordinator_keys,
+528:             &mut replay,
+529:             &clock,
+530:             &mut fence_watermark,
+531:             &mut budget,
+532:             &policy,
+533:         );
+790: ///   워크로드가 두 번 실행된다(`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
+791: ///   첫 커밋(391e49d)은 peek 경로 하나만 막았고 Revoke 읽기 실패 · 갱신 응답 유실 복구가 남아 있었다.
+792: ///   ★ 결함 ㊽ (재검수 50) — 기준은 **실행을 시도했는가**다(두 번째 관문 거부 · 기동 실패도 포함). 기동
+793: ///     지금 두 번째 관문 거부 · 기동 실패는 원래도 Fatal 이다(EXEC_REFUSED:* · EXEC_FAILED:SPAWN — 재접속 표지가 없다).
+794: ///     이 기준은 **실행 시도 이후에 재시도 가능 오류가 반환되더라도** 재진입을 막으려는 보수적 억제다(결함 56 — 전에는
+795: ///     "기동 성공만 세면 그 사이 실패가 재접속으로 이어진다" 고 단정했다). 전에는 "워크로드를 이미 띄웠다" 고 적었다.
+796: #[allow(clippy::too_many_arguments)]
+797: fn run_one_connection(
+798:     config: AgentConfig,
+799:     stream: TcpStream,
+800:     recovering_ambiguous_renew: bool,
+801:     signing_key: &SigningKey,
+802:     coordinator_keys: &mut InMemoryKeyring,
+803:     replay: &mut InMemoryReplayGuard,
+804:     clock: &SystemClock,
+805:     fence_watermark: &mut DurableFenceWatermark,
+806:     budget: &mut RetryBudget,
+807:     policy: &RetryPolicy,
+808: ) -> Result<(), String> {
+809:     let mut execution_attempted = false;
+810:     let result = run_one_connection_inner(
+811:         config,
+812:         stream,
+813:         recovering_ambiguous_renew,
+814:         signing_key,
+815:         coordinator_keys,
+816:         replay,
+817:         clock,
+818:         fence_watermark,
+819:         budget,
+820:         policy,
+821:         &mut execution_attempted,
+822:     );
+823:     result.map_err(|error| {
+824:         if execution_attempted {
+825:             not_retried_after_workload(&error)
+826:         } else {
+827:             error
+828:         }
+829:     })
+830: }
+831: 
+832: /// 재접속 · 재조회 표지를 바꿔 `SessionError::from` 이 Fatal 로 분류하게 한다(결함 ㊺).
+833: fn not_retried_after_workload(error: &str) -> String {
+834:     format!(
+835:         "WORKLOAD_EXECUTION_ATTEMPTED: 이 연결에서 워크로드 실행을 시도했다(기동 성공 여부와 무관) — 재접속하면 같은 Grant 로 \
+836:          다시 실행할 수 있으므로 재시도하지 않는다: {}",
+837:         error
+838:             .replace("RETRYABLE_", "RETRYABLE(억제)_")
+839:             .replace("AMBIGUOUS_RENEW", "AMBIGUOUS(억제)_RENEW")
+840:     )
+841: }
+842: 
+843: #[allow(clippy::too_many_arguments)]
+844: fn run_one_connection_inner(
+872:             "fence watermark 저장소가 영속이 아니다(fence_db_path={:?}) — \
+873:              재시작을 넘는 epoch 강등 방어가 조용히 무력화된다",
+874:             config.fence_db_path
+875:         ));
+876:     }
+877: 
+878:     */
+879:     stream
+880:         .set_read_timeout(Some(IO_TIMEOUT))
+881:         .map_err(|e| e.to_string())?;
+882:     stream
+883:         .set_write_timeout(Some(IO_TIMEOUT))
+884:         .map_err(|e| e.to_string())?;
+885: 
+886:     if config.resume_protocol {
+887:         return run_resume_connection(
+888:             &config,
+889:             stream,
+890:             signing_key,
+891:             coordinator_keys,
+892:             replay,
+893:             clock,
+894:             fence_watermark,
+895:             budget,
+896:             policy,
+897:         );
+898:     }
+899: 
+900:     // ★ D2 (B+E 구현 단계 4, 2026-09-14) — **모든 연결은 Agent 의 Hello 로 시작한다.** 순차 lane 도 다중 Agent lane 과
+901:     //   같은 Hello(FRESH) -> Grant 순서다. 한 리스너가 FRESH · RESUME · RENEW · REPORT 를 가르려면 Agent 가 먼저 말해야 한다
+902:     //   (제안서 결정 D2 — 설정 분기 없음). 옛 Coordinator 는 Grant 를 먼저 쓰고 ACK 자리에서 이 Hello 를 받아 명시적으로 실패한다.
+903:     {
+904:         let mut hello = pb::AgentSessionHello {
+905:             schema_version: 1,
+906:             mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+907:             session_id: config.session_id.clone(),
+908:             node_id: config.agent_device_id.clone(),
+909:             connection_attempt: config.connection_attempt,
+910:             issued_at_unix_ms: clock.now_unix_ms(),
+911:             nonce: fresh_nonce()?,
+912:             ..Default::default()
+913:         };
+914:         hello.node_signature = sign(&signing_key, &hello).to_vec();
+915:         let frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+916:             .map_err(|e| format!("AgentSessionHello(FRESH) 프레임 인코딩 실패: {e}"))?;
+917:         stream
+918:             .write_all(&frame)
+919:             .map_err(|e| format!("AgentSessionHello(FRESH) 전송 실패: {e}"))?;
+920:         stream.flush().map_err(|e| e.to_string())?;
+921:     }
+922: 
+923:     let received = read_frame(
+924:         &mut stream,
+925:         2,
+926:         KeyDirectorySource::Provided(coordinator_keys),
+927:         replay,
+928:         clock,
+929:     )
+930:     .map_err(|e| classify_framing_error(e, "Grant"))?;
+931: 
+932:     // ★ Grant 를 replay 검사까지 통과한 뒤에만 그 내용으로 ACK 를
+933:     //   만든다 — 부작용(ACK 발급)이 검증되지 않은 값에서 나오지 않는다.
+934:     let grant: pb::ExecutionGrant = match &received {
+935:         IngressMessage::Grant(verified) => verified
+1218:     if let Some(test_signer_id) = &config.revoke_signer_id_override {
+1219:         coordinator_keys.insert(test_signer_id.clone(), config.coordinator_verifying_key);
+1220:     }
+1221: 
+1222:     // ★ 워크로드가 있으면 ACK 는 이미 실행 **전**에 갔다(결함 ⑱). 없으면 여기서 보낸다.
+1223:     let ack = match sent_ack {
+1224:         Some(sent) => sent,
+1225:         None => send_grant_ack(&mut stream, signing_key, &grant, &config, clock)?,
+1226:     };
+1227: 
+1228:     // ★ 노드 생존 보고 (2026-08-29, ADR-033 §7 앞 단계).
+1229:     //
+1230:     //   ACK 뒤·갱신 앞의 고정 위치로 보낸다. 이 stub 프로토콜에는
+1231:     //   비동기 multiplexing 이 없어 주기적 전송을 표현할 수 없다 —
+1232:     //   할 수 없는 것을 하는 척하지 않고, 표현 가능한 순차 위치에 둔다.
+1434:     // ★ 결함 82 — 작업 디렉터리 삭제 실패는 종료 보고를 처리한 **뒤에** 알린다. 남의 PC 에 남은 출력을 조용히 넘기지 않는다(§0.5).
+1435:     if let Some(error) = pending_cleanup_failure.take() {
+1436:         return Err(format!(
+1437:             "WORKLOAD_CLEANUP_FAILED: 작업 디렉터리를 지우지 못했다({}): {error}",
+1438:             // 결함 91 — 보내는 설정일 때만 "보냈다" 다. 보낼 관측이 없으면 이 자리에 오기 전에 ATTEMPT_REPORT_REFUSED 로 끝난다.
+1439:             if config.send_attempt_report || config.report_over_session {
+1440:                 "종료 보고는 보냈다"
+1441:             } else {
+1442:                 "종료 보고를 보내는 설정이 아니다 — 보고 없음"
+1443:             }
+1444:         ));
+1445:     }
+1446: 
+1447:     // ★ 워크로드를 띄운 연결에서는 끊김을 재접속 사유로 쓰지 않는다 — 재접속은 같은 Grant 로
+1448:     //   처음부터 다시 돌고, 그러면 워크로드가 **두 번** 실행된다. 설계 A 로 ACK 가 실행 전에 가면
+1449:     //   기본 Coordinator 는 ACK 직후 닫으므로 실행이 끝날 즈음엔 닫혀 있을 수 있다(빈도는 재지 않았다 — 결함 52)
+1450:     //   (`docs/reports/debugs/2026-09-14_1055_재접속이_워크로드를_다시_돌린다.md`).
+1451:     if config.reconnect_enabled
+1452:         && !config.do_renew
+1453:         && !config.expect_replay
+1454:         && config.expect_revoke_after_round.is_none()
+1455:         && !*execution_attempted
+1456:         && peer_closed_after_ack(&stream)?
+1457:     {
+1458:         return Err("RETRYABLE_CONNECTION: coordinator disconnected after ACK".into());
+1459:     }
+1460: 
+1461:     let mut revoked = false;
+1462:     if config.expect_revoke_after_round == Some(0) {
+1463:         let notice = receive_and_validate_revoke(
+1464:             &mut stream,
+1465:             &coordinator_keys,
+1466:             &mut replay,
+1467:             &clock,
+1468:             &held_lease,
+1469:         )?;
+1470:         println!(
+1471:             "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+1472:             notice.lease_id, notice.fence_epoch, notice.cause
+1473:         );
+1474:         revoked = true;
+1475:     }
+1476: 
+1477:     // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
+1478:     //   찍지 않는다.** 두 번째로 도착하는 프레임은 Coordinator 가
+1479:     //   `send_grant_twice` 로 다시 보낸 같은 Grant wire bytes 다.
+1480:     //   `require_replay_checked()` 까지 갈 필요도 없다 — `verify()`
+1481:     //   자체가 `Duplicate` 를 만나면 `read_frame` 단계에서 이미 `Err`
+1482:     //   를 반환한다.
+1483:     if config.expect_replay {
+1484:         stream
+1485:             .set_read_timeout(Some(Duration::from_secs(5)))
+1486:             .map_err(|e| e.to_string())?;
+1487:         return match read_frame(
+1488:             &mut stream,
+1489:             2,
+1490:             KeyDirectorySource::Provided(coordinator_keys),
+1491:             replay,
+1492:             clock,
+1493:         ) {
+1494:             Err(error) => Err(format!("REPLAY_REJECTED: {error}")),
+1495:             Ok(message) => Err(format!(
+1496:                 "REPLAY_NOT_REJECTED: 두 번째 Grant 가 거부되지 않고 {message:?} 로 검증됐다"
+1497:             )),
+1498:         };
+1499:     }
+1500: 
+1501:     // ★ Lease 갱신 (2026-08-19) — ACK 를 보낸 뒤 같은 연결에 이어서
+1640: /// 순서: 요청 nonce echo -> coordinator_id -> outcome. RENEWED 면 중첩 Lease 를 **독립적으로** 서명 검증하고(규칙 i) 신원 ·
+1641: /// 세대 상승 거부 · fence watermark 를 본다. 그 밖의 outcome 은 `RENEW_REFUSED:<이름>` 오류다(전에 루프 안에 있던 코드 그대로).
+1642: #[allow(clippy::too_many_arguments)]
+1643: fn verify_renew_result(
+1644:     result: &pb::RenewLeaseResult,
+1645:     request_nonce: &[u8],
+1646:     held_lease: &pb::Lease,
+1647:     config: &AgentConfig,
+1648:     coordinator_keys: &InMemoryKeyring,
+1649:     replay: &mut InMemoryReplayGuard,
+1650:     clock: &SystemClock,
+1651:     fence_watermark: &mut DurableFenceWatermark,
+1652: ) -> Result<pb::Lease, String> {
+1653:     // ★ 서명은 이미 검증됐다 — 그 뒤에 상관관계를 확인한다.
+1654:     //   request_nonce 가 우리가 보낸 요청과 다르면, 이 결과가 다른
+1655:     //   갱신 요청에 대한 응답이 재사용되고 있다는 뜻이다.
+1656:     if result.request_nonce != request_nonce {
+1657:         return Err("RENEW_REJECTED: request_nonce 가 우리가 보낸 요청과 다르다".into());
+1658:     }
+1659:     if result.coordinator_id != config.coordinator_device_id {
+1660:         return Err(format!(
+1661:             "RENEW_REJECTED: coordinator_id 불일치: 기대값 {} != {}",
+1662:             config.coordinator_device_id, result.coordinator_id
+1663:         ));
+1664:     }
+1665:     match result.outcome {
+1666:         1 => {
+1667:             // RENEW_OUTCOME_RENEWED — nested Lease 는 outer 결과 서명과 **무관하게** 독립적으로 검증한다(규칙 i).
+1668:             let new_lease = result
+1669:                 .lease
+1670:                 .clone()
+1671:                 .ok_or_else(|| "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string())?;
+1672:             let verifier = Ed25519Verifier::new(coordinator_keys);
+1673:             let verified_lease = verify(&new_lease, 1, &verifier, clock.now_unix_ms(), replay)
+1674:                 .map_err(|e| format!("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패: {e:?}"))?;
+1675:             let new_lease = verified_lease.get();
+1676:             if new_lease.lease_id != held_lease.lease_id {
+1677:                 return Err("RENEW_REJECTED: 갱신된 Lease.lease_id 가 기존과 다르다".into());
+1678:             }
+1679:             if new_lease.job_id != held_lease.job_id {
+1680:                 return Err("RENEW_REJECTED: 갱신된 Lease.job_id 가 기존과 다르다".into());
+1681:             }
+1682:             if new_lease.attempt_id != held_lease.attempt_id {
+1683:                 return Err("RENEW_REJECTED: 갱신된 Lease.attempt_id 가 기존과 다르다".into());
+1684:             }
+1685:             if new_lease.issuing_coordinator_id != config.coordinator_device_id {
+1686:                 return Err("RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다".into());
+1687:             }
+1688:             if new_lease.holder_node_id != config.agent_device_id {
+1689:                 return Err("RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into());
+1690:             }
+1691:             // ★ 코덱스 독립 검수(2026-08-19, p99) — epoch **상승**은 정책상 거부한다. `check_and_advance()` 는 `<` 만 거부한다.
+1692:             if new_lease.fence_epoch > held_lease.fence_epoch {
+1693:                 return Err(format!(
+1694:                     "RENEW_REJECTED: 갱신된 Lease.fence_epoch({}) 이 기존({}) 보다 높다 \
+1695:                      — epoch 상승은 이 조각의 범위 밖이라 정책상 거부한다",
+1696:                     new_lease.fence_epoch, held_lease.fence_epoch
+1697:                 ));
+1698:             }
+1699:             // ★ 같은 job_id 를 resource key 로 재사용한다 — lease_id 를 새 키로 쓰면 강등 방어가 깨진다.
+1700:             fence_watermark
+1701:                 .check_and_advance(&new_lease.job_id, new_lease.fence_epoch)
+1702:                 .map_err(|e| fence_error_message("RENEW_REJECTED", e))?;
+1703:             Ok(new_lease.clone())
+1704:         }
+1705:         2 => Err("RENEW_REFUSED:SUPERSEDED".into()),
+1706:         3 => Err("RENEW_REFUSED:QUARANTINED".into()),
+1707:         // max_total_duration_seconds 갱신 차단 — 새 lease_id 재발급은 범위 밖이다.
+1708:         6 => Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
+1709:         8 => Err("RENEW_REFUSED:REVOKED".into()),
+1710:         other => Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
+1711:     }
+1712: }
+2984:         let last = ack
+2985:             .agent_signature
+2986:             .last_mut()
+2987:             .ok_or_else(|| "agent_signature 가 비어 있다".to_string())?;
+2988:         *last ^= 0x01;
+2989:     }
+2990: 
+2991:     let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
+2992:         .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
+2993:     stream
+2994:         .write_all(&frame)
+2995:         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
+2996:     stream.flush().map_err(|e| e.to_string())?;
+2997:     // ★ 기동 전 ACK 를 테스트가 직접 관측하는 표지(결함 ㊻) — WORKLOAD_SPAWNED 보다 먼저 찍혀야 한다.
+2998:     println!("ACK_SENT grant_id={} attempt_id={}", ack.grant_id, ack.attempt_id);
+2999:     Ok(ack)
+3000: }
+3001: 
+3002: /// A coordinator that deliberately drops the transport after ACK is detected
+3003: /// without adding a protocol message. A normal coordinator remains readable,
+3004: /// so the short peek times out and the completed handshake is preserved.
+3005: fn peer_closed_after_ack(stream: &TcpStream) -> Result<bool, String> {
+3006:     stream
+3007:         .set_read_timeout(Some(Duration::from_millis(50)))
+3008:         .map_err(|e| e.to_string())?;
+3009:     let mut byte = [0u8; 1];
+3010:     match stream.peek(&mut byte) {
+3011:         Ok(0) => Ok(true),
+3012:         Ok(_) => Ok(false),
+3013:         Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+3014:             Ok(false)
+3015:         }
+3016:         Err(error)
+3017:             if matches!(
+3018:                 error.kind(),
+3019:                 ErrorKind::ConnectionReset
+3020:                     | ErrorKind::ConnectionAborted
+3021:                     | ErrorKind::BrokenPipe
+3022:                     | ErrorKind::NotConnected
+3023:             ) =>
+3024:         {
+3025:             Ok(true)
+3026:         }
+3027:         Err(error) => Err(error.to_string()),
+3028:     }
+3029: }
+3030: 
+3031: /// `crates/coordinator/src/lib.rs::derive_nonce` 와 같은 방식 —
+3032: /// 결정적 유도로 재현 가능한 selftest 시나리오를 만든다. `tag` 로
+3033: /// Grant nonce 와 네임스페이스를 분리한다(같은 grant_id 라도
+3034: /// Coordinator->Agent 방향과 Agent->Coordinator 방향의 nonce 가 같아지면
+3035: /// `nonce_namespace_is_per_device` 가 보장하는 sender 별 분리에 기대게
+
+FILE crates/coordinator/src/lib.rs
+770:     }
+771:     if config.resume_protocol {
+772:         return Some(
+773:             "resume 경로는 heartbeat 수신에 닿기 전에 반환한다 — --expect-heartbeats 와 --resume-protocol 을 함께 줄 수 없다"
+774:                 .to_string(),
+775:         );
+776:     }
+777:     for (enabled, flag) in [
+778:         (config.send_grant_twice, "--send-grant-twice"),
+779:         (config.disconnect_after_ack, "--disconnect-after-ack"),
+780:         (
+781:             config.drop_connection_after_ack_once,
+782:             "--drop-connection-after-ack-once",
+783:         ),
+784:     ] {
+785:         if enabled {
+786:             return Some(format!(
+787:                 "{flag} 는 heartbeat 수신 구간보다 먼저 세션을 끝낼 수 있다 — --expect-heartbeats 와 함께 줄 수 없다"
+788:             ));
+789:         }
+790:     }
+791:     None
+792: }
+793: 
+794: /// ★ 이웃 신고 관문(`unsupported_neighbor_report_lane`)과 같은 이유로
+795: ///   있다 — 받아 놓고 안 하는 것이 가장 나쁘다. 여기서는 그보다 하나 더
+796: ///   본다: 증거를 결합할 **예약이 있는 control DB** 가 없으면 저장 자체가
+797: ///   불가능하다.
+798: ///
+799: /// ★ `NeighborReportLane` 을 재사용한다. 두 옵션이 같은 lane 구분을 쓰고,
+800: ///   그 구분은 "순차 lane 인가 multi-agent lane 인가" 라는 **하나의 사실**
+801: ///   이다 — 같은 사실을 두 개의 enum 으로 적으면 둘이 어긋난다.
+802: pub(crate) fn unsupported_attempt_report_lane(
+803:     config: &CoordinatorConfig,
+804:     lane: NeighborReportLane,
+805: ) -> Option<String> {
+806:     if config.expect_attempt_reports == 0 {
+807:         return None;
+808:     }
+809:     if lane == NeighborReportLane::MultiAgent {
+810:         return Some(
+811:             "multi-agent lane 은 AttemptReport 수신을 구현하지 않았다 — --expect-attempt-reports 와 함께 쓸 수 없다"
+812:                 .to_string(),
+813:         );
+814:     }
+815:     if config.grant_from_control_db.is_none() {
+816:         return Some(
+817:             "--expect-attempt-reports 는 --grant-from-control-db 가 있어야 한다 — \
+818:              종료 증거는 그 control DB 에 저장된 Attempt·예약에 결합해야만 저장된다"
+819:                 .to_string(),
+820:         );
+821:     }
+822:     if config.resume_protocol {
+823:         return Some(
+824:             "resume 경로는 AttemptReport 수신에 닿기 전에 반환한다 — --expect-attempt-reports 와 --resume-protocol 을 함께 줄 수 없다"
+825:                 .to_string(),
+826:         );
+827:     }
+828:     for (enabled, flag) in [
+829:         (config.send_grant_twice, "--send-grant-twice"),
+830:         (config.disconnect_after_ack, "--disconnect-after-ack"),
+831:         (
+832:             config.drop_connection_after_ack_once,
+833:             "--drop-connection-after-ack-once",
+834:         ),
+835:     ] {
+836:         if enabled {
+837:             return Some(format!(
+838:                 "{flag} 는 ACK 직후 세션을 끝낼 수 있어 AttemptReport 수신에 닿는다고 보장할 수 없다 — --expect-attempt-reports 와 함께 줄 수 없다"
+839:             ));
+840:         }
+841:     }
+842:     None
+843: }
+844: 
+845: /// B+E 구현 단계 6 — REPORT 세션을 받을 수 없는 구성을 시작 전에 거부한다(위 관문과 같은 이유).
+846: ///
+847: /// ★ ACK 직후 세션을 끝내는 hook 들은 여기서 보지 않는다 — REPORT 세션은 FRESH 연결과 **따로** 오는 새 연결이다.
+848: pub(crate) fn unsupported_report_session_lane(
+849:     config: &CoordinatorConfig,
+850:     lane: NeighborReportLane,
+851: ) -> Option<String> {
+852:     if !config.accept_report_sessions {
+853:         return None;
+854:     }
+855:     if lane == NeighborReportLane::MultiAgent {
+856:         return Some(
+857:             "multi-agent lane 은 REPORT 세션을 구현하지 않았다 — --accept-report-sessions 와 함께 쓸 수 없다".to_string(),
+858:         );
+859:     }
+860:     if config.grant_from_control_db.is_none() {
+861:         return Some(
+862:             "--accept-report-sessions 는 --grant-from-control-db 가 있어야 한다 — \
+863:              종료 증거는 그 control DB 에 저장된 Attempt · 예약에 결합해야만 저장된다"
+864:                 .to_string(),
+865:         );
+866:     }
+867:     if config.resume_protocol {
+868:         return Some(
+869:             "resume 경로는 Hello 의 mode 로 세션을 가르지 않는다 — --accept-report-sessions 와 --resume-protocol 을 함께 줄 수 없다"
+870:                 .to_string(),
+871:         );
+872:     }
+873:     None
+874: }
+875: 
+876: fn session_error_kind(error: &CoordinatorSessionError) -> &'static str {
+877:     match error {
+878:         CoordinatorSessionError::Transport(_) => "transport",
+879:         CoordinatorSessionError::Protocol(_) => "protocol",
+880:         CoordinatorSessionError::Storage(_) => "storage",
+881:     }
+882: }
+883: 
+884: /// Legacy 문자열 오류를 Transport · Protocol · Storage 로 가른다.
+885: ///
+886: /// ★ 결함 92 (재검수 60) — Storage 는 **우리 코드가 만든 문구의 앞머리**("lease store")로만 고른다. 전에는 문자열 어디든
+887: ///   "lease store" · "저장소" 가 있거나, durable 저장소일 때 "Lease" 와 "실패" 가 함께 있으면 Storage 였다 — 상대가 보낸 값(ACK 의
+888: ///   grant_id, 예상 밖 프레임의 Debug 출력 등)이 문자열에 섞이면 accept 루프 전체가 멈췄다(87 과 같은 부류, FRESH 연결 안).
+889: ///   이제 상대 내용은 분류를 Transport · Protocol 쪽으로만 바꿀 수 있다 — 리스너를 멈추지 못한다.
+890: /// ★ 근거: 이 함수로 오는 저장소 장애 문구는 전부 "lease store" 로 시작하고 `?` 로 앞에 다른 말 없이 올라온다(2026-09-14 소스
+891: ///   대조 — 타입으로 강제한 것은 아니다). 다른 저장소(종료 보고 · 이웃 신고 · 생존 관측 · 저장된 예약)의 장애는 `Classified(Storage)`
+892: ///   로 와서 이 함수를 지나지 않는다. "Lease"+"실패" 규칙에 걸리던 문구는 프레임 읽기 · 검증 오류였다.
+893: /// ★ 결함 99 · 100 · 101 (재검수 61) — 위 근거는 **틀렸다**: `갱신 전 revoke 저장 실패` 가 저장소 문구 앞에 말을 붙였고, 구성 불일치
+894: ///   ("lease store 에 없다")와 정책 거부(만료 · revoke)가 이 앞머리 하나에 뒤섞여 있었다. 그래서 저장소를 부르는 곳은 오류를
+895: ///   **타입으로** 갈라 Classified 로 올리거나(99 · 100), 정책 거부에 `LEASE_POLICY_REFUSED` 앞머리를 붙인다(101). 이 함수는 남은
+896: ///   Legacy 문자열의 마지막 판정이다.
+897: fn classify_legacy_session_error(message: String) -> CoordinatorSessionError {
+898:     let lower = message.to_ascii_lowercase();
+899:     let transport = lower.contains("truncated")
+900:         || lower.contains("stream")
+901:         || lower.contains("connection reset")
+902:         || lower.contains("connection aborted")
+903:         || lower.contains("broken pipe")
+904:         || lower.contains("timed out")
+905:         || lower.contains("timeout")
+906:         || message.contains("스트림이 끊겼다")
+907:         || message.contains("스트림 읽기 실패")
+908:         || message.contains("연결이 끊겼다")
+909:         || message.contains("전송 실패")
+910:         || message.contains("flush 실패")
+911:         || message.contains("연결에 더 이상 아무것도 오지 않았다");
+912:     if message.starts_with("lease store") {
+913:         storage_error("session lease operation", message)
+914:     } else if transport {
+915:         transport_error("session I/O", message)
+916:     } else {
+917:         protocol_error("session protocol", message)
+918:     }
+919: }
+920: 
+921: /// ★★ 결함 ⑱ (설계 A, 2026-09-14) — ACK **다음 첫 읽기**의 시한.
+922: ///
+923: /// Manifest 가 실린 Grant 면 Agent 는 ACK 를 보낸 **뒤** 워크로드를 돌리고, 끝난 뒤에야
+924: /// heartbeat · 이웃 신고 · 종료 보고 · 갱신 요청 중 첫 프레임을 보낸다. 그 첫 읽기를 10초
+925: /// (`IO_TIMEOUT`)로 두면 10초보다 긴 작업이 전부 끊긴다. 그래서 첫 읽기만 **Lease 만료까지 남은
+926: /// 시간**(10초보다 짧아지지는 않는다)으로 두고, 읽고 나면 다시 10초로 되돌린다.
+927: ///
+928: /// ★ 결함 ㊹ — 이것은 **무응답 시한**이지 Lease 유효성 판정이 아니다. 소켓 읽기마다 적용되는 상대
+929: ///   시한이라(`read_frame` 은 헤더와 본문을 따로 읽는다) 프레임 전체가 Lease 만료를 넘겨 도착할 수 있고,
+930: ///   최소 10초 · `arm` 뒤의 지연(갱신 전 sleep 등)도 만료 뒤까지 기다리게 만든다. 즉 Lease 만료 뒤에
+931: ///   도착한 프레임을 **거부하지 않는다** — 전에 "받지 않는다" 고 적었었다(구현 검수 49). 규범의 STALE
+932: ///   제출(`state-machines.md` §3)을 이 연결이 판정하지도 않는다 — 그 자리는 설계 B+E 의 보고 연결이다.
+933: /// ★ 이 연결은 순차로 처리되므로 기다리는 동안 다른 연결을 받지 못한다(설계 문서 §3 의 A).
+934: struct PostAckWait {
+935:     armed: bool,
+936:     /// 마지막으로 시한을 건 단계와 시각 — 끝날 때(Drop) 경과를 **Coordinator 안에서** 잰다(결함 62).
+937:     phase: &'static str,
+938:     set_at: Option<std::time::Instant>,
+939: }
+940: 
+1180:             crate::grant_from_stored::signed_grant_from_stored(
+1181:                 &jobs,
+1182:                 &staging,
+1183:                 &leases,
+1184:                 &crate::grant_from_stored::StoredGrantRequest {
+1185:                     job_id: config.stored_grant_job_id.clone(),
+1186:                     attempt_id: config.stored_grant_attempt_id.clone(),
+1187:                     lease_id: config.stored_grant_lease_id.clone(),
+1188:                     grant_id: config.grant_id.clone(),
+1189:                     issued_at_unix_ms: now,
+1190:                     expires_at_unix_ms: now.saturating_add(config.stored_grant_ttl_ms),
+1191:                     // ★ **기존 handshake 의 유도식을 그대로 쓴다.** Agent 가
+1192:                     //   연결 시도 번호에서 같은 값을 다시 만들어 대조한다 —
+1193:                     //   저장된 사실로 뽑으면 그 대조가 깨진다(통합 테스트가
+1194:                     //   `nonce does not match connection attempt` 로 잡았다).
+1195:                     nonce: derive_nonce("grant", &config.grant_id, connection_attempt),
+1196:                 },
+1197:                 signing_key,
+1198:                 &submitters,
+1199:             )
+1200:             // ★ 결함 104 (재검수 62) — 저장소를 읽다가 난 장애는 Storage(fail-closed), 저장된 사실과 맞지 않는 거부만 Protocol.
+1201:             .map_err(|e| match e {
+1202:                 crate::grant_from_stored::StoredGrantError::Storage(message) => {
+1203:                     SessionHandlerError::Classified(CoordinatorSessionError::Storage(message))
+1204:                 }
+1205:                 crate::grant_from_stored::StoredGrantError::Refused(message) => {
+1206:                     SessionHandlerError::Classified(CoordinatorSessionError::Protocol(message))
+1207:                 }
+1208:             })?
+1209:         }
+1210:         None => issue_grant(config, lease_store, signing_key, now, connection_attempt)?,
+1211:     };
+1212: 
+1213:     if config.corrupt_own_signature {
+1214:         let last = grant
+1215:             .coordinator_signature
+1216:             .last_mut()
+1217:             .ok_or_else(|| "coordinator_signature 가 비어 있다".to_string())?;
+1218:         *last ^= 0x01;
+1219:     }
+1220: 
+1221:     let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
+1222:         .map_err(|e| format!("Grant 프레임 인코딩 실패: {e}"))?;
+1223:     stream
+1224:         .write_all(&frame)
+1225:         .map_err(|e| format!("Grant 전송 실패: {e}"))?;
+1226: 
+1227:     // ★ replay 시나리오 — **똑같은 wire bytes** 를 다시 쓴다. `grant` 를
+1228:     //   다시 인코딩하지 않는다 — 그러면 "논리적으로 같은 재발급" 이지
+1229:     //   "같은 프레임의 replay" 가 아니게 된다. 검증 대상은 "같은 서명
+1230:     //   바이트가 두 번 오면 두 번째가 거부되는가" 다.
+1231:     if config.send_grant_twice {
+1232:         stream
+1233:             .write_all(&frame)
+1234:             .map_err(|e| format!("replay Grant 전송 실패: {e}"))?;
+1235:     }
+1236:     stream.flush().map_err(|e| e.to_string())?;
+1237: 
+1238:     let received = read_frame(
+1239:         stream,
+1240:         1,
+1241:         KeyDirectorySource::Provided(agent_keys),
+1242:         replay,
+1243:         clock,
+1244:     )
+1245:     .map_err(|e| format!("ACK 프레임 읽기/검증 실패: {e}"))?;
+1246: 
+1247:     // ★ `require_replay_checked()` 를 반드시 거친다 — replay 상태가
+1248:     //   `permits_side_effects()` 를 만족하지 못한 `Verified<M>` 로
+1249:     //   grant_id 대조 같은 부작용을 실행하지 않는다(§10).
+1250:     let ack = match &received {
+1251:         IngressMessage::GrantAck(verified) => verified
+1252:             .require_replay_checked()
+1253:             .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
+1254:         other => return Err(format!("예상하지 못한 응답 타입: {}", ingress_kind(&other)).into()),
+1255:     };
+2068:             if config.revoke_after_round == Some(_round + 1) {
+2069:                 send_revoke_notice(config, &grant, lease_store, signing_key, stream)?;
+2070:                 break;
+2071:             }
+2072:         }
+2073:     }
+2074: 
+2075:     println!(
+2076:         "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
+2077:         grant.grant_id, grant.attempt_id, ack.agent_device_id
+2078:     );
+2079:     // Give an ACK-only Agent enough time to distinguish a completed session
+2080:     // from the deliberate drop-after-ACK test hook.
+2081:     std::thread::sleep(Duration::from_millis(100));
+2082:     return Ok(());
+2083: }
+2084: 
+2085: /// 이미 발급한 Grant 안의 Lease를 대상으로 revoke 통지를 만들고
+2086: /// 서명해 같은 연결로 보낸다.
+2087: ///
+2088: /// `RevokeLeaseNotice::signer_id()`는 현재 프로토콜 계약상 `lease_id`를
+2089: /// 반환한다(V-08). 따라서 테스트용 target override도 바뀐 payload에
+2090: /// 대해 정상 서명해, Agent의 identity 검증과 서명 검증을 분리한다.
+2430: /// ★ session_id 는 대조하지 않는다 — FRESH 는 세션 복원 대상이 아니다(Resume lane 만 요구한다).
+2431: fn read_session_hello(
+2432:     config: &CoordinatorConfig,
+2433:     stream: &mut std::net::TcpStream,
+2434:     agent_keys: &InMemoryKeyring,
+2435:     replay: &mut InMemoryReplayGuard,
+2436:     clock: &SystemClock,
+2437: ) -> Result<pb::AgentSessionHello, SessionHandlerError> {
+2438:     let message = read_frame(
+2439:         stream,
+2440:         1,
+2441:         KeyDirectorySource::Provided(agent_keys),
+2442:         replay,
+2443:         clock,
+2444:     )
+2445:     .map_err(|e| {
+2446:         session_framing_error(
+2447:             "HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다)",
+2448:             "HELLO_REJECTED: 첫 프레임을 Hello 로 검증하지 못했다(서명 · 시각 · replay · 형식)",
+2449:             &e,
+2450:         )
+2451:     })?;
+2452:     let hello = match message {
+2453:         IngressMessage::SessionHello(verified) => verified
+2454:             .require_replay_checked()
+2455:             .map_err(|e| session_protocol_error(format!("HELLO_REJECTED: replay 검사 실패: {e:?}")))?
+2456:             .clone(),
+2457:         _ => {
+2458:             return Err(session_protocol_error(
+2459:                 "HELLO_MISSING: 첫 프레임이 Hello 가 아니다 — 모든 연결은 Agent 의 Hello 로 시작한다(D2)",
+2460:             ))
+2461:         }
+2462:     };
+2463:     if hello.node_id != config.agent_device_id {
+2464:         return Err(session_protocol_error(format!(
+2465:             "HELLO_REJECTED: node_id 불일치 — 기대값 {}",
+2466:             config.agent_device_id
+2467:         )));
+2468:     }
+2469:     println!(
+2470:         "SESSION_HELLO_ACCEPTED mode={} node_id={} connection_attempt={}",
+2471:         hello.mode, hello.node_id, hello.connection_attempt
+2472:     );
+2473:     Ok(hello)
+2474: }
+2475: 
+
+ succeeded in 1105ms:
+diff --git a/docs/history/HISTORY.md b/docs/history/HISTORY.md
+index 068545e..cfd3226 100644
+--- a/docs/history/HISTORY.md
++++ b/docs/history/HISTORY.md
+@@ -25,6 +25,19 @@
+ 
+ ---
+ 
++## 2026-09-17 10:42 — 옛 상대 조합 시험 · 결함 131(새 Agent 는 옛 Coordinator 가 거부해도 성공으로 끝난다)
++
++- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §8 · §13 의 "옛 Coordinator 조합 시험"
++- 스트림: QA
++- 수행: D2 이전 바이너리(7d5a9fe)를 별도 target 으로 빌드해 새 · 옛 조합을 쟀다(`crates/cli/tests/old_peer_combination.rs`, 옛 바이너리 경로는 환경 변수 · #[ignore]).
++  옛 Agent · 새 Coordinator 는 둘 다 약 10초 시한으로 실패한다. 새 Agent · 옛 Coordinator 는 **Coordinator 만 실패하고 Agent 는 성공(RESULT ok=true)** —
++  계획서의 "새 Agent 는 실패한다" 를 정정하고 결함 131 로 기록했다. 고치려면 계약 변경이 필요해 오늘의 사실을 고정하는 덫 테스트로 뒀다
++- 검증: 3 passed(덫 포함) · 새 · 옛 실행 파일 해시가 다르다. 레거시 lane 만 쟀다 · 리눅스 미실행
++- 원본: `docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt`
++- 리포트: 결함 리포트 131
++
++---
++
+ ## 2026-09-17 09:56 — 결함 79 · 81 일부 · 종료 · 메모리 관측 분류를 플랫폼 밖 순수 함수로 · 리눅스 memory.peak 실패 사유 보존
+ 
+ - 계획: 결함 리포트 79 · 81 조치(착수 기록)
+diff --git a/docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md b/docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md
+index cad609c..903692f 100644
+--- a/docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md
++++ b/docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md
+@@ -344,6 +344,8 @@ coordinator lib.rs  read_fresh_hello — Grant 를 쓰기 전에 Hello 를 읽
+ 
+ ★ 설정 분기가 없다(D2 결정 "항상"). 옛 Agent 는 새 Coordinator 에 HELLO_MISSING 으로 거부되고(시한까지 기다리거나 다른 프레임을
+   받으면), 새 Agent 는 옛 Coordinator 가 ACK 자리에서 Hello 를 받아 실패한다 — 후자는 **테스트하지 않았다**(옛 바이너리가 없다).
++  ★ 2026-09-17 10:41 정정(결함 131) — 옛 바이너리를 별도 target 으로 빌드해 쟀다. 옛 Coordinator 는 실패하지만 **새 Agent 는 성공(RESULT ok=true)으로 끝난다.**
++    옛 Agent · 새 Coordinator 는 둘 다 약 10초 시한으로 실패한다. `crates/cli/tests/old_peer_combination.rs`
+ ★ 아직 한 리스너가 mode 로 **가르지는** 않는다 — 순차 lane 은 FRESH 만, Resume lane(설정)은 RESUME 만 받는다. RENEW · REPORT 를
+   같은 리스너에서 가르는 것은 다음 단계(RENEW · REPORT 세션)다.
+ ★ session_id 는 FRESH 에서 대조하지 않는다(Resume 만 요구).
+diff --git a/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md b/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md
+index acfe597..f10b288 100644
+--- a/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md
++++ b/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md
+@@ -1707,6 +1707,33 @@ out_file.rs 주석   "다른 쓰기가 방금 만들고 지우는 이름과 겹
+ 
+ ---
+ 
++# 결함 131 — 새 Agent 는 옛 Coordinator 가 거부해도 성공으로 끝난다 (옛 상대 조합 시험 · 세션 자체 발견)
++
++★ 계획서 §8 이 "새 Agent 는 옛 Coordinator 가 ACK 자리에서 Hello 를 받아 실패한다 — 테스트하지 않았다(옛 바이너리가 없다)" 고 적었다. 옛 바이너리를
++  **별도 target 디렉터리**로 빌드해(결함 130 — 공유 target 의 첫 시도는 옛 · 옛이었다) 처음 쟀다. 서술의 앞 절반(옛 Coordinator 실패)은 맞고 **뒤 절반(새 Agent 실패)은 틀렸다.**
++
++## 1. 위치 · 2. 재현 (2026-09-17 10:41, Windows 개발 기계)
++```text
++새 Agent(test/old-peer-combination · 0c45c41 위) · 옛 Coordinator(7d5a9fe — D2 커밋 5064c1c 의 부모) · 레거시 lane(--lease-db 없음)
++  옛 Coordinator  accept 뒤 곧바로 Grant 를 보내고 ACK 자리에서 SessionHello 를 받아 "예상하지 못한 응답 타입" -> 실패(exit != 0)
++  새 Agent        Hello 를 보낸 뒤 Grant 를 받아 검증 · ACK 전송 · RESULT ok=true -> **성공(exit 0)**
++옛 Agent · 새 Coordinator  둘 다 약 10초 시한으로 실패(HELLO_MISSING / Grant 읽기 시한) — 매달리지 않는다
++새 · 새(대조)              둘 다 성공
++```
++원인: Agent 의 성공은 "ACK 를 썼다" 까지다 — Coordinator 가 ACK 를 받아들였다는 서명된 응답이 계약에 없다(CLAUDE.md §5-4 의 "Agent 의 성공 출력이 도달의
++증거가 아니다" 와 같은 뿌리). 옛 Coordinator 는 Hello 를 모르므로 Agent 가 옛 상대를 알아챌 칸도 없다.
++
++## 4. 위험도
++- [x] 섞인 배포(옛 Coordinator · 새 Agent)에서 Agent 는 작업을 받았다고 보고하지만 Coordinator 는 그 연결을 실패로 끝냈다 — 두 쪽 사실이 어긋난다.
++  레거시 lane 에서 잰 것이다. 저장된 예약 lane · 실행 lane 은 재지 않았다
++
++## 6. 조치
++- [x] 고치기 전에 쓴다 (2026-09-17 10:41)
++- [ ] 이번에는 고치지 않는다 — Agent 가 알아채려면 계약에 "Hello 를 받았다" 또는 "ACK 를 받아들였다" 는 서명된 응답이 필요하다(계약 제안 절차). 결함 88 계획의 계약 변경과 함께 검토한다
++- [ ] 조합 시험의 해당 테스트를 오늘의 사실을 고정하는 덫으로 바꾼다(`today_…`) — 고치면 뒤집는다
++
++---
++
+ # 결함 107 — REPORT 세션 outbox 의 기본 위치가 체크포인트 루트 **안**이다 (세션 자체 발견 · 검수 65 전)
+ 
+ ★ 검수가 아니라 이 세션이 결함 85(부팅 GC 연결)를 다음 조각으로 읽다가 찾았다. 커밋 2fabac1(REPORT 세션 코드)의 결함이다.
+rg: .cargo: 지정된 파일을 찾을 수 없습니다. (os error 2)
+.github\workflows\canonical-schema-check.yml
+crates/agent/src/lib.rs:37:const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/agent/src/lib.rs:364:/// `JOB_STARTED ... state=WRITING` 및 `RESULT ok=true ...` 를 찍고
+crates/agent/src/lib.rs:368:/// `RESULT ok=true` 는 Job 완료가 아니다. 이 stub은 entrypoint를 실행하지
+crates/agent/src/lib.rs:756:                "RESUME_RESULT ok=true outcome=1 lease_id={} connection_attempt={}",
+crates/agent/src/lib.rs:760:                "RESULT ok=true resume_outcome=1 lease_id={}",
+crates/agent/src/lib.rs:880:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:883:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:1175:                    Some(0) => println!("WORKLOAD_RESULT ok=true job_id={}", spec.job_id),
+crates/agent/src/lib.rs:1471:            "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+crates/agent/src/lib.rs:1477:    // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
+crates/agent/src/lib.rs:1611:            "RENEW_RESULT ok=true outcome=RENEWED lease_id={} fence_epoch={}",
+crates/agent/src/lib.rs:1624:                "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+crates/agent/src/lib.rs:1632:        "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
+crates/agent/src/lib.rs:1733:    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+crates/agent/src/lib.rs:1735:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:1738:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:1824:/// 갱신 성공        RENEW_SESSION_RESULT ok=true — 스레드가 든 Lease 를 새것으로 바꾼다
+crates/agent/src/lib.rs:1858:                        "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",
+crates/agent/src/lib.rs:2020:    let mut stream = connect_with_timeout(&config.coordinator_addr, IO_TIMEOUT)?;
+crates/agent/src/lib.rs:2022:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:2025:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:66:const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/coordinator/src/lib.rs:91:    ///   끝난다(정상 `RESULT ok=true` 를 절대 찍지 않는다).
+crates/coordinator/src/lib.rs:399:/// 성공하면 `stdout` 에 `RESULT ok=true ...` 를 찍고 `Ok(())`,
+crates/coordinator/src/lib.rs:925:/// (`IO_TIMEOUT`)로 두면 10초보다 긴 작업이 전부 끊긴다. 그래서 첫 읽기만 **Lease 만료까지 남은
+crates/coordinator/src/lib.rs:980:            let restored = IO_TIMEOUT;
+crates/coordinator/src/lib.rs:1022:/// 단 `IO_TIMEOUT` 보다 짧게 두지 않는다. 이미 만료됐으면 기다리지 않고 거부한다.
+crates/coordinator/src/lib.rs:1041:    Ok(Some(Duration::from_millis(remaining_ms).max(IO_TIMEOUT)))
+crates/coordinator/src/lib.rs:1063:        .set_read_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:1066:        .set_write_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:1069:    serve_one_connection_impl(
+crates/coordinator/src/lib.rs:1090:fn serve_one_connection_impl(
+crates/coordinator/src/lib.rs:1323:    // ★ replay 시나리오는 여기서 끝낸다 — **절대 `RESULT ok=true` 를
+crates/coordinator/src/lib.rs:1998:                        "RENEW_RESULT ok=true outcome={} lease_id={}",
+crates/coordinator/src/lib.rs:2054:                "RENEW_RESULT ok=true outcome={} lease_id={} request_nonce={}",
+crates/coordinator/src/lib.rs:2076:        "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
+crates/coordinator/src/lib.rs:2633:        "RESUME_RESULT ok=true outcome={} lease_id={} connection_attempt={}",
+crates/coordinator/src/lib.rs:2637:        "RESULT ok=true resume_outcome={} lease_id={}",
+crates/coordinator/src/lib.rs:2683:        "REVOKE_RESULT ok=true lease_id={} fence_epoch={} cause={}",
+crates/coordinator/src/lib.rs:4025:            Ok(Some(IO_TIMEOUT))
+5064c1c5f23cc335e1e174e4348d3463893500eb 7d5a9febbc8f6137d437f97e41e7ea74146de9e7 B+E 구현 단계 4 · D2: 모든 연결은 Agent 의 Hello 로 시작한다 · 결함 82~86 기록(재검수 58)
+
+codex
+현재 테스트는 종료 상태만 검사하므로, “둘 다 실패”가 프로토콜 순서 때문인지 다른 오류 때문인지 구분하지 못합니다. 반면 원본 로그에는 옛 Coordinator가 서명 검증된 `SessionHello`를 ACK 자리에서 거부한 기록이 있습니다. 새 Agent의 성공이 항상 재현되는지와 60초 제한이 실제로 보장되는지 더 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import sys,pathlib,subprocess; sys.stdout.reconfigure(encoding='utf-8'); specs=[('crates/agent/src/lib.rs',[(1628,1639),(2988,3026)]),('crates/coordinator/src/lib.rs',[(1044,1160),(675,790)]),('docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md',[(1670,1738)]),('.github/workflows/canonical-schema-check.yml',[(1,250)])]; [(print('\\nFILE '+p),*[print(str(i)+': '+l) for i,l in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines(),1) if any(a<=i<=b for a,b in ranges)]) for p,ranges in specs]; [(print('AGENTS '+str(p/'AGENTS.md')),print((p/'AGENTS.md').read_text(encoding='utf-8'))) for p in [pathlib.Path.cwd(),*pathlib.Path.cwd().parents] if (p/'AGENTS.md').is_file()]\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+ succeeded in 1008ms:
+
+FILE crates/agent/src/lib.rs
+1628:         }
+1629:     }
+1630: 
+1631:     println!(
+1632:         "RESULT ok=true grant_id={} attempt_id={} agent_device_id={}",
+1633:         grant.grant_id, grant.attempt_id, ack.agent_device_id
+1634:     );
+1635:     Ok(())
+1636: }
+1637: 
+1638: /// 갱신 결과를 검증하고 RENEWED 면 새 Lease 를 돌려준다 — FRESH 연결 안의 갱신 루프와 RENEW 세션(B+E 구현 단계 5b)이 같이 쓴다.
+1639: ///
+2988:         *last ^= 0x01;
+2989:     }
+2990: 
+2991:     let frame = write_frame(FrameType::GrantAck, &ack.encode_to_vec())
+2992:         .map_err(|e| format!("ACK 프레임 인코딩 실패: {e}"))?;
+2993:     stream
+2994:         .write_all(&frame)
+2995:         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
+2996:     stream.flush().map_err(|e| e.to_string())?;
+2997:     // ★ 기동 전 ACK 를 테스트가 직접 관측하는 표지(결함 ㊻) — WORKLOAD_SPAWNED 보다 먼저 찍혀야 한다.
+2998:     println!("ACK_SENT grant_id={} attempt_id={}", ack.grant_id, ack.attempt_id);
+2999:     Ok(ack)
+3000: }
+3001: 
+3002: /// A coordinator that deliberately drops the transport after ACK is detected
+3003: /// without adding a protocol message. A normal coordinator remains readable,
+3004: /// so the short peek times out and the completed handshake is preserved.
+3005: fn peer_closed_after_ack(stream: &TcpStream) -> Result<bool, String> {
+3006:     stream
+3007:         .set_read_timeout(Some(Duration::from_millis(50)))
+3008:         .map_err(|e| e.to_string())?;
+3009:     let mut byte = [0u8; 1];
+3010:     match stream.peek(&mut byte) {
+3011:         Ok(0) => Ok(true),
+3012:         Ok(_) => Ok(false),
+3013:         Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+3014:             Ok(false)
+3015:         }
+3016:         Err(error)
+3017:             if matches!(
+3018:                 error.kind(),
+3019:                 ErrorKind::ConnectionReset
+3020:                     | ErrorKind::ConnectionAborted
+3021:                     | ErrorKind::BrokenPipe
+3022:                     | ErrorKind::NotConnected
+3023:             ) =>
+3024:         {
+3025:             Ok(true)
+3026:         }
+
+FILE crates/coordinator/src/lib.rs
+675:     MultiAgent,
+676: }
+677: 
+678: /// 설정만 보고 lane 을 고른다 — `run()`/`run_from_args()` 처럼 **아직 분기하지
+679: /// 않은** 자리에서만 쓴다. lane 진입점 안에서는 쓰지 않는다(그 자리는 답을
+680: /// 이미 안다).
+681: pub(crate) fn lane_from_config(config: &CoordinatorConfig) -> NeighborReportLane {
+682:     if config.multi_agent {
+683:         NeighborReportLane::MultiAgent
+684:     } else {
+685:         NeighborReportLane::Sequential
+686:     }
+687: }
+688: 
+689: /// 이웃 신고 옵션이 **이 lane 에서 실제로 동작하는가**를 본다.
+690: ///
+691: /// ★ 구현하지 않은 조합은 거부한다 — 받아 놓고 안 하는 것이 가장 나쁘다.
+692: ///   운영자는 신고가 모이는 줄 안다.
+693: pub(crate) fn unsupported_neighbor_report_lane(
+694:     config: &CoordinatorConfig,
+695:     lane: NeighborReportLane,
+696: ) -> Option<String> {
+697:     if config.expect_neighbor_reports == 0 {
+698:         return None;
+699:     }
+700:     if lane == NeighborReportLane::MultiAgent {
+701:         return Some(
+702:             "multi-agent lane 은 이웃 신고 수신을 구현하지 않았다 — --expect-neighbor-reports 와 함께 쓸 수 없다"
+703:                 .to_string(),
+704:         );
+705:     }
+706:     // ★ 순차 lane 안에도 **신고 수신 루프에 닿지 못할 수 있는** 구성이 있다
+707:     //   (독립 검수 11라운드). resume 경로는 그보다 먼저 반환하고, 세 test
+708:     //   hook 은 ACK 직후 세션을 끝낼 수 있다 — 셋 중 둘은 항상 끝내고,
+709:     //   `--drop-connection-after-ack-once` 는 `max_connections > 1` 이고 첫
+710:     //   연결일 때만 끝낸다(13라운드 정정 — 전에 "세 hook 은 ACK 직후 끝낸다"
+711:     //   고 뭉뚱그렸다). 닿는다고 **보장할 수 없으면** 받지 않는다.
+712:     if config.resume_protocol {
+713:         return Some(
+714:             "resume 경로는 이웃 신고 수신에 닿기 전에 반환한다 — --expect-neighbor-reports 와 --resume-protocol 을 함께 줄 수 없다"
+715:                 .to_string(),
+716:         );
+717:     }
+718:     for (enabled, flag) in [
+719:         (config.send_grant_twice, "--send-grant-twice"),
+720:         (config.disconnect_after_ack, "--disconnect-after-ack"),
+721:         (
+722:             config.drop_connection_after_ack_once,
+723:             "--drop-connection-after-ack-once",
+724:         ),
+725:     ] {
+726:         if enabled {
+727:             // ★ 조건 없이 거부한다. `--drop-connection-after-ack-once` 는
+728:             //   `max_connections > 1 && connection_attempt == 0` 일 때만
+729:             //   실제로 끊지만(12라운드 정정 — 전에 "항상 끝낸다" 고 썼다),
+730:             //   **닿을 수도 있고 아닐 수도 있는 구성**을 받아 주는 것이
+731:             //   조용한 무시보다 낫지 않다.
+732:             return Some(format!(
+733:                 "{flag} 는 ACK 직후 세션을 끝낼 수 있어 이웃 신고 수신에 닿는다고 보장할 수 없다 — --expect-neighbor-reports 와 함께 줄 수 없다"
+734:             ));
+735:         }
+736:     }
+737:     None
+738: }
+739: 
+740: /// 종료 보고 옵션이 **이 lane 에서 실제로 동작하는가**를 본다.
+741: ///
+742: /// ★ 결함 ㉟ — heartbeat 수신 구간에 **닿지 못하는** 구성을 시작 전에 거부한다.
+743: ///   종료 보고 관문(아래 `unsupported_attempt_report_lane`)과 같은 목록이다 — 받아 두고
+744: ///   안 받으면 운영자는 생존 관측이 쌓이는 줄 안다.
+745: ///
+746: ///   `serve_one_connection` 에서 Resume 은 heartbeat 구간보다 먼저 반환하고, 아래 hook
+747: ///   셋은 그 구간 앞에서 세션을 끝낼 수 있다(`--send-grant-twice` · `--disconnect-after-ack`
+748: ///   는 항상, `--drop-connection-after-ack-once` 는 조건부). multi-agent lane 의 세션 루프에는
+749: ///   heartbeat 수신 구간이 없다.
+750: pub(crate) fn unsupported_heartbeat_lane(
+751:     config: &CoordinatorConfig,
+752:     lane: NeighborReportLane,
+753: ) -> Option<String> {
+754:     // ★ 결함 ㊲ — 라이브러리 호출자는 CLI 파서의 NEEDS_EXPECT 를 지나쳐 올 수 있다. 저장소 경로가
+755:     //   있는데 heartbeat 를 기대하지 않으면 그 경로는 열리지 않고 버려진다.
+756:     if config.expect_heartbeats == 0 && config.liveness_db_path.is_some() {
+757:         return Some(
+758:             "--liveness-db 는 --expect-heartbeats 가 0 보다 클 때만 열린다 — 받아 두고 버리지 않는다"
+759:                 .to_string(),
+760:         );
+761:     }
+762:     if config.expect_heartbeats == 0 {
+763:         return None;
+764:     }
+765:     if lane == NeighborReportLane::MultiAgent {
+766:         return Some(
+767:             "multi-agent lane 은 heartbeat 수신을 구현하지 않았다 — --expect-heartbeats 와 함께 쓸 수 없다"
+768:                 .to_string(),
+769:         );
+770:     }
+771:     if config.resume_protocol {
+772:         return Some(
+773:             "resume 경로는 heartbeat 수신에 닿기 전에 반환한다 — --expect-heartbeats 와 --resume-protocol 을 함께 줄 수 없다"
+774:                 .to_string(),
+775:         );
+776:     }
+777:     for (enabled, flag) in [
+778:         (config.send_grant_twice, "--send-grant-twice"),
+779:         (config.disconnect_after_ack, "--disconnect-after-ack"),
+780:         (
+781:             config.drop_connection_after_ack_once,
+782:             "--drop-connection-after-ack-once",
+783:         ),
+784:     ] {
+785:         if enabled {
+786:             return Some(format!(
+787:                 "{flag} 는 heartbeat 수신 구간보다 먼저 세션을 끝낼 수 있다 — --expect-heartbeats 와 함께 줄 수 없다"
+788:             ));
+789:         }
+790:     }
+1044: /// Dispatch and serve exactly one accepted connection. The implementation is
+1045: /// deliberately sequential; the outer loop owns accept/count/error isolation.
+1046: #[allow(clippy::too_many_arguments)]
+1047: fn serve_one_connection(
+1048:     config: &CoordinatorConfig,
+1049:     stream: &mut std::net::TcpStream,
+1050:     lease_store: &mut Option<CoordinatorLeaseStore>,
+1051:     neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
+1052:     attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
+1053:     signing_key: &SigningKey,
+1054:     agent_keys: &InMemoryKeyring,
+1055:     replay: &mut InMemoryReplayGuard,
+1056:     clock: &SystemClock,
+1057:     connection_attempt: u32,
+1058: ) -> Result<(), CoordinatorSessionError> {
+1059:     stream
+1060:         .set_nonblocking(false)
+1061:         .map_err(|e| transport_error("accepted stream blocking mode failed", e))?;
+1062:     stream
+1063:         .set_read_timeout(Some(IO_TIMEOUT))
+1064:         .map_err(|e| transport_error("read timeout setup failed", e))?;
+1065:     stream
+1066:         .set_write_timeout(Some(IO_TIMEOUT))
+1067:         .map_err(|e| transport_error("write timeout setup failed", e))?;
+1068: 
+1069:     serve_one_connection_impl(
+1070:         config,
+1071:         stream,
+1072:         lease_store,
+1073:         neighbor_store,
+1074:         attempt_report_store,
+1075:         signing_key,
+1076:         agent_keys,
+1077:         replay,
+1078:         clock,
+1079:         connection_attempt,
+1080:     )
+1081:     .map_err(|error| match error {
+1082:         SessionHandlerError::Legacy(message) => {
+1083:             classify_legacy_session_error(message)
+1084:         }
+1085:         SessionHandlerError::Classified(error) => error,
+1086:     })
+1087: }
+1088: 
+1089: #[allow(clippy::too_many_arguments)]
+1090: fn serve_one_connection_impl(
+1091:     config: &CoordinatorConfig,
+1092:     stream: &mut std::net::TcpStream,
+1093:     lease_store: &mut Option<CoordinatorLeaseStore>,
+1094:     neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
+1095:     attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
+1096:     signing_key: &SigningKey,
+1097:     agent_keys: &InMemoryKeyring,
+1098:     replay: &mut InMemoryReplayGuard,
+1099:     clock: &SystemClock,
+1100:     connection_attempt: u32,
+1101: ) -> Result<(), SessionHandlerError> {
+1102:     let now = clock.now_unix_ms();
+1103:     if config.resume_protocol {
+1104:         return serve_resume_connection(
+1105:             config,
+1106:             stream,
+1107:             lease_store,
+1108:             signing_key,
+1109:             agent_keys,
+1110:             replay,
+1111:             clock,
+1112:             connection_attempt,
+1113:         );
+1114:     }
+1115:     // ★ D2 (B+E 구현 단계 4) — 순차 lane 도 Agent 의 Hello 로 시작한다. Grant 를 쓰기 **전에** 읽고 검증한다.
+1116:     // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
+1117:     let hello = read_session_hello(config, stream, agent_keys, replay, clock)?;
+1118:     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
+1119:         return serve_renew_session(config, stream, lease_store, signing_key, agent_keys, replay, clock);
+1120:     }
+1121:     if hello.mode == gputeer_protocol::constants::MODE_REPORT {
+1122:         return serve_report_session(
+1123:             config,
+1124:             stream,
+1125:             attempt_report_store,
+1126:             signing_key,
+1127:             agent_keys,
+1128:             replay,
+1129:             clock,
+1130:             &hello,
+1131:         );
+1132:     }
+1133:     if hello.mode != gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
+1134:         return Err(session_protocol_error(format!(
+1135:             "HELLO_REJECTED: mode 불일치 — 순차 lane 은 FRESH({}) · RENEW({}) · REPORT({}) 만 받는다, 받은 값 {}",
+1136:             gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+1137:             gputeer_protocol::constants::MODE_RENEW,
+1138:             gputeer_protocol::constants::MODE_REPORT,
+1139:             hello.mode
+1140:         )));
+1141:     }
+1142:     // FRESH 만 연결 번호를 대조한다 — Grant nonce 가 이 번호로 만들어진다. RENEW 는 실행 중 Agent 가 따로 여는 연결이라
+1143:     // Coordinator 의 연결 번호를 알 수 없다(단계 5a).
+1144:     if hello.connection_attempt != connection_attempt {
+1145:         return Err(session_protocol_error(format!(
+1146:             "HELLO_REJECTED: connection_attempt 불일치 — 기대값 {} != {}",
+1147:             connection_attempt, hello.connection_attempt
+1148:         )));
+1149:     }
+1150:     let mut grant = match &config.grant_from_control_db {
+1151:         // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
+1152:         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
+1153:         //   함수**여서 두 벌이 생기지 않는다.
+1154:         Some(control_db) => {
+1155:             let jobs = crate::job_store::CoordinatorJobStore::open(control_db)
+1156:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("job store: {e}"))))?;
+1157:             let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)
+1158:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("staging store: {e}"))))?;
+1159:             let leases = CoordinatorLeaseStore::open(control_db)
+1160:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("lease store: {e}"))))?;
+
+FILE docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md
+1670: ## 4. 위험도
+1671: - [x] 기록 신뢰도 저하 — 원인 후보 하나를 근거 없이 닫는다
+1672: 
+1673: ## 6. 조치
+1674: - [x] 고치기 전에 쓴다 (재검수 42 직후)
+1675: - [x] "별도 경쟁 프로세스를 넣지 않은 단일 프로세스 · 16스레드 프로그램에서도 같은 오류를 관측했다.
+1676:   외부 프로세스의 개입 여부와 커널 안의 원인은 확인하지 않았다" 로 좁혔다
+1677: 
+1678: ---
+1679: 
+1680: # 결함 ㊴ — ㊱ 수정의 주석 · 비재사용 보장 · 보호 테스트가 저마다 한 칸씩 넓었다 (재검수 43)
+1681: 
+1682: ★ 42 의 지적(㊳)은 닫혔다. 측정 기록도 범위 안이라고 했다. 나머지가 이렇다.
+1683: 
+1684: ## 1. 위치 · 2. 재현 (재검수 43)
+1685: ```text
+1686: out_file.rs 주석   "다른 쓰기가 방금 만들고 지우는 이름과 겹쳤다 … 그 순간 PermissionDenied" — 기록에 있는 것은
+1687:                    경쟁 중의 오류와 attempt 번호뿐이다. 삭제와의 정확한 시간 관계는 확인하지 않았다
+1688: 비재사용 보장      TEMP_SEQ.fetch_add 는 2^64 번째에 0 으로 돈다 — 먼저 받은 호출이 아직 진행 중이면 같은 후보를
+1689:                    다시 시도할 수 있다. 모듈 문서와 HISTORY 21:16 항목의 무조건적 서술("부딪히지 않는다 ·
+1690:                    없어진다")의 반례다(실용적으로 먼 한계)
+1691: 보호 테스트        leftover_temps_under_the_current_name_are_kept 가 load 로 번호를 읽기만 한다 — 그 사이 다른 테스트가
+1692:                    번호 320 개를 가져가면 쓰기는 깔아 둔 256 범위 밖을 받아 **충돌 없이 통과**한다(빈 통과)
+1693: ```
+1694: 
+1695: ## 4. 위험도
+1696: - [x] 검증 신뢰도 저하 — 보호 테스트가 스케줄에 따라 아무것도 재지 않는다
+1697: 
+1698: ## 6. 조치
+1699: - [x] 고치기 전에 쓴다 (재검수 43 직후)
+1700: - [x] 번호 할당을 떼어 냈다 — `next_temp_seq`(`fetch_update` + `checked_add`, 소진되면 None -> 호출 실패).
+1701:   `the_temp_sequence_fails_instead_of_wrapping`
+1702: - [x] 후보 생성을 떼어 냈다(`create_exclusive_temp_with_seq`) — 테스트가 번호 7777 의 `.0` 에 파일을 깔고,
+1703:   `.1` 을 고르는지와 깐 파일이 그대로인지 직접 단언한다. 뮤테이션 3/3(번호 순환 · 배타 생성을
+1704:   덮어쓰기로 · 이름에서 번호 제거)
+1705: - [x] 주석을 "경쟁 실험에서 PermissionDenied 를 관측했다. 삭제와의 정확한 시간 관계는 확인하지 않았다" 로.
+1706:   HISTORY 21:16 항목은 고치지 않는다(추가 전용) — 새 항목에 정정
+1707: 
+1708: ---
+1709: 
+1710: # 결함 131 — 새 Agent 는 옛 Coordinator 가 거부해도 성공으로 끝난다 (옛 상대 조합 시험 · 세션 자체 발견)
+1711: 
+1712: ★ 계획서 §8 이 "새 Agent 는 옛 Coordinator 가 ACK 자리에서 Hello 를 받아 실패한다 — 테스트하지 않았다(옛 바이너리가 없다)" 고 적었다. 옛 바이너리를
+1713:   **별도 target 디렉터리**로 빌드해(결함 130 — 공유 target 의 첫 시도는 옛 · 옛이었다) 처음 쟀다. 서술의 앞 절반(옛 Coordinator 실패)은 맞고 **뒤 절반(새 Agent 실패)은 틀렸다.**
+1714: 
+1715: ## 1. 위치 · 2. 재현 (2026-09-17 10:41, Windows 개발 기계)
+1716: ```text
+1717: 새 Agent(test/old-peer-combination · 0c45c41 위) · 옛 Coordinator(7d5a9fe — D2 커밋 5064c1c 의 부모) · 레거시 lane(--lease-db 없음)
+1718:   옛 Coordinator  accept 뒤 곧바로 Grant 를 보내고 ACK 자리에서 SessionHello 를 받아 "예상하지 못한 응답 타입" -> 실패(exit != 0)
+1719:   새 Agent        Hello 를 보낸 뒤 Grant 를 받아 검증 · ACK 전송 · RESULT ok=true -> **성공(exit 0)**
+1720: 옛 Agent · 새 Coordinator  둘 다 약 10초 시한으로 실패(HELLO_MISSING / Grant 읽기 시한) — 매달리지 않는다
+1721: 새 · 새(대조)              둘 다 성공
+1722: ```
+1723: 원인: Agent 의 성공은 "ACK 를 썼다" 까지다 — Coordinator 가 ACK 를 받아들였다는 서명된 응답이 계약에 없다(CLAUDE.md §5-4 의 "Agent 의 성공 출력이 도달의
+1724: 증거가 아니다" 와 같은 뿌리). 옛 Coordinator 는 Hello 를 모르므로 Agent 가 옛 상대를 알아챌 칸도 없다.
+1725: 
+1726: ## 4. 위험도
+1727: - [x] 섞인 배포(옛 Coordinator · 새 Agent)에서 Agent 는 작업을 받았다고 보고하지만 Coordinator 는 그 연결을 실패로 끝냈다 — 두 쪽 사실이 어긋난다.
+1728:   레거시 lane 에서 잰 것이다. 저장된 예약 lane · 실행 lane 은 재지 않았다
+1729: 
+1730: ## 6. 조치
+1731: - [x] 고치기 전에 쓴다 (2026-09-17 10:41)
+1732: - [ ] 이번에는 고치지 않는다 — Agent 가 알아채려면 계약에 "Hello 를 받았다" 또는 "ACK 를 받아들였다" 는 서명된 응답이 필요하다(계약 제안 절차). 결함 88 계획의 계약 변경과 함께 검토한다
+1733: - [ ] 조합 시험의 해당 테스트를 오늘의 사실을 고정하는 덫으로 바꾼다(`today_…`) — 고치면 뒤집는다
+1734: 
+1735: ---
+1736: 
+1737: # 결함 107 — REPORT 세션 outbox 의 기본 위치가 체크포인트 루트 **안**이다 (세션 자체 발견 · 검수 65 전)
+1738: 
+
+FILE .github/workflows/canonical-schema-check.yml
+1: name: Canonical schema and workspace checks
+2: 
+3: on:
+4:   push:
+5:     branches: [main]
+6:   pull_request:
+7:     branches: [main]
+8: 
+9: permissions:
+10:   contents: read
+11: 
+12: jobs:
+13:   canonical-schema:
+14:     runs-on: ubuntu-latest
+15:     steps:
+16:       - name: Check out repository
+17:         uses: actions/checkout@v4
+18: 
+19:       - name: Install Rust 1.89 toolchain
+20:         uses: dtolnay/rust-toolchain@1.89.0
+21: 
+22:       - name: Set up Python 3
+23:         uses: actions/setup-python@v5
+24:         with:
+25:           python-version: '3.x'
+26: 
+27:       - name: Install schema-check dependencies
+28:         run: |
+29:           sudo apt-get update
+30:           sudo apt-get install --no-install-recommends -y protobuf-compiler
+31:           python -m pip install --upgrade pip
+32:           python -m pip install protobuf blake3
+33: 
+34:       - name: Run canonical reference self-test
+35:         run: python tools/canonical/reference_canonical.py --self-test
+36: 
+37:       - name: Verify canonical vectors
+38:         run: python tools/canonical/reference_canonical.py --verify tests/vectors/canonical_v1.json
+39: 
+40:       - name: Check canonical schema against proto definitions
+41:         run: python tools/canonical/check_schema.py
+42: 
+43:       - name: Check formatting
+44:         run: cargo fmt --all -- --check
+45: 
+46:       - name: Build workspace excluding Windows runtime
+47:         run: cargo build --workspace --exclude gputeer-runtime-windows
+48: 
+49:       - name: Test workspace excluding Windows runtime
+50:         run: cargo test --workspace --exclude gputeer-runtime-windows
+51: 
+52:       - name: Verify evidence schema
+53:         run: python scripts/verify_evidence.py
+54: 
+55:       - name: 문서 구조·주장 검사
+56:         run: python scripts/check_docs.py
+57: 
+58:       # 검사표가 공허하지 않은지 — 각 줄을 뒤집어 실패하는지 본다
+59:       - name: 주장 검사표 뒤집기 시험
+60:         run: python scripts/claims_selftest.py
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "python -c \"import subprocess,sys,pathlib; sys.stdout.reconfigure(encoding='utf-8'); specs=[('crates/agent/src/lib.rs',[(475,509),(760,793)]),('crates/coordinator/src/lib.rs',[(574,661),(1015,1070),(1120,1160)])]; [(print('\\nOLD 7d5a9fe '+p),*[print(str(i)+': '+l) for i,l in enumerate(subprocess.check_output(['git','show','7d5a9fe:'+p]).decode('utf-8').splitlines(),1) if any(a<=i<=b for a,b in ranges)]) for p,ranges in specs]; p='docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md'; print('\\nFILE '+p); [print(str(i)+': '+l) for i,l in enumerate(pathlib.Path(p).read_text(encoding='utf-8').splitlines(),1) if 336<=i<=354]; print('\\nOLD CODE MARKERS'); [print(p+':'+str(i)+': '+l) for p in ['crates/agent/src/lib.rs','crates/coordinator/src/lib.rs'] for i,l in enumerate(subprocess.check_output(['git','show','7d5a9fe:'+p]).decode('utf-8').splitlines(),1) if any(s in l for s in ['set_read_timeout','SessionHello','IO_TIMEOUT','stream.shutdown','예상하지 못한 응답 타입','if config.multi_agent'])]\"" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat
+ succeeded in 1044ms:
+
+OLD 7d5a9fe crates/agent/src/lib.rs
+475:             &mut fence_watermark,
+476:             &mut budget,
+477:             &policy,
+478:         );
+479:     }
+480: 
+481:     let mut connection_attempt = 0u32;
+482:     let mut recovering_ambiguous_renew = false;
+483:     for attempt in 0..config.max_reconnect_attempts {
+484:         if attempt > 0 {
+485:             let exponent = (attempt - 1).min(31);
+486:             let raw = policy
+487:                 .base_delay
+488:                 .checked_mul(1u32 << exponent)
+489:                 .unwrap_or(policy.cap_delay)
+490:                 .min(policy.cap_delay);
+491:             let jitter = if raw.is_zero() {
+492:                 Duration::ZERO
+493:             } else {
+494:                 let n = std::time::SystemTime::now()
+495:                     .duration_since(std::time::UNIX_EPOCH)
+496:                     .map(|d| d.subsec_nanos() as u128)
+497:                     .unwrap_or(0);
+498:                 Duration::from_nanos((n % raw.as_nanos()) as u64)
+499:             };
+500:             if budget.exhausted() || std::time::Instant::now() + jitter >= budget.deadline {
+501:                 return Err(format!("ReconnectExhausted: attempt={attempt}"));
+502:             }
+503:             std::thread::sleep(jitter);
+504:         }
+505: 
+506:         let connection_result =
+507:             match connect_with_timeout(&config.coordinator_addr, policy.connect_timeout) {
+508:                 Ok(stream) => {
+509:                     let mut attempt_config = config.clone();
+760:         coordinator_keys,
+761:         replay,
+762:         clock,
+763:         fence_watermark,
+764:         budget,
+765:         policy,
+766:         &mut execution_attempted,
+767:     );
+768:     result.map_err(|error| {
+769:         if execution_attempted {
+770:             not_retried_after_workload(&error)
+771:         } else {
+772:             error
+773:         }
+774:     })
+775: }
+776: 
+777: /// 재접속 · 재조회 표지를 바꿔 `SessionError::from` 이 Fatal 로 분류하게 한다(결함 ㊺).
+778: fn not_retried_after_workload(error: &str) -> String {
+779:     format!(
+780:         "WORKLOAD_EXECUTION_ATTEMPTED: 이 연결에서 워크로드 실행을 시도했다(기동 성공 여부와 무관) — 재접속하면 같은 Grant 로 \
+781:          다시 실행할 수 있으므로 재시도하지 않는다: {}",
+782:         error
+783:             .replace("RETRYABLE_", "RETRYABLE(억제)_")
+784:             .replace("AMBIGUOUS_RENEW", "AMBIGUOUS(억제)_RENEW")
+785:     )
+786: }
+787: 
+788: #[allow(clippy::too_many_arguments)]
+789: fn run_one_connection_inner(
+790:     config: AgentConfig,
+791:     mut stream: TcpStream,
+792:     recovering_ambiguous_renew: bool,
+793:     signing_key: &SigningKey,
+
+OLD 7d5a9fe crates/coordinator/src/lib.rs
+574:                 "SESSION_ERROR peer=<startup> connection_attempt=<none> kind=storage error={message}"
+575:             );
+576:             return Err(message);
+577:         }
+578:         Some(store)
+579:     } else {
+580:         None
+581:     };
+582: 
+583:     let listener = TcpListener::bind(&config.listen).map_err(|e| format!("bind 실패: {e}"))?;
+584:     let address = listener.local_addr().map_err(|e| e.to_string())?;
+585: 
+586: 
+587:     println!("READY {address}");
+588:     std::io::stdout().flush().map_err(|e| e.to_string())?;
+589: 
+590:     let signing_key = SigningKey::from_bytes(&config.own_seed);
+591:     let mut agent_keys = InMemoryKeyring::new();
+592:     agent_keys.insert(config.agent_device_id.clone(), config.agent_verifying_key);
+593: 
+594:     let mut replay = InMemoryReplayGuard::new();
+595:     let clock = SystemClock;
+596: 
+597:     listener
+598:         .set_nonblocking(true)
+599:         .map_err(|e| format!("listener nonblocking failed: {e}"))?;
+600:     let mut connection_count = 0u32;
+601:     loop {
+602:         if connection_count >= config.max_connections {
+603:             return Err("max-connections reached before completed session".into());
+604:         }
+605:         if connection_count > 0 && config.pause_before_next_accept_ms != 0 {
+606:             std::thread::sleep(Duration::from_millis(config.pause_before_next_accept_ms));
+607:         }
+608:         let (mut stream, peer) =
+609:             accept_with_deadline(&listener, Duration::from_millis(config.accept_timeout_ms))?;
+610:         let connection_attempt = connection_count;
+611:         connection_count += 1;
+612:         println!("CONNECTION_ATTEMPT {connection_attempt} peer={peer}");
+613: 
+614:         match serve_one_connection(
+615:             &config,
+616:             &mut stream,
+617:             &mut lease_store,
+618:             &mut neighbor_store,
+619:             &mut attempt_report_store,
+620:             &signing_key,
+621:             &agent_keys,
+622:             &mut replay,
+623:             &clock,
+624:             connection_attempt,
+625:         ) {
+626:             Ok(()) => {
+627:                 if connection_count >= config.max_connections {
+628:                     return Ok(());
+629:                 }
+630:             }
+631:             Err(error @ CoordinatorSessionError::Transport(_))
+632:             | Err(error @ CoordinatorSessionError::Protocol(_)) => {
+633:                 eprintln!(
+634:                     "SESSION_ERROR peer={peer} connection_attempt={connection_attempt} kind={} error={error}",
+635:                     session_error_kind(&error)
+636:                 );
+637:                 if connection_count >= config.max_connections {
+638:                     return Err(error.to_string());
+639:                 }
+640:             }
+641:             Err(error @ CoordinatorSessionError::Storage(_)) => {
+642:                 eprintln!(
+643:                     "SESSION_ERROR peer={peer} connection_attempt={connection_attempt} kind=storage error={error}"
+644:                 );
+645:                 return Err(error.to_string());
+646:             }
+647:         }
+648:     }
+649: }
+650: 
+651: /// **어느 lane 을 실제로 시작하는가** — 설정이 아니라 진입점이 말한다.
+652: ///
+653: /// ★ 독립 검수 11라운드 지적. 전에는 관문이 `config.multi_agent` 를 읽어서
+654: ///   판정했는데, **`run_multi_agent()` 자체가 그 lane 이다.** 라이브러리
+655: ///   호출자가 그 함수를 `multi_agent: false` 로 부르면 관문이 "순차 lane
+656: ///   이구나" 하고 통과시켰다 — 관문이 자기가 어디 있는지를 남에게 물어본 셈.
+657: #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+658: pub(crate) enum NeighborReportLane {
+659:     /// `run()` 이 직접 도는 경로 — **유일하게 신고를 받는다.**
+660:     Sequential,
+661:     /// `multi_agent::run_multi_agent()` — 수신 루프가 없다.
+1015:         .map_err(|e| transport_error("write timeout setup failed", e))?;
+1016: 
+1017:     serve_one_connection_impl(
+1018:         config,
+1019:         stream,
+1020:         lease_store,
+1021:         neighbor_store,
+1022:         attempt_report_store,
+1023:         signing_key,
+1024:         agent_keys,
+1025:         replay,
+1026:         clock,
+1027:         connection_attempt,
+1028:     )
+1029:     .map_err(|error| match error {
+1030:         SessionHandlerError::Legacy(message) => {
+1031:             classify_legacy_session_error(message, lease_store.is_some())
+1032:         }
+1033:         SessionHandlerError::Classified(error) => error,
+1034:     })
+1035: }
+1036: 
+1037: #[allow(clippy::too_many_arguments)]
+1038: fn serve_one_connection_impl(
+1039:     config: &CoordinatorConfig,
+1040:     stream: &mut std::net::TcpStream,
+1041:     lease_store: &mut Option<CoordinatorLeaseStore>,
+1042:     neighbor_store: &mut Option<crate::neighbor_report_store::CoordinatorNeighborReportStore>,
+1043:     attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
+1044:     signing_key: &SigningKey,
+1045:     agent_keys: &InMemoryKeyring,
+1046:     replay: &mut InMemoryReplayGuard,
+1047:     clock: &SystemClock,
+1048:     connection_attempt: u32,
+1049: ) -> Result<(), SessionHandlerError> {
+1050:     let now = clock.now_unix_ms();
+1051:     if config.resume_protocol {
+1052:         return serve_resume_connection(
+1053:             config,
+1054:             stream,
+1055:             lease_store,
+1056:             signing_key,
+1057:             agent_keys,
+1058:             replay,
+1059:             clock,
+1060:             connection_attempt,
+1061:         );
+1062:     }
+1063:     let mut grant = match &config.grant_from_control_db {
+1064:         // ★ **저장된 예약에서 조립한다.** 대조·조립은 `grant_from_stored`
+1065:         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
+1066:         //   함수**여서 두 벌이 생기지 않는다.
+1067:         Some(control_db) => {
+1068:             let jobs = crate::job_store::CoordinatorJobStore::open(control_db)
+1069:                 .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("job store: {e}"))))?;
+1070:             let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)
+1120:             .coordinator_signature
+1121:             .last_mut()
+1122:             .ok_or_else(|| "coordinator_signature 가 비어 있다".to_string())?;
+1123:         *last ^= 0x01;
+1124:     }
+1125: 
+1126:     let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())
+1127:         .map_err(|e| format!("Grant 프레임 인코딩 실패: {e}"))?;
+1128:     stream
+1129:         .write_all(&frame)
+1130:         .map_err(|e| format!("Grant 전송 실패: {e}"))?;
+1131: 
+1132:     // ★ replay 시나리오 — **똑같은 wire bytes** 를 다시 쓴다. `grant` 를
+1133:     //   다시 인코딩하지 않는다 — 그러면 "논리적으로 같은 재발급" 이지
+1134:     //   "같은 프레임의 replay" 가 아니게 된다. 검증 대상은 "같은 서명
+1135:     //   바이트가 두 번 오면 두 번째가 거부되는가" 다.
+1136:     if config.send_grant_twice {
+1137:         stream
+1138:             .write_all(&frame)
+1139:             .map_err(|e| format!("replay Grant 전송 실패: {e}"))?;
+1140:     }
+1141:     stream.flush().map_err(|e| e.to_string())?;
+1142: 
+1143:     let received = read_frame(
+1144:         stream,
+1145:         1,
+1146:         KeyDirectorySource::Provided(agent_keys),
+1147:         replay,
+1148:         clock,
+1149:     )
+1150:     .map_err(|e| format!("ACK 프레임 읽기/검증 실패: {e}"))?;
+1151: 
+1152:     // ★ `require_replay_checked()` 를 반드시 거친다 — replay 상태가
+1153:     //   `permits_side_effects()` 를 만족하지 못한 `Verified<M>` 로
+1154:     //   grant_id 대조 같은 부작용을 실행하지 않는다(§10).
+1155:     let ack = match &received {
+1156:         IngressMessage::GrantAck(verified) => verified
+1157:             .require_replay_checked()
+1158:             .map_err(|e| format!("ACK replay 검사 실패: {e:?}"))?,
+1159:         other => return Err(format!("예상하지 못한 응답 타입: {other:?}").into()),
+1160:     };
+
+FILE docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md
+336: ```text
+337: agent lib.rs        순차 lane 도 Grant 를 읽기 전에 서명된 AgentSessionHello(FRESH = MODE_MULTI_AGENT_GRANT) 를 보낸다
+338:                     (nonce 는 CSPRNG 16바이트 · connection_attempt 는 이 연결의 번호)
+339: coordinator lib.rs  read_fresh_hello — Grant 를 쓰기 전에 Hello 를 읽고 서명 · replay · mode · node_id · connection_attempt 를 대조한다.
+340:                     Hello 가 없거나 다른 프레임이면 HELLO_MISSING, 대조가 틀리면 HELLO_REJECTED 로 **명시적으로** 실패한다
+341: 테스트 · selftest   가짜 상대 넷(coordinator 수신 테스트 · agent 보고 전송 테스트 · agent 단위 테스트 · selftest wire Agent)의
+342:                     대화 순서를 맞췄다. 음성 둘(HELLO_MISSING · HELLO_REJECTED mode)
+343: ```
+344: 
+345: ★ 설정 분기가 없다(D2 결정 "항상"). 옛 Agent 는 새 Coordinator 에 HELLO_MISSING 으로 거부되고(시한까지 기다리거나 다른 프레임을
+346:   받으면), 새 Agent 는 옛 Coordinator 가 ACK 자리에서 Hello 를 받아 실패한다 — 후자는 **테스트하지 않았다**(옛 바이너리가 없다).
+347:   ★ 2026-09-17 10:41 정정(결함 131) — 옛 바이너리를 별도 target 으로 빌드해 쟀다. 옛 Coordinator 는 실패하지만 **새 Agent 는 성공(RESULT ok=true)으로 끝난다.**
+348:     옛 Agent · 새 Coordinator 는 둘 다 약 10초 시한으로 실패한다. `crates/cli/tests/old_peer_combination.rs`
+349: ★ 아직 한 리스너가 mode 로 **가르지는** 않는다 — 순차 lane 은 FRESH 만, Resume lane(설정)은 RESUME 만 받는다. RENEW · REPORT 를
+350:   같은 리스너에서 가르는 것은 다음 단계(RENEW · REPORT 세션)다.
+351: ★ session_id 는 FRESH 에서 대조하지 않는다(Resume 만 요구).
+352: 
+353: ## 9. 구현 단계 5a — RENEW 세션(Coordinator) · 재검수 59 대응 (2026-09-14 19:31)
+354: 
+
+OLD CODE MARKERS
+crates/agent/src/lib.rs:37: const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/agent/src/lib.rs:315:     if config.multi_agent {
+crates/agent/src/lib.rs:397:     if config.multi_agent {
+crates/agent/src/lib.rs:576:     let mut hello = pb::AgentSessionHello {
+crates/agent/src/lib.rs:590:     let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
+crates/agent/src/lib.rs:591:         .map_err(|e| format!("AgentSessionHello 프레임 인코딩 실패: {e}"))?;
+crates/agent/src/lib.rs:594:         .map_err(|e| format!("AgentSessionHello 전송 실패: {e}"))?;
+crates/agent/src/lib.rs:825:         .set_read_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:828:         .set_write_timeout(Some(IO_TIMEOUT))
+crates/agent/src/lib.rs:1359:             .set_read_timeout(Some(Duration::from_secs(5)))
+crates/agent/src/lib.rs:2305:         .set_read_timeout(Some(Duration::from_millis(50)))
+crates/agent/src/lib.rs:2866:             .set_read_timeout(Some(Duration::from_secs(2)))
+crates/coordinator/src/lib.rs:66: const IO_TIMEOUT: Duration = Duration::from_secs(10);
+crates/coordinator/src/lib.rs:408:     if config.multi_agent {
+crates/coordinator/src/lib.rs:669:     if config.multi_agent {
+crates/coordinator/src/lib.rs:873: /// (`IO_TIMEOUT`)로 두면 10초보다 긴 작업이 전부 끊긴다. 그래서 첫 읽기만 **Lease 만료까지 남은
+crates/coordinator/src/lib.rs:903:             .set_read_timeout(Some(wait))
+crates/coordinator/src/lib.rs:928:             let restored = IO_TIMEOUT;
+crates/coordinator/src/lib.rs:930:                 .set_read_timeout(Some(restored))
+crates/coordinator/src/lib.rs:970: /// 단 `IO_TIMEOUT` 보다 짧게 두지 않는다. 이미 만료됐으면 기다리지 않고 거부한다.
+crates/coordinator/src/lib.rs:989:     Ok(Some(Duration::from_millis(remaining_ms).max(IO_TIMEOUT)))
+crates/coordinator/src/lib.rs:1011:         .set_read_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:1014:         .set_write_timeout(Some(IO_TIMEOUT))
+crates/coordinator/src/lib.rs:1159:         other => return Err(format!("예상하지 못한 응답 타입: {other:?}").into()),
+crates/coordinator/src/lib.rs:1235:             .set_read_timeout(Some(Duration::from_secs(2)))
+crates/coordinator/src/lib.rs:2030:     .map_err(|e| format!("AgentSessionHello 프레임 읽기/검증 실패: {e}"))?;
+crates/coordinator/src/lib.rs:2032:         IngressMessage::SessionHello(verified) => verified
+crates/coordinator/src/lib.rs:2034:             .map_err(|e| format!("AgentSessionHello replay 검사 실패: {e:?}"))?
+crates/coordinator/src/lib.rs:2045:             "AgentSessionHello.mode must be RESUME, got {}",
+crates/coordinator/src/lib.rs:2051:             "AgentSessionHello.node_id 불일치: 기대값 {} != {}",
+crates/coordinator/src/lib.rs:2057:             "AgentSessionHello.connection_attempt 불일치: 기대값 {} != {}",
+crates/coordinator/src/lib.rs:2063:             "AgentSessionHello.session_id가 비어 있다".into(),
+crates/coordinator/src/lib.rs:2091:             "ResumeLeaseRequest와 AgentSessionHello 상관관계가 일치하지 않는다".into(),
+crates/coordinator/src/lib.rs:3523:             Ok(Some(IO_TIMEOUT))
+
+codex
+두 가지 제한이 확인됐습니다. `--disable-reconnect true`가 ACK 뒤 연결 종료 검사도 건너뛰게 하므로, 이 실측을 기본 재접속 설정에 일반화할 수 없습니다. 또한 60초 판정은 Agent를 기다린 뒤 Coordinator를 확인해서 엄밀한 프로세스별 종료 시한을 보장하지 못합니다. 원본에는 옛 바이너리의 실제 빌드 로그와 실행 경로·해시를 연결하는 기록도 빠져 있습니다.
+
+codex
+**CHANGES_REQUESTED에 해당합니다.** 기록된 성공·실패 자체를 부정할 근거는 찾지 못했지만, 테스트가 그 원인과 재현 조건까지 고정하지는 못합니다.
+
+1. **[P2] 새 Agent의 성공을 항상 성립하는 결과로 단언하면 안 됩니다.**  
+   [old_peer_combination.rs:173](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:173)은 반드시 성공해야 통과합니다. 그러나 ACK의 `write_all`이 실패하면 Agent도 실패합니다([agent/src/lib.rs:2993](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/agent/src/lib.rs:2993)). 옛 Coordinator가 Hello를 거부하고 연결을 닫는 시점과 ACK 쓰기는 동기화되어 있지 않습니다. 연결 종료가 전송 오류로 관측되는 실행에서는 **결함을 고치지 않았는데도 덫이 실패할 수 있습니다.** 이 경쟁을 실제 실행으로 재현하지는 못했습니다.
+
+   또한 테스트는 `--disable-reconnect true`를 지정합니다([old_peer_combination.rs:141](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:141)). 이 옵션은 ACK 뒤 연결 종료 검사도 건너뜁니다([agent/src/lib.rs:1451](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/agent/src/lib.rs:1451)). 따라서 정확한 결론은 **“재접속을 끈 이 구성에서 성공을 관측했다”**입니다. 결정적인 회귀 검증에는 ACK 전송까지 연결을 유지하는 통제된 상대가 필요합니다.
+
+2. **[P2] ‘둘 다 실패’ 테스트는 엉뚱한 실패도 통과시킵니다.**  
+   [old_peer_combination.rs:183](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:183)은 매달림 여부와 종료 성공 여부만 검사합니다. 옛 Agent가 인자 해석이나 초기 저장소 오류로 연결 전에 종료하고, 새 Coordinator가 accept 시한으로 종료해도 통과합니다. 새·새 대조로는 옛 실행 파일의 인자·키 구성이 유효했음을 보장하지 못하므로, 파일 첫머리의 설명도 과합니다([old_peer_combination.rs:14](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:14)).
+
+   **이번 기록**에서는 다른 증거가 있습니다. 옛 Coordinator의 오류가 `SessionHello(Verified … replay_status: Checked)`이므로, 해당 실행의 실패를 단순 키 오류로 설명하기는 어렵습니다([원본:164](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:164)). 옛·옛 성공 대조와 함께, 연결 성립 및 기대한 오류 종류를 단언해야 이 사실이 다음 실행에도 보호됩니다.
+
+3. **[P2] 60초는 엄밀한 종료 시한으로 검사되지 않습니다.**  
+   Agent를 먼저 끝까지 기다린 다음 Coordinator를 검사합니다([old_peer_combination.rs:148](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:148)). 그런데 `finish`는 경과 시간보다 `try_wait`를 먼저 확인합니다([old_peer_combination.rs:81](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:81)). 따라서 Coordinator가 자기 시작 기준 60초를 넘겨 종료했어도, 나중에 확인했을 때 이미 종료 상태라면 `hung=false`입니다. 출력하는 Coordinator의 `elapsed_ms`도 실제 종료 시각이 아닙니다.
+
+   READY 대기에서 panic하면 자식을 종료·회수하는 경로도 없습니다([old_peer_combination.rs:128](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:128)). 두 자식을 동시에 감시하고, 모든 조기 실패 경로에서 정리해야 합니다.
+
+4. **[P2] 원본은 소스와 실행 바이너리의 연결을 완결하지 못합니다.**  
+   옛 빌드와 두 SHA-256은 주석으로만 제시됩니다([원본:2](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:2)). 실제 옛 빌드 명령·출력, 양쪽 checkout의 전체 커밋과 변경 상태, `GPUTEER_OLD_BINARY`의 실행 경로, 해시 산출 명령이 없습니다. 새 빌드의 crate 경로는 확인되지만 테스트 실행 파일은 여전히 공유 target에 있습니다([원본:21](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:21)). `CARGO_BIN_EXE_gputeer`도 경로를 제공할 뿐 출처를 검증하지 않습니다([old_peer_combination.rs:58](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:58)).
+
+   Git 객체에서는 `5064c1c`의 부모가 `7d5a9fe`임을 확인했습니다. 하지만 **그 커밋으로 만든 파일을 그 실행에서 사용했다는 증명은 별개**입니다. 양쪽 전용 target, 실제 실행 경로, 실행 전후 해시, 정확한 빌드·시험 명령을 원본에 남겨야 결함 130의 재발 가능성을 닫을 수 있습니다.
+
+5. **[P2] 결함 설명과 계획서 정정의 범위를 좁혀야 합니다.**  
+   계획서는 조건 없이 “새 Agent는 성공으로 끝난다”고 정정합니다([계획서:347](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:347)). 레거시 FRESH·실행 없음·재접속 비활성·Windows 실측이라는 조건을 붙여야 합니다. 저장된 예약, 실행, REPORT 세션으로 일반화할 근거는 없습니다.
+
+   “옛 Coordinator는 Hello를 모른다”도 부정확합니다([결함 보고서:1724](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1724)). 로그처럼 Hello를 검증했지만 **그 자리에서 ACK를 기대해서 거부**합니다. 서명된 수신 확인이 없다는 설명은 타당하지만, 연결 오류로 실패를 알아채는 경로까지 없다는 뜻으로 쓰면 과장입니다.
+
+나머지 두 질문에는 다음까지 확인했습니다.
+
+- **옛 Agent·새 Coordinator는 시한에 의존하는 실패입니다.** 원본에는 약 10초 뒤 Grant 읽기 timeout과 `HELLO_MISSING` transport 오류가 있습니다([원본:109](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:109)). 새 Coordinator는 Grant 전에 Hello를 읽고, 소켓 읽기 시한을 설정합니다([coordinator/src/lib.rs:1063](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/coordinator/src/lib.rs:1063), [1117](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/coordinator/src/lib.rs:1117)). 이는 무한 대기를 끊는 명시적 오류지만, 버전 불일치를 즉시 식별한 결과는 아닙니다.
+- **환경 변수의 `expect`는 선택된 테스트의 조용한 통과를 막습니다.** 기본 CI는 일반 `cargo test`이므로 이 파일에서는 **대조 1개 실행·조합 2개 ignored**입니다([CI:50](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/.github/workflows/canonical-schema-check.yml:50), [old_peer_combination.rs:167](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:167)). `--ignored`는 조합 2개만 실행하므로 대조까지 함께 검증하려면 `--include-ignored`가 필요합니다.
+
+`git show HEAD`, 기준점 이후 변경 파일, 지정 코드와 문서, 옛 커밋의 대응 경로를 확인했습니다. 읽기 전용 환경이므로 빌드·프로세스 시험은 재실행하지 않았습니다. 경쟁 조건의 실행 반례를 못 만든 것과 재현성이 보장되는 것은 구분합니다.
+
+CHANGES_REQUESTED
+tokens used
+58,087
+**CHANGES_REQUESTED에 해당합니다.** 기록된 성공·실패 자체를 부정할 근거는 찾지 못했지만, 테스트가 그 원인과 재현 조건까지 고정하지는 못합니다.
+
+1. **[P2] 새 Agent의 성공을 항상 성립하는 결과로 단언하면 안 됩니다.**  
+   [old_peer_combination.rs:173](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:173)은 반드시 성공해야 통과합니다. 그러나 ACK의 `write_all`이 실패하면 Agent도 실패합니다([agent/src/lib.rs:2993](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/agent/src/lib.rs:2993)). 옛 Coordinator가 Hello를 거부하고 연결을 닫는 시점과 ACK 쓰기는 동기화되어 있지 않습니다. 연결 종료가 전송 오류로 관측되는 실행에서는 **결함을 고치지 않았는데도 덫이 실패할 수 있습니다.** 이 경쟁을 실제 실행으로 재현하지는 못했습니다.
+
+   또한 테스트는 `--disable-reconnect true`를 지정합니다([old_peer_combination.rs:141](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:141)). 이 옵션은 ACK 뒤 연결 종료 검사도 건너뜁니다([agent/src/lib.rs:1451](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/agent/src/lib.rs:1451)). 따라서 정확한 결론은 **“재접속을 끈 이 구성에서 성공을 관측했다”**입니다. 결정적인 회귀 검증에는 ACK 전송까지 연결을 유지하는 통제된 상대가 필요합니다.
+
+2. **[P2] ‘둘 다 실패’ 테스트는 엉뚱한 실패도 통과시킵니다.**  
+   [old_peer_combination.rs:183](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:183)은 매달림 여부와 종료 성공 여부만 검사합니다. 옛 Agent가 인자 해석이나 초기 저장소 오류로 연결 전에 종료하고, 새 Coordinator가 accept 시한으로 종료해도 통과합니다. 새·새 대조로는 옛 실행 파일의 인자·키 구성이 유효했음을 보장하지 못하므로, 파일 첫머리의 설명도 과합니다([old_peer_combination.rs:14](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:14)).
+
+   **이번 기록**에서는 다른 증거가 있습니다. 옛 Coordinator의 오류가 `SessionHello(Verified … replay_status: Checked)`이므로, 해당 실행의 실패를 단순 키 오류로 설명하기는 어렵습니다([원본:164](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:164)). 옛·옛 성공 대조와 함께, 연결 성립 및 기대한 오류 종류를 단언해야 이 사실이 다음 실행에도 보호됩니다.
+
+3. **[P2] 60초는 엄밀한 종료 시한으로 검사되지 않습니다.**  
+   Agent를 먼저 끝까지 기다린 다음 Coordinator를 검사합니다([old_peer_combination.rs:148](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:148)). 그런데 `finish`는 경과 시간보다 `try_wait`를 먼저 확인합니다([old_peer_combination.rs:81](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:81)). 따라서 Coordinator가 자기 시작 기준 60초를 넘겨 종료했어도, 나중에 확인했을 때 이미 종료 상태라면 `hung=false`입니다. 출력하는 Coordinator의 `elapsed_ms`도 실제 종료 시각이 아닙니다.
+
+   READY 대기에서 panic하면 자식을 종료·회수하는 경로도 없습니다([old_peer_combination.rs:128](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:128)). 두 자식을 동시에 감시하고, 모든 조기 실패 경로에서 정리해야 합니다.
+
+4. **[P2] 원본은 소스와 실행 바이너리의 연결을 완결하지 못합니다.**  
+   옛 빌드와 두 SHA-256은 주석으로만 제시됩니다([원본:2](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:2)). 실제 옛 빌드 명령·출력, 양쪽 checkout의 전체 커밋과 변경 상태, `GPUTEER_OLD_BINARY`의 실행 경로, 해시 산출 명령이 없습니다. 새 빌드의 crate 경로는 확인되지만 테스트 실행 파일은 여전히 공유 target에 있습니다([원본:21](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:21)). `CARGO_BIN_EXE_gputeer`도 경로를 제공할 뿐 출처를 검증하지 않습니다([old_peer_combination.rs:58](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:58)).
+
+   Git 객체에서는 `5064c1c`의 부모가 `7d5a9fe`임을 확인했습니다. 하지만 **그 커밋으로 만든 파일을 그 실행에서 사용했다는 증명은 별개**입니다. 양쪽 전용 target, 실제 실행 경로, 실행 전후 해시, 정확한 빌드·시험 명령을 원본에 남겨야 결함 130의 재발 가능성을 닫을 수 있습니다.
+
+5. **[P2] 결함 설명과 계획서 정정의 범위를 좁혀야 합니다.**  
+   계획서는 조건 없이 “새 Agent는 성공으로 끝난다”고 정정합니다([계획서:347](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md:347)). 레거시 FRESH·실행 없음·재접속 비활성·Windows 실측이라는 조건을 붙여야 합니다. 저장된 예약, 실행, REPORT 세션으로 일반화할 근거는 없습니다.
+
+   “옛 Coordinator는 Hello를 모른다”도 부정확합니다([결함 보고서:1724](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md:1724)). 로그처럼 Hello를 검증했지만 **그 자리에서 ACK를 기대해서 거부**합니다. 서명된 수신 확인이 없다는 설명은 타당하지만, 연결 오류로 실패를 알아채는 경로까지 없다는 뜻으로 쓰면 과장입니다.
+
+나머지 두 질문에는 다음까지 확인했습니다.
+
+- **옛 Agent·새 Coordinator는 시한에 의존하는 실패입니다.** 원본에는 약 10초 뒤 Grant 읽기 timeout과 `HELLO_MISSING` transport 오류가 있습니다([원본:109](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/docs/evidence/_raw/옛_상대_조합_시험_2026-09-17.txt:109)). 새 Coordinator는 Grant 전에 Hello를 읽고, 소켓 읽기 시한을 설정합니다([coordinator/src/lib.rs:1063](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/coordinator/src/lib.rs:1063), [1117](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/coordinator/src/lib.rs:1117)). 이는 무한 대기를 끊는 명시적 오류지만, 버전 불일치를 즉시 식별한 결과는 아닙니다.
+- **환경 변수의 `expect`는 선택된 테스트의 조용한 통과를 막습니다.** 기본 CI는 일반 `cargo test`이므로 이 파일에서는 **대조 1개 실행·조합 2개 ignored**입니다([CI:50](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/.github/workflows/canonical-schema-check.yml:50), [old_peer_combination.rs:167](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-compat/crates/cli/tests/old_peer_combination.rs:167)). `--ignored`는 조합 2개만 실행하므로 대조까지 함께 검증하려면 `--include-ignored`가 필요합니다.
+
+`git show HEAD`, 기준점 이후 변경 파일, 지정 코드와 문서, 옛 커밋의 대응 경로를 확인했습니다. 읽기 전용 환경이므로 빌드·프로세스 시험은 재실행하지 않았습니다. 경쟁 조건의 실행 반례를 못 만든 것과 재현성이 보장되는 것은 구분합니다.
+
+CHANGES_REQUESTED
