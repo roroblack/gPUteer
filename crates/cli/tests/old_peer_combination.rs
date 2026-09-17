@@ -80,14 +80,24 @@ struct Finished {
     elapsed: Duration,
     stdout: String,
     stderr: String,
+    /// 결함 185 — 자식이 끝난 뒤에도 출력 수집이 시한 안에 끝나지 않았다(후손이 파이프를 물고 있는 경우).
+    output_timed_out: bool,
 }
 
-fn drain(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<String> {
+/// 결함 185 — 자식이 끝난 뒤 출력 수집에 주는 시한. 후손이 파이프를 물고 있으면 join 이 끝나지 않으므로 채널로 받는다.
+const OUTPUT_DEADLINE: Duration = Duration::from_secs(10);
+
+fn drain(mut pipe: impl Read + Send + 'static) -> mpsc::Receiver<String> {
+    let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut out = Vec::new();
-        pipe.read_to_end(&mut out).expect("출력 읽기");
-        String::from_utf8_lossy(&out).to_string()
-    })
+        let text = match pipe.read_to_end(&mut out) {
+            Ok(_) => String::from_utf8_lossy(&out).to_string(),
+            Err(error) => format!("{}<출력 읽기 실패: {error}>", String::from_utf8_lossy(&out)),
+        };
+        let _receiver_may_be_gone = sender.send(text);
+    });
+    receiver
 }
 
 /// 결함 176 — 어느 경로로 끝나든(READY 시한 panic 포함) 살아 있는 자식을 끝내고 회수한다.
@@ -104,7 +114,9 @@ impl Guarded {
             return;
         }
         if let Some(status) = self.child.try_wait().expect("상태 조회") {
-            self.outcome = Some((Some(status), false, self.started.elapsed()));
+            // ★ 결함 185 — 스스로 끝났어도 자기 시작 시각 기준 시한을 넘겼으면 매달림으로 센다(감시 주기 사이에 끝난 경우).
+            let elapsed = self.started.elapsed();
+            self.outcome = Some((Some(status), elapsed > DEADLINE, elapsed));
         } else if self.started.elapsed() > DEADLINE {
             self.child.kill().expect("시한 초과 프로세스 종료");
             self.child.wait().expect("종료 대기");
@@ -123,6 +135,10 @@ impl Drop for Guarded {
 }
 
 fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished, Finished) {
+    run_pair_with(coordinator_exe, &[], agent_exe, label)
+}
+
+fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: &Path, label: &str) -> (Finished, Finished) {
     describe("coordinator", coordinator_exe);
     describe("agent", agent_exe);
     let keys = keys();
@@ -136,6 +152,7 @@ fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished,
                 "--lease-id", "01JLEASEOLDPEER000000001", "--job-id", "01JJOBOLDPEER00000000001",
                 "--i-understand-legacy-mode-is-unsafe", "true",
             ])
+            .args(coordinator_extra)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -147,14 +164,18 @@ fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished,
     let pipe = coordinator.child.stdout.take().expect("stdout");
     let coordinator_stderr = drain(coordinator.child.stderr.take().expect("stderr"));
     let (ready_sender, ready_receiver) = mpsc::channel();
-    let coordinator_stdout = thread::spawn(move || {
+    let (stdout_sender, coordinator_stdout) = mpsc::channel();
+    thread::spawn(move || {
         let mut reader = BufReader::new(pipe);
         let mut line = String::new();
-        reader.read_line(&mut line).expect("READY 줄 읽기");
+        let _ready_read = reader.read_line(&mut line);
         let _receiver_may_be_gone = ready_sender.send(line.clone());
         let mut rest = String::new();
-        reader.read_to_string(&mut rest).expect("나머지 stdout");
-        format!("{line}{rest}")
+        let tail = match reader.read_to_string(&mut rest) {
+            Ok(_) => rest,
+            Err(error) => format!("{rest}<나머지 stdout 읽기 실패: {error}>"),
+        };
+        let _receiver_may_be_gone = stdout_sender.send(format!("{line}{tail}"));
     });
     // ★ 결함 176 — 여기서 panic 해도 `coordinator` 가드가 자식을 끝낸다.
     let ready = ready_receiver.recv_timeout(Duration::from_secs(20)).expect("coordinator READY 시한");
@@ -188,23 +209,28 @@ fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished,
         agent.poll();
         thread::sleep(Duration::from_millis(20));
     }
-    let finish = |guarded: &Guarded, stdout: thread::JoinHandle<String>, stderr: thread::JoinHandle<String>| {
+    let finish = |guarded: &Guarded, stdout: mpsc::Receiver<String>, stderr: mpsc::Receiver<String>| {
         let (status, hung, elapsed) = guarded.outcome.expect("끝났다");
-        Finished {
-            success: status.is_some_and(|s| s.success()),
-            hung,
-            elapsed,
-            stdout: stdout.join().expect("stdout 스레드"),
-            stderr: stderr.join().expect("stderr 스레드"),
-        }
+        let mut output_timed_out = false;
+        let mut collect = |receiver: mpsc::Receiver<String>| match receiver.recv_timeout(OUTPUT_DEADLINE) {
+            Ok(text) => text,
+            Err(_) => {
+                output_timed_out = true;
+                "<출력 수집 시한 초과 — 후손이 파이프를 물고 있을 수 있다>".to_string()
+            }
+        };
+        let stdout = collect(stdout);
+        let stderr = collect(stderr);
+        Finished { success: status.is_some_and(|s| s.success()), hung, elapsed, stdout, stderr, output_timed_out }
     };
     let agent_run = finish(&agent, agent_stdout, agent_stderr);
     let coordinator_run = finish(&coordinator, coordinator_stdout, coordinator_stderr);
     for (who, run) in [("agent", &agent_run), ("coordinator", &coordinator_run)] {
         eprintln!(
-            "=== {label} · {who}: success={} hung={} elapsed_ms={}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            "=== {label} · {who}: success={} hung={} output_timed_out={} elapsed_ms={}\n--- stdout ---\n{}\n--- stderr ---\n{}",
             run.success,
             run.hung,
+            run.output_timed_out,
             run.elapsed.as_millis(),
             run.stdout,
             run.stderr
@@ -213,15 +239,36 @@ fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished,
     (agent_run, coordinator_run)
 }
 
-/// 새 Agent · 옛 Coordinator — **오늘의 사실을 고정하는 덫**(결함 131 · 174). 옛 Coordinator 는 Hello 를 **검증한 뒤** ACK 자리에서 받았다고 거부한다.
-/// 새 Agent 는 Grant 를 받고 ACK 를 쓴 뒤 — 재접속을 끈 이 구성에서는 — **성공으로 끝난다.** "ACK 를 받아들였다" 는 서명된 응답이 계약에 없어서다.
-/// ★ 결함 174 — ACK 쓰기와 옛 쪽의 연결 닫기는 동기화되지 않는다. 그래서 새 Agent 가 **ACK 전송 실패**로 끝나는 실행도 오늘의 사실로 받는다(어느 쪽이었는지 출력한다).
-///   그 밖의 실패는 덫이 뒤집힌 것이다 — 결함 131 을 고쳤는지(계약 변경) 확인하고 이 시험을 바꾼다.
+/// **결정적 덫**(결함 131 · 182) — 새 Coordinator 가 ACK 를 **검증한 뒤**(`DISCONNECT_AFTER_ACK coordinator_acknowledged=true`) 수신 확인 없이 끊는다.
+/// ACK 는 확실히 도달했으므로 ACK 전송 실패의 경쟁이 없다. 오늘의 새 Agent 는 **성공으로 끝난다** — "ACK 를 받아들였다" 는 서명된 응답이 계약에 없어서다.
+/// 결함 131 을 고치면(ACK 뒤 수신 확인을 기다림) Agent 는 여기서 **실패해야 한다** — 그때 이 시험을 뒤집는다. 옛 바이너리가 필요 없어 늘 돈다.
+#[test]
+fn today_a_new_agent_succeeds_without_an_ack_receipt_after_the_coordinator_verified_the_ack() {
+    let exe = new_binary();
+    let (agent, coordinator) = run_pair_with(&exe, &["--disconnect-after-ack", "true"], &exe, "새 · 새(ACK 검증 뒤 수신 확인 없이 끊음)");
+    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "덫이 매달렸다");
+    assert!(
+        coordinator.success && coordinator.stdout.contains("DISCONNECT_AFTER_ACK coordinator_acknowledged=true"),
+        "Coordinator 가 ACK 를 검증한 뒤 끊은 흔적이 없다 — 덫의 전제가 깨졌다: stdout={} stderr={}",
+        coordinator.stdout,
+        coordinator.stderr
+    );
+    assert!(
+        agent.success,
+        "새 Agent 가 수신 확인 없는 연결에서 실패했다 — 결함 131 이 고쳐졌으면 이 덫을 뒤집어라: {}",
+        agent.stderr
+    );
+}
+
+/// 새 Agent · 옛 Coordinator — **관측 기록**(결함 131 · 174 · 182). 옛 Coordinator 는 Hello 를 **검증한 뒤** ACK 자리에서 받았다고 거부한다.
+/// 새 Agent 는 성공하거나, 옛 쪽이 먼저 닫으면 **ACK 전송 실패**로 끝난다(어느 쪽이었는지 출력한다).
+/// ★ 결함 182 — 이 조합은 결함 131 을 고친 Agent 를 **구별하지 못한다**(고친 Agent 도 수신 확인을 기다리기 전의 ACK 쓰기에서 같은 문구로 실패할 수 있다).
+///   수정 전 · 후를 가르는 것은 위의 결정적 덫이다.
 #[test]
 #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --include-ignored --nocapture"]
 fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
     let (agent, coordinator) = run_pair(&old_binary(), &new_binary(), "새 Agent · 옛 Coordinator");
-    assert!(!agent.hung && !coordinator.hung, "조합이 시한({DEADLINE:?})까지 매달렸다");
+    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "조합이 시한({DEADLINE:?})까지 매달렸다");
     assert!(!coordinator.success, "옛 Coordinator 가 새 Agent 와 성공으로 끝났다 — 조합이 실제로 통하게 됐다");
     assert!(
         coordinator.stderr.contains("예상하지 못한 응답 타입: SessionHello"),
@@ -233,7 +280,7 @@ fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
     } else {
         assert!(
             agent.stderr.contains("ACK 전송 실패"),
-            "새 Agent 가 ACK 전송 실패가 아닌 이유로 실패했다 — 결함 131 이 고쳐졌으면 이 덫을 뒤집어라: {}",
+            "새 Agent 가 ACK 전송 실패가 아닌 이유로 실패했다 — 관측을 다시 해석하라(결정적 덫과 함께 본다): {}",
             agent.stderr
         );
         eprintln!("=== 덫 판정: 새 Agent 가 ACK 전송 실패로 끝남(옛 쪽이 먼저 닫은 경쟁 — 결함 174)");
@@ -246,29 +293,39 @@ fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
 #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --include-ignored --nocapture"]
 fn an_old_agent_and_a_new_coordinator_both_fail_explicitly() {
     let (agent, coordinator) = run_pair(&new_binary(), &old_binary(), "옛 Agent · 새 Coordinator");
-    assert!(!agent.hung && !coordinator.hung, "조합이 시한({DEADLINE:?})까지 매달렸다");
+    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "조합이 시한({DEADLINE:?})까지 매달렸다");
     assert!(!agent.success, "옛 Agent 가 새 Coordinator 와 성공으로 끝났다");
     assert!(!coordinator.success, "새 Coordinator 가 옛 Agent 와 성공으로 끝났다");
+    // ★ 결함 183 — HELLO_MISSING 만으로는 모자란다(검증된 다른 종류의 첫 프레임에도 쓰인다). **transport 분류 + 기다리다 끝난 두 사유 중 하나**까지 본다.
+    // ★ 두 쪽 모두 약 10초 읽기 시한이라 **어느 쪽이 먼저 시한에 걸리는지 경쟁**이다(2026-09-17 측정에서 실제로 갈렸다): 자기 시한이 먼저면 "스트림 읽기 실패",
+    //   상대가 먼저 닫으면 "프레임이 완결되기 전에 스트림이 끊겼다". 둘 다 "상대 프레임을 기다리다 transport 로 끝남" 이고 검증 실패 · 다른 프레임이 아니다.
+    const WAITED_OUT: [&str; 2] = ["스트림 읽기 실패", "프레임이 완결되기 전에 스트림이 끊겼다"];
     assert!(
-        coordinator.stdout.contains("CONNECTION_ATTEMPT 0") && coordinator.stderr.contains("HELLO_MISSING"),
-        "새 Coordinator 가 연결을 받아 Hello 를 기다리다 끝난 흔적이 없다(연결 전 실패 · accept 시한일 수 있다): stdout={} stderr={}",
+        coordinator.stdout.contains("CONNECTION_ATTEMPT 0")
+            && coordinator.stderr.contains("kind=transport")
+            && coordinator.stderr.contains("HELLO_MISSING")
+            && WAITED_OUT.iter().any(|reason| coordinator.stderr.contains(reason)),
+        "새 Coordinator 가 연결을 받아 Hello 를 기다리다 transport 로 끝난 흔적이 없다: stdout={} stderr={}",
         coordinator.stdout,
         coordinator.stderr
     );
+    // ★ 결함 183 — Grant 문구는 읽기 실패와 검증 실패를 가르지 않는다. **RETRYABLE_CONNECTION + Grant 프레임 읽기 + 기다리다 끝난 두 사유 중 하나**를 본다.
     assert!(
-        agent.stderr.contains("Grant 프레임 읽기/검증 실패"),
-        "옛 Agent 가 Grant 를 기다리다 실패한 흔적이 없다(인자 · 저장소 오류일 수 있다): {}",
+        agent.stderr.contains("RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: ")
+            && WAITED_OUT.iter().any(|reason| agent.stderr.contains(&format!("Grant 프레임 읽기/검증 실패: {reason}"))),
+        "옛 Agent 가 Grant 를 기다리다 transport 로 끝난 흔적이 없다: {}",
         agent.stderr
     );
 }
 
-/// 대조 — 옛 바이너리끼리는 성공한다(결함 175). 조합 실패가 옛 바이너리의 인자 · 키 구성 실수가 아님을 보인다.
+/// 대조 — 옛 바이너리끼리는 **이 인자 · 키로** 성공한다(결함 175 · 183). 옛 바이너리의 인자 · 키 구성이 유효함을 보인다 — 조합 시험 실행 자체의
+/// 별개 장애까지 배제하지는 않는다(그 실행의 실패 원인은 위 시험의 문구 단언이 본다).
 #[test]
 #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --include-ignored --nocapture"]
 fn the_same_old_binary_on_both_sides_succeeds() {
     let exe = old_binary();
     let (agent, coordinator) = run_pair(&exe, &exe, "옛 · 옛(대조)");
-    assert!(!agent.hung && !coordinator.hung, "대조가 매달렸다");
+    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "대조가 매달렸다");
     assert!(agent.success && coordinator.success, "대조(옛 · 옛)가 실패했다 — 옛 바이너리의 인자 · 키 구성을 먼저 의심하라");
 }
 
@@ -277,6 +334,6 @@ fn the_same_old_binary_on_both_sides_succeeds() {
 fn the_same_new_binary_on_both_sides_succeeds() {
     let exe = new_binary();
     let (agent, coordinator) = run_pair(&exe, &exe, "새 · 새(대조)");
-    assert!(!agent.hung && !coordinator.hung, "대조가 매달렸다");
+    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "대조가 매달렸다");
     assert!(agent.success && coordinator.success, "대조(새 · 새)가 실패했다 — 인자 · 키 구성을 먼저 의심하라");
 }
