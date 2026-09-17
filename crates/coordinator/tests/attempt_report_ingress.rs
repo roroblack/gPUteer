@@ -997,16 +997,30 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
         }
     };
     second.set_write_timeout(Some(Duration::from_secs(10))).expect("쓰기 타임아웃");
-    send_hello(&mut second, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 1, 120);
+    // ★ 결함 123 (재검수 64c) — 두 번째 연결은 **첫 연결에서는 나올 수 없는 결과**를 만든다: 서명을 변조한 Hello -> HELLO_REJECTED.
+    //   전에는 두 연결이 같은 GRANT_REFUSED 를 만들어, Protocol 거부 뒤 곧바로 끝나는 회귀도 첫 오류로 통과했다(TCP 연결 · 쓰기 성공은
+    //   두 번째 accept 의 증거가 아니다).
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut broken = pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        node_id: NODE_ID.into(),
+        connection_attempt: 1,
+        issued_at_unix_ms: now_ms(),
+        nonce: (120u8..136).collect(),
+        ..Default::default()
+    };
+    broken.node_signature = sign(&key, &broken).to_vec();
+    broken.node_signature[0] ^= 0x01;
+    write_frame_body(&mut second, FrameType::SessionHello, &broken.encode_to_vec());
     let error = handle
         .join()
         .expect("Coordinator 스레드")
         .expect_err("마지막 연결의 거부는 오류로 끝난다");
-    // ★ 결함 120 — 분류를 본다. TCP 연결 성공은 두 번째 accept 의 증거가 아니다 — Storage 로 끝난 Coordinator 가 listener 를 놓기 전에
-    //   연결이 성립할 수 있다. 그때 돌아오는 오류는 "storage: GRANT_REFUSED: … 옛 Job …" 이라 문구만으로는 가를 수 없다.
+    // ★ 결함 120 · 123 — 분류와 **출처 연결**을 함께 본다. 첫 연결의 거부(GRANT_REFUSED · 옛 Job)나 Storage 종료는 이 단언을 통과하지 못한다.
     assert!(
-        error.starts_with("protocol: ") && error.contains("GRANT_REFUSED") && error.contains("옛 Job"),
-        "옛 Job 의 거부는 protocol 분류여야 한다: {error}"
+        error.starts_with("protocol: ") && error.contains("HELLO_REJECTED") && !error.contains("GRANT_REFUSED"),
+        "리스너가 두 번째 연결을 처리하고 그 연결의 거부로 끝나야 한다: {error}"
     );
 }
 
