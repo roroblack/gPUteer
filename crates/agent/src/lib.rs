@@ -407,6 +407,22 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     if config.report_over_session && config.report_session_attempts == 0 {
         return Err("REPORT_SESSION_CONFIG_REFUSED: --report-session-attempts 는 1 이상이어야 한다".to_string());
     }
+    // ★ 결함 127 (검수 65) — 순차 Coordinator 는 한 연결을 끝내야 다음 연결을 받는다. REPORT 세션 **뒤에** 같은 FRESH 연결로 더 보내는 설정
+    //   (연결 안 갱신 · revoke 대기 · replay 시험)을 함께 켜면 Coordinator 는 FRESH 에서 기다리고 Agent 는 REPORT Ack 를 기다린다.
+    //   heartbeat · 이웃 신고는 REPORT 전에 끝나므로 여기 넣지 않는다.
+    if config.report_over_session {
+        let holding = [
+            (config.do_renew, "--do-renew"),
+            (config.expect_revoke_after_round.is_some(), "--expect-revoke-after-round"),
+            (config.expect_replay, "--expect-replay"),
+        ];
+        if let Some((_, flag)) = holding.iter().find(|(enabled, _)| *enabled) {
+            return Err(format!(
+                "REPORT_SESSION_CONFIG_REFUSED: {flag} 는 REPORT 세션 뒤에도 FRESH 연결을 붙잡아 순차 Coordinator 가 REPORT 연결을 받지 못한다 — \
+                 --report-over-session 과 함께 켤 수 없다(결함 127)"
+            ));
+        }
+    }
     // ★ 결함 107 — outbox 는 체크포인트 루트 **밖**이어야 한다. 위치를 못 정하거나 루트 안이면 연결하기 전에 거부한다.
     if config.report_over_session {
         report_outbox_dir(&config).map_err(|error| format!("REPORT_SESSION_CONFIG_REFUSED: {error}"))?;
@@ -1205,6 +1221,13 @@ fn run_one_connection_inner(
         }
     }
 
+    // ★ 결함 126 (검수 65) — REPORT 세션을 쓰면 종료 관측을 **여기서 바로** 서명해 outbox 에 남긴다. 전에는 heartbeat · 이웃 신고를 보낸 뒤에
+    //   남겨, FRESH 연결이 끊겨 그 송신이 `?` 로 실패하면 보고가 파일로도 남지 않았다. 남긴 파일은 다음 기동의 outbox 재전송이 다시 보낸다.
+    let outboxed_report = match (config.report_over_session, terminal_observation.as_ref()) {
+        (true, Some(observed)) => Some(outbox_terminal_report(&config, signing_key, &clock, observed)?),
+        _ => None,
+    };
+
     // RevokeLeaseNotice는 coordinator_device_id가 아닌 lease_id를
     // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
     // 보유 Lease id 아래에서 같은 Coordinator 키로 검증한다.
@@ -1412,11 +1435,11 @@ fn run_one_connection_inner(
     //   Ack 를 검증하면 지운다. 못 받으면 파일을 남기고 오류로 끝낸다 — 성공한 척하지 않는다.
     // ★ 실패로 끝나도 작업 디렉터리 삭제 실패(결함 82)를 함께 알린다 — 먼저 반환해 그 사실을 잃지 않는다.
     if config.report_over_session {
-        let delivered = match terminal_observation.as_ref() {
+        let delivered = match outboxed_report.as_ref() {
             None => Err(
                 "ATTEMPT_REPORT_REFUSED: 관측된 워크로드 종료가 없다 — 보고할 사실이 없으면 보내지 않는다".to_string(),
             ),
-            Some(observed) => send_report_over_session(&config, &signing_key, &clock, observed),
+            Some((report, path)) => deliver_outboxed_report(&config, &signing_key, report, path),
         };
         if let Err(error) = delivered {
             return Err(match pending_cleanup_failure.take() {
@@ -1878,20 +1901,29 @@ fn start_renew_during_execution(
 /// ★ 명시한 경로가 루트 안(루트 자신 포함)이면 거부한다. 비교는 절대 경로의 **구성 요소 앞머리**다 — 대소문자만 다른 경로 ·
 ///   junction · symlink 로 루트 안을 가리키는 경로는 못 잡는다(리눅스의 `std::path::absolute` 는 `..` 도 풀지 않는다).
 fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
-    let Some(explicit) = config.report_outbox_dir.as_ref() else {
-        return checkpoint_root_sibling(&config.checkpoint_root, ".report-outbox");
+    let outbox = match config.report_outbox_dir.as_ref() {
+        None => checkpoint_root_sibling(&config.checkpoint_root, ".report-outbox")?,
+        Some(explicit) => std::path::absolute(explicit)
+            .map_err(|error| format!("--report-outbox 를 절대 경로로 바꿀 수 없다({explicit:?}): {error}"))?,
     };
-    let outbox = std::path::absolute(explicit)
-        .map_err(|error| format!("--report-outbox 를 절대 경로로 바꿀 수 없다({explicit:?}): {error}"))?;
-    let root = std::path::absolute(&config.checkpoint_root).map_err(|error| {
-        format!("checkpoint root 를 절대 경로로 바꿀 수 없다({:?}): {error}", config.checkpoint_root)
-    })?;
-    if outbox.starts_with(&root) {
-        return Err(format!(
-            "--report-outbox({}) 가 체크포인트 루트({}) 안이다 — 부팅 GC 가 매니페스트 없는 디렉터리로 보고 보고를 지운다(결함 107)",
-            outbox.display(),
-            root.display()
-        ));
+    // ★ 결함 128 (검수 65) — 문자열 앞머리 비교는 대소문자(Windows) · junction · symlink · `..` 로 루트 안을 가리키며 통과했다.
+    //   세 디렉터리를 만든 뒤 **실제 위치**(canonicalize)로 대조한다. 만드는 것은 부작용이지만 어차피 곧 쓸 자리다.
+    // ★ 결함 129 (검수 65) — 체크포인트 루트뿐 아니라 **작업 출력 루트**(`<root>.workload-run`) 아래도 거부한다 — 실행 전 · 뒤에 재귀 삭제된다.
+    let real = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
+        fs::create_dir_all(path).map_err(|error| format!("{what} 디렉터리를 만들지 못했다({path:?}): {error}"))?;
+        fs::canonicalize(path).map_err(|error| format!("{what} 의 실제 위치를 읽지 못했다({path:?}): {error}"))
+    };
+    let real_outbox = real(&outbox, "outbox")?;
+    let real_root = real(&config.checkpoint_root, "checkpoint root")?;
+    let real_run_root = real(&workload_run_root(&config.checkpoint_root)?, "작업 출력 루트")?;
+    for (guarded, label) in [(&real_root, "체크포인트 루트"), (&real_run_root, "작업 출력 루트")] {
+        if real_outbox.starts_with(guarded) {
+            return Err(format!(
+                "--report-outbox({}) 가 {label}({}) 안이다(실제 위치 대조) — 부팅 GC · 작업 정리가 보고를 지운다(결함 107 · 128 · 129)",
+                outbox.display(),
+                guarded.display()
+            ));
+        }
     }
     Ok(outbox)
 }
@@ -1930,12 +1962,13 @@ fn persist_report_to_outbox(dir: &std::path::Path, report: &pb::AttemptReport) -
 }
 
 /// 서명 · 보관 · 전송 — 워크로드를 끝낸 연결이 부른다.
-fn send_report_over_session(
+/// 결함 126 — 종료 관측을 서명해 outbox 에 남기고 (보고, 경로)를 돌려준다. 보내기는 `deliver_outboxed_report` 가 한다.
+fn outbox_terminal_report(
     config: &AgentConfig,
     signing_key: &SigningKey,
     clock: &SystemClock,
     observed: &crate::report::TerminalObservation,
-) -> Result<(), String> {
+) -> Result<(pb::AttemptReport, PathBuf), String> {
     let attempt_report = report::build_signed_attempt_report(
         signing_key,
         &crate::report::TerminalObservation {
@@ -1953,7 +1986,7 @@ fn send_report_over_session(
         attempt_report.outcome,
         attempt_report.schema_version
     );
-    deliver_outboxed_report(config, signing_key, &attempt_report, &path)
+    Ok((attempt_report, path))
 }
 
 /// outbox 의 보고 하나를 REPORT 세션으로 보낸다.
@@ -3054,6 +3087,9 @@ fn derive_renew_nonce(lease_id: &str, connection_attempt: u32, round: u64) -> Ve
 pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
     let flags = parse_flags(args)?;
 
+    // ★ 결함 125 (검수 65) — `--checkpoint-root` 를 안 주면 기본 루트가 PID · 시각으로 **기동마다 새로** 만들어져, 거기서 파생한 outbox 도
+    //   매번 달라진다. 그러면 못 보낸 보고를 다음 기동이 못 찾는다. REPORT 세션은 두 경로 중 하나를 명시해야 한다.
+    let report_path_explicit = flags.get("--checkpoint-root").is_some() || flags.get("--report-outbox").is_some();
     let config = AgentConfig {
         coordinator_addr: flags.require("--connect")?,
         own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
@@ -3161,6 +3197,13 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             .unwrap_or_default(),
         resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
     };
+    if config.report_over_session && !report_path_explicit {
+        return Err(
+            "REPORT_SESSION_CONFIG_REFUSED: --report-over-session 에는 --checkpoint-root 또는 --report-outbox 가 필요하다 — \
+             기본 체크포인트 루트는 기동마다 바뀌어 못 보낸 보고를 다음 기동이 찾지 못한다(결함 125)"
+                .to_string(),
+        );
+    }
 
     // ★ 결함 ⑯ 확장(2026-09-10) — 모르는 이름을 받아 두지 않는다.
     let bad_bools = flags.bad_bools();
@@ -4149,6 +4192,88 @@ mod report_session_tests {
             report_outbox_dir(&config).expect("루트 밖 outbox 는 받아야 한다"),
             std::path::absolute(dir.path().join("outbox")).expect("절대 경로")
         );
+    }
+
+    /// 결함 125 — REPORT 세션인데 경로를 하나도 주지 않으면 설정 단계에서 거부한다. 하나라도 주면 받는다.
+    #[test]
+    fn report_over_session_without_a_persistent_path_is_refused_at_parse() {
+        let base = |extra: &[&str]| -> Vec<String> {
+            let mut argv: Vec<String> = [
+                "--connect", "127.0.0.1:9", "--own-seed", &hex(&AGENT_SEED),
+                "--peer-pubkey", &hex(SigningKey::from_bytes(&COORD_SEED).verifying_key().as_bytes()),
+                "--coordinator-device-id", COORD_ID, "--agent-device-id", AGENT_ID,
+                "--report-over-session", "true",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            argv.extend(extra.iter().map(|s| s.to_string()));
+            argv
+        };
+        let error = parse_config_from_args(&base(&[])).err().expect("경로 없는 REPORT 세션은 거부돼야 한다");
+        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 125"), "{error}");
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        assert!(parse_config_from_args(&base(&["--checkpoint-root", root.to_str().expect("경로")])).is_ok());
+        let outbox = dir.path().join("outbox");
+        assert!(parse_config_from_args(&base(&["--report-outbox", outbox.to_str().expect("경로")])).is_ok());
+    }
+
+    /// 결함 127 — REPORT 세션 뒤에도 FRESH 연결을 붙잡는 설정은 연결 전에 거부한다.
+    #[test]
+    fn report_over_session_with_a_setting_that_holds_the_fresh_connection_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        for flag in ["do_renew", "expect_revoke_after_round", "expect_replay"] {
+            let mut config = config(dir.path(), "127.0.0.1:9");
+            match flag {
+                "do_renew" => config.do_renew = true,
+                "expect_revoke_after_round" => config.expect_revoke_after_round = Some(0),
+                _ => config.expect_replay = true,
+            }
+            let error = run(config).expect_err("붙잡는 설정과 REPORT 세션은 함께 켤 수 없다");
+            assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 127"), "{flag}: {error}");
+        }
+    }
+
+    /// 결함 128 — 루트 안을 다른 표기로 가리켜도 거부한다: `..` 우회(모든 플랫폼) · 대소문자만 다른 경로(Windows) · junction(Windows).
+    #[test]
+    fn an_outbox_that_reaches_the_checkpoint_root_through_another_spelling_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        std::fs::create_dir_all(dir.path().join("other")).expect("우회용 디렉터리");
+        let mut spellings = vec![dir.path().join("other").join("..").join("checkpoints").join("outbox")];
+        #[cfg(windows)]
+        {
+            spellings.push(dir.path().join("CHECKPOINTS").join("outbox"));
+            std::fs::create_dir_all(dir.path().join("checkpoints")).expect("루트");
+            let alias = dir.path().join("alias");
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&alias)
+                .arg(dir.path().join("checkpoints"))
+                .output()
+                .expect("mklink 실행");
+            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            spellings.push(alias.join("outbox"));
+        }
+        for outbox in spellings {
+            let mut config = config(dir.path(), "127.0.0.1:9");
+            config.report_outbox_dir = Some(outbox.clone());
+            let error = report_outbox_dir(&config).expect_err("루트 안을 가리키는 다른 표기도 거부돼야 한다");
+            assert!(error.contains("체크포인트 루트") && error.contains("결함 107"), "{outbox:?}: {error}");
+        }
+    }
+
+    /// 결함 129 — 작업 출력 루트(`<root>.workload-run`) 아래의 outbox 도 거부한다. 대조: 루트 밖 · 작업 출력 밖은 받는다.
+    #[test]
+    fn an_outbox_inside_the_workload_run_root_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let mut config = config(dir.path(), "127.0.0.1:9");
+        let run_root = workload_run_root(&config.checkpoint_root).expect("작업 출력 루트");
+        config.report_outbox_dir = Some(run_root.join("some-checkpoint"));
+        let error = report_outbox_dir(&config).expect_err("작업 출력 아래 outbox 는 거부돼야 한다");
+        assert!(error.contains("작업 출력 루트") && error.contains("129"), "{error}");
+        config.report_outbox_dir = Some(dir.path().join("elsewhere"));
+        assert!(report_outbox_dir(&config).is_ok(), "루트 · 작업 출력 밖은 받아야 한다");
     }
 
     /// REPORT 세션과 FRESH 보고를 함께 켜면 연결 전에 거부한다.

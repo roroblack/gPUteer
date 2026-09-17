@@ -1304,6 +1304,27 @@ fn a_report_session_stores_the_report_and_answers_with_a_signed_ack() {
     assert_eq!(stored_binding(&fixture.control_db), Some(report), "Ack 를 보냈으면 저장돼 있어야 한다");
 }
 
+/// 결함 124 (검수 65) — 기동 때 outbox 를 REPORT 로 먼저 보낸 Agent 의 FRESH 는 연결 번호 0 으로 온다. 보조 세션은 FRESH 번호에 넣지 않는다.
+///   전에는 Coordinator 가 REPORT 도 세어 기대값 1 로 거부했다.
+#[test]
+fn a_fresh_connection_after_a_report_session_keeps_connection_attempt_zero() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_reports(&fixture, true, 2);
+    let report = terminal_report(fence_epoch);
+    {
+        let mut session = open_report_session(&fixture, 0, 220, &report);
+        let ack = read_ack(&mut session);
+        assert!(ack.created, "먼저 보낸 보고가 저장돼야 한다");
+    }
+    let mut fresh = connect_when_ready(fixture.address);
+    let grant = handshake_at(&mut fresh, 0);
+    assert_eq!(grant.attempt_id, ATTEMPT_ID, "REPORT 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    drop(fresh);
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
 /// 단계 6 — 같은 보고를 새 REPORT 세션으로 다시 보내면 저장소 멱등성대로 created=false 의 Ack 를 받는다(Agent 의 재전송 경로).
 #[test]
 fn the_same_report_resent_over_a_new_report_session_is_acknowledged_as_not_created() {

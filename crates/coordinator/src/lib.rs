@@ -611,6 +611,9 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         .set_nonblocking(true)
         .map_err(|e| format!("listener nonblocking failed: {e}"))?;
     let mut connection_count = 0u32;
+    // ★ 결함 124 (검수 65) — RENEW · REPORT 세션 수. FRESH 의 연결 번호는 "받은 연결 수 − 보조 세션 수" 다. 전에는 보조 세션도 번호를 올려,
+    //   기동 때 outbox 를 REPORT 로 보낸 Agent 의 FRESH(0) 가 기대값 1 과 달라 거부됐다.
+    let mut auxiliary_sessions = 0u32;
     loop {
         if connection_count >= config.max_connections {
             return Err("max-connections reached before completed session".into());
@@ -635,6 +638,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &mut replay,
             &clock,
             connection_attempt,
+            &mut auxiliary_sessions,
         ) {
             Ok(()) => {
                 if connection_count >= config.max_connections {
@@ -1055,6 +1059,7 @@ fn serve_one_connection(
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
     connection_attempt: u32,
+    auxiliary_sessions: &mut u32,
 ) -> Result<(), CoordinatorSessionError> {
     stream
         .set_nonblocking(false)
@@ -1077,6 +1082,7 @@ fn serve_one_connection(
         replay,
         clock,
         connection_attempt,
+        auxiliary_sessions,
     )
     .map_err(|error| match error {
         SessionHandlerError::Legacy(message) => {
@@ -1098,6 +1104,7 @@ fn serve_one_connection_impl(
     replay: &mut InMemoryReplayGuard,
     clock: &SystemClock,
     connection_attempt: u32,
+    auxiliary_sessions: &mut u32,
 ) -> Result<(), SessionHandlerError> {
     let now = clock.now_unix_ms();
     if config.resume_protocol {
@@ -1116,9 +1123,11 @@ fn serve_one_connection_impl(
     // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
     let hello = read_session_hello(config, stream, agent_keys, replay, clock)?;
     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
+        *auxiliary_sessions += 1;
         return serve_renew_session(config, stream, lease_store, signing_key, agent_keys, replay, clock);
     }
     if hello.mode == gputeer_protocol::constants::MODE_REPORT {
+        *auxiliary_sessions += 1;
         return serve_report_session(
             config,
             stream,
@@ -1141,6 +1150,9 @@ fn serve_one_connection_impl(
     }
     // FRESH 만 연결 번호를 대조한다 — Grant nonce 가 이 번호로 만들어진다. RENEW 는 실행 중 Agent 가 따로 여는 연결이라
     // Coordinator 의 연결 번호를 알 수 없다(단계 5a).
+    // ★ 결함 124 — 아래부터 `connection_attempt` 는 **FRESH 번호**(보조 세션을 뺀 값)다. Grant · ACK nonce 와 재접속 시험 조건이 모두 이 값을 쓴다.
+    //   Hello 를 읽지 못하고 끝난 연결은 어느 종류인지 몰라 FRESH 로 센다(전과 같다).
+    let connection_attempt = connection_attempt.saturating_sub(*auxiliary_sessions);
     if hello.connection_attempt != connection_attempt {
         return Err(session_protocol_error(format!(
             "HELLO_REJECTED: connection_attempt 불일치 — 기대값 {} != {}",
