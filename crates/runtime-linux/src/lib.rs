@@ -242,6 +242,13 @@ impl ConstrainedChild {
         std::fs::read_to_string(self.cgroup.join("memory.peak"))
     }
 
+    /// `memory.max` 원문 읽기 — 실패 사유를 버리지 않는다(결함 144 · 81 과 같은 이유).
+    ///
+    /// ★ `memory_limit_bytes()` 는 부재 · 읽기 실패 · 해석 실패("max" 포함)를 `None` 으로 접는다. 분류는 agent `exec::classify_linux_memory_limit` 이 한다.
+    pub fn read_memory_max_file(&self) -> std::io::Result<String> {
+        std::fs::read_to_string(self.cgroup.join("memory.max"))
+    }
+
     /// 이 cgroup 에 실제로 걸린 상한(바이트).
     pub fn memory_limit_bytes(&self) -> Option<u64> {
         std::fs::read_to_string(self.cgroup.join("memory.max"))
@@ -253,6 +260,9 @@ impl ConstrainedChild {
     ///
     /// `Some(0)` 이어야 상한이 실제로 강제된다 — 0 이 아니면 작업이
     /// 상한을 넘어도 스왑으로 밀려나 살아남는다.
+    ///
+    /// ★ 결함 144 — 이 함수도 실패 사유를 `None` 으로 접는다. 지금 보고 경로(agent exec)는 이것을 부르지 않고 시험(cgroup_enforcement)만 부른다 —
+    ///   보고 경로에 넣을 때는 `read_memory_max_file` 처럼 원문을 돌려받아야 한다.
     pub fn swap_limit_bytes(&self) -> Option<u64> {
         std::fs::read_to_string(self.cgroup.join("memory.swap.max"))
             .ok()
