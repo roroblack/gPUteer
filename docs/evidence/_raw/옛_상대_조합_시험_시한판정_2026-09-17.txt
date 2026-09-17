@@ -1,0 +1,1144 @@
+# 옛 상대 조합 시험 — 결함 191 ~ 193 (재검수 69c) · 2026-09-17 13:12 · Windows 개발 기계
+# ★ 옛 바이너리는 결함 184 에서 새 별도 target(old_target_184)으로 다시 빌드한 것을 그대로 썼다(시험 직전 sha256 재계산 · 아래 옛 빌드 기록)
+# ★ 결함 192 정정 — 앞 원본(옛_상대_조합_시험_출처재빌드_2026-09-17.txt)의 "같은 커밋 · 같은 도구로도 비트 단위로 같지 않다(비결정적이거나 경로가 들어간다)" 는
+#   근거를 넘었다. 10:40 빌드의 소스 상태는 입증된 적이 없다 — **10:40 빌드와 이번 빌드의 해시는 다르며 원인은 확인하지 않았다.** 이 원본의 결론은 이번 빌드에 대한 것이다
+# ★ 코드만의 diff(`git diff HEAD --binary -- crates`) sha256 = 11710aaa445098d24a60c818a650b25b8bec8976948d11adf44f2a381d022caa
+# ★ 옛 Agent · 새 Coordinator 이번 실행의 끝: 옛 Agent 시한(10060) · 새 Coordinator 시한(10060) — 판정 함수(결함 191)는 한쪽 이상 시한 번호 + 경과 ≥ 9초 · 다른 쪽 시한 또는 완결 전 끊김만 받는다
+# ★ 변이: 합계 기대대로 2/2 — 검출 2 · 기대 미검출 0 (M191 시한 번호 무시 · M193 완료 시각 비교 제거 — 옛 바이너리 없이 도는 판정 시험 둘이 잡는다)
+# ★ 옛 Coordinator 조합 관측: 요약: 성공 판정 5 · ACK 전송 실패 판정 0 · 시험 실패 0 — 수정 전후를 가르지 못한다(결함 182)
+# ★ reset 등 다른 연결 장애 · 출력 수집 시한 초과 · 시한 넘긴 종료는 실제 실행으로 재지 않았다(판정 함수 · 수집 함수의 단위 시험으로 잰다) · unix 시한 번호(11 · 35)는 실행하지 않았다 · 리눅스 미실행
+
+# 옛 상대 조합 원본 수집(결함 191~193) — 2026-09-17 13:06
+## 옛 빌드 기록(결함 184 — 새 별도 target 으로 다시 빌드한 기록 전부)
+# 옛 바이너리 재빌드(결함 184) — 시작 2026-09-17 12:42:53
+worktree C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2
+빌드 전 HEAD 7d5a9febbc8f6137d437f97e41e7ea74146de9e7
+빌드 전 git status --short: 없음
+빌드 전 git diff HEAD sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+rustc rustc 1.97.1 (8bab26f4f 2026-07-14) · cargo cargo 1.97.1 (c980f4866 2026-06-30)
+명령: CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_target_184 cargo build -j 1 -p gputeer-cli (cwd=C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2)
+빌드 exit=0 · 끝 2026-09-17 12:44:20
+Compiling gputeer 줄 10 · old_pre_d2 밖 경로 0
+빌드 뒤 HEAD 7d5a9febbc8f6137d437f97e41e7ea74146de9e7 · status 없음
+산출물 C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_target_184\debug\gputeer.exe size=8596992 sha256=6f52ab2fd466b53aca30b4fa80ba5ef09327a8f328d5ab24d1d40fdbb91af3f4
+복사본 C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_bin\gputeer_pre_d2_7d5a9fe_build184.exe sha256=6f52ab2fd466b53aca30b4fa80ba5ef09327a8f328d5ab24d1d40fdbb91af3f4 · 같음=True
+10:40 빌드 복사본 sha256=182f4fe5cf73c313c3890afac4b14faee8a48ed7c9f7b8f6f41d930311037550 · 이번 빌드와 같음=False(다르면 빌드가 비결정적이거나 경로가 들어간다 — 같음을 주장하지 않는다)
+## 빌드 출력(전부)
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling version_check v0.9.5
+   Compiling syn v2.0.119
+   Compiling cfg-if v1.0.4
+   Compiling once_cell v1.21.4
+   Compiling anyhow v1.0.104
+   Compiling windows-link v0.2.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling either v1.17.0
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.3
+   Compiling itertools v0.14.0
+   Compiling prost-derive v0.14.4
+   Compiling bytes v1.12.1
+   Compiling syn v3.0.3
+   Compiling fastrand v2.5.0
+   Compiling foldhash v0.1.5
+   Compiling prettyplease v0.2.37
+   Compiling hashbrown v0.17.1
+   Compiling zerocopy v0.8.56
+   Compiling regex-syntax v0.8.11
+   Compiling equivalent v1.0.2
+   Compiling indexmap v2.14.0
+   Compiling regex-automata v0.4.18
+   Compiling hashbrown v0.15.5
+   Compiling prost v0.14.4
+   Compiling windows-sys v0.61.2
+   Compiling ahash v0.8.12
+   Compiling generic-array v0.14.7
+   Compiling fixedbitset v0.5.7
+   Compiling petgraph v0.8.3
+   Compiling tempfile v3.27.0
+   Compiling prost-types v0.14.4
+   Compiling regex v1.13.1
+   Compiling protoc-bin-vendored-linux-x86_64 v3.2.0
+   Compiling log v0.4.33
+   Compiling typenum v1.20.1
+   Compiling multimap v0.10.1
+   Compiling protoc-bin-vendored-linux-x86_32 v3.2.0
+   Compiling thiserror v2.0.20
+   Compiling vcpkg v0.2.15
+   Compiling protoc-bin-vendored-macos-aarch_64 v3.2.0
+   Compiling pkg-config v0.3.34
+   Compiling protoc-bin-vendored-linux-aarch_64 v3.2.0
+   Compiling protoc-bin-vendored-macos-x86_64 v3.2.0
+   Compiling protoc-bin-vendored-linux-ppcle_64 v3.2.0
+   Compiling protoc-bin-vendored-linux-s390_64 v3.2.0
+   Compiling heck v0.5.0
+   Compiling protoc-bin-vendored-win32 v3.2.0
+   Compiling protoc-bin-vendored v3.2.0
+   Compiling prost-build v0.14.4
+   Compiling libsqlite3-sys v0.30.1
+   Compiling thiserror-impl v2.0.20
+   Compiling blake3 v1.8.6
+   Compiling hashbrown v0.14.5
+   Compiling gputeer-protocol v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\protocol)
+   Compiling arrayvec v0.7.8
+   Compiling arrayref v0.3.9
+   Compiling constant_time_eq v0.4.2
+   Compiling semver v1.0.28
+   Compiling cpufeatures v0.3.0
+   Compiling rustc_version v0.4.1
+   Compiling hashlink v0.9.1
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling smallvec v1.15.2
+   Compiling fallible-iterator v0.3.0
+   Compiling bitflags v2.13.1
+   Compiling rusqlite v0.32.1
+   Compiling digest v0.10.7
+   Compiling curve25519-dalek v4.1.3
+   Compiling cpufeatures v0.2.17
+   Compiling serde_core v1.0.229
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling zeroize v1.9.0
+   Compiling signature v2.2.0
+   Compiling zmij v1.0.23
+   Compiling subtle v2.6.1
+   Compiling ed25519 v2.2.3
+   Compiling sha2 v0.10.9
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling ed25519-dalek v2.2.0
+   Compiling gputeer-runtime-policy v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\runtime-policy)
+   Compiling serde_derive v1.0.229
+   Compiling getrandom v0.4.3
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\runtime-windows)
+   Compiling gputeer-crypto v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\crypto)
+   Compiling libloading v0.8.9
+   Compiling gputeer-runtime-nvml v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\runtime-nvml)
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\checkpoint)
+   Compiling getrandom v0.2.17
+   Compiling gputeer-scheduler v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\scheduler)
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\coordinator)
+   Compiling gputeer-agent v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\agent)
+   Compiling gputeer-cli v0.0.1 (C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_pre_d2\crates\cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 26s
+
+
+시험 직전 sha256 old_target_184/debug/gputeer.exe = 6f52ab2fd466b53aca30b4fa80ba5ef09327a8f328d5ab24d1d40fdbb91af3f4
+시험 직전 sha256 GPUTEER_OLD_BINARY(gputeer_pre_d2_7d5a9fe_build184.exe) = 6f52ab2fd466b53aca30b4fa80ba5ef09327a8f328d5ab24d1d40fdbb91af3f4
+새 worktree HEAD 1f88f5a 결함 191 ~ 193 기록(재검수 69c): 183 단언의 시한 아닌 장애 통과 · 184 해시 차이 원인 단정 · 185 출력 시한 재시작 — 고치기 전 · 변경 상태: M crates/cli/tests/old_peer_combination.rs
+
+## 결함 130 절차 측정(measure.py compat_191)
+### measure build exit=0
+# 측정 compat_191 · build · 2026-09-17 13:06 · worktree gputeer-be-compat · HEAD 1f88f5a 결함 191 ~ 193 기록(재검수 69c): 183 단언의 시한 아닌 장애 통과 · 184 해시 차이 원인 단정 · 185 출력 시한 재시작 — 고치기 전
+# 작업 트리 변경: M crates/cli/tests/old_peer_combination.rs
+# 작업 트리 diff sha256 11710aaa445098d24a60c818a650b25b8bec8976948d11adf44f2a381d022caa (16809 바이트) · 추적 안 된 파일 없음
+로컬 crate 컴파일: 10/10(Windows 는 runtime-linux 제외) · 빠진 것 없음 · 다른 경로 없음
+판정 OK
+실행 파일 sha256 c360052254d3939e6e365e7d7ec460f2e1df5518560f001291701c9279aef708
+
+### measure test exit=0
+# 측정 compat_191 · test · 2026-09-17 13:07 · worktree gputeer-be-compat · HEAD 1f88f5a 결함 191 ~ 193 기록(재검수 69c): 183 단언의 시한 아닌 장애 통과 · 184 해시 차이 원인 단정 · 185 출력 시한 재시작 — 고치기 전
+# 작업 트리 변경: M crates/cli/tests/old_peer_combination.rs
+# 작업 트리 diff sha256 11710aaa445098d24a60c818a650b25b8bec8976948d11adf44f2a381d022caa (16809 바이트) · 추적 안 된 파일 없음
+build 단계와 소스 diff: 같음
+passed 472 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97
+시험 단계 재컴파일: 없음 · 실행 파일 sha256 build c360052254d3939e… / selftest 직전 c360052254d3939e… 같음
+판정 OK
+
+
+## 조합 시험 — cargo test -j 1 -p gputeer-cli --test old_peer_combination -- --include-ignored --nocapture --test-threads 1
+exit=0
+
+running 7 tests
+test an_old_agent_and_a_new_coordinator_both_fail_explicitly ... ok
+test output_collection_uses_a_fixed_deadline_and_the_completion_time ... ok
+test the_same_new_binary_on_both_sides_succeeds ... ok
+test the_same_old_binary_on_both_sides_succeeds ... ok
+test the_wait_classifier_accepts_read_timeouts_and_rejects_other_connection_failures ... ok
+test today_a_new_agent_reports_success_against_an_old_coordinator_that_failed ... ok
+test today_a_new_agent_succeeds_without_an_ack_receipt_after_the_coordinator_verified_the_ack ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.06s
+
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.99s
+     Running tests\old_peer_combination.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\old_peer_combination-d11e22d9c3df380c.exe)
+=== 실행 파일 coordinator: path=C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe size=8804352 blake3=5899678b11d9a3cc13fb94105bde6d7932c2bd6fde4c8f7ef7f9802ed4c76e11
+=== 실행 파일 agent: path=C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_bin\gputeer_pre_d2_7d5a9fe_build184.exe size=8596992 blake3=5b94ce738a4334336340153c31a487d59c6b82074b0b446036c0189dc5f9d30d
+=== 옛 Agent · 새 Coordinator · agent: success=false hung=false output_timed_out=false elapsed_ms=10071
+--- stdout ---
+
+--- stderr ---
+agent-stub 실패: RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+
+=== 옛 Agent · 새 Coordinator · coordinator: success=false hung=false output_timed_out=false elapsed_ms=10097
+--- stdout ---
+READY 127.0.0.1:58300
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:58303
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+SESSION_ERROR peer=127.0.0.1:58303 connection_attempt=0 kind=transport error=transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+coordinator-stub 실패: transport: session: HELLO_MISSING: Agent 의 Hello 를 받지 못했다(연결 끊김 · 소켓 시한 — Hello 를 보내지 않는 D2 이전 Agent 일 수 있다): 스트림 읽기 실패: 연결된 구성원으로부터 응답이 없어 연결하지 못했거나, 호스트로부터 응답이 없어 연결이 끊어졌습니다. (os error 10060)
+
+=== 실행 파일 coordinator: path=C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe size=8804352 blake3=5899678b11d9a3cc13fb94105bde6d7932c2bd6fde4c8f7ef7f9802ed4c76e11
+=== 실행 파일 agent: path=C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe size=8804352 blake3=5899678b11d9a3cc13fb94105bde6d7932c2bd6fde4c8f7ef7f9802ed4c76e11
+=== 새 · 새(대조) · agent: success=true hung=false output_timed_out=false elapsed_ms=81
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-10476-1789618277298508800 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789618277321 expires_at_unix_ms=1789618337321
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 · 새(대조) · coordinator: success=true hung=false output_timed_out=false elapsed_ms=221
+--- stdout ---
+READY 127.0.0.1:58349
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:58350
+SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+
+=== 실행 파일 coordinator: path=C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_bin\gputeer_pre_d2_7d5a9fe_build184.exe size=8596992 blake3=5b94ce738a4334336340153c31a487d59c6b82074b0b446036c0189dc5f9d30d
+=== 실행 파일 agent: path=C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_bin\gputeer_pre_d2_7d5a9fe_build184.exe size=8596992 blake3=5b94ce738a4334336340153c31a487d59c6b82074b0b446036c0189dc5f9d30d
+=== 옛 · 옛(대조) · agent: success=true hung=false output_timed_out=false elapsed_ms=101
+--- stdout ---
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789618277620 expires_at_unix_ms=1789618337620
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 옛 · 옛(대조) · coordinator: success=true hung=false output_timed_out=false elapsed_ms=231
+--- stdout ---
+READY 127.0.0.1:58353
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:58354
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+
+=== 실행 파일 coordinator: path=C:\Users\PLAYDA~1\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\old_bin\gputeer_pre_d2_7d5a9fe_build184.exe size=8596992 blake3=5b94ce738a4334336340153c31a487d59c6b82074b0b446036c0189dc5f9d30d
+=== 실행 파일 agent: path=C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe size=8804352 blake3=5899678b11d9a3cc13fb94105bde6d7932c2bd6fde4c8f7ef7f9802ed4c76e11
+=== 새 Agent · 옛 Coordinator · agent: success=true hung=false output_timed_out=false elapsed_ms=81
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-5784-1789618277857913200 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789618277876 expires_at_unix_ms=1789618337876
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 Agent · 옛 Coordinator · coordinator: success=false hung=false output_timed_out=false elapsed_ms=65
+--- stdout ---
+READY 127.0.0.1:58356
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:58357
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+SESSION_ERROR peer=127.0.0.1:58357 connection_attempt=0 kind=protocol error=protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789618277875, nonce: [33, 41, 168, 178, 110, 194, 20, 99, 58, 39, 229, 118, 119, 186, 250, 216], node_signature: [137, 192, 64, 37, 213, 21, 82, 221, 30, 75, 68, 239, 162, 80, 145, 195, 231, 24, 211, 255, 71, 81, 165, 83, 79, 103, 24, 10, 110, 181, 176, 106, 242, 135, 98, 202, 125, 206, 116, 215, 10, 113, 24, 94, 138, 102, 74, 33, 7, 206, 20, 237, 250, 239, 254, 169, 0, 72, 69, 134, 229, 197, 185, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+coordinator-stub 실패: protocol: session protocol: 예상하지 못한 응답 타입: SessionHello(Verified { inner: AgentSessionHello { schema_version: 1, mode: Fresh, session_id: "resume-session", node_id: "01JAGENTOLDPEER00000000001", connection_attempt: 0, issued_at_unix_ms: 1789618277875, nonce: [33, 41, 168, 178, 110, 194, 20, 99, 58, 39, 229, 118, 119, 186, 250, 216], node_signature: [137, 192, 64, 37, 213, 21, 82, 221, 30, 75, 68, 239, 162, 80, 145, 195, 231, 24, 211, 255, 71, 81, 165, 83, 79, 103, 24, 10, 110, 181, 176, 106, 242, 135, 98, 202, 125, 206, 116, 215, 10, 113, 24, 94, 138, 102, 74, 33, 7, 206, 20, 237, 250, 239, 254, 169, 0, 72, 69, 134, 229, 197, 185, 8] }, signer_id: "01JAGENTOLDPEER00000000001", replay_status: Checked })
+
+=== 덫 판정: 새 Agent 성공(결함 131 의 원래 관측)
+=== 실행 파일 coordinator: path=C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe size=8804352 blake3=5899678b11d9a3cc13fb94105bde6d7932c2bd6fde4c8f7ef7f9802ed4c76e11
+=== 실행 파일 agent: path=C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\gputeer.exe size=8804352 blake3=5899678b11d9a3cc13fb94105bde6d7932c2bd6fde4c8f7ef7f9802ed4c76e11
+=== 새 · 새(ACK 검증 뒤 수신 확인 없이 끊음) · agent: success=true hung=false output_timed_out=false elapsed_ms=81
+--- stdout ---
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-2436-1789618278000505500 dirs=0 removed=0
+LEASE_ACCEPTED connection_attempt=0 lease_id=01JLEASEOLDPEER000000001 issued_at_unix_ms=1789618278023 expires_at_unix_ms=1789618338023
+JOB_STARTED checkpoint_id=start-35e5b277afc5c81818b106f7a006c179a29729e35397491697e56c496a53b840 job_id=01JJOBOLDPEER00000000001 attempt_id=01JATTEMPTOLDPEER00000001 grant_id=01JGRANTOLDPEER000000001 state=WRITING
+ACK_SENT grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001
+RESULT ok=true grant_id=01JGRANTOLDPEER000000001 attempt_id=01JATTEMPTOLDPEER00000001 agent_device_id=01JAGENTOLDPEER00000000001
+
+--- stderr ---
+
+=== 새 · 새(ACK 검증 뒤 수신 확인 없이 끊음) · coordinator: success=true hung=false output_timed_out=false elapsed_ms=122
+--- stdout ---
+READY 127.0.0.1:58358
+CONNECTION_ATTEMPT 0 peer=127.0.0.1:58362
+SESSION_HELLO_ACCEPTED mode=1 node_id=01JAGENTOLDPEER00000000001 connection_attempt=0
+DISCONNECT_AFTER_ACK coordinator_acknowledged=true grant_id=01JGRANTOLDPEER000000001
+
+--- stderr ---
+경고: 레거시 모드(--lease-db 없음)를 사용한다 — revoke/만료/max-duration 보호가 없다
+
+
+sha256 새 실행 파일(target/debug/gputeer.exe, 조합 시험 뒤) = c360052254d3939e6e365e7d7ec460f2e1df5518560f001291701c9279aef708
+
+## 옛 Coordinator 조합 관측 5회(결함 174 · 182 — 수정 전후를 가르지 못하는 관측 기록)
+1회 exit=0 ['=== 덫 판정: 새 Agent 성공(결함 131 의 원래 관측)'] ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.16s']
+2회 exit=0 ['=== 덫 판정: 새 Agent 성공(결함 131 의 원래 관측)'] ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.17s']
+3회 exit=0 ['=== 덫 판정: 새 Agent 성공(결함 131 의 원래 관측)'] ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.24s']
+4회 exit=0 ['=== 덫 판정: 새 Agent 성공(결함 131 의 원래 관측)'] ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.17s']
+5회 exit=0 ['=== 덫 판정: 새 Agent 성공(결함 131 의 원래 관측)'] ['test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.18s']
+요약: 성공 판정 5 · ACK 전송 실패 판정 0 · 시험 실패 0
+
+## 뮤테이션(결함 191 · 193) — 각 변이 뒤 되돌린다 · 옛 바이너리 없이 도는 판정 시험으로 잰다
+caught        (기대 caught) M191 시한 오류 번호를 보지 않는다(결함 191 이전 — 어떤 I/O 오류든 시한으로 받음) — reset 반례에서 판정 시험이 실패해야 한다
+    패치 - (!need_timeout || line.contains(READ_TIMEOUT_OS_ERROR))
+    패치 + (!need_timeout || true)
+    출력 test the_wait_classifier_accepts_read_timeouts_and_rejects_other_connection_failures ... FAILED
+    출력 thread 'the_wait_classifier_accepts_read_timeouts_and_rejects_other_connection_failures' (20792) panicked at crates\cli\tests\old_peer_combination.rs:374:5:
+    출력 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+caught        (기대 caught) M193 완료 시각을 마감과 비교하지 않는다(결함 193 이전) — 늦게 완성된 출력에서 수집 시험이 실패해야 한다
+    패치 - let late = completed > deadline;
+    패치 + let late = { let _ = completed; false };
+    출력 test output_collection_uses_a_fixed_deadline_and_the_completion_time ... FAILED
+    출력 thread 'output_collection_uses_a_fixed_deadline_and_the_completion_time' (19884) panicked at crates\cli\tests\old_peer_combination.rs:397:5:
+    출력 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+원복 뒤 늘 도는 시험 exit=0 ['test result: ok. 4 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.39s']
+합계 기대대로 2/2 — 검출 2 · 기대 미검출 0
+
+
+# ── measure build ──
+# 측정 compat_191 · build · 2026-09-17 13:06 · worktree gputeer-be-compat · HEAD 1f88f5a 결함 191 ~ 193 기록(재검수 69c): 183 단언의 시한 아닌 장애 통과 · 184 해시 차이 원인 단정 · 185 출력 시한 재시작 — 고치기 전
+# 작업 트리 변경: M crates/cli/tests/old_peer_combination.rs
+# 작업 트리 diff sha256 11710aaa445098d24a60c818a650b25b8bec8976948d11adf44f2a381d022caa (16809 바이트) · 추적 안 된 파일 없음
+로컬 crate 컴파일: 10/10(Windows 는 runtime-linux 제외) · 빠진 것 없음 · 다른 경로 없음
+판정 OK
+실행 파일 sha256 c360052254d3939e6e365e7d7ec460f2e1df5518560f001291701c9279aef708
+
+## cargo clean exit=0
+     Removed 287 files, 482.7MiB total
+
+
+## cargo test -j 1 --no-run -p gputeer-coordinator -p gputeer-agent exit=0
+   Compiling gputeer-protocol v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\protocol)
+   Compiling gputeer-crypto v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\crypto)
+   Compiling gputeer-scheduler v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\scheduler)
+   Compiling gputeer-runtime-policy v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-policy)
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-windows)
+   Compiling gputeer-coordinator v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\coordinator)
+   Compiling gputeer-runtime-nvml v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-nvml)
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\checkpoint)
+   Compiling gputeer-agent v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\agent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.37s
+  Executable unittests src\lib.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\gputeer_agent-795e53b84d357b44.exe)
+  Executable tests\attempt_report_send.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_report_send-e647d98c243cc7e3.exe)
+  Executable tests\exit_code_preservation.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\exit_code_preservation-d40c2497ae019c4e.exe)
+  Executable tests\gpu_preflight_gate.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\gpu_preflight_gate-e9d740ce7f6c7f33.exe)
+  Executable tests\neighbor_report_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\neighbor_report_lane_guard-5a244155a24e288f.exe)
+  Executable tests\owner_panel_http.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\owner_panel_http-5edf6f3e7b3e571f.exe)
+  Executable tests\owner_panel_startup.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\owner_panel_startup-a52c129ffaab5e1e.exe)
+  Executable tests\owner_stop_control.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\owner_stop_control-1fbd844031a4dbf5.exe)
+  Executable tests\unknown_flags.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\unknown_flags-6db1360ae58d40c8.exe)
+  Executable unittests src\lib.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\gputeer_coordinator-4e80b1a575507b7e.exe)
+  Executable tests\attempt_report_ingress.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_report_ingress-b2316752ec9c4402.exe)
+  Executable tests\attempt_report_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_report_lane_guard-91334101acacabf6.exe)
+  Executable tests\attempt_state_parity.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_state_parity-97174f478804985d.exe)
+  Executable tests\heartbeat_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\heartbeat_lane_guard-cd1bab8d8d6a8083.exe)
+  Executable tests\job_store_concurrent_submit.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\job_store_concurrent_submit-1d2232d99c09b7d1.exe)
+  Executable tests\lease_store_concurrent_issue.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\lease_store_concurrent_issue-fd6a2c56a0076943.exe)
+  Executable tests\neighbor_report_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\neighbor_report_lane_guard-8f50bced3bbbf08c.exe)
+  Executable tests\neighbor_report_store.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\neighbor_report_store-28755206389573ca.exe)
+  Executable tests\node_liveness_store.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\node_liveness_store-dd7167bc019a73f7.exe)
+  Executable tests\reservation_release.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\reservation_release-c6f20831d1bd2624.exe)
+  Executable tests\stored_lane_flags.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\stored_lane_flags-7f90f30d7ed4805f.exe)
+
+
+## cargo test -j 1 --no-run -p gputeer-cli --test ack_before_execution --test grant_over_wire --test issue_grant --test shared_control_db exit=0
+   Compiling gputeer-cli v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.29s
+  Executable tests\ack_before_execution.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\ack_before_execution-72ce49cd1bb4c2cb.exe)
+  Executable tests\grant_over_wire.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\grant_over_wire-b468dfb326e4063c.exe)
+  Executable tests\issue_grant.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\issue_grant-49b64aeb723d22c5.exe)
+  Executable tests\shared_control_db.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\shared_control_db-783211f347279486.exe)
+
+
+## cargo test -j 1 --no-run -p gputeer-checkpoint --test codex_findings --test durability_chaos exit=0
+   Compiling gputeer-runtime-windows v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\runtime-windows)
+   Compiling gputeer-checkpoint v0.0.1 (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-be-compat\crates\checkpoint)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.09s
+  Executable tests\codex_findings.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\codex_findings-fda5ff4bb640ed59.exe)
+  Executable tests\durability_chaos.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\durability_chaos-08fa42e5680f8ff9.exe)
+
+
+## cargo build -j 1 -p gputeer-cli exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+# ── measure test ──
+# 측정 compat_191 · test · 2026-09-17 13:07 · worktree gputeer-be-compat · HEAD 1f88f5a 결함 191 ~ 193 기록(재검수 69c): 183 단언의 시한 아닌 장애 통과 · 184 해시 차이 원인 단정 · 185 출력 시한 재시작 — 고치기 전
+# 작업 트리 변경: M crates/cli/tests/old_peer_combination.rs
+# 작업 트리 diff sha256 11710aaa445098d24a60c818a650b25b8bec8976948d11adf44f2a381d022caa (16809 바이트) · 추적 안 된 파일 없음
+build 단계와 소스 diff: 같음
+passed 472 · failed 0 · ignored 0 · warning 줄 0 · selftest exit 0 줄 97
+시험 단계 재컴파일: 없음 · 실행 파일 sha256 build c360052254d3939e… / selftest 직전 c360052254d3939e… 같음
+판정 OK
+
+## cargo test -j 1 -p gputeer-coordinator -p gputeer-agent exit=0
+
+running 54 tests
+test defect_19_tests::a_cleanup_failure_keeps_the_observed_report ... ok
+test defect_19_tests::a_lost_captured_output_is_read_outputs ... ok
+test defect_19_tests::an_unreadable_output_is_read_outputs ... ok
+test defect_42_45_tests::errors_after_the_workload_ran_are_not_retried ... ok
+test defect_42_45_tests::a_successful_cleanup_returns_the_original_error_and_removes_the_directory ... ok
+test defect_19_tests::a_blocked_checkpoint_is_commit_checkpoint ... ok
+test exec::observation_classification_tests::a_linux_memory_peak_absence_read_failure_and_garbage_each_leave_a_distinct_reason ... ok
+test exec::observation_classification_tests::a_windows_memory_query_failure_keeps_the_policy_limit_and_the_reason ... ok
+test multi_agent::tests::each_agent_derives_a_distinct_hello_nonce ... ok
+test exec::observation_classification_tests::a_wait_failure_is_an_execution_error_and_a_code_lookup_failure_is_no_code ... ok
+test multi_agent::tests::hello_and_ack_nonces_do_not_collide ... ok
+test multi_agent::tests::this_lane_uses_a_distinct_session_mode ... ok
+test owner_panel::tests::a_backwards_clock_does_not_produce_a_giant_number ... ok
+test owner_panel::tests::host_check_accepts_loopback_and_rejects_names ... ok
+test owner_panel::tests::an_empty_token_is_refused_at_bind_time ... ok
+test owner_panel::tests::json_values_are_escaped ... ok
+test owner_panel::tests::loss_is_measured_from_the_last_checkpoint ... ok
+test owner_panel::tests::two_attempts_of_one_job_are_both_visible ... ok
+test owner_panel::tests::with_no_checkpoint_everything_since_start_is_lost ... ok
+test report::tests::a_backwards_clock_between_start_and_finish_is_refused_with_both_values ... ok
+test defect_42_45_tests::a_cleanup_failure_keeps_the_original_refusal ... ok
+test report::tests::a_finalization_failure_after_an_observed_exit_is_still_reported ... ok
+test report::tests::an_empty_identity_field_is_refused_by_name ... ok
+test report::tests::an_issue_time_before_the_finish_time_is_refused_with_both_values ... ok
+test report::tests::an_observed_exit_without_a_code_is_a_failed_v2_report_with_no_code ... ok
+test report::tests::an_observed_code_is_carried_as_is_including_u32_max ... ok
+test report::tests::exit_code_zero_is_completed_and_anything_else_is_failed ... ok
+test report::tests::observed_timestamps_are_copied_not_recomputed ... ok
+test report::tests::unobserved_fields_stay_empty ... ok
+test report::tests::a_built_report_verifies_under_the_signing_node_identity ... ok
+test report::tests::a_field_changed_after_signing_no_longer_verifies ... ok
+test defect_19_tests::a_real_exit_with_a_blocked_checkpoint_still_yields_a_report ... ok
+test report_session_tests::a_tampered_outbox_file_is_quarantined_not_sent ... ok
+test report_session_tests::an_ack_for_another_session_nonce_is_rejected_and_the_outbox_file_stays ... ok
+test report_session_tests::a_verified_ack_clears_the_outbox_file ... ok
+test report_session_tests::an_explicit_outbox_inside_the_checkpoint_root_is_refused_before_connecting ... ok
+test report_session_tests::report_over_session_with_the_fresh_report_is_refused_before_connecting ... ok
+test startup_gc_tests::a_checkpoint_root_that_is_a_file_stops_at_startup_gc ... ok
+test report_session_tests::an_ack_with_a_wrong_report_hash_is_rejected_and_the_outbox_file_stays ... ok
+test startup_gc_tests::run_collects_partial_checkpoints_before_anything_else ... ok
+test tests::filesystem_root_as_checkpoint_root_is_refused ... ok
+test startup_gc_tests::a_second_agent_on_the_same_checkpoint_root_refuses_and_leaves_the_partial ... ok
+test report_session_tests::an_outboxed_report_survives_the_checkpoint_startup_gc ... ok
+test tests::revoke_notice_for_expired_lease_is_rejected ... ok
+test tests::revoke_notice_matching_lease_and_epoch_is_applicable ... ok
+test tests::revoke_notice_with_wrong_fence_epoch_is_rejected ... ok
+test tests::revoke_notice_with_wrong_lease_id_is_rejected ... ok
+test tests::workload_run_root_is_never_inside_the_checkpoint_root ... ok
+test defect_19_tests::an_uncaptured_missing_output_is_not_a_failure ... ok
+test defect_19_tests::an_unblocked_run_finalizes ... ok
+test startup_gc_tests::startup_collects_a_partial_checkpoint_and_keeps_a_committed_one ... ok
+test defect_19_tests::a_publish_failure_after_hash_verification_is_not_a_finalization_failure ... ok
+test report_session_tests::a_valid_outbox_file_that_cannot_be_sent_stays_pending ... ok
+test tests::nonce_attempt_counter_ignores_failed_connects ... ok
+
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.66s
+
+
+running 4 tests
+test renewing_during_execution_with_expect_replay_is_refused_before_connecting ... ok
+test renewing_during_execution_with_a_report_on_the_fresh_connection_is_refused_before_connecting ... ok
+test the_flag_without_an_observed_exit_refuses_instead_of_inventing_one ... ok
+test without_the_flag_nothing_extra_follows_the_ack ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 3 tests
+test an_exit_code_of_u32_max_is_kept_as_a_code ... ok
+test an_exit_code_of_259_is_kept_as_a_code ... ok
+test ordinary_exit_codes_are_kept ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 5 tests
+test opt_in_is_still_checked_before_everything ... ok
+test the_cheap_gate_runs_first ... ok
+test a_workload_that_asks_for_a_gpu_that_is_not_here_does_not_start ... ok
+test the_two_refusals_are_not_interchangeable ... ok
+test no_gpu_requirement_means_no_gpu_gate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 4 tests
+test the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off ... ok
+test run_refuses_a_missing_or_blank_target_before_connecting ... ok
+test run_refuses_unsupported_lane_combinations_before_connecting ... ok
+test the_report_guard_stays_out_of_a_lane_that_wants_no_reports ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+
+
+running 8 tests
+test the_panel_binds_only_to_loopback ... ok
+test a_request_with_a_foreign_host_header_is_refused ... ok
+test stopping_an_unknown_workload_reports_failure_not_success ... ok
+test the_workload_list_is_served_over_loopback ... ok
+test the_html_page_carries_its_defensive_headers ... ok
+test an_absurd_content_length_is_refused_without_allocating ... ok
+test a_request_without_a_host_header_is_refused ... ok
+test a_stop_without_the_token_is_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test the_page_actually_shows_what_the_owner_needs ... ok
+test consecutive_requests_are_served ... ok
+test a_taken_port_makes_the_agent_refuse_to_start ... ok
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-5108-1789618090401795700 dirs=0 removed=0
+OWNER_PANEL listening=http://127.0.0.1:56850/
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-19580-1789618090408878100 dirs=0 removed=0
+OWNER_PANEL listening=http://127.0.0.1:56852/
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-2336-1789618090510974700 dirs=0 removed=0
+OWNER_PANEL listening=http://127.0.0.1:56872/
+CHECKPOINT_STARTUP_GC root=C:\Users\PLAYDA~1\AppData\Local\Temp\gputeer-checkpoints-1060-1789618090520611000 dirs=0 removed=0
+OWNER_PANEL listening=http://127.0.0.1:56874/
+test a_different_seed_yields_a_different_token ... ok
+test the_panel_token_is_stable_across_restarts ... ok
+test without_execution_no_panel_is_opened ... ok
+test enabling_execution_starts_the_panel_even_without_a_port ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.46s
+
+
+running 5 tests
+test stop_failure_is_distinguishable_in_logs ... ok
+test refused_executions_hand_out_no_stopper ... ok
+test owner_stop_exit_code_is_not_success ... ok
+test the_owner_can_stop_a_running_workload ... ok
+test stopping_twice_is_not_an_error ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 8 tests
+test an_invalid_bool_is_refused_by_name ... ok
+test a_valid_duplicate_bool_is_accepted_and_the_last_value_wins ... ok
+test an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused ... ok
+test a_misspelled_flag_is_refused_by_name ... ok
+test a_valid_numeric_duplicate_is_accepted ... ok
+test the_correct_spelling_is_accepted ... ok
+test the_plain_arguments_parse ... ok
+test an_invalid_number_hidden_by_a_later_duplicate_is_still_refused ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 162 tests
+test attempt_report_store::tests::a_report_with_its_current_reservation_records_the_reservation_binding ... ok
+test attempt_report_store::tests::attempt_node_and_verified_signer_are_bound_to_durable_owner ... ok
+test attempt_report_store::tests::a_v2_output_finalization_failure_is_stored_and_replays ... ok
+test attempt_report_store::tests::a_stored_body_that_breaks_the_field_rules_fails_closed ... ok
+test attempt_report_store::tests::a_late_report_still_has_to_match_the_assignment_record ... ok
+test attempt_report_store::tests::a_database_without_the_binding_source_column_is_migrated ... ok
+test attempt_report_store::tests::failure_after_insert_rolls_back_report_and_preserves_control_state ... ok
+test attempt_report_store::tests::exact_replay_returns_first_row_and_changed_body_or_signature_conflicts ... ok
+test attempt_report_store::tests::signature_and_binding_survive_reopen_without_state_or_release_side_effects ... ok
+test checkpoint_manifest_store::tests::complete_signed_manifest_and_store_derived_hash_survive_reopen ... ok
+test attempt_report_store::tests::unspecified_and_unknown_outcomes_create_no_row ... ok
+test attempt_report_store::tests::missing_or_different_reservation_owner_creates_no_row ... ok
+test attempt_report_store::tests::signed_reports_that_break_the_field_rules_create_no_row ... ok
+test checkpoint_manifest_store::tests::current_attempt_binding_corruption_fails_closed ... ok
+test checkpoint_manifest_store::tests::exact_replay_returns_first_row_and_changed_body_or_signature_conflicts ... ok
+test checkpoint_manifest_store::tests::failure_after_insert_rolls_back_manifest_and_preserves_reservation ... ok
+test attempt_report_store::tests::wrong_job_attempt_and_stale_fence_create_no_row ... ok
+test attempt_report_store::tests::all_five_known_terminal_outcomes_are_stored ... ok
+test device_id_validation_tests::ordinary_identifiers_pass ... ok
+test device_id_validation_tests::the_forbidden_shapes_are_actually_refused ... ok
+test checkpoint_manifest_store::tests::producer_signer_mismatch_with_durable_owner_creates_no_row ... ok
+test checkpoint_manifest_store::tests::storage_has_no_checkpoint_state_or_control_state_side_effects ... ok
+test inventory_store::tests::a_bootstrap_import_produces_schedulable_candidates ... ok
+test inventory_store::tests::a_failing_entry_rolls_back_every_earlier_entry ... ok
+test inventory_store::tests::a_bad_bootstrap_entry_is_rejected_without_waiting_for_the_write_lock ... ok
+test inventory_store::tests::bad_input_is_rejected_without_waiting_for_the_write_lock ... ok
+test inventory_store::tests::corrupt_payload_and_observation_markers_fail_closed ... ok
+test inventory_store::tests::importing_the_same_bootstrap_twice_creates_nothing_new ... ok
+test checkpoint_manifest_store::tests::missing_or_different_reservation_owner_creates_no_row ... ok
+test inventory_store::tests::invalid_registry_and_inventory_inputs_have_no_side_effects ... ok
+test inventory_store::tests::maximum_revision_timestamp_and_resource_values_round_trip ... ok
+test inventory_store::tests::every_replacement_fault_rolls_back_parent_and_all_children ... ok
+test inventory_store::tests::registry_retry_is_idempotent_and_every_identity_conflict_preserves_row ... ok
+test inventory_store::tests::multiple_agents_reopen_and_project_in_node_order ... ok
+test inventory_store::tests::corrupted_enum_key_revision_and_gpu_child_fail_closed_after_reopen ... ok
+test inventory_store::tests::the_two_halves_of_an_entry_must_name_the_same_node ... ok
+test checkpoint_manifest_store::tests::wrong_job_attempt_and_stale_fence_create_no_row ... ok
+test inventory_store::tests::same_revision_requires_byte_equivalent_normalized_payload ... ok
+test inventory_store::tests::stale_and_future_observation_times_are_preserved_and_rejected_by_scheduler ... ok
+test job_store::tests::blank_identity_and_zero_queue_duration_fail_closed ... ok
+test inventory_store::tests::two_connections_competing_for_one_revision_leave_one_complete_payload ... ok
+test inventory_store::tests::unknown_and_explicit_zero_facts_remain_distinct_in_projection ... ok
+test job_store::tests::changed_payload_with_same_idempotency_key_is_rejected_without_overwrite ... ok
+test job_store::tests::clock_rollback_does_not_advance_state ... ok
+test job_store::tests::body_hash_and_job_identity_corruption_fail_closed_independently ... ok
+test job_store::tests::deadline_boundary_is_strict_and_one_millisecond_after_fails ... ok
+test job_store::tests::device_signer_corruption_and_legacy_missing_body_fail_closed ... ok
+test job_store::tests::corrupted_state_and_truncated_integer_fail_closed ... ok
+test job_store::tests::fault_after_manifest_insert_rolls_back_job_body_and_idempotency ... ok
+test attempt_report_store::tests::corrupt_body_hash_identity_signer_and_fence_fail_closed ... ok
+test job_store::tests::fixed_width_zero_bytes_are_not_invented_as_an_invalid_encoding ... ok
+test job_store::tests::file_store_survives_reopen_and_reports_durable ... ok
+test job_store::tests::empty_and_undecodable_manifest_bodies_fail_closed ... ok
+test job_store::tests::only_normative_initial_transition_order_is_allowed ... ok
+test job_store::tests::no_independent_timeout_never_turns_into_zero_duration_timeout ... ok
+test job_store::tests::opens_pre_staging_schema_and_preserves_existing_job ... ok
+test checkpoint_manifest_store::tests::missing_or_unspecified_root_and_blank_identity_create_no_row ... ok
+test job_store::tests::identity_and_supplied_hash_mismatches_create_no_rows ... ok
+test job_store::tests::planning_and_enqueue_retries_are_idempotent_but_plan_change_is_not ... ok
+test job_store::tests::permanent_infeasibility_requires_reason_and_stays_distinct ... ok
+test job_store::tests::same_job_id_with_another_key_is_rejected ... ok
+test job_store::tests::queue_timeout_boundary_is_strict_and_one_millisecond_after_fails ... ok
+test job_store::tests::submission_retry_returns_original_timestamp_and_no_duplicate ... ok
+test job_store::tests::verified_manifest_body_signature_and_derived_hash_survive_reopen ... ok
+test job_store::tests::u64_max_timestamp_round_trips_without_sqlite_integer_truncation ... ok
+test job_store::tests::terminal_retry_returns_original_and_different_reason_cannot_overwrite ... ok
+test job_store::tests::verified_manifest_replay_returns_original_and_changed_manifest_conflicts ... ok
+test lease_store::tests::conflicting_holder_node_id_is_rejected_without_overwrite ... ok
+test lease_store::tests::conflicting_attempt_id_is_rejected_without_overwrite ... ok
+test lease_store::tests::conflicting_identity_is_rejected_without_overwrite ... ok
+test job_store::tests::queue_is_deterministic_fifo_with_job_id_tie_breaker ... ok
+test lease_store::tests::is_durable_reports_true_for_file_backed_db ... ok
+test lease_store::tests::conflicting_issuing_coordinator_id_is_rejected_without_overwrite ... ok
+test lease_store::tests::expired_existing_lease_is_rejected_without_overwrite ... ok
+test lease_store::tests::classify_resume_obeys_identity_revoke_expiry_and_epoch_order ... ok
+test lease_store::tests::expiry_boundary_is_inclusive ... ok
+test lease_store::tests::mark_revoked_persists_and_is_idempotent ... ok
+test lease_store::tests::open_insert_reopen_get_preserves_all_fields ... ok
+test lease_store::tests::renew_missing_lease_id_is_not_found_and_creates_nothing ... ok
+test lease_store::tests::renew_expiry_at_now_returns_expired_without_update ... ok
+test lease_store::tests::opens_old_schema_and_preserves_existing_lease_as_active ... ok
+test lease_store::tests::renew_existing_updates_only_expiry_fields ... ok
+test lease_store::tests::renew_within_duration_missing_lease_id_is_not_found ... ok
+test lease_store::tests::renew_expiry_one_millisecond_after_now_succeeds ... ok
+test lease_store::tests::renew_within_duration_extends_expiry_when_not_exceeded ... ok
+test lease_store::tests::renew_within_duration_refuses_and_does_not_extend_when_exceeded ... ok
+test lease_store::tests::renew_within_duration_treats_clock_rollback_as_exceeded ... ok
+test manifest_requirements::tests::a_complete_manifest_becomes_complete_requirements ... ok
+test lease_store::tests::u64_max_fields_round_trip_without_truncation ... ok
+test lease_store::tests::same_identity_reissue_returns_stored_value_not_candidate ... ok
+test manifest_requirements::tests::a_missing_nested_message_is_named ... ok
+test manifest_requirements::tests::a_zero_vram_floor_is_still_accepted_as_no_floor ... ok
+test lease_store::tests::revoked_lease_cannot_be_reissued_or_overwritten ... ok
+test lease_store::tests::revoked_lease_cannot_be_renewed ... ok
+test lease_store::tests::unexpired_existing_lease_is_reissued ... ok
+test manifest_requirements::tests::a_zero_gpu_count_becomes_the_documented_default_of_one ... ok
+test manifest_requirements::tests::an_empty_model_list_means_no_constraint ... ok
+test multi_agent::tests::a_duplicate_device_id_is_refused ... ok
+test multi_agent::tests::a_single_identity_is_refused ... ok
+test multi_agent::tests::different_base_ids_stay_different ... ok
+test multi_agent::tests::each_agent_gets_a_distinct_id ... ok
+test multi_agent::tests::every_listed_agent_is_registered ... ok
+test multi_agent::tests::shadowing_the_primary_identity_is_refused ... ok
+test multi_agent::tests::the_same_agent_always_gets_the_same_id ... ok
+test manifest_requirements::tests::an_enum_value_this_build_does_not_know_is_refused ... ok
+test manifest_requirements::tests::an_absent_submitter_member_is_refused_rather_than_taken_from_team_id ... ok
+test manifest_requirements::tests::each_undeclared_resource_amount_is_refused_by_its_own_name ... ok
+test lease_store::tests::renew_within_duration_refuses_exactly_at_the_limit_and_renews_just_before ... ok
+test manifest_requirements::tests::every_unspecified_axis_is_refused_by_its_own_name ... ok
+test manifest_requirements::tests::every_valid_variant_of_every_axis_maps_to_its_own_value ... ok
+test orchestrate::tests::corrupt_inventory_fails_closed_before_staging ... ok
+test orchestrate::tests::one_candidate_bypasses_ranking_and_stages_that_node ... ok
+test orchestrate::tests::invalid_ranking_policy_fails_closed_before_staging ... ok
+test post_ack_wait_tests::an_expired_lease_is_refused_instead_of_waited_for ... ok
+test post_ack_wait_tests::the_first_read_never_waits_less_than_the_io_timeout ... ok
+test post_ack_wait_tests::the_first_read_waits_for_the_remaining_lease ... ok
+test post_ack_wait_tests::without_a_manifest_the_first_read_is_not_extended ... ok
+test orchestrate::tests::multiple_candidates_stage_the_best_fit_winner ... ok
+test orchestrate::tests::operation_replay_returns_the_original_durable_staging_result ... ok
+test orchestrate::tests::concurrent_orchestration_of_one_gpu_stages_exactly_one_job ... ok
+test orchestrate::tests::staging_validation_error_does_not_claim_success_or_consume_epoch ... ok
+test orchestrate::tests::zero_candidates_preserves_queued_job_and_creates_no_attempt ... ok
+test replica_ack_store::tests::complete_signed_ack_and_store_derived_hash_survive_reopen ... ok
+test orchestrate::tests::single_and_ranked_winner_use_the_same_gpu_assignment_rule ... ok
+test replica_ack_store::tests::failure_after_insert_rolls_back_and_control_rows_are_unchanged ... ok
+test replica_ack_store::tests::exact_replay_returns_first_row_changed_replay_conflicts_and_later_ack_is_separate ... ok
+test replica_ack_store::tests::list_is_deterministic_and_does_not_filter_replica_claims ... ok
+test staging_store::tests::changed_operation_payload_and_reused_attempt_or_lease_ids_fail_closed ... ok
+test staging_store::tests::concurrent_distinct_jobs_reserving_one_gpu_commit_exactly_once ... ok
+test staging_store::tests::distinct_nodes_do_not_share_a_global_reservation_lock ... ok
+test staging_store::tests::corrupt_or_max_counter_fails_without_partial_state ... ok
+test staging_store::tests::corrupt_inventory_and_reservation_revision_or_owner_fail_closed ... ok
+test staging_store::tests::every_injected_write_failure_rolls_back_job_attempt_lease_counter_and_operation ... ok
+test staging_store::tests::exact_reserved_replay_survives_inventory_refresh_but_changed_revision_conflicts ... ok
+test replica_ack_store::tests::missing_corrupt_or_changed_checkpoint_anchor_fails_closed ... ok
+test staging_store::tests::failure_after_gpu_binding_insert_rolls_back_every_staging_side_effect ... ok
+test staging_store::tests::failure_after_reservation_insert_rolls_back_reservation_and_all_staging_state ... ok
+test staging_store::tests::existing_lease_watermark_is_used_and_corrupt_or_max_epoch_rolls_back ... ok
+test replica_ack_store::tests::missing_anchor_wrong_root_sha256_and_wrong_length_create_no_row ... ok
+test staging_store::tests::invalid_state_identity_lifetime_and_clock_leave_state_unchanged ... ok
+test staging_store::tests::reopen_preserves_all_state_and_standalone_stores_read_and_mutate_the_lease ... ok
+test staging_store::tests::revision_zero_and_multiple_gpu_ids_survive_reopen_in_canonical_order ... ok
+test checkpoint_manifest_store::tests::corrupt_body_hash_identity_signer_fence_and_root_fail_closed ... ok
+test staging_store::tests::selected_gpu_binding_is_in_operation_payload_and_replay_returns_original ... ok
+test tests::a_liveness_path_without_expected_heartbeats_is_refused_by_the_common_guard ... ok
+test tests::an_expired_stored_lease_on_first_issue_is_a_policy_refusal_not_storage ... ok
+test tests::heartbeats_on_an_unreachable_lane_are_refused ... ok
+test tests::revoke_notice_test_overrides_are_signed_payload_values ... ok
+test tests::revoke_notice_uses_issued_lease_identity_and_epoch ... ok
+test tests::the_default_renew_extension_is_still_sixty_seconds_without_a_lease_store ... ok
+test tests::the_heartbeat_guard_stays_out_of_reachable_or_unexpecting_sessions ... ok
+test tests::the_renew_extension_is_applied_without_a_lease_store ... ok
+test tests::u32_from_stored_accepts_max_total_duration_seconds_default ... ok
+test tests::u32_from_stored_accepts_u32_max ... ok
+test tests::u32_from_stored_rejects_values_above_u32_max_instead_of_truncating ... ok
+test staging_store::tests::sequential_distinct_jobs_cannot_reserve_the_same_node_gpu ... ok
+test staging_store::tests::success_is_consistent_and_identical_retry_does_not_consume_epoch ... ok
+test staging_store::tests::stale_or_missing_inventory_fails_before_any_staging_side_effect ... ok
+test staging_store::tests::two_connections_stage_one_queued_job_exactly_once ... ok
+test staging_store::tests::invalid_or_missing_selected_gpu_ids_fail_before_staging ... ok
+test staging_store::tests::missing_blank_noncanonical_or_gapped_stored_gpu_binding_fails_closed ... ok
+test replica_ack_store::tests::corrupt_body_hash_identity_signer_time_and_root_fail_closed ... ok
+
+test result: ok. 162 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.01s
+
+
+running 30 tests
+test a_hello_with_a_broken_signature_is_rejected_not_missing ... ok
+test a_fresh_renew_whose_lease_lives_in_another_store_stops_the_listener ... ok
+test a_hello_for_another_mode_is_refused ... ok
+test a_first_frame_that_is_not_a_hello_is_refused_as_hello_missing ... ok
+test a_forged_signature_is_refused_before_the_store ... ok
+test a_corrupt_stored_lease_row_on_the_stored_lane_stops_the_listener ... ok
+test a_first_frame_whose_content_mentions_the_lease_store_does_not_stop_the_listener ... ok
+test a_late_report_after_the_reservation_is_gone_is_stored_and_acknowledged ... ok
+test a_renew_session_for_a_lease_issued_by_another_coordinator_is_refused_before_the_store_changes ... ok
+test a_non_terminal_outcome_is_refused_with_the_outcome_value ... ok
+test a_report_for_another_job_is_refused_by_job_id ... ok
+test a_report_for_another_attempt_is_refused_by_attempt_id ... ok
+test a_renew_session_with_a_lower_fence_epoch_is_superseded ... ok
+test a_renew_session_without_a_lease_db_is_refused ... ok
+test a_report_from_another_fence_epoch_is_refused_by_fence_epoch ... ok
+test a_renew_session_on_a_new_connection_renews_the_stored_lease ... ok
+test a_report_session_refuses_a_report_that_breaks_the_field_rules_without_an_ack ... ok
+test a_report_session_stores_the_report_and_answers_with_a_signed_ack ... ok
+test a_v2_report_that_breaks_the_field_rules_is_refused_before_the_store ... ok
+test a_second_report_that_contradicts_the_first_is_refused ... ok
+test a_report_session_without_the_flag_is_refused_and_nothing_is_stored ... ok
+test a_signed_terminal_report_crosses_the_wire_and_lands_in_the_store ... ok
+test a_session_that_expects_no_reports_behaves_exactly_as_before ... ok
+test a_v2_report_with_an_observed_zero_exit_crosses_the_wire_and_is_stored ... ok
+test an_ack_whose_grant_id_mentions_the_lease_store_does_not_stop_the_listener ... ok
+test a_revoke_store_lock_timeout_before_renew_stops_the_listener ... ok
+test an_unexpected_frame_in_place_of_the_ack_is_named_by_kind_without_its_content ... ok
+test the_same_report_resent_over_a_new_report_session_is_acknowledged_as_not_created ... ok
+test the_same_report_sent_twice_is_idempotent ... ok
+test with_a_durable_lease_store_an_ack_mentioning_lease_failure_does_not_stop_the_listener ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.03s
+
+
+running 5 tests
+test the_guard_stays_out_of_a_session_that_expects_no_reports ... ok
+test the_resume_lane_is_refused ... ok
+test reports_without_a_control_db_are_refused_before_bind ... ok
+test the_multi_agent_lane_is_refused_from_both_entry_points ... ok
+test flags_that_may_end_the_session_after_ack_are_refused ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test the_stored_enum_is_a_strict_subset_of_the_normative_one ... ok
+test every_stored_state_maps_to_a_normative_state ... ok
+test the_normative_enum_still_has_the_states_this_crate_expects ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test a_liveness_path_without_expected_heartbeats_is_refused_by_run_before_bind ... ok
+test heartbeats_on_the_multi_agent_lane_are_refused_from_both_entry_points ... ok
+test heartbeats_with_the_resume_lane_are_refused_before_bind ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 2 tests
+test concurrent_identical_submit_creates_once_and_replays_once ... ok
+test concurrent_key_reuse_with_changed_payload_has_one_winner_and_no_overwrite ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 2 tests
+test complete_winner_assertion_rejects_each_loser_marker ... ok
+test concurrent_first_issue_has_one_complete_winner ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.74s
+
+
+running 6 tests
+test run_refuses_the_multi_agent_combination ... ok
+test run_refuses_the_resume_combination ... ok
+test the_report_guard_stays_out_of_a_lane_that_wants_no_reports ... ok
+test the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off ... ok
+test flags_that_may_end_the_session_after_ack_are_refused ... ok
+test the_lane_guard_runs_before_bind_for_every_lane ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 33 tests
+test a_different_device_cannot_take_over_an_existing_reporter_machine ... ok
+test a_newer_observation_replaces_the_older_one ... ok
+test a_body_whose_hash_no_longer_matches_is_refused ... ok
+test a_corrupted_row_is_reported_as_corruption_not_as_a_device_conflict ... ok
+test a_machine_with_mixed_devices_is_refused_even_for_the_first_sorted_device ... ok
+test a_body_that_disagrees_with_its_index_columns_is_refused ... ok
+test a_node_cannot_report_itself_as_unreachable ... ok
+test a_report_addressed_to_another_coordinator_is_refused ... ok
+test a_report_survives_a_restart ... ok
+test a_stored_device_that_disagrees_with_the_body_is_refused ... ok
+test an_in_memory_store_is_not_durable ... ok
+test a_stored_observation_time_that_disagrees_with_the_body_is_refused ... ok
+test an_older_observation_never_overwrites_a_newer_one ... ok
+test another_device_cannot_claim_a_machine_through_a_different_target ... ok
+test asking_about_a_node_nobody_reported_is_not_an_error ... ok
+test each_empty_identity_field_is_refused_on_its_own ... ok
+test corruption_is_caught_on_the_single_row_path_too ... ok
+test one_device_can_still_claim_two_machines_and_the_store_makes_that_visible ... ok
+test one_neighbor_can_report_about_several_nodes ... ok
+test opening_without_a_coordinator_identity_is_refused ... ok
+test a_corrupted_eviction_candidate_is_refused_not_silently_dropped ... ok
+test a_corrupted_time_column_cannot_hide_a_row_from_eviction ... ok
+test reports_from_different_neighbors_about_one_node_are_all_kept ... ok
+test an_observation_older_than_everything_stored_does_not_evict ... ok
+test rows_written_for_another_coordinator_are_refused_on_read_too ... ok
+test the_same_observation_time_is_not_a_new_observation ... ok
+test the_stored_body_and_hash_are_pinned_to_fixed_bytes ... ok
+test a_single_insert_at_the_bound_evicts_exactly_one_row ... ok
+test a_store_already_over_the_bound_is_brought_back_under_it ... ok
+test eviction_drops_the_oldest_observation_of_that_device ... ok
+test over_the_bound_an_observation_not_newer_than_the_doomed_set_is_refused ... ok
+test reaching_the_quota_does_not_block_updating_an_existing_report ... ok
+test one_device_cannot_grow_the_store_without_bound ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.01s
+
+
+running 16 tests
+test a_heartbeat_without_a_timestamp_is_refused ... ok
+test a_pointless_or_unknown_rebind_is_refused ... ok
+test a_different_device_claiming_the_same_node_is_refused ... ok
+test a_late_older_heartbeat_does_not_move_the_clock_backwards ... ok
+test a_corrupted_row_fails_closed ... ok
+test a_newer_heartbeat_advances ... ok
+test a_mistaken_rebind_can_be_retargeted ... ok
+test a_pending_rebind_can_be_cancelled ... ok
+test a_same_millisecond_tie_uses_the_same_rule_as_the_kernel ... ok
+test an_identical_timestamp_does_not_advance ... ok
+test a_tampered_body_is_caught_by_the_hash ... ok
+test an_observation_survives_a_restart ... ok
+test an_approved_rebind_only_admits_the_named_device ... ok
+test stored_facts_feed_the_liveness_kernel ... ok
+test without_an_approval_a_device_change_is_still_refused ... ok
+test each_node_keeps_exactly_one_row ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+
+running 21 tests
+test a_refused_release_leaves_no_trace ... ok
+test a_non_terminal_outcome_cannot_release ... ok
+test a_report_that_breaks_the_field_rules_cannot_release_even_when_the_gates_pass ... ok
+test a_non_completed_outcome_does_not_need_the_artifact_guard ... ok
+test a_report_from_an_older_fence_is_caught_by_the_evidence_check ... ok
+test a_failure_between_the_deletes_and_the_insert_rolls_everything_back ... ok
+test a_missing_reservation_without_a_release_record_fails_closed ... ok
+test a_moved_attempt_fence_blocks_the_release ... ok
+test a_report_that_does_not_match_the_stored_evidence_cannot_release ... ok
+test an_in_memory_store_is_not_durable ... ok
+test releasing_removes_the_reserved_gpu_rows_too ... ok
+test a_verified_terminal_report_releases_the_reservation ... ok
+test releasing_twice_with_the_same_evidence_is_idempotent ... ok
+test after_release_another_job_can_reserve_the_same_node ... ok
+test a_reservation_held_by_another_attempt_is_never_deleted ... ok
+test the_authorization_gate_is_checked_before_the_evidence ... ok
+test the_release_record_survives_reopening_the_store ... ok
+test todays_honest_caller_cannot_release_anything ... ok
+test without_stored_terminal_evidence_the_reservation_is_not_released ... ok
+test two_concurrent_releases_produce_exactly_one_release ... ok
+test each_missing_declaration_blocks_on_its_own ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.16s
+
+
+running 21 tests
+test a_valid_numeric_duplicate_still_uses_the_last_value ... ok
+test an_absent_stored_id_is_refused ... ok
+test a_neighbor_report_db_without_expected_reports_is_refused ... ok
+test a_liveness_db_without_expected_heartbeats_is_refused ... ok
+test an_invalid_bool_is_refused_by_name ... ok
+test an_id_that_disagrees_with_the_stored_one_is_refused ... ok
+test an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused ... ok
+test an_unknown_flag_is_refused_by_name_on_either_lane ... ok
+test every_absent_stored_id_is_refused_by_name ... ok
+test lease_db_dependent_flags_are_accepted_without_a_lease_db ... ok
+test an_invalid_number_hidden_by_a_later_duplicate_is_still_refused ... ok
+test stored_lane_only_flags_are_refused_on_the_legacy_lane ... ok
+test multi_agent_only_flags_are_refused_on_the_sequential_lane ... ok
+test session_id_is_not_a_coordinator_flag_on_any_lane ... ok
+test the_plain_stored_lane_parses ... ok
+test the_stored_lane_without_a_submitter_keyring_is_refused ... ok
+test every_stored_lane_only_flag_is_refused_on_the_legacy_lane ... ok
+test never_applied_flags_are_refused_without_a_lease_db_too ... ok
+test each_flag_the_stored_lane_does_not_apply_is_refused_by_name ... ok
+test the_same_flags_are_accepted_on_the_legacy_lane ... ok
+test resume_with_a_control_db_is_refused_at_startup_not_by_the_stored_lane_checks ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test crates\coordinator\src\replica_ack_store.rs - replica_ack_store::CoordinatorReplicaAckStore::store_verified_ack (line 224) - compile fail ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src\lib.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\gputeer_agent-795e53b84d357b44.exe)
+     Running tests\attempt_report_send.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_report_send-e647d98c243cc7e3.exe)
+     Running tests\exit_code_preservation.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\exit_code_preservation-d40c2497ae019c4e.exe)
+     Running tests\gpu_preflight_gate.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\gpu_preflight_gate-e9d740ce7f6c7f33.exe)
+     Running tests\neighbor_report_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\neighbor_report_lane_guard-5a244155a24e288f.exe)
+     Running tests\owner_panel_http.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\owner_panel_http-5edf6f3e7b3e571f.exe)
+     Running tests\owner_panel_startup.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\owner_panel_startup-a52c129ffaab5e1e.exe)
+     Running tests\owner_stop_control.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\owner_stop_control-1fbd844031a4dbf5.exe)
+     Running tests\unknown_flags.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\unknown_flags-6db1360ae58d40c8.exe)
+     Running unittests src\lib.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\gputeer_coordinator-4e80b1a575507b7e.exe)
+     Running tests\attempt_report_ingress.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_report_ingress-b2316752ec9c4402.exe)
+     Running tests\attempt_report_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_report_lane_guard-91334101acacabf6.exe)
+     Running tests\attempt_state_parity.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\attempt_state_parity-97174f478804985d.exe)
+     Running tests\heartbeat_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\heartbeat_lane_guard-cd1bab8d8d6a8083.exe)
+     Running tests\job_store_concurrent_submit.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\job_store_concurrent_submit-1d2232d99c09b7d1.exe)
+     Running tests\lease_store_concurrent_issue.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\lease_store_concurrent_issue-fd6a2c56a0076943.exe)
+     Running tests\neighbor_report_lane_guard.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\neighbor_report_lane_guard-8f50bced3bbbf08c.exe)
+     Running tests\neighbor_report_store.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\neighbor_report_store-28755206389573ca.exe)
+     Running tests\node_liveness_store.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\node_liveness_store-dd7167bc019a73f7.exe)
+     Running tests\reservation_release.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\reservation_release-c6f20831d1bd2624.exe)
+     Running tests\stored_lane_flags.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\stored_lane_flags-7f90f30d7ed4805f.exe)
+   Doc-tests gputeer_agent
+   Doc-tests gputeer_coordinator
+
+
+## cargo test -j 1 -p gputeer-cli --test ack_before_execution --test grant_over_wire --test issue_grant --test shared_control_db exit=0
+
+running 10 tests
+test a_refused_preflight_sends_no_ack ... ok
+test a_revoke_read_failure_after_the_workload_does_not_reconnect_and_run_it_again ... ok
+test a_refused_renew_session_is_reported_not_hidden ... ok
+test a_connection_that_ran_the_workload_does_not_reconnect_and_run_it_again ... ok
+test a_renew_result_with_a_broken_signature_stops_the_renew_thread ... ok
+test the_agent_renews_its_lease_over_new_connections_while_the_workload_runs ... ok
+test a_workload_longer_than_the_io_timeout_is_acknowledged_before_it_runs ... ok
+test the_first_read_after_ack_waits_for_the_workload_within_the_lease ... ok
+test the_read_timeout_returns_to_the_io_timeout_after_the_first_read ... ok
+test the_first_read_after_ack_gives_up_at_lease_expiry ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.36s
+
+
+running 8 tests
+test a_manifest_file_on_the_stored_lane_is_refused_at_startup ... ok
+test an_agent_process_accepts_a_grant_built_from_the_stored_reservation ... ok
+test a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire ... ok
+test the_exit_report_crosses_a_report_session_and_the_agent_verifies_the_ack ... ok
+test with_the_report_off_the_workload_runs_but_no_report_row_is_stored ... ok
+test without_report_sessions_on_the_coordinator_the_agent_fails_and_keeps_the_report ... ok
+test without_a_stored_reservation_the_coordinator_refuses_to_build_a_grant ... ok
+test a_workload_longer_than_the_io_timeout_still_gets_its_report_stored ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.77s
+
+
+running 19 tests
+test a_non_durable_control_db_is_refused ... ok
+test a_malformed_key_file_is_refused ... ok
+test a_lease_whose_fence_disagrees_with_its_attempt_yields_no_grant ... ok
+test a_grant_is_signed_from_stored_facts_and_verifies ... ok
+test a_grant_outliving_its_lease_is_refused ... ok
+test a_reservation_held_by_another_job_yields_no_grant ... ok
+test a_revoked_lease_yields_no_grant ... ok
+test a_grant_that_outlives_its_manifest_is_refused_at_the_boundary ... ok
+test a_queued_but_unstaged_job_gets_no_grant ... ok
+test a_stored_manifest_whose_signature_no_longer_verifies_gets_no_grant ... ok
+test a_submitter_no_longer_in_the_keyring_gets_no_grant ... ok
+test an_attempt_belonging_to_another_job_yields_no_grant ... ok
+test an_expired_lease_at_issue_time_is_refused ... ok
+test an_explicit_flag_allows_replacing_the_file ... ok
+test an_existing_out_file_is_not_clobbered ... ok
+test an_unknown_attempt_or_lease_gets_no_grant ... ok
+test an_unknown_job_gets_no_grant ... ok
+test the_grant_carries_the_stored_manifest_and_its_hash ... ok
+test reissuing_with_the_same_input_produces_an_identical_grant ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.01s
+
+
+running 2 tests
+test both_imports_into_one_control_db_let_staging_see_the_inventory ... ok
+test splitting_the_two_databases_breaks_the_reservation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests\ack_before_execution.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\ack_before_execution-72ce49cd1bb4c2cb.exe)
+     Running tests\grant_over_wire.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\grant_over_wire-b468dfb326e4063c.exe)
+     Running tests\issue_grant.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\issue_grant-49b64aeb723d22c5.exe)
+     Running tests\shared_control_db.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\shared_control_db-783211f347279486.exe)
+
+
+## cargo test -j 1 -p gputeer-checkpoint --test codex_findings --test durability_chaos exit=0
+
+running 13 tests
+test k2_zero_attempts_returns_error_not_panic ... ok
+test k1f_registered_file_named_like_a_lock_file_is_preserved ... ok
+test k4_write_once_must_reject_path_traversal ... ok
+test k1e_gc_partial_reclaims_dead_locks_but_preserves_held_ones ... ok
+test k1b_write_once_is_idempotent_for_identical_content ... ok
+test k1_write_once_must_detect_content_mismatch ... ok
+test k1c_concurrent_same_name_writers_only_one_writer_wins ... ok
+test k3_documents_rename_then_syncdir_failure_semantics ... ok
+test k1d_lock_is_released_when_holder_is_dropped_so_next_writer_proceeds ... ok
+test k4c_data_file_named_like_a_lock_file_is_rejected ... ok
+test k2b_normal_policy_still_works ... ok
+test write_once_leaves_no_tmp_behind ... ok
+test k4b_normal_names_including_subdirs_still_work ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+running 17 tests
+test allowed_transitions_follow_normative_table ... ok
+test durability_requirements_match_baseline ... ok
+test negative_partial_can_never_become_canonical_candidate ... ok
+test negative_undefined_transitions_are_rejected ... ok
+test gc_removes_orphan_tmp_files ... ok
+test adr026_write_once_is_idempotent_for_same_name ... ok
+test replica_counting_applies_all_normative_rules ... ok
+test manifest_json_roundtrip ... ok
+test negative_hash_mismatch_is_detected ... ok
+test pointer_replace_exhaustion_is_explicit_error_not_silent ... ok
+test sync_dir_works_on_this_platform ... ok
+test hash_verification_passes_for_intact_files ... ok
+test manifest_last_rule_identifies_partial_checkpoints ... ok
+test startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint ... ok
+test pointer_replace_retries_and_eventually_reports_error ... ok
+test write_once_survives_readers_with_no_share_delete ... ok
+test adr026_write_once_succeeds_while_readers_hold_files_open ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.99s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests\codex_findings.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\codex_findings-fda5ff4bb640ed59.exe)
+     Running tests\durability_chaos.rs (C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer\target\debug\deps\durability_chaos-08fa42e5680f8ff9.exe)
+
+
+## selftest exit=0
+1) 정상 handshake 성공 (self=2428 coordinator=19192 agent=6176, grant_id=01JGRANTSELFTEST000000001)
+2) 위조 coordinator_signature 거부 확인 (Agent 가 ACK 미발급)
+3) 위조 agent_signature 거부 확인 (Coordinator 가 성공 처리 안 함)
+4) 동일 Grant wire bytes replay 거부 확인 (DurableReplayGuard 계약과 동일하게 InMemoryReplayGuard 도 Duplicate 를 거부)
+5) 위조 nested Lease 서명 거부 확인 (Agent 가 Lease 를 outer Grant 와 독립적으로 검증한다)
+6) 만료된 Lease 거부 확인 (Lease::LIFETIME == LongLived 의 만료 검사)
+7) 정상 Lease 갱신 성공 (같은 epoch 유지, Agent 가 새 Lease 를 독립 검증)
+8) 위조 RenewLeaseRequest.node_signature 거부 확인 (Coordinator ingress 검증 실패)
+9) 위조 RenewLeaseResult.coordinator_signature 거부 확인 (Agent 결과 서명 검증 실패)
+10) 위조 nested 새 Lease 서명 거부 확인 (Agent 가 갱신된 Lease 를 outer 결과와 독립적으로 검증한다)
+11) epoch 강등 거부 확인 (FenceWatermark.check_and_advance 가 낮은 epoch 를 거부)
+12) RENEW_OUTCOME_SUPERSEDED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+13) RENEW_OUTCOME_QUARANTINED 서명된 정상 정책 거부로 분류 확인 (Lease·watermark 불변)
+14) RenewLeaseResult.request_nonce 불일치 거부 확인 (응답이 다른 요청에 재사용되는 것을 방지)
+15) epoch 상승 거부 확인 (계획서 범위 — FenceWatermark 만으로는 안 잡히고 명시적 검사가 필요하다)
+16) RenewLeaseRequest.fence_epoch 불일치 거부 확인 (Coordinator 가 요청 epoch 을 자신이 기억하는 값과 대조한다)
+17) durable FenceWatermark 재시작 방어 확인 — 별도 프로세스가 SQLite 파일로 이전 watermark 를 물려받아 낮은 epoch 의 최초 Grant 를 거부한다(뮤테이션 테스트로 확인한 대로, 이 하나의 관측 지점이 그 위에 올라타는 갱신 경로까지 보호한다)
+18) --fence-db :memory: fail closed 확인 (비영속 경로로 재시작 방어를 흉내내지 못한다)
+19) 같은 연결에서 3회 정상 갱신 확인 (회차별 nonce 분리로 replay guard 의 Duplicate 거부를 피한다 — 성공 자체가 증거다)
+20) Coordinator 영속 Lease 저장소 — 발급 상태 복원 확인 (별도 프로세스가 SQLite 파일로 저장된 epoch 를 CLI 의 틀린 값보다 우선시킨다)
+21) Coordinator 영속 Lease 저장소 — 재시작 후 갱신 대조 확인 (별도 프로세스가 갱신 요청의 fence_epoch 을 저장된 값과 대조한다, 그 실행의 CLI 값이 아니라)
+22) max_total_duration_seconds 초과 — 서명된 MAX_DURATION_EXCEEDED 로 갱신 거부 확인 (저장소 만료시각 불변)
+23) max_total_duration_seconds 대조군 — 한도 안에서는 여전히 RENEWED 확인 (오탐 없음)
+24) lease_store=Some + override — 서명된 정책 거부는 그대로이고 저장소는 전혀 갱신되지 않음을 확인 (코덱스 p114 지적의 회귀 방지)
+25) 영속 stored epoch(5)보다 낮은 renew 요청(4)을 연결 종료 없이 signed SUPERSEDED로 응답하고 Agent가 정상 정책 거부로 분류함
+26) 저장된 epoch와 같은 epoch의 기본 renew가 signed RENEWED임을 확인
+27) ACK 직후 revoke + 양쪽 renew=true 정상 종료 및 Agent의 revoke 후 renew 미생성 경로 확인 (Coordinator/Agent stub이 즉시 종료하므로 wire상 추가 프레임 부재 자체는 이 selftest가 직접 증명하지 않음)
+28) 위조 RevokeLeaseNotice 서명 거부 확인
+29) 잘못된 revoke lease_id 거부 확인
+30) 잘못된 revoke fence_epoch 거부 확인
+31) 이미 만료된 Lease에 대한 revoke 거부 확인
+32) renew_rounds=2의 첫 회차 SUPERSEDED 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인
+33) ACK 직후 의도적 연결 단절 후 새 프로세스 쌍이 같은 lease/fence DB에서 active Lease를 복원하고, 잘못된 CLI fence_epoch=3 대신 저장된 epoch=5로 Grant/ACK 성공
+34) 같은 lease_id를 다른 holder_node_id로 재접속 주장 시 Coordinator의 기존 IdentityConflict 거부 확인
+35) revoke 통지 후 revoked_at_unix_ms 영속화 및 새 Coordinator의 revoked Lease 최초 발급 거부 확인
+36) 짧은 TTL Lease를 실제로 만료시킨 뒤 새 프로세스 쌍의 재접속 복원 거부(Expired) 확인
+37) 같은 연결에서 revoke 후 갱신 요청을 보내 signed RENEW_OUTCOME_REVOKED(8)를 받고 즉시 종료 확인
+38) --lease-db 및 legacy opt-in 없는 Coordinator가 bind 전에 즉시 실패하고, Agent도 비리스닝 주소 연결 후 41ms 안에 exit=1로 비정상 종료함
+39) 정상 Grant 뒤 checkpoint_root/<digest>와 .durability.writing(WRITING) 생성 및 manifest 미생성 확인
+40) 위조 Lease 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인
+41) 만료 Lease 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인
+42) 영속 store에서 revoked Lease 재발급 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인
+43) 동일 attempt 재시도에서 같은 checkpoint_id와 단일 WRITING marker만 유지되어 write_once 멱등 경로가 확인됨
+44) checkpoint 디렉터리 자리가 일반 파일인 디스크 오류에서 기동 GC 통과 뒤 marker/AgentGrantAck/JOB_STARTED 없이 fail-closed 확인
+45) renew_rounds=2의 첫 회차 QUARANTINED(--renew-outcome-override 3) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인
+46) renew_rounds=2의 첫 회차 MAX_DURATION_EXCEEDED(--max-total-duration-seconds 2, 2.2초 경과) 후 양쪽이 교착 없이 종료되고 이후 RENEW_RESULT가 없음을 확인
+47) 짧은 TTL로 실제 renew 경로에서 Lease 만료를 유도하고 signed outcome 없이 raw error로 연결 종료 확인
+48) Agent가 expires_at_unix_ms <= now를 갱신 직전에 감지해 LOCAL_EXPIRED로 종료하고 RenewLeaseRequest 없이 Coordinator도 EOF 오류로 종료 (hard timeout=90s, elapsed=1.1615366s)
+49) 동일 Agent/Coordinator PID에서 ACK 후 1회 drop, connection_attempt=1의 새 Grant/ACK nonce로 bounded reconnect 성공; RESULT ok=true 각 1회 (hard timeout=120s, accept-timeout=5000ms)
+50) max-reconnect-attempts=2/max-duration=3s로 재접속 예산 소진; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)
+51) 첫 ACK 직후 durable revoke 후 재접속 get_or_issue가 revoked로 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)
+52) 2초 TTL과 2500ms next-accept 대기로 재접속 시 expired 거부; RESULT ok=true 없음 (hard timeout=120s, accept-timeout=5000ms)
+53) 명시적 --resume-protocol Hello-first Resume 성공(RESUMED), 저장된 expires_at 유지
+54) 존재하지 않는 lease_id를 UNKNOWN_LEASE로 거부
+55) job_id 불일치 identity conflict를 IDENTITY_CONFLICT로 거부
+56) durable revoke 상태를 REVOKED로 판정
+57) expires_at_unix_ms <= now 경계로 EXPIRED 판정
+58) 요청 epoch < 저장 epoch 방향을 SUPERSEDED로 고정
+59) 요청 epoch > 저장 epoch을 EPOCH_AHEAD(enum 값 8)로 고정
+60) durable store 없이 Resume을 요청한 구성 오류(Io)를 kind=storage로 분류하고 UNAVAILABLE 없이 fail-closed 종료
+61) 첫 연결의 truncated EOF를 transport 오류로 로그하고 connection_attempt=1의 두 번째 정상 Agent를 같은 Coordinator가 수락
+62) 첫 연결의 위조 Agent 서명을 protocol 오류로 로그하고 다음 정상 Agent 연결까지 accept 계속
+63) 존재하지 않는 --lease-db 부모 경로의 SQLite open 오류를 storage로 로그하고 bind/accept 전에 fail-closed 종료
+64) 정상 startup 뒤 열린 lease DB를 Resume 요청 직전에 손상시켜 kind=storage 분류·UNAVAILABLE 미서명·다음 accept 없는 즉시 run 종료를 검증
+65) Renew SQLite commit 직후 결과 전송 전 drop; 동일 Agent가 bounded reconnect 후 기존 Grant/ACK get_or_issue 경로에서 정확히 committed expiry를 받고 새 nonce Renew 성공
+66) ambiguous commit 뒤 durable revoke를 확정한 경우 두 번째 get_or_issue가 revoked로 fail-closed; Agent는 bounded ReconnectExhausted로 종료
+67) 300ms로 연장된 committed Lease를 next-accept 600ms 지연 중 만료시켜 두 번째 get_or_issue의 <= expiry 거부 확인
+68) ambiguous recovery 후에도 최초 issued_at 기준 1초 max-duration이 유지되어 새 heartbeat를 signed MAX_DURATION_EXCEEDED로 즉시 종료
+69) 재접속 뒤 old Renew nonce를 강제로 재사용하면 Coordinator InMemoryReplayGuard가 Duplicate/replay로 거부; 이전 응답 재생이 아님을 확인
+70) 명시적 unsafe legacy(--lease-db 없음)에서 request flush 뒤 결과 유실을 만들어도 durable recovery gate가 꺼져 connection_attempt=0 한 번만 실행
+71) commit/result 사이 drop과 함께 Coordinator max-connections=1 소진; Agent가 무한 대기 없이 ReconnectExhausted (4.2879186s, hard timeout=120s)
+72) recovery=true 오조합에서도 legacy Coordinator의 signed durable=false Grant를 ACK·새 Renew 전에 fatal 거부
+73) Coordinator가 RESUMED를 서명해도 durable fence watermark보다 낮은 epoch은 Agent가 거부
+74) Grant 에 실린 제출자 서명 Manifest 를 Agent 가 독립 검증하고 실행 지시(entrypoint·args)를 도출
+75) outer Grant 서명이 유효해도 nested Manifest 서명이 위조되면 Agent 가 거부
+76) Coordinator 가 Manifest 와 다른 manifest_hash 를 보내면 프로토콜 계층의 파생값 대조(DerivedMismatch)가 Grant 자체를 거부
+77) 제출자 공개키가 없으면 Manifest 가 실린 Grant 를 fail closed 로 거부(조용히 무시하지 않음)
+78) 서명이 유효해도 Manifest 의 job_id 가 같은 Grant 의 Lease 와 다르면 Agent 가 거부
+79) 실행 opt-in 이 꺼진 기본값에서는 실행 지시를 뽑되 프로세스를 띄우지 않고 WORKLOAD_SKIPPED 보고
+80) opt-in 시 실제 프로세스가 뜨고 exit_code=0 과 0 이 아닌 커밋 상한을 관측
+81) 종료 코드 7 을 관측해 WORKLOAD_RESULT ok=false 로 성공과 구분
+82) 커밋 상한을 걸 수 없으면(상한 0) 프로세스를 띄우지 않고 EXEC_REFUSED:LIMIT_NOT_APPLIED 로 거부
+83) 자식 출력이 체크포인트로 회수·확정되고, 작업 디렉터리는 루트 밖에 있다가 끝난 뒤 사라짐
+84) 종료 코드 7 로 실패한 실행도 산출물과 결과 파일이 남고 exit_code 가 기록됨
+85) NodeHeartbeat 2회가 실제 wire 로 전송되어 서명·replay·회차별 nonce 분리 검증을 통과(거부 대조는 86·87 이 본다)
+86) heartbeat 개수 불일치가 무한 대기가 아니라 식별 가능한 오류로 끝남
+87) 보유 Lease 와 세대가 다른 heartbeat 를 fence_epoch 대조로 거부
+89) 다른 Coordinator 앞으로 서명된 heartbeat 를 coordinator_device_id 대조로 거부
+90) 남의 Agent 이름으로 보낸 heartbeat 를 서명자 조회에서 거부(UnknownSigner)
+92) heartbeat 관측이 실제 wire 를 거쳐 durable 저장소까지 도달
+93) 이웃 신고 관측이 실제 wire 를 거쳐 durable 저장소까지 도달
+94) 다른 Coordinator 앞으로 서명된 이웃 신고는 거부되고 저장되지 않는다
+95) 이웃 신고 저장소 구성이 잘못되면(비영속/경로 부재) listener 를 열기 전에 멈춘다
+96) 잘못된 신고 구성(대상 없음/공백/multi-agent/resume)이면 Agent 가 연결조차 하지 않는다
+97) 구현하지 않은 lane 조합(multi-agent)은 조용히 무시하지 않고 거부한다 — 순서는 95 가 잰다
+88) 두 Agent 가 동시에 붙어(peak_concurrent=2) 각자 다른 Lease 를 받고 각자 ACK 까지 완료(01JLEASESELFTEST000000001-01JAGENTSELFTEST00000000001 / 01JLEASESELFTEST000000001-01JAGENT2SELFTEST0000000001)
+91) 다른 lane(Resume) 용으로 서명된 Hello 를 mode 대조로 거부
+
