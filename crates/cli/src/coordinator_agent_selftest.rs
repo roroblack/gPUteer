@@ -557,7 +557,11 @@ fn checkpoint_entries(root: &Path) -> Result<Vec<std::fs::DirEntry>, String> {
         .map_err(|error| format!("checkpoint root 읽기 실패({root:?}): {error}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("checkpoint root 항목 읽기 실패({root:?}): {error}"))?;
-    Ok(entries)
+    // ★ 결함 151 — 루트 소유 표식은 Agent 가 기동 때 쓴다(체크포인트가 아니다). 세지 않는다.
+    Ok(entries
+        .into_iter()
+        .filter(|entry| entry.file_name() != gputeer_agent::CHECKPOINT_ROOT_OWNER_MARKER)
+        .collect())
 }
 
 fn started_checkpoint_id(stdout: &str) -> Option<String> {
@@ -2997,11 +3001,17 @@ pub fn run() -> Result<String, String> {
     assert_no_agent_ack_or_marker(&revoked_42, checkpoint_root_42.path(), "revoked Lease(42)")?;
     report.push_str("42) 영속 store에서 revoked Lease 재발급 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
 
-    // ── 43. 동일 attempt 재시도는 같은 digest 디렉터리에 멱등 기록 ────
+    // ── 43. 동일 attempt 재기동은 기동 GC 뒤 같은 digest 디렉터리에 새로 기록(결함 140 · 155) ────
     let checkpoint_root_43 = tempfile::tempdir()
         .map_err(|e| format!("동일 attempt retry marker root 생성 실패(43): {e}"))?;
     let retry_first_43 =
         run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
+    // ★ 결함 155 (재검수 66b) — `removed != 0` 만으로는 마커를 지웠는지 특정하지 못한다(남은 잠금 파일만 지워도 양수). 첫 마커 내용을 바꿔 둔다 —
+    //   두 번째 기동의 GC 가 그 마커를 지우지 않으면 write_once 가 내용 불일치로 실패한다.
+    if let Some(first_id) = started_checkpoint_id(&retry_first_43.agent_stdout) {
+        std::fs::write(checkpoint_root_43.path().join(&first_id).join(".durability.writing"), b"Stale\n")
+            .map_err(|e| format!("첫 마커 내용 바꾸기 실패(43): {e}"))?;
+    }
     let retry_second_43 =
         run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
     let first_id_43 = started_checkpoint_id(&retry_first_43.agent_stdout)
@@ -3054,6 +3064,7 @@ pub fn run() -> Result<String, String> {
     std::fs::create_dir_all(&failed_root_44)
         .map_err(|e| format!("fail-closed용 root 디렉터리 생성 실패(44): {e}"))?;
     // ★ 결함 137 — 비지 않은 루트는 표식이 있어야 받는다. 이 입력은 "지난 실행이 쓰던 루트" 이므로 표식을 먼저 둔다.
+    // ★ 결함 151 — 표식은 이제 루트 안이다(checkpoint_root_owner_marker 가 경로를 준다).
     let owner_marker_44 = gputeer_agent::checkpoint_root_owner_marker(&failed_root_44)
         .map_err(|e| format!("fail-closed용 root 표식 경로 실패(44): {e}"))?;
     std::fs::write(&owner_marker_44, b"gputeer agent checkpoint root v1\n")

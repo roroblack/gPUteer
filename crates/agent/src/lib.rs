@@ -455,7 +455,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     };
     // ★ 결함 85 — 부팅 시 GC(CLAUDE.md §0.3). **아무것도 시작하기 전에** 체크포인트 루트를 독점하고 지난 실행의 PARTIAL 을 치운다.
     //   잠금은 이 함수가 끝날 때까지 쥔다 — 같은 루트를 쓰는 다른 Agent 가 기동 GC 로 이 실행의 PARTIAL 을 지우지 못하게 한다.
-    let _checkpoint_root_lock = claim_checkpoint_root_and_collect(&config.checkpoint_root)?;
+    // ★ 결함 152 · 153 (재검수 66b) — 잠금 · GC 는 실제 위치에 돌았는데 이후 쓰기(시작 체크포인트 · 기본 outbox · 작업 출력)는 입력 경로를 썼다. 별칭을
+    //   바꿔치기하거나 루트 안에 별칭을 두면 두 기준이 갈라진다. 그래서 잠금을 얻은 뒤 **설정의 루트를 실제 위치로 바꾼다** — 이 뒤로는 한 기준이다.
+    let mut config = config;
+    let _checkpoint_root_lock = settle_checkpoint_root(&mut config)?;
     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
     //   (2026-08-29, 독립 검수 지적).
     //
@@ -2630,6 +2633,16 @@ fn workload_run_root(checkpoint_root: &std::path::Path) -> Result<PathBuf, Strin
 /// 결함 85 — 체크포인트 루트를 이 프로세스가 독점했다는 증표. 떨어뜨리면 잠금이 풀린다(파일은 지우지 않는다).
 struct CheckpointRootLock {
     _file: fs::File,
+    /// 결함 152 — 잠금 · 표식 · GC 가 쓴 실제 위치. 이후 쓰기도 이 경로를 쓴다.
+    real_root: PathBuf,
+}
+
+/// 결함 152 · 153 — 루트를 독점 · 정리하고 설정의 루트를 실제 위치로 바꾼다. run() 이 부르고 시험도 부른다.
+/// ★ 한계: canonicalize 뒤 디렉터리 자체를 바꿔치기하는 경쟁은 핸들 고정 없이 막지 못한다 — 운영 제약(루트 · 그 부모를 다른 프로세스가 바꾸지 않는다)이다.
+fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock, String> {
+    let lock = claim_checkpoint_root_and_collect(&config.checkpoint_root)?;
+    config.checkpoint_root = lock.real_root.clone();
+    Ok(lock)
 }
 
 /// 결함 85 — 체크포인트 루트를 독점하고 부팅 GC(`startup_gc`)를 돌린다.
@@ -2642,10 +2655,12 @@ struct CheckpointRootLock {
 /// ★ GC 가 실패하면 시작하지 않는다(CHECKPOINT_STARTUP_GC_FAILED) — 부분 데이터를 남긴 채 새 작업을 받지 않는다.
 /// ★ 이것은 PARTIAL 체크포인트 정리다. SENSITIVE 데이터셋 삭제 · 검증(§0.5)은 하지 않는다.
 /// ★ 결함 137 (검수 66) — `startup_gc` 는 직계 하위 디렉터리의 매니페스트 없는 **모든 파일**을 지운다. 그래서 루트가 **Agent 가 만든 전용 루트**일 때만
-///   부른다: 형제 표식 `<실제 루트>.agent-root` 가 있거나, 없으면 루트가 **비어 있을 때만** 표식을 쓰고 받는다. 표식 없는 비지 않은 루트는
-///   삭제 전에 거부한다(CHECKPOINT_ROOT_NOT_OWNED) — `--checkpoint-root C:\data` 오지정이 사용자 파일 삭제가 되지 않게.
-///   표식을 루트 안에 두지 않는 이유는 잠금과 같다. 표식은 fsync 하지 않는다 — 잃으면 다음 기동이 거부한다(가용성 쪽으로 닫힌다).
-///   ★ 이 판 이전 Agent 가 쓰던 루트도 거부된다 — 운영자가 내용을 확인하고 표식 파일을 직접 만들어야 한다.
+///   부른다: 표식이 있거나, 없으면 루트가 **비어 있을 때만** 표식을 쓰고 받는다. 표식 없는 비지 않은 루트는 삭제 전에 거부한다(CHECKPOINT_ROOT_NOT_OWNED).
+/// ★ 결함 151 (재검수 66b) — 137 은 표식을 루트의 **형제** `<R>.agent-root` 로 뒀는데, 그것은 "그 경로에 형제 파일이 있다" 만 증명했다 — R 을 지우고 같은
+///   경로에 사용자 디렉터리를 두면 표식이 남아 GC 가 사용자 파일을 지웠다. 이제 표식은 루트 **안** `<R>/.gputeer-agent-root` 다 — 디렉터리를 바꾸면
+///   표식도 사라진다. startup_gc 는 루트의 파일을 건너뛰고, 점으로 시작하는 이름이라 hex checkpoint_id 와 겹치지 않는다. 표식은 배타 생성(create_new)이다.
+///   ★ 막지 않는 것(전용 디렉터리 계약): 표식 파일을 사용자 디렉터리에 복사하기 · 표식이 생긴 뒤 루트에 넣은 사용자 파일.
+///   표식은 fsync 하지 않는다 — 잃으면 다음 기동이 거부한다(가용성 쪽으로 닫힌다). 이 판 이전 Agent 가 쓰던 루트도 거부된다(운영자가 확인 뒤 표식을 만든다).
 /// ★ 결함 138 (검수 66) — 잠금 · 표식은 루트를 만든 뒤 **실제 위치**(canonicalize)의 형제로 정한다. 전에는 절대 경로 문자열의 형제라 junction ·
 ///   symlink 별칭으로 부른 두 Agent 가 서로 다른 잠금을 얻고 서로의 PARTIAL 을 지울 수 있었다. GC 도 실제 위치에 돈다.
 fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
@@ -2675,7 +2690,7 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
             return Err(format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠그지 못했다({lock_path:?}): {error}"));
         }
     }
-    let owner_marker = checkpoint_root_sibling(&real_root, CHECKPOINT_ROOT_OWNER_SUFFIX)?;
+    let owner_marker = real_root.join(CHECKPOINT_ROOT_OWNER_MARKER);
     let owned = match fs::symlink_metadata(&owner_marker) {
         Ok(metadata) if metadata.is_file() => true,
         Ok(_) => {
@@ -2700,7 +2715,11 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
                 owner_marker.display()
             ));
         }
-        fs::write(&owner_marker, b"gputeer agent checkpoint root v1\n")
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&owner_marker)
+            .and_then(|mut marker| marker.write_all(b"gputeer agent checkpoint root v1\n"))
             .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 루트 표식을 쓰지 못했다({owner_marker:?}): {error}"))?;
     }
     let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(&real_root).map_err(|error| {
@@ -2710,24 +2729,54 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
         )
     })?;
     println!("CHECKPOINT_STARTUP_GC root={} dirs={dirs} removed={removed}", root.display());
-    Ok(CheckpointRootLock { _file: file })
+    Ok(CheckpointRootLock { _file: file, real_root })
 }
 
 /// 체크포인트 루트의 형제 디렉터리 `<부모>/<루트 이름><suffix>` — 작업 출력 · outbox(결함 107)가 같이 쓴다.
-/// 결함 137 — 체크포인트 루트가 Agent 전용이라는 형제 표식의 접미사.
-pub const CHECKPOINT_ROOT_OWNER_SUFFIX: &str = ".agent-root";
+/// 결함 137 · 151 — 체크포인트 루트가 Agent 전용이라는 표식 파일 이름(루트 **안**). 루트 항목을 세는 시험은 이 이름을 뺀다.
+pub const CHECKPOINT_ROOT_OWNER_MARKER: &str = ".gputeer-agent-root";
 
 /// 결함 138 — 체크포인트 루트를 만들고 실제 위치를 돌려준다. 별칭(junction · symlink) · 표기 차이가 같은 경로로 모인다.
+/// ★ 결함 152 — 이 경로를 이후 쓰기에도 쓰므로 Windows 의 `\\?\C:\…` 는 **보통 경로로 되돌릴 수 있을 때만** 되돌린다(`without_verbatim_prefix`) —
+///   작업 디렉터리 · 자식 프로세스 인자가 verbatim 경로를 받지 못하는 경우가 있다.
 fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
     fs::create_dir_all(root)
         .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트 디렉터리를 만들지 못했다({root:?}): {error}"))?;
     fs::canonicalize(root)
+        .map(without_verbatim_prefix)
         .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트의 실제 위치를 읽지 못했다({root:?}): {error}"))
 }
 
-/// 결함 137 — 이 루트의 소유 표식 경로(루트를 만든다). 이 판 이전 루트를 넘겨받는 운영 절차 · selftest 가 쓴다.
+/// 결함 152 — `\\?\X:\…` 에서 접두사를 떼도 같은 경로로 읽히면 뗀다. 길이(248 이상) · 끝이 점 · 공백인 이름 · 장치 이름(CON 등)이 있거나 UNC 면 그대로 둔다.
+#[cfg(windows)]
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let Some(text) = path.to_str() else { return path };
+    let Some(rest) = text.strip_prefix(r"\\?\") else { return path };
+    let bytes = rest.as_bytes();
+    let drive_form = bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\';
+    const DEVICES: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4",
+        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let plain_components = rest[3..].split('\\').filter(|c| !c.is_empty()).all(|component| {
+        let stem = component.split('.').next().unwrap_or("").to_ascii_uppercase();
+        !component.ends_with('.') && !component.ends_with(' ') && !DEVICES.contains(&stem.as_str())
+    });
+    if drive_form && rest.len() < 248 && plain_components {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}
+
+#[cfg(not(windows))]
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
+}
+
+/// 결함 137 · 151 — 이 루트의 소유 표식 경로(루트를 만든다). 이 판 이전 루트를 넘겨받는 운영 절차 · selftest 가 쓴다.
 pub fn checkpoint_root_owner_marker(root: &std::path::Path) -> Result<PathBuf, String> {
-    checkpoint_root_sibling(&real_checkpoint_root(root)?, CHECKPOINT_ROOT_OWNER_SUFFIX)
+    Ok(real_checkpoint_root(root)?.join(CHECKPOINT_ROOT_OWNER_MARKER))
 }
 
 fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> Result<PathBuf, String> {
@@ -4163,6 +4212,64 @@ mod startup_gc_tests {
         let partial = leave_partial(&fresh);
         let _lock = claim_checkpoint_root_and_collect(&fresh).expect("표식 있는 루트");
         assert!(!partial.exists(), "대조: 표식 있는 루트의 PARTIAL 은 치워야 한다");
+    }
+
+    /// 결함 151 (재검수 66b) — 표식을 받은 루트를 지우고 같은 경로에 사용자 디렉터리를 두면 거부한다(형제 표식일 때는 받아 지웠다).
+    #[test]
+    fn a_root_replaced_by_a_user_directory_at_the_same_path_is_refused() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        start_once(&root);
+        fs::remove_dir_all(&root).expect("루트 삭제");
+        fs::create_dir_all(root.join("photos")).expect("사용자 디렉터리");
+        fs::write(root.join("photos").join("family.jpg"), b"photo").expect("사용자 파일");
+        match claim_checkpoint_root_and_collect(&root) {
+            Ok(_) => panic!("바뀐 루트에서 기동 GC 가 돌았다"),
+            Err(error) => assert!(error.contains("CHECKPOINT_ROOT_NOT_OWNED"), "{error}"),
+        }
+        assert_eq!(fs::read(root.join("photos").join("family.jpg")).expect("사용자 파일"), b"photo", "사용자 파일을 지웠다");
+    }
+
+    /// 결함 152 · 153 (재검수 66b) — 루트 **안**의 junction 별칭으로 기동해도 설정의 루트가 실제 위치로 바뀌어 기본 outbox · 작업 출력이 실제 루트의 형제다.
+    #[test]
+    fn an_alias_inside_the_root_is_settled_to_the_real_root_before_anything_else_uses_it() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let root = dir.path().join("checkpoints");
+        start_once(&root);
+        let alias = root.join("alias");
+        #[cfg(windows)]
+        {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&alias)
+                .arg(&root)
+                .output()
+                .expect("mklink 실행");
+            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, &alias).expect("symlink");
+        let mut config = config_stopping_after_startup(&alias);
+        let _lock = settle_checkpoint_root(&mut config).expect("별칭 루트 기동");
+        let real = without_verbatim_prefix(fs::canonicalize(&root).expect("실제 루트"));
+        assert_eq!(config.checkpoint_root, real, "설정의 루트가 실제 위치로 바뀌지 않았다");
+        let outbox = report_outbox_dir(&config).expect("기본 outbox");
+        assert_eq!(outbox.parent(), real.parent(), "기본 outbox 가 실제 루트의 형제가 아니다: {outbox:?}");
+        let run_root = workload_run_root(&config.checkpoint_root).expect("작업 출력 루트");
+        assert_eq!(run_root.parent(), real.parent(), "작업 출력 루트가 실제 루트의 형제가 아니다: {run_root:?}");
+        assert!(alias.exists(), "대조: 별칭은 그대로 있어야 한다");
+    }
+
+    /// 결함 152 — verbatim 접두사는 보통 경로로 되돌릴 수 있을 때만 뗀다.
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_prefix_is_removed_only_when_the_plain_path_means_the_same() {
+        assert_eq!(without_verbatim_prefix(PathBuf::from(r"\\?\C:\data\checkpoints")), PathBuf::from(r"C:\data\checkpoints"));
+        for kept in [r"\\?\UNC\server\share\cp", r"\\?\C:\data\name.", r"\\?\C:\data\CON\cp", r"\\?\C:\data\trailing \cp"] {
+            assert_eq!(without_verbatim_prefix(PathBuf::from(kept)), PathBuf::from(kept), "{kept}");
+        }
+        let long = format!(r"\\?\C:\{}", "a".repeat(260));
+        assert_eq!(without_verbatim_prefix(PathBuf::from(&long)), PathBuf::from(&long));
     }
 
     /// 결함 138 (검수 66) — 잡혀 있는 루트를 **별칭**(Windows junction · unix symlink)으로 불러도 같은 잠금이라 시작하지 않는다.
