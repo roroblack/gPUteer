@@ -3002,37 +3002,44 @@ pub fn run() -> Result<String, String> {
     report.push_str("42) 영속 store에서 revoked Lease 재발급 거부 시 WRITING marker 미생성 및 AgentGrantAck 미전송 확인\n");
 
     // ── 43. 동일 attempt 재기동은 기동 GC 뒤 같은 digest 디렉터리에 새로 기록(결함 140 · 155) ────
-    let checkpoint_root_43 = tempfile::tempdir()
+    let checkpoint_dir_43 = tempfile::tempdir()
         .map_err(|e| format!("동일 attempt retry marker root 생성 실패(43): {e}"))?;
+    // ★ 결함 180 (재검수 66e) — 루트 이름에 ` removed=0 dirs=9 ` 를 넣는다. GC 출력의 경로에 그 글자가 있어도 실제 삭제 수를 읽는지 매번 잰다(결함 167 의 회귀 시험).
+    let checkpoint_root_43 = checkpoint_dir_43.path().join("cp removed=0 dirs=9");
     let retry_first_43 =
-        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
+        run_handshake_with_checkpoint_root(&fixture, &checkpoint_root_43, &[], &[])?;
     // ★ 결함 155 (재검수 66b) — `removed != 0` 만으로는 마커를 지웠는지 특정하지 못한다(남은 잠금 파일만 지워도 양수). 첫 마커 내용을 바꿔 둔다 —
     //   두 번째 기동의 GC 가 그 마커를 지우지 않으면 write_once 가 내용 불일치로 실패한다.
     if let Some(first_id) = started_checkpoint_id(&retry_first_43.agent_stdout) {
-        std::fs::write(checkpoint_root_43.path().join(&first_id).join(".durability.writing"), b"Stale\n")
+        std::fs::write(&checkpoint_root_43.join(&first_id).join(".durability.writing"), b"Stale\n")
             .map_err(|e| format!("첫 마커 내용 바꾸기 실패(43): {e}"))?;
     }
     let retry_second_43 =
-        run_handshake_with_checkpoint_root(&fixture, checkpoint_root_43.path(), &[], &[])?;
+        run_handshake_with_checkpoint_root(&fixture, &checkpoint_root_43, &[], &[])?;
     let first_id_43 = started_checkpoint_id(&retry_first_43.agent_stdout)
         .ok_or_else(|| "첫 retry에서 JOB_STARTED가 없다(43)".to_string())?;
     let second_id_43 = started_checkpoint_id(&retry_second_43.agent_stdout)
         .ok_or_else(|| "두 번째 retry에서 JOB_STARTED가 없다(43)".to_string())?;
-    let entries_43 = checkpoint_entries(checkpoint_root_43.path())?;
+    let entries_43 = checkpoint_entries(&checkpoint_root_43)?;
     let marker_43 = checkpoint_root_43
-        .path()
         .join(&first_id_43)
         .join(".durability.writing");
     // ★ 결함 140 (검수 66) — 두 번째 기동의 GC 가 첫 실행의 WRITING-only PARTIAL 을 지운다. 그래서 두 번째 기록은 멱등 처리가 아니라 **새 생성**이다 —
     //   이 시나리오는 "GC 로 치운 뒤 같은 checkpoint_id 로 다시 만든다" 를 잰다. write_once 멱등 자체는 checkpoint 시험
     //   (`codex_findings.rs::k1b_write_once_is_idempotent_for_identical_content` · `durability_chaos.rs::adr026_write_once_is_idempotent_for_same_name`)이 잰다.
+    // ★ 결함 180 — 수치를 못 읽으면 0 으로 뭉치지 않고 "관측 실패" 로 따로 실패한다(실제 삭제 0 과 가른다). 형식이 깨진 줄은 건너뛰고 다음 줄을 본다.
     let second_gc_removed_43 = retry_second_43
         .agent_stdout
         .lines()
         // ★ 결함 167 — 출력은 `dirs= removed= root= real_root=` 순서다. 경로에 `removed=` 글자가 있어도 잘못 읽지 않게 **두 번째 토큰만** 본다.
-        .find_map(|line| line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace().nth(1)?.strip_prefix("removed="))
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0);
+        .filter_map(|line| line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace().nth(1)?.strip_prefix("removed="))
+        .find_map(|value| value.parse::<usize>().ok())
+        .ok_or_else(|| {
+            format!(
+                "두 번째 기동의 CHECKPOINT_STARTUP_GC removed= 를 읽지 못했다(43 · 관측 실패 — 삭제 0 이 아니다): agent_stdout={}",
+                retry_second_43.agent_stdout
+            )
+        })?;
     if !retry_first_43.agent_success
         || !retry_second_43.agent_success
         || !retry_first_43.coordinator_success

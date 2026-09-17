@@ -4288,8 +4288,9 @@ mod startup_gc_tests {
         }
         let long = format!(r"\\?\C:\{}", "a".repeat(260));
         assert_eq!(without_verbatim_prefix(PathBuf::from(&long)), PathBuf::from(&long));
-        // 결함 160 · 168 — 경계는 루트 길이만이 아니라 그 아래 파생 경로가 260 자 안에 들어오게 정했다. Agent 가 쓰는 **고정 이름 전부**로 가장 긴 파생 접미사를
-        //   계산해 확인한다(전에는 세 이름만 적어 최장을 놓쳤다 — 결함 168). 가변 데이터 이름 · staged API 는 범위 밖이다(상수 주석).
+        // 결함 160 · 168 · 179 — 경계는 루트 길이만이 아니라 그 아래 파생 경로가 260 자 안에 들어오게 정했다. Agent 가 쓰는 **고정 이름 목록**(아래)으로 가장 긴 파생
+        //   접미사를 계산해 확인한다(전에는 세 이름만 적어 최장을 놓쳤다 — 결함 168 · 그 뒤 `.tmp` · LATEST · 형제 잠금 · 루트 표식도 빠졌었다 — 결함 179).
+        //   "전부" 라고 하지 않는다 — 목록에 없는 이름이 생기면 여기에 더한다. 가변 데이터 이름 · staged API 는 범위 밖이다(상수 주석).
         use gputeer_checkpoint::durability::{state_marker_name, DurabilityState, MANIFEST_FILENAME, PUBLICATION_FAILED_MARKER};
         let checkpoint_id = start_checkpoint_id("job", "attempt", "grant");
         let mut in_checkpoint: Vec<String> = [
@@ -4310,8 +4311,21 @@ mod startup_gc_tests {
         );
         let mut suffixes: Vec<String> = in_checkpoint
             .iter()
-            .flat_map(|name| [format!(r"\{checkpoint_id}\{name}"), format!(r"\{checkpoint_id}\{name}.write_once.lock")])
+            .flat_map(|name| {
+                [
+                    format!(r"\{checkpoint_id}\{name}"),
+                    format!(r"\{checkpoint_id}\{name}.write_once.lock"),
+                    format!(r"\{checkpoint_id}\{name}.tmp"),
+                ]
+            })
             .collect();
+        // 결함 179 — 루트 바로 아래 · 형제 이름.
+        suffixes.extend([
+            format!(r"\{}", gputeer_checkpoint::writer::POINTER_FILENAME),
+            format!(r"\{}.tmp", gputeer_checkpoint::writer::POINTER_FILENAME),
+            format!(r"\{CHECKPOINT_ROOT_OWNER_MARKER}"),
+            ".agent-lock".to_string(),
+        ]);
         suffixes.extend([exec::STDOUT_FILENAME, exec::STDERR_FILENAME].map(|name| format!(r".workload-run\{checkpoint_id}\{name}")));
         suffixes.extend(["report", "report.tmp", "report.rejected"].map(|ext| format!(r".report-outbox\{}.{ext}", "0".repeat(32))));
         let longest = suffixes.iter().map(String::len).max().expect("접미사");
