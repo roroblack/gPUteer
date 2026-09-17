@@ -454,9 +454,10 @@ def main():
         #   같은 집합이다. 전에는 두 조건을 bool 로 섞어 유예를 남기고 오류만 내는 구현도 통과했다.
         # ★ 재검수 63b 결함 114 — 기대 집합을 **검사 대상 함수로 얻지 않는다.** 같은 함수로 얻으면 정상 로드가 틀린 집합을 내도 기대도 같이
         #   틀려 통과한다. 목록 파일 바이트를 여기서 직접 파싱한다(주석 · 빈 줄 제외).
+        # ★ 재검수 63c 결함 118 — 줄 나누기는 검사기와 같은 splitlines() 다. split("\n") 은 외로운 CR 이 든 목록을 다르게 읽는다.
         expected_set = {
             line.strip()
-            for line in real.replace(b"\r\n", b"\n").decode("utf-8").split("\n")
+            for line in real.decode("utf-8").splitlines()
             if line.strip() and not line.strip().startswith("#")
         }
         assert expected_set, "유예 목록에서 항목을 하나도 못 읽었다"
