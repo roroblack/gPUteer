@@ -301,7 +301,8 @@ impl std::fmt::Display for NeighborReportStoreError {
                 blocking_observed_at_unix_ms,
             } => write!(
                 f,
-                "장치 {reporter_device_id} 의 저장 상한({limit})이 찼고(현재 {stored_rows}행)                  들어온 신고가 밀려날 관측({blocking_observed_at_unix_ms})보다 새롭지 않다"
+                "장치 {reporter_device_id} 의 저장 상한({limit})이 찼고(현재 {stored_rows}행) \
+                    들어온 신고가 밀려날 관측({blocking_observed_at_unix_ms})보다 새롭지 않다"
             ),
             // ★ 이 두 값은 **행 키(SQLite 인덱스 열)** 이지 디코드된 신고에서
             //   온 값이 아니다(독립 검수 1라운드 정정) — `ReporterNodeMismatch`
@@ -660,7 +661,8 @@ impl CoordinatorNeighborReportStore {
                 if to_evict == 0 || to_evict > candidates.len() {
                     // 셈과 조회가 어긋났다.
                     return Err(NeighborReportStoreError::Storage(format!(
-                        "저장 상한 계산과 실제 행이 어긋났다                          (셈 {stored_rows}, 읽은 행 {}, 밀어낼 수 {to_evict})",
+                        "저장 상한 계산과 실제 행이 어긋났다 \
+                            (셈 {stored_rows}, 읽은 행 {}, 밀어낼 수 {to_evict})",
                         candidates.len()
                     )));
                 }

@@ -1230,7 +1230,9 @@ fn a_corrupted_time_column_cannot_hide_a_row_from_eviction() {
     tamper(
         &path,
         &format!(
-            "UPDATE coordinator_neighbor_reports              SET observed_at_unix_ms = X'FFFFFFFFFFFFFFFF'              WHERE unreachable_node_id = '{truly_oldest}'"
+            "UPDATE coordinator_neighbor_reports \
+                SET observed_at_unix_ms = X'FFFFFFFFFFFFFFFF' \
+                WHERE unreachable_node_id = '{truly_oldest}'"
         ),
     );
 
@@ -1278,7 +1280,8 @@ fn a_corrupted_eviction_candidate_is_refused_not_silently_dropped() {
     tamper(
         &path,
         &format!(
-            "UPDATE coordinator_neighbor_reports SET report_body = X'00'              WHERE unreachable_node_id = '{oldest_target}'"
+            "UPDATE coordinator_neighbor_reports SET report_body = X'00' \
+                WHERE unreachable_node_id = '{oldest_target}'"
         ),
     );
 
