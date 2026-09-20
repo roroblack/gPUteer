@@ -960,6 +960,60 @@ fn a_corrupt_stored_lease_row_on_the_stored_lane_stops_the_listener() {
     assert!(error.contains("Lease 조회 실패"), "{error}");
 }
 
+/// 결함 111 (재검수 64) — Manifest 행이 없는 옛 hash-only Job 은 저장소 장애가 아니라 **거부**다. 첫 연결이 거부돼도 리스너는 두 번째
+///   연결을 받는다. 104 는 이것까지 Storage 로 묶어 옛 Job 하나로 리스너를 멈췄다.
+#[test]
+fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting() {
+    let fixture = fixture();
+    {
+        let db = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
+        let changed = db
+            .execute("DELETE FROM coordinator_job_manifests WHERE job_id = ?1", [JOB_ID])
+            .expect("Manifest 행 삭제");
+        assert_eq!(changed, 1, "fixture 의 Manifest 행이 하나 있어야 한다");
+    }
+    let handle = spawn_coordinator_with(&fixture, 2, &[]);
+    let mut first = connect_when_ready(fixture.address);
+    send_hello(&mut first, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    // Coordinator 가 거부하고 닫을 때까지 기다린다.
+    // ★ 결함 120 (재검수 64b) — 닫힘으로 인정하는 것은 EOF 와 연결 재설정 · 중단뿐이다. 시한 초과(TimedOut · WouldBlock)는 닫힘이 아니다.
+    let mut rest = Vec::new();
+    match first.read_to_end(&mut rest) {
+        Ok(_) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ) => {}
+        Err(error) => panic!("첫 연결이 닫히지 않았다(읽기 {:?}): {error}", error.kind()),
+    }
+    assert!(rest.is_empty(), "거부된 연결에 프레임이 왔다({} 바이트)", rest.len());
+    // Storage 로 분류했다면 리스너가 멈춰 이 연결이 거부된다 — 그때는 Coordinator 가 무엇으로 끝났는지 함께 남긴다(결함 121).
+    let mut second = match TcpStream::connect_timeout(&fixture.address, Duration::from_secs(2)) {
+        Ok(stream) => stream,
+        Err(connect_error) => {
+            let outcome = handle.join().expect("Coordinator 스레드");
+            panic!("첫 거부 뒤에도 리스너가 두 번째 연결을 받아야 한다: {connect_error} — Coordinator 결과 {outcome:?}");
+        }
+    };
+    second.set_write_timeout(Some(Duration::from_secs(10))).expect("쓰기 타임아웃");
+    // ★ 결함 123 (재검수 64c) — 두 번째 연결은 **첫 연결에서는 나올 수 없는 결과**를 만든다.
+    // ★ 결함 132 (재검수 64d) — 서명 변조 Hello(HELLO_REJECTED)는 모자랐다: 첫 Hello 도 60초 만료로 HELLO_REJECTED 가 될 수 있다.
+    //   그래서 **서명이 유효하고 모드만 다른** Hello(RESUME)를 보낸다. "mode 불일치" 는 서명 · 시각 · replay 검증을 통과한 Hello 에서만 나오고,
+    //   첫 연결의 Hello 는 MULTI_AGENT_GRANT 라 이 문구를 만들 수 없다.
+    send_hello(&mut second, gputeer_protocol::constants::MODE_RESUME, 1, 120);
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("마지막 연결의 거부는 오류로 끝난다");
+    // ★ 결함 120 · 123 · 132 — 분류와 **출처 연결**을 함께 본다. 첫 연결의 거부(GRANT_REFUSED · 만료 HELLO_REJECTED)나 Storage 종료는 이 단언을
+    //   통과하지 못한다.
+    assert!(
+        error.starts_with("protocol: ") && error.contains("HELLO_REJECTED: mode 불일치") && !error.contains("GRANT_REFUSED"),
+        "리스너가 두 번째 연결을 처리하고 그 연결의 거부(모드 불일치)로 끝나야 한다: {error}"
+    );
+}
+
 /// 결함 105 (재검수 62) — `--revoke-before-renew` 의 revoke 저장이 락 시한으로 실패하면 Storage(fail-closed)다(결함 99 의 음성 테스트).
 ///   순서로 보장한다 — Grant 를 받은 뒤 ACK 를 보류하고, 다른 연결로 BEGIN IMMEDIATE 를 잡은 다음 ACK 를 보낸다(lease 저장소 busy
 ///   timeout 1초). 리스너가 멈추고 revoke 는 기록되지 않는다.

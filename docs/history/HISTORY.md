@@ -285,6 +285,28 @@
 
 ---
 
+## 2026-09-17 10:54 — 재검수 64e · 결함 132 수용
+
+- 계획: 구현계획 §12b
+- 스트림: QA
+- 수행: 64e 판정을 원본으로 남기고 결함 리포트 132 · 검수 대기열에 적었다. 코드 변경 없음
+- 검증: 코덱스알트 ACCEPTED — 반례를 못 찾았다는 판정이다. 첫 연결이 GRANT_REFUSED 까지 갔는지는 여전히 보지 않는다
+- 원본: `docs/evidence/_raw/검수_2026-09-10/64e_재검수_결함132_ACCEPTED_알트.txt`
+- 리포트: 결함 리포트 132
+
+---
+
+## 2026-09-17 10:48 — 재검수 64d 대응 · 결함 132(옛 Job 테스트의 두 번째 연결은 유효 서명 · 다른 모드 Hello)
+
+- 계획: 구현계획 §12b
+- 스트림: QA
+- 수행: 두 번째 연결이 서명이 유효한 RESUME Hello 를 보내 "mode 불일치" 로 끝나야 통과한다 — 서명 · 시각 검증을 지난 Hello 에서만 나오는 문구라 첫 연결(만료 포함)로는 만들 수 없다
+- 검증: 결함 130 절차 418 passed · 0 failed · 경고 0 · selftest 97 · M42 · M45 caught · M43 compile_error. 만료 순서는 실행으로 보이지 못했다
+- 원본: `docs/evidence/_raw/B+E_결함132_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/64d_재검수_결함123_CHANGES_REQUESTED_알트.txt`
+- 리포트: 결함 리포트 132
+
+---
+
 ## 2026-09-17 10:38 — 검수 65 대응 · 결함 124 ~ 129(REPORT 세션의 연결 번호 · 기본 경로 · 저장 순서 · 상호 대기 · 경로 우회 · 작업 출력 정리)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §13b
@@ -295,6 +317,31 @@
   126 은 테스트가 없다. 첫 측정은 129 테스트 단언 문구 실수로 실패했다(원본에 적었다). 리눅스 미실행
 - 원본: `docs/evidence/_raw/B+E_결함124_129_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/65_검수_REPORT세션_CHANGES_REQUESTED_알트.txt`
 - 리포트: 결함 리포트 124~129
+
+---
+
+## 2026-09-17 09:56 — 재검수 64c 대응 · 결함 123(옛 Job 테스트가 어느 연결의 오류인지 가른다)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12b
+- 스트림: QA
+- 수행: 두 번째 연결이 서명을 변조한 Hello 를 보내 첫 연결에서는 나올 수 없는 HELLO_REJECTED 로 끝나야 통과한다. Protocol 거부 뒤 곧바로 끝나는 회귀(M45)를 더했다
+- 검증: attempt_report_ingress 26 passed · 0 failed · 경고 0 · M42 · M45 caught · M43 compile_error. 경쟁 순서(연결 성립)는 이번 실행에서 일어나지 않아
+  실행으로는 보이지 못했다. selftest · cli 미실행
+- 원본: `docs/evidence/_raw/B+E_결함123_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/64c_재검수_결함120_122_CHANGES_REQUESTED.txt`
+- 리포트: 결함 리포트 123
+
+---
+
+## 2026-09-17 09:47 — 재검수 64b 대응 · 결함 120 ~ 122(111 테스트의 분류 단언 · M42 증거 · Manifest 행 유실 한계)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12b
+- 스트림: QA
+- 수행: 옛 Job 테스트가 마지막 오류의 `protocol:` 분류를 요구하고, 첫 연결 닫힘을 EOF · 연결 재설정 · 중단으로만 인정하며, 두 번째 연결이 실패하면
+  Coordinator 결과를 실패 메시지에 싣는다(120 · 121). 현대 Job 의 Manifest 행 유실도 거부로 분류되는 한계를 주석에 적었다(122)
+- 검증: attempt_report_ingress 26 passed · 0 failed · 경고 0 · 뮤테이션 M42 caught(Coordinator 결과 storage 문구 포함) · M43 compile_error.
+  selftest · cli 미실행(테스트 · 주석만 변경)
+- 원본: `docs/evidence/_raw/B+E_결함120_122_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/64b_재검수_결함111_113_CHANGES_REQUESTED.txt`
+- 리포트: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` (120~122)
 
 ---
 
@@ -344,6 +391,19 @@
 
 ---
 
+## 2026-09-17 09:22 — 재검수 64 대응 · 결함 111 ~ 113(옛 Job 의 Manifest 부재 분류 · From<String> 통로 · 뮤테이션 원본)
+
+- 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §12b
+- 스트림: Coordinator · QA
+- 수행: 저장된 예약 lane 에서 Manifest 행이 없는 옛 Job 을 저장소 장애가 아니라 거부로 분류했다(111). `From<String> for StoredGrantError` 를 지우고
+  거부 지점마다 Refused 를 적어 분류 누락을 컴파일 오류로 만들었다(112). 뮤테이션 원본에 패치와 실패 출력을 싣는다(113).
+  grant_from_stored.rs 의 틀린 rusqlite 주석을 정정했다
+- 검증: 323 passed · 0 failed · 경고 0 · selftest 시나리오 줄 97 · 뮤테이션 2/2 기대대로(M42 caught · M43 compile_error). 리눅스 미실행
+- 원본: `docs/evidence/_raw/B+E_결함111_113_시험_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/64_재검수_결함104_106_CHANGES_REQUESTED_알트.txt`
+- 리포트: `docs/reports/debugs/2026-09-10_0900_검수가_찾은_결함_5건.md` (111~113)
+
+---
+
 ## 2026-09-17 05:39 — B+E 구현 단계 6(REPORT 세션 · outbox · 서명된 받았다 응답 검증 · 결정 D1 완성)
 
 - 계획: `docs/plans/2026-09-14_1238_B+E_갱신연결_보고연결_받았다응답_구현계획.md` §13 · 제안서 흐름의 REPORT 세션 · §5.8 (3)
@@ -371,7 +431,6 @@
   ★ E1 의 첫 실행은 내 기대 목록이 틀려(LF 줄) NOT_CAUGHT 로 찍혔다 — 원본에 적었다
 - 원본: `docs/evidence/_raw/증거_digest_줄바꿈_검수63_대응_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/63_검수_증거digest_줄바꿈_CHANGES_REQUESTED.txt`
 - 리포트: `docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md`
-
 
 ---
 
