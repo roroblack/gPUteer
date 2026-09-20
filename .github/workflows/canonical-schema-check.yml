@@ -16,8 +16,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # ★ rustfmt 는 기본으로 안 깔린다 — 2026-09-18 실행이 정확히 여기서 죽었다
+      #   ("'cargo-fmt' is not installed for the toolchain '1.89.0'"). components 로 받는다
       - name: Install Rust 1.89 toolchain
         uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt
 
       - name: Set up Python 3
         uses: actions/setup-python@v5
@@ -40,6 +44,10 @@ jobs:
       - name: Check canonical schema against proto definitions
         run: python tools/canonical/check_schema.py
 
+      # ★★ 이 단계는 **지금 실패한다.** 도구가 없어서가 아니라 서식이 실제로 어긋나 있어서다 —
+      #   개발 기계 실측으로 워크스페이스에 차이가 501곳이다(2026-09-18 · "Diff in" 줄 수).
+      #   끄지 않는다. 검사를 끄면 빚이 보이지 않게 될 뿐이다.
+      #   -> 열린 가지들을 합친 뒤 `cargo fmt --all` 일괄 정리를 한 번에 한다(그 전에 하면 전부 충돌한다).
       - name: Check formatting
         run: cargo fmt --all -- --check
 
