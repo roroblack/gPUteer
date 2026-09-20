@@ -137,7 +137,8 @@ impl std::fmt::Display for NodeLivenessStoreError {
                 incoming,
             } => write!(
                 f,
-                "LIVENESS_DEVICE_CHANGED: node {node_id} 는 {stored} 로 기록돼 있는데                  {incoming} 가 보고했다 — 어느 쪽이 진짜인지 이 저장소는 모른다"
+                "LIVENESS_DEVICE_CHANGED: node {node_id} 는 {stored} 로 기록돼 있는데 \
+                    {incoming} 가 보고했다 — 어느 쪽이 진짜인지 이 저장소는 모른다"
             ),
         }
     }
