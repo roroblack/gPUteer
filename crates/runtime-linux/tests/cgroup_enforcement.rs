@@ -51,7 +51,8 @@ fn wait_within(mut child: gputeer_runtime_linux::ConstrainedChild, limit: Durati
         Ok(Ok(code)) => code,
         Ok(Err(error)) => panic!("wait 실패: {error}"),
         Err(_) => panic!(
-            "{limit:?} 안에 자식이 끝나지 않았다 — 자식이 cgroup 밖에서 돌고 있어              정지 손잡이가 아무도 못 죽이는 것이다"
+            "{limit:?} 안에 자식이 끝나지 않았다 — 자식이 cgroup 밖에서 돌고 있어 \
+                정지 손잡이가 아무도 못 죽이는 것이다"
         ),
     }
 }

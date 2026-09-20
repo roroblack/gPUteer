@@ -3580,7 +3580,8 @@ pub fn validate_device_id(device_id: &str) -> Result<(), String> {
     }
     if device_id.len() > MAX_DEVICE_ID_LEN {
         return Err(format!(
-            "DEVICE_ID_REJECTED: {}자다 — 상한 {MAX_DEVICE_ID_LEN}자.              이 값은 식별자 네 곳에 복제된다",
+            "DEVICE_ID_REJECTED: {}자다 — 상한 {MAX_DEVICE_ID_LEN}자. \
+                이 값은 식별자 네 곳에 복제된다",
             device_id.len()
         ));
     }
@@ -3589,7 +3590,8 @@ pub fn validate_device_id(device_id: &str) -> Result<(), String> {
         .find(|c| !(c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.'))
     {
         return Err(format!(
-            "DEVICE_ID_REJECTED: {bad:?} 는 쓸 수 없다({device_id:?}) —              영숫자와 - _ . 만 허용한다"
+            "DEVICE_ID_REJECTED: {bad:?} 는 쓸 수 없다({device_id:?}) — \
+                영숫자와 - _ . 만 허용한다"
         ));
     }
     Ok(())

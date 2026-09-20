@@ -457,7 +457,8 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         match config.neighbor_report_target_node_id.as_deref() {
             None => {
                 return Err(
-                    "NEIGHBOR_REPORT_REFUSED: --neighbor-report-rounds 를 켰으면                      --neighbor-report-target 이 있어야 한다"
+                    "NEIGHBOR_REPORT_REFUSED: --neighbor-report-rounds 를 켰으면 \
+                        --neighbor-report-target 이 있어야 한다"
                         .to_string(),
                 )
             }
@@ -2733,7 +2734,8 @@ fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> R
     })?;
     let parent = absolute.parent().ok_or_else(|| {
         format!(
-            "checkpoint root 가 파일시스템 루트라 {suffix} 디렉터리를 밖에 둘 수 없다({absolute:?})              — 하위 디렉터리를 지정하라"
+            "checkpoint root 가 파일시스템 루트라 {suffix} 디렉터리를 밖에 둘 수 없다({absolute:?}) \
+                — 하위 디렉터리를 지정하라"
         )
     })?;
     let name = absolute.file_name().ok_or_else(|| {
@@ -3781,7 +3783,8 @@ mod tests {
             let absolute_root = std::path::absolute(root).expect("절대 경로");
             assert!(
                 !run_root.starts_with(&absolute_root),
-                "{raw:?} 의 작업 루트가 체크포인트 루트 안에 생겼다 —                  startup_gc 가 이걸 체크포인트로 오인한다: {run_root:?} ⊂ {absolute_root:?}"
+                "{raw:?} 의 작업 루트가 체크포인트 루트 안에 생겼다 — \
+                    startup_gc 가 이걸 체크포인트로 오인한다: {run_root:?} ⊂ {absolute_root:?}"
             );
             assert_eq!(
                 run_root.parent(),
