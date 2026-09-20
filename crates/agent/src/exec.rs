@@ -526,23 +526,11 @@ mod platform {
         //   (`exit_code()` 의 STILL_ACTIVE 가드를 여기서 쓰면 실제 값 259 를 "코드 없음" 으로 바꾼다 — 재검수 57 실측).
         // ★ 결함 69 (i) — 기다리기는 성공했는데 코드만 못 읽었으면 NoCode. 전에는 실행 오류로 돌려 종료 보고가 사라졌다.
         //   기다리기 자체의 실패는 여전히 오류다 — 자식이 살아 있을 수 있어 종료를 보고하지 않는다.
-        let exit = match child
-            .wait_then_exit_code()
-            .map_err(|e| ExecutionError::WaitFailed {
-                detail: e.to_string(),
-            })? {
-            Ok(code) => super::ExitObserved::Code(code),
-            Err(e) => super::ExitObserved::NoCode {
-                detail: format!("wait() 뒤 종료 코드 조회 실패: {e}"),
-            },
-        };
+        // ★ 결함 79 — 어댑터 결과를 보고 칸으로 옮기는 분류는 `classify_wait_result` · `classify_windows_memory` 가 한다(실패 입력을 넣어 시험한다).
+        let exit = super::classify_wait_result(child.wait_then_exit_code())?;
         // ★ 결함 69 (ii) — 메모리 관측 실패는 종료 관측과 따로 남긴다. 코드는 코드대로 보고한다.
         let (commit_limit_bytes, peak_commit_bytes, memory_observation_error) =
-            match child.query_memory_limits() {
-                Ok((peak, limit)) => (limit as u64, Some(peak as u64), None),
-                // 상한은 이 실행에 걸어 둔 정책 값을 남긴다 — Linux 경로가 memory.max 를 못 읽을 때와 같다.
-                Err(e) => (policy.commit_limit_bytes, None, Some(e.to_string())),
-            };
+            super::classify_windows_memory(child.query_memory_limits(), policy.commit_limit_bytes);
 
         Ok(ExecutionOutcome {
             exit,
@@ -550,6 +538,152 @@ mod platform {
             peak_commit_bytes,
             memory_observation_error,
         })
+    }
+}
+
+/// 결함 79 — Windows `wait_then_exit_code()` 결과의 분류. 기다리기 실패는 실행 오류(자식이 살아 있을 수 있어 종료를 보고하지 않는다),
+/// 기다린 뒤 코드 조회 실패는 NoCode, 코드는 그대로(259 포함 — 결함 77).
+///
+/// ★ 플랫폼 밖 순수 함수다 — OS 호출의 실패를 일으킬 수단이 없어, 실패 **결과**를 직접 넣어 이 분류만 시험한다(79 는 여기서 닫히지 않는다).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn classify_wait_result<E1: std::fmt::Display, E2: std::fmt::Display>(
+    wait: Result<Result<u32, E1>, E2>,
+) -> Result<ExitObserved, ExecutionError> {
+    match wait {
+        Err(e) => Err(ExecutionError::WaitFailed { detail: e.to_string() }),
+        Ok(Ok(code)) => Ok(ExitObserved::Code(code)),
+        Ok(Err(e)) => Ok(ExitObserved::NoCode {
+            detail: format!("wait() 뒤 종료 코드 조회 실패: {e}"),
+        }),
+    }
+}
+
+/// 결함 79 — Windows 메모리 조회 결과의 분류. 실패하면 상한은 이 실행에 건 정책 값, peak 는 비우고 사유를 남긴다 — 실행 오류로 올리지 않는다(결함 69).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn classify_windows_memory<E: std::fmt::Display>(
+    query: Result<(usize, usize), E>,
+    policy_commit_limit_bytes: u64,
+) -> (u64, Option<u64>, Option<String>) {
+    match query {
+        Ok((peak, limit)) => (limit as u64, Some(peak as u64), None),
+        Err(e) => (policy_commit_limit_bytes, None, Some(e.to_string())),
+    }
+}
+
+/// 결함 81 — 리눅스 `memory.peak` 원문 읽기 결과의 분류. 값이면 peak, 아니면 peak 는 비우고 **사유를 남긴다** —
+/// 부재(NotFound, 보통 memory.peak 가 없는 커널) · 읽기 실패 · 해석 실패를 문구로 가른다.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn classify_linux_memory_peak(read: std::io::Result<String>) -> (Option<u64>, Option<String>) {
+    match read {
+        Ok(text) => match text.trim().parse::<u64>() {
+            Ok(peak) => (Some(peak), None),
+            Err(_) => (None, Some(format!("memory.peak 값을 해석하지 못했다: {:?}", text.trim()))),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+            None,
+            Some("memory.peak 가 없다 — 이 커널은 최댓값을 제공하지 않을 수 있다(관측 수단 없음)".to_string()),
+        ),
+        Err(e) => (None, Some(format!("memory.peak 읽기 실패: {e}"))),
+    }
+}
+
+/// 결함 144 (검수 68) — 리눅스 `memory.max` 원문 읽기 결과의 분류. 숫자면 그 상한, 아니면 이 실행에 건 **정책 상한**으로 채우고 사유를 남긴다.
+/// ★ 전에는 부재 · 읽기 실패 · 해석 실패가 조용히 정책 상한이 됐다 — `memory.peak` 만 정상이면 사유 칸이 비었다.
+/// ★ 결함 173 (검수 68b) — 전에는 "max" 도 "해석하지 못했다" 로 적었다. `max` 는 cgroup v2 의 **유효한 "상한 없음" 표현**이라 틀린 말이다.
+///   이제 "상한 없음이 관측돼 이 실행에 건 정책 상한과 어긋난다" 로 따로 적는다. 여전히 실행 오류로 올리지는 않는다(종료 보고 경로를 건너뛰게 된다).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn classify_linux_memory_limit(read: std::io::Result<String>, policy_commit_limit_bytes: u64) -> (u64, Option<String>) {
+    match read {
+        Ok(text) if text.trim() == "max" => (
+            policy_commit_limit_bytes,
+            Some("memory.max 가 max(상한 없음)로 관측됐다 — 이 실행에 건 정책 상한과 어긋난다 · 정책 상한으로 적었다".to_string()),
+        ),
+        Ok(text) => match text.trim().parse::<u64>() {
+            Ok(limit) => (limit, None),
+            Err(_) => (
+                policy_commit_limit_bytes,
+                Some(format!("memory.max 값을 해석하지 못했다: {:?} — 정책 상한으로 적었다", text.trim())),
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+            policy_commit_limit_bytes,
+            Some("memory.max 가 없다 — 정책 상한으로 적었다".to_string()),
+        ),
+        Err(e) => (policy_commit_limit_bytes, Some(format!("memory.max 읽기 실패: {e} — 정책 상한으로 적었다"))),
+    }
+}
+
+/// 결함 144 — 상한 · peak 사유를 한 칸에 모은다. 둘 다 없으면 None, 하나만 있으면 그것, 둘이면 " · " 로 잇는다(어느 것도 버리지 않는다).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn join_observation_errors(limit: Option<String>, peak: Option<String>) -> Option<String> {
+    match (limit, peak) {
+        (None, None) => None,
+        (Some(one), None) | (None, Some(one)) => Some(one),
+        (Some(limit), Some(peak)) => Some(format!("{limit} · {peak}")),
+    }
+}
+
+#[cfg(test)]
+mod observation_classification_tests {
+    //! 결함 79 · 81 — 어댑터 결과 -> 보고 칸 분류. 실패 결과를 직접 넣는다(OS 실패 주입이 아니다).
+    use super::*;
+
+    #[test]
+    fn a_wait_failure_is_an_execution_error_and_a_code_lookup_failure_is_no_code() {
+        let wait_failed = classify_wait_result::<String, String>(Err("wait 실패".into()));
+        assert!(matches!(wait_failed, Err(ExecutionError::WaitFailed { .. })), "{wait_failed:?}");
+        let no_code = classify_wait_result::<String, String>(Ok(Err("코드 조회 실패".into()))).expect("종료는 관측했다");
+        assert!(matches!(&no_code, ExitObserved::NoCode { detail } if detail.contains("코드 조회 실패")), "{no_code:?}");
+        let code = classify_wait_result::<String, String>(Ok(Ok(259))).expect("종료는 관측했다");
+        assert!(matches!(code, ExitObserved::Code(259)), "{code:?}");
+    }
+
+    #[test]
+    fn a_windows_memory_query_failure_keeps_the_policy_limit_and_the_reason() {
+        let (limit, peak, error) = classify_windows_memory::<String>(Err("QueryInformationJobObject 실패".into()), 256);
+        assert_eq!((limit, peak), (256, None));
+        assert!(error.as_deref().is_some_and(|e| e.contains("QueryInformationJobObject")), "{error:?}");
+        assert_eq!(classify_windows_memory::<String>(Ok((100, 200)), 256), (200, Some(100), None));
+    }
+
+    #[test]
+    fn a_linux_memory_peak_absence_read_failure_and_garbage_each_leave_a_distinct_reason() {
+        assert_eq!(classify_linux_memory_peak(Ok("12345\n".into())), (Some(12345), None));
+        let (peak, absent) = classify_linux_memory_peak(Err(std::io::Error::from(std::io::ErrorKind::NotFound)));
+        assert!(peak.is_none() && absent.as_deref().is_some_and(|e| e.contains("없다")), "{absent:?}");
+        let (peak, denied) = classify_linux_memory_peak(Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+        assert!(peak.is_none() && denied.as_deref().is_some_and(|e| e.contains("읽기 실패")), "{denied:?}");
+        let (peak, garbage) = classify_linux_memory_peak(Ok("max\n".into()));
+        assert!(peak.is_none() && garbage.as_deref().is_some_and(|e| e.contains("해석하지 못했다")), "{garbage:?}");
+        assert_ne!(absent, denied, "부재와 읽기 실패의 사유가 같다");
+    }
+
+    /// 결함 144 — memory.max 실패는 정책 상한으로 채우되 사유를 남기고, peak 가 정상이어도 사유 칸이 비지 않는다.
+    #[test]
+    fn a_linux_memory_limit_failure_keeps_the_policy_limit_and_its_reason_survives_a_good_peak() {
+        assert_eq!(classify_linux_memory_limit(Ok("268435456\n".into()), 1), (268435456, None));
+        // 결함 173 — max 는 "상한 없음" 으로, 진짜 해석 불가 값은 "해석하지 못했다" 로 가른다
+        let (limit, unlimited) = classify_linux_memory_limit(Ok("max\n".into()), 256);
+        assert!(limit == 256 && unlimited.as_deref().is_some_and(|e| e.contains("상한 없음") && e.contains("어긋난다")), "{unlimited:?}");
+        let (limit, garbage) = classify_linux_memory_limit(Ok("12k\n".into()), 256);
+        assert!(limit == 256 && garbage.as_deref().is_some_and(|e| e.contains("memory.max") && e.contains("해석하지 못했다")), "{garbage:?}");
+        assert_ne!(unlimited, garbage, "상한 없음과 해석 불가의 사유가 같다");
+        let (limit, absent) = classify_linux_memory_limit(Err(std::io::Error::from(std::io::ErrorKind::NotFound)), 256);
+        assert!(limit == 256 && absent.as_deref().is_some_and(|e| e.contains("memory.max 가 없다")), "{absent:?}");
+        let (limit, denied) = classify_linux_memory_limit(Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)), 256);
+        assert!(limit == 256 && denied.as_deref().is_some_and(|e| e.contains("memory.max 읽기 실패")), "{denied:?}");
+
+        let (_, peak_ok) = classify_linux_memory_peak(Ok("12345\n".into()));
+        let joined = join_observation_errors(denied.clone(), peak_ok);
+        assert_eq!(joined, denied, "peak 가 정상이어도 memory.max 사유가 남아야 한다");
+        let (_, peak_absent) = classify_linux_memory_peak(Err(std::io::Error::from(std::io::ErrorKind::NotFound)));
+        let both = join_observation_errors(absent, peak_absent).expect("둘 다 사유");
+        assert!(both.contains("memory.max 가 없다") && both.contains("memory.peak 가 없다"), "{both}");
+        assert_eq!(join_observation_errors(None, None), None);
+        // 결함 172 (검수 68b) — memory.max 는 정상이고 peak 만 사유가 있는 조합. 이 분기만 None 으로 바꾸는 회귀를 잡는다
+        let (_, peak_denied) = classify_linux_memory_peak(Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)));
+        assert!(peak_denied.is_some(), "시험 전제: peak 사유가 있어야 한다");
+        assert_eq!(join_observation_errors(None, peak_denied.clone()), peak_denied, "memory.max 가 정상이어도 peak 사유가 남아야 한다");
     }
 }
 
@@ -630,7 +764,9 @@ mod platform {
             inner: child.stopper(),
         });
 
-        let limit = child.memory_limit_bytes().unwrap_or(policy.commit_limit_bytes);
+        // ★ 결함 144 (검수 68) — 전에는 `memory_limit_bytes().unwrap_or(정책)` 이라 읽기 · 해석 실패 사유가 사라졌다. 원문을 받아 사유를 남긴다.
+        let (limit, limit_observation_error) =
+            super::classify_linux_memory_limit(child.read_memory_max_file(), policy.commit_limit_bytes);
         // ★ 결함 69 — 신호 종료를 -1 로 합성하지 않는다(`wait_status`). 전에는 -1 을 u32 로 옮겨
         //   OBSERVED_WITH_CODE / 4294967295 로 보고될 수 있었다.
         let exit = match child.wait_status().map_err(|error| ExecutionError::WaitFailed {
@@ -648,13 +784,17 @@ mod platform {
         //   최종값이 아니다. cgroup 은 프로세스가 끝나도 우리가 지울
         //   때까지 남아 있으므로 여기서 읽을 수 있다.
         // 모르면 None — 전에는 0 으로 채웠다(`CLAUDE.md` §1).
-        let peak = child.peak_memory_bytes();
+        // ★ 결함 81 — 전에는 `peak_memory_bytes()` 가 부재 · 읽기 실패 · 해석 실패를 모두 None 으로 접어 사유가 사라졌다
+        //   (`memory_observation_error` 가 리눅스에서 늘 None 이었다). 원문 결과를 받아 사유를 남긴다.
+        // ★ 이 두 줄은 Windows 개발 기계에서 타입 검사를 못 한다 — 리눅스 실행 전까지 미검증이다.
+        let (peak, peak_observation_error) = super::classify_linux_memory_peak(child.read_memory_peak_file());
+        let memory_observation_error = super::join_observation_errors(limit_observation_error, peak_observation_error);
 
         Ok(ExecutionOutcome {
             exit,
             commit_limit_bytes: limit,
             peak_commit_bytes: peak,
-            memory_observation_error: None,
+            memory_observation_error,
         })
     }
 }
