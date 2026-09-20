@@ -452,7 +452,8 @@ fn require_distinct_scoped_ids(
         let derived = scoped_id(&base.lease_id, device_id);
         if let Some(previous) = seen.insert(derived.clone(), device_id.clone()) {
             return Err(format!(
-                "SCOPED_ID_COLLISION: {previous} 와 {device_id} 가 같은 식별자 {derived} 를                  만든다 — 저장소 없이 실행하면 서로 다른 Agent 에게 같은 Lease 가 서명돼 나간다"
+                "SCOPED_ID_COLLISION: {previous} 와 {device_id} 가 같은 식별자 {derived} 를 \
+                    만든다 — 저장소 없이 실행하면 서로 다른 Agent 에게 같은 Lease 가 서명돼 나간다"
             ));
         }
     }

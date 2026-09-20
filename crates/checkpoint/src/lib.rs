@@ -57,7 +57,10 @@ pub enum CheckpointError {
     ///
     /// 이것을 조용히 통과시키면 **writer 가 "확정했다" 고 거짓 보고한다** —
     /// 매니페스트에는 새 해시가, 디스크에는 옛 데이터가 남는다.
-    #[error("write-once 내용 불일치 {path:?}: 기존 {existing_len}B, 새 {incoming_len}B —              같은 이름에 다른 내용을 쓰려 했다. 앞선 writer 가 중단됐을 수 있다")]
+    #[error(
+        "write-once 내용 불일치 {path:?}: 기존 {existing_len}B, 새 {incoming_len}B — \
+        같은 이름에 다른 내용을 쓰려 했다. 앞선 writer 가 중단됐을 수 있다"
+    )]
     ContentMismatch {
         path: PathBuf,
         existing_len: usize,
