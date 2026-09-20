@@ -136,7 +136,8 @@ fn the_report_guard_stays_out_of_a_lane_that_wants_no_reports() {
     let cfg = config(&["--multi-agent", "true", "--accept-timeout-ms", "200"]);
     assert_eq!(cfg.expect_neighbor_reports, 0);
     // 관문 판정만 따로 확인한다 — 실제 실행은 다른 이유로 실패할 수 있다.
-    let error = gputeer_coordinator::run(cfg).expect_err("이 lane 은 신원이 하나라 다른 이유로 거부된다");
+    let error =
+        gputeer_coordinator::run(cfg).expect_err("이 lane 은 신원이 하나라 다른 이유로 거부된다");
     assert!(
         !error.contains("이웃 신고"),
         "신고를 기대하지 않는데 신고 관문이 걸렸다: {error}"
@@ -161,7 +162,10 @@ fn the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off() {
             "플래그 켜짐",
             vec!["--expect-neighbor-reports", "1", "--multi-agent", "true"],
         ),
-        ("플래그 꺼짐 — 우회 반례", vec!["--expect-neighbor-reports", "1"]),
+        (
+            "플래그 꺼짐 — 우회 반례",
+            vec!["--expect-neighbor-reports", "1"],
+        ),
     ] {
         let error = gputeer_coordinator::multi_agent::run_multi_agent(config(&extra))
             .expect_err("거부돼야 한다");
@@ -188,8 +192,9 @@ fn flags_that_may_end_the_session_after_ack_are_refused() {
         "--disconnect-after-ack",
         "--drop-connection-after-ack-once",
     ] {
-        let error = gputeer_coordinator::run(config(&["--expect-neighbor-reports", "1", flag, "true"]))
-            .expect_err("거부돼야 한다");
+        let error =
+            gputeer_coordinator::run(config(&["--expect-neighbor-reports", "1", flag, "true"]))
+                .expect_err("거부돼야 한다");
         assert!(error.contains(flag), "{flag}: 실제 오류: {error}");
     }
 }

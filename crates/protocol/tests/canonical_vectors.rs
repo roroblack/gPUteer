@@ -453,7 +453,6 @@ fn domain_tags_are_32_bytes_and_unique() {
     );
 }
 
-
 /// ★ **규범 문서·Python 참조 구현·Rust 구현의 "메시지 → domain tag" 대응이 같은가.**
 ///
 /// # 왜 이 테스트가 필요한가
@@ -628,9 +627,7 @@ fn domain_tags_match_the_norm_document_and_the_python_reference() {
                 continue;
             }
             let mut end = i + needle.len();
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
-            {
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                 end += 1;
             }
             let variant = String::from_utf8_lossy(&bytes[i + needle.len()..end]).into_owned();
@@ -716,7 +713,9 @@ fn domain_tags_match_the_norm_document_and_the_python_reference() {
             .collect();
 
     let md_map = map_from_norm_section(include_str!("../../../docs/protocol/signing.md"));
-    let py_map = map_from_python_dict(include_str!("../../../tools/canonical/reference_canonical.py"));
+    let py_map = map_from_python_dict(include_str!(
+        "../../../tools/canonical/reference_canonical.py"
+    ));
 
     // 파서가 공허하지 않은지 먼저 본다.
     assert!(

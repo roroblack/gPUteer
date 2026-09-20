@@ -461,9 +461,7 @@ impl CoordinatorReservationReleaseStore {
 ///
 /// ★ 이 커널은 진술이 **참인지** 확인하지 못한다. 확인하는 척하지 않고,
 ///   진술하지 않으면 통과할 수 없게만 한다(`CLAUDE.md` §0.4).
-fn check_authorization(
-    authorization: ReleaseAuthorization,
-) -> Result<(), ReservationReleaseError> {
+fn check_authorization(authorization: ReleaseAuthorization) -> Result<(), ReservationReleaseError> {
     if authorization.runtime_stop == RuntimeStopProof::NotProvenYet {
         return Err(ReservationReleaseError::RuntimeStopNotProven);
     }

@@ -38,13 +38,13 @@ mod coordinator_agent_selftest;
 mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
-mod plan_job;
 mod issue_grant;
 mod out_file;
+mod plan_job;
 mod scheduler_tick;
+mod selftest;
 mod stage_job;
 mod submit;
-mod selftest;
 
 const USAGE: &str = "\
 gputeer — gPUteer CLI

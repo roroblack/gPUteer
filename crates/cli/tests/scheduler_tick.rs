@@ -21,7 +21,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const NODE: &str = "node-tick-a";
@@ -34,7 +38,10 @@ const JOB_A: &str = "01JJOBTICKA0000000000001";
 const JOB_B: &str = "01JJOBTICKB0000000000001";
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -151,17 +158,29 @@ fn write_bootstrap(dir: &Path, nodes: usize) -> PathBuf {
 }
 
 const DECLARATIONS: [&str; 22] = [
-    "--workload-class", "TRAINING",
-    "--side-effect-class", "PURE",
-    "--dataset-sensitivity", "INTERNAL",
-    "--minimum-security-tier", "S2",
-    "--minimum-isolation-class", "CONTAINED",
-    "--minimum-key-protection", "K1",
-    "--gpu-count", "1",
-    "--gpu-min-vram-bytes", "8589934592",
+    "--workload-class",
+    "TRAINING",
+    "--side-effect-class",
+    "PURE",
+    "--dataset-sensitivity",
+    "INTERNAL",
+    "--minimum-security-tier",
+    "S2",
+    "--minimum-isolation-class",
+    "CONTAINED",
+    "--minimum-key-protection",
+    "K1",
+    "--gpu-count",
+    "1",
+    "--gpu-min-vram-bytes",
+    "8589934592",
     // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
-    "--cpu-cores", "4", "--ram-bytes", "8589934592",
-    "--workspace-bytes", "10737418240",
+    "--cpu-cores",
+    "4",
+    "--ram-bytes",
+    "8589934592",
+    "--workspace-bytes",
+    "10737418240",
 ];
 
 /// 한 Job 을 `submit` -> `import-manifest` -> `plan-job` 까지 올린다.
@@ -170,28 +189,55 @@ fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
     let mut args: Vec<&str> = vec![
-        "submit", "--job-id", job_id, "--entrypoint", "python",
-        "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
-        "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
-        "--out", manifest.to_str().unwrap(),
+        "submit",
+        "--job-id",
+        job_id,
+        "--entrypoint",
+        "python",
+        "--submitter-device-id",
+        SUBMITTER,
+        "--submitter-seed",
+        SEED,
+        "--issued-at-unix-ms",
+        &issued,
+        "--expires-at-unix-ms",
+        &expires,
+        "--out",
+        manifest.to_str().unwrap(),
     ];
     args.extend_from_slice(&DECLARATIONS);
     let (ok, out) = run_cli(&args);
     assert!(ok, "submit 실패: {out}");
 
     let (ok, out) = run_cli(&[
-        "import-manifest", "--manifest", manifest.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--job-db", db.to_str().unwrap(), "--idempotency-key", idem,
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "import-manifest",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--job-db",
+        db.to_str().unwrap(),
+        "--idempotency-key",
+        idem,
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "import-manifest 실패: {out}");
 
     let (ok, out) = run_cli(&[
-        "plan-job", "--job-id", job_id, "--control-db", db.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "plan-job",
+        "--job-id",
+        job_id,
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "plan-job 실패: {out}");
 }
@@ -199,17 +245,28 @@ fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
 fn tick(keyring: &Path, db: &Path, extra: &[&str]) -> (bool, String) {
     let mut args: Vec<&str> = vec![
         "scheduler-tick",
-        "--control-db", db.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--submitter-member", OWNER,
-        "--max-snapshot-age-ms", "86400000",
-        "--best-fit-axes", AXES,
-        "--coordinator-id", COORDINATOR,
-        "--coordinator-term", "3",
-        "--lease-ttl-ms", "600000",
-        "--lease-renew-after-ms", "300000",
-        "--lease-max-total-duration-seconds", "86400",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "300000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ];
     args.extend_from_slice(extra);
     run_cli(&args)
@@ -226,12 +283,20 @@ fn prepared(dir: &Path, nodes: usize) -> (PathBuf, PathBuf) {
     let bootstrap = write_bootstrap(dir, nodes);
     let (ok, out) = run_cli(&[
         "import-inventory",
-        "--inventory", bootstrap.to_str().unwrap(),
-        "--inventory-db", db.to_str().unwrap(),
+        "--inventory",
+        bootstrap.to_str().unwrap(),
+        "--inventory-db",
+        db.to_str().unwrap(),
     ]);
     assert!(ok, "import-inventory 실패: {out}");
     let keyring = write_keyring(dir);
-    queue_job(dir, &keyring, &db, JOB_A, "0102030405060708090a0b0c0d0e0f10");
+    queue_job(
+        dir,
+        &keyring,
+        &db,
+        JOB_A,
+        "0102030405060708090a0b0c0d0e0f10",
+    );
     (keyring, db)
 }
 
@@ -248,7 +313,10 @@ fn a_tick_picks_a_queued_job_and_stages_it_without_operator_identifiers() {
     assert!(ok, "tick 실패: {output}");
     assert!(output.contains("TICK_STAGED"), "출력이 다르다: {output}");
     assert!(output.contains(NODE), "어느 노드인지 안 말한다: {output}");
-    assert!(output.contains("created=true"), "최초 예약이 아니다: {output}");
+    assert!(
+        output.contains("created=true"),
+        "최초 예약이 아니다: {output}"
+    );
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
 }
 
@@ -318,8 +386,10 @@ fn an_empty_queue_is_idle_not_an_error() {
     let bootstrap = write_bootstrap(dir.path(), 1);
     let (ok, out) = run_cli(&[
         "import-inventory",
-        "--inventory", bootstrap.to_str().unwrap(),
-        "--inventory-db", db.to_str().unwrap(),
+        "--inventory",
+        bootstrap.to_str().unwrap(),
+        "--inventory-db",
+        db.to_str().unwrap(),
     ]);
     assert!(ok, "import-inventory 실패: {out}");
     let keyring = write_keyring(dir.path());
@@ -358,7 +428,13 @@ fn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared(dir.path(), 2);
     // 두 번째 Job 을 뒤이어 큐에 올린다.
-    queue_job(dir.path(), &keyring, &db, JOB_B, "1102030405060708090a0b0c0d0e0f10");
+    queue_job(
+        dir.path(),
+        &keyring,
+        &db,
+        JOB_B,
+        "1102030405060708090a0b0c0d0e0f10",
+    );
 
     let (ok, first) = tick(&keyring, &db, &[]);
     assert!(ok, "1회차 실패: {first}");
@@ -504,7 +580,10 @@ fn a_renew_offset_at_or_after_the_ttl_is_refused() {
 
     for renew in ["600000", "700000", "0"] {
         let (ok, output) = tick(&keyring, &db, &["--lease-renew-after-ms", renew]);
-        assert!(!ok, "--lease-renew-after-ms {renew} 를 받아들였다: {output}");
+        assert!(
+            !ok,
+            "--lease-renew-after-ms {renew} 를 받아들였다: {output}"
+        );
         assert!(
             refused_with(&output, "TICK_ARGS_REFUSED: RENEW_AFTER_NOT_BEFORE_TTL"),
             "이유를 안 말한다: {output}"
@@ -521,17 +600,28 @@ fn a_non_durable_control_db_is_refused() {
     for label in [":memory:", ""] {
         let (ok, output) = run_cli(&[
             "scheduler-tick",
-            "--control-db", label,
-            "--submitter-keyring", keyring.to_str().unwrap(),
-            "--submitter-member", OWNER,
-            "--max-snapshot-age-ms", "86400000",
-            "--best-fit-axes", AXES,
-            "--coordinator-id", COORDINATOR,
-            "--coordinator-term", "3",
-            "--lease-ttl-ms", "600000",
-            "--lease-renew-after-ms", "300000",
-            "--lease-max-total-duration-seconds", "86400",
-            "--i-understand-plaintext-keyring-is-unsafe", "true",
+            "--control-db",
+            label,
+            "--submitter-keyring",
+            keyring.to_str().unwrap(),
+            "--submitter-member",
+            OWNER,
+            "--max-snapshot-age-ms",
+            "86400000",
+            "--best-fit-axes",
+            AXES,
+            "--coordinator-id",
+            COORDINATOR,
+            "--coordinator-term",
+            "3",
+            "--lease-ttl-ms",
+            "600000",
+            "--lease-renew-after-ms",
+            "300000",
+            "--lease-max-total-duration-seconds",
+            "86400",
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
         ]);
         assert!(!ok, "{label:?} 를 받아들였다: {output}");
         assert!(
@@ -566,7 +656,12 @@ fn an_argument_error_cannot_impersonate_a_later_gate() {
 
     // ── 갈래 1 — 사유 문구를 축 이름에 심는다 ────────────────
     //    검수가 지적한 바로 그 입력이다.
-    for planted in ["already reserved", "너무 오래 있었다", "작아야 한다", "영속이 아니다"] {
+    for planted in [
+        "already reserved",
+        "너무 오래 있었다",
+        "작아야 한다",
+        "영속이 아니다",
+    ] {
         let axes = format!("{planted},gpu_count,cpu,ram,workspace");
         let (ok, output) = tick(&keyring, &db, &["--best-fit-axes", &axes]);
 

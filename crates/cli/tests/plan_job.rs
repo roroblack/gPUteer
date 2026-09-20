@@ -24,7 +24,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const NODE: &str = "node-plan-a";
@@ -38,7 +42,10 @@ const OWNER: &str = "owner-plan";
 const MEMBER: &str = OWNER;
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -262,7 +269,10 @@ fn a_submitted_job_with_a_matching_node_reaches_the_queue() {
 
     let (ok, output) = plan(&keyring, &db, &[]);
     assert!(ok, "plan-job 실패: {output}");
-    assert!(output.contains("QUEUED"), "출력이 QUEUED 가 아니다: {output}");
+    assert!(
+        output.contains("QUEUED"),
+        "출력이 QUEUED 가 아니다: {output}"
+    );
     assert!(
         output.contains("eligible=1"),
         "적격 노드 수를 말하지 않는다: {output}"

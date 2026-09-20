@@ -72,7 +72,10 @@ fn a_fresh_ack_is_accepted_and_the_same_ack_again_is_refused_as_replay() {
 
     let first = ack(&key, (48u8..64).collect());
     let verified = verify(&first, 1, &verifier, NOW, &mut guard).expect("정상 Ack 는 받는다");
-    assert!(verified.replay_checked(), "실제 guard 로 검사했는데 미검사로 표시됐다");
+    assert!(
+        verified.replay_checked(),
+        "실제 guard 로 검사했는데 미검사로 표시됐다"
+    );
 
     assert_eq!(
         verify(&first, 1, &verifier, NOW, &mut guard)
@@ -84,5 +87,6 @@ fn a_fresh_ack_is_accepted_and_the_same_ack_again_is_refused_as_replay() {
     );
 
     let other_session = ack(&key, (64u8..80).collect());
-    verify(&other_session, 1, &verifier, NOW, &mut guard).expect("다른 세션 nonce 의 Ack 는 받는다");
+    verify(&other_session, 1, &verifier, NOW, &mut guard)
+        .expect("다른 세션 nonce 의 Ack 는 받는다");
 }

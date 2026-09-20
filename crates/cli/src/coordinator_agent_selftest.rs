@@ -215,9 +215,7 @@ fn run_submit(
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !stdout.contains("SUBMITTED") || !stdout.contains(job_id) {
-        return Err(format!(
-            "gputeer submit 출력이 기대와 다르다: {stdout}"
-        ));
+        return Err(format!("gputeer submit 출력이 기대와 다르다: {stdout}"));
     }
     Ok(())
 }
@@ -268,7 +266,6 @@ fn run_handshake_internal(
 }
 
 const NEWLINE: char = '\n';
-
 
 /// Coordinator 만 띄워 **시작 전에 죽는지** 본다.
 ///
@@ -570,9 +567,19 @@ fn checkpoint_entries(root: &Path) -> Result<Vec<std::fs::DirEntry>, String> {
 ///   `dirs=bad removed=0` 같은 깨진 줄도 채택해 뒤의 정상 줄을 건너뛰었다). 못 읽으면 None — 호출자가 "관측 실패" 로 따로 실패한다(결함 180).
 fn startup_gc_removed(stdout: &str) -> Option<usize> {
     stdout.lines().find_map(|line| {
-        let mut fields = line.strip_prefix("CHECKPOINT_STARTUP_GC ")?.split_whitespace();
-        fields.next()?.strip_prefix("dirs=")?.parse::<usize>().ok()?;
-        fields.next()?.strip_prefix("removed=")?.parse::<usize>().ok()
+        let mut fields = line
+            .strip_prefix("CHECKPOINT_STARTUP_GC ")?
+            .split_whitespace();
+        fields
+            .next()?
+            .strip_prefix("dirs=")?
+            .parse::<usize>()
+            .ok()?;
+        fields
+            .next()?
+            .strip_prefix("removed=")?
+            .parse::<usize>()
+            .ok()
     })
 }
 
@@ -3023,8 +3030,13 @@ pub fn run() -> Result<String, String> {
     // ★ 결함 155 (재검수 66b) — `removed != 0` 만으로는 마커를 지웠는지 특정하지 못한다(남은 잠금 파일만 지워도 양수). 첫 마커 내용을 바꿔 둔다 —
     //   두 번째 기동의 GC 가 그 마커를 지우지 않으면 write_once 가 내용 불일치로 실패한다.
     if let Some(first_id) = started_checkpoint_id(&retry_first_43.agent_stdout) {
-        std::fs::write(&checkpoint_root_43.join(&first_id).join(".durability.writing"), b"Stale\n")
-            .map_err(|e| format!("첫 마커 내용 바꾸기 실패(43): {e}"))?;
+        std::fs::write(
+            &checkpoint_root_43
+                .join(&first_id)
+                .join(".durability.writing"),
+            b"Stale\n",
+        )
+        .map_err(|e| format!("첫 마커 내용 바꾸기 실패(43): {e}"))?;
     }
     let retry_second_43 =
         run_handshake_with_checkpoint_root(&fixture, &checkpoint_root_43, &[], &[])?;
@@ -3102,7 +3114,9 @@ pub fn run() -> Result<String, String> {
             .coordinator_stdout
             .contains(RESULT_OK_MARKER)
         || marker_failure_44.agent_stdout.contains("JOB_STARTED ")
-        || !marker_failure_44.agent_stdout.contains("CHECKPOINT_STARTUP_GC ")
+        || !marker_failure_44
+            .agent_stdout
+            .contains("CHECKPOINT_STARTUP_GC ")
         || !blocked_checkpoint_44.is_file()
     {
         return Err(format!(
@@ -4561,8 +4575,8 @@ pub fn run() -> Result<String, String> {
     // ★ 제출자가 직접 서명한다. Coordinator 는 제출자 개인키를
     //   보지 못하고 서명된 파일을 실어 나를 뿐이다 — 그래야 Agent 의
     //   독립 검증이 의미를 갖는다.
-    let manifest_dir = tempfile::tempdir()
-        .map_err(|e| format!("manifest tempdir 생성 실패: {e}"))?;
+    let manifest_dir =
+        tempfile::tempdir().map_err(|e| format!("manifest tempdir 생성 실패: {e}"))?;
     let manifest_path = manifest_dir.path().join("job.manifest");
     let manifest_path_str = manifest_path
         .to_str()
@@ -4577,10 +4591,8 @@ pub fn run() -> Result<String, String> {
         &manifest_path_str,
     )?;
 
-    let manifest_coordinator_args: Vec<String> = vec![
-        "--manifest-file".to_string(),
-        manifest_path_str.clone(),
-    ];
+    let manifest_coordinator_args: Vec<String> =
+        vec!["--manifest-file".to_string(), manifest_path_str.clone()];
     let manifest_coordinator_refs: Vec<&str> = manifest_coordinator_args
         .iter()
         .map(String::as_str)
@@ -4886,8 +4898,8 @@ pub fn run() -> Result<String, String> {
     ];
     let echo_refs: Vec<&str> = echo_args.iter().map(String::as_str).collect();
 
-    let checkpoint_root_83 = tempfile::tempdir()
-        .map_err(|error| format!("83) checkpoint root 생성 실패: {error}"))?;
+    let checkpoint_root_83 =
+        tempfile::tempdir().map_err(|error| format!("83) checkpoint root 생성 실패: {error}"))?;
     let exec_83 = run_handshake_with_checkpoint_root(
         &fixture,
         checkpoint_root_83.path(),
@@ -4900,8 +4912,12 @@ pub fn run() -> Result<String, String> {
             exec_83.agent_stdout, exec_83.agent_stderr
         ));
     }
-    let checkpoint_id_83 = started_checkpoint_id(&exec_83.agent_stdout)
-        .ok_or_else(|| format!("83) checkpoint_id 를 찾을 수 없다: {:?}", exec_83.agent_stdout))?;
+    let checkpoint_id_83 = started_checkpoint_id(&exec_83.agent_stdout).ok_or_else(|| {
+        format!(
+            "83) checkpoint_id 를 찾을 수 없다: {:?}",
+            exec_83.agent_stdout
+        )
+    })?;
     let dir_83 = checkpoint_root_83.path().join(&checkpoint_id_83);
 
     // 자식이 실제로 찍은 바이트가 파일로 남았는가.
@@ -4975,8 +4991,8 @@ pub fn run() -> Result<String, String> {
     //
     //     ★ 실패했을 때야말로 출력이 필요하다. 성공 경로에서만
     //       회수하면 "왜 실패했는지" 를 볼 방법이 없다.
-    let checkpoint_root_84 = tempfile::tempdir()
-        .map_err(|error| format!("84) checkpoint root 생성 실패: {error}"))?;
+    let checkpoint_root_84 =
+        tempfile::tempdir().map_err(|error| format!("84) checkpoint root 생성 실패: {error}"))?;
     let exec_84 = run_handshake_with_checkpoint_root(
         &fixture,
         checkpoint_root_84.path(),
@@ -4989,8 +5005,12 @@ pub fn run() -> Result<String, String> {
             exec_84.agent_stdout, exec_84.agent_stderr
         ));
     }
-    let checkpoint_id_84 = started_checkpoint_id(&exec_84.agent_stdout)
-        .ok_or_else(|| format!("84) checkpoint_id 를 찾을 수 없다: {:?}", exec_84.agent_stdout))?;
+    let checkpoint_id_84 = started_checkpoint_id(&exec_84.agent_stdout).ok_or_else(|| {
+        format!(
+            "84) checkpoint_id 를 찾을 수 없다: {:?}",
+            exec_84.agent_stdout
+        )
+    })?;
     let result_84 = std::fs::read_to_string(
         checkpoint_root_84
             .path()
@@ -5063,9 +5083,7 @@ pub fn run() -> Result<String, String> {
             hb_86.coordinator_stderr
         ));
     }
-    report.push_str(
-        "86) heartbeat 개수 불일치가 무한 대기가 아니라 식별 가능한 오류로 끝남\n",
-    );
+    report.push_str("86) heartbeat 개수 불일치가 무한 대기가 아니라 식별 가능한 오류로 끝남\n");
 
     // 87) 세대가 다른 heartbeat 는 거부된다.
     //
@@ -5192,8 +5210,8 @@ pub fn run() -> Result<String, String> {
     //     저장소 단위 테스트는 따로 있다. 여기서 보는 것은 **실제 서명·
     //     replay·3종 대조를 전부 통과한 heartbeat 가** 그 저장소까지
     //     도달하는가다.
-    let liveness_dir = tempfile::tempdir()
-        .map_err(|e| format!("92) liveness 임시 디렉터리 생성 실패: {e}"))?;
+    let liveness_dir =
+        tempfile::tempdir().map_err(|e| format!("92) liveness 임시 디렉터리 생성 실패: {e}"))?;
     let liveness_db = liveness_dir.path().join("liveness.db");
     let liveness_db = liveness_db
         .to_str()
@@ -5279,8 +5297,8 @@ pub fn run() -> Result<String, String> {
     //   지목된 노드가 실재하는지, 연락 두절이 실제로 일어났는지. 이 lane
     //   에는 네트워크를 갈라 볼 수단이 없다. 증명하는 것은 **관측이
     //   전달되고 남는다** 까지다.
-    let neighbor_dir = tempfile::tempdir()
-        .map_err(|e| format!("93) 이웃 신고 임시 디렉터리 생성 실패: {e}"))?;
+    let neighbor_dir =
+        tempfile::tempdir().map_err(|e| format!("93) 이웃 신고 임시 디렉터리 생성 실패: {e}"))?;
     let neighbor_db = neighbor_dir.path().join("neighbors.db");
     let neighbor_db = neighbor_db
         .to_str()
@@ -5368,11 +5386,12 @@ pub fn run() -> Result<String, String> {
     //
     //   그래서 프로세스가 끝난 **뒤에** 저장소를 다시 열어 행을 읽는다.
     //   재시작을 넘어 남았는지까지 이 자리에서 함께 본다.
-    let reopened = gputeer_coordinator::neighbor_report_store::CoordinatorNeighborReportStore::open(
-        neighbor_db,
-        fixture.coordinator_device_id,
-    )
-    .map_err(|e| format!("93) 저장소를 다시 열지 못했다: {e}"))?;
+    let reopened =
+        gputeer_coordinator::neighbor_report_store::CoordinatorNeighborReportStore::open(
+            neighbor_db,
+            fixture.coordinator_device_id,
+        )
+        .map_err(|e| format!("93) 저장소를 다시 열지 못했다: {e}"))?;
     let rows_93 = reopened
         .reports_about(TARGET_93)
         .map_err(|e| format!("93) 저장된 신고를 읽지 못했다: {e}"))?;
@@ -5500,13 +5519,14 @@ pub fn run() -> Result<String, String> {
     //     대상에 대한 행만 본다. 이 lane 에서 94 가 만들 수 있는 행은
     //     `(이 Agent 의 기계, TARGET_93)` 하나뿐이므로 여기서는 충분하지만,
     //     "한 글자도 다르지 않다" 는 저장소 전체에 대한 주장이 아니다.
-    let after_94 = gputeer_coordinator::neighbor_report_store::CoordinatorNeighborReportStore::open(
-        neighbor_db,
-        fixture.coordinator_device_id,
-    )
-    .map_err(|e| format!("94) 저장소를 다시 열지 못했다: {e}"))?
-    .reports_about(TARGET_93)
-    .map_err(|e| format!("94) 저장된 신고를 읽지 못했다: {e}"))?;
+    let after_94 =
+        gputeer_coordinator::neighbor_report_store::CoordinatorNeighborReportStore::open(
+            neighbor_db,
+            fixture.coordinator_device_id,
+        )
+        .map_err(|e| format!("94) 저장소를 다시 열지 못했다: {e}"))?
+        .reports_about(TARGET_93)
+        .map_err(|e| format!("94) 저장된 신고를 읽지 못했다: {e}"))?;
     if after_94 != rows_93 {
         return Err(format!(
             "94) 거부된 신고가 저장소를 바꿨다 — 저장이 대조보다 먼저다.\n  전: {rows_93:?}\n  후: {after_94:?}"
@@ -5530,7 +5550,12 @@ pub fn run() -> Result<String, String> {
     for (label, extra) in [
         (
             "비영속(:memory:)",
-            vec!["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+            vec![
+                "--expect-neighbor-reports",
+                "1",
+                "--neighbor-report-db",
+                ":memory:",
+            ],
         ),
         ("경로 부재", vec!["--expect-neighbor-reports", "1"]),
     ] {
@@ -5572,9 +5597,18 @@ pub fn run() -> Result<String, String> {
         (
             "비영속(:memory:)",
             "kind=storage",
-            vec!["--expect-neighbor-reports", "1", "--neighbor-report-db", ":memory:"],
+            vec![
+                "--expect-neighbor-reports",
+                "1",
+                "--neighbor-report-db",
+                ":memory:",
+            ],
         ),
-        ("경로 부재", "kind=storage", vec!["--expect-neighbor-reports", "1"]),
+        (
+            "경로 부재",
+            "kind=storage",
+            vec!["--expect-neighbor-reports", "1"],
+        ),
         (
             "multi-agent 조합",
             "STARTUP_REFUSED",
@@ -5629,7 +5663,12 @@ pub fn run() -> Result<String, String> {
         ("대상 없음", vec!["--neighbor-report-rounds", "1"]),
         (
             "대상이 공백",
-            vec!["--neighbor-report-rounds", "1", "--neighbor-report-target", "   "],
+            vec![
+                "--neighbor-report-rounds",
+                "1",
+                "--neighbor-report-target",
+                "   ",
+            ],
         ),
         (
             "multi-agent 와 함께",
@@ -5669,7 +5708,9 @@ pub fn run() -> Result<String, String> {
             return Err(format!("96) {label} 인데 정상 종료했다: {out:?}"));
         }
         if !err.contains("NEIGHBOR_REPORT_REFUSED") {
-            return Err(format!("96) {label} 의 거부 사유가 식별되지 않는다: {err:?}"));
+            return Err(format!(
+                "96) {label} 의 거부 사유가 식별되지 않는다: {err:?}"
+            ));
         }
         // ★ accept 가 한 건이라도 있으면 연결을 시도한 것이다.
         match watcher.accept() {
@@ -5910,9 +5951,11 @@ fn run_wire_agent_client(
         ..Default::default()
     };
     hello.node_signature = gputeer_crypto::sign(&hello_key, &hello).to_vec();
-    let hello_frame =
-        gputeer_crypto::write_frame(gputeer_crypto::FrameType::SessionHello, &hello.encode_to_vec())
-            .map_err(|e| format!("wire Agent Hello encode failed: {e}"))?;
+    let hello_frame = gputeer_crypto::write_frame(
+        gputeer_crypto::FrameType::SessionHello,
+        &hello.encode_to_vec(),
+    )
+    .map_err(|e| format!("wire Agent Hello encode failed: {e}"))?;
     stream
         .write_all(&hello_frame)
         .map_err(|e| format!("wire Agent Hello write failed: {e}"))?;
@@ -6637,8 +6680,16 @@ mod startup_gc_output_tests {
     #[test]
     fn no_readable_line_is_an_observation_failure_not_zero() {
         // 결함 180 — 못 읽으면 0 이 아니라 None
-        assert_eq!(startup_gc_removed("CHECKPOINT_STARTUP_GC dirs=2 removed=x root=a real_root=a\nOTHER removed=0\n"), None);
-        assert_eq!(startup_gc_removed("CHECKPOINT_STARTUP_GC removed=0 dirs=2 root=a real_root=a\n"), None);
+        assert_eq!(
+            startup_gc_removed(
+                "CHECKPOINT_STARTUP_GC dirs=2 removed=x root=a real_root=a\nOTHER removed=0\n"
+            ),
+            None
+        );
+        assert_eq!(
+            startup_gc_removed("CHECKPOINT_STARTUP_GC removed=0 dirs=2 root=a real_root=a\n"),
+            None
+        );
         assert_eq!(startup_gc_removed(""), None);
     }
 }

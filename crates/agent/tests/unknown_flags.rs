@@ -16,12 +16,18 @@ fn base() -> Vec<String> {
     let own_seed = "22".repeat(32);
     let peer_hex = hex(peer.as_bytes());
     [
-        "--connect", "127.0.0.1:9",
-        "--own-seed", own_seed.as_str(),
-        "--peer-pubkey", peer_hex.as_str(),
-        "--coordinator-device-id", "01JCOORDINATORAGENTFLAG01",
-        "--agent-device-id", "01JAGENTAGENTFLAG00000001",
-        "--fence-db", "fence.sqlite3",
+        "--connect",
+        "127.0.0.1:9",
+        "--own-seed",
+        own_seed.as_str(),
+        "--peer-pubkey",
+        peer_hex.as_str(),
+        "--coordinator-device-id",
+        "01JCOORDINATORAGENTFLAG01",
+        "--agent-device-id",
+        "01JAGENTAGENTFLAG00000001",
+        "--fence-db",
+        "fence.sqlite3",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -45,7 +51,10 @@ fn a_misspelled_flag_is_refused_by_name() {
         error.starts_with("STARTUP_REFUSED: UNKNOWN_FLAGS"),
         "다른 이유로 거부했다: {error}"
     );
-    assert!(error.contains("--send-attempt-reprot"), "이름을 안 댄다: {error}");
+    assert!(
+        error.contains("--send-attempt-reprot"),
+        "이름을 안 댄다: {error}"
+    );
 }
 
 /// ★ 대조 — 올바른 이름은 받는다. 없으면 "모르는 것이든 아는 것이든 다
@@ -67,7 +76,10 @@ fn an_invalid_bool_is_refused_by_name() {
         Ok(_) => panic!("잘못된 불리언을 받아들였다"),
         Err(error) => error,
     };
-    assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+    assert!(
+        error.starts_with("STARTUP_REFUSED: INVALID_BOOL"),
+        "{error}"
+    );
     assert!(error.contains("--send-attempt-report"), "{error}");
 }
 
@@ -76,15 +88,23 @@ fn an_invalid_bool_is_refused_by_name() {
 fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
     let mut args = base();
     args.extend(
-        ["--send-attempt-report", "tru", "--send-attempt-report", "false"]
-            .iter()
-            .map(|s| s.to_string()),
+        [
+            "--send-attempt-report",
+            "tru",
+            "--send-attempt-report",
+            "false",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
     );
     let error = match parse_config_from_args(&args) {
         Ok(_) => panic!("중복 뒤에 숨은 잘못된 불리언을 받아들였다"),
         Err(error) => error,
     };
-    assert!(error.starts_with("STARTUP_REFUSED: INVALID_BOOL"), "{error}");
+    assert!(
+        error.starts_with("STARTUP_REFUSED: INVALID_BOOL"),
+        "{error}"
+    );
     assert!(error.contains("--send-attempt-report"), "{error}");
 }
 
@@ -95,9 +115,14 @@ fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
 fn a_valid_duplicate_bool_is_accepted_and_the_last_value_wins() {
     let mut args = base();
     args.extend(
-        ["--send-attempt-report", "false", "--send-attempt-report", "true"]
-            .iter()
-            .map(|s| s.to_string()),
+        [
+            "--send-attempt-report",
+            "false",
+            "--send-attempt-report",
+            "true",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
     );
     let config = parse_config_from_args(&args).expect("올바른 값의 중복을 거부했다");
     assert!(config.send_attempt_report, "마지막 값을 쓰지 않았다");
@@ -125,7 +150,10 @@ fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
             Ok(_) => panic!("{flag}: 잘못된 앞 값을 받아들였다"),
             Err(e) => e,
         };
-        assert!(error.contains(flag) && error.contains("abc"), "{flag}: 이유를 안 말한다: {error}");
+        assert!(
+            error.contains(flag) && error.contains("abc"),
+            "{flag}: 이유를 안 말한다: {error}"
+        );
     }
 }
 
@@ -134,7 +162,11 @@ fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
 #[test]
 fn a_valid_numeric_duplicate_is_accepted() {
     let mut args = base();
-    args.extend(["--renew-rounds", "3", "--renew-rounds", "2"].iter().map(|s| s.to_string()));
+    args.extend(
+        ["--renew-rounds", "3", "--renew-rounds", "2"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
     let config = parse_config_from_args(&args).expect("올바른 중복을 거부했다");
     assert_eq!(config.renew_rounds, 2, "마지막 값을 쓰지 않았다");
 }

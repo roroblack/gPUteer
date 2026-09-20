@@ -76,26 +76,23 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
     // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
     //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
     //   다시 본다.
-    if let Some(message) = crate::unsupported_neighbor_report_lane(
-        &config,
-        crate::NeighborReportLane::MultiAgent,
-    ) {
+    if let Some(message) =
+        crate::unsupported_neighbor_report_lane(&config, crate::NeighborReportLane::MultiAgent)
+    {
         return Err(message);
     }
     // ★ 종료 보고도 같은 자리에서 막는다 — 이 lane 의 `serve()` 는
     //   자기 세션 루프를 따로 갖고 있어 `serve_one_connection()` 을
     //   부르지 않는다. 즉 `AttemptReport` 수신 구간이 **없다.**
-    if let Some(message) = crate::unsupported_attempt_report_lane(
-        &config,
-        crate::NeighborReportLane::MultiAgent,
-    ) {
+    if let Some(message) =
+        crate::unsupported_attempt_report_lane(&config, crate::NeighborReportLane::MultiAgent)
+    {
         return Err(message);
     }
     // ★ 결함 ㉟ — heartbeat 수신 구간도 이 lane 에는 없다.
-    if let Some(message) = crate::unsupported_heartbeat_lane(
-        &config,
-        crate::NeighborReportLane::MultiAgent,
-    ) {
+    if let Some(message) =
+        crate::unsupported_heartbeat_lane(&config, crate::NeighborReportLane::MultiAgent)
+    {
         return Err(message);
     }
     let agents = parse_agent_directory(
@@ -188,7 +185,11 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
         }
     }
     if !failures.is_empty() {
-        return Err(format!("세션 {}건 실패: {}", failures.len(), failures.join(" / ")));
+        return Err(format!(
+            "세션 {}건 실패: {}",
+            failures.len(),
+            failures.join(" / ")
+        ));
     }
 
     println!(
@@ -627,7 +628,6 @@ mod tests {
         }
     }
 }
-
 
 /// 열려 있는 세션 하나. RAII 로 동시 개수를 센다.
 ///

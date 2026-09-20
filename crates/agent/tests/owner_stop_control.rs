@@ -106,7 +106,9 @@ fn stopping_twice_is_not_an_error() {
     let stopper = rx.recv_timeout(Duration::from_secs(10)).expect("손잡이");
     stopper.stop().expect("첫 정지");
     worker.join().expect("worker thread").expect("실행 결과");
-    stopper.stop().expect("이미 끝난 작업에 대한 두 번째 정지가 실패했다");
+    stopper
+        .stop()
+        .expect("이미 끝난 작업에 대한 두 번째 정지가 실패했다");
 }
 
 /// 실행하지 못한 경우에는 손잡이를 주지 않는다.
@@ -118,11 +120,7 @@ fn stopping_twice_is_not_an_error() {
 #[test]
 fn refused_executions_hand_out_no_stopper() {
     for (name, policy, expected) in [
-        (
-            "opt-in 꺼짐",
-            policy(false, COMMIT_LIMIT),
-            "NOT_OPTED_IN",
-        ),
+        ("opt-in 꺼짐", policy(false, COMMIT_LIMIT), "NOT_OPTED_IN"),
         ("상한 0", policy(true, 0), "LIMIT_NOT_APPLIED"),
     ] {
         let spec = spec(&["/c", "exit", "0"]);

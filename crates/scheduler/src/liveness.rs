@@ -365,9 +365,8 @@ mod tests {
     /// 나쁜 값이 `Silent` 여야 하고, 그 위는 없어야 한다.
     #[test]
     fn the_worst_verdict_is_silence_not_death() {
-        let reports =
-            classify_node_liveness(&[observation("n1", 0)], &[], policy(), u64::MAX / 2)
-                .expect("판정");
+        let reports = classify_node_liveness(&[observation("n1", 0)], &[], policy(), u64::MAX / 2)
+            .expect("판정");
         assert_eq!(
             reports[0].liveness,
             NodeLiveness::Silent,
@@ -489,7 +488,12 @@ mod tests {
         blank_node.node_id = String::new();
         let mut blank_device = observation("n3", 1);
         blank_device.device_id = String::new();
-        let a = classify_node_liveness(&[blank_node.clone(), blank_device.clone()], &[], policy(), 0);
+        let a = classify_node_liveness(
+            &[blank_node.clone(), blank_device.clone()],
+            &[],
+            policy(),
+            0,
+        );
         let b = classify_node_liveness(&[blank_device, blank_node], &[], policy(), 0);
         assert_eq!(a, b, "어느 빈 식별자를 먼저 만나느냐에 따라 오류가 갈린다");
     }

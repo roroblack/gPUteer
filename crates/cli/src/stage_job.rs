@@ -177,9 +177,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         now_unix_ms,
         &mut NoReplayCheck,
     )
-    .map_err(|e| {
-        format!("STAGE_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?}")
-    })?;
+    .map_err(|e| format!("STAGE_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?}"))?;
     let job_requirements = job_requirements_from_manifest(&verified, submitter_member)
         .map_err(|e| format!("STAGE_REFUSED: {e}"))?;
 

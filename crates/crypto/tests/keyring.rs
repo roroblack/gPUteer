@@ -354,11 +354,8 @@ fn linux_k1_round_trips_through_systemd_creds() {
     let secret = SecretSigningKey::from_signing_key(key(9));
     let public = secret.verifying_key();
 
-    let created = PersistentKeyring::new(
-        &path,
-        KeyProtection::K1OsProtected,
-        PlaintextPolicy::Reject,
-    );
+    let created =
+        PersistentKeyring::new(&path, KeyProtection::K1OsProtected, PlaintextPolicy::Reject);
 
     if !available {
         eprintln!("ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — K1 왕복은 측정하지 않았다");
@@ -383,8 +380,7 @@ fn linux_k1_round_trips_through_systemd_creds() {
 
     // ★ 재열기로 왕복을 증명한다. 같은 객체에서 읽으면 메모리에 남은
     //   값을 보는 것이라 실제로 봉인·복호가 됐는지 알 수 없다.
-    let reopened =
-        PersistentKeyring::load(&path, PlaintextPolicy::Reject).expect("재열기");
+    let reopened = PersistentKeyring::load(&path, PlaintextPolicy::Reject).expect("재열기");
     assert_eq!(
         reopened.protection(),
         KeyProtection::K1OsProtected,
@@ -424,8 +420,7 @@ fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
 #[test]
 fn unsupported_platform_and_call_failure_are_different_errors() {
     let unsupported = gputeer_crypto::KeyringError::UnsupportedPlatform.to_string();
-    let failed =
-        gputeer_crypto::KeyringError::OsProtectionFailed("권한 없음".into()).to_string();
+    let failed = gputeer_crypto::KeyringError::OsProtectionFailed("권한 없음".into()).to_string();
     assert_ne!(unsupported, failed);
     assert!(unsupported.contains("사용할 수 없다"));
     assert!(failed.contains("실패했다") && failed.contains("권한 없음"));
@@ -478,12 +473,9 @@ fn another_signers_keypair_cannot_be_transplanted_into_this_slot() {
     let alice = "01JALICESELFTEST00000000001";
     let bob = "01JBOBSELFTEST0000000000001";
 
-    let mut keyring = PersistentKeyring::new(
-        &path,
-        KeyProtection::K1OsProtected,
-        PlaintextPolicy::Reject,
-    )
-    .expect("K1 키링");
+    let mut keyring =
+        PersistentKeyring::new(&path, KeyProtection::K1OsProtected, PlaintextPolicy::Reject)
+            .expect("K1 키링");
     keyring
         .insert_private(alice, SecretSigningKey::from_signing_key(key(1)))
         .expect("alice");
@@ -502,7 +494,10 @@ fn another_signers_keypair_cannot_be_transplanted_into_this_slot() {
         key(2).verifying_key().as_bytes(),
     )
     .expect("공개키와 봉인 blob 을 형식대로 찾지 못했다");
-    assert_ne!(swapped, raw, "맞바꿨는데 파일이 그대로다 — 아무것도 안 바꾼 것이다");
+    assert_ne!(
+        swapped, raw,
+        "맞바꿨는데 파일이 그대로다 — 아무것도 안 바꾼 것이다"
+    );
     // ★ 체크섬을 다시 계산한다. 안 하면 **키 로직에 닿기도 전에**
     //   "checksum 이 일치하지 않는다" 로 걸려서, 봉인이 막았는지 체크섬이
     //   막았는지 구분할 수 없다 — 실제로 처음엔 그렇게 공허했다.
@@ -624,7 +619,9 @@ fn a_public_key_only_entry_cannot_be_swapped_in_either() {
             .map(|out| out.status.success())
             .unwrap_or(false);
         if !available {
-            eprintln!("ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — 공개키 이식 검사는 측정하지 않았다");
+            eprintln!(
+                "ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — 공개키 이식 검사는 측정하지 않았다"
+            );
             return;
         }
     }
@@ -633,12 +630,9 @@ fn a_public_key_only_entry_cannot_be_swapped_in_either() {
     let path = dir.path().join("keys.bin");
     let alice = "01JALICESELFTEST00000000001";
 
-    let mut keyring = PersistentKeyring::new(
-        &path,
-        KeyProtection::K1OsProtected,
-        PlaintextPolicy::Reject,
-    )
-    .expect("K1 키링");
+    let mut keyring =
+        PersistentKeyring::new(&path, KeyProtection::K1OsProtected, PlaintextPolicy::Reject)
+            .expect("K1 키링");
     keyring
         .insert_private(alice, SecretSigningKey::from_signing_key(key(1)))
         .expect("alice");
@@ -672,7 +666,11 @@ fn a_public_key_only_entry_cannot_be_swapped_in_either() {
 /// 길이 필드까지 고쳐야 하므로 뒤쪽 바이트가 밀린다 — 그래서 blob 을
 /// 잘라내고 길이를 0 으로 쓴다.
 #[cfg(any(windows, target_os = "linux"))]
-fn replace_with_public_only(raw: &[u8], target_public: &[u8], new_public: &[u8]) -> Option<Vec<u8>> {
+fn replace_with_public_only(
+    raw: &[u8],
+    target_public: &[u8],
+    new_public: &[u8],
+) -> Option<Vec<u8>> {
     let key_at = raw.windows(32).position(|w| w == target_public)?;
     let len_at = key_at + 32;
     let length = u32::from_le_bytes(raw.get(len_at..len_at + 4)?.try_into().ok()?) as usize;

@@ -166,9 +166,9 @@ pub fn run(args: &[String]) -> Result<String, String> {
         .plan_id
         .clone()
         .ok_or_else(|| format!("TICK_REFUSED: {job_id} 가 QUEUED 인데 plan_id 가 없다"))?;
-    let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
-        format!("TICK_REFUSED: {job_id} 가 QUEUED 인데 queued_at 이 없다")
-    })?;
+    let queued_at = job
+        .queued_at_unix_ms
+        .ok_or_else(|| format!("TICK_REFUSED: {job_id} 가 QUEUED 인데 queued_at 이 없다"))?;
 
     // ── Lease 시각을 저장된 사실에서 유도한다 ───────────────────────
     //
@@ -355,7 +355,9 @@ fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
             }
         };
         if axes.contains(&axis) {
-            return Err(format!("TICK_ARGS_REFUSED: AXES_DUPLICATE — --best-fit-axes 에 {name:?} 가 두 번 나온다"));
+            return Err(format!(
+                "TICK_ARGS_REFUSED: AXES_DUPLICATE — --best-fit-axes 에 {name:?} 가 두 번 나온다"
+            ));
         }
         axes.push(axis);
     }
@@ -383,7 +385,9 @@ fn parse_flags(args: &[String]) -> Result<BTreeMap<String, String>, String> {
     while i < args.len() {
         let key = &args[i];
         if !key.starts_with("--") {
-            return Err(format!("TICK_ARGS_REFUSED: UNKNOWN_FLAG — 알 수 없는 인자: {key}"));
+            return Err(format!(
+                "TICK_ARGS_REFUSED: UNKNOWN_FLAG — 알 수 없는 인자: {key}"
+            ));
         }
         let value = args
             .get(i + 1)

@@ -128,7 +128,11 @@ fn main() {
     //
     // ★ 이게 없으면 안쪽 실패가 "AppContainer 때문" 인지 "이 기계가 원래
     //   안 되는 것" 인지 구분할 수 없다.
-    match std::process::Command::new(&python).arg("-c").arg(code).output() {
+    match std::process::Command::new(&python)
+        .arg("-c")
+        .arg(code)
+        .output()
+    {
         Ok(o) => println!(
             "P0_02 outside exit={:?} result={}",
             o.status.code(),
@@ -141,13 +145,18 @@ fn main() {
     // ★ `P0_02_RAW_CMD` 가 있으면 **명령줄 전체를 그것으로** 쓴다.
     //   Python 말고 다른 실행 파일(예: `dll_probe`)을 컨테이너 안에서
     //   돌려야 벽을 더 좁힐 수 있다 — `-c` 를 붙이면 그게 안 된다.
-    let command = std::env::var("P0_02_RAW_CMD")
-        .unwrap_or_else(|_| format!("\"{python}\" -c \"{code}\""));
+    let command =
+        std::env::var("P0_02_RAW_CMD").unwrap_or_else(|_| format!("\"{python}\" -c \"{code}\""));
     // ★ capability 를 세 번째 인자로 받는다(쉼표 구분). 안 주면 빈 목록 —
     //   지금까지와 같다. 넣어 보는 것 자체가 `P0-02` 의 "식별" 방법이다.
     let caps: Vec<String> = std::env::args()
         .nth(3)
-        .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
     if !caps.is_empty() {
         println!("P0_02 capabilities={}", caps.join(","));

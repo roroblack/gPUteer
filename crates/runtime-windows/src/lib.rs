@@ -65,24 +65,23 @@ mod windows_impl {
     use gputeer_runtime_policy::vram::{windows_commit_cap, VramEnforcement};
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS};
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        TerminateJobObject,
-        SetInformationJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
     use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_READ,
         FILE_SHARE_WRITE,
     };
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
     use windows_sys::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess,
-        InitializeProcThreadAttributeList,
-        ResumeThread, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
-        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
+        InitializeProcThreadAttributeList, ResumeThread, TerminateProcess,
+        UpdateProcThreadAttribute, WaitForSingleObject, CREATE_SUSPENDED,
+        CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
         LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
         STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
     };
@@ -856,9 +855,9 @@ mod windows_impl {
 
 #[cfg(windows)]
 pub use windows_impl::{
-    create_constrained_child, create_constrained_child_for_ram_limit, quote_command_line,
-    create_constrained_child_suspended, ConstrainedChild, CreateProcessSpec, JobStopper,
-    SuspendedChild,
+    create_constrained_child, create_constrained_child_for_ram_limit,
+    create_constrained_child_suspended, quote_command_line, ConstrainedChild, CreateProcessSpec,
+    JobStopper, SuspendedChild,
 };
 
 #[cfg(not(windows))]

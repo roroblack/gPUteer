@@ -19,7 +19,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const JOB: &str = "01JJOBSUBMIT000000000001";
@@ -27,7 +31,10 @@ const SUBMITTER: &str = "01JSUBMITTERSUB000000001";
 const SEED: &str = "1111111111111111111111111111111111111111111111111111111111111122";
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -65,13 +72,21 @@ fn submit(out: &std::path::Path, override_flag: Option<(&str, &str)>) -> (bool, 
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
     let mut args: Vec<String> = vec![
-        "submit".into(), "--job-id".into(), JOB.into(),
-        "--entrypoint".into(), "python".into(),
-        "--submitter-device-id".into(), SUBMITTER.into(),
-        "--submitter-seed".into(), SEED.into(),
-        "--issued-at-unix-ms".into(), issued,
-        "--expires-at-unix-ms".into(), expires,
-        "--out".into(), out.to_str().unwrap().into(),
+        "submit".into(),
+        "--job-id".into(),
+        JOB.into(),
+        "--entrypoint".into(),
+        "python".into(),
+        "--submitter-device-id".into(),
+        SUBMITTER.into(),
+        "--submitter-seed".into(),
+        SEED.into(),
+        "--issued-at-unix-ms".into(),
+        issued,
+        "--expires-at-unix-ms".into(),
+        expires,
+        "--out".into(),
+        out.to_str().unwrap().into(),
     ];
     for (name, value) in GOOD {
         let value = match override_flag {
@@ -113,10 +128,7 @@ fn a_misspelled_declaration_is_refused_at_submit_time() {
             output.contains(typo) && output.contains("모른다"),
             "{flag}: 무엇이 잘못됐는지 안 말한다: {output}"
         );
-        assert!(
-            !out.exists(),
-            "{flag}: 거부했는데 Manifest 파일을 남겼다"
-        );
+        assert!(!out.exists(), "{flag}: 거부했는데 Manifest 파일을 남겼다");
     }
 }
 
@@ -133,18 +145,21 @@ fn declarations_are_case_insensitive() {
 }
 
 /// 시각 인자를 직접 통제하는 제출 — 기본 helper 는 항상 만료를 준다.
-fn submit_with_times(
-    out: &std::path::Path,
-    issued: &str,
-    expires: Option<&str>,
-) -> (bool, String) {
+fn submit_with_times(out: &std::path::Path, issued: &str, expires: Option<&str>) -> (bool, String) {
     let mut args: Vec<String> = vec![
-        "submit".into(), "--job-id".into(), JOB.into(),
-        "--entrypoint".into(), "python".into(),
-        "--submitter-device-id".into(), SUBMITTER.into(),
-        "--submitter-seed".into(), SEED.into(),
-        "--issued-at-unix-ms".into(), issued.into(),
-        "--out".into(), out.to_str().unwrap().into(),
+        "submit".into(),
+        "--job-id".into(),
+        JOB.into(),
+        "--entrypoint".into(),
+        "python".into(),
+        "--submitter-device-id".into(),
+        SUBMITTER.into(),
+        "--submitter-seed".into(),
+        SEED.into(),
+        "--issued-at-unix-ms".into(),
+        issued.into(),
+        "--out".into(),
+        out.to_str().unwrap().into(),
     ];
     if let Some(e) = expires {
         args.push("--expires-at-unix-ms".into());
@@ -195,11 +210,8 @@ fn a_manifest_that_expires_before_it_is_issued_is_refused_before_signing() {
     let out = dir.path().join("reversed.pb");
     let issued = now_unix_ms();
 
-    let (ok, output) = submit_with_times(
-        &out,
-        &issued.to_string(),
-        Some(&(issued - 1).to_string()),
-    );
+    let (ok, output) =
+        submit_with_times(&out, &issued.to_string(), Some(&(issued - 1).to_string()));
     assert!(!ok, "만료가 발급보다 앞인데 받아들였다: {output}");
     // ★ 이유까지 본다 — 다른 관문에 걸려도 !ok 는 참이다.
     assert!(
@@ -216,8 +228,7 @@ fn an_expiry_equal_to_the_issue_time_is_refused_too() {
     let out = dir.path().join("equal.pb");
     let issued = now_unix_ms();
 
-    let (ok, output) =
-        submit_with_times(&out, &issued.to_string(), Some(&issued.to_string()));
+    let (ok, output) = submit_with_times(&out, &issued.to_string(), Some(&issued.to_string()));
     assert!(!ok, "발급 == 만료 를 받아들였다: {output}");
     assert!(!out.exists(), "거부했는데 파일을 남겼다");
 }
@@ -273,14 +284,23 @@ fn an_explicit_flag_allows_replacing_the_manifest() {
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
     let mut args: Vec<String> = vec![
-        "submit".into(), "--job-id".into(), JOB.into(),
-        "--entrypoint".into(), "python".into(),
-        "--submitter-device-id".into(), SUBMITTER.into(),
-        "--submitter-seed".into(), SEED.into(),
-        "--issued-at-unix-ms".into(), issued,
-        "--expires-at-unix-ms".into(), expires,
-        "--out".into(), out.to_str().unwrap().into(),
-        "--overwrite-existing-manifest".into(), "true".into(),
+        "submit".into(),
+        "--job-id".into(),
+        JOB.into(),
+        "--entrypoint".into(),
+        "python".into(),
+        "--submitter-device-id".into(),
+        SUBMITTER.into(),
+        "--submitter-seed".into(),
+        SEED.into(),
+        "--issued-at-unix-ms".into(),
+        issued,
+        "--expires-at-unix-ms".into(),
+        expires,
+        "--out".into(),
+        out.to_str().unwrap().into(),
+        "--overwrite-existing-manifest".into(),
+        "true".into(),
     ];
     for (name, value) in GOOD {
         args.push(name.into());
@@ -290,7 +310,10 @@ fn an_explicit_flag_allows_replacing_the_manifest() {
     let (ok, output) = run_cli(&borrowed);
     assert!(ok, "명시적 덮어쓰기가 실패했다: {output}");
     let bytes = std::fs::read(&out).expect("Manifest 를 읽는다");
-    assert_ne!(bytes, b"stale bytes", "덮어쓴다고 했는데 옛 내용이 그대로다");
+    assert_ne!(
+        bytes, b"stale bytes",
+        "덮어쓴다고 했는데 옛 내용이 그대로다"
+    );
     assert!(!bytes.is_empty(), "덮어썼는데 비어 있다");
 }
 
@@ -367,13 +390,21 @@ fn declaration_case_does_not_change_the_signed_bytes() {
 
     let run_with = |out: &std::path::Path, upper: bool| {
         let mut args: Vec<String> = vec![
-            "submit".into(), "--job-id".into(), JOB.into(),
-            "--entrypoint".into(), "python".into(),
-            "--submitter-device-id".into(), SUBMITTER.into(),
-            "--submitter-seed".into(), SEED.into(),
-            "--issued-at-unix-ms".into(), issued.clone(),
-            "--expires-at-unix-ms".into(), expires.clone(),
-            "--out".into(), out.to_str().unwrap().into(),
+            "submit".into(),
+            "--job-id".into(),
+            JOB.into(),
+            "--entrypoint".into(),
+            "python".into(),
+            "--submitter-device-id".into(),
+            SUBMITTER.into(),
+            "--submitter-seed".into(),
+            SEED.into(),
+            "--issued-at-unix-ms".into(),
+            issued.clone(),
+            "--expires-at-unix-ms".into(),
+            expires.clone(),
+            "--out".into(),
+            out.to_str().unwrap().into(),
         ];
         for (name, value) in GOOD {
             args.push(name.into());
@@ -419,12 +450,19 @@ fn an_issued_time_too_large_for_the_default_expiry_is_refused_not_a_panic() {
 
     // 만료를 **안 주고** 발급만 최대값으로 준다 — 기본값 계산이 도는 경로다.
     let mut args: Vec<String> = vec![
-        "submit".into(), "--job-id".into(), JOB.into(),
-        "--entrypoint".into(), "python".into(),
-        "--submitter-device-id".into(), SUBMITTER.into(),
-        "--submitter-seed".into(), SEED.into(),
-        "--issued-at-unix-ms".into(), u64::MAX.to_string(),
-        "--out".into(), out.to_str().unwrap().into(),
+        "submit".into(),
+        "--job-id".into(),
+        JOB.into(),
+        "--entrypoint".into(),
+        "python".into(),
+        "--submitter-device-id".into(),
+        SUBMITTER.into(),
+        "--submitter-seed".into(),
+        SEED.into(),
+        "--issued-at-unix-ms".into(),
+        u64::MAX.to_string(),
+        "--out".into(),
+        out.to_str().unwrap().into(),
     ];
     for (name, value) in GOOD {
         args.push(name.into());
@@ -447,13 +485,21 @@ fn an_issued_time_too_large_for_the_default_expiry_is_refused_not_a_panic() {
     // 대조 — 만료를 직접 주면 그 큰 발급 시각도 문제가 아니다…가 아니라
     // 역전 검사에 걸린다. 어느 쪽이든 **패닉이 아니어야** 한다.
     let mut args2: Vec<String> = vec![
-        "submit".into(), "--job-id".into(), JOB.into(),
-        "--entrypoint".into(), "python".into(),
-        "--submitter-device-id".into(), SUBMITTER.into(),
-        "--submitter-seed".into(), SEED.into(),
-        "--issued-at-unix-ms".into(), u64::MAX.to_string(),
-        "--expires-at-unix-ms".into(), expires,
-        "--out".into(), out.to_str().unwrap().into(),
+        "submit".into(),
+        "--job-id".into(),
+        JOB.into(),
+        "--entrypoint".into(),
+        "python".into(),
+        "--submitter-device-id".into(),
+        SUBMITTER.into(),
+        "--submitter-seed".into(),
+        SEED.into(),
+        "--issued-at-unix-ms".into(),
+        u64::MAX.to_string(),
+        "--expires-at-unix-ms".into(),
+        expires,
+        "--out".into(),
+        out.to_str().unwrap().into(),
     ];
     for (name, value) in GOOD {
         args2.push(name.into());
@@ -462,7 +508,10 @@ fn an_issued_time_too_large_for_the_default_expiry_is_refused_not_a_panic() {
     let borrowed2: Vec<&str> = args2.iter().map(String::as_str).collect();
     let (ok2, output2) = run_cli(&borrowed2);
     assert!(!ok2, "발급이 만료보다 뒤인데 받아들였다: {output2}");
-    assert!(!output2.contains("panicked"), "여기서도 패닉이 났다: {output2}");
+    assert!(
+        !output2.contains("panicked"),
+        "여기서도 패닉이 났다: {output2}"
+    );
 }
 
 /// 64**바이트**지만 hex 가 아닌 seed 는 **패닉이 아니라 거부**한다.
@@ -490,13 +539,21 @@ fn a_sixty_four_byte_but_non_hex_seed_is_refused_not_a_panic() {
         let issued = now_unix_ms().saturating_sub(60_000).to_string();
         let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
         let mut args: Vec<String> = vec![
-            "submit".into(), "--job-id".into(), JOB.into(),
-            "--entrypoint".into(), "python".into(),
-            "--submitter-device-id".into(), SUBMITTER.into(),
-            "--submitter-seed".into(), bad_seed.into(),
-            "--issued-at-unix-ms".into(), issued,
-            "--expires-at-unix-ms".into(), expires,
-            "--out".into(), out.to_str().unwrap().into(),
+            "submit".into(),
+            "--job-id".into(),
+            JOB.into(),
+            "--entrypoint".into(),
+            "python".into(),
+            "--submitter-device-id".into(),
+            SUBMITTER.into(),
+            "--submitter-seed".into(),
+            bad_seed.into(),
+            "--issued-at-unix-ms".into(),
+            issued,
+            "--expires-at-unix-ms".into(),
+            expires,
+            "--out".into(),
+            out.to_str().unwrap().into(),
         ];
         for (name, value) in GOOD {
             args.push(name.into());
@@ -532,18 +589,29 @@ fn declaring_only_some_resources_is_refused_rather_than_silently_dropped() {
 
     let run = |out: &std::path::Path, resource_flags: &[(&str, &str)]| {
         let mut args: Vec<String> = vec![
-            "submit".into(), "--job-id".into(), JOB.into(),
-            "--entrypoint".into(), "python".into(),
-            "--submitter-device-id".into(), SUBMITTER.into(),
-            "--submitter-seed".into(), SEED.into(),
-            "--issued-at-unix-ms".into(), issued.clone(),
-            "--expires-at-unix-ms".into(), expires.clone(),
-            "--out".into(), out.to_str().unwrap().into(),
+            "submit".into(),
+            "--job-id".into(),
+            JOB.into(),
+            "--entrypoint".into(),
+            "python".into(),
+            "--submitter-device-id".into(),
+            SUBMITTER.into(),
+            "--submitter-seed".into(),
+            SEED.into(),
+            "--issued-at-unix-ms".into(),
+            issued.clone(),
+            "--expires-at-unix-ms".into(),
+            expires.clone(),
+            "--out".into(),
+            out.to_str().unwrap().into(),
         ];
         // 여섯 enum 축만 GOOD 에서 가져온다(자원은 인자로 받는다).
         for (name, value) in GOOD {
-            if name.starts_with("--gpu") || name.starts_with("--cpu")
-                || name.starts_with("--ram") || name.starts_with("--workspace") {
+            if name.starts_with("--gpu")
+                || name.starts_with("--cpu")
+                || name.starts_with("--ram")
+                || name.starts_with("--workspace")
+            {
                 continue;
             }
             args.push(name.into());
@@ -559,15 +627,19 @@ fn declaring_only_some_resources_is_refused_rather_than_silently_dropped() {
 
     // ★ 검수가 든 반례 그대로 — gpu-count 만 빼고 셋을 준다.
     let partial = dir.path().join("partial.pb");
-    let (ok, output) = run(&partial, &[
-        ("--cpu-cores", "4"),
-        ("--ram-bytes", "8589934592"),
-        ("--workspace-bytes", "10737418240"),
-    ]);
+    let (ok, output) = run(
+        &partial,
+        &[
+            ("--cpu-cores", "4"),
+            ("--ram-bytes", "8589934592"),
+            ("--workspace-bytes", "10737418240"),
+        ],
+    );
     assert!(ok, "cpu·ram·workspace 를 다 줬는데 거부했다: {output}");
     let m = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(
         std::fs::read(&partial).expect("읽기").as_slice(),
-    ).expect("디코드");
+    )
+    .expect("디코드");
     let r = m.resources.as_ref().expect("★ 선언한 자원이 버려졌다");
     assert_eq!(r.cpu_cores, 4, "선언한 cpu_cores 가 버려졌다");
     assert_eq!(r.ram_bytes, 8_589_934_592, "선언한 ram_bytes 가 버려졌다");
@@ -603,8 +675,13 @@ fn declaring_only_some_resources_is_refused_rather_than_silently_dropped() {
     assert!(ok4, "자원을 안 쓰는 제출을 막았다: {output4}");
     let m4 = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(
         std::fs::read(&none).expect("읽기").as_slice(),
-    ).expect("디코드");
-    assert!(m4.resources.is_none(), "선언하지 않은 자원이 생겼다: {:?}", m4.resources);
+    )
+    .expect("디코드");
+    assert!(
+        m4.resources.is_none(),
+        "선언하지 않은 자원이 생겼다: {:?}",
+        m4.resources
+    );
 }
 
 /// 서명이 **선언한 seed 의 공개키로** 검증된다.
@@ -621,9 +698,8 @@ fn the_signature_verifies_with_the_declared_seeds_public_key() {
     assert!(ok, "정상 경로가 실패했다: {output}");
 
     let bytes = std::fs::read(&out).expect("Manifest 읽기");
-    let manifest =
-        <gputeer_protocol::pb::JobManifest as prost::Message>::decode(bytes.as_slice())
-            .expect("디코드");
+    let manifest = <gputeer_protocol::pb::JobManifest as prost::Message>::decode(bytes.as_slice())
+        .expect("디코드");
 
     // 선언한 seed 에서 공개키를 도출해 그 키만 담은 keyring 으로 검증한다.
     let mut seed = [0u8; 32];

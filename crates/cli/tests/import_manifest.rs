@@ -15,7 +15,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const SUBMITTER: &str = "01JSUBMITTERIMPORT0000001";
@@ -35,12 +39,9 @@ fn seed_bytes() -> [u8; 32] {
 /// ★ `signer` 를 바꿔 주면 **다른 사람의 키를 넣은 keyring** 이 된다 —
 ///   그게 "모르는 서명자" 반례다.
 fn write_keyring(path: &Path, signer_id: &str, key: &SigningKey) {
-    let mut keyring = PersistentKeyring::new(
-        path,
-        KeyProtection::K0Plaintext,
-        PlaintextPolicy::Allow,
-    )
-    .expect("keyring 생성");
+    let mut keyring =
+        PersistentKeyring::new(path, KeyProtection::K0Plaintext, PlaintextPolicy::Allow)
+            .expect("keyring 생성");
     keyring
         .insert_public(signer_id, key.verifying_key())
         .expect("공개키 등록");
@@ -127,8 +128,8 @@ fn stored_job(db: &Path) -> Option<gputeer_coordinator::job_store::StoredJob> {
     if !db.exists() {
         return None;
     }
-    let store = gputeer_coordinator::job_store::CoordinatorJobStore::open(db)
-        .expect("job store 열기");
+    let store =
+        gputeer_coordinator::job_store::CoordinatorJobStore::open(db).expect("job store 열기");
     store.get(JOB_ID).expect("job 조회")
 }
 
@@ -213,7 +214,8 @@ fn a_manifest_from_an_unknown_signer_is_rejected_and_the_db_is_untouched() {
     // ★ 세 거부 사유를 **구분해서** 확인한다(독립 검수 1라운드 지적).
     //   공통 문자열만 보면 셋을 하나로 뭉갠 구현도 전부 통과한다.
     assert!(
-        run.stderr.contains("신뢰 목록에서 쓸 수 있는 키를 찾지 못했다"),
+        run.stderr
+            .contains("신뢰 목록에서 쓸 수 있는 키를 찾지 못했다"),
         "서명자를 못 찾은 것을 그렇게 부르지 않는다: {}",
         run.stderr
     );
@@ -306,7 +308,11 @@ fn importing_the_same_manifest_twice_keeps_one_row() {
     let after_first = stored_job(&db).expect("첫 반입이 저장되지 않았다");
 
     let second = import(&manifest, &keyring, &db, &ALLOW_PLAINTEXT);
-    assert!(second.ok, "재반입이 실패했다 — 재시도는 정상이다: {}", second.stderr);
+    assert!(
+        second.ok,
+        "재반입이 실패했다 — 재시도는 정상이다: {}",
+        second.stderr
+    );
     let after_second = stored_job(&db).expect("재반입 뒤 Job 이 사라졌다");
 
     // ★ 개수가 아니라 **행 전체**를 비교한다 — 두 번째가 덮어써서 값이
@@ -379,8 +385,7 @@ fn a_rejection_leaves_an_already_populated_db_byte_for_byte_identical() {
 fn an_expired_manifest_is_rejected_and_the_db_is_untouched() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     // 30초 전에 이미 만료됐다.
-    let manifest =
-        submit_manifest_expiring_at(dir.path(), "expired.pb", now_unix_ms() - 30_000);
+    let manifest = submit_manifest_expiring_at(dir.path(), "expired.pb", now_unix_ms() - 30_000);
     let keyring = dir.path().join("submitters.keyring");
     write_keyring(&keyring, SUBMITTER, &SigningKey::from_bytes(&seed_bytes()));
     let db = dir.path().join("jobs.sqlite3");

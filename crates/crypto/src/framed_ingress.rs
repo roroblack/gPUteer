@@ -322,10 +322,9 @@ pub fn read_frame<R: Read>(
         FrameType::LeaseResume => verify_as!(LeaseResume, pb::ResumeLeaseRequest),
         FrameType::LeaseResumeResult => verify_as!(LeaseResumeResult, pb::ResumeLeaseResult),
         FrameType::NodeHeartbeat => verify_as!(NodeHeartbeat, pb::NodeHeartbeat),
-        FrameType::NeighborUnreachableReport => verify_as!(
-            NeighborUnreachableReport,
-            pb::NeighborUnreachableReport
-        ),
+        FrameType::NeighborUnreachableReport => {
+            verify_as!(NeighborUnreachableReport, pb::NeighborUnreachableReport)
+        }
         FrameType::AttemptReportAck => verify_as!(AttemptReportAck, pb::AttemptReportAck),
     }
 }

@@ -195,7 +195,9 @@ fn token_from_agent_with_seed(seed_hex: &str) -> String {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         if stream
-            .write_all(b"GET /api/workloads HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .write_all(
+                b"GET /api/workloads HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            )
             .is_err()
         {
             continue;

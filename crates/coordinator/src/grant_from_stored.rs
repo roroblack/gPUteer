@@ -145,7 +145,9 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     let job = jobs
         .get(&request.job_id)
         .map_err(|e| StoredGrantError::Storage(format!("Job 조회 실패: {e}")))?
-        .ok_or_else(|| StoredGrantError::Refused(format!("GRANT_REFUSED: {} 를 모른다", request.job_id)))?;
+        .ok_or_else(|| {
+            StoredGrantError::Refused(format!("GRANT_REFUSED: {} 를 모른다", request.job_id))
+        })?;
     if job.state != JobState::Staging {
         return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Job 이 STAGING 이 아니다(현재 {:?}) — 예약 없이 Grant 를 만들지 않는다",
@@ -165,7 +167,12 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     let stored_lease = leases
         .get(&request.lease_id)
         .map_err(|e| StoredGrantError::Storage(format!("Lease 조회 실패: {e}")))?
-        .ok_or_else(|| StoredGrantError::Refused(format!("GRANT_REFUSED: Lease {} 가 저장소에 없다", request.lease_id)))?;
+        .ok_or_else(|| {
+            StoredGrantError::Refused(format!(
+                "GRANT_REFUSED: Lease {} 가 저장소에 없다",
+                request.lease_id
+            ))
+        })?;
 
     // ── 한 행만 믿지 않는다 ─────────────────────────────────────────
     for (label, left, right) in [

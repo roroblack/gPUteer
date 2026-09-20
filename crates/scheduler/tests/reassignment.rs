@@ -13,9 +13,9 @@ use std::collections::BTreeSet;
 
 use gputeer_scheduler::{
     evaluate_reassignment, AuditRecord, FenceRangeIssuance, NeighborReportResolution,
-    NeighborUnreachableReport, ParticipationModel, PartitionPauseEnforcement,
-    ReassignmentDecision, ReassignmentInputError, ReassignmentPolicy, ReassignmentRequest,
-    ReceivingNodeConsent, ReservedFenceRange, UnmetCondition,
+    NeighborUnreachableReport, ParticipationModel, PartitionPauseEnforcement, ReassignmentDecision,
+    ReassignmentInputError, ReassignmentPolicy, ReassignmentRequest, ReceivingNodeConsent,
+    ReservedFenceRange, UnmetCondition,
 };
 
 const NOW: u64 = 1_700_000_000_000;
@@ -422,10 +422,7 @@ fn an_audit_record_whose_fields_do_not_match_the_request_is_an_input_error() {
 /// `ADR-033` 8 조건 5 는 "**이 Job 의** failover 범위" 다.
 #[test]
 fn a_fence_range_issued_for_another_attempt_is_an_input_error() {
-    for (job, attempt) in [
-        (OTHER_JOB_ID, ATTEMPT_ID),
-        (JOB_ID, OTHER_ATTEMPT_ID),
-    ] {
+    for (job, attempt) in [(OTHER_JOB_ID, ATTEMPT_ID), (JOB_ID, OTHER_ATTEMPT_ID)] {
         let mut request = gate_open();
         request.reserved_fence_range.issued_for_job_id = job.to_string();
         request.reserved_fence_range.issued_for_attempt_id = attempt.to_string();
@@ -708,7 +705,8 @@ fn a_public_pool_demands_the_higher_quorum() {
     let mut open_policy = policy();
     open_policy.public_pool_enabled = true;
 
-    let unmet = match evaluate_reassignment(&request, &open_policy).expect("입력은 유효하다") {
+    let unmet = match evaluate_reassignment(&request, &open_policy).expect("입력은 유효하다")
+    {
         ReassignmentDecision::Refused { unmet } => unmet,
         other => panic!("거부돼야 한다: {other:?}"),
     };
@@ -1040,7 +1038,11 @@ fn a_report_observed_in_the_future_is_an_input_error() {
 /// 비거나 공백이 섞인 식별자로 검사를 우회할 수 없다.
 #[test]
 fn non_canonical_identifiers_fail_closed() {
-    let cases: Vec<(&'static str, &'static str, Box<dyn Fn(&mut ReassignmentRequest)>)> = vec![
+    let cases: Vec<(
+        &'static str,
+        &'static str,
+        Box<dyn Fn(&mut ReassignmentRequest)>,
+    )> = vec![
         (
             "receiving_node_id",
             "  ",
@@ -1166,7 +1168,10 @@ fn every_unmet_condition_is_reported_not_just_the_first() {
         },
         UnmetCondition::AuditRecordNotCommitted,
     ] {
-        assert!(unmet.contains(&expected), "{expected:?} 가 빠졌다: {unmet:?}");
+        assert!(
+            unmet.contains(&expected),
+            "{expected:?} 가 빠졌다: {unmet:?}"
+        );
     }
 }
 

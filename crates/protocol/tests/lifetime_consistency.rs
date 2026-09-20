@@ -353,7 +353,6 @@ fn evidence_and_shortlived_differ_in_what_they_check() {
     );
 }
 
-
 /// ★ **재생이 사실을 조작하는 메시지**의 `Lifetime` 을 값으로 고정한다.
 ///
 /// # 왜 이 테스트가 따로 필요한가

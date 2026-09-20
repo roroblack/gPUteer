@@ -83,8 +83,8 @@ fn absent_gpu() -> GpuRequirements {
 
 #[test]
 fn a_workload_that_asks_for_a_gpu_that_is_not_here_does_not_start() {
-    let error = execute(&spec(), policy(Some(absent_gpu())))
-        .expect_err("없는 GPU 를 요구했는데 실행됐다");
+    let error =
+        execute(&spec(), policy(Some(absent_gpu()))).expect_err("없는 GPU 를 요구했는데 실행됐다");
 
     // ★ 기계에 따라 둘 중 하나다. **둘 다 관문이 돈 증거**다.
     //     GPU 있는 기계   -> GpuRequirementUnmet   (없는 UUID 라 모자람)
@@ -114,14 +114,8 @@ fn the_two_refusals_are_not_interchangeable() {
     // ★★ **이 저장소가 이 구분에 값을 두는 이유를 문자열로도 고정한다.**
     //   접두사가 같아지면 로그만 보는 운영자가 둘을 구분할 수 없고,
     //   그러면 NVML 이 잠깐 안 열린 노드를 "GPU 없는 노드" 로 잘못 고친다.
-    let unmet = ExecutionError::GpuRequirementUnmet {
-        detail: "x".into(),
-    }
-    .to_string();
-    let unknown = ExecutionError::GpuUnverifiable {
-        detail: "x".into(),
-    }
-    .to_string();
+    let unmet = ExecutionError::GpuRequirementUnmet { detail: "x".into() }.to_string();
+    let unknown = ExecutionError::GpuUnverifiable { detail: "x".into() }.to_string();
 
     assert!(unmet.contains("GPU_REQUIREMENT_UNMET"), "{unmet}");
     assert!(unknown.contains("GPU_UNVERIFIABLE"), "{unknown}");

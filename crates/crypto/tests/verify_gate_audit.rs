@@ -88,7 +88,8 @@ fn a_valid_signature_with_a_trailing_byte_is_rejected() {
 
     for extra in [1usize, 2, 8, 64] {
         let mut m = good.clone();
-        m.submitter_signature.extend(std::iter::repeat(0u8).take(extra));
+        m.submitter_signature
+            .extend(std::iter::repeat(0u8).take(extra));
         assert_eq!(
             verify(&m, 1, &ring, NOW, &mut NoReplayCheck)
                 .unwrap_err()
@@ -225,21 +226,17 @@ fn an_over_long_short_lived_ttl_is_refused_by_policy() {
     let k = key(1);
     let ring = ring_with(DEVICE, &k);
 
-    let too_long = ShortLivedProbe::new(
-        NOW,
-        NOW + MAX_SHORTLIVED_TTL_MS + 1,
-        Some(nonce16()),
-    )
-    .signed(&k);
+    let too_long =
+        ShortLivedProbe::new(NOW, NOW + MAX_SHORTLIVED_TTL_MS + 1, Some(nonce16())).signed(&k);
 
     match verify(&too_long, 1, &ring, NOW, &mut NoReplayCheck).unwrap_err() {
         VerifyError::Policy(PolicyViolation::ShortLivedTtlTooLong { ttl_ms, max_ms }) => {
             assert_eq!(ttl_ms, MAX_SHORTLIVED_TTL_MS + 1);
             assert_eq!(max_ms, MAX_SHORTLIVED_TTL_MS);
         }
-        other => panic!(
-            "★ TTL 상한을 넘은 단수명 메시지가 정책 위반으로 거부되지 않았다: {other:?}"
-        ),
+        other => {
+            panic!("★ TTL 상한을 넘은 단수명 메시지가 정책 위반으로 거부되지 않았다: {other:?}")
+        }
     }
 
     // ★ 이것은 프로토콜 결과가 아니라 **로컬 정책**이다 — 상대에게 보고할
@@ -256,8 +253,7 @@ fn an_over_long_short_lived_ttl_is_refused_by_policy() {
     // 구현과 구분되지 않는다.
     let at_limit =
         ShortLivedProbe::new(NOW, NOW + MAX_SHORTLIVED_TTL_MS, Some(nonce16())).signed(&k);
-    verify(&at_limit, 1, &ring, NOW, &mut NoReplayCheck)
-        .expect("TTL 상한 정각은 허용되어야 한다");
+    verify(&at_limit, 1, &ring, NOW, &mut NoReplayCheck).expect("TTL 상한 정각은 허용되어야 한다");
 }
 
 // ══════════════════════════════════════════════════════════════════

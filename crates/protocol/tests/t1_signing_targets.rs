@@ -803,9 +803,15 @@ fn neighbor_unreachable_report_matches_reference() {
 // 아무것도 실패하지 않는다. canonical 과 sig_input(domain · 버전 포함) 을 둘 다 본다.
 // ══════════════════════════════════════════════════════════════════
 
-fn assert_matches_reference<M: gputeer_protocol::signing::Signable + ToCanonicalFields>(name: &str, msg: &M) {
+fn assert_matches_reference<M: gputeer_protocol::signing::Signable + ToCanonicalFields>(
+    name: &str,
+    msg: &M,
+) {
     assert_eq!(
-        hex(&canonical_encode(&ToCanonicalFields::to_canonical_fields(msg), &[])),
+        hex(&canonical_encode(
+            &ToCanonicalFields::to_canonical_fields(msg),
+            &[]
+        )),
         expect_hex(name),
         "{name} canonical 이 Python 참조 구현과 다르다"
     );
@@ -817,7 +823,13 @@ fn assert_matches_reference<M: gputeer_protocol::signing::Signable + ToCanonical
 }
 
 /// 참조 구현 `_report_base` 와 같은 값.
-fn b_e_report(schema_version: u32, outcome: i32, exit_observation: i32, exit_code: u32, stage: i32) -> pb::AttemptReport {
+fn b_e_report(
+    schema_version: u32,
+    outcome: i32,
+    exit_observation: i32,
+    exit_code: u32,
+    stage: i32,
+) -> pb::AttemptReport {
     pb::AttemptReport {
         schema_version,
         job_id: "01JBXR7Q0000000000000000AA".into(),
@@ -840,15 +852,42 @@ fn b_e_report(schema_version: u32, outcome: i32, exit_observation: i32, exit_cod
 fn b_e_attempt_report_vectors_match_reference() {
     for (name, report) in [
         ("v39_attempt_report_v1_completed", b_e_report(1, 1, 0, 0, 0)),
-        ("v39a_attempt_report_v2_completed_default_fields", b_e_report(2, 1, 0, 0, 0)),
-        ("v39b_attempt_report_v2_completed", b_e_report(2, 1, 2, 0, 0)),
-        ("v39c_attempt_report_v2_failed_exit7_read_outputs", b_e_report(2, 2, 2, 7, 1)),
-        ("v39d_attempt_report_v2_failed_exit8_read_outputs", b_e_report(2, 2, 2, 8, 1)),
-        ("v39e_attempt_report_v2_output_finalization_read_outputs", b_e_report(2, 6, 2, 0, 1)),
-        ("v39f_attempt_report_v2_output_finalization_encode_result", b_e_report(2, 6, 2, 0, 2)),
-        ("v39g_attempt_report_v2_output_finalization_commit_checkpoint", b_e_report(2, 6, 2, 0, 3)),
-        ("v39h_attempt_report_v2_failed_not_observed", b_e_report(2, 2, 1, 0, 0)),
-        ("v39i_attempt_report_v2_failed_observed_no_code", b_e_report(2, 2, 3, 0, 0)),
+        (
+            "v39a_attempt_report_v2_completed_default_fields",
+            b_e_report(2, 1, 0, 0, 0),
+        ),
+        (
+            "v39b_attempt_report_v2_completed",
+            b_e_report(2, 1, 2, 0, 0),
+        ),
+        (
+            "v39c_attempt_report_v2_failed_exit7_read_outputs",
+            b_e_report(2, 2, 2, 7, 1),
+        ),
+        (
+            "v39d_attempt_report_v2_failed_exit8_read_outputs",
+            b_e_report(2, 2, 2, 8, 1),
+        ),
+        (
+            "v39e_attempt_report_v2_output_finalization_read_outputs",
+            b_e_report(2, 6, 2, 0, 1),
+        ),
+        (
+            "v39f_attempt_report_v2_output_finalization_encode_result",
+            b_e_report(2, 6, 2, 0, 2),
+        ),
+        (
+            "v39g_attempt_report_v2_output_finalization_commit_checkpoint",
+            b_e_report(2, 6, 2, 0, 3),
+        ),
+        (
+            "v39h_attempt_report_v2_failed_not_observed",
+            b_e_report(2, 2, 1, 0, 0),
+        ),
+        (
+            "v39i_attempt_report_v2_failed_observed_no_code",
+            b_e_report(2, 2, 3, 0, 0),
+        ),
     ] {
         assert_matches_reference(name, &report);
     }
@@ -880,8 +919,14 @@ fn b_e_attempt_report_ack_vectors_match_reference() {
         ..ack.clone()
     };
     assert_ne!(
-        hex(&canonical_encode(&ToCanonicalFields::to_canonical_fields(&ack), &[])),
-        hex(&canonical_encode(&ToCanonicalFields::to_canonical_fields(&replay), &[])),
+        hex(&canonical_encode(
+            &ToCanonicalFields::to_canonical_fields(&ack),
+            &[]
+        )),
+        hex(&canonical_encode(
+            &ToCanonicalFields::to_canonical_fields(&replay),
+            &[]
+        )),
         "created 를 바꿨는데 canonical 이 같다"
     );
     assert_matches_reference("v40b_attempt_report_ack_replay_created_false", &replay);
@@ -900,6 +945,12 @@ fn b_e_session_hello_mode_vectors_match_reference() {
         node_signature: vec![0x11; 64],
         ..Default::default()
     };
-    assert_matches_reference("v41_agent_session_hello_renew", &hello(gputeer_protocol::constants::MODE_RENEW as i32));
-    assert_matches_reference("v41b_agent_session_hello_report", &hello(gputeer_protocol::constants::MODE_REPORT as i32));
+    assert_matches_reference(
+        "v41_agent_session_hello_renew",
+        &hello(gputeer_protocol::constants::MODE_RENEW as i32),
+    );
+    assert_matches_reference(
+        "v41b_agent_session_hello_report",
+        &hello(gputeer_protocol::constants::MODE_REPORT as i32),
+    );
 }

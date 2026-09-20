@@ -169,7 +169,11 @@ fn dropping_every_handle_kills_the_workload() {
     let mut alive = pids.clone();
     for _ in 0..50 {
         std::thread::sleep(Duration::from_millis(100));
-        alive = pids.iter().copied().filter(|pid| pid_is_alive(*pid)).collect();
+        alive = pids
+            .iter()
+            .copied()
+            .filter(|pid| pid_is_alive(*pid))
+            .collect();
         if alive.is_empty() {
             break;
         }
@@ -227,4 +231,3 @@ fn stopper_outlives_the_child_handle() {
         .terminate(1)
         .expect("child drop 뒤 손잡이가 죽었다 — 핸들 수명이 분리되지 않았다");
 }
-

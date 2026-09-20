@@ -2,7 +2,9 @@
 //!
 //! 뒤의 실패를 앞과 같은 칸에 넣으면, 검증까지 끝난 산출물을 Agent 가 "확정 실패(outcome 6)" 로 보고한다.
 
-use gputeer_checkpoint::writer::{manifest_for, write_checkpoint_phased, WritePhase, POINTER_FILENAME};
+use gputeer_checkpoint::writer::{
+    manifest_for, write_checkpoint_phased, WritePhase, POINTER_FILENAME,
+};
 
 fn files() -> Vec<(String, Vec<u8>)> {
     vec![("a.bin".to_string(), b"hello".to_vec())]

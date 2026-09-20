@@ -19,7 +19,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const OBSERVED_AT: u64 = 1_700_000_000_000;
@@ -275,7 +279,10 @@ fn a_bad_entry_leaves_nothing_from_the_earlier_entries() {
     );
     {
         let store = CoordinatorInventoryStore::open(&db).expect("store 열기");
-        assert!(store.get_agent("node-a").expect("조회").is_none(), "registry 가 남았다");
+        assert!(
+            store.get_agent("node-a").expect("조회").is_none(),
+            "registry 가 남았다"
+        );
         assert!(
             store.get_inventory("node-a").expect("조회").is_none(),
             "inventory 가 남았다"
@@ -326,7 +333,10 @@ fn a_missing_fact_is_refused_rather_than_stored_as_unknown() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let without = agent_json("node-a", 1, 1).replace("\"key_protection\": \"K1\"\n      ", "");
     // 앞 필드의 쉼표가 남아 문법이 깨지지 않도록 정리한다.
-    let without = without.replace("\"isolation_class\": \"CONTAINED\",", "\"isolation_class\": \"CONTAINED\"");
+    let without = without.replace(
+        "\"isolation_class\": \"CONTAINED\",",
+        "\"isolation_class\": \"CONTAINED\"",
+    );
     let doc = write_doc(dir.path(), "bootstrap.json", &document(&[without]));
     let db = dir.path().join("inventory.sqlite3");
 
@@ -407,7 +417,8 @@ fn the_same_node_twice_in_one_document_is_refused() {
 #[test]
 fn an_unsupported_schema_version_is_refused() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
-    let body = document(&[agent_json("node-a", 1, 1)]).replace("\"schema_version\": 1", "\"schema_version\": 2");
+    let body = document(&[agent_json("node-a", 1, 1)])
+        .replace("\"schema_version\": 1", "\"schema_version\": 2");
     let doc = write_doc(dir.path(), "bootstrap.json", &body);
     let db = dir.path().join("inventory.sqlite3");
 

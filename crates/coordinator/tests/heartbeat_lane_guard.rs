@@ -58,7 +58,10 @@ fn assert_refused_before_bind(error: &str, must_contain: &[&str]) {
     for word in must_contain {
         assert!(error.contains(word), "{word} 가 없다 — 실제 오류: {error}");
     }
-    assert!(!error.contains("bind 실패"), "관문보다 bind 가 먼저 일어났다: {error}");
+    assert!(
+        !error.contains("bind 실패"),
+        "관문보다 bind 가 먼저 일어났다: {error}"
+    );
 }
 
 /// Resume 은 heartbeat 수신 구간보다 먼저 반환한다 — `run()` 이 bind 전에 거부한다.
@@ -95,11 +98,9 @@ fn heartbeats_on_the_multi_agent_lane_are_refused_from_both_entry_points() {
     assert_refused_before_bind(&error, &["multi-agent", "heartbeat"]);
 
     // ★ 라이브러리 호출자가 `run()` 을 지나쳐 `run_multi_agent()` 를 바로 부르는 우회.
-    let error = gputeer_coordinator::multi_agent::run_multi_agent(config(&[
-        "--expect-heartbeats",
-        "1",
-    ]))
-    .expect_err("거부돼야 한다");
+    let error =
+        gputeer_coordinator::multi_agent::run_multi_agent(config(&["--expect-heartbeats", "1"]))
+            .expect_err("거부돼야 한다");
     assert!(
         error.contains("multi-agent") && error.contains("heartbeat"),
         "실제 오류: {error}"

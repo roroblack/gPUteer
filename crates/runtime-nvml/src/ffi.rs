@@ -69,9 +69,7 @@ fn candidate_paths() -> Vec<String> {
     if cfg!(windows) {
         let mut paths = vec!["nvml.dll".to_string()];
         if let Ok(program_files) = std::env::var("ProgramW6432") {
-            paths.push(format!(
-                "{program_files}/NVIDIA Corporation/NVSMI/nvml.dll"
-            ));
+            paths.push(format!("{program_files}/NVIDIA Corporation/NVSMI/nvml.dll"));
         }
         paths
     } else {
@@ -226,9 +224,7 @@ impl Nvml {
             free: 0,
             used: 0,
         };
-        Self::check("nvmlDeviceGetMemoryInfo", unsafe {
-            f(device, &mut memory)
-        })?;
+        Self::check("nvmlDeviceGetMemoryInfo", unsafe { f(device, &mut memory) })?;
         Ok((memory.total, memory.free, memory.used))
     }
 
@@ -266,7 +262,6 @@ impl Nvml {
         Self::check("nvmlDeviceGetMigMode", code)?;
         Ok(Some(mig_enabled_from_modes(current, pending)))
     }
-
 }
 
 /// NUL 로 끝나는 C 문자열을 읽는다.
@@ -276,12 +271,13 @@ impl Nvml {
 ///   잘린 문자열을 값으로 쓰면 UUID 가 다른데 같아 보일 수 있다.
 fn read_c_string(buffer: &[c_char], call: &str) -> Result<String, NvmlError> {
     let bytes: Vec<u8> = buffer.iter().map(|value| *value as u8).collect();
-    let nul = bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .ok_or_else(|| NvmlError::UnterminatedString {
-            call: call.to_string(),
-        })?;
+    let nul =
+        bytes
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(|| NvmlError::UnterminatedString {
+                call: call.to_string(),
+            })?;
     CStr::from_bytes_with_nul(&bytes[..=nul])
         .map_err(|_| NvmlError::BadString {
             call: call.to_string(),
@@ -345,8 +341,8 @@ mod tests {
     fn a_name_that_exactly_fills_the_buffer_without_nul_is_an_error() {
         // 96바이트를 꽉 채우고 NUL 이 없다 — NVML 이 자를 수 있는 상황.
         let full: Vec<c_char> = vec![b'x' as c_char; NAME_BUFFER];
-        let error = read_c_string(&full, "nvmlDeviceGetName")
-            .expect_err("NUL 이 없으면 오류여야 한다");
+        let error =
+            read_c_string(&full, "nvmlDeviceGetName").expect_err("NUL 이 없으면 오류여야 한다");
         assert!(
             matches!(error, NvmlError::UnterminatedString { ref call } if call == "nvmlDeviceGetName"),
             "잘린 문자열을 값으로 받아들였다: {error}"
@@ -360,11 +356,7 @@ mod tests {
         let mut buffer: Vec<c_char> = vec![b'x' as c_char; NAME_BUFFER - 1];
         buffer.push(0);
         let name = read_c_string(&buffer, "nvmlDeviceGetName").expect("읽혀야 한다");
-        assert_eq!(
-            name.len(),
-            NAME_BUFFER - 1,
-            "경계 바로 아래 이름이 잘렸다"
-        );
+        assert_eq!(name.len(), NAME_BUFFER - 1, "경계 바로 아래 이름이 잘렸다");
         assert!(name.chars().all(|c| c == 'x'), "내용이 바뀌었다: {name}");
     }
 

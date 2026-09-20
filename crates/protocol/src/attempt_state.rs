@@ -238,8 +238,11 @@ mod tests {
             (AttemptState::Failed, AttemptState::Running),
             (AttemptState::Completed, AttemptState::Canonical),
         ] {
-            let error = transition(from, to)
-                .expect_err(&format!("{} -> {} 가 통과했다", from.table_name(), to.table_name()));
+            let error = transition(from, to).expect_err(&format!(
+                "{} -> {} 가 통과했다",
+                from.table_name(),
+                to.table_name()
+            ));
             assert_eq!(error.from, from);
             assert_eq!(error.to, to);
         }

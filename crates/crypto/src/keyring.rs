@@ -410,7 +410,8 @@ impl PersistentKeyring {
                 let private = if encrypted_private.is_empty() {
                     None
                 } else {
-                    let raw_private = unprotect_private_key(protection, &signer_id, encrypted_private)?;
+                    let raw_private =
+                        unprotect_private_key(protection, &signer_id, encrypted_private)?;
 
                     if raw_private.len() != 32 {
                         return Err(KeyringError::CorruptFile("개인키 길이가 잘못되었다"));
@@ -869,10 +870,7 @@ const FILE_MAC_LABEL: &str = "gputeer-keyring-file-mac";
 ///
 /// 즉 "파일을 쓸 수 있는 공격자는 봉인을 만들 수 없다" 는 **과한
 /// 일반화**다. 정확히는 "그 경계 **밖**의 공격자는 못 만든다" 다.
-fn seal_checksum(
-    protection: KeyProtection,
-    body: &[u8],
-) -> Result<Vec<u8>, KeyringError> {
+fn seal_checksum(protection: KeyProtection, body: &[u8]) -> Result<Vec<u8>, KeyringError> {
     let digest = blake3::hash(body);
     match protection {
         KeyProtection::K0Plaintext => Ok(digest.as_bytes().to_vec()),
@@ -1456,8 +1454,6 @@ fn dpapi_unprotect(signer_id: &str, bytes: &[u8]) -> Result<Vec<u8>, KeyringErro
 
     Ok(result)
 }
-
-
 
 struct Reader<'a> {
     bytes: &'a [u8],

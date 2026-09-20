@@ -215,7 +215,10 @@ fn register_agent_in_tx(
     registry: &AgentRegistry,
 ) -> Result<RegisterAgentResult, InventoryStoreError> {
     {
-        debug_assert!(validate_registry(registry).is_ok(), "caller must validate first");
+        debug_assert!(
+            validate_registry(registry).is_ok(),
+            "caller must validate first"
+        );
         let payload = encode_registry(registry);
 
         if let Some(stored) = fetch_registry(transaction, &registry.node_id)? {
@@ -1294,9 +1297,7 @@ mod tests {
                 assert_eq!(node_id, "node-b", "실패한 노드를 잘못 말한다");
                 assert_eq!(
                     **source,
-                    InventoryStoreError::RegistryConflict {
-                        field: "device_id"
-                    },
+                    InventoryStoreError::RegistryConflict { field: "device_id" },
                     "원인을 잘못 말한다"
                 );
             }
@@ -1321,7 +1322,11 @@ mod tests {
         let mut reopened = CoordinatorInventoryStore::open(&path).unwrap();
         assert!(reopened.get_agent("node-a").unwrap().is_none());
         assert_eq!(
-            reopened.pool_snapshot(1_700_000_001_000).unwrap().candidates.len(),
+            reopened
+                .pool_snapshot(1_700_000_001_000)
+                .unwrap()
+                .candidates
+                .len(),
             0,
             "거부했는데 후보가 생겼다"
         );
@@ -1360,10 +1365,17 @@ mod tests {
         let mut store = CoordinatorInventoryStore::open(&path).unwrap();
 
         let result = store
-            .import_bootstrap(&[bootstrap("node-a", 1, 1, 100), bootstrap("node-b", 2, 1, 200)])
+            .import_bootstrap(&[
+                bootstrap("node-a", 1, 1, 100),
+                bootstrap("node-b", 2, 1, 200),
+            ])
             .expect("정상 반입");
         assert_eq!(
-            (result.registered, result.inventories_updated, result.entries),
+            (
+                result.registered,
+                result.inventories_updated,
+                result.entries
+            ),
             (2, 2, 2),
             "무엇을 했는지 잘못 보고한다"
         );
@@ -1372,11 +1384,7 @@ mod tests {
         drop(store);
         let mut reopened = CoordinatorInventoryStore::open(&path).unwrap();
         let pool = reopened.pool_snapshot(1_700_000_001_000).unwrap();
-        let ids: Vec<&str> = pool
-            .candidates
-            .iter()
-            .map(|c| c.node_id.as_str())
-            .collect();
+        let ids: Vec<&str> = pool.candidates.iter().map(|c| c.node_id.as_str()).collect();
         assert_eq!(ids, vec!["node-a", "node-b"], "후보가 안 생겼다");
     }
 

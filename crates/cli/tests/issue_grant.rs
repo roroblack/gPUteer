@@ -24,7 +24,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const NODE: &str = "node-grant-a";
@@ -53,7 +57,10 @@ const GRANT_EXPIRES: u64 = 1_800_000_070_000;
 const TERM: u64 = 7;
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -277,7 +284,14 @@ fn staged_until(dir: &Path, manifest_expires: u64) -> (PathBuf, PathBuf) {
 
 fn issue(db: &Path, key_file: &Path, out: &Path, extra: &[&str]) -> (bool, String) {
     // ★ 저장된 Manifest 를 다시 검증할 제출자 keyring — 준비 코드가 DB 옆에 만든다.
-    issue_full(db, key_file, out, &db.with_file_name("submitters.keyring"), GRANT_EXPIRES, extra)
+    issue_full(
+        db,
+        key_file,
+        out,
+        &db.with_file_name("submitters.keyring"),
+        GRANT_EXPIRES,
+        extra,
+    )
 }
 
 /// keyring 과 Grant 만료를 고르는 발급. 같은 플래그를 두 번 주지 않으려고 따로 둔다.
@@ -330,34 +344,77 @@ fn queue_only(dir: &Path, db: &Path, job_id: &str, idem: &str) {
     //   JobManifest 는 LongLived 라 "지금 < 만료" 만 보므로 만료를 Lease 만료 뒤로 둔다.
     let expires = (LEASE_EXPIRES + 3_600_000).to_string();
     let (ok, out) = run_cli(&[
-        "submit", "--job-id", job_id, "--entrypoint", "python",
-        "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
-        "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
-        "--out", manifest.to_str().unwrap(),
-        "--workload-class", "TRAINING", "--side-effect-class", "PURE",
-        "--dataset-sensitivity", "INTERNAL", "--minimum-security-tier", "S2",
-        "--minimum-isolation-class", "CONTAINED", "--minimum-key-protection", "K1",
-        "--gpu-count", "1", "--gpu-min-vram-bytes", "8589934592",
+        "submit",
+        "--job-id",
+        job_id,
+        "--entrypoint",
+        "python",
+        "--submitter-device-id",
+        SUBMITTER,
+        "--submitter-seed",
+        SEED,
+        "--issued-at-unix-ms",
+        &issued,
+        "--expires-at-unix-ms",
+        &expires,
+        "--out",
+        manifest.to_str().unwrap(),
+        "--workload-class",
+        "TRAINING",
+        "--side-effect-class",
+        "PURE",
+        "--dataset-sensitivity",
+        "INTERNAL",
+        "--minimum-security-tier",
+        "S2",
+        "--minimum-isolation-class",
+        "CONTAINED",
+        "--minimum-key-protection",
+        "K1",
+        "--gpu-count",
+        "1",
+        "--gpu-min-vram-bytes",
+        "8589934592",
         // ★ 2026-09-10 — 변환기가 생략된 자원을 더 이상 0 으로 채우지 않는다.
-        "--cpu-cores", "4", "--ram-bytes", "8589934592",
-        "--workspace-bytes", "10737418240",
+        "--cpu-cores",
+        "4",
+        "--ram-bytes",
+        "8589934592",
+        "--workspace-bytes",
+        "10737418240",
     ]);
     assert!(ok, "submit 실패: {out}");
 
     let keyring = dir.join("submitters.keyring");
     let (ok, out) = run_cli(&[
-        "import-manifest", "--manifest", manifest.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--job-db", db.to_str().unwrap(), "--idempotency-key", idem,
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "import-manifest",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--job-db",
+        db.to_str().unwrap(),
+        "--idempotency-key",
+        idem,
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "import-manifest 실패: {out}");
 
     let (ok, out) = run_cli(&[
-        "plan-job", "--job-id", job_id, "--control-db", db.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "plan-job",
+        "--job-id",
+        job_id,
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "plan-job 실패: {out}");
 }
@@ -393,7 +450,10 @@ fn a_grant_is_signed_from_stored_facts_and_verifies() {
 
     let (ok, output) = issue(&db, &key_file, &out, &[]);
     assert!(ok, "issue-grant 실패: {output}");
-    assert!(output.contains("GRANTED"), "출력이 GRANTED 가 아니다: {output}");
+    assert!(
+        output.contains("GRANTED"),
+        "출력이 GRANTED 가 아니다: {output}"
+    );
 
     let grant = verified_grant(&out);
 
@@ -977,10 +1037,18 @@ fn the_grant_carries_the_stored_manifest_and_its_hash() {
         .get_manifest_binding(JOB)
         .expect("binding 조회")
         .expect("binding 이 있다");
-    assert_eq!(grant.manifest.as_ref(), Some(&stored.manifest), "저장된 Manifest 가 그대로 실리지 않았다");
+    assert_eq!(
+        grant.manifest.as_ref(),
+        Some(&stored.manifest),
+        "저장된 Manifest 가 그대로 실리지 않았다"
+    );
     let hash = grant.manifest_hash.as_ref().expect("manifest_hash 가 없다");
     assert_eq!(hash.algo, 1, "hash 알고리즘이 BLAKE3-256(1) 이 아니다");
-    assert_eq!(hash.value, stored.manifest_hash.to_vec(), "hash 가 저장된 값과 다르다");
+    assert_eq!(
+        hash.value,
+        stored.manifest_hash.to_vec(),
+        "hash 가 저장된 값과 다르다"
+    );
 }
 
 /// ★ 저장소 검사는 통과하고 **서명만** 무효인 Manifest 는 싣지 않는다.
@@ -1054,7 +1122,10 @@ fn a_submitter_no_longer_in_the_keyring_gets_no_grant() {
     .expect("빈 keyring 저장");
 
     let (ok, output) = issue_full(&db, &key_file, &out, &empty, GRANT_EXPIRES, &[]);
-    assert!(!ok, "keyring 에 없는 제출자의 Manifest 로 Grant 를 냈다: {output}");
+    assert!(
+        !ok,
+        "keyring 에 없는 제출자의 Manifest 로 Grant 를 냈다: {output}"
+    );
     assert!(
         output.contains("GRANT_REFUSED") && output.contains("다시 검증하지 못했다"),
         "거부는 했는데 재검증 때문이 아니다: {output}"

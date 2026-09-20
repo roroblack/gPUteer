@@ -96,7 +96,10 @@ fn a_request_with_a_foreign_host_header_is_refused() {
 #[test]
 fn a_request_without_a_host_header_is_refused() {
     let (port, handle) = panel_on_thread(OwnerPanelState::new(), 1);
-    let response = raw_request(port, "GET /api/workloads HTTP/1.1\r\nConnection: close\r\n\r\n");
+    let response = raw_request(
+        port,
+        "GET /api/workloads HTTP/1.1\r\nConnection: close\r\n\r\n",
+    );
     handle.join().expect("panel thread");
 
     assert!(
@@ -171,7 +174,11 @@ fn the_html_page_carries_its_defensive_headers() {
     handle.join().expect("panel thread");
 
     assert!(status_line(&response).contains("200"), "{response}");
-    for header in ["X-Frame-Options: DENY", "X-Content-Type-Options: nosniff", "Cache-Control: no-store"] {
+    for header in [
+        "X-Frame-Options: DENY",
+        "X-Content-Type-Options: nosniff",
+        "Cache-Control: no-store",
+    ] {
         assert!(
             response.contains(header),
             "{header} 가 없다 — 남의 페이지가 이 화면을 덮을 수 있다: {response}"

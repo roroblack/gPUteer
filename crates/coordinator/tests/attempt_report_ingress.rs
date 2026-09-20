@@ -34,7 +34,9 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use gputeer_coordinator::attempt_report_store::{CoordinatorAttemptReportStore, ReportBindingSource};
+use gputeer_coordinator::attempt_report_store::{
+    CoordinatorAttemptReportStore, ReportBindingSource,
+};
 use gputeer_coordinator::inventory_store::{
     AgentInventory, AgentRegistry, CoordinatorInventoryStore, GpuInventory,
 };
@@ -46,9 +48,9 @@ use gputeer_crypto::{
     PlaintextPolicy, SigningKey,
 };
 use gputeer_protocol::canonical::blake3_256;
-use gputeer_protocol::signing::{signing_input, verify, NoReplayCheck};
 use gputeer_protocol::nonce::derive_replay_nonce;
 use gputeer_protocol::pb;
+use gputeer_protocol::signing::{signing_input, verify, NoReplayCheck};
 use prost::Message;
 
 const JOB_ID: &str = "job-1";
@@ -137,8 +139,14 @@ fn prepare_control_db(path: &Path) {
     manifest.submitter_signature = sign(&submitter, &manifest).to_vec();
     let mut ring = InMemoryKeyring::new();
     ring.insert(SUBMITTER_ID, submitter.verifying_key());
-    let verified = verify(&manifest, 1, &Ed25519Verifier::new(ring), now, &mut NoReplayCheck)
-        .expect("fixture Manifest 서명이 검증된다");
+    let verified = verify(
+        &manifest,
+        1,
+        &Ed25519Verifier::new(ring),
+        now,
+        &mut NoReplayCheck,
+    )
+    .expect("fixture Manifest 서명이 검증된다");
     let mut jobs = CoordinatorJobStore::open(path).expect("job store");
     jobs.submit_verified_manifest(
         &AcceptedJobSubmission {
@@ -210,14 +218,14 @@ fn fixture() -> Fixture {
     let control_db = dir.path().join("control.sqlite3");
     prepare_control_db(&control_db);
     let keyring = dir.path().join("submitters.keyring");
-    let mut ring = PersistentKeyring::new(
-        &keyring,
-        KeyProtection::K0Plaintext,
-        PlaintextPolicy::Allow,
+    let mut ring =
+        PersistentKeyring::new(&keyring, KeyProtection::K0Plaintext, PlaintextPolicy::Allow)
+            .expect("keyring 생성");
+    ring.insert_public(
+        SUBMITTER_ID,
+        SigningKey::from_bytes(&SUBMITTER_SEED).verifying_key(),
     )
-    .expect("keyring 생성");
-    ring.insert_public(SUBMITTER_ID, SigningKey::from_bytes(&SUBMITTER_SEED).verifying_key())
-        .expect("공개키 등록");
+    .expect("공개키 등록");
     ring.save().expect("keyring 저장");
     Fixture {
         _dir: dir,
@@ -228,11 +236,9 @@ fn fixture() -> Fixture {
 }
 
 fn coordinator_args(fixture: &Fixture, expect_attempt_reports: u32) -> Vec<String> {
-    let agent_pubkey = hex(
-        SigningKey::from_bytes(&AGENT_SEED)
-            .verifying_key()
-            .as_bytes(),
-    );
+    let agent_pubkey = hex(SigningKey::from_bytes(&AGENT_SEED)
+        .verifying_key()
+        .as_bytes());
     [
         "--listen",
         &fixture.address.to_string(),
@@ -345,7 +351,9 @@ fn handshake_at(stream: &mut TcpStream, connection_attempt: u32) -> pb::Executio
         node_id: NODE_ID.into(),
         connection_attempt,
         issued_at_unix_ms: now_ms(),
-        nonce: (100u8..116).map(|b| b.wrapping_add((connection_attempt as u8).wrapping_mul(16))).collect(),
+        nonce: (100u8..116)
+            .map(|b| b.wrapping_add((connection_attempt as u8).wrapping_mul(16)))
+            .collect(),
         ..Default::default()
     };
     hello.node_signature = sign(&hello_key, &hello).to_vec();
@@ -421,7 +429,9 @@ fn run_session_with(reports: &[pb::AttemptReport], expect: u32) -> (Fixture, Res
             &report.encode_to_vec(),
         );
     }
-    let outcome = handle.join().expect("Coordinator 스레드가 panic 하지 않았다");
+    let outcome = handle
+        .join()
+        .expect("Coordinator 스레드가 panic 하지 않았다");
     drop(stream);
     (fixture, outcome)
 }
@@ -448,7 +458,10 @@ fn a_signed_terminal_report_crosses_the_wire_and_lands_in_the_store() {
     assert!(outcome.is_ok(), "정상 보고가 거부됐다: {outcome:?}");
 
     let stored = stored_binding(&fixture.control_db).expect("증거가 저장돼 있어야 한다");
-    assert_eq!(stored, report, "저장된 것이 보낸 것과 바이트 단위로 같아야 한다");
+    assert_eq!(
+        stored, report,
+        "저장된 것이 보낸 것과 바이트 단위로 같아야 한다"
+    );
 }
 
 /// 같은 보고를 두 번 보내면 **행은 하나**이고 오류도 아니다.
@@ -473,7 +486,10 @@ fn the_same_report_sent_twice_is_idempotent() {
     }
 
     let outcome = handle.join().expect("Coordinator 스레드");
-    assert!(outcome.is_ok(), "같은 보고의 재전송이 거부됐다: {outcome:?}");
+    assert!(
+        outcome.is_ok(),
+        "같은 보고의 재전송이 거부됐다: {outcome:?}"
+    );
     assert_eq!(
         stored_binding(&fixture.control_db).expect("증거"),
         report,
@@ -738,7 +754,10 @@ fn a_first_frame_that_is_not_a_hello_is_refused_as_hello_missing() {
         .join()
         .expect("Coordinator 스레드")
         .expect_err("Hello 로 시작하지 않는 연결은 거부돼야 한다");
-    assert!(error.contains("HELLO_MISSING"), "거부 사유가 Hello 부재라고 말해야 한다: {error}");
+    assert!(
+        error.contains("HELLO_MISSING"),
+        "거부 사유가 Hello 부재라고 말해야 한다: {error}"
+    );
     assert!(stored_binding(&fixture.control_db).is_none());
 }
 
@@ -825,7 +844,10 @@ fn signed_renew_request(fence_epoch: u64, nonce_start: u8) -> pb::RenewLeaseRequ
 }
 
 /// 연결 1 은 FRESH(Grant -> ACK), 연결 2 는 RENEW 로 갱신 요청 하나를 보낸다. 받은 응답을 돌려준다.
-fn fresh_then_renew(fixture: &Fixture, fence_epoch: u64) -> (pb::RenewLeaseRequest, pb::RenewLeaseResult) {
+fn fresh_then_renew(
+    fixture: &Fixture,
+    fence_epoch: u64,
+) -> (pb::RenewLeaseRequest, pb::RenewLeaseResult) {
     {
         let mut fresh = connect_when_ready(fixture.address);
         handshake(&mut fresh);
@@ -835,8 +857,15 @@ fn fresh_then_renew(fixture: &Fixture, fence_epoch: u64) -> (pb::RenewLeaseReque
     let request = signed_renew_request(fence_epoch, 160);
     write_frame_body(&mut renew, FrameType::LeaseRenew, &request.encode_to_vec());
     let (frame_type, body) = read_frame_body(&mut renew);
-    assert_eq!(frame_type, FrameType::LeaseRenewResult as u8, "RENEW 세션의 응답은 갱신 결과다");
-    (request, pb::RenewLeaseResult::decode(body.as_slice()).expect("갱신 결과 디코드"))
+    assert_eq!(
+        frame_type,
+        FrameType::LeaseRenewResult as u8,
+        "RENEW 세션의 응답은 갱신 결과다"
+    );
+    (
+        request,
+        pb::RenewLeaseResult::decode(body.as_slice()).expect("갱신 결과 디코드"),
+    )
 }
 
 /// 단계 5a — FRESH 연결을 닫은 뒤 **새 연결**(RENEW)로 저장된 Lease 를 갱신한다. 결과의 바깥 서명 · 요청 nonce, 그리고 중첩 Lease 의
@@ -850,15 +879,27 @@ fn a_renew_session_on_a_new_connection_renews_the_stored_lease() {
     let (request, result) = fresh_then_renew(&fixture, fence_epoch);
 
     assert_eq!(result.outcome, 1, "RENEWED 여야 한다: {result:?}");
-    assert_eq!(result.request_nonce, request.nonce, "요청 nonce 를 되돌려야 한다");
+    assert_eq!(
+        result.request_nonce, request.nonce,
+        "요청 nonce 를 되돌려야 한다"
+    );
     let lease = result.lease.clone().expect("갱신된 Lease 가 실린다");
-    assert!(lease.expires_at_unix_ms > now_ms(), "갱신된 만료가 지금보다 뒤다");
+    assert!(
+        lease.expires_at_unix_ms > now_ms(),
+        "갱신된 만료가 지금보다 뒤다"
+    );
     let mut ring = InMemoryKeyring::new();
-    ring.insert(COORDINATOR_ID, SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key());
+    ring.insert(
+        COORDINATOR_ID,
+        SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key(),
+    );
     let verifier = Ed25519Verifier::new(ring);
     verify(&result, 1, &verifier, now_ms(), &mut NoReplayCheck)
         .expect("Coordinator 가 서명한 갱신 결과다");
-    assert_eq!(result.coordinator_id, COORDINATOR_ID, "결과의 coordinator_id");
+    assert_eq!(
+        result.coordinator_id, COORDINATOR_ID,
+        "결과의 coordinator_id"
+    );
     // ★ 결함 96 — 중첩 Lease 는 바깥 서명과 **따로** 검증한다(Agent 의 규칙 i). 바깥만 보면 중첩 서명이 깨져도 통과한다.
     verify(&lease, 1, &verifier, now_ms(), &mut NoReplayCheck)
         .expect("중첩 Lease 도 Coordinator 가 따로 서명했다");
@@ -871,7 +912,14 @@ fn a_renew_session_on_a_new_connection_renews_the_stored_lease() {
             lease.holder_node_id.as_str(),
             lease.fence_epoch,
         ),
-        (LEASE_ID, JOB_ID, ATTEMPT_ID, COORDINATOR_ID, NODE_ID, fence_epoch),
+        (
+            LEASE_ID,
+            JOB_ID,
+            ATTEMPT_ID,
+            COORDINATOR_ID,
+            NODE_ID,
+            fence_epoch
+        ),
         "Agent 가 대조하는 신원이 그대로여야 한다"
     );
     let outcome = handle.join().expect("Coordinator 스레드");
@@ -883,11 +931,17 @@ fn a_renew_session_on_a_new_connection_renews_the_stored_lease() {
 fn a_renew_session_with_a_lower_fence_epoch_is_superseded() {
     let fixture = fixture();
     let fence_epoch = staged_fence_epoch(&fixture.control_db);
-    assert!(fence_epoch > 0, "fixture 의 세대가 0 이면 더 낮은 세대를 만들 수 없다");
+    assert!(
+        fence_epoch > 0,
+        "fixture 의 세대가 0 이면 더 낮은 세대를 만들 수 없다"
+    );
     let handle = spawn_coordinator_for_renew(&fixture, true);
     let (_, result) = fresh_then_renew(&fixture, fence_epoch - 1);
     assert_eq!(result.outcome, 2, "SUPERSEDED 여야 한다: {result:?}");
-    assert!(result.lease.is_none(), "물러나라는 응답에 새 Lease 를 싣지 않는다");
+    assert!(
+        result.lease.is_none(),
+        "물러나라는 응답에 새 Lease 를 싣지 않는다"
+    );
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
 }
@@ -952,7 +1006,12 @@ fn a_corrupt_stored_lease_row_on_the_stored_lane_stops_the_listener() {
     }
     let handle = spawn_coordinator_with(&fixture, 2, &[]);
     let mut stream = connect_when_ready(fixture.address);
-    send_hello(&mut stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    send_hello(
+        &mut stream,
+        gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        0,
+        100,
+    );
     let error = handle
         .join()
         .expect("Coordinator 스레드")
@@ -968,13 +1027,21 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
     {
         let db = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
         let changed = db
-            .execute("DELETE FROM coordinator_job_manifests WHERE job_id = ?1", [JOB_ID])
+            .execute(
+                "DELETE FROM coordinator_job_manifests WHERE job_id = ?1",
+                [JOB_ID],
+            )
             .expect("Manifest 행 삭제");
         assert_eq!(changed, 1, "fixture 의 Manifest 행이 하나 있어야 한다");
     }
     let handle = spawn_coordinator_with(&fixture, 2, &[]);
     let mut first = connect_when_ready(fixture.address);
-    send_hello(&mut first, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    send_hello(
+        &mut first,
+        gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        0,
+        100,
+    );
     // Coordinator 가 거부하고 닫을 때까지 기다린다.
     // ★ 결함 120 (재검수 64b) — 닫힘으로 인정하는 것은 EOF 와 연결 재설정 · 중단뿐이다. 시한 초과(TimedOut · WouldBlock)는 닫힘이 아니다.
     let mut rest = Vec::new();
@@ -987,7 +1054,11 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
             ) => {}
         Err(error) => panic!("첫 연결이 닫히지 않았다(읽기 {:?}): {error}", error.kind()),
     }
-    assert!(rest.is_empty(), "거부된 연결에 프레임이 왔다({} 바이트)", rest.len());
+    assert!(
+        rest.is_empty(),
+        "거부된 연결에 프레임이 왔다({} 바이트)",
+        rest.len()
+    );
     // Storage 로 분류했다면 리스너가 멈춰 이 연결이 거부된다 — 그때는 Coordinator 가 무엇으로 끝났는지 함께 남긴다(결함 121).
     let mut second = match TcpStream::connect_timeout(&fixture.address, Duration::from_secs(2)) {
         Ok(stream) => stream,
@@ -996,12 +1067,19 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
             panic!("첫 거부 뒤에도 리스너가 두 번째 연결을 받아야 한다: {connect_error} — Coordinator 결과 {outcome:?}");
         }
     };
-    second.set_write_timeout(Some(Duration::from_secs(10))).expect("쓰기 타임아웃");
+    second
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .expect("쓰기 타임아웃");
     // ★ 결함 123 (재검수 64c) — 두 번째 연결은 **첫 연결에서는 나올 수 없는 결과**를 만든다.
     // ★ 결함 132 (재검수 64d) — 서명 변조 Hello(HELLO_REJECTED)는 모자랐다: 첫 Hello 도 60초 만료로 HELLO_REJECTED 가 될 수 있다.
     //   그래서 **서명이 유효하고 모드만 다른** Hello(RESUME)를 보낸다. "mode 불일치" 는 서명 · 시각 · replay 검증을 통과한 Hello 에서만 나오고,
     //   첫 연결의 Hello 는 MULTI_AGENT_GRANT 라 이 문구를 만들 수 없다.
-    send_hello(&mut second, gputeer_protocol::constants::MODE_RESUME, 1, 120);
+    send_hello(
+        &mut second,
+        gputeer_protocol::constants::MODE_RESUME,
+        1,
+        120,
+    );
     let error = handle
         .join()
         .expect("Coordinator 스레드")
@@ -1009,7 +1087,9 @@ fn a_legacy_job_without_a_manifest_is_refused_and_the_listener_keeps_accepting()
     // ★ 결함 120 · 123 · 132 — 분류와 **출처 연결**을 함께 본다. 첫 연결의 거부(GRANT_REFUSED · 만료 HELLO_REJECTED)나 Storage 종료는 이 단언을
     //   통과하지 못한다.
     assert!(
-        error.starts_with("protocol: ") && error.contains("HELLO_REJECTED: mode 불일치") && !error.contains("GRANT_REFUSED"),
+        error.starts_with("protocol: ")
+            && error.contains("HELLO_REJECTED: mode 불일치")
+            && !error.contains("GRANT_REFUSED"),
         "리스너가 두 번째 연결을 처리하고 그 연결의 거부(모드 불일치)로 끝나야 한다: {error}"
     );
 }
@@ -1024,12 +1104,26 @@ fn a_revoke_store_lock_timeout_before_renew_stops_the_listener() {
     let handle = spawn_coordinator_with(
         &fixture,
         2,
-        &["--lease-db", control_db.as_str(), "--revoke-before-renew", "true"],
+        &[
+            "--lease-db",
+            control_db.as_str(),
+            "--revoke-before-renew",
+            "true",
+        ],
     );
     let mut stream = connect_when_ready(fixture.address);
-    send_hello(&mut stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    send_hello(
+        &mut stream,
+        gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        0,
+        100,
+    );
     let (frame_type, body) = read_frame_body(&mut stream);
-    assert_eq!(frame_type, FrameType::Grant as u8, "첫 프레임은 Grant 여야 한다");
+    assert_eq!(
+        frame_type,
+        FrameType::Grant as u8,
+        "첫 프레임은 Grant 여야 한다"
+    );
     let grant = pb::ExecutionGrant::decode(body.as_slice()).expect("Grant 디코드");
 
     let lock = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
@@ -1059,7 +1153,10 @@ fn a_revoke_store_lock_timeout_before_renew_stops_the_listener() {
         .get(LEASE_ID)
         .expect("Lease 조회")
         .expect("Lease");
-    assert!(stored.revoked_at_unix_ms.is_none(), "실패했는데 revoke 가 기록됐다");
+    assert!(
+        stored.revoked_at_unix_ms.is_none(),
+        "실패했는데 revoke 가 기록됐다"
+    );
 }
 
 /// 결함 100 (재검수 61) — 발급한 Lease 를 **다른** lease 저장소에서 찾지 못하는 구성(--grant-from-control-db A · --lease-db B)은
@@ -1075,7 +1172,12 @@ fn a_fresh_renew_whose_lease_lives_in_another_store_stops_the_listener() {
         .position(|arg| arg == "--max-connections")
         .expect("--max-connections");
     args[at + 1] = "2".into();
-    for extra in ["--lease-db", other_db.to_str().expect("경로"), "--do-renew", "true"] {
+    for extra in [
+        "--lease-db",
+        other_db.to_str().expect("경로"),
+        "--do-renew",
+        "true",
+    ] {
         args.push(extra.into());
     }
     let handle = std::thread::spawn(move || {
@@ -1109,7 +1211,11 @@ fn a_first_frame_whose_content_mentions_the_lease_store_does_not_stop_the_listen
         let mut report = terminal_report(fence_epoch);
         report.job_id = "lease store".into();
         let report = signed_report(report);
-        write_frame_body(&mut first, FrameType::AttemptReport, &report.encode_to_vec());
+        write_frame_body(
+            &mut first,
+            FrameType::AttemptReport,
+            &report.encode_to_vec(),
+        );
         // Coordinator 가 이 연결을 닫을 때까지 기다린다 — 먼저 끊으면 다른 원인(끊김)이 섞인다.
         let mut probe = [0u8; 1];
         let _closed_by_coordinator = first.read(&mut probe);
@@ -1117,7 +1223,10 @@ fn a_first_frame_whose_content_mentions_the_lease_store_does_not_stop_the_listen
     let mut second = connect_when_ready(fixture.address);
     handshake_at(&mut second, 1);
     let outcome = handle.join().expect("Coordinator 스레드");
-    assert!(outcome.is_ok(), "받은 메시지의 내용 때문에 리스너가 멈췄다: {outcome:?}");
+    assert!(
+        outcome.is_ok(),
+        "받은 메시지의 내용 때문에 리스너가 멈췄다: {outcome:?}"
+    );
 }
 
 /// 결함 89 — 도착했지만 검증에 실패한 Hello(서명 변조)는 HELLO_MISSING 이 아니라 HELLO_REJECTED 다.
@@ -1145,15 +1254,27 @@ fn a_hello_with_a_broken_signature_is_rejected_not_missing() {
         .expect("Coordinator 스레드")
         .expect_err("서명이 틀린 Hello 는 거부돼야 한다");
     assert!(error.contains("HELLO_REJECTED"), "{error}");
-    assert!(!error.contains("HELLO_MISSING"), "검증 실패를 Hello 부재로 적었다: {error}");
+    assert!(
+        !error.contains("HELLO_MISSING"),
+        "검증 실패를 Hello 부재로 적었다: {error}"
+    );
 }
 
 /// FRESH 한 판을 ACK 까지 가되 ACK 의 grant_id 를 `grant_id` 로 바꿔 보낸다(서명은 정상). Coordinator 는 상관관계 불일치로 이
 /// 연결을 끝낸다 — 그 오류 문구에 상대가 보낸 grant_id 가 그대로 들어간다.
 fn handshake_with_ack_grant_id(stream: &mut TcpStream, grant_id: &str) {
-    send_hello(stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    send_hello(
+        stream,
+        gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        0,
+        100,
+    );
     let (frame_type, body) = read_frame_body(stream);
-    assert_eq!(frame_type, FrameType::Grant as u8, "첫 프레임은 Grant 여야 한다");
+    assert_eq!(
+        frame_type,
+        FrameType::Grant as u8,
+        "첫 프레임은 Grant 여야 한다"
+    );
     let grant = pb::ExecutionGrant::decode(body.as_slice()).expect("Grant 디코드");
     let key = SigningKey::from_bytes(&AGENT_SEED);
     let now = now_ms();
@@ -1188,7 +1309,10 @@ fn an_ack_whose_grant_id_mentions_the_lease_store_does_not_stop_the_listener() {
     let mut second = connect_when_ready(fixture.address);
     handshake_at(&mut second, 1);
     let outcome = handle.join().expect("Coordinator 스레드");
-    assert!(outcome.is_ok(), "받은 ACK 의 내용 때문에 리스너가 멈췄다: {outcome:?}");
+    assert!(
+        outcome.is_ok(),
+        "받은 ACK 의 내용 때문에 리스너가 멈췄다: {outcome:?}"
+    );
 }
 
 /// 결함 92 — durable 저장소일 때 "Lease" 와 "실패" 가 함께 든 문구를 Storage 로 고르던 규칙도 없앴다. 같은 모양의 ACK 에
@@ -1204,7 +1328,10 @@ fn with_a_durable_lease_store_an_ack_mentioning_lease_failure_does_not_stop_the_
     let mut second = connect_when_ready(fixture.address);
     handshake_at(&mut second, 1);
     let outcome = handle.join().expect("Coordinator 스레드");
-    assert!(outcome.is_ok(), "받은 ACK 의 내용 때문에 리스너가 멈췄다: {outcome:?}");
+    assert!(
+        outcome.is_ok(),
+        "받은 ACK 의 내용 때문에 리스너가 멈췄다: {outcome:?}"
+    );
 }
 
 /// 결함 92 — 예상 밖 프레임은 **종류 이름**만 오류에 남긴다. ACK 자리에 서명된 보고를 보내고, 그 job_id 에 넣은 표지가 Coordinator
@@ -1215,18 +1342,37 @@ fn an_unexpected_frame_in_place_of_the_ack_is_named_by_kind_without_its_content(
     let fence_epoch = staged_fence_epoch(&fixture.control_db);
     let handle = spawn_coordinator(&fixture, 0);
     let mut stream = connect_when_ready(fixture.address);
-    send_hello(&mut stream, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0, 100);
+    send_hello(
+        &mut stream,
+        gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        0,
+        100,
+    );
     let (frame_type, _) = read_frame_body(&mut stream);
-    assert_eq!(frame_type, FrameType::Grant as u8, "첫 프레임은 Grant 여야 한다");
+    assert_eq!(
+        frame_type,
+        FrameType::Grant as u8,
+        "첫 프레임은 Grant 여야 한다"
+    );
     let mut report = terminal_report(fence_epoch);
     report.job_id = "PEER-CONTENT-MARKER".into();
-    write_frame_body(&mut stream, FrameType::AttemptReport, &signed_report(report).encode_to_vec());
+    write_frame_body(
+        &mut stream,
+        FrameType::AttemptReport,
+        &signed_report(report).encode_to_vec(),
+    );
     let error = handle
         .join()
         .expect("Coordinator 스레드")
         .expect_err("ACK 자리의 보고는 거부돼야 한다");
-    assert!(error.contains("AttemptReport"), "무슨 종류가 왔는지는 말해야 한다: {error}");
-    assert!(!error.contains("PEER-CONTENT-MARKER"), "상대가 보낸 내용이 오류 문자열에 들어갔다: {error}");
+    assert!(
+        error.contains("AttemptReport"),
+        "무슨 종류가 왔는지는 말해야 한다: {error}"
+    );
+    assert!(
+        !error.contains("PEER-CONTENT-MARKER"),
+        "상대가 보낸 내용이 오류 문자열에 들어갔다: {error}"
+    );
 }
 
 /// 결함 94 — 다른 Coordinator 가 발급한 Lease 는 RENEW 로 갱신하지 않는다 — **저장소를 바꾸기 전에** 거부한다.
@@ -1240,7 +1386,10 @@ fn a_renew_session_for_a_lease_issued_by_another_coordinator_is_refused_before_t
         .get(LEASE_ID)
         .expect("Lease 조회")
         .expect("fixture 가 Lease 를 만들었다");
-    assert_eq!(before.issuing_coordinator_id, COORDINATOR_ID, "fixture 전제");
+    assert_eq!(
+        before.issuing_coordinator_id, COORDINATOR_ID,
+        "fixture 전제"
+    );
     let mut args = coordinator_args(&fixture, 0);
     let at = args
         .iter()
@@ -1270,7 +1419,10 @@ fn a_renew_session_for_a_lease_issued_by_another_coordinator_is_refused_before_t
         .get(LEASE_ID)
         .expect("Lease 조회")
         .expect("Lease");
-    assert_eq!(after.expires_at_unix_ms, before.expires_at_unix_ms, "거부했는데 저장소의 만료가 바뀌었다");
+    assert_eq!(
+        after.expires_at_unix_ms, before.expires_at_unix_ms,
+        "거부했는데 저장소의 만료가 바뀌었다"
+    );
 }
 
 // ── B+E 구현 단계 6 — REPORT 세션(새 연결로 종료 보고 · 서명된 받았다 응답) ────────────
@@ -1298,7 +1450,12 @@ fn spawn_coordinator_for_reports(
 }
 
 /// REPORT 세션 하나 — Hello(REPORT, nonce `nonce_start..+16`) 와 보고를 보내고 스트림을 돌려준다.
-fn open_report_session(fixture: &Fixture, connection_attempt: u32, nonce_start: u8, report: &pb::AttemptReport) -> TcpStream {
+fn open_report_session(
+    fixture: &Fixture,
+    connection_attempt: u32,
+    nonce_start: u8,
+    report: &pb::AttemptReport,
+) -> TcpStream {
     let mut session = connect_when_ready(fixture.address);
     send_hello(
         &mut session,
@@ -1306,13 +1463,21 @@ fn open_report_session(fixture: &Fixture, connection_attempt: u32, nonce_start: 
         connection_attempt,
         nonce_start,
     );
-    write_frame_body(&mut session, FrameType::AttemptReport, &report.encode_to_vec());
+    write_frame_body(
+        &mut session,
+        FrameType::AttemptReport,
+        &report.encode_to_vec(),
+    );
     session
 }
 
 fn read_ack(session: &mut TcpStream) -> pb::AttemptReportAck {
     let (frame_type, body) = read_frame_body(session);
-    assert_eq!(frame_type, FrameType::AttemptReportAck as u8, "REPORT 세션의 응답은 받았다 응답이다");
+    assert_eq!(
+        frame_type,
+        FrameType::AttemptReportAck as u8,
+        "REPORT 세션의 응답은 받았다 응답이다"
+    );
     pb::AttemptReportAck::decode(body.as_slice()).expect("Ack 디코드")
 }
 
@@ -1332,10 +1497,23 @@ fn a_report_session_stores_the_report_and_answers_with_a_signed_ack() {
     let ack = read_ack(&mut session);
 
     let mut ring = InMemoryKeyring::new();
-    ring.insert(COORDINATOR_ID, SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key());
-    verify(&ack, 1, &Ed25519Verifier::new(ring), now_ms(), &mut NoReplayCheck)
-        .expect("Coordinator 가 서명한 Ack 다");
-    assert_eq!(ack.session_nonce, (200u8..216).collect::<Vec<u8>>(), "이 세션 Hello 의 nonce 를 되돌려야 한다");
+    ring.insert(
+        COORDINATOR_ID,
+        SigningKey::from_bytes(&COORDINATOR_SEED).verifying_key(),
+    );
+    verify(
+        &ack,
+        1,
+        &Ed25519Verifier::new(ring),
+        now_ms(),
+        &mut NoReplayCheck,
+    )
+    .expect("Coordinator 가 서명한 Ack 다");
+    assert_eq!(
+        ack.session_nonce,
+        (200u8..216).collect::<Vec<u8>>(),
+        "이 세션 Hello 의 nonce 를 되돌려야 한다"
+    );
     let hash = ack.report_hash.clone().expect("report_hash 가 있다");
     assert_eq!(
         (hash.algo, hash.value),
@@ -1355,7 +1533,11 @@ fn a_report_session_stores_the_report_and_answers_with_a_signed_ack() {
     );
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
-    assert_eq!(stored_binding(&fixture.control_db), Some(report), "Ack 를 보냈으면 저장돼 있어야 한다");
+    assert_eq!(
+        stored_binding(&fixture.control_db),
+        Some(report),
+        "Ack 를 보냈으면 저장돼 있어야 한다"
+    );
 }
 
 /// 결함 124 (검수 65) — 기동 때 outbox 를 REPORT 로 먼저 보낸 Agent 의 FRESH 는 연결 번호 0 으로 온다. 보조 세션은 FRESH 번호에 넣지 않는다.
@@ -1373,7 +1555,10 @@ fn a_fresh_connection_after_a_report_session_keeps_connection_attempt_zero() {
     }
     let mut fresh = connect_when_ready(fixture.address);
     let grant = handshake_at(&mut fresh, 0);
-    assert_eq!(grant.attempt_id, ATTEMPT_ID, "REPORT 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    assert_eq!(
+        grant.attempt_id, ATTEMPT_ID,
+        "REPORT 뒤 FRESH(0) 도 Grant 를 받아야 한다"
+    );
     drop(fresh);
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
@@ -1398,9 +1583,16 @@ fn a_fresh_connection_after_a_report_connection_that_dropped_before_hello_is_acc
     }
     let mut fresh = connect_when_ready(fixture.address);
     let grant = handshake_at(&mut fresh, 0);
-    assert_eq!(grant.attempt_id, ATTEMPT_ID, "끊긴 보조 연결 뒤 FRESH(0) 도 Grant 를 받아야 한다");
+    assert_eq!(
+        grant.attempt_id, ATTEMPT_ID,
+        "끊긴 보조 연결 뒤 FRESH(0) 도 Grant 를 받아야 한다"
+    );
     // 결함 149 — Grant nonce 도 Hello 의 번호(0)로 만들어져야 한다(받은 연결 번호는 2 다).
-    assert_eq!(grant.nonce, derive_replay_nonce("grant", GRANT_ID, 0), "Grant nonce 가 Hello 번호로 만들어지지 않았다");
+    assert_eq!(
+        grant.nonce,
+        derive_replay_nonce("grant", GRANT_ID, 0),
+        "Grant nonce 가 Hello 번호로 만들어지지 않았다"
+    );
     drop(fresh);
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
@@ -1415,13 +1607,27 @@ fn a_fresh_hello_that_skips_ahead_is_accepted_and_a_reused_number_is_refused() {
     {
         let mut ahead = connect_when_ready(fixture.address);
         let grant = handshake_at(&mut ahead, 5);
-        assert_eq!(grant.nonce, derive_replay_nonce("grant", GRANT_ID, 5), "Grant nonce 가 Hello 번호(5)로 만들어지지 않았다");
+        assert_eq!(
+            grant.nonce,
+            derive_replay_nonce("grant", GRANT_ID, 5),
+            "Grant nonce 가 Hello 번호(5)로 만들어지지 않았다"
+        );
     }
     let mut reuse = connect_when_ready(fixture.address);
-    send_hello(&mut reuse, gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 5, 60);
-    let error = handle.join().expect("Coordinator 스레드").expect_err("재사용한 번호는 거부돼야 한다");
+    send_hello(
+        &mut reuse,
+        gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        5,
+        60,
+    );
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("재사용한 번호는 거부돼야 한다");
     assert!(
-        error.starts_with("protocol: ") && error.contains("connection_attempt 가 규칙을 어겼다") && error.contains("받은 5 · 직전 FRESH Some(5)"),
+        error.starts_with("protocol: ")
+            && error.contains("connection_attempt 가 규칙을 어겼다")
+            && error.contains("받은 5 · 직전 FRESH Some(5)"),
         "{error}"
     );
 }
@@ -1445,7 +1651,11 @@ fn the_same_report_resent_over_a_new_report_session_is_acknowledged_as_not_creat
     let second = read_ack(&mut session);
     assert!(first.created, "첫 저장은 created=true");
     assert!(!second.created, "같은 바이트의 재전송은 created=false");
-    assert_eq!(second.session_nonce, (220u8..236).collect::<Vec<u8>>(), "Ack 는 **그 세션**의 nonce 를 되돌린다");
+    assert_eq!(
+        second.session_nonce,
+        (220u8..236).collect::<Vec<u8>>(),
+        "Ack 는 **그 세션**의 nonce 를 되돌린다"
+    );
     assert_eq!(first.report_hash, second.report_hash);
     let outcome = handle.join().expect("Coordinator 스레드");
     assert!(outcome.is_ok(), "{outcome:?}");
@@ -1467,7 +1677,10 @@ fn a_report_session_without_the_flag_is_refused_and_nothing_is_stored() {
         .expect("Coordinator 스레드")
         .expect_err("받지 않는 구성의 REPORT 세션은 거부돼야 한다");
     assert!(error.contains("REPORT_SESSION_REFUSED"), "{error}");
-    assert!(stored_binding(&fixture.control_db).is_none(), "거부했는데 저장했다");
+    assert!(
+        stored_binding(&fixture.control_db).is_none(),
+        "거부했는데 저장했다"
+    );
 }
 
 /// 단계 6 — 서명은 유효하지만 필드 조합 규칙을 어긴 보고는 Ack 없이 거부한다(v2 인데 종료 관측이 UNSPECIFIED).
@@ -1504,7 +1717,10 @@ fn a_report_session_refuses_a_report_that_breaks_the_field_rules_without_an_ack(
         !matches!(session.read(&mut probe), Ok(n) if n > 0),
         "거부했는데 무언가(Ack)를 보냈다"
     );
-    assert!(stored_binding(&fixture.control_db).is_none(), "거부했는데 저장했다");
+    assert!(
+        stored_binding(&fixture.control_db).is_none(),
+        "거부했는데 저장했다"
+    );
 }
 
 /// 결정 D1 — 예약이 없어진 뒤 온 늦은 보고도 REPORT 세션으로 저장하고 Ack 한다(과거 실행의 보고). 결합 경로는 배정 기록이다.
@@ -1519,14 +1735,18 @@ fn a_late_report_after_the_reservation_is_gone_is_stored_and_acknowledged() {
     }
     {
         let db = rusqlite::Connection::open(&fixture.control_db).expect("control DB");
-        db.busy_timeout(Duration::from_secs(5)).expect("busy timeout");
+        db.busy_timeout(Duration::from_secs(5))
+            .expect("busy timeout");
         db.execute(
             "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
             [NODE_ID],
         )
         .expect("예약 GPU 행 삭제");
-        db.execute("DELETE FROM coordinator_node_reservations WHERE node_id = ?1", [NODE_ID])
-            .expect("예약 행 삭제");
+        db.execute(
+            "DELETE FROM coordinator_node_reservations WHERE node_id = ?1",
+            [NODE_ID],
+        )
+        .expect("예약 행 삭제");
     }
     let report = terminal_report(fence_epoch);
     let mut session = open_report_session(&fixture, 1, 200, &report);
@@ -1539,7 +1759,11 @@ fn a_late_report_after_the_reservation_is_gone_is_stored_and_acknowledged() {
         .get_report_binding(ATTEMPT_ID, NODE_ID)
         .expect("보고 조회")
         .expect("Ack 를 보냈으면 저장돼 있어야 한다");
-    assert_eq!(binding.bound_via, ReportBindingSource::AssignmentRecord, "배정 기록으로 결합했다고 남겨야 한다");
+    assert_eq!(
+        binding.bound_via,
+        ReportBindingSource::AssignmentRecord,
+        "배정 기록으로 결합했다고 남겨야 한다"
+    );
 }
 
 /// 첫 증거와 **내용이 다른** 두 번째 보고는 거부된다.

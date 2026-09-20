@@ -175,9 +175,8 @@ fn load_signing_key(path: &str) -> Result<SigningKey, String> {
     }
     // ★ 결함 ⑬(2026-09-10) — 바이트로 자르지 않는다. `gputeer_crypto::hex`
     //   가 한 바이트씩 읽으므로 문자 경계를 가를 수 없다.
-    let seed = gputeer_crypto::hex::decode_fixed::<32>(hex).map_err(|e| {
-        format!("GRANT_REFUSED: KEY_NOT_HEX — 서명키 hex 파싱 실패({path}): {e}")
-    })?;
+    let seed = gputeer_crypto::hex::decode_fixed::<32>(hex)
+        .map_err(|e| format!("GRANT_REFUSED: KEY_NOT_HEX — 서명키 hex 파싱 실패({path}): {e}"))?;
     Ok(SigningKey::from_bytes(&seed))
 }
 

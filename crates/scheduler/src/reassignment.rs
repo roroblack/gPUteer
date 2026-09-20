@@ -406,10 +406,7 @@ pub enum ReassignmentInputError {
     /// 것이 섞여 있다. **다듬어서 받아들이지 않고 거부한다** — 다듬으면
     /// `"member-a"` 와 `" member-a"` 가 조용히 같아지고, 그 조용함이
     /// 자기편향 검사를 우회하는 통로가 된다(2026-08-30 독립 검수 지적).
-    NonCanonicalIdentifier {
-        field: &'static str,
-        value: String,
-    },
+    NonCanonicalIdentifier { field: &'static str, value: String },
     /// 작업을 옮길 곳이 원래 있던 곳과 같다.
     ReceivingNodeIsStrandedNode { node_id: String },
     /// 서명·멤버십이 해소되지 않은 신고.
@@ -482,10 +479,7 @@ pub enum ReassignmentInputError {
     /// job/attempt ID 가 ULID 26자가 아니다.
     ///
     /// `crates/protocol/src/fenced_operation.rs` 와 같은 규칙이다.
-    IdentifierIsNotUlidLength {
-        field: &'static str,
-        actual: usize,
-    },
+    IdentifierIsNotUlidLength { field: &'static str, actual: usize },
     /// 예비 fence 범위가 다른 Job/attempt 용으로 발행됐다.
     FenceRangeIssuedForAnotherAttempt {
         issued_for_job_id: String,
@@ -562,10 +556,7 @@ fn require_canonical_identifier(
 const ULID_LEN: usize = 26;
 
 /// job/attempt ID 는 규범 형태 + 26자여야 한다.
-fn require_ulid_identifier(
-    value: &str,
-    field: &'static str,
-) -> Result<(), ReassignmentInputError> {
+fn require_ulid_identifier(value: &str, field: &'static str) -> Result<(), ReassignmentInputError> {
     require_canonical_identifier(value, field)?;
     if value.chars().count() != ULID_LEN {
         return Err(ReassignmentInputError::IdentifierIsNotUlidLength {
@@ -905,10 +896,9 @@ pub fn evaluate_reassignment(
         //
         // 정렬된 목록의 **모든 이전 원소**와 비교한다 — 인접만 보면
         // `a` / `B` / `A` 처럼 사이에 낀 값이 있을 때 놓친다.
-        if let Some(previous) = distinct_reporter_nodes
-            .iter()
-            .find(|seen| compare_identity(seen, &report.reporter_node_id) == IdentityMatch::Ambiguous)
-        {
+        if let Some(previous) = distinct_reporter_nodes.iter().find(|seen| {
+            compare_identity(seen, &report.reporter_node_id) == IdentityMatch::Ambiguous
+        }) {
             return Err(ReassignmentInputError::AmbiguousIdentifier {
                 field: "reporter_node_id",
                 first: (*previous).to_string(),

@@ -54,7 +54,10 @@ fn run_against_a_listener_we_own(extra: &[&str]) -> (String, bool) {
     listener.set_nonblocking(true).expect("nonblocking");
 
     let mut argv = args(extra);
-    let idx = argv.iter().position(|a| a == "--connect").expect("--connect");
+    let idx = argv
+        .iter()
+        .position(|a| a == "--connect")
+        .expect("--connect");
     argv[idx + 1] = addr;
 
     let error = gputeer_agent::run(parse_config_from_args(&argv).expect("설정 파싱"))
@@ -112,7 +115,12 @@ fn run_refuses_a_missing_or_blank_target_before_connecting() {
         ("대상 없음", vec!["--neighbor-report-rounds", "1"]),
         (
             "대상이 공백",
-            vec!["--neighbor-report-rounds", "1", "--neighbor-report-target", "   "],
+            vec![
+                "--neighbor-report-rounds",
+                "1",
+                "--neighbor-report-target",
+                "   ",
+            ],
         ),
     ] {
         let (error, connected) = run_against_a_listener_we_own(&extra);
@@ -166,7 +174,12 @@ fn the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off() {
         ),
         (
             "플래그 꺼짐 — 우회 반례",
-            vec!["--neighbor-report-rounds", "1", "--neighbor-report-target", TARGET],
+            vec![
+                "--neighbor-report-rounds",
+                "1",
+                "--neighbor-report-target",
+                TARGET,
+            ],
         ),
         (
             "플래그 꺼짐 + 대상도 없음",
@@ -174,8 +187,8 @@ fn the_multi_agent_entry_point_refuses_reports_even_with_the_flag_off() {
         ),
     ] {
         let cfg = config(&extra);
-        let error = gputeer_agent::multi_agent::run_multi_agent_session(&cfg)
-            .expect_err("거부돼야 한다");
+        let error =
+            gputeer_agent::multi_agent::run_multi_agent_session(&cfg).expect_err("거부돼야 한다");
         assert!(
             error.contains("NEIGHBOR_REPORT_REFUSED"),
             "{label}: 실제 오류: {error}"

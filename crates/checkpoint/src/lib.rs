@@ -21,8 +21,8 @@ pub use durability::{
     ResolvedHolderObservation,
 };
 pub use writer::{
-    find_resume_point, manifest_for, read_pointer, startup_gc, write_checkpoint, write_checkpoint_phased,
-    WritePhase,
+    find_resume_point, manifest_for, read_pointer, startup_gc, write_checkpoint,
+    write_checkpoint_phased, WritePhase,
 };
 
 use std::path::PathBuf;
@@ -120,5 +120,4 @@ pub enum CheckpointError {
 
     #[error("매니페스트 파싱: {0}")]
     Manifest(String),
-
 }

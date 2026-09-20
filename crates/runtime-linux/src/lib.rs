@@ -522,10 +522,8 @@ fn resolve_parent(parent: &CgroupParent) -> Result<PathBuf, CgroupError> {
         CgroupParent::Explicit(path) => validate_explicit_parent(path, root)?,
         CgroupParent::RootBypassingAncestorLimits => root.to_path_buf(),
     };
-    memory_is_delegated(&candidate).map_err(|reason| {
-        CgroupError::MemoryControllerUnavailable {
-            detail: format!("{candidate:?}: {reason}"),
-        }
+    memory_is_delegated(&candidate).map_err(|reason| CgroupError::MemoryControllerUnavailable {
+        detail: format!("{candidate:?}: {reason}"),
     })?;
     Ok(candidate)
 }
@@ -676,10 +674,11 @@ fn memory_is_delegated(dir: &Path) -> Result<(), String> {
 ///   조용히 안 걸린다.
 fn current_cgroup_dir() -> Result<PathBuf, CgroupError> {
     let root = Path::new(CGROUP_ROOT);
-    let text =
-        std::fs::read_to_string("/proc/self/cgroup").map_err(|error| CgroupError::NotAvailable {
+    let text = std::fs::read_to_string("/proc/self/cgroup").map_err(|error| {
+        CgroupError::NotAvailable {
             detail: format!("/proc/self/cgroup 읽기 실패: {error}"),
-        })?;
+        }
+    })?;
     let relative = text
         .lines()
         .find_map(|line| line.strip_prefix("0::"))
@@ -842,10 +841,7 @@ mod explicit_parent_tests {
             let error = validate_explicit_parent(&root.join(dangerous), root)
                 .expect_err(&format!("{dangerous} 가 통과했다"));
             let message = error.to_string();
-            assert!(
-                message.contains("NOT_DELEGATED"),
-                "{dangerous}: {message}"
-            );
+            assert!(message.contains("NOT_DELEGATED"), "{dangerous}: {message}");
         }
     }
 
@@ -900,7 +896,10 @@ mod explicit_parent_tests {
     #[test]
     fn the_root_and_outside_paths_are_refused() {
         let root = Path::new(CGROUP_ROOT);
-        assert!(validate_explicit_parent(root, root).is_err(), "루트가 통과했다");
+        assert!(
+            validate_explicit_parent(root, root).is_err(),
+            "루트가 통과했다"
+        );
         assert!(
             validate_explicit_parent(Path::new("/etc"), root).is_err(),
             "cgroup 밖이 통과했다"

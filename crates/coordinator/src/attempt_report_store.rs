@@ -498,7 +498,17 @@ pub(crate) fn fetch_report_binding(
         )
         .optional()
         .map_err(map_sql_error)?;
-    let Some((row_attempt_id, row_node_id, row_job_id, epoch, signer_id, hash, body, bound_via_text)) = raw else {
+    let Some((
+        row_attempt_id,
+        row_node_id,
+        row_job_id,
+        epoch,
+        signer_id,
+        hash,
+        body,
+        bound_via_text,
+    )) = raw
+    else {
         return Ok(None);
     };
     let corrupt = |kind| AttemptReportStoreError::Corrupt {
@@ -1035,7 +1045,10 @@ mod tests {
         //   이 테스트의 이름은 DoD-51 증거가 가리켜 그대로 둔다 — 예약이 **같은 Attempt 의 것인데** 어긋나면 아래처럼 여전히 행이 없다.
         let stored = store.store_verified_terminal_report(&report).unwrap();
         assert!(stored.created);
-        assert_eq!(stored.binding.bound_via, ReportBindingSource::AssignmentRecord);
+        assert_eq!(
+            stored.binding.bound_via,
+            ReportBindingSource::AssignmentRecord
+        );
         assert_eq!(
             store
                 .get_report_binding(ATTEMPT_ID, NODE_ID)
@@ -1092,7 +1105,9 @@ mod tests {
         let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
         assert_eq!(
             store.store_verified_terminal_report(&completed_report(2)),
-            Err(AttemptReportStoreError::BindingMismatch(BindingField::FenceEpoch))
+            Err(AttemptReportStoreError::BindingMismatch(
+                BindingField::FenceEpoch
+            ))
         );
         assert_eq!(report_count(&store), 0);
     }
@@ -1102,8 +1117,13 @@ mod tests {
     fn a_report_with_its_current_reservation_records_the_reservation_binding() {
         let fixture = prepare_fixture();
         let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
-        let stored = store.store_verified_terminal_report(&completed_report(1)).unwrap();
-        assert_eq!(stored.binding.bound_via, ReportBindingSource::CurrentReservation);
+        let stored = store
+            .store_verified_terminal_report(&completed_report(1))
+            .unwrap();
+        assert_eq!(
+            stored.binding.bound_via,
+            ReportBindingSource::CurrentReservation
+        );
     }
 
     /// 결정 D1 — 결합 경로 칸이 없던 DB 를 열면 칸을 더하고, 그 전의 행은 현재 예약 결합으로 읽는다.
@@ -1112,7 +1132,9 @@ mod tests {
         let fixture = prepare_fixture();
         {
             let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
-            store.store_verified_terminal_report(&completed_report(1)).unwrap();
+            store
+                .store_verified_terminal_report(&completed_report(1))
+                .unwrap();
             store
                 .connection
                 .execute_batch("ALTER TABLE coordinator_attempt_reports DROP COLUMN bound_via")

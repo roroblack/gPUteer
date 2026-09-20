@@ -194,8 +194,8 @@ fn flags_that_may_end_the_session_after_ack_are_refused() {
 fn the_guard_stays_out_of_a_session_that_expects_no_reports() {
     let cfg = config(&["--multi-agent", "true", "--accept-timeout-ms", "200"]);
     assert_eq!(cfg.expect_attempt_reports, 0);
-    let error = gputeer_coordinator::run(cfg)
-        .expect_err("이 lane 은 신원이 하나라 다른 이유로 거부된다");
+    let error =
+        gputeer_coordinator::run(cfg).expect_err("이 lane 은 신원이 하나라 다른 이유로 거부된다");
     assert!(
         !error.contains("AttemptReport"),
         "보고를 기대하지 않는데 보고 관문이 걸렸다: {error}"

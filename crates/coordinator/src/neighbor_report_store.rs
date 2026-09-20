@@ -397,7 +397,9 @@ impl CoordinatorNeighborReportStore {
         unreachable_node_id: &str,
     ) -> Result<Vec<StoredNeighborReport>, NeighborReportStoreError> {
         if unreachable_node_id.trim().is_empty() {
-            return Err(NeighborReportStoreError::InvalidInput("unreachable_node_id"));
+            return Err(NeighborReportStoreError::InvalidInput(
+                "unreachable_node_id",
+            ));
         }
         let mut statement = self
             .connection
@@ -424,7 +426,10 @@ impl CoordinatorNeighborReportStore {
 
         let mut out = Vec::new();
         for row in rows {
-            out.push(decode_row(row.map_err(map_sql_error)?, &self.coordinator_device_id)?);
+            out.push(decode_row(
+                row.map_err(map_sql_error)?,
+                &self.coordinator_device_id,
+            )?);
         }
         Ok(out)
     }
@@ -708,8 +713,6 @@ impl CoordinatorNeighborReportStore {
                     }
                 }
                 evicted = doomed;
-
-
             }
         }
 
@@ -750,9 +753,7 @@ impl CoordinatorNeighborReportStore {
     }
 }
 
-fn validate_input(
-    report: &pb::NeighborUnreachableReport,
-) -> Result<(), NeighborReportStoreError> {
+fn validate_input(report: &pb::NeighborUnreachableReport) -> Result<(), NeighborReportStoreError> {
     if report.reporter_node_id.trim().is_empty() {
         return Err(NeighborReportStoreError::InvalidInput("reporter_node_id"));
     }
@@ -839,8 +840,8 @@ fn decode_row(
     }
     let report = pb::NeighborUnreachableReport::decode(body.as_slice())
         .map_err(|_| corrupt(NeighborReportCorruption::UndecodableBody))?;
-    let observed_at_unix_ms =
-        decode_u64(&observed_at).map_err(|_| corrupt(NeighborReportCorruption::ObservedAtEncoding))?;
+    let observed_at_unix_ms = decode_u64(&observed_at)
+        .map_err(|_| corrupt(NeighborReportCorruption::ObservedAtEncoding))?;
 
     if report.reporter_node_id != reporter_node_id {
         return Err(corrupt(NeighborReportCorruption::ReporterNodeMismatch));

@@ -36,9 +36,9 @@ pub mod inventory_store;
 pub mod job_store;
 pub mod lease_store;
 pub mod manifest_requirements;
+pub mod multi_agent;
 pub mod neighbor_report_store;
 pub mod node_liveness_store;
-pub mod multi_agent;
 // ★ 이 허용은 **`orchestrate` 의 것이다.** `DoD-46` 이 "production
 //   미연결" 로 남겨 테스트 fixture 만 부르던 동안 dead_code 경고가
 //   났다. 이제 `gputeer stage-job` 이 부르므로 허용이 필요 없을 수도
@@ -563,7 +563,9 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     //   경로는 `grant_from_control_db` 그대로다. 위 lane 관문이
     //   `expect_attempt_reports > 0` 이면 그 값이 `Some` 임을 보장한다.
     //   ★ B+E 구현 단계 6 — REPORT 세션도 같은 저장소다. 그 관문(`unsupported_report_session_lane`)도 control DB 를 요구한다.
-    let mut attempt_report_store = if config.expect_attempt_reports > 0 || config.accept_report_sessions {
+    let mut attempt_report_store = if config.expect_attempt_reports > 0
+        || config.accept_report_sessions
+    {
         let path = config
             .grant_from_control_db
             .as_ref()
@@ -595,7 +597,6 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
 
     let listener = TcpListener::bind(&config.listen).map_err(|e| format!("bind 실패: {e}"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
-
 
     println!("READY {address}");
     std::io::stdout().flush().map_err(|e| e.to_string())?;
@@ -959,10 +960,9 @@ impl PostAckWait {
             .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 설정 실패: {e}"))?;
         // ★ 결함 54 · 55 · 61 — 테스트가 시각을 재 추정하지 않고 **같은 순간의 값**을 보게 한다: 남은 Lease ·
         //   계산한 시한 · 소켓에 실제로 걸린 시한(read_timeout 을 다시 읽는다).
-        let remaining_lease_ms = grant
-            .lease
-            .as_ref()
-            .map_or(0, |lease| lease.expires_at_unix_ms.saturating_sub(now_unix_ms));
+        let remaining_lease_ms = grant.lease.as_ref().map_or(0, |lease| {
+            lease.expires_at_unix_ms.saturating_sub(now_unix_ms)
+        });
         let applied_ms = stream
             .read_timeout()
             .map_err(|e| format!("POST_ACK_WAIT: 읽기 시한 조회 실패: {e}"))?
@@ -1084,9 +1084,7 @@ fn serve_one_connection(
         last_fresh_attempt,
     )
     .map_err(|error| match error {
-        SessionHandlerError::Legacy(message) => {
-            classify_legacy_session_error(message)
-        }
+        SessionHandlerError::Legacy(message) => classify_legacy_session_error(message),
         SessionHandlerError::Classified(error) => error,
     })
 }
@@ -1122,7 +1120,15 @@ fn serve_one_connection_impl(
     // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
     let hello = read_session_hello(config, stream, agent_keys, replay, clock)?;
     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
-        return serve_renew_session(config, stream, lease_store, signing_key, agent_keys, replay, clock);
+        return serve_renew_session(
+            config,
+            stream,
+            lease_store,
+            signing_key,
+            agent_keys,
+            replay,
+            clock,
+        );
     }
     if hello.mode == gputeer_protocol::constants::MODE_REPORT {
         return serve_report_session(
@@ -1178,19 +1184,32 @@ fn serve_one_connection_impl(
         //   가 하고 이 lane 은 전송만 한다 — CLI `issue-grant` 와 **같은
         //   함수**여서 두 벌이 생기지 않는다.
         Some(control_db) => {
-            let jobs = crate::job_store::CoordinatorJobStore::open(control_db)
-                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("job store: {e}"))))?;
-            let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)
-                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("staging store: {e}"))))?;
-            let leases = CoordinatorLeaseStore::open(control_db)
-                .map_err(|e| SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!("lease store: {e}"))))?;
+            let jobs = crate::job_store::CoordinatorJobStore::open(control_db).map_err(|e| {
+                SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(
+                    "job store: {e}"
+                )))
+            })?;
+            let staging =
+                crate::staging_store::CoordinatorStagingStore::open(control_db).map_err(|e| {
+                    SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(
+                        "staging store: {e}"
+                    )))
+                })?;
+            let leases = CoordinatorLeaseStore::open(control_db).map_err(|e| {
+                SessionHandlerError::Classified(CoordinatorSessionError::Storage(format!(
+                    "lease store: {e}"
+                )))
+            })?;
             // ★ 저장된 Manifest 를 싣기 전에 **지금** 다시 검증할 제출자 keyring.
             //   못 열면 설정 문제라 fail-closed 로 끝낸다(Storage).
-            let keyring_path = config.stored_grant_submitter_keyring.as_ref().ok_or_else(|| {
-                SessionHandlerError::Classified(CoordinatorSessionError::Storage(
-                    "--submitter-keyring 이 없다 — 시작 관문이 막았어야 한다".to_string(),
-                ))
-            })?;
+            let keyring_path = config
+                .stored_grant_submitter_keyring
+                .as_ref()
+                .ok_or_else(|| {
+                    SessionHandlerError::Classified(CoordinatorSessionError::Storage(
+                        "--submitter-keyring 이 없다 — 시작 관문이 막았어야 한다".to_string(),
+                    ))
+                })?;
             let policy = if config.stored_grant_allow_plaintext_keyring {
                 gputeer_crypto::PlaintextPolicy::Allow
             } else {
@@ -1390,10 +1409,7 @@ fn serve_one_connection_impl(
         Some(path) if config.expect_heartbeats > 0 => Some(
             crate::node_liveness_store::CoordinatorNodeLivenessStore::open(path).map_err(
                 |error| {
-                    SessionHandlerError::Classified(storage_error(
-                        "liveness store open",
-                        error,
-                    ))
+                    SessionHandlerError::Classified(storage_error("liveness store open", error))
                 },
             )?,
         ),
@@ -1418,7 +1434,11 @@ fn serve_one_connection_impl(
             IngressMessage::NodeHeartbeat(verified) => verified
                 .require_replay_checked()
                 .map_err(|e| format!("NodeHeartbeat replay 검사 실패: {e:?}"))?,
-            other => return Err(format!("예상하지 못한 heartbeat 타입: {}", ingress_kind(&other)).into()),
+            other => {
+                return Err(
+                    format!("예상하지 못한 heartbeat 타입: {}", ingress_kind(&other)).into(),
+                )
+            }
         };
 
         // 이 연결의 상대가 맞는가. 서명은 "이 장치가 보냈다" 를 증명할
@@ -1485,7 +1505,11 @@ fn serve_one_connection_impl(
         if let Some(store) = liveness_store.as_mut() {
             let verified = match &message {
                 IngressMessage::NodeHeartbeat(verified) => verified,
-                other => return Err(format!("예상하지 못한 heartbeat 타입: {}", ingress_kind(&other)).into()),
+                other => {
+                    return Err(
+                        format!("예상하지 못한 heartbeat 타입: {}", ingress_kind(&other)).into(),
+                    )
+                }
             };
             let observed = store.observe(verified).map_err(|error| match error {
                 // ★ 신원 충돌은 **저장소 장애가 아니다**(2026-08-30 독립
@@ -1493,19 +1517,13 @@ fn serve_one_connection_impl(
                 //   거부하는 게 아니라 Coordinator accept loop 전체가
                 //   종료된다 — 장치 하나를 잘못 신고한 것 때문에 다른
                 //   Agent 들의 작업까지 끊긴다.
-                crate::node_liveness_store::NodeLivenessStoreError::DeviceChanged {
-                    ..
-                }
-                | crate::node_liveness_store::NodeLivenessStoreError::InvalidHeartbeat {
-                    ..
-                }
+                crate::node_liveness_store::NodeLivenessStoreError::DeviceChanged { .. }
+                | crate::node_liveness_store::NodeLivenessStoreError::InvalidHeartbeat { .. }
                 | crate::node_liveness_store::NodeLivenessStoreError::SignerIsNotTheDevice {
                     ..
                 } => SessionHandlerError::Legacy(format!("HEARTBEAT_REJECTED: {error}")),
                 // 진짜 저장소 장애는 fail-closed 다(`DoD-37` 규칙).
-                other => {
-                    SessionHandlerError::Classified(storage_error("liveness observe", other))
-                }
+                other => SessionHandlerError::Classified(storage_error("liveness observe", other)),
             })?;
             println!(
                 "HEARTBEAT_STORED node_id={} last_heartbeat_unix_ms={} advanced={}",
@@ -1562,13 +1580,15 @@ fn serve_one_connection_impl(
         //   저장소가 기계별로 한 행만 두므로 N 번 넣어도 한 행이다.
         let verified = match &message {
             IngressMessage::NeighborUnreachableReport(verified) => {
-                verified.require_replay_checked().map_err(|e| {
-                    format!("NeighborUnreachableReport replay 검사 실패: {e:?}")
-                })?;
+                verified
+                    .require_replay_checked()
+                    .map_err(|e| format!("NeighborUnreachableReport replay 검사 실패: {e:?}"))?;
                 verified
             }
             other => {
-                return Err(format!("예상하지 못한 이웃 신고 타입: {}", ingress_kind(&other)).into())
+                return Err(
+                    format!("예상하지 못한 이웃 신고 타입: {}", ingress_kind(&other)).into(),
+                )
             }
         };
         let report = verified.get();
@@ -1677,10 +1697,7 @@ fn serve_one_connection_impl(
                 }
             })?;
             match outcome {
-                crate::neighbor_report_store::RecordOutcome::Recorded {
-                    stored,
-                    evicted,
-                } => {
+                crate::neighbor_report_store::RecordOutcome::Recorded { stored, evicted } => {
                     println!(
                         "NEIGHBOR_REPORT_STORED reporter_node_id={} unreachable_node_id={} observed_at_unix_ms={} evicted={}",
                         stored.reporter_node_id,
@@ -1744,7 +1761,9 @@ fn serve_one_connection_impl(
         let verified = match &message {
             IngressMessage::AttemptReport(verified) => verified,
             other => {
-                return Err(format!("예상하지 못한 종료 보고 타입: {}", ingress_kind(&other)).into());
+                return Err(
+                    format!("예상하지 못한 종료 보고 타입: {}", ingress_kind(&other)).into(),
+                );
             }
         };
         // 검증을 통과한 뒤에야 필드를 본다.
@@ -1842,33 +1861,35 @@ fn serve_one_connection_impl(
                 "--expect-attempt-reports 를 켰는데 저장소가 열려 있지 않다",
             ))
         })?;
-        let result = store.store_verified_terminal_report(verified).map_err(|error| {
-            use crate::attempt_report_store::AttemptReportStoreError as E;
-            match error {
-                // ★ 아래는 전부 **들어온 보고가 유발한** 문제다 — 입력이
-                //   비었거나, terminal 이 아니거나, 저장된 Attempt·예약과
-                //   결합되지 않거나, 이미 다른 내용의 증거가 있다.
-                //
-                //   `Storage` 로 포장하면 accept loop 전체가 끝나 다른
-                //   Agent 들의 작업까지 끊긴다 — heartbeat·이웃 신고
-                //   경로가 이미 같은 이유로 이렇게 가른다.
-                E::InvalidInput(_)
-                | E::InvalidOutcome(_)
-                | E::ReportRule(_)
-                | E::AttemptNotFound { .. }
-                | E::ReservationNotFound { .. }
-                | E::BindingMismatch(_)
-                | E::ReportConflict { .. } => {
-                    SessionHandlerError::Legacy(format!("ATTEMPT_REPORT_REJECTED: {error}"))
+        let result = store
+            .store_verified_terminal_report(verified)
+            .map_err(|error| {
+                use crate::attempt_report_store::AttemptReportStoreError as E;
+                match error {
+                    // ★ 아래는 전부 **들어온 보고가 유발한** 문제다 — 입력이
+                    //   비었거나, terminal 이 아니거나, 저장된 Attempt·예약과
+                    //   결합되지 않거나, 이미 다른 내용의 증거가 있다.
+                    //
+                    //   `Storage` 로 포장하면 accept loop 전체가 끝나 다른
+                    //   Agent 들의 작업까지 끊긴다 — heartbeat·이웃 신고
+                    //   경로가 이미 같은 이유로 이렇게 가른다.
+                    E::InvalidInput(_)
+                    | E::InvalidOutcome(_)
+                    | E::ReportRule(_)
+                    | E::AttemptNotFound { .. }
+                    | E::ReservationNotFound { .. }
+                    | E::BindingMismatch(_)
+                    | E::ReportConflict { .. } => {
+                        SessionHandlerError::Legacy(format!("ATTEMPT_REPORT_REJECTED: {error}"))
+                    }
+                    // 진짜 저장소 장애와 **이미 영속된 행의 손상**은
+                    // fail-closed 다(`DoD-37` 규칙, 이웃 신고 경로와 같다).
+                    other => SessionHandlerError::Classified(storage_error(
+                        "attempt report store",
+                        other,
+                    )),
                 }
-                // 진짜 저장소 장애와 **이미 영속된 행의 손상**은
-                // fail-closed 다(`DoD-37` 규칙, 이웃 신고 경로와 같다).
-                other => SessionHandlerError::Classified(storage_error(
-                    "attempt report store",
-                    other,
-                )),
-            }
-        })?;
+            })?;
         println!(
             "ATTEMPT_REPORT_STORED job_id={} attempt_id={} node_id={} fence_epoch={} \
              signer_id={} created={}",
@@ -1906,7 +1927,9 @@ fn serve_one_connection_impl(
             .mark_revoked(&lease.lease_id, revoked_at)
             // ★ 결함 99 (재검수 61) — 저장소 장애를 문자열 분류에 맡기지 않는다. 전에는 이 문구 앞머리가 "lease store" 가
             //   아니라 92 뒤로 Protocol 이 됐다 — 저장에 실패하고도 다음 연결을 받았다.
-            .map_err(|e| SessionHandlerError::Classified(storage_error("갱신 전 revoke 저장 실패", e)))?;
+            .map_err(|e| {
+                SessionHandlerError::Classified(storage_error("갱신 전 revoke 저장 실패", e))
+            })?;
         println!(
             "REVOKE_STORE ok=true lease_id={} revoked_at_unix_ms={revoked_at}",
             lease.lease_id
@@ -1955,7 +1978,11 @@ fn serve_one_connection_impl(
                 IngressMessage::LeaseRenew(verified) => verified
                     .require_replay_checked()
                     .map_err(|e| format!("RenewLeaseRequest replay 검사 실패: {e:?}"))?,
-                other => return Err(format!("예상하지 못한 갱신 요청 타입: {}", ingress_kind(&other)).into()),
+                other => {
+                    return Err(
+                        format!("예상하지 못한 갱신 요청 타입: {}", ingress_kind(&other)).into(),
+                    )
+                }
             };
 
             if renew_req.node_id != config.agent_device_id {
@@ -2230,7 +2257,11 @@ fn serve_renew_session(
             .map_err(|e| session_protocol_error(format!("RENEW_SESSION: replay 검사 실패: {e:?}")))?
             .clone(),
         // ★ 결함 87 — 받은 프레임의 **내용**을 오류에 넣지 않는다.
-        _ => return Err(session_protocol_error("RENEW_SESSION: 갱신 요청이 아닌 프레임이다")),
+        _ => {
+            return Err(session_protocol_error(
+                "RENEW_SESSION: 갱신 요청이 아닌 프레임이다",
+            ))
+        }
     };
     if request.node_id != config.agent_device_id {
         return Err(session_protocol_error(format!(
@@ -2243,7 +2274,9 @@ fn serve_renew_session(
         .expect("저장소는 위에서 확인했다")
         .get(&request.lease_id)
         .map_err(|e| SessionHandlerError::Classified(storage_error("lease store", e)))?
-        .ok_or_else(|| session_protocol_error("RENEW_SESSION: 저장된 Lease 가 아니다(모르는 lease_id)"))?;
+        .ok_or_else(|| {
+            session_protocol_error("RENEW_SESSION: 저장된 Lease 가 아니다(모르는 lease_id)")
+        })?;
     // ★ 결함 94 (재검수 60) — 다른 Coordinator 가 발급한 Lease 를 이 Coordinator 가 갱신해 자기 서명으로 내보내지 않는다. 저장소를
     //   **바꾸기 전에** 대조한다(FRESH 경로 `get_or_issue` 의 신원 대조와 같은 축). 통과시키면 저장소가 먼저 갱신되고, 결과의 중첩
     //   Lease(발급자 A · 서명 B)는 Agent 가 거부한다.
@@ -2254,7 +2287,9 @@ fn serve_renew_session(
         )));
     }
     if stored.holder_node_id != request.node_id {
-        return Err(session_protocol_error("RENEW_SESSION: 이 Lease 의 보유자가 아니다"));
+        return Err(session_protocol_error(
+            "RENEW_SESSION: 이 Lease 의 보유자가 아니다",
+        ));
     }
     let now = clock.now_unix_ms();
     let result = if request.fence_epoch < stored.fence_epoch {
@@ -2275,7 +2310,9 @@ fn serve_renew_session(
         )));
     } else if stored.revoked_at_unix_ms.is_none() && stored.expires_at_unix_ms <= now {
         // `<=` 경계 — DoD-26 · DoD-32 와 같은 규칙. revoke 된 Lease 는 아래에서 서명된 REVOKED 로 답한다.
-        return Err(session_protocol_error("RENEW_SESSION: Lease 가 이미 만료됐다"));
+        return Err(session_protocol_error(
+            "RENEW_SESSION: Lease 가 이미 만료됐다",
+        ));
     } else {
         // `build_renew_result` 의 오류는 전부 Storage(fail-closed, DoD-37)로 둔다. 보유자 · 발급자 · 세대 · 만료는 위에서 먼저
         // 걸렀으므로 남는 것은 저장소 조회 · 갱신 실패와 저장값 변환 실패(u64 -> u32, 저장소 손상 의심)로 본다.
@@ -2382,26 +2419,34 @@ fn serve_report_session(
             "REPORT_SESSION_REJECTED: terminal 이 아닌 outcome 이다 — 종료하지 않은 Attempt 의 보고를 증거로 저장하지 않는다",
         ));
     }
-    if let Err(rule) = gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report) {
-        return Err(session_protocol_error(format!("REPORT_SESSION_REJECTED: {rule}")));
+    if let Err(rule) =
+        gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report)
+    {
+        return Err(session_protocol_error(format!(
+            "REPORT_SESSION_REJECTED: {rule}"
+        )));
     }
-    let result = store.store_verified_terminal_report(verified).map_err(|error| {
-        use crate::attempt_report_store::AttemptReportStoreError as E;
-        match error {
-            // 들어온 보고가 유발한 문제 — 그 연결만의 거부다(FRESH 경로와 같은 가름).
-            E::InvalidInput(_)
-            | E::InvalidOutcome(_)
-            | E::ReportRule(_)
-            | E::AttemptNotFound { .. }
-            | E::ReservationNotFound { .. }
-            | E::BindingMismatch(_)
-            | E::ReportConflict { .. } => {
-                session_protocol_error(format!("REPORT_SESSION_REJECTED: {error}"))
+    let result = store
+        .store_verified_terminal_report(verified)
+        .map_err(|error| {
+            use crate::attempt_report_store::AttemptReportStoreError as E;
+            match error {
+                // 들어온 보고가 유발한 문제 — 그 연결만의 거부다(FRESH 경로와 같은 가름).
+                E::InvalidInput(_)
+                | E::InvalidOutcome(_)
+                | E::ReportRule(_)
+                | E::AttemptNotFound { .. }
+                | E::ReservationNotFound { .. }
+                | E::BindingMismatch(_)
+                | E::ReportConflict { .. } => {
+                    session_protocol_error(format!("REPORT_SESSION_REJECTED: {error}"))
+                }
+                // 진짜 저장소 장애와 이미 영속된 행의 손상은 fail-closed(DoD-37).
+                other => {
+                    SessionHandlerError::Classified(storage_error("attempt report store", other))
+                }
             }
-            // 진짜 저장소 장애와 이미 영속된 행의 손상은 fail-closed(DoD-37).
-            other => SessionHandlerError::Classified(storage_error("attempt report store", other)),
-        }
-    })?;
+        })?;
     let report_hash = blake3_256(&signing_input(report));
     let mut ack = pb::AttemptReportAck {
         schema_version: 1,
@@ -2527,7 +2572,8 @@ fn serve_resume_connection(
             .clone(),
         other => {
             return Err(SessionHandlerError::Legacy(format!(
-                "Resume lane에서 Hello가 아닌 프레임 수신: {}", ingress_kind(&other)
+                "Resume lane에서 Hello가 아닌 프레임 수신: {}",
+                ingress_kind(&other)
             )))
         }
     };
@@ -2571,7 +2617,8 @@ fn serve_resume_connection(
             .clone(),
         other => {
             return Err(SessionHandlerError::Legacy(format!(
-                "Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {}", ingress_kind(&other)
+                "Resume lane에서 ResumeLeaseRequest가 아닌 프레임 수신: {}",
+                ingress_kind(&other)
             )))
         }
     };
@@ -3268,7 +3315,6 @@ fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
     gputeer_protocol::nonce::derive_replay_nonce(tag, id, connection_attempt)
 }
 
-
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -3323,12 +3369,18 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         // ★ 저장된 예약에서 발급(2026-09-03). 안 주면 기존 경로 그대로다.
         grant_from_control_db: flags.get("--grant-from-control-db").map(PathBuf::from),
         stored_grant_submitter_keyring: flags.get("--submitter-keyring").map(PathBuf::from),
-        stored_grant_allow_plaintext_keyring: flags.bool_flag("--i-understand-plaintext-keyring-is-unsafe"),
-        stored_grant_job_id: flags.get("--stored-grant-job-id").cloned().unwrap_or_default(),
-        stored_grant_attempt_id: flags.get("--stored-grant-attempt-id")
+        stored_grant_allow_plaintext_keyring: flags
+            .bool_flag("--i-understand-plaintext-keyring-is-unsafe"),
+        stored_grant_job_id: flags
+            .get("--stored-grant-job-id")
             .cloned()
             .unwrap_or_default(),
-        stored_grant_lease_id: flags.get("--stored-grant-lease-id")
+        stored_grant_attempt_id: flags
+            .get("--stored-grant-attempt-id")
+            .cloned()
+            .unwrap_or_default(),
+        stored_grant_lease_id: flags
+            .get("--stored-grant-lease-id")
             .cloned()
             .unwrap_or_default(),
         stored_grant_ttl_ms: flags
@@ -3341,13 +3393,13 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         revoke_before_renew: flags.bool_flag("--revoke-before-renew"),
         expect_heartbeats: flags.u32_flag_with_default("--expect-heartbeats", 0)?,
         liveness_db_path: flags.get("--liveness-db").cloned(),
-        expect_neighbor_reports: flags
-            .u32_flag_with_default("--expect-neighbor-reports", 0)?,
+        expect_neighbor_reports: flags.u32_flag_with_default("--expect-neighbor-reports", 0)?,
         neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
         accept_report_sessions: flags.bool_flag("--accept-report-sessions"),
         extra_agents: flags.get("--extra-agents").cloned(),
-        require_concurrent_sessions: flags.u32_flag_with_default("--require-concurrent-sessions", 0)?,
+        require_concurrent_sessions: flags
+            .u32_flag_with_default("--require-concurrent-sessions", 0)?,
         multi_agent: flags.bool_flag("--multi-agent"),
         revoke_lease_id_override: flags.get("--revoke-lease-id").cloned(),
         revoke_fence_epoch_override: flags.u64_opt_flag("--revoke-fence-epoch")?,
@@ -3421,7 +3473,11 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         }
         for (name, cli, stored) in [
             ("job", &config.job_id, &config.stored_grant_job_id),
-            ("attempt", &config.attempt_id, &config.stored_grant_attempt_id),
+            (
+                "attempt",
+                &config.attempt_id,
+                &config.stored_grant_attempt_id,
+            ),
             ("lease", &config.lease_id, &config.stored_grant_lease_id),
         ] {
             if stored.is_empty() {
@@ -3551,7 +3607,6 @@ pub fn run_from_args(args: &[String]) -> Result<(), String> {
 /// 식별자 길이 상한 — 이 값이 식별자 네 곳에 복제되므로 길면 프레임
 /// 상한을 넘기고 저장소를 부풀린다.
 pub const MAX_DEVICE_ID_LEN: usize = 64;
-
 
 /// Agent 식별자로 쓸 수 있는 모양인가.
 ///
@@ -3857,16 +3912,26 @@ mod tests {
         let peer_hex: String = peer.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
         let own_seed = "11".repeat(32);
         let mut args: Vec<String> = [
-            "--listen", "127.0.0.1:0",
-            "--own-seed", own_seed.as_str(),
-            "--peer-pubkey", peer_hex.as_str(),
-            "--coordinator-device-id", "01JCOORDRENEWEXT00000001",
-            "--agent-device-id", "01JAGENTRENEWEXT00000001",
-            "--grant-id", "01JGRANTRENEWEXT00000001",
-            "--attempt-id", "01JATTEMPTRENEWEXT000001",
-            "--lease-id", "01JLEASERENEWEXT00000001",
-            "--job-id", "01JJOBRENEWEXT0000000001",
-            "--i-understand-legacy-mode-is-unsafe", "true",
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            own_seed.as_str(),
+            "--peer-pubkey",
+            peer_hex.as_str(),
+            "--coordinator-device-id",
+            "01JCOORDRENEWEXT00000001",
+            "--agent-device-id",
+            "01JAGENTRENEWEXT00000001",
+            "--grant-id",
+            "01JGRANTRENEWEXT00000001",
+            "--attempt-id",
+            "01JATTEMPTRENEWEXT000001",
+            "--lease-id",
+            "01JLEASERENEWEXT00000001",
+            "--job-id",
+            "01JJOBRENEWEXT0000000001",
+            "--i-understand-legacy-mode-is-unsafe",
+            "true",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -3881,16 +3946,28 @@ mod tests {
     fn an_expired_stored_lease_on_first_issue_is_a_policy_refusal_not_storage() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let db = dir.path().join("lease.sqlite3");
-        let config = legacy_renew_config(&["--lease-db", db.to_str().expect("경로"), "--lease-ttl-ms", "1000"]);
+        let config = legacy_renew_config(&[
+            "--lease-db",
+            db.to_str().expect("경로"),
+            "--lease-ttl-ms",
+            "1000",
+        ]);
         let key = SigningKey::from_bytes(&[5u8; 32]);
         let now = 1_800_000_000_000;
         let mut store = Some(CoordinatorLeaseStore::open(&db).expect("lease store"));
         issue_lease(&config, &mut store, &key, now).expect("처음 발급");
-        let error = issue_lease(&config, &mut store, &key, now + 5_000).expect_err("만료된 Lease 는 다시 발급하지 않는다");
+        let error = issue_lease(&config, &mut store, &key, now + 5_000)
+            .expect_err("만료된 Lease 는 다시 발급하지 않는다");
         assert!(error.starts_with("LEASE_POLICY_REFUSED"), "{error}");
-        assert!(error.contains("lease store 최초 발급 실패") && error.contains("expired"), "{error}");
         assert!(
-            matches!(classify_legacy_session_error(error), CoordinatorSessionError::Protocol(_)),
+            error.contains("lease store 최초 발급 실패") && error.contains("expired"),
+            "{error}"
+        );
+        assert!(
+            matches!(
+                classify_legacy_session_error(error),
+                CoordinatorSessionError::Protocol(_)
+            ),
             "정책 거부가 Storage 로 분류됐다"
         );
     }
@@ -3903,12 +3980,27 @@ mod tests {
         let config = legacy_renew_config(&["--renew-extension-ms", "1000"]);
         let key = SigningKey::from_bytes(&[5u8; 32]);
         let now = 1_800_000_000_000;
-        let result = build_renew_result(&config, &mut None, &key, now, &config.lease_id, vec![1u8; 16])
-            .expect("갱신 결과");
+        let result = build_renew_result(
+            &config,
+            &mut None,
+            &key,
+            now,
+            &config.lease_id,
+            vec![1u8; 16],
+        )
+        .expect("갱신 결과");
         assert_eq!(result.outcome, 1, "RENEWED 가 아니다: {result:?}");
         let lease = result.lease.expect("갱신된 Lease 가 없다");
-        assert_eq!(lease.expires_at_unix_ms, now + 1_000, "만료가 --renew-extension-ms 를 따르지 않는다");
-        assert_eq!(lease.renew_after_unix_ms, now + 500, "갱신 시점이 --renew-extension-ms / 2 가 아니다");
+        assert_eq!(
+            lease.expires_at_unix_ms,
+            now + 1_000,
+            "만료가 --renew-extension-ms 를 따르지 않는다"
+        );
+        assert_eq!(
+            lease.renew_after_unix_ms,
+            now + 500,
+            "갱신 시점이 --renew-extension-ms / 2 가 아니다"
+        );
     }
 
     /// 대조 — 인자를 안 주면 기본값 60초 그대로다. 없으면 "항상 1초" 같은 고정으로도 위가 통과한다.
@@ -3917,8 +4009,15 @@ mod tests {
         let config = legacy_renew_config(&[]);
         let key = SigningKey::from_bytes(&[5u8; 32]);
         let now = 1_800_000_000_000;
-        let result = build_renew_result(&config, &mut None, &key, now, &config.lease_id, vec![1u8; 16])
-            .expect("갱신 결과");
+        let result = build_renew_result(
+            &config,
+            &mut None,
+            &key,
+            now,
+            &config.lease_id,
+            vec![1u8; 16],
+        )
+        .expect("갱신 결과");
         let lease = result.lease.expect("갱신된 Lease 가 없다");
         assert_eq!(lease.expires_at_unix_ms, now + 60_000);
         assert_eq!(lease.renew_after_unix_ms, now + 30_000);
@@ -3927,11 +4026,16 @@ mod tests {
     /// ★ 결함 ㉟ — heartbeat 수신에 닿지 못하는 구성은 관문이 막는다.
     #[test]
     fn heartbeats_on_an_unreachable_lane_are_refused() {
-        let resume = legacy_renew_config(&["--expect-heartbeats", "1", "--resume-protocol", "true"]);
+        let resume =
+            legacy_renew_config(&["--expect-heartbeats", "1", "--resume-protocol", "true"]);
         let message = unsupported_heartbeat_lane(&resume, lane_from_config(&resume))
             .expect("resume 을 막아야 한다");
         assert!(message.contains("resume"), "{message}");
-        for flag in ["--send-grant-twice", "--disconnect-after-ack", "--drop-connection-after-ack-once"] {
+        for flag in [
+            "--send-grant-twice",
+            "--disconnect-after-ack",
+            "--drop-connection-after-ack-once",
+        ] {
             let config = legacy_renew_config(&["--expect-heartbeats", "1", flag, "true"]);
             let message = unsupported_heartbeat_lane(&config, lane_from_config(&config))
                 .unwrap_or_else(|| panic!("{flag} 를 막아야 한다"));
@@ -3948,7 +4052,10 @@ mod tests {
     #[test]
     fn the_heartbeat_guard_stays_out_of_reachable_or_unexpecting_sessions() {
         let plain = legacy_renew_config(&["--expect-heartbeats", "1"]);
-        assert_eq!(unsupported_heartbeat_lane(&plain, lane_from_config(&plain)), None);
+        assert_eq!(
+            unsupported_heartbeat_lane(&plain, lane_from_config(&plain)),
+            None
+        );
         let not_expecting = legacy_renew_config(&["--resume-protocol", "true"]);
         assert_eq!(
             unsupported_heartbeat_lane(&not_expecting, lane_from_config(&not_expecting)),
@@ -3961,12 +4068,15 @@ mod tests {
     fn a_liveness_path_without_expected_heartbeats_is_refused_by_the_common_guard() {
         let mut config = legacy_renew_config(&[]);
         config.liveness_db_path = Some("live.sqlite3".into());
-        let message = unsupported_heartbeat_lane(&config, lane_from_config(&config))
-            .expect("막아야 한다");
+        let message =
+            unsupported_heartbeat_lane(&config, lane_from_config(&config)).expect("막아야 한다");
         assert!(message.contains("--liveness-db"), "{message}");
         // 대조 — 기대하면 받는다.
         config.expect_heartbeats = 1;
-        assert_eq!(unsupported_heartbeat_lane(&config, lane_from_config(&config)), None);
+        assert_eq!(
+            unsupported_heartbeat_lane(&config, lane_from_config(&config)),
+            None
+        );
     }
 }
 
@@ -3997,7 +4107,10 @@ mod device_id_validation_tests {
             );
         }
         let too_long = "a".repeat(MAX_DEVICE_ID_LEN + 1);
-        assert!(validate_device_id(&too_long).is_err(), "상한을 넘겼는데 통과했다");
+        assert!(
+            validate_device_id(&too_long).is_err(),
+            "상한을 넘겼는데 통과했다"
+        );
     }
 
     /// 정상 값은 통과하는가.
@@ -4035,7 +4148,10 @@ mod post_ack_wait_tests {
 
     #[test]
     fn without_a_manifest_the_first_read_is_not_extended() {
-        assert_eq!(post_ack_first_read_wait(&grant(false, 50_000), 1_000), Ok(None));
+        assert_eq!(
+            post_ack_first_read_wait(&grant(false, 50_000), 1_000),
+            Ok(None)
+        );
     }
 
     #[test]

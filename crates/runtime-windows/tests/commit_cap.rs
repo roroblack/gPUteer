@@ -72,8 +72,8 @@ fn constrained_child_is_capped_near_the_limit() {
         application_name: exe.clone().into_os_string(),
         command_line,
         current_dir: None,
-            stdout_path: None,
-            stderr_path: None,
+        stdout_path: None,
+        stderr_path: None,
     };
 
     let child = create_constrained_child(&spec, COMMIT_LIMIT_MIB * 1024 * 1024)

@@ -876,7 +876,6 @@ fn write_frame_accepts_bodies_within_the_limit() {
     assert!(write_frame(FrameType::Grant, &ok_body).is_ok());
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════
 // 이웃 신고 (ADR-033 §7 관측 층, 2026-08-30)
 // ═══════════════════════════════════════════════════════════════════════
@@ -925,7 +924,10 @@ fn a_signed_neighbor_report_dispatches() {
 
     match message {
         IngressMessage::NeighborUnreachableReport(verified) => {
-            assert_eq!(verified.get().unreachable_node_id, "01JBXNODE0000000000000002");
+            assert_eq!(
+                verified.get().unreachable_node_id,
+                "01JBXNODE0000000000000002"
+            );
             assert_eq!(verified.signer_id(), DEVICE);
         }
         other => panic!("다른 메시지로 dispatch 됐다: {other:?}"),
@@ -1259,8 +1261,5 @@ fn a_stale_neighbor_report_is_rejected() {
         &FixedClock(NOW + 3_600_000),
     );
 
-    assert!(
-        result.is_err(),
-        "만료된 신고가 통과했다: {result:?}"
-    );
+    assert!(result.is_err(), "만료된 신고가 통과했다: {result:?}");
 }

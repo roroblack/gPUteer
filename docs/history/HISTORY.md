@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-21 01:20 — main 에 여섯 가지를 합치고 서식을 한 번에 정리했다
+
+- 계획: 없음(운영 정리)
+- 스트림: 공통 · CI
+- 수행: `fix/report-session-124-129` · `feat/agent-startup-gc` · `feat/b-e-contract` · `fix/memory-observation-cause` ·
+  `test/old-peer-combination` · `fix/lease-max-duration-boundary` 를 main 에 합쳤다(앞서 `integ/report-gc-154` · `fix/evidence-digest-eol` 병합).
+  충돌은 전부 문서였다 — HISTORY 는 시각 순, 결함 기록 · 검수 대기열 · B+E 구현계획은 양쪽 절을 모두 남겼다(계획은 12b 를 13 앞에, 그 문서가 적어 둔 순서대로).
+  그 뒤 `cargo fmt --all` 로 서식을 한 번에 정리했다 — 79개 파일, `--check` 위반 501 -> 0
+- 검증: 병합 직후 **493 passed · 0 failed · ignored 0 · 경고 0 · selftest 시나리오 97**(결함 130 절차) ·
+  서식 정리 뒤 **다시 493 passed · 0 failed · 판정 OK** · check_docs 0/0 · claims_selftest 31/31 · verify_evidence 위반 0 ·
+  결함 204 재발 방지 패턴 적중 0(서식 정리가 줄이음을 되돌리지 않았다). 리눅스 실행은 안 했다(CI 가 본다)
+- 리포트: 없음(병합 · 서식 정리 — 새 판단 없음)
+
+---
+
 ## 2026-09-21 00:40 — main 정리: 통합 가지 · 결함 204 · 증거 digest 를 받고 CI 의 빠진 도구를 채웠다
 
 - 계획: 없음(운영 정리)

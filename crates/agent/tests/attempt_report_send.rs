@@ -125,11 +125,9 @@ fn run_agent_session(extra: &[&str]) -> SessionOutcome {
     let fence_db = dir.path().join("fence.sqlite3");
     let checkpoints = dir.path().join("checkpoints");
 
-    let coordinator_pubkey = hex(
-        SigningKey::from_bytes(&COORDINATOR_SEED)
-            .verifying_key()
-            .as_bytes(),
-    );
+    let coordinator_pubkey = hex(SigningKey::from_bytes(&COORDINATOR_SEED)
+        .verifying_key()
+        .as_bytes());
     let mut argv: Vec<String> = [
         "--connect",
         &address,
@@ -167,7 +165,11 @@ fn run_agent_session(extra: &[&str]) -> SessionOutcome {
 
     // D2 — Agent 가 먼저 Hello(FRESH) 를 보낸다.
     let hello_type = read_frame_type(&mut stream).expect("Agent 가 Hello 를 먼저 보내야 한다");
-    assert_eq!(hello_type, FrameType::SessionHello as u8, "첫 프레임은 Hello 다(D2)");
+    assert_eq!(
+        hello_type,
+        FrameType::SessionHello as u8,
+        "첫 프레임은 Hello 다(D2)"
+    );
 
     let grant = signed_grant();
     write_frame_body(&mut stream, FrameType::Grant, &grant.encode_to_vec());
@@ -241,11 +243,9 @@ fn the_flag_without_an_observed_exit_refuses_instead_of_inventing_one() {
 #[test]
 fn renewing_during_execution_with_a_report_on_the_fresh_connection_is_refused_before_connecting() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
-    let coordinator_pubkey = hex(
-        SigningKey::from_bytes(&COORDINATOR_SEED)
-            .verifying_key()
-            .as_bytes(),
-    );
+    let coordinator_pubkey = hex(SigningKey::from_bytes(&COORDINATOR_SEED)
+        .verifying_key()
+        .as_bytes());
     let fence_db = dir.path().join("fence.sqlite3");
     let checkpoints = dir.path().join("checkpoints");
     let argv: Vec<String> = [
@@ -276,7 +276,10 @@ fn renewing_during_execution_with_a_report_on_the_fresh_connection_is_refused_be
     let error = gputeer_agent::run(parse_config_from_args(&argv).expect("설정 파싱"))
         .expect_err("함께 켤 수 없는 설정이다");
     assert!(error.contains("RENEW_DURING_EXECUTION_REFUSED"), "{error}");
-    assert!(error.contains("--send-attempt-report"), "어느 설정 때문인지 말해야 한다: {error}");
+    assert!(
+        error.contains("--send-attempt-report"),
+        "어느 설정 때문인지 말해야 한다: {error}"
+    );
 }
 
 /// 결함 103 (재검수 61) — `--expect-replay` 도 FRESH 연결을 붙잡는다(짝인 `--send-grant-twice` 가 ACK 뒤 기다린다). 실행 중 갱신과
@@ -284,11 +287,9 @@ fn renewing_during_execution_with_a_report_on_the_fresh_connection_is_refused_be
 #[test]
 fn renewing_during_execution_with_expect_replay_is_refused_before_connecting() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
-    let coordinator_pubkey = hex(
-        SigningKey::from_bytes(&COORDINATOR_SEED)
-            .verifying_key()
-            .as_bytes(),
-    );
+    let coordinator_pubkey = hex(SigningKey::from_bytes(&COORDINATOR_SEED)
+        .verifying_key()
+        .as_bytes());
     let fence_db = dir.path().join("fence.sqlite3");
     let checkpoints = dir.path().join("checkpoints");
     let argv: Vec<String> = [
@@ -319,5 +320,8 @@ fn renewing_during_execution_with_expect_replay_is_refused_before_connecting() {
     let error = gputeer_agent::run(parse_config_from_args(&argv).expect("설정 파싱"))
         .expect_err("함께 켤 수 없는 설정이다");
     assert!(error.contains("RENEW_DURING_EXECUTION_REFUSED"), "{error}");
-    assert!(error.contains("--expect-replay"), "어느 설정 때문인지 말해야 한다: {error}");
+    assert!(
+        error.contains("--expect-replay"),
+        "어느 설정 때문인지 말해야 한다: {error}"
+    );
 }

@@ -114,7 +114,9 @@ pub enum NvmlError {
     /// ★ 이걸 `BadString` 과 합치면 "인코딩이 이상하다" 와
     ///   "버퍼 상한을 잘못 잡았다" 를 구분할 수 없다 — 후자는
     ///   이 크레이트의 버그고 전자는 드라이버 문제다(독립 검수 지적).
-    #[error("NVML_UNTERMINATED_STRING: {call} 의 버퍼에 NUL 이 없다 — 버퍼 상한이 작아 잘렸을 수 있다")]
+    #[error(
+        "NVML_UNTERMINATED_STRING: {call} 의 버퍼에 NUL 이 없다 — 버퍼 상한이 작아 잘렸을 수 있다"
+    )]
     UnterminatedString { call: String },
 }
 
@@ -324,10 +326,7 @@ mod tests {
         //
         //   `synthetic_gpus()` 의 index 는 0=dddd · 1=bbbb · 2=aaaa · 3=cccc
         //   이므로 UUID 오름차순은 [2, 1, 3, 0] 이다.
-        let expected: Vec<NvmlGpu> = [2usize, 1, 3, 0]
-            .iter()
-            .map(|i| base[*i].clone())
-            .collect();
+        let expected: Vec<NvmlGpu> = [2usize, 1, 3, 0].iter().map(|i| base[*i].clone()).collect();
 
         // 손으로 고른 것이 실제로 UUID 오름차순인지 대조한다 — 순서를
         // 잘못 적었으면 이 테스트 전체가 틀린 것을 재게 된다.

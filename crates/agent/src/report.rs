@@ -325,7 +325,10 @@ mod tests {
 
     #[test]
     fn exit_code_zero_is_completed_and_anything_else_is_failed() {
-        assert_eq!(outcome_for_exit_code(Some(0)), pb::AttemptOutcome::Completed);
+        assert_eq!(
+            outcome_for_exit_code(Some(0)),
+            pb::AttemptOutcome::Completed
+        );
         assert_eq!(outcome_for_exit_code(Some(1)), pb::AttemptOutcome::Failed);
         assert_eq!(
             outcome_for_exit_code(Some(u32::MAX)),
@@ -345,10 +348,14 @@ mod tests {
     fn an_observed_exit_without_a_code_is_a_failed_v2_report_with_no_code() {
         let mut observed = observation();
         observed.exit_code = None;
-        let report = build_signed_attempt_report(&key(), &observed).expect("코드 없는 종료도 보고한다");
+        let report =
+            build_signed_attempt_report(&key(), &observed).expect("코드 없는 종료도 보고한다");
         assert_eq!(report.schema_version, 2);
         assert_eq!(report.outcome, pb::AttemptOutcome::Failed as i32);
-        assert_eq!(report.exit_observation, pb::ExitObservation::ObservedNoCode as i32);
+        assert_eq!(
+            report.exit_observation,
+            pb::ExitObservation::ObservedNoCode as i32
+        );
         assert_eq!(report.exit_code, 0);
         assert_eq!(report.finalization_failure_stage, 0);
     }
@@ -359,10 +366,30 @@ mod tests {
     fn a_finalization_failure_after_an_observed_exit_is_still_reported() {
         use pb::FinalizationFailureStage as S;
         for (code, stage, outcome, expected_observation) in [
-            (Some(0), S::ReadOutputs, pb::AttemptOutcome::OutputFinalizationFailed, pb::ExitObservation::ObservedWithCode),
-            (Some(0), S::CommitCheckpoint, pb::AttemptOutcome::OutputFinalizationFailed, pb::ExitObservation::ObservedWithCode),
-            (Some(7), S::EncodeResult, pb::AttemptOutcome::Failed, pb::ExitObservation::ObservedWithCode),
-            (None, S::ReadOutputs, pb::AttemptOutcome::Failed, pb::ExitObservation::ObservedNoCode),
+            (
+                Some(0),
+                S::ReadOutputs,
+                pb::AttemptOutcome::OutputFinalizationFailed,
+                pb::ExitObservation::ObservedWithCode,
+            ),
+            (
+                Some(0),
+                S::CommitCheckpoint,
+                pb::AttemptOutcome::OutputFinalizationFailed,
+                pb::ExitObservation::ObservedWithCode,
+            ),
+            (
+                Some(7),
+                S::EncodeResult,
+                pb::AttemptOutcome::Failed,
+                pb::ExitObservation::ObservedWithCode,
+            ),
+            (
+                None,
+                S::ReadOutputs,
+                pb::AttemptOutcome::Failed,
+                pb::ExitObservation::ObservedNoCode,
+            ),
         ] {
             let mut observed = observation();
             observed.exit_code = code;
@@ -370,8 +397,14 @@ mod tests {
             let report = build_signed_attempt_report(&key(), &observed)
                 .unwrap_or_else(|e| panic!("{code:?} {stage:?}: 확정 실패도 보고해야 한다: {e}"));
             assert_eq!(report.outcome, outcome as i32, "{code:?} {stage:?}");
-            assert_eq!(report.exit_observation, expected_observation as i32, "{code:?} {stage:?}");
-            assert_eq!(report.finalization_failure_stage, stage as i32, "{code:?} {stage:?}");
+            assert_eq!(
+                report.exit_observation, expected_observation as i32,
+                "{code:?} {stage:?}"
+            );
+            assert_eq!(
+                report.finalization_failure_stage, stage as i32,
+                "{code:?} {stage:?}"
+            );
         }
         assert_eq!(outcome_for(Some(0), None), pb::AttemptOutcome::Completed);
     }
@@ -384,7 +417,10 @@ mod tests {
             observed.exit_code = Some(code);
             let report = build_signed_attempt_report(&key(), &observed).expect("관측한 코드");
             assert_eq!(report.schema_version, 2);
-            assert_eq!(report.exit_observation, pb::ExitObservation::ObservedWithCode as i32);
+            assert_eq!(
+                report.exit_observation,
+                pb::ExitObservation::ObservedWithCode as i32
+            );
             assert_eq!(report.exit_code, code);
         }
     }
@@ -406,7 +442,10 @@ mod tests {
     #[test]
     fn an_empty_identity_field_is_refused_by_name() {
         for (field, mutate) in [
-            ("job_id", (|o: &mut TerminalObservation| o.job_id.clear()) as fn(&mut _)),
+            (
+                "job_id",
+                (|o: &mut TerminalObservation| o.job_id.clear()) as fn(&mut _),
+            ),
             ("attempt_id", |o: &mut TerminalObservation| {
                 o.attempt_id = "   ".into()
             }),

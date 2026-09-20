@@ -70,7 +70,10 @@ fn reporter_device(neighbor: &str) -> String {
 }
 
 /// 기본 신고 — 이 Coordinator 앞으로, 지정한 이웃이 `TARGET` 을 지목.
-fn report_from(neighbor: &str, observed_at_unix_ms: u64) -> Verified<pb::NeighborUnreachableReport> {
+fn report_from(
+    neighbor: &str,
+    observed_at_unix_ms: u64,
+) -> Verified<pb::NeighborUnreachableReport> {
     verified_report(
         &reporter_id(neighbor),
         &reporter_device(neighbor),
@@ -259,7 +262,9 @@ fn current_row(
     reporter: &str,
     target: &str,
 ) -> StoredNeighborReport {
-    s.get_report(reporter, target).expect("읽기").expect("행이 있어야 한다")
+    s.get_report(reporter, target)
+        .expect("읽기")
+        .expect("행이 있어야 한다")
 }
 
 fn snapshot(path: &std::path::Path) -> Vec<SnapshotRow> {
@@ -274,7 +279,14 @@ fn snapshot(path: &std::path::Path) -> Vec<SnapshotRow> {
         .expect("준비");
     let rows = statement
         .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })
         .expect("조회");
     rows.map(|r| r.expect("행")).collect()
@@ -293,7 +305,9 @@ fn a_report_survives_a_restart() {
     let dir = tempfile::tempdir().expect("temp");
     {
         let mut s = store(&dir, "neighbors.db");
-        let outcome = s.record_verified_report(&report_from("a", 5_000)).expect("기록");
+        let outcome = s
+            .record_verified_report(&report_from("a", 5_000))
+            .expect("기록");
         // ★ variant 만 보면 반환 payload 가 조작돼도 통과한다(6라운드 지적).
         match outcome {
             RecordOutcome::Recorded { stored, evicted } => {
@@ -334,7 +348,9 @@ fn a_report_addressed_to_another_coordinator_is_refused() {
         THEIRS, // ★ 우리 앞으로 온 게 아니다
         5_000,
     );
-    let error = s.record_verified_report(&elsewhere).expect_err("거부돼야 한다");
+    let error = s
+        .record_verified_report(&elsewhere)
+        .expect_err("거부돼야 한다");
     assert_eq!(
         error,
         NeighborReportStoreError::AddressedToAnotherCoordinator {
@@ -354,8 +370,11 @@ fn a_report_addressed_to_another_coordinator_is_refused() {
 fn a_newer_observation_replaces_the_older_one() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "neighbors.db");
-    s.record_verified_report(&report_from("a", 1_000)).expect("첫 기록");
-    let outcome = s.record_verified_report(&report_from("a", 2_000)).expect("갱신");
+    s.record_verified_report(&report_from("a", 1_000))
+        .expect("첫 기록");
+    let outcome = s
+        .record_verified_report(&report_from("a", 2_000))
+        .expect("갱신");
     match outcome {
         RecordOutcome::Recorded { stored, evicted } => {
             assert!(evicted.is_empty(), "갱신은 아무것도 밀어내지 않는다");
@@ -378,8 +397,11 @@ fn a_newer_observation_replaces_the_older_one() {
 fn an_older_observation_never_overwrites_a_newer_one() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "neighbors.db");
-    s.record_verified_report(&report_from("a", 2_000)).expect("첫 기록");
-    let outcome = s.record_verified_report(&report_from("a", 1_000)).expect("옛 관측");
+    s.record_verified_report(&report_from("a", 2_000))
+        .expect("첫 기록");
+    let outcome = s
+        .record_verified_report(&report_from("a", 1_000))
+        .expect("옛 관측");
     match outcome {
         RecordOutcome::NotNewer(stored) => {
             // ★ 기대값을 입력에서 만든다(9라운드 지적).
@@ -404,7 +426,10 @@ fn the_same_observation_time_is_not_a_new_observation() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "neighbors.db");
     let first = expected_from("a", 2_000);
-    match s.record_verified_report(&report_from("a", 2_000)).expect("첫 기록") {
+    match s
+        .record_verified_report(&report_from("a", 2_000))
+        .expect("첫 기록")
+    {
         RecordOutcome::Recorded { stored, evicted } => {
             assert!(evicted.is_empty());
             assert_eq!(stored, first);
@@ -412,10 +437,14 @@ fn the_same_observation_time_is_not_a_new_observation() {
         other => panic!("{other:?}"),
     }
 
-    let outcome = s.record_verified_report(&report_from("a", 2_000)).expect("재전송");
+    let outcome = s
+        .record_verified_report(&report_from("a", 2_000))
+        .expect("재전송");
     match outcome {
         // ★ variant 만 보면 payload 가 조작돼도 통과한다(5라운드 지적).
-        RecordOutcome::NotNewer(stored) => assert_eq!(stored, first, "반환값이 최초 기록과 달라졌다"),
+        RecordOutcome::NotNewer(stored) => {
+            assert_eq!(stored, first, "반환값이 최초 기록과 달라졌다")
+        }
         other => panic!("덮어쓰면 안 된다: {other:?}"),
     }
 
@@ -432,7 +461,8 @@ fn reports_from_different_neighbors_about_one_node_are_all_kept() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "neighbors.db");
     for (neighbor, at) in [("c", 3_000), ("a", 1_000), ("b", 2_000)] {
-        s.record_verified_report(&report_from(neighbor, at)).expect("기록");
+        s.record_verified_report(&report_from(neighbor, at))
+            .expect("기록");
     }
     // ★ 개수와 정렬만 보면 대상·시각·해시·원본이 틀려도 통과한다
     //   (7라운드 지적) — 예상 집합 **전체**와 대조한다.
@@ -450,7 +480,8 @@ fn one_neighbor_can_report_about_several_nodes() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "neighbors.db");
     let other_target = "01JNODETARGET0000000000002";
-    s.record_verified_report(&report_from("a", 1_000)).expect("기록");
+    s.record_verified_report(&report_from("a", 1_000))
+        .expect("기록");
     s.record_verified_report(&verified_report(
         "01JNODE0000000000000000a",
         "01JDEV00000000000000000a",
@@ -531,8 +562,14 @@ fn another_device_cannot_claim_a_machine_through_a_different_target() {
     let first_target = "01JNODETARGETONE00000001";
     let other_target = "01JNODETARGETTWO00000001";
 
-    s.record_verified_report(&verified_report(machine, first_device, first_target, OURS, 1_000))
-        .expect("정당한 신고자의 첫 기록");
+    s.record_verified_report(&verified_report(
+        machine,
+        first_device,
+        first_target,
+        OURS,
+        1_000,
+    ))
+    .expect("정당한 신고자의 첫 기록");
 
     // ★ 대상이 다르므로 쌍 단위 검사로는 걸리지 않는다.
     let error = s
@@ -684,7 +721,12 @@ fn a_different_device_cannot_take_over_an_existing_reporter_machine() {
     // 기존 행이 **전부** 그대로인지 다시 읽어 확인한다.
     assert_eq!(
         s.reports_about(TARGET).expect("읽기"),
-        vec![expected_row(machine, "01JDEVFIRST000000000001", TARGET, 1_000)]
+        vec![expected_row(
+            machine,
+            "01JDEVFIRST000000000001",
+            TARGET,
+            1_000
+        )]
     );
 }
 
@@ -760,7 +802,9 @@ fn each_empty_identity_field_is_refused_on_its_own() {
         )
         .expect("서명 자체는 유효하다");
 
-        let error = s.record_verified_report(&verified).expect_err("거부돼야 한다");
+        let error = s
+            .record_verified_report(&verified)
+            .expect_err("거부돼야 한다");
         assert_eq!(
             error,
             NeighborReportStoreError::InvalidInput(match field {
@@ -775,10 +819,14 @@ fn each_empty_identity_field_is_refused_on_its_own() {
 
     // ★ 네 번 다 거부했는데 행이 하나라도 생겼는가 — DB 를 직접 센다.
     //   오류를 돌려주면서 쓰기도 하는 구현은 반환값만으로 안 잡힌다.
-    let connection = rusqlite::Connection::open(dir.path().join("neighbors.db"))
-        .expect("직접 열기");
+    let connection =
+        rusqlite::Connection::open(dir.path().join("neighbors.db")).expect("직접 열기");
     let rows: i64 = connection
-        .query_row("SELECT COUNT(*) FROM coordinator_neighbor_reports", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_neighbor_reports",
+            [],
+            |r| r.get(0),
+        )
         .expect("세기");
     assert_eq!(rows, 0, "거부된 신고가 행을 남겼다");
 }
@@ -820,7 +868,8 @@ fn a_body_that_disagrees_with_its_index_columns_is_refused() {
     let path = dir.path().join("neighbors.db");
     {
         let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-        s.record_verified_report(&report_from("a", 1_000)).expect("기록");
+        s.record_verified_report(&report_from("a", 1_000))
+            .expect("기록");
     }
     // 몸통은 그대로 두고 인덱스 컬럼만 바꾼다 — 어느 쪽이 진실인지
     // 모른 채 판정에 들어가면 안 된다.
@@ -829,7 +878,9 @@ fn a_body_that_disagrees_with_its_index_columns_is_refused() {
         "UPDATE coordinator_neighbor_reports SET unreachable_node_id = 'somewhere-else'",
     );
     let s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-    let error = s.reports_about("somewhere-else").expect_err("거부돼야 한다");
+    let error = s
+        .reports_about("somewhere-else")
+        .expect_err("거부돼야 한다");
     assert_corrupt(
         error,
         &reporter_id("a"),
@@ -844,7 +895,8 @@ fn a_body_whose_hash_no_longer_matches_is_refused() {
     let path = dir.path().join("neighbors.db");
     {
         let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-        s.record_verified_report(&report_from("a", 1_000)).expect("기록");
+        s.record_verified_report(&report_from("a", 1_000))
+            .expect("기록");
     }
     tamper(
         &path,
@@ -852,7 +904,12 @@ fn a_body_whose_hash_no_longer_matches_is_refused() {
     );
     let s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
     let error = s.reports_about(TARGET).expect_err("거부돼야 한다");
-    assert_corrupt(error, &reporter_id("a"), TARGET, NeighborReportCorruption::HashMismatch);
+    assert_corrupt(
+        error,
+        &reporter_id("a"),
+        TARGET,
+        NeighborReportCorruption::HashMismatch,
+    );
 }
 
 #[test]
@@ -861,7 +918,8 @@ fn a_stored_observation_time_that_disagrees_with_the_body_is_refused() {
     let path = dir.path().join("neighbors.db");
     {
         let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-        s.record_verified_report(&report_from("a", 1_000)).expect("기록");
+        s.record_verified_report(&report_from("a", 1_000))
+            .expect("기록");
     }
     // 8바이트 형식은 유지한 채 값만 바꾼다 — 인코딩 오류가 아니라
     // 몸통과의 불일치로 잡혀야 한다.
@@ -885,7 +943,8 @@ fn a_stored_device_that_disagrees_with_the_body_is_refused() {
     let path = dir.path().join("neighbors.db");
     {
         let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-        s.record_verified_report(&report_from("a", 1_000)).expect("기록");
+        s.record_verified_report(&report_from("a", 1_000))
+            .expect("기록");
     }
     tamper(
         &path,
@@ -909,7 +968,10 @@ fn corruption_is_caught_on_the_single_row_path_too() {
     let path = dir.path().join("neighbors.db");
     let reporter = {
         let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-        match s.record_verified_report(&report_from("a", 1_000)).expect("기록") {
+        match s
+            .record_verified_report(&report_from("a", 1_000))
+            .expect("기록")
+        {
             RecordOutcome::Recorded { stored, evicted } => {
                 assert!(evicted.is_empty(), "빈 저장소에서 밀어낼 것이 없다");
                 assert_eq!(stored, expected_from("a", 1_000));
@@ -924,7 +986,12 @@ fn corruption_is_caught_on_the_single_row_path_too() {
     );
     let s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
     let error = s.get_report(&reporter, TARGET).expect_err("거부돼야 한다");
-    assert_corrupt(error, &reporter, TARGET, NeighborReportCorruption::HashMismatch);
+    assert_corrupt(
+        error,
+        &reporter,
+        TARGET,
+        NeighborReportCorruption::HashMismatch,
+    );
 }
 
 /// 없는 것을 물으면 오류가 아니라 빈 결과다.
@@ -933,7 +1000,10 @@ fn asking_about_a_node_nobody_reported_is_not_an_error() {
     let dir = tempfile::tempdir().expect("temp");
     let s = store(&dir, "neighbors.db");
     assert!(s.reports_about(TARGET).expect("읽기").is_empty());
-    assert!(s.get_report("01JNODENOBODY00000000001", TARGET).expect("읽기").is_none());
+    assert!(s
+        .get_report("01JNODENOBODY00000000001", TARGET)
+        .expect("읽기")
+        .is_none());
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -952,7 +1022,10 @@ fn rows_written_for_another_coordinator_are_refused_on_read_too() {
     let reporter = {
         // OURS 앞으로 정상적으로 기록한다.
         let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
-        match s.record_verified_report(&report_from("a", 1_000)).expect("기록") {
+        match s
+            .record_verified_report(&report_from("a", 1_000))
+            .expect("기록")
+        {
             RecordOutcome::Recorded { stored, evicted } => {
                 assert!(evicted.is_empty(), "빈 저장소에서 밀어낼 것이 없다");
                 assert_eq!(stored, expected_from("a", 1_000));
@@ -965,7 +1038,9 @@ fn rows_written_for_another_coordinator_are_refused_on_read_too() {
     // 같은 파일을 **다른** Coordinator 가 연다.
     let theirs = CoordinatorNeighborReportStore::open(&path, THEIRS).expect("열기");
 
-    let error = theirs.reports_about(TARGET).expect_err("목록에서 거부돼야 한다");
+    let error = theirs
+        .reports_about(TARGET)
+        .expect_err("목록에서 거부돼야 한다");
     assert_eq!(
         error,
         NeighborReportStoreError::AddressedToAnotherCoordinator {
@@ -1020,7 +1095,11 @@ fn one_device_cannot_grow_the_store_without_bound() {
     fn count(path: &std::path::Path) -> i64 {
         rusqlite::Connection::open(path)
             .expect("직접 열기")
-            .query_row("SELECT COUNT(*) FROM coordinator_neighbor_reports", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM coordinator_neighbor_reports",
+                [],
+                |r| r.get(0),
+            )
             .expect("세기")
     }
 
@@ -1084,7 +1163,10 @@ fn one_device_cannot_grow_the_store_without_bound() {
 
     // ★ 200 번 넣었는데 행 수가 정확히 상한인가 — DB 를 직접 센다.
     assert_eq!(count(&path), 64, "상한에 정확히 묶여야 한다");
-    assert!(evictions > 0, "축출이 한 번도 보고되지 않았다 — 조용히 버렸을 수 있다");
+    assert!(
+        evictions > 0,
+        "축출이 한 번도 보고되지 않았다 — 조용히 버렸을 수 있다"
+    );
 
     // ★ 그리고 **남아 있는 64행이 예상과 정확히 같은가**(8라운드 지적) —
     //   개수만 맞추면 예상 밖의 생존자를 지우고 다른 행으로 채워도 통과한다.
@@ -1122,21 +1204,43 @@ fn a_single_insert_at_the_bound_evicts_exactly_one_row() {
 
     // 같은 장치가 두 기계 ID 로 **같은 대상**을 신고한다 — 가장 오래된 쌍.
     let shared_target = "01JNODESHAREDTARGET00001";
-    s.record_verified_report(&verified_report(machine_a, device, shared_target, OURS, 1_000))
-        .expect("A 신고");
-    s.record_verified_report(&verified_report(machine_b, device, shared_target, OURS, 1_000))
-        .expect("B 신고");
+    s.record_verified_report(&verified_report(
+        machine_a,
+        device,
+        shared_target,
+        OURS,
+        1_000,
+    ))
+    .expect("A 신고");
+    s.record_verified_report(&verified_report(
+        machine_b,
+        device,
+        shared_target,
+        OURS,
+        1_000,
+    ))
+    .expect("B 신고");
 
     // 나머지를 상한까지 채운다(둘은 이미 넣었으므로 62개).
     for i in 0..62u64 {
         let target = format!("01JNODEFILL{:0>15}", i);
-        s.record_verified_report(&verified_report(machine_a, device, &target, OURS, 2_000 + i))
-            .expect("채우기");
+        s.record_verified_report(&verified_report(
+            machine_a,
+            device,
+            &target,
+            OURS,
+            2_000 + i,
+        ))
+        .expect("채우기");
     }
 
     let connection = rusqlite::Connection::open(&path).expect("직접 열기");
     let before: i64 = connection
-        .query_row("SELECT COUNT(*) FROM coordinator_neighbor_reports", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_neighbor_reports",
+            [],
+            |r| r.get(0),
+        )
         .expect("세기");
     assert_eq!(before, 64);
 
@@ -1170,16 +1274,26 @@ fn a_single_insert_at_the_bound_evicts_exactly_one_row() {
     //   같으므로 `ORDER BY observed_at, reporter_node_id, ...` 의 둘째 성분이
     //   승부를 낸다 — `machine_a < machine_b` 이므로 A 다. "둘 중 아무거나"
     //   를 받아 주면 정렬이 비결정적으로 바뀌어도 통과한다(3라운드 지적).
-    assert_eq!(evicted, expected_victim, "동점은 신고자 ID 오름차순으로 갈린다");
+    assert_eq!(
+        evicted, expected_victim,
+        "동점은 신고자 ID 오름차순으로 갈린다"
+    );
 
     let after: i64 = connection
-        .query_row("SELECT COUNT(*) FROM coordinator_neighbor_reports", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_neighbor_reports",
+            [],
+            |r| r.get(0),
+        )
         .expect("세기");
     assert_eq!(after, 64, "한 행 지우고 한 행 넣었으니 총량은 그대로다");
 
     // ★ 밀려난 행은 실제로 사라졌고, 새 행은 들어왔고, 나머지는 전부 살아
     //   있는가 — 개수만 맞으면 다른 행이 대신 지워져도 통과한다(7라운드 지적).
-    assert!(s.get_report(machine_a, shared_target).expect("읽기").is_none());
+    assert!(s
+        .get_report(machine_a, shared_target)
+        .expect("읽기")
+        .is_none());
     assert_eq!(
         current_row(&s, machine_a, "01JNODEONEMORE000000001"),
         expected_row(machine_a, device, "01JNODEONEMORE000000001", 9_999)
@@ -1253,7 +1367,11 @@ fn a_corrupted_time_column_cannot_hide_a_row_from_eviction() {
         NeighborReportCorruption::ObservedAtEncoding,
     );
     // ★ 멀쩡한 행이 대신 밀려나지 않았는가 — 저장소 전체가 그대로여야 한다.
-    assert_eq!(snapshot(&path), before, "손상된 행을 숨긴 채 다른 행을 지웠다");
+    assert_eq!(
+        snapshot(&path),
+        before,
+        "손상된 행을 숨긴 채 다른 행을 지웠다"
+    );
 }
 
 /// ★ **손상된 행은 조용히 축출되지 않는다.**
@@ -1295,7 +1413,12 @@ fn a_corrupted_eviction_candidate_is_refused_not_silently_dropped() {
             9_999,
         ))
         .expect_err("손상된 축출 후보는 거부돼야 한다");
-    assert_corrupt(error, machine, &oldest_target, NeighborReportCorruption::HashMismatch);
+    assert_corrupt(
+        error,
+        machine,
+        &oldest_target,
+        NeighborReportCorruption::HashMismatch,
+    );
     // 손상된 행도, 다른 어떤 행도 사라지지 않았다.
     assert_eq!(snapshot(&path), before, "거부했는데 DB 가 바뀌었다");
 }
@@ -1335,7 +1458,11 @@ fn eviction_drops_the_oldest_observation_of_that_device() {
         .expect("축출하고 받는다");
     match outcome {
         RecordOutcome::Recorded { stored, evicted } => {
-            assert_eq!(evicted, vec![expected], "축출 보고가 사라진 행 전체와 같아야 한다");
+            assert_eq!(
+                evicted,
+                vec![expected],
+                "축출 보고가 사라진 행 전체와 같아야 한다"
+            );
             // ★ 다른 경로에는 적용한 "반환된 저장 행 전체를 DB 와 대조" 기준이
             //   이 경로에만 빠져 있었다(7라운드 지적).
             assert_eq!(
@@ -1347,7 +1474,10 @@ fn eviction_drops_the_oldest_observation_of_that_device() {
     }
 
     // 밀려난 것은 실제로 사라졌고 새 것은 들어왔는가 — DB 를 다시 읽는다.
-    assert!(s.get_report(machine, &oldest_target).expect("읽기").is_none());
+    assert!(s
+        .get_report(machine, &oldest_target)
+        .expect("읽기")
+        .is_none());
     // ★ 새 행도 **내용**까지 확인한다 — 반환값 대조가 DB 대조를 대신하지
     //   않는다(독립 검수 10라운드 지적).
     assert_eq!(
@@ -1443,7 +1573,13 @@ fn reaching_the_quota_does_not_block_updating_an_existing_report() {
 
     // ★ 이미 있는 신고의 갱신은 상한과 무관하고, 아무것도 밀어내지 않는다.
     let outcome = s
-        .record_verified_report(&verified_report(machine, device, &first_target, OURS, 8_000))
+        .record_verified_report(&verified_report(
+            machine,
+            device,
+            &first_target,
+            OURS,
+            8_000,
+        ))
         .expect("기존 행 갱신은 상한과 무관하다");
     let returned = match outcome {
         RecordOutcome::Recorded { stored, evicted } => {
@@ -1489,8 +1625,9 @@ fn a_store_already_over_the_bound_is_brought_back_under_it() {
     let mut s = CoordinatorNeighborReportStore::open(&path, OURS).expect("열기");
 
     // ★ 밀려날 7건을 **미리 읽어 둔다** — 축출 보고가 이것과 전부 같아야 한다.
-    let all_targets: Vec<String> =
-        (0..70u64).map(|i| format!("01JNODEOVER{:0>15}", i)).collect();
+    let all_targets: Vec<String> = (0..70u64)
+        .map(|i| format!("01JNODEOVER{:0>15}", i))
+        .collect();
     let expected_doomed: Vec<_> = all_targets[..7]
         .iter()
         .enumerate()
@@ -1535,7 +1672,11 @@ fn a_store_already_over_the_bound_is_brought_back_under_it() {
 
     let connection = rusqlite::Connection::open(&path).expect("직접 열기");
     let rows: i64 = connection
-        .query_row("SELECT COUNT(*) FROM coordinator_neighbor_reports", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_neighbor_reports",
+            [],
+            |r| r.get(0),
+        )
         .expect("세기");
     assert_eq!(rows, 64, "상한 안쪽으로 돌아와야 한다");
 }
@@ -1621,8 +1762,16 @@ fn the_stored_body_and_hash_are_pinned_to_fixed_bytes() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .expect("읽기");
-    assert_eq!(hex(&stored_body), GOLDEN_BODY, "저장된 몸통 바이트가 바뀌었다");
-    assert_eq!(hex(&stored_hash), GOLDEN_HASH, "저장된 다이제스트가 바뀌었다");
+    assert_eq!(
+        hex(&stored_body),
+        GOLDEN_BODY,
+        "저장된 몸통 바이트가 바뀌었다"
+    );
+    assert_eq!(
+        hex(&stored_hash),
+        GOLDEN_HASH,
+        "저장된 다이제스트가 바뀌었다"
+    );
 }
 
 fn hex(bytes: &[u8]) -> String {

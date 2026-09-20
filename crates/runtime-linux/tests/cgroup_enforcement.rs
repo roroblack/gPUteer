@@ -60,8 +60,9 @@ fn wait_within(mut child: gputeer_runtime_linux::ConstrainedChild, limit: Durati
 /// 상한이 실제로 걸리고 자식이 그 cgroup 안에서 도는가.
 #[test]
 fn a_child_actually_runs_inside_the_cgroup() {
-    let mut child = create_constrained_child(&spec("/bin/sleep", &["3"]), LIMIT, "runs-inside", &parent())
-        .expect("자식 기동");
+    let mut child =
+        create_constrained_child(&spec("/bin/sleep", &["3"]), LIMIT, "runs-inside", &parent())
+            .expect("자식 기동");
 
     // 자식이 실제로 그 cgroup 에 들어갔는지 본다. 안 들어갔다면
     // 상한은 아무것도 제한하지 않는다.
@@ -73,7 +74,10 @@ fn a_child_actually_runs_inside_the_cgroup() {
             break;
         }
     }
-    assert!(!pids.is_empty(), "자식이 cgroup 안에 없다 — 상한이 무의미하다");
+    assert!(
+        !pids.is_empty(),
+        "자식이 cgroup 안에 없다 — 상한이 무의미하다"
+    );
 
     assert_eq!(
         child.memory_limit_bytes(),
@@ -101,7 +105,13 @@ fn exceeding_the_limit_actually_kills_the_child() {
     // 32MiB 상한에 64MiB 를 잡으려 한다.
     let small = 32 * 1024 * 1024;
     let mut child = create_constrained_child(
-        &spec("/bin/sh", &["-c", "A=$(head -c 67108864 /dev/urandom | base64); echo ${#A}"]),
+        &spec(
+            "/bin/sh",
+            &[
+                "-c",
+                "A=$(head -c 67108864 /dev/urandom | base64); echo ${#A}",
+            ],
+        ),
         small,
         "exceeds",
         &parent(),
@@ -122,7 +132,13 @@ fn exceeding_the_limit_actually_kills_the_child() {
 #[test]
 fn a_workload_within_the_limit_is_untouched() {
     let mut child = create_constrained_child(
-        &spec("/bin/sh", &["-c", "A=$(head -c 1048576 /dev/urandom | base64); echo ${#A}"]),
+        &spec(
+            "/bin/sh",
+            &[
+                "-c",
+                "A=$(head -c 1048576 /dev/urandom | base64); echo ${#A}",
+            ],
+        ),
         LIMIT,
         "within",
         &parent(),
@@ -135,8 +151,13 @@ fn a_workload_within_the_limit_is_untouched() {
 /// 붙잡힌 wait 을 다른 스레드에서 풀 수 있는가.
 #[test]
 fn a_blocked_wait_can_be_released_from_another_thread() {
-    let child =
-        create_constrained_child(&spec("/bin/sleep", &["99999"]), LIMIT, "stoppable", &parent()).expect("기동");
+    let child = create_constrained_child(
+        &spec("/bin/sleep", &["99999"]),
+        LIMIT,
+        "stoppable",
+        &parent(),
+    )
+    .expect("기동");
     let stopper = child.stopper();
 
     let started = Instant::now();
@@ -166,7 +187,10 @@ fn a_blocked_wait_can_be_released_from_another_thread() {
 fn killing_the_cgroup_kills_grandchildren_too() {
     let child = create_constrained_child(
         &spec("/bin/sh", &["-c", "sleep 99999 & sleep 99999"]),
-        LIMIT, "grandchildren", &parent())
+        LIMIT,
+        "grandchildren",
+        &parent(),
+    )
     .expect("기동");
 
     let mut before = Vec::new();

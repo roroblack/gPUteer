@@ -992,7 +992,12 @@ mod tests {
         // issued_at + 정확히 1시간 — 한도에 닿았다. 갱신하지 않고 만료시각도 그대로다.
         let at_limit = 1_000 + 3_600 * 1_000;
         let result = s
-            .renew_existing_within_duration("lease-1", at_limit, at_limit + 60_000, at_limit + 30_000)
+            .renew_existing_within_duration(
+                "lease-1",
+                at_limit,
+                at_limit + 60_000,
+                at_limit + 30_000,
+            )
             .unwrap();
         assert!(
             matches!(result, RenewDecision::MaxDurationExceeded(_)),
@@ -1009,7 +1014,12 @@ mod tests {
         s.get_or_issue(&record, 0).unwrap();
         let just_before = at_limit - 1;
         let result = s
-            .renew_existing_within_duration("lease-1", just_before, just_before + 60_000, just_before + 30_000)
+            .renew_existing_within_duration(
+                "lease-1",
+                just_before,
+                just_before + 60_000,
+                just_before + 30_000,
+            )
             .unwrap();
         assert!(
             matches!(result, RenewDecision::Renewed(_)),

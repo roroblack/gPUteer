@@ -339,11 +339,16 @@ fn a_workload_longer_than_the_io_timeout_is_acknowledged_before_it_runs() {
         "워크로드가 끝까지 돌지 않았다\n{all}"
     );
     // ★ 기동 **전** ACK 의 직접 관측 — 같은 프로세스의 표준 출력 순서다.
-    let (ack_line, _) = agent.first("ACK_SENT").unwrap_or_else(|| panic!("ACK_SENT 가 없다\n{all}"));
+    let (ack_line, _) = agent
+        .first("ACK_SENT")
+        .unwrap_or_else(|| panic!("ACK_SENT 가 없다\n{all}"));
     let (spawn_line, _) = agent
         .first("WORKLOAD_SPAWNED")
         .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
-    assert!(ack_line < spawn_line, "자식을 띄운 뒤에 ACK 를 보냈다\n{all}");
+    assert!(
+        ack_line < spawn_line,
+        "자식을 띄운 뒤에 ACK 를 보냈다\n{all}"
+    );
     // Coordinator 가 ACK 를 받은 사건(RESULT)이 워크로드 종료 사건보다 한참 먼저다.
     let (_, acked_at) = coordinator.first("RESULT ok=true").expect("RESULT");
     let (_, exited_at) = agent.first("WORKLOAD_EXITED").expect("WORKLOAD_EXITED");
@@ -375,7 +380,12 @@ fn the_agent_renews_its_lease_over_new_connections_while_the_workload_runs() {
     let agent = spawn_agent(
         &addr,
         dir.path(),
-        &["--disable-reconnect", "true", "--renew-during-execution-ms", "1500"],
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+        ],
     );
     let coordinator = wait(coordinator, Duration::from_secs(90));
     let agent = wait(agent, Duration::from_secs(90));
@@ -387,12 +397,19 @@ fn the_agent_renews_its_lease_over_new_connections_while_the_workload_runs() {
         coordinator.count("RENEW_SESSION_RESULT outcome=1") >= 2,
         "RENEW 세션 갱신이 두 번 이상 있어야 한다\n{all}"
     );
-    let (spawned, _) = agent.first("WORKLOAD_SPAWNED").unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (spawned, _) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
     let (renewed, _) = agent
         .first("RENEW_SESSION_RESULT ok=true")
         .unwrap_or_else(|| panic!("Agent 가 갱신 결과를 받지 못했다\n{all}"));
-    let (exited, _) = agent.first("WORKLOAD_EXITED").unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
-    assert!(spawned < renewed && renewed < exited, "갱신이 실행 **중**에 일어나야 한다\n{all}");
+    let (exited, _) = agent
+        .first("WORKLOAD_EXITED")
+        .unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(
+        spawned < renewed && renewed < exited,
+        "갱신이 실행 **중**에 일어나야 한다\n{all}"
+    );
 }
 
 /// 단계 5b — Coordinator 가 RENEW 를 받지 못하면(영속 lease 저장소 없음) Agent 는 갱신 실패를 **알리고** 워크로드는 끝까지 돈다.
@@ -408,16 +425,33 @@ fn a_refused_renew_session_is_reported_not_hidden() {
     let agent = spawn_agent(
         &addr,
         dir.path(),
-        &["--disable-reconnect", "true", "--renew-during-execution-ms", "1500"],
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+        ],
     );
     let coordinator = wait(coordinator, Duration::from_secs(90));
     let agent = wait(agent, Duration::from_secs(90));
     let all = both(&agent, &coordinator);
 
-    assert!(agent.success, "갱신이 실패해도 워크로드는 끝까지 돈다\n{all}");
-    assert!(agent.output().contains("RENEW_SESSION_FAILED"), "갱신 실패를 알려야 한다\n{all}");
-    assert!(!agent.output().contains("RENEW_SESSION_RESULT ok=true"), "거부됐는데 갱신 성공을 적었다\n{all}");
-    assert!(coordinator.output().contains("RENEW_SESSION_REFUSED"), "Coordinator 가 거부 사유를 남겨야 한다\n{all}");
+    assert!(
+        agent.success,
+        "갱신이 실패해도 워크로드는 끝까지 돈다\n{all}"
+    );
+    assert!(
+        agent.output().contains("RENEW_SESSION_FAILED"),
+        "갱신 실패를 알려야 한다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("RENEW_SESSION_RESULT ok=true"),
+        "거부됐는데 갱신 성공을 적었다\n{all}"
+    );
+    assert!(
+        coordinator.output().contains("RENEW_SESSION_REFUSED"),
+        "Coordinator 가 거부 사유를 남겨야 한다\n{all}"
+    );
 }
 
 /// 결함 102 (재검수 61) — RENEW 세션의 **바깥** 결과 서명이 깨졌으면 갱신 스레드는 멈추고(RENEW_SESSION_STOPPED · RENEW_REJECTED)
@@ -443,22 +477,39 @@ fn a_renew_result_with_a_broken_signature_stops_the_renew_thread() {
     let agent = spawn_agent(
         &addr,
         dir.path(),
-        &["--disable-reconnect", "true", "--renew-during-execution-ms", "1500"],
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+        ],
     );
     let coordinator = wait(coordinator, Duration::from_secs(90));
     let agent = wait(agent, Duration::from_secs(90));
     let all = both(&agent, &coordinator);
 
-    assert!(agent.success, "갱신이 거부돼도 워크로드는 끝까지 돈다\n{all}");
+    assert!(
+        agent.success,
+        "갱신이 거부돼도 워크로드는 끝까지 돈다\n{all}"
+    );
     let stopped = agent
         .output()
         .lines()
         .find(|line| line.starts_with("RENEW_SESSION_STOPPED"))
         .map(str::to_string)
         .unwrap_or_else(|| panic!("검증 실패인데 스레드가 멈추지 않았다\n{all}"));
-    assert!(stopped.contains("RENEW_REJECTED"), "멈춘 이유가 검증 실패가 아니다: {stopped}\n{all}");
-    assert!(!agent.output().contains("RENEW_SESSION_FAILED"), "검증 실패 뒤에 다시 열었다\n{all}");
-    assert!(!agent.output().contains("RENEW_SESSION_RESULT ok=true"), "깨진 서명을 받아들였다\n{all}");
+    assert!(
+        stopped.contains("RENEW_REJECTED"),
+        "멈춘 이유가 검증 실패가 아니다: {stopped}\n{all}"
+    );
+    assert!(
+        !agent.output().contains("RENEW_SESSION_FAILED"),
+        "검증 실패 뒤에 다시 열었다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("RENEW_SESSION_RESULT ok=true"),
+        "깨진 서명을 받아들였다\n{all}"
+    );
     assert_eq!(
         coordinator.count("RENEW_SESSION_RESULT outcome="),
         1,
@@ -500,7 +551,12 @@ fn a_refused_preflight_sends_no_ack() {
     let agent = spawn_agent(
         &addr,
         dir.path(),
-        &["--disable-reconnect", "true", "--workload-commit-limit-bytes", "0"],
+        &[
+            "--disable-reconnect",
+            "true",
+            "--workload-commit-limit-bytes",
+            "0",
+        ],
     );
     let coordinator = wait(coordinator, Duration::from_secs(60));
     let agent = wait(agent, Duration::from_secs(60));
@@ -510,8 +566,14 @@ fn a_refused_preflight_sends_no_ack() {
         !agent.success && agent.output().contains("EXEC_REFUSED:LIMIT_NOT_APPLIED"),
         "사전 관문 거부가 보고되지 않았다\n{all}"
     );
-    assert!(!agent.output().contains("ACK_SENT"), "거부했는데 ACK 를 보냈다\n{all}");
-    assert!(!agent.output().contains("WORKLOAD_SPAWNED"), "거부됐는데 실행됐다\n{all}");
+    assert!(
+        !agent.output().contains("ACK_SENT"),
+        "거부했는데 ACK 를 보냈다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("WORKLOAD_SPAWNED"),
+        "거부됐는데 실행됐다\n{all}"
+    );
     assert!(
         !coordinator.output().contains("RESULT ok=true"),
         "받아들이지 못한 Grant 에 ACK 가 갔다\n{all}"
@@ -546,7 +608,11 @@ fn the_first_read_after_ack_gives_up_at_lease_expiry() {
     );
     // ★ 결함 61 · 62 — 고정 창 · 부모 쪽 시각 대신 Coordinator 가 **같은 순간에** 찍은 값을 서로 대조한다.
     assert!(
-        line_with(&coordinator, &["NodeHeartbeat 프레임 읽기/검증 실패", TIMED_OUT]).is_some(),
+        line_with(
+            &coordinator,
+            &["NodeHeartbeat 프레임 읽기/검증 실패", TIMED_OUT]
+        )
+        .is_some(),
         "첫 읽기의 시한 오류가 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
     );
     let armed = line_with(&coordinator, &["POST_ACK_WAIT_ARMED"])
@@ -559,8 +625,14 @@ fn the_first_read_after_ack_gives_up_at_lease_expiry() {
         remaining_ms > 10_000,
         "전제가 깨졌다 — 남은 Lease 가 10초 이하라 이 테스트가 판별하지 못한다(remaining_lease_ms={remaining_ms})\n{all}"
     );
-    assert_eq!(wait_ms, remaining_ms, "첫 읽기 시한이 남은 Lease 가 아니다\n{all}");
-    assert_eq!(applied_ms, wait_ms, "계산한 시한이 소켓에 걸리지 않았다\n{all}");
+    assert_eq!(
+        wait_ms, remaining_ms,
+        "첫 읽기 시한이 남은 Lease 가 아니다\n{all}"
+    );
+    assert_eq!(
+        applied_ms, wait_ms,
+        "계산한 시한이 소켓에 걸리지 않았다\n{all}"
+    );
     let ended = line_with(&coordinator, &["POST_ACK_WAIT_ENDED", "phase=armed"])
         .unwrap_or_else(|| panic!("첫 읽기 시한 단계에서 끝나지 않았다\n{all}"));
     let since_ms = field_u64(&ended, "since_set_ms=");
@@ -674,17 +746,32 @@ fn the_read_timeout_returns_to_the_io_timeout_after_the_first_read() {
         1,
         "첫 heartbeat 만 받고 두 번째에서 포기해야 한다\n{all}"
     );
-    assert!(!coordinator.success, "두 번째 읽기가 10초를 넘겨 기다렸다\n{all}");
+    assert!(
+        !coordinator.success,
+        "두 번째 읽기가 10초를 넘겨 기다렸다\n{all}"
+    );
     // ★ 결함 ㊿ · 53 · 55 — EOF 가 아니라 **시한 오류**로 끝났는지, 복원값이 10초인지 Coordinator 가 찍은 값으로 본다.
     // ★ 결함 62 — 오류 문구와 10060 을 **같은 오류 줄**에서, 경과는 Coordinator 안의 시계로 본다.
     assert!(
-        line_with(&coordinator, &["NodeHeartbeat 프레임 읽기/검증 실패", TIMED_OUT]).is_some(),
+        line_with(
+            &coordinator,
+            &["NodeHeartbeat 프레임 읽기/검증 실패", TIMED_OUT]
+        )
+        .is_some(),
         "두 번째 heartbeat 읽기의 시한 오류가 아니라 다른 이유(EOF 등)로 끝났다\n{all}"
     );
     let restored = line_with(&coordinator, &["POST_ACK_WAIT_RESTORED"])
         .unwrap_or_else(|| panic!("첫 읽기 뒤 시한을 되돌리지 않았다\n{all}"));
-    assert_eq!(field_u64(&restored, "timeout_ms="), 10_000, "되돌린 시한이 10초가 아니다\n{all}");
-    assert_eq!(field_u64(&restored, "applied_ms="), 10_000, "되돌린 시한이 소켓에 걸리지 않았다\n{all}");
+    assert_eq!(
+        field_u64(&restored, "timeout_ms="),
+        10_000,
+        "되돌린 시한이 10초가 아니다\n{all}"
+    );
+    assert_eq!(
+        field_u64(&restored, "applied_ms="),
+        10_000,
+        "되돌린 시한이 소켓에 걸리지 않았다\n{all}"
+    );
     let ended = line_with(&coordinator, &["POST_ACK_WAIT_ENDED", "phase=restored"])
         .unwrap_or_else(|| panic!("되돌린 시한 단계에서 끝나지 않았다\n{all}"));
     let since_ms = field_u64(&ended, "since_set_ms=");

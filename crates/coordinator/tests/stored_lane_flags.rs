@@ -22,21 +22,36 @@ fn stored_lane(job: &str, attempt: &str, lease: &str) -> Vec<String> {
     let own_seed = "11".repeat(32);
     let peer_hex = hex(peer.as_bytes());
     [
-        "--listen", "127.0.0.1:0",
-        "--own-seed", own_seed.as_str(),
-        "--peer-pubkey", peer_hex.as_str(),
-        "--coordinator-device-id", "01JCOORDINATORFLAGS000001",
-        "--agent-device-id", "01JAGENTFLAGS00000000001",
-        "--grant-id", "01JGRANTFLAGS00000000001",
-        "--attempt-id", attempt,
-        "--lease-id", lease,
-        "--job-id", job,
-        "--lease-db", "lease.sqlite3",
-        "--grant-from-control-db", "control.sqlite3",
-        "--stored-grant-job-id", "J",
-        "--stored-grant-attempt-id", "A",
-        "--stored-grant-lease-id", "L",
-        "--submitter-keyring", "submitters.keyring",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        own_seed.as_str(),
+        "--peer-pubkey",
+        peer_hex.as_str(),
+        "--coordinator-device-id",
+        "01JCOORDINATORFLAGS000001",
+        "--agent-device-id",
+        "01JAGENTFLAGS00000000001",
+        "--grant-id",
+        "01JGRANTFLAGS00000000001",
+        "--attempt-id",
+        attempt,
+        "--lease-id",
+        lease,
+        "--job-id",
+        job,
+        "--lease-db",
+        "lease.sqlite3",
+        "--grant-from-control-db",
+        "control.sqlite3",
+        "--stored-grant-job-id",
+        "J",
+        "--stored-grant-attempt-id",
+        "A",
+        "--stored-grant-lease-id",
+        "L",
+        "--submitter-keyring",
+        "submitters.keyring",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -68,7 +83,10 @@ fn refused_by_name(args: Vec<String>, code: &str, name: &str) {
         error.starts_with(&format!("STARTUP_REFUSED: {code}")),
         "{name}: 다른 이유로 거부했다 — {error}"
     );
-    assert!(error.contains(name), "{name}: 거부는 했는데 이름을 안 댄다 — {error}");
+    assert!(
+        error.contains(name),
+        "{name}: 거부는 했는데 이름을 안 댄다 — {error}"
+    );
 }
 
 const NOT_APPLIED: [(&str, &str); 9] = [
@@ -112,9 +130,21 @@ fn the_same_flags_are_accepted_on_the_legacy_lane() {
 
 #[test]
 fn an_id_that_disagrees_with_the_stored_one_is_refused() {
-    refused_by_name(stored_lane("OTHER", "A", "L"), "STORED_LANE_ID_CONFLICT", "--job-id");
-    refused_by_name(stored_lane("J", "OTHER", "L"), "STORED_LANE_ID_CONFLICT", "--attempt-id");
-    refused_by_name(stored_lane("J", "A", "OTHER"), "STORED_LANE_ID_CONFLICT", "--lease-id");
+    refused_by_name(
+        stored_lane("OTHER", "A", "L"),
+        "STORED_LANE_ID_CONFLICT",
+        "--job-id",
+    );
+    refused_by_name(
+        stored_lane("J", "OTHER", "L"),
+        "STORED_LANE_ID_CONFLICT",
+        "--attempt-id",
+    );
+    refused_by_name(
+        stored_lane("J", "A", "OTHER"),
+        "STORED_LANE_ID_CONFLICT",
+        "--lease-id",
+    );
 }
 
 #[test]
@@ -144,7 +174,10 @@ fn session_id_is_not_a_coordinator_flag_on_any_lane() {
         "--session-id",
     );
     refused_by_name(
-        with(legacy_lane(), &["--multi-agent", "true", "--session-id", "s"]),
+        with(
+            legacy_lane(),
+            &["--multi-agent", "true", "--session-id", "s"],
+        ),
         "UNKNOWN_FLAGS",
         "--session-id",
     );
@@ -152,11 +185,21 @@ fn session_id_is_not_a_coordinator_flag_on_any_lane() {
 
 #[test]
 fn multi_agent_only_flags_are_refused_on_the_sequential_lane() {
-    for (flag, value) in [("--extra-agents", "x"), ("--require-concurrent-sessions", "2")] {
-        refused_by_name(with(legacy_lane(), &[flag, value]), "MULTI_AGENT_ONLY", flag);
+    for (flag, value) in [
+        ("--extra-agents", "x"),
+        ("--require-concurrent-sessions", "2"),
+    ] {
+        refused_by_name(
+            with(legacy_lane(), &[flag, value]),
+            "MULTI_AGENT_ONLY",
+            flag,
+        );
         // 대조 — --multi-agent lane 에서는 읽힌다.
-        parse_config_from_args(&with(legacy_lane(), &["--multi-agent", "true", flag, value]))
-            .unwrap_or_else(|e| panic!("--multi-agent 인데 {flag} 를 거부했다: {e}"));
+        parse_config_from_args(&with(
+            legacy_lane(),
+            &["--multi-agent", "true", flag, value],
+        ))
+        .unwrap_or_else(|e| panic!("--multi-agent 인데 {flag} 를 거부했다: {e}"));
     }
 }
 
@@ -165,7 +208,10 @@ fn multi_agent_only_flags_are_refused_on_the_sequential_lane() {
 // ─────────────────────────────────────────────────────────────────────
 
 fn without(mut args: Vec<String>, flag: &str) -> Vec<String> {
-    let at = args.iter().position(|a| a == flag).expect("그 플래그가 있어야 한다");
+    let at = args
+        .iter()
+        .position(|a| a == flag)
+        .expect("그 플래그가 있어야 한다");
     args.drain(at..at + 2);
     args
 }
@@ -190,7 +236,10 @@ fn lease_db_dependent_flags_are_accepted_without_a_lease_db() {
         ("--max-total-duration-seconds", "60"),
         ("--renewed-fence-epoch", "3"),
     ] {
-        let args = with(without(stored_lane("J", "A", "L"), "--lease-db"), &[flag, value]);
+        let args = with(
+            without(stored_lane("J", "A", "L"), "--lease-db"),
+            &[flag, value],
+        );
         parse_config_from_args(&args)
             .unwrap_or_else(|e| panic!("--lease-db 없이 준 {flag} 를 거부했다: {e}"));
     }
@@ -206,12 +255,20 @@ fn resume_with_a_control_db_is_refused_at_startup_not_by_the_stored_lane_checks(
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let lease_db = dir.path().join("lease.sqlite3");
     let mut args = legacy_lane();
-    let at = args.iter().position(|a| a == "--lease-db").expect("--lease-db");
+    let at = args
+        .iter()
+        .position(|a| a == "--lease-db")
+        .expect("--lease-db");
     args[at + 1] = lease_db.to_str().expect("경로").to_string();
     args.extend(
-        ["--resume-protocol", "true", "--grant-from-control-db", "control.sqlite3"]
-            .iter()
-            .map(|s| s.to_string()),
+        [
+            "--resume-protocol",
+            "true",
+            "--grant-from-control-db",
+            "control.sqlite3",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
     );
     let config = parse_config_from_args(&args).expect("Resume 이면 식별자를 요구하지 않는다");
     let error = gputeer_coordinator::run(config).expect_err("시작 관문이 거부해야 한다");
@@ -254,7 +311,12 @@ fn a_neighbor_report_db_without_expected_reports_is_refused() {
     // 대조 — 기대값이 있으면 받는다.
     parse_config_from_args(&with(
         legacy_lane(),
-        &["--expect-neighbor-reports", "1", "--neighbor-report-db", "reports.sqlite3"],
+        &[
+            "--expect-neighbor-reports",
+            "1",
+            "--neighbor-report-db",
+            "reports.sqlite3",
+        ],
     ))
     .expect("기대값이 있는데 거부했다");
 }
@@ -267,21 +329,39 @@ fn a_neighbor_report_db_without_expected_reports_is_refused() {
 #[test]
 fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
     refused_by_name(
-        with(legacy_lane(), &["--corrupt-own-signature", "tru", "--corrupt-own-signature", "false"]),
+        with(
+            legacy_lane(),
+            &[
+                "--corrupt-own-signature",
+                "tru",
+                "--corrupt-own-signature",
+                "false",
+            ],
+        ),
         "INVALID_BOOL",
         "--corrupt-own-signature",
     );
     // 대조 — 올바른 값의 중복은 받는다(마지막 값을 쓴다).
     let config = parse_config_from_args(&with(
         legacy_lane(),
-        &["--corrupt-own-signature", "false", "--corrupt-own-signature", "true"],
+        &[
+            "--corrupt-own-signature",
+            "false",
+            "--corrupt-own-signature",
+            "true",
+        ],
     ))
     .expect("올바른 값의 중복을 거부했다");
     assert!(config.corrupt_own_signature, "마지막 값을 쓰지 않았다");
     // 반대 방향도 — 마지막 값이 false 면 false 다(재검수 20).
     let config = parse_config_from_args(&with(
         legacy_lane(),
-        &["--corrupt-own-signature", "true", "--corrupt-own-signature", "false"],
+        &[
+            "--corrupt-own-signature",
+            "true",
+            "--corrupt-own-signature",
+            "false",
+        ],
     ))
     .expect("올바른 값의 중복을 거부했다");
     assert!(!config.corrupt_own_signature, "마지막 값을 쓰지 않았다");
@@ -293,7 +373,10 @@ fn an_invalid_bool_hidden_by_a_later_duplicate_is_still_refused() {
 fn never_applied_flags_are_refused_without_a_lease_db_too() {
     for (flag, value) in &NOT_APPLIED[..6] {
         refused_by_name(
-            with(without(stored_lane("J", "A", "L"), "--lease-db"), &[flag, value]),
+            with(
+                without(stored_lane("J", "A", "L"), "--lease-db"),
+                &[flag, value],
+            ),
             "STORED_LANE_IGNORES",
             flag,
         );
@@ -302,8 +385,16 @@ fn never_applied_flags_are_refused_without_a_lease_db_too() {
 
 #[test]
 fn every_absent_stored_id_is_refused_by_name() {
-    for flag in ["--stored-grant-job-id", "--stored-grant-attempt-id", "--stored-grant-lease-id"] {
-        refused_by_name(without(stored_lane("J", "A", "L"), flag), "STORED_LANE_ID_MISSING", flag);
+    for flag in [
+        "--stored-grant-job-id",
+        "--stored-grant-attempt-id",
+        "--stored-grant-lease-id",
+    ] {
+        refused_by_name(
+            without(stored_lane("J", "A", "L"), flag),
+            "STORED_LANE_ID_MISSING",
+            flag,
+        );
     }
 }
 
@@ -317,7 +408,11 @@ fn every_stored_lane_only_flag_is_refused_on_the_legacy_lane() {
         ("--submitter-keyring", "k.keyring"),
         ("--i-understand-plaintext-keyring-is-unsafe", "true"),
     ] {
-        refused_by_name(with(legacy_lane(), &[flag, value]), "STORED_LANE_ONLY", flag);
+        refused_by_name(
+            with(legacy_lane(), &[flag, value]),
+            "STORED_LANE_ONLY",
+            flag,
+        );
     }
 }
 
@@ -349,7 +444,10 @@ fn an_invalid_number_hidden_by_a_later_duplicate_is_still_refused() {
             Ok(_) => panic!("{flag}: 잘못된 앞 값을 받아들였다"),
             Err(e) => e,
         };
-        assert!(error.contains(flag) && error.contains("abc"), "{flag}: 이유를 안 말한다: {error}");
+        assert!(
+            error.contains(flag) && error.contains("abc"),
+            "{flag}: 이유를 안 말한다: {error}"
+        );
     }
 }
 

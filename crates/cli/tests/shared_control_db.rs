@@ -37,7 +37,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const NODE: &str = "node-a";
@@ -48,7 +52,10 @@ const SEED: &str = "444444444444444444444444444444444444444444444444444444444444
 const OBSERVED_AT: u64 = 1_700_000_000_000;
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -169,7 +176,9 @@ fn queue_the_job(db: &Path) {
     let mut store = CoordinatorJobStore::open(db).expect("job store 열기");
     let now = now_unix_ms();
     store.start_planning(JOB_ID, now).expect("PLANNING 전이");
-    store.enqueue(JOB_ID, "plan-shared", now).expect("QUEUED 전이");
+    store
+        .enqueue(JOB_ID, "plan-shared", now)
+        .expect("QUEUED 전이");
 }
 
 fn reservation_request() -> StageQueuedRequest {
@@ -234,11 +243,7 @@ fn both_imports_into_one_control_db_let_staging_see_the_inventory() {
     {
         let mut store = CoordinatorInventoryStore::open(&control).expect("inventory store 열기");
         let pool = store.pool_snapshot(OBSERVED_AT + 1_000).expect("snapshot");
-        assert_eq!(
-            pool.candidates.len(),
-            1,
-            "같은 파일을 쓰자 후보가 사라졌다"
-        );
+        assert_eq!(pool.candidates.len(), 1, "같은 파일을 쓰자 후보가 사라졌다");
     }
 
     queue_the_job(&control);

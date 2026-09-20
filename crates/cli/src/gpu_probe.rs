@@ -45,7 +45,9 @@ pub fn run(_args: &[String]) -> Result<String, String> {
             }
             if snapshot.gpus.is_empty() {
                 // "0개" 는 확인된 사실이다. 아래 Err 경로의 "모름" 과 다르다.
-                out.push_str("GPU_PROBE_NOTE NVML 은 정상인데 장치가 0개다 — 이건 확인된 사실이다\n");
+                out.push_str(
+                    "GPU_PROBE_NOTE NVML 은 정상인데 장치가 0개다 — 이건 확인된 사실이다\n",
+                );
             }
             Ok(out)
         }

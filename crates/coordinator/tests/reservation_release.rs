@@ -30,8 +30,8 @@ use gputeer_coordinator::reservation_release::{
 };
 use gputeer_coordinator::staging_store::{CoordinatorStagingStore, StageQueuedRequest};
 use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
-use gputeer_protocol::signing::{verify, NoReplayCheck, Verified};
 use gputeer_protocol::pb;
+use gputeer_protocol::signing::{verify, NoReplayCheck, Verified};
 
 const JOB_ID: &str = "job-1";
 const ATTEMPT_ID: &str = "attempt-1";
@@ -562,10 +562,16 @@ fn a_reservation_held_by_another_attempt_is_never_deleted() {
     stage_second_attempt_on_node_two(&fixture.path);
     let connection = rusqlite::Connection::open(&fixture.path).unwrap();
     connection
-        .execute("DELETE FROM coordinator_node_reservation_gpus WHERE node_id = 'node-2'", [])
+        .execute(
+            "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = 'node-2'",
+            [],
+        )
         .unwrap();
     connection
-        .execute("DELETE FROM coordinator_node_reservations WHERE node_id = 'node-2'", [])
+        .execute(
+            "DELETE FROM coordinator_node_reservations WHERE node_id = 'node-2'",
+            [],
+        )
         .unwrap();
     connection
         .execute(
@@ -579,10 +585,12 @@ fn a_reservation_held_by_another_attempt_is_never_deleted() {
     let mut store = CoordinatorReservationReleaseStore::open(&fixture.path).unwrap();
     assert_eq!(
         store.release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT),
-        Err(ReservationReleaseError::ReservationBelongsToAnotherAttempt {
-            node_id: NODE_ID.into(),
-            holder_attempt_id: "attempt-2".into(),
-        }),
+        Err(
+            ReservationReleaseError::ReservationBelongsToAnotherAttempt {
+                node_id: NODE_ID.into(),
+                holder_attempt_id: "attempt-2".into(),
+            }
+        ),
     );
     assert!(
         reservation_exists(&fixture.path),
@@ -643,7 +651,8 @@ fn a_moved_attempt_fence_blocks_the_release() {
     drop(connection);
 
     let mut store = CoordinatorReservationReleaseStore::open(&fixture.path).unwrap();
-    let outcome = store.release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT);
+    let outcome =
+        store.release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT);
     assert!(
         matches!(
             outcome,
@@ -950,11 +959,8 @@ fn a_failure_between_the_deletes_and_the_insert_rolls_everything_back() {
             .unwrap();
     }
 
-    let outcome = store.release_for_verified_terminal_report(
-        &report,
-        fully_authorized(),
-        RELEASED_AT,
-    );
+    let outcome =
+        store.release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT);
     assert!(outcome.is_err(), "삽입 충돌로 실패해야 한다: {outcome:?}");
 
     // ★ 예약이 살아 있어야 한다 — 부분 커밋이면 예약만 사라지고 해제
@@ -1015,11 +1021,11 @@ fn two_concurrent_releases_produce_exactly_one_release() {
         .filter(|outcome| matches!(outcome, Ok(ReleaseOutcome::AlreadyReleased(_))))
         .count();
 
-    assert_eq!(released, 1, "정확히 하나만 실제로 풀어야 한다: {outcomes:?}");
     assert_eq!(
-        already, 1,
-        "나머지 하나는 멱등 경로여야 한다: {outcomes:?}"
+        released, 1,
+        "정확히 하나만 실제로 풀어야 한다: {outcomes:?}"
     );
+    assert_eq!(already, 1, "나머지 하나는 멱등 경로여야 한다: {outcomes:?}");
     assert!(!reservation_exists(&fixture.path));
 }
 
@@ -1049,5 +1055,8 @@ fn a_non_completed_outcome_does_not_need_the_artifact_guard() {
     let outcome = store
         .release_for_verified_terminal_report(&failed, authorization, RELEASED_AT)
         .expect("실패 보고서에는 artifact guard 가 필요 없다");
-    assert!(matches!(outcome, ReleaseOutcome::Released(_)), "{outcome:?}");
+    assert!(
+        matches!(outcome, ReleaseOutcome::Released(_)),
+        "{outcome:?}"
+    );
 }

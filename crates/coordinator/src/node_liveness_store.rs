@@ -190,8 +190,7 @@ impl CoordinatorNodeLivenessStore {
         //   하는데 여기만 빠져 있었다.
         if !store.is_durable() {
             return Err(NodeLivenessStoreError::Storage {
-                detail: "liveness 저장소가 영속이 아니다 — 메모리 DB 는 재시작을 못 넘는다"
-                    .into(),
+                detail: "liveness 저장소가 영속이 아니다 — 메모리 DB 는 재시작을 못 넘는다".into(),
             });
         }
         Ok(store)
@@ -264,9 +263,7 @@ impl CoordinatorNodeLivenessStore {
             (None, Some(expected)) => expected.clone(),
             (None, None) => {
                 return Err(NodeLivenessStoreError::InvalidHeartbeat {
-                    detail: format!(
-                        "{node_id} 에 대한 기록도 대기도 없다 — rebind 할 대상이 없다"
-                    ),
+                    detail: format!("{node_id} 에 대한 기록도 대기도 없다 — rebind 할 대상이 없다"),
                 })
             }
         };
@@ -621,9 +618,10 @@ fn decode_row(node_id: &str, row: &Row) -> Result<StoredNodeLiveness, NodeLivene
             kind: LivenessCorruption::IssuedAtMismatch,
         });
     }
-    let stored_epoch = u64::try_from(*fence_epoch).map_err(|_| NodeLivenessStoreError::Corrupt {
-        kind: LivenessCorruption::FenceEpochMismatch,
-    })?;
+    let stored_epoch =
+        u64::try_from(*fence_epoch).map_err(|_| NodeLivenessStoreError::Corrupt {
+            kind: LivenessCorruption::FenceEpochMismatch,
+        })?;
     if heartbeat.fence_epoch != stored_epoch {
         return Err(NodeLivenessStoreError::Corrupt {
             kind: LivenessCorruption::FenceEpochMismatch,

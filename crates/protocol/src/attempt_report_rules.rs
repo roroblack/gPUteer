@@ -119,7 +119,9 @@ pub fn validate_attempt_report_semantics(r: &pb::AttemptReport) -> Result<(), Re
             // ★ 결함 71 — 허용 집합을 명시한다. UNSPECIFIED 는 위에서 이미 걸렀지만, 앞선 검사를 옮기거나 지워도
             //   v1 이 UNSPECIFIED 를 받지 않게 여기서도 닫는다.
             match outcome {
-                O::Completed | O::Failed | O::Interrupted | O::Cancelled | O::StaleCompleted => Ok(()),
+                O::Completed | O::Failed | O::Interrupted | O::Cancelled | O::StaleCompleted => {
+                    Ok(())
+                }
                 O::OutputFinalizationFailed => Err(ReportRuleError::V1UsesNewOutcome),
                 O::Unspecified => Err(ReportRuleError::UnspecifiedOutcome),
             }
@@ -177,7 +179,11 @@ mod tests {
     }
 
     fn ok(v: u32, o: O, e: E, c: u32, s: S) {
-        assert_eq!(validate_attempt_report_semantics(&report(v, o, e, c, s)), Ok(()), "{v} {o:?} {e:?} {c} {s:?}");
+        assert_eq!(
+            validate_attempt_report_semantics(&report(v, o, e, c, s)),
+            Ok(()),
+            "{v} {o:?} {e:?} {c} {s:?}"
+        );
     }
 
     fn rejected(v: u32, o: O, e: E, c: u32, s: S) {
@@ -189,24 +195,48 @@ mod tests {
 
     #[test]
     fn v1_reports_keep_working_and_cannot_use_new_fields() {
-        for o in [O::Completed, O::Failed, O::Interrupted, O::Cancelled, O::StaleCompleted] {
+        for o in [
+            O::Completed,
+            O::Failed,
+            O::Interrupted,
+            O::Cancelled,
+            O::StaleCompleted,
+        ] {
             ok(1, o, E::Unspecified, 0, S::Unspecified);
         }
         rejected(1, O::Failed, E::ObservedWithCode, 7, S::Unspecified);
         rejected(1, O::Failed, E::Unspecified, 0, S::ReadOutputs);
         rejected(1, O::Failed, E::Unspecified, 7, S::Unspecified);
-        rejected(1, O::OutputFinalizationFailed, E::Unspecified, 0, S::Unspecified);
+        rejected(
+            1,
+            O::OutputFinalizationFailed,
+            E::Unspecified,
+            0,
+            S::Unspecified,
+        );
     }
 
     #[test]
     fn v1_unspecified_outcome_is_refused_with_its_own_error() {
         // 결함 71 — 새 필드 기본값 · outcome 6 금지를 모두 만족해도 UNSPECIFIED 는 받지 않는다.
         assert_eq!(
-            validate_attempt_report_semantics(&report(1, O::Unspecified, E::Unspecified, 0, S::Unspecified)),
+            validate_attempt_report_semantics(&report(
+                1,
+                O::Unspecified,
+                E::Unspecified,
+                0,
+                S::Unspecified
+            )),
             Err(ReportRuleError::UnspecifiedOutcome)
         );
         assert_eq!(
-            validate_attempt_report_semantics(&report(1, O::OutputFinalizationFailed, E::Unspecified, 0, S::Unspecified)),
+            validate_attempt_report_semantics(&report(
+                1,
+                O::OutputFinalizationFailed,
+                E::Unspecified,
+                0,
+                S::Unspecified
+            )),
             Err(ReportRuleError::V1UsesNewOutcome)
         );
     }
@@ -227,9 +257,27 @@ mod tests {
         for s in [S::ReadOutputs, S::EncodeResult, S::CommitCheckpoint] {
             ok(2, O::OutputFinalizationFailed, E::ObservedWithCode, 0, s);
         }
-        rejected(2, O::OutputFinalizationFailed, E::ObservedWithCode, 0, S::Unspecified);
-        rejected(2, O::OutputFinalizationFailed, E::ObservedWithCode, 7, S::ReadOutputs);
-        rejected(2, O::OutputFinalizationFailed, E::NotObserved, 0, S::ReadOutputs);
+        rejected(
+            2,
+            O::OutputFinalizationFailed,
+            E::ObservedWithCode,
+            0,
+            S::Unspecified,
+        );
+        rejected(
+            2,
+            O::OutputFinalizationFailed,
+            E::ObservedWithCode,
+            7,
+            S::ReadOutputs,
+        );
+        rejected(
+            2,
+            O::OutputFinalizationFailed,
+            E::NotObserved,
+            0,
+            S::ReadOutputs,
+        );
     }
 
     #[test]
@@ -246,7 +294,13 @@ mod tests {
         ok(2, O::Failed, E::ObservedWithCode, u32::MAX, S::Unspecified);
         // 코드 없는 관측에 코드를 붙이면 공통 규칙이 거부한다.
         assert_eq!(
-            validate_attempt_report_semantics(&report(2, O::Failed, E::ObservedNoCode, 7, S::Unspecified)),
+            validate_attempt_report_semantics(&report(
+                2,
+                O::Failed,
+                E::ObservedNoCode,
+                7,
+                S::Unspecified
+            )),
             Err(ReportRuleError::ExitCodeWithoutObservedCode)
         );
     }
@@ -274,7 +328,10 @@ mod tests {
     fn unknown_enum_values_are_refused() {
         let mut r = report(2, O::Failed, E::ObservedWithCode, 7, S::Unspecified);
         r.outcome = 99;
-        assert_eq!(validate_attempt_report_semantics(&r), Err(ReportRuleError::UnknownOutcome(99)));
+        assert_eq!(
+            validate_attempt_report_semantics(&r),
+            Err(ReportRuleError::UnknownOutcome(99))
+        );
         let mut r = report(2, O::Failed, E::ObservedWithCode, 7, S::Unspecified);
         r.exit_observation = 99;
         assert_eq!(

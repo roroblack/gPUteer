@@ -27,7 +27,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 const NODE: &str = "node-stage-a";
@@ -49,7 +53,10 @@ const LEASE_RENEW: &str = "1800000300000";
 const LEASE_EXPIRES: &str = "1800000600000";
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -296,7 +303,13 @@ fn prepared(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
         db.to_str().unwrap(),
     ]);
     assert!(ok, "import-inventory 실패: {output}");
-    queue_job(dir, &keyring, &db, job_id, "0102030405060708090a0b0c0d0e0f10");
+    queue_job(
+        dir,
+        &keyring,
+        &db,
+        job_id,
+        "0102030405060708090a0b0c0d0e0f10",
+    );
     (keyring, db)
 }
 
@@ -311,7 +324,13 @@ fn prepared(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
 ///   `agent_json()` 으로 두 개를 만들어 합친다.
 fn prepared_two_nodes(dir: &Path, job_id: &str) -> (PathBuf, PathBuf) {
     let (keyring, db) = two_node_pool(dir);
-    queue_job(dir, &keyring, &db, job_id, "0102030405060708090a0b0c0d0e0f10");
+    queue_job(
+        dir,
+        &keyring,
+        &db,
+        job_id,
+        "0102030405060708090a0b0c0d0e0f10",
+    );
     (keyring, db)
 }
 
@@ -410,7 +429,10 @@ fn a_queued_job_is_reserved_on_a_real_node() {
         "aa0102030405060708090a0b0c0d0e0f",
     );
     assert!(ok, "stage-job 실패: {output}");
-    assert!(output.contains("STAGED"), "출력이 STAGED 가 아니다: {output}");
+    assert!(
+        output.contains("STAGED"),
+        "출력이 STAGED 가 아니다: {output}"
+    );
     assert!(
         output.contains(&format!("node={NODE}")),
         "어느 노드에 잡았는지 말하지 않는다: {output}"
@@ -685,7 +707,10 @@ fn a_renew_point_after_expiry_is_refused() {
         "true",
     ]);
     assert!(!ok, "만료 뒤 갱신 시점을 받아들였다: {output}");
-    assert!(output.contains("순서가 아니다"), "이유를 안 말한다: {output}");
+    assert!(
+        output.contains("순서가 아니다"),
+        "이유를 안 말한다: {output}"
+    );
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
 }
 
@@ -911,7 +936,13 @@ fn a_restage_on_this_fixture_hits_occupancy_before_the_state_gate() {
 fn a_submitted_job_is_refused_by_the_state_gate_even_on_a_free_node() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = two_node_pool(dir.path());
-    import_job(dir.path(), &keyring, &db, JOB_A, "0102030405060708090a0b0c0d0e0f10");
+    import_job(
+        dir.path(),
+        &keyring,
+        &db,
+        JOB_A,
+        "0102030405060708090a0b0c0d0e0f10",
+    );
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Submitted));
 
     let (ok, output) = stage(

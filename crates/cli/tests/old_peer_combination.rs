@@ -46,8 +46,12 @@ fn keys() -> Keys {
     Keys {
         coordinator_seed: hex(&coordinator),
         agent_seed: hex(&agent),
-        coordinator_pub: hex(gputeer_crypto::SigningKey::from_bytes(&coordinator).verifying_key().as_bytes()),
-        agent_pub: hex(gputeer_crypto::SigningKey::from_bytes(&agent).verifying_key().as_bytes()),
+        coordinator_pub: hex(gputeer_crypto::SigningKey::from_bytes(&coordinator)
+            .verifying_key()
+            .as_bytes()),
+        agent_pub: hex(gputeer_crypto::SigningKey::from_bytes(&agent)
+            .verifying_key()
+            .as_bytes()),
     }
 }
 
@@ -55,7 +59,10 @@ fn old_binary() -> PathBuf {
     let path = std::env::var_os("GPUTEER_OLD_BINARY")
         .map(PathBuf::from)
         .expect("GPUTEER_OLD_BINARY 가 없다 — D2 이전 커밋을 빌드한 gputeer 경로를 줘야 이 조합을 잴 수 있다");
-    assert!(path.is_file(), "GPUTEER_OLD_BINARY 가 파일이 아니다: {path:?}");
+    assert!(
+        path.is_file(),
+        "GPUTEER_OLD_BINARY 가 파일이 아니다: {path:?}"
+    );
     path
 }
 
@@ -65,7 +72,8 @@ fn new_binary() -> PathBuf {
 
 /// 결함 177 — 어느 파일로 쟀는지 원본에 남긴다.
 fn describe(label: &str, exe: &Path) {
-    let bytes = std::fs::read(exe).unwrap_or_else(|e| panic!("{label} 실행 파일을 읽지 못했다({exe:?}): {e}"));
+    let bytes = std::fs::read(exe)
+        .unwrap_or_else(|e| panic!("{label} 실행 파일을 읽지 못했다({exe:?}): {e}"));
     eprintln!(
         "=== 실행 파일 {label}: path={} size={} blake3={}",
         exe.display(),
@@ -115,7 +123,10 @@ fn collect_by(receiver: mpsc::Receiver<(String, Instant)>, deadline: Instant) ->
             let late = completed > deadline;
             (text, late)
         }
-        Err(_) => ("<출력 수집 시한 초과 — 후손이 파이프를 물고 있을 수 있다>".to_string(), true),
+        Err(_) => (
+            "<출력 수집 시한 초과 — 후손이 파이프를 물고 있을 수 있다>".to_string(),
+            true,
+        ),
     }
 }
 
@@ -158,19 +169,39 @@ fn run_pair(coordinator_exe: &Path, agent_exe: &Path, label: &str) -> (Finished,
     run_pair_with(coordinator_exe, &[], agent_exe, label)
 }
 
-fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: &Path, label: &str) -> (Finished, Finished) {
+fn run_pair_with(
+    coordinator_exe: &Path,
+    coordinator_extra: &[&str],
+    agent_exe: &Path,
+    label: &str,
+) -> (Finished, Finished) {
     describe("coordinator", coordinator_exe);
     describe("agent", agent_exe);
     let keys = keys();
     let mut coordinator = Guarded {
         child: Command::new(coordinator_exe)
             .args([
-                "coordinator-stub", "--listen", "127.0.0.1:0",
-                "--own-seed", &keys.coordinator_seed, "--peer-pubkey", &keys.agent_pub,
-                "--coordinator-device-id", COORDINATOR_ID, "--agent-device-id", AGENT_ID,
-                "--grant-id", "01JGRANTOLDPEER000000001", "--attempt-id", "01JATTEMPTOLDPEER00000001",
-                "--lease-id", "01JLEASEOLDPEER000000001", "--job-id", "01JJOBOLDPEER00000000001",
-                "--i-understand-legacy-mode-is-unsafe", "true",
+                "coordinator-stub",
+                "--listen",
+                "127.0.0.1:0",
+                "--own-seed",
+                &keys.coordinator_seed,
+                "--peer-pubkey",
+                &keys.agent_pub,
+                "--coordinator-device-id",
+                COORDINATOR_ID,
+                "--agent-device-id",
+                AGENT_ID,
+                "--grant-id",
+                "01JGRANTOLDPEER000000001",
+                "--attempt-id",
+                "01JATTEMPTOLDPEER00000001",
+                "--lease-id",
+                "01JLEASEOLDPEER000000001",
+                "--job-id",
+                "01JJOBOLDPEER00000000001",
+                "--i-understand-legacy-mode-is-unsafe",
+                "true",
             ])
             .args(coordinator_extra)
             .stdout(Stdio::piped())
@@ -200,7 +231,9 @@ fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: 
         let _receiver_may_be_gone = stdout_sender.send((format!("{line}{tail}"), finished_reading));
     });
     // ★ 결함 176 — 여기서 panic 해도 `coordinator` 가드가 자식을 끝낸다.
-    let ready = ready_receiver.recv_timeout(Duration::from_secs(20)).expect("coordinator READY 시한");
+    let ready = ready_receiver
+        .recv_timeout(Duration::from_secs(20))
+        .expect("coordinator READY 시한");
     let address = ready
         .trim()
         .strip_prefix("READY ")
@@ -210,10 +243,19 @@ fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: 
     let mut agent = Guarded {
         child: Command::new(agent_exe)
             .args([
-                "agent-stub", "--connect", &address,
-                "--own-seed", &keys.agent_seed, "--peer-pubkey", &keys.coordinator_pub,
-                "--coordinator-device-id", COORDINATOR_ID, "--agent-device-id", AGENT_ID,
-                "--disable-reconnect", "true",
+                "agent-stub",
+                "--connect",
+                &address,
+                "--own-seed",
+                &keys.agent_seed,
+                "--peer-pubkey",
+                &keys.coordinator_pub,
+                "--coordinator-device-id",
+                COORDINATOR_ID,
+                "--agent-device-id",
+                AGENT_ID,
+                "--disable-reconnect",
+                "true",
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -231,14 +273,23 @@ fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: 
         agent.poll();
         thread::sleep(Duration::from_millis(20));
     }
-    let finish = |guarded: &Guarded, stdout: mpsc::Receiver<(String, Instant)>, stderr: mpsc::Receiver<(String, Instant)>| {
+    let finish = |guarded: &Guarded,
+                  stdout: mpsc::Receiver<(String, Instant)>,
+                  stderr: mpsc::Receiver<(String, Instant)>| {
         let (status, hung, elapsed, observed_at) = guarded.outcome.expect("끝났다");
         // ★ 결함 193 — 마감은 이 자식의 종료 **관측** 시각에 고정한다(스트림마다 새로 주지 않는다).
         // ★ 결함 198 — 관측은 감시 주기(20ms)와 다른 자식을 기다린 시간만큼 실제 종료보다 늦을 수 있다 — "실제 종료 뒤 10초" 보장이 아니다
         let deadline = observed_at + OUTPUT_DEADLINE;
         let (stdout, stdout_late) = collect_by(stdout, deadline);
         let (stderr, stderr_late) = collect_by(stderr, deadline);
-        Finished { success: status.is_some_and(|s| s.success()), hung, elapsed, stdout, stderr, output_timed_out: stdout_late || stderr_late }
+        Finished {
+            success: status.is_some_and(|s| s.success()),
+            hung,
+            elapsed,
+            stdout,
+            stderr,
+            output_timed_out: stdout_late || stderr_late,
+        }
     };
     let agent_run = finish(&agent, agent_stdout, agent_stderr);
     let coordinator_run = finish(&coordinator, coordinator_stdout, coordinator_stderr);
@@ -262,8 +313,19 @@ fn run_pair_with(coordinator_exe: &Path, coordinator_extra: &[&str], agent_exe: 
 #[test]
 fn today_a_new_agent_succeeds_without_an_ack_receipt_after_the_coordinator_verified_the_ack() {
     let exe = new_binary();
-    let (agent, coordinator) = run_pair_with(&exe, &["--disconnect-after-ack", "true"], &exe, "새 · 새(ACK 검증 뒤 수신 확인 없이 끊음)");
-    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "덫이 매달렸다");
+    let (agent, coordinator) = run_pair_with(
+        &exe,
+        &["--disconnect-after-ack", "true"],
+        &exe,
+        "새 · 새(ACK 검증 뒤 수신 확인 없이 끊음)",
+    );
+    assert!(
+        !agent.hung
+            && !coordinator.hung
+            && !agent.output_timed_out
+            && !coordinator.output_timed_out,
+        "덫이 매달렸다"
+    );
     assert!(
         coordinator.success && coordinator.stdout.contains("DISCONNECT_AFTER_ACK coordinator_acknowledged=true"),
         "Coordinator 가 ACK 를 검증한 뒤 끊은 흔적이 없다 — 덫의 전제가 깨졌다: stdout={} stderr={}",
@@ -285,8 +347,17 @@ fn today_a_new_agent_succeeds_without_an_ack_receipt_after_the_coordinator_verif
 #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --include-ignored --nocapture"]
 fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
     let (agent, coordinator) = run_pair(&old_binary(), &new_binary(), "새 Agent · 옛 Coordinator");
-    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "조합이 시한({DEADLINE:?})까지 매달렸다");
-    assert!(!coordinator.success, "옛 Coordinator 가 새 Agent 와 성공으로 끝났다 — 조합이 실제로 통하게 됐다");
+    assert!(
+        !agent.hung
+            && !coordinator.hung
+            && !agent.output_timed_out
+            && !coordinator.output_timed_out,
+        "조합이 시한({DEADLINE:?})까지 매달렸다"
+    );
+    assert!(
+        !coordinator.success,
+        "옛 Coordinator 가 새 Agent 와 성공으로 끝났다 — 조합이 실제로 통하게 됐다"
+    );
     assert!(
         coordinator.stderr.contains("예상하지 못한 응답 타입: SessionHello"),
         "옛 Coordinator 가 기대한 이유(ACK 자리에서 Hello)로 실패하지 않았다 — 구성 실수일 수 있다: {}",
@@ -300,7 +371,9 @@ fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
             "새 Agent 가 ACK 전송 실패가 아닌 이유로 실패했다 — 관측을 다시 해석하라(결정적 덫과 함께 본다): {}",
             agent.stderr
         );
-        eprintln!("=== 덫 판정: 새 Agent 가 ACK 전송 실패로 끝남(옛 쪽이 먼저 닫은 경쟁 — 결함 174)");
+        eprintln!(
+            "=== 덫 판정: 새 Agent 가 ACK 전송 실패로 끝남(옛 쪽이 먼저 닫은 경쟁 — 결함 174)"
+        );
     }
 }
 
@@ -310,10 +383,26 @@ fn today_a_new_agent_reports_success_against_an_old_coordinator_that_failed() {
 #[ignore = "GPUTEER_OLD_BINARY(D2 이전 gputeer) 가 필요하다 — cargo test -p gputeer-cli --test old_peer_combination -- --include-ignored --nocapture"]
 fn an_old_agent_and_a_new_coordinator_both_fail_explicitly() {
     let (agent, coordinator) = run_pair(&new_binary(), &old_binary(), "옛 Agent · 새 Coordinator");
-    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "조합이 시한({DEADLINE:?})까지 매달렸다");
-    assert!(!agent.success, "옛 Agent 가 새 Coordinator 와 성공으로 끝났다");
-    assert!(!coordinator.success, "새 Coordinator 가 옛 Agent 와 성공으로 끝났다");
-    assert!(coordinator.stdout.contains("CONNECTION_ATTEMPT 0"), "새 Coordinator 가 연결을 받지 않았다: {}", coordinator.stdout);
+    assert!(
+        !agent.hung
+            && !coordinator.hung
+            && !agent.output_timed_out
+            && !coordinator.output_timed_out,
+        "조합이 시한({DEADLINE:?})까지 매달렸다"
+    );
+    assert!(
+        !agent.success,
+        "옛 Agent 가 새 Coordinator 와 성공으로 끝났다"
+    );
+    assert!(
+        !coordinator.success,
+        "새 Coordinator 가 옛 Agent 와 성공으로 끝났다"
+    );
+    assert!(
+        coordinator.stdout.contains("CONNECTION_ATTEMPT 0"),
+        "새 Coordinator 가 연결을 받지 않았다: {}",
+        coordinator.stdout
+    );
     // ★ 결함 183 · 191 — 아래 판정 함수의 주석 참조. 서로 상대 프레임을 기다리다 **한쪽 이상이 읽기 시한 초과**로 끝났음을 오류 종류로 고정한다.
     assert!(
         both_waited_for_the_peer_until_a_read_timeout(&agent.stderr, agent.elapsed, &coordinator.stderr, coordinator.elapsed),
@@ -331,16 +420,37 @@ fn an_old_agent_and_a_new_coordinator_both_fail_explicitly() {
 /// ★ Windows 번호만 실행으로 봤다(2026-09-17 원본). unix 번호는 libc errno 정의 근거이고 unix 에서 돌리지 않았다.
 #[cfg(windows)]
 const READ_TIMEOUT_OS_ERROR: &str = "(os error 10060)";
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "solaris", target_os = "illumos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "solaris",
+    target_os = "illumos"
+))]
 const READ_TIMEOUT_OS_ERROR: &str = "(os error 11)";
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 const READ_TIMEOUT_OS_ERROR: &str = "(os error 35)";
 #[cfg(not(any(
     windows,
-    target_os = "linux", target_os = "android", target_os = "solaris", target_os = "illumos",
-    target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"
+    target_os = "linux",
+    target_os = "android",
+    target_os = "solaris",
+    target_os = "illumos",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
 )))]
-const READ_TIMEOUT_OS_ERROR: &str = "<이 플랫폼의 읽기 시한 오류 번호를 정하지 않았다 — 판정은 늘 실패한다>";
+const READ_TIMEOUT_OS_ERROR: &str =
+    "<이 플랫폼의 읽기 시한 오류 번호를 정하지 않았다 — 판정은 늘 실패한다>";
 
 /// 두 쪽 IO_TIMEOUT(10초)에서 여유를 뺀 하한 — 두 자식 모두 적어도 이만큼 돌았어야 한다.
 /// ★ 결함 196 — 경과는 **읽기 대기 시간이 아니라** 그 자식의 시작 ~ 종료 관측이다. 하한은 "짧게 끝난 끝" 을 떨어뜨릴 뿐 기다린 원인을 확정하지 않는다.
@@ -357,25 +467,38 @@ const READ_TIMEOUT_FLOOR: Duration = Duration::from_secs(9);
 ///   인과 · 사건 순서는 입증하지 않는다(공통 시간축에서 두 오류 시각을 재지 않는다). 전에 "먼저 시한에 걸린 쪽이 닫아 생긴 끝" 이라 적은 것은 판정보다 강했다.
 /// ★ 결함 195 (재검수 69d) — 옛 Agent 줄의 `RETRYABLE_CONNECTION:` 접두사를 요구하지 않는다. 재시도 분류에 WouldBlock 이 없어 unix 의 읽기 시한(EAGAIN)은
 ///   접두사 없이 끝난다. 그래서 "Grant 프레임 읽기/검증 실패: <사유>" 만 본다(unix 에서 돌리지 않았다).
-fn both_waited_for_the_peer_until_a_read_timeout(agent_stderr: &str, agent_elapsed: Duration, coordinator_stderr: &str, coordinator_elapsed: Duration) -> bool {
+fn both_waited_for_the_peer_until_a_read_timeout(
+    agent_stderr: &str,
+    agent_elapsed: Duration,
+    coordinator_stderr: &str,
+    coordinator_elapsed: Duration,
+) -> bool {
     const AGENT: &str = "Grant 프레임 읽기/검증 실패: ";
     let ends_with_timeout = |line: &str| line.trim_end().ends_with(READ_TIMEOUT_OS_ERROR);
     let coordinator_line = |reason: &str, need_timeout: bool| {
         coordinator_stderr.lines().any(|line| {
-            line.contains("kind=transport") && line.contains("HELLO_MISSING") && line.contains(reason) && (!need_timeout || ends_with_timeout(line))
+            line.contains("kind=transport")
+                && line.contains("HELLO_MISSING")
+                && line.contains(reason)
+                && (!need_timeout || ends_with_timeout(line))
         })
     };
     let agent_line = |reason: &str, need_timeout: bool| {
-        agent_stderr
-            .lines()
-            .any(|line| line.contains(&format!("{AGENT}{reason}")) && (!need_timeout || ends_with_timeout(line)))
+        agent_stderr.lines().any(|line| {
+            line.contains(&format!("{AGENT}{reason}")) && (!need_timeout || ends_with_timeout(line))
+        })
     };
     // ★ 결함 202 (재검수 69e) — 하한을 시한 쪽 · EOF 쪽으로 나눠 쓴다(변이가 각각을 따로 잰다). 뜻은 191 · 196 과 같다 — 두 자식 모두 하한 이상.
-    let coordinator_timed_out = coordinator_line("스트림 읽기 실패", true) && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
-    let agent_timed_out = agent_line("스트림 읽기 실패", true) && agent_elapsed >= READ_TIMEOUT_FLOOR;
-    let coordinator_saw_close = coordinator_line("프레임이 완결되기 전에 스트림이 끊겼다", false) && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
-    let agent_saw_close = agent_line("프레임이 완결되기 전에 스트림이 끊겼다", false) && agent_elapsed >= READ_TIMEOUT_FLOOR;
-    (coordinator_timed_out && (agent_timed_out || agent_saw_close)) || (agent_timed_out && coordinator_saw_close)
+    let coordinator_timed_out =
+        coordinator_line("스트림 읽기 실패", true) && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
+    let agent_timed_out =
+        agent_line("스트림 읽기 실패", true) && agent_elapsed >= READ_TIMEOUT_FLOOR;
+    let coordinator_saw_close = coordinator_line("프레임이 완결되기 전에 스트림이 끊겼다", false)
+        && coordinator_elapsed >= READ_TIMEOUT_FLOOR;
+    let agent_saw_close = agent_line("프레임이 완결되기 전에 스트림이 끊겼다", false)
+        && agent_elapsed >= READ_TIMEOUT_FLOOR;
+    (coordinator_timed_out && (agent_timed_out || agent_saw_close))
+        || (agent_timed_out && coordinator_saw_close)
 }
 
 /// 결함 201 (재검수 69e) — 이 플랫폼의 읽기 시한 번호가 정해졌는지. 나열하지 않은 플랫폼에서는 **늘 도는 시험이 실패**해 알린다
@@ -393,36 +516,107 @@ fn the_read_timeout_error_number_is_known_on_this_platform() {
 fn the_wait_classifier_accepts_read_timeouts_and_rejects_other_connection_failures() {
     let t = READ_TIMEOUT_OS_ERROR;
     let long = Duration::from_secs(10);
-    let agent_timeout = format!("RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 응답이 없다 {t}");
-    let agent_close = "RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 프레임이 완결되기 전에 스트림이 끊겼다".to_string();
+    let agent_timeout = format!(
+        "RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 응답이 없다 {t}"
+    );
+    let agent_close =
+        "RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 프레임이 완결되기 전에 스트림이 끊겼다"
+            .to_string();
     let coordinator_timeout = format!("SESSION_ERROR attempt=0 kind=transport error=transport: session: HELLO_MISSING: 스트림 읽기 실패: 응답이 없다 {t}");
     let coordinator_close = "SESSION_ERROR attempt=0 kind=transport error=transport: session: HELLO_MISSING: 프레임이 완결되기 전에 스트림이 끊겼다".to_string();
     // 2026-09-17 첫 실행의 모양(옛 Agent 시한 · 새 Coordinator 끊김)과 그 반대 · 둘 다 시한
-    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_timeout, long, &coordinator_close, long));
-    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_close, long, &coordinator_timeout, long));
-    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_timeout, long, &coordinator_timeout, long));
+    assert!(both_waited_for_the_peer_until_a_read_timeout(
+        &agent_timeout,
+        long,
+        &coordinator_close,
+        long
+    ));
+    assert!(both_waited_for_the_peer_until_a_read_timeout(
+        &agent_close,
+        long,
+        &coordinator_timeout,
+        long
+    ));
+    assert!(both_waited_for_the_peer_until_a_read_timeout(
+        &agent_timeout,
+        long,
+        &coordinator_timeout,
+        long
+    ));
     // reset(시한 번호 아님) — 검수 69c 의 반례
     let agent_reset = "RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 원격 호스트가 연결을 끊었다 (os error 10054)";
     let coordinator_reset = "SESSION_ERROR attempt=0 kind=transport error=transport: session: HELLO_MISSING: 스트림 읽기 실패: 원격 호스트가 연결을 끊었다 (os error 10054)";
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(agent_reset, long, coordinator_reset, long));
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(agent_reset, long, &coordinator_close, long));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        agent_reset,
+        long,
+        coordinator_reset,
+        long
+    ));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        agent_reset,
+        long,
+        &coordinator_close,
+        long
+    ));
     // 둘 다 EOF — 누구도 시한에 걸리지 않았다
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_close, long, &coordinator_close, long));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        &agent_close,
+        long,
+        &coordinator_close,
+        long
+    ));
     // 시한 번호는 있지만 너무 일찍 끝났다
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_timeout, Duration::from_secs(1), &coordinator_close, long));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        &agent_timeout,
+        Duration::from_secs(1),
+        &coordinator_close,
+        long
+    ));
     // 결함 196 — EOF 쪽이 1초 만에 끝났다(시한 쪽은 10초)
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_timeout, long, &coordinator_close, Duration::from_secs(1)));
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_close, Duration::from_secs(1), &coordinator_timeout, long));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        &agent_timeout,
+        long,
+        &coordinator_close,
+        Duration::from_secs(1)
+    ));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        &agent_close,
+        Duration::from_secs(1),
+        &coordinator_timeout,
+        long
+    ));
     // 결함 196 — reset 줄 **중간**에 무관한 시한 번호가 섞였다
     let agent_reset_with_number = format!("RETRYABLE_CONNECTION: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: context={t} 원격 호스트가 연결을 끊었다 (os error 10054)");
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_reset_with_number, long, &coordinator_close, long));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        &agent_reset_with_number,
+        long,
+        &coordinator_close,
+        long
+    ));
     // 결함 195 — 재시도 접두사 없이 끝난 옛 Agent 시한 줄(unix 의 WouldBlock 모양)도 받는다
-    let agent_timeout_unprefixed = format!("agent-stub 실패: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 자원 일시 부족 {t}");
-    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_timeout_unprefixed, long, &coordinator_close, long));
-    assert!(both_waited_for_the_peer_until_a_read_timeout(&agent_timeout_unprefixed, long, &coordinator_timeout, long));
+    let agent_timeout_unprefixed = format!(
+        "agent-stub 실패: Grant 프레임 읽기/검증 실패: 스트림 읽기 실패: 자원 일시 부족 {t}"
+    );
+    assert!(both_waited_for_the_peer_until_a_read_timeout(
+        &agent_timeout_unprefixed,
+        long,
+        &coordinator_close,
+        long
+    ));
+    assert!(both_waited_for_the_peer_until_a_read_timeout(
+        &agent_timeout_unprefixed,
+        long,
+        &coordinator_timeout,
+        long
+    ));
     // Coordinator 가 protocol 분류(검증 실패)면 떨어진다
     let coordinator_rejected = format!("SESSION_ERROR attempt=0 kind=protocol error=protocol: HELLO_REJECTED: 스트림 읽기 실패 {t}");
-    assert!(!both_waited_for_the_peer_until_a_read_timeout(&agent_close, long, &coordinator_rejected, long));
+    assert!(!both_waited_for_the_peer_until_a_read_timeout(
+        &agent_close,
+        long,
+        &coordinator_rejected,
+        long
+    ));
 }
 
 /// 결함 193 — 출력 마감이 고정이고, 받은 출력의 완료 시각도 마감과 비교되는지(늘 돈다).
@@ -436,14 +630,19 @@ fn output_collection_uses_a_fixed_deadline_and_the_completion_time() {
     assert_eq!(collect_by(receiver, deadline), ("ok".to_string(), false));
     // 채널에는 있지만 완성 시각이 마감 뒤 — 시한 초과(전에는 통과했다)
     let (sender, receiver) = mpsc::channel();
-    sender.send(("late".to_string(), deadline + Duration::from_millis(1))).expect("보냄");
+    sender
+        .send(("late".to_string(), deadline + Duration::from_millis(1)))
+        .expect("보냄");
     assert_eq!(collect_by(receiver, deadline), ("late".to_string(), true));
     // 아무것도 안 온다 — 마감까지만 기다리고 시한 초과
     let (_sender, receiver) = mpsc::channel::<(String, Instant)>();
     let short = Instant::now() + Duration::from_millis(50);
     let started = Instant::now();
     assert!(collect_by(receiver, short).1);
-    assert!(started.elapsed() < Duration::from_secs(5), "고정 마감을 넘겨 기다렸다");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "고정 마감을 넘겨 기다렸다"
+    );
     // 이미 지난 마감 — 기다리지 않고 판정
     let (_sender, receiver) = mpsc::channel::<(String, Instant)>();
     assert!(collect_by(receiver, base).1);
@@ -456,8 +655,17 @@ fn output_collection_uses_a_fixed_deadline_and_the_completion_time() {
 fn the_same_old_binary_on_both_sides_succeeds() {
     let exe = old_binary();
     let (agent, coordinator) = run_pair(&exe, &exe, "옛 · 옛(대조)");
-    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "대조가 매달렸다");
-    assert!(agent.success && coordinator.success, "대조(옛 · 옛)가 실패했다 — 옛 바이너리의 인자 · 키 구성을 먼저 의심하라");
+    assert!(
+        !agent.hung
+            && !coordinator.hung
+            && !agent.output_timed_out
+            && !coordinator.output_timed_out,
+        "대조가 매달렸다"
+    );
+    assert!(
+        agent.success && coordinator.success,
+        "대조(옛 · 옛)가 실패했다 — 옛 바이너리의 인자 · 키 구성을 먼저 의심하라"
+    );
 }
 
 /// 대조 — 같은 새 바이너리끼리는 성공한다.
@@ -465,6 +673,15 @@ fn the_same_old_binary_on_both_sides_succeeds() {
 fn the_same_new_binary_on_both_sides_succeeds() {
     let exe = new_binary();
     let (agent, coordinator) = run_pair(&exe, &exe, "새 · 새(대조)");
-    assert!(!agent.hung && !coordinator.hung && !agent.output_timed_out && !coordinator.output_timed_out, "대조가 매달렸다");
-    assert!(agent.success && coordinator.success, "대조(새 · 새)가 실패했다 — 인자 · 키 구성을 먼저 의심하라");
+    assert!(
+        !agent.hung
+            && !coordinator.hung
+            && !agent.output_timed_out
+            && !coordinator.output_timed_out,
+        "대조가 매달렸다"
+    );
+    assert!(
+        agent.success && coordinator.success,
+        "대조(새 · 새)가 실패했다 — 인자 · 키 구성을 먼저 의심하라"
+    );
 }

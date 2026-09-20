@@ -75,7 +75,9 @@ fn an_observation_survives_a_restart() {
     let dir = tempfile::tempdir().expect("temp");
     {
         let mut s = store(&dir, "liveness.db");
-        let result = s.observe(&verified_heartbeat(DEVICE, 1_000, 7, 1)).expect("관측");
+        let result = s
+            .observe(&verified_heartbeat(DEVICE, 1_000, 7, 1))
+            .expect("관측");
         assert!(result.advanced);
         assert_eq!(result.stored.last_heartbeat_unix_ms, 1_000);
     }
@@ -98,8 +100,11 @@ fn a_late_older_heartbeat_does_not_move_the_clock_backwards() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
 
-    s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 2)).expect("최신");
-    let late = s.observe(&verified_heartbeat(DEVICE, 1_000, 3, 0)).expect("지연 도착");
+    s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 2))
+        .expect("최신");
+    let late = s
+        .observe(&verified_heartbeat(DEVICE, 1_000, 3, 0))
+        .expect("지연 도착");
 
     assert!(!late.advanced, "옛 관측이 저장됐다");
     assert_eq!(
@@ -121,8 +126,11 @@ fn a_late_older_heartbeat_does_not_move_the_clock_backwards() {
 fn an_identical_timestamp_does_not_advance() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 2)).expect("첫 관측");
-    let again = s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 2)).expect("재전송");
+    s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 2))
+        .expect("첫 관측");
+    let again = s
+        .observe(&verified_heartbeat(DEVICE, 5_000, 9, 2))
+        .expect("재전송");
     assert!(!again.advanced);
 }
 
@@ -133,8 +141,11 @@ fn an_identical_timestamp_does_not_advance() {
 fn a_newer_heartbeat_advances() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 3, 0)).expect("첫 관측");
-    let newer = s.observe(&verified_heartbeat(DEVICE, 2_000, 4, 1)).expect("최신");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 3, 0))
+        .expect("첫 관측");
+    let newer = s
+        .observe(&verified_heartbeat(DEVICE, 2_000, 4, 1))
+        .expect("최신");
     assert!(newer.advanced);
     assert_eq!(newer.stored.last_heartbeat_unix_ms, 2_000);
     assert_eq!(newer.stored.fence_epoch, 4);
@@ -147,10 +158,15 @@ fn each_node_keeps_exactly_one_row() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
     for at in [1_000u64, 2_000, 3_000] {
-        s.observe(&verified_heartbeat(DEVICE, at, 1, 0)).expect("관측");
+        s.observe(&verified_heartbeat(DEVICE, at, 1, 0))
+            .expect("관측");
     }
     let all = s.load_all().expect("읽기");
-    assert_eq!(all.len(), 1, "노드 하나에 행이 여럿이다 — 저장소가 무한히 자란다");
+    assert_eq!(
+        all.len(),
+        1,
+        "노드 하나에 행이 여럿이다 — 저장소가 무한히 자란다"
+    );
     assert_eq!(all[0].last_heartbeat_unix_ms, 3_000);
 }
 
@@ -169,7 +185,10 @@ fn a_heartbeat_without_a_timestamp_is_refused() {
         error,
         NodeLivenessStoreError::InvalidHeartbeat { .. }
     ));
-    assert!(s.load_all().expect("읽기").is_empty(), "거부했는데 행이 남았다");
+    assert!(
+        s.load_all().expect("읽기").is_empty(),
+        "거부했는데 행이 남았다"
+    );
 }
 
 /// 손상된 행을 조용히 통과시키지 않는가.
@@ -182,7 +201,8 @@ fn a_corrupted_row_fails_closed() {
     let path = dir.path().join("liveness.db");
     {
         let mut s = CoordinatorNodeLivenessStore::open(&path).expect("열기");
-        s.observe(&verified_heartbeat(DEVICE, 1_000, 7, 1)).expect("관측");
+        s.observe(&verified_heartbeat(DEVICE, 1_000, 7, 1))
+            .expect("관측");
     }
     // 저장된 시각만 손으로 바꾼다 — body 는 그대로라 대조에서 걸려야 한다.
     {
@@ -206,7 +226,8 @@ fn a_tampered_body_is_caught_by_the_hash() {
     let path = dir.path().join("liveness.db");
     {
         let mut s = CoordinatorNodeLivenessStore::open(&path).expect("열기");
-        s.observe(&verified_heartbeat(DEVICE, 1_000, 7, 1)).expect("관측");
+        s.observe(&verified_heartbeat(DEVICE, 1_000, 7, 1))
+            .expect("관측");
     }
     {
         let connection = rusqlite::Connection::open(&path).expect("직접 열기");
@@ -236,7 +257,8 @@ fn stored_facts_feed_the_liveness_kernel() {
 
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000_000, 7, 1)).expect("관측");
+    s.observe(&verified_heartbeat(DEVICE, 1_000_000, 7, 1))
+        .expect("관측");
 
     let observations: Vec<HeartbeatObservation> = s
         .load_all()
@@ -275,13 +297,18 @@ fn a_same_millisecond_tie_uses_the_same_rule_as_the_kernel() {
     let mut s = store(&dir, "liveness.db");
 
     // 낮은 세대를 먼저 넣고 같은 시각의 높은 세대를 넣는다.
-    s.observe(&verified_heartbeat(DEVICE, 5_000, 3, 0)).expect("첫 관측");
-    let later = s.observe(&verified_heartbeat(DEVICE, 5_000, 9, 1)).expect("동점");
+    s.observe(&verified_heartbeat(DEVICE, 5_000, 3, 0))
+        .expect("첫 관측");
+    let later = s
+        .observe(&verified_heartbeat(DEVICE, 5_000, 9, 1))
+        .expect("동점");
     assert!(later.advanced, "같은 시각의 나중 세대가 반영되지 않았다");
     assert_eq!(later.stored.fence_epoch, 9);
 
     // 반대 방향은 진행하지 않아야 한다.
-    let back = s.observe(&verified_heartbeat(DEVICE, 5_000, 3, 0)).expect("역방향");
+    let back = s
+        .observe(&verified_heartbeat(DEVICE, 5_000, 3, 0))
+        .expect("역방향");
     assert!(!back.advanced, "같은 시각의 옛 세대가 최신을 밀어냈다");
     assert_eq!(back.stored.fence_epoch, 9);
 }
@@ -294,11 +321,17 @@ fn a_same_millisecond_tie_uses_the_same_rule_as_the_kernel() {
 fn a_different_device_claiming_the_same_node_is_refused() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("첫 관측");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0))
+        .expect("첫 관측");
 
     // 더 최신 시각인데도 거부돼야 한다 — 시각이 문제가 아니라 신원이다.
     let error = s
-        .observe(&verified_heartbeat("01JOTHERDEVICE0000000000001", 9_000, 1, 0))
+        .observe(&verified_heartbeat(
+            "01JOTHERDEVICE0000000000001",
+            9_000,
+            1,
+            0,
+        ))
         .expect_err("다른 장치가 같은 노드를 인수했다");
     assert!(matches!(
         error,
@@ -326,7 +359,8 @@ const THIRD_DEVICE: &str = "01JTHIRDDEVICE0000000000001";
 fn an_approved_rebind_only_admits_the_named_device() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0))
+        .expect("최초 등록");
 
     // 운영자가 DEVICE -> OTHER_DEVICE 교체를 승인한다.
     s.rebind_device(NODE, OTHER_DEVICE).expect("rebind 승인");
@@ -366,7 +400,8 @@ fn an_approved_rebind_only_admits_the_named_device() {
 fn without_an_approval_a_device_change_is_still_refused() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0))
+        .expect("최초 등록");
     let error = s
         .observe(&verified_heartbeat(OTHER_DEVICE, 2_000, 1, 0))
         .expect_err("승인 없이 장치가 바뀌었다");
@@ -385,7 +420,8 @@ fn a_pointless_or_unknown_rebind_is_refused() {
         s.rebind_device(NODE, OTHER_DEVICE).is_err(),
         "기록도 없는데 rebind 가 성공했다"
     );
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("등록");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0))
+        .expect("등록");
     assert!(
         s.rebind_device(NODE, DEVICE).is_err(),
         "같은 장치로 rebind 가 성공했다 — 대기만 남기고 아무것도 안 바뀐다"
@@ -402,7 +438,8 @@ fn a_pointless_or_unknown_rebind_is_refused() {
 fn a_mistaken_rebind_can_be_retargeted() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0))
+        .expect("최초 등록");
 
     // 잘못 지정한다.
     s.rebind_device(NODE, THIRD_DEVICE).expect("첫 지정");
@@ -428,7 +465,8 @@ fn a_mistaken_rebind_can_be_retargeted() {
 fn a_pending_rebind_can_be_cancelled() {
     let dir = tempfile::tempdir().expect("temp");
     let mut s = store(&dir, "liveness.db");
-    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0)).expect("최초 등록");
+    s.observe(&verified_heartbeat(DEVICE, 1_000, 1, 0))
+        .expect("최초 등록");
     s.rebind_device(NODE, OTHER_DEVICE).expect("지정");
 
     s.cancel_rebind(NODE).expect("취소");
@@ -439,5 +477,8 @@ fn a_pending_rebind_can_be_cancelled() {
     assert_eq!(after.stored.device_id, THIRD_DEVICE);
 
     // 두 번 취소하면 대상이 없다고 알린다 — 조용히 성공하지 않는다.
-    assert!(s.cancel_rebind(NODE).is_err(), "없는 대기를 취소했는데 성공했다");
+    assert!(
+        s.cancel_rebind(NODE).is_err(),
+        "없는 대기를 취소했는데 성공했다"
+    );
 }

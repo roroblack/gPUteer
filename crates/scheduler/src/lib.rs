@@ -31,9 +31,9 @@ pub use model::{
 pub use rank::{rank_best_fit, resource_fit};
 pub use reassignment::{
     evaluate_reassignment, AuditRecord, FenceRangeIssuance, NeighborReportResolution,
-    NeighborUnreachableReport, ParticipationModel, PartitionPauseEnforcement,
-    ReassignmentDecision, ReassignmentInputError, ReassignmentPolicy, ReassignmentRequest,
-    ReceivingNodeConsent, ReservedFenceRange, UnmetCondition,
+    NeighborUnreachableReport, ParticipationModel, PartitionPauseEnforcement, ReassignmentDecision,
+    ReassignmentInputError, ReassignmentPolicy, ReassignmentRequest, ReceivingNodeConsent,
+    ReservedFenceRange, UnmetCondition,
 };
 pub use scope::{
     gpu_scope_candidate, AvailableVramObservation, GpuAllocationMode, GpuObservationSnapshot,

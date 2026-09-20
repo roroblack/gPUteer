@@ -542,7 +542,10 @@ mod tests {
     #[test]
     fn an_unknown_enum_name_lists_what_is_known() {
         let error = parse_node_state("ONLIEN").expect_err("오타를 받아들였다");
-        assert!(error.contains("ONLIEN"), "무엇이 틀렸는지 안 말한다: {error}");
+        assert!(
+            error.contains("ONLIEN"),
+            "무엇이 틀렸는지 안 말한다: {error}"
+        );
         assert!(error.contains("ONLINE"), "아는 값을 안 알려 준다: {error}");
     }
 

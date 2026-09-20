@@ -67,7 +67,11 @@ pub enum AppContainerError {
 }
 
 fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
-    value.as_ref().encode_wide().chain(std::iter::once(0)).collect()
+    value
+        .as_ref()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// 살아 있는 AppContainer 프로파일. `Drop` 에서 지우려 **시도**한다.
@@ -195,8 +199,8 @@ pub fn run_in_container(
     use windows_sys::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
         InitializeProcThreadAttributeList, UpdateProcThreadAttribute, WaitForSingleObject,
-        EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTUPINFOEXW,
+        EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTUPINFOEXW,
     };
 
     let mut caps = SECURITY_CAPABILITIES {
@@ -326,22 +330,20 @@ pub fn run_in_container_capture_with_caps(
 ) -> Result<(u32, String), AppContainerError> {
     use std::io::Read;
     use std::os::windows::io::FromRawHandle;
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
-        WAIT_FAILED,
-    };
     use windows_sys::Win32::Foundation::DuplicateHandle;
-    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE, WAIT_FAILED,
+    };
     use windows_sys::Win32::Security::{
         SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
     };
     use windows_sys::Win32::System::Pipes::CreatePipe;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
     use windows_sys::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
         InitializeProcThreadAttributeList, UpdateProcThreadAttribute, WaitForSingleObject,
-        EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES,
-        STARTUPINFOEXW,
+        EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
+        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
     };
 
     // ── 파이프 ────────────────────────────────────────────────────────
@@ -609,8 +611,8 @@ mod tests {
     /// ★ 이게 깨지면 재시작 뒤 방화벽 규칙이 **엉뚱한 컨테이너**를 가리킨다.
     #[test]
     fn the_same_name_yields_the_same_sid() {
-        let first = AppContainerProfile::create("gputeer-test-stable", "s", "테스트")
-            .expect("첫 생성");
+        let first =
+            AppContainerProfile::create("gputeer-test-stable", "s", "테스트").expect("첫 생성");
         let sid_first = first.sid_string().expect("SID");
         // 아직 안 지운 상태에서 같은 이름을 다시 — ERROR_ALREADY_EXISTS 경로.
         let second = AppContainerProfile::create("gputeer-test-stable", "s", "테스트")

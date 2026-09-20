@@ -29,7 +29,11 @@ fn cli_bin() -> PathBuf {
     if path.ends_with("deps") {
         path.pop();
     }
-    path.join(if cfg!(windows) { "gputeer.exe" } else { "gputeer" })
+    path.join(if cfg!(windows) {
+        "gputeer.exe"
+    } else {
+        "gputeer"
+    })
 }
 
 /// ★★ **scheduler 의 `node_id` 와 Agent 의 device id 는 다른 이름
@@ -92,7 +96,10 @@ fn now_unix_ms() -> u64 {
 }
 
 fn run_cli(args: &[&str]) -> (bool, String) {
-    let out = Command::new(cli_bin()).args(args).output().expect("gputeer 실행");
+    let out = Command::new(cli_bin())
+        .args(args)
+        .output()
+        .expect("gputeer 실행");
     (
         out.status.success(),
         format!(
@@ -161,19 +168,46 @@ fn staged_control_db_running(dir: &Path, entrypoint: &str, args_csv: Option<&str
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
     let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
     let mut submit_args: Vec<&str> = vec![
-        "submit", "--job-id", JOB, "--entrypoint", entrypoint,
-        "--submitter-device-id", SUBMITTER, "--submitter-seed", SEED,
-        "--issued-at-unix-ms", &issued, "--expires-at-unix-ms", &expires,
-        "--out", manifest.to_str().unwrap(),
-        "--workload-class", "TRAINING", "--side-effect-class", "PURE",
-        "--dataset-sensitivity", "INTERNAL", "--minimum-security-tier", "S2",
-        "--minimum-isolation-class", "CONTAINED", "--minimum-key-protection", "K1",
-        "--gpu-count", "1", "--gpu-min-vram-bytes", "8589934592",
+        "submit",
+        "--job-id",
+        JOB,
+        "--entrypoint",
+        entrypoint,
+        "--submitter-device-id",
+        SUBMITTER,
+        "--submitter-seed",
+        SEED,
+        "--issued-at-unix-ms",
+        &issued,
+        "--expires-at-unix-ms",
+        &expires,
+        "--out",
+        manifest.to_str().unwrap(),
+        "--workload-class",
+        "TRAINING",
+        "--side-effect-class",
+        "PURE",
+        "--dataset-sensitivity",
+        "INTERNAL",
+        "--minimum-security-tier",
+        "S2",
+        "--minimum-isolation-class",
+        "CONTAINED",
+        "--minimum-key-protection",
+        "K1",
+        "--gpu-count",
+        "1",
+        "--gpu-min-vram-bytes",
+        "8589934592",
         // ★ 2026-09-10 — 이 셋을 안 주고 있었다. 그전에는 변환기가
         //   생략을 `Some(0)` 으로 채워 줘서 통과했다. 독립 검수가
         //   그 채움을 지적해 이제 거부한다 — 그래서 여기서 선언한다.
-        "--cpu-cores", "4", "--ram-bytes", "8589934592",
-        "--workspace-bytes", "10737418240",
+        "--cpu-cores",
+        "4",
+        "--ram-bytes",
+        "8589934592",
+        "--workspace-bytes",
+        "10737418240",
     ];
     if let Some(args_csv) = args_csv {
         submit_args.extend(["--args", args_csv]);
@@ -196,19 +230,34 @@ fn staged_control_db_running(dir: &Path, entrypoint: &str, args_csv: Option<&str
     ring.save().expect("keyring 저장");
 
     let (ok, out) = run_cli(&[
-        "import-manifest", "--manifest", manifest.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--job-db", db.to_str().unwrap(),
-        "--idempotency-key", "0102030405060708090a0b0c0d0e0f10",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "import-manifest",
+        "--manifest",
+        manifest.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--job-db",
+        db.to_str().unwrap(),
+        "--idempotency-key",
+        "0102030405060708090a0b0c0d0e0f10",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "import-manifest 실패: {out}");
 
     let (ok, out) = run_cli(&[
-        "plan-job", "--job-id", JOB, "--control-db", db.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "plan-job",
+        "--job-id",
+        JOB,
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "plan-job 실패: {out}");
 
@@ -224,18 +273,39 @@ fn staged_control_db_running(dir: &Path, entrypoint: &str, args_csv: Option<&str
     let lease_renew = (now + 300_000).to_string();
     let lease_expires = (now + 600_000).to_string();
     let (ok, out) = run_cli(&[
-        "stage-job", "--job-id", JOB, "--control-db", db.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--submitter-member", OWNER, "--max-snapshot-age-ms", "86400000",
-        "--best-fit-axes", AXES,
-        "--coordinator-id", COORDINATOR, "--coordinator-term", "7",
-        "--attempt-id", ATTEMPT, "--lease-id", LEASE,
-        "--operation-key", "aa0102030405060708090a0b0c0d0e0f",
-        "--lease-issued-at-unix-ms", &lease_issued,
-        "--lease-renew-after-unix-ms", &lease_renew,
-        "--lease-expires-at-unix-ms", &lease_expires,
-        "--lease-max-total-duration-seconds", "86400",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "stage-job",
+        "--job-id",
+        JOB,
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "7",
+        "--attempt-id",
+        ATTEMPT,
+        "--lease-id",
+        LEASE,
+        "--operation-key",
+        "aa0102030405060708090a0b0c0d0e0f",
+        "--lease-issued-at-unix-ms",
+        &lease_issued,
+        "--lease-renew-after-unix-ms",
+        &lease_renew,
+        "--lease-expires-at-unix-ms",
+        &lease_expires,
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "stage-job 실패: {out}");
     db
@@ -443,8 +513,7 @@ fn without_a_stored_reservation_the_coordinator_refuses_to_build_a_grant() {
     // 스키마만 있고 예약은 없는 DB.
     let empty = dir.path().join("empty.sqlite3");
     drop(
-        gputeer_coordinator::job_store::CoordinatorJobStore::open(&empty)
-            .expect("job store 생성"),
+        gputeer_coordinator::job_store::CoordinatorJobStore::open(&empty).expect("job store 생성"),
     );
 
     let (coordinator, addr) = spawn_coordinator(&empty, dir.path(), &[]);
@@ -607,7 +676,10 @@ fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
     let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
 
     assert!(agent_ok, "Agent 가 실패했다\n{both}");
-    assert!(agent_output.contains("MANIFEST_ACCEPTED"), "Agent 가 Manifest 를 받지 않았다\n{both}");
+    assert!(
+        agent_output.contains("MANIFEST_ACCEPTED"),
+        "Agent 가 Manifest 를 받지 않았다\n{both}"
+    );
     assert!(
         agent_output.contains("WORKLOAD_RESULT ok=true"),
         "워크로드가 성공하지 않았다\n{both}"
@@ -628,9 +700,8 @@ fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
             .find_map(|kv| kv.strip_prefix(prefix.as_str()).map(str::to_string))
             .unwrap_or_else(|| panic!("{name} 가 보낸 줄에 없다: {sent}"))
     };
-    let store =
-        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
-            .expect("저장소 열기");
+    let store = gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+        .expect("저장소 열기");
     let binding = store
         .get_report_binding(ATTEMPT, NODE)
         .expect("조회")
@@ -641,18 +712,30 @@ fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
     assert_eq!(report.node_id, field("node_id"));
     assert_eq!(report.fence_epoch.to_string(), field("fence_epoch"));
     assert_eq!(report.outcome.to_string(), field("outcome"));
-    assert_eq!(report.started_at_unix_ms.to_string(), field("started_at_unix_ms"));
-    assert_eq!(report.finished_at_unix_ms.to_string(), field("finished_at_unix_ms"));
+    assert_eq!(
+        report.started_at_unix_ms.to_string(),
+        field("started_at_unix_ms")
+    );
+    assert_eq!(
+        report.finished_at_unix_ms.to_string(),
+        field("finished_at_unix_ms")
+    );
     assert_eq!(binding.bound_fence_epoch.to_string(), field("fence_epoch"));
     // B+E — Agent 는 v2 로 보내고 종료 코드의 존재 여부를 적는다. 두 프로세스를 건너 저장된 행에서 본다.
-    assert_eq!(report.schema_version, 2, "Agent 가 v2 로 보내지 않았다\n{both}");
+    assert_eq!(
+        report.schema_version, 2,
+        "Agent 가 v2 로 보내지 않았다\n{both}"
+    );
     assert_eq!(
         report.exit_observation,
         gputeer_protocol::pb::ExitObservation::ObservedWithCode as i32,
         "종료 코드를 관측했는데 OBSERVED_WITH_CODE 가 아니다\n{both}"
     );
     assert_eq!(report.exit_code.to_string(), field("exit_code"));
-    assert_eq!(report.exit_observation.to_string(), field("exit_observation"));
+    assert_eq!(
+        report.exit_observation.to_string(),
+        field("exit_observation")
+    );
     assert_eq!(report.schema_version.to_string(), field("schema_version"));
 
     // ★ 저장된 Grant 자체를 본다 — Agent 는 hash 없음을 통과시키므로
@@ -663,10 +746,18 @@ fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
         .get_manifest_binding(JOB)
         .expect("binding 조회")
         .expect("binding 이 있다");
-    assert_eq!(grant.manifest.as_ref(), Some(&stored.manifest), "저장된 Manifest 가 그대로 실리지 않았다");
+    assert_eq!(
+        grant.manifest.as_ref(),
+        Some(&stored.manifest),
+        "저장된 Manifest 가 그대로 실리지 않았다"
+    );
     let hash = grant.manifest_hash.as_ref().expect("manifest_hash 가 없다");
     assert_eq!(hash.algo, 1, "hash 알고리즘이 BLAKE3-256(1) 이 아니다");
-    assert_eq!(hash.value, stored.manifest_hash.to_vec(), "hash 가 저장된 값과 다르다");
+    assert_eq!(
+        hash.value,
+        stored.manifest_hash.to_vec(),
+        "hash 가 저장된 값과 다르다"
+    );
 }
 
 /// ★ 대조군 — 보고만 끄면 워크로드는 **성공하는데** 행이 없다.
@@ -688,11 +779,16 @@ fn with_the_report_off_the_workload_runs_but_no_report_row_is_stored() {
         "워크로드가 성공하지 않았다 — 행이 없는 이유가 보고 끄기가 아닐 수 있다\n{both}"
     );
     assert!(!agent_output.contains("ATTEMPT_REPORT_SENT"), "\n{both}");
-    assert!(!coordinator_output.contains("ATTEMPT_REPORT_STORED"), "\n{both}");
-    let store =
-        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
-            .expect("저장소 열기");
-    assert!(store.get_report_binding(ATTEMPT, NODE).expect("조회").is_none());
+    assert!(
+        !coordinator_output.contains("ATTEMPT_REPORT_STORED"),
+        "\n{both}"
+    );
+    let store = gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+        .expect("저장소 열기");
+    assert!(store
+        .get_report_binding(ATTEMPT, NODE)
+        .expect("조회")
+        .is_none());
 }
 
 /// outbox 에 남은 `.report` 파일들.
@@ -729,26 +825,46 @@ fn the_exit_report_crosses_a_report_session_and_the_agent_verifies_the_ack() {
 
     assert!(agent_ok, "Agent 가 실패했다\n{both}");
     assert!(coordinator_ok, "Coordinator 가 실패했다\n{both}");
-    assert!(agent_output.contains("WORKLOAD_RESULT ok=true"), "워크로드가 성공하지 않았다\n{both}");
-    assert!(agent_output.contains("ATTEMPT_REPORT_OUTBOX_WRITTEN"), "outbox 에 먼저 남기지 않았다\n{both}");
+    assert!(
+        agent_output.contains("WORKLOAD_RESULT ok=true"),
+        "워크로드가 성공하지 않았다\n{both}"
+    );
+    assert!(
+        agent_output.contains("ATTEMPT_REPORT_OUTBOX_WRITTEN"),
+        "outbox 에 먼저 남기지 않았다\n{both}"
+    );
     let acknowledged = agent_output
         .lines()
         .find(|line| line.starts_with("ATTEMPT_REPORT_ACKNOWLEDGED "))
         .unwrap_or_else(|| panic!("받았다 응답을 검증하지 않았다\n{both}"));
-    assert!(acknowledged.contains("created=true"), "첫 저장인데 created=true 가 아니다\n{both}");
-    assert!(coordinator_output.contains("REPORT_SESSION_ACK_SENT"), "Coordinator 가 Ack 를 보내지 않았다\n{both}");
-    assert!(!agent_output.contains("ATTEMPT_REPORT_SENT "), "FRESH 연결로도 보냈다\n{both}");
+    assert!(
+        acknowledged.contains("created=true"),
+        "첫 저장인데 created=true 가 아니다\n{both}"
+    );
+    assert!(
+        coordinator_output.contains("REPORT_SESSION_ACK_SENT"),
+        "Coordinator 가 Ack 를 보내지 않았다\n{both}"
+    );
+    assert!(
+        !agent_output.contains("ATTEMPT_REPORT_SENT "),
+        "FRESH 연결로도 보냈다\n{both}"
+    );
 
-    let store =
-        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
-            .expect("저장소 열기");
+    let store = gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+        .expect("저장소 열기");
     let binding = store
         .get_report_binding(ATTEMPT, NODE)
         .expect("조회")
         .unwrap_or_else(|| panic!("보고 행이 없다\n{both}"));
-    assert_eq!(binding.report.schema_version, 2, "Agent 가 v2 로 보내지 않았다\n{both}");
+    assert_eq!(
+        binding.report.schema_version, 2,
+        "Agent 가 v2 로 보내지 않았다\n{both}"
+    );
     let left = outbox_reports(dir.path());
-    assert!(left.is_empty(), "Ack 를 검증했는데 outbox 에 남았다: {left:?}\n{both}");
+    assert!(
+        left.is_empty(),
+        "Ack 를 검증했는데 outbox 에 남았다: {left:?}\n{both}"
+    );
 }
 
 /// 단계 6 — Coordinator 가 REPORT 세션을 받지 않으면 Agent 는 **성공한 척하지 않는다** — 받았다 응답이 없다고 실패하고 보고를
@@ -762,19 +878,39 @@ fn without_report_sessions_on_the_coordinator_the_agent_fails_and_keeps_the_repo
     let (agent_ok, agent_output) = run_executing_agent_with(
         &addr,
         dir.path(),
-        &["--report-over-session", "true", "--report-session-attempts", "2"],
+        &[
+            "--report-over-session",
+            "true",
+            "--report-session-attempts",
+            "2",
+        ],
     );
     let (_, coordinator_output) = finish(coordinator, "coordinator-stub");
     let both = format!("--- agent ---\n{agent_output}\n--- coordinator ---\n{coordinator_output}");
 
     assert!(!agent_ok, "받았다 응답 없이 성공으로 끝났다\n{both}");
-    assert!(agent_output.contains("ATTEMPT_REPORT_NOT_ACKNOWLEDGED"), "실패 사유를 말해야 한다\n{both}");
-    assert!(coordinator_output.contains("REPORT_SESSION_REFUSED"), "Coordinator 가 거부 사유를 남겨야 한다\n{both}");
-    assert_eq!(outbox_reports(dir.path()).len(), 1, "보고는 outbox 에 남아 있어야 한다\n{both}");
-    let store =
-        gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
-            .expect("저장소 열기");
-    assert!(store.get_report_binding(ATTEMPT, NODE).expect("조회").is_none(), "거부했는데 저장했다");
+    assert!(
+        agent_output.contains("ATTEMPT_REPORT_NOT_ACKNOWLEDGED"),
+        "실패 사유를 말해야 한다\n{both}"
+    );
+    assert!(
+        coordinator_output.contains("REPORT_SESSION_REFUSED"),
+        "Coordinator 가 거부 사유를 남겨야 한다\n{both}"
+    );
+    assert_eq!(
+        outbox_reports(dir.path()).len(),
+        1,
+        "보고는 outbox 에 남아 있어야 한다\n{both}"
+    );
+    let store = gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore::open(&db)
+        .expect("저장소 열기");
+    assert!(
+        store
+            .get_report_binding(ATTEMPT, NODE)
+            .expect("조회")
+            .is_none(),
+        "거부했는데 저장했다"
+    );
 }
 
 /// 저장된 예약에서 `issue-grant` 로 Grant 를 만들어 읽는다 — Coordinator 가 쓰는 것과
@@ -790,17 +926,28 @@ fn issue_stored_grant(db: &Path, dir: &Path) -> gputeer_protocol::pb::ExecutionG
     let keyring = dir.join("submitters.keyring");
     let (ok, out) = run_cli(&[
         "issue-grant",
-        "--job-id", JOB,
-        "--control-db", db.to_str().unwrap(),
-        "--attempt-id", ATTEMPT,
-        "--lease-id", LEASE,
-        "--grant-id", GRANT,
-        "--grant-issued-at-unix-ms", &issued,
-        "--grant-expires-at-unix-ms", &expires,
-        "--coordinator-key-file", key.to_str().unwrap(),
-        "--out", grant_file.to_str().unwrap(),
-        "--submitter-keyring", keyring.to_str().unwrap(),
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "--job-id",
+        JOB,
+        "--control-db",
+        db.to_str().unwrap(),
+        "--attempt-id",
+        ATTEMPT,
+        "--lease-id",
+        LEASE,
+        "--grant-id",
+        GRANT,
+        "--grant-issued-at-unix-ms",
+        &issued,
+        "--grant-expires-at-unix-ms",
+        &expires,
+        "--coordinator-key-file",
+        key.to_str().unwrap(),
+        "--out",
+        grant_file.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     assert!(ok, "저장된 예약에서 Grant 를 못 만들었다: {out}");
     <gputeer_protocol::pb::ExecutionGrant as prost::Message>::decode(
@@ -821,29 +968,48 @@ fn a_manifest_file_on_the_stored_lane_is_refused_at_startup() {
     let lease_db = dir.path().join("coordinator-lease.sqlite3");
     let (ok, output) = run_cli(&[
         "coordinator-stub",
-        "--listen", "127.0.0.1:0",
-        "--own-seed", COORD_SEED,
-        "--peer-pubkey", &pub_hex(AGENT_SEED),
-        "--coordinator-device-id", COORDINATOR,
-        "--agent-device-id", AGENT_DEVICE,
-        "--grant-id", GRANT,
-        "--attempt-id", ATTEMPT,
-        "--lease-id", LEASE,
-        "--job-id", JOB,
-        "--lease-db", lease_db.to_str().unwrap(),
-        "--grant-from-control-db", db.to_str().unwrap(),
-        "--stored-grant-job-id", JOB,
-        "--stored-grant-attempt-id", ATTEMPT,
-        "--stored-grant-lease-id", LEASE,
-        "--manifest-file", dir.path().join("m.pb").to_str().unwrap(),
-        "--accept-timeout-ms", "2000",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        COORD_SEED,
+        "--peer-pubkey",
+        &pub_hex(AGENT_SEED),
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        AGENT_DEVICE,
+        "--grant-id",
+        GRANT,
+        "--attempt-id",
+        ATTEMPT,
+        "--lease-id",
+        LEASE,
+        "--job-id",
+        JOB,
+        "--lease-db",
+        lease_db.to_str().unwrap(),
+        "--grant-from-control-db",
+        db.to_str().unwrap(),
+        "--stored-grant-job-id",
+        JOB,
+        "--stored-grant-attempt-id",
+        ATTEMPT,
+        "--stored-grant-lease-id",
+        LEASE,
+        "--manifest-file",
+        dir.path().join("m.pb").to_str().unwrap(),
+        "--accept-timeout-ms",
+        "2000",
     ]);
     assert!(!ok, "두 플래그를 같이 줬는데 시작했다: {output}");
     assert!(
         output.contains("STARTUP_REFUSED") && output.contains("--manifest-file"),
         "시작은 막았는데 이유가 이 관문이 아니다: {output}"
     );
-    assert!(!output.contains("READY"), "소켓을 연 뒤에 거부했다: {output}");
+    assert!(
+        !output.contains("READY"),
+        "소켓을 연 뒤에 거부했다: {output}"
+    );
 }
 
 /// ★★ 결함 ⑱ (설계 A, 2026-09-14) — **10초보다 긴** 워크로드(약 15초)도 ACK 를 거쳐 종료 보고가

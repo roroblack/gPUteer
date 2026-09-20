@@ -94,7 +94,9 @@ fn real_main() {
         selected_gpu_uuids: vec!["GPU-00000000-0000-0000-0000-000000000000".to_string()],
     };
     match check_gpu_requirements_now(&absent) {
-        Ok(_) => println!("PREFLIGHT_PROBE stage=reject_absent ok=false detail=없는 UUID 를 통과시켰다"),
+        Ok(_) => {
+            println!("PREFLIGHT_PROBE stage=reject_absent ok=false detail=없는 UUID 를 통과시켰다")
+        }
         Err(rej) => println!("PREFLIGHT_PROBE stage=reject_absent ok=true rejection={rej:?}"),
     }
 
@@ -105,7 +107,9 @@ fn real_main() {
         selected_gpu_uuids: vec![first.uuid.clone()],
     };
     match check_gpu_requirements_now(&too_much) {
-        Ok(_) => println!("PREFLIGHT_PROBE stage=reject_vram ok=false detail=과한 VRAM 요구를 통과시켰다"),
+        Ok(_) => println!(
+            "PREFLIGHT_PROBE stage=reject_vram ok=false detail=과한 VRAM 요구를 통과시켰다"
+        ),
         Err(rej) => println!("PREFLIGHT_PROBE stage=reject_vram ok=true rejection={rej:?}"),
     }
 
@@ -122,7 +126,9 @@ fn real_main() {
             .collect(),
     };
     match check_gpu_requirements_now(&too_many) {
-        Ok(_) => println!("PREFLIGHT_PROBE stage=reject_count ok=false detail=있는 것보다 많은 개수를 통과시켰다"),
+        Ok(_) => println!(
+            "PREFLIGHT_PROBE stage=reject_count ok=false detail=있는 것보다 많은 개수를 통과시켰다"
+        ),
         Err(rej) => println!("PREFLIGHT_PROBE stage=reject_count ok=true rejection={rej:?}"),
     }
 

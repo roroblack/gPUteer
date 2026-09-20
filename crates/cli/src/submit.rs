@@ -128,42 +128,66 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //   ★ 이 조각 전까지 `submit` 은 이 축들을 **선언할 방법 자체가
     //     없었다** — 즉 이 명령이 만든 어떤 Manifest 도 스케줄될 수
     //     없었다. 변환기의 fail-closed 규칙이 그 사실을 드러냈다.
-    let workload_class = enum_flag(&flags, "--workload-class", &[
-        ("TRAINING", pb::WorkloadClass::Training as i32),
-        ("INFERENCE", pb::WorkloadClass::Inference as i32),
-        ("PREPROCESSING", pb::WorkloadClass::Preprocessing as i32),
-        ("EVALUATION", pb::WorkloadClass::Evaluation as i32),
-        ("RENDERING", pb::WorkloadClass::Rendering as i32),
-        ("OTHER", pb::WorkloadClass::Other as i32),
-    ])?;
-    let side_effect_class = enum_flag(&flags, "--side-effect-class", &[
-        ("PURE", pb::SideEffectClass::Pure as i32),
-        ("IDEMPOTENT", pb::SideEffectClass::Idempotent as i32),
-        ("SIDE_EFFECTING", pb::SideEffectClass::SideEffecting as i32),
-    ])?;
-    let sensitivity = enum_flag(&flags, "--dataset-sensitivity", &[
-        ("PUBLIC", pb::Sensitivity::Public as i32),
-        ("INTERNAL", pb::Sensitivity::Internal as i32),
-        ("SENSITIVE", pb::Sensitivity::Sensitive as i32),
-    ])?;
-    let minimum_security_tier = enum_flag(&flags, "--minimum-security-tier", &[
-        ("S0", pb::SecurityTier::S0 as i32),
-        ("S1", pb::SecurityTier::S1 as i32),
-        ("S2", pb::SecurityTier::S2 as i32),
-        ("S3", pb::SecurityTier::S3 as i32),
-        ("S4", pb::SecurityTier::S4 as i32),
-        ("S5", pb::SecurityTier::S5 as i32),
-    ])?;
-    let minimum_isolation_class = enum_flag(&flags, "--minimum-isolation-class", &[
-        ("RESTRICTED", pb::IsolationClass::Restricted as i32),
-        ("CONTAINED", pb::IsolationClass::Contained as i32),
-        ("VIRTUALIZED", pb::IsolationClass::Virtualized as i32),
-    ])?;
-    let minimum_key_protection = enum_flag(&flags, "--minimum-key-protection", &[
-        ("K0", pb::KeyProtection::K0 as i32),
-        ("K1", pb::KeyProtection::K1 as i32),
-        ("K2", pb::KeyProtection::K2 as i32),
-    ])?;
+    let workload_class = enum_flag(
+        &flags,
+        "--workload-class",
+        &[
+            ("TRAINING", pb::WorkloadClass::Training as i32),
+            ("INFERENCE", pb::WorkloadClass::Inference as i32),
+            ("PREPROCESSING", pb::WorkloadClass::Preprocessing as i32),
+            ("EVALUATION", pb::WorkloadClass::Evaluation as i32),
+            ("RENDERING", pb::WorkloadClass::Rendering as i32),
+            ("OTHER", pb::WorkloadClass::Other as i32),
+        ],
+    )?;
+    let side_effect_class = enum_flag(
+        &flags,
+        "--side-effect-class",
+        &[
+            ("PURE", pb::SideEffectClass::Pure as i32),
+            ("IDEMPOTENT", pb::SideEffectClass::Idempotent as i32),
+            ("SIDE_EFFECTING", pb::SideEffectClass::SideEffecting as i32),
+        ],
+    )?;
+    let sensitivity = enum_flag(
+        &flags,
+        "--dataset-sensitivity",
+        &[
+            ("PUBLIC", pb::Sensitivity::Public as i32),
+            ("INTERNAL", pb::Sensitivity::Internal as i32),
+            ("SENSITIVE", pb::Sensitivity::Sensitive as i32),
+        ],
+    )?;
+    let minimum_security_tier = enum_flag(
+        &flags,
+        "--minimum-security-tier",
+        &[
+            ("S0", pb::SecurityTier::S0 as i32),
+            ("S1", pb::SecurityTier::S1 as i32),
+            ("S2", pb::SecurityTier::S2 as i32),
+            ("S3", pb::SecurityTier::S3 as i32),
+            ("S4", pb::SecurityTier::S4 as i32),
+            ("S5", pb::SecurityTier::S5 as i32),
+        ],
+    )?;
+    let minimum_isolation_class = enum_flag(
+        &flags,
+        "--minimum-isolation-class",
+        &[
+            ("RESTRICTED", pb::IsolationClass::Restricted as i32),
+            ("CONTAINED", pb::IsolationClass::Contained as i32),
+            ("VIRTUALIZED", pb::IsolationClass::Virtualized as i32),
+        ],
+    )?;
+    let minimum_key_protection = enum_flag(
+        &flags,
+        "--minimum-key-protection",
+        &[
+            ("K0", pb::KeyProtection::K0 as i32),
+            ("K1", pb::KeyProtection::K1 as i32),
+            ("K2", pb::KeyProtection::K2 as i32),
+        ],
+    )?;
 
     // 자원 요구.
     //
@@ -275,7 +299,9 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //   한쪽만 고치면 다음 사람이 다른 쪽을 다시 발견한다 — 그래서
     //   도우미를 `crate::out_file` 한 곳에 뒀다.
     let overwrite = matches!(
-        flags.get("--overwrite-existing-manifest").map(String::as_str),
+        flags
+            .get("--overwrite-existing-manifest")
+            .map(String::as_str),
         Some("true")
     );
     let warning = crate::out_file::write_new(

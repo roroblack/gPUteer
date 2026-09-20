@@ -453,15 +453,21 @@ mod tests {
                     })
                 })
                 .collect();
-            let results: Vec<(u8, Result<Option<String>, String>)> =
-                handles.into_iter().map(|h| h.join().expect("스레드")).collect();
+            let results: Vec<(u8, Result<Option<String>, String>)> = handles
+                .into_iter()
+                .map(|h| h.join().expect("스레드"))
+                .collect();
 
             let winners: Vec<u8> = results
                 .iter()
                 .filter(|(_, r)| r.is_ok())
                 .map(|(i, _)| *i)
                 .collect();
-            assert_eq!(winners.len(), 1, "round {round}: 이긴 쓰기가 {winners:?} 다");
+            assert_eq!(
+                winners.len(),
+                1,
+                "round {round}: 이긴 쓰기가 {winners:?} 다"
+            );
             for (i, result) in &results {
                 if let Err(e) = result {
                     assert!(e.contains("OUT_EXISTS"), "round {round} writer {i}: {e}");
@@ -473,7 +479,10 @@ mod tests {
                 "round {round}: 산출물이 이긴 쓰기의 것이 아니다"
             );
             let left = temps_left(dir.path());
-            assert!(left.is_empty(), "round {round}: 임시 파일이 남았다 {left:?}");
+            assert!(
+                left.is_empty(),
+                "round {round}: 임시 파일이 남았다 {left:?}"
+            );
         }
     }
 
@@ -486,9 +495,13 @@ mod tests {
         let (first, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("첫 임시");
         drop(file);
         std::fs::remove_file(&first).expect("지우기");
-        let (second, file) = create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("둘째 임시");
+        let (second, file) =
+            create_exclusive_temp(dir.path(), "x.pb", "T", "X").expect("둘째 임시");
         drop(file);
-        assert_ne!(first, second, "지운 임시 이름을 다시 썼다 — 동시 쓰기가 같은 이름을 두고 부딪힌다");
+        assert_ne!(
+            first, second,
+            "지운 임시 이름을 다시 썼다 — 동시 쓰기가 같은 이름을 두고 부딪힌다"
+        );
     }
 
     /// ★ 결함 ㊱ · ㊴ — **지금 이름**(`.tmp.<pid>.<seq>.0`)의 남의 파일도 안 건드린다.
@@ -511,7 +524,10 @@ mod tests {
             dir.path().join(format!("y.pb.tmp.{pid}.{seq}.1")),
             "남은 파일과 부딪힌 뒤 다음 후보로 넘어가지 않았다"
         );
-        assert_eq!(std::fs::read(&sentinel).expect("★ 남의 파일이 사라졌다"), b"sentinel");
+        assert_eq!(
+            std::fs::read(&sentinel).expect("★ 남의 파일이 사라졌다"),
+            b"sentinel"
+        );
     }
 
     /// ★ 결함 ㊴ — 번호가 소진되면 0 으로 돌지 않고 실패한다.

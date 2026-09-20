@@ -222,11 +222,12 @@ fn side_effect_class(value: i32) -> Result<SideEffectClass, ManifestConversionEr
 }
 
 fn sensitivity(value: i32) -> Result<Sensitivity, ManifestConversionError> {
-    let parsed =
-        pb::Sensitivity::try_from(value).map_err(|_| ManifestConversionError::UnknownEnumValue {
+    let parsed = pb::Sensitivity::try_from(value).map_err(|_| {
+        ManifestConversionError::UnknownEnumValue {
             field: "dataset.sensitivity",
             value,
-        })?;
+        }
+    })?;
     match parsed {
         pb::Sensitivity::Unspecified => {
             Err(ManifestConversionError::Unspecified("dataset.sensitivity"))
@@ -238,11 +239,12 @@ fn sensitivity(value: i32) -> Result<Sensitivity, ManifestConversionError> {
 }
 
 fn security_tier(value: i32) -> Result<SecurityTier, ManifestConversionError> {
-    let parsed =
-        pb::SecurityTier::try_from(value).map_err(|_| ManifestConversionError::UnknownEnumValue {
+    let parsed = pb::SecurityTier::try_from(value).map_err(|_| {
+        ManifestConversionError::UnknownEnumValue {
             field: "minimum_security_tier",
             value,
-        })?;
+        }
+    })?;
     match parsed {
         pb::SecurityTier::Unspecified => Err(ManifestConversionError::Unspecified(
             "minimum_security_tier",
@@ -464,10 +466,16 @@ mod tests {
     #[test]
     fn a_zero_vram_floor_is_still_accepted_as_no_floor() {
         let manifest = verified(|m| {
-            m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_vram_bytes = 0;
+            m.resources
+                .as_mut()
+                .unwrap()
+                .gpu
+                .as_mut()
+                .unwrap()
+                .min_vram_bytes = 0;
         });
-        let requirements = job_requirements_from_manifest(&manifest, MEMBER)
-            .expect("VRAM 하한 0 은 받아야 한다");
+        let requirements =
+            job_requirements_from_manifest(&manifest, MEMBER).expect("VRAM 하한 0 은 받아야 한다");
         assert_eq!(requirements.minimum_vram_bytes_per_gpu, Some(0));
     }
 
@@ -519,7 +527,15 @@ mod tests {
     #[test]
     fn a_zero_gpu_count_becomes_the_documented_default_of_one() {
         let requirements = job_requirements_from_manifest(
-            &verified(|m| m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_count = 0),
+            &verified(|m| {
+                m.resources
+                    .as_mut()
+                    .unwrap()
+                    .gpu
+                    .as_mut()
+                    .unwrap()
+                    .min_count = 0
+            }),
             MEMBER,
         )
         .expect("변환 실패");
@@ -527,7 +543,15 @@ mod tests {
 
         // 대조 — 0 이 아닌 값은 그대로 간다. 아니면 "항상 1" 로도 통과한다.
         let requirements = job_requirements_from_manifest(
-            &verified(|m| m.resources.as_mut().unwrap().gpu.as_mut().unwrap().min_count = 4),
+            &verified(|m| {
+                m.resources
+                    .as_mut()
+                    .unwrap()
+                    .gpu
+                    .as_mut()
+                    .unwrap()
+                    .min_count = 4
+            }),
             MEMBER,
         )
         .expect("변환 실패");
@@ -613,18 +637,17 @@ mod tests {
 
         for (raw, want) in [
             (pb::SideEffectClass::Pure, SideEffectClass::Pure),
-            (
-                pb::SideEffectClass::Idempotent,
-                SideEffectClass::Idempotent,
-            ),
+            (pb::SideEffectClass::Idempotent, SideEffectClass::Idempotent),
             (
                 pb::SideEffectClass::SideEffecting,
                 SideEffectClass::SideEffecting,
             ),
         ] {
-            let got =
-                job_requirements_from_manifest(&verified(|m| m.side_effect_class = raw as i32), MEMBER)
-                    .unwrap_or_else(|e| panic!("side_effect_class {raw:?} 를 거부했다: {e:?}"));
+            let got = job_requirements_from_manifest(
+                &verified(|m| m.side_effect_class = raw as i32),
+                MEMBER,
+            )
+            .unwrap_or_else(|e| panic!("side_effect_class {raw:?} 를 거부했다: {e:?}"));
             assert_eq!(got.side_effect_class, Some(want));
         }
 
@@ -660,10 +683,7 @@ mod tests {
         for (raw, want) in [
             (pb::IsolationClass::Restricted, IsolationClass::Restricted),
             (pb::IsolationClass::Contained, IsolationClass::Contained),
-            (
-                pb::IsolationClass::Virtualized,
-                IsolationClass::Virtualized,
-            ),
+            (pb::IsolationClass::Virtualized, IsolationClass::Virtualized),
         ] {
             let got = job_requirements_from_manifest(
                 &verified(|m| m.minimum_isolation_class = raw as i32),

@@ -277,7 +277,9 @@ impl OwnerPanel {
     fn handle(&self, mut stream: TcpStream) -> std::io::Result<()> {
         let request = match read_request(&mut stream) {
             Ok(request) => request,
-            Err(message) => return respond(&mut stream, 400, "text/plain; charset=utf-8", &message),
+            Err(message) => {
+                return respond(&mut stream, 400, "text/plain; charset=utf-8", &message)
+            }
         };
 
         // ★ Host 검사 — DNS 리바인딩 방어.
@@ -393,9 +395,9 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
             "host" => host = Some(value),
             TOKEN_HEADER => token = Some(value),
             "content-length" => {
-                content_length = value.parse().map_err(|_| {
-                    format!("Content-Length 를 읽을 수 없다: {value:?}")
-                })?;
+                content_length = value
+                    .parse()
+                    .map_err(|_| format!("Content-Length 를 읽을 수 없다: {value:?}"))?;
             }
             _ => {}
         }
@@ -626,7 +628,13 @@ mod tests {
     /// `Host` 검사가 실제로 갈라내는가.
     #[test]
     fn host_check_accepts_loopback_and_rejects_names() {
-        for good in ["127.0.0.1", "127.0.0.1:8765", "localhost", "localhost:1", "[::1]:9"] {
+        for good in [
+            "127.0.0.1",
+            "127.0.0.1:8765",
+            "localhost",
+            "localhost:1",
+            "[::1]:9",
+        ] {
             assert!(host_is_loopback(Some(good)), "{good} 이 거부됐다");
         }
         // ★ 문법이 깨진 Host 도 전부 거부해야 한다. 초안은 이것들을

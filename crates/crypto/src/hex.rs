@@ -141,7 +141,10 @@ mod tests {
     fn a_sign_is_not_a_hex_digit() {
         assert!(matches!(
             decode_fixed::<1>("+f"),
-            Err(HexError::NotHex { byte: b'+', index: 0 })
+            Err(HexError::NotHex {
+                byte: b'+',
+                index: 0
+            })
         ));
     }
 

@@ -389,8 +389,14 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             (config.send_attempt_report, "--send-attempt-report"),
             (config.heartbeat_rounds > 0, "--heartbeat-rounds"),
             (config.do_renew, "--do-renew"),
-            (config.expect_revoke_after_round.is_some(), "--expect-revoke-after-round"),
-            (config.neighbor_report_rounds > 0, "--neighbor-report-rounds"),
+            (
+                config.expect_revoke_after_round.is_some(),
+                "--expect-revoke-after-round",
+            ),
+            (
+                config.neighbor_report_rounds > 0,
+                "--neighbor-report-rounds",
+            ),
             // 결함 103 (재검수 61) — 짝인 Coordinator --send-grant-twice 가 ACK 뒤 추가 프레임을 기다리며 FRESH 를 붙잡는다.
             (config.expect_replay, "--expect-replay"),
         ];
@@ -410,7 +416,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         );
     }
     if config.report_over_session && config.report_session_attempts == 0 {
-        return Err("REPORT_SESSION_CONFIG_REFUSED: --report-session-attempts 는 1 이상이어야 한다".to_string());
+        return Err(
+            "REPORT_SESSION_CONFIG_REFUSED: --report-session-attempts 는 1 이상이어야 한다"
+                .to_string(),
+        );
     }
     // ★ 결함 127 (검수 65) — 순차 Coordinator 는 한 연결을 끝내야 다음 연결을 받는다. REPORT 세션 **뒤에** 같은 FRESH 연결로 더 보내는 설정
     //   (연결 안 갱신 · revoke 대기 · replay 시험)을 함께 켜면 Coordinator 는 FRESH 에서 기다리고 Agent 는 REPORT Ack 를 기다린다.
@@ -420,7 +429,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         //   heartbeat · 이웃 신고는 **양쪽 횟수가 같을 때** REPORT 전에 끝난다(Coordinator 가 더 기다리면 이 목록으로도 못 막는다).
         let holding = [
             (config.do_renew, "--do-renew"),
-            (config.expect_revoke_after_round.is_some(), "--expect-revoke-after-round"),
+            (
+                config.expect_revoke_after_round.is_some(),
+                "--expect-revoke-after-round",
+            ),
             (config.expect_replay, "--expect-replay"),
             (config.multi_agent, "--multi-agent"),
             (config.resume_protocol, "--resume-protocol"),
@@ -435,7 +447,10 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     // ★ 결함 134 · 147 — 125 의 파서 관문을 지나지 않는 라이브러리 호출자도 막는다: outbox 를 명시하지 않았는데 체크포인트 루트가 기동마다 바뀌는
     //   기본 루트면 거부한다. ★ 147 — 전에는 이름 모양(임시 디렉터리 · `gputeer-checkpoints-`)으로 추정해 `..` · 대소문자 표기로 우회되고 고정한 같은
     //   이름을 잘못 거부했다. 이제 설정이 기본값 여부(`checkpoint_root_is_default`)를 들고 온다.
-    if config.report_over_session && config.report_outbox_dir.is_none() && config.checkpoint_root_is_default {
+    if config.report_over_session
+        && config.report_outbox_dir.is_none()
+        && config.checkpoint_root_is_default
+    {
         return Err(
             "REPORT_SESSION_CONFIG_REFUSED: 체크포인트 루트가 기동마다 바뀌는 기본 경로다 — 못 보낸 보고를 다음 기동이 찾지 못한다(결함 125 · 134)"
                 .to_string(),
@@ -443,7 +458,8 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     }
     // ★ 결함 107 — outbox 는 체크포인트 루트 **밖**이어야 한다. 위치를 못 정하거나 루트 안이면 연결하기 전에 거부한다.
     if config.report_over_session {
-        report_outbox_dir(&config).map_err(|error| format!("REPORT_SESSION_CONFIG_REFUSED: {error}"))?;
+        report_outbox_dir(&config)
+            .map_err(|error| format!("REPORT_SESSION_CONFIG_REFUSED: {error}"))?;
     }
     // ★ **신고 대상은 연결하기 전에 확인한다**(독립 검수 4라운드 지적).
     //
@@ -1086,9 +1102,8 @@ fn run_one_connection_inner(
         // 남은 `stdout.log` 에 자식이 이어서 쓰면 지난번 출력과
         // 섞인다.
         remove_dir_if_present(&run_dir)?;
-        fs::create_dir_all(&run_dir).map_err(|error| {
-            format!("작업 출력 디렉터리 생성 실패({run_dir:?}): {error}")
-        })?;
+        fs::create_dir_all(&run_dir)
+            .map_err(|error| format!("작업 출력 디렉터리 생성 실패({run_dir:?}): {error}"))?;
 
         // ★★ **GPU 요구는 Coordinator 가 확정해 내려준 것만 쓴다**
         //   (2026-09-07 신설).
@@ -1178,7 +1193,9 @@ fn run_one_connection_inner(
             clock,
         );
         if let Some(renewer) = renewer {
-            renewer.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            renewer
+                .stop
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             match renewer.handle.join() {
                 // 스레드가 검증한 최신 Lease — 세대는 올라가지 않는다(상승은 verify_renew_result 가 거부한다).
                 Ok(renewed) => held_lease = renewed,
@@ -1190,7 +1207,10 @@ fn run_one_connection_inner(
         let cleanup = remove_dir_if_present(&run_dir);
         let (outcome, cleanup_failure) = merge_run_and_cleanup(outcome, cleanup)?;
         if let Some(error) = &cleanup_failure {
-            println!("WORKLOAD_CLEANUP_FAILED job_id={} detail={error}", spec.job_id);
+            println!(
+                "WORKLOAD_CLEANUP_FAILED job_id={} detail={error}",
+                spec.job_id
+            );
         }
         pending_cleanup_failure = cleanup_failure;
 
@@ -1231,7 +1251,10 @@ fn run_one_connection_inner(
                     node_id: config.agent_device_id.clone(),
                     fence_epoch: held_lease.fence_epoch,
                     exit_code: report.exit.code(),
-                    finalization_failure: report.finalization_failure.as_ref().map(|(stage, _)| *stage),
+                    finalization_failure: report
+                        .finalization_failure
+                        .as_ref()
+                        .map(|(stage, _)| *stage),
                     started_at_unix_ms: report.started_at_unix_ms,
                     finished_at_unix_ms: report.finished_at_unix_ms,
                     issued_at_unix_ms: 0,
@@ -1249,7 +1272,12 @@ fn run_one_connection_inner(
     // ★ 결함 126 (검수 65) — REPORT 세션을 쓰면 종료 관측을 **여기서 바로** 서명해 outbox 에 남긴다. 전에는 heartbeat · 이웃 신고를 보낸 뒤에
     //   남겨, FRESH 연결이 끊겨 그 송신이 `?` 로 실패하면 보고가 파일로도 남지 않았다. 남긴 파일은 다음 기동의 outbox 재전송이 다시 보낸다.
     let outboxed_report = match (config.report_over_session, terminal_observation.as_ref()) {
-        (true, Some(observed)) => Some(outbox_terminal_report(&config, signing_key, &clock, observed)?),
+        (true, Some(observed)) => Some(outbox_terminal_report(
+            &config,
+            signing_key,
+            &clock,
+            observed,
+        )?),
         _ => None,
     };
 
@@ -1383,9 +1411,7 @@ fn run_one_connection_inner(
             FrameType::NeighborUnreachableReport,
             &report.encode_to_vec(),
         )
-        .map_err(|e| {
-            format!("NeighborUnreachableReport 프레임 인코딩 실패(round={round}): {e}")
-        })?;
+        .map_err(|e| format!("NeighborUnreachableReport 프레임 인코딩 실패(round={round}): {e}"))?;
         stream
             .write_all(&frame)
             .map_err(|e| format!("NeighborUnreachableReport 전송 실패(round={round}): {e}"))?;
@@ -1409,11 +1435,9 @@ fn run_one_connection_inner(
     //   표현할 수 없다 — 표현할 수 없는 것을 하는 척하지 않는다.
     if config.send_attempt_report {
         let Some(observed) = terminal_observation.as_ref() else {
-            return Err(
-                "ATTEMPT_REPORT_REFUSED: 관측된 워크로드 종료가 없다 — \
+            return Err("ATTEMPT_REPORT_REFUSED: 관측된 워크로드 종료가 없다 — \
                  보고할 사실이 없으면 보내지 않는다"
-                    .to_string(),
-            );
+                .to_string());
         };
         // 발행 시각만 지금 읽는다. 시작·종료는 그때 관측한 값 그대로다.
         let attempt_report = report::build_signed_attempt_report(
@@ -1728,10 +1752,14 @@ fn verify_renew_result(
                 return Err("RENEW_REJECTED: 갱신된 Lease.attempt_id 가 기존과 다르다".into());
             }
             if new_lease.issuing_coordinator_id != config.coordinator_device_id {
-                return Err("RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다".into());
+                return Err(
+                    "RENEW_REJECTED: 갱신된 Lease.issuing_coordinator_id 가 기대값과 다르다".into(),
+                );
             }
             if new_lease.holder_node_id != config.agent_device_id {
-                return Err("RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into());
+                return Err(
+                    "RENEW_REJECTED: 갱신된 Lease.holder_node_id 가 이 Agent 가 아니다".into(),
+                );
             }
             // ★ 코덱스 독립 검수(2026-08-19, p99) — epoch **상승**은 정책상 거부한다. `check_and_advance()` 는 `<` 만 거부한다.
             if new_lease.fence_epoch > held_lease.fence_epoch {
@@ -1806,11 +1834,19 @@ fn renew_once_over_new_connection(
     };
     request.node_signature = sign(signing_key, &request).to_vec();
     for (frame_type, body, what) in [
-        (FrameType::SessionHello, hello.encode_to_vec(), "Hello(RENEW)"),
-        (FrameType::LeaseRenew, request.encode_to_vec(), "RenewLeaseRequest"),
+        (
+            FrameType::SessionHello,
+            hello.encode_to_vec(),
+            "Hello(RENEW)",
+        ),
+        (
+            FrameType::LeaseRenew,
+            request.encode_to_vec(),
+            "RenewLeaseRequest",
+        ),
     ] {
-        let frame =
-            write_frame(frame_type, &body).map_err(|e| format!("{what} 프레임 인코딩 실패: {e}"))?;
+        let frame = write_frame(frame_type, &body)
+            .map_err(|e| format!("{what} 프레임 인코딩 실패: {e}"))?;
         stream
             .write_all(&frame)
             .map_err(|e| format!("{what} 전송 실패: {e}"))?;
@@ -1818,7 +1854,10 @@ fn renew_once_over_new_connection(
     stream.flush().map_err(|e| e.to_string())?;
 
     let mut keys = InMemoryKeyring::new();
-    keys.insert(config.coordinator_device_id.clone(), config.coordinator_verifying_key);
+    keys.insert(
+        config.coordinator_device_id.clone(),
+        config.coordinator_verifying_key,
+    );
     let mut replay = InMemoryReplayGuard::new();
     let message = read_frame(
         &mut stream,
@@ -1834,7 +1873,9 @@ fn renew_once_over_new_connection(
         FramingError::Truncated | FramingError::Io(_) => {
             format!("RenewLeaseResult 를 받지 못했다(연결 끊김 · 소켓 시한): {e}")
         }
-        other => format!("RENEW_REJECTED: RenewLeaseResult 를 검증하지 못했다(서명 · 시각 · 형식): {other}"),
+        other => format!(
+            "RENEW_REJECTED: RenewLeaseResult 를 검증하지 못했다(서명 · 시각 · 형식): {other}"
+        ),
     })?;
     let result = match message {
         IngressMessage::LeaseRenewResult(verified) => verified
@@ -1905,7 +1946,10 @@ fn start_renew_during_execution(
                     );
                     lease = renewed;
                 }
-                Err(error) if error.starts_with("RENEW_REFUSED") || error.starts_with("RENEW_REJECTED") => {
+                Err(error)
+                    if error.starts_with("RENEW_REFUSED")
+                        || error.starts_with("RENEW_REJECTED") =>
+                {
                     println!("RENEW_SESSION_STOPPED round={round} detail={error}");
                     break 'renew;
                 }
@@ -1928,8 +1972,9 @@ fn start_renew_during_execution(
 fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
     let outbox = match config.report_outbox_dir.as_ref() {
         None => checkpoint_root_sibling(&config.checkpoint_root, ".report-outbox")?,
-        Some(explicit) => std::path::absolute(explicit)
-            .map_err(|error| format!("--report-outbox 를 절대 경로로 바꿀 수 없다({explicit:?}): {error}"))?,
+        Some(explicit) => std::path::absolute(explicit).map_err(|error| {
+            format!("--report-outbox 를 절대 경로로 바꿀 수 없다({explicit:?}): {error}")
+        })?,
     };
     // ★ 결함 128 (검수 65) — 문자열 앞머리 비교는 대소문자(Windows) · junction · symlink · `..` 로 루트 안을 가리키며 통과했다.
     //   세 디렉터리를 만든 뒤 **실제 위치**(canonicalize)로 대조한다. 만드는 것은 부작용이지만 어차피 곧 쓸 자리다.
@@ -1951,20 +1996,29 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
     //   정상 outbox. 그때는 링크를 풀어 쓴 실제 경로를 `--report-outbox` 로 준다(기본 outbox 는 체크포인트 루트의 형제라 루트 경로에 링크가 없으면 걸리지 않는다).
     // ★ 한계: 검사 뒤 경로를 바꿔치기하는 경쟁(TOCTOU)은 막지 못한다 — 핸들로 고정하지 않는다. 거부되는 설정도 디렉터리를 만든 흔적이 남는다.
     let real = |path: &std::path::Path, what: &str| -> Result<PathBuf, String> {
-        fs::create_dir_all(path).map_err(|error| format!("{what} 디렉터리를 만들지 못했다({path:?}): {error}"))?;
-        fs::canonicalize(path).map_err(|error| format!("{what} 의 실제 위치를 읽지 못했다({path:?}): {error}"))
+        fs::create_dir_all(path)
+            .map_err(|error| format!("{what} 디렉터리를 만들지 못했다({path:?}): {error}"))?;
+        fs::canonicalize(path)
+            .map_err(|error| format!("{what} 의 실제 위치를 읽지 못했다({path:?}): {error}"))
     };
     let real_outbox = real(&outbox, "outbox")?;
     let real_root = real(&config.checkpoint_root, "checkpoint root")?;
-    let real_run_root = real(&workload_run_root(&config.checkpoint_root)?, "작업 출력 루트")?;
-    let absolute_outbox =
-        std::path::absolute(&outbox).map_err(|error| format!("outbox 를 절대 경로로 바꿀 수 없다({outbox:?}): {error}"))?;
+    let real_run_root = real(
+        &workload_run_root(&config.checkpoint_root)?,
+        "작업 출력 루트",
+    )?;
+    let absolute_outbox = std::path::absolute(&outbox)
+        .map_err(|error| format!("outbox 를 절대 경로로 바꿀 수 없다({outbox:?}): {error}"))?;
     let mut walked = PathBuf::new();
     for component in absolute_outbox.components() {
         if matches!(component, std::path::Component::Normal(_)) && walked.as_os_str().len() > 0 {
-            let real_prefix = fs::canonicalize(&walked)
-                .map_err(|error| format!("outbox 경로 중간({walked:?})의 실제 위치를 읽지 못했다: {error}"))?;
-            for (guarded, label) in [(&real_root, "체크포인트 루트"), (&real_run_root, "작업 출력 루트")] {
+            let real_prefix = fs::canonicalize(&walked).map_err(|error| {
+                format!("outbox 경로 중간({walked:?})의 실제 위치를 읽지 못했다: {error}")
+            })?;
+            for (guarded, label) in [
+                (&real_root, "체크포인트 루트"),
+                (&real_run_root, "작업 출력 루트"),
+            ] {
                 if real_prefix.starts_with(guarded) {
                     return Err(format!(
                         "--report-outbox({}) 가 {label}({}) 안을 지나간다(경로 중간 실제 위치 대조: {}) — 부팅 GC · 작업 정리가 그 자리를 지운다(결함 107 · 129 · 136 · 146)",
@@ -1992,7 +2046,10 @@ fn report_outbox_dir(config: &AgentConfig) -> Result<PathBuf, String> {
             }
         }
     }
-    for (guarded, label) in [(&real_root, "체크포인트 루트"), (&real_run_root, "작업 출력 루트")] {
+    for (guarded, label) in [
+        (&real_root, "체크포인트 루트"),
+        (&real_run_root, "작업 출력 루트"),
+    ] {
         if real_outbox.starts_with(guarded) {
             return Err(format!(
                 "--report-outbox({}) 가 {label}({}) 안이다(실제 위치 대조) — 부팅 GC · 작업 정리가 보고를 지운다(결함 107 · 128 · 129)",
@@ -2013,9 +2070,15 @@ fn attempt_report_hash(report: &pb::AttemptReport) -> [u8; 32] {
 ///
 /// ★ 디렉터리 sync 는 하지 않는다 — Windows 에는 같은 수단이 없다(ADR-026). 전원이 끊기면 마지막 이름 바꾸기가 사라질 수 있다는 한계가
 ///   남는다(이 경우 보고는 다시 만들 수 없다 — 종료 관측이 메모리에만 있었다).
-fn persist_report_to_outbox(dir: &std::path::Path, report: &pb::AttemptReport) -> Result<PathBuf, String> {
+fn persist_report_to_outbox(
+    dir: &std::path::Path,
+    report: &pb::AttemptReport,
+) -> Result<PathBuf, String> {
     fs::create_dir_all(dir).map_err(|e| {
-        format!("ATTEMPT_REPORT_OUTBOX_FAILED: outbox 디렉터리를 만들지 못했다({}): {e}", dir.display())
+        format!(
+            "ATTEMPT_REPORT_OUTBOX_FAILED: outbox 디렉터리를 만들지 못했다({}): {e}",
+            dir.display()
+        )
     })?;
     let name: String = attempt_report_hash(report)[..16]
         .iter()
@@ -2032,7 +2095,10 @@ fn persist_report_to_outbox(dir: &std::path::Path, report: &pb::AttemptReport) -
         fs::rename(&tmp, &path)
     };
     write().map_err(|e| {
-        format!("ATTEMPT_REPORT_OUTBOX_FAILED: 보고를 outbox 에 남기지 못했다({}): {e}", path.display())
+        format!(
+            "ATTEMPT_REPORT_OUTBOX_FAILED: 보고를 outbox 에 남기지 못했다({}): {e}",
+            path.display()
+        )
     })?;
     Ok(path)
 }
@@ -2101,7 +2167,10 @@ fn deliver_outboxed_report(
                 return Ok(());
             }
             Err(error) if error.starts_with("REPORT_ACK_REJECTED") => {
-                return Err(format!("{error} — 보고는 outbox 에 남아 있다({})", path.display()));
+                return Err(format!(
+                    "{error} — 보고는 outbox 에 남아 있다({})",
+                    path.display()
+                ));
             }
             Err(error) => {
                 println!("REPORT_SESSION_FAILED attempt={attempt} detail={error}");
@@ -2145,7 +2214,10 @@ fn report_session_once(
     let hello_frame = write_frame(FrameType::SessionHello, &hello.encode_to_vec())
         .map_err(|e| format!("Hello(REPORT) 프레임 인코딩 실패: {e}"))?;
     let report_frame = report::attempt_report_frame(report).map_err(|error| error.to_string())?;
-    for (frame, what) in [(hello_frame, "Hello(REPORT)"), (report_frame, "AttemptReport")] {
+    for (frame, what) in [
+        (hello_frame, "Hello(REPORT)"),
+        (report_frame, "AttemptReport"),
+    ] {
         stream
             .write_all(&frame)
             .map_err(|e| format!("{what} 전송 실패: {e}"))?;
@@ -2153,7 +2225,10 @@ fn report_session_once(
     stream.flush().map_err(|e| e.to_string())?;
 
     let mut keys = InMemoryKeyring::new();
-    keys.insert(config.coordinator_device_id.clone(), config.coordinator_verifying_key);
+    keys.insert(
+        config.coordinator_device_id.clone(),
+        config.coordinator_verifying_key,
+    );
     let mut replay = InMemoryReplayGuard::new();
     let message = read_frame(
         &mut stream,
@@ -2167,7 +2242,9 @@ fn report_session_once(
         FramingError::Truncated | FramingError::Io(_) => {
             format!("AttemptReportAck 를 받지 못했다(연결 끊김 · 소켓 시한): {e}")
         }
-        other => format!("REPORT_ACK_REJECTED: 받았다 응답을 검증하지 못했다(서명 · 시각 · 형식): {other}"),
+        other => format!(
+            "REPORT_ACK_REJECTED: 받았다 응답을 검증하지 못했다(서명 · 시각 · 형식): {other}"
+        ),
     })?;
     let ack = match message {
         IngressMessage::AttemptReportAck(verified) => verified
@@ -2198,9 +2275,17 @@ fn verify_report_ack(
             config.coordinator_device_id
         ));
     }
-    if (ack.job_id.as_str(), ack.attempt_id.as_str(), ack.node_id.as_str(), ack.fence_epoch)
-        != (report.job_id.as_str(), report.attempt_id.as_str(), report.node_id.as_str(), report.fence_epoch)
-    {
+    if (
+        ack.job_id.as_str(),
+        ack.attempt_id.as_str(),
+        ack.node_id.as_str(),
+        ack.fence_epoch,
+    ) != (
+        report.job_id.as_str(),
+        report.attempt_id.as_str(),
+        report.node_id.as_str(),
+        report.fence_epoch,
+    ) {
         return Err("REPORT_ACK_REJECTED: job · attempt · node · 세대가 보낸 보고와 다르다".into());
     }
     match ack.report_hash.as_ref() {
@@ -2260,7 +2345,10 @@ fn flush_report_outbox(config: &AgentConfig, signing_key: &SigningKey) {
             }
             Ok(report) => {
                 if let Err(error) = deliver_outboxed_report(config, signing_key, &report, &path) {
-                    println!("ATTEMPT_REPORT_OUTBOX_PENDING path={} detail={error}", path.display());
+                    println!(
+                        "ATTEMPT_REPORT_OUTBOX_PENDING path={} detail={error}",
+                        path.display()
+                    );
                 }
             }
         }
@@ -2274,7 +2362,8 @@ fn reopen_outboxed_report(
     path: &std::path::Path,
 ) -> Result<pb::AttemptReport, String> {
     let bytes = fs::read(path).map_err(|e| format!("읽지 못했다: {e}"))?;
-    let report = pb::AttemptReport::decode(bytes.as_slice()).map_err(|e| format!("디코드 실패: {e}"))?;
+    let report =
+        pb::AttemptReport::decode(bytes.as_slice()).map_err(|e| format!("디코드 실패: {e}"))?;
     if report.node_id != config.agent_device_id {
         return Err("이 Agent 의 보고가 아니다(node_id)".into());
     }
@@ -2566,7 +2655,10 @@ fn run_and_capture_workload(
     let outputs_captured = policy.capture_dir.is_some();
     let outcome = match exec::execute_with_control(spec, policy, |stopper| {
         // ★ 자식이 **막 떴다**(결함 ㊻ — ACK_SENT 와 순서를 비교하는 표지).
-        println!("WORKLOAD_SPAWNED job_id={} attempt_id={}", spec.job_id, attempt_id);
+        println!(
+            "WORKLOAD_SPAWNED job_id={} attempt_id={}",
+            spec.job_id, attempt_id
+        );
         panel.register(owner_panel::RunningWorkload {
             job_id: spec.job_id.clone(),
             attempt_id: attempt_id.to_string(),
@@ -2617,10 +2709,16 @@ fn run_and_capture_workload(
             .map_or_else(|| "unknown".to_string(), |peak| peak.to_string())
     );
     if let exec::ExitObserved::NoCode { detail } = &outcome.exit {
-        println!("WORKLOAD_EXIT_CODE_UNAVAILABLE job_id={} detail={detail}", spec.job_id);
+        println!(
+            "WORKLOAD_EXIT_CODE_UNAVAILABLE job_id={} detail={detail}",
+            spec.job_id
+        );
     }
     if let Some(error) = &outcome.memory_observation_error {
-        println!("WORKLOAD_MEMORY_OBSERVATION_FAILED job_id={} detail={error}", spec.job_id);
+        println!(
+            "WORKLOAD_MEMORY_OBSERVATION_FAILED job_id={} detail={error}",
+            spec.job_id
+        );
     }
 
     // ★ 결함 ⑲ — 여기부터의 실패는 **종료를 관측한 뒤**의 일이다. 전에는 `?` 로 돌려 Agent 오류가 됐고,
@@ -2640,9 +2738,16 @@ fn run_and_capture_workload(
         Ok((files, publish_failure)) => {
             // 결함 83 · 90 — 파일 해시 검증 뒤의 실패는 확정 실패가 아니다(exit 0 이면 COMPLETED, 아니면 FAILED — 결함 91). 그래도 알린다.
             if let Some(detail) = publish_failure {
-                println!("WORKLOAD_CHECKPOINT_PUBLISH_FAILED job_id={} detail={detail}", spec.job_id);
+                println!(
+                    "WORKLOAD_CHECKPOINT_PUBLISH_FAILED job_id={} detail={detail}",
+                    spec.job_id
+                );
             }
-            (files.len(), files.iter().map(|(_, data)| data.len()).sum(), None)
+            (
+                files.len(),
+                files.iter().map(|(_, data)| data.len()).sum(),
+                None,
+            )
         }
         Err((stage, detail)) => {
             println!(
@@ -2675,7 +2780,9 @@ fn merge_run_and_cleanup(
         (Ok(value), Ok(())) => Ok((value, None)),
         (Ok(value), Err(cleanup_error)) => Ok((value, Some(cleanup_error))),
         (Err(run_error), Ok(())) => Err(run_error),
-        (Err(run_error), Err(cleanup_error)) => Err(format!("{run_error} / 그리고 {cleanup_error}")),
+        (Err(run_error), Err(cleanup_error)) => {
+            Err(format!("{run_error} / 그리고 {cleanup_error}"))
+        }
     }
 }
 
@@ -2698,8 +2805,9 @@ fn finalize_workload_outputs(
 ) -> Result<(Vec<(String, Vec<u8>)>, Option<String>), (pb::FinalizationFailureStage, String)> {
     let files = collect_workload_artifacts(run_dir, spec, outcome, outputs_captured)?;
     // Ok(Some(..)) 는 해시 검증 뒤의 공개 실패다(결함 83) — 확정 실패가 아니다.
-    let publish_failure = finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)
-        .map_err(|detail| (pb::FinalizationFailureStage::CommitCheckpoint, detail))?;
+    let publish_failure =
+        finalize_workload_checkpoint(checkpoint_root, checkpoint_id, lease, attempt_id, &files)
+            .map_err(|detail| (pb::FinalizationFailureStage::CommitCheckpoint, detail))?;
     Ok((files, publish_failure))
 }
 
@@ -2751,8 +2859,11 @@ fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock
     let lock = claim_checkpoint_root(&input_root)?;
     config.checkpoint_root = lock.real_root.clone();
     if config.report_over_session {
-        report_outbox_dir(config)
-            .map_err(|error| format!("REPORT_SESSION_CONFIG_REFUSED: (실제 루트 기준 · 기동 GC 전 · 결함 199) {error}"))?;
+        report_outbox_dir(config).map_err(|error| {
+            format!(
+                "REPORT_SESSION_CONFIG_REFUSED: (실제 루트 기준 · 기동 GC 전 · 결함 199) {error}"
+            )
+        })?;
     }
     collect_startup_partials(&input_root, &lock.real_root)?;
     Ok(lock)
@@ -2799,7 +2910,9 @@ fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, S
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠금 파일을 열지 못했다({lock_path:?}): {error}"))?;
+        .map_err(|error| {
+            format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠금 파일을 열지 못했다({lock_path:?}): {error}")
+        })?;
     match file.try_lock() {
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => {
@@ -2809,7 +2922,9 @@ fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, S
             ));
         }
         Err(fs::TryLockError::Error(error)) => {
-            return Err(format!("CHECKPOINT_ROOT_LOCK_FAILED: 잠그지 못했다({lock_path:?}): {error}"));
+            return Err(format!(
+                "CHECKPOINT_ROOT_LOCK_FAILED: 잠그지 못했다({lock_path:?}): {error}"
+            ));
         }
     }
     let owner_marker = real_root.join(CHECKPOINT_ROOT_OWNER_MARKER);
@@ -2844,11 +2959,17 @@ fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, S
             .and_then(|mut marker| marker.write_all(b"gputeer agent checkpoint root v1\n"))
             .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 루트 표식을 쓰지 못했다({owner_marker:?}): {error}"))?;
     }
-    Ok(CheckpointRootLock { _file: file, real_root })
+    Ok(CheckpointRootLock {
+        _file: file,
+        real_root,
+    })
 }
 
 /// 결함 85 · 199 — 독점한 실제 루트의 부팅 GC. 반드시 `claim_checkpoint_root` 가 돌려준 잠금을 쥔 채로 부른다.
-fn collect_startup_partials(root: &std::path::Path, real_root: &std::path::Path) -> Result<(), String> {
+fn collect_startup_partials(
+    root: &std::path::Path,
+    real_root: &std::path::Path,
+) -> Result<(), String> {
     let (dirs, removed) = gputeer_checkpoint::writer::startup_gc(real_root).map_err(|error| {
         format!(
             "CHECKPOINT_STARTUP_GC_FAILED: 체크포인트 루트({} · 실제 위치 {})의 부분 체크포인트를 정리하지 못했다 — 시작하지 않는다: {error}",
@@ -2874,8 +2995,11 @@ pub const CHECKPOINT_ROOT_OWNER_MARKER: &str = ".gputeer-agent-root";
 /// ★ 결함 152 — 이 경로를 이후 쓰기에도 쓰므로 Windows 의 `\\?\C:\…` 는 **보통 경로로 되돌릴 수 있을 때만** 되돌린다(`without_verbatim_prefix`) —
 ///   작업 디렉터리 · 자식 프로세스 인자가 verbatim 경로를 받지 못하는 경우가 있다.
 fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
-    fs::create_dir_all(root)
-        .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트 디렉터리를 만들지 못했다({root:?}): {error}"))?;
+    fs::create_dir_all(root).map_err(|error| {
+        format!(
+            "CHECKPOINT_ROOT_INVALID: 체크포인트 루트 디렉터리를 만들지 못했다({root:?}): {error}"
+        )
+    })?;
     fs::canonicalize(root)
         .map(without_verbatim_prefix)
         .map_err(|error| format!("CHECKPOINT_ROOT_INVALID: 체크포인트 루트의 실제 위치를 읽지 못했다({root:?}): {error}"))
@@ -2895,18 +3019,32 @@ const VERBATIM_STRIP_MAX_ROOT_LEN: usize = 120;
 /// 결함 152 · 160 — `\\?\X:\…` 에서 접두사를 떼도 같은 경로로 읽히면 뗀다. 길이(VERBATIM_STRIP_MAX_ROOT_LEN 이상) · 끝이 점 · 공백인 이름 · 장치 이름(CON 등)이 있거나 UNC 면 그대로 둔다.
 #[cfg(windows)]
 fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let Some(text) = path.to_str() else { return path };
-    let Some(rest) = text.strip_prefix(r"\\?\") else { return path };
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    let Some(rest) = text.strip_prefix(r"\\?\") else {
+        return path;
+    };
     let bytes = rest.as_bytes();
-    let drive_form = bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\';
+    let drive_form =
+        bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\';
     const DEVICES: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4",
-        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
-    let plain_components = rest[3..].split('\\').filter(|c| !c.is_empty()).all(|component| {
-        let stem = component.split('.').next().unwrap_or("").to_ascii_uppercase();
-        !component.ends_with('.') && !component.ends_with(' ') && !DEVICES.contains(&stem.as_str())
-    });
+    let plain_components = rest[3..]
+        .split('\\')
+        .filter(|c| !c.is_empty())
+        .all(|component| {
+            let stem = component
+                .split('.')
+                .next()
+                .unwrap_or("")
+                .to_ascii_uppercase();
+            !component.ends_with('.')
+                && !component.ends_with(' ')
+                && !DEVICES.contains(&stem.as_str())
+        });
     if drive_form && rest.len() < VERBATIM_STRIP_MAX_ROOT_LEN && plain_components {
         PathBuf::from(rest)
     } else {
@@ -2924,7 +3062,10 @@ pub fn checkpoint_root_owner_marker(root: &std::path::Path) -> Result<PathBuf, S
     Ok(real_checkpoint_root(root)?.join(CHECKPOINT_ROOT_OWNER_MARKER))
 }
 
-fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> Result<PathBuf, String> {
+fn checkpoint_root_sibling(
+    checkpoint_root: &std::path::Path,
+    suffix: &str,
+) -> Result<PathBuf, String> {
     let absolute = std::path::absolute(checkpoint_root).map_err(|error| {
         format!("checkpoint root 를 절대 경로로 바꿀 수 없다({checkpoint_root:?}): {error}")
     })?;
@@ -2934,9 +3075,9 @@ fn checkpoint_root_sibling(checkpoint_root: &std::path::Path, suffix: &str) -> R
                 — 하위 디렉터리를 지정하라"
         )
     })?;
-    let name = absolute.file_name().ok_or_else(|| {
-        format!("checkpoint root 에서 이름을 얻을 수 없다({absolute:?})")
-    })?;
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| format!("checkpoint root 에서 이름을 얻을 수 없다({absolute:?})"))?;
     let mut sibling = name.to_os_string();
     sibling.push(suffix);
     Ok(parent.join(sibling))
@@ -3012,13 +3153,12 @@ fn collect_workload_artifacts(
         "peak_commit_bytes": outcome.peak_commit_bytes,
         "memory_observation_error": outcome.memory_observation_error,
     });
-    let mut result_bytes = serde_json::to_vec_pretty(&result)
-        .map_err(|error| {
-            (
-                pb::FinalizationFailureStage::EncodeResult,
-                format!("작업 결과를 JSON 으로 바꾸지 못했다: {error}"),
-            )
-        })?;
+    let mut result_bytes = serde_json::to_vec_pretty(&result).map_err(|error| {
+        (
+            pb::FinalizationFailureStage::EncodeResult,
+            format!("작업 결과를 JSON 으로 바꾸지 못했다: {error}"),
+        )
+    })?;
     result_bytes.push(b'\n');
     files.push((WORKLOAD_RESULT_FILENAME.to_string(), result_bytes));
 
@@ -3242,7 +3382,10 @@ fn send_grant_ack(
         .map_err(|e| format!("ACK 전송 실패: {e}"))?;
     stream.flush().map_err(|e| e.to_string())?;
     // ★ 기동 전 ACK 를 테스트가 직접 관측하는 표지(결함 ㊻) — WORKLOAD_SPAWNED 보다 먼저 찍혀야 한다.
-    println!("ACK_SENT grant_id={} attempt_id={}", ack.grant_id, ack.attempt_id);
+    println!(
+        "ACK_SENT grant_id={} attempt_id={}",
+        ack.grant_id, ack.attempt_id
+    );
     Ok(ack)
 }
 
@@ -3321,7 +3464,6 @@ fn derive_nonce(tag: &str, id: &str, connection_attempt: u32) -> Vec<u8> {
     gputeer_protocol::nonce::derive_replay_nonce(tag, id, connection_attempt)
 }
 
-
 /// 반복 Lease 갱신(2026-08-19,
 /// `docs/plans/2026-08-19_2330_같은_연결_반복_lease_갱신_v1.md`) 전용
 /// nonce 유도 — `lease_id` 만으로는 회차마다 같은 값이 나와
@@ -3356,7 +3498,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
 
     // ★ 결함 125 (검수 65) — `--checkpoint-root` 를 안 주면 기본 루트가 PID · 시각으로 **기동마다 새로** 만들어져, 거기서 파생한 outbox 도
     //   매번 달라진다. 그러면 못 보낸 보고를 다음 기동이 못 찾는다. REPORT 세션은 두 경로 중 하나를 명시해야 한다.
-    let report_path_explicit = flags.get("--checkpoint-root").is_some() || flags.get("--report-outbox").is_some();
+    let report_path_explicit =
+        flags.get("--checkpoint-root").is_some() || flags.get("--report-outbox").is_some();
     let config = AgentConfig {
         coordinator_addr: flags.require("--connect")?,
         own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
@@ -3370,22 +3513,25 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         send_attempt_report: flags.bool_flag("--send-attempt-report"),
         report_over_session: flags.bool_flag("--report-over-session"),
         report_outbox_dir: flags.get("--report-outbox").map(PathBuf::from),
-        report_session_attempts: u32::try_from(flags.u64_flag_with_default("--report-session-attempts", 3)?)
-            .map_err(|_| "--report-session-attempts 가 u32 범위를 넘는다".to_string())?,
+        report_session_attempts: u32::try_from(
+            flags.u64_flag_with_default("--report-session-attempts", 3)?,
+        )
+        .map_err(|_| "--report-session-attempts 가 u32 범위를 넘는다".to_string())?,
         corrupt_heartbeat_fence: flags.bool_flag("--corrupt-heartbeat-fence"),
         corrupt_heartbeat_coordinator: flags.bool_flag("--corrupt-heartbeat-coordinator"),
         corrupt_heartbeat_device: flags.bool_flag("--corrupt-heartbeat-device"),
         corrupt_hello_mode: flags.bool_flag("--corrupt-hello-mode"),
-        workload_cgroup_parent: flags.get("--workload-cgroup-parent")
+        workload_cgroup_parent: flags
+            .get("--workload-cgroup-parent")
             .map(std::path::PathBuf::from),
         multi_agent: flags.bool_flag("--multi-agent"),
         // ★ 파싱 실패를 0 으로 접지 않는다(2026-08-30 독립 검수 3라운드).
         //   잘못 쓴 값이 "간격 없음" 으로 조용히 바뀌면, 운영자는 간격을
         //   줬다고 믿는데 실제로는 안 준 상태가 된다.
         heartbeat_interval_ms: match flags.checked_get::<u64>("--heartbeat-interval-ms")? {
-            Some(raw) => raw.parse::<u64>().map_err(|_| {
-                format!("--heartbeat-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
-            })?,
+            Some(raw) => raw
+                .parse::<u64>()
+                .map_err(|_| format!("--heartbeat-interval-ms 를 숫자로 읽지 못했다: {raw:?}"))?,
             None => 0,
         },
         heartbeat_rounds: match flags.checked_get::<u32>("--heartbeat-rounds")? {
@@ -3403,7 +3549,9 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         // ★ heartbeat 간격과 같은 이유로 **조용히 0 으로 떨어뜨리지 않는다** —
         //   잘못 쓴 값이 "간격 없음" 이 되면 운영자는 간격을 줬다고 믿는데
         //   실제로는 안 준 상태가 된다.
-        neighbor_report_interval_ms: match flags.checked_get::<u64>("--neighbor-report-interval-ms")? {
+        neighbor_report_interval_ms: match flags
+            .checked_get::<u64>("--neighbor-report-interval-ms")?
+        {
             Some(raw) => raw.parse::<u64>().map_err(|_| {
                 format!("--neighbor-report-interval-ms 를 숫자로 읽지 못했다: {raw:?}")
             })?,
@@ -3413,7 +3561,11 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         corrupt_neighbor_report_coordinator: flags
             .bool_flag("--corrupt-neighbor-report-coordinator"),
         owner_panel_state: owner_panel::OwnerPanelState::new(),
-        owner_panel_port: flags.checked_get::<u16>("--owner-panel-port")?.map(|v| v.parse::<u16>()).transpose().map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
+        owner_panel_port: flags
+            .checked_get::<u16>("--owner-panel-port")?
+            .map(|v| v.parse::<u16>())
+            .transpose()
+            .map_err(|e| format!("--owner-panel-port 파싱 실패: {e}"))?,
         // 기본 256MiB. Job Object 커밋 상한이라 VRAM 은 대략
         // `RAM 상한 - 2000MiB` 로 간접 제한된다(ADR-027) — 이 값은
         // 실행 자체를 증명하기 위한 최소값이고 정책이 아니다.
@@ -3453,14 +3605,14 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         drop_after_renew_request_once: flags.bool_flag("--drop-after-renew-request-once"),
         reuse_renew_nonce_after_reconnect: flags.bool_flag("--reuse-renew-nonce-after-reconnect"),
         resume_protocol: flags.bool_flag("--resume-protocol"),
-        session_id: flags.get("--session-id")
+        session_id: flags
+            .get("--session-id")
             .cloned()
             .unwrap_or_else(|| "resume-session".into()),
-        resume_lease_id: flags.get("--resume-lease-id")
-            .cloned()
-            .unwrap_or_default(),
+        resume_lease_id: flags.get("--resume-lease-id").cloned().unwrap_or_default(),
         resume_job_id: flags.get("--resume-job-id").cloned().unwrap_or_default(),
-        resume_attempt_id: flags.get("--resume-attempt-id")
+        resume_attempt_id: flags
+            .get("--resume-attempt-id")
             .cloned()
             .unwrap_or_default(),
         resume_fence_epoch: flags.u64_flag_with_default("--resume-fence-epoch", 0)?,
@@ -3874,8 +4026,17 @@ mod tests {
         // D2 — 실제 Agent 는 Grant 를 받기 전에 Hello(FRESH) 를 보낸다.
         let mut hello_header = [0u8; 5];
         std::io::Read::read_exact(&mut stream, &mut hello_header).expect("Agent Hello header");
-        assert_eq!(hello_header[0], FrameType::SessionHello as u8, "첫 프레임은 Hello 다(D2)");
-        let hello_len = u32::from_be_bytes([hello_header[1], hello_header[2], hello_header[3], hello_header[4]]) as usize;
+        assert_eq!(
+            hello_header[0],
+            FrameType::SessionHello as u8,
+            "첫 프레임은 Hello 다(D2)"
+        );
+        let hello_len = u32::from_be_bytes([
+            hello_header[1],
+            hello_header[2],
+            hello_header[3],
+            hello_header[4],
+        ]) as usize;
         let mut hello_body = vec![0u8; hello_len];
         std::io::Read::read_exact(&mut stream, &mut hello_body).expect("Agent Hello body");
 
@@ -4045,9 +4206,23 @@ mod defect_19_tests {
         let run = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(run.path().join(exec::STDOUT_FILENAME)).unwrap();
-        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
-            .expect_err("디렉터리를 파일로 읽을 수 없다");
-        assert_eq!(error.0, pb::FinalizationFailureStage::ReadOutputs, "{}", error.1);
+        let error = finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect_err("디렉터리를 파일로 읽을 수 없다");
+        assert_eq!(
+            error.0,
+            pb::FinalizationFailureStage::ReadOutputs,
+            "{}",
+            error.1
+        );
     }
 
     /// 체크포인트 디렉터리 자리에 **파일**이 있으면 확정이 실패한다 -> COMMIT_CHECKPOINT.
@@ -4059,9 +4234,23 @@ mod defect_19_tests {
         // 캡처한 출력은 있어야 한다 — 없으면 결함 84 규칙(READ_OUTPUTS)이 먼저 걸려 확정 단계까지 가지 않는다.
         std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
         std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
-        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
-            .expect_err("파일 위에 체크포인트를 만들 수 없다");
-        assert_eq!(error.0, pb::FinalizationFailureStage::CommitCheckpoint, "{}", error.1);
+        let error = finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect_err("파일 위에 체크포인트를 만들 수 없다");
+        assert_eq!(
+            error.0,
+            pb::FinalizationFailureStage::CommitCheckpoint,
+            "{}",
+            error.1
+        );
     }
 
     /// 대조 — 막힌 곳이 없으면 확정이 성공하고 파일 목록을 돌려준다(위 두 테스트가 무조건 실패하는 fixture 가 아님을 확인).
@@ -4071,8 +4260,17 @@ mod defect_19_tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
         std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
-        let (files, publish_failure) = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
-            .expect("막힌 곳이 없으면 확정한다");
+        let (files, publish_failure) = finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect("막힌 곳이 없으면 확정한다");
         assert!(files.iter().any(|(name, _)| name == exec::STDOUT_FILENAME));
         assert!(publish_failure.is_none());
     }
@@ -4082,9 +4280,23 @@ mod defect_19_tests {
     fn a_lost_captured_output_is_read_outputs() {
         let run = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
-        let error = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
-            .expect_err("캡처했는데 출력이 없으면 확정하지 않는다");
-        assert_eq!(error.0, pb::FinalizationFailureStage::ReadOutputs, "{}", error.1);
+        let error = finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect_err("캡처했는데 출력이 없으면 확정하지 않는다");
+        assert_eq!(
+            error.0,
+            pb::FinalizationFailureStage::ReadOutputs,
+            "{}",
+            error.1
+        );
     }
 
     /// 대조 — 캡처를 안 켰으면 출력 파일 부재는 실패가 아니다(관측하지 않았다).
@@ -4092,8 +4304,17 @@ mod defect_19_tests {
     fn an_uncaptured_missing_output_is_not_a_failure() {
         let run = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
-        finalize_workload_outputs(run.path(), &spec(), &outcome(), false, root.path(), "ckpt-19", &lease(), "attempt-19")
-            .expect("캡처하지 않은 출력은 요구하지 않는다");
+        finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            false,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect("캡처하지 않은 출력은 요구하지 않는다");
     }
 
     /// 결함 83 — LATEST 자리를 막아 **해시 검증 뒤** 공개가 실패하면 확정 실패가 아니다(보고는 COMPLETED).
@@ -4103,9 +4324,22 @@ mod defect_19_tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
         std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
-        std::fs::create_dir(root.path().join(gputeer_checkpoint::writer::POINTER_FILENAME)).unwrap();
-        let (_, publish_failure) = finalize_workload_outputs(run.path(), &spec(), &outcome(), true, root.path(), "ckpt-19", &lease(), "attempt-19")
-            .expect("검증까지 끝난 산출물은 확정 실패가 아니다");
+        std::fs::create_dir(
+            root.path()
+                .join(gputeer_checkpoint::writer::POINTER_FILENAME),
+        )
+        .unwrap();
+        let (_, publish_failure) = finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect("검증까지 끝난 산출물은 확정 실패가 아니다");
         assert!(publish_failure.is_some(), "공개 실패는 알려야 한다");
     }
 
@@ -4125,7 +4359,10 @@ mod defect_19_tests {
         assert!(kept.is_some());
         assert_eq!(cleanup.as_deref(), Some("삭제 실패"));
         assert!(merge_run_and_cleanup(Err("실행 실패".to_string()), Ok(())).is_err());
-        assert!(merge_run_and_cleanup(Err("실행 실패".to_string()), Err("삭제 실패".to_string())).is_err());
+        assert!(
+            merge_run_and_cleanup(Err("실행 실패".to_string()), Err("삭제 실패".to_string()))
+                .is_err()
+        );
     }
 
     /// ★ 결함 ⑲ 의 핵심 — **실제로 끝난 프로세스**의 산출물 확정이 실패해도 `run_and_capture_workload` 는 Agent 오류가
@@ -4200,8 +4437,14 @@ mod defect_42_45_tests {
             .expect("파일");
         let message = fail_after_cleanup("EXEC_REFUSED:LIMIT_NOT_APPLIED".to_string(), &run_dir);
         drop(held);
-        assert!(message.contains("EXEC_REFUSED:LIMIT_NOT_APPLIED"), "{message}");
-        assert!(message.contains("그리고"), "정리 실패가 보고되지 않았다: {message}");
+        assert!(
+            message.contains("EXEC_REFUSED:LIMIT_NOT_APPLIED"),
+            "{message}"
+        );
+        assert!(
+            message.contains("그리고"),
+            "정리 실패가 보고되지 않았다: {message}"
+        );
     }
 
     #[test]
@@ -4225,13 +4468,20 @@ mod defect_42_45_tests {
             SessionError::from("AMBIGUOUS_RENEW: z".to_string()),
             SessionError::AmbiguousRenew(_)
         ));
-        for raw in ["RETRYABLE_CONNECTION: x", "RETRYABLE_RESUME: y", "AMBIGUOUS_RENEW: z"] {
+        for raw in [
+            "RETRYABLE_CONNECTION: x",
+            "RETRYABLE_RESUME: y",
+            "AMBIGUOUS_RENEW: z",
+        ] {
             let mapped = not_retried_after_workload(raw);
             assert!(
                 matches!(SessionError::from(mapped.clone()), SessionError::Fatal(_)),
                 "{mapped}"
             );
-            assert!(mapped.starts_with("WORKLOAD_EXECUTION_ATTEMPTED"), "{mapped}");
+            assert!(
+                mapped.starts_with("WORKLOAD_EXECUTION_ATTEMPTED"),
+                "{mapped}"
+            );
         }
     }
 }
@@ -4258,9 +4508,16 @@ mod startup_gc_tests {
 
     fn leave_committed(root: &std::path::Path) -> PathBuf {
         let files = vec![("shard-0.bin".to_string(), b"whole".to_vec())];
-        let manifest =
-            gputeer_checkpoint::writer::manifest_for("ckpt-committed", "job-gc", "attempt-gc", 1, 1, &files);
-        gputeer_checkpoint::writer::write_checkpoint(root, &manifest, &files, 0).expect("완결 체크포인트")
+        let manifest = gputeer_checkpoint::writer::manifest_for(
+            "ckpt-committed",
+            "job-gc",
+            "attempt-gc",
+            1,
+            1,
+            &files,
+        );
+        gputeer_checkpoint::writer::write_checkpoint(root, &manifest, &files, 0)
+            .expect("완결 체크포인트")
     }
 
     /// 연결 전에 끝나는 설정 — fence DB 가 `:memory:` 라 기동 GC 뒤 "영속이 아니다" 로 멈춘다.
@@ -4271,7 +4528,9 @@ mod startup_gc_tests {
             "--own-seed",
             &hex(&SEED),
             "--peer-pubkey",
-            &hex(SigningKey::from_bytes(&[0x72; 32]).verifying_key().as_bytes()),
+            &hex(SigningKey::from_bytes(&[0x72; 32])
+                .verifying_key()
+                .as_bytes()),
             "--coordinator-device-id",
             "coordinator-gc-test",
             "--agent-device-id",
@@ -4304,10 +4563,21 @@ mod startup_gc_tests {
         let partial = leave_partial(&root);
         let committed = leave_committed(&root);
         let _lock = claim_checkpoint_root_and_collect(&root).expect("기동 GC");
-        assert!(!partial.exists(), "지난 실행의 PARTIAL 이 남았다: {partial:?}");
-        assert!(committed.exists(), "완결 체크포인트를 지웠다: {committed:?}");
-        let resume = gputeer_checkpoint::writer::find_resume_point_for(&root, "job-gc", "attempt-gc").expect("재개 지점 조회");
-        assert!(resume.is_some(), "완결 체크포인트가 재개 지점으로 찾히지 않는다");
+        assert!(
+            !partial.exists(),
+            "지난 실행의 PARTIAL 이 남았다: {partial:?}"
+        );
+        assert!(
+            committed.exists(),
+            "완결 체크포인트를 지웠다: {committed:?}"
+        );
+        let resume =
+            gputeer_checkpoint::writer::find_resume_point_for(&root, "job-gc", "attempt-gc")
+                .expect("재개 지점 조회");
+        assert!(
+            resume.is_some(),
+            "완결 체크포인트가 재개 지점으로 찾히지 않는다"
+        );
     }
 
     /// 결함 154 (통합 브랜치 — REPORT 세션 × 기동 GC) — outbox 가 체크포인트 루트 **안**이면(Windows 는 대소문자만 다른 표기 포함) `run()` 이
@@ -4333,13 +4603,26 @@ mod startup_gc_tests {
             config.report_over_session = true;
             config.report_outbox_dir = Some(spelling.clone());
             let error = run(config).expect_err("루트 안 outbox 는 거부돼야 한다");
-            assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED"), "{spelling:?}: 다른 이유로 멈췄다: {error}");
-            assert!(unsent.exists() && quarantined.exists(), "{spelling:?}: 거부 전에 기동 GC 가 돌아 보고를 지웠다");
+            assert!(
+                error.contains("REPORT_SESSION_CONFIG_REFUSED"),
+                "{spelling:?}: 다른 이유로 멈췄다: {error}"
+            );
+            assert!(
+                unsent.exists() && quarantined.exists(),
+                "{spelling:?}: 거부 전에 기동 GC 가 돌아 보고를 지웠다"
+            );
 
             // 대조 — REPORT 세션 없이 같은 루트로 기동하면 기동 GC 가 매니페스트 없는 그 디렉터리의 두 파일을 지운다
-            let plain = run(config_stopping_after_startup(&root)).expect_err("fence :memory: 에서 멈춘다");
-            assert!(!plain.contains("REPORT_SESSION_CONFIG_REFUSED"), "대조가 REPORT 거부로 멈췄다: {plain}");
-            assert!(!unsent.exists() && !quarantined.exists(), "대조: 기동 GC 가 루트 안 보고를 지우지 않았다 — 위 보존 단언이 공허하다");
+            let plain =
+                run(config_stopping_after_startup(&root)).expect_err("fence :memory: 에서 멈춘다");
+            assert!(
+                !plain.contains("REPORT_SESSION_CONFIG_REFUSED"),
+                "대조가 REPORT 거부로 멈췄다: {plain}"
+            );
+            assert!(
+                !unsent.exists() && !quarantined.exists(),
+                "대조: 기동 GC 가 루트 안 보고를 지우지 않았다 — 위 보존 단언이 공허하다"
+            );
         }
     }
 
@@ -4347,8 +4630,17 @@ mod startup_gc_tests {
     fn link_dir(target: &std::path::Path, link: &std::path::Path) {
         #[cfg(windows)]
         {
-            let made = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target).output().expect("mklink 실행");
-            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("mklink 실행");
+            assert!(
+                made.status.success(),
+                "junction 을 만들지 못했다: {}",
+                String::from_utf8_lossy(&made.stderr)
+            );
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, link).expect("symlink");
@@ -4374,14 +4666,30 @@ mod startup_gc_tests {
 
         let mut config = config_stopping_after_startup(&alias);
         config.report_over_session = true;
-        assert!(report_outbox_dir(&config).is_ok(), "대조: 입력 루트 기준 기본 outbox 는 사전 검사를 통과해야 이 시험이 순서를 잰다");
+        assert!(
+            report_outbox_dir(&config).is_ok(),
+            "대조: 입력 루트 기준 기본 outbox 는 사전 검사를 통과해야 이 시험이 순서를 잰다"
+        );
         let error = run(config).expect_err("실제 루트 기준 기본 outbox 는 거부돼야 한다");
-        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("199"), "실제 루트 기준 거부가 아니다: {error}");
-        assert!(unsent.exists() && quarantined.exists(), "거부 전에 기동 GC 가 돌아 R 안의 보고를 지웠다");
+        assert!(
+            error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("199"),
+            "실제 루트 기준 거부가 아니다: {error}"
+        );
+        assert!(
+            unsent.exists() && quarantined.exists(),
+            "거부 전에 기동 GC 가 돌아 R 안의 보고를 지웠다"
+        );
 
-        let plain = run(config_stopping_after_startup(&alias)).expect_err("fence :memory: 에서 멈춘다");
-        assert!(!plain.contains("REPORT_SESSION_CONFIG_REFUSED"), "대조가 REPORT 거부로 멈췄다: {plain}");
-        assert!(!unsent.exists() && !quarantined.exists(), "대조: 기동 GC 가 R 안의 보고를 지우지 않았다 — 위 보존 단언이 공허하다");
+        let plain =
+            run(config_stopping_after_startup(&alias)).expect_err("fence :memory: 에서 멈춘다");
+        assert!(
+            !plain.contains("REPORT_SESSION_CONFIG_REFUSED"),
+            "대조가 REPORT 거부로 멈췄다: {plain}"
+        );
+        assert!(
+            !unsent.exists() && !quarantined.exists(),
+            "대조: 기동 GC 가 R 안의 보고를 지우지 않았다 — 위 보존 단언이 공허하다"
+        );
     }
 
     /// 결함 199 — 별칭 루트 A -> R 로 기동하며 명시 outbox 를 **실제** 작업 출력 루트(R.workload-run) 안에 주면, 입력 루트 기준(A.workload-run)으로는
@@ -4399,9 +4707,15 @@ mod startup_gc_tests {
         let mut config = config_stopping_after_startup(&alias);
         config.report_over_session = true;
         config.report_outbox_dir = Some(outbox);
-        assert!(report_outbox_dir(&config).is_ok(), "대조: 입력 루트 기준으로는 통과해야 이 시험이 실제 루트 기준 검사를 잰다");
+        assert!(
+            report_outbox_dir(&config).is_ok(),
+            "대조: 입력 루트 기준으로는 통과해야 이 시험이 실제 루트 기준 검사를 잰다"
+        );
         let error = run(config).expect_err("실제 작업 출력 루트 안 outbox 는 거부돼야 한다");
-        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("199"), "실제 루트 기준 거부가 아니다: {error}");
+        assert!(
+            error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("199"),
+            "실제 루트 기준 거부가 아니다: {error}"
+        );
     }
 
     /// run() 이 연결 · fence DB 보다 **먼저** 기동 GC 를 부른다 — 뒤에서 멈추는 설정이어도 PARTIAL 은 이미 치워져 있다.
@@ -4411,9 +4725,16 @@ mod startup_gc_tests {
         let root = dir.path().join("checkpoints");
         start_once(&root);
         let partial = leave_partial(&root);
-        let error = run(config_stopping_after_startup(&root)).expect_err("fence DB 가 영속이 아니라 멈춰야 한다");
-        assert!(error.contains("영속이 아니다"), "기동 GC 뒤의 관문에서 멈추지 않았다: {error}");
-        assert!(!partial.exists(), "run() 이 기동 GC 를 부르지 않았다: {partial:?}");
+        let error = run(config_stopping_after_startup(&root))
+            .expect_err("fence DB 가 영속이 아니라 멈춰야 한다");
+        assert!(
+            error.contains("영속이 아니다"),
+            "기동 GC 뒤의 관문에서 멈추지 않았다: {error}"
+        );
+        assert!(
+            !partial.exists(),
+            "run() 이 기동 GC 를 부르지 않았다: {partial:?}"
+        );
     }
 
     /// 체크포인트 루트가 일반 파일이면 기동 GC 에서 멈춘다 — 연결하지 않고, 그 파일을 건드리지 않는다.
@@ -4423,10 +4744,15 @@ mod startup_gc_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let root = dir.path().join("not-a-directory");
         fs::write(&root, b"regular file").expect("루트 자리 파일");
-        let error = run(config_stopping_after_startup(&root)).expect_err("루트가 파일이면 시작하지 않아야 한다");
+        let error = run(config_stopping_after_startup(&root))
+            .expect_err("루트가 파일이면 시작하지 않아야 한다");
         // 결함 138 — 이제 GC 전에 루트를 만들고 실제 위치를 읽는 단계에서 멈춘다.
         assert!(error.contains("CHECKPOINT_ROOT_INVALID"), "{error}");
-        assert_eq!(fs::read(&root).expect("루트 자리 파일"), b"regular file", "루트 자리 파일을 바꿨다");
+        assert_eq!(
+            fs::read(&root).expect("루트 자리 파일"),
+            b"regular file",
+            "루트 자리 파일을 바꿨다"
+        );
     }
 
     /// 같은 루트의 잠금이 잡혀 있으면 시작하지 않고 PARTIAL 을 건드리지 않는다 — 그 PARTIAL 은 다른 Agent 가 쓰는 중일 수 있다.
@@ -4436,12 +4762,19 @@ mod startup_gc_tests {
         let root = dir.path().join("checkpoints");
         let held = claim_checkpoint_root_and_collect(&root).expect("첫 Agent 의 잠금");
         let in_progress = leave_partial(&root);
-        let error = run(config_stopping_after_startup(&root)).expect_err("잠긴 루트에서는 시작하지 않아야 한다");
+        let error = run(config_stopping_after_startup(&root))
+            .expect_err("잠긴 루트에서는 시작하지 않아야 한다");
         assert!(error.contains("CHECKPOINT_ROOT_BUSY"), "{error}");
-        assert!(in_progress.exists(), "다른 Agent 가 쓰는 중인 PARTIAL 을 지웠다");
+        assert!(
+            in_progress.exists(),
+            "다른 Agent 가 쓰는 중인 PARTIAL 을 지웠다"
+        );
         drop(held);
         let _lock = claim_checkpoint_root_and_collect(&root).expect("잠금이 풀리면 다시 잡힌다");
-        assert!(!in_progress.exists(), "잠금이 풀린 뒤의 기동 GC 는 PARTIAL 을 치워야 한다(대조)");
+        assert!(
+            !in_progress.exists(),
+            "잠금이 풀린 뒤의 기동 GC 는 PARTIAL 을 치워야 한다(대조)"
+        );
     }
 
     /// 결함 137 (검수 66) — Agent 가 만들지 않은 비지 않은 디렉터리는 삭제 전에 거부하고 파일을 건드리지 않는다. 대조: 빈 루트는 표식을 받고 PARTIAL 을 치운다.
@@ -4456,15 +4789,32 @@ mod startup_gc_tests {
             Ok(_) => panic!("표식 없는 비지 않은 디렉터리에서 기동 GC 가 돌았다"),
             Err(error) => assert!(error.contains("CHECKPOINT_ROOT_NOT_OWNED"), "{error}"),
         }
-        assert_eq!(fs::read(photos.join("family.jpg")).expect("사용자 파일"), b"photo", "사용자 파일을 지웠다");
-        assert!(!checkpoint_root_owner_marker(&data).expect("표식 경로").exists(), "거부했는데 표식을 썼다");
+        assert_eq!(
+            fs::read(photos.join("family.jpg")).expect("사용자 파일"),
+            b"photo",
+            "사용자 파일을 지웠다"
+        );
+        assert!(
+            !checkpoint_root_owner_marker(&data)
+                .expect("표식 경로")
+                .exists(),
+            "거부했는데 표식을 썼다"
+        );
 
         let fresh = dir.path().join("fresh");
         start_once(&fresh);
-        assert!(checkpoint_root_owner_marker(&fresh).expect("표식 경로").is_file(), "빈 루트에 표식이 없다");
+        assert!(
+            checkpoint_root_owner_marker(&fresh)
+                .expect("표식 경로")
+                .is_file(),
+            "빈 루트에 표식이 없다"
+        );
         let partial = leave_partial(&fresh);
         let _lock = claim_checkpoint_root_and_collect(&fresh).expect("표식 있는 루트");
-        assert!(!partial.exists(), "대조: 표식 있는 루트의 PARTIAL 은 치워야 한다");
+        assert!(
+            !partial.exists(),
+            "대조: 표식 있는 루트의 PARTIAL 은 치워야 한다"
+        );
     }
 
     /// 결함 151 (재검수 66b) — 표식을 받은 루트를 지우고 같은 경로에 사용자 디렉터리를 두면 거부한다(형제 표식일 때는 받아 지웠다).
@@ -4480,7 +4830,11 @@ mod startup_gc_tests {
             Ok(_) => panic!("바뀐 루트에서 기동 GC 가 돌았다"),
             Err(error) => assert!(error.contains("CHECKPOINT_ROOT_NOT_OWNED"), "{error}"),
         }
-        assert_eq!(fs::read(root.join("photos").join("family.jpg")).expect("사용자 파일"), b"photo", "사용자 파일을 지웠다");
+        assert_eq!(
+            fs::read(root.join("photos").join("family.jpg")).expect("사용자 파일"),
+            b"photo",
+            "사용자 파일을 지웠다"
+        );
     }
 
     /// 결함 152 · 153 (재검수 66b) — 루트 **안**의 junction 별칭으로 기동해도 설정의 루트가 실제 위치로 바뀌어 기본 outbox · 작업 출력이 실제 루트의 형제다.
@@ -4498,18 +4852,33 @@ mod startup_gc_tests {
                 .arg(&root)
                 .output()
                 .expect("mklink 실행");
-            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            assert!(
+                made.status.success(),
+                "junction 을 만들지 못했다: {}",
+                String::from_utf8_lossy(&made.stderr)
+            );
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(&root, &alias).expect("symlink");
         let mut config = config_stopping_after_startup(&alias);
         let _lock = settle_checkpoint_root(&mut config).expect("별칭 루트 기동");
         let real = without_verbatim_prefix(fs::canonicalize(&root).expect("실제 루트"));
-        assert_eq!(config.checkpoint_root, real, "설정의 루트가 실제 위치로 바뀌지 않았다");
+        assert_eq!(
+            config.checkpoint_root, real,
+            "설정의 루트가 실제 위치로 바뀌지 않았다"
+        );
         let outbox = report_outbox_dir(&config).expect("기본 outbox");
-        assert_eq!(outbox.parent(), real.parent(), "기본 outbox 가 실제 루트의 형제가 아니다: {outbox:?}");
+        assert_eq!(
+            outbox.parent(),
+            real.parent(),
+            "기본 outbox 가 실제 루트의 형제가 아니다: {outbox:?}"
+        );
         let run_root = workload_run_root(&config.checkpoint_root).expect("작업 출력 루트");
-        assert_eq!(run_root.parent(), real.parent(), "작업 출력 루트가 실제 루트의 형제가 아니다: {run_root:?}");
+        assert_eq!(
+            run_root.parent(),
+            real.parent(),
+            "작업 출력 루트가 실제 루트의 형제가 아니다: {run_root:?}"
+        );
         assert!(alias.exists(), "대조: 별칭은 그대로 있어야 한다");
     }
 
@@ -4517,16 +4886,33 @@ mod startup_gc_tests {
     #[cfg(windows)]
     #[test]
     fn a_verbatim_prefix_is_removed_only_when_the_plain_path_means_the_same() {
-        assert_eq!(without_verbatim_prefix(PathBuf::from(r"\\?\C:\data\checkpoints")), PathBuf::from(r"C:\data\checkpoints"));
-        for kept in [r"\\?\UNC\server\share\cp", r"\\?\C:\data\name.", r"\\?\C:\data\CON\cp", r"\\?\C:\data\trailing \cp"] {
-            assert_eq!(without_verbatim_prefix(PathBuf::from(kept)), PathBuf::from(kept), "{kept}");
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(r"\\?\C:\data\checkpoints")),
+            PathBuf::from(r"C:\data\checkpoints")
+        );
+        for kept in [
+            r"\\?\UNC\server\share\cp",
+            r"\\?\C:\data\name.",
+            r"\\?\C:\data\CON\cp",
+            r"\\?\C:\data\trailing \cp",
+        ] {
+            assert_eq!(
+                without_verbatim_prefix(PathBuf::from(kept)),
+                PathBuf::from(kept),
+                "{kept}"
+            );
         }
         let long = format!(r"\\?\C:\{}", "a".repeat(260));
-        assert_eq!(without_verbatim_prefix(PathBuf::from(&long)), PathBuf::from(&long));
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(&long)),
+            PathBuf::from(&long)
+        );
         // 결함 160 · 168 · 179 — 경계는 루트 길이만이 아니라 그 아래 파생 경로가 260 자 안에 들어오게 정했다. Agent 가 쓰는 **고정 이름 목록**(아래)으로 가장 긴 파생
         //   접미사를 계산해 확인한다(전에는 세 이름만 적어 최장을 놓쳤다 — 결함 168 · 그 뒤 `.tmp` · LATEST · 형제 잠금 · 루트 표식도 빠졌었다 — 결함 179).
         //   "전부" 라고 하지 않는다 — 목록에 없는 이름이 생기면 여기에 더한다. 가변 데이터 이름 · staged API 는 범위 밖이다(상수 주석).
-        use gputeer_checkpoint::durability::{state_marker_name, DurabilityState, MANIFEST_FILENAME, PUBLICATION_FAILED_MARKER};
+        use gputeer_checkpoint::durability::{
+            state_marker_name, DurabilityState, MANIFEST_FILENAME, PUBLICATION_FAILED_MARKER,
+        };
         let checkpoint_id = start_checkpoint_id("job", "attempt", "grant");
         let mut in_checkpoint: Vec<String> = [
             DurabilityState::Writing,
@@ -4542,7 +4928,14 @@ mod startup_gc_tests {
         .map(|state| state_marker_name(state).to_string())
         .collect();
         in_checkpoint.extend(
-            [PUBLICATION_FAILED_MARKER, MANIFEST_FILENAME, exec::STDOUT_FILENAME, exec::STDERR_FILENAME, WORKLOAD_RESULT_FILENAME].map(str::to_string),
+            [
+                PUBLICATION_FAILED_MARKER,
+                MANIFEST_FILENAME,
+                exec::STDOUT_FILENAME,
+                exec::STDERR_FILENAME,
+                WORKLOAD_RESULT_FILENAME,
+            ]
+            .map(str::to_string),
         );
         let mut suffixes: Vec<String> = in_checkpoint
             .iter()
@@ -4561,8 +4954,14 @@ mod startup_gc_tests {
             format!(r"\{CHECKPOINT_ROOT_OWNER_MARKER}"),
             ".agent-lock".to_string(),
         ]);
-        suffixes.extend([exec::STDOUT_FILENAME, exec::STDERR_FILENAME].map(|name| format!(r".workload-run\{checkpoint_id}\{name}")));
-        suffixes.extend(["report", "report.tmp", "report.rejected"].map(|ext| format!(r".report-outbox\{}.{ext}", "0".repeat(32))));
+        suffixes.extend(
+            [exec::STDOUT_FILENAME, exec::STDERR_FILENAME]
+                .map(|name| format!(r".workload-run\{checkpoint_id}\{name}")),
+        );
+        suffixes.extend(
+            ["report", "report.tmp", "report.rejected"]
+                .map(|ext| format!(r".report-outbox\{}.{ext}", "0".repeat(32))),
+        );
         let longest = suffixes.iter().map(String::len).max().expect("접미사");
         assert!(
             VERBATIM_STRIP_MAX_ROOT_LEN - 1 + longest + 20 < 260,
@@ -4575,9 +4974,17 @@ mod startup_gc_tests {
             "경계 바로 아래는 떼야 한다"
         );
         let at_bound = format!(r"\\?\C:\{}", "b".repeat(VERBATIM_STRIP_MAX_ROOT_LEN - 3));
-        assert_eq!(without_verbatim_prefix(PathBuf::from(&at_bound)), PathBuf::from(&at_bound), "경계부터는 verbatim 을 유지해야 한다");
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(&at_bound)),
+            PathBuf::from(&at_bound),
+            "경계부터는 verbatim 을 유지해야 한다"
+        );
         let two_hundred = format!(r"\\?\C:\{}", "c".repeat(197));
-        assert_eq!(without_verbatim_prefix(PathBuf::from(&two_hundred)), PathBuf::from(&two_hundred), "검수 66c 반례(200 자 루트)");
+        assert_eq!(
+            without_verbatim_prefix(PathBuf::from(&two_hundred)),
+            PathBuf::from(&two_hundred),
+            "검수 66c 반례(200 자 루트)"
+        );
     }
 
     /// 결함 138 (검수 66) — 잡혀 있는 루트를 **별칭**(Windows junction · unix symlink)으로 불러도 같은 잠금이라 시작하지 않는다.
@@ -4595,7 +5002,11 @@ mod startup_gc_tests {
                 .arg(&root)
                 .output()
                 .expect("mklink 실행");
-            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            assert!(
+                made.status.success(),
+                "junction 을 만들지 못했다: {}",
+                String::from_utf8_lossy(&made.stderr)
+            );
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(&root, &alias).expect("symlink");
@@ -4604,7 +5015,10 @@ mod startup_gc_tests {
             Ok(_) => panic!("별칭으로 부른 두 번째 Agent 가 잠금을 얻었다"),
             Err(error) => assert!(error.contains("CHECKPOINT_ROOT_BUSY"), "{error}"),
         }
-        assert!(in_progress.exists(), "별칭으로 부른 Agent 가 쓰는 중인 PARTIAL 을 지웠다");
+        assert!(
+            in_progress.exists(),
+            "별칭으로 부른 Agent 가 쓰는 중인 PARTIAL 을 지웠다"
+        );
         drop(held);
     }
 }
@@ -4631,7 +5045,9 @@ mod report_session_tests {
             "--own-seed",
             &hex(&AGENT_SEED),
             "--peer-pubkey",
-            &hex(SigningKey::from_bytes(&COORD_SEED).verifying_key().as_bytes()),
+            &hex(SigningKey::from_bytes(&COORD_SEED)
+                .verifying_key()
+                .as_bytes()),
             "--coordinator-device-id",
             COORD_ID,
             "--agent-device-id",
@@ -4670,14 +5086,21 @@ mod report_session_tests {
         .expect("보고 서명")
     }
 
-    fn signed_ack(report: &pb::AttemptReport, session_nonce: Vec<u8>, hash: Vec<u8>) -> pb::AttemptReportAck {
+    fn signed_ack(
+        report: &pb::AttemptReport,
+        session_nonce: Vec<u8>,
+        hash: Vec<u8>,
+    ) -> pb::AttemptReportAck {
         let mut ack = pb::AttemptReportAck {
             schema_version: 1,
             job_id: report.job_id.clone(),
             attempt_id: report.attempt_id.clone(),
             node_id: report.node_id.clone(),
             fence_epoch: report.fence_epoch,
-            report_hash: Some(pb::Digest { algo: 1, value: hash }),
+            report_hash: Some(pb::Digest {
+                algo: 1,
+                value: hash,
+            }),
             created: true,
             coordinator_id: COORD_ID.into(),
             issued_at_unix_ms: SystemClock.now_unix_ms(),
@@ -4690,22 +5113,37 @@ mod report_session_tests {
 
     /// 가짜 Coordinator 하나 — Hello(REPORT) 와 보고를 검증해 읽고, `answer` 가 만든 Ack 를 보낸 뒤 닫는다.
     fn fake_coordinator(
-        answer: impl FnOnce(&pb::AgentSessionHello, &pb::AttemptReport) -> pb::AttemptReportAck + Send + 'static,
+        answer: impl FnOnce(&pb::AgentSessionHello, &pb::AttemptReport) -> pb::AttemptReportAck
+            + Send
+            + 'static,
     ) -> (String, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         let addr = listener.local_addr().expect("주소").to_string();
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
             let mut keys = InMemoryKeyring::new();
-            keys.insert(AGENT_ID.to_string(), SigningKey::from_bytes(&AGENT_SEED).verifying_key());
+            keys.insert(
+                AGENT_ID.to_string(),
+                SigningKey::from_bytes(&AGENT_SEED).verifying_key(),
+            );
             let mut replay = InMemoryReplayGuard::new();
-            let hello = match read_frame(&mut stream, 1, KeyDirectorySource::Provided(&keys), &mut replay, &SystemClock)
-                .expect("Hello 읽기")
+            let hello = match read_frame(
+                &mut stream,
+                1,
+                KeyDirectorySource::Provided(&keys),
+                &mut replay,
+                &SystemClock,
+            )
+            .expect("Hello 읽기")
             {
                 IngressMessage::SessionHello(verified) => verified.get().clone(),
                 _ => panic!("첫 프레임은 Hello 여야 한다"),
             };
-            assert_eq!(hello.mode, gputeer_protocol::constants::MODE_REPORT, "REPORT 세션의 Hello 다");
+            assert_eq!(
+                hello.mode,
+                gputeer_protocol::constants::MODE_REPORT,
+                "REPORT 세션의 Hello 다"
+            );
             let received = match read_frame(
                 &mut stream,
                 gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
@@ -4719,7 +5157,8 @@ mod report_session_tests {
                 _ => panic!("둘째 프레임은 보고여야 한다"),
             };
             let ack = answer(&hello, &received);
-            let frame = write_frame(FrameType::AttemptReportAck, &ack.encode_to_vec()).expect("Ack 프레임");
+            let frame =
+                write_frame(FrameType::AttemptReportAck, &ack.encode_to_vec()).expect("Ack 프레임");
             stream.write_all(&frame).expect("Ack 전송");
         });
         (addr, handle)
@@ -4731,14 +5170,28 @@ mod report_session_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let report = signed_report();
         let (addr, server) = fake_coordinator(|hello, received| {
-            signed_ack(received, hello.nonce.clone(), attempt_report_hash(received).to_vec())
+            signed_ack(
+                received,
+                hello.nonce.clone(),
+                attempt_report_hash(received).to_vec(),
+            )
         });
         let config = config(dir.path(), &addr);
-        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
-        deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
-            .expect("검증한 Ack 를 받아야 한다");
+        let path =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
+        deliver_outboxed_report(
+            &config,
+            &SigningKey::from_bytes(&AGENT_SEED),
+            &report,
+            &path,
+        )
+        .expect("검증한 Ack 를 받아야 한다");
         server.join().expect("가짜 Coordinator");
-        assert!(!path.exists(), "검증한 Ack 뒤에는 outbox 파일이 없어야 한다");
+        assert!(
+            !path.exists(),
+            "검증한 Ack 뒤에는 outbox 파일이 없어야 한다"
+        );
     }
 
     /// report_hash 가 보낸 보고와 다르면 거부하고 파일을 남긴다 — Coordinator 가 적은 값을 믿지 않는다.
@@ -4746,13 +5199,25 @@ mod report_session_tests {
     fn an_ack_with_a_wrong_report_hash_is_rejected_and_the_outbox_file_stays() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let report = signed_report();
-        let (addr, server) = fake_coordinator(|hello, received| signed_ack(received, hello.nonce.clone(), vec![0u8; 32]));
+        let (addr, server) = fake_coordinator(|hello, received| {
+            signed_ack(received, hello.nonce.clone(), vec![0u8; 32])
+        });
         let config = config(dir.path(), &addr);
-        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
-        let error = deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
-            .expect_err("틀린 해시의 Ack 는 거부돼야 한다");
+        let path =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
+        let error = deliver_outboxed_report(
+            &config,
+            &SigningKey::from_bytes(&AGENT_SEED),
+            &report,
+            &path,
+        )
+        .expect_err("틀린 해시의 Ack 는 거부돼야 한다");
         server.join().expect("가짜 Coordinator");
-        assert!(error.contains("REPORT_ACK_REJECTED") && error.contains("report_hash"), "{error}");
+        assert!(
+            error.contains("REPORT_ACK_REJECTED") && error.contains("report_hash"),
+            "{error}"
+        );
         assert!(path.exists(), "거부했으면 보고는 outbox 에 남아야 한다");
     }
 
@@ -4762,14 +5227,28 @@ mod report_session_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let report = signed_report();
         let (addr, server) = fake_coordinator(|_hello, received| {
-            signed_ack(received, vec![9u8; 16], attempt_report_hash(received).to_vec())
+            signed_ack(
+                received,
+                vec![9u8; 16],
+                attempt_report_hash(received).to_vec(),
+            )
         });
         let config = config(dir.path(), &addr);
-        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
-        let error = deliver_outboxed_report(&config, &SigningKey::from_bytes(&AGENT_SEED), &report, &path)
-            .expect_err("다른 세션의 Ack 는 거부돼야 한다");
+        let path =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
+        let error = deliver_outboxed_report(
+            &config,
+            &SigningKey::from_bytes(&AGENT_SEED),
+            &report,
+            &path,
+        )
+        .expect_err("다른 세션의 Ack 는 거부돼야 한다");
         server.join().expect("가짜 Coordinator");
-        assert!(error.contains("REPORT_ACK_REJECTED") && error.contains("session_nonce"), "{error}");
+        assert!(
+            error.contains("REPORT_ACK_REJECTED") && error.contains("session_nonce"),
+            "{error}"
+        );
         assert!(path.exists(), "거부했으면 보고는 outbox 에 남아야 한다");
     }
 
@@ -4781,10 +5260,15 @@ mod report_session_tests {
         let config = config(dir.path(), "127.0.0.1:9");
         let mut report = signed_report();
         report.job_id = "job-tampered".into(); // 서명 뒤에 바꾼다 — 필드 조합 규칙은 그대로 지킨다
-        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
+        let path =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
         flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
         assert!(!path.exists(), "변조된 보고를 outbox 에 그대로 두었다");
-        assert!(path.with_extension("report.rejected").exists(), "지우지 않고 격리해야 한다(증거)");
+        assert!(
+            path.with_extension("report.rejected").exists(),
+            "지우지 않고 격리해야 한다(증거)"
+        );
     }
 
     /// 검사를 통과했지만 보내지 못한 outbox 파일은 그대로 남는다(격리하지 않는다).
@@ -4793,10 +5277,15 @@ mod report_session_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let config = config(dir.path(), "127.0.0.1:9");
         let report = signed_report();
-        let path = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
+        let path =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
         flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
         assert!(path.exists(), "보내지 못한 정상 보고를 지웠다");
-        assert!(!path.with_extension("report.rejected").exists(), "정상 보고를 격리했다");
+        assert!(
+            !path.with_extension("report.rejected").exists(),
+            "정상 보고를 격리했다"
+        );
     }
 
     /// 결함 107 — 기본 outbox 에 남긴 보고는 체크포인트 루트의 부팅 GC 뒤에도 남는다.
@@ -4809,18 +5298,30 @@ mod report_session_tests {
         let report = signed_report();
         let root = std::path::absolute(&config.checkpoint_root).expect("절대 경로");
         std::fs::create_dir_all(&root).expect("체크포인트 루트");
-        let kept = persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report).expect("outbox");
-        let inside = persist_report_to_outbox(&root.join("report-outbox"), &report).expect("루트 안");
+        let kept =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
+        let inside =
+            persist_report_to_outbox(&root.join("report-outbox"), &report).expect("루트 안");
         gputeer_checkpoint::writer::startup_gc(&root).expect("부팅 GC");
-        assert!(!inside.exists(), "대조가 성립하지 않는다 — 루트 안 보고를 GC 가 지우지 않았다");
-        assert!(kept.exists(), "부팅 GC 가 보내지 못한 보고를 지웠다: {kept:?}");
+        assert!(
+            !inside.exists(),
+            "대조가 성립하지 않는다 — 루트 안 보고를 GC 가 지우지 않았다"
+        );
+        assert!(
+            kept.exists(),
+            "부팅 GC 가 보내지 못한 보고를 지웠다: {kept:?}"
+        );
     }
 
     /// 결함 107 — 명시한 outbox 가 체크포인트 루트 안(루트 자신 포함)이면 연결 전에 거부한다. 루트 밖은 받는다.
     #[test]
     fn an_explicit_outbox_inside_the_checkpoint_root_is_refused_before_connecting() {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
-        for inside in [dir.path().join("checkpoints"), dir.path().join("checkpoints").join("outbox")] {
+        for inside in [
+            dir.path().join("checkpoints"),
+            dir.path().join("checkpoints").join("outbox"),
+        ] {
             let mut config = config(dir.path(), "127.0.0.1:9");
             config.report_outbox_dir = Some(inside.clone());
             let error = run(config).expect_err("루트 안 outbox 는 거부돼야 한다");
@@ -4842,10 +5343,20 @@ mod report_session_tests {
     fn report_over_session_without_a_persistent_path_is_refused_at_parse() {
         let base = |extra: &[&str]| -> Vec<String> {
             let mut argv: Vec<String> = [
-                "--connect", "127.0.0.1:9", "--own-seed", &hex(&AGENT_SEED),
-                "--peer-pubkey", &hex(SigningKey::from_bytes(&COORD_SEED).verifying_key().as_bytes()),
-                "--coordinator-device-id", COORD_ID, "--agent-device-id", AGENT_ID,
-                "--report-over-session", "true",
+                "--connect",
+                "127.0.0.1:9",
+                "--own-seed",
+                &hex(&AGENT_SEED),
+                "--peer-pubkey",
+                &hex(SigningKey::from_bytes(&COORD_SEED)
+                    .verifying_key()
+                    .as_bytes()),
+                "--coordinator-device-id",
+                COORD_ID,
+                "--agent-device-id",
+                AGENT_ID,
+                "--report-over-session",
+                "true",
             ]
             .into_iter()
             .map(str::to_string)
@@ -4853,18 +5364,41 @@ mod report_session_tests {
             argv.extend(extra.iter().map(|s| s.to_string()));
             argv
         };
-        let error = parse_config_from_args(&base(&[])).err().expect("경로 없는 REPORT 세션은 거부돼야 한다");
-        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 125"), "{error}");
+        let error = parse_config_from_args(&base(&[]))
+            .err()
+            .expect("경로 없는 REPORT 세션은 거부돼야 한다");
+        assert!(
+            error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 125"),
+            "{error}"
+        );
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         let root = dir.path().join("checkpoints");
-        assert!(parse_config_from_args(&base(&["--checkpoint-root", root.to_str().expect("경로")])).is_ok());
+        assert!(parse_config_from_args(&base(&[
+            "--checkpoint-root",
+            root.to_str().expect("경로")
+        ]))
+        .is_ok());
         let outbox = dir.path().join("outbox");
-        assert!(parse_config_from_args(&base(&["--report-outbox", outbox.to_str().expect("경로")])).is_ok());
+        assert!(parse_config_from_args(&base(&[
+            "--report-outbox",
+            outbox.to_str().expect("경로")
+        ]))
+        .is_ok());
         // 결함 158 — 파서가 루트의 출처를 보존한다: --checkpoint-root 가 없으면 기본 루트(true), 있으면 false.
-        let without_root = parse_config_from_args(&base(&["--report-outbox", outbox.to_str().expect("경로")])).expect("outbox 만");
-        assert!(without_root.checkpoint_root_is_default, "--checkpoint-root 없이 만든 설정이 기본 루트로 표시되지 않았다");
-        let with_root = parse_config_from_args(&base(&["--checkpoint-root", root.to_str().expect("경로")])).expect("루트 명시");
-        assert!(!with_root.checkpoint_root_is_default, "--checkpoint-root 를 준 설정이 기본 루트로 표시됐다");
+        let without_root =
+            parse_config_from_args(&base(&["--report-outbox", outbox.to_str().expect("경로")]))
+                .expect("outbox 만");
+        assert!(
+            without_root.checkpoint_root_is_default,
+            "--checkpoint-root 없이 만든 설정이 기본 루트로 표시되지 않았다"
+        );
+        let with_root =
+            parse_config_from_args(&base(&["--checkpoint-root", root.to_str().expect("경로")]))
+                .expect("루트 명시");
+        assert!(
+            !with_root.checkpoint_root_is_default,
+            "--checkpoint-root 를 준 설정이 기본 루트로 표시됐다"
+        );
     }
 
     /// 결함 127 — REPORT 세션 뒤에도 FRESH 연결을 붙잡는 설정은 연결 전에 거부한다.
@@ -4879,7 +5413,10 @@ mod report_session_tests {
                 _ => config.expect_replay = true,
             }
             let error = run(config).expect_err("붙잡는 설정과 REPORT 세션은 함께 켤 수 없다");
-            assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 127"), "{flag}: {error}");
+            assert!(
+                error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 127"),
+                "{flag}: {error}"
+            );
         }
     }
 
@@ -4889,7 +5426,14 @@ mod report_session_tests {
         let dir = tempfile::tempdir().expect("임시 디렉터리");
         std::fs::create_dir_all(dir.path().join("other")).expect("우회용 디렉터리");
         // (표기, junction 인가) — ★ 결함 166 — junction 표기만 링크 거부 사유를 허용한다. 나머지는 루트 대조 사유여야 한다(어느 검사가 작동했는지 가른다).
-        let mut spellings = vec![(dir.path().join("other").join("..").join("checkpoints").join("outbox"), false)];
+        let mut spellings = vec![(
+            dir.path()
+                .join("other")
+                .join("..")
+                .join("checkpoints")
+                .join("outbox"),
+            false,
+        )];
         #[cfg(windows)]
         {
             spellings.push((dir.path().join("CHECKPOINTS").join("outbox"), false));
@@ -4901,16 +5445,28 @@ mod report_session_tests {
                 .arg(dir.path().join("checkpoints"))
                 .output()
                 .expect("mklink 실행");
-            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            assert!(
+                made.status.success(),
+                "junction 을 만들지 못했다: {}",
+                String::from_utf8_lossy(&made.stderr)
+            );
             spellings.push((alias.join("outbox"), true));
         }
         for (outbox, via_junction) in spellings {
             let mut config = config(dir.path(), "127.0.0.1:9");
             config.report_outbox_dir = Some(outbox.clone());
-            let error = report_outbox_dir(&config).expect_err("루트 안을 가리키는 다른 표기도 거부돼야 한다");
+            let error = report_outbox_dir(&config)
+                .expect_err("루트 안을 가리키는 다른 표기도 거부돼야 한다");
             // ★ 결함 157 — junction 표기는 경로 중간 링크 거부가 먼저 잡는다.
-            let expected_reason = if via_junction { "링크" } else { "체크포인트 루트" };
-            assert!(error.contains(expected_reason) && error.contains("결함 107"), "{outbox:?} ({expected_reason}): {error}");
+            let expected_reason = if via_junction {
+                "링크"
+            } else {
+                "체크포인트 루트"
+            };
+            assert!(
+                error.contains(expected_reason) && error.contains("결함 107"),
+                "{outbox:?} ({expected_reason}): {error}"
+            );
         }
     }
 
@@ -4922,9 +5478,15 @@ mod report_session_tests {
         let run_root = workload_run_root(&config.checkpoint_root).expect("작업 출력 루트");
         config.report_outbox_dir = Some(run_root.join("some-checkpoint"));
         let error = report_outbox_dir(&config).expect_err("작업 출력 아래 outbox 는 거부돼야 한다");
-        assert!(error.contains("작업 출력 루트") && error.contains("129"), "{error}");
+        assert!(
+            error.contains("작업 출력 루트") && error.contains("129"),
+            "{error}"
+        );
         config.report_outbox_dir = Some(dir.path().join("elsewhere"));
-        assert!(report_outbox_dir(&config).is_ok(), "루트 · 작업 출력 밖은 받아야 한다");
+        assert!(
+            report_outbox_dir(&config).is_ok(),
+            "루트 · 작업 출력 밖은 받아야 한다"
+        );
     }
 
     /// 결함 134 — 라이브러리 호출자가 기본 체크포인트 루트로 REPORT 를 켜면 run() 이 거부한다 · multi_agent · resume_protocol 조합도 거부한다.
@@ -4935,7 +5497,10 @@ mod report_session_tests {
         default_root.checkpoint_root = default_checkpoint_root();
         default_root.checkpoint_root_is_default = true;
         let error = run(default_root).expect_err("기본 루트의 REPORT 는 거부돼야 한다");
-        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("134"), "{error}");
+        assert!(
+            error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("134"),
+            "{error}"
+        );
         // 결함 147 — 기본 루트와 **똑같은 모양**이라도 기본값이 아니라고 들고 온 루트는 이 관문에서 막지 않는다. 연결 전에 끝나도록 이웃 신고 대상을 비워
         //   다음 관문에서 멈춘다. outbox 계산이 시스템 임시 디렉터리에 만든 세 디렉터리는 끝에서 지운다.
         let mut fixed = config(dir.path(), "127.0.0.1:9");
@@ -4951,10 +5516,14 @@ mod report_session_tests {
             path.push(suffix);
             let path = PathBuf::from(path);
             if path.exists() {
-                std::fs::remove_dir_all(&path).unwrap_or_else(|e| panic!("시험이 만든 {path:?} 를 지우지 못했다: {e}"));
+                std::fs::remove_dir_all(&path)
+                    .unwrap_or_else(|e| panic!("시험이 만든 {path:?} 를 지우지 못했다: {e}"));
             }
         }
-        assert!(error.contains("NEIGHBOR_REPORT_REFUSED") && !error.contains("기본 경로"), "기본값이 아닌 루트를 기본 루트로 거부했다: {error}");
+        assert!(
+            error.contains("NEIGHBOR_REPORT_REFUSED") && !error.contains("기본 경로"),
+            "기본값이 아닌 루트를 기본 루트로 거부했다: {error}"
+        );
         for flag in ["multi_agent", "resume_protocol"] {
             let mut config = config(dir.path(), "127.0.0.1:9");
             match flag {
@@ -4962,7 +5531,10 @@ mod report_session_tests {
                 _ => config.resume_protocol = true,
             }
             let error = run(config).expect_err("지원하지 않는 lane 조합은 거부돼야 한다");
-            assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 127"), "{flag}: {error}");
+            assert!(
+                error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("결함 127"),
+                "{flag}: {error}"
+            );
         }
     }
 
@@ -4985,35 +5557,67 @@ mod report_session_tests {
                 .arg(&outside)
                 .output()
                 .expect("mklink 실행");
-            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            assert!(
+                made.status.success(),
+                "junction 을 만들지 못했다: {}",
+                String::from_utf8_lossy(&made.stderr)
+            );
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &link).expect("symlink");
         assert!(
-            std::fs::canonicalize(&link).expect("링크의 실제 위치").starts_with(std::fs::canonicalize(&outside).expect("바깥")),
+            std::fs::canonicalize(&link)
+                .expect("링크의 실제 위치")
+                .starts_with(std::fs::canonicalize(&outside).expect("바깥")),
             "대조: 링크의 실제 위치는 작업 출력 루트 밖이어야 한다"
         );
         config.report_outbox_dir = Some(link.clone());
-        let error = report_outbox_dir(&config).expect_err("작업 출력 루트 아래 링크는 거부돼야 한다");
-        assert!(error.contains("경로 중간 실제 위치 대조") && error.contains("146"), "{error}");
+        let error =
+            report_outbox_dir(&config).expect_err("작업 출력 루트 아래 링크는 거부돼야 한다");
+        assert!(
+            error.contains("경로 중간 실제 위치 대조") && error.contains("146"),
+            "{error}"
+        );
         // 결함 146 · 150 — 다른 표기로 같은 링크를 가리켜도 거부한다.
         let mut spellings: Vec<PathBuf> = Vec::new();
         #[cfg(windows)]
         {
-            let run_root_name = run_root.file_name().expect("이름").to_string_lossy().to_uppercase();
-            spellings.push(run_root.with_file_name(run_root_name).join("some-checkpoint").join("link"));
-            let verbatim = format!(r"\\?\{}", std::path::absolute(&link).expect("절대 경로").display());
+            let run_root_name = run_root
+                .file_name()
+                .expect("이름")
+                .to_string_lossy()
+                .to_uppercase();
+            spellings.push(
+                run_root
+                    .with_file_name(run_root_name)
+                    .join("some-checkpoint")
+                    .join("link"),
+            );
+            let verbatim = format!(
+                r"\\?\{}",
+                std::path::absolute(&link).expect("절대 경로").display()
+            );
             spellings.push(PathBuf::from(verbatim));
         }
         #[cfg(unix)]
         {
             std::fs::create_dir_all(dir.path().join("tmp")).expect("우회용");
-            spellings.push(dir.path().join("tmp").join("..").join(run_root.file_name().expect("이름")).join("some-checkpoint").join("link"));
+            spellings.push(
+                dir.path()
+                    .join("tmp")
+                    .join("..")
+                    .join(run_root.file_name().expect("이름"))
+                    .join("some-checkpoint")
+                    .join("link"),
+            );
         }
         for spelling in spellings {
             config.report_outbox_dir = Some(spelling.clone());
             let error = report_outbox_dir(&config).expect_err("다른 표기의 링크도 거부돼야 한다");
-            assert!(error.contains("경로 중간 실제 위치 대조"), "{spelling:?}: {error}");
+            assert!(
+                error.contains("경로 중간 실제 위치 대조"),
+                "{spelling:?}: {error}"
+            );
         }
         // 결함 157 — 작업 출력 루트 **밖**의 별칭이 그 안의 링크를 거쳐 바깥을 가리켜도 거부한다(입력 경로에 작업 출력 루트가 안 나타난다).
         let safe = dir.path().join("safe");
@@ -5021,8 +5625,17 @@ mod report_session_tests {
         let chain = safe.join("alias");
         #[cfg(windows)]
         {
-            let made = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&chain).arg(&link).output().expect("mklink 실행");
-            assert!(made.status.success(), "junction 을 만들지 못했다: {}", String::from_utf8_lossy(&made.stderr));
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&chain)
+                .arg(&link)
+                .output()
+                .expect("mklink 실행");
+            assert!(
+                made.status.success(),
+                "junction 을 만들지 못했다: {}",
+                String::from_utf8_lossy(&made.stderr)
+            );
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(&link, &chain).expect("symlink");
@@ -5048,7 +5661,8 @@ mod report_session_tests {
         std::fs::create_dir_all(&config.checkpoint_root).expect("루트");
         let outbox = config.checkpoint_root.join("..").join("outside-outbox");
         config.report_outbox_dir = Some(outbox.clone());
-        let accepted = report_outbox_dir(&config).expect("루트 밖으로 되돌아 나간 outbox 는 받아야 한다");
+        let accepted =
+            report_outbox_dir(&config).expect("루트 밖으로 되돌아 나간 outbox 는 받아야 한다");
         assert_eq!(accepted, std::path::absolute(&outbox).expect("절대 경로"));
     }
 
@@ -5064,8 +5678,16 @@ mod report_session_tests {
         let base = std::fs::canonicalize(dir.path()).expect("임시 디렉터리 실제 위치");
         let mut config = config(&base, "127.0.0.1:9");
         std::fs::create_dir_all(config.checkpoint_root.join("sub")).expect("루트 안 하위");
-        config.report_outbox_dir = Some(config.checkpoint_root.join("sub").join("..").join("..").join("outside-outbox"));
-        let error = report_outbox_dir(&config).expect_err("지워질 수 있는 하위 디렉터리를 지나는 경로는 거부돼야 한다");
+        config.report_outbox_dir = Some(
+            config
+                .checkpoint_root
+                .join("sub")
+                .join("..")
+                .join("..")
+                .join("outside-outbox"),
+        );
+        let error = report_outbox_dir(&config)
+            .expect_err("지워질 수 있는 하위 디렉터리를 지나는 경로는 거부돼야 한다");
         assert!(error.contains("경로 중간 실제 위치 대조"), "{error}");
     }
 
@@ -5077,10 +5699,17 @@ mod report_session_tests {
         //   이것은 "연결 시도가 한 번도 없었다" 의 증명이 아니다 — 성립하지 못한 시도는 남지 않고 100ms 는 동기화가 아니다. 검출력은 "먼저 연결한 뒤 같은 거부" 변이로 쟀다.
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         listener.set_nonblocking(true).expect("nonblocking");
-        let mut config = config(dir.path(), &listener.local_addr().expect("주소").to_string());
+        let mut config = config(
+            dir.path(),
+            &listener.local_addr().expect("주소").to_string(),
+        );
         config.multi_agent = true;
-        let error = multi_agent::run_multi_agent_session(&config).expect_err("multi_agent 진입점도 REPORT 를 거부해야 한다");
-        assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("148"), "{error}");
+        let error = multi_agent::run_multi_agent_session(&config)
+            .expect_err("multi_agent 진입점도 REPORT 를 거부해야 한다");
+        assert!(
+            error.contains("REPORT_SESSION_CONFIG_REFUSED") && error.contains("148"),
+            "{error}"
+        );
         std::thread::sleep(Duration::from_millis(100));
         match listener.accept() {
             Err(e) if e.kind() == ErrorKind::WouldBlock => {}

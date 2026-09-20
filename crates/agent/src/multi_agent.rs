@@ -44,7 +44,6 @@ use crate::{derive_nonce, AgentConfig};
 //   조용히 어긋난다 — `serve_resume_connection` 이 "두 wire ordering 을
 //   한 포트에서 모호하게 만들지 말라" 고 이미 적어 둔 이유다.
 
-
 /// Hello -> Grant -> ACK 한 왕복.
 pub fn run_multi_agent_session(config: &AgentConfig) -> Result<(), String> {
     // ★ 결함 148 (재검수 65c) — 이 lane 은 outbox 재전송 전에 반환하고 REPORT 를 보내지 않는다. run() 의 거부(결함 134)를 지나쳐 여기로 바로 오는
@@ -58,10 +57,9 @@ pub fn run_multi_agent_session(config: &AgentConfig) -> Result<(), String> {
     // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
     //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
     //   다시 본다.
-    if let Some(message) = crate::unsupported_neighbor_report_lane(
-        config,
-        crate::NeighborReportLane::MultiAgent,
-    ) {
+    if let Some(message) =
+        crate::unsupported_neighbor_report_lane(config, crate::NeighborReportLane::MultiAgent)
+    {
         return Err(message);
     }
     let clock = SystemClock;

@@ -43,7 +43,11 @@ fn run_cli(args: &[&str]) -> (bool, String) {
 /// 바이트 길이는 `len` 인데 첫 글자가 3바이트인 문자열.
 fn multibyte(len: usize) -> String {
     let s = format!("가{}", "1".repeat(len - 3));
-    assert_eq!(s.len(), len, "전제: 바이트 길이가 맞아야 길이 검사를 통과한다");
+    assert_eq!(
+        s.len(),
+        len,
+        "전제: 바이트 길이가 맞아야 길이 검사를 통과한다"
+    );
     s
 }
 
@@ -61,24 +65,37 @@ fn refused_by_name(label: &str, (ok, output): (bool, String), marker: &str) {
 
 const GOOD_SEED: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const DECLARATIONS: [&str; 12] = [
-    "--workload-class", "TRAINING",
-    "--side-effect-class", "PURE",
-    "--dataset-sensitivity", "INTERNAL",
-    "--minimum-security-tier", "S2",
-    "--minimum-isolation-class", "CONTAINED",
-    "--minimum-key-protection", "K1",
+    "--workload-class",
+    "TRAINING",
+    "--side-effect-class",
+    "PURE",
+    "--dataset-sensitivity",
+    "INTERNAL",
+    "--minimum-security-tier",
+    "S2",
+    "--minimum-isolation-class",
+    "CONTAINED",
+    "--minimum-key-protection",
+    "K1",
 ];
 
 fn submit_args<'a>(seed: &'a str, out: &'a str) -> Vec<&'a str> {
     let mut args = vec![
         "submit",
-        "--job-id", "01JJOBHEXPANIC000000000001",
-        "--entrypoint", "python",
-        "--submitter-device-id", "01JSUBMITTERHEXPANIC00001",
-        "--submitter-seed", seed,
-        "--issued-at-unix-ms", "1800000000000",
-        "--expires-at-unix-ms", "1800000600000",
-        "--out", out,
+        "--job-id",
+        "01JJOBHEXPANIC000000000001",
+        "--entrypoint",
+        "python",
+        "--submitter-device-id",
+        "01JSUBMITTERHEXPANIC00001",
+        "--submitter-seed",
+        seed,
+        "--issued-at-unix-ms",
+        "1800000000000",
+        "--expires-at-unix-ms",
+        "1800000600000",
+        "--out",
+        out,
     ];
     args.extend_from_slice(&DECLARATIONS);
     args
@@ -93,7 +110,11 @@ fn submit_seed() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let out = dir.path().join("m.pb");
     let seed = multibyte(64);
-    refused_by_name("submit --submitter-seed", run_cli(&submit_args(&seed, path_str(&out))), "SEED_NOT_HEX");
+    refused_by_name(
+        "submit --submitter-seed",
+        run_cli(&submit_args(&seed, path_str(&out))),
+        "SEED_NOT_HEX",
+    );
     assert!(!out.exists());
 }
 
@@ -106,15 +127,24 @@ fn issue_grant_key_file() {
     let db = dir.path().join("control.sqlite3");
     let result = run_cli(&[
         "issue-grant",
-        "--job-id", "01JJOBHEXPANIC000000000001",
-        "--control-db", path_str(&db),
-        "--attempt-id", "01JATTEMPTHEXPANIC0000001",
-        "--lease-id", "01JLEASEHEXPANIC000000001",
-        "--grant-id", "01JGRANTHEXPANIC000000001",
-        "--grant-issued-at-unix-ms", "1",
-        "--grant-expires-at-unix-ms", "2",
-        "--coordinator-key-file", path_str(&key),
-        "--out", path_str(&out),
+        "--job-id",
+        "01JJOBHEXPANIC000000000001",
+        "--control-db",
+        path_str(&db),
+        "--attempt-id",
+        "01JATTEMPTHEXPANIC0000001",
+        "--lease-id",
+        "01JLEASEHEXPANIC000000001",
+        "--grant-id",
+        "01JGRANTHEXPANIC000000001",
+        "--grant-issued-at-unix-ms",
+        "1",
+        "--grant-expires-at-unix-ms",
+        "2",
+        "--coordinator-key-file",
+        path_str(&key),
+        "--out",
+        path_str(&out),
     ]);
     refused_by_name("issue-grant --coordinator-key-file", result, "KEY_NOT_HEX");
     assert!(!out.exists());
@@ -128,22 +158,38 @@ fn stage_job_operation_key() {
     let key = multibyte(32);
     let result = run_cli(&[
         "stage-job",
-        "--job-id", "01JJOBHEXPANIC000000000001",
-        "--control-db", path_str(&db),
-        "--submitter-keyring", path_str(&keyring),
-        "--submitter-member", "owner",
-        "--max-snapshot-age-ms", "86400000",
-        "--best-fit-axes", "vram,gpu_count,cpu,ram,workspace",
-        "--coordinator-id", "01JCOORDINATORHEXPANIC001",
-        "--coordinator-term", "1",
-        "--attempt-id", "01JATTEMPTHEXPANIC0000001",
-        "--lease-id", "01JLEASEHEXPANIC000000001",
-        "--operation-key", &key,
-        "--lease-issued-at-unix-ms", "1800000000000",
-        "--lease-renew-after-unix-ms", "1800000300000",
-        "--lease-expires-at-unix-ms", "1800000600000",
-        "--lease-max-total-duration-seconds", "86400",
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "--job-id",
+        "01JJOBHEXPANIC000000000001",
+        "--control-db",
+        path_str(&db),
+        "--submitter-keyring",
+        path_str(&keyring),
+        "--submitter-member",
+        "owner",
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        "vram,gpu_count,cpu,ram,workspace",
+        "--coordinator-id",
+        "01JCOORDINATORHEXPANIC001",
+        "--coordinator-term",
+        "1",
+        "--attempt-id",
+        "01JATTEMPTHEXPANIC0000001",
+        "--lease-id",
+        "01JLEASEHEXPANIC000000001",
+        "--operation-key",
+        &key,
+        "--lease-issued-at-unix-ms",
+        "1800000000000",
+        "--lease-renew-after-unix-ms",
+        "1800000300000",
+        "--lease-expires-at-unix-ms",
+        "1800000600000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
     refused_by_name("stage-job --operation-key", result, "--operation-key");
 }
@@ -160,13 +206,22 @@ fn import_manifest_idempotency_key() {
     let key = multibyte(32);
     let result = run_cli(&[
         "import-manifest",
-        "--manifest", path_str(&manifest),
-        "--submitter-keyring", path_str(&keyring),
-        "--job-db", path_str(&db),
-        "--idempotency-key", &key,
-        "--i-understand-plaintext-keyring-is-unsafe", "true",
+        "--manifest",
+        path_str(&manifest),
+        "--submitter-keyring",
+        path_str(&keyring),
+        "--job-db",
+        path_str(&db),
+        "--idempotency-key",
+        &key,
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
     ]);
-    refused_by_name("import-manifest --idempotency-key", result, "--idempotency-key");
+    refused_by_name(
+        "import-manifest --idempotency-key",
+        result,
+        "--idempotency-key",
+    );
 }
 
 #[test]
@@ -206,10 +261,16 @@ fn import_inventory_verifying_key() {
     let db = dir.path().join("control.sqlite3");
     let result = run_cli(&[
         "import-inventory",
-        "--inventory", path_str(&doc),
-        "--inventory-db", path_str(&db),
+        "--inventory",
+        path_str(&doc),
+        "--inventory-db",
+        path_str(&db),
     ]);
-    refused_by_name("import-inventory verifying_key_hex", result, "verifying_key_hex");
+    refused_by_name(
+        "import-inventory verifying_key_hex",
+        result,
+        "verifying_key_hex",
+    );
 }
 
 #[test]
@@ -217,16 +278,26 @@ fn coordinator_stub_own_seed() {
     let seed = multibyte(64);
     let result = run_cli(&[
         "coordinator-stub",
-        "--listen", "127.0.0.1:0",
-        "--own-seed", &seed,
-        "--peer-pubkey", GOOD_SEED,
-        "--coordinator-device-id", "01JCOORDINATORHEXPANIC001",
-        "--agent-device-id", "01JAGENTHEXPANIC000000001",
-        "--grant-id", "01JGRANTHEXPANIC000000001",
-        "--attempt-id", "01JATTEMPTHEXPANIC0000001",
-        "--lease-id", "01JLEASEHEXPANIC000000001",
-        "--job-id", "01JJOBHEXPANIC000000000001",
-        "--accept-timeout-ms", "2000",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        &seed,
+        "--peer-pubkey",
+        GOOD_SEED,
+        "--coordinator-device-id",
+        "01JCOORDINATORHEXPANIC001",
+        "--agent-device-id",
+        "01JAGENTHEXPANIC000000001",
+        "--grant-id",
+        "01JGRANTHEXPANIC000000001",
+        "--attempt-id",
+        "01JATTEMPTHEXPANIC0000001",
+        "--lease-id",
+        "01JLEASEHEXPANIC000000001",
+        "--job-id",
+        "01JJOBHEXPANIC000000000001",
+        "--accept-timeout-ms",
+        "2000",
     ]);
     refused_by_name("coordinator-stub --own-seed", result, "hex 가 아니다");
 }
@@ -238,12 +309,18 @@ fn agent_stub_own_seed() {
     let seed = multibyte(64);
     let result = run_cli(&[
         "agent-stub",
-        "--connect", "127.0.0.1:9",
-        "--own-seed", &seed,
-        "--peer-pubkey", GOOD_SEED,
-        "--coordinator-device-id", "01JCOORDINATORHEXPANIC001",
-        "--agent-device-id", "01JAGENTHEXPANIC000000001",
-        "--fence-db", path_str(&fence),
+        "--connect",
+        "127.0.0.1:9",
+        "--own-seed",
+        &seed,
+        "--peer-pubkey",
+        GOOD_SEED,
+        "--coordinator-device-id",
+        "01JCOORDINATORHEXPANIC001",
+        "--agent-device-id",
+        "01JAGENTHEXPANIC000000001",
+        "--fence-db",
+        path_str(&fence),
     ]);
     refused_by_name("agent-stub --own-seed", result, "hex 가 아니다");
 }
