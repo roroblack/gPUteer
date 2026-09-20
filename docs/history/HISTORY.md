@@ -372,6 +372,7 @@
 - 원본: `docs/evidence/_raw/증거_digest_줄바꿈_검수63_대응_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/63_검수_증거digest_줄바꿈_CHANGES_REQUESTED.txt`
 - 리포트: `docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md`
 
+
 ---
 
 ## 2026-09-17 05:19 — 재검수 62 대응 · 결함 104 ~ 106(저장된 예약 lane 의 저장소 장애 타입 분류 · 99 음성 테스트 · 서술)
