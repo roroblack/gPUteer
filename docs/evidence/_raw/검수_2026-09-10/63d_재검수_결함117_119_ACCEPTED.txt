@@ -1,0 +1,2259 @@
+OpenAI Codex v0.153.4
+--------
+workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0acca-d64c-7060-a700-4a971b722afa
+--------
+user
+동의가 아니라 **반박**을 원한다.
+
+작업 위치: worktree `fix/evidence-digest-eol`. 검수 대상은 ea485c9 다음 커밋 — `git show HEAD` · `git diff ea485c9..HEAD`.
+
+# 결함 117 ~ 119 (재검수 63c 대응)
+
+```text
+117  E4 = 오류는 내고 CRLF 목록일 때만 빈 집합. 세 환경(현재 CRLF worktree · LF 내보내기 · 108 수정 전 CRLF 체크아웃 125949c) 원본
+118  §13 기대 집합 splitlines()
+119  두 환경의 테스트 파일 LF 정규화 sha256
+```
+
+물을 것:
+1. 원본이 "108 수정 전 통과 · 현재 실패" 를 E4 · E5 에 대해 입증하나. 수정 전 체크아웃이 정말 CRLF 목록인가(원본의 CRLF 줄 수).
+2. 118 뒤에도 테스트와 검사기가 목록을 다르게 읽는 입력이 남았나.
+3. 이 커밋의 테스트 파일 blob(LF 정규화)이 원본의 sha256 과 같은가.
+4. 이번에도 증명한 범위보다 넓게 적은 문장이 있나(조치문 · HISTORY · 커밋 메시지).
+
+읽을 파일:
+
+```text
+scripts/test_verify_evidence.py · scripts/verify_evidence.py
+docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md (117~119)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt
+docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt
+```
+
+# 못 찾았으면
+
+**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
+
+# 답의 형식
+
+각 지적마다 `파일:줄` 을 인용하라.
+마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+커밋과 원본 로그를 대조하고, 테스트와 검사기의 목록 해석이 갈리는 반례를 확인하겠습니다. 확인한 범위와 입증되지 않은 주장을 구분해 적겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'git status --short; git branch --show-current; git log -3 --oneline; git show --stat HEAD; rg --files -g AGENTS.md' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ exited 1 in 1426ms:
+C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+ �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+ 
+C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+���Ƿ� ��Ʈ �ҽ��� �� �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+��ġ ��:1 ����:1
++ . 'C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShel ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (:) [Microsoft.PowerShell_profile.ps1], NotSupportedException
+    + FullyQualifiedErrorId : DotSourceNotSupported,Microsoft.PowerShell_profile.ps1
+ 
+fix/evidence-digest-eol
+17abb39 재검수 63c 대응 · 결함 117 118 119: E4 판별력 · 유예 목록 줄 나누기 · LF 내보내기 테스트 해시
+ea485c9 재검수 63b 대응 · 결함 114 115 116: 유예 기대 집합의 독립 · 남은 기준선 필터 · 뮤테이션 판별력과 원본
+0b6e9b8 검수 63 대응 · 결함 108 109 110: 증거 검사기 테스트의 유예 취소 조건 · 기준선 필터 · 계획서 범위
+commit 17abb390ddb2d18555b0b1e8178aa0b868149c2f
+Author: Your Name <zweing@gmail.com>
+Date:   Thu Sep 17 09:35:55 2026 +0900
+
+    재검수 63c 대응 · 결함 117 118 119: E4 판별력 · 유예 목록 줄 나누기 · LF 내보내기 테스트 해시
+    
+    - 117 E4 를 "오류는 내고 CRLF 목록일 때만 빈 집합" 으로. 108 수정 전 CRLF 체크아웃(125949c)에서는 E4 · E5 가 통과하고
+      현재 테스트에서는 실패함을 원본에 남겼다(이전 E4 는 수정 전 테스트도 잡아 판별력의 증거가 아니었다)
+    - 118 §13 기대 집합을 검사기와 같이 splitlines() 로 읽는다
+    - 119 CRLF worktree · LF 내보내기의 테스트 파일 LF 정규화 sha256 이 같음을 원본에 적었다
+    - verify_evidence.py 는 그대로다
+    - 검증: CRLF worktree · LF 내보내기 각각 부정 테스트 exit 0 · 뮤테이션 5/5 · 위반 없음. check_docs 오류 0 · claims_selftest 30/30
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+ ...2\260\355\225\250114_116_CHANGES_REQUESTED.txt" | 2876 +++++++++++++++++++
+ ...23063c_\353\214\200\354\235\221_2026-09-17.txt" | 2943 ++++++++++++++++++++
+ docs/history/HISTORY.md                            |   14 +
+ ...35\274_\352\260\210\353\246\260\353\213\244.md" |   31 +-
+ ...10\230_\353\214\200\352\270\260\354\227\264.md" |    2 +
+ ...354\210\230_\352\262\260\355\225\250117_119.md" |   35 +
+ scripts/test_verify_evidence.py                    |    3 +-
+ 7 files changed, 5902 insertions(+), 2 deletions(-)
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command 'git show HEAD -- scripts/test_verify_evidence.py docs/history/HISTORY.md; git diff ea485c9..HEAD -- docs/reports; Get-Command python; rg -n "E4|E5|sha256|CRLF|splitlines|125949c|exit|108|117|118|119" scripts/test_verify_evidence.py scripts/verify_evidence.py docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ succeeded in 1179ms:
+commit 17abb390ddb2d18555b0b1e8178aa0b868149c2f
+Author: Your Name <zweing@gmail.com>
+Date:   Thu Sep 17 09:35:55 2026 +0900
+
+    재검수 63c 대응 · 결함 117 118 119: E4 판별력 · 유예 목록 줄 나누기 · LF 내보내기 테스트 해시
+    
+    - 117 E4 를 "오류는 내고 CRLF 목록일 때만 빈 집합" 으로. 108 수정 전 CRLF 체크아웃(125949c)에서는 E4 · E5 가 통과하고
+      현재 테스트에서는 실패함을 원본에 남겼다(이전 E4 는 수정 전 테스트도 잡아 판별력의 증거가 아니었다)
+    - 118 §13 기대 집합을 검사기와 같이 splitlines() 로 읽는다
+    - 119 CRLF worktree · LF 내보내기의 테스트 파일 LF 정규화 sha256 이 같음을 원본에 적었다
+    - verify_evidence.py 는 그대로다
+    - 검증: CRLF worktree · LF 내보내기 각각 부정 테스트 exit 0 · 뮤테이션 5/5 · 위반 없음. check_docs 오류 0 · claims_selftest 30/30
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+diff --git a/docs/history/HISTORY.md b/docs/history/HISTORY.md
+index 296be7b..140c4e9 100644
+--- a/docs/history/HISTORY.md
++++ b/docs/history/HISTORY.md
+@@ -25,6 +25,20 @@
+ 
+ ---
+ 
++## 2026-09-17 09:35 — 재검수 63c 대응 · 결함 117 ~ 119(E4 판별력 · 목록 줄 나누기 · LF 내보내기 테스트 해시)
++
++- 계획: `docs/plans/2026-09-17_0513_증거_digest_줄바꿈_독립.md` 단계 6(독립 검수) 대응
++- 스트림: QA
++- 수행: E4 를 "오류는 내고 CRLF 목록일 때만 빈 집합" 으로 고쳐, 108 수정 전 테스트(125949c 체크아웃)에서는 통과하고 지금 테스트에서는 실패함을
++  원본에 남겼다(117 — 이전 E4 는 수정 전 테스트도 잡아 판별력의 증거가 아니었다). §13 기대 집합을 검사기와 같이 splitlines() 로 읽는다(118).
++  LF 내보내기에 쓴 테스트 파일의 해시를 원본에 적었다(119). 검사기(`verify_evidence.py`)는 그대로다
++- 검증: CRLF worktree · LF 내보내기 각각 부정 테스트 exit 0 · 뮤테이션 5/5 · 위반 없음. 108 수정 전 체크아웃에서 E4 · E5 통과. check_docs 오류 0 ·
++  claims_selftest 30/30
++- 원본: `docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt`
++- 리포트: `docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md`
++
++---
++
+ ## 2026-09-17 09:24 — 재검수 63b 대응 · 결함 114 ~ 116(유예 기대 집합의 독립 · 남은 기준선 필터 · 뮤테이션 판별력과 원본)
+ 
+ - 계획: `docs/plans/2026-09-17_0513_증거_digest_줄바꿈_독립.md` 단계 6(독립 검수) 대응
+diff --git a/scripts/test_verify_evidence.py b/scripts/test_verify_evidence.py
+index f319207..c0110fa 100644
+--- a/scripts/test_verify_evidence.py
++++ b/scripts/test_verify_evidence.py
+@@ -454,9 +454,10 @@ def main():
+         #   같은 집합이다. 전에는 두 조건을 bool 로 섞어 유예를 남기고 오류만 내는 구현도 통과했다.
+         # ★ 재검수 63b 결함 114 — 기대 집합을 **검사 대상 함수로 얻지 않는다.** 같은 함수로 얻으면 정상 로드가 틀린 집합을 내도 기대도 같이
+         #   틀려 통과한다. 목록 파일 바이트를 여기서 직접 파싱한다(주석 · 빈 줄 제외).
++        # ★ 재검수 63c 결함 118 — 줄 나누기는 검사기와 같은 splitlines() 다. split("\n") 은 외로운 CR 이 든 목록을 다르게 읽는다.
+         expected_set = {
+             line.strip()
+-            for line in real.replace(b"\r\n", b"\n").decode("utf-8").split("\n")
++            for line in real.decode("utf-8").splitlines()
+             if line.strip() and not line.strip().startswith("#")
+         }
+         assert expected_set, "유예 목록에서 항목을 하나도 못 읽었다"
+diff --git "a/docs/reports/debugs/2026-09-17_0513_\354\246\235\352\261\260_digest_\352\260\200_\354\262\264\355\201\254\354\225\204\354\233\203_\354\244\204\353\260\224\352\277\210\354\227\220_\353\224\260\353\235\274_\352\260\210\353\246\260\353\213\244.md" "b/docs/reports/debugs/2026-09-17_0513_\354\246\235\352\261\260_digest_\352\260\200_\354\262\264\355\201\254\354\225\204\354\233\203_\354\244\204\353\260\224\352\277\210\354\227\220_\353\224\260\353\235\274_\352\260\210\353\246\260\353\213\244.md"
+index b1eeedf..7d81012 100644
+--- "a/docs/reports/debugs/2026-09-17_0513_\354\246\235\352\261\260_digest_\352\260\200_\354\262\264\355\201\254\354\225\204\354\233\203_\354\244\204\353\260\224\352\277\210\354\227\220_\353\224\260\353\235\274_\352\260\210\353\246\260\353\213\244.md"
++++ "b/docs/reports/debugs/2026-09-17_0513_\354\246\235\352\261\260_digest_\352\260\200_\354\262\264\355\201\254\354\225\204\354\233\203_\354\244\204\353\260\224\352\277\210\354\227\220_\353\224\260\353\235\274_\352\260\210\353\246\260\353\213\244.md"
+@@ -129,7 +129,36 @@ DoD-63  파일  3987B ·   74줄 중  26줄 CRLF   같음 · 같음(3961B)
+ - [x] 114 (2026-09-17 09:24) 기대 집합을 목록 파일 바이트에서 직접 파싱한다. E5(정상 로드에 가짜 항목) — LF · CRLF 정상 로드 두 줄 FAIL(두 환경)
+ - [x] 115 (2026-09-17 09:24) §11b 두 줄 · §12 한 줄도 expect_absent. 109 조치문에 "5b 의 세 줄만" 정정을 덧붙였다.
+   ★ 이 파일에서 `want=False` 는 grep 으로 1곳 — expect_absent 설명문의 언급뿐이고 호출은 0건이다
+-- [x] 116 (2026-09-17 09:24) E4 — CRLF worktree 에서 새 LF 취소 줄만 FAIL(기존 검사 통과), LF 내보내기에서는 기존 검사도 FAIL. 원본에 뮤테이션 스크립트 전문과
++- [x] 116 (★ 재검수 63c 정정: 아래 E4 는 108 수정 전 테스트도 잡는다 — 판별력의 증거가 아니었다, 결함 117) (2026-09-17 09:24) E4 — CRLF worktree 에서 새 LF 취소 줄만 FAIL(기존 검사 통과), LF 내보내기에서는 기존 검사도 FAIL. 원본에 뮤테이션 스크립트 전문과
+   변이별 전체 출력을 싣고, 바꾼 테스트를 LF 내보내기에서 실행했다(exit 0 · 뮤테이션 5/5). 지난 원본의 E1 첫 실행 출력은 되살리지 못했다
+ - 검증: CRLF worktree · LF 내보내기 모두 부정 테스트 exit 0 · FAIL 0 · 뮤테이션 E1~E5 5/5 · verify_evidence 위반 없음. check_docs 오류 0 ·
+   claims_selftest 30/30. 원본 `docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt`
++
++---
++
++# 재검수 63c(ea485c9)가 찾은 것 — 결함 117 ~ 119
++
++★ §11b · §12 의 needle 이 정상 fixture 를 실패시키는 반례 · LF 내보내기 차이로 테스트가 잘못 통과하는 반례는 못 찾았다고 했다. E5 는 이전 테스트
++  통과 · 현재 실패를 양쪽 환경에서 재현했다고 했다. 원본 `docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt`
++
++## 1. 위치 · 2. 재현 (재검수 63c)
++```text
++117 [P3] 원본 증거_digest_줄바꿈_재검수63b_대응 E4  CRLF 조건을 **오류 생성 분기 전체**에 붙였다 — 바뀐 LF 목록에서 오류 없이 유예 4건을 돌려준다.
++      그러면 108 수정 전 테스트(125949c)도 같은 줄에서 실패한다. "108 의 조건이 있어야 잡힌다" 의 증거가 아니다(116 조치문의 과장).
++      오류는 그대로 내고 **빈 집합 반환에만** CRLF 조건을 붙여야 이전 통과 · 현재 실패로 갈린다(검수가 CRLF 모사로 재현)
++118 [P3] scripts/test_verify_evidence.py §13 기대 집합  테스트는 split("\n"), 검사기는 splitlines() — 외로운 CR 이 든 목록(`a.md\rb.md`)에서
++      둘이 다르게 읽는다. 지금 목록과 고정 digest 에서는 오판 반례가 없다고 했다
++119 [P3] 같은 원본의 LF 내보내기 절차  덮어쓴 테스트 파일의 해시를 남기지 않아 커밋된 파일과 같은지 원본으로 확정할 수 없다
++```
++
++## 4. 위험도
++- [x] 117 뮤테이션 판별력 과장 · 118 파서 차이(지금은 잠재) · 119 증거 부족
++
++## 6. 조치
++- [x] 고치기 전에 쓴다 (2026-09-17 09:31)
++- [x] 117 (2026-09-17 09:35) E4 = 오류는 내고 CRLF 목록일 때만 빈 집합. 108 수정 전 CRLF 체크아웃(125949c)에서 E4 · E5 는 **통과**, 현재 CRLF worktree ·
++  LF 내보내기에서는 실패 — 이전 통과 · 현재 실패. 116 조치문에 정정을 덧붙였다
++- [x] 118 (2026-09-17 09:35) 테스트도 splitlines() 로 읽는다
++- [x] 119 (2026-09-17 09:35) 두 환경의 테스트 파일 LF 정규화 sha256 이 같다(59ad51e8bd94bebd…) — 원본 머리에 적었다
++- 검증: ① ② 부정 테스트 exit 0 · 뮤테이션 5/5 · 위반 없음, ③ E4 · E5 통과(판별력). check_docs 오류 0 · claims_selftest 30/30.
++  원본 `docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt`
+
+CommandType     Name                                               Version    Source                                   
+-----------     ----                                               -------    ------                                   
+Application     python.exe                                         3.12.71... C:\Users\playdata2\anaconda3\python.exe  
+scripts/test_verify_evidence.py:35:import verify_evidence as VE  # noqa: E402
+scripts/test_verify_evidence.py:168:      기준선과 CRLF 입력이 같은 오류를 내도 "통과" 줄이 ok 로 찍혔다. 통과를 주장하는 줄은 필터 없이 본다.
+scripts/test_verify_evidence.py:250:    for label, files in (("LF", lf_raw), ("CRLF", crlf_raw)):
+scripts/test_verify_evidence.py:452:        # ★ 2026-09-17 — 줄바꿈만 다른 목록(LF · CRLF 체크아웃)은 같은 목록이다. 한 줄 추가는 어느 형태로든 유예를 전부 취소한다.
+scripts/test_verify_evidence.py:453:        # ★ 검수 63 결함 108 — 취소는 "오류가 있다" 가 아니라 **오류 그리고 빈 유예**다. 정상은 오류 없음 **그리고** 손대지 않은 목록과
+scripts/test_verify_evidence.py:457:        # ★ 재검수 63c 결함 118 — 줄 나누기는 검사기와 같은 splitlines() 다. split("\n") 은 외로운 CR 이 든 목록을 다르게 읽는다.
+scripts/test_verify_evidence.py:460:            for line in real.decode("utf-8").splitlines()
+scripts/test_verify_evidence.py:467:            ("CRLF", lf_list.replace(b"\n", b"\r\n"), b"ENV-99_fake.md\r\n"),
+scripts/test_verify_evidence.py:520:    sys.exit(main())
+scripts/verify_evidence.py:43:#   그 값(sha256:c684df09…)은 목록을 처음 쓴 체크아웃의 CRLF 판이었다 — LF 체크아웃에서는 유예가 전부 취소됐다.
+scripts/verify_evidence.py:45:GRANDFATHER_DIGEST = "sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18"
+scripts/verify_evidence.py:94:DIGEST_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
+scripts/verify_evidence.py:323:    actual = "sha256:" + hashlib.sha256(raw).hexdigest()
+scripts/verify_evidence.py:334:    for line in raw.decode("utf-8").splitlines():
+scripts/verify_evidence.py:399:    """CRLF 를 LF 로만 바꾼다 — 외로운 CR 은 그대로 둔다(그것은 내용이다).
+scripts/verify_evidence.py:403:      LF(리눅스 · autocrlf=false) · CRLF(새 Windows 체크아웃) · 원문을 처음 쓴 체크아웃의 섞인 줄바꿈.
+scripts/verify_evidence.py:406:    ★ `.gitattributes` 로 고정하지 않은 이유 — 이미 CRLF 로 체크아웃된 작업 트리는 다시 체크아웃하기 전까지 그대로 어긋나고,
+scripts/verify_evidence.py:412:def sha256_file(full):
+scripts/verify_evidence.py:420:    return hashlib.sha256(data).hexdigest(), len(data)
+scripts/verify_evidence.py:603:            actual, nbytes = sha256_file(os.path.join(REPO_ROOT, norm))
+scripts/verify_evidence.py:607:                    "raw_output_digest 형식이 잘못됐다 — 'sha256:' + 소문자 hex 64자여야 한다"
+scripts/verify_evidence.py:613:                    "raw_output_digest 불일치 — 기록 %s / 실제 sha256:%s "
+scripts/verify_evidence.py:864:    sys.exit(main())
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1:# 재검수 63c 결함 117~119 대응 — 시험 원본 (2026-09-17 09:35)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:3:# 세 환경: ① CRLF worktree(현재) ② LF 내보내기(HEAD 를 LF 로 내보내고 바꾼 테스트만 LF 로 덮어씀) ③ 108 수정 전 CRLF 체크아웃(125949c, 분리 worktree)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:4:# ★ 결함 119 — 테스트 파일의 LF 정규화 sha256 은 ① ② 가 같다: 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7. 커밋 뒤 blob 과의 대조는 커밋 메시지 뒤 기록에 남긴다
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:5:# ★ 판별력(결함 117): E4 · E5 는 ③ 에서 통과하고 ① ② 에서 실패한다. ② 에서 E4 는 기존 검사(작업 트리 목록이 LF)도 실패시킨다
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:7:## 요약 — ① CRLF worktree
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:17:baseline exit=0
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:28:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:29:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:68:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:69:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:75:## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:86:  FAIL 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:87:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:126:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:127:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:132:  ! 기준선이 통과하지 않는다: ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:133:  ! 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과 — 오류가 없어야 하는데 났다: 'raw_output_'
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:134:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:136:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:ffd91f16f0e4575085d1dd46ff22fdf2ce87bc9faf47474dedff0f5e3f0ecfb6 (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5183']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:141:## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:152:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:153:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:192:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:193:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:198:  ! 무손상 유예 목록이 로드되지 않는다: ['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:199:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=0건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:204:## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:215:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:216:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:255:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:256:  FAIL 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:261:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:262:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:263:  ! 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:267:## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:278:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:279:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:318:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:319:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:324:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:328:## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:339:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:340:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:379:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:380:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:386:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=[], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:391:caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:392:caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:393:caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:394:caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:395:caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:409:baseline exit=0
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:420:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:421:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:460:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:461:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:467:## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:478:  FAIL 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:479:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:518:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:519:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:524:  ! 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과 — 오류가 없어야 하는데 났다: 'raw_output_'
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:525:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:527:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:ffd91f16f0e4575085d1dd46ff22fdf2ce87bc9faf47474dedff0f5e3f0ecfb6 (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5183']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:531:## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:542:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:543:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:582:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:583:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:588:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=0건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:592:## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:603:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:604:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:643:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:644:  FAIL 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:649:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:650:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:651:  ! 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:655:## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:666:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:667:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:706:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:707:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:712:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:713:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:717:## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:728:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:729:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:768:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:769:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:775:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=[], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:780:caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:781:caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:782:caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:783:caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:784:caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:788:## 요약 — ③ 108 수정 전 CRLF 체크아웃
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:798:baseline exit=0
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:809:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:810:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:849:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:850:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:856:## fails      E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:867:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:868:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:907:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:908:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:913:  ! 기준선이 통과하지 않는다: ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:915:      새로 난 오류: ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:ffd91f16f0e4575085d1dd46ff22fdf2ce87bc9faf47474dedff0f5e3f0ecfb6 (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5183']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:920:## fails      E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:931:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:932:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:971:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:972:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:977:  ! 무손상 유예 목록이 로드되지 않는다: ['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:978:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=0건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:983:## fails      E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:994:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:995:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1034:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1035:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1040:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1044:## PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1055:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1056:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1095:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1096:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1102:## PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1113:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1114:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1153:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1154:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1161:fails      E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1162:fails      E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1163:fails      E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1164:PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1165:PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1179:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1180:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1219:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1220:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1238:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1239:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1278:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1279:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1503:# 뮤테이션 재검수 63c 대응 — 2026-09-17 09:31 · 환경 CRLF worktree(현재) · 루트 C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1504:# LF 정규화 sha256:
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1505:#   scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 (CRLF 520줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1506:#   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 864줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1507:#   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 19줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1509:"""재검수 63c 결함 117 · 119 뒤 뮤테이션 — 각 변이 뒤 반드시 되돌린다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1512:  환경: CRLF worktree(현재) · LF 내보내기(현재) · 108 수정 전 CRLF 체크아웃(125949c). 출력에 **이 스크립트 전문** · 변이별 전체 출력 ·
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1513:  두 스크립트와 유예 목록의 LF 정규화 sha256(결함 119)을 싣는다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1514:판정: exit != 0 이고 기대 줄이 전부 FAIL 이면 caught. 108 수정 전 환경에서는 기대를 두지 않는다 — 판별력은 "이전 통과 · 현재 실패" 로 본다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1515:★ E4(결함 117 수정판): 오류는 그대로 내고, **목록 파일이 CRLF 일 때만** 빈 집합을 돌려준다 — LF 목록이 바뀌면 오류와 함께 유예를 남긴다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1516:  108 수정 전 테스트는 LF 반복에서 bool(errs) 만 보므로 통과해야 하고, 108 수정 뒤 테스트는 LF 취소 줄에서 실패해야 한다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1529:     ["줄바꿈만 다른 원문(CRLF 체크아웃)은 통과", "줄바꿈이 섞인 원문은 통과"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1536:     ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소", "유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1537:    ("E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)", [
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1542:    ("E5 정상 로드에 가짜 항목을 더한다(결함 114)", [
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1544:     ["유예 목록(LF 체크아웃) 정상 로드", "유예 목록(CRLF 체크아웃) 정상 로드"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1546:OLD = "108 수정 전" in ENV_NAME
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1557:    return f"{hashlib.sha256(b.replace(b'\r\n', b'\n')).hexdigest()} (CRLF {b.count(b'\r\n')}줄)"
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1561:         "# LF 정규화 sha256:"]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1566:lines.append(f"baseline exit={code}")
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1584:    failed = [l[len("  FAIL "):] for l in out.splitlines() if l.startswith("  FAIL ")]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1586:        head = f"{'fails' if code else 'PASSES':10} {name} exit={code} FAIL 줄={failed}"
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1591:        head = f"{'caught' if ok else 'NOT_CAUGHT':10} {name} exit={code} FAIL 줄={failed}" + (f" ★ 기대 줄 누락 {missing}" if missing else "")
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1605:baseline exit=0
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1616:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1617:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1656:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1657:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1663:## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1674:  FAIL 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1675:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1714:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1715:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1720:  ! 기준선이 통과하지 않는다: ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1721:  ! 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과 — 오류가 없어야 하는데 났다: 'raw_output_'
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1722:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1724:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:ffd91f16f0e4575085d1dd46ff22fdf2ce87bc9faf47474dedff0f5e3f0ecfb6 (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5183']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1729:## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1740:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1741:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1780:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1781:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1786:  ! 무손상 유예 목록이 로드되지 않는다: ['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1787:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=0건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1792:## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1803:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1804:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1843:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1844:  FAIL 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1849:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1850:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1851:  ! 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1855:## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1866:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1867:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1906:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1907:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1912:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1916:## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1927:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1928:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1967:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1968:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1974:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=[], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1979:caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1980:caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1981:caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1982:caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1983:caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1990:# LF 정규화 sha256:
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1991:#   scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 (CRLF 0줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1992:#   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 0줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1993:#   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 0줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1995:"""재검수 63c 결함 117 · 119 뒤 뮤테이션 — 각 변이 뒤 반드시 되돌린다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1998:  환경: CRLF worktree(현재) · LF 내보내기(현재) · 108 수정 전 CRLF 체크아웃(125949c). 출력에 **이 스크립트 전문** · 변이별 전체 출력 ·
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1999:  두 스크립트와 유예 목록의 LF 정규화 sha256(결함 119)을 싣는다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2000:판정: exit != 0 이고 기대 줄이 전부 FAIL 이면 caught. 108 수정 전 환경에서는 기대를 두지 않는다 — 판별력은 "이전 통과 · 현재 실패" 로 본다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2001:★ E4(결함 117 수정판): 오류는 그대로 내고, **목록 파일이 CRLF 일 때만** 빈 집합을 돌려준다 — LF 목록이 바뀌면 오류와 함께 유예를 남긴다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2002:  108 수정 전 테스트는 LF 반복에서 bool(errs) 만 보므로 통과해야 하고, 108 수정 뒤 테스트는 LF 취소 줄에서 실패해야 한다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2015:     ["줄바꿈만 다른 원문(CRLF 체크아웃)은 통과", "줄바꿈이 섞인 원문은 통과"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2022:     ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소", "유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2023:    ("E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)", [
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2028:    ("E5 정상 로드에 가짜 항목을 더한다(결함 114)", [
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2030:     ["유예 목록(LF 체크아웃) 정상 로드", "유예 목록(CRLF 체크아웃) 정상 로드"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2032:OLD = "108 수정 전" in ENV_NAME
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2043:    return f"{hashlib.sha256(b.replace(b'\r\n', b'\n')).hexdigest()} (CRLF {b.count(b'\r\n')}줄)"
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2047:         "# LF 정규화 sha256:"]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2052:lines.append(f"baseline exit={code}")
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2070:    failed = [l[len("  FAIL "):] for l in out.splitlines() if l.startswith("  FAIL ")]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2072:        head = f"{'fails' if code else 'PASSES':10} {name} exit={code} FAIL 줄={failed}"
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2077:        head = f"{'caught' if ok else 'NOT_CAUGHT':10} {name} exit={code} FAIL 줄={failed}" + (f" ★ 기대 줄 누락 {missing}" if missing else "")
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2091:baseline exit=0
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2102:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2103:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2142:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2143:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2149:## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2160:  FAIL 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2161:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2200:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2201:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2206:  ! 줄바꿈만 다른 원문(CRLF 체크아웃)은 통과 — 오류가 없어야 하는데 났다: 'raw_output_'
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2207:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2209:      ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:ffd91f16f0e4575085d1dd46ff22fdf2ce87bc9faf47474dedff0f5e3f0ecfb6 (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5183']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2213:## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2224:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2225:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2264:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2265:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2270:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=0건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2274:## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2285:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2286:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2325:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2326:  FAIL 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2331:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2332:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2333:  ! 유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2337:## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2348:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2349:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2388:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2389:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2394:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2395:  ! 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2399:## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2410:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2411:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2450:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2451:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2457:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=[], 유예=4건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2462:caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2463:caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2464:caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2465:caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2466:caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2472:# 뮤테이션 재검수 63c 대응 — 2026-09-17 09:32 · 환경 108 수정 전 CRLF 체크아웃(125949c) · 루트 C:\Users\playdata2\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\eol_old_125949c
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2473:# LF 정규화 sha256:
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2474:#   scripts/test_verify_evidence.py d433c6bc901827fc9fc7ac832b8a4debb82c0bcb1faa814ee36a352b410df990 (CRLF 490줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2475:#   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 864줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2476:#   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 19줄)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2478:"""재검수 63c 결함 117 · 119 뒤 뮤테이션 — 각 변이 뒤 반드시 되돌린다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2481:  환경: CRLF worktree(현재) · LF 내보내기(현재) · 108 수정 전 CRLF 체크아웃(125949c). 출력에 **이 스크립트 전문** · 변이별 전체 출력 ·
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2482:  두 스크립트와 유예 목록의 LF 정규화 sha256(결함 119)을 싣는다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2483:판정: exit != 0 이고 기대 줄이 전부 FAIL 이면 caught. 108 수정 전 환경에서는 기대를 두지 않는다 — 판별력은 "이전 통과 · 현재 실패" 로 본다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2484:★ E4(결함 117 수정판): 오류는 그대로 내고, **목록 파일이 CRLF 일 때만** 빈 집합을 돌려준다 — LF 목록이 바뀌면 오류와 함께 유예를 남긴다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2485:  108 수정 전 테스트는 LF 반복에서 bool(errs) 만 보므로 통과해야 하고, 108 수정 뒤 테스트는 LF 취소 줄에서 실패해야 한다.
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2498:     ["줄바꿈만 다른 원문(CRLF 체크아웃)은 통과", "줄바꿈이 섞인 원문은 통과"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2505:     ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소", "유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2506:    ("E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)", [
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2511:    ("E5 정상 로드에 가짜 항목을 더한다(결함 114)", [
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2513:     ["유예 목록(LF 체크아웃) 정상 로드", "유예 목록(CRLF 체크아웃) 정상 로드"]),
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2515:OLD = "108 수정 전" in ENV_NAME
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2526:    return f"{hashlib.sha256(b.replace(b'\r\n', b'\n')).hexdigest()} (CRLF {b.count(b'\r\n')}줄)"
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2530:         "# LF 정규화 sha256:"]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2535:lines.append(f"baseline exit={code}")
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2553:    failed = [l[len("  FAIL "):] for l in out.splitlines() if l.startswith("  FAIL ")]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2555:        head = f"{'fails' if code else 'PASSES':10} {name} exit={code} FAIL 줄={failed}"
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2560:        head = f"{'caught' if ok else 'NOT_CAUGHT':10} {name} exit={code} FAIL 줄={failed}" + (f" ★ 기대 줄 누락 {missing}" if missing else "")
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2574:baseline exit=0
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2585:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2586:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2625:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2626:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2632:## fails      E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2643:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2644:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2683:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2684:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2689:  ! 기준선이 통과하지 않는다: ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:501f43e79232890dbef3e3d6b758854aa6775da0e8a2c455f5fc5408a312875d (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5227']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2691:      새로 난 오류: ['raw_output_digest 불일치 — 기록 sha256:d9acfb59d5ad4587d4f6311e49ab43b234b276ad8850325a4df62367f5703cee / 실제 sha256:ffd91f16f0e4575085d1dd46ff22fdf2ce87bc9faf47474dedff0f5e3f0ecfb6 (원문이 기록 이후 변경됐다)', 'raw_output_bytes 불일치 — 기록 5138 / 실제 5183']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2696:## fails      E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2707:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2708:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2747:  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2748:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2753:  ! 무손상 유예 목록이 로드되지 않는다: ['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2754:  ! 유예 목록(CRLF 체크아웃) 정상 로드 — 오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=0건
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2759:## fails      E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2770:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2771:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2810:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2811:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2816:  ! 유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=['유예 목록이 변경됐다 — 기록 sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 / 실제 sha256:63e4f27911b0ee29b0e13732050ffb817128598ce6b114a9b9adf1707f290249. 유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, 그 diff 가 검토 대상이다.'], 유예=4건)
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2820:## PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2831:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2832:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2871:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2872:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2878:## PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2889:  ok   줄바꿈만 다른 원문(CRLF 체크아웃)은 통과
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2890:  ok   변조한 원문(CRLF 체크아웃)은 실패
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2929:  ok   유예 목록(CRLF 체크아웃) 정상 로드
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2930:  ok   유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2937:fails      E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2938:fails      E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2939:fails      E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소']
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2940:PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2941:PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+
+
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+for f, spans in [('scripts/test_verify_evidence.py',[(1,215),(415,520)]),('scripts/verify_evidence.py',[(302,344),(390,414)]),('docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt',[(1,18),(1350,1480),(1980,2100),(2470,2576)])]:
+ p=Path(f); lines=p.read_text(encoding='utf-8').splitlines()
+ print('\\nFILE',f)
+ for a,b in spans:
+  for i in range(a,min(b,len(lines))+1): print(f'{i}: {lines[i-1]}')
+'@ | python -X utf8 -B -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ exited 1 in 1197ms:
+
+FILE scripts/test_verify_evidence.py
+1: #!/usr/bin/env python3
+2: # -*- coding: utf-8 -*-
+3: """`verify_evidence.py` 의 부정 테스트 — **검사기가 실제로 잡는가.**
+4: 
+5: # 왜 이 파일이 있나
+6: 
+7: `RULE.md` §4.3 · `CLAUDE.md` §4 — 정상 경로 통과만으로 완료라 하지 않는다.
+8: 
+9: evidence 검사기는 **규칙을 강제하는 장치**다.
+10: 강제 장치가 실제로 강제하는지 증명하지 않으면,
+11: "검사기가 통과했다" 는 "검사기가 아무것도 안 본다" 와 구분되지 않는다.
+12: 
+13: 2026-08-17 실제로 그런 일이 있었다 — 파서가 따옴표를 벗기지 않아
+14: `reviewer_id: "agent:x"` 의 값이 `"agent:x"` 였고 접두사 검사가 전부 오탐이었다.
+15: 정상 evidence 하나로만 확인했으면 못 봤다.
+16: 
+17: # 방법
+18: 
+19: 정상 evidence 를 임시 디렉터리에 복사하고 **한 군데씩 망가뜨린 뒤**
+20: 검사기가 그 항목을 오류로 보고하는지 확인한다.
+21: 보고하지 않으면 그 검사는 존재하지 않는 것이다.
+22: 
+23: # 사용법
+24: 
+25:     python scripts/test_verify_evidence.py
+26: """
+27: import io
+28: import os
+29: import re
+30: import shutil
+31: import sys
+32: import tempfile
+33: 
+34: sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+35: import verify_evidence as VE  # noqa: E402
+36: 
+37: REPO_ROOT = VE.REPO_ROOT
+38: PILOT = "DoD-09_재개선택_필터.md"
+39: 
+40: FAILURES = []
+41: 
+42: 
+43: def real_sources():
+44:     """진짜 저장소의 소스 전문. `VE.REPO_ROOT` 가 바뀌어도 이것을 쓴다."""
+45:     saved = VE.REPO_ROOT
+46:     VE.REPO_ROOT = REPO_ROOT
+47:     try:
+48:         return VE.repo_sources()
+49:     finally:
+50:         VE.REPO_ROOT = saved
+51: 
+52: 
+53: def check(text, raw_files, grandfathered=frozenset({PILOT}), filename=None):
+54:     """망가뜨린 evidence 를 검사기에 통과시킨다. (errors, warnings) 반환.
+55: 
+56:     `_raw/` 원문은 실제 파일이어야 digest 검사가 의미를 갖는다 —
+57:     임시 저장소를 통째로 만든다.
+58:     """
+59:     tmp = tempfile.mkdtemp(prefix="gputeer-ve-")
+60:     try:
+61:         ev = os.path.join(tmp, "docs", "evidence")
+62:         raw = os.path.join(ev, "_raw")
+63:         os.makedirs(raw)
+64:         for name, data in raw_files.items():
+65:             io.open(os.path.join(raw, name), "wb").write(data)
+66:         path = os.path.join(ev, filename or PILOT)
+67:         io.open(path, "w", encoding="utf-8", newline="\n").write(text)
+68: 
+69:         # `_raw/` 밖의 artifact(소스 파일 등)는 내용이 검사 대상이 아니다.
+70:         # 임시 저장소에 **빈 파일로 세운다** — 그러지 않으면 기준선조차
+71:         # "artifact 가 존재하지 않는다" 로 실패해 부정 테스트가 무의미해진다.
+72:         for rel in re.findall(r"(?m)^  - (\S+)$", text):
+73:             ok, _ = VE.safe_repo_path(rel)
+74:             if not ok or "/_raw/" in rel:
+75:                 continue          # 경로 탈출 케이스는 세우지 않는다 — 그게 검사 대상이다
+76:             full = os.path.join(tmp, rel.replace("/", os.sep))
+77:             os.makedirs(os.path.dirname(full), exist_ok=True)
+78:             io.open(full, "w").close()
+79: 
+80:         old_root, old_ev = VE.REPO_ROOT, VE.EVIDENCE_DIR
+81:         VE.REPO_ROOT, VE.EVIDENCE_DIR = tmp, ev
+82:         # ★ 소스 스캔은 **진짜 저장소**를 봐야 한다.
+83:         #   임시 저장소에는 빈 스텁 파일뿐이라 모든 테스트 이름이
+84:         #   "함수 정의를 찾지 못했다" 가 된다 — 실제로 그렇게 만들었다가
+85:         #   부정 테스트가 전부 오탐이 됐다.
+86:         VE._SOURCE_CACHE[tmp] = real_sources()
+87:         try:
+88:             # 임시 저장소는 git 저장소가 아니므로 commit 검사는 자동으로 건너뛴다.
+89:             errors, warns, _ = VE.check_file(path, grandfathered)
+90:         finally:
+91:             VE.REPO_ROOT, VE.EVIDENCE_DIR = old_root, old_ev
+92:         return errors, warns
+93:     finally:
+94:         shutil.rmtree(tmp, ignore_errors=True)
+95: 
+96: 
+97: def run_main_on(text, raw_files, filename=None):
+98:     """임시 저장소를 만들고 `VE.main()` 을 실제로 돌려 **종료 코드**를 얻는다.
+99: 
+100:     ★ 왜 필요한가 (독립 검수 2026-08-17 지적).
+101: 
+102:       다른 검사들은 `check_file()` 만 부른다. 그래서 **경고로만 보고되는 위반이
+103:       종료 코드 0 으로 통과하는지** 알 수 없다.
+104:       규칙을 강제하는 것은 함수 반환값이 아니라 **종료 코드**다.
+105:     """
+106:     tmp = tempfile.mkdtemp(prefix="gputeer-ve-main-")
+107:     try:
+108:         ev = os.path.join(tmp, "docs", "evidence")
+109:         os.makedirs(os.path.join(ev, "_raw"))
+110:         for name, data in raw_files.items():
+111:             io.open(os.path.join(ev, "_raw", name), "wb").write(data)
+112:         io.open(os.path.join(ev, filename or PILOT), "w",
+113:                 encoding="utf-8", newline="\n").write(text)
+114:         for rel in re.findall(r"(?m)^  - (\S+)$", text):
+115:             if "/_raw/" in rel:
+116:                 continue
+117:             full = os.path.join(tmp, rel.replace("/", os.sep))
+118:             os.makedirs(os.path.dirname(full), exist_ok=True)
+119:             io.open(full, "w").close()
+120:         # 유예 목록은 그대로 복사한다 — digest 검사가 통과해야 하기 때문이다.
+121:         shutil.copyfile(VE.GRANDFATHER_LIST,
+122:                         os.path.join(ev, "_schema_v1_grandfathered.txt"))
+123: 
+124:         saved = (VE.REPO_ROOT, VE.EVIDENCE_DIR, VE.GRANDFATHER_LIST, sys.argv,
+125:                  sys.stdout)
+126:         VE.REPO_ROOT, VE.EVIDENCE_DIR = tmp, ev
+127:         VE.GRANDFATHER_LIST = os.path.join(ev, "_schema_v1_grandfathered.txt")
+128:         sys.argv = ["verify_evidence.py"]
+129:         sys.stdout = io.StringIO()          # main() 의 출력은 삼킨다
+130:         try:
+131:             return VE.main()
+132:         finally:
+133:             (VE.REPO_ROOT, VE.EVIDENCE_DIR, VE.GRANDFATHER_LIST, sys.argv,
+134:              sys.stdout) = saved
+135:     finally:
+136:         shutil.rmtree(tmp, ignore_errors=True)
+137: 
+138: 
+139: # ★ 기준선(무손상)이 내는 오류. `expect()` 가 **다른 이유로 난 오류**를
+140: #   목표 오류로 착각하지 않게 하려고 쓴다 (독립 검수 2026-08-17 지적).
+141: BASELINE_ERRORS = []
+142: 
+143: 
+144: def expect(label, errors, needle, want=True):
+145:     """`needle` 을 포함한 오류가 **새로** 났는가.
+146: 
+147:     ★ 2026-08-17 강화 (독립 검수). 전에는 부분문자열 하나만 찾았다.
+148:       망가뜨린 것과 **무관한** 오류가 같은 문자열을 담고 있어도 통과했다.
+149:       지금은 기준선에도 있던 오류는 근거로 세지 않는다.
+150:     """
+151:     fresh = [e for e in errors if e not in BASELINE_ERRORS]
+152:     hit = any(needle in e for e in fresh)
+153:     if hit != want:
+154:         FAILURES.append(
+155:             "%s — %s: %r\n      새로 난 오류: %s"
+156:             % (label,
+157:                "잡아야 하는데 못 잡았다" if want else "잡으면 안 되는데 잡았다",
+158:                needle, fresh or "(없음)"))
+159:         print("  FAIL %s" % label)
+160:     else:
+161:         print("  ok   %s" % label)
+162: 
+163: 
+164: def expect_absent(label, errors, needle):
+165:     """`needle` 을 포함한 오류가 **하나도** 없어야 통과한다 — 기준선 필터를 쓰지 않는다.
+166: 
+167:     ★ 2026-09-17 검수 63 결함 109. `expect(want=False)` 는 기준선에도 있던 오류를 빼고 본다 — 정규화를 끈 검사기에서
+168:       기준선과 CRLF 입력이 같은 오류를 내도 "통과" 줄이 ok 로 찍혔다. 통과를 주장하는 줄은 필터 없이 본다.
+169:     """
+170:     hits = [e for e in errors if needle in e]
+171:     if hits:
+172:         FAILURES.append("%s — 오류가 없어야 하는데 났다: %r\n      %s" % (label, needle, hits))
+173:         print("  FAIL %s" % label)
+174:     else:
+175:         print("  ok   %s" % label)
+176: 
+177: 
+178: def main():
+179:     for s in (sys.stdout, sys.stderr):
+180:         try:
+181:             s.reconfigure(encoding="utf-8", errors="replace")
+182:         except (AttributeError, ValueError):
+183:             pass
+184: 
+185:     src = os.path.join(REPO_ROOT, "docs", "evidence", PILOT)
+186:     if not os.path.exists(src):
+187:         print("시범 evidence 가 없다: %s" % src)
+188:         return 1
+189:     base = io.open(src, encoding="utf-8").read()
+190: 
+191:     raw_files = {}
+192:     for n in ("DoD-09_resume_selection.txt", "DoD-09_review.txt"):
+193:         p = os.path.join(REPO_ROOT, "docs", "evidence", "_raw", n)
+194:         raw_files[n] = io.open(p, "rb").read()
+195: 
+196:     print("verify_evidence.py 부정 테스트")
+197:     print("=" * 62)
+198: 
+199:     # ── 0. 기준선 — 손대지 않은 것은 통과해야 한다 ────────────────
+200:     errors, warns = check(base, raw_files)
+201:     BASELINE_ERRORS[:] = errors
+202:     if errors:
+203:         FAILURES.append("기준선이 통과하지 않는다: %s" % errors)
+204:         print("  FAIL 기준선(무손상) 통과")
+205:     else:
+206:         print("  ok   기준선(무손상) 통과")
+207: 
+208:     # ── 1. 자기 검수 ──────────────────────────────────────────────
+209:     #   가장 중요한 검사다. 이것이 없으면 v2 는 형식 절차일 뿐이다.
+210:     m = base.replace('reviewer_id: "agent:codex-cli"',
+211:                      'reviewer_id: "agent:claude-code"')
+212:     assert m != base
+213:     errors, _ = check(m, raw_files)
+214:     expect("자기 검수(executor_id == reviewer_id)", errors, "자기 검수")
+215: 
+415:     if any("함수 정의를 찾지 못했다" in w for w in warns):
+416:         FAILURES.append("실재하는 negative test 에 경고가 났다: %s" % warns)
+417:         print("  FAIL 실재하는 이름은 경고하지 않는다")
+418:     else:
+419:         print("  ok   실재하는 이름은 경고하지 않는다")
+420: 
+421:     # ── 13. 유예 목록 자체를 손대는 경우 ──────────────────────────
+422:     #   ★ 독립 검수(2026-08-17)가 **치명**으로 지적한 우회다.
+423:     #     목록 파일에 "추가 금지" 라고 적어만 뒀고 검사기는 그냥 믿었다.
+424:     #     한 줄 추가하면 새 v1 evidence 가 검수 없이 통과했다.
+425:     tmp = tempfile.mkdtemp(prefix="gputeer-gf-")
+426:     try:
+427:         real = io.open(VE.GRANDFATHER_LIST, "rb").read()
+428:         fake = os.path.join(tmp, "_schema_v1_grandfathered.txt")
+429:         io.open(fake, "wb").write(real + b"ENV-99_fake.md\n")
+430:         old_list = VE.GRANDFATHER_LIST
+431:         VE.GRANDFATHER_LIST = fake
+432:         try:
+433:             got, errs = VE.load_grandfathered()
+434:         finally:
+435:             VE.GRANDFATHER_LIST = old_list
+436:         if errs and not got:
+437:             print("  ok   유예 목록에 한 줄 추가 -> 유예 전부 취소")
+438:         else:
+439:             FAILURES.append(
+440:                 "유예 목록을 늘렸는데 검사기가 통과시켰다 (오류=%s, 유예=%d건)"
+441:                 % (errs, len(got)))
+442:             print("  FAIL 유예 목록에 한 줄 추가 -> 유예 전부 취소")
+443: 
+444:         # 비공허성 — 손대지 않은 목록은 정상 로드된다
+445:         got, errs = VE.load_grandfathered()
+446:         if not errs and got:
+447:             print("  ok   손대지 않은 유예 목록은 정상 로드")
+448:         else:
+449:             FAILURES.append("무손상 유예 목록이 로드되지 않는다: %s" % errs)
+450:             print("  FAIL 손대지 않은 유예 목록은 정상 로드")
+451: 
+452:         # ★ 2026-09-17 — 줄바꿈만 다른 목록(LF · CRLF 체크아웃)은 같은 목록이다. 한 줄 추가는 어느 형태로든 유예를 전부 취소한다.
+453:         # ★ 검수 63 결함 108 — 취소는 "오류가 있다" 가 아니라 **오류 그리고 빈 유예**다. 정상은 오류 없음 **그리고** 손대지 않은 목록과
+454:         #   같은 집합이다. 전에는 두 조건을 bool 로 섞어 유예를 남기고 오류만 내는 구현도 통과했다.
+455:         # ★ 재검수 63b 결함 114 — 기대 집합을 **검사 대상 함수로 얻지 않는다.** 같은 함수로 얻으면 정상 로드가 틀린 집합을 내도 기대도 같이
+456:         #   틀려 통과한다. 목록 파일 바이트를 여기서 직접 파싱한다(주석 · 빈 줄 제외).
+457:         # ★ 재검수 63c 결함 118 — 줄 나누기는 검사기와 같은 splitlines() 다. split("\n") 은 외로운 CR 이 든 목록을 다르게 읽는다.
+458:         expected_set = {
+459:             line.strip()
+460:             for line in real.decode("utf-8").splitlines()
+461:             if line.strip() and not line.strip().startswith("#")
+462:         }
+463:         assert expected_set, "유예 목록에서 항목을 하나도 못 읽었다"
+464:         lf_list = real.replace(b"\r\n", b"\n")
+465:         for label, data, extra in (
+466:             ("LF", lf_list, b"ENV-99_fake.md\n"),
+467:             ("CRLF", lf_list.replace(b"\n", b"\r\n"), b"ENV-99_fake.md\r\n"),
+468:         ):
+469:             for appended, want_loaded in ((b"", True), (extra, False)):
+470:                 io.open(fake, "wb").write(data + appended)
+471:                 VE.GRANDFATHER_LIST = fake
+472:                 try:
+473:                     got, errs = VE.load_grandfathered()
+474:                 finally:
+475:                     VE.GRANDFATHER_LIST = old_list
+476:                 name = "유예 목록(%s 체크아웃)%s" % (
+477:                     label, " 정상 로드" if want_loaded else "에 한 줄 추가 -> 유예 전부 취소")
+478:                 if want_loaded:
+479:                     passed = not errs and set(got) == set(expected_set)
+480:                 else:
+481:                     passed = bool(errs) and not got
+482:                 if passed:
+483:                     print("  ok   %s" % name)
+484:                 else:
+485:                     FAILURES.append("%s — 오류=%s, 유예=%d건" % (name, errs, len(got)))
+486:                     print("  FAIL %s" % name)
+487:     finally:
+488:         shutil.rmtree(tmp, ignore_errors=True)
+489: 
+490:     # ── 14. 종료 코드 — end-to-end ────────────────────────────────
+491:     #   ★ 위 검사들은 `check_file()` 만 부른다. 독립 검수가 지적했듯
+492:     #     그것만으로는 **경고만 나는 위반이 종료 코드 0 으로 통과하는지**
+493:     #     알 수 없다. `main()` 을 실제로 돌려 확인한다.
+494:     if run_main_on(base, raw_files) != 0:
+495:         FAILURES.append("무손상 evidence 에서 main() 이 0 을 반환하지 않는다")
+496:         print("  FAIL main() — 무손상은 0")
+497:     else:
+498:         print("  ok   main() — 무손상은 0")
+499: 
+500:     broken = base.replace('review_outcome: "ACCEPTED"',
+501:                           'review_outcome: "CHANGES_REQUESTED"')
+502:     if run_main_on(broken, raw_files) == 0:
+503:         FAILURES.append("★ 위반이 있는데 main() 이 0 을 반환했다 — 종료 코드가 규칙을 강제하지 않는다")
+504:         print("  FAIL main() — 위반은 1")
+505:     else:
+506:         print("  ok   main() — 위반은 1")
+507: 
+508:     print("-" * 62)
+509:     if FAILURES:
+510:         print("검사기 결함 %d건:" % len(FAILURES))
+511:         for f in FAILURES:
+512:             print("  ! %s" % f)
+513:         print("\n★ 검사기가 잡지 못하는 규칙은 규칙이 아니다.")
+514:         return 1
+515:     print("검사기가 위 위반을 전부 잡는다.")
+516:     return 0
+517: 
+518: 
+519: if __name__ == "__main__":
+520:     sys.exit(main())
+
+FILE scripts/verify_evidence.py
+302:                                             encoding="utf-8",
+303:                                             errors="ignore").read())
+304:                     except OSError:
+305:                         pass
+306:     _SOURCE_CACHE[REPO_ROOT] = chr(10).join(blob)
+307:     return _SOURCE_CACHE[REPO_ROOT]
+308: 
+309: 
+310: def load_grandfathered():
+311:     """schema v1 로 남을 수 있는 파일 목록. `(집합, 오류목록)` 반환.
+312: 
+313:     ★ 목록이 없으면 **아무것도 유예하지 않는다** (빈 집합).
+314:       "파일이 없으면 전부 통과" 로 만들면 목록을 지우는 것이 규칙 우회가 된다.
+315: 
+316:     ★ 목록 자체가 `GRANDFATHER_DIGEST` 와 일치해야 한다.
+317:       일치하지 않으면 **아무것도 유예하지 않는다** — 안전한 실패 방향이다.
+318:     """
+319:     if not os.path.exists(GRANDFATHER_LIST):
+320:         return set(), []
+321:     # ★ 원문 digest 와 같은 정의 — 체크아웃의 줄바꿈과 무관하다(`lf_normalized`).
+322:     raw = lf_normalized(io.open(GRANDFATHER_LIST, "rb").read())
+323:     actual = "sha256:" + hashlib.sha256(raw).hexdigest()
+324:     errs = []
+325:     if GRANDFATHER_DIGEST != actual:
+326:         errs.append(
+327:             "유예 목록이 변경됐다 — 기록 %s / 실제 %s. "
+328:             "유예를 늘리려면 verify_evidence.py 의 GRANDFATHER_DIGEST 도 함께 고쳐야 하며, "
+329:             "그 diff 가 검토 대상이다."
+330:             % (GRANDFATHER_DIGEST, actual)
+331:         )
+332:         return set(), errs      # ★ 유예를 전부 취소한다
+333:     out = set()
+334:     for line in raw.decode("utf-8").splitlines():
+335:         t = line.strip()
+336:         if t and not t.startswith("#"):
+337:             out.add(t)
+338:     return out, errs
+339: 
+340: 
+341: def safe_repo_path(rel):
+342:     """저장소 안의 상대 경로인가. (ok, 이유) 반환.
+343: 
+344:     ★ 2026-08-17 추가 (독립 검수). 전에는 `os.path.exists` 만 봤다 —
+390:     expected = os.path.normcase(os.path.join(root, *parts))
+391:     if os.path.normcase(real) != expected:
+392:         return False, (
+393:             "적힌 경로와 실제 이름이 다르다(8.3 단축이름 등): %s -> %s" % (rel, real)
+394:         )
+395:     return True, None
+396: 
+397: 
+398: def lf_normalized(data):
+399:     """CRLF 를 LF 로만 바꾼다 — 외로운 CR 은 그대로 둔다(그것은 내용이다).
+400: 
+401:     ★ 2026-09-17 (docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md).
+402:       이 저장소는 `.gitattributes` 없이 `core.autocrlf=true` 라, 같은 커밋도 체크아웃마다 작업 트리 바이트가 다르다 —
+403:       LF(리눅스 · autocrlf=false) · CRLF(새 Windows 체크아웃) · 원문을 처음 쓴 체크아웃의 섞인 줄바꿈.
+404:       작업 트리 바이트를 그대로 해시하자 검사 결과가 체크아웃에 따라 갈렸다(새 worktree 76건 · LF 내보내기 7건 · 메인 0건).
+405:     ★ 잃는 것: **줄바꿈만** 바꾼 변경은 digest 로 잡지 못한다. 내용 변경은 그대로 잡는다(외로운 CR 도 내용이다).
+406:     ★ `.gitattributes` 로 고정하지 않은 이유 — 이미 CRLF 로 체크아웃된 작업 트리는 다시 체크아웃하기 전까지 그대로 어긋나고,
+407:       섞인 줄바꿈으로 기록된 digest 는 어떤 체크아웃에서도 다시 만들 수 없다. 검사기가 체크아웃과 무관해야 한다.
+408:     """
+409:     return data.replace(b"\r\n", b"\n")
+410: 
+411: 
+412: def sha256_file(full):
+413:     """`_raw/` 원문의 digest 와 바이트 수 — **LF 정규화한 내용**으로 잰다(`lf_normalized`).
+414: 
+Traceback (most recent call last):
+  File "<stdin>", line 3, in <module>
+  File "C:\Users\playdata2\anaconda3\Lib\pathlib.py", line 1027, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\playdata2\anaconda3\Lib\pathlib.py", line 1013, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 22] Invalid argument: 'docs\\evidence\\_raw\\??_digest_???_???63c_??_2026-09-17.txt'
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+p=next(Path('docs/evidence/_raw').glob('*digest*63c*txt')); lines=p.read_text(encoding='utf-8').splitlines()
+print('FILE',p)
+for a,b in [(1,18),(1350,1480),(1980,2100),(2470,2576)]:
+ for i in range(a,min(b,len(lines))+1): print(f'{i}: {lines[i-1]}')
+print('HEADINGS')
+for i,l in enumerate(lines,1):
+ if l.startswith(('#','baseline exit','caught','PASSES')) and ('E4' in l or 'E5' in l or 'sha256' in l or 'CRLF ' in l or '## ' in l or 'baseline' in l): print(f'{i}: {l}')
+'@ | python -X utf8 -B -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ succeeded in 1068ms:
+FILE docs\evidence\_raw\증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt
+1: # 재검수 63c 결함 117~119 대응 — 시험 원본 (2026-09-17 09:35)
+2: # 결함 리포트 docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md
+3: # 세 환경: ① CRLF worktree(현재) ② LF 내보내기(HEAD 를 LF 로 내보내고 바꾼 테스트만 LF 로 덮어씀) ③ 108 수정 전 CRLF 체크아웃(125949c, 분리 worktree)
+4: # ★ 결함 119 — 테스트 파일의 LF 정규화 sha256 은 ① ② 가 같다: 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7. 커밋 뒤 blob 과의 대조는 커밋 메시지 뒤 기록에 남긴다
+5: # ★ 판별력(결함 117): E4 · E5 는 ③ 에서 통과하고 ① ② 에서 실패한다. ② 에서 E4 는 기존 검사(작업 트리 목록이 LF)도 실패시킨다
+6: 
+7: ## 요약 — ① CRLF worktree
+8: # ── 요약 ──")
+9: lines.extend(summary)
+10: if not OLD:
+11:     lines.append(f"합계 caught {caught}/{len(MUTATIONS)}")
+12: lines.append(f"복원 확인 {VE.read_bytes() == original}")
+13: OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+14: print(lines[-2] if not OLD else "", lines[-1])
+15: 
+16: # ── 결과 ──
+17: baseline exit=0
+18: verify_evidence.py 부정 테스트
+1350:   ok   DoD-55_gpu_scope_candidate_kernel.md     PASS
+1351:   ok   DoD-56_nvml_실제_gpu_관측_계층.md              PASS
+1352:   ok   DoD-57_linux_cgroup_자원_상한_강제.md          PASS
+1353:   ok   DoD-58_다중_agent_동시_처리_lane.md            PASS
+1354:   ok   DoD-59_linux_운영용_키_보관.md                 PASS
+1355:   ok   DoD-60_노드_생존_판정과_관측_영속화.md               PASS
+1356:   ok   DoD-61_재배정_관문_ADR033_8조건.md              PASS
+1357:   ok   DoD-62_예약_해제_경로와_증명_관문.md                PASS
+1358:   ok   DoD-63_이웃_신고_wire_메시지.md                 PASS
+1359:   ok   DoD-64_이웃_신고_관측_저장소.md                   PASS
+1360:   ok   DoD-65_이웃_신고_wire_연결.md                  PASS
+1361:         ~ negative test 'coordinator' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+1362:   ok   DoD-66_nvml_불변식_고정.md                    PASS
+1363:         ~ 본문에 '이 실험이 증명하지 않는 것' 절이 보이지 않는다
+1364:   ok   DoD-67_제출_manifest_운영자_반입.md             PASS
+1365:   ok   DoD-68_실행_사슬.md                          PASS
+1366:   ok   ENV-01_개발환경_실측.md                        PASS
+1367:   ok   ENV-02_원격_GPU_기계_실측.md                   PASS
+1368:   ok   ENV-03_remote5090_리눅스_GPU_기계_실측.md         PASS
+1369:   ok   ENV-04_x600_wsl2_리눅스_반복검증_환경.md          PASS
+1370:   ok   P0-01_windows_s1_restricted_cuda.md      PASS
+1371:   ok   P0-02_windows_appcontainer_cuda.md       INCONCLUSIVE
+1372:   ok   P0-03_checkpoint_durability.md           PASS
+1373:   ok   P0-03a_windows_fs_atomicity.md           PASS
+1374:   ok   P0-06_vram_enforcement.md                FAIL-SCOPE
+1375:   ok   P0-07_runtime_estimation_accuracy.md     PASS
+1376:   ok   P0-08_스키마_진화.md                          PASS
+1377: --------------------------------------------------------------
+1378: 파일 79개
+1379:   FAIL-SCOPE             1
+1380:   INCONCLUSIVE           1
+1381:   PASS                   77  <- PASS 로 계상
+1382: PASS 로 계상되는 항목: 77 / 79
+1383: 
+1384: 스키마 위반 없음.
+1385: 
+1386: 
+1387: ## verify_evidence.py — ②
+1388: evidence 검사 — C:\Users\playdata2\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\eol_lf_export4\docs\evidence
+1389: ==============================================================
+1390:   ok   DoD-01_canonical_encode_교차검증.md          PASS
+1391:   ok   DoD-02_prost_연동_계층.md                    PASS
+1392:   ok   DoD-03_서명대상_완전성.md                       PASS
+1393:         ~ negative test 'missing_from_full' 의 이름이 실행 원문에 없다 — 적기만 하고 실행하지 않았을 수 있다
+1394:   ok   DoD-04_ed25519_검증순서.md                   PASS
+1395:         ~ negative test 'compile_fail' 의 이름이 실행 원문에 없다 — 적기만 하고 실행하지 않았을 수 있다
+1396:   ok   DoD-05_T1_서명대상_확장.md                     PASS
+1397:         ~ negative test 'renew_lease_request' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+1398:         ~ negative test 'revoke_lease_notice' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+1399:   ok   DoD-06_domain_tag_충돌.md                  PASS
+1400:         ~ negative test 'change_coordinator_set' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+1401:   ok   DoD-07_시각정책_실메시지.md                      PASS
+1402:         ~ negative test 'grant_nonce_comes_from_signed_message_field' 의 이름이 실행 원문에 없다 — 적기만 하고 실행하지 않았을 수 있다
+1403:         ~ negative test 'evidence_is_not_replay_checked' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+1404:   ok   DoD-08_독립검수_시정.md                        PASS
+1405:   ok   DoD-09_재개선택_필터.md                        PASS
+1406:   ok   DoD-10_영속_replay_저장소.md                  PASS
+1407:   ok   DoD-11_coordinator_agent_핸드셰이크.md        PASS
+1408:   ok   DoD-12_coordinator_agent_lease_최소_조각.md  PASS
+1409:   ok   DoD-13_coordinator_agent_lease_갱신_최소_조각.md PASS
+1410:   ok   DoD-14_durable_fence_watermark.md        PASS
+1411:   ok   DoD-15_같은_연결_반복_lease_갱신.md              PASS
+1412:   ok   DoD-16_coordinator_영속_lease_저장소.md       PASS
+1413:   ok   DoD-17_revoke_lease_notice_framed_ingress_커버리지.md PASS
+1414:   ok   DoD-18_max_total_duration_seconds_갱신_차단.md PASS
+1415:   ok   DoD-19_오래된_테스트_공백_3건.md                  PASS
+1416:   ok   DoD-20_check_schema_py.md                PASS
+1417:   ok   DoD-21_write_once_동시_호출_계약.md            PASS
+1418:   ok   DoD-22_lease_revoke_최소_조각.md             PASS
+1419:   ok   DoD-23_lease_재발급_정책_superseded.md        PASS
+1420:   ok   DoD-24_lease_재접속_최소_조각.md                PASS
+1421:   ok   DoD-25_coordinator_lease_revoke_영속화.md   PASS
+1422:   ok   DoD-26_만료_lease_재접속_거부.md                PASS
+1423:   ok   DoD-27_revoked_signed_outcome.md         PASS
+1424:   ok   DoD-28_check_schema_ci_연결.md             PASS
+1425:   ok   DoD-29_레거시_lease_경로_명시적_opt_in.md        PASS
+1426:   ok   DoD-30_job_시작_writing_마커.md              PASS
+1427:   ok   DoD-31_terminal_outcome_다회차_교착_회귀.md     PASS
+1428:   ok   DoD-32_만료_lease_갱신_fail_closed.md        PASS
+1429:   ok   DoD-33_marker_only_checkpoint_gc_회귀.md   PASS
+1430:   ok   DoD-34_agent_갱신_전_만료_재확인.md              PASS
+1431:   ok   DoD-35_자동_재접속_최소_경로.md                   PASS
+1432:   ok   DoD-36_resume_프로토콜.md                    PASS
+1433:   ok   DoD-37_coordinator_dispatcher_정교화.md     PASS
+1434:   ok   DoD-38_agent_resume_통합.md                PASS
+1435:   ok   DoD-39_ambiguous_renew_복구.md             PASS
+1436:   ok   DoD-40_lease_store_동시_발급_안전성.md          PASS
+1437:   ok   DoD-41_scheduler_hard_filter.md          PASS
+1438:   ok   DoD-42_scheduler_durable_job.md          PASS
+1439:   ok   DoD-43_scheduler_staging_kernel.md       PASS
+1440:   ok   DoD-44_scheduler_inventory_store.md      PASS
+1441:   ok   DoD-45_scheduler_best_fit.md             PASS
+1442:   ok   DoD-46_scheduler_local_orchestration.md  PASS
+1443:   ok   DoD-47_scheduler_inventory_cas.md        PASS
+1444:   ok   DoD-48_scheduler_selected_gpu_assignment.md PASS
+1445:   ok   DoD-49_scheduler_gpu_reservation_binding.md PASS
+1446:   ok   DoD-50_scheduler_verified_manifest_binding.md PASS
+1447:   ok   DoD-51_scheduler_terminal_attempt_report_binding.md PASS
+1448:   ok   DoD-52_scheduler_verified_checkpoint_manifest_binding.md PASS
+1449:   ok   DoD-53_scheduler_verified_replica_ack_binding.md PASS
+1450:   ok   DoD-54_effective_replica_count_kernel.md PASS
+1451:   ok   DoD-55_gpu_scope_candidate_kernel.md     PASS
+1452:   ok   DoD-56_nvml_실제_gpu_관측_계층.md              PASS
+1453:   ok   DoD-57_linux_cgroup_자원_상한_강제.md          PASS
+1454:   ok   DoD-58_다중_agent_동시_처리_lane.md            PASS
+1455:   ok   DoD-59_linux_운영용_키_보관.md                 PASS
+1456:   ok   DoD-60_노드_생존_판정과_관측_영속화.md               PASS
+1457:   ok   DoD-61_재배정_관문_ADR033_8조건.md              PASS
+1458:   ok   DoD-62_예약_해제_경로와_증명_관문.md                PASS
+1459:   ok   DoD-63_이웃_신고_wire_메시지.md                 PASS
+1460:   ok   DoD-64_이웃_신고_관측_저장소.md                   PASS
+1461:   ok   DoD-65_이웃_신고_wire_연결.md                  PASS
+1462:         ~ negative test 'coordinator' 의 함수 정의를 찾지 못했다 — 이름이 바뀌었거나 지워졌을 수 있다. 테스트 함수가 아닌 것(벡터 이름 등)을 적었다면 무시해도 된다
+1463:   ok   DoD-66_nvml_불변식_고정.md                    PASS
+1464:         ~ 본문에 '이 실험이 증명하지 않는 것' 절이 보이지 않는다
+1465:   ok   DoD-67_제출_manifest_운영자_반입.md             PASS
+1466:   ok   DoD-68_실행_사슬.md                          PASS
+1467:   ok   ENV-01_개발환경_실측.md                        PASS
+1468:   ok   ENV-02_원격_GPU_기계_실측.md                   PASS
+1469:   ok   ENV-03_remote5090_리눅스_GPU_기계_실측.md         PASS
+1470:   ok   ENV-04_x600_wsl2_리눅스_반복검증_환경.md          PASS
+1471:   ok   P0-01_windows_s1_restricted_cuda.md      PASS
+1472:   ok   P0-02_windows_appcontainer_cuda.md       INCONCLUSIVE
+1473:   ok   P0-03_checkpoint_durability.md           PASS
+1474:   ok   P0-03a_windows_fs_atomicity.md           PASS
+1475:   ok   P0-06_vram_enforcement.md                FAIL-SCOPE
+1476:   ok   P0-07_runtime_estimation_accuracy.md     PASS
+1477:   ok   P0-08_스키마_진화.md                          PASS
+1478: --------------------------------------------------------------
+1479: 파일 79개
+1480:   FAIL-SCOPE             1
+1980: caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+1981: caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+1982: caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+1983: caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+1984: 합계 caught 5/5
+1985: 복원 확인 True
+1986: 
+1987: 
+1988: ## 뮤테이션 전문 — ②
+1989: # 뮤테이션 재검수 63c 대응 — 2026-09-17 09:33 · 환경 LF 내보내기(현재) · 루트 C:\Users\playdata2\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\eol_lf_export4
+1990: # LF 정규화 sha256:
+1991: #   scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 (CRLF 0줄)
+1992: #   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 0줄)
+1993: #   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 0줄)
+1994: # ── 스크립트 전문 ──
+1995: """재검수 63c 결함 117 · 119 뒤 뮤테이션 — 각 변이 뒤 반드시 되돌린다.
+1996: 
+1997: 사용: python mutate_eol4.py <저장소 루트> <출력 파일> <환경 이름>
+1998:   환경: CRLF worktree(현재) · LF 내보내기(현재) · 108 수정 전 CRLF 체크아웃(125949c). 출력에 **이 스크립트 전문** · 변이별 전체 출력 ·
+1999:   두 스크립트와 유예 목록의 LF 정규화 sha256(결함 119)을 싣는다.
+2000: 판정: exit != 0 이고 기대 줄이 전부 FAIL 이면 caught. 108 수정 전 환경에서는 기대를 두지 않는다 — 판별력은 "이전 통과 · 현재 실패" 로 본다.
+2001: ★ E4(결함 117 수정판): 오류는 그대로 내고, **목록 파일이 CRLF 일 때만** 빈 집합을 돌려준다 — LF 목록이 바뀌면 오류와 함께 유예를 남긴다.
+2002:   108 수정 전 테스트는 LF 반복에서 bool(errs) 만 보므로 통과해야 하고, 108 수정 뒤 테스트는 LF 취소 줄에서 실패해야 한다.
+2003: """
+2004: import datetime, hashlib, os, pathlib, subprocess, sys
+2005: 
+2006: R = pathlib.Path(sys.argv[1])
+2007: OUT = pathlib.Path(sys.argv[2])
+2008: ENV_NAME = sys.argv[3]
+2009: VE = R / "scripts/verify_evidence.py"
+2010: ENV = dict(os.environ, PYTHONIOENCODING="utf-8")
+2011: 
+2012: MUTATIONS = [
+2013:     ("E1 원문 digest 의 LF 정규화를 끈다", [
+2014:         ("        data = lf_normalized(f.read())\n", "        data = f.read()\n")],
+2015:      ["줄바꿈만 다른 원문(CRLF 체크아웃)은 통과", "줄바꿈이 섞인 원문은 통과"]),
+2016:     ("E2 유예 목록 digest 의 LF 정규화를 끈다", [
+2017:         ('    raw = lf_normalized(io.open(GRANDFATHER_LIST, "rb").read())\n',
+2018:          '    raw = io.open(GRANDFATHER_LIST, "rb").read()\n')],
+2019:      []),
+2020:     ("E3 목록이 바뀌어도 오류만 내고 유예를 남긴다", [
+2021:         ("        return set(), errs      # ★ 유예를 전부 취소한다\n", "        pass\n")],
+2022:      ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소", "유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+2023:     ("E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)", [
+2024:         ("        return set(), errs      # ★ 유예를 전부 취소한다\n",
+2025:          '        if b"\\r\\n" in io.open(GRANDFATHER_LIST, "rb").read():\n'
+2026:          "            return set(), errs      # ★ 유예를 전부 취소한다\n")],
+2027:      ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+2028:     ("E5 정상 로드에 가짜 항목을 더한다(결함 114)", [
+2029:         ("    return out, errs\n", '    return out | {"ENV-99_fake.md"}, errs\n')],
+2030:      ["유예 목록(LF 체크아웃) 정상 로드", "유예 목록(CRLF 체크아웃) 정상 로드"]),
+2031: ]
+2032: OLD = "108 수정 전" in ENV_NAME
+2033: 
+2034: 
+2035: def run():
+2036:     p = subprocess.run([sys.executable, "scripts/test_verify_evidence.py"], cwd=R, env=ENV,
+2037:                        capture_output=True, text=True, encoding="utf-8", errors="replace")
+2038:     return p.returncode, p.stdout + p.stderr
+2039: 
+2040: 
+2041: def lf_sha(path):
+2042:     b = path.read_bytes()
+2043:     return f"{hashlib.sha256(b.replace(b'\r\n', b'\n')).hexdigest()} (CRLF {b.count(b'\r\n')}줄)"
+2044: 
+2045: 
+2046: lines = [f"# 뮤테이션 재검수 63c 대응 — {datetime.datetime.now():%Y-%m-%d %H:%M} · 환경 {ENV_NAME} · 루트 {R}",
+2047:          "# LF 정규화 sha256:"]
+2048: for rel in ["scripts/test_verify_evidence.py", "scripts/verify_evidence.py", "docs/evidence/_schema_v1_grandfathered.txt"]:
+2049:     lines.append(f"#   {rel} {lf_sha(R / rel)}")
+2050: lines += ["# ── 스크립트 전문 ──", pathlib.Path(__file__).read_text(encoding="utf-8"), "# ── 결과 ──"]
+2051: code, out = run()
+2052: lines.append(f"baseline exit={code}")
+2053: lines.append(out)
+2054: assert code == 0, out[-2000:]
+2055: original = VE.read_bytes()
+2056: caught = 0
+2057: summary = []
+2058: for name, subs, must_fail in MUTATIONS:
+2059:     text = original.decode("utf-8")
+2060:     nl = "\r\n" if "\r\n" in text else "\n"
+2061:     s = text.replace("\r\n", "\n")
+2062:     for old, new in subs:
+2063:         assert s.count(old) == 1, (name, s.count(old), old[:80])
+2064:         s = s.replace(old, new)
+2065:     try:
+2066:         VE.write_bytes(s.replace("\n", nl).encode("utf-8"))
+2067:         code, out = run()
+2068:     finally:
+2069:         VE.write_bytes(original)
+2070:     failed = [l[len("  FAIL "):] for l in out.splitlines() if l.startswith("  FAIL ")]
+2071:     if OLD:
+2072:         head = f"{'fails' if code else 'PASSES':10} {name} exit={code} FAIL 줄={failed}"
+2073:     else:
+2074:         missing = [m for m in must_fail if m not in failed]
+2075:         ok = code != 0 and not missing
+2076:         caught += ok
+2077:         head = f"{'caught' if ok else 'NOT_CAUGHT':10} {name} exit={code} FAIL 줄={failed}" + (f" ★ 기대 줄 누락 {missing}" if missing else "")
+2078:     summary.append(head)
+2079:     lines.append("## " + head)
+2080:     lines.append(out)
+2081:     print(head, flush=True)
+2082: lines.append("# ── 요약 ──")
+2083: lines.extend(summary)
+2084: if not OLD:
+2085:     lines.append(f"합계 caught {caught}/{len(MUTATIONS)}")
+2086: lines.append(f"복원 확인 {VE.read_bytes() == original}")
+2087: OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+2088: print(lines[-2] if not OLD else "", lines[-1])
+2089: 
+2090: # ── 결과 ──
+2091: baseline exit=0
+2092: verify_evidence.py 부정 테스트
+2093: ==============================================================
+2094:   ok   기준선(무손상) 통과
+2095:   ok   자기 검수(executor_id == reviewer_id)
+2096:   ok   review_outcome != ACCEPTED 인데 PASS
+2097:   ok   review_context != fresh-read-only
+2098:   ok   원문 수기 변조 (digest 불일치)
+2099:   ok   raw_output_bytes 불일치
+2100:   ok   줄바꿈만 다른 원문(LF 체크아웃)은 통과
+2470: 
+2471: ## 뮤테이션 전문 — ③
+2472: # 뮤테이션 재검수 63c 대응 — 2026-09-17 09:32 · 환경 108 수정 전 CRLF 체크아웃(125949c) · 루트 C:\Users\playdata2\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\eol_old_125949c
+2473: # LF 정규화 sha256:
+2474: #   scripts/test_verify_evidence.py d433c6bc901827fc9fc7ac832b8a4debb82c0bcb1faa814ee36a352b410df990 (CRLF 490줄)
+2475: #   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 864줄)
+2476: #   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 19줄)
+2477: # ── 스크립트 전문 ──
+2478: """재검수 63c 결함 117 · 119 뒤 뮤테이션 — 각 변이 뒤 반드시 되돌린다.
+2479: 
+2480: 사용: python mutate_eol4.py <저장소 루트> <출력 파일> <환경 이름>
+2481:   환경: CRLF worktree(현재) · LF 내보내기(현재) · 108 수정 전 CRLF 체크아웃(125949c). 출력에 **이 스크립트 전문** · 변이별 전체 출력 ·
+2482:   두 스크립트와 유예 목록의 LF 정규화 sha256(결함 119)을 싣는다.
+2483: 판정: exit != 0 이고 기대 줄이 전부 FAIL 이면 caught. 108 수정 전 환경에서는 기대를 두지 않는다 — 판별력은 "이전 통과 · 현재 실패" 로 본다.
+2484: ★ E4(결함 117 수정판): 오류는 그대로 내고, **목록 파일이 CRLF 일 때만** 빈 집합을 돌려준다 — LF 목록이 바뀌면 오류와 함께 유예를 남긴다.
+2485:   108 수정 전 테스트는 LF 반복에서 bool(errs) 만 보므로 통과해야 하고, 108 수정 뒤 테스트는 LF 취소 줄에서 실패해야 한다.
+2486: """
+2487: import datetime, hashlib, os, pathlib, subprocess, sys
+2488: 
+2489: R = pathlib.Path(sys.argv[1])
+2490: OUT = pathlib.Path(sys.argv[2])
+2491: ENV_NAME = sys.argv[3]
+2492: VE = R / "scripts/verify_evidence.py"
+2493: ENV = dict(os.environ, PYTHONIOENCODING="utf-8")
+2494: 
+2495: MUTATIONS = [
+2496:     ("E1 원문 digest 의 LF 정규화를 끈다", [
+2497:         ("        data = lf_normalized(f.read())\n", "        data = f.read()\n")],
+2498:      ["줄바꿈만 다른 원문(CRLF 체크아웃)은 통과", "줄바꿈이 섞인 원문은 통과"]),
+2499:     ("E2 유예 목록 digest 의 LF 정규화를 끈다", [
+2500:         ('    raw = lf_normalized(io.open(GRANDFATHER_LIST, "rb").read())\n',
+2501:          '    raw = io.open(GRANDFATHER_LIST, "rb").read()\n')],
+2502:      []),
+2503:     ("E3 목록이 바뀌어도 오류만 내고 유예를 남긴다", [
+2504:         ("        return set(), errs      # ★ 유예를 전부 취소한다\n", "        pass\n")],
+2505:      ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소", "유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+2506:     ("E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)", [
+2507:         ("        return set(), errs      # ★ 유예를 전부 취소한다\n",
+2508:          '        if b"\\r\\n" in io.open(GRANDFATHER_LIST, "rb").read():\n'
+2509:          "            return set(), errs      # ★ 유예를 전부 취소한다\n")],
+2510:      ["유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소"]),
+2511:     ("E5 정상 로드에 가짜 항목을 더한다(결함 114)", [
+2512:         ("    return out, errs\n", '    return out | {"ENV-99_fake.md"}, errs\n')],
+2513:      ["유예 목록(LF 체크아웃) 정상 로드", "유예 목록(CRLF 체크아웃) 정상 로드"]),
+2514: ]
+2515: OLD = "108 수정 전" in ENV_NAME
+2516: 
+2517: 
+2518: def run():
+2519:     p = subprocess.run([sys.executable, "scripts/test_verify_evidence.py"], cwd=R, env=ENV,
+2520:                        capture_output=True, text=True, encoding="utf-8", errors="replace")
+2521:     return p.returncode, p.stdout + p.stderr
+2522: 
+2523: 
+2524: def lf_sha(path):
+2525:     b = path.read_bytes()
+2526:     return f"{hashlib.sha256(b.replace(b'\r\n', b'\n')).hexdigest()} (CRLF {b.count(b'\r\n')}줄)"
+2527: 
+2528: 
+2529: lines = [f"# 뮤테이션 재검수 63c 대응 — {datetime.datetime.now():%Y-%m-%d %H:%M} · 환경 {ENV_NAME} · 루트 {R}",
+2530:          "# LF 정규화 sha256:"]
+2531: for rel in ["scripts/test_verify_evidence.py", "scripts/verify_evidence.py", "docs/evidence/_schema_v1_grandfathered.txt"]:
+2532:     lines.append(f"#   {rel} {lf_sha(R / rel)}")
+2533: lines += ["# ── 스크립트 전문 ──", pathlib.Path(__file__).read_text(encoding="utf-8"), "# ── 결과 ──"]
+2534: code, out = run()
+2535: lines.append(f"baseline exit={code}")
+2536: lines.append(out)
+2537: assert code == 0, out[-2000:]
+2538: original = VE.read_bytes()
+2539: caught = 0
+2540: summary = []
+2541: for name, subs, must_fail in MUTATIONS:
+2542:     text = original.decode("utf-8")
+2543:     nl = "\r\n" if "\r\n" in text else "\n"
+2544:     s = text.replace("\r\n", "\n")
+2545:     for old, new in subs:
+2546:         assert s.count(old) == 1, (name, s.count(old), old[:80])
+2547:         s = s.replace(old, new)
+2548:     try:
+2549:         VE.write_bytes(s.replace("\n", nl).encode("utf-8"))
+2550:         code, out = run()
+2551:     finally:
+2552:         VE.write_bytes(original)
+2553:     failed = [l[len("  FAIL "):] for l in out.splitlines() if l.startswith("  FAIL ")]
+2554:     if OLD:
+2555:         head = f"{'fails' if code else 'PASSES':10} {name} exit={code} FAIL 줄={failed}"
+2556:     else:
+2557:         missing = [m for m in must_fail if m not in failed]
+2558:         ok = code != 0 and not missing
+2559:         caught += ok
+2560:         head = f"{'caught' if ok else 'NOT_CAUGHT':10} {name} exit={code} FAIL 줄={failed}" + (f" ★ 기대 줄 누락 {missing}" if missing else "")
+2561:     summary.append(head)
+2562:     lines.append("## " + head)
+2563:     lines.append(out)
+2564:     print(head, flush=True)
+2565: lines.append("# ── 요약 ──")
+2566: lines.extend(summary)
+2567: if not OLD:
+2568:     lines.append(f"합계 caught {caught}/{len(MUTATIONS)}")
+2569: lines.append(f"복원 확인 {VE.read_bytes() == original}")
+2570: OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+2571: print(lines[-2] if not OLD else "", lines[-1])
+2572: 
+2573: # ── 결과 ──
+2574: baseline exit=0
+2575: verify_evidence.py 부정 테스트
+2576: ==============================================================
+HEADINGS
+3: # 세 환경: ① CRLF worktree(현재) ② LF 내보내기(HEAD 를 LF 로 내보내고 바꾼 테스트만 LF 로 덮어씀) ③ 108 수정 전 CRLF 체크아웃(125949c, 분리 worktree)
+4: # ★ 결함 119 — 테스트 파일의 LF 정규화 sha256 은 ① ② 가 같다: 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7. 커밋 뒤 blob 과의 대조는 커밋 메시지 뒤 기록에 남긴다
+5: # ★ 판별력(결함 117): E4 · E5 는 ③ 에서 통과하고 ① ② 에서 실패한다. ② 에서 E4 는 기존 검사(작업 트리 목록이 LF)도 실패시킨다
+7: ## 요약 — ① CRLF worktree
+17: baseline exit=0
+75: ## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+141: ## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+204: ## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+267: ## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+328: ## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+391: caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+392: caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+393: caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+394: caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+395: caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+399: ## 요약 — ② LF 내보내기
+409: baseline exit=0
+467: ## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+531: ## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+592: ## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+655: ## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+717: ## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+780: caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+781: caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+782: caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+783: caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+784: caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+788: ## 요약 — ③ 108 수정 전 CRLF 체크아웃
+798: baseline exit=0
+856: ## fails      E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+920: ## fails      E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+983: ## fails      E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소']
+1044: ## PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+1102: ## PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+1164: PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+1165: PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+1168: ## test_verify_evidence.py — ①
+1227: ## test_verify_evidence.py — ②
+1286: ## verify_evidence.py — ①
+1387: ## verify_evidence.py — ②
+1488: ## check_docs.py
+1496: ## claims_selftest.py
+1502: ## 뮤테이션 전문 — ①
+1503: # 뮤테이션 재검수 63c 대응 — 2026-09-17 09:31 · 환경 CRLF worktree(현재) · 루트 C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+1504: # LF 정규화 sha256:
+1505: #   scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 (CRLF 520줄)
+1506: #   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 864줄)
+1507: #   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 19줄)
+1605: baseline exit=0
+1663: ## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+1729: ## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+1792: ## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+1855: ## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+1916: ## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+1979: caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+1980: caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+1981: caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+1982: caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+1983: caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+1988: ## 뮤테이션 전문 — ②
+1990: # LF 정규화 sha256:
+1991: #   scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 (CRLF 0줄)
+1992: #   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 0줄)
+1993: #   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 0줄)
+2091: baseline exit=0
+2149: ## caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+2213: ## caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+2274: ## caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+2337: ## caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+2399: ## caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+2462: caught     E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['줄바꿈만 다른 원문(CRLF 체크아웃)은 통과', '줄바꿈이 섞인 원문은 통과']
+2463: caught     E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['유예 목록(CRLF 체크아웃) 정상 로드']
+2464: caught     E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소', '유예 목록(CRLF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+2465: caught     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소', '유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소']
+2466: caught     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=1 FAIL 줄=['유예 목록(LF 체크아웃) 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드']
+2471: ## 뮤테이션 전문 — ③
+2472: # 뮤테이션 재검수 63c 대응 — 2026-09-17 09:32 · 환경 108 수정 전 CRLF 체크아웃(125949c) · 루트 C:\Users\playdata2\AppData\Local\Temp\claude\C--Users-playdata2-Documents-test-workspace-gPUteer\760af870-99c0-47ab-9573-8bab06182e32\scratchpad\eol_old_125949c
+2473: # LF 정규화 sha256:
+2474: #   scripts/test_verify_evidence.py d433c6bc901827fc9fc7ac832b8a4debb82c0bcb1faa814ee36a352b410df990 (CRLF 490줄)
+2475: #   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 864줄)
+2476: #   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 19줄)
+2574: baseline exit=0
+2632: ## fails      E1 원문 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['기준선(무손상) 통과', '줄바꿈이 섞인 원문은 통과', 'main() — 무손상은 0']
+2696: ## fails      E2 유예 목록 digest 의 LF 정규화를 끈다 exit=1 FAIL 줄=['손대지 않은 유예 목록은 정상 로드', '유예 목록(CRLF 체크아웃) 정상 로드', 'main() — 무손상은 0']
+2759: ## fails      E3 목록이 바뀌어도 오류만 내고 유예를 남긴다 exit=1 FAIL 줄=['유예 목록에 한 줄 추가 -> 유예 전부 취소']
+2820: ## PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+2878: ## PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+2940: PASSES     E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다) exit=0 FAIL 줄=[]
+2941: PASSES     E5 정상 로드에 가짜 항목을 더한다(결함 114) exit=0 FAIL 줄=[]
+
+codex
+원본에는 수정 전 목록의 CRLF가 19줄로 기록되어 있고, E4·E5 모두 수정 전 exit 0, 현재 두 환경 exit 1입니다. 이제 기록된 해시를 실제 Git blob과 대조하고, `splitlines()` 앞의 LF 정규화 차이가 집합 차이를 만드는지도 확인하겠습니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command 'git -c core.quotepath=false diff ea485c9..HEAD --name-only; git -c core.quotepath=false diff ea485c9..HEAD -- docs/plans; git -c core.quotepath=false diff ea485c9..HEAD -- docs/reviews; git worktree list --porcelain; Get-ChildItem -Force -Name' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+import subprocess, hashlib
+for rev in ['HEAD','125949c']:
+ for rel in ['scripts/test_verify_evidence.py','scripts/verify_evidence.py','docs/evidence/_schema_v1_grandfathered.txt']:
+  b=subprocess.check_output(['git','show',f'{rev}:{rel}']); print(rev,rel,hashlib.sha256(b.replace(b'\\r\\n',b'\\n')).hexdigest(),'LF',b.count(b'\\n'),'CRLF',b.count(b'\\r\\n'))
+p=next(Path('docs/evidence/_raw').rglob('63c_*CHANGES_REQUESTED.txt'))
+ls=p.read_text(encoding='utf-8').splitlines(); print('PRIOR REVIEW',p,'lines',len(ls))
+for i,l in enumerate(ls,1):
+ if i<65 or i>len(ls)-100: print(f'{i}: {l}')
+'@ | python -X utf8 -B -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ succeeded in 1322ms:
+docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt
+docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt
+docs/history/HISTORY.md
+docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md
+docs/runbooks/검수_대기열.md
+docs/runbooks/검수_프롬프트/63d_재검수_결함117_119.md
+scripts/test_verify_evidence.py
+worktree C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer
+HEAD 3e17f0897ac52c3e5e8d683f33537a501493c898
+branch refs/heads/fix/defect-18-ack-timeout
+
+worktree C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be
+HEAD bbbf53b996a42bf48df1088c8435859fd0c7492d
+branch refs/heads/feat/b-e-contract
+
+worktree C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-gc
+HEAD 95af3f55ee776a4624e86a08de1dcf331d79a148
+branch refs/heads/feat/agent-startup-gc
+
+worktree C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-be-report
+HEAD 95af3f55ee776a4624e86a08de1dcf331d79a148
+branch refs/heads/feat/b-e-report-session
+
+worktree C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol
+HEAD 17abb390ddb2d18555b0b1e8178aa0b868149c2f
+branch refs/heads/fix/evidence-digest-eol
+
+.github
+apps
+crates
+docs
+legacy
+proto
+python
+scripts
+tests
+tools
+.git
+.git-blame-ignore-revs
+.gitignore
+Cargo.lock
+Cargo.toml
+CLAUDE.md
+README.md
+RULE.md
+
+ succeeded in 1497ms:
+HEAD scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 LF 520 CRLF 0
+HEAD scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 LF 864 CRLF 0
+HEAD docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 LF 19 CRLF 0
+125949c scripts/test_verify_evidence.py d433c6bc901827fc9fc7ac832b8a4debb82c0bcb1faa814ee36a352b410df990 LF 490 CRLF 0
+125949c scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 LF 864 CRLF 0
+125949c docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 LF 19 CRLF 0
+PRIOR REVIEW docs\evidence\_raw\검수_2026-09-10\63c_재검수_결함114_116_CHANGES_REQUESTED.txt lines 2876
+1: OpenAI Codex v0.153.4
+2: --------
+3: workdir: C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+4: model: gpt-6-astra
+5: provider: openai
+6: approval: never
+7: sandbox: read-only
+8: reasoning effort: high
+9: reasoning summaries: none
+10: session id: 01a0acc0-f5b0-76d3-8a69-1780d0e95a25
+11: --------
+12: user
+13: 동의가 아니라 **반박**을 원한다.
+14: 
+15: 작업 위치: worktree `fix/evidence-digest-eol`. 검수 대상은 0b6e9b8 다음 커밋 — `git show HEAD` · `git diff 0b6e9b8..HEAD`.
+16: 
+17: # 결함 114 ~ 116 (재검수 63b 대응)
+18: 
+19: ```text
+20: 114  §13 정상 기대 집합 — 목록 파일 바이트를 테스트가 직접 파싱(주석 · 빈 줄 제외). 검사 대상 함수를 쓰지 않는다
+21: 115  §11b 두 줄 · §12 한 줄 — expect_absent. 109 조치문 정정
+22: 116  뮤테이션 E4(CRLF 목록일 때만 취소) · E5(정상 로드에 가짜 항목) · 원본에 스크립트 전문과 변이별 출력 · LF 내보내기 실행
+23: ```
+24: 
+25: 물을 것:
+26: 1. 테스트의 목록 파싱이 검사기의 파싱과 **다르게** 읽는 입력(BOM · 앞뒤 공백 · 주석 뒤 항목 · 외로운 CR)이 있나 — 있다면 둘이 같이 틀리거나, 옳은
+27:    구현을 틀렸다고 하나.
+28: 2. expect_absent 로 바꾼 §11b · §12 의 needle 이 너무 넓어(다른 이유의 오류 문구와 겹쳐) 옳은 구현을 실패시키는 경우가 있나.
+29: 3. E4 가 "108 의 LF 분기만 잡는다" 는 해석이 CRLF worktree · LF 내보내기 두 원본과 맞나. 원본이 실패 원인을 입증하나.
+30: 4. LF 내보내기 절차(HEAD 내보내기 뒤 바꾼 테스트만 덮어씀)가 커밋될 상태와 다를 수 있나.
+31: 
+32: 읽을 파일:
+33: 
+34: ```text
+35: scripts/test_verify_evidence.py · scripts/verify_evidence.py
+36: docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md (114~116)
+37: docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt
+38: docs/evidence/_raw/검수_2026-09-10/63b_재검수_결함108_110_CHANGES_REQUESTED_알트.txt
+39: ```
+40: 
+41: # 못 찾았으면
+42: 
+43: **못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
+44: 
+45: # 답의 형식
+46: 
+47: 각 지적마다 `파일:줄` 을 인용하라.
+48: 마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+49: 
+50: codex
+51: 지정한 커밋 차이와 원본 로그를 대조하고, 네 질문에 대해 반례를 찾아보겠습니다. 지적에는 파일·줄 근거를 붙이고, 반례를 못 만든 범위도 구분하겠습니다.
+52: 
+53: exec
+54: "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command 'Get-Location; git status --short --branch; git log -3 --oneline; git show HEAD --stat; git diff 0b6e9b8..HEAD --stat; rg --files -g AGENTS.md' in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+55:  exited 1 in 2013ms:
+56: C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ����Ƿ� ��Ʈ �ҽ��� ��
+57:  �����ϴ�. �ش� �������� �������� �ʰ� �� ������ ȣ���Ϸ��� '.' �����ڸ� �����Ͻʽÿ�.
+58: ��ġ ��:1 ����:1
+59: + . 'C:\Users\playdata2\Documents\WindowsPowerShell\profile.ps1'
+60: + ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+61:     + CategoryInfo          : InvalidOperation: (:) [profile.ps1], NotSupportedException
+62:     + FullyQualifiedErrorId : DotSourceNotSupported,profile.ps1
+63:  
+64: C:\Users\playdata2\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1 : �� ������ �ٸ� ��� ��忡�� ���ǵǾ�
+2777: 304:                     except OSError:
+2778: 305:                         pass
+2779: 306:     _SOURCE_CACHE[REPO_ROOT] = chr(10).join(blob)
+2780: 307:     return _SOURCE_CACHE[REPO_ROOT]
+2781: 308: 
+2782: 309: 
+2783: FILE docs\reports\debugs\2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md
+2784: 119: 116 [P3] 원본 증거_digest_줄바꿈_검수63_대응  E3 는 기존 §13 검사(작업 트리 목록)도 잡으므로 전체 exit 로 이번 수정의 효과를 입증하지 못한다 —
+2785: 120:       LF 에서만 유예를 남기는 변이가 필요하다(검수가 125949c 통과 · HEAD 실패를 재현). E1 첫 실행의 원출력 · 뮤테이션 코드가 원본에 없다.
+2786: 121:       바꾼 테스트를 LF 내보내기에서 돌리지 않았다(검사기 불변은 테스트 변경의 LF 실행을 대신하지 못한다)
+2787: 122: ```
+2788: 123: 
+2789: 124: ## 4. 위험도
+2790: 125: - [x] 114 정상 로드의 잘못된 집합을 못 잡는다 · 115 줄 단위 거짓 성공 · 조치문 과장 · 116 증거 부족
+2791: 126: 
+2792: 127: ## 6. 조치
+2793: 128: - [x] 고치기 전에 쓴다 (2026-09-17 05:42)
+2794: 129: - [x] 114 (2026-09-17 09:24) 기대 집합을 목록 파일 바이트에서 직접 파싱한다. E5(정상 로드에 가짜 항목) — LF · CRLF 정상 로드 두 줄 FAIL(두 환경)
+2795: 130: - [x] 115 (2026-09-17 09:24) §11b 두 줄 · §12 한 줄도 expect_absent. 109 조치문에 "5b 의 세 줄만" 정정을 덧붙였다.
+2796: 131:   ★ 이 파일에서 `want=False` 는 grep 으로 1곳 — expect_absent 설명문의 언급뿐이고 호출은 0건이다
+2797: 132: - [x] 116 (2026-09-17 09:24) E4 — CRLF worktree 에서 새 LF 취소 줄만 FAIL(기존 검사 통과), LF 내보내기에서는 기존 검사도 FAIL. 원본에 뮤테이션 스크립트 전문과
+2798: 133:   변이별 전체 출력을 싣고, 바꾼 테스트를 LF 내보내기에서 실행했다(exit 0 · 뮤테이션 5/5). 지난 원본의 E1 첫 실행 출력은 되살리지 못했다
+2799: 134: - 검증: CRLF worktree · LF 내보내기 모두 부정 테스트 exit 0 · FAIL 0 · 뮤테이션 E1~E5 5/5 · verify_evidence 위반 없음. check_docs 오류 0 ·
+2800: 135:   claims_selftest 30/30. 원본 `docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt`
+2801: 
+2802: codex
+2803: `ea485c9`를 검수했습니다. **116의 E4가 108 수정의 판별력을 입증하지 못하는 반례를 재현했습니다.**
+2804: 
+2805: 1. **[P3] E4는 108 수정 전 테스트도 잡습니다.**  
+2806:    [대응 원본:1151](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt:1151)의 변이는 CRLF 조건을 **오류 생성 분기 전체**에 붙입니다. 따라서 변경된 LF 목록에서 `오류=[], 유예=4건`을 반환합니다. 원본에도 이 결과가 기록돼 있습니다([원본:1511](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt:1511)).
+2807: 
+2808:    기록된 변이를 실제 §13 코드에 적용해 메모리에서 실행한 결과는 다음과 같습니다.
+2809: 
+2810:    | 환경 | 108 수정 전 `125949c` | 현재 HEAD |
+2811:    |---|---|---|
+2812:    | CRLF | LF 추가 검사 실패 | 동일 |
+2813:    | LF | 기존 추가 검사·LF 추가 검사 실패 | 동일 |
+2814: 
+2815:    따라서 두 환경의 실패 줄 설명은 맞지만, **“108의 강화된 조건이 있어야 잡힌다”는 증거는 아닙니다.** [리포트:120](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md:120)이 요구한 이전 버전 통과·수정 버전 실패를 충족하지 않습니다.
+2816: 
+2817:    오류 생성은 유지하고 **빈 집합 반환에만 CRLF 조건**을 붙이면 됩니다. 이 변이로 CRLF 환경을 모사하니 `125949c`는 통과하고 HEAD는 LF 취소 검사에서만 실패했습니다. 이 대조 결과를 원본에 남겨야 합니다.
+2818: 
+2819: 2. **목록 파싱에는 차이가 있지만, 현재 목록에서 오판하는 반례는 못 찾았습니다.**  
+2820:    테스트는 [test_verify_evidence.py:459](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:459)의 `split("\n")`, 검사기는 [verify_evidence.py:334](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:334)의 `splitlines()`를 사용합니다.
+2821: 
+2822:    - `a.md\rb.md\n`: 테스트는 항목 하나, 검사기는 두 개입니다.
+2823:    - `# comment\ra.md\nb.md\n`: 테스트는 `b.md`만, 검사기는 `a.md`도 읽습니다.
+2824:    - BOM·앞뒤 공백·같은 줄의 주석 뒤 항목은 두 파서가 동일하게 처리했습니다. BOM은 제거하지 않고, `#`로 시작하는 줄은 통째로 제외합니다.
+2825: 
+2826:    외로운 CR을 포함한 목록에 맞춰 digest까지 승인하면 정상 검사기 반환을 테스트가 거부할 수 있습니다. 그러나 **현재 목록에는 BOM·외로운 CR이 없으며**, 고정 digest를 유지하면 이런 변경은 파싱 전에 거부됩니다([verify_evidence.py:325](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:325)). 현재 커밋의 실제 실패로 확대해서 지적하지는 않습니다. E5는 이전 테스트 통과·현재 정상 로드 두 줄 실패를 양쪽 환경에서 재현했습니다.
+2827: 
+2828: 3. **§11b·§12의 needle 때문에 정상 fixture가 실패하는 반례는 못 찾았습니다.**  
+2829:    [test_verify_evidence.py:381](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:381)의 두 needle과 [395행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:395)의 `review_outcome`을 확인했습니다. 실제 fixture로 기준선·§11b·§12를 검사한 결과 모두 오류 0이었습니다.
+2830: 
+2831:    `review_outcome`은 필드 누락 오류와도 겹칩니다([verify_evidence.py:448](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:448)). 하지만 현재 §12는 그 필드를 유지합니다. 필드를 지운 fixture의 실패를 검수 강제 회귀라고 진단하면 잘못이지만, 정상 fixture를 거부하는 이번 변경의 결함은 확인하지 못했습니다.
+2832: 
+2833: 4. **LF 내보내기는 최종 커밋과 달라질 수 있지만, 이번 차이로 테스트가 잘못 통과한 반례는 못 찾았습니다.**  
+2834:    [원본:3](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt:3)의 절차는 당시 HEAD에 변경된 테스트 하나만 덮어쓰므로 최종 커밋 전체와 동일하지 않습니다. 이번 diff에서 나머지는 문서·원본 기록이며, 검사기·목록·시범 evidence는 불변입니다. 현재 두 스크립트와 목록의 LF 정규화 바이트는 HEAD blob과 일치했습니다. 다만 당시 덮어쓴 테스트의 동일성을 확정할 해시는 원본에 없습니다.
+2835: 
+2836: 확인 범위는 지정 커밋 차이와 관련 원본, 실제 §13의 메모리 실행, 파싱 경계 입력, §11b·§12 검사입니다. 읽기 전용 환경이라 파일을 만드는 전체 부정 테스트와 실제 LF 내보내기는 재실행하지 않았습니다. 반례를 못 만든 범위를 결함 부재로 단정하지 않습니다.
+2837: 
+2838: CHANGES_REQUESTED
+2839: tokens used
+2840: 73,418
+2841: `ea485c9`를 검수했습니다. **116의 E4가 108 수정의 판별력을 입증하지 못하는 반례를 재현했습니다.**
+2842: 
+2843: 1. **[P3] E4는 108 수정 전 테스트도 잡습니다.**  
+2844:    [대응 원본:1151](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt:1151)의 변이는 CRLF 조건을 **오류 생성 분기 전체**에 붙입니다. 따라서 변경된 LF 목록에서 `오류=[], 유예=4건`을 반환합니다. 원본에도 이 결과가 기록돼 있습니다([원본:1511](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt:1511)).
+2845: 
+2846:    기록된 변이를 실제 §13 코드에 적용해 메모리에서 실행한 결과는 다음과 같습니다.
+2847: 
+2848:    | 환경 | 108 수정 전 `125949c` | 현재 HEAD |
+2849:    |---|---|---|
+2850:    | CRLF | LF 추가 검사 실패 | 동일 |
+2851:    | LF | 기존 추가 검사·LF 추가 검사 실패 | 동일 |
+2852: 
+2853:    따라서 두 환경의 실패 줄 설명은 맞지만, **“108의 강화된 조건이 있어야 잡힌다”는 증거는 아닙니다.** [리포트:120](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md:120)이 요구한 이전 버전 통과·수정 버전 실패를 충족하지 않습니다.
+2854: 
+2855:    오류 생성은 유지하고 **빈 집합 반환에만 CRLF 조건**을 붙이면 됩니다. 이 변이로 CRLF 환경을 모사하니 `125949c`는 통과하고 HEAD는 LF 취소 검사에서만 실패했습니다. 이 대조 결과를 원본에 남겨야 합니다.
+2856: 
+2857: 2. **목록 파싱에는 차이가 있지만, 현재 목록에서 오판하는 반례는 못 찾았습니다.**  
+2858:    테스트는 [test_verify_evidence.py:459](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:459)의 `split("\n")`, 검사기는 [verify_evidence.py:334](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:334)의 `splitlines()`를 사용합니다.
+2859: 
+2860:    - `a.md\rb.md\n`: 테스트는 항목 하나, 검사기는 두 개입니다.
+2861:    - `# comment\ra.md\nb.md\n`: 테스트는 `b.md`만, 검사기는 `a.md`도 읽습니다.
+2862:    - BOM·앞뒤 공백·같은 줄의 주석 뒤 항목은 두 파서가 동일하게 처리했습니다. BOM은 제거하지 않고, `#`로 시작하는 줄은 통째로 제외합니다.
+2863: 
+2864:    외로운 CR을 포함한 목록에 맞춰 digest까지 승인하면 정상 검사기 반환을 테스트가 거부할 수 있습니다. 그러나 **현재 목록에는 BOM·외로운 CR이 없으며**, 고정 digest를 유지하면 이런 변경은 파싱 전에 거부됩니다([verify_evidence.py:325](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:325)). 현재 커밋의 실제 실패로 확대해서 지적하지는 않습니다. E5는 이전 테스트 통과·현재 정상 로드 두 줄 실패를 양쪽 환경에서 재현했습니다.
+2865: 
+2866: 3. **§11b·§12의 needle 때문에 정상 fixture가 실패하는 반례는 못 찾았습니다.**  
+2867:    [test_verify_evidence.py:381](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:381)의 두 needle과 [395행](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:395)의 `review_outcome`을 확인했습니다. 실제 fixture로 기준선·§11b·§12를 검사한 결과 모두 오류 0이었습니다.
+2868: 
+2869:    `review_outcome`은 필드 누락 오류와도 겹칩니다([verify_evidence.py:448](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:448)). 하지만 현재 §12는 그 필드를 유지합니다. 필드를 지운 fixture의 실패를 검수 강제 회귀라고 진단하면 잘못이지만, 정상 fixture를 거부하는 이번 변경의 결함은 확인하지 못했습니다.
+2870: 
+2871: 4. **LF 내보내기는 최종 커밋과 달라질 수 있지만, 이번 차이로 테스트가 잘못 통과한 반례는 못 찾았습니다.**  
+2872:    [원본:3](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt:3)의 절차는 당시 HEAD에 변경된 테스트 하나만 덮어쓰므로 최종 커밋 전체와 동일하지 않습니다. 이번 diff에서 나머지는 문서·원본 기록이며, 검사기·목록·시범 evidence는 불변입니다. 현재 두 스크립트와 목록의 LF 정규화 바이트는 HEAD blob과 일치했습니다. 다만 당시 덮어쓴 테스트의 동일성을 확정할 해시는 원본에 없습니다.
+2873: 
+2874: 확인 범위는 지정 커밋 차이와 관련 원본, 실제 §13의 메모리 실행, 파싱 경계 입력, §11b·§12 검사입니다. 읽기 전용 환경이라 파일을 만드는 전체 부정 테스트와 실제 LF 내보내기는 재실행하지 않았습니다. 반례를 못 만든 범위를 결함 부재로 단정하지 않습니다.
+2875: 
+2876: CHANGES_REQUESTED
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+import ast, contextlib, hashlib, io, itertools, os, subprocess, types
+from pathlib import Path
+
+def blob(rev,path): return subprocess.check_output(['git','show',rev+':'+path]).decode('utf-8')
+rawpath=next(Path('docs/evidence/_raw').glob('*digest*63c*txt'))
+raw=rawpath.read_text(encoding='utf-8')
+start=raw.index('MUTATIONS = ['); end=raw.index('\\nOLD = ',start)
+mutations=ast.literal_eval(ast.parse(raw[start:end]).body[0].value)
+ve_src=blob('HEAD','scripts/verify_evidence.py')
+list_data=Path('docs/evidence/_schema_v1_grandfathered.txt').read_bytes().replace(b'\\r\\n',b'\\n')
+class MemoryFile(io.BytesIO):
+ def __init__(self,fs,p,mode): super().__init__(fs.get(p,b'')); self.fs,self.p,self.mode=fs,p,mode
+ def write(self,data):
+  n=super().write(data); self.fs[self.p]=self.getvalue(); return n
+class MemoryIO:
+ def __init__(self,fs): self.fs=fs
+ def open(self,p,mode): return MemoryFile(self.fs,p,mode)
+
+def run_section(rev,crlf,subs):
+ fs={'real':list_data.replace(b'\\n',b'\\r\\n') if crlf else list_data}
+ src=ve_src
+ for old,new in subs:
+  assert src.count(old)==1
+  src=src.replace(old,new)
+ tree=ast.parse(src)
+ venv={'io':MemoryIO(fs),'os':types.SimpleNamespace(path=types.SimpleNamespace(exists=lambda p:p in fs)),'hashlib':hashlib,'GRANDFATHER_LIST':'real','GRANDFATHER_DIGEST':'sha256:'+hashlib.sha256(list_data).hexdigest()}
+ nodes=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in ('lf_normalized','load_grandfathered')]
+ exec(compile(ast.Module(body=nodes,type_ignores=[]),'verifier','exec'),venv)
+ ve=types.SimpleNamespace()
+ def load():
+  venv['GRANDFATHER_LIST']=ve.GRANDFATHER_LIST
+  return venv['load_grandfathered']()
+ ve.GRANDFATHER_LIST='real'; ve.load_grandfathered=load
+ tree=ast.parse(blob(rev,'scripts/test_verify_evidence.py'))
+ main=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='main')
+ ix=next(i for i,n in enumerate(main.body) if isinstance(n,ast.Assign) and isinstance(n.value,ast.Call) and any(isinstance(k.value,ast.Constant) and k.value.value=='gputeer-gf-' for k in n.value.keywords))
+ env={'io':MemoryIO(fs),'os':os,'VE':ve,'FAILURES':[],'tempfile':types.SimpleNamespace(mkdtemp=lambda **k:'mem'),'shutil':types.SimpleNamespace(rmtree=lambda *a,**k:None)}
+ out=io.StringIO()
+ with contextlib.redirect_stdout(out): exec(compile(ast.Module(body=main.body[ix:ix+2],type_ignores=[]),'section13','exec'),env)
+ print(rev,'CRLF' if crlf else 'LF','failures',len(env['FAILURES']))
+ for line in out.getvalue().splitlines():
+  if 'FAIL' in line: print(line)
+for rev,crlf in [('125949c',True),('HEAD',True),('HEAD',False),('125949c',False)]:
+ for m in [None,mutations[3],mutations[4]]:
+  print('MUTATION',m[0] if m else 'baseline')
+  run_section(rev,crlf,m[1] if m else [])
+# Extract actual independent expected-set expression and actual verifier parser.
+tree=ast.parse(blob('HEAD','scripts/test_verify_evidence.py'))
+expr=next(n.value for n in ast.walk(tree) if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='expected_set' for t in n.targets))
+expect_code=compile(ast.Expression(expr),'expected_set','eval')
+vfunc=next(n for n in ast.parse(ve_src).body if isinstance(n,ast.FunctionDef) and n.name=='load_grandfathered')
+parser=compile(ast.Module(body=vfunc.body[-3:-1],type_ignores=[]),'parser','exec')
+chars=['a','#',' ','\\t','\\r','\\n','\\v','\\f','\\x1c','\\x1d','\\x1e','\\x85','\\u2028','\\u2029','\\ufeff']
+count=0
+for size in range(5):
+ for parts in itertools.product(chars,repeat=size):
+  real=''.join(parts).encode('utf-8'); expected=eval(expect_code,{'real':real})
+  for data in [real,real.replace(b'\\r\\n',b'\\n'),real.replace(b'\\r\\n',b'\\n').replace(b'\\n',b'\\r\\n')]:
+   env={'raw':data.replace(b'\\r\\n',b'\\n')}; exec(parser,env)
+   assert expected==env['out'],(real,expected,env['out'])
+  count+=1
+print('parser exhaustive inputs',count,'variants',count*3,'mismatches 0')
+'@ | python -X utf8 -B -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ succeeded in 2128ms:
+MUTATION baseline
+125949c CRLF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)
+125949c CRLF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION E5 정상 로드에 가짜 항목을 더한다(결함 114)
+125949c CRLF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION baseline
+HEAD CRLF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)
+HEAD CRLF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION E5 정상 로드에 가짜 항목을 더한다(결함 114)
+HEAD CRLF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION baseline
+HEAD LF failures 1
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+MUTATION E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)
+HEAD LF failures 3
+  FAIL 유예 목록에 한 줄 추가 -> 유예 전부 취소
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+MUTATION E5 정상 로드에 가짜 항목을 더한다(결함 114)
+HEAD LF failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+MUTATION baseline
+125949c LF failures 1
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+MUTATION E4 오류는 내고 CRLF 목록일 때만 빈 집합(결함 117 수정판 — LF 에서만 유예를 남긴다)
+125949c LF failures 2
+  FAIL 유예 목록에 한 줄 추가 -> 유예 전부 취소
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+MUTATION E5 정상 로드에 가짜 항목을 더한다(결함 114)
+125949c LF failures 1
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+parser exhaustive inputs 54241 variants 162723 mismatches 0
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+import ast,contextlib,hashlib,io,os,subprocess,types
+from pathlib import Path
+blob=lambda r,p:subprocess.check_output(['git','show',r+':'+p]).decode('utf-8')
+raw=next(Path('docs/evidence/_raw').glob('*digest*63c*txt')).read_text(encoding='utf-8'); start=raw.index('MUTATIONS = ['); end=raw.index('\\nOLD = ',start)
+ms=ast.literal_eval(ast.parse(raw[start:end]).body[0].value)
+source=blob('HEAD','scripts/verify_evidence.py'); data=Path('docs/evidence/_schema_v1_grandfathered.txt').read_bytes().replace(b'\\r\\n',b'\\n')
+class F(io.BytesIO):
+ def __init__(self,fs,p,mode):
+  if 'w' in mode: fs[p]=b''
+  super().__init__(fs[p]); self.fs,self.p=fs,p
+ def write(self,b):
+  n=super().write(b); self.fs[self.p]=self.getvalue(); return n
+for rev,crlf in [('125949c',True),('HEAD',True),('HEAD',False),('125949c',False)]:
+ for m in [None,ms[3],ms[4]]:
+  fs={'real':data.replace(b'\\n',b'\\r\\n') if crlf else data}; memio=types.SimpleNamespace(open=lambda p,mode:F(fs,p,mode))
+  src=source
+  for old,new in m[1] if m else []:
+   assert src.count(old)==1; src=src.replace(old,new)
+  ve=types.SimpleNamespace(GRANDFATHER_LIST='real')
+  env={'io':memio,'os':types.SimpleNamespace(path=types.SimpleNamespace(exists=lambda p:p in fs)),'hashlib':hashlib,'GRANDFATHER_DIGEST':'sha256:'+hashlib.sha256(data).hexdigest()}
+  nodes=[n for n in ast.parse(src).body if isinstance(n,ast.FunctionDef) and n.name in ('lf_normalized','load_grandfathered')]
+  exec(compile(ast.Module(body=nodes,type_ignores=[]),'verifier','exec'),env)
+  def load():
+   env['GRANDFATHER_LIST']=ve.GRANDFATHER_LIST
+   return env['load_grandfathered']()
+  ve.load_grandfathered=load
+  main=next(n for n in ast.parse(blob(rev,'scripts/test_verify_evidence.py')).body if isinstance(n,ast.FunctionDef) and n.name=='main')
+  ix=next(i for i,n in enumerate(main.body) if isinstance(n,ast.Assign) and isinstance(n.value,ast.Call) and any(isinstance(k.value,ast.Constant) and k.value.value=='gputeer-gf-' for k in n.value.keywords))
+  test={'io':memio,'os':os,'VE':ve,'FAILURES':[],'tempfile':types.SimpleNamespace(mkdtemp=lambda **k:'mem'),'shutil':types.SimpleNamespace(rmtree=lambda *a,**k:None)}
+  out=io.StringIO()
+  with contextlib.redirect_stdout(out): exec(compile(ast.Module(body=main.body[ix:ix+2],type_ignores=[]),'section13','exec'),test)
+  print(rev,'CRLF' if crlf else 'LF',m[0][:2] if m else 'baseline','failures',len(test['FAILURES']))
+  for l in out.getvalue().splitlines():
+   if 'FAIL' in l: print(l)
+  if m is None: assert not test['FAILURES']
+'@ | python -X utf8 -B -" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ succeeded in 1492ms:
+125949c CRLF baseline failures 0
+125949c CRLF E4 failures 0
+125949c CRLF E5 failures 0
+HEAD CRLF baseline failures 0
+HEAD CRLF E4 failures 1
+  FAIL 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+HEAD CRLF E5 failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+HEAD LF baseline failures 0
+HEAD LF E4 failures 2
+  FAIL 유예 목록에 한 줄 추가 -> 유예 전부 취소
+  FAIL 유예 목록(LF 체크아웃)에 한 줄 추가 -> 유예 전부 취소
+HEAD LF E5 failures 2
+  FAIL 유예 목록(LF 체크아웃) 정상 로드
+  FAIL 유예 목록(CRLF 체크아웃) 정상 로드
+125949c LF baseline failures 0
+125949c LF E4 failures 1
+  FAIL 유예 목록에 한 줄 추가 -> 유예 전부 취소
+125949c LF E5 failures 0
+
+codex
+테스트 blob의 LF 정규화 SHA-256은 원본의 두 환경 기록과 일치합니다. 실제 §13 코드와 원본의 E4·E5 변이를 메모리에서 실행해 같은 판별 결과도 확인했습니다. 다만 수정 전 **LF** 환경은 E4를 이미 잡으므로, “수정 전 통과”는 원본에 적힌 **수정 전 CRLF 체크아웃**으로 한정해야 합니다.
+
+exec
+"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "@'
+from pathlib import Path
+files=[(Path('scripts/test_verify_evidence.py'),216,414),(next(Path('docs/reports/debugs').glob('2026-09-17_0513_*')),127,166),(Path('docs/history/HISTORY.md'),25,42),(next(Path('docs/evidence/_raw').glob('*digest*63c*txt')),1488,1508)]
+for p,a,b in files:
+ print('FILE',p)
+ ls=p.read_text(encoding='utf-8').splitlines()
+ for i in range(a,min(b,len(ls))+1): print(f'{i}: {ls[i-1]}')
+'@ | python -X utf8 -B -
+git -c core.quotepath=false diff ea485c9..HEAD -- docs/runbooks
+git status --short" in C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+ succeeded in 1130ms:
+FILE scripts\test_verify_evidence.py
+216:     # ── 2. 검수 결과가 ACCEPTED 가 아닌데 PASS ────────────────────
+217:     m = base.replace('review_outcome: "ACCEPTED"',
+218:                      'review_outcome: "CHANGES_REQUESTED"')
+219:     assert m != base
+220:     errors, _ = check(m, raw_files)
+221:     expect("review_outcome != ACCEPTED 인데 PASS", errors, "review_outcome")
+222: 
+223:     # ── 3. 검수 컨텍스트가 새 세션이 아님 ─────────────────────────
+224:     m = base.replace('review_context: "fresh-read-only"',
+225:                      'review_context: "same-session"')
+226:     assert m != base
+227:     errors, _ = check(m, raw_files)
+228:     expect("review_context != fresh-read-only", errors, "review_context")
+229: 
+230:     # ── 4. 원문이 digest 기록 이후 변조됨 ─────────────────────────
+231:     tampered = dict(raw_files)
+232:     tampered["DoD-09_resume_selection.txt"] = \
+233:         raw_files["DoD-09_resume_selection.txt"].replace(b"4 failed", b"0 failed")
+234:     assert tampered["DoD-09_resume_selection.txt"] != raw_files["DoD-09_resume_selection.txt"]
+235:     errors, _ = check(base, tampered)
+236:     expect("원문 수기 변조 (digest 불일치)", errors, "raw_output_digest 불일치")
+237: 
+238:     # ── 5. 바이트 수만 틀림 ───────────────────────────────────────
+239:     m = re.sub(r"raw_output_bytes: \d+", "raw_output_bytes: 1", base)
+240:     assert m != base
+241:     errors, _ = check(m, raw_files)
+242:     expect("raw_output_bytes 불일치", errors, "raw_output_bytes 불일치")
+243: 
+244:     # ── 5b. 줄바꿈만 다른 원문 — 체크아웃마다 다른 같은 원문이다 ──
+245:     #   ★ 2026-09-17 — `core.autocrlf` 로 체크아웃마다 작업 트리 바이트가 다르다. 검사기는 LF 정규화 내용으로 잰다.
+246:     #     줄바꿈만 다르면 통과하고, 내용을 바꾸면 **어느 형태로든** 실패해야 한다.
+247:     key = "DoD-09_resume_selection.txt"
+248:     lf_raw = {k: v.replace(b"\r\n", b"\n") for k, v in raw_files.items()}
+249:     crlf_raw = {k: v.replace(b"\n", b"\r\n") for k, v in lf_raw.items()}
+250:     for label, files in (("LF", lf_raw), ("CRLF", crlf_raw)):
+251:         errors, _ = check(base, files)
+252:         expect_absent("줄바꿈만 다른 원문(%s 체크아웃)은 통과" % label, errors, "raw_output_")
+253:         tampered = dict(files)
+254:         tampered[key] = files[key].replace(b"4 failed", b"0 failed")
+255:         assert tampered[key] != files[key]
+256:         errors, _ = check(base, tampered)
+257:         expect("변조한 원문(%s 체크아웃)은 실패" % label, errors, "raw_output_digest 불일치")
+258:     parts = lf_raw[key].split(b"\n")
+259:     mixed = dict(lf_raw)
+260:     mixed[key] = b"\n".join(
+261:         part + (b"\r" if i % 2 == 0 and i < len(parts) - 1 else b"") for i, part in enumerate(parts))
+262:     assert b"\r\n" in mixed[key] and mixed[key] != lf_raw[key]
+263:     errors, _ = check(base, mixed)
+264:     expect_absent("줄바꿈이 섞인 원문은 통과", errors, "raw_output_")
+265:     lone = dict(lf_raw)
+266:     lone[key] = lf_raw[key].replace(b"\n", b"\r", 1)
+267:     assert lone[key] != lf_raw[key]
+268:     errors, _ = check(base, lone)
+269:     expect("줄바꿈 하나를 외로운 CR 로 바꾼 원문은 실패(내용이다)", errors, "raw_output_digest 불일치")
+270: 
+271:     # ── 6. 검수 receipt 가 형식적 LGTM ────────────────────────────
+272:     lgtm = dict(raw_files)
+273:     lgtm["DoD-09_review.txt"] = b"LGTM\n"
+274:     errors, _ = check(base, lgtm)
+275:     expect("형식적 LGTM (너무 짧은 receipt)", errors, "review_artifact 가 너무 짧다")
+276: 
+277:     # ── 6b. 길지만 파일:줄 위치가 없는 receipt ────────────────────
+278:     #   ★ 2026-08-17 — 전에는 경고였다. 경고는 종료 코드에 반영되지 않아
+279:     #     "검사기가 통과했다" 로 읽힌다. 오류로 승격했다.
+280:     vague = dict(raw_files)
+281:     vague["DoD-09_review.txt"] = ("전반적으로 좋아 보입니다. " * 40).encode("utf-8")
+282:     errors, _ = check(base, vague)
+283:     expect("구체적 반례 없는 receipt", errors, "파일:줄 위치가 하나도 없다")
+284: 
+285:     # ── 6c. 검수자가 실제로 만든 우회 payload ─────────────────────
+286:     #   `("LGTM. " * 40) + "fake.py:1"` — 길이도 넘고 정규식도 만족한다.
+287:     #   가리키는 파일이 저장소에 없다는 것으로 잡는다.
+288:     bypass = dict(raw_files)
+289:     bypass["DoD-09_review.txt"] = (("LGTM. " * 40) + "fake.py:1").encode("utf-8")
+290:     errors, _ = check(base, bypass)
+291:     expect("형식적 LGTM + 없는 파일 인용", errors, "인용한 파일이 저장소에 하나도 없다")
+292: 
+293:     # ── 6d. review_artifact 가 `_raw/` 밖 ─────────────────────────
+294:     m = base.replace('review_artifact: "docs/evidence/_raw/DoD-09_review.txt"',
+295:                      'review_artifact: "scripts/verify_evidence.py"')
+296:     m = m.replace("  - docs/evidence/_raw/DoD-09_review.txt",
+297:                   "  - scripts/verify_evidence.py")
+298:     assert m != base
+299:     errors, _ = check(m, raw_files)
+300:     expect("review_artifact 가 _raw/ 밖", errors, "아래여야 한다")
+301: 
+302:     # ── 6e. 중복 키 ───────────────────────────────────────────────
+303:     m = base.replace(
+304:         'review_outcome: "ACCEPTED"',
+305:         'review_outcome: "CHANGES_REQUESTED"\nreview_outcome: "ACCEPTED"')
+306:     assert m != base
+307:     errors, _ = check(m, raw_files)
+308:     expect("중복 키", errors, "중복 키")
+309: 
+310:     # ── 6f. 보이지 않는 문자로 위장한 검수자 ──────────────────────
+311:     m = base.replace('reviewer_id: "agent:codex-cli"',
+312:                      'reviewer_id: "agent:claude-code​"')
+313:     assert m != base
+314:     errors, _ = check(m, raw_files)
+315:     expect("제로폭 문자로 위장한 검수자", errors, "보이지 않는 문자")
+316: 
+317:     # ── 6g. id 와 파일명 불일치로 검수 강제 회피 ──────────────────
+318:     m = base.replace('review_outcome: "ACCEPTED"',
+319:                      'review_outcome: "CHANGES_REQUESTED"')
+320:     errors, _ = check(m, raw_files, filename="ENV-99_disguised.md",
+321:                       grandfathered=frozenset())
+322:     expect("파일명 위장 — id 로도 강제된다", errors, "review_outcome")
+323:     expect("파일명 위장 — 불일치 자체가 오류", errors, "시작하지 않는다")
+324: 
+325:     # ── 6h. 경로에 콜론 (NTFS ADS) ────────────────────────────────
+326:     m = base.replace(
+327:         'raw_output_artifact: "docs/evidence/_raw/DoD-09_resume_selection.txt"',
+328:         'raw_output_artifact: "docs/evidence/_raw/DoD-09_resume_selection.txt::$DATA"')
+329:     assert m != base
+330:     errors, _ = check(m, raw_files)
+331:     expect("NTFS ADS 경로", errors, "콜론")
+332: 
+333:     # ── 6i. BOM ───────────────────────────────────────────────────
+334:     errors, _ = check("﻿" + base, raw_files)
+335:     expect("BOM 으로 시작하는 파일", errors, "BOM")
+336: 
+337:     # ── 7. 검수 receipt 가 artifacts 목록에 없음 ──────────────────
+338:     m = base.replace("  - docs/evidence/_raw/DoD-09_review.txt\n", "")
+339:     assert m != base
+340:     errors, _ = check(m, raw_files)
+341:     expect("review_artifact 가 artifacts 에 없음", errors, "artifacts 목록에 없다")
+342: 
+343:     # ── 8. 경로 탈출 ──────────────────────────────────────────────
+344:     m = base.replace('raw_output_artifact: "docs/evidence/_raw/DoD-09_resume_selection.txt"',
+345:                      'raw_output_artifact: "docs/evidence/_raw/../../../etc/passwd"')
+346:     assert m != base
+347:     errors, _ = check(m, raw_files)
+348:     expect("raw_output_artifact 경로 탈출", errors, "경로 탈출")
+349: 
+350:     m = base.replace("  - crates/checkpoint/src/writer.rs",
+351:                      "  - ../../../etc/passwd")
+352:     assert m != base
+353:     errors, _ = check(m, raw_files)
+354:     expect("artifact 경로 탈출", errors, "경로 탈출")
+355: 
+356:     # ── 9. 신원 형식 ──────────────────────────────────────────────
+357:     m = base.replace('reviewer_id: "agent:codex-cli"', 'reviewer_id: "codex"')
+358:     assert m != base
+359:     errors, _ = check(m, raw_files)
+360:     expect("reviewer_id 접두사 없음", errors, "reviewer_id 는")
+361: 
+362:     # ── 10. v2 필드 누락 ──────────────────────────────────────────
+363:     for field in VE.V2_FIELDS:
+364:         m = re.sub(r"(?m)^%s:.*(\n(?=\S|\s*$))?" % re.escape(field), "", base, count=1)
+365:         if m == base:
+366:             FAILURES.append("테스트 준비 실패 — %s 를 지우지 못했다" % field)
+367:             print("  FAIL v2 필드 누락: %s (준비 실패)" % field)
+368:             continue
+369:         errors, _ = check(m, raw_files)
+370:         expect("v2 필드 누락: %s" % field, errors, field)
+371: 
+372:     # ── 11. 유예 목록에 없는 v1 evidence ──────────────────────────
+373:     m = base.replace("schema_version: 2", "schema_version: 1")
+374:     assert m != base
+375:     errors, _ = check(m, raw_files, grandfathered=frozenset())
+376:     expect("유예 목록에 없는 새 v1 evidence", errors, "유예 목록")
+377: 
+378:     # ── 11b. 유예 목록에 있으면 v1 이어도 통과 ────────────────────
+379:     errors, _ = check(m, raw_files, grandfathered=frozenset({PILOT}))
+380:     # ★ 재검수 63b 결함 115 — 통과를 주장하는 줄은 기준선 필터 없이 본다(expect_absent).
+381:     expect_absent("유예된 v1 evidence 는 v2 검사 면제", errors, "유예 목록")
+382:     expect_absent("유예된 v1 evidence 는 v2 필드도 면제", errors, "v2 필수 필드 누락")
+383: 
+384:     # ── 12. ENV-* 는 검수 강제 대상이 아니다 ──────────────────────
+385:     #   규칙이 과하면 우회하게 된다. 범위를 실제로 좁혔는지 확인한다.
+386:     saved = VE.REVIEW_REQUIRED_PREFIX
+387:     try:
+388:         m = base.replace('review_outcome: "ACCEPTED"',
+389:                          'review_outcome: "CHANGES_REQUESTED"')
+390:         # 파일명을 ENV-* 로 바꾸는 대신 접두사 판정을 그대로 쓰되,
+391:         # PILOT 이 DoD- 로 시작하므로 강제 대상이다. 대조군으로 접두사를 비운다.
+392:         VE.REVIEW_REQUIRED_PREFIX = ("ZZZ-",)
+393:         errors, _ = check(m, raw_files)
+394:         expect_absent("강제 대상이 아니면 review_outcome 을 묻지 않는다",
+395:                       errors, "review_outcome")
+396:     finally:
+397:         VE.REVIEW_REQUIRED_PREFIX = saved
+398: 
+399:     # ── 12b. 사라진 negative test 이름 ────────────────────────────
+400:     #   ★ 실제로 있었던 일: DoD-07 이 `evidence_is_not_replay_checked` 를
+401:     #     적어 뒀는데 그 테스트는 이름이 바뀌었고 **동작도 뒤집혔다.**
+402:     #     evidence 는 그대로 "이 테스트가 이것을 보장한다" 고 말하고 있었다.
+403:     m = base.replace("  - w1_resume_must_not_pick_another_job",
+404:                      "  - this_test_does_not_exist_anywhere: 없는 테스트")
+405:     assert m != base
+406:     _errors, warns = check(m, raw_files)
+407:     if any("함수 정의를 찾지 못했다" in w for w in warns):
+408:         print("  ok   사라진 negative test 이름 -> 경고")
+409:     else:
+410:         FAILURES.append("사라진 negative test 에 경고가 없다: %s" % warns)
+411:         print("  FAIL 사라진 negative test 이름 -> 경고")
+412: 
+413:     # 비공허성 — 실재하는 이름은 경고하지 않는다
+414:     _errors, warns = check(base, raw_files)
+FILE docs\reports\debugs\2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md
+127: ## 6. 조치
+128: - [x] 고치기 전에 쓴다 (2026-09-17 05:42)
+129: - [x] 114 (2026-09-17 09:24) 기대 집합을 목록 파일 바이트에서 직접 파싱한다. E5(정상 로드에 가짜 항목) — LF · CRLF 정상 로드 두 줄 FAIL(두 환경)
+130: - [x] 115 (2026-09-17 09:24) §11b 두 줄 · §12 한 줄도 expect_absent. 109 조치문에 "5b 의 세 줄만" 정정을 덧붙였다.
+131:   ★ 이 파일에서 `want=False` 는 grep 으로 1곳 — expect_absent 설명문의 언급뿐이고 호출은 0건이다
+132: - [x] 116 (★ 재검수 63c 정정: 아래 E4 는 108 수정 전 테스트도 잡는다 — 판별력의 증거가 아니었다, 결함 117) (2026-09-17 09:24) E4 — CRLF worktree 에서 새 LF 취소 줄만 FAIL(기존 검사 통과), LF 내보내기에서는 기존 검사도 FAIL. 원본에 뮤테이션 스크립트 전문과
+133:   변이별 전체 출력을 싣고, 바꾼 테스트를 LF 내보내기에서 실행했다(exit 0 · 뮤테이션 5/5). 지난 원본의 E1 첫 실행 출력은 되살리지 못했다
+134: - 검증: CRLF worktree · LF 내보내기 모두 부정 테스트 exit 0 · FAIL 0 · 뮤테이션 E1~E5 5/5 · verify_evidence 위반 없음. check_docs 오류 0 ·
+135:   claims_selftest 30/30. 원본 `docs/evidence/_raw/증거_digest_줄바꿈_재검수63b_대응_2026-09-17.txt`
+136: 
+137: ---
+138: 
+139: # 재검수 63c(ea485c9)가 찾은 것 — 결함 117 ~ 119
+140: 
+141: ★ §11b · §12 의 needle 이 정상 fixture 를 실패시키는 반례 · LF 내보내기 차이로 테스트가 잘못 통과하는 반례는 못 찾았다고 했다. E5 는 이전 테스트
+142:   통과 · 현재 실패를 양쪽 환경에서 재현했다고 했다. 원본 `docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt`
+143: 
+144: ## 1. 위치 · 2. 재현 (재검수 63c)
+145: ```text
+146: 117 [P3] 원본 증거_digest_줄바꿈_재검수63b_대응 E4  CRLF 조건을 **오류 생성 분기 전체**에 붙였다 — 바뀐 LF 목록에서 오류 없이 유예 4건을 돌려준다.
+147:       그러면 108 수정 전 테스트(125949c)도 같은 줄에서 실패한다. "108 의 조건이 있어야 잡힌다" 의 증거가 아니다(116 조치문의 과장).
+148:       오류는 그대로 내고 **빈 집합 반환에만** CRLF 조건을 붙여야 이전 통과 · 현재 실패로 갈린다(검수가 CRLF 모사로 재현)
+149: 118 [P3] scripts/test_verify_evidence.py §13 기대 집합  테스트는 split("\n"), 검사기는 splitlines() — 외로운 CR 이 든 목록(`a.md\rb.md`)에서
+150:       둘이 다르게 읽는다. 지금 목록과 고정 digest 에서는 오판 반례가 없다고 했다
+151: 119 [P3] 같은 원본의 LF 내보내기 절차  덮어쓴 테스트 파일의 해시를 남기지 않아 커밋된 파일과 같은지 원본으로 확정할 수 없다
+152: ```
+153: 
+154: ## 4. 위험도
+155: - [x] 117 뮤테이션 판별력 과장 · 118 파서 차이(지금은 잠재) · 119 증거 부족
+156: 
+157: ## 6. 조치
+158: - [x] 고치기 전에 쓴다 (2026-09-17 09:31)
+159: - [x] 117 (2026-09-17 09:35) E4 = 오류는 내고 CRLF 목록일 때만 빈 집합. 108 수정 전 CRLF 체크아웃(125949c)에서 E4 · E5 는 **통과**, 현재 CRLF worktree ·
+160:   LF 내보내기에서는 실패 — 이전 통과 · 현재 실패. 116 조치문에 정정을 덧붙였다
+161: - [x] 118 (2026-09-17 09:35) 테스트도 splitlines() 로 읽는다
+162: - [x] 119 (2026-09-17 09:35) 두 환경의 테스트 파일 LF 정규화 sha256 이 같다(59ad51e8bd94bebd…) — 원본 머리에 적었다
+163: - 검증: ① ② 부정 테스트 exit 0 · 뮤테이션 5/5 · 위반 없음, ③ E4 · E5 통과(판별력). check_docs 오류 0 · claims_selftest 30/30.
+164:   원본 `docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt`
+FILE docs\history\HISTORY.md
+25: 
+26: ---
+27: 
+28: ## 2026-09-17 09:35 — 재검수 63c 대응 · 결함 117 ~ 119(E4 판별력 · 목록 줄 나누기 · LF 내보내기 테스트 해시)
+29: 
+30: - 계획: `docs/plans/2026-09-17_0513_증거_digest_줄바꿈_독립.md` 단계 6(독립 검수) 대응
+31: - 스트림: QA
+32: - 수행: E4 를 "오류는 내고 CRLF 목록일 때만 빈 집합" 으로 고쳐, 108 수정 전 테스트(125949c 체크아웃)에서는 통과하고 지금 테스트에서는 실패함을
+33:   원본에 남겼다(117 — 이전 E4 는 수정 전 테스트도 잡아 판별력의 증거가 아니었다). §13 기대 집합을 검사기와 같이 splitlines() 로 읽는다(118).
+34:   LF 내보내기에 쓴 테스트 파일의 해시를 원본에 적었다(119). 검사기(`verify_evidence.py`)는 그대로다
+35: - 검증: CRLF worktree · LF 내보내기 각각 부정 테스트 exit 0 · 뮤테이션 5/5 · 위반 없음. 108 수정 전 체크아웃에서 E4 · E5 통과. check_docs 오류 0 ·
+36:   claims_selftest 30/30
+37: - 원본: `docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt` · 검수 `docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt`
+38: - 리포트: `docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md`
+39: 
+40: ---
+41: 
+42: ## 2026-09-17 09:24 — 재검수 63b 대응 · 결함 114 ~ 116(유예 기대 집합의 독립 · 남은 기준선 필터 · 뮤테이션 판별력과 원본)
+FILE docs\evidence\_raw\증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt
+1488: ## check_docs.py
+1489: 문서 구조 검사 — C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+1490: ==============================================================
+1491:   이상 없음
+1492: --------------------------------------------------------------
+1493: 오류 0 · 경고 0
+1494: 
+1495: 
+1496: ## claims_selftest.py
+1497: 주장 검사표 뒤집기 시험 — 30줄
+1498: ==============================================================
+1499:   30/30 줄 전부 뒤집었을 때 실패했다 — 공허한 줄 없음
+1500: 
+1501: 
+1502: ## 뮤테이션 전문 — ①
+1503: # 뮤테이션 재검수 63c 대응 — 2026-09-17 09:31 · 환경 CRLF worktree(현재) · 루트 C:\Users\playdata2\Documents\test_workspace\gPUteer\gputeer-evidence-eol
+1504: # LF 정규화 sha256:
+1505: #   scripts/test_verify_evidence.py 59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7 (CRLF 520줄)
+1506: #   scripts/verify_evidence.py 3f3366286b9362439a9b0ceb6fefe01bcc79c3c6a29b072520462b77d820eb53 (CRLF 864줄)
+1507: #   docs/evidence/_schema_v1_grandfathered.txt 7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18 (CRLF 19줄)
+1508: # ── 스크립트 전문 ──
+diff --git a/docs/runbooks/검수_대기열.md b/docs/runbooks/검수_대기열.md
+index 123f9ca..a198aa6 100644
+--- a/docs/runbooks/검수_대기열.md
++++ b/docs/runbooks/검수_대기열.md
+@@ -157,6 +157,8 @@
+                                                      4건 재기록 근거 4/4 확인. 유예 취소 테스트 조건 · 기준선 필터 오독 · 계획서 범위(결함 108~110)
+ 63b 재검수 — 결함 108~110 (0b6e9b8)                        코덱스알트: CHANGES_REQUESTED -> 취소 조건 유효 · E1 LF 통과 맞음.
+                                                      기대 집합을 검사 대상에서 얻음 · 남은 기준선 필터 세 줄과 조치문 과장 · E3 판별력 · 원본 부족(결함 114~116)
++63c 재검수 — 결함 114~116 (ea485c9)                        CHANGES_REQUESTED -> needle · LF 내보내기 오판 반례 없음 · E5 판별 확인.
++                                                     E4 가 수정 전 테스트도 잡음 · 파서 차이(외로운 CR) · 덮어쓴 테스트 해시 없음(결함 117~119)
+ 48  설명 요청 — 결함 ⑱ 설계 넷 · ID 26자 두 질문(사용자가 다시 요청)  중단 -> 코덱스 사용량 한도(재개 2026-09-11 02:31).
+                                                      끊기기 전 정정 둘: Lease 60초는 바꿀 수 있는 기본값 · 유예는 추가 작업 허가가 아니다
+ 48b 설명 요청 48 재시도(2026-09-11 02:35)                        EXPLAINED -> 추천 A · (가) · 공통함수+CLI+저장소+Agent 수신.
+diff --git a/docs/runbooks/검수_프롬프트/63d_재검수_결함117_119.md b/docs/runbooks/검수_프롬프트/63d_재검수_결함117_119.md
+new file mode 100644
+index 0000000..30ca235
+--- /dev/null
++++ b/docs/runbooks/검수_프롬프트/63d_재검수_결함117_119.md
+@@ -0,0 +1,35 @@
++동의가 아니라 **반박**을 원한다.
++
++작업 위치: worktree `fix/evidence-digest-eol`. 검수 대상은 ea485c9 다음 커밋 — `git show HEAD` · `git diff ea485c9..HEAD`.
++
++# 결함 117 ~ 119 (재검수 63c 대응)
++
++```text
++117  E4 = 오류는 내고 CRLF 목록일 때만 빈 집합. 세 환경(현재 CRLF worktree · LF 내보내기 · 108 수정 전 CRLF 체크아웃 125949c) 원본
++118  §13 기대 집합 splitlines()
++119  두 환경의 테스트 파일 LF 정규화 sha256
++```
++
++물을 것:
++1. 원본이 "108 수정 전 통과 · 현재 실패" 를 E4 · E5 에 대해 입증하나. 수정 전 체크아웃이 정말 CRLF 목록인가(원본의 CRLF 줄 수).
++2. 118 뒤에도 테스트와 검사기가 목록을 다르게 읽는 입력이 남았나.
++3. 이 커밋의 테스트 파일 blob(LF 정규화)이 원본의 sha256 과 같은가.
++4. 이번에도 증명한 범위보다 넓게 적은 문장이 있나(조치문 · HISTORY · 커밋 메시지).
++
++읽을 파일:
++
++```text
++scripts/test_verify_evidence.py · scripts/verify_evidence.py
++docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md (117~119)
++docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt
++docs/evidence/_raw/검수_2026-09-10/63c_재검수_결함114_116_CHANGES_REQUESTED.txt
++```
++
++# 못 찾았으면
++
++**못 찾았다고 말하고, 어디까지 확인했는지 적어라.** 반례를 못 만든 것과 결함이 없는 것은 다르다.
++
++# 답의 형식
++
++각 지적마다 `파일:줄` 을 인용하라.
++마지막 줄에 `ACCEPTED` 또는 `CHANGES_REQUESTED` 중 하나를 써라.
+
+codex
+`17abb390`을 검수했습니다. **이번 변경에서 수정을 요구할 결함은 못 찾았습니다.** 확인 범위는 다음과 같습니다.
+
+1. **117의 판별력은 원본과 일치합니다.** 수정 전 목록은 원본에 **CRLF 19줄**로 기록되어 있습니다([원본:2476](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2476)). 수정 전 E4·E5는 exit 0이고([원본:2940](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2940)), 현재 CRLF·LF 환경에서는 모두 exit 1입니다([원본:1982](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1982), [원본:2465](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2465)). 실제 §13 코드에 기록된 변이를 적용한 메모리 실행에서도 같은 결과를 확인했습니다.
+
+2. **118 이후 목록 집합이 달라지는 반례는 못 찾았습니다.** [test_verify_evidence.py:458](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:458)과 [verify_evidence.py:334](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:334)의 실제 파싱 코드를 비교했습니다. BOM·공백·주석 기호·외로운 CR·Unicode 줄 구분자를 포함한 15개 문자로 길이 0~4의 **54,241개 입력**, 각각 원형·LF·CRLF 변환을 검사해 집합 차이 0건이었습니다. 이는 유한한 탐색 결과이며 모든 입력의 무결함 증명은 아닙니다.
+
+3. **119의 해시는 실제 커밋 blob과 같습니다.** `HEAD:scripts/test_verify_evidence.py`의 LF 정규화 SHA-256은  
+   `59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7`입니다. 두 환경의 기록과 일치합니다([원본:1505](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1505), [원본:1991](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1991)). 수정 전 테스트·검사기·목록의 기록된 해시도 `125949c` blob과 대조해 일치했습니다.
+
+4. **증명 범위를 넘었다고 확정할 문장은 못 찾았습니다.** 다만 **“수정 전 통과”를 LF 환경까지 확대하면 틀립니다.** 추가 메모리 실행에서 수정 전 LF 환경은 E4를 기존 추가 검사로 잡았습니다. [조치문:159](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md:159)과 커밋 메시지는 CRLF 조건을 명시합니다. [HISTORY.md:32](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/history/HISTORY.md:32)는 해당 `125949c` 체크아웃의 기록을 가리키므로 반증되지는 않지만, 여기도 **CRLF 체크아웃**이라고 명시하면 범위가 더 분명합니다.
+
+읽기 전용 환경에서 원본 대조·Git blob 해시 계산·§13 메모리 실행·파싱 경계 탐색까지 수행했습니다. 파일을 생성하는 전체 부정 테스트와 실제 세 환경 체크아웃은 재실행하지 않았습니다.
+
+ACCEPTED
+tokens used
+66,300
+`17abb390`을 검수했습니다. **이번 변경에서 수정을 요구할 결함은 못 찾았습니다.** 확인 범위는 다음과 같습니다.
+
+1. **117의 판별력은 원본과 일치합니다.** 수정 전 목록은 원본에 **CRLF 19줄**로 기록되어 있습니다([원본:2476](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2476)). 수정 전 E4·E5는 exit 0이고([원본:2940](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2940)), 현재 CRLF·LF 환경에서는 모두 exit 1입니다([원본:1982](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1982), [원본:2465](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:2465)). 실제 §13 코드에 기록된 변이를 적용한 메모리 실행에서도 같은 결과를 확인했습니다.
+
+2. **118 이후 목록 집합이 달라지는 반례는 못 찾았습니다.** [test_verify_evidence.py:458](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/test_verify_evidence.py:458)과 [verify_evidence.py:334](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/scripts/verify_evidence.py:334)의 실제 파싱 코드를 비교했습니다. BOM·공백·주석 기호·외로운 CR·Unicode 줄 구분자를 포함한 15개 문자로 길이 0~4의 **54,241개 입력**, 각각 원형·LF·CRLF 변환을 검사해 집합 차이 0건이었습니다. 이는 유한한 탐색 결과이며 모든 입력의 무결함 증명은 아닙니다.
+
+3. **119의 해시는 실제 커밋 blob과 같습니다.** `HEAD:scripts/test_verify_evidence.py`의 LF 정규화 SHA-256은  
+   `59ad51e8bd94bebdd773dfbb692f7ccf945771095f2c9f0f25d7e4de7efbd9a7`입니다. 두 환경의 기록과 일치합니다([원본:1505](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1505), [원본:1991](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/evidence/_raw/증거_digest_줄바꿈_재검수63c_대응_2026-09-17.txt:1991)). 수정 전 테스트·검사기·목록의 기록된 해시도 `125949c` blob과 대조해 일치했습니다.
+
+4. **증명 범위를 넘었다고 확정할 문장은 못 찾았습니다.** 다만 **“수정 전 통과”를 LF 환경까지 확대하면 틀립니다.** 추가 메모리 실행에서 수정 전 LF 환경은 E4를 기존 추가 검사로 잡았습니다. [조치문:159](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md:159)과 커밋 메시지는 CRLF 조건을 명시합니다. [HISTORY.md:32](C:/Users/playdata2/Documents/test_workspace/gPUteer/gputeer-evidence-eol/docs/history/HISTORY.md:32)는 해당 `125949c` 체크아웃의 기록을 가리키므로 반증되지는 않지만, 여기도 **CRLF 체크아웃**이라고 명시하면 범위가 더 분명합니다.
+
+읽기 전용 환경에서 원본 대조·Git blob 해시 계산·§13 메모리 실행·파싱 경계 탐색까지 수행했습니다. 파일을 생성하는 전체 부정 테스트와 실제 세 환경 체크아웃은 재실행하지 않았습니다.
+
+ACCEPTED

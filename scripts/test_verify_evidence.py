@@ -161,6 +161,20 @@ def expect(label, errors, needle, want=True):
         print("  ok   %s" % label)
 
 
+def expect_absent(label, errors, needle):
+    """`needle` 을 포함한 오류가 **하나도** 없어야 통과한다 — 기준선 필터를 쓰지 않는다.
+
+    ★ 2026-09-17 검수 63 결함 109. `expect(want=False)` 는 기준선에도 있던 오류를 빼고 본다 — 정규화를 끈 검사기에서
+      기준선과 CRLF 입력이 같은 오류를 내도 "통과" 줄이 ok 로 찍혔다. 통과를 주장하는 줄은 필터 없이 본다.
+    """
+    hits = [e for e in errors if needle in e]
+    if hits:
+        FAILURES.append("%s — 오류가 없어야 하는데 났다: %r\n      %s" % (label, needle, hits))
+        print("  FAIL %s" % label)
+    else:
+        print("  ok   %s" % label)
+
+
 def main():
     for s in (sys.stdout, sys.stderr):
         try:
@@ -226,6 +240,33 @@ def main():
     assert m != base
     errors, _ = check(m, raw_files)
     expect("raw_output_bytes 불일치", errors, "raw_output_bytes 불일치")
+
+    # ── 5b. 줄바꿈만 다른 원문 — 체크아웃마다 다른 같은 원문이다 ──
+    #   ★ 2026-09-17 — `core.autocrlf` 로 체크아웃마다 작업 트리 바이트가 다르다. 검사기는 LF 정규화 내용으로 잰다.
+    #     줄바꿈만 다르면 통과하고, 내용을 바꾸면 **어느 형태로든** 실패해야 한다.
+    key = "DoD-09_resume_selection.txt"
+    lf_raw = {k: v.replace(b"\r\n", b"\n") for k, v in raw_files.items()}
+    crlf_raw = {k: v.replace(b"\n", b"\r\n") for k, v in lf_raw.items()}
+    for label, files in (("LF", lf_raw), ("CRLF", crlf_raw)):
+        errors, _ = check(base, files)
+        expect_absent("줄바꿈만 다른 원문(%s 체크아웃)은 통과" % label, errors, "raw_output_")
+        tampered = dict(files)
+        tampered[key] = files[key].replace(b"4 failed", b"0 failed")
+        assert tampered[key] != files[key]
+        errors, _ = check(base, tampered)
+        expect("변조한 원문(%s 체크아웃)은 실패" % label, errors, "raw_output_digest 불일치")
+    parts = lf_raw[key].split(b"\n")
+    mixed = dict(lf_raw)
+    mixed[key] = b"\n".join(
+        part + (b"\r" if i % 2 == 0 and i < len(parts) - 1 else b"") for i, part in enumerate(parts))
+    assert b"\r\n" in mixed[key] and mixed[key] != lf_raw[key]
+    errors, _ = check(base, mixed)
+    expect_absent("줄바꿈이 섞인 원문은 통과", errors, "raw_output_")
+    lone = dict(lf_raw)
+    lone[key] = lf_raw[key].replace(b"\n", b"\r", 1)
+    assert lone[key] != lf_raw[key]
+    errors, _ = check(base, lone)
+    expect("줄바꿈 하나를 외로운 CR 로 바꾼 원문은 실패(내용이다)", errors, "raw_output_digest 불일치")
 
     # ── 6. 검수 receipt 가 형식적 LGTM ────────────────────────────
     lgtm = dict(raw_files)
@@ -336,8 +377,9 @@ def main():
 
     # ── 11b. 유예 목록에 있으면 v1 이어도 통과 ────────────────────
     errors, _ = check(m, raw_files, grandfathered=frozenset({PILOT}))
-    expect("유예된 v1 evidence 는 v2 검사 면제", errors, "유예 목록", want=False)
-    expect("유예된 v1 evidence 는 v2 필드도 면제", errors, "v2 필수 필드 누락", want=False)
+    # ★ 재검수 63b 결함 115 — 통과를 주장하는 줄은 기준선 필터 없이 본다(expect_absent).
+    expect_absent("유예된 v1 evidence 는 v2 검사 면제", errors, "유예 목록")
+    expect_absent("유예된 v1 evidence 는 v2 필드도 면제", errors, "v2 필수 필드 누락")
 
     # ── 12. ENV-* 는 검수 강제 대상이 아니다 ──────────────────────
     #   규칙이 과하면 우회하게 된다. 범위를 실제로 좁혔는지 확인한다.
@@ -349,8 +391,8 @@ def main():
         # PILOT 이 DoD- 로 시작하므로 강제 대상이다. 대조군으로 접두사를 비운다.
         VE.REVIEW_REQUIRED_PREFIX = ("ZZZ-",)
         errors, _ = check(m, raw_files)
-        expect("강제 대상이 아니면 review_outcome 을 묻지 않는다",
-               errors, "review_outcome", want=False)
+        expect_absent("강제 대상이 아니면 review_outcome 을 묻지 않는다",
+                      errors, "review_outcome")
     finally:
         VE.REVIEW_REQUIRED_PREFIX = saved
 
@@ -406,6 +448,42 @@ def main():
         else:
             FAILURES.append("무손상 유예 목록이 로드되지 않는다: %s" % errs)
             print("  FAIL 손대지 않은 유예 목록은 정상 로드")
+
+        # ★ 2026-09-17 — 줄바꿈만 다른 목록(LF · CRLF 체크아웃)은 같은 목록이다. 한 줄 추가는 어느 형태로든 유예를 전부 취소한다.
+        # ★ 검수 63 결함 108 — 취소는 "오류가 있다" 가 아니라 **오류 그리고 빈 유예**다. 정상은 오류 없음 **그리고** 손대지 않은 목록과
+        #   같은 집합이다. 전에는 두 조건을 bool 로 섞어 유예를 남기고 오류만 내는 구현도 통과했다.
+        # ★ 재검수 63b 결함 114 — 기대 집합을 **검사 대상 함수로 얻지 않는다.** 같은 함수로 얻으면 정상 로드가 틀린 집합을 내도 기대도 같이
+        #   틀려 통과한다. 목록 파일 바이트를 여기서 직접 파싱한다(주석 · 빈 줄 제외).
+        # ★ 재검수 63c 결함 118 — 줄 나누기는 검사기와 같은 splitlines() 다. split("\n") 은 외로운 CR 이 든 목록을 다르게 읽는다.
+        expected_set = {
+            line.strip()
+            for line in real.decode("utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        assert expected_set, "유예 목록에서 항목을 하나도 못 읽었다"
+        lf_list = real.replace(b"\r\n", b"\n")
+        for label, data, extra in (
+            ("LF", lf_list, b"ENV-99_fake.md\n"),
+            ("CRLF", lf_list.replace(b"\n", b"\r\n"), b"ENV-99_fake.md\r\n"),
+        ):
+            for appended, want_loaded in ((b"", True), (extra, False)):
+                io.open(fake, "wb").write(data + appended)
+                VE.GRANDFATHER_LIST = fake
+                try:
+                    got, errs = VE.load_grandfathered()
+                finally:
+                    VE.GRANDFATHER_LIST = old_list
+                name = "유예 목록(%s 체크아웃)%s" % (
+                    label, " 정상 로드" if want_loaded else "에 한 줄 추가 -> 유예 전부 취소")
+                if want_loaded:
+                    passed = not errs and set(got) == set(expected_set)
+                else:
+                    passed = bool(errs) and not got
+                if passed:
+                    print("  ok   %s" % name)
+                else:
+                    FAILURES.append("%s — 오류=%s, 유예=%d건" % (name, errs, len(got)))
+                    print("  FAIL %s" % name)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -39,7 +39,10 @@ GRANDFATHER_LIST = os.path.join(EVIDENCE_DIR, "_schema_v1_grandfathered.txt")
 #   그러면 유예 확대가 **코드 diff 에 드러난다.**
 #   (완전한 위조 방지는 아니다 — 둘 다 고치면 통과한다.
 #    목적은 '조용히 늘어나는 것' 을 막는 것이다.)
-GRANDFATHER_DIGEST = "sha256:c684df095636efdbc5ce64a453ca733322feff6e22339762e51900429595de57"
+# ★ 2026-09-17 — 목록을 **LF 정규화한 내용**의 SHA-256 이다(`lf_normalized`). 전에는 작업 트리 바이트를 그대로 해시했고,
+#   그 값(sha256:c684df09…)은 목록을 처음 쓴 체크아웃의 CRLF 판이었다 — LF 체크아웃에서는 유예가 전부 취소됐다.
+#   목록 내용은 바꾸지 않았다(docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md).
+GRANDFATHER_DIGEST = "sha256:7936fdc6fb9c623a8395ca9f31942a12f554fe486b912ccc6a8f03ef3b3eea18"
 
 REQUIRED = [
     "id", "claim", "status", "commit", "binary_digests", "protocol_versions",
@@ -315,7 +318,8 @@ def load_grandfathered():
     """
     if not os.path.exists(GRANDFATHER_LIST):
         return set(), []
-    raw = io.open(GRANDFATHER_LIST, "rb").read()
+    # ★ 원문 digest 와 같은 정의 — 체크아웃의 줄바꿈과 무관하다(`lf_normalized`).
+    raw = lf_normalized(io.open(GRANDFATHER_LIST, "rb").read())
     actual = "sha256:" + hashlib.sha256(raw).hexdigest()
     errs = []
     if GRANDFATHER_DIGEST != actual:
@@ -391,19 +395,29 @@ def safe_repo_path(rel):
     return True, None
 
 
+def lf_normalized(data):
+    """CRLF 를 LF 로만 바꾼다 — 외로운 CR 은 그대로 둔다(그것은 내용이다).
+
+    ★ 2026-09-17 (docs/reports/debugs/2026-09-17_0513_증거_digest_가_체크아웃_줄바꿈에_따라_갈린다.md).
+      이 저장소는 `.gitattributes` 없이 `core.autocrlf=true` 라, 같은 커밋도 체크아웃마다 작업 트리 바이트가 다르다 —
+      LF(리눅스 · autocrlf=false) · CRLF(새 Windows 체크아웃) · 원문을 처음 쓴 체크아웃의 섞인 줄바꿈.
+      작업 트리 바이트를 그대로 해시하자 검사 결과가 체크아웃에 따라 갈렸다(새 worktree 76건 · LF 내보내기 7건 · 메인 0건).
+    ★ 잃는 것: **줄바꿈만** 바꾼 변경은 digest 로 잡지 못한다. 내용 변경은 그대로 잡는다(외로운 CR 도 내용이다).
+    ★ `.gitattributes` 로 고정하지 않은 이유 — 이미 CRLF 로 체크아웃된 작업 트리는 다시 체크아웃하기 전까지 그대로 어긋나고,
+      섞인 줄바꿈으로 기록된 digest 는 어떤 체크아웃에서도 다시 만들 수 없다. 검사기가 체크아웃과 무관해야 한다.
+    """
+    return data.replace(b"\r\n", b"\n")
+
+
 def sha256_file(full):
-    h = hashlib.sha256()
-    n = 0
-    # ★ 텍스트가 아니라 **바이트**로 읽는다.
-    #   텍스트로 읽으면 Windows 개행 변환이 digest 를 바꾼다.
+    """`_raw/` 원문의 digest 와 바이트 수 — **LF 정규화한 내용**으로 잰다(`lf_normalized`).
+
+    ★ 텍스트 모드로 읽지 않는다 — 텍스트 모드는 외로운 CR 까지 바꾸고 인코딩 오류를 삼킨다.
+    ★ 한 번에 읽는다 — 조각 경계에서 CR 과 LF 가 갈리면 정규화가 틀린다. `_raw/` 원문은 수백 KB 규모다.
+    """
     with io.open(full, "rb") as f:
-        while True:
-            chunk = f.read(65536)
-            if not chunk:
-                break
-            h.update(chunk)
-            n += len(chunk)
-    return h.hexdigest(), n
+        data = lf_normalized(f.read())
+    return hashlib.sha256(data).hexdigest(), len(data)
 
 
 def check_schema_v2(fm, path, errors, warns, grandfathered):
