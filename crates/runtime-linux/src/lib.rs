@@ -342,7 +342,8 @@ pub fn create_constrained_child(
     } else if system_has_swap() {
         let _ = std::fs::remove_dir(&cgroup);
         return Err(CgroupError::LimitNotApplied {
-            detail: "memory.swap.max 가 없는데 스왑은 켜져 있다(/proc/swaps) —                      상한을 넘겨도 스왑으로 살아남으므로 실행하지 않는다"
+            detail: "memory.swap.max 가 없는데 스왑은 켜져 있다(/proc/swaps) — \
+                상한을 넘겨도 스왑으로 살아남으므로 실행하지 않는다"
                 .into(),
         });
     }
@@ -603,7 +604,8 @@ fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupE
     }
     if resolved == root {
         return Err(refuse(format!(
-            "{resolved:?} 는 cgroup v2 루트다 — 상위 제한을 우회하려면              RootBypassingAncestorLimits 를 명시적으로 골라야 한다"
+            "{resolved:?} 는 cgroup v2 루트다 — 상위 제한을 우회하려면 \
+                RootBypassingAncestorLimits 를 명시적으로 골라야 한다"
         )));
     }
     // ★ 루트의 **직속 자식**인가. 조상 계층을 못 타게 하는 조건이다.
@@ -612,7 +614,8 @@ fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupE
         .ok_or_else(|| refuse(format!("{resolved:?} 의 상위를 읽지 못했다")))?;
     if parent_of != root {
         return Err(refuse(format!(
-            "{resolved:?} 가 {root:?} 의 직속 자식이 아니다 — system.slice 같은 다른              서비스 계층 아래를 쓰지 못하게 깊이를 1 로 고정한다"
+            "{resolved:?} 가 {root:?} 의 직속 자식이 아니다 — system.slice 같은 다른 \
+                서비스 계층 아래를 쓰지 못하게 깊이를 1 로 고정한다"
         )));
     }
     let name = resolved
@@ -621,7 +624,8 @@ fn validate_explicit_parent(path: &Path, root: &Path) -> Result<PathBuf, CgroupE
         .ok_or_else(|| refuse(format!("{resolved:?} 의 이름을 읽지 못했다")))?;
     if !name.starts_with(DELEGATED_PARENT_PREFIX) {
         return Err(refuse(format!(
-            "{resolved:?} 의 이름이 `{DELEGATED_PARENT_PREFIX}` 로 시작하지 않는다 —              운영자가 이 Agent 몫으로 만든 디렉터리만 받는다"
+            "{resolved:?} 의 이름이 `{DELEGATED_PARENT_PREFIX}` 로 시작하지 않는다 — \
+                운영자가 이 Agent 몫으로 만든 디렉터리만 받는다"
         )));
     }
     Ok(resolved)
