@@ -364,11 +364,10 @@ impl ReplayStatus {
         match self {
             Self::Checked => "replay 저장소가 처음 보는 nonce 라고 답했다",
             Self::NotApplicable => {
-                "단수명 메시지가 아니어서 replay 검사를 하지 않았다 —                  이 계층은 재전송을 막지 않는다"
+                "단수명 메시지가 아니어서 replay 검사를 하지 않았다 — \
+                    이 계층은 재전송을 막지 않는다"
             }
-            Self::Ineffective => {
-                "replay guard 가 아무것도 기억하지 않는 구현이다 — 방어가 없다"
-            }
+            Self::Ineffective => "replay guard 가 아무것도 기억하지 않는 구현이다 — 방어가 없다",
         }
     }
 }
@@ -403,7 +402,8 @@ impl PolicyViolation {
     pub fn explain(&self) -> String {
         match self {
             Self::ShortLivedTtlTooLong { ttl_ms, max_ms } => format!(
-                "단수명 메시지의 TTL {}ms 가 상한 {}ms 를 넘었다 —                  replay 캐시를 영구 점유할 수 있어 거부한다",
+                "단수명 메시지의 TTL {}ms 가 상한 {}ms 를 넘었다 — \
+                    replay 캐시를 영구 점유할 수 있어 거부한다",
                 ttl_ms, max_ms
             ),
         }
@@ -530,7 +530,8 @@ impl VerifyError {
             Self::Outcome(o) => o.explain(),
             Self::ReplayStore(e) => e.explain(),
             Self::Derived(_) => {
-                "도출 해시가 내용과 맞지 않는다 — 서명은 정상이므로 위조가 아니라                  발신자가 잘못된 참조 해시를 넣었거나 중첩 메시지가 바꿔치기됐다"
+                "도출 해시가 내용과 맞지 않는다 — 서명은 정상이므로 위조가 아니라 \
+                    발신자가 잘못된 참조 해시를 넣었거나 중첩 메시지가 바꿔치기됐다"
             }
             Self::Policy(PolicyViolation::ShortLivedTtlTooLong { .. }) => {
                 "단수명 메시지의 TTL 이 상한을 넘었다 — replay 캐시를 영구 점유할 수 있어 거부했다"
