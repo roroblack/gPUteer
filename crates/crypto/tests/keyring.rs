@@ -328,25 +328,73 @@ fn k1_is_explicitly_unavailable_on_platforms_without_a_backend() {
     ));
 }
 
+/// 이 기계에서 K1 봉인이 **실제로** 되는 상태인가.
+///
+/// ★★ 2026-09-21 결함 205 — 전에는 `systemd-creds --version` 성공만 보고
+///   "봉인이 된다" 고 읽었다. **바이너리 존재와 봉인 가능은 다르다.**
+///   `--with-key=host` 는 `/var/lib/systemd/credential.secret`(0600 root)를
+///   읽어야 하므로 **root 여야 성립한다**(`CLAUDE.md` §0.4 의 키 보관 표).
+///   GitHub Actions 우분투 러너(비-root · systemd-creds 있음)에서 세 테스트가
+///   그 차이로 실패했다 — 환경이 막은 것을 코드 결함으로 보고한 것이다.
+///
+///   그래서 **우리 코드가 아니라 OS 도구로 직접 봉인을 한 번 해 본다.**
+///   제품 코드(`save()`)로 판정하면 제품이 망가져도 "환경 없음" 으로
+///   조용히 건너뛰게 된다 — 그건 회귀를 숨긴다.
+#[cfg(target_os = "linux")]
+enum K1Backend {
+    /// 봉인이 실제로 됐다.
+    Works,
+    /// 도구는 있는데 봉인이 거부됐다(비-root 등). 사유 원문을 같이 남긴다.
+    Refused(String),
+    /// 도구 자체가 없다.
+    Missing,
+}
+
+#[cfg(target_os = "linux")]
+fn k1_backend_state() -> K1Backend {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let child = Command::new("systemd-creds")
+        .args(["encrypt", "--with-key=host", "-", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(_) => return K1Backend::Missing,
+    };
+    if let Some(stdin) = child.stdin.as_mut() {
+        // 쓰기 실패는 상대가 이미 죽었다는 뜻이다 — 아래 출력으로 판정한다.
+        let _ = stdin.write_all(b"k1-probe");
+    }
+    let out = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => return K1Backend::Refused(e.to_string()),
+    };
+    if out.status.success() {
+        K1Backend::Works
+    } else {
+        K1Backend::Refused(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
 /// Linux 의 K1 이 `systemd-creds` 로 실제 왕복하는가.
 ///
 /// # 왜 이 테스트가 조건부인가
 ///
-/// ★ `systemd-creds` 는 systemd 가 도는 기계에만 있다. 없는 환경에서
-///   실패시키면 "환경 없음" 이 "코드 결함" 으로 보고된다 —
-///   `CLAUDE.md` §4 가 `ENVIRONMENT-BLOCKED` 를 `PASS` 로 계상하지 말라고
-///   한 것과 같은 이유다.
+/// ★ `systemd-creds` 는 systemd 가 도는 기계에만 있고, 있어도 **root 여야**
+///   호스트 비밀로 봉인할 수 있다. 그 환경에서 실패시키면 "환경 없음" 이
+///   "코드 결함" 으로 보고된다 — `CLAUDE.md` §4 가 `ENVIRONMENT-BLOCKED` 를
+///   `PASS` 로 계상하지 말라고 한 것과 같은 이유다.
 ///
-///   대신 **없으면 없다고 말하고** 건너뛴다. 그 경우에도 K1 요청이
-///   조용히 통과하지 않는지는 확인한다.
+///   대신 **안 되면 안 된다고 말하고** 거기서 끝낸다. 그 경우에도 K1 요청이
+///   조용히 통과하지 않는지는 확인한다 — 건너뛰되 빈손으로 건너뛰지 않는다.
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_k1_round_trips_through_systemd_creds() {
-    let available = std::process::Command::new("systemd-creds")
-        .arg("--version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false);
+    let backend = k1_backend_state();
 
     let dir = tempdir().unwrap();
     let path = dir.path().join("keys.bin");
@@ -357,9 +405,18 @@ fn linux_k1_round_trips_through_systemd_creds() {
     let created =
         PersistentKeyring::new(&path, KeyProtection::K1OsProtected, PlaintextPolicy::Reject);
 
-    if !available {
-        eprintln!("ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — K1 왕복은 측정하지 않았다");
-        // ★ 그래도 이것만은 확인한다. 없을 때 조용히 통과하면
+    if let K1Backend::Missing | K1Backend::Refused(_) = &backend {
+        match &backend {
+            K1Backend::Missing => {
+                eprintln!("ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — K1 왕복은 측정하지 않았다")
+            }
+            K1Backend::Refused(why) => eprintln!(
+                "ENVIRONMENT-BLOCKED: systemd-creds 는 있는데 봉인이 거부됐다(비-root 로 보인다) \
+                 — K1 왕복은 측정하지 않았다: {why}"
+            ),
+            K1Backend::Works => unreachable!(),
+        }
+        // ★ 그래도 이것만은 확인한다. 봉인이 안 되는데 조용히 통과하면
         //   보호받는다고 믿으면서 보호 없이 도는 것이다.
         //
         //   `new()` 는 파일을 아직 안 만들므로 여기서는 통과할 수 있다.
@@ -368,13 +425,13 @@ fn linux_k1_round_trips_through_systemd_creds() {
             keyring.insert_private(signer, secret).expect("등록");
             assert!(
                 keyring.save().is_err(),
-                "systemd-creds 가 없는데 K1 저장이 성공했다 — 조용한 강등이다"
+                "봉인할 수 없는 환경인데 K1 저장이 성공했다 — 조용한 강등이다"
             );
         }
         return;
     }
 
-    let mut keyring = created.expect("systemd-creds 가 있는데 K1 키링을 못 만들었다");
+    let mut keyring = created.expect("봉인이 되는 환경인데 K1 키링을 못 만들었다");
     keyring.insert_private(signer, secret).expect("등록");
     keyring.save().expect("봉인 저장");
 
@@ -455,15 +512,30 @@ fn unsupported_platform_and_call_failure_are_different_errors() {
 fn another_signers_keypair_cannot_be_transplanted_into_this_slot() {
     #[cfg(target_os = "linux")]
     {
-        let available = std::process::Command::new("systemd-creds")
-            .arg("--version")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false);
-        if !available {
+        // ★ 결함 205 — 전제는 "도구가 있다" 가 아니라 "봉인이 된다" 다.
+        if let K1Backend::Missing | K1Backend::Refused(_) = k1_backend_state() {
             eprintln!(
-                "ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — 키쌍 이식 검사는 측정하지 않았다"
+                "ENVIRONMENT-BLOCKED: K1 봉인이 안 되는 환경이다(도구 없음 또는 비-root) \
+                 — 키쌍 이식 검사는 측정하지 않았다"
             );
+            // 빈손으로 건너뛰지 않는다 — 봉인이 안 되면 K1 저장이 **실패**해야 한다.
+            let probe = tempdir().unwrap();
+            if let Ok(mut keyring) = PersistentKeyring::new(
+                &probe.path().join("probe.bin"),
+                KeyProtection::K1OsProtected,
+                PlaintextPolicy::Reject,
+            ) {
+                keyring
+                    .insert_private(
+                        "01JPROBESELFTEST0000000001",
+                        SecretSigningKey::from_signing_key(key(7)),
+                    )
+                    .expect("등록");
+                assert!(
+                    keyring.save().is_err(),
+                    "봉인할 수 없는 환경인데 K1 저장이 성공했다 — 조용한 강등이다"
+                );
+            }
             return;
         }
     }
@@ -613,15 +685,30 @@ fn swap_two_keypairs(raw: &[u8], first_public: &[u8], second_public: &[u8]) -> O
 fn a_public_key_only_entry_cannot_be_swapped_in_either() {
     #[cfg(target_os = "linux")]
     {
-        let available = std::process::Command::new("systemd-creds")
-            .arg("--version")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false);
-        if !available {
+        // ★ 결함 205 — 전제는 "도구가 있다" 가 아니라 "봉인이 된다" 다.
+        if let K1Backend::Missing | K1Backend::Refused(_) = k1_backend_state() {
             eprintln!(
-                "ENVIRONMENT-BLOCKED: systemd-creds 가 없다 — 공개키 이식 검사는 측정하지 않았다"
+                "ENVIRONMENT-BLOCKED: K1 봉인이 안 되는 환경이다(도구 없음 또는 비-root) \
+                 — 공개키 이식 검사는 측정하지 않았다"
             );
+            // 빈손으로 건너뛰지 않는다 — 봉인이 안 되면 K1 저장이 **실패**해야 한다.
+            let probe = tempdir().unwrap();
+            if let Ok(mut keyring) = PersistentKeyring::new(
+                &probe.path().join("probe.bin"),
+                KeyProtection::K1OsProtected,
+                PlaintextPolicy::Reject,
+            ) {
+                keyring
+                    .insert_private(
+                        "01JPROBESELFTEST0000000002",
+                        SecretSigningKey::from_signing_key(key(8)),
+                    )
+                    .expect("등록");
+                assert!(
+                    keyring.save().is_err(),
+                    "봉인할 수 없는 환경인데 K1 저장이 성공했다 — 조용한 강등이다"
+                );
+            }
             return;
         }
     }
