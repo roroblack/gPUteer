@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-09-22 21:40 — 신뢰망 P1-2: 예약 해제를 보고 저장과 **한 커밋**에 넣었다 (계획서 조건 3 충족)
+
+- 계획: `docs/plans/2026-09-22_1730_시도가_끝났다를_적는다_설계.md` 의 다음 조각
+- 스트림: Coordinator
+- 수행: `reservation_release` 에 **트랜잭션을 인자로 받는** 경로(`release_within_transaction`)를 냈다.
+  `attempt_report_store::store_verified_terminal_report_and_release()` 가 보고 저장 · Attempt 종료 전이 ·
+  예약 해제를 **한 커밋**에 넣는다 — 모듈 문서가 "이 API 로는 조건 3 을 만족시킬 수 없다" 고 적어 둔 것을 구조로 풀었다.
+  종료 증명 등급 `RuntimeStopProof::ObservedExitInSignedReport` 를 새로 뒀다 — **이름에 등급을 박았다**(WORKER_REPORTED).
+  진술만 받지 않고 **보고에 실제 종료 관측이 있는지 값으로 확인**한다(v1 보고로는 못 푼다)
+- ★ 왜 새 등급인가 — 노드 자기보고는 `ProvenByCaller` 와 같은 것이 아니다. 신뢰망 배치용 등급이고,
+  공개 풀에서는 이 값으로 풀지 않는다고 주석에 적었다
+- 검증: 시험 둘 — 종료 관측이 있는 v2 보고는 한 커밋에 풀린다 · v1 보고는 **거부되고 보고 저장까지 롤백**된다.
+  coordinator 168 passed · 0 failed · 서식 위반 0 · check_docs 0/0
+- ★ 워크스페이스 동시 실행에서 `runtime-windows` 의 `commit_cap` 시험이 1건 간헐 실패했다 — 단독 3/3 통과.
+  이 세션 변경과 접점이 없어 결함 209 로 **기록만** 했다(원인 확정 안 함)
+- 리포트: `docs/reports/debugs/2026-09-22_2140_commit_cap_시험이_동시_실행에서_간헐_실패한다.md`
+
+---
+
 ## 2026-09-22 18:20 — §A1 4c: 시도 기록이 "끝났다" 를 말할 수 있게 됐다 (신뢰망 P1 첫 조각)
 
 - 계획: `docs/plans/2026-09-22_1730_시도가_끝났다를_적는다_설계.md` (논의 코덱스 72 · 권고 C 채택)

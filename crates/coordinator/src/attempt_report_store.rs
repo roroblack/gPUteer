@@ -203,6 +203,9 @@ impl CoordinatorAttemptReportStore {
             .map_err(map_sql_error)?;
         staging_store::initialize_schema(&mut connection).map_err(map_staging_error)?;
         initialize_report_schema(&connection)?;
+        // 예약 해제를 같은 트랜잭션에서 하려면 해제 기록 테이블도 있어야 한다.
+        crate::reservation_release::initialize_release_schema(&connection)
+            .map_err(|error| AttemptReportStoreError::Staging(format!("해제 스키마: {error:?}")))?;
         backfill_terminal_states(&mut connection)?;
         Ok(Self { connection })
     }
@@ -229,13 +232,36 @@ impl CoordinatorAttemptReportStore {
         &mut self,
         verified: &Verified<pb::AttemptReport>,
     ) -> Result<StoreAttemptReportResult, AttemptReportStoreError> {
-        self.store_verified_terminal_report_inner(verified, None)
+        self.store_verified_terminal_report_inner(verified, None, None)
+    }
+
+    /// 보고 저장 · Attempt 종료 전이 · **예약 해제**를 한 커밋에 넣는다.
+    ///
+    /// ★★ 2026-09-22 (신뢰망 P1-2) — 계획서가 요구한 조건 3(전이와 해제를 같은
+    ///   durable transaction 에 묶기)을 실제로 만족시키는 경로다. 전에는
+    ///   `reservation_release` 가 자기 트랜잭션을 열어서 **만족시킬 방법이 없었다.**
+    ///
+    /// ★ 관문은 그대로다 — 진술 셋(`ReleaseAuthorization`)을 통과해야 하고,
+    ///   `ObservedExitInSignedReport` 등급은 보고에 실제 종료 관측이 있어야 한다.
+    ///   관문에 막히면 **보고 저장까지 통째로 롤백된다**(부분 적용을 만들지 않는다).
+    pub fn store_verified_terminal_report_and_release(
+        &mut self,
+        verified: &Verified<pb::AttemptReport>,
+        authorization: crate::reservation_release::ReleaseAuthorization,
+        released_at_unix_ms: u64,
+    ) -> Result<StoreAttemptReportResult, AttemptReportStoreError> {
+        self.store_verified_terminal_report_inner(
+            verified,
+            None,
+            Some((authorization, released_at_unix_ms)),
+        )
     }
 
     fn store_verified_terminal_report_inner(
         &mut self,
         verified: &Verified<pb::AttemptReport>,
         fault: Option<TestFault>,
+        release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
     ) -> Result<StoreAttemptReportResult, AttemptReportStoreError> {
         // No report field is observed before the only report parameter has
         // crossed the Verified type gate.
@@ -330,6 +356,18 @@ impl CoordinatorAttemptReportStore {
                 )
                 .map_err(|error| AttemptReportStoreError::Staging(error.to_string()))?;
             }
+        }
+
+        // ★ 예약 해제까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
+        //   오류가 그대로 올라가고 **보고 저장도 롤백된다** — 반쪽 적용을 만들지 않는다.
+        if let Some((authorization, released_at)) = release {
+            crate::reservation_release::release_within_transaction(
+                &transaction,
+                verified,
+                authorization,
+                released_at,
+            )
+            .map_err(|error| AttemptReportStoreError::Staging(format!("예약 해제: {error:?}")))?;
         }
 
         transaction.commit().map_err(map_sql_error)?;
@@ -1259,6 +1297,94 @@ mod tests {
         assert_eq!(report_count(&store), 1);
     }
 
+    /// 신뢰망 등급으로 **보고 저장 · 종료 전이 · 예약 해제가 한 커밋에** 들어간다.
+    ///
+    /// ★ 계획서 조건 3 을 실제로 만족시키는 경로다(전에는 API 구조상 불가능했다).
+    #[test]
+    fn a_report_with_an_observed_exit_releases_the_reservation_in_the_same_commit() {
+        use crate::reservation_release::{
+            ArtifactDurabilityGuard, KeyDirectoryProvenance, ReleaseAuthorization, RuntimeStopProof,
+        };
+        let fixture = prepare_fixture();
+        let mut report = base_report(2, pb::AttemptOutcome::Failed);
+        report.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+        report.exit_code = 3;
+        let verified = verified_custom(report, 7);
+
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store
+            .store_verified_terminal_report_and_release(
+                &verified,
+                ReleaseAuthorization {
+                    runtime_stop: RuntimeStopProof::ObservedExitInSignedReport,
+                    key_directory: KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+                    artifact_durability: ArtifactDurabilityGuard::NotApplicableNonCompleted,
+                },
+                777,
+            )
+            .expect("해제까지 한 커밋에 들어가야 한다");
+        drop(store);
+
+        let staging = CoordinatorStagingStore::open(&fixture.path).unwrap();
+        assert_eq!(
+            staging.get_attempt(ATTEMPT_ID).unwrap().unwrap().state,
+            AttemptState::Failed,
+            "상태가 안 바뀌었다"
+        );
+        assert_eq!(
+            staging.get_node_reservation(NODE_ID).unwrap(),
+            None,
+            "예약이 아직 남아 있다 — 그 노드는 계속 묶인다"
+        );
+    }
+
+    /// 옛 보고(종료 관측 없음)로는 **풀지 않는다** — 등급을 이름만 바꾼 게 아님을 고정한다.
+    #[test]
+    fn a_report_without_an_observed_exit_refuses_to_release_and_rolls_back() {
+        use crate::reservation_release::{
+            ArtifactDurabilityGuard, KeyDirectoryProvenance, ReleaseAuthorization, RuntimeStopProof,
+        };
+        let fixture = prepare_fixture();
+        // v1 — exit_observation 이 없다(정보 없음).
+        let verified = verified_report(
+            JOB_ID,
+            ATTEMPT_ID,
+            NODE_ID,
+            1,
+            pb::AttemptOutcome::Failed as i32,
+            7,
+            10,
+        );
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store
+            .store_verified_terminal_report_and_release(
+                &verified,
+                ReleaseAuthorization {
+                    runtime_stop: RuntimeStopProof::ObservedExitInSignedReport,
+                    key_directory: KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+                    artifact_durability: ArtifactDurabilityGuard::NotApplicableNonCompleted,
+                },
+                777,
+            )
+            .expect_err("종료 관측이 없는데 풀렸다");
+        drop(store);
+
+        // ★ 보고 저장까지 통째로 롤백돼야 한다 — 반쪽 적용을 만들지 않는다.
+        let store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        assert_eq!(report_count(&store), 0, "관문에 막혔는데 보고가 남았다");
+        drop(store);
+        let staging = CoordinatorStagingStore::open(&fixture.path).unwrap();
+        assert!(
+            staging.get_node_reservation(NODE_ID).unwrap().is_some(),
+            "막혔는데 예약이 사라졌다"
+        );
+        assert_eq!(
+            staging.get_attempt(ATTEMPT_ID).unwrap().unwrap().state,
+            AttemptState::Created,
+            "막혔는데 상태가 바뀌었다"
+        );
+    }
+
     /// 재조회 뒤 재검증(§5.7 (4)) — 규칙을 어긴 저장본은 손상으로 fail-closed.
     #[test]
     fn a_stored_body_that_breaks_the_field_rules_fails_closed() {
@@ -1631,7 +1757,11 @@ mod tests {
         let report = completed_report(1);
         let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
         assert_eq!(
-            store.store_verified_terminal_report_inner(&report, Some(TestFault::AfterReportInsert)),
+            store.store_verified_terminal_report_inner(
+                &report,
+                Some(TestFault::AfterReportInsert),
+                None
+            ),
             Err(AttemptReportStoreError::InjectedFailure(
                 "after AttemptReport insert"
             ))

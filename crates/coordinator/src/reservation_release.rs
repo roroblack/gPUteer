@@ -110,6 +110,19 @@ const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 pub enum RuntimeStopProof {
     /// 호출부가 프로세스 종료와 자원 반환을 확인했다고 **진술한다**.
     ProvenByCaller,
+    /// ★★ 2026-09-22 추가 — **노드가 서명한 보고에 "종료를 관측했다" 가 들어 있다.**
+    ///
+    /// 등급을 이름에 박아 둔다. 이것은 `CLAUDE.md` §1 의 `WORKER_REPORTED` 다 —
+    /// 노드 **자기보고**이고, 정상 키를 가진 노드가 "끝났다" 고 서명해 놓고 계속 돌면
+    /// 막지 못한다. 그래서 `ProvenByCaller` 와 **같은 값으로 두지 않는다.**
+    ///
+    /// 쓸 수 있는 조건(호출부가 아니라 이 모듈이 값으로 확인한다):
+    /// 보고의 `exit_observation` 이 `OBSERVED_WITH_CODE` 또는 `OBSERVED_NO_CODE` 여야 한다.
+    /// 옛 v1 보고(정보 없음)에는 **쓸 수 없다**.
+    ///
+    /// 신뢰망(서로 믿는 참여자) 배치에서 쓰라고 만든 등급이다. 공개 풀에서는
+    /// 이 값으로 풀지 않는다 — 그때는 실제 종료 증명이 필요하다.
+    ObservedExitInSignedReport,
     /// 확인하지 못했다 — 오늘의 정직한 값.
     NotProvenYet,
 }
@@ -247,23 +260,17 @@ pub enum ReservationReleaseError {
     Storage(String),
 }
 
-pub struct CoordinatorReservationReleaseStore {
-    connection: Connection,
-}
-
-impl CoordinatorReservationReleaseStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ReservationReleaseError> {
-        let mut connection = Connection::open(path).map_err(map_sql_error)?;
-        connection
-            .busy_timeout(BUSY_TIMEOUT)
-            .map_err(map_sql_error)?;
-        // 같은 control DB 파일을 쓴다 — 예약과 증거가 한 트랜잭션 안에
-        // 있어야 원자적으로 풀 수 있다.
-        staging_store::initialize_schema(&mut connection).map_err(map_staging_error)?;
-        attempt_report_store::initialize_report_schema(&connection).map_err(map_evidence_error)?;
-        connection
-            .execute_batch(
-                r#"
+/// 해제 기록 테이블을 만든다.
+///
+/// ★★ 2026-09-22 — `attempt_report_store` 가 **같은 트랜잭션에서** 예약을 풀 수 있게 되면서
+///   이 스키마가 그 경로에서도 필요해졌다. 전에는 이 저장소를 여는 사람만 만들었고,
+///   그래서 보고 저장 경로에서 부르면 "no such table" 이 났다.
+pub(crate) fn initialize_release_schema(
+    connection: &Connection,
+) -> Result<(), ReservationReleaseError> {
+    connection
+        .execute_batch(
+            r#"
                 CREATE TABLE IF NOT EXISTS coordinator_reservation_releases (
                     attempt_id TEXT PRIMARY KEY
                         REFERENCES coordinator_attempts(attempt_id),
@@ -282,8 +289,26 @@ impl CoordinatorReservationReleaseStore {
                     UNIQUE(attempt_id, gpu_id)
                 );
                 "#,
-            )
+        )
+        .map_err(map_sql_error)?;
+    Ok(())
+}
+
+pub struct CoordinatorReservationReleaseStore {
+    connection: Connection,
+}
+
+impl CoordinatorReservationReleaseStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, ReservationReleaseError> {
+        let mut connection = Connection::open(path).map_err(map_sql_error)?;
+        connection
+            .busy_timeout(BUSY_TIMEOUT)
             .map_err(map_sql_error)?;
+        // 같은 control DB 파일을 쓴다 — 예약과 증거가 한 트랜잭션 안에
+        // 있어야 원자적으로 풀 수 있다.
+        staging_store::initialize_schema(&mut connection).map_err(map_staging_error)?;
+        attempt_report_store::initialize_report_schema(&connection).map_err(map_evidence_error)?;
+        initialize_release_schema(&connection)?;
         Ok(Self { connection })
     }
 
@@ -329,6 +354,7 @@ impl CoordinatorReservationReleaseStore {
         validate_input(report)?;
         // 조건 4 는 outcome 에 따라 달라지므로 관문을 지난 뒤에 본다.
         check_artifact_guard(report.outcome, authorization.artifact_durability)?;
+        check_observed_exit(report, authorization.runtime_stop)?;
         let report_body = report.encode_to_vec();
         let report_hash = blake3_256(&report_body);
         let signer_id = verified.signer_id();
@@ -469,6 +495,147 @@ fn check_authorization(authorization: ReleaseAuthorization) -> Result<(), Reserv
         return Err(ReservationReleaseError::KeyDirectoryNotVerified);
     }
     Ok(())
+}
+
+/// **이미 열려 있는 트랜잭션 안에서** 예약을 푼다 — 계획서 조건 3 을 실제로 만족시키는 길.
+///
+/// ★★ 2026-09-22 (신뢰망 P1-2) — 모듈 문서가 "이 API 로는 조건 3(Attempt 전이·해제를
+///   같은 트랜잭션에 묶기)을 만족시킬 수 없다" 고 적어 뒀다. **맞는 말이었다** — 그 API 는
+///   자기 connection 으로 자기 트랜잭션을 연다. 그래서 **트랜잭션을 인자로 받는** 길을 새로 낸다.
+///   `attempt_report_store` 가 보고 저장 · Attempt 종료 전이 · 예약 해제를 **한 커밋**에 넣는다.
+///
+/// 관문은 그대로다 — 진술 셋을 확인하고, 증거와 재검증 보고가 같은지 보고, 예약 주인을 대조한다.
+/// 다른 점은 **커밋을 여기서 하지 않는다**는 것뿐이다(부른 쪽이 한다).
+pub fn release_within_transaction(
+    transaction: &Connection,
+    verified: &Verified<pb::AttemptReport>,
+    authorization: ReleaseAuthorization,
+    released_at_unix_ms: u64,
+) -> Result<ReleaseOutcome, ReservationReleaseError> {
+    check_authorization(authorization)?;
+    let report = verified.get();
+    validate_input(report)?;
+    check_artifact_guard(report.outcome, authorization.artifact_durability)?;
+    check_observed_exit(report, authorization.runtime_stop)?;
+    let report_body = report.encode_to_vec();
+    let report_hash = blake3_256(&report_body);
+    let signer_id = verified.signer_id();
+
+    if let Some(existing) = fetch_release(transaction, &report.attempt_id)? {
+        if existing.node_id != report.node_id
+            || existing.job_id != report.job_id
+            || existing.fence_epoch != report.fence_epoch
+            || existing.report_hash != report_hash
+        {
+            return Err(ReservationReleaseError::ReleaseConflict {
+                attempt_id: report.attempt_id.clone(),
+            });
+        }
+        return Ok(ReleaseOutcome::AlreadyReleased(existing));
+    }
+
+    let binding = attempt_report_store::fetch_report_binding(
+        transaction,
+        &report.attempt_id,
+        &report.node_id,
+    )
+    .map_err(map_evidence_error)?
+    .ok_or_else(|| ReservationReleaseError::NoTerminalEvidence {
+        attempt_id: report.attempt_id.clone(),
+        node_id: report.node_id.clone(),
+    })?;
+    if binding.report_hash != report_hash
+        || binding.report != *report
+        || binding.signer_id_at_submission != signer_id
+    {
+        return Err(ReservationReleaseError::EvidenceMismatch {
+            attempt_id: report.attempt_id.clone(),
+            node_id: report.node_id.clone(),
+        });
+    }
+
+    let reservation = staging_store::fetch_node_reservation(transaction, &report.node_id)
+        .map_err(map_staging_error)?
+        .ok_or_else(|| ReservationReleaseError::ReservationNotFound {
+            node_id: report.node_id.clone(),
+        })?;
+    check_reservation_owner(report, &reservation)?;
+
+    let released_gpu_ids = reservation.selected_gpu_ids.clone();
+    transaction
+        .execute(
+            "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
+            rusqlite::params![report.node_id],
+        )
+        .map_err(map_sql_error)?;
+    let removed = transaction
+        .execute(
+            "DELETE FROM coordinator_node_reservations WHERE node_id = ?1 AND attempt_id = ?2",
+            rusqlite::params![report.node_id, report.attempt_id],
+        )
+        .map_err(map_sql_error)?;
+    if removed != 1 {
+        return Err(ReservationReleaseError::Storage(format!(
+            "예약 삭제가 {removed} 행을 지웠다 — 1 이어야 한다"
+        )));
+    }
+    transaction
+        .execute(
+            "INSERT INTO coordinator_reservation_releases(
+                attempt_id, node_id, job_id, fence_epoch, report_hash, released_at_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                report.attempt_id,
+                report.node_id,
+                report.job_id,
+                encode_u64(report.fence_epoch),
+                report_hash.as_slice(),
+                encode_u64(released_at_unix_ms),
+            ],
+        )
+        .map_err(map_sql_error)?;
+    for (ordinal, gpu_id) in released_gpu_ids.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO coordinator_reservation_release_gpus(
+                    attempt_id, gpu_id, ordinal
+                 ) VALUES (?1, ?2, ?3)",
+                rusqlite::params![report.attempt_id, gpu_id, ordinal as i64],
+            )
+            .map_err(map_sql_error)?;
+    }
+
+    Ok(ReleaseOutcome::Released(StoredReservationRelease {
+        attempt_id: report.attempt_id.clone(),
+        node_id: report.node_id.clone(),
+        job_id: report.job_id.clone(),
+        fence_epoch: report.fence_epoch,
+        report_hash,
+        released_at_unix_ms,
+        released_gpu_ids,
+    }))
+}
+
+/// `ObservedExitInSignedReport` 를 **값으로** 확인한다.
+///
+/// ★ 진술만 받고 넘어가면 이 등급은 `ProvenByCaller` 와 같아진다 — 이름만 정직하고
+///   동작은 같은 꼴이다. 보고에 실제로 종료 관측이 들어 있는지 여기서 본다.
+fn check_observed_exit(
+    report: &pb::AttemptReport,
+    proof: RuntimeStopProof,
+) -> Result<(), ReservationReleaseError> {
+    if proof != RuntimeStopProof::ObservedExitInSignedReport {
+        return Ok(());
+    }
+    let observed = matches!(
+        pb::ExitObservation::try_from(report.exit_observation),
+        Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+    );
+    if observed {
+        Ok(())
+    } else {
+        Err(ReservationReleaseError::RuntimeStopNotProven)
+    }
 }
 
 /// 계획서 조건 4 — `Completed` 일 때만 artifact durability 를 요구한다.
