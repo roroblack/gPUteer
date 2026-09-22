@@ -97,6 +97,12 @@ fn staged_until(dir: &Path, manifest_expires: u64) -> (PathBuf, PathBuf) {
     let db = dir.join("control.sqlite3");
 
     // inventory
+    let spare_key: String = SigningKey::from_bytes(&[22u8; 32])
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     let node_key: String = SigningKey::from_bytes(&[21u8; 32])
         .verifying_key()
         .to_bytes()
@@ -122,6 +128,24 @@ fn staged_until(dir: &Path, manifest_expires: u64) -> (PathBuf, PathBuf) {
       "inventory": {{
         "inventory_revision": 1, "observed_at_unix_ms": {observed},
         "gpus": [{{ "gpu_id": "{GPU}", "model": "RTX 4070 SUPER",
+                    "healthy": true, "available_vram_bytes": 12884901888 }}],
+        "available_cpu_cores": 16, "available_ram_bytes": 34359738368,
+        "available_workspace_bytes": 107374182400,
+        "allowed_workload_classes": ["TRAINING"],
+        "third_party_workloads_opt_in": true
+      }}
+    }},
+    {{
+      "registry": {{
+        "node_id": "{NODE}-spare", "device_id": "device-grant-spare",
+        "owner_member_id": "{OWNER}", "verifying_key_hex": "{spare_key}",
+        "node_state": "ONLINE", "risk_state": "NORMAL",
+        "security_tier": "S2", "isolation_class": "CONTAINED",
+        "key_protection": "K1"
+      }},
+      "inventory": {{
+        "inventory_revision": 1, "observed_at_unix_ms": {observed},
+        "gpus": [{{ "gpu_id": "{GPU}-spare", "model": "RTX 4070 SUPER",
                     "healthy": true, "available_vram_bytes": 12884901888 }}],
         "available_cpu_cores": 16, "available_ram_bytes": 34359738368,
         "available_workspace_bytes": 107374182400,
@@ -537,7 +561,13 @@ fn a_queued_but_unstaged_job_gets_no_grant() {
     let (db, key_file) = staged(dir.path());
     let out = dir.path().join("grant.pb");
 
-    // 두 번째 Job 을 큐까지만 올린다 — 노드가 하나뿐이라 예약은 못 한다.
+    // 두 번째 Job 을 큐까지만 올린다(예약·STAGING 은 안 한다).
+    //
+    // ★★ 2026-09-22 — 여기 "노드가 하나뿐이라 예약은 못 한다" 고 적혀 있었다.
+    //   그 전제는 **예약 축이 없던 시절의 것**이다(결정 `B′` 구현 전). 이제 후보 선택이
+    //   예약을 보므로, 첫 Job 이 잡은 노드 하나뿐이면 계획 자체가 거부된다.
+    //   그래서 fixture 에 **여분 노드**를 뒀다 — 이 시험이 재려는 것은 "계획이 되나" 가
+    //   아니라 "STAGING 안 한 Job 에는 Grant 가 안 나간다" 이기 때문이다.
     let second = "01JJOBGRANTB00000000001";
     queue_only(dir.path(), &db, second, "1102030405060708090a0b0c0d0e0f10");
 

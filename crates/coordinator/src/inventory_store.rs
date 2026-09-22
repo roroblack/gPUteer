@@ -538,10 +538,39 @@ impl CoordinatorInventoryStore {
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(map_sql_error)?;
         let registries = fetch_all_registries(&transaction)?;
+        // 읽기만 한다 — 잠금을 잡지 않는다.
+        let reservations_table_exists: bool = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'coordinator_node_reservations'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sql_error)?
+            > 0;
         let mut candidates = Vec::with_capacity(registries.len());
         for registry in registries {
+            let node_id = registry.node_id.clone();
             let inventory = fetch_inventory(&transaction, &registry.node_id)?;
-            candidates.push(project_candidate(registry, inventory));
+            let mut candidate = project_candidate(registry, inventory);
+            // ★★ 2026-09-22 (결정 `B′`, 2026-09-08 사용자) — **예약을 접어 넣는 유일한 지점.**
+            //   장비 목록(스냅샷)은 사실 그대로 두고, 예약은 따로 둔 채 여기서만 합친다.
+            //   다른 곳에서 합치면 두 진실이 생기고, 어느 쪽이 맞는지 아무도 모르게 된다.
+            //   전에는 이 축이 없어서 **같은 GPU 를 두 Job 에 줄 수 있었다.**
+            candidate.reservation = if reservations_table_exists {
+                crate::staging_store::fetch_node_reservation(&transaction, &node_id)
+                    .map_err(|error| InventoryStoreError::CorruptData(error.to_string()))?
+                    .map(|reservation| gputeer_scheduler::CandidateReservation {
+                        attempt_id: reservation.attempt_id,
+                        expired_at_unix_ms: reservation.expired_at_unix_ms,
+                    })
+            } else {
+                // ★ 예약 테이블이 **아예 없는** DB 는 예약도 없다(스테이징을 한 번도 안 한 파일이다).
+                //   여기서 테이블을 만들지 않는다 — 여는 것만으로 쓰기 잠금을 잡으면
+                //   "잘못된 입력은 잠금을 기다리지 않고 거부한다" 는 기존 계약이 깨진다(실측으로 확인).
+                None
+            };
+            candidates.push(candidate);
         }
         candidates.sort_by(|left, right| left.node_id.cmp(&right.node_id));
         transaction.commit().map_err(map_sql_error)?;
@@ -982,6 +1011,8 @@ fn project_candidate(
         None => (None, None, None, None, None, None, None, None),
     };
     CandidateSnapshot {
+        // ★ 예약은 여기서 채우지 않는다 — `pool_snapshot()` 한 곳에서만 접어 넣는다(결정 `B′`).
+        reservation: None,
         node_id: registry.node_id,
         inventory_revision: revision,
         owner_member_id: Some(registry.owner_member_id),

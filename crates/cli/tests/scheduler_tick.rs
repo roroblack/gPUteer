@@ -399,32 +399,22 @@ fn an_empty_queue_is_idle_not_an_error() {
     assert!(output.contains("TICK_IDLE"), "출력이 다르다: {output}");
 }
 
-/// ★★ **찾은 공백 — 후보 선택이 기존 예약을 모른다.**
+/// ★★ **덫을 뒤집었다 — 후보 선택이 이제 예약을 안다**(2026-09-22 · 결정 `B′`).
 ///
-/// 노드가 **둘**인데 두 번째 tick 이 실패한다:
+/// 전에는 이 자리에 "찾은 공백" 이 있었다. 노드가 **둘**인데 두 번째 tick 이
+/// `TICK_REFUSED: node is already reserved` 로 실패했다 — `evaluate_eligibility` 가
+/// **inventory 만** 보고 예약은 다른 테이블에 있어서, best-fit 이 늘 같은 노드를 골라
+/// 예약 관문에서 막혔기 때문이다. 안전 문제는 아니었지만 **루프를 돌리면 큐 맨 앞에서
+/// 영영 멈추는** 구조였고, 그게 데몬화의 실질적 차단 요인이었다.
 ///
-/// ```text
-/// TICK_REFUSED: node is already reserved: node=node-tick-a, ...
-/// ```
+/// 그때 이 테스트는 **오늘의 동작을 고정하는 덫**이었고, 주석에 이렇게 적어 뒀다 —
+/// "메우면 이 테스트가 실패하며 문서도 같이 고치라고 알린다". 실제로 그렇게 됐다.
 ///
-/// `evaluate_eligibility`/`rank_best_fit` 은 **inventory 만** 본다.
-/// 예약은 staging 저장소의 다른 테이블에 있고, 둘을 잇는 것이 없다.
-/// 그래서 best-fit 이 늘 같은 노드를 골라 예약 관문에서 막힌다 —
-/// **비어 있는 노드가 있어도 그렇다.**
-///
-/// 안전에는 문제가 없다(예약 관문이 중복을 막는다). 그러나 **루프를
-/// 돌리면 큐 맨 앞에서 영영 멈춘다** — 이게 ④ 데몬화의 실질적 차단
-/// 요인이다.
-///
-/// ★ 고치려면 결정이 필요하다 — 예약된 노드를 `pool_snapshot()` 에서
-///   빼는가, hard-filter 에서 거르는가, 아니면 orchestrate 가 차순위
-///   후보로 재시도하는가. 셋이 의미가 다르고 규범이 아직 없다.
-///   **그래서 지금 고치지 않고, 지금 동작을 테스트로 고정한다** —
-///   메우면 이 테스트가 실패하며 문서도 같이 고치라고 알린다
-///   (`runtime-linux` 의 "탈출이 성공하기를 기대하는 테스트" 와 같은
-///   장치).
+/// 이제 기대를 뒤집는다: **두 번째 tick 은 비어 있는 다른 노드를 골라 성공해야 한다.**
+/// 예약은 `pool_snapshot()` 한 곳에서 접히고(결정 `B′`), hard-filter 가
+/// `AlreadyReserved` 로 거른다.
 #[test]
-fn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {
+fn a_second_tick_picks_the_free_node_instead_of_the_reserved_one() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared(dir.path(), 2);
     // 두 번째 Job 을 뒤이어 큐에 올린다.
@@ -443,22 +433,22 @@ fn a_second_tick_is_blocked_by_the_first_reservation_even_with_a_free_node() {
         "먼저 들어온 Job 을 안 골랐다: {first}"
     );
 
-    // ★ 노드가 둘인데도 두 번째는 막힌다 — 위 문서의 공백이다.
+    // ★ 노드가 둘이므로 두 번째도 간다 — 잡힌 노드를 피해 간다.
     let (ok, second) = tick(&keyring, &db, &[]);
     assert!(
-        !ok,
-        "예약이 후보 선택에 반영되기 시작했다 — 이 테스트와 위 문서를 같이 고쳐라: {second}"
+        ok,
+        "2회차가 막혔다 — 예약이 후보 선택에 반영되지 않는다: {second}"
     );
     assert!(
-        refused_with(&second, "TICK_REFUSED:") && second.contains("already reserved"),
-        "막힌 이유가 예약이 아니다: {second}"
+        second.contains(&format!("job_id={JOB_B}")),
+        "두 번째 Job 을 안 골랐다: {second}"
     );
 
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
     assert_eq!(
         job_state(&db, JOB_B),
-        Some(JobState::Queued),
-        "두 번째 Job 은 큐에 남아야 한다"
+        Some(JobState::Staging),
+        "두 번째 Job 도 STAGING 으로 가야 한다 — 큐가 더 이상 맨 앞에서 막히지 않는다"
     );
 }
 

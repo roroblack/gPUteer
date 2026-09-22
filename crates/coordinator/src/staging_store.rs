@@ -103,6 +103,15 @@ pub struct StoredNodeReservation {
     pub inventory_revision: u64,
     pub reserved_at_unix_ms: u64,
     pub selected_gpu_ids: Vec<String>,
+    /// **만료 의심**으로 표시된 시각. `None` 이면 표시된 적이 없다.
+    ///
+    /// ★★ 2026-09-22 (§A1 4a) — 이 칸은 **예약을 지우는 근거가 아니다.**
+    ///   2026-09-09 독립 검수가 "만료로 예약을 지우는 것" 을 셋으로 기각했다 —
+    ///   ① 예약 행이 증거 저장소들의 외래키라 지우면 늦게 온 보고가 버려진다
+    ///   ② 만료만으로는 부족하고 정지 강제가 함께 필요하다
+    ///   ③ fence 일치는 프로세스 종료의 증명이 아니다.
+    ///   그래서 **보이게만** 한다. 실제 회수는 종료 증명(해제 경로)이나 사람이 한다.
+    pub expired_at_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,7 +298,9 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), Stagi
                     REFERENCES coordinator_attempts(attempt_id)
                     DEFERRABLE INITIALLY DEFERRED,
                 inventory_revision BLOB NOT NULL,
-                reserved_at_unix_ms BLOB NOT NULL
+                reserved_at_unix_ms BLOB NOT NULL,
+                -- ★ 만료 "의심" 표시다. 지우는 근거가 아니다(§A1 4a).
+                expired_at_unix_ms BLOB
             );
             CREATE TABLE IF NOT EXISTS coordinator_node_reservation_gpus (
                 node_id TEXT NOT NULL
@@ -334,6 +345,15 @@ impl CoordinatorStagingStore {
         node_id: &str,
     ) -> Result<Option<StoredNodeReservation>, StagingStoreError> {
         fetch_node_reservation(&self.connection, node_id)
+    }
+
+    /// 예약에 **만료 의심** 표시를 찍는다(§A1 4a). 지우지 않는다 — 함수 문서 참조.
+    pub fn mark_node_reservation_expired(
+        &mut self,
+        node_id: &str,
+        expired_at_unix_ms: u64,
+    ) -> Result<bool, StagingStoreError> {
+        mark_reservation_expired(&self.connection, node_id, expired_at_unix_ms)
     }
 
     pub fn stage_queued_with_lease(
@@ -451,6 +471,8 @@ impl CoordinatorStagingStore {
             inventory_revision: expected_inventory_revision,
             reserved_at_unix_ms: request.issued_at_unix_ms,
             selected_gpu_ids: request.selected_gpu_ids.clone(),
+            // 새 예약은 만료 표시가 없다 — 표시는 나중에 따로 찍는다.
+            expired_at_unix_ms: None,
         };
         insert_node_reservation(&transaction, &reservation)?;
         fail_at(fault, TestFault::AfterReservationInsert)?;
@@ -928,13 +950,39 @@ fn validate_selected_gpus_exist(
     Ok(())
 }
 
+/// 예약에 **만료 의심** 표시를 찍는다 — 지우지 않는다(§A1 4a).
+///
+/// ★★ 왜 지우지 않나 — 2026-09-09 독립 검수가 "만료로 회수" 를 셋으로 기각했다.
+///   그중 ①(예약 행이 증거 저장소들의 외래키다)은 **지금도 그대로**다. 지우면 뒤늦게
+///   도착한 정상 종료 보고가 버려지고, 그러면 정상 해제 경로가 영영 못 돈다.
+///   그래서 이 함수는 **보이게만** 한다. `liveness.rs` 가 `Dead` 없이 `Silent` 만 두는 것과 같은 형태다.
+///
+/// 이미 표시돼 있으면 **덮어쓰지 않는다** — 처음 의심한 시각이 더 쓸모 있다.
+/// 반환값은 "이번 호출이 새로 찍었는가" 다.
+pub fn mark_reservation_expired(
+    connection: &Connection,
+    node_id: &str,
+    expired_at_unix_ms: u64,
+) -> Result<bool, StagingStoreError> {
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_node_reservations
+             SET expired_at_unix_ms = ?1
+             WHERE node_id = ?2 AND expired_at_unix_ms IS NULL",
+            rusqlite::params![encode_u64(expired_at_unix_ms), node_id],
+        )
+        .map_err(map_sql_error)?;
+    Ok(changed == 1)
+}
+
 pub(crate) fn fetch_node_reservation(
     connection: &Connection,
     node_id: &str,
 ) -> Result<Option<StoredNodeReservation>, StagingStoreError> {
     let raw = connection
         .query_row(
-            "SELECT node_id, job_id, attempt_id, inventory_revision, reserved_at_unix_ms
+            "SELECT node_id, job_id, attempt_id, inventory_revision, reserved_at_unix_ms,
+                    expired_at_unix_ms
              FROM coordinator_node_reservations WHERE node_id = ?1",
             rusqlite::params![node_id],
             |row| {
@@ -944,13 +992,18 @@ pub(crate) fn fetch_node_reservation(
                     row.get::<_, String>(2)?,
                     row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, Option<Vec<u8>>>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(map_sql_error)?;
-    let Some((node_id, job_id, attempt_id, revision, reserved_at)) = raw else {
+    let Some((node_id, job_id, attempt_id, revision, reserved_at, expired_at)) = raw else {
         return Ok(None);
+    };
+    let expired_at_unix_ms = match expired_at {
+        Some(bytes) => Some(decode_u64(&bytes, "reservation expired_at_unix_ms")?),
+        None => None,
     };
     if node_id.trim().is_empty() || job_id.trim().is_empty() || attempt_id.trim().is_empty() {
         return Err(StagingStoreError::CorruptData(
@@ -965,6 +1018,7 @@ pub(crate) fn fetch_node_reservation(
         inventory_revision: decode_u64(&revision, "reservation inventory_revision")?,
         reserved_at_unix_ms: decode_u64(&reserved_at, "reservation reserved_at_unix_ms")?,
         selected_gpu_ids,
+        expired_at_unix_ms,
     }))
 }
 
@@ -1300,6 +1354,57 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(store.get_node_reservation(&request.node_id).unwrap(), None);
+    }
+
+    /// 만료 표시는 **찍히되 예약을 지우지 않는다**(§A1 4a).
+    ///
+    /// ★ 이 시험이 지키는 것은 "표시가 된다" 뿐 아니라 **"안 지운다"** 다.
+    ///   지우는 순간 증거 저장소의 외래키가 끊긴다(2026-09-09 검수 ①).
+    #[test]
+    fn an_expiry_mark_is_recorded_without_removing_the_reservation() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-exp", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let revision = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory.pool_snapshot(7).unwrap().candidates[0]
+                .inventory_revision
+                .unwrap()
+        };
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-exp", 1);
+        store
+            .reserve_node_and_stage_queued_with_lease(&request, revision)
+            .unwrap();
+
+        // 처음 찍는다.
+        assert!(store
+            .mark_node_reservation_expired("node-1", 5_000)
+            .unwrap());
+        let marked = store.get_node_reservation("node-1").unwrap().unwrap();
+        assert_eq!(marked.expired_at_unix_ms, Some(5_000));
+        assert_eq!(marked.attempt_id, request.attempt_id, "예약이 바뀌었다");
+
+        // 두 번째는 덮어쓰지 않는다 — 처음 의심한 시각이 더 쓸모 있다.
+        assert!(!store
+            .mark_node_reservation_expired("node-1", 9_000)
+            .unwrap());
+        assert_eq!(
+            store
+                .get_node_reservation("node-1")
+                .unwrap()
+                .unwrap()
+                .expired_at_unix_ms,
+            Some(5_000),
+            "나중 시각으로 덮였다"
+        );
+
+        // ★ 그리고 예약은 그대로 있어야 한다.
+        assert!(
+            store.get_node_reservation("node-1").unwrap().is_some(),
+            "만료 표시가 예약을 지웠다 — 증거 저장소의 외래키가 끊긴다"
+        );
     }
 
     /// 상태를 **읽은 값이 그대로일 때만** 쓴다(CAS).

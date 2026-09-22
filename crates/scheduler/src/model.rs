@@ -111,6 +111,24 @@ pub struct CandidateSnapshot {
     /// `RESTRICTED` 격리 장치 단위 제3자 Job opt-in(§9.2).
     /// 관련 없는 노드에서는 `None`이어도 된다.
     pub third_party_workloads_opt_in: Option<bool>,
+    /// 지금 이 노드를 잡고 있는 예약. 없으면 `None`.
+    ///
+    /// ★★ 2026-09-22 (§A1 4 · 결정 `B′`, 2026-09-08 사용자) — 스냅샷은 **사실 그대로** 두고,
+    ///   예약은 따로 둔 채 **`pool_snapshot()` 한 곳에서만** 접어 넣는다. 그래서 이 칸을
+    ///   채우는 곳도 거기 하나뿐이다. 다른 데서 채우면 두 진실이 생긴다.
+    ///
+    /// ★ 이 칸이 있다고 노드가 **영영** 못 쓰는 것은 아니다 — 예약이 풀리면 사라진다.
+    ///   만료 **의심** 표시(`expired_at_unix_ms`)는 여기 같이 실어 보여 주기만 한다.
+    ///   그것으로 회수하지 않는다(2026-09-09 검수 기각).
+    pub reservation: Option<CandidateReservation>,
+}
+
+/// 후보가 지금 잡혀 있다는 사실.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateReservation {
+    pub attempt_id: String,
+    /// 만료 **의심** 으로 표시된 시각. 회수 근거가 아니라 **가시성**이다.
+    pub expired_at_unix_ms: Option<u64>,
 }
 
 /// Manifest/proto 기본값을 그대로 사용하지 않는 명시적 domain 요구사항.
@@ -181,6 +199,13 @@ pub enum MissingFact {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RejectionReason {
     MissingFact(MissingFact),
+    /// 다른 시도가 이 노드를 이미 잡고 있다(§A1 4 · `B′`).
+    ///
+    /// ★ 만료 의심 표시가 있어도 **여전히 잡혀 있는 것**이다 — 표시는 사람이 보라고 싣는다.
+    AlreadyReserved {
+        attempt_id: String,
+        expired_at_unix_ms: Option<u64>,
+    },
     NodeNotOnline {
         actual: NodeState,
     },

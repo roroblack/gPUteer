@@ -32,6 +32,7 @@ fn job() -> JobRequirements {
 
 fn candidate(node_id: &str) -> CandidateSnapshot {
     CandidateSnapshot {
+        reservation: None,
         node_id: node_id.into(),
         inventory_revision: Some(1),
         owner_member_id: Some("owner-a".into()),

@@ -514,9 +514,14 @@ fn a_second_job_cannot_reserve_the_only_node() {
     //   실패하도록 바뀌어도 통과한다 — 이 테스트가 재려던 것은
     //   "같은 노드를 둘이 못 잡는다" 이지 "두 번째가 어떻게든 실패한다"
     //   가 아니다.
+    // ★★ 2026-09-22 (결정 `B′` 구현) — **막히는 지점이 앞당겨졌다.**
+    //   전에는 staging 의 점유 관문("node is already reserved")에서 걸렸다.
+    //   이제 후보 선택이 예약을 보므로 그 앞에서 `AlreadyReserved` 로 거른다.
+    //   재려는 것은 그대로다 — "같은 노드를 둘이 못 잡는다" 와 **그 이유가 예약이라는 것**.
+    //   점유 관문(CAS)은 없어지지 않았다. 마지막 방어선으로 남아 있고, 이제 먼저 닿지 않을 뿐이다.
     assert!(
-        output.contains("node is already reserved"),
-        "예약 충돌이 아니라 다른 관문에 걸렸다 — 이 테스트가 재려던 것이 아니다: {output}"
+        output.contains("AlreadyReserved") || output.contains("node is already reserved"),
+        "예약 때문이 아니라 다른 관문에 걸렸다 — 이 테스트가 재려던 것이 아니다: {output}"
     );
     eprintln!("DIAG 두 번째 실패 이유: {output}");
     assert_eq!(
@@ -756,9 +761,13 @@ fn a_second_stage_of_the_same_job_is_blocked_by_the_node_reservation_not_by_the_
     //   ★ 지금은 그 사실을 그대로 고정한다. 상태 관문을 따로 재려면
     //     **노드를 하나 더 준 fixture** 가 필요하고, 그건 이 조각 밖이다.
     //     "재려던 것을 잰다" 고 거짓으로 적지 않는다.
+    // ★★ 2026-09-22 (결정 `B′` 구현) — 위 서술대로 **앞 관문이 옮겨졌다.**
+    //   이제는 staging 의 점유 관문보다 **후보 선택**이 먼저 거른다(`AlreadyReserved`).
+    //   위 주석이 "노드를 하나 더 준 fixture 가 필요하다" 고 적어 둔 상태 관문 분리는
+    //   `a_restage_on_this_fixture_hits_occupancy_before_the_state_gate` 쪽에서 따로 다룬다.
     assert!(
-        output.contains("node is already reserved"),
-        "예약 관문이 아닌 다른 이유로 막혔다: {output}"
+        output.contains("AlreadyReserved") || output.contains("node is already reserved"),
+        "예약 때문이 아닌 다른 이유로 막혔다: {output}"
     );
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
 }
@@ -867,20 +876,23 @@ fn a_malformed_operation_key_is_refused() {
 /// ★ 재검수 14 — 여기 "CLI 경로로 그 관문에 못 닿는다" 가 남아 있었다.
 ///   테스트 이름만 좁히고 이 설명을 안 읽었다.
 ///
-/// **이 fixture 에서 왜 못 닿나** — 순서가 이렇다:
+/// **순서** — `reserve_node_and_stage_queued_with_lease` 안에서:
 /// ```text
-/// reserve_node_and_stage_queued_with_lease
 ///   1. 노드 점유 검사   -> NodeAlreadyReserved
-///   2. stage_new_in_transaction 안에서 상태 검사 -> JobNotQueued
+///   2. 상태 검사        -> JobNotQueued
 /// ```
-/// 그리고 **후보 선택이 예약을 안 본다.** 노드가 둘이어도 늘 같은 노드를
-/// 고르므로, 이 fixture 의 두 번째 시도는 늘 1번에서 죽는다.
 ///
-/// ★★ **이 테스트는 덫이다.** 후보 선택이 예약을 알게 되면(`B′`,
-///   `docs/plans/_열린_작업.md` §A1 4번) 두 번째 시도가 빈 노드를 골라
-///   2번에 닿게 되고, **이 테스트가 깨진다.** 깨지면 지우지 말고 뒤집어라.
+/// ★★ **2026-09-22 — 덫이 예고대로 깨져서 뒤집었다.**
+///   전에는 "후보 선택이 예약을 안 봐서 노드가 둘이어도 늘 같은 노드를 골라
+///   1번에서 죽는다" 였고, 그 사실을 고정하며 이렇게 적어 뒀다 —
+///   "후보 선택이 예약을 알게 되면 두 번째 시도가 빈 노드를 골라 2번에 닿고,
+///   이 테스트가 깨진다. 깨지면 지우지 말고 뒤집어라."
+///
+///   결정 `B′` 를 구현하자 정확히 그렇게 됐다. 이제 이 테스트는
+///   **상태 관문에 닿는 것**을 고정한다 — 빈 노드를 골랐으므로 점유는 통과하고,
+///   큐를 떠난 Job 이라 상태에서 막힌다.
 #[test]
-fn a_restage_on_this_fixture_hits_occupancy_before_the_state_gate() {
+fn a_restage_with_a_free_node_reaches_the_state_gate() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared_two_nodes(dir.path(), JOB_A);
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
@@ -897,7 +909,7 @@ fn a_restage_on_this_fixture_hits_occupancy_before_the_state_gate() {
     assert!(ok, "첫 예약이 실패했다: {output}");
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
 
-    // 두 번째 — 빈 노드가 **남아 있는데도** 같은 노드를 고른다.
+    // 두 번째 — 빈 노드가 남아 있으므로 **그쪽을 고른다**(결정 `B′`).
     let (ok2, output2) = stage(
         &keyring,
         &db,
@@ -908,14 +920,14 @@ fn a_restage_on_this_fixture_hits_occupancy_before_the_state_gate() {
     );
     assert!(!ok2, "큐를 떠난 Job 을 다시 예약했다: {output2}");
 
-    // ★ 오늘의 사실 — 막은 것은 **점유**다.
+    // ★ 이제 막는 것은 **상태**다 — 점유는 빈 노드라 통과한다.
     assert!(
-        output2.contains("node is already reserved"),
-        "점유가 아닌 이유로 막혔다 — 후보 선택이 예약을 보게 됐다면 이 테스트를 뒤집어라: {output2}"
+        output2.contains("Job is not QUEUED"),
+        "상태 관문에 못 닿았다 — 빈 노드를 안 고른 것이다: {output2}"
     );
     assert!(
-        !output2.contains("Job is not QUEUED"),
-        "상태 관문에 닿았다 — 후보 선택이 바뀐 것이다. 이 테스트를 뒤집을 때다: {output2}"
+        !output2.contains("node is already reserved"),
+        "여전히 점유에서 막힌다 — 후보 선택이 예약을 보지 않는다: {output2}"
     );
 
     // 어느 쪽 이유든 상태는 그대로여야 한다.

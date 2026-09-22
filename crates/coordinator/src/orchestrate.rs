@@ -151,7 +151,21 @@ pub fn orchestrate_placement_to_staging(
     staging_store: &mut CoordinatorStagingStore,
     input: &PlacementToStagingInput,
 ) -> Result<PlacementToStagingOutcome, PlacementToStagingError> {
-    let pool = inventory_store.pool_snapshot(input.evaluated_at_unix_ms)?;
+    let mut pool = inventory_store.pool_snapshot(input.evaluated_at_unix_ms)?;
+    // ★★ 2026-09-22 (결정 `B′`) — **내 예약은 남의 예약이 아니다.**
+    //   같은 시도(operation replay)가 다시 들어오면 앞선 호출이 만든 예약이 보인다.
+    //   그것까지 "잡혀 있다" 로 세면 재시도가 `NoEligible` 이 돼 **멱등성이 깨진다**
+    //   (실측으로 확인 — `operation_replay_returns_the_original_durable_staging_result`).
+    //   그래서 **이 시도의 예약만** 접기에서 뺀다. 남의 예약은 그대로 남는다.
+    for candidate in &mut pool.candidates {
+        if candidate
+            .reservation
+            .as_ref()
+            .is_some_and(|reservation| reservation.attempt_id == input.issuance.attempt_id)
+        {
+            candidate.reservation = None;
+        }
+    }
     let eligibility =
         evaluate_eligibility(&pool, &input.job_requirements, &input.hard_filter_policy);
 
@@ -639,6 +653,57 @@ mod tests {
                 .filter(|state| **state == JobState::Queued)
                 .count(),
             1
+        );
+    }
+
+    /// **이미 잡힌 노드는 다음 작업의 후보가 아니다**(결정 `B′` · §A1 4).
+    ///
+    /// ★★ 이 시험이 없으면 `B′` 는 말뿐이다 — 전에는 후보 선택이 장비 목록만 봐서
+    ///   **같은 노드를 두 Job 에 줄 수 있었다.** 노드가 하나뿐인 풀에서 두 번째 Job 이
+    ///   후보 없음으로 끝나야 한다. 그리고 그 사유에 **누가 잡고 있는지**가 담겨야 한다.
+    #[test]
+    fn a_node_already_reserved_by_another_attempt_is_not_a_candidate() {
+        let mut fixture = Fixture::new();
+        fixture.add_candidate("node-a", 12);
+
+        // 첫 작업이 그 노드를 잡는다.
+        let first = fixture.run().unwrap();
+        assert!(
+            matches!(first, PlacementToStagingOutcome::Staged { .. }),
+            "첫 배치가 안 됐다"
+        );
+
+        // 두 번째 작업 — 다른 job · 다른 attempt 다.
+        fixture
+            .job_store
+            .submit_accepted(
+                &AcceptedJobSubmission {
+                    idempotency_key: [9; 16],
+                    job_id: "job-2".into(),
+                    submitter_device_id: "submitter-device".into(),
+                    manifest_hash: [3; 32],
+                    deadline_unix_ms: None,
+                    max_queue_duration_ms: None,
+                },
+                10,
+            )
+            .unwrap();
+        fixture.job_store.start_planning("job-2", 20).unwrap();
+        fixture.job_store.enqueue("job-2", "plan-2", 30).unwrap();
+        fixture.input = placement_input("job-2", 5);
+
+        let second = fixture.run().unwrap();
+        let PlacementToStagingOutcome::NoEligible { eligibility } = second else {
+            panic!("이미 잡힌 노드에 두 번째 작업이 배치됐다 — 같은 GPU 를 둘에게 준 것이다");
+        };
+        let reasons = &eligibility.rejected[0].reasons;
+        assert!(
+            reasons.iter().any(|reason| matches!(
+                reason,
+                gputeer_scheduler::RejectionReason::AlreadyReserved { attempt_id, .. }
+                    if attempt_id == "attempt-1"
+            )),
+            "거부는 했는데 누가 잡고 있는지 안 알려준다: {reasons:?}"
         );
     }
 

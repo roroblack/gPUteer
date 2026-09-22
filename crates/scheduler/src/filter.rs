@@ -56,6 +56,16 @@ fn evaluate_candidate(
         reasons.push(RejectionReason::MissingFact(MissingFact::NodeId));
     }
 
+    // ★★ 2026-09-22 (§A1 4 · 결정 `B′`) — 이미 잡힌 노드는 후보가 아니다.
+    //   전에는 이 축이 아예 없어서 **같은 GPU 를 두 Job 에 줄 수 있었다.**
+    //   만료 의심 표시가 있어도 잡힌 것은 잡힌 것이다 — 표시는 사유에 실어 보여만 준다.
+    if let Some(reservation) = &candidate.reservation {
+        reasons.push(RejectionReason::AlreadyReserved {
+            attempt_id: reservation.attempt_id.clone(),
+            expired_at_unix_ms: reservation.expired_at_unix_ms,
+        });
+    }
+
     match candidate.node_state {
         None => missing(&mut reasons, MissingFact::NodeState),
         Some(NodeState::Online) => {}

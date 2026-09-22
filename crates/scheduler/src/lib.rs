@@ -22,11 +22,11 @@ pub use liveness::{
     NodeLivenessReport,
 };
 pub use model::{
-    BestFitPolicy, BestFitRanking, CandidateSnapshot, EligibilityReport, EligibilityResolution,
-    EligibleCandidate, FitAxis, FitKey, GpuSnapshot, IsolationClass, JobRequirements,
-    KeyProtection, MissingFact, NodeState, Policy, PoolSnapshot, RankedCandidate, RankingError,
-    RejectedCandidate, RejectionReason, ResourceFit, RiskState, SecurityTier, Sensitivity,
-    SideEffectClass, WorkloadClass,
+    BestFitPolicy, BestFitRanking, CandidateReservation, CandidateSnapshot, EligibilityReport,
+    EligibilityResolution, EligibleCandidate, FitAxis, FitKey, GpuSnapshot, IsolationClass,
+    JobRequirements, KeyProtection, MissingFact, NodeState, Policy, PoolSnapshot, RankedCandidate,
+    RankingError, RejectedCandidate, RejectionReason, ResourceFit, RiskState, SecurityTier,
+    Sensitivity, SideEffectClass, WorkloadClass,
 };
 pub use rank::{rank_best_fit, resource_fit};
 pub use reassignment::{
