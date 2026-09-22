@@ -14,7 +14,7 @@ use gputeer_protocol::{canonical::blake3_256, pb, signing::Verified};
 use prost::Message;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
-use crate::staging_store::{self, StoredAttempt, StoredNodeReservation};
+use crate::staging_store::{self, AttemptState, StoredAttempt, StoredNodeReservation};
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -110,6 +110,12 @@ pub enum AttemptReportStoreError {
         node_id: String,
     },
     BindingMismatch(BindingField),
+    /// 이 보고가 가리키는 종료 상태로 **규범 표를 따라 갈 수 없다**(§A1 4c).
+    /// 지어내지 않고 거부한다 — 규범 밖 상태를 만드는 것보다 낫다.
+    AttemptStateUnreachable {
+        from: AttemptState,
+        to: AttemptState,
+    },
     ReportConflict {
         attempt_id: String,
         node_id: String,
@@ -130,6 +136,10 @@ impl std::fmt::Display for AttemptReportStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidInput(field) => write!(f, "invalid AttemptReport input: {field}"),
+            Self::AttemptStateUnreachable { from, to } => write!(
+                f,
+                "이 보고가 가리키는 종료 상태로 규범 표를 따라갈 수 없다: {from:?} -> {to:?}"
+            ),
             Self::InvalidOutcome(outcome) => {
                 write!(
                     f,
@@ -193,6 +203,7 @@ impl CoordinatorAttemptReportStore {
             .map_err(map_sql_error)?;
         staging_store::initialize_schema(&mut connection).map_err(map_staging_error)?;
         initialize_report_schema(&connection)?;
+        backfill_terminal_states(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -294,6 +305,33 @@ impl CoordinatorAttemptReportStore {
             )
             .map_err(map_sql_error)?;
         fail_at(fault, TestFault::AfterReportInsert)?;
+
+        // ★★ 2026-09-22 (§A1 4c) — **보고 저장과 같은 트랜잭션에서** Attempt 를 종료 상태로 옮긴다.
+        //   갈라 놓으면 "보고는 있는데 상태는 CREATED" 인 행이 다시 생기고, 그게 정확히
+        //   예약을 풀지 못하게 만들던 상태였다.
+        if let Some(target) = terminal_state_for(report) {
+            let observed_exit = matches!(
+                pb::ExitObservation::try_from(report.exit_observation),
+                Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+            );
+            if attempt.state != target {
+                let Some(path) = normative_path(attempt.state, target, observed_exit) else {
+                    return Err(AttemptReportStoreError::AttemptStateUnreachable {
+                        from: attempt.state,
+                        to: target,
+                    });
+                };
+                // 경로는 규범 검증용이다 — DB 에는 최종 상태만 쓴다(중간 상태는 관측하지 않았다).
+                staging_store::transition_attempt_state_along(
+                    &transaction,
+                    &report.attempt_id,
+                    attempt.state,
+                    &path,
+                )
+                .map_err(|error| AttemptReportStoreError::Staging(error.to_string()))?;
+            }
+        }
+
         transaction.commit().map_err(map_sql_error)?;
 
         Ok(StoreAttemptReportResult {
@@ -310,6 +348,63 @@ impl CoordinatorAttemptReportStore {
             created: true,
         })
     }
+}
+
+/// 4c 이전에 저장된 행을 고친다 — **보고는 있는데 Attempt 는 CREATED** 인 것들.
+///
+/// ★★ 왜 필요한가(코덱스 72 권고 3) — 새로 저장하는 경로만 고치면 **이미 있는 행은
+///   조용히 CREATED 로 남는다.** 그 행들의 예약은 영영 못 푼다. 지금 고치지 않으면
+///   "고쳤다" 는 말이 그 DB 들에 대해서는 거짓이 된다.
+///
+/// ★ 지어내지 않는다 — 보고가 증명하는 상태로만 옮기고, 규범 표를 따라갈 수 없는
+///   조합(예: INTERRUPTED)은 **그대로 둔다.**
+fn backfill_terminal_states(connection: &mut Connection) -> Result<(), AttemptReportStoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sql_error)?;
+    let rows: Vec<(String, Vec<u8>)> = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT r.attempt_id, r.report_body
+                 FROM coordinator_attempt_reports r
+                 JOIN coordinator_attempts a ON a.attempt_id = r.attempt_id
+                 WHERE a.state = 'CREATED'",
+            )
+            .map_err(map_sql_error)?;
+        let mapped = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(map_sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sql_error)?;
+        mapped
+    };
+    for (attempt_id, body) in rows {
+        let Ok(report) = pb::AttemptReport::decode(body.as_slice()) else {
+            // 디코드가 안 되는 행은 이 자리에서 판단하지 않는다 — 저장 경로의 손상 검사가 본다.
+            continue;
+        };
+        let Some(target) = terminal_state_for(&report) else {
+            continue;
+        };
+        let observed_exit = matches!(
+            pb::ExitObservation::try_from(report.exit_observation),
+            Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+        );
+        let Some(path) = normative_path(AttemptState::Created, target, observed_exit) else {
+            continue;
+        };
+        staging_store::transition_attempt_state_along(
+            &transaction,
+            &attempt_id,
+            AttemptState::Created,
+            &path,
+        )
+        .map_err(|error| AttemptReportStoreError::Staging(error.to_string()))?;
+    }
+    transaction.commit().map_err(map_sql_error)?;
+    Ok(())
 }
 
 /// 보고서 테이블을 만든다.
@@ -397,6 +492,85 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
 /// ★ `reservation_release` 가 **같은 규칙**을 써야 한다 — 여기서
 ///   terminal 이라 저장한 것을 저기서 아니라고 하면 증거는 있는데 못 푸는
 ///   상태가 된다.
+
+/// 종료 보고가 **증명하는** 마지막 Attempt 상태.
+///
+/// ★★ 2026-09-22 (§A1 4c · 코덱스 72 권고 C) — **보지 않은 중간 상태를 합성하지 않는다.**
+///   경로는 규범 표로 검증하되 DB 에는 최종 상태만 쓴다. 판단 근거:
+///
+/// ```text
+/// COMPLETED · STALE_COMPLETED      Completed   완료 보고는 워크로드가 돌았다는 뜻이다(계약)
+/// OUTPUT_FINALIZATION_FAILED       Failed      규범 표가 Running -> Failed 의 trigger 로 이 이름을 적어 뒀다
+/// FAILED + 종료를 관측했다          Failed      exit_observation 이 OBSERVED_* 면 돌았다는 증거다
+/// FAILED + 관측 없음(v1 포함)       Failed      ★ 기동 실패 쪽(Starting -> Failed)으로 보수적으로 적는다
+/// CANCELLED                        Cancelled   Created -> Cancelled
+/// INTERRUPTED                      없음        ★ 규범 Attempt 표에 INTERRUPTED 상태가 없다(그건 Job 쪽이다).
+///                                              상태를 바꾸지 않고 보고만 저장한다
+/// ```
+///
+/// ★ **한계(설계 문서 §2 와 같은 내용).** v1 보고는 "기동 실패" 와 "돌다가 실패" 를 구분할 정보를
+///   담지 못한다 — 둘 다 `Starting -> Failed` 로 적힌다. 그래서 **실행 실패가 과소계상된다.**
+///   구분하려면 v2 의 `exit_observation` 이 있어야 하고, 그건 Agent 쪽 계약이다.
+fn terminal_state_for(report: &pb::AttemptReport) -> Option<AttemptState> {
+    let observed_exit = matches!(
+        pb::ExitObservation::try_from(report.exit_observation),
+        Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+    );
+    match pb::AttemptOutcome::try_from(report.outcome) {
+        Ok(pb::AttemptOutcome::Completed) | Ok(pb::AttemptOutcome::StaleCompleted) => {
+            Some(AttemptState::Completed)
+        }
+        Ok(pb::AttemptOutcome::Failed) | Ok(pb::AttemptOutcome::OutputFinalizationFailed) => {
+            let _ = observed_exit; // 어느 쪽이든 최종 상태는 Failed 다 — 경로만 다르다(아래 path_to).
+            Some(AttemptState::Failed)
+        }
+        Ok(pb::AttemptOutcome::Cancelled) => Some(AttemptState::Cancelled),
+        // INTERRUPTED 는 Attempt 규범 표에 대응 상태가 없다 — 만들지 않는다.
+        _ => None,
+    }
+}
+
+/// `from` 에서 `to` 까지 **규범 표에 있는 전이만 밟는** 경로. 없으면 None.
+///
+/// ★ 경로가 필요한 이유 — 규범 표에 `Created -> Completed` 같은 지름길이 없다.
+///   `Created -> Starting` 의 trigger 는 `GRANT_ACCEPTED` 이고, **보고가 왔다는 것은
+///   Grant 가 수락됐다는 뜻**이므로 그 한 칸은 보고가 증명한다.
+///   여기서 하는 것은 "그 경로가 규범 안에 있는가" 확인이다 — 중간 상태를 DB 에 쓰지는 않는다.
+fn normative_path(
+    from: AttemptState,
+    to: AttemptState,
+    observed_exit: bool,
+) -> Option<Vec<AttemptState>> {
+    use gputeer_protocol::attempt_state::transition;
+    let candidates: [&[AttemptState]; 4] = [
+        &[to],
+        &[AttemptState::Starting, to],
+        &[AttemptState::Starting, AttemptState::Running, to],
+        &[AttemptState::Running, to],
+    ];
+    for path in candidates {
+        // 관측 없는 실패에는 Running 을 끼우지 않는다(합성 금지).
+        if !observed_exit && to == AttemptState::Failed && path.contains(&AttemptState::Running) {
+            continue;
+        }
+        let mut current = from;
+        let mut ok = true;
+        for step in path {
+            match transition(current, *step) {
+                Ok(next) => current = next,
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok && current == to {
+            return Some(path.to_vec());
+        }
+    }
+    None
+}
+
 pub(crate) fn is_terminal_outcome(outcome: i32) -> bool {
     validate_terminal_outcome(outcome).is_ok()
 }
@@ -869,6 +1043,158 @@ mod tests {
         }
     }
 
+    /// 보고의 결과마다 **어떤 종료 상태로 적히는가**(§A1 4c · 설계 §2).
+    ///
+    /// ★ 이 표가 설계 문서와 어긋나면 둘 중 하나가 거짓말을 하는 것이다.
+    #[test]
+    fn each_outcome_writes_the_state_its_evidence_supports() {
+        for (outcome, expected) in [
+            (pb::AttemptOutcome::Completed, Some(AttemptState::Completed)),
+            (
+                pb::AttemptOutcome::StaleCompleted,
+                Some(AttemptState::Completed),
+            ),
+            (pb::AttemptOutcome::Failed, Some(AttemptState::Failed)),
+            (pb::AttemptOutcome::Cancelled, Some(AttemptState::Cancelled)),
+            // ★ INTERRUPTED 는 Attempt 규범 표에 대응 상태가 없다 — 상태를 바꾸지 않는다.
+            //   보고는 저장되지만 Attempt 는 Created 그대로다.
+            (pb::AttemptOutcome::Interrupted, None),
+        ] {
+            let fixture = prepare_fixture();
+            let report = verified_report(JOB_ID, ATTEMPT_ID, NODE_ID, 1, outcome as i32, 7, 10);
+            let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+            store.store_verified_terminal_report(&report).unwrap();
+            drop(store);
+
+            let attempt = CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_attempt(ATTEMPT_ID)
+                .unwrap()
+                .unwrap();
+            let want = expected.unwrap_or(AttemptState::Created);
+            assert_eq!(
+                attempt.state, want,
+                "{outcome:?} 보고 뒤 Attempt 상태가 {:?} 다 — 기대는 {want:?}",
+                attempt.state
+            );
+        }
+    }
+
+    /// 규범 표 밖의 전이는 **거부한다**(지어내지 않는다).
+    ///
+    /// ★ 이미 종료된(COMPLETED) Attempt 에 취소 보고가 오면, 규범 표에
+    ///   `Completed -> Cancelled` 가 없으므로 거부돼야 한다. 조용히 덮어쓰면
+    ///   끝난 작업이 취소된 것으로 뒤바뀐다.
+    #[test]
+    fn a_transition_outside_the_norm_table_is_refused() {
+        let fixture = prepare_fixture();
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let completed = verified_report(
+            JOB_ID,
+            ATTEMPT_ID,
+            NODE_ID,
+            1,
+            pb::AttemptOutcome::Completed as i32,
+            7,
+            10,
+        );
+        store.store_verified_terminal_report(&completed).unwrap();
+        drop(store);
+
+        // 같은 Attempt · 같은 노드에 다른 결과의 보고를 넣으려 한다.
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let cancelled = verified_report(
+            JOB_ID,
+            ATTEMPT_ID,
+            NODE_ID,
+            1,
+            pb::AttemptOutcome::Cancelled as i32,
+            7,
+            10,
+        );
+        let error = store
+            .store_verified_terminal_report(&cancelled)
+            .expect_err("종료된 Attempt 가 취소로 덮였다");
+        // 보고 충돌로 먼저 걸리든(같은 키) 전이 거부로 걸리든, **덮어쓰지 않는 것**이 계약이다.
+        assert!(
+            matches!(
+                error,
+                AttemptReportStoreError::ReportConflict { .. }
+                    | AttemptReportStoreError::AttemptStateUnreachable { .. }
+                    | AttemptReportStoreError::Staging(_)
+            ),
+            "예상 밖 오류: {error}"
+        );
+        drop(store);
+
+        let attempt = CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_attempt(ATTEMPT_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            attempt.state,
+            AttemptState::Completed,
+            "거부했는데 상태가 바뀌었다"
+        );
+    }
+
+    /// 4c 이전에 만들어진 행(보고는 있는데 Attempt 는 CREATED)을 **열 때 고친다**.
+    ///
+    /// ★ 새 경로만 고치면 옛 DB 는 계속 예약을 못 푼다. 그 상태를 직접 만들어 확인한다 —
+    ///   보고를 저장한 뒤 상태를 손으로 CREATED 로 되돌리고, 다시 열어 본다.
+    #[test]
+    fn an_old_row_stored_before_4c_is_backfilled_on_open() {
+        let fixture = prepare_fixture();
+        let report = verified_report(
+            JOB_ID,
+            ATTEMPT_ID,
+            NODE_ID,
+            1,
+            pb::AttemptOutcome::Completed as i32,
+            7,
+            10,
+        );
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store.store_verified_terminal_report(&report).unwrap();
+        drop(store);
+
+        // 4c 이전 상태를 재현한다 — 보고는 있고 Attempt 는 CREATED.
+        {
+            let connection = Connection::open(&fixture.path).unwrap();
+            connection
+                .execute(
+                    "UPDATE coordinator_attempts SET state = 'CREATED' WHERE attempt_id = ?1",
+                    rusqlite::params![ATTEMPT_ID],
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_attempt(ATTEMPT_ID)
+                .unwrap()
+                .unwrap()
+                .state,
+            AttemptState::Created,
+            "옛 상태 재현이 안 됐다 — 이 시험이 아무것도 안 보고 있다"
+        );
+
+        // 여는 것만으로 고쳐져야 한다.
+        let store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        drop(store);
+        assert_eq!(
+            CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_attempt(ATTEMPT_ID)
+                .unwrap()
+                .unwrap()
+                .state,
+            AttemptState::Completed,
+            "옛 행이 그대로 CREATED 다 — 그 DB 들은 예약을 영영 못 푼다"
+        );
+    }
+
     #[test]
     fn unspecified_and_unknown_outcomes_create_no_row() {
         for outcome in [pb::AttemptOutcome::Unspecified as i32, 99] {
@@ -1196,8 +1522,17 @@ mod tests {
         );
     }
 
+    /// ★★ 2026-09-22 (§A1 4c) — **이 시험이 고정하던 계약의 절반을 의도적으로 뒤집었다.**
+    ///
+    /// 원래 이름은 `..._without_state_or_release_side_effects` 였고, "보고를 저장해도
+    /// Attempt 상태를 **바꾸지 않는다**" 를 고정했다(DoD-51). 그런데 바로 그것 때문에
+    /// "이 시도는 끝났다" 를 적을 곳이 없어 예약을 영영 풀지 못했다(§A1 4c).
+    ///
+    /// 이제 **Attempt 상태는 바뀐다**(종료 보고와 같은 트랜잭션에서). 대신 나머지는
+    /// 그대로다 — Job · Lease · 예약은 건드리지 않는다. **해제는 여전히 별도 관문이다.**
+    /// 그래서 이름에서 `state` 를 뺐다.
     #[test]
-    fn signature_and_binding_survive_reopen_without_state_or_release_side_effects() {
+    fn signature_and_binding_survive_reopen_without_release_side_effects() {
         let fixture = prepare_fixture();
         let before_job = CoordinatorJobStore::open(&fixture.path)
             .unwrap()
@@ -1246,13 +1581,26 @@ mod tests {
                 .unwrap(),
             before_job
         );
+        // Attempt 는 **종료 상태로 바뀌어야 한다** — 그것이 4c 의 목적이다.
+        let after_attempt = CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_attempt(ATTEMPT_ID)
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            CoordinatorStagingStore::open(&fixture.path)
-                .unwrap()
-                .get_attempt(ATTEMPT_ID)
-                .unwrap()
-                .unwrap(),
-            before_attempt
+            after_attempt.state,
+            AttemptState::Completed,
+            "종료 보고를 저장했는데 Attempt 가 아직 {:?} 다 — 끝났다를 적을 곳이 다시 없어졌다",
+            after_attempt.state
+        );
+        // 나머지 칸은 그대로다 — 상태 말고는 아무것도 건드리지 않는다.
+        assert_eq!(
+            StoredAttempt {
+                state: before_attempt.state,
+                ..after_attempt.clone()
+            },
+            before_attempt,
+            "상태 외의 칸이 바뀌었다"
         );
         assert_eq!(
             CoordinatorLeaseStore::open(&fixture.path)

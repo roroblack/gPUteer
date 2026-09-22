@@ -1,103 +1,80 @@
-//! 저장소의 `AttemptState` 가 **규범 정본에서 조용히 갈라지지 않게** 한다.
+//! 저장소의 Attempt 상태가 **규범 정본에서 갈라지지 않게** 한다.
 //!
-//! # 왜 이 파일이 생겼나 (2026-09-07)
+//! # 이 파일의 역사 (읽고 나서 고쳐라)
 //!
-//! 같은 이름의 타입이 **두 곳에** 있다.
-//!
-//! ```text
-//! gputeer_protocol::attempt_state::AttemptState   11개 상태 · transition() 있음
-//!                                                 state_table_parity.rs 가
-//!                                                 규범 표와 양방향 대조한다
-//!
-//! gputeer_coordinator::staging_store::AttemptState  1개(Created) · 설명 없음
-//! ```
-//!
-//! ★★ **위험한 것은 개수 차이가 아니라 "설명이 없다" 는 점이었다.**
-//!   저장소 쪽 enum 에 누가 `Running` 을 추가하면, 그 값은 규범 표를
-//!   거치지 않고 생긴다. 그러면 `state-machines.md` 가 강제한다고 믿는
-//!   전이 규칙 **밖에서** 상태가 늘어난다.
-//!
-//!   이 저장소는 같은 부류의 사고를 이미 겪었다 — "막는 문 하나와 안
-//!   막는 문 하나" 가 있으면, 막힌다고 믿으면서 안 막힌 쪽으로 들어간다.
-//!
-//! # 이 테스트가 하는 것 / 하지 않는 것
+//! **2026-09-07 — 같은 이름의 타입이 두 곳에 있었다.**
 //!
 //! ```text
-//! 한다      저장소의 모든 상태가 규범 정본에 **이름으로 대응**되는지
-//!           저장소가 상태를 늘리면 컴파일이 깨지게 만드는지
-//!
-//! 안 한다   두 enum 을 하나로 합치는 것.
-//!           저장소 쪽은 SQLite 에 적히는 값이라 합치려면 마이그레이션이
-//!           필요하고, 그건 이 테스트의 범위가 아니다.
+//! gputeer_protocol::attempt_state::AttemptState     11개 상태 · transition() 있음
+//! gputeer_coordinator::staging_store::AttemptState   1개(Created) · 설명 없음
 //! ```
+//!
+//! 위험한 것은 개수 차이가 아니라 **저장소 쪽에 상태를 추가하면 규범 표를
+//! 거치지 않고 생긴다**는 점이었다. 그래서 이 파일이 "저장소 enum 이 늘면
+//! 컴파일이 깨지게" 만들어 두었다.
+//!
+//! **2026-09-22 (§A1 4c) — 둘을 하나로 합쳤다.** 저장소가 규범 타입을 그대로
+//! 재수출한다(`pub use`). 갈라질 여지 자체가 사라졌으므로, 이 파일이 지키는
+//! 대상도 바뀐다:
+//!
+//! ```text
+//! 옛 역할   저장소 enum ⊆ 규범 enum 인가 (두 타입이 있을 때의 방어)
+//! 새 역할   규범의 **모든** 상태가 SQLite 문자열로 **왕복**되는가
+//!           -> 그래야 종료 상태를 쓴 직후 다시 읽을 수 있다.
+//!              4c 이전의 저장소는 'CREATED' 아닌 값을 전부 손상으로 거부했다
+//! ```
+//!
+//! ★ 왜 왕복이 중요한가 — 디스크에 남는 값이다. 쓰기만 되고 읽기가 안 되면
+//!   다음 재시작에서 그 Attempt 는 **손상으로 보인다.**
 
-use gputeer_coordinator::staging_store::AttemptState as StoredAttemptState;
-use gputeer_protocol::attempt_state::AttemptState as NormativeAttemptState;
+use gputeer_coordinator::staging_store::{state_from_db, state_to_db, AttemptState};
+use gputeer_protocol::attempt_state::{AttemptState as NormativeAttemptState, ALL_ATTEMPT_STATES};
 
-/// 저장소 상태 → 규범 정본 상태.
+/// 저장소 타입과 규범 타입이 **같은 타입**인지 컴파일 시점에 고정한다.
 ///
-/// ★★ **`match` 를 exhaustive 로 둔다.** 저장소 enum 에 변형이 추가되면
-///   이 함수가 **컴파일되지 않는다.** 그것이 이 파일의 핵심 장치다 —
-///   추가하는 사람이 "이 새 상태는 규범 표의 어느 것인가" 를 반드시
-///   답하게 만든다.
-///
-///   `_ => ...` 를 절대 쓰지 마라. 쓰는 순간 이 검사가 사라진다.
-fn to_normative(stored: StoredAttemptState) -> NormativeAttemptState {
-    match stored {
-        StoredAttemptState::Created => NormativeAttemptState::Created,
-    }
+/// ★ 누가 저장소에 별도 enum 을 다시 만들면 이 함수가 컴파일되지 않는다 —
+///   그것이 2026-09-07 에 막으려던 바로 그 사고다.
+fn _same_type(state: AttemptState) -> NormativeAttemptState {
+    state
 }
 
-/// 저장소가 오늘 아는 모든 상태.
-///
-/// ★ 손으로 적는다. 저장소 enum 이 늘면 위 `to_normative` 가 먼저
-///   컴파일 오류를 내므로, 그때 여기도 같이 늘리게 된다.
-const STORED_STATES: &[StoredAttemptState] = &[StoredAttemptState::Created];
-
 #[test]
-fn every_stored_state_maps_to_a_normative_state() {
-    for stored in STORED_STATES {
-        let normative = to_normative(*stored);
-        // 이름으로 대응되는지까지 본다 — 값만 맞고 이름이 다르면
-        // 나중에 읽는 사람이 두 개념을 헷갈린다.
+fn every_normative_state_round_trips_through_the_database_string() {
+    for state in ALL_ATTEMPT_STATES {
+        let raw = state_to_db(*state);
+        let back = state_from_db(raw).unwrap_or_else(|error| {
+            panic!("{state:?} 를 {raw:?} 로 적었는데 다시 못 읽는다 — 쓰기만 되고 읽기가 안 된다: {error}")
+        });
         assert_eq!(
-            format!("{stored:?}"),
-            format!("{normative:?}"),
-            "저장소 상태 {stored:?} 가 규범의 다른 이름에 대응된다 — \
-             이름이 다르면 두 문서가 같은 것을 말하는지 알 수 없다"
+            back, *state,
+            "{raw:?} 를 읽었더니 다른 상태가 나왔다 — 디스크 값과 코드가 어긋난다"
         );
     }
 }
 
 #[test]
-fn the_stored_enum_is_a_strict_subset_of_the_normative_one() {
-    // ★ 저장소가 규범보다 **많아지면** 그것은 규범 밖 상태다.
-    //   `state-machines.md` 표를 안 거치고 생긴 상태가 있다는 뜻이다.
-    let normative_count = gputeer_protocol::attempt_state::ALL_ATTEMPT_STATES.len();
-    assert!(
-        STORED_STATES.len() <= normative_count,
-        "저장소 상태({})가 규범 정본({})보다 많다 — 규범 표를 거치지 않은 \
-         상태가 생겼다는 뜻이다",
-        STORED_STATES.len(),
-        normative_count
+fn the_database_strings_are_all_distinct() {
+    // ★ 두 상태가 같은 문자열을 쓰면 왕복 시험은 통과하면서도 하나가 다른
+    //   하나로 읽힌다. 개수로 직접 확인한다.
+    let mut seen: Vec<&str> = ALL_ATTEMPT_STATES.iter().map(|s| state_to_db(*s)).collect();
+    seen.sort_unstable();
+    let before = seen.len();
+    seen.dedup();
+    assert_eq!(
+        before,
+        seen.len(),
+        "두 상태가 같은 DB 문자열을 쓴다 — 하나가 다른 하나로 읽힌다"
     );
 }
 
 #[test]
-fn the_normative_enum_still_has_the_states_this_crate_expects() {
-    // ★★ **반대 방향 대조군.** 위 둘만 있으면, 규범 쪽에서 `Created` 를
-    //   지워도 이 테스트들이 통과한다(저장소가 0개가 되면 되니까).
-    //   규범이 이 crate 가 기대하는 상태를 계속 갖고 있는지 본다.
+fn an_unknown_database_string_is_refused_instead_of_defaulting() {
+    // ★ 조용히 Created 로 읽으면, 손상된 행이 "이제 막 만들어진 시도" 로
+    //   되살아난다. 그건 끝난 작업을 다시 돌리는 길이다.
+    let error = state_from_db("NOT_A_STATE").expect_err("모르는 값이 통과했다");
+    let message = error.to_string();
     assert!(
-        gputeer_protocol::attempt_state::ALL_ATTEMPT_STATES
-            .contains(&NormativeAttemptState::Created),
-        "규범 정본에서 Created 가 사라졌다 — 저장소가 쓰는 상태다"
-    );
-    // 오늘 저장소가 아는 것은 하나뿐이다. 그 사실 자체를 고정해,
-    // 늘어날 때 이 파일을 반드시 다시 보게 만든다.
-    assert_eq!(
-        STORED_STATES.len(),
-        1,
-        "저장소 상태가 늘었다 — to_normative() 와 이 파일 머리말을 함께 갱신하라"
+        message.contains("NOT_A_STATE"),
+        "거부는 했는데 어떤 값이 문제인지 안 알려준다: {message}"
     );
 }

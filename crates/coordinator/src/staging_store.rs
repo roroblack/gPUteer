@@ -37,9 +37,41 @@ pub struct StageQueuedRequest {
     pub max_total_duration_seconds: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttemptState {
-    Created,
+/// Attempt 상태 — **규범 정본을 그대로 쓴다.**
+///
+/// ★★ 2026-09-22 (§A1 4c) — 전에는 이 파일에 `Created` 하나짜리 **별도 enum**
+///   이 있었다. 같은 이름의 타입이 둘이면 저장소 쪽에 상태를 추가할 때 규범 표를
+///   거치지 않고 늘어난다 — `attempt_state_parity.rs` 가 그 위험 때문에 생겼다.
+///   이제 **하나로 합쳤으므로 갈라질 여지 자체가 없다.**
+///   SQLite 에 적히는 문자열은 아래 `state_to_db`/`state_from_db` 가 책임진다.
+pub use gputeer_protocol::attempt_state::AttemptState;
+
+/// 상태 -> SQLite 문자열.
+///
+/// ★ 이 값은 **디스크에 남는다.** 이름을 바꾸면 옛 행을 못 읽는다 — 바꾸려면 마이그레이션이 필요하다.
+pub fn state_to_db(state: AttemptState) -> &'static str {
+    match state {
+        AttemptState::Created => "CREATED",
+        AttemptState::Starting => "STARTING",
+        AttemptState::Running => "RUNNING",
+        AttemptState::Paused => "PAUSED",
+        AttemptState::Stale => "STALE",
+        AttemptState::Completed => "COMPLETED",
+        AttemptState::Failed => "FAILED",
+        AttemptState::Cancelled => "CANCELLED",
+        AttemptState::Reconciling => "RECONCILING",
+        AttemptState::Canonical => "CANONICAL",
+        AttemptState::Superseded => "SUPERSEDED",
+    }
+}
+
+/// SQLite 문자열 -> 상태. 모르는 값은 **손상으로 거부한다**(조용히 Created 로 읽지 않는다).
+pub fn state_from_db(raw: &str) -> Result<AttemptState, StagingStoreError> {
+    gputeer_protocol::attempt_state::ALL_ATTEMPT_STATES
+        .iter()
+        .copied()
+        .find(|s| state_to_db(*s) == raw)
+        .ok_or_else(|| StagingStoreError::CorruptData(format!("unknown Attempt state: {raw}")))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +125,15 @@ pub enum StagingStoreError {
     },
     InvalidLeaseLifetime,
     FenceEpochOverflow,
+    /// 규범 표에 없는 Attempt 전이다(§A1 4c).
+    AttemptTransitionRejected {
+        from: AttemptState,
+        to: AttemptState,
+    },
+    /// 읽은 상태와 지금 저장된 상태가 다르다 — 다른 쓰기가 끼어들었다(CAS 실패).
+    AttemptStateRaced {
+        expected: AttemptState,
+    },
     CorruptData(String),
     Io(String),
     LockTimeout,
@@ -107,6 +148,14 @@ impl std::fmt::Display for StagingStoreError {
             Self::JobNotFound => write!(f, "job_id is not present in the control DB"),
             Self::JobNotQueued(state) => write!(f, "Job is not QUEUED: {state:?}"),
             Self::OperationConflict => write!(f, "staging operation key payload conflict"),
+            Self::AttemptTransitionRejected { from, to } => write!(
+                f,
+                "규범 표에 없는 Attempt 전이다: {from:?} -> {to:?} (docs/protocol/state-machines.md §3)"
+            ),
+            Self::AttemptStateRaced { expected } => write!(
+                f,
+                "Attempt 상태가 읽은 값({expected:?})과 달라 갱신하지 않았다 — 다른 쓰기가 끼어들었다"
+            ),
             Self::AttemptIdConflict(id) => write!(f, "attempt_id already exists: {id}"),
             Self::LeaseIdConflict(id) => write!(f, "lease_id already exists: {id}"),
             Self::ClockRollback { issued_at_unix_ms, queued_at_unix_ms } => write!(
@@ -604,7 +653,7 @@ fn insert_attempt(
         .execute(
             "INSERT INTO coordinator_attempts(
                 attempt_id, job_id, state, fence_epoch, lease_id, created_at_unix_ms, revision
-             ) VALUES (?1, ?2, 'CREATED', ?3, ?4, ?5, ?6)",
+             ) VALUES (?1, ?2, ?7, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 attempt.attempt_id,
                 attempt.job_id,
@@ -612,6 +661,7 @@ fn insert_attempt(
                 attempt.lease_id,
                 encode_u64(attempt.created_at_unix_ms),
                 encode_u64(attempt.revision),
+                state_to_db(attempt.state),
             ],
         )
         .map_err(map_sql_error)?;
@@ -621,6 +671,59 @@ fn insert_attempt(
             rusqlite::params![attempt.attempt_id, attempt.node_ids[0]],
         )
         .map_err(map_sql_error)?;
+    Ok(())
+}
+
+/// Attempt 상태를 `from` 에서 `to` 로 옮긴다 — **규범 검증 + CAS**.
+///
+/// ★ 두 가지를 같이 한다. 하나라도 빠지면 조용히 틀린다:
+///   1. `transition()` 이 규범 표(`state-machines.md` §3)에 있는 전이인지 본다.
+///      표에 없는 전이는 **여기서** 막는다 — 저장소가 규범 밖 상태를 만들지 못하게.
+///   2. `WHERE state = <읽은 값>` 으로만 쓴다. 읽고 쓰는 사이에 다른 쓰기가
+///      끼어들었으면 0행이 바뀌고, 그것을 **경쟁으로 보고한다**(덮어쓰지 않는다).
+///
+/// 호출자는 같은 트랜잭션 안에서 부른다 — 보고 저장과 상태 변경이 갈라지면
+/// "보고는 있는데 상태는 CREATED" 인 행이 다시 생긴다(§A1 4c 가 그 상태였다).
+pub(crate) fn transition_attempt_state(
+    connection: &Connection,
+    attempt_id: &str,
+    from: AttemptState,
+    to: AttemptState,
+) -> Result<(), StagingStoreError> {
+    transition_attempt_state_along(connection, attempt_id, from, &[to])
+}
+
+/// 여러 칸짜리 경로를 **메모리에서 규범으로 검증**하고, DB 에는 **마지막 상태만** 쓴다.
+///
+/// ★★ 왜 중간 상태를 DB 에 안 쓰나(코덱스 72 권고 C) — 중간 상태를 쓰면
+///   "그 순간 그 상태였다" 고 말하는 셈인데, 우리는 그것을 **관측하지 않았다.**
+///   한 트랜잭션 안이라 관측 순간도 따로 없다. 경로는 "규범 안의 이야기인가" 를
+///   확인하는 데만 쓰고, 남기는 사실은 최종 상태 하나다.
+pub(crate) fn transition_attempt_state_along(
+    connection: &Connection,
+    attempt_id: &str,
+    from: AttemptState,
+    path: &[AttemptState],
+) -> Result<(), StagingStoreError> {
+    let mut current = from;
+    for step in path {
+        current = gputeer_protocol::attempt_state::transition(current, *step).map_err(|_| {
+            StagingStoreError::AttemptTransitionRejected {
+                from: current,
+                to: *step,
+            }
+        })?;
+    }
+    let to = current;
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_attempts SET state = ?1 WHERE attempt_id = ?2 AND state = ?3",
+            rusqlite::params![state_to_db(to), attempt_id, state_to_db(from)],
+        )
+        .map_err(map_sql_error)?;
+    if changed != 1 {
+        return Err(StagingStoreError::AttemptStateRaced { expected: from });
+    }
     Ok(())
 }
 
@@ -650,11 +753,9 @@ pub(crate) fn fetch_attempt(
     let Some((attempt_id, job_id, state, epoch, lease_id, created_at, revision)) = raw else {
         return Ok(None);
     };
-    if state != "CREATED" {
-        return Err(StagingStoreError::CorruptData(format!(
-            "unknown Attempt state: {state}"
-        )));
-    }
+    // ★ 2026-09-22 (§A1 4c) — 전에는 'CREATED' 가 아니면 손상으로 거부하고
+    //   반환값도 무조건 Created 였다. 그래서 종료 상태를 **적을 수도 읽을 수도** 없었다.
+    let state = state_from_db(&state)?;
     let mut statement = connection
         .prepare("SELECT node_id, ordinal FROM coordinator_attempt_nodes WHERE attempt_id = ?1 ORDER BY ordinal")
         .map_err(map_sql_error)?;
@@ -673,7 +774,7 @@ pub(crate) fn fetch_attempt(
     Ok(Some(StoredAttempt {
         attempt_id,
         job_id,
-        state: AttemptState::Created,
+        state,
         node_ids: vec![nodes[0].0.clone()],
         fence_epoch: decode_u64(&epoch, "Attempt fence_epoch")?,
         lease_id,
@@ -1199,6 +1300,67 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(store.get_node_reservation(&request.node_id).unwrap(), None);
+    }
+
+    /// 상태를 **읽은 값이 그대로일 때만** 쓴다(CAS).
+    ///
+    /// ★★ 이 시험이 있는 이유 — 2026-09-22 뮤테이션에서 `WHERE state = <읽은 값>` 을
+    ///   빼도 다른 시험이 **하나도 실패하지 않았다.** 장치가 있었는데 아무도 지키지
+    ///   않았다는 뜻이다(`CLAUDE.md` §4 — 뮤테이션이 안 잡히면 테스트가 약한 것이다).
+    ///
+    ///   스레드 없이 결정적으로 만든다: 같은 `from` 으로 **두 번** 부른다.
+    ///   두 번째 호출은 이미 낡은 값을 들고 있으므로 거부돼야 한다.
+    #[test]
+    fn a_state_write_with_a_stale_source_state_is_refused_not_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-cas", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let revision = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory.pool_snapshot(7).unwrap().candidates[0]
+                .inventory_revision
+                .unwrap()
+        };
+        let staged = {
+            let mut store = CoordinatorStagingStore::open(&path).unwrap();
+            let request = request("job-cas", 1);
+            store
+                .reserve_node_and_stage_queued_with_lease(&request, revision)
+                .unwrap();
+            request.attempt_id.clone()
+        };
+
+        let connection = Connection::open(&path).unwrap();
+        // 첫 번째 — 읽은 값(Created)이 아직 그대로다. 통과한다.
+        transition_attempt_state(
+            &connection,
+            &staged,
+            AttemptState::Created,
+            AttemptState::Starting,
+        )
+        .expect("첫 전이");
+        // 두 번째 — 여전히 Created 를 들고 있다. 그 사이 상태가 바뀌었으므로 **거부**다.
+        let error = transition_attempt_state(
+            &connection,
+            &staged,
+            AttemptState::Created,
+            AttemptState::Starting,
+        )
+        .expect_err("낡은 값으로 덮어썼다 — CAS 가 없는 것이다");
+        assert_eq!(
+            error,
+            StagingStoreError::AttemptStateRaced {
+                expected: AttemptState::Created
+            }
+        );
+
+        // 그리고 상태는 첫 전이 결과 그대로여야 한다.
+        let store = CoordinatorStagingStore::open(&path).unwrap();
+        assert_eq!(
+            store.get_attempt(&staged).unwrap().unwrap().state,
+            AttemptState::Starting
+        );
     }
 
     #[test]
