@@ -13,8 +13,13 @@ jobs:
   canonical-schema:
     runs-on: ubuntu-latest
     steps:
+      # ★★ fetch-depth: 0 이 **필수**다(2026-09-22 결함 208). 기본값은 1 —
+      #   커밋 하나만 받는다. 그러면 `verify_evidence.py` 의 commit 도달 가능성
+      #   검사가 **무엇을 고치든 반드시 실패**한다(과거 커밋이 아예 없으므로).
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ★ rustfmt 는 기본으로 안 깔린다 — 2026-09-18 실행이 정확히 여기서 죽었다
       #   ("'cargo-fmt' is not installed for the toolchain '1.89.0'"). components 로 받는다

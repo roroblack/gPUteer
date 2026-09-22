@@ -3,7 +3,7 @@ schema_version: 2
 id: P0-03
 claim: "체크포인트가 쓰기 도중 프로세스 강제 종료되어도 PARTIAL 로만 남고 COMMITTED 로 승격되지 않으며, 마지막 유효 체크포인트에서 재개할 수 있다"
 status: PASS
-commit: 45c1b43c94a7668be9bfb29e5de30d2b8defb289
+commit: 6e9ac19f46ea531d7535cab863204d3802df5826
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -212,7 +212,7 @@ GC removed 3 partial files, kept 4 valid checkpoints
 
 ### 무엇이 바뀌었나
 
-이 문서를 쓴 시점(commit `45c1b43`)의 재개 판정은 이 문서가 관측한
+이 문서를 쓴 시점(commit `6e9ac19`)의 재개 판정은 이 문서가 관측한
 그대로였다. 그 뒤 `writer.rs::is_resume_candidate()` 가 재설계됐다
 (2026-08-17, 별도 세션 — DoD-04/P0-03 재검수와 무관하게 카오스 테스트가
 부하 아래서 재개 지점을 통째로 잃는 문제를 잡아서 고친 것).
@@ -351,7 +351,7 @@ COMMITTED 여부와 무관하게 해시가 유효한 가장 높은 체크포인�
 `crates/checkpoint/tests/kill_chaos.rs` 는 여전히
 `[40, 90, 150, 230, 310, 420, 560, 700]` 8개 값을 순회한다
 (`kill_chaos.rs:271`). 그러나 그 값을 쓰는 방식이 원래 evidence를
-쓴 시점(commit `45c1b43`)과 지금은 다르다:
+쓴 시점(commit `6e9ac19`)과 지금은 다르다:
 
 ```text
 당시(원본 raw_output)   각 ms 값을 실제 대기 시간으로 써서

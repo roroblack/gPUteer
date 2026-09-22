@@ -3,7 +3,7 @@ schema_version: 2
 id: P0-01
 claim: "Windows Restricted Token(특권 전부 제거) 아래에서 CUDA 가 동작하고, Job Object 로 프로세스 트리를 종료하면 VRAM 이 반환된다 — 즉 S1(Restricted Native) 경로가 성립한다"
 status: PASS
-commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
+commit: 6d8628f36e79987d8f825ad3098d69877ab06c36
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash — grep 기반 소스 일치성 확인, 하드웨어 재실측 아님)"

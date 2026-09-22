@@ -2,7 +2,7 @@
 id: P0-06
 claim: "기준선 §10.3 의 주장 — 소비자 GPU 에는 VRAM quota 를 강제할 수단이 없다 — 을 검증하고, ADR-015(Exclusive 기본값)를 유지할지 판정한다"
 status: FAIL-SCOPE
-commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
+commit: 6d8628f36e79987d8f825ad3098d69877ab06c36
 binary_digests:
   probe_a_d: "tools/probes/p0_06_vram_enforcement.py"
   probe_sweep: "tools/probes/p0_06b_jobobject_vram_sweep.py"

@@ -3,7 +3,7 @@ schema_version: 2
 id: P0-07
 claim: "기준선 §12.3 Stage-2 의 50-step calibration 이 전체 실행시간을 상대오차 σ <= 0.20 으로 예측한다"
 status: PASS
-commit: 5dba36e62c230b3ec894cb8ca16623da2aec2c2a
+commit: 6d8628f36e79987d8f825ad3098d69877ab06c36
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (SSH x600 재실측 + Bash)"

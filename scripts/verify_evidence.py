@@ -248,25 +248,55 @@ def is_empty(v):
     return False
 
 
+def _git(*args, timeout=10):
+    """git 을 부른다. 못 부르면 None 을 돌려준다(검사 불가)."""
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+_SHALLOW_WARNED = []
+
+
 def commit_exists(h):
-    """이 저장소에 실제로 존재하는 커밋인가.
+    """이 커밋을 이 저장소에서 **되짚을 수 있는가**.
 
     ★ 2026-08-16 추가. 전에는 40자 hex 형식만 봤다 —
       **존재하지 않는 커밋도 통과했다.**
 
-    git 이 없거나 저장소가 아니면 검사를 건너뛴다(경고 없이 통과).
-    검사기 자체가 환경 때문에 실패하면 안 되기 때문이다.
+    ★★ 2026-09-22 결함 208 — `git cat-file` 로 **존재**만 보던 것을
+      **도달 가능성**으로 바꿨다. cat-file 은 어느 가지에서도 닿지 않는
+      객체(옛 이력·버려진 amend)까지 찾아낸다. 그래서 개발 기계에서는
+      **끊긴 포인터가 통과**했고, 새로 복제한 CI 에서만 드러났다 —
+      검사가 두 곳에서 서로 다른 답을 냈다. 증거의 요건은 "객체가 어딘가
+      남아 있다" 가 아니라 "이 저장소의 이력에서 그 코드 상태로 되돌아갈
+      수 있다" 이므로, 판정은 `merge-base --is-ancestor <sha> HEAD` 다.
+
+    git 이 없거나 저장소가 아니면 검사를 건너뛴다(통과).
+    **얕은 복제**(`fetch-depth: 1`)도 검사 불가다 — 그때는 조용히 넘어가지
+    않고 한 번 말하고 건너뛴다(`CLAUDE.md` §4 — 조용한 스킵을 만들지 않는다).
     """
-    try:
-        r = subprocess.run(
-            ["git", "cat-file", "-t", h],
-            cwd=REPO_ROOT, capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return True  # git 없음 — 검사 불가이므로 통과시킨다
-    if r.returncode != 0 and "not a git repository" in (r.stderr or "").lower():
+    r = _git("rev-parse", "--is-inside-work-tree")
+    if r is None or r.returncode != 0:
+        return True  # git 없음 · 저장소 아님 — 검사 불가이므로 통과시킨다
+
+    shallow = _git("rev-parse", "--is-shallow-repository")
+    if shallow is not None and shallow.stdout.strip() == "true":
+        if not _SHALLOW_WARNED:
+            _SHALLOW_WARNED.append(True)
+            print(
+                "  ! 얕은 복제라 commit 도달 가능성을 검사할 수 없다 — 건너뛴다"
+                "(CI 라면 actions/checkout 에 fetch-depth: 0 을 준다)"
+            )
         return True
-    return r.stdout.strip() == "commit"
+
+    if _git("cat-file", "-t", h).stdout.strip() != "commit":
+        return False
+    # 객체가 있어도 **어느 가지에서도 안 닿으면** 되짚을 수 없다.
+    return _git("merge-base", "--is-ancestor", h, "HEAD").returncode == 0
 
 
 def as_list(v):
