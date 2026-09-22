@@ -301,7 +301,7 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
                 // ★ 일이 없는 것은 **오류가 아니다.** 이유를 말하고 이 연결을 끝낸다 —
                 //   없는 일을 지어내 Grant 를 만들지 않는다.
                 return Err(format!(
-                    "NO_WORK_FOR_NODE: {agent_device_id} 에 배정된 예약이 없다 —                      스케줄러가 아직 이 노드를 고르지 않았다"
+                    "NO_WORK_FOR_NODE: {agent_device_id} 에 배정된 예약이 없다 — 스케줄러가 아직 고르지 않았다"
                 ));
             };
             let keyring_path = shared
