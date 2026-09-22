@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-22 09:20 — 결함 206: cgroup 시험의 전제를 "리눅스다" 에서 "하위 cgroup 을 만들 수 있다" 로
+
+- 계획: 없음(CI 가 찾은 결함 — 205 를 고치자 그 뒤 층이 드러났다)
+- 스트림: QA
+- 수행: 비-root 리눅스 CI 에서 cgroup 강제 시험 7건이 전부 `NotDelegated ... Permission denied` 로 실패했다.
+  시험이 부모를 루트(`/sys/fs/cgroup`)로 고정하는데 거기 쓰려면 대개 root 다 — x600 WSL2(root) 통과를
+  "리눅스 통과" 로 센 것이다(`CLAUDE.md` §4 는 같은 OS 안의 **권한 차이**에도 적용된다).
+  `cgroup_delegation_state()` 가 탐침 디렉터리를 실제로 만들어 보고 판정하고, 없으면 `ENVIRONMENT-BLOCKED` 를 적은 뒤
+  **제품이 기동을 거부하는지**만 확인하고 끝낸다(거부 안 하면 그 자리에서 실패). 제품 코드는 안 바꿨다
+- 검증: `cargo check -p gputeer-runtime-linux --all-targets --target x86_64-unknown-linux-gnu` 통과(타입 검사) ·
+  서식 위반 0. ★ 리눅스 실행은 CI 가 본다 — 이 기계에서 이 시험을 돌릴 수단이 없다
+- 리포트: `docs/reports/debugs/2026-09-22_0715_cgroup_시험이_루트에_쓸_수_있다고_전제한다.md`
+
+---
+
 ## 2026-09-22 08:50 — 결함 205: K1 시험의 전제를 "도구가 있다" 에서 "봉인이 된다" 로 바꿨다
 
 - 계획: 없음(CI 가 찾은 결함)

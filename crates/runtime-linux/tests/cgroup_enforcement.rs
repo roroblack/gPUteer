@@ -20,6 +20,58 @@ fn parent() -> CgroupParent {
     CgroupParent::RootBypassingAncestorLimits
 }
 
+/// cgroup 루트에 하위 cgroup 을 **실제로 만들 수 있는가**.
+///
+/// ★★ 2026-09-22 결함 206 — 위 `parent()` 의 주석("WSL 은 루트를 써야
+///   한다")이 **전제로 굳어 있었다.** 루트에 쓰려면 대개 root 권한이
+///   필요한데, 비-root 리눅스(GitHub Actions 러너)에서 이 시험 7건이
+///   전부 `NotDelegated ... Permission denied` 로 실패했다.
+///   제품은 옳게 거부한 것이고, 틀린 것은 시험의 전제다
+///   (`CLAUDE.md` §4 — 한 플랫폼 통과를 다른 플랫폼 통과로 세지 않는다.
+///   같은 OS 안의 **권한 차이**에도 적용된다).
+///
+///   그래서 **제품이 아니라 파일시스템에 직접** 물어본다. 제품 함수로
+///   판정하면 제품이 망가져도 "환경 없음" 으로 조용히 건너뛰게 된다
+///   — 그건 회귀를 숨긴다(결함 205 와 같은 이유).
+fn cgroup_delegation_state() -> Result<(), String> {
+    let probe = std::path::Path::new("/sys/fs/cgroup").join(format!(
+        "gputeer-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    match std::fs::create_dir(&probe) {
+        Ok(()) => {
+            // 빈 cgroup 디렉터리는 rmdir 로만 지워진다(remove_dir 가 그것이다).
+            let _ = std::fs::remove_dir(&probe);
+            Ok(())
+        }
+        Err(e) => Err(format!("{}: {e}", probe.display())),
+    }
+}
+
+/// 위임이 없으면 `ENVIRONMENT-BLOCKED` 를 적고, **제품이 조용히 통과하지
+/// 않는지**만 확인한 뒤 `false` 를 돌려준다(호출한 시험은 거기서 끝낸다).
+///
+/// ★ 빈손으로 건너뛰지 않는다 — 상한을 못 거는데 자식이 그냥 돌아 버리면
+///   "보호된다" 고 믿으면서 보호 없이 도는 것이다(`CLAUDE.md` §0.4).
+fn require_cgroup_delegation(what: &str) -> bool {
+    let why = match cgroup_delegation_state() {
+        Ok(()) => return true,
+        Err(why) => why,
+    };
+    eprintln!("ENVIRONMENT-BLOCKED: cgroup 하위 생성이 거부됐다(비-root 로 보인다) — {what} 은 측정하지 않았다: {why}");
+    let refused =
+        create_constrained_child(&spec("/bin/true", &[]), LIMIT, "blocked-probe", &parent());
+    match refused {
+        Ok(_) => panic!("cgroup 을 못 만드는 환경인데 자식이 기동됐다 — 상한 없이 실행한 것이다"),
+        Err(error) => eprintln!("  (확인: 제품이 기동을 거부했다 — {error})"),
+    }
+    false
+}
+
 const LIMIT: u64 = 256 * 1024 * 1024;
 
 fn spec(program: &str, args: &[&str]) -> SpawnSpec {
@@ -60,6 +112,9 @@ fn wait_within(mut child: gputeer_runtime_linux::ConstrainedChild, limit: Durati
 /// 상한이 실제로 걸리고 자식이 그 cgroup 안에서 도는가.
 #[test]
 fn a_child_actually_runs_inside_the_cgroup() {
+    if !require_cgroup_delegation("a_child_actually_runs_inside_the_cgroup") {
+        return;
+    }
     let mut child =
         create_constrained_child(&spec("/bin/sleep", &["3"]), LIMIT, "runs-inside", &parent())
             .expect("자식 기동");
@@ -102,6 +157,9 @@ fn a_child_actually_runs_inside_the_cgroup() {
 ///   통과한다 — 실제로 **제한되는지**는 넘겨 봐야 안다.
 #[test]
 fn exceeding_the_limit_actually_kills_the_child() {
+    if !require_cgroup_delegation("exceeding_the_limit_actually_kills_the_child") {
+        return;
+    }
     // 32MiB 상한에 64MiB 를 잡으려 한다.
     let small = 32 * 1024 * 1024;
     let mut child = create_constrained_child(
@@ -131,6 +189,9 @@ fn exceeding_the_limit_actually_kills_the_child() {
 ///   살아남는 것을 같이 봐야 검사가 공허하지 않다.
 #[test]
 fn a_workload_within_the_limit_is_untouched() {
+    if !require_cgroup_delegation("a_workload_within_the_limit_is_untouched") {
+        return;
+    }
     let mut child = create_constrained_child(
         &spec(
             "/bin/sh",
@@ -151,6 +212,9 @@ fn a_workload_within_the_limit_is_untouched() {
 /// 붙잡힌 wait 을 다른 스레드에서 풀 수 있는가.
 #[test]
 fn a_blocked_wait_can_be_released_from_another_thread() {
+    if !require_cgroup_delegation("a_blocked_wait_can_be_released_from_another_thread") {
+        return;
+    }
     let child = create_constrained_child(
         &spec("/bin/sleep", &["99999"]),
         LIMIT,
@@ -185,6 +249,9 @@ fn a_blocked_wait_can_be_released_from_another_thread() {
 /// GPU 를 쥔 채 남는다.
 #[test]
 fn killing_the_cgroup_kills_grandchildren_too() {
+    if !require_cgroup_delegation("killing_the_cgroup_kills_grandchildren_too") {
+        return;
+    }
     let child = create_constrained_child(
         &spec("/bin/sh", &["-c", "sleep 99999 & sleep 99999"]),
         LIMIT,
@@ -257,6 +324,9 @@ fn killing_the_cgroup_kills_grandchildren_too() {
 /// 그때 모듈 문서의 "못 막는다" 를 같이 고치게 된다.
 #[test]
 fn a_determined_child_can_still_escape_the_cgroup() {
+    if !require_cgroup_delegation("a_determined_child_can_still_escape_the_cgroup") {
+        return;
+    }
     let dir = std::env::temp_dir().join("gputeer-escape-probe");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("증거 디렉터리");
@@ -326,6 +396,9 @@ fn a_determined_child_can_still_escape_the_cgroup() {
 /// **Agent 의 실제 경로는 한 번도 실행된 적이 없었다.**
 #[test]
 fn the_parent_the_agent_actually_uses_is_exercised() {
+    if !require_cgroup_delegation("the_parent_the_agent_actually_uses_is_exercised") {
+        return;
+    }
     // 1) 위임받은 subtree 를 실제로 만든다 — 운영자가 Agent 몫으로
     //    준비해 주는 것과 같은 모양이다.
     let delegated = std::path::Path::new("/sys/fs/cgroup/gputeer-delegated-probe");
