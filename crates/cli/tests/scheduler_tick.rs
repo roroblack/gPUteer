@@ -272,6 +272,40 @@ fn tick(keyring: &Path, db: &Path, extra: &[&str]) -> (bool, String) {
     run_cli(&args)
 }
 
+/// `scheduler-loop` 은 tick 과 **같은 인자**를 받고, 루프 인자만 더 붙인다.
+fn loop_run(keyring: &Path, db: &Path, interval_ms: &str, max_ticks: &str) -> (bool, String) {
+    let args: Vec<&str> = vec![
+        "scheduler-loop",
+        "--interval-ms",
+        interval_ms,
+        "--max-ticks",
+        max_ticks,
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "300000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+    ];
+    run_cli(&args)
+}
+
 fn job_state(db: &Path, job_id: &str) -> Option<JobState> {
     let store = CoordinatorJobStore::open(db).expect("job store");
     store.get(job_id).expect("조회").map(|job| job.state)
@@ -698,5 +732,124 @@ fn an_argument_error_cannot_impersonate_a_later_gate() {
             "심은 코드가 진짜 거부 코드로 인정됐다 — 사유 확인이 줄 시작을 안 본다: {output}"
         );
         assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+    }
+}
+
+/// ★★ **루프가 큐를 실제로 비운다** — 신뢰망 P1 의 마지막 고리.
+///
+/// 노드 둘 · Job 둘을 두고 루프를 세 번 돌린다. 두 Job 이 STAGING 으로 가고
+/// 세 번째 tick 은 빈 큐(`TICK_IDLE`)여야 한다.
+///
+/// ★ 이 시험이 **전에는 불가능했다** — 후보 선택이 예약을 몰라 두 번째 tick 이
+///   늘 같은 노드를 골라 막혔다(그 사실을 고정하던 덫을 2026-09-22 에 뒤집었다).
+#[test]
+fn the_loop_drains_the_queue_and_then_reports_idle() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 2);
+    queue_job(
+        dir.path(),
+        &keyring,
+        &db,
+        JOB_B,
+        "1102030405060708090a0b0c0d0e0f10",
+    );
+
+    // 간격 0 — 시험에서 기다릴 이유가 없다. 정책은 운영자가 정한다.
+    let (ok, output) = loop_run(&keyring, &db, "0", "3");
+    assert!(ok, "루프가 실패했다: {output}");
+    assert!(
+        output.contains("LOOP_DONE ticks=3 staged=2 idle=1 refused=0"),
+        "센 값이 기대와 다르다: {output}"
+    );
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+    assert_eq!(job_state(&db, JOB_B), Some(JobState::Staging));
+}
+
+/// 설정이 틀리면 **즉시 멈춘다** — 같은 실패를 영원히 반복하지 않는다.
+#[test]
+fn the_loop_stops_immediately_when_its_own_settings_are_wrong() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+    // 갱신 시점이 만료 뒤 — tick 이 TICK_ARGS_REFUSED 로 거부하는 설정이다.
+    let args: Vec<&str> = vec![
+        "scheduler-loop",
+        "--interval-ms",
+        "0",
+        "--max-ticks",
+        "5",
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "600000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+    ];
+    let (ok, output) = run_cli(&args);
+    assert!(!ok, "틀린 설정으로 계속 돌았다: {output}");
+    assert!(
+        output.contains("LOOP_STOPPED: 설정이 틀렸다"),
+        "멈추긴 했는데 이유가 다르다: {output}"
+    );
+}
+
+/// 루프 인자를 안 주면 **기본값을 지어내지 않고 거부한다**.
+#[test]
+fn the_loop_refuses_to_invent_its_own_policy() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+    for missing in ["--interval-ms", "--max-ticks"] {
+        let mut args: Vec<&str> = vec!["scheduler-loop"];
+        if missing != "--interval-ms" {
+            args.extend_from_slice(&["--interval-ms", "0"]);
+        }
+        if missing != "--max-ticks" {
+            args.extend_from_slice(&["--max-ticks", "1"]);
+        }
+        args.extend_from_slice(&[
+            "--control-db",
+            db.to_str().unwrap(),
+            "--submitter-keyring",
+            keyring.to_str().unwrap(),
+            "--submitter-member",
+            OWNER,
+            "--max-snapshot-age-ms",
+            "86400000",
+            "--best-fit-axes",
+            AXES,
+            "--coordinator-id",
+            COORDINATOR,
+            "--coordinator-term",
+            "3",
+            "--lease-ttl-ms",
+            "600000",
+            "--lease-renew-after-ms",
+            "300000",
+            "--lease-max-total-duration-seconds",
+            "86400",
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
+        ]);
+        let (ok, output) = run_cli(&args);
+        assert!(!ok, "{missing} 없이 돌았다: {output}");
+        assert!(
+            output.contains("LOOP_ARGS_REFUSED") && output.contains(missing),
+            "{missing} 를 짚어 말하지 않는다: {output}"
+        );
     }
 }

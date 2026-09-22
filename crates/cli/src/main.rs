@@ -41,6 +41,7 @@ mod import_manifest;
 mod issue_grant;
 mod out_file;
 mod plan_job;
+mod scheduler_loop;
 mod scheduler_tick;
 mod selftest;
 mod stage_job;
@@ -183,6 +184,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("issue-grant 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("scheduler-loop") => match scheduler_loop::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("scheduler-loop 실패: {error}");
                 ExitCode::FAILURE
             }
         },
