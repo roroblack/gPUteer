@@ -171,6 +171,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         &requirements,
         &Policy {
             maximum_snapshot_age_ms: max_snapshot_age_ms,
+            silent_after_ms: None,
         },
     );
 

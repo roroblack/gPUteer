@@ -42,6 +42,7 @@ fn gpu(node_id: &str, suffix: usize, available_vram_bytes: u64) -> GpuSnapshot {
 
 fn candidate(node_id: &str) -> CandidateSnapshot {
     CandidateSnapshot {
+        last_heartbeat_unix_ms: None,
         reservation: None,
         node_id: node_id.into(),
         inventory_revision: Some(1),
@@ -64,6 +65,7 @@ fn candidate(node_id: &str) -> CandidateSnapshot {
 fn hard_policy() -> Policy {
     Policy {
         maximum_snapshot_age_ms: MAX_AGE,
+        silent_after_ms: None,
     }
 }
 

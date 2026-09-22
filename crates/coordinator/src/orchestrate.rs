@@ -379,6 +379,7 @@ mod tests {
             job_requirements: requirements(),
             hard_filter_policy: Policy {
                 maximum_snapshot_age_ms: 20,
+                silent_after_ms: None,
             },
             best_fit_policy: BestFitPolicy {
                 axis_order: [

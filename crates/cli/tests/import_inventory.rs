@@ -183,6 +183,7 @@ fn an_imported_node_becomes_a_candidate_the_scheduler_actually_selects() {
         &requirements,
         &gputeer_scheduler::Policy {
             maximum_snapshot_age_ms: 60_000,
+            silent_after_ms: None,
         },
     );
     match report.resolution {

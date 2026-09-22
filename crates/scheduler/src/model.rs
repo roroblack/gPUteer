@@ -121,6 +121,12 @@ pub struct CandidateSnapshot {
     ///   만료 **의심** 표시(`expired_at_unix_ms`)는 여기 같이 실어 보여 주기만 한다.
     ///   그것으로 회수하지 않는다(2026-09-09 검수 기각).
     pub reservation: Option<CandidateReservation>,
+    /// 마지막 생존 신호를 본 시각. 신호가 아예 없으면 `None`.
+    ///
+    /// ★★ 2026-09-23 (신뢰망 P2) — 예약과 **같은 자리**(`pool_snapshot()`)에서 접어 넣는다.
+    ///   판정(`Live`/`Suspect`/`Silent`/`NoObservation`)은 `liveness.rs` 가 이미 한다 —
+    ///   여기서 다시 판정하지 않고 **사실(마지막 시각)만** 싣는다. 판정은 한 곳에서만 한다.
+    pub last_heartbeat_unix_ms: Option<u64>,
 }
 
 /// 후보가 지금 잡혀 있다는 사실.
@@ -160,6 +166,12 @@ pub struct PoolSnapshot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Policy {
     pub maximum_snapshot_age_ms: u64,
+    /// 이 시간을 넘도록 생존 신호가 없으면 새 일을 맡기지 않는다(신뢰망 P2).
+    ///
+    /// ★ `None` 이면 **이 축을 아예 보지 않는다.** 기본값을 지어내지 않는다 —
+    ///   얼마나 기다릴지는 배치마다 다르고, 이 저장소에 그 규범이 없다.
+    ///   `liveness.rs` 의 `silent_after_ms` 와 같은 뜻이다.
+    pub silent_after_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -199,6 +211,16 @@ pub enum MissingFact {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RejectionReason {
     MissingFact(MissingFact),
+    /// 정해진 시간 안에 생존 신호가 없다(신뢰망 P2).
+    ///
+    /// ★ **죽었다는 뜻이 아니다**(`liveness.rs` 가 `Dead` 를 두지 않는 것과 같은 이유).
+    ///   지금 새 일을 맡기기에 근거가 모자라다는 뜻이다.
+    NotLiveEnough {
+        /// 마지막으로 본 시각. 한 번도 못 봤으면 `None`.
+        last_heartbeat_unix_ms: Option<u64>,
+        /// 이 판정에 쓴 기준(정책값이며 측정값이 아니다).
+        silent_after_ms: u64,
+    },
     /// 다른 시도가 이 노드를 이미 잡고 있다(§A1 4 · `B′`).
     ///
     /// ★ 만료 의심 표시가 있어도 **여전히 잡혀 있는 것**이다 — 표시는 사람이 보라고 싣는다.

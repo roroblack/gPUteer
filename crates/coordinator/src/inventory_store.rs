@@ -539,6 +539,15 @@ impl CoordinatorInventoryStore {
             .map_err(map_sql_error)?;
         let registries = fetch_all_registries(&transaction)?;
         // 읽기만 한다 — 잠금을 잡지 않는다.
+        let liveness_table_exists: bool = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'coordinator_node_liveness'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sql_error)?
+            > 0;
         let reservations_table_exists: bool = transaction
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
@@ -557,6 +566,24 @@ impl CoordinatorInventoryStore {
             //   장비 목록(스냅샷)은 사실 그대로 두고, 예약은 따로 둔 채 여기서만 합친다.
             //   다른 곳에서 합치면 두 진실이 생기고, 어느 쪽이 맞는지 아무도 모르게 된다.
             //   전에는 이 축이 없어서 **같은 GPU 를 두 Job 에 줄 수 있었다.**
+            // ★★ 2026-09-23 (신뢰망 P2) — 생존 신호도 **여기서만** 접어 넣는다.
+            //   예약과 같은 자리다. 판정은 하지 않고 **사실(마지막 시각)만** 싣는다.
+            candidate.last_heartbeat_unix_ms = if liveness_table_exists {
+                transaction
+                    .query_row(
+                        "SELECT last_heartbeat_unix_ms FROM coordinator_node_liveness
+                         WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .optional()
+                    .map_err(map_sql_error)?
+                    .map(|raw| decode_u64(&raw, "liveness last_heartbeat_unix_ms"))
+                    .transpose()?
+            } else {
+                // 관측 테이블이 아예 없는 DB 는 본 적이 없는 것이다 — 없는 관측을 지어내지 않는다.
+                None
+            };
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)
                     .map_err(|error| InventoryStoreError::CorruptData(error.to_string()))?
@@ -1011,6 +1038,7 @@ fn project_candidate(
         None => (None, None, None, None, None, None, None, None),
     };
     CandidateSnapshot {
+        last_heartbeat_unix_ms: None,
         // ★ 예약은 여기서 채우지 않는다 — `pool_snapshot()` 한 곳에서만 접어 넣는다(결정 `B′`).
         reservation: None,
         node_id: registry.node_id,
@@ -1814,6 +1842,7 @@ mod tests {
             &job,
             &Policy {
                 maximum_snapshot_age_ms: 50,
+                silent_after_ms: None,
             },
         );
         for rejected in report.rejected {

@@ -32,6 +32,7 @@ fn job() -> JobRequirements {
 
 fn candidate(node_id: &str) -> CandidateSnapshot {
     CandidateSnapshot {
+        last_heartbeat_unix_ms: None,
         reservation: None,
         node_id: node_id.into(),
         inventory_revision: Some(1),
@@ -65,6 +66,7 @@ fn report(candidate: CandidateSnapshot, job: &JobRequirements) -> EligibilityRep
         job,
         &Policy {
             maximum_snapshot_age_ms: MAX_AGE,
+            silent_after_ms: None,
         },
     )
 }
@@ -484,6 +486,7 @@ fn zero_one_and_multiple_eligible_candidates_are_distinguished_without_ranking()
     let j = job();
     let policy = Policy {
         maximum_snapshot_age_ms: MAX_AGE,
+        silent_after_ms: None,
     };
     let none = evaluate_eligibility(
         &PoolSnapshot {
@@ -534,6 +537,7 @@ fn candidate_and_reason_order_is_independent_of_input_order() {
     let j = job();
     let policy = Policy {
         maximum_snapshot_age_ms: MAX_AGE,
+        silent_after_ms: None,
     };
     let mut a = candidate("node-c");
     a.node_state = Some(NodeState::Offline);
@@ -575,6 +579,7 @@ fn duplicate_node_ids_do_not_reintroduce_input_order_dependence() {
     let j = job();
     let policy = Policy {
         maximum_snapshot_age_ms: MAX_AGE,
+        silent_after_ms: None,
     };
     let mut first = candidate("same-node");
     first.node_state = Some(NodeState::Offline);
@@ -597,4 +602,83 @@ fn duplicate_node_ids_do_not_reintroduce_input_order_dependence() {
         &policy,
     );
     assert_eq!(forward, reverse);
+}
+
+/// 생존 신호가 끊긴 노드에는 **새 일을 맡기지 않는다**(신뢰망 P2).
+///
+/// ★ 세 가지를 한 시험에서 가른다 — 최근에 봤다 / 너무 오래됐다 / 한 번도 못 봤다.
+///   셋을 나눠 놓지 않으면 "한 번도 못 본 노드" 가 조용히 통과할 수 있다.
+#[test]
+fn a_node_without_recent_liveness_is_not_eligible() {
+    let silent_after_ms = 500;
+    let policy = Policy {
+        maximum_snapshot_age_ms: MAX_AGE,
+        silent_after_ms: Some(silent_after_ms),
+    };
+    let evaluate = |last: Option<u64>| {
+        let mut candidate = candidate("node-live");
+        candidate.last_heartbeat_unix_ms = last;
+        evaluate_eligibility(
+            &PoolSnapshot {
+                evaluated_at_unix_ms: NOW,
+                candidates: vec![candidate],
+            },
+            &job(),
+            &policy,
+        )
+    };
+
+    // 최근에 봤다 — 통과한다.
+    assert_eq!(evaluate(Some(NOW - 100)).rejected, vec![]);
+
+    // 너무 오래됐다 — 사유에 **마지막으로 본 시각과 기준**이 같이 담긴다.
+    let stale = evaluate(Some(NOW - silent_after_ms - 1));
+    assert!(
+        stale.rejected[0]
+            .reasons
+            .contains(&RejectionReason::NotLiveEnough {
+                last_heartbeat_unix_ms: Some(NOW - silent_after_ms - 1),
+                silent_after_ms,
+            }),
+        "오래된 노드를 거르지 않았거나 사유가 다르다: {:?}",
+        stale.rejected
+    );
+
+    // 한 번도 못 봤다 — `Silent` 와 원인이 다르지만 맡길 근거가 없는 것은 같다.
+    let never = evaluate(None);
+    assert!(
+        never.rejected[0]
+            .reasons
+            .contains(&RejectionReason::NotLiveEnough {
+                last_heartbeat_unix_ms: None,
+                silent_after_ms,
+            }),
+        "관측이 없는 노드를 통과시켰다: {:?}",
+        never.rejected
+    );
+}
+
+/// 기준을 **안 주면 이 축을 보지 않는다** — 기본값을 지어내지 않는다.
+///
+/// ★ 이게 없으면 "정책 없음" 이 조용히 "0ms 기준" 이 되어 **모든 노드가 탈락**한다.
+#[test]
+fn without_a_policy_the_liveness_axis_is_not_applied() {
+    let mut candidate = candidate("node-live");
+    candidate.last_heartbeat_unix_ms = None;
+    let actual = evaluate_eligibility(
+        &PoolSnapshot {
+            evaluated_at_unix_ms: NOW,
+            candidates: vec![candidate],
+        },
+        &job(),
+        &Policy {
+            maximum_snapshot_age_ms: MAX_AGE,
+            silent_after_ms: None,
+        },
+    );
+    assert_eq!(
+        actual.rejected,
+        vec![],
+        "기준을 안 줬는데 생존 축으로 걸렀다 — 운영자가 정하지 않은 규칙이 생긴 것이다"
+    );
 }

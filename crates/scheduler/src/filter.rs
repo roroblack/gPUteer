@@ -56,6 +56,26 @@ fn evaluate_candidate(
         reasons.push(RejectionReason::MissingFact(MissingFact::NodeId));
     }
 
+    // ★★ 2026-09-23 (신뢰망 P2) — 소식이 끊긴 노드에 새 일을 맡기지 않는다.
+    //   ★ 판정 기준이 **없으면 이 축을 보지 않는다** — 기본값을 지어내면 운영자가
+    //     정하지 않은 규칙이 조용히 생긴다. 판정 자체는 값 비교 하나다:
+    //     `liveness.rs` 의 등급(Live/Suspect/Silent)은 관측 여럿을 한꺼번에 볼 때 쓰고,
+    //     여기서는 이 후보 하나만 본다.
+    if let Some(silent_after_ms) = policy.silent_after_ms {
+        let silent = match candidate.last_heartbeat_unix_ms {
+            // 한 번도 못 본 노드와 보다가 끊긴 노드는 원인이 다르지만,
+            // **새 일을 맡길 근거가 없다**는 점은 같다.
+            None => true,
+            Some(last) => evaluated_at_unix_ms.saturating_sub(last) > silent_after_ms,
+        };
+        if silent {
+            reasons.push(RejectionReason::NotLiveEnough {
+                last_heartbeat_unix_ms: candidate.last_heartbeat_unix_ms,
+                silent_after_ms,
+            });
+        }
+    }
+
     // ★★ 2026-09-22 (§A1 4 · 결정 `B′`) — 이미 잡힌 노드는 후보가 아니다.
     //   전에는 이 축이 아예 없어서 **같은 GPU 를 두 Job 에 줄 수 있었다.**
     //   만료 의심 표시가 있어도 잡힌 것은 잡힌 것이다 — 표시는 사유에 실어 보여만 준다.

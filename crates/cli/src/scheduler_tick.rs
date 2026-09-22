@@ -231,6 +231,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             job_requirements,
             hard_filter_policy: Policy {
                 maximum_snapshot_age_ms: max_snapshot_age_ms,
+                silent_after_ms: None,
             },
             best_fit_policy,
             evaluated_at_unix_ms: now_unix_ms,
