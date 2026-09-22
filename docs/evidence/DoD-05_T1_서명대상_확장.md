@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-05
 claim: "signing.md §5 domain_tag 17종 중 9종이 ToCanonicalFields 로 구현되었고 참조 구현과 바이트 단위로 일치한다. 규칙 j(부호 있는 정수)가 신설되어 기존 벡터를 바꾸지 않고 int64 를 결정론적으로 인코딩한다. 중첩 서명 메시지의 규칙 i 재귀 적용 결과가 테스트로 고정되었다"
 status: PASS
-commit: 8ca27992e840b8aa64221615ecb5faf3524f435e
+commit: f8d39a55c493b8de98a17227d8b9466b2078daff
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -343,7 +343,7 @@ genesis/audit/release/invite proto 부재(`:77`), int32 경로 미실행(`:80`,
 몇 건씩 늘렸는지)까지는 추적하지 않았다 — "지금 40건" 이라는 사실만
 확인된 것이고, 그 증가 과정의 파일:줄 근거는 **확인 안 됨**이다.
 schema fingerprint(`:13`)는 지금 `proto/SCHEMA_FINGERPRINT.txt` 와
-일치해 유효하다. `raw_output` 의 117 tests 는 당시(commit `8ca2799`)
+일치해 유효하다. `raw_output` 의 117 tests 는 당시(commit `f8d39a5`)
 실행 기록이다.
 
 ### review_outcome

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-55
 claim: "관측·GPU 요구·명시 자원값과 caller-supplied `ProvenanceGate`만 받는 `gpu_scope_candidate()`가 I/O·clock·환경변수·난수·crypto·전역 상태 없이 입력 검증·정렬·`BTreeMap`/`BTreeSet` 계산만 수행하고, GPU를 `(available_vram, gpu_id)` 전체 튜플로 선택한 뒤 결과 ID를 재정렬해 동일 VRAM 동점과 입력 순서에도 결정적인 `ScopeCandidate` 전체를 만들며, provenance를 스스로 검증하지 않고 unverified·PARTITIONED·CUDA runtime 미해소·파생 VRAM을 typed error로 닫고 unknown/N/A를 긍정 값으로 발명하지 않음을 신규 테스트 14건, production 조기 반환 뮤테이션 2건, 독립 검수 1라운드 ACCEPTED와 감독자 scheduler 회귀 67건으로 확인했다"
 status: PASS
-commit: 2637e52d8c1057c20de534df56df7b428686a421
+commit: 0a6ce9121adb73e2458b9b08b960a0cb2c38f618
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — ScopeCandidate 순수 kernel, 신규 테스트 14건과 production 조기 반환 뮤테이션 2건"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-56
 claim: "`crates/runtime-nvml` 이 `libloading` 으로 NVML 을 런타임에 열어 실제 GPU 사실(UUID·이름·total/free/used VRAM·compute capability·MIG 모드·드라이버/CUDA 버전)을 읽고, NVML 부재를 빈 목록이 아니라 typed error 로 보고하며, MIG 를 지원 안 함/꺼짐/켜짐 세 상태로 구분하고, 장치 목록을 UUID 순으로 정렬해 열거 순서에 무관한 스냅샷을 만든다. 실물 RTX 4070 SUPER(x600)에서 읽은 값이 같은 기계의 `nvidia-smi` 출력과 UUID·이름·드라이버 버전·total VRAM·compute capability 에서 일치함을 교차 확인했고, GPU 없는 개발 기계에서는 정확히 `GPU_PROBE_UNKNOWN` 으로 실패함을 확인했다"
 status: PASS
-commit: 690ccf138205690880b8ea84ca63f1c270acbc33
+commit: 2c1d1d9414ed794d9228a228bfd80afd2123bf5b
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — crates/runtime-nvml 신설, gputeer gpu-probe 신설, x600 원격 실측"

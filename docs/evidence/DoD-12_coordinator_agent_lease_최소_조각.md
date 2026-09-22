@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-12
 claim: "Coordinator 가 ExecutionGrant.lease 에 서명된 Lease 를 채워 보내고, Agent 가 그 nested Lease 를 outer Grant 와 독립적으로 검증해 fence_epoch 를 FenceWatermark 에 기록한다. 위조된 nested Lease 서명과 만료된 Lease 는 각각 거부된다"
 status: PASS
-commit: 0be82e87f845931de710eac9c841004025909788
+commit: 595bf0f8a2403a7f1d66c4831c20158e5d5e75b4
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"

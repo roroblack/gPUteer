@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-49
 claim: "`DoD-48` 의 selected GPU 식별자를 inventory CAS·node reservation·STAGING 과 같은 트랜잭션에 영속화해, 재시작 시 유실되던 문제를 닫았다. canonical GPU ID 목록 검증, node-scoped inventory 존재 확인, operation payload binding, durable child row 복원·대조와 손상 fail-closed를 구현하고 binding 직후 fault 전체 rollback·replay/OperationConflict·Barrier 경쟁·DoD-43 무회귀·뮤테이션 2건·독립 검수 1라운드 ACCEPTED·감독자 coordinator 92 passed로 확인했다. 단 이는 local SQLite의 node-exclusive durable binding이며 Grant/Lease scope·NVML UUID provenance·GPU별 capacity accounting·reservation release·production wire는 완료하지 않았다"
 status: PASS
-commit: 3a85bed5236f8751e8ab616337abb6549704a964
+commit: f744ff82499eab945ae8db0e1218b1aa228ec6e0
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — selected GPU reservation child binding, operation payload·replay·손상 검증, fault/concurrency/negative test와 뮤테이션 검증"

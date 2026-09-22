@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-32
 claim: "crates/coordinator/src/lease_store.rs 의 renew_existing_within_duration() 이 revoke 여부·max_total_duration_seconds 만 검사하고 저장된 expires_at_unix_ms 가 이미 지났는지는 검사하지 않은 채 즉시 새 만료시각으로 UPDATE 하던 안전 공백을 닫았다 — revoke 검사 뒤·max-duration 검사 전에 expires_at_unix_ms <= now_unix_ms(DoD-26 과 동일한 경계 포함 규칙) 를 추가하고, 기존 LeaseStoreError::Expired(DoD-26) 를 재사용해 트랜잭션을 commit 한 뒤 UPDATE 없이 반환한다. crates/coordinator/src/lib.rs 의 build_renew_result() override 읽기 경로·일반 갱신 경로 양쪽 다 이 검사를 적용하고, 만료 시 signed outcome 없이 raw error 로 연결을 끊는다(proto 변경 없음). 기존 정상 갱신·MaxDurationExceeded·경계 단위 테스트 fixture 의 만료시각을 미래로 보정하면서도 각 테스트의 원래 판정 조건은 유지했고, 새 경계 단위 테스트 2건(expires_at==now → Expired·DB 레코드 완전 불변, expires_at==now+1 → 정상 갱신·UPDATE)과 신규 selftest 시나리오 47(짧은 TTL 로 실제 만료시킨 뒤 갱신 시도가 raw error 로 거부됨)을 추가했다"
 status: PASS
-commit: 9d4bdfd
+commit: e2f2016
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (cargo build·test·coordinator-agent-selftest 5회 연속 독립 재실행 — 코덱스 read-only 샌드박스 밖 실제 환경)"

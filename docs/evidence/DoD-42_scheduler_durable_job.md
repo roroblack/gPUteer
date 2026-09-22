@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-42
 claim: "scheduler 로드맵 조각 2를 'durable Job/Queue truth'로 정직하게 축소해 완료했다. 원안의 3~5일 규모 durable Job/Attempt/Queue·Lease/Grant 결합·전체 ControlStore를 하루에 끝냈다고 주장하지 않고 조각 2a로 한정했다 — SQLite CoordinatorJobStore가 BEGIN IMMEDIATE read-check-write로 검증 완료 submit의 멱등 저장과 SUBMITTED→PLANNING→QUEUED 전이, 결정적 queue 조회, deadline/queue-timeout/영구 불가능 실패를 durable하게 보존하며, 실제 barrier 동시 경쟁·경계·손상·뮤테이션 테스트와 자체 재검토 수정 2건을 독립 검수 1라운드 ACCEPTED 및 감독자 cargo test로 확인했다"
 status: PASS
-commit: c7883ad1f1b67abb636606c500dbd46b10695cb8
+commit: 60f06c455f23e44382dfa7d012a0577bdc6f925c
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — 자체 재검토 포함"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-08
 claim: "독립 적대적 검수(Codex CLI, 2026-08-16)가 지적한 결함 7건을 실측으로 확인하고 시정했다. 그 중 3건은 Rust 와 Python 참조 구현이 동일하게 틀려 벡터 대조로는 잡히지 않던 것이다. 검증 도구 자체의 결함 1건(--verify 가 재생성 대조를 하지 않음)도 시정했다"
 status: PASS
-commit: 44ce31a6ea75508adc2688416fc370e81c25f6c6
+commit: 0d96f9f70f07629b0db5a5b8b6477d160f30758f
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"

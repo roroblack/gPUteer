@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-53
 claim: "검증된 `ReplicaAck` 를 durable checkpoint/root anchor 에 묶어 재시작 뒤에도 보존되는 immutable signed observation으로 만들었다 — 공개 저장 API는 `&Verified<pb::ReplicaAck>`만 받고 `Verified::get()` 뒤에 body를 encode해 signature 포함 complete body의 BLAKE3 hash를 저장소가 직접 계산한 다음 `BEGIN IMMEDIATE`를 획득한다. 구조 검증, verified signer↔holder 대조, body/hash와 Attempt job/node/fence binding까지 재검사하는 DoD-52 anchor 조회, exact root 대조, replay 대조와 INSERT는 모두 같은 transaction 안에서 수행한다. `root_digest`는 BLAKE3-256이면서 정확히 32바이트인 경우만 허용하고, exact replay는 최초 observation을 유지하며 later `acked_at_unix_ms`는 별도 행으로 보존한다. raw load는 의도적으로 `Verified`가 아니고 전체 binding 손상을 fail closed한다. 독립 검수 1라운드 ACCEPTED와 감독자 coordinator 121 passed + 5 passed로 확인했다. `MIRRORED` 판정·전이, effective replica count와 membership/failure-domain 판정은 완료하지 않았다"
 status: PASS
-commit: 101f132dba92b861d37b63cbd71d9b7c23aeb63e
+commit: 7b25329dbfe3632b9a97af3ecd723119b95d927f
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — verified ReplicaAck durable checkpoint/root binding, replay·rollback·corruption negative test와 뮤테이션 검증"

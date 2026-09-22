@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-21
 claim: "write_once()(crates/checkpoint/src/atomic.rs)가 같은 (dir, name) 에 대한 동시 호출을 지원하지 않고 명시적으로 거부하는 계약을 실제로 강제하도록 고쳤다 — std::fs::File::try_lock() 기반 프로세스 간 파일 잠금을 final_path.exists() 첫 검사보다 먼저 잡고, 실패 시 CheckpointError::WriteInProgress 를 즉시 반환한다(무기한 대기 없음). 성공 시(Ok(true)/Ok(false) 둘 다) 락 파일을 자가 정리해 완결된 체크포인트 디렉터리에 흔적을 남기지 않는다. gc_partial() 은 자신이 try_lock 을 직접 시도해 아무도 쥐고 있지 않은 락 파일만 회수한다(활성 writer 보호). .write_once.lock 접미사(대소문자·후행 점/공백 무관)는 validate_relative_name() 에서 예약해, 이 락 경로와 실제 데이터 파일 경로가 충돌할 수 없게 원천 차단했다"
 status: PASS
-commit: a721df0124eb3e646cf2b1531c7bf19e7f22e868
+commit: 78f85ceda79e4e1d971915fdf46a832834eab0e8
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (cargo test + Edit/Write)"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-26
 claim: "CoordinatorLeaseStore::get_or_issue() 가 저장된 Lease 의 expires_at_unix_ms 를 확인해, 이미 만료된 Lease 는 재접속(process-restart rehydration, DoD-24)해도 다시 발급하지 않고 LeaseStoreError::Expired 로 거부한다. 만료 경계는 expires_at_unix_ms <= now_unix_ms(경계 포함)로 판정하며, 이는 crates/protocol/src/signing.rs 의 Lease 서명 검증(now >= expires_at)과 crates/agent/src/lib.rs 의 revoke 검사(expires <= now)가 이미 쓰는 경계 규칙과 일치한다 — 1라운드 검수가 처음 구현(엄격한 < 비교)이 이 경계와 어긋난다는 진짜 결함을 찾아 수정했다"
 status: PASS
-commit: 4c13cd3
+commit: 46b18a9
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현·수정) / claude-code (cargo build/test 독립 재확인)"

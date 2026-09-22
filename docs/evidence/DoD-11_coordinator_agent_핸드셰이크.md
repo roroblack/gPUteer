@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-11
 claim: "gputeer coordinator-stub 와 gputeer agent-stub 가 실제 별도 OS 프로세스(PID)로 TCP 를 통해 서명된 ExecutionGrant/AgentGrantAck 를 주고받는 정상 handshake 를 증명하고, 거부 경로 3종(위조 coordinator_signature, 위조 agent_signature, 동일 Grant wire bytes replay)을 gputeer coordinator-agent-selftest 가 자동으로 검증한다"
 status: PASS
-commit: d7aacdce52e7d2eeef90104e962df76390a7eabc
+commit: bbbc0589e6eb4c55610bc69a26d7462f15042d73
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -25,7 +25,7 @@ raw_output_bytes: 3533
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1"
-  cli_bin: "target/debug/gputeer.exe (dev profile, 2026-08-19 오늘 HEAD — Lease 최소 조각(commit 0be82e8, DoD-12)까지 반영된 소스에서 빌드. commit 필드(d7aacdc)는 핸드셰이크 자체가 완성된 시점을 가리킬 뿐, 이 바이너리의 빌드 시점이 아니다 — 혼동하지 않는다)"
+  cli_bin: "target/debug/gputeer.exe (dev profile, 2026-08-19 오늘 HEAD — Lease 최소 조각(commit 595bf0f, DoD-12)까지 반영된 소스에서 빌드. commit 필드(bbbc058)는 핸드셰이크 자체가 완성된 시점을 가리킬 뿐, 이 바이너리의 빌드 시점이 아니다 — 혼동하지 않는다)"
 protocol_versions:
   schema_version: "1"
   canonical_spec: "docs/protocol/signing.md v1"

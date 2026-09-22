@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-09
 claim: "find_resume_point_for 는 job_id·attempt_id 가 다른 체크포인트, files 가 빈 매니페스트, checkpoint_id 가 디렉터리명과 다른 매니페스트를 재개 후보에서 제외한다."
 status: PASS
-commit: 78c39323b9a73795ff09cfe2579ee23113242c7a
+commit: 7ae2b0b06e19c25a6e8a9672ea1c54ea670a8828
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -130,7 +130,7 @@ raw_output_bytes  == 실제 크기            검사기가 강제한다
 > **없는 것보다 나쁜 기록**이 된다.
 
 ```text
-당시 limitations                          지금 (커밋 7e57538)
+당시 limitations                          지금 (커밋 ba4fe35)
 ──────────────────────────────────────────────────────────────────────
 write_checkpoint 실패 후 잔여물이 남는다   해결 — .publication-failed 마커로 배제
 startup_gc 가 등록된 .tmp 도 지운다        해결 — 매니페스트 등록분은 보존
@@ -141,7 +141,7 @@ startup_gc 동시 실행 NotFound 경합         해결 — ★ 단 두 번 걸�
                                            공유하는 재시도 헬퍼(atomic.rs::
                                            retry_tolerating_race)로 통합한
                                            뒤 8회 연속 통과로 확인했다
-                                           (커밋 8af8262).
+                                           (커밋 f1fedc4).
 DurabilityState 가 파일 연산과 무관하다    해결 — 상태별 write-once 사이드카로 기록
 
 LATEST 포인터를 쓰지 않는다                ★ 여전히 미수정 (의도적)

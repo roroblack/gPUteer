@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-03
 claim: "JobManifest 와 Lease 의 서명 필드를 제외한 전 필드가 canonical 서명 대상에 포함되며, 각 필드가 실제로 서명 결과에 영향을 준다. Rust 와 Python 참조 구현이 전 필드 메시지에서 바이트 단위로 일치한다"
 status: PASS
-commit: 13795c604c74c5c9bb5bd0104a5338407d03f3d7
+commit: f91645cf013628e994173d2f8ceb02b895e2098f
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"

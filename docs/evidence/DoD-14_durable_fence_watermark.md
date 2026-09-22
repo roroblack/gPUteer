@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-14
 claim: "FenceWatermark(Lease epoch 강등 방어)가 SQLite 파일에 영속되어 Agent 프로세스 재시작을 넘어 유지된다. Agent 의 최초 Grant 검증·Lease 갱신 검증 두 호출부 모두 DurableFenceWatermark 를 쓰며, 열 수 없거나(:memory: 등) 비영속인 저장소는 fail closed 로 거부한다. 정책 거부(낮은 epoch)와 저장소 장애(I/O·락 타임아웃)는 서로 다른 오류로 구분된다"
 status: PASS
-commit: 90d5da9ba56e08ccba472d8c7b2611eb0831add2
+commit: 47ba0c019e2146907def5063117bec31d82ac5cf
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -25,7 +25,7 @@ raw_output_bytes: 22650
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1"
-  cli_bin: "target/debug/gputeer.exe (dev profile, commit 90d5da9 에서 빌드)"
+  cli_bin: "target/debug/gputeer.exe (dev profile, commit 47ba0c0 에서 빌드)"
 protocol_versions:
   schema_version: "해당 없음 — 이 조각은 Protocol 서명 대상 메시지를 바꾸지 않는다. fence_db_path 는 Agent 로컬 설정이지 서명 필드가 아니다"
   canonical_spec: "docs/protocol/signing.md v1 (변경 없음)"

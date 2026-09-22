@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-13
 claim: "Coordinator 와 Agent 가 같은 TCP 연결에 이어서 서명된 RenewLeaseRequest/RenewLeaseResult 왕복으로 Lease 를 갱신한다. RenewLeaseResult 는 새로 서명 대상 메시지로 승격됐다(이전에는 서명 필드가 없어 SUPERSEDED/QUARANTINED 같은 정책 거부를 누구나 위조할 수 있었다). Agent 는 결과 서명·request_nonce echo·nested 새 Lease 독립 서명·epoch 단조성(낮은 epoch 거부 + 높은 epoch 도 이 조각 범위에서는 정책상 거부)을 전부 확인한 뒤에만 보유 Lease 를 교체한다. Coordinator 도 요청의 fence_epoch 을 자신이 기억하는 값과 대조해 거부한다"
 status: PASS
-commit: b67e678d1ca65f1b965b46629882e4002000af47
+commit: 666cf10cb2acd7be79da9e4cc053d29d03b6f26e
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -25,7 +25,7 @@ raw_output_bytes: 18853
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1"
-  cli_bin: "target/debug/gputeer.exe (dev profile, commit b67e678 에서 빌드)"
+  cli_bin: "target/debug/gputeer.exe (dev profile, commit 666cf10 에서 빌드)"
 protocol_versions:
   schema_version: "1 (RenewLeaseResult 의 인증 필드는 이번에 처음 추가됐다 — 이전 버전과의 마이그레이션 대상이 없어 schema_version=1 로 시작)"
   canonical_spec: "docs/protocol/signing.md v1 (§5 domain_tag 25종째 gputeer/v1/lease-renew-result, §6 규칙 i)"

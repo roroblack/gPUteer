@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-62
 claim: "`crates/coordinator/src/reservation_release.rs` 의 `CoordinatorReservationReleaseStore` 가 노드 예약 해제를 하나의 `BEGIN IMMEDIATE` 안에서 원자적으로 수행하되, **오늘 정직한 호출은 아무 예약도 풀지 못한다**. `DoD-49` 가 미뤄 둔 release 를 만들면서 초안은 '검증된 terminal `AttemptReport` 가 실행 종료의 증명' 이라고 전제했는데 **그 전제가 틀렸다** — `DoD-51` evidence 가 '저장 성공은 프로세스 종료를 증명하지 않으며 reservation release 의 충분조건이 아니다' 라고 직접 적어 뒀고 독립 검수가 이를 반박했다. 그래서 계획서의 '안전한 release proof 최소 형태' 4조건 중 1번만 코드로 확인하고, 2·4번은 `ReleaseAuthorization` 의 진술로 요구하며, 3번(전이 결합)은 **이 API 로 만족시킬 수 없음을 명시**한다. 저장된 증거 행 하나로는 풀 수 없고(재검증한 `Verified` 와 바이트 단위로 같아야 한다), 다른 attempt 가 잡고 있는 예약은 절대 지우지 않는다"
 status: PASS
-commit: 65efdc1ec142b7556132c06a5228685547ef4b5c
+commit: 9650cbb293471e2b7b1aa5545950d6a4341776ac
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — reservation_release 신설, 통합 테스트 20건, 뮤테이션 14건"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-17
 claim: "RevokeLeaseNotice 는 실제로 서명해 FrameType::LeaseRevoke 프레임으로 왕복시키면 IngressMessage::LeaseRevoke variant 로 정확히 디스패치되고, 디코드된 페이로드 필드(lease_id/fence_epoch/cause/issued_at_unix_ms)가 원본과 정확히 일치한다. 위조된 coordinator_signature 는 프레이밍 계층(FramingError::Verify)에서 거부된다 — 배선 자체는 이전 세션부터 있었지만, 실제 서명·검증·payload 무결성을 확인하는 테스트는 이번이 처음이다"
 status: PASS
-commit: 06766d56a3072533e658acbb5bf17ebfd7ebc264
+commit: a02ea148bafe26d993a9ea202e25f8154e49dd6e
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"

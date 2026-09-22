@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-47
 claim: "scheduler 로드맵 조각 5b(inventory revision 기반 CAS reservation)를 완료해, `DoD-46` 이 명시적으로 인정했던 자원 중복 선택 위험을 닫았다. CandidateSnapshot의 revision token을 inventory projection부터 선택까지 보존하고, operation replay→revision 비교→node-exclusive reservation→Attempt/Lease/fence→Job STAGING→operation 기록을 하나의 BEGIN IMMEDIATE transaction에서 원자 처리하며 CAS·점유 충돌을 재시도 없이 거부함을 구현·독립 검수 1라운드 ACCEPTED·감독자 coordinator 테스트 86/86으로 확인했다. 단 node-exclusive라 같은 node의 다른 GPU도 동시에 쓸 수 없고 release가 없으며 private orchestration kernel은 production run()에 연결되지 않았다"
 status: PASS
-commit: 68518647b26d60f0526438009928461ebe52cab7
+commit: b929472989872443f64e84daa5c75b6d8729ffc2
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — inventory revision projection, node-exclusive CAS staging과 실제 파일 DB 동시성·뮤테이션 검증"

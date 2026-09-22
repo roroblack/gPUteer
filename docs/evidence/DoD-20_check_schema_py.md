@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-20
 claim: "tools/canonical/check_schema.py 를 신규 구현했다 — reference_canonical.py 의 SCHEMAS 딕셔너리(서명 대상 메시지 필드 표를 손으로 옮겨 적은 것)를 protoc --descriptor_set_out 으로 뽑은 FileDescriptorSet 과 구조적으로 대조해, field number/이름/타입/nested 참조 불일치를 잡아낸다. field 90(서명 필드)은 canonical_encode() 가 번호로만 무조건 건너뛰므로 타입 비교에서 명시적으로 제외하고(번호·이름은 그대로 검사), derived hash field(manifest_hash)는 INFO 로만 보고한다. 현재 저장소 상태에서 실행하면 오류 0건(경고 42건은 SCHEMAS 가 서명 대상만 다루는 설계라 정상). 실행 환경 오류(protoc 없음/컴파일 실패/임시 파일 I/O 실패/descriptor 디코드 실패)는 전부 exit(2) 로, schema mismatch 는 exit(1) 로 구분된다"
 status: PASS
-commit: 589ed2b44df682b938db49236af7d82c486d3939
+commit: 1a419f8ffa0675a89a7506044fc66abefb291081
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + python + protoc)"

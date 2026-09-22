@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-41
 claim: "scheduler 로드맵 조각 1(순수 hard-filter kernel)을 완료했다. 9단계 로드맵 중 첫 조각이며, Coordinator 연결·실제 자동 매칭은 하지 않는다. 1차 독립 검수가 실제 보안 결함 2건 (isolation_class 축 오류·빈 identity MissingFact 우회)을 찾아 2라운드에서 근본 수정, 2차 검수 ACCEPTED — 고정 PoolSnapshot·JobRequirements·Policy만 받는 evaluate_eligibility()가 Node/Risk/freshness·보안 축·GPU/CPU/RAM/workspace·owner 정책을 fail-closed로 판정하고, 복수 적격이면 winner를 고르지 않고 RankingRequired를 반환함을 33개 테스트와 두 회귀 뮤테이션으로 확인했다"
 status: PASS
-commit: 6ec46a1c6d1a3cd6309787262ef1e6a8c57505bd
+commit: 5ea414a106acd6c37029a3c10597c49682a5a0c1
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — 2라운드"

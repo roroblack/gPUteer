@@ -3,7 +3,7 @@ schema_version: 2
 id: P0-02
 claim: "기준선 §32 의 `P0-02`(Windows AppContainer + CUDA, S2 실험적)를 실측했다. **x600(RTX 4070 SUPER · 그 Windows 빌드 · package identity 없는 AppContainer)에서** 프로파일 생성·고유 SID·컨테이너 안 프로세스 실행·Python 실행·C 확장 로드(`zlib`·`_socket`)를 확인했다. **가둠은 개발 기계에서 따로 쟀다** — 컨테이너 안에서 호스트 임시 파일을 `type` 하면 종료 코드 1, 바깥에서는 0, 보안 속성을 빼면 안쪽도 0 이다(`P0-02_가둠_대조_재실측_2026-09-10.txt`). ★ 거부 **이유**(오류 코드·메시지)는 원문에 없다 — 종료 코드가 보안 속성에 따라 갈린다는 것까지다. 그러나 x600 에서 **`torch.cuda.is_available()` 까지 도달하지 못했다** — `torch/__init__.py:14` 의 `import ctypes` 가 `_ctypes.pyd` 초기화 실패(1114)로 죽는다. DLL 을 하나씩 열어 보니 **시험한 DLL 중 `ole32.dll` 로드에서도 1114 가 관측됐다** — `_ctypes` 실패와의 인과는 확인하지 않았다. `combase.dll` 은 **로드**됐다(COM 기능 실행은 안 쟀다). ★ 그러므로 이 스파이크는 **전체 질문에 답하지 못했다** — `status: INCONCLUSIVE`. 잰 좁은 구성에 대한 판정은 decision 에 가른다"
 status: INCONCLUSIVE
-commit: 52d72b9
+commit: 32100bb
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — SSH 로 x600 원격 실측. AppContainer primitive(신규 300여 줄)·프로브 2종 신설, 여섯 차례 측정"

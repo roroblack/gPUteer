@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-63
 claim: "`ADR-033` §7 의 **이웃 신고**(관측 층) wire 메시지를 신설했다. `proto/lease.proto` 의 `NeighborUnreachableReport` 는 **판정을 담는 필드가 하나도 없다** — §7 이 '관측을 판정 결과로 승격하지 않는다' 고 못박았으므로 `is_dead` 같은 값을 넣지 않았고, 담기는 것은 신고자가 본 사실(관측 시각)뿐이다. 정족수 단위는 `ADR-033` §8 조건 3 원문대로 **기계**(`reporter_node_id`)다. `Lifetime::ShortLived` 로 재생을 막고, canonical/서명/프레이밍 체인 전체와 Python 참조 구현 바이트 교차검증 벡터 2건을 갖췄다. ★ 이 메시지가 증명하지 **않는** 것 — 신고자가 정당한 풀 이웃인지(멤버십 해소 없음), 그 장치가 주장한 기계 ID 의 실제 소유자인지, 수신 Coordinator 가 맞는지 — 은 전부 **테스트로 고정된 열린 구멍**이다. 부수적으로 이 저장소가 다섯 번 겪은 '손으로 쓴 domain 목록이 낡는' 결함의 **남은 두 자리**(규범 문서·Python 참조 구현)를 3자 대조 테스트로 닫았다"
 status: PASS
-commit: e13b15ad509092552b137c4acb7dae2109a311cc
+commit: 977d67132a13d7d4db37809b1f4a27d0a0746924
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — proto 신설, canonical/signing 체인, framed_ingress dispatch, 거부 경로 테스트 8건, 3자 domain 대조 테스트"

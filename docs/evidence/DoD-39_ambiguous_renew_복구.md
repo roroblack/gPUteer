@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-39
 claim: "자동 재접속 루프 로드맵 조각 5(원래 'durable request ledger')를 오늘의 설계 조사가 정직하게 재범위했다 — 진짜 공백은 '정확히 한 번 처리'가 아니라 가용성 공백이었다: Agent 가 RenewLeaseRequest 전송 뒤 결과를 받기 전에 연결이 끊기면 SessionError::AmbiguousRenew 로 분류돼 지금까지는 즉시 fatal 종료했다. 이제 명시적 게이트(--recover-ambiguous-renew-from-durable-lease)가 켜졌을 때만 bounded reconnect 후 기존 Grant/ACK 경로(get_or_issue())로 최신 저장 Lease 를 재조회하고 새 nonce 로 새 Renew 를 보낸다. 1차 독립 검수가 legacy Coordinator + 이 게이트 오조합 시 자동 복구가 실제로는 '재조회'가 아니라 '그 순간 새로 조작된 Lease 발급'이 되는 진짜 안전 결함을 찾았다 — proto/job.proto 의 ExecutionGrant 를 schema v2 로 승격해 서명 대상 필드 lease_from_durable_store 를 순수 추가하고, Coordinator 는 lease_store.is_some() 일 때만 true 로 서명하며, Agent 는 이 서명된 비트가 true 가 아니면 ACK·checkpoint·새 Renew 전에 fatal 거부하도록 고쳐 닫았다. lease_store.rs·SQLite 스키마·lease_requests 테이블 같은 범용 request ledger 는 만들지 않았다 — 로드맵 원안보다 훨씬 작은 범위다"
 status: PASS
-commit: 3a76a107147e985836b537479cc5da1093b2d313
+commit: 17056934e316b9e5f5da1c3c8caa142486aa8cd3
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현 2라운드) / claude-code (cargo build·test·canonical self-test/verify·coordinator-agent-selftest 5회+5회+10회 독립 재실행 — 코덱스 샌드박스 밖 실제 환경)"

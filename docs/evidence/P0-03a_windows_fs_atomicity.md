@@ -3,7 +3,7 @@ schema_version: 2
 id: P0-03a
 claim: "기준선 §18.2 의 체크포인트 확정 절차(tmp -> fsync -> rename -> fsync(dir))가 Windows/NTFS 에서 성립하는지 실측하고, 성립하지 않으면 수정안을 도출한다"
 status: PASS
-commit: 2fd847628b4cfec54cbafc41cb5c4b5a9c79f66a
+commit: 4478fd7840fda877a60a0a83d0d4ff426a79dee8
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + python)"

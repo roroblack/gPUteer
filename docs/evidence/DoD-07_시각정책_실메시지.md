@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-07
 claim: "signing.md §9 의 세 시각 정책이 실제 proto 메시지에서 서로 다르게 동작한다. §9 표에 없던 6종은 ADR-029 로 Lifetime::Evidence 를 부여했고, 만료되지 않으면서 observed_at 을 노출한다(강제는 타입이 아니라 테스트가 한다). 단수명 경로가 실메시지(ExecutionGrant · RenewLeaseRequest)로 처음 검증되었다"
 status: PASS
-commit: 3120688ad3f82c61c3c913d2fc18e2b7207c5932
+commit: a7ee752feb4adf4f56c6bf008236577686da9f0d
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -307,7 +307,7 @@ SCHEMA_FINGERPRINT  불변
 > 그러나 그 뒤 동작이 바뀐 부분을 표시하지 않으면 **읽는 사람을 오도한다.**
 
 ```text
-당시                                        지금 (DoD-10 · 커밋 e188cce 이후)
+당시                                        지금 (DoD-10 · 커밋 db3dc5e 이후)
 ──────────────────────────────────────────────────────────────────────────
 evidence_is_not_replay_checked              evidence_has_no_replay_defense_and_says_so
 증거는 require_replay_checked() 를 통과한다  ★ 거부한다

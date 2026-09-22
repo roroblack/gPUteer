@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-37
 claim: "자동 재접속 루프 로드맵 조각 4(session dispatcher + transport 오류 격리)를 구현했다. DoD-35 가 만든 반복 accept 루프의 기반 위에, crates/coordinator/src/lib.rs 의 인라인 Grant 처리 로직을 serve_one_connection()/serve_one_connection_impl() 로 추출하고, 새 CoordinatorSessionError{Transport, Protocol, Storage} 로 오류를 분류했다 — transport/protocol 오류는 로그 후 다음 accept 로 진행(--max-connections 는 성공이 아니라 accept 성공한 연결 시도 수를 세어 무한 재시도를 막는다), storage 오류는 즉시 run() 을 Err 로 종료하는 fail-closed. 1차 구현이 Resume 처리 경로(classify_resume() 호출부)의 SQLite 조회 오류를 서명된 UNAVAILABLE 응답으로 흡수해 fail-closed 분기에 도달하지 못하는 진짜 안전 결함을 남겼으나, 독립 검수 1라운드가 이를 찾아 반려했고 2라운드 수정이 LeaseStoreError 를 정책 판정(NotFound/IdentityConflict/Revoked/Expired, 정상 서명 응답)과 진짜 저장소 장애(Io/LockTimeout, CoordinatorSessionError::Storage 로 fail-closed)로 명확히 구분해 닫았다. 이 수정 과정에서 DoD-36 이 기록한 시나리오 60(durable store 없이 Resume 시 서명된 UNAVAILABLE 반환)의 기대 동작이 '설정 오류를 fail-closed 로 처리'로 의도적으로 강화됐다 — 독립 검수가 이 변경 방향이 fail-closed 원칙과 일관됨을 확인했다. coordinator-agent-selftest 시나리오 61~64 신설, 기존 1~60개는 이 의미 변경 1건(시나리오 60)을 제외하고 전부 회귀 없음"
 status: PASS
-commit: 5a69ee3
+commit: ba6f0eb
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현 2라운드) / claude-code (cargo build/test·coordinator-agent-selftest 5회 연속 독립 재실행 — 매 라운드마다, 코덱스 read-only 샌드박스 밖 실제 환경)"

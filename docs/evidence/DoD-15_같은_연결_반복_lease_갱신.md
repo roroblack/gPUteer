@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-15
 claim: "Coordinator 와 Agent 가 같은 TCP 연결에서 RenewLeaseRequest/RenewLeaseResult 왕복을 N 회(N=3 으로 실측) 반복할 수 있다. 각 회차는 독립적으로 서명·검증되고, 회차별로 분리된 nonce(lease_id + round 유도)를 써서 InMemoryReplayGuard 의 Duplicate 거부를 피한다 — 설계 단계에서 코드 경로로 확정한 대로, round 를 nonce 입력에 섞지 않으면 두 번째 왕복부터 반드시 실패한다"
 status: PASS
-commit: bc58623db007988aab401eb56fcc1255ef80b8ac
+commit: 8e5c38420eed55eff7d2c39373db1024b95fae72
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -25,7 +25,7 @@ raw_output_bytes: 21097
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1"
-  cli_bin: "target/debug/gputeer.exe (dev profile, commit bc58623 에서 빌드)"
+  cli_bin: "target/debug/gputeer.exe (dev profile, commit 8e5c384 에서 빌드)"
 protocol_versions:
   schema_version: "해당 없음 — 이 조각은 Protocol 서명 대상 메시지를 바꾸지 않는다. renew_rounds 는 CLI/설정값이지 서명 필드가 아니다. round 는 nonce 유도 입력일 뿐 RenewLeaseRequest.nonce 필드 자체의 구조는 그대로다"
   canonical_spec: "docs/protocol/signing.md v1 (변경 없음)"

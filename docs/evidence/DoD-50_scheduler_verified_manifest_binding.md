@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-50
 claim: "검증된 signed `JobManifest` 를 durable 하게 묶는 저장 경로를 만들었다 — 저장 API 는 `&Verified<pb::JobManifest>` 만 받아 미검증 Manifest 가 저장될 수 없고, load 결과는 의도적으로 `Verified` 가 아니라 재검증 없이는 쓸 수 없다. accepted Job·Manifest body·verified signer·재계산 hash·idempotency를 단일 `BEGIN IMMEDIATE` transaction에 결합하고 identity/hash 불일치·fault rollback·replay conflict·typed corruption·legacy migration·body device identity 손상·뮤테이션 2건·독립 검수 1라운드 ACCEPTED·감독자 coordinator 99 passed로 확인했다. membership resolution, `JobRequirements` projection, 기본 `MIRRORED` durability 소비, Grant/Lease scope, `COMMITTED` submission과 production wire는 완료하지 않았다"
 status: PASS
-commit: 5132e486cddb9865e55802dc9b0ae02c8c7a24af
+commit: 9be0253cb7eee81979e0b95634fc93584e91d765
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — verified signed JobManifest durable binding, replay·fault·corruption·migration negative test와 뮤테이션 검증"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-43
 claim: "scheduler 로드맵 조각 2b 를 'single-node local atomic STAGING kernel'로 완료했다. 조각 2 전체나 분산 COMMITTED를 끝냈다고 주장하지 않고 2b-1로 한정했다 — SQLite CoordinatorStagingStore의 stage_queued_with_lease()가 한 BEGIN IMMEDIATE transaction 안에서 fence epoch 채번·Attempt/node/Lease 삽입·QUEUED→STAGING 전이·operation idempotency 기록을 전부 원자 처리하며, rollback epoch 미소비·최초 결과 재시도·불변 identity/epoch 손상 검출·기존 Lease API 무회귀·실제 두 connection 경쟁과 뮤테이션 2건을 자체 재검토 수정 5건, 독립 검수 1라운드 ACCEPTED 및 감독자 cargo test로 확인했다"
 status: PASS
-commit: 015de6dc2bd15bbea186739368bd34dae85d9522
+commit: d8146323f45c3c27931f40ed911de93d1284846a
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — 자체 재검토 5건 포함"

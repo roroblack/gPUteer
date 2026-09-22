@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-02
 claim: "실제 prost 생성 메시지에서 canonical 규칙 a~i 가 유지되며, to_fields 변환 계층이 Python 참조 구현과 바이트 단위로 일치한다. 서명 대상에서 빠진 필드는 전부 명시적으로 선언되어 있다"
 status: PASS
-commit: e7b72693e2478b6ab7f7a112e5b44966f793a9ba
+commit: 2c066e2421b6d40775eefc23d2249395171e6d2f
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -339,7 +339,7 @@ Windows 단일 플랫폼·float 경로 미검증 limitation 은 지금도 유효
 
 ### 메타데이터
 
-`raw_output` 의 "55 tests"·"15 벡터"는 당시(commit `e7b7269`) 실행
+`raw_output` 의 "55 tests"·"15 벡터"는 당시(commit `2c066e2`) 실행
 기록이다 — 지금 `tests/vectors/canonical_v1.json` 은 40건이고
 `reference_canonical.py --verify` 도 40건 전부 통과한다. 과거 기록과
 지금 상태를 혼동하지 않는다.

@@ -3,7 +3,7 @@ schema_version: 2
 id: ENV-03
 claim: "사용자가 임시로 제공한 원격 기계 remote5090 가 실제 네이티브 Linux + NVIDIA GPU 환경인지 실측하고, 이 저장소가 Linux 에서 처음으로 빌드·테스트됐을 때 무엇이 통과하고 무엇이 안 통과하는지 확정한다"
 status: PASS
-commit: 63a0e781ffb0febe3ad0362b15b8badf6698d908
+commit: fec5a383f2984e436668746712df254b2c141229
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + ssh + cargo)"

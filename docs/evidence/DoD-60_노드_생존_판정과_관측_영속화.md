@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-60
 claim: "`crates/scheduler/src/liveness.rs` 의 `classify_node_liveness()` 가 노드 자기보고(heartbeat)의 신선도를 순수하게 분류하고, `crates/coordinator/src/node_liveness_store.rs` 의 `CoordinatorNodeLivenessStore` 가 검증된 heartbeat 를 재시작 너머로 남기며, 그 저장이 실제 wire 경로(시나리오 92)를 거쳐 도달함을 확인했다. 커널에는 `Dead` 판정이 **없다** — `ADR-033` §7 이 '연락이 안 된다 != 죽었다' 를 못박았고, 가장 나쁜 판정인 `Silent` 는 사실 진술이지 재배정 결정이 아니다. 저장소는 노드당 한 행만 유지하고(무한 이력을 만들지 않는다), 늦게 도착한 옛 관측이 최신을 밀어내지 않으며, 승인 없는 장치 교체를 거부하되 운영자 승인 경로(`rebind_device`/`cancel_rebind`)를 제공한다"
 status: PASS
-commit: 33182ed057244cb69b9a81b235cd9535ef8aa64e
+commit: 43ef73d6505b33d853df467fc19c959f5833b57a
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — liveness 순수 커널 신설, node_liveness_store 신설, coordinator heartbeat 수신부 연결, selftest 시나리오 92"

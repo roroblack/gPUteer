@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-16
 claim: "Coordinator 가 SQLite 파일에 발급한 Lease 의 신원(lease_id/job_id/attempt_id/holder_node_id)과 epoch/만료 시각을 영속해, 프로세스 재시작 후에도 자신이 무엇을 발급했는지 기억한다. --lease-db 를 안 주면(기존 시나리오 전부) 이 조각 이전과 완전히 같은 레거시 경로(그 실행의 CLI 인자만 신뢰)를 그대로 쓴다 — 회귀가 없다. 최초 발급은 저장된 값이 CLI 인자보다 우선하고, 갱신 요청의 fence_epoch 대조도 저장된 값 기준이다"
 status: PASS
-commit: 1195af0b687752d21fd6f0348ee8640e06f28acb
+commit: 334cc52819e119816e2cfbec7518d82d1cb0c32b
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -25,7 +25,7 @@ raw_output_bytes: 24669
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1"
-  cli_bin: "target/debug/gputeer.exe (dev profile, commit 1195af0 에서 빌드)"
+  cli_bin: "target/debug/gputeer.exe (dev profile, commit 334cc52 에서 빌드)"
 protocol_versions:
   schema_version: "해당 없음 — 이 조각은 Protocol 서명 대상 메시지를 바꾸지 않는다. lease_db_path 는 Coordinator 로컬 설정이지 서명 필드가 아니다"
   canonical_spec: "docs/protocol/signing.md v1 (변경 없음)"

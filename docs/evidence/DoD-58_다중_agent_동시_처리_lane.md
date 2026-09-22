@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-58
 claim: "`crates/coordinator/src/multi_agent.rs` 와 `crates/agent/src/multi_agent.rs` 가 여러 Agent 를 동시에 처리하는 별도 lane 을 제공하고, 그 **동시성이 구조적으로 증명된다** — 각 세션이 요구된 수의 세션이 동시에 열릴 때까지 기다리는 관문 때문에 순차 서버는 통과할 수 없다. 두 Agent 가 각자 다른 신원으로 Hello 를 보내고 각자 다른 Lease 를 받아 각자 ACK 까지 마치는 것을 별도 OS 프로세스 3개(coordinator + Agent 2)로 확인했다. `DoD-40` 이 '2~4일 아키텍처 변경' 으로 이월했던 것을 기존 순차 `run()` 을 건드리지 않고 별도 lane 으로 열어, 기존 91개 시나리오에 회귀가 없다"
 status: PASS
-commit: a4be8d855f767dd2b97d5ef835013f7ec90bfd0e
+commit: 7c5d768318273f6c2e1678cf087470eab2a1d27d
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — multi_agent lane 신설(coordinator·agent), 동시성 관문, 식별자 분리, device_id 검증"

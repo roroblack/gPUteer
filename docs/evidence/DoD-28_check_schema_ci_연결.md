@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-28
 claim: "docs/plans/2026-08-20_0000_check_schema_py_v1.md(DoD-20)이 limitations 절에 명시적으로 남긴 공백 — check_schema.py를 CI 파이프라인에 실제로 연결하지 않았다 — 를 닫았다. .github/workflows/canonical-schema-check.yml을 신설해 main 대상 push/pull_request에서 canonical 참조 self-test, canonical 벡터 대조, check_schema.py, 워크스페이스 build/test(gputeer-runtime-windows 제외), verify_evidence.py를 순서대로 실행한다. 이 저장소는 원격이 설정돼 있지 않아 워크플로 파일은 아직 어디서도 실제 실행된 적이 없다 — 로컬에서 동일 명령을 순서대로 실행해 성공을 확인하는 것으로 검증을 대신했다"
 status: PASS
-commit: bb93f2f
+commit: 296b857
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (git 상태·evidence 스키마 독립 재확인)"

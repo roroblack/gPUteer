@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-24
 claim: "재접속(failover)의 첫 최소 조각 — Active Lease process-restart rehydration — 을 구현했다. 새 proto 메시지·필드는 추가하지 않는다. 연결이 끊긴 뒤(테스트 전용 --disconnect-after-ack 로 시뮬레이션) 완전히 새로운 Coordinator/Agent 프로세스 쌍이 같은 --lease-db·--fence-db 로 시작하면, 기존 ExecutionGrant/AgentGrantAck handshake 만으로 CoordinatorLeaseStore::get_or_issue() 가 저장된 활성 Lease(identity·epoch·시각)를 복원해 Grant 에 실어 보낸다 — Coordinator CLI 의 틀린 fence_epoch 인자보다 저장된 값이 우선한다. 같은 lease_id 를 다른 holder_node_id 로 재접속 주장하면 기존 holder identity 검사(이번 조각에서 새로 만든 게 아니라 이미 있던 코드)가 거부한다. 자동 재접속 루프·ResumeLeaseRequest·revoke 상태 보존·다중 Agent 경쟁은 명시적으로 범위 밖"
 status: PASS
-commit: f4aca53
+commit: ffdf262
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (설계 조사·구현) / claude-code (cargo build/test 독립 재확인)"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-22
 claim: "Coordinator 가 이미 발급한 Lease 를 대상으로 서명된 RevokeLeaseNotice 를 같은 TCP 연결로 보내고, Agent 가 서명·lease_id·fence_epoch·만료 여부를 검증한 뒤 보유 Lease 를 revoked 로 표시해 이후 갱신 요청을 만들지 않는 최소 경로를 구현했다 — RevokeLeaseNotice 자체는 이미 서명 대상 메시지·framed_ingress dispatch 로 존재했지만(DoD-17) Coordinator/Agent 업무 로직은 이번에 처음 생겼다. coordinator-agent-selftest 에 시나리오 25~29(정상 revoke+차단, 위조 서명, 잘못된 lease_id, 잘못된 fence_epoch, 만료된 Lease 에 대한 revoke 거부)를 추가했다"
 status: PASS
-commit: 9b158c7
+commit: eeb7a85
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현·수정) / claude-code (cargo build/test 독립 재확인, 뮤테이션 재현)"

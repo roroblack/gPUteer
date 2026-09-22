@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-48
 claim: "결정적 selected GPU assignment 순수 kernel 을 완료해, `DoD-46` 이 남긴 계약 불일치 3번(ranking 이 선택 GPU 식별자를 반환하지 않음)의 선행 작업을 닫았다. 순수 `resource_fit()`이 적격 GPU를 `(available_vram_bytes, gpu_id)` 오름차순으로 요구 개수만 선택하고 반환 ID를 `gpu_id` 오름차순으로 정규화하며, 단일/복수 후보가 같은 helper를 쓰고 `Staged` outcome이 ID를 보존해 STAGING 전에 개수를 재검증함을 구현·negative test·뮤테이션 2건·독립 검수 1라운드 ACCEPTED·감독자 scheduler 53/coordinator 87 passed로 확인했다. 단 반환 ID는 snapshot 식별자일 뿐 NVML UUID provenance가 아니며 Grant/Lease scope·GPU별 reservation/release·production wire는 범위 밖이다"
 status: PASS
-commit: 2ca2366da90c8687ece851a1be50daab9af6e90f
+commit: fdd5b1496c75dd7dbb8acb36540b4877924c1094
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — scheduler resource_fit/selected ID 보존, coordinator STAGING 전 재검증, 테스트와 뮤테이션 검증"

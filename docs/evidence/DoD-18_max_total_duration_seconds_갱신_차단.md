@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-18
 claim: "Coordinator 영속 Lease 저장소(lease_store=Some)에서, 저장된 issued_at_unix_ms 기준 누적 시간이 max_total_duration_seconds 를 초과하면 갱신 요청에 서명된 RENEW_OUTCOME_MAX_DURATION_EXCEEDED(=6) 를 반환하고 저장소의 만료시각을 연장하지 않는다(실측: 2초 한도를 실제로 2.2초 초과시켜 확인). 한도 안에서는 여전히 RENEWED 가 나온다(오탐 없음). --renew-outcome-override(테스트 전용) 는 이제 lease_store=Some 에서도 저장소를 전혀 건드리지 않는다 — 실제 초과는 여전히 override 보다 우선한다. lease_store=None(레거시) 경로는 이 판정을 하지 않는다(경과시간을 추적할 수 없기 때문)"
 status: PASS
-commit: d3a74b5918ed0e7e1c98385d7b8a4aa1a89c00f0
+commit: 9a80d878576c3aa391ef0460ca77188e8e437620
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -25,7 +25,7 @@ raw_output_bytes: 44220
 
 binary_digests:
   toolchain: "cargo 1.97.1 (c980f4866 2026-06-30) / rustc 1.97.1 (8bab26f4f 2026-07-14)"
-  cli_bin: "target/debug/gputeer.exe (dev profile, commit d3a74b5 에서 빌드)"
+  cli_bin: "target/debug/gputeer.exe (dev profile, commit 9a80d87 에서 빌드)"
 protocol_versions:
   schema_version: "해당 없음 — max_total_duration_seconds(Lease.33)와 RENEW_OUTCOME_MAX_DURATION_EXCEEDED(=6)는 proto/lease.proto 에 이미 있던 필드다. 이 조각은 wire schema 를 바꾸지 않고, 지금까지 판정되지 않던 필드를 실제로 판정하게 만들었을 뿐이다"
   canonical_spec: "docs/protocol/signing.md v1 (변경 없음)"

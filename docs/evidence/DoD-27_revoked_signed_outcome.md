@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-27
 claim: "proto/lease.proto 의 RenewOutcome 에 RENEW_OUTCOME_REVOKED = 8 을 순수 추가하고, Coordinator 가 revoked Lease 에 대한 갱신(renew) 요청을 raw error 로 연결을 끊는 대신 서명된 RenewLeaseResult{ outcome: 8 } 로 응답하도록 고쳤다 — override 읽기 전용 경로와 renew_existing_within_duration() 을 쓰는 정상 경로 둘 다. Agent 는 outcome 8 을 만나면 RENEW_REFUSED:REVOKED 로 즉시 종료하고, Coordinator 도 결과를 전송한 뒤 갱신 루프를 break 한다(오늘 이미 두 번 나온 outcome-분기 교착 버그를 이번엔 처음부터 피했다). 초기 Grant 발급 시점의 revoked 거부는 범위 밖으로 남겨 기존 raw error 그대로다"
 status: PASS
-commit: 86aef4e
+commit: 8bbcded
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (canonical self-test·schema check·cargo build/test 독립 재확인)"

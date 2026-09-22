@@ -3,7 +3,7 @@ schema_version: 2
 id: ENV-04
 claim: "x600 의 WSL2 Ubuntu 가 이 저장소의 **반복 가능한** Linux 검증 환경으로 성립하는지 확정하고, 같은 소스에서 Windows 와 Linux 의 테스트 결과 차이를 항목 단위로 설명한다"
 status: PASS
-commit: 32d0a209e7a1cac595b8d5a6544c2ccfd476f838
+commit: 47893175f6a426720719b2359cfef9e1e747c4cd
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + ssh + wsl + cargo)"
@@ -93,7 +93,7 @@ decision: "x600 의 WSL2 를 이 저장소의 **반복 가능한 Linux 검증 �
 ```text
 Linux (x600 WSL2)    56 suite · 597 passed · 0 failed · 1 ignored
 Windows (개발 기계)   56 suite · 600 passed · 0 failed · 1 ignored
-같은 소스 (32d0a20)
+같은 소스 (4789317)
 ```
 
 ## 차이 설명 — 597 vs 600

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-51
 claim: "검증된 terminal `AttemptReport` 를 durable `(job, attempt, node, fence)` 에 묶어, 재시작 시 증거 유실과 stale report 혼입을 막았다 — 하나의 `BEGIN IMMEDIATE` 안에서 report job/attempt와 durable Attempt job/attempt, report node와 single-node Attempt node, verified signer와 report/Attempt node, report fence와 Attempt fence, reservation job/attempt/node와 report identity를 5중 대조하고, reservation 부재·owner 불일치·non-terminal outcome·changed replay는 행 생성 없이 거부한다. 공개 저장 API는 `&Verified<pb::AttemptReport>`만 받고 필드는 `Verified::get()` 뒤에만 읽으며, signature 포함 body와 저장소가 직접 계산한 BLAKE3 hash를 first-write fact로 보존한다. 독립 검수 1라운드 ACCEPTED와 감독자 coordinator 108 passed로 확인했다. Job/Attempt terminal 전이와 artifact/runtime-stop guard, Lease revoke·reservation release·production wire는 완료하지 않았다"
 status: PASS
-commit: ee5a8367b8215760a126cd17b897e064988ed559
+commit: 8a58e97d0d1fef2db623910fa47f82b71c505458
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — verified terminal AttemptReport durable Attempt/reservation binding, replay·rollback·corruption negative test와 뮤테이션 검증"

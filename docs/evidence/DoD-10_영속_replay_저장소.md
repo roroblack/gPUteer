@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-10
 claim: "DurableReplayGuard 는 프로세스 재시작 후에도 이미 본 nonce 를 Duplicate 으로 거부하고, 미커밋 트랜잭션을 rollback 하며, InMemoryReplayGuard 와 replay_contract.rs 의 9개 시나리오에서 같은 답을 낸다."
 status: PASS
-commit: f4f16e2f7e7c7d69c4a502817cc574211313c28d
+commit: b7baa6bd9dc6319edabe24bce81f7969256607b4
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"

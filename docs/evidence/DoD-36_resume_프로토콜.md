@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-36
 claim: "자동 재접속 루프 로드맵(docs/plans/2026-08-20_0300_..., 7조각)의 조각 3 — 명시적 Resume 프로토콜을 구현했다. proto/lease.proto 에 SessionMode·AgentSessionHello·ResumeLeaseRequest·ResumeOutcome·ResumeLeaseResult 를 순수 추가했다(기존 필드 번호 불변). 세 메시지 모두 Signable 서명 대상으로 만들고 canonical/signing 체인 전체(docs/protocol/signing.md 의 domain_tag 3개 신규 등록, crates/protocol 의 canonical.rs/to_fields.rs/signable.rs, 5개 protocol 테스트 파일, tools/canonical/reference_canonical.py, tests/vectors/canonical_v1.json 45→48개 벡터, proto/SCHEMA_FINGERPRINT.txt, crates/crypto/src/framed_ingress.rs 의 FrameType 3종)를 갱신했다 — domain count 25→28. Coordinator 에 읽기 전용 classify_resume()(crates/coordinator/src/lease_store.rs, get_or_issue()/renew_existing_within_duration() 재사용 안 함, 판정 순서 identity→revoke→만료(<=)→epoch)을 신설하고 wire dispatch·서명은 crates/coordinator/src/lib.rs 에 뒀다. Agent 에는 --resume-protocol opt-in 플래그를 추가했고, 기본값(플래그 없음)은 기존 server-first Grant/ACK handshake 그대로다 — 기존 48개 레거시 시나리오와 DoD-35 의 49~52 재접속 시나리오는 전혀 안 바뀐다. coordinator-agent-selftest 시나리오 53~60 신설(RESUMED·UNKNOWN_LEASE·IDENTITY_CONFLICT·REVOKED·EXPIRED·SUPERSEDED·EPOCH_AHEAD·UNAVAILABLE). durable request ledger(조각 5)·다중 Agent 경쟁(조각 7)·session_id 의 durable 소유권 검증은 의도적으로 범위 밖 — 이번 조각의 request_nonce 는 서명·상관관계·기존 replay guard 용도까지만 다룬다"
 status: PASS
-commit: 1d99f27
+commit: afda055
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현 2라운드) / claude-code (canonical self-test·verify·check_schema·cargo build/test·coordinator-agent-selftest 5~8회 연속 독립 재실행 — 매 라운드마다, 코덱스 read-only 샌드박스 밖 실제 환경)"

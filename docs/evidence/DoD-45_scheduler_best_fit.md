@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-45
 claim: "scheduler 로드맵 조각 4를 '순수 resource best-fit kernel'로 완료했다. rank_best_fit()이 hard-filter 적격 후보 중 가장 tight한 GPU 요구 개수를 고른 뒤 BestFitPolicy의 VRAM 잔여 합→GPU 수 잔여→CPU/RAM/workspace 잔여 축 순서로 lexicographic 비교하고 완전 동점은 node_id 오름차순으로 해소하며, GPU 벡터·pool·report 입력 순서 독립성, malformed 입력 fail-closed와 뮤테이션 판별력을 구현·검수 3라운드 끝의 ACCEPTED 및 감독자 cargo test 48/48로 확인했다"
 status: PASS
-commit: 187776033ec5bdb99c8ca1fa5607d643d22987f5
+commit: 70f2ff466a7b594ba7a3c1692585181b2dd8ece8
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — 검수 1라운드 지적 후 GPU permutation test 보강"
@@ -16,7 +16,7 @@ reviewer_tool: "대화 기록 없는 독립 검수 세션 — 3라운드"
 reviewer_model: "제공된 이력 요약에 모델 식별자 없음"
 review_context: "fresh-read-only"
 review_outcome: "ACCEPTED"
-review_scope: "1라운드(CHANGES_REQUESTED) — GPU 벡터 자체의 순열 동등성 테스트와 VRAM 정렬 제거 뮤테이션 요구. 2라운드(CHANGES_REQUESTED) — 조각 4 전체가 미커밋인데 lib.rs/model.rs 1차 구현 산출물을 후속 수정분으로 오인한 git-diff-scope 오탐. 3라운드(ACCEPTED) — HEAD 1877760이 DoD-44임과 두 production 파일이 module 연결·신규 타입인 순수 1차 산출물임을 확인하고, 새 GPU reverse 전체-ranking 동등성 테스트와 정렬 제거 시 node-b/node-a winner 분기의 판별력을 재확인해 최종 수용"
+review_scope: "1라운드(CHANGES_REQUESTED) — GPU 벡터 자체의 순열 동등성 테스트와 VRAM 정렬 제거 뮤테이션 요구. 2라운드(CHANGES_REQUESTED) — 조각 4 전체가 미커밋인데 lib.rs/model.rs 1차 구현 산출물을 후속 수정분으로 오인한 git-diff-scope 오탐. 3라운드(ACCEPTED) — HEAD 70f2ff4이 DoD-44임과 두 production 파일이 module 연결·신규 타입인 순수 1차 산출물임을 확인하고, 새 GPU reverse 전체-ranking 동등성 테스트와 정렬 제거 시 node-b/node-a winner 분기의 판별력을 재확인해 최종 수용"
 review_artifact: "docs/evidence/_raw/DoD-45_review.txt"
 
 raw_output_artifact: "docs/evidence/_raw/DoD-45_scheduler_best_fit_2026-08-21.txt"
@@ -68,7 +68,7 @@ limitations:
   - "Declared estimate, CUDA/architecture, availability, checkpoint/durability admission과 performance/cost/reliability/fairness 비교는 없다"
   - "실제 GPU hardware·telemetry·network·filesystem을 사용하지 않아 운영 환경의 resource 변화나 TOCTOU를 입증하지 않는다"
   - "rank.rs 269줄과 model.rs 타입 추가 54줄, 테스트 405줄로 계획 추정 production 120~220줄·테스트 250~400줄을 넘었다 — malformed/overflow fail-closed 검증과 GPU permutation 보강 때문이며 범위 밖 배선 기능을 넣은 결과는 아니다"
-decision: "scheduler 로드맵 조각 4의 전체 placement/reservation을 완료했다고 과장하지 않고, 기존 hard-filter가 만든 복수 적격 후보를 고정 snapshot의 자원 잔여량으로 결정 정렬하는 순수 kernel로 제한했다. GPU는 healthy·model·최소 VRAM을 만족하는 값들을 먼저 정렬해 요구 개수만큼 가장 tight한 subset만 사용하고, 호출자가 명시한 다섯 FitAxis 완전 순열로 작은 잔여량을 lexicographic 비교한 뒤 완전 동점에서만 node_id 오름차순을 사용한다. 구현 1라운드 뒤 독립 검수는 GPU vector 자체의 순열 검증이 비어 있음을 찾아 CHANGES_REQUESTED했고, reverse된 GPU 벡터의 BestFitRanking 전체 동등성 테스트와 VRAM 정렬 제거 시 node-b/node-a로 실제 winner가 갈리는 뮤테이션을 추가했다. 2라운드의 CHANGES_REQUESTED는 조각 전체 미커밋 상태에서 lib.rs/model.rs의 1차 module·타입 산출물을 이번 수정으로 오인한 git-diff-scope 오탐이었고, 감독자가 HEAD 1877760과 diff를 명확히 한 3라운드에서 새 테스트·뮤테이션·범위를 재확인해 ACCEPTED했다. 감독자는 scheduler 테스트 48건을 직접 재확인했다. scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a·4 완료 — 남은 조각 3 나머지·5~9는 후속"
+decision: "scheduler 로드맵 조각 4의 전체 placement/reservation을 완료했다고 과장하지 않고, 기존 hard-filter가 만든 복수 적격 후보를 고정 snapshot의 자원 잔여량으로 결정 정렬하는 순수 kernel로 제한했다. GPU는 healthy·model·최소 VRAM을 만족하는 값들을 먼저 정렬해 요구 개수만큼 가장 tight한 subset만 사용하고, 호출자가 명시한 다섯 FitAxis 완전 순열로 작은 잔여량을 lexicographic 비교한 뒤 완전 동점에서만 node_id 오름차순을 사용한다. 구현 1라운드 뒤 독립 검수는 GPU vector 자체의 순열 검증이 비어 있음을 찾아 CHANGES_REQUESTED했고, reverse된 GPU 벡터의 BestFitRanking 전체 동등성 테스트와 VRAM 정렬 제거 시 node-b/node-a로 실제 winner가 갈리는 뮤테이션을 추가했다. 2라운드의 CHANGES_REQUESTED는 조각 전체 미커밋 상태에서 lib.rs/model.rs의 1차 module·타입 산출물을 이번 수정으로 오인한 git-diff-scope 오탐이었고, 감독자가 HEAD 70f2ff4과 diff를 명확히 한 3라운드에서 새 테스트·뮤테이션·범위를 재확인해 ACCEPTED했다. 감독자는 scheduler 테스트 48건을 직접 재확인했다. scheduler 로드맵 9단계 중 조각 1·2a·2b-1·3a·4 완료 — 남은 조각 3 나머지·5~9는 후속"
 ---
 
 # DoD-45 · scheduler 순수 deterministic resource best-fit kernel (로드맵 조각 4)
@@ -109,7 +109,7 @@ VRAM 잔여 합과 전체 적격 GPU 수의 잔여, CPU/RAM/workspace 잔여를 
 
 2라운드는 `git diff`에 보인 `lib.rs`·`model.rs`를 후속 수정의 범위 확장으로 오인해
 `CHANGES_REQUESTED`했다. 조각 4 전체가 미커밋이었고 기준 HEAD가 DoD-44의
-`1877760`임을 감독자가 직접 명확히 한 뒤, 3라운드 검수는 두 파일이 1차 구현의
+`70f2ff4`임을 감독자가 직접 명확히 한 뒤, 3라운드 검수는 두 파일이 1차 구현의
 module 연결과 신규 타입일 뿐임을 확인했다. 새 GPU permutation 테스트와 뮤테이션,
 범위 밖 Coordinator·reservation·Grant 무변경을 재확인해 최종 `ACCEPTED`했다.
 

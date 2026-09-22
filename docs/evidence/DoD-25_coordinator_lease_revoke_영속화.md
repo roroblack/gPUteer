@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-25
 claim: "CoordinatorLeaseStore 에 revoked_at_unix_ms 필드를 추가해 Lease revoke 상태를 재시작을 넘어 영속화했다. send_revoke_notice() 가 wire 로 통지를 만들어 보내기 전에 mark_revoked()(idempotent — 최초 revoke 시각 유지)로 SQLite 커밋을 먼저 확정한다. get_or_issue() 와 두 갱신 경로(정상 경로·renew_outcome_override 경로) 모두 저장된 레코드가 revoked 면 거부한다 — revoke 된 뒤 프로세스가 재시작해도 새 Agent 가 같은 Lease 를 다시 받거나 갱신할 수 없다. 기존 SQLite 파일과의 호환을 위해 open() 시점에 PRAGMA table_info 로 컬럼 존재를 확인하고 없으면 ALTER TABLE 로 보정하는 마이그레이션을 추가했다. 새 proto 메시지·signed denial 은 추가하지 않았다 — Coordinator 가 Grant 발급 자체를 raw error 로 거부하는 fail-closed 방식을 그대로 썼다"
 status: PASS
-commit: 4491c13
+commit: 9694dfc
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (설계 조사·구현) / claude-code (cargo build/test 독립 재확인)"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-35
 claim: "자동 재접속 루프 전체 로드맵(docs/plans/2026-08-20_0300_자동_재접속_루프_전체_설계_v1.md, 7조각·6~8일 규모)의 '하루 조각으로 가능한 부분'(1+2 축소판)을 구현했다 — proto 변경 없이, 같은 Agent 프로세스가 TCP 연결이 끊겼을 때 bounded retry(최대 8회, 총 60초, exponential backoff+full jitter, 연결별 3초 timeout)로 재연결해 기존 Grant/ACK handshake 를 처음부터 재수행한다. Coordinator 는 listener.accept() 를 반복하는 루프로 바뀌었고(--max-connections·--accept-timeout-ms·--drop-connection-after-ack-once 신규 플래그, 기존 --disconnect-after-ack 의미는 불변), Grant/ACK/Renew nonce 계산에 connection_attempt 를 반영해 재접속 시 nonce 충돌(replay 오인)을 피한다. Windows 플랫폼에서 nonblocking listener 설정이 accept 된 stream 에도 전파돼 WSAEWOULDBLOCK(10035) 이 발생하던 버그도 발견해 accepted stream 을 blocking 모드로 되돌려 고쳤다. coordinator-agent-selftest 시나리오 49~52 신설(정상 재접속 성공·bounded retry 소진·재접속 중 revoke·재접속 중 만료), 기존 48개 시나리오는 전부 회귀 없이 그대로 통과한다(nonce 값이 connection_attempt=0 일 때 기존과 바이트 단위로 동일). Resume proto·durable request ledger·다중 Agent 경쟁은 의도적으로 범위 밖 — 이건 완전한 Resume 프로토콜이 아니라 로드맵 7조각 중 1+2 만 구현한 최소 경로다"
 status: PASS
-commit: c7240d9
+commit: 3de6cb5
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현 3라운드) / claude-code (cargo build·test·coordinator-agent-selftest 5회 연속 독립 재실행 — 매 라운드마다, 코덱스 read-only 샌드박스 밖 실제 환경)"

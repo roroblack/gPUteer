@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-67
 claim: "`DoD-50` 이 `submit_verified_manifest()` 를 만들면서 'production wire 연결은 범위 밖' 이라 적어 둔 저장소에 **첫 소비자**를 만든다 — `gputeer import-manifest` 가 서명된 `JobManifest` 를 운영자 keyring 으로 검증한 뒤에만 필드를 읽고 durable job store 에 넣는다. ★ 이건 제출 **접수**가 아니라 **반입(import)** 이다 — 명령줄로 공개키를 받으면 신뢰 경계가 그 명령 한 줄이 되므로, 운영자가 **미리 provision 한 keyring 파일**에 있는 서명자만 받는다. 신뢰 경계가 운영자가 소유하는 파일이다. ★ 이 조각은 네트워크 제출을 받지 않고, 누가 제출할 자격이 있는지 판정하지 않으며(멤버십 권위는 여전히 없다), 스케줄링도 하지 않는다"
 status: PASS
-commit: 5b07a9d
+commit: dbb1f89
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — CLI 명령 1건(production 240줄), 통합 테스트 8건, 뮤테이션 7건, 독립 검수 4라운드"

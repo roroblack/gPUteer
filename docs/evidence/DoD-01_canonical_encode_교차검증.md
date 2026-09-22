@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-01
 claim: "Rust 구현 canonical_encode 가 Python 참조 구현과 바이트 단위로 일치하며, signing.md §3 의 규칙 a~i 를 모두 만족한다"
 status: PASS
-commit: f2ec00e25313bf56ea4782616af19e118999f5a0
+commit: 74d7c278f2ee287cbb977aeea8fe339a6bb5a42e
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"

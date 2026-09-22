@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-06
 claim: "signing.md §5 가 세 domain_tag 를 여러 메시지에 공유시켜 서명 재사용이 가능했음을 실측으로 확인했다. ADR-028 로 tag 를 분리해 시정했고, canonical bytes 는 하나도 바뀌지 않았다. domain 커버리지가 19/23 이 되었다"
 status: PASS
-commit: e5ac1ff319a3c130c13a29c2dc10beeddb6ffa4c
+commit: 46a584f0ff0a926f130f7fbddabbe0c366865e74
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code (Bash + cargo)"
@@ -341,7 +341,7 @@ frontmatter(`DoD-06:12`)는 "36건" 이라고 적었다. `tests/vectors/canonica
 은 `DoD-03`(20 → 40 정정)과 `DoD-06`(28 → 36) 이 함께 늘려 온 **같은
 파일**이다 — 그 뒤 다른 작업이 더 늘려 지금은 **40건**이다(직접 파싱해
 셈, `DoD-03` 의 "이후 변경" 절 참조). "36건" 은 이 evidence 를 쓴
-시점(commit `e5ac1ff3`)의 정확한 스냅샷이므로 원본 YAML 은 고치지
+시점(commit `46a584f0`)의 정확한 스냅샷이므로 원본 YAML 은 고치지
 않는다 — 지금 schema v2 승격의 근거로 쓰려면 **40** 을 현재 값으로
 읽어야 한다.
 

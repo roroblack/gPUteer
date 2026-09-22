@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-30
 claim: "crates/agent 가 Job 실행을 향한 가장 작은 첫 걸음을 구현했다 — 유효한 Grant/Lease 검증 성공 직후, AgentGrantAck 전송 전에 결정적 checkpoint_id(BLAKE3-256, domain + 길이-프리픽스된 job_id/attempt_id/grant_id)로 checkpoint 디렉터리를 만들고 WRITING 마커를 write_once()(DoD-21 의 동시 호출 거부 계약을 그대로 상속)로 기록한 뒤, JOB_STARTED state=WRITING 을 stdout 에 출력한다. 위조·만료·revoked Lease 는 마커를 만들지 않고 ACK 도 안 보낸다. 마커 생성 자체가 실패하면(checkpoint root 가 디렉터리가 아닌 경우 등) fail-closed 로 ACK 를 안 보낸다. 동일 attempt 재시도는 같은 checkpoint_id 로 write_once() 의 기존 idempotent 동작에 의존한다. 실제 entrypoint 프로세스 실행·manifest.json 작성·Coordinator 에 보고하는 wire 메시지·scheduler 는 전부 범위 밖이다 — RESULT ok=true 는 여전히 Job 완료를 뜻하지 않는다는 것을 코드 주석으로 명시했다"
 status: PASS
-commit: 1018ac5
+commit: 230f89c
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (cargo build·coordinator-agent-selftest 5회 연속 독립 재실행 — 코덱스 read-only 샌드박스 밖 실제 환경)"

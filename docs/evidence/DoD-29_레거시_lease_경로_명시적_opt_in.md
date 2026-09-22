@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-29
 claim: "Coordinator 를 --lease-db 없이(레거시 경로, lease_store=None) 시작하면 revoke·만료·max_total_duration_seconds 보호 장치가 전부 조용히 우회되던 위험한 기본값을, 새 CLI 플래그 --i-understand-legacy-mode-is-unsafe(기본값 false)로 명시적 opt-in 을 요구하도록 바꿨다 — --lease-db 도 없고 이 플래그도 없으면 TCP bind 전에 즉시 종료한다. opt-in 시에는 기존과 완전히 동일하게 동작하되 시작 시 경고 로그를 남긴다. 기존 레거시 selftest 시나리오(1~17·19, 그리고 DoD-22 의 저장소 무관 revoke notice 계약 시나리오 27~31)는 run_handshake() 헬퍼가 --lease-db 부재 시 자동으로 opt-in 플래그를 붙여 원래 검증 목적을 그대로 유지한다. 신규 시나리오 38 은 opt-in 없는 Coordinator 의 즉시 거부와, 그 상황에서 연결을 시도하는 Agent 가 하드 타임아웃 안에 깔끔하게 실패 종료하는지까지 확인한다"
 status: PASS
-commit: 53e6836
+commit: da40c2b
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현 2라운드) / claude-code (cargo build·coordinator-agent-selftest 16회 연속 독립 재실행 — 코덱스 read-only 샌드박스 밖 실제 환경)"

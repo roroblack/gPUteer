@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-59
 claim: "`crates/crypto/src/keyring.rs` 의 `K1OsProtected` 가 Linux 에서 `systemd-creds --with-key=host` 로 개인키를 실제로 봉인하고, 키링 파일에 개인키 평문이 남지 않으며, 재열기로 왕복함을 x600 WSL2(systemd 259)에서 실측했다. 파일 전체 무결성 표식(BLAKE3 체크섬)도 같은 OS 저장소로 봉인해, 파일을 쓸 수 있는 **K1 경계 밖의** 공격자가 신원을 바꿔치기하지 못한다 — 공개키만 옮기고 개인키 blob 을 비우는 우회까지 막는다. `systemd-creds` 가 없으면 조용히 K0 로 내려가지 않고 실패하며, '없다' 와 '있는데 실패했다' 를 구분한다"
 status: PASS
-commit: 33182ed057244cb69b9a81b235cd9535ef8aa64e
+commit: 43ef73d6505b33d853df467fc19c959f5833b57a
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — Linux K1 구현(systemd-creds subprocess), signer 별 봉인 이름/DPAPI entropy, 파일 체크섬 봉인, 파일 형식 v1->v2"
@@ -66,7 +66,7 @@ negative_tests:
   - "`plaintext_storage_is_rejected_without_explicit_opt_in`: K0 를 기본 허용하지 않는다. 이것이 K0 강등 공격(보호 등급을 K0 로 낮춰 적어 평문 검증을 유도)도 함께 막는다 — 검수가 그 순서를 코드로 확인했다"
   - "기존 5건(개인키 Debug/Display 미출력·손상 파일 거부·quarantine·revoke·회전 grace) 회귀 없음"
 limitations:
-  - "★ 2026-08-30 추가 — `run_in_own_process_group()` 의 그룹 종료 경로를 x600 WSL2 에서 실측했다(3/3 통과, 남은 프로세스 0). 뮤테이션 3건(무조건 그룹 종료 제거·ESRCH 정상 취급 제거·시간 초과 보고 뒤집기) 전부 지정 테스트를 동작 수준에서 실패시켰다. M1 의 실패 메시지가 예측 그대로였다 — '후손이 파이프를 물고 있을 수 있다'. 커밋 `445beed` 는 이 검증 **전에** 만들어져 'Linux 미검증' 이라고 적혀 있으나, 그 상태는 해소됐다(원본: `docs/evidence/_raw/DoD-59_process_group_x600_2026-08-30.txt`)"
+  - "★ 2026-08-30 추가 — `run_in_own_process_group()` 의 그룹 종료 경로를 x600 WSL2 에서 실측했다(3/3 통과, 남은 프로세스 0). 뮤테이션 3건(무조건 그룹 종료 제거·ESRCH 정상 취급 제거·시간 초과 보고 뒤집기) 전부 지정 테스트를 동작 수준에서 실패시켰다. M1 의 실패 메시지가 예측 그대로였다 — '후손이 파이프를 물고 있을 수 있다'. 커밋 `ed26e45` 는 이 검증 **전에** 만들어져 'Linux 미검증' 이라고 적혀 있으나, 그 상태는 해소됐다(원본: `docs/evidence/_raw/DoD-59_process_group_x600_2026-08-30.txt`)"
   - "★ **롤백을 막지 못한다.** 봉인은 본문 변조를 막지만, 공격자가 예전의 정상 v2 파일을 통째로 되돌리면 그때 정상적으로 봉인된 파일이므로 검증을 그대로 통과한다 — 폐기·회전된 키가 되살아난다. 막으려면 파일 밖의 단조 카운터(TPM monotonic counter 등)가 필요하고 이 조각 밖이다. 반쯤 동작하는 카운터를 만들지 않고 못 막는다고 적는다(§0.4)"
   - "★ **K1 경계 안쪽은 봉인을 만들 수 있다.** Windows DPAPI 는 다른 **사용자**를, Linux host key 는 **비-root** 를 막는다. 그 경계 안의 공격자(Windows 의 같은 사용자, Linux 의 root)는 알려진 entropy/이름으로 직접 봉인을 만들 수 있다 — 처음부터 이 등급의 정의다. '파일을 쓸 수 있는 공격자는 봉인을 만들 수 없다' 는 과한 일반화이며, 정확히는 '경계 **밖**의 공격자는 못 만든다'"
   - "★ **signer 별 봉인 묶기가 이제 독립적으로 측정되지 않는다.** 파일 체크섬 봉인이 파일 변조를 먼저 잡으므로, 뮤테이션 A(`--name` 을 signer 무관하게)를 걸어도 테스트가 통과한다(실측 로그에 그대로 남아 있다). 그 방어는 여전히 코드에 있고 defense-in-depth 로 의미가 있지만, **이 evidence 는 그것이 작동함을 증명하지 않는다**"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-31
 claim: "오늘 밤 세 번(DoD-22·DoD-23·DoD-27) 나온 교착 버그 패턴 — Coordinator 가 다회차 갱신 루프 중 정책 거부 outcome(SUPERSEDED=2·QUARANTINED=3·MAX_DURATION_EXCEEDED=6·REVOKED=8)을 마지막이 아닌 회차에서 보내면 Agent 는 즉시 종료하는데 Coordinator 는 다음 프레임을 계속 기다리는 교착 — 을 막는 crates/coordinator/src/lib.rs:486 의 matches!(result.outcome, 2 | 3 | 6 | 8) { break; } 가드에 대해, SUPERSEDED·REVOKED 만 다회차(renew_rounds>=2) 회귀 시나리오가 있고 QUARANTINED·MAX_DURATION_EXCEEDED 는 단일 회차 시나리오뿐이던 테스트 공백을 닫았다. 새 selftest 시나리오 45(QUARANTINED, renew_rounds=2 의 첫 회차)·46(MAX_DURATION_EXCEEDED, 같은 패턴, 기존 DoD-18 트리거 재사용)을 추가했다 — 프로덕션 코드는 전혀 바꾸지 않은 순수 테스트 커버리지 조각이다. 감독자가 matches! 에서 3·6 을 각각 제거하는 뮤테이션으로 직접 재현해, 두 경우 모두 정확히 예측된 교착(Coordinator 가 오지 않을 RenewLeaseRequest 를 기다리다 스트림이 끊김)으로 실패함을 확인했다"
 status: PASS
-commit: ac9bd31
+commit: 5d98e6c
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (cargo build·coordinator-agent-selftest 5회 연속 독립 재실행 + 2건의 뮤테이션 직접 재현·원복 — 코덱스 read-only 샌드박스 밖 실제 환경)"

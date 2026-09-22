@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-34
 claim: "Agent(crates/agent/src/lib.rs)가 갱신 루프에서 지금까지 revoked 여부만 확인하고 만료는 재확인 안 해 이미 만료된 Lease로 RenewLeaseRequest를 계속 보낼 수 있던 공백(DoD-32가 Coordinator 쪽에서 이미 raw error로 방어해 Lease 부활 결함은 아니었으나 Agent 쪽 낭비·관측 공백)을 닫았다. Agent가 RenewLeaseRequest 를 만들어 보내기 직전에 새 lease_is_expired() 헬퍼(DoD-26/DoD-32 와 동일한 <= 경계 규칙, 최초 Grant 검증·revoke 경로와 일관)로 보유 Lease의 만료를 재확인하고, 만료됐으면 요청 자체를 보내지 않은 채 RENEW_REFUSED:LOCAL_EXPIRED 로 종료한다. Coordinator 코드는 전혀 바뀌지 않았다 — read_frame() 이 연결 EOF를 즉시 Truncated 오류로 전파하고 살아있는 연결에서 프레임이 없을 때만 기존 10초 read timeout이 적용되므로, Agent가 요청을 보내지 않아도 Coordinator가 무한 대기에 빠지지 않는다(오늘 밤 세 번 나온 것과 반대 방향의 교착을 만들지 않는다는 것을 독립 검수와 감독자가 각각 확인했다)"
 status: PASS
-commit: 1b5513c
+commit: f545bcd
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (cargo build·test·coordinator-agent-selftest 5회 연속 독립 재실행 — 코덱스 read-only 샌드박스 밖 실제 환경)"

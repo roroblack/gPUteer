@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-23
 claim: "Coordinator 가 RenewLeaseRequest.fence_epoch 이 영속 저장소의 저장된 값보다 낮게 도착했을 때, 연결을 raw error 로 끊는 대신 서명된 RenewLeaseResult{outcome: RENEW_OUTCOME_SUPERSEDED}로 응답하는 실제 정책을 구현했다(proto 주석이 이미 '정상적인 failover 경합'이라고 선언한 상황을 이제 정말 그렇게 처리한다). lease_store 가 없는 레거시 경로와 요청 epoch 이 더 높은 경우는 기존 hard error 를 유지한다. QUARANTINED 는 위험도/신뢰도 판정 인프라가 아직 없어 실제 트리거는 구현하지 않고 TODO_VISION V-11 로 등록했다"
 status: PASS
-commit: 0cdd263
+commit: 370bd59
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현·수정) / claude-code (cargo build/test 독립 재확인, 뮤테이션 재현)"

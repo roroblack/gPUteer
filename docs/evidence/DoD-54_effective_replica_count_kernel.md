@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-54
 claim: "holder/freshness/membership 해석을 명시적 입력으로 받는 `evaluate_effective_replicas()`가 시계·TTL·I/O·DB·network·난수·membership 조회·전역 상태 없이 입력 검증·정렬·`BTreeMap`/`BTreeSet` 집계만으로 effective replica report 전체를 입력 순서와 무관하게 계산하고, 같은 holder의 복수 selected를 후보 계산 전에 fail closed하며, 유효 서명·현재 승인·distinct failure-domain·same-device 중복 제거·ephemeral `WORKER_LOCAL` 제외와 `MIRRORED=1`/`REPLICATED=2` 요구치를 적용하되 규범에 없는 timestamp 최신값·TTL·`ONLINE` 조건을 추가하지 않음을 13개 테스트, production guard 뮤테이션 2건, 독립 검수 1라운드 ACCEPTED와 감독자 회귀 실행으로 확인했다"
 status: PASS
-commit: 23d3beb32e9276915869eecd7f4748c082ed22e5
+commit: dc7158a3bdba924924e94b425232928ea2930e35
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — resolved-input effective replica 순수 kernel, 13개 테스트와 production guard 뮤테이션 2건"

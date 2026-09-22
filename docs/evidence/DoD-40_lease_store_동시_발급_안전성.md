@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-40
 claim: "자동 재접속 루프 로드맵 조각 7(원안 '다중 Agent selftest, 같은 프로세스 안 시나리오·fault injection·다중 Agent 경쟁')을 오늘의 설계 조사가 정직하게 재범위했다 — 진짜 '다중 Agent 동시 경쟁'은 지금 Coordinator 아키텍처(의도적 순차 처리, Agent identity/key 1개만 등록, connection_attempt 가 Coordinator 전체 accept 순번)로는 표현 자체가 안 되고, 이를 가능하게 하려면 최소 2~4일짜리 아키텍처 변경이 필요하다. 대신 실제로 검증되지 않았던 위험 — CoordinatorLeaseStore::get_or_issue() 가 BEGIN IMMEDIATE 로 check-then-insert TOCTOU 를 막는다고 코드는 주장하지만 실제 동시 호출로 측정된 적이 없었던 것 — 을 새 통합 테스트로 증명했다. 1차 독립 검수가 테스트의 실제 결함(경쟁 후보가 holder_node_id 외 필드는 전부 같아 부분 덮어쓰기를 못 잡음)을 찾아 필드를 전부 구별되게 만들고 self-check 로 assert 의 판별력을 직접 증명하도록 고쳤다. 프로덕션 코드는 전혀 안 건드렸다(순수 테스트 추가). 로드맵 조각 7 원안 전체(진짜 다중 Agent 병렬 처리·wire-level 경쟁·active-session owner 선정)는 scheduler/다중 Agent 아키텍처 도입 단계로 명시적으로 이월한다 — 이 조각은 '다중 Agent selftest 완료'가 아니라 'Lease store 동시 최초 발급 안전성'이라는 훨씬 좁은 이름으로 기록한다"
 status: PASS
-commit: e904bbd4e534cced2e5c619e4356c1043e2181a7
+commit: e549d2567be250122d9c8b4da1673c485043b35a
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현 2라운드) / claude-code (cargo build·test·신규 테스트 반복(10+80회 등)·coordinator-agent-selftest 재실행 — 코덱스 샌드박스 밖 실제 환경)"

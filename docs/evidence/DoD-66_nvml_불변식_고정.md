@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-66
 claim: "`DoD-56` 이 **스스로** 남긴 검증 부채 셋을 닫는다 — 그 evidence 는 '이 조각의 NVML 쪽 주장들은 뮤테이션으로 검증하지 못했다. 다음 세 주장은 실측 1회로 받침될 뿐 자동 검사로 고정되지 않았다' 고 적었다(UUID 정렬의 열거 순서 무관성 · 96바이트 버퍼 상한 · MIG 를 `current` 로 판정). ★ 셋 다 **실물 GPU 없이 재는 방법**으로 고정했고, 핵심은 **떼어냈다**는 것이다 — 전에는 FFI 호출과 관측 경로 안에 묻혀 있어 GPU 없이는 잴 수 없었고, 그래서 정렬 테스트는 **관측 결과를 다시 정렬해 자기와 비교**하는(정렬을 통째로 지워도 통과하는) 공허한 것이었다. 이제 `normalize_gpu_order()` 는 합성 GPU 4장의 **서로 다른 24개 순열 전부**로, `mig_enabled_from_modes()` 는 두 값을 어긋나게 준 입력으로, `read_c_string()` 은 NUL 없는 96바이트 합성 버퍼로 잰다. ★ **실물 GPU 실측은 이 조각에 없다** — 여기서 고정한 것은 규칙이 순서·경계·모드 선택에 대해 어떻게 행동하는가이지 x600 의 GPU 가 무엇을 돌려주는가가 아니다"
 status: PASS
-commit: a6569a83c75a229fdd82e9f97fc67fd6143ffc35
+commit: f4dba9fb9c900a1dc0fd0a2d4046748b9c0a942e
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — 순수 함수 추출 2건, 테스트 7건, 뮤테이션 7건, 독립 검수 3라운드"

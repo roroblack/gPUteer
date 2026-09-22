@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-46
 claim: "scheduler 로드맵 조각 5를 '로컬 orchestration kernel'로 완료했다. crate-internal orchestrate_placement_to_staging()이 pool_snapshot()→evaluate_eligibility()→0/1/N 후보 분기→N에서만 rank_best_fit()→stage_queued_with_lease()를 조합하고 caller-supplied ID·coordinator term·시각·Lease 수명을 사용함을 구현·독립 검수 1라운드 ACCEPTED·감독자 coordinator 테스트 78/78로 확인했다. 단 inventory revision/CAS reservation이 없어 서로 다른 Job의 같은 GPU 중복 선택을 막지 못하므로 이 함수는 private module의 test fixture 외 production 경로에는 연결되지 않았다"
 status: PASS
-commit: a210eac8e0e4228c0d48ab1b68732161143b7366
+commit: 21ef993d6643f2c89d61f3b3ab6d838c2be42bc8
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — private orchestration module과 실제 파일 DB 테스트 7건, 뮤테이션 2건"

@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-52
 claim: "검증된 `CheckpointManifest` 를 durable Attempt/reservation 에 묶어 재시작 뒤 보존되는 first-write evidence로 만들고 stale manifest 혼입을 막았다 — 공개 저장 API는 `&Verified<pb::CheckpointManifest>`만 받고 `Verified::get()` 뒤에만 필드를 읽으며, 하나의 `BEGIN IMMEDIATE`를 획득한 뒤 같은 transaction 안에서 현재 durable Attempt·reservation의 job/attempt/producer/verified signer/fence/owner를 대조한 후에만 INSERT한다. signature 포함 complete body와 저장소가 직접 계산한 BLAKE3 hash를 저장하고, `root_digest`는 BLAKE3-256이면서 정확히 32바이트인 경우만 허용한다. exact replay는 최초 1행을 유지하고 changed replay·binding 불일치·손상은 fail closed하며 load는 의도적으로 `Verified`가 아니다. 자체 재검토에서 SHA-256 root를 허용하던 실제 결함을 고쳐 negative case로 고정했고, 독립 검수 1라운드 ACCEPTED와 감독자 coordinator 118 passed로 확인했다. `ReplicaAck` 저장·`MIRRORED` 및 checkpoint durability 전이와 Job/Attempt/Lease/reservation 상태 전이는 완료하지 않았다"
 status: PASS
-commit: 3a0d4f5a36ec9fbe0ebed2f0defcec244a54dadf
+commit: 471fb077f2beb89fd31693ea320334ee7f2644c7
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — verified CheckpointManifest durable Attempt/reservation binding, replay·rollback·corruption negative test와 뮤테이션 검증"

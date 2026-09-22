@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-57
 claim: "`crates/runtime-linux` 가 cgroup v2 로 자원 상한을 실제로 강제하고, Agent 의 Linux 실행 경로가 그것을 통해 프로세스를 띄운다. x600 WSL2 에서 실측으로 확인했다 — 상한을 넘는 할당은 죽고, 상한 안의 작업은 살아남고, `cgroup.kill` 이 손자까지 정리하고, 붙잡힌 `wait()` 을 다른 스레드에서 풀 수 있다. 상한을 걸 수 없으면 프로세스를 띄우지 않는다(typed error). ★ 그러나 이것은 **협조하는 작업에 대한 상한이지 적대적 코드에 대한 격리가 아니다** — 자식이 자기 pid 를 상위 `cgroup.procs` 에 써서 실제로 빠져나가 32MiB 상한 밖에서 90MB 를 잡는 것을 테스트로 확인했다"
 status: PASS
-commit: 2eb3637a5eb73d91fb6a03fb69b82f2dfc222f63
+commit: 04f740f8ea26e9f38af88737f2067a1a6567faf9
 
 executor_id: "agent:claude-code"
 executor_tool: "claude-code 세션 — crates/runtime-linux 신설, crates/agent 의 Linux platform::execute 구현, x600 WSL2 원격 실측"

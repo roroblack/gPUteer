@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-38
 claim: "자동 재접속 루프 로드맵 조각 6(Agent Resume 통합)을 완료했다. crates/agent/src/lib.rs 의 run_resume_connection() 은 이미 실제로 AgentSessionHello/ResumeLeaseRequest 를 보내고 ResumeLeaseResult 를 검증하며 재시도 여부(안전 동작)는 이미 올바르게 구현돼 있었다 — REVOKED·EXPIRED·SUPERSEDED·UNKNOWN_LEASE·IDENTITY_CONFLICT·EPOCH_AHEAD 는 전부 재시도 없이 즉시 종료, UNAVAILABLE 만 재시도 가능(RETRYABLE_RESUME). 이번 조각은 그 위에 outcome 별 명시적 오류 문자열(RESUME_REFUSED:REVOKED 등, DoD-27 의 RENEW_REFUSED:REVOKED 패턴을 재사용)을 추가하고, 기존 selftest 시나리오 53~59 가 이 문자열과 CONNECTION_ATTEMPT 1회·ReconnectExhausted 미발생을 실제로 assert 하도록 보강했다 — 재시도 안전 동작 자체는 조금도 안 바뀌었다. Coordinator·proto 는 전혀 안 건드렸다"
 status: PASS
-commit: c952a5b
+commit: 330a6c0
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (cargo build·test·coordinator-agent-selftest 5회 연속 독립 재실행 — 코덱스 read-only 샌드박스 밖 실제 환경)"

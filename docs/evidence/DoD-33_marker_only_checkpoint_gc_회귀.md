@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-33
 claim: "DoD-30(Job 시작 WRITING 마커) evidence 문서가 주장했던 'WRITING 마커만 있는 디렉터리는 기존 gc_partial() 규칙상 PARTIAL 로 취급돼 GC 대상' 이라는 주장을 실제로 검증하는 회귀 테스트를 추가했다 — crates/checkpoint/tests/durability_chaos.rs 에 신설한 startup_gc_removes_marker_only_checkpoint_but_preserves_manifest_checkpoint 가 .durability.writing 마커만 있는 디렉터리는 startup_gc()/gc_partial() 실행 후 실제로 삭제되고, manifest.json+데이터 파일까지 있는 완결된 디렉터리는 보존됨을 파일시스템 상태(exists/is_dir/is_file)로 직접 확인한다. GC 알고리즘 자체(crates/checkpoint/src/atomic.rs·writer.rs)와 crates/agent/src/lib.rs 는 전혀 바꾸지 않은 순수 테스트 추가다"
 status: PASS
-commit: 6881555
+commit: 6b3213d
 
 executor_id: "agent:codex-cli+agent:claude-code"
 executor_tool: "codex exec --sandbox workspace-write -c model_reasoning_effort=high (구현) / claude-code (cargo build·cargo test -p gputeer-checkpoint --test durability_chaos·워크스페이스 전체 테스트 독립 재실행 — 코덱스 read-only 샌드박스 밖 실제 환경)"

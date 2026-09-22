@@ -3,7 +3,7 @@ schema_version: 2
 id: DoD-44
 claim: "scheduler 로드맵 조각 3 을 'durable Agent inventory 저장소 커널(3a)'로 좁혀 완료했다. single-Coordinator SQLite의 CoordinatorInventoryStore가 복수 Agent registry를 충돌 방지·멱등 등록하고, 한 BEGIN IMMEDIATE transaction으로 parent/GPU/workload inventory를 원자 교체하며, 저장된 normalized fact를 node ID 순의 결정적 gputeer_scheduler::PoolSnapshot으로 투영함을 자체 재검토 수정 5건, rollback·revision·손상·별도 connection 경쟁·뮤테이션 검증, 독립 검수 1라운드 ACCEPTED 및 감독자 cargo test로 확인했다"
 status: PASS
-commit: 8cd3c81e96bb8710a33e9e21c166e8e2d410cdca
+commit: 41d599ee7379ffadfa5a1b4d6579732e2300b843
 
 executor_id: "agent:implementation-author"
 executor_tool: "workspace-write 구현 세션 — 자체 재검토 5건 포함"
