@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-09-23 00:20 — 신뢰망 P2 첫 조각: 다중 Agent lane 이 **저장된 배정**으로 Grant 를 만든다
+
+- 계획: 신뢰망 P2(여러 대가 동시에 붙기)
+- 스트림: Coordinator
+- 수행: `staging_store::work_assigned_to_node()` 를 더했다 — 예약에서 시작해 시도까지 가 `(job, attempt, lease)` 를 찾는다.
+  다중 Agent lane 이 `--grant-from-control-db` 가 있을 때 **그 노드에 배정된 일**로 Grant 를 만든다.
+  조립은 순차 lane · CLI 와 **같은 함수**(`grant_from_stored`)가 한다 — 두 벌이 생기지 않는다
+- ★ 전에는 이 lane 이 설정에 적힌 식별자로 Agent 마다 Grant 를 **지어냈다**(`scope_config_to_agent`).
+  여러 대가 붙어도 각자 "가짜 일" 을 받을 뿐 스케줄러가 정한 배치와 무관했다
+- ★ 배정이 없으면 `NO_WORK_FOR_NODE` 로 **연결을 끝낸다** — 없는 일을 지어내지 않는다.
+  제어 DB 를 안 주면 기존 동작 그대로다(기본 경로 무변경)
+- 검증: 워크스페이스 **1241 passed · 0 failed · 서식 위반 0**(개발 기계 Windows, `-j 1`).
+  새 시험 — 배정 조회가 **자기 노드의 일만** 돌려주고 배정 없는 노드에는 `None` 을 준다
+- ★ `-j 2` 로 돌리다 `rustc-LLVM ERROR: out of memory` 로 컴파일이 죽었다(기계 사정). `-j 1` 로 다시 돌려 전부 통과.
+  CLAUDE.md §5 가 같은 부류를 이미 적어 뒀다
+- 리포트: 없음
+
+---
+
 ## 2026-09-22 22:45 — 신뢰망 P1 마지막 고리: `scheduler-loop` — 큐를 도는 루프
 
 - 계획: §A1 5 · `docs/plans/2026-09-22_1730_시도가_끝났다를_적는다_설계.md` 의 사슬 끝

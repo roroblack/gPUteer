@@ -278,9 +278,71 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
 
     let signing_key = SigningKey::from_bytes(&shared.config.own_seed);
     let now = clock.now_unix_ms();
-    let grant = {
-        let mut store = lock(&shared.lease_store);
-        issue_grant(&per_agent, &mut store, &signing_key, now, 0)?
+    let grant = match &shared.config.grant_from_control_db {
+        // ★★ 2026-09-23 (신뢰망 P2) — **저장된 배정에서 조립한다.**
+        //
+        //   전에는 이 lane 이 설정에 적힌 식별자로 Agent 마다 Grant 를 **지어냈다**
+        //   (`scope_config_to_agent`). 그러면 여러 대가 붙어도 각자 자기 몫의
+        //   "가짜 일" 을 받을 뿐이고, 스케줄러가 정한 배치와는 아무 상관이 없었다.
+        //
+        //   이제 **그 노드에 배정된 일**을 찾아 그것으로 Grant 를 만든다. 조립은
+        //   순차 lane · CLI 와 **같은 함수**(`grant_from_stored`)가 한다 — 두 벌이 생기지 않는다.
+        Some(control_db) => {
+            let jobs = crate::job_store::CoordinatorJobStore::open(control_db)
+                .map_err(|e| format!("job store: {e}"))?;
+            let staging = crate::staging_store::CoordinatorStagingStore::open(control_db)
+                .map_err(|e| format!("staging store: {e}"))?;
+            let leases =
+                CoordinatorLeaseStore::open(control_db).map_err(|e| format!("lease store: {e}"))?;
+            let Some((job_id, attempt_id, lease_id)) = staging
+                .work_assigned_to_node(&agent_device_id)
+                .map_err(|e| format!("배정 조회: {e}"))?
+            else {
+                // ★ 일이 없는 것은 **오류가 아니다.** 이유를 말하고 이 연결을 끝낸다 —
+                //   없는 일을 지어내 Grant 를 만들지 않는다.
+                return Err(format!(
+                    "NO_WORK_FOR_NODE: {agent_device_id} 에 배정된 예약이 없다 —                      스케줄러가 아직 이 노드를 고르지 않았다"
+                ));
+            };
+            let keyring_path = shared
+                .config
+                .stored_grant_submitter_keyring
+                .as_ref()
+                .ok_or_else(|| {
+                    "--submitter-keyring 이 없다 — 시작 관문이 막았어야 한다".to_string()
+                })?;
+            let policy = if shared.config.stored_grant_allow_plaintext_keyring {
+                gputeer_crypto::PlaintextPolicy::Allow
+            } else {
+                gputeer_crypto::PlaintextPolicy::Reject
+            };
+            let submitters = gputeer_crypto::PersistentKeyring::load(keyring_path, policy)
+                .map_err(|e| format!("제출자 keyring({}): {e:?}", keyring_path.display()))?;
+            crate::grant_from_stored::signed_grant_from_stored(
+                &jobs,
+                &staging,
+                &leases,
+                &crate::grant_from_stored::StoredGrantRequest {
+                    job_id,
+                    attempt_id,
+                    lease_id,
+                    grant_id: per_agent.grant_id.clone(),
+                    issued_at_unix_ms: now,
+                    expires_at_unix_ms: now.saturating_add(shared.config.stored_grant_ttl_ms),
+                    // ★ 이 lane 의 연결 시도 번호는 0 이다(연결마다 새로 센다) —
+                    //   Agent 가 같은 유도식으로 다시 만들어 대조한다.
+                    nonce: crate::derive_nonce("grant", &per_agent.grant_id, 0),
+                },
+                &signing_key,
+                &submitters,
+            )
+            .map_err(|e| format!("저장된 배정으로 Grant 를 만들지 못했다: {e:?}"))?
+        }
+        // 제어 DB 를 안 주면 기존 동작 그대로다 — 설정에 적힌 식별자로 발급한다.
+        None => {
+            let mut store = lock(&shared.lease_store);
+            issue_grant(&per_agent, &mut store, &signing_key, now, 0)?
+        }
     };
 
     let frame = write_frame(FrameType::Grant, &grant.encode_to_vec())

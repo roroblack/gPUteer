@@ -347,6 +347,35 @@ impl CoordinatorStagingStore {
         fetch_node_reservation(&self.connection, node_id)
     }
 
+    /// 이 노드에 **지금 배정돼 있는 일**을 찾는다 — 예약에서 시작해 시도까지 간다.
+    ///
+    /// ★★ 2026-09-23 (신뢰망 P2) — 다중 Agent lane 이 쓴다. 전에는 Coordinator 설정에
+    ///   `job/attempt/lease` 를 **손으로** 적어야 했다(노드 하나짜리 전제). 여러 대가 붙으면
+    ///   각자 **자기 노드에 배정된** 일을 받아야 하므로, 저장된 사실에서 찾아야 한다.
+    ///
+    /// 반환은 `(job_id, attempt_id, lease_id)` 다. 예약이 없으면 `None` — **일이 없다는 뜻**이지
+    /// 오류가 아니다(그 노드에 아직 아무것도 안 배정됐다).
+    pub fn work_assigned_to_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<(String, String, String)>, StagingStoreError> {
+        let Some(reservation) = fetch_node_reservation(&self.connection, node_id)? else {
+            return Ok(None);
+        };
+        let Some(attempt) = fetch_attempt(&self.connection, &reservation.attempt_id)? else {
+            // 예약은 있는데 시도가 없다 — 외래키가 있으므로 있을 수 없다. 조용히 넘기지 않는다.
+            return Err(StagingStoreError::CorruptData(format!(
+                "예약은 있는데 그 Attempt 가 없다: node={node_id} attempt={}",
+                reservation.attempt_id
+            )));
+        };
+        Ok(Some((
+            reservation.job_id,
+            reservation.attempt_id,
+            attempt.lease_id,
+        )))
+    }
+
     /// 예약에 **만료 의심** 표시를 찍는다(§A1 4a). 지우지 않는다 — 함수 문서 참조.
     pub fn mark_node_reservation_expired(
         &mut self,
@@ -1354,6 +1383,48 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(store.get_node_reservation(&request.node_id).unwrap(), None);
+    }
+
+    /// 노드별 배정 조회 — **자기 노드의 일만** 돌려준다(신뢰망 P2).
+    ///
+    /// ★ 여러 대가 붙었을 때 각자 자기 일을 받으려면 이 조회가 정확해야 한다.
+    ///   틀리면 남의 작업 허가를 받아 **같은 일을 두 대가 돌린다**.
+    #[test]
+    fn work_lookup_returns_only_the_assignment_of_that_node() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-w", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        prepare_inventory(&path, "node-2", 7, 2);
+        let revision = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory
+                .pool_snapshot(7)
+                .unwrap()
+                .candidates
+                .iter()
+                .find(|candidate| candidate.node_id == "node-1")
+                .unwrap()
+                .inventory_revision
+                .unwrap()
+        };
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-w", 1);
+        store
+            .reserve_node_and_stage_queued_with_lease(&request, revision)
+            .unwrap();
+
+        let assigned = store.work_assigned_to_node("node-1").unwrap().unwrap();
+        assert_eq!(assigned.0, "job-w");
+        assert_eq!(assigned.1, request.attempt_id);
+        assert_eq!(assigned.2, request.lease_id);
+
+        // ★ 배정이 없는 노드에는 **아무것도 주지 않는다** — 없는 일을 지어내지 않는다.
+        assert_eq!(
+            store.work_assigned_to_node("node-2").unwrap(),
+            None,
+            "배정이 없는 노드에 남의 일을 줬다"
+        );
     }
 
     /// 만료 표시는 **찍히되 예약을 지우지 않는다**(§A1 4a).
