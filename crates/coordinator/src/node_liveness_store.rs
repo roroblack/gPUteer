@@ -226,7 +226,11 @@ impl CoordinatorNodeLivenessStore {
                 detail: "node_id 가 비었다".into(),
             });
         }
-        self.connection
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        transaction
             .execute(
                 "INSERT INTO coordinator_node_session_seen(node_id, last_seen_unix_ms, last_mode)
                  VALUES (?1, ?2, ?3)
@@ -237,6 +241,29 @@ impl CoordinatorNodeLivenessStore {
                 rusqlite::params![node_id, seen_at_unix_ms.to_be_bytes().to_vec(), mode],
             )
             .map_err(storage)?;
+        // ★ 2026-09-24 (결함 266 · 재검수 86) — FRESH 인사는 **같은 커밋에서** 그 노드의 소유자 되찾음 기록을 지운다. 되찾음 해제를 시각으로
+        //   비교했더니(237 · 253 · 262) 시계가 튈 때마다 반대편 경우가 생겼다 — 되찾음 해제는 시각이 아니라 **사건 순서**다. Agent 는 되찾음 표시가
+        //   있는 동안 FRESH 를 보내지 않으므로(run() 이 OWNER_RECLAIMED 로 끝난다) FRESH 가 왔다는 것이 곧 "소유자가 다시 켰다" 다.
+        if mode == gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
+            let reclaims = transaction
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_node_reclaims'",
+                    [],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map_err(storage)?
+                .is_some();
+            if reclaims {
+                transaction
+                    .execute(
+                        "DELETE FROM coordinator_node_reclaims WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                    )
+                    .map_err(storage)?;
+            }
+        }
+        transaction.commit().map_err(storage)?;
         Ok(())
     }
 

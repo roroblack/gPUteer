@@ -180,10 +180,11 @@ pub fn status_report(control_db: &Path, now_unix_ms: u64) -> Result<String, Stri
                     })
                     .unwrap_or("-"),
                 ago(now_unix_ms, last_seen),
-                match (reclaimed, last_seen) {
-                    (Some(reclaimed), Some(seen)) if seen > reclaimed => "resumed".to_string(),
-                    (Some(_), _) => "yes".to_string(),
-                    (None, _) => "no".to_string(),
+                // 결함 266 — 되찾음 기록이 있으면 "yes"(되찾은 뒤의 FRESH 가 그 기록을 지운다 — 시각을 비교하지 않는다).
+                if reclaimed.is_some() {
+                    "yes".to_string()
+                } else {
+                    "no".to_string()
                 },
             ));
         }

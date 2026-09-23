@@ -646,13 +646,12 @@ impl CoordinatorInventoryStore {
             } else {
                 None
             };
-            // ★ 2026-09-24 (결함 262 · 재검수 85) — 되찾음은 **되찾은 뒤의 FRESH 인사로만** 풀린다. heartbeat(다른 lane 의 생존 신호)는 풀지
-            //   않는다 — 전에는 둘의 최댓값과 비교해, 미래 시각 heartbeat 하나가 되찾음을 무효로 만들었다(status 와도 어긋났다).
-            candidate.last_heartbeat_unix_ms = match reclaimed_at {
-                Some(reclaimed) if session_seen_unix_ms.is_none_or(|fresh| fresh <= reclaimed) => {
-                    None
-                }
-                _ => last_seen,
+            // ★ 2026-09-24 (결함 262 · 266 · 재검수 85 · 86) — 되찾음 기록이 **있으면** 숨긴다. 시각을 비교하지 않는다 — 기록은 되찾은 뒤의 FRESH
+            //   인사가 같은 커밋에서 지운다(`record_session_seen`). heartbeat(다른 lane)는 되찾음을 풀지 않는다.
+            candidate.last_heartbeat_unix_ms = if reclaimed_at.is_some() {
+                None
+            } else {
+                last_seen
             };
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)
@@ -1660,12 +1659,12 @@ mod tests {
         assert_eq!(snapshot.candidates[0].last_heartbeat_unix_ms, Some(2000));
         drop(store);
 
-        // 되찾음(1000) — heartbeat(2000)가 더 늦어도 숨는다.
+        // 되찾음 — heartbeat(2000)가 있어도 숨는다. 되찾은 시각은 **미래로 튄 값**이다(결함 266 — 시각을 비교하면 영영 안 풀렸다).
         crate::failover::ensure_reclaim_table(&connection).unwrap();
         connection
             .execute(
                 "INSERT INTO coordinator_node_reclaims(node_id, reclaimed_at_unix_ms) VALUES ('node-a', ?1)",
-                rusqlite::params![1000u64.to_be_bytes().to_vec()],
+                rusqlite::params![4_102_444_800_000u64.to_be_bytes().to_vec()],
             )
             .unwrap();
         let mut store = CoordinatorInventoryStore::open(&path).unwrap();
@@ -1676,7 +1675,7 @@ mod tests {
         );
         drop(store);
 
-        // 되찾은 뒤의 FRESH(1200) 는 푼다.
+        // 되찾은 뒤의 FRESH 는 시각이 더 작아도(1200) 푼다 — 순서로 가른다.
         crate::node_liveness_store::CoordinatorNodeLivenessStore::open(&path)
             .unwrap()
             .record_session_seen(
