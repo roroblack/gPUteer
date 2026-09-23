@@ -279,8 +279,10 @@ verify    = Ed25519_verify(public_key, sig_input, signature)
 | `ResumeLeaseRequest` | `gputeer/v1/lease-resume` |
 | `ResumeLeaseResult` | `gputeer/v1/lease-resume-result` |
 | `AttemptReportAck` | `gputeer/v1/attempt-report-ack` |
+| `GrantAckReceipt` | `gputeer/v1/grant-ack-receipt` |
 
-**총 31종.** ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
+**총 32종.** ★ 2026-09-23 결함 131 의 `GrantAckReceipt`(Coordinator 가 ACK 를 검증 · 기록한 뒤에만 서명하는 수신 확인)가 더해졌다 —
+`AgentGrantAck`(Agent 서명)와 tag 를 공유하지 않는다. 제안 `docs/contracts/proposals/2026-09-23_2020_ACK_수신_확인.md`. ★ 2026-08-16 이전에는 17종이었고 `membership`(6개 메시지) ·
 `policy` · `quarantine`(2개 메시지)이 tag 를 공유했다. **ADR-028 로 분리했다** —
 사유는 §5.1. `AgentGrantAck` 는 coordinator/agent 최소 핸드셰이크
 (docs/plans/2026-08-18_0800_coordinator_agent_최소_핸드셰이크_v1.md, 2026-08-18)로

@@ -30,7 +30,8 @@ use std::process::Command;
 use std::time::Duration;
 
 /// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
-const FORWARDED_PREFIXES: [&str; 6] = [
+const FORWARDED_PREFIXES: [&str; 7] = [
+    "ACK_RECEIPT_VERIFIED",
     "OWNER_STOPPED",
     "RESUME_PREPARED",
     "CHECKPOINT_PUBLISHED",

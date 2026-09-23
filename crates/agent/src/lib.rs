@@ -298,6 +298,9 @@ pub struct AgentConfig {
     ///   Coordinator 는 노드 단위로 배타 배정하므로 그렇게 하면 GPU 단위 배정이 된다.
     ///   ★ 보이게 하는 것이지 강제가 아니다 — 작업이 환경 변수를 무시하고 다른 GPU 를 열면 막지 못한다(§0.4).
     pub gpu_pin: Option<String>,
+    /// ★ 2026-09-23 (결함 131 · 신뢰망 L) — ACK 를 보낸 뒤 Coordinator 의 **서명된 수신 확인**을 받아야만 실행한다.
+    ///   받지 못하면(옛 Coordinator · 거부된 ACK · 끊긴 연결) 실행하지 않고 멈춘다(fail-closed). 풀 모드에서 켠다.
+    pub require_ack_receipt: bool,
 
     // ── Lease revoke (2026-08-19) ───────────────────────────────────
     /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
@@ -1244,6 +1247,23 @@ fn run_one_connection_inner(
             send_grant_ack(&mut stream, signing_key, &grant, &config, clock)
                 .map_err(|ack_error| fail_after_cleanup(ack_error, &run_dir))?,
         );
+        // ★ 2026-09-23 (결함 131) — 실행 **전에** 수신 확인을 기다린다(요구할 때만).
+        if config.require_ack_receipt {
+            let ack_nonce = sent_ack
+                .as_ref()
+                .map(|ack| ack.nonce.clone())
+                .unwrap_or_default();
+            wait_for_ack_receipt(
+                &mut stream,
+                coordinator_keys,
+                replay,
+                clock,
+                &grant,
+                &config,
+                &ack_nonce,
+            )
+            .map_err(|error| fail_after_cleanup(error, &run_dir))?;
+        }
         *execution_attempted = will_execute;
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
         //   작업 디렉터리를 지운다.
@@ -3560,6 +3580,78 @@ fn classify_renew_result_error(error: FramingError) -> String {
 /// ★ 결함 ⑱ (설계 A) — 워크로드가 있으면 **사전 관문 뒤 · 실행 전**에, 없으면 Grant 처리 끝에
 ///   부른다. 한 연결에서 한 번만 부른다 — 두 번 보내면 Coordinator 가 두 번째를 다음 프레임으로
 ///   읽으려다 실패한다.
+/// Coordinator 의 서명된 수신 확인을 읽고 대조한다 — 이 Grant · 이 Agent · **보낸 그 ACK** 의 것인가.
+fn wait_for_ack_receipt(
+    stream: &mut TcpStream,
+    coordinator_keys: &InMemoryKeyring,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
+    clock: &SystemClock,
+    grant: &pb::ExecutionGrant,
+    config: &AgentConfig,
+    ack_nonce: &[u8],
+) -> Result<(), String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| format!("ACK_RECEIPT_MISSING: 읽기 시한 설정 실패: {e}"))?;
+    let message = read_frame(
+        stream,
+        1,
+        KeyDirectorySource::Provided(coordinator_keys),
+        replay,
+        clock,
+    )
+    .map_err(|e| {
+        format!(
+            "ACK_RECEIPT_MISSING: Coordinator 의 수신 확인을 받지 못했다({e}) — ACK 가 받아들여졌는지 모르므로 실행하지 않는다"
+        )
+    })?;
+    let receipt = match message {
+        IngressMessage::GrantAckReceipt(verified) => verified
+            .require_replay_checked()
+            .map_err(|e| format!("ACK_RECEIPT_INVALID: replay 검사 실패: {e:?}"))?
+            .clone(),
+        _ => return Err("ACK_RECEIPT_INVALID: 수신 확인 자리에 다른 프레임이 왔다".to_string()),
+    };
+    for (label, got, want) in [
+        (
+            "grant_id",
+            receipt.grant_id.as_str(),
+            grant.grant_id.as_str(),
+        ),
+        (
+            "attempt_id",
+            receipt.attempt_id.as_str(),
+            grant.attempt_id.as_str(),
+        ),
+        (
+            "agent_device_id",
+            receipt.agent_device_id.as_str(),
+            config.agent_device_id.as_str(),
+        ),
+        (
+            "coordinator_device_id",
+            receipt.coordinator_device_id.as_str(),
+            config.coordinator_device_id.as_str(),
+        ),
+    ] {
+        if got != want {
+            return Err(format!(
+                "ACK_RECEIPT_INVALID: {label} 가 다르다(받은 {got} · 기대 {want})"
+            ));
+        }
+    }
+    if receipt.ack_nonce != ack_nonce {
+        return Err(
+            "ACK_RECEIPT_INVALID: 보낸 ACK 에 대한 확인이 아니다(ack_nonce 불일치)".to_string(),
+        );
+    }
+    println!(
+        "ACK_RECEIPT_VERIFIED grant_id={} attempt_id={}",
+        receipt.grant_id, receipt.attempt_id
+    );
+    Ok(())
+}
+
 fn send_grant_ack(
     stream: &mut TcpStream,
     signing_key: &SigningKey,
@@ -3812,6 +3904,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             Some(raw) => parse_pool_peer_keys(raw)?,
             None => Vec::new(),
         },
+        require_ack_receipt: flags.bool_flag("--require-ack-receipt"),
         gpu_pin: match flags.get("--gpu-pin") {
             Some(raw) => Some(parse_gpu_pin(raw)?),
             None => None,
@@ -4157,6 +4250,7 @@ mod tests {
             checkpoint_publish_interval_ms: 1_000,
             pool_peer_keys: Vec::new(),
             gpu_pin: None,
+            require_ack_receipt: false,
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
             max_reconnect_attempts: 1_000,

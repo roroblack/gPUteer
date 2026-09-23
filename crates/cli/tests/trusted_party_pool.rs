@@ -405,6 +405,9 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
             "true",
             "--max-reconnect-attempts",
             "1",
+            // ★ 결함 131 — 서명된 수신 확인을 받아야만 실행한다.
+            "--require-ack-receipt",
+            "true",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -461,6 +464,13 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
         assert!(
             out.contains("outcome=worked"),
             "{label} 가 한 번도 일하지 않았다\n{everything}"
+        );
+    }
+    // ★ 결함 131 — 두 Agent 모두 서명된 수신 확인을 검증한 뒤에 실행했다.
+    for (label, out) in [("agent 1", &agent_1_out), ("agent 2", &agent_2_out)] {
+        assert!(
+            out.contains("ACK_RECEIPT_VERIFIED"),
+            "{label} 가 수신 확인을 검증하지 않았다\n{everything}"
         );
     }
     // ★ J — 운영자가 보는 한 줄 요약이 사실과 같다.
@@ -581,4 +591,163 @@ fn a_node_outside_the_pool_is_refused_and_the_coordinator_keeps_serving() {
         log.contains(&format!("SESSION_SEEN node_id={NODE_1}")),
         "거부 뒤에 Coordinator 가 다음 노드를 받지 않았다\n{everything}"
     );
+}
+
+/// 풀 Coordinator 를 띄우고, 서명된 Hello 바이트 하나를 보내고, 끈다. Coordinator 의 전체 출력을 돌려준다.
+fn one_hello_against_a_pool_coordinator(
+    dir: &Path,
+    db: &Path,
+    keyring: &Path,
+    replay_db: Option<&Path>,
+    hello_frame: &[u8],
+    log_name: &str,
+) -> String {
+    use std::io::Write;
+    let db_s = db.to_str().unwrap().to_string();
+    let log = dir.join(log_name);
+    let pool_agents = format!("{NODE_1}={}", pub_hex(AGENT_SEED_1));
+    let mut args: Vec<String> = [
+        "coordinator-stub",
+        "--pool-mode",
+        "true",
+        "--pool-agents",
+        &pool_agents,
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        COORD_SEED,
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--grant-from-control-db",
+        &db_s,
+        "--lease-db",
+        &db_s,
+        "--liveness-db",
+        &db_s,
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+        "--accept-report-sessions",
+        "true",
+        "--max-connections",
+        "1",
+        "--accept-timeout-ms",
+        "30000",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    if let Some(replay_db) = replay_db {
+        args.extend([
+            "--replay-db".to_string(),
+            replay_db.to_str().unwrap().to_string(),
+        ]);
+    }
+    let coordinator = Command::new(cli_bin())
+        .args(&args)
+        .stdout(Stdio::from(std::fs::File::create(&log).unwrap()))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("coordinator spawn");
+    let addr = wait_ready(&log);
+    let mut stream = std::net::TcpStream::connect(&addr).expect("연결");
+    stream.write_all(hello_frame).expect("Hello 쓰기");
+    stream.flush().ok();
+    let output = coordinator.wait_with_output().expect("Coordinator 종료");
+    format!(
+        "{}{}",
+        std::fs::read_to_string(&log).unwrap_or_default(),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+/// ★ 2026-09-23 (결함 88 조각 3, 신뢰망 L) — 풀 모드 `--replay-db` 는 **Coordinator 를 다시 띄워도** 같은 Hello 바이트를 거부한다.
+///
+/// 대조군이 같은 시험 안에 있다 — `--replay-db` 없이는 재시작 뒤 같은 바이트가 받아들여진다(메모리 방어는 재시작하면 잊는다).
+#[test]
+fn a_replayed_hello_is_refused_across_a_pool_coordinator_restart() {
+    use prost::Message;
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool(dir.path());
+    let key = SigningKey::from_bytes(&seed_bytes(AGENT_SEED_1));
+    let mut hello = gputeer_protocol::pb::AgentSessionHello {
+        schema_version: 1,
+        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        session_id: "replay-probe".into(),
+        node_id: NODE_1.into(),
+        connection_attempt: 0,
+        issued_at_unix_ms: now_unix_ms(),
+        nonce: vec![0x5A; 16],
+        ..Default::default()
+    };
+    hello.node_signature = gputeer_crypto::sign(&key, &hello).to_vec();
+    let frame = gputeer_crypto::write_frame(
+        gputeer_crypto::FrameType::SessionHello,
+        &hello.encode_to_vec(),
+    )
+    .expect("프레임");
+
+    // 대조 — 영속 방어 없이는 재시작 뒤 같은 바이트를 받는다.
+    let first =
+        one_hello_against_a_pool_coordinator(dir.path(), &db, &keyring, None, &frame, "c1.log");
+    let second =
+        one_hello_against_a_pool_coordinator(dir.path(), &db, &keyring, None, &frame, "c2.log");
+    assert!(first.contains("SESSION_HELLO_ACCEPTED"), "{first}");
+    assert!(
+        second.contains("SESSION_HELLO_ACCEPTED"),
+        "대조군이 성립하지 않는다 — 메모리 방어는 재시작 뒤 같은 Hello 를 받아야 한다: {second}"
+    );
+
+    // 영속 방어 — 재시작 뒤 같은 바이트를 거부한다.
+    let replay_db = dir.path().join("replay.sqlite3");
+    let third = one_hello_against_a_pool_coordinator(
+        dir.path(),
+        &db,
+        &keyring,
+        Some(&replay_db),
+        &frame,
+        "c3.log",
+    );
+    let fourth = one_hello_against_a_pool_coordinator(
+        dir.path(),
+        &db,
+        &keyring,
+        Some(&replay_db),
+        &frame,
+        "c4.log",
+    );
+    assert!(third.contains("SESSION_HELLO_ACCEPTED"), "{third}");
+    assert!(
+        !fourth.contains("SESSION_HELLO_ACCEPTED") && fourth.contains("HELLO_REJECTED"),
+        "재시작 뒤 같은 Hello 를 받아들였다: {fourth}"
+    );
+
+    // 풀 모드가 아니면 --replay-db 를 거부한다(유도 nonce 가 재시작 뒤 겹친다).
+    let (ok, out) = run_cli(&[
+        "coordinator-stub",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        COORD_SEED,
+        "--peer-pubkey",
+        &pub_hex(AGENT_SEED_1),
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        NODE_1,
+        "--grant-id",
+        "g",
+        "--attempt-id",
+        "a",
+        "--lease-id",
+        "l",
+        "--job-id",
+        "j",
+        "--lease-db",
+        db.to_str().unwrap(),
+        "--replay-db",
+        replay_db.to_str().unwrap(),
+    ]);
+    assert!(!ok && out.contains("REPLAY_DB_NEEDS_POOL_MODE"), "{out}");
 }

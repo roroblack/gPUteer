@@ -356,6 +356,7 @@ declare_domains! {
     NodeHeartbeat => "gputeer/v1/node-heartbeat",
     NeighborUnreachableReport => "gputeer/v1/neighbor-unreachable",
     AttemptReportAck => "gputeer/v1/attempt-report-ack",
+    GrantAckReceipt => "gputeer/v1/grant-ack-receipt",
 }
 
 impl Domain {

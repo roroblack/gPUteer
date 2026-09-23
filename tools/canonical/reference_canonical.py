@@ -314,6 +314,18 @@ SCHEMAS = {
         (40, "issued_at_unix_ms", "uint", None),
         (90, "node_signature", "bytes", None),
     ],
+    # 결함 131 (2026-09-23) — Coordinator 가 서명하는 ACK 수신 확인
+    "GrantAckReceipt": [
+        (1, "schema_version", "uint", None),
+        (2, "grant_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "agent_device_id", "string", None),
+        (5, "ack_nonce", "bytes", None),
+        (6, "coordinator_device_id", "string", None),
+        (7, "issued_at_unix_ms", "uint", None),
+        (8, "nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
     # B+E 계약 단계 1 — Coordinator 가 서명하는 "받았다" 응답
     "AttemptReportAck": [
         (1, "schema_version", "uint", None),
@@ -714,6 +726,7 @@ DOMAIN_TAGS = {
     "ArtifactRef": b"gputeer/v1/artifact",
     "AttemptReport": b"gputeer/v1/attempt-report",
     "AttemptReportAck": b"gputeer/v1/attempt-report-ack",
+    "GrantAckReceipt": b"gputeer/v1/grant-ack-receipt",
     "CanonicalDecision": b"gputeer/v1/canonical",
     "Genesis": b"gputeer/v1/genesis",
     # ★ ADR-028 (2026-08-16) — membership/policy/quarantine 3종을 9종으로 분리.
@@ -1853,6 +1866,25 @@ def build_vectors():
     add("v40b_attempt_report_ack_replay_created_false",
         "같은 보고의 재전송 응답(created=false) — canonical 이 달라야 한다", "AttemptReportAck", _ack_replay,
         ["MUST_DIFFER:v40_attempt_report_ack"])
+
+    # 결함 131 (2026-09-23) — ACK 수신 확인. 어느 ACK 에 대한 확인인지(ack_nonce)가 서명에 닿아야 한다.
+    _receipt = {
+        "schema_version": 1,
+        "grant_id": "g0123456789abcdef01234567",
+        "attempt_id": "01JBXATT00000000000000001",
+        "agent_device_id": "node-1",
+        "ack_nonce": bytes(range(16, 32)),
+        "coordinator_device_id": "coordinator-1",
+        "issued_at_unix_ms": 1_755_104_403_000,
+        "nonce": bytes(range(64, 80)),
+        "coordinator_signature": b"R" * 64,
+    }
+    add("v42_grant_ack_receipt", "GrantAckReceipt canonical vector", "GrantAckReceipt", _receipt)
+    _receipt_other = dict(_receipt)
+    _receipt_other["ack_nonce"] = bytes(range(32, 48))
+    add("v42b_grant_ack_receipt_other_ack",
+        "다른 ACK 에 대한 확인 — canonical 이 달라야 한다", "GrantAckReceipt", _receipt_other,
+        ["MUST_DIFFER:v42_grant_ack_receipt"])
 
     _hello_renew = dict(_hello)
     _hello_renew["mode"] = 3

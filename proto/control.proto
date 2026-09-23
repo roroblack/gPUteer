@@ -390,6 +390,25 @@ message AgentGrantAck {
   bytes agent_signature = 90;
 }
 
+// ★ 2026-09-23 (결함 131 · 신뢰망 L) — Coordinator 가 ACK 를 **검증하고 기록한 뒤에만** 서명해 보내는 수신 확인.
+//   ACK 를 보낸 Agent 가 "Coordinator 가 받아들였다" 를 알 방법이 없었다 — 거부된 ACK 뒤에도 작업을 돌렸다.
+//   Agent 는 이것을 요구하도록 설정하면(--require-ack-receipt) 받기 전에는 실행하지 않는다. 옛 Coordinator 는 보내지
+//   않으므로 그 조합은 실행 전에 멈춘다(fail-closed). 선례: REPORT 세션의 AttemptReportAck.
+message GrantAckReceipt {
+  uint32 schema_version = 1; // 현재 1
+  string grant_id = 2;
+  string attempt_id = 3;
+  string agent_device_id = 4;
+  // 받아들인 ACK 의 nonce 를 그대로 되돌린다 — 이 확인이 **그 ACK** 의 것임을 묶는다.
+  bytes ack_nonce = 5;
+  string coordinator_device_id = 6;
+  uint64 issued_at_unix_ms = 7;
+  // 16바이트 CSPRNG. replay 캐시 대상.
+  bytes nonce = 8;
+  // domain_tag = "gputeer/v1/grant-ack-receipt"
+  bytes coordinator_signature = 90;
+}
+
 message SubmitJob { JobManifest manifest = 1; }
 
 message TransitionJob {

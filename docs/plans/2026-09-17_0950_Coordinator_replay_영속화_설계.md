@@ -100,6 +100,11 @@ D  B + 단수명 nonce 전부 CSPRNG — **새 proto 칸 없이** ACK 를 발급
 | 2 | Agent · Coordinator 가 단수명 nonce 를 CSPRNG 로 · ACK 결합을 새 칸으로 · selftest 전제 손질 | 기존 테스트 통과 · 재접속 시나리오 유지 | ⬜ |
 | 3 | Coordinator `DurableReplayGuard`(경로: `--replay-db`, 영속 lease 저장소를 쓰는 구성에서는 필수) · 1분 GC · 음성 테스트(재시작 뒤 같은 Hello · ACK 바이트 거부) | 음성 테스트 · 뮤테이션 | ⬜ |
 
+★★ **2026-09-23 — 풀 모드에서 조각 3 이 됐다(`--replay-db`).** 풀 모드는 Grant id 를 발급마다 난수로 뽑아(신뢰망 K) 유도 nonce 가
+  재시작 뒤에도 겹치지 않는다 — 사실상 D 다. D 를 보류한 이유(`start_checkpoint_id` 의 grant id 의존)는 풀 모드에서 성립하지 않는다(풀 모드는
+  CREATED 시도에만 Grant 를 다시 낸다). 풀 밖에서 `--replay-db` 를 주면 시작을 거부한다(`REPLAY_DB_NEEDS_POOL_MODE`). 시험: 재시작 뒤 같은 Hello
+  거부 · 대조군(없으면 받는다). **풀 밖 lane 의 C(조각 1 · 2)는 여전히 남았다.** 131 은 `GrantAckReceipt` 로 따로 됐다
+  (`docs/contracts/proposals/2026-09-23_2020_ACK_수신_확인.md`).
 ★ 3 만 먼저 하면(바꿔 끼우기) DoD-24 재시작 복원이 깨진다 — **순서를 바꾸지 않는다.** 조각 0 은 guard 를 **Hello 에만** 쓰므로 이 제약 밖이다.
 
 ## 5. 하지 않는 것
@@ -120,3 +125,4 @@ D  B + 단수명 nonce 전부 CSPRNG — **새 proto 칸 없이** ACK 를 발급
 | 2026-09-17 | 최초 작성(설계 조사 — 코드 무변경) |
 | 2026-09-17 | 검수 67 반영 — 조사표를 메시지 · 발신 경로별로(이웃 신고 추가 · 결함 142) · 선택지 D · 조각 0(Hello 만 영속 guard)을 더하고 "새 칸이 필수 선행" 서술을 거뒀다(결함 141) |
 | 2026-09-21 | 논의 71(코덱스 · 읽기 전용) 반영 — **C 채택** · 조각 0 의 범위를 "read_session_hello 에만 별도 durable guard" 로 좁히고 multi_agent 의 `--replay-db` 무시 금지를 더했다 |
+| 2026-09-23 | 풀 모드에서 조각 3(`--replay-db`) — 발급마다 난수 Grant id(사실상 D)라 계약 변경 없이 성립. 풀 밖 C 는 남음 |

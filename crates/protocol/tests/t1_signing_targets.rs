@@ -653,6 +653,8 @@ fn domain_coverage_is_explicit() {
         ),
         // B+E 계약 단계 1 (2026-09-14) — "받았다" 응답
         (Domain::AttemptReportAck, Some("AttemptReportAck"), true),
+        // 결함 131 (2026-09-23) — ACK 수신 확인
+        (Domain::GrantAckReceipt, Some("GrantAckReceipt"), true),
     ];
 
     // ★ 수동으로 적은 28 같은 숫자를 쓰지 않는다. 그 숫자를 두면
@@ -694,8 +696,9 @@ fn domain_coverage_is_explicit() {
     // 이 숫자가 바뀌면 목록을 갱신하게 만든다.
     // **줄어드는(=후퇴하는) 것도 잡는다.**
     // 26 -> 27 (2026-09-14) — B+E 계약 단계 1 의 AttemptReportAck.
+    // 27 -> 28 (2026-09-23) — 결함 131 의 GrantAckReceipt.
     assert_eq!(
-        implemented, 27,
+        implemented, 28,
         "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
     assert_eq!(
@@ -952,5 +955,38 @@ fn b_e_session_hello_mode_vectors_match_reference() {
     assert_matches_reference(
         "v41b_agent_session_hello_report",
         &hello(gputeer_protocol::constants::MODE_REPORT as i32),
+    );
+}
+
+/// ★ 결함 131 (2026-09-23) — ACK 수신 확인의 canonical 이 참조 구현과 같고, 어느 ACK 에 대한 확인인지(ack_nonce)가 서명에 닿는다.
+#[test]
+fn grant_ack_receipt_vectors_match_reference() {
+    let receipt = pb::GrantAckReceipt {
+        schema_version: 1,
+        grant_id: "g0123456789abcdef01234567".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        agent_device_id: "node-1".into(),
+        ack_nonce: (16u8..32).collect(),
+        coordinator_device_id: "coordinator-1".into(),
+        issued_at_unix_ms: 1_755_104_403_000,
+        nonce: (64u8..80).collect(),
+        coordinator_signature: vec![b'R'; 64],
+    };
+    assert_matches_reference("v42_grant_ack_receipt", &receipt);
+    let other_ack = pb::GrantAckReceipt {
+        ack_nonce: (32u8..48).collect(),
+        ..receipt.clone()
+    };
+    assert_matches_reference("v42b_grant_ack_receipt_other_ack", &other_ack);
+    assert_ne!(
+        hex(&canonical_encode(
+            &ToCanonicalFields::to_canonical_fields(&receipt),
+            &[]
+        )),
+        hex(&canonical_encode(
+            &ToCanonicalFields::to_canonical_fields(&other_ack),
+            &[]
+        )),
+        "ack_nonce 를 바꿨는데 canonical 이 같다 — 다른 ACK 에 대한 확인을 구별하지 못한다"
     );
 }

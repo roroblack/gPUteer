@@ -107,6 +107,8 @@ pub enum FrameType {
     NeighborUnreachableReport = 16,
     /// B+E 계약 단계 1 — Coordinator 가 서명하는 "받았다" 응답(REPORT 세션).
     AttemptReportAck = 17,
+    /// ★ 2026-09-23 (결함 131) — Coordinator 가 서명하는 ACK 수신 확인.
+    GrantAckReceipt = 18,
 }
 
 impl FrameType {
@@ -129,6 +131,7 @@ impl FrameType {
             15 => Self::NodeHeartbeat,
             16 => Self::NeighborUnreachableReport,
             17 => Self::AttemptReportAck,
+            18 => Self::GrantAckReceipt,
             _ => return None,
         })
     }
@@ -206,6 +209,7 @@ pub enum IngressMessage {
     NodeHeartbeat(Verified<pb::NodeHeartbeat>),
     NeighborUnreachableReport(Verified<pb::NeighborUnreachableReport>),
     AttemptReportAck(Verified<pb::AttemptReportAck>),
+    GrantAckReceipt(Verified<pb::GrantAckReceipt>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -326,6 +330,7 @@ pub fn read_frame<R: Read>(
             verify_as!(NeighborUnreachableReport, pb::NeighborUnreachableReport)
         }
         FrameType::AttemptReportAck => verify_as!(AttemptReportAck, pb::AttemptReportAck),
+        FrameType::GrantAckReceipt => verify_as!(GrantAckReceipt, pb::GrantAckReceipt),
     }
 }
 

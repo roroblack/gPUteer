@@ -270,6 +270,16 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    // 결함 131 — ACK 수신 확인. ShortLived 여야 한다 — 재생할 수 있으면 받아들여지지 않은 ACK 를 받아들여졌다고 믿게 된다.
+    check(
+        "GrantAckReceipt",
+        &pb::GrantAckReceipt {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
 }
 
 /// ★ `Signable` 을 구현한 메시지가 위 테스트에 **전부** 있는가.

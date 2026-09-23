@@ -268,6 +268,8 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("lease.proto", "NeighborUnreachableReport", 90),
     // B+E 계약 단계 1 (2026-09-14)
     ("artifact.proto", "AttemptReportAck", 90),
+    // 결함 131 (2026-09-23)
+    ("control.proto", "GrantAckReceipt", 90),
 ];
 
 #[test]

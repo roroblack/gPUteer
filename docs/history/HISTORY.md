@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-09-23 20:25 — 신뢰망 남은 일 L: ACK 수신 확인(결함 131) · 풀 모드 재시작 넘는 replay 방어(결함 88 조각 3)
+
+- 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` L · `docs/plans/2026-09-17_0950_Coordinator_replay_영속화_설계.md` 조각 3
+- 스트림: Protocol · Coordinator · Agent
+- 수행:
+  - **131** — 새 서명 메시지 `GrantAckReceipt`(domain `gputeer/v1/grant-ack-receipt` · FrameType 18 · 벡터 v42 · v42b · 서명 대상 32종째).
+    풀 Coordinator 가 ACK 를 **기록한 뒤에만** 보낸다(`ACK_RECEIPT_SENT`). Agent `--require-ack-receipt true` 면 grant · attempt · 자기 ·
+    Coordinator · **보낸 ACK 의 nonce** 를 대조한 뒤에만 실행하고(`ACK_RECEIPT_VERIFIED`), 못 받으면 `ACK_RECEIPT_MISSING` 으로 실행하지 않는다
+  - **88 조각 3** — 풀 모드는 Grant id 를 발급마다 난수로 뽑아(K) 유도 nonce 가 재시작 뒤에도 겹치지 않는다 -> 계약 변경 없이 `--replay-db`
+    (DurableReplayGuard, 풀 모드 전용 · `--hello-replay-db` 와 겹치면 거부). 풀 밖 lane 의 C(ACK 에 grant_nonce)는 남았다
+  - 제안 `docs/contracts/proposals/2026-09-23_2020_ACK_수신_확인.md` · 런북 · `deploy/trusted-party/` 틀에 두 플래그
+- 검증: 워크스페이스 `cargo test --workspace -j 1` **1279 passed · 0 failed · ignored 4**(111 묶음) · 경고 0 · 서식 · check_docs 0/0 · 벡터 대조 OK.
+  실제 프로세스 시험 — 옛 Coordinator(확인 없음) + 요구하는 Agent -> 실행 안 함 · 풀 Agent 둘이 확인을 받고 실행 · 재시작 뒤 같은 Hello 거부(대조군: DB 없으면 받는다)
+- ★ 한계: 독립 검수 없음(제안 상태 "적용 · 검수 전") · 풀 밖 lane 의 88 C 는 그대로 · replay DB 는 한 파일(복제 없음)
+- 리포트: 없음(제안 문서가 대신한다)
+
 ## 2026-09-23 20:09 — 신뢰망 남은 일 H · I · J: 소유자 선점 · GPU 고정 · 설치 운영
 
 - 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` H · I · J

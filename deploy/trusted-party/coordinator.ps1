@@ -24,5 +24,6 @@ foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
     --submitter-keyring $config.GPUTEER_SUBMITTER_KEYRING `
     --accept-report-sessions true --release-on-exit-report true `
     --shared-checkpoint-root $config.GPUTEER_SHARED_ROOT `
+    --replay-db $config.GPUTEER_REPLAY_DB `
     --max-connections 0 --accept-timeout-ms 0
 exit $LASTEXITCODE

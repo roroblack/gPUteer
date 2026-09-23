@@ -315,6 +315,11 @@ pub struct CoordinatorConfig {
     pub pool_agents: Vec<(String, VerifyingKey)>,
     /// ★ 2026-09-23 (신뢰망 남은 일 H) — 풀 모드에서 소유자 선점 때 이어갈 체크포인트를 찾을 공유 저장소.
     pub shared_checkpoint_root: Option<PathBuf>,
+    /// ★ 2026-09-23 (결함 88 조각 3, 신뢰망 L) — 풀 모드에서 **모든** 단수명 메시지(Hello · ACK · Renew · Report Hello)의
+    ///   재전송 방어를 재시작을 넘게 한다(`DurableReplayGuard`).
+    ///   풀 모드에서만 된다 — Grant id 가 발급마다 난수라 유도 nonce(grant id · 연결 번호)가 재시작 뒤에도 겹치지 않는다.
+    ///   풀 밖(설정값 grant id)에서 켜면 재시작 뒤 정상 재접속이 같은 nonce 로 거부된다(DoD-24) — 그래서 시작을 거부한다.
+    pub replay_db: Option<PathBuf>,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -654,7 +659,17 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         agent_keys.insert(id.clone(), *key);
     }
 
-    let mut replay = InMemoryReplayGuard::new();
+    let mut memory_replay = InMemoryReplayGuard::new();
+    // ★ 2026-09-23 (결함 88 조각 3) — 풀 모드 `--replay-db` 면 모든 단수명 메시지가 재시작을 넘는 방어를 거친다.
+    let mut durable_replay = match &config.replay_db {
+        Some(path) => Some(gputeer_crypto::DurableReplayGuard::open(path).map_err(|e| {
+            format!(
+                "STARTUP_REFUSED: --replay-db 를 열지 못했다({}): {e:?}",
+                path.display()
+            )
+        })?),
+        None => None,
+    };
     // ★★ 2026-09-23 (결함 88 조각 0) — **Hello 전용** 영속 재전송 방어. 다른 메시지에는 쓰지 않는다.
     let mut hello_replay = match &config.hello_replay_db {
         Some(path) => Some(gputeer_crypto::DurableReplayGuard::open(path).map_err(|e| {
@@ -700,7 +715,10 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &mut attempt_report_store,
             &signing_key,
             &agent_keys,
-            &mut replay,
+            match durable_replay.as_mut() {
+                Some(guard) => guard as &mut dyn gputeer_protocol::signing::ReplayGuard,
+                None => &mut memory_replay,
+            },
             &mut hello_replay,
             &clock,
             connection_attempt,
@@ -1122,7 +1140,7 @@ fn serve_one_connection(
     attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
-    replay: &mut InMemoryReplayGuard,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
     hello_replay: &mut Option<gputeer_crypto::DurableReplayGuard>,
     clock: &SystemClock,
     connection_attempt: u32,
@@ -1167,7 +1185,7 @@ fn serve_one_connection_impl(
     attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
-    replay: &mut InMemoryReplayGuard,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
     hello_replay: &mut Option<gputeer_crypto::DurableReplayGuard>,
     clock: &SystemClock,
     connection_attempt: u32,
@@ -1466,6 +1484,37 @@ fn serve_one_connection_impl(
             ack.attempt_id,
             record.as_str()
         );
+        // ★ 2026-09-23 (결함 131 · 신뢰망 L) — 풀 모드는 ACK 를 **기록한 뒤에만** 서명된 수신 확인을 보낸다.
+        //   Agent 는 이것을 요구하도록 설정하면 받기 전에는 실행하지 않는다 — 거부된 ACK 뒤에 작업이 도는 일을 막는다.
+        //   옛 Agent 는 이 프레임을 읽지 않는다(FRESH 연결은 곧 닫힌다) — 보내도 해가 없다.
+        if config.pool_mode {
+            let mut receipt_nonce = [0u8; 16];
+            getrandom::getrandom(&mut receipt_nonce).map_err(|e| {
+                SessionHandlerError::Classified(storage_error("ack receipt nonce", e))
+            })?;
+            let mut receipt = pb::GrantAckReceipt {
+                schema_version: 1,
+                grant_id: ack.grant_id.clone(),
+                attempt_id: ack.attempt_id.clone(),
+                agent_device_id: ack.agent_device_id.clone(),
+                ack_nonce: ack.nonce.clone(),
+                coordinator_device_id: config.coordinator_device_id.clone(),
+                issued_at_unix_ms: clock.now_unix_ms(),
+                nonce: receipt_nonce.to_vec(),
+                coordinator_signature: Vec::new(),
+            };
+            receipt.coordinator_signature = sign(signing_key, &receipt).to_vec();
+            let frame = write_frame(FrameType::GrantAckReceipt, &receipt.encode_to_vec())
+                .map_err(|e| format!("수신 확인 프레임 인코딩 실패: {e}"))?;
+            stream
+                .write_all(&frame)
+                .and_then(|()| stream.flush())
+                .map_err(|e| format!("수신 확인 전송 실패: {e}"))?;
+            println!(
+                "ACK_RECEIPT_SENT grant_id={} attempt_id={}",
+                receipt.grant_id, receipt.attempt_id
+            );
+        }
     }
 
     // ★★ 결함 ⑱ (설계 A) — Manifest 가 실렸으면 Agent 는 ACK 뒤에 워크로드를 돌린다. 그래서
@@ -2321,6 +2370,7 @@ fn ingress_kind(message: &IngressMessage) -> &'static str {
         IngressMessage::NodeHeartbeat(_) => "NodeHeartbeat",
         IngressMessage::NeighborUnreachableReport(_) => "NeighborUnreachableReport",
         IngressMessage::AttemptReportAck(_) => "AttemptReportAck",
+        IngressMessage::GrantAckReceipt(_) => "GrantAckReceipt",
     }
 }
 
@@ -2367,7 +2417,7 @@ fn serve_renew_session(
     lease_store: &mut Option<CoordinatorLeaseStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
-    replay: &mut InMemoryReplayGuard,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
     clock: &SystemClock,
 ) -> Result<(), SessionHandlerError> {
     if lease_store.is_none() {
@@ -2807,7 +2857,7 @@ fn serve_report_session(
     attempt_report_store: &mut Option<crate::attempt_report_store::CoordinatorAttemptReportStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
-    replay: &mut InMemoryReplayGuard,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
     clock: &SystemClock,
     hello: &pb::AgentSessionHello,
 ) -> Result<(), SessionHandlerError> {
@@ -2978,7 +3028,7 @@ fn read_session_hello(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
     agent_keys: &InMemoryKeyring,
-    replay: &mut InMemoryReplayGuard,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
     clock: &SystemClock,
 ) -> Result<pb::AgentSessionHello, SessionHandlerError> {
     let message = read_frame(
@@ -3030,7 +3080,7 @@ fn serve_resume_connection(
     lease_store: &mut Option<CoordinatorLeaseStore>,
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
-    replay: &mut InMemoryReplayGuard,
+    replay: &mut dyn gputeer_protocol::signing::ReplayGuard,
     clock: &SystemClock,
     connection_attempt: u32,
 ) -> Result<(), SessionHandlerError> {
@@ -3914,6 +3964,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         pool_mode,
         pool_agents,
         shared_checkpoint_root: flags.get("--shared-checkpoint-root").map(PathBuf::from),
+        replay_db: flags.get("--replay-db").map(PathBuf::from),
         extra_agents: flags.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags
             .u32_flag_with_default("--require-concurrent-sessions", 0)?,
@@ -4037,6 +4088,22 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
     // ★ 2026-09-23 (신뢰망 남은 일 K) — 풀 모드의 전제를 시작할 때 전부 본다.
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
+    }
+    // ★ 2026-09-23 (결함 88 조각 3) — 영속 재전송 방어는 풀 모드에서만(필드 문서 참조).
+    // --replay-db 가 Hello 까지 덮는다. 둘을 같이 주면 같은 Hello 를 두 guard 가 기록한다 — 같은 파일이면 정상 Hello 도
+    // 두 번째 검사에서 "이미 봤다" 가 된다. 받아 두고 말없이 겹치게 두지 않는다.
+    if config.replay_db.is_some() && config.hello_replay_db.is_some() {
+        return Err(
+            "STARTUP_REFUSED: REPLAY_DB_OVERLAP — --replay-db 가 Hello 까지 덮는다. --hello-replay-db 와 함께 주지 않는다"
+                .to_string(),
+        );
+    }
+    if config.replay_db.is_some() && !config.pool_mode {
+        return Err(
+            "STARTUP_REFUSED: REPLAY_DB_NEEDS_POOL_MODE — --replay-db 는 --pool-mode 에서만 쓴다. \
+             설정값 grant id 에서 유도한 nonce 는 재시작 뒤 겹쳐 정상 재접속을 거부한다(DoD-24)"
+                .to_string(),
+        );
     }
     // ★ 2026-09-23 (신뢰망 남은 일 B) — 예약 해제 스위치는 **보고를 실제로 받는 구성**에서만 뜻이 있다.
     //   받지 않으면서 켜 두면 "풀린다" 고 믿는데 아무것도 안 풀린다.

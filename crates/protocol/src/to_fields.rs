@@ -565,6 +565,25 @@ impl ToCanonicalFields for pb::AttemptReportAck {
     }
 }
 
+impl ToCanonicalFields for pb::GrantAckReceipt {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.grant_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.agent_device_id);
+        // ★ ACK nonce 가 서명 밖이면 다른 ACK 에 대한 확인을 이 ACK 의 것으로 속일 수 있다.
+        put_bytes(&mut f, 5, &self.ack_nonce);
+        put_str(&mut f, 6, &self.coordinator_device_id);
+        put_uint(&mut f, 7, self.issued_at_unix_ms);
+        put_bytes(&mut f, 8, &self.nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 impl ToCanonicalFields for pb::AgentSessionHello {
     fn to_canonical_fields(&self) -> Fields {
         let mut f = Fields::new();

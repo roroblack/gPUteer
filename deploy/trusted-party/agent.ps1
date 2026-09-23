@@ -30,6 +30,7 @@ $nodeDir = $config.GPUTEER_NODE_DIR
     --submitter-pubkey $config.GPUTEER_SUBMITTER_PUBKEY `
     --i-understand-this-executes-untrusted-code true `
     --report-over-session true --renew-during-execution-ms 30000 --max-reconnect-attempts 1 `
+    --require-ack-receipt true `
     --shared-checkpoint-root $config.GPUTEER_SHARED_ROOT `
     --pool-peer-keys $config.GPUTEER_POOL_AGENTS `
     --owner-panel-port $config.GPUTEER_OWNER_PANEL_PORT `

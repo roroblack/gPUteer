@@ -329,6 +329,15 @@ fn drain(child: &mut Child) -> (thread::JoinHandle<String>, thread::JoinHandle<S
 
 /// 한 작업을 실제 프로세스 둘로 돌린다 — Coordinator(저장된 예약 lane) + 실행하는 Agent.
 fn run_round(party: &Party, round: &Round, release_switch: bool) -> (String, String) {
+    run_round_with(party, round, release_switch, &[])
+}
+
+fn run_round_with(
+    party: &Party,
+    round: &Round,
+    release_switch: bool,
+    agent_extra: &[&str],
+) -> (String, String) {
     let lease_db = party.dir.path().join("coordinator-lease.sqlite3");
     let mut args: Vec<&str> = vec![
         "coordinator-stub",
@@ -430,6 +439,7 @@ fn run_round(party: &Party, round: &Round, release_switch: bool) -> (String, Str
             "--send-attempt-report",
             "true",
         ])
+        .args(agent_extra)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -589,5 +599,32 @@ fn a_job_that_asked_for_replication_keeps_its_reservation() {
             .unwrap()
             .is_some(),
         "예약이 없어졌다"
+    );
+}
+
+/// ★ 결함 131 (2026-09-23) — 수신 확인을 **요구하는** Agent 는 그것을 보내지 않는 Coordinator(풀 모드가 아님 · 옛 버전)
+/// 앞에서 **실행하지 않는다**(fail-closed). ACK 가 받아들여졌는지 모르는 채 작업을 돌리지 않는다.
+#[test]
+fn an_agent_that_requires_an_ack_receipt_does_not_run_without_one() {
+    let party = party_with_two_queued_jobs();
+    let (ok, out) = stage(&party, &A);
+    assert!(ok, "A 예약 실패: {out}");
+    let (agent, coordinator) =
+        run_round_with(&party, &A, false, &["--require-ack-receipt", "true"]);
+    let both = format!(
+        "--- agent ---
+{agent}
+--- coordinator ---
+{coordinator}"
+    );
+    assert!(
+        agent.contains("ACK_RECEIPT_MISSING"),
+        "수신 확인 없이 넘어갔다
+{both}"
+    );
+    assert!(
+        !agent.contains("WORKLOAD_SPAWNED") && !agent.contains("WORKLOAD_RESULT"),
+        "수신 확인 없이 작업을 돌렸다
+{both}"
     );
 }

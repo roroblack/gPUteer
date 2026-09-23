@@ -537,6 +537,34 @@ impl Signable for pb::AttemptReportAck {
     }
 }
 
+/// ★ 2026-09-23 (결함 131) — Coordinator 가 서명하는 ACK 수신 확인. 발급 즉시 소비되는 단수명이다.
+impl Signable for pb::GrantAckReceipt {
+    const DOMAIN: Domain = Domain::GrantAckReceipt;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.coordinator_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS)
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.coordinator_device_id
+    }
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.nonce)
+    }
+}
+
 impl Signable for pb::CanonicalDecision {
     const DOMAIN: Domain = Domain::Canonical;
     const LIFETIME: Lifetime = Lifetime::Evidence;
