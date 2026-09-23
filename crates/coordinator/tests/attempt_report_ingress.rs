@@ -402,6 +402,16 @@ fn terminal_report(fence_epoch: u64) -> pb::AttemptReport {
     })
 }
 
+/// Job 을 **끝내지 않는** 종료 보고 — INTERRUPTED 는 Attempt 규범에 대응 상태가 없어 Job 도 STAGING 에 남는다.
+///
+/// ★ 2026-09-23 (신뢰망 남은 일 A) — 완료 보고는 이제 Job 을 COMPLETED 로 끝낸다. 끝난 Job 에는 새 Grant 를
+///   만들지 않으므로, **보고 뒤에 같은 Job 의 Grant 를 다시 받는** 연결 번호 시험들은 이 보고를 쓴다.
+fn job_keeping_report(fence_epoch: u64) -> pb::AttemptReport {
+    let mut report = terminal_report(fence_epoch);
+    report.outcome = pb::AttemptOutcome::Interrupted as i32;
+    signed_report(report)
+}
+
 fn signed_report(mut report: pb::AttemptReport) -> pb::AttemptReport {
     let agent_key = SigningKey::from_bytes(&AGENT_SEED);
     report.node_signature = sign(&agent_key, &report).to_vec();
@@ -1147,7 +1157,12 @@ fn a_revoke_store_lock_timeout_before_renew_stops_the_listener() {
     lock.execute_batch("ROLLBACK").expect("락 해제");
 
     let error = outcome.expect_err("revoke 저장 실패는 리스너를 멈춰야 한다");
-    assert!(error.contains("갱신 전 revoke 저장 실패"), "{error}");
+    // ★ 2026-09-23 (신뢰망 남은 일 D) — 저장된 예약 lane 은 이제 검증한 ACK 를 **먼저** 기록한다(시도 STARTING ·
+    //   Job RUNNING). 락이 잡혀 있으면 그 기록에서 먼저 멈춘다 — 같은 fail-closed 이고 revoke 는 여전히 안 적힌다.
+    assert!(
+        error.contains("갱신 전 revoke 저장 실패") || error.contains("grant accepted record"),
+        "{error}"
+    );
     let stored = CoordinatorLeaseStore::open(&fixture.control_db)
         .expect("lease store")
         .get(LEASE_ID)
@@ -1547,7 +1562,7 @@ fn a_fresh_connection_after_a_report_session_keeps_connection_attempt_zero() {
     let fixture = fixture();
     let fence_epoch = staged_fence_epoch(&fixture.control_db);
     let handle = spawn_coordinator_for_reports(&fixture, true, 2);
-    let report = terminal_report(fence_epoch);
+    let report = job_keeping_report(fence_epoch);
     {
         let mut session = open_report_session(&fixture, 0, 220, &report);
         let ack = read_ack(&mut session);
@@ -1575,7 +1590,7 @@ fn a_fresh_connection_after_a_report_connection_that_dropped_before_hello_is_acc
         let dropped = connect_when_ready(fixture.address);
         drop(dropped);
     }
-    let report = terminal_report(fence_epoch);
+    let report = job_keeping_report(fence_epoch);
     {
         let mut session = open_report_session(&fixture, 0, 230, &report);
         let ack = read_ack(&mut session);

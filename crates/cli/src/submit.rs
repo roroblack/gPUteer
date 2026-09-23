@@ -149,6 +149,18 @@ pub fn run(args: &[String]) -> Result<String, String> {
             ("SIDE_EFFECTING", pb::SideEffectClass::SideEffecting as i32),
         ],
     )?;
+    // ★ 2026-09-23 (신뢰망 남은 일 B) — 산출물 내구성을 **선언할 방법이 없었다.** 안 주면 0(UNSPECIFIED)
+    //   으로 서명되고, 규범의 기본값은 MIRRORED 다(proto/common.proto). 신뢰망은 복제를 하지 않으므로
+    //   LOCAL 을 명시한 작업만 완료 뒤 예약이 풀린다(`--release-on-exit-report`). 기본값을 지어내지 않는다.
+    let durability = enum_flag(
+        &flags,
+        "--durability",
+        &[
+            ("LOCAL", pb::Durability::Local as i32),
+            ("MIRRORED", pb::Durability::Mirrored as i32),
+            ("REPLICATED", pb::Durability::Replicated as i32),
+        ],
+    )?;
     let sensitivity = enum_flag(
         &flags,
         "--dataset-sensitivity",
@@ -252,6 +264,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         issued_at_unix_ms,
         expires_at_unix_ms,
         side_effect_class,
+        durability,
         minimum_security_tier,
         minimum_isolation_class,
         minimum_key_protection,

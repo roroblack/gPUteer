@@ -669,6 +669,9 @@ fn run_executing_agent_with(addr: &str, dir: &Path, extra: &[&str]) -> (bool, St
 fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let db = staged_control_db_running(dir.path(), &cmd_exe(), Some("/c,exit,0"));
+    // ★ 2026-09-23 (신뢰망 남은 일 A) — 저장된 Grant 는 **실행 전에** 뽑아 본다. 완료 보고가 Job 을
+    //   COMPLETED 로 끝내면 그 Job 에는 더 이상 Grant 를 만들지 않는다(끝난 작업을 다시 내주지 않는다).
+    let grant = issue_stored_grant(&db, dir.path());
     let (coordinator, addr) =
         spawn_coordinator(&db, dir.path(), &["--expect-attempt-reports", "1"]);
     let (agent_ok, agent_output) = run_executing_agent(&addr, dir.path(), true);
@@ -740,7 +743,7 @@ fn a_stored_grant_carries_the_manifest_and_the_exit_report_crosses_the_wire() {
 
     // ★ 저장된 Grant 자체를 본다 — Agent 는 hash 없음을 통과시키므로
     //   (`verify_nested_manifest`) Agent 성공만으로는 hash 채우기가 빠진 것을 못 잡는다.
-    let grant = issue_stored_grant(&db, dir.path());
+    //   (Grant 는 위에서 실행 전에 뽑았다.)
     let stored = gputeer_coordinator::job_store::CoordinatorJobStore::open(&db)
         .expect("job store")
         .get_manifest_binding(JOB)

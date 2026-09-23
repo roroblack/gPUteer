@@ -339,8 +339,9 @@ fn unchecked_contract_items_are_declared() {
         "미검사 항목 수가 바뀌었다 — 목록을 갱신하라"
     );
 
-    // 다른 4개 상태기계는 구현 자체가 없다 — 그 사실을 고정한다
-    for machine in ["Node", "Job", "Lease", "Member"] {
+    // 다른 3개 상태기계는 구현 자체가 없다 — 그 사실을 고정한다
+    // (Job 은 2026-09-23 구현됐다 — 아래 §2 대조 참조)
+    for machine in ["Node", "Lease", "Member"] {
         let rows = parse_state_table(machine);
         assert!(
             !rows.is_empty(),
@@ -537,4 +538,143 @@ fn every_implemented_attempt_trigger_is_documented() {
   "
         )
     );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ Job 상태기계 — §2
+//
+// 2026-09-23 추가(신뢰망 P1 후속). 시도의 끝을 Job 까지 올리게 되면서
+// 표의 STAGING 뒤 전이를 실제로 만들어내게 됐다. Attempt 와 같은 네 계약을 대조한다.
+// ══════════════════════════════════════════════════════════════════
+
+use gputeer_protocol::job_state::{
+    transition_triggers as job_transition_triggers, JobState, ALL_JOB_STATES,
+};
+
+fn to_job_state(name: &str) -> Option<JobState> {
+    use JobState::*;
+    Some(match name {
+        "SUBMITTED" => Submitted,
+        "PLANNING" => Planning,
+        "QUEUED" => Queued,
+        "STAGING" => Staging,
+        "RUNNING" => Running,
+        "INTERRUPTED" => Interrupted,
+        "REPLANNING" => Replanning,
+        "PAUSED" => Paused,
+        "RECONCILING" => Reconciling,
+        "COMPLETED" => Completed,
+        "FAILED" => Failed,
+        "CANCELLED" => Cancelled,
+        "ARCHIVED" => Archived,
+        "(none)" => return None,
+        other => panic!("Job 표에 알 수 없는 상태 이름: {other:?}"),
+    })
+}
+
+#[test]
+fn job_parser_is_not_vacuous() {
+    let rows = parse_state_table("Job");
+    assert!(
+        rows.len() >= 35,
+        "Job 전이표에서 {}행만 뽑았다 — 파서 결함",
+        rows.len()
+    );
+    for trigger in [
+        "ATTEMPT_COMPLETED",
+        "NODE_LOST",
+        "FAILOVER_STARTED",
+        "REPLAN_READY",
+    ] {
+        assert!(
+            rows.iter().any(|r| r.trigger == trigger),
+            "{trigger} 행을 못 찾았다"
+        );
+    }
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.from == "CREATED" || r.from == "DISCOVERED"),
+        "Job 표에 Attempt/Node 행이 섞였다"
+    );
+}
+
+#[test]
+fn every_documented_job_transition_is_allowed() {
+    let mut missing = Vec::new();
+    for r in parse_state_table("Job") {
+        let (Some(from), Some(to)) = (to_job_state(&r.from), to_job_state(&r.to)) else {
+            continue;
+        };
+        let implemented = job_transition_triggers(from, to);
+        if !implemented.contains(&r.trigger.as_str()) {
+            missing.push(format!(
+                "{} -> {} ({}) 구현={implemented:?}",
+                r.from, r.to, r.trigger
+            ));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "★ 규범 Job 행이 구현에 없다:
+  {}",
+        missing.join(
+            "
+  "
+        )
+    );
+}
+
+#[test]
+fn every_implemented_job_transition_and_trigger_is_documented() {
+    let mut documented: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for r in parse_state_table("Job") {
+        if to_job_state(&r.from).is_some() && to_job_state(&r.to).is_some() {
+            documented.insert((r.from, r.to, r.trigger));
+        }
+    }
+    let mut invented = Vec::new();
+    for &from in ALL_JOB_STATES {
+        for &to in ALL_JOB_STATES {
+            for trigger in job_transition_triggers(from, to) {
+                let key = (
+                    from.table_name().to_string(),
+                    to.table_name().to_string(),
+                    (*trigger).to_string(),
+                );
+                if !documented.contains(&key) {
+                    invented.push(format!(
+                        "{} -> {} ({trigger})",
+                        from.table_name(),
+                        to.table_name()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        invented.is_empty(),
+        "★★ 표에 없는 Job 전이/trigger:
+  {}",
+        invented.join(
+            "
+  "
+        )
+    );
+}
+
+#[test]
+fn job_terminal_states_agree_with_the_table() {
+    let rows = parse_state_table("Job");
+    for &state in ALL_JOB_STATES {
+        let has_outgoing = rows
+            .iter()
+            .any(|r| r.from == state.table_name() && to_job_state(&r.to).is_some());
+        assert_eq!(
+            state.is_terminal(),
+            !has_outgoing,
+            "{} terminal 판정이 표와 다르다",
+            state.table_name()
+        );
+    }
 }

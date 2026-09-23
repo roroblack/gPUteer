@@ -315,7 +315,84 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), Stagi
         .map_err(map_sql_error)
 }
 
+/// ACK 기록의 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrantAcceptedRecord {
+    /// 시도 CREATED -> STARTING, Job STAGING -> RUNNING 을 한 커밋에 적었다.
+    Recorded,
+    /// 이미 적혀 있다(같은 시도의 재접속 ACK) — 아무것도 바꾸지 않았다.
+    AlreadyRecorded,
+    /// 이 시도는 더 이상 Job 의 현재 시도가 아니다 — 아무것도 바꾸지 않았다.
+    NotCurrentAttempt,
+    /// Coordinator 시계가 예약 시각보다 뒤다 — 시각을 지어내지 않으려고 아무것도 적지 않았다.
+    ClockBehindStaging,
+}
+
+impl GrantAcceptedRecord {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Recorded => "recorded",
+            Self::AlreadyRecorded => "already_recorded",
+            Self::NotCurrentAttempt => "not_current_attempt",
+            Self::ClockBehindStaging => "clock_behind_staging",
+        }
+    }
+}
+
 impl CoordinatorStagingStore {
+    /// ★ 2026-09-23 (신뢰망 남은 일 D) — 검증한 ACK 를 **관측으로** 적는다.
+    ///
+    /// 규범: 시도 `CREATED -> STARTING`(GRANT_ACCEPTED, guard "Agent 검증 통과") · Job `STAGING -> RUNNING`
+    /// (STAGING_COMPLETE). 둘을 한 트랜잭션에 넣는다 — 갈라지면 "시도는 시작했는데 Job 은 아직 준비 중" 이 남는다.
+    ///
+    /// ★ 이 기록이 있어야 장애 이어받기가 규범대로 갈린다 — ACK 전에 노드를 잃으면 `STAGING_NODE_LOST`
+    ///   (그냥 다시 큐로), ACK 뒤면 `NODE_LOST`(이어갈 체크포인트가 있어야 다시 큐로).
+    pub fn record_grant_accepted(
+        &mut self,
+        attempt_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<GrantAcceptedRecord, StagingStoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+        let attempt =
+            fetch_attempt(&transaction, attempt_id)?.ok_or(StagingStoreError::JobNotFound)?;
+        if attempt.state != AttemptState::Created {
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(GrantAcceptedRecord::AlreadyRecorded);
+        }
+        let job_moved = match crate::job_store::record_staging_complete(
+            &transaction,
+            &attempt.job_id,
+            attempt_id,
+            now_unix_ms,
+        ) {
+            Ok(moved) => moved,
+            Err(crate::job_store::JobStoreError::ClockRollback { .. }) => {
+                return Ok(GrantAcceptedRecord::ClockBehindStaging);
+            }
+            Err(crate::job_store::JobStoreError::LockTimeout) => {
+                return Err(StagingStoreError::LockTimeout)
+            }
+            Err(crate::job_store::JobStoreError::Io(message)) => {
+                return Err(StagingStoreError::Io(message))
+            }
+            Err(other) => return Err(StagingStoreError::CorruptData(other.to_string())),
+        };
+        if !job_moved {
+            return Ok(GrantAcceptedRecord::NotCurrentAttempt);
+        }
+        transition_attempt_state(
+            &transaction,
+            attempt_id,
+            AttemptState::Created,
+            AttemptState::Starting,
+        )?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(GrantAcceptedRecord::Recorded)
+    }
+
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StagingStoreError> {
         let mut connection = Connection::open(path).map_err(map_sql_error)?;
         connection
@@ -1425,6 +1502,70 @@ mod tests {
             None,
             "배정이 없는 노드에 남의 일을 줬다"
         );
+    }
+
+    /// ★ 2026-09-23 (신뢰망 남은 일 D) — 검증된 ACK 가 시도 STARTING · Job RUNNING 을 **한 커밋에** 적는다.
+    ///
+    /// 두 번째 ACK(같은 시도의 재접속)는 아무것도 바꾸지 않는다. Coordinator 시계가 예약 시각보다 뒤면
+    /// 시각을 지어내지 않고 **아무것도 적지 않는다.**
+    #[test]
+    fn a_verified_ack_records_starting_and_running_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-a", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-a", 1);
+        store
+            .reserve_node_and_stage_queued_with_lease(&request, 7)
+            .unwrap();
+
+        // 시계가 예약 시각(200)보다 뒤 — 적지 않는다.
+        assert_eq!(
+            store
+                .record_grant_accepted(&request.attempt_id, 150)
+                .unwrap(),
+            GrantAcceptedRecord::ClockBehindStaging
+        );
+        assert_eq!(
+            store
+                .get_attempt(&request.attempt_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            AttemptState::Created
+        );
+
+        assert_eq!(
+            store
+                .record_grant_accepted(&request.attempt_id, 250)
+                .unwrap(),
+            GrantAcceptedRecord::Recorded
+        );
+        assert_eq!(
+            store
+                .get_attempt(&request.attempt_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            AttemptState::Starting
+        );
+        let job = job_store::fetch_job(&store.connection, "job-a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Running);
+        assert_eq!(job.running_at_unix_ms, Some(250));
+
+        assert_eq!(
+            store
+                .record_grant_accepted(&request.attempt_id, 260)
+                .unwrap(),
+            GrantAcceptedRecord::AlreadyRecorded
+        );
+        let again = job_store::fetch_job(&store.connection, "job-a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(again, job, "두 번째 ACK 가 Job 을 바꿨다");
     }
 
     /// 만료 표시는 **찍히되 예약을 지우지 않는다**(§A1 4a).

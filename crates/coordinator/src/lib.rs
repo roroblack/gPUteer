@@ -279,6 +279,20 @@ pub struct CoordinatorConfig {
     /// ★ "받았다"(Ack)는 **저장했다**는 뜻으로 한정한다(결정 D1). 예약이 없어졌거나 다른 실행으로 바뀐 늦은 보고도 Attempt 의 배정
     ///   기록으로 결합해 저장한다(`bound_via = assignment_record`) — 그 보고로 예약을 풀거나 결과를 채택하지 않는다.
     pub accept_report_sessions: bool,
+    /// ★ 2026-09-23 (신뢰망 남은 일 B) — 종료 보고를 저장하는 **같은 커밋에서** 그 노드의 예약을 푼다.
+    ///
+    /// 신뢰망(서로 믿는 참여자) 전용 운영자 스위치다. 푸는 근거는 셋이고, 하나라도 모자라면 **보고만 저장하고
+    /// 예약은 남긴다**(그 사유를 `RESERVATION_KEPT reason=...` 로 적는다):
+    ///
+    /// ```text
+    /// 종료 관측    보고에 exit_observation = OBSERVED_* (노드 자기보고, WORKER_REPORTED 등급)
+    /// 예약 주인    그 노드의 예약이 **이 시도의 것** — 늦은 옛 보고로 새 작업의 예약을 풀지 않는다
+    /// 산출물 등급  완료면, 제출자 서명 Manifest 를 **지금** 다시 검증해 요구 내구성이 LOCAL 인지 본다.
+    ///             이 풀은 복제를 하지 않는다 — MIRRORED 이상을 요구한 작업의 예약은 풀지 않는다
+    /// ```
+    ///
+    /// 공개 풀에서는 켜지 않는다 — 그때는 노드 자기보고가 아닌 실제 종료 증명이 필요하다.
+    pub release_on_exit_report: bool,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -1360,6 +1374,23 @@ fn serve_one_connection_impl(
             .into());
     }
 
+    // ★ 2026-09-23 (신뢰망 남은 일 D) — 저장된 예약 lane 이면 검증을 **다 통과한** ACK 를 관측으로 적는다
+    //   (시도 STARTING · Job RUNNING). 저장소 장애는 fail-closed(DoD-37).
+    if let Some(control_db) = config.grant_from_control_db.as_ref() {
+        let record = crate::staging_store::CoordinatorStagingStore::open(control_db)
+            .and_then(|mut staging| {
+                staging.record_grant_accepted(&ack.attempt_id, clock.now_unix_ms())
+            })
+            .map_err(|error| {
+                SessionHandlerError::Classified(storage_error("grant accepted record", error))
+            })?;
+        println!(
+            "GRANT_ACCEPTED_RECORDED attempt_id={} outcome={}",
+            ack.attempt_id,
+            record.as_str()
+        );
+    }
+
     // ★★ 결함 ⑱ (설계 A) — Manifest 가 실렸으면 Agent 는 ACK 뒤에 워크로드를 돌린다. 그래서
     //   ACK **다음 첫 읽기**의 무응답 시한을 Lease 만료까지 남은 시간(최소 10초)으로 둔다.
     //   Lease 유효성 판정이 아니다 — 이유 · 한계는 `PostAckWait`.
@@ -1890,35 +1921,35 @@ fn serve_one_connection_impl(
                 "--expect-attempt-reports 를 켰는데 저장소가 열려 있지 않다",
             ))
         })?;
-        let result = store
-            .store_verified_terminal_report(verified)
-            .map_err(|error| {
-                use crate::attempt_report_store::AttemptReportStoreError as E;
-                match error {
-                    // ★ 아래는 전부 **들어온 보고가 유발한** 문제다 — 입력이
-                    //   비었거나, terminal 이 아니거나, 저장된 Attempt·예약과
-                    //   결합되지 않거나, 이미 다른 내용의 증거가 있다.
-                    //
-                    //   `Storage` 로 포장하면 accept loop 전체가 끝나 다른
-                    //   Agent 들의 작업까지 끊긴다 — heartbeat·이웃 신고
-                    //   경로가 이미 같은 이유로 이렇게 가른다.
-                    E::InvalidInput(_)
-                    | E::InvalidOutcome(_)
-                    | E::ReportRule(_)
-                    | E::AttemptNotFound { .. }
-                    | E::ReservationNotFound { .. }
-                    | E::BindingMismatch(_)
-                    | E::ReportConflict { .. } => {
-                        SessionHandlerError::Legacy(format!("ATTEMPT_REPORT_REJECTED: {error}"))
+        let (result, release_note) =
+            store_terminal_report_with_policy(store, verified, config, clock.now_unix_ms())
+                .map_err(|error| {
+                    use crate::attempt_report_store::AttemptReportStoreError as E;
+                    match error {
+                        // ★ 아래는 전부 **들어온 보고가 유발한** 문제다 — 입력이
+                        //   비었거나, terminal 이 아니거나, 저장된 Attempt·예약과
+                        //   결합되지 않거나, 이미 다른 내용의 증거가 있다.
+                        //
+                        //   `Storage` 로 포장하면 accept loop 전체가 끝나 다른
+                        //   Agent 들의 작업까지 끊긴다 — heartbeat·이웃 신고
+                        //   경로가 이미 같은 이유로 이렇게 가른다.
+                        E::InvalidInput(_)
+                        | E::InvalidOutcome(_)
+                        | E::ReportRule(_)
+                        | E::AttemptNotFound { .. }
+                        | E::ReservationNotFound { .. }
+                        | E::BindingMismatch(_)
+                        | E::ReportConflict { .. } => {
+                            SessionHandlerError::Legacy(format!("ATTEMPT_REPORT_REJECTED: {error}"))
+                        }
+                        // 진짜 저장소 장애와 **이미 영속된 행의 손상**은
+                        // fail-closed 다(`DoD-37` 규칙, 이웃 신고 경로와 같다).
+                        other => SessionHandlerError::Classified(storage_error(
+                            "attempt report store",
+                            other,
+                        )),
                     }
-                    // 진짜 저장소 장애와 **이미 영속된 행의 손상**은
-                    // fail-closed 다(`DoD-37` 규칙, 이웃 신고 경로와 같다).
-                    other => SessionHandlerError::Classified(storage_error(
-                        "attempt report store",
-                        other,
-                    )),
-                }
-            })?;
+                })?;
         println!(
             "ATTEMPT_REPORT_STORED job_id={} attempt_id={} node_id={} fence_epoch={} \
              signer_id={} created={}",
@@ -1929,6 +1960,7 @@ fn serve_one_connection_impl(
             result.binding.signer_id_at_submission,
             result.created
         );
+        println!("{release_note}");
 
         println!(
             "ATTEMPT_REPORT_ACCEPTED job_id={} attempt_id={} node_id={} outcome={} \
@@ -2390,6 +2422,136 @@ fn serve_renew_session(
 /// ★ 결정 D1 — 예약이 없어진 늦은 보고도 배정 기록으로 결합해 저장하고 Ack 한다(`bound_via`). 늦은 보고로 예약을 해제하지 않는다.
 /// ★ 아직 하지 않는다: 예약 해제 · Attempt 전이 · 결과 채택.
 #[allow(clippy::too_many_arguments)]
+/// 종료 보고를 저장한다 — `--release-on-exit-report` 면 **같은 커밋에서 예약까지** 푼다.
+///
+/// ★ 2026-09-23 (신뢰망 남은 일 B). 근거 셋(`CoordinatorConfig::release_on_exit_report` 참조) 중 하나라도
+///   모자라면 **보고만 저장한다.** 관문에 막혀 보고까지 롤백되면 증거를 잃는다 — 그래서 관문을 여기서 먼저 본다.
+///   돌려주는 문자열은 한 줄 기록(`RESERVATION_RELEASED ...` 또는 `RESERVATION_KEPT reason=...`)이다.
+fn store_terminal_report_with_policy(
+    store: &mut crate::attempt_report_store::CoordinatorAttemptReportStore,
+    verified: &gputeer_protocol::signing::Verified<pb::AttemptReport>,
+    config: &CoordinatorConfig,
+    now_unix_ms: u64,
+) -> Result<
+    (
+        crate::attempt_report_store::StoreAttemptReportResult,
+        String,
+    ),
+    crate::attempt_report_store::AttemptReportStoreError,
+> {
+    use crate::reservation_release::{
+        ArtifactDurabilityGuard, KeyDirectoryProvenance, ReleaseAuthorization, RuntimeStopProof,
+    };
+    let keep = |store: &mut crate::attempt_report_store::CoordinatorAttemptReportStore,
+                reason: String| {
+        store
+            .store_verified_terminal_report(verified)
+            .map(|result| (result, format!("RESERVATION_KEPT reason={reason}")))
+    };
+    if !config.release_on_exit_report {
+        return keep(store, "RELEASE_SWITCH_OFF".to_string());
+    }
+    let report = verified.get();
+    let observed_exit = matches!(
+        pb::ExitObservation::try_from(report.exit_observation),
+        Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+    );
+    if !observed_exit {
+        return keep(store, "NO_OBSERVED_EXIT".to_string());
+    }
+    let Some(control_db) = config.grant_from_control_db.as_ref() else {
+        return keep(store, "NO_CONTROL_DB".to_string());
+    };
+    // 예약 주인 — 늦은 옛 보고로 새 작업의 예약을 풀지 않는다(결정 D1).
+    let owner = crate::staging_store::CoordinatorStagingStore::open(control_db)
+        .and_then(|staging| staging.get_node_reservation(&report.node_id))
+        .map_err(|error| {
+            crate::attempt_report_store::AttemptReportStoreError::Staging(format!(
+                "예약 조회: {error}"
+            ))
+        })?;
+    match owner {
+        Some(reservation) if reservation.attempt_id == report.attempt_id => {}
+        Some(_) => return keep(store, "RESERVATION_OWNED_BY_ANOTHER_ATTEMPT".to_string()),
+        None => return keep(store, "NO_RESERVATION".to_string()),
+    }
+    let artifact_durability = if report.outcome == pb::AttemptOutcome::Completed as i32 {
+        match required_durability(config, control_db, &report.job_id) {
+            Ok(pb::Durability::Local) => ArtifactDurabilityGuard::SatisfiedByCaller,
+            Ok(other) => {
+                return keep(
+                    store,
+                    format!(
+                        "ARTIFACT_DURABILITY_{} — 이 풀은 복제하지 않는다(LOCAL 만)",
+                        other.as_str_name()
+                    ),
+                )
+            }
+            Err(reason) => return keep(store, format!("MANIFEST_UNVERIFIED {reason}")),
+        }
+    } else {
+        ArtifactDurabilityGuard::NotApplicableNonCompleted
+    };
+    let authorization = ReleaseAuthorization {
+        // 노드가 서명한 보고의 종료 관측 — 값으로 확인했다(위). WORKER_REPORTED 등급.
+        runtime_stop: RuntimeStopProof::ObservedExitInSignedReport,
+        // 이 Coordinator 가 설정된 Agent 키 목록으로 **방금** 검증한 보고다. 신뢰망에서는 그 목록이 권위 있는 디렉터리다.
+        key_directory: KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+        artifact_durability,
+    };
+    let result =
+        store.store_verified_terminal_report_and_release(verified, authorization, now_unix_ms)?;
+    Ok((
+        result,
+        format!(
+            "RESERVATION_RELEASED node_id={} attempt_id={}",
+            report.node_id, report.attempt_id
+        ),
+    ))
+}
+
+/// 완료 작업이 요구한 산출물 내구성 — 제출자 서명 Manifest 를 **지금** 다시 검증한 뒤에만 읽는다(§0.2 · DoD-50).
+///
+/// ★ 검증 시각은 **제출 시각**이다. 실행이 길어 그 사이 Manifest 유효기간이 지나도 "제출될 때 지금 신뢰하는
+///   제출자가 서명했다" 는 사실은 그대로다 — 지금 시각으로 검증하면 긴 작업의 예약이 영영 안 풀린다.
+fn required_durability(
+    config: &CoordinatorConfig,
+    control_db: &std::path::Path,
+    job_id: &str,
+) -> Result<pb::Durability, String> {
+    let keyring_path = config
+        .stored_grant_submitter_keyring
+        .as_ref()
+        .ok_or("--submitter-keyring 없음")?;
+    let policy = if config.stored_grant_allow_plaintext_keyring {
+        gputeer_crypto::PlaintextPolicy::Allow
+    } else {
+        gputeer_crypto::PlaintextPolicy::Reject
+    };
+    let submitters = gputeer_crypto::PersistentKeyring::load(keyring_path, policy)
+        .map_err(|e| format!("제출자 keyring: {e:?}"))?;
+    let jobs =
+        crate::job_store::CoordinatorJobStore::open(control_db).map_err(|e| e.to_string())?;
+    let job = jobs
+        .get(job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Job 없음")?;
+    let binding = jobs
+        .get_manifest_binding(job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("저장된 Manifest 없음")?;
+    let verified = gputeer_protocol::verify(
+        &binding.manifest,
+        1,
+        &gputeer_crypto::Ed25519Verifier::new(&submitters),
+        job.submitted_at_unix_ms,
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .map_err(|e| format!("Manifest 재검증 실패: {e:?}"))?;
+    pb::Durability::try_from(verified.get().durability)
+        .map_err(|_| "알 수 없는 durability 값".to_string())
+}
+
 fn serve_report_session(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
@@ -2455,27 +2617,29 @@ fn serve_report_session(
             "REPORT_SESSION_REJECTED: {rule}"
         )));
     }
-    let result = store
-        .store_verified_terminal_report(verified)
-        .map_err(|error| {
-            use crate::attempt_report_store::AttemptReportStoreError as E;
-            match error {
-                // 들어온 보고가 유발한 문제 — 그 연결만의 거부다(FRESH 경로와 같은 가름).
-                E::InvalidInput(_)
-                | E::InvalidOutcome(_)
-                | E::ReportRule(_)
-                | E::AttemptNotFound { .. }
-                | E::ReservationNotFound { .. }
-                | E::BindingMismatch(_)
-                | E::ReportConflict { .. } => {
-                    session_protocol_error(format!("REPORT_SESSION_REJECTED: {error}"))
-                }
-                // 진짜 저장소 장애와 이미 영속된 행의 손상은 fail-closed(DoD-37).
-                other => {
-                    SessionHandlerError::Classified(storage_error("attempt report store", other))
-                }
+    let (result, release_note) = store_terminal_report_with_policy(
+        store,
+        verified,
+        config,
+        clock.now_unix_ms(),
+    )
+    .map_err(|error| {
+        use crate::attempt_report_store::AttemptReportStoreError as E;
+        match error {
+            // 들어온 보고가 유발한 문제 — 그 연결만의 거부다(FRESH 경로와 같은 가름).
+            E::InvalidInput(_)
+            | E::InvalidOutcome(_)
+            | E::ReportRule(_)
+            | E::AttemptNotFound { .. }
+            | E::ReservationNotFound { .. }
+            | E::BindingMismatch(_)
+            | E::ReportConflict { .. } => {
+                session_protocol_error(format!("REPORT_SESSION_REJECTED: {error}"))
             }
-        })?;
+            // 진짜 저장소 장애와 이미 영속된 행의 손상은 fail-closed(DoD-37).
+            other => SessionHandlerError::Classified(storage_error("attempt report store", other)),
+        }
+    })?;
     let report_hash = blake3_256(&signing_input(report));
     let mut ack = pb::AttemptReportAck {
         schema_version: 1,
@@ -2516,6 +2680,7 @@ fn serve_report_session(
         hex_bytes(&ack.session_nonce),
         result.binding.bound_via.as_str()
     );
+    println!("{release_note}");
     Ok(())
 }
 
@@ -3458,6 +3623,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
         accept_report_sessions: flags.bool_flag("--accept-report-sessions"),
+        release_on_exit_report: flags.bool_flag("--release-on-exit-report"),
         extra_agents: flags.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags
             .u32_flag_with_default("--require-concurrent-sessions", 0)?,
@@ -3570,6 +3736,25 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
             return Err(
                 "STARTUP_REFUSED: STORED_LANE_KEYRING_MISSING — --submitter-keyring 이 없다. \
                  저장된 Manifest 를 싣기 전에 지금 신뢰하는 제출자 키로 다시 검증해야 한다"
+                    .to_string(),
+            );
+        }
+    }
+    // ★ 2026-09-23 (신뢰망 남은 일 B) — 예약 해제 스위치는 **보고를 실제로 받는 구성**에서만 뜻이 있다.
+    //   받지 않으면서 켜 두면 "풀린다" 고 믿는데 아무것도 안 풀린다.
+    if config.release_on_exit_report {
+        if config.expect_attempt_reports == 0 && !config.accept_report_sessions {
+            return Err(
+                "STARTUP_REFUSED: RELEASE_SWITCH_WITHOUT_REPORTS — --release-on-exit-report 는 \
+                 --expect-attempt-reports 나 --accept-report-sessions 와 같이 켠다"
+                    .to_string(),
+            );
+        }
+        if config.grant_from_control_db.is_none() || config.stored_grant_submitter_keyring.is_none()
+        {
+            return Err(
+                "STARTUP_REFUSED: RELEASE_SWITCH_NEEDS_STORED_LANE — --release-on-exit-report 는 \
+                 --grant-from-control-db 와 --submitter-keyring 이 필요하다(완료 산출물 등급을 서명된 Manifest 로 본다)"
                     .to_string(),
             );
         }

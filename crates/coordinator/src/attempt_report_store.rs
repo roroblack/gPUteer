@@ -356,6 +356,20 @@ impl CoordinatorAttemptReportStore {
                 )
                 .map_err(|error| AttemptReportStoreError::Staging(error.to_string()))?;
             }
+            // ★ 2026-09-23 (신뢰망 남은 일 A) — 시도의 끝을 **같은 트랜잭션에서** Job 까지 올린다.
+            //   "실행에 들어갔나" 는 보고가 증명한 경로로만 판단한다(관측 없는 실패에는 RUNNING 을 끼우지 않는다).
+            let attempt_ran = attempt.state == AttemptState::Running
+                || normative_path(AttemptState::Created, target, observed_exit)
+                    .is_some_and(|path| path.contains(&AttemptState::Running));
+            crate::job_store::follow_attempt_terminal(
+                &transaction,
+                &report.job_id,
+                &report.attempt_id,
+                target,
+                attempt_ran,
+                report.finished_at_unix_ms,
+            )
+            .map_err(|error| AttemptReportStoreError::Staging(format!("Job 종료 전이: {error}")))?;
         }
 
         // ★ 예약 해제까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
@@ -589,6 +603,15 @@ fn normative_path(
     for path in candidates {
         // 관측 없는 실패에는 Running 을 끼우지 않는다(합성 금지).
         if !observed_exit && to == AttemptState::Failed && path.contains(&AttemptState::Running) {
+            continue;
+        }
+        // ★ 결함 210 — 반대 방향. 종료가 **관측됐으면** 프로세스는 떴다. 그 실패를 기동 실패
+        //   (START_FAILED)로 적지 않는다 — Running 을 지나는 경로만 받는다.
+        if observed_exit
+            && to == AttemptState::Failed
+            && from != AttemptState::Running
+            && !path.contains(&AttemptState::Running)
+        {
             continue;
         }
         let mut current = from;
@@ -1116,6 +1139,119 @@ mod tests {
                 attempt.state
             );
         }
+    }
+
+    /// ★ 2026-09-23 (신뢰망 남은 일 A) — 시도의 끝이 **같은 커밋에서** Job 까지 올라간다.
+    ///
+    /// 전에는 작업이 끝나도 Job 이 영원히 STAGING 이었다. 이 표가 `job_store::follow_attempt_terminal`
+    /// 의 주석 표와 어긋나면 둘 중 하나가 거짓말을 하는 것이다.
+    #[test]
+    fn each_outcome_moves_the_job_along_the_norm() {
+        use crate::job_store::{JobState, RunTerminal};
+        let observed = |mut report: pb::AttemptReport| {
+            report.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+            report.exit_code = 3;
+            report
+        };
+        let cases: Vec<(&str, pb::AttemptReport, JobState, Option<RunTerminal>)> = vec![
+            (
+                "완료",
+                base_report(1, pb::AttemptOutcome::Completed),
+                JobState::Completed,
+                Some(RunTerminal::AttemptCompleted),
+            ),
+            (
+                "관측된 종료로 실패 — 돌다가 죽었다",
+                observed(base_report(2, pb::AttemptOutcome::Failed)),
+                JobState::Failed,
+                Some(RunTerminal::UnrecoverableError),
+            ),
+            (
+                "관측 없는 실패 — 실행이 시작됐다고 지어내지 않는다",
+                base_report(1, pb::AttemptOutcome::Failed),
+                JobState::Failed,
+                Some(RunTerminal::StagingFailed),
+            ),
+            (
+                "취소 — Agent 가 받지 않았다",
+                base_report(1, pb::AttemptOutcome::Cancelled),
+                JobState::Failed,
+                Some(RunTerminal::StagingFailed),
+            ),
+            (
+                "중단 — Attempt 규범에 대응 상태가 없어 Job 도 그대로다",
+                base_report(1, pb::AttemptOutcome::Interrupted),
+                JobState::Staging,
+                None,
+            ),
+        ];
+        for (label, report, want_state, want_terminal) in cases {
+            let fixture = prepare_fixture();
+            let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+            store
+                .store_verified_terminal_report(&verified_custom(report, 7))
+                .unwrap();
+            drop(store);
+            let job = CoordinatorJobStore::open(&fixture.path)
+                .unwrap()
+                .get(JOB_ID)
+                .unwrap()
+                .unwrap();
+            assert_eq!(job.state, want_state, "{label}");
+            assert_eq!(job.run_terminal, want_terminal, "{label}");
+            if want_terminal.is_some() {
+                assert_eq!(
+                    job.worker_reported_finished_at_unix_ms,
+                    Some(300),
+                    "{label} — 끝난 시각은 보고의 값이다(WORKER_REPORTED)"
+                );
+            }
+        }
+    }
+
+    /// 옛 시도의 늦은 보고는 **새 시도의 Job 을 끝내지 않는다.**
+    ///
+    /// ★ 장애 이어받기 뒤 옛 노드가 살아나 "끝났다" 고 보고하는 경우다. 보고는 저장되고 옛 시도도
+    ///   종료로 적히지만, Job 은 fence 가 더 큰 새 시도를 따른다.
+    #[test]
+    fn a_late_report_from_a_superseded_attempt_leaves_the_job_alone() {
+        use crate::job_store::JobState;
+        let fixture = prepare_fixture();
+        rusqlite::Connection::open(&fixture.path)
+            .unwrap()
+            .execute(
+                "INSERT INTO coordinator_attempts(attempt_id, job_id, state, fence_epoch, lease_id,
+                     created_at_unix_ms, revision)
+                 VALUES ('attempt-newer', ?1, 'CREATED', ?2, 'lease-newer', ?3, ?4)",
+                rusqlite::params![JOB_ID, encode_u64(99), encode_u64(400), encode_u64(0)],
+            )
+            .unwrap();
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store
+            .store_verified_terminal_report(&completed_report(1))
+            .unwrap();
+        drop(store);
+        let job = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            job.state,
+            JobState::Staging,
+            "옛 시도의 완료로 Job 을 끝냈다"
+        );
+        assert_eq!(job.run_terminal, None);
+        let attempt = CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_attempt(ATTEMPT_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            attempt.state,
+            AttemptState::Completed,
+            "옛 시도 자체는 종료로 적힌다"
+        );
     }
 
     /// 규범 표 밖의 전이는 **거부한다**(지어내지 않는다).
@@ -1699,13 +1835,25 @@ mod tests {
         assert_eq!(binding.bound_fence_epoch, 1);
         drop(reopened);
 
+        // ★ 2026-09-23 (신뢰망 남은 일 A) — 덫을 뒤집었다. 전에는 "Job 은 그대로" 를 고정했는데
+        //   그게 바로 "작업이 끝나도 Job 이 영원히 STAGING" 이던 상태다. 이제 Job 은 끝나야 하고,
+        //   **끝난 것 말고는** 아무것도 바뀌지 않아야 한다.
+        let after_job = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_job.state, JobState::Completed);
         assert_eq!(
-            CoordinatorJobStore::open(&fixture.path)
-                .unwrap()
-                .get(JOB_ID)
-                .unwrap()
-                .unwrap(),
-            before_job
+            crate::job_store::StoredJob {
+                state: before_job.state,
+                run_terminal: None,
+                worker_reported_finished_at_unix_ms: None,
+                revision: before_job.revision,
+                ..after_job
+            },
+            before_job,
+            "Job 의 종료 칸 말고 다른 칸이 바뀌었다"
         );
         // Attempt 는 **종료 상태로 바뀌어야 한다** — 그것이 4c 의 목적이다.
         let after_attempt = CoordinatorStagingStore::open(&fixture.path)

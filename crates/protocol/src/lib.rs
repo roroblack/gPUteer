@@ -13,6 +13,7 @@ pub mod canonical;
 pub mod constants;
 pub mod execution_spec;
 pub mod fenced_operation;
+pub mod job_state;
 pub mod membership;
 pub mod nonce;
 pub mod participation;

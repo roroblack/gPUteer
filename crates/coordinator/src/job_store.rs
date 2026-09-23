@@ -18,35 +18,75 @@ use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, Tran
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JobState {
-    Submitted,
-    Planning,
-    Queued,
-    Staging,
-    Failed,
+/// ★ 2026-09-23 — 저장소가 쓰던 별도 enum(다섯 값)을 **규범 정본과 하나로 합쳤다**
+///   (`gputeer_protocol::job_state`, `state-machines.md` §2). Attempt 와 같은 이유다 —
+///   두 벌이면 갈라진다.
+pub use gputeer_protocol::job_state::JobState;
+
+/// DB 문자열 — 표의 이름 그대로다.
+trait JobStateDb {
+    fn as_str(self) -> &'static str;
 }
 
-impl JobState {
+impl JobStateDb for JobState {
     fn as_str(self) -> &'static str {
+        self.table_name()
+    }
+}
+
+/// 이 저장소가 **쓰는** 상태만 읽는다. 표에는 있지만 이 저장소가 최종 상태로 쓰지 않는 상태
+/// (INTERRUPTED · REPLANNING · RECONCILING · CANCELLED · ARCHIVED)가 DB 에 있으면 손상이다 —
+/// 그 상태들은 판정 순간에만 거친다(코덱스 72 결정 C, Attempt 와 같다).
+fn parse_job_state(value: &str) -> Result<JobState, JobStoreError> {
+    match value {
+        "SUBMITTED" => Ok(JobState::Submitted),
+        "PLANNING" => Ok(JobState::Planning),
+        "QUEUED" => Ok(JobState::Queued),
+        "STAGING" => Ok(JobState::Staging),
+        "RUNNING" => Ok(JobState::Running),
+        "PAUSED" => Ok(JobState::Paused),
+        "COMPLETED" => Ok(JobState::Completed),
+        "FAILED" => Ok(JobState::Failed),
+        other => Err(JobStoreError::CorruptData(format!(
+            "unknown job state in durable store: {other}"
+        ))),
+    }
+}
+
+/// 실행에 들어간 뒤 Job 이 끝난 이유 — 표의 trigger 이름 그대로 저장한다.
+///
+/// ★ 큐 단계의 실패(`QueueFailure`)와 **따로 둔다.** 둘은 guard 도 effect 도 다르다 —
+///   하나로 접으면 "배치조차 못 했다" 와 "돌다가 죽었다" 가 같은 칸에 섞인다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunTerminal {
+    /// `RUNNING -> COMPLETED` (ATTEMPT_COMPLETED).
+    AttemptCompleted,
+    /// `STAGING -> FAILED` (STAGING_FAILED) — 실행이 시작되지 못했다.
+    StagingFailed,
+    /// `RUNNING -> FAILED` (UNRECOVERABLE_ERROR) — 돌다가 실패했고 재시도 정책(0회)이 소진됐다.
+    UnrecoverableError,
+    /// `INTERRUPTED -> FAILED` (NO_COMMITTED_CHECKPOINT) — 노드를 잃었고 이어갈 체크포인트가 없다.
+    NoCommittedCheckpoint,
+}
+
+impl RunTerminal {
+    pub fn trigger(self) -> &'static str {
         match self {
-            Self::Submitted => "SUBMITTED",
-            Self::Planning => "PLANNING",
-            Self::Queued => "QUEUED",
-            Self::Staging => "STAGING",
-            Self::Failed => "FAILED",
+            Self::AttemptCompleted => "ATTEMPT_COMPLETED",
+            Self::StagingFailed => "STAGING_FAILED",
+            Self::UnrecoverableError => "UNRECOVERABLE_ERROR",
+            Self::NoCommittedCheckpoint => "NO_COMMITTED_CHECKPOINT",
         }
     }
 
     fn parse(value: &str) -> Result<Self, JobStoreError> {
         match value {
-            "SUBMITTED" => Ok(Self::Submitted),
-            "PLANNING" => Ok(Self::Planning),
-            "QUEUED" => Ok(Self::Queued),
-            "STAGING" => Ok(Self::Staging),
-            "FAILED" => Ok(Self::Failed),
+            "ATTEMPT_COMPLETED" => Ok(Self::AttemptCompleted),
+            "STAGING_FAILED" => Ok(Self::StagingFailed),
+            "UNRECOVERABLE_ERROR" => Ok(Self::UnrecoverableError),
+            "NO_COMMITTED_CHECKPOINT" => Ok(Self::NoCommittedCheckpoint),
             other => Err(JobStoreError::CorruptData(format!(
-                "unknown job state in durable store: {other}"
+                "unknown run terminal trigger in durable store: {other}"
             ))),
         }
     }
@@ -126,6 +166,14 @@ pub struct StoredJob {
     pub plan_id: Option<String>,
     pub queue_failure: Option<QueueFailure>,
     pub failed_at_unix_ms: Option<u64>,
+    /// ACK 를 받은 시각(Coordinator 시계) — `STAGING -> RUNNING` 을 관측한 때.
+    /// ACK 를 기록하지 않은 경로에서는 비어 있다. 지어내지 않는다.
+    pub running_at_unix_ms: Option<u64>,
+    /// 실행에 들어간 뒤 끝난 이유. 큐 실패는 `queue_failure` 에 따로 있다.
+    pub run_terminal: Option<RunTerminal>,
+    /// 끝난 시각 — **워커가 보고한 값**(`AttemptReport.finished_at_unix_ms`, `WORKER_REPORTED`).
+    /// Coordinator 시계가 아니므로 순서 검사에 쓰지 않는다.
+    pub worker_reported_finished_at_unix_ms: Option<u64>,
     pub revision: u64,
 }
 
@@ -373,6 +421,37 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), JobSt
             )
             .map_err(map_sql_error)?;
     }
+    // ★ 2026-09-23 — Job 이 시도의 끝을 따라가며 생긴 칸. 옛 DB 는 열 때 보탠다(값은 비어 있다 —
+    //   그 행들은 이 칸을 쓰는 상태에 있지 않았다).
+    for (column, ty) in [
+        ("running_at_unix_ms", "BLOB"),
+        ("run_terminal", "TEXT"),
+        ("worker_reported_finished_at_unix_ms", "BLOB"),
+    ] {
+        let exists = {
+            let mut statement = transaction
+                .prepare("PRAGMA table_info(coordinator_jobs)")
+                .map_err(map_sql_error)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(map_sql_error)?;
+            let mut found = false;
+            for row in rows {
+                if row.map_err(map_sql_error)? == column {
+                    found = true;
+                }
+            }
+            found
+        };
+        if !exists {
+            transaction
+                .execute(
+                    &format!("ALTER TABLE coordinator_jobs ADD COLUMN {column} {ty}"),
+                    [],
+                )
+                .map_err(map_sql_error)?;
+        }
+    }
     transaction.commit().map_err(map_sql_error)
 }
 
@@ -491,6 +570,9 @@ impl CoordinatorJobStore {
             plan_id: None,
             queue_failure: None,
             failed_at_unix_ms: None,
+            running_at_unix_ms: None,
+            run_terminal: None,
+            worker_reported_finished_at_unix_ms: None,
             revision: 0,
         };
 
@@ -621,6 +703,9 @@ impl CoordinatorJobStore {
             plan_id: None,
             queue_failure: None,
             failed_at_unix_ms: None,
+            running_at_unix_ms: None,
+            run_terminal: None,
+            worker_reported_finished_at_unix_ms: None,
             revision: 0,
         };
 
@@ -972,6 +1057,139 @@ pub(crate) fn fetch_job(
         .transpose()
 }
 
+/// ACK 를 받았을 때 Job 을 `STAGING -> RUNNING`(STAGING_COMPLETE)으로 옮긴다.
+///
+/// ★ 2026-09-23 (신뢰망 남은 일 D). Agent 는 Grant·Lease 를 검증하고 workspace 를 만든 **뒤에** ACK 를 보낸다
+///   (결함 ⑱ 설계 A — 실행 전 ACK). 그래서 ACK 는 "환경 준비 완료" 의 관측이다. 그 시각은 Coordinator 시계다.
+///
+/// `Ok(false)` — 건드리지 않았다: 이 시도가 Job 의 가장 최근 시도가 아니거나 Job 이 STAGING 이 아니다.
+pub(crate) fn record_staging_complete(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    now_unix_ms: u64,
+) -> Result<bool, JobStoreError> {
+    let Some(mut job) = fetch_job(connection, job_id)? else {
+        return Err(JobStoreError::NotFound);
+    };
+    if job.state != JobState::Staging {
+        return Ok(false);
+    }
+    let latest: Option<String> = connection
+        .query_row(
+            "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    if latest.as_deref() != Some(attempt_id) {
+        return Ok(false);
+    }
+    if let Some(staging_at) = job.staging_at_unix_ms {
+        ensure_not_before(now_unix_ms, staging_at)?;
+    }
+    job.state = gputeer_protocol::job_state::transition(job.state, JobState::Running).map_err(
+        |rejected| JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        },
+    )?;
+    job.running_at_unix_ms = Some(now_unix_ms);
+    job.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &job)?;
+    Ok(true)
+}
+
+/// 시도의 끝을 Job 에 올린다 — **보고를 저장하는 같은 트랜잭션 안에서** 부른다.
+///
+/// ★★ 2026-09-23 (신뢰망 남은 일 A). 전에는 시도가 끝나도 Job 이 영원히 `STAGING` 이었다.
+///
+/// ```text
+/// 시도 최종    실행에 들어갔나   Job 경로(규범 §2)                        trigger
+/// COMPLETED    -                 (STAGING ->) RUNNING -> COMPLETED         ATTEMPT_COMPLETED
+/// FAILED       예                (STAGING ->) RUNNING -> FAILED            UNRECOVERABLE_ERROR
+/// FAILED       아니오            STAGING -> FAILED                         STAGING_FAILED
+/// CANCELLED    -                 STAGING -> FAILED                         STAGING_FAILED
+/// ```
+///
+/// ★ 재시도 정책은 **0회**다(신뢰망 계획 §기준선과 다른 점). 그래서 두 실패 trigger 의 guard
+///   "재시도 소진" 이 즉시 참이다. 재시도는 운영자가 다시 제출한다.
+///
+/// ★ **건드리지 않는 경우** — `Ok(None)` 을 돌려준다:
+///   * 이 시도가 그 Job 의 **가장 최근 시도가 아니다**(fence 가 더 큰 시도가 있다). 장애 이어받기 뒤
+///     옛 노드가 늦게 보고하면 여기 온다 — 옛 시도의 결과로 새 시도의 Job 을 끝내지 않는다.
+///     그 보고는 저장되고 옛 시도도 종료로 적힌다. 둘 다 완료했으면 규범의 `DUPLICATE_COMPLETION`
+///     조정(§20.3)이 필요한데 **아직 없다** — 그래서 Job 은 새 시도를 따른다.
+///   * Job 이 이미 끝났거나 실행 단계(`STAGING`/`RUNNING`)가 아니다.
+///
+/// ★ 경로는 규범 검증용이다 — DB 에는 **최종 상태만** 쓴다(코덱스 72 결정 C).
+pub(crate) fn follow_attempt_terminal(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    attempt_final: gputeer_protocol::attempt_state::AttemptState,
+    attempt_ran: bool,
+    worker_reported_finished_at_unix_ms: u64,
+) -> Result<Option<StoredJob>, JobStoreError> {
+    use gputeer_protocol::attempt_state::AttemptState as A;
+    let Some(mut job) = fetch_job(connection, job_id)? else {
+        return Err(JobStoreError::NotFound);
+    };
+    if !matches!(job.state, JobState::Staging | JobState::Running) {
+        return Ok(None);
+    }
+    let latest: Option<String> = connection
+        .query_row(
+            "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    if latest.as_deref() != Some(attempt_id) {
+        return Ok(None);
+    }
+    let (path, terminal): (&[JobState], RunTerminal) = match (attempt_final, attempt_ran) {
+        (A::Completed, _) => (
+            &[JobState::Running, JobState::Completed],
+            RunTerminal::AttemptCompleted,
+        ),
+        (A::Failed, true) => (
+            &[JobState::Running, JobState::Failed],
+            RunTerminal::UnrecoverableError,
+        ),
+        (A::Failed, false) | (A::Cancelled, _) => (&[JobState::Failed], RunTerminal::StagingFailed),
+        _ => return Ok(None),
+    };
+    // 이미 RUNNING 이면 첫 칸(STAGING -> RUNNING)은 이미 밟았다.
+    let path = if job.state == JobState::Running && path.first() == Some(&JobState::Running) {
+        &path[1..]
+    } else {
+        path
+    };
+    let final_state = gputeer_protocol::job_state::walk(job.state, path).map_err(|rejected| {
+        JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        }
+    })?;
+    job.state = final_state;
+    job.run_terminal = Some(terminal);
+    job.worker_reported_finished_at_unix_ms = Some(worker_reported_finished_at_unix_ms);
+    job.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &job)?;
+    Ok(Some(job))
+}
+
 pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(), JobStoreError> {
     let (failure_kind, failure_detail) = match &job.queue_failure {
         Some(failure) => (Some(failure.code()), failure.detail()),
@@ -982,7 +1200,9 @@ pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(),
             "UPDATE coordinator_jobs SET
                 state = ?2, planning_at_unix_ms = ?3, queued_at_unix_ms = ?4,
                 staging_at_unix_ms = ?5, plan_id = ?6, queue_failure_kind = ?7,
-                queue_failure_detail = ?8, failed_at_unix_ms = ?9, revision = ?10
+                queue_failure_detail = ?8, failed_at_unix_ms = ?9, revision = ?10,
+                running_at_unix_ms = ?11, run_terminal = ?12,
+                worker_reported_finished_at_unix_ms = ?13
              WHERE job_id = ?1",
             rusqlite::params![
                 job.job_id,
@@ -995,6 +1215,9 @@ pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(),
                 failure_detail,
                 job.failed_at_unix_ms.map(encode_u64),
                 encode_u64(job.revision),
+                job.running_at_unix_ms.map(encode_u64),
+                job.run_terminal.map(RunTerminal::trigger),
+                job.worker_reported_finished_at_unix_ms.map(encode_u64),
             ],
         )
         .map_err(map_sql_error)?;
@@ -1023,11 +1246,22 @@ struct RawJobRow {
     queue_failure_detail: Option<String>,
     failed_at_unix_ms: Option<Vec<u8>>,
     revision: Vec<u8>,
+    running_at_unix_ms: Option<Vec<u8>>,
+    run_terminal: Option<String>,
+    worker_reported_finished_at_unix_ms: Option<Vec<u8>>,
 }
 
 impl RawJobRow {
     fn into_stored(self) -> Result<StoredJob, JobStoreError> {
-        let state = JobState::parse(&self.state)?;
+        let state = parse_job_state(&self.state)?;
+        let run_terminal = self
+            .run_terminal
+            .as_deref()
+            .map(RunTerminal::parse)
+            .transpose()?;
+        let not_run_yet = self.running_at_unix_ms.is_none()
+            && run_terminal.is_none()
+            && self.worker_reported_finished_at_unix_ms.is_none();
         let queue_failure = match self.queue_failure_kind {
             Some(kind) => Some(QueueFailure::parse(&kind, self.queue_failure_detail)?),
             None if self.queue_failure_detail.is_none() => None,
@@ -1037,9 +1271,14 @@ impl RawJobRow {
                 ))
             }
         };
+        let has_plan = self
+            .plan_id
+            .as_deref()
+            .is_some_and(|plan_id| !plan_id.trim().is_empty());
         let valid_shape = match state {
             JobState::Submitted => {
-                self.planning_at_unix_ms.is_none()
+                not_run_yet
+                    && self.planning_at_unix_ms.is_none()
                     && self.queued_at_unix_ms.is_none()
                     && self.staging_at_unix_ms.is_none()
                     && self.plan_id.is_none()
@@ -1047,7 +1286,8 @@ impl RawJobRow {
                     && self.failed_at_unix_ms.is_none()
             }
             JobState::Planning => {
-                self.planning_at_unix_ms.is_some()
+                not_run_yet
+                    && self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_none()
                     && self.staging_at_unix_ms.is_none()
                     && self.plan_id.is_none()
@@ -1055,7 +1295,8 @@ impl RawJobRow {
                     && self.failed_at_unix_ms.is_none()
             }
             JobState::Queued => {
-                self.planning_at_unix_ms.is_some()
+                not_run_yet
+                    && self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_some()
                     && self.staging_at_unix_ms.is_none()
                     && self
@@ -1066,7 +1307,8 @@ impl RawJobRow {
                     && self.failed_at_unix_ms.is_none()
             }
             JobState::Staging => {
-                self.planning_at_unix_ms.is_some()
+                not_run_yet
+                    && self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_some()
                     && self.staging_at_unix_ms.is_some()
                     && self
@@ -1076,17 +1318,48 @@ impl RawJobRow {
                     && queue_failure.is_none()
                     && self.failed_at_unix_ms.is_none()
             }
-            JobState::Failed => {
+            JobState::Running | JobState::Paused => {
                 self.planning_at_unix_ms.is_some()
                     && self.queued_at_unix_ms.is_some()
-                    && self.staging_at_unix_ms.is_none()
-                    && self
-                        .plan_id
-                        .as_deref()
-                        .is_some_and(|plan_id| !plan_id.trim().is_empty())
-                    && queue_failure.is_some()
-                    && self.failed_at_unix_ms.is_some()
+                    && self.staging_at_unix_ms.is_some()
+                    && self.running_at_unix_ms.is_some()
+                    && run_terminal.is_none()
+                    && self.worker_reported_finished_at_unix_ms.is_none()
+                    && has_plan
+                    && queue_failure.is_none()
+                    && self.failed_at_unix_ms.is_none()
             }
+            JobState::Completed => {
+                self.planning_at_unix_ms.is_some()
+                    && self.queued_at_unix_ms.is_some()
+                    && self.staging_at_unix_ms.is_some()
+                    && run_terminal == Some(RunTerminal::AttemptCompleted)
+                    && has_plan
+                    && queue_failure.is_none()
+                    && self.failed_at_unix_ms.is_none()
+            }
+            JobState::Failed => {
+                let queue_stage_failure = not_run_yet
+                    && self.staging_at_unix_ms.is_none()
+                    && queue_failure.is_some()
+                    && self.failed_at_unix_ms.is_some();
+                let run_stage_failure = self.staging_at_unix_ms.is_some()
+                    && matches!(
+                        run_terminal,
+                        Some(
+                            RunTerminal::StagingFailed
+                                | RunTerminal::UnrecoverableError
+                                | RunTerminal::NoCommittedCheckpoint
+                        )
+                    )
+                    && queue_failure.is_none()
+                    && self.failed_at_unix_ms.is_none();
+                self.planning_at_unix_ms.is_some()
+                    && self.queued_at_unix_ms.is_some()
+                    && has_plan
+                    && (queue_stage_failure || run_stage_failure)
+            }
+            _ => false,
         };
         if !valid_shape {
             return Err(JobStoreError::CorruptData(format!(
@@ -1132,6 +1405,17 @@ impl RawJobRow {
                 .as_deref()
                 .map(|bytes| decode_u64(bytes, "failed_at_unix_ms"))
                 .transpose()?,
+            running_at_unix_ms: self
+                .running_at_unix_ms
+                .as_deref()
+                .map(|bytes| decode_u64(bytes, "running_at_unix_ms"))
+                .transpose()?,
+            run_terminal,
+            worker_reported_finished_at_unix_ms: self
+                .worker_reported_finished_at_unix_ms
+                .as_deref()
+                .map(|bytes| decode_u64(bytes, "worker_reported_finished_at_unix_ms"))
+                .transpose()?,
             revision: decode_u64(&self.revision, "revision")?,
         })
     }
@@ -1140,12 +1424,14 @@ impl RawJobRow {
 const SELECT_JOB_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
     submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms, deadline_unix_ms, \
     max_queue_duration_ms, plan_id, queue_failure_kind, queue_failure_detail, \
-    failed_at_unix_ms, revision FROM coordinator_jobs WHERE job_id = ?1";
+    failed_at_unix_ms, revision, running_at_unix_ms, run_terminal, \
+    worker_reported_finished_at_unix_ms FROM coordinator_jobs WHERE job_id = ?1";
 
 const SELECT_QUEUED_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
     submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms, deadline_unix_ms, \
     max_queue_duration_ms, plan_id, queue_failure_kind, queue_failure_detail, \
-    failed_at_unix_ms, revision FROM coordinator_jobs WHERE state = 'QUEUED'";
+    failed_at_unix_ms, revision, running_at_unix_ms, run_terminal, \
+    worker_reported_finished_at_unix_ms FROM coordinator_jobs WHERE state = 'QUEUED'";
 
 fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawJobRow> {
     Ok(RawJobRow {
@@ -1164,6 +1450,9 @@ fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawJobRow> {
         queue_failure_detail: row.get(12)?,
         failed_at_unix_ms: row.get(13)?,
         revision: row.get(14)?,
+        running_at_unix_ms: row.get(15)?,
+        run_terminal: row.get(16)?,
+        worker_reported_finished_at_unix_ms: row.get(17)?,
     })
 }
 
