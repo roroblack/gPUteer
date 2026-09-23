@@ -72,6 +72,11 @@ pub struct StoredGrantRequest {
     pub attempt_id: String,
     pub lease_id: String,
     pub grant_id: String,
+    /// ★ 2026-09-23 (결함 218 · 재검수 78 · 80) — 참이면 **STARTING** 시도(ACK 는 기록됐는데 수신 확인이 유실돼 Agent 가 실행하지 않은
+    ///   시도)도 다시 내준다 — 단 Job 이 RUNNING 이고 그 시도가 현재 시도일 때만. 풀 연결만 켠다(그 노드의 예약으로만 온다).
+    ///   ★ 이것만으로는 두 번 실행을 막지 못한다 — 막는 것은 Agent 의 **시작 기록**(`--require-ack-receipt` 를 켠 Agent 는 이미
+    ///   시작한 시도에 ACK 하지 않는다)이다. 그 옵션을 끈 Agent 를 풀에 붙이면 안 되는 이유다(런북 §5).
+    pub reissue_unacknowledged_start: bool,
     pub issued_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
     /// ★ **nonce 는 저장된 사실이 아니라 전송 계약이다.**
@@ -228,7 +233,12 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
             attempt.job_id, request.job_id
         )));
     }
-    if attempt.state != gputeer_protocol::attempt_state::AttemptState::Created {
+    let unacknowledged_start = request.reissue_unacknowledged_start
+        && attempt.state == gputeer_protocol::attempt_state::AttemptState::Starting
+        && job.state == JobState::Running;
+    if attempt.state != gputeer_protocol::attempt_state::AttemptState::Created
+        && !unacknowledged_start
+    {
         return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: 시도 {} 는 이미 받아들여졌다({:?}) — 같은 시도를 다시 내주지 않는다",
             attempt.attempt_id, attempt.state

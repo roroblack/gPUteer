@@ -130,6 +130,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             attempt_id: attempt_id.to_string(),
             lease_id: lease_id.to_string(),
             grant_id: grant_id.to_string(),
+            reissue_unacknowledged_start: false,
             issued_at_unix_ms,
             expires_at_unix_ms,
             // 파일로 내는 경로에는 연결 개념이 없다 — 같은 입력이면

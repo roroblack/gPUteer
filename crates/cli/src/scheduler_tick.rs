@@ -153,7 +153,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     // ★ 신선도 판정에 쓰는 "지금". durable 기록으로는 안 쓴다.
     let now_unix_ms = now_unix_ms();
 
-    let jobs = CoordinatorJobStore::open(control_db)
+    let mut jobs = CoordinatorJobStore::open(control_db)
         .map_err(|e| format!("job store 를 열지 못했다({control_db}): {e}"))?;
     if !jobs.is_durable() {
         return Err(format!(
@@ -205,10 +205,76 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let queued = jobs
         .list_schedulable()
         .map_err(|e| format!("큐 조회 실패: {e}"))?;
-    let Some(job) = queued.into_iter().next() else {
+    // ── 제출자 keyring(Manifest 재검증용) ───────────────────────────
+    let policy = if flags
+        .get("--i-understand-plaintext-keyring-is-unsafe")
+        .map(String::as_str)
+        == Some("true")
+    {
+        eprintln!(
+            "경고: 평문(K0) 제출자 keyring 을 허용했다 — 이 파일을 쓸 수 있는 사람은 임의의 공개키를 신뢰 목록에 넣을 수 있다"
+        );
+        PlaintextPolicy::Allow
+    } else {
+        PlaintextPolicy::Reject
+    };
+    let keyring = PersistentKeyring::load(keyring_path, policy)
+        .map_err(|e| format!("제출자 keyring 을 열지 못했다({keyring_path}): {e:?}"))?;
+
+    // ★ 2026-09-24 (결함 235 · 236 · 재검수 79) — 풀 여부는 **풀 Coordinator 가 control DB 에 적은 표식**으로 안다. 전에는
+    //   `--pool-agents` 유무로 짐작해, 실제 풀에서 그 인자를 빠뜨리면 거부가 빠지고(217 재현), 풀 밖에서 이어받기 키로 주면
+    //   만족 가능한 작업까지 영구 FAILED 가 됐다. 그리고 비-LOCAL 작업은 **건너뛰고** 다음 작업을 본다 — QUEUED 는 규범
+    //   `QUEUED -> FAILED`(PERMANENTLY_INFEASIBLE)로 내리고, PAUSED 는 규범상 여기서 내릴 전이가 없어(PAUSE_TIMEOUT · USER_CANCELLED 뿐)
+    //   건너뛰기만 한다 — 전에는 PAUSED 가 FIFO 맨 앞을 영구히 막았다.
+    let pool_declared =
+        gputeer_coordinator::job_store::pool_mode_declared(std::path::Path::new(control_db))
+            .map_err(|e| format!("TICK_REFUSED: 풀 모드 표식을 읽지 못했다: {e}"))?;
+    let queue_was_empty = queued.is_empty();
+    let mut chosen = None;
+    for candidate in queued {
+        if pool_declared {
+            if let Some(reason) =
+                pool_unsupported_durability(&jobs, &candidate.job_id, &keyring, now_unix_ms)?
+            {
+                if candidate.state == gputeer_coordinator::job_store::JobState::Queued {
+                    jobs.fail_queued(
+                        &candidate.job_id,
+                        gputeer_coordinator::job_store::QueueFailure::PermanentlyInfeasible {
+                            reason: reason.clone(),
+                        },
+                        now_unix_ms,
+                    )
+                    .map_err(|e| {
+                        format!(
+                            "TICK_REFUSED: {} 를 큐에서 내리지 못했다: {e}",
+                            candidate.job_id
+                        )
+                    })?;
+                    println!(
+                        "TICK_JOB_FAILED_PERMANENTLY_INFEASIBLE {} — {reason}",
+                        candidate.job_id
+                    );
+                } else {
+                    println!(
+                        "TICK_SKIPPED {} state={:?} — {reason}. 규범상 여기서 내릴 전이가 없어 건너뛴다(운영자가 취소한다)",
+                        candidate.job_id, candidate.state
+                    );
+                }
+                continue;
+            }
+        }
+        chosen = Some(candidate);
+        break;
+    }
+    let Some(job) = chosen else {
         // ★ 빈 큐는 **오류가 아니다.** 루프가 이걸 실패로 세면 정상
         //   유휴 상태가 장애로 보인다.
-        return Ok("TICK_IDLE 큐가 비었다".to_string());
+        return Ok(if queue_was_empty {
+            "TICK_IDLE 큐가 비었다".to_string()
+        } else {
+            "TICK_IDLE 배치할 작업이 없다 — 남은 작업은 전부 이 풀이 채울 수 없는 내구성을 요구한다"
+                .to_string()
+        });
     };
     let job_id = job.job_id.clone();
     let plan_id = job
@@ -237,21 +303,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         .ok_or_else(|| format!("TICK_REFUSED: {job_id} 에 저장된 Manifest 가 없다"))?;
     drop(jobs);
 
-    // ── 저장된 Manifest 를 지금 다시 검증한다 ───────────────────────
-    let policy = if flags
-        .get("--i-understand-plaintext-keyring-is-unsafe")
-        .map(String::as_str)
-        == Some("true")
-    {
-        eprintln!(
-            "경고: 평문(K0) 제출자 keyring 을 허용했다 — 이 파일을 쓸 수 있는 사람은 임의의 공개키를 신뢰 목록에 넣을 수 있다"
-        );
-        PlaintextPolicy::Allow
-    } else {
-        PlaintextPolicy::Reject
-    };
-    let keyring = PersistentKeyring::load(keyring_path, policy)
-        .map_err(|e| format!("제출자 keyring 을 열지 못했다({keyring_path}): {e:?}"))?;
+    // ── 저장된 Manifest 를 지금 다시 검증한다(keyring 은 위에서 열었다) ─────
     let verified = verify(
         &binding.manifest,
         1,
@@ -261,37 +313,6 @@ pub fn run(args: &[String]) -> Result<String, String> {
     )
     .map_err(|e| format!("TICK_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?}"))?;
 
-    // ★ 2026-09-23 (결함 217 · 검수 73) — 풀 모드(`--pool-agents`)는 산출물을 복제하지 않는다. LOCAL 이 아닌 내구성을
-    //   요구한 작업을 배치하면, 끝난 뒤 예약 해제 관문(ARTIFACT_DURABILITY_*)이 영영 안 열려 **노드가 묶인다.**
-    //   그래서 배치 전에 큐에서 내린다 — 규범 `QUEUED -> FAILED`(PERMANENTLY_INFEASIBLE). 거부만 하고 두면 FIFO 맨 앞이라
-    //   뒤 작업까지 인질이 된다(결함 211 과 같은 모양). 검증된 Manifest 에서 읽는다(§0.2).
-    if flags.contains_key("--pool-agents") {
-        let durability = gputeer_protocol::pb::Durability::try_from(verified.get().durability)
-            .map_err(|_| format!("TICK_REFUSED: {job_id} 의 durability 값을 모른다"))?;
-        if durability != gputeer_protocol::pb::Durability::Local {
-            let reason = format!(
-                "{}_NOT_SUPPORTED_BY_POOL — 이 풀은 복제하지 않는다(LOCAL 만)",
-                durability.as_str_name()
-            );
-            if job.state == gputeer_coordinator::job_store::JobState::Queued {
-                CoordinatorJobStore::open(control_db)
-                    .and_then(|mut jobs| {
-                        jobs.fail_queued(
-                            &job_id,
-                            gputeer_coordinator::job_store::QueueFailure::PermanentlyInfeasible {
-                                reason: reason.clone(),
-                            },
-                            now_unix_ms,
-                        )
-                    })
-                    .map_err(|e| format!("TICK_REFUSED: {job_id} 를 큐에서 내리지 못했다: {e}"))?;
-                return Err(format!(
-                    "TICK_REFUSED: JOB_FAILED_PERMANENTLY_INFEASIBLE {job_id} — {reason}"
-                ));
-            }
-            return Err(format!("TICK_REFUSED: {job_id} — {reason}"));
-        }
-    }
     let job_requirements = job_requirements_from_manifest(&verified, submitter_member)
         .map_err(|e| format!("TICK_REFUSED: {e}"))?;
 
@@ -456,6 +477,41 @@ fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
 }
 
 /// `--pool-agents "id=hex;id2=hex"` — 체크포인트 생산자 서명을 검증할 풀 노드 키(풀 Coordinator 와 같은 형식).
+/// 풀이 채울 수 없는 내구성인가 — 저장된 Manifest 를 **지금 다시 검증한 뒤** 읽는다(§0.2). 검증이 안 되면 여기서 거부하지 않는다
+/// (아래 본 경로가 같은 검증으로 거부한다 — 사유를 한 곳에서 낸다).
+fn pool_unsupported_durability(
+    jobs: &CoordinatorJobStore,
+    job_id: &str,
+    keyring: &PersistentKeyring,
+    now_unix_ms: u64,
+) -> Result<Option<String>, String> {
+    let Some(binding) = jobs
+        .get_manifest_binding(job_id)
+        .map_err(|e| format!("Manifest binding 조회 실패: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let Ok(verified) = verify(
+        &binding.manifest,
+        1,
+        &Ed25519Verifier::new(keyring),
+        now_unix_ms,
+        &mut NoReplayCheck,
+    ) else {
+        return Ok(None);
+    };
+    let durability = gputeer_protocol::pb::Durability::try_from(verified.get().durability)
+        .map_err(|_| format!("TICK_REFUSED: {job_id} 의 durability 값을 모른다"))?;
+    Ok(
+        (durability != gputeer_protocol::pb::Durability::Local).then(|| {
+            format!(
+                "{}_NOT_SUPPORTED_BY_POOL — 이 풀은 복제하지 않는다(LOCAL 만)",
+                durability.as_str_name()
+            )
+        }),
+    )
+}
+
 fn parse_pool_agents(raw: &str) -> Result<Vec<(String, gputeer_crypto::VerifyingKey)>, String> {
     let mut keys = Vec::new();
     for entry in raw

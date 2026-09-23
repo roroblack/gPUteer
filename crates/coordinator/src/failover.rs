@@ -502,7 +502,18 @@ pub(crate) fn pause_for_owner_preempt_within(
     if latest.as_deref() != Some(attempt_id) {
         return Ok(None);
     }
-    let resume = find_resume_point(transaction, policy, job_id, now_unix_ms, notes)?;
+    // ★ 2026-09-24 (결함 234 · 재검수 79) — 이 함수는 종료 보고 저장과 **같은 트랜잭션**에서 돈다(215). 이어갈 지점 조회가 공유 저장소
+    //   장애로 실패해도 오류로 올리지 않는다 — 올리면 보고 저장까지 롤백되고, 저장소가 계속 죽어 있으면 보고가 영영 안 남는다(증거 유실).
+    //   그때는 새 지점 없이 멈춘다(전에 고른 지점은 그대로 둔다) — 사실을 한 줄 남긴다.
+    let resume = match find_resume_point(transaction, policy, job_id, now_unix_ms, notes) {
+        Ok(found) => found,
+        Err(error) => {
+            notes.push(format!(
+                "RESUME_POINT_UNAVAILABLE job_id={job_id} detail={error} — 새 이어갈 지점 없이 멈춘다(보고는 저장한다)"
+            ));
+            None
+        }
+    };
     crate::job_store::pause_for_owner_preempt(
         transaction,
         &job,
@@ -515,11 +526,37 @@ pub(crate) fn pause_for_owner_preempt_within(
         .ok_or_else(|| format!("시도 {attempt_id} 가 사라졌다"))?;
     crate::lease_store::revoke_within(transaction, &attempt.lease_id, now_unix_ms)
         .map_err(|e| e.to_string())?;
+    // ★ 2026-09-24 (결함 237 · 재검수 80) — 되찾음 판정은 "되찾은 시각 >= 마지막 FRESH 시각" 이다. 시계가 뒤로 가면 방금 되찾은 노드가
+    //   다시 후보가 됐다. 그래서 되찾은 시각을 **이미 적힌 마지막 FRESH 이상**으로 적는다 — 되찾기 전의 인사로는 풀리지 않는다.
+    let last_fresh: Option<u64> = if transaction
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_node_session_seen'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        transaction
+            .query_row(
+                "SELECT last_seen_unix_ms FROM coordinator_node_session_seen WHERE node_id = ?1",
+                rusqlite::params![node_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .and_then(|raw| <[u8; 8]>::try_from(raw.as_slice()).ok())
+            .map(u64::from_be_bytes)
+    } else {
+        None
+    };
+    let reclaimed_at = last_fresh.map_or(now_unix_ms, |seen| seen.max(now_unix_ms));
     transaction
         .execute(
             "INSERT INTO coordinator_node_reclaims(node_id, reclaimed_at_unix_ms) VALUES (?1, ?2)
              ON CONFLICT(node_id) DO UPDATE SET reclaimed_at_unix_ms = excluded.reclaimed_at_unix_ms",
-            rusqlite::params![node_id, now_unix_ms.to_be_bytes().to_vec()],
+            rusqlite::params![node_id, reclaimed_at.to_be_bytes().to_vec()],
         )
         .map_err(|e| e.to_string())?;
     Ok(Some(format!(

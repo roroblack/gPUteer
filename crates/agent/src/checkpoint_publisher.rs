@@ -60,6 +60,11 @@ fn step_of(name: &str) -> Option<u64> {
     if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
+    // ★ 2026-09-24 (결함 242 · 재검수 81) — 숫자 하나에 이름 하나. `step-01` 과 `step-1` 이 같은 step 으로 섞여 안정 판정이 서로를 깨고,
+    //   끝에서는 먼저 정렬된 쪽이 체크포인트 id 를 차지했다. 앞자리 0 은 받지 않는다(`step-0` 만 예외).
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
     digits.parse().ok()
 }
 
@@ -215,7 +220,12 @@ pub fn start(ctx: PublishContext, out_dir: PathBuf, interval_ms: u64) -> Running
     }
 }
 
-/// 작업이 끝난 뒤 — 스레드를 세우고 **마지막으로 한 번 더** 훑는다(끝나기 직전에 쓴 체크포인트를 놓치지 않는다).
+/// 작업이 끝난 뒤 — 스레드를 세우고 **마지막으로 몇 번 더** 훑는다(끝나기 직전에 쓴 체크포인트를 올린다).
+///
+/// ★ 2026-09-24 (결함 240 · 재검수 81) — 전에는 마지막 훑기가 **한 번**이었다. 그때 서명 매니페스트 쓰기만 실패하면(NAS 끊김 · 디스크 참)
+///   다시 시도할 기회가 없었고, 곧 작업 폴더가 지워져 그 체크포인트는 이어가기에 영영 못 쓰였다. 이제 몇 번 다시 해 보고,
+///   그래도 못 올린 step 은 **CHECKPOINT_PUBLISH_LOST** 로 크게 남긴다 — "놓치지 않는다" 를 보장하지는 못한다(공유 저장소가 계속
+///   죽어 있으면 잃는다).
 pub fn finish(publisher: RunningPublisher) {
     publisher.stop.store(true, Ordering::SeqCst);
     let mut state = match publisher.handle.join() {
@@ -228,13 +238,45 @@ pub fn finish(publisher: RunningPublisher) {
         }
     };
     // 작업이 끝났다 — 더 쓰는 쪽이 없으므로 안정을 기다리지 않는다.
-    publish_ready_steps(
-        &publisher.ctx,
-        &publisher.out_dir,
-        &mut state,
-        false,
-        now_unix_ms(),
-    );
+    const FINAL_TRIES: u32 = 3;
+    for attempt in 1..=FINAL_TRIES {
+        publish_ready_steps(
+            &publisher.ctx,
+            &publisher.out_dir,
+            &mut state,
+            false,
+            now_unix_ms(),
+        );
+        let left = unpublished_steps(&publisher.out_dir, &state);
+        if left.is_empty() {
+            return;
+        }
+        if attempt == FINAL_TRIES {
+            for step in left {
+                println!(
+                    "CHECKPOINT_PUBLISH_LOST step={step} job_id={} — {FINAL_TRIES} 번 해 봤지만 공유 저장소에 서명하지 못한 채 끝난다(이 step 에서는 이어갈 수 없다)",
+                    publisher.ctx.job_id
+                );
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// 아직 못 올린 `step-<숫자>` 들.
+fn unpublished_steps(out_dir: &Path, state: &PublishState) -> Vec<u64> {
+    let Ok(entries) = std::fs::read_dir(out_dir) else {
+        return Vec::new();
+    };
+    let mut left: Vec<u64> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
+        .filter_map(|entry| step_of(&entry.file_name().to_string_lossy()))
+        .filter(|step| !state.published.contains(step))
+        .collect();
+    left.sort();
+    left
 }
 
 fn now_unix_ms() -> u64 {
@@ -259,6 +301,9 @@ mod tests {
         assert_eq!(step_of("step-"), None);
         assert_eq!(step_of("stepx-3"), None);
         assert_eq!(step_of("step--3"), None);
+        // 결함 242 — 앞자리 0 은 다른 이름이다(같은 step 으로 섞이지 않게).
+        assert_eq!(step_of("step-01"), None);
+        assert_eq!(step_of("step-0"), Some(0));
     }
 
     /// 완성된 step 만 올리고, 서명된 매니페스트를 남기며, 두 번 올리지 않는다.

@@ -242,6 +242,9 @@ pub fn write_signed_manifest(
     safe_component(checkpoint_id, "checkpoint_id")?;
     let root = job_root(shared_root, job_id)?;
     std::fs::create_dir_all(&root).map_err(|e| format!("SHARED_CHECKPOINT_ROOT: {e}"))?;
+    // ★ 2026-09-24 (결함 244 · 재검수 81) — 서명 매니페스트 자리가 링크면 쓰지 않는다. 전에는 write_once 가 링크를 따라가
+    //   "같은 바이트라 멱등" 으로 성공했는데, 목록(`list_signed_manifests`)은 링크를 건너뛰어 게시 성공과 목록이 어긋났다.
+    ensure_not_link(&root.join(format!("{checkpoint_id}{SIGNED_MANIFEST_SUFFIX}")))?;
     crate::write_once(
         &root,
         &format!("{checkpoint_id}{SIGNED_MANIFEST_SUFFIX}"),

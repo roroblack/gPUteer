@@ -214,6 +214,9 @@ pub struct CoordinatorConfig {
     /// `Some` 일 때만 읽는다.
     pub stored_grant_job_id: String,
     pub stored_grant_attempt_id: String,
+    /// ★ 2026-09-23 (결함 218) — 풀 연결에서만 참. 수신 확인이 유실돼 STARTING 에 멈춘 시도를 그 노드에 다시 내준다.
+    ///   명령줄로는 켜지 않는다(`pool_connection_config` 가 연결마다 켠다).
+    pub reissue_unacknowledged_start: bool,
     pub stored_grant_lease_id: String,
     /// Grant 수명(발급 시각 기준). 저장된 Lease 만료를 넘으면 거부된다.
     pub stored_grant_ttl_ms: u64,
@@ -657,6 +660,13 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     // ★ 풀 모드 — 풀에 속한 노드 전부를 검증 목록에 올린다(`--pool-agents`).
     for (id, key) in &config.pool_agents {
         agent_keys.insert(id.clone(), *key);
+    }
+    // ★ 2026-09-24 (결함 235 · 재검수 79) — 이 control DB 가 풀의 것임을 적는다. 스케줄러가 이 표식으로 풀 여부를 안다.
+    if config.pool_mode {
+        if let Some(control_db) = config.grant_from_control_db.as_ref() {
+            crate::job_store::declare_pool_mode(control_db, SystemClock.now_unix_ms())
+                .map_err(|e| format!("STARTUP_REFUSED: POOL_MODE_DECLARE — control DB 에 풀 표식을 적지 못했다: {e}"))?;
+        }
     }
 
     let mut memory_replay = InMemoryReplayGuard::new();
@@ -1378,6 +1388,7 @@ fn serve_one_connection_impl(
                     attempt_id: config.stored_grant_attempt_id.clone(),
                     lease_id: config.stored_grant_lease_id.clone(),
                     grant_id: config.grant_id.clone(),
+                    reissue_unacknowledged_start: config.reissue_unacknowledged_start,
                     issued_at_unix_ms: now,
                     // ★ 2026-09-23 (신뢰망 남은 일 G) — 풀 모드는 Grant 가 **Lease 보다 오래 살지 않게** 자른다.
                     //   짧은 Lease(실행 중 갱신으로 늘리는 방식)에서 기본 Grant 수명이 Lease 만료를 넘어 거부됐다.
@@ -1509,7 +1520,18 @@ fn serve_one_connection_impl(
         // ★ 2026-09-23 (결함 131 · 신뢰망 L) — 풀 모드는 ACK 를 **기록한 뒤에만** 서명된 수신 확인을 보낸다.
         //   Agent 는 이것을 요구하도록 설정하면 받기 전에는 실행하지 않는다 — 거부된 ACK 뒤에 작업이 도는 일을 막는다.
         //   옛 Agent 는 이 프레임을 읽지 않는다(FRESH 연결은 곧 닫힌다) — 보내도 해가 없다.
-        if config.pool_mode {
+        // ★★ 결함 233 (재검수 78) — 전에는 기록 결과를 **보지 않고** 보냈다. 대체된 시도(NOT_CURRENT)나 시계가 뒤인 경우(CLOCK_BEHIND)는
+        //   아무것도 적지 않았는데 확인이 나가, 옛 노드가 새 시도와 같이 돌 수 있었다. 이제 실제로 적었거나(RECORDED),
+        //   수신 확인 유실 뒤 같은 노드의 재발급 ACK(STARTING_STILL_CURRENT, 결함 218)일 때만 보낸다.
+        let receipt_allowed = ack_receipt_allowed(record);
+        if config.pool_mode && !receipt_allowed {
+            println!(
+                "ACK_RECEIPT_WITHHELD attempt_id={} outcome={} — ACK 가 기록되지 않았다. Agent 는 실행하지 않는다",
+                ack.attempt_id,
+                record.as_str()
+            );
+        }
+        if config.pool_mode && receipt_allowed {
             let mut receipt_nonce = [0u8; 16];
             getrandom::getrandom(&mut receipt_nonce).map_err(|e| {
                 SessionHandlerError::Classified(storage_error("ack receipt nonce", e))
@@ -2350,6 +2372,15 @@ fn serve_one_connection_impl(
 /// `RevokeLeaseNotice::signer_id()`는 현재 프로토콜 계약상 `lease_id`를
 /// 반환한다(V-08). 따라서 테스트용 target override도 바뀐 payload에
 /// 대해 정상 서명해, Agent의 identity 검증과 서명 검증을 분리한다.
+/// 수신 확인을 보내도 되는 ACK 기록 결과인가(결함 233 · 218). 아무것도 적지 않은 결과에는 보내지 않는다.
+fn ack_receipt_allowed(record: crate::staging_store::GrantAcceptedRecord) -> bool {
+    use crate::staging_store::GrantAcceptedRecord as R;
+    match record {
+        R::Recorded | R::StartingStillCurrent => true,
+        R::AlreadyRecorded | R::NotCurrentAttempt | R::ClockBehindStaging => false,
+    }
+}
+
 /// 시한 없는 accept — 풀 모드의 상시 리스너용(결함 222).
 fn accept_without_deadline(
     listener: &TcpListener,
@@ -2732,6 +2763,8 @@ fn pool_connection_config(
     scoped.stored_grant_job_id = job_id;
     scoped.stored_grant_attempt_id = attempt_id;
     scoped.stored_grant_lease_id = lease_id;
+    // ★ 결함 218 — 풀은 수신 확인이 유실된 STARTING 시도를 **이 노드에만** 다시 내준다(아래 grant_from_stored 관문).
+    scoped.reissue_unacknowledged_start = true;
     scoped.grant_id = fresh_grant_id()
         .map_err(|error| SessionHandlerError::Classified(storage_error("grant id", error)))?;
     Ok(Some(scoped))
@@ -3994,6 +4027,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
             .get("--stored-grant-attempt-id")
             .cloned()
             .unwrap_or_default(),
+        reissue_unacknowledged_start: false,
         stored_grant_lease_id: flags
             .get("--stored-grant-lease-id")
             .cloned()
@@ -4612,6 +4646,24 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_config_from_args(&args).expect("설정 파싱")
+    }
+
+    /// 결함 233 (재검수 78) — ACK 를 적지 않은 결과(대체된 시도 · 시계가 뒤 · 이미 끝난 시도)에는 수신 확인을 보내지 않는다.
+    #[test]
+    fn an_ack_that_recorded_nothing_gets_no_receipt() {
+        use crate::staging_store::GrantAcceptedRecord as R;
+        assert!(ack_receipt_allowed(R::Recorded));
+        assert!(ack_receipt_allowed(R::StartingStillCurrent));
+        for nothing in [
+            R::NotCurrentAttempt,
+            R::ClockBehindStaging,
+            R::AlreadyRecorded,
+        ] {
+            assert!(
+                !ack_receipt_allowed(nothing),
+                "{nothing:?} 에 수신 확인을 보냈다"
+            );
+        }
     }
 
     /// ★ 2026-09-23 (신뢰망 남은 일 K) — 풀 모드의 전제가 하나라도 어긋나면 **시작하지 않는다.**

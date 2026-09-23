@@ -322,6 +322,9 @@ pub enum GrantAcceptedRecord {
     Recorded,
     /// 이미 적혀 있다(같은 시도의 재접속 ACK) — 아무것도 바꾸지 않았다.
     AlreadyRecorded,
+    /// ★ 2026-09-23 (결함 218) — 시도가 이미 STARTING 이고 여전히 Job(RUNNING)의 현재 시도다 — 수신 확인이 유실돼 같은 노드가
+    ///   다시 받아 간 풀 재발급의 ACK 다. 아무것도 바꾸지 않았다. 두 번째 실행을 막는 것은 Agent 의 시작 기록이다.
+    StartingStillCurrent,
     /// 이 시도는 더 이상 Job 의 현재 시도가 아니다 — 아무것도 바꾸지 않았다.
     NotCurrentAttempt,
     /// Coordinator 시계가 예약 시각보다 뒤다 — 시각을 지어내지 않으려고 아무것도 적지 않았다.
@@ -333,6 +336,7 @@ impl GrantAcceptedRecord {
         match self {
             Self::Recorded => "recorded",
             Self::AlreadyRecorded => "already_recorded",
+            Self::StartingStillCurrent => "starting_still_current",
             Self::NotCurrentAttempt => "not_current_attempt",
             Self::ClockBehindStaging => "clock_behind_staging",
         }
@@ -375,8 +379,27 @@ impl CoordinatorStagingStore {
         let attempt =
             fetch_attempt(&transaction, attempt_id)?.ok_or(StagingStoreError::JobNotFound)?;
         if attempt.state != AttemptState::Created {
+            let still_current = attempt.state == AttemptState::Starting
+                && crate::job_store::fetch_job(&transaction, &attempt.job_id)
+                    .map_err(|error| StagingStoreError::CorruptData(error.to_string()))?
+                    .is_some_and(|job| job.state == crate::job_store::JobState::Running)
+                && transaction
+                    .query_row(
+                        "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+                         ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+                        rusqlite::params![attempt.job_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
+                    .map_err(map_sql_error)?
+                    .as_deref()
+                    == Some(attempt_id);
             transaction.commit().map_err(map_sql_error)?;
-            return Ok(GrantAcceptedRecord::AlreadyRecorded);
+            return Ok(if still_current {
+                GrantAcceptedRecord::StartingStillCurrent
+            } else {
+                GrantAcceptedRecord::AlreadyRecorded
+            });
         }
         let job_moved = match crate::job_store::record_staging_complete(
             &transaction,
@@ -1586,7 +1609,8 @@ mod tests {
             store
                 .record_grant_accepted(&request.attempt_id, 260)
                 .unwrap(),
-            GrantAcceptedRecord::AlreadyRecorded
+            // ★ 결함 218 — 여전히 현재 시도이고 Job 이 RUNNING 이면 "수신 확인 유실 뒤 재발급의 ACK" 로 가른다(아무것도 바꾸지 않는다).
+            GrantAcceptedRecord::StartingStillCurrent
         );
         let again = job_store::fetch_job(&store.connection, "job-a")
             .unwrap()

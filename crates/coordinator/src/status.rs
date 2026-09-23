@@ -166,7 +166,7 @@ pub fn status_report(control_db: &Path, now_unix_ms: u64) -> Result<String, Stri
                 None
             };
             out.push(format!(
-                "  {node} reserved_by={} reservation_expired={} last_hello={} owner_reclaimed={}",
+                "  {node} reserved_by={} reservation_expired={} last_fresh_hello={} owner_reclaimed={}",
                 reservation
                     .as_ref()
                     .map(|r| r.attempt_id.clone())

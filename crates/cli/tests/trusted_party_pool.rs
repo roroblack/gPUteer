@@ -91,10 +91,10 @@ fn run_cli(args: &[&str]) -> (bool, String) {
 
 /// 노드 둘을 등록하고 작업 셋을 LOCAL 내구성으로 큐에 올린다.
 fn pool(dir: &Path) -> (PathBuf, PathBuf) {
-    pool_with(dir, "LOCAL")
+    pool_with(dir, ["LOCAL"; 3])
 }
 
-fn pool_with(dir: &Path, durability: &str) -> (PathBuf, PathBuf) {
+fn pool_with(dir: &Path, durabilities: [&str; 3]) -> (PathBuf, PathBuf) {
     let db = dir.join("control.sqlite3");
     let observed = now_unix_ms();
     let agent = |node: &str, seed: &str| {
@@ -181,7 +181,7 @@ fn pool_with(dir: &Path, durability: &str) -> (PathBuf, PathBuf) {
             "--side-effect-class",
             "PURE",
             "--durability",
-            durability,
+            durabilities[index],
             "--dataset-sensitivity",
             "INTERNAL",
             "--minimum-security-tier",
@@ -756,10 +756,9 @@ fn a_replayed_hello_is_refused_across_a_pool_coordinator_restart() {
     assert!(!ok && out.contains("REPLAY_DB_NEEDS_POOL_MODE"), "{out}");
 }
 
-/// 결함 217 (검수 73) — 풀 모드 스케줄러는 풀이 채울 수 없는 내구성(LOCAL 아님)을 요구한 작업을 **배치 전에** 큐에서 내린다.
-///
-/// 배치하면 끝난 뒤 예약 해제 관문이 영영 안 열려 노드가 묶인다. 거부만 하고 두면 FIFO 맨 앞이 뒤 작업을 인질로 잡는다.
-/// 대조군 — `--pool-agents` 가 없는 tick 은 전처럼 배치한다(풀 모드가 아닌 운영을 바꾸지 않는다).
+/// 결함 217 · 235 · 236 (검수 73 · 재검수 79) — 풀 스케줄러는 풀이 채울 수 없는 내구성(LOCAL 아님)을 요구한 작업을 **배치 전에** 내리고,
+/// 그 뒤의 작업을 계속 본다(맨 앞이 뒤를 인질로 잡지 않는다). 풀 여부는 **풀 Coordinator 가 control DB 에 적은 표식**으로 안다.
+/// 대조군 — 표식이 없는 DB 는 `--pool-agents` 를 줘도 풀로 보지 않는다(이어받기 키로 쓰는 풀 밖 운영을 바꾸지 않는다).
 #[test]
 fn a_pool_scheduler_drops_a_job_whose_durability_the_pool_cannot_meet() {
     let tick = |db: &Path, keyring: &Path, pool_agents: Option<&str>| -> (bool, String) {
@@ -802,25 +801,30 @@ fn a_pool_scheduler_drops_a_job_whose_durability_the_pool_cannot_meet() {
         pub_hex(AGENT_SEED_2)
     );
 
+    // 풀 — Coordinator 가 적는 표식을 시험이 직접 적는다. 인자에는 --pool-agents 가 **없다**(235 A).
     let dir = tempfile::tempdir().expect("임시 폴더");
-    let (db, keyring) = pool_with(dir.path(), "MIRRORED");
-    let (ok, out) = tick(&db, &keyring, Some(&agents));
-    assert!(!ok, "배치됐다: {out}");
+    let (db, keyring) = pool_with(dir.path(), ["MIRRORED", "LOCAL", "LOCAL"]);
+    gputeer_coordinator::job_store::declare_pool_mode(&db, now_unix_ms()).expect("풀 표식");
+    let (ok, out) = tick(&db, &keyring, None);
+    assert!(ok, "{out}");
     assert!(
-        out.contains("JOB_FAILED_PERMANENTLY_INFEASIBLE")
-            && out.contains("DURABILITY_MIRRORED_NOT_SUPPORTED_BY_POOL"),
+        out.contains(&format!(
+            "TICK_JOB_FAILED_PERMANENTLY_INFEASIBLE {}",
+            JOBS[0]
+        )) && out.contains("DURABILITY_MIRRORED_NOT_SUPPORTED_BY_POOL"),
         "{out}"
     );
     assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Failed));
-    // 맨 앞이 빠졌으니 다음 tick 은 다음 작업을 본다 — 인질이 없다.
-    let (_, out) = tick(&db, &keyring, Some(&agents));
-    assert!(out.contains(JOBS[1]), "{out}");
-    assert_eq!(job_state(&db, JOBS[1]), Some(JobState::Failed));
+    assert_eq!(
+        job_state(&db, JOBS[1]),
+        Some(JobState::Staging),
+        "맨 앞을 내린 뒤 같은 tick 이 다음 작업을 배치하지 않았다(236)\n{out}"
+    );
 
-    // 대조군 — 풀 모드가 아니면 전처럼 배치한다.
+    // 대조군 — 표식 없는 DB 에 --pool-agents 를 줘도 거부하지 않는다(235 B).
     let control = tempfile::tempdir().expect("임시 폴더");
-    let (db, keyring) = pool_with(control.path(), "MIRRORED");
-    let (ok, out) = tick(&db, &keyring, None);
+    let (db, keyring) = pool_with(control.path(), ["MIRRORED"; 3]);
+    let (ok, out) = tick(&db, &keyring, Some(&agents));
     assert!(ok, "풀 밖 tick 이 거부했다: {out}");
     assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Staging));
 }
@@ -945,5 +949,182 @@ fn a_pool_coordinator_refuses_shared_keys_and_a_separate_liveness_db() {
     assert!(
         !out.contains("STARTUP_REFUSED"),
         "맞는 설정인데 시작을 거부했다\n{out}"
+    );
+}
+
+/// 결함 218 (재검수 78 · 80) — ACK 는 기록됐는데 수신 확인이 유실돼 Agent 가 실행하지 않은 시도(STARTING)를, 풀 Coordinator 가
+/// **같은 노드에** 다시 내주고 그 노드가 끝까지 돈다. 전에는 "이미 받아들여졌다" 로 거부돼 한 번도 안 돈 작업이 묶였다.
+///
+/// 유실 상황은 시도를 미리 STARTING 으로 적어 흉내 낸다(ACK 기록 직후 끊긴 것과 저장 상태가 같다).
+/// ★ 같은 노드가 **이미 시작한** 시도를 다시 받지 않는 쪽(Agent 의 시작 기록)은 단위 시험이 본다
+///   (`owner_reclaim_marker_tests::the_start_journal_remembers_exactly_the_attempts_started_here`).
+#[test]
+fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs() {
+    let dir = tempfile::tempdir().expect("임시 폴더");
+    let (db, keyring) = pool(dir.path());
+    let db_s = db.to_str().unwrap().to_string();
+    let keyring_s = keyring.to_str().unwrap().to_string();
+    let (ok, out) = run_cli(&[
+        "scheduler-tick",
+        "--control-db",
+        &db_s,
+        "--submitter-keyring",
+        &keyring_s,
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "300000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+    ]);
+    assert!(ok, "예약 실패: {out}");
+    let staging = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db).unwrap();
+    let (node, seed, attempt_id) = [(NODE_1, AGENT_SEED_1), (NODE_2, AGENT_SEED_2)]
+        .into_iter()
+        .find_map(|(node, seed)| {
+            staging
+                .work_assigned_to_node(node)
+                .unwrap()
+                .map(|(_, attempt, _)| (node, seed, attempt))
+        })
+        .expect("어느 노드에도 배정이 없다");
+    drop(staging);
+    // ACK 는 기록됐고(시도 STARTING · Job RUNNING) 수신 확인만 유실됐다.
+    let recorded = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db)
+        .unwrap()
+        .record_grant_accepted(&attempt_id, now_unix_ms())
+        .unwrap();
+    assert_eq!(
+        recorded,
+        gputeer_coordinator::staging_store::GrantAcceptedRecord::Recorded
+    );
+    assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Running));
+
+    let pool_agents = format!(
+        "{NODE_1}={};{NODE_2}={}",
+        pub_hex(AGENT_SEED_1),
+        pub_hex(AGENT_SEED_2)
+    );
+    let coordinator_log = dir.path().join("coordinator.log");
+    let coordinator = Command::new(cli_bin())
+        .args([
+            "coordinator-stub",
+            "--pool-mode",
+            "true",
+            "--pool-agents",
+            &pool_agents,
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            COORD_SEED,
+            "--coordinator-device-id",
+            COORDINATOR,
+            "--grant-from-control-db",
+            &db_s,
+            "--lease-db",
+            &db_s,
+            "--liveness-db",
+            &db_s,
+            "--submitter-keyring",
+            &keyring_s,
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
+            "--accept-report-sessions",
+            "true",
+            "--release-on-exit-report",
+            "true",
+            "--max-connections",
+            "0",
+            "--accept-timeout-ms",
+            "0",
+        ])
+        .stdout(Stdio::from(
+            std::fs::File::create(&coordinator_log).expect("log 파일"),
+        ))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("coordinator spawn");
+    let addr = wait_ready(&coordinator_log);
+    let fence = dir.path().join(format!("{node}-fence.sqlite3"));
+    let checkpoints = dir.path().join(format!("{node}-checkpoints"));
+    let coordinator_pub = pub_hex(COORD_SEED);
+    let submitter_pub = pub_hex(SEED);
+    let agent: Vec<String> = [
+        "agent-loop",
+        "--interval-ms",
+        "100",
+        "--max-rounds",
+        "1",
+        "--",
+        "--connect",
+        &addr,
+        "--own-seed",
+        seed,
+        "--peer-pubkey",
+        &coordinator_pub,
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        node,
+        "--fence-db",
+        fence.to_str().unwrap(),
+        "--checkpoint-root",
+        checkpoints.to_str().unwrap(),
+        "--submitter-pubkey",
+        &submitter_pub,
+        "--i-understand-this-executes-untrusted-code",
+        "true",
+        "--report-over-session",
+        "true",
+        "--max-reconnect-attempts",
+        "1",
+        "--require-ack-receipt",
+        "true",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    // 한 회차가 끝날 때까지 기다린다(collect 는 곧바로 죽인다).
+    let agent_output = spawn(&agent).wait_with_output().expect("agent 출력");
+    let agent_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&agent_output.stdout),
+        String::from_utf8_lossy(&agent_output.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while job_state(&db, JOBS[0]) != Some(JobState::Completed) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(200));
+    }
+    let finished = job_state(&db, JOBS[0]);
+    let coordinator_err = collect(coordinator);
+    let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();
+    let everything = format!(
+        "--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}\n{coordinator_err}"
+    );
+    assert!(
+        coordinator_out.contains("outcome=starting_still_current")
+            && coordinator_out.contains("ACK_RECEIPT_SENT"),
+        "유실 뒤 재발급의 ACK 에 수신 확인을 보내지 않았다\n{everything}"
+    );
+    assert!(
+        agent_out.contains("ACK_RECEIPT_VERIFIED"),
+        "Agent 가 수신 확인을 받지 못했다\n{everything}"
+    );
+    assert_eq!(
+        finished,
+        Some(JobState::Completed),
+        "한 번도 안 돈 작업이 다시 돌아 끝나지 않았다\n{everything}"
     );
 }

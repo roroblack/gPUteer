@@ -1356,6 +1356,58 @@ pub(crate) fn follow_attempt_terminal(
     Ok(Some(job))
 }
 
+/// ★ 2026-09-24 (결함 235 · 재검수 79) — 풀 Coordinator 가 시작할 때 control DB 에 "이 DB 는 풀이다" 를 적는다. 스케줄러가 이것으로
+///   풀 여부를 안다(명령줄 인자로 짐작하지 않는다). 한 번 적으면 지우지 않는다(멱등).
+pub fn declare_pool_mode(control_db: &std::path::Path, now_unix_ms: u64) -> Result<(), String> {
+    let connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS coordinator_pool_mode (
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                declared_at_unix_ms BLOB NOT NULL CHECK(length(declared_at_unix_ms) = 8)
+            );",
+        )
+        .map_err(|e| e.to_string())?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO coordinator_pool_mode(singleton, declared_at_unix_ms) VALUES (1, ?1)",
+            rusqlite::params![now_unix_ms.to_be_bytes().to_vec()],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 이 control DB 를 풀 Coordinator 가 쓰는가([`declare_pool_mode`]). 표가 없으면 아니다(읽기만 한다).
+pub fn pool_mode_declared(control_db: &std::path::Path) -> Result<bool, String> {
+    let connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    let table = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_pool_mode'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if table.is_none() {
+        return Ok(false);
+    }
+    Ok(connection
+        .query_row(
+            "SELECT 1 FROM coordinator_pool_mode WHERE singleton = 1",
+            [],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .is_some())
+}
+
 pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(), JobStoreError> {
     let (failure_kind, failure_detail) = match &job.queue_failure {
         Some(failure) => (Some(failure.code()), failure.detail()),

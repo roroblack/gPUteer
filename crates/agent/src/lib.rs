@@ -414,6 +414,48 @@ pub fn owner_reclaim_marker(checkpoint_root: &std::path::Path) -> Result<PathBuf
     checkpoint_root_sibling(&base, ".owner-reclaimed")
 }
 
+/// 이 노드가 **시작한 시도**의 기록 폴더 — 체크포인트 루트의 형제(루트는 이미 실제 위치로 바뀐 뒤다).
+fn started_attempts_dir(checkpoint_root: &std::path::Path) -> Result<PathBuf, String> {
+    checkpoint_root_sibling(checkpoint_root, ".started-attempts")
+}
+
+/// 시도 id 를 파일 이름으로 — 모양을 믿지 않고 해시한다.
+fn started_attempt_name(attempt_id: &str) -> String {
+    blake3::hash(attempt_id.as_bytes()).to_hex().to_string()
+}
+
+fn attempt_started_here(
+    checkpoint_root: &std::path::Path,
+    attempt_id: &str,
+) -> Result<bool, String> {
+    let path = started_attempts_dir(checkpoint_root)?.join(started_attempt_name(attempt_id));
+    match fs::symlink_metadata(&path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "ATTEMPT_START_JOURNAL: 시작 기록을 읽지 못했다({path:?}): {error} — 모르면 받지 않는다"
+        )),
+    }
+}
+
+/// 워크로드를 띄우기 **직전에** 영속으로 적는다(write-once · fsync). 실패하면 실행하지 않는다.
+fn record_attempt_started_here(
+    checkpoint_root: &std::path::Path,
+    attempt_id: &str,
+) -> Result<(), String> {
+    let dir = started_attempts_dir(checkpoint_root)?;
+    fs::create_dir_all(&dir).map_err(|error| {
+        format!("ATTEMPT_START_JOURNAL: 폴더를 만들지 못했다({dir:?}): {error}")
+    })?;
+    gputeer_checkpoint::write_once(
+        &dir,
+        &started_attempt_name(attempt_id),
+        format!("attempt_id={attempt_id}\n").as_bytes(),
+    )
+    .map(|_| ())
+    .map_err(|error| format!("ATTEMPT_START_JOURNAL: 시작 기록을 남기지 못했다: {error:?}"))
+}
+
 /// 소유자가 공유를 다시 켠다 — 표시 파일을 지운다. 없으면 이미 켜져 있다(멱등).
 pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
     let marker = owner_reclaim_marker(checkpoint_root)?;
@@ -425,7 +467,27 @@ pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
 }
 
 pub fn run(config: AgentConfig) -> Result<(), String> {
-    // (소유자 되찾음 검사는 체크포인트 루트를 실제 위치로 바꾼 **뒤**로 옮겼다 — 결함 229 · 230, 아래 settle 참조)
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **새 일을 받으러 붙지 않는다.** 붙으면 Coordinator 가 이 노드를
+    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
+    // ★ 결함 229 · 230 · 238 (검수 77 · 재검수 80) — 표시는 루트의 **실제 위치** 옆에서 찾는다(`owner_reclaim_marker` 가 링크를 푼다).
+    //   멈추기 전에 **못 보낸 종료 보고를 먼저 보낸다** — 선점 보고(INTERRUPTED)가 outbox 에 갇히면 Coordinator 가 선점을 모른다.
+    //   이 검사는 체크포인트 루트 잠금 · 기동 GC **앞에** 둔다 — 그것들이 실패해도(권한 · 잠금) 보고는 나가야 한다(238).
+    //   outbox 위치를 실행 때와 같게 계산하려고 루트만 실제 위치로 바꾼 설정 사본을 쓴다. 보고 연결은 일을 받지 않는다(FRESH 만 생존 관측).
+    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
+    if marker.exists() {
+        if config.report_over_session {
+            let mut outbox_config = config.clone();
+            if let Ok(real) = fs::canonicalize(&config.checkpoint_root) {
+                outbox_config.checkpoint_root = without_verbatim_prefix(real);
+            }
+            flush_report_outbox(&outbox_config, &SigningKey::from_bytes(&config.own_seed));
+        }
+        return Err(format!(
+            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
+             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
+            marker.display()
+        ));
+    }
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -555,22 +617,6 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   바꿔치기하거나 루트 안에 별칭을 두면 두 기준이 갈라진다. 그래서 잠금을 얻은 뒤 **설정의 루트를 실제 위치로 바꾼다** — 이 뒤로는 한 기준이다.
     let mut config = config;
     let _checkpoint_root_lock = settle_checkpoint_root(&mut config)?;
-    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **새 일을 받으러 붙지 않는다.** 붙으면 Coordinator 가 이 노드를
-    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
-    // ★ 결함 229 · 230 (검수 77) — 루트를 실제 위치로 바꾼 **뒤에** 본다(링크 뒤의 표시를 놓치지 않게). 그리고 멈추기 전에
-    //   **못 보낸 종료 보고를 먼저 보낸다** — 전에는 기동 첫머리에서 곧바로 끝나 선점 보고(INTERRUPTED)가 outbox 에 갇혀
-    //   Coordinator 가 선점을 영영 몰랐다. 보고 연결은 일을 받지 않는다(Coordinator 는 FRESH 인사만 "일 받을 준비" 로 센다).
-    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
-    if marker.exists() {
-        if config.report_over_session {
-            flush_report_outbox(&config, &SigningKey::from_bytes(&config.own_seed));
-        }
-        return Err(format!(
-            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
-             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
-            marker.display()
-        ));
-    }
     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
     //   (2026-08-29, 독립 검수 지적).
     //
@@ -1261,6 +1307,21 @@ fn run_one_connection_inner(
             // ★ 결함 ㊸ — 정리까지 실패해도 거부 사유를 잃지 않는다.
             Err(refused) => return Err(fail_after_cleanup(refused.to_string(), &run_dir)),
         };
+        // ★ 2026-09-23 (결함 218 · 재검수 78 · 80) — 수신 확인을 요구하는 Agent 는 **이 노드에서 이미 시작한 시도**의 Grant 에
+        //   ACK 하지 않는다. 풀 Coordinator 는 수신 확인이 유실된 시도(STARTING)를 같은 노드에 다시 내줄 수 있다 — 그 재발급이
+        //   두 번째 실행이 되지 않게 하는 것이 이 기록이다(워크로드를 띄우기 **전에** 영속으로 적는다, 아래).
+        if config.require_ack_receipt
+            && will_execute
+            && attempt_started_here(&config.checkpoint_root, &grant.attempt_id)?
+        {
+            return Err(fail_after_cleanup(
+                format!(
+                    "ATTEMPT_ALREADY_STARTED_HERE: 시도 {} 는 이 노드에서 이미 시작했다 — 다시 받지 않는다(두 번 돌지 않게)",
+                    grant.attempt_id
+                ),
+                &run_dir,
+            ));
+        }
         // ★ 결함 ㊷ — ACK 전송이 실패해도 작업 디렉터리를 치운 뒤 보고한다.
         sent_ack = Some(
             send_grant_ack(&mut stream, signing_key, &grant, &config, clock)
@@ -1282,6 +1343,11 @@ fn run_one_connection_inner(
                 &ack_nonce,
             )
             .map_err(|error| fail_after_cleanup(error, &run_dir))?;
+            // 시작 기록 — 실행 직전, 영속으로. 이 뒤로 이 노드는 같은 시도를 다시 받지 않는다(결함 218).
+            if will_execute {
+                record_attempt_started_here(&config.checkpoint_root, &grant.attempt_id)
+                    .map_err(|error| fail_after_cleanup(error, &run_dir))?;
+            }
         }
         *execution_attempted = will_execute;
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
@@ -6102,5 +6168,22 @@ mod owner_reclaim_marker_tests {
             "링크 옆과 실제 위치 옆이 갈렸다 — 표시를 못 본다"
         );
         assert_eq!(through_alias.file_name(), through_real.file_name());
+    }
+
+    /// 결함 218 (재검수 78 · 80) — 시작 기록은 영속이고 시도마다 따로다. 기록된 시도만 "이미 시작" 이다.
+    #[test]
+    fn the_start_journal_remembers_exactly_the_attempts_started_here() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("checkpoints");
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(!super::attempt_started_here(&root, "attempt-a").unwrap());
+        super::record_attempt_started_here(&root, "attempt-a").unwrap();
+        // 같은 시도를 다시 적어도 된다(멱등) — 두 번째 실행 여부는 이 기록을 **읽어서** 막는다.
+        super::record_attempt_started_here(&root, "attempt-a").unwrap();
+        assert!(super::attempt_started_here(&root, "attempt-a").unwrap());
+        assert!(
+            !super::attempt_started_here(&root, "attempt-b").unwrap(),
+            "다른 시도까지 막았다 — 이어받기(새 시도)가 이 노드에 못 온다"
+        );
     }
 }
