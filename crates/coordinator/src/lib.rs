@@ -31,6 +31,7 @@ use prost::Message;
 
 pub mod attempt_report_store;
 pub mod checkpoint_manifest_store;
+pub mod failover;
 pub mod grant_from_stored;
 pub mod inventory_store;
 pub mod job_store;
@@ -1335,7 +1336,20 @@ fn serve_one_connection_impl(
                     lease_id: config.stored_grant_lease_id.clone(),
                     grant_id: config.grant_id.clone(),
                     issued_at_unix_ms: now,
-                    expires_at_unix_ms: now.saturating_add(config.stored_grant_ttl_ms),
+                    // ★ 2026-09-23 (신뢰망 남은 일 G) — 풀 모드는 Grant 가 **Lease 보다 오래 살지 않게** 자른다.
+                    //   짧은 Lease(실행 중 갱신으로 늘리는 방식)에서 기본 Grant 수명이 Lease 만료를 넘어 거부됐다.
+                    //   다른 lane 은 전과 같다 — 거기서는 넘으면 설정 오류로 거부하는 편이 낫다.
+                    expires_at_unix_ms: {
+                        let wanted = now.saturating_add(config.stored_grant_ttl_ms);
+                        if config.pool_mode {
+                            match leases.get(&config.stored_grant_lease_id) {
+                                Ok(Some(lease)) => wanted.min(lease.expires_at_unix_ms),
+                                _ => wanted,
+                            }
+                        } else {
+                            wanted
+                        }
+                    },
                     // ★ **기존 handshake 의 유도식을 그대로 쓴다.** Agent 가
                     //   연결 시도 번호에서 같은 값을 다시 만들어 대조한다 —
                     //   저장된 사실로 뽑으면 그 대조가 깨진다(통합 테스트가

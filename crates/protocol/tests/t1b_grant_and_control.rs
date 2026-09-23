@@ -123,8 +123,84 @@ fn grant(manifest_sig: u8, manifest_hash: u8) -> pb::ExecutionGrant {
         expires_at_unix_ms: 1_755_100_860_000,
         nonce: (0u8..16).collect(),
         lease_from_durable_store: true,
+        resume_from: None,
         coordinator_signature: vec![0xFE; 64],
     }
+}
+
+/// ★ v3 (2026-09-23, 신뢰망 남은 일 F) — 재개 지점을 실은 Grant. `grant()` 는 v2 그대로 둔다(기존 벡터 v25*).
+fn resume_manifest(producer_signature: u8, step: u64) -> pb::CheckpointManifest {
+    pb::CheckpointManifest {
+        schema_version: 1,
+        checkpoint_id: "ckpt-resume-1".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000000".into(),
+        step,
+        epoch: 0,
+        files: vec![pb::CheckpointFile {
+            path: "state.bin.b3-00".into(),
+            digest: Some(pb::Digest {
+                algo: 1,
+                value: vec![0x11; 32],
+            }),
+            size_bytes: 7,
+            chunk_digests: vec![],
+            chunk_size_bytes: 0,
+        }],
+        root_digest: Some(pb::Digest {
+            algo: 1,
+            value: vec![0x22; 32],
+        }),
+        total_bytes: 7,
+        completeness: None,
+        created_at_unix_ms: 1_755_100_700_000,
+        producer_node_id: "node-7".into(),
+        fence_epoch: 41,
+        producer_signature: vec![producer_signature; 64],
+    }
+}
+
+fn grant_v3(producer_signature: u8, step: u64) -> pb::ExecutionGrant {
+    let mut g = grant(0xAA, 0x01);
+    g.schema_version = 3;
+    g.resume_from = Some(resume_manifest(producer_signature, step));
+    g
+}
+
+#[test]
+fn execution_grant_v3_with_resume_point_matches_reference() {
+    assert_eq!(
+        hex(&canon(&grant_v3(0xAB, 42))),
+        expect_hex("v25d_execution_grant_v3_resume_from"),
+        "v3 Grant(재개 지점) canonical 이 참조 구현과 다르다"
+    );
+}
+
+/// ★ 규칙 i — 재개 지점 매니페스트의 **생산자 서명**은 Grant canonical 에 들어가지 않는다.
+///   그래서 Agent 는 그 서명을 따로 검증해야 한다(MUST). 하지 않으면 서명이 벗겨진 체크포인트에서 이어간다.
+#[test]
+fn resume_point_nested_signature_is_excluded() {
+    assert_eq!(canon(&grant_v3(0xAB, 42)), canon(&grant_v3(0xCD, 42)));
+    assert_eq!(
+        hex(&canon(&grant_v3(0xCD, 42))),
+        expect_hex("v25e_execution_grant_v3_resume_nested_sig_swapped")
+    );
+}
+
+/// 반대로 재개 지점의 **내용**(어느 step 에서 이어가나)은 Coordinator 서명이 묶는다.
+#[test]
+fn resume_point_content_does_affect_grant_canonical() {
+    assert_ne!(canon(&grant_v3(0xAB, 42)), canon(&grant_v3(0xAB, 41)));
+    assert_eq!(
+        hex(&canon(&grant_v3(0xAB, 41))),
+        expect_hex("v25f_execution_grant_v3_resume_step_changed")
+    );
+    // v2 에 없던 칸이 v3 canonical 에 실제로 들어간다.
+    assert_ne!(canon(&grant_v3(0xAB, 42)), {
+        let mut g = grant_v3(0xAB, 42);
+        g.resume_from = None;
+        canon(&g)
+    });
 }
 
 #[test]

@@ -139,6 +139,8 @@ pub struct SpawnSpec {
     ///   `runtime-windows` 가 같은 이유로 파일을 쓴다.
     pub stdout_path: Option<PathBuf>,
     pub stderr_path: Option<PathBuf>,
+    /// ★ 2026-09-23 (신뢰망 남은 일 E) — 부모 환경 위에 더하는 변수. 비어 있으면 전과 같다.
+    pub environment: Vec<(OsString, OsString)>,
 }
 
 /// 상한이 걸린 채 도는 자식.
@@ -368,6 +370,7 @@ pub fn create_constrained_child(
 
     let mut command = std::process::Command::new(&spec.program);
     command.args(&spec.args);
+    command.envs(spec.environment.iter().map(|(key, value)| (key, value)));
     if let Some(dir) = &spec.current_dir {
         command.current_dir(dir);
     }
@@ -781,6 +784,7 @@ mod tests {
     #[test]
     fn a_zero_limit_is_refused() {
         let spec = SpawnSpec {
+            environment: Vec::new(),
             program: "/bin/true".into(),
             args: vec![],
             current_dir: None,

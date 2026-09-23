@@ -9,6 +9,7 @@ license.workspace = true
 gputeer-protocol = { path = "../protocol" }
 gputeer-crypto = { path = "../crypto" }
 gputeer-scheduler = { path = "../scheduler" }
+gputeer-checkpoint = { path = "../checkpoint" }
 prost.workspace = true
 blake3.workspace = true
 rusqlite.workspace = true

@@ -161,6 +161,43 @@ pub fn run(args: &[String]) -> Result<String, String> {
         ));
     }
 
+    // ── 장애 이어받기 먼저 ─────────────────────────────────────────
+    //
+    // ★ 2026-09-23 (신뢰망 남은 일 G) — `--failover-grace-ms` 를 주면 **큐를 보기 전에** 끊긴 시도의 Job 을 규범 경로로
+    //   되돌린다(`gputeer_coordinator::failover`). 되돌아온 Job 은 곧바로 이 tick 의 큐 후보가 된다.
+    //   주지 않으면 하지 않는다 — 유예 시간을 지어내지 않는다.
+    //   결과 줄은 바로 찍는다(표준 출력) — tick 결과가 거부여도 되돌린 사실은 남아야 한다.
+    if let Some(raw) = flags.get("--failover-grace-ms") {
+        let grace_ms = raw.parse::<u64>().map_err(|e| {
+            format!("TICK_ARGS_REFUSED: FAILOVER_GRACE_NOT_A_NUMBER — --failover-grace-ms 파싱 실패: {e}")
+        })?;
+        let producer_keys = match flags.get("--pool-agents") {
+            Some(raw) => parse_pool_agents(raw)?,
+            None => Vec::new(),
+        };
+        let policy = gputeer_coordinator::failover::FailoverPolicy {
+            grace_ms,
+            shared_checkpoint_root: flags
+                .get("--shared-checkpoint-root")
+                .map(std::path::PathBuf::from),
+            producer_keys,
+        };
+        let mut notes = Vec::new();
+        let outcomes = gputeer_coordinator::failover::failover_lost_attempts(
+            std::path::Path::new(control_db),
+            &policy,
+            now_unix_ms,
+            &mut notes,
+        )
+        .map_err(|e| format!("TICK_REFUSED: FAILOVER_STORE — 장애 판정 중 저장소 오류: {e}"))?;
+        for note in notes {
+            println!("{note}");
+        }
+        for outcome in outcomes {
+            println!("{}", outcome.line());
+        }
+    }
+
     // ── 큐의 맨 앞 하나 ─────────────────────────────────────────────
     //
     // `list_queued()` 는 `(queued_at, job_id)` 순의 결정적 FIFO 다.
@@ -231,8 +268,15 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let mut staging = CoordinatorStagingStore::open(control_db)
         .map_err(|e| format!("staging store 를 열지 못했다({control_db}): {e}"))?;
 
-    let attempt_id = derive_id("attempt", &job_id, &plan_id);
-    let lease_id = derive_id("lease", &job_id, &plan_id);
+    // ★ 2026-09-23 (신뢰망 남은 일 G) — 이어받기로 되돌아온 Job 은 **새 시도**다. 같은 (job, plan) 에서 유도하면 옛 시도와
+    //   식별자가 겹쳐 저장소가 옛 결과를 돌려준다(operation replay). 되돌아온 횟수로 가른다 — 0 이면 전과 같다.
+    let generation = if job.requeue_count == 0 {
+        plan_id.clone()
+    } else {
+        format!("{plan_id}#requeue-{}", job.requeue_count)
+    };
+    let attempt_id = derive_id("attempt", &job_id, &generation);
+    let lease_id = derive_id("lease", &job_id, &generation);
 
     let outcome = orchestrate_placement_to_staging(
         &mut inventory,
@@ -247,7 +291,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             best_fit_policy,
             evaluated_at_unix_ms: now_unix_ms,
             issuance: StagingIssuanceInput {
-                operation_key: derive_operation_key(&job_id, &plan_id),
+                operation_key: derive_operation_key(&job_id, &generation),
                 attempt_id: attempt_id.clone(),
                 lease_id: lease_id.clone(),
                 issuing_coordinator_id: coordinator_id.to_string(),
@@ -376,6 +420,37 @@ fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
     Ok(BestFitPolicy {
         axis_order: [axes[0], axes[1], axes[2], axes[3], axes[4]],
     })
+}
+
+/// `--pool-agents "id=hex;id2=hex"` — 체크포인트 생산자 서명을 검증할 풀 노드 키(풀 Coordinator 와 같은 형식).
+fn parse_pool_agents(raw: &str) -> Result<Vec<(String, gputeer_crypto::VerifyingKey)>, String> {
+    let mut keys = Vec::new();
+    for entry in raw
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let (id, hex) = entry.split_once('=').ok_or_else(|| {
+            format!("TICK_ARGS_REFUSED: POOL_AGENTS_FORMAT — {entry:?} 는 id=공개키hex 가 아니다")
+        })?;
+        let hex = hex.trim();
+        if hex.len() != 64 {
+            return Err(format!(
+                "TICK_ARGS_REFUSED: POOL_AGENTS_FORMAT — {id} 의 공개키가 32바이트 hex 가 아니다"
+            ));
+        }
+        let mut bytes = [0u8; 32];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).map_err(|_| {
+                format!("TICK_ARGS_REFUSED: POOL_AGENTS_FORMAT — {id} 의 공개키가 hex 가 아니다")
+            })?;
+        }
+        let key = gputeer_crypto::VerifyingKey::from_bytes(&bytes).map_err(|e| {
+            format!("TICK_ARGS_REFUSED: POOL_AGENTS_FORMAT — {id} 의 공개키가 유효하지 않다: {e}")
+        })?;
+        keys.push((id.trim().to_string(), key));
+    }
+    Ok(keys)
 }
 
 fn now_unix_ms() -> u64 {

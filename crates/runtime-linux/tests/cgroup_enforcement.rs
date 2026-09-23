@@ -76,6 +76,7 @@ const LIMIT: u64 = 256 * 1024 * 1024;
 
 fn spec(program: &str, args: &[&str]) -> SpawnSpec {
     SpawnSpec {
+        environment: Vec::new(),
         program: program.into(),
         args: args.iter().map(|a| (*a).into()).collect(),
         current_dir: None,

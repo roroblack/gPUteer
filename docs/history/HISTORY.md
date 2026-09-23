@@ -25,6 +25,34 @@
 
 ---
 
+## 2026-09-23 19:47 — 신뢰망 남은 일 E · F · G: 체크포인트가 기계를 넘고, 끊긴 노드의 작업을 다른 노드가 이어받는다
+
+- 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` E · F · G
+- 스트림: Protocol · Coordinator · Agent · Checkpoint
+- 수행:
+  - **E 체크포인트 이동** — `checkpoint::shared`(공유 저장소에 `StagedCheckpoint` 로 확정 · 서명할 proto 로 변환 · 파일을 다시 해시해
+    검증 · 논리 이름으로 복원). Agent 가 작업에 `GPUTEER_CHECKPOINT_DIR` · `GPUTEER_RESUME_DIR` · `GPUTEER_JOB_ID` · `GPUTEER_ATTEMPT_ID` 를
+    준다(Windows 환경 블록 · 리눅스 `envs` — 두 런타임에 칸을 더했다). 실행 중 게시기가 `step-<N>` 폴더를 공유 저장소로 옮기고 이 노드의 키로
+    서명한 매니페스트를 남긴다(`--shared-checkpoint-root` · `--checkpoint-publish-interval-ms`)
+  - **F 계약(v3)** — `ExecutionGrant.resume_from = 26`(생산자 서명 CheckpointManifest 그대로). 재개 지점이 있을 때만 schema 3.
+    벡터 셋(v25d · e · f) · 참조 구현 · 스키마 지문 · signing.md §6.4(생산자 서명 독립 검증 · 파일 재해시 MUST) · 제안 문서.
+    `SCHEMA_VERSION` 2 -> 3 — ★ 올리지 않았을 때 v3 를 읽는 검증이 **패닉**해 Coordinator 가 죽었다(실측으로 잡음). Agent 는 v2 이하에
+    재개 지점이 있으면 거부하고, 받으면 `--pool-peer-keys` 로 생산자 서명을 검증 · Job 대조 · 파일 재해시 뒤 되살린다(ACK 전 — 못 하면 받지 않는다)
+  - **G 장애 이어받기** — `coordinator::failover`: STAGING · RUNNING 인 Job 의 최근 시도가 끝나지 않았고 Lease 만료 + 유예가 지났으면
+    규범 경로로 — STAGING(ACK 전) -> QUEUED(STAGING_NODE_LOST) / RUNNING -> INTERRUPTED -> REPLANNING -> QUEUED(마지막 체크포인트를 붙여서) /
+    체크포인트가 없으면 -> FAILED(NO_COMMITTED_CHECKPOINT). 체크포인트는 넷을 다 본다(생산자 서명 · 그 시도의 fence·노드 · 파일 재해시 ·
+    가장 큰 (fence, step)). 옛 예약은 지우지 않고 만료 표시만 — `gputeer release-lost-node --operator-statement` 로 운영자가 확인 뒤 푼다
+    (살아 있는 시도의 예약은 거부). `scheduler-tick --failover-grace-ms --shared-checkpoint-root --pool-agents`. 되돌아온 Job 의 새 시도는
+    되돌아온 횟수로 식별자를 가른다. Grant 발급은 **대체된 시도**에는 주지 않고, 재개 지점이 있으면 v3 로 싣는다. 풀 모드 Grant 수명을 Lease 만료로 자른다
+  - 결함 **212**(동시 배치 시험이 진 쪽 거부를 한 형태만 인정 — B′ 이후 잠복, 6회 중 1회 실패 -> 20/20)
+- 검증: 워크스페이스 전체 1회 **1272 passed · 2 failed** -> 두 건 고침(① 대체 검사가 더 구체적인 신원 대조보다 앞에 있었다 — 순서를 뒤로,
+  `issue_grant` 19/19 ② 결함 212, 20/20). 서식 0 · 참조 구현 69 벡터 일치 · 스키마 검사 통과 · `runtime-linux` 리눅스 타입 검사 통과.
+  ★ **`trusted_party_failover.rs` — 실행 중인 노드를 죽이면 다른 노드가 마지막 체크포인트에서 이어서 끝낸다**: A 가 1·2단계 뒤 죽고 ->
+  `FAILOVER_REQUEUED resume_step=2` -> B 가 `start 2` 로 3~6단계 -> 보고 · 예약 해제 -> `release-lost-node` 로 A 해제
+- ★ 한계(적어 둔다): 공유 저장소 하나를 holder 하나로 본다(신뢰망 전용 완화) · 체크포인트 폴더는 파일만(하위 폴더 거부) · 파일을 통째로
+  메모리에 읽는다 · 옛 노드가 살아 계속 돌면 막지 못한다(PURE 전제, §0.4) · Agent 의 리눅스 실행 경로는 CI 가 본다
+- 리포트: 결함 212 · 제안 `docs/contracts/proposals/2026-09-23_1908_Grant_v3_재개_지점.md`
+
 ## 2026-09-23 19:02 — 신뢰망 남은 일 K · C · 결함 211: 풀 Coordinator 하나가 여러 Agent 를 사람 손 없이 돌린다
 
 - 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` K · C

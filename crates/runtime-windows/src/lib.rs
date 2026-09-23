@@ -113,6 +113,37 @@ mod windows_impl {
         pub stdout_path: Option<PathBuf>,
         /// 자식의 표준 오류를 받을 파일. `None` 이면 받지 않는다.
         pub stderr_path: Option<PathBuf>,
+        /// ★ 2026-09-23 (신뢰망 남은 일 E) — 부모 환경 위에 **더하는** 변수. 비어 있으면 부모 환경을 그대로
+        ///   물려준다(전과 같다). 같은 이름이 있으면 이 값이 이긴다(Windows 규칙대로 대소문자 무시).
+        pub environment: Vec<(OsString, OsString)>,
+    }
+
+    /// 부모 환경 + 더할 변수로 `CREATE_UNICODE_ENVIRONMENT` 블록을 만든다.
+    ///
+    /// 형식: `이름=값\0` 을 이어 붙이고 끝에 `\0` 하나 더. 이름은 대소문자를 무시해 정렬한다
+    /// (CreateProcess 문서가 정렬을 요구한다). 같은 이름은 더할 변수가 이긴다.
+    fn environment_block(extra: &[(OsString, OsString)]) -> Vec<u16> {
+        use std::collections::BTreeMap;
+        use std::os::windows::ffi::OsStrExt;
+        let mut merged: BTreeMap<String, (OsString, OsString)> = BTreeMap::new();
+        for (key, value) in std::env::vars_os() {
+            merged.insert(key.to_string_lossy().to_uppercase(), (key, value));
+        }
+        for (key, value) in extra {
+            merged.insert(
+                key.to_string_lossy().to_uppercase(),
+                (key.clone(), value.clone()),
+            );
+        }
+        let mut block: Vec<u16> = Vec::new();
+        for (key, value) in merged.values() {
+            block.extend(key.encode_wide());
+            block.push(u16::from(b'='));
+            block.extend(value.encode_wide());
+            block.push(0);
+        }
+        block.push(0);
+        block
     }
 
     /// `std::process::Child` 대신 쓰는 최소 Windows 프로세스+Job 핸들.
@@ -613,6 +644,12 @@ mod windows_impl {
             startup.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
         }
 
+        // ★ 더할 변수가 있을 때만 환경 블록을 만든다 — 없으면 null(부모 환경 상속, 전과 같다).
+        let environment_block = if spec.environment.is_empty() {
+            None
+        } else {
+            Some(environment_block(&spec.environment))
+        };
         let mut process_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
         let mut flags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
         if !inherited.is_empty() {
@@ -627,7 +664,9 @@ mod windows_impl {
                 ptr::null(),
                 i32::from(!inherited.is_empty()),
                 flags,
-                ptr::null(),
+                environment_block.as_ref().map_or(ptr::null(), |block| {
+                    block.as_ptr() as *const std::ffi::c_void
+                }),
                 current_dir.as_ref().map_or(ptr::null(), |v| v.as_ptr()),
                 &startup as *const STARTUPINFOEXW as *const STARTUPINFOW,
                 &mut process_info,

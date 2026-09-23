@@ -57,8 +57,13 @@ pub const NONCE_LEN: usize = 16;
 /// replay 캐시 상한. 초과 시 축출이 아니라 **거부**한다 (signing.md §10).
 pub const REPLAY_CACHE_MAX_ENTRIES: usize = 100_000;
 
-/// 현재 프로토콜 스키마 버전.
-pub const SCHEMA_VERSION: u32 = 2;
+/// 이 빌드가 아는 **가장 높은** 메시지 schema_version. `verify()` 는 호출자의 상한을 이 값으로 자른다.
+///
+/// ★ 2026-09-23 — 2 -> 3. `ExecutionGrant` v3(재개 지점, `docs/contracts/proposals/2026-09-23_1908_Grant_v3_재개_지점.md`)
+///   를 넣으면서 올렸다. 올리지 않으면 v3 를 읽으려는 검증이 **패닉**한다(debug) — 장애 이어받기 실측에서 Coordinator 가
+///   바로 그렇게 죽었다. 메시지마다의 상한은 따로 있다(`EXECUTION_GRANT_MAX_SCHEMA_VERSION` 등) — 이 값을 올린다고
+///   다른 메시지가 v3 를 받게 되지 않는다.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// ★ 단수명 메시지의 **TTL 상한** (독립 검수 2026-08-17).
 ///
@@ -126,3 +131,9 @@ pub const MODE_REPORT: i32 = 4;
 /// `AttemptReport` 가 쓰는 가장 높은 schema_version — 2 부터 종료 관측 · 확정 실패 단계 필드가 있다(B+E 계약 단계 1).
 /// ★ 소비 경로(Coordinator 의 AttemptReport 읽기 등)는 이 값을 지원 버전으로 넘긴다 — 숫자를 경로마다 적지 않는다.
 pub const ATTEMPT_REPORT_MAX_SCHEMA_VERSION: u32 = 2;
+
+/// `ExecutionGrant` 를 받는 쪽이 읽는 최대 schema_version.
+///
+/// ★ 2026-09-23 (신뢰망 남은 일 F) — 3 은 재개 지점(`resume_from = 26`)을 실은 Grant 다. 재개 지점이 없으면
+///   발급자는 계속 2 를 쓴다 — 재개가 필요 없는 작업은 구버전 Agent 도 받는다.
+pub const EXECUTION_GRANT_MAX_SCHEMA_VERSION: u32 = 3;

@@ -69,6 +69,7 @@ fn constrained_child_is_capped_near_the_limit() {
     );
 
     let spec = CreateProcessSpec {
+        environment: Vec::new(),
         application_name: exe.clone().into_os_string(),
         command_line,
         current_dir: None,

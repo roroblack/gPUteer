@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use gputeer_checkpoint::durability::record_initial_state;
 use gputeer_checkpoint::writer::{manifest_for, write_checkpoint_phased, WritePhase};
+pub mod checkpoint_publisher;
 pub mod exec;
 pub mod multi_agent;
 pub mod owner_panel;
@@ -284,6 +285,14 @@ pub struct AgentConfig {
     /// B+E 구현 단계 5b — 워크로드가 도는 **동안** 이 간격(밀리초)마다 새 연결(RENEW 세션)로 Lease 를 갱신한다.
     /// 0 이면 끈다(기본값). 켜려면 Coordinator 가 `--lease-db` 로 RENEW 세션을 받아야 한다.
     pub renew_during_execution_ms: u64,
+    /// ★ 2026-09-23 (신뢰망 남은 일 E) — 공유 저장소 루트(NAS · 동기화 폴더 · 네트워크 드라이브).
+    ///   주면 작업이 `GPUTEER_CHECKPOINT_DIR` 에 완성한 체크포인트를 **실행 중에** 여기로 게시한다(생산자 서명 포함).
+    ///   재개 지점을 받으면 여기서 검증해 되살린다. 없으면 게시도 재개도 하지 않는다(재개 지점이 오면 거부).
+    pub shared_checkpoint_root: Option<PathBuf>,
+    /// 게시 스레드가 체크포인트 폴더를 훑는 간격.
+    pub checkpoint_publish_interval_ms: u64,
+    /// 재개 지점의 **생산자 서명**을 검증할 풀 노드 키 — `--pool-peer-keys "id=hex;..."`.
+    pub pool_peer_keys: Vec<(String, VerifyingKey)>,
 
     // ── Lease revoke (2026-08-19) ───────────────────────────────────
     /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
@@ -976,7 +985,8 @@ fn run_one_connection_inner(
 
     let received = read_frame(
         &mut stream,
-        2,
+        // ★ 2026-09-23 — v3 는 재개 지점을 실은 Grant 다(신뢰망 남은 일 F).
+        gputeer_protocol::constants::EXECUTION_GRANT_MAX_SCHEMA_VERSION,
         KeyDirectorySource::Provided(coordinator_keys),
         replay,
         clock,
@@ -992,6 +1002,13 @@ fn run_one_connection_inner(
             .clone(),
         other => return Err(format!("예상하지 못한 요청 타입: {other:?}")),
     };
+    // ★ 2026-09-23 (신뢰망 남은 일 F · signing.md §6.4) — 재개 지점은 v3 에서만 쓴다.
+    if grant.schema_version < 3 && grant.resume_from.is_some() {
+        return Err(
+            "GRANT_REJECTED: schema v2 이하 Grant 에 재개 지점(26)이 있다 — v3 에서만 쓴다"
+                .to_string(),
+        );
+    }
     // The local recovery flag only expresses operator intent.  A legacy
     // Coordinator can mint a fresh in-memory Lease on reconnect, so recovery
     // is safe only when the verified Grant itself attests that issue_lease()
@@ -1135,7 +1152,36 @@ fn run_one_connection_inner(
                 selected_gpu_uuids: plan.assigned_gpu_uuids.clone(),
             });
 
+        // ★ 2026-09-23 (신뢰망 남은 일 E) — 작업에게 체크포인트를 **어디에 쓰는지**, 이어서 시작할 때는 **어디서
+        //   이어가는지** 알려 준다(`checkpoint_publisher` 의 워크로드 계약). 작업 디렉터리 안이라 끝나면 같이 치운다(§0.5).
+        let checkpoint_out = run_dir.join("checkpoints-out");
+        fs::create_dir_all(&checkpoint_out).map_err(|error| {
+            fail_after_cleanup(
+                format!("체크포인트 폴더 생성 실패({checkpoint_out:?}): {error}"),
+                &run_dir,
+            )
+        })?;
+        let mut workload_environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
+            ("GPUTEER_JOB_ID".into(), held_lease.job_id.clone().into()),
+            ("GPUTEER_ATTEMPT_ID".into(), grant.attempt_id.clone().into()),
+            (
+                "GPUTEER_CHECKPOINT_DIR".into(),
+                checkpoint_out.clone().into_os_string(),
+            ),
+        ];
+        if let Some(resume) = grant.resume_from.as_ref() {
+            // ★ ACK **전에** 한다 — 이어갈 체크포인트를 검증하지 못하면 받지 않는다(받아 놓고 처음부터 돌리지 않는다).
+            let resume_dir = run_dir.join("resume-in");
+            prepare_resume(&config, resume, &held_lease, &resume_dir, clock)
+                .map_err(|error| fail_after_cleanup(error, &run_dir))?;
+            println!(
+                "RESUME_PREPARED checkpoint_id={} step={} producer={}",
+                resume.checkpoint_id, resume.step, resume.producer_node_id
+            );
+            workload_environment.push(("GPUTEER_RESUME_DIR".into(), resume_dir.into_os_string()));
+        }
         let policy = exec::ExecutionPolicy {
+            workload_environment,
             opted_in: config.execute_workload,
             commit_limit_bytes: config.workload_commit_limit_bytes,
             gpu_requirements,
@@ -1179,6 +1225,22 @@ fn run_one_connection_inner(
         } else {
             None
         };
+        // ★ 2026-09-23 (신뢰망 남은 일 E) — 공유 저장소가 있으면 실행하는 동안 체크포인트를 게시한다.
+        let publisher = match (&config.shared_checkpoint_root, will_execute) {
+            (Some(shared_root), true) => Some(checkpoint_publisher::start(
+                checkpoint_publisher::PublishContext {
+                    shared_root: shared_root.clone(),
+                    job_id: held_lease.job_id.clone(),
+                    attempt_id: grant.attempt_id.clone(),
+                    fence_epoch: held_lease.fence_epoch,
+                    node_id: config.agent_device_id.clone(),
+                    signing_key: signing_key.clone(),
+                },
+                checkpoint_out.clone(),
+                config.checkpoint_publish_interval_ms,
+            )),
+            _ => None,
+        };
         let outcome = run_and_capture_workload(
             spec,
             policy,
@@ -1192,6 +1254,10 @@ fn run_one_connection_inner(
             clock.now_unix_ms(),
             clock,
         );
+        // 작업 디렉터리를 치우기 **전에** 마지막 체크포인트까지 올린다.
+        if let Some(publisher) = publisher {
+            checkpoint_publisher::finish(publisher);
+        }
         if let Some(renewer) = renewer {
             renewer
                 .stop
@@ -1555,7 +1621,7 @@ fn run_one_connection_inner(
             .map_err(|e| e.to_string())?;
         return match read_frame(
             &mut stream,
-            2,
+            gputeer_protocol::constants::EXECUTION_GRANT_MAX_SCHEMA_VERSION,
             KeyDirectorySource::Provided(coordinator_keys),
             replay,
             clock,
@@ -3088,6 +3154,71 @@ fn checkpoint_root_sibling(
 /// ★ 삭제 실패를 `let _ =` 로 버리지 않는다(`CLAUDE.md` §3).
 ///   남의 출력을 못 지우면 그건 알아야 할 사실이다.
 /// ★ 결함 ㊷ ㊸ — 앞선 실패를 보고하기 전에 작업 디렉터리를 치우고, 정리까지 실패하면 **둘 다** 남긴다.
+/// `--pool-peer-keys "id=hex;id2=hex"` — 재개 지점 생산자 서명을 검증할 풀 노드 키.
+fn parse_pool_peer_keys(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
+    let mut keys = Vec::new();
+    for entry in raw
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let (id, key) = entry.split_once('=').ok_or_else(|| {
+            format!("--pool-peer-keys 형식 오류: {entry:?} 는 id=공개키hex 가 아니다")
+        })?;
+        keys.push((id.trim().to_string(), hex_to_verifying_key(key.trim())?));
+    }
+    if keys.is_empty() {
+        return Err("--pool-peer-keys 가 비었다".to_string());
+    }
+    Ok(keys)
+}
+
+/// 재개 지점을 검증하고 되살린다 — signing.md §6.4 의 MUST 셋.
+///
+/// ```text
+/// 1  생산자 서명을 풀 노드 키로 독립 검증(Grant canonical 에는 그 서명이 없다 — 벡터 v25e)
+/// 2  재개 지점의 Job 이 이 Lease 의 Job 과 같다
+/// 3  공유 저장소의 파일을 다시 해시해 대조한 뒤에만 되살린다
+/// ```
+fn prepare_resume(
+    config: &AgentConfig,
+    resume: &pb::CheckpointManifest,
+    lease: &pb::Lease,
+    dest: &std::path::Path,
+    clock: &dyn Clock,
+) -> Result<(), String> {
+    let shared_root = config.shared_checkpoint_root.as_ref().ok_or(
+        "RESUME_REFUSED: 재개 지점을 받았는데 --shared-checkpoint-root 가 없다 — 이어갈 파일이 어디 있는지 모른다",
+    )?;
+    if config.pool_peer_keys.is_empty() {
+        return Err(
+            "RESUME_REFUSED: --pool-peer-keys 가 없다 — 재개 지점의 생산자 서명을 검증할 수 없다"
+                .to_string(),
+        );
+    }
+    let mut keyring = InMemoryKeyring::new();
+    for (id, key) in &config.pool_peer_keys {
+        keyring.insert(id.clone(), *key);
+    }
+    let verifier = Ed25519Verifier::new(&keyring);
+    verify(
+        resume,
+        1,
+        &verifier,
+        clock.now_unix_ms(),
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .map_err(|error| format!("RESUME_REFUSED: 재개 지점의 생산자 서명 검증 실패: {error:?}"))?;
+    if resume.job_id != lease.job_id {
+        return Err(format!(
+            "RESUME_REFUSED: 재개 지점의 Job({}) 이 이 Lease 의 Job({}) 이 아니다",
+            resume.job_id, lease.job_id
+        ));
+    }
+    gputeer_checkpoint::shared::restore(shared_root, resume, dest)
+        .map_err(|error| format!("RESUME_REFUSED: {error}"))
+}
+
 fn fail_after_cleanup(primary: String, run_dir: &std::path::Path) -> String {
     match remove_dir_if_present(run_dir) {
         Ok(()) => primary,
@@ -3591,6 +3722,13 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
         renew_during_execution_ms: flags.u64_flag_with_default("--renew-during-execution-ms", 0)?,
+        shared_checkpoint_root: flags.get("--shared-checkpoint-root").map(PathBuf::from),
+        checkpoint_publish_interval_ms: flags
+            .u64_flag_with_default("--checkpoint-publish-interval-ms", 1_000)?,
+        pool_peer_keys: match flags.get("--pool-peer-keys") {
+            Some(raw) => parse_pool_peer_keys(raw)?,
+            None => Vec::new(),
+        },
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
         revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
         max_reconnect_attempts: flags.u32_flag_with_default("--max-reconnect-attempts", 8)?,
@@ -3928,6 +4066,9 @@ mod tests {
             renew_rounds: 1,
             renew_delay_ms: 0,
             renew_during_execution_ms: 0,
+            shared_checkpoint_root: None,
+            checkpoint_publish_interval_ms: 1_000,
+            pool_peer_keys: Vec::new(),
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
             max_reconnect_attempts: 1_000,
@@ -4382,6 +4523,7 @@ mod defect_19_tests {
             env_vars: BTreeMap::new(),
         };
         let policy = exec::ExecutionPolicy {
+            workload_environment: Vec::new(),
             opted_in: true,
             commit_limit_bytes: 256 * 1024 * 1024,
             gpu_requirements: None,

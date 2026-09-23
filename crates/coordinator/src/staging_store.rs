@@ -347,6 +347,22 @@ impl CoordinatorStagingStore {
     ///
     /// ★ 이 기록이 있어야 장애 이어받기가 규범대로 갈린다 — ACK 전에 노드를 잃으면 `STAGING_NODE_LOST`
     ///   (그냥 다시 큐로), ACK 뒤면 `NODE_LOST`(이어갈 체크포인트가 있어야 다시 큐로).
+    /// 이 Job 의 가장 최근 시도(fence 가 가장 큰 것). 이어받기 뒤에는 새 시도다.
+    pub fn latest_attempt_for_job(
+        &self,
+        job_id: &str,
+    ) -> Result<Option<String>, StagingStoreError> {
+        self.connection
+            .query_row(
+                "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+                 ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+                rusqlite::params![job_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_sql_error)
+    }
+
     pub fn record_grant_accepted(
         &mut self,
         attempt_id: &str,

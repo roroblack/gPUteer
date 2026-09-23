@@ -42,6 +42,7 @@ mod import_manifest;
 mod issue_grant;
 mod out_file;
 mod plan_job;
+mod release_lost_node;
 mod scheduler_loop;
 mod scheduler_tick;
 mod selftest;
@@ -185,6 +186,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("issue-grant 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("release-lost-node") => match release_lost_node::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("release-lost-node 실패: {error}");
                 ExitCode::FAILURE
             }
         },

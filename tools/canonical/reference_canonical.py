@@ -512,6 +512,8 @@ SCHEMAS = {
         (23, "expires_at_unix_ms", "uint", None),
         (24, "nonce", "bytes", None),
         (25, "lease_from_durable_store", "bool", None),
+        # ★ v3 (2026-09-23, 신뢰망 남은 일 F) — 재개 지점. 각자 서명된 메시지 — 규칙 i 로 그 서명은 빠진다
+        (26, "resume_from", "message", "CheckpointManifest"),
         (90, "coordinator_signature", "bytes", None),
     ],
     "CoordinatorEntry": [
@@ -1449,6 +1451,53 @@ def build_vectors():
                "ExecutionGrant", g3,
                ["MUST_DIFFER:v25_execution_grant"])
     assert c_g3 != c_g1, "중첩 manifest 의 내용이 canonical 에 반영되지 않았다"
+
+    # 25d~f. ★ v3 (2026-09-23, 신뢰망 남은 일 F) — 재개 지점(resume_from = 26).
+    #   생산 노드가 서명한 CheckpointManifest 를 그대로 싣는다. 규칙 i 로 생산자 서명은 빠지고(25e),
+    #   내용(어느 step 에서 이어가나)은 Coordinator 서명이 묶는다(25f).
+    def _resume_manifest(producer_signature, step):
+        return {
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-resume-1",
+            "job_id": "01JBXR7Q0000000000000000AA",
+            "attempt_id": "01JBXATT00000000000000000",
+            "step": step,
+            "epoch": 0,
+            "files": [{
+                "path": "state.bin.b3-00",
+                "digest": {"algo": 1, "value": b"\x11" * 32},
+                "size_bytes": 7,
+            }],
+            "root_digest": {"algo": 1, "value": b"\x22" * 32},
+            "total_bytes": 7,
+            "created_at_unix_ms": 1_755_100_700_000,
+            "producer_node_id": "node-7",
+            "fence_epoch": 41,
+            "producer_signature": producer_signature,
+        }
+
+    def _grant_v3(producer_signature, step):
+        g = _grant(b"\xAA" * 64, {"algo": 1, "value": b"\x01" * 32})
+        g["schema_version"] = 3
+        g["resume_from"] = _resume_manifest(producer_signature, step)
+        return g
+
+    c_r1 = add("v25d_execution_grant_v3_resume_from",
+               "ExecutionGrant v3 — 재개 지점(resume_from = 26, 생산자 서명 CheckpointManifest)을 싣는다",
+               "ExecutionGrant", _grant_v3(b"\xAB" * 64, 42),
+               ["MUST_EQUAL:v25e_execution_grant_v3_resume_nested_sig_swapped",
+                "MUST_DIFFER:v25_execution_grant"])
+    c_r2 = add("v25e_execution_grant_v3_resume_nested_sig_swapped",
+               "재개 지점의 생산자 서명만 바꾼 것 — v25d 와 canonical 이 **같아야** 한다(규칙 i). "
+               "그래서 Agent 는 생산자 서명을 독립 검증해야 한다",
+               "ExecutionGrant", _grant_v3(b"\xCD" * 64, 42),
+               ["MUST_EQUAL:v25d_execution_grant_v3_resume_from"])
+    assert c_r1 == c_r2, "재개 지점의 중첩 서명이 Grant canonical 에 들어갔다(규칙 i)"
+    c_r3 = add("v25f_execution_grant_v3_resume_step_changed",
+               "재개 지점의 step 을 바꾼 것 — v25d 와 canonical 이 달라야 한다",
+               "ExecutionGrant", _grant_v3(b"\xAB" * 64, 41),
+               ["MUST_DIFFER:v25d_execution_grant_v3_resume_from"])
+    assert c_r3 != c_r1, "재개 지점의 내용이 Grant canonical 에 반영되지 않았다"
 
     # 26. 멤버십 — 소유자 서명
     add("v26_add_member",

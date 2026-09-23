@@ -52,6 +52,7 @@
 
 use gputeer_crypto::{sign, Ed25519Verifier, KeyDirectory, SigningKey};
 use gputeer_protocol::pb;
+use prost::Message;
 
 use crate::job_store::{CoordinatorJobStore, JobState, JobStoreError};
 use crate::lease_store::CoordinatorLeaseStore;
@@ -224,6 +225,19 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
             attempt.job_id, request.job_id
         )));
     }
+    // (대체 검사는 신원 대조들 **뒤에** 둔다 — 더 구체적인 불일치 사유가 먼저 보이게.)
+    // ★ 2026-09-23 (신뢰망 남은 일 G) — 이어받기로 **대체된** 시도에는 Grant 를 만들지 않는다.
+    //   옛 노드가 돌아와 붙으면 그 노드의 예약은 아직 옛 시도를 가리킨다(운영자가 풀 때까지) — 그 시도로 다시
+    //   돌리면 같은 작업이 두 번 돈다.
+    let latest = staging
+        .latest_attempt_for_job(&request.job_id)
+        .map_err(|e| StoredGrantError::Storage(format!("최근 시도 조회 실패: {e}")))?;
+    if latest.as_deref() != Some(request.attempt_id.as_str()) {
+        return Err(StoredGrantError::Refused(format!(
+            "GRANT_REFUSED: 시도 {} 는 이어받기로 대체됐다(최근 시도 {:?}) — 다시 돌리지 않는다",
+            request.attempt_id, latest
+        )));
+    }
 
     let reservation = staging
         .get_node_reservation(&stored_lease.holder_node_id)
@@ -338,6 +352,15 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         manifest: Some(binding.manifest),
         ..Default::default()
     };
+    // ★ 2026-09-23 (신뢰망 남은 일 F · G) — 이어갈 체크포인트가 있으면 **v3** 로 싣는다(없으면 v2 그대로).
+    //   장애 판정(`failover`)이 생산자 서명 · 파일 해시를 검증해 고른 것만 Job 에 있다. Agent 가 다시 검증한다(§6.4).
+    if let Some(body) = job.resume_checkpoint.as_ref() {
+        let resume = pb::CheckpointManifest::decode(body.as_slice()).map_err(|e| {
+            StoredGrantError::Storage(format!("저장된 재개 지점을 읽지 못했다: {e}"))
+        })?;
+        grant.schema_version = 3;
+        grant.resume_from = Some(resume);
+    }
     grant.coordinator_signature = sign(key, &grant).to_vec();
 
     // ── 방금 만든 것을 바로 다시 검증한다 ───────────────────────────
@@ -408,7 +431,7 @@ fn verify_own_output(
 
     gputeer_protocol::verify(
         grant,
-        2,
+        gputeer_protocol::constants::EXECUTION_GRANT_MAX_SCHEMA_VERSION,
         &verifier,
         at_unix_ms,
         &mut gputeer_protocol::signing::NoReplayCheck,

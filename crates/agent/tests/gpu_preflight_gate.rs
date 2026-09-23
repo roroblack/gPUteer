@@ -57,6 +57,7 @@ fn spec() -> ExecutionSpec {
 
 fn policy(gpu: Option<GpuRequirements>) -> ExecutionPolicy {
     ExecutionPolicy {
+        workload_environment: Vec::new(),
         // ★ opt-in 은 켠다. 안 켜면 GPU 관문에 **도달하지 못하고**
         //   `NotOptedIn` 으로 먼저 끝난다 — 그러면 이 테스트가 관문을
         //   재는 것이 아니라 opt-in 을 재게 된다.

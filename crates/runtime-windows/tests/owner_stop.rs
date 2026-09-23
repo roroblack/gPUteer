@@ -37,6 +37,7 @@ fn spawn(args: &[&str]) -> gputeer_runtime_windows::ConstrainedChild {
     let owned: Vec<OsString> = args.iter().map(OsString::from).collect();
     let refs: Vec<&OsStr> = owned.iter().map(OsString::as_os_str).collect();
     let spec = CreateProcessSpec {
+        environment: Vec::new(),
         application_name: exe.clone(),
         command_line: quote_command_line(&exe, &refs),
         current_dir: None,

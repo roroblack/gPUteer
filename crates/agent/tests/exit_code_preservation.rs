@@ -22,6 +22,7 @@ fn run(code_arg: &str) -> ExitObserved {
         env_vars: BTreeMap::new(),
     };
     let policy = ExecutionPolicy {
+        workload_environment: Vec::new(),
         opted_in: true,
         commit_limit_bytes: 256 * 1024 * 1024,
         // GPU 관문을 켜면 이 기계의 GPU 유무가 먼저 판정을 가른다 — 여기서 재려는 것은 종료 코드다.

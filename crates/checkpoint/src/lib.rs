@@ -7,6 +7,7 @@ pub mod atomic;
 pub mod commit;
 pub mod durability;
 pub mod platform;
+pub mod shared;
 pub mod writer;
 
 pub use atomic::{gc_partial, replace_with_retry, sync_dir, write_once, RetryPolicy};

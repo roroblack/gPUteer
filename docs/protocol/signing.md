@@ -439,6 +439,17 @@ inner(a,b)= BLAKE3_256( 0x01 || a || b )
 
 ---
 
+### 6.4 ExecutionGrant v3 의 재개 지점(resume_from) — 중첩 서명의 독립 검증 (2026-09-23)
+
+`ExecutionGrant.resume_from`(26, schema v3)은 생산 노드가 서명한 `CheckpointManifest` 를 **그대로** 싣는다.
+규칙 i 로 그 생산자 서명(90)은 Grant canonical 에 들어가지 않는다(벡터 `v25e` 가 고정한다).
+
+- **Agent 는 생산자 서명을 자기가 아는 풀 노드 키로 독립 검증한다(MUST).** Grant 서명은 "이 지점에서 이어가라" 는
+  Coordinator 의 선택만 묶는다 — 내용을 묶는 것은 생산자 서명이다.
+- **Agent 는 공유 저장소의 파일을 다시 해시해 `files` · `root_digest`(§6.3)와 대조한 뒤에만 작업에 준다(MUST).**
+- `schema_version < 3` 인 Grant 에 이 칸이 있으면 거부한다(MUST).
+- 제안: `docs/contracts/proposals/2026-09-23_1908_Grant_v3_재개_지점.md`
+
 ## 7. schema_version 과 알 수 없는 필드
 
 ### 7.1 v5 초안의 오류

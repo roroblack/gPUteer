@@ -29,6 +29,15 @@
 use std::process::Command;
 use std::time::Duration;
 
+/// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
+const FORWARDED_PREFIXES: [&str; 5] = [
+    "RESUME_PREPARED",
+    "CHECKPOINT_PUBLISHED",
+    "CHECKPOINT_PUBLISH_FAILED",
+    "ATTEMPT_REPORT_ACKNOWLEDGED",
+    "RESUME_REFUSED",
+];
+
 pub fn run(args: &[String]) -> Result<String, String> {
     let split = args
         .iter()
@@ -93,6 +102,14 @@ pub fn run(args: &[String]) -> Result<String, String> {
             .rev()
             .find(|line| !line.trim().is_empty())
             .unwrap_or("");
+        // ★ 운영자가 봐야 하는 관측 줄은 그대로 옮겨 찍는다 — 재개 · 체크포인트 게시 · 보고 확인 · 거부 사유.
+        for line in text.lines().filter(|line| {
+            FORWARDED_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+        }) {
+            println!("  {line}");
+        }
         if did_work {
             worked += 1;
             let result = text

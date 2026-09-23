@@ -10,7 +10,7 @@
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 #
-# blake3-256: e71fab9493bb4d6ed539cab5d880d5bd7de600808fb28940236be537d8403164
+# blake3-256: b7c9549c86b1278f0e8ce77a00c9c2b5b46dd2047bac35a9c54ea4a6c1af9f9c
 
 artifact.proto::ArtifactRef
   1 uint32 schema_version
@@ -385,6 +385,7 @@ job.proto::ExecutionGrant
   23 uint64 expires_at_unix_ms
   24 bytes nonce
   25 bool lease_from_durable_store
+  26 CheckpointManifest resume_from
   90 bytes coordinator_signature
 job.proto::GrantedExecutionPlan
   1 ExecutionMode mode

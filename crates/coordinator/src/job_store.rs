@@ -174,6 +174,11 @@ pub struct StoredJob {
     /// 끝난 시각 — **워커가 보고한 값**(`AttemptReport.finished_at_unix_ms`, `WORKER_REPORTED`).
     /// Coordinator 시계가 아니므로 순서 검사에 쓰지 않는다.
     pub worker_reported_finished_at_unix_ms: Option<u64>,
+    /// ★ 2026-09-23 (신뢰망 남은 일 G) — 장애 이어받기로 큐에 **몇 번** 되돌아왔나. 새 시도의 식별자를 가른다.
+    pub requeue_count: u64,
+    /// 이어서 시작할 체크포인트 — 생산 노드가 서명한 `CheckpointManifest` 원본 바이트.
+    /// 장애 판정 때 서명 · 파일 해시를 검증한 것만 여기 들어온다(`failover`). 다음 Grant 가 그대로 싣는다(v3).
+    pub resume_checkpoint: Option<Vec<u8>>,
     pub revision: u64,
 }
 
@@ -427,6 +432,8 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), JobSt
         ("running_at_unix_ms", "BLOB"),
         ("run_terminal", "TEXT"),
         ("worker_reported_finished_at_unix_ms", "BLOB"),
+        ("requeue_count", "BLOB"),
+        ("resume_checkpoint", "BLOB"),
     ] {
         let exists = {
             let mut statement = transaction
@@ -573,6 +580,8 @@ impl CoordinatorJobStore {
             running_at_unix_ms: None,
             run_terminal: None,
             worker_reported_finished_at_unix_ms: None,
+            requeue_count: 0,
+            resume_checkpoint: None,
             revision: 0,
         };
 
@@ -706,6 +715,8 @@ impl CoordinatorJobStore {
             running_at_unix_ms: None,
             run_terminal: None,
             worker_reported_finished_at_unix_ms: None,
+            requeue_count: 0,
+            resume_checkpoint: None,
             revision: 0,
         };
 
@@ -1057,6 +1068,87 @@ pub(crate) fn fetch_job(
         .transpose()
 }
 
+/// 실행 단계(STAGING · RUNNING)에 있는 Job 전부 — 장애 판정이 훑는 대상이다. job_id 순.
+pub(crate) fn list_in_run_states(connection: &Connection) -> Result<Vec<StoredJob>, JobStoreError> {
+    let sql = SELECT_QUEUED_SQL.replace(
+        "WHERE state = 'QUEUED'",
+        "WHERE state IN ('STAGING', 'RUNNING') ORDER BY job_id",
+    );
+    let mut statement = connection.prepare(&sql).map_err(map_sql_error)?;
+    let rows = statement
+        .query_map([], row_to_raw)
+        .map_err(map_sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sql_error)?;
+    rows.into_iter().map(RawJobRow::into_stored).collect()
+}
+
+/// 장애 이어받기의 규범 경로로 Job 을 되돌리거나 끝낸다 — **같은 트랜잭션 안에서** 부른다.
+///
+/// ```text
+/// STAGING  -> QUEUED                                       STAGING_NODE_LOST   (ACK 전에 잃었다 — 실행 전이다)
+/// RUNNING  -> INTERRUPTED -> REPLANNING -> QUEUED          NODE_LOST · FAILOVER_STARTED · REPLAN_READY
+///                                                          (guard: 마지막 COMMITTED 체크포인트가 있다 — `resume` 이 Some)
+/// RUNNING  -> INTERRUPTED -> FAILED                         NODE_LOST · NO_COMMITTED_CHECKPOINT
+/// ```
+///
+/// ★ `REPLAN_READY` 의 guard "새 후보 확보" 는 **계획이 여전히 유효하다**(plan_id 를 지킨다)로 읽는다 —
+///   실제 노드는 스케줄러가 큐에서 다시 고른다. 후보가 끝내 없으면 큐의 기존 규칙(deadline · queue timeout ·
+///   PERMANENTLY_INFEASIBLE)이 끝낸다.
+/// ★ 큐 순서는 **원래 큐 진입 시각**을 지킨다 — 이어받은 작업을 뒤로 보내지 않는다.
+pub(crate) fn requeue_after_node_lost(
+    connection: &Connection,
+    job: &StoredJob,
+    resume: Option<Vec<u8>>,
+    worker_clock_hint_unix_ms: u64,
+) -> Result<StoredJob, JobStoreError> {
+    let mut next = job.clone();
+    let path: &[JobState] = match (job.state, resume.is_some()) {
+        (JobState::Staging, _) => &[JobState::Queued],
+        (JobState::Running, true) => &[
+            JobState::Interrupted,
+            JobState::Replanning,
+            JobState::Queued,
+        ],
+        (JobState::Running, false) => &[JobState::Interrupted, JobState::Failed],
+        (from, _) => {
+            return Err(JobStoreError::InvalidTransition {
+                from,
+                to: JobState::Queued,
+            })
+        }
+    };
+    next.state = gputeer_protocol::job_state::walk(job.state, path).map_err(|rejected| {
+        JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        }
+    })?;
+    if next.state == JobState::Queued {
+        next.staging_at_unix_ms = None;
+        next.running_at_unix_ms = None;
+        next.requeue_count = job
+            .requeue_count
+            .checked_add(1)
+            .ok_or(JobStoreError::CorruptData(
+                "requeue_count overflow".to_string(),
+            ))?;
+        // 이번에 고른 지점이 없으면(STAGING 에서 잃음) 전에 고른 지점을 그대로 둔다 — 그 사이 진척이 없었다.
+        if resume.is_some() {
+            next.resume_checkpoint = resume;
+        }
+    } else {
+        next.run_terminal = Some(RunTerminal::NoCommittedCheckpoint);
+        next.worker_reported_finished_at_unix_ms = Some(worker_clock_hint_unix_ms);
+    }
+    next.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &next)?;
+    Ok(next)
+}
+
 /// ACK 를 받았을 때 Job 을 `STAGING -> RUNNING`(STAGING_COMPLETE)으로 옮긴다.
 ///
 /// ★ 2026-09-23 (신뢰망 남은 일 D). Agent 는 Grant·Lease 를 검증하고 workspace 를 만든 **뒤에** ACK 를 보낸다
@@ -1202,7 +1294,8 @@ pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(),
                 staging_at_unix_ms = ?5, plan_id = ?6, queue_failure_kind = ?7,
                 queue_failure_detail = ?8, failed_at_unix_ms = ?9, revision = ?10,
                 running_at_unix_ms = ?11, run_terminal = ?12,
-                worker_reported_finished_at_unix_ms = ?13
+                worker_reported_finished_at_unix_ms = ?13,
+                requeue_count = ?14, resume_checkpoint = ?15
              WHERE job_id = ?1",
             rusqlite::params![
                 job.job_id,
@@ -1218,6 +1311,9 @@ pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(),
                 job.running_at_unix_ms.map(encode_u64),
                 job.run_terminal.map(RunTerminal::trigger),
                 job.worker_reported_finished_at_unix_ms.map(encode_u64),
+                // 0 은 NULL 로 둔다 — 이 칸이 생기기 전의 행과 같은 모양이다.
+                (job.requeue_count > 0).then(|| encode_u64(job.requeue_count)),
+                job.resume_checkpoint.as_deref(),
             ],
         )
         .map_err(map_sql_error)?;
@@ -1249,6 +1345,8 @@ struct RawJobRow {
     running_at_unix_ms: Option<Vec<u8>>,
     run_terminal: Option<String>,
     worker_reported_finished_at_unix_ms: Option<Vec<u8>>,
+    requeue_count: Option<Vec<u8>>,
+    resume_checkpoint: Option<Vec<u8>>,
 }
 
 impl RawJobRow {
@@ -1271,6 +1369,23 @@ impl RawJobRow {
                 ))
             }
         };
+        let requeue_count = self
+            .requeue_count
+            .as_deref()
+            .map(|bytes| decode_u64(bytes, "requeue_count"))
+            .transpose()?
+            .unwrap_or(0);
+        // 이어갈 체크포인트는 이어받기로 되돌아온 Job 에만 있다.
+        if self.resume_checkpoint.is_some() && requeue_count == 0 {
+            return Err(JobStoreError::CorruptData(
+                "resume_checkpoint exists without a requeue".to_string(),
+            ));
+        }
+        if self.resume_checkpoint.as_ref().is_some_and(Vec::is_empty) {
+            return Err(JobStoreError::CorruptData(
+                "resume_checkpoint is empty".to_string(),
+            ));
+        }
         let has_plan = self
             .plan_id
             .as_deref()
@@ -1411,6 +1526,8 @@ impl RawJobRow {
                 .map(|bytes| decode_u64(bytes, "running_at_unix_ms"))
                 .transpose()?,
             run_terminal,
+            requeue_count,
+            resume_checkpoint: self.resume_checkpoint,
             worker_reported_finished_at_unix_ms: self
                 .worker_reported_finished_at_unix_ms
                 .as_deref()
@@ -1425,13 +1542,13 @@ const SELECT_JOB_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash,
     submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms, deadline_unix_ms, \
     max_queue_duration_ms, plan_id, queue_failure_kind, queue_failure_detail, \
     failed_at_unix_ms, revision, running_at_unix_ms, run_terminal, \
-    worker_reported_finished_at_unix_ms FROM coordinator_jobs WHERE job_id = ?1";
+    worker_reported_finished_at_unix_ms, requeue_count, resume_checkpoint FROM coordinator_jobs WHERE job_id = ?1";
 
 const SELECT_QUEUED_SQL: &str = "SELECT job_id, submitter_device_id, manifest_hash, state, \
     submitted_at_unix_ms, planning_at_unix_ms, queued_at_unix_ms, staging_at_unix_ms, deadline_unix_ms, \
     max_queue_duration_ms, plan_id, queue_failure_kind, queue_failure_detail, \
     failed_at_unix_ms, revision, running_at_unix_ms, run_terminal, \
-    worker_reported_finished_at_unix_ms FROM coordinator_jobs WHERE state = 'QUEUED'";
+    worker_reported_finished_at_unix_ms, requeue_count, resume_checkpoint FROM coordinator_jobs WHERE state = 'QUEUED'";
 
 fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawJobRow> {
     Ok(RawJobRow {
@@ -1453,6 +1570,8 @@ fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawJobRow> {
         running_at_unix_ms: row.get(15)?,
         run_terminal: row.get(16)?,
         worker_reported_finished_at_unix_ms: row.get(17)?,
+        requeue_count: row.get(18)?,
+        resume_checkpoint: row.get(19)?,
     })
 }
 

@@ -26,6 +26,7 @@ package gputeer.v1;
 
 import "common.proto";
 import "lease.proto";   // Lease — ExecutionGrant 가 참조한다
+import "artifact.proto"; // CheckpointManifest — ExecutionGrant.resume_from (v3) 이 참조한다
 
 option go_package = "github.com/gputeer/gputeer/proto/v1;gputeerv1";
 
@@ -101,7 +102,8 @@ message JobManifest {
 // ═══════════════════════════════════════════════════════════════════════
 
 message ExecutionGrant {
-  uint32 schema_version = 1; // 현재 2
+  // 현재 2. 재개 지점(resume_from = 26)을 실을 때만 3 이다(2026-09-23, 신뢰망 남은 일 F).
+  uint32 schema_version = 1;
   string grant_id = 2;
 
   // submitter 서명을 포함한 채로 그대로 전달된다. 재서명하지 않는다.
@@ -131,6 +133,13 @@ message ExecutionGrant {
   // get_or_issue()로 해석됐음을 나타낸다. Agent는 Ambiguous Renew
   // 복구 재접속에서 이 서명된 값이 true인 경우에만 새 Renew를 보낸다.
   bool lease_from_durable_store = 25;
+
+  // ★ schema v3 (2026-09-23, 신뢰망 남은 일 F) — 이 시도가 **이어서 시작할** 체크포인트.
+  //   생산 노드가 서명한 원본 그대로 싣는다(Coordinator 가 재서명하지 않는다). 비어 있으면 처음부터 시작한다.
+  //   Agent 는 (1) 생산자 서명을 자기가 아는 풀 노드 키로 **독립 검증**하고(규칙 i — 이 canonical 에는 그 서명이
+  //   들어가지 않는다) (2) 공유 저장소의 파일을 다시 해시해 files · root_digest 와 대조한 뒤에만 작업에 준다.
+  //   v2 이하 Grant 에 이 칸이 있으면 거부한다 — 구버전 Agent 는 이 칸을 모르고 서명 검증에서 떨어진다(fail-closed).
+  CheckpointManifest resume_from = 26;
 
   // domain_tag = "gputeer/v2/grant"
   bytes coordinator_signature = 90;

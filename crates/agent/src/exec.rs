@@ -336,6 +336,12 @@ pub struct ExecutionPolicy {
     ///
     ///   Windows 는 이 값을 쓰지 않는다.
     pub cgroup_parent: Option<std::path::PathBuf>,
+    /// ★ 2026-09-23 (신뢰망 남은 일 E) — 자식에게 **더 주는** 환경 변수. 체크포인트를 쓸 폴더 ·
+    ///   이어갈 체크포인트 폴더 · 작업 식별자를 알려 준다(`GPUTEER_*`). 비어 있으면 전과 같다.
+    ///
+    /// ★ Manifest 의 `env_vars` 는 여기 들어오지 않는다 — 그것을 적용하는 것은 별도 판단이다(제출자가 정한
+    ///   값을 남의 PC 에서 그대로 쓸지). 이 칸은 **Agent 가 만든** 값만 담는다.
+    pub workload_environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
 }
 
 /// 검증된 실행 지시를 실제 프로세스로 띄우고 종료까지 관측한다.
@@ -459,6 +465,7 @@ mod platform {
         let arg_refs: Vec<&OsStr> = args.iter().map(std::ffi::OsString::as_os_str).collect();
         let command_line = gputeer_runtime_windows::quote_command_line(&exe, &arg_refs);
         let create = gputeer_runtime_windows::CreateProcessSpec {
+            environment: policy.workload_environment.clone(),
             application_name: exe,
             command_line,
             current_dir: None,
@@ -809,6 +816,7 @@ mod platform {
         on_started: impl FnOnce(super::WorkloadStopper),
     ) -> Result<ExecutionOutcome, ExecutionError> {
         let create = gputeer_runtime_linux::SpawnSpec {
+            environment: policy.workload_environment.clone(),
             program: spec.entrypoint.clone().into(),
             args: spec.args.iter().map(|a| a.clone().into()).collect(),
             current_dir: policy.capture_dir.clone(),

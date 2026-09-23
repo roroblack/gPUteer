@@ -627,6 +627,9 @@ mod tests {
                 .count(),
             1
         );
+        // ★ 결함 212 — 진 쪽의 거부는 **두 형태** 중 하나다. 이긴 쪽이 진 쪽의 스냅샷보다 늦게 확정하면 스테이징 단계의
+        //   `NodeAlreadyReserved`, 먼저 확정하면 후보 선택(B′)의 `NoEligible`(이미 예약됨). 둘 다 "예약하지 않았다" 다.
+        //   전에는 앞의 형태만 세서 타이밍에 따라 실패했다.
         assert_eq!(
             results
                 .iter()
@@ -634,7 +637,7 @@ mod tests {
                     result,
                     Err(PlacementToStagingError::Staging(
                         ReservedStageError::NodeAlreadyReserved { .. }
-                    ))
+                    )) | Ok(PlacementToStagingOutcome::NoEligible { .. })
                 ))
                 .count(),
             1

@@ -760,6 +760,10 @@ impl ToCanonicalFields for pb::ExecutionGrant {
         // Ambiguous Renew 복구의 durable 권위 증명. 이 값이 서명 밖이면
         // legacy Grant를 durable Grant로 바꿔 복구를 강제할 수 있다.
         put_bool(&mut f, 25, self.lease_from_durable_store);
+        // ★ v3 (2026-09-23) — 재개 지점. manifest(3) · lease(6) 처럼 **각자 서명된** 메시지다 —
+        //   규칙 i 로 그 서명(90)은 여기 안 들어간다. Agent 는 생산자 서명을 독립 검증해야 한다(MUST).
+        //   Coordinator 의 서명이 "이 체크포인트에서 이어가라" 는 선택을 묶고, 생산자 서명이 내용을 묶는다.
+        put_msg(&mut f, 26, &self.resume_from);
         f
     }
     fn schema_version(&self) -> u32 {

@@ -362,6 +362,7 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "getrandom 0.2.17",
+ "gputeer-checkpoint",
  "gputeer-crypto",
  "gputeer-protocol",
  "gputeer-scheduler",

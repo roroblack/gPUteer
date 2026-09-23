@@ -35,6 +35,7 @@ fn spec(args: &[&str]) -> ExecutionSpec {
 
 fn policy(opted_in: bool, limit: u64) -> ExecutionPolicy {
     ExecutionPolicy {
+        workload_environment: Vec::new(),
         opted_in,
         commit_limit_bytes: limit,
         // ★ 이 테스트는 소유자 정지를 잰다. GPU 관문을 켜면 이 기계에
