@@ -111,13 +111,24 @@ pub fn publish_ready_steps(
     let Ok(entries) = std::fs::read_dir(out_dir) else {
         return;
     };
-    let all: Vec<(u64, PathBuf)> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
-        .filter_map(|entry| {
-            step_of(&entry.file_name().to_string_lossy()).map(|step| (step, entry.path()))
-        })
-        .collect();
+    // ★ 결함 260 (재검수 85) — 항목 하나의 읽기 · 종류 오류를 조용히 버리지 않는다. 버리면 그 step 을 못 올린 채 "남은 것 없음" 이 됐다.
+    //   여기서는 알리고 건너뛴다 — 마지막 훑기의 `unpublished_steps` 가 같은 오류를 "모른다" 로 세어 다시 해 보고 LOST 를 남긴다.
+    let mut all: Vec<(u64, PathBuf)> = Vec::new();
+    for entry in entries {
+        let listed = entry.and_then(|entry| entry.file_type().map(|kind| (entry, kind)));
+        match listed {
+            Ok((entry, kind)) if kind.is_dir() => {
+                if let Some(step) = step_of(&entry.file_name().to_string_lossy()) {
+                    all.push((step, entry.path()));
+                }
+            }
+            Ok(_) => {}
+            Err(error) => println!(
+                "CHECKPOINT_SCAN_ERROR job_id={} detail=작업 출력 폴더의 항목을 읽지 못했다: {error}",
+                ctx.job_id
+            ),
+        }
+    }
     let mut ready: Vec<(u64, PathBuf)> = Vec::new();
     for (step, dir) in &all {
         if state.published.contains(step) {
@@ -298,12 +309,20 @@ fn unpublished_steps(out_dir: &Path, state: &PublishState) -> Result<Vec<u64>, S
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.to_string()),
     };
-    let mut left: Vec<u64> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
-        .filter_map(|entry| step_of(&entry.file_name().to_string_lossy()))
-        .filter(|step| !state.published.contains(step))
-        .collect();
+    let mut left: Vec<u64> = Vec::new();
+    for entry in entries {
+        // ★ 결함 260 — 항목 오류는 "모른다" 다(버리면 못 올린 step 을 잃는다).
+        let entry = entry.map_err(|error| error.to_string())?;
+        let kind = entry.file_type().map_err(|error| error.to_string())?;
+        if !kind.is_dir() {
+            continue;
+        }
+        if let Some(step) = step_of(&entry.file_name().to_string_lossy()) {
+            if !state.published.contains(&step) {
+                left.push(step);
+            }
+        }
+    }
     left.sort();
     left.dedup();
     Ok(left)

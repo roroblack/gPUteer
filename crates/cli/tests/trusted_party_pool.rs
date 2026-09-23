@@ -991,13 +991,12 @@ fn a_pool_coordinator_refuses_shared_keys_and_a_separate_liveness_db() {
     );
 }
 
-/// 결함 218 (재검수 78 · 80) — ACK 는 기록됐는데 수신 확인이 유실돼 Agent 가 실행하지 않은 시도(STARTING)를, 풀 Coordinator 가
-/// **같은 노드에** 다시 내주고 그 노드가 끝까지 돈다. 전에는 "이미 받아들여졌다" 로 거부돼 한 번도 안 돈 작업이 묶였다.
+/// 수신 확인 유실 상황을 만들고 풀 Coordinator 에 같은 노드의 Agent 한 회차를 붙인다.
 ///
 /// 유실 상황은 시도를 미리 STARTING 으로 적어 흉내 낸다(ACK 기록 직후 끊긴 것과 저장 상태가 같다).
 /// ★ 같은 노드가 **이미 시작한** 시도를 다시 받지 않는 쪽(Agent 의 시작 기록)은 단위 시험이 본다
 ///   (`owner_reclaim_marker_tests::the_start_journal_remembers_exactly_the_attempts_started_here`).
-fn lost_receipt_round(renewed_before: bool) -> (String, String, Option<JobState>) {
+fn lost_receipt_round() -> (String, String, Option<JobState>) {
     let dir = tempfile::tempdir().expect("임시 폴더");
     let (db, keyring) = pool(dir.path());
     let db_s = db.to_str().unwrap().to_string();
@@ -1049,28 +1048,6 @@ fn lost_receipt_round(renewed_before: bool) -> (String, String, Option<JobState>
         gputeer_coordinator::staging_store::GrantAcceptedRecord::Recorded
     );
     assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Running));
-    let lease_id = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db)
-        .unwrap()
-        .get_attempt(&attempt_id)
-        .unwrap()
-        .unwrap()
-        .lease_id;
-    if renewed_before {
-        // 대조군 — 누군가 이 시도를 돌리며 갱신했다(결함 247). 재발급하면 안 된다.
-        let mut leases =
-            gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db).unwrap();
-        let lease = leases.get(&lease_id).unwrap().unwrap();
-        leases
-            .renew_existing_within_duration(
-                &lease_id,
-                now_unix_ms(),
-                lease.expires_at_unix_ms + 1,
-                lease.renew_after_unix_ms + 1,
-            )
-            .unwrap();
-    }
-    // 결함 247 — 재발급은 ACK 뒤 Lease 갱신 간격(여기서는 1초)이 조용히 지나야 한다.
-    thread::sleep(Duration::from_millis(1_500));
 
     let pool_agents = format!(
         "{NODE_1}={};{NODE_2}={}",
@@ -1163,7 +1140,7 @@ fn lost_receipt_round(renewed_before: bool) -> (String, String, Option<JobState>
         String::from_utf8_lossy(&agent_output.stdout),
         String::from_utf8_lossy(&agent_output.stderr)
     );
-    let deadline = Instant::now() + Duration::from_secs(if renewed_before { 3 } else { 30 });
+    let deadline = Instant::now() + Duration::from_secs(3);
     while job_state(&db, JOBS[0]) != Some(JobState::Completed) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(200));
     }
@@ -1173,34 +1150,16 @@ fn lost_receipt_round(renewed_before: bool) -> (String, String, Option<JobState>
     (agent_out, coordinator_out + &coordinator_err, finished)
 }
 
+/// ★ 2026-09-24 (결함 218 · 257 · 258 — 재발급 철회) — 수신 확인이 유실돼 STARTING 에 멈춘 시도를 **다시 내주지 않는다.**
+///   재발급을 하면 "한 번도 안 돈 시도" 와 "돌고 있는 시도" 를 계약 없이 가를 수 없어 두 번 실행 경로가 생겼다(재검수 84).
+///   이 시도는 노드 유실처럼 처리된다(Lease 만료 뒤 이어받기 — 체크포인트가 없으면 FAILED). 알려진 한계다.
 #[test]
-fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs() {
-    let (agent_out, coordinator_out, finished) = lost_receipt_round(false);
-    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
-    assert!(
-        coordinator_out.contains("outcome=starting_still_current")
-            && coordinator_out.contains("ACK_RECEIPT_SENT"),
-        "유실 뒤 재발급의 ACK 에 수신 확인을 보내지 않았다\n{everything}"
-    );
-    assert!(
-        agent_out.contains("ACK_RECEIPT_VERIFIED"),
-        "Agent 가 수신 확인을 받지 못했다\n{everything}"
-    );
-    assert_eq!(
-        finished,
-        Some(JobState::Completed),
-        "한 번도 안 돈 작업이 다시 돌아 끝나지 않았다\n{everything}"
-    );
-}
-
-/// 결함 247 (재검수 82) — Lease 가 한 번이라도 갱신됐으면(누군가 그 시도를 돌리고 있다) 같은 노드라도 다시 내주지 않는다.
-#[test]
-fn a_start_whose_lease_was_renewed_is_not_handed_out_again() {
-    let (agent_out, coordinator_out, finished) = lost_receipt_round(true);
+fn a_start_whose_ack_receipt_was_lost_is_not_handed_out_again() {
+    let (agent_out, coordinator_out, finished) = lost_receipt_round();
     let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
     assert!(
         !agent_out.contains("ACK_RECEIPT_VERIFIED") && !agent_out.contains("WORKLOAD_RESULT"),
-        "갱신된 시도를 다시 내줘 두 번째 실행이 됐다\n{everything}"
+        "STARTING 시도를 다시 내줬다\n{everything}"
     );
     assert!(
         coordinator_out.contains("이미 받아들여졌다"),

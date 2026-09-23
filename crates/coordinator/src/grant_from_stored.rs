@@ -72,11 +72,6 @@ pub struct StoredGrantRequest {
     pub attempt_id: String,
     pub lease_id: String,
     pub grant_id: String,
-    /// ★ 2026-09-23 (결함 218 · 재검수 78 · 80) — 참이면 **STARTING** 시도(ACK 는 기록됐는데 수신 확인이 유실돼 Agent 가 실행하지 않은
-    ///   시도)도 다시 내준다 — 단 Job 이 RUNNING 이고 그 시도가 현재 시도일 때만. 풀 연결만 켠다(그 노드의 예약으로만 온다).
-    ///   ★ 이것만으로는 두 번 실행을 막지 못한다 — 막는 것은 Agent 의 **시작 기록**(`--require-ack-receipt` 를 켠 Agent 는 이미
-    ///   시작한 시도에 ACK 하지 않는다)이다. 그 옵션을 끈 Agent 를 풀에 붙이면 안 되는 이유다(런북 §5).
-    pub reissue_unacknowledged_start: bool,
     pub issued_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
     /// ★ **nonce 는 저장된 사실이 아니라 전송 계약이다.**
@@ -124,38 +119,6 @@ impl From<StoredGrantError> for String {
     fn from(error: StoredGrantError) -> Self {
         error.to_string()
     }
-}
-
-/// ★ 2026-09-24 (결함 247 · 재검수 82) — 수신 확인이 유실된 시도를 다시 내줘도 되는가.
-///
-/// 같은 node_id 로 루트만 다른 Agent 둘이 뜨면(운영 실수) 시작 기록이 서로 안 보여 재발급이 두 번째 실행이 됐다. 그래서 **조용할 때만** 준다:
-/// Lease 가 한 번도 갱신되지 않았고, ACK(= Job RUNNING 시각)부터 그 Lease 의 갱신 간격(`renew_after - issued_at`)이 지났을 때.
-/// 실제로 돌고 있는 Agent 는 그 전에 갱신한다(런북: 실행 중 갱신 주기 < Lease 갱신 간격). 갱신을 끈 Agent 에는 이 방어가 없다.
-fn reissue_is_quiet(
-    job: &crate::job_store::StoredJob,
-    leases: &crate::lease_store::CoordinatorLeaseStore,
-    lease_id: &str,
-    now_unix_ms: u64,
-) -> Result<bool, StoredGrantError> {
-    if leases
-        .was_ever_renewed(lease_id)
-        .map_err(|e| StoredGrantError::Storage(format!("Lease 갱신 기록 조회 실패: {e}")))?
-    {
-        return Ok(false);
-    }
-    let Some(lease) = leases
-        .get(lease_id)
-        .map_err(|e| StoredGrantError::Storage(format!("Lease 조회 실패: {e}")))?
-    else {
-        return Ok(false);
-    };
-    let Some(acked_at) = job.running_at_unix_ms else {
-        return Ok(false);
-    };
-    let interval = lease
-        .renew_after_unix_ms
-        .saturating_sub(lease.issued_at_unix_ms);
-    Ok(now_unix_ms >= acked_at.saturating_add(interval))
 }
 
 /// 저장된 예약을 읽어 대조한 뒤 서명된 Grant 를 만든다.
@@ -265,13 +228,9 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
             attempt.job_id, request.job_id
         )));
     }
-    let unacknowledged_start = request.reissue_unacknowledged_start
-        && attempt.state == gputeer_protocol::attempt_state::AttemptState::Starting
-        && job.state == JobState::Running
-        && reissue_is_quiet(&job, leases, &request.lease_id, request.issued_at_unix_ms)?;
-    if attempt.state != gputeer_protocol::attempt_state::AttemptState::Created
-        && !unacknowledged_start
-    {
+    // ★ 2026-09-24 (결함 257 · 258 · 재검수 84) — 풀에서 수신 확인이 유실된 STARTING 시도를 같은 노드에 다시 내주던 것(결함 218 대응)을
+    //   **철회했다.** 계약 없이 "한 번도 안 돈 시도" 를 가르려던 규칙들이 회차마다 두 번 실행 경로를 새로 만들었다. STARTING 은 다시 내주지 않는다.
+    if attempt.state != gputeer_protocol::attempt_state::AttemptState::Created {
         return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: 시도 {} 는 이미 받아들여졌다({:?}) — 같은 시도를 다시 내주지 않는다",
             attempt.attempt_id, attempt.state

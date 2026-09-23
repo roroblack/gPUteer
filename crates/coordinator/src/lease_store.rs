@@ -172,57 +172,6 @@ pub(crate) fn map_sql_error(error: SqlError) -> LeaseStoreError {
     }
 }
 
-fn record_renewal_within(
-    connection: &Connection,
-    lease_id: &str,
-    renewed_at_unix_ms: u64,
-) -> Result<(), LeaseStoreError> {
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS coordinator_lease_renewals (
-                lease_id TEXT PRIMARY KEY,
-                last_renewed_at_unix_ms BLOB NOT NULL CHECK(length(last_renewed_at_unix_ms) = 8)
-            );",
-        )
-        .map_err(map_sql_error)?;
-    connection
-        .execute(
-            "INSERT INTO coordinator_lease_renewals(lease_id, last_renewed_at_unix_ms) VALUES (?1, ?2)
-             ON CONFLICT(lease_id) DO UPDATE SET last_renewed_at_unix_ms = excluded.last_renewed_at_unix_ms",
-            rusqlite::params![lease_id, encode_u64(renewed_at_unix_ms)],
-        )
-        .map_err(map_sql_error)?;
-    Ok(())
-}
-
-impl CoordinatorLeaseStore {
-    /// 이 Lease 가 한 번이라도 갱신됐는가(결함 247). 기록 표가 없으면 아니다.
-    pub fn was_ever_renewed(&self, lease_id: &str) -> Result<bool, LeaseStoreError> {
-        let table = self
-            .connection
-            .query_row(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_lease_renewals'",
-                [],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(map_sql_error)?;
-        if table.is_none() {
-            return Ok(false);
-        }
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT 1 FROM coordinator_lease_renewals WHERE lease_id = ?1",
-                rusqlite::params![lease_id],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(map_sql_error)?
-            .is_some())
-    }
-}
-
 /// 호출자의 트랜잭션 안에서 Lease 를 폐기한다(이미 폐기됐으면 첫 시각을 둔다). 행이 없으면 오류다.
 ///
 /// ★ 2026-09-23 (결함 227 · 검수 76) — 장애 이어받기 · 소유자 선점이 Job 을 되돌리는 **같은 커밋**에서 부른다.
@@ -566,10 +515,6 @@ impl CoordinatorLeaseStore {
                 ],
             )
             .map_err(map_sql_error)?;
-        // ★ 2026-09-24 (결함 247 · 재검수 82) — "이 Lease 가 한 번이라도 갱신됐다" 를 **같은 커밋**에 적는다. 풀 재발급(결함 218)은 갱신된 적 있는
-        //   Lease 의 시도를 다시 내주지 않는다 — 누군가 그 시도를 돌리며 갱신하고 있다는 뜻이다.
-        record_renewal_within(&transaction, lease_id, now_unix_ms)?;
-
         transaction.commit().map_err(map_sql_error)?;
 
         let mut renewed = stored;

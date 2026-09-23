@@ -592,11 +592,19 @@ impl CoordinatorInventoryStore {
                         "SELECT last_heartbeat_unix_ms FROM coordinator_node_liveness
                          WHERE node_id = ?1",
                         rusqlite::params![node_id],
-                        |row| row.get::<_, Vec<u8>>(0),
+                        // ★ 2026-09-24 (결함 261 · 재검수 85) — 생존 표는 이 칸을 **INTEGER** 로 적는다(`node_liveness_store`). 전에는
+                        //   8바이트 BLOB 로 읽어, heartbeat 행이 하나라도 있으면 스냅샷이 형식 오류로 끝나 배치가 멈췄다(신뢰망 P2 부터).
+                        |row| row.get::<_, i64>(0),
                     )
                     .optional()
                     .map_err(map_sql_error)?
-                    .map(|raw| decode_u64(&raw, "liveness last_heartbeat_unix_ms"))
+                    .map(|value| {
+                        u64::try_from(value).map_err(|_| {
+                            InventoryStoreError::CorruptData(format!(
+                                "liveness last_heartbeat_unix_ms 가 음수다: {value}"
+                            ))
+                        })
+                    })
                     .transpose()?
             } else {
                 // 관측 테이블이 아예 없는 DB 는 본 적이 없는 것이다 — 없는 관측을 지어내지 않는다.
@@ -638,9 +646,13 @@ impl CoordinatorInventoryStore {
             } else {
                 None
             };
-            candidate.last_heartbeat_unix_ms = match (last_seen, reclaimed_at) {
-                (Some(seen), Some(reclaimed)) if reclaimed >= seen => None,
-                (seen, _) => seen,
+            // ★ 2026-09-24 (결함 262 · 재검수 85) — 되찾음은 **되찾은 뒤의 FRESH 인사로만** 풀린다. heartbeat(다른 lane 의 생존 신호)는 풀지
+            //   않는다 — 전에는 둘의 최댓값과 비교해, 미래 시각 heartbeat 하나가 되찾음을 무효로 만들었다(status 와도 어긋났다).
+            candidate.last_heartbeat_unix_ms = match reclaimed_at {
+                Some(reclaimed) if session_seen_unix_ms.is_none_or(|fresh| fresh <= reclaimed) => {
+                    None
+                }
+                _ => last_seen,
             };
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)
@@ -1618,6 +1630,68 @@ mod tests {
         let mut store = CoordinatorInventoryStore::open(path).unwrap();
         store.register_agent(&registry("node-a", 1)).unwrap();
         store
+    }
+
+    /// 결함 261 · 262 (재검수 85) — heartbeat 행(INTEGER)이 있어도 스냅샷이 선다. 되찾음은 heartbeat 로 풀리지 않고 되찾은 뒤의 FRESH 로만 풀린다.
+    #[test]
+    fn a_heartbeat_row_is_read_and_cannot_undo_an_owner_reclaim() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("inventory.sqlite3");
+        let mut store = prepared_store(&path);
+        store
+            .update_inventory(&inventory("node-a", 1, 90, 10))
+            .unwrap();
+        drop(store);
+        crate::node_liveness_store::CoordinatorNodeLivenessStore::open(&path).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        // 미래 시각 heartbeat(2000) — 다른 lane 의 생존 신호다.
+        connection
+            .execute(
+                "INSERT INTO coordinator_node_liveness(node_id, device_id, last_heartbeat_unix_ms, fence_epoch,
+                 running_attempts, signer_id_at_observation, heartbeat_body, heartbeat_hash)
+                 VALUES ('node-a', 'device-a', 2000, 1, 0, 'node-a', x'00', x'00')",
+                [],
+            )
+            .unwrap();
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+        let snapshot = store
+            .pool_snapshot(1500)
+            .expect("heartbeat 행이 있으면 스냅샷이 섰어야 한다(261)");
+        assert_eq!(snapshot.candidates[0].last_heartbeat_unix_ms, Some(2000));
+        drop(store);
+
+        // 되찾음(1000) — heartbeat(2000)가 더 늦어도 숨는다.
+        crate::failover::ensure_reclaim_table(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO coordinator_node_reclaims(node_id, reclaimed_at_unix_ms) VALUES ('node-a', ?1)",
+                rusqlite::params![1000u64.to_be_bytes().to_vec()],
+            )
+            .unwrap();
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+        assert_eq!(
+            store.pool_snapshot(1500).unwrap().candidates[0].last_heartbeat_unix_ms,
+            None,
+            "heartbeat 가 되찾음을 풀었다(262)"
+        );
+        drop(store);
+
+        // 되찾은 뒤의 FRESH(1200) 는 푼다.
+        crate::node_liveness_store::CoordinatorNodeLivenessStore::open(&path)
+            .unwrap()
+            .record_session_seen(
+                "node-a",
+                gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+                1200,
+            )
+            .unwrap();
+        let mut store = CoordinatorInventoryStore::open(&path).unwrap();
+        assert!(
+            store.pool_snapshot(1500).unwrap().candidates[0]
+                .last_heartbeat_unix_ms
+                .is_some(),
+            "되찾은 뒤의 FRESH 가 되찾음을 풀지 못했다"
+        );
     }
 
     #[test]

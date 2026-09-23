@@ -248,7 +248,9 @@ fn find_resume_point(
     let verifier = Ed25519Verifier::new(&keyring);
     let mut best: Option<(u64, u64, ResumePoint)> = None;
     // ★ 2026-09-24 (결함 254 · 재검수 83) — "공유 저장소 목록을 못 읽었다" 만 호출자가 원하면 "지점 없음" 으로 받는다(선점 — 보고를 롤백하지
-    //   않으려고). control DB 오류 · 그 밖의 오류는 그대로 올린다 — 전에는 선점 쪽이 **모든** 오류를 삼켜 DB 손상까지 "지점 없음" 으로 커밋했다.
+    //   않으려고). control DB 오류는 그대로 올린다 — 전에는 선점 쪽이 **모든** 오류를 삼켜 DB 손상까지 "지점 없음" 으로 커밋했다.
+    //   ★ 결함 263 (재검수 85) — 한계: 목록이 **일부만** 읽혀도 전체를 못 읽은 것으로 본다(읽힌 정상 후보도 버린다). 목록 뒤 체크포인트 파일
+    //     읽기 오류(NAS I/O)는 그 체크포인트를 "건너뜀" 으로 처리한다 — "그 밖의 오류는 올린다" 가 아니다.
     let listed = match gputeer_checkpoint::shared::list_signed_manifests(shared_root, job_id) {
         Ok(listed) => listed,
         Err(error) if list_error_as_none => {

@@ -327,7 +327,6 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
                     attempt_id,
                     lease_id,
                     grant_id: per_agent.grant_id.clone(),
-                    reissue_unacknowledged_start: false,
                     issued_at_unix_ms: now,
                     expires_at_unix_ms: now.saturating_add(shared.config.stored_grant_ttl_ms),
                     // ★ 이 lane 의 연결 시도 번호는 0 이다(연결마다 새로 센다) —

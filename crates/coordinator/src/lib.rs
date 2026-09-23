@@ -214,9 +214,6 @@ pub struct CoordinatorConfig {
     /// `Some` 일 때만 읽는다.
     pub stored_grant_job_id: String,
     pub stored_grant_attempt_id: String,
-    /// ★ 2026-09-23 (결함 218) — 풀 연결에서만 참. 수신 확인이 유실돼 STARTING 에 멈춘 시도를 그 노드에 다시 내준다.
-    ///   명령줄로는 켜지 않는다(`pool_connection_config` 가 연결마다 켠다).
-    pub reissue_unacknowledged_start: bool,
     pub stored_grant_lease_id: String,
     /// Grant 수명(발급 시각 기준). 저장된 Lease 만료를 넘으면 거부된다.
     pub stored_grant_ttl_ms: u64,
@@ -1390,7 +1387,6 @@ fn serve_one_connection_impl(
                     attempt_id: config.stored_grant_attempt_id.clone(),
                     lease_id: config.stored_grant_lease_id.clone(),
                     grant_id: config.grant_id.clone(),
-                    reissue_unacknowledged_start: config.reissue_unacknowledged_start,
                     issued_at_unix_ms: now,
                     // ★ 2026-09-23 (신뢰망 남은 일 G) — 풀 모드는 Grant 가 **Lease 보다 오래 살지 않게** 자른다.
                     //   짧은 Lease(실행 중 갱신으로 늘리는 방식)에서 기본 Grant 수명이 Lease 만료를 넘어 거부됐다.
@@ -2378,8 +2374,12 @@ fn serve_one_connection_impl(
 fn ack_receipt_allowed(record: crate::staging_store::GrantAcceptedRecord) -> bool {
     use crate::staging_store::GrantAcceptedRecord as R;
     match record {
-        R::Recorded | R::StartingStillCurrent => true,
-        R::AlreadyRecorded | R::NotCurrentAttempt | R::ClockBehindStaging => false,
+        // ★ 결함 257 (재검수 84) — 재발급을 철회해 STARTING_STILL_CURRENT 는 생기지 않는다. 생겨도 보내지 않는다(적은 것이 없다).
+        R::Recorded => true,
+        R::StartingStillCurrent
+        | R::AlreadyRecorded
+        | R::NotCurrentAttempt
+        | R::ClockBehindStaging => false,
     }
 }
 
@@ -2765,8 +2765,6 @@ fn pool_connection_config(
     scoped.stored_grant_job_id = job_id;
     scoped.stored_grant_attempt_id = attempt_id;
     scoped.stored_grant_lease_id = lease_id;
-    // ★ 결함 218 — 풀은 수신 확인이 유실된 STARTING 시도를 **이 노드에만** 다시 내준다(아래 grant_from_stored 관문).
-    scoped.reissue_unacknowledged_start = true;
     scoped.grant_id = fresh_grant_id()
         .map_err(|error| SessionHandlerError::Classified(storage_error("grant id", error)))?;
     Ok(Some(scoped))
@@ -4029,7 +4027,6 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
             .get("--stored-grant-attempt-id")
             .cloned()
             .unwrap_or_default(),
-        reissue_unacknowledged_start: false,
         stored_grant_lease_id: flags
             .get("--stored-grant-lease-id")
             .cloned()
@@ -4655,8 +4652,8 @@ mod tests {
     fn an_ack_that_recorded_nothing_gets_no_receipt() {
         use crate::staging_store::GrantAcceptedRecord as R;
         assert!(ack_receipt_allowed(R::Recorded));
-        assert!(ack_receipt_allowed(R::StartingStillCurrent));
         for nothing in [
+            R::StartingStillCurrent,
             R::NotCurrentAttempt,
             R::ClockBehindStaging,
             R::AlreadyRecorded,

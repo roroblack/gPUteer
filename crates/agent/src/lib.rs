@@ -2567,6 +2567,12 @@ fn flush_report_outbox(config: &AgentConfig, signing_key: &SigningKey) {
     paths.sort();
     for path in paths {
         match reopen_outboxed_report(config, signing_key, &path) {
+            // ★ 2026-09-24 (결함 264 · 재검수 85) — 다른 node_id 의 보고는 **격리하지 않는다.** 같은 루트를 순차로 쓴 다른 Agent 의 정당한 보고를
+            //   `.rejected` 로 바꾸면 그 Agent 가 돌아와도 영영 못 보낸다(재전송은 `.report` 만 본다). 알리고 그대로 둔다.
+            Err(reason) if reason.starts_with(FOREIGN_OUTBOX_REPORT) => println!(
+                "ATTEMPT_REPORT_OUTBOX_FOREIGN path={} detail={reason} — 건드리지 않는다",
+                path.display()
+            ),
             Err(reason) => {
                 let rejected = path.with_extension("report.rejected");
                 match fs::rename(&path, &rejected) {
@@ -2592,6 +2598,9 @@ fn flush_report_outbox(config: &AgentConfig, signing_key: &SigningKey) {
     }
 }
 
+/// node_id 가 다른 보고 — 격리하지 않고 건드리지 않는다(결함 264).
+const FOREIGN_OUTBOX_REPORT: &str = "FOREIGN_NODE";
+
 /// outbox 파일 하나를 다시 연다 — 디코드 · 이 Agent 의 보고인지 · 서명 · 필드 조합 규칙.
 fn reopen_outboxed_report(
     config: &AgentConfig,
@@ -2602,7 +2611,9 @@ fn reopen_outboxed_report(
     let report =
         pb::AttemptReport::decode(bytes.as_slice()).map_err(|e| format!("디코드 실패: {e}"))?;
     if report.node_id != config.agent_device_id {
-        return Err("이 Agent 의 보고가 아니다(node_id)".into());
+        return Err(format!(
+            "{FOREIGN_OUTBOX_REPORT}: 이 Agent 의 보고가 아니다(node_id)"
+        ));
     }
     let mut keys = InMemoryKeyring::new();
     keys.insert(config.agent_device_id.clone(), signing_key.verifying_key());
@@ -5705,6 +5716,24 @@ mod report_session_tests {
         assert!(
             path.with_extension("report.rejected").exists(),
             "지우지 않고 격리해야 한다(증거)"
+        );
+    }
+
+    /// 결함 264 — 다른 node_id 의 보고는 격리하지 않고 그대로 둔다(그 Agent 가 돌아와 보낸다).
+    #[test]
+    fn a_report_of_another_node_is_left_untouched() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let config = config(dir.path(), "127.0.0.1:9");
+        let mut report = signed_report();
+        report.node_id = "01JOTHERNODE000000000001".into();
+        let path =
+            persist_report_to_outbox(&report_outbox_dir(&config).expect("outbox 위치"), &report)
+                .expect("outbox");
+        flush_report_outbox(&config, &SigningKey::from_bytes(&AGENT_SEED));
+        assert!(path.exists(), "다른 Agent 의 보고를 옮기거나 지웠다");
+        assert!(
+            !path.with_extension("report.rejected").exists(),
+            "다른 Agent 의 보고를 격리했다 — 그 Agent 가 영영 못 보낸다"
         );
     }
 
