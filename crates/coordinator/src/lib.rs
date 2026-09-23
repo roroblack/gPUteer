@@ -309,6 +309,14 @@ pub struct CoordinatorConfig {
     /// Explicit opt-in Hello-first Resume lane. The default remains the
     /// historical server-first Grant/ACK lane.
     pub resume_protocol: bool,
+    /// 재시작을 넘는 **Hello 재전송 방어**를 기록할 SQLite 파일(결함 88 조각 0).
+    ///
+    /// ★★ 2026-09-23 (신뢰망 P3) — 설계 `docs/plans/2026-09-17_0950_…` §4 조각 0 · 논의 71.
+    ///   **순차 lane 의 일반 Hello 에만** 쓴다. ACK · Renew · Heartbeat 는 기존 메모리 방어 그대로다 —
+    ///   그 메시지들은 연결 번호에서 nonce 를 유도하므로, 영속 방어로 바꾸면 재시작 뒤
+    ///   **정상 재접속을 거부한다**(DoD-24 재시작 복원이 깨진다). Hello 는 이미 무작위 nonce 라 안전하다.
+    /// `None` 이면 지금까지와 같다(재시작 뒤 같은 Hello 바이트를 다시 받는다 — 결함 88).
+    pub hello_replay_db: Option<PathBuf>,
     // ★ 2026-09-10 — 여기 `session_id: String` 이 있었다. **어디서도 읽지
     //   않았다**(Resume 대조는 Agent 가 보낸 hello 와 요청 사이에서만 한다).
     //   결함 ⑯ 확장으로 모르는 플래그를 거부하면서 지웠다 — 받아 두기만 하는
@@ -355,6 +363,7 @@ fn storage_error(context: &str, error: impl std::fmt::Display) -> CoordinatorSes
 /// transport/protocol paths. Resume storage failures are different: they must
 /// reach the dispatcher as a typed `Storage` error instead of being converted
 /// into a signed UNAVAILABLE result or reclassified by message text.
+#[derive(Debug)]
 enum SessionHandlerError {
     Legacy(String),
     Classified(CoordinatorSessionError),
@@ -606,6 +615,16 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     agent_keys.insert(config.agent_device_id.clone(), config.agent_verifying_key);
 
     let mut replay = InMemoryReplayGuard::new();
+    // ★★ 2026-09-23 (결함 88 조각 0) — **Hello 전용** 영속 재전송 방어. 다른 메시지에는 쓰지 않는다.
+    let mut hello_replay = match &config.hello_replay_db {
+        Some(path) => Some(gputeer_crypto::DurableReplayGuard::open(path).map_err(|e| {
+            format!(
+                "STARTUP_REFUSED: --hello-replay-db 를 열지 못했다({}): {e:?}",
+                path.display()
+            )
+        })?),
+        None => None,
+    };
     let clock = SystemClock;
 
     listener
@@ -636,6 +655,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &signing_key,
             &agent_keys,
             &mut replay,
+            &mut hello_replay,
             &clock,
             connection_attempt,
             &mut last_fresh_attempt,
@@ -1056,6 +1076,7 @@ fn serve_one_connection(
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
+    hello_replay: &mut Option<gputeer_crypto::DurableReplayGuard>,
     clock: &SystemClock,
     connection_attempt: u32,
     last_fresh_attempt: &mut Option<u32>,
@@ -1079,6 +1100,7 @@ fn serve_one_connection(
         signing_key,
         agent_keys,
         replay,
+        hello_replay,
         clock,
         connection_attempt,
         last_fresh_attempt,
@@ -1099,6 +1121,7 @@ fn serve_one_connection_impl(
     signing_key: &SigningKey,
     agent_keys: &InMemoryKeyring,
     replay: &mut InMemoryReplayGuard,
+    hello_replay: &mut Option<gputeer_crypto::DurableReplayGuard>,
     clock: &SystemClock,
     connection_attempt: u32,
     last_fresh_attempt: &mut Option<u32>,
@@ -1119,6 +1142,12 @@ fn serve_one_connection_impl(
     // ★ D2 (B+E 구현 단계 4) — 순차 lane 도 Agent 의 Hello 로 시작한다. Grant 를 쓰기 **전에** 읽고 검증한다.
     // ★ B+E 구현 단계 5a — 같은 리스너가 Hello 의 mode 로 세션을 가른다. FRESH 는 아래 Grant 흐름, RENEW 는 갱신 한 건만.
     let hello = read_session_hello(config, stream, agent_keys, replay, clock)?;
+    // ★★ 2026-09-23 (결함 88 조각 0) — 메모리 방어는 **재시작하면 잊는다.** 그래서 같은 Hello 바이트를
+    //   재시작 뒤 다시 보내면 받아들였다. 영속 방어가 있으면 여기서 한 번 더 본다.
+    //   ★ 서명 검증은 위 `read_session_hello` 가 이미 끝냈다 — 검증된 값만 여기 온다.
+    if let Some(guard) = hello_replay.as_mut() {
+        check_hello_across_restart(guard, &hello)?;
+    }
     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
         return serve_renew_session(
             config,
@@ -2499,6 +2528,38 @@ fn serve_report_session(
 ///   (Protocol)이다(아래 `_` 갈래). 전에는 "끊김 · 소켓 시한만 HELLO_MISSING" 이라고 적었다.
 /// ★ 결함 87 — 분류를 여기서 정하고 받은 프레임의 내용을 오류에 넣지 않는다([`session_protocol_error`]).
 /// ★ session_id 는 대조하지 않는다 — FRESH 는 세션 복원 대상이 아니다(Resume lane 만 요구한다).
+/// 검증된 Hello 를 **재시작을 넘는** 재전송 방어로 한 번 더 본다(결함 88 조각 0).
+///
+/// ★ 메모리 방어는 재시작하면 잊는다 — 그래서 같은 Hello 바이트를 재시작 뒤 다시 보내면 받아들였다.
+///   이 함수는 **서명 검증이 끝난 값만** 받는다(`read_session_hello` 뒤에서 부른다).
+/// ★ 저장소 장애는 "이미 봤다" 와 **다른 사실**이다 — 뭉뚱그리지 않고 fail-closed(Storage)로 올린다.
+fn check_hello_across_restart(
+    guard: &mut gputeer_crypto::DurableReplayGuard,
+    hello: &pb::AgentSessionHello,
+) -> Result<(), SessionHandlerError> {
+    use gputeer_protocol::signing::{ReplayDecision, ReplayGuard as _, Signable};
+    let nonce = hello.replay_nonce().unwrap_or_default().to_vec();
+    let retain_until = hello
+        .expires_at_unix_ms()
+        .saturating_add(gputeer_protocol::constants::CLOCK_SKEW_TOLERANCE_MS);
+    match guard.check_and_record(
+        hello.signer_id(),
+        <pb::AgentSessionHello as Signable>::DOMAIN,
+        &nonce,
+        retain_until,
+    ) {
+        Ok(ReplayDecision::Fresh) => Ok(()),
+        Ok(_) => Err(session_protocol_error(
+            "HELLO_REPLAYED: 이 Hello 는 이미 받은 적이 있다(재시작을 넘는 방어) — 재전송이다",
+        )),
+        Err(error) => Err(SessionHandlerError::Classified(
+            CoordinatorSessionError::Storage(format!(
+                "Hello 영속 재전송 방어 저장소 장애: {error:?}"
+            )),
+        )),
+    }
+}
+
 fn read_session_hello(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
@@ -3408,6 +3469,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         revoke_delay_ms: flags.u64_flag_with_default("--revoke-delay-ms", 0)?,
         renew_delay_ms: flags.u64_flag_with_default("--renew-delay-ms", 0)?,
         resume_protocol: flags.bool_flag("--resume-protocol"),
+        hello_replay_db: flags.get("--hello-replay-db").map(PathBuf::from),
     };
 
     // ★★ 결함 ⑯ 확장(2026-09-10 재검수 14) — **받아 두고 말없이 버리지 않는다.**
@@ -3420,6 +3482,16 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
     //
     //   ★ 여기서 거부하는 것은 **파서가 볼 수 있는 것**뿐이다. 값이
     //     기본값과 같아도 "줬다" 는 사실은 여기서만 보인다.
+    // ★★ 2026-09-23 (결함 88 조각 0 · 논의 71) — `--hello-replay-db` 는 **순차 lane 의 일반 Hello** 에만
+    //   걸린다. 다중 Agent lane 과 명시적 Resume lane 은 Hello 를 다른 함수로 읽어 이 방어를 **거치지 않는다.**
+    //   그 조합을 받아 두면 운영자는 재전송이 막힌다고 믿는데 실제로는 안 막힌다 — 그래서 거부한다.
+    if config.hello_replay_db.is_some() && (config.multi_agent || config.resume_protocol) {
+        return Err(
+            "STARTUP_REFUSED: HELLO_REPLAY_DB_NOT_APPLIED — --hello-replay-db 는 순차 lane 의 일반 Hello 에만 걸린다. \
+             --multi-agent 나 --resume-protocol 과 함께 주면 그 lane 의 Hello 는 이 방어를 거치지 않는다"
+                .to_string(),
+        );
+    }
     let bad_bools = flags.bad_bools();
     if !bad_bools.is_empty() {
         return Err(format!(
@@ -3938,6 +4010,110 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_config_from_args(&args).expect("설정 파싱")
+    }
+
+    /// ★★ 결함 88 조각 0 — **재시작을 넘어** 같은 Hello 를 거부한다.
+    ///
+    /// 재시작을 흉내 낸다: 같은 DB 파일로 영속 방어를 **두 번 연다.** 처음 연 것이 기록한 Hello 를
+    /// 새로 연 것이 기억해야 한다. 메모리 방어였다면 두 번째 열기에서 잊는다(결함 88 의 모양 그대로).
+    #[test]
+    fn a_replayed_hello_is_refused_across_a_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join("hello-replay.sqlite3");
+        let hello = pb::AgentSessionHello {
+            schema_version: 1,
+            node_id: "01JAGENTHELLOREPLAY00001".into(),
+            issued_at_unix_ms: 4_000_000_000_000,
+            nonce: vec![7u8; 16],
+            ..Default::default()
+        };
+
+        {
+            let mut before_restart = gputeer_crypto::DurableReplayGuard::open(&db).unwrap();
+            check_hello_across_restart(&mut before_restart, &hello)
+                .expect("처음 보는 Hello 는 받아야 한다");
+        }
+        // ★ 재시작 — 새로 연다.
+        let mut after_restart = gputeer_crypto::DurableReplayGuard::open(&db).unwrap();
+        let refused = check_hello_across_restart(&mut after_restart, &hello)
+            .expect_err("재시작 뒤 같은 Hello 를 다시 받았다 — 결함 88 이 그대로다");
+        assert!(
+            format!("{refused:?}").contains("HELLO_REPLAYED"),
+            "거부는 했는데 재전송이라고 말하지 않는다: {refused:?}"
+        );
+    }
+
+    /// 재시작 뒤라도 **새 Hello**(다른 nonce)는 받는다 — 정상 재접속을 막지 않는다.
+    ///
+    /// ★ 이게 조각 0 을 Hello 에만 거는 이유다. ACK · Renew 처럼 nonce 를 연결 번호에서 유도하는 메시지에
+    ///   영속 방어를 걸면 재시작 뒤 번호가 0 부터 다시 시작해 **정상 재접속을 거부한다**(DoD-24 가 깨진다).
+    #[test]
+    fn a_fresh_hello_after_a_restart_is_still_accepted() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join("hello-replay.sqlite3");
+        let first = pb::AgentSessionHello {
+            schema_version: 1,
+            node_id: "01JAGENTHELLOREPLAY00001".into(),
+            issued_at_unix_ms: 4_000_000_000_000,
+            nonce: vec![1u8; 16],
+            ..Default::default()
+        };
+        {
+            let mut guard = gputeer_crypto::DurableReplayGuard::open(&db).unwrap();
+            check_hello_across_restart(&mut guard, &first).unwrap();
+        }
+        let mut guard = gputeer_crypto::DurableReplayGuard::open(&db).unwrap();
+        let second = pb::AgentSessionHello {
+            nonce: vec![2u8; 16],
+            ..first
+        };
+        check_hello_across_restart(&mut guard, &second)
+            .expect("재시작 뒤 새 Hello 를 거부했다 — 정상 재접속이 막힌다");
+    }
+
+    /// 방어가 **안 걸리는 lane** 과 함께 주면 시작을 거부한다 — 막힌다고 믿는데 안 막히는 상태를 만들지 않는다.
+    #[test]
+    fn the_hello_replay_db_is_refused_where_it_would_not_apply() {
+        for lane in [["--multi-agent", "true"], ["--resume-protocol", "true"]] {
+            let peer = SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+            let peer_hex: String = peer.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+            let own_seed = "11".repeat(32);
+            let mut args: Vec<String> = [
+                "--listen",
+                "127.0.0.1:0",
+                "--own-seed",
+                own_seed.as_str(),
+                "--peer-pubkey",
+                peer_hex.as_str(),
+                "--coordinator-device-id",
+                "01JCOORDRENEWEXT00000001",
+                "--agent-device-id",
+                "01JAGENTRENEWEXT00000001",
+                "--grant-id",
+                "01JGRANTRENEWEXT00000001",
+                "--attempt-id",
+                "01JATTEMPTRENEWEXT000001",
+                "--lease-id",
+                "01JLEASERENEWEXT00000001",
+                "--job-id",
+                "01JJOBRENEWEXT0000000001",
+                "--i-understand-legacy-mode-is-unsafe",
+                "true",
+                "--hello-replay-db",
+                "hello.sqlite3",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            args.extend(lane.iter().map(|s| s.to_string()));
+            let Err(error) = parse_config_from_args(&args) else {
+                panic!("{lane:?} — 적용되지 않는 lane 과 함께 받아들였다");
+            };
+            assert!(
+                error.contains("HELLO_REPLAY_DB_NOT_APPLIED"),
+                "{lane:?} 와의 조합을 다른 이유로 막았다: {error}"
+            );
+        }
     }
 
     /// 결함 101 (재검수 61) — 저장된 Lease 가 이미 만료된 뒤의 최초 발급 요청은 **정책 거부**(Protocol)다. 전에는

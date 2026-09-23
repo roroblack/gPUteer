@@ -95,7 +95,7 @@ D  B + 단수명 nonce 전부 CSPRNG — **새 proto 칸 없이** ACK 를 발급
 
 | # | 조각 | 완료 기준 | 상태 |
 |---|---|---|---|
-| 0 | **일반 경로 Hello 만** 영속 guard 로 검사(`--replay-db` 가 있을 때) — Hello 는 이미 fresh_nonce 이고 검사 진입점이 따로다. 나머지 메시지는 기존 in-memory guard. multi_agent lane 은 Hello 가 유도값이라 그 lane 의 Agent 를 fresh_nonce 로 바꾸거나 이 조각에서 빼야 한다 | 재시작 뒤 같은 Hello 바이트 거부 음성 테스트 · DoD-24 재시작 복원 유지 | ⬜ |
+| 0 | ✅ **2026-09-23 됐다** — `--hello-replay-db`. 순차 lane 의 일반 Hello 를 읽은 **직후** 영속 guard 로 한 번 더 본다(메모리 guard 는 그대로 둔다). 다중 Agent · Resume lane 과 함께 주면 시작을 거부한다(그 lane 의 Hello 는 이 방어를 거치지 않는다). 시험 셋 · 뮤테이션 1건. 아래는 계획 당시의 서술이다. **일반 경로 Hello 만** 영속 guard 로 검사(`--replay-db` 가 있을 때) — Hello 는 이미 fresh_nonce 이고 검사 진입점이 따로다. 나머지 메시지는 기존 in-memory guard. multi_agent lane 은 Hello 가 유도값이라 그 lane 의 Agent 를 fresh_nonce 로 바꾸거나 이 조각에서 빼야 한다 | 재시작 뒤 같은 Hello 바이트 거부 음성 테스트 · DoD-24 재시작 복원 유지 | ⬜ |
 | 1 | 계약 제안 — AgentGrantAck.grant_nonce(가칭) 순수 추가 · ACK 결합 규칙 교체 · §10 에 "유도 nonce 금지" 명시 · 벡터 | 제안 승인 | ⬜ |
 | 2 | Agent · Coordinator 가 단수명 nonce 를 CSPRNG 로 · ACK 결합을 새 칸으로 · selftest 전제 손질 | 기존 테스트 통과 · 재접속 시나리오 유지 | ⬜ |
 | 3 | Coordinator `DurableReplayGuard`(경로: `--replay-db`, 영속 lease 저장소를 쓰는 구성에서는 필수) · 1분 GC · 음성 테스트(재시작 뒤 같은 Hello · ACK 바이트 거부) | 음성 테스트 · 뮤테이션 | ⬜ |
