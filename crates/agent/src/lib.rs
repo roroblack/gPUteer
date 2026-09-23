@@ -293,6 +293,11 @@ pub struct AgentConfig {
     pub checkpoint_publish_interval_ms: u64,
     /// 재개 지점의 **생산자 서명**을 검증할 풀 노드 키 — `--pool-peer-keys "id=hex;..."`.
     pub pool_peer_keys: Vec<(String, VerifyingKey)>,
+    /// ★ 2026-09-23 (신뢰망 남은 일 I) — 이 Agent 가 맡은 GPU(장치 번호, 예 "1" · "0,1"). 주면 작업에
+    ///   `CUDA_VISIBLE_DEVICES` 로 그 GPU 만 보이게 한다. GPU 여러 장 기계는 **GPU 마다 Agent(노드) 하나**로 붙인다 —
+    ///   Coordinator 는 노드 단위로 배타 배정하므로 그렇게 하면 GPU 단위 배정이 된다.
+    ///   ★ 보이게 하는 것이지 강제가 아니다 — 작업이 환경 변수를 무시하고 다른 GPU 를 열면 막지 못한다(§0.4).
+    pub gpu_pin: Option<String>,
 
     // ── Lease revoke (2026-08-19) ───────────────────────────────────
     /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
@@ -389,7 +394,32 @@ pub(crate) fn unsupported_neighbor_report_lane(
 ///
 /// ★ 구현하지 않은 조합은 거부한다 — 받아 놓고 안 하는 것이 가장 나쁘다.
 ///   운영자는 신고가 모이는 줄 안다.
+/// ★ 2026-09-23 (신뢰망 남은 일 H) — "소유자가 GPU 를 되찾았다" 표시 파일. 체크포인트 루트의 형제다.
+pub fn owner_reclaim_marker(checkpoint_root: &std::path::Path) -> Result<PathBuf, String> {
+    checkpoint_root_sibling(checkpoint_root, ".owner-reclaimed")
+}
+
+/// 소유자가 공유를 다시 켠다 — 표시 파일을 지운다. 없으면 이미 켜져 있다(멱등).
+pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
+    let marker = owner_reclaim_marker(checkpoint_root)?;
+    match fs::remove_file(&marker) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("표시 파일을 지우지 못했다({marker:?}): {error}")),
+    }
+}
+
 pub fn run(config: AgentConfig) -> Result<(), String> {
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **붙지 않는다.** 붙으면 Coordinator 가 이 노드를
+    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
+    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
+    if marker.exists() {
+        return Err(format!(
+            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
+             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
+            marker.display()
+        ));
+    }
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -1169,6 +1199,10 @@ fn run_one_connection_inner(
                 checkpoint_out.clone().into_os_string(),
             ),
         ];
+        if let Some(pin) = config.gpu_pin.as_ref() {
+            workload_environment.push(("CUDA_VISIBLE_DEVICES".into(), pin.clone().into()));
+            workload_environment.push(("GPUTEER_GPU_PIN".into(), pin.clone().into()));
+        }
         if let Some(resume) = grant.resume_from.as_ref() {
             // ★ ACK **전에** 한다 — 이어갈 체크포인트를 검증하지 못하면 받지 않는다(받아 놓고 처음부터 돌리지 않는다).
             let resume_dir = run_dir.join("resume-in");
@@ -1324,7 +1358,22 @@ fn run_one_connection_inner(
                     started_at_unix_ms: report.started_at_unix_ms,
                     finished_at_unix_ms: report.finished_at_unix_ms,
                     issued_at_unix_ms: 0,
+                    stopped_by_owner: config.owner_panel_state.stopped_by_owner(&grant.attempt_id),
                 });
+                // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았다. 이 노드는 소유자가 다시 켤 때까지
+                //   풀에 붙지 않는다(표시 파일). 보고는 이번 실행에서 그대로 보낸다 — 선점 사실을 Coordinator 가 알아야
+                //   작업을 다른 노드로 옮긴다.
+                if config.owner_panel_state.stopped_by_owner(&grant.attempt_id) {
+                    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
+                    fs::write(&marker, format!("attempt_id={}\n", grant.attempt_id)).map_err(
+                        |error| format!("소유자 되찾음 표시를 남기지 못했다({marker:?}): {error}"),
+                    )?;
+                    println!(
+                        "OWNER_STOPPED attempt_id={} marker={}",
+                        grant.attempt_id,
+                        marker.display()
+                    );
+                }
             }
             None => {
                 println!(
@@ -3154,6 +3203,40 @@ fn checkpoint_root_sibling(
 /// ★ 삭제 실패를 `let _ =` 로 버리지 않는다(`CLAUDE.md` §3).
 ///   남의 출력을 못 지우면 그건 알아야 할 사실이다.
 /// ★ 결함 ㊷ ㊸ — 앞선 실패를 보고하기 전에 작업 디렉터리를 치우고, 정리까지 실패하면 **둘 다** 남긴다.
+/// ★ 2026-09-23 (신뢰망 남은 일 J) — 자기 서명 시드를 **파일에서** 읽을 수 있게 한다(`--own-seed-file`).
+///   `--own-seed <hex>` 는 명령줄에 비밀이 드러난다 — 같은 기계의 다른 사용자가 프로세스 목록에서 볼 수 있다.
+///   둘 다 주면 거부한다(어느 쪽이 쓰였는지 헷갈리지 않게). 파일은 hex 64자(앞뒤 공백 허용).
+fn own_seed_from_flags(flags: &Flags) -> Result<[u8; 32], String> {
+    match (flags.get("--own-seed"), flags.get("--own-seed-file")) {
+        (Some(_), Some(_)) => Err(
+            "STARTUP_REFUSED: OWN_SEED_TWICE — --own-seed 와 --own-seed-file 을 함께 주지 않는다"
+                .to_string(),
+        ),
+        (Some(hex), None) => hex_to_seed(hex),
+        (None, Some(path)) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("--own-seed-file 을 읽지 못했다({path}): {e}"))?;
+            hex_to_seed(text.trim())
+        }
+        (None, None) => Err("필수 인자 누락: --own-seed 또는 --own-seed-file".to_string()),
+    }
+}
+
+/// `--gpu-pin "1"` · `"0,1"` — 장치 번호만 받는다(숫자와 쉼표). 다른 것은 지어내지 않고 거부한다.
+fn parse_gpu_pin(raw: &str) -> Result<String, String> {
+    let ids: Vec<&str> = raw.split(',').map(str::trim).collect();
+    if ids.is_empty()
+        || ids
+            .iter()
+            .any(|id| id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()))
+    {
+        return Err(format!(
+            "--gpu-pin 형식 오류: {raw:?} — 장치 번호를 쉼표로 적는다(예 \"1\" · \"0,1\")"
+        ));
+    }
+    Ok(ids.join(","))
+}
+
 /// `--pool-peer-keys "id=hex;id2=hex"` — 재개 지점 생산자 서명을 검증할 풀 노드 키.
 fn parse_pool_peer_keys(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
     let mut keys = Vec::new();
@@ -3633,7 +3716,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         flags.get("--checkpoint-root").is_some() || flags.get("--report-outbox").is_some();
     let config = AgentConfig {
         coordinator_addr: flags.require("--connect")?,
-        own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+        own_seed: own_seed_from_flags(&flags)?,
         coordinator_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
         // 안 주면 None — Manifest 가 실려 오면 fail closed 로 거부한다.
         submitter_verifying_key: match flags.get("--submitter-pubkey") {
@@ -3728,6 +3811,10 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         pool_peer_keys: match flags.get("--pool-peer-keys") {
             Some(raw) => parse_pool_peer_keys(raw)?,
             None => Vec::new(),
+        },
+        gpu_pin: match flags.get("--gpu-pin") {
+            Some(raw) => Some(parse_gpu_pin(raw)?),
+            None => None,
         },
         expect_revoke_after_round: flags.u32_opt_flag("--expect-revoke-after-round")?,
         revoke_signer_id_override: flags.get("--revoke-signer-id").cloned(),
@@ -4069,6 +4156,7 @@ mod tests {
             shared_checkpoint_root: None,
             checkpoint_publish_interval_ms: 1_000,
             pool_peer_keys: Vec::new(),
+            gpu_pin: None,
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
             max_reconnect_attempts: 1_000,
@@ -5214,6 +5302,7 @@ mod report_session_tests {
         report::build_signed_attempt_report(
             &SigningKey::from_bytes(&AGENT_SEED),
             &report::TerminalObservation {
+                stopped_by_owner: false,
                 job_id: "job-report-test".into(),
                 attempt_id: "attempt-report-test".into(),
                 node_id: AGENT_ID.into(),

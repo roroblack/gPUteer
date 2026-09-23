@@ -615,9 +615,12 @@ fn stage_new_in_transaction(
     let mut job = job_store::fetch_job(connection, &request.job_id)
         .map_err(map_job_error)?
         .ok_or(StagingStoreError::JobNotFound)?;
-    if job.state != JobState::Queued {
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 선점으로 멈춘 Job(PAUSED)도 받는다. 새 Lease 를 받는 이 순간이
+    //   규범의 `PAUSED -> RUNNING`(RESUMED, guard "새 lease 발급") 이다.
+    if !matches!(job.state, JobState::Queued | JobState::Paused) {
         return Err(StagingStoreError::JobNotQueued(job.state));
     }
+    let resumed = job.state == JobState::Paused;
     let queued_at = job.queued_at_unix_ms.ok_or_else(|| {
         StagingStoreError::CorruptData("QUEUED Job has no queued timestamp".into())
     })?;
@@ -658,8 +661,15 @@ fn stage_new_in_transaction(
     fail_at(fault, TestFault::AfterLeaseInsert)?;
     fail_at(fault, TestFault::BeforeJobUpdate)?;
 
-    job.state = JobState::Staging;
-    job.staging_at_unix_ms = Some(request.issued_at_unix_ms);
+    if resumed {
+        job.state = gputeer_protocol::job_state::transition(JobState::Paused, JobState::Running)
+            .map_err(|_| StagingStoreError::JobNotQueued(JobState::Paused))?;
+        job.staging_at_unix_ms = Some(request.issued_at_unix_ms);
+        job.running_at_unix_ms = Some(request.issued_at_unix_ms);
+    } else {
+        job.state = JobState::Staging;
+        job.staging_at_unix_ms = Some(request.issued_at_unix_ms);
+    }
     job.revision = job
         .revision
         .checked_add(1)
@@ -1256,7 +1266,7 @@ fn load_result(
             StagingStoreError::CorruptData("operation points to missing Lease".into())
         })?;
     let original_lease = request.to_lease(epoch);
-    if job.state != JobState::Staging
+    if !matches!(job.state, JobState::Staging | JobState::Running)
         || job.staging_at_unix_ms != Some(request.issued_at_unix_ms)
         || attempt.job_id != request.job_id
         || attempt.lease_id != request.lease_id

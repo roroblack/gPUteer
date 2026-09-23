@@ -418,3 +418,84 @@ pub fn release_lost_node_by_operator(
         released_gpu_ids: reservation.selected_gpu_ids,
     })
 }
+
+/// ★ 2026-09-23 (신뢰망 남은 일 H) — 노드 소유자가 작업을 멈췄다(그 노드가 서명한 INTERRUPTED 보고 · 종료 관측).
+///
+/// ```text
+/// Job  RUNNING -> PAUSED (OWNER_PREEMPT)      이어갈 지점 = 공유 저장소의 검증된 마지막 체크포인트
+/// 노드 "되찾김" 표시                          pool_snapshot 이 그 노드를 **다시 Hello 할 때까지** 소식 없음으로 접는다
+/// ```
+///
+/// 스케줄러는 PAUSED Job 도 배치한다 — 다른 노드에서 `PAUSED -> RUNNING`(RESUMED)으로 이어간다. Lease 만료를 기다리지 않는다.
+/// 이 Job 의 최근 시도가 아니거나 Job 이 RUNNING 이 아니면 아무것도 하지 않는다(`Ok(None)`).
+pub fn pause_for_owner_preempt(
+    control_db: &Path,
+    job_id: &str,
+    attempt_id: &str,
+    node_id: &str,
+    policy: &FailoverPolicy,
+    now_unix_ms: u64,
+    notes: &mut Vec<String>,
+) -> Result<Option<String>, String> {
+    let mut connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(1))
+        .map_err(|e| e.to_string())?;
+    ensure_reclaim_table(&connection)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let Some(job) = crate::job_store::fetch_job(&transaction, job_id).map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    if job.state != JobState::Running {
+        return Ok(None);
+    }
+    let latest: Option<String> = transaction
+        .query_row(
+            "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if latest.as_deref() != Some(attempt_id) {
+        return Ok(None);
+    }
+    let resume = find_resume_point(&transaction, policy, job_id, now_unix_ms, notes)?;
+    crate::job_store::pause_for_owner_preempt(
+        &transaction,
+        &job,
+        resume.as_ref().map(|found| found.body.clone()),
+    )
+    .map_err(|e| e.to_string())?;
+    transaction
+        .execute(
+            "INSERT INTO coordinator_node_reclaims(node_id, reclaimed_at_unix_ms) VALUES (?1, ?2)
+             ON CONFLICT(node_id) DO UPDATE SET reclaimed_at_unix_ms = excluded.reclaimed_at_unix_ms",
+            rusqlite::params![node_id, now_unix_ms.to_be_bytes().to_vec()],
+        )
+        .map_err(|e| e.to_string())?;
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(Some(format!(
+        "OWNER_PREEMPTED job_id={job_id} attempt_id={attempt_id} node_id={node_id} resume_step={}",
+        resume
+            .as_ref()
+            .map(|found| found.step.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    )))
+}
+
+/// "소유자가 되찾음" 표시. `pool_snapshot()` 이 읽는다(있을 때만).
+pub(crate) fn ensure_reclaim_table(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS coordinator_node_reclaims (
+                node_id TEXT PRIMARY KEY,
+                reclaimed_at_unix_ms BLOB NOT NULL CHECK(length(reclaimed_at_unix_ms) = 8)
+            );",
+        )
+        .map_err(|e| e.to_string())
+}

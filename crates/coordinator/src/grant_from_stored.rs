@@ -149,9 +149,12 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         .ok_or_else(|| {
             StoredGrantError::Refused(format!("GRANT_REFUSED: {} 를 모른다", request.job_id))
         })?;
-    if job.state != JobState::Staging {
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 선점 뒤 다시 배치된 Job 은 새 Lease 를 받는 순간 RUNNING(RESUMED)이다.
+    //   그래서 STAGING · RUNNING 둘 다 받고, 대신 **시도가 아직 한 번도 받아들여지지 않았는가**(CREATED)를 아래에서 본다 —
+    //   ACK 로 STARTING 이 된 시도를 다시 내주지 않는다(같은 시도가 두 번 돌지 않게).
+    if !matches!(job.state, JobState::Staging | JobState::Running) {
         return Err(StoredGrantError::Refused(format!(
-            "GRANT_REFUSED: Job 이 STAGING 이 아니다(현재 {:?}) — 예약 없이 Grant 를 만들지 않는다",
+            "GRANT_REFUSED: Job 이 STAGING · RUNNING 이 아니다(현재 {:?}) — 예약 없이 Grant 를 만들지 않는다",
             job.state
         )));
     }
@@ -223,6 +226,12 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         return Err(StoredGrantError::Refused(format!(
             "GRANT_REFUSED: Attempt 가 다른 Job 의 것이다({} != {})",
             attempt.job_id, request.job_id
+        )));
+    }
+    if attempt.state != gputeer_protocol::attempt_state::AttemptState::Created {
+        return Err(StoredGrantError::Refused(format!(
+            "GRANT_REFUSED: 시도 {} 는 이미 받아들여졌다({:?}) — 같은 시도를 다시 내주지 않는다",
+            attempt.attempt_id, attempt.state
         )));
     }
     // (대체 검사는 신원 대조들 **뒤에** 둔다 — 더 구체적인 불일치 사유가 먼저 보이게.)

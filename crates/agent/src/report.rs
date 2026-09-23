@@ -96,6 +96,9 @@ pub struct TerminalObservation {
     pub finished_at_unix_ms: u64,
     /// 이 보고를 만드는 시점에 읽은 시계.
     pub issued_at_unix_ms: u64,
+    /// ★ 2026-09-23 (신뢰망 남은 일 H) — 이 노드의 **소유자가** Owner Panel 로 멈췄다(관측, `OwnerPanelState`).
+    ///   그러면 outcome 은 FAILED 가 아니라 INTERRUPTED 다 — 작업이 잘못된 게 아니라 GPU 를 되찾긴 것이다.
+    pub stopped_by_owner: bool,
 }
 
 /// 보고를 만들 수 없는 이유. **전부 "안 보낸다" 다** — 부분 보고가 없다.
@@ -225,7 +228,11 @@ pub fn build_signed_attempt_report(
         attempt_id: observation.attempt_id.clone(),
         node_id: observation.node_id.clone(),
         fence_epoch: observation.fence_epoch,
-        outcome: outcome_for(observation.exit_code, observation.finalization_failure) as i32,
+        outcome: if observation.stopped_by_owner {
+            pb::AttemptOutcome::Interrupted as i32
+        } else {
+            outcome_for(observation.exit_code, observation.finalization_failure) as i32
+        },
         // v2 — 종료 관측의 **존재 여부**를 그대로 옮긴다(B+E 계획서 §5.7 (3)). 코드가 없으면 NO_CODE 로 적고
         //   exit_code 는 기본값이다 — 숫자로 "없음" 을 나타내지 않는다.
         exit_observation: match observation.exit_code {
@@ -280,6 +287,7 @@ mod tests {
 
     fn observation() -> TerminalObservation {
         TerminalObservation {
+            stopped_by_owner: false,
             job_id: JOB.into(),
             attempt_id: ATTEMPT.into(),
             node_id: NODE.into(),
@@ -525,5 +533,20 @@ mod tests {
             outcome.is_err(),
             "서명 뒤에 바꾼 outcome 이 그대로 통과했다"
         );
+    }
+
+    /// ★ H — 소유자가 멈춘 시도는 INTERRUPTED 로 보고한다(종료 관측은 그대로 싣는다 — v2 규칙이 허용한다).
+    #[test]
+    fn an_owner_stop_is_reported_as_interrupted_not_failed() {
+        let key = SigningKey::from_bytes(&[3u8; 32]);
+        let mut observed = observation();
+        observed.exit_code = Some(0xC000_0013);
+        observed.stopped_by_owner = true;
+        let report = build_signed_attempt_report(&key, &observed).unwrap();
+        assert_eq!(report.outcome, pb::AttemptOutcome::Interrupted as i32);
+        gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(&report).unwrap();
+        observed.stopped_by_owner = false;
+        let report = build_signed_attempt_report(&key, &observed).unwrap();
+        assert_eq!(report.outcome, pb::AttemptOutcome::Failed as i32);
     }
 }

@@ -40,6 +40,7 @@ pub mod manifest_requirements;
 pub mod multi_agent;
 pub mod neighbor_report_store;
 pub mod node_liveness_store;
+pub mod status;
 // ★ 이 허용은 **`orchestrate` 의 것이다.** `DoD-46` 이 "production
 //   미연결" 로 남겨 테스트 fixture 만 부르던 동안 dead_code 경고가
 //   났다. 이제 `gputeer stage-job` 이 부르므로 허용이 필요 없을 수도
@@ -312,6 +313,8 @@ pub struct CoordinatorConfig {
     pub pool_mode: bool,
     /// 풀에 속한 노드 — `(node_id, 공개키)`. `--pool-agents "id=hex;id2=hex"`.
     pub pool_agents: Vec<(String, VerifyingKey)>,
+    /// ★ 2026-09-23 (신뢰망 남은 일 H) — 풀 모드에서 소유자 선점 때 이어갈 체크포인트를 찾을 공유 저장소.
+    pub shared_checkpoint_root: Option<PathBuf>,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -2496,6 +2499,25 @@ fn serve_renew_session(
 /// ★ 결정 D1 — 예약이 없어진 늦은 보고도 배정 기록으로 결합해 저장하고 Ack 한다(`bound_via`). 늦은 보고로 예약을 해제하지 않는다.
 /// ★ 아직 하지 않는다: 예약 해제 · Attempt 전이 · 결과 채택.
 #[allow(clippy::too_many_arguments)]
+/// ★ 2026-09-23 (신뢰망 남은 일 J) — 자기 서명 시드를 **파일에서** 읽을 수 있게 한다(`--own-seed-file`).
+///   `--own-seed <hex>` 는 명령줄에 비밀이 드러난다 — 같은 기계의 다른 사용자가 프로세스 목록에서 볼 수 있다.
+///   둘 다 주면 거부한다(어느 쪽이 쓰였는지 헷갈리지 않게). 파일은 hex 64자(앞뒤 공백 허용).
+fn own_seed_from_flags(flags: &Flags) -> Result<[u8; 32], String> {
+    match (flags.get("--own-seed"), flags.get("--own-seed-file")) {
+        (Some(_), Some(_)) => Err(
+            "STARTUP_REFUSED: OWN_SEED_TWICE — --own-seed 와 --own-seed-file 을 함께 주지 않는다"
+                .to_string(),
+        ),
+        (Some(hex), None) => hex_to_seed(hex),
+        (None, Some(path)) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("--own-seed-file 을 읽지 못했다({path}): {e}"))?;
+            hex_to_seed(text.trim())
+        }
+        (None, None) => Err("필수 인자 누락: --own-seed 또는 --own-seed-file".to_string()),
+    }
+}
+
 /// 풀 모드에서 연결마다 정해지는 식별자의 자리 채움 값. 이 값으로 발급하지 않는다(연결마다 덮는다).
 const POOL_UNASSIGNED: &str = "pool-unassigned";
 
@@ -2698,13 +2720,43 @@ fn store_terminal_report_with_policy(
     };
     let result =
         store.store_verified_terminal_report_and_release(verified, authorization, now_unix_ms)?;
-    Ok((
-        result,
-        format!(
-            "RESERVATION_RELEASED node_id={} attempt_id={}",
-            report.node_id, report.attempt_id
-        ),
-    ))
+    let mut note = format!(
+        "RESERVATION_RELEASED node_id={} attempt_id={}",
+        report.node_id, report.attempt_id
+    );
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 그 노드가 서명한 "중단" 보고 = 소유자가 GPU 를 되찾았다(Agent 가 Owner Panel 로
+    //   관측한 사실만 INTERRUPTED 로 보낸다). 풀 모드면 Job 을 선점으로 멈추고 그 노드를 되찾김으로 표시한다.
+    if config.pool_mode && report.outcome == pb::AttemptOutcome::Interrupted as i32 {
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: config.shared_checkpoint_root.clone(),
+            producer_keys: config.pool_agents.clone(),
+        };
+        let mut notes = Vec::new();
+        match crate::failover::pause_for_owner_preempt(
+            control_db,
+            &report.job_id,
+            &report.attempt_id,
+            &report.node_id,
+            &policy,
+            now_unix_ms,
+            &mut notes,
+        ) {
+            Ok(Some(line)) => note = format!("{note}\n{line}"),
+            Ok(None) => {}
+            Err(error) => {
+                return Err(
+                    crate::attempt_report_store::AttemptReportStoreError::Staging(format!(
+                        "소유자 선점 기록: {error}"
+                    )),
+                )
+            }
+        }
+        for extra in notes {
+            note = format!("{note}\n{extra}");
+        }
+    }
+    Ok((result, note))
 }
 
 /// 완료 작업이 요구한 산출물 내구성 — 제출자 서명 Manifest 를 **지금** 다시 검증한 뒤에만 읽는다(§0.2 · DoD-50).
@@ -3780,7 +3832,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
 
     let config = CoordinatorConfig {
         listen: flags.require("--listen")?,
-        own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
+        own_seed: own_seed_from_flags(&flags)?,
         agent_verifying_key: match pool_first_key {
             Some(key) => {
                 per_connection("--peer-pubkey")?;
@@ -3861,6 +3913,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         release_on_exit_report: flags.bool_flag("--release-on-exit-report"),
         pool_mode,
         pool_agents,
+        shared_checkpoint_root: flags.get("--shared-checkpoint-root").map(PathBuf::from),
         extra_agents: flags.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags
             .u32_flag_with_default("--require-concurrent-sessions", 0)?,

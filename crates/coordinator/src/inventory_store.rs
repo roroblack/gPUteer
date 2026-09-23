@@ -557,6 +557,15 @@ impl CoordinatorInventoryStore {
             )
             .map_err(map_sql_error)?
             > 0;
+        let reclaims_table_exists: bool = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'coordinator_node_reclaims'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sql_error)?
+            > 0;
         let reservations_table_exists: bool = transaction
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
@@ -609,9 +618,29 @@ impl CoordinatorInventoryStore {
             } else {
                 None
             };
-            candidate.last_heartbeat_unix_ms = match (heartbeat_unix_ms, session_seen_unix_ms) {
+            let last_seen = match (heartbeat_unix_ms, session_seen_unix_ms) {
                 (Some(a), Some(b)) => Some(a.max(b)),
                 (a, b) => a.or(b),
+            };
+            // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면, 그 **뒤에** 다시 Hello 할 때까지
+            //   소식 없음으로 접는다. 되찾은 GPU 에 곧바로 새 일을 주지 않는다(§0.1).
+            let reclaimed_at = if reclaims_table_exists {
+                transaction
+                    .query_row(
+                        "SELECT reclaimed_at_unix_ms FROM coordinator_node_reclaims WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .optional()
+                    .map_err(map_sql_error)?
+                    .map(|raw| decode_u64(&raw, "reclaimed_at_unix_ms"))
+                    .transpose()?
+            } else {
+                None
+            };
+            candidate.last_heartbeat_unix_ms = match (last_seen, reclaimed_at) {
+                (Some(seen), Some(reclaimed)) if reclaimed >= seen => None,
+                (seen, _) => seen,
             };
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)

@@ -40,6 +40,7 @@ mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
 mod issue_grant;
+mod ops;
 mod out_file;
 mod plan_job;
 mod release_lost_node;
@@ -86,6 +87,16 @@ gputeer — gPUteer CLI
     gputeer plan-job --job-id <id> --control-db <path> \
         --submitter-keyring <path> --submitter-member <id> \
         --max-snapshot-age-ms <ms>
+
+  신뢰망 운영 — 전체 절차는 docs/runbooks/신뢰망_설치_운영.md
+    gputeer keygen --out <시드 파일>
+    gputeer coordinator-stub --pool-mode true --pool-agents <id=hex;...> --own-seed-file <파일> ...
+    gputeer scheduler-loop --interval-ms <ms> --max-ticks 0 <scheduler-tick 인자>
+        [--silent-after-ms <ms>] [--failover-grace-ms <ms> --shared-checkpoint-root <dir>]
+    gputeer agent-loop --interval-ms <ms> --max-rounds 0 -- <agent-stub 인자>
+    gputeer status --control-db <path>
+    gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>
+    gputeer owner-resume --checkpoint-root <dir>
 
     selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
                                   작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
@@ -189,6 +200,53 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("keygen") => match ops::keygen(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("keygen 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("status") => match ops::status(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("status 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("owner-resume") => {
+            // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 공유를 다시 켠다.
+            let root = match args.get(1).map(String::as_str) {
+                Some("--checkpoint-root") => args.get(2),
+                _ => None,
+            };
+            match root {
+                Some(root) => match gputeer_agent::owner_resume(std::path::Path::new(root)) {
+                    Ok(true) => {
+                        println!("OWNER_RESUMED — 다시 풀에 붙는다");
+                        ExitCode::SUCCESS
+                    }
+                    Ok(false) => {
+                        println!("OWNER_RESUMED — 이미 켜져 있었다");
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("owner-resume 실패: {error}");
+                        ExitCode::FAILURE
+                    }
+                },
+                None => {
+                    eprintln!("owner-resume 실패: --checkpoint-root <루트> 가 필요하다");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some("release-lost-node") => match release_lost_node::run(&args[1..]) {
             Ok(message) => {
                 println!("{message}");

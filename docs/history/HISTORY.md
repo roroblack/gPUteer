@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-09-23 20:09 — 신뢰망 남은 일 H · I · J: 소유자 선점 · GPU 고정 · 설치 운영
+
+- 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` H · I · J
+- 스트림: Agent · Coordinator · Scheduler · 운영
+- 수행:
+  - **H 소유자 선점** — Owner Panel 정지가 성공하면 그 시도를 "소유자가 멈춤" 으로 기록하고, 종료 보고를 FAILED 가 아니라
+    **INTERRUPTED** 로 보낸다(관측 사실). 체크포인트 루트 옆에 되찾음 표시 파일을 남겨 **다시 켤 때까지 풀에 붙지 않는다**
+    (`OWNER_RECLAIMED` · `gputeer owner-resume`). Coordinator(풀 모드)는 그 보고에 `RUNNING -> PAUSED`(OWNER_PREEMPT) + 검증된 마지막 체크포인트 +
+    그 노드 되찾김 표시(`pool_snapshot` 이 다시 Hello 할 때까지 소식 없음으로 접는다). 스케줄러가 PAUSED 도 배치하고 스테이징이
+    `PAUSED -> RUNNING`(RESUMED, "새 lease 발급")으로 옮긴다. Grant 는 Job STAGING · RUNNING 이면서 **시도가 CREATED 일 때만** 준다
+  - **I GPU 고정** — `--gpu-pin` 이 작업에 `CUDA_VISIBLE_DEVICES` · `GPUTEER_GPU_PIN` 을 준다. GPU 여러 장 기계는 GPU 마다 노드 하나(런북)
+  - **J 운영** — `docs/runbooks/신뢰망_설치_운영.md` · `deploy/trusted-party/`(systemd 유닛 3 · PowerShell 3 · 설정 틀, 값은 전부 자리 표시) ·
+    `gputeer keygen`(파일에만, 덮지 않음) · `--own-seed-file`(두 명령 — 명령줄에 비밀을 드러내지 않는다) · `gputeer status`(읽기 전용 요약)
+- 검증: 워크스페이스 **1275 passed · 1 failed** -> 그 1건은 거부 문구를 바꾼 것을 옛 문구로 보던 시험(기대를 고침, `issue_grant` 19/19).
+  서식 0 · check_docs 0/0. 실제 프로세스 시험 — 소유자 선점(6초, Lease 60초 이전) · 장애 이어받기 + GPU 고정(A 0 · B 1) · 풀 운영(시드 파일 · status 요약)
+- ★ 한계: GPU 고정은 보이게 하는 것이지 강제가 아니다 · 되찾은 노드는 소유자가 명령으로 다시 켠다(패널 버튼 없음) · 제출 쪽 `--submitter-seed` 는 아직 명령줄이다
+- 리포트: 없음(계획 문서 · 런북이 대신한다)
+
 ## 2026-09-23 19:47 — 신뢰망 남은 일 E · F · G: 체크포인트가 기계를 넘고, 끊긴 노드의 작업을 다른 노드가 이어받는다
 
 - 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` E · F · G

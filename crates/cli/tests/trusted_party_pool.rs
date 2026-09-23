@@ -290,6 +290,9 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
         pub_hex(AGENT_SEED_1),
         pub_hex(AGENT_SEED_2)
     );
+    // ★ J — 운영은 시드를 명령줄이 아니라 파일로 준다(프로세스 목록에 비밀이 드러나지 않게).
+    let coordinator_seed_file = dir.path().join("coordinator.seed");
+    std::fs::write(&coordinator_seed_file, COORD_SEED).expect("시드 파일");
     let coordinator = Command::new(cli_bin())
         .args([
             "coordinator-stub",
@@ -299,8 +302,8 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
             &pool_agents,
             "--listen",
             "127.0.0.1:0",
-            "--own-seed",
-            COORD_SEED,
+            "--own-seed-file",
+            coordinator_seed_file.to_str().unwrap(),
             "--coordinator-device-id",
             COORDINATOR,
             "--grant-from-control-db",
@@ -458,6 +461,16 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
         assert!(
             out.contains("outcome=worked"),
             "{label} 가 한 번도 일하지 않았다\n{everything}"
+        );
+    }
+    // ★ J — 운영자가 보는 한 줄 요약이 사실과 같다.
+    let (ok, status) = run_cli(&["status", "--control-db", &db_s]);
+    assert!(ok, "status 실패: {status}");
+    assert!(status.contains("SUMMARY completed=3"), "{status}");
+    for node in [NODE_1, NODE_2] {
+        assert!(
+            status.contains(&format!("{node} reserved_by=-")),
+            "끝났는데 {node} 의 예약이 보인다: {status}"
         );
     }
 }

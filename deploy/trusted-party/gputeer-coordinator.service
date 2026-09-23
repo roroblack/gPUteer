@@ -1,0 +1,12 @@
+[Unit]
+Description=gPUteer 풀 Coordinator (신뢰망)
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/gputeer/gputeer.env
+ExecStart=/bin/sh -c 'exec "$GPUTEER_BIN" coordinator-stub --pool-mode true --pool-agents "$GPUTEER_POOL_AGENTS" --listen "$GPUTEER_LISTEN" --own-seed-file "$GPUTEER_COORDINATOR_SEED_FILE" --coordinator-device-id "$GPUTEER_COORDINATOR_ID" --grant-from-control-db "$GPUTEER_CONTROL_DB" --lease-db "$GPUTEER_CONTROL_DB" --liveness-db "$GPUTEER_CONTROL_DB" --submitter-keyring "$GPUTEER_SUBMITTER_KEYRING" --accept-report-sessions true --release-on-exit-report true --shared-checkpoint-root "$GPUTEER_SHARED_ROOT" --max-connections 0 --accept-timeout-ms 0'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

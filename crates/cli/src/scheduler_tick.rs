@@ -201,8 +201,9 @@ pub fn run(args: &[String]) -> Result<String, String> {
     // ── 큐의 맨 앞 하나 ─────────────────────────────────────────────
     //
     // `list_queued()` 는 `(queued_at, job_id)` 순의 결정적 FIFO 다.
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 선점으로 멈춘 PAUSED Job 도 배치한다(다른 노드에서 RESUMED).
     let queued = jobs
-        .list_queued()
+        .list_schedulable()
         .map_err(|e| format!("큐 조회 실패: {e}"))?;
     let Some(job) = queued.into_iter().next() else {
         // ★ 빈 큐는 **오류가 아니다.** 루프가 이걸 실패로 세면 정상

@@ -597,8 +597,9 @@ fn a_queued_but_unstaged_job_gets_no_grant() {
         "true",
     ]);
     assert!(!ok, "예약 없는 Job 에 Grant 를 냈다: {output}");
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 선점 뒤 다시 배치된 Job 은 RUNNING(RESUMED)이라 문구가 둘을 말한다.
     assert!(
-        output.contains("STAGING 이 아니다"),
+        output.contains("STAGING · RUNNING 이 아니다"),
         "이유를 안 말한다: {output}"
     );
     assert!(!out.exists(), "거부했는데 파일을 남겼다");

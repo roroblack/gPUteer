@@ -341,6 +341,7 @@ dependencies = [
 name = "gputeer-cli"
 version = "0.0.1"
 dependencies = [
+ "getrandom 0.2.17",
  "gputeer-agent",
  "gputeer-checkpoint",
  "gputeer-coordinator",

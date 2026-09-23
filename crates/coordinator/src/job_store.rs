@@ -500,6 +500,28 @@ impl CoordinatorJobStore {
 
     /// Returns the durable queue in deterministic FIFO order. `job_id` is the
     /// tie-breaker when two jobs have the same queue timestamp.
+    /// ★ 2026-09-23 (신뢰망 남은 일 H) — 배치할 수 있는 Job: QUEUED 와 **선점으로 멈춘** PAUSED. `(queued_at, job_id)` 순.
+    ///   선점된 작업은 원래 큐 진입 시각을 지킨다 — 소유자가 GPU 를 되찾았다고 뒤로 밀지 않는다.
+    pub fn list_schedulable(&self) -> Result<Vec<StoredJob>, JobStoreError> {
+        let sql = SELECT_QUEUED_SQL.replace(
+            "WHERE state = 'QUEUED'",
+            "WHERE state IN ('QUEUED', 'PAUSED')",
+        );
+        let mut statement = self.connection.prepare(&sql).map_err(map_sql_error)?;
+        let mut jobs = statement
+            .query_map([], row_to_raw)
+            .map_err(map_sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sql_error)?
+            .into_iter()
+            .map(RawJobRow::into_stored)
+            .collect::<Result<Vec<_>, _>>()?;
+        jobs.sort_by(|a, b| {
+            (a.queued_at_unix_ms, &a.job_id).cmp(&(b.queued_at_unix_ms, &b.job_id))
+        });
+        Ok(jobs)
+    }
+
     pub fn list_queued(&self) -> Result<Vec<StoredJob>, JobStoreError> {
         let mut statement = self
             .connection
@@ -1149,6 +1171,40 @@ pub(crate) fn requeue_after_node_lost(
     Ok(next)
 }
 
+/// ★ 2026-09-23 (신뢰망 남은 일 H) — 노드 소유자가 GPU 를 되찾았다: `RUNNING -> PAUSED`(OWNER_PREEMPT).
+///
+/// 규범 effect "checkpoint 후 정지" — 이어갈 지점은 공유 저장소의 검증된 마지막 체크포인트다(없으면 전에 고른 지점을
+/// 그대로 둔다 — 처음부터 다시 도는 것은 PURE 작업에서만 안전하다). 새 시도의 식별자를 가르려고 되돌아온 횟수를 올린다.
+/// 다른 노드에 다시 배치되면 `PAUSED -> RUNNING`(RESUMED, "새 lease 발급")이다 — 스테이징이 한다.
+pub(crate) fn pause_for_owner_preempt(
+    connection: &Connection,
+    job: &StoredJob,
+    resume: Option<Vec<u8>>,
+) -> Result<StoredJob, JobStoreError> {
+    let mut next = job.clone();
+    next.state = gputeer_protocol::job_state::transition(job.state, JobState::Paused).map_err(
+        |rejected| JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        },
+    )?;
+    next.requeue_count = job
+        .requeue_count
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData(
+            "requeue_count overflow".to_string(),
+        ))?;
+    if resume.is_some() {
+        next.resume_checkpoint = resume;
+    }
+    next.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &next)?;
+    Ok(next)
+}
+
 /// ACK 를 받았을 때 Job 을 `STAGING -> RUNNING`(STAGING_COMPLETE)으로 옮긴다.
 ///
 /// ★ 2026-09-23 (신뢰망 남은 일 D). Agent 는 Grant·Lease 를 검증하고 workspace 를 만든 **뒤에** ACK 를 보낸다
@@ -1164,7 +1220,9 @@ pub(crate) fn record_staging_complete(
     let Some(mut job) = fetch_job(connection, job_id)? else {
         return Err(JobStoreError::NotFound);
     };
-    if job.state != JobState::Staging {
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 선점 뒤 다시 배치된 Job 은 새 Lease 를 받는 순간 이미 RUNNING 이다(RESUMED).
+    //   그 시도의 ACK 는 Job 을 더 옮기지 않고, 시도만 STARTING 으로 적는다(아래 `latest` 대조는 똑같이 한다).
+    if !matches!(job.state, JobState::Staging | JobState::Running) {
         return Ok(false);
     }
     let latest: Option<String> = connection
@@ -1178,6 +1236,9 @@ pub(crate) fn record_staging_complete(
         .map_err(map_sql_error)?;
     if latest.as_deref() != Some(attempt_id) {
         return Ok(false);
+    }
+    if job.state == JobState::Running {
+        return Ok(true);
     }
     if let Some(staging_at) = job.staging_at_unix_ms {
         ensure_not_before(now_unix_ms, staging_at)?;

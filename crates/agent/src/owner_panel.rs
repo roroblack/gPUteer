@@ -127,6 +127,9 @@ pub fn estimate_loss(workload: &RunningWorkload, now_unix_ms: u64) -> LossEstima
 #[derive(Clone)]
 pub struct OwnerPanelState {
     inner: Arc<Mutex<BTreeMap<String, RunningWorkload>>>,
+    /// ★ 2026-09-23 (신뢰망 남은 일 H) — **소유자가** 멈춘 시도. 종료 보고가 "실패" 가 아니라 "중단(선점)" 을 말하게 한다.
+    ///   관측한 사실이다 — 정지 요청이 성공한 attempt 만 들어간다. 실행 계층은 누가 죽였는지 모르지만 이 패널은 안다.
+    owner_stopped: Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
 
 impl Default for OwnerPanelState {
@@ -139,6 +142,7 @@ impl OwnerPanelState {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(BTreeMap::new())),
+            owner_stopped: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
         }
     }
 
@@ -186,7 +190,25 @@ impl OwnerPanelState {
         let workload = guard
             .get(attempt_id)
             .ok_or_else(|| format!("그런 작업이 없다: {attempt_id}"))?;
-        workload.stopper.stop().map_err(|error| error.to_string())
+        workload.stopper.stop().map_err(|error| error.to_string())?;
+        // 정지가 **성공한 뒤에만** 적는다 — 실패한 요청을 선점으로 보고하지 않는다.
+        match self.owner_stopped.lock() {
+            Ok(mut stopped) => {
+                stopped.insert(attempt_id.to_string());
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().insert(attempt_id.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// 이 시도를 **소유자가** 멈췄나.
+    pub fn stopped_by_owner(&self, attempt_id: &str) -> bool {
+        match self.owner_stopped.lock() {
+            Ok(stopped) => stopped.contains(attempt_id),
+            Err(poisoned) => poisoned.into_inner().contains(attempt_id),
+        }
     }
 
     /// ★ 락이 poisoned 여도 계속 간다.
