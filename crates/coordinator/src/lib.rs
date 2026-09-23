@@ -648,6 +648,15 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         None
     };
 
+    // ★ 2026-09-24 (결함 235 · 재검수 79) — 이 control DB 가 풀의 것임을 적는다. 스케줄러가 이 표식으로 풀 여부를 안다.
+    //   ★ 결함 249 (재검수 82) — READY **전에** 적는다(전에는 READY 뒤였다).
+    if config.pool_mode {
+        if let Some(control_db) = config.grant_from_control_db.as_ref() {
+            crate::job_store::declare_pool_mode(control_db, SystemClock.now_unix_ms())
+                .map_err(|e| format!("STARTUP_REFUSED: POOL_MODE_DECLARE — control DB 에 풀 표식을 적지 못했다: {e}"))?;
+        }
+    }
+
     let listener = TcpListener::bind(&config.listen).map_err(|e| format!("bind 실패: {e}"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
 
@@ -660,13 +669,6 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     // ★ 풀 모드 — 풀에 속한 노드 전부를 검증 목록에 올린다(`--pool-agents`).
     for (id, key) in &config.pool_agents {
         agent_keys.insert(id.clone(), *key);
-    }
-    // ★ 2026-09-24 (결함 235 · 재검수 79) — 이 control DB 가 풀의 것임을 적는다. 스케줄러가 이 표식으로 풀 여부를 안다.
-    if config.pool_mode {
-        if let Some(control_db) = config.grant_from_control_db.as_ref() {
-            crate::job_store::declare_pool_mode(control_db, SystemClock.now_unix_ms())
-                .map_err(|e| format!("STARTUP_REFUSED: POOL_MODE_DECLARE — control DB 에 풀 표식을 적지 못했다: {e}"))?;
-        }
     }
 
     let mut memory_replay = InMemoryReplayGuard::new();

@@ -226,6 +226,23 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //   만족 가능한 작업까지 영구 FAILED 가 됐다. 그리고 비-LOCAL 작업은 **건너뛰고** 다음 작업을 본다 — QUEUED 는 규범
     //   `QUEUED -> FAILED`(PERMANENTLY_INFEASIBLE)로 내리고, PAUSED 는 규범상 여기서 내릴 전이가 없어(PAUSE_TIMEOUT · USER_CANCELLED 뿐)
     //   건너뛰기만 한다 — 전에는 PAUSED 가 FIFO 맨 앞을 영구히 막았다.
+    // ★ 결함 249 (재검수 82) — 표식은 Coordinator 가 처음 뜰 때 적는다. 그 전에 스케줄러가 돌면 표식이 없어 비-LOCAL 이 배치됐다.
+    //   그래서 풀 운영의 스케줄러는 `--pool-mode true` 를 **명시**한다(짐작이 아니다) — 주면 표식을 적고 풀로 본다.
+    match flags.get("--pool-mode").map(String::as_str) {
+        None | Some("true") | Some("false") => {}
+        Some(other) => {
+            return Err(format!(
+                "TICK_ARGS_REFUSED: POOL_MODE_NOT_A_BOOL — --pool-mode 는 true · false 다(받은 값 {other:?})"
+            ))
+        }
+    }
+    if flags.get("--pool-mode").map(String::as_str) == Some("true") {
+        gputeer_coordinator::job_store::declare_pool_mode(
+            std::path::Path::new(control_db),
+            now_unix_ms,
+        )
+        .map_err(|e| format!("TICK_REFUSED: 풀 모드 표식을 적지 못했다: {e}"))?;
+    }
     let pool_declared =
         gputeer_coordinator::job_store::pool_mode_declared(std::path::Path::new(control_db))
             .map_err(|e| format!("TICK_REFUSED: 풀 모드 표식을 읽지 못했다: {e}"))?;

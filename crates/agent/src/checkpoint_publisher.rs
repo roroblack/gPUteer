@@ -60,11 +60,8 @@ fn step_of(name: &str) -> Option<u64> {
     if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
-    // ★ 2026-09-24 (결함 242 · 재검수 81) — 숫자 하나에 이름 하나. `step-01` 과 `step-1` 이 같은 step 으로 섞여 안정 판정이 서로를 깨고,
-    //   끝에서는 먼저 정렬된 쪽이 체크포인트 id 를 차지했다. 앞자리 0 은 받지 않는다(`step-0` 만 예외).
-    if digits.len() > 1 && digits.starts_with('0') {
-        return None;
-    }
+    // ★ 결함 242 · 255 (재검수 81 · 83) — 앞자리 0(`step-01`)은 **받는다**(한때 거부했더니 그렇게 쓰던 작업의 체크포인트가 경고 없이 사라졌다).
+    //   같은 숫자의 폴더가 둘이면(`step-01` · `step-1`) 둘 다 건너뛰고 크게 알린다 — `publish_ready_steps` 가 가른다.
     digits.parse().ok()
 }
 
@@ -98,6 +95,7 @@ fn fingerprint(dir: &Path) -> Option<Fingerprint> {
 pub struct PublishState {
     pub published: BTreeSet<u64>,
     seen: BTreeMap<u64, Fingerprint>,
+    conflicts_reported: BTreeSet<u64>,
 }
 
 /// `out_dir` 에서 완성된 `step-<숫자>` 폴더를 찾아 **아직 안 올린 것**을 step 순으로 올린다.
@@ -113,14 +111,29 @@ pub fn publish_ready_steps(
     let Ok(entries) = std::fs::read_dir(out_dir) else {
         return;
     };
-    let mut ready: Vec<(u64, PathBuf)> = entries
+    let all: Vec<(u64, PathBuf)> = entries
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
         .filter_map(|entry| {
             step_of(&entry.file_name().to_string_lossy()).map(|step| (step, entry.path()))
         })
-        .filter(|(step, _)| !state.published.contains(step))
         .collect();
+    let mut ready: Vec<(u64, PathBuf)> = Vec::new();
+    for (step, dir) in &all {
+        if state.published.contains(step) {
+            continue;
+        }
+        if all.iter().filter(|(other, _)| other == step).count() > 1 {
+            if state.conflicts_reported.insert(*step) {
+                println!(
+                    "CHECKPOINT_STEP_NAME_CONFLICT step={step} job_id={} — 같은 번호의 폴더가 여럿이다(예: step-01 · step-1). 어느 쪽도 올리지 않는다",
+                    ctx.job_id
+                );
+            }
+            continue;
+        }
+        ready.push((*step, dir.clone()));
+    }
     ready.sort();
     for (step, dir) in ready {
         if require_stable {
@@ -238,7 +251,10 @@ pub fn finish(publisher: RunningPublisher) {
         }
     };
     // 작업이 끝났다 — 더 쓰는 쪽이 없으므로 안정을 기다리지 않는다.
-    const FINAL_TRIES: u32 = 3;
+    // ★ 결함 252 (재검수 83) — 0 · 0.5 · 1초 세 번은 1.1초 끊김에도 졌다. 약 15초까지 늘린다(0 · 0.5 · 1 · 2 · 4 · 8초).
+    //   그래도 못 올리면 잃는다 — 작업 폴더는 작업이 끝나면 지운다(§0.5 · 남의 PC 에 남의 데이터를 두지 않는다).
+    const BACKOFF_MS: [u64; 5] = [500, 1_000, 2_000, 4_000, 8_000];
+    const FINAL_TRIES: u32 = BACKOFF_MS.len() as u32 + 1;
     for attempt in 1..=FINAL_TRIES {
         publish_ready_steps(
             &publisher.ctx,
@@ -247,27 +263,40 @@ pub fn finish(publisher: RunningPublisher) {
             false,
             now_unix_ms(),
         );
+        // 목록을 못 읽으면 "남은 것 없음" 이 아니라 "모른다" 다 — 다시 해 본다(결함 252).
         let left = unpublished_steps(&publisher.out_dir, &state);
-        if left.is_empty() {
+        if matches!(&left, Ok(left) if left.is_empty()) {
             return;
         }
         if attempt == FINAL_TRIES {
-            for step in left {
-                println!(
-                    "CHECKPOINT_PUBLISH_LOST step={step} job_id={} — {FINAL_TRIES} 번 해 봤지만 공유 저장소에 서명하지 못한 채 끝난다(이 step 에서는 이어갈 수 없다)",
+            match left {
+                Ok(left) => {
+                    for step in left {
+                        println!(
+                            "CHECKPOINT_PUBLISH_LOST step={step} job_id={} — {FINAL_TRIES} 번(약 15초) 해 봤지만 공유 저장소에 서명하지 못한 채 끝난다(이 step 에서는 이어갈 수 없다)",
+                            publisher.ctx.job_id
+                        );
+                    }
+                }
+                Err(error) => println!(
+                    "CHECKPOINT_PUBLISH_LOST step=? job_id={} — 작업 출력 폴더를 읽지 못해 무엇을 못 올렸는지도 모른다: {error}",
                     publisher.ctx.job_id
-                );
+                ),
             }
             return;
         }
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(
+            BACKOFF_MS[(attempt as usize - 1).min(BACKOFF_MS.len() - 1)],
+        ));
     }
 }
 
-/// 아직 못 올린 `step-<숫자>` 들.
-fn unpublished_steps(out_dir: &Path, state: &PublishState) -> Vec<u64> {
-    let Ok(entries) = std::fs::read_dir(out_dir) else {
-        return Vec::new();
+/// 아직 못 올린 `step-<숫자>` 들(이름이 겹쳐 건너뛴 것도 — 올리지 못했다). 폴더가 아예 없으면 빈 목록, 읽기 오류는 오류다.
+fn unpublished_steps(out_dir: &Path, state: &PublishState) -> Result<Vec<u64>, String> {
+    let entries = match std::fs::read_dir(out_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
     };
     let mut left: Vec<u64> = entries
         .filter_map(Result::ok)
@@ -276,7 +305,8 @@ fn unpublished_steps(out_dir: &Path, state: &PublishState) -> Vec<u64> {
         .filter(|step| !state.published.contains(step))
         .collect();
     left.sort();
-    left
+    left.dedup();
+    Ok(left)
 }
 
 fn now_unix_ms() -> u64 {
@@ -301,8 +331,8 @@ mod tests {
         assert_eq!(step_of("step-"), None);
         assert_eq!(step_of("stepx-3"), None);
         assert_eq!(step_of("step--3"), None);
-        // 결함 242 — 앞자리 0 은 다른 이름이다(같은 step 으로 섞이지 않게).
-        assert_eq!(step_of("step-01"), None);
+        // 결함 255 — 앞자리 0 은 받는다(같은 번호가 둘이면 게시에서 가른다).
+        assert_eq!(step_of("step-01"), Some(1));
         assert_eq!(step_of("step-0"), Some(0));
     }
 
@@ -423,5 +453,27 @@ mod tests {
             1,
             "서명이 빠진 체크포인트를 되살리지 못했다"
         );
+    }
+
+    /// 결함 242 · 255 — 같은 번호의 폴더가 둘이면 어느 쪽도 올리지 않는다. 하나뿐이면 앞자리 0 이어도 올린다.
+    #[test]
+    fn two_folders_with_the_same_step_number_are_both_held_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let out = temp.path().join("out");
+        for name in ["step-01", "step-1"] {
+            std::fs::create_dir_all(out.join(name)).unwrap();
+            std::fs::write(out.join(name).join("state"), name.as_bytes()).unwrap();
+        }
+        std::fs::create_dir_all(out.join("step-02")).unwrap();
+        std::fs::write(out.join("step-02").join("state"), b"2").unwrap();
+        let ctx = ctx_in(temp.path());
+        let mut state = PublishState::default();
+        publish_ready_steps(&ctx, &out, &mut state, false, 10);
+        assert_eq!(
+            state.published.iter().copied().collect::<Vec<_>>(),
+            vec![2],
+            "겹친 번호를 올렸거나 step-02 를 못 올렸다"
+        );
+        assert_eq!(unpublished_steps(&out, &state).unwrap(), vec![1]);
     }
 }

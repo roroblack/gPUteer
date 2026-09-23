@@ -467,27 +467,6 @@ pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
 }
 
 pub fn run(config: AgentConfig) -> Result<(), String> {
-    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **새 일을 받으러 붙지 않는다.** 붙으면 Coordinator 가 이 노드를
-    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
-    // ★ 결함 229 · 230 · 238 (검수 77 · 재검수 80) — 표시는 루트의 **실제 위치** 옆에서 찾는다(`owner_reclaim_marker` 가 링크를 푼다).
-    //   멈추기 전에 **못 보낸 종료 보고를 먼저 보낸다** — 선점 보고(INTERRUPTED)가 outbox 에 갇히면 Coordinator 가 선점을 모른다.
-    //   이 검사는 체크포인트 루트 잠금 · 기동 GC **앞에** 둔다 — 그것들이 실패해도(권한 · 잠금) 보고는 나가야 한다(238).
-    //   outbox 위치를 실행 때와 같게 계산하려고 루트만 실제 위치로 바꾼 설정 사본을 쓴다. 보고 연결은 일을 받지 않는다(FRESH 만 생존 관측).
-    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
-    if marker.exists() {
-        if config.report_over_session {
-            let mut outbox_config = config.clone();
-            if let Ok(real) = fs::canonicalize(&config.checkpoint_root) {
-                outbox_config.checkpoint_root = without_verbatim_prefix(real);
-            }
-            flush_report_outbox(&outbox_config, &SigningKey::from_bytes(&config.own_seed));
-        }
-        return Err(format!(
-            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
-             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
-            marker.display()
-        ));
-    }
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -616,7 +595,27 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     // ★ 결함 152 · 153 (재검수 66b) — 잠금 · GC 는 실제 위치에 돌았는데 이후 쓰기(시작 체크포인트 · 기본 outbox · 작업 출력)는 입력 경로를 썼다. 별칭을
     //   바꿔치기하거나 루트 안에 별칭을 두면 두 기준이 갈라진다. 그래서 잠금을 얻은 뒤 **설정의 루트를 실제 위치로 바꾼다** — 이 뒤로는 한 기준이다.
     let mut config = config;
-    let _checkpoint_root_lock = settle_checkpoint_root(&mut config)?;
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **새 일을 받으러 붙지 않는다.** 붙으면 Coordinator 가 이 노드를
+    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
+    // ★ 결함 229 · 230 · 238 · 251 (검수 77 · 재검수 80 · 83) — 순서가 **잠금 → 되찾음 검사 · 못 보낸 보고 재전송 → 기동 GC** 다.
+    //   · 잠금 뒤 — 잠금 전에 재전송했더니 같은 루트를 쓰는 **다른 Agent 의** 정당한 보고를 "내 것이 아니다" 로 격리했다(251).
+    //     잠금을 못 잡으면(CHECKPOINT_ROOT_BUSY) 그 루트는 다른 Agent 의 것이다 — 그 Agent 가 보낸다.
+    //   · GC 앞 — GC 가 실패해도(권한 · 손상) 선점 보고는 나가야 한다(238).
+    //   표시는 루트의 **실제 위치** 옆에서 찾는다(잠금이 루트를 실제 위치로 바꾼 뒤다). 보고 연결은 일을 받지 않는다(FRESH 만 생존 관측).
+    let _checkpoint_root_lock = settle_checkpoint_root_with(&mut config, |settled| {
+        let marker = owner_reclaim_marker(&settled.checkpoint_root)?;
+        if !marker.exists() {
+            return Ok(());
+        }
+        if settled.report_over_session {
+            flush_report_outbox(settled, &SigningKey::from_bytes(&settled.own_seed));
+        }
+        Err(format!(
+            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
+             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
+            marker.display()
+        ))
+    })?;
     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
     //   (2026-08-29, 독립 검수 지적).
     //
@@ -1343,6 +1342,24 @@ fn run_one_connection_inner(
                 &ack_nonce,
             )
             .map_err(|error| fail_after_cleanup(error, &run_dir))?;
+            // ★ 2026-09-24 (결함 246 · 재검수 82) — 수신 확인은 ACK 기록 커밋 **뒤에** 나간다. 그 사이 Lease 가 만료돼 장애 판정이 이 시도를
+            //   되돌렸을 수 있다(만료 직전 ACK). 그래서 실행 직전에 Lease 남은 시간이 "실행 중 갱신 주기 + 5초" 보다 짧으면 시작하지 않는다 —
+            //   첫 갱신 전에 만료될 시도는 돌지 않는다. ★ Agent 시계로 잰다 — 두 시계가 크게 어긋나면 이 방어도 어긋난다.
+            if will_execute {
+                let remaining = held_lease
+                    .expires_at_unix_ms
+                    .saturating_sub(clock.now_unix_ms());
+                let needed = config.renew_during_execution_ms.saturating_add(5_000);
+                if remaining < needed {
+                    return Err(fail_after_cleanup(
+                        format!(
+                            "LEASE_TOO_SHORT_TO_START: Lease 가 {remaining}ms 남았다 — 첫 갱신(주기 {}ms + 여유 5초) 전에 만료될 시도는 시작하지 않는다",
+                            config.renew_during_execution_ms
+                        ),
+                        &run_dir,
+                    ));
+                }
+            }
             // 시작 기록 — 실행 직전, 영속으로. 이 뒤로 이 노드는 같은 시도를 다시 받지 않는다(결함 218).
             if will_execute {
                 record_attempt_started_here(&config.checkpoint_root, &grant.attempt_id)
@@ -3074,7 +3091,16 @@ struct CheckpointRootLock {
 ///   기준이라, 별칭 루트 A -> R 에서 A.report-outbox 는 통과하고 GC 가 R.report-outbox(-> R 안) 의 보고를 지운 뒤에야 실제 루트 기준으로 거부됐다.
 ///   이제 (1) 잠금 · 표식 · 실제 위치 확정 (2) 설정 루트를 실제 위치로 (3) **실제 루트 기준 REPORT outbox 검사** (4) 기동 GC 순서다.
 ///   ★ 거부돼도 (1) 의 흔적(잠금 파일 · 빈 루트면 표식)은 남는다 — 삭제는 하지 않는다. 검사 뒤 경로를 바꿔치기하는 경쟁(TOCTOU)은 막지 못한다(잠금 중에도).
+#[cfg(test)]
 fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock, String> {
+    settle_checkpoint_root_with(config, |_| Ok(()))
+}
+
+/// 잠금을 잡고 루트를 실제 위치로 바꾼 뒤, **기동 GC 전에** `before_gc` 를 부른다(결함 251 — 되찾음 검사 · 보고 재전송 자리).
+fn settle_checkpoint_root_with(
+    config: &mut AgentConfig,
+    before_gc: impl FnOnce(&AgentConfig) -> Result<(), String>,
+) -> Result<CheckpointRootLock, String> {
     let input_root = config.checkpoint_root.clone();
     let lock = claim_checkpoint_root(&input_root)?;
     config.checkpoint_root = lock.real_root.clone();
@@ -3085,6 +3111,7 @@ fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock
             )
         })?;
     }
+    before_gc(config)?;
     collect_startup_partials(&input_root, &lock.real_root)?;
     Ok(lock)
 }

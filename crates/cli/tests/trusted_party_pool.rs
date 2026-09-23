@@ -821,6 +821,45 @@ fn a_pool_scheduler_drops_a_job_whose_durability_the_pool_cannot_meet() {
         "맨 앞을 내린 뒤 같은 tick 이 다음 작업을 배치하지 않았다(236)\n{out}"
     );
 
+    // 결함 249 — 표식이 아직 없어도(Coordinator 가 먼저 안 떴다) 스케줄러가 `--pool-mode true` 를 명시하면 풀로 본다.
+    let early = tempfile::tempdir().expect("임시 폴더");
+    let (db, keyring) = pool_with(early.path(), ["MIRRORED", "LOCAL", "LOCAL"]);
+    let db_s = db.to_str().unwrap().to_string();
+    let keyring_s = keyring.to_str().unwrap().to_string();
+    let (ok, out) = run_cli(&[
+        "scheduler-tick",
+        "--control-db",
+        &db_s,
+        "--submitter-keyring",
+        &keyring_s,
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "300000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+        "--pool-mode",
+        "true",
+    ]);
+    assert!(ok, "{out}");
+    assert_eq!(
+        job_state(&db, JOBS[0]),
+        Some(JobState::Failed),
+        "표식 전 스케줄러가 비-LOCAL 을 배치했다(249)\n{out}"
+    );
+
     // 대조군 — 표식 없는 DB 에 --pool-agents 를 줘도 거부하지 않는다(235 B).
     let control = tempfile::tempdir().expect("임시 폴더");
     let (db, keyring) = pool_with(control.path(), ["MIRRORED"; 3]);
@@ -958,8 +997,7 @@ fn a_pool_coordinator_refuses_shared_keys_and_a_separate_liveness_db() {
 /// 유실 상황은 시도를 미리 STARTING 으로 적어 흉내 낸다(ACK 기록 직후 끊긴 것과 저장 상태가 같다).
 /// ★ 같은 노드가 **이미 시작한** 시도를 다시 받지 않는 쪽(Agent 의 시작 기록)은 단위 시험이 본다
 ///   (`owner_reclaim_marker_tests::the_start_journal_remembers_exactly_the_attempts_started_here`).
-#[test]
-fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs() {
+fn lost_receipt_round(renewed_before: bool) -> (String, String, Option<JobState>) {
     let dir = tempfile::tempdir().expect("임시 폴더");
     let (db, keyring) = pool(dir.path());
     let db_s = db.to_str().unwrap().to_string();
@@ -983,7 +1021,7 @@ fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs()
         "--lease-ttl-ms",
         "600000",
         "--lease-renew-after-ms",
-        "300000",
+        "1000",
         "--lease-max-total-duration-seconds",
         "86400",
         "--i-understand-plaintext-keyring-is-unsafe",
@@ -1011,6 +1049,28 @@ fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs()
         gputeer_coordinator::staging_store::GrantAcceptedRecord::Recorded
     );
     assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Running));
+    let lease_id = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db)
+        .unwrap()
+        .get_attempt(&attempt_id)
+        .unwrap()
+        .unwrap()
+        .lease_id;
+    if renewed_before {
+        // 대조군 — 누군가 이 시도를 돌리며 갱신했다(결함 247). 재발급하면 안 된다.
+        let mut leases =
+            gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db).unwrap();
+        let lease = leases.get(&lease_id).unwrap().unwrap();
+        leases
+            .renew_existing_within_duration(
+                &lease_id,
+                now_unix_ms(),
+                lease.expires_at_unix_ms + 1,
+                lease.renew_after_unix_ms + 1,
+            )
+            .unwrap();
+    }
+    // 결함 247 — 재발급은 ACK 뒤 Lease 갱신 간격(여기서는 1초)이 조용히 지나야 한다.
+    thread::sleep(Duration::from_millis(1_500));
 
     let pool_agents = format!(
         "{NODE_1}={};{NODE_2}={}",
@@ -1103,16 +1163,20 @@ fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs()
         String::from_utf8_lossy(&agent_output.stdout),
         String::from_utf8_lossy(&agent_output.stderr)
     );
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(if renewed_before { 3 } else { 30 });
     while job_state(&db, JOBS[0]) != Some(JobState::Completed) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(200));
     }
     let finished = job_state(&db, JOBS[0]);
     let coordinator_err = collect(coordinator);
     let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();
-    let everything = format!(
-        "--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}\n{coordinator_err}"
-    );
+    (agent_out, coordinator_out + &coordinator_err, finished)
+}
+
+#[test]
+fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs() {
+    let (agent_out, coordinator_out, finished) = lost_receipt_round(false);
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
     assert!(
         coordinator_out.contains("outcome=starting_still_current")
             && coordinator_out.contains("ACK_RECEIPT_SENT"),
@@ -1127,4 +1191,20 @@ fn a_start_whose_ack_receipt_was_lost_is_handed_back_to_the_same_node_and_runs()
         Some(JobState::Completed),
         "한 번도 안 돈 작업이 다시 돌아 끝나지 않았다\n{everything}"
     );
+}
+
+/// 결함 247 (재검수 82) — Lease 가 한 번이라도 갱신됐으면(누군가 그 시도를 돌리고 있다) 같은 노드라도 다시 내주지 않는다.
+#[test]
+fn a_start_whose_lease_was_renewed_is_not_handed_out_again() {
+    let (agent_out, coordinator_out, finished) = lost_receipt_round(true);
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        !agent_out.contains("ACK_RECEIPT_VERIFIED") && !agent_out.contains("WORKLOAD_RESULT"),
+        "갱신된 시도를 다시 내줘 두 번째 실행이 됐다\n{everything}"
+    );
+    assert!(
+        coordinator_out.contains("이미 받아들여졌다"),
+        "거부 사유가 보이지 않는다\n{everything}"
+    );
+    assert_eq!(finished, Some(JobState::Running), "{everything}");
 }

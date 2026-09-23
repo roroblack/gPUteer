@@ -4,7 +4,7 @@ After=gputeer-coordinator.service
 
 [Service]
 EnvironmentFile=/etc/gputeer/gputeer.env
-ExecStart=/bin/sh -c 'exec "$GPUTEER_BIN" scheduler-loop --interval-ms 1000 --max-ticks 0 --control-db "$GPUTEER_CONTROL_DB" --submitter-keyring "$GPUTEER_SUBMITTER_KEYRING" --submitter-member "$GPUTEER_SUBMITTER_MEMBER" --max-snapshot-age-ms 86400000 --best-fit-axes vram,gpu_count,cpu,ram,workspace --coordinator-id "$GPUTEER_COORDINATOR_ID" --coordinator-term 1 --lease-ttl-ms 120000 --lease-renew-after-ms 40000 --lease-max-total-duration-seconds 86400 --silent-after-ms 60000 --failover-grace-ms 30000 --shared-checkpoint-root "$GPUTEER_SHARED_ROOT" --pool-agents "$GPUTEER_POOL_AGENTS"'
+ExecStart=/bin/sh -c 'exec "$GPUTEER_BIN" scheduler-loop --interval-ms 1000 --max-ticks 0 --control-db "$GPUTEER_CONTROL_DB" --submitter-keyring "$GPUTEER_SUBMITTER_KEYRING" --submitter-member "$GPUTEER_SUBMITTER_MEMBER" --max-snapshot-age-ms 86400000 --best-fit-axes vram,gpu_count,cpu,ram,workspace --coordinator-id "$GPUTEER_COORDINATOR_ID" --coordinator-term 1 --lease-ttl-ms 120000 --lease-renew-after-ms 40000 --lease-max-total-duration-seconds 86400 --silent-after-ms 60000 --failover-grace-ms 30000 --shared-checkpoint-root "$GPUTEER_SHARED_ROOT" --pool-agents "$GPUTEER_POOL_AGENTS" --pool-mode true'
 Restart=on-failure
 RestartSec=5
 

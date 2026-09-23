@@ -175,7 +175,7 @@ pub fn failover_lost_attempts(
         }
         let lost_node_id = attempt.node_ids.first().cloned().unwrap_or_default();
         let resume = if job.state == JobState::Running {
-            find_resume_point(&transaction, policy, &job.job_id, now_unix_ms, notes)?
+            find_resume_point(&transaction, policy, &job.job_id, now_unix_ms, notes, false)?
         } else {
             None
         };
@@ -233,6 +233,7 @@ fn find_resume_point(
     job_id: &str,
     now_unix_ms: u64,
     notes: &mut Vec<String>,
+    list_error_as_none: bool,
 ) -> Result<Option<ResumePoint>, String> {
     let Some(shared_root) = policy.shared_checkpoint_root.as_ref() else {
         notes.push(format!(
@@ -246,9 +247,19 @@ fn find_resume_point(
     }
     let verifier = Ed25519Verifier::new(&keyring);
     let mut best: Option<(u64, u64, ResumePoint)> = None;
-    for (checkpoint_id, body) in
-        gputeer_checkpoint::shared::list_signed_manifests(shared_root, job_id)?
-    {
+    // ★ 2026-09-24 (결함 254 · 재검수 83) — "공유 저장소 목록을 못 읽었다" 만 호출자가 원하면 "지점 없음" 으로 받는다(선점 — 보고를 롤백하지
+    //   않으려고). control DB 오류 · 그 밖의 오류는 그대로 올린다 — 전에는 선점 쪽이 **모든** 오류를 삼켜 DB 손상까지 "지점 없음" 으로 커밋했다.
+    let listed = match gputeer_checkpoint::shared::list_signed_manifests(shared_root, job_id) {
+        Ok(listed) => listed,
+        Err(error) if list_error_as_none => {
+            notes.push(format!(
+                "RESUME_POINT_UNAVAILABLE job_id={job_id} detail={error} — 공유 저장소 목록을 못 읽어 새 이어갈 지점 없이 멈춘다(보고는 저장한다)"
+            ));
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    for (checkpoint_id, body) in listed {
         let mut skip = |why: String| {
             notes.push(format!(
                 "FAILOVER_CHECKPOINT_SKIPPED job_id={job_id} checkpoint_id={checkpoint_id} reason={why}"
@@ -505,15 +516,7 @@ pub(crate) fn pause_for_owner_preempt_within(
     // ★ 2026-09-24 (결함 234 · 재검수 79) — 이 함수는 종료 보고 저장과 **같은 트랜잭션**에서 돈다(215). 이어갈 지점 조회가 공유 저장소
     //   장애로 실패해도 오류로 올리지 않는다 — 올리면 보고 저장까지 롤백되고, 저장소가 계속 죽어 있으면 보고가 영영 안 남는다(증거 유실).
     //   그때는 새 지점 없이 멈춘다(전에 고른 지점은 그대로 둔다) — 사실을 한 줄 남긴다.
-    let resume = match find_resume_point(transaction, policy, job_id, now_unix_ms, notes) {
-        Ok(found) => found,
-        Err(error) => {
-            notes.push(format!(
-                "RESUME_POINT_UNAVAILABLE job_id={job_id} detail={error} — 새 이어갈 지점 없이 멈춘다(보고는 저장한다)"
-            ));
-            None
-        }
-    };
+    let resume = find_resume_point(transaction, policy, job_id, now_unix_ms, notes, true)?;
     crate::job_store::pause_for_owner_preempt(
         transaction,
         &job,
@@ -526,9 +529,11 @@ pub(crate) fn pause_for_owner_preempt_within(
         .ok_or_else(|| format!("시도 {attempt_id} 가 사라졌다"))?;
     crate::lease_store::revoke_within(transaction, &attempt.lease_id, now_unix_ms)
         .map_err(|e| e.to_string())?;
-    // ★ 2026-09-24 (결함 237 · 재검수 80) — 되찾음 판정은 "되찾은 시각 >= 마지막 FRESH 시각" 이다. 시계가 뒤로 가면 방금 되찾은 노드가
-    //   다시 후보가 됐다. 그래서 되찾은 시각을 **이미 적힌 마지막 FRESH 이상**으로 적는다 — 되찾기 전의 인사로는 풀리지 않는다.
-    let last_fresh: Option<u64> = if transaction
+    // ★ 2026-09-24 (결함 237 · 253 · 재검수 80 · 83) — 되찾음 판정은 "되찾은 시각 >= 마지막 FRESH 시각" 이다. 시계가 뒤로 가면 방금 되찾은
+    //   노드가 다시 후보가 됐고(237), 그걸 max(지금, 마지막 FRESH) 로 막았더니 시계가 **미래로 튀었던** FRESH 가 있으면 owner-resume 뒤에도
+    //   영원히 숨었다(253). 그래서 되찾을 때 그 노드의 FRESH 기록을 **지운다** — 비교할 옛 값이 없어지고, 되찾기 뒤의 FRESH 만 남는다.
+    //   (FRESH 기록은 단조 갱신이라, 지우지 않으면 미래 값이 계속 이긴다.)
+    let seen_table = transaction
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_node_session_seen'",
             [],
@@ -536,22 +541,16 @@ pub(crate) fn pause_for_owner_preempt_within(
         )
         .optional()
         .map_err(|e| e.to_string())?
-        .is_some()
-    {
+        .is_some();
+    if seen_table {
         transaction
-            .query_row(
-                "SELECT last_seen_unix_ms FROM coordinator_node_session_seen WHERE node_id = ?1",
+            .execute(
+                "DELETE FROM coordinator_node_session_seen WHERE node_id = ?1",
                 rusqlite::params![node_id],
-                |row| row.get::<_, Vec<u8>>(0),
             )
-            .optional()
-            .map_err(|e| e.to_string())?
-            .and_then(|raw| <[u8; 8]>::try_from(raw.as_slice()).ok())
-            .map(u64::from_be_bytes)
-    } else {
-        None
-    };
-    let reclaimed_at = last_fresh.map_or(now_unix_ms, |seen| seen.max(now_unix_ms));
+            .map_err(|e| e.to_string())?;
+    }
+    let reclaimed_at = now_unix_ms;
     transaction
         .execute(
             "INSERT INTO coordinator_node_reclaims(node_id, reclaimed_at_unix_ms) VALUES (?1, ?2)

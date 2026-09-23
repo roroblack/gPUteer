@@ -23,5 +23,6 @@ foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
     --lease-ttl-ms 120000 --lease-renew-after-ms 40000 --lease-max-total-duration-seconds 86400 `
     --silent-after-ms 60000 `
     --failover-grace-ms 30000 --shared-checkpoint-root $config.GPUTEER_SHARED_ROOT `
-    --pool-agents $config.GPUTEER_POOL_AGENTS
+    --pool-agents $config.GPUTEER_POOL_AGENTS `
+    --pool-mode true
 exit $LASTEXITCODE
