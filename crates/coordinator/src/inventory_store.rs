@@ -548,6 +548,15 @@ impl CoordinatorInventoryStore {
             )
             .map_err(map_sql_error)?
             > 0;
+        let session_seen_table_exists: bool = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'coordinator_node_session_seen'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sql_error)?
+            > 0;
         let reservations_table_exists: bool = transaction
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
@@ -568,7 +577,7 @@ impl CoordinatorInventoryStore {
             //   전에는 이 축이 없어서 **같은 GPU 를 두 Job 에 줄 수 있었다.**
             // ★★ 2026-09-23 (신뢰망 P2) — 생존 신호도 **여기서만** 접어 넣는다.
             //   예약과 같은 자리다. 판정은 하지 않고 **사실(마지막 시각)만** 싣는다.
-            candidate.last_heartbeat_unix_ms = if liveness_table_exists {
+            let heartbeat_unix_ms = if liveness_table_exists {
                 transaction
                     .query_row(
                         "SELECT last_heartbeat_unix_ms FROM coordinator_node_liveness
@@ -583,6 +592,26 @@ impl CoordinatorInventoryStore {
             } else {
                 // 관측 테이블이 아예 없는 DB 는 본 적이 없는 것이다 — 없는 관측을 지어내지 않는다.
                 None
+            };
+            // ★ 2026-09-23 (신뢰망 남은 일 C) — 검증된 Hello 를 받은 시각(Coordinator 시계)도 같은 자리에서 접는다.
+            //   둘 중 **나중** 것이 마지막으로 들은 때다. 없으면 없는 그대로다.
+            let session_seen_unix_ms = if session_seen_table_exists {
+                transaction
+                    .query_row(
+                        "SELECT last_seen_unix_ms FROM coordinator_node_session_seen WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .optional()
+                    .map_err(map_sql_error)?
+                    .map(|raw| decode_u64(&raw, "session_seen last_seen_unix_ms"))
+                    .transpose()?
+            } else {
+                None
+            };
+            candidate.last_heartbeat_unix_ms = match (heartbeat_unix_ms, session_seen_unix_ms) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
             };
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)

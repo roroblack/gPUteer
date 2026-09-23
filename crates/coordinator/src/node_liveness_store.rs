@@ -178,6 +178,12 @@ impl CoordinatorNodeLivenessStore {
                     node_id TEXT PRIMARY KEY,
                     expected_device_id TEXT NOT NULL
                 );
+                -- ★ 2026-09-23 (신뢰망 남은 일 C) — 검증된 Hello 를 받은 **Coordinator 시각**.
+                CREATE TABLE IF NOT EXISTS coordinator_node_session_seen (
+                    node_id TEXT PRIMARY KEY,
+                    last_seen_unix_ms BLOB NOT NULL CHECK(length(last_seen_unix_ms) = 8),
+                    last_mode INTEGER NOT NULL
+                );
                 ",
             )
             .map_err(storage)?;
@@ -194,6 +200,41 @@ impl CoordinatorNodeLivenessStore {
             });
         }
         Ok(store)
+    }
+
+    /// ★ 2026-09-23 (신뢰망 남은 일 C) — **서명이 검증된 Hello 를 받았다**는 관측을 적는다.
+    ///
+    /// 풀 모드의 Agent 는 일을 기다리며 되풀이해 붙고(FRESH), 실행 중에는 갱신 세션(RENEW)을, 끝나면 보고
+    /// 세션(REPORT)을 연다 — 전부 Hello 로 시작한다(결정 D2). 그래서 Hello 가 곧 "살아 있다" 의 신호다.
+    /// 새 계약(주기적 heartbeat 메시지·다중화)이 필요 없다.
+    ///
+    /// ★ 시각은 **Coordinator 시계**다(받은 순간). 노드가 적은 `issued_at` 이 아니다 — 판정하는 쪽이 자기
+    ///   시계로 본 사실이라 노드 시계가 틀려도 흔들리지 않는다. 더 이른 값으로 덮지 않는다(단조).
+    ///
+    /// ★ 서명 검증은 호출부(`read_session_hello`)가 이미 끝냈다 — 검증되지 않은 Hello 로 부르지 않는다.
+    pub fn record_session_seen(
+        &mut self,
+        node_id: &str,
+        mode: i32,
+        seen_at_unix_ms: u64,
+    ) -> Result<(), NodeLivenessStoreError> {
+        if node_id.trim().is_empty() {
+            return Err(NodeLivenessStoreError::InvalidHeartbeat {
+                detail: "node_id 가 비었다".into(),
+            });
+        }
+        self.connection
+            .execute(
+                "INSERT INTO coordinator_node_session_seen(node_id, last_seen_unix_ms, last_mode)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(node_id) DO UPDATE SET
+                    last_seen_unix_ms = excluded.last_seen_unix_ms,
+                    last_mode = excluded.last_mode
+                 WHERE excluded.last_seen_unix_ms > coordinator_node_session_seen.last_seen_unix_ms",
+                rusqlite::params![node_id, seen_at_unix_ms.to_be_bytes().to_vec(), mode],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 
     /// 이 저장소가 실제 파일을 가리키는가.

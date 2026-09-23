@@ -13,7 +13,7 @@
 //! 코드가 붙은 분기는 두 무리로 가른다:
 //! ```text
 //! TICK_ARGS_REFUSED: <CODE>   인자·설정 검사 (CONTROL_DB_NOT_DURABLE 만 저장소를 연 뒤)
-//! TICK_REFUSED: <CODE>        실행 중 관문 (QUEUE_TOO_OLD 등)
+//! TICK_REFUSED: <CODE>        실행 중 관문 (★ QUEUE_TOO_OLD 는 결함 211 로 없어졌다)
 //! ```
 //! ★ **코드 없는 오류도 낸다**(재검수 30 — 전에는 위 두 줄이 오류 전체를 가르는
 //!   것처럼 적었다). 필수 인자 누락(`--control-db 가 필요하다`) · 숫자 파싱 실패 ·
@@ -57,8 +57,8 @@
 //! attempt_id      BLAKE3("attempt", job_id, plan_id) -> 26자
 //! lease_id        BLAKE3("lease",   job_id, plan_id) -> 26자
 //! operation_key   BLAKE3("operation", job_id, plan_id)[..16]
-//! Lease 발급 시각  job.queued_at_unix_ms  (저장된 사실)
-//! Lease 갱신·만료  queued_at + 운영자가 준 오프셋
+//! Lease 발급 시각  max(job.queued_at_unix_ms, 지금)   ★ 결함 211 — 아래 참조
+//! Lease 갱신·만료  발급 시각 + 운영자가 준 오프셋
 //! ```
 //!
 //! 같은 Job·계획에서는 식별자와 operation key 가 같게 유도된다. 요청에는 현재
@@ -133,6 +133,17 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let lease_ttl_ms = u64_flag(&flags, "--lease-ttl-ms")?;
     let lease_renew_after_ms = u64_flag(&flags, "--lease-renew-after-ms")?;
     let max_total_duration_seconds = u64_flag(&flags, "--lease-max-total-duration-seconds")?;
+    // ★ 2026-09-23 (신뢰망 남은 일 C) — 생존 축. 이만큼 소식이 없는 노드에는 새 일을 주지 않는다.
+    //   **주지 않으면 이 축을 보지 않는다** — "정책 없음" 을 0ms 로 읽으면 모든 노드가 탈락한다(2026-09-23 P2).
+    //   소식은 풀 Coordinator 가 적는 검증된 Hello 시각이다(`--liveness-db` 가 control DB 와 같을 때 보인다).
+    let silent_after_ms = match flags.get("--silent-after-ms") {
+        Some(raw) => Some(raw.parse::<u64>().map_err(|e| {
+            format!(
+                "TICK_ARGS_REFUSED: SILENT_AFTER_NOT_A_NUMBER — --silent-after-ms 파싱 실패: {e}"
+            )
+        })?),
+        None => None,
+    };
     if lease_renew_after_ms == 0 || lease_renew_after_ms >= lease_ttl_ms {
         return Err(format!(
             "TICK_ARGS_REFUSED: RENEW_AFTER_NOT_BEFORE_TTL — --lease-renew-after-ms({lease_renew_after_ms}) 는 0 보다 크고 --lease-ttl-ms({lease_ttl_ms}) 보다 작아야 한다. 갱신 시점이 만료 뒤면 갱신할 기회가 없다"
@@ -170,17 +181,17 @@ pub fn run(args: &[String]) -> Result<String, String> {
         .queued_at_unix_ms
         .ok_or_else(|| format!("TICK_REFUSED: {job_id} 가 QUEUED 인데 queued_at 이 없다"))?;
 
-    // ── Lease 시각을 저장된 사실에서 유도한다 ───────────────────────
+    // ── Lease 시각 ──────────────────────────────────────────────────
     //
-    // ★ `queued_at` 을 발급 시각으로 쓴다. 저장소가 "Lease 발급 시각은
-    //   큐 진입보다 앞설 수 없다" 고 요구하는데, **같은 값이면 그
-    //   경계를 정확히 만족**하면서도 시계를 안 읽는다.
-    let expires_at = queued_at.saturating_add(lease_ttl_ms);
-    if expires_at <= now_unix_ms {
-        return Err(format!(
-            "TICK_REFUSED: QUEUE_TOO_OLD — {job_id} 는 큐에 너무 오래 있었다(큐 진입 {queued_at}, 이 설정의 Lease 만료 {expires_at}, 지금 {now_unix_ms}). 지금 예약하면 이미 만료된 Lease 를 준다"
-        ));
-    }
+    // ★★ 결함 211 (2026-09-23) — 전에는 `queued_at` 을 발급 시각으로 쓰고, 큐에서 TTL 보다 오래 기다린 작업을
+    //   `QUEUE_TOO_OLD` 로 거부했다. 그 작업은 **영영** 배치되지 않았고 FIFO 맨 앞이라 뒤 작업까지 인질이 됐다 —
+    //   작업 수가 GPU 수보다 많은 신뢰망에서는 보통 상황이다. 시계를 안 읽는 이득(같은 tick 의 재시도가 같은
+    //   요청을 만든다)은 실제로 없었다 — 예약된 Job 은 큐에서 빠져 두 번째 tick 이 다시 보지 않는다.
+    //   그래서 발급 시각을 **지금**으로 둔다. 저장소의 "큐 진입보다 앞설 수 없다" 는 `max` 로 그대로 지킨다.
+    //   ★ 동시에 도는 tick 둘은 발급 시각이 달라 같은 operation key 에 **다른 요청**이 된다 — 저장소가 둘째를
+    //     `OperationConflict` 로 거부한다(중복 예약이 아니라 거부다).
+    let issued_at = queued_at.max(now_unix_ms);
+    let expires_at = issued_at.saturating_add(lease_ttl_ms);
 
     let binding = jobs
         .get_manifest_binding(&job_id)
@@ -231,7 +242,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             job_requirements,
             hard_filter_policy: Policy {
                 maximum_snapshot_age_ms: max_snapshot_age_ms,
-                silent_after_ms: None,
+                silent_after_ms,
             },
             best_fit_policy,
             evaluated_at_unix_ms: now_unix_ms,
@@ -241,8 +252,8 @@ pub fn run(args: &[String]) -> Result<String, String> {
                 lease_id: lease_id.clone(),
                 issuing_coordinator_id: coordinator_id.to_string(),
                 coordinator_term,
-                issued_at_unix_ms: queued_at,
-                renew_after_unix_ms: queued_at.saturating_add(lease_renew_after_ms),
+                issued_at_unix_ms: issued_at,
+                renew_after_unix_ms: issued_at.saturating_add(lease_renew_after_ms),
                 expires_at_unix_ms: expires_at,
                 max_total_duration_seconds,
             },

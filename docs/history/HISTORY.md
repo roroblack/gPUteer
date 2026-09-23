@@ -25,6 +25,30 @@
 
 ---
 
+## 2026-09-23 19:02 — 신뢰망 남은 일 K · C · 결함 211: 풀 Coordinator 하나가 여러 Agent 를 사람 손 없이 돌린다
+
+- 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` K · C
+- 스트림: Coordinator · Agent · Scheduler
+- 수행:
+  - **K 풀 Coordinator** — `coordinator-stub --pool-mode true --pool-agents "id=hex;..."`. 계속 떠 있는 순차 리스너가
+    Hello 의 서명자(= node_id)로 누구인지 알고, FRESH 면 **그 노드에 배정된 예약**으로 Grant 를 만든다(없으면 `NO_WORK_FOR_NODE`
+    로 닫는다 — 일을 지어내지 않는다). RENEW · REPORT 도 같은 리스너가 받는다. Grant id 를 발급마다 OS 난수로 뽑아 nonce 가
+    겹치지 않게 했다(그래서 이 모드에서는 FRESH 번호 증가 규칙을 쓰지 않는다). `--max-connections 0` · `--accept-timeout-ms 0` 은
+    이 모드에서 "끝없이" 다. 시작 관문 — control DB · 제출자 keyring · Lease DB = control DB · 보고 세션 · lane 충돌 · 같은 연결 회차를 본다
+  - **Agent 쪽** — `gputeer agent-loop --interval-ms --max-rounds -- <agent-stub 인자>`: 회차마다 agent-stub 을 **새 프로세스로**
+    띄운다(회차 사이에 남는 것은 디스크에 영속된 것뿐). 일을 했으면 바로 다음 회차, 아니면 기다린다
+  - **C 생존 신호** — 풀 Coordinator 가 검증된 Hello 를 받은 순간(Coordinator 시계)을 `coordinator_node_session_seen` 에 적고,
+    `pool_snapshot()` 이 heartbeat 와 둘 중 나중 것을 접는다. `scheduler-tick --silent-after-ms`(주지 않으면 이 축을 안 본다)
+  - **결함 211** — 스케줄러가 Lease 발급 시각을 큐 진입 시각으로 써서 TTL 보다 오래 기다린 작업이 **영영** `QUEUE_TOO_OLD` 였다.
+    발급 시각 = `max(queued_at, now)`. 덫 두 시험을 뒤집었다
+- 검증: 워크스페이스 **1264 passed · 0 failed**(개발 기계 Windows, `-j 1 --no-fail-fast`). 서식 0 · check_docs 0/0.
+  `trusted_party_pool.rs` — **Coordinator 한 번 · Agent 둘 · 작업 셋이 사람 손 없이 끝난다**(6회 연속 통과, 매회 약 2.3초 —
+  두 Agent 모두 일했고 · 예약 해제 셋 · 일 없는 회차 기록). 음성: 풀 밖 노드의 Hello 거부 뒤에도 Coordinator 가 다음 노드를 받는다 ·
+  소식 없던 노드엔 일을 안 주고 Hello 뒤엔 준다 · 풀 모드 시작 관문 다섯 가지가 각자 코드로 거부
+- ★ 한계(적어 둔다): 순차라 한 번에 연결 하나 — 신뢰망 몇 대에는 충분하지만 수십 대면 다중화가 필요하다. 실행 **도중**의 생존 신호는
+  갱신 세션이 있을 때만이다. agent-loop 는 "일 없음" 과 "거부" 를 가르지 않는다(가를 서명된 메시지가 계약에 없다)
+- 리포트: 결함 211
+
 ## 2026-09-23 18:46 — 신뢰망 남은 일 A · B · D: Job 이 끝을 따라가고, 보고가 예약을 풀고, ACK 가 관측이 된다
 
 - 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` A · B · D

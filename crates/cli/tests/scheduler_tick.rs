@@ -486,51 +486,50 @@ fn a_second_tick_picks_the_free_node_instead_of_the_reserved_one() {
     );
 }
 
-/// ★★ **큐에 너무 오래 있었으면 예약하지 않는다.**
+/// ★★ 결함 211 (2026-09-23) — **큐에서 TTL 보다 오래 기다린 작업도 배치되고, 살아 있는 Lease 를 받는다.**
 ///
-/// Lease 발급 시각을 `queued_at` 으로 쓰므로, TTL 이 짧으면 지금
-/// 예약해도 **이미 만료된 Lease** 를 주게 된다. 그걸 주면 Agent 는
-/// 받자마자 거부한다 — 조용히 만들지 않고 거부 이유를 말한다.
+/// 뒤집은 덫이다. 전에는 이 시험이 `QUEUE_TOO_OLD` 거부를 고정했다 — 발급 시각이 `queued_at` 이라 오래
+/// 기다린 작업의 Lease 는 태어나자마자 만료였고, 그래서 거부했다. 거부는 정직했지만 그 작업은 **영영**
+/// 배치되지 않았다. 이제 발급 시각은 배치하는 순간이다.
 #[test]
-fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
+fn a_job_that_waited_longer_than_the_lease_ttl_still_gets_a_live_lease() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared(dir.path(), 1);
-
-    // ★★ **처음 쓴 이 테스트는 엉뚱한 관문을 재고 있었다.**
-    //
-    //   `--lease-ttl-ms 1` 만 줬는데 `--lease-renew-after-ms` 는 기본
-    //   300000 이 남아 있었다. 갱신 오프셋 검사가 **먼저** 있으므로
-    //   (`scheduler_tick.rs:85` 가 `:128` 보다 앞이다) 거기서 걸렸고,
-    //   내 단언이 "작아야 한다" 도 받아 줘서 **통과했다.**
-    //   내 뮤테이션 T3(큐 나이 검사를 통째로 지움)이 안 잡히는 것을
-    //   보고서야 알았다 — 재려던 것을 하나도 안 재고 있었다.
-    //
-    //   이제 갱신 검사를 **통과하는** 값을 준다(1 < 2).
+    // queued_at 보다 TTL(2ms) 이상 지난 뒤에 돈다 — 전에는 여기서 QUEUE_TOO_OLD 였다.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let before = now_ms();
     let (ok, output) = tick(
         &keyring,
         &db,
         &["--lease-ttl-ms", "2", "--lease-renew-after-ms", "1"],
     );
-    assert!(!ok, "만료될 Lease 로 예약했다: {output}");
+    assert!(ok, "오래 기다린 작업을 거부했다: {output}");
+    assert!(output.contains("TICK_STAGED"), "예약하지 않았다: {output}");
+    let lease_id = output
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("lease="))
+        .expect("출력에 lease= 가 없다")
+        .to_string();
+    let stored = gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(&db)
+        .expect("lease store")
+        .get(&lease_id)
+        .expect("조회")
+        .expect("Lease");
     assert!(
-        refused_with(&output, "TICK_REFUSED: QUEUE_TOO_OLD"),
-        "큐 나이가 아니라 다른 관문에 걸렸다: {output}"
+        stored.issued_at_unix_ms >= before,
+        "발급 시각이 배치 순간보다 앞이다(큐 진입 시각을 썼다): issued={} before={before}",
+        stored.issued_at_unix_ms
     );
-    assert_eq!(
-        job_state(&db, JOB_A),
-        Some(JobState::Queued),
-        "거부했는데 상태가 바뀌었다"
-    );
+    assert_eq!(stored.expires_at_unix_ms, stored.issued_at_unix_ms + 2);
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+}
 
-    // 대조 — 넉넉한 TTL 이면 예약된다. 없으면 "항상 거부" 로도 통과한다.
-    //
-    // ★★ **이 대조군 자체가 부실했다** (2026-09-07 독립 검수 지적).
-    //   `assert!(ok)` 만 봤다. 검수가 반례를 만들어 보였다 — 구현이
-    //   예약 경로로 안 들어가고 `TICK_IDLE` 을 조기 반환하도록 바뀌어도
-    //   **종료 코드는 0 이라 이 단언이 통과한다.** 그러면 "항상 거부"
-    //   회귀는 잡아도 **"아무것도 예약 안 함" 회귀는 못 잡는다.**
-    //
-    //   대조군을 두는 목적이 바로 그 두 번째인데, 그걸 못 재고 있었다.
+#[test]
+fn a_generous_ttl_still_places_the_job() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+    // 대조 — 넉넉한 TTL 이면 예약된다. `assert!(ok)` 만 보지 않는다(2026-09-07 검수 — TICK_IDLE 조기 반환도
+    //   종료 코드 0 이다).
     let (ok, output) = tick(&keyring, &db, &[]);
     assert!(ok, "넉넉한 TTL 에서도 거부했다: {output}");
     assert!(
@@ -544,7 +543,9 @@ fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
     );
 }
 
-/// ★★ **Lease 발급 시각이 정말 `queued_at` 인가 — 저장된 값으로 잰다.**
+/// ★★ **Lease 발급 시각이 정말 배치하는 순간인가 — 저장된 값으로 잰다.**
+///
+/// ★ 결함 211 (2026-09-23) 로 기대를 바꿨다 — 전에는 `queued_at` 이어야 했다.
 ///
 /// 이 모듈의 무게중심인데 **아무 테스트도 안 재고 있었다** — 멱등
 /// 테스트는 attempt/lease **식별자**만 비교하고, 식별자는 시각에서
@@ -552,7 +553,7 @@ fn a_job_that_waited_longer_than_the_lease_ttl_is_refused() {
 ///
 /// 이제 저장소를 열어 실제 행을 본다.
 #[test]
-fn the_stored_lease_is_issued_at_the_moment_the_job_entered_the_queue() {
+fn the_stored_lease_is_issued_at_placement_time_not_queue_entry() {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let (keyring, db) = prepared(dir.path(), 1);
 
@@ -566,7 +567,9 @@ fn the_stored_lease_is_issued_at_the_moment_the_job_entered_the_queue() {
             .expect("queued_at")
     };
 
+    let before = now_ms();
     let (ok, output) = tick(&keyring, &db, &[]);
+    let after = now_ms();
     assert!(ok, "tick 실패: {output}");
     let lease_id = output
         .split_whitespace()
@@ -580,19 +583,20 @@ fn the_stored_lease_is_issued_at_the_moment_the_job_entered_the_queue() {
         .expect("조회")
         .expect("Lease");
 
-    assert_eq!(
-        stored.issued_at_unix_ms, queued_at,
-        "발급 시각이 큐 진입 시각이 아니다 — 시계를 읽었다"
+    let issued = stored.issued_at_unix_ms;
+    assert!(
+        issued >= queued_at && issued >= before && issued <= after,
+        "발급 시각이 배치 순간이 아니다: issued={issued} queued={queued_at} before={before} after={after}"
     );
     assert_eq!(
         stored.expires_at_unix_ms,
-        queued_at + 600_000,
-        "만료가 queued_at + TTL 이 아니다"
+        issued + 600_000,
+        "만료가 발급 시각 + TTL 이 아니다"
     );
     assert_eq!(
         stored.renew_after_unix_ms,
-        queued_at + 300_000,
-        "갱신 시점이 queued_at + 오프셋이 아니다"
+        issued + 300_000,
+        "갱신 시점이 발급 시각 + 오프셋이 아니다"
     );
 }
 
@@ -852,4 +856,36 @@ fn the_loop_refuses_to_invent_its_own_policy() {
             "{missing} 를 짚어 말하지 않는다: {output}"
         );
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_millis() as u64
+}
+
+/// ★ 2026-09-23 (신뢰망 남은 일 C) — `--silent-after-ms` 를 주면 **한 번도 소식이 없던 노드에는 새 일을 주지 않는다.**
+///
+/// 풀 Coordinator 가 검증된 Hello 를 받으면 그 시각을 적는다(`record_session_seen`). 그 뒤에는 준다.
+/// 대조군이 같은 시험 안에 있다 — "항상 거부" 도 "항상 줌" 도 이 시험을 통과하지 못한다.
+#[test]
+fn with_silence_policy_a_never_heard_node_gets_no_work_until_it_says_hello() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    let (ok, output) = tick(&keyring, &db, &["--silent-after-ms", "60000"]);
+    assert!(!ok, "소식이 없던 노드에 일을 줬다: {output}");
+    assert!(output.contains("TICK_REFUSED"), "{output}");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+
+    gputeer_coordinator::node_liveness_store::CoordinatorNodeLivenessStore::open(&db)
+        .expect("liveness store")
+        .record_session_seen(NODE, 1, now_ms())
+        .expect("Hello 관측 기록");
+
+    let (ok, output) = tick(&keyring, &db, &["--silent-after-ms", "60000"]);
+    assert!(ok, "Hello 를 한 노드에도 일을 안 줬다: {output}");
+    assert!(output.contains("TICK_STAGED"), "{output}");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
 }

@@ -34,6 +34,7 @@
 
 use std::process::ExitCode;
 
+mod agent_loop;
 mod coordinator_agent_selftest;
 mod gpu_probe;
 mod import_inventory;
@@ -184,6 +185,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("issue-grant 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("agent-loop") => match agent_loop::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("agent-loop 실패: {error}");
                 ExitCode::FAILURE
             }
         },

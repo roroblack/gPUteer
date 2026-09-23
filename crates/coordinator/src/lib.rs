@@ -293,6 +293,24 @@ pub struct CoordinatorConfig {
     ///
     /// 공개 풀에서는 켜지 않는다 — 그때는 노드 자기보고가 아닌 실제 종료 증명이 필요하다.
     pub release_on_exit_report: bool,
+    /// ★ 2026-09-23 (신뢰망 남은 일 K) — **풀 Coordinator.** 계속 떠 있는 순차 리스너 하나가 여러 Agent 를 받는다.
+    ///
+    /// ```text
+    /// Hello 로 누구인지 안다(서명자 = node_id, `pool_agents` 의 키로 검증)
+    ///   FRESH   그 노드에 **배정된 예약**으로 Grant 를 만든다. 없으면 `NO_WORK_FOR_NODE` 로 끝낸다(지어내지 않는다)
+    ///   RENEW   실행 중 갱신 — Lease 는 control DB 에 있다(`--lease-db` 가 control DB 와 같아야 한다)
+    ///   REPORT  종료 보고 — `--release-on-exit-report` 면 같은 커밋에서 예약을 푼다
+    /// ```
+    ///
+    /// 식별자(`--job-id` · `--attempt-id` · `--lease-id` · `--grant-id` · `--stored-grant-*`)는 **연결마다** 정해지므로
+    /// 받지 않는다. Grant id 는 발급마다 새로 뽑는다 — 같은 Agent 가 다시 붙어도 Grant · ACK nonce 가 겹치지 않는다
+    /// (그래서 FRESH 번호 증가 규칙을 이 모드에서는 쓰지 않는다).
+    ///
+    /// ★ 순차다 — 한 번에 연결 하나. 신뢰망의 몇 대에는 충분하다: FRESH 는 ACK 뒤 바로 닫히고(실행은 연결 밖에서),
+    ///   보고 · 갱신은 짧은 따로 연결이다. 수십 대가 되면 다중화가 필요하다(범위 밖).
+    pub pool_mode: bool,
+    /// 풀에 속한 노드 — `(node_id, 공개키)`. `--pool-agents "id=hex;id2=hex"`.
+    pub pool_agents: Vec<(String, VerifyingKey)>,
     /// 다중 Agent lane 을 켜고 추가 신원을 등록한다.
     ///
     /// 형식: `id=pubkeyhex;id2=pubkeyhex2`
@@ -627,6 +645,10 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     let signing_key = SigningKey::from_bytes(&config.own_seed);
     let mut agent_keys = InMemoryKeyring::new();
     agent_keys.insert(config.agent_device_id.clone(), config.agent_verifying_key);
+    // ★ 풀 모드 — 풀에 속한 노드 전부를 검증 목록에 올린다(`--pool-agents`).
+    for (id, key) in &config.pool_agents {
+        agent_keys.insert(id.clone(), *key);
+    }
 
     let mut replay = InMemoryReplayGuard::new();
     // ★★ 2026-09-23 (결함 88 조각 0) — **Hello 전용** 영속 재전송 방어. 다른 메시지에는 쓰지 않는다.
@@ -647,15 +669,21 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     let mut connection_count = 0u32;
     // ★ 결함 124 · 133 — 직전에 받아들인 FRESH Hello 의 연결 번호. FRESH 번호 규칙은 `serve_one_connection_impl` 의 대조에 적었다.
     let mut last_fresh_attempt: Option<u32> = None;
+    // ★ 풀 모드에서 `--max-connections 0` 은 **끝없이** 받는다는 뜻이다(데몬). 다른 lane 에서는 그대로 0 이다.
+    let unlimited = config.pool_mode && config.max_connections == 0;
     loop {
-        if connection_count >= config.max_connections {
+        if !unlimited && connection_count >= config.max_connections {
             return Err("max-connections reached before completed session".into());
         }
         if connection_count > 0 && config.pause_before_next_accept_ms != 0 {
             std::thread::sleep(Duration::from_millis(config.pause_before_next_accept_ms));
         }
-        let (mut stream, peer) =
-            accept_with_deadline(&listener, Duration::from_millis(config.accept_timeout_ms))?;
+        let (mut stream, peer) = if config.pool_mode && config.accept_timeout_ms == 0 {
+            // ★ 풀 모드의 `--accept-timeout-ms 0` — 기다림에 끝이 없다. 일이 없는 시간도 정상이다.
+            accept_with_deadline(&listener, Duration::from_secs(365 * 24 * 3600))?
+        } else {
+            accept_with_deadline(&listener, Duration::from_millis(config.accept_timeout_ms))?
+        };
         let connection_attempt = connection_count;
         connection_count += 1;
         println!("CONNECTION_ATTEMPT {connection_attempt} peer={peer}");
@@ -675,7 +703,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
             &mut last_fresh_attempt,
         ) {
             Ok(()) => {
-                if connection_count >= config.max_connections {
+                if !unlimited && connection_count >= config.max_connections {
                     return Ok(());
                 }
             }
@@ -685,7 +713,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
                     "SESSION_ERROR peer={peer} connection_attempt={connection_attempt} kind={} error={error}",
                     session_error_kind(&error)
                 );
-                if connection_count >= config.max_connections {
+                if !unlimited && connection_count >= config.max_connections {
                     return Err(error.to_string());
                 }
             }
@@ -791,7 +819,8 @@ pub(crate) fn unsupported_heartbeat_lane(
 ) -> Option<String> {
     // ★ 결함 ㊲ — 라이브러리 호출자는 CLI 파서의 NEEDS_EXPECT 를 지나쳐 올 수 있다. 저장소 경로가
     //   있는데 heartbeat 를 기대하지 않으면 그 경로는 열리지 않고 버려진다.
-    if config.expect_heartbeats == 0 && config.liveness_db_path.is_some() {
+    // ★ 풀 모드는 이 저장소를 **쓴다** — 검증된 Hello 를 생존 관측으로 적는다(신뢰망 남은 일 C).
+    if config.expect_heartbeats == 0 && !config.pool_mode && config.liveness_db_path.is_some() {
         return Some(
             "--liveness-db 는 --expect-heartbeats 가 0 보다 클 때만 열린다 — 받아 두고 버리지 않는다"
                 .to_string(),
@@ -1162,6 +1191,35 @@ fn serve_one_connection_impl(
     if let Some(guard) = hello_replay.as_mut() {
         check_hello_across_restart(guard, &hello)?;
     }
+    // ★ 2026-09-23 (신뢰망 남은 일 K · C) — 풀 모드: 받은 순간을 생존 관측으로 적고, 이 연결을 그 노드로 좁힌다.
+    let pooled;
+    let config = if config.pool_mode {
+        if let Some(path) = config.liveness_db_path.as_ref() {
+            crate::node_liveness_store::CoordinatorNodeLivenessStore::open(path)
+                .and_then(|mut store| {
+                    store.record_session_seen(&hello.node_id, hello.mode, clock.now_unix_ms())
+                })
+                .map_err(|error| {
+                    SessionHandlerError::Classified(storage_error("session seen", error))
+                })?;
+            println!("SESSION_SEEN node_id={} mode={}", hello.node_id, hello.mode);
+        }
+        match pool_connection_config(config, &hello)? {
+            Some(scoped) => {
+                pooled = scoped;
+                &pooled
+            }
+            None => {
+                println!(
+                    "NO_WORK_FOR_NODE node_id={} — 배정된 예약이 없다. 일을 지어내지 않는다",
+                    hello.node_id
+                );
+                return Ok(());
+            }
+        }
+    } else {
+        config
+    };
     if hello.mode == gputeer_protocol::constants::MODE_RENEW {
         return serve_renew_session(
             config,
@@ -1214,7 +1272,9 @@ fn serve_one_connection_impl(
     //   아래부터 `connection_attempt` 는 **Hello 의 번호**다 — Grant · ACK nonce 와 재접속 시험 조건이 이 값을 쓴다.
     // 받은 연결 번호(`connection_attempt` 인자)는 이제 판정에 쓰지 않는다 — 145 가 상한을 없앴다.
     let _ = connection_attempt;
-    if last_fresh_attempt.is_some_and(|last| hello.connection_attempt <= last) {
+    // ★ 풀 모드는 이 규칙을 쓰지 않는다 — Grant id 가 발급마다 새로 뽑혀 nonce 가 겹치지 않는다(`fresh_grant_id`).
+    if !config.pool_mode && last_fresh_attempt.is_some_and(|last| hello.connection_attempt <= last)
+    {
         return Err(session_protocol_error(format!(
             "HELLO_REJECTED: connection_attempt 가 규칙을 어겼다 — 받은 {} · 직전 FRESH {:?}(직전보다 커야 한다)",
             hello.connection_attempt, *last_fresh_attempt
@@ -2422,6 +2482,129 @@ fn serve_renew_session(
 /// ★ 결정 D1 — 예약이 없어진 늦은 보고도 배정 기록으로 결합해 저장하고 Ack 한다(`bound_via`). 늦은 보고로 예약을 해제하지 않는다.
 /// ★ 아직 하지 않는다: 예약 해제 · Attempt 전이 · 결과 채택.
 #[allow(clippy::too_many_arguments)]
+/// 풀 모드에서 연결마다 정해지는 식별자의 자리 채움 값. 이 값으로 발급하지 않는다(연결마다 덮는다).
+const POOL_UNASSIGNED: &str = "pool-unassigned";
+
+/// `--pool-agents "id=pubhex;id2=pubhex2"` — 풀에 속한 노드의 신원.
+fn parse_pool_agents(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
+    let mut agents: Vec<(String, VerifyingKey)> = Vec::new();
+    for entry in raw
+        .split(';')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let (id, key) = entry.split_once('=').ok_or_else(|| {
+            format!("STARTUP_REFUSED: POOL_AGENTS_FORMAT — {entry:?} 는 id=공개키hex 가 아니다")
+        })?;
+        let id = id.trim().to_string();
+        validate_device_id(&id)?;
+        if agents.iter().any(|(existing, _)| *existing == id) {
+            return Err(format!(
+                "STARTUP_REFUSED: POOL_AGENTS_DUPLICATE — {id} 가 두 번 있다"
+            ));
+        }
+        agents.push((id, hex_to_verifying_key(key.trim())?));
+    }
+    if agents.is_empty() {
+        return Err("STARTUP_REFUSED: POOL_AGENTS_EMPTY — --pool-agents 가 비었다".to_string());
+    }
+    Ok(agents)
+}
+
+/// 풀 모드의 전제 — 하나라도 어긋나면 시작하지 않는다.
+fn pool_mode_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
+    let refuse = |code: &str, why: &str| Err(format!("STARTUP_REFUSED: {code} — {why}"));
+    let Some(control_db) = config.grant_from_control_db.as_ref() else {
+        return refuse(
+            "POOL_NEEDS_CONTROL_DB",
+            "풀 모드는 배정(예약)을 --grant-from-control-db 에서 찾는다",
+        );
+    };
+    if config.stored_grant_submitter_keyring.is_none() {
+        return refuse(
+            "POOL_NEEDS_SUBMITTER_KEYRING",
+            "저장된 Manifest 를 싣기 전에 --submitter-keyring 으로 다시 검증한다",
+        );
+    }
+    if config.lease_db_path.as_deref() != Some(control_db.as_path()) {
+        return refuse(
+            "POOL_LEASE_DB_MISMATCH",
+            "--lease-db 는 --grant-from-control-db 와 같은 파일이어야 한다 — 예약이 만든 Lease 가 거기 있고, 갱신이 그것을 찾는다",
+        );
+    }
+    if !config.accept_report_sessions {
+        return refuse(
+            "POOL_NEEDS_REPORT_SESSIONS",
+            "풀 모드의 종료 보고는 따로 연결(REPORT)로 온다 — --accept-report-sessions true",
+        );
+    }
+    if config.multi_agent || config.resume_protocol {
+        return refuse(
+            "POOL_LANE_CONFLICT",
+            "풀 모드는 순차 lane 이다 — --multi-agent · --resume-protocol 과 함께 쓰지 않는다",
+        );
+    }
+    if config.expect_attempt_reports > 0 || config.expect_heartbeats > 0 || config.do_renew {
+        return refuse(
+            "POOL_INLINE_ROUNDS",
+            "풀 모드의 FRESH 연결은 ACK 뒤 바로 닫힌다 — 같은 연결에서 받는 보고 · heartbeat · 갱신 회차를 켜지 않는다",
+        );
+    }
+    Ok(())
+}
+
+/// 이 연결에 쓸 설정 — 연결한 노드로 좁힌다. FRESH 면 그 노드의 배정을 찾아 식별자를 채운다.
+///
+/// `Ok(None)` — FRESH 인데 그 노드에 배정이 없다. 일을 지어내지 않는다.
+fn pool_connection_config(
+    config: &CoordinatorConfig,
+    hello: &pb::AgentSessionHello,
+) -> Result<Option<CoordinatorConfig>, SessionHandlerError> {
+    let mut scoped = config.clone();
+    scoped.agent_device_id = hello.node_id.clone();
+    if let Some((_, key)) = config
+        .pool_agents
+        .iter()
+        .find(|(id, _)| *id == hello.node_id)
+    {
+        scoped.agent_verifying_key = *key;
+    }
+    if hello.mode != gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT {
+        return Ok(Some(scoped));
+    }
+    let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
+        SessionHandlerError::Classified(storage_error(
+            "pool",
+            "--grant-from-control-db 가 없다 — 시작 관문이 막았어야 한다",
+        ))
+    })?;
+    let assignment = crate::staging_store::CoordinatorStagingStore::open(control_db)
+        .and_then(|staging| staging.work_assigned_to_node(&hello.node_id))
+        .map_err(|error| SessionHandlerError::Classified(storage_error("배정 조회", error)))?;
+    let Some((job_id, attempt_id, lease_id)) = assignment else {
+        return Ok(None);
+    };
+    scoped.job_id = job_id.clone();
+    scoped.attempt_id = attempt_id.clone();
+    scoped.lease_id = lease_id.clone();
+    scoped.stored_grant_job_id = job_id;
+    scoped.stored_grant_attempt_id = attempt_id;
+    scoped.stored_grant_lease_id = lease_id;
+    scoped.grant_id = fresh_grant_id()
+        .map_err(|error| SessionHandlerError::Classified(storage_error("grant id", error)))?;
+    Ok(Some(scoped))
+}
+
+/// 발급마다 새 Grant id — OS 난수 12바이트(hex 24자) 앞에 `g`.
+///
+/// ★ 같은 Agent 가 같은 배정으로 다시 붙어도 Grant · ACK nonce 가 겹치지 않게 한다 — nonce 는 grant id 와 연결 번호로
+///   유도되는데(결함 88 이 짚은 설계), 풀 모드의 Agent 는 붙을 때마다 번호가 0 에서 시작한다.
+fn fresh_grant_id() -> Result<String, String> {
+    let mut bytes = [0u8; 12];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("CSPRNG 실패: {e}"))?;
+    Ok(format!("g{}", hex_bytes(&bytes)))
+}
+
 /// 종료 보고를 저장한다 — `--release-on-exit-report` 면 **같은 커밋에서 예약까지** 푼다.
 ///
 /// ★ 2026-09-23 (신뢰망 남은 일 B). 근거 셋(`CoordinatorConfig::release_on_exit_report` 참조) 중 하나라도
@@ -2757,7 +2940,9 @@ fn read_session_hello(
             ))
         }
     };
-    if hello.node_id != config.agent_device_id {
+    // ★ 풀 모드는 여러 노드를 받는다 — 서명자(= node_id)의 키가 풀 목록에 있어야 검증이 통과하므로
+    //   그것이 곧 "풀의 노드다" 의 확인이다.
+    if !config.pool_mode && hello.node_id != config.agent_device_id {
         return Err(session_protocol_error(format!(
             "HELLO_REJECTED: node_id 불일치 — 기대값 {}",
             config.agent_device_id
@@ -3555,14 +3740,50 @@ fn hex_bytes(bytes: &[u8]) -> String {
 pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, String> {
     let flags = parse_flags(args)?;
 
+    // ★ 2026-09-23 (신뢰망 남은 일 K) — 풀 모드는 연결마다 정해지는 식별자를 **받지 않는다.**
+    //   주면 거부한다 — 받아 두면 운영자는 그 값이 쓰인다고 믿는다.
+    let pool_mode = flags.bool_flag("--pool-mode");
+    let pool_agents = if pool_mode {
+        parse_pool_agents(&flags.require("--pool-agents")?)?
+    } else {
+        Vec::new()
+    };
+    let per_connection = |name: &str| -> Result<String, String> {
+        if !pool_mode {
+            return flags.require(name);
+        }
+        if flags.0.contains_key(name) {
+            return Err(format!(
+                "STARTUP_REFUSED: POOL_PER_CONNECTION_FLAG — {name} 는 풀 모드에서 연결마다 정해진다. 주지 않는다"
+            ));
+        }
+        Ok(POOL_UNASSIGNED.to_string())
+    };
+    let (pool_first_id, pool_first_key) = match pool_agents.first() {
+        Some((id, key)) => (Some(id.clone()), Some(*key)),
+        None => (None, None),
+    };
+
     let config = CoordinatorConfig {
         listen: flags.require("--listen")?,
         own_seed: hex_to_seed(&flags.require("--own-seed")?)?,
-        agent_verifying_key: hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+        agent_verifying_key: match pool_first_key {
+            Some(key) => {
+                per_connection("--peer-pubkey")?;
+                key
+            }
+            None => hex_to_verifying_key(&flags.require("--peer-pubkey")?)?,
+        },
         coordinator_device_id: flags.require("--coordinator-device-id")?,
-        agent_device_id: flags.require("--agent-device-id")?,
-        grant_id: flags.require("--grant-id")?,
-        attempt_id: flags.require("--attempt-id")?,
+        agent_device_id: match &pool_first_id {
+            Some(id) => {
+                per_connection("--agent-device-id")?;
+                id.clone()
+            }
+            None => flags.require("--agent-device-id")?,
+        },
+        grant_id: per_connection("--grant-id")?,
+        attempt_id: per_connection("--attempt-id")?,
         corrupt_own_signature: flags.bool_flag("--corrupt-own-signature"),
         send_grant_twice: flags.bool_flag("--send-grant-twice"),
         disconnect_after_ack: flags.bool_flag("--disconnect-after-ack"),
@@ -3572,8 +3793,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         revoke_before_drop: flags.bool_flag("--revoke-before-drop"),
         pause_before_next_accept_ms: flags
             .u64_flag_with_default("--pause-before-next-accept-ms", 0)?,
-        lease_id: flags.require("--lease-id")?,
-        job_id: flags.require("--job-id")?,
+        lease_id: per_connection("--lease-id")?,
+        job_id: per_connection("--job-id")?,
         fence_epoch: flags.u64_flag("--fence-epoch")?,
         // Manifest 배선 — 안 주면 기존 경로 그대로(manifest 필드 없음).
         manifest_file: flags.get("--manifest-file").map(PathBuf::from),
@@ -3624,6 +3845,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
         accept_report_sessions: flags.bool_flag("--accept-report-sessions"),
         release_on_exit_report: flags.bool_flag("--release-on-exit-report"),
+        pool_mode,
+        pool_agents,
         extra_agents: flags.get("--extra-agents").cloned(),
         require_concurrent_sessions: flags
             .u32_flag_with_default("--require-concurrent-sessions", 0)?,
@@ -3718,6 +3941,10 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
             ),
             ("lease", &config.lease_id, &config.stored_grant_lease_id),
         ] {
+            // 풀 모드는 식별자를 연결마다 배정 조회로 정한다 — 여기서 요구하지 않는다(아래 풀 관문이 따로 본다).
+            if config.pool_mode {
+                continue;
+            }
             if stored.is_empty() {
                 return Err(format!(
                     "STARTUP_REFUSED: STORED_LANE_ID_MISSING — --stored-grant-{name}-id 가 없다"
@@ -3739,6 +3966,10 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
                     .to_string(),
             );
         }
+    }
+    // ★ 2026-09-23 (신뢰망 남은 일 K) — 풀 모드의 전제를 시작할 때 전부 본다.
+    if config.pool_mode {
+        pool_mode_startup_check(&config)?;
     }
     // ★ 2026-09-23 (신뢰망 남은 일 B) — 예약 해제 스위치는 **보고를 실제로 받는 구성**에서만 뜻이 있다.
     //   받지 않으면서 켜 두면 "풀린다" 고 믿는데 아무것도 안 풀린다.
@@ -3790,7 +4021,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         );
     }
     // ★ 결함 ㉟ — 생존 보고를 기대하지 않으면 저장소를 열지 않는다(위 이웃 신고와 같은 모양).
-    if config.expect_heartbeats == 0 && flags.0.contains_key("--liveness-db") {
+    if config.expect_heartbeats == 0 && !config.pool_mode && flags.0.contains_key("--liveness-db") {
         return Err(
             "STARTUP_REFUSED: NEEDS_EXPECT — --liveness-db 는 --expect-heartbeats 가 \
              0 보다 클 때만 열린다. 받아 두고 버리지 않는다"
@@ -4195,6 +4426,102 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_config_from_args(&args).expect("설정 파싱")
+    }
+
+    /// ★ 2026-09-23 (신뢰망 남은 일 K) — 풀 모드의 전제가 하나라도 어긋나면 **시작하지 않는다.**
+    ///
+    /// 각 거부가 자기 코드로 나오는지 본다 — 다른 관문에 걸려 통과하는 시험을 만들지 않는다.
+    #[test]
+    fn pool_mode_refuses_to_start_without_its_premises() {
+        let agent = SigningKey::from_bytes(&[7u8; 32]).verifying_key();
+        let agent_hex: String = agent
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let pool_agents = format!("01JPOOLUNIT0000000000001={agent_hex}");
+        let own_seed = "11".repeat(32);
+        let base = |extra: &[&str], drop: &[&str]| -> Result<CoordinatorConfig, String> {
+            let mut args: Vec<String> = [
+                "--pool-mode",
+                "true",
+                "--pool-agents",
+                pool_agents.as_str(),
+                "--listen",
+                "127.0.0.1:0",
+                "--own-seed",
+                own_seed.as_str(),
+                "--coordinator-device-id",
+                "01JCOORDPOOLUNIT00000001",
+                "--grant-from-control-db",
+                "control.sqlite3",
+                "--lease-db",
+                "control.sqlite3",
+                "--submitter-keyring",
+                "submitters.keyring",
+                "--accept-report-sessions",
+                "true",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            for flag in drop {
+                if let Some(index) = args.iter().position(|arg| arg == flag) {
+                    args.drain(index..index + 2);
+                }
+            }
+            args.extend(extra.iter().map(|s| s.to_string()));
+            parse_config_from_args(&args)
+        };
+        let Ok(config) = base(&[], &[]) else {
+            panic!("전제를 다 갖춘 풀 설정은 받아야 한다");
+        };
+        assert!(config.pool_mode);
+        assert_eq!(config.pool_agents.len(), 1);
+
+        let cases: [(&str, &[&str], &[&str], &str); 5] = [
+            (
+                "연결마다 정해지는 식별자를 줬다",
+                &["--job-id", "01JJOBPOOLUNIT0000000001"],
+                &[],
+                "POOL_PER_CONNECTION_FLAG",
+            ),
+            (
+                "Lease 가 다른 파일에 있다",
+                &["--lease-db", "other.sqlite3"],
+                &["--lease-db"],
+                "POOL_LEASE_DB_MISMATCH",
+            ),
+            (
+                "보고 세션을 안 받는다",
+                &[],
+                &["--accept-report-sessions"],
+                "POOL_NEEDS_REPORT_SESSIONS",
+            ),
+            (
+                "같은 연결의 보고를 켰다",
+                &["--expect-attempt-reports", "1"],
+                &[],
+                "POOL_INLINE_ROUNDS",
+            ),
+            (
+                "다중 Agent lane 과 섞었다",
+                &["--multi-agent", "true"],
+                &[],
+                "POOL_LANE_CONFLICT",
+            ),
+        ];
+        for (label, extra, drop, code) in cases {
+            // 설정에는 비밀(own_seed)이 있어 Debug 를 두지 않는다 — expect_err 대신 let-else.
+            let Err(error) = base(extra, drop) else {
+                panic!("{label}: 받아들였다");
+            };
+            assert!(error.contains(code), "{label}: {error}");
+        }
+        let Err(error) = base(&[], &["--pool-agents"]) else {
+            panic!("풀 목록 없이 받아들였다");
+        };
+        assert!(error.contains("--pool-agents"), "{error}");
     }
 
     /// ★★ 결함 88 조각 0 — **재시작을 넘어** 같은 Hello 를 거부한다.

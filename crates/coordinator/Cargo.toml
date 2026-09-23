@@ -12,6 +12,7 @@ gputeer-scheduler = { path = "../scheduler" }
 prost.workspace = true
 blake3.workspace = true
 rusqlite.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
