@@ -38,7 +38,24 @@ pub const SIGNED_MANIFEST_SUFFIX: &str = ".checkpoint.pb";
 /// 이 Job 의 체크포인트가 모이는 곳.
 pub fn job_root(shared_root: &Path, job_id: &str) -> Result<PathBuf, String> {
     safe_component(job_id, "job_id")?;
-    Ok(shared_root.join(job_id))
+    let root = shared_root.join(job_id);
+    ensure_not_link(&root)?;
+    Ok(root)
+}
+
+/// ★ 2026-09-23 (결함 225 · 검수 75) — Job 폴더 · 체크포인트 폴더가 **링크(심볼릭 · junction)면** 따라가지 않는다.
+///   `read_beneath` 는 "이미 고른 폴더 아래" 만 지킨다 — 고른 폴더가 밖을 가리키면 공유 저장소 밖을 쓰고 읽는다.
+///   (Windows 의 `is_symlink` 는 junction 같은 이름 대리 재분석 지점도 참으로 본다.) 공유 루트 자체는 운영자가 고른 경로라 보지 않는다.
+///   ★ 확인과 사용 사이에 링크로 바꿔치기하는 경합은 막지 않는다 — 신뢰망 전제(악의적 참여자 방어 범위 밖)다.
+fn ensure_not_link(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "SHARED_CHECKPOINT_LINK: {path:?} 가 링크다 — 공유 저장소 밖으로 나갈 수 있어 따라가지 않는다"
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("SHARED_CHECKPOINT_LINK: {path:?}: {error}")),
+    }
 }
 
 fn safe_component(value: &str, what: &str) -> Result<(), String> {
@@ -65,7 +82,11 @@ pub fn publish_directory(
     source_dir: &Path,
     meta: &ManifestMeta,
 ) -> Result<CommittedCheckpoint, String> {
+    // ★ 2026-09-23 (결함 225 · 검수 75) — 전에는 checkpoint_id 를 여기서 안 봐서 ':'(Windows 드라이브 접두사)가 공유 루트 밖에
+    //   데이터를 확정한 뒤에야 서명 매니페스트 쓰기에서 거부됐다.
+    safe_component(checkpoint_id, "checkpoint_id")?;
     let root = job_root(shared_root, job_id)?;
+    ensure_not_link(&root.join(checkpoint_id))?;
     let mut names: Vec<(String, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(source_dir)
         .map_err(|e| format!("SHARED_CHECKPOINT_SOURCE: {source_dir:?} 를 읽지 못했다: {e}"))?
@@ -105,6 +126,60 @@ pub fn publish_directory(
     staged
         .commit(meta)
         .map_err(|e| format!("SHARED_CHECKPOINT_COMMIT: {e:?}"))
+}
+
+/// 게시한다 — 또는 **데이터는 이미 확정됐는데 서명만 빠진** 체크포인트를 되살린다.
+///
+/// ★ 2026-09-23 (결함 223 · 검수 75) — 데이터 확정 뒤 서명 매니페스트 쓰기만 실패하면, 다음 시도가 `AlreadyCommitted` 에 막혀
+///   서명 단계에 다시 닿지 못했다(그 체크포인트는 이어가기에 영영 못 쓰였다). 이제 이미 확정된 매니페스트를 읽어
+///   **이 시도 · step · fence · 생산자의 것이고, 디스크 파일이 맞고, 원본 폴더 내용과 같을 때만** 그것을 돌려준다(서명은 호출부가 한다).
+pub fn publish_or_recover(
+    shared_root: &Path,
+    job_id: &str,
+    checkpoint_id: &str,
+    source_dir: &Path,
+    meta: &ManifestMeta,
+) -> Result<CheckpointManifest, String> {
+    match publish_directory(shared_root, job_id, checkpoint_id, source_dir, meta) {
+        Ok(committed) => return Ok(committed.manifest),
+        Err(error) if error.starts_with("SHARED_CHECKPOINT_BEGIN: AlreadyCommitted") => {}
+        Err(error) => return Err(error),
+    }
+    let dir = job_root(shared_root, job_id)?.join(checkpoint_id);
+    let json = crate::platform::read_beneath(&dir, Path::new(crate::durability::MANIFEST_FILENAME))
+        .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: manifest.json 을 읽지 못했다: {e}"))?;
+    let manifest = CheckpointManifest::from_json(&json)
+        .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: manifest.json 해석 실패: {e:?}"))?;
+    if manifest.checkpoint_id != checkpoint_id
+        || manifest.job_id != meta.job_id
+        || manifest.attempt_id != meta.attempt_id
+        || manifest.step != meta.step
+        || manifest.fence_epoch != meta.fence_epoch
+        || manifest.producer_node_id != meta.producer_node_id
+    {
+        return Err(format!(
+            "SHARED_CHECKPOINT_RECOVER: {checkpoint_id} 는 이미 **다른** 확정 체크포인트다 — 서명하지 않는다"
+        ));
+    }
+    let on_disk = verify_on_disk(shared_root, &to_unsigned_pb(&manifest)?)?;
+    let mut source: Vec<(String, Vec<u8>)> = Vec::new();
+    for entry in std::fs::read_dir(source_dir)
+        .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {source_dir:?}: {e}"))?
+    {
+        let entry = entry.map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {e}"))?;
+        let data = std::fs::read(entry.path())
+            .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {:?}: {e}", entry.path()))?;
+        source.push((entry.file_name().to_string_lossy().to_string(), data));
+    }
+    source.sort();
+    let mut committed = on_disk;
+    committed.sort();
+    if source != committed {
+        return Err(format!(
+            "SHARED_CHECKPOINT_RECOVER: {checkpoint_id} 의 확정본이 지금 폴더 내용과 다르다 — 서명하지 않는다"
+        ));
+    }
+    Ok(manifest)
 }
 
 fn hex32(hex: &str, what: &str) -> Result<Vec<u8>, String> {
@@ -221,6 +296,7 @@ pub fn verify_on_disk(
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
     safe_component(&manifest.checkpoint_id, "checkpoint_id")?;
     let dir = job_root(shared_root, &manifest.job_id)?.join(&manifest.checkpoint_id);
+    ensure_not_link(&dir)?;
     if manifest.files.is_empty() {
         return Err("SHARED_CHECKPOINT_VERIFY: 파일이 없는 매니페스트다".to_string());
     }
@@ -260,6 +336,19 @@ pub fn verify_on_disk(
         if blake3::hash(&data).as_bytes().as_slice() != digest.value.as_slice() {
             return Err(format!(
                 "SHARED_CHECKPOINT_VERIFY: {} 내용이 매니페스트와 다르다",
+                file.path
+            ));
+        }
+        // ★ 2026-09-23 (결함 226 · 검수 75) — 이름의 내용 주소 표식도 그 digest 여야 한다. 전에는 모양(64자 hex)만 봤다.
+        let named: String = digest.value.iter().map(|b| format!("{b:02x}")).collect();
+        if file
+            .path
+            .rsplit_once(crate::commit::CONTENT_ADDRESS_MARKER)
+            .map(|(_, suffix)| suffix)
+            != Some(named.as_str())
+        {
+            return Err(format!(
+                "SHARED_CHECKPOINT_VERIFY: {} 의 이름 표식이 내용의 digest 와 다르다",
                 file.path
             ));
         }
@@ -353,6 +442,105 @@ mod tests {
         restore(&shared, &pb, &dest).unwrap();
         assert_eq!(std::fs::read(dest.join("state.bin")).unwrap(), b"counter=2");
         assert_eq!(std::fs::read(dest.join("rng")).unwrap(), b"seed");
+    }
+
+    /// 결함 223 — 데이터는 확정됐는데 서명만 빠졌으면 되살린다. 확정본이 다른 시도 · 다른 내용이면 거부한다.
+    #[test]
+    fn a_committed_checkpoint_without_its_signature_is_recovered_only_when_it_matches() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let source = source_with(temp.path(), &[("state.bin", b"counter=2")]);
+        let first = publish_directory(&shared, "job-1", "ckpt-2", &source, &meta(2)).unwrap();
+        // 서명 매니페스트를 못 쓴 채 다시 온다(created_at 은 달라도 된다).
+        let mut later = meta(2);
+        later.created_at_unix_ms = 9_999;
+        let recovered = publish_or_recover(&shared, "job-1", "ckpt-2", &source, &later).unwrap();
+        assert_eq!(
+            to_unsigned_pb(&recovered).unwrap(),
+            to_unsigned_pb(&first.manifest).unwrap()
+        );
+        // 다른 fence 의 것이면 되살리지 않는다.
+        let mut other = meta(2);
+        other.fence_epoch = 4;
+        assert!(
+            publish_or_recover(&shared, "job-1", "ckpt-2", &source, &other)
+                .unwrap_err()
+                .contains("다른** 확정")
+        );
+        // 폴더 내용이 바뀌었으면 되살리지 않는다.
+        std::fs::write(source.join("state.bin"), b"counter=3").unwrap();
+        assert!(
+            publish_or_recover(&shared, "job-1", "ckpt-2", &source, &meta(2))
+                .unwrap_err()
+                .contains("지금 폴더 내용과 다르다")
+        );
+    }
+
+    /// 결함 225 A — checkpoint_id 에 ':'(드라이브 접두사)가 있으면 **쓰기 전에** 거부한다.
+    #[test]
+    fn a_checkpoint_id_with_a_drive_prefix_is_refused_before_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let source = source_with(temp.path(), &[("state.bin", b"x")]);
+        let error = publish_directory(&shared, "job-1", "C:-step-1", &source, &meta(1))
+            .expect_err("드라이브 접두사를 받았다");
+        assert!(error.contains("SHARED_CHECKPOINT_UNSAFE_NAME"), "{error}");
+        assert!(!shared.join("job-1").exists(), "거부 전에 무언가를 썼다");
+    }
+
+    /// 결함 225 B — Job 폴더가 밖을 가리키는 링크면 게시 · 목록 · 검증이 모두 따라가지 않는다.
+    #[test]
+    fn a_job_folder_that_is_a_link_is_not_followed() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = shared.join("job-1");
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        assert!(made, "시험 전제: 링크를 만들 수 있어야 한다");
+        let source = source_with(temp.path(), &[("state.bin", b"x")]);
+        let error = publish_directory(&shared, "job-1", "ckpt-1", &source, &meta(1))
+            .expect_err("링크를 따라 밖에 썼다");
+        assert!(error.contains("SHARED_CHECKPOINT_LINK"), "{error}");
+        assert_eq!(
+            std::fs::read_dir(&outside).unwrap().count(),
+            0,
+            "밖에 무언가를 썼다"
+        );
+        assert!(list_signed_manifests(&shared, "job-1")
+            .unwrap_err()
+            .contains("SHARED_CHECKPOINT_LINK"));
+    }
+
+    /// 결함 226 — 이름의 내용 주소 표식이 digest 와 다르면 검증에서 떨어진다(내용 · 루트가 맞아도).
+    #[test]
+    fn a_false_content_address_name_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let source = source_with(temp.path(), &[("state.bin", b"counter=2")]);
+        let committed = publish_directory(&shared, "job-1", "ckpt-2", &source, &meta(2)).unwrap();
+        let mut pb = to_unsigned_pb(&committed.manifest).unwrap();
+        let dir = shared.join("job-1").join("ckpt-2");
+        let honest = pb.files[0].path.clone();
+        let forged = format!(
+            "state.bin{}{}",
+            crate::commit::CONTENT_ADDRESS_MARKER,
+            "0".repeat(64)
+        );
+        std::fs::copy(dir.join(&honest), dir.join(&forged)).unwrap();
+        pb.files[0].path = forged;
+        let error = verify_on_disk(&shared, &pb).expect_err("거짓 이름 표식을 받았다");
+        assert!(error.contains("이름 표식"), "{error}");
     }
 
     /// ★ 공유 저장소의 파일이 **바뀌면** 검증에서 떨어진다 — 바뀐 체크포인트에서 이어가지 않는다(§0.2).

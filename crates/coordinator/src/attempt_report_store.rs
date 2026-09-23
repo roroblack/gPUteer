@@ -63,6 +63,15 @@ pub struct StoreAttemptReportResult {
     pub binding: StoredAttemptReportBinding,
     /// `false` means an exact semantic replay returned the first durable row.
     pub created: bool,
+    /// 같은 커밋에서 일어난 일의 한 줄 기록들(예약 해제 · 소유자 선점). 비어 있으면 둘 다 일어나지 않았다.
+    pub notes: Vec<String>,
+}
+
+/// 소유자 선점 INTERRUPTED 보고를 **같은 커밋에서** Job `RUNNING -> PAUSED` 로 옮기라는 요청(풀 모드).
+#[derive(Clone, Copy)]
+pub struct OwnerPreemptRequest<'a> {
+    pub policy: &'a crate::failover::FailoverPolicy,
+    pub now_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,7 +241,21 @@ impl CoordinatorAttemptReportStore {
         &mut self,
         verified: &Verified<pb::AttemptReport>,
     ) -> Result<StoreAttemptReportResult, AttemptReportStoreError> {
-        self.store_verified_terminal_report_inner(verified, None, None)
+        self.store_verified_terminal_report_inner(verified, None, None, None)
+    }
+
+    /// 보고 저장에 **예약 해제**(요청 시)와 **소유자 선점 전이**(요청 시 · INTERRUPTED 일 때만)를 한 커밋으로 묶는다.
+    ///
+    /// ★ 2026-09-23 (결함 213 · 215 · 검수 73) — 같은 보고가 **다시** 와도 둘을 다시 시도한다(이미 있는 보고에서
+    ///   곧바로 돌아가면 첫 저장 때 관문에 막혔던 해제 · 중간에 죽은 선점을 되살릴 길이 없었다). 둘 다 멱등이다 —
+    ///   해제는 이미 풀린 기록을 돌려주고, 선점은 Job 이 RUNNING 이 아니면 아무것도 안 한다.
+    pub fn store_verified_terminal_report_with(
+        &mut self,
+        verified: &Verified<pb::AttemptReport>,
+        release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
+        owner_preempt: Option<OwnerPreemptRequest<'_>>,
+    ) -> Result<StoreAttemptReportResult, AttemptReportStoreError> {
+        self.store_verified_terminal_report_inner(verified, None, release, owner_preempt)
     }
 
     /// 보고 저장 · Attempt 종료 전이 · **예약 해제**를 한 커밋에 넣는다.
@@ -254,6 +277,7 @@ impl CoordinatorAttemptReportStore {
             verified,
             None,
             Some((authorization, released_at_unix_ms)),
+            None,
         )
     }
 
@@ -262,6 +286,7 @@ impl CoordinatorAttemptReportStore {
         verified: &Verified<pb::AttemptReport>,
         fault: Option<TestFault>,
         release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
+        owner_preempt: Option<OwnerPreemptRequest<'_>>,
     ) -> Result<StoreAttemptReportResult, AttemptReportStoreError> {
         // No report field is observed before the only report parameter has
         // crossed the Verified type gate.
@@ -285,10 +310,13 @@ impl CoordinatorAttemptReportStore {
                     node_id: report.node_id.clone(),
                 });
             }
+            // ★ 결함 213 · 215 — 재전송에도 해제 · 선점을 다시 시도한다(아래 after_report 는 둘 다 멱등이다).
+            let notes = after_report(&transaction, verified, release, owner_preempt)?;
             transaction.commit().map_err(map_sql_error)?;
             return Ok(StoreAttemptReportResult {
                 binding,
                 created: false,
+                notes,
             });
         }
 
@@ -372,17 +400,9 @@ impl CoordinatorAttemptReportStore {
             .map_err(|error| AttemptReportStoreError::Staging(format!("Job 종료 전이: {error}")))?;
         }
 
-        // ★ 예약 해제까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
+        // ★ 예약 해제 · 소유자 선점까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
         //   오류가 그대로 올라가고 **보고 저장도 롤백된다** — 반쪽 적용을 만들지 않는다.
-        if let Some((authorization, released_at)) = release {
-            crate::reservation_release::release_within_transaction(
-                &transaction,
-                verified,
-                authorization,
-                released_at,
-            )
-            .map_err(|error| AttemptReportStoreError::Staging(format!("예약 해제: {error:?}")))?;
-        }
+        let notes = after_report(&transaction, verified, release, owner_preempt)?;
 
         transaction.commit().map_err(map_sql_error)?;
 
@@ -398,6 +418,7 @@ impl CoordinatorAttemptReportStore {
                 bound_via,
             },
             created: true,
+            notes,
         })
     }
 }
@@ -537,6 +558,50 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
     // ★ `Verified` 는 서명 통과이지 조합 규칙 통과가 아니다 — 저장 진입이 직접 부른다(§5.7 (4)).
     gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(report)
         .map_err(AttemptReportStoreError::ReportRule)
+}
+
+/// 보고가 저장된(또는 이미 있던) 같은 트랜잭션에서 예약 해제와 소유자 선점을 한다. 둘 다 멱등이다.
+fn after_report(
+    transaction: &Connection,
+    verified: &Verified<pb::AttemptReport>,
+    release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
+    owner_preempt: Option<OwnerPreemptRequest<'_>>,
+) -> Result<Vec<String>, AttemptReportStoreError> {
+    let report = verified.get();
+    let mut notes = Vec::new();
+    if let Some((authorization, released_at)) = release {
+        crate::reservation_release::release_within_transaction(
+            transaction,
+            verified,
+            authorization,
+            released_at,
+        )
+        .map_err(|error| AttemptReportStoreError::Staging(format!("예약 해제: {error:?}")))?;
+        notes.push(format!(
+            "RESERVATION_RELEASED node_id={} attempt_id={}",
+            report.node_id, report.attempt_id
+        ));
+    }
+    if let Some(request) = owner_preempt {
+        if report.outcome == pb::AttemptOutcome::Interrupted as i32 {
+            let mut extra = Vec::new();
+            let line = crate::failover::pause_for_owner_preempt_within(
+                transaction,
+                &report.job_id,
+                &report.attempt_id,
+                &report.node_id,
+                request.policy,
+                request.now_unix_ms,
+                &mut extra,
+            )
+            .map_err(|error| {
+                AttemptReportStoreError::Staging(format!("소유자 선점 기록: {error}"))
+            })?;
+            notes.extend(line);
+            notes.extend(extra);
+        }
+    }
+    Ok(notes)
 }
 
 /// terminal outcome 인가.
@@ -1207,6 +1272,259 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn observed_exit(mut report: pb::AttemptReport) -> pb::AttemptReport {
+        report.exit_observation = pb::ExitObservation::ObservedWithCode as i32;
+        report.exit_code = 0;
+        report
+    }
+
+    fn release_auth(
+        artifact_durability: crate::reservation_release::ArtifactDurabilityGuard,
+    ) -> crate::reservation_release::ReleaseAuthorization {
+        use crate::reservation_release::{
+            KeyDirectoryProvenance, ReleaseAuthorization, RuntimeStopProof,
+        };
+        ReleaseAuthorization {
+            runtime_stop: RuntimeStopProof::ObservedExitInSignedReport,
+            key_directory: KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+            artifact_durability,
+        }
+    }
+
+    /// 선점 뒤 다시 배치된 Job 처럼 **시도는 CREATED 인데 Job 은 이미 RUNNING** 인 상태를 만든다.
+    fn make_job_running(fixture: &Fixture) {
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        assert!(
+            crate::job_store::record_staging_complete(&connection, JOB_ID, ATTEMPT_ID, 250)
+                .unwrap()
+        );
+    }
+
+    /// 결함 213 — 보고만 저장된 뒤 **같은 보고가 다시 오면** 예약 해제를 다시 시도한다.
+    #[test]
+    fn a_replayed_report_releases_the_reservation_it_could_not_release_the_first_time() {
+        use crate::reservation_release::ArtifactDurabilityGuard;
+        let fixture = prepare_fixture();
+        let verified =
+            verified_custom(observed_exit(base_report(2, pb::AttemptOutcome::Failed)), 7);
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        // 첫 도착 — 해제 없이 저장만(스위치 꺼짐 · 관문 사유 등).
+        let first = store.store_verified_terminal_report(&verified).unwrap();
+        assert!(first.created);
+        assert!(first.notes.is_empty());
+        // 같은 보고의 재전송 — 이번에는 해제를 요청한다.
+        let again = store
+            .store_verified_terminal_report_with(
+                &verified,
+                Some((
+                    release_auth(ArtifactDurabilityGuard::NotApplicableNonCompleted),
+                    777,
+                )),
+                None,
+            )
+            .unwrap();
+        assert!(!again.created, "첫 저장본을 돌려줘야 한다");
+        assert_eq!(
+            again.notes,
+            vec![format!(
+                "RESERVATION_RELEASED node_id={NODE_ID} attempt_id={ATTEMPT_ID}"
+            )]
+        );
+        drop(store);
+        assert_eq!(
+            CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_node_reservation(NODE_ID)
+                .unwrap(),
+            None,
+            "재전송이 해제에 닿지 않았다 — 그 노드는 계속 묶인다"
+        );
+    }
+
+    /// 결함 214 — STALE_COMPLETED 도 완료다. 내구성 관문을 "해당 없음" 으로 넘기면 거부하고 통째로 롤백한다.
+    #[test]
+    fn a_stale_completion_cannot_skip_the_artifact_durability_guard() {
+        use crate::reservation_release::ArtifactDurabilityGuard;
+        let fixture = prepare_fixture();
+        let verified = verified_custom(
+            observed_exit(base_report(2, pb::AttemptOutcome::StaleCompleted)),
+            7,
+        );
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store
+            .store_verified_terminal_report_with(
+                &verified,
+                Some((
+                    release_auth(ArtifactDurabilityGuard::NotApplicableNonCompleted),
+                    777,
+                )),
+                None,
+            )
+            .expect_err("늦은 완료가 내구성 관문을 비껴갔다");
+        assert_eq!(report_count(&store), 0, "막혔는데 보고가 남았다");
+        drop(store);
+        assert!(CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_node_reservation(NODE_ID)
+            .unwrap()
+            .is_some());
+    }
+
+    /// 결함 215 — 소유자 선점은 보고 저장 · 예약 해제와 **같은 커밋**이고, 재전송이 빠진 선점을 되살린다.
+    #[test]
+    fn an_owner_preempt_is_committed_with_the_report_and_a_replay_recovers_it() {
+        use crate::reservation_release::ArtifactDurabilityGuard;
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let preempt = OwnerPreemptRequest {
+            policy: &policy,
+            now_unix_ms: 400,
+        };
+        let interrupted = verified_custom(
+            observed_exit(base_report(2, pb::AttemptOutcome::Interrupted)),
+            7,
+        );
+
+        // 한 번에 — 보고 · 해제 · 선점이 함께 들어간다.
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let result = store
+            .store_verified_terminal_report_with(
+                &interrupted,
+                Some((
+                    release_auth(ArtifactDurabilityGuard::NotApplicableNonCompleted),
+                    400,
+                )),
+                Some(preempt),
+            )
+            .unwrap();
+        assert!(
+            result
+                .notes
+                .iter()
+                .any(|line| line.starts_with("OWNER_PREEMPTED")),
+            "{:?}",
+            result.notes
+        );
+        drop(store);
+        let job = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Paused);
+        assert_eq!(
+            CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_node_reservation(NODE_ID)
+                .unwrap(),
+            None
+        );
+
+        // 옛 코드가 남기던 반쪽 상태(보고 · 해제는 됐고 선점은 빠짐)에서 재전송이 선점을 되살린다.
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        store
+            .store_verified_terminal_report_with(
+                &interrupted,
+                Some((
+                    release_auth(ArtifactDurabilityGuard::NotApplicableNonCompleted),
+                    400,
+                )),
+                None,
+            )
+            .unwrap();
+        let replay = store
+            .store_verified_terminal_report_with(&interrupted, None, Some(preempt))
+            .unwrap();
+        assert!(!replay.created);
+        drop(store);
+        assert_eq!(
+            CoordinatorJobStore::open(&fixture.path)
+                .unwrap()
+                .get(JOB_ID)
+                .unwrap()
+                .unwrap()
+                .state,
+            JobState::Paused,
+            "재전송이 빠진 선점을 되살리지 못했다 — Job 이 RUNNING 으로 남는다"
+        );
+    }
+
+    /// 결함 216 — Job 이 이미 RUNNING 인데 시도가 실행 전에 끝나면 trigger 는 UNRECOVERABLE_ERROR 다.
+    #[test]
+    fn a_running_job_whose_attempt_never_started_fails_with_the_running_trigger() {
+        use crate::job_store::RunTerminal;
+        for outcome in [pb::AttemptOutcome::Cancelled, pb::AttemptOutcome::Failed] {
+            let fixture = prepare_fixture();
+            make_job_running(&fixture);
+            let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+            store
+                .store_verified_terminal_report(&verified_custom(base_report(1, outcome), 7))
+                .unwrap();
+            drop(store);
+            let job = CoordinatorJobStore::open(&fixture.path)
+                .unwrap()
+                .get(JOB_ID)
+                .unwrap()
+                .unwrap();
+            assert_eq!(job.state, JobState::Failed, "{outcome:?}");
+            assert_eq!(
+                job.run_terminal,
+                Some(RunTerminal::UnrecoverableError),
+                "{outcome:?} — RUNNING -> FAILED 를 STAGING_FAILED 로 적었다"
+            );
+        }
+    }
+
+    /// 결함 227 (검수 76) — 장애 판정이 옛 Lease 를 같은 커밋에서 폐기한다. 판정 **전에** 시각을 잡은 늦은 갱신도
+    ///   판정 뒤에는 저장되지 않는다(전에는 옛 Lease 가 미래로 늘어 옛 노드와 새 노드가 같이 돌 수 있었다).
+    #[test]
+    fn a_renewal_that_arrives_after_failover_cannot_revive_the_old_lease() {
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let outcomes = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            lease.expires_at_unix_ms + 1,
+            &mut notes,
+        )
+        .unwrap();
+        assert_eq!(outcomes.len(), 1, "{notes:?}");
+        // 판정 직전(만료 전)에 시각을 잡은 갱신이 이제 저장된다.
+        let late = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .renew_existing_within_duration(
+                LEASE_ID,
+                lease.expires_at_unix_ms - 1,
+                lease.expires_at_unix_ms + 60_000,
+                lease.expires_at_unix_ms + 30_000,
+            );
+        assert!(
+            matches!(
+                late,
+                Err(crate::lease_store::LeaseStoreError::Revoked { .. })
+            ),
+            "장애 판정 뒤에 옛 Lease 가 되살아났다: {late:?}"
+        );
     }
 
     /// 옛 시도의 늦은 보고는 **새 시도의 Job 을 끝내지 않는다.**
@@ -1908,6 +2226,7 @@ mod tests {
             store.store_verified_terminal_report_inner(
                 &report,
                 Some(TestFault::AfterReportInsert),
+                None,
                 None
             ),
             Err(AttemptReportStoreError::InjectedFailure(

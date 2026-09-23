@@ -398,8 +398,20 @@ pub(crate) fn unsupported_neighbor_report_lane(
 /// ★ 구현하지 않은 조합은 거부한다 — 받아 놓고 안 하는 것이 가장 나쁘다.
 ///   운영자는 신고가 모이는 줄 안다.
 /// ★ 2026-09-23 (신뢰망 남은 일 H) — "소유자가 GPU 를 되찾았다" 표시 파일. 체크포인트 루트의 형제다.
+///
+/// ★ 2026-09-23 (결함 229 · 검수 77) — 루트가 있으면 **실제 위치**(링크를 푼 경로) 옆에 둔다. 실행 중에는 루트를 실제 위치로 바꾼 뒤
+///   표시를 만드는데, 다음 기동이 입력 경로(링크) 옆을 보면 표시를 못 보고 풀에 붙었다. 루트가 아직 없으면 입력 경로 그대로다.
 pub fn owner_reclaim_marker(checkpoint_root: &std::path::Path) -> Result<PathBuf, String> {
-    checkpoint_root_sibling(checkpoint_root, ".owner-reclaimed")
+    let base = match fs::canonicalize(checkpoint_root) {
+        Ok(real) => without_verbatim_prefix(real),
+        Err(error) if error.kind() == ErrorKind::NotFound => checkpoint_root.to_path_buf(),
+        Err(error) => {
+            return Err(format!(
+                "checkpoint root 의 실제 위치를 읽지 못했다({checkpoint_root:?}): {error}"
+            ))
+        }
+    };
+    checkpoint_root_sibling(&base, ".owner-reclaimed")
 }
 
 /// 소유자가 공유를 다시 켠다 — 표시 파일을 지운다. 없으면 이미 켜져 있다(멱등).
@@ -413,16 +425,7 @@ pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
 }
 
 pub fn run(config: AgentConfig) -> Result<(), String> {
-    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **붙지 않는다.** 붙으면 Coordinator 가 이 노드를
-    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
-    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
-    if marker.exists() {
-        return Err(format!(
-            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
-             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
-            marker.display()
-        ));
-    }
+    // (소유자 되찾음 검사는 체크포인트 루트를 실제 위치로 바꾼 **뒤**로 옮겼다 — 결함 229 · 230, 아래 settle 참조)
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -552,6 +555,22 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   바꿔치기하거나 루트 안에 별칭을 두면 두 기준이 갈라진다. 그래서 잠금을 얻은 뒤 **설정의 루트를 실제 위치로 바꾼다** — 이 뒤로는 한 기준이다.
     let mut config = config;
     let _checkpoint_root_lock = settle_checkpoint_root(&mut config)?;
+    // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았으면 **새 일을 받으러 붙지 않는다.** 붙으면 Coordinator 가 이 노드를
+    //   다시 살아 있다고 보고 새 일을 준다(§0.1 — 소유자의 결정이 원격 서비스보다 앞선다).
+    // ★ 결함 229 · 230 (검수 77) — 루트를 실제 위치로 바꾼 **뒤에** 본다(링크 뒤의 표시를 놓치지 않게). 그리고 멈추기 전에
+    //   **못 보낸 종료 보고를 먼저 보낸다** — 전에는 기동 첫머리에서 곧바로 끝나 선점 보고(INTERRUPTED)가 outbox 에 갇혀
+    //   Coordinator 가 선점을 영영 몰랐다. 보고 연결은 일을 받지 않는다(Coordinator 는 FRESH 인사만 "일 받을 준비" 로 센다).
+    let marker = owner_reclaim_marker(&config.checkpoint_root)?;
+    if marker.exists() {
+        if config.report_over_session {
+            flush_report_outbox(&config, &SigningKey::from_bytes(&config.own_seed));
+        }
+        return Err(format!(
+            "OWNER_RECLAIMED: 이 노드의 소유자가 GPU 를 되찾았다 — 풀에 붙지 않는다. 다시 켜려면 \
+             `gputeer owner-resume --checkpoint-root <루트>` (표시 파일 {})",
+            marker.display()
+        ));
+    }
     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
     //   (2026-08-29, 독립 검수 지적).
     //
@@ -6050,5 +6069,38 @@ mod report_session_tests {
         config.send_attempt_report = true;
         let error = run(config).expect_err("두 길로 보내는 설정은 거부돼야 한다");
         assert!(error.contains("REPORT_SESSION_CONFIG_REFUSED"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod owner_reclaim_marker_tests {
+    /// 결함 229 (검수 77) — 링크(junction · symlink)로 준 루트와 실제 루트가 **같은 표시 파일**을 가리킨다.
+    #[test]
+    fn a_linked_checkpoint_root_finds_the_marker_of_its_real_location() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real-cp");
+        std::fs::create_dir_all(&real).unwrap();
+        let alias_parent = temp.path().join("alias");
+        std::fs::create_dir_all(&alias_parent).unwrap();
+        let alias = alias_parent.join("cp");
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&alias)
+            .arg(&real)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&real, &alias).is_ok();
+        assert!(made, "시험 전제: 링크를 만들 수 있어야 한다");
+        let through_alias = super::owner_reclaim_marker(&alias).unwrap();
+        let through_real = super::owner_reclaim_marker(&real).unwrap();
+        assert_eq!(
+            std::fs::canonicalize(through_alias.parent().unwrap()).unwrap(),
+            std::fs::canonicalize(through_real.parent().unwrap()).unwrap(),
+            "링크 옆과 실제 위치 옆이 갈렸다 — 표시를 못 본다"
+        );
+        assert_eq!(through_alias.file_name(), through_real.file_name());
     }
 }

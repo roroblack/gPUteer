@@ -1268,6 +1268,7 @@ pub(crate) fn record_staging_complete(
 /// FAILED       예                (STAGING ->) RUNNING -> FAILED            UNRECOVERABLE_ERROR
 /// FAILED       아니오            STAGING -> FAILED                         STAGING_FAILED
 /// CANCELLED    -                 STAGING -> FAILED                         STAGING_FAILED
+/// FAILED 아니오 · CANCELLED       RUNNING -> FAILED (이미 RUNNING 일 때)     UNRECOVERABLE_ERROR  ★ 결함 216
 /// ```
 ///
 /// ★ 재시도 정책은 **0회**다(신뢰망 계획 §기준선과 다른 점). 그래서 두 실패 trigger 의 guard
@@ -1308,16 +1309,10 @@ pub(crate) fn follow_attempt_terminal(
     if latest.as_deref() != Some(attempt_id) {
         return Ok(None);
     }
-    let (path, terminal): (&[JobState], RunTerminal) = match (attempt_final, attempt_ran) {
-        (A::Completed, _) => (
-            &[JobState::Running, JobState::Completed],
-            RunTerminal::AttemptCompleted,
-        ),
-        (A::Failed, true) => (
-            &[JobState::Running, JobState::Failed],
-            RunTerminal::UnrecoverableError,
-        ),
-        (A::Failed, false) | (A::Cancelled, _) => (&[JobState::Failed], RunTerminal::StagingFailed),
+    let path: &[JobState] = match (attempt_final, attempt_ran) {
+        (A::Completed, _) => &[JobState::Running, JobState::Completed],
+        (A::Failed, true) => &[JobState::Running, JobState::Failed],
+        (A::Failed, false) | (A::Cancelled, _) => &[JobState::Failed],
         _ => return Ok(None),
     };
     // 이미 RUNNING 이면 첫 칸(STAGING -> RUNNING)은 이미 밟았다.
@@ -1326,12 +1321,30 @@ pub(crate) fn follow_attempt_terminal(
     } else {
         path
     };
-    let final_state = gputeer_protocol::job_state::walk(job.state, path).map_err(|rejected| {
+    // ★ 2026-09-23 (결함 216 · 검수 73) — trigger 는 **마지막 간선**이 정한다. 전에는 시도 결과만 보고 골라서,
+    //   선점 뒤 이미 RUNNING 인 Job 의 새 시도가 실행 전에 실패하면 `RUNNING -> FAILED` 를 STAGING_FAILED 로 적었다.
+    //   CANCELLED 시도는 Agent 의 Grant 거부(규범 Attempt 표 GRANT_REJECTED)다 — 사용자 취소가 아니므로 Job 은 실패로 끝난다.
+    let (last_from, prefix) = match path.split_last() {
+        Some((_, prefix)) => (prefix.last().copied().unwrap_or(job.state), prefix),
+        None => return Ok(None),
+    };
+    let final_to = *path.last().expect("위에서 비어 있지 않음을 봤다");
+    let terminal = match (last_from, final_to) {
+        (JobState::Running, JobState::Completed) => RunTerminal::AttemptCompleted,
+        (JobState::Running, JobState::Failed) => RunTerminal::UnrecoverableError,
+        (JobState::Staging, JobState::Failed) => RunTerminal::StagingFailed,
+        (from, to) => return Err(JobStoreError::InvalidTransition { from, to }),
+    };
+    let reject = |rejected: gputeer_protocol::job_state::JobTransitionRejected| {
         JobStoreError::InvalidTransition {
             from: rejected.from,
             to: rejected.to,
         }
-    })?;
+    };
+    gputeer_protocol::job_state::walk(job.state, prefix).map_err(reject)?;
+    let final_state =
+        gputeer_protocol::job_state::transition_via(last_from, final_to, terminal.trigger())
+            .map_err(reject)?;
     job.state = final_state;
     job.run_terminal = Some(terminal);
     job.worker_reported_finished_at_unix_ms = Some(worker_reported_finished_at_unix_ms);

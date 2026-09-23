@@ -33,8 +33,10 @@
 //! # 하지 않는 것
 //!
 //! ```text
-//! 옛 노드 멈추기      못 한다. 그 노드가 살아 있으면 계속 돌 수 있다 — 새 시도는 더 큰 fence 를 받아 옛 Lease 의 갱신을
-//!                     막을 뿐이다(§0.4 — 억제이지 방지가 아니다). PURE 작업을 전제한다
+//! 옛 노드 멈추기      못 한다. 그 노드가 살아 있으면 계속 돌 수 있다 — 옛 Lease 를 되돌리는 같은 커밋에서 **폐기**해
+//!                     그 뒤의 갱신을 거부할 뿐이다(§0.4 — 억제이지 방지가 아니다). PURE 작업을 전제한다
+//!                     ★ 결함 227(검수 76) — 전에는 "새 시도의 더 큰 fence 가 옛 Lease 갱신을 막는다" 고 적었는데, 옛 Lease 갱신은
+//!                       자기 행의 fence 만 봐서 막히지 않았다. 판정 직전에 시작된 갱신이 옛 Lease 를 되살릴 수 있었다
 //! 옛 예약 풀기        풀지 않는다. 만료 **표시**만 한다(§A1 4a). 그 노드는 운영자가 멈췄음을 확인하고 풀 때까지 새 일을
 //!                     받지 않는다 — 살아 있는 좀비와 새 작업이 같은 GPU 를 다투지 않게
 //! 옛 시도 상태        바꾸지 않는다. Coordinator 가 그 시도의 끝을 관측하지 못했다 — 지어내지 않는다
@@ -184,6 +186,11 @@ pub fn failover_lost_attempts(
             now_unix_ms,
         )
         .map_err(|e| e.to_string())?;
+        // ★ 2026-09-23 (결함 227 · 검수 76) — 옛 Lease 를 **같은 커밋에서** 폐기한다. 전에는 만료만 보고 되돌렸는데, 판정 직전에
+        //   시작된 갱신이 판정 뒤에 저장되면(옛 시각을 잡은 채) 옛 Lease 가 미래로 늘어나 옛 노드와 새 노드가 같이 돌 수 있었다.
+        //   갱신 저장은 자기 트랜잭션 안에서 폐기를 다시 읽으므로, 이 커밋 뒤의 갱신은 전부 REVOKED 로 거부된다.
+        crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
+            .map_err(|e| e.to_string())?;
         if !lost_node_id.is_empty() {
             // 표시만 한다 — 지우지 않는다(§A1 4a).
             crate::staging_store::mark_reservation_expired(
@@ -319,8 +326,12 @@ pub struct OperatorRelease {
 /// 장애 이어받기는 옛 예약을 지우지 않는다(§A1 4a — 살아 있는 좀비와 새 작업이 같은 GPU 를 다투지 않게).
 /// 그래서 그 노드를 다시 쓰려면 누군가 멈췄음을 확인해야 한다 — Coordinator 는 증명할 수 없다(§0.4).
 ///
-/// 관문: 그 예약의 시도가 **대체됐거나 끝난 Job 의 것**일 때만 푼다. 살아 있는 시도의 예약은 거부한다 —
-/// 운영자가 노드를 잘못 짚으면 지금 도는 남의 작업이 풀려 같은 GPU 에 두 작업이 선다(§0.1).
+/// 관문: 그 예약의 시도가 **대체됐거나 끝난 Job 의 것**일 때만 푼다. Job 이 아직 그 시도로 도는 중(STAGING · RUNNING ·
+/// PAUSED)이면 거부한다 — 운영자가 노드를 잘못 짚어 지금 도는 남의 작업을 푸는 실수를 막는다(§0.1).
+///
+/// ★ 2026-09-23 (결함 228 · 검수 76 — 전에는 "살아 있는 시도의 예약은 거부한다" 고 적었다) — 이 관문은 **Job 이 넘어갔는지**를
+///   볼 뿐, 옛 시도의 **프로세스가 멈췄는지**는 증명하지 않는다. 장애 이어받기 뒤 옛 시도의 저장 상태는 STARTING · RUNNING 으로 남아
+///   있을 수 있고, 그 예약도 풀린다. 멈춤의 근거는 **운영자 진술**뿐이다(그래서 진술을 남긴다) — Coordinator 는 증명할 수 없다(§0.4).
 ///
 /// 기록은 `coordinator_operator_releases` 에 남는다 — 누가 · 언제 · 무엇을 풀었나. 되돌리지 않는 기록이다.
 pub fn release_lost_node_by_operator(
@@ -445,7 +456,34 @@ pub fn pause_for_owner_preempt(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
-    let Some(job) = crate::job_store::fetch_job(&transaction, job_id).map_err(|e| e.to_string())?
+    let line = pause_for_owner_preempt_within(
+        &transaction,
+        job_id,
+        attempt_id,
+        node_id,
+        policy,
+        now_unix_ms,
+        notes,
+    )?;
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(line)
+}
+
+/// [`pause_for_owner_preempt`] 의 본체 — **호출자의 트랜잭션 안에서** 돈다(커밋하지 않는다).
+///
+/// ★ 2026-09-23 (결함 215 · 검수 73) — 종료 보고 저장 · 예약 해제와 **같은 커밋**에 넣으려고 뗐다. 따로 커밋하면
+///   그 사이에 죽었을 때 "예약 없음 + Job RUNNING" 이 남고, 재전송도 그것을 되살리지 못했다.
+pub(crate) fn pause_for_owner_preempt_within(
+    transaction: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    node_id: &str,
+    policy: &FailoverPolicy,
+    now_unix_ms: u64,
+    notes: &mut Vec<String>,
+) -> Result<Option<String>, String> {
+    ensure_reclaim_table(transaction)?;
+    let Some(job) = crate::job_store::fetch_job(transaction, job_id).map_err(|e| e.to_string())?
     else {
         return Ok(None);
     };
@@ -464,13 +502,19 @@ pub fn pause_for_owner_preempt(
     if latest.as_deref() != Some(attempt_id) {
         return Ok(None);
     }
-    let resume = find_resume_point(&transaction, policy, job_id, now_unix_ms, notes)?;
+    let resume = find_resume_point(transaction, policy, job_id, now_unix_ms, notes)?;
     crate::job_store::pause_for_owner_preempt(
-        &transaction,
+        transaction,
         &job,
         resume.as_ref().map(|found| found.body.clone()),
     )
     .map_err(|e| e.to_string())?;
+    // ★ 결함 227 — 선점으로 옮기는 Job 도 옛 Lease 를 같은 커밋에서 폐기한다(늦은 갱신이 옛 시도를 되살리지 않게).
+    let attempt = crate::staging_store::fetch_attempt(transaction, attempt_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("시도 {attempt_id} 가 사라졌다"))?;
+    crate::lease_store::revoke_within(transaction, &attempt.lease_id, now_unix_ms)
+        .map_err(|e| e.to_string())?;
     transaction
         .execute(
             "INSERT INTO coordinator_node_reclaims(node_id, reclaimed_at_unix_ms) VALUES (?1, ?2)
@@ -478,7 +522,6 @@ pub fn pause_for_owner_preempt(
             rusqlite::params![node_id, now_unix_ms.to_be_bytes().to_vec()],
         )
         .map_err(|e| e.to_string())?;
-    transaction.commit().map_err(|e| e.to_string())?;
     Ok(Some(format!(
         "OWNER_PREEMPTED job_id={job_id} attempt_id={attempt_id} node_id={node_id} resume_step={}",
         resume

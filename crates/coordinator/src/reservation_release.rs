@@ -645,7 +645,9 @@ fn check_artifact_guard(
     outcome: i32,
     guard: ArtifactDurabilityGuard,
 ) -> Result<(), ReservationReleaseError> {
-    let completed = outcome == pb::AttemptOutcome::Completed as i32;
+    // ★ 2026-09-23 (결함 214 · 검수 73) — STALE_COMPLETED 도 완료다. 빼면 늦은 완료 보고가 이 관문을 비껴간다.
+    let completed = outcome == pb::AttemptOutcome::Completed as i32
+        || outcome == pb::AttemptOutcome::StaleCompleted as i32;
     match (completed, guard) {
         (true, ArtifactDurabilityGuard::SatisfiedByCaller) => Ok(()),
         (true, ArtifactDurabilityGuard::NotSatisfiedYet) => {

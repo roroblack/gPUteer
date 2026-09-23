@@ -699,7 +699,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
         }
         let (mut stream, peer) = if config.pool_mode && config.accept_timeout_ms == 0 {
             // ★ 풀 모드의 `--accept-timeout-ms 0` — 기다림에 끝이 없다. 일이 없는 시간도 정상이다.
-            accept_with_deadline(&listener, Duration::from_secs(365 * 24 * 3600))?
+            // ★ 2026-09-23 (결함 222 · 검수 74) — 전에는 365일 시한을 넘겨 그 뒤 Coordinator 가 끝났다. 이제 시한이 없다.
+            accept_without_deadline(&listener)?
         } else {
             accept_with_deadline(&listener, Duration::from_millis(config.accept_timeout_ms))?
         };
@@ -1216,7 +1217,28 @@ fn serve_one_connection_impl(
     // ★ 2026-09-23 (신뢰망 남은 일 K · C) — 풀 모드: 받은 순간을 생존 관측으로 적고, 이 연결을 그 노드로 좁힌다.
     let pooled;
     let config = if config.pool_mode {
-        if let Some(path) = config.liveness_db_path.as_ref() {
+        // ★ 2026-09-23 (결함 221 · 검수 74) — 받을 수 없는 mode 의 Hello 는 생존 관측으로 **적기 전에** 거부한다.
+        //   서명이 맞아도 풀 세션을 못 여는 노드를 "살아 있다" 고 적으면 스케줄러가 그 노드에 일을 준다.
+        if ![
+            gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+            gputeer_protocol::constants::MODE_RENEW,
+            gputeer_protocol::constants::MODE_REPORT,
+        ]
+        .contains(&hello.mode)
+        {
+            return Err(session_protocol_error(format!(
+                "HELLO_REJECTED: mode 불일치 — 풀은 FRESH({}) · RENEW({}) · REPORT({}) 만 받는다, 받은 값 {}",
+                gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+                gputeer_protocol::constants::MODE_RENEW,
+                gputeer_protocol::constants::MODE_REPORT,
+                hello.mode
+            )));
+        }
+        // ★ 2026-09-23 (결함 230 · 검수 77) — **FRESH 인사만** 생존 관측으로 적는다. 스케줄러는 이 시각을 "새 일을 받을 수 있다" 로
+        //   쓰고, 소유자 되찾음은 "되찾은 뒤에 온 인사" 로 풀린다. 전에는 RENEW · REPORT 인사도 적어서, 되찾은 노드가 못 보낸 보고를
+        //   다시 보내기만 해도 다시 후보가 됐다. 일을 받으러 온 연결만이 그 뜻이다.
+        let asks_for_work = hello.mode == gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
+        if let Some(path) = config.liveness_db_path.as_ref().filter(|_| asks_for_work) {
             crate::node_liveness_store::CoordinatorNodeLivenessStore::open(path)
                 .and_then(|mut store| {
                     store.record_session_seen(&hello.node_id, hello.mode, clock.now_unix_ms())
@@ -2328,6 +2350,21 @@ fn serve_one_connection_impl(
 /// `RevokeLeaseNotice::signer_id()`는 현재 프로토콜 계약상 `lease_id`를
 /// 반환한다(V-08). 따라서 테스트용 target override도 바뀐 payload에
 /// 대해 정상 서명해, Agent의 identity 검증과 서명 검증을 분리한다.
+/// 시한 없는 accept — 풀 모드의 상시 리스너용(결함 222).
+fn accept_without_deadline(
+    listener: &TcpListener,
+) -> Result<(std::net::TcpStream, std::net::SocketAddr), String> {
+    loop {
+        match listener.accept() {
+            Ok(connection) => return Ok(connection),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(format!("accept failed: {error}")),
+        }
+    }
+}
+
 fn accept_with_deadline(
     listener: &TcpListener,
     timeout: Duration,
@@ -2589,7 +2626,18 @@ fn parse_pool_agents(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
                 "STARTUP_REFUSED: POOL_AGENTS_DUPLICATE — {id} 가 두 번 있다"
             ));
         }
-        agents.push((id, hex_to_verifying_key(key.trim())?));
+        let key = hex_to_verifying_key(key.trim())?;
+        // ★ 2026-09-23 (결함 219 · 검수 74) — 키 하나를 두 노드에 주면 그 키를 가진 Agent 가 **어느 이름으로든** 검증을 통과한다.
+        //   노드 신원 경계가 운영 실수 하나로 사라지므로 시작하지 않는다.
+        if let Some((other, _)) = agents
+            .iter()
+            .find(|(_, existing)| existing.as_bytes() == key.as_bytes())
+        {
+            return Err(format!(
+                "STARTUP_REFUSED: POOL_AGENTS_DUPLICATE_KEY — {id} 와 {other} 가 같은 공개키다. 노드마다 자기 키가 있어야 한다"
+            ));
+        }
+        agents.push((id, key));
     }
     if agents.is_empty() {
         return Err("STARTUP_REFUSED: POOL_AGENTS_EMPTY — --pool-agents 가 비었다".to_string());
@@ -2616,6 +2664,14 @@ fn pool_mode_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
         return refuse(
             "POOL_LEASE_DB_MISMATCH",
             "--lease-db 는 --grant-from-control-db 와 같은 파일이어야 한다 — 예약이 만든 Lease 가 거기 있고, 갱신이 그것을 찾는다",
+        );
+    }
+    // ★ 2026-09-23 (결함 220 · 검수 74) — 스케줄러는 control DB 에서만 생존 관측을 찾는다. 다른 파일에 적으면(또는 안 적으면)
+    //   `--silent-after-ms` 가 모든 노드를 "소식 없음" 으로 빼 큐가 영영 배치되지 않는다.
+    if config.liveness_db_path.as_deref().map(std::path::Path::new) != Some(control_db.as_path()) {
+        return refuse(
+            "POOL_LIVENESS_DB_MISMATCH",
+            "--liveness-db 는 --grant-from-control-db 와 같은 파일이어야 한다 — 스케줄러가 거기서 Hello 관측을 읽는다",
         );
     }
     if !config.accept_report_sessions {
@@ -2711,11 +2767,33 @@ fn store_terminal_report_with_policy(
     use crate::reservation_release::{
         ArtifactDurabilityGuard, KeyDirectoryProvenance, ReleaseAuthorization, RuntimeStopProof,
     };
+    // ★ 2026-09-23 (결함 215 · 검수 73) — 소유자 선점(풀 모드 INTERRUPTED)은 **보고 저장과 같은 커밋**에서 Job 을
+    //   PAUSED 로 옮긴다. 예약을 풀든 안 풀든 한다 — 선점 전이는 예약 해제에 기대지 않는다(최근 시도가 아니면 저장소가 안 한다).
+    let preempt_policy = crate::failover::FailoverPolicy {
+        grace_ms: 0,
+        shared_checkpoint_root: config.shared_checkpoint_root.clone(),
+        producer_keys: config.pool_agents.clone(),
+    };
+    let owner_preempt = (config.pool_mode
+        && verified.get().outcome == pb::AttemptOutcome::Interrupted as i32)
+        .then_some(crate::attempt_report_store::OwnerPreemptRequest {
+            policy: &preempt_policy,
+            now_unix_ms,
+        });
+    let with_notes = |mut line: String, notes: &[String]| {
+        for extra in notes {
+            line = format!("{line}\n{extra}");
+        }
+        line
+    };
     let keep = |store: &mut crate::attempt_report_store::CoordinatorAttemptReportStore,
                 reason: String| {
         store
-            .store_verified_terminal_report(verified)
-            .map(|result| (result, format!("RESERVATION_KEPT reason={reason}")))
+            .store_verified_terminal_report_with(verified, None, owner_preempt)
+            .map(|result| {
+                let line = with_notes(format!("RESERVATION_KEPT reason={reason}"), &result.notes);
+                (result, line)
+            })
     };
     if !config.release_on_exit_report {
         return keep(store, "RELEASE_SWITCH_OFF".to_string());
@@ -2744,7 +2822,11 @@ fn store_terminal_report_with_policy(
         Some(_) => return keep(store, "RESERVATION_OWNED_BY_ANOTHER_ATTEMPT".to_string()),
         None => return keep(store, "NO_RESERVATION".to_string()),
     }
-    let artifact_durability = if report.outcome == pb::AttemptOutcome::Completed as i32 {
+    // ★ 2026-09-23 (결함 214 · 검수 73) — STALE_COMPLETED 도 완료다(저장소가 시도 · Job 을 COMPLETED 로 적는다).
+    //   COMPLETED 만 보면 늦은 완료 보고가 내구성 관문을 비껴간다.
+    let completed = report.outcome == pb::AttemptOutcome::Completed as i32
+        || report.outcome == pb::AttemptOutcome::StaleCompleted as i32;
+    let artifact_durability = if completed {
         match required_durability(config, control_db, &report.job_id) {
             Ok(pb::Durability::Local) => ArtifactDurabilityGuard::SatisfiedByCaller,
             Ok(other) => {
@@ -2768,44 +2850,14 @@ fn store_terminal_report_with_policy(
         key_directory: KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
         artifact_durability,
     };
-    let result =
-        store.store_verified_terminal_report_and_release(verified, authorization, now_unix_ms)?;
-    let mut note = format!(
-        "RESERVATION_RELEASED node_id={} attempt_id={}",
-        report.node_id, report.attempt_id
-    );
-    // ★ 2026-09-23 (신뢰망 남은 일 H) — 그 노드가 서명한 "중단" 보고 = 소유자가 GPU 를 되찾았다(Agent 가 Owner Panel 로
-    //   관측한 사실만 INTERRUPTED 로 보낸다). 풀 모드면 Job 을 선점으로 멈추고 그 노드를 되찾김으로 표시한다.
-    if config.pool_mode && report.outcome == pb::AttemptOutcome::Interrupted as i32 {
-        let policy = crate::failover::FailoverPolicy {
-            grace_ms: 0,
-            shared_checkpoint_root: config.shared_checkpoint_root.clone(),
-            producer_keys: config.pool_agents.clone(),
-        };
-        let mut notes = Vec::new();
-        match crate::failover::pause_for_owner_preempt(
-            control_db,
-            &report.job_id,
-            &report.attempt_id,
-            &report.node_id,
-            &policy,
-            now_unix_ms,
-            &mut notes,
-        ) {
-            Ok(Some(line)) => note = format!("{note}\n{line}"),
-            Ok(None) => {}
-            Err(error) => {
-                return Err(
-                    crate::attempt_report_store::AttemptReportStoreError::Staging(format!(
-                        "소유자 선점 기록: {error}"
-                    )),
-                )
-            }
-        }
-        for extra in notes {
-            note = format!("{note}\n{extra}");
-        }
-    }
+    // ★ 2026-09-23 (결함 213 · 검수 73) — 기록은 저장소가 **실제로 한 일**에서 만든다. 전에는 결과를 안 보고
+    //   RESERVATION_RELEASED 를 찍었다(같은 보고의 재전송이 해제에 닿지 않았는데도).
+    let result = store.store_verified_terminal_report_with(
+        verified,
+        Some((authorization, now_unix_ms)),
+        owner_preempt,
+    )?;
+    let note = result.notes.join("\n");
     Ok((result, note))
 }
 
@@ -4591,6 +4643,8 @@ mod tests {
                 "control.sqlite3",
                 "--lease-db",
                 "control.sqlite3",
+                "--liveness-db",
+                "control.sqlite3",
                 "--submitter-keyring",
                 "submitters.keyring",
                 "--accept-report-sessions",
@@ -4613,7 +4667,7 @@ mod tests {
         assert!(config.pool_mode);
         assert_eq!(config.pool_agents.len(), 1);
 
-        let cases: [(&str, &[&str], &[&str], &str); 5] = [
+        let cases: [(&str, &[&str], &[&str], &str); 7] = [
             (
                 "연결마다 정해지는 식별자를 줬다",
                 &["--job-id", "01JJOBPOOLUNIT0000000001"],
@@ -4625,6 +4679,18 @@ mod tests {
                 &["--lease-db", "other.sqlite3"],
                 &["--lease-db"],
                 "POOL_LEASE_DB_MISMATCH",
+            ),
+            (
+                "생존 관측이 다른 파일에 적힌다(결함 220)",
+                &["--liveness-db", "other.sqlite3"],
+                &["--liveness-db"],
+                "POOL_LIVENESS_DB_MISMATCH",
+            ),
+            (
+                "생존 관측을 안 적는다(결함 220)",
+                &[],
+                &["--liveness-db"],
+                "POOL_LIVENESS_DB_MISMATCH",
             ),
             (
                 "보고 세션을 안 받는다",
@@ -4645,7 +4711,16 @@ mod tests {
                 "POOL_LANE_CONFLICT",
             ),
         ];
-        for (label, extra, drop, code) in cases {
+        // 결함 219 — 같은 공개키를 두 노드에 줬다.
+        let shared = format!("{pool_agents};01JPOOLUNIT0000000000002={agent_hex}");
+        let shared_args = ["--pool-agents", shared.as_str()];
+        let shared_case: (&str, &[&str], &[&str], &str) = (
+            "같은 공개키를 두 노드에 줬다(결함 219)",
+            &shared_args,
+            &["--pool-agents"],
+            "POOL_AGENTS_DUPLICATE_KEY",
+        );
+        for (label, extra, drop, code) in cases.into_iter().chain([shared_case]) {
             // 설정에는 비밀(own_seed)이 있어 Debug 를 두지 않는다 — expect_err 대신 let-else.
             let Err(error) = base(extra, drop) else {
                 panic!("{label}: 받아들였다");

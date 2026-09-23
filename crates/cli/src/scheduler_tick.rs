@@ -260,6 +260,38 @@ pub fn run(args: &[String]) -> Result<String, String> {
         &mut NoReplayCheck,
     )
     .map_err(|e| format!("TICK_REFUSED: 저장된 Manifest 를 지금 다시 검증하지 못했다: {e:?}"))?;
+
+    // ★ 2026-09-23 (결함 217 · 검수 73) — 풀 모드(`--pool-agents`)는 산출물을 복제하지 않는다. LOCAL 이 아닌 내구성을
+    //   요구한 작업을 배치하면, 끝난 뒤 예약 해제 관문(ARTIFACT_DURABILITY_*)이 영영 안 열려 **노드가 묶인다.**
+    //   그래서 배치 전에 큐에서 내린다 — 규범 `QUEUED -> FAILED`(PERMANENTLY_INFEASIBLE). 거부만 하고 두면 FIFO 맨 앞이라
+    //   뒤 작업까지 인질이 된다(결함 211 과 같은 모양). 검증된 Manifest 에서 읽는다(§0.2).
+    if flags.contains_key("--pool-agents") {
+        let durability = gputeer_protocol::pb::Durability::try_from(verified.get().durability)
+            .map_err(|_| format!("TICK_REFUSED: {job_id} 의 durability 값을 모른다"))?;
+        if durability != gputeer_protocol::pb::Durability::Local {
+            let reason = format!(
+                "{}_NOT_SUPPORTED_BY_POOL — 이 풀은 복제하지 않는다(LOCAL 만)",
+                durability.as_str_name()
+            );
+            if job.state == gputeer_coordinator::job_store::JobState::Queued {
+                CoordinatorJobStore::open(control_db)
+                    .and_then(|mut jobs| {
+                        jobs.fail_queued(
+                            &job_id,
+                            gputeer_coordinator::job_store::QueueFailure::PermanentlyInfeasible {
+                                reason: reason.clone(),
+                            },
+                            now_unix_ms,
+                        )
+                    })
+                    .map_err(|e| format!("TICK_REFUSED: {job_id} 를 큐에서 내리지 못했다: {e}"))?;
+                return Err(format!(
+                    "TICK_REFUSED: JOB_FAILED_PERMANENTLY_INFEASIBLE {job_id} — {reason}"
+                ));
+            }
+            return Err(format!("TICK_REFUSED: {job_id} — {reason}"));
+        }
+    }
     let job_requirements = job_requirements_from_manifest(&verified, submitter_member)
         .map_err(|e| format!("TICK_REFUSED: {e}"))?;
 

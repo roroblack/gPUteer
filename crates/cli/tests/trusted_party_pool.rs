@@ -91,6 +91,10 @@ fn run_cli(args: &[&str]) -> (bool, String) {
 
 /// 노드 둘을 등록하고 작업 셋을 LOCAL 내구성으로 큐에 올린다.
 fn pool(dir: &Path) -> (PathBuf, PathBuf) {
+    pool_with(dir, "LOCAL")
+}
+
+fn pool_with(dir: &Path, durability: &str) -> (PathBuf, PathBuf) {
     let db = dir.join("control.sqlite3");
     let observed = now_unix_ms();
     let agent = |node: &str, seed: &str| {
@@ -177,7 +181,7 @@ fn pool(dir: &Path) -> (PathBuf, PathBuf) {
             "--side-effect-class",
             "PURE",
             "--durability",
-            "LOCAL",
+            durability,
             "--dataset-sensitivity",
             "INTERNAL",
             "--minimum-security-tier",
@@ -750,4 +754,196 @@ fn a_replayed_hello_is_refused_across_a_pool_coordinator_restart() {
         replay_db.to_str().unwrap(),
     ]);
     assert!(!ok && out.contains("REPLAY_DB_NEEDS_POOL_MODE"), "{out}");
+}
+
+/// 결함 217 (검수 73) — 풀 모드 스케줄러는 풀이 채울 수 없는 내구성(LOCAL 아님)을 요구한 작업을 **배치 전에** 큐에서 내린다.
+///
+/// 배치하면 끝난 뒤 예약 해제 관문이 영영 안 열려 노드가 묶인다. 거부만 하고 두면 FIFO 맨 앞이 뒤 작업을 인질로 잡는다.
+/// 대조군 — `--pool-agents` 가 없는 tick 은 전처럼 배치한다(풀 모드가 아닌 운영을 바꾸지 않는다).
+#[test]
+fn a_pool_scheduler_drops_a_job_whose_durability_the_pool_cannot_meet() {
+    let tick = |db: &Path, keyring: &Path, pool_agents: Option<&str>| -> (bool, String) {
+        let db_s = db.to_str().unwrap().to_string();
+        let keyring_s = keyring.to_str().unwrap().to_string();
+        let mut args = vec![
+            "scheduler-tick",
+            "--control-db",
+            &db_s,
+            "--submitter-keyring",
+            &keyring_s,
+            "--submitter-member",
+            OWNER,
+            "--max-snapshot-age-ms",
+            "86400000",
+            "--best-fit-axes",
+            AXES,
+            "--coordinator-id",
+            COORDINATOR,
+            "--coordinator-term",
+            "3",
+            "--lease-ttl-ms",
+            "600000",
+            "--lease-renew-after-ms",
+            "300000",
+            "--lease-max-total-duration-seconds",
+            "86400",
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
+        ];
+        if let Some(agents) = pool_agents {
+            args.push("--pool-agents");
+            args.push(agents);
+        }
+        run_cli(&args)
+    };
+    let agents = format!(
+        "{NODE_1}={};{NODE_2}={}",
+        pub_hex(AGENT_SEED_1),
+        pub_hex(AGENT_SEED_2)
+    );
+
+    let dir = tempfile::tempdir().expect("임시 폴더");
+    let (db, keyring) = pool_with(dir.path(), "MIRRORED");
+    let (ok, out) = tick(&db, &keyring, Some(&agents));
+    assert!(!ok, "배치됐다: {out}");
+    assert!(
+        out.contains("JOB_FAILED_PERMANENTLY_INFEASIBLE")
+            && out.contains("DURABILITY_MIRRORED_NOT_SUPPORTED_BY_POOL"),
+        "{out}"
+    );
+    assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Failed));
+    // 맨 앞이 빠졌으니 다음 tick 은 다음 작업을 본다 — 인질이 없다.
+    let (_, out) = tick(&db, &keyring, Some(&agents));
+    assert!(out.contains(JOBS[1]), "{out}");
+    assert_eq!(job_state(&db, JOBS[1]), Some(JobState::Failed));
+
+    // 대조군 — 풀 모드가 아니면 전처럼 배치한다.
+    let control = tempfile::tempdir().expect("임시 폴더");
+    let (db, keyring) = pool_with(control.path(), "MIRRORED");
+    let (ok, out) = tick(&db, &keyring, None);
+    assert!(ok, "풀 밖 tick 이 거부했다: {out}");
+    assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Staging));
+}
+
+/// 결함 221 (검수 74) — 풀이 받지 않는 mode 의 Hello 는 **생존 관측으로 적기 전에** 거부한다. 대조군: FRESH 는 적힌다.
+#[test]
+fn a_hello_the_pool_cannot_serve_is_not_recorded_as_alive() {
+    use prost::Message;
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool(dir.path());
+    let key = SigningKey::from_bytes(&seed_bytes(AGENT_SEED_1));
+    let frame_for = |mode: i32, nonce: u8| {
+        let mut hello = gputeer_protocol::pb::AgentSessionHello {
+            schema_version: 1,
+            mode,
+            session_id: format!("mode-probe-{mode}"),
+            node_id: NODE_1.into(),
+            connection_attempt: 0,
+            issued_at_unix_ms: now_unix_ms(),
+            nonce: vec![nonce; 16],
+            ..Default::default()
+        };
+        hello.node_signature = gputeer_crypto::sign(&key, &hello).to_vec();
+        gputeer_crypto::write_frame(
+            gputeer_crypto::FrameType::SessionHello,
+            &hello.encode_to_vec(),
+        )
+        .expect("프레임")
+    };
+    let resume = one_hello_against_a_pool_coordinator(
+        dir.path(),
+        &db,
+        &keyring,
+        None,
+        &frame_for(gputeer_protocol::constants::MODE_RESUME, 0x61),
+        "resume.log",
+    );
+    assert!(resume.contains("HELLO_REJECTED"), "{resume}");
+    assert!(
+        !resume.contains("SESSION_SEEN"),
+        "받지 못할 Hello 를 생존 관측으로 적었다\n{resume}"
+    );
+    // 결함 230 (검수 77) — 보고 연결(REPORT)도 생존 관측이 아니다. 되찾은 노드가 보고를 다시 보내도 후보로 돌아오지 않는다.
+    let report = one_hello_against_a_pool_coordinator(
+        dir.path(),
+        &db,
+        &keyring,
+        None,
+        &frame_for(gputeer_protocol::constants::MODE_REPORT, 0x63),
+        "report.log",
+    );
+    assert!(
+        !report.contains("SESSION_SEEN"),
+        "보고 연결을 생존 관측으로 적었다\n{report}"
+    );
+    let fresh = one_hello_against_a_pool_coordinator(
+        dir.path(),
+        &db,
+        &keyring,
+        None,
+        &frame_for(gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT, 0x62),
+        "fresh.log",
+    );
+    assert!(fresh.contains("SESSION_SEEN"), "{fresh}");
+}
+
+/// 결함 219 · 220 (검수 74) — 같은 공개키를 두 노드에 주거나, 생존 DB 가 control DB 와 다르면 풀 Coordinator 가 시작하지 않는다.
+#[test]
+fn a_pool_coordinator_refuses_shared_keys_and_a_separate_liveness_db() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool(dir.path());
+    let db_s = db.to_str().unwrap().to_string();
+    let other_db = dir.path().join("liveness-elsewhere.sqlite3");
+    let other_s = other_db.to_str().unwrap().to_string();
+    let start = |pool_agents: &str, liveness: &str| {
+        run_cli(&[
+            "coordinator-stub",
+            "--pool-mode",
+            "true",
+            "--pool-agents",
+            pool_agents,
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            COORD_SEED,
+            "--coordinator-device-id",
+            COORDINATOR,
+            "--grant-from-control-db",
+            &db_s,
+            "--lease-db",
+            &db_s,
+            "--liveness-db",
+            liveness,
+            "--submitter-keyring",
+            keyring.to_str().unwrap(),
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
+            "--accept-report-sessions",
+            "true",
+            "--max-connections",
+            "1",
+            "--accept-timeout-ms",
+            "1",
+        ])
+    };
+    let shared = format!(
+        "{NODE_1}={};{NODE_2}={}",
+        pub_hex(AGENT_SEED_1),
+        pub_hex(AGENT_SEED_1)
+    );
+    let (ok, out) = start(&shared, &db_s);
+    assert!(!ok && out.contains("POOL_AGENTS_DUPLICATE_KEY"), "{out}");
+    let distinct = format!(
+        "{NODE_1}={};{NODE_2}={}",
+        pub_hex(AGENT_SEED_1),
+        pub_hex(AGENT_SEED_2)
+    );
+    let (ok, out) = start(&distinct, &other_s);
+    assert!(!ok && out.contains("POOL_LIVENESS_DB_MISMATCH"), "{out}");
+    // 대조군 — 둘 다 맞으면 시작 관문을 지난다(연결이 없어 accept 시한으로 끝난다).
+    let (_, out) = start(&distinct, &db_s);
+    assert!(
+        !out.contains("STARTUP_REFUSED"),
+        "맞는 설정인데 시작을 거부했다\n{out}"
+    );
 }

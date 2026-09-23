@@ -172,6 +172,28 @@ pub(crate) fn map_sql_error(error: SqlError) -> LeaseStoreError {
     }
 }
 
+/// 호출자의 트랜잭션 안에서 Lease 를 폐기한다(이미 폐기됐으면 첫 시각을 둔다). 행이 없으면 오류다.
+///
+/// ★ 2026-09-23 (결함 227 · 검수 76) — 장애 이어받기 · 소유자 선점이 Job 을 되돌리는 **같은 커밋**에서 부른다.
+pub(crate) fn revoke_within(
+    connection: &Connection,
+    lease_id: &str,
+    revoked_at_unix_ms: u64,
+) -> Result<(), LeaseStoreError> {
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_leases
+             SET revoked_at_unix_ms = COALESCE(revoked_at_unix_ms, ?2)
+             WHERE lease_id = ?1",
+            rusqlite::params![lease_id, encode_u64(revoked_at_unix_ms)],
+        )
+        .map_err(map_sql_error)?;
+    if changed != 1 {
+        return Err(LeaseStoreError::NotFound);
+    }
+    Ok(())
+}
+
 pub(crate) fn encode_u64(v: u64) -> Vec<u8> {
     v.to_be_bytes().to_vec()
 }

@@ -170,6 +170,23 @@ pub fn transition(from: JobState, to: JobState) -> Result<JobState, JobTransitio
     }
 }
 
+/// 전이를 **그 trigger 로** 시도한다 — 상태 쌍이 표에 있어도 trigger 가 그 행의 것이 아니면 거부한다.
+///
+/// ★ 2026-09-23 (결함 216 · 검수 73) — [`transition`] 은 상태 쌍만 본다. 그래서 `RUNNING -> FAILED` 를
+///   `STAGING_FAILED` 로 적는 오류가 통과했다(그 쌍의 trigger 는 `UNRECOVERABLE_ERROR` 다).
+///   저장하는 trigger 가 있는 곳은 이것을 쓴다.
+pub fn transition_via(
+    from: JobState,
+    to: JobState,
+    trigger: &str,
+) -> Result<JobState, JobTransitionRejected> {
+    if transition_triggers(from, to).contains(&trigger) {
+        Ok(to)
+    } else {
+        Err(JobTransitionRejected { from, to })
+    }
+}
+
 /// `from` 에서 `path` 를 차례로 밟는다. 한 칸이라도 표에 없으면 거부한다.
 ///
 /// ★ 저장소는 **최종 상태만** 쓴다(코덱스 논의 72 결정 C — Attempt 와 같다).
@@ -233,5 +250,25 @@ mod tests {
             Ok(JobState::Queued)
         );
         assert!(walk(JobState::Staging, &[JobState::Completed]).is_err());
+    }
+
+    /// 결함 216 — 상태 쌍이 맞아도 trigger 가 그 행의 것이 아니면 거부한다.
+    #[test]
+    fn transition_via_rejects_a_trigger_from_another_row() {
+        assert_eq!(
+            transition_via(JobState::Running, JobState::Failed, "UNRECOVERABLE_ERROR"),
+            Ok(JobState::Failed)
+        );
+        assert_eq!(
+            transition_via(JobState::Running, JobState::Failed, "STAGING_FAILED"),
+            Err(JobTransitionRejected {
+                from: JobState::Running,
+                to: JobState::Failed
+            })
+        );
+        assert_eq!(
+            transition_via(JobState::Staging, JobState::Failed, "STAGING_FAILED"),
+            Ok(JobState::Failed)
+        );
     }
 }
