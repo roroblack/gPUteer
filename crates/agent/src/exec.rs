@@ -469,10 +469,7 @@ fn execute_in_container(
         .filter(|(key, _)| key != "CUDA_VISIBLE_DEVICES")
         .cloned()
         .collect();
-    let name = crate::container::derive_container_name(
-        &policy.isolation.grant_id,
-        &policy.isolation.attempt_id,
-    );
+    let name = crate::container::derive_container_name(&policy.isolation.attempt_id);
     // ★ 결함 273 · 279 (재검수 88) — 작업 폴더 **전체**를 붙이지 않는다. 그 폴더에 Agent 가 호스트에서 로그(stdout.log)를 쓰는데,
     //   작업이 그 자리에 링크를 심으면 Agent 가 링크를 따라가 호스트 파일(시드 · fence DB)을 덮었다. 체크포인트 폴더만 쓰기로,
     //   이어받기 폴더는 읽기 전용으로 붙인다.

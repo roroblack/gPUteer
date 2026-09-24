@@ -471,6 +471,19 @@ pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
 }
 
 pub fn run(config: AgentConfig) -> Result<(), String> {
+    // ★ 2026-09-25 (결함 290 · 291 · 재검수 90) — 회차를 시작하기 전에 이 노드의 라벨로 남은 컨테이너를 모두 치운다. 한 노드는 한 번에
+    //   한 작업만 돌리므로, 지금 돌고 있는 이 노드의 컨테이너는 죽은 회차가 남긴 것이다. 목록을 못 읽으면 시작하지 않는다.
+    if let Some(runtime) = config.container_runtime.as_ref() {
+        let removed = container::remove_leftovers(runtime)
+            .map_err(|why| format!("CONTAINER_LEFTOVERS_UNKNOWN: 남은 컨테이너를 확인 · 정리하지 못해 시작하지 않는다 — {why}"))?;
+        if !removed.is_empty() {
+            println!(
+                "CONTAINER_LEFTOVERS_REMOVED count={} ids={}",
+                removed.len(),
+                removed.join(",")
+            );
+        }
+    }
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -1386,29 +1399,42 @@ fn run_one_connection_inner(
                 record_attempt_started_here(&config.checkpoint_root, &grant.attempt_id)
                     .map_err(|error| fail_after_cleanup(error, &run_dir))?;
             }
-            // ★ 2026-09-25 (결함 268 · 269 · 271 · 재검수 87) — 첫 갱신을 **실행 전 관문**으로 쓴다. Coordinator 는 그 갱신을 받아야
-            //   시도 RUNNING · Job RUNNING 을 적는다(record_process_started). 전에는 갱신 스레드를 띄우고 **성공을 기다리지 않은 채**
-            //   워크로드를 시작해, 첫 갱신이 유실 · 거부 · 기록 실패하면 실제로 도는 작업이 STAGING 으로 남아 Lease 만료 뒤 다른 노드에서
-            //   한 번 더 돌았다. 이제 확인(갱신 성공)을 받지 못하면 **띄우지 않는다** — 그 시도는 정말로 안 돈 채 큐로 돌아간다.
-            //   ★ 남는 것: Coordinator 가 기록한 뒤 결과 프레임만 잃으면 안 돈 시도가 RUNNING 이다 — 이어받기에서 체크포인트가 없으면
-            //     FAILED 로 끝난다(두 번 돌지는 않는다 — 옛 218 의 가용성 쪽 한계).
-            if will_execute && config.renew_during_execution_ms > 0 {
-                match renew_once_over_new_connection(&config, signing_key, &held_lease) {
-                    Ok(renewed) => {
-                        println!(
-                            "PROCESS_START_CONFIRMED lease_id={} expires_at_unix_ms={}",
-                            renewed.lease_id, renewed.expires_at_unix_ms
-                        );
-                        held_lease = renewed;
-                    }
-                    Err(error) => {
+        }
+        // ★ 2026-09-25 (결함 268 · 269 · 271 · 재검수 87) — 첫 갱신을 **실행 전 관문**으로 쓴다. Coordinator 는 그 갱신을 받아야
+        //   시도 RUNNING · Job RUNNING 을 적는다(record_process_started). 전에는 갱신 스레드를 띄우고 **성공을 기다리지 않은 채**
+        //   워크로드를 시작해, 첫 갱신이 유실 · 거부 · 기록 실패하면 실제로 도는 작업이 STAGING 으로 남아 Lease 만료 뒤 다른 노드에서
+        //   한 번 더 돌았다. 이제 확인(갱신 성공)을 받지 못하면 **띄우지 않는다** — 그 시도는 정말로 안 돈 채 큐로 돌아간다.
+        //   ★ 남는 것: Coordinator 가 기록한 뒤 결과 프레임만 잃으면 안 돈 시도가 RUNNING 이다 — 이어받기에서 체크포인트가 없으면
+        //     FAILED 로 끝난다(두 번 돌지는 않는다 — 옛 218 의 가용성 쪽 한계).
+        // ★ 결함 288 (재검수 90) — 이 관문은 수신 확인 블록 안에 있었다. 보고 세션만 켠 Agent 도 갱신을 켰으면 확인을 받아야 띄운다.
+        // ★ 결함 289 — 받은 Lease 가 5초도 안 남았으면 띄우지 않는다(다음 갱신 전에 만료돼 이어받기와 겹친다).
+        if will_execute && config.renew_during_execution_ms > 0 {
+            match renew_once_over_new_connection(&config, signing_key, &held_lease) {
+                Ok(renewed) => {
+                    let remaining = renewed
+                        .expires_at_unix_ms
+                        .saturating_sub(clock.now_unix_ms());
+                    if remaining < 5_000 {
                         return Err(fail_after_cleanup(
                             format!(
-                                "PROCESS_START_NOT_CONFIRMED: 실행 전 갱신이 확인되지 않아 시작하지 않는다(결함 268) — {error}"
+                                "LEASE_TOO_SHORT_AFTER_CONFIRM: 확인받은 Lease 가 {remaining}ms 남았다 — 다음 갱신 전에 만료될 시도는 시작하지 않는다(결함 289)"
                             ),
                             &run_dir,
                         ));
                     }
+                    println!(
+                        "PROCESS_START_CONFIRMED lease_id={} expires_at_unix_ms={}",
+                        renewed.lease_id, renewed.expires_at_unix_ms
+                    );
+                    held_lease = renewed;
+                }
+                Err(error) => {
+                    return Err(fail_after_cleanup(
+                        format!(
+                            "PROCESS_START_NOT_CONFIRMED: 실행 전 갱신이 확인되지 않아 시작하지 않는다(결함 268) — {error}"
+                        ),
+                        &run_dir,
+                    ));
                 }
             }
         }
@@ -1423,13 +1449,8 @@ fn run_one_connection_inner(
         //   오히려 실패했을 때 남는 것이 더 위험하다.
         // ★ B+E 구현 단계 5b — 실행하는 동안만 새 연결로 갱신한다(설정으로 켤 때만).
         let renewer = if will_execute {
-            // 수신 확인을 요구하는 Agent 는 첫 갱신을 이미 동기로 했다(위) — 스레드는 주기 뒤부터.
-            start_renew_during_execution(
-                &config,
-                signing_key,
-                &held_lease,
-                !config.require_ack_receipt,
-            )
+            // 첫 갱신은 이미 동기로 했다(위, 결함 268 · 288) — 스레드는 그 뒤부터.
+            start_renew_during_execution(&config, signing_key, &held_lease)
         } else {
             None
         };
@@ -2207,7 +2228,6 @@ fn start_renew_during_execution(
     config: &AgentConfig,
     signing_key: &SigningKey,
     held_lease: &pb::Lease,
-    first_immediately: bool,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
@@ -2221,13 +2241,15 @@ fn start_renew_during_execution(
         let interval = Duration::from_millis(config.renew_during_execution_ms);
         let mut round: u64 = 0;
         'renew: loop {
-            // ★ 2026-09-25 (결함 218) — 첫 갱신은 **곧바로** 보낸다. Coordinator 는 실행 중 첫 갱신을 "프로세스가 시작했다"(PROCESS_STARTED)로
-            //   적고 그때 Job 을 RUNNING 으로 옮긴다 — 전에는 첫 갱신이 주기 뒤라 그동안 Job 이 STAGING 으로 보였다.
-            let due = if round == 0 && first_immediately {
-                std::time::Instant::now()
-            } else {
-                std::time::Instant::now() + interval
-            };
+            // ★ 2026-09-25 (결함 289 · 재검수 90) — 다음 갱신은 "주기" 와 "지금 Lease 가 남은 시간의 절반" 중 짧은 쪽에 한다. 전에는 주기만
+            //   기다려, Coordinator 가 주기보다 짧게 연장하면 갱신 전에 만료돼 이어받기와 겹쳤다. 첫 갱신은 실행 전에 동기로 했다(결함 268).
+            let remaining = Duration::from_millis(
+                lease
+                    .expires_at_unix_ms
+                    .saturating_sub(SystemClock.now_unix_ms()),
+            );
+            let wait = interval.min((remaining / 2).max(Duration::from_millis(500)));
+            let due = std::time::Instant::now() + wait;
             while std::time::Instant::now() < due {
                 if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
                     break 'renew;
@@ -3455,6 +3477,7 @@ fn parse_container_runtime(flags: &Flags) -> Result<Option<container::ContainerR
             flavor: container::RuntimeFlavor::parse(kind)?,
             pass_gpu: gpu,
             only,
+            node_id: flags.require("--agent-device-id")?,
         })),
         _ => Err(
             "--container-runtime 과 --container-runtime-kind 는 함께 준다(종류를 이름으로 추측하지 않는다)".into(),

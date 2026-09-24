@@ -419,8 +419,60 @@ fn the_agent_renews_its_lease_over_new_connections_while_the_workload_runs() {
 
 /// 단계 5b — Coordinator 가 RENEW 를 받지 못하면(영속 lease 저장소 없음) Agent 는 갱신 실패를 **알리고** 워크로드는 끝까지 돈다.
 ///   조용히 넘기지도, 성공한 척하지도 않는다.
+/// ★ 2026-09-25 (결함 289 · 재검수 90) — 실행 직전 갱신으로 **받은** Lease 가 5초도 안 남았으면 띄우지 않는다. 전에는 받은 Lease 를
+///   다시 보지 않았고 갱신 스레드는 주기 전체를 기다려, Coordinator 가 짧게 연장하면 갱신 전에 만료돼 이어받기와 겹쳤다.
+#[test]
+fn a_confirmed_lease_too_short_to_keep_alive_does_not_start() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 3);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--renew-extension-ms",
+            "3000",
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "30000",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+        ],
+    );
+    let coordinator = wait(coordinator, Duration::from_secs(90));
+    let agent = wait(agent, Duration::from_secs(90));
+    let all = both(&agent, &coordinator);
+    assert!(
+        agent.output().contains("RENEW_SESSION_RESULT")
+            || coordinator
+                .output()
+                .contains("RENEW_SESSION_RESULT outcome=1"),
+        "실행 전 갱신이 일어나지 않았다 — 시험의 전제가 깨졌다\n{all}"
+    );
+    assert!(
+        !agent.success && agent.output().contains("LEASE_TOO_SHORT_AFTER_CONFIRM"),
+        "받은 Lease 가 짧은데 시작을 거부하지 않았다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("WORKLOAD_SPAWNED"),
+        "짧은 Lease 로 워크로드를 띄웠다\n{all}"
+    );
+}
+
 #[test]
 fn a_refused_renew_session_is_reported_not_hidden() {
+    // ★ 2026-09-25 (결함 288 · 재검수 90) — 갱신을 켠 Agent 는 **실행 직전 갱신**이 성공해야 띄운다. 전에는 갱신이 거부돼도 워크로드를
+    //   돌렸다 — 풀에서는 그것이 두 번 실행이었다. 이제 거부는 시작 전에 드러나고 워크로드는 돌지 않는다(fail-closed).
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let manifest = submit_ping_manifest(dir.path(), 5);
     let (coordinator, addr) = spawn_coordinator(
@@ -442,12 +494,12 @@ fn a_refused_renew_session_is_reported_not_hidden() {
     let all = both(&agent, &coordinator);
 
     assert!(
-        agent.success,
-        "갱신이 실패해도 워크로드는 끝까지 돈다\n{all}"
+        !agent.success && agent.output().contains("PROCESS_START_NOT_CONFIRMED"),
+        "실행 전 갱신이 거부됐는데 시작을 거부하지 않았다\n{all}"
     );
     assert!(
-        agent.output().contains("RENEW_SESSION_FAILED"),
-        "갱신 실패를 알려야 한다\n{all}"
+        !agent.output().contains("WORKLOAD_SPAWNED"),
+        "확인 없이 워크로드를 띄웠다\n{all}"
     );
     assert!(
         !agent.output().contains("RENEW_SESSION_RESULT ok=true"),
@@ -463,6 +515,8 @@ fn a_refused_renew_session_is_reported_not_hidden() {
 ///   연결을 다시 열지 않는다. 받지 못한 것(끊김 · 시한)만 다시 시도할 실패다.
 #[test]
 fn a_renew_result_with_a_broken_signature_stops_the_renew_thread() {
+    // ★ 2026-09-25 (결함 288) — 첫 갱신은 이제 실행 **전**에 동기로 한다. 깨진 서명은 거기서 걸려 시작하지 않는다.
+    //   ★ 그래서 "시작한 뒤 갱신 스레드가 검증 실패로 멈춘다" 는 경로는 이 시험이 더는 재지 않는다(시험 공백 — 결함 문서).
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let manifest = submit_ping_manifest(dir.path(), 8);
     let lease_db = dir.path().join("coordinator-lease.sqlite3");
@@ -493,19 +547,19 @@ fn a_renew_result_with_a_broken_signature_stops_the_renew_thread() {
     let agent = wait(agent, Duration::from_secs(90));
     let all = both(&agent, &coordinator);
 
-    assert!(
-        agent.success,
-        "갱신이 거부돼도 워크로드는 끝까지 돈다\n{all}"
-    );
-    let stopped = agent
+    let refused = agent
         .output()
         .lines()
-        .find(|line| line.starts_with("RENEW_SESSION_STOPPED"))
+        .find(|line| line.contains("PROCESS_START_NOT_CONFIRMED"))
         .map(str::to_string)
-        .unwrap_or_else(|| panic!("검증 실패인데 스레드가 멈추지 않았다\n{all}"));
+        .unwrap_or_else(|| panic!("검증 실패인데 시작을 거부하지 않았다\n{all}"));
     assert!(
-        stopped.contains("RENEW_REJECTED"),
-        "멈춘 이유가 검증 실패가 아니다: {stopped}\n{all}"
+        refused.contains("RENEW_REJECTED"),
+        "거부 이유가 검증 실패가 아니다: {refused}\n{all}"
+    );
+    assert!(
+        !agent.output().contains("WORKLOAD_SPAWNED"),
+        "깨진 확인으로 워크로드를 띄웠다\n{all}"
     );
     assert!(
         !agent.output().contains("RENEW_SESSION_FAILED"),

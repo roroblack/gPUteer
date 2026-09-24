@@ -84,6 +84,8 @@ pub struct ContainerRuntime {
     pub pass_gpu: bool,
     /// 컨테이너 Job 만 받는가(`--container-only`). 켜면 `OCI_IMAGE` 가 아닌 Job 을 호스트에서 돌리지 않는다.
     pub only: bool,
+    /// 이 Agent 의 노드 id — 모든 컨테이너에 `gputeer.node=<id>` 라벨로 붙인다. 죽은 회차가 남긴 컨테이너를 찾는 열쇠다(결함 290).
+    pub node_id: String,
 }
 
 /// 이 Job 을 어떻게 실행하는가 — ACK **전에** 정한다.
@@ -208,16 +210,48 @@ fn check_image_ref(image_ref: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 컨테이너 이름 — attempt 별로 다르다. 같으면 두 작업이 같은 이름을 다퉈 한쪽을 멈출 때 다른 쪽이 죽는다
-/// (cgroup 이름과 같은 이유 · `exec::derive_cgroup_name`). 자르거나 치환하지 않고 해시한다.
-pub fn derive_container_name(grant_id: &str, attempt_id: &str) -> String {
+/// 컨테이너 이름 — **시도(attempt)** 에서만 만든다. 자르거나 치환하지 않고 해시한다.
+///
+/// ★ 결함 290 (재검수 90) — 전에는 `grant_id` 도 넣었다. 풀은 연결마다 새 grant_id 를 만들어, Agent 가 죽은 뒤 같은 시도를 다시 받은
+///   회차가 옛 컨테이너를 이름으로 찾지 못했다. 한 시도는 한 노드에서만 돈다(이어받기는 새 시도다) — 시도만으로 갈린다.
+pub fn derive_container_name(attempt_id: &str) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"gputeer/v1/container-name");
-    for component in [grant_id, attempt_id] {
-        hasher.update(&(component.len() as u64).to_be_bytes());
-        hasher.update(component.as_bytes());
-    }
+    hasher.update(b"gputeer/v2/container-name");
+    hasher.update(&(attempt_id.len() as u64).to_be_bytes());
+    hasher.update(attempt_id.as_bytes());
     format!("gputeer-{}", &hasher.finalize().to_hex()[..32])
+}
+
+/// 이 노드의 라벨이 붙은 컨테이너를 **모두** 끝내고 지운다 — Agent 가 회차를 시작할 때 부른다(결함 290 · 291).
+///
+/// ★ 한 노드(한 Agent)는 한 번에 한 작업만 돌린다(회차는 순차다). 새 회차가 시작될 때 이 노드의 라벨로 돌고 있는 컨테이너는
+///   죽은 회차(Agent 가 죽었거나 종료를 관측하지 못하고 끝난 회차)가 남긴 것이다 — 그대로 두면 패널 손잡이 없이 GPU 를 물고 돌고,
+///   이어받은 다른 노드와 **두 번** 돈다. 지운 컨테이너 id 를 돌려준다. 목록을 못 읽으면 오류다(모르는 채 시작하지 않는다).
+pub fn remove_leftovers(runtime: &ContainerRuntime) -> Result<Vec<String>, String> {
+    let program = runtime.program.as_path();
+    let listed = cli_ok(
+        program,
+        &[
+            "ps".into(),
+            "-a".into(),
+            "-q".into(),
+            "--filter".into(),
+            format!("label=gputeer.node={}", runtime.node_id).into(),
+        ],
+        SHORT_TIMEOUT,
+    )?;
+    let ids: Vec<String> = listed
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect();
+    for id in &ids {
+        remove_container(program, id)
+            .map_err(|why| format!("남은 컨테이너 {id} 를 지우지 못했다: {why}"))?;
+    }
+    Ok(ids)
 }
 
 /// 컨테이너에 붙일 호스트 폴더 하나.
@@ -263,6 +297,7 @@ pub fn create_args(
         "create".into(),
         format!("--name={}", input.name).into(),
         "--label=gputeer.managed=1".into(),
+        format!("--label=gputeer.node={}", execution.runtime.node_id).into(),
         "--pull=missing".into(),
         "--read-only".into(),
         "--tmpfs=/tmp".into(),
@@ -651,6 +686,7 @@ mod tests {
             flavor,
             pass_gpu: false,
             only: false,
+            node_id: "node-a".into(),
         }
     }
 
@@ -972,14 +1008,9 @@ mod tests {
 
     #[test]
     fn container_names_differ_per_attempt() {
-        assert_ne!(
-            derive_container_name("g", "a1"),
-            derive_container_name("g", "a2")
-        );
-        assert_ne!(
-            derive_container_name("ga", "b"),
-            derive_container_name("g", "ab")
-        );
-        assert!(derive_container_name("g", "a").starts_with("gputeer-"));
+        assert_ne!(derive_container_name("a1"), derive_container_name("a2"));
+        // 결함 290 — 같은 시도는 연결(grant)이 바뀌어도 같은 이름이다.
+        assert_eq!(derive_container_name("a1"), derive_container_name("a1"));
+        assert!(derive_container_name("a").starts_with("gputeer-"));
     }
 }

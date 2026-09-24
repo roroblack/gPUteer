@@ -223,8 +223,17 @@ fn probe_writable(dir: &Path) -> Result<(), String> {
     let written = file.write_all(b"probe");
     drop(file);
     let removed = std::fs::remove_file(&probe);
-    written.map_err(|e| format!("{dir:?} 에 쓰지 못했다: {e}"))?;
-    removed.map_err(|e| format!("확인용 파일 {probe:?} 를 지우지 못했다(남았다): {e}"))
+    // ★ 결함 292 — 쓰기 · 삭제가 둘 다 실패하면 둘 다 알린다(남은 파일 이름을 잃지 않는다).
+    match (written, removed) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(w), Ok(())) => Err(format!("{dir:?} 에 쓰지 못했다: {w}")),
+        (Ok(()), Err(r)) => Err(format!(
+            "확인용 파일 {probe:?} 를 지우지 못했다(남았다): {r}"
+        )),
+        (Err(w), Err(r)) => Err(format!(
+            "{dir:?} 에 쓰지 못했고({w}) 확인용 파일 {probe:?} 도 지우지 못했다(남았다): {r}"
+        )),
+    }
 }
 
 /// 노드 폴더 — 있고 쓸 수 있고, Agent 가 여는 하위 자리(`fence.sqlite3` · `checkpoints`)가 다른 종류로 막혀 있지 않은가(결함 283).

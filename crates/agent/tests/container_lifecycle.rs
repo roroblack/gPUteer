@@ -56,6 +56,10 @@ fn main() {
             "execute_runs_the_container_path_end_to_end",
             execute_runs_the_container_path_end_to_end,
         ),
+        (
+            "leftovers_of_this_node_are_removed_before_a_round",
+            leftovers_of_this_node_are_removed_before_a_round,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -149,6 +153,14 @@ fn fake_runtime(state: &Path) -> i32 {
             std::fs::write(state.join("removed"), "").unwrap();
             0
         }
+        "ps" => {
+            // 죽은 회차가 남긴 컨테이너 — 시험이 state/leftovers 에 적어 둔다.
+            print!(
+                "{}",
+                std::fs::read_to_string(state.join("leftovers")).unwrap_or_default()
+            );
+            0
+        }
         other => {
             eprintln!("fake: 모르는 명령 {other}");
             2
@@ -216,6 +228,7 @@ fn execution() -> ContainerExecution {
             flavor: RuntimeFlavor::Docker,
             pass_gpu: false,
             only: false,
+            node_id: "node-test".into(),
         },
         pinned_image: format!("registry.local/train@sha256:{}", "ab".repeat(32)),
         gpu_pin: None,
@@ -470,5 +483,41 @@ fn execute_runs_the_container_path_end_to_end() {
     assert!(
         f.work.join("stdout.log").exists(),
         "컨테이너 출력을 작업 폴더에 남기지 않았다"
+    );
+}
+
+/// 결함 290 · 291 (재검수 90) — 회차를 시작하기 전에 **이 노드의 라벨**로 남은 컨테이너를 모두 지운다. 다른 노드 라벨은 묻지 않는다.
+fn leftovers_of_this_node_are_removed_before_a_round() {
+    let f = fixture(None);
+    std::fs::write(f.state.join("leftovers"), "old-1\nold-2\n").unwrap();
+    let removed = container::remove_leftovers(&execution().runtime).expect("정리");
+    assert_eq!(removed, ["old-1", "old-2"]);
+    let calls = calls(&f.state);
+    assert!(
+        calls
+            .lines()
+            .any(|l| l == "ps -a -q --filter label=gputeer.node=node-test"),
+        "이 노드 라벨로 찾지 않았다:\n{calls}"
+    );
+    for id in ["old-1", "old-2"] {
+        assert!(
+            calls.lines().any(|l| l == format!("rm -f -v {id}")),
+            "{id} 를 지우지 않았다:\n{calls}"
+        );
+    }
+    // 만드는 컨테이너에도 같은 라벨이 붙는다 — 다음 회차가 찾을 수 있다.
+    let _ = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    );
+    let create = std::fs::read_to_string(f.state.join("create.args")).unwrap();
+    assert!(
+        create
+            .lines()
+            .any(|l| l == "--label=gputeer.node=node-test"),
+        "노드 라벨 없이 만들었다:\n{create}"
     );
 }
