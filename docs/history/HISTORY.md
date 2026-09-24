@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-25 01:11 — 노드 점검(node-doctor)과 운영자 대시보드
+
+- 계획: `docs/plans/2026-09-25_0111_노드_점검과_운영자_대시보드.md`
+- 스트림: CLI · Coordinator
+- 수행: `gputeer node-doctor` 가 Agent 를 띄우기 전 시작 조건(시드 · 노드 폴더 · Coordinator TCP · 공유 저장소 · Owner Panel 포트 · GPU ·
+  컨테이너 런타임과 rootless 여부)을 OK/WARN/FAIL 로 보여 준다. `gputeer dashboard` 는 127.0.0.1 전용 읽기 전용 화면으로 Job · 노드 ·
+  예약을 5초마다 다시 읽는다(`status_report` 를 `pool_status` 구조로 나눠 같은 값을 쓴다). 서비스 틀에 선택 컨테이너 런타임 값
+- 검증: `cargo test --workspace -j 1` 1322 passed · 0 failed · ignored 4(개발 기계 Windows — 점검 시험 3 추가, 대시보드 확인은 풀 무인 운영 시험 안). 뮤테이션 2(대시보드 Host 검사 · 포트 사용 중 판정) 되돌려 확인
+- ★ 한계: 화면(HTML)은 데모 DB 로 브라우저에서 한 번 봤을 뿐 자동 시험이 아니다 · 독립 검수 없음
+- 리포트: 계획 문서가 대신한다
+
 ## 2026-09-25 01:03 — 컨테이너 실행 backend: OCI_IMAGE Job 을 podman · docker 로 가둔다
 
 - 계획: `docs/plans/2026-09-25_0053_컨테이너_실행_backend.md`

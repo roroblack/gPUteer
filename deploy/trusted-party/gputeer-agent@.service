@@ -3,9 +3,10 @@ Description=gPUteer Agent 루프 (노드 %i, 신뢰망)
 After=network-online.target
 
 [Service]
+# ★ `$$` 는 systemd 가 아니라 sh 가 풀게 한다(선택 값 — 비어 있으면 컨테이너 옵션을 넘기지 않는다).
 EnvironmentFile=/etc/gputeer/gputeer.env
 EnvironmentFile=/etc/gputeer/agent-%i.env
-ExecStart=/bin/sh -c 'exec "$GPUTEER_BIN" agent-loop --interval-ms 5000 --max-rounds 0 -- --connect "$GPUTEER_CONNECT" --own-seed-file "$GPUTEER_NODE_SEED_FILE" --peer-pubkey "$GPUTEER_COORDINATOR_PUBKEY" --coordinator-device-id "$GPUTEER_COORDINATOR_ID" --agent-device-id "$GPUTEER_NODE_ID" --fence-db "$GPUTEER_NODE_DIR/fence.sqlite3" --checkpoint-root "$GPUTEER_NODE_DIR/checkpoints" --submitter-pubkey "$GPUTEER_SUBMITTER_PUBKEY" --i-understand-this-executes-untrusted-code true --report-over-session true --renew-during-execution-ms 30000 --max-reconnect-attempts 1 --require-ack-receipt true --shared-checkpoint-root "$GPUTEER_SHARED_ROOT" --pool-peer-keys "$GPUTEER_POOL_AGENTS" --owner-panel-port "$GPUTEER_OWNER_PANEL_PORT" --gpu-pin "$GPUTEER_GPU_PIN"'
+ExecStart=/bin/sh -c 'exec "$GPUTEER_BIN" agent-loop --interval-ms 5000 --max-rounds 0 -- --connect "$GPUTEER_CONNECT" --own-seed-file "$GPUTEER_NODE_SEED_FILE" --peer-pubkey "$GPUTEER_COORDINATOR_PUBKEY" --coordinator-device-id "$GPUTEER_COORDINATOR_ID" --agent-device-id "$GPUTEER_NODE_ID" --fence-db "$GPUTEER_NODE_DIR/fence.sqlite3" --checkpoint-root "$GPUTEER_NODE_DIR/checkpoints" --submitter-pubkey "$GPUTEER_SUBMITTER_PUBKEY" --i-understand-this-executes-untrusted-code true --report-over-session true --renew-during-execution-ms 30000 --max-reconnect-attempts 1 --require-ack-receipt true --shared-checkpoint-root "$GPUTEER_SHARED_ROOT" --pool-peer-keys "$GPUTEER_POOL_AGENTS" --owner-panel-port "$GPUTEER_OWNER_PANEL_PORT" --gpu-pin "$GPUTEER_GPU_PIN" $${GPUTEER_CONTAINER_RUNTIME:+--container-runtime "$$GPUTEER_CONTAINER_RUNTIME" --container-runtime-kind "$$GPUTEER_CONTAINER_RUNTIME_KIND"}'
 Restart=on-failure
 RestartSec=5
 

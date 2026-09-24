@@ -18,6 +18,12 @@ foreach ($file in @($EnvFile, $AgentEnvFile)) {
     }
 }
 $nodeDir = $config.GPUTEER_NODE_DIR
+# 선택 — 컨테이너 런타임(런북 §5a). 비어 있으면 넘기지 않는다.
+$containerArgs = @()
+if ($config.GPUTEER_CONTAINER_RUNTIME) {
+    $containerArgs = @("--container-runtime", $config.GPUTEER_CONTAINER_RUNTIME,
+        "--container-runtime-kind", $config.GPUTEER_CONTAINER_RUNTIME_KIND)
+}
 
 & $config.GPUTEER_BIN agent-loop --interval-ms 5000 --max-rounds 0 -- `
     --connect $config.GPUTEER_CONNECT `
@@ -34,5 +40,6 @@ $nodeDir = $config.GPUTEER_NODE_DIR
     --shared-checkpoint-root $config.GPUTEER_SHARED_ROOT `
     --pool-peer-keys $config.GPUTEER_POOL_AGENTS `
     --owner-panel-port $config.GPUTEER_OWNER_PANEL_PORT `
-    --gpu-pin $config.GPUTEER_GPU_PIN
+    --gpu-pin $config.GPUTEER_GPU_PIN `
+    @containerArgs
 exit $LASTEXITCODE

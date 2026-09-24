@@ -35,15 +35,105 @@ fn ago(now_unix_ms: u64, at: Option<u64>) -> String {
     }
 }
 
+/// Job 한 줄 — `gputeer status` 와 대시보드가 같은 값을 쓴다(2026-09-25).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobStatus {
+    pub job_id: String,
+    pub state: String,
+    pub requeued: u64,
+    /// 끝난 사유(실행 종료 사유 또는 큐 실패). 없으면 `None`.
+    pub ended: Option<String>,
+    pub attempt_id: Option<String>,
+    pub attempt_state: Option<String>,
+    pub node: Option<String>,
+    pub resume_point: bool,
+}
+
+/// 노드 한 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeStatus {
+    pub node_id: String,
+    pub reserved_by: Option<String>,
+    /// 예약이 없으면 `None`.
+    pub reservation_expired: Option<bool>,
+    /// 마지막 FRESH 인사 시각. 들은 적 없으면 `None` — 판정은 하지 않는다.
+    pub last_fresh_hello_unix_ms: Option<u64>,
+    pub owner_reclaimed: bool,
+}
+
+/// 풀 상태. 테이블이 없으면 `None`(아직 만들지 않았다) — 빈 목록(있는데 비었다)과 구분한다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolStatus {
+    pub jobs: Option<Vec<JobStatus>>,
+    pub nodes: Option<Vec<NodeStatus>>,
+    /// Job 상태별 개수(소문자 상태 이름).
+    pub summary: std::collections::BTreeMap<String, u64>,
+}
+
 /// control DB 의 Job · 노드 · 예약을 사람이 읽는 줄로.
 pub fn status_report(control_db: &Path, now_unix_ms: u64) -> Result<String, String> {
+    let status = pool_status(control_db, now_unix_ms)?;
+    let dash = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_string());
+    let mut out = vec!["JOBS".to_string()];
+    match &status.jobs {
+        Some(jobs) => {
+            for job in jobs {
+                out.push(format!(
+                    "  {} state={} requeued={} ended={} attempt={} attempt_state={} node={} resume_point={}",
+                    job.job_id,
+                    job.state,
+                    job.requeued,
+                    dash(&job.ended),
+                    dash(&job.attempt_id),
+                    dash(&job.attempt_state),
+                    dash(&job.node),
+                    if job.resume_point { "yes" } else { "no" },
+                ));
+            }
+        }
+        None => out.push("  (Job 테이블이 없다 — 아직 제출된 작업이 없다)".to_string()),
+    }
+    out.push("NODES".to_string());
+    match &status.nodes {
+        Some(nodes) => {
+            for node in nodes {
+                out.push(format!(
+                    "  {} reserved_by={} reservation_expired={} last_fresh_hello={} owner_reclaimed={}",
+                    node.node_id,
+                    dash(&node.reserved_by),
+                    match node.reservation_expired {
+                        Some(true) => "yes",
+                        Some(false) => "no",
+                        None => "-",
+                    },
+                    ago(now_unix_ms, node.last_fresh_hello_unix_ms),
+                    // 결함 266 — 되찾음 기록이 있으면 "yes"(되찾은 뒤의 FRESH 가 그 기록을 지운다 — 시각을 비교하지 않는다).
+                    if node.owner_reclaimed { "yes" } else { "no" },
+                ));
+            }
+        }
+        None => out.push("  (노드 테이블이 없다 — import-inventory 를 먼저 한다)".to_string()),
+    }
+    out.push(format!(
+        "SUMMARY {}",
+        status
+            .summary
+            .iter()
+            .map(|(state, count)| format!("{state}={count}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    Ok(out.join("\n"))
+}
+
+/// control DB 의 Job · 노드 · 예약을 구조로 읽는다. 읽기만 한다.
+pub fn pool_status(control_db: &Path, _now_unix_ms: u64) -> Result<PoolStatus, String> {
     let connection = Connection::open_with_flags(control_db, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| format!("STATUS: control DB 를 열지 못했다({control_db:?}): {e}"))?;
-    let mut out = Vec::new();
     let mut counts: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
 
-    out.push("JOBS".to_string());
-    if table_exists(&connection, "coordinator_jobs")? {
+    let jobs = if table_exists(&connection, "coordinator_jobs")? {
+        let mut rows_out = Vec::new();
         let ids: Vec<String> = {
             let mut statement = connection
                 .prepare("SELECT job_id FROM coordinator_jobs ORDER BY job_id")
@@ -84,39 +174,27 @@ pub fn status_report(control_db: &Path, now_unix_ms: u64) -> Result<String, Stri
                 .queue_failure
                 .as_ref()
                 .map(|failure| format!("{failure:?}"));
-            out.push(format!(
-                "  {job_id} state={} requeued={} ended={} attempt={} attempt_state={} node={} resume_point={}",
-                job.state.table_name(),
-                job.requeue_count,
-                job.run_terminal
+            rows_out.push(JobStatus {
+                job_id: job_id.clone(),
+                state: job.state.table_name().to_string(),
+                requeued: job.requeue_count,
+                ended: job
+                    .run_terminal
                     .map(|terminal| terminal.trigger().to_string())
-                    .or(queue_failure)
-                    .unwrap_or_else(|| "-".to_string()),
-                attempt
-                    .as_ref()
-                    .map(|a| a.attempt_id.clone())
-                    .unwrap_or_else(|| "-".to_string()),
-                attempt
-                    .as_ref()
-                    .map(|a| a.state.table_name().to_string())
-                    .unwrap_or_else(|| "-".to_string()),
-                attempt
-                    .as_ref()
-                    .and_then(|a| a.node_ids.first().cloned())
-                    .unwrap_or_else(|| "-".to_string()),
-                if job.resume_checkpoint.is_some() {
-                    "yes"
-                } else {
-                    "no"
-                },
-            ));
+                    .or(queue_failure),
+                attempt_id: attempt.as_ref().map(|a| a.attempt_id.clone()),
+                attempt_state: attempt.as_ref().map(|a| a.state.table_name().to_string()),
+                node: attempt.as_ref().and_then(|a| a.node_ids.first().cloned()),
+                resume_point: job.resume_checkpoint.is_some(),
+            });
         }
+        Some(rows_out)
     } else {
-        out.push("  (Job 테이블이 없다 — 아직 제출된 작업이 없다)".to_string());
-    }
+        None
+    };
 
-    out.push("NODES".to_string());
-    if table_exists(&connection, "coordinator_agent_registry")? {
+    let nodes_out = if table_exists(&connection, "coordinator_agent_registry")? {
+        let mut rows_out = Vec::new();
         let nodes: Vec<String> = {
             let mut statement = connection
                 .prepare("SELECT node_id FROM coordinator_agent_registry ORDER BY node_id")
@@ -165,40 +243,25 @@ pub fn status_report(control_db: &Path, now_unix_ms: u64) -> Result<String, Stri
             } else {
                 None
             };
-            out.push(format!(
-                "  {node} reserved_by={} reservation_expired={} last_fresh_hello={} owner_reclaimed={}",
-                reservation
-                    .as_ref()
-                    .map(|r| r.attempt_id.clone())
-                    .unwrap_or_else(|| "-".to_string()),
-                reservation
-                    .as_ref()
-                    .map(|r| if r.expired_at_unix_ms.is_some() {
-                        "yes"
-                    } else {
-                        "no"
-                    })
-                    .unwrap_or("-"),
-                ago(now_unix_ms, last_seen),
-                // 결함 266 — 되찾음 기록이 있으면 "yes"(되찾은 뒤의 FRESH 가 그 기록을 지운다 — 시각을 비교하지 않는다).
-                if reclaimed.is_some() {
-                    "yes".to_string()
-                } else {
-                    "no".to_string()
-                },
-            ));
+            rows_out.push(NodeStatus {
+                node_id: node.clone(),
+                reserved_by: reservation.as_ref().map(|r| r.attempt_id.clone()),
+                reservation_expired: reservation.as_ref().map(|r| r.expired_at_unix_ms.is_some()),
+                last_fresh_hello_unix_ms: last_seen,
+                owner_reclaimed: reclaimed.is_some(),
+            });
         }
+        Some(rows_out)
     } else {
-        out.push("  (노드 테이블이 없다 — import-inventory 를 먼저 한다)".to_string());
-    }
+        None
+    };
 
-    out.push(format!(
-        "SUMMARY {}",
-        counts
-            .iter()
-            .map(|(state, count)| format!("{}={count}", state.to_ascii_lowercase()))
-            .collect::<Vec<_>>()
-            .join(" ")
-    ));
-    Ok(out.join("\n"))
+    Ok(PoolStatus {
+        jobs,
+        nodes: nodes_out,
+        summary: counts
+            .into_iter()
+            .map(|(state, count)| (state.to_ascii_lowercase(), count))
+            .collect(),
+    })
 }

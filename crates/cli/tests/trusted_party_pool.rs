@@ -490,6 +490,62 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
             "끝났는데 {node} 의 예약이 보인다: {status}"
         );
     }
+    // ★ 2026-09-25 — 대시보드(읽기 전용 · 127.0.0.1)가 같은 사실을 JSON 으로 낸다.
+    let json = dashboard_get(&db_s, "/api/status", "127.0.0.1");
+    assert!(json.starts_with("HTTP/1.1 200"), "{json}");
+    let body: serde_json::Value =
+        serde_json::from_str(json.split("\r\n\r\n").nth(1).unwrap_or("")).expect("JSON");
+    assert_eq!(body["summary"]["completed"], 3, "{body}");
+    let nodes = body["nodes"].as_array().expect("노드 목록");
+    assert_eq!(nodes.len(), 2, "{body}");
+    assert!(nodes.iter().all(|n| n["reserved_by"].is_null()), "{body}");
+    assert_eq!(body["jobs"].as_array().map(Vec::len), Some(3), "{body}");
+    // 음성 — Host 가 loopback 이 아니면(DNS 리바인딩) 거부 · 쓰기 요청 거부.
+    let rebound = dashboard_get(&db_s, "/api/status", "attacker.example");
+    assert!(rebound.starts_with("HTTP/1.1 403"), "{rebound}");
+}
+
+/// 대시보드를 포트 0 으로 띄워 요청 하나를 보내고 응답 전체를 돌려준다(`--max-requests 1`).
+fn dashboard_get(db: &str, path: &str, host: &str) -> String {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let mut child = Command::new(cli_bin())
+        .args([
+            "dashboard",
+            "--control-db",
+            db,
+            "--port",
+            "0",
+            "--max-requests",
+            "1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("dashboard");
+    let mut first = String::new();
+    BufReader::new(child.stdout.as_mut().unwrap())
+        .read_line(&mut first)
+        .unwrap();
+    let address = first
+        .trim()
+        .strip_prefix("DASHBOARD_LISTENING http://")
+        .and_then(|rest| rest.strip_suffix('/'))
+        .unwrap_or_else(|| panic!("주소 줄이 아니다: {first:?}"))
+        .to_string();
+    let mut stream = std::net::TcpStream::connect(&address).unwrap();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let status = child.wait().unwrap();
+    assert!(
+        status.success(),
+        "dashboard 가 요청 하나 뒤 정상으로 끝나지 않았다"
+    );
+    response
 }
 
 /// 음성 — **풀에 없는 노드의 Hello 는 거부되고**, Coordinator 는 계속 산다(다음 정상 노드를 받는다).

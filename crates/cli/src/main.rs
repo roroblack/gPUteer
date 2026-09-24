@@ -40,9 +40,11 @@ mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
 mod issue_grant;
+mod node_doctor;
 mod ops;
 mod out_file;
 mod plan_job;
+mod pool_dashboard;
 mod release_lost_node;
 mod scheduler_loop;
 mod scheduler_tick;
@@ -90,6 +92,10 @@ gputeer — gPUteer CLI
 
   신뢰망 운영 — 전체 절차는 docs/runbooks/신뢰망_설치_운영.md
     gputeer keygen --out <시드 파일>
+    gputeer dashboard --control-db <control.sqlite3> --port <로컬 포트>   (127.0.0.1 전용 · 읽기 전용)
+    gputeer node-doctor --seed-file <node.seed> --node-dir <노드 폴더> --connect <주소>:<포트> \\
+        [--shared-checkpoint-root <공유 저장소>] [--owner-panel-port <포트>] [--gpu-pin <GPU>] \\
+        [--container-runtime <podman|docker> --container-runtime-kind podman|docker]
     gputeer coordinator-stub --pool-mode true --pool-agents <id=hex;...> --own-seed-file <파일> ...
     gputeer scheduler-loop --interval-ms <ms> --max-ticks 0 <scheduler-tick 인자>
         [--silent-after-ms <ms>] [--failover-grace-ms <ms> --shared-checkpoint-root <dir>]
@@ -207,6 +213,27 @@ fn main() -> ExitCode {
             }
             Err(error) => {
                 eprintln!("keygen 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("dashboard") => match pool_dashboard::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("dashboard 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("node-doctor") => match node_doctor::run(&args[1..]) {
+            Ok(report) => {
+                println!("{report}");
+                ExitCode::SUCCESS
+            }
+            Err(report) => {
+                // ★ FAIL 이 있어도 보고 전체를 낸다 — 무엇이 빠졌는지가 이 명령의 쓸모다.
+                println!("{report}");
                 ExitCode::FAILURE
             }
         },
