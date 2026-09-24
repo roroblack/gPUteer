@@ -412,6 +412,9 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
             // ★ 결함 131 — 서명된 수신 확인을 받아야만 실행한다.
             "--require-ack-receipt",
             "true",
+            // 결함 218 — 풀 Agent 는 실행 중 갱신을 켜야 시작한다(첫 갱신이 "실행을 시작했다" 신호다).
+            "--renew-during-execution-ms",
+            "1000",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1041,13 +1044,14 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
     // ACK 는 기록됐고(시도 STARTING · Job RUNNING) 수신 확인만 유실됐다.
     let recorded = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db)
         .unwrap()
-        .record_grant_accepted(&attempt_id, now_unix_ms())
+        .record_grant_accepted(&attempt_id, now_unix_ms(), false)
         .unwrap();
     assert_eq!(
         recorded,
         gputeer_coordinator::staging_store::GrantAcceptedRecord::Recorded
     );
-    assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Running));
+    // 결함 218 — ACK 는 Job 을 옮기지 않는다(첫 진행 신호가 옮긴다). 한 번도 안 돈 이 시도의 Job 은 STAGING 이다.
+    assert_eq!(job_state(&db, JOBS[0]), Some(JobState::Staging));
 
     let pool_agents = format!(
         "{NODE_1}={};{NODE_2}={}",
@@ -1129,6 +1133,9 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
         "1",
         "--require-ack-receipt",
         "true",
+        // 결함 218 — 풀 Agent 는 실행 중 갱신을 켜야 시작한다(첫 갱신이 "실행을 시작했다" 신호다).
+        "--renew-during-execution-ms",
+        "1000",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -1152,7 +1159,7 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
 
 /// ★ 2026-09-24 (결함 218 · 257 · 258 — 재발급 철회) — 수신 확인이 유실돼 STARTING 에 멈춘 시도를 **다시 내주지 않는다.**
 ///   재발급을 하면 "한 번도 안 돈 시도" 와 "돌고 있는 시도" 를 계약 없이 가를 수 없어 두 번 실행 경로가 생겼다(재검수 84).
-///   이 시도는 노드 유실처럼 처리된다(Lease 만료 뒤 이어받기 — 체크포인트가 없으면 FAILED). 알려진 한계다.
+///   ★ 2026-09-25 (결함 218 닫힘) — ACK 는 Job 을 옮기지 않으므로 이 Job 은 STAGING 에 남고, Lease 만료 뒤 큐로 돌아가 처음부터 돈다(FAILED 가 아니다).
 #[test]
 fn a_start_whose_ack_receipt_was_lost_is_not_handed_out_again() {
     let (agent_out, coordinator_out, finished) = lost_receipt_round();
@@ -1165,5 +1172,51 @@ fn a_start_whose_ack_receipt_was_lost_is_not_handed_out_again() {
         coordinator_out.contains("이미 받아들여졌다"),
         "거부 사유가 보이지 않는다\n{everything}"
     );
-    assert_eq!(finished, Some(JobState::Running), "{everything}");
+    // Lease 만료 뒤 이어받기가 STAGING_NODE_LOST 로 큐에 되돌린다(단위 시험 an_acknowledged_start_that_never_ran_goes_back_to_the_queue).
+    assert_eq!(finished, Some(JobState::Staging), "{everything}");
+}
+
+/// 결함 218 (2026-09-25) — 풀 방식 Agent(보고 세션 + 수신 확인 요구)는 실행 중 갱신 없이 시작하지 않는다. 대조군: 갱신을 켜면 이 관문을 지난다.
+#[test]
+fn a_pool_agent_without_renewal_refuses_to_start() {
+    let dir = tempfile::tempdir().expect("임시 폴더");
+    let fence = dir.path().join("fence.sqlite3");
+    let checkpoints = dir.path().join("checkpoints");
+    let coordinator_pub = pub_hex(COORD_SEED);
+    let base = |extra: &[&str]| {
+        let mut args = vec![
+            "agent-stub",
+            "--connect",
+            "127.0.0.1:9",
+            "--own-seed",
+            AGENT_SEED_1,
+            "--peer-pubkey",
+            &coordinator_pub,
+            "--coordinator-device-id",
+            COORDINATOR,
+            "--agent-device-id",
+            NODE_1,
+            "--fence-db",
+            fence.to_str().unwrap(),
+            "--checkpoint-root",
+            checkpoints.to_str().unwrap(),
+            "--i-understand-this-executes-untrusted-code",
+            "true",
+            "--report-over-session",
+            "true",
+            "--require-ack-receipt",
+            "true",
+            "--max-reconnect-attempts",
+            "1",
+        ];
+        args.extend_from_slice(extra);
+        run_cli(&args)
+    };
+    let (ok, out) = base(&[]);
+    assert!(!ok && out.contains("POOL_AGENT_NEEDS_RENEW"), "{out}");
+    let (_, out) = base(&["--renew-during-execution-ms", "1000"]);
+    assert!(
+        !out.contains("POOL_AGENT_NEEDS_RENEW"),
+        "갱신을 켰는데 거부했다\n{out}"
+    );
 }

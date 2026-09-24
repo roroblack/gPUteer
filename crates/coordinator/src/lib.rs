@@ -1505,7 +1505,12 @@ fn serve_one_connection_impl(
     if let Some(control_db) = config.grant_from_control_db.as_ref() {
         let record = crate::staging_store::CoordinatorStagingStore::open(control_db)
             .and_then(|mut staging| {
-                staging.record_grant_accepted(&ack.attempt_id, clock.now_unix_ms())
+                staging.record_grant_accepted(
+                    &ack.attempt_id,
+                    clock.now_unix_ms(),
+                    // 결함 218 — 풀 모드는 첫 진행 신호가 Job 을 옮긴다. 풀 밖 lane 은 전처럼 ACK 가 옮긴다.
+                    !config.pool_mode,
+                )
             })
             .map_err(|error| {
                 SessionHandlerError::Classified(storage_error("grant accepted record", error))
@@ -2587,6 +2592,24 @@ fn serve_renew_session(
         )
         .map_err(|e| SessionHandlerError::Classified(storage_error("lease store renew", e)))?
     };
+    // ★ 2026-09-25 (결함 218) — 실행 중 갱신이 성공하면 그것이 규범의 "첫 progress"(PROCESS_STARTED)다. 저장된 예약 lane 이면 시도
+    //   STARTING -> RUNNING · Job STAGING -> RUNNING 을 적는다(갱신마다 불러도 멱등). ACK 는 더 이상 Job 을 옮기지 않는다.
+    if result.outcome == 1 {
+        if let Some(control_db) = config.grant_from_control_db.as_ref() {
+            let started = crate::staging_store::CoordinatorStagingStore::open(control_db)
+                .and_then(|mut staging| staging.record_process_started(&request.lease_id, now))
+                .map_err(|e| {
+                    SessionHandlerError::Classified(storage_error("process started", e))
+                })?;
+            if let crate::staging_store::ProcessStartedRecord::Started {
+                attempt_id,
+                job_moved,
+            } = &started
+            {
+                println!("PROCESS_STARTED_RECORDED attempt_id={attempt_id} job_moved={job_moved}");
+            }
+        }
+    }
     let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec())
         .map_err(|e| session_protocol_error(format!("RenewLeaseResult 프레임 인코딩 실패: {e}")))?;
     stream

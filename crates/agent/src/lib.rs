@@ -493,6 +493,20 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             ));
         }
     }
+    // ★ 2026-09-25 (결함 218) — 풀 방식 Agent(보고 세션 + 수신 확인 요구)는 실행 중 갱신을 켜야 시작한다. Coordinator 는 첫 갱신을 보고
+    //   Job 을 RUNNING 으로 옮긴다 — 갱신 없이 오래 돌면 Job 이 STAGING 으로 남아 Lease 만료 뒤 "한 번도 안 돈 작업" 으로 큐에 되돌려져
+    //   다른 노드에서 한 번 더 돈다.
+    if config.require_ack_receipt
+        && config.report_over_session
+        && config.execute_workload
+        && config.renew_during_execution_ms == 0
+    {
+        return Err(
+            "POOL_AGENT_NEEDS_RENEW: --require-ack-receipt · --report-over-session 인 풀 Agent 는 --renew-during-execution-ms 를 켜야 한다 — \
+             첫 갱신이 \"실행을 시작했다\" 는 신호다(결함 218)"
+                .to_string(),
+        );
+    }
     // ★ B+E 구현 단계 6 — 같은 종료 보고를 두 길(FRESH 연결 · REPORT 세션)로 보내지 않는다.
     if config.report_over_session && config.send_attempt_report {
         return Err(
@@ -2168,7 +2182,13 @@ fn start_renew_during_execution(
         let interval = Duration::from_millis(config.renew_during_execution_ms);
         let mut round: u64 = 0;
         'renew: loop {
-            let due = std::time::Instant::now() + interval;
+            // ★ 2026-09-25 (결함 218) — 첫 갱신은 **곧바로** 보낸다. Coordinator 는 실행 중 첫 갱신을 "프로세스가 시작했다"(PROCESS_STARTED)로
+            //   적고 그때 Job 을 RUNNING 으로 옮긴다 — 전에는 첫 갱신이 주기 뒤라 그동안 Job 이 STAGING 으로 보였다.
+            let due = if round == 0 {
+                std::time::Instant::now()
+            } else {
+                std::time::Instant::now() + interval
+            };
             while std::time::Instant::now() < due {
                 if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
                     break 'renew;

@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-25 00:39 — 결함 218 · 256 닫힘: Job 은 첫 진행 신호에 RUNNING
+
+- 계획: `docs/plans/2026-09-25_0035_218_첫_진행_신호로_RUNNING.md`
+- 스트림: Coordinator · Agent
+- 수행: ACK 는 시도만 STARTING 으로 적고 Job 은 STAGING 에 둔다. 실행 중 첫 갱신 성공(규범 Attempt PROCESS_STARTED)이 시도 RUNNING ·
+  Job STAGING -> RUNNING 을 한 커밋에 적는다(`record_process_started`). Agent 는 실행 직후 곧바로 한 번 갱신하고, 풀 방식 Agent 는 갱신 없이
+  시작하지 않는다(`POOL_AGENT_NEEDS_RENEW`). 수신 확인 유실 · 짧은 Lease 거부로 한 번도 안 돈 시도는 Lease 만료 뒤 큐로 돌아간다(전: FAILED).
+  풀 모드에서만 바꿨다 — 풀 밖 lane 은 첫 진행 신호가 없어 전처럼 ACK 가 Job 을 옮긴다
+- 검증: `cargo test --workspace -j 1` 1303 passed · 0 failed · ignored 4(개발 기계 Windows). 218 닫힘 시험은 옛 동작으로 되돌리면 실패(되돌려 확인)
+- ★ 한계: 독립 검수 없음 · 시작했는데 첫 갱신이 Lease 만료 + 유예보다 오래 못 가면 한 번 더 돌 수 있다(PURE 전제의 기존 한계와 같은 종류)
+- 리포트: 계획 문서가 대신한다
+
 ## 2026-09-24 04:12 — 신뢰망 재검수 86 대응: 결함 266 · 검수 루프 종료
 
 - 계획: `docs/plans/2026-09-23_1816_신뢰망_100_남은_일.md` §재검수 86

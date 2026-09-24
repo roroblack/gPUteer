@@ -1484,6 +1484,51 @@ mod tests {
         }
     }
 
+    /// 결함 218 (2026-09-25) — ACK 는 기록됐지만 한 번도 안 돈 시도(수신 확인 유실 · 시작 거부)는 Lease 만료 뒤 **큐로 돌아간다.**
+    ///   전에는 ACK 가 Job 을 RUNNING 으로 올려, 체크포인트 없는 RUNNING 이 이어받기에서 FAILED 가 됐다. 대조군: 첫 진행 신호가 온 시도는 RUNNING 이라
+    ///   (체크포인트가 없으면) FAILED 다 — 돌았던 것을 처음부터 다시 돌리지 않는다.
+    #[test]
+    fn an_acknowledged_start_that_never_ran_goes_back_to_the_queue() {
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        for (ran, want) in [(false, JobState::Queued), (true, JobState::Failed)] {
+            let fixture = prepare_fixture();
+            let mut staging = CoordinatorStagingStore::open(&fixture.path).unwrap();
+            assert_eq!(
+                staging
+                    .record_grant_accepted(ATTEMPT_ID, 250, false)
+                    .unwrap(),
+                crate::staging_store::GrantAcceptedRecord::Recorded
+            );
+            if ran {
+                staging.record_process_started(LEASE_ID, 260).unwrap();
+            }
+            drop(staging);
+            let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+                .unwrap()
+                .get(LEASE_ID)
+                .unwrap()
+                .unwrap();
+            let mut notes = Vec::new();
+            crate::failover::failover_lost_attempts(
+                &fixture.path,
+                &policy,
+                lease.expires_at_unix_ms + 1,
+                &mut notes,
+            )
+            .unwrap();
+            let job = CoordinatorJobStore::open(&fixture.path)
+                .unwrap()
+                .get(JOB_ID)
+                .unwrap()
+                .unwrap();
+            assert_eq!(job.state, want, "ran={ran} {notes:?}");
+        }
+    }
+
     /// 결함 227 (검수 76) — 장애 판정이 옛 Lease 를 같은 커밋에서 폐기한다. 판정 **전에** 시각을 잡은 늦은 갱신도
     ///   판정 뒤에는 저장되지 않는다(전에는 옛 Lease 가 미래로 늘어 옛 노드와 새 노드가 같이 돌 수 있었다).
     #[test]

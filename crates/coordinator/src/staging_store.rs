@@ -315,10 +315,21 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), Stagi
         .map_err(map_sql_error)
 }
 
+/// 첫 진행 신호 기록의 결과(결함 218).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessStartedRecord {
+    /// 시도 STARTING -> RUNNING 을 적었다. `job_moved` — Job 도 STAGING -> RUNNING 으로 옮겼다.
+    Started { attempt_id: String, job_moved: bool },
+    /// 이미 적혀 있었거나(RUNNING) 옮길 상태가 아니다 — 아무것도 바꾸지 않았다.
+    AlreadyRecorded { attempt_id: String },
+    /// 이 Lease 의 시도를 모른다(풀 밖에서 발급된 Lease 등).
+    UnknownLease,
+}
+
 /// ACK 기록의 결과.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrantAcceptedRecord {
-    /// 시도 CREATED -> STARTING, Job STAGING -> RUNNING 을 한 커밋에 적었다.
+    /// 시도 CREATED -> STARTING 을 적었다(★ 2026-09-25 — Job 은 옮기지 않는다. 첫 진행 신호가 옮긴다 · 결함 218).
     Recorded,
     /// 이미 적혀 있다(같은 시도의 재접속 ACK) — 아무것도 바꾸지 않았다.
     AlreadyRecorded,
@@ -367,10 +378,13 @@ impl CoordinatorStagingStore {
             .map_err(map_sql_error)
     }
 
+    /// `job_moves_on_ack` — 참이면 전처럼 ACK 가 Job 을 `STAGING -> RUNNING` 으로 옮긴다(풀 밖 lane — 수신 확인도 실행 중 갱신도 없다).
+    /// 거짓이면(풀 모드) 시도만 STARTING 으로 적고 Job 은 첫 진행 신호(`record_process_started`)가 옮긴다(결함 218).
     pub fn record_grant_accepted(
         &mut self,
         attempt_id: &str,
         now_unix_ms: u64,
+        job_moves_on_ack: bool,
     ) -> Result<GrantAcceptedRecord, StagingStoreError> {
         let transaction = self
             .connection
@@ -401,12 +415,23 @@ impl CoordinatorStagingStore {
                 GrantAcceptedRecord::AlreadyRecorded
             });
         }
-        let job_moved = match crate::job_store::record_staging_complete(
-            &transaction,
-            &attempt.job_id,
-            attempt_id,
-            now_unix_ms,
-        ) {
+        // ★ 2026-09-25 (결함 218) — 풀 모드의 ACK 는 시도만 STARTING 으로 적는다. Job 은 첫 진행 신호(record_process_started)가 RUNNING 으로 옮긴다.
+        let current = if job_moves_on_ack {
+            crate::job_store::record_staging_complete(
+                &transaction,
+                &attempt.job_id,
+                attempt_id,
+                now_unix_ms,
+            )
+        } else {
+            crate::job_store::ack_is_for_current_attempt(
+                &transaction,
+                &attempt.job_id,
+                attempt_id,
+                now_unix_ms,
+            )
+        };
+        let job_moved = match current {
             Ok(moved) => moved,
             Err(crate::job_store::JobStoreError::ClockRollback { .. }) => {
                 return Ok(GrantAcceptedRecord::ClockBehindStaging);
@@ -430,6 +455,75 @@ impl CoordinatorStagingStore {
         )?;
         transaction.commit().map_err(map_sql_error)?;
         Ok(GrantAcceptedRecord::Recorded)
+    }
+
+    /// ★ 2026-09-25 (결함 218) — 실행 중 **첫 갱신**(= 규범 PROCESS_STARTED 의 "첫 progress") 뒤에 부른다. 그 Lease 의 시도가 STARTING 이면
+    ///   `STARTING -> RUNNING`, 그 Job 이 STAGING 이고 이 시도가 현재 시도면 `STAGING -> RUNNING`(STAGING_COMPLETE)을 **한 커밋에** 적는다.
+    ///   이미 RUNNING 이면 아무것도 바꾸지 않는다(갱신마다 불러도 된다).
+    pub fn record_process_started(
+        &mut self,
+        lease_id: &str,
+        now_unix_ms: u64,
+    ) -> Result<ProcessStartedRecord, StagingStoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+        let attempt_id: Option<String> = transaction
+            .query_row(
+                "SELECT attempt_id FROM coordinator_attempts WHERE lease_id = ?1",
+                rusqlite::params![lease_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_sql_error)?;
+        let Some(attempt_id) = attempt_id else {
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(ProcessStartedRecord::UnknownLease);
+        };
+        let attempt =
+            fetch_attempt(&transaction, &attempt_id)?.ok_or(StagingStoreError::JobNotFound)?;
+        let attempt_moved = attempt.state == AttemptState::Starting;
+        if attempt_moved {
+            transition_attempt_state(
+                &transaction,
+                &attempt_id,
+                AttemptState::Starting,
+                AttemptState::Running,
+            )?;
+        }
+        let job_moved = if matches!(
+            attempt.state,
+            AttemptState::Starting | AttemptState::Running
+        ) {
+            match crate::job_store::record_staging_complete(
+                &transaction,
+                &attempt.job_id,
+                &attempt_id,
+                now_unix_ms,
+            ) {
+                Ok(moved) => moved,
+                Err(crate::job_store::JobStoreError::ClockRollback { .. }) => false,
+                Err(crate::job_store::JobStoreError::LockTimeout) => {
+                    return Err(StagingStoreError::LockTimeout)
+                }
+                Err(crate::job_store::JobStoreError::Io(message)) => {
+                    return Err(StagingStoreError::Io(message))
+                }
+                Err(other) => return Err(StagingStoreError::CorruptData(other.to_string())),
+            }
+        } else {
+            false
+        };
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(if attempt_moved {
+            ProcessStartedRecord::Started {
+                attempt_id,
+                job_moved,
+            }
+        } else {
+            ProcessStartedRecord::AlreadyRecorded { attempt_id }
+        })
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StagingStoreError> {
@@ -1572,7 +1666,7 @@ mod tests {
         // 시계가 예약 시각(200)보다 뒤 — 적지 않는다.
         assert_eq!(
             store
-                .record_grant_accepted(&request.attempt_id, 150)
+                .record_grant_accepted(&request.attempt_id, 150, false)
                 .unwrap(),
             GrantAcceptedRecord::ClockBehindStaging
         );
@@ -1587,7 +1681,7 @@ mod tests {
 
         assert_eq!(
             store
-                .record_grant_accepted(&request.attempt_id, 250)
+                .record_grant_accepted(&request.attempt_id, 250, false)
                 .unwrap(),
             GrantAcceptedRecord::Recorded
         );
@@ -1599,23 +1693,63 @@ mod tests {
                 .state,
             AttemptState::Starting
         );
+        // ★ 2026-09-25 (결함 218) — ACK 는 Job 을 옮기지 않는다. 첫 진행 신호(실행 중 첫 갱신)가 옮긴다.
         let job = job_store::fetch_job(&store.connection, "job-a")
             .unwrap()
             .unwrap();
-        assert_eq!(job.state, JobState::Running);
-        assert_eq!(job.running_at_unix_ms, Some(250));
+        assert_eq!(
+            job.state,
+            JobState::Staging,
+            "ACK 가 Job 을 RUNNING 으로 옮겼다"
+        );
 
         assert_eq!(
             store
-                .record_grant_accepted(&request.attempt_id, 260)
+                .record_grant_accepted(&request.attempt_id, 260, false)
                 .unwrap(),
-            // ★ 결함 218 — 여전히 현재 시도이고 Job 이 RUNNING 이면 "수신 확인 유실 뒤 재발급의 ACK" 로 가른다(아무것도 바꾸지 않는다).
-            GrantAcceptedRecord::StartingStillCurrent
+            GrantAcceptedRecord::AlreadyRecorded
         );
         let again = job_store::fetch_job(&store.connection, "job-a")
             .unwrap()
             .unwrap();
         assert_eq!(again, job, "두 번째 ACK 가 Job 을 바꿨다");
+
+        // 첫 진행 신호 — 시도 STARTING -> RUNNING · Job STAGING -> RUNNING 을 한 커밋에.
+        assert_eq!(
+            store
+                .record_process_started(&request.lease_id, 270)
+                .unwrap(),
+            ProcessStartedRecord::Started {
+                attempt_id: request.attempt_id.clone(),
+                job_moved: true
+            }
+        );
+        assert_eq!(
+            store
+                .get_attempt(&request.attempt_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            AttemptState::Running
+        );
+        let running = job_store::fetch_job(&store.connection, "job-a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(running.state, JobState::Running);
+        assert_eq!(running.running_at_unix_ms, Some(270));
+        // 다음 갱신마다 불러도 아무것도 바꾸지 않는다.
+        assert_eq!(
+            store
+                .record_process_started(&request.lease_id, 300)
+                .unwrap(),
+            ProcessStartedRecord::AlreadyRecorded {
+                attempt_id: request.attempt_id.clone()
+            }
+        );
+        assert_eq!(
+            store.record_process_started("lease-unknown", 300).unwrap(),
+            ProcessStartedRecord::UnknownLease
+        );
     }
 
     /// 만료 표시는 **찍히되 예약을 지우지 않는다**(§A1 4a).

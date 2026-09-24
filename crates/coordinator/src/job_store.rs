@@ -1205,7 +1205,46 @@ pub(crate) fn pause_for_owner_preempt(
     Ok(next)
 }
 
-/// ACK 를 받았을 때 Job 을 `STAGING -> RUNNING`(STAGING_COMPLETE)으로 옮긴다.
+/// ACK 가 **이 Job 의 현재 시도**의 것인가 — Job 은 옮기지 않는다(결함 218 · 2026-09-25).
+///
+/// ★ Job 의 `STAGING -> RUNNING` 은 이제 ACK 가 아니라 **첫 진행 신호**(실행 중 첫 갱신 — `record_staging_complete`)가 옮긴다.
+///   ACK 뒤 수신 확인이 유실돼 한 번도 안 돈 시도가 RUNNING 으로 남아 이어받기에서 FAILED 가 되던 것(218)을 막는다 — 그 Job 은
+///   STAGING 으로 남아 `STAGING_NODE_LOST` 로 큐에 돌아간다. 시계가 예약 시각보다 뒤면 `ClockRollback`.
+pub(crate) fn ack_is_for_current_attempt(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    now_unix_ms: u64,
+) -> Result<bool, JobStoreError> {
+    let Some(job) = fetch_job(connection, job_id)? else {
+        return Err(JobStoreError::NotFound);
+    };
+    if !matches!(job.state, JobState::Staging | JobState::Running) {
+        return Ok(false);
+    }
+    let latest: Option<String> = connection
+        .query_row(
+            "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    if latest.as_deref() != Some(attempt_id) {
+        return Ok(false);
+    }
+    if job.state == JobState::Staging {
+        if let Some(staging_at) = job.staging_at_unix_ms {
+            ensure_not_before(now_unix_ms, staging_at)?;
+        }
+    }
+    Ok(true)
+}
+
+/// 첫 진행 신호에 Job 을 `STAGING -> RUNNING`(STAGING_COMPLETE)으로 옮긴다.
+///
+/// ★ 2026-09-25 (결함 218) — 전에는 ACK 가 불렀다. 이제 실행 중 **첫 갱신**(`record_process_started`)이 부른다.
 ///
 /// ★ 2026-09-23 (신뢰망 남은 일 D). Agent 는 Grant·Lease 를 검증하고 workspace 를 만든 **뒤에** ACK 를 보낸다
 ///   (결함 ⑱ 설계 A — 실행 전 ACK). 그래서 ACK 는 "환경 준비 완료" 의 관측이다. 그 시각은 Coordinator 시계다.
