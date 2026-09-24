@@ -139,10 +139,23 @@ fn handle(mut stream: TcpStream, control_db: &Path) -> std::io::Result<()> {
     }
 }
 
+/// ★ 결함 285 (재검수 89) — 시한은 요청 **전체**에 건다(전에는 read 한 번마다라 1바이트씩 보내면 한 스레드인 화면이 영구히 묶였다).
+///   크기 한도는 종료 표시보다 **먼저** 본다(전에는 한도를 넘긴 뒤 종료 표시가 오면 받았다).
+const HEAD_DEADLINE: Duration = Duration::from_secs(5);
+const HEAD_LIMIT: usize = 16 * 1024;
+
 fn read_head(stream: &mut TcpStream) -> Result<String, String> {
+    let deadline = std::time::Instant::now() + HEAD_DEADLINE;
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 1024];
     loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err("요청 머리가 시한 안에 다 오지 않았다".into());
+        }
+        stream
+            .set_read_timeout(Some(left))
+            .map_err(|e| format!("시한을 걸지 못했다: {e}"))?;
         let n = stream
             .read(&mut chunk)
             .map_err(|e| format!("요청을 읽지 못했다: {e}"))?;
@@ -150,11 +163,11 @@ fn read_head(stream: &mut TcpStream) -> Result<String, String> {
             break;
         }
         buffer.extend_from_slice(&chunk[..n]);
+        if buffer.len() > HEAD_LIMIT {
+            return Err("요청 머리가 너무 길다".into());
+        }
         if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
             break;
-        }
-        if buffer.len() > 16 * 1024 {
-            return Err("요청 머리가 너무 길다".into());
         }
     }
     String::from_utf8(buffer).map_err(|_| "요청 머리가 UTF-8 이 아니다".into())

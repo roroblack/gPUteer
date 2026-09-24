@@ -20,7 +20,9 @@
 //! 네트워크    --network=none (runtime_allow_hosts 가 비었을 때만 받는다 — 허용 목록은 강제할 수단이 없어 거부)
 //! 메모리      --memory = --memory-swap = 커밋 상한 (스왑으로 새지 않게 — runtime-linux 의 2026-08-30 실측과 같은 이유)
 //! 프로세스    --pids-limit
-//! 쓰기        작업 폴더 하나만 /gputeer/work 로 붙인다
+//! 쓰기        체크포인트 폴더(/gputeer/checkpoints)만 붙여 쓰고 · 이어받기 폴더(/gputeer/resume)는 읽기 전용 ·
+//!             그 밖에 쓸 수 있는 곳은 메모리 tmpfs(/tmp · /dev/shm — 메모리 상한에 든다)뿐이다. 로그를 받는 작업 폴더는 붙이지
+//!             않는다(결함 273). ★ docker 는 이미지의 VOLUME 을 막지 못한다(끝에 rm -v 로 지운다 · 결함 274)
 //! ```
 //!
 //! # 보장하지 않는 것 (`CLAUDE.md` §0.4)
@@ -40,8 +42,10 @@ use std::time::{Duration, Instant};
 
 use gputeer_protocol::pb;
 
-/// 컨테이너 안에서 작업 폴더가 붙는 자리.
-pub const CONTAINER_WORK_DIR: &str = "/gputeer/work";
+/// 컨테이너 안에서 체크포인트를 쓰는 자리(쓰기 · 호스트의 `<작업 폴더>/checkpoints-out`).
+pub const CONTAINER_CHECKPOINT_DIR: &str = "/gputeer/checkpoints";
+/// 이어받을 체크포인트가 붙는 자리(읽기 전용 · 호스트의 `<작업 폴더>/resume-in`).
+pub const CONTAINER_RESUME_DIR: &str = "/gputeer/resume";
 
 /// 한 작업이 만들 수 있는 프로세스 수 상한. fork 폭탄으로 소유자 기계를 멈추지 못하게 한다.
 pub const CONTAINER_PIDS_LIMIT: u32 = 4096;
@@ -216,17 +220,27 @@ pub fn derive_container_name(grant_id: &str, attempt_id: &str) -> String {
     format!("gputeer-{}", &hasher.finalize().to_hex()[..32])
 }
 
+/// 컨테이너에 붙일 호스트 폴더 하나.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mount {
+    pub host: PathBuf,
+    /// 컨테이너 안 자리(절대 경로 · 고정 문자열).
+    pub target: &'static str,
+    pub read_only: bool,
+}
+
 /// `create` 에 줄 입력.
 pub struct CreateInput<'a> {
     pub name: &'a str,
     pub entrypoint: &'a str,
     pub args: &'a [String],
-    /// Agent 가 만든 환경 변수(호스트 경로 그대로). 작업 폴더 아래 경로는 컨테이너 안 경로로 바꿔 넘긴다.
+    /// Agent 가 만든 환경 변수(호스트 경로 그대로). 붙인 폴더 아래 경로는 컨테이너 안 경로로 바꿔 넘긴다.
     pub environment: &'a [(OsString, OsString)],
-    /// 쓰기로 붙일 유일한 폴더(호스트).
-    pub work_dir: &'a Path,
+    /// 붙일 폴더들. ★ 결함 273 — Agent 가 **호스트에서 쓰는** 폴더(로그를 받는 작업 폴더)를 여기 넣지 않는다.
+    ///   작업이 그 안에 링크를 심으면 Agent 가 링크를 따라가 호스트 파일을 덮는다.
+    pub mounts: &'a [Mount],
     pub memory_limit_bytes: u64,
-    /// 컨테이너 안에서 쓸 uid:gid (리눅스 docker). 작업 폴더에 호스트 root 로 쓰지 않게 한다.
+    /// 컨테이너 안에서 쓸 uid:gid (리눅스 docker). 붙인 폴더에 호스트 root 로 쓰지 않게 한다.
     pub user: Option<(u32, u32)>,
 }
 
@@ -244,16 +258,6 @@ pub fn create_args(
     if input.entrypoint.is_empty() {
         return Err("entrypoint 가 비었다".into());
     }
-    let work = input
-        .work_dir
-        .to_str()
-        .ok_or_else(|| format!("작업 폴더 경로가 UTF-8 이 아니다({:?})", input.work_dir))?;
-    // ★ `--mount` 는 쉼표로 필드를 가른다. 경로에 쉼표가 있으면 필드가 바뀐다 — 받지 않는다.
-    if work.contains(',') || work.contains('=') {
-        return Err(format!(
-            "작업 폴더 경로에 ',' 나 '=' 가 있다({work:?}) — --mount 필드를 바꿀 수 있어 받지 않는다"
-        ));
-    }
     let memory = input.memory_limit_bytes.to_string();
     let mut args: Vec<OsString> = vec![
         "create".into(),
@@ -265,12 +269,33 @@ pub fn create_args(
         "--cap-drop=ALL".into(),
         "--security-opt=no-new-privileges".into(),
         "--network=none".into(),
+        // ★ 결함 274 — IPC 네임스페이스를 호스트 · 다른 컨테이너와 나누지 않는다(/dev/shm 은 이 컨테이너의 tmpfs · 메모리 상한에 든다).
+        "--ipc=private".into(),
         format!("--pids-limit={CONTAINER_PIDS_LIMIT}").into(),
         format!("--memory={memory}").into(),
         format!("--memory-swap={memory}").into(),
-        format!("--mount=type=bind,source={work},target={CONTAINER_WORK_DIR}").into(),
-        format!("--workdir={CONTAINER_WORK_DIR}").into(),
+        "--workdir=/tmp".into(),
     ];
+    for mount in input.mounts {
+        let host = mount
+            .host
+            .to_str()
+            .ok_or_else(|| format!("붙일 폴더 경로가 UTF-8 이 아니다({:?})", mount.host))?;
+        // ★ `--mount` 는 쉼표로 필드를 가른다. 경로에 쉼표 · '=' 가 있으면 필드가 바뀐다 — 받지 않는다.
+        if host.contains(',') || host.contains('=') {
+            return Err(format!(
+                "붙일 폴더 경로에 ',' 나 '=' 가 있다({host:?}) — --mount 필드를 바꿀 수 있어 받지 않는다"
+            ));
+        }
+        let readonly = if mount.read_only { ",readonly" } else { "" };
+        args.push(
+            format!(
+                "--mount=type=bind,source={host},target={}{readonly}",
+                mount.target
+            )
+            .into(),
+        );
+    }
     match (execution.runtime.flavor, input.user) {
         // ★ rootless podman 은 컨테이너 안 uid 를 subuid 로 옮긴다 — keep-id 가 아니면 붙인 폴더에 못 쓴다.
         (RuntimeFlavor::Podman, _) => args.push("--userns=keep-id".into()),
@@ -279,11 +304,18 @@ pub fn create_args(
         }
         (RuntimeFlavor::Docker, None) => {}
     }
+    if execution.runtime.flavor == RuntimeFlavor::Podman {
+        // ★ 결함 274 — podman 은 이미지의 VOLUME 을 익명 쓰기 볼륨으로 만들고(--read-only 와 무관), --read-only 일 때
+        //   /dev · /dev/shm · /run · /tmp · /var/tmp 를 쓰기 tmpfs 로 둔다. 둘 다 끈다(/tmp 는 위에서 따로 준다).
+        //   docker 는 이미지 VOLUME 을 막는 create 옵션이 없다 — 끝에 `rm -v` 로 지울 뿐이다(런북 §5a).
+        args.push("--image-volume=ignore".into());
+        args.push("--read-only-tmpfs=false".into());
+    }
     for (key, value) in input.environment {
         let key = key
             .to_str()
             .ok_or_else(|| format!("환경 변수 이름이 UTF-8 이 아니다({key:?})"))?;
-        let value = translate_into_container(value, input.work_dir)?;
+        let value = translate_into_container(value, input.mounts)?;
         if key.is_empty() || key.contains('=') {
             return Err(format!("환경 변수 이름이 잘못됐다({key:?})"));
         }
@@ -305,15 +337,15 @@ pub fn create_args(
     Ok(args)
 }
 
-/// 작업 폴더 아래를 가리키는 호스트 경로를 컨테이너 안 경로로 바꾼다. 작업 폴더 밖 경로는 그대로 둔다(식별자 같은 값).
-fn translate_into_container(value: &OsStr, work_dir: &Path) -> Result<String, String> {
+/// 붙인 폴더 아래를 가리키는 호스트 경로를 컨테이너 안 경로로 바꾼다. 붙인 폴더 밖 경로는 그대로 둔다(식별자 같은 값).
+fn translate_into_container(value: &OsStr, mounts: &[Mount]) -> Result<String, String> {
     let text = value
         .to_str()
         .ok_or_else(|| format!("환경 변수 값이 UTF-8 이 아니다({value:?})"))?;
     let path = Path::new(text);
-    match path.strip_prefix(work_dir) {
-        Ok(rest) => {
-            let mut inside = String::from(CONTAINER_WORK_DIR);
+    for mount in mounts {
+        if let Ok(rest) = path.strip_prefix(&mount.host) {
+            let mut inside = String::from(mount.target);
             for component in rest.components() {
                 inside.push('/');
                 inside.push_str(
@@ -323,10 +355,10 @@ fn translate_into_container(value: &OsStr, work_dir: &Path) -> Result<String, St
                         .ok_or_else(|| format!("경로가 UTF-8 이 아니다({rest:?})"))?,
                 );
             }
-            Ok(inside)
+            return Ok(inside);
         }
-        Err(_) => Ok(text.to_string()),
     }
+    Ok(text.to_string())
 }
 
 /// 런타임 명령 한 번의 결과.
@@ -338,11 +370,7 @@ struct CliOutput {
 }
 
 /// 런타임 명령을 **시한 안에** 부른다. 시한을 넘기면 그 CLI 프로세스를 죽이고 오류다.
-fn run_cli(
-    program: &Path,
-    args: &[OsString],
-    timeout: Option<Duration>,
-) -> Result<CliOutput, String> {
+fn run_cli(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOutput, String> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -370,13 +398,12 @@ fn run_cli(
             Ok(None) => {}
             Err(error) => return Err(format!("{program:?} 를 기다리지 못했다: {error}")),
         }
-        if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+        if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "{program:?} {:?} 가 {:?} 안에 끝나지 않았다 — 런타임이 멈췄을 수 있다",
-                args.first(),
-                timeout.unwrap_or_default()
+                "{program:?} {:?} 가 {timeout:?} 안에 끝나지 않았다 — 런타임이 멈췄을 수 있다",
+                args.first()
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -388,11 +415,7 @@ fn run_cli(
     })
 }
 
-fn cli_ok(
-    program: &Path,
-    args: &[OsString],
-    timeout: Option<Duration>,
-) -> Result<CliOutput, String> {
+fn cli_ok(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOutput, String> {
     let output = run_cli(program, args, timeout)?;
     if output.status.success() {
         Ok(output)
@@ -406,6 +429,16 @@ fn cli_ok(
     }
 }
 
+/// `rm -f -v <이름>` — 컨테이너와 그 익명 볼륨까지 지운다(결함 274). 없는 이름이면 런타임이 실패를 돌려준다.
+fn remove_container(program: &Path, name: &str) -> Result<(), String> {
+    cli_ok(
+        program,
+        &["rm".into(), "-f".into(), "-v".into(), name.into()],
+        SHORT_TIMEOUT,
+    )
+    .map(|_| ())
+}
+
 /// 실행 중인 컨테이너를 **밖에서** 끝내는 손잡이(`CLAUDE.md` §0.1).
 #[derive(Debug, Clone)]
 pub struct ContainerStopper {
@@ -416,20 +449,23 @@ pub struct ContainerStopper {
 impl ContainerStopper {
     /// 컨테이너를 즉시 끝낸다(SIGKILL). 컨테이너 안의 프로세스 트리 전체가 같이 끝난다.
     ///
-    /// 이미 끝난 컨테이너에 불러도 성공한다 — 정지 버튼을 두 번 누르는 것은 정상이다. 그러나 끝났는지 **확인하지 못하면**
-    /// 성공이라고 하지 않는다.
+    /// ★ 결함 277 — kill 이 실패했는데 이미 끝나 있으면 **실패**(`ALREADY_EXITED`)다. 전에는 성공으로 바꿔, 스스로 코드 0 으로
+    ///   끝난 작업이 "소유자가 멈췄다" 로 보고됐다 — 정지 요청이 받아들여진 것과 정지가 종료 원인인 것은 다르다.
     pub fn stop(&self) -> Result<(), String> {
         let kill = run_cli(
             &self.program,
             &["kill".into(), self.name.clone().into()],
-            Some(SHORT_TIMEOUT),
+            SHORT_TIMEOUT,
         )?;
         if kill.status.success() {
             return Ok(());
         }
-        match inspect_running(&self.program, &self.name) {
-            Ok(false) => Ok(()),
-            Ok(true) => Err(format!(
+        match inspect_state(&self.program, &self.name) {
+            Ok(Some(_)) => Err(format!(
+                "ALREADY_EXITED: 작업이 이미 끝나 있었다 — 이 정지가 종료 원인이 아니다({})",
+                kill.stderr.trim()
+            )),
+            Ok(None) => Err(format!(
                 "kill 이 실패했고 컨테이너가 아직 돈다: {}",
                 kill.stderr.trim()
             )),
@@ -438,23 +474,6 @@ impl ContainerStopper {
                 kill.stderr.trim()
             )),
         }
-    }
-}
-
-fn inspect_running(program: &Path, name: &str) -> Result<bool, String> {
-    let output = cli_ok(
-        program,
-        &[
-            "inspect".into(),
-            "--format={{.State.Running}}".into(),
-            name.into(),
-        ],
-        Some(SHORT_TIMEOUT),
-    )?;
-    match output.stdout.trim() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        other => Err(format!("State.Running 을 읽지 못했다({other:?})")),
     }
 }
 
@@ -471,14 +490,20 @@ pub struct ContainerExit {
 pub enum ContainerRunError {
     /// 컨테이너를 만들거나 시작하지 못했다 — 작업은 돌지 않았다.
     NotStarted { detail: String },
-    /// 시작했는데 종료를 관측하지 못했다 — 컨테이너가 살아 있을 수 있다(지우지 않는다).
+    /// 시작했는데 종료를 관측하지 못했다. 정리(kill · rm)를 시도했고 그 결과는 `detail` 에 있다.
     NotObserved { detail: String },
 }
 
-/// 만들고 → 시작하고 → 끝날 때까지 기다리고 → 종료를 읽고 → 출력을 받고 → 지운다.
+/// 종료를 확인하는 주기와, 연속으로 몇 번 확인에 실패하면 "관측 못 함" 으로 볼지.
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+const POLL_FAILURES_TOLERATED: u32 = 5;
+
+/// 만들고 → 시작하고 → 끝날 때까지 상태를 확인하고 → 출력을 받고 → 지운다.
 ///
 /// ★ `run` 한 번으로 하지 않는다. `run` 의 종료 코드는 런타임 오류(125~127)와 작업 종료가 섞인다 — 작업이 125 로 끝난 것과
 ///   이미지를 못 받은 것이 같아 보인다. 단계를 나누면 어디서 실패했는지 안다.
+/// ★ 결함 276 — `wait` 를 쓰지 않는다. 시한이 없어 데몬이 멈추면 영원히 기다렸다. 대신 `inspect` 를 주기로 부른다(명령마다 시한).
+///   종료를 관측하지 못하면 kill · rm 을 시도하고 그 결과를 적는다 — 소유자 패널에서 사라진 채 컨테이너가 계속 돌지 않게 한다.
 pub fn run(
     execution: &ContainerExecution,
     input: &CreateInput<'_>,
@@ -489,59 +514,60 @@ pub fn run(
     let program = execution.runtime.program.as_path();
     let not_started = |detail: String| ContainerRunError::NotStarted { detail };
     let create = create_args(execution, input).map_err(not_started)?;
-    let remove = || {
-        let _ = run_cli(
-            program,
-            &["rm".into(), "-f".into(), input.name.into()],
-            Some(SHORT_TIMEOUT),
-        );
-    };
-    if let Err(why) = cli_ok(program, &create, Some(CREATE_TIMEOUT)) {
+    // ★ 결함 276 — 같은 이름이 남아 있으면(전 실행의 rm 실패) create 가 충돌한다. 이름은 이 시도의 것이라 남은 것도 이 시도의 것이다.
+    let _ = remove_container(program, input.name);
+    if let Err(why) = cli_ok(program, &create, CREATE_TIMEOUT) {
         // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다.
-        remove();
+        let _ = remove_container(program, input.name);
         return Err(not_started(format!("create: {why}")));
     }
-    if let Err(why) = cli_ok(
-        program,
-        &["start".into(), input.name.into()],
-        Some(SHORT_TIMEOUT),
-    ) {
-        remove();
+    if let Err(why) = cli_ok(program, &["start".into(), input.name.into()], SHORT_TIMEOUT) {
+        let _ = remove_container(program, input.name);
         return Err(not_started(format!("start: {why}")));
     }
-    on_started(ContainerStopper {
+    let stopper = ContainerStopper {
         program: program.to_path_buf(),
         name: input.name.to_string(),
-    });
+    };
+    on_started(stopper.clone());
     // ★ 시한 없이 기다린다 — 작업 길이는 Lease 가 정한다. 멈추는 것은 소유자 손잡이(kill)가 한다.
-    let waited = cli_ok(program, &["wait".into(), input.name.into()], None);
-    let exit = match inspect_exit(program, input.name) {
-        Ok(exit) => exit,
-        Err(inspect_why) => {
-            let detail = match &waited {
-                Ok(output) => format!(
-                    "wait 는 {:?} 를 냈는데 inspect 로 종료를 확인하지 못했다: {inspect_why}",
-                    output.stdout.trim()
-                ),
-                Err(wait_why) => format!("wait: {wait_why} · inspect: {inspect_why}"),
-            };
-            return Err(ContainerRunError::NotObserved { detail });
+    let mut failures: u32 = 0;
+    let exit = loop {
+        match inspect_state(program, input.name) {
+            Ok(Some(exit)) => break exit,
+            Ok(None) => failures = 0,
+            Err(why) => {
+                failures += 1;
+                if failures >= POLL_FAILURES_TOLERATED {
+                    let killed = match stopper.stop() {
+                        Ok(()) => "kill 성공".to_string(),
+                        Err(e) => format!("kill 실패({e})"),
+                    };
+                    let removed = match remove_container(program, input.name) {
+                        Ok(()) => "rm 성공 — 컨테이너는 없다".to_string(),
+                        Err(e) => format!("rm 실패({e}) — 컨테이너가 남아 돌 수 있다"),
+                    };
+                    return Err(ContainerRunError::NotObserved {
+                        detail: format!(
+                            "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · {removed}"
+                        ),
+                    });
+                }
+            }
         }
+        std::thread::sleep(POLL_INTERVAL);
     };
     if let Err(why) = save_logs(program, input.name, stdout_path, stderr_path) {
         eprintln!("CONTAINER_LOGS_NOT_SAVED name={} — {why}", input.name);
     }
-    if let Err(why) = cli_ok(
-        program,
-        &["rm".into(), "-f".into(), input.name.into()],
-        Some(SHORT_TIMEOUT),
-    ) {
+    if let Err(why) = remove_container(program, input.name) {
         eprintln!("CONTAINER_NOT_REMOVED name={} — {why}", input.name);
     }
     Ok(exit)
 }
 
-fn inspect_exit(program: &Path, name: &str) -> Result<ContainerExit, String> {
+/// 컨테이너 상태 — 끝났으면 `Some(종료)`, 아직 돌면 `None`.
+fn inspect_state(program: &Path, name: &str) -> Result<Option<ContainerExit>, String> {
     let output = cli_ok(
         program,
         &[
@@ -549,21 +575,21 @@ fn inspect_exit(program: &Path, name: &str) -> Result<ContainerExit, String> {
             "--format={{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}".into(),
             name.into(),
         ],
-        Some(SHORT_TIMEOUT),
+        SHORT_TIMEOUT,
     )?;
-    parse_inspect_exit(&output.stdout)
+    parse_inspect_state(&output.stdout)
 }
 
-/// `inspect` 출력(`<running> <exit code> <oom>`)을 읽는다. 아직 돌고 있으면 종료가 아니다.
-fn parse_inspect_exit(text: &str) -> Result<ContainerExit, String> {
+/// `inspect` 출력(`<running> <exit code> <oom>`)을 읽는다. 아직 돌고 있으면 `None`.
+fn parse_inspect_state(text: &str) -> Result<Option<ContainerExit>, String> {
     let fields: Vec<&str> = text.split_whitespace().collect();
     let [running, code, oom] = fields.as_slice() else {
         return Err(format!("inspect 출력을 읽지 못했다({text:?})"));
     };
-    if *running != "false" {
-        return Err(format!(
-            "컨테이너가 아직 끝나지 않았다(State.Running={running})"
-        ));
+    match *running {
+        "true" => return Ok(None),
+        "false" => {}
+        other => return Err(format!("State.Running 을 읽지 못했다({other:?})")),
     }
     let exit_code = code
         .parse::<i64>()
@@ -573,10 +599,10 @@ fn parse_inspect_exit(text: &str) -> Result<ContainerExit, String> {
         "false" => false,
         other => return Err(format!("OOMKilled 를 읽지 못했다({other:?})")),
     };
-    Ok(ContainerExit {
+    Ok(Some(ContainerExit {
         exit_code,
         oom_killed,
-    })
+    }))
 }
 
 fn save_logs(
@@ -776,8 +802,23 @@ mod tests {
             .starts_with("CONTAINER_NETWORK_ALLOWLIST"));
     }
 
+    fn mounts(run: &Path) -> Vec<Mount> {
+        vec![
+            Mount {
+                host: run.join("checkpoints-out"),
+                target: CONTAINER_CHECKPOINT_DIR,
+                read_only: false,
+            },
+            Mount {
+                host: run.join("resume-in"),
+                target: CONTAINER_RESUME_DIR,
+                read_only: true,
+            },
+        ]
+    }
+
     fn input<'a>(
-        work: &'a Path,
+        mounts: &'a [Mount],
         env: &'a [(OsString, OsString)],
         args: &'a [String],
     ) -> CreateInput<'a> {
@@ -786,7 +827,7 @@ mod tests {
             entrypoint: "python",
             args,
             environment: env,
-            work_dir: work,
+            mounts,
             memory_limit_bytes: 256 * 1024 * 1024,
             user: Some((1000, 1000)),
         }
@@ -805,55 +846,86 @@ mod tests {
             pinned_image: "img@sha256:00".into(),
             gpu_pin: None,
         };
-        let work = PathBuf::from("/var/gputeer/run-1");
+        let run = PathBuf::from("/var/gputeer/run-1");
+        let mounts = mounts(&run);
         let env = vec![
             (
                 OsString::from("GPUTEER_CHECKPOINT_DIR"),
                 OsString::from("/var/gputeer/run-1/checkpoints-out"),
             ),
+            (
+                OsString::from("GPUTEER_RESUME_DIR"),
+                OsString::from("/var/gputeer/run-1/resume-in"),
+            ),
             (OsString::from("GPUTEER_JOB_ID"), OsString::from("job-1")),
         ];
         let job_args = vec!["train.py".to_string(), "--epochs=3".to_string()];
-        let args = strings(create_args(&execution, &input(&work, &env, &job_args)).unwrap());
+        let args = strings(create_args(&execution, &input(&mounts, &env, &job_args)).unwrap());
         for flag in [
             "--read-only",
             "--tmpfs=/tmp",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
             "--network=none",
+            "--ipc=private",
             "--pids-limit=4096",
             "--memory=268435456",
             "--memory-swap=268435456",
-            "--mount=type=bind,source=/var/gputeer/run-1,target=/gputeer/work",
+            "--workdir=/tmp",
             "--user=1000:1000",
-            "--env=GPUTEER_CHECKPOINT_DIR=/gputeer/work/checkpoints-out",
+            "--env=GPUTEER_CHECKPOINT_DIR=/gputeer/checkpoints",
+            "--env=GPUTEER_RESUME_DIR=/gputeer/resume",
             "--env=GPUTEER_JOB_ID=job-1",
             "--entrypoint=python",
         ] {
             assert!(args.iter().any(|a| a == flag), "{flag} 가 없다: {args:?}");
         }
+        // 경로 구분자는 플랫폼마다 다르다 — 기대값도 같은 Path 로 만든다.
+        for expected in [
+            format!(
+                "--mount=type=bind,source={},target=/gputeer/checkpoints",
+                run.join("checkpoints-out").display()
+            ),
+            format!(
+                "--mount=type=bind,source={},target=/gputeer/resume,readonly",
+                run.join("resume-in").display()
+            ),
+        ] {
+            assert!(args.contains(&expected), "{expected} 가 없다: {args:?}");
+        }
+        // ★ 결함 273 — 로그를 받는 작업 폴더 자체는 붙이지 않는다.
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.starts_with("--mount=") && a.contains("source=/var/gputeer/run-1,")),
+            "작업 폴더 전체를 붙였다: {args:?}"
+        );
         // 이미지 뒤에는 작업 인자만 온다 — 제출자 값이 옵션으로 읽히지 않는다.
         let image_at = args.iter().position(|a| a == "img@sha256:00").unwrap();
         assert_eq!(&args[image_at + 1..], ["train.py", "--epochs=3"]);
         assert!(args[..image_at]
             .iter()
             .all(|a| a == "create" || a.starts_with("--")));
+        // docker 는 podman 전용 옵션을 받지 않는다.
+        assert!(!args.iter().any(|a| a == "--image-volume=ignore"));
     }
 
     #[test]
-    fn podman_keeps_the_host_uid_and_gpu_flags_follow_the_runtime() {
+    fn podman_keeps_the_host_uid_ignores_image_volumes_and_gpu_flags_follow_the_runtime() {
         let mut execution = ContainerExecution {
             runtime: runtime(RuntimeFlavor::Podman),
             pinned_image: "img@sha256:00".into(),
             gpu_pin: Some("GPU-1".into()),
         };
-        let work = PathBuf::from("/w");
-        let podman = strings(create_args(&execution, &input(&work, &[], &[])).unwrap());
+        let mounts = mounts(Path::new("/w"));
+        let podman = strings(create_args(&execution, &input(&mounts, &[], &[])).unwrap());
         assert!(podman.iter().any(|a| a == "--userns=keep-id"));
         assert!(!podman.iter().any(|a| a.starts_with("--user=")));
+        assert!(podman.iter().any(|a| a == "--image-volume=ignore"));
+        assert!(podman.iter().any(|a| a == "--read-only-tmpfs=false"));
         assert!(podman.iter().any(|a| a == "--device=nvidia.com/gpu=GPU-1"));
         execution.runtime.flavor = RuntimeFlavor::Docker;
-        let docker = strings(create_args(&execution, &input(&work, &[], &[])).unwrap());
+        let docker = strings(create_args(&execution, &input(&mounts, &[], &[])).unwrap());
         let gpus = docker.iter().position(|a| a == "--gpus").unwrap();
         assert_eq!(docker[gpus + 1], "device=GPU-1");
     }
@@ -865,9 +937,14 @@ mod tests {
             pinned_image: "img@sha256:00".into(),
             gpu_pin: None,
         };
-        let work = PathBuf::from("/w,readonly=false");
-        assert!(create_args(&execution, &input(&work, &[], &[])).is_err());
-        let mut zero = input(Path::new("/w"), &[], &[]);
+        let bad = vec![Mount {
+            host: PathBuf::from("/w,readonly=false"),
+            target: CONTAINER_CHECKPOINT_DIR,
+            read_only: true,
+        }];
+        assert!(create_args(&execution, &input(&bad, &[], &[])).is_err());
+        let good = mounts(Path::new("/w"));
+        let mut zero = input(&good, &[], &[]);
         zero.memory_limit_bytes = 0;
         assert!(create_args(&execution, &zero).is_err());
     }
@@ -875,16 +952,22 @@ mod tests {
     #[test]
     fn inspect_output_distinguishes_running_exit_and_oom() {
         assert_eq!(
-            parse_inspect_exit("false 137 true\n").unwrap(),
-            ContainerExit {
+            parse_inspect_state("false 137 true\n").unwrap(),
+            Some(ContainerExit {
                 exit_code: 137,
                 oom_killed: true
-            }
+            })
         );
-        assert_eq!(parse_inspect_exit("false 0 false").unwrap().exit_code, 0);
-        assert!(parse_inspect_exit("true 0 false").is_err());
-        assert!(parse_inspect_exit("").is_err());
-        assert!(parse_inspect_exit("false x false").is_err());
+        assert_eq!(
+            parse_inspect_state("false 0 false")
+                .unwrap()
+                .map(|e| e.exit_code),
+            Some(0)
+        );
+        assert_eq!(parse_inspect_state("true 0 false").unwrap(), None);
+        assert!(parse_inspect_state("").is_err());
+        assert!(parse_inspect_state("false x false").is_err());
+        assert!(parse_inspect_state("maybe 0 false").is_err());
     }
 
     #[test]

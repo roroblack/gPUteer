@@ -21,8 +21,13 @@ $nodeDir = $config.GPUTEER_NODE_DIR
 # 선택 — 컨테이너 런타임(런북 §5a). 비어 있으면 넘기지 않는다.
 $containerArgs = @()
 if ($config.GPUTEER_CONTAINER_RUNTIME) {
+    # 런타임을 주면 컨테이너 Job 만 받는다 — 컨테이너가 아닌 Job 을 호스트에서 돌리지 않는다(결함 280).
     $containerArgs = @("--container-runtime", $config.GPUTEER_CONTAINER_RUNTIME,
-        "--container-runtime-kind", $config.GPUTEER_CONTAINER_RUNTIME_KIND)
+        "--container-runtime-kind", $config.GPUTEER_CONTAINER_RUNTIME_KIND,
+        "--container-only", "true")
+    if ($config.GPUTEER_CONTAINER_GPU -eq "true") {
+        $containerArgs += @("--container-gpu", "true")
+    }
 }
 
 & $config.GPUTEER_BIN agent-loop --interval-ms 5000 --max-rounds 0 -- `

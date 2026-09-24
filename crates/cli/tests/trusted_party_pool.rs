@@ -631,6 +631,9 @@ fn a_node_outside_the_pool_is_refused_and_the_coordinator_keeps_serving() {
             "true",
             "--max-reconnect-attempts",
             "1",
+            // 풀에 붙는 Agent 는 실행 중 갱신을 켠다(런북 §5).
+            "--renew-during-execution-ms",
+            "1000",
         ]);
         out
     };
@@ -1211,6 +1214,175 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
     let coordinator_err = collect(coordinator);
     let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();
     (agent_out, coordinator_out + &coordinator_err, finished)
+}
+
+fn unconfirmed_start_round() -> (String, String, Option<JobState>) {
+    let dir = tempfile::tempdir().expect("임시 폴더");
+    let (db, keyring) = pool(dir.path());
+    let db_s = db.to_str().unwrap().to_string();
+    let keyring_s = keyring.to_str().unwrap().to_string();
+    let (ok, out) = run_cli(&[
+        "scheduler-tick",
+        "--control-db",
+        &db_s,
+        "--submitter-keyring",
+        &keyring_s,
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "1000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+    ]);
+    assert!(ok, "예약 실패: {out}");
+    let staging = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db).unwrap();
+    let (node, seed, _attempt_id) = [(NODE_1, AGENT_SEED_1), (NODE_2, AGENT_SEED_2)]
+        .into_iter()
+        .find_map(|(node, seed)| {
+            staging
+                .work_assigned_to_node(node)
+                .unwrap()
+                .map(|(_, attempt, _)| (node, seed, attempt))
+        })
+        .expect("어느 노드에도 배정이 없다");
+    drop(staging);
+    let pool_agents = format!(
+        "{NODE_1}={};{NODE_2}={}",
+        pub_hex(AGENT_SEED_1),
+        pub_hex(AGENT_SEED_2)
+    );
+    let coordinator_log = dir.path().join("coordinator.log");
+    let coordinator = Command::new(cli_bin())
+        .args([
+            "coordinator-stub",
+            "--pool-mode",
+            "true",
+            "--pool-agents",
+            &pool_agents,
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            COORD_SEED,
+            "--coordinator-device-id",
+            COORDINATOR,
+            "--grant-from-control-db",
+            &db_s,
+            "--lease-db",
+            &db_s,
+            "--liveness-db",
+            &db_s,
+            "--submitter-keyring",
+            &keyring_s,
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
+            "--accept-report-sessions",
+            "true",
+            "--release-on-exit-report",
+            "true",
+            // ★ FRESH 연결 하나(Grant · ACK · 수신 확인)만 받고 끝난다 — 실행 전 갱신 연결은 거부된다.
+            "--max-connections",
+            "1",
+            "--accept-timeout-ms",
+            "0",
+        ])
+        .stdout(Stdio::from(
+            std::fs::File::create(&coordinator_log).expect("log 파일"),
+        ))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("coordinator spawn");
+    let addr = wait_ready(&coordinator_log);
+    let fence = dir.path().join(format!("{node}-fence.sqlite3"));
+    let checkpoints = dir.path().join(format!("{node}-checkpoints"));
+    let coordinator_pub = pub_hex(COORD_SEED);
+    let submitter_pub = pub_hex(SEED);
+    let agent: Vec<String> = [
+        "agent-loop",
+        "--interval-ms",
+        "100",
+        "--max-rounds",
+        "1",
+        "--",
+        "--connect",
+        &addr,
+        "--own-seed",
+        seed,
+        "--peer-pubkey",
+        &coordinator_pub,
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        node,
+        "--fence-db",
+        fence.to_str().unwrap(),
+        "--checkpoint-root",
+        checkpoints.to_str().unwrap(),
+        "--submitter-pubkey",
+        &submitter_pub,
+        "--i-understand-this-executes-untrusted-code",
+        "true",
+        "--report-over-session",
+        "true",
+        "--max-reconnect-attempts",
+        "1",
+        "--require-ack-receipt",
+        "true",
+        // 결함 218 — 풀 Agent 는 실행 중 갱신을 켜야 시작한다(첫 갱신이 "실행을 시작했다" 신호다).
+        "--renew-during-execution-ms",
+        "1000",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    // 한 회차가 끝날 때까지 기다린다(collect 는 곧바로 죽인다).
+    let agent_output = spawn(&agent).wait_with_output().expect("agent 출력");
+    let agent_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&agent_output.stdout),
+        String::from_utf8_lossy(&agent_output.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while job_state(&db, JOBS[0]) == Some(JobState::Queued) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(200));
+    }
+    let finished = job_state(&db, JOBS[0]);
+    let coordinator_err = collect(coordinator);
+    let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();
+    (agent_out, coordinator_out + &coordinator_err, finished)
+}
+
+/// ★ 2026-09-25 (결함 268 · 재검수 87) — 실행 전 갱신(= "시작한다" 확인)을 받지 못하면 **띄우지 않는다.** 전에는 갱신을 기다리지 않고
+///   띄워, 실제로 도는 작업이 STAGING 으로 남아 Lease 만료 뒤 다른 노드에서 한 번 더 돌았다. 대조군은 무인 운영 시험(갱신이 되면 돈다).
+#[test]
+fn a_start_that_the_coordinator_did_not_confirm_does_not_run() {
+    let (agent_out, coordinator_out, state) = unconfirmed_start_round();
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        agent_out.contains("ACK_RECEIPT_VERIFIED"),
+        "수신 확인까지 가지 못했다 — 시험의 전제가 깨졌다\n{everything}"
+    );
+    assert!(
+        agent_out.contains("PROCESS_START_NOT_CONFIRMED"),
+        "확인 없이 시작을 거부하지 않았다\n{everything}"
+    );
+    assert!(
+        !agent_out.contains("WORKLOAD_SPAWNED") && !agent_out.contains("WORKLOAD_RESULT"),
+        "확인 없이 워크로드를 띄웠다\n{everything}"
+    );
+    // 정말로 안 돈 시도다 — Job 은 STAGING 에 남아 Lease 만료 뒤 큐로 돌아간다.
+    assert_eq!(state, Some(JobState::Staging), "{everything}");
 }
 
 /// ★ 2026-09-24 (결함 218 · 257 · 258 — 재발급 철회) — 수신 확인이 유실돼 STARTING 에 멈춘 시도를 **다시 내주지 않는다.**

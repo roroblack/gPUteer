@@ -72,6 +72,22 @@ fn safe_component(value: &str, what: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 원본 폴더의 파일 하나를 **링크를 따라가지 않고** 읽는다(결함 287 · 재검수 88 대조).
+///
+/// ★ 원본 폴더(`<작업 폴더>/checkpoints-out/step-N`)는 작업이 쓰는 자리다 — 컨테이너로 돌면 작업은 호스트를 믿지 않는 쪽이다.
+///   전에는 항목 종류를 확인한 **뒤에** 경로로 다시 열어(`fs::read`), 그 사이에 파일이나 `step-N` 을 호스트 파일 링크로 바꾸면
+///   그 내용이 공유 저장소로 올라갔다. 이제 `step-N/<이름>` 을 부모 기준으로 열되 경로의 링크를 커널이 거부한다
+///   (리눅스 openat2 RESOLVE_NO_SYMLINKS · Windows reparse 거부 — `platform::read_beneath`).
+fn read_source_file(source_dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+    let (Some(parent), Some(dir_name)) = (source_dir.parent(), source_dir.file_name()) else {
+        return Err(format!(
+            "SHARED_CHECKPOINT_SOURCE: {source_dir:?} 의 부모 · 이름을 알 수 없다"
+        ));
+    };
+    crate::platform::read_beneath(parent, &Path::new(dir_name).join(name))
+        .map_err(|e| format!("SHARED_CHECKPOINT_READ: {source_dir:?}/{name}: {e}"))
+}
+
 /// `source_dir` 안의 **파일만** 체크포인트 하나로 공유 저장소에 확정한다.
 ///
 /// 이름 순으로 스테이징한다 — 같은 폴더에서 같은 매니페스트가 나오게(머클 루트가 순서에 달려 있다).
@@ -116,9 +132,8 @@ pub fn publish_directory(
     names.sort();
     let mut staged = StagedCheckpoint::begin(&root, checkpoint_id)
         .map_err(|e| format!("SHARED_CHECKPOINT_BEGIN: {e:?}"))?;
-    for (name, path) in &names {
-        let data =
-            std::fs::read(path).map_err(|e| format!("SHARED_CHECKPOINT_READ: {path:?}: {e}"))?;
+    for (name, _path) in &names {
+        let data = read_source_file(source_dir, name)?;
         staged
             .stage(name, &data)
             .map_err(|e| format!("SHARED_CHECKPOINT_STAGE: {name}: {e:?}"))?;
@@ -167,9 +182,9 @@ pub fn publish_or_recover(
         .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {source_dir:?}: {e}"))?
     {
         let entry = entry.map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {e}"))?;
-        let data = std::fs::read(entry.path())
-            .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {:?}: {e}", entry.path()))?;
-        source.push((entry.file_name().to_string_lossy().to_string(), data));
+        let name = entry.file_name().to_string_lossy().to_string();
+        let data = read_source_file(source_dir, &name)?;
+        source.push((name, data));
     }
     source.sort();
     let mut committed = on_disk;
@@ -523,6 +538,50 @@ mod tests {
         assert!(list_signed_manifests(&shared, "job-1")
             .unwrap_err()
             .contains("SHARED_CHECKPOINT_LINK"));
+    }
+
+    /// 결함 287 — 원본 step 폴더가 **호스트의 다른 폴더를 가리키는 링크**면(작업이 바꿔치기한 경우) 그 내용을 올리지 않는다.
+    ///   전에는 `read_dir` 이 링크를 따라가 목록을 만들고 `fs::read` 로 읽어, 호스트 파일(예: 키)이 공유 저장소로 올라갔다.
+    #[test]
+    fn a_source_step_folder_that_is_a_link_is_not_uploaded() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let secret_dir = temp.path().join("host-secrets");
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("node.seed"), b"secret").unwrap();
+        let out = temp.path().join("checkpoints-out");
+        std::fs::create_dir_all(&out).unwrap();
+        let step = out.join("step-1");
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&step)
+            .arg(&secret_dir)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&secret_dir, &step).is_ok();
+        assert!(made, "시험 전제: 링크를 만들 수 있어야 한다");
+        let error = publish_directory(&shared, "job-1", "ckpt-1", &step, &meta(1))
+            .expect_err("링크 너머의 호스트 파일을 올렸다");
+        assert!(error.contains("SHARED_CHECKPOINT_READ"), "{error}");
+        let uploaded_secret = std::fs::read_dir(shared.join("job-1"))
+            .map(|entries| {
+                entries.flatten().any(|e| {
+                    std::fs::read_dir(e.path())
+                        .map(|files| {
+                            files.flatten().any(|f| {
+                                std::fs::read(f.path())
+                                    .map(|d| d == b"secret")
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        assert!(!uploaded_secret, "호스트 파일 내용이 공유 저장소에 남았다");
     }
 
     /// 결함 226 — 이름의 내용 주소 표식이 digest 와 다르면 검증에서 떨어진다(내용 · 루트가 맞아도).

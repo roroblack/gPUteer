@@ -45,6 +45,10 @@ use gputeer_protocol::execution_spec::ExecutionSpec;
 pub const STDOUT_FILENAME: &str = "stdout.log";
 /// 자식의 표준 오류를 받는 파일 이름.
 pub const STDERR_FILENAME: &str = "stderr.log";
+/// 작업 폴더 안에서 작업이 체크포인트를 쓰는 하위 폴더(`GPUTEER_CHECKPOINT_DIR`).
+pub const CHECKPOINT_OUT_DIRNAME: &str = "checkpoints-out";
+/// 작업 폴더 안에서 이어받을 체크포인트를 풀어 두는 하위 폴더(`GPUTEER_RESUME_DIR`).
+pub const RESUME_IN_DIRNAME: &str = "resume-in";
 
 /// 종료를 관측한 결과 — 종료 코드의 **존재 여부**를 보존한다(B+E 계획서 §5.7 (3) · 결함 69).
 ///
@@ -469,12 +473,32 @@ fn execute_in_container(
         &policy.isolation.grant_id,
         &policy.isolation.attempt_id,
     );
+    // ★ 결함 273 · 279 (재검수 88) — 작업 폴더 **전체**를 붙이지 않는다. 그 폴더에 Agent 가 호스트에서 로그(stdout.log)를 쓰는데,
+    //   작업이 그 자리에 링크를 심으면 Agent 가 링크를 따라가 호스트 파일(시드 · fence DB)을 덮었다. 체크포인트 폴더만 쓰기로,
+    //   이어받기 폴더는 읽기 전용으로 붙인다.
+    let checkpoint_out = work_dir.join(CHECKPOINT_OUT_DIRNAME);
+    std::fs::create_dir_all(&checkpoint_out).map_err(|error| ExecutionError::SpawnFailed {
+        detail: format!("체크포인트 폴더를 만들지 못했다({checkpoint_out:?}): {error}"),
+    })?;
+    let mut mounts = vec![crate::container::Mount {
+        host: checkpoint_out,
+        target: crate::container::CONTAINER_CHECKPOINT_DIR,
+        read_only: false,
+    }];
+    let resume_in = work_dir.join(RESUME_IN_DIRNAME);
+    if resume_in.is_dir() {
+        mounts.push(crate::container::Mount {
+            host: resume_in,
+            target: crate::container::CONTAINER_RESUME_DIR,
+            read_only: true,
+        });
+    }
     let input = crate::container::CreateInput {
         name: &name,
         entrypoint: &spec.entrypoint,
         args: &spec.args,
         environment: &environment,
-        work_dir,
+        mounts: &mounts,
         memory_limit_bytes: policy.commit_limit_bytes,
         user,
     };
@@ -531,18 +555,19 @@ fn execute_in_container(
 ///
 /// 플랫폼 지원 · 실제 상한 적용 · 기동은 여기서 보지 않는다 — 띄워 봐야 아는 것이다.
 pub fn preflight(policy: &ExecutionPolicy) -> Result<(), ExecutionError> {
+    // ★ 2026-09-25 (결함 278 · 재검수 88) — 컨테이너로 받을 수 없는 Job 은 opt-in 보다 **먼저** 거부한다. 전에는 실행을 켜지 않은
+    //   Agent 에서 `NotOptedIn` 에 가려져 ACK 가 갔다("ACK 전에 거부" 가 그 Agent 에서 거짓이었다).
+    if let crate::container::ContainerDecision::Refused { detail } = &policy.container {
+        return Err(ExecutionError::ContainerRefused {
+            detail: detail.clone(),
+        });
+    }
     if !policy.opted_in {
         return Err(ExecutionError::NotOptedIn);
     }
     if policy.commit_limit_bytes == 0 {
         return Err(ExecutionError::LimitNotApplied {
             detail: "commit_limit_bytes 가 0 이다".into(),
-        });
-    }
-    // ★ 2026-09-25 — 컨테이너로 받을 수 없는 Job 은 ACK **전에** 거부한다(호스트에서 대신 돌리지 않는다).
-    if let crate::container::ContainerDecision::Refused { detail } = &policy.container {
-        return Err(ExecutionError::ContainerRefused {
-            detail: detail.clone(),
         });
     }
     // ★★ **GPU 확인은 여기다 — 자식을 띄우기 전이다** (2026-09-07 신설).

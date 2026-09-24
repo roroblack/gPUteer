@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use gputeer_agent::container::{
     self, ContainerDecision, ContainerExecution, ContainerRunError, ContainerRuntime, CreateInput,
-    RuntimeFlavor,
+    Mount, RuntimeFlavor,
 };
 
 const STATE_ENV: &str = "GPUTEER_FAKE_RUNTIME_STATE";
@@ -45,8 +45,8 @@ fn main() {
             the_owner_stop_kills_the_container,
         ),
         (
-            "stopping_an_already_finished_container_succeeds",
-            stopping_an_already_finished_container_succeeds,
+            "stopping_an_already_finished_container_is_not_reported_as_a_stop",
+            stopping_an_already_finished_container_is_not_reported_as_a_stop,
         ),
         (
             "a_refused_decision_calls_no_runtime",
@@ -223,7 +223,7 @@ fn execution() -> ContainerExecution {
 }
 
 fn input<'a>(
-    work: &'a Path,
+    mounts: &'a [Mount],
     entrypoint: &'a str,
     env: &'a [(OsString, OsString)],
 ) -> CreateInput<'a> {
@@ -232,10 +232,18 @@ fn input<'a>(
         entrypoint,
         args: &[],
         environment: env,
-        work_dir: work,
+        mounts,
         memory_limit_bytes: 64 * 1024 * 1024,
         user: None,
     }
+}
+
+fn mounts(work: &Path) -> Vec<Mount> {
+    vec![Mount {
+        host: work.join("checkpoints-out"),
+        target: container::CONTAINER_CHECKPOINT_DIR,
+        read_only: false,
+    }]
 }
 
 fn calls(state: &Path) -> String {
@@ -249,7 +257,7 @@ fn a_finished_container_reports_its_own_exit_code() {
     let mut started = false;
     let exit = container::run(
         &execution(),
-        &input(&f.work, "exit-3", &[]),
+        &input(&mounts(&f.work), "exit-3", &[]),
         Some(&out),
         Some(&err),
         |_| started = true,
@@ -268,7 +276,8 @@ fn a_finished_container_reports_its_own_exit_code() {
         .lines()
         .map(|l| l.split(' ').next().unwrap().to_string())
         .collect();
-    assert_eq!(order, ["create", "start", "wait", "inspect", "logs", "rm"]);
+    // 남은 같은 이름을 먼저 치우고(결함 276), wait 대신 inspect 로 종료를 본다(시한 있는 명령만 쓴다).
+    assert_eq!(order, ["rm", "create", "start", "inspect", "logs", "rm"]);
     let create = std::fs::read_to_string(f.state.join("create.args")).unwrap();
     for flag in [
         "--network=none",
@@ -287,7 +296,7 @@ fn an_oom_kill_is_reported_as_such() {
     let f = fixture(None);
     let exit = container::run(
         &execution(),
-        &input(&f.work, "oom", &[]),
+        &input(&mounts(&f.work), "oom", &[]),
         None,
         None,
         |_| {},
@@ -302,7 +311,7 @@ fn a_failed_create_is_not_a_workload_exit() {
     let mut started = false;
     let error = container::run(
         &execution(),
-        &input(&f.work, "exit-0", &[]),
+        &input(&mounts(&f.work), "exit-0", &[]),
         None,
         None,
         |_| started = true,
@@ -318,6 +327,14 @@ fn a_failed_create_is_not_a_workload_exit() {
         "create 실패 뒤 start 를 불렀다"
     );
     assert!(
+        calls(&f.state)
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with("rm -f -v ")),
+        "반쯤 만든 컨테이너를 볼륨까지 치우지 않았다:\n{}",
+        calls(&f.state)
+    );
+    assert!(
         f.state.join("removed").exists(),
         "반쯤 만든 컨테이너를 치우지 않았다"
     );
@@ -331,7 +348,7 @@ fn the_owner_stop_kills_the_container() {
         std::thread::spawn(move || {
             container::run(
                 &execution(),
-                &input(&work, "sleep", &[]),
+                &input(&mounts(&work), "sleep", &[]),
                 None,
                 None,
                 move |stopper| {
@@ -347,12 +364,12 @@ fn the_owner_stop_kills_the_container() {
     assert!(calls(&f.state).lines().any(|l| l.starts_with("kill ")));
 }
 
-fn stopping_an_already_finished_container_succeeds() {
+fn stopping_an_already_finished_container_is_not_reported_as_a_stop() {
     let f = fixture(None);
     let (tx, rx) = std::sync::mpsc::channel();
     container::run(
         &execution(),
-        &input(&f.work, "exit-0", &[]),
+        &input(&mounts(&f.work), "exit-0", &[]),
         None,
         None,
         move |stopper| {
@@ -361,10 +378,12 @@ fn stopping_an_already_finished_container_succeeds() {
     )
     .expect("실행");
     let stopper = rx.recv().unwrap();
-    // kill 은 "안 돈다" 로 실패하고, inspect 가 끝났음을 확인해 준다 — 두 번 누른 정지 버튼이 오류가 되지 않는다.
-    stopper
+    // ★ 결함 277 — kill 은 "안 돈다" 로 실패하고 inspect 는 이미 끝났다고 한다. 이 정지는 종료 원인이 아니다 — 성공이라 하지 않는다
+    //   (성공이라 하면 스스로 끝난 작업이 "소유자가 멈췄다" 로 보고된다).
+    let error = stopper
         .stop()
-        .expect("끝난 컨테이너의 정지는 성공해야 한다");
+        .expect_err("이미 끝난 컨테이너의 정지를 성공이라 했다");
+    assert!(error.starts_with("ALREADY_EXITED"), "{error}");
 }
 
 fn policy(work: &Path, decision: ContainerDecision) -> gputeer_agent::exec::ExecutionPolicy {
@@ -435,7 +454,7 @@ fn execute_runs_the_container_path_end_to_end() {
     assert!(
         create
             .lines()
-            .any(|l| l == "--env=GPUTEER_CHECKPOINT_DIR=/gputeer/work/checkpoints-out"),
+            .any(|l| l == "--env=GPUTEER_CHECKPOINT_DIR=/gputeer/checkpoints"),
         "작업 폴더 경로를 컨테이너 안 경로로 바꾸지 않았다:\n{create}"
     );
     assert!(

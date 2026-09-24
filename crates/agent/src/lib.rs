@@ -500,13 +500,15 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     // ★ 2026-09-25 (결함 218) — 풀 방식 Agent(보고 세션 + 수신 확인 요구)는 실행 중 갱신을 켜야 시작한다. Coordinator 는 첫 갱신을 보고
     //   Job 을 RUNNING 으로 옮긴다 — 갱신 없이 오래 돌면 Job 이 STAGING 으로 남아 Lease 만료 뒤 "한 번도 안 돈 작업" 으로 큐에 되돌려져
     //   다른 노드에서 한 번 더 돈다.
+    // ★ 결함 270 (재검수 87) — 처음엔 수신 확인 **과** 보고 세션이 둘 다 켜졌을 때만 섰다. 수신 확인만 켜도 풀 Agent 다 — 수신 확인 요구 하나로 선다.
+    //   ★ 보고 세션만 켠 Agent 는 막지 않는다 — 풀 밖 lane(ACK 가 Job 을 옮긴다)의 정상 설정이고, Agent 는 상대가 풀인지 모른다.
+    //     풀에 수신 확인 없이 붙이는 것은 설정 오류로 남는다(런북 §5 — 결함 131 · 270 의 남은 한계).
     if config.require_ack_receipt
-        && config.report_over_session
         && config.execute_workload
         && config.renew_during_execution_ms == 0
     {
         return Err(
-            "POOL_AGENT_NEEDS_RENEW: --require-ack-receipt · --report-over-session 인 풀 Agent 는 --renew-during-execution-ms 를 켜야 한다 — \
+            "POOL_AGENT_NEEDS_RENEW: --require-ack-receipt 인 풀 Agent 는 --renew-during-execution-ms 를 켜야 한다 — \
              첫 갱신이 \"실행을 시작했다\" 는 신호다(결함 218)"
                 .to_string(),
         );
@@ -1269,7 +1271,7 @@ fn run_one_connection_inner(
 
         // ★ 2026-09-23 (신뢰망 남은 일 E) — 작업에게 체크포인트를 **어디에 쓰는지**, 이어서 시작할 때는 **어디서
         //   이어가는지** 알려 준다(`checkpoint_publisher` 의 워크로드 계약). 작업 디렉터리 안이라 끝나면 같이 치운다(§0.5).
-        let checkpoint_out = run_dir.join("checkpoints-out");
+        let checkpoint_out = run_dir.join(exec::CHECKPOINT_OUT_DIRNAME);
         fs::create_dir_all(&checkpoint_out).map_err(|error| {
             fail_after_cleanup(
                 format!("체크포인트 폴더 생성 실패({checkpoint_out:?}): {error}"),
@@ -1290,7 +1292,7 @@ fn run_one_connection_inner(
         }
         if let Some(resume) = grant.resume_from.as_ref() {
             // ★ ACK **전에** 한다 — 이어갈 체크포인트를 검증하지 못하면 받지 않는다(받아 놓고 처음부터 돌리지 않는다).
-            let resume_dir = run_dir.join("resume-in");
+            let resume_dir = run_dir.join(exec::RESUME_IN_DIRNAME);
             prepare_resume(&config, resume, &held_lease, &resume_dir, clock)
                 .map_err(|error| fail_after_cleanup(error, &run_dir))?;
             println!(
@@ -1384,6 +1386,31 @@ fn run_one_connection_inner(
                 record_attempt_started_here(&config.checkpoint_root, &grant.attempt_id)
                     .map_err(|error| fail_after_cleanup(error, &run_dir))?;
             }
+            // ★ 2026-09-25 (결함 268 · 269 · 271 · 재검수 87) — 첫 갱신을 **실행 전 관문**으로 쓴다. Coordinator 는 그 갱신을 받아야
+            //   시도 RUNNING · Job RUNNING 을 적는다(record_process_started). 전에는 갱신 스레드를 띄우고 **성공을 기다리지 않은 채**
+            //   워크로드를 시작해, 첫 갱신이 유실 · 거부 · 기록 실패하면 실제로 도는 작업이 STAGING 으로 남아 Lease 만료 뒤 다른 노드에서
+            //   한 번 더 돌았다. 이제 확인(갱신 성공)을 받지 못하면 **띄우지 않는다** — 그 시도는 정말로 안 돈 채 큐로 돌아간다.
+            //   ★ 남는 것: Coordinator 가 기록한 뒤 결과 프레임만 잃으면 안 돈 시도가 RUNNING 이다 — 이어받기에서 체크포인트가 없으면
+            //     FAILED 로 끝난다(두 번 돌지는 않는다 — 옛 218 의 가용성 쪽 한계).
+            if will_execute && config.renew_during_execution_ms > 0 {
+                match renew_once_over_new_connection(&config, signing_key, &held_lease) {
+                    Ok(renewed) => {
+                        println!(
+                            "PROCESS_START_CONFIRMED lease_id={} expires_at_unix_ms={}",
+                            renewed.lease_id, renewed.expires_at_unix_ms
+                        );
+                        held_lease = renewed;
+                    }
+                    Err(error) => {
+                        return Err(fail_after_cleanup(
+                            format!(
+                                "PROCESS_START_NOT_CONFIRMED: 실행 전 갱신이 확인되지 않아 시작하지 않는다(결함 268) — {error}"
+                            ),
+                            &run_dir,
+                        ));
+                    }
+                }
+            }
         }
         *execution_attempted = will_execute;
         // ★ 실행부터 산출물 확정까지를 한 덩어리로 묶고, 그 **밖에서**
@@ -1396,7 +1423,13 @@ fn run_one_connection_inner(
         //   오히려 실패했을 때 남는 것이 더 위험하다.
         // ★ B+E 구현 단계 5b — 실행하는 동안만 새 연결로 갱신한다(설정으로 켤 때만).
         let renewer = if will_execute {
-            start_renew_during_execution(&config, signing_key, &held_lease)
+            // 수신 확인을 요구하는 Agent 는 첫 갱신을 이미 동기로 했다(위) — 스레드는 주기 뒤부터.
+            start_renew_during_execution(
+                &config,
+                signing_key,
+                &held_lease,
+                !config.require_ack_receipt,
+            )
         } else {
             None
         };
@@ -2174,6 +2207,7 @@ fn start_renew_during_execution(
     config: &AgentConfig,
     signing_key: &SigningKey,
     held_lease: &pb::Lease,
+    first_immediately: bool,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
@@ -2189,7 +2223,7 @@ fn start_renew_during_execution(
         'renew: loop {
             // ★ 2026-09-25 (결함 218) — 첫 갱신은 **곧바로** 보낸다. Coordinator 는 실행 중 첫 갱신을 "프로세스가 시작했다"(PROCESS_STARTED)로
             //   적고 그때 Job 을 RUNNING 으로 옮긴다 — 전에는 첫 갱신이 주기 뒤라 그동안 Job 이 STAGING 으로 보였다.
-            let due = if round == 0 {
+            let due = if round == 0 && first_immediately {
                 std::time::Instant::now()
             } else {
                 std::time::Instant::now() + interval

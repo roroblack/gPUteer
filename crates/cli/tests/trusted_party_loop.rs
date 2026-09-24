@@ -617,8 +617,11 @@ fn an_agent_that_requires_an_ack_receipt_does_not_run_without_one() {
 --- coordinator ---
 {coordinator}"
     );
+    // ★ 2026-09-25 (결함 270) — 수신 확인을 요구하는 Agent 는 실행 중 갱신 없이는 **설정 단계에서** 시작하지 않는다. 이 lane 은
+    //   종료 보고를 FRESH 연결로 보내(--send-attempt-report) 갱신과 함께 켤 수 없으므로(결함 97), 이제 그 관문에서 먼저 멈춘다.
+    //   어느 쪽이든 fail-closed 다 — 수신 확인 없이 작업을 돌리지 않는다.
     assert!(
-        agent.contains("ACK_RECEIPT_MISSING"),
+        agent.contains("ACK_RECEIPT_MISSING") || agent.contains("POOL_AGENT_NEEDS_RENEW"),
         "수신 확인 없이 넘어갔다
 {both}"
     );

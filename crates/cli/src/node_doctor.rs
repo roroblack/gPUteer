@@ -15,7 +15,9 @@
 //! ```
 //!
 //! ★ 이 점검은 **시작 조건**을 본다. 통과가 "작업이 잘 돈다" 를 뜻하지 않는다 — 컨테이너 GPU 넘기기는 "런타임에 nvidia 가 보였다"
-//!   까지만 본다(실행 확인이 아니다). 아무것도 바꾸지 않는다 — 폴더 확인에 쓰는 임시 파일은 곧바로 지운다.
+//!   까지만 본다(실행 확인이 아니다). Coordinator 는 TCP 로 붙는지만 본다(서명 교환 없음 — 이름이 `coordinator_tcp` 다).
+//! ★ 결함 282 (재검수 89) — 폴더를 **만들지 않는다**(없으면 FAIL). 쓰기 확인은 무작위 이름의 새 파일을 **배타 생성**(있으면 실패)해
+//!   쓰고 곧바로 지운다 — 남의 파일 · 링크 대상을 건드리지 않는다. 지우지 못하면 FAIL 로 그 이름을 알린다.
 
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -108,7 +110,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let options = parse(args)?;
     let mut checks = vec![
         check_seed(options.seed_file.as_deref().expect("parse")),
-        check_writable_dir("node_dir", options.node_dir.as_deref().expect("parse")),
+        check_node_dir(options.node_dir.as_deref().expect("parse")),
         check_coordinator(options.connect.as_deref().expect("parse")),
     ];
     if let Some(root) = options.shared_root.as_deref() {
@@ -200,19 +202,72 @@ fn check_seed(path: &Path) -> Check {
     check("seed", Level::Ok, format!("공개키 {public}"))
 }
 
-/// 폴더를 만들고(없으면) 임시 파일을 써서 지워 본다.
+/// 폴더가 **있고** 쓸 수 있는지 — 새 파일을 배타 생성해 쓰고 지운다. 폴더를 만들지 않는다.
 fn probe_writable(dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("{dir:?} 를 만들지 못했다: {e}"))?;
-    let probe = dir.join(format!(".gputeer-doctor-{}", std::process::id()));
-    std::fs::write(&probe, b"probe").map_err(|e| format!("{dir:?} 에 쓰지 못했다: {e}"))?;
-    std::fs::remove_file(&probe).map_err(|e| format!("{probe:?} 를 지우지 못했다: {e}"))
+    use std::io::Write;
+    let meta = std::fs::metadata(dir).map_err(|e| {
+        format!("{dir:?} 가 없거나 읽을 수 없다: {e} — 먼저 만든다(점검은 만들지 않는다)")
+    })?;
+    if !meta.is_dir() {
+        return Err(format!("{dir:?} 는 폴더가 아니다"));
+    }
+    let mut nonce = [0u8; 8];
+    getrandom::getrandom(&mut nonce).map_err(|e| format!("무작위 이름을 만들지 못했다: {e}"))?;
+    let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+    let probe = dir.join(format!(".gputeer-doctor-{name}"));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|e| format!("{dir:?} 에 새 파일을 만들지 못했다: {e}"))?;
+    let written = file.write_all(b"probe");
+    drop(file);
+    let removed = std::fs::remove_file(&probe);
+    written.map_err(|e| format!("{dir:?} 에 쓰지 못했다: {e}"))?;
+    removed.map_err(|e| format!("확인용 파일 {probe:?} 를 지우지 못했다(남았다): {e}"))
 }
 
-fn check_writable_dir(name: &'static str, dir: &Path) -> Check {
-    match probe_writable(dir) {
-        Ok(()) => check(name, Level::Ok, format!("{dir:?} 에 쓸 수 있다")),
-        Err(why) => check(name, Level::Fail, why),
+/// 노드 폴더 — 있고 쓸 수 있고, Agent 가 여는 하위 자리(`fence.sqlite3` · `checkpoints`)가 다른 종류로 막혀 있지 않은가(결함 283).
+fn check_node_dir(dir: &Path) -> Check {
+    if let Err(why) = probe_writable(dir) {
+        return check("node_dir", Level::Fail, why);
     }
+    for (child, want_dir) in [("fence.sqlite3", false), ("checkpoints", true)] {
+        let path = dir.join(child);
+        match std::fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return check(
+                    "node_dir",
+                    Level::Fail,
+                    format!("{path:?} 를 읽지 못했다: {e}"),
+                )
+            }
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return check(
+                    "node_dir",
+                    Level::Fail,
+                    format!("{path:?} 가 링크다 — Agent 가 여는 자리는 링크가 아니어야 한다"),
+                )
+            }
+            Ok(meta) if meta.is_dir() != want_dir => {
+                return check(
+                    "node_dir",
+                    Level::Fail,
+                    format!(
+                        "{path:?} 가 {} 이어야 하는데 아니다 — Agent 가 열지 못한다",
+                        if want_dir { "폴더" } else { "파일" }
+                    ),
+                )
+            }
+            Ok(_) => {}
+        }
+    }
+    check(
+        "node_dir",
+        Level::Ok,
+        format!("{dir:?} 에 쓸 수 있고 fence.sqlite3 · checkpoints 자리가 비었거나 맞는 종류다"),
+    )
 }
 
 fn check_coordinator(address: &str) -> Check {
@@ -220,7 +275,7 @@ fn check_coordinator(address: &str) -> Check {
         Ok(addrs) => addrs.collect(),
         Err(e) => {
             return check(
-                "coordinator",
+                "coordinator_tcp",
                 Level::Fail,
                 format!("{address} 를 주소로 풀지 못했다: {e}"),
             )
@@ -232,16 +287,18 @@ fn check_coordinator(address: &str) -> Check {
             // ★ 연결만 본다 — 인사(Hello)를 보내지 않는다. Coordinator 는 서명 없는 연결을 곧 닫는다.
             Ok(_) => {
                 return check(
-                    "coordinator",
+                    "coordinator_tcp",
                     Level::Ok,
-                    format!("{address} 에 TCP 로 붙었다(서명 교환은 하지 않았다)"),
+                    format!(
+                    "{address} 에 TCP 로 붙었다 — 서명 교환은 하지 않았다(키가 맞는지는 모른다)"
+                ),
                 )
             }
             Err(e) => last = format!("{addr}: {e}"),
         }
     }
     check(
-        "coordinator",
+        "coordinator_tcp",
         Level::Fail,
         format!("{address} 에 붙지 못했다 — {last} (Coordinator 가 떠 있는가 · 방화벽 · 포트)"),
     )
@@ -289,6 +346,20 @@ fn check_owner_panel_port(port: u16) -> Check {
 }
 
 fn check_gpu(pin: Option<&str>) -> Check {
+    // ★ 결함 284 — Agent 는 --gpu-pin 에 **장치 번호**(쉼표로 여럿)만 받는다. UUID 를 OK 로 보여 주면 Agent 가 시작에서 거부한다.
+    let pins: Option<Vec<&str>> = pin.map(|raw| raw.split(',').map(str::trim).collect());
+    if let (Some(raw), Some(ids)) = (pin, pins.as_ref()) {
+        if ids
+            .iter()
+            .any(|id| id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()))
+        {
+            return check(
+                "gpu",
+                Level::Fail,
+                format!("--gpu-pin {raw:?} — Agent 는 장치 번호(예 \"0\" · \"0,1\")만 받는다(UUID 는 받지 않는다)"),
+            );
+        }
+    }
     match gputeer_runtime_nvml::observe() {
         Ok(snapshot) => {
             let listed: Vec<String> = snapshot
@@ -296,12 +367,11 @@ fn check_gpu(pin: Option<&str>) -> Check {
                 .iter()
                 .map(|g| format!("{}:{}", g.index, g.name))
                 .collect();
-            match pin {
-                Some(pin) => {
-                    let found = snapshot
-                        .gpus
+            match (pin, pins.as_ref()) {
+                (Some(pin), Some(ids)) => {
+                    let found = ids
                         .iter()
-                        .any(|g| g.index.to_string() == pin || g.uuid == pin);
+                        .all(|id| snapshot.gpus.iter().any(|g| g.index.to_string() == *id));
                     if found {
                         check(
                             "gpu",
@@ -316,7 +386,7 @@ fn check_gpu(pin: Option<&str>) -> Check {
                         )
                     }
                 }
-                None => check(
+                _ => check(
                     "gpu",
                     Level::Ok,
                     format!("GPU {}개 {listed:?}", listed.len()),
