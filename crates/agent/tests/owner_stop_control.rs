@@ -48,6 +48,7 @@ fn policy(opted_in: bool, limit: u64) -> ExecutionPolicy {
             attempt_id: "attempt".to_string(),
         },
         cgroup_parent: None,
+        container: gputeer_agent::container::ContainerDecision::Host,
     }
 }
 

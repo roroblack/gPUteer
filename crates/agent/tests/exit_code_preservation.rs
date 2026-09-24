@@ -33,6 +33,7 @@ fn run(code_arg: &str) -> ExitObserved {
             attempt_id: "attempt".to_string(),
         },
         cgroup_parent: None,
+        container: gputeer_agent::container::ContainerDecision::Host,
     };
     execute(&spec, policy)
         .unwrap_or_else(|e| panic!("exit {code_arg} 를 실행하지 못했다: {e}"))

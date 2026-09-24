@@ -38,6 +38,21 @@ use prost::Message;
 /// 만료를 안 주면 쓰는 기본 기간. `proto/job.proto` 의 "기본 issued_at + 7일".
 const SEVEN_DAYS_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
+/// 64자리 소문자·대문자 16진수 -> 32바이트. `sha256:` 접두사는 받지 않는다(값만).
+fn parse_sha256_hex(raw: &str) -> Result<Vec<u8>, String> {
+    if raw.len() != 64 || !raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "--image-sha256 은 16진수 64자리다(받은 값 {raw:?} — `sha256:` 접두사 없이)"
+        ));
+    }
+    (0..32)
+        .map(|i| {
+            u8::from_str_radix(&raw[i * 2..i * 2 + 2], 16)
+                .map_err(|e| format!("--image-sha256 파싱 실패: {e}"))
+        })
+        .collect()
+}
+
 pub fn run(args: &[String]) -> Result<String, String> {
     let flags = parse_flags(args)?;
 
@@ -65,6 +80,24 @@ pub fn run(args: &[String]) -> Result<String, String> {
             env_vars.insert(name.to_owned(), value.to_owned());
         }
     }
+
+    // ★ 2026-09-25 — 컨테이너 Job(`ENV_KIND_OCI_IMAGE`). 이미지 참조와 sha256 digest 를 **함께** 받는다 — Agent 는 digest 로
+    //   고정된 이미지만 돌린다(태그는 움직인다). 하나만 주면 거부한다.
+    let env = match (flags.get("--image-ref"), flags.get("--image-sha256")) {
+        (None, None) => None,
+        (Some(image_ref), Some(sha256_hex)) => Some(pb::ExecutionEnvironment {
+            kind: pb::EnvKind::OciImage as i32,
+            image_ref: image_ref.clone(),
+            oci_source_digest: Some(pb::Digest {
+                algo: pb::HashAlgorithm::Sha256 as i32,
+                value: parse_sha256_hex(sha256_hex)?,
+            }),
+            ..Default::default()
+        }),
+        _ => {
+            return Err("--image-ref 와 --image-sha256 은 함께 준다".into());
+        }
+    };
 
     let issued_at_unix_ms = require_u64(&flags, "--issued-at-unix-ms")?;
     // 기본 7일 — `proto/job.proto` 의 "기본 issued_at + 7일" 주석 그대로.
@@ -259,6 +292,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         job_id: job_id.clone(),
         entrypoint,
         args: args_list,
+        env,
         env_vars: env_vars.into_iter().collect(),
         submitter_device_id,
         issued_at_unix_ms,

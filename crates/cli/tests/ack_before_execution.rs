@@ -75,6 +75,10 @@ fn cmd_exe() -> String {
 
 /// `ping -n <count> 127.0.0.1` 은 약 `count - 1` 초 걸린다.
 fn submit_ping_manifest(dir: &Path, ping_count: u32) -> PathBuf {
+    submit_manifest(dir, ping_count, &[])
+}
+
+fn submit_manifest(dir: &Path, ping_count: u32, extra: &[&str]) -> PathBuf {
     let path = dir.join("job.manifest");
     let args = format!("/c,ping,-n,{ping_count},127.0.0.1");
     let out = Command::new(cli_bin())
@@ -95,6 +99,7 @@ fn submit_ping_manifest(dir: &Path, ping_count: u32) -> PathBuf {
             "--out",
             path.to_str().unwrap(),
         ])
+        .args(extra)
         .output()
         .expect("gputeer submit");
     assert!(
@@ -573,6 +578,49 @@ fn a_refused_preflight_sends_no_ack() {
     assert!(
         !agent.output().contains("WORKLOAD_SPAWNED"),
         "거부됐는데 실행됐다\n{all}"
+    );
+    assert!(
+        !coordinator.output().contains("RESULT ok=true"),
+        "받아들이지 못한 Grant 에 ACK 가 갔다\n{all}"
+    );
+}
+
+/// ★ 2026-09-25 (컨테이너 실행 backend) — 컨테이너 Job(`OCI_IMAGE`)을 런타임 없는 Agent 가 받으면 **ACK 전에** 거부한다.
+///   호스트에서 대신 돌리지 않는다 — 제출자는 격리를 전제로 이미지를 냈다.
+#[test]
+fn a_container_job_on_an_agent_without_a_runtime_is_refused_before_ack() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let digest = "ab".repeat(32);
+    let manifest = submit_manifest(
+        dir.path(),
+        1,
+        &[
+            "--image-ref",
+            "registry.local/team/train:v1",
+            "--image-sha256",
+            &digest,
+        ],
+    );
+    let (coordinator, addr) = spawn_coordinator(&manifest, &[]);
+    let agent = spawn_agent(&addr, dir.path(), &["--disable-reconnect", "true"]);
+    let coordinator = wait(coordinator, Duration::from_secs(60));
+    let agent = wait(agent, Duration::from_secs(60));
+    let all = both(&agent, &coordinator);
+
+    assert!(
+        !agent.success
+            && agent
+                .output()
+                .contains("EXEC_REFUSED:CONTAINER_RUNTIME_MISSING"),
+        "런타임 없는 컨테이너 Job 거부가 보고되지 않았다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("ACK_SENT"),
+        "거부했는데 ACK 를 보냈다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("WORKLOAD_SPAWNED"),
+        "컨테이너 Job 이 호스트에서 실행됐다\n{all}"
     );
     assert!(
         !coordinator.output().contains("RESULT ok=true"),

@@ -19,6 +19,11 @@ getrandom.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+# 가짜 컨테이너 런타임이 이 시험 실행 파일 자신이다 — main 을 직접 쓴다.
+[[test]]
+name = "container_lifecycle"
+harness = false
+
 [target.'cfg(windows)'.dependencies]
 gputeer-runtime-windows = { path = "../runtime-windows" }
 

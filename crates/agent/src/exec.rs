@@ -138,6 +138,10 @@ pub enum ExecutionError {
     ///   2026-09-07 실측에서 GPU 없는 기계가 정확히 이 모양으로 나오는
     ///   것을 확인했다(`docs/evidence/_raw/NVML_preflight_실측.txt`).
     GpuUnverifiable { detail: String },
+
+    /// ★ 2026-09-25 — 컨테이너로 받을 수 없는 Job 이다(런타임 없음 · digest 없음 · 강제 못 하는 네트워크 등).
+    ///   사유 코드는 `container::decide` 가 붙인다. 호스트에서 대신 돌리지 않는다.
+    ContainerRefused { detail: String },
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -173,6 +177,7 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "EXEC_REFUSED:GPU_UNVERIFIABLE: GPU 를 확인하지 못했다(모자란 것이 아니다) — {detail}"
             ),
+            Self::ContainerRefused { detail } => write!(f, "EXEC_REFUSED:{detail}"),
         }
     }
 }
@@ -200,9 +205,11 @@ impl std::error::Error for ExecutionError {}
 /// ```
 pub struct WorkloadStopper {
     #[cfg(windows)]
-    inner: gputeer_runtime_windows::JobStopper,
+    inner: Option<gputeer_runtime_windows::JobStopper>,
     #[cfg(target_os = "linux")]
-    inner: gputeer_runtime_linux::CgroupStopper,
+    inner: Option<gputeer_runtime_linux::CgroupStopper>,
+    /// ★ 2026-09-25 — 컨테이너로 돈 작업의 손잡이. 있으면 이것으로 멈춘다(`inner` 는 비어 있다).
+    container: Option<crate::container::ContainerStopper>,
 }
 
 impl WorkloadStopper {
@@ -214,9 +221,20 @@ impl WorkloadStopper {
     pub(crate) fn for_test() -> Self {
         Self {
             #[cfg(windows)]
-            inner: gputeer_runtime_windows::JobStopper::inert_for_test(),
+            inner: Some(gputeer_runtime_windows::JobStopper::inert_for_test()),
             #[cfg(target_os = "linux")]
-            inner: gputeer_runtime_linux::CgroupStopper::inert_for_test(),
+            inner: Some(gputeer_runtime_linux::CgroupStopper::inert_for_test()),
+            container: None,
+        }
+    }
+
+    fn for_container(stopper: crate::container::ContainerStopper) -> Self {
+        Self {
+            #[cfg(windows)]
+            inner: None,
+            #[cfg(target_os = "linux")]
+            inner: None,
+            container: Some(stopper),
         }
     }
 
@@ -232,9 +250,18 @@ impl WorkloadStopper {
     /// ★ 이 문서는 `for_test()` 가 위에 끼어들면서 그쪽으로 밀려나 있었다
     ///   — 속성·문서는 **바로 아래 항목**에 붙는다.
     pub fn stop(&self) -> Result<(), ExecutionError> {
+        if let Some(container) = self.container.as_ref() {
+            return container
+                .stop()
+                .map_err(|detail| ExecutionError::StopFailed { detail });
+        }
         #[cfg(windows)]
         {
             self.inner
+                .as_ref()
+                .ok_or_else(|| ExecutionError::StopFailed {
+                    detail: "멈출 손잡이가 없다".into(),
+                })?
                 .terminate(EXIT_CODE_OWNER_STOPPED)
                 .map_err(|error| ExecutionError::StopFailed {
                     detail: error.to_string(),
@@ -245,6 +272,10 @@ impl WorkloadStopper {
             // cgroup 전체를 끝낸다 — 자식이 손자를 만들었어도 같이 죽는다.
             // Windows 의 `TerminateJobObject` 와 같은 자리다.
             self.inner
+                .as_ref()
+                .ok_or_else(|| ExecutionError::StopFailed {
+                    detail: "멈출 손잡이가 없다".into(),
+                })?
                 .stop()
                 .map_err(|error| ExecutionError::StopFailed {
                     detail: error.to_string(),
@@ -342,6 +373,9 @@ pub struct ExecutionPolicy {
     /// ★ Manifest 의 `env_vars` 는 여기 들어오지 않는다 — 그것을 적용하는 것은 별도 판단이다(제출자가 정한
     ///   값을 남의 PC 에서 그대로 쓸지). 이 칸은 **Agent 가 만든** 값만 담는다.
     pub workload_environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// ★ 2026-09-25 — 호스트에서 돌리는가, 컨테이너로 돌리는가, 받지 않는가. Manifest(`env.kind`)와 운영자 설정으로
+    ///   ACK **전에** 정한다(`container::decide`). 거부면 `preflight` 가 실행 전에 막는다.
+    pub container: crate::container::ContainerDecision,
 }
 
 /// 검증된 실행 지시를 실제 프로세스로 띄우고 종료까지 관측한다.
@@ -392,7 +426,98 @@ pub fn execute_with_control(
 ) -> Result<ExecutionOutcome, ExecutionError> {
     // ★ 사전 관문은 `preflight` 한 곳에 있다 — Agent 가 ACK **전에** 같은 함수를 부른다(결함 ⑱).
     preflight(&policy)?;
+    if let crate::container::ContainerDecision::Container(execution) = &policy.container {
+        return execute_in_container(spec, &policy, execution, on_started);
+    }
     platform::execute(spec, &policy, on_started)
+}
+
+/// 컨테이너로 실행한다(2026-09-25 · `container` 모듈). 호스트 경로(Job Object · cgroup)를 쓰지 않는다 — 상한은 런타임이
+/// 컨테이너 cgroup 에 건다(`--memory` = `--memory-swap`).
+fn execute_in_container(
+    spec: &ExecutionSpec,
+    policy: &ExecutionPolicy,
+    execution: &crate::container::ContainerExecution,
+    on_started: impl FnOnce(WorkloadStopper),
+) -> Result<ExecutionOutcome, ExecutionError> {
+    let work_dir = policy
+        .capture_dir
+        .as_ref()
+        .ok_or_else(|| ExecutionError::ContainerRefused {
+            detail: "CONTAINER_NO_WORK_DIR: 컨테이너에 붙일 작업 폴더가 없다".into(),
+        })?;
+    // ★ 리눅스 docker 는 컨테이너 안을 root 로 돌려 붙인 폴더에 호스트 root 로 쓴다. 작업 폴더 주인(= Agent)으로 돌린다.
+    #[cfg(unix)]
+    let user = {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(work_dir).map_err(|error| ExecutionError::SpawnFailed {
+            detail: format!("작업 폴더를 읽지 못했다({work_dir:?}): {error}"),
+        })?;
+        Some((meta.uid(), meta.gid()))
+    };
+    #[cfg(not(unix))]
+    let user = None;
+    // ★ GPU 는 런타임이 장치 단위로 넘긴다 — 컨테이너 안에서는 넘긴 GPU 가 0번이다. 호스트 번호로 고정하는
+    //   CUDA_VISIBLE_DEVICES 를 그대로 넘기면 안에서 없는 장치를 가리킨다.
+    let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = policy
+        .workload_environment
+        .iter()
+        .filter(|(key, _)| key != "CUDA_VISIBLE_DEVICES")
+        .cloned()
+        .collect();
+    let name = crate::container::derive_container_name(
+        &policy.isolation.grant_id,
+        &policy.isolation.attempt_id,
+    );
+    let input = crate::container::CreateInput {
+        name: &name,
+        entrypoint: &spec.entrypoint,
+        args: &spec.args,
+        environment: &environment,
+        work_dir,
+        memory_limit_bytes: policy.commit_limit_bytes,
+        user,
+    };
+    println!(
+        "CONTAINER_STARTING name={name} image={} runtime={:?}",
+        execution.pinned_image, execution.runtime.flavor
+    );
+    let exit = crate::container::run(
+        execution,
+        &input,
+        Some(&work_dir.join(STDOUT_FILENAME)),
+        Some(&work_dir.join(STDERR_FILENAME)),
+        |stopper| on_started(WorkloadStopper::for_container(stopper)),
+    )
+    .map_err(|error| match error {
+        crate::container::ContainerRunError::NotStarted { detail } => {
+            ExecutionError::SpawnFailed { detail }
+        }
+        crate::container::ContainerRunError::NotObserved { detail } => {
+            ExecutionError::WaitFailed { detail }
+        }
+    })?;
+    println!(
+        "CONTAINER_EXITED name={name} exit_code={} oom_killed={}",
+        exit.exit_code, exit.oom_killed
+    );
+    let observed = match u32::try_from(exit.exit_code) {
+        Ok(code) => ExitObserved::Code(code),
+        Err(_) => ExitObserved::NoCode {
+            detail: format!("컨테이너 종료 코드가 u32 범위 밖이다({})", exit.exit_code),
+        },
+    };
+    Ok(ExecutionOutcome {
+        exit: observed,
+        commit_limit_bytes: policy.commit_limit_bytes,
+        // ★ 컨테이너 경로는 최댓값을 재지 않는다 — 지어내지 않는다(`CLAUDE.md` §1).
+        peak_commit_bytes: None,
+        memory_observation_error: Some(if exit.oom_killed {
+            "OOM_KILLED: 메모리 상한에 걸려 커널이 컨테이너를 끝냈다(최댓값은 재지 않는다)".into()
+        } else {
+            "컨테이너 경로는 메모리 최댓값을 재지 않는다".into()
+        }),
+    })
 }
 
 /// 자식을 띄우기 **전에** 판정할 수 있는 관문 — opt-in · 상한 값 · GPU 요구.
@@ -412,6 +537,12 @@ pub fn preflight(policy: &ExecutionPolicy) -> Result<(), ExecutionError> {
     if policy.commit_limit_bytes == 0 {
         return Err(ExecutionError::LimitNotApplied {
             detail: "commit_limit_bytes 가 0 이다".into(),
+        });
+    }
+    // ★ 2026-09-25 — 컨테이너로 받을 수 없는 Job 은 ACK **전에** 거부한다(호스트에서 대신 돌리지 않는다).
+    if let crate::container::ContainerDecision::Refused { detail } = &policy.container {
+        return Err(ExecutionError::ContainerRefused {
+            detail: detail.clone(),
         });
     }
     // ★★ **GPU 확인은 여기다 — 자식을 띄우기 전이다** (2026-09-07 신설).
@@ -519,7 +650,10 @@ mod platform {
                      — 멈출 수 없는 작업은 시작하지 않는다: {error}"
                 ),
             })?;
-        on_started(super::WorkloadStopper { inner: stopper });
+        on_started(super::WorkloadStopper {
+            inner: Some(stopper),
+            container: None,
+        });
 
         // 이제서야 돌린다. 소유자는 첫 명령이 실행되기 전부터 이 작업을
         // 보고 멈출 수 있다.
@@ -863,7 +997,8 @@ mod platform {
         //   여기서 넘기지 않으면 `wait()` 에 붙잡힌 동안 소유자가 멈출
         //   방법이 없다.
         on_started(super::WorkloadStopper {
-            inner: child.stopper(),
+            inner: Some(child.stopper()),
+            container: None,
         });
 
         // ★ 결함 144 (검수 68) — 전에는 `memory_limit_bytes().unwrap_or(정책)` 이라 읽기 · 해석 실패 사유가 사라졌다. 원문을 받아 사유를 남긴다.

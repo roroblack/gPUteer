@@ -70,6 +70,7 @@ fn policy(gpu: Option<GpuRequirements>) -> ExecutionPolicy {
             attempt_id: "attempt-gpu-gate".to_string(),
         },
         cgroup_parent: None,
+        container: gputeer_agent::container::ContainerDecision::Host,
     }
 }
 

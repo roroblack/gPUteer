@@ -21,6 +21,7 @@ use std::time::Duration;
 use gputeer_checkpoint::durability::record_initial_state;
 use gputeer_checkpoint::writer::{manifest_for, write_checkpoint_phased, WritePhase};
 pub mod checkpoint_publisher;
+pub mod container;
 pub mod exec;
 pub mod multi_agent;
 pub mod owner_panel;
@@ -214,6 +215,9 @@ pub struct AgentConfig {
     ///   위임한 subtree 를 여기 지정한다. 없으면 "내 cgroup" 을 쓰고,
     ///   위임이 없으면 실행을 거부한다 — 상한 없이 띄우지 않는다.
     pub workload_cgroup_parent: Option<std::path::PathBuf>,
+    /// ★ 2026-09-25 — `OCI_IMAGE` Job 을 돌릴 컨테이너 런타임(`--container-runtime` · `--container-runtime-kind`).
+    ///   없으면 `OCI_IMAGE` Job 은 실행 전에 거부된다(호스트에서 대신 돌리지 않는다).
+    pub container_runtime: Option<container::ContainerRuntime>,
     /// 실행에 걸 Job Object 커밋 상한(바이트). 0 이면 실행하지 않는다.
     pub workload_commit_limit_bytes: u64,
     /// Owner Panel 이 쓸 상태. Agent 가 작업을 시작하면 여기 등록하고
@@ -1308,6 +1312,7 @@ fn run_one_connection_inner(
                 attempt_id: grant.attempt_id.clone(),
             },
             cgroup_parent: config.workload_cgroup_parent.clone(),
+            container: loaded.container.clone(),
         };
         // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
         //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
@@ -2794,6 +2799,11 @@ fn verify_nested_manifest(
     //   한다(`CLAUDE.md` §0.1). 검증을 통과한 뒤에만 읽는다.
     Ok(Some(VerifiedWorkload {
         submitter_device_id: verified.get().submitter_device_id.clone(),
+        container: container::decide(
+            verified.get(),
+            config.container_runtime.as_ref(),
+            config.gpu_pin.as_deref(),
+        ),
         spec,
     }))
 }
@@ -2801,6 +2811,8 @@ fn verify_nested_manifest(
 /// 검증을 통과한 실행 지시와, 그것을 낸 사람.
 struct VerifiedWorkload {
     spec: gputeer_protocol::execution_spec::ExecutionSpec,
+    /// ★ 2026-09-25 — 서명 검증을 통과한 Manifest 의 `env` 와 운영자 설정으로 정한 실행 방식.
+    container: container::ContainerDecision,
     /// 소유자 화면에 보여줄 제출자. `ExecutionSpec` 에는 없다 —
     /// 실행에는 필요 없지만 **소유자에게는 필요한** 사실이다.
     submitter_device_id: String,
@@ -3386,6 +3398,36 @@ fn own_seed_from_flags(flags: &Flags) -> Result<[u8; 32], String> {
 }
 
 /// `--gpu-pin "1"` · `"0,1"` — 장치 번호만 받는다(숫자와 쉼표). 다른 것은 지어내지 않고 거부한다.
+/// `--container-runtime <실행 파일>` · `--container-runtime-kind podman|docker` · `--container-gpu` · `--container-only`.
+///
+/// ★ 종류를 실행 파일 이름으로 추측하지 않는다 — podman 을 docker 이름으로 감싼 설치가 흔하다. 둘 중 하나만 주면 거부한다.
+fn parse_container_runtime(flags: &Flags) -> Result<Option<container::ContainerRuntime>, String> {
+    let program = flags.get("--container-runtime");
+    let kind = flags.get("--container-runtime-kind");
+    let gpu = flags.bool_flag("--container-gpu");
+    let only = flags.bool_flag("--container-only");
+    match (program, kind) {
+        (None, None) => {
+            if gpu || only {
+                return Err(
+                    "--container-gpu · --container-only 는 --container-runtime 과 함께만 쓴다"
+                        .into(),
+                );
+            }
+            Ok(None)
+        }
+        (Some(program), Some(kind)) => Ok(Some(container::ContainerRuntime {
+            program: std::path::PathBuf::from(program),
+            flavor: container::RuntimeFlavor::parse(kind)?,
+            pass_gpu: gpu,
+            only,
+        })),
+        _ => Err(
+            "--container-runtime 과 --container-runtime-kind 는 함께 준다(종류를 이름으로 추측하지 않는다)".into(),
+        ),
+    }
+}
+
 fn parse_gpu_pin(raw: &str) -> Result<String, String> {
     let ids: Vec<&str> = raw.split(',').map(str::trim).collect();
     if ids.is_empty()
@@ -3973,6 +4015,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         workload_cgroup_parent: flags
             .get("--workload-cgroup-parent")
             .map(std::path::PathBuf::from),
+        container_runtime: parse_container_runtime(&flags)?,
         multi_agent: flags.bool_flag("--multi-agent"),
         // ★ 파싱 실패를 0 으로 접지 않는다(2026-08-30 독립 검수 3라운드).
         //   잘못 쓴 값이 "간격 없음" 으로 조용히 바뀌면, 운영자는 간격을
@@ -4372,6 +4415,7 @@ mod tests {
             corrupt_heartbeat_device: false,
             corrupt_hello_mode: false,
             workload_cgroup_parent: None,
+            container_runtime: None,
             multi_agent: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             owner_panel_port: None,
@@ -4858,6 +4902,7 @@ mod defect_19_tests {
                 attempt_id: "attempt-19".into(),
             },
             cgroup_parent: None,
+            container: container::ContainerDecision::Host,
         };
         let report = run_and_capture_workload(
             &spec,

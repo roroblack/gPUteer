@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-25 01:03 — 컨테이너 실행 backend: OCI_IMAGE Job 을 podman · docker 로 가둔다
+
+- 계획: `docs/plans/2026-09-25_0053_컨테이너_실행_backend.md`
+- 스트림: Agent · CLI
+- 수행: 규범에 있던 `ENV_KIND_OCI_IMAGE`(image_ref · oci_source_digest)를 처음으로 실행한다. digest 로 고정한 이미지를 읽기 전용 루트 ·
+  capability 0 · no-new-privileges · 네트워크 없음 · 스왑 포함 메모리 상한 · 프로세스 상한 · 작업 폴더 하나만 쓰기로 돌린다. 받을 수
+  없는 것(런타임 없음 · digest 없음 · 허용 목록 네트워크 · GPU 설정 꺼짐)은 ACK 전에 거부하고 호스트에서 대신 돌리지 않는다.
+  소유자 정지는 컨테이너 kill. `submit --image-ref --image-sha256`
+- 검증: `cargo test --workspace -j 1` 1319 passed · 0 failed · ignored 4(개발 기계 Windows — 새 시험 16: 단위 8 · 가짜 런타임 수명 7 · CLI 1). 리눅스 실제 docker 시험 5 는 CI 에서 처음 돈다. 뮤테이션 2(정지 확인 · preflight 거부) 되돌려 확인
+- ★ 한계: 리눅스 쪽은 CI 가 첫 컴파일 · 첫 실측이다 · GPU 넘기기(`--container-gpu`) 실측 전 · 독립 검수 없음
+- 리포트: 계획 문서가 대신한다
+
 ## 2026-09-25 00:39 — 결함 218 · 256 닫힘: Job 은 첫 진행 신호에 RUNNING
 
 - 계획: `docs/plans/2026-09-25_0035_218_첫_진행_신호로_RUNNING.md`
