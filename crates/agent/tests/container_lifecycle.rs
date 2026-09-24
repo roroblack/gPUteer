@@ -229,6 +229,7 @@ fn execution() -> ContainerExecution {
             pass_gpu: false,
             only: false,
             node_id: "node-test".into(),
+            owner: "node-test.root".into(),
         },
         pinned_image: format!("registry.local/train@sha256:{}", "ab".repeat(32)),
         gpu_pin: None,
@@ -496,7 +497,7 @@ fn leftovers_of_this_node_are_removed_before_a_round() {
     assert!(
         calls
             .lines()
-            .any(|l| l == "ps -a -q --filter label=gputeer.node=node-test"),
+            .any(|l| l == "ps -a -q --filter label=gputeer.owner=node-test.root"),
         "이 노드 라벨로 찾지 않았다:\n{calls}"
     );
     for id in ["old-1", "old-2"] {
@@ -517,7 +518,7 @@ fn leftovers_of_this_node_are_removed_before_a_round() {
     assert!(
         create
             .lines()
-            .any(|l| l == "--label=gputeer.node=node-test"),
+            .any(|l| l == "--label=gputeer.owner=node-test.root"),
         "노드 라벨 없이 만들었다:\n{create}"
     );
 }

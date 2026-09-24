@@ -1216,7 +1216,7 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
     (agent_out, coordinator_out + &coordinator_err, finished)
 }
 
-fn unconfirmed_start_round() -> (String, String, Option<JobState>) {
+fn unconfirmed_start_round(coordinator_extra: &[&str]) -> (String, String, Option<JobState>) {
     let dir = tempfile::tempdir().expect("임시 폴더");
     let (db, keyring) = pool(dir.path());
     let db_s = db.to_str().unwrap().to_string();
@@ -1291,12 +1291,9 @@ fn unconfirmed_start_round() -> (String, String, Option<JobState>) {
             "true",
             "--release-on-exit-report",
             "true",
-            // ★ FRESH 연결 하나(Grant · ACK · 수신 확인)만 받고 끝난다 — 실행 전 갱신 연결은 거부된다.
-            "--max-connections",
-            "1",
-            "--accept-timeout-ms",
-            "0",
         ])
+        .args(coordinator_extra)
+        .args(["--accept-timeout-ms", "0"])
         .stdout(Stdio::from(
             std::fs::File::create(&coordinator_log).expect("log 파일"),
         ))
@@ -1367,7 +1364,8 @@ fn unconfirmed_start_round() -> (String, String, Option<JobState>) {
 ///   띄워, 실제로 도는 작업이 STAGING 으로 남아 Lease 만료 뒤 다른 노드에서 한 번 더 돌았다. 대조군은 무인 운영 시험(갱신이 되면 돈다).
 #[test]
 fn a_start_that_the_coordinator_did_not_confirm_does_not_run() {
-    let (agent_out, coordinator_out, state) = unconfirmed_start_round();
+    // FRESH 연결 하나(Grant · ACK · 수신 확인)만 받고 끝난다 — 실행 전 갱신 연결은 거부된다.
+    let (agent_out, coordinator_out, state) = unconfirmed_start_round(&["--max-connections", "1"]);
     let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
     assert!(
         agent_out.contains("ACK_RECEIPT_VERIFIED"),
@@ -1447,4 +1445,23 @@ fn a_pool_agent_without_renewal_refuses_to_start() {
         !out.contains("POOL_AGENT_NEEDS_RENEW"),
         "갱신을 켰는데 거부했다\n{out}"
     );
+}
+
+/// ★ 2026-09-25 (결함 289 · 293 · 재검수 90 · 91) — 실행 직전 갱신으로 **받은** Lease 가 5초도 안 남았으면 띄우지 않는다(다음 갱신 전에
+///   만료돼 이어받기와 겹친다). ★ 그 대가를 사실로 고정한다 — Coordinator 는 그 갱신에서 이미 시작을 기록해 Job 이 RUNNING 이다. 체크포인트가
+///   없으면 이어받기에서 FAILED 가 된다(두 번 도는 대신 가용성을 잃는 쪽을 골랐다).
+#[test]
+fn a_confirmed_lease_too_short_to_keep_alive_does_not_start() {
+    let (agent_out, coordinator_out, state) =
+        unconfirmed_start_round(&["--renew-extension-ms", "3000", "--max-connections", "0"]);
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        agent_out.contains("LEASE_TOO_SHORT_AFTER_CONFIRM"),
+        "받은 Lease 가 짧은데 시작을 거부하지 않았다\n{everything}"
+    );
+    assert!(
+        !agent_out.contains("WORKLOAD_SPAWNED"),
+        "짧은 Lease 로 워크로드를 띄웠다\n{everything}"
+    );
+    assert_eq!(state, Some(JobState::Running), "{everything}");
 }

@@ -84,8 +84,11 @@ pub struct ContainerRuntime {
     pub pass_gpu: bool,
     /// 컨테이너 Job 만 받는가(`--container-only`). 켜면 `OCI_IMAGE` 가 아닌 Job 을 호스트에서 돌리지 않는다.
     pub only: bool,
-    /// 이 Agent 의 노드 id — 모든 컨테이너에 `gputeer.node=<id>` 라벨로 붙인다. 죽은 회차가 남긴 컨테이너를 찾는 열쇠다(결함 290).
+    /// 이 Agent 의 노드 id — 모든 컨테이너에 `gputeer.node=<id>` 라벨로 붙인다(사람이 알아보는 용도).
     pub node_id: String,
+    /// 남은 컨테이너를 찾는 열쇠 — `<노드 id>.<잠근 체크포인트 루트의 해시>`. 같은 루트를 잠근 Agent 는 하나뿐이다(결함 290 · 295).
+    /// Agent 가 루트를 잠근 뒤 채운다. 비어 있으면 컨테이너를 만들지도 지우지도 않는다.
+    pub owner: String,
 }
 
 /// 이 Job 을 어떻게 실행하는가 — ACK **전에** 정한다.
@@ -228,6 +231,9 @@ pub fn derive_container_name(attempt_id: &str) -> String {
 ///   죽은 회차(Agent 가 죽었거나 종료를 관측하지 못하고 끝난 회차)가 남긴 것이다 — 그대로 두면 패널 손잡이 없이 GPU 를 물고 돌고,
 ///   이어받은 다른 노드와 **두 번** 돈다. 지운 컨테이너 id 를 돌려준다. 목록을 못 읽으면 오류다(모르는 채 시작하지 않는다).
 pub fn remove_leftovers(runtime: &ContainerRuntime) -> Result<Vec<String>, String> {
+    if runtime.owner.is_empty() {
+        return Err("owner 라벨이 비었다 — 어느 컨테이너가 이 Agent 의 것인지 모른다".into());
+    }
     let program = runtime.program.as_path();
     let listed = cli_ok(
         program,
@@ -236,7 +242,7 @@ pub fn remove_leftovers(runtime: &ContainerRuntime) -> Result<Vec<String>, Strin
             "-a".into(),
             "-q".into(),
             "--filter".into(),
-            format!("label=gputeer.node={}", runtime.node_id).into(),
+            format!("label=gputeer.owner={}", runtime.owner).into(),
         ],
         SHORT_TIMEOUT,
     )?;
@@ -292,12 +298,16 @@ pub fn create_args(
     if input.entrypoint.is_empty() {
         return Err("entrypoint 가 비었다".into());
     }
+    if execution.runtime.owner.is_empty() {
+        return Err("owner 라벨이 비었다 — 다음 회차가 이 컨테이너를 찾지 못한다(결함 290)".into());
+    }
     let memory = input.memory_limit_bytes.to_string();
     let mut args: Vec<OsString> = vec![
         "create".into(),
         format!("--name={}", input.name).into(),
         "--label=gputeer.managed=1".into(),
         format!("--label=gputeer.node={}", execution.runtime.node_id).into(),
+        format!("--label=gputeer.owner={}", execution.runtime.owner).into(),
         "--pull=missing".into(),
         "--read-only".into(),
         "--tmpfs=/tmp".into(),
@@ -687,6 +697,7 @@ mod tests {
             pass_gpu: false,
             only: false,
             node_id: "node-a".into(),
+            owner: "node-a.0123456789abcdef".into(),
         }
     }
 

@@ -471,19 +471,6 @@ pub fn owner_resume(checkpoint_root: &std::path::Path) -> Result<bool, String> {
 }
 
 pub fn run(config: AgentConfig) -> Result<(), String> {
-    // ★ 2026-09-25 (결함 290 · 291 · 재검수 90) — 회차를 시작하기 전에 이 노드의 라벨로 남은 컨테이너를 모두 치운다. 한 노드는 한 번에
-    //   한 작업만 돌리므로, 지금 돌고 있는 이 노드의 컨테이너는 죽은 회차가 남긴 것이다. 목록을 못 읽으면 시작하지 않는다.
-    if let Some(runtime) = config.container_runtime.as_ref() {
-        let removed = container::remove_leftovers(runtime)
-            .map_err(|why| format!("CONTAINER_LEFTOVERS_UNKNOWN: 남은 컨테이너를 확인 · 정리하지 못해 시작하지 않는다 — {why}"))?;
-        if !removed.is_empty() {
-            println!(
-                "CONTAINER_LEFTOVERS_REMOVED count={} ids={}",
-                removed.len(),
-                removed.join(",")
-            );
-        }
-    }
     // ★ 결함 97 (재검수 60) — 실행 중 갱신(RENEW 세션)은 FRESH 연결이 ACK 뒤 닫히는 구성에서만 성립한다. 순차 Coordinator 는 한
     //   연결을 끝내야 다음 연결을 받으므로, FRESH 연결을 붙잡는 설정과 함께 켜면 RENEW 가 처리되지 않아 갱신 시한을 넘긴다.
     //   구성 오류는 연결하기 전에 드러낸다. 종료 보고와 함께 쓰려면 REPORT 세션(다음 단계)이 먼저다.
@@ -649,6 +636,24 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             marker.display()
         ))
     })?;
+    // ★ 2026-09-25 (결함 290 · 291 · 295 · 재검수 90 · 91) — 체크포인트 루트를 **잠근 뒤에** 이 Agent 의 라벨로 남은 컨테이너를 모두 치운다.
+    //   라벨은 노드 id 와 잠근 루트의 실제 위치 해시다 — 같은 루트를 잠근 Agent 는 하나뿐이므로, 지금 그 라벨로 도는 컨테이너는 죽은 회차가
+    //   남긴 것이다. 전에는 잠금 **전에** 노드 id 만으로 지워, 같은 노드 id 로 잘못 뜬 두 번째 Agent 가 거부되기 전에 정상 실행 중인
+    //   컨테이너를 지웠다(295). 목록을 못 읽으면 시작하지 않는다.
+    if let Some(runtime) = config.container_runtime.as_mut() {
+        let root_hash = blake3::hash(config.checkpoint_root.to_string_lossy().as_bytes()).to_hex();
+        runtime.owner = format!("{}.{}", runtime.node_id, &root_hash[..16]);
+        let removed = container::remove_leftovers(runtime).map_err(|why| {
+            format!("CONTAINER_LEFTOVERS_UNKNOWN: 남은 컨테이너를 확인 · 정리하지 못해 시작하지 않는다 — {why}")
+        })?;
+        if !removed.is_empty() {
+            println!(
+                "CONTAINER_LEFTOVERS_REMOVED count={} ids={}",
+                removed.len(),
+                removed.join(",")
+            );
+        }
+    }
     // ★ 실행을 켰으면 소유자 패널이 **반드시** 있어야 한다
     //   (2026-08-29, 독립 검수 지적).
     //
@@ -1408,7 +1413,10 @@ fn run_one_connection_inner(
         //     FAILED 로 끝난다(두 번 돌지는 않는다 — 옛 218 의 가용성 쪽 한계).
         // ★ 결함 288 (재검수 90) — 이 관문은 수신 확인 블록 안에 있었다. 보고 세션만 켠 Agent 도 갱신을 켰으면 확인을 받아야 띄운다.
         // ★ 결함 289 — 받은 Lease 가 5초도 안 남았으면 띄우지 않는다(다음 갱신 전에 만료돼 이어받기와 겹친다).
-        if will_execute && config.renew_during_execution_ms > 0 {
+        // ★ 결함 293 (재검수 91) — 이 관문은 **수신 확인을 요구하는 Agent(= 풀)** 에만 선다. 288 대응으로 모든 갱신 Agent 로 넓혔더니,
+        //   ACK 가 이미 Job 을 RUNNING 으로 옮긴 풀 밖 lane 에서 갱신 한 번 실패가 "안 돈 작업의 FAILED" 가 됐다. 풀 밖 lane 은 갱신 실패가
+        //   두 번 실행이 되지 않으므로 전처럼 띄운다(첫 갱신은 스레드가 곧바로). 수신 확인 없이 풀에 붙이는 것은 설정 오류다(런북 §5).
+        if will_execute && config.renew_during_execution_ms > 0 && config.require_ack_receipt {
             match renew_once_over_new_connection(&config, signing_key, &held_lease) {
                 Ok(renewed) => {
                     let remaining = renewed
@@ -1449,8 +1457,13 @@ fn run_one_connection_inner(
         //   오히려 실패했을 때 남는 것이 더 위험하다.
         // ★ B+E 구현 단계 5b — 실행하는 동안만 새 연결로 갱신한다(설정으로 켤 때만).
         let renewer = if will_execute {
-            // 첫 갱신은 이미 동기로 했다(위, 결함 268 · 288) — 스레드는 그 뒤부터.
-            start_renew_during_execution(&config, signing_key, &held_lease)
+            // 수신 확인 Agent 는 첫 갱신을 이미 동기로 했다(위, 결함 268 · 293) — 스레드는 그 뒤부터. 그 밖에는 곧바로 한다.
+            start_renew_during_execution(
+                &config,
+                signing_key,
+                &held_lease,
+                !config.require_ack_receipt,
+            )
         } else {
             None
         };
@@ -2228,6 +2241,7 @@ fn start_renew_during_execution(
     config: &AgentConfig,
     signing_key: &SigningKey,
     held_lease: &pb::Lease,
+    first_immediately: bool,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
@@ -2248,7 +2262,13 @@ fn start_renew_during_execution(
                     .expires_at_unix_ms
                     .saturating_sub(SystemClock.now_unix_ms()),
             );
-            let wait = interval.min((remaining / 2).max(Duration::from_millis(500)));
+            //   ★ 결함 294 — 남은 시간은 Coordinator 가 정한 만료 시각을 **Agent 시계**로 뺀 값이다. 시계 차이가 크면 틀린다 — 런북 §5 의
+            //     운영 조건(연장 ≥ 2 × 주기 + 시계 차이 · NTP)이 그 전제다. 1초 미만이 남았으면 500ms 뒤에 한다(절반이 아니다).
+            let wait = if round == 0 && first_immediately {
+                Duration::ZERO
+            } else {
+                interval.min((remaining / 2).max(Duration::from_millis(500)))
+            };
             let due = std::time::Instant::now() + wait;
             while std::time::Instant::now() < due {
                 if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
@@ -3478,6 +3498,8 @@ fn parse_container_runtime(flags: &Flags) -> Result<Option<container::ContainerR
             pass_gpu: gpu,
             only,
             node_id: flags.require("--agent-device-id")?,
+            // 체크포인트 루트를 잠근 뒤 `<노드 id>.<루트 해시>` 로 채운다(결함 295 · run()).
+            owner: String::new(),
         })),
         _ => Err(
             "--container-runtime 과 --container-runtime-kind 는 함께 준다(종류를 이름으로 추측하지 않는다)".into(),
