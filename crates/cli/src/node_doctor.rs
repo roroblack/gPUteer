@@ -504,20 +504,34 @@ fn check_container_runtime(program: &Path, kind: &str, wants_gpu: bool) -> Vec<C
     });
     if wants_gpu {
         // ★ "보였다" 까지다 — 컨테이너 안에서 GPU 를 실제로 연 것이 아니다(설계 문서 Out · 조각 2).
-        let seen = match kind {
-            "podman" => Ok(["/etc/cdi/nvidia.yaml", "/var/run/cdi/nvidia.yaml"]
-                .iter()
-                .any(|p| Path::new(p).exists())),
-            _ => run_text(program, &["info", "--format", "{{json .Runtimes}}"])
-                .map(|text| text.contains("nvidia")),
-        };
+        // ★ 결함 302 — docker 29 는 --gpus 를 CDI 사양으로 푼다(x600 실측 "failed to discover GPU vendor from CDI").
+        //   런타임 목록만 보면 CDI 만 있는 기계를 "못 넘긴다" 로, 런타임만 있는 기계를 "넘긴다" 로 잘못 말할 수 있다 — 둘 다 본다.
+        let cdi = ["/etc/cdi/nvidia.yaml", "/var/run/cdi/nvidia.yaml"]
+            .iter()
+            .any(|p| Path::new(p).exists());
+        let seen =
+            match kind {
+                "podman" => Ok(cdi.then_some("CDI 사양")),
+                _ => run_text(program, &["info", "--format", "{{json .Runtimes}}"]).map(|text| {
+                    match (cdi, text.contains("nvidia")) {
+                        (true, true) => Some("CDI 사양 · nvidia 런타임"),
+                        (true, false) => Some("CDI 사양"),
+                        (false, true) => Some(
+                            "nvidia 런타임(CDI 사양은 없다 — docker 29 는 --gpus 를 CDI 로 푼다)",
+                        ),
+                        (false, false) => None,
+                    }
+                }),
+            };
         checks.push(match seen {
-            Ok(true) => check(
+            Ok(Some(what)) => check(
                 "container_gpu",
                 Level::Ok,
-                "NVIDIA 런타임/CDI 설정이 보였다(컨테이너 안에서 GPU 를 연 것은 아니다)",
+                format!(
+                    "{what} 이 보였다(컨테이너 안에서 GPU 를 연 것은 아니다 — --container-gpu-probe-image 로 실행을 확인한다)"
+                ),
             ),
-            Ok(false) => check(
+            Ok(None) => check(
                 "container_gpu",
                 Level::Warn,
                 "NVIDIA Container Toolkit(CDI · nvidia 런타임)이 보이지 않는다 — --container-gpu 로 GPU 를 넘길 수 없다",
