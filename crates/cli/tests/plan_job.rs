@@ -589,6 +589,51 @@ fn a_stale_observation_is_not_planned_under_the_operators_freshness_policy() {
     assert!(ok, "넉넉한 상한에서도 거부했다: {output}");
 }
 
+/// 결함 301 — 등록 정보의 관측 시각은 import-inventory 만 새로 한다. 런북의 상한(하루)으로는 **등록 하루 뒤부터** 배치하지
+/// 않는다. 운영 완화(`deploy/trusted-party/install/refresh-inventory`)는 revision 을 올려 지금 시각으로 다시 넣는 것이다 —
+/// 그렇게 넣으면 다시 배치되고, revision 을 올리지 않고 시각만 바꾸면 저장소가 받지 않는다(완화가 revision 을 올리는 이유).
+#[test]
+fn an_inventory_older_than_the_runbook_limit_is_planned_again_only_after_a_fresh_import() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepare(dir.path(), &FULL, now_unix_ms() - 25 * 3_600_000);
+    let (ok, output) = plan(&keyring, &db, &[]);
+    assert!(!ok, "25시간 전 등록으로 계획했다: {output}");
+    assert!(output.contains("SnapshotNotFresh"), "{output}");
+
+    let bootstrap = dir.path().join("bootstrap.json");
+    let stale = std::fs::read_to_string(&bootstrap).expect("문서 읽기");
+    let import = |body: String| {
+        std::fs::write(&bootstrap, body).expect("문서 쓰기");
+        run_cli(&[
+            "import-inventory",
+            "--inventory",
+            bootstrap.to_str().unwrap(),
+            "--inventory-db",
+            db.to_str().unwrap(),
+        ])
+    };
+    let observed_line = stale
+        .lines()
+        .find(|line| line.contains("\"observed_at_unix_ms\""))
+        .expect("관측 시각 줄")
+        .to_string();
+    let now_line = format!("        \"observed_at_unix_ms\": {},", now_unix_ms());
+    // 시각만 바꾸고 revision 은 그대로 — 받지 않는다.
+    let (ok, output) = import(stale.replace(&observed_line, &now_line));
+    assert!(!ok, "같은 revision 으로 다른 내용을 받았다: {output}");
+    let (ok, _) = plan(&keyring, &db, &[]);
+    assert!(!ok, "받지 않은 반입 뒤에 계획했다");
+    // revision 을 올려 지금 시각으로 — 다시 계획한다.
+    let (ok, output) = import(
+        stale
+            .replace(&observed_line, &now_line)
+            .replace("\"inventory_revision\": 1,", "\"inventory_revision\": 2,"),
+    );
+    assert!(ok, "새 revision 반입 실패: {output}");
+    let (ok, output) = plan(&keyring, &db, &[]);
+    assert!(ok, "새로 넣은 뒤에도 계획하지 않았다: {output}");
+}
+
 /// 비영속 DB 는 거부한다 — 올린 상태가 사라지는데 로그는 성공이다.
 #[test]
 fn a_non_durable_control_db_is_refused() {

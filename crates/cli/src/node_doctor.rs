@@ -14,8 +14,10 @@
 //! FAIL  이대로 띄우면 Agent 가 실패한다 — 종료 코드가 0 이 아니다
 //! ```
 //!
-//! ★ 이 점검은 **시작 조건**을 본다. 통과가 "작업이 잘 돈다" 를 뜻하지 않는다 — 컨테이너 GPU 넘기기는 "런타임에 nvidia 가 보였다"
-//!   까지만 본다(실행 확인이 아니다). Coordinator 는 TCP 로 붙는지만 본다(서명 교환 없음 — 이름이 `coordinator_tcp` 다).
+//! ★ 이 점검은 **시작 조건**을 본다. 통과가 "작업이 잘 돈다" 를 뜻하지 않는다 — 컨테이너 GPU 넘기기는 기본으로 "런타임에 nvidia 가
+//!   보였다" 까지만 본다(실행 확인이 아니다). `--container-gpu-probe-image` 를 주면 Agent 와 같은 create 인자로 컨테이너를 띄워
+//!   `nvidia-smi -L` 을 돌린다(`container_gpu_probe` — 실행 확인 · 2026-09-25 fork). Coordinator 는 TCP 로 붙는지만 본다
+//!   (서명 교환 없음 — 이름이 `coordinator_tcp` 다).
 //! ★ 결함 282 (재검수 89) — 폴더를 **만들지 않는다**(없으면 FAIL). 쓰기 확인은 무작위 이름의 새 파일을 **배타 생성**(있으면 실패)해
 //!   쓰고 곧바로 지운다 — 남의 파일 · 링크 대상을 건드리지 않는다. 지우지 못하면 FAIL 로 그 이름을 알린다.
 
@@ -54,11 +56,13 @@ struct Options {
     gpu_pin: Option<String>,
     container_runtime: Option<PathBuf>,
     container_kind: Option<String>,
+    gpu_probe_image: Option<String>,
 }
 
 const USAGE: &str = "gputeer node-doctor --seed-file <node.seed> --node-dir <노드 폴더> --connect <coordinator 주소>:<포트> \
 [--shared-checkpoint-root <공유 저장소>] [--owner-panel-port <포트>] [--gpu-pin <GPU 번호>] \
-[--container-runtime <podman|docker 실행 파일> --container-runtime-kind podman|docker]";
+[--container-runtime <podman|docker 실행 파일> --container-runtime-kind podman|docker \
+[--container-gpu-probe-image <nvidia-smi 가 도는 이미지>]]";
 
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut options = Options {
@@ -70,6 +74,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         gpu_pin: None,
         container_runtime: None,
         container_kind: None,
+        gpu_probe_image: None,
     };
     let mut iter = args.iter();
     while let Some(key) = iter.next() {
@@ -89,6 +94,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--gpu-pin" => options.gpu_pin = Some(value.clone()),
             "--container-runtime" => options.container_runtime = Some(value.into()),
             "--container-runtime-kind" => options.container_kind = Some(value.clone()),
+            "--container-gpu-probe-image" => options.gpu_probe_image = Some(value.clone()),
             other => return Err(format!("NODE_DOCTOR_ARGS: 모르는 옵션 {other}\n{USAGE}")),
         }
     }
@@ -100,6 +106,14 @@ fn parse(args: &[String]) -> Result<Options, String> {
     if options.container_runtime.is_some() != options.container_kind.is_some() {
         return Err(
             "NODE_DOCTOR_ARGS: --container-runtime 과 --container-runtime-kind 는 함께 준다".into(),
+        );
+    }
+    if options.gpu_probe_image.is_some()
+        && (options.container_runtime.is_none() || options.gpu_pin.is_none())
+    {
+        return Err(
+            "NODE_DOCTOR_ARGS: --container-gpu-probe-image 는 --container-runtime · --container-runtime-kind · --gpu-pin 과 함께 준다"
+                .into(),
         );
     }
     Ok(options)
@@ -129,6 +143,18 @@ pub fn run(args: &[String]) -> Result<String, String> {
             kind,
             options.gpu_pin.is_some(),
         ));
+        if let (Some(image), Some(pin)) = (
+            options.gpu_probe_image.as_deref(),
+            options.gpu_pin.as_deref(),
+        ) {
+            checks.push(check_container_gpu_probe(
+                program,
+                kind,
+                pin,
+                image,
+                options.node_dir.as_deref().expect("parse"),
+            ));
+        }
     }
     let mut report = String::new();
     for c in &checks {
@@ -500,4 +526,192 @@ fn check_container_runtime(program: &Path, kind: &str, wants_gpu: bool) -> Vec<C
         });
     }
     checks
+}
+
+/// 컨테이너 안에서 GPU 를 **실제로 연다** — Agent 가 컨테이너 Job 에 쓰는 것과 **같은** create 인자(격리 옵션 · GPU 인자 · 체크포인트
+/// 폴더 붙이기)로 `nvidia-smi -L` 을 돌린다. `check_container_runtime` 의 "보였다" 와 달리 이것은 실행 확인이다.
+///
+/// ★ 운영자가 이미지를 골라 줄 때만 한다(`--container-gpu-probe-image`) — 이미지를 받아 오는 일이라 기본으로 돌리지 않는다.
+/// ★ 컨테이너 이름 · 라벨은 이 점검만의 것이다(`gputeer-doctor-<무작위>` · owner `node-doctor.<무작위>`) — 돌고 있는 Agent 의 정리
+///   열쇠(`<노드>.<루트 해시>`)와 겹치지 않아 그 Agent 의 컨테이너를 건드리지 않고, Agent 도 이 컨테이너를 지우지 않는다.
+fn check_container_gpu_probe(
+    program: &Path,
+    kind: &str,
+    pin: &str,
+    image: &str,
+    node_dir: &Path,
+) -> Check {
+    use gputeer_agent::container::{self, ContainerExecution, ContainerRuntime, RuntimeFlavor};
+    let fail = |detail: String| check("container_gpu_probe", Level::Fail, detail);
+    let flavor = match RuntimeFlavor::parse(kind) {
+        Ok(flavor) => flavor,
+        Err(why) => return fail(why),
+    };
+    if image.is_empty() || image.starts_with('-') || image.chars().any(char::is_whitespace) {
+        return fail(format!(
+            "--container-gpu-probe-image {image:?} 는 이미지 참조가 아니다"
+        ));
+    }
+    let mut nonce = [0u8; 8];
+    if let Err(e) = getrandom::getrandom(&mut nonce) {
+        return fail(format!("무작위 이름을 만들지 못했다: {e}"));
+    }
+    let suffix: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+    // 노드 폴더 아래 이 점검만의 폴더 — 배타 생성이라 남의 것을 쓰지 않는다. 끝나면 지운다.
+    let probe_dir = node_dir.join(format!(".gputeer-doctor-gpu-{suffix}"));
+    if let Err(e) = std::fs::create_dir(&probe_dir) {
+        return fail(format!("점검 폴더 {probe_dir:?} 를 만들지 못했다: {e}"));
+    }
+    let outcome = (|| {
+        let checkpoint_out = probe_dir.join("checkpoints-out");
+        std::fs::create_dir(&checkpoint_out)
+            .map_err(|e| format!("{checkpoint_out:?} 를 만들지 못했다: {e}"))?;
+        #[cfg(unix)]
+        let user = {
+            use std::os::unix::fs::MetadataExt;
+            let meta = std::fs::metadata(&probe_dir)
+                .map_err(|e| format!("{probe_dir:?} 를 읽지 못했다: {e}"))?;
+            Some((meta.uid(), meta.gid()))
+        };
+        #[cfg(not(unix))]
+        let user = None;
+        let execution = ContainerExecution {
+            runtime: ContainerRuntime {
+                program: program.to_path_buf(),
+                flavor,
+                pass_gpu: true,
+                only: true,
+                node_id: "node-doctor".into(),
+                owner: format!("node-doctor.{suffix}"),
+            },
+            pinned_image: image.to_string(),
+            gpu_pin: Some(pin.to_string()),
+        };
+        let mounts = [container::Mount {
+            host: checkpoint_out,
+            target: container::CONTAINER_CHECKPOINT_DIR,
+            read_only: false,
+        }];
+        let name = format!("gputeer-doctor-{suffix}");
+        let args = ["-L".to_string()];
+        let input = container::CreateInput {
+            name: &name,
+            entrypoint: "nvidia-smi",
+            args: &args,
+            environment: &[],
+            mounts: &mounts,
+            memory_limit_bytes: 1024 * 1024 * 1024,
+            user,
+        };
+        let stdout_path = probe_dir.join("stdout.log");
+        let stderr_path = probe_dir.join("stderr.log");
+        let exit = container::run(
+            &execution,
+            &input,
+            Some(&stdout_path),
+            Some(&stderr_path),
+            |_| {},
+        )
+        .map_err(|e| format!("컨테이너를 돌리지 못했다: {e:?}"))?;
+        let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+        let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+        Ok::<_, String>((exit, stdout, stderr))
+    })();
+    let removed = std::fs::remove_dir_all(&probe_dir);
+    let left = match removed {
+        Ok(()) => String::new(),
+        Err(e) => format!(" · ★ 점검 폴더 {probe_dir:?} 를 지우지 못했다(남았다): {e}"),
+    };
+    let (exit, stdout, stderr) = match outcome {
+        Ok(result) => result,
+        Err(why) => return fail(format!("{why}{left}")),
+    };
+    let pinned = pin.split(',').filter(|id| !id.trim().is_empty()).count();
+    judge_gpu_probe(
+        exit.exit_code,
+        exit.oom_killed,
+        &stdout,
+        &stderr,
+        pinned,
+        &left,
+    )
+}
+
+/// 점검 컨테이너의 결과를 판정한다(순수 함수 — 시험이 런타임 없이 잰다).
+///
+/// FAIL  종료 코드가 0 이 아니거나 `GPU ` 줄이 하나도 없다 — Agent 의 컨테이너 GPU Job 도 같은 곳에서 실패한다
+/// WARN  보이는 GPU 수가 고정한 수와 다르다(더 많으면 고정이 새고 있다) · 점검 폴더를 못 지웠다
+/// OK    그 밖
+fn judge_gpu_probe(
+    exit_code: i64,
+    oom_killed: bool,
+    stdout: &str,
+    stderr: &str,
+    pinned: usize,
+    left: &str,
+) -> Check {
+    let seen: Vec<&str> = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("GPU "))
+        .collect();
+    if exit_code != 0 || seen.is_empty() {
+        return check(
+            "container_gpu_probe",
+            Level::Fail,
+            format!(
+                "컨테이너 안에서 GPU 를 열지 못했다(종료 {exit_code} · oom {oom_killed}) — stdout {:?} · stderr {:?}{left}",
+                stdout.trim(),
+                stderr.trim()
+            ),
+        );
+    }
+    if seen.len() != pinned {
+        return check(
+            "container_gpu_probe",
+            Level::Warn,
+            format!(
+                "컨테이너 안에 GPU {}개가 보인다 — 고정한 것은 {pinned}개다: {seen:?}{left}",
+                seen.len()
+            ),
+        );
+    }
+    check(
+        "container_gpu_probe",
+        if left.is_empty() {
+            Level::Ok
+        } else {
+            Level::Warn
+        },
+        format!("Agent 와 같은 격리 옵션으로 컨테이너 안에서 GPU 를 열었다: {seen:?}{left}"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_gpu_probe_passes_only_when_the_pinned_gpus_are_seen_inside() {
+        let one = "GPU 0: NVIDIA GeForce RTX 4070 SUPER (UUID: GPU-x)\n";
+        assert_eq!(judge_gpu_probe(0, false, one, "", 1, "").level, Level::Ok);
+        // 런타임이 GPU 를 못 넘겼다 — nvidia-smi 가 없거나 장치를 못 연다.
+        assert_eq!(
+            judge_gpu_probe(127, false, "", "exec: nvidia-smi: not found", 1, "").level,
+            Level::Fail
+        );
+        // 종료 0 이어도 GPU 줄이 없으면 연 것이 아니다.
+        assert_eq!(
+            judge_gpu_probe(0, false, "No devices were found\n", "", 1, "").level,
+            Level::Fail
+        );
+        // 고정한 것보다 많이 보인다 — 고정이 새고 있다.
+        let two = "GPU 0: A (UUID: GPU-a)\nGPU 1: B (UUID: GPU-b)\n";
+        assert_eq!(judge_gpu_probe(0, false, two, "", 1, "").level, Level::Warn);
+        // 폴더를 못 지웠으면 OK 로 덮지 않는다.
+        assert_eq!(
+            judge_gpu_probe(0, false, one, "", 1, " · 남았다").level,
+            Level::Warn
+        );
+    }
 }

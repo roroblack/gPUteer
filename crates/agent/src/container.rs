@@ -367,19 +367,35 @@ pub fn create_args(
         args.push(format!("--env={key}={value}").into());
     }
     if let Some(pin) = execution.gpu_pin.as_deref() {
-        // ★ 아직 실측하지 않은 경로다(설계 문서 Out · 조각 2). 모양은 각 런타임의 문서를 따른다.
-        match execution.runtime.flavor {
-            RuntimeFlavor::Podman => args.push(format!("--device=nvidia.com/gpu={pin}").into()),
-            RuntimeFlavor::Docker => {
-                args.push("--gpus".into());
-                args.push(format!("device={pin}").into());
-            }
-        }
+        args.extend(gpu_args(execution.runtime.flavor, pin));
     }
     args.push(format!("--entrypoint={}", input.entrypoint).into());
     args.push(execution.pinned_image.clone().into());
     args.extend(input.args.iter().map(OsString::from));
     Ok(args)
+}
+
+/// `--gpu-pin` 값(장치 번호를 쉼표로 · `parse_gpu_pin` 이 정리한 것)을 런타임의 GPU 인자로 바꾼다.
+///
+/// ★ 결함 300 — 여러 장을 한 값으로 넘기면 두 런타임 다 받지 않는다(예상 · 문서 기준). podman 의 CDI 이름은 장치 하나씩이고,
+///   docker 는 `--gpus` 값을 CSV 로 읽어 `device=0,1` 이 두 필드(`device=0` · `1`=개수)로 쪼개진다. 그래서 podman 은 장치마다
+///   `--device` 를 따로 주고, docker 는 값 전체를 큰따옴표로 감싸 한 필드로 만든다(docker 문서의 `"device=0,1"` 형식).
+pub fn gpu_args(flavor: RuntimeFlavor, pin: &str) -> Vec<OsString> {
+    let ids: Vec<&str> = pin
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .collect();
+    match flavor {
+        RuntimeFlavor::Podman => ids
+            .iter()
+            .map(|id| format!("--device=nvidia.com/gpu={id}").into())
+            .collect(),
+        RuntimeFlavor::Docker => vec![
+            "--gpus".into(),
+            format!("\"device={}\"", ids.join(",")).into(),
+        ],
+    }
 }
 
 /// 붙인 폴더 아래를 가리키는 호스트 경로를 컨테이너 안 경로로 바꾼다. 붙인 폴더 밖 경로는 그대로 둔다(식별자 같은 값).
@@ -974,7 +990,28 @@ mod tests {
         execution.runtime.flavor = RuntimeFlavor::Docker;
         let docker = strings(create_args(&execution, &input(&mounts, &[], &[])).unwrap());
         let gpus = docker.iter().position(|a| a == "--gpus").unwrap();
-        assert_eq!(docker[gpus + 1], "device=GPU-1");
+        assert_eq!(docker[gpus + 1], "\"device=GPU-1\"");
+    }
+
+    #[test]
+    fn several_pinned_gpus_become_one_device_request_per_runtime_syntax() {
+        // 결함 300 — "0,1" 을 한 값으로 넘기면 podman 은 없는 CDI 이름을, docker 는 CSV 두 필드(device=0 · 1)를 본다.
+        let podman = strings(gpu_args(RuntimeFlavor::Podman, "0,1"));
+        assert_eq!(
+            podman,
+            ["--device=nvidia.com/gpu=0", "--device=nvidia.com/gpu=1"]
+        );
+        let docker = strings(gpu_args(RuntimeFlavor::Docker, "0,1"));
+        assert_eq!(docker, ["--gpus", "\"device=0,1\""]);
+        // 한 장은 전과 같은 뜻이다.
+        assert_eq!(
+            strings(gpu_args(RuntimeFlavor::Podman, "0")),
+            ["--device=nvidia.com/gpu=0"]
+        );
+        assert_eq!(
+            strings(gpu_args(RuntimeFlavor::Docker, "0")),
+            ["--gpus", "\"device=0\""]
+        );
     }
 
     #[test]

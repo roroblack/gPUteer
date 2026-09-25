@@ -275,6 +275,20 @@
   맡는다(결함 번호: main 298 · 299 · 400~ / fork 300~399)
 - 리포트: 런북 §5a · 컨테이너 계획 문서
 
+## 2026-09-25 16:10 — (fork `fork-install-gpu`) 설치 자동화 · 컨테이너 GPU 실행 점검 · 결함 300 · 301
+
+- 계획: 사용자 지시 "x600 허가할게 순서대로 다 진행해" 중 ② 설치 자동화 · ④ `--container-gpu` 실측(main 세션과 분담 — ③ 웹 UI 는 main)
+- 수행: `deploy/trusted-party/install/`(make-invite · install-node · admit-node · refresh-inventory, `.ps1` · `.sh`) ·
+  `node-doctor --container-gpu-probe-image`(Agent 와 같은 create 인자로 `nvidia-smi -L`) · `container::gpu_args()`(결함 300) ·
+  `scripts/container_gpu_probe/`(x600 실측 도구) · 런북 §4 · §5a(새 줄) · §9a
+- 결함: 300 — 여러 GPU 고정의 컨테이너 GPU 인자가 런타임 문법에 안 맞다(코드 읽기 · 수정). 301 — 등록 정보의 관측 시각이 갱신되지 않아
+  `--max-snapshot-age-ms`(런북 하루) 뒤 풀이 배치를 멈춘다(시험으로 확인 · 운영 완화만, 근본은 설계 결정으로 main 에 넘김)
+- 검증: `gputeer-agent` container 단위 9 · `gputeer-cli` node_doctor 단위 1 + 통합 4 · plan_job 12 통과(개발 기계 Windows).
+  스크립트는 PowerShell 5.1 · Git Bash 로 초대 → 설치(node-doctor 까지) → 받기 → 다시 넣기를 돌렸다.
+  **x600 실측은 못 했다** — 이 세션에서 x600 원격 실행이 자동 권한 판정에 막혔다. `--container-gpu` 는 여전히 실측 전이다
+- 리포트: `docs/reports/debugs/2026-09-25_1540_결함300_여러_GPU_핀의_컨테이너_GPU_인자.md` ·
+  `docs/reports/debugs/2026-09-25_1610_결함301_노드_등록정보가_하루_뒤_낡아_배치가_멈춘다.md`
+
 ## 2026-09-25 02:55 — 재검수 92 대응: 결함 296 · 297(문서)
 
 - 결함: `docs/reports/debugs/2026-09-25_0240_재검수91_결함_293_295.md` 끝 절

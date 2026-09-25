@@ -158,6 +158,26 @@ fn a_missing_required_option_is_refused() {
     ]);
     assert!(!success);
     assert!(report.contains("함께 준다"), "{report}");
+    // GPU 실행 점검은 런타임 · 고정 GPU 없이 받지 않는다 — 무엇을 넘길지 모른다.
+    let (success, report) = doctor(&[
+        "--seed-file",
+        "x",
+        "--node-dir",
+        "y",
+        "--connect",
+        "127.0.0.1:1",
+        "--container-runtime",
+        "podman",
+        "--container-runtime-kind",
+        "podman",
+        "--container-gpu-probe-image",
+        "img",
+    ]);
+    assert!(!success);
+    assert!(
+        report.contains("--container-gpu-probe-image") && report.contains("함께 준다"),
+        "{report}"
+    );
 }
 
 /// 결함 282 · 283 · 284 (재검수 89) — 점검은 폴더를 만들지 않고, Agent 가 열 자리가 막혀 있으면 FAIL 이고, Agent 가 받지 않는
