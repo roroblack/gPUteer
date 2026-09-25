@@ -140,3 +140,25 @@ fn every_database_path_is_checked_for_the_pool_mark() {
         );
     }
 }
+
+/// ★ 결함 415 (재검수 100) — DB 경로를 SQLite URI 로 주면(`file:…`) 존재 검사는 거짓인데 SQLite 는 그 파일을 연다. URI 는 받지 않는다.
+#[test]
+fn a_sqlite_uri_database_path_is_refused() {
+    // 관문이 망가져도 저장소에 파일을 만들지 않게 임시 폴더 · 읽기 전용 URI 를 쓴다.
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("pool.sqlite3");
+    gputeer_coordinator::job_store::declare_pool_mode(&db, 1).expect("풀 표식");
+    let path = db.to_str().expect("경로").replace('\\', "/");
+    for uri in [
+        format!("file:{path}?mode=ro"),
+        format!("FILE:{path}?mode=ro"),
+    ] {
+        let mut c = config(&["--max-connections", "1", "--accept-timeout-ms", "200"]);
+        c.lease_db_path = Some(std::path::PathBuf::from(&uri));
+        let error = gputeer_coordinator::run(c).expect_err(&uri);
+        assert!(
+            error.contains("SQLITE_URI_PATH"),
+            "{uri}: 실제 오류: {error}"
+        );
+    }
+}

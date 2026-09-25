@@ -2783,6 +2783,20 @@ pub(crate) fn refuse_pool_marked_db_without_pool_mode(
         config.replay_db.clone(),
         config.hello_replay_db.clone(),
     ];
+    // ★ 결함 415 (재검수 100) — 저장소는 rusqlite 기본값(SQLITE_OPEN_URI)으로 열어 `file:…` 을 URI 로 해석한다. 아래 존재 검사는 그것을 파일 이름으로
+    //   보므로 둘이 다른 파일을 가리킨다 — URI 경로는 받지 않는다(이 저장소는 쓰지 않는다). 검사는 여는 쪽과 같은 해석이어야 한다.
+    for path in paths.iter().flatten() {
+        if path
+            .to_string_lossy()
+            .get(..5)
+            .is_some_and(|head| head.eq_ignore_ascii_case("file:"))
+        {
+            return Err(format!(
+                "STARTUP_REFUSED: SQLITE_URI_PATH — {} 는 SQLite URI 다. DB 는 파일 경로로 준다(풀 표식 검사가 URI 를 해석하지 않는다)",
+                path.display()
+            ));
+        }
+    }
     for path in paths.into_iter().flatten().filter(|p| p.exists()) {
         if job_store::pool_mode_declared(&path)? {
             return Err(format!(
