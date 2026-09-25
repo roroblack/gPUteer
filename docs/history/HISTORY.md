@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-25 15:33 — CI 첫 컨테이너 실측: docker · podman 둘 다 격리 5개 통과
+
+- 근거: GitHub Actions 실행 36103061402(`fff3d08` 푸시 · ubuntu 러너 · 비-root) — 정보용 단계의 `CONTAINER_ISOLATION_MEASURED` 두 런타임 × 5
+- 수행: 개발 기계에 런타임이 없어 미뤄 둔 실측을 CI 가 처음 했다. 읽기 전용 루트 · lo 뿐인 네트워크 · capability 0 · 메모리 초과 시 죽음 ·
+  소유자 정지가 docker 와 rootless podman 에서 모두 확인됐다. podman 도 `--memory-swap` = `--memory` 를 받았다(결함 275 — 그 판에서)
+- ★ 새로 안 것: podman 은 컨테이너 안 한 프로세스가 OOM 으로 죽으면 `OOMKilled=false` 로 보고했다(docker 는 true) — OOM 판정은 종료 코드로 한다
+- ★ 한계: 한 번 · 한 환경 · GPU 경로 미측정 · evidence 미작성
+- 작업 나눔: 같은 저장소의 fork 세션이 ② 설치 자동화 · ④ x600 GPU 실측을 `fork-install-gpu` 브랜치에서 맡고, 이 세션은 ③ 웹 UI · 풀 계약 신호(결함 288)를
+  맡는다(결함 번호: main 298 · 299 · 400~ / fork 300~399)
+- 리포트: 런북 §5a · 컨테이너 계획 문서
+
 ## 2026-09-25 02:55 — 재검수 92 대응: 결함 296 · 297(문서)
 
 - 결함: `docs/reports/debugs/2026-09-25_0240_재검수91_결함_293_295.md` 끝 절
