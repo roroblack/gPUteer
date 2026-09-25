@@ -385,7 +385,7 @@ document.getElementById('send').addEventListener('click',async()=>{
  out.textContent='올리는 중…';
  try{const r=await fetch('/api/import',{method:'POST',headers:{'X-Gputeer-Token':token,'Content-Type':'application/octet-stream'},body:await f.arrayBuffer()});
   const t=await r.text();let d;try{d=JSON.parse(t);}catch(e){d=null;}
-  out.textContent=d?(d.ok?'반입 · 계획 완료\n'+d.imported+'\n'+d.planned:'실패('+(d.stage||'?')+'): '+d.error+(d.imported?'\n'+d.imported:'')):t;
+  out.textContent=d?(d.ok?'반입 · 계획 완료\n'+d.imported+'\n'+d.planned:'실패('+(d.stage||'?')+'): '+d.error+(d.imported?'\n'+d.imported:'')+(d.state_now?'\n지금 상태: '+d.state_now+(d.state_now==='PLANNING'?' — 계획 도중 멈췄다(plan-job 으로 다시 계획한다)':''):'')):t;
   refresh();
  }catch(e){out.textContent='실패: '+e;}
 });

@@ -193,7 +193,7 @@ pub fn respond_json(
 pub const MAX_CONCURRENT: usize = 16;
 
 /// 연결마다 스레드로 처리한다 — 끝나지 않는 연결 하나가 다른 요청을 막지 못하게(결함 403 · 재검수 93). 동시에 `MAX_CONCURRENT` 개까지 받고,
-/// 넘으면 받자마자 닫는다. `max_requests`(시험용)는 **처리를 끝낸** 요청만 센다 — 다 세면 진행 중인 처리가 끝나기를 기다렸다 돌아온다.
+/// 넘으면 받자마자 닫는다. `max_requests`(시험용)만큼 **받아들이면** 더 받지 않고, 진행 중인 처리가 끝나기를 기다렸다 끝낸 수를 돌려준다.
 ///
 /// ★ 남는 것: 로컬 프로세스가 연결 16개를 계속 채우면 여전히 밀린다(로컬 전용 화면의 한계).
 pub fn serve<F>(listener: TcpListener, max_requests: Option<u64>, handler: F) -> Result<u64, String>
@@ -208,8 +208,10 @@ where
     let handler = Arc::new(handler);
     let active = Arc::new(AtomicUsize::new(0));
     let done = Arc::new(AtomicU64::new(0));
+    // ★ 결함 404 (재검수 94) — 받아들인 요청 수로 **입장**을 막는다. 끝난 수만 보면 끝나기 전에 들어온 요청이 더 처리됐다.
+    let mut admitted: u64 = 0;
     loop {
-        if max_requests.is_some_and(|max| max > 0 && done.load(Ordering::SeqCst) >= max) {
+        if max_requests.is_some_and(|max| max > 0 && admitted >= max) {
             while active.load(Ordering::SeqCst) > 0 {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -226,6 +228,7 @@ where
                     continue;
                 }
                 active.fetch_add(1, Ordering::SeqCst);
+                admitted += 1;
                 let (handler, active, done) = (handler.clone(), active.clone(), done.clone());
                 std::thread::spawn(move || {
                     if let Err(e) = handler(stream) {

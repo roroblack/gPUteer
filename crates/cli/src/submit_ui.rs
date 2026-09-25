@@ -297,6 +297,18 @@ fn submit_from_form(request: &Request, config: &Config) -> (u16, serde_json::Val
                 "message": message,
             }),
         ),
+        // ★ 결함 406 (재검수 94) — 같은 id 두 요청이 동시에 존재 확인을 지나면 쓰기는 하나만 이기고(원자적 생성) 진 쪽은 OUT_EXISTS 다.
+        //   그 쪽도 409 · 내려받기로 알린다(두 번째 작업은 생기지 않았다).
+        Err(error) if error.contains("OUT_EXISTS") => (
+            409,
+            serde_json::json!({
+                "ok": false,
+                "exists": true,
+                "job_id": job_id,
+                "download": format!("/manifest/{job_id}"),
+                "error": "이 Job id 로 이미 만들었다 — 다시 만들지 않는다(두 번 도는 것을 막는다). 이미 만든 파일을 내려받는다",
+            }),
+        ),
         Err(error) => fail(400, error),
     }
 }
