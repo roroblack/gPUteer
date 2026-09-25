@@ -406,6 +406,10 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
             "true",
             "--release-on-exit-report",
             "true",
+            // ★ 결함 288 (2026-09-25) — 수신 확인을 켠 풀 Agent 는 실행 중 갱신이 Lease 를 이 폭만큼 늘린다. 기본 60초면 A 를 죽인 뒤
+            //   Lease 가 만료될 때까지 시험 시한을 넘긴다. 갱신 주기(600ms)의 두 배 + 여유보다 길고 "확인 뒤 5초" 보다 길게 둔다.
+            "--renew-extension-ms",
+            "7000",
             "--max-connections",
             "0",
             "--accept-timeout-ms",
@@ -534,12 +538,31 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
     .map(|s| s.to_string())
     .collect();
     b_args.extend(agent_args(&pool, &addr, NODE_B, SEED_B));
-    let agent_b = Command::new(cli_bin())
+    let mut agent_b = Command::new(cli_bin())
         .args(&b_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("agent B spawn");
+    // ★ 2026-09-25 — agent-loop 는 한 회차의 출력을 **자식이 끝난 뒤에** 찍는다. Job 이 COMPLETED 가 되는 순간(종료 보고 저장)과 그 출력 사이에
+    //   틈이 있어, 완료를 보자마자 죽이면 일한 회차의 줄(RESUME_PREPARED 등)이 사라졌다(수신 확인을 켠 뒤 간헐적으로 드러났다 — 고치기 전 14회 중 3회 실패 · 고친 뒤 10회 통과, 교대 측정 아님).
+    //   출력을 따로 읽어 일한 회차 줄이 나올 때까지 기다린 뒤 죽인다.
+    let b_lines = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let b_reader = {
+        let stdout = agent_b.stdout.take().expect("B stdout");
+        let lines = std::sync::Arc::clone(&b_lines);
+        thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let mut all = lines.lock().unwrap();
+                all.push_str(&line);
+                all.push_str("\n");
+            }
+        })
+    };
 
     let deadline = Instant::now() + Duration::from_secs(90);
     let finished = loop {
@@ -552,7 +575,13 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
         thread::sleep(Duration::from_millis(200));
     };
 
-    let agent_b_out = collect(agent_b);
+    let worked_deadline = Instant::now() + Duration::from_secs(20);
+    while !b_lines.lock().unwrap().contains("outcome=worked") && Instant::now() < worked_deadline {
+        thread::sleep(Duration::from_millis(100));
+    }
+    let b_err = collect(agent_b);
+    b_reader.join().ok();
+    let agent_b_out = format!("{}{b_err}", b_lines.lock().unwrap());
     let scheduler_out = collect(scheduler);
     let coordinator_err = collect(coordinator);
     let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();

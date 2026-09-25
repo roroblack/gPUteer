@@ -106,3 +106,37 @@ fn a_pool_marked_lease_db_is_refused_on_every_entry_point() {
         "실제 오류: {error}"
     );
 }
+
+/// ★ 결함 414 (재검수 99) — Coordinator 가 여는 DB 경로 **어느 것이든** 풀 DB 면 `--pool-mode` 없이 시작하지 않는다. 경로마다 하나씩 잰다.
+#[test]
+fn every_database_path_is_checked_for_the_pool_mark() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("pool.sqlite3");
+    gputeer_coordinator::job_store::declare_pool_mode(&db, 1).expect("풀 표식");
+    let db_string = db.to_str().expect("경로").to_string();
+    let setters: [(&str, fn(&mut CoordinatorConfig, &std::path::Path, &str)); 6] = [
+        ("control", |c, p, _| {
+            c.grant_from_control_db = Some(p.to_path_buf())
+        }),
+        ("lease", |c, p, _| c.lease_db_path = Some(p.to_path_buf())),
+        ("liveness", |c, _, s| {
+            c.liveness_db_path = Some(s.to_string())
+        }),
+        ("neighbor", |c, _, s| {
+            c.neighbor_report_db_path = Some(s.to_string())
+        }),
+        ("replay", |c, p, _| c.replay_db = Some(p.to_path_buf())),
+        ("hello-replay", |c, p, _| {
+            c.hello_replay_db = Some(p.to_path_buf())
+        }),
+    ];
+    for (label, set) in setters {
+        let mut c = config(&["--max-connections", "1", "--accept-timeout-ms", "200"]);
+        set(&mut c, &db, &db_string);
+        let error = gputeer_coordinator::run(c).expect_err(label);
+        assert!(
+            error.contains("POOL_DB_WITHOUT_POOL_MODE"),
+            "{label}: 실제 오류: {error}"
+        );
+    }
+}

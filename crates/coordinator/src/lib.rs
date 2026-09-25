@@ -2773,10 +2773,15 @@ pub(crate) fn refuse_pool_marked_db_without_pool_mode(
     if config.pool_mode {
         return Ok(());
     }
+    // ★ 결함 414 (재검수 99) — `run()` 이 여는 SQLite 경로 **전부**다. 처음엔 제어 · Lease · 생존 셋만 봐서 Hello replay DB 로 풀 DB 를 열면 지나갔다.
+    //   새 DB 경로를 설정에 더하면 여기에도 더한다(`pool_lane_guard` 시험이 이 목록을 하나씩 잰다).
     let paths = [
         config.grant_from_control_db.clone(),
         config.lease_db_path.clone(),
         config.liveness_db_path.as_ref().map(PathBuf::from),
+        config.neighbor_report_db_path.as_ref().map(PathBuf::from),
+        config.replay_db.clone(),
+        config.hello_replay_db.clone(),
     ];
     for path in paths.into_iter().flatten().filter(|p| p.exists()) {
         if job_store::pool_mode_declared(&path)? {
