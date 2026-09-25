@@ -1420,8 +1420,13 @@ pub fn declare_pool_mode(control_db: &std::path::Path, now_unix_ms: u64) -> Resu
 }
 
 /// 이 control DB 를 풀 Coordinator 가 쓰는가([`declare_pool_mode`]). 표가 없으면 아니다(읽기만 한다).
+///
+/// ★ 2026-09-25 (결함 419 · 재검수 103) — **읽기 전용 · 생성 없음 · URI 해석 없음**으로 연다. 기본(읽기 · 쓰기 · 생성)으로 열면, 호출자가 존재를
+///   확인한 뒤 파일이 옮겨졌을 때 빈 DB 를 만들고 "표식 없음" 으로 판단했다. 없는 파일이면 열기가 실패한다(호출자는 거부한다 — fail-closed).
 pub fn pool_mode_declared(control_db: &std::path::Path) -> Result<bool, String> {
-    let connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    let connection =
+        Connection::open_with_flags(control_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| e.to_string())?;
     connection
         .busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| e.to_string())?;

@@ -231,3 +231,12 @@ fn the_cli_parser_and_multi_agent_report_a_uri_before_other_pool_problems() {
         "multi-agent: 실제 오류: {error}"
     );
 }
+
+/// ★ 결함 419 (재검수 103) — 풀 표식 읽기는 없는 파일을 만들지 않는다(읽기 전용 · 생성 없음). 없으면 오류다(호출자가 거부한다).
+#[test]
+fn reading_the_pool_mark_never_creates_a_database_file() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let missing = dir.path().join("missing.sqlite3");
+    assert!(gputeer_coordinator::job_store::pool_mode_declared(&missing).is_err());
+    assert!(!missing.exists(), "풀 표식을 읽다가 빈 DB 를 만들었다");
+}

@@ -458,7 +458,8 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     validate_device_id(&config.coordinator_device_id)?;
     // ★ 2026-09-25 (결함 408 · 재검수 96) — 풀 전제도 **여기서** 본다. 파서에서만 보면 라이브러리 호출자가 `multi_agent` 분기로 가서
     //   풀 예약으로 풀 신호 없는 Grant 를 냈다(수신 확인 없는 Agent 가 실행하고, 그 lane 은 Job 을 RUNNING 으로 옮기지 않는다).
-    // ★ 결함 416 — DB 경로 모양(URI) · 풀 표식을 **먼저** 본다. 풀 시작 검사가 먼저면 풀 설정의 URI 가 다른 사유로만 거부되거나 지나간다.
+    // ★ 결함 416 — DB 경로 모양(URI) · 풀 표식을 **풀 시작 검사보다 먼저** 본다. 풀 시작 검사가 먼저면 풀 설정의 URI 가 다른 사유로만 거부되거나
+    //   지나간다. ★ 장치 id 검증은 위에서 먼저 돈다(결함 418 — 입력 자체가 틀린 사유를 먼저 알린다).
     refuse_pool_marked_db_without_pool_mode(&config)?;
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
@@ -2767,7 +2768,8 @@ fn parse_pool_agents(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
 /// ★ 결함 410 · 412 (재검수 97 · 98) — 풀 표식이 있는 DB 를 `--pool-mode` 없이 쓰지 않는다. 표식은 한 번 적으면 지우지 않는 사실이고,
 ///   빠뜨리면 풀 시작 검사 · 수신 확인 발송을 건너뛴 채 풀 예약(또는 같은 Lease DB)으로 풀 신호 없는 Grant 를 낸다.
 ///   이 Coordinator 가 여는 제어 · Lease · 생존 DB 를 **전부** 본다(412 — 처음엔 제어 DB 만 봐서 `--lease-db` 로만 열면 지나갔다).
-///   없는 파일은 열지 않는다(여는 것만으로 만들어진다). `run()` 과 `run_multi_agent()` 가 맨 앞에서 부른다.
+///   없는 파일은 건너뛰고, 있는 파일은 읽기 전용 · 생성 없음으로 읽는다(결함 419). `run()` · 파서는 풀 시작 검사보다 먼저, `run_multi_agent()` 는 맨 앞에서
+///   부른다(결함 418 — 장치 id · 인자 모양 검사는 그보다 앞선다).
 pub(crate) fn refuse_pool_marked_db_without_pool_mode(
     config: &CoordinatorConfig,
 ) -> Result<(), String> {
@@ -4072,8 +4074,9 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// `--flag value` 쌍으로 이루어진 CLI 인자를 설정으로 바꾸기만 한다 —
-/// lane 선택도 관문도 여기서 하지 않는다.
+/// `--flag value` 쌍으로 이루어진 CLI 인자를 설정으로 바꾼다 — lane 선택은 여기서 하지 않는다.
+/// ★ 인자 조합 관문(`STARTUP_REFUSED`)은 여기서도 한다. 2026-09-25(결함 417 · 419)부터는 DB 경로 검사가 **이미 있는 DB 파일을 읽기 전용으로** 읽는다
+///   (풀 표식) — 파일을 만들거나 쓰지 않는다.
 ///
 /// ★ `run_from_args` 에서 떼어냈다(독립 검수 7라운드). 관문이 실제로
 ///   각 진입점에 있는지 재려면, 라이브러리 호출자처럼 설정을 만들어
@@ -4204,8 +4207,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         resume_protocol: flags.bool_flag("--resume-protocol"),
         hello_replay_db: flags.get("--hello-replay-db").map(PathBuf::from),
     };
-    // ★ 결함 417 (재검수 102) — DB 경로 모양(URI) · 풀 표식을 파서에서도 **먼저** 본다. `run()` 에만 두면 CLI 는 아래 풀 시작 검사가 먼저 돌아
-    //   URI 가 다른 사유로만 보고됐다.
+    // ★ 결함 417 (재검수 102) — DB 경로 모양(URI) · 풀 표식을 파서에서도 아래 **풀 시작 검사보다 먼저** 본다. `run()` 에만 두면 CLI 는 풀 시작
+    //   검사가 먼저 돌아 URI 가 다른 사유로만 보고됐다. ★ 인자 자체의 모양 검사(`--pool-agents` 파싱 등)는 위에서 먼저 돈다(결함 418 — "맨 앞" 이 아니다).
     refuse_pool_marked_db_without_pool_mode(&config)?;
 
     // ★★ 결함 ⑯ 확장(2026-09-10 재검수 14) — **받아 두고 말없이 버리지 않는다.**
