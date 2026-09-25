@@ -56,9 +56,13 @@ if [ -n "$GPUTEER" ]; then
     echo "== node-doctor --container-gpu-probe-image (Agent 의 실제 create 인자)"
     NODE_DIR="$OUT_DIR/doctor-node"; mkdir -p "$NODE_DIR"
     SEED="$OUT_DIR/doctor.seed"; [ -e "$SEED" ] || "$GPUTEER" keygen --out "$SEED"
-    "$GPUTEER" node-doctor --seed-file "$SEED" --node-dir "$NODE_DIR" --connect 127.0.0.1:9 --gpu-pin 0 \
-        --container-runtime "$RT" --container-runtime-kind docker --container-gpu-probe-image "$PINNED"
-    echo "RESULT [node-doctor] exit=$? (coordinator_tcp FAIL 은 의도 — 여기서는 Coordinator 를 띄우지 않는다)"
+    for request in default cdi-all; do
+        echo "== node-doctor --container-gpu-request $request"
+        if [ "$request" = default ]; then set --; else set -- --container-gpu-request "$request"; fi
+        "$GPUTEER" node-doctor --seed-file "$SEED" --node-dir "$NODE_DIR" --connect 127.0.0.1:9 --gpu-pin 0 \
+            --container-runtime "$RT" --container-runtime-kind docker "$@" --container-gpu-probe-image "$PINNED"
+        echo "RESULT [node-doctor $request] exit=$? (coordinator_tcp FAIL 은 의도 — 여기서는 Coordinator 를 띄우지 않는다)"
+    done
 fi
 
 [ -n "$HAD_IMAGE" ] || { docker image rm "$IMAGE" >/dev/null && echo "== 받았던 이미지를 지웠다 $IMAGE"; }
