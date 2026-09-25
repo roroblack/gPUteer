@@ -843,6 +843,89 @@ impl CoordinatorJobStore {
         })
     }
 
+    /// ★ 2026-09-25 (결함 402) — `SUBMITTED -> PLANNING -> QUEUED` 를 **한 트랜잭션**으로 한다. 두 전이(PLANNING_STARTED · PLAN_READY)를 모두
+    /// 기록하고(두 시각 · revision +2), 중간에 실패하면 아무것도 남기지 않는다.
+    ///
+    /// 전에는 `plan-job` 이 [`start_planning`](Self::start_planning) · [`enqueue`](Self::enqueue) 를 따로 커밋해, 둘째가 실패하면 Job 이 PLANNING 에
+    /// 남았다. 그 사이 제출 Manifest 가 만료되면 `plan-job` 이 서명 검증에서 먼저 거부해 다시 돌려도 풀 수 없었다.
+    ///
+    /// PLANNING 에 있으면 QUEUED 로만 옮긴다(옛 실행이 남긴 것). QUEUED 면 같은 `plan_id` 일 때 그대로 돌려주고 다르면 `PlanConflict` 다.
+    pub fn plan_and_enqueue(
+        &mut self,
+        job_id: &str,
+        plan_id: &str,
+        at_unix_ms: u64,
+    ) -> Result<StoredJob, JobStoreError> {
+        self.plan_and_enqueue_inner(job_id, plan_id, at_unix_ms, false)
+    }
+
+    fn plan_and_enqueue_inner(
+        &mut self,
+        job_id: &str,
+        plan_id: &str,
+        at_unix_ms: u64,
+        fail_after_planning: bool,
+    ) -> Result<StoredJob, JobStoreError> {
+        if plan_id.trim().is_empty() {
+            return Err(JobStoreError::InvalidInput("plan_id"));
+        }
+        self.transition(job_id, |transaction, mut job| {
+            if job.state == JobState::Queued {
+                if job.plan_id.as_deref() == Some(plan_id) {
+                    return Ok(job);
+                }
+                return Err(JobStoreError::PlanConflict {
+                    stored_plan_id: job.plan_id.unwrap_or_default(),
+                    requested_plan_id: plan_id.to_string(),
+                });
+            }
+            if job.state == JobState::Submitted {
+                ensure_not_before(at_unix_ms, job.submitted_at_unix_ms)?;
+                job.state = JobState::Planning;
+                job.planning_at_unix_ms = Some(at_unix_ms);
+                job.revision = job.revision.checked_add(1).ok_or_else(|| {
+                    JobStoreError::CorruptData("job revision overflow".to_string())
+                })?;
+                update_job(transaction, &job)?;
+                if fail_after_planning {
+                    return Err(JobStoreError::CorruptData(
+                        "시험 주입 — PLANNING 을 적은 뒤 실패".to_string(),
+                    ));
+                }
+            }
+            if job.state != JobState::Planning {
+                return Err(JobStoreError::InvalidTransition {
+                    from: job.state,
+                    to: JobState::Queued,
+                });
+            }
+            let planning_at = job.planning_at_unix_ms.ok_or_else(|| {
+                JobStoreError::CorruptData("PLANNING job has no planning timestamp".to_string())
+            })?;
+            ensure_not_before(at_unix_ms, planning_at)?;
+            job.state = JobState::Queued;
+            job.queued_at_unix_ms = Some(at_unix_ms);
+            job.plan_id = Some(plan_id.to_string());
+            job.revision = job
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| JobStoreError::CorruptData("job revision overflow".to_string()))?;
+            update_job(transaction, &job)?;
+            Ok(job)
+        })
+    }
+
+    /// 시험 전용 — PLANNING 을 적은 **뒤** 같은 트랜잭션 안에서 실패시킨다(결함 402 의 원자성 시험).
+    #[cfg(test)]
+    pub(crate) fn plan_and_enqueue_failing_after_planning(
+        &mut self,
+        job_id: &str,
+        plan_id: &str,
+        at_unix_ms: u64,
+    ) -> Result<StoredJob, JobStoreError> {
+        self.plan_and_enqueue_inner(job_id, plan_id, at_unix_ms, true)
+    }
+
     /// Records one of the three distinct normative `QUEUED -> FAILED`
     /// outcomes. Deadline and timeout guards are checked inside the same
     /// `BEGIN IMMEDIATE` transaction as the state update. Permanent
@@ -2488,5 +2571,55 @@ mod tests {
             store.get("job-1").unwrap().unwrap().submitted_at_unix_ms,
             u64::MAX
         );
+    }
+
+    /// ★ 결함 402 — 한 트랜잭션: SUBMITTED 에서 두 전이를 모두 기록하고(두 시각 · revision +2), PLANNING 을 적은 뒤 실패하면 SUBMITTED 로 남는다.
+    #[test]
+    fn plan_and_enqueue_is_one_transaction() {
+        let (mut store, _dir) = open_temp();
+        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+        assert!(store
+            .plan_and_enqueue_failing_after_planning("job-1", "plan-1", 200)
+            .is_err());
+        let after_failure = store.get("job-1").unwrap().unwrap();
+        assert_eq!(
+            after_failure.state,
+            JobState::Submitted,
+            "PLANNING 이 남았다"
+        );
+        assert_eq!(after_failure.revision, 0);
+        assert_eq!(after_failure.planning_at_unix_ms, None);
+
+        let queued = store.plan_and_enqueue("job-1", "plan-1", 200).unwrap();
+        assert_eq!(queued.state, JobState::Queued);
+        assert_eq!(queued.revision, 2);
+        assert_eq!(queued.planning_at_unix_ms, Some(200));
+        assert_eq!(queued.queued_at_unix_ms, Some(200));
+        assert_eq!(queued.plan_id.as_deref(), Some("plan-1"));
+        // 재시도는 멱등 · 다른 계획은 거부
+        assert_eq!(
+            store.plan_and_enqueue("job-1", "plan-1", 999).unwrap(),
+            queued
+        );
+        assert!(matches!(
+            store.plan_and_enqueue("job-1", "plan-2", 999),
+            Err(JobStoreError::PlanConflict { .. })
+        ));
+    }
+
+    /// 옛 실행이 PLANNING 에 남긴 Job 은 QUEUED 로만 옮긴다(PLANNING 시각은 그대로).
+    #[test]
+    fn plan_and_enqueue_finishes_a_job_left_in_planning() {
+        let (mut store, _dir) = open_temp();
+        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+        store.start_planning("job-1", 150).unwrap();
+        let queued = store.plan_and_enqueue("job-1", "plan-1", 200).unwrap();
+        assert_eq!(queued.state, JobState::Queued);
+        assert_eq!(queued.planning_at_unix_ms, Some(150));
+        assert_eq!(queued.revision, 2);
+        assert!(matches!(
+            store.plan_and_enqueue("job-1", "", 200),
+            Err(JobStoreError::InvalidInput("plan_id"))
+        ));
     }
 }

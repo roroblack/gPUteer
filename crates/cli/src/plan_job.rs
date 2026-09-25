@@ -18,7 +18,7 @@
 //! 3  Verified 뒤에만 JobRequirements 로 옮긴다
 //! 4  같은 control DB 의 inventory 로 pool_snapshot 을 만든다
 //! 5  evaluate_eligibility() 로 후보를 가린다
-//! 6  적격이 있으면 start_planning + enqueue(plan_id)
+//! 6  적격이 있으면 plan_and_enqueue(plan_id) — PLANNING · QUEUED 를 한 트랜잭션으로(결함 402)
 //!    없으면 아무 상태도 안 바꾸고 이유를 보고한다
 //! ```
 //!
@@ -201,28 +201,13 @@ pub fn run(args: &[String]) -> Result<String, String> {
     // ── 6. 계획이 실제로 있다. 이제 올린다 ──────────────────────────
     let plan_id = derive_plan_id(job_id, &binding.manifest_hash, &snapshot, &report);
 
-    // ★ **이미 큐에 있으면 `PLANNING` 으로 되돌리지 않는다.**
-    //
-    //   `start_planning()` 은 `SUBMITTED` 에서만 받고 `QUEUED -> PLANNING`
-    //   을 거부한다 — 상태기계가 뒤로 가지 않는다. 그런데 재계획은
-    //   정상적인 일이다(운영자가 같은 명령을 두 번 돌린다).
-    //
-    //   그래서 큐에 이미 있으면 그 단계를 건너뛰고 `enqueue()` 만 부른다.
-    //   그쪽은 **같은 `plan_id` 면 멱등**이고 다르면 `PlanConflict` 를
-    //   낸다 — inventory 가 바뀌어 계획이 달라졌으면 조용히 옛 계획을
-    //   유지하지 않고 시끄럽게 실패하는 것이 옳다.
-    let already_queued = jobs
-        .get(job_id)
-        .map_err(|e| format!("Job 조회 실패: {e}"))?
-        .map(|job| job.state == gputeer_coordinator::job_store::JobState::Queued)
-        .unwrap_or(false);
-    if !already_queued {
-        jobs.start_planning(job_id, now_unix_ms)
-            .map_err(|e| format!("PLAN_REFUSED: PLANNING 진입 실패: {e}"))?;
-    }
+    // ★ **이미 큐에 있으면 `PLANNING` 으로 되돌리지 않는다.** 재계획은 정상적인 일이다(운영자가 같은 명령을 두 번 돌린다) — 같은 `plan_id` 면
+    //   멱등이고 다르면 `PlanConflict` 다(inventory 가 바뀌어 계획이 달라졌으면 옛 계획을 조용히 유지하지 않고 시끄럽게 실패한다).
+    // ★★ 2026-09-25 (결함 402) — `SUBMITTED -> PLANNING -> QUEUED` 를 **한 트랜잭션**으로 한다. 전에는 두 커밋이라 둘째가 실패하면 PLANNING 에
+    //   남았고, 그 사이 Manifest 가 만료되면 이 명령이 서명 검증에서 먼저 거부해 다시 돌려도 풀 수 없었다.
     let job = jobs
-        .enqueue(job_id, &plan_id, now_unix_ms)
-        .map_err(|e| format!("PLAN_REFUSED: QUEUED 진입 실패: {e}"))?;
+        .plan_and_enqueue(job_id, &plan_id, now_unix_ms)
+        .map_err(|e| format!("PLAN_REFUSED: 계획 · 큐 진입 실패: {e}"))?;
 
     Ok(format!(
         "QUEUED job_id={job_id} plan_id={plan_id} state={:?} eligible={} rejected={}",

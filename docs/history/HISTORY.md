@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-25 21:32 — 결함 402 닫음(계획 · 큐 진입을 한 트랜잭션) · 재검수 106 대응(결함 422)
+
+- 결함: `docs/reports/debugs/2026-09-25_1600_재검수93_결함_298_299_400_403.md` 끝 절
+- 스트림: Coordinator · CLI
+- 수행: `plan-job` 이 SUBMITTED → PLANNING → QUEUED 를 한 트랜잭션(`plan_and_enqueue`)으로 한다 — 두 커밋 사이 실패로 PLANNING 에 남고, Manifest 가 만료되면
+  영영 못 풀던 것(402). 재검수 106 은 407(웹 화면 409)에 새 결함이 없다고 했고, 시험의 Drop 가드가 출력 해석 도중 실패를 못 막는 것(422)을 짚었다 — 띄우자마자 감싼다
+- 검증: `cargo test --workspace -j 2` 1361 passed · 0 failed · ignored 4 · 402 는 실패 시 커밋하게 망가뜨리면, 422 는 가드를 끄면 시험 실패
+- ★ 한계: 이미 PLANNING 에 멈춘 옛 Job 중 Manifest 가 만료된 것은 풀 수 없다(PLANNING → FAILED 미구현) · 재검수 전
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-25 20:01 — 재검수 105 ACCEPTED: 풀 신호 · 노드 GPU 관측(결함 288 · 301 · 408~421)
 
 - 결함: `docs/reports/debugs/2026-09-25_1752_재검수96_결함_408_409.md` · 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`

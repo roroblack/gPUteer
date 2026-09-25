@@ -121,13 +121,22 @@ impl Drop for Ui {
 
 /// 화면을 띄우고 첫 줄들에서 주소와 토큰(있으면)을 읽는다.
 fn spawn_ui(args: &[&str], token_prefix: Option<&str>) -> (Ui, String, Option<String>) {
-    let mut child = Command::new(cli_bin())
+    parse_ui(start_ui(args), token_prefix)
+}
+
+/// ★ 결함 422 (재검수 106) — 띄우자마자 가드로 감싼다. 전에는 출력 해석(아래 assert · panic)을 마친 뒤에 감싸, 그 사이 실패에서 프로세스가 남았다.
+fn start_ui(args: &[&str]) -> Ui {
+    Ui(Command::new(cli_bin())
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("ui");
-    let mut reader = BufReader::new(child.stdout.take().unwrap());
+        .expect("ui"))
+}
+
+/// 가드를 쥔 채로 첫 줄들을 해석한다 — 여기서 실패하면 가드가 풀리며 프로세스를 죽인다.
+fn parse_ui(mut ui: Ui, token_prefix: Option<&str>) -> (Ui, String, Option<String>) {
+    let mut reader = BufReader::new(ui.0.stdout.take().unwrap());
     let mut first = String::new();
     reader.read_line(&mut first).unwrap();
     let address = first
@@ -152,7 +161,7 @@ fn spawn_ui(args: &[&str], token_prefix: Option<&str>) -> (Ui, String, Option<St
         let mut rest = String::new();
         let _ = reader.read_to_string(&mut rest);
     });
-    (Ui(child), address, token)
+    (ui, address, token)
 }
 
 /// 요청 하나 — (상태 코드, 몸).
@@ -503,4 +512,52 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
         Some(JobState::Queued),
         "control DB 에 QUEUED 로 남지 않았다"
     );
+}
+
+/// ★ 결함 422 (재검수 106) — 출력 해석 도중에 실패해도(틀린 토큰 줄 접두어) 띄운 화면 프로세스가 죽는다.
+#[test]
+fn a_ui_that_fails_during_startup_parsing_is_killed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_db, _keyring, seed) = party(dir.path());
+    let out_dir = dir.path().join("manifests");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let ui = start_ui(&[
+        "submit-ui",
+        "--submitter-device-id",
+        SUBMITTER,
+        "--submitter-seed-file",
+        seed.to_str().unwrap(),
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        "--port",
+        "0",
+        "--max-requests",
+        "10",
+    ]);
+    let pid = ui.0.id();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        parse_ui(ui, Some("WRONG_PREFIX"))
+    }));
+    assert!(result.is_err(), "틀린 접두어인데 해석이 통과했다");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while process_alive(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        !process_alive(pid),
+        "해석 도중 실패한 화면 프로세스(pid {pid})가 남았다"
+    );
+}
+
+/// 그 pid 의 프로세스가 아직 있는가 — Windows 는 tasklist, 그 밖은 /proc.
+fn process_alive(pid: u32) -> bool {
+    if cfg!(windows) {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .expect("tasklist");
+        String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
+    } else {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
 }
