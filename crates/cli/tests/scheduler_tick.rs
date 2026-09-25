@@ -185,9 +185,28 @@ const DECLARATIONS: [&str; 22] = [
 
 /// 한 Job 을 `submit` -> `import-manifest` -> `plan-job` 까지 올린다.
 fn queue_job(dir: &Path, keyring: &Path, db: &Path, job_id: &str, idem: &str) {
+    queue_job_expiring(
+        dir,
+        keyring,
+        db,
+        job_id,
+        idem,
+        now_unix_ms() + 7 * 24 * 3_600_000,
+    );
+}
+
+/// Manifest 만료 시각을 정해 큐에 넣는다(결함 423 시험).
+fn queue_job_expiring(
+    dir: &Path,
+    keyring: &Path,
+    db: &Path,
+    job_id: &str,
+    idem: &str,
+    expires_at_unix_ms: u64,
+) {
     let manifest = dir.join(format!("{job_id}.pb"));
     let issued = now_unix_ms().saturating_sub(60_000).to_string();
-    let expires = (now_unix_ms() + 7 * 24 * 3_600_000).to_string();
+    let expires = expires_at_unix_ms.to_string();
     let mut args: Vec<&str> = vec![
         "submit",
         "--job-id",
@@ -888,4 +907,60 @@ fn with_silence_policy_a_never_heard_node_gets_no_work_until_it_says_hello() {
     assert!(ok, "Hello 를 한 노드에도 일을 안 줬다: {output}");
     assert!(output.contains("TICK_STAGED"), "{output}");
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+}
+
+/// ★ 결함 423 (재검수 107) — 큐 맨 앞 Job 의 Manifest 가 만료되면 큐에서 내리고 **뒤의 Job 을 배치한다.**
+///   전에는 맨 앞을 고른 뒤 검증해 tick 이 매번 거부로 끝났고, 뒤의 Job 은 영영 배치되지 않았다.
+#[test]
+fn an_expired_manifest_at_the_head_does_not_hold_the_queue_hostage() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("control.sqlite3");
+    let bootstrap = write_bootstrap(dir.path(), 1);
+    let (ok, out) = run_cli(&[
+        "import-inventory",
+        "--inventory",
+        bootstrap.to_str().unwrap(),
+        "--inventory-db",
+        db.to_str().unwrap(),
+    ]);
+    assert!(ok, "import-inventory 실패: {out}");
+    let keyring = write_keyring(dir.path());
+    let expires = now_unix_ms() + 4_000;
+    queue_job_expiring(
+        dir.path(),
+        &keyring,
+        &db,
+        "01JEXPIREDHEAD0000000001",
+        "a1a2a3a4a5a6a7a8a9aaabacadaeaf00",
+        expires,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    queue_job(
+        dir.path(),
+        &keyring,
+        &db,
+        "01JVALIDBEHIND0000000001",
+        "b1b2b3b4b5b6b7b8b9babbbcbdbebf00",
+    );
+    while now_unix_ms() <= expires + 100 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "tick 실패: {output}");
+    assert!(
+        output.contains("TICK_JOB_FAILED_MANIFEST_EXPIRED 01JEXPIREDHEAD0000000001"),
+        "만료된 맨 앞을 내리지 않았다: {output}"
+    );
+    assert!(
+        output.contains("TICK_STAGED"),
+        "뒤의 Job 을 배치하지 않았다: {output}"
+    );
+    assert_eq!(
+        job_state(&db, "01JEXPIREDHEAD0000000001"),
+        Some(JobState::Failed)
+    );
+    assert_eq!(
+        job_state(&db, "01JVALIDBEHIND0000000001"),
+        Some(JobState::Staging)
+    );
 }

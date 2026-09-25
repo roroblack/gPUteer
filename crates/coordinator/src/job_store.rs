@@ -843,8 +843,11 @@ impl CoordinatorJobStore {
         })
     }
 
-    /// ★ 2026-09-25 (결함 402) — `SUBMITTED -> PLANNING -> QUEUED` 를 **한 트랜잭션**으로 한다. 두 전이(PLANNING_STARTED · PLAN_READY)를 모두
-    /// 기록하고(두 시각 · revision +2), 중간에 실패하면 아무것도 남기지 않는다.
+    /// ★ 2026-09-25 (결함 402) — `SUBMITTED -> PLANNING -> QUEUED` 를 **한 트랜잭션**으로 한다. 두 시각 칸과 revision(+2)을 채우고, 중간에 실패하면
+    /// 아무것도 남기지 않는다.
+    ///
+    /// ★ 결함 425 (재검수 107) — 상태표를 **전부** 지키는 것은 아니다. PLANNING 은 따로 영속되지 않는다 — `plan-job` 은 계획 계산을 쓰기 **전에**
+    ///   끝내므로 PLANNING 은 이 호출 안에서만 있다. PLAN_READY 의 효과인 PlacementRationale 기록은 없다(옛 `enqueue` 도 없었다 — 저장할 칸이 없다).
     ///
     /// 전에는 `plan-job` 이 [`start_planning`](Self::start_planning) · [`enqueue`](Self::enqueue) 를 따로 커밋해, 둘째가 실패하면 Job 이 PLANNING 에
     /// 남았다. 그 사이 제출 Manifest 가 만료되면 `plan-job` 이 서명 검증에서 먼저 거부해 다시 돌려도 풀 수 없었다.

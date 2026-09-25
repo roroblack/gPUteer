@@ -136,9 +136,21 @@ fn start_ui(args: &[&str]) -> Ui {
 
 /// 가드를 쥔 채로 첫 줄들을 해석한다 — 여기서 실패하면 가드가 풀리며 프로세스를 죽인다.
 fn parse_ui(mut ui: Ui, token_prefix: Option<&str>) -> (Ui, String, Option<String>) {
-    let mut reader = BufReader::new(ui.0.stdout.take().unwrap());
-    let mut first = String::new();
-    reader.read_line(&mut first).unwrap();
+    // ★ 결함 426 (재검수 107) — 줄 읽기는 별도 스레드에서 하고 **시한**을 둔다. 전에는 자식이 다음 줄을 안 찍고 살아 있으면 여기서 영원히 기다려
+    //   가드까지 가지 못했다. 스레드는 받는 쪽이 사라진 뒤에도 끝까지 빨아낸다(파이프가 차서 멈추지 않게).
+    let stdout = ui.0.stdout.take().unwrap();
+    let (lines, received) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = lines.send(line);
+        }
+    });
+    let next_line = |what: &str| -> String {
+        received
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .unwrap_or_else(|_| panic!("{what} 줄을 20초 안에 받지 못했다"))
+    };
+    let first = next_line("주소");
     let address = first
         .trim()
         .split("http://")
@@ -147,19 +159,13 @@ fn parse_ui(mut ui: Ui, token_prefix: Option<&str>) -> (Ui, String, Option<Strin
         .unwrap_or_else(|| panic!("주소 줄이 아니다: {first:?}"))
         .to_string();
     let token = token_prefix.map(|prefix| {
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
+        let line = next_line("토큰 주소");
         assert!(line.starts_with(prefix), "토큰 주소 줄이 아니다: {line:?}");
         line.trim()
             .split("#token=")
             .nth(1)
             .unwrap_or_else(|| panic!("주소에 토큰이 없다: {line:?}"))
             .to_string()
-    });
-    // 나머지 출력은 버리지 않고 빨아낸다(파이프가 차서 멈추지 않게).
-    std::thread::spawn(move || {
-        let mut rest = String::new();
-        let _ = reader.read_to_string(&mut rest);
     });
     (ui, address, token)
 }
@@ -549,7 +555,7 @@ fn a_ui_that_fails_during_startup_parsing_is_killed() {
     );
 }
 
-/// 그 pid 의 프로세스가 아직 있는가 — Windows 는 tasklist, 그 밖은 /proc.
+/// 그 pid 의 프로세스가 아직 있는가 — Windows 는 tasklist, 그 밖은 `ps -p`(결함 426 — /proc 는 리눅스에만 있어 다른 유닉스에서 공허했다).
 fn process_alive(pid: u32) -> bool {
     if cfg!(windows) {
         let out = Command::new("tasklist")
@@ -558,6 +564,40 @@ fn process_alive(pid: u32) -> bool {
             .expect("tasklist");
         String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
     } else {
-        std::path::Path::new(&format!("/proc/{pid}")).exists()
+        Command::new("ps")
+            .args(["-p", &pid.to_string()])
+            .output()
+            .expect("ps")
+            .status
+            .success()
     }
+}
+
+/// ★ 결함 426 (재검수 107) — 자식이 기다리는 줄을 끝내 찍지 않아도(토큰을 안 찍는 read-only 대시보드에 토큰을 기대) 시한 뒤 실패하고 프로세스가 죽는다.
+#[test]
+fn a_ui_that_never_prints_the_expected_line_is_killed_after_a_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let (db, _keyring, _seed) = party(dir.path());
+    let ui = start_ui(&[
+        "dashboard",
+        "--control-db",
+        db.to_str().unwrap(),
+        "--port",
+        "0",
+        "--max-requests",
+        "10",
+    ]);
+    let pid = ui.0.id();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        parse_ui(ui, Some("DASHBOARD_IMPORT_ENABLED"))
+    }));
+    assert!(result.is_err(), "찍히지 않은 줄을 받았다고 했다");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while process_alive(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        !process_alive(pid),
+        "시한 뒤에도 화면 프로세스(pid {pid})가 남았다"
+    );
 }

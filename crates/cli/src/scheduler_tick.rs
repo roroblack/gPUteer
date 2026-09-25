@@ -249,6 +249,41 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let queue_was_empty = queued.is_empty();
     let mut chosen = None;
     for candidate in queued {
+        // ★ 2026-09-25 (결함 423 · 재검수 107) — 저장된 Manifest 를 **고르기 전에** 검증한다. 전에는 맨 앞을 고른 뒤 검증해, 만료된 Manifest 하나가
+        //   tick 을 매번 거부로 끝내고 뒤의 모든 Job 을 인질로 잡았다(결함 211 · 236 과 같은 모양).
+        //   만료는 되돌릴 수 없어 큐에서 내린다(제출자가 다시 서명해 새로 낸다). 그 밖의 실패(모르는 서명자 등)는 keyring 을 고치면 풀릴 수 있어
+        //   내리지 않고 건너뛴다. 저장된 Manifest 가 없는 Job 도 건너뛴다.
+        match stored_manifest_check(&jobs, &candidate.job_id, &keyring, now_unix_ms)? {
+            ManifestCheck::Valid => {}
+            ManifestCheck::Expired => {
+                if candidate.state == gputeer_coordinator::job_store::JobState::Queued {
+                    jobs.fail_queued(
+                        &candidate.job_id,
+                        gputeer_coordinator::job_store::QueueFailure::PermanentlyInfeasible {
+                            reason: "MANIFEST_EXPIRED — 제출 Manifest 가 만료됐다. 제출자가 다시 서명해 새로 낸다".to_string(),
+                        },
+                        now_unix_ms,
+                    )
+                    .map_err(|e| {
+                        format!("TICK_REFUSED: {} 를 큐에서 내리지 못했다: {e}", candidate.job_id)
+                    })?;
+                    println!("TICK_JOB_FAILED_MANIFEST_EXPIRED {}", candidate.job_id);
+                } else {
+                    println!(
+                        "TICK_SKIPPED {} state={:?} — 제출 Manifest 가 만료됐다. 규범상 여기서 내릴 전이가 없어 건너뛴다(운영자가 취소한다)",
+                        candidate.job_id, candidate.state
+                    );
+                }
+                continue;
+            }
+            ManifestCheck::Unusable(reason) => {
+                println!(
+                    "TICK_SKIPPED {} — {reason}. 배치하지 않고 다음 작업을 본다",
+                    candidate.job_id
+                );
+                continue;
+            }
+        }
         if pool_declared {
             if let Some(reason) =
                 pool_unsupported_durability(&jobs, &candidate.job_id, &keyring, now_unix_ms)?
@@ -496,6 +531,48 @@ fn parse_axes(raw: &str) -> Result<BestFitPolicy, String> {
 /// `--pool-agents "id=hex;id2=hex"` — 체크포인트 생산자 서명을 검증할 풀 노드 키(풀 Coordinator 와 같은 형식).
 /// 풀이 채울 수 없는 내구성인가 — 저장된 Manifest 를 **지금 다시 검증한 뒤** 읽는다(§0.2). 검증이 안 되면 여기서 거부하지 않는다
 /// (아래 본 경로가 같은 검증으로 거부한다 — 사유를 한 곳에서 낸다).
+/// 결함 423 — 후보를 고르기 전의 Manifest 검사 결과.
+enum ManifestCheck {
+    Valid,
+    /// 만료 — 되돌릴 수 없다.
+    Expired,
+    /// 그 밖의 이유로 지금은 쓸 수 없다(저장된 Manifest 없음 · 모르는 서명자 · 서명 불일치 등).
+    Unusable(String),
+}
+
+fn stored_manifest_check(
+    jobs: &CoordinatorJobStore,
+    job_id: &str,
+    keyring: &PersistentKeyring,
+    now_unix_ms: u64,
+) -> Result<ManifestCheck, String> {
+    let Some(binding) = jobs
+        .get_manifest_binding(job_id)
+        .map_err(|e| format!("Manifest binding 조회 실패: {e}"))?
+    else {
+        return Ok(ManifestCheck::Unusable(
+            "저장된 Manifest 가 없다".to_string(),
+        ));
+    };
+    Ok(
+        match verify(
+            &binding.manifest,
+            1,
+            &Ed25519Verifier::new(keyring),
+            now_unix_ms,
+            &mut NoReplayCheck,
+        ) {
+            Ok(_) => ManifestCheck::Valid,
+            Err(gputeer_protocol::signing::VerifyError::Outcome(
+                gputeer_protocol::signing::VerifyOutcome::Expired,
+            )) => ManifestCheck::Expired,
+            Err(e) => {
+                ManifestCheck::Unusable(format!("저장된 Manifest 를 지금 검증하지 못했다: {e:?}"))
+            }
+        },
+    )
+}
+
 fn pool_unsupported_durability(
     jobs: &CoordinatorJobStore,
     job_id: &str,
