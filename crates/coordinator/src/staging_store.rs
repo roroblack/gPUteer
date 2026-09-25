@@ -675,6 +675,11 @@ impl CoordinatorStagingStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sql_error)?;
+        // ★ 결함 435 · 437 (재검수 112 · 113) — Manifest 행 대조는 **replay 판정보다 먼저** 한다. 새 operation 분기에만 두면, 옛 백업에 같은 operation 이
+        //   남아 있을 때 replay 가 먼저 성공을 돌려줘 Grant 를 만들 수 없는 예약을 "됐다" 고 알렸다.
+        if require_manifest && !manifest_row_exists(&transaction, &request.job_id)? {
+            return Err(StagingStoreError::ManifestMissing(request.job_id.clone()).into());
+        }
 
         if let Some(operation) = fetch_operation(&transaction, &request.operation_key)? {
             if operation.job_id != request.job_id
@@ -736,9 +741,6 @@ impl CoordinatorStagingStore {
         fail_at(fault, TestFault::AfterReservationInsert)?;
         insert_gpu_binding(&transaction, &reservation)?;
         fail_at(fault, TestFault::AfterGpuBindingInsert)?;
-        if require_manifest && !manifest_row_exists(&transaction, &request.job_id)? {
-            return Err(StagingStoreError::ManifestMissing(request.job_id.clone()).into());
-        }
         let stage = stage_new_in_transaction(&transaction, request, &request_payload, fault)?;
         transaction.commit().map_err(map_sql_error)?;
         Ok(ReservedStageResult { reservation, stage })
@@ -1690,6 +1692,37 @@ mod tests {
             .reserve_node_and_stage_queued_with_lease_requiring_manifest(&request, revision)
             .unwrap();
         assert!(store.get_node_reservation("node-1").unwrap().is_some());
+    }
+
+    /// ★ 결함 437 (재검수 113) — 무대조 경로가 만든 operation 이 있어도, Manifest 행이 없으면 대조 경로의 **재시도(replay)** 가 성공을 돌려주지 않는다.
+    #[test]
+    fn a_manifest_requiring_replay_of_an_unchecked_operation_is_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-r", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let revision = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory.pool_snapshot(7).unwrap().candidates[0]
+                .inventory_revision
+                .unwrap()
+        };
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-r", 1);
+        // 옛 무대조 경로로 예약(옛 백업의 상태를 흉내낸다)
+        store
+            .reserve_node_and_stage_queued_with_lease(&request, revision)
+            .unwrap();
+        let refused = store
+            .reserve_node_and_stage_queued_with_lease_requiring_manifest(&request, revision)
+            .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                ReservedStageError::Staging(StagingStoreError::ManifestMissing(_))
+            ),
+            "{refused:?}"
+        );
     }
 
     /// 노드별 배정 조회 — **자기 노드의 일만** 돌려준다(신뢰망 P2).

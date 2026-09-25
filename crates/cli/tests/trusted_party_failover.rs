@@ -452,8 +452,10 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
         "3",
         // ★ 결함 288 (2026-09-25) — 3000 이었다. 수신 확인을 켠 풀 Agent 는 "갱신 주기(600) + 5초" 보다 짧은 Lease 로 시작하지 않는다
         //   (LEASE_TOO_SHORT_TO_START) — 3초 Lease 는 수신 확인을 끈(풀 규칙을 어긴) Agent 에서만 돌았다.
+        // ★ 2026-09-26 — 7000 으로도 흔들렸다: 스케줄러가 발급한 뒤 B 가 붙기까지 2초 넘게 걸리면 남은 4.8초가 시작 관문(갱신 주기 + 5초)에 걸렸다.
+        //   A 를 죽인 뒤 기다리는 시간은 이 값이 아니라 갱신 연장 폭(7초)이 정한다.
         "--lease-ttl-ms",
-        "7000",
+        "15000",
         "--lease-renew-after-ms",
         "1000",
         "--lease-max-total-duration-seconds",
