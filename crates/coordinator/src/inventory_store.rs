@@ -564,7 +564,8 @@ impl CoordinatorInventoryStore {
             Some(gpus) if !gpus.is_empty() => gpus,
             _ => return Ok(GpuAttestationOutcome::NoDeclaredGpus),
         };
-        if let Err(reason) = crate::gpu_attestation::match_declaration(declared, &observation.gpus) {
+        if let Err(reason) = crate::gpu_attestation::match_declaration(declared, &observation.gpus)
+        {
             return Ok(GpuAttestationOutcome::Mismatch(reason));
         }
         transaction
@@ -588,7 +589,9 @@ impl CoordinatorInventoryStore {
             .transpose()?;
         // 같은 판이면 늦은 쪽을 둔다 — 시계가 되돌아간 관측이 확인을 앞당겨 지우지 않는다.
         let attested_at = match stored {
-            Some((revision, at)) if revision == inventory.inventory_revision => at.max(attested_at_unix_ms),
+            Some((revision, at)) if revision == inventory.inventory_revision => {
+                at.max(attested_at_unix_ms)
+            }
             _ => attested_at_unix_ms,
         };
         transaction
@@ -764,8 +767,9 @@ impl CoordinatorInventoryStore {
                     let revision = decode_u64(&revision, "gpu attestation inventory_revision")?;
                     let at = decode_u64(&at, "gpu attestation attested_at_unix_ms")?;
                     if candidate.inventory_revision == Some(revision) {
-                        candidate.observed_at_unix_ms =
-                            candidate.observed_at_unix_ms.map(|declared| declared.max(at));
+                        candidate.observed_at_unix_ms = candidate
+                            .observed_at_unix_ms
+                            .map(|declared| declared.max(at));
                     }
                 }
             }
@@ -2294,11 +2298,15 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("control.sqlite3");
         let mut store = prepared_store(&path);
-        store.update_inventory(&inventory("node-a", 1, 1_000, 5)).unwrap();
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
         // 선언: gpu-a-5(model-a-5 · VRAM 15) · gpu-z-5(model-z-5 · VRAM 25)
         let matching = observation(&[("GPU-1", "model-a-5", 15), ("GPU-2", "model-z-5", 4_096)]);
         assert_eq!(
-            store.record_gpu_attestation("node-a", &matching, 50_000).unwrap(),
+            store
+                .record_gpu_attestation("node-a", &matching, 50_000)
+                .unwrap(),
             GpuAttestationOutcome::Recorded {
                 inventory_revision: 1,
                 attested_at_unix_ms: 50_000
@@ -2307,22 +2315,31 @@ mod tests {
         assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(50_000));
         // 선언 자체는 그대로다
         assert_eq!(
-            fetch_inventory(&store.connection, "node-a").unwrap().unwrap().observed_at_unix_ms,
+            fetch_inventory(&store.connection, "node-a")
+                .unwrap()
+                .unwrap()
+                .observed_at_unix_ms,
             1_000
         );
         // 같은 판에 더 이른 확인은 늦은 확인을 지우지 않는다
         assert_eq!(
-            store.record_gpu_attestation("node-a", &matching, 40_000).unwrap(),
+            store
+                .record_gpu_attestation("node-a", &matching, 40_000)
+                .unwrap(),
             GpuAttestationOutcome::Recorded {
                 inventory_revision: 1,
                 attested_at_unix_ms: 50_000
             }
         );
         // 새 판(운영자 재선언) — 옛 판의 확인은 접히지 않는다
-        store.update_inventory(&inventory("node-a", 2, 2_000, 5)).unwrap();
+        store
+            .update_inventory(&inventory("node-a", 2, 2_000, 5))
+            .unwrap();
         assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(2_000));
         // 확인이 선언보다 이르면 선언 시각을 줄이지 않는다
-        store.record_gpu_attestation("node-a", &matching, 1_500).unwrap();
+        store
+            .record_gpu_attestation("node-a", &matching, 1_500)
+            .unwrap();
         assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(2_000));
     }
 
@@ -2334,15 +2351,23 @@ mod tests {
         let mut store = prepared_store(&path);
         assert_eq!(
             store
-                .record_gpu_attestation("node-a", &observation(&[("GPU-1", "model-a-5", 15)]), 50_000)
+                .record_gpu_attestation(
+                    "node-a",
+                    &observation(&[("GPU-1", "model-a-5", 15)]),
+                    50_000
+                )
                 .unwrap(),
             GpuAttestationOutcome::NoInventory
         );
-        store.update_inventory(&inventory("node-a", 1, 1_000, 5)).unwrap();
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
         // 두 장 선언 · 한 장 관측
         let one = observation(&[("GPU-1", "model-a-5", 15)]);
         assert!(matches!(
-            store.record_gpu_attestation("node-a", &one, 50_000).unwrap(),
+            store
+                .record_gpu_attestation("node-a", &one, 50_000)
+                .unwrap(),
             GpuAttestationOutcome::Mismatch(_)
         ));
         assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(1_000));
@@ -2351,14 +2376,18 @@ mod tests {
         cpu_only.gpus = Some(vec![]);
         store.update_inventory(&cpu_only).unwrap();
         assert_eq!(
-            store.record_gpu_attestation("node-a", &one, 50_000).unwrap(),
+            store
+                .record_gpu_attestation("node-a", &one, 50_000)
+                .unwrap(),
             GpuAttestationOutcome::NoDeclaredGpus
         );
         let mut unobserved = inventory("node-a", 3, 1_000, 5);
         unobserved.gpus = None;
         store.update_inventory(&unobserved).unwrap();
         assert_eq!(
-            store.record_gpu_attestation("node-a", &one, 50_000).unwrap(),
+            store
+                .record_gpu_attestation("node-a", &one, 50_000)
+                .unwrap(),
             GpuAttestationOutcome::NoDeclaredGpus
         );
         assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(1_000));

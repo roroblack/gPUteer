@@ -73,6 +73,13 @@ use crate::{issue_grant, validate_device_id, CoordinatorConfig, CoordinatorLease
 /// ★ 전에 "Lease 저장소와 replay 방어뿐" 이라 적었는데 사실이 아니었다
 ///   (독립 검수 11라운드).
 pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
+    // ★ 2026-09-25 (결함 408 · 재검수 96) — 풀은 순차 lane 이다. 이 진입점을 바로 부르는 라이브러리 호출자도 막는다.
+    if config.pool_mode {
+        return Err(
+            "STARTUP_REFUSED: POOL_LANE_CONFLICT — 풀 모드는 순차 lane 이다. multi-agent lane 으로 풀 예약을 내주지 않는다"
+                .to_string(),
+        );
+    }
     // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
     //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
     //   다시 본다.
@@ -323,8 +330,8 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
                 &staging,
                 &leases,
                 &crate::grant_from_stored::StoredGrantRequest {
-                    // 풀 모드는 이 lane 을 금지한다(`pool_mode_startup_check`) — 여기 오는 Grant 는 풀 Grant 가 아니다.
-                    pool_mode: false,
+                    // 풀 모드는 이 lane 을 금지한다(`run_multi_agent` 맨 앞 · 결함 408). 그래도 박아 넣지 않고 설정을 넘긴다 — 두 겹.
+                    pool_mode: shared.config.pool_mode,
                     job_id,
                     attempt_id,
                     lease_id,

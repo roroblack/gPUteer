@@ -58,7 +58,8 @@ pub fn check_hello_observation_shape(hello: &pb::AgentSessionHello) -> Result<()
     // 오름차순 · 중복 없음 — 같은 관측이 한 가지 바이트로만 서명되게 한다.
     if gpus.windows(2).any(|pair| pair[0].uuid >= pair[1].uuid) {
         return Err(
-            "HELLO_REJECTED: GPU 관측이 uuid 오름차순이 아니거나 같은 uuid 가 두 번 있다".to_string(),
+            "HELLO_REJECTED: GPU 관측이 uuid 오름차순이 아니거나 같은 uuid 가 두 번 있다"
+                .to_string(),
         );
     }
     Ok(())
@@ -86,6 +87,11 @@ pub fn observation_time_usable(
     Ok(())
 }
 
+/// 선언 gpu_id 가 NVML UUID 모양인가(`GPU-…` · MIG 인스턴스 `MIG-…`). 설치 자동화의 `<노드>-gpu-<번호>` 는 아니다.
+fn declared_as_uuid(gpu_id: &str) -> bool {
+    gpu_id.starts_with("GPU-") || gpu_id.starts_with("MIG-")
+}
+
 /// 선언의 GPU 마다 **서로 다른** 관측 GPU 하나씩을 짝지을 수 있는가.
 ///
 /// 짝이 되는 조건:
@@ -93,7 +99,7 @@ pub fn observation_time_usable(
 /// ```text
 /// 선언 model 이 있으면              관측 이름과 같다
 /// 선언 available_vram_bytes 가 있으면  관측 총 VRAM 이하다
-/// 선언 gpu_id 가 관측 uuid 와 같으면    그 GPU 하고만 짝짓는다(운영자가 UUID 로 선언한 경우)
+/// 선언 gpu_id 가 UUID 모양(GPU-/MIG-)이면  그 UUID 의 관측 GPU 하고만 짝짓는다 — 관측에 없으면 짝이 없다
 /// ```
 ///
 /// ★ UUID 로만 짝짓지 않는 이유 — 설치 자동화의 가입 파일은 `gpu_id` 를 `<노드>-gpu-<번호>` 로 적는다. 선언의 `gpu_id` 는
@@ -106,11 +112,11 @@ pub fn match_declaration(
     observed: &[pb::ObservedGpu],
 ) -> Result<(), String> {
     let fits = |d: &GpuInventory, o: &pb::ObservedGpu| -> bool {
-        let uuid_bound = observed.iter().any(|any| any.uuid == d.gpu_id);
-        (!uuid_bound || o.uuid == d.gpu_id)
+        // ★ 2026-09-25 (결함 409 · 재검수 96) — UUID 로 선언했으면 **그 UUID 하고만** 짝짓는다. 전에는 "관측에 그 UUID 가 있으면" 만
+        //   묶어서, 선언한 GPU 가 빠지면 같은 모델의 다른 GPU 가 대신 짝이 돼 옛 선언이 계속 신선했다.
+        (!declared_as_uuid(&d.gpu_id) || o.uuid == d.gpu_id)
             && d.model.as_deref().is_none_or(|model| model == o.model)
-            && d
-                .available_vram_bytes
+            && d.available_vram_bytes
                 .is_none_or(|vram| vram <= o.total_vram_bytes)
     };
     // owner[j] = 관측 j 와 짝지은 선언 번호
@@ -198,7 +204,11 @@ mod tests {
     #[test]
     fn install_style_declaration_matches_by_model_and_vram() {
         // 가입 파일 모양 — gpu_id 는 번호, VRAM 은 nvidia-smi MiB 를 바이트로(총 VRAM 이하)
-        let d = [declared("node-a-gpu-0", Some(MODEL), Some(12_282 * 1_048_576))];
+        let d = [declared(
+            "node-a-gpu-0",
+            Some(MODEL),
+            Some(12_282 * 1_048_576),
+        )];
         let o = [observed("GPU-1", MODEL, TOTAL)];
         assert_eq!(match_declaration(&d, &o), Ok(()));
     }
@@ -215,16 +225,38 @@ mod tests {
         // 다른 모델
         assert!(match_declaration(&[declared("n-gpu-0", Some("RTX 3060"), None)], &o).is_err());
         // 선언 VRAM 이 관측 총 VRAM 보다 크다
-        assert!(match_declaration(&[declared("n-gpu-0", Some(MODEL), Some(TOTAL + 1))], &o).is_err());
+        assert!(
+            match_declaration(&[declared("n-gpu-0", Some(MODEL), Some(TOTAL + 1))], &o).is_err()
+        );
     }
 
     #[test]
     fn a_uuid_declaration_binds_only_to_that_gpu() {
-        let o = [observed("GPU-1", MODEL, TOTAL), observed("GPU-2", MODEL, TOTAL)];
-        assert_eq!(match_declaration(&[declared("GPU-2", Some(MODEL), None)], &o), Ok(()));
+        let o = [
+            observed("GPU-1", MODEL, TOTAL),
+            observed("GPU-2", MODEL, TOTAL),
+        ];
+        assert_eq!(
+            match_declaration(&[declared("GPU-2", Some(MODEL), None)], &o),
+            Ok(())
+        );
         // 선언 UUID 의 GPU 가 다른 모델이면 — 같은 모델의 다른 GPU 로 대신 짝짓지 않는다
-        let o2 = [observed("GPU-1", MODEL, TOTAL), observed("GPU-2", "RTX 3060", TOTAL)];
+        let o2 = [
+            observed("GPU-1", MODEL, TOTAL),
+            observed("GPU-2", "RTX 3060", TOTAL),
+        ];
         assert!(match_declaration(&[declared("GPU-2", Some(MODEL), None)], &o2).is_err());
+    }
+
+    /// ★ 결함 409 — UUID 로 선언한 GPU 가 빠지고 같은 모델 · 용량의 다른 GPU 가 꽂혔다. 대신 짝짓지 않는다.
+    #[test]
+    fn a_uuid_declared_gpu_that_disappeared_is_not_replaced_by_a_look_alike() {
+        let d = [declared("GPU-old", Some(MODEL), Some(TOTAL))];
+        assert!(match_declaration(&d, &[observed("GPU-new", MODEL, TOTAL)]).is_err());
+        assert_eq!(
+            match_declaration(&d, &[observed("GPU-old", MODEL, TOTAL)]),
+            Ok(())
+        );
     }
 
     /// 탐욕으로 고르면 틀리는 조합 — 첫 선언(VRAM 조건 없음)이 큰 GPU 를 먼저 잡으면 둘째(큰 VRAM 필요)가 남는 것이 없다.
@@ -234,20 +266,32 @@ mod tests {
             declared("n-gpu-0", Some(MODEL), None),
             declared("n-gpu-1", Some(MODEL), Some(TOTAL)),
         ];
-        let o = [observed("GPU-1", MODEL, TOTAL), observed("GPU-2", MODEL, 8_000_000_000)];
+        let o = [
+            observed("GPU-1", MODEL, TOTAL),
+            observed("GPU-2", MODEL, 8_000_000_000),
+        ];
         assert_eq!(match_declaration(&d, &o), Ok(()));
     }
 
     #[test]
     fn extra_observed_gpus_are_allowed() {
-        let o = [observed("GPU-1", MODEL, TOTAL), observed("GPU-2", MODEL, TOTAL)];
-        assert_eq!(match_declaration(&[declared("n-gpu-0", Some(MODEL), None)], &o), Ok(()));
+        let o = [
+            observed("GPU-1", MODEL, TOTAL),
+            observed("GPU-2", MODEL, TOTAL),
+        ];
+        assert_eq!(
+            match_declaration(&[declared("n-gpu-0", Some(MODEL), None)], &o),
+            Ok(())
+        );
     }
 
     #[test]
     fn shape_rules() {
         let one = || vec![observed("GPU-1", MODEL, TOTAL)];
-        assert_eq!(check_hello_observation_shape(&hello(2, MODE_MULTI_AGENT_GRANT, one())), Ok(()));
+        assert_eq!(
+            check_hello_observation_shape(&hello(2, MODE_MULTI_AGENT_GRANT, one())),
+            Ok(())
+        );
         // v1 에 관측
         assert!(check_hello_observation_shape(&hello(1, MODE_MULTI_AGENT_GRANT, one())).is_err());
         // FRESH 가 아닌 Hello 에 관측
@@ -274,19 +318,27 @@ mod tests {
         assert!(check_hello_observation_shape(&hello(
             2,
             MODE_MULTI_AGENT_GRANT,
-            vec![observed("GPU-2", MODEL, TOTAL), observed("GPU-1", MODEL, TOTAL)]
+            vec![
+                observed("GPU-2", MODEL, TOTAL),
+                observed("GPU-1", MODEL, TOTAL)
+            ]
         ))
         .is_err());
         assert!(check_hello_observation_shape(&hello(
             2,
             MODE_MULTI_AGENT_GRANT,
-            vec![observed("GPU-1", MODEL, TOTAL), observed("GPU-1", MODEL, TOTAL)]
+            vec![
+                observed("GPU-1", MODEL, TOTAL),
+                observed("GPU-1", MODEL, TOTAL)
+            ]
         ))
         .is_err());
         let too_many = (0..=GPU_OBSERVATION_MAX_GPUS)
             .map(|i| observed(&format!("GPU-{i:03}"), MODEL, TOTAL))
             .collect();
-        assert!(check_hello_observation_shape(&hello(2, MODE_MULTI_AGENT_GRANT, too_many)).is_err());
+        assert!(
+            check_hello_observation_shape(&hello(2, MODE_MULTI_AGENT_GRANT, too_many)).is_err()
+        );
         // 관측 없는 v1 · v2 는 통과
         let mut bare = hello(1, MODE_MULTI_AGENT_GRANT, vec![]);
         bare.gpu_observation = None;
@@ -295,14 +347,23 @@ mod tests {
 
     #[test]
     fn time_rules() {
-        let h = hello(2, MODE_MULTI_AGENT_GRANT, vec![observed("GPU-1", MODEL, TOTAL)]);
+        let h = hello(
+            2,
+            MODE_MULTI_AGENT_GRANT,
+            vec![observed("GPU-1", MODEL, TOTAL)],
+        );
         let at = |t: u64| pb::NodeGpuObservation {
             observed_at_unix_ms: t,
             gpus: vec![],
         };
         assert_eq!(observation_time_usable(&h, &at(1_000_000)), Ok(()));
-        assert_eq!(observation_time_usable(&h, &at(1_000_000 - GPU_OBSERVATION_MAX_AGE_MS)), Ok(()));
+        assert_eq!(
+            observation_time_usable(&h, &at(1_000_000 - GPU_OBSERVATION_MAX_AGE_MS)),
+            Ok(())
+        );
         assert!(observation_time_usable(&h, &at(1_000_001)).is_err());
-        assert!(observation_time_usable(&h, &at(1_000_000 - GPU_OBSERVATION_MAX_AGE_MS - 1)).is_err());
+        assert!(
+            observation_time_usable(&h, &at(1_000_000 - GPU_OBSERVATION_MAX_AGE_MS - 1)).is_err()
+        );
     }
 }

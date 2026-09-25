@@ -456,6 +456,11 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     //   우회했다. CLI 는 이 저장소가 쓰는 한 가지 진입 방법일 뿐이다.
     validate_device_id(&config.agent_device_id)?;
     validate_device_id(&config.coordinator_device_id)?;
+    // ★ 2026-09-25 (결함 408 · 재검수 96) — 풀 전제도 **여기서** 본다. 파서에서만 보면 라이브러리 호출자가 `multi_agent` 분기로 가서
+    //   풀 예약으로 풀 신호 없는 Grant 를 냈다(수신 확인 없는 Agent 가 실행하고, 그 lane 은 Job 을 RUNNING 으로 옮기지 않는다).
+    if config.pool_mode {
+        pool_mode_startup_check(&config)?;
+    }
 
     // ★ lane 선택을 **여기서** 한다(독립 검수 6라운드 지적).
     //
@@ -1269,16 +1274,26 @@ fn serve_one_connection_impl(
                 ),
                 Ok(()) => {
                     let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
-                        session_protocol_error("풀 모드인데 제어 DB 가 없다(시작 검사가 막았어야 한다)")
+                        session_protocol_error(
+                            "풀 모드인데 제어 DB 가 없다(시작 검사가 막았어야 한다)",
+                        )
                     })?;
                     let attested_at = observation.observed_at_unix_ms.min(clock.now_unix_ms());
-                    let outcome = crate::inventory_store::CoordinatorInventoryStore::open(control_db)
-                        .and_then(|mut store| {
-                            store.record_gpu_attestation(&hello.node_id, observation, attested_at)
-                        })
-                        .map_err(|error| {
-                            SessionHandlerError::Classified(storage_error("gpu attestation", error))
-                        })?;
+                    let outcome =
+                        crate::inventory_store::CoordinatorInventoryStore::open(control_db)
+                            .and_then(|mut store| {
+                                store.record_gpu_attestation(
+                                    &hello.node_id,
+                                    observation,
+                                    attested_at,
+                                )
+                            })
+                            .map_err(|error| {
+                                SessionHandlerError::Classified(storage_error(
+                                    "gpu attestation",
+                                    error,
+                                ))
+                            })?;
                     match outcome {
                         crate::inventory_store::GpuAttestationOutcome::Recorded {
                             inventory_revision,
@@ -3211,7 +3226,8 @@ fn read_session_hello(
         }
     };
     // ★ 결함 301 · signing.md §6.6 — 관측의 구조 규칙은 모든 lane 에서 본다(서명이 맞아도 모양이 틀린 관측은 받지 않는다).
-    crate::gpu_attestation::check_hello_observation_shape(&hello).map_err(session_protocol_error)?;
+    crate::gpu_attestation::check_hello_observation_shape(&hello)
+        .map_err(session_protocol_error)?;
     if hello.gpu_observation.is_some() && !config.pool_mode {
         println!(
             "GPU_ATTESTATION_IGNORED node_id={} reason=NOT_POOL — 선언 확인은 풀 Coordinator 만 한다",

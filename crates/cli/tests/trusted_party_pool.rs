@@ -1559,30 +1559,56 @@ fn a_matching_gpu_observation_keeps_a_node_fresh_and_a_different_gpu_does_not() 
 
     // 다른 GPU — 기록하지 않는다
     let other = one_hello_against_a_pool_coordinator(
-        dir.path(), &db, &keyring, None,
-        &frame_for(2, fresh, "RTX 3060", 0x71), "other.log",
+        dir.path(),
+        &db,
+        &keyring,
+        None,
+        &frame_for(2, fresh, "RTX 3060", 0x71),
+        "other.log",
     );
     assert!(other.contains("GPU_ATTESTATION_MISMATCH"), "{other}");
     assert!(!other.contains("GPU_ATTESTATION_RECORDED"), "{other}");
     assert_eq!(declared_at(), before, "맞지 않는 관측이 신선도를 늘렸다");
 
     // 구조 규칙 — v1 Hello 에 관측 · RENEW Hello 에 관측은 Hello 째 거부한다(생존 관측으로도 적지 않는다)
-    for (schema, mode, label) in [(1, fresh, "v1.log"), (2, gputeer_protocol::constants::MODE_RENEW, "renew.log")] {
+    for (schema, mode, label) in [
+        (1, fresh, "v1.log"),
+        (2, gputeer_protocol::constants::MODE_RENEW, "renew.log"),
+    ] {
         let out = one_hello_against_a_pool_coordinator(
-            dir.path(), &db, &keyring, None,
-            &frame_for(schema, mode, "RTX 4070 SUPER", 0x72 + mode as u8 + schema as u8), label,
+            dir.path(),
+            &db,
+            &keyring,
+            None,
+            &frame_for(
+                schema,
+                mode,
+                "RTX 4070 SUPER",
+                0x72 + mode as u8 + schema as u8,
+            ),
+            label,
         );
         assert!(out.contains("HELLO_REJECTED"), "{label}\n{out}");
-        assert!(!out.contains("SESSION_SEEN") && !out.contains("GPU_ATTESTATION_RECORDED"), "{label}\n{out}");
+        assert!(
+            !out.contains("SESSION_SEEN") && !out.contains("GPU_ATTESTATION_RECORDED"),
+            "{label}\n{out}"
+        );
     }
     assert_eq!(declared_at(), before);
 
     // 맞는 GPU — 그 선언 판을 확인하고 스냅샷의 관측 시각이 앞으로 간다(선언 자체는 그대로다)
     let matching = one_hello_against_a_pool_coordinator(
-        dir.path(), &db, &keyring, None,
-        &frame_for(2, fresh, "RTX 4070 SUPER", 0x79), "matching.log",
+        dir.path(),
+        &db,
+        &keyring,
+        None,
+        &frame_for(2, fresh, "RTX 4070 SUPER", 0x79),
+        "matching.log",
     );
     assert!(matching.contains("GPU_ATTESTATION_RECORDED"), "{matching}");
     let after = declared_at();
-    assert!(after > before, "맞는 관측이 신선도를 늘리지 않았다({before} -> {after})\n{matching}");
+    assert!(
+        after > before,
+        "맞는 관측이 신선도를 늘리지 않았다({before} -> {after})\n{matching}"
+    );
 }

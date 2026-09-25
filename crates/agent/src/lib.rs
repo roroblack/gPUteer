@@ -1118,7 +1118,10 @@ fn run_one_connection_inner(
             }) {
                 Ok(observation) => Some(observation),
                 Err(reason) => {
-                    println!("GPU_ATTESTATION_UNAVAILABLE node={} reason={reason}", config.agent_device_id);
+                    println!(
+                        "GPU_ATTESTATION_UNAVAILABLE node={} reason={reason}",
+                        config.agent_device_id
+                    );
                     None
                 }
             }
@@ -3872,19 +3875,27 @@ fn gpu_observation_from_snapshot(
         });
     }
     if gpus.len() > gputeer_protocol::constants::GPU_OBSERVATION_MAX_GPUS {
-        return Err(format!("GPU {} 개 — Hello 에 실을 수 있는 상한을 넘는다", gpus.len()));
+        return Err(format!(
+            "GPU {} 개 — Hello 에 실을 수 있는 상한을 넘는다",
+            gpus.len()
+        ));
     }
     gpus.sort_by(|a, b| a.uuid.cmp(&b.uuid));
     for pair in gpus.windows(2) {
         if pair[0].uuid == pair[1].uuid {
-            return Err(format!("NVML 이 같은 UUID 를 두 번 보고했다: {}", pair[0].uuid));
+            return Err(format!(
+                "NVML 이 같은 UUID 를 두 번 보고했다: {}",
+                pair[0].uuid
+            ));
         }
     }
     if let Some(bad) = gpus
         .iter()
         .find(|gpu| gpu.uuid.is_empty() || gpu.model.is_empty() || gpu.total_vram_bytes == 0)
     {
-        return Err(format!("NVML 관측이 비어 있다(uuid · 이름 · 총 VRAM): {bad:?}"));
+        return Err(format!(
+            "NVML 관측이 비어 있다(uuid · 이름 · 총 VRAM): {bad:?}"
+        ));
     }
     Ok(pb::NodeGpuObservation {
         observed_at_unix_ms,
@@ -6516,9 +6527,18 @@ mod pool_signal_tests {
         let peer = SigningKey::from_bytes(&[0x72; 32]).verifying_key();
         let peer_hex: String = peer.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
         let argv: Vec<String> = [
-            "--connect", "127.0.0.1:9", "--own-seed", &seed, "--peer-pubkey", &peer_hex,
-            "--coordinator-device-id", "coordinator-pool-test", "--agent-device-id", "agent-pool-test",
-            "--fence-db", ":memory:",
+            "--connect",
+            "127.0.0.1:9",
+            "--own-seed",
+            &seed,
+            "--peer-pubkey",
+            &peer_hex,
+            "--coordinator-device-id",
+            "coordinator-pool-test",
+            "--agent-device-id",
+            "agent-pool-test",
+            "--fence-db",
+            ":memory:",
         ]
         .into_iter()
         .map(str::to_string)
@@ -6594,7 +6614,12 @@ mod pool_signal_tests {
         // 빈 관측 · 없는 번호 · 같은 UUID · 빈 값은 보내지 않는다
         assert!(gpu_observation_from_snapshot(&snapshot(vec![]), None, 7).is_err());
         assert!(gpu_observation_from_snapshot(&two, Some("5"), 7).is_err());
-        assert!(gpu_observation_from_snapshot(&snapshot(vec![gpu("GPU-a", 0), gpu("GPU-a", 1)]), None, 7).is_err());
+        assert!(gpu_observation_from_snapshot(
+            &snapshot(vec![gpu("GPU-a", 0), gpu("GPU-a", 1)]),
+            None,
+            7
+        )
+        .is_err());
         let mut zero = gpu("GPU-a", 0);
         zero.total_vram_bytes = 0;
         assert!(gpu_observation_from_snapshot(&snapshot(vec![zero]), None, 7).is_err());
