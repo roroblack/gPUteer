@@ -406,6 +406,9 @@ pub fn run(args: &[String]) -> Result<String, String> {
                 renew_after_unix_ms: issued_at.saturating_add(lease_renew_after_ms),
                 expires_at_unix_ms: expires_at,
                 max_total_duration_seconds,
+                // ★ 결함 435 (재검수 112) — 고를 때 읽은 Manifest 를 들고 가도(432), 예약 트랜잭션이 같은 DB 에 그 행이 **지금** 있는지 대조한다.
+                //   실행 중 옛 백업으로 바뀐 DB 에 Grant 를 만들 수 없는 예약을 커밋하지 않는다.
+                require_stored_manifest: true,
             },
         },
     )

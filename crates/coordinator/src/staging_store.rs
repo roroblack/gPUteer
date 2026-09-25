@@ -143,6 +143,8 @@ pub enum StagingStoreError {
     AttemptStateRaced {
         expected: AttemptState,
     },
+    /// ★ 결함 435 (재검수 112) — Manifest 를 요구하는 예약인데 그 Job 의 Manifest 행이 없다(옛 백업 복원 · 해시만 있는 Job). 예약하지 않는다.
+    ManifestMissing(String),
     CorruptData(String),
     Io(String),
     LockTimeout,
@@ -176,6 +178,10 @@ impl std::fmt::Display for StagingStoreError {
             Self::CorruptData(message) => write!(f, "staging store corruption: {message}"),
             Self::Io(message) => write!(f, "staging store I/O error: {message}"),
             Self::LockTimeout => write!(f, "staging store lock acquisition timed out"),
+            Self::ManifestMissing(job_id) => write!(
+                f,
+                "{job_id} 에 저장된 Manifest 행이 없다 — 예약하지 않는다(Grant 를 만들 수 없는 예약이 노드를 묶는다)"
+            ),
             #[cfg(test)]
             Self::InjectedFailure(point) => write!(f, "injected staging failure: {point}"),
         }
@@ -607,7 +613,19 @@ impl CoordinatorStagingStore {
         request: &StageQueuedRequest,
         expected_inventory_revision: u64,
     ) -> Result<ReservedStageResult, ReservedStageError> {
-        self.reserve_and_stage(request, expected_inventory_revision, None)
+        self.reserve_and_stage(request, expected_inventory_revision, None, false)
+    }
+
+    /// ★ 2026-09-25 (결함 435 · 재검수 112) — [`reserve_node_and_stage_queued_with_lease`](Self::reserve_node_and_stage_queued_with_lease) 와 같되,
+    ///   **같은 트랜잭션 안에서** 그 Job 의 Manifest 행이 있는지 대조한다 — 없으면 예약 · STAGING 을 커밋하지 않는다(`ManifestMissing`).
+    ///   예약을 요구하는 쪽(scheduler-tick · stage-job)이 쓴다. 전에는 호출자가 앞서 읽은 Manifest 만 믿어, 그 사이 DB 가 옛 백업으로 바뀌면
+    ///   Grant 를 만들 수 없는 예약이 노드를 묶었다.
+    pub fn reserve_node_and_stage_queued_with_lease_requiring_manifest(
+        &mut self,
+        request: &StageQueuedRequest,
+        expected_inventory_revision: u64,
+    ) -> Result<ReservedStageResult, ReservedStageError> {
+        self.reserve_and_stage(request, expected_inventory_revision, None, true)
     }
 
     fn stage(
@@ -648,6 +666,7 @@ impl CoordinatorStagingStore {
         request: &StageQueuedRequest,
         expected_inventory_revision: u64,
         fault: Option<TestFault>,
+        require_manifest: bool,
     ) -> Result<ReservedStageResult, ReservedStageError> {
         validate_request(request)?;
         validate_selected_gpu_ids(&request.selected_gpu_ids)?;
@@ -717,10 +736,37 @@ impl CoordinatorStagingStore {
         fail_at(fault, TestFault::AfterReservationInsert)?;
         insert_gpu_binding(&transaction, &reservation)?;
         fail_at(fault, TestFault::AfterGpuBindingInsert)?;
+        if require_manifest && !manifest_row_exists(&transaction, &request.job_id)? {
+            return Err(StagingStoreError::ManifestMissing(request.job_id.clone()).into());
+        }
         let stage = stage_new_in_transaction(&transaction, request, &request_payload, fault)?;
         transaction.commit().map_err(map_sql_error)?;
         Ok(ReservedStageResult { reservation, stage })
     }
+}
+
+/// 결함 435 — 이 트랜잭션에서 본 DB 에 그 Job 의 Manifest 행이 있는가. 표가 없으면(옛 DB) 없다.
+fn manifest_row_exists(connection: &Connection, job_id: &str) -> Result<bool, StagingStoreError> {
+    let table: bool = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_manifests'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_sql_error)?
+        > 0;
+    if !table {
+        return Ok(false);
+    }
+    Ok(connection
+        .query_row(
+            "SELECT 1 FROM coordinator_job_manifests WHERE job_id = ?1",
+            rusqlite::params![job_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(map_sql_error)?
+        .is_some())
 }
 
 fn stage_new_in_transaction(
@@ -1605,6 +1651,47 @@ mod tests {
         assert_eq!(store.get_node_reservation(&request.node_id).unwrap(), None);
     }
 
+    /// ★ 결함 435 (재검수 112) — Manifest 를 요구하는 예약은 **같은 트랜잭션에서** 그 행을 대조한다. 없으면 아무것도 커밋하지 않고(Job 은 QUEUED ·
+    ///   예약 없음), 행이 생기면 예약한다. 대조군은 요구하지 않는 옛 경로(해시만 있는 Job 도 예약한다).
+    #[test]
+    fn a_manifest_requiring_reservation_refuses_a_job_without_a_manifest_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        prepare_queued(&path, "job-m", 1);
+        prepare_inventory(&path, "node-1", 7, 1);
+        let revision = {
+            let mut inventory = CoordinatorInventoryStore::open(&path).unwrap();
+            inventory.pool_snapshot(7).unwrap().candidates[0]
+                .inventory_revision
+                .unwrap()
+        };
+        let mut store = CoordinatorStagingStore::open(&path).unwrap();
+        let request = request("job-m", 1);
+        let refused = store
+            .reserve_node_and_stage_queued_with_lease_requiring_manifest(&request, revision)
+            .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                ReservedStageError::Staging(StagingStoreError::ManifestMissing(ref job)) if job == "job-m"
+            ),
+            "{refused:?}"
+        );
+        assert_queued_and_no_side_effects(&store, &request);
+
+        store
+            .connection
+            .execute(
+                "INSERT INTO coordinator_job_manifests(job_id, verified_signer_id, manifest_body) VALUES ('job-m', 'submitter-1', x'00')",
+                [],
+            )
+            .unwrap();
+        store
+            .reserve_node_and_stage_queued_with_lease_requiring_manifest(&request, revision)
+            .unwrap();
+        assert!(store.get_node_reservation("node-1").unwrap().is_some());
+    }
+
     /// 노드별 배정 조회 — **자기 노드의 일만** 돌려준다(신뢰망 P2).
     ///
     /// ★ 여러 대가 붙었을 때 각자 자기 일을 받으려면 이 조회가 정확해야 한다.
@@ -2094,7 +2181,7 @@ mod tests {
         let mut store = CoordinatorStagingStore::open(&path).unwrap();
 
         assert!(matches!(
-            store.reserve_and_stage(&request, 5, Some(TestFault::AfterReservationInsert)),
+            store.reserve_and_stage(&request, 5, Some(TestFault::AfterReservationInsert), false),
             Err(ReservedStageError::Staging(
                 StagingStoreError::InjectedFailure("after node reservation insert")
             ))
@@ -2117,7 +2204,7 @@ mod tests {
         let mut store = CoordinatorStagingStore::open(&path).unwrap();
 
         assert!(matches!(
-            store.reserve_and_stage(&request, 5, Some(TestFault::AfterGpuBindingInsert)),
+            store.reserve_and_stage(&request, 5, Some(TestFault::AfterGpuBindingInsert), false),
             Err(ReservedStageError::Staging(
                 StagingStoreError::InjectedFailure("after selected GPU binding insert")
             ))

@@ -33,6 +33,9 @@ pub struct StagingIssuanceInput {
     pub renew_after_unix_ms: u64,
     pub expires_at_unix_ms: u64,
     pub max_total_duration_seconds: u64,
+    /// ★ 결함 435 — 예약 트랜잭션 안에서 그 Job 의 Manifest 행을 대조한다(없으면 예약하지 않는다). Manifest 로 Grant 를 만드는 경로(scheduler-tick ·
+    ///   stage-job)는 켠다. 해시만 있는 Job 을 예약하는 시험은 끈다.
+    pub require_stored_manifest: bool,
 }
 
 /// Already validated and normalized scheduler/staging inputs.
@@ -233,9 +236,16 @@ pub fn orchestrate_placement_to_staging(
         expires_at_unix_ms: input.issuance.expires_at_unix_ms,
         max_total_duration_seconds: input.issuance.max_total_duration_seconds,
     };
-    let stage = staging_store
-        .reserve_node_and_stage_queued_with_lease(&request, expected_inventory_revision)?
-        .stage;
+    let stage = if input.issuance.require_stored_manifest {
+        staging_store.reserve_node_and_stage_queued_with_lease_requiring_manifest(
+            &request,
+            expected_inventory_revision,
+        )?
+    } else {
+        staging_store
+            .reserve_node_and_stage_queued_with_lease(&request, expected_inventory_revision)?
+    }
+    .stage;
 
     Ok(PlacementToStagingOutcome::Staged {
         eligibility,
@@ -401,6 +411,8 @@ mod tests {
                 renew_after_unix_ms: 120,
                 expires_at_unix_ms: 160,
                 max_total_duration_seconds: 1,
+                // 이 시험들은 해시만 있는 Job 을 예약한다.
+                require_stored_manifest: false,
             },
         }
     }

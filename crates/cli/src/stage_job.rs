@@ -101,6 +101,8 @@ pub fn run(args: &[String]) -> Result<String, String> {
         renew_after_unix_ms,
         expires_at_unix_ms,
         max_total_duration_seconds: u64_flag(&flags, "--lease-max-total-duration-seconds")?,
+        // 결함 435 — 예약하는 트랜잭션 안에서 Manifest 행을 대조한다(이 명령은 Manifest 를 검증해 예약한다).
+        require_stored_manifest: true,
     };
 
     // ★★ **"재시도 때 값이 달라도 저장되는 것이 안 바뀐다" 고 적어 뒀던
