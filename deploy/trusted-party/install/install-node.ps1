@@ -30,6 +30,8 @@ param(
     [string]$ContainerRuntime = "",
     [string]$ContainerRuntimeKind = "",
     [switch]$ContainerGpu,
+    # gpus | cdi | cdi-all (결함 303 — WSL2 docker 는 cdi-all 만 됐다). 비우면 런타임 기본값
+    [string]$ContainerGpuRequest = "",
     [string]$GpuProbeImage = "",
     [string]$WorkloadClasses = "TRAINING",
     [string]$GpuModel = "",
@@ -70,6 +72,8 @@ if ($CpuCores -le 0 -or $RamGiB -le 0 -or $WorkspaceGiB -le 0) { throw "INSTALL_
 if (($ContainerRuntime -eq "") -ne ($ContainerRuntimeKind -eq "")) { throw "INSTALL_ARGS: -ContainerRuntime 과 -ContainerRuntimeKind 는 함께 준다" }
 if ($ContainerRuntimeKind -ne "" -and $ContainerRuntimeKind -notin @("podman", "docker")) { throw "INSTALL_ARGS: -ContainerRuntimeKind 는 podman 또는 docker" }
 if ($ContainerGpu -and $ContainerRuntime -eq "") { throw "INSTALL_ARGS: -ContainerGpu 는 -ContainerRuntime 과 함께 준다" }
+if ($ContainerGpuRequest -ne "" -and $ContainerGpuRequest -notin @("gpus", "cdi", "cdi-all")) { throw "INSTALL_ARGS: -ContainerGpuRequest 는 gpus · cdi · cdi-all" }
+if ($ContainerGpuRequest -ne "" -and -not $ContainerGpu) { throw "INSTALL_ARGS: -ContainerGpuRequest 는 -ContainerGpu 와 함께 준다" }
 if ($GpuProbeImage -ne "" -and -not $ContainerGpu) { throw "INSTALL_ARGS: -GpuProbeImage 는 -ContainerGpu 와 함께 준다" }
 if ($KeyProtection -notin @("K0", "K1", "K2")) { throw "INSTALL_ARGS: -KeyProtection 은 K0 · K1 · K2" }
 
@@ -122,7 +126,8 @@ Write-Utf8NoBom $agentEnv @(
     "GPUTEER_OWNER_PANEL_PORT=$OwnerPanelPort",
     "GPUTEER_CONTAINER_RUNTIME=$ContainerRuntime",
     "GPUTEER_CONTAINER_RUNTIME_KIND=$ContainerRuntimeKind",
-    "GPUTEER_CONTAINER_GPU=$(if ($ContainerGpu) { 'true' } else { '' })"
+    "GPUTEER_CONTAINER_GPU=$(if ($ContainerGpu) { 'true' } else { '' })",
+    "GPUTEER_CONTAINER_GPU_REQUEST=$ContainerGpuRequest"
 )
 Write-Host "CONFIG_WRITTEN $common $agentEnv"
 
@@ -130,6 +135,7 @@ Write-Host "CONFIG_WRITTEN $common $agentEnv"
 $doctorArgs = @("node-doctor", "--seed-file", $seed, "--node-dir", $NodeDir, "--connect", $inviteMap.GPUTEER_CONNECT,
     "--shared-checkpoint-root", $SharedRoot, "--owner-panel-port", "$OwnerPanelPort", "--gpu-pin", $GpuPin)
 if ($ContainerRuntime -ne "") { $doctorArgs += @("--container-runtime", $ContainerRuntime, "--container-runtime-kind", $ContainerRuntimeKind) }
+if ($ContainerGpuRequest -ne "") { $doctorArgs += @("--container-gpu-request", $ContainerGpuRequest) }
 if ($GpuProbeImage -ne "") { $doctorArgs += @("--container-gpu-probe-image", $GpuProbeImage) }
 $doctor = & $Bin @doctorArgs 2>&1 | ForEach-Object { "$_" }
 $doctorExit = $LASTEXITCODE

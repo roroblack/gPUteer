@@ -239,3 +239,41 @@ fn the_doctor_changes_nothing_and_reports_what_the_agent_would_refuse() {
     assert!(!ok && line(&report, "gpu").contains(" FAIL "), "{report}");
     assert!(report.contains("장치 번호"), "{report}");
 }
+
+/// 결함 303 — GPU 를 청하는 방식도 Agent 와 같게 받고, `cdi-all` 은 한 장 노드가 아니면 FAIL 로 미리 보여 준다.
+#[test]
+fn the_gpu_request_is_checked_like_the_agent_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let seed = keygen(dir.path());
+    let node = dir.path().join("node");
+    std::fs::create_dir_all(&node).unwrap();
+    let base = [
+        "--seed-file",
+        seed.to_str().unwrap(),
+        "--node-dir",
+        node.to_str().unwrap(),
+        "--connect",
+        "127.0.0.1:1",
+        "--container-runtime",
+        "no-such-runtime",
+        "--container-runtime-kind",
+        "docker",
+    ];
+    let with = |extra: &[&str]| {
+        let mut args = base.to_vec();
+        args.extend_from_slice(extra);
+        doctor(&args)
+    };
+    let (ok, report) = with(&["--container-gpu-request", "all"]);
+    assert!(!ok && report.contains("NODE_DOCTOR_ARGS"), "{report}");
+    // 핀이 0 이 아니면 NVML 과 무관하게 FAIL.
+    let (ok, report) = with(&["--container-gpu-request", "cdi-all", "--gpu-pin", "1"]);
+    assert!(!ok, "{report}");
+    assert!(
+        line(&report, "container_gpu_request").contains(" FAIL "),
+        "{report}"
+    );
+    // 고르지 않으면 이 점검 줄은 없다.
+    let (_, report) = with(&[]);
+    assert!(!report.contains("CHECK container_gpu_request "), "{report}");
+}

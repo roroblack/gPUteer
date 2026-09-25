@@ -30,7 +30,8 @@
 //! ```text
 //! 커널 격리     컨테이너는 호스트 커널을 같이 쓴다(S3). 커널 · 드라이버 취약점은 못 막는다 — 그건 S4(gVisor) · S5(VM)
 //! 런타임 신뢰   docker(rootful)의 docker 그룹은 곧 root 다. 권장은 rootless podman
-//! GPU 격리      --container-gpu 로 장치를 넘기면 그 GPU 의 드라이버 표면이 컨테이너에 열린다. 그리고 이 경로는 아직 실측하지 않았다
+//! GPU 격리      --container-gpu 로 장치를 넘기면 그 GPU 의 드라이버 표면이 컨테이너에 열린다. 2026-09-25 x600 WSL2 docker 29 에서
+//!               위 격리 옵션 그대로 `--device=nvidia.com/gpu=all` 로 GPU 를 연 것이 첫 실측이다(`--gpus` 는 거부 · 결함 303)
 //! 이미지 CAS    image_digest(BLAKE3) 대조는 하지 않는다 — oci_source_digest 는 런타임이 내용으로 검증한다
 //! ```
 
@@ -74,6 +75,44 @@ impl RuntimeFlavor {
     }
 }
 
+/// GPU 를 런타임에 **어떻게 청하는가** — 운영자가 고른다(`--container-gpu-request`). 기계마다 되는 모양이 다르다(결함 303).
+///
+/// ```text
+/// gpus     docker --gpus "device=<n>"          nvidia 런타임이 등록된 docker. docker 기본값(전과 같다)
+/// cdi      --device=nvidia.com/gpu=<n> (장치마다) CDI 사양에 번호별 장치가 있는 기계(네이티브 리눅스). podman 기본값
+/// cdi-all  --device=nvidia.com/gpu=all          WSL2 — CDI 사양이 번호로 나누지 않고 `all` 하나만 준다(2026-09-25 x600 실측)
+/// ```
+///
+/// ★ `cdi-all` 은 GPU 를 **전부** 넘긴다 — 한 장인 노드에서만 고정과 같은 뜻이다. Agent 는 `--gpu-pin 0` 이고 NVML 이 GPU 를 정확히
+///   한 장 볼 때만 이 값을 받는다(`lib.rs` parse_container_runtime).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuRequest {
+    Gpus,
+    Cdi,
+    CdiAll,
+}
+
+impl GpuRequest {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "gpus" => Ok(Self::Gpus),
+            "cdi" => Ok(Self::Cdi),
+            "cdi-all" => Ok(Self::CdiAll),
+            other => Err(format!(
+                "--container-gpu-request 는 gpus · cdi · cdi-all 중 하나다(받은 값 {other:?})"
+            )),
+        }
+    }
+
+    /// 고르지 않았을 때 — 이 판 전의 동작과 같다.
+    pub fn default_for(flavor: RuntimeFlavor) -> Self {
+        match flavor {
+            RuntimeFlavor::Docker => Self::Gpus,
+            RuntimeFlavor::Podman => Self::Cdi,
+        }
+    }
+}
+
 /// 운영자가 켠 컨테이너 런타임.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerRuntime {
@@ -82,6 +121,8 @@ pub struct ContainerRuntime {
     pub flavor: RuntimeFlavor,
     /// GPU 를 컨테이너에 넘기는가(`--container-gpu`). 끄면 GPU 를 고정한(`--gpu-pin`) 노드는 컨테이너 Job 을 거부한다.
     pub pass_gpu: bool,
+    /// GPU 를 어떻게 청하는가(`--container-gpu-request` · 결함 303).
+    pub gpu_request: GpuRequest,
     /// 컨테이너 Job 만 받는가(`--container-only`). 켜면 `OCI_IMAGE` 가 아닌 Job 을 호스트에서 돌리지 않는다.
     pub only: bool,
     /// 이 Agent 의 노드 id — 모든 컨테이너에 `gputeer.node=<id>` 라벨로 붙인다(사람이 알아보는 용도).
@@ -174,6 +215,15 @@ pub fn decide(
     {
         return refused(
             "CONTAINER_NETWORK_ALLOWLIST: runtime_allow_hosts 를 강제할 수단이 없다 — 네트워크 없는 Job 만 받는다".into(),
+        );
+    }
+    // ★ 결함 303 — `cdi-all` 은 GPU 를 전부 넘긴다. 한 장(`0`)만 고정한 노드가 아니면 고정이 샌다 — 받지 않는다.
+    if runtime.pass_gpu
+        && runtime.gpu_request == GpuRequest::CdiAll
+        && gpu_pin.is_some_and(|pin| pin != "0")
+    {
+        return refused(
+            "CONTAINER_GPU_ALL_NOT_PINNED: --container-gpu-request cdi-all 은 GPU 를 전부 넘긴다 — --gpu-pin 0 인 한 장 노드에서만 받는다".into(),
         );
     }
     if gpu_pin.is_some() && !runtime.pass_gpu {
@@ -367,7 +417,7 @@ pub fn create_args(
         args.push(format!("--env={key}={value}").into());
     }
     if let Some(pin) = execution.gpu_pin.as_deref() {
-        args.extend(gpu_args(execution.runtime.flavor, pin));
+        args.extend(gpu_args(execution.runtime.gpu_request, pin));
     }
     args.push(format!("--entrypoint={}", input.entrypoint).into());
     args.push(execution.pinned_image.clone().into());
@@ -380,21 +430,24 @@ pub fn create_args(
 /// ★ 결함 300 — 여러 장을 한 값으로 넘기면 두 런타임 다 받지 않는다(예상 · 문서 기준). podman 의 CDI 이름은 장치 하나씩이고,
 ///   docker 는 `--gpus` 값을 CSV 로 읽어 `device=0,1` 이 두 필드(`device=0` · `1`=개수)로 쪼개진다. 그래서 podman 은 장치마다
 ///   `--device` 를 따로 주고, docker 는 값 전체를 큰따옴표로 감싸 한 필드로 만든다(docker 문서의 `"device=0,1"` 형식).
-pub fn gpu_args(flavor: RuntimeFlavor, pin: &str) -> Vec<OsString> {
+/// ★ 결함 303 — 모양은 런타임 종류가 아니라 운영자가 고른 `GpuRequest` 가 정한다(WSL docker 29 는 `--gpus` 를 전부 거부했고
+///   CDI `all` 만 받았다). `CdiAll` 은 핀을 보지 않는다 — 한 장 노드인지는 Agent 시작과 `decide()` 가 먼저 막는다.
+pub fn gpu_args(request: GpuRequest, pin: &str) -> Vec<OsString> {
     let ids: Vec<&str> = pin
         .split(',')
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .collect();
-    match flavor {
-        RuntimeFlavor::Podman => ids
+    match request {
+        GpuRequest::Cdi => ids
             .iter()
             .map(|id| format!("--device=nvidia.com/gpu={id}").into())
             .collect(),
-        RuntimeFlavor::Docker => vec![
+        GpuRequest::Gpus => vec![
             "--gpus".into(),
             format!("\"device={}\"", ids.join(",")).into(),
         ],
+        GpuRequest::CdiAll => vec!["--device=nvidia.com/gpu=all".into()],
     }
 }
 
@@ -711,6 +764,7 @@ mod tests {
             program: PathBuf::from("podman"),
             flavor,
             pass_gpu: false,
+            gpu_request: GpuRequest::default_for(flavor),
             only: false,
             node_id: "node-a".into(),
             owner: "node-a.0123456789abcdef".into(),
@@ -988,6 +1042,7 @@ mod tests {
         assert!(podman.iter().any(|a| a == "--read-only-tmpfs=false"));
         assert!(podman.iter().any(|a| a == "--device=nvidia.com/gpu=GPU-1"));
         execution.runtime.flavor = RuntimeFlavor::Docker;
+        execution.runtime.gpu_request = GpuRequest::default_for(RuntimeFlavor::Docker);
         let docker = strings(create_args(&execution, &input(&mounts, &[], &[])).unwrap());
         let gpus = docker.iter().position(|a| a == "--gpus").unwrap();
         assert_eq!(docker[gpus + 1], "\"device=GPU-1\"");
@@ -996,22 +1051,58 @@ mod tests {
     #[test]
     fn several_pinned_gpus_become_one_device_request_per_runtime_syntax() {
         // 결함 300 — "0,1" 을 한 값으로 넘기면 podman 은 없는 CDI 이름을, docker 는 CSV 두 필드(device=0 · 1)를 본다.
-        let podman = strings(gpu_args(RuntimeFlavor::Podman, "0,1"));
+        let podman = strings(gpu_args(GpuRequest::Cdi, "0,1"));
         assert_eq!(
             podman,
             ["--device=nvidia.com/gpu=0", "--device=nvidia.com/gpu=1"]
         );
-        let docker = strings(gpu_args(RuntimeFlavor::Docker, "0,1"));
+        let docker = strings(gpu_args(GpuRequest::Gpus, "0,1"));
         assert_eq!(docker, ["--gpus", "\"device=0,1\""]);
         // 한 장은 전과 같은 뜻이다.
         assert_eq!(
-            strings(gpu_args(RuntimeFlavor::Podman, "0")),
+            strings(gpu_args(GpuRequest::Cdi, "0")),
             ["--device=nvidia.com/gpu=0"]
         );
         assert_eq!(
-            strings(gpu_args(RuntimeFlavor::Docker, "0")),
+            strings(gpu_args(GpuRequest::Gpus, "0")),
             ["--gpus", "\"device=0\""]
         );
+    }
+
+    #[test]
+    fn cdi_all_passes_every_gpu_so_only_a_single_pinned_gpu_may_use_it() {
+        // 결함 303 — WSL2 의 CDI 사양은 `all` 하나다(x600 실측). 모양은 핀과 무관하게 all 이고,
+        // 그래서 `0` 한 장 고정이 아니면 decide 가 받지 않는다.
+        assert_eq!(
+            strings(gpu_args(GpuRequest::CdiAll, "0")),
+            ["--device=nvidia.com/gpu=all"]
+        );
+        // docker 도 cdi 를 고르면 장치마다 CDI 이름이다(런타임 종류가 아니라 고른 방식이 모양을 정한다).
+        assert_eq!(
+            strings(gpu_args(GpuRequest::Cdi, "1")),
+            ["--device=nvidia.com/gpu=1"]
+        );
+        let mut runtime = runtime(RuntimeFlavor::Docker);
+        runtime.pass_gpu = true;
+        runtime.gpu_request = GpuRequest::CdiAll;
+        let manifest = oci_manifest("registry.local/train", sha256(0xcd));
+        assert!(matches!(
+            decide(&manifest, Some(&runtime), Some("0")),
+            ContainerDecision::Container(_)
+        ));
+        for pin in ["1", "0,1"] {
+            match decide(&manifest, Some(&runtime), Some(pin)) {
+                ContainerDecision::Refused { detail } => {
+                    assert!(
+                        detail.starts_with("CONTAINER_GPU_ALL_NOT_PINNED"),
+                        "{detail}"
+                    )
+                }
+                other => panic!("{pin} 고정인데 cdi-all 을 받았다: {other:?}"),
+            }
+        }
+        assert_eq!(GpuRequest::parse("cdi-all"), Ok(GpuRequest::CdiAll));
+        assert!(GpuRequest::parse("all").is_err());
     }
 
     #[test]

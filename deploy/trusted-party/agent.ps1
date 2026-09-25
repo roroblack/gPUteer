@@ -28,6 +28,10 @@ if ($config.GPUTEER_CONTAINER_RUNTIME) {
     if ($config.GPUTEER_CONTAINER_GPU -eq "true") {
         $containerArgs += @("--container-gpu", "true")
     }
+    # GPU request style (gpus | cdi | cdi-all) - defect 303. Empty = runtime default.
+    if ($config.GPUTEER_CONTAINER_GPU_REQUEST) {
+        $containerArgs += @("--container-gpu-request", $config.GPUTEER_CONTAINER_GPU_REQUEST)
+    }
 }
 
 & $config.GPUTEER_BIN agent-loop --interval-ms 5000 --max-rounds 0 -- `

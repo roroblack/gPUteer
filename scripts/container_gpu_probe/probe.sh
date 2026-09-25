@@ -45,8 +45,11 @@ probe gpus-quoted --gpus '"device=0"'          # 결함 300 수정 뒤 Agent 가
 probe gpus-plain --gpus device=0               # 수정 전 모양(한 장이면 같은 뜻이어야 한다)
 probe no-gpu                                   # 대조 — GPU 를 안 넘기면 안에서 못 봐야 한다
 probe gpus-two --gpus '"device=0,1"'           # 한 장 기계 — 없는 1번을 달라면 거부돼야 한다(여러 장 모양의 문법 확인)
+probe gpus-all --gpus all                      # 번호 없이 전부 — WSL 의 CDI 사양이 이것만 줄 수 있다
 if [ -d /etc/cdi ] || [ -d /var/run/cdi ]; then
+    echo "== CDI 장치 목록"; (nvidia-ctk cdi list 2>&1 || true)
     probe cdi --device=nvidia.com/gpu=0        # CDI 경로(podman 이 쓰는 모양 — docker 25+ 도 받는다)
+    probe cdi-all --device=nvidia.com/gpu=all  # WSL 의 CDI 사양은 번호별 장치 없이 all 하나다(2026-09-25 x600)
 fi
 
 if [ -n "$GPUTEER" ]; then

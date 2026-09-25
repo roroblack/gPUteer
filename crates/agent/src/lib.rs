@@ -3519,28 +3519,61 @@ fn parse_container_runtime(flags: &Flags) -> Result<Option<container::ContainerR
     let kind = flags.get("--container-runtime-kind");
     let gpu = flags.bool_flag("--container-gpu");
     let only = flags.bool_flag("--container-only");
+    let request = flags.get("--container-gpu-request");
     match (program, kind) {
         (None, None) => {
-            if gpu || only {
+            if gpu || only || request.is_some() {
                 return Err(
-                    "--container-gpu · --container-only 는 --container-runtime 과 함께만 쓴다"
+                    "--container-gpu · --container-only · --container-gpu-request 는 --container-runtime 과 함께만 쓴다"
                         .into(),
                 );
             }
             Ok(None)
         }
-        (Some(program), Some(kind)) => Ok(Some(container::ContainerRuntime {
-            program: std::path::PathBuf::from(program),
-            flavor: container::RuntimeFlavor::parse(kind)?,
-            pass_gpu: gpu,
-            only,
-            node_id: flags.require("--agent-device-id")?,
-            // 체크포인트 루트를 잠근 뒤 `<노드 id>.<루트 해시>` 로 채운다(결함 295 · run()).
-            owner: String::new(),
-        })),
+        (Some(program), Some(kind)) => {
+            let flavor = container::RuntimeFlavor::parse(kind)?;
+            let gpu_request = match request {
+                Some(value) => container::GpuRequest::parse(value)?,
+                None => container::GpuRequest::default_for(flavor),
+            };
+            if gpu_request == container::GpuRequest::CdiAll {
+                check_cdi_all_is_one_pinned_gpu(flags.get("--gpu-pin").map(String::as_str))?;
+            }
+            Ok(Some(container::ContainerRuntime {
+                program: std::path::PathBuf::from(program),
+                flavor,
+                pass_gpu: gpu,
+                gpu_request,
+                only,
+                node_id: flags.require("--agent-device-id")?,
+                // 체크포인트 루트를 잠근 뒤 `<노드 id>.<루트 해시>` 로 채운다(결함 295 · run()).
+                owner: String::new(),
+            }))
+        }
         _ => Err(
             "--container-runtime 과 --container-runtime-kind 는 함께 준다(종류를 이름으로 추측하지 않는다)".into(),
         ),
+    }
+}
+
+/// `cdi-all` 은 GPU 를 **전부** 넘긴다(결함 303) — `--gpu-pin 0` 이고 NVML 이 GPU 를 정확히 한 장 볼 때만 고정과 같은 뜻이다.
+///
+/// ★ NVML 을 못 열면 "한 장" 인지 모른다 — 모르면 받지 않는다(`CLAUDE.md` §1 · 지어내지 않는다).
+fn check_cdi_all_is_one_pinned_gpu(pin: Option<&str>) -> Result<(), String> {
+    if pin.map(str::trim) != Some("0") {
+        return Err(format!(
+            "CONTAINER_GPU_ALL_NOT_PINNED: --container-gpu-request cdi-all 은 GPU 를 전부 넘긴다 — --gpu-pin 0 인 한 장 노드에서만 받는다(받은 핀 {pin:?})"
+        ));
+    }
+    match gputeer_runtime_nvml::observe() {
+        Ok(snapshot) if snapshot.gpus.len() == 1 => Ok(()),
+        Ok(snapshot) => Err(format!(
+            "CONTAINER_GPU_ALL_NOT_PINNED: cdi-all 인데 NVML 이 GPU {}장을 본다 — 한 장이 아니면 다른 GPU 까지 넘어간다",
+            snapshot.gpus.len()
+        )),
+        Err(e) => Err(format!(
+            "CONTAINER_GPU_ALL_NOT_PINNED: cdi-all 은 GPU 가 한 장임을 NVML 로 확인해야 받는다 — 확인하지 못했다: {e:?}"
+        )),
     }
 }
 
@@ -4574,6 +4607,61 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     use std::time::Instant;
+
+    fn container_flags(extra: &[&str]) -> Result<Option<container::ContainerRuntime>, String> {
+        let mut args: Vec<String> = [
+            "--agent-device-id",
+            "node-a",
+            "--container-runtime",
+            "docker",
+            "--container-runtime-kind",
+            "docker",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        args.extend(extra.iter().map(|s| s.to_string()));
+        parse_container_runtime(&parse_flags(&args)?)
+    }
+
+    /// 결함 303 — GPU 를 청하는 방식은 운영자가 고르고, 안 고르면 전과 같다. `cdi-all` 은 한 장 노드에서만 받는다.
+    #[test]
+    fn the_gpu_request_is_chosen_by_the_operator_and_cdi_all_needs_one_pinned_gpu() {
+        let default = container_flags(&[]).unwrap().unwrap();
+        assert_eq!(default.gpu_request, container::GpuRequest::Gpus);
+        let cdi = container_flags(&["--container-gpu-request", "cdi"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(cdi.gpu_request, container::GpuRequest::Cdi);
+        assert!(container_flags(&["--container-gpu-request", "all"]).is_err());
+        // 핀이 0 이 아니면 NVML 을 보기 전에 거부한다.
+        for pin in [None, Some("1"), Some("0,1")] {
+            let mut extra = vec!["--container-gpu-request", "cdi-all"];
+            if let Some(pin) = pin {
+                extra.extend(["--gpu-pin", pin]);
+            }
+            let error = container_flags(&extra).unwrap_err();
+            assert!(
+                error.starts_with("CONTAINER_GPU_ALL_NOT_PINNED"),
+                "{pin:?}: {error}"
+            );
+        }
+        // 핀 0 — NVML 이 한 장을 보면 받고, 못 열거나 여러 장이면 거부한다(이 기계의 NVML 에 따라 갈린다 — 어느 쪽이든 조용히 받지 않는다).
+        let result = container_flags(&["--container-gpu-request", "cdi-all", "--gpu-pin", "0"]);
+        match gputeer_runtime_nvml::observe() {
+            Ok(snapshot) if snapshot.gpus.len() == 1 => assert_eq!(
+                result.unwrap().unwrap().gpu_request,
+                container::GpuRequest::CdiAll
+            ),
+            _ => assert!(result
+                .unwrap_err()
+                .starts_with("CONTAINER_GPU_ALL_NOT_PINNED")),
+        }
+        // 런타임 없이 방식만 주면 거부한다.
+        let lone =
+            parse_flags(&["--container-gpu-request".to_string(), "cdi".to_string()]).unwrap();
+        assert!(parse_container_runtime(&lone).is_err());
+    }
 
     #[test]
     fn nonce_attempt_counter_ignores_failed_connects() {

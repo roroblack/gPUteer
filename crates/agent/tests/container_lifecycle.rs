@@ -227,6 +227,7 @@ fn execution() -> ContainerExecution {
             program: std::env::current_exe().unwrap(),
             flavor: RuntimeFlavor::Docker,
             pass_gpu: false,
+            gpu_request: container::GpuRequest::Gpus,
             only: false,
             node_id: "node-test".into(),
             owner: "node-test.root".into(),

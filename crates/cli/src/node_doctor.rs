@@ -57,12 +57,13 @@ struct Options {
     container_runtime: Option<PathBuf>,
     container_kind: Option<String>,
     gpu_probe_image: Option<String>,
+    gpu_request: Option<String>,
 }
 
 const USAGE: &str = "gputeer node-doctor --seed-file <node.seed> --node-dir <노드 폴더> --connect <coordinator 주소>:<포트> \
 [--shared-checkpoint-root <공유 저장소>] [--owner-panel-port <포트>] [--gpu-pin <GPU 번호>] \
 [--container-runtime <podman|docker 실행 파일> --container-runtime-kind podman|docker \
-[--container-gpu-probe-image <nvidia-smi 가 도는 이미지>]]";
+[--container-gpu-request gpus|cdi|cdi-all] [--container-gpu-probe-image <nvidia-smi 가 도는 이미지>]]";
 
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut options = Options {
@@ -75,6 +76,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         container_runtime: None,
         container_kind: None,
         gpu_probe_image: None,
+        gpu_request: None,
     };
     let mut iter = args.iter();
     while let Some(key) = iter.next() {
@@ -95,6 +97,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--container-runtime" => options.container_runtime = Some(value.into()),
             "--container-runtime-kind" => options.container_kind = Some(value.clone()),
             "--container-gpu-probe-image" => options.gpu_probe_image = Some(value.clone()),
+            "--container-gpu-request" => options.gpu_request = Some(value.clone()),
             other => return Err(format!("NODE_DOCTOR_ARGS: 모르는 옵션 {other}\n{USAGE}")),
         }
     }
@@ -107,6 +110,15 @@ fn parse(args: &[String]) -> Result<Options, String> {
         return Err(
             "NODE_DOCTOR_ARGS: --container-runtime 과 --container-runtime-kind 는 함께 준다".into(),
         );
+    }
+    if options.gpu_request.is_some() && options.container_runtime.is_none() {
+        return Err(
+            "NODE_DOCTOR_ARGS: --container-gpu-request 는 --container-runtime 과 함께 준다".into(),
+        );
+    }
+    if let Some(value) = options.gpu_request.as_deref() {
+        gputeer_agent::container::GpuRequest::parse(value)
+            .map_err(|e| format!("NODE_DOCTOR_ARGS: {e}"))?;
     }
     if options.gpu_probe_image.is_some()
         && (options.container_runtime.is_none() || options.gpu_pin.is_none())
@@ -143,6 +155,9 @@ pub fn run(args: &[String]) -> Result<String, String> {
             kind,
             options.gpu_pin.is_some(),
         ));
+        if options.gpu_request.as_deref() == Some("cdi-all") {
+            checks.push(check_cdi_all(options.gpu_pin.as_deref()));
+        }
         if let (Some(image), Some(pin)) = (
             options.gpu_probe_image.as_deref(),
             options.gpu_pin.as_deref(),
@@ -150,6 +165,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             checks.push(check_container_gpu_probe(
                 program,
                 kind,
+                options.gpu_request.as_deref(),
                 pin,
                 image,
                 options.node_dir.as_deref().expect("parse"),
@@ -509,10 +525,10 @@ fn check_container_runtime(program: &Path, kind: &str, wants_gpu: bool) -> Vec<C
         let cdi = ["/etc/cdi/nvidia.yaml", "/var/run/cdi/nvidia.yaml"]
             .iter()
             .any(|p| Path::new(p).exists());
-        let seen =
-            match kind {
-                "podman" => Ok(cdi.then_some("CDI 사양")),
-                _ => run_text(program, &["info", "--format", "{{json .Runtimes}}"]).map(|text| {
+        let seen = match kind {
+            "podman" => Ok(cdi.then_some("CDI 사양")),
+            _ => {
+                run_text(program, &["info", "--format", "{{json .Runtimes}}"]).map(|text| {
                     match (cdi, text.contains("nvidia")) {
                         (true, true) => Some("CDI 사양 · nvidia 런타임"),
                         (true, false) => Some("CDI 사양"),
@@ -521,8 +537,9 @@ fn check_container_runtime(program: &Path, kind: &str, wants_gpu: bool) -> Vec<C
                         ),
                         (false, false) => None,
                     }
-                }),
-            };
+                })
+            }
+        };
         checks.push(match seen {
             Ok(Some(what)) => check(
                 "container_gpu",
@@ -551,15 +568,24 @@ fn check_container_runtime(program: &Path, kind: &str, wants_gpu: bool) -> Vec<C
 fn check_container_gpu_probe(
     program: &Path,
     kind: &str,
+    gpu_request: Option<&str>,
     pin: &str,
     image: &str,
     node_dir: &Path,
 ) -> Check {
-    use gputeer_agent::container::{self, ContainerExecution, ContainerRuntime, RuntimeFlavor};
+    use gputeer_agent::container::{
+        self, ContainerExecution, ContainerRuntime, GpuRequest, RuntimeFlavor,
+    };
     let fail = |detail: String| check("container_gpu_probe", Level::Fail, detail);
     let flavor = match RuntimeFlavor::parse(kind) {
         Ok(flavor) => flavor,
         Err(why) => return fail(why),
+    };
+    // Agent 와 같은 규칙 — 고르지 않으면 런타임 종류의 기본값(결함 303).
+    let gpu_request = match gpu_request.map(GpuRequest::parse) {
+        None => GpuRequest::default_for(flavor),
+        Some(Ok(request)) => request,
+        Some(Err(why)) => return fail(why),
     };
     if image.is_empty() || image.starts_with('-') || image.chars().any(char::is_whitespace) {
         return fail(format!(
@@ -594,6 +620,7 @@ fn check_container_gpu_probe(
                 program: program.to_path_buf(),
                 flavor,
                 pass_gpu: true,
+                gpu_request,
                 only: true,
                 node_id: "node-doctor".into(),
                 owner: format!("node-doctor.{suffix}"),
@@ -727,5 +754,38 @@ mod tests {
             judge_gpu_probe(0, false, one, "", 1, " · 남았다").level,
             Level::Warn
         );
+    }
+}
+
+/// `--container-gpu-request cdi-all` — Agent 는 `--gpu-pin 0` 이고 NVML 이 GPU 를 정확히 한 장 볼 때만 시작한다(결함 303).
+/// 같은 조건을 여기서 미리 보여 준다. `cdi-all` 은 GPU 를 전부 넘기므로 한 장이 아니면 고정이 샌다.
+fn check_cdi_all(pin: Option<&str>) -> Check {
+    let name = "container_gpu_request";
+    if pin.map(str::trim) != Some("0") {
+        return check(
+            name,
+            Level::Fail,
+            format!("cdi-all 은 --gpu-pin 0 인 한 장 노드에서만 Agent 가 받는다(받은 핀 {pin:?})"),
+        );
+    }
+    match gputeer_runtime_nvml::observe() {
+        Ok(snapshot) if snapshot.gpus.len() == 1 => check(
+            name,
+            Level::Ok,
+            "cdi-all · GPU 한 장 · --gpu-pin 0 — 전부 넘겨도 고정한 것과 같다",
+        ),
+        Ok(snapshot) => check(
+            name,
+            Level::Fail,
+            format!(
+                "cdi-all 인데 GPU 가 {}장이다 — 다른 GPU 까지 넘어가므로 Agent 가 시작을 거부한다",
+                snapshot.gpus.len()
+            ),
+        ),
+        Err(e) => check(
+            name,
+            Level::Fail,
+            format!("cdi-all 은 GPU 가 한 장임을 NVML 로 확인해야 Agent 가 받는다 — 확인하지 못했다: {e:?}"),
+        ),
     }
 }

@@ -14,7 +14,7 @@ set -eu
 die() { echo "$*" >&2; exit 1; }
 
 INVITE= NODE_ID= OWNER= GPU_PIN= CPU= RAM_GIB= WS_GIB=
-PANEL_PORT=7610 CONFIG_DIR= NODE_DIR= BIN= SHARED= RT= RT_KIND= RT_GPU= PROBE_IMAGE=
+PANEL_PORT=7610 CONFIG_DIR= NODE_DIR= BIN= SHARED= RT= RT_KIND= RT_GPU= RT_GPU_REQUEST= PROBE_IMAGE=
 CLASSES=TRAINING GPU_MODEL= GPU_VRAM_MIB=0 KEY_PROTECTION=K0 REGISTER=
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -33,6 +33,7 @@ while [ $# -gt 0 ]; do
         --container-runtime) RT=$2; shift 2 ;;
         --container-runtime-kind) RT_KIND=$2; shift 2 ;;
         --container-gpu) RT_GPU=true; shift ;;
+        --container-gpu-request) RT_GPU_REQUEST=$2; shift 2 ;;
         --gpu-probe-image) PROBE_IMAGE=$2; shift 2 ;;
         --workload-classes) CLASSES=$2; shift 2 ;;
         --gpu-model) GPU_MODEL=$2; shift 2 ;;
@@ -61,6 +62,8 @@ else
 fi
 case "$RT_KIND" in ""|podman|docker) ;; *) die "INSTALL_ARGS: --container-runtime-kind 는 podman 또는 docker" ;; esac
 [ -z "$RT_GPU" ] || [ -n "$RT" ] || die "INSTALL_ARGS: --container-gpu 는 --container-runtime 과 함께 준다"
+case "$RT_GPU_REQUEST" in ""|gpus|cdi|cdi-all) ;; *) die "INSTALL_ARGS: --container-gpu-request 는 gpus · cdi · cdi-all" ;; esac
+[ -z "$RT_GPU_REQUEST" ] || [ -n "$RT_GPU" ] || die "INSTALL_ARGS: --container-gpu-request 는 --container-gpu 와 함께 준다"
 [ -z "$PROBE_IMAGE" ] || [ -n "$RT_GPU" ] || die "INSTALL_ARGS: --gpu-probe-image 는 --container-gpu 와 함께 준다"
 case "$KEY_PROTECTION" in K0|K1|K2) ;; *) die "INSTALL_ARGS: --key-protection 은 K0 · K1 · K2" ;; esac
 
@@ -126,6 +129,7 @@ GPUTEER_OWNER_PANEL_PORT=$PANEL_PORT
 GPUTEER_CONTAINER_RUNTIME=$RT
 GPUTEER_CONTAINER_RUNTIME_KIND=$RT_KIND
 GPUTEER_CONTAINER_GPU=$RT_GPU
+GPUTEER_CONTAINER_GPU_REQUEST=$RT_GPU_REQUEST
 EOF
 echo "CONFIG_WRITTEN $COMMON $AGENT_ENV"
 
@@ -133,6 +137,7 @@ echo "CONFIG_WRITTEN $COMMON $AGENT_ENV"
 set -- node-doctor --seed-file "$SEED" --node-dir "$NODE_DIR" --connect "$CONNECT" \
     --shared-checkpoint-root "$SHARED" --owner-panel-port "$PANEL_PORT" --gpu-pin "$GPU_PIN"
 [ -z "$RT" ] || set -- "$@" --container-runtime "$RT" --container-runtime-kind "$RT_KIND"
+[ -z "$RT_GPU_REQUEST" ] || set -- "$@" --container-gpu-request "$RT_GPU_REQUEST"
 [ -z "$PROBE_IMAGE" ] || set -- "$@" --container-gpu-probe-image "$PROBE_IMAGE"
 REPORT=$("$BIN" "$@" 2>&1) && DOCTOR_OK=1 || DOCTOR_OK=
 echo "$REPORT"
