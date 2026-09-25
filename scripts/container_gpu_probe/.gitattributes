@@ -1,0 +1,2 @@
+# WSL · Linux 의 sh 가 읽는다 — Windows 체크아웃에서도 LF 로 둔다(CRLF 면 sh 가 줄끝의 CR 문자 때문에 깨진다).
+*.sh text eol=lf

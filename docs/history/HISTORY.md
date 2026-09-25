@@ -275,6 +275,20 @@
   맡는다(결함 번호: main 298 · 299 · 400~ / fork 300~399)
 - 리포트: 런북 §5a · 컨테이너 계획 문서
 
+## 2026-09-25 16:26 — (fork) x600 컨테이너 GPU 실측 — Toolkit 없음(ENVIRONMENT-BLOCKED) · 결함 302
+
+- 계획: ④ `--container-gpu` 실측(사용자가 x600 원격 실행을 허가)
+- 수행: x600 WSL2 docker 29.7.2 에서 `scripts/container_gpu_probe/` 로 GPU 인자 네 모양 + 대조를 돌리고, fork(4be292c)를 x600 WSL 의
+  `E:` 아래에서 빌드해 `node-doctor --container-gpu-probe-image` 까지 돌렸다. 실행기(`run_on_x600.cmd`)의 인자 따옴표 문제를 고쳤고
+  `.sh` 를 LF 로 고정했다(경로 한정 `.gitattributes`)
+- 결과: NVIDIA Container Toolkit 이 없다 — `--gpus` 가 `failed to discover GPU vendor from CDI` 로 거부(`ENVIRONMENT-BLOCKED`).
+  node-doctor 판정은 실제와 맞았다(gpu OK · container_gpu WARN · container_gpu_probe FAIL). 대조(GPU 안 넘김)는 안에 nvidia-smi 가
+  없었다. **GPU 가 컨테이너 안에서 열리는 것은 아직 못 봤다**
+- 결함: 302 — docker 29 는 `--gpus` 를 CDI 로 푸는데 node-doctor 는 Runtimes 만 봤다(수정)
+- ★ 사용자 컨테이너 수가 1회차 8 → 2회차 이후 7. 회차 안에서는 시작 = 끝이고 두 회차 사이에 docker 를 부르지 않았다. 이벤트 버퍼가
+  밀려 증명은 못 했다 — `docs/evidence/_raw/컨테이너_GPU_실측_x600_2026-09-25.txt`
+- 다음: Toolkit 설치(외부 저장소 추가 · 시스템 패키지)는 사용자 결정
+
 ## 2026-09-25 16:10 — (fork `fork-install-gpu`) 설치 자동화 · 컨테이너 GPU 실행 점검 · 결함 300 · 301
 
 - 계획: 사용자 지시 "x600 허가할게 순서대로 다 진행해" 중 ② 설치 자동화 · ④ `--container-gpu` 실측(main 세션과 분담 — ③ 웹 UI 는 main)

@@ -42,3 +42,62 @@ RESULT [gpus-two] exit=125
 == 받았던 이미지를 지웠다 ubuntu:24.04
 == 끝날 때 컨테이너 수 8 (시작 8)
 LOG /mnt/e/gputeer-work/container_gpu_probe/results/container_gpu_probe_20260925_161420.txt
+
+
+# ─── 2회차 16:22 — fork 4be292c 를 x600 WSL 에서 빌드해 node-doctor --container-gpu-probe-image 까지 ───
+# node-doctor: gpu OK(NVML) · container_gpu WARN(Toolkit 없음) · container_gpu_probe FAIL(데몬 거부 문구 그대로) — 판정이 실제와 맞다.
+#   coordinator_tcp FAIL 은 의도(Coordinator 를 띄우지 않았다). seed WARN(mode 777)은 /mnt/e(DrvFs)가 권한을 못 담아서다.
+# ★ 사용자 컨테이너 수가 1회차 8 -> 2회차 7 이다(각 회차 안에서는 시작=끝). 두 회차 사이에 이 세션이 x600 에서 한 일은 소스 풀기 ·
+#   cargo build · ls 뿐이고 docker 를 부르지 않았다. docker events 에는 16:22 의 gputeer-* create/destroy 만 있고 사용자 컨테이너
+#   destroy 는 없다 — 단 이벤트 버퍼가 healthcheck 이벤트로 밀려 1회차 이벤트도 남아 있지 않아 증명은 아니다. 무엇이 줄었는지는 모른다.
+
+== 시각 2026-09-25 16:22:34 +0900 · 이미지 ubuntu:24.04
+Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+== docker
+client 29.7.2 · server 29.7.2
+== toolkit
+/mnt/e/gputeer-work/container_gpu_probe/probe_lf.sh: 25: nvidia-ctk: not found
+nvidia-ctk 없음
+ls: cannot access '/etc/cdi': No such file or directory
+ls: cannot access '/var/run/cdi': No such file or directory
+== WSL 에서 보이는 GPU
+GPU 0: NVIDIA GeForce RTX 4070 SUPER (UUID: GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93)
+== 시작할 때 컨테이너 수 7 (건드리지 않는다)
+docker.io/library/ubuntu:24.04
+== 고정 참조 ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 (원래 있던 이미지: 아니오)
+== [gpus-quoted] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus "device=0" --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: failed to discover GPU vendor from CDI: no known GPU vendor found
+
+Run 'docker run --help' for more information
+RESULT [gpus-quoted] exit=125
+== [gpus-plain] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus device=0 --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: failed to discover GPU vendor from CDI: no known GPU vendor found
+
+Run 'docker run --help' for more information
+RESULT [gpus-plain] exit=125
+== [no-gpu] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1  --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: failed to create task for container: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: exec: "nvidia-smi": executable file not found in $PATH
+
+Run 'docker run --help' for more information
+RESULT [no-gpu] exit=127
+== [gpus-two] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus "device=0,1" --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: failed to discover GPU vendor from CDI: no known GPU vendor found
+
+Run 'docker run --help' for more information
+RESULT [gpus-two] exit=125
+== node-doctor --container-gpu-probe-image (Agent 의 실제 create 인자)
+SEED_FILE /mnt/e/gputeer-work/container_gpu_probe/results/doctor.seed
+PUBLIC_KEY 8b764a65a940c0e50742c5448ce8d69158dba3c437699987f0ad34fc5e898b0f
+CHECK seed WARN — 공개키 8b764a65a940c0e50742c5448ce8d69158dba3c437699987f0ad34fc5e898b0f · 그런데 다른 사용자가 읽을 수 있다(mode 777) — chmod 600
+CHECK node_dir OK — "/mnt/e/gputeer-work/container_gpu_probe/results/doctor-node" 에 쓸 수 있고 fence.sqlite3 · checkpoints 자리가 비었거나 맞는 종류다
+CHECK coordinator_tcp FAIL — 127.0.0.1:9 에 붙지 못했다 — 127.0.0.1:9: Connection refused (os error 111) (Coordinator 가 떠 있는가 · 방화벽 · 포트)
+CHECK gpu OK — --gpu-pin 0 가 있다 · 전체 ["0:NVIDIA GeForce RTX 4070 SUPER"]
+CHECK container_runtime OK — docker 29.7.2
+CHECK container_rootless WARN — rootful 이다 — 런타임 그룹에 든 계정은 사실상 root 다. rootless podman 을 권한다
+CHECK container_gpu WARN — NVIDIA Container Toolkit(CDI · nvidia 런타임)이 보이지 않는다 — --container-gpu 로 GPU 를 넘길 수 없다
+CHECK container_gpu_probe FAIL — 컨테이너를 돌리지 못했다: NotStarted { detail: "start: Some(\"start\") 실패(exit status: 1): Error response from daemon: failed to discover GPU vendor from CDI: no known GPU vendor found\nfailed to start containers: gputeer-doctor-4d4ac8c0b985bf83" }
+NODE_DOCTOR ok=3 warn=3 fail=2
+RESULT [node-doctor] exit=1 (coordinator_tcp FAIL 은 의도 — 여기서는 Coordinator 를 띄우지 않는다)
+== 받았던 이미지를 지웠다 ubuntu:24.04
+== 끝날 때 컨테이너 수 7 (시작 7)
+LOG /mnt/e/gputeer-work/container_gpu_probe/results/container_gpu_probe_20260925_162234.txt
