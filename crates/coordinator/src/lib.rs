@@ -2768,7 +2768,7 @@ fn parse_pool_agents(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
 /// ★ 결함 410 · 412 (재검수 97 · 98) — 풀 표식이 있는 DB 를 `--pool-mode` 없이 쓰지 않는다. 표식은 한 번 적으면 지우지 않는 사실이고,
 ///   빠뜨리면 풀 시작 검사 · 수신 확인 발송을 건너뛴 채 풀 예약(또는 같은 Lease DB)으로 풀 신호 없는 Grant 를 낸다.
 ///   이 Coordinator 가 여는 제어 · Lease · 생존 DB 를 **전부** 본다(412 — 처음엔 제어 DB 만 봐서 `--lease-db` 로만 열면 지나갔다).
-///   없는 파일은 건너뛰고, 있는 파일은 읽기 전용 · 생성 없음으로 읽는다(결함 419). `run()` · 파서는 풀 시작 검사보다 먼저, `run_multi_agent()` 는 맨 앞에서
+///   없는 파일은 건너뛰고, 있는 파일은 생성 없는 읽기 · 쓰기로 연다(결함 419 · 420 — 남은 rollback journal 은 되감는다). `run()` · 파서는 풀 시작 검사보다 먼저, `run_multi_agent()` 는 맨 앞에서
 ///   부른다(결함 418 — 장치 id · 인자 모양 검사는 그보다 앞선다).
 pub(crate) fn refuse_pool_marked_db_without_pool_mode(
     config: &CoordinatorConfig,
@@ -2792,7 +2792,7 @@ pub(crate) fn refuse_pool_marked_db_without_pool_mode(
             .is_some_and(|head| head.eq_ignore_ascii_case("file:"))
         {
             return Err(format!(
-                "STARTUP_REFUSED: SQLITE_URI_PATH — {} 는 SQLite URI 다. DB 는 파일 경로로 준다(풀 표식 검사가 URI 를 해석하지 않는다)",
+                "STARTUP_REFUSED: SQLITE_URI_PATH — {} 는 SQLite URI 다. DB 는 파일 경로로 준다(존재 확인은 경로를 파일 이름으로 보는데 SQLite 는 URI 로 연다 — 둘이 갈린다)",
                 path.display()
             ));
         }
@@ -4075,8 +4075,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 /// `--flag value` 쌍으로 이루어진 CLI 인자를 설정으로 바꾼다 — lane 선택은 여기서 하지 않는다.
-/// ★ 인자 조합 관문(`STARTUP_REFUSED`)은 여기서도 한다. 2026-09-25(결함 417 · 419)부터는 DB 경로 검사가 **이미 있는 DB 파일을 읽기 전용으로** 읽는다
-///   (풀 표식) — 파일을 만들거나 쓰지 않는다.
+/// ★ 인자 조합 관문(`STARTUP_REFUSED`)은 여기서도 한다. 2026-09-25(결함 417 · 419)부터는 DB 경로 검사가 **이미 있는 DB 파일을** 생성 없는 읽기 · 쓰기로
+///   열어 풀 표식을 읽는다 — 파일을 만들지 않는다. 남은 rollback journal 이 있으면 SQLite 가 되감는다(그때만 쓴다 · 결함 420).
 ///
 /// ★ `run_from_args` 에서 떼어냈다(독립 검수 7라운드). 관문이 실제로
 ///   각 진입점에 있는지 재려면, 라이브러리 호출자처럼 설정을 만들어

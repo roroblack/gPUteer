@@ -25,6 +25,15 @@
 
 ---
 
+## 2026-09-25 20:01 — 재검수 105 ACCEPTED: 풀 신호 · 노드 GPU 관측(결함 288 · 301 · 408~421)
+
+- 결함: `docs/reports/debugs/2026-09-25_1752_재검수96_결함_408_409.md` · 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`
+- 스트림: Coordinator
+- 수행: 재검수 105 가 받아들였다. 남은 문구 넷(“읽기 전용” 셋 · URI 오류 문구)을 코드에 맞췄다. 제안서 상태를 "검수 받음" 으로 고쳤다
+- 검증: 문구 · 주석만 바뀌었다 — `cargo build --workspace --all-targets` 경고 0 · `pool_lane_guard` 10 passed(직전 전체 1358 passed · 0 failed · ignored 4 는 5bb5b3f 에서)
+- ★ 한계: 413 운영 조건 · 관측은 노드 자기보고 · CPU/RAM 미관측 · 업그레이드 순서(Agent → Coordinator → `--attest-gpus`) · x600 한 대에서만 이름 · VRAM 일치 확인
+- 리포트: 결함 문서 · 제안서
+
 ## 2026-09-25 19:55 — 재검수 104 대응: 결함 420(419 조치가 만든 회귀 — hot journal) · 421(문구)
 
 - 결함: `docs/reports/debugs/2026-09-25_1752_재검수96_결함_408_409.md` 끝 절
