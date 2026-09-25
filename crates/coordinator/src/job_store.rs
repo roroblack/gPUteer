@@ -862,8 +862,10 @@ impl CoordinatorJobStore {
         self.plan_and_enqueue_inner(job_id, plan_id, Some(at_unix_ms), false)
     }
 
-    /// ★ 결함 428 (재검수 108) — [`plan_and_enqueue`](Self::plan_and_enqueue) 와 같되, 시각을 **쓰기 잠금을 잡은 뒤** 시계에서 읽는다. 호출자가 미리 읽은
-    ///   시각을 쓰면 잠금 대기만큼 앞당겨지고, 시계가 되돌아가면 실제 진입 순서와 FIFO 가 뒤집혔다.
+    /// ★ 결함 428 (재검수 108) — [`plan_and_enqueue`](Self::plan_and_enqueue) 와 같되, 시각을 **쓰기 잠금을 잡은 뒤** 시계에서 읽는다 — 호출자가 미리 읽은
+    ///   시각은 잠금 대기만큼 앞당겨졌다.
+    /// ★ 결함 431 (재검수 109) — 벽시계라 **시계가 되돌아가면** 서로 다른 트랜잭션 사이 FIFO 순서는 여전히 뒤집힐 수 있다. 시계 차이는 운영 조건(NTP)이다
+    ///   (런북 §5 결함 294).
     pub fn plan_and_enqueue_now(
         &mut self,
         job_id: &str,

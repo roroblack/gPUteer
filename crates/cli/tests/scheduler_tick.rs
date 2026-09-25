@@ -998,3 +998,34 @@ fn a_legacy_job_without_a_manifest_body_is_skipped_not_fatal() {
     assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
     assert_eq!(job_state(&db, JOB_B), Some(JobState::Staging));
 }
+
+/// ★ 결함 429 (재검수 109) — 본문이 손상된(빈) Manifest 의 Job 이 맨 앞이어도 건너뛰고 뒤를 배치한다. 손상은 `ManifestCorrupt` 로 온다.
+#[test]
+fn a_job_with_a_corrupt_manifest_body_is_skipped_not_fatal() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    queue_job(
+        dir.path(),
+        &keyring,
+        &db,
+        JOB_B,
+        "d1d2d3d4d5d6d7d8d9dadbdcdddedf00",
+    );
+    let connection = rusqlite::Connection::open(&db).expect("열기");
+    let changed = connection
+        .execute(
+            "UPDATE coordinator_job_manifests SET manifest_body = x'' WHERE job_id = ?1",
+            [JOB_A],
+        )
+        .expect("본문 비우기");
+    assert_eq!(changed, 1, "시험 전제 — JOB_A 의 본문 행이 있어야 한다");
+    drop(connection);
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "tick 이 손상된 Manifest 에서 멈췄다: {output}");
+    assert!(
+        output.contains(&format!("TICK_SKIPPED {JOB_A}")),
+        "{output}"
+    );
+    assert_eq!(job_state(&db, JOB_B), Some(JobState::Staging));
+}

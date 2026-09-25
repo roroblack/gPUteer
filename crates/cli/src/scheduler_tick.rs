@@ -556,15 +556,20 @@ fn stored_manifest_check(
                 "저장된 Manifest 가 없다".to_string(),
             ))
         }
+        // ★ 결함 429 · 430 (재검수 109) — Manifest **전용** 오류만 건너뛴다(본문 손상은 `ManifestCorrupt` 등으로 온다 — `CorruptData` 가 아니다).
+        //   그 밖의 저장소 장애(`Io` · `LockTimeout` · Job 행 손상 `CorruptData`)는 접두어 없이 올려 scheduler-loop 를 멈춘다(fail-closed) —
+        //   `TICK_REFUSED` 로 포장하면 루프가 헛돈다.
         Err(
             e @ (gputeer_coordinator::job_store::JobStoreError::LegacyManifestMissing { .. }
-            | gputeer_coordinator::job_store::JobStoreError::CorruptData(_)),
+            | gputeer_coordinator::job_store::JobStoreError::ManifestCorrupt { .. }
+            | gputeer_coordinator::job_store::JobStoreError::ManifestHashMismatch
+            | gputeer_coordinator::job_store::JobStoreError::ManifestIdentityMismatch(_)),
         ) => {
             return Ok(ManifestCheck::Unusable(format!(
                 "저장된 Manifest 를 쓸 수 없다: {e}"
             )))
         }
-        Err(e) => return Err(format!("TICK_REFUSED: Manifest binding 조회 실패: {e}")),
+        Err(e) => return Err(format!("STORAGE_FAILED: Manifest binding 조회 실패: {e}")),
     };
     Ok(
         match verify(
