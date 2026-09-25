@@ -40,6 +40,7 @@ mod gpu_probe;
 mod import_inventory;
 mod import_manifest;
 mod issue_grant;
+mod local_http;
 mod node_doctor;
 mod ops;
 mod out_file;
@@ -51,6 +52,7 @@ mod scheduler_tick;
 mod selftest;
 mod stage_job;
 mod submit;
+mod submit_ui;
 
 const USAGE: &str = "\
 gputeer — gPUteer CLI
@@ -92,7 +94,9 @@ gputeer — gPUteer CLI
 
   신뢰망 운영 — 전체 절차는 docs/runbooks/신뢰망_설치_운영.md
     gputeer keygen --out <시드 파일>
-    gputeer dashboard --control-db <control.sqlite3> --port <로컬 포트>   (127.0.0.1 전용 · 읽기 전용)
+    gputeer dashboard --control-db <control.sqlite3> --port <로컬 포트>   (127.0.0.1 전용 · 기본 읽기 전용)
+        [--allow-import true --submitter-keyring <keyring> --submitter-member <id> --max-snapshot-age-ms <ms>]
+    gputeer submit-ui --submitter-device-id <id> --submitter-seed-file <파일> --out-dir <폴더> --port <로컬 포트>
     gputeer node-doctor --seed-file <node.seed> --node-dir <노드 폴더> --connect <주소>:<포트> \\
         [--shared-checkpoint-root <공유 저장소>] [--owner-panel-port <포트>] [--gpu-pin <GPU>] \\
         [--container-runtime <podman|docker> --container-runtime-kind podman|docker]
@@ -341,6 +345,16 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("import-inventory 실패: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("submit-ui") => match submit_ui::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("submit-ui 실패: {error}");
                 ExitCode::FAILURE
             }
         },

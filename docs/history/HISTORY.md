@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-25 15:45 — 제출자 · 운영자 웹 화면: 폼으로 내고 화면에서 반입 · 계획
+
+- 계획: `docs/plans/2026-09-25_1535_제출자_운영자_웹_UI.md`
+- 스트림: CLI
+- 수행: `gputeer submit-ui`(제출자 기계 127.0.0.1 — 폼 → `submit` 과 같은 함수로 서명 Manifest 를 만들어 내려받게 한다)와 대시보드의
+  `--allow-import true`(올린 Manifest 를 `import-manifest` · `plan-job` 과 같은 함수로 반입 · 계획)를 더했다. 둘 다 127.0.0.1 · Host 검사 ·
+  토큰 헤더 · 요청 전체 시한. 공용 조각 `local_http` 로 대시보드도 옮겼다
+- 검증: `cargo test --workspace -j 2` 1329 passed · 0 failed · ignored 4(개발 기계 Windows · 이 세션 전용 빌드 폴더). 새 시험 1(끝에서 끝 + 음성 6) · 뮤테이션 2(토큰 · Host 검사) 되돌려 확인 · 제출 화면은 브라우저로 한 번 확인
+- ★ 한계: 독립 검수 전 · 네트워크 제출 경로는 여전히 없다(파일을 건넨다)
+- ★ 작업 환경: fork 세션이 같은 빌드 폴더(target)를 써 이 세션의 `gputeer.exe` 를 덮은 일이 있었다(15:42) — fork 에 따로 된 빌드 폴더를 쓰도록 알렸다
+- 리포트: 계획 문서가 대신한다
+
 ## 2026-09-25 15:33 — CI 첫 컨테이너 실측: docker · podman 둘 다 격리 5개 통과
 
 - 근거: GitHub Actions 실행 36103061402(`fff3d08` 푸시 · ubuntu 러너 · 비-root) — 정보용 단계의 `CONTAINER_ISOLATION_MEASURED` 두 런타임 × 5
