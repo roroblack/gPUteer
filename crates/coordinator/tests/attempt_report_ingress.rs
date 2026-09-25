@@ -1834,3 +1834,45 @@ fn a_session_that_expects_no_reports_behaves_exactly_as_before() {
         "기대하지 않았는데 무언가 저장됐다"
     );
 }
+
+/// ★ 결함 410 (재검수 97) — Grant 를 만드는 곳은 호출자의 `pool_mode` 만 믿지 않는다. 제어 DB 에 풀 표식이 있으면 호출자가 false 를 줘도
+///   풀 Grant(v4 · pool_mode)로 낸다 — 재시작 명령에서 `--pool-mode` 를 빠뜨려도 풀 신호가 빠지지 않는다. 대조군: 표식이 없으면 v2 그대로.
+#[test]
+fn a_pool_marked_control_db_always_issues_pool_grants() {
+    let fixture = fixture();
+    let issue = || {
+        let jobs = CoordinatorJobStore::open(&fixture.control_db).expect("job store");
+        let staging = CoordinatorStagingStore::open(&fixture.control_db).expect("staging store");
+        let leases = CoordinatorLeaseStore::open(&fixture.control_db).expect("lease store");
+        let mut submitters = InMemoryKeyring::new();
+        submitters.insert(
+            SUBMITTER_ID,
+            SigningKey::from_bytes(&SUBMITTER_SEED).verifying_key(),
+        );
+        let now = now_ms();
+        gputeer_coordinator::grant_from_stored::signed_grant_from_stored(
+            &jobs,
+            &staging,
+            &leases,
+            &gputeer_coordinator::grant_from_stored::StoredGrantRequest {
+                job_id: JOB_ID.into(),
+                attempt_id: ATTEMPT_ID.into(),
+                lease_id: LEASE_ID.into(),
+                grant_id: GRANT_ID.into(),
+                issued_at_unix_ms: now,
+                expires_at_unix_ms: now + 60_000,
+                nonce: vec![7; 16],
+                pool_mode: false,
+            },
+            &SigningKey::from_bytes(&COORDINATOR_SEED),
+            &submitters,
+        )
+        .expect("Grant 발급")
+    };
+    let before = issue();
+    assert_eq!((before.schema_version, before.pool_mode), (2, false));
+    gputeer_coordinator::job_store::declare_pool_mode(&fixture.control_db, now_ms())
+        .expect("풀 표식");
+    let after = issue();
+    assert_eq!((after.schema_version, after.pool_mode), (4, true));
+}

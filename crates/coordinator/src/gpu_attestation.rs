@@ -87,9 +87,23 @@ pub fn observation_time_usable(
     Ok(())
 }
 
-/// 선언 gpu_id 가 NVML UUID 모양인가(`GPU-…` · MIG 인스턴스 `MIG-…`). 설치 자동화의 `<노드>-gpu-<번호>` 는 아니다.
+/// 선언 gpu_id 가 NVML UUID 모양인가 — `GPU-` 또는 `MIG-` 뒤에 8-4-4-4-12 자리 16진수. 설치 자동화의 `<노드>-gpu-<번호>` 는 아니다.
+///
+/// ★ 2026-09-25 (결함 411 · 재검수 97) — 처음엔 접두어만 봐서, 노드 이름이 `GPU` 인 가입 파일의 `GPU-gpu-0` 을 UUID 로 오인했다.
+/// ★ 옛 MIG 형식(`MIG-GPU-<uuid>/<gi>/<ci>`)은 UUID 로 보지 않는다 — 모델 · VRAM 으로 짝짓는다(대체 짝을 막지 못한다).
 fn declared_as_uuid(gpu_id: &str) -> bool {
-    gpu_id.starts_with("GPU-") || gpu_id.starts_with("MIG-")
+    let Some(rest) = gpu_id
+        .strip_prefix("GPU-")
+        .or_else(|| gpu_id.strip_prefix("MIG-"))
+    else {
+        return false;
+    };
+    let groups: Vec<&str> = rest.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(group, len)| group.len() == len && group.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// 선언의 GPU 마다 **서로 다른** 관측 GPU 하나씩을 짝지을 수 있는가.
@@ -170,6 +184,8 @@ mod tests {
 
     const MODEL: &str = "NVIDIA GeForce RTX 4070 SUPER";
     const TOTAL: u64 = 12_878_610_432;
+    const OLD: &str = "GPU-0a1b2c3d-0000-4000-8000-00000000000a";
+    const NEW: &str = "GPU-0a1b2c3d-0000-4000-8000-00000000000b";
 
     fn declared(id: &str, model: Option<&str>, vram: Option<u64>) -> GpuInventory {
         GpuInventory {
@@ -232,31 +248,49 @@ mod tests {
 
     #[test]
     fn a_uuid_declaration_binds_only_to_that_gpu() {
-        let o = [
-            observed("GPU-1", MODEL, TOTAL),
-            observed("GPU-2", MODEL, TOTAL),
-        ];
+        let o = [observed(OLD, MODEL, TOTAL), observed(NEW, MODEL, TOTAL)];
         assert_eq!(
-            match_declaration(&[declared("GPU-2", Some(MODEL), None)], &o),
+            match_declaration(&[declared(NEW, Some(MODEL), None)], &o),
             Ok(())
         );
         // 선언 UUID 의 GPU 가 다른 모델이면 — 같은 모델의 다른 GPU 로 대신 짝짓지 않는다
         let o2 = [
-            observed("GPU-1", MODEL, TOTAL),
-            observed("GPU-2", "RTX 3060", TOTAL),
+            observed(OLD, MODEL, TOTAL),
+            observed(NEW, "RTX 3060", TOTAL),
         ];
-        assert!(match_declaration(&[declared("GPU-2", Some(MODEL), None)], &o2).is_err());
+        assert!(match_declaration(&[declared(NEW, Some(MODEL), None)], &o2).is_err());
     }
 
     /// ★ 결함 409 — UUID 로 선언한 GPU 가 빠지고 같은 모델 · 용량의 다른 GPU 가 꽂혔다. 대신 짝짓지 않는다.
     #[test]
     fn a_uuid_declared_gpu_that_disappeared_is_not_replaced_by_a_look_alike() {
-        let d = [declared("GPU-old", Some(MODEL), Some(TOTAL))];
-        assert!(match_declaration(&d, &[observed("GPU-new", MODEL, TOTAL)]).is_err());
+        let d = [declared(OLD, Some(MODEL), Some(TOTAL))];
+        assert!(match_declaration(&d, &[observed(NEW, MODEL, TOTAL)]).is_err());
         assert_eq!(
-            match_declaration(&d, &[observed("GPU-old", MODEL, TOTAL)]),
+            match_declaration(&d, &[observed(OLD, MODEL, TOTAL)]),
             Ok(())
         );
+    }
+
+    /// ★ 결함 411 — 노드 이름이 `GPU` 인 번호형 선언(`GPU-gpu-0`)은 UUID 가 아니다. 모델 · VRAM 으로 짝짓는다.
+    #[test]
+    fn a_numbered_declaration_that_starts_with_gpu_is_not_a_uuid() {
+        let d = [declared("GPU-gpu-0", Some(MODEL), Some(TOTAL))];
+        assert_eq!(
+            match_declaration(&d, &[observed(NEW, MODEL, TOTAL)]),
+            Ok(())
+        );
+        assert!(declared_as_uuid(OLD));
+        assert!(declared_as_uuid("MIG-0a1b2c3d-0000-4000-8000-00000000000a"));
+        for not_uuid in [
+            "GPU-gpu-0",
+            "GPU-",
+            "node-gpu-0",
+            "GPU-0a1b2c3d-0000-4000-8000-00000000000",
+            "MIG-GPU-x/1/0",
+        ] {
+            assert!(!declared_as_uuid(not_uuid), "{not_uuid}");
+        }
     }
 
     /// 탐욕으로 고르면 틀리는 조합 — 첫 선언(VRAM 조건 없음)이 큰 GPU 를 먼저 잡으면 둘째(큰 VRAM 필요)가 남는 것이 없다.

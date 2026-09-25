@@ -64,3 +64,18 @@ fn run_multi_agent_refuses_pool_mode() {
         gputeer_coordinator::multi_agent::run_multi_agent(pooled).expect_err("거부돼야 한다");
     assert!(error.contains("POOL_LANE_CONFLICT"), "실제 오류: {error}");
 }
+
+/// ★ 결함 410 (재검수 97) — 풀 표식이 있는 제어 DB 를 `--pool-mode` 없이 쓰면 `run()` 이 시작하지 않는다.
+#[test]
+fn run_refuses_a_pool_marked_control_db_without_pool_mode() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("control.sqlite3");
+    gputeer_coordinator::job_store::declare_pool_mode(&db, 1).expect("풀 표식");
+    let mut unpooled = config(&["--max-connections", "1", "--accept-timeout-ms", "200"]);
+    unpooled.grant_from_control_db = Some(db);
+    let error = gputeer_coordinator::run(unpooled).expect_err("거부돼야 한다");
+    assert!(
+        error.contains("POOL_DB_WITHOUT_POOL_MODE"),
+        "실제 오류: {error}"
+    );
+}

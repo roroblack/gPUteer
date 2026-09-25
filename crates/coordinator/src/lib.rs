@@ -461,6 +461,18 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
     }
+    // ★ 결함 410 (재검수 97) — 풀 표식이 있는 제어 DB 를 `--pool-mode` 없이 쓰지 않는다. 표식은 한 번 적으면 지우지 않는 사실이고,
+    //   빠뜨리면 풀 시작 검사 · 수신 확인 발송을 건너뛴 채 풀 예약을 내준다. 없는 파일은 열지 않는다(여는 것만으로 만들어진다).
+    if !config.pool_mode {
+        if let Some(control_db) = config.grant_from_control_db.as_ref().filter(|p| p.exists()) {
+            if job_store::pool_mode_declared(control_db)? {
+                return Err(format!(
+                    "STARTUP_REFUSED: POOL_DB_WITHOUT_POOL_MODE — {} 는 풀 제어 DB 다(풀 표식이 있다). --pool-mode true 로 띄운다",
+                    control_db.display()
+                ));
+            }
+        }
+    }
 
     // ★ lane 선택을 **여기서** 한다(독립 검수 6라운드 지적).
     //

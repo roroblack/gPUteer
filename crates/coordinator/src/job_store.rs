@@ -1447,6 +1447,35 @@ pub fn pool_mode_declared(control_db: &std::path::Path) -> Result<bool, String> 
         .is_some())
 }
 
+impl CoordinatorJobStore {
+    /// ★ 2026-09-25 (결함 410 · 재검수 97) — 이 저장소의 DB 에 풀 표식이 있는가([`declare_pool_mode`]). Grant 를 만드는 곳이 설정의 불리언이
+    ///   아니라 **DB 의 사실**로 풀 여부를 알게 한다. 표가 없으면 아니다(읽기만 한다).
+    pub fn pool_mode_declared(&self) -> Result<bool, JobStoreError> {
+        let table = self
+            .connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_pool_mode'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(map_sql_error)?;
+        if table.is_none() {
+            return Ok(false);
+        }
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM coordinator_pool_mode WHERE singleton = 1",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(map_sql_error)?
+            .is_some())
+    }
+}
+
 pub(crate) fn update_job(connection: &Connection, job: &StoredJob) -> Result<(), JobStoreError> {
     let (failure_kind, failure_detail) = match &job.queue_failure {
         Some(failure) => (Some(failure.code()), failure.detail()),
