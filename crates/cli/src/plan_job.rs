@@ -205,11 +205,10 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //   멱등이고 다르면 `PlanConflict` 다(inventory 가 바뀌어 계획이 달라졌으면 옛 계획을 조용히 유지하지 않고 시끄럽게 실패한다).
     // ★★ 2026-09-25 (결함 402) — `SUBMITTED -> PLANNING -> QUEUED` 를 **한 트랜잭션**으로 한다. 전에는 두 커밋이라 둘째가 실패하면 PLANNING 에
     //   남았고, 그 사이 Manifest 가 만료되면 이 명령이 서명 검증에서 먼저 거부해 다시 돌려도 풀 수 없었다.
-    // ★ 결함 424 (재검수 107) — 큐 진입 시각은 **지금** 이다. 명령 시작 때 읽은 값을 쓰면 검증 · 스냅샷에 걸린 시간만큼 앞당겨져 FIFO 순서와 큐 시한이
-    //   틀어졌다. 앞선 시각보다 뒤로 가지 않게 max 로 둔다.
-    let queued_at_unix_ms = now_unix_ms.max(crate::plan_job::now_unix_ms());
+    // ★ 결함 424 · 428 (재검수 107 · 108) — 큐 진입 시각은 저장소가 **쓰기 잠금을 잡은 뒤** 읽는다. 명령 시작 때 읽은 값은 검증 · 스냅샷 · 잠금 대기만큼
+    //   앞당겨졌고, 그것을 고치려 둔 max(시작, 지금)은 시계가 되돌아가면 실제 진입 순서를 뒤집었다.
     let job = jobs
-        .plan_and_enqueue(job_id, &plan_id, queued_at_unix_ms)
+        .plan_and_enqueue_now(job_id, &plan_id)
         .map_err(|e| format!("PLAN_REFUSED: 계획 · 큐 진입 실패: {e}"))?;
 
     Ok(format!(

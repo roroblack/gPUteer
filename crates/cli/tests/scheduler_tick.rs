@@ -964,3 +964,37 @@ fn an_expired_manifest_at_the_head_does_not_hold_the_queue_hostage() {
         Some(JobState::Staging)
     );
 }
+
+/// ★ 결함 427 (재검수 108) — Manifest 본문이 없는 옛 Job 이 맨 앞이어도 건너뛰고 뒤를 배치한다(전에는 tick 이 저장소 오류로 끝나 루프가 멈췄다).
+#[test]
+fn a_legacy_job_without_a_manifest_body_is_skipped_not_fatal() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    queue_job(
+        dir.path(),
+        &keyring,
+        &db,
+        JOB_B,
+        "c1c2c3c4c5c6c7c8c9cacbcccdcecf00",
+    );
+    // JOB_A 를 옛 Job 처럼 만든다 — 본문 행만 지운다.
+    let connection = rusqlite::Connection::open(&db).expect("열기");
+    let removed = connection
+        .execute(
+            "DELETE FROM coordinator_job_manifests WHERE job_id = ?1",
+            [JOB_A],
+        )
+        .expect("본문 지우기");
+    assert_eq!(removed, 1, "시험 전제 — JOB_A 의 본문 행이 있어야 한다");
+    drop(connection);
+    let (ok, output) = tick(&keyring, &db, &[]);
+    assert!(ok, "tick 이 옛 Job 에서 멈췄다: {output}");
+    assert!(
+        output.contains(&format!("TICK_SKIPPED {JOB_A}")),
+        "{output}"
+    );
+    assert!(output.contains("TICK_STAGED"), "{output}");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+    assert_eq!(job_state(&db, JOB_B), Some(JobState::Staging));
+}

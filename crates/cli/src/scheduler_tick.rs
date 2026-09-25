@@ -546,13 +546,25 @@ fn stored_manifest_check(
     keyring: &PersistentKeyring,
     now_unix_ms: u64,
 ) -> Result<ManifestCheck, String> {
-    let Some(binding) = jobs
-        .get_manifest_binding(job_id)
-        .map_err(|e| format!("Manifest binding 조회 실패: {e}"))?
-    else {
-        return Ok(ManifestCheck::Unusable(
-            "저장된 Manifest 가 없다".to_string(),
-        ));
+    // ★ 결함 427 (재검수 108) — 옛 Job(본문 행 없음 · `LegacyManifestMissing`)과 본문 손상(`CorruptData`)은 **이 Job 을 쓸 수 없다** 는 뜻이라
+    //   건너뛴다. 처음엔 `?` 로 올려 tick 이 끝났고, 오류가 `TICK_REFUSED` 로 시작하지 않아 scheduler-loop 가 멈췄다. 그 밖의 저장소 장애(잠금 · I/O)는
+    //   거부한다(fail-closed).
+    let binding = match jobs.get_manifest_binding(job_id) {
+        Ok(Some(binding)) => binding,
+        Ok(None) => {
+            return Ok(ManifestCheck::Unusable(
+                "저장된 Manifest 가 없다".to_string(),
+            ))
+        }
+        Err(
+            e @ (gputeer_coordinator::job_store::JobStoreError::LegacyManifestMissing { .. }
+            | gputeer_coordinator::job_store::JobStoreError::CorruptData(_)),
+        ) => {
+            return Ok(ManifestCheck::Unusable(format!(
+                "저장된 Manifest 를 쓸 수 없다: {e}"
+            )))
+        }
+        Err(e) => return Err(format!("TICK_REFUSED: Manifest binding 조회 실패: {e}")),
     };
     Ok(
         match verify(

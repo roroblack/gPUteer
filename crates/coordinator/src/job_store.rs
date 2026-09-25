@@ -859,20 +859,37 @@ impl CoordinatorJobStore {
         plan_id: &str,
         at_unix_ms: u64,
     ) -> Result<StoredJob, JobStoreError> {
-        self.plan_and_enqueue_inner(job_id, plan_id, at_unix_ms, false)
+        self.plan_and_enqueue_inner(job_id, plan_id, Some(at_unix_ms), false)
+    }
+
+    /// ★ 결함 428 (재검수 108) — [`plan_and_enqueue`](Self::plan_and_enqueue) 와 같되, 시각을 **쓰기 잠금을 잡은 뒤** 시계에서 읽는다. 호출자가 미리 읽은
+    ///   시각을 쓰면 잠금 대기만큼 앞당겨지고, 시계가 되돌아가면 실제 진입 순서와 FIFO 가 뒤집혔다.
+    pub fn plan_and_enqueue_now(
+        &mut self,
+        job_id: &str,
+        plan_id: &str,
+    ) -> Result<StoredJob, JobStoreError> {
+        self.plan_and_enqueue_inner(job_id, plan_id, None, false)
     }
 
     fn plan_and_enqueue_inner(
         &mut self,
         job_id: &str,
         plan_id: &str,
-        at_unix_ms: u64,
+        at_unix_ms: Option<u64>,
         fail_after_planning: bool,
     ) -> Result<StoredJob, JobStoreError> {
         if plan_id.trim().is_empty() {
             return Err(JobStoreError::InvalidInput("plan_id"));
         }
         self.transition(job_id, |transaction, mut job| {
+            // `transition` 이 BEGIN IMMEDIATE 로 쓰기 잠금을 잡은 뒤다 — 여기서 읽은 시각이 실제 진입 순서를 따른다.
+            let at_unix_ms = at_unix_ms.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0)
+            });
             if job.state == JobState::Queued {
                 if job.plan_id.as_deref() == Some(plan_id) {
                     return Ok(job);
@@ -926,7 +943,7 @@ impl CoordinatorJobStore {
         plan_id: &str,
         at_unix_ms: u64,
     ) -> Result<StoredJob, JobStoreError> {
-        self.plan_and_enqueue_inner(job_id, plan_id, at_unix_ms, true)
+        self.plan_and_enqueue_inner(job_id, plan_id, Some(at_unix_ms), true)
     }
 
     /// Records one of the three distinct normative `QUEUED -> FAILED`
@@ -2624,5 +2641,35 @@ mod tests {
             store.plan_and_enqueue("job-1", "", 200),
             Err(JobStoreError::InvalidInput("plan_id"))
         ));
+    }
+
+    /// ★ 결함 428 — 큐 진입 시각은 쓰기 잠금을 잡은 **뒤** 읽는다. 다른 연결이 잠금을 쥔 동안 부르면 그 시각은 잠금이 풀린 뒤다.
+    #[test]
+    fn plan_and_enqueue_now_reads_the_clock_after_taking_the_write_lock() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("jobs.sqlite3");
+        let mut store = CoordinatorJobStore::open(&path).expect("open");
+        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+        let blocker = Connection::open(&path).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64
+        };
+        let called_at = now();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            blocker.execute_batch("COMMIT;").unwrap();
+        });
+        let queued = store.plan_and_enqueue_now("job-1", "plan-1").unwrap();
+        release.join().unwrap();
+        let queued_at = queued.queued_at_unix_ms.unwrap();
+        assert!(
+            queued_at >= called_at + 300,
+            "잠금을 기다리기 전 시각을 썼다(called_at {called_at}, queued_at {queued_at})"
+        );
+        assert_eq!(queued.planning_at_unix_ms, Some(queued_at));
     }
 }
