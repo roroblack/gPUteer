@@ -1421,11 +1421,15 @@ pub fn declare_pool_mode(control_db: &std::path::Path, now_unix_ms: u64) -> Resu
 
 /// 이 control DB 를 풀 Coordinator 가 쓰는가([`declare_pool_mode`]). 표가 없으면 아니다(읽기만 한다).
 ///
-/// ★ 2026-09-25 (결함 419 · 재검수 103) — **읽기 전용 · 생성 없음 · URI 해석 없음**으로 연다. 기본(읽기 · 쓰기 · 생성)으로 열면, 호출자가 존재를
-///   확인한 뒤 파일이 옮겨졌을 때 빈 DB 를 만들고 "표식 없음" 으로 판단했다. 없는 파일이면 열기가 실패한다(호출자는 거부한다 — fail-closed).
+/// ★ 2026-09-25 (결함 419 · 재검수 103) — **생성 없음**으로 연다. 기본(읽기 · 쓰기 · 생성)으로 열면, 호출자가 존재를 확인한 뒤 파일이 옮겨졌을 때
+///   빈 DB 를 만들고 "표식 없음" 으로 판단했다. 없는 파일이면 열기가 실패한다(호출자는 거부한다 — fail-closed).
+/// ★ 결함 420 (재검수 104) — 그렇다고 **읽기 전용**으로 열면 안 된다. 비정상 종료가 남긴 rollback journal 을 되감지 못해 실패하고, 이 검사가 시작의 첫 DB
+///   접근이라 재시작마다 같은 곳에서 막혔다(419 조치가 처음에 그랬다). 읽기 · 쓰기로 열되 만들지는 않는다.
+/// ★ 결함 421 — URI(`file:…`)는 이 열기에서도 해석된다(bundled SQLite 가 `SQLITE_USE_URI` 로 빌드됐다). URI 경로는 호출자
+///   (`refuse_pool_marked_db_without_pool_mode`)가 먼저 거부한다.
 pub fn pool_mode_declared(control_db: &std::path::Path) -> Result<bool, String> {
     let connection =
-        Connection::open_with_flags(control_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        Connection::open_with_flags(control_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
             .map_err(|e| e.to_string())?;
     connection
         .busy_timeout(std::time::Duration::from_secs(5))

@@ -240,3 +240,40 @@ fn reading_the_pool_mark_never_creates_a_database_file() {
     assert!(gputeer_coordinator::job_store::pool_mode_declared(&missing).is_err());
     assert!(!missing.exists(), "풀 표식을 읽다가 빈 DB 를 만들었다");
 }
+
+/// ★ 결함 420 (재검수 104) — 비정상 종료가 남긴 rollback journal(hot journal)이 있는 DB 도 풀 표식 검사가 읽는다(되감는다).
+///   처음 419 조치는 읽기 전용으로 열어 되감지 못하고 실패했다 — 시작 검사가 첫 DB 접근이라 재시작마다 같은 곳에서 막혔다.
+///   hot journal 은 쓰기 도중인 DB 와 journal 을 **잠금 없이** 복사해 만든다(복사본에는 잠금을 쥔 연결이 없다).
+#[test]
+fn a_hot_journal_left_by_a_crash_does_not_block_the_pool_mark_check() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("control.sqlite3");
+    gputeer_coordinator::job_store::declare_pool_mode(&db, 1).expect("풀 표식");
+    let writer = rusqlite::Connection::open(&db).expect("열기");
+    writer
+        .execute_batch(
+            "PRAGMA journal_mode = DELETE; PRAGMA cache_size = 1;
+             CREATE TABLE filler(x BLOB);",
+        )
+        .expect("준비");
+    writer.execute_batch("BEGIN IMMEDIATE;").expect("쓰기 시작");
+    for _ in 0..200 {
+        writer
+            .execute("INSERT INTO filler VALUES (zeroblob(4096))", [])
+            .expect("쓰기");
+    }
+    let copy = dir.path().join("crashed.sqlite3");
+    std::fs::copy(&db, &copy).expect("DB 복사");
+    let journal = dir.path().join("control.sqlite3-journal");
+    assert!(
+        journal.exists(),
+        "쓰기 도중인데 journal 이 없다 — 시험 전제가 깨졌다"
+    );
+    std::fs::copy(&journal, dir.path().join("crashed.sqlite3-journal")).expect("journal 복사");
+    drop(writer);
+    assert_eq!(
+        gputeer_coordinator::job_store::pool_mode_declared(&copy),
+        Ok(true),
+        "hot journal 이 남은 DB 의 풀 표식을 읽지 못했다"
+    );
+}
