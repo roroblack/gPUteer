@@ -53,6 +53,22 @@ pub struct AgentInventory {
     pub third_party_workloads_opt_in: Option<bool>,
 }
 
+/// 노드의 GPU 관측을 선언과 대조한 결과(결함 301). `Recorded` 만 확인 기록을 남겼다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuAttestationOutcome {
+    /// 선언 판(`inventory_revision`)에 대해 `attested_at_unix_ms` 로 확인 기록을 남겼다(같은 판의 더 늦은 기록이 있으면 그것을 둔다).
+    Recorded {
+        inventory_revision: u64,
+        attested_at_unix_ms: u64,
+    },
+    /// 등록된 선언이 없다 — 대조할 것이 없다.
+    NoInventory,
+    /// 선언이 GPU 를 관측하지 않았거나(`gpus: None`) GPU 가 없다고 했다 — GPU 관측은 그 선언의 증거가 아니다.
+    NoDeclaredGpus,
+    /// 선언과 관측이 맞지 않는다. 확인 기록을 남기지 않는다 — 그 노드는 선언의 시각대로 늙어 배치에서 빠진다.
+    Mismatch(String),
+}
+
 /// One Agent's registration and its inventory, imported together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentBootstrap {
@@ -526,6 +542,76 @@ impl CoordinatorInventoryStore {
         })
     }
 
+    /// ★ 결함 301 — 노드가 Hello 에 실어 보낸 GPU 관측을 **지금 선언**과 대조해, 맞으면 그 선언 판에 대한 확인 기록을 남긴다.
+    ///
+    /// 선언(observed_at 포함)은 바꾸지 않는다 — 확인 기록은 따로 둔 표에만 적고 `pool_snapshot()` 이 접는다. 대조와 기록이
+    /// 한 트랜잭션이라, 그 사이 운영자가 새 선언을 넣어도 옛 선언에 대한 확인이 새 판에 붙지 않는다.
+    /// `attested_at_unix_ms` 는 호출자가 min(관측 시각, Coordinator 지금) 으로 준다.
+    pub fn record_gpu_attestation(
+        &mut self,
+        node_id: &str,
+        observation: &gputeer_protocol::pb::NodeGpuObservation,
+        attested_at_unix_ms: u64,
+    ) -> Result<GpuAttestationOutcome, InventoryStoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+        let Some(inventory) = fetch_inventory(&transaction, node_id)? else {
+            return Ok(GpuAttestationOutcome::NoInventory);
+        };
+        let declared = match inventory.gpus.as_deref() {
+            Some(gpus) if !gpus.is_empty() => gpus,
+            _ => return Ok(GpuAttestationOutcome::NoDeclaredGpus),
+        };
+        if let Err(reason) = crate::gpu_attestation::match_declaration(declared, &observation.gpus) {
+            return Ok(GpuAttestationOutcome::Mismatch(reason));
+        }
+        transaction
+            .execute_batch(GPU_ATTESTATION_SCHEMA)
+            .map_err(map_sql_error)?;
+        let stored = transaction
+            .query_row(
+                "SELECT inventory_revision, attested_at_unix_ms FROM coordinator_node_gpu_attestation
+                 WHERE node_id = ?1",
+                rusqlite::params![node_id],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(map_sql_error)?
+            .map(|(revision, at)| {
+                Ok::<_, InventoryStoreError>((
+                    decode_u64(&revision, "gpu attestation inventory_revision")?,
+                    decode_u64(&at, "gpu attestation attested_at_unix_ms")?,
+                ))
+            })
+            .transpose()?;
+        // 같은 판이면 늦은 쪽을 둔다 — 시계가 되돌아간 관측이 확인을 앞당겨 지우지 않는다.
+        let attested_at = match stored {
+            Some((revision, at)) if revision == inventory.inventory_revision => at.max(attested_at_unix_ms),
+            _ => attested_at_unix_ms,
+        };
+        transaction
+            .execute(
+                "INSERT INTO coordinator_node_gpu_attestation(node_id, inventory_revision, attested_at_unix_ms)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(node_id) DO UPDATE SET
+                    inventory_revision = excluded.inventory_revision,
+                    attested_at_unix_ms = excluded.attested_at_unix_ms",
+                rusqlite::params![
+                    node_id,
+                    inventory.inventory_revision.to_be_bytes().to_vec(),
+                    attested_at.to_be_bytes().to_vec()
+                ],
+            )
+            .map_err(map_sql_error)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(GpuAttestationOutcome::Recorded {
+            inventory_revision: inventory.inventory_revision,
+            attested_at_unix_ms: attested_at,
+        })
+    }
+
     /// Reads registry and inventory rows from one SQLite snapshot and projects
     /// candidates in deterministic `node_id` order. The supplied time is copied
     /// only to the pool; stored observation timestamps are never rewritten.
@@ -561,6 +647,15 @@ impl CoordinatorInventoryStore {
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
                  WHERE type = 'table' AND name = 'coordinator_node_reclaims'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sql_error)?
+            > 0;
+        let attestation_table_exists: bool = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'coordinator_node_gpu_attestation'",
                 [],
                 |row| row.get::<_, i64>(0),
             )
@@ -653,6 +748,27 @@ impl CoordinatorInventoryStore {
             } else {
                 last_seen
             };
+            // ★ 2026-09-25 (결함 301) — 노드의 GPU 관측이 **지금 선언 판**을 확인했으면 그 시각까지 신선하다고 접는다.
+            //   선언의 observed_at 은 그대로다(운영자 말과 노드 말을 섞지 않는다). 판이 다르면(새 선언) 옛 확인은 무효다.
+            if attestation_table_exists {
+                let attestation = transaction
+                    .query_row(
+                        "SELECT inventory_revision, attested_at_unix_ms FROM coordinator_node_gpu_attestation
+                         WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                        |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                    )
+                    .optional()
+                    .map_err(map_sql_error)?;
+                if let Some((revision, at)) = attestation {
+                    let revision = decode_u64(&revision, "gpu attestation inventory_revision")?;
+                    let at = decode_u64(&at, "gpu attestation attested_at_unix_ms")?;
+                    if candidate.inventory_revision == Some(revision) {
+                        candidate.observed_at_unix_ms =
+                            candidate.observed_at_unix_ms.map(|declared| declared.max(at));
+                    }
+                }
+            }
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)
                     .map_err(|error| InventoryStoreError::CorruptData(error.to_string()))?
@@ -676,6 +792,13 @@ impl CoordinatorInventoryStore {
         })
     }
 }
+
+/// 확인 기록 표(결함 301). 기록할 때만 만든다 — 여는 것만으로 쓰기 잠금을 잡지 않는다(예약 표와 같은 이유).
+const GPU_ATTESTATION_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS coordinator_node_gpu_attestation (
+    node_id TEXT PRIMARY KEY REFERENCES coordinator_agent_registry(node_id),
+    inventory_revision BLOB NOT NULL,
+    attested_at_unix_ms BLOB NOT NULL
+);";
 
 fn initialize_schema(connection: &Connection) -> Result<(), InventoryStoreError> {
     connection
@@ -2138,5 +2261,106 @@ mod tests {
                 Err(InventoryStoreError::CorruptData(_))
             ));
         }
+    }
+
+    fn observation(gpus: &[(&str, &str, u64)]) -> gputeer_protocol::pb::NodeGpuObservation {
+        gputeer_protocol::pb::NodeGpuObservation {
+            observed_at_unix_ms: 0,
+            gpus: gpus
+                .iter()
+                .map(|(uuid, model, total)| gputeer_protocol::pb::ObservedGpu {
+                    uuid: (*uuid).into(),
+                    model: (*model).into(),
+                    total_vram_bytes: *total,
+                })
+                .collect(),
+        }
+    }
+
+    fn snapshot_observed_at(store: &mut CoordinatorInventoryStore, node: &str) -> Option<u64> {
+        store
+            .pool_snapshot(2_000_000_000_000)
+            .unwrap()
+            .candidates
+            .into_iter()
+            .find(|candidate| candidate.node_id == node)
+            .unwrap()
+            .observed_at_unix_ms
+    }
+
+    /// ★ 결함 301 — 맞는 관측은 **그 선언 판**의 신선도를 늘린다. 선언은 바꾸지 않고, 새 판이 들어오면 옛 확인은 무효다.
+    #[test]
+    fn a_matching_gpu_observation_refreshes_only_the_declared_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        store.update_inventory(&inventory("node-a", 1, 1_000, 5)).unwrap();
+        // 선언: gpu-a-5(model-a-5 · VRAM 15) · gpu-z-5(model-z-5 · VRAM 25)
+        let matching = observation(&[("GPU-1", "model-a-5", 15), ("GPU-2", "model-z-5", 4_096)]);
+        assert_eq!(
+            store.record_gpu_attestation("node-a", &matching, 50_000).unwrap(),
+            GpuAttestationOutcome::Recorded {
+                inventory_revision: 1,
+                attested_at_unix_ms: 50_000
+            }
+        );
+        assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(50_000));
+        // 선언 자체는 그대로다
+        assert_eq!(
+            fetch_inventory(&store.connection, "node-a").unwrap().unwrap().observed_at_unix_ms,
+            1_000
+        );
+        // 같은 판에 더 이른 확인은 늦은 확인을 지우지 않는다
+        assert_eq!(
+            store.record_gpu_attestation("node-a", &matching, 40_000).unwrap(),
+            GpuAttestationOutcome::Recorded {
+                inventory_revision: 1,
+                attested_at_unix_ms: 50_000
+            }
+        );
+        // 새 판(운영자 재선언) — 옛 판의 확인은 접히지 않는다
+        store.update_inventory(&inventory("node-a", 2, 2_000, 5)).unwrap();
+        assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(2_000));
+        // 확인이 선언보다 이르면 선언 시각을 줄이지 않는다
+        store.record_gpu_attestation("node-a", &matching, 1_500).unwrap();
+        assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(2_000));
+    }
+
+    /// ★ 결함 301 — GPU 가 빠졌거나 다른 GPU 면 기록하지 않는다. CPU 전용 · GPU 미관측 선언은 GPU 관측이 증거가 아니다.
+    #[test]
+    fn a_mismatching_or_gpu_less_declaration_is_not_refreshed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        assert_eq!(
+            store
+                .record_gpu_attestation("node-a", &observation(&[("GPU-1", "model-a-5", 15)]), 50_000)
+                .unwrap(),
+            GpuAttestationOutcome::NoInventory
+        );
+        store.update_inventory(&inventory("node-a", 1, 1_000, 5)).unwrap();
+        // 두 장 선언 · 한 장 관측
+        let one = observation(&[("GPU-1", "model-a-5", 15)]);
+        assert!(matches!(
+            store.record_gpu_attestation("node-a", &one, 50_000).unwrap(),
+            GpuAttestationOutcome::Mismatch(_)
+        ));
+        assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(1_000));
+        // CPU 전용 선언
+        let mut cpu_only = inventory("node-a", 2, 1_000, 5);
+        cpu_only.gpus = Some(vec![]);
+        store.update_inventory(&cpu_only).unwrap();
+        assert_eq!(
+            store.record_gpu_attestation("node-a", &one, 50_000).unwrap(),
+            GpuAttestationOutcome::NoDeclaredGpus
+        );
+        let mut unobserved = inventory("node-a", 3, 1_000, 5);
+        unobserved.gpus = None;
+        store.update_inventory(&unobserved).unwrap();
+        assert_eq!(
+            store.record_gpu_attestation("node-a", &one, 50_000).unwrap(),
+            GpuAttestationOutcome::NoDeclaredGpus
+        );
+        assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(1_000));
     }
 }

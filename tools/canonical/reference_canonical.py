@@ -416,7 +416,18 @@ SCHEMAS = {
         (5, "connection_attempt", "uint", None),
         (6, "issued_at_unix_ms", "uint", None),
         (7, "nonce", "bytes", None),
+        # ★ v2 · FRESH 에서만 (2026-09-25, 결함 301) — 노드가 NVML 로 읽은 GPU 관측. 서명 없는 중첩 메시지다
+        (8, "gpu_observation", "message", "NodeGpuObservation"),
         (90, "node_signature", "bytes", None),
+    ],
+    "NodeGpuObservation": [
+        (1, "observed_at_unix_ms", "uint", None),
+        (2, "gpus", "repeated_message", "ObservedGpu"),
+    ],
+    "ObservedGpu": [
+        (1, "uuid", "string", None),
+        (2, "model", "string", None),
+        (3, "total_vram_bytes", "uint", None),
     ],
     "NodeHeartbeat": [
         (1, "schema_version", "uint", None),
@@ -526,6 +537,8 @@ SCHEMAS = {
         (25, "lease_from_durable_store", "bool", None),
         # ★ v3 (2026-09-23, 신뢰망 남은 일 F) — 재개 지점. 각자 서명된 메시지 — 규칙 i 로 그 서명은 빠진다
         (26, "resume_from", "message", "CheckpointManifest"),
+        # ★ v4 (2026-09-25, 결함 288) — 풀 Coordinator 가 발급했다
+        (27, "pool_mode", "bool", None),
         (90, "coordinator_signature", "bytes", None),
     ],
     "CoordinatorEntry": [
@@ -1893,6 +1906,47 @@ def build_vectors():
     _hello_report["mode"] = 4
     add("v41b_agent_session_hello_report", "AgentSessionHello REPORT(4)", "AgentSessionHello", _hello_report,
         ["MUST_DIFFER:v41_agent_session_hello_renew"])
+
+    # 43. ★ ExecutionGrant v4 — 풀 신호(pool_mode = 27, 결함 288)
+    _grant_v4 = _grant(b"\xAA" * 64, {"algo": 1, "value": b"\x01" * 32})
+    _grant_v4["schema_version"] = 4
+    _grant_v4["pool_mode"] = True
+    c_p1 = add("v43_execution_grant_v4_pool_mode",
+               "ExecutionGrant v4 — 풀 Coordinator 가 발급한 Grant(pool_mode = 27). Agent 는 수신 확인 · 실행 중 갱신이 꺼져 있으면 거부한다",
+               "ExecutionGrant", _grant_v4,
+               ["MUST_DIFFER:v25_execution_grant"])
+    _grant_v4_off = dict(_grant_v4)
+    _grant_v4_off["pool_mode"] = False
+    c_p2 = add("v43b_execution_grant_v4_pool_mode_false",
+               "v43 에서 pool_mode 만 false — canonical 이 달라야 한다(풀 신호가 서명에 묶인다)",
+               "ExecutionGrant", _grant_v4_off,
+               ["MUST_DIFFER:v43_execution_grant_v4_pool_mode"])
+    assert c_p1 != c_p2, "pool_mode 가 Grant canonical 에 반영되지 않았다"
+
+    # 44. ★ AgentSessionHello v2 — FRESH 에 노드 GPU 관측(gpu_observation = 8, 결함 301)
+    def _hello_v2(total_vram_second):
+        h = dict(_hello)
+        h["schema_version"] = 2
+        h["mode"] = 1
+        h["gpu_observation"] = {
+            "observed_at_unix_ms": 1_755_103_899_000,
+            "gpus": [
+                {"uuid": "GPU-00000000-0000-0000-0000-000000000001",
+                 "model": "NVIDIA GeForce RTX 4070 SUPER", "total_vram_bytes": 12_878_610_432},
+                {"uuid": "GPU-00000000-0000-0000-0000-000000000002",
+                 "model": "NVIDIA GeForce RTX 4070 SUPER", "total_vram_bytes": total_vram_second},
+            ],
+        }
+        return h
+    c_h1 = add("v44_agent_session_hello_v2_gpu_observation",
+               "AgentSessionHello v2 FRESH — 노드가 NVML 로 읽은 GPU 두 개를 싣는다",
+               "AgentSessionHello", _hello_v2(12_878_610_432),
+               ["MUST_DIFFER:v34_agent_session_hello"])
+    c_h2 = add("v44b_agent_session_hello_v2_gpu_vram_changed",
+               "v44 에서 두 번째 GPU 의 총 VRAM 만 바꾼 것 — canonical 이 달라야 한다(관측이 Hello 서명에 묶인다)",
+               "AgentSessionHello", _hello_v2(8_585_216_000),
+               ["MUST_DIFFER:v44_agent_session_hello_v2_gpu_observation"])
+    assert c_h1 != c_h2, "GPU 관측이 Hello canonical 에 반영되지 않았다"
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

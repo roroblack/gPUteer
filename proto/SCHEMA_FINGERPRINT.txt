@@ -10,7 +10,7 @@
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 #
-# blake3-256: 94b0eba9a9a1f1c3c6d7bdb9b9e540ce7f69eb0a153dc3665dcb599c79c89409
+# blake3-256: 68f1015e90b772a6e736ace089618787c6922f971caaee3c42838be7db1f199d
 
 artifact.proto::ArtifactRef
   1 uint32 schema_version
@@ -396,6 +396,7 @@ job.proto::ExecutionGrant
   24 bytes nonce
   25 bool lease_from_durable_store
   26 CheckpointManifest resume_from
+  27 bool pool_mode
   90 bytes coordinator_signature
 job.proto::GrantedExecutionPlan
   1 ExecutionMode mode
@@ -461,6 +462,7 @@ lease.proto::AgentSessionHello
   5 uint32 connection_attempt
   6 uint64 issued_at_unix_ms
   7 bytes nonce
+  8 NodeGpuObservation gpu_observation
   90 bytes node_signature
 lease.proto::FenceWatermark
   1 string team_id
@@ -495,6 +497,9 @@ lease.proto::NeighborUnreachableReport
   6 uint64 observed_at_unix_ms
   7 bytes request_nonce
   90 bytes reporter_signature
+lease.proto::NodeGpuObservation
+  1 uint64 observed_at_unix_ms
+  2 repeated ObservedGpu gpus
 lease.proto::NodeHeartbeat
   1 uint32 schema_version
   2 string node_id
@@ -505,6 +510,10 @@ lease.proto::NodeHeartbeat
   7 uint32 running_attempts
   8 bytes request_nonce
   90 bytes node_signature
+lease.proto::ObservedGpu
+  1 string uuid
+  2 string model
+  3 uint64 total_vram_bytes
 lease.proto::ProgressReport
   1 uint64 current_step
   2 uint64 total_steps

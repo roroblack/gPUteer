@@ -452,6 +452,31 @@ inner(a,b)= BLAKE3_256( 0x01 || a || b )
 - `schema_version < 3` 인 Grant 에 이 칸이 있으면 거부한다(MUST).
 - 제안: `docs/contracts/proposals/2026-09-23_1908_Grant_v3_재개_지점.md`
 
+### 6.5 ExecutionGrant v4 의 풀 신호(pool_mode) (2026-09-25, 결함 288)
+
+`ExecutionGrant.pool_mode`(27, schema v4)는 **풀 Coordinator**(`--pool-mode true`)가 발급한 Grant 에만 true 다.
+Coordinator 서명이 묶는다 — 벗기면 canonical 이 달라진다(벡터 `v43` · `v43b`).
+
+- `schema_version < 4` 인 Grant 에 이 칸이 true 면 거부한다(MUST).
+- Agent 는 이 칸이 true 인데 **ACK 수신 확인 대기**(`--require-ack-receipt`)가 꺼져 있거나, 실행하면서 **실행 중 갱신**
+  (`--renew-during-execution-ms`)이 0 이면 ACK · 체크포인트 마커 · 실행 **전에** 거부한다(MUST). 그 설정 없이 풀에 붙으면
+  실행 전 확인 관문이 서지 않아 같은 시도가 두 번 돌 수 있다.
+- 풀이 아닌 Coordinator 는 계속 v2 · v3 을 쓴다.
+- 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`
+
+### 6.6 AgentSessionHello v2 의 GPU 관측(gpu_observation) (2026-09-25, 결함 301)
+
+`AgentSessionHello.gpu_observation`(8, schema v2)은 노드가 NVML 로 읽은 GPU 목록(`NodeGpuObservation` · `ObservedGpu`)이다.
+서명 없는 중첩 메시지라 **전부** Hello 서명에 들어간다(벡터 `v44` · `v44b`).
+
+- `schema_version < 2` 이거나 mode 가 FRESH 가 아닌 Hello 에 이 칸이 있으면 거부한다(MUST).
+- 형식: `gpus` 는 1~64 개 · `uuid` 오름차순 · 중복 없음 · `uuid` 와 `model` 은 비어 있지 않고 `total_vram_bytes` 는 0 이 아니다.
+  어기면 Hello 를 거부한다(MUST).
+- `observed_at_unix_ms` 가 Hello `issued_at_unix_ms` 보다 늦거나 60초 넘게 이르면 **확인에 쓰지 않는다**(Hello 는 받는다).
+- 관측은 노드 자기보고다(`WORKER_REPORTED`). Coordinator 는 등록된 선언과 **맞을 때만** 그 선언 판(revision)에 대한 확인 기록을
+  남기고, 선언 자체는 바꾸지 않는다. 대조 규칙은 제안서 "적용 설계" 에 있다.
+- 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`
+
 ## 7. schema_version 과 알 수 없는 필드
 
 ### 7.1 v5 초안의 오류
@@ -528,7 +553,8 @@ P0-08 이 확인한 가장 중요한 사실이다.
 그래서 스키마 지문을 저장소에 고정한다.
 
 ```text
-proto/SCHEMA_FINGERPRINT.txt                      72개 메시지 · 449개 필드
+proto/SCHEMA_FINGERPRINT.txt                      항목(message · enum) 76개 · 번호 줄 480개
+                                                  (2026-09-25 세어 고침 — 여기 72 · 449 는 옛 값이었다)
 crates/protocol/tests/schema_fingerprint.rs       대조. 다르면 실패
 
 갱신: UPDATE_SCHEMA_FINGERPRINT=1 cargo test -p gputeer-protocol --test schema_fingerprint

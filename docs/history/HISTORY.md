@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-25 17:44 — 계약 변경: 풀 신호(Grant v4) · 노드 GPU 관측(Hello v2) — 결함 288 · 301
+
+- 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`("적용 설계" 17:15) · 규범 `docs/protocol/signing.md` §6.5 · §6.6
+- 스트림: Protocol · Coordinator · Agent
+- 수행: `ExecutionGrant.pool_mode`(27, v4) — 풀 Coordinator 만 서명해 싣고, Agent 는 수신 확인 · 실행 중 갱신 없이 받으면 ACK 전에 거부(288).
+  `AgentSessionHello.gpu_observation`(8, v2) — `--attest-gpus true` 면 FRESH 인사에 NVML 관측을 싣고, 풀 Coordinator 는 가입 파일 선언과 짝지어
+  맞을 때만 그 선언 판에 확인 기록을 남겨 스냅샷의 관측 시각을 늘린다(선언은 바꾸지 않는다 · 301). 참조 구현 · 벡터 4건(v43 · v43b · v44 · v44b, 기존 71건 무변경) ·
+  지문 · field 감사 갱신. ★ `trusted_party_failover` 가 풀에 수신 확인 없는 Agent 와 3초 Lease 로 돌고 있었다 — 새 관문에 걸려 수신 확인을 켜고 Lease 를 7초로 고쳤다
+- 검증: `cargo test --workspace -j 2` 1345 passed · 0 failed · ignored 4 · 참조 구현 self-test · `--verify` 75건 · `check_schema.py` 오류 0 ·
+  뮤테이션 7건 전부 잡힘(Agent 관문 제거 · Coordinator 가 풀 신호 안 실음 · 스냅샷 접기 제거 · 대조 항상 통과 · 구조 검사 제거 · canonical 에서 27 · 8 제거)
+- ★ 한계: 독립 검수 전 · 관측은 노드 자기보고 · CPU/RAM 미관측 · CPU 전용 노드는 재선언에 기댄다 · 업그레이드 순서(Agent → Coordinator → `--attest-gpus`)
+- 리포트: 제안서 · `docs/reports/debugs/2026-09-25_0220_재검수90_결함_288_292.md` 끝 절
+
 ## 2026-09-25 16:37 — 재검수 95 대응(결함 407) · 풀 신호와 노드 관측 서명 제안
 
 - 결함: `docs/reports/debugs/2026-09-25_1600_재검수93_결함_298_299_400_403.md` 끝 절 · 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`

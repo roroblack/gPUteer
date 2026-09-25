@@ -63,7 +63,10 @@ pub const REPLAY_CACHE_MAX_ENTRIES: usize = 100_000;
 ///   를 넣으면서 올렸다. 올리지 않으면 v3 를 읽으려는 검증이 **패닉**한다(debug) — 장애 이어받기 실측에서 Coordinator 가
 ///   바로 그렇게 죽었다. 메시지마다의 상한은 따로 있다(`EXECUTION_GRANT_MAX_SCHEMA_VERSION` 등) — 이 값을 올린다고
 ///   다른 메시지가 v3 를 받게 되지 않는다.
-pub const SCHEMA_VERSION: u32 = 3;
+///
+/// ★ 2026-09-25 — 3 -> 4. `ExecutionGrant` v4(풀 신호 `pool_mode = 27`, 결함 288)를 넣으면서 올렸다.
+///   `AgentSessionHello` v2(GPU 관측, 결함 301)는 이 값 아래다.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// ★ 단수명 메시지의 **TTL 상한** (독립 검수 2026-08-17).
 ///
@@ -136,4 +139,27 @@ pub const ATTEMPT_REPORT_MAX_SCHEMA_VERSION: u32 = 2;
 ///
 /// ★ 2026-09-23 (신뢰망 남은 일 F) — 3 은 재개 지점(`resume_from = 26`)을 실은 Grant 다. 재개 지점이 없으면
 ///   발급자는 계속 2 를 쓴다 — 재개가 필요 없는 작업은 구버전 Agent 도 받는다.
-pub const EXECUTION_GRANT_MAX_SCHEMA_VERSION: u32 = 3;
+///
+/// ★ 2026-09-25 (결함 288) — 4 는 풀 Coordinator 가 발급한 Grant(`pool_mode = 27` 이 true)다. 풀이 아니면 발급자는
+///   지금처럼 2 · 3 을 쓴다. 구버전 Agent(최대 3)는 풀 Grant 를 `SCHEMA_TOO_NEW` 로 거부한다(fail-closed).
+///   제안 `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`.
+pub const EXECUTION_GRANT_MAX_SCHEMA_VERSION: u32 = 4;
+
+/// 풀 신호(`pool_mode = 27`)를 실을 수 있는 가장 낮은 `ExecutionGrant` schema_version.
+pub const EXECUTION_GRANT_POOL_MODE_MIN_SCHEMA_VERSION: u32 = 4;
+
+/// `AgentSessionHello` 를 받는 쪽이 읽는 최대 schema_version.
+///
+/// ★ 2026-09-25 (결함 301) — 2 는 FRESH Hello 에 노드의 GPU 관측(`gpu_observation = 8`)을 실은 것이다.
+///   관측이 없으면 Agent 는 계속 1 을 쓴다 — 구버전 Coordinator(최대 1)도 받는다.
+pub const AGENT_SESSION_HELLO_MAX_SCHEMA_VERSION: u32 = 2;
+
+/// GPU 관측(`gpu_observation = 8`)을 실을 수 있는 가장 낮은 `AgentSessionHello` schema_version.
+pub const AGENT_SESSION_HELLO_GPU_OBSERVATION_MIN_SCHEMA_VERSION: u32 = 2;
+
+/// Hello 하나에 실을 수 있는 GPU 관측 수의 상한(결함 301). 정책값이다 — 한 노드에 이보다 많은 GPU 는 본 적이 없다.
+pub const GPU_OBSERVATION_MAX_GPUS: usize = 64;
+
+/// GPU 관측이 Hello 서명 시각보다 이만큼 넘게 이르면 확인에 쓰지 않는다(결함 301). 정책값이다 —
+/// Agent 는 Hello 를 만들기 직전에 NVML 을 읽으므로 보통 1초 안이다.
+pub const GPU_OBSERVATION_MAX_AGE_MS: u64 = 60_000;

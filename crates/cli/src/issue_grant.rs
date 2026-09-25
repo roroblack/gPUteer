@@ -135,6 +135,11 @@ pub fn run(args: &[String]) -> Result<String, String> {
             // 파일로 내는 경로에는 연결 개념이 없다 — 같은 입력이면
             // 같은 Grant 가 나오도록 결정적으로 유도한다.
             nonce: derive_stored_grant_nonce(grant_id, attempt_id),
+            // ★ 결함 288 — 풀로 선언된 제어 DB 에서 낸 Grant 도 풀 Grant 다(v4 · pool_mode).
+            pool_mode: gputeer_coordinator::job_store::pool_mode_declared(std::path::Path::new(
+                control_db,
+            ))
+            .map_err(|e| format!("제어 DB 의 풀 선언을 읽지 못했다({control_db}): {e}"))?,
         },
         &key,
         &submitters,

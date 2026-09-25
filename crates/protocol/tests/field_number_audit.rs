@@ -270,6 +270,9 @@ const AUDITED: &[(&str, &str, u32)] = &[
     ("artifact.proto", "AttemptReportAck", 90),
     // 결함 131 (2026-09-23)
     ("control.proto", "GrantAckReceipt", 90),
+    // 결함 301 (2026-09-25) — Hello v2 의 GPU 관측(서명 없는 중첩 메시지)
+    ("lease.proto", "NodeGpuObservation", 90),
+    ("lease.proto", "ObservedGpu", 90),
 ];
 
 #[test]

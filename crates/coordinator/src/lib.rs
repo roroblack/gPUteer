@@ -32,6 +32,7 @@ use prost::Message;
 pub mod attempt_report_store;
 pub mod checkpoint_manifest_store;
 pub mod failover;
+pub mod gpu_attestation;
 pub mod grant_from_stored;
 pub mod inventory_store;
 pub mod job_store;
@@ -1257,6 +1258,48 @@ fn serve_one_connection_impl(
                 })?;
             println!("SESSION_SEEN node_id={} mode={}", hello.node_id, hello.mode);
         }
+        // ★ 2026-09-25 (결함 301) — FRESH Hello 가 GPU 관측을 실었으면 등록된 선언과 대조한다. 맞으면 "그 선언이 지금도 사실이다" 는
+        //   확인 기록을 남겨 스케줄러의 신선도 검사가 운영자 재선언 없이도 통과하게 한다. 안 맞으면 기록하지 않는다 — 그 노드는
+        //   선언 시각대로 늙어 배치에서 빠진다. 어느 쪽이든 연결은 이어간다(배정된 일이 있으면 Agent 의 실행 전 검사가 GPU 를 다시 본다).
+        if let Some(observation) = hello.gpu_observation.as_ref().filter(|_| asks_for_work) {
+            match crate::gpu_attestation::observation_time_usable(&hello, observation) {
+                Err(reason) => println!(
+                    "GPU_ATTESTATION_SKIPPED node_id={} reason=STALE_OBSERVATION detail={reason}",
+                    hello.node_id
+                ),
+                Ok(()) => {
+                    let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
+                        session_protocol_error("풀 모드인데 제어 DB 가 없다(시작 검사가 막았어야 한다)")
+                    })?;
+                    let attested_at = observation.observed_at_unix_ms.min(clock.now_unix_ms());
+                    let outcome = crate::inventory_store::CoordinatorInventoryStore::open(control_db)
+                        .and_then(|mut store| {
+                            store.record_gpu_attestation(&hello.node_id, observation, attested_at)
+                        })
+                        .map_err(|error| {
+                            SessionHandlerError::Classified(storage_error("gpu attestation", error))
+                        })?;
+                    match outcome {
+                        crate::inventory_store::GpuAttestationOutcome::Recorded {
+                            inventory_revision,
+                            attested_at_unix_ms,
+                        } => println!(
+                            "GPU_ATTESTATION_RECORDED node_id={} inventory_revision={inventory_revision} attested_at={attested_at_unix_ms} gpus={}",
+                            hello.node_id,
+                            observation.gpus.len()
+                        ),
+                        crate::inventory_store::GpuAttestationOutcome::Mismatch(reason) => println!(
+                            "GPU_ATTESTATION_MISMATCH node_id={} detail={reason}",
+                            hello.node_id
+                        ),
+                        other => println!(
+                            "GPU_ATTESTATION_SKIPPED node_id={} reason={other:?}",
+                            hello.node_id
+                        ),
+                    }
+                }
+            }
+        }
         match pool_connection_config(config, &hello)? {
             Some(scoped) => {
                 pooled = scoped;
@@ -1383,6 +1426,8 @@ fn serve_one_connection_impl(
                 &staging,
                 &leases,
                 &crate::grant_from_stored::StoredGrantRequest {
+                    // ★ 결함 288 — 풀 Coordinator 의 Grant 는 풀 신호를 서명해 싣는다(v4).
+                    pool_mode: config.pool_mode,
                     job_id: config.stored_grant_job_id.clone(),
                     attempt_id: config.stored_grant_attempt_id.clone(),
                     lease_id: config.stored_grant_lease_id.clone(),
@@ -3141,7 +3186,8 @@ fn read_session_hello(
 ) -> Result<pb::AgentSessionHello, SessionHandlerError> {
     let message = read_frame(
         stream,
-        1,
+        // ★ 2026-09-25 (결함 301) — v2 는 FRESH Hello 에 노드의 GPU 관측을 실은 것이다.
+        gputeer_protocol::constants::AGENT_SESSION_HELLO_MAX_SCHEMA_VERSION,
         KeyDirectorySource::Provided(agent_keys),
         replay,
         clock,
@@ -3164,6 +3210,14 @@ fn read_session_hello(
             ))
         }
     };
+    // ★ 결함 301 · signing.md §6.6 — 관측의 구조 규칙은 모든 lane 에서 본다(서명이 맞아도 모양이 틀린 관측은 받지 않는다).
+    crate::gpu_attestation::check_hello_observation_shape(&hello).map_err(session_protocol_error)?;
+    if hello.gpu_observation.is_some() && !config.pool_mode {
+        println!(
+            "GPU_ATTESTATION_IGNORED node_id={} reason=NOT_POOL — 선언 확인은 풀 Coordinator 만 한다",
+            hello.node_id
+        );
+    }
     // ★ 풀 모드는 여러 노드를 받는다 — 서명자(= node_id)의 키가 풀 목록에 있어야 검증이 통과하므로
     //   그것이 곧 "풀의 노드다" 의 확인이다.
     if !config.pool_mode && hello.node_id != config.agent_device_id {

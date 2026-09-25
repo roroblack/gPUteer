@@ -594,10 +594,37 @@ impl ToCanonicalFields for pb::AgentSessionHello {
         put_uint(&mut f, 5, self.connection_attempt as u64);
         put_uint(&mut f, 6, self.issued_at_unix_ms);
         put_bytes(&mut f, 7, &self.nonce);
+        // ★ v2 (2026-09-25, 결함 301) — 노드의 GPU 관측. 서명 없는 중첩 메시지라 전부 이 Hello 서명에 들어간다.
+        put_msg(&mut f, 8, &self.gpu_observation);
         f
     }
     fn schema_version(&self) -> u32 {
         self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::NodeGpuObservation {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.observed_at_unix_ms);
+        put_repeated_msg(&mut f, 2, &self.gpus);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
+    }
+}
+
+impl ToCanonicalFields for pb::ObservedGpu {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_str(&mut f, 1, &self.uuid);
+        put_str(&mut f, 2, &self.model);
+        put_uint(&mut f, 3, self.total_vram_bytes);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        1
     }
 }
 
@@ -783,6 +810,8 @@ impl ToCanonicalFields for pb::ExecutionGrant {
         //   규칙 i 로 그 서명(90)은 여기 안 들어간다. Agent 는 생산자 서명을 독립 검증해야 한다(MUST).
         //   Coordinator 의 서명이 "이 체크포인트에서 이어가라" 는 선택을 묶고, 생산자 서명이 내용을 묶는다.
         put_msg(&mut f, 26, &self.resume_from);
+        // ★ v4 (2026-09-25, 결함 288) — 풀 신호. 서명 밖이면 풀 Grant 를 풀이 아닌 것처럼 벗겨 Agent 의 관문을 피할 수 있다.
+        put_bool(&mut f, 27, self.pool_mode);
         f
     }
     fn schema_version(&self) -> u32 {

@@ -305,6 +305,11 @@ pub struct AgentConfig {
     /// ★ 2026-09-23 (결함 131 · 신뢰망 L) — ACK 를 보낸 뒤 Coordinator 의 **서명된 수신 확인**을 받아야만 실행한다.
     ///   받지 못하면(옛 Coordinator · 거부된 ACK · 끊긴 연결) 실행하지 않고 멈춘다(fail-closed). 풀 모드에서 켠다.
     pub require_ack_receipt: bool,
+    /// ★ 2026-09-25 (결함 301 · signing.md §6.6) — FRESH Hello 에 NVML 로 읽은 GPU 목록을 서명해 싣는다(Hello v2).
+    ///   풀 Coordinator 는 등록된 선언과 맞을 때만 "그 선언이 지금도 사실이다" 는 확인 기록을 남긴다 — 그래야 운영자가
+    ///   다시 선언하지 않아도 이 노드가 신선도 검사에서 떨어지지 않는다. 기본 끔: 구버전 Coordinator 는 Hello v2 를 거부한다.
+    ///   NVML 을 못 읽으면 관측 없이 v1 Hello 를 보내고 `GPU_ATTESTATION_UNAVAILABLE` 을 찍는다(지어내지 않는다).
+    pub attest_gpus: bool,
 
     // ── Lease revoke (2026-08-19) ───────────────────────────────────
     /// 이 회차가 끝난 뒤 Coordinator가 보내는 revoke frame을 기다린다.
@@ -503,6 +508,8 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     // ★ 결함 270 (재검수 87) — 처음엔 수신 확인 **과** 보고 세션이 둘 다 켜졌을 때만 섰다. 수신 확인만 켜도 풀 Agent 다 — 수신 확인 요구 하나로 선다.
     //   ★ 보고 세션만 켠 Agent 는 막지 않는다 — 풀 밖 lane(ACK 가 Job 을 옮긴다)의 정상 설정이고, Agent 는 상대가 풀인지 모른다.
     //     풀에 수신 확인 없이 붙이는 것은 설정 오류로 남는다(런북 §5 — 결함 131 · 270 의 남은 한계).
+    //   ★★ 2026-09-25 (결함 288) — 이제 Agent 는 **Grant 로** 상대가 풀인지 안다(`pool_mode = 27`, v4). 그 설정 오류는 Grant 를 받은 뒤
+    //     ACK 전에 `pool_grant_gate` 가 거부한다. 여기(시작 전 검사)는 수신 확인을 켠 Agent 의 짝 설정만 본다.
     if config.require_ack_receipt
         && config.execute_workload
         && config.renew_during_execution_ms == 0
@@ -1099,14 +1106,38 @@ fn run_one_connection_inner(
     //   같은 Hello(FRESH) -> Grant 순서다. 한 리스너가 FRESH · RESUME · RENEW · REPORT 를 가르려면 Agent 가 먼저 말해야 한다
     //   (제안서 결정 D2 — 설정 분기 없음). 옛 Coordinator 는 Grant 를 먼저 쓰고 ACK 자리에서 이 Hello 를 받아 명시적으로 실패한다.
     {
+        // ★ 결함 301 — NVML 을 **먼저** 읽고 그 시각을 적은 뒤 Hello 시각을 잡는다(관측 시각 <= Hello 시각, signing.md §6.6).
+        let gpu_observation = if config.attest_gpus {
+            let observed = gputeer_runtime_nvml::observe().map_err(|e| format!("{e:?}"));
+            match observed.and_then(|snapshot| {
+                gpu_observation_from_snapshot(
+                    &snapshot,
+                    config.gpu_pin.as_deref(),
+                    clock.now_unix_ms(),
+                )
+            }) {
+                Ok(observation) => Some(observation),
+                Err(reason) => {
+                    println!("GPU_ATTESTATION_UNAVAILABLE node={} reason={reason}", config.agent_device_id);
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let mut hello = pb::AgentSessionHello {
-            schema_version: 1,
+            schema_version: if gpu_observation.is_some() {
+                gputeer_protocol::constants::AGENT_SESSION_HELLO_GPU_OBSERVATION_MIN_SCHEMA_VERSION
+            } else {
+                1
+            },
             mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
             session_id: config.session_id.clone(),
             node_id: config.agent_device_id.clone(),
             connection_attempt: config.connection_attempt,
             issued_at_unix_ms: clock.now_unix_ms(),
             nonce: fresh_nonce()?,
+            gpu_observation,
             ..Default::default()
         };
         hello.node_signature = sign(&signing_key, &hello).to_vec();
@@ -1144,6 +1175,9 @@ fn run_one_connection_inner(
                 .to_string(),
         );
     }
+    // ★ 2026-09-25 (결함 288 · signing.md §6.5) — 풀 Grant 는 수신 확인 · 실행 중 갱신이 있어야만 한 번 실행이 성립한다.
+    //   전에는 Agent 가 상대가 풀인지 몰라 런북의 설정 규칙으로만 막았다. ACK · 체크포인트 마커 · 실행 **전에** 거부한다.
+    pool_grant_gate(&grant, &config)?;
     // The local recovery flag only expresses operator intent.  A legacy
     // Coordinator can mint a fresh in-memory Lease on reconnect, so recovery
     // is safe only when the verified Grant itself attests that issue_lease()
@@ -3806,6 +3840,88 @@ fn connect_with_timeout(address: &str, timeout: Duration) -> Result<TcpStream, S
     })
 }
 
+/// ★ 결함 301 — NVML 관측을 Hello 에 실을 모양으로 바꾼다(signing.md §6.6 의 형식 규칙을 **보내는 쪽에서도** 지킨다).
+///
+/// `--gpu-pin` 을 주면 그 장치 번호의 GPU 만 싣는다 — GPU 마다 Agent 하나로 붙인 기계에서 두 노드가 같은 GPU 들을
+/// 보고하지 않게 한다. ★ 장치 번호는 NVML 순번이다(`node-doctor` 와 같은 대조). CUDA 순번과 다를 수 있다(§0.4 와 같은 한계).
+/// GPU 가 하나도 안 남거나 형식이 어긋나면 오류다 — 빈 관측을 보내지 않는다.
+fn gpu_observation_from_snapshot(
+    snapshot: &gputeer_runtime_nvml::NvmlSnapshot,
+    gpu_pin: Option<&str>,
+    observed_at_unix_ms: u64,
+) -> Result<pb::NodeGpuObservation, String> {
+    let pinned: Option<Vec<&str>> = gpu_pin.map(|pin| pin.split(',').collect());
+    let mut gpus: Vec<pb::ObservedGpu> = snapshot
+        .gpus
+        .iter()
+        .filter(|gpu| {
+            pinned
+                .as_ref()
+                .is_none_or(|ids| ids.contains(&gpu.index.to_string().as_str()))
+        })
+        .map(|gpu| pb::ObservedGpu {
+            uuid: gpu.uuid.clone(),
+            model: gpu.name.clone(),
+            total_vram_bytes: gpu.total_vram_bytes,
+        })
+        .collect();
+    if gpus.is_empty() {
+        return Err(match gpu_pin {
+            Some(pin) => format!("NVML 이 --gpu-pin {pin:?} 의 GPU 를 보고하지 않았다"),
+            None => "NVML 이 GPU 를 하나도 보고하지 않았다".to_string(),
+        });
+    }
+    if gpus.len() > gputeer_protocol::constants::GPU_OBSERVATION_MAX_GPUS {
+        return Err(format!("GPU {} 개 — Hello 에 실을 수 있는 상한을 넘는다", gpus.len()));
+    }
+    gpus.sort_by(|a, b| a.uuid.cmp(&b.uuid));
+    for pair in gpus.windows(2) {
+        if pair[0].uuid == pair[1].uuid {
+            return Err(format!("NVML 이 같은 UUID 를 두 번 보고했다: {}", pair[0].uuid));
+        }
+    }
+    if let Some(bad) = gpus
+        .iter()
+        .find(|gpu| gpu.uuid.is_empty() || gpu.model.is_empty() || gpu.total_vram_bytes == 0)
+    {
+        return Err(format!("NVML 관측이 비어 있다(uuid · 이름 · 총 VRAM): {bad:?}"));
+    }
+    Ok(pb::NodeGpuObservation {
+        observed_at_unix_ms,
+        gpus,
+    })
+}
+
+/// ★ 결함 288 — 풀 Grant(`pool_mode = 27`)를 이 Agent 설정으로 받아도 되는가. 검증된 Grant 에만 부른다.
+///
+/// 거부는 `GRANT_REJECTED` 로 시작한다 — 되풀이하지 않는 오류(Fatal)다. 설정을 고치기 전에는 다시 붙어도 같다.
+fn pool_grant_gate(grant: &pb::ExecutionGrant, config: &AgentConfig) -> Result<(), String> {
+    if !grant.pool_mode {
+        return Ok(());
+    }
+    if grant.schema_version
+        < gputeer_protocol::constants::EXECUTION_GRANT_POOL_MODE_MIN_SCHEMA_VERSION
+    {
+        return Err(format!(
+            "GRANT_REJECTED: schema v{} Grant 에 풀 신호(27)가 있다 — v4 에서만 쓴다",
+            grant.schema_version
+        ));
+    }
+    if !config.require_ack_receipt {
+        return Err(
+            "GRANT_REJECTED: POOL_GRANT_NEEDS_ACK_RECEIPT — 풀 Coordinator 의 Grant 다. 수신 확인 없이 실행하면 같은 시도가 두 번 돌 수 있다. --require-ack-receipt true 로 다시 시작한다"
+                .to_string(),
+        );
+    }
+    if config.execute_workload && config.renew_during_execution_ms == 0 {
+        return Err(
+            "GRANT_REJECTED: POOL_GRANT_NEEDS_RENEW — 풀 Coordinator 의 Grant 다. 실행 중 Lease 갱신 없이 실행하지 않는다. --renew-during-execution-ms 를 준다"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn classify_framing_error(error: FramingError, phase: &str) -> String {
     let retryable = match &error {
         FramingError::Truncated => true,
@@ -4170,6 +4286,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             None => Vec::new(),
         },
         require_ack_receipt: flags.bool_flag("--require-ack-receipt"),
+        attest_gpus: flags.bool_flag("--attest-gpus"),
         gpu_pin: match flags.get("--gpu-pin") {
             Some(raw) => Some(parse_gpu_pin(raw)?),
             None => None,
@@ -4517,6 +4634,7 @@ mod tests {
             pool_peer_keys: Vec::new(),
             gpu_pin: None,
             require_ack_receipt: false,
+            attest_gpus: false,
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
             max_reconnect_attempts: 1_000,
@@ -6385,5 +6503,100 @@ mod owner_reclaim_marker_tests {
             !super::attempt_started_here(&root, "attempt-b").unwrap(),
             "다른 시도까지 막았다 — 이어받기(새 시도)가 이 노드에 못 온다"
         );
+    }
+}
+
+/// ★ 2026-09-25 (결함 288 · 301) — 풀 Grant 관문과 GPU 관측 만들기.
+#[cfg(test)]
+mod pool_signal_tests {
+    use super::*;
+
+    fn config() -> AgentConfig {
+        let seed = "11".repeat(32);
+        let peer = SigningKey::from_bytes(&[0x72; 32]).verifying_key();
+        let peer_hex: String = peer.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let argv: Vec<String> = [
+            "--connect", "127.0.0.1:9", "--own-seed", &seed, "--peer-pubkey", &peer_hex,
+            "--coordinator-device-id", "coordinator-pool-test", "--agent-device-id", "agent-pool-test",
+            "--fence-db", ":memory:",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        parse_config_from_args(&argv).expect("설정 파싱")
+    }
+
+    fn grant(schema_version: u32, pool_mode: bool) -> pb::ExecutionGrant {
+        pb::ExecutionGrant {
+            schema_version,
+            pool_mode,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_pool_grant_needs_ack_receipt_and_renewal() {
+        let mut c = config();
+        // 풀이 아닌 Grant 는 설정과 무관하게 지난다
+        assert_eq!(pool_grant_gate(&grant(2, false), &c), Ok(()));
+        // 수신 확인이 꺼져 있다
+        assert!(pool_grant_gate(&grant(4, true), &c)
+            .unwrap_err()
+            .contains("POOL_GRANT_NEEDS_ACK_RECEIPT"));
+        // 수신 확인은 켰는데 실행하면서 갱신이 0 이다
+        c.require_ack_receipt = true;
+        c.execute_workload = true;
+        assert!(pool_grant_gate(&grant(4, true), &c)
+            .unwrap_err()
+            .contains("POOL_GRANT_NEEDS_RENEW"));
+        c.renew_during_execution_ms = 1_000;
+        assert_eq!(pool_grant_gate(&grant(4, true), &c), Ok(()));
+        // v3 이하에 풀 신호 — 설정이 맞아도 거부한다
+        assert!(pool_grant_gate(&grant(3, true), &c)
+            .unwrap_err()
+            .contains("v4 에서만"));
+    }
+
+    fn gpu(uuid: &str, index: u32) -> gputeer_runtime_nvml::NvmlGpu {
+        gputeer_runtime_nvml::NvmlGpu {
+            uuid: uuid.into(),
+            index,
+            name: "NVIDIA GeForce RTX 4070 SUPER".into(),
+            total_vram_bytes: 12_878_610_432,
+            free_vram_bytes: 0,
+            used_vram_bytes: 0,
+            compute_capability: None,
+            mig_enabled: None,
+        }
+    }
+
+    fn snapshot(gpus: Vec<gputeer_runtime_nvml::NvmlGpu>) -> gputeer_runtime_nvml::NvmlSnapshot {
+        gputeer_runtime_nvml::NvmlSnapshot {
+            driver_version: "0".into(),
+            cuda_driver_version: 0,
+            gpus,
+        }
+    }
+
+    #[test]
+    fn the_observation_is_sorted_pinned_and_never_empty() {
+        let two = snapshot(vec![gpu("GPU-b", 0), gpu("GPU-a", 1)]);
+        let all = gpu_observation_from_snapshot(&two, None, 7).unwrap();
+        assert_eq!(all.observed_at_unix_ms, 7);
+        assert_eq!(
+            all.gpus.iter().map(|g| g.uuid.as_str()).collect::<Vec<_>>(),
+            ["GPU-a", "GPU-b"]
+        );
+        // --gpu-pin 은 그 장치 번호만 싣는다
+        let pinned = gpu_observation_from_snapshot(&two, Some("0"), 7).unwrap();
+        assert_eq!(pinned.gpus.len(), 1);
+        assert_eq!(pinned.gpus[0].uuid, "GPU-b");
+        // 빈 관측 · 없는 번호 · 같은 UUID · 빈 값은 보내지 않는다
+        assert!(gpu_observation_from_snapshot(&snapshot(vec![]), None, 7).is_err());
+        assert!(gpu_observation_from_snapshot(&two, Some("5"), 7).is_err());
+        assert!(gpu_observation_from_snapshot(&snapshot(vec![gpu("GPU-a", 0), gpu("GPU-a", 1)]), None, 7).is_err());
+        let mut zero = gpu("GPU-a", 0);
+        zero.total_vram_bytes = 0;
+        assert!(gpu_observation_from_snapshot(&snapshot(vec![zero]), None, 7).is_err());
     }
 }

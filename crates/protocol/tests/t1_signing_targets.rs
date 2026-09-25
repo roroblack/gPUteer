@@ -493,6 +493,7 @@ fn resume_protocol_messages_match_reference() {
         connection_attempt: 2,
         issued_at_unix_ms: 1_755_103_900_000,
         nonce: (0u8..16).collect(),
+        gpu_observation: None,
         node_signature: vec![0x11; 64],
     };
     assert_eq!(
@@ -955,6 +956,48 @@ fn b_e_session_hello_mode_vectors_match_reference() {
     assert_matches_reference(
         "v41b_agent_session_hello_report",
         &hello(gputeer_protocol::constants::MODE_REPORT as i32),
+    );
+}
+
+/// ★ 결함 301 (2026-09-25) — Hello v2 의 GPU 관측이 참조 구현과 같고, 관측 내용이 Hello 서명에 닿는다.
+#[test]
+fn session_hello_v2_gpu_observation_vectors_match_reference() {
+    let hello = |second_total_vram: u64| pb::AgentSessionHello {
+        schema_version: 2,
+        mode: gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT,
+        session_id: "01JBXSESSION00000000000001".into(),
+        node_id: "node-1".into(),
+        connection_attempt: 2,
+        issued_at_unix_ms: 1_755_103_900_000,
+        nonce: (0u8..16).collect(),
+        gpu_observation: Some(pb::NodeGpuObservation {
+            observed_at_unix_ms: 1_755_103_899_000,
+            gpus: vec![
+                pb::ObservedGpu {
+                    uuid: "GPU-00000000-0000-0000-0000-000000000001".into(),
+                    model: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                    total_vram_bytes: 12_878_610_432,
+                },
+                pb::ObservedGpu {
+                    uuid: "GPU-00000000-0000-0000-0000-000000000002".into(),
+                    model: "NVIDIA GeForce RTX 4070 SUPER".into(),
+                    total_vram_bytes: second_total_vram,
+                },
+            ],
+        }),
+        node_signature: vec![0x11; 64],
+    };
+    assert_matches_reference(
+        "v44_agent_session_hello_v2_gpu_observation",
+        &hello(12_878_610_432),
+    );
+    assert_matches_reference(
+        "v44b_agent_session_hello_v2_gpu_vram_changed",
+        &hello(8_585_216_000),
+    );
+    assert_ne!(
+        canonical_encode(&hello(12_878_610_432).to_canonical_fields(), &[]),
+        canonical_encode(&hello(8_585_216_000).to_canonical_fields(), &[]),
     );
 }
 

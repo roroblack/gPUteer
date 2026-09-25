@@ -124,6 +124,7 @@ fn grant(manifest_sig: u8, manifest_hash: u8) -> pb::ExecutionGrant {
         nonce: (0u8..16).collect(),
         lease_from_durable_store: true,
         resume_from: None,
+        pool_mode: false,
         coordinator_signature: vec![0xFE; 64],
     }
 }
@@ -201,6 +202,33 @@ fn resume_point_content_does_affect_grant_canonical() {
         g.resume_from = None;
         canon(&g)
     });
+}
+
+/// ★ v4 (2026-09-25, 결함 288) — 풀 신호. `grant()` 는 v2 그대로 둔다(기존 벡터 v25*).
+fn grant_v4(pool_mode: bool) -> pb::ExecutionGrant {
+    let mut g = grant(0xAA, 0x01);
+    g.schema_version = 4;
+    g.pool_mode = pool_mode;
+    g
+}
+
+#[test]
+fn execution_grant_v4_pool_mode_matches_reference() {
+    assert_eq!(
+        hex(&canon(&grant_v4(true))),
+        expect_hex("v43_execution_grant_v4_pool_mode"),
+        "v4 Grant(풀 신호) canonical 이 참조 구현과 다르다"
+    );
+    assert_eq!(
+        hex(&canon(&grant_v4(false))),
+        expect_hex("v43b_execution_grant_v4_pool_mode_false")
+    );
+}
+
+/// 풀 신호는 Coordinator 서명이 묶는다 — 벗기면 canonical 이 달라져 서명이 깨진다.
+#[test]
+fn pool_mode_does_affect_grant_canonical() {
+    assert_ne!(canon(&grant_v4(true)), canon(&grant_v4(false)));
 }
 
 #[test]

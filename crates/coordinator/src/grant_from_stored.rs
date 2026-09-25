@@ -89,6 +89,10 @@ pub struct StoredGrantRequest {
     ///   그래서 이 모듈이 정하지 않고 **호출부가 준다.** 여기서 하나를
     ///   고르면 다른 소비자가 조용히 깨진다.
     pub nonce: Vec<u8>,
+    /// ★ 2026-09-25 (결함 288 · signing.md §6.5) — 풀 Coordinator 가 발급하는가. true 면 Grant 가 v4 가 되고
+    ///   `pool_mode = 27` 을 서명해 싣는다 — Agent 는 수신 확인 · 실행 중 갱신 없이 풀 Grant 를 받지 않는다.
+    ///   호출부가 준다: wire 는 `--pool-mode`, 파일로 내는 `issue-grant` 는 제어 DB 의 풀 선언을 읽는다.
+    pub pool_mode: bool,
 }
 
 /// 저장된 예약 Grant 를 만들지 못한 이유 — 저장소 장애와 거부를 **타입으로** 가른다(결함 104, 재검수 62).
@@ -371,6 +375,12 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
         })?;
         grant.schema_version = 3;
         grant.resume_from = Some(resume);
+    }
+    // ★ 2026-09-25 (결함 288) — 풀 Grant 는 **v4** 다(재개 지점이 있어도 4 — v4 는 v3 의 칸을 모두 가진다).
+    if request.pool_mode {
+        grant.schema_version =
+            gputeer_protocol::constants::EXECUTION_GRANT_POOL_MODE_MIN_SCHEMA_VERSION;
+        grant.pool_mode = true;
     }
     grant.coordinator_signature = sign(key, &grant).to_vec();
 

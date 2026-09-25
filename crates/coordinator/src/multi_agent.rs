@@ -323,6 +323,8 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
                 &staging,
                 &leases,
                 &crate::grant_from_stored::StoredGrantRequest {
+                    // 풀 모드는 이 lane 을 금지한다(`pool_mode_startup_check`) — 여기 오는 Grant 는 풀 Grant 가 아니다.
+                    pool_mode: false,
                     job_id,
                     attempt_id,
                     lease_id,

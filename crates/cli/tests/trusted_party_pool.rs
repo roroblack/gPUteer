@@ -1217,6 +1217,14 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
 }
 
 fn unconfirmed_start_round(coordinator_extra: &[&str]) -> (String, String, Option<JobState>) {
+    pool_round(coordinator_extra, true)
+}
+
+/// `require_ack_receipt` 가 false 면 Agent 에서 `--require-ack-receipt true` 를 뺀다(결함 288 — 풀에 잘못 붙인 Agent).
+fn pool_round(
+    coordinator_extra: &[&str],
+    require_ack_receipt: bool,
+) -> (String, String, Option<JobState>) {
     let dir = tempfile::tempdir().expect("임시 폴더");
     let (db, keyring) = pool(dir.path());
     let db_s = db.to_str().unwrap().to_string();
@@ -1343,6 +1351,17 @@ fn unconfirmed_start_round(coordinator_extra: &[&str]) -> (String, String, Optio
     .iter()
     .map(|s| s.to_string())
     .collect();
+    let agent: Vec<String> = if require_ack_receipt {
+        agent
+    } else {
+        let at = agent
+            .iter()
+            .position(|a| a == "--require-ack-receipt")
+            .expect("플래그 자리");
+        let mut agent = agent;
+        agent.drain(at..at + 2);
+        agent
+    };
     // 한 회차가 끝날 때까지 기다린다(collect 는 곧바로 죽인다).
     let agent_output = spawn(&agent).wait_with_output().expect("agent 출력");
     let agent_out = format!(
@@ -1464,4 +1483,106 @@ fn a_confirmed_lease_too_short_to_keep_alive_does_not_start() {
         "짧은 Lease 로 워크로드를 띄웠다\n{everything}"
     );
     assert_eq!(state, Some(JobState::Running), "{everything}");
+}
+
+/// ★ 2026-09-25 (결함 288 · signing.md §6.5) — 수신 확인 없이 풀에 붙은 Agent 는 풀 Grant(v4 · pool_mode)를 **ACK 전에** 거부한다.
+///   전에는 Agent 가 상대가 풀인지 몰라 ACK 하고 바로 실행했다 — 실행 전 확인 관문이 서지 않아 같은 시도가 두 번 돌 수 있었다.
+///   대조군은 같은 조립에서 수신 확인을 켠 `a_start_that_the_coordinator_did_not_confirm_does_not_run`(Grant 를 받아 ACK 까지 간다).
+#[test]
+fn an_agent_without_ack_receipt_refuses_a_pool_grant_before_ack() {
+    let (agent_out, coordinator_out, state) = pool_round(&["--max-connections", "1"], false);
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        agent_out.contains("POOL_GRANT_NEEDS_ACK_RECEIPT"),
+        "풀 Grant 를 수신 확인 없이 받았다\n{everything}"
+    );
+    assert!(
+        !agent_out.contains("ACK_SENT") && !agent_out.contains("WORKLOAD_SPAWNED"),
+        "거부하기 전에 ACK 하거나 워크로드를 띄웠다\n{everything}"
+    );
+    // 받아들여지지 않은 시도다 — Job 은 STAGING 에 남아 Lease 만료 뒤 큐로 돌아간다.
+    assert_eq!(state, Some(JobState::Staging), "{everything}");
+}
+
+/// ★ 2026-09-25 (결함 301 · signing.md §6.6) — FRESH Hello 의 GPU 관측이 등록된 선언과 **맞을 때만** 그 노드가 신선해진다.
+///   전에는 운영자가 다시 선언하지 않으면 하루 뒤 모든 노드가 SnapshotNotFresh 로 빠졌다. 선언과 다르면(다른 GPU) 기록하지 않고,
+///   구조 규칙을 어긴 관측(v1 · FRESH 가 아닌 Hello)은 Hello 째 거부한다.
+#[test]
+fn a_matching_gpu_observation_keeps_a_node_fresh_and_a_different_gpu_does_not() {
+    use prost::Message;
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool(dir.path());
+    let key = SigningKey::from_bytes(&seed_bytes(AGENT_SEED_1));
+    let declared_at = || {
+        let mut store =
+            gputeer_coordinator::inventory_store::CoordinatorInventoryStore::open(&db).unwrap();
+        store
+            .pool_snapshot(now_unix_ms())
+            .unwrap()
+            .candidates
+            .into_iter()
+            .find(|c| c.node_id == NODE_1)
+            .unwrap()
+            .observed_at_unix_ms
+            .unwrap()
+    };
+    let frame_for = |schema: u32, mode: i32, model: &str, nonce: u8| {
+        let now = now_unix_ms();
+        let mut hello = gputeer_protocol::pb::AgentSessionHello {
+            schema_version: schema,
+            mode,
+            session_id: format!("gpu-attest-{nonce}"),
+            node_id: NODE_1.into(),
+            connection_attempt: 0,
+            issued_at_unix_ms: now,
+            nonce: vec![nonce; 16],
+            gpu_observation: Some(gputeer_protocol::pb::NodeGpuObservation {
+                observed_at_unix_ms: now - 1_000,
+                gpus: vec![gputeer_protocol::pb::ObservedGpu {
+                    uuid: "GPU-00000000-0000-0000-0000-000000000001".into(),
+                    model: model.into(),
+                    total_vram_bytes: 12_884_901_888,
+                }],
+            }),
+            ..Default::default()
+        };
+        hello.node_signature = gputeer_crypto::sign(&key, &hello).to_vec();
+        gputeer_crypto::write_frame(
+            gputeer_crypto::FrameType::SessionHello,
+            &hello.encode_to_vec(),
+        )
+        .expect("프레임")
+    };
+    let fresh = gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
+    let before = declared_at();
+    std::thread::sleep(Duration::from_millis(1_100));
+
+    // 다른 GPU — 기록하지 않는다
+    let other = one_hello_against_a_pool_coordinator(
+        dir.path(), &db, &keyring, None,
+        &frame_for(2, fresh, "RTX 3060", 0x71), "other.log",
+    );
+    assert!(other.contains("GPU_ATTESTATION_MISMATCH"), "{other}");
+    assert!(!other.contains("GPU_ATTESTATION_RECORDED"), "{other}");
+    assert_eq!(declared_at(), before, "맞지 않는 관측이 신선도를 늘렸다");
+
+    // 구조 규칙 — v1 Hello 에 관측 · RENEW Hello 에 관측은 Hello 째 거부한다(생존 관측으로도 적지 않는다)
+    for (schema, mode, label) in [(1, fresh, "v1.log"), (2, gputeer_protocol::constants::MODE_RENEW, "renew.log")] {
+        let out = one_hello_against_a_pool_coordinator(
+            dir.path(), &db, &keyring, None,
+            &frame_for(schema, mode, "RTX 4070 SUPER", 0x72 + mode as u8 + schema as u8), label,
+        );
+        assert!(out.contains("HELLO_REJECTED"), "{label}\n{out}");
+        assert!(!out.contains("SESSION_SEEN") && !out.contains("GPU_ATTESTATION_RECORDED"), "{label}\n{out}");
+    }
+    assert_eq!(declared_at(), before);
+
+    // 맞는 GPU — 그 선언 판을 확인하고 스냅샷의 관측 시각이 앞으로 간다(선언 자체는 그대로다)
+    let matching = one_hello_against_a_pool_coordinator(
+        dir.path(), &db, &keyring, None,
+        &frame_for(2, fresh, "RTX 4070 SUPER", 0x79), "matching.log",
+    );
+    assert!(matching.contains("GPU_ATTESTATION_RECORDED"), "{matching}");
+    let after = declared_at();
+    assert!(after > before, "맞는 관측이 신선도를 늘리지 않았다({before} -> {after})\n{matching}");
 }

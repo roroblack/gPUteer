@@ -330,6 +330,9 @@ fn agent_args(pool: &Pool, addr: &str, node: &str, seed: &str) -> Vec<String> {
         "1",
         "--renew-during-execution-ms",
         "600",
+        // ★ 결함 288 (2026-09-25) — 풀 Grant(v4)는 수신 확인 없는 Agent 가 ACK 전에 거부한다. 전에는 이 시험이 바로 그 설정 오류로 돌았다.
+        "--require-ack-receipt",
+        "true",
         "--shared-checkpoint-root",
         pool.shared.to_str().unwrap(),
         "--checkpoint-publish-interval-ms",
@@ -443,8 +446,10 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
         COORDINATOR,
         "--coordinator-term",
         "3",
+        // ★ 결함 288 (2026-09-25) — 3000 이었다. 수신 확인을 켠 풀 Agent 는 "갱신 주기(600) + 5초" 보다 짧은 Lease 로 시작하지 않는다
+        //   (LEASE_TOO_SHORT_TO_START) — 3초 Lease 는 수신 확인을 끈(풀 규칙을 어긴) Agent 에서만 돌았다.
         "--lease-ttl-ms",
-        "3000",
+        "7000",
         "--lease-renew-after-ms",
         "1000",
         "--lease-max-total-duration-seconds",

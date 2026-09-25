@@ -103,6 +103,7 @@ message JobManifest {
 
 message ExecutionGrant {
   // 현재 2. 재개 지점(resume_from = 26)을 실을 때만 3 이다(2026-09-23, 신뢰망 남은 일 F).
+  // 풀 신호(pool_mode = 27)가 true 면 4 다(2026-09-25, 결함 288).
   uint32 schema_version = 1;
   string grant_id = 2;
 
@@ -140,6 +141,12 @@ message ExecutionGrant {
   //   들어가지 않는다) (2) 공유 저장소의 파일을 다시 해시해 files · root_digest 와 대조한 뒤에만 작업에 준다.
   //   v2 이하 Grant 에 이 칸이 있으면 거부한다 — 구버전 Agent 는 이 칸을 모르고 서명 검증에서 떨어진다(fail-closed).
   CheckpointManifest resume_from = 26;
+
+  // ★ schema v4 (2026-09-25, 결함 288) — 이 Grant 를 **풀 Coordinator**(--pool-mode true)가 발급했다.
+  //   풀은 Agent 가 ACK 수신 확인을 기다리고(require_ack_receipt) 실행 중 Lease 를 갱신해야만 한 번 실행이 성립한다.
+  //   Agent 는 이 값이 true 인데 그 설정이 꺼져 있으면 ACK 전에 거부한다(signing.md §6.5).
+  //   v3 이하 Grant 에 이 칸이 true 면 거부한다 — 구버전 Agent 는 이 칸을 모르고 서명 검증에서 떨어진다(fail-closed).
+  bool pool_mode = 27;
 
   // domain_tag = "gputeer/v2/grant"
   bytes coordinator_signature = 90;

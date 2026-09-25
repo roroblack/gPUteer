@@ -131,6 +131,7 @@ enum SessionMode {
 }
 
 message AgentSessionHello {
+  // 현재 1. GPU 관측(gpu_observation = 8)을 실을 때만 2 다(2026-09-25, 결함 301).
   uint32 schema_version = 1;
   SessionMode mode = 2;
   string session_id = 3;
@@ -138,7 +139,29 @@ message AgentSessionHello {
   uint32 connection_attempt = 5;
   uint64 issued_at_unix_ms = 6;
   bytes nonce = 7;
+  // ★ schema v2 · FRESH 에서만 (2026-09-25, 결함 301) — 노드가 NVML 로 직접 읽은 GPU 목록.
+  //   Coordinator 는 등록된 선언과 **맞을 때만** "그 선언이 지금도 사실이다" 는 확인 기록을 남긴다(선언은 바꾸지 않는다).
+  //   노드 자기보고다(WORKER_REPORTED) — 막는 것은 GPU 가 빠졌는데 선언이 신선하게 남는 것이지, 작정한 거짓이 아니다.
+  //   v1 Hello 나 FRESH 가 아닌 Hello 에 이 칸이 있으면 거부한다(signing.md §6.6).
+  NodeGpuObservation gpu_observation = 8;
   bytes node_signature = 90;
+}
+
+// 노드가 NVML 로 읽은 GPU 관측(결함 301). 서명하지 않는다 — 싣는 메시지(AgentSessionHello)의 서명이 묶는다.
+message NodeGpuObservation {
+  // 노드 시계로 NVML 을 읽은 때. Hello.issued_at 보다 늦거나 60초 넘게 이르면 확인에 쓰지 않는다.
+  uint64 observed_at_unix_ms = 1;
+  // uuid 오름차순 · 중복 없음 · 1~64 개.
+  repeated ObservedGpu gpus = 2;
+}
+
+message ObservedGpu {
+  // NVML UUID.
+  string uuid = 1;
+  // NVML 이름(예: "NVIDIA GeForce RTX 4070 SUPER"). 비어 있으면 거부한다.
+  string model = 2;
+  // NVML 총 VRAM. 0 이면 거부한다.
+  uint64 total_vram_bytes = 3;
 }
 
 message ResumeLeaseRequest {
