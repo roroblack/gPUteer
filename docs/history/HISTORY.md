@@ -212,6 +212,21 @@
 - ★ 한계: 번호로 선언한 노드의 같은 모델 교체는 구분 못 함 · 재검수 전
 - 리포트: 결함 문서가 대신한다
 
+## 2026-09-25 17:59 — (fork) Toolkit 설치 뒤 컨테이너 GPU 첫 확인 · 결함 303 · main 위로 rebase · `--attest-gpus` 설치 틀
+
+- 계획: ④ 실측(사용자가 x600 에 NVIDIA Container Toolkit 설치를 허가) · main 123802d 의 계약 변경을 설치 틀에 잇기(main 요청)
+- 수행: x600 WSL2 에 Toolkit 1.19.0 설치 · CDI 사양만 생성(daemon.json · docker 재시작 없음). `--device=nvidia.com/gpu=all` 만 Agent 격리 옵션
+  그대로 컨테이너 안에서 RTX 4070 SUPER 를 열었다 — `--gpus` 는 전부 `AMD CDI spec not found`, `nvidia.com/gpu=0` 은 unresolvable.
+  → 결함 303: Agent · node-doctor `--container-gpu-request gpus|cdi|cdi-all`(기본값 불변 · cdi-all 은 `--gpu-pin 0` + NVML 한 장일 때만).
+  fork 를 main 123802d 위로 rebase(충돌 HISTORY · 런북 §5a — main 기록 유지 + fork 줄 뒤에). 설치 틀에 `GPUTEER_ATTEST_GPUS`(install-node 기본 true ·
+  `-NoAttestGpus`). 런북 §4 · §5a(main 이 넘긴 옛 "미실측" 문장 포함) · §9a 정정
+- 검증: `cargo test --workspace -j 2 --no-fail-fast` 1351 passed · 0 failed · ignored 4(개발 기계 Windows · rebase 뒤). 첫 실행에서
+  crypto `separate_processes_same_nonce_have_exactly_one_fresh` 가 30초 대기 초과로 1회 실패 — 단독 3회 통과(약 2초) · 두 번째 전체 실행 통과. 부하 추정
+- ★ 한계: `cdi-all` 로 **우리 Agent 바이너리가** GPU 를 연 것은 못 쟀다 — x600 E: 가 여유 29MB 까지 차 새 판 빌드가 멈췄다(우리 쓰기량보다
+  훨씬 큰 감소 · 원인 미확인 · 사용자가 정리 중). 네이티브 리눅스 · podman · 멀티 GPU WSL 미측정
+- 리포트: `docs/reports/debugs/2026-09-25_1710_결함303_WSL_docker_에서_Agent_의_GPU_인자가_거부된다.md` ·
+  `docs/evidence/_raw/컨테이너_GPU_실측_x600_2026-09-25.txt`(3회차)
+
 ## 2026-09-25 17:44 — 계약 변경: 풀 신호(Grant v4) · 노드 GPU 관측(Hello v2) — 결함 288 · 301
 
 - 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`("적용 설계" 17:15) · 규범 `docs/protocol/signing.md` §6.5 · §6.6

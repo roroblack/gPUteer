@@ -38,6 +38,8 @@ param(
     [long]$GpuVramMiB = 0,
     # 시드는 평문 파일이다(K0). 더 높게 적으려면 그 보호를 실제로 걸었을 때만 바꾼다.
     [string]$KeyProtection = "K0",
+    # 인사에 GPU 관측을 싣지 않는다 — Coordinator 가 아직 옛 판일 때만(런북 §5 · 결함 301)
+    [switch]$NoAttestGpus,
     [switch]$Register
 )
 
@@ -124,6 +126,7 @@ Write-Utf8NoBom $agentEnv @(
     "GPUTEER_NODE_DIR=$NodeDir",
     "GPUTEER_GPU_PIN=$GpuPin",
     "GPUTEER_OWNER_PANEL_PORT=$OwnerPanelPort",
+    "GPUTEER_ATTEST_GPUS=$(if ($NoAttestGpus) { '' } else { 'true' })",
     "GPUTEER_CONTAINER_RUNTIME=$ContainerRuntime",
     "GPUTEER_CONTAINER_RUNTIME_KIND=$ContainerRuntimeKind",
     "GPUTEER_CONTAINER_GPU=$(if ($ContainerGpu) { 'true' } else { '' })",

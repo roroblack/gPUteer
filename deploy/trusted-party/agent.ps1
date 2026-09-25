@@ -18,6 +18,9 @@ foreach ($file in @($EnvFile, $AgentEnvFile)) {
     }
 }
 $nodeDir = $config.GPUTEER_NODE_DIR
+# GPU observation in Hello (defect 301 / Hello v2). Turn on only after the Coordinator is upgraded.
+$attestArgs = @()
+if ($config.GPUTEER_ATTEST_GPUS -eq "true") { $attestArgs = @("--attest-gpus", "true") }
 # 선택 — 컨테이너 런타임(런북 §5a). 비어 있으면 넘기지 않는다.
 $containerArgs = @()
 if ($config.GPUTEER_CONTAINER_RUNTIME) {
@@ -50,5 +53,6 @@ if ($config.GPUTEER_CONTAINER_RUNTIME) {
     --pool-peer-keys $config.GPUTEER_POOL_AGENTS `
     --owner-panel-port $config.GPUTEER_OWNER_PANEL_PORT `
     --gpu-pin $config.GPUTEER_GPU_PIN `
+    @attestArgs `
     @containerArgs
 exit $LASTEXITCODE

@@ -101,3 +101,78 @@ RESULT [node-doctor] exit=1 (coordinator_tcp FAIL 은 의도 — 여기서는 Co
 == 받았던 이미지를 지웠다 ubuntu:24.04
 == 끝날 때 컨테이너 수 7 (시작 7)
 LOG /mnt/e/gputeer-work/container_gpu_probe/results/container_gpu_probe_20260925_162234.txt
+
+
+# ─── 3회차 17:02 — 사용자 허가로 NVIDIA Container Toolkit 1.19.0 설치 뒤 ───
+# 설치: NVIDIA 공식 apt 저장소 추가 · nvidia-container-toolkit · nvidia-ctk cdi generate(/etc/cdi/nvidia.yaml). daemon.json 은 그대로(dns 설정만) · docker 재시작 없음.
+# nvidia-ctk cdi list -> nvidia.com/gpu=all 하나(WSL 은 번호별 장치를 만들지 않았다).
+# 결과: --gpus 네 모양 -> AMD CDI spec not found(125) · nvidia.com/gpu=0 -> unresolvable(125) · **nvidia.com/gpu=all -> GPU 0: RTX 4070 SUPER (0)**
+#       대조(GPU 안 넘김) -> nvidia-smi 없음(127). node-doctor(fork 4be292c · 기본 gpus) -> container_gpu OK(CDI 사양) · probe FAIL(AMD CDI spec not found).
+#       -> 결함 303. 사용자 컨테이너 수 시작 8 = 끝 8.
+
+== 시각 2026-09-25 17:02:52 +0900 · 이미지 ubuntu:24.04
+Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+== docker
+client 29.7.2 · server 29.7.2
+== toolkit
+NVIDIA Container Toolkit CLI version 1.19.0
+commit: ec7b4e2fa2caecad6d89be4a26029b831fe7503a
+ls: cannot access '/var/run/cdi': No such file or directory
+/etc/cdi:
+total 4
+-rw-r--r-- 1 root root 3764 Sep 25 17:02 nvidia.yaml
+== WSL 에서 보이는 GPU
+GPU 0: NVIDIA GeForce RTX 4070 SUPER (UUID: GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93)
+== 시작할 때 컨테이너 수 8 (건드리지 않는다)
+docker.io/library/ubuntu:24.04
+== 고정 참조 ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 (원래 있던 이미지: 아니오)
+== [gpus-quoted] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus "device=0" --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: AMD CDI spec not found
+
+Run 'docker run --help' for more information
+RESULT [gpus-quoted] exit=125
+== [gpus-plain] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus device=0 --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: AMD CDI spec not found
+
+Run 'docker run --help' for more information
+RESULT [gpus-plain] exit=125
+== [no-gpu] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1  --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: failed to create task for container: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: exec: "nvidia-smi": executable file not found in $PATH
+
+Run 'docker run --help' for more information
+RESULT [no-gpu] exit=127
+== [gpus-two] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus "device=0,1" --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: AMD CDI spec not found
+
+Run 'docker run --help' for more information
+RESULT [gpus-two] exit=125
+== [gpus-all] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --gpus all --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: AMD CDI spec not found
+
+Run 'docker run --help' for more information
+RESULT [gpus-all] exit=125
+== CDI 장치 목록
+time="2026-09-25T17:03:02+09:00" level=info msg="Found 1 CDI devices"
+nvidia.com/gpu=all
+== [cdi] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --device=nvidia.com/gpu=0 --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+docker: Error response from daemon: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=0
+
+Run 'docker run --help' for more information
+RESULT [cdi] exit=125
+== [cdi-all] docker run --read-only --tmpfs=/tmp --cap-drop=ALL --security-opt=no-new-privileges --network=none --ipc=private --pids-limit=4096 --memory=1073741824 --memory-swap=1073741824 --workdir=/tmp --user=0:0 --label=gputeer.managed=1 --label=gputeer.probe=1 --device=nvidia.com/gpu=all --entrypoint nvidia-smi ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3 -L
+GPU 0: NVIDIA GeForce RTX 4070 SUPER (UUID: GPU-09a269a7-50a8-f5be-2a00-d20a1c281c93)
+RESULT [cdi-all] exit=0
+== node-doctor --container-gpu-probe-image (Agent 의 실제 create 인자)
+CHECK seed WARN — 공개키 8b764a65a940c0e50742c5448ce8d69158dba3c437699987f0ad34fc5e898b0f · 그런데 다른 사용자가 읽을 수 있다(mode 777) — chmod 600
+CHECK node_dir OK — "/mnt/e/gputeer-work/container_gpu_probe/results/doctor-node" 에 쓸 수 있고 fence.sqlite3 · checkpoints 자리가 비었거나 맞는 종류다
+CHECK coordinator_tcp FAIL — 127.0.0.1:9 에 붙지 못했다 — 127.0.0.1:9: Connection refused (os error 111) (Coordinator 가 떠 있는가 · 방화벽 · 포트)
+CHECK gpu OK — --gpu-pin 0 가 있다 · 전체 ["0:NVIDIA GeForce RTX 4070 SUPER"]
+CHECK container_runtime OK — docker 29.7.2
+CHECK container_rootless WARN — rootful 이다 — 런타임 그룹에 든 계정은 사실상 root 다. rootless podman 을 권한다
+CHECK container_gpu OK — CDI 사양 이 보였다(컨테이너 안에서 GPU 를 연 것은 아니다 — --container-gpu-probe-image 로 실행을 확인한다)
+CHECK container_gpu_probe FAIL — 컨테이너를 돌리지 못했다: NotStarted { detail: "start: Some(\"start\") 실패(exit status: 1): Error response from daemon: AMD CDI spec not found\nfailed to start containers: gputeer-doctor-cec091435bd98bd7" }
+NODE_DOCTOR ok=4 warn=2 fail=2
+RESULT [node-doctor] exit=1 (coordinator_tcp FAIL 은 의도 — 여기서는 Coordinator 를 띄우지 않는다)
+== 받았던 이미지를 지웠다 ubuntu:24.04
+== 끝날 때 컨테이너 수 8 (시작 8)
+LOG /mnt/e/gputeer-work/container_gpu_probe/results/container_gpu_probe_20260925_170252.txt
