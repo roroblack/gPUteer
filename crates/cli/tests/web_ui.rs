@@ -100,8 +100,27 @@ fn party(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
     (db, keyring, seed)
 }
 
+/// 시험이 도중에 실패해도 화면 프로세스를 남기지 않는다 — 남으면 요청을 기다리며 출력 파이프를 붙잡아 시험 실행 전체가 멈춘다
+/// (Windows 는 자식이 부모의 파이프를 물려받는다 · 2026-09-25 뮤테이션 중 실제로 멈췄다).
+struct Ui(Child);
+
+impl Ui {
+    fn wait(&mut self) {
+        let _ = self.0.wait();
+    }
+}
+
+impl Drop for Ui {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
 /// 화면을 띄우고 첫 줄들에서 주소와 토큰(있으면)을 읽는다.
-fn spawn_ui(args: &[&str], token_prefix: Option<&str>) -> (Child, String, Option<String>) {
+fn spawn_ui(args: &[&str], token_prefix: Option<&str>) -> (Ui, String, Option<String>) {
     let mut child = Command::new(cli_bin())
         .args(args)
         .stdout(Stdio::piped())
@@ -133,7 +152,7 @@ fn spawn_ui(args: &[&str], token_prefix: Option<&str>) -> (Child, String, Option
         let mut rest = String::new();
         let _ = reader.read_to_string(&mut rest);
     });
-    (child, address, token)
+    (Ui(child), address, token)
 }
 
 /// 요청 하나 — (상태 코드, 몸).
@@ -196,7 +215,7 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
             "--port",
             "0",
             "--max-requests",
-            "9",
+            "10",
         ],
         Some("SUBMIT_UI_OPEN"),
     );
@@ -321,6 +340,24 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
         !String::from_utf8_lossy(&body).contains(&token),
         "설정 응답이 토큰을 냈다"
     );
+    // 10 음성(결함 407) — 입력 오류 문구에 OUT_EXISTS 가 들어가도 "이미 만들었다"(409)로 오판하지 않는다.
+    let mut tricky: serde_json::Value = serde_json::from_str(&form).unwrap();
+    tricky["job_id"] = "web-job-3".into();
+    tricky["image_ref"] = "example/image".into();
+    tricky["image_sha256"] = "OUT_EXISTS".into();
+    let tricky = tricky.to_string();
+    assert!(tricky.contains("OUT_EXISTS"), "시험 전제");
+    let (status, body) = http(
+        &address,
+        "POST",
+        "/api/submit",
+        "127.0.0.1",
+        Some(&token),
+        "application/json",
+        tricky.as_bytes(),
+    );
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(!out_dir.join("web-job-3.manifest").exists());
     // 6 음성 — 인자 안의 쉼표는 조용히 쪼개지 않고 거부한다.
     let comma = form
         .replace("web-job-1", "web-job-2")
@@ -336,7 +373,7 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
     );
     assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
     assert!(!out_dir.join("web-job-2.manifest").exists());
-    let _ = submit_ui.wait();
+    submit_ui.wait();
 
     // ── 반입이 꺼진 운영자 화면 — 올리기를 받지 않는다 ──
     let manifest = std::fs::read(&file).unwrap();
@@ -362,7 +399,7 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
         &manifest,
     );
     assert_eq!(status, 403, "반입이 꺼졌는데 받았다");
-    let _ = read_only.wait();
+    read_only.wait();
     assert_eq!(
         CoordinatorJobStore::open(&db)
             .unwrap()
@@ -456,7 +493,7 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
         "{}",
         String::from_utf8_lossy(&body)
     );
-    let _ = dashboard.wait();
+    dashboard.wait();
     assert_eq!(
         CoordinatorJobStore::open(&db)
             .unwrap()

@@ -299,7 +299,8 @@ fn submit_from_form(request: &Request, config: &Config) -> (u16, serde_json::Val
         ),
         // ★ 결함 406 (재검수 94) — 같은 id 두 요청이 동시에 존재 확인을 지나면 쓰기는 하나만 이기고(원자적 생성) 진 쪽은 OUT_EXISTS 다.
         //   그 쪽도 409 · 내려받기로 알린다(두 번째 작업은 생기지 않았다).
-        Err(error) if error.contains("OUT_EXISTS") => (
+        // ★ 결함 407 (재검수 95) — 문구만 보지 않는다(입력값에 그 글자가 들어가도 맞아떨어졌다). 파일이 **실제로 있을 때만** 이미 만든 것이다.
+        Err(error) if error.contains("OUT_EXISTS") && path.is_file() => (
             409,
             serde_json::json!({
                 "ok": false,
