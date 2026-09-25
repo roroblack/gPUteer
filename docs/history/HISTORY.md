@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-25 19:33 — 재검수 102 대응: 결함 417(URI 보고 순서 — CLI · multi-agent)
+
+- 결함: `docs/reports/debugs/2026-09-25_1752_재검수96_결함_408_409.md` 끝 절
+- 스트림: Coordinator
+- 수행: CLI 파서와 `run_multi_agent()` 도 DB 경로 검사(URI · 풀 표식)를 다른 시작 검사보다 먼저 한다. 재검수 102 는 계약 변경 전체의 핵심(풀 신호 서명 ·
+  v4 발급 · Agent 관문 · GPU 관측 서명 · 대조 · 확인 기록)에서 새 결함을 찾지 못했다. ★ 기존 시험 하나(`a_replayed_hello_is_refused_across_a_pool_coordinator_restart`)가
+  풀 DB 를 비풀 설정에 넣어 다른 사유를 보고 있어, 재려는 것(비풀 + `--replay-db`)을 지키도록 풀이 아닌 Lease DB 로 바꿨다
+- 검증: `cargo test --workspace -j 2` 1356 passed · 0 failed · ignored 4 · 두 호출을 각각 빼면 시험 실패
+- ★ 한계: 재검수 전
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-25 19:18 — 재검수 101 대응: 결함 416(풀 설정의 SQLite URI)
 
 - 결함: `docs/reports/debugs/2026-09-25_1752_재검수96_결함_408_409.md` 끝 절

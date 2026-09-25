@@ -810,8 +810,10 @@ fn a_replayed_hello_is_refused_across_a_pool_coordinator_restart() {
         "l",
         "--job-id",
         "j",
+        // ★ 결함 417 (2026-09-25) — 풀 DB 를 주면 이제 풀 표식 검사가 먼저 거부한다(POOL_DB_WITHOUT_POOL_MODE). 이 줄이 재는 것은
+        //   "비풀 + --replay-db" 이므로 풀이 아닌 Lease DB 를 준다.
         "--lease-db",
-        db.to_str().unwrap(),
+        dir.path().join("unpooled-lease.sqlite3").to_str().unwrap(),
         "--replay-db",
         replay_db.to_str().unwrap(),
     ]);

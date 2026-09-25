@@ -182,3 +182,52 @@ fn a_sqlite_uri_database_path_is_refused_in_pool_mode_too() {
     let error = gputeer_coordinator::run(c).expect_err("거부돼야 한다");
     assert!(error.contains("SQLITE_URI_PATH"), "실제 오류: {error}");
 }
+
+/// ★ 결함 417 (재검수 102) — CLI 파서 경로에서도, 풀 설정의 다른 결함(제출자 keyring 없음)보다 URI 를 먼저 보고한다.
+///   `run_multi_agent()` 를 풀 설정으로 바로 불러도 URI 가 먼저다.
+#[test]
+fn the_cli_parser_and_multi_agent_report_a_uri_before_other_pool_problems() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let path = dir
+        .path()
+        .join("control.sqlite3")
+        .to_str()
+        .expect("경로")
+        .replace('\\', "/");
+    let uri = format!("file:{path}?mode=ro");
+    let argv: Vec<String> = [
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        &"11".repeat(32),
+        "--coordinator-device-id",
+        "01JCOORDLANEGUARD00000001",
+        "--pool-mode",
+        "true",
+        "--pool-agents",
+        "01JAGENTLANEGUARD00000001=3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+        "--grant-from-control-db",
+        &uri,
+        "--lease-db",
+        &uri,
+        "--liveness-db",
+        &uri,
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let Err(error) = parse_config_from_args(&argv) else {
+        panic!("거부돼야 한다");
+    };
+    assert!(error.contains("SQLITE_URI_PATH"), "CLI: 실제 오류: {error}");
+
+    let mut pooled = config(&[]);
+    pooled.pool_mode = true;
+    pooled.lease_db_path = Some(std::path::PathBuf::from(&uri));
+    let error =
+        gputeer_coordinator::multi_agent::run_multi_agent(pooled).expect_err("거부돼야 한다");
+    assert!(
+        error.contains("SQLITE_URI_PATH"),
+        "multi-agent: 실제 오류: {error}"
+    );
+}

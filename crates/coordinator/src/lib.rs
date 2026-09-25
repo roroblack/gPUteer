@@ -4204,6 +4204,9 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         resume_protocol: flags.bool_flag("--resume-protocol"),
         hello_replay_db: flags.get("--hello-replay-db").map(PathBuf::from),
     };
+    // ★ 결함 417 (재검수 102) — DB 경로 모양(URI) · 풀 표식을 파서에서도 **먼저** 본다. `run()` 에만 두면 CLI 는 아래 풀 시작 검사가 먼저 돌아
+    //   URI 가 다른 사유로만 보고됐다.
+    refuse_pool_marked_db_without_pool_mode(&config)?;
 
     // ★★ 결함 ⑯ 확장(2026-09-10 재검수 14) — **받아 두고 말없이 버리지 않는다.**
     //
