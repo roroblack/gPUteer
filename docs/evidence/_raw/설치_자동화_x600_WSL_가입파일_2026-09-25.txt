@@ -1,0 +1,26 @@
+# 설치 자동화(②) — GPU 가 보이는 리눅스에서 install-node.sh 가 가입 파일까지 만드는가 (2026-09-25 16:26, fork 4be292c 소스를 x600 WSL 에서 빌드 — install-node.sh 는 18c9473 까지 내용이 같다(줄끝만 LF 고정))
+# 환경 x600 WSL2 Ubuntu · ★ root 로 돌았다(WSL 기본 사용자) — 비-root 리눅스 통과로 세지 않는다(CLAUDE.md §4)
+# 가짜 Coordinator: WSL 안 127.0.0.1 임시 리스너(서명 교환 없음 · node-doctor 는 TCP 만 본다)
+# 결과 install EXIT 0 · node-doctor ok=5 warn=1(seed mode 777 — /mnt/e DrvFs) fail=0 · nvidia-smi 로 GPU 이름 · VRAM(12282MiB) 읽음 · import-inventory 가 받음
+# 확인하지 않은 것: --register(systemd) · 컨테이너 런타임을 준 설치 · 비-root
+
+{
+  "schema_version": 1,
+  "agents": [
+    {
+      "registry": {
+        "node_id": "x600-gpu0", "device_id": "x600-gpu0", "owner_member_id": "tester",
+        "verifying_key_hex": "721dcafa5b6149001c40cebe9c64a0e0dd88806bde8664fb40117c506ca10cc7", "node_state": "ONLINE", "risk_state": "NORMAL",
+        "security_tier": "S0", "isolation_class": "RESTRICTED", "key_protection": "K0"
+      },
+      "inventory": {
+        "inventory_revision": 1790321214000, "observed_at_unix_ms": 1790321214000,
+        "gpus": [ { "gpu_id": "x600-gpu0-gpu-0", "model": "NVIDIA GeForce RTX 4070 SUPER", "healthy": true, "available_vram_bytes": 12878610432 } ],
+        "available_cpu_cores": 4, "available_ram_bytes": 8589934592,
+        "available_workspace_bytes": 21474836480,
+        "allowed_workload_classes": [ "TRAINING" ],
+        "third_party_workloads_opt_in": true
+      }
+    }
+  ]
+}
