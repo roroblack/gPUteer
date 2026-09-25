@@ -461,18 +461,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
     }
-    // ★ 결함 410 (재검수 97) — 풀 표식이 있는 제어 DB 를 `--pool-mode` 없이 쓰지 않는다. 표식은 한 번 적으면 지우지 않는 사실이고,
-    //   빠뜨리면 풀 시작 검사 · 수신 확인 발송을 건너뛴 채 풀 예약을 내준다. 없는 파일은 열지 않는다(여는 것만으로 만들어진다).
-    if !config.pool_mode {
-        if let Some(control_db) = config.grant_from_control_db.as_ref().filter(|p| p.exists()) {
-            if job_store::pool_mode_declared(control_db)? {
-                return Err(format!(
-                    "STARTUP_REFUSED: POOL_DB_WITHOUT_POOL_MODE — {} 는 풀 제어 DB 다(풀 표식이 있다). --pool-mode true 로 띄운다",
-                    control_db.display()
-                ));
-            }
-        }
-    }
+    refuse_pool_marked_db_without_pool_mode(&config)?;
 
     // ★ lane 선택을 **여기서** 한다(독립 검수 6라운드 지적).
     //
@@ -2774,6 +2763,32 @@ fn parse_pool_agents(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
 }
 
 /// 풀 모드의 전제 — 하나라도 어긋나면 시작하지 않는다.
+/// ★ 결함 410 · 412 (재검수 97 · 98) — 풀 표식이 있는 DB 를 `--pool-mode` 없이 쓰지 않는다. 표식은 한 번 적으면 지우지 않는 사실이고,
+///   빠뜨리면 풀 시작 검사 · 수신 확인 발송을 건너뛴 채 풀 예약(또는 같은 Lease DB)으로 풀 신호 없는 Grant 를 낸다.
+///   이 Coordinator 가 여는 제어 · Lease · 생존 DB 를 **전부** 본다(412 — 처음엔 제어 DB 만 봐서 `--lease-db` 로만 열면 지나갔다).
+///   없는 파일은 열지 않는다(여는 것만으로 만들어진다). `run()` 과 `run_multi_agent()` 가 맨 앞에서 부른다.
+pub(crate) fn refuse_pool_marked_db_without_pool_mode(
+    config: &CoordinatorConfig,
+) -> Result<(), String> {
+    if config.pool_mode {
+        return Ok(());
+    }
+    let paths = [
+        config.grant_from_control_db.clone(),
+        config.lease_db_path.clone(),
+        config.liveness_db_path.as_ref().map(PathBuf::from),
+    ];
+    for path in paths.into_iter().flatten().filter(|p| p.exists()) {
+        if job_store::pool_mode_declared(&path)? {
+            return Err(format!(
+                "STARTUP_REFUSED: POOL_DB_WITHOUT_POOL_MODE — {} 는 풀 DB 다(풀 표식이 있다). --pool-mode true 로 띄운다",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn pool_mode_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
     let refuse = |code: &str, why: &str| Err(format!("STARTUP_REFUSED: {code} — {why}"));
     let Some(control_db) = config.grant_from_control_db.as_ref() else {

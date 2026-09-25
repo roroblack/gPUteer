@@ -79,3 +79,30 @@ fn run_refuses_a_pool_marked_control_db_without_pool_mode() {
         "실제 오류: {error}"
     );
 }
+
+/// ★ 결함 412 (재검수 98) — 풀 DB 를 Lease DB 로만 열어도(예약 없는 옛 발급 경로) `--pool-mode` 없이는 시작하지 않는다.
+///   `run()` 과 `run_multi_agent()` 를 각각 직접 부른다.
+#[test]
+fn a_pool_marked_lease_db_is_refused_on_every_entry_point() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let db = dir.path().join("pool.sqlite3");
+    gputeer_coordinator::job_store::declare_pool_mode(&db, 1).expect("풀 표식");
+    let unpooled = || {
+        let mut c = config(&["--max-connections", "1", "--accept-timeout-ms", "200"]);
+        c.lease_db_path = Some(db.clone());
+        c
+    };
+    let error = gputeer_coordinator::run(unpooled()).expect_err("run 이 거부해야 한다");
+    assert!(
+        error.contains("POOL_DB_WITHOUT_POOL_MODE"),
+        "실제 오류: {error}"
+    );
+    let mut multi = unpooled();
+    multi.multi_agent = true;
+    let error = gputeer_coordinator::multi_agent::run_multi_agent(multi)
+        .expect_err("run_multi_agent 가 거부해야 한다");
+    assert!(
+        error.contains("POOL_DB_WITHOUT_POOL_MODE"),
+        "실제 오류: {error}"
+    );
+}

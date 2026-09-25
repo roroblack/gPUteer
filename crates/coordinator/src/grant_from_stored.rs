@@ -378,7 +378,8 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
     }
     // ★ 2026-09-25 (결함 288) — 풀 Grant 는 **v4** 다(재개 지점이 있어도 4 — v4 는 v3 의 칸을 모두 가진다).
     // ★ 결함 410 (재검수 97) — 호출자의 값만 믿지 않는다. 제어 DB 에 풀 표식이 있으면(풀 Coordinator · `scheduler-tick --pool-mode` 가 적는다)
-    //   호출자가 `--pool-mode` 를 빠뜨렸어도 풀 Grant 로 낸다 — 모든 발급 경로(wire · issue-grant · multi-agent)가 여기를 지난다.
+    //   호출자가 `--pool-mode` 를 빠뜨렸어도 풀 Grant 로 낸다 — **저장된 예약** 발급 경로(wire · issue-grant · multi-agent)가 여기를 지난다.
+    //   예약 없는 옛 `issue_grant()` 는 여기를 안 지난다 — 그 경로는 풀 표식 DB 를 열면 시작하지 않는다(결함 412).
     //   안전한 쪽으로만 바뀐다: 풀 신호가 붙으면 Agent 는 수신 확인 · 실행 중 갱신 없이 실행하지 않는다.
     let pool_mode = request.pool_mode
         || jobs.pool_mode_declared().map_err(|e| {

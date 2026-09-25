@@ -80,6 +80,8 @@ pub fn run_multi_agent(config: CoordinatorConfig) -> Result<(), String> {
                 .to_string(),
         );
     }
+    // ★ 결함 412 — 풀 표식이 있는 DB 를 이 lane 으로 여는 것도 막는다(`run()` 을 거치지 않는 호출자).
+    crate::refuse_pool_marked_db_without_pool_mode(&config)?;
     // ★ 라이브러리 호출자가 CLI 관문을 지나쳐 여기로 바로 올 수 있다
     //   (독립 검수 6라운드 지적) — 이 lane 이 실제로 시작하는 자리에서
     //   다시 본다.
