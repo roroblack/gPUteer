@@ -162,3 +162,23 @@ fn a_sqlite_uri_database_path_is_refused() {
         );
     }
 }
+
+/// ★ 결함 416 (재검수 101) — 풀 설정에서도 URI 경로를 받지 않는다(처음엔 풀이면 URI 검사를 건너뛰었다).
+#[test]
+fn a_sqlite_uri_database_path_is_refused_in_pool_mode_too() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let path = dir
+        .path()
+        .join("control.sqlite3")
+        .to_str()
+        .expect("경로")
+        .replace('\\', "/");
+    let uri = std::path::PathBuf::from(format!("file:{path}?mode=ro"));
+    let mut c = config(&[]);
+    c.pool_mode = true;
+    c.grant_from_control_db = Some(uri.clone());
+    c.lease_db_path = Some(uri.clone());
+    c.liveness_db_path = Some(uri.to_string_lossy().to_string());
+    let error = gputeer_coordinator::run(c).expect_err("거부돼야 한다");
+    assert!(error.contains("SQLITE_URI_PATH"), "실제 오류: {error}");
+}

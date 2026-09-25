@@ -458,10 +458,11 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     validate_device_id(&config.coordinator_device_id)?;
     // ★ 2026-09-25 (결함 408 · 재검수 96) — 풀 전제도 **여기서** 본다. 파서에서만 보면 라이브러리 호출자가 `multi_agent` 분기로 가서
     //   풀 예약으로 풀 신호 없는 Grant 를 냈다(수신 확인 없는 Agent 가 실행하고, 그 lane 은 Job 을 RUNNING 으로 옮기지 않는다).
+    // ★ 결함 416 — DB 경로 모양(URI) · 풀 표식을 **먼저** 본다. 풀 시작 검사가 먼저면 풀 설정의 URI 가 다른 사유로만 거부되거나 지나간다.
+    refuse_pool_marked_db_without_pool_mode(&config)?;
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
     }
-    refuse_pool_marked_db_without_pool_mode(&config)?;
 
     // ★ lane 선택을 **여기서** 한다(독립 검수 6라운드 지적).
     //
@@ -2770,9 +2771,6 @@ fn parse_pool_agents(raw: &str) -> Result<Vec<(String, VerifyingKey)>, String> {
 pub(crate) fn refuse_pool_marked_db_without_pool_mode(
     config: &CoordinatorConfig,
 ) -> Result<(), String> {
-    if config.pool_mode {
-        return Ok(());
-    }
     // ★ 결함 414 (재검수 99) — `run()` 이 여는 SQLite 경로 **전부**다. 처음엔 제어 · Lease · 생존 셋만 봐서 Hello replay DB 로 풀 DB 를 열면 지나갔다.
     //   새 DB 경로를 설정에 더하면 여기에도 더한다(`pool_lane_guard` 시험이 이 목록을 하나씩 잰다).
     let paths = [
@@ -2796,6 +2794,10 @@ pub(crate) fn refuse_pool_marked_db_without_pool_mode(
                 path.display()
             ));
         }
+    }
+    // ★ 결함 416 (재검수 101) — URI 거부는 풀이어도 한다. 처음엔 이 함수 맨 앞에서 풀이면 돌아가, 풀 설정에서는 URI(`nolock=1` 까지)를 받았다.
+    if config.pool_mode {
+        return Ok(());
     }
     for path in paths.into_iter().flatten().filter(|p| p.exists()) {
         if job_store::pool_mode_declared(&path)? {
