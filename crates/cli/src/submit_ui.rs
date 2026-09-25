@@ -92,24 +92,12 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let listener = local_http::bind(port).map_err(|e| format!("SUBMIT_UI: {e}"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     println!("SUBMIT_UI_LISTENING http://{address}/");
-    println!("SUBMIT_UI_TOKEN {}", config.token);
-    let mut served: u64 = 0;
-    loop {
-        if max_requests.is_some_and(|max| max > 0 && served >= max) {
-            return Ok(format!("SUBMIT_UI_DONE served={served}"));
-        }
-        let (stream, _) = match listener.accept() {
-            Ok(accepted) => accepted,
-            Err(e) => {
-                eprintln!("submit-ui: accept 실패(계속 받는다): {e}");
-                continue;
-            }
-        };
-        served += 1;
-        if let Err(e) = handle(stream, &config) {
-            eprintln!("submit-ui: 요청 처리 실패(계속 받는다): {e}");
-        }
-    }
+    // ★ 결함 298 (재검수 93) — 토큰은 이 주소로만 준다(`#` 뒤는 서버로 가지 않는다). 이 주소를 연다.
+    println!("SUBMIT_UI_OPEN http://{address}/#token={}", config.token);
+    let served = local_http::serve(listener, max_requests, move |stream| {
+        handle(stream, &config)
+    })?;
+    Ok(format!("SUBMIT_UI_DONE served={served}"))
 }
 
 fn handle(mut stream: TcpStream, config: &Config) -> std::io::Result<()> {
@@ -135,7 +123,7 @@ fn handle(mut stream: TcpStream, config: &Config) -> std::io::Result<()> {
         ("GET", "/api/config") => local_http::respond_json(
             &mut stream,
             200,
-            &serde_json::json!({ "token": config.token, "submitter_device_id": config.device_id }),
+            &serde_json::json!({ "submitter_device_id": config.device_id }),
         ),
         ("POST", "/api/submit") => {
             if !request.token_matches(&config.token) {
@@ -192,19 +180,6 @@ fn check_job_id(job_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn generated_job_id() -> Result<String, String> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let mut nonce = [0u8; 4];
-    // 난수가 실패하면 만들지 않는다 — 같은 밀리초의 두 작업이 같은 id 를 받지 않게(`let _` 로 버리지 않는다 · CLAUDE.md §3).
-    getrandom::getrandom(&mut nonce)
-        .map_err(|e| format!("Job id 를 만들 난수를 얻지 못했다: {e}"))?;
-    let hex: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(format!("job-{now}-{hex}"))
-}
-
 /// 폼 몸(JSON)을 `submit` 의 인자로 옮겨 그대로 부른다.
 fn submit_from_form(request: &Request, config: &Config) -> (u16, serde_json::Value) {
     let fail =
@@ -222,15 +197,25 @@ fn submit_from_form(request: &Request, config: &Config) -> (u16, serde_json::Val
             _ => None,
         }
     };
-    let job_id = match text("job_id") {
-        Some(id) => id,
-        None => match generated_job_id() {
-            Ok(id) => id,
-            Err(why) => return fail(500, why),
-        },
+    // ★ 결함 299 (재검수 93) — Job id 는 **화면이** 폼을 열 때 한 번 만든다. 서버가 요청마다 지어내면 응답을 잃고 다시 누를 때 두 번째 작업이
+    //   생겼다. 같은 id 로 다시 오면 이미 만든 파일이라 거부하고 내려받기를 알려 준다.
+    let Some(job_id) = text("job_id") else {
+        return fail(400, "Job id 가 비었다 — 화면이 만든 값을 쓴다".into());
     };
     if let Err(why) = check_job_id(&job_id) {
         return fail(400, why);
+    }
+    if manifest_path(&config.out_dir, &job_id).exists() {
+        return (
+            409,
+            serde_json::json!({
+                "ok": false,
+                "exists": true,
+                "job_id": job_id,
+                "download": format!("/manifest/{job_id}"),
+                "error": "이 Job id 로 이미 만들었다 — 다시 만들지 않는다(두 번 도는 것을 막는다). 이미 만든 파일을 내려받는다",
+            }),
+        );
     }
     let Some(entrypoint) = text("entrypoint") else {
         return fail(400, "실행할 것(entrypoint)이 비었다".into());
@@ -340,7 +325,7 @@ pre{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Consolas,
 <p class="sub">제출자 <span id="who">-</span> 의 키로 서명한 작업 파일을 만든다. 만든 파일을 운영자에게 건네면 운영자 화면에서 올린다.</p>
 <form id="f">
 <section><h2>무엇을 돌리나</h2><div class="grid">
-<label>Job id (비우면 자동)<input name="job_id" placeholder="job-…"></label>
+<label>Job id (화면이 만든다 · 바꿔도 된다)<input name="job_id" required></label>
 <label>실행할 것(entrypoint)<input name="entrypoint" required placeholder="python 또는 /usr/bin/python3"></label>
 <label style="grid-column:1/-1">인자 — 한 줄에 하나(쉼표는 쓸 수 없다)<textarea name="args" placeholder="train.py&#10;--epochs=3"></textarea></label>
 </div></section>
@@ -368,8 +353,17 @@ pre{white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Consolas,
 </form>
 <section><h2>결과</h2><pre id="result">아직 없다</pre><p><a id="download" hidden>작업 파일 내려받기</a></p></section>
 </main><script>
-let token=null;
-(async()=>{try{const r=await fetch('/api/config',{cache:'no-store'});const c=await r.json();token=c.token;document.getElementById('who').textContent=c.submitter_device_id;}catch(e){document.getElementById('result').textContent='설정을 읽지 못했다: '+e;}})();
+function pageToken(){
+ // ★ 결함 298 — 토큰은 HTTP 로 받지 않는다. 시작할 때 찍힌 주소의 # 뒤(서버로 가지 않는다)에서 읽어 이 탭에만 둔다.
+ const fromHash=new URLSearchParams(location.hash.slice(1)).get('token');
+ try{if(fromHash){sessionStorage.setItem('gputeer-token',fromHash);history.replaceState(null,'',location.pathname);}
+  return fromHash||sessionStorage.getItem('gputeer-token');}catch(e){return fromHash;}
+}
+const token=pageToken();
+function newJobId(){const b=new Uint8Array(4);crypto.getRandomValues(b);return 'job-'+Date.now()+'-'+Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');}
+document.querySelector('input[name=job_id]').value=newJobId();
+if(!token)document.getElementById('result').textContent='만들려면 시작할 때 찍힌 주소(#token=… 이 붙은 것)로 연다';
+(async()=>{try{const r=await fetch('/api/config',{cache:'no-store'});const c=await r.json();document.getElementById('who').textContent=c.submitter_device_id;}catch(e){document.getElementById('result').textContent='설정을 읽지 못했다: '+e;}})();
 const GiB=1024*1024*1024;
 document.getElementById('f').addEventListener('submit',async(ev)=>{
  ev.preventDefault();
@@ -384,12 +378,15 @@ document.getElementById('f').addEventListener('submit',async(ev)=>{
   dataset_sensitivity:v('dataset_sensitivity'),minimum_security_tier:v('minimum_security_tier'),
   minimum_isolation_class:v('minimum_isolation_class'),minimum_key_protection:v('minimum_key_protection')};
  const out=document.getElementById('result');const dl=document.getElementById('download');dl.hidden=true;
+ const button=ev.target.querySelector('button[type=submit]');button.disabled=true;
  out.className='';out.textContent='만드는 중…';
  try{const r=await fetch('/api/submit',{method:'POST',headers:{'X-Gputeer-Token':token,'Content-Type':'application/json'},body:JSON.stringify(body)});
   const t=await r.text();let d=null;try{d=JSON.parse(t);}catch(e){}
-  if(d&&d.ok){out.className='ok';out.textContent='만들었다 — '+d.job_id+'\n'+d.file+'\n'+d.message;dl.href=d.download;dl.hidden=false;}
-  else{out.className='bad';out.textContent='만들지 못했다: '+(d?d.error:t);}
+  if(d&&d.ok){out.className='ok';out.textContent='만들었다 — '+d.job_id+'\n'+d.file+'\n'+d.message;dl.href=d.download;dl.hidden=false;
+   document.querySelector('input[name=job_id]').value=newJobId();}
+  else{out.className='bad';out.textContent='만들지 못했다: '+(d?d.error:t);if(d&&d.exists){dl.href=d.download;dl.hidden=false;}}
  }catch(e){out.className='bad';out.textContent='만들지 못했다: '+e;}
+ finally{button.disabled=false;}
 });
 </script></body></html>
 "#;

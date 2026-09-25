@@ -117,26 +117,18 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let listener = local_http::bind(port).map_err(|e| format!("DASHBOARD: {e}"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     println!("DASHBOARD_LISTENING http://{address}/");
+    // ★ 결함 298 (재검수 93) — 토큰은 이 주소로만 준다(`#` 뒤는 서버로 가지 않는다). `/api/config` 는 토큰을 내지 않는다 — 같은 PC 의
+    //   다른 프로세스가 HTTP 로 물어 토큰을 얻지 못하게. 운영자는 이 주소를 연다.
     if let Some(import) = import.as_ref() {
-        println!("DASHBOARD_IMPORT_ENABLED token={}", import.token);
+        println!(
+            "DASHBOARD_IMPORT_ENABLED open=http://{address}/#token={}",
+            import.token
+        );
     }
-    let mut served: u64 = 0;
-    loop {
-        if max_requests.is_some_and(|max| max > 0 && served >= max) {
-            return Ok(format!("DASHBOARD_DONE served={served}"));
-        }
-        let (stream, _) = match listener.accept() {
-            Ok(accepted) => accepted,
-            Err(e) => {
-                eprintln!("dashboard: accept 실패(계속 받는다): {e}");
-                continue;
-            }
-        };
-        served += 1;
-        if let Err(e) = handle(stream, &control_db, import.as_ref()) {
-            eprintln!("dashboard: 요청 처리 실패(계속 받는다): {e}");
-        }
-    }
+    let served = local_http::serve(listener, max_requests, move |stream| {
+        handle(stream, &control_db, import.as_ref())
+    })?;
+    Ok(format!("DASHBOARD_DONE served={served}"))
 }
 
 fn now_unix_ms() -> u64 {
@@ -189,7 +181,6 @@ fn handle(
             200,
             &serde_json::json!({
                 "import_enabled": import.is_some(),
-                "token": import.map(|i| i.token.as_str()),
             }),
         ),
         ("POST", "/api/import") => match import {
@@ -228,42 +219,19 @@ fn import_manifest_bytes(
         );
     }
     let digest = gputeer_protocol::canonical::blake3_256(&request.body);
-    let key: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
-    // 반입 함수는 파일 경로를 받는다 — 임시 파일에 쓰고 끝나면 지운다(이름은 내용 해시 · 프로세스 id).
-    let temp = std::env::temp_dir().join(format!(
-        "gputeer-dashboard-{}-{}.manifest",
-        std::process::id(),
-        digest[..8]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    ));
-    if let Err(e) = std::fs::write(&temp, &request.body) {
-        return (
-            500,
-            serde_json::json!({ "ok": false, "error": format!("임시 파일을 쓰지 못했다: {e}") }),
-        );
-    }
+    let mut key = [0u8; 16];
+    key.copy_from_slice(&digest[..16]);
     let db = control_db.to_string_lossy().to_string();
-    let temp_s = temp.to_string_lossy().to_string();
-    let mut import_args = vec![
-        "--manifest".to_string(),
-        temp_s,
-        "--submitter-keyring".to_string(),
-        import.keyring.clone(),
-        "--job-db".to_string(),
-        db.clone(),
-        "--idempotency-key".to_string(),
+    // ★ 결함 400 · 401 (재검수 93) — 올린 바이트를 그대로 반입한다(임시 파일에 써서 다시 열지 않는다). Job id 는 결과 구조에서 받는다.
+    let imported = match crate::import_manifest::import_bytes(
+        &request.body,
+        "올린 파일",
+        &import.keyring,
+        &db,
         key,
-    ];
-    if import.plaintext_keyring {
-        import_args.push("--i-understand-plaintext-keyring-is-unsafe".into());
-        import_args.push("true".into());
-    }
-    let imported = crate::import_manifest::run(&import_args);
-    let _ = std::fs::remove_file(&temp);
-    let imported = match imported {
-        Ok(message) => message,
+        import.plaintext_keyring,
+    ) {
+        Ok(imported) => imported,
         Err(error) => {
             return (
                 400,
@@ -271,16 +239,8 @@ fn import_manifest_bytes(
             )
         }
     };
-    let Some(job_id) = imported
-        .split_whitespace()
-        .find_map(|word| word.strip_prefix("job_id="))
-        .map(str::to_string)
-    else {
-        return (
-            500,
-            serde_json::json!({ "ok": false, "stage": "import", "error": format!("반입 결과에서 job_id 를 읽지 못했다: {imported}") }),
-        );
-    };
+    let job_id = imported.job_id.clone();
+    let imported = imported.message;
     let mut plan_args = vec![
         "--job-id".to_string(),
         job_id.clone(),
@@ -303,10 +263,17 @@ fn import_manifest_bytes(
             serde_json::json!({ "ok": true, "job_id": job_id, "imported": imported, "planned": planned }),
         ),
         // 반입은 됐다 — 계획만 실패했다(예: 맞는 노드가 없다). 둘을 가른다.
-        Err(error) => (
-            400,
-            serde_json::json!({ "ok": false, "stage": "plan", "job_id": job_id, "imported": imported, "error": error }),
-        ),
+        // ★ 결함 402 — 계획은 PLANNING 커밋과 QUEUED 커밋이 따로라, 실패한 뒤 Job 이 PLANNING 에 남을 수 있다. 지금 상태를 같이 보인다.
+        Err(error) => {
+            let state = gputeer_coordinator::job_store::CoordinatorJobStore::open(control_db)
+                .ok()
+                .and_then(|store| store.get(&job_id).ok().flatten())
+                .map(|job| job.state.table_name().to_string());
+            (
+                400,
+                serde_json::json!({ "ok": false, "stage": "plan", "job_id": job_id, "imported": imported, "error": error, "state_now": state }),
+            )
+        }
     }
 }
 
@@ -400,10 +367,17 @@ async function refresh(){
   for(const n of d.nodes||[]){const tr=document.createElement('tr');cell(tr,n.node_id,'mono');cell(tr,n.reserved_by,'mono');cell(tr,n.reservation_expired==null?'-':n.reservation_expired?'예':'아니오',n.reservation_expired?'yes':'');cell(tr,ago(d.now_unix_ms,n.last_fresh_hello_unix_ms));cell(tr,n.owner_reclaimed?'예':'아니오',n.owner_reclaimed?'yes':'');nodes.appendChild(tr);}
  }catch(e){document.getElementById('err').textContent='읽지 못했다: '+e;}
 }
-let token=null;
+function pageToken(){
+ // ★ 결함 298 — 토큰은 HTTP 로 받지 않는다. 시작할 때 찍힌 주소의 # 뒤(서버로 가지 않는다)에서 읽어 이 탭에만 둔다.
+ const fromHash=new URLSearchParams(location.hash.slice(1)).get('token');
+ try{if(fromHash){sessionStorage.setItem('gputeer-token',fromHash);history.replaceState(null,'',location.pathname);}
+  return fromHash||sessionStorage.getItem('gputeer-token');}catch(e){return fromHash;}
+}
+const token=pageToken();
 async function config(){
  try{const r=await fetch('/api/config',{cache:'no-store'});const c=await r.json();
-  if(c.import_enabled){token=c.token;document.getElementById('import').hidden=false;}}catch(e){}
+  if(c.import_enabled){document.getElementById('import').hidden=false;
+   if(!token)document.getElementById('result').textContent='올리려면 시작할 때 찍힌 주소(#token=… 이 붙은 것)로 연다';}}catch(e){}
 }
 document.getElementById('send').addEventListener('click',async()=>{
  const out=document.getElementById('result');const f=document.getElementById('file').files[0];

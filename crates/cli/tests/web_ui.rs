@@ -121,10 +121,11 @@ fn spawn_ui(args: &[&str], token_prefix: Option<&str>) -> (Child, String, Option
     let token = token_prefix.map(|prefix| {
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
+        assert!(line.starts_with(prefix), "토큰 주소 줄이 아니다: {line:?}");
         line.trim()
-            .strip_prefix(prefix)
-            .unwrap_or_else(|| panic!("토큰 줄이 아니다: {line:?}"))
-            .trim()
+            .split("#token=")
+            .nth(1)
+            .unwrap_or_else(|| panic!("주소에 토큰이 없다: {line:?}"))
             .to_string()
     });
     // 나머지 출력은 버리지 않고 빨아낸다(파이프가 차서 멈추지 않게).
@@ -195,9 +196,9 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
             "--port",
             "0",
             "--max-requests",
-            "6",
+            "9",
         ],
-        Some("SUBMIT_UI_TOKEN"),
+        Some("SUBMIT_UI_OPEN"),
     );
     let token = token.unwrap();
     let form = serde_json::json!({
@@ -274,6 +275,52 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
         std::fs::read(&file).unwrap(),
         "내려받은 것이 남긴 파일과 다르다"
     );
+    // 7 음성(결함 299) — 같은 Job id 로 다시 보내면 두 번째 작업을 만들지 않는다(응답을 잃고 다시 누른 경우).
+    let before = std::fs::read(&file).unwrap();
+    let (status, body) = http(
+        &address,
+        "POST",
+        "/api/submit",
+        "127.0.0.1",
+        Some(&token),
+        "application/json",
+        form.as_bytes(),
+    );
+    assert_eq!(status, 409, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(json(&body)["download"], "/manifest/web-job-1");
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        before,
+        "이미 만든 파일을 바꿨다"
+    );
+    // 8 음성(결함 299) — Job id 가 없으면 서버가 지어내지 않는다.
+    let no_id = form.replace("\"job_id\":\"web-job-1\",", "");
+    assert!(!no_id.contains("job_id"), "시험 전제: job_id 를 뺐다");
+    let (status, _) = http(
+        &address,
+        "POST",
+        "/api/submit",
+        "127.0.0.1",
+        Some(&token),
+        "application/json",
+        no_id.as_bytes(),
+    );
+    assert_eq!(status, 400, "Job id 없이 만들었다");
+    // 9 (결함 298) — 설정 응답은 토큰을 내지 않는다(같은 PC 의 다른 프로세스가 HTTP 로 얻지 못한다).
+    let (status, body) = http(
+        &address,
+        "GET",
+        "/api/config",
+        "127.0.0.1",
+        None,
+        "text/plain",
+        b"",
+    );
+    assert_eq!(status, 200);
+    assert!(
+        !String::from_utf8_lossy(&body).contains(&token),
+        "설정 응답이 토큰을 냈다"
+    );
     // 6 음성 — 인자 안의 쉼표는 조용히 쪼개지 않고 거부한다.
     let comma = form
         .replace("web-job-1", "web-job-2")
@@ -335,7 +382,7 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
             "--port",
             "0",
             "--max-requests",
-            "3",
+            "4",
             "--allow-import",
             "true",
             "--submitter-keyring",
@@ -347,7 +394,7 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
             "--i-understand-plaintext-keyring-is-unsafe",
             "true",
         ],
-        Some("DASHBOARD_IMPORT_ENABLED token="),
+        Some("DASHBOARD_IMPORT_ENABLED"),
     );
     let token = token.unwrap();
     let (status, _) = http(
@@ -360,6 +407,20 @@ fn a_job_made_in_the_submit_screen_is_queued_from_the_operator_screen() {
         &manifest,
     );
     assert_eq!(status, 403, "토큰 없이 반입했다");
+    // 결함 298 — 설정 응답은 토큰을 내지 않는다.
+    let (_, body) = http(
+        &address,
+        "GET",
+        "/api/config",
+        "127.0.0.1",
+        None,
+        "text/plain",
+        b"",
+    );
+    assert!(
+        !String::from_utf8_lossy(&body).contains(&token),
+        "설정 응답이 토큰을 냈다"
+    );
     let (status, body) = http(
         &address,
         "POST",

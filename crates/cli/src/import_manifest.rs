@@ -51,9 +51,43 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let job_db_path = require(&flags, "--job-db")?;
     let idempotency_key = parse_idempotency_key(require(&flags, "--idempotency-key")?)?;
 
-    let bytes = std::fs::read(&manifest_path)
+    let bytes = std::fs::read(manifest_path)
         .map_err(|e| format!("Manifest 파일을 읽지 못했다({manifest_path}): {e}"))?;
-    let manifest = pb::JobManifest::decode(bytes.as_slice())
+    let plaintext_keyring = flags
+        .get("--i-understand-plaintext-keyring-is-unsafe")
+        .map(String::as_str)
+        == Some("true");
+    import_bytes(
+        &bytes,
+        manifest_path,
+        keyring_path,
+        job_db_path,
+        idempotency_key,
+        plaintext_keyring,
+    )
+    .map(|imported| imported.message)
+}
+
+/// 반입 결과 — 문자열이 아니라 구조로 돌려준다(결함 401 — 부르는 쪽이 출력에서 Job id 를 잘라 읽지 않게).
+pub struct Imported {
+    pub job_id: String,
+    pub message: String,
+}
+
+/// 받은 **바이트**를 그대로 검증 · 반입한다 — 파일을 다시 열지 않는다(결함 400 · 재검수 93).
+///
+/// ★ 운영자 화면은 올린 바이트로 멱등 키를 만든 뒤 임시 파일에 써서 이 명령이 경로로 다시 열게 했다 — 그 사이 파일이 바뀌면 다른 Manifest 가
+///   그 키로 반입됐다. 이제 같은 바이트가 검증 · 해시 · 저장까지 간다. `source` 는 오류 문구에만 쓴다.
+pub fn import_bytes(
+    bytes: &[u8],
+    source: &str,
+    keyring_path: &str,
+    job_db_path: &str,
+    idempotency_key: [u8; 16],
+    plaintext_keyring: bool,
+) -> Result<Imported, String> {
+    let manifest_path = source;
+    let manifest = pb::JobManifest::decode(bytes)
         .map_err(|e| format!("Manifest 가 protobuf 로 해석되지 않는다({manifest_path}): {e}"))?;
 
     // 운영자가 provision 한 신뢰 목록. 여기 없는 서명자는 거부된다.
@@ -63,11 +97,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
     //   넣으면 아무 Manifest 나 "검증됨" 이 된다. 보호되지 않은 목록을
     //   쓰려면 그 위험을 **명시적으로 진술**해야 한다(`DoD-29` 의
     //   `--i-understand-legacy-mode-is-unsafe` 와 같은 모양).
-    let policy = if flags
-        .get("--i-understand-plaintext-keyring-is-unsafe")
-        .map(String::as_str)
-        == Some("true")
-    {
+    let policy = if plaintext_keyring {
         eprintln!(
             "경고: 평문(K0) 제출자 keyring 을 허용했다 — 이 파일을 쓸 수 있는 사람은 임의의 공개키를 신뢰 목록에 넣을 수 있다"
         );
@@ -133,10 +163,13 @@ pub fn run(args: &[String]) -> Result<String, String> {
         .submit_verified_manifest(&submission, &verified, now_unix_ms)
         .map_err(|e| format!("MANIFEST_REJECTED: 저장 실패: {e}"))?;
 
-    Ok(format!(
-        "IMPORTED job_id={job_id} submitter={submitter_device_id} state={:?} created={}",
-        result.job.state, result.created
-    ))
+    Ok(Imported {
+        message: format!(
+            "IMPORTED job_id={job_id} submitter={submitter_device_id} state={:?} created={}",
+            result.job.state, result.created
+        ),
+        job_id,
+    })
 }
 
 /// 검증 실패를 **운영자가 무엇을 고쳐야 하는지**로 나눈다.
