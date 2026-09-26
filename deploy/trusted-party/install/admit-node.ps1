@@ -56,15 +56,26 @@ $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile
 New-Item -ItemType Directory -Force -Path $admittedDir | Out-Null
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $admitted = Join-Path $admittedDir "join-$nodeId.json"
+# ★ 결함 443 (재검수 115) — **반입이 성공한 뒤에만** 활성 사본을 바꾼다. 전에는 먼저 덮고 반입했다 — 거부될 가입 파일이 활성 사본이 되면
+#   refresh-inventory 가 매번 실패하고 정상 선언이 낡아 노드가 빠졌다. 후보는 join-*.json 이 아닌 이름이라 refresh 가 줍지 않는다.
+$candidate = Join-Path $admittedDir ".candidate-$nodeId.json"
+[System.IO.File]::WriteAllText($candidate, ($join | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+
+# ★ 5.1 에서 Stop 이면 실행 파일의 stderr 한 줄이 곧 예외다 — 그러면 후보를 못 지우고 빠져나간다. 이 호출만 Continue 로 두고 종료 코드로 판정한다.
+$ErrorActionPreference = "Continue"
+& $config.GPUTEER_BIN import-inventory --inventory $candidate --inventory-db $config.GPUTEER_CONTROL_DB 2>&1 | ForEach-Object { "$_" } | Out-Host
+$importExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($importExit -ne 0) {
+    Remove-Item -LiteralPath $candidate -Force
+    throw "import-inventory 실패 — 풀 목록도 받아 둔 가입 파일(admitted\)도 바꾸지 않았다"
+}
 if (Test-Path -LiteralPath $admitted) {
     $backup = Join-Path $admittedDir (Join-Path "_backup" $stamp)
     New-Item -ItemType Directory -Force -Path $backup | Out-Null
     Copy-Item -LiteralPath $admitted -Destination $backup
 }
-[System.IO.File]::WriteAllText($admitted, ($join | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
-
-& $config.GPUTEER_BIN import-inventory --inventory $admitted --inventory-db $config.GPUTEER_CONTROL_DB | Out-Host
-if ($LASTEXITCODE -ne 0) { throw "import-inventory 실패 — 풀 목록은 바꾸지 않았다" }
+Move-Item -LiteralPath $candidate -Destination $admitted -Force
 
 if (-not $entries.Contains($nodeId)) {
     $entries[$nodeId] = $key

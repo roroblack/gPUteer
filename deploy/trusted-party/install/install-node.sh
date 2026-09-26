@@ -15,7 +15,8 @@ die() { echo "$*" >&2; exit 1; }
 
 INVITE= NODE_ID= OWNER= GPU_PIN= CPU= RAM_GIB= WS_GIB=
 PANEL_PORT=7610 CONFIG_DIR= NODE_DIR= BIN= SHARED= RT= RT_KIND= RT_GPU= RT_GPU_REQUEST= PROBE_IMAGE=
-CLASSES=TRAINING GPU_MODEL= GPU_VRAM_MIB=0 KEY_PROTECTION=K0 REGISTER= ATTEST=true
+# ★ 결함 444 — GPU 관측은 기본 끔(구버전 Coordinator 는 관측을 실은 인사를 거부한다). Coordinator 를 올린 뒤 --attest-gpus 로 켠다.
+CLASSES=TRAINING GPU_MODEL= GPU_VRAM_MIB=0 KEY_PROTECTION=K0 REGISTER= ATTEST=
 while [ $# -gt 0 ]; do
     case "$1" in
         --invite) INVITE=$2; shift 2 ;;
@@ -40,7 +41,7 @@ while [ $# -gt 0 ]; do
         --gpu-vram-mib) GPU_VRAM_MIB=$2; shift 2 ;;
         --key-protection) KEY_PROTECTION=$2; shift 2 ;;
         --register) REGISTER=1; shift ;;
-        --no-attest-gpus) ATTEST=; shift ;;
+        --attest-gpus) ATTEST=true; shift ;;
         *) die "INSTALL_ARGS: 모르는 옵션 $1" ;;
     esac
 done
@@ -51,7 +52,8 @@ for pair in "invite:$INVITE" "node-id:$NODE_ID" "owner-member-id:$OWNER" "gpu-pi
 done
 echo "$NODE_ID" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$' || die "INSTALL_ARGS: --node-id 는 영문 · 숫자 · . _ - 만(64자 이하) — 받은 값 '$NODE_ID'"
 echo "$OWNER" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$' || die "INSTALL_ARGS: --owner-member-id 형식 오류 '$OWNER'"
-echo "$GPU_PIN" | grep -Eq '^[0-9]+(,[0-9]+)*$' || die "INSTALL_ARGS: --gpu-pin 은 장치 번호다(예 0 · 0,1)"
+# ★ 결함 439 — 장치 번호 **하나**. Grant 가 GPU 배정을 싣지 않아 여러 장을 고정하면 한 장만 예약된 작업에 전부 넘어간다 — GPU 마다 노드 하나로 설치한다.
+echo "$GPU_PIN" | grep -Eq '^[0-9]+$' || die "INSTALL_ARGS: --gpu-pin 은 장치 번호 하나다(예 0). GPU 가 여러 장이면 GPU 마다 --node-id 를 달리해 따로 설치한다"
 for n in "$CPU" "$RAM_GIB" "$WS_GIB" "$PANEL_PORT" "$GPU_VRAM_MIB"; do
     echo "$n" | grep -Eq '^[0-9]+$' || die "INSTALL_ARGS: 숫자가 아니다: $n"
 done
@@ -93,8 +95,35 @@ if [ -z "$CONFIG_DIR" ]; then
     fi
 fi
 [ -n "$NODE_DIR" ] || NODE_DIR="$CONFIG_DIR/nodes/$NODE_ID"
+
+# ★ 결함 438 (재검수 115) — 설치 폴더는 **이 설치기가 쓰는 전용 폴더**만 받는다. 전에는 아무 경로나 받아 --register 끝에 root 로 chown -R 했다
+#   (--config-dir /etc 면 /etc 전체가 일반 사용자 소유가 됐다). 시스템 경로를 거부하고, 이미 있는 폴더는 비었거나 전에 이 설치기가 쓴 폴더(표식)여야 한다.
+MARKER=.gputeer-install-dir
+guard_install_dir() {
+    dir=$1
+    case "$dir" in /*) ;; *) die "INSTALL_DIR_REFUSED: $dir — 절대 경로로 준다" ;; esac
+    clean=$(printf '%s' "$dir" | sed 's:/*$::'); [ -n "$clean" ] || clean=/
+    case "$clean" in
+        /|/bin|/boot|/dev|/etc|/home|/lib|/lib32|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/usr/*|/var|/var/lib|/var/log|/etc/*|/boot/*|/proc/*|/sys/*|/dev/*)
+            die "INSTALL_DIR_REFUSED: $dir 는 시스템 경로다 — 전용 폴더를 준다(기본 ~/.config/gputeer)" ;;
+    esac
+    if [ -d "$dir" ] && [ ! -e "$dir/$MARKER" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
+        die "INSTALL_DIR_REFUSED: $dir 가 비어 있지 않고 이 설치기가 만든 폴더 표식($MARKER)이 없다 — 비어 있는 새 폴더를 준다"
+    fi
+}
+guard_install_dir "$CONFIG_DIR"
+guard_install_dir "$NODE_DIR"
+# ★ 상위 폴더는 만들지 않는다 — sudo 로 부르면 mkdir -p 가 ~/.config 같은 상위까지 root 소유 0700 으로 만든다. 기본 노드 폴더의 nodes/ 만 예외다.
+[ -d "$(dirname "$CONFIG_DIR")" ] || die "INSTALL_DIR_REFUSED: $(dirname "$CONFIG_DIR") 가 없다 — 먼저 만든다(설치기는 상위 폴더를 만들지 않는다)"
+DEFAULT_NODES="$CONFIG_DIR/nodes"
+if [ "$(dirname "$NODE_DIR")" != "$DEFAULT_NODES" ]; then
+    [ -d "$(dirname "$NODE_DIR")" ] || die "INSTALL_DIR_REFUSED: $(dirname "$NODE_DIR") 가 없다 — 먼저 만든다"
+fi
 umask 077
-mkdir -p "$CONFIG_DIR" "$NODE_DIR"
+mkdir -p "$CONFIG_DIR"
+[ "$(dirname "$NODE_DIR")" != "$DEFAULT_NODES" ] || mkdir -p "$DEFAULT_NODES"
+mkdir -p "$NODE_DIR"
+touch "$CONFIG_DIR/$MARKER" "$NODE_DIR/$MARKER"
 STAMP=$(date +%Y-%m-%d_%H%M)
 
 backup_if_exists() {
@@ -199,13 +228,27 @@ if [ -n "$REGISTER" ]; then
     AGENT_USER=${SUDO_USER:-}
     [ -n "$AGENT_USER" ] && [ "$AGENT_USER" != root ] || die "REGISTER: sudo 로 부른다 — Agent 를 돌릴 계정(root 가 아닌)을 SUDO_USER 로 안다"
     mkdir -p /etc/gputeer
-    backup_if_exists /etc/gputeer/gputeer.env; backup_if_exists "/etc/gputeer/agent-$NODE_ID.env"
-    install -m 0644 "$COMMON" /etc/gputeer/gputeer.env
-    install -m 0644 "$AGENT_ENV" "/etc/gputeer/agent-$NODE_ID.env"
+    # ★ 결함 445 (재검수 115) — 공유 파일을 덮지 않는다. 이 노드의 설정은 **인스턴스 파일 하나**에(공통 값 + 노드 값), 실행 계정은 **인스턴스 drop-in** 에 둔다.
+    #   전에는 공유 틀의 User= 와 /etc/gputeer/gputeer.env 를 설치마다 덮어, 같은 PC 의 앞 노드가 뒤 사용자로 실행돼 자기 시드를 못 읽었다
+    #   (운영자 PC 라면 운영자의 gputeer.env 까지 덮었다).
+    INSTANCE_ENV="/etc/gputeer/agent-$NODE_ID.env"
+    backup_if_exists "$INSTANCE_ENV"
+    { cat "$COMMON"; cat "$AGENT_ENV"; } > "$INSTANCE_ENV.tmp" && chmod 0644 "$INSTANCE_ENV.tmp" && mv "$INSTANCE_ENV.tmp" "$INSTANCE_ENV"
     UNIT=/etc/systemd/system/gputeer-agent@.service
-    backup_if_exists "$UNIT"
-    sed "s/^User=.*/User=$AGENT_USER/" "$HERE/../gputeer-agent@.service" > "$UNIT"
-    chown -R "$AGENT_USER" "$CONFIG_DIR"
+    if ! cmp -s "$HERE/../gputeer-agent@.service" "$UNIT" 2>/dev/null; then
+        backup_if_exists "$UNIT"
+        install -m 0644 "$HERE/../gputeer-agent@.service" "$UNIT"
+    fi
+    DROPIN="/etc/systemd/system/gputeer-agent@$NODE_ID.service.d"
+    mkdir -p "$DROPIN"
+    printf '[Service]\nUser=%s\n' "$AGENT_USER" > "$DROPIN/10-user.conf"
+    chmod 0644 "$DROPIN/10-user.conf"
+    # ★ 결함 438 — 설치기가 쓴 것만 넘긴다(폴더 전체를 재귀로 넘기지 않는다). 노드 폴더는 Agent 가 쓰는 곳이라 재귀로 넘긴다(위에서 전용 폴더로 확인했다).
+    #   -h: 링크면 링크 자체만 바꾼다(가리키는 대상의 소유를 넘기지 않는다).
+    chown -h "$AGENT_USER" "$CONFIG_DIR" "$CONFIG_DIR/$MARKER" "$SEED" "$COMMON" "$AGENT_ENV" "$JOIN"
+    [ "$(dirname "$NODE_DIR")" != "$DEFAULT_NODES" ] || chown -h "$AGENT_USER" "$DEFAULT_NODES"
+    [ ! -d "$CONFIG_DIR/_backup" ] || chown -hR "$AGENT_USER" "$CONFIG_DIR/_backup"
+    chown -hR "$AGENT_USER" "$NODE_DIR"
     systemctl daemon-reload
     systemctl enable --now "gputeer-agent@$NODE_ID"
     echo "REGISTERED gputeer-agent@$NODE_ID (User=$AGENT_USER)"

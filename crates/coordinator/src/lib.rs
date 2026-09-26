@@ -1267,8 +1267,9 @@ fn serve_one_connection_impl(
             println!("SESSION_SEEN node_id={} mode={}", hello.node_id, hello.mode);
         }
         // ★ 2026-09-25 (결함 301) — FRESH Hello 가 GPU 관측을 실었으면 등록된 선언과 대조한다. 맞으면 "그 선언이 지금도 사실이다" 는
-        //   확인 기록을 남겨 스케줄러의 신선도 검사가 운영자 재선언 없이도 통과하게 한다. 안 맞으면 기록하지 않는다 — 그 노드는
-        //   선언 시각대로 늙어 배치에서 빠진다. 어느 쪽이든 연결은 이어간다(배정된 일이 있으면 Agent 의 실행 전 검사가 GPU 를 다시 본다).
+        //   확인 기록을 남겨 스케줄러의 신선도 검사가 운영자 재선언 없이도 통과하게 한다. 안 맞으면 **불일치를 노드별로 기록**한다(결함 440 ·
+        //   재검수 115) — 스케줄러가 그 노드를 맞는 관측이 올 때까지 배치에서 뺀다(재선언 · refresh 로 풀리지 않는다). 전에는 기록하지 않아
+        //   refresh 가 틀린 선언을 계속 신선하게 만들었다. 어느 쪽이든 연결은 이어간다(배정된 일이 있으면 Agent 의 실행 전 검사가 GPU 를 다시 본다).
         if let Some(observation) = hello.gpu_observation.as_ref().filter(|_| asks_for_work) {
             match crate::gpu_attestation::observation_time_usable(&hello, observation) {
                 Err(reason) => println!(

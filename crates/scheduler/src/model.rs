@@ -127,6 +127,9 @@ pub struct CandidateSnapshot {
     ///   판정(`Live`/`Suspect`/`Silent`/`NoObservation`)은 `liveness.rs` 가 이미 한다 —
     ///   여기서 다시 판정하지 않고 **사실(마지막 시각)만** 싣는다. 판정은 한 곳에서만 한다.
     pub last_heartbeat_unix_ms: Option<u64>,
+    /// ★ 2026-09-26 (결함 440 · 재검수 115) — 노드가 서명해 보낸 GPU 관측이 선언과 **맞지 않았던** 마지막 시각. 그 뒤로 맞는 관측이 없으면 채워진다.
+    ///   재선언(revision 을 올린 반입)으로 지워지지 않는다 — 틀린 선언을 새 시각으로 다시 넣어도 노드가 계속 빠진다. `pool_snapshot()` 한 곳에서만 접는다.
+    pub gpu_observation_mismatch_at_unix_ms: Option<u64>,
 }
 
 /// 후보가 지금 잡혀 있다는 사실.
@@ -238,6 +241,10 @@ pub enum RejectionReason {
         observed_at_unix_ms: u64,
         evaluated_at_unix_ms: u64,
         maximum_age_ms: u64,
+    },
+    /// 노드의 GPU 관측이 선언과 맞지 않았고, 그 뒤로 맞는 관측이 없다(결함 440). 선언을 실제 GPU 에 맞게 고쳐 다시 넣으면 다음 인사에서 풀린다.
+    GpuObservationMismatch {
+        mismatch_at_unix_ms: u64,
     },
     SecurityTierTooLow {
         available: SecurityTier,

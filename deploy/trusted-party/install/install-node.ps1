@@ -38,8 +38,9 @@ param(
     [long]$GpuVramMiB = 0,
     # 시드는 평문 파일이다(K0). 더 높게 적으려면 그 보호를 실제로 걸었을 때만 바꾼다.
     [string]$KeyProtection = "K0",
-    # 인사에 GPU 관측을 싣지 않는다 — Coordinator 가 아직 옛 판일 때만(런북 §5 · 결함 301)
-    [switch]$NoAttestGpus,
+    # 인사에 GPU 관측을 싣는다 — **기본 끔**(결함 444). 옛 Coordinator 는 관측을 실은 인사를 거부한다.
+    #   Coordinator 를 먼저 올린 뒤에 켠다(런북 §5 의 순서: Agent(관측 끔) -> Coordinator -> 관측 켬)
+    [switch]$AttestGpus,
     [switch]$Register
 )
 
@@ -69,7 +70,8 @@ function Write-Utf8NoBom([string]$path, [string[]]$lines) {
 # 노드 id 는 파일 이름 · 작업 이름 · 라벨에 들어간다 — 좁힌다.
 if ($NodeId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$') { throw "INSTALL_ARGS: -NodeId 는 영문 · 숫자 · . _ - 만(64자 이하) — 받은 값 '$NodeId'" }
 if ($OwnerMemberId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$') { throw "INSTALL_ARGS: -OwnerMemberId 형식 오류 '$OwnerMemberId'" }
-if ($GpuPin -notmatch '^[0-9]+(,[0-9]+)*$') { throw "INSTALL_ARGS: -GpuPin 은 장치 번호다(예 0 · 0,1) — 받은 값 '$GpuPin'" }
+# ★ 결함 439 — 장치 번호 **하나**. Grant 가 GPU 배정을 싣지 않아 여러 장을 고정하면 한 장만 예약된 작업에 전부 넘어간다 — GPU 마다 노드 하나로 설치한다.
+if ($GpuPin -notmatch '^[0-9]+$') { throw "INSTALL_ARGS: -GpuPin 은 장치 번호 하나다(예 0). GPU 가 여러 장이면 GPU 마다 -NodeId 를 달리해 따로 설치한다 — 받은 값 '$GpuPin'" }
 if ($CpuCores -le 0 -or $RamGiB -le 0 -or $WorkspaceGiB -le 0) { throw "INSTALL_ARGS: -CpuCores · -RamGiB · -WorkspaceGiB 는 0 보다 커야 한다" }
 if (($ContainerRuntime -eq "") -ne ($ContainerRuntimeKind -eq "")) { throw "INSTALL_ARGS: -ContainerRuntime 과 -ContainerRuntimeKind 는 함께 준다" }
 if ($ContainerRuntimeKind -ne "" -and $ContainerRuntimeKind -notin @("podman", "docker")) { throw "INSTALL_ARGS: -ContainerRuntimeKind 는 podman 또는 docker" }
@@ -92,7 +94,69 @@ $Bin = (Resolve-Path -LiteralPath $Bin).Path
 if ($NodeDir -eq "") { $NodeDir = Join-Path $ConfigDir (Join-Path "nodes" $NodeId) }
 if ($SharedRoot -eq "") { $SharedRoot = $inviteMap.GPUTEER_SHARED_ROOT }
 
-New-Item -ItemType Directory -Force -Path $ConfigDir, $NodeDir | Out-Null
+# ★ 결함 438 · 442 (재검수 115) — 설치 폴더는 **이 설치기가 쓰는 전용 폴더**만 받고, 현재 사용자 · SYSTEM · Administrators 만 열 수 있게 좁힌다.
+#   전에는 아무 경로나 받고 ACL 을 건드리지 않아, C:\Users\Public\gputeer 에 설치하면 다른 로컬 계정이 시드를 읽어 노드를 가장할 수 있었다.
+$marker = ".gputeer-install-dir"
+$ownerSids = @(
+    [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value,
+    "S-1-5-18",      # SYSTEM
+    "S-1-5-32-544"   # Administrators
+)
+function Get-FullDir([string]$dir) { return [System.IO.Path]::GetFullPath($dir).TrimEnd('\') }
+function Test-Under([string]$child, [string]$parent) {
+    return $child.StartsWith($parent.TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+function Assert-InstallDir([string]$dir) {
+    if (-not [System.IO.Path]::IsPathRooted($dir)) { throw "INSTALL_DIR_REFUSED: $dir — 절대 경로로 준다" }
+    $full = Get-FullDir $dir
+    if ($full -eq ([System.IO.Path]::GetPathRoot($full)).TrimEnd('\')) { throw "INSTALL_DIR_REFUSED: $dir 는 드라이브 루트다 — 전용 폴더를 준다" }
+    foreach ($system in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if ($system -and ($full -eq $system.TrimEnd('\') -or (Test-Under $full $system))) {
+            throw "INSTALL_DIR_REFUSED: $dir 는 시스템 경로다 — 전용 폴더를 준다(기본 %LOCALAPPDATA%\gputeer)"
+        }
+    }
+    if (Test-Path -LiteralPath $full) {
+        if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw "INSTALL_DIR_REFUSED: $dir 는 폴더가 아니다" }
+        $hasMarker = Test-Path -LiteralPath (Join-Path $full $marker)
+        $isEmpty = -not (Get-ChildItem -LiteralPath $full -Force | Select-Object -First 1)
+        if (-not $hasMarker -and -not $isEmpty) { throw "INSTALL_DIR_REFUSED: $dir 가 비어 있지 않고 이 설치기가 만든 폴더 표식($marker)이 없다 — 비어 있는 새 폴더를 준다" }
+    }
+}
+# 상속을 끊고 세 주체에게만 준다. 파일은 폴더에서 물려받는다 — 그래서 **이미 있는** 파일(시드)은 따로 좁힌다.
+function Set-OwnerOnlyAcl([string]$path, [bool]$isDir) {
+    $inherit = if ($isDir) { "(OI)(CI)" } else { "" }
+    $grants = @($ownerSids | ForEach-Object { "*${_}:${inherit}F" })
+    & icacls $path /inheritance:r /grant:r @grants | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $path 의 권한을 좁히지 못했다" }
+}
+# ★ 좁힌 뒤 **읽어서** 확인한다 — 세 주체 밖의 허용 항목이 하나라도 남으면 멈춘다(예 전에 손으로 준 명시 항목).
+function Assert-OwnerOnlyAcl([string]$path) {
+    $acl = Get-Acl -LiteralPath $path
+    if (-not $acl.AreAccessRulesProtected) { throw "ACL_OPEN: $path 가 상위 폴더 권한을 물려받는다" }
+    foreach ($rule in $acl.Access) {
+        if ($rule.AccessControlType -ne "Allow") { continue }
+        $sid = try { $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { "$($rule.IdentityReference)" }
+        if ($sid -notin $ownerSids) { throw "ACL_OPEN: $path 를 $($rule.IdentityReference) 도 열 수 있다 — 현재 사용자 · SYSTEM · Administrators 만 남긴다" }
+    }
+}
+
+Assert-InstallDir $ConfigDir
+Assert-InstallDir $NodeDir
+# 상위 폴더는 만들지 않는다 — 기본 노드 폴더의 nodes\ 만 예외다.
+$configParent = Split-Path -Parent (Get-FullDir $ConfigDir)
+if (-not (Test-Path -LiteralPath $configParent -PathType Container)) { throw "INSTALL_DIR_REFUSED: $configParent 가 없다 — 먼저 만든다" }
+$defaultNodes = Join-Path (Get-FullDir $ConfigDir) "nodes"
+$nodeParent = Split-Path -Parent (Get-FullDir $NodeDir)
+if ($nodeParent -ne $defaultNodes -and -not (Test-Path -LiteralPath $nodeParent -PathType Container)) { throw "INSTALL_DIR_REFUSED: $nodeParent 가 없다 — 먼저 만든다" }
+New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+Set-OwnerOnlyAcl $ConfigDir $true
+New-Item -ItemType Directory -Force -Path $NodeDir | Out-Null
+if (-not (Test-Under (Get-FullDir $NodeDir) (Get-FullDir $ConfigDir))) { Set-OwnerOnlyAcl $NodeDir $true }
+foreach ($dir in @($ConfigDir, $NodeDir)) {
+    $markerPath = Join-Path $dir $marker
+    if (-not (Test-Path -LiteralPath $markerPath)) { New-Item -ItemType File -Path $markerPath | Out-Null }
+}
+Assert-OwnerOnlyAcl $ConfigDir
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 
 # 1. 키 — 있으면 쓰고, 없으면 만든다.
@@ -103,6 +167,8 @@ if (Test-Path -LiteralPath $seed) {
     & $Bin keygen --out $seed | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "keygen 실패" }
 }
+Set-OwnerOnlyAcl $seed $false
+Assert-OwnerOnlyAcl $seed
 
 # 2. 설정 파일.
 $poolAgents = if ($inviteMap.Contains("GPUTEER_POOL_AGENTS")) { $inviteMap.GPUTEER_POOL_AGENTS } else { "" }
@@ -126,7 +192,7 @@ Write-Utf8NoBom $agentEnv @(
     "GPUTEER_NODE_DIR=$NodeDir",
     "GPUTEER_GPU_PIN=$GpuPin",
     "GPUTEER_OWNER_PANEL_PORT=$OwnerPanelPort",
-    "GPUTEER_ATTEST_GPUS=$(if ($NoAttestGpus) { '' } else { 'true' })",
+    "GPUTEER_ATTEST_GPUS=$(if ($AttestGpus) { 'true' } else { '' })",
     "GPUTEER_CONTAINER_RUNTIME=$ContainerRuntime",
     "GPUTEER_CONTAINER_RUNTIME_KIND=$ContainerRuntimeKind",
     "GPUTEER_CONTAINER_GPU=$(if ($ContainerGpu) { 'true' } else { '' })",
@@ -150,7 +216,7 @@ $publicKey = $Matches[1]
 
 # 4. 가입 파일 — GPU 는 nvidia-smi 로 읽는다(못 읽으면 -GpuModel · -GpuVramMiB 로 준다. 지어내지 않는다).
 $gpus = @()
-foreach ($index in $GpuPin.Split(",")) {
+foreach ($index in @($GpuPin)) {
     $model = $GpuModel; $vramMiB = $GpuVramMiB
     if ($model -eq "" -or $vramMiB -le 0) {
         $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue

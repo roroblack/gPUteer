@@ -397,17 +397,20 @@ fn check_owner_panel_port(port: u16) -> Check {
 }
 
 fn check_gpu(pin: Option<&str>) -> Check {
-    // ★ 결함 284 — Agent 는 --gpu-pin 에 **장치 번호**(쉼표로 여럿)만 받는다. UUID 를 OK 로 보여 주면 Agent 가 시작에서 거부한다.
+    // ★ 결함 284 — Agent 는 --gpu-pin 에 **장치 번호**만 받는다(439 부터 하나만). UUID 를 OK 로 보여 주면 Agent 가 시작에서 거부한다.
     let pins: Option<Vec<&str>> = pin.map(|raw| raw.split(',').map(str::trim).collect());
     if let (Some(raw), Some(ids)) = (pin, pins.as_ref()) {
-        if ids
-            .iter()
-            .any(|id| id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()))
+        // ★ 결함 439 (재검수 115) — Agent 는 장치 번호 **하나**만 받는다(GPU 마다 Agent 하나). Grant 가 GPU 배정을 싣지 않아, 여러 장을 고정하면
+        //   한 장만 예약된 작업에 전부 넘어갔다.
+        if ids.len() != 1
+            || ids
+                .iter()
+                .any(|id| id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()))
         {
             return check(
                 "gpu",
                 Level::Fail,
-                format!("--gpu-pin {raw:?} — Agent 는 장치 번호(예 \"0\" · \"0,1\")만 받는다(UUID 는 받지 않는다)"),
+                format!("--gpu-pin {raw:?} — Agent 는 장치 번호 하나(예 \"0\")만 받는다(UUID · 여러 장은 받지 않는다 — GPU 마다 Agent 하나)"),
             );
         }
     }
@@ -681,7 +684,8 @@ fn check_container_gpu_probe(
 /// 점검 컨테이너의 결과를 판정한다(순수 함수 — 시험이 런타임 없이 잰다).
 ///
 /// FAIL  종료 코드가 0 이 아니거나 `GPU ` 줄이 하나도 없다 — Agent 의 컨테이너 GPU Job 도 같은 곳에서 실패한다
-/// WARN  보이는 GPU 수가 고정한 수와 다르다(더 많으면 고정이 새고 있다) · 점검 폴더를 못 지웠다
+///       보이는 GPU 수가 고정한 수와 다르다(더 많으면 고정이 새고 있다 — 결함 441)
+/// WARN  점검 폴더를 못 지웠다
 /// OK    그 밖
 fn judge_gpu_probe(
     exit_code: i64,
@@ -707,10 +711,11 @@ fn judge_gpu_probe(
             ),
         );
     }
+    // ★ 결함 441 (재검수 115) — 고정보다 많이 보이면 격리가 새는 것이다 — FAIL 이다(설치기가 등록을 멈춘다). 전에는 WARN 이라 CONTAINED 로 등록됐다.
     if seen.len() != pinned {
         return check(
             "container_gpu_probe",
-            Level::Warn,
+            Level::Fail,
             format!(
                 "컨테이너 안에 GPU {}개가 보인다 — 고정한 것은 {pinned}개다: {seen:?}{left}",
                 seen.len()
@@ -746,14 +751,22 @@ mod tests {
             judge_gpu_probe(0, false, "No devices were found\n", "", 1, "").level,
             Level::Fail
         );
-        // 고정한 것보다 많이 보인다 — 고정이 새고 있다.
+        // 고정한 것보다 많이 보인다 — 고정이 새고 있다. 결함 441 — WARN 이 아니라 FAIL(설치기가 등록을 멈춘다).
         let two = "GPU 0: A (UUID: GPU-a)\nGPU 1: B (UUID: GPU-b)\n";
-        assert_eq!(judge_gpu_probe(0, false, two, "", 1, "").level, Level::Warn);
+        assert_eq!(judge_gpu_probe(0, false, two, "", 1, "").level, Level::Fail);
         // 폴더를 못 지웠으면 OK 로 덮지 않는다.
         assert_eq!(
             judge_gpu_probe(0, false, one, "", 1, " · 남았다").level,
             Level::Warn
         );
+    }
+
+    /// 결함 439 — 여러 장 핀은 NVML 을 보기 전에 FAIL 이다(Agent 가 시작에서 거부한다).
+    #[test]
+    fn a_multi_gpu_pin_fails_before_nvml_is_consulted() {
+        for pin in ["0,1", "0,", "GPU-1234abcd"] {
+            assert_eq!(check_gpu(Some(pin)).level, Level::Fail, "{pin}");
+        }
     }
 }
 

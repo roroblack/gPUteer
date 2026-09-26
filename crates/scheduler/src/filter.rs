@@ -110,6 +110,12 @@ fn evaluate_candidate(
         }
         Some(_) => {}
     }
+    // ★ 결함 440 — 노드 자신의 GPU 관측이 선언을 반박했다. 선언이 아무리 새것이어도 배치하지 않는다.
+    if let Some(mismatch_at_unix_ms) = candidate.gpu_observation_mismatch_at_unix_ms {
+        reasons.push(RejectionReason::GpuObservationMismatch {
+            mismatch_at_unix_ms,
+        });
+    }
 
     compare_minimum(
         candidate.security_tier,

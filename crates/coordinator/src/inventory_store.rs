@@ -564,12 +564,28 @@ impl CoordinatorInventoryStore {
             Some(gpus) if !gpus.is_empty() => gpus,
             _ => return Ok(GpuAttestationOutcome::NoDeclaredGpus),
         };
+        transaction
+            .execute_batch(GPU_ATTESTATION_SCHEMA)
+            .map_err(map_sql_error)?;
         if let Err(reason) = crate::gpu_attestation::match_declaration(declared, &observation.gpus)
         {
+            // ★ 결함 440 (재검수 115) — 불일치를 **기록**한다(전에는 아무것도 적지 않고 돌아가, 재선언이 틀린 선언을 계속 신선하게 만들었다).
+            //   revision 과 무관하게 노드별로 남기고, 맞는 관측이 올 때만 지운다. pool_snapshot 이 그 노드를 배치에서 뺀다.
+            transaction
+                .execute(
+                    "INSERT INTO coordinator_node_gpu_mismatch(node_id, mismatch_at_unix_ms) VALUES (?1, ?2)
+                     ON CONFLICT(node_id) DO UPDATE SET mismatch_at_unix_ms = excluded.mismatch_at_unix_ms",
+                    rusqlite::params![node_id, attested_at_unix_ms.to_be_bytes().to_vec()],
+                )
+                .map_err(map_sql_error)?;
+            transaction.commit().map_err(map_sql_error)?;
             return Ok(GpuAttestationOutcome::Mismatch(reason));
         }
         transaction
-            .execute_batch(GPU_ATTESTATION_SCHEMA)
+            .execute(
+                "DELETE FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
+                rusqlite::params![node_id],
+            )
             .map_err(map_sql_error)?;
         let stored = transaction
             .query_row(
@@ -659,6 +675,15 @@ impl CoordinatorInventoryStore {
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
                  WHERE type = 'table' AND name = 'coordinator_node_gpu_attestation'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sql_error)?
+            > 0;
+        let mismatch_table_exists: bool = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'coordinator_node_gpu_mismatch'",
                 [],
                 |row| row.get::<_, i64>(0),
             )
@@ -773,6 +798,19 @@ impl CoordinatorInventoryStore {
                     }
                 }
             }
+            // ★ 결함 440 — 노드 자신의 GPU 관측이 선언을 반박한 채면(맞는 관측이 아직 없다) 싣는다. 필터가 배치에서 뺀다.
+            if mismatch_table_exists {
+                candidate.gpu_observation_mismatch_at_unix_ms = transaction
+                    .query_row(
+                        "SELECT mismatch_at_unix_ms FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .optional()
+                    .map_err(map_sql_error)?
+                    .map(|raw| decode_u64(&raw, "gpu mismatch_at_unix_ms"))
+                    .transpose()?;
+            }
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)
                     .map_err(|error| InventoryStoreError::CorruptData(error.to_string()))?
@@ -802,6 +840,10 @@ const GPU_ATTESTATION_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS coordinator_nod
     node_id TEXT PRIMARY KEY REFERENCES coordinator_agent_registry(node_id),
     inventory_revision BLOB NOT NULL,
     attested_at_unix_ms BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS coordinator_node_gpu_mismatch (
+    node_id TEXT PRIMARY KEY REFERENCES coordinator_agent_registry(node_id),
+    mismatch_at_unix_ms BLOB NOT NULL
 );";
 
 fn initialize_schema(connection: &Connection) -> Result<(), InventoryStoreError> {
@@ -1237,6 +1279,7 @@ fn project_candidate(
         last_heartbeat_unix_ms: None,
         // ★ 예약은 여기서 채우지 않는다 — `pool_snapshot()` 한 곳에서만 접어 넣는다(결정 `B′`).
         reservation: None,
+        gpu_observation_mismatch_at_unix_ms: None,
         node_id: registry.node_id,
         inventory_revision: revision,
         owner_member_id: Some(registry.owner_member_id),
@@ -2391,5 +2434,52 @@ mod tests {
             GpuAttestationOutcome::NoDeclaredGpus
         );
         assert_eq!(snapshot_observed_at(&mut store, "node-a"), Some(1_000));
+    }
+
+    /// ★ 결함 440 (재검수 115) — 관측 불일치가 남아 배치에서 빠지고, 같은 틀린 선언을 새 revision · 새 시각으로 다시 넣어도(refresh) 풀리지 않는다.
+    ///   맞는 관측이 오면 풀린다.
+    #[test]
+    fn a_gpu_mismatch_keeps_the_node_out_until_a_matching_observation() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
+        let mismatch_at = |store: &mut CoordinatorInventoryStore| {
+            store
+                .pool_snapshot(2_000_000_000_000)
+                .unwrap()
+                .candidates
+                .into_iter()
+                .find(|c| c.node_id == "node-a")
+                .unwrap()
+                .gpu_observation_mismatch_at_unix_ms
+        };
+        assert_eq!(mismatch_at(&mut store), None);
+        let one = observation(&[("GPU-1", "model-a-5", 15)]);
+        assert!(matches!(
+            store
+                .record_gpu_attestation("node-a", &one, 50_000)
+                .unwrap(),
+            GpuAttestationOutcome::Mismatch(_)
+        ));
+        assert_eq!(mismatch_at(&mut store), Some(50_000));
+        store
+            .update_inventory(&inventory("node-a", 9, 1_999_999_999_000, 5))
+            .unwrap();
+        assert_eq!(
+            mismatch_at(&mut store),
+            Some(50_000),
+            "재선언이 불일치를 지웠다"
+        );
+        let both = observation(&[("GPU-1", "model-a-5", 15), ("GPU-2", "model-z-5", 25)]);
+        assert!(matches!(
+            store
+                .record_gpu_attestation("node-a", &both, 60_000)
+                .unwrap(),
+            GpuAttestationOutcome::Recorded { .. }
+        ));
+        assert_eq!(mismatch_at(&mut store), None);
     }
 }

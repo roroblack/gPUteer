@@ -44,6 +44,7 @@ fn candidate(node_id: &str) -> CandidateSnapshot {
     CandidateSnapshot {
         last_heartbeat_unix_ms: None,
         reservation: None,
+        gpu_observation_mismatch_at_unix_ms: None,
         node_id: node_id.into(),
         inventory_revision: Some(1),
         owner_member_id: Some("owner-a".into()),

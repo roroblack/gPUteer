@@ -297,7 +297,7 @@ pub struct AgentConfig {
     pub checkpoint_publish_interval_ms: u64,
     /// 재개 지점의 **생산자 서명**을 검증할 풀 노드 키 — `--pool-peer-keys "id=hex;..."`.
     pub pool_peer_keys: Vec<(String, VerifyingKey)>,
-    /// ★ 2026-09-23 (신뢰망 남은 일 I) — 이 Agent 가 맡은 GPU(장치 번호, 예 "1" · "0,1"). 주면 작업에
+    /// ★ 2026-09-23 (신뢰망 남은 일 I) — 이 Agent 가 맡은 GPU(장치 번호 **하나**, 예 "1" — 결함 439). 주면 작업에
     ///   `CUDA_VISIBLE_DEVICES` 로 그 GPU 만 보이게 한다. GPU 여러 장 기계는 **GPU 마다 Agent(노드) 하나**로 붙인다 —
     ///   Coordinator 는 노드 단위로 배타 배정하므로 그렇게 하면 GPU 단위 배정이 된다.
     ///   ★ 보이게 하는 것이지 강제가 아니다 — 작업이 환경 변수를 무시하고 다른 GPU 를 열면 막지 못한다(§0.4).
@@ -3510,7 +3510,6 @@ fn own_seed_from_flags(flags: &Flags) -> Result<[u8; 32], String> {
     }
 }
 
-/// `--gpu-pin "1"` · `"0,1"` — 장치 번호만 받는다(숫자와 쉼표). 다른 것은 지어내지 않고 거부한다.
 /// `--container-runtime <실행 파일>` · `--container-runtime-kind podman|docker` · `--container-gpu` · `--container-only`.
 ///
 /// ★ 종류를 실행 파일 이름으로 추측하지 않는다 — podman 을 docker 이름으로 감싼 설치가 흔하다. 둘 중 하나만 주면 거부한다.
@@ -3577,18 +3576,18 @@ fn check_cdi_all_is_one_pinned_gpu(pin: Option<&str>) -> Result<(), String> {
     }
 }
 
+/// `--gpu-pin "1"` — 장치 번호 **하나**만 받는다. 다른 것은 지어내지 않고 거부한다.
+///
+/// ★ 결함 439 (재검수 115) — 전에는 `"0,1"` 도 받았다. Grant 는 어느 GPU 를 배정했는지 싣지 않고 컨테이너 · 환경 변수는 핀 전체를 넘기므로,
+///   한 장만 예약된 작업이 고정한 GPU 전부를 썼다. GPU 여러 장 기계는 GPU 마다 Agent(노드) 하나로 붙인다.
 fn parse_gpu_pin(raw: &str) -> Result<String, String> {
-    let ids: Vec<&str> = raw.split(',').map(str::trim).collect();
-    if ids.is_empty()
-        || ids
-            .iter()
-            .any(|id| id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()))
-    {
+    let id = raw.trim();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
         return Err(format!(
-            "--gpu-pin 형식 오류: {raw:?} — 장치 번호를 쉼표로 적는다(예 \"1\" · \"0,1\")"
+            "--gpu-pin 형식 오류: {raw:?} — 장치 번호 **하나**를 적는다(예 \"1\"). GPU 마다 Agent 하나로 붙인다(결함 439)"
         ));
     }
-    Ok(ids.join(","))
+    Ok(id.to_string())
 }
 
 /// `--pool-peer-keys "id=hex;id2=hex"` — 재개 지점 생산자 서명을 검증할 풀 노드 키.
@@ -4622,6 +4621,17 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_container_runtime(&parse_flags(&args)?)
+    }
+
+    /// 결함 439 — 핀은 장치 번호 하나다(여러 장이면 노드 둘).
+    #[test]
+    fn a_gpu_pin_names_exactly_one_device() {
+        assert_eq!(parse_gpu_pin("1").unwrap(), "1");
+        assert_eq!(parse_gpu_pin(" 0 ").unwrap(), "0");
+        for bad in ["0,1", "", "a", "1 2", "-1", "0,"] {
+            let error = parse_gpu_pin(bad).unwrap_err();
+            assert!(error.contains("결함 439"), "{bad:?}: {error}");
+        }
     }
 
     /// 결함 303 — GPU 를 청하는 방식은 운영자가 고르고, 안 고르면 전과 같다. `cdi-all` 은 한 장 노드에서만 받는다.

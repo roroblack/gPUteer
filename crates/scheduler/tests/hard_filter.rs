@@ -34,6 +34,7 @@ fn candidate(node_id: &str) -> CandidateSnapshot {
     CandidateSnapshot {
         last_heartbeat_unix_ms: None,
         reservation: None,
+        gpu_observation_mismatch_at_unix_ms: None,
         node_id: node_id.into(),
         inventory_revision: Some(1),
         owner_member_id: Some("owner-a".into()),
@@ -680,5 +681,20 @@ fn without_a_policy_the_liveness_axis_is_not_applied() {
         actual.rejected,
         vec![],
         "기준을 안 줬는데 생존 축으로 걸렀다 — 운영자가 정하지 않은 규칙이 생긴 것이다"
+    );
+}
+
+/// ★ 결함 440 (재검수 115) — 노드 자신의 GPU 관측이 선언을 반박한 채면, 선언이 신선해도 배치하지 않는다. 대조군: 같은 후보가 표시 없이는 적격이다.
+#[test]
+fn a_node_whose_gpu_observation_contradicts_its_declaration_is_rejected() {
+    assert_eligible(candidate("node-a"), &job());
+    let mut contradicted = candidate("node-a");
+    contradicted.gpu_observation_mismatch_at_unix_ms = Some(123);
+    assert_rejected_with(
+        contradicted,
+        &job(),
+        RejectionReason::GpuObservationMismatch {
+            mismatch_at_unix_ms: 123,
+        },
     );
 }

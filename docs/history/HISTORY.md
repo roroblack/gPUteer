@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-26 12:49 — 재검수 115 대응: 결함 438~445(fork 설치 자동화 · 컨테이너 GPU — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-26_1226_재검수115_결함_438_445.md`
+- 스트림: 배포 스크립트 · Agent · CLI · Coordinator · scheduler · 런북
+- 수행: 설치 폴더 가드와 root chown 축소(438) · 핀 하나만(439) · GPU 관측 불일치를 노드별로 기록해 배치 관문으로(440 — 재선언 · refresh 로 안 풀림) ·
+  컨테이너 GPU 누출은 FAIL(441) · Windows 설치 폴더 · 시드 ACL 좁히고 다시 읽어 확인(442) · admit-node 는 반입 성공 뒤에만 활성 사본 교체(443) ·
+  관측 기본 끔과 업그레이드 순서 하나로(444) · register 가 인스턴스 env · drop-in 에만 씀(445)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1378 passed · 0 failed · ignored 4. 뮤테이션 4건(필터 거부 · 불일치 기록 커밋 · 맞는 관측의 삭제 ·
+  핀 쉼표 허용) 모두 잡힘. 설치기 · admit-node 는 Git Bash · PowerShell 5.1 에서 거부 · 교체 경로를 직접 돌렸다. ★ `--register` · `-Register` 는 돌리지 않았다
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-26 00:30 — 재검수 114 ACCEPTED: 결함 402 · 422~437(계획 · 큐 · tick 의 Manifest 처리)
 
 - 결함: `docs/reports/debugs/2026-09-25_1600_재검수93_결함_298_299_400_403.md` 끝 절
