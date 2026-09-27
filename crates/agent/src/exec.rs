@@ -98,6 +98,11 @@ pub struct ExecutionOutcome {
     /// ★ 결함 495 (재검수 124) — 전에는 "부분 파일을 지우면 확정이 실패한다"(결함 487)에만 기댔는데, 삭제가 실패하면 부분 출력이 성공으로
     ///   확정됐다. 종료 관측(`exit`)은 그대로 남긴다 — 출력 불완전은 종료를 지우는 사유가 아니다.
     pub outputs_incomplete: Option<String>,
+    /// 종료는 관측했지만 **사람이 봐야 한다**(컨테이너가 남았거나 없음을 확인하지 못했다) — 작업 폴더를 지우지 않는다.
+    ///
+    /// ★ 결함 499 (재검수 125) — `container::run` 의 판정을 lib 까지 **타입으로** 넘긴다(전에는 lib 이 표식 파일을 다시 읽고 문자열 접두사로 갈랐다).
+    ///   프로세스 경로는 늘 `false` 다.
+    pub container_needs_human: bool,
 }
 
 /// 실행하지 못한 이유. **전부 "실행 안 함" 이다** — 부분 실행이 없다.
@@ -151,6 +156,13 @@ pub enum ExecutionError {
     /// ★ 2026-09-25 — 컨테이너로 받을 수 없는 Job 이다(런타임 없음 · digest 없음 · 강제 못 하는 네트워크 등).
     ///   사유 코드는 `container::decide` 가 붙인다. 호스트에서 대신 돌리지 않는다.
     ContainerRefused { detail: String },
+}
+
+impl ExecutionError {
+    /// 작업이 아직 돌 수 있는가(종료를 관측하지 못했다) — 작업 폴더를 지우지 않는다. 문자열이 아니라 타입으로 가른다(결함 499).
+    pub fn workload_may_be_alive(&self) -> bool {
+        matches!(self, Self::WaitFailed { .. })
+    }
 }
 
 impl std::fmt::Display for ExecutionError {
@@ -516,6 +528,18 @@ fn execute_in_container(
         |stopper| on_started(WorkloadStopper::for_container(stopper)),
     ) {
         Ok(exit) => exit,
+        // ★ 결함 499 (재검수 125) — 작업은 돌지 않았지만 **남은 컨테이너를 없애지 못했다**(만들기 전 같은 이름 삭제 실패 등). 그 컨테이너가 같은
+        //   시도의 앞선 실행일 수 있어 "돌고 있을 수 있다"(WaitFailed — 작업 폴더를 지우지 않는다)로 넘긴다.
+        Err(error @ crate::container::ContainerRunError::NotStarted { .. })
+            if error.needs_human() =>
+        {
+            return Err(ExecutionError::WaitFailed {
+                detail: format!(
+                    "작업은 시작하지 않았지만 같은 이름의 컨테이너가 남았다 — {}",
+                    error.detail()
+                ),
+            })
+        }
         Err(crate::container::ContainerRunError::NotStarted { detail, .. }) => {
             return Err(ExecutionError::SpawnFailed { detail })
         }
@@ -530,12 +554,20 @@ fn execute_in_container(
         //   컨테이너를 남겼으면(로그를 못 받음) 사건 표식이 따로 있고 작업 폴더도 남는다(lib.rs).
         //   ★ 결함 490 — start 가 실패로 답한 경우도 여기로 온다(돌았을 수 있다 — 체크포인트 확정을 거친다).
         //   ★ 결함 495 — 로그를 못 받았으면 출력 불완전을 싣는다(부분 파일 삭제에 기대지 않는다).
-        Err(crate::container::ContainerRunError::Unobserved {
-            detail,
-            logs_complete,
-            ..
-        }) => {
-            println!("CONTAINER_REMOVED_UNOBSERVED name={name} — {detail}");
+        //   ★ 결함 499 (재검수 125) — 사람이 봐야 하는가를 타입으로 넘긴다(작업 폴더를 남긴다).
+        Err(error @ crate::container::ContainerRunError::Unobserved { .. }) => {
+            let container_needs_human = error.needs_human();
+            let logs_complete = matches!(
+                error,
+                crate::container::ContainerRunError::Unobserved {
+                    logs_complete: true,
+                    ..
+                }
+            );
+            let detail = error.detail().to_string();
+            println!(
+                "CONTAINER_STOPPED_UNOBSERVED name={name} needs_human={container_needs_human} — {detail}"
+            );
             return Ok(ExecutionOutcome {
                 outputs_incomplete: (!logs_complete)
                     .then(|| format!("컨테이너 로그를 끝까지 받지 못했다 — {detail}")),
@@ -545,6 +577,7 @@ fn execute_in_container(
                 memory_observation_error: Some(
                     "컨테이너 경로는 메모리 최댓값을 재지 않는다".into(),
                 ),
+                container_needs_human,
             });
         }
     };
@@ -561,9 +594,8 @@ fn execute_in_container(
     Ok(ExecutionOutcome {
         exit: observed,
         // ★ 결함 495 — 정상 종료 뒤 로그를 못 받았다(컨테이너는 남겼다 · 사건 표식). 종료 코드는 그대로 보고하고 확정만 실패시킨다.
-        outputs_incomplete: (!exit.logs_complete).then(|| {
-            format!("컨테이너 {name} 의 로그를 끝까지 받지 못했다(컨테이너를 남겼다)")
-        }),
+        outputs_incomplete: (!exit.logs_complete)
+            .then(|| format!("컨테이너 {name} 의 로그를 끝까지 받지 못했다(컨테이너를 남겼다)")),
         commit_limit_bytes: policy.commit_limit_bytes,
         // ★ 컨테이너 경로는 최댓값을 재지 않는다 — 지어내지 않는다(`CLAUDE.md` §1).
         peak_commit_bytes: None,
@@ -572,6 +604,7 @@ fn execute_in_container(
         } else {
             "컨테이너 경로는 메모리 최댓값을 재지 않는다".into()
         }),
+        container_needs_human: exit.needs_human(),
     })
 }
 
@@ -735,6 +768,7 @@ mod platform {
             peak_commit_bytes,
             memory_observation_error,
             outputs_incomplete: None,
+            container_needs_human: false,
         })
     }
 }
@@ -1096,6 +1130,7 @@ mod platform {
             peak_commit_bytes: peak,
             memory_observation_error,
             outputs_incomplete: None,
+            container_needs_human: false,
         })
     }
 }

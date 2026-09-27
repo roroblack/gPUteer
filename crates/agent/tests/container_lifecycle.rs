@@ -108,6 +108,22 @@ fn main() {
             "a_leftover_is_kept_when_stop_or_log_salvage_is_unconfirmed",
             a_leftover_is_kept_when_stop_or_log_salvage_is_unconfirmed,
         ),
+        (
+            "an_unwritable_incident_dir_keeps_the_observed_exit",
+            an_unwritable_incident_dir_keeps_the_observed_exit,
+        ),
+        (
+            "every_file_in_the_incident_dir_is_open_and_unknown_means_open",
+            every_file_in_the_incident_dir_is_open_and_unknown_means_open,
+        ),
+        (
+            "incidents_for_the_same_name_never_overwrite_each_other",
+            incidents_for_the_same_name_never_overwrite_each_other,
+        ),
+        (
+            "execute_hands_the_needs_human_verdict_to_the_caller",
+            execute_hands_the_needs_human_verdict_to_the_caller,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -532,7 +548,10 @@ fn execute_runs_the_container_path_end_to_end() {
     )
     .expect("실행");
     assert_eq!(outcome.exit.code(), Some(7));
-    assert_eq!(outcome.outputs_incomplete, None, "로그를 다 받았는데 불완전이라 했다");
+    assert_eq!(
+        outcome.outputs_incomplete, None,
+        "로그를 다 받았는데 불완전이라 했다"
+    );
     assert_eq!(
         outcome.peak_commit_bytes, None,
         "재지 않은 최댓값을 지어냈다"
@@ -732,7 +751,10 @@ fn a_failed_start_keeps_the_container_unless_stop_and_logs_are_confirmed() {
     );
     assert!(error.needs_human());
     // 결함 475 — 돌고 있을 수 있으니 소유자가 멈출 수 있게 정지 손잡이를 넘겼다.
-    assert!(handed_stopper, "시작 여부를 모르는데 정지 손잡이를 넘기지 않았다");
+    assert!(
+        handed_stopper,
+        "시작 여부를 모르는데 정지 손잡이를 넘기지 않았다"
+    );
     let after_start: Vec<String> = call_order(&f.state)
         .into_iter()
         .skip_while(|c| c != "start")
@@ -789,7 +811,10 @@ fn an_undeletable_partial_output_is_reported_and_never_complete() {
     assert!(!exit.logs_complete, "로그를 못 받았는데 완결이라 했다");
     assert_eq!(exit.container, ContainerLeft::Kept);
     assert!(exit.needs_human());
-    assert!(out.is_dir(), "시험 전제 — 지울 수 없는 것이 남아 있어야 한다");
+    assert!(
+        out.is_dir(),
+        "시험 전제 — 지울 수 없는 것이 남아 있어야 한다"
+    );
 }
 
 /// 결함 481 (재검수 121) — 종료를 다섯 번 못 봐 kill · rm 을 했을 때, rm 이 성공하면 "지웠다"(RemovedUnobserved), 실패하면 "남아 돌 수 있다"(NotObserved).
@@ -918,6 +943,7 @@ fn an_unconfirmed_stop_never_removes_the_container() {
             ContainerRunError::Unobserved {
                 stopped: false,
                 container: ContainerLeft::Kept,
+                logs_complete: false,
                 ..
             }
         ),
@@ -1096,6 +1122,148 @@ fn execute_marks_unreceived_logs_as_incomplete_outputs() {
         )
         .unwrap_or_else(|e| panic!("{fail}: start 실패를 실행 안 함으로 보고했다: {e:?}"));
         assert_eq!(outcome.exit.code(), None, "{fail}");
-        assert_eq!(outcome.outputs_incomplete.is_some(), incomplete, "{fail}: {outcome:?}");
+        assert_eq!(
+            outcome.outputs_incomplete.is_some(),
+            incomplete,
+            "{fail}: {outcome:?}"
+        );
     }
+}
+
+/// 결함 497 (재검수 125) — 표식 폴더에 쓰지 못해도 **관측한 종료 코드 · 로그 완결을 지우지 않는다**(전에는 결과를 통째로 "멈춤 모름" 으로 바꿨다).
+/// 결과는 여전히 "사람 필요" 라 작업 폴더가 남고, 회차를 멈추는 것은 agent-loop 가 `CONTAINER_INCIDENT_NOT_RECORDED` 를 보고 한다.
+fn an_unwritable_incident_dir_keeps_the_observed_exit() {
+    let f = fixture(Some("rm-created"));
+    // 표식 폴더 자리에 **파일**이 있다 — 폴더를 만들 수도, 그 안에 쓸 수도 없다.
+    let blocked = f.work.join("container-incidents");
+    std::fs::write(&blocked, b"not a directory").unwrap();
+    let mut execution = execution();
+    execution.runtime.incident_dir = Some(blocked.clone());
+    let exit = container::run(
+        &execution,
+        &input(&mounts(&f.work), "exit-3", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |_| {},
+    )
+    .expect("표식을 못 써도 관측한 종료는 그대로다");
+    assert_eq!(exit.exit_code, 3, "관측한 종료 코드를 잃었다");
+    assert!(exit.logs_complete, "완결된 로그를 잃었다");
+    assert_eq!(exit.container, ContainerLeft::Unknown);
+    assert!(exit.needs_human());
+    assert!(
+        container::probe_incident_dir(&blocked).is_err(),
+        "쓸 수 없는 폴더가 기동 관문을 통과했다"
+    );
+}
+
+/// 결함 498 · 499 (재검수 125) — 표식 폴더의 **모든** 항목이 열린 사건이다(쓰다 만 파일 · 모르는 파일도). 폴더를 읽지 못하면 "있다" 로 본다.
+/// 쓰기 시험은 흔적을 남기지 않는다.
+fn every_file_in_the_incident_dir_is_open_and_unknown_means_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let incidents = dir.path().join("container-incidents");
+    container::probe_incident_dir(&incidents).expect("빈 폴더에는 쓸 수 있다");
+    assert!(
+        container::open_incidents(&incidents).unwrap().is_empty(),
+        "쓰기 시험이 흔적을 남겼다"
+    );
+    std::fs::write(incidents.join(".gputeer-test.1.tmp"), b"").unwrap();
+    assert_eq!(
+        container::open_incidents(&incidents).unwrap().len(),
+        1,
+        "쓰다 만 파일을 세지 않았다"
+    );
+    assert!(!container::incident_recorded_for(
+        &incidents,
+        "gputeer-other"
+    ));
+    // 폴더 자리에 파일 — 읽지 못한다 → 있다고 본다.
+    let unreadable = dir.path().join("not-a-dir");
+    std::fs::write(&unreadable, b"x").unwrap();
+    assert!(container::open_incidents(&unreadable).is_err());
+    assert!(
+        container::incident_recorded_for(&unreadable, "gputeer-test"),
+        "표식 폴더를 읽지 못했는데 없다고 봤다"
+    );
+}
+
+/// 결함 500 (재검수 125) — 같은 이름의 사건을 몰아서 써도(같은 밀리초) 서로 덮지 않는다.
+fn incidents_for_the_same_name_never_overwrite_each_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let incidents = dir.path().join("container-incidents");
+    let mut written = std::collections::BTreeSet::new();
+    for n in 0..50 {
+        // 같은 밀리초로 고정한다 — 쓰기마다 시각이 달라지면 충돌이 일어나지 않아 시험이 공허하다.
+        let path = container::write_incident_at(
+            &incidents,
+            "gputeer-test",
+            "node",
+            "EXITED",
+            &format!("사건 {n}"),
+            1_700_000_000_000,
+        )
+        .unwrap();
+        assert!(written.insert(path), "같은 파일에 두 번 썼다");
+    }
+    let open = container::open_incidents(&incidents).unwrap();
+    assert_eq!(open.len(), 50);
+    for n in 0..50 {
+        let needle = format!("detail=사건 {n}\n");
+        assert!(
+            open.iter()
+                .any(|path| std::fs::read_to_string(path).unwrap().contains(&needle)),
+            "사건 {n} 이 덮였다"
+        );
+    }
+}
+
+/// 결함 499 (재검수 125) — 실행기가 "사람이 봐야 한다" 를 **타입으로** 호출자(lib — 작업 폴더를 남길지)에게 넘긴다. 문자열 접두사가 아니다.
+fn execute_hands_the_needs_human_verdict_to_the_caller() {
+    // 정상 종료 · 지우기 성공 → 사람 불필요.
+    let f = fixture(None);
+    let outcome = gputeer_agent::exec::execute(
+        &spec("exit-0"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect("실행");
+    assert!(!outcome.container_needs_human, "{outcome:?}");
+    // 정상 종료 · 지우기만 실패 → 종료 코드는 그대로 · 사람 필요.
+    let f = fixture(Some("rm-created"));
+    let outcome = gputeer_agent::exec::execute(
+        &spec("exit-0"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect("종료는 봤다");
+    assert_eq!(outcome.exit.code(), Some(0));
+    assert!(
+        outcome.container_needs_human,
+        "정리 실패를 호출자에게 넘기지 않았다"
+    );
+    // start 실패 · 로그 못 받음(컨테이너 남김) → 종료 코드 없음 · 사람 필요.
+    let f = fixture(Some("start-after-run,logs"));
+    let outcome = gputeer_agent::exec::execute(
+        &spec("exit-0"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect("start 실패는 종료 코드 없음으로 확정 단계를 거친다");
+    assert!(
+        outcome.container_needs_human,
+        "남긴 컨테이너를 호출자에게 넘기지 않았다"
+    );
+    // 종료를 못 봤고 멈춤도 확인하지 못함 → 작업이 돌 수 있다(작업 폴더를 남긴다).
+    let f = fixture(Some("inspect,kill"));
+    let error = gputeer_agent::exec::execute(
+        &spec("sleep"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect_err("멈춤을 모르는데 종료를 봤다고 했다");
+    assert!(error.workload_may_be_alive(), "{error:?}");
+    // 같은 이름을 못 지워 만들지 않음 → 남은 것이 돌 수 있다.
+    let f = fixture(Some("rm"));
+    let error = gputeer_agent::exec::execute(
+        &spec("exit-0"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect_err("남은 것을 못 지웠는데 만들었다");
+    assert!(error.workload_may_be_alive(), "{error:?}");
 }

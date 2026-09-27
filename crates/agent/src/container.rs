@@ -336,7 +336,10 @@ pub fn remove_leftovers(
                     save_logs(program, id, Some(&stdout), Some(&stderr))
                         .map(|()| stdout.clone())
                         .map_err(|why| {
-                            format!("{why}{}", discard_partial_outputs(Some(&stdout), Some(&stderr)))
+                            format!(
+                                "{why}{}",
+                                discard_partial_outputs(Some(&stdout), Some(&stderr))
+                            )
                         })
                 });
             match saved {
@@ -975,14 +978,21 @@ fn run_inner(
                     //   출력 · 체크포인트를 잃는다). 로그를 못 받아도 지우지 않는다(결함 487 — 런타임에 온전한 로그가 남는다).
                     let (stopped, killed) = stop_confirmed(&stopper);
                     // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 못 남기면 반쯤 쓴 파일을 지운다(빈 출력이 성공이 되지 않게 · 487).
-                    let (logs_complete, logs) =
+                    let (saved, logs) =
                         match save_logs(program, input.name, stdout_path, stderr_path) {
-                            Ok(()) => (true, "로그 남김".to_string()),
+                            Ok(()) if stopped => (true, "로그 남김".to_string()),
+                            Ok(()) => (
+                                true,
+                                "지금까지의 로그만 남김(멈춤을 확인하지 못해 완결이 아니다)"
+                                    .to_string(),
+                            ),
                             Err(e) => {
                                 let discard = discard_partial_outputs(stdout_path, stderr_path);
                                 (false, format!("로그 못 남김({e}){discard}"))
                             }
                         };
+                    // ★ 결함 496 (재검수 125) — 멈춤을 확인하지 못했으면 `logs` 성공은 완결의 증거가 아니다(도는 컨테이너의 로그는 그 순간까지다).
+                    let logs_complete = stopped && saved;
                     let head = format!(
                         "종료를 {failures}번 연속 확인하지 못했다({why}) · {killed} · {logs}"
                     );
@@ -1035,7 +1045,10 @@ pub fn incident_dir_for(checkpoint_root: &Path) -> PathBuf {
     checkpoint_root.with_file_name("container-incidents")
 }
 
-/// 열린 사건 표식(`*.incident`)을 이름 순으로 돌려준다. 폴더가 없으면 없다.
+/// 열린 사건 표식을 이름 순으로 돌려준다. 폴더가 없으면 없다.
+///
+/// ★ 결함 498 (재검수 125) — 확장자로 가르지 않는다. 폴더 안의 **모든** 항목을 열린 것으로 센다 — 쓰다 만 표식 · 모르는 파일도 사람이 본다
+///   (전에는 `*.incident` 만 세어, 임시 파일을 쓰고 이름을 바꾸기 전에 죽으면 재기동이 열린 사건 0건으로 봤다).
 pub fn open_incidents(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -1047,9 +1060,7 @@ pub fn open_incidents(dir: &Path) -> Result<Vec<PathBuf>, String> {
         let path = entry
             .map_err(|error| format!("{dir:?} 를 읽지 못했다: {error}"))?
             .path();
-        if path.extension().is_some_and(|ext| ext == "incident") {
-            found.push(path);
-        }
+        found.push(path);
     }
     found.sort();
     Ok(found)
@@ -1074,9 +1085,11 @@ pub fn clear_incidents(dir: &Path, name: Option<&str>) -> Result<Vec<PathBuf>, S
     Ok(cleared)
 }
 
-/// 이 컨테이너 이름으로 열린 사건 표식이 있는가.
+/// 이 컨테이너 이름으로 열린 사건 표식이 있는가 — **확인하지 못해도 있다고 본다**.
+///
+/// ★ 결함 499 (재검수 125) — 폴더를 읽지 못한 것을 "없다" 로 삼키면 작업 폴더를 지운다. 모르면 남긴다.
 pub fn incident_recorded_for(dir: &Path, name: &str) -> bool {
-    open_incidents(dir).is_ok_and(|found| {
+    open_incidents(dir).map_or(true, |found| {
         found.iter().any(|path| {
             path.file_name()
                 .and_then(|file| file.to_str())
@@ -1085,9 +1098,35 @@ pub fn incident_recorded_for(dir: &Path, name: &str) -> bool {
     })
 }
 
+/// 기동 관문 — 사건 표식 폴더에 **실제로 쓸 수 있는가**(새 파일을 만들고 지운다). 못 쓰면 사람에게 넘길 길이 없으니 시작하지 않는다(결함 497).
+/// 시험 파일을 지우지 못하면 그 파일이 열린 사건으로 남는다(보수 쪽).
+pub fn probe_incident_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|error| format!("{dir:?} 를 만들지 못했다: {error}"))?;
+    let probe = dir.join(format!("write-probe.{}.{}", std::process::id(), unix_ms()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|error| format!("{probe:?} 를 만들지 못했다: {error}"))?;
+    std::io::Write::write_all(&mut file, b"probe\n")
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("{probe:?} 에 쓰지 못했다: {error}"))?;
+    drop(file);
+    std::fs::remove_file(&probe).map_err(|error| format!("{probe:?} 를 지우지 못했다: {error}"))
+}
+
+fn unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
 /// ★ 2026-09-27 보수 규칙 — 사람이 봐야 하는 결과면 **영속 사건 표식**을 남긴다. 표식이 있는 동안 Agent 는 기동하지 않아(새 작업 거부) 남은
 ///   컨테이너 정리도 돌지 않는다 — 사람에게 넘긴 것을 재기동이 덮지 않는다. 해제는 소유자의 명시적 명령(`gputeer container-incidents --clear`)이다.
-///   표식을 쓰지 못하면 결과를 "멈춤을 모른다"(사람 필요)로 올린다 — 조용히 넘어가지 않는다.
+///   ★ 결함 497 (재검수 125) — 표식을 쓰지 못해도 **관측한 사실(종료 코드 · 로그 완결)은 그대로 돌려준다**(전에는 결과를 통째로 "멈춤 모름" 으로
+///     바꿔 지웠다). 결과가 이미 "사람 필요" 라 작업 폴더는 남고(exec · lib 이 타입으로 받는다), `CONTAINER_INCIDENT_NOT_RECORDED` 를 본
+///     agent-loop 가 다음 회차를 돌리지 않는다. 다시 띄우면 기동 관문이 폴더에 실제로 쓸 수 있는지부터 본다(`probe_incident_dir`).
 fn record_incident_if_needed(
     runtime: &ContainerRuntime,
     name: &str,
@@ -1131,45 +1170,77 @@ fn record_incident_if_needed(
             result
         }
         Err(why) => {
-            eprintln!("CONTAINER_INCIDENT_NOT_RECORDED name={name} — {why}");
-            Err(ContainerRunError::Unobserved {
-                detail: format!("{detail} · ★ 사건 표식을 쓰지 못했다({why})"),
-                stopped: false,
-                logs_complete: false,
-                container: ContainerLeft::Unknown,
-            })
+            eprintln!(
+                "CONTAINER_INCIDENT_NOT_RECORDED name={name} kind={kind} — 사건 표식을 쓰지 못했다({why}) · {detail} — 사람이 확인하기 전까지 다음 회차를 돌리지 않는다"
+            );
+            result
         }
     }
 }
 
-/// 표식 한 건을 쓴다 — 임시 파일에 쓰고 새 이름으로 옮긴다(덮지 않는다: 같은 이름이 있으면 시각을 붙인다).
-fn write_incident(
+/// 표식 한 건을 쓴다 — **최종 이름으로 바로** 새로 만든다(`create_new` — 있으면 번호를 올려 다시 · 덮지 않는다).
+///
+/// ★ 결함 498 · 500 (재검수 125) — 전에는 임시 파일에 쓰고 rename 했다. rename 전에 죽으면 관문이 못 봤고(498), `exists()` 뒤 밀리초 하나로
+///   이름을 정해 같은 밀리초의 두 사건이 서로 덮었다(500). 이제 파일이 **생기는 순간** 열린 사건이다 — 쓰다 죽어 내용이 비어도 관문이 본다.
+pub fn write_incident(
     dir: &Path,
     name: &str,
     node_id: &str,
     kind: &str,
     detail: &str,
 ) -> Result<PathBuf, String> {
+    write_incident_at(dir, name, node_id, kind, detail, unix_ms())
+}
+
+/// `write_incident` 의 시각을 고정한 판 — 같은 밀리초의 충돌을 시험이 실제로 일으키게 한다(결함 500).
+#[doc(hidden)]
+pub fn write_incident_at(
+    dir: &Path,
+    name: &str,
+    node_id: &str,
+    kind: &str,
+    detail: &str,
+    now: u128,
+) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|error| format!("{dir:?} 를 만들지 못했다: {error}"))?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let mut path = dir.join(format!("{name}.incident"));
-    if path.exists() {
-        path = dir.join(format!("{name}.{now}.incident"));
-    }
-    let tmp = dir.join(format!(".{name}.{now}.tmp"));
     let one_line = detail.replace(['\n', '\r'], " ");
     let body = format!(
         "container={name}\nnode={node_id}\nkind={kind}\nrecorded_at_unix_ms={now}\ndetail={one_line}\n"
     );
-    std::fs::write(&tmp, body).map_err(|error| format!("{tmp:?} 를 쓰지 못했다: {error}"))?;
-    std::fs::rename(&tmp, &path).map_err(|error| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("{path:?} 로 옮기지 못했다: {error}")
-    })?;
-    Ok(path)
+    for seq in 0u32..1000 {
+        let path = dir.join(format!("{name}.{now}.{seq}.incident"));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("{path:?} 를 만들지 못했다: {error}")),
+        };
+        // ★ 쓰기 · sync 가 실패해도 파일은 이미 생겼다 — 지우지 않는다(열린 사건으로 남아 사람이 본다).
+        std::io::Write::write_all(&mut file, body.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("{path:?} 에 쓰지 못했다(파일은 남긴다): {error}"))?;
+        sync_dir(dir)?;
+        return Ok(path);
+    }
+    Err(format!(
+        "{dir:?} 에 {name} 의 새 표식 이름을 찾지 못했다(1000번 겹침)"
+    ))
+}
+
+/// 새 파일 이름을 디스크에 확정한다(리눅스 — 폴더 fsync). Windows 에는 폴더 fsync 가 없다.
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> Result<(), String> {
+    std::fs::File::open(dir)
+        .and_then(|handle| handle.sync_all())
+        .map_err(|error| format!("{dir:?} 를 sync 하지 못했다: {error}"))
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// 컨테이너 상태 — 끝났으면 `Some(종료)`, 아직 돌면 `None`.

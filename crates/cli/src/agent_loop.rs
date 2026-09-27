@@ -25,12 +25,17 @@
 //! ```
 //!
 //! ★ `--` 뒤의 인자는 **그대로** agent-stub 에 넘긴다. 여기서 해석하지 않는다(두 곳에서 해석하면 규칙이 갈라진다).
+//!
+//! ★ 결함 497 (재검수 125) — 회차가 사람에게 넘길 컨테이너 사건을 **표식으로 남기지 못했으면**(`CONTAINER_INCIDENT_NOT_RECORDED`) 루프를 멈춘다.
+//!   다음 회차가 뜨면 기동 관문은 빈 표식 폴더를 보고 남은 컨테이너 정리를 돌리기 때문이다. 다시 띄우면 기동 관문이 표식 폴더에 실제로 쓸 수
+//!   있는지부터 본다.
 
 use std::process::Command;
 use std::time::Duration;
 
 /// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
-const FORWARDED_PREFIXES: [&str; 7] = [
+const FORWARDED_PREFIXES: [&str; 8] = [
+    INCIDENT_NOT_RECORDED,
     "ACK_RECEIPT_VERIFIED",
     "OWNER_STOPPED",
     "RESUME_PREPARED",
@@ -39,6 +44,15 @@ const FORWARDED_PREFIXES: [&str; 7] = [
     "ATTEMPT_REPORT_ACKNOWLEDGED",
     "RESUME_REFUSED",
 ];
+
+/// 회차가 사건 표식을 쓰지 못했다는 줄(`container::record_incident_if_needed`).
+const INCIDENT_NOT_RECORDED: &str = "CONTAINER_INCIDENT_NOT_RECORDED";
+
+/// 이 회차 뒤 루프를 멈춰야 하는가 — 사건 표식을 쓰지 못한 줄이 있으면 그 줄.
+fn must_stop_after(text: &str) -> Option<&str> {
+    text.lines()
+        .find(|line| line.starts_with(INCIDENT_NOT_RECORDED))
+}
 
 pub fn run(args: &[String]) -> Result<String, String> {
     let split = args
@@ -112,6 +126,12 @@ pub fn run(args: &[String]) -> Result<String, String> {
         }) {
             println!("  {line}");
         }
+        if let Some(line) = must_stop_after(&text) {
+            return Err(format!(
+                "AGENT_LOOP_STOPPED round={rounds}: 사람에게 넘길 컨테이너 사건을 표식으로 남기지 못해 다음 회차를 돌리지 않는다 — 소유자가 컨테이너 · \
+                 작업 폴더 · 표식 폴더를 확인한 뒤 다시 띄운다: {line}"
+            ));
+        }
         if did_work {
             worked += 1;
             let result = text
@@ -134,4 +154,19 @@ pub fn run(args: &[String]) -> Result<String, String> {
     Ok(format!(
         "AGENT_LOOP_DONE rounds={rounds} worked={worked} idle_or_refused={idle}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::must_stop_after;
+
+    #[test]
+    fn a_round_that_could_not_record_an_incident_stops_the_loop() {
+        let text = "WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_NOT_RECORDED name=gputeer-x kind=EXITED — 쓰지 못했다\n";
+        assert!(must_stop_after(text).is_some_and(|line| line.contains("gputeer-x")));
+        assert!(must_stop_after(
+            "WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_RECORDED name=gputeer-x\n"
+        )
+        .is_none());
+    }
 }

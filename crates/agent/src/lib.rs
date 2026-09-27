@@ -676,6 +676,12 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
                 config.checkpoint_root.display()
             ));
         }
+        // ★ 결함 497 (재검수 125) — 표식 폴더에 **실제로 쓸 수 있어야** 시작한다. 못 쓰면 사람에게 넘길 길이 없다.
+        container::probe_incident_dir(&incident_dir).map_err(|why| {
+            format!(
+                "CONTAINER_INCIDENT_UNKNOWN: 사건 표식 폴더에 쓸 수 없어 시작하지 않는다 — {why}"
+            )
+        })?;
         runtime.incident_dir = Some(incident_dir);
         // ★ 결함 489 — 지우기 전에 로그를 체크포인트 루트 옆 `leftover-container-logs/` 에 건진다.
         let salvage_dir = config
@@ -1558,6 +1564,7 @@ fn run_one_connection_inner(
             )),
             _ => None,
         };
+        let mut keep_run_dir = false;
         let outcome = run_and_capture_workload(
             spec,
             policy,
@@ -1570,6 +1577,7 @@ fn run_one_connection_inner(
             &loaded.submitter_device_id,
             clock.now_unix_ms(),
             clock,
+            &mut keep_run_dir,
         );
         // 작업 디렉터리를 치우기 **전에** 마지막 체크포인트까지 올린다.
         if let Some(publisher) = publisher {
@@ -1589,8 +1597,8 @@ fn run_one_connection_inner(
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
         // ★ 결함 471 (재검수 119) — 단, 종료를 **관측하지 못한** 경우(작업이 아직 돌 수 있다 — `EXEC_FAILED:WAIT`)는 지우지 않는다.
         //   돌고 있는 컨테이너가 이 폴더의 체크포인트 자리를 붙이고 있을 수 있어, 지우면 그 뒤 체크포인트가 연결 끊긴 곳에 쓰여 사라진다.
-        // ★ 2026-09-27 보수 규칙 — 문자열 접두사만으로 가르지 않는다(코덱스 지적). 이 시도의 컨테이너에 사건 표식이 남았으면(컨테이너 · 로그가
-        //   불확실) 작업 폴더도 남긴다 — 표식은 `container::run` 이 타입 판정에서 직접 쓴 영속 기록이다.
+        // ★ 2026-09-27 보수 규칙 · 결함 499 (재검수 125) — 문자열 접두사로 가르지 않는다. 실행기가 타입으로 넘긴 판정(`keep_run_dir` — 종료 못 봄 ·
+        //   사람이 봐야 하는 컨테이너)을 쓰고, 이 시도의 사건 표식이 있거나 **확인하지 못해도** 남긴다(`incident_recorded_for` 는 모르면 true).
         let incident_open = config.container_runtime.as_ref().is_some_and(|runtime| {
             runtime.incident_dir.as_ref().is_some_and(|dir| {
                 container::incident_recorded_for(
@@ -1599,8 +1607,7 @@ fn run_one_connection_inner(
                 )
             })
         });
-        let workload_may_be_alive = incident_open
-            || matches!(&outcome, Err(error) if error.starts_with("EXEC_FAILED:WAIT"));
+        let workload_may_be_alive = keep_run_dir || incident_open;
         let cleanup = if workload_may_be_alive {
             println!(
                 "WORKLOAD_DIR_KEPT job_id={} run_dir={} — 작업이 아직 돌 수 있어 작업 폴더를 지우지 않았다(확인 뒤 사람이 지운다)",
@@ -3138,6 +3145,7 @@ fn run_and_capture_workload(
     submitter_device_id: &str,
     started_at_unix_ms: u64,
     clock: &SystemClock,
+    keep_run_dir: &mut bool,
 ) -> Result<Option<WorkloadReport>, String> {
     // ★ 자식이 뜨는 **즉시** 소유자 화면에 올린다. `execute()` 가
     //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
@@ -3163,7 +3171,11 @@ fn run_and_capture_workload(
             stopper,
         });
     }) {
-        Ok(outcome) => outcome,
+        Ok(outcome) => {
+            // ★ 결함 499 (재검수 125) — 사람이 봐야 하는 컨테이너 결과면 작업 폴더를 남긴다(타입으로 받는다).
+            *keep_run_dir = outcome.container_needs_human;
+            outcome
+        }
         Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
         // ★ 여기서도 종료 시각을 읽지 않는다. 실행 자체가 **일어나지
         //   않았거나**(NotOptedIn·UnsupportedPlatform·LimitNotApplied·
@@ -3178,6 +3190,7 @@ fn run_and_capture_workload(
         //     실제로 멈추는 길은 (1) 런타임이 되살아나면 다음 회차의 남은 컨테이너 정리 · (2) 소유자가 런타임으로 직접 kill 이다.
         //     ★ 결함 484 — Agent 서비스를 멈추는 것은 정지 수단이 아니다(컨테이너는 런타임이 소유하고, 멈추면 다음 회차 정리도 멈춘다).
         Err(other @ exec::ExecutionError::WaitFailed { .. }) => {
+            *keep_run_dir = other.workload_may_be_alive();
             println!(
                 "WORKLOAD_MAY_BE_RUNNING attempt_id={attempt_id} — 종료를 관측하지 못했다. 다음 회차가 남은 컨테이너를 지운다(런타임이 응답해야 한다). 지금 멈추려면 런타임으로 직접 kill 한다(Agent 서비스를 멈추면 컨테이너는 계속 돌고 정리도 멈춘다)"
             );
@@ -5168,6 +5181,7 @@ mod defect_19_tests {
             peak_commit_bytes: None,
             memory_observation_error: None,
             outputs_incomplete: None,
+            container_needs_human: false,
         }
     }
 
@@ -5425,6 +5439,7 @@ mod defect_19_tests {
             "submitter-19",
             1,
             &SystemClock,
+            &mut false,
         )
         .expect("확정 실패는 Agent 오류가 아니다 — 종료를 관측했으면 보고한다")
         .expect("opt-in 했으니 실행됐다");
