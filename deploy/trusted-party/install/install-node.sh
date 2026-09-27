@@ -46,7 +46,7 @@ if [ -n "$WANT_REGISTER" ] && [ -z "$PHASE" ]; then
     fi
     PHASE=root
 elif [ "$(id -u)" -eq 0 ]; then
-    die "INSTALL_AS_ROOT: 일반 계정으로 돌린다 — 키 · 설정은 Agent 를 돌릴 계정의 것이어야 한다(등록만 sudo sh $0 <같은 인자> --register)"
+    die "INSTALL_AS_ROOT: 일반 계정으로 돌린다 — 키 · 설정은 Agent 를 돌릴 계정의 것이어야 한다(등록만 /usr/bin/sudo /bin/sh <root 소유 사본> <같은 인자> --register · 런북 --register 절)"
 fi
 
 INVITE= NODE_ID= OWNER= GPU_PIN= CPU= RAM_GIB= WS_GIB=
@@ -238,7 +238,7 @@ if [ "$PHASE" = root ]; then
     systemctl enable "gputeer-agent@$NODE_ID"
     # ★ 결함 459 (재검수 117) — 이미 돌고 있으면 **다시 띄우지 않는다**(실행 중인 작업을 끊지 않으려고). 바뀐 설정(예 관측 켜기)은 다시 띄워야 적용된다.
     if systemctl is-active --quiet "gputeer-agent@$NODE_ID"; then
-        echo "RESTART_NEEDED gputeer-agent@$NODE_ID 가 이미 돈다 — 바뀐 설정은 다시 띄워야 적용된다. 실행 중인 작업이 끝난 뒤: sudo systemctl restart gputeer-agent@$NODE_ID"
+        echo "RESTART_NEEDED gputeer-agent@$NODE_ID 가 이미 돈다 — 바뀐 설정은 다시 띄워야 적용된다. 실행 중인 작업이 끝난 뒤: /usr/bin/sudo /usr/bin/systemctl restart gputeer-agent@$NODE_ID"
     else
         systemctl start "gputeer-agent@$NODE_ID"
     fi
@@ -379,6 +379,6 @@ if [ "$PHASE" = user ]; then
     echo "INSTALL_SEED $SEED"
     echo "INSTALL_BIN $BIN"
 else
-    echo "NOT_REGISTERED — 등록하려면: sudo sh $0 <같은 인자> --register"
+    echo "NOT_REGISTERED — 등록하려면 root 가 직접 받아 대조한 root 소유 사본에서: /usr/bin/sudo /bin/sh <그 사본의 install-node.sh> <같은 인자> --register (런북 --register 절 · 결함 507 · 509)"
 fi
 echo "NEXT 운영자에게 $JOIN 를 보낸다(비밀 없음). 운영자가 admit-node 로 받은 뒤 Agent 가 일을 받는다."
