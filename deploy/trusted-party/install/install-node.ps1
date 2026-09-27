@@ -13,7 +13,8 @@
 #     -ContainerRuntime docker -ContainerRuntimeKind docker -ContainerGpu
 #
 # ★ 이 스크립트가 쓰는 파일은 전부 저장소 **밖**(기본 %LOCALAPPDATA%\gputeer)이다. 채운 파일을 저장소에 넣지 않는다.
-# ★ 자원 수치(CPU · RAM · 디스크)는 **소유자가 내놓는 양**이다 — 기계 전체가 아니다. 지어내지 않으려고 기본값을 두지 않는다.
+# ★ 자원 수치(CPU · RAM · 디스크)는 **소유자가 내놓겠다고 알리는 양**이다 — 기계 전체가 아니다. 지어내지 않으려고 기본값을 두지 않는다.
+#   ★ 결함 510 · 511 — 배치 기준 숫자일 뿐 강제하지 않는다(가입 파일에만 들어간다). CPU · 디스크 · RAM 총량에 상한이 없다 — 런북 설치 절.
 param(
     [Parameter(Mandatory = $true)][string]$Invite,
     [Parameter(Mandatory = $true)][string]$NodeId,
