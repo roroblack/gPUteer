@@ -88,6 +88,14 @@ fn main() {
             "a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident",
             a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident,
         ),
+        (
+            "salvaged_leftover_logs_are_never_overwritten",
+            salvaged_leftover_logs_are_never_overwritten,
+        ),
+        (
+            "a_leftover_is_kept_when_stop_or_log_salvage_is_unconfirmed",
+            a_leftover_is_kept_when_stop_or_log_salvage_is_unconfirmed,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -294,6 +302,16 @@ fn mounts(work: &Path) -> Vec<Mount> {
         target: container::CONTAINER_CHECKPOINT_DIR,
         read_only: false,
     }]
+}
+
+/// `calls` 에서 그 줄이 처음 나온 자리.
+fn at(calls: &str, line: &str) -> usize {
+    calls.lines().position(|l| l == line).unwrap_or_else(|| {
+        panic!(
+            "{line} 가 없다:
+{calls}"
+        )
+    })
 }
 
 fn calls(state: &Path) -> String {
@@ -551,7 +569,19 @@ fn leftovers_of_this_node_are_removed_before_a_round() {
             calls.lines().any(|l| l == format!("rm -f -v {id}")),
             "{id} 를 지우지 않았다:\n{calls}"
         );
+        // 결함 492 — 로그는 지우기 전에 받는다.
+        let (logs, rm) = (
+            at(&calls, &format!("logs {id}")),
+            at(&calls, &format!("rm -f -v {id}")),
+        );
+        assert!(logs < rm, "{id}: logs → rm 순서가 아니다:\n{calls}");
     }
+    // 결함 492 — 도는 컨테이너는 **멈춘 뒤에** 로그를 받는다. (가짜 런타임의 "멈춤" 은 컨테이너별이 아니라 하나라,
+    //   old-1 을 멈추면 old-2 는 이미 멈춘 것으로 보여 kill 을 부르지 않는다 — 그래서 첫 컨테이너만 kill 순서를 본다.)
+    assert!(
+        at(&calls, "kill old-1") < at(&calls, "logs old-1"),
+        "old-1: 멈추기 전에 로그를 받았다:\n{calls}"
+    );
     // 만드는 컨테이너에도 같은 라벨이 붙는다 — 다음 회차가 찾을 수 있다.
     let _ = container::run(
         &execution(),
@@ -900,4 +930,49 @@ fn a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident() {
         &incidents,
         "gputeer-test"
     ));
+}
+
+/// 결함 493 (재검수 124) — 같은 id 의 로그를 전에 건졌으면 덮지 않고 새 번호로 쓴다.
+fn salvaged_leftover_logs_are_never_overwritten() {
+    let f = fixture(None);
+    std::fs::write(f.state.join("leftovers"), "old-1\n").unwrap();
+    let salvage = f.work.join("leftover-container-logs");
+    std::fs::create_dir_all(&salvage).unwrap();
+    std::fs::write(salvage.join("old-1.stdout.log"), "earlier").unwrap();
+    container::remove_leftovers(&execution().runtime, Some(&salvage)).expect("정리");
+    assert_eq!(
+        std::fs::read_to_string(salvage.join("old-1.stdout.log")).unwrap(),
+        "earlier",
+        "전에 건진 로그를 덮었다"
+    );
+    assert_eq!(
+        std::fs::read_to_string(salvage.join("old-1.1.stdout.log"))
+            .unwrap()
+            .trim(),
+        "hello-out"
+    );
+}
+
+/// 보수 규칙(재검수 124 합의) — 멈췄는지 확인하지 못하거나 로그를 건지지 못하면 **지우지 않고** Err(기동을 막는다).
+fn a_leftover_is_kept_when_stop_or_log_salvage_is_unconfirmed() {
+    for (fail, expected) in [
+        ("kill,inspect", "멈췄는지 확인하지 못했다"),
+        ("logs", "로그를 건지지 못해 지우지 않았다"),
+    ] {
+        let f = fixture(Some(fail));
+        std::fs::write(f.state.join("leftovers"), "old-1\n").unwrap();
+        let salvage = f.work.join("leftover-container-logs");
+        let error = container::remove_leftovers(&execution().runtime, Some(&salvage))
+            .expect_err("확인하지 못했는데 치웠다고 했다");
+        assert!(error.contains(expected), "{fail}: {error}");
+        let calls = calls(&f.state);
+        assert!(
+            !calls.lines().any(|l| l.starts_with("rm ")),
+            "{fail}: 확인하지 못했는데 지웠다:\n{calls}"
+        );
+        assert!(
+            !salvage.join("old-1.stdout.log").exists(),
+            "{fail}: 부분 로그 파일이 남았다"
+        );
+    }
 }

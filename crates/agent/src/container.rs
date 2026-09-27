@@ -279,14 +279,15 @@ pub fn derive_container_name(attempt_id: &str) -> String {
     format!("gputeer-{}", &hasher.finalize().to_hex()[..32])
 }
 
-/// 이 노드의 라벨이 붙은 컨테이너를 **모두** 끝내고 지운다 — Agent 가 회차를 시작할 때 부른다(결함 290 · 291).
+/// 이 노드의 라벨이 붙은 컨테이너를 **모두** 멈추고, 멈춤 · 로그 건지기를 확인한 것만 지운다 — Agent 가 회차를 시작할 때 부른다(결함 290 · 291 · 492).
 ///
 /// ★ 한 노드(한 Agent)는 한 번에 한 작업만 돌린다(회차는 순차다). 새 회차가 시작될 때 이 노드의 라벨로 돌고 있는 컨테이너는
 ///   죽은 회차(Agent 가 죽었거나 종료를 관측하지 못하고 끝난 회차)가 남긴 것이다 — 그대로 두면 패널 손잡이 없이 GPU 를 물고 돌고,
 ///   이어받은 다른 노드와 **두 번** 돈다. 지운 컨테이너 id 를 돌려준다. 목록을 못 읽으면 오류다(모르는 채 시작하지 않는다).
 ///
 /// ★ 결함 489 (재검수 123) — 지우기 **전에** 로그를 `salvage_dir/<id>.{stdout,stderr}.log` 로 건진다. 죽은 회차가 종료를 보고 로그를 받기 전에 죽었으면
-///   런타임 로그가 출력의 유일한 사본이다. 그 시도는 이미 보고할 수 없다 — 사람이 볼 수 있게 남기는 것이다(못 건지면 그 사실을 찍고 지운다).
+///   런타임 로그가 출력의 유일한 사본이다. 그 시도는 이미 보고할 수 없다 — 사람이 볼 수 있게 남기는 것이다.
+///   ★ 결함 492 · 493 (재검수 124) — 멈춘 **뒤에** 건지고, 이미 건진 파일을 덮지 않으며, 못 건지면 **지우지 않고** Err 다(아래 본문).
 pub fn remove_leftovers(
     runtime: &ContainerRuntime,
     salvage_dir: Option<&Path>,
@@ -313,28 +314,95 @@ pub fn remove_leftovers(
         .filter(|id| !id.is_empty())
         .map(str::to_string)
         .collect();
+    // ★ 결함 492 (재검수 124) — 로그는 **멈춘 뒤에** 받는다. `logs` 는 그 순간까지의 로그만 준다 — 도는 컨테이너에서 받으면 마지막 출력이 빠진다.
+    //   먼저 **모든** 컨테이너를 멈춰 본다(하나가 실패해도 나머지를 멈춘다 — GPU 를 물고 도는 것을 줄인다).
+    // ★ 보수 규칙(재검수 124 합의) — 멈춤 · 로그 건지기 · 지우기 중 하나라도 확인하지 못하면 **자동으로 지우지 않고** 모아서 Err 로 돌려준다.
+    //   Agent 는 이 Err 로 기동을 멈춘다(새 작업을 받지 않는다) — 사람이 확인해 치울 때까지 컨테이너와 런타임 로그가 남는다.
+    let mut problems: Vec<String> = Vec::new();
+    let mut stopped: Vec<&String> = Vec::new();
     for id in &ids {
+        match stop_and_confirm(program, id) {
+            Ok(()) => stopped.push(id),
+            Err(why) => problems.push(format!("{id}: 멈췄는지 확인하지 못했다 — {why}")),
+        }
+    }
+    for id in stopped {
         if let Some(dir) = salvage_dir {
-            let stdout = dir.join(format!("{id}.stdout.log"));
-            let stderr = dir.join(format!("{id}.stderr.log"));
             let saved = std::fs::create_dir_all(dir)
                 .map_err(|error| format!("{dir:?} 를 만들지 못했다: {error}"))
-                .and_then(|()| save_logs(program, id, Some(&stdout), Some(&stderr)));
+                .and_then(|()| {
+                    // ★ 결함 493 (재검수 124) — 이미 건진 로그를 덮지 않는다. 같은 id 가 다시 오면(앞 회차가 건지고 지우기에 실패) 새 번호로 쓴다.
+                    let (stdout, stderr) = unique_salvage_paths(dir, id);
+                    save_logs(program, id, Some(&stdout), Some(&stderr))
+                        .map(|()| stdout.clone())
+                        .map_err(|why| {
+                            discard_partial_outputs(Some(&stdout), Some(&stderr));
+                            why
+                        })
+                });
             match saved {
-                Ok(()) => eprintln!(
-                    "CONTAINER_LEFTOVER_LOGS_SAVED id={id} dir={}",
-                    dir.display()
+                Ok(stdout) => eprintln!(
+                    "CONTAINER_LEFTOVER_LOGS_SAVED id={id} file={}",
+                    stdout.display()
                 ),
                 Err(why) => {
-                    discard_partial_outputs(Some(&stdout), Some(&stderr));
-                    eprintln!("CONTAINER_LEFTOVER_LOGS_LOST id={id} — {why}");
+                    problems.push(format!(
+                        "{id}: 로그를 건지지 못해 지우지 않았다(멈춰 있다 — 런타임 로그가 남는다) — {why}"
+                    ));
+                    continue;
                 }
             }
         }
-        remove_container(program, id)
-            .map_err(|why| format!("남은 컨테이너 {id} 를 지우지 못했다: {why}"))?;
+        if let Err(why) = remove_container(program, id) {
+            problems.push(format!("{id}: 지우지 못했다 — {why}"));
+        }
+    }
+    if !problems.is_empty() {
+        return Err(format!(
+            "남은 컨테이너를 자동으로 치우지 못해 남겼다(사람이 확인한다): {}",
+            problems.join(" / ")
+        ));
     }
     Ok(ids)
+}
+
+/// 컨테이너가 **멈췄음을 확인**한다 — `inspect` 가 멈춤을 보이면 곧바로 Ok. 아니면 `kill` 하고, kill 이 성공했거나 그 뒤 `inspect` 가 멈춤을 보이면 Ok.
+/// 둘 다 확인하지 못하면 Err(아직 돌 수 있다). 확인 없이 멈췄다고 보지 않는다(재검수 124 합의 — 보수 규칙).
+pub fn stop_and_confirm(program: &Path, name: &str) -> Result<(), String> {
+    if let Ok(Some(_)) = inspect_state(program, name) {
+        return Ok(());
+    }
+    let kill = run_cli(program, &["kill".into(), name.into()], SHORT_TIMEOUT);
+    if matches!(&kill, Ok(output) if output.status.success()) {
+        return Ok(());
+    }
+    let kill = match kill {
+        Ok(output) => format!("kill 실패({}): {}", output.status, output.stderr.trim()),
+        Err(why) => format!("kill 실패: {why}"),
+    };
+    match inspect_state(program, name) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!("{kill} · 아직 돈다")),
+        Err(why) => Err(format!("{kill} · 상태도 모른다({why})")),
+    }
+}
+
+/// 건진 로그를 쓸 **새** 파일 이름 — `<id>.stdout.log` 가 이미 있으면 `<id>.1.stdout.log` … (결함 493 — 덮지 않는다).
+fn unique_salvage_paths(dir: &Path, id: &str) -> (PathBuf, PathBuf) {
+    let mut n: u32 = 0;
+    loop {
+        let stem = if n == 0 {
+            id.to_string()
+        } else {
+            format!("{id}.{n}")
+        };
+        let stdout = dir.join(format!("{stem}.stdout.log"));
+        let stderr = dir.join(format!("{stem}.stderr.log"));
+        if !stdout.exists() && !stderr.exists() {
+            return (stdout, stderr);
+        }
+        n += 1;
+    }
 }
 
 /// 컨테이너에 붙일 호스트 폴더 하나.
