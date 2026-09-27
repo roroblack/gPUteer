@@ -431,7 +431,7 @@ pub fn create_args(
 ///   docker 는 `--gpus` 값을 CSV 로 읽어 `device=0,1` 이 두 필드(`device=0` · `1`=개수)로 쪼개진다. 그래서 podman 은 장치마다
 ///   `--device` 를 따로 주고, docker 는 값 전체를 큰따옴표로 감싸 한 필드로 만든다(docker 문서의 `"device=0,1"` 형식).
 /// ★ 결함 303 — 모양은 런타임 종류가 아니라 운영자가 고른 `GpuRequest` 가 정한다(WSL docker 29 는 `--gpus` 를 전부 거부했고
-///   CDI `all` 만 받았다). `CdiAll` 은 핀을 보지 않는다 — 한 장 노드인지는 Agent 시작과 `decide()` 가 먼저 막는다.
+///   CDI `all` 만 받았다). `CdiAll` 은 핀을 보지 않는다 — 한 장 노드인지는 Agent 시작 · Manifest 해석 · 컨테이너를 만들기 직전(`run`)이 막는다.
 pub fn gpu_args(request: GpuRequest, pin: &str) -> Vec<OsString> {
     let ids: Vec<&str> = pin
         .split(',')
@@ -599,6 +599,26 @@ pub struct ContainerExit {
     pub oom_killed: bool,
 }
 
+/// `cdi-all` 로 GPU 를 넘기는 실행이면 NVML 이 GPU 를 **정확히 한 장** 볼 때만 통과한다. 못 보면 거부한다(지어내지 않는다).
+/// 그 밖의 실행은 NVML 을 보지 않는다.
+pub fn cdi_all_ready(
+    execution: &ContainerExecution,
+    gpu_count: impl FnOnce() -> Result<usize, String>,
+) -> Result<(), String> {
+    if !(execution.runtime.pass_gpu && execution.runtime.gpu_request == GpuRequest::CdiAll) {
+        return Ok(());
+    }
+    match gpu_count() {
+        Ok(1) => Ok(()),
+        Ok(count) => Err(format!(
+            "CONTAINER_GPU_ALL_NOT_PINNED: 컨테이너를 만들기 직전 NVML 이 GPU {count}장을 본다 — cdi-all 은 한 장일 때만 넘긴다"
+        )),
+        Err(why) => Err(format!(
+            "CONTAINER_GPU_ALL_NOT_PINNED: 컨테이너를 만들기 직전 GPU 가 한 장임을 NVML 로 확인하지 못했다: {why}"
+        )),
+    }
+}
+
 /// 실행 결과의 실패 — 어디서 멈췄는지 나눈다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerRunError {
@@ -627,6 +647,14 @@ pub fn run(
 ) -> Result<ContainerExit, ContainerRunError> {
     let program = execution.runtime.program.as_path();
     let not_started = |detail: String| ContainerRunError::NotStarted { detail };
+    // ★ 결함 462 (재검수 117) — cdi-all 장수를 컨테이너를 만들기 **직전**에 다시 본다. Manifest 해석 때의 검사 뒤 ACK · 갱신을 기다리는 사이
+    //   GPU · CDI 장치가 늘 수 있다.
+    cdi_all_ready(execution, || {
+        gputeer_runtime_nvml::observe()
+            .map(|snapshot| snapshot.gpus.len())
+            .map_err(|e| format!("{e:?}"))
+    })
+    .map_err(not_started)?;
     let create = create_args(execution, input).map_err(not_started)?;
     // ★ 결함 276 — 같은 이름이 남아 있으면(전 실행의 rm 실패) create 가 충돌한다. 이름은 이 시도의 것이라 남은 것도 이 시도의 것이다.
     let _ = remove_container(program, input.name);
@@ -757,6 +785,40 @@ fn save_logs(
 
 #[cfg(test)]
 mod tests {
+    /// 결함 462 — cdi-all 은 컨테이너를 만들기 직전에도 한 장인지 본다. 그 밖에는 NVML 을 보지 않는다.
+    #[test]
+    fn cdi_all_is_rechecked_right_before_the_container_is_created() {
+        let execution = |gpu_request, pass_gpu| super::ContainerExecution {
+            runtime: super::ContainerRuntime {
+                program: std::path::PathBuf::from("podman"),
+                flavor: super::RuntimeFlavor::Podman,
+                pass_gpu,
+                gpu_request,
+                only: true,
+                node_id: "node".into(),
+                owner: String::new(),
+            },
+            pinned_image: "img@sha256:00".into(),
+            gpu_pin: Some("0".into()),
+        };
+        let all = execution(super::GpuRequest::CdiAll, true);
+        assert_eq!(super::cdi_all_ready(&all, || Ok(1)), Ok(()));
+        for count in [Ok(2), Ok(0), Err("NVML 없음".to_string())] {
+            assert!(super::cdi_all_ready(&all, || count)
+                .unwrap_err()
+                .starts_with("CONTAINER_GPU_ALL_NOT_PINNED"));
+        }
+        for other in [
+            execution(super::GpuRequest::Cdi, true),
+            execution(super::GpuRequest::CdiAll, false),
+        ] {
+            assert_eq!(
+                super::cdi_all_ready(&other, || panic!("NVML 을 봤다")),
+                Ok(())
+            );
+        }
+    }
+
     use super::*;
 
     fn runtime(flavor: RuntimeFlavor) -> ContainerRuntime {

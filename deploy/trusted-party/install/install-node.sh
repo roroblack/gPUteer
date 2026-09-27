@@ -6,17 +6,43 @@
 #     --cpu-cores 8 --ram-gib 16 --workspace-gib 100 \
 #     --container-runtime "$(command -v podman)" --container-runtime-kind podman --container-gpu
 #
-# --register 는 root 로 돌린다(sudo) — /etc/gputeer 에 설정을 두고 gputeer-agent@<노드> 유닛을 켠다.
-#   Agent 는 root 로 돌지 않는다: 유닛의 User= 를 sudo 를 부른 계정으로 채운다(결함 280).
+# 일반 계정으로 돌린다(root 로 돌리면 멈춘다). --register 만 sudo 로 부른다 — /etc/gputeer 에 설정을 두고 gputeer-agent@<노드> 유닛을 켠다.
+#   Agent 는 root 로 돌지 않는다: 인스턴스 drop-in 의 User= 를 sudo 를 부른 계정으로 채운다(결함 280 · 445).
+# ★ 결함 455 (재검수 117) — --register 는 **두 단계**다. 사용자 단계(폴더 · 키 · 설정 · 점검 · 가입 파일)는 root 가 아니라 `sudo -u <부른 계정>` 으로
+#   이 스크립트를 다시 돌려 그 계정 권한으로 쓰고, root 단계는 /etc 아래만 쓴다. root 는 사용자 폴더의 파일을 읽지도 쓰지도 넘기지도 않는다
+#   (전에는 root 가 사용자 폴더 안에서 백업 · 쓰기 · chown 을 해, 그 계정으로 도는 워크로드가 심어 둔 링크를 따라 시스템 파일을 덮을 수 있었다).
 # ★ 쓰는 파일은 전부 저장소 밖(기본 ~/.config/gputeer)이다. 자원 수치는 소유자가 내놓는 양이다 — 기본값을 두지 않는다.
 set -eu
 
 die() { echo "$*" >&2; exit 1; }
 
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+HERE=$(dirname "$SELF")
+PHASE=${GPUTEER_INSTALL_PHASE:-}
+case "$PHASE" in ""|user) ;; *) die "INSTALL_ARGS: GPUTEER_INSTALL_PHASE 는 설치기 안에서만 쓴다" ;; esac
+WANT_REGISTER=
+for arg in "$@"; do [ "$arg" != --register ] || WANT_REGISTER=1; done
+USER_OUT=
+if [ -n "$WANT_REGISTER" ] && [ -z "$PHASE" ]; then
+    [ "$(id -u)" -eq 0 ] || die "REGISTER: --register 는 root 로 돌린다(sudo)"
+    AGENT_USER=${SUDO_USER:-}
+    [ -n "$AGENT_USER" ] && [ "$AGENT_USER" != root ] || die "REGISTER: sudo 로 부른다 — Agent 를 돌릴 계정(root 가 아닌)을 SUDO_USER 로 안다"
+    # 사용자 단계 — 부른 계정으로 같은 인자를 다시 돌린다(--register 는 그 단계에서 무시한다).
+    if USER_OUT=$(sudo -u "$AGENT_USER" -H env GPUTEER_INSTALL_PHASE=user sh "$SELF" "$@" 2>&1); then
+        printf '%s\n' "$USER_OUT"
+    else
+        printf '%s\n' "$USER_OUT"
+        die "USER_PHASE_FAILED: $AGENT_USER 계정으로 돈 설치 단계가 실패했다 — 위 출력을 고친 뒤 같은 명령을 다시 돌린다"
+    fi
+    PHASE=root
+elif [ "$(id -u)" -eq 0 ]; then
+    die "INSTALL_AS_ROOT: 일반 계정으로 돌린다 — 키 · 설정은 Agent 를 돌릴 계정의 것이어야 한다(등록만 sudo sh $0 <같은 인자> --register)"
+fi
+
 INVITE= NODE_ID= OWNER= GPU_PIN= CPU= RAM_GIB= WS_GIB=
 PANEL_PORT=7610 CONFIG_DIR= NODE_DIR= BIN= SHARED= RT= RT_KIND= RT_GPU= RT_GPU_REQUEST= PROBE_IMAGE=
 # ★ 결함 444 — GPU 관측은 기본 끔(구버전 Coordinator 는 관측을 실은 인사를 거부한다). Coordinator 를 올린 뒤 --attest-gpus 로 켠다.
-CLASSES=TRAINING GPU_MODEL= GPU_VRAM_MIB=0 KEY_PROTECTION=K0 REGISTER= ATTEST=
+CLASSES=TRAINING GPU_MODEL= GPU_VRAM_MIB=0 KEY_PROTECTION=K0 ATTEST=
 while [ $# -gt 0 ]; do
     case "$1" in
         --invite) INVITE=$2; shift 2 ;;
@@ -40,7 +66,7 @@ while [ $# -gt 0 ]; do
         --gpu-model) GPU_MODEL=$2; shift 2 ;;
         --gpu-vram-mib) GPU_VRAM_MIB=$2; shift 2 ;;
         --key-protection) KEY_PROTECTION=$2; shift 2 ;;
-        --register) REGISTER=1; shift ;;
+        --register) shift ;;
         --attest-gpus) ATTEST=true; shift ;;
         *) die "INSTALL_ARGS: 모르는 옵션 $1" ;;
     esac
@@ -70,8 +96,13 @@ case "$RT_GPU_REQUEST" in ""|gpus|cdi|cdi-all) ;; *) die "INSTALL_ARGS: --contai
 [ -z "$PROBE_IMAGE" ] || [ -n "$RT_GPU" ] || die "INSTALL_ARGS: --gpu-probe-image 는 --container-gpu 와 함께 준다"
 case "$KEY_PROTECTION" in K0|K1|K2) ;; *) die "INSTALL_ARGS: --key-protection 은 K0 · K1 · K2" ;; esac
 
-# 초대 파일 — KEY=VALUE 만 읽는다(셸로 실행하지 않는다: source 하면 파일 속 명령이 돈다).
-invite_value() { sed -n "s/^[[:space:]]*$1=//p" "$INVITE" | tail -n 1 | tr -d '\r'; }
+# 초대 파일 — KEY=VALUE 만 읽는다(셸로 실행하지 않는다: source 하면 파일 속 명령이 돈다). root 단계는 부른 계정 권한으로 읽는다(455).
+if [ "$PHASE" = root ]; then
+    INVITE_TEXT=$(sudo -u "$AGENT_USER" cat -- "$INVITE") || die "INVITE_REJECTED: $INVITE 를 $AGENT_USER 권한으로 읽지 못했다"
+else
+    INVITE_TEXT=$(cat -- "$INVITE") || die "INVITE_REJECTED: $INVITE 를 읽지 못했다"
+fi
+invite_value() { printf '%s\n' "$INVITE_TEXT" | sed -n "s/^[[:space:]]*$1=//p" | tail -n 1 | tr -d '\r'; }
 [ "$(invite_value GPUTEER_INVITE_VERSION)" = 1 ] || die "INVITE_REJECTED: 초대 판이 1 이 아니거나 없다"
 CONNECT=$(invite_value GPUTEER_CONNECT); COORD_ID=$(invite_value GPUTEER_COORDINATOR_ID)
 COORD_PUB=$(invite_value GPUTEER_COORDINATOR_PUBKEY); SUB_PUB=$(invite_value GPUTEER_SUBMITTER_PUBKEY)
@@ -82,22 +113,106 @@ for pair in "GPUTEER_CONNECT:$CONNECT" "GPUTEER_COORDINATOR_ID:$COORD_ID" "GPUTE
     [ -n "${pair#*:}" ] || die "INVITE_REJECTED: 초대 파일에 ${pair%%:*} 가 없다"
 done
 
+# 설정 파일 내용 — 사용자 단계는 사용자 폴더의 사본에, root 단계는 /etc 의 인스턴스 파일에 **같은 변수로** 쓴다(root 는 사용자 파일을 읽지 않는다).
+emit_common() {
+    cat <<EOF
+GPUTEER_BIN=$BIN
+GPUTEER_CONNECT=$CONNECT
+GPUTEER_COORDINATOR_ID=$COORD_ID
+GPUTEER_COORDINATOR_PUBKEY=$COORD_PUB
+GPUTEER_SUBMITTER_PUBKEY=$SUB_PUB
+GPUTEER_SHARED_ROOT=$SHARED
+GPUTEER_POOL_AGENTS=$POOL
+EOF
+}
+emit_agent() {
+    cat <<EOF
+GPUTEER_NODE_ID=$NODE_ID
+GPUTEER_NODE_SEED_FILE=$SEED
+GPUTEER_NODE_DIR=$NODE_DIR
+GPUTEER_GPU_PIN=$GPU_PIN
+GPUTEER_OWNER_PANEL_PORT=$PANEL_PORT
+GPUTEER_ATTEST_GPUS=$ATTEST
+GPUTEER_CONTAINER_RUNTIME=$RT
+GPUTEER_CONTAINER_RUNTIME_KIND=$RT_KIND
+GPUTEER_CONTAINER_GPU=$RT_GPU
+GPUTEER_CONTAINER_GPU_REQUEST=$RT_GPU_REQUEST
+EOF
+}
+STAMP=$(date +%Y-%m-%d_%H%M)
+backup_if_exists() {
+    if [ -e "$1" ]; then
+        dest="$(dirname "$1")/_backup/$STAMP"
+        mkdir -p "$dest" && cp -p "$1" "$dest/" && echo "BACKUP $1 -> $dest"
+    fi
+}
+
+if [ "$PHASE" = root ]; then
+    # ── root 단계: /etc 아래만 쓴다 ──────────────────────────────────────────────────────────────
+    # 사용자 단계가 끝에 찍은 실제 경로 · 실행 파일을 받는다(root 는 사용자 폴더를 다시 풀지 않는다 — 그 사이 바뀌어도 /etc 에는 문자열만 적힌다).
+    user_out_value() { printf '%s\n' "$USER_OUT" | sed -n "s/^$1 //p" | tail -n 1; }
+    CONFIG_DIR=$(user_out_value INSTALL_CONFIG_DIR); NODE_DIR=$(user_out_value INSTALL_NODE_DIR)
+    BIN=$(user_out_value INSTALL_BIN); SEED=$(user_out_value INSTALL_SEED)
+    for pair in "CONFIG_DIR:$CONFIG_DIR" "NODE_DIR:$NODE_DIR" "BIN:$BIN" "SEED:$SEED"; do
+        case "${pair#*:}" in /*) ;; *) die "USER_PHASE_FAILED: 사용자 단계가 ${pair%%:*} 를 알려 주지 않았다" ;; esac
+    done
+    # 시험 전용 — 개발 기계에서 root 단계를 가짜 root 로 돌릴 때만 준다(운영에서는 비워 둔다. sudo 는 이 변수를 넘기지 않는다).
+    ETC=${GPUTEER_TEST_ETC_PREFIX:-}/etc
+    mkdir -p "$ETC/gputeer"
+    # ★ 결함 445 · 453 — 공유 파일을 덮지 않는다. 이 노드의 설정은 **인스턴스 파일**에, 실행 계정은 **인스턴스 drop-in** 에 둔다.
+    #   공유 틀은 **없을 때만** 놓고, 있고 다르면 멈춘다(같은 PC 의 다른 노드가 다음 재시작부터 바뀐 틀로 돈다).
+    UNIT="$ETC/systemd/system/gputeer-agent@.service"
+    if [ -e "$UNIT" ]; then
+        cmp -s "$HERE/../gputeer-agent@.service" "$UNIT" || die "UNIT_DIFFERS: $UNIT 가 이 설치기의 틀과 다르다 — 이 PC 의 다른 노드도 쓰는 틀이라 덮지 않는다.
+  비교: diff $UNIT $HERE/../gputeer-agent@.service — 바꾸려면 운영자가 직접 바꾸고 모든 gputeer-agent@ 를 다시 띄운다"
+    fi
+    INSTANCE_ENV="$ETC/gputeer/agent-$NODE_ID.env"
+    COMMON_ETC="$ETC/gputeer/gputeer.env"
+    if [ -e "$COMMON_ETC" ]; then
+        # ★ 결함 458 (재검수 117) — 공통 파일이 있으면 그것이 이긴다(인스턴스 파일에 공통 값을 넣지 않는다 — 453). 그러니 그 값이 **초대와 같은지** 본다.
+        #   다르거나 없으면 멈춘다 — 점검은 초대의 값으로 통과했는데 등록된 Agent 는 다른 값으로 붙게 된다. 풀 목록만 달라도 된다(공통 파일이 더 새것).
+        common_value() { sed -n "s/^[[:space:]]*$1=//p" "$COMMON_ETC" | tail -n 1 | tr -d '\r'; }
+        DIFFERS=
+        for pair in "GPUTEER_CONNECT:$CONNECT" "GPUTEER_COORDINATOR_ID:$COORD_ID" "GPUTEER_COORDINATOR_PUBKEY:$COORD_PUB" \
+            "GPUTEER_SUBMITTER_PUBKEY:$SUB_PUB" "GPUTEER_SHARED_ROOT:$SHARED"; do
+            [ "$(common_value "${pair%%:*}")" = "${pair#*:}" ] || DIFFERS="$DIFFERS ${pair%%:*}"
+        done
+        [ -z "$DIFFERS" ] || die "COMMON_ENV_DIFFERS: $COMMON_ETC 의$DIFFERS 가 초대와 다르거나 없다 — 공통 파일을 초대에 맞추거나 초대를 다시 받는다"
+        backup_if_exists "$INSTANCE_ENV"
+        { echo "GPUTEER_BIN=$BIN"; emit_agent; } > "$INSTANCE_ENV.tmp"
+        POOL_FILE=$COMMON_ETC
+    else
+        backup_if_exists "$INSTANCE_ENV"
+        { emit_common; emit_agent; } > "$INSTANCE_ENV.tmp"
+        POOL_FILE=$INSTANCE_ENV
+    fi
+    chmod 0644 "$INSTANCE_ENV.tmp" && mv "$INSTANCE_ENV.tmp" "$INSTANCE_ENV"
+    [ -e "$UNIT" ] || install -m 0644 "$HERE/../gputeer-agent@.service" "$UNIT"
+    DROPIN="$ETC/systemd/system/gputeer-agent@$NODE_ID.service.d"
+    mkdir -p "$DROPIN"
+    printf '[Service]\nUser=%s\n' "$AGENT_USER" > "$DROPIN/10-user.conf"
+    chmod 0644 "$DROPIN/10-user.conf"
+    systemctl daemon-reload
+    systemctl enable "gputeer-agent@$NODE_ID"
+    # ★ 결함 459 (재검수 117) — 이미 돌고 있으면 **다시 띄우지 않는다**(실행 중인 작업을 끊지 않으려고). 바뀐 설정(예 관측 켜기)은 다시 띄워야 적용된다.
+    if systemctl is-active --quiet "gputeer-agent@$NODE_ID"; then
+        echo "RESTART_NEEDED gputeer-agent@$NODE_ID 가 이미 돈다 — 바뀐 설정은 다시 띄워야 적용된다. 실행 중인 작업이 끝난 뒤: sudo systemctl restart gputeer-agent@$NODE_ID"
+    else
+        systemctl start "gputeer-agent@$NODE_ID"
+    fi
+    echo "REGISTERED gputeer-agent@$NODE_ID (User=$AGENT_USER)"
+    echo "POOL_AGENTS_FILE $POOL_FILE — 풀 노드 목록(GPUTEER_POOL_AGENTS)을 바꿀 때는 이 파일을 고치고 gputeer-agent@$NODE_ID 를 다시 띄운다"
+    exit 0
+fi
+
+# ── 사용자 단계: Agent 를 돌릴 계정 권한으로만 쓴다 ─────────────────────────────────────────────────
 [ -n "$BIN" ] || BIN=$(command -v gputeer || true)
 [ -n "$BIN" ] && [ -x "$BIN" ] || die "INSTALL_ARGS: gputeer 실행 파일이 없다 — --bin <경로>(빌드: cargo build --release -p gputeer-cli)"
 BIN=$(cd "$(dirname "$BIN")" && pwd)/$(basename "$BIN")
-if [ -z "$CONFIG_DIR" ]; then
-    # ★ sudo 로 부르면 HOME 이 root 의 것일 수 있다 — 그러면 root 폴더에 **새 키**를 만든다(신원이 바뀐다). 부른 계정의 집을 쓴다.
-    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
-        USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-        CONFIG_DIR="$USER_HOME/.config/gputeer"
-    else
-        CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gputeer"
-    fi
-fi
-# ★ 결함 438 (재검수 115) — 설치 폴더는 **이 설치기가 쓰는 전용 폴더**만 받는다. 전에는 아무 경로나 받아 --register 끝에 root 로 chown -R 했다
-#   (--config-dir /etc 면 /etc 전체가 일반 사용자 소유가 됐다). 시스템 경로를 거부하고, 이미 있는 폴더는 비었거나 전에 이 설치기가 쓴 폴더(표식)여야 한다.
-# ★ 결함 446 (재검수 116) — 검사는 **실제 경로**에 한다. 전에는 문자열만 봐서 ~/gputeer -> /etc/... 링크로 시스템 경로를 지났다.
-#   대상 자체가 링크면 거부하고, 상위(반드시 있어야 한다)를 `cd -P` 로 풀어 이름을 붙인다. 뒤의 모든 작업은 푼 경로로 한다.
+[ -n "$CONFIG_DIR" ] || CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gputeer"
+# ★ 결함 438 (재검수 115) — 설치 폴더는 **이 설치기가 쓰는 전용 폴더**만 받는다. 시스템 경로를 거부하고, 이미 있는 폴더는 비었거나 전에 이 설치기가 쓴
+#   폴더(표식)여야 한다.
+# ★ 결함 446 (재검수 116) — 검사는 **실제 경로**에 한다. 대상 자체가 링크면 거부하고, 상위(반드시 있어야 한다)를 `cd -P` 로 풀어 이름을 붙인다.
 MARKER=.gputeer-install-dir
 real_install_dir() {
     given=$1
@@ -108,7 +223,7 @@ real_install_dir() {
     case "$name" in .|..) die "INSTALL_DIR_REFUSED: $given — 끝 이름이 . · .. 이다" ;; esac
     [ ! -L "$trimmed" ] || die "INSTALL_DIR_REFUSED: $given 는 링크다 — 실제 폴더를 준다"
     parent=$(dirname "$trimmed")
-    # ★ 상위 폴더는 만들지 않는다 — sudo 로 부르면 mkdir -p 가 ~/.config 같은 상위까지 root 소유 0700 으로 만든다.
+    # ★ 상위 폴더는 만들지 않는다.
     [ -d "$parent" ] || die "INSTALL_DIR_REFUSED: $parent 가 없다 — 먼저 만든다(설치기는 상위 폴더를 만들지 않는다)"
     real_parent=$(cd -P "$parent" && pwd -P) || die "INSTALL_DIR_REFUSED: $parent 를 풀지 못했다"
     printf '%s/%s' "${real_parent%/}" "$name"
@@ -135,53 +250,32 @@ else
     NODE_DIR=$(real_install_dir "$NODE_DIR")
 fi
 guard_install_dir "$NODE_DIR"
+SEED="$CONFIG_DIR/$NODE_ID.seed"
+COMMON="$CONFIG_DIR/gputeer.env"; AGENT_ENV="$CONFIG_DIR/agent-$NODE_ID.env"; JOIN="$CONFIG_DIR/join-$NODE_ID.json"
+# ★ 결함 457 (재검수 117) — 다른 계정이 쓰던 노드를 이 계정으로 조용히 이어 쓰지 않는다. 설정 폴더 · 쓰는 파일 · 노드 폴더 안 전부가 이 계정의 것이어야 한다
+#   (전에는 root 가 노드 폴더만 넘겨, 옛 계정이 만든 fence DB · 체크포인트를 새 계정이 못 열었다). 계정을 바꾸려면 새 노드 id · 새 폴더로 설치한다.
+ME=$(id -u)
+for f in "$CONFIG_DIR" "$SEED" "$COMMON" "$AGENT_ENV" "$JOIN" "$CONFIG_DIR/$MARKER" "$DEFAULT_NODES" "$NODE_DIR"; do
+    [ ! -L "$f" ] || die "INSTALL_DIR_REFUSED: $f 가 링크다 — 지우고 다시 돌린다"
+    [ ! -e "$f" ] || [ -O "$f" ] || die "NODE_OWNED_BY_OTHER: $f 가 이 계정($(id -un))의 것이 아니다 — 계정을 바꾸려면 새 노드 id · 새 폴더로 설치한다"
+done
+if [ -d "$NODE_DIR" ]; then
+    OTHER=$(find "$NODE_DIR" ! -user "$ME" -print 2>/dev/null | head -n 1)
+    [ -z "$OTHER" ] || die "NODE_OWNED_BY_OTHER: $OTHER 가 이 계정의 것이 아니다 — 이 노드는 다른 계정이 쓰던 것이다. 새 노드 id · 새 폴더로 설치한다"
+fi
 umask 077
 mkdir -p "$CONFIG_DIR"
 [ "$(dirname "$NODE_DIR")" != "$DEFAULT_NODES" ] || mkdir -p "$DEFAULT_NODES"
 mkdir -p "$NODE_DIR"
 touch "$CONFIG_DIR/$MARKER" "$NODE_DIR/$MARKER"
-STAMP=$(date +%Y-%m-%d_%H%M)
-
-backup_if_exists() {
-    if [ -e "$1" ]; then
-        dest="$(dirname "$1")/_backup/$STAMP"
-        mkdir -p "$dest" && cp -p "$1" "$dest/" && echo "BACKUP $1 -> $dest"
-    fi
-}
 
 # 1. 키.
-SEED="$CONFIG_DIR/$NODE_ID.seed"
-# 설치기가 쓰는 파일 자리에 링크가 있으면 멈춘다 — root 로 쓰거나 넘길 때 링크 너머를 건드리지 않는다(결함 446).
-for f in "$SEED" "$CONFIG_DIR/gputeer.env" "$CONFIG_DIR/agent-$NODE_ID.env" "$CONFIG_DIR/join-$NODE_ID.json" "$CONFIG_DIR/$MARKER" "$NODE_DIR/$MARKER"; do
-    [ ! -L "$f" ] || die "INSTALL_DIR_REFUSED: $f 가 링크다 — 지우고 다시 돌린다"
-done
 if [ -e "$SEED" ]; then echo "SEED_KEPT $SEED"; else "$BIN" keygen --out "$SEED"; fi
 
 # 2. 설정.
-COMMON="$CONFIG_DIR/gputeer.env"; AGENT_ENV="$CONFIG_DIR/agent-$NODE_ID.env"
 backup_if_exists "$COMMON"; backup_if_exists "$AGENT_ENV"
-cat > "$COMMON" <<EOF
-# install-node.sh 가 $STAMP 에 썼다. 저장소에 넣지 않는다.
-GPUTEER_BIN=$BIN
-GPUTEER_CONNECT=$CONNECT
-GPUTEER_COORDINATOR_ID=$COORD_ID
-GPUTEER_COORDINATOR_PUBKEY=$COORD_PUB
-GPUTEER_SUBMITTER_PUBKEY=$SUB_PUB
-GPUTEER_SHARED_ROOT=$SHARED
-GPUTEER_POOL_AGENTS=$POOL
-EOF
-cat > "$AGENT_ENV" <<EOF
-GPUTEER_NODE_ID=$NODE_ID
-GPUTEER_NODE_SEED_FILE=$SEED
-GPUTEER_NODE_DIR=$NODE_DIR
-GPUTEER_GPU_PIN=$GPU_PIN
-GPUTEER_OWNER_PANEL_PORT=$PANEL_PORT
-GPUTEER_ATTEST_GPUS=$ATTEST
-GPUTEER_CONTAINER_RUNTIME=$RT
-GPUTEER_CONTAINER_RUNTIME_KIND=$RT_KIND
-GPUTEER_CONTAINER_GPU=$RT_GPU
-GPUTEER_CONTAINER_GPU_REQUEST=$RT_GPU_REQUEST
-EOF
+{ echo "# install-node.sh 가 $STAMP 에 썼다. 저장소에 넣지 않는다."; emit_common; } > "$COMMON"
+emit_agent > "$AGENT_ENV"
 echo "CONFIG_WRITTEN $COMMON $AGENT_ENV"
 
 # 3. 점검.
@@ -198,23 +292,18 @@ PUBLIC_KEY=$(echo "$REPORT" | sed -n 's/^CHECK seed .*\([0-9a-f]\{64\}\).*$/\1/p
 
 # 4. 가입 파일 — GPU 는 nvidia-smi 로 읽는다(못 읽으면 --gpu-model · --gpu-vram-mib. 지어내지 않는다).
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-GPUS=
-for index in $(echo "$GPU_PIN" | tr ',' ' '); do
-    model=$GPU_MODEL; vram=$GPU_VRAM_MIB
-    if [ -z "$model" ] || [ "$vram" -le 0 ]; then
-        command -v nvidia-smi >/dev/null || die "GPU_UNKNOWN: nvidia-smi 가 없다 — --gpu-model · --gpu-vram-mib 로 직접 준다"
-        row=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits -i "$index") || die "GPU_UNKNOWN: GPU $index 를 읽지 못했다"
-        [ -n "$model" ] || model=$(echo "$row" | cut -d, -f1 | sed 's/^ *//; s/ *$//')
-        [ "$vram" -gt 0 ] || vram=$(echo "$row" | cut -d, -f2 | tr -d ' ')
-    fi
-    echo "$vram" | grep -Eq '^[0-9]+$' || die "GPU_UNKNOWN: VRAM 값이 숫자가 아니다($vram)"
-    [ -z "$GPUS" ] || GPUS="$GPUS, "
-    GPUS="$GPUS{ \"gpu_id\": \"$NODE_ID-gpu-$index\", \"model\": \"$(json_escape "$model")\", \"healthy\": true, \"available_vram_bytes\": $((vram * 1048576)) }"
-done
+model=$GPU_MODEL; vram=$GPU_VRAM_MIB
+if [ -z "$model" ] || [ "$vram" -le 0 ]; then
+    command -v nvidia-smi >/dev/null || die "GPU_UNKNOWN: nvidia-smi 가 없다 — --gpu-model · --gpu-vram-mib 로 직접 준다"
+    row=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits -i "$GPU_PIN") || die "GPU_UNKNOWN: GPU $GPU_PIN 을 읽지 못했다"
+    [ -n "$model" ] || model=$(echo "$row" | cut -d, -f1 | sed 's/^ *//; s/ *$//')
+    [ "$vram" -gt 0 ] || vram=$(echo "$row" | cut -d, -f2 | tr -d ' ')
+fi
+echo "$vram" | grep -Eq '^[0-9]+$' || die "GPU_UNKNOWN: VRAM 값이 숫자가 아니다($vram)"
+GPUS="{ \"gpu_id\": \"$NODE_ID-gpu-$GPU_PIN\", \"model\": \"$(json_escape "$model")\", \"healthy\": true, \"available_vram_bytes\": $((vram * 1048576)) }"
 if [ -n "$RT" ]; then TIER=S3; ISOLATION=CONTAINED; else TIER=S0; ISOLATION=RESTRICTED; fi
 CLASSES_JSON=$(echo "$CLASSES" | tr ',' '\n' | sed 's/^ *//; s/ *$//; s/.*/"&"/' | paste -sd, -)
 NOW_MS=$(($(date +%s) * 1000))
-JOIN="$CONFIG_DIR/join-$NODE_ID.json"
 backup_if_exists "$JOIN"
 cat > "$JOIN" <<EOF
 {
@@ -241,48 +330,12 @@ EOF
 echo "JOIN_FILE $JOIN"
 echo "PUBLIC_KEY $PUBLIC_KEY"
 
-# 5. 등록.
-HERE=$(cd "$(dirname "$0")" && pwd)
-if [ -n "$REGISTER" ]; then
-    [ "$(id -u)" -eq 0 ] || die "REGISTER: root 로 돌린다(sudo)"
-    AGENT_USER=${SUDO_USER:-}
-    [ -n "$AGENT_USER" ] && [ "$AGENT_USER" != root ] || die "REGISTER: sudo 로 부른다 — Agent 를 돌릴 계정(root 가 아닌)을 SUDO_USER 로 안다"
-    mkdir -p /etc/gputeer
-    # ★ 결함 445 (재검수 115) — 공유 파일을 덮지 않는다. 이 노드의 설정은 **인스턴스 파일 하나**에(공통 값 + 노드 값), 실행 계정은 **인스턴스 drop-in** 에 둔다.
-    #   전에는 공유 틀의 User= 와 /etc/gputeer/gputeer.env 를 설치마다 덮어, 같은 PC 의 앞 노드가 뒤 사용자로 실행돼 자기 시드를 못 읽었다
-    #   (운영자 PC 라면 운영자의 gputeer.env 까지 덮었다).
-    # ★ 결함 453 (재검수 116) — 공유 틀은 **없을 때만** 놓는다. 있고 다르면 멈춘다(전에는 덮어, 같은 PC 의 다른 노드가 다음 재시작부터 바뀐 틀로 돌았다).
-    UNIT=/etc/systemd/system/gputeer-agent@.service
-    if [ -e "$UNIT" ]; then
-        cmp -s "$HERE/../gputeer-agent@.service" "$UNIT" || die "UNIT_DIFFERS: $UNIT 가 이 설치기의 틀과 다르다 — 이 PC 의 다른 노드도 쓰는 틀이라 덮지 않는다.
-  비교: diff $UNIT $HERE/../gputeer-agent@.service — 바꾸려면 운영자가 직접 바꾸고 모든 gputeer-agent@ 를 다시 띄운다"
-    fi
-    # ★ 453 — 이 PC 에 공통 파일(/etc/gputeer/gputeer.env — 운영자 PC 등)이 있으면 인스턴스 파일에 공통 값을 넣지 않는다. 넣으면 뒤에 읽는
-    #   인스턴스 파일이 이겨, 공통 파일의 풀 목록 갱신(admit-node)이 조용히 가려진다.
-    INSTANCE_ENV="/etc/gputeer/agent-$NODE_ID.env"
-    backup_if_exists "$INSTANCE_ENV"
-    if [ -e /etc/gputeer/gputeer.env ]; then
-        cat "$AGENT_ENV" > "$INSTANCE_ENV.tmp"
-        POOL_FILE=/etc/gputeer/gputeer.env
-    else
-        { cat "$COMMON"; cat "$AGENT_ENV"; } > "$INSTANCE_ENV.tmp"
-        POOL_FILE=$INSTANCE_ENV
-    fi
-    chmod 0644 "$INSTANCE_ENV.tmp" && mv "$INSTANCE_ENV.tmp" "$INSTANCE_ENV"
-    [ -e "$UNIT" ] || install -m 0644 "$HERE/../gputeer-agent@.service" "$UNIT"
-    DROPIN="/etc/systemd/system/gputeer-agent@$NODE_ID.service.d"
-    mkdir -p "$DROPIN"
-    printf '[Service]\nUser=%s\n' "$AGENT_USER" > "$DROPIN/10-user.conf"
-    chmod 0644 "$DROPIN/10-user.conf"
-    # ★ 결함 438 · 447 — 설치기가 쓴 것만 **이름으로** 넘긴다. 재귀로 넘기지 않는다(전에는 노드 폴더 · _backup 을 재귀로 넘겨, 표식 있는 폴더에 둔
-    #   다른 파일까지 넘어갔다). Agent 가 노드 폴더 안에 만드는 것(fence DB · 체크포인트)은 Agent 계정으로 만들어진다.
-    #   _backup 은 root 소유로 남는다(sudo 로 읽는다). -h: 링크면 링크 자체만 바꾼다.
-    chown -h "$AGENT_USER" "$CONFIG_DIR" "$CONFIG_DIR/$MARKER" "$SEED" "$COMMON" "$AGENT_ENV" "$JOIN" "$NODE_DIR" "$NODE_DIR/$MARKER"
-    [ "$(dirname "$NODE_DIR")" != "$DEFAULT_NODES" ] || chown -h "$AGENT_USER" "$DEFAULT_NODES"
-    systemctl daemon-reload
-    systemctl enable --now "gputeer-agent@$NODE_ID"
-    echo "REGISTERED gputeer-agent@$NODE_ID (User=$AGENT_USER)"
-    echo "POOL_AGENTS_FILE $POOL_FILE — 풀 노드 목록(GPUTEER_POOL_AGENTS)을 바꿀 때는 이 파일을 고치고 gputeer-agent@$NODE_ID 를 다시 띄운다"
+if [ "$PHASE" = user ]; then
+    # root 단계에 넘길 값 — 마지막 줄들이다(root 단계는 같은 이름의 마지막 줄을 읽는다).
+    echo "INSTALL_CONFIG_DIR $CONFIG_DIR"
+    echo "INSTALL_NODE_DIR $NODE_DIR"
+    echo "INSTALL_SEED $SEED"
+    echo "INSTALL_BIN $BIN"
 else
     echo "NOT_REGISTERED — 등록하려면: sudo sh $0 <같은 인자> --register"
 fi

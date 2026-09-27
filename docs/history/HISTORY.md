@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-27 14:19 — 재검수 117 대응: 결함 455~463(설치기 두 단계 · 하위 ACL · 관측 revision · cdi-all 생성 직전 — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-27_1402_재검수117_결함_455_463.md`
+- 스트림: 배포 스크립트 · Agent · Coordinator · 런북
+- 수행: Linux `--register` 를 사용자 단계(부른 계정)와 root 단계(/etc 만)로 나눔(455) · Windows 하위 파일 · 폴더 ACL 정리(456) · 다른 계정 소유
+  노드면 멈춤(457) · 공통 env 가 초대와 다르면 멈춤(458) · 도는 Agent 는 다시 띄우지 않고 RESTART_NEEDED(459) · 순서 비교는 같은 revision 의 확인만(460) ·
+  CPU 전용 반입이 불일치를 지움(461) · cdi-all 을 컨테이너 생성 직전에 재확인(462) · refresh 는 후보 남은 노드만 건너뜀 · 예약 로그(463)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1385 passed · 0 failed · ignored 4. 뮤테이션 3건(revision 무시 · 반입 때 삭제 · 생성 직전 장수)
+  모두 잡힘. Linux 두 단계는 Git Bash 에서 가짜 root · sudo · systemctl 과 시험용 /etc 접두로 흉내 냈다(진짜 root · systemd 아님). Windows 하위 ACL ·
+  refresh 는 PowerShell 5.1 에서 직접 돌렸다. ★ `--register` · `-Register` 를 진짜로는 돌리지 않았다
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-27 13:52 — 재검수 116 대응: 결함 446~454(설치 경로 실제 경로 · 관측 순서 · cdi-all 재확인 — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-26_1259_재검수116_결함_446_454.md`

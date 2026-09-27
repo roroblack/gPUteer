@@ -410,6 +410,14 @@ fn update_inventory_in_tx(
         let mut gpus = inventory.gpus.clone().unwrap_or_default();
         gpus.sort_by(|left, right| left.gpu_id.cmp(&right.gpu_id));
         if gpus.is_empty() {
+            // ★ 결함 461 (재검수 117) — GPU 를 주장하지 않는 선언을 받으면 GPU 관측 불일치를 **지운다**(접지 않는 것만으로는, 그 사이 Hello 가
+            //   없을 때 다시 GPU 를 선언하면 옛 불일치가 살아났다). 표는 여는 때 만든다(결함 451).
+            transaction
+                .execute(
+                    "DELETE FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
+                    rusqlite::params![inventory.node_id],
+                )
+                .map_err(map_sql_error)?;
             fail_at(fault, TestFault::DuringGpuReplacement)?;
         }
         for (index, gpu) in gpus.iter().enumerate() {
@@ -583,16 +591,25 @@ impl CoordinatorInventoryStore {
         };
         // ★ 결함 449 (재검수 116) — 관측은 처리 순서가 아니라 **관측 시각** 순서로 판정한다. 같은 노드의 관측은 같은 Agent 시계라 서로 비교된다.
         let mismatch_at = fetch_gpu_mismatch_at(&transaction, node_id)?;
+        // ★ 결함 460 (재검수 117) — 마지막 확인은 **지금 선언과 같은 revision** 일 때만 순서 비교에 쓴다. 옛 선언에 대한 확인이 새 선언의
+        //   불일치를 억누르지 않게.
         let last_match_at = transaction
             .query_row(
-                "SELECT attested_at_unix_ms FROM coordinator_node_gpu_attestation WHERE node_id = ?1",
+                "SELECT inventory_revision, attested_at_unix_ms FROM coordinator_node_gpu_attestation WHERE node_id = ?1",
                 rusqlite::params![node_id],
-                |row| row.get::<_, Vec<u8>>(0),
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
             )
             .optional()
             .map_err(map_sql_error)?
-            .map(|raw| decode_u64(&raw, "gpu attestation attested_at_unix_ms"))
-            .transpose()?;
+            .map(|(revision, at)| {
+                Ok::<_, InventoryStoreError>((
+                    decode_u64(&revision, "gpu attestation inventory_revision")?,
+                    decode_u64(&at, "gpu attestation attested_at_unix_ms")?,
+                ))
+            })
+            .transpose()?
+            .filter(|(revision, _)| *revision == inventory.inventory_revision)
+            .map(|(_, at)| at);
         if let Err(reason) = crate::gpu_attestation::match_declaration(declared, &observation.gpus)
         {
             // ★ 결함 440 (재검수 115) — 불일치를 **기록**한다(전에는 아무것도 적지 않고 돌아가, 재선언이 틀린 선언을 계속 신선하게 만들었다).
@@ -2634,6 +2651,69 @@ mod tests {
             candidate(&mut store).gpu_observation_mismatch_at_unix_ms,
             None
         );
+    }
+
+    /// ★ 결함 461 (재검수 117) — CPU 전용 선언을 **반입하는 것만으로** 옛 불일치가 지워진다(그 사이 Hello 가 없어도 GPU 재선언에서 살아나지 않는다).
+    #[test]
+    fn a_cpu_only_import_alone_clears_an_old_gpu_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
+        let bad = observation(&[("GPU-1", "model-a-5", 15)]);
+        store.record_gpu_attestation("node-a", &bad, 150).unwrap();
+        let mut cpu_only = inventory("node-a", 2, 1_999_999_999_000, 5);
+        cpu_only.gpus = None;
+        store.update_inventory(&cpu_only).unwrap();
+        store
+            .update_inventory(&inventory("node-a", 3, 1_999_999_999_500, 5))
+            .unwrap();
+        let candidate = store
+            .pool_snapshot(2_000_000_000_000)
+            .unwrap()
+            .candidates
+            .into_iter()
+            .find(|c| c.node_id == "node-a")
+            .unwrap();
+        assert_eq!(candidate.gpu_observation_mismatch_at_unix_ms, None);
+    }
+
+    /// ★ 결함 460 (재검수 117) — 옛 revision 의 확인은 새 revision 의 불일치를 억누르지 않는다.
+    #[test]
+    fn an_older_revisions_match_does_not_suppress_a_new_revisions_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
+        let revision_one = observation(&[("GPU-1", "model-a-5", 15), ("GPU-2", "model-z-5", 25)]);
+        assert!(matches!(
+            store
+                .record_gpu_attestation("node-a", &revision_one, 200)
+                .unwrap(),
+            GpuAttestationOutcome::Recorded { .. }
+        ));
+        store
+            .update_inventory(&inventory("node-a", 2, 1_000, 7))
+            .unwrap();
+        // 시계가 되돌아간 관측(180) — revision 2 와 맞지 않는다. 옛 revision 의 확인(200)과 비교하지 않고 적는다.
+        assert!(matches!(
+            store
+                .record_gpu_attestation("node-a", &revision_one, 180)
+                .unwrap(),
+            GpuAttestationOutcome::Mismatch(_)
+        ));
+        let candidate = store
+            .pool_snapshot(2_000_000_000_000)
+            .unwrap()
+            .candidates
+            .into_iter()
+            .find(|c| c.node_id == "node-a")
+            .unwrap();
+        assert_eq!(candidate.gpu_observation_mismatch_at_unix_ms, Some(180));
     }
 
     /// ★ 결함 451 (재검수 116) — 관측 표는 여는 때 생긴다(첫 관측 전의 옛 DB 도 표가 있는 상태로 읽는다).

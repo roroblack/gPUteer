@@ -4,7 +4,8 @@
 #   경로가 import-inventory 하나뿐이라, 이것을 돌리지 않으면 등록 하루 뒤부터 풀이 새 작업을 배치하지 않는다(결함 301).
 #   운영자 기계의 작업 스케줄러에 하루 한 번(최대 나이보다 짧게) 건다:
 #     schtasks /Create /TN gputeer-refresh-inventory /SC HOURLY /MO 6 /RL LIMITED `
-#       /TR "powershell -NoProfile -ExecutionPolicy Bypass -File <이 파일> -EnvFile <운영자 gputeer.env>"
+#       /TR "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& '<이 파일>' -EnvFile '<운영자 gputeer.env>' *>> '<로그 파일>'\""
+#   ★ 결함 463 — 출력을 로그에 남긴다. 실패(ADMIT_INCOMPLETE · REFRESH_FAILED)는 로그와 작업 스케줄러의 "마지막 실행 결과" 로 본다.
 # ★ 이것은 "노드가 살아 있다" 를 확인하지 않는다 — 운영자가 받은 선언을 다시 적을 뿐이다. 생존은 scheduler 의 --silent-after-ms 가 본다.
 # ★ 결함 440 (재검수 115) — 이것은 하드웨어를 다시 읽지 않는다. 받아 둔 **선언**에 지금 시각을 찍을 뿐이라, 틀린 선언도 신선해진다.
 #   그래서 **GPU 관측을 켜지 않은 노드**(CPU 전용 · 관측 전 판 Agent)용이다. 관측을 켠 노드는 인사의 관측이 신선도를 준다.
@@ -20,16 +21,19 @@ foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
 }
 $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
 # ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
-#   방금 반입한 새 선언을 되돌린다 — 아무것도 넣지 않고 멈춘다(신선도가 끊겨 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
-$leftover = @(Get-ChildItem -LiteralPath $admittedDir -Filter ".candidate-*.json" -File -Force -ErrorAction SilentlyContinue)
-if ($leftover.Count -gt 0) {
-    throw "ADMIT_INCOMPLETE: $($leftover[0].FullName) 가 남아 있다 — admit-node 가 끝나지 않았다. 그 노드의 가입 파일로 admit-node 를 다시 돌린 뒤 refresh 한다"
+#   방금 반입한 새 선언을 되돌린다 — 그 노드는 넣지 않는다(신선도가 끊겨 그 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
+# ★ 결함 463 (재검수 117) — 후보가 남은 **그 노드만** 건너뛰고 나머지는 갱신한 뒤 실패로 끝낸다(전에는 후보 하나가 전체를 멈춰 풀 전체가 빠졌다).
+$incomplete = @(Get-ChildItem -LiteralPath $admittedDir -Filter ".candidate-*.json" -File -Force -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.BaseName.Substring(".candidate-".Length) })
+foreach ($node in $incomplete) {
+    Write-Warning "ADMIT_INCOMPLETE $node — admitted\.candidate-$node.json 이 남아 있다. 그 노드의 가입 파일로 admit-node 를 다시 돌린다(이번 refresh 는 건너뛴다)"
 }
 $files = @(Get-ChildItem -LiteralPath $admittedDir -Filter "join-*.json" -File -ErrorAction SilentlyContinue)
-if ($files.Count -eq 0) { throw "REFRESH: $admittedDir 에 받은 노드가 없다 — admit-node 로 먼저 받는다" }
+if ($files.Count -eq 0 -and $incomplete.Count -eq 0) { throw "REFRESH: $admittedDir 에 받은 노드가 없다 — admit-node 로 먼저 받는다" }
 $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $failed = 0
 foreach ($file in $files) {
+    if ($file.BaseName.Substring("join-".Length) -in $incomplete) { continue }
     $join = Get-Content -Encoding UTF8 -Raw $file.FullName | ConvertFrom-Json
     $agent = @($join.agents)[0]
     $agent.inventory.inventory_revision = $nowMs
@@ -38,4 +42,5 @@ foreach ($file in $files) {
     & $config.GPUTEER_BIN import-inventory --inventory $file.FullName --inventory-db $config.GPUTEER_CONTROL_DB | Out-Host
     if ($LASTEXITCODE -ne 0) { $failed += 1; Write-Host "REFRESH_FAILED $($file.Name)" } else { Write-Host "REFRESHED $($agent.registry.node_id)" }
 }
+if ($incomplete.Count -gt 0) { throw "REFRESH: admit-node 가 끝나지 않은 노드가 있다($($incomplete -join ', ')) — 나머지는 갱신했다" }
 if ($failed -gt 0) { throw "REFRESH: $failed 개 실패" }

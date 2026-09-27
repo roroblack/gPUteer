@@ -1109,7 +1109,9 @@ fn run_one_connection_inner(
         // ★ 결함 301 — NVML 을 **먼저** 읽고 그 시각을 적은 뒤 Hello 시각을 잡는다(관측 시각 <= Hello 시각, signing.md §6.6).
         let gpu_observation = if config.attest_gpus {
             let observed = gputeer_runtime_nvml::observe().map_err(|e| format!("{e:?}"));
-            // ★ 결함 454 — cdi-all 노드는 GPU 를 전부 넘기므로 핀으로 거르지 않고 **전부** 보고한다(늘어난 GPU 가 선언 불일치로 드러난다).
+            // ★ 결함 454 — cdi-all 노드는 GPU 를 전부 넘기므로 핀으로 거르지 않고 **전부** 보고한다(보는 것을 숨기지 않는다).
+            //   ★ 462 정정 — Coordinator 대조는 선언보다 많은 관측 GPU 를 허용하므로 늘어난 GPU 가 불일치(배치 관문)로 되지는 않는다.
+            //   늘어난 GPU 를 막는 것은 Job 마다의 cdi-all 재확인(Manifest 해석 · 컨테이너 생성 직전)이다.
             let passes_all_gpus = config.container_runtime.as_ref().is_some_and(|runtime| {
                 runtime.pass_gpu && runtime.gpu_request == container::GpuRequest::CdiAll
             });

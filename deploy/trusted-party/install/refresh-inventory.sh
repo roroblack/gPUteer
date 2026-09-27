@@ -1,6 +1,7 @@
 #!/bin/sh
 # gPUteer 노드 등록 정보 새로 넣기 (운영자 · Linux) — refresh-inventory.ps1 과 같다(결함 301). cron 에 하루 한 번보다 자주 건다:
-#   0 */6 * * *  sh <이 파일> --env-file /etc/gputeer/gputeer.env
+#   0 */6 * * *  sh <이 파일> --env-file /etc/gputeer/gputeer.env >> <로그 파일> 2>&1
+#   ★ 결함 463 — 출력을 로그에 남긴다. 실패(ADMIT_INCOMPLETE · REFRESH_FAILED)는 로그와 종료 코드로 본다.
 # ★ 노드가 살아 있는지는 확인하지 않는다 — 받은 선언을 다시 적을 뿐이다. 생존은 scheduler 의 --silent-after-ms 가 본다.
 # ★ 결함 440 (재검수 115) — 이것은 하드웨어를 다시 읽지 않는다. 받아 둔 **선언**에 지금 시각을 찍을 뿐이라, 틀린 선언도 신선해진다.
 #   그래서 **GPU 관측을 켜지 않은 노드**(CPU 전용 · 관측 전 판 Agent)용이다. 관측을 켠 노드는 인사의 관측이 신선도를 준다.
@@ -13,16 +14,19 @@ value() { sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'; }
 BIN=$(value GPUTEER_BIN); DB=$(value GPUTEER_CONTROL_DB)
 ADMITTED_DIR="$(cd "$(dirname "$ENV_FILE")" && pwd)/admitted"
 # ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
-#   방금 반입한 새 선언을 되돌린다 — 아무것도 넣지 않고 멈춘다(신선도가 끊겨 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
-for candidate in "$ADMITTED_DIR"/.candidate-*.json; do
-    [ -e "$candidate" ] || continue
-    die "ADMIT_INCOMPLETE: $candidate 가 남아 있다 — admit-node 가 끝나지 않았다. 그 노드의 가입 파일로 admit-node 를 다시 돌린 뒤 refresh 한다"
-done
+#   방금 반입한 새 선언을 되돌린다 — 그 노드는 넣지 않는다(신선도가 끊겨 그 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
+# ★ 결함 463 (재검수 117) — 후보가 남은 **그 노드만** 건너뛰고 나머지는 갱신한 뒤 0 이 아닌 코드로 끝낸다(전에는 후보 하나가 전체를 멈춰 풀 전체가 빠졌다).
+count=0; failed=0; incomplete=
 NOW_MS=$(($(date +%s) * 1000))
-count=0; failed=0
 for file in "$ADMITTED_DIR"/join-*.json; do
     [ -e "$file" ] || continue
     count=$((count + 1))
+    node=$(basename "$file" .json); node=${node#join-}
+    if [ -e "$ADMITTED_DIR/.candidate-$node.json" ]; then
+        incomplete="$incomplete $node"
+        echo "ADMIT_INCOMPLETE $node — admitted/.candidate-$node.json 이 남아 있다. 그 노드의 가입 파일로 admit-node 를 다시 돌린다(이번 refresh 는 건너뛴다)" >&2
+        continue
+    fi
     sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $NOW_MS/" \
         -e "s/\"observed_at_unix_ms\"[[:space:]]*:[[:space:]]*[0-9]*/\"observed_at_unix_ms\": $NOW_MS/" "$file" > "$file.tmp"
     mv "$file.tmp" "$file"
@@ -32,5 +36,11 @@ for file in "$ADMITTED_DIR"/join-*.json; do
         failed=$((failed + 1)); echo "REFRESH_FAILED $(basename "$file")"
     fi
 done
-[ "$count" -gt 0 ] || die "REFRESH: $ADMITTED_DIR 에 받은 노드가 없다 — admit-node 로 먼저 받는다"
+for candidate in "$ADMITTED_DIR"/.candidate-*.json; do
+    [ -e "$candidate" ] || continue
+    node=$(basename "$candidate" .json); node=${node#.candidate-}
+    case " $incomplete " in *" $node "*) ;; *) incomplete="$incomplete $node"; echo "ADMIT_INCOMPLETE $node — 받아 둔 활성 사본 없이 후보만 남았다. admit-node 를 다시 돌린다" >&2 ;; esac
+done
+[ "$count" -gt 0 ] || [ -n "$incomplete" ] || die "REFRESH: $ADMITTED_DIR 에 받은 노드가 없다 — admit-node 로 먼저 받는다"
+[ -z "$incomplete" ] || die "REFRESH: admit-node 가 끝나지 않은 노드가 있다(${incomplete# }) — 나머지는 갱신했다"
 [ "$failed" -eq 0 ] || die "REFRESH: $failed 개 실패"

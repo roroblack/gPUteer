@@ -181,16 +181,44 @@ function Set-OwnerOnlyAcl([string]$path, [bool]$isDir) {
 }
 # ★ 좁힌 뒤 **읽어서** 확인한다 — 소유자가 세 주체 밖이거나, 세 주체 밖의 허용 항목이 하나라도 남으면 멈춘다(예 전에 손으로 준 명시 항목).
 #   ★ 막지 않는 것: 이미 열려 있던 핸들 · 관리자 · SYSTEM · 같은 사용자로 도는 다른 프로그램.
-function Assert-OwnerOnlyAcl([string]$path) {
+#   하위 항목은 상속을 받아도 된다(`-RequireProtected $false`) — 좁힌 폴더에서 물려받는 것이라 허용 항목만 본다.
+function Assert-OwnerOnlyAcl([string]$path, [bool]$RequireProtected = $true) {
     $acl = Get-Acl -LiteralPath $path
     $owner = try { $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { "" }
     if ($owner -notin $ownerSids) { throw "ACL_OPEN: $path 의 소유자가 $($acl.Owner) 다 — 현재 사용자 · SYSTEM · Administrators 여야 한다" }
-    if (-not $acl.AreAccessRulesProtected) { throw "ACL_OPEN: $path 가 상위 폴더 권한을 물려받는다" }
+    if ($RequireProtected -and -not $acl.AreAccessRulesProtected) { throw "ACL_OPEN: $path 가 상위 폴더 권한을 물려받는다" }
     foreach ($rule in $acl.Access) {
         if ($rule.AccessControlType -ne "Allow") { continue }
         $sid = try { $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { "$($rule.IdentityReference)" }
         if ($sid -notin $ownerSids) { throw "ACL_OPEN: $path 를 $($rule.IdentityReference) 도 열 수 있다 — 현재 사용자 · SYSTEM · Administrators 만 남긴다" }
     }
+}
+
+# ★ 결함 456 (재검수 117) — 설치 폴더 **아래에 이미 있는** 파일 · 폴더도 좁힌다. 전에는 루트만 좁혀, 전에 상속을 끊고 `Users` 를 준 하위 항목
+#   (gputeer.env · nodes\<노드> 등)이 그대로 열려 있었다. 하위의 junction · 링크는 따라가지 않고 거부한다(좁히는 범위가 밖으로 새지 않게).
+function Get-TreeItems([string]$root) {
+    $pending = New-Object System.Collections.Stack
+    $pending.Push($root)
+    while ($pending.Count -gt 0) {
+        $dir = $pending.Pop()
+        foreach ($item in @(Get-ChildItem -LiteralPath $dir -Force)) {
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw "INSTALL_DIR_REFUSED: $($item.FullName) 는 junction · 링크다 — 설치 폴더 안에 두지 않는다"
+            }
+            $item
+            if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+        }
+    }
+}
+# 하위 전부의 소유자를 현재 사용자로 바꾸고, 명시 항목을 지워 좁힌 루트에서 물려받게 한다(icacls /reset). 그 뒤 하나씩 다시 읽는다.
+function Set-OwnerOnlyTree([string]$root) {
+    $items = @(Get-TreeItems $root)
+    if ($items.Count -eq 0) { return }
+    & icacls $root /setowner "*$($ownerSids[0])" /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $root 아래의 소유자를 바꾸지 못했다" }
+    & icacls (Join-Path $root "*") /reset /T /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $root 아래의 권한을 되돌리지 못했다" }
+    foreach ($item in $items) { Assert-OwnerOnlyAcl $item.FullName $false }
 }
 
 # 상위 폴더는 만들지 않는다 — 기본 노드 폴더의 nodes\ 만 예외다.
@@ -221,6 +249,8 @@ foreach ($dir in @($ConfigDir, $NodeDir)) {
 }
 Assert-OwnerOnlyAcl $ConfigDir
 if ($nodeOutside) { Assert-OwnerOnlyAcl $NodeDir }
+Set-OwnerOnlyTree $ConfigDir
+if ($nodeOutside) { Set-OwnerOnlyTree $NodeDir }
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 
 # 1. 키 — 있으면 쓰고, 없으면 만든다.
@@ -331,5 +361,10 @@ if ($Register) {
     Write-Host "REGISTERED $taskName (다음 로그온부터 뜬다 · 지금 띄우려면: schtasks /Run /TN $taskName)"
 } else {
     Write-Host "NOT_REGISTERED — 등록하려면 -Register 를 붙여 다시 돌리거나: schtasks /Create /TN $taskName /SC ONLOGON /RL LIMITED /TR '$taskRun'"
+}
+# ★ 결함 459 (재검수 117) — 이미 도는 Agent 는 바뀐 설정(예 관측 켜기)을 읽지 않는다. 실행 중인 작업을 끊지 않으려고 여기서 다시 띄우지 않고 알린다.
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($existingTask -and "$($existingTask.State)" -eq "Running") {
+    Write-Host "RESTART_NEEDED $taskName 가 이미 돈다 — 바뀐 설정은 다시 띄워야 적용된다. 실행 중인 작업이 끝난 뒤: schtasks /End /TN $taskName ; schtasks /Run /TN $taskName"
 }
 Write-Host "NEXT 운영자에게 $joinPath 를 보낸다(비밀 없음). 운영자가 admit-node 로 받은 뒤 Agent 가 일을 받는다."
