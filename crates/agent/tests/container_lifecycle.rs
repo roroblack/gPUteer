@@ -124,6 +124,18 @@ fn main() {
             "execute_hands_the_needs_human_verdict_to_the_caller",
             execute_hands_the_needs_human_verdict_to_the_caller,
         ),
+        (
+            "a_never_started_container_is_never_read_as_exit_zero",
+            a_never_started_container_is_never_read_as_exit_zero,
+        ),
+        (
+            "a_kill_that_does_not_stop_is_not_a_stop",
+            a_kill_that_does_not_stop_is_not_a_stop,
+        ),
+        (
+            "an_rm_that_leaves_the_container_is_not_a_removal",
+            an_rm_that_leaves_the_container_is_not_a_removal,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -165,11 +177,36 @@ fn fake_runtime(state: &Path) -> i32 {
         eprintln!("fake: poststart 훅 실패를 흉내낸다");
         return 126;
     }
-    if fails(command) || (command == "rm" && created && fails("rm-created")) {
+    // "inspect-exit" — 종료 상태를 읽는 inspect 만 실패시킨다(멈춤 · 존재 확인용 `{{.State.Running}}` 은 통과 · 결함 502 · 503 시험).
+    let running_only = args.get(1).map(String::as_str) == Some("--format={{.State.Running}}");
+    let inspect_exit_fails = command == "inspect" && !running_only && fails("inspect-exit");
+    // "start-noop" — start 가 0 으로 답하지만 아무것도 띄우지 않는다(결함 501). "kill-noop" — kill 이 0 이지만 멈추지 않는다(결함 502).
+    // "rm-noop" — 만든 뒤의 rm 이 0 이지만 지우지 않는다(결함 503).
+    if command == "start" && fails("start-noop") {
+        std::fs::write(state.join("start-noop"), "").unwrap();
+        return 0;
+    }
+    if command == "kill" && fails("kill-noop") {
+        return 0;
+    }
+    if inspect_exit_fails || fails(command) || (command == "rm" && created && fails("rm-created")) {
         eprintln!("fake: {command} 실패를 흉내낸다");
         return 125;
     }
     let behaviour = || std::fs::read_to_string(state.join("behaviour")).unwrap_or_default();
+    // 컨테이너가 **있는가** — 이 시도의 것(만들었고 지우지 않음) 또는 죽은 회차가 남긴 것(state/leftovers · 지우지 않음).
+    // 없는 이름의 inspect · rm 은 실제 런타임처럼 "No such container" 로 답한다(결함 503 — rm 뒤 사후 조회).
+    let target = args.last().cloned().unwrap_or_default();
+    let is_leftover = std::fs::read_to_string(state.join("leftovers"))
+        .unwrap_or_default()
+        .lines()
+        .any(|id| id.trim() == target);
+    let gone_marker = if is_leftover {
+        state.join(format!("gone.{target}"))
+    } else {
+        state.join("gone")
+    };
+    let exists = (is_leftover || created) && !gone_marker.exists();
     match command {
         "create" => {
             let entry = args
@@ -178,6 +215,7 @@ fn fake_runtime(state: &Path) -> i32 {
                 .unwrap_or("");
             std::fs::write(state.join("behaviour"), entry).unwrap();
             std::fs::write(state.join("create.args"), args.join("\n")).unwrap();
+            let _ = std::fs::remove_file(state.join("gone"));
             println!("fake-container-id");
             0
         }
@@ -199,14 +237,21 @@ fn fake_runtime(state: &Path) -> i32 {
             }
         }
         "inspect" => {
-            let format = args.get(1).map(String::as_str).unwrap_or("");
+            if !exists {
+                eprintln!("Error: No such container: {target}");
+                return 1;
+            }
+            // start 가 0 으로 답했지만 아무것도 띄우지 않았다 — created · 멈춤 · 시작 흔적 없음(결함 501).
+            let never_started = state.join("start-noop").exists() && !state.join("killed").exists();
             let done = finished(state, &behaviour());
-            if format == "--format={{.State.Running}}" {
-                println!("{}", done.is_none());
+            if running_only {
+                println!("{}", !never_started && done.is_none());
+            } else if never_started {
+                println!("false 0 false 0001-01-01T00:00:00Z");
             } else {
                 match done {
-                    Some((code, oom)) => println!("false {code} {oom}"),
-                    None => println!("true 0 false"),
+                    Some((code, oom)) => println!("false {code} {oom} 2026-09-28T00:00:00Z"),
+                    None => println!("true 0 false 2026-09-28T00:00:00Z"),
                 }
             }
             0
@@ -225,7 +270,14 @@ fn fake_runtime(state: &Path) -> i32 {
             0
         }
         "rm" => {
+            if !exists {
+                eprintln!("Error: No such container: {target}");
+                return 1;
+            }
             std::fs::write(state.join("removed"), "").unwrap();
+            if !fails("rm-noop") {
+                std::fs::write(&gone_marker, "").unwrap();
+            }
             0
         }
         "pull" => 0,
@@ -378,8 +430,11 @@ fn a_finished_container_reports_its_own_exit_code() {
         .lines()
         .map(|l| l.split(' ').next().unwrap().to_string())
         .collect();
-    // 남은 같은 이름을 먼저 치우고(결함 276), wait 대신 inspect 로 종료를 본다(시한 있는 명령만 쓴다).
-    assert_eq!(order, ["rm", "create", "start", "inspect", "logs", "rm"]);
+    // 남은 같은 이름을 먼저 치우고(결함 276), wait 대신 inspect 로 종료를 본다(시한 있는 명령만 쓴다). 지운 뒤 inspect 로 없어졌는지 본다(결함 503).
+    assert_eq!(
+        order,
+        ["rm", "create", "start", "inspect", "logs", "rm", "inspect"]
+    );
     let create = std::fs::read_to_string(f.state.join("create.args")).unwrap();
     for flag in [
         "--network=none",
@@ -435,10 +490,6 @@ fn a_failed_create_is_not_a_workload_exit() {
             .is_some_and(|l| l.starts_with("rm -f -v ")),
         "반쯤 만든 컨테이너를 볼륨까지 치우지 않았다:\n{}",
         calls(&f.state)
-    );
-    assert!(
-        f.state.join("removed").exists(),
-        "반쯤 만든 컨테이너를 치우지 않았다"
     );
 }
 
@@ -691,7 +742,7 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     assert!(!started);
     assert_eq!(
         order(&f.state),
-        ["pull", "rm", "create", "rm"],
+        ["pull", "rm", "create", "rm", "inspect"],
         "{}",
         calls(&f.state)
     );
@@ -819,7 +870,8 @@ fn an_undeletable_partial_output_is_reported_and_never_complete() {
 
 /// 결함 481 (재검수 121) — 종료를 다섯 번 못 봐 kill · rm 을 했을 때, rm 이 성공하면 "지웠다"(RemovedUnobserved), 실패하면 "남아 돌 수 있다"(NotObserved).
 fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
-    let f = fixture(Some("inspect"));
+    // 종료 상태만 못 읽는다 — 멈춤 · 존재 확인은 된다(결함 502 · 503 뒤로는 그 확인 없이 지우지 않는다).
+    let f = fixture(Some("inspect-exit"));
     let out = f.work.join("stdout.log");
     let err = f.work.join("stderr.log");
     let error = container::run(
@@ -847,7 +899,7 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
     let removed = order.iter().rposition(|c| c == "rm").unwrap();
     assert!(logs < removed, "지운 뒤에 로그를 받으려 했다: {order:?}");
 
-    let f = fixture(Some("inspect,rm-created"));
+    let f = fixture(Some("inspect-exit,rm-created"));
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "sleep", &[]),
@@ -860,6 +912,98 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
         matches!(&error, ContainerRunError::Unobserved { stopped: true, container: ContainerLeft::Unknown, detail, .. } if detail.contains("rm 실패")),
         "{error:?}"
     );
+}
+
+/// 결함 501 (재검수 126) — `start` 가 0 으로 답해도 컨테이너가 **시작한 흔적이 없으면** 종료 코드 0 으로 읽지 않는다(한 번도 돌지 않은 작업이
+/// `WORKLOAD_RESULT ok=true` 가 되지 않게). 종료를 모르는 것으로 다룬다.
+fn a_never_started_container_is_never_read_as_exit_zero() {
+    let f = fixture(Some("start-noop"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |_| {},
+    )
+    .expect_err("시작한 흔적이 없는데 종료 코드를 돌려줬다");
+    assert!(
+        matches!(&error, ContainerRunError::Unobserved { detail, .. } if detail.contains("INSPECT_NEVER_STARTED")),
+        "{error:?}"
+    );
+    let f = fixture(Some("start-noop"));
+    let outcome = gputeer_agent::exec::execute(
+        &spec("exit-0"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect("멈춤은 확인했다 — 종료 코드 없음으로 확정 단계를 거친다");
+    assert_eq!(
+        outcome.exit.code(),
+        None,
+        "시작하지 않은 작업이 종료 코드를 가졌다"
+    );
+}
+
+/// 결함 502 (재검수 126) — `kill` 이 0 으로 답해도 `inspect` 로 멈춤을 확인하기 전에는 멈췄다고 보지 않는다. 확인하지 못하면 지우지 않는다.
+fn a_kill_that_does_not_stop_is_not_a_stop() {
+    let f = fixture(Some("inspect-exit,kill-noop"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "sleep", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |_| {},
+    )
+    .expect_err("종료를 못 봤는데 성공했다");
+    assert!(
+        matches!(
+            &error,
+            ContainerRunError::Unobserved {
+                stopped: false,
+                logs_complete: false,
+                container: ContainerLeft::Kept,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    let after_start: Vec<String> = call_order(&f.state)
+        .into_iter()
+        .skip_while(|c| c != "start")
+        .collect();
+    assert!(
+        !after_start.iter().any(|c| c == "rm"),
+        "멈춤을 확인하지 못했는데 지웠다: {after_start:?}"
+    );
+    // 남은 컨테이너 정리도 같다.
+    let f = fixture(Some("kill-noop"));
+    std::fs::write(f.state.join("leftovers"), "old-1\n").unwrap();
+    let error = container::remove_leftovers(&execution().runtime, Some(&f.work.join("salvage")))
+        .expect_err("멈추지 않은 것을 치웠다고 했다");
+    assert!(error.contains("멈췄는지 확인하지 못했다"), "{error}");
+    assert!(!calls(&f.state).lines().any(|l| l.starts_with("rm ")));
+}
+
+/// 결함 503 (재검수 126) — `rm` 이 0 으로 답해도 `inspect` 가 "없다" 고 할 때만 지웠다고 본다. 남아 있으면 사람이 본다(작업 폴더 · 표식).
+fn an_rm_that_leaves_the_container_is_not_a_removal() {
+    let f = fixture(Some("rm-noop"));
+    let exit = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |_| {},
+    )
+    .expect("종료는 봤다");
+    assert_eq!(exit.exit_code, 0);
+    assert_eq!(exit.container, ContainerLeft::Unknown);
+    assert!(exit.needs_human());
+    // 결함 504 — 사유가 결과(와 표식)에 실린다.
+    assert!(exit.note.contains("아직 있다"), "{}", exit.note);
+    let f = fixture(Some("rm-noop"));
+    std::fs::write(f.state.join("leftovers"), "old-1\n").unwrap();
+    let error = container::remove_leftovers(&execution().runtime, Some(&f.work.join("salvage")))
+        .expect_err("남아 있는 것을 치웠다고 했다");
+    assert!(error.contains("지웠는지 확인하지 못했다"), "{error}");
 }
 
 /// 결함 487 (재검수 123) — 로그를 못 받으면 반쯤 쓴 출력 파일을 지우고(빈 출력이 성공이 되지 않게) 컨테이너를 남긴다(런타임에 온전한 로그가 남는다).
@@ -892,7 +1036,7 @@ fn unsaved_logs_leave_no_partial_output_and_keep_the_container() {
     );
 
     // 종료를 못 봄 — kill 은 성공, 로그 실패 → 컨테이너를 남기고(지우지 않고) 출력 파일도 없다.
-    let f = fixture(Some("inspect,logs"));
+    let f = fixture(Some("inspect-exit,logs"));
     let out = f.work.join("stdout.log");
     let err = f.work.join("stderr.log");
     let error = container::run(
@@ -1015,6 +1159,11 @@ fn a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident() {
     let body = std::fs::read_to_string(&open[0]).unwrap();
     assert!(
         body.contains("kind=EXITED") && body.contains("container=gputeer-test"),
+        "{body}"
+    );
+    // 결함 504 (재검수 126) — 표식에 **왜**(런타임의 rm 오류)가 남는다.
+    assert!(
+        body.contains("rm 실패") && body.contains("fake: rm 실패를 흉내낸다"),
         "{body}"
     );
     assert!(container::incident_recorded_for(&incidents, "gputeer-test"));

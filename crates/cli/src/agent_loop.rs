@@ -34,8 +34,18 @@ use std::process::Command;
 use std::time::Duration;
 
 /// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
-const FORWARDED_PREFIXES: [&str; 8] = [
+///
+/// ★ 결함 504 (재검수 126) — 컨테이너를 남긴 · 지우지 못한 이유와 사건 표식 기록도 옮겨 찍는다(전에는 자식의 출력에만 있어 서비스 로그에서 사라졌다).
+const FORWARDED_PREFIXES: [&str; 16] = [
     INCIDENT_NOT_RECORDED,
+    "CONTAINER_INCIDENT_RECORDED",
+    "CONTAINER_INCIDENT_OPEN",
+    "CONTAINER_INCIDENT_UNKNOWN",
+    "CONTAINER_NOT_REMOVED",
+    "CONTAINER_KEPT_FOR_LOGS",
+    "CONTAINER_LEFTOVER",
+    "WORKLOAD_DIR_KEPT",
+    "WORKLOAD_MAY_BE_RUNNING",
     "ACK_RECEIPT_VERIFIED",
     "OWNER_STOPPED",
     "RESUME_PREPARED",

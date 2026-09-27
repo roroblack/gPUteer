@@ -14,6 +14,16 @@
 # ★ 쓰는 파일은 전부 저장소 밖(기본 ~/.config/gputeer)이다. 자원 수치는 소유자가 내놓는 양이다 — 기본값을 두지 않는다.
 set -eu
 
+# ★ 결함 505 (재검수 126) — root 로 돌 때는 **어떤 명령을 부르기 전에** PATH 를 시스템 폴더로 고정한다. 부른 계정의 PATH(예 $HOME/bin)를
+#   물려받으면 그 계정으로 돈 워크로드가 심어 둔 dirname · id · sudo · systemctl 을 root 가 실행한다(계정 경계를 넘는다). root 인지 보는
+#   id 도 절대 경로로 부른다. IFS 도 기본값으로 되돌린다. 사용자 단계(`sudo -u <계정>`)는 그 계정 권한이라 계정의 PATH 를 그대로 쓴다.
+if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    export PATH
+    IFS=$(printf ' \t\nX')
+    IFS=${IFS%X}
+fi
+
 die() { echo "$*" >&2; exit 1; }
 
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"

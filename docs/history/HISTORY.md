@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-09-28 00:30 — 재검수 126 대응: 결함 501~505(런타임 성공 응답을 확인 없이 믿지 않기 · 표식의 사유 · 설치기 PATH — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-28_0012_재검수126_결함_501_505.md`
+- 스트림: Agent · CLI · 설치기 · 런북
+- 수행: 종료는 `inspect` 가 멈춤과 시작 흔적(`State.StartedAt`)을 함께 보일 때만 읽음(501) · `kill` 뒤 `inspect` 로 멈춤 확인(502) · `rm` 뒤 `inspect` 로
+  없어졌는지 확인(503) · `ContainerExit.note` 로 런타임 오류 문장을 표식에 싣고 agent-loop 가 컨테이너 사건 줄을 옮겨 찍음(504) · `install-node.sh` 가
+  root 면 첫 명령 전에 `PATH` · `IFS` 고정(505). 가짜 런타임을 "있는가" 모델로 바꾸고 `start-noop` · `kill-noop` · `rm-noop` · `inspect-exit` 를 더했다
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1409 passed · 0 failed · ignored 4 · 경고 0. 뮤테이션 4건(시작 흔적 검사 제거 · kill 0 을 멈춤으로 ·
+  rm 뒤 남아도 Removed · 표식에서 사유 제거) 모두 잡힘. ★ 505 는 `sh -n` 과 `IFS` 바이트 확인까지 — 진짜 root 로 돌리지 않았다. ★ 멈춘 컨테이너의 `logs`
+  0 을 완결로 믿는 것은 남는다(런북 "런타임을 그대로 믿는 곳")
+- 리포트: 결함 문서가 대신한다
+
+---
+
 ## 2026-09-28 00:00 — 재검수 125 대응: 결함 496~500(사건 표식 · 판정 전달 — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-27_2337_재검수125_결함_496_500.md`

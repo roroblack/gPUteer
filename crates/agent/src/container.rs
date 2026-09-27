@@ -355,8 +355,10 @@ pub fn remove_leftovers(
                 }
             }
         }
-        if let Err(why) = remove_container(program, id) {
-            problems.push(format!("{id}: 지우지 못했다 — {why}"));
+        // ★ 결함 503 (재검수 126) — rm 의 0 이 아니라 사후 조회로 없어졌음을 확인한다.
+        let (left, removed) = remove_container_fact(program, id);
+        if left != ContainerLeft::Removed {
+            problems.push(format!("{id}: 지웠는지 확인하지 못했다 — {removed}"));
         }
     }
     if !problems.is_empty() {
@@ -368,24 +370,62 @@ pub fn remove_leftovers(
     Ok(ids)
 }
 
-/// 컨테이너가 **멈췄음을 확인**한다 — `inspect` 가 멈춤을 보이면 곧바로 Ok. 아니면 `kill` 하고, kill 이 성공했거나 그 뒤 `inspect` 가 멈춤을 보이면 Ok.
-/// 둘 다 확인하지 못하면 Err(아직 돌 수 있다). 확인 없이 멈췄다고 보지 않는다(재검수 124 합의 — 보수 규칙).
+/// 컨테이너가 **멈췄음을 확인**한다 — `inspect` 가 멈춤(또는 없음)을 보이면 곧바로 Ok. 아니면 `kill` 하고 **다시 `inspect` 로** 멈춤을 확인한다.
+/// 확인하지 못하면 Err(아직 돌 수 있다). 확인 없이 멈췄다고 보지 않는다(재검수 124 합의 — 보수 규칙).
+///
+/// ★ 결함 502 (재검수 126) — 전에는 `kill` 이 0 이면 곧바로 Ok 였다. `kill` 의 0 은 신호를 **접수했다**는 뜻이지 멈췄다는 뜻이 아니다 — 그 사이
+///   받은 로그를 완결로 적고 `rm` 이 실제로 끝내며 마지막 출력을 잃었다. 이제 kill 뒤 `inspect` 를 몇 번(최대 약 2초) 본다.
 pub fn stop_and_confirm(program: &Path, name: &str) -> Result<(), String> {
-    if let Ok(Some(_)) = inspect_state(program, name) {
+    if let Ok(false) = inspect_running(program, name) {
         return Ok(());
     }
-    let kill = run_cli(program, &["kill".into(), name.into()], SHORT_TIMEOUT);
-    if matches!(&kill, Ok(output) if output.status.success()) {
-        return Ok(());
-    }
-    let kill = match kill {
+    let kill = match run_cli(program, &["kill".into(), name.into()], SHORT_TIMEOUT) {
+        Ok(output) if output.status.success() => "kill 접수".to_string(),
         Ok(output) => format!("kill 실패({}): {}", output.status, output.stderr.trim()),
         Err(why) => format!("kill 실패: {why}"),
     };
-    match inspect_state(program, name) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err(format!("{kill} · 아직 돈다")),
-        Err(why) => Err(format!("{kill} · 상태도 모른다({why})")),
+    let mut last = String::new();
+    for attempt in 0..STOP_CONFIRM_TRIES {
+        match inspect_running(program, name) {
+            Ok(false) => return Ok(()),
+            Ok(true) => last = "아직 돈다".into(),
+            Err(why) => last = format!("상태를 모른다({why})"),
+        }
+        if attempt + 1 < STOP_CONFIRM_TRIES {
+            std::thread::sleep(STOP_CONFIRM_INTERVAL);
+        }
+    }
+    Err(format!("{kill} · {last}"))
+}
+
+/// kill 뒤 멈춤을 몇 번 · 얼마 간격으로 확인할지(결함 502).
+const STOP_CONFIRM_TRIES: u32 = 10;
+const STOP_CONFIRM_INTERVAL: Duration = Duration::from_millis(200);
+
+/// 런타임이 "그런 컨테이너 없다" 고 답했는가(docker · podman 공통 문구).
+fn says_no_such_container(why: &str) -> bool {
+    why.to_lowercase().contains("no such container")
+}
+
+/// 컨테이너가 지금 **도는가** — `inspect --format={{.State.Running}}`. 없는 컨테이너면 "안 돈다"(Ok(false))다.
+/// 종료 코드를 읽는 `inspect_state` 와 따로 둔다 — 멈춤 확인에는 "돌지 않는다" 만 필요하고, 종료 코드는 시작한 흔적까지 봐야 한다(결함 501).
+fn inspect_running(program: &Path, name: &str) -> Result<bool, String> {
+    match cli_ok(
+        program,
+        &[
+            "inspect".into(),
+            "--format={{.State.Running}}".into(),
+            name.into(),
+        ],
+        SHORT_TIMEOUT,
+    ) {
+        Ok(output) => match output.stdout.trim() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            other => Err(format!("State.Running 을 읽지 못했다({other:?})")),
+        },
+        Err(why) if says_no_such_container(&why) => Ok(false),
+        Err(why) => Err(why),
     }
 }
 
@@ -671,12 +711,12 @@ impl ContainerStopper {
         if kill.status.success() {
             return Ok(());
         }
-        match inspect_state(&self.program, &self.name) {
-            Ok(Some(_)) => Err(format!(
+        match inspect_running(&self.program, &self.name) {
+            Ok(false) => Err(format!(
                 "ALREADY_EXITED: 작업이 이미 끝나 있었다 — 이 정지가 종료 원인이 아니다({})",
                 kill.stderr.trim()
             )),
-            Ok(None) => Err(format!(
+            Ok(true) => Err(format!(
                 "kill 이 실패했고 컨테이너가 아직 돈다: {}",
                 kill.stderr.trim()
             )),
@@ -711,6 +751,8 @@ pub struct ContainerExit {
     /// 작업 출력(stdout · stderr)을 끝까지 받았는가. 못 받았으면 반쯤 쓴 파일은 지워져 있다(확정이 실패하게).
     pub logs_complete: bool,
     pub container: ContainerLeft,
+    /// 로그 받기 · 정리가 **왜** 그렇게 됐는가(런타임 오류 문장). 사건 표식에 그대로 싣는다(결함 504 — 전에는 eprintln 으로만 나가 사라졌다).
+    pub note: String,
 }
 
 impl ContainerExit {
@@ -832,22 +874,41 @@ pub fn run_with_gpu_count(
 }
 
 /// 지우고 그 결과를 컨테이너 축으로 돌려준다. 런타임이 "없다" 고 답하면(docker · podman 공통 "no such container") 없는 것이다.
+///
+/// ★ 결함 503 (재검수 126) — `rm` 의 0 은 요청을 **접수했다**는 뜻이다. 뒤이어 `inspect` 가 "없다" 고 답할 때만 없다고 본다(전에는 0 만으로
+///   `Removed` 였다 — 삭제 전에 런타임이 멈추면 컨테이너가 남았는데 표식 없이 작업 폴더를 지웠다).
 fn remove_container_fact(program: &Path, name: &str) -> (ContainerLeft, String) {
     match remove_container(program, name) {
-        Ok(()) => (ContainerLeft::Removed, "rm 성공".into()),
-        Err(why) if why.to_lowercase().contains("no such container") => {
-            (ContainerLeft::Removed, "이미 없다".into())
-        }
+        Ok(()) => match inspect_exists(program, name) {
+            Ok(false) => (ContainerLeft::Removed, "rm 성공 · 없음 확인".into()),
+            Ok(true) => (
+                ContainerLeft::Unknown,
+                "rm 이 성공이라 답했지만 컨테이너가 아직 있다".into(),
+            ),
+            Err(why) => (
+                ContainerLeft::Unknown,
+                format!("rm 이 성공이라 답했지만 없어졌는지 확인하지 못했다({why})"),
+            ),
+        },
+        Err(why) if says_no_such_container(&why) => (ContainerLeft::Removed, "이미 없다".into()),
         Err(why) => (ContainerLeft::Unknown, format!("rm 실패({why})")),
     }
 }
 
-/// 멈춤을 확인한다 — kill 성공, 또는 이미 끝나 있었다(`ALREADY_EXITED`).
-fn stop_confirmed(stopper: &ContainerStopper) -> (bool, String) {
-    match stopper.stop() {
-        Ok(()) => (true, "kill 성공".into()),
-        Err(why) if why.starts_with("ALREADY_EXITED") => (true, "이미 끝나 있었다".into()),
-        Err(why) => (false, format!("kill 실패({why})")),
+/// 컨테이너가 **있는가** — 런타임이 "없다" 고 답하면 false, 상태를 돌려주면 true, 그 밖의 실패는 모른다(Err).
+fn inspect_exists(program: &Path, name: &str) -> Result<bool, String> {
+    match cli_ok(
+        program,
+        &[
+            "inspect".into(),
+            "--format={{.State.Running}}".into(),
+            name.into(),
+        ],
+        SHORT_TIMEOUT,
+    ) {
+        Ok(_) => Ok(true),
+        Err(why) if says_no_such_container(&why) => Ok(false),
+        Err(why) => Err(why),
     }
 }
 
@@ -976,7 +1037,11 @@ fn run_inner(
                 if failures >= POLL_FAILURES_TOLERATED {
                     // ★ 2026-09-27 보수 규칙 — 멈춤을 확인하지 못하면 지우지 않는다(코덱스 지적: kill 이 실패했는데 `rm -f` 로 가면 로그를 받은 뒤의
                     //   출력 · 체크포인트를 잃는다). 로그를 못 받아도 지우지 않는다(결함 487 — 런타임에 온전한 로그가 남는다).
-                    let (stopped, killed) = stop_confirmed(&stopper);
+                    // ★ 결함 502 (재검수 126) — kill 의 0 이 아니라 `inspect` 로 멈춤을 확인한다.
+                    let (stopped, killed) = match stop_and_confirm(program, input.name) {
+                        Ok(()) => (true, "멈춤 확인".to_string()),
+                        Err(why) => (false, format!("멈춤을 확인하지 못했다({why})")),
+                    };
                     // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 못 남기면 반쯤 쓴 파일을 지운다(빈 출력이 성공이 되지 않게 · 487).
                     let (saved, logs) =
                         match save_logs(program, input.name, stdout_path, stderr_path) {
@@ -1026,6 +1091,7 @@ fn run_inner(
             if left != ContainerLeft::Removed {
                 eprintln!("CONTAINER_NOT_REMOVED name={} — {removed}", input.name);
             }
+            exit.note = format!("로그 받음 · {removed}");
         }
         Err(why) => {
             let discard = discard_partial_outputs(stdout_path, stderr_path);
@@ -1035,6 +1101,7 @@ fn run_inner(
                 "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다: {why}{discard}",
                 input.name
             );
+            exit.note = format!("로그를 받지 못해 컨테이너를 남겼다({why}){discard}");
         }
     }
     Ok(exit)
@@ -1136,14 +1203,15 @@ fn record_incident_if_needed(
         Ok(exit) => (
             "EXITED",
             format!(
-                "종료 코드 {} · 로그 {} · 컨테이너 {:?}",
+                "종료 코드 {} · 로그 {} · 컨테이너 {:?} · {}",
                 exit.exit_code,
                 if exit.logs_complete {
                     "완결"
                 } else {
                     "못 받음"
                 },
-                exit.container
+                exit.container,
+                exit.note
             ),
             exit.needs_human(),
         ),
@@ -1249,7 +1317,8 @@ fn inspect_state(program: &Path, name: &str) -> Result<Option<ContainerExit>, St
         program,
         &[
             "inspect".into(),
-            "--format={{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}".into(),
+            "--format={{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.StartedAt}}"
+                .into(),
             name.into(),
         ],
         SHORT_TIMEOUT,
@@ -1257,12 +1326,17 @@ fn inspect_state(program: &Path, name: &str) -> Result<Option<ContainerExit>, St
     parse_inspect_state(&output.stdout)
 }
 
-/// `inspect` 출력(`<running> <exit code> <oom>`)을 읽는다. 아직 돌고 있으면 `None`.
+/// `inspect` 출력(`<running> <exit code> <oom> <started at>`)을 읽는다. 아직 돌고 있으면 `None`.
+///
+/// ★ 결함 501 (재검수 126) — 멈춰 있어도 **시작한 흔적(`StartedAt`)이 없으면** 종료로 읽지 않는다(Err — 관측 실패로 센다). 한 번도 시작하지 않은
+///   컨테이너(`created`)도 `Running=false · ExitCode=0` 이라, 전에는 `start` 의 0 만 믿고 "종료 코드 0" 으로 확정했다. 시작하지 않은 시각은
+///   docker `0001-01-01T00:00:00Z` · podman `0001-01-01 00:00:00 +0000 UTC` 다(시각 문자열은 공백을 가질 수 있어 네 번째부터 끝까지 합친다).
 fn parse_inspect_state(text: &str) -> Result<Option<ContainerExit>, String> {
     let fields: Vec<&str> = text.split_whitespace().collect();
-    let [running, code, oom] = fields.as_slice() else {
+    let [running, code, oom, started @ ..] = fields.as_slice() else {
         return Err(format!("inspect 출력을 읽지 못했다({text:?})"));
     };
+    let started_at = started.join(" ");
     match *running {
         "true" => return Ok(None),
         "false" => {}
@@ -1276,12 +1350,18 @@ fn parse_inspect_state(text: &str) -> Result<Option<ContainerExit>, String> {
         "false" => false,
         other => return Err(format!("OOMKilled 를 읽지 못했다({other:?})")),
     };
+    if started_at.is_empty() || started_at.starts_with("0001-01-01") {
+        return Err(format!(
+            "INSPECT_NEVER_STARTED: 멈춰 있지만 시작한 흔적이 없다(State.StartedAt={started_at:?}) — 종료로 읽지 않는다"
+        ));
+    }
     Ok(Some(ContainerExit {
         exit_code,
         oom_killed,
         // 아래 값은 `run` 이 로그 받기 · 정리 뒤에 채운다.
         logs_complete: false,
         container: ContainerLeft::Kept,
+        note: String::new(),
     }))
 }
 
@@ -1750,25 +1830,50 @@ mod tests {
 
     #[test]
     fn inspect_output_distinguishes_running_exit_and_oom() {
+        const STARTED: &str = "2026-09-28T00:00:00.123456789Z";
         assert_eq!(
-            parse_inspect_state("false 137 true\n").unwrap(),
+            parse_inspect_state(&format!("false 137 true {STARTED}\n")).unwrap(),
             Some(ContainerExit {
                 exit_code: 137,
                 oom_killed: true,
                 logs_complete: false,
                 container: ContainerLeft::Kept,
+                note: String::new(),
             })
         );
         assert_eq!(
-            parse_inspect_state("false 0 false")
+            parse_inspect_state(&format!("false 0 false {STARTED}"))
                 .unwrap()
                 .map(|e| e.exit_code),
             Some(0)
         );
-        assert_eq!(parse_inspect_state("true 0 false").unwrap(), None);
+        // podman 의 시각은 공백을 가진다.
+        assert_eq!(
+            parse_inspect_state("false 3 false 2026-09-28 00:00:00.1 +0000 UTC")
+                .unwrap()
+                .map(|e| e.exit_code),
+            Some(3)
+        );
+        assert_eq!(
+            parse_inspect_state(&format!("true 0 false {STARTED}")).unwrap(),
+            None
+        );
         assert!(parse_inspect_state("").is_err());
-        assert!(parse_inspect_state("false x false").is_err());
-        assert!(parse_inspect_state("maybe 0 false").is_err());
+        assert!(parse_inspect_state(&format!("false x false {STARTED}")).is_err());
+        assert!(parse_inspect_state(&format!("maybe 0 false {STARTED}")).is_err());
+    }
+
+    /// 결함 501 (재검수 126) — 한 번도 시작하지 않은 컨테이너(`created`)는 `Running=false · ExitCode=0` 이어도 **종료가 아니다**.
+    #[test]
+    fn a_never_started_container_is_not_an_exit() {
+        for never in [
+            "false 0 false 0001-01-01T00:00:00Z",
+            "false 0 false 0001-01-01 00:00:00 +0000 UTC",
+            "false 0 false",
+        ] {
+            let error = parse_inspect_state(never).expect_err(never);
+            assert!(error.contains("INSPECT_NEVER_STARTED"), "{never}: {error}");
+        }
     }
 
     #[test]
