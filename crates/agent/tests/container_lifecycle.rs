@@ -72,6 +72,10 @@ fn main() {
             "an_unobserved_exit_is_removed_only_when_rm_succeeded",
             an_unobserved_exit_is_removed_only_when_rm_succeeded,
         ),
+        (
+            "unsaved_logs_leave_no_partial_output_and_keep_the_container",
+            unsaved_logs_leave_no_partial_output_and_keep_the_container,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -509,8 +513,18 @@ fn execute_runs_the_container_path_end_to_end() {
 fn leftovers_of_this_node_are_removed_before_a_round() {
     let f = fixture(None);
     std::fs::write(f.state.join("leftovers"), "old-1\nold-2\n").unwrap();
-    let removed = container::remove_leftovers(&execution().runtime).expect("정리");
+    let salvage = f.work.join("leftover-container-logs");
+    let removed = container::remove_leftovers(&execution().runtime, Some(&salvage)).expect("정리");
     assert_eq!(removed, ["old-1", "old-2"]);
+    // 결함 489 — 지우기 전에 로그를 건졌다.
+    for id in ["old-1", "old-2"] {
+        assert_eq!(
+            std::fs::read_to_string(salvage.join(format!("{id}.stdout.log")))
+                .unwrap()
+                .trim(),
+            "hello-out"
+        );
+    }
     let calls = calls(&f.state);
     assert!(
         calls
@@ -680,5 +694,61 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
     assert!(
         matches!(&error, ContainerRunError::NotObserved { detail } if detail.contains("rm 실패")),
         "{error:?}"
+    );
+}
+
+/// 결함 487 (재검수 123) — 로그를 못 받으면 반쯤 쓴 출력 파일을 지우고(빈 출력이 성공이 되지 않게) 컨테이너를 남긴다(런타임에 온전한 로그가 남는다).
+fn unsaved_logs_leave_no_partial_output_and_keep_the_container() {
+    let order = |state: &Path| -> Vec<String> {
+        calls(state)
+            .lines()
+            .map(|l| l.split(' ').next().unwrap().to_string())
+            .collect()
+    };
+    // 정상 종료 — 종료 코드는 돌려주지만 출력 파일은 없고 마지막 rm 도 없다.
+    let f = fixture(Some("logs"));
+    let out = f.work.join("stdout.log");
+    let err = f.work.join("stderr.log");
+    let exit = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&out),
+        Some(&err),
+        |_| {},
+    )
+    .expect("종료는 봤다");
+    assert_eq!(exit.exit_code, 0);
+    assert!(!out.exists() && !err.exists(), "반쯤 쓴 출력 파일이 남았다");
+    assert_eq!(
+        order(&f.state).last().map(String::as_str),
+        Some("logs"),
+        "{}",
+        calls(&f.state)
+    );
+
+    // 종료를 못 봄 — kill 은 성공, 로그 실패 → 컨테이너를 남기고(지우지 않고) 출력 파일도 없다.
+    let f = fixture(Some("inspect,logs"));
+    let out = f.work.join("stdout.log");
+    let err = f.work.join("stderr.log");
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "sleep", &[]),
+        Some(&out),
+        Some(&err),
+        |_| {},
+    )
+    .expect_err("종료를 못 봤는데 성공했다");
+    assert!(
+        matches!(&error, ContainerRunError::RemovedUnobserved { detail } if detail.contains("컨테이너를 남겼다")),
+        "{error:?}"
+    );
+    assert!(!out.exists() && !err.exists(), "반쯤 쓴 출력 파일이 남았다");
+    let calls_after_start: Vec<String> = order(&f.state)
+        .into_iter()
+        .skip_while(|c| c != "start")
+        .collect();
+    assert!(
+        !calls_after_start.iter().any(|c| c == "rm"),
+        "로그를 못 받았는데 지웠다: {calls_after_start:?}"
     );
 }

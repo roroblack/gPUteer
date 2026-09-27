@@ -281,7 +281,13 @@ pub fn derive_container_name(attempt_id: &str) -> String {
 /// ★ 한 노드(한 Agent)는 한 번에 한 작업만 돌린다(회차는 순차다). 새 회차가 시작될 때 이 노드의 라벨로 돌고 있는 컨테이너는
 ///   죽은 회차(Agent 가 죽었거나 종료를 관측하지 못하고 끝난 회차)가 남긴 것이다 — 그대로 두면 패널 손잡이 없이 GPU 를 물고 돌고,
 ///   이어받은 다른 노드와 **두 번** 돈다. 지운 컨테이너 id 를 돌려준다. 목록을 못 읽으면 오류다(모르는 채 시작하지 않는다).
-pub fn remove_leftovers(runtime: &ContainerRuntime) -> Result<Vec<String>, String> {
+///
+/// ★ 결함 489 (재검수 123) — 지우기 **전에** 로그를 `salvage_dir/<id>.{stdout,stderr}.log` 로 건진다. 죽은 회차가 종료를 보고 로그를 받기 전에 죽었으면
+///   런타임 로그가 출력의 유일한 사본이다. 그 시도는 이미 보고할 수 없다 — 사람이 볼 수 있게 남기는 것이다(못 건지면 그 사실을 찍고 지운다).
+pub fn remove_leftovers(
+    runtime: &ContainerRuntime,
+    salvage_dir: Option<&Path>,
+) -> Result<Vec<String>, String> {
     if runtime.owner.is_empty() {
         return Err("owner 라벨이 비었다 — 어느 컨테이너가 이 Agent 의 것인지 모른다".into());
     }
@@ -305,6 +311,23 @@ pub fn remove_leftovers(runtime: &ContainerRuntime) -> Result<Vec<String>, Strin
         .map(str::to_string)
         .collect();
     for id in &ids {
+        if let Some(dir) = salvage_dir {
+            let stdout = dir.join(format!("{id}.stdout.log"));
+            let stderr = dir.join(format!("{id}.stderr.log"));
+            let saved = std::fs::create_dir_all(dir)
+                .map_err(|error| format!("{dir:?} 를 만들지 못했다: {error}"))
+                .and_then(|()| save_logs(program, id, Some(&stdout), Some(&stderr)));
+            match saved {
+                Ok(()) => eprintln!(
+                    "CONTAINER_LEFTOVER_LOGS_SAVED id={id} dir={}",
+                    dir.display()
+                ),
+                Err(why) => {
+                    discard_partial_outputs(Some(&stdout), Some(&stderr));
+                    eprintln!("CONTAINER_LEFTOVER_LOGS_LOST id={id} — {why}");
+                }
+            }
+        }
         remove_container(program, id)
             .map_err(|why| format!("남은 컨테이너 {id} 를 지우지 못했다: {why}"))?;
     }
@@ -700,10 +723,38 @@ pub fn run_with_gpu_count(
         let _ = remove_container(program, input.name);
         return Err(not_started(format!("create 뒤 다시 확인: {why}")));
     }
-    if let Err(why) = cli_ok(program, &["start".into(), input.name.into()], SHORT_TIMEOUT) {
-        // ★ 결함 471 (재검수 119) — start 가 시한을 넘기면 데몬은 이미 컨테이너를 띄웠을 수 있다. 지우기(`rm -f` — 돌고 있으면 죽인다)가
-        //   성공했을 때만 "돌지 않는다" 로 본다. 지우기도 실패하면 **시작 여부를 모른다** — "관측 못 함" 으로 올려 작업 폴더를 지우지 않게 한다.
+    // ★ 결함 488 (재검수 123) — 런타임이 **실패라고 답한** 경우(0 이 아닌 종료)만 "시작하지 않았다" 다. 응답이 없거나 시한을 넘기면 데몬은 이미 띄웠을 수
+    //   있다 — 로그를 받고 지운 뒤 "종료는 봤고 코드가 없다"(RemovedUnobserved)로 돌려줘 산출물(체크포인트 포함) 확정을 거치게 한다.
+    let start_args: [OsString; 2] = ["start".into(), input.name.into()];
+    let start_failure = match run_cli(program, &start_args, SHORT_TIMEOUT) {
+        Ok(output) if output.status.success() => None,
+        Ok(output) => Some((
+            false,
+            format!("start 실패({}): {}", output.status, output.stderr.trim()),
+        )),
+        Err(why) => Some((true, why)),
+    };
+    if let Some((unanswered, why)) = start_failure {
+        let logs = if unanswered {
+            match save_logs(program, input.name, stdout_path, stderr_path) {
+                Ok(()) => " · 로그 남김".to_string(),
+                Err(e) => {
+                    discard_partial_outputs(stdout_path, stderr_path);
+                    format!(" · 로그 못 남김({e})")
+                }
+            }
+        } else {
+            String::new()
+        };
+        // ★ 결함 471 (재검수 119) — 지우기(`rm -f` — 돌고 있으면 죽인다)가 성공했을 때만 "돌지 않는다" 로 본다. 지우기도 실패하면 **시작 여부를 모른다**.
         match remove_container(program, input.name) {
+            Ok(()) if unanswered => {
+                return Err(ContainerRunError::RemovedUnobserved {
+                    detail: format!(
+                    "start 가 응답하지 않았다({why}) — 시작했는지 모른다{logs} · 컨테이너를 지웠다"
+                ),
+                })
+            }
             Ok(()) => return Err(not_started(format!("start: {why} · 컨테이너를 지웠다"))),
             Err(rm) => {
                 // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**. 소유자가 패널에서 멈출 수 있어야 한다(§0.1).
@@ -713,7 +764,7 @@ pub fn run_with_gpu_count(
                 });
                 return Err(ContainerRunError::NotObserved {
                     detail: format!(
-                        "start: {why} · 지우기도 실패했다({rm}) — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
+                        "start: {why}{logs} · 지우기도 실패했다({rm}) — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
                         input.name
                     ),
                 });
@@ -734,17 +785,28 @@ pub fn run_with_gpu_count(
             Err(why) => {
                 failures += 1;
                 if failures >= POLL_FAILURES_TOLERATED {
-                    let killed = match stopper.stop() {
-                        Ok(()) => "kill 성공".to_string(),
-                        Err(e) => format!("kill 실패({e})"),
+                    let (kill_ok, killed) = match stopper.stop() {
+                        Ok(()) => (true, "kill 성공".to_string()),
+                        Err(e) => (false, format!("kill 실패({e})")),
                     };
                     // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 지우면 런타임의 로그도 사라져 작업 출력을 되살릴 수 없다.
-                    //   못 남기면 확정이 READ_OUTPUTS 로 실패한다(성공으로 속이지 않는다) — 그래도 지우기는 한다.
-                    let logs = match save_logs(program, input.name, stdout_path, stderr_path) {
-                        Ok(()) => "로그 남김".to_string(),
-                        Err(e) => format!("로그 못 남김({e})"),
+                    // ★ 결함 487 (재검수 123) — 못 남기면 반쯤 쓴 출력 파일을 지운다(확정이 READ_OUTPUTS 로 **실패**하게 — 빈 출력이 성공이 되지 않게).
+                    //   kill 이 성공했으면(더 돌지 않는다) 컨테이너를 **남긴다** — 런타임에 온전한 로그가 남고 다음 회차가 건진다(489).
+                    let logs = save_logs(program, input.name, stdout_path, stderr_path);
+                    if let Err(e) = &logs {
+                        discard_partial_outputs(stdout_path, stderr_path);
+                        if kill_ok {
+                            return Err(ContainerRunError::RemovedUnobserved {
+                                detail: format!(
+                                    "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · 로그 못 남김({e}) — 컨테이너를 남겼다(더 돌지 않는다 · 다음 회차가 로그를 건지고 지운다)"
+                                ),
+                            });
+                        }
+                    }
+                    let killed = match &logs {
+                        Ok(()) => format!("{killed} · 로그 남김"),
+                        Err(e) => format!("{killed} · 로그 못 남김({e})"),
                     };
-                    let killed = format!("{killed} · {logs}");
                     return Err(match remove_container(program, input.name) {
                         Ok(()) => ContainerRunError::RemovedUnobserved {
                             detail: format!(
@@ -762,11 +824,21 @@ pub fn run_with_gpu_count(
         }
         std::thread::sleep(POLL_INTERVAL);
     };
-    if let Err(why) = save_logs(program, input.name, stdout_path, stderr_path) {
-        eprintln!("CONTAINER_LOGS_NOT_SAVED name={} — {why}", input.name);
-    }
-    if let Err(why) = remove_container(program, input.name) {
-        eprintln!("CONTAINER_NOT_REMOVED name={} — {why}", input.name);
+    // ★ 결함 487 (재검수 123) — 로그를 못 받으면 반쯤 쓴 출력 파일을 지우고(확정이 READ_OUTPUTS 로 실패하게 — 빈 출력이 성공이 되지 않게),
+    //   컨테이너를 **지우지 않는다**(런타임에 온전한 로그가 남는다 — 다음 회차가 건진 뒤 지운다 · 489).
+    match save_logs(program, input.name, stdout_path, stderr_path) {
+        Ok(()) => {
+            if let Err(why) = remove_container(program, input.name) {
+                eprintln!("CONTAINER_NOT_REMOVED name={} — {why}", input.name);
+            }
+        }
+        Err(why) => {
+            discard_partial_outputs(stdout_path, stderr_path);
+            eprintln!(
+                "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다(다음 회차가 로그를 건지고 지운다): {why}",
+                input.name
+            );
+        }
     }
     Ok(exit)
 }
@@ -808,6 +880,13 @@ fn parse_inspect_state(text: &str) -> Result<Option<ContainerExit>, String> {
         exit_code,
         oom_killed,
     }))
+}
+
+/// 로그 받기가 실패했을 때 반쯤 쓴 출력 파일을 지운다 — 남겨 두면 확정이 빈 · 일부 출력을 정상 산출물로 읽는다(결함 487).
+fn discard_partial_outputs(stdout_path: Option<&Path>, stderr_path: Option<&Path>) {
+    for path in [stdout_path, stderr_path].into_iter().flatten() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 fn save_logs(
