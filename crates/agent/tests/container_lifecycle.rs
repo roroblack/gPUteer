@@ -176,6 +176,10 @@ fn main() {
             "a_kill_that_answers_failure_then_takes_effect_is_still_an_owner_stop",
             a_kill_that_answers_failure_then_takes_effect_is_still_an_owner_stop,
         ),
+        (
+            "a_kill_that_never_answers_but_took_effect_is_still_an_owner_stop",
+            a_kill_that_never_answers_but_took_effect_is_still_an_owner_stop,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -251,6 +255,12 @@ fn fake_runtime(state: &Path) -> i32 {
         while !state.join("gone").exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
+        return 0;
+    }
+    // "kill-hangs-after-kill" — kill 이 작업을 끝내고(137) 응답 없이 멈춘다(시한 15초를 넘긴다 · 결함 531).
+    if command == "kill" && fails("kill-hangs-after-kill") {
+        std::fs::write(state.join("killed"), "").unwrap();
+        std::thread::sleep(Duration::from_secs(20));
         return 0;
     }
     // "kill-fails-then-dies" — kill 이 실패로 답하고, 작업은 **조금 뒤에**(0.5초) 137 로 끝난다(SIGKILL 이 진행 중 · 결함 529).
@@ -1866,6 +1876,33 @@ fn a_kill_that_answers_failure_then_takes_effect_is_still_an_owner_stop() {
     stopper
         .stop()
         .expect("kill 이 실패로 답했어도 곧 137 로 멈췄으면 소유자 정지다");
+    let exit = runner.join().unwrap().expect("종료 관측");
+    assert_eq!(exit.exit_code, 137);
+}
+
+/// 결함 531 (재검수 136) — kill 이 작업을 끝냈는데 **응답 없이 시한을 넘겨도**, 나눈 관측 · 조회로 이 정지가 원인(137)임을 판정한다(전에는 확인 없이
+/// 곧바로 실패였다). ★ kill 시한(15초)을 넘겨야 하므로 이 시험은 15초쯤 걸린다.
+fn a_kill_that_never_answers_but_took_effect_is_still_an_owner_stop() {
+    let f = fixture(Some("kill-hangs-after-kill"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    stopper
+        .stop()
+        .expect("kill 이 응답하지 않았어도 137 로 멈췄으면 소유자 정지다");
     let exit = runner.join().unwrap().expect("종료 관측");
     assert_eq!(exit.exit_code, 137);
 }

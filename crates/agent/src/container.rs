@@ -379,7 +379,7 @@ pub fn stop_and_confirm(program: &Path, name: &str) -> Result<(), String> {
     if let Ok(false) = inspect_running(program, name) {
         return Ok(());
     }
-    let kill = match run_cli(program, &["kill".into(), name.into()], SHORT_TIMEOUT) {
+    let kill = match run_cli(program, &["kill".into(), name.into()], CONFIRM_TIMEOUT) {
         Ok(output) if output.status.success() => "kill 접수".to_string(),
         Ok(output) => format!("kill 실패({}): {}", output.status, output.stderr.trim()),
         Err(why) => format!("kill 실패: {why}"),
@@ -715,21 +715,27 @@ impl ContainerStopper {
     /// ★ 결함 277 — kill 이 실패했는데 이미 끝나 있으면 **실패**(`ALREADY_EXITED`)다. 전에는 성공으로 바꿔, 스스로 코드 0 으로
     ///   끝난 작업이 "소유자가 멈췄다" 로 보고됐다 — 정지 요청이 받아들여진 것과 정지가 종료 원인인 것은 다르다.
     pub fn stop(&self) -> Result<(), String> {
+        // ★ 결함 531 (재검수 136) — kill 을 띄우지 못했거나 응답이 없어도(시한 초과) **곧바로 끝내지 않는다**. 띄운 뒤 응답만 없었으면 SIGKILL 이
+        //   적용됐을 수 있다 — 아래의 같은 판정(나눈 관측 → 조회)을 거친다. 시한은 확인 조회와 같은 15초(kill 은 가벼운 신호 명령이다).
         let kill = run_cli(
             &self.program,
             &["kill".into(), self.name.clone().into()],
-            SHORT_TIMEOUT,
-        )?;
+            CONFIRM_TIMEOUT,
+        );
         // ★ 결함 506 (재검수 127) — kill 의 0 은 접수일 뿐이다. 멈춤을 `inspect` 로 확인해야 소유자에게 "멈췄다" 고 답한다(전에는 곧바로 성공이라
         //   패널이 `owner_stopped` 를 적고, 계속 돈 작업이 나중에 정상 종료해도 INTERRUPTED 로 보고돼 재배치될 수 있었다).
         // ★ 결함 506 · 520 · 525 · 527 — kill 의 응답(성공 · 실패)과 상관없이 **멈췄는지와 이 정지가 원인인지**(SIGKILL 의 종료 코드 137 · OOM 아님)를
         //   본다. 성공 응답은 접수일 뿐이고(506), 실패 응답도 죽이지 않았다는 증거가 아니다(527 — start 에 적용한 490 과 같은 규칙). 실행 쪽이 이미
         //   종료를 보고 지웠으면 그때 나눈 관측으로 판정한다(525). 스스로 끝났으면(137 이 아님) `ALREADY_EXITED` — 소유자 정지로 적지 않는다(520 · 277).
         //   ★ 남는 것 — 작업이 바로 그때 스스로 137 로 끝나면 가르지 못한다.
-        let kill_note = if kill.status.success() {
-            "kill 접수".to_string()
-        } else {
-            format!("kill 실패 응답({}): {}", kill.status, kill.stderr.trim())
+        let kill_note = match &kill {
+            Ok(output) if output.status.success() => "kill 접수".to_string(),
+            Ok(output) => format!(
+                "kill 실패 응답({}): {}",
+                output.status,
+                output.stderr.trim()
+            ),
+            Err(why) => format!("kill 응답을 받지 못했다({why})"),
         };
         let judge = |code: i64, oom: bool| {
             if code == 137 && !oom {
