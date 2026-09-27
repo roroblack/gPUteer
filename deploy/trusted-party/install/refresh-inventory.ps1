@@ -19,6 +19,12 @@ foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
     if ($line -match '^\s*([A-Z_]+)=(.*)$') { $config[$Matches[1]] = $Matches[2].Trim() }
 }
 $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
+# ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
+#   방금 반입한 새 선언을 되돌린다 — 아무것도 넣지 않고 멈춘다(신선도가 끊겨 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
+$leftover = @(Get-ChildItem -LiteralPath $admittedDir -Filter ".candidate-*.json" -File -Force -ErrorAction SilentlyContinue)
+if ($leftover.Count -gt 0) {
+    throw "ADMIT_INCOMPLETE: $($leftover[0].FullName) 가 남아 있다 — admit-node 가 끝나지 않았다. 그 노드의 가입 파일로 admit-node 를 다시 돌린 뒤 refresh 한다"
+}
 $files = @(Get-ChildItem -LiteralPath $admittedDir -Filter "join-*.json" -File -ErrorAction SilentlyContinue)
 if ($files.Count -eq 0) { throw "REFRESH: $admittedDir 에 받은 노드가 없다 — admit-node 로 먼저 받는다" }
 $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()

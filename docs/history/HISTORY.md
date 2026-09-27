@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-27 13:52 — 재검수 116 대응: 결함 446~454(설치 경로 실제 경로 · 관측 순서 · cdi-all 재확인 — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-26_1259_재검수116_결함_446_454.md`
+- 스트림: 배포 스크립트 · Agent · Coordinator · 런북
+- 수행: 설치 폴더를 실제 경로로 풀어 검사하고 링크 거부(446 · Windows 는 8.3 · junction 까지 448) · 재귀 chown 제거(447) · Windows 소유자 교체와 밖의
+  노드 폴더 ACL 재확인(448) · GPU 관측을 관측 시각 순서로 판정(449) · CPU 전용 재선언은 불일치를 접지 않음(450) · 관측 표를 여는 때 생성(451) ·
+  refresh 가 남은 admit 후보를 보면 멈춤(452) · 공유 유닛 틀은 없을 때만 · 공통 env 가 있으면 인스턴스에 노드 값만(453) · cdi-all 을 Job 마다 재확인하고
+  관측은 GPU 전부(454)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1382 passed · 0 failed · ignored 4. 뮤테이션 5건(옛 일치의 삭제 · 옛 불일치의 기록 · CPU 전용 접기 ·
+  여는 때 표 생성 · cdi-all 장수 재확인) 모두 잡힘. 설치기 · refresh 는 Git Bash · PowerShell 5.1 에서 직접 돌렸다(Linux 링크는 NTFS junction 으로만).
+  ★ `--register` · `-Register` 는 돌리지 않았다
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-26 12:49 — 재검수 115 대응: 결함 438~445(fork 설치 자동화 · 컨테이너 GPU — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-26_1226_재검수115_결함_438_445.md`

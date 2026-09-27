@@ -12,6 +12,12 @@ ENV_FILE=$2
 value() { sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'; }
 BIN=$(value GPUTEER_BIN); DB=$(value GPUTEER_CONTROL_DB)
 ADMITTED_DIR="$(cd "$(dirname "$ENV_FILE")" && pwd)/admitted"
+# ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
+#   방금 반입한 새 선언을 되돌린다 — 아무것도 넣지 않고 멈춘다(신선도가 끊겨 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
+for candidate in "$ADMITTED_DIR"/.candidate-*.json; do
+    [ -e "$candidate" ] || continue
+    die "ADMIT_INCOMPLETE: $candidate 가 남아 있다 — admit-node 가 끝나지 않았다. 그 노드의 가입 파일로 admit-node 를 다시 돌린 뒤 refresh 한다"
+done
 NOW_MS=$(($(date +%s) * 1000))
 count=0; failed=0
 for file in "$ADMITTED_DIR"/join-*.json; do

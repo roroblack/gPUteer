@@ -91,7 +91,7 @@ if ($inviteMap.GPUTEER_INVITE_VERSION -ne "1") { throw "INVITE_REJECTED: 모르�
 if ($Bin -eq "") { $Bin = (Get-Command gputeer -ErrorAction SilentlyContinue).Source }
 if (-not $Bin -or -not (Test-Path -LiteralPath $Bin)) { throw "INSTALL_ARGS: gputeer 실행 파일이 없다 — -Bin <경로> 로 준다(빌드: cargo build --release -p gputeer-cli)" }
 $Bin = (Resolve-Path -LiteralPath $Bin).Path
-if ($NodeDir -eq "") { $NodeDir = Join-Path $ConfigDir (Join-Path "nodes" $NodeId) }
+$nodeDirGiven = $NodeDir -ne ""
 if ($SharedRoot -eq "") { $SharedRoot = $inviteMap.GPUTEER_SHARED_ROOT }
 
 # ★ 결함 438 · 442 (재검수 115) — 설치 폴더는 **이 설치기가 쓰는 전용 폴더**만 받고, 현재 사용자 · SYSTEM · Administrators 만 열 수 있게 좁힌다.
@@ -102,36 +102,89 @@ $ownerSids = @(
     "S-1-5-18",      # SYSTEM
     "S-1-5-32-544"   # Administrators
 )
-function Get-FullDir([string]$dir) { return [System.IO.Path]::GetFullPath($dir).TrimEnd('\') }
+# ★ 결함 448 (재검수 116) — 검사는 **실제 경로**에 한다. 문자열 비교는 8.3 이름(C:\PROGRA~1)과 junction 을 지나쳤다.
+#   가장 깊은 **있는** 조상을 열어 GetFinalPathNameByHandle 로 푼 뒤(8.3 · junction · 링크가 풀린다) 없는 꼬리를 붙인다. 대상 자체가
+#   reparse point(junction · 링크)면 거부한다. 뒤의 모든 작업은 푼 경로로 한다.
+Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class GputeerFinalPath {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder buffer, uint length, uint flags);
+    public static string Of(string path) {
+        // 0 = 속성만 · 7 = 모두 공유 · 3 = OPEN_EXISTING · 0x02000000 = FILE_FLAG_BACKUP_SEMANTICS(폴더를 연다)
+        using (SafeFileHandle handle = CreateFileW(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            StringBuilder buffer = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0 || length >= buffer.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
+            string final = buffer.ToString();
+            if (final.StartsWith(@"\\?\UNC\")) return @"\\" + final.Substring(8);
+            if (final.StartsWith(@"\\?\")) return final.Substring(4);
+            return final;
+        }
+    }
+}
+"@
+function Get-RealDir([string]$dir) {
+    if (-not [System.IO.Path]::IsPathRooted($dir)) { throw "INSTALL_DIR_REFUSED: $dir — 절대 경로로 준다" }
+    $full = [System.IO.Path]::GetFullPath($dir).TrimEnd('\')
+    if ($full -eq ([System.IO.Path]::GetPathRoot($full)).TrimEnd('\')) { throw "INSTALL_DIR_REFUSED: $dir 는 드라이브 루트다 — 전용 폴더를 준다" }
+    if ((Test-Path -LiteralPath $full) -and ((Get-Item -LiteralPath $full -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw "INSTALL_DIR_REFUSED: $dir 는 junction · 링크다 — 실제 폴더를 준다"
+    }
+    $existing = $full; $tail = @()
+    while (-not (Test-Path -LiteralPath $existing)) {
+        $tail = @(Split-Path -Leaf $existing) + $tail
+        $existing = Split-Path -Parent $existing
+        if (-not $existing) { throw "INSTALL_DIR_REFUSED: $dir — 있는 상위 폴더가 없다" }
+    }
+    $real = [GputeerFinalPath]::Of($existing).TrimEnd('\')
+    foreach ($name in $tail) { $real = Join-Path $real $name }
+    return $real
+}
 function Test-Under([string]$child, [string]$parent) {
     return $child.StartsWith($parent.TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
-function Assert-InstallDir([string]$dir) {
-    if (-not [System.IO.Path]::IsPathRooted($dir)) { throw "INSTALL_DIR_REFUSED: $dir — 절대 경로로 준다" }
-    $full = Get-FullDir $dir
-    if ($full -eq ([System.IO.Path]::GetPathRoot($full)).TrimEnd('\')) { throw "INSTALL_DIR_REFUSED: $dir 는 드라이브 루트다 — 전용 폴더를 준다" }
-    foreach ($system in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-        if ($system -and ($full -eq $system.TrimEnd('\') -or (Test-Under $full $system))) {
-            throw "INSTALL_DIR_REFUSED: $dir 는 시스템 경로다 — 전용 폴더를 준다(기본 %LOCALAPPDATA%\gputeer)"
+function Assert-InstallDir([string]$real) {
+    if ($real -eq ([System.IO.Path]::GetPathRoot($real)).TrimEnd('\')) { throw "INSTALL_DIR_REFUSED: $real 는 드라이브 루트다 — 전용 폴더를 준다" }
+    foreach ($system in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData)) {
+        if (-not $system) { continue }
+        $systemReal = [GputeerFinalPath]::Of($system).TrimEnd('\')
+        # ProgramData 는 그 자체만 막는다(그 아래 전용 폴더는 받는다). 나머지는 그 아래 전부를 막는다.
+        $isUnder = ($system -ne $env:ProgramData) -and (Test-Under $real $systemReal)
+        if ($real -eq $systemReal -or $isUnder) {
+            throw "INSTALL_DIR_REFUSED: $real 는 시스템 경로다 — 전용 폴더를 준다(기본 %LOCALAPPDATA%\gputeer)"
         }
     }
-    if (Test-Path -LiteralPath $full) {
-        if (-not (Test-Path -LiteralPath $full -PathType Container)) { throw "INSTALL_DIR_REFUSED: $dir 는 폴더가 아니다" }
-        $hasMarker = Test-Path -LiteralPath (Join-Path $full $marker)
-        $isEmpty = -not (Get-ChildItem -LiteralPath $full -Force | Select-Object -First 1)
-        if (-not $hasMarker -and -not $isEmpty) { throw "INSTALL_DIR_REFUSED: $dir 가 비어 있지 않고 이 설치기가 만든 폴더 표식($marker)이 없다 — 비어 있는 새 폴더를 준다" }
+    if (Test-Path -LiteralPath $real) {
+        if (-not (Test-Path -LiteralPath $real -PathType Container)) { throw "INSTALL_DIR_REFUSED: $real 는 폴더가 아니다" }
+        $hasMarker = Test-Path -LiteralPath (Join-Path $real $marker)
+        $isEmpty = -not (Get-ChildItem -LiteralPath $real -Force | Select-Object -First 1)
+        if (-not $hasMarker -and -not $isEmpty) { throw "INSTALL_DIR_REFUSED: $real 가 비어 있지 않고 이 설치기가 만든 폴더 표식($marker)이 없다 — 비어 있는 새 폴더를 준다" }
     }
 }
-# 상속을 끊고 세 주체에게만 준다. 파일은 폴더에서 물려받는다 — 그래서 **이미 있는** 파일(시드)은 따로 좁힌다.
+# 상속을 끊고 세 주체에게만 준다 · 소유자를 현재 사용자로 바꾼다(결함 448 — 옛 소유자는 DACL 을 다시 열 수 있다).
+# 파일은 폴더에서 물려받는다 — 그래서 **이미 있는** 파일(시드)은 따로 좁힌다.
 function Set-OwnerOnlyAcl([string]$path, [bool]$isDir) {
     $inherit = if ($isDir) { "(OI)(CI)" } else { "" }
     $grants = @($ownerSids | ForEach-Object { "*${_}:${inherit}F" })
+    & icacls $path /setowner "*$($ownerSids[0])" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $path 의 소유자를 현재 사용자로 바꾸지 못했다" }
     & icacls $path /inheritance:r /grant:r @grants | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $path 의 권한을 좁히지 못했다" }
 }
-# ★ 좁힌 뒤 **읽어서** 확인한다 — 세 주체 밖의 허용 항목이 하나라도 남으면 멈춘다(예 전에 손으로 준 명시 항목).
+# ★ 좁힌 뒤 **읽어서** 확인한다 — 소유자가 세 주체 밖이거나, 세 주체 밖의 허용 항목이 하나라도 남으면 멈춘다(예 전에 손으로 준 명시 항목).
+#   ★ 막지 않는 것: 이미 열려 있던 핸들 · 관리자 · SYSTEM · 같은 사용자로 도는 다른 프로그램.
 function Assert-OwnerOnlyAcl([string]$path) {
     $acl = Get-Acl -LiteralPath $path
+    $owner = try { $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { "" }
+    if ($owner -notin $ownerSids) { throw "ACL_OPEN: $path 의 소유자가 $($acl.Owner) 다 — 현재 사용자 · SYSTEM · Administrators 여야 한다" }
     if (-not $acl.AreAccessRulesProtected) { throw "ACL_OPEN: $path 가 상위 폴더 권한을 물려받는다" }
     foreach ($rule in $acl.Access) {
         if ($rule.AccessControlType -ne "Allow") { continue }
@@ -140,23 +193,34 @@ function Assert-OwnerOnlyAcl([string]$path) {
     }
 }
 
-Assert-InstallDir $ConfigDir
-Assert-InstallDir $NodeDir
 # 상위 폴더는 만들지 않는다 — 기본 노드 폴더의 nodes\ 만 예외다.
-$configParent = Split-Path -Parent (Get-FullDir $ConfigDir)
-if (-not (Test-Path -LiteralPath $configParent -PathType Container)) { throw "INSTALL_DIR_REFUSED: $configParent 가 없다 — 먼저 만든다" }
-$defaultNodes = Join-Path (Get-FullDir $ConfigDir) "nodes"
-$nodeParent = Split-Path -Parent (Get-FullDir $NodeDir)
-if ($nodeParent -ne $defaultNodes -and -not (Test-Path -LiteralPath $nodeParent -PathType Container)) { throw "INSTALL_DIR_REFUSED: $nodeParent 가 없다 — 먼저 만든다" }
+$ConfigDir = Get-RealDir $ConfigDir
+if (-not (Test-Path -LiteralPath (Split-Path -Parent $ConfigDir) -PathType Container)) { throw "INSTALL_DIR_REFUSED: $(Split-Path -Parent $ConfigDir) 가 없다 — 먼저 만든다" }
+Assert-InstallDir $ConfigDir
+$defaultNodes = Join-Path $ConfigDir "nodes"
+if ($nodeDirGiven) {
+    $NodeDir = Get-RealDir $NodeDir
+    if (-not (Test-Path -LiteralPath (Split-Path -Parent $NodeDir) -PathType Container)) { throw "INSTALL_DIR_REFUSED: $(Split-Path -Parent $NodeDir) 가 없다 — 먼저 만든다" }
+} else {
+    foreach ($path in @($defaultNodes, (Join-Path $defaultNodes $NodeId))) {
+        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "INSTALL_DIR_REFUSED: $path 는 junction · 링크다"
+        }
+    }
+    $NodeDir = Join-Path $defaultNodes $NodeId
+}
+Assert-InstallDir $NodeDir
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 Set-OwnerOnlyAcl $ConfigDir $true
 New-Item -ItemType Directory -Force -Path $NodeDir | Out-Null
-if (-not (Test-Under (Get-FullDir $NodeDir) (Get-FullDir $ConfigDir))) { Set-OwnerOnlyAcl $NodeDir $true }
+$nodeOutside = -not (Test-Under $NodeDir $ConfigDir)
+if ($nodeOutside) { Set-OwnerOnlyAcl $NodeDir $true }
 foreach ($dir in @($ConfigDir, $NodeDir)) {
     $markerPath = Join-Path $dir $marker
     if (-not (Test-Path -LiteralPath $markerPath)) { New-Item -ItemType File -Path $markerPath | Out-Null }
 }
 Assert-OwnerOnlyAcl $ConfigDir
+if ($nodeOutside) { Assert-OwnerOnlyAcl $NodeDir }
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 
 # 1. 키 — 있으면 쓰고, 없으면 만든다.

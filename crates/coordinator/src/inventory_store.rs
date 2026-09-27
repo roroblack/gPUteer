@@ -65,8 +65,11 @@ pub enum GpuAttestationOutcome {
     NoInventory,
     /// 선언이 GPU 를 관측하지 않았거나(`gpus: None`) GPU 가 없다고 했다 — GPU 관측은 그 선언의 증거가 아니다.
     NoDeclaredGpus,
-    /// 선언과 관측이 맞지 않는다. 확인 기록을 남기지 않는다 — 그 노드는 선언의 시각대로 늙어 배치에서 빠진다.
+    /// 선언과 관측이 맞지 않는다. 노드별 불일치로 적는다(결함 440) — 맞는 **더 새** 관측이 올 때까지 배치에서 빠진다.
+    /// 이미 더 새 확인이 있으면 적지 않는다(늦게 처리된 옛 관측 — 결함 449).
     Mismatch(String),
+    /// 선언과 맞지만 이 노드에 **더 새** 불일치가 있다 — 늦게 처리된 옛 관측이라 아무것도 적지 않는다(결함 449).
+    OlderThanMismatch { mismatch_at_unix_ms: u64 },
 }
 
 /// One Agent's registration and its inventory, imported together.
@@ -560,33 +563,69 @@ impl CoordinatorInventoryStore {
         let Some(inventory) = fetch_inventory(&transaction, node_id)? else {
             return Ok(GpuAttestationOutcome::NoInventory);
         };
-        let declared = match inventory.gpus.as_deref() {
-            Some(gpus) if !gpus.is_empty() => gpus,
-            _ => return Ok(GpuAttestationOutcome::NoDeclaredGpus),
-        };
         transaction
             .execute_batch(GPU_ATTESTATION_SCHEMA)
             .map_err(map_sql_error)?;
+        let declared = match inventory.gpus.as_deref() {
+            Some(gpus) if !gpus.is_empty() => gpus,
+            _ => {
+                // ★ 결함 450 (재검수 116) — GPU 를 주장하지 않는 선언에 GPU 관측 불일치는 뜻이 없다. 남은 불일치를 지운다
+                //   (GPU 를 빼고 CPU 전용으로 다시 선언한 노드가 영영 빠지지 않게. 접는 쪽도 GPU 없는 선언에는 접지 않는다).
+                transaction
+                    .execute(
+                        "DELETE FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
+                        rusqlite::params![node_id],
+                    )
+                    .map_err(map_sql_error)?;
+                transaction.commit().map_err(map_sql_error)?;
+                return Ok(GpuAttestationOutcome::NoDeclaredGpus);
+            }
+        };
+        // ★ 결함 449 (재검수 116) — 관측은 처리 순서가 아니라 **관측 시각** 순서로 판정한다. 같은 노드의 관측은 같은 Agent 시계라 서로 비교된다.
+        let mismatch_at = fetch_gpu_mismatch_at(&transaction, node_id)?;
+        let last_match_at = transaction
+            .query_row(
+                "SELECT attested_at_unix_ms FROM coordinator_node_gpu_attestation WHERE node_id = ?1",
+                rusqlite::params![node_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(map_sql_error)?
+            .map(|raw| decode_u64(&raw, "gpu attestation attested_at_unix_ms"))
+            .transpose()?;
         if let Err(reason) = crate::gpu_attestation::match_declaration(declared, &observation.gpus)
         {
             // ★ 결함 440 (재검수 115) — 불일치를 **기록**한다(전에는 아무것도 적지 않고 돌아가, 재선언이 틀린 선언을 계속 신선하게 만들었다).
-            //   revision 과 무관하게 노드별로 남기고, 맞는 관측이 올 때만 지운다. pool_snapshot 이 그 노드를 배치에서 뺀다.
-            transaction
-                .execute(
-                    "INSERT INTO coordinator_node_gpu_mismatch(node_id, mismatch_at_unix_ms) VALUES (?1, ?2)
-                     ON CONFLICT(node_id) DO UPDATE SET mismatch_at_unix_ms = excluded.mismatch_at_unix_ms",
-                    rusqlite::params![node_id, attested_at_unix_ms.to_be_bytes().to_vec()],
-                )
-                .map_err(map_sql_error)?;
-            transaction.commit().map_err(map_sql_error)?;
+            //   revision 과 무관하게 노드별로 남기고, 맞는 더 새 관측이 올 때만 지운다. pool_snapshot 이 그 노드를 배치에서 뺀다.
+            //   ★ 449 — 이미 더 새 확인이 있으면 늦게 처리된 옛 불일치다 — 적지 않는다. 같은 시각이면 적는다(빼는 쪽).
+            if last_match_at.is_none_or(|matched| attested_at_unix_ms >= matched) {
+                let at =
+                    mismatch_at.map_or(attested_at_unix_ms, |old| old.max(attested_at_unix_ms));
+                transaction
+                    .execute(
+                        "INSERT INTO coordinator_node_gpu_mismatch(node_id, mismatch_at_unix_ms) VALUES (?1, ?2)
+                         ON CONFLICT(node_id) DO UPDATE SET mismatch_at_unix_ms = excluded.mismatch_at_unix_ms",
+                        rusqlite::params![node_id, at.to_be_bytes().to_vec()],
+                    )
+                    .map_err(map_sql_error)?;
+                transaction.commit().map_err(map_sql_error)?;
+            }
             return Ok(GpuAttestationOutcome::Mismatch(reason));
         }
-        transaction
-            .execute(
-                "DELETE FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
-                rusqlite::params![node_id],
-            )
-            .map_err(map_sql_error)?;
+        // ★ 449 — 불일치보다 새 관측만 불일치를 지운다(같은 시각이면 지우지 않는다 — 빼는 쪽). 옛 관측이면 아무것도 적지 않는다.
+        if let Some(mismatch_at_unix_ms) = mismatch_at {
+            if attested_at_unix_ms <= mismatch_at_unix_ms {
+                return Ok(GpuAttestationOutcome::OlderThanMismatch {
+                    mismatch_at_unix_ms,
+                });
+            }
+            transaction
+                .execute(
+                    "DELETE FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
+                    rusqlite::params![node_id],
+                )
+                .map_err(map_sql_error)?;
+        }
         let stored = transaction
             .query_row(
                 "SELECT inventory_revision, attested_at_unix_ms FROM coordinator_node_gpu_attestation
@@ -799,17 +838,11 @@ impl CoordinatorInventoryStore {
                 }
             }
             // ★ 결함 440 — 노드 자신의 GPU 관측이 선언을 반박한 채면(맞는 관측이 아직 없다) 싣는다. 필터가 배치에서 뺀다.
-            if mismatch_table_exists {
-                candidate.gpu_observation_mismatch_at_unix_ms = transaction
-                    .query_row(
-                        "SELECT mismatch_at_unix_ms FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
-                        rusqlite::params![node_id],
-                        |row| row.get::<_, Vec<u8>>(0),
-                    )
-                    .optional()
-                    .map_err(map_sql_error)?
-                    .map(|raw| decode_u64(&raw, "gpu mismatch_at_unix_ms"))
-                    .transpose()?;
+            //   ★ 450 — 선언이 GPU 를 주장하지 않으면 접지 않는다(CPU 전용으로 다시 선언한 노드).
+            let declares_gpus = candidate.gpus.as_ref().is_some_and(|gpus| !gpus.is_empty());
+            if mismatch_table_exists && declares_gpus {
+                candidate.gpu_observation_mismatch_at_unix_ms =
+                    fetch_gpu_mismatch_at(&transaction, &node_id)?;
             }
             candidate.reservation = if reservations_table_exists {
                 crate::staging_store::fetch_node_reservation(&transaction, &node_id)
@@ -845,6 +878,22 @@ CREATE TABLE IF NOT EXISTS coordinator_node_gpu_mismatch (
     node_id TEXT PRIMARY KEY REFERENCES coordinator_agent_registry(node_id),
     mismatch_at_unix_ms BLOB NOT NULL
 );";
+
+fn fetch_gpu_mismatch_at(
+    transaction: &rusqlite::Transaction<'_>,
+    node_id: &str,
+) -> Result<Option<u64>, InventoryStoreError> {
+    transaction
+        .query_row(
+            "SELECT mismatch_at_unix_ms FROM coordinator_node_gpu_mismatch WHERE node_id = ?1",
+            rusqlite::params![node_id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?
+        .map(|raw| decode_u64(&raw, "gpu mismatch_at_unix_ms"))
+        .transpose()
+}
 
 fn initialize_schema(connection: &Connection) -> Result<(), InventoryStoreError> {
     connection
@@ -893,6 +942,10 @@ fn initialize_schema(connection: &Connection) -> Result<(), InventoryStoreError>
             );
             "#,
         )
+        .map_err(map_sql_error)?;
+    // ★ 결함 451 (재검수 116) — 관측 확인 · 불일치 표를 여는 때 만든다(전에는 첫 관측 기록 때 생겨, 그 전의 옛 DB 는 표가 없는 상태로 읽혔다).
+    connection
+        .execute_batch(GPU_ATTESTATION_SCHEMA)
         .map_err(map_sql_error)
 }
 
@@ -2481,5 +2534,127 @@ mod tests {
             GpuAttestationOutcome::Recorded { .. }
         ));
         assert_eq!(mismatch_at(&mut store), None);
+    }
+
+    /// ★ 결함 449 (재검수 116) — 관측은 처리 순서가 아니라 관측 시각 순서로 판정한다.
+    #[test]
+    fn a_late_processed_old_observation_does_not_override_a_newer_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
+        let mismatch_at = |store: &mut CoordinatorInventoryStore| {
+            store
+                .pool_snapshot(2_000_000_000_000)
+                .unwrap()
+                .candidates
+                .into_iter()
+                .find(|c| c.node_id == "node-a")
+                .unwrap()
+                .gpu_observation_mismatch_at_unix_ms
+        };
+        let good = observation(&[("GPU-1", "model-a-5", 15), ("GPU-2", "model-z-5", 25)]);
+        let bad = observation(&[("GPU-1", "model-a-5", 15)]);
+        // 새 불일치(150)가 먼저 처리되고, 옛 일치(100)가 늦게 온다 — 불일치가 남는다.
+        assert!(matches!(
+            store.record_gpu_attestation("node-a", &bad, 150).unwrap(),
+            GpuAttestationOutcome::Mismatch(_)
+        ));
+        assert_eq!(
+            store.record_gpu_attestation("node-a", &good, 100).unwrap(),
+            GpuAttestationOutcome::OlderThanMismatch {
+                mismatch_at_unix_ms: 150
+            }
+        );
+        // 같은 시각의 일치도 지우지 않는다(빼는 쪽).
+        assert!(matches!(
+            store.record_gpu_attestation("node-a", &good, 150).unwrap(),
+            GpuAttestationOutcome::OlderThanMismatch { .. }
+        ));
+        assert_eq!(mismatch_at(&mut store), Some(150));
+        // 더 새 일치(200)가 지운다.
+        assert!(matches!(
+            store.record_gpu_attestation("node-a", &good, 200).unwrap(),
+            GpuAttestationOutcome::Recorded { .. }
+        ));
+        assert_eq!(mismatch_at(&mut store), None);
+        // 늦게 처리된 옛 불일치(180)는 더 새 확인(200) 뒤라 다시 적지 않는다.
+        assert!(matches!(
+            store.record_gpu_attestation("node-a", &bad, 180).unwrap(),
+            GpuAttestationOutcome::Mismatch(_)
+        ));
+        assert_eq!(
+            mismatch_at(&mut store),
+            None,
+            "옛 불일치가 정상 노드를 다시 뺐다"
+        );
+        // 더 새 불일치(250)는 적는다.
+        store.record_gpu_attestation("node-a", &bad, 250).unwrap();
+        assert_eq!(mismatch_at(&mut store), Some(250));
+    }
+
+    /// ★ 결함 450 (재검수 116) — GPU 를 빼고 CPU 전용으로 다시 선언하면 불일치가 접히지 않는다 · 그 뒤 관측이 오면 지워진다.
+    #[test]
+    fn a_cpu_only_redeclaration_is_not_held_by_an_old_gpu_mismatch() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let mut store = prepared_store(&path);
+        store
+            .update_inventory(&inventory("node-a", 1, 1_000, 5))
+            .unwrap();
+        let bad = observation(&[("GPU-1", "model-a-5", 15)]);
+        store.record_gpu_attestation("node-a", &bad, 150).unwrap();
+        let mut cpu_only = inventory("node-a", 2, 1_999_999_999_000, 5);
+        cpu_only.gpus = Some(Vec::new());
+        store.update_inventory(&cpu_only).unwrap();
+        let candidate = |store: &mut CoordinatorInventoryStore| {
+            store
+                .pool_snapshot(2_000_000_000_000)
+                .unwrap()
+                .candidates
+                .into_iter()
+                .find(|c| c.node_id == "node-a")
+                .unwrap()
+        };
+        assert_eq!(
+            candidate(&mut store).gpu_observation_mismatch_at_unix_ms,
+            None
+        );
+        assert_eq!(
+            store.record_gpu_attestation("node-a", &bad, 300).unwrap(),
+            GpuAttestationOutcome::NoDeclaredGpus
+        );
+        // 다시 GPU 를 선언해도 옛 불일치는 되살아나지 않는다(지워졌다).
+        store
+            .update_inventory(&inventory("node-a", 3, 1_999_999_999_500, 5))
+            .unwrap();
+        assert_eq!(
+            candidate(&mut store).gpu_observation_mismatch_at_unix_ms,
+            None
+        );
+    }
+
+    /// ★ 결함 451 (재검수 116) — 관측 표는 여는 때 생긴다(첫 관측 전의 옛 DB 도 표가 있는 상태로 읽는다).
+    #[test]
+    fn opening_the_store_creates_the_gpu_observation_tables() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        drop(CoordinatorInventoryStore::open(&path).unwrap());
+        let connection = Connection::open(&path).unwrap();
+        for table in [
+            "coordinator_node_gpu_attestation",
+            "coordinator_node_gpu_mismatch",
+        ] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{table}");
+        }
     }
 }

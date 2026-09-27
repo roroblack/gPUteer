@@ -1109,12 +1109,17 @@ fn run_one_connection_inner(
         // ★ 결함 301 — NVML 을 **먼저** 읽고 그 시각을 적은 뒤 Hello 시각을 잡는다(관측 시각 <= Hello 시각, signing.md §6.6).
         let gpu_observation = if config.attest_gpus {
             let observed = gputeer_runtime_nvml::observe().map_err(|e| format!("{e:?}"));
+            // ★ 결함 454 — cdi-all 노드는 GPU 를 전부 넘기므로 핀으로 거르지 않고 **전부** 보고한다(늘어난 GPU 가 선언 불일치로 드러난다).
+            let passes_all_gpus = config.container_runtime.as_ref().is_some_and(|runtime| {
+                runtime.pass_gpu && runtime.gpu_request == container::GpuRequest::CdiAll
+            });
+            let observation_pin = if passes_all_gpus {
+                None
+            } else {
+                config.gpu_pin.as_deref()
+            };
             match observed.and_then(|snapshot| {
-                gpu_observation_from_snapshot(
-                    &snapshot,
-                    config.gpu_pin.as_deref(),
-                    clock.now_unix_ms(),
-                )
+                gpu_observation_from_snapshot(&snapshot, observation_pin, clock.now_unix_ms())
             }) {
                 Ok(observation) => Some(observation),
                 Err(reason) => {
@@ -2912,13 +2917,50 @@ fn verify_nested_manifest(
     //   한다(`CLAUDE.md` §0.1). 검증을 통과한 뒤에만 읽는다.
     Ok(Some(VerifiedWorkload {
         submitter_device_id: verified.get().submitter_device_id.clone(),
-        container: container::decide(
-            verified.get(),
-            config.container_runtime.as_ref(),
-            config.gpu_pin.as_deref(),
+        container: recheck_cdi_all(
+            container::decide(
+                verified.get(),
+                config.container_runtime.as_ref(),
+                config.gpu_pin.as_deref(),
+            ),
+            || {
+                gputeer_runtime_nvml::observe()
+                    .map(|snapshot| snapshot.gpus.len())
+                    .map_err(|e| format!("{e:?}"))
+            },
         ),
         spec,
     }))
+}
+
+/// ★ 결함 454 (재검수 116) — `cdi-all` 은 GPU 를 **전부** 넘긴다. 시작 때 한 장이었어도 그 뒤 GPU · CDI 장치가 늘 수 있으므로
+///   컨테이너 Job 마다 NVML 로 한 장인지 **다시** 본다. 못 보면 받지 않는다(지어내지 않는다 — `CLAUDE.md` §1).
+fn recheck_cdi_all(
+    decision: container::ContainerDecision,
+    gpu_count: impl FnOnce() -> Result<usize, String>,
+) -> container::ContainerDecision {
+    let passes_all = matches!(
+        &decision,
+        container::ContainerDecision::Container(execution)
+            if execution.runtime.pass_gpu
+                && execution.runtime.gpu_request == container::GpuRequest::CdiAll
+    );
+    if !passes_all {
+        return decision;
+    }
+    match gpu_count() {
+        Ok(1) => decision,
+        Ok(count) => container::ContainerDecision::Refused {
+            detail: format!(
+                "CONTAINER_GPU_ALL_NOT_PINNED: cdi-all 인데 지금 NVML 이 GPU {count}장을 본다 — 한 장이 아니면 다른 GPU 까지 넘어간다"
+            ),
+        },
+        Err(why) => container::ContainerDecision::Refused {
+            detail: format!(
+                "CONTAINER_GPU_ALL_NOT_PINNED: cdi-all 은 GPU 가 한 장임을 NVML 로 다시 확인해야 받는다 — 확인하지 못했다: {why}"
+            ),
+        },
+    }
 }
 
 /// 검증을 통과한 실행 지시와, 그것을 낸 사람.
@@ -4621,6 +4663,47 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_container_runtime(&parse_flags(&args)?)
+    }
+
+    /// 결함 454 — cdi-all 컨테이너 Job 은 받을 때마다 GPU 가 한 장인지 다시 본다(시작 뒤 늘어난 GPU 를 넘기지 않는다).
+    #[test]
+    fn a_cdi_all_job_rechecks_the_gpu_count_each_time() {
+        let runtime = |gpu_request, pass_gpu| container::ContainerRuntime {
+            program: std::path::PathBuf::from("podman"),
+            flavor: container::RuntimeFlavor::Podman,
+            pass_gpu,
+            gpu_request,
+            only: true,
+            node_id: "node".into(),
+            owner: String::new(),
+        };
+        let run = |runtime| {
+            container::ContainerDecision::Container(container::ContainerExecution {
+                runtime,
+                pinned_image: "img@sha256:00".into(),
+                gpu_pin: Some("0".into()),
+            })
+        };
+        let all = run(runtime(container::GpuRequest::CdiAll, true));
+        assert_eq!(recheck_cdi_all(all.clone(), || Ok(1)), all);
+        for count in [Ok(2), Ok(0), Err("NVML 없음".to_string())] {
+            assert!(matches!(
+                recheck_cdi_all(all.clone(), || count.clone()),
+                container::ContainerDecision::Refused { ref detail }
+                    if detail.starts_with("CONTAINER_GPU_ALL_NOT_PINNED")
+            ));
+        }
+        // cdi-all 이 아니면(또는 GPU 를 넘기지 않으면) NVML 을 보지 않는다.
+        for other in [
+            run(runtime(container::GpuRequest::Cdi, true)),
+            run(runtime(container::GpuRequest::CdiAll, false)),
+            container::ContainerDecision::Host,
+        ] {
+            assert_eq!(
+                recheck_cdi_all(other.clone(), || panic!("NVML 을 봤다")),
+                other
+            );
+        }
     }
 
     /// 결함 439 — 핀은 장치 번호 하나다(여러 장이면 노드 둘).
