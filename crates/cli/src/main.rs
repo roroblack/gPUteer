@@ -107,6 +107,7 @@ gputeer — gPUteer CLI
     gputeer status --control-db <path>
     gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>
     gputeer owner-resume --checkpoint-root <dir>
+    gputeer container-incidents --checkpoint-root <dir> [--clear <컨테이너 이름> | --clear-all]
 
     selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
                                   작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
@@ -274,6 +275,68 @@ fn main() -> ExitCode {
                 },
                 None => {
                     eprintln!("owner-resume 실패: --checkpoint-root <루트> 가 필요하다");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Some("container-incidents") => {
+            // ★ 2026-09-27 보수 규칙(재검수 121~124 합의) — 사람이 봐야 하는 컨테이너 사건 표식을 보고, 확인한 뒤 **명시적으로** 해제한다.
+            //   표식이 있는 동안 Agent 는 새 작업을 받지 않는다. 해제하면 다음 기동이 남은 컨테이너의 로그를 건지고 지운다.
+            let mut root = None;
+            let mut clear: Option<Option<String>> = None;
+            let mut rest = args[1..].iter();
+            while let Some(arg) = rest.next() {
+                match arg.as_str() {
+                    "--checkpoint-root" => root = rest.next().cloned(),
+                    // ★ 이름을 빠뜨린 `--clear` 가 전부 해제(`--clear-all`)가 되지 않게 한다 — 시험이 찾았다.
+                    "--clear" => match rest.next() {
+                        Some(name) if !name.is_empty() && !name.starts_with("--") => {
+                            clear = Some(Some(name.clone()))
+                        }
+                        _ => {
+                            eprintln!("container-incidents 실패: --clear 에 컨테이너 이름을 준다(전부는 --clear-all)");
+                            return ExitCode::FAILURE;
+                        }
+                    },
+                    "--clear-all" => clear = Some(None),
+                    other => {
+                        eprintln!("container-incidents 실패: 모르는 인자 {other}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            let Some(root) = root else {
+                eprintln!("container-incidents 실패: --checkpoint-root <루트> 가 필요하다");
+                return ExitCode::FAILURE;
+            };
+            let dir = gputeer_agent::container::incident_dir_for(std::path::Path::new(&root));
+            let result = match &clear {
+                Some(name) => gputeer_agent::container::clear_incidents(&dir, name.as_deref()),
+                None => gputeer_agent::container::open_incidents(&dir),
+            };
+            match result {
+                Ok(paths) => {
+                    for path in &paths {
+                        if clear.is_some() {
+                            println!("CONTAINER_INCIDENT_CLEARED {}", path.display());
+                        } else {
+                            println!("CONTAINER_INCIDENT_OPEN {}", path.display());
+                            match std::fs::read_to_string(path) {
+                                Ok(body) => print!("{body}"),
+                                Err(error) => println!("  (읽지 못했다: {error})"),
+                            }
+                        }
+                    }
+                    println!(
+                        "CONTAINER_INCIDENTS {} {} dir={}",
+                        if clear.is_some() { "cleared" } else { "open" },
+                        paths.len(),
+                        dir.display()
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("container-incidents 실패: {error}");
                     ExitCode::FAILURE
                 }
             }

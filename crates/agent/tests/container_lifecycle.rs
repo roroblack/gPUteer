@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use gputeer_agent::container::{
-    self, ContainerDecision, ContainerExecution, ContainerRunError, ContainerRuntime, CreateInput,
-    Mount, RuntimeFlavor,
+    self, ContainerDecision, ContainerExecution, ContainerLeft, ContainerRunError,
+    ContainerRuntime, CreateInput, Mount, RuntimeFlavor,
 };
 
 const STATE_ENV: &str = "GPUTEER_FAKE_RUNTIME_STATE";
@@ -76,6 +76,18 @@ fn main() {
             "unsaved_logs_leave_no_partial_output_and_keep_the_container",
             unsaved_logs_leave_no_partial_output_and_keep_the_container,
         ),
+        (
+            "an_unconfirmed_stop_never_removes_the_container",
+            an_unconfirmed_stop_never_removes_the_container,
+        ),
+        (
+            "an_unremovable_same_name_container_blocks_create",
+            an_unremovable_same_name_container_blocks_create,
+        ),
+        (
+            "a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident",
+            a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -107,10 +119,11 @@ fn fake_runtime(state: &Path) -> i32 {
     let command = args.first().map(String::as_str).unwrap_or("");
     append(state, "calls", &format!("{}\n", args.join(" ")));
     // 쉼표로 여럿을 실패시킬 수 있다(예 "start,rm").
-    if std::env::var(FAIL_ENV)
-        .ok()
-        .is_some_and(|fail| fail.split(',').any(|c| c == command))
-    {
+    let fail_list = std::env::var(FAIL_ENV).unwrap_or_default();
+    let fails = |token: &str| fail_list.split(',').any(|c| c == token);
+    // "rm-created" — 컨테이너를 만든 뒤의 rm 만 실패시킨다(만들기 전 같은 이름 지우기는 통과 · 2026-09-27 보수 규칙 시험).
+    let created = state.join("create.args").exists();
+    if fails(command) || (command == "rm" && created && fails("rm-created")) {
         eprintln!("fake: {command} 실패를 흉내낸다");
         return 125;
     }
@@ -252,6 +265,7 @@ fn execution() -> ContainerExecution {
             only: false,
             node_id: "node-test".into(),
             owner: "node-test.root".into(),
+            incident_dir: None,
         },
         pinned_image: format!("registry.local/train@sha256:{}", "ab".repeat(32)),
         gpu_pin: None,
@@ -354,7 +368,7 @@ fn a_failed_create_is_not_a_workload_exit() {
     )
     .expect_err("create 가 실패했는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::NotStarted { detail } if detail.contains("create")),
+        matches!(&error, ContainerRunError::NotStarted { detail, container: ContainerLeft::Removed } if detail.contains("create")),
         "{error:?}"
     );
     assert!(!started, "시작하지 않았는데 정지 손잡이를 넘겼다");
@@ -603,7 +617,7 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     )
     .expect_err("create 뒤 GPU 가 늘었는데 시작했다");
     assert!(
-        matches!(&error, ContainerRunError::NotStarted { detail } if detail.contains("create 뒤 다시 확인")),
+        matches!(&error, ContainerRunError::NotStarted { detail, container: ContainerLeft::Removed } if detail.contains("create 뒤 다시 확인")),
         "{error:?}"
     );
     assert!(!started);
@@ -627,11 +641,11 @@ fn a_failed_start_is_not_started_only_when_the_container_was_removed() {
     )
     .expect_err("start 가 실패했는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::NotStarted { detail } if detail.contains("지웠다")),
+        matches!(&error, ContainerRunError::NotStarted { detail, container: ContainerLeft::Removed } if detail.contains("지웠다")),
         "{error:?}"
     );
 
-    let f = fixture(Some("start,rm"));
+    let f = fixture(Some("start,rm-created"));
     let mut handed_stopper = false;
     let error = container::run(
         &execution(),
@@ -642,7 +656,7 @@ fn a_failed_start_is_not_started_only_when_the_container_was_removed() {
     )
     .expect_err("start 가 실패했는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::NotObserved { detail } if detail.contains("시작했는지 모른다")),
+        matches!(&error, ContainerRunError::Unobserved { detail, stopped: false, container: ContainerLeft::Unknown, .. } if detail.contains("시작했는지 모른다")),
         "{error:?}"
     );
     // 결함 475 — 돌고 있을 수 있으니 소유자가 멈출 수 있게 정지 손잡이를 넘겼다.
@@ -666,7 +680,7 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
     )
     .expect_err("종료를 못 봤는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::RemovedUnobserved { detail } if detail.contains("rm 성공")),
+        matches!(&error, ContainerRunError::Unobserved { detail, stopped: true, logs_complete: true, container: ContainerLeft::Removed } if detail.contains("rm 성공")),
         "{error:?}"
     );
     // 결함 483 — 지우기 전에 로그를 남겼다(지운 뒤에는 런타임 로그도 없다).
@@ -682,7 +696,7 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
     let removed = order.iter().rposition(|c| c == "rm").unwrap();
     assert!(logs < removed, "지운 뒤에 로그를 받으려 했다: {order:?}");
 
-    let f = fixture(Some("inspect,rm"));
+    let f = fixture(Some("inspect,rm-created"));
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "sleep", &[]),
@@ -692,7 +706,7 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
     )
     .expect_err("종료를 못 봤는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::NotObserved { detail } if detail.contains("rm 실패")),
+        matches!(&error, ContainerRunError::Unobserved { stopped: true, container: ContainerLeft::Unknown, detail, .. } if detail.contains("rm 실패")),
         "{error:?}"
     );
 }
@@ -739,7 +753,7 @@ fn unsaved_logs_leave_no_partial_output_and_keep_the_container() {
     )
     .expect_err("종료를 못 봤는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::RemovedUnobserved { detail } if detail.contains("컨테이너를 남겼다")),
+        matches!(&error, ContainerRunError::Unobserved { detail, stopped: true, logs_complete: false, container: ContainerLeft::Kept } if detail.contains("컨테이너를 남겼다")),
         "{error:?}"
     );
     assert!(!out.exists() && !err.exists(), "반쯤 쓴 출력 파일이 남았다");
@@ -751,4 +765,139 @@ fn unsaved_logs_leave_no_partial_output_and_keep_the_container() {
         !calls_after_start.iter().any(|c| c == "rm"),
         "로그를 못 받았는데 지웠다: {calls_after_start:?}"
     );
+}
+
+fn call_order(state: &Path) -> Vec<String> {
+    calls(state)
+        .lines()
+        .map(|l| l.split(' ').next().unwrap().to_string())
+        .collect()
+}
+
+/// 2026-09-27 보수 규칙(코덱스 지적) — 종료를 못 봐 kill 했는데 멈춤을 확인하지 못하면 **지우지 않는다**(전에는 `rm -f` 로 가 로그를 받은 뒤의
+/// 출력 · 체크포인트를 잃을 수 있었다). 결과는 "멈춤 모름 · 컨테이너 남김" 이다.
+fn an_unconfirmed_stop_never_removes_the_container() {
+    let f = fixture(Some("inspect,kill"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "sleep", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("종료를 못 봤는데 성공했다");
+    assert!(
+        matches!(
+            &error,
+            ContainerRunError::Unobserved {
+                stopped: false,
+                container: ContainerLeft::Kept,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(error.needs_human());
+    let after_start: Vec<String> = call_order(&f.state)
+        .into_iter()
+        .skip_while(|c| c != "start")
+        .collect();
+    assert!(
+        !after_start.iter().any(|c| c == "rm"),
+        "멈춤을 확인하지 못했는데 지웠다: {after_start:?}"
+    );
+}
+
+/// 2026-09-27 보수 규칙(코덱스 지적) — 만들기 전에 같은 이름의 남은 컨테이너를 지우지 못하면 **만들지 않는다**(전에는 결과를 버렸다).
+fn an_unremovable_same_name_container_blocks_create() {
+    let f = fixture(Some("rm"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("남은 것을 못 지웠는데 만들었다");
+    assert!(
+        matches!(
+            &error,
+            ContainerRunError::NotStarted {
+                container: ContainerLeft::Unknown,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(error.needs_human());
+    assert!(
+        !call_order(&f.state).iter().any(|c| c == "create"),
+        "{}",
+        calls(&f.state)
+    );
+}
+
+/// 2026-09-27 보수 규칙 — 정상 종료 뒤 지우기만 실패하면 **관측한 종료는 그대로** 돌려주고(정리 실패를 작업 실패로 바꾸지 않는다) 정리 결과는
+/// 따로 싣는다. 사건 표식 폴더가 있으면 표식을 **남긴다**(덮지 않는다) — 정리가 된 실행은 표식을 남기지 않는다. 해제는 명시적이다.
+fn a_cleanup_failure_keeps_the_observed_exit_and_records_an_incident() {
+    let f = fixture(Some("rm-created"));
+    let incidents = f.work.join("container-incidents");
+    let mut execution = execution();
+    execution.runtime.incident_dir = Some(incidents.clone());
+    let out = f.work.join("stdout.log");
+    let err = f.work.join("stderr.log");
+    let exit = container::run(
+        &execution,
+        &input(&mounts(&f.work), "exit-3", &[]),
+        Some(&out),
+        Some(&err),
+        |_| {},
+    )
+    .expect("종료는 봤다");
+    assert_eq!(exit.exit_code, 3, "관측한 종료 코드를 잃었다");
+    assert!(exit.logs_complete);
+    assert_eq!(exit.container, ContainerLeft::Unknown);
+    assert!(exit.needs_human());
+    let open = container::open_incidents(&incidents).unwrap();
+    assert_eq!(open.len(), 1, "{open:?}");
+    let body = std::fs::read_to_string(&open[0]).unwrap();
+    assert!(
+        body.contains("kind=EXITED") && body.contains("container=gputeer-test"),
+        "{body}"
+    );
+    assert!(container::incident_recorded_for(&incidents, "gputeer-test"));
+
+    // 같은 이름이 다시 사건을 남기면 덮지 않고 새 파일이다.
+    let f2 = fixture(Some("rm-created"));
+    let exit = container::run(
+        &execution,
+        &input(&mounts(&f2.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect("종료는 봤다");
+    assert!(exit.needs_human());
+    assert_eq!(container::open_incidents(&incidents).unwrap().len(), 2);
+
+    // 정리가 된 실행은 표식을 남기지 않는다.
+    let f3 = fixture(None);
+    container::run(
+        &execution,
+        &input(&mounts(&f3.work), "exit-0", &[]),
+        Some(&f3.work.join("o.log")),
+        Some(&f3.work.join("e.log")),
+        |_| {},
+    )
+    .expect("정상");
+    assert_eq!(container::open_incidents(&incidents).unwrap().len(), 2);
+
+    // 해제는 명시적 — 이름으로 지운다.
+    let cleared = container::clear_incidents(&incidents, Some("gputeer-test")).unwrap();
+    assert_eq!(cleared.len(), 2);
+    assert!(container::open_incidents(&incidents).unwrap().is_empty());
+    assert!(!container::incident_recorded_for(
+        &incidents,
+        "gputeer-test"
+    ));
 }

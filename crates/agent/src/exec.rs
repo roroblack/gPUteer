@@ -511,14 +511,19 @@ fn execute_in_container(
         |stopper| on_started(WorkloadStopper::for_container(stopper)),
     ) {
         Ok(exit) => exit,
-        Err(crate::container::ContainerRunError::NotStarted { detail }) => {
+        Err(crate::container::ContainerRunError::NotStarted { detail, .. }) => {
             return Err(ExecutionError::SpawnFailed { detail })
         }
-        Err(crate::container::ContainerRunError::NotObserved { detail }) => {
-            return Err(ExecutionError::WaitFailed { detail })
-        }
-        // ★ 결함 481 (재검수 121) — 컨테이너는 지웠다(더 돌지 않는다). 종료 코드만 모른다 — "종료는 봤고 코드가 없다" 로 보고한다(결함 69 와 같은 모양).
-        Err(crate::container::ContainerRunError::RemovedUnobserved { detail }) => {
+        // ★ 2026-09-27 보수 규칙 — 멈춤을 확인하지 못했으면 "작업이 돌 수 있다"(WaitFailed — 작업 폴더를 지우지 않는다). 사건 표식은 `container::run`
+        //   이 이미 남겼다.
+        Err(crate::container::ContainerRunError::Unobserved {
+            detail,
+            stopped: false,
+            ..
+        }) => return Err(ExecutionError::WaitFailed { detail }),
+        // ★ 결함 481 (재검수 121) — 더 돌지 않는다(멈춤 확인). 종료 코드만 모른다 — "종료는 봤고 코드가 없다" 로 보고한다(결함 69 와 같은 모양).
+        //   컨테이너를 남겼으면(로그를 못 받음) 사건 표식이 따로 있고 작업 폴더도 남는다(lib.rs).
+        Err(crate::container::ContainerRunError::Unobserved { detail, .. }) => {
             println!("CONTAINER_REMOVED_UNOBSERVED name={name} — {detail}");
             return Ok(ExecutionOutcome {
                 exit: ExitObserved::NoCode { detail },

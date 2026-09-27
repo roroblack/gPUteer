@@ -131,6 +131,9 @@ pub struct ContainerRuntime {
     /// 남은 컨테이너를 찾는 열쇠 — `<노드 id>.<잠근 체크포인트 루트의 해시>`. 같은 루트를 잠근 Agent 는 하나뿐이다(결함 290 · 295).
     /// Agent 가 루트를 잠근 뒤 채운다. 비어 있으면 컨테이너를 만들지도 지우지도 않는다.
     pub owner: String,
+    /// ★ 2026-09-27 보수 규칙(재검수 121~124 합의) — 사람이 봐야 하는 상태(시작 여부 · 정지 · 로그 · 컨테이너가 불확실)를 남길 **영속 사건 표식**
+    ///   폴더. Agent 가 체크포인트 루트를 잠근 뒤 채운다(`incident_dir_for`). `None` 이면 표식을 쓰지 않는다(node-doctor · 시험 — 호출부가 직접 알린다).
+    pub incident_dir: Option<PathBuf>,
 }
 
 /// 이 Job 을 어떻게 실행하는가 — ACK **전에** 정한다.
@@ -615,12 +618,36 @@ impl ContainerStopper {
     }
 }
 
+/// 컨테이너 객체가 지금 어떤가 — 여러 축 판정의 "컨테이너" 축(2026-09-27 보수 규칙).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerLeft {
+    /// 없다(지웠거나 처음부터 만들지 않았다 — `rm -f` 성공 또는 런타임이 "없다" 고 답함).
+    Removed,
+    /// 남겼다(더 돌지 않는데 로그를 못 받았다 · 멈추지 못해 지우지 않았다 등 — 일부러 보존).
+    Kept,
+    /// 지우려 했는데 결과를 모른다.
+    Unknown,
+}
+
 /// 컨테이너가 끝난 뒤 관측한 것.
+///
+/// ★ 이미 관측한 사실(종료 코드 · 로그 완결)과 정리 결과(`container`)를 **따로** 싣는다 — 정리 실패를 작업 실패로 바꾸면 반대 방향의 거짓
+///   보고다(2026-09-27 합의). 정리가 불확실하면 사건 표식이 따로 남는다(`needs_human`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerExit {
     pub exit_code: i64,
     /// 메모리 상한에 걸려 커널이 죽였는가.
     pub oom_killed: bool,
+    /// 작업 출력(stdout · stderr)을 끝까지 받았는가. 못 받았으면 반쯤 쓴 파일은 지워져 있다(확정이 실패하게).
+    pub logs_complete: bool,
+    pub container: ContainerLeft,
+}
+
+impl ContainerExit {
+    /// 사람이 봐야 하는가 — 컨테이너가 없음을 확인하지 못했다.
+    pub fn needs_human(&self) -> bool {
+        self.container != ContainerLeft::Removed
+    }
 }
 
 /// `cdi-all` 로 GPU 를 넘기는 실행이면 NVML 이 GPU 를 **정확히 한 장** 볼 때만 통과한다. 못 보면 거부한다(지어내지 않는다).
@@ -643,16 +670,44 @@ pub fn cdi_all_ready(
     }
 }
 
-/// 실행 결과의 실패 — 어디서 멈췄는지 나눈다.
+/// 실행 결과의 실패 — 여러 축으로 나눈다(2026-09-27 보수 규칙 · 재검수 121~124 합의).
+///
+/// ★ 전에는 `NotObserved` · `RemovedUnobserved` 두 이름으로 뭉개, "컨테이너를 남겼는데 지웠다" 를 돌려주는 모순이 있었다(코덱스 지적).
+///   실행 · 정지 · 로그 · 컨테이너를 각각 싣는다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerRunError {
-    /// 컨테이너를 만들거나 시작하지 못했다 — 작업은 돌지 않았다.
-    NotStarted { detail: String },
-    /// 시작했는데 종료를 관측하지 못했고 컨테이너가 **남아 돌 수 있다**. 정리(kill · rm)를 시도했고 그 결과는 `detail` 에 있다.
-    NotObserved { detail: String },
-    /// ★ 결함 481 (재검수 121) — 종료 코드는 관측하지 못했지만 컨테이너를 **지웠다**(`rm -f` 성공 — 더 돌지 않는다). 호출부는 "종료는 봤고 코드가
-    /// 없다" 로 다룬다 — 작업 폴더를 남길 까닭이 없다.
-    RemovedUnobserved { detail: String },
+    /// 작업은 **돌지 않았다**(만들기 전 · 만들기 · 만든 뒤 확인 실패 · 런타임이 start 를 실패라고 답함). `container` 는 남은 객체의 상태다.
+    NotStarted {
+        detail: String,
+        container: ContainerLeft,
+    },
+    /// 작업이 **돌았을 수 있고** 종료 코드를 모른다.
+    Unobserved {
+        detail: String,
+        /// 더 돌지 않음을 확인했는가(kill 성공 · 이미 끝나 있음 · `rm -f` 성공).
+        stopped: bool,
+        /// 작업 출력을 끝까지 받았는가.
+        logs_complete: bool,
+        container: ContainerLeft,
+    },
+}
+
+impl ContainerRunError {
+    /// 사람이 봐야 하는가 — 멈춤을 확인하지 못했거나 컨테이너가 없음을 확인하지 못했다.
+    pub fn needs_human(&self) -> bool {
+        match self {
+            Self::NotStarted { container, .. } => *container != ContainerLeft::Removed,
+            Self::Unobserved {
+                stopped, container, ..
+            } => !*stopped || *container != ContainerLeft::Removed,
+        }
+    }
+
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::NotStarted { detail, .. } | Self::Unobserved { detail, .. } => detail,
+        }
+    }
 }
 
 /// 종료를 확인하는 주기와, 연속으로 몇 번 확인에 실패하면 "관측 못 함" 으로 볼지.
@@ -695,8 +750,50 @@ pub fn run_with_gpu_count(
     on_started: impl FnOnce(ContainerStopper),
     nvml_gpu_count: impl Fn() -> Result<usize, String>,
 ) -> Result<ContainerExit, ContainerRunError> {
+    let result = run_inner(
+        execution,
+        input,
+        stdout_path,
+        stderr_path,
+        on_started,
+        nvml_gpu_count,
+    );
+    record_incident_if_needed(&execution.runtime, input.name, result)
+}
+
+/// 지우고 그 결과를 컨테이너 축으로 돌려준다. 런타임이 "없다" 고 답하면(docker · podman 공통 "no such container") 없는 것이다.
+fn remove_container_fact(program: &Path, name: &str) -> (ContainerLeft, String) {
+    match remove_container(program, name) {
+        Ok(()) => (ContainerLeft::Removed, "rm 성공".into()),
+        Err(why) if why.to_lowercase().contains("no such container") => {
+            (ContainerLeft::Removed, "이미 없다".into())
+        }
+        Err(why) => (ContainerLeft::Unknown, format!("rm 실패({why})")),
+    }
+}
+
+/// 멈춤을 확인한다 — kill 성공, 또는 이미 끝나 있었다(`ALREADY_EXITED`).
+fn stop_confirmed(stopper: &ContainerStopper) -> (bool, String) {
+    match stopper.stop() {
+        Ok(()) => (true, "kill 성공".into()),
+        Err(why) if why.starts_with("ALREADY_EXITED") => (true, "이미 끝나 있었다".into()),
+        Err(why) => (false, format!("kill 실패({why})")),
+    }
+}
+
+fn run_inner(
+    execution: &ContainerExecution,
+    input: &CreateInput<'_>,
+    stdout_path: Option<&Path>,
+    stderr_path: Option<&Path>,
+    on_started: impl FnOnce(ContainerStopper),
+    nvml_gpu_count: impl Fn() -> Result<usize, String>,
+) -> Result<ContainerExit, ContainerRunError> {
     let program = execution.runtime.program.as_path();
-    let not_started = |detail: String| ContainerRunError::NotStarted { detail };
+    let not_created = |detail: String| ContainerRunError::NotStarted {
+        detail,
+        container: ContainerLeft::Removed,
+    };
     // ★ 결함 462 (재검수 117) · 468 (재검수 118) — cdi-all 은 GPU 를 전부 넘긴다. 확인과 실제 장치 해석(create) 사이를 좁힌다:
     //   이미지를 **먼저** 받고(create 가 수십 분 이미지를 받는 동안 GPU 가 늘 수 있었다) → 장수 확인 → create → 다시 확인 → start.
     //   ★ 남는 창 — create 한 번 동안의 장치 변경은 닫지 못한다(확인 두 번이지 격리 보장이 아니다).
@@ -708,23 +805,39 @@ pub fn run_with_gpu_count(
             &["pull".into(), execution.pinned_image.clone().into()],
             CREATE_TIMEOUT,
         )
-        .map_err(|why| not_started(format!("pull: {why}")))?;
+        .map_err(|why| not_created(format!("pull: {why}")))?;
     }
-    cdi_all_ready(execution, &nvml_gpu_count).map_err(not_started)?;
-    let create = create_args(execution, input).map_err(not_started)?;
+    cdi_all_ready(execution, &nvml_gpu_count).map_err(not_created)?;
+    let create = create_args(execution, input).map_err(not_created)?;
     // ★ 결함 276 — 같은 이름이 남아 있으면(전 실행의 rm 실패) create 가 충돌한다. 이름은 이 시도의 것이라 남은 것도 이 시도의 것이다.
-    let _ = remove_container(program, input.name);
+    // ★ 2026-09-27 보수 규칙(코덱스 지적) — 전에는 결과를 버렸다(`let _`). 지우지 못했으면(남은 것이 무엇인지 모른다) 만들지 않고 사람에게 넘긴다.
+    //   Agent 는 기동 때 남은 컨테이너를 로그를 건진 뒤 지우므로(결함 489) 여기서 남아 있는 것은 뜻밖이다.
+    let (left, removed) = remove_container_fact(program, input.name);
+    if left != ContainerLeft::Removed {
+        return Err(ContainerRunError::NotStarted {
+            detail: format!(
+                "같은 이름의 남은 컨테이너를 지우지 못했다 — 만들지 않았다 · {removed}"
+            ),
+            container: left,
+        });
+    }
     if let Err(why) = cli_ok(program, &create, CREATE_TIMEOUT) {
-        // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다.
-        let _ = remove_container(program, input.name);
-        return Err(not_started(format!("create: {why}")));
+        // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다. 결과는 컨테이너 축에 싣는다.
+        let (left, removed) = remove_container_fact(program, input.name);
+        return Err(ContainerRunError::NotStarted {
+            detail: format!("create: {why} · {removed}"),
+            container: left,
+        });
     }
     if let Err(why) = cdi_all_ready(execution, &nvml_gpu_count) {
-        let _ = remove_container(program, input.name);
-        return Err(not_started(format!("create 뒤 다시 확인: {why}")));
+        let (left, removed) = remove_container_fact(program, input.name);
+        return Err(ContainerRunError::NotStarted {
+            detail: format!("create 뒤 다시 확인: {why} · {removed}"),
+            container: left,
+        });
     }
-    // ★ 결함 488 (재검수 123) — 런타임이 **실패라고 답한** 경우(0 이 아닌 종료)만 "시작하지 않았다" 다. 응답이 없거나 시한을 넘기면 데몬은 이미 띄웠을 수
-    //   있다 — 로그를 받고 지운 뒤 "종료는 봤고 코드가 없다"(RemovedUnobserved)로 돌려줘 산출물(체크포인트 포함) 확정을 거치게 한다.
+    // ★ 결함 488 (재검수 123) — 런타임이 **실패라고 답한** 경우(0 이 아닌 종료)와 응답이 없거나 시한을 넘긴 경우를 나눈다.
+    //   ★ 이 분기의 정책(490 · 491)은 갈라진 세션(fix/490-495)이 채운다 — 여기서는 판정 타입만 바꾸고 동작은 그대로 둔다.
     let start_args: [OsString; 2] = ["start".into(), input.name.into()];
     let start_failure = match run_cli(program, &start_args, SHORT_TIMEOUT) {
         Ok(output) if output.status.success() => None,
@@ -735,41 +848,50 @@ pub fn run_with_gpu_count(
         Err(why) => Some((true, why)),
     };
     if let Some((unanswered, why)) = start_failure {
-        let logs = if unanswered {
+        let (logs_complete, logs) = if unanswered {
             match save_logs(program, input.name, stdout_path, stderr_path) {
-                Ok(()) => " · 로그 남김".to_string(),
+                Ok(()) => (true, " · 로그 남김".to_string()),
                 Err(e) => {
                     discard_partial_outputs(stdout_path, stderr_path);
-                    format!(" · 로그 못 남김({e})")
+                    (false, format!(" · 로그 못 남김({e})"))
                 }
             }
         } else {
-            String::new()
+            (false, String::new())
         };
         // ★ 결함 471 (재검수 119) — 지우기(`rm -f` — 돌고 있으면 죽인다)가 성공했을 때만 "돌지 않는다" 로 본다. 지우기도 실패하면 **시작 여부를 모른다**.
-        match remove_container(program, input.name) {
-            Ok(()) if unanswered => {
-                return Err(ContainerRunError::RemovedUnobserved {
+        let (left, removed) = remove_container_fact(program, input.name);
+        if left == ContainerLeft::Removed {
+            return Err(if unanswered {
+                ContainerRunError::Unobserved {
                     detail: format!(
-                    "start 가 응답하지 않았다({why}) — 시작했는지 모른다{logs} · 컨테이너를 지웠다"
-                ),
-                })
-            }
-            Ok(()) => return Err(not_started(format!("start: {why} · 컨테이너를 지웠다"))),
-            Err(rm) => {
-                // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**. 소유자가 패널에서 멈출 수 있어야 한다(§0.1).
-                on_started(ContainerStopper {
-                    program: program.to_path_buf(),
-                    name: input.name.to_string(),
-                });
-                return Err(ContainerRunError::NotObserved {
-                    detail: format!(
-                        "start: {why}{logs} · 지우기도 실패했다({rm}) — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
-                        input.name
+                        "start 가 응답하지 않았다({why}) — 시작했는지 모른다{logs} · 컨테이너를 지웠다"
                     ),
-                });
-            }
+                    stopped: true,
+                    logs_complete,
+                    container: ContainerLeft::Removed,
+                }
+            } else {
+                ContainerRunError::NotStarted {
+                    detail: format!("start: {why} · 컨테이너를 지웠다"),
+                    container: ContainerLeft::Removed,
+                }
+            });
         }
+        // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**(같은 프로세스가 도는 동안의 소유자 손잡이).
+        on_started(ContainerStopper {
+            program: program.to_path_buf(),
+            name: input.name.to_string(),
+        });
+        return Err(ContainerRunError::Unobserved {
+            detail: format!(
+                "start: {why}{logs} · {removed} — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
+                input.name
+            ),
+            stopped: false,
+            logs_complete,
+            container: left,
+        });
     }
     let stopper = ContainerStopper {
         program: program.to_path_buf(),
@@ -778,46 +900,42 @@ pub fn run_with_gpu_count(
     on_started(stopper.clone());
     // ★ 시한 없이 기다린다 — 작업 길이는 Lease 가 정한다. 멈추는 것은 소유자 손잡이(kill)가 한다.
     let mut failures: u32 = 0;
-    let exit = loop {
+    let mut exit = loop {
         match inspect_state(program, input.name) {
             Ok(Some(exit)) => break exit,
             Ok(None) => failures = 0,
             Err(why) => {
                 failures += 1;
                 if failures >= POLL_FAILURES_TOLERATED {
-                    let (kill_ok, killed) = match stopper.stop() {
-                        Ok(()) => (true, "kill 성공".to_string()),
-                        Err(e) => (false, format!("kill 실패({e})")),
-                    };
-                    // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 지우면 런타임의 로그도 사라져 작업 출력을 되살릴 수 없다.
-                    // ★ 결함 487 (재검수 123) — 못 남기면 반쯤 쓴 출력 파일을 지운다(확정이 READ_OUTPUTS 로 **실패**하게 — 빈 출력이 성공이 되지 않게).
-                    //   kill 이 성공했으면(더 돌지 않는다) 컨테이너를 **남긴다** — 런타임에 온전한 로그가 남고 다음 회차가 건진다(489).
-                    let logs = save_logs(program, input.name, stdout_path, stderr_path);
-                    if let Err(e) = &logs {
-                        discard_partial_outputs(stdout_path, stderr_path);
-                        if kill_ok {
-                            return Err(ContainerRunError::RemovedUnobserved {
-                                detail: format!(
-                                    "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · 로그 못 남김({e}) — 컨테이너를 남겼다(더 돌지 않는다 · 다음 회차가 로그를 건지고 지운다)"
-                                ),
-                            });
-                        }
+                    // ★ 2026-09-27 보수 규칙 — 멈춤을 확인하지 못하면 지우지 않는다(코덱스 지적: kill 이 실패했는데 `rm -f` 로 가면 로그를 받은 뒤의
+                    //   출력 · 체크포인트를 잃는다). 로그를 못 받아도 지우지 않는다(결함 487 — 런타임에 온전한 로그가 남는다).
+                    let (stopped, killed) = stop_confirmed(&stopper);
+                    // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 못 남기면 반쯤 쓴 파일을 지운다(빈 출력이 성공이 되지 않게 · 487).
+                    let (logs_complete, logs) =
+                        match save_logs(program, input.name, stdout_path, stderr_path) {
+                            Ok(()) => (true, "로그 남김".to_string()),
+                            Err(e) => {
+                                discard_partial_outputs(stdout_path, stderr_path);
+                                (false, format!("로그 못 남김({e})"))
+                            }
+                        };
+                    let head = format!(
+                        "종료를 {failures}번 연속 확인하지 못했다({why}) · {killed} · {logs}"
+                    );
+                    if !stopped || !logs_complete {
+                        return Err(ContainerRunError::Unobserved {
+                            detail: format!("{head} — 컨테이너를 남겼다(사람이 확인한다)"),
+                            stopped,
+                            logs_complete,
+                            container: ContainerLeft::Kept,
+                        });
                     }
-                    let killed = match &logs {
-                        Ok(()) => format!("{killed} · 로그 남김"),
-                        Err(e) => format!("{killed} · 로그 못 남김({e})"),
-                    };
-                    return Err(match remove_container(program, input.name) {
-                        Ok(()) => ContainerRunError::RemovedUnobserved {
-                            detail: format!(
-                                "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · rm 성공 — 컨테이너는 없다"
-                            ),
-                        },
-                        Err(e) => ContainerRunError::NotObserved {
-                            detail: format!(
-                                "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · rm 실패({e}) — 컨테이너가 남아 돌 수 있다"
-                            ),
-                        },
+                    let (left, removed) = remove_container_fact(program, input.name);
+                    return Err(ContainerRunError::Unobserved {
+                        detail: format!("{head} · {removed}"),
+                        stopped: true,
+                        logs_complete: true,
+                        container: left,
                     });
                 }
             }
@@ -825,22 +943,169 @@ pub fn run_with_gpu_count(
         std::thread::sleep(POLL_INTERVAL);
     };
     // ★ 결함 487 (재검수 123) — 로그를 못 받으면 반쯤 쓴 출력 파일을 지우고(확정이 READ_OUTPUTS 로 실패하게 — 빈 출력이 성공이 되지 않게),
-    //   컨테이너를 **지우지 않는다**(런타임에 온전한 로그가 남는다 — 다음 회차가 건진 뒤 지운다 · 489).
+    //   컨테이너를 **지우지 않는다**(런타임에 온전한 로그가 남는다). 종료 코드는 관측한 사실이라 그대로 돌려준다(정리 결과는 따로).
     match save_logs(program, input.name, stdout_path, stderr_path) {
         Ok(()) => {
-            if let Err(why) = remove_container(program, input.name) {
-                eprintln!("CONTAINER_NOT_REMOVED name={} — {why}", input.name);
+            exit.logs_complete = true;
+            let (left, removed) = remove_container_fact(program, input.name);
+            exit.container = left;
+            if left != ContainerLeft::Removed {
+                eprintln!("CONTAINER_NOT_REMOVED name={} — {removed}", input.name);
             }
         }
         Err(why) => {
             discard_partial_outputs(stdout_path, stderr_path);
+            exit.logs_complete = false;
+            exit.container = ContainerLeft::Kept;
             eprintln!(
-                "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다(다음 회차가 로그를 건지고 지운다): {why}",
+                "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다: {why}",
                 input.name
             );
         }
     }
     Ok(exit)
+}
+
+/// 사건 표식 폴더 — 체크포인트 루트 옆 `container-incidents/`(건진 로그 `leftover-container-logs/` 와 같은 자리).
+pub fn incident_dir_for(checkpoint_root: &Path) -> PathBuf {
+    checkpoint_root.with_file_name("container-incidents")
+}
+
+/// 열린 사건 표식(`*.incident`)을 이름 순으로 돌려준다. 폴더가 없으면 없다.
+pub fn open_incidents(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{dir:?} 를 읽지 못했다: {error}")),
+    };
+    let mut found = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("{dir:?} 를 읽지 못했다: {error}"))?
+            .path();
+        if path.extension().is_some_and(|ext| ext == "incident") {
+            found.push(path);
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// 소유자의 **명시적** 해제 — 표식을 지운다(`name` 이 없으면 전부). 지운 표식을 돌려준다. 컨테이너 · 작업 폴더는 건드리지 않는다
+/// (해제한 뒤 다음 기동이 남은 컨테이너의 로그를 건지고 지운다 · 결함 489).
+pub fn clear_incidents(dir: &Path, name: Option<&str>) -> Result<Vec<PathBuf>, String> {
+    let mut cleared = Vec::new();
+    for path in open_incidents(dir)? {
+        let matches = name.is_none_or(|name| {
+            path.file_name()
+                .and_then(|file| file.to_str())
+                .is_some_and(|file| file.starts_with(&format!("{name}.")))
+        });
+        if matches {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("{path:?} 를 지우지 못했다: {error}"))?;
+            cleared.push(path);
+        }
+    }
+    Ok(cleared)
+}
+
+/// 이 컨테이너 이름으로 열린 사건 표식이 있는가.
+pub fn incident_recorded_for(dir: &Path, name: &str) -> bool {
+    open_incidents(dir).is_ok_and(|found| {
+        found.iter().any(|path| {
+            path.file_name()
+                .and_then(|file| file.to_str())
+                .is_some_and(|file| file.starts_with(&format!("{name}.")))
+        })
+    })
+}
+
+/// ★ 2026-09-27 보수 규칙 — 사람이 봐야 하는 결과면 **영속 사건 표식**을 남긴다. 표식이 있는 동안 Agent 는 기동하지 않아(새 작업 거부) 남은
+///   컨테이너 정리도 돌지 않는다 — 사람에게 넘긴 것을 재기동이 덮지 않는다. 해제는 소유자의 명시적 명령(`gputeer container-incidents --clear`)이다.
+///   표식을 쓰지 못하면 결과를 "멈춤을 모른다"(사람 필요)로 올린다 — 조용히 넘어가지 않는다.
+fn record_incident_if_needed(
+    runtime: &ContainerRuntime,
+    name: &str,
+    result: Result<ContainerExit, ContainerRunError>,
+) -> Result<ContainerExit, ContainerRunError> {
+    let (kind, detail, needs) = match &result {
+        Ok(exit) => (
+            "EXITED",
+            format!(
+                "종료 코드 {} · 로그 {} · 컨테이너 {:?}",
+                exit.exit_code,
+                if exit.logs_complete {
+                    "완결"
+                } else {
+                    "못 받음"
+                },
+                exit.container
+            ),
+            exit.needs_human(),
+        ),
+        Err(error @ ContainerRunError::NotStarted { .. }) => (
+            "NOT_STARTED",
+            error.detail().to_string(),
+            error.needs_human(),
+        ),
+        Err(error @ ContainerRunError::Unobserved { .. }) => (
+            "UNOBSERVED",
+            error.detail().to_string(),
+            error.needs_human(),
+        ),
+    };
+    let Some(dir) = runtime.incident_dir.as_ref().filter(|_| needs) else {
+        return result;
+    };
+    match write_incident(dir, name, &runtime.node_id, kind, &detail) {
+        Ok(path) => {
+            eprintln!(
+                "CONTAINER_INCIDENT_RECORDED name={name} file={} — 사람이 확인한 뒤 해제한다",
+                path.display()
+            );
+            result
+        }
+        Err(why) => {
+            eprintln!("CONTAINER_INCIDENT_NOT_RECORDED name={name} — {why}");
+            Err(ContainerRunError::Unobserved {
+                detail: format!("{detail} · ★ 사건 표식을 쓰지 못했다({why})"),
+                stopped: false,
+                logs_complete: false,
+                container: ContainerLeft::Unknown,
+            })
+        }
+    }
+}
+
+/// 표식 한 건을 쓴다 — 임시 파일에 쓰고 새 이름으로 옮긴다(덮지 않는다: 같은 이름이 있으면 시각을 붙인다).
+fn write_incident(
+    dir: &Path,
+    name: &str,
+    node_id: &str,
+    kind: &str,
+    detail: &str,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|error| format!("{dir:?} 를 만들지 못했다: {error}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut path = dir.join(format!("{name}.incident"));
+    if path.exists() {
+        path = dir.join(format!("{name}.{now}.incident"));
+    }
+    let tmp = dir.join(format!(".{name}.{now}.tmp"));
+    let one_line = detail.replace(['\n', '\r'], " ");
+    let body = format!(
+        "container={name}\nnode={node_id}\nkind={kind}\nrecorded_at_unix_ms={now}\ndetail={one_line}\n"
+    );
+    std::fs::write(&tmp, body).map_err(|error| format!("{tmp:?} 를 쓰지 못했다: {error}"))?;
+    std::fs::rename(&tmp, &path).map_err(|error| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("{path:?} 로 옮기지 못했다: {error}")
+    })?;
+    Ok(path)
 }
 
 /// 컨테이너 상태 — 끝났으면 `Some(종료)`, 아직 돌면 `None`.
@@ -879,6 +1144,9 @@ fn parse_inspect_state(text: &str) -> Result<Option<ContainerExit>, String> {
     Ok(Some(ContainerExit {
         exit_code,
         oom_killed,
+        // 아래 값은 `run` 이 로그 받기 · 정리 뒤에 채운다.
+        logs_complete: false,
+        container: ContainerLeft::Kept,
     }))
 }
 
@@ -939,6 +1207,7 @@ mod tests {
                 only: true,
                 node_id: "node".into(),
                 owner: String::new(),
+                incident_dir: None,
             },
             pinned_image: "img@sha256:00".into(),
             gpu_pin: Some("0".into()),
@@ -972,6 +1241,7 @@ mod tests {
             only: false,
             node_id: "node-a".into(),
             owner: "node-a.0123456789abcdef".into(),
+            incident_dir: None,
         }
     }
 
@@ -1334,7 +1604,9 @@ mod tests {
             parse_inspect_state("false 137 true\n").unwrap(),
             Some(ContainerExit {
                 exit_code: 137,
-                oom_killed: true
+                oom_killed: true,
+                logs_complete: false,
+                container: ContainerLeft::Kept,
             })
         );
         assert_eq!(

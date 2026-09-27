@@ -85,6 +85,7 @@ fn execution(flavor: RuntimeFlavor, hex: &str) -> ContainerExecution {
             only: false,
             node_id: "gputeer-ci-node".into(),
             owner: "gputeer-ci-node.test".into(),
+            incident_dir: None,
         },
         pinned_image: format!("docker.io/library/busybox@sha256:{hex}"),
         gpu_pin: None,

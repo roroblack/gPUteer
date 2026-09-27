@@ -629,6 +629,7 @@ fn check_container_gpu_probe(
                 only: true,
                 node_id: "node-doctor".into(),
                 owner: format!("node-doctor.{suffix}"),
+                incident_dir: None,
             },
             pinned_image: image.to_string(),
             gpu_pin: Some(pin.to_string()),
@@ -659,18 +660,24 @@ fn check_container_gpu_probe(
             |_| {},
         )
         .map_err(|e| {
-            if matches!(e, container::ContainerRunError::NotObserved { .. }) {
+            // ★ 2026-09-27 보수 규칙 — 멈춤 · 컨테이너가 불확실하면(사람이 봐야 하면) 점검 폴더를 지우지 않는다(코덱스 지적: 전에는
+            //   NotObserved 하나만 봤다).
+            if e.needs_human() {
                 probe_may_be_running = true;
             }
             format!("컨테이너를 돌리지 못했다: {e:?}")
         })?;
+        // 종료는 봤는데 로그를 못 받아 컨테이너를 남겼거나(결함 487) 지우지 못했다 — 폴더를 남기고 아래에서 FAIL 로 알린다.
+        if exit.needs_human() {
+            probe_may_be_running = true;
+        }
         let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
         let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
         Ok::<_, String>((exit, stdout, stderr))
     })();
     let left = if probe_may_be_running {
         format!(
-            " · ★ 점검 컨테이너 gputeer-doctor-{suffix} 가 돌고 있을 수 있어 점검 폴더 {probe_dir:?} 를 지우지 않았다 — `<런타임> rm -f -v gputeer-doctor-{suffix}` 뒤 폴더를 지운다"
+            " · ★ 점검 컨테이너 gputeer-doctor-{suffix} 가 남았거나 돌고 있을 수 있어 점검 폴더 {probe_dir:?} 를 지우지 않았다 — `<런타임> logs` 로 확인하고 `<런타임> rm -f -v gputeer-doctor-{suffix}` 뒤 폴더를 지운다"
         )
     } else {
         match std::fs::remove_dir_all(&probe_dir) {
@@ -682,6 +689,18 @@ fn check_container_gpu_probe(
         Ok(result) => result,
         Err(why) => return fail(format!("{why}{left}")),
     };
+    // ★ 2026-09-27 보수 규칙 — 사람이 봐야 하는 컨테이너를 남겼으면 GPU 가 보였어도 FAIL 이다(WARN 이면 명령이 성공해 설치가 이어진다).
+    if probe_may_be_running {
+        return fail(format!(
+            "점검 컨테이너를 남겼다(로그 {} · 컨테이너 {:?}){left}",
+            if exit.logs_complete {
+                "완결"
+            } else {
+                "못 받음"
+            },
+            exit.container
+        ));
+    }
     let pinned = pin.split(',').filter(|id| !id.trim().is_empty()).count();
     judge_gpu_probe(
         exit.exit_code,

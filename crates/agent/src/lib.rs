@@ -650,6 +650,33 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     if let Some(runtime) = config.container_runtime.as_mut() {
         let root_hash = blake3::hash(config.checkpoint_root.to_string_lossy().as_bytes()).to_hex();
         runtime.owner = format!("{}.{}", runtime.node_id, &root_hash[..16]);
+        // ★ 2026-09-27 보수 규칙(재검수 121~124 합의) — 열린 사건 표식이 있으면 **새 작업을 받지 않고** 기동하지 않는다. 남은 컨테이너 정리보다
+        //   **먼저** 본다 — 사람에게 넘긴 컨테이너 · 로그를 재기동의 자동 정리가 지우지 않게. 해제는 소유자가 확인한 뒤 명시적으로 한다.
+        let incident_dir = container::incident_dir_for(&config.checkpoint_root);
+        let open = container::open_incidents(&incident_dir).map_err(|why| {
+            format!(
+                "CONTAINER_INCIDENT_UNKNOWN: 사건 표식 폴더를 읽지 못해 시작하지 않는다 — {why}"
+            )
+        })?;
+        if !open.is_empty() {
+            let names: Vec<String> = open
+                .iter()
+                .filter_map(|path| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .collect();
+            return Err(format!(
+                "CONTAINER_INCIDENT_OPEN: 사람이 확인해야 하는 컨테이너 사건 {}건이 열려 있어 새 작업을 받지 않는다({}) — 폴더 {} 의 내용을 보고 \
+                 컨테이너 · 작업 폴더를 확인한 뒤 `gputeer container-incidents --checkpoint-root {} --clear-all` 로 해제한다(해제하면 다음 기동이 \
+                 남은 컨테이너의 로그를 건지고 지운다)",
+                open.len(),
+                names.join(","),
+                incident_dir.display(),
+                config.checkpoint_root.display()
+            ));
+        }
+        runtime.incident_dir = Some(incident_dir);
         // ★ 결함 489 — 지우기 전에 로그를 체크포인트 루트 옆 `leftover-container-logs/` 에 건진다.
         let salvage_dir = config
             .checkpoint_root
@@ -1562,8 +1589,18 @@ fn run_one_connection_inner(
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
         // ★ 결함 471 (재검수 119) — 단, 종료를 **관측하지 못한** 경우(작업이 아직 돌 수 있다 — `EXEC_FAILED:WAIT`)는 지우지 않는다.
         //   돌고 있는 컨테이너가 이 폴더의 체크포인트 자리를 붙이고 있을 수 있어, 지우면 그 뒤 체크포인트가 연결 끊긴 곳에 쓰여 사라진다.
-        let workload_may_be_alive =
-            matches!(&outcome, Err(error) if error.starts_with("EXEC_FAILED:WAIT"));
+        // ★ 2026-09-27 보수 규칙 — 문자열 접두사만으로 가르지 않는다(코덱스 지적). 이 시도의 컨테이너에 사건 표식이 남았으면(컨테이너 · 로그가
+        //   불확실) 작업 폴더도 남긴다 — 표식은 `container::run` 이 타입 판정에서 직접 쓴 영속 기록이다.
+        let incident_open = config.container_runtime.as_ref().is_some_and(|runtime| {
+            runtime.incident_dir.as_ref().is_some_and(|dir| {
+                container::incident_recorded_for(
+                    dir,
+                    &container::derive_container_name(&grant.attempt_id),
+                )
+            })
+        });
+        let workload_may_be_alive = incident_open
+            || matches!(&outcome, Err(error) if error.starts_with("EXEC_FAILED:WAIT"));
         let cleanup = if workload_may_be_alive {
             println!(
                 "WORKLOAD_DIR_KEPT job_id={} run_dir={} — 작업이 아직 돌 수 있어 작업 폴더를 지우지 않았다(확인 뒤 사람이 지운다)",
@@ -3620,6 +3657,8 @@ fn parse_container_runtime(flags: &Flags) -> Result<Option<container::ContainerR
                 node_id: flags.require("--agent-device-id")?,
                 // 체크포인트 루트를 잠근 뒤 `<노드 id>.<루트 해시>` 로 채운다(결함 295 · run()).
                 owner: String::new(),
+                // 체크포인트 루트를 잠근 뒤 채운다(2026-09-27 보수 규칙 · run()).
+                incident_dir: None,
             }))
         }
         _ => Err(
@@ -4707,6 +4746,7 @@ mod tests {
             only: true,
             node_id: "node".into(),
             owner: String::new(),
+            incident_dir: None,
         };
         let run = |runtime| {
             container::ContainerDecision::Container(container::ContainerExecution {

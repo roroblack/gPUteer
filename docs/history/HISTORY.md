@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-09-27 23:26 — 컨테이너 보수 규칙: 여러 축 판정 · 사건 표식 · 표식 동안 기동 거부(재검수 121~124 합의 — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-27_1642_재검수124_결함_490_495.md`(§조치 — 두 세션 분담) · 설계 `docs/plans/2026-09-27_2306_컨테이너_런타임_불확실_상태_설계.md`
+- 스트림: Agent · CLI · 런북
+- 수행: `ContainerRunError` 를 `NotStarted{container}` · `Unobserved{stopped, logs_complete, container}` 로, `ContainerExit` 에 `logs_complete` ·
+  `container` 를 실음(`RemovedUnobserved` 모순 제거) · 사람이 봐야 하는 결과는 `container-incidents/` 에 덮지 않는 표식을 남기고, 쓰지 못하면 결과를
+  "멈춤 모름" 으로 올림 · 표식이 열려 있으면 Agent 가 남은 컨테이너 정리보다 먼저 기동을 거부(`CONTAINER_INCIDENT_OPEN`) · 해제는
+  `gputeer container-incidents --clear <이름>|--clear-all` · kill 실패 뒤 rm 하지 않음 · 만들기 전 같은 이름을 못 지우면 만들지 않음 · 정상 종료 뒤
+  지우기만 실패하면 관측한 종료 코드를 지킴 · node-doctor 는 사람이 봐야 하면 점검 폴더를 남기고 FAIL(494)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1393 passed · 1 failed · ignored 4. 실패 1건은 이번에 건드리지 않은 체크포인트 크레이트의
+  `write_failure::concurrent_startup_gc_treats_not_found_as_normal_race`(os error 1168) — 단독 20회 재실행 0/20 실패, `DoD-21` 에 적힌 전체 부하 간헐
+  실패와 같은 모양으로 보나 원인을 다시 보지는 않았다. 뮤테이션 4건(표식 쓰기 제거 · kill 실패를 멈춤으로 · 사람 확인 판정 끄기 · 기동 관문 제거) 모두 잡힘.
+  ★ 중복 실행 방지(Lease/Attempt 계약)는 주장하지 않는다 — 설계 문서의 P0
+- 리포트: 결함 문서 · 설계 문서가 대신한다
+
+---
+
 ## 2026-09-27 16:34 — 재검수 123 대응: 결함 487~489(컨테이너를 지우기 전 출력 보존 — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-27_1621_재검수123_결함_487_489.md`
