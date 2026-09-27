@@ -336,8 +336,7 @@ pub fn remove_leftovers(
                     save_logs(program, id, Some(&stdout), Some(&stderr))
                         .map(|()| stdout.clone())
                         .map_err(|why| {
-                            discard_partial_outputs(Some(&stdout), Some(&stderr));
-                            why
+                            format!("{why}{}", discard_partial_outputs(Some(&stdout), Some(&stderr)))
                         })
                 });
             match saved {
@@ -904,60 +903,57 @@ fn run_inner(
             container: left,
         });
     }
-    // ★ 결함 488 (재검수 123) — 런타임이 **실패라고 답한** 경우(0 이 아닌 종료)와 응답이 없거나 시한을 넘긴 경우를 나눈다.
-    //   ★ 이 분기의 정책(490 · 491)은 갈라진 세션(fix/490-495)이 채운다 — 여기서는 판정 타입만 바꾸고 동작은 그대로 둔다.
+    // ★ 결함 490 (재검수 124) — start 의 **어떤** 실패도 "돌지 않았다" 의 증거가 아니다. OCI `poststart` 훅은 사용자 프로세스가 돈 **뒤에**
+    //   돌고, 실패하면 start 가 실패로 답한다(결함 488 의 "런타임이 실패라고 답하면 시작하지 않았다" 가 틀렸다). 응답이 없거나 시한을 넘긴
+    //   경우도 같다. 그래서 start 실패는 전부 "시작했는지 모른다"(Unobserved)이고, 그 뒤는 남은 컨테이너 정리와 같은 순서다:
+    //   멈춤 확인(`stop_and_confirm`) → 로그 받기 → 둘 다 확인됐을 때만 지운다. 하나라도 확인하지 못하면 **지우지 않고** 남긴다(사건 표식).
+    //   ★ 결함 491 — 전에는 응답 없음 경로가 로그를 못 받아도 지웠다(출력 · 원본 로그를 모두 잃었다).
+    //   ★ 대가 — 진입점 오타처럼 정말 시작하지 않은 실패도 "종료 코드 없음"(NoCode)으로 확정 단계를 거친다. 시작 여부를 런타임 답만으로
+    //     가를 수 없어서다(보수 규칙 — 불확실하면 성공으로도 "안 돌았다" 로도 단정하지 않는다).
     let start_args: [OsString; 2] = ["start".into(), input.name.into()];
     let start_failure = match run_cli(program, &start_args, SHORT_TIMEOUT) {
         Ok(output) if output.status.success() => None,
-        Ok(output) => Some((
-            false,
-            format!("start 실패({}): {}", output.status, output.stderr.trim()),
+        Ok(output) => Some(format!(
+            "start 실패({}): {}",
+            output.status,
+            output.stderr.trim()
         )),
-        Err(why) => Some((true, why)),
+        Err(why) => Some(format!("start 가 응답하지 않았다({why})")),
     };
-    if let Some((unanswered, why)) = start_failure {
-        let (logs_complete, logs) = if unanswered {
-            match save_logs(program, input.name, stdout_path, stderr_path) {
-                Ok(()) => (true, " · 로그 남김".to_string()),
-                Err(e) => {
-                    discard_partial_outputs(stdout_path, stderr_path);
-                    (false, format!(" · 로그 못 남김({e})"))
-                }
-            }
-        } else {
-            (false, String::new())
-        };
-        // ★ 결함 471 (재검수 119) — 지우기(`rm -f` — 돌고 있으면 죽인다)가 성공했을 때만 "돌지 않는다" 로 본다. 지우기도 실패하면 **시작 여부를 모른다**.
-        let (left, removed) = remove_container_fact(program, input.name);
-        if left == ContainerLeft::Removed {
-            return Err(if unanswered {
-                ContainerRunError::Unobserved {
-                    detail: format!(
-                        "start 가 응답하지 않았다({why}) — 시작했는지 모른다{logs} · 컨테이너를 지웠다"
-                    ),
-                    stopped: true,
-                    logs_complete,
-                    container: ContainerLeft::Removed,
-                }
-            } else {
-                ContainerRunError::NotStarted {
-                    detail: format!("start: {why} · 컨테이너를 지웠다"),
-                    container: ContainerLeft::Removed,
-                }
+    if let Some(why) = start_failure {
+        let head = format!("{why} — 시작했는지 모른다");
+        if let Err(stop) = stop_and_confirm(program, input.name) {
+            // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**(같은 프로세스가 도는 동안의 소유자 손잡이).
+            on_started(ContainerStopper {
+                program: program.to_path_buf(),
+                name: input.name.to_string(),
+            });
+            return Err(ContainerRunError::Unobserved {
+                detail: format!(
+                    "{head} · 멈춤을 확인하지 못했다({stop}) — 컨테이너 {} 를 남겼다(돌고 있을 수 있다 · 사람이 확인한다)",
+                    input.name
+                ),
+                stopped: false,
+                logs_complete: false,
+                container: ContainerLeft::Kept,
             });
         }
-        // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**(같은 프로세스가 도는 동안의 소유자 손잡이).
-        on_started(ContainerStopper {
-            program: program.to_path_buf(),
-            name: input.name.to_string(),
-        });
+        if let Err(e) = save_logs(program, input.name, stdout_path, stderr_path) {
+            let discard = discard_partial_outputs(stdout_path, stderr_path);
+            return Err(ContainerRunError::Unobserved {
+                detail: format!(
+                    "{head} · 멈췄다 · 로그 못 남김({e}){discard} — 컨테이너를 남겼다(런타임에 로그가 남는다 · 사람이 확인한다)"
+                ),
+                stopped: true,
+                logs_complete: false,
+                container: ContainerLeft::Kept,
+            });
+        }
+        let (left, removed) = remove_container_fact(program, input.name);
         return Err(ContainerRunError::Unobserved {
-            detail: format!(
-                "start: {why}{logs} · {removed} — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
-                input.name
-            ),
-            stopped: false,
-            logs_complete,
+            detail: format!("{head} · 멈췄다 · 로그 남김 · {removed}"),
+            stopped: true,
+            logs_complete: true,
             container: left,
         });
     }
@@ -983,8 +979,8 @@ fn run_inner(
                         match save_logs(program, input.name, stdout_path, stderr_path) {
                             Ok(()) => (true, "로그 남김".to_string()),
                             Err(e) => {
-                                discard_partial_outputs(stdout_path, stderr_path);
-                                (false, format!("로그 못 남김({e})"))
+                                let discard = discard_partial_outputs(stdout_path, stderr_path);
+                                (false, format!("로그 못 남김({e}){discard}"))
                             }
                         };
                     let head = format!(
@@ -1022,11 +1018,11 @@ fn run_inner(
             }
         }
         Err(why) => {
-            discard_partial_outputs(stdout_path, stderr_path);
+            let discard = discard_partial_outputs(stdout_path, stderr_path);
             exit.logs_complete = false;
             exit.container = ContainerLeft::Kept;
             eprintln!(
-                "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다: {why}",
+                "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다: {why}{discard}",
                 input.name
             );
         }
@@ -1219,9 +1215,24 @@ fn parse_inspect_state(text: &str) -> Result<Option<ContainerExit>, String> {
 }
 
 /// 로그 받기가 실패했을 때 반쯤 쓴 출력 파일을 지운다 — 남겨 두면 확정이 빈 · 일부 출력을 정상 산출물로 읽는다(결함 487).
-fn discard_partial_outputs(stdout_path: Option<&Path>, stderr_path: Option<&Path>) {
+///
+/// ★ 결함 495 (재검수 124) — 전에는 삭제 실패를 버렸다(`let _`). 지우지 못한 부분 파일을 확정이 정상 산출물로 읽었다. 이제 실패를 문장으로
+///   돌려주고(호출자가 결과 설명에 싣는다), **확정이 이 삭제에 기대지 않는다** — 로그를 못 받은 결과는 `logs_complete = false` 로 나가고
+///   `exec` 가 그것을 "출력 불완전" 으로 실어 확정을 READ_OUTPUTS 로 실패시킨다. 이 함수의 삭제는 이제 두 번째 방어다.
+///   반환값은 비었거나(`""` — 지웠다 · 원래 없었다) " · 부분 파일을 지우지 못했다(…)" 다.
+fn discard_partial_outputs(stdout_path: Option<&Path>, stderr_path: Option<&Path>) -> String {
+    let mut failed = Vec::new();
     for path in [stdout_path, stderr_path].into_iter().flatten() {
-        let _ = std::fs::remove_file(path);
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => failed.push(format!("{path:?}: {error}")),
+        }
+    }
+    if failed.is_empty() {
+        String::new()
+    } else {
+        format!(" · 부분 파일을 지우지 못했다({})", failed.join(" · "))
     }
 }
 

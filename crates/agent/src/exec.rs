@@ -93,6 +93,11 @@ pub struct ExecutionOutcome {
     pub peak_commit_bytes: Option<u64>,
     /// 종료 뒤 메모리 관측이 실패했으면 그 사유. 실패해도 종료 관측(`exit`)은 그대로 남긴다(결함 69 (ii)).
     pub memory_observation_error: Option<String>,
+    /// 작업 출력(stdout · stderr)을 끝까지 받지 못했으면 그 사유 — 확정은 출력 파일이 있어도 이것을 보고 READ_OUTPUTS 로 실패한다.
+    ///
+    /// ★ 결함 495 (재검수 124) — 전에는 "부분 파일을 지우면 확정이 실패한다"(결함 487)에만 기댔는데, 삭제가 실패하면 부분 출력이 성공으로
+    ///   확정됐다. 종료 관측(`exit`)은 그대로 남긴다 — 출력 불완전은 종료를 지우는 사유가 아니다.
+    pub outputs_incomplete: Option<String>,
 }
 
 /// 실행하지 못한 이유. **전부 "실행 안 함" 이다** — 부분 실행이 없다.
@@ -523,9 +528,17 @@ fn execute_in_container(
         }) => return Err(ExecutionError::WaitFailed { detail }),
         // ★ 결함 481 (재검수 121) — 더 돌지 않는다(멈춤 확인). 종료 코드만 모른다 — "종료는 봤고 코드가 없다" 로 보고한다(결함 69 와 같은 모양).
         //   컨테이너를 남겼으면(로그를 못 받음) 사건 표식이 따로 있고 작업 폴더도 남는다(lib.rs).
-        Err(crate::container::ContainerRunError::Unobserved { detail, .. }) => {
+        //   ★ 결함 490 — start 가 실패로 답한 경우도 여기로 온다(돌았을 수 있다 — 체크포인트 확정을 거친다).
+        //   ★ 결함 495 — 로그를 못 받았으면 출력 불완전을 싣는다(부분 파일 삭제에 기대지 않는다).
+        Err(crate::container::ContainerRunError::Unobserved {
+            detail,
+            logs_complete,
+            ..
+        }) => {
             println!("CONTAINER_REMOVED_UNOBSERVED name={name} — {detail}");
             return Ok(ExecutionOutcome {
+                outputs_incomplete: (!logs_complete)
+                    .then(|| format!("컨테이너 로그를 끝까지 받지 못했다 — {detail}")),
                 exit: ExitObserved::NoCode { detail },
                 commit_limit_bytes: policy.commit_limit_bytes,
                 peak_commit_bytes: None,
@@ -547,6 +560,10 @@ fn execute_in_container(
     };
     Ok(ExecutionOutcome {
         exit: observed,
+        // ★ 결함 495 — 정상 종료 뒤 로그를 못 받았다(컨테이너는 남겼다 · 사건 표식). 종료 코드는 그대로 보고하고 확정만 실패시킨다.
+        outputs_incomplete: (!exit.logs_complete).then(|| {
+            format!("컨테이너 {name} 의 로그를 끝까지 받지 못했다(컨테이너를 남겼다)")
+        }),
         commit_limit_bytes: policy.commit_limit_bytes,
         // ★ 컨테이너 경로는 최댓값을 재지 않는다 — 지어내지 않는다(`CLAUDE.md` §1).
         peak_commit_bytes: None,
@@ -717,6 +734,7 @@ mod platform {
             commit_limit_bytes,
             peak_commit_bytes,
             memory_observation_error,
+            outputs_incomplete: None,
         })
     }
 }
@@ -1077,6 +1095,7 @@ mod platform {
             commit_limit_bytes: limit,
             peak_commit_bytes: peak,
             memory_observation_error,
+            outputs_incomplete: None,
         })
     }
 }

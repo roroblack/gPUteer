@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-27 23:44 — 재검수 124 대응(2): 결함 490 · 491 · 495(start 실패는 "시작 모름" · 확인 못 하면 남김 · 출력 불완전은 확정 실패 — 브랜치 fix/490-495)
+
+- 결함: `docs/reports/debugs/2026-09-27_1642_재검수124_결함_490_495.md`(§조치 — 갈라진 세션의 490 · 491 · 495)
+- 스트림: Agent · 런북
+- 수행: start 의 어떤 실패도 NotStarted 로 내지 않고 `Unobserved` — `stop_and_confirm` → 로그 → 둘 다 확인됐을 때만 rm, 아니면 남김(사건 표식).
+  `ExecutionOutcome.outputs_incomplete` 신설 — 로그를 끝까지 못 받은 컨테이너 실행은 파일이 있어도 확정이 READ_OUTPUTS(종료 코드는 유지).
+  `discard_partial_outputs` 가 삭제 실패를 문장으로 돌려준다. 판정 타입 커밋 `79679b9` 위로 rebase(492 · 493 은 `105855b`)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1400 passed · 0 failed · ignored 4 · 경고 0. `container_lifecycle` 20 passed(새 시험 4) ·
+  lib 새 시험 1. 뮤테이션 6건 모두 잡힘(컴파일 성공 · 시험 실패). ★ 가짜 런타임만 — 실제 docker · podman 의 poststart 실패는 재지 않았다
+- 리포트: 위 결함 문서 §조치
+
+---
+
 ## 2026-09-27 23:26 — 컨테이너 보수 규칙: 여러 축 판정 · 사건 표식 · 표식 동안 기동 거부(재검수 121~124 합의 — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-27_1642_재검수124_결함_490_495.md`(§조치 — 두 세션 분담) · 설계 `docs/plans/2026-09-27_2306_컨테이너_런타임_불확실_상태_설계.md`

@@ -65,8 +65,20 @@ fn main() {
             a_cdi_all_container_pulls_first_and_is_rechecked_after_create,
         ),
         (
-            "a_failed_start_is_not_started_only_when_the_container_was_removed",
-            a_failed_start_is_not_started_only_when_the_container_was_removed,
+            "a_failed_start_is_never_reported_as_not_started",
+            a_failed_start_is_never_reported_as_not_started,
+        ),
+        (
+            "a_failed_start_keeps_the_container_unless_stop_and_logs_are_confirmed",
+            a_failed_start_keeps_the_container_unless_stop_and_logs_are_confirmed,
+        ),
+        (
+            "an_undeletable_partial_output_is_reported_and_never_complete",
+            an_undeletable_partial_output_is_reported_and_never_complete,
+        ),
+        (
+            "execute_marks_unreceived_logs_as_incomplete_outputs",
+            execute_marks_unreceived_logs_as_incomplete_outputs,
         ),
         (
             "an_unobserved_exit_is_removed_only_when_rm_succeeded",
@@ -131,6 +143,12 @@ fn fake_runtime(state: &Path) -> i32 {
     let fails = |token: &str| fail_list.split(',').any(|c| c == token);
     // "rm-created" — 컨테이너를 만든 뒤의 rm 만 실패시킨다(만들기 전 같은 이름 지우기는 통과 · 2026-09-27 보수 규칙 시험).
     let created = state.join("create.args").exists();
+    // "start-after-run" — 작업 프로세스는 돌고(started) start 는 실패로 답한다(OCI poststart 훅 실패 · 결함 490).
+    if command == "start" && fails("start-after-run") {
+        std::fs::write(state.join("started"), "").unwrap();
+        eprintln!("fake: poststart 훅 실패를 흉내낸다");
+        return 126;
+    }
     if fails(command) || (command == "rm" && created && fails("rm-created")) {
         eprintln!("fake: {command} 실패를 흉내낸다");
         return 125;
@@ -514,6 +532,7 @@ fn execute_runs_the_container_path_end_to_end() {
     )
     .expect("실행");
     assert_eq!(outcome.exit.code(), Some(7));
+    assert_eq!(outcome.outputs_incomplete, None, "로그를 다 받았는데 불완전이라 했다");
     assert_eq!(
         outcome.peak_commit_bytes, None,
         "재지 않은 최댓값을 지어냈다"
@@ -659,41 +678,118 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     );
 }
 
-/// 결함 471 (재검수 119) — start 가 실패해도 지우기가 성공해야만 "돌지 않았다"(NotStarted)다. 지우기도 실패하면 시작 여부를 모른다(NotObserved).
-fn a_failed_start_is_not_started_only_when_the_container_was_removed() {
-    let f = fixture(Some("start"));
-    let error = container::run(
-        &execution(),
-        &input(&mounts(&f.work), "exit-0", &[]),
-        None,
-        None,
-        |_| {},
-    )
-    .expect_err("start 가 실패했는데 성공했다");
-    assert!(
-        matches!(&error, ContainerRunError::NotStarted { detail, container: ContainerLeft::Removed } if detail.contains("지웠다")),
-        "{error:?}"
-    );
+/// 결함 490 (재검수 124) — start 의 실패는 "돌지 않았다" 의 증거가 아니다(poststart 훅은 작업이 돈 뒤에 실패한다). 런타임이 실패로 답해도
+/// 결과는 NotStarted 가 아니라 "시작했는지 모른다"(Unobserved)이고, 멈춤 확인 → 로그 → 지우기 순서를 탄다.
+fn a_failed_start_is_never_reported_as_not_started() {
+    for fail in ["start-after-run", "start"] {
+        let f = fixture(Some(fail));
+        let out = f.work.join("stdout.log");
+        let err = f.work.join("stderr.log");
+        let error = container::run(
+            &execution(),
+            &input(&mounts(&f.work), "exit-0", &[]),
+            Some(&out),
+            Some(&err),
+            |_| {},
+        )
+        .expect_err("start 가 실패했는데 성공했다");
+        assert!(
+            matches!(&error, ContainerRunError::Unobserved { detail, stopped: true, logs_complete: true, container: ContainerLeft::Removed } if detail.contains("시작했는지 모른다")),
+            "{fail}: {error:?}"
+        );
+        assert!(!error.needs_human(), "{fail}: {error:?}");
+        // 돌았을 수 있으니 지우기 전에 로그를 받았다.
+        assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "hello-out");
+        let after_start: Vec<String> = call_order(&f.state)
+            .into_iter()
+            .skip_while(|c| c != "start")
+            .collect();
+        let logs = after_start.iter().position(|c| c == "logs");
+        let rm = after_start.iter().position(|c| c == "rm");
+        assert!(
+            matches!((logs, rm), (Some(l), Some(r)) if l < r),
+            "{fail}: logs → rm 순서가 아니다: {after_start:?}"
+        );
+    }
+}
 
-    let f = fixture(Some("start,rm-created"));
+/// 결함 490 · 491 (재검수 124) — start 실패 뒤 멈춤을 확인하지 못하거나(정지 손잡이를 넘긴다) 로그를 받지 못하면 **지우지 않는다**
+/// (전에는 응답 없음 경로가 로그를 못 받아도 지워 출력 · 원본 로그를 모두 잃었다). 둘 다 사람이 봐야 한다.
+fn a_failed_start_keeps_the_container_unless_stop_and_logs_are_confirmed() {
+    let f = fixture(Some("start,kill,inspect"));
     let mut handed_stopper = false;
     let error = container::run(
         &execution(),
-        &input(&mounts(&f.work), "exit-0", &[]),
+        &input(&mounts(&f.work), "sleep", &[]),
         None,
         None,
         |_| handed_stopper = true,
     )
     .expect_err("start 가 실패했는데 성공했다");
     assert!(
-        matches!(&error, ContainerRunError::Unobserved { detail, stopped: false, container: ContainerLeft::Unknown, .. } if detail.contains("시작했는지 모른다")),
+        matches!(&error, ContainerRunError::Unobserved { detail, stopped: false, container: ContainerLeft::Kept, .. } if detail.contains("멈춤을 확인하지 못했다")),
         "{error:?}"
     );
+    assert!(error.needs_human());
     // 결함 475 — 돌고 있을 수 있으니 소유자가 멈출 수 있게 정지 손잡이를 넘겼다.
+    assert!(handed_stopper, "시작 여부를 모르는데 정지 손잡이를 넘기지 않았다");
+    let after_start: Vec<String> = call_order(&f.state)
+        .into_iter()
+        .skip_while(|c| c != "start")
+        .collect();
     assert!(
-        handed_stopper,
-        "시작 여부를 모르는데 정지 손잡이를 넘기지 않았다"
+        !after_start.iter().any(|c| c == "rm"),
+        "멈춤을 확인하지 못했는데 지웠다: {after_start:?}"
     );
+
+    let f = fixture(Some("start-after-run,logs"));
+    let out = f.work.join("stdout.log");
+    let err = f.work.join("stderr.log");
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&out),
+        Some(&err),
+        |_| {},
+    )
+    .expect_err("start 가 실패했는데 성공했다");
+    assert!(
+        matches!(&error, ContainerRunError::Unobserved { detail, stopped: true, logs_complete: false, container: ContainerLeft::Kept } if detail.contains("로그 못 남김")),
+        "{error:?}"
+    );
+    assert!(error.needs_human());
+    assert!(!out.exists() && !err.exists(), "부분 출력 파일이 남았다");
+    let after_start: Vec<String> = call_order(&f.state)
+        .into_iter()
+        .skip_while(|c| c != "start")
+        .collect();
+    assert!(
+        !after_start.iter().any(|c| c == "rm"),
+        "로그를 못 받았는데 지웠다: {after_start:?}"
+    );
+}
+
+/// 결함 495 (재검수 124) — 로그를 못 받았는데 부분 파일도 지우지 못하면 그 사실을 알린다. 결과는 여전히 "로그 불완전 · 컨테이너 남김"
+/// 이다(확정은 이 삭제가 아니라 `logs_complete` 로 실패한다 — exec · lib 시험). stdout 자리에 지울 수 없는 것(비지 않은 폴더)을 둔다.
+fn an_undeletable_partial_output_is_reported_and_never_complete() {
+    let f = fixture(None);
+    let out = f.work.join("stdout.log");
+    let err = f.work.join("stderr.log");
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(out.join("keep"), "x").unwrap();
+    let exit = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&out),
+        Some(&err),
+        |_| {},
+    )
+    .expect("종료는 봤다");
+    assert_eq!(exit.exit_code, 0);
+    assert!(!exit.logs_complete, "로그를 못 받았는데 완결이라 했다");
+    assert_eq!(exit.container, ContainerLeft::Kept);
+    assert!(exit.needs_human());
+    assert!(out.is_dir(), "시험 전제 — 지울 수 없는 것이 남아 있어야 한다");
 }
 
 /// 결함 481 (재검수 121) — 종료를 다섯 번 못 봐 kill · rm 을 했을 때, rm 이 성공하면 "지웠다"(RemovedUnobserved), 실패하면 "남아 돌 수 있다"(NotObserved).
@@ -974,5 +1070,32 @@ fn a_leftover_is_kept_when_stop_or_log_salvage_is_unconfirmed() {
             !salvage.join("old-1.stdout.log").exists(),
             "{fail}: 부분 로그 파일이 남았다"
         );
+    }
+}
+
+/// 결함 490 · 495 (재검수 124) — 실행기 수준에서: 로그를 못 받았으면 종료 관측은 그대로 두고 **출력 불완전**을 싣는다(확정이 부분 파일 삭제에
+/// 기대지 않게). start 가 실패로 답해도 SpawnFailed(작업 폴더 삭제)가 아니라 "종료는 봤고 코드가 없다" 로 확정 단계를 거친다.
+fn execute_marks_unreceived_logs_as_incomplete_outputs() {
+    let f = fixture(Some("logs"));
+    let outcome = gputeer_agent::exec::execute(
+        &spec("exit-7"),
+        policy(&f.work, ContainerDecision::Container(execution())),
+    )
+    .expect("종료는 봤다");
+    assert_eq!(outcome.exit.code(), Some(7), "관측한 종료 코드를 잃었다");
+    assert!(
+        outcome.outputs_incomplete.is_some(),
+        "로그를 못 받았는데 출력이 완결이라 했다"
+    );
+
+    for (fail, incomplete) in [("start-after-run", false), ("start-after-run,logs", true)] {
+        let f = fixture(Some(fail));
+        let outcome = gputeer_agent::exec::execute(
+            &spec("exit-0"),
+            policy(&f.work, ContainerDecision::Container(execution())),
+        )
+        .unwrap_or_else(|e| panic!("{fail}: start 실패를 실행 안 함으로 보고했다: {e:?}"));
+        assert_eq!(outcome.exit.code(), None, "{fail}");
+        assert_eq!(outcome.outputs_incomplete.is_some(), incomplete, "{fail}: {outcome:?}");
     }
 }

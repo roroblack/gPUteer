@@ -3799,6 +3799,14 @@ fn collect_workload_artifacts(
 ) -> Result<Vec<(String, Vec<u8>)>, (pb::FinalizationFailureStage, String)> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
 
+    // ★ 결함 495 (재검수 124) — 실행기가 출력을 끝까지 받지 못했다고 했으면 파일이 있어도 읽지 않는다(지우지 못한 부분 파일일 수 있다).
+    if let Some(why) = &outcome.outputs_incomplete {
+        return Err((
+            pb::FinalizationFailureStage::ReadOutputs,
+            format!("작업 출력이 완결되지 않았다: {why}"),
+        ));
+    }
+
     for name in [exec::STDOUT_FILENAME, exec::STDERR_FILENAME] {
         let path = run_dir.join(name);
         match fs::read(&path) {
@@ -5159,6 +5167,7 @@ mod defect_19_tests {
             commit_limit_bytes: 1,
             peak_commit_bytes: None,
             memory_observation_error: None,
+            outputs_incomplete: None,
         }
     }
 
@@ -5267,6 +5276,46 @@ mod defect_19_tests {
             "{}",
             error.1
         );
+    }
+
+    /// 결함 495 (재검수 124) — 실행기가 출력을 끝까지 받지 못했다고 했으면 **파일이 있어도**(지우지 못한 부분 파일) READ_OUTPUTS 다.
+    #[test]
+    fn an_incomplete_output_is_read_outputs_even_when_the_files_exist() {
+        let run = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(run.path().join(exec::STDOUT_FILENAME), b"half").unwrap();
+        std::fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
+        let mut incomplete = outcome();
+        incomplete.outputs_incomplete = Some("로그를 끝까지 받지 못했다".into());
+        let error = finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &incomplete,
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect_err("불완전한 출력을 확정했다");
+        assert_eq!(
+            error.0,
+            pb::FinalizationFailureStage::ReadOutputs,
+            "{}",
+            error.1
+        );
+        // 대조 — 같은 파일이라도 완결이면 확정한다(파일이 아니라 표시가 가른다).
+        finalize_workload_outputs(
+            run.path(),
+            &spec(),
+            &outcome(),
+            true,
+            root.path(),
+            "ckpt-19",
+            &lease(),
+            "attempt-19",
+        )
+        .expect("완결된 출력은 확정한다");
     }
 
     /// 대조 — 캡처를 안 켰으면 출력 파일 부재는 실패가 아니다(관측하지 않았다).
