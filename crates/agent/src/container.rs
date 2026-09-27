@@ -675,7 +675,9 @@ fn run_cli_detailed(
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
-            let _ = child.wait();
+            // ★ 결함 547 (재검수 143) — 거두기(`wait`)는 **뒤에서** 한다. 커널에서 멈춘(D 상태) 프로세스는 SIGKILL 을 받아도 곧 거둘 수 없어, 여기서
+            //   기다리면 시한이 뜻을 잃는다(정지 손잡이 등록 · 판정에 닿지 못한다).
+            reap_in_background(child);
             return Err(CliFailure::AfterSpawn(format!(
                 "{program:?} {:?} 가 {timeout:?} 안에 끝나지 않았다 — 런타임이 멈췄을 수 있다",
                 args.first()
@@ -684,7 +686,7 @@ fn run_cli_detailed(
         std::thread::sleep(Duration::from_millis(50));
     };
     let deadline = started + timeout;
-    let collect = |rx: std::sync::mpsc::Receiver<String>, which: &str| {
+    let collect = |rx: std::sync::mpsc::Receiver<(String, bool)>, which: &str| {
         let left = deadline
             .saturating_duration_since(Instant::now())
             .max(PIPE_CLOSE_GRACE);
@@ -695,8 +697,16 @@ fn run_cli_detailed(
             ))
         })
     };
-    let stdout = collect(stdout_rx, "stdout")?;
-    let stderr = collect(stderr_rx, "stderr")?;
+    let (stdout, stdout_cut) = collect(stdout_rx, "stdout")?;
+    let (stderr, stderr_cut) = collect(stderr_rx, "stderr")?;
+    // ★ 결함 548 (재검수 143) — 출력이 상한을 넘어 **잘렸으면** 그 출력을 쓰지 않는다(예: `ps -a -q` 목록이 잘리면 뒤의 컨테이너를 놓친 채 정리 성공이
+    //   된다). 실패로 돌려준다 — 부르는 쪽은 확인하지 못한 것으로 다룬다.
+    if stdout_cut || stderr_cut {
+        return Err(CliFailure::AfterSpawn(format!(
+            "{program:?} {:?} 의 출력이 상한({MAX_CLI_OUTPUT_BYTES} 바이트)을 넘어 잘렸다 — 잘린 출력은 쓰지 않는다",
+            args.first()
+        )));
+    }
     Ok(CliOutput {
         status,
         stdout,
@@ -709,24 +719,41 @@ const MAX_CLI_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 /// 자식이 끝난 뒤 파이프가 닫히기를 기다리는 최소 여유(시한이 이미 지났어도).
 const PIPE_CLOSE_GRACE: Duration = Duration::from_secs(2);
 
-/// 파이프를 끝까지 빨아내고, 앞 `MAX_CLI_OUTPUT_BYTES` 를 문자열로 채널에 넘긴다(EOF 때 한 번).
-fn drain_pipe(mut pipe: impl Read + Send + 'static) -> std::sync::mpsc::Receiver<String> {
+/// 파이프를 끝까지 빨아내고, 앞 `MAX_CLI_OUTPUT_BYTES` 를 문자열로 · 잘렸는지를 함께 채널에 넘긴다(EOF 때 한 번).
+fn drain_pipe(mut pipe: impl Read + Send + 'static) -> std::sync::mpsc::Receiver<(String, bool)> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut kept = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            match pipe.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let room = MAX_CLI_OUTPUT_BYTES.saturating_sub(kept.len());
-                    kept.extend_from_slice(&chunk[..n.min(room)]);
-                }
-            }
-        }
-        let _ = tx.send(String::from_utf8_lossy(&kept).into_owned());
+        let (kept, cut) = drain_capped(&mut pipe);
+        let _ = tx.send((String::from_utf8_lossy(&kept).into_owned(), cut));
     });
     rx
+}
+
+/// 끝까지 읽되 앞 `MAX_CLI_OUTPUT_BYTES` 만 담는다. 넘었으면 `true`(잘렸다).
+fn drain_capped(pipe: &mut impl Read) -> (Vec<u8>, bool) {
+    let mut kept = Vec::new();
+    let mut cut = false;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let room = MAX_CLI_OUTPUT_BYTES.saturating_sub(kept.len());
+                if n > room {
+                    cut = true;
+                }
+                kept.extend_from_slice(&chunk[..n.min(room)]);
+            }
+        }
+    }
+    (kept, cut)
+}
+
+/// 시한이 지나 죽인 자식을 **뒤에서** 거둔다(결함 547 — 커널에서 멈춘 프로세스를 기다리지 않는다).
+fn reap_in_background(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 fn cli_ok(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOutput, String> {
@@ -1738,7 +1765,8 @@ fn save_logs(
             Ok(Some(status)) => return Err(format!("logs 실패({status})")),
             Ok(None) if started.elapsed() >= SHORT_TIMEOUT => {
                 let _ = child.kill();
-                let _ = child.wait();
+                // ★ 결함 547 — 거두기는 뒤에서(D 상태 프로세스를 기다리지 않는다).
+                reap_in_background(child);
                 return Err("logs 가 시한 안에 끝나지 않았다".into());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
@@ -2150,6 +2178,18 @@ mod tests {
         let mut zero = input(&good, &[], &[]);
         zero.memory_limit_bytes = 0;
         assert!(create_args(&execution, &zero).is_err());
+    }
+
+    /// 결함 548 (재검수 143) — 상한을 넘는 출력은 앞부분만 담고 "잘렸다" 를 알린다(그 출력을 완전한 것으로 쓰지 않게).
+    #[test]
+    fn a_cli_output_over_the_cap_is_marked_as_cut() {
+        let big = vec![b'x'; MAX_CLI_OUTPUT_BYTES + 1];
+        let (kept, cut) = drain_capped(&mut std::io::Cursor::new(big));
+        assert!(cut, "잘렸는데 알리지 않았다");
+        assert_eq!(kept.len(), MAX_CLI_OUTPUT_BYTES);
+        let (kept, cut) = drain_capped(&mut std::io::Cursor::new(b"id-1\nid-2\n".to_vec()));
+        assert!(!cut);
+        assert_eq!(kept, b"id-1\nid-2\n");
     }
 
     #[test]

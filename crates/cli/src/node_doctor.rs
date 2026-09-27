@@ -671,8 +671,9 @@ fn check_container_gpu_probe(
         if exit.needs_human() {
             probe_may_be_running = true;
         }
-        let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
-        let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+        // ★ 결함 549 (재검수 143) — 점검 출력은 상한까지만 읽는다(컨테이너의 메모리 경계를 호스트 쪽 읽기가 우회하지 않게). 넘으면 FAIL 이다.
+        let stdout = read_probe_output(&stdout_path)?;
+        let stderr = read_probe_output(&stderr_path)?;
         Ok::<_, String>((exit, stdout, stderr))
     })();
     let left = if probe_may_be_running {
@@ -764,9 +765,42 @@ fn judge_gpu_probe(
     )
 }
 
+/// GPU 점검 출력 한 파일에서 읽는 상한(결함 549).
+const MAX_PROBE_OUTPUT_BYTES: u64 = 1024 * 1024;
+
+/// 점검 출력 파일을 상한까지만 읽는다 — 없으면 빈 문자열, 상한을 넘으면 Err.
+fn read_probe_output(path: &std::path::Path) -> Result<String, String> {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() > MAX_PROBE_OUTPUT_BYTES => Err(format!(
+            "점검 출력 {path:?} 가 {} 바이트로 상한({MAX_PROBE_OUTPUT_BYTES})을 넘는다 — 읽지 않았다",
+            meta.len()
+        )),
+        Ok(_) => std::fs::read_to_string(path)
+            .map_err(|error| format!("점검 출력 {path:?} 를 읽지 못했다: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(format!("점검 출력 {path:?} 를 보지 못했다: {error}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 결함 549 (재검수 143) — GPU 점검 출력은 상한까지만 읽는다 — 넘으면 읽지 않고 실패(FAIL)다. 없으면 빈 문자열.
+    #[test]
+    fn a_probe_output_over_the_cap_is_never_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = dir.path().join("stdout.log");
+        let file = std::fs::File::create(&big).unwrap();
+        file.set_len(MAX_PROBE_OUTPUT_BYTES + 1).unwrap();
+        drop(file);
+        let error = read_probe_output(&big).expect_err("상한을 넘는 출력을 읽었다");
+        assert!(error.contains("상한"), "{error}");
+        let small = dir.path().join("stderr.log");
+        std::fs::write(&small, "GPU 0: x").unwrap();
+        assert_eq!(read_probe_output(&small).unwrap(), "GPU 0: x");
+        assert_eq!(read_probe_output(&dir.path().join("none.log")).unwrap(), "");
+    }
 
     #[test]
     fn a_gpu_probe_passes_only_when_the_pinned_gpus_are_seen_inside() {
