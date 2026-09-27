@@ -683,10 +683,8 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             )
         })?;
         runtime.incident_dir = Some(incident_dir);
-        // ★ 결함 489 — 지우기 전에 로그를 체크포인트 루트 옆 `leftover-container-logs/` 에 건진다.
-        let salvage_dir = config
-            .checkpoint_root
-            .with_file_name("leftover-container-logs");
+        // ★ 결함 489 — 지우기 전에 로그를 체크포인트 루트의 형제 `<루트>.leftover-container-logs/` 에 건진다(결함 523 — 노드마다 따로).
+        let salvage_dir = container::leftover_logs_dir_for(&config.checkpoint_root);
         let removed = container::remove_leftovers(runtime, Some(&salvage_dir)).map_err(|why| {
             format!("CONTAINER_LEFTOVERS_UNKNOWN: 남은 컨테이너를 확인 · 정리하지 못해 시작하지 않는다 — {why}")
         })?;

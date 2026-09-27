@@ -30,7 +30,7 @@ fn an_open_incident_keeps_the_agent_from_starting_until_the_owner_clears_it() {
     let node = dir.path().join("node");
     std::fs::create_dir_all(&node).unwrap();
     let checkpoint_root = node.join("checkpoints");
-    let incidents = node.join("container-incidents");
+    let incidents = node.join("checkpoints.container-incidents");
     std::fs::create_dir_all(&incidents).unwrap();
     std::fs::write(
         incidents.join("gputeer-deadbeef.incident"),
@@ -115,6 +115,43 @@ fn an_open_incident_keeps_the_agent_from_starting_until_the_owner_clears_it() {
     assert!(second.contains("CONTAINER_LEFTOVERS_UNKNOWN"), "{second}");
 }
 
+/// 결함 523 (재검수 133) — 같은 부모 아래 두 노드(루트 `a` · `b`)의 표식은 따로다 — `b` 를 해제해도 `a` 의 표식은 남는다.
+#[test]
+fn two_nodes_under_one_parent_keep_separate_incidents() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let a_incidents = dir.path().join("a.container-incidents");
+    std::fs::create_dir_all(&a_incidents).unwrap();
+    std::fs::write(a_incidents.join("gputeer-x.1.0.incident"), "kind=EXITED\n").unwrap();
+    let (ok, listed) = gputeer(&["container-incidents", "--checkpoint-root", path_str(&b)]);
+    assert!(
+        ok && listed.contains("CONTAINER_INCIDENTS open 0"),
+        "{listed}"
+    );
+    let (ok, cleared) = gputeer(&[
+        "container-incidents",
+        "--checkpoint-root",
+        path_str(&b),
+        "--clear-all",
+    ]);
+    assert!(
+        ok && cleared.contains("CONTAINER_INCIDENTS cleared 0"),
+        "{cleared}"
+    );
+    assert!(
+        a_incidents.join("gputeer-x.1.0.incident").exists(),
+        "다른 노드의 표식을 지웠다"
+    );
+    let (ok, listed) = gputeer(&["container-incidents", "--checkpoint-root", path_str(&a)]);
+    assert!(
+        ok && listed.contains("CONTAINER_INCIDENTS open 1"),
+        "{listed}"
+    );
+}
+
 #[test]
 fn clearing_needs_a_checkpoint_root_and_a_name() {
     let (ok, text) = gputeer(&["container-incidents"]);
@@ -162,7 +199,7 @@ fn an_aliased_checkpoint_root_clears_the_real_incidents() {
         "mklink /J 실패 — 이 시험은 조용히 건너뛰지 않는다"
     );
     // Agent 가 쓰는 곳 — 실제 루트의 형제.
-    let real_incidents = real_parent.join("container-incidents");
+    let real_incidents = real_parent.join("cp.container-incidents");
     std::fs::create_dir_all(&real_incidents).unwrap();
     std::fs::write(
         real_incidents.join("gputeer-x.1.0.incident"),
@@ -170,7 +207,7 @@ fn an_aliased_checkpoint_root_clears_the_real_incidents() {
     )
     .unwrap();
     // 별칭 쪽 형제에 다른 파일 — 지워지면 안 된다.
-    let decoy_dir = alias_parent.join("container-incidents");
+    let decoy_dir = alias_parent.join("cp.container-incidents");
     std::fs::create_dir_all(&decoy_dir).unwrap();
     std::fs::write(decoy_dir.join("notes.txt"), "keep").unwrap();
 

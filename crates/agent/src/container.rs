@@ -704,6 +704,9 @@ fn remove_container(program: &Path, name: &str) -> Result<(), String> {
 pub struct ContainerStopper {
     program: PathBuf,
     name: String,
+    /// 실행 쪽이 관측한 종료(코드 · OOM) — 지우기 **전에** 적는다. 소유자 정지가 멈춘 원인을 가를 때, 실행 쪽이 이미 컨테이너를 지웠으면 이것을 본다
+    /// (결함 520 수정이 만든 경쟁 — kill 직후 실행 쪽이 종료를 보고 로그를 받아 지우면 사후 조회가 "없다" 가 됐다).
+    observed_exit: std::sync::Arc<std::sync::Mutex<Option<(i64, bool)>>>,
 }
 
 impl ContainerStopper {
@@ -720,23 +723,44 @@ impl ContainerStopper {
         // ★ 결함 506 (재검수 127) — kill 의 0 은 접수일 뿐이다. 멈춤을 `inspect` 로 확인해야 소유자에게 "멈췄다" 고 답한다(전에는 곧바로 성공이라
         //   패널이 `owner_stopped` 를 적고, 계속 돈 작업이 나중에 정상 종료해도 INTERRUPTED 로 보고돼 재배치될 수 있었다).
         if kill.status.success() {
-            confirm_stopped(&self.program, &self.name).map_err(|why| {
-                format!("KILL_UNCONFIRMED: kill 을 접수했지만 멈춤을 확인하지 못했다 — {why}")
-            })?;
-            // ★ 결함 520 (재검수 132) — 멈췄다고 **이 정지가 원인**인 것은 아니다. kill 이 무동작인 사이 작업이 스스로 끝났으면 그 종료는 소유자
-            //   정지가 아니다(성공이라 하면 코드 0 이 INTERRUPTED 로 바뀌어 재실행된다). SIGKILL 의 종료 코드(137 · OOM 아님)일 때만 성공이다.
+            // ★ 결함 506 · 520 (재검수 127 · 132) — 멈췄는지, 그리고 **이 정지가 원인**인지(SIGKILL 의 종료 코드 137 · OOM 아님)를 본다. kill 이
+            //   무동작인 사이 작업이 스스로 끝났으면 소유자 정지가 아니다(성공이라 하면 코드 0 이 INTERRUPTED 로 바뀌어 재실행된다).
+            //   ★ 결함 525 — 실행 쪽이 종료를 보고 이미 컨테이너를 지웠으면 조회가 "없다" 다. 그때는 실행 쪽이 지우기 전에 적어 둔 관측으로 판정한다.
             //   ★ 남는 것 — 작업이 바로 그때 스스로 137 로 끝나면 가르지 못한다.
-            return match inspect_state(&self.program, &self.name) {
-                Ok(Some(exit)) if exit.exit_code == 137 && !exit.oom_killed => Ok(()),
-                Ok(Some(exit)) => Err(format!(
-                    "ALREADY_EXITED: 멈췄지만 이 정지가 원인이 아니다 — 작업이 스스로 끝났다(종료 코드 {} · OOM {})",
-                    exit.exit_code, exit.oom_killed
-                )),
-                Ok(None) => Err("KILL_UNCONFIRMED: 멈췄다가 다시 돈다고 보인다".to_string()),
-                Err(why) => Err(format!(
-                    "KILL_UNCONFIRMED: 멈췄지만 원인(종료 코드)을 확인하지 못했다 — {why}"
-                )),
+            let judge = |code: i64, oom: bool| {
+                if code == 137 && !oom {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "ALREADY_EXITED: 멈췄지만 이 정지가 원인이 아니다 — 작업이 스스로 끝났다(종료 코드 {code} · OOM {oom})"
+                    ))
+                }
             };
+            let observed = || *self.observed_exit.lock().unwrap_or_else(|e| e.into_inner());
+            let mut last = String::new();
+            for attempt in 0..STOP_CONFIRM_TRIES {
+                if let Some((code, oom)) = observed() {
+                    return judge(code, oom);
+                }
+                match inspect_state(&self.program, &self.name) {
+                    Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
+                    Ok(None) => last = "아직 돈다".into(),
+                    Err(why) => {
+                        if let Some((code, oom)) = observed() {
+                            return judge(code, oom);
+                        }
+                        return Err(format!(
+                            "KILL_UNCONFIRMED: kill 을 접수했지만 멈춤 · 원인(종료 코드)을 확인하지 못했다 — {why}"
+                        ));
+                    }
+                }
+                if attempt + 1 < STOP_CONFIRM_TRIES {
+                    std::thread::sleep(STOP_CONFIRM_INTERVAL);
+                }
+            }
+            return Err(format!(
+                "KILL_UNCONFIRMED: kill 을 접수했지만 멈춤을 확인하지 못했다 — {last}"
+            ));
         }
         match inspect_running(&self.program, &self.name) {
             Ok(false) => Err(format!(
@@ -937,6 +961,30 @@ fn remove_container_fact(program: &Path, name: &str) -> (ContainerLeft, String) 
     }
 }
 
+/// 이 이름의 컨테이너의 owner 라벨 — 없으면 `Ok(None)`, 있는데 라벨이 없으면 `Ok(Some(""))`(결함 522).
+fn inspect_owner(program: &Path, name: &str) -> Result<Option<String>, String> {
+    match cli_ok(
+        program,
+        &[
+            "inspect".into(),
+            "--format={{index .Config.Labels \"gputeer.owner\"}}".into(),
+            name.into(),
+        ],
+        CONFIRM_TIMEOUT,
+    ) {
+        Ok(output) => {
+            let owner = output.stdout.trim();
+            Ok(Some(if owner == "<no value>" {
+                String::new()
+            } else {
+                owner.to_string()
+            }))
+        }
+        Err(why) if says_no_such_container(&why) => Ok(None),
+        Err(why) => Err(why),
+    }
+}
+
 /// 컨테이너(ID)의 이름 — docker 는 앞에 `/` 를 붙인다(떼고 돌려준다).
 fn inspect_name(program: &Path, id: &str) -> Result<String, String> {
     let output = cli_ok(
@@ -995,14 +1043,37 @@ fn run_inner(
     // ★ 결함 276 — 같은 이름이 남아 있으면(전 실행의 rm 실패) create 가 충돌한다. 이름은 이 시도의 것이라 남은 것도 이 시도의 것이다.
     // ★ 2026-09-27 보수 규칙(코덱스 지적) — 전에는 결과를 버렸다(`let _`). 지우지 못했으면(남은 것이 무엇인지 모른다) 만들지 않고 사람에게 넘긴다.
     //   Agent 는 기동 때 남은 컨테이너를 로그를 건진 뒤 지우므로(결함 489) 여기서 남아 있는 것은 뜻밖이다.
-    let (left, removed) = remove_container_fact(program, input.name);
-    if left != ContainerLeft::Removed {
-        return Err(ContainerRunError::NotStarted {
-            detail: format!(
-                "같은 이름의 남은 컨테이너를 지우지 못했다 — 만들지 않았다 · {removed}"
-            ),
-            container: left,
-        });
+    // ★ 결함 522 (재검수 133) — 이름은 시도 id 로만 만들어 노드 · owner 를 담지 않는다. 같은 이름이 있으면 **owner 라벨이 이 Agent 의 것일 때만**
+    //   지운다. 다른 owner 이거나 확인하지 못하면 지우지 않고 사람에게 넘긴다(다른 Agent · 운영 절차의 컨테이너일 수 있다).
+    match inspect_owner(program, input.name) {
+        Ok(None) => {}
+        Ok(Some(owner)) if owner == execution.runtime.owner => {
+            let (left, removed) = remove_container_fact(program, input.name);
+            if left != ContainerLeft::Removed {
+                return Err(ContainerRunError::NotStarted {
+                    detail: format!(
+                        "같은 이름의 남은 컨테이너(이 Agent 의 것)를 지우지 못했다 — 만들지 않았다 · {removed}"
+                    ),
+                    container: left,
+                });
+            }
+        }
+        Ok(Some(owner)) => {
+            return Err(ContainerRunError::NotStarted {
+                detail: format!(
+                    "같은 이름의 컨테이너가 이 Agent 의 것이 아니다(owner 라벨 {owner:?}) — 지우지도 만들지도 않았다(사람이 확인한다)"
+                ),
+                container: ContainerLeft::Unknown,
+            })
+        }
+        Err(why) => {
+            return Err(ContainerRunError::NotStarted {
+                detail: format!(
+                    "같은 이름의 컨테이너가 있는지 · 누구의 것인지 확인하지 못했다({why}) — 만들지 않았다"
+                ),
+                container: ContainerLeft::Unknown,
+            })
+        }
     }
     let created = match cli_ok(program, &create, CREATE_TIMEOUT) {
         Ok(output) => output,
@@ -1083,6 +1154,7 @@ fn run_inner(
             on_started(ContainerStopper {
                 program: program.to_path_buf(),
                 name: target.to_string(),
+                observed_exit: Default::default(),
             });
             return Err(ContainerRunError::Unobserved {
                 detail: format!(
@@ -1116,6 +1188,7 @@ fn run_inner(
     let stopper = ContainerStopper {
         program: program.to_path_buf(),
         name: target.to_string(),
+        observed_exit: Default::default(),
     };
     on_started(stopper.clone());
     // ★ 시한 없이 기다린다 — 작업 길이는 Lease 가 정한다. 멈추는 것은 소유자 손잡이(kill)가 한다.
@@ -1172,6 +1245,11 @@ fn run_inner(
         }
         std::thread::sleep(POLL_INTERVAL);
     };
+    // ★ 결함 525 — 관측한 종료를 **지우기 전에** 정지 손잡이와 나눈다(소유자 정지가 멈춘 원인을 가를 때 컨테이너가 이미 없을 수 있다).
+    *stopper
+        .observed_exit
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some((exit.exit_code, exit.oom_killed));
     // ★ 결함 487 (재검수 123) — 로그를 못 받으면 반쯤 쓴 출력 파일을 지우고(확정이 READ_OUTPUTS 로 실패하게 — 빈 출력이 성공이 되지 않게),
     //   컨테이너를 **지우지 않는다**(런타임에 온전한 로그가 남는다). 종료 코드는 관측한 사실이라 그대로 돌려준다(정리 결과는 따로).
     match save_logs(program, target, stdout_path, stderr_path) {
@@ -1201,9 +1279,26 @@ fn run_inner(
     Ok(exit)
 }
 
-/// 사건 표식 폴더 — 체크포인트 루트 옆 `container-incidents/`(건진 로그 `leftover-container-logs/` 와 같은 자리).
+/// 사건 표식 폴더 — 체크포인트 루트의 형제 `<루트>.container-incidents/`.
+///
+/// ★ 결함 523 (재검수 133) — 전에는 부모 아래 고정 이름 `container-incidents` 였다. 같은 부모를 쓰는 두 노드(`/srv/gputeer/a` · `/b`)가 한 폴더를
+///   나눠 써, 한 노드의 표식이 다른 노드의 기동을 막고 다른 노드의 해제가 이 노드의 보호 표식을 지웠다. 루트 이름을 앞에 붙여 노드마다 따로 둔다.
 pub fn incident_dir_for(checkpoint_root: &Path) -> PathBuf {
-    checkpoint_root.with_file_name("container-incidents")
+    checkpoint_root_sibling_path(checkpoint_root, ".container-incidents")
+}
+
+/// 남은 컨테이너에서 건진 로그 폴더 — 체크포인트 루트의 형제 `<루트>.leftover-container-logs/`(결함 523 — 노드마다 따로).
+pub fn leftover_logs_dir_for(checkpoint_root: &Path) -> PathBuf {
+    checkpoint_root_sibling_path(checkpoint_root, ".leftover-container-logs")
+}
+
+fn checkpoint_root_sibling_path(checkpoint_root: &Path, suffix: &str) -> PathBuf {
+    let mut name = checkpoint_root
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push(suffix);
+    checkpoint_root.with_file_name(name)
 }
 
 /// 열린 사건 표식을 이름 순으로 돌려준다. 폴더가 없으면 없다.

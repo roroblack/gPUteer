@@ -156,6 +156,14 @@ fn main() {
             "a_natural_exit_during_an_owner_stop_is_not_an_owner_stop",
             a_natural_exit_during_an_owner_stop_is_not_an_owner_stop,
         ),
+        (
+            "a_same_name_container_of_another_owner_is_never_removed",
+            a_same_name_container_of_another_owner_is_never_removed,
+        ),
+        (
+            "an_owner_stop_is_judged_even_after_the_run_cleaned_up",
+            an_owner_stop_is_judged_even_after_the_run_cleaned_up,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -203,7 +211,14 @@ fn fake_runtime(state: &Path) -> i32 {
     // "inspect-exit" — 종료 상태를 읽는 inspect 만 실패시킨다(멈춤 · 존재 확인용 `{{.State.Running}}` 은 통과 · 결함 502 · 503 시험).
     let running_only = args.get(1).map(String::as_str) == Some("--format={{.State.Running}}");
     // `{{.Name}}` — create 가 돌려준 ID 가 이 시도의 컨테이너인지 대조하는 조회(결함 519). inspect 실패 토큰은 이것을 건드리지 않는다.
-    let name_only = args.get(1).map(String::as_str) == Some("--format={{.Name}}");
+    let name_only = args.get(1).map(String::as_str) == Some("--format={{.Name}}")
+        // owner 라벨 조회(결함 522)도 같은 대조용 조회다.
+        || args
+            .get(1)
+            .is_some_and(|a| a.starts_with("--format={{index .Config.Labels"));
+    let owner_only = args
+        .get(1)
+        .is_some_and(|a| a.starts_with("--format={{index .Config.Labels"));
     let inspect_exit_fails =
         command == "inspect" && !running_only && !name_only && fails("inspect-exit");
     // "start-noop" — start 가 0 으로 답하지만 아무것도 띄우지 않는다(결함 501). "kill-noop" — kill 이 0 이지만 멈추지 않는다(결함 502).
@@ -213,6 +228,16 @@ fn fake_runtime(state: &Path) -> i32 {
         return 0;
     }
     if command == "kill" && fails("kill-noop") {
+        return 0;
+    }
+    // "kill-waits-for-rm" — kill 이 작업을 끝내고(137), 실행 쪽이 종료를 보고 컨테이너를 지울 때까지 기다렸다가 0 으로 답한다(결함 525 — 정지
+    // 손잡이의 사후 조회가 "없다" 를 받는 경쟁을 결정적으로 만든다).
+    if command == "kill" && fails("kill-waits-for-rm") {
+        std::fs::write(state.join("killed"), "").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !state.join("gone").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         return 0;
     }
     // "kill-noop-exit0" — kill 은 0 이지만 무동작이고, 그 사이 작업이 스스로 코드 0 으로 끝난다(결함 520).
@@ -274,6 +299,24 @@ fn fake_runtime(state: &Path) -> i32 {
             if !exists {
                 eprintln!("Error: No such container: {target}");
                 return 1;
+            }
+            if owner_only {
+                // 남은 컨테이너(leftovers)의 owner 는 이 Agent 의 것 — "leftover-foreign" 이면 다른 owner(결함 522).
+                let owner = if is_leftover {
+                    if fails("leftover-foreign") {
+                        "someone-else".to_string()
+                    } else {
+                        "node-test.root".to_string()
+                    }
+                } else {
+                    std::fs::read_to_string(state.join("create.args"))
+                        .unwrap_or_default()
+                        .lines()
+                        .find_map(|l| l.strip_prefix("--label=gputeer.owner=").map(str::to_string))
+                        .unwrap_or_default()
+                };
+                println!("{owner}");
+                return 0;
             }
             if name_only {
                 // "create-name-mismatch" — ID 가 다른 컨테이너를 가리킨다(결함 519).
@@ -488,7 +531,7 @@ fn a_finished_container_reports_its_own_exit_code() {
     // 남은 같은 이름을 먼저 치우고(결함 276), wait 대신 inspect 로 종료를 본다(시한 있는 명령만 쓴다). 지운 뒤 inspect 로 없어졌는지 본다(결함 503).
     assert_eq!(
         order,
-        ["rm", "inspect", "create", "inspect", "start", "inspect", "logs", "rm", "inspect"]
+        ["inspect", "create", "inspect", "start", "inspect", "logs", "rm", "inspect"]
     );
     let create = std::fs::read_to_string(f.state.join("create.args")).unwrap();
     for flag in [
@@ -769,8 +812,8 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     )
     .expect("한 장이면 돈다");
     assert_eq!(
-        &order(&f.state)[..6],
-        ["pull", "rm", "inspect", "create", "inspect", "start"],
+        &order(&f.state)[..5],
+        ["pull", "inspect", "create", "inspect", "start"],
         "{}",
         calls(&f.state)
     );
@@ -798,7 +841,7 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     assert!(!started);
     assert_eq!(
         order(&f.state),
-        ["pull", "rm", "inspect", "create", "inspect", "rm", "inspect"],
+        ["pull", "inspect", "create", "inspect", "rm", "inspect"],
         "{}",
         calls(&f.state)
     );
@@ -1649,4 +1692,57 @@ fn a_natural_exit_during_an_owner_stop_is_not_an_owner_stop() {
     assert!(error.starts_with("ALREADY_EXITED"), "{error}");
     let exit = runner.join().unwrap().expect("종료 관측");
     assert_eq!(exit.exit_code, 0, "관측한 자연 종료를 잃었다");
+}
+
+/// 결함 522 (재검수 133) — 만들기 전에 같은 이름의 컨테이너가 있어도 **owner 라벨이 이 Agent 의 것이 아니면** 지우지 않는다(다른 Agent · 운영 절차의
+/// 것일 수 있다). 만들지도 않고 사람에게 넘긴다.
+fn a_same_name_container_of_another_owner_is_never_removed() {
+    let f = fixture(Some("leftover-foreign"));
+    std::fs::write(f.state.join("leftovers"), "gputeer-test\n").unwrap();
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("남의 컨테이너가 있는데 만들었다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { container: ContainerLeft::Unknown, detail } if detail.contains("이 Agent 의 것이 아니다")),
+        "{error:?}"
+    );
+    assert!(error.needs_human());
+    let order = call_order(&f.state);
+    assert!(
+        !order.iter().any(|c| c == "rm" || c == "create"),
+        "{order:?}"
+    );
+}
+
+/// 결함 525 — 소유자 정지 직후 실행 쪽이 종료(137)를 보고 로그를 받아 컨테이너를 **먼저 지워도**, 정지 손잡이는 실행 쪽이 지우기 전에 나눈 관측으로
+/// "이 정지가 원인" 을 판정한다(전에는 사후 조회가 "없다" 를 받아 정지 실패로 보고했다 — 부하에서 전체 시험이 한 번 떨어져 드러났다).
+fn an_owner_stop_is_judged_even_after_the_run_cleaned_up() {
+    let f = fixture(Some("kill-waits-for-rm"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    stopper
+        .stop()
+        .expect("실행 쪽이 이미 지웠어도 이 정지가 원인이다");
+    let exit = runner.join().unwrap().expect("종료 관측");
+    assert_eq!(exit.exit_code, 137);
+    assert_eq!(exit.container, ContainerLeft::Removed);
 }
