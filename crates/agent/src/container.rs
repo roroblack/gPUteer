@@ -631,13 +631,32 @@ struct CliOutput {
 
 /// 런타임 명령을 **시한 안에** 부른다. 시한을 넘기면 그 CLI 프로세스를 죽이고 오류다.
 fn run_cli(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOutput, String> {
+    run_cli_detailed(program, args, timeout).map_err(|failure| match failure {
+        CliFailure::NotSpawned(why) | CliFailure::AfterSpawn(why) => why,
+    })
+}
+
+/// CLI 를 부르지 못한 까닭 — **띄우지 못했는가**(명령이 런타임에 닿지 않았다)와 **띄운 뒤**(기다리기 실패 · 시한 초과 — 명령이 닿았을 수 있다)를
+/// 가른다(결함 536 — 소유자 정지는 kill 을 띄우지 못했으면 정지 신호가 전달되지 않은 것이 확실하다).
+enum CliFailure {
+    NotSpawned(String),
+    AfterSpawn(String),
+}
+
+fn run_cli_detailed(
+    program: &Path,
+    args: &[OsString],
+    timeout: Duration,
+) -> Result<CliOutput, CliFailure> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("{program:?} 를 띄우지 못했다: {error}"))?;
+        .map_err(|error| {
+            CliFailure::NotSpawned(format!("{program:?} 를 띄우지 못했다: {error}"))
+        })?;
     // 파이프가 차서 CLI 가 멈추지 않게 따로 빨아낸다.
     let mut stdout_pipe = child.stdout.take().expect("piped");
     let mut stderr_pipe = child.stderr.take().expect("piped");
@@ -656,15 +675,19 @@ fn run_cli(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOu
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {}
-            Err(error) => return Err(format!("{program:?} 를 기다리지 못했다: {error}")),
+            Err(error) => {
+                return Err(CliFailure::AfterSpawn(format!(
+                    "{program:?} 를 기다리지 못했다: {error}"
+                )))
+            }
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!(
+            return Err(CliFailure::AfterSpawn(format!(
                 "{program:?} {:?} 가 {timeout:?} 안에 끝나지 않았다 — 런타임이 멈췄을 수 있다",
                 args.first()
-            ));
+            )));
         }
         std::thread::sleep(Duration::from_millis(50));
     };
@@ -717,11 +740,21 @@ impl ContainerStopper {
     pub fn stop(&self) -> Result<(), String> {
         // ★ 결함 531 (재검수 136) — kill 을 띄우지 못했거나 응답이 없어도(시한 초과) **곧바로 끝내지 않는다**. 띄운 뒤 응답만 없었으면 SIGKILL 이
         //   적용됐을 수 있다 — 아래의 같은 판정(나눈 관측 → 조회)을 거친다. 시한은 확인 조회와 같은 15초(kill 은 가벼운 신호 명령이다).
-        let kill = run_cli(
+        let kill = match run_cli_detailed(
             &self.program,
             &["kill".into(), self.name.clone().into()],
             CONFIRM_TIMEOUT,
-        );
+        ) {
+            // ★ 결함 536 (재검수 138) — kill 을 **띄우지 못했으면** 정지 신호가 전달되지 않은 것이 확실하다. 관측된 137(작업이 스스로 끝남)을
+            //   소유자 정지로 삼지 않는다.
+            Err(CliFailure::NotSpawned(why)) => {
+                return Err(format!(
+                    "OWNER_STOP_NOT_SENT: kill 을 띄우지 못해 정지 신호가 전달되지 않았다 — {why}"
+                ))
+            }
+            Err(CliFailure::AfterSpawn(why)) => Err(why),
+            Ok(output) => Ok(output),
+        };
         // ★ 결함 506 (재검수 127) — kill 의 0 은 접수일 뿐이다. 멈춤을 `inspect` 로 확인해야 소유자에게 "멈췄다" 고 답한다(전에는 곧바로 성공이라
         //   패널이 `owner_stopped` 를 적고, 계속 돈 작업이 나중에 정상 종료해도 INTERRUPTED 로 보고돼 재배치될 수 있었다).
         // ★ 결함 506 · 520 · 525 · 527 — kill 의 응답(성공 · 실패)과 상관없이 **멈췄는지와 이 정지가 원인인지**(SIGKILL 의 종료 코드 137 · OOM 아님)를

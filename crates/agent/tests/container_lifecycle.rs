@@ -180,6 +180,10 @@ fn main() {
             "a_kill_that_never_answers_but_took_effect_is_still_an_owner_stop",
             a_kill_that_never_answers_but_took_effect_is_still_an_owner_stop,
         ),
+        (
+            "a_kill_that_could_not_even_be_sent_is_never_an_owner_stop",
+            a_kill_that_could_not_even_be_sent_is_never_an_owner_stop,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -1905,4 +1909,33 @@ fn a_kill_that_never_answers_but_took_effect_is_still_an_owner_stop() {
         .expect("kill 이 응답하지 않았어도 137 로 멈췄으면 소유자 정지다");
     let exit = runner.join().unwrap().expect("종료 관측");
     assert_eq!(exit.exit_code, 137);
+}
+
+/// 결함 536 (재검수 138) — kill 을 **띄우지 못했으면**(런타임 실행 파일이 없다) 정지 신호가 전달되지 않은 것이 확실하다 — 작업이 스스로 137 로 끝난
+/// 관측이 있어도 소유자 정지로 삼지 않는다.
+fn a_kill_that_could_not_even_be_sent_is_never_an_owner_stop() {
+    let f = fixture(None);
+    // 런타임을 사본으로 두고, 실행이 끝난 뒤 지운다 — 그 뒤의 kill 은 띄워지지 않는다.
+    let runtime_copy = f.work.join("runtime-copy.exe");
+    std::fs::copy(std::env::current_exe().unwrap(), &runtime_copy).unwrap();
+    let mut execution = execution();
+    execution.runtime.program = runtime_copy.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let exit = container::run(
+        &execution,
+        &input(&mounts(&f.work), "exit-137", &[]),
+        None,
+        None,
+        move |stopper| {
+            tx.send(stopper).unwrap();
+        },
+    )
+    .expect("작업이 스스로 137 로 끝났다");
+    assert_eq!(exit.exit_code, 137);
+    let stopper = rx.recv().expect("손잡이");
+    std::fs::remove_file(&runtime_copy).unwrap();
+    let error = stopper
+        .stop()
+        .expect_err("kill 을 띄우지 못했는데 소유자 정지라 했다");
+    assert!(error.starts_with("OWNER_STOP_NOT_SENT"), "{error}");
 }
