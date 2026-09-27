@@ -1182,13 +1182,27 @@ fn run_inner(
     //     가를 수 없어서다(보수 규칙 — 불확실하면 성공으로도 "안 돌았다" 로도 단정하지 않는다).
     let start_args: [OsString; 2] = ["start".into(), target.into()];
     // (응답이 있었는가, 사유)
-    let start_failure = match run_cli(program, &start_args, SHORT_TIMEOUT) {
+    let start_failure = match run_cli_detailed(program, &start_args, SHORT_TIMEOUT) {
         Ok(output) if output.status.success() => None,
         Ok(output) => Some((
             true,
             format!("start 실패({}): {}", output.status, output.stderr.trim()),
         )),
-        Err(why) => Some((false, format!("start 가 응답하지 않았다({why})"))),
+        // ★ 결함 537 (재검수 139) — start 를 **띄우지 못했으면** 요청이 런타임에 닿지 않았다 — 작업은 시작하지 않았다(`NotStarted`). 정지 손잡이를
+        //   넘기지 않고(`WORKLOAD_SPAWNED` · 패널 등록 없음 — 실행 API 계약) 만든 컨테이너는 확인한 ID 로 지운다(한 번도 돌지 않았다). 지웠는지
+        //   확인하지 못하면(런타임 실행 파일이 여전히 없으면 조회도 실패한다) 사람에게 넘긴다.
+        Err(CliFailure::NotSpawned(why)) => {
+            let (left, removed) = remove_container_fact(program, target);
+            return Err(ContainerRunError::NotStarted {
+                detail: format!(
+                    "start 를 띄우지 못했다({why}) — 요청이 런타임에 닿지 않아 시작하지 않았다 · {removed}"
+                ),
+                container: left,
+            });
+        }
+        Err(CliFailure::AfterSpawn(why)) => {
+            Some((false, format!("start 가 응답하지 않았다({why})")))
+        }
     };
     if let Some((answered, why)) = start_failure {
         let head = format!("{why} — 시작했는지 모른다");

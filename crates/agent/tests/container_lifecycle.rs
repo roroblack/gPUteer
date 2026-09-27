@@ -184,6 +184,10 @@ fn main() {
             "a_kill_that_could_not_even_be_sent_is_never_an_owner_stop",
             a_kill_that_could_not_even_be_sent_is_never_an_owner_stop,
         ),
+        (
+            "a_start_that_could_not_be_sent_did_not_start",
+            a_start_that_could_not_be_sent_did_not_start,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -375,6 +379,17 @@ fn fake_runtime(state: &Path) -> i32 {
                         .unwrap_or_default()
                 };
                 println!("/{name}");
+                // "create-then-vanish" — ID 대조 조회에 답한 뒤 런타임 실행 파일(시험이 둔 **사본**만)의 이름을 바꿔, 이어지는 start 를 띄울 수 없게
+                // 한다(결함 537).
+                if fails("create-then-vanish") && !owner_only {
+                    let me = std::env::current_exe().unwrap();
+                    if me
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("runtime-copy"))
+                    {
+                        std::fs::rename(&me, me.with_extension("gone")).unwrap();
+                    }
+                }
                 return 0;
             }
             // start 가 0 으로 답했지만 아무것도 띄우지 않았다 — created · 멈춤 · 시작 흔적 없음(결함 501).
@@ -1938,4 +1953,33 @@ fn a_kill_that_could_not_even_be_sent_is_never_an_owner_stop() {
         .stop()
         .expect_err("kill 을 띄우지 못했는데 소유자 정지라 했다");
     assert!(error.starts_with("OWNER_STOP_NOT_SENT"), "{error}");
+}
+
+/// 결함 537 (재검수 139) — start 를 **띄우지 못했으면** 요청이 런타임에 닿지 않았다 — 시작하지 않았다(`NotStarted`). 정지 손잡이를 넘기지 않는다
+/// (`WORKLOAD_SPAWNED` · 패널 등록 없음).
+fn a_start_that_could_not_be_sent_did_not_start() {
+    let f = fixture(Some("create-then-vanish"));
+    let runtime_copy = f.work.join("runtime-copy.exe");
+    std::fs::copy(std::env::current_exe().unwrap(), &runtime_copy).unwrap();
+    let mut execution = execution();
+    execution.runtime.program = runtime_copy.clone();
+    let mut started = false;
+    let error = container::run(
+        &execution,
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| started = true,
+    )
+    .expect_err("start 를 띄우지 못했는데 성공했다");
+    assert!(!started, "시작하지 않았는데 정지 손잡이를 넘겼다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { detail, .. } if detail.contains("start 를 띄우지 못했다")),
+        "{error:?}"
+    );
+    assert!(
+        !call_order(&f.state).iter().any(|c| c == "start"),
+        "{}",
+        calls(&f.state)
+    );
 }
