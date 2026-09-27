@@ -20,6 +20,17 @@ foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
     if ($line -match '^\s*([A-Z_]+)=(.*)$') { $config[$Matches[1]] = $Matches[2].Trim() }
 }
 $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
+if (-not (Test-Path -LiteralPath $admittedDir -PathType Container)) { throw "REFRESH: $admittedDir 가 없다 — admit-node 로 먼저 받는다" }
+# ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
+#   썼다 — admitted\.lock 을 CreateNew 로 잡고 돈다(닫으면 지워진다). 잡혀 있으면 멈춘다.
+$lockPath = Join-Path $admittedDir ".lock"
+try {
+    $lock = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None, 1, [System.IO.FileOptions]::DeleteOnClose)
+} catch {
+    throw "ADMITTED_LOCKED: $lockPath 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
+}
+trap { if ($lock) { $lock.Dispose() }; break }
 # ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
 #   방금 반입한 새 선언을 되돌린다 — 그 노드는 넣지 않는다(신선도가 끊겨 그 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
 # ★ 결함 463 (재검수 117) — 후보가 남은 **그 노드만** 건너뛰고 나머지는 갱신한 뒤 실패로 끝낸다(전에는 후보 하나가 전체를 멈춰 풀 전체가 빠졌다).
@@ -36,11 +47,14 @@ foreach ($file in $files) {
     if ($file.BaseName.Substring("join-".Length) -in $incomplete) { continue }
     $join = Get-Content -Encoding UTF8 -Raw $file.FullName | ConvertFrom-Json
     $agent = @($join.agents)[0]
-    $agent.inventory.inventory_revision = $nowMs
+    # ★ 결함 467 — revision 은 max(지금, 이 사본의 revision + 1) · observed_at 은 지금.
+    $previous = [long]$agent.inventory.inventory_revision
+    $agent.inventory.inventory_revision = if ($nowMs -gt $previous) { $nowMs } else { $previous + 1 }
     $agent.inventory.observed_at_unix_ms = $nowMs
     [System.IO.File]::WriteAllText($file.FullName, ($join | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
     & $config.GPUTEER_BIN import-inventory --inventory $file.FullName --inventory-db $config.GPUTEER_CONTROL_DB | Out-Host
     if ($LASTEXITCODE -ne 0) { $failed += 1; Write-Host "REFRESH_FAILED $($file.Name)" } else { Write-Host "REFRESHED $($agent.registry.node_id)" }
 }
+$lock.Dispose()
 if ($incomplete.Count -gt 0) { throw "REFRESH: admit-node 가 끝나지 않은 노드가 있다($($incomplete -join ', ')) — 나머지는 갱신했다" }
 if ($failed -gt 0) { throw "REFRESH: $failed 개 실패" }

@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-27 14:49 — 재검수 118 대응: 결함 464~470(root 소유 사본 · 상승 거부 · 잠금 · revision 분리 · cdi-all 재확인 — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-27_1429_재검수118_결함_464_470.md`
+- 스트림: 배포 스크립트 · Agent · 런북
+- 수행: `--register` 는 root 소유 사본에서만(464) · Windows 설치기는 상승된 관리자면 멈춤 · icacls `/L`(465) · admit · refresh 가 `admitted/.lock` 을
+  잡음(466) · revision = max(지금, 사본 + 1)(467) · cdi-all 은 pull 먼저 · create 전후 두 번 확인(468) · 런타임을 주면 `--container-gpu` 요구(469) ·
+  시험 접두는 systemd 호스트에서 거부(470)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1386 passed · 0 failed · ignored 4. 뮤테이션 2건(생성 뒤 재확인 · pull 먼저) 잡힘.
+  잠금 · revision 복구는 sh · ps1 에서 직접 돌렸다. ★ 진짜 root · systemd · 상승된 창 · 진짜 NVML 에서는 재지 않았다
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-27 14:19 — 재검수 117 대응: 결함 455~463(설치기 두 단계 · 하위 ACL · 관측 revision · cdi-all 생성 직전 — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-27_1402_재검수117_결함_455_463.md`

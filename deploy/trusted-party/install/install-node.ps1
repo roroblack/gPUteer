@@ -76,6 +76,14 @@ if ($CpuCores -le 0 -or $RamGiB -le 0 -or $WorkspaceGiB -le 0) { throw "INSTALL_
 if (($ContainerRuntime -eq "") -ne ($ContainerRuntimeKind -eq "")) { throw "INSTALL_ARGS: -ContainerRuntime 과 -ContainerRuntimeKind 는 함께 준다" }
 if ($ContainerRuntimeKind -ne "" -and $ContainerRuntimeKind -notin @("podman", "docker")) { throw "INSTALL_ARGS: -ContainerRuntimeKind 는 podman 또는 docker" }
 if ($ContainerGpu -and $ContainerRuntime -eq "") { throw "INSTALL_ARGS: -ContainerGpu 는 -ContainerRuntime 과 함께 준다" }
+# ★ 결함 469 (재검수 118) — 핀이 필수라, 컨테이너 런타임을 주면 GPU 를 컨테이너에 넘겨야(-ContainerGpu) 작업을 받는다.
+if ($ContainerRuntime -ne "" -and -not $ContainerGpu) { throw "INSTALL_ARGS: -ContainerRuntime 을 주면 -ContainerGpu 도 준다(GPU 를 고정한 노드는 컨테이너에 GPU 를 넘겨야 작업을 받는다)" }
+# ★ 결함 465 (재검수 118) — **상승된 관리자** 로 돌지 않는다. 이 설치기는 소유자 계정의 권한으로만 쓴다 — 폴더 정리와 같은 사용자 프로그램의 경쟁이
+#   있어도 그 계정이 이미 할 수 있는 일을 넘지 않게 한다(상승된 채로 돌면 경쟁으로 바꿔 둔 junction 너머의 ACL 을 관리자 권한으로 바꿀 수 있었다).
+$principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
+if ($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "INSTALL_ELEVATED: 관리자 권한(상승된 창)으로 돌리지 않는다 — Agent 를 돌릴 사용자의 일반 창에서 돌린다"
+}
 if ($ContainerGpuRequest -ne "" -and $ContainerGpuRequest -notin @("gpus", "cdi", "cdi-all")) { throw "INSTALL_ARGS: -ContainerGpuRequest 는 gpus · cdi · cdi-all" }
 if ($ContainerGpuRequest -ne "" -and -not $ContainerGpu) { throw "INSTALL_ARGS: -ContainerGpuRequest 는 -ContainerGpu 와 함께 준다" }
 if ($GpuProbeImage -ne "" -and -not $ContainerGpu) { throw "INSTALL_ARGS: -GpuProbeImage 는 -ContainerGpu 와 함께 준다" }
@@ -214,9 +222,9 @@ function Get-TreeItems([string]$root) {
 function Set-OwnerOnlyTree([string]$root) {
     $items = @(Get-TreeItems $root)
     if ($items.Count -eq 0) { return }
-    & icacls $root /setowner "*$($ownerSids[0])" /T /C | Out-Null
+    & icacls $root /setowner "*$($ownerSids[0])" /T /C /L | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $root 아래의 소유자를 바꾸지 못했다" }
-    & icacls (Join-Path $root "*") /reset /T /C | Out-Null
+    & icacls (Join-Path $root "*") /reset /T /C /L | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "ACL_FAILED: icacls 가 $root 아래의 권한을 되돌리지 못했다" }
     foreach ($item in $items) { Assert-OwnerOnlyAcl $item.FullName $false }
 }

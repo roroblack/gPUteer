@@ -16,6 +16,12 @@ ADMITTED_DIR="$(cd "$(dirname "$ENV_FILE")" && pwd)/admitted"
 # ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
 #   방금 반입한 새 선언을 되돌린다 — 그 노드는 넣지 않는다(신선도가 끊겨 그 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
 # ★ 결함 463 (재검수 117) — 후보가 남은 **그 노드만** 건너뛰고 나머지는 갱신한 뒤 0 이 아닌 코드로 끝낸다(전에는 후보 하나가 전체를 멈춰 풀 전체가 빠졌다).
+[ -d "$ADMITTED_DIR" ] || die "REFRESH: $ADMITTED_DIR 가 없다 — admit-node 로 먼저 받는다"
+# ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
+#   썼다 — admitted/.lock 을 O_EXCL(noclobber)로 잡고 돈다. 잡혀 있으면 멈춘다. 끝나면(실패해도) 지운다.
+LOCK="$ADMITTED_DIR/.lock"
+( set -C; echo "$$" > "$LOCK" ) 2>/dev/null || die "ADMITTED_LOCKED: $LOCK 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
+trap 'rm -f "$LOCK"' EXIT
 count=0; failed=0; incomplete=
 NOW_MS=$(($(date +%s) * 1000))
 for file in "$ADMITTED_DIR"/join-*.json; do
@@ -27,7 +33,11 @@ for file in "$ADMITTED_DIR"/join-*.json; do
         echo "ADMIT_INCOMPLETE $node — admitted/.candidate-$node.json 이 남아 있다. 그 노드의 가입 파일로 admit-node 를 다시 돌린다(이번 refresh 는 건너뛴다)" >&2
         continue
     fi
-    sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $NOW_MS/" \
+    # ★ 결함 467 — revision 은 max(지금, 이 사본의 revision + 1) · observed_at 은 지금.
+    REV=$NOW_MS
+    PREV=$(tr -d '\r' < "$file" | sed -n 's/.*"inventory_revision"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+    [ -z "$PREV" ] || [ "$REV" -gt "$PREV" ] || REV=$((PREV + 1))
+    sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $REV/" \
         -e "s/\"observed_at_unix_ms\"[[:space:]]*:[[:space:]]*[0-9]*/\"observed_at_unix_ms\": $NOW_MS/" "$file" > "$file.tmp"
     mv "$file.tmp" "$file"
     if "$BIN" import-inventory --inventory "$file" --inventory-db "$DB"; then

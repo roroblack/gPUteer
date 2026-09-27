@@ -60,6 +60,10 @@ fn main() {
             "leftovers_of_this_node_are_removed_before_a_round",
             leftovers_of_this_node_are_removed_before_a_round,
         ),
+        (
+            "a_cdi_all_container_pulls_first_and_is_rechecked_after_create",
+            a_cdi_all_container_pulls_first_and_is_rechecked_after_create,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -153,6 +157,7 @@ fn fake_runtime(state: &Path) -> i32 {
             std::fs::write(state.join("removed"), "").unwrap();
             0
         }
+        "pull" => 0,
         "ps" => {
             // 죽은 회차가 남긴 컨테이너 — 시험이 state/leftovers 에 적어 둔다.
             print!(
@@ -521,5 +526,65 @@ fn leftovers_of_this_node_are_removed_before_a_round() {
             .lines()
             .any(|l| l == "--label=gputeer.owner=node-test.root"),
         "노드 라벨 없이 만들었다:\n{create}"
+    );
+}
+
+/// 결함 468 (재검수 118) — cdi-all 은 이미지를 **먼저** 받고, create 직전 · 직후에 GPU 장수를 본다. create 뒤에 늘었으면 지우고 시작하지 않는다.
+fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
+    let mut cdi_all = execution();
+    cdi_all.runtime.pass_gpu = true;
+    cdi_all.runtime.gpu_request = container::GpuRequest::CdiAll;
+    cdi_all.gpu_pin = Some("0".into());
+    let order = |state: &Path| -> Vec<String> {
+        calls(state)
+            .lines()
+            .map(|l| l.split(' ').next().unwrap().to_string())
+            .collect()
+    };
+
+    // 한 장 그대로 — pull 이 create 보다 먼저다.
+    let f = fixture(None);
+    container::run_with_gpu_count(
+        &cdi_all,
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+        || Ok(1),
+    )
+    .expect("한 장이면 돈다");
+    assert_eq!(
+        &order(&f.state)[..4],
+        ["pull", "rm", "create", "start"],
+        "{}",
+        calls(&f.state)
+    );
+
+    // create 뒤에 두 장이 됐다 — 지우고 시작하지 않는다.
+    let f = fixture(None);
+    let seen = std::cell::Cell::new(0);
+    let mut started = false;
+    let error = container::run_with_gpu_count(
+        &cdi_all,
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| started = true,
+        || {
+            seen.set(seen.get() + 1);
+            Ok(seen.get())
+        },
+    )
+    .expect_err("create 뒤 GPU 가 늘었는데 시작했다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { detail } if detail.contains("create 뒤 다시 확인")),
+        "{error:?}"
+    );
+    assert!(!started);
+    assert_eq!(
+        order(&f.state),
+        ["pull", "rm", "create", "rm"],
+        "{}",
+        calls(&f.state)
     );
 }

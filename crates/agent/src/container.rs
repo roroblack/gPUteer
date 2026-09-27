@@ -645,16 +645,45 @@ pub fn run(
     stderr_path: Option<&Path>,
     on_started: impl FnOnce(ContainerStopper),
 ) -> Result<ContainerExit, ContainerRunError> {
+    run_with_gpu_count(
+        execution,
+        input,
+        stdout_path,
+        stderr_path,
+        on_started,
+        || {
+            gputeer_runtime_nvml::observe()
+                .map(|snapshot| snapshot.gpus.len())
+                .map_err(|e| format!("{e:?}"))
+        },
+    )
+}
+
+/// `run` 과 같다 — cdi-all 장수를 무엇으로 셀지만 받는다(시험이 NVML 없이 "생성 뒤 늘어난 GPU" 를 흉내 낸다 · 결함 468).
+pub fn run_with_gpu_count(
+    execution: &ContainerExecution,
+    input: &CreateInput<'_>,
+    stdout_path: Option<&Path>,
+    stderr_path: Option<&Path>,
+    on_started: impl FnOnce(ContainerStopper),
+    nvml_gpu_count: impl Fn() -> Result<usize, String>,
+) -> Result<ContainerExit, ContainerRunError> {
     let program = execution.runtime.program.as_path();
     let not_started = |detail: String| ContainerRunError::NotStarted { detail };
-    // ★ 결함 462 (재검수 117) — cdi-all 장수를 컨테이너를 만들기 **직전**에 다시 본다. Manifest 해석 때의 검사 뒤 ACK · 갱신을 기다리는 사이
-    //   GPU · CDI 장치가 늘 수 있다.
-    cdi_all_ready(execution, || {
-        gputeer_runtime_nvml::observe()
-            .map(|snapshot| snapshot.gpus.len())
-            .map_err(|e| format!("{e:?}"))
-    })
-    .map_err(not_started)?;
+    // ★ 결함 462 (재검수 117) · 468 (재검수 118) — cdi-all 은 GPU 를 전부 넘긴다. 확인과 실제 장치 해석(create) 사이를 좁힌다:
+    //   이미지를 **먼저** 받고(create 가 수십 분 이미지를 받는 동안 GPU 가 늘 수 있었다) → 장수 확인 → create → 다시 확인 → start.
+    //   ★ 남는 창 — create 한 번 동안의 장치 변경은 닫지 못한다(확인 두 번이지 격리 보장이 아니다).
+    let passes_all_gpus =
+        execution.runtime.pass_gpu && execution.runtime.gpu_request == GpuRequest::CdiAll;
+    if passes_all_gpus {
+        cli_ok(
+            program,
+            &["pull".into(), execution.pinned_image.clone().into()],
+            CREATE_TIMEOUT,
+        )
+        .map_err(|why| not_started(format!("pull: {why}")))?;
+    }
+    cdi_all_ready(execution, &nvml_gpu_count).map_err(not_started)?;
     let create = create_args(execution, input).map_err(not_started)?;
     // ★ 결함 276 — 같은 이름이 남아 있으면(전 실행의 rm 실패) create 가 충돌한다. 이름은 이 시도의 것이라 남은 것도 이 시도의 것이다.
     let _ = remove_container(program, input.name);
@@ -662,6 +691,10 @@ pub fn run(
         // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다.
         let _ = remove_container(program, input.name);
         return Err(not_started(format!("create: {why}")));
+    }
+    if let Err(why) = cdi_all_ready(execution, &nvml_gpu_count) {
+        let _ = remove_container(program, input.name);
+        return Err(not_started(format!("create 뒤 다시 확인: {why}")));
     }
     if let Err(why) = cli_ok(program, &["start".into(), input.name.into()], SHORT_TIMEOUT) {
         let _ = remove_container(program, input.name);

@@ -40,13 +40,24 @@ IFS=$OLD_IFS
 ENV_DIR=$(cd "$(dirname "$ENV_FILE")" && pwd)
 ADMITTED_DIR="$ENV_DIR/admitted"; STAMP=$(date +%Y-%m-%d_%H%M)
 mkdir -p "$ADMITTED_DIR"
+# ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
+#   썼다 — admitted/.lock 을 O_EXCL(noclobber)로 잡고 돈다. 잡혀 있으면 멈춘다. 끝나면(실패해도) 지운다.
+LOCK="$ADMITTED_DIR/.lock"
+( set -C; echo "$$" > "$LOCK" ) 2>/dev/null || die "ADMITTED_LOCKED: $LOCK 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
+trap 'rm -f "$LOCK"' EXIT
 ADMITTED="$ADMITTED_DIR/join-$NODE_ID.json"
 # ★ 결함 443 (재검수 115) — **반입이 성공한 뒤에만** 활성 사본을 바꾼다. 전에는 먼저 덮고 반입했다 — 거부될 가입 파일이 활성 사본이 되면
 #   refresh-inventory 가 매번 실패하고 정상 선언이 낡아 노드가 빠졌다. 후보는 join-*.json 이 아닌 이름이라 refresh 가 줍지 않는다.
 CANDIDATE="$ADMITTED_DIR/.candidate-$NODE_ID.json"
-# 관측 시각 · revision 을 지금으로(결함 301).
+# 관측 시각을 지금으로(결함 301). ★ 결함 467 (재검수 118) — revision 은 벽시계와 뗀다: max(지금, 받아 둔 사본의 revision + 1).
+#   운영자 시계가 한 번 미래로 갔다 돌아와도 revision 은 계속 오르고 observed_at 은 바른 시각으로 덮여 스스로 풀린다.
 NOW_MS=$(($(date +%s) * 1000))
-sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $NOW_MS/" \
+REV=$NOW_MS
+if [ -e "$ADMITTED" ]; then
+    PREV=$(tr -d '\r' < "$ADMITTED" | sed -n 's/.*"inventory_revision"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+    [ -z "$PREV" ] || [ "$REV" -gt "$PREV" ] || REV=$((PREV + 1))
+fi
+sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $REV/" \
     -e "s/\"observed_at_unix_ms\"[[:space:]]*:[[:space:]]*[0-9]*/\"observed_at_unix_ms\": $NOW_MS/" "$JOIN_FILE" > "$CANDIDATE"
 if ! "$BIN" import-inventory --inventory "$CANDIDATE" --inventory-db "$DB"; then
     rm -f "$CANDIDATE"

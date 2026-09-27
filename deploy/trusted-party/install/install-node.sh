@@ -91,6 +91,9 @@ else
 fi
 case "$RT_KIND" in ""|podman|docker) ;; *) die "INSTALL_ARGS: --container-runtime-kind 는 podman 또는 docker" ;; esac
 [ -z "$RT_GPU" ] || [ -n "$RT" ] || die "INSTALL_ARGS: --container-gpu 는 --container-runtime 과 함께 준다"
+# ★ 결함 469 (재검수 118) — 핀이 필수라, 컨테이너 런타임을 주면 GPU 를 컨테이너에 넘겨야(--container-gpu) 작업을 받는다. 빠뜨리면 모든 작업을
+#   CONTAINER_GPU_OFF 로 거부하는 노드가 S3 로 등록됐다.
+[ -z "$RT" ] || [ -n "$RT_GPU" ] || die "INSTALL_ARGS: --container-runtime 을 주면 --container-gpu 도 준다(GPU 를 고정한 노드는 컨테이너에 GPU 를 넘겨야 작업을 받는다)"
 case "$RT_GPU_REQUEST" in ""|gpus|cdi|cdi-all) ;; *) die "INSTALL_ARGS: --container-gpu-request 는 gpus · cdi · cdi-all" ;; esac
 [ -z "$RT_GPU_REQUEST" ] || [ -n "$RT_GPU" ] || die "INSTALL_ARGS: --container-gpu-request 는 --container-gpu 와 함께 준다"
 [ -z "$PROBE_IMAGE" ] || [ -n "$RT_GPU" ] || die "INSTALL_ARGS: --gpu-probe-image 는 --container-gpu 와 함께 준다"
@@ -156,15 +159,44 @@ if [ "$PHASE" = root ]; then
     for pair in "CONFIG_DIR:$CONFIG_DIR" "NODE_DIR:$NODE_DIR" "BIN:$BIN" "SEED:$SEED"; do
         case "${pair#*:}" in /*) ;; *) die "USER_PHASE_FAILED: 사용자 단계가 ${pair%%:*} 를 알려 주지 않았다" ;; esac
     done
-    # 시험 전용 — 개발 기계에서 root 단계를 가짜 root 로 돌릴 때만 준다(운영에서는 비워 둔다. sudo 는 이 변수를 넘기지 않는다).
+    # 시험 전용 — 개발 기계에서 root 단계를 가짜 root 로 돌릴 때만 준다.
+    # ★ 결함 470 (재검수 118) — 진짜 systemd 호스트(/etc/systemd/system 이 있다)에서는 받지 않는다. 받으면 설정은 시험 트리에 쓰고 systemctl 은 진짜
+    #   시스템을 봐 거짓 REGISTERED 를 찍는다.
+    if [ -n "${GPUTEER_TEST_ETC_PREFIX:-}" ] && [ -d /etc/systemd/system ]; then
+        die "INSTALL_ARGS: GPUTEER_TEST_ETC_PREFIX 는 시험 전용이다 — systemd 가 있는 기계에서는 받지 않는다"
+    fi
     ETC=${GPUTEER_TEST_ETC_PREFIX:-}/etc
+    # ★ 결함 464 (재검수 118) — root 가 실행 · 복사하는 것(이 스크립트 · 유닛 틀)과 그 상위 폴더가 전부 **root 소유이고 다른 계정이 쓸 수 없어야**
+    #   한다. 사용자 소유 체크아웃에서 sudo 로 부르면, 그 계정으로 도는 작업이 바꿔 둔 스크립트 · 틀을 root 가 실행 · 설치한다.
+    #   ★ 이 검사는 스크립트 안에 있다 — **이미 바뀐** 스크립트는 막지 못한다. 막는 것은 사용자 소유 사본에서 부르는 운영자의 실수다.
+    root_owned_chain() {
+        path=$1
+        while :; do
+            [ -e "$path" ] || return 1
+            owner_mode=$(stat -c '%u %a' "$path") || return 1
+            [ "${owner_mode%% *}" = 0 ] || return 1
+            mode=${owner_mode#* }
+            [ $(( (mode / 10 % 10) & 2 )) -eq 0 ] && [ $(( mode % 10 & 2 )) -eq 0 ] || return 1
+            [ "$path" != / ] || return 0
+            path=$(dirname "$path")
+        done
+    }
+    UNIT_SOURCE="$(cd -P "$HERE/.." && pwd -P)/gputeer-agent@.service"
+    SELF_REAL="$(cd -P "$HERE" && pwd -P)/$(basename "$SELF")"
+    if [ -z "${GPUTEER_TEST_ETC_PREFIX:-}" ]; then
+        for path in "$SELF_REAL" "$UNIT_SOURCE"; do
+            root_owned_chain "$path" || die "INSTALLER_NOT_ROOT_OWNED: $path (또는 그 상위 폴더)가 root 소유가 아니거나 다른 계정이 쓸 수 있다.
+  --register 는 root 소유 사본에서 부른다: sudo install -d -m 0755 /usr/local/share/gputeer && sudo cp -r deploy/trusted-party /usr/local/share/gputeer/
+  그리고 sudo sh /usr/local/share/gputeer/trusted-party/install/install-node.sh <같은 인자> --register"
+        done
+    fi
     mkdir -p "$ETC/gputeer"
     # ★ 결함 445 · 453 — 공유 파일을 덮지 않는다. 이 노드의 설정은 **인스턴스 파일**에, 실행 계정은 **인스턴스 drop-in** 에 둔다.
     #   공유 틀은 **없을 때만** 놓고, 있고 다르면 멈춘다(같은 PC 의 다른 노드가 다음 재시작부터 바뀐 틀로 돈다).
     UNIT="$ETC/systemd/system/gputeer-agent@.service"
     if [ -e "$UNIT" ]; then
-        cmp -s "$HERE/../gputeer-agent@.service" "$UNIT" || die "UNIT_DIFFERS: $UNIT 가 이 설치기의 틀과 다르다 — 이 PC 의 다른 노드도 쓰는 틀이라 덮지 않는다.
-  비교: diff $UNIT $HERE/../gputeer-agent@.service — 바꾸려면 운영자가 직접 바꾸고 모든 gputeer-agent@ 를 다시 띄운다"
+        cmp -s "$UNIT_SOURCE" "$UNIT" || die "UNIT_DIFFERS: $UNIT 가 이 설치기의 틀과 다르다 — 이 PC 의 다른 노드도 쓰는 틀이라 덮지 않는다.
+  비교: diff $UNIT $UNIT_SOURCE — 바꾸려면 운영자가 직접 바꾸고 모든 gputeer-agent@ 를 다시 띄운다"
     fi
     INSTANCE_ENV="$ETC/gputeer/agent-$NODE_ID.env"
     COMMON_ETC="$ETC/gputeer/gputeer.env"
@@ -187,7 +219,7 @@ if [ "$PHASE" = root ]; then
         POOL_FILE=$INSTANCE_ENV
     fi
     chmod 0644 "$INSTANCE_ENV.tmp" && mv "$INSTANCE_ENV.tmp" "$INSTANCE_ENV"
-    [ -e "$UNIT" ] || install -m 0644 "$HERE/../gputeer-agent@.service" "$UNIT"
+    [ -e "$UNIT" ] || install -m 0644 "$UNIT_SOURCE" "$UNIT"
     DROPIN="$ETC/systemd/system/gputeer-agent@$NODE_ID.service.d"
     mkdir -p "$DROPIN"
     printf '[Service]\nUser=%s\n' "$AGENT_USER" > "$DROPIN/10-user.conf"

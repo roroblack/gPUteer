@@ -48,14 +48,30 @@ foreach ($other in $entries.Keys) {
     if ($other -ne $nodeId -and $entries[$other] -eq $key) { throw "JOIN_REJECTED: 같은 공개키를 $other 가 이미 쓴다(POOL_AGENTS_DUPLICATE_KEY)" }
 }
 
-# 관측 시각 · revision 을 지금으로 — 받은 시각이 곧 운영자가 이 선언을 받아들인 시각이다.
-$nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$agent.inventory.inventory_revision = $nowMs
-$agent.inventory.observed_at_unix_ms = $nowMs
 $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
 New-Item -ItemType Directory -Force -Path $admittedDir | Out-Null
+# ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
+#   썼다 — admitted\.lock 을 CreateNew 로 잡고 돈다(닫으면 지워진다). 잡혀 있으면 멈춘다.
+$lockPath = Join-Path $admittedDir ".lock"
+try {
+    $lock = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None, 1, [System.IO.FileOptions]::DeleteOnClose)
+} catch {
+    throw "ADMITTED_LOCKED: $lockPath 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
+}
+trap { if ($lock) { $lock.Dispose() }; break }
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $admitted = Join-Path $admittedDir "join-$nodeId.json"
+# 관측 시각을 지금으로 — 받은 시각이 곧 운영자가 이 선언을 받아들인 시각이다.
+# ★ 결함 467 (재검수 118) — revision 은 벽시계와 뗀다: max(지금, 받아 둔 사본의 revision + 1). 운영자 시계가 한 번 미래로 갔다 돌아와도 스스로 풀린다.
+$nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$revision = $nowMs
+if (Test-Path -LiteralPath $admitted) {
+    $previous = [long](@((Get-Content -Encoding UTF8 -Raw $admitted | ConvertFrom-Json).agents)[0].inventory.inventory_revision)
+    if ($revision -le $previous) { $revision = $previous + 1 }
+}
+$agent.inventory.inventory_revision = $revision
+$agent.inventory.observed_at_unix_ms = $nowMs
 # ★ 결함 443 (재검수 115) — **반입이 성공한 뒤에만** 활성 사본을 바꾼다. 전에는 먼저 덮고 반입했다 — 거부될 가입 파일이 활성 사본이 되면
 #   refresh-inventory 가 매번 실패하고 정상 선언이 낡아 노드가 빠졌다. 후보는 join-*.json 이 아닌 이름이라 refresh 가 줍지 않는다.
 $candidate = Join-Path $admittedDir ".candidate-$nodeId.json"
@@ -96,4 +112,5 @@ if (-not $entries.Contains($nodeId)) {
     Write-Host "POOL_AGENTS_UNCHANGED $nodeId 는 같은 키로 이미 있다(등록 정보만 새로 넣었다)"
 }
 Write-Host "ADMITTED $nodeId"
+$lock.Dispose()
 Write-Host "NEXT Coordinator · scheduler 를 다시 띄운다. 다른 Agent 들의 GPUTEER_POOL_AGENTS 도 위 줄로 바꾸고 다시 띄운다."
