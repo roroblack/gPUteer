@@ -3249,6 +3249,11 @@ fn run_and_capture_workload(
     //   그러면 종료 보고가 만들어지지 않아 관측한 종료까지 사라졌다. 이제 실패 단계를 보고에 싣는다.
     //   ★ 상위 확정 작업(finalize_workload_outputs)은 다시 부르지 않는다 — 포인터 rename 은 최대 5회 반복한다
     //     (checkpoint atomic.rs — 임시 파일 생성 · 쓰기 · sync 실패는 그 반복 전에 반환한다, 결함 91). D3 "재시도를 끝낸 뒤" 는 그 뒤다(결함 86 — 전에는 "재시도 0회" 로 넓게 적었다).
+    // ★ 결함 540 — 출력이 상한을 넘으면 확정이 READ_OUTPUTS 로 실패한다 — 작업 폴더를 남겨 출력을 잃지 않는다(타입으로 넘긴다).
+    if let Some(why) = oversized_workload_outputs(run_dir) {
+        println!("WORKLOAD_OUTPUT_TOO_LARGE job_id={} — {why}", spec.job_id);
+        *keep_run_dir = true;
+    }
     let (file_count, total_bytes, finalization_failure) = match finalize_workload_outputs(
         run_dir,
         spec,
@@ -3828,6 +3833,29 @@ fn remove_dir_if_present(dir: &std::path::Path) -> Result<(), String> {
 /// 남긴다. 반면 파일 자체가 **없으면** 캡처를 안 한 경우이므로 목록에서
 /// 뺀다 — 둘을 같은 것으로 만들면 관측 결과와 미관측을 구분할 수 없다
 /// (`CLAUDE.md` §1 — 모르면 비워 둔다).
+/// 작업 출력(stdout · stderr) 한 파일을 메모리에 올릴 수 있는 상한(결함 540).
+const MAX_CAPTURED_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 작업 출력 파일 가운데 상한을 넘는 것이 있으면 그 사유.
+///
+/// ★ 결함 540 (재검수 141) — 확정은 stdout · stderr 를 **통째로** 메모리에 올린다. 컨테이너에 메모리 상한을 걸어도 작업이 큰 출력을 내면 Agent 가 그만큼
+///   호스트 메모리를 써 상한이 우회됐다(Agent · 기계 OOM → 종료 보고 유실). 상한을 넘으면 올리지 않고 확정을 READ_OUTPUTS 로 실패시키며, 작업 폴더는
+///   남긴다(출력을 잃지 않게 — 사람이 본다).
+fn oversized_workload_outputs(run_dir: &std::path::Path) -> Option<String> {
+    for name in [exec::STDOUT_FILENAME, exec::STDERR_FILENAME] {
+        let path = run_dir.join(name);
+        if let Ok(meta) = fs::metadata(&path) {
+            if meta.len() > MAX_CAPTURED_OUTPUT_BYTES {
+                return Some(format!(
+                    "OUTPUT_TOO_LARGE: 작업 출력 {path:?} 가 {} 바이트로 상한({MAX_CAPTURED_OUTPUT_BYTES})을 넘어 메모리에 올리지 않았다(작업 폴더를 남긴다)",
+                    meta.len()
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn collect_workload_artifacts(
     run_dir: &std::path::Path,
     spec: &gputeer_protocol::execution_spec::ExecutionSpec,
@@ -3842,6 +3870,10 @@ fn collect_workload_artifacts(
             pb::FinalizationFailureStage::ReadOutputs,
             format!("작업 출력이 완결되지 않았다: {why}"),
         ));
+    }
+    // ★ 결함 540 — 상한을 넘는 출력은 메모리에 올리지 않는다.
+    if let Some(why) = oversized_workload_outputs(run_dir) {
+        return Err((pb::FinalizationFailureStage::ReadOutputs, why));
     }
 
     for name in [exec::STDOUT_FILENAME, exec::STDERR_FILENAME] {
@@ -5215,6 +5247,27 @@ mod defect_19_tests {
             fence_epoch: 3,
             ..Default::default()
         }
+    }
+
+    /// 결함 540 (재검수 141) — 상한을 넘는 작업 출력은 메모리에 올리지 않고 확정을 READ_OUTPUTS 로 실패시킨다(컨테이너 메모리 상한을 Agent 의 읽기가
+    /// 우회하지 않게). 상한 이하는 그대로 읽는다.
+    #[test]
+    fn an_oversized_output_is_never_read_into_memory() {
+        let run = tempfile::tempdir().unwrap();
+        // 성긴 파일로 상한 + 1 바이트를 만든다(실제로 디스크를 채우지 않는다).
+        let big = fs::File::create(run.path().join(exec::STDOUT_FILENAME)).unwrap();
+        big.set_len(MAX_CAPTURED_OUTPUT_BYTES + 1).unwrap();
+        drop(big);
+        fs::write(run.path().join(exec::STDERR_FILENAME), b"").unwrap();
+        let error = collect_workload_artifacts(run.path(), &spec(), &outcome(), true)
+            .expect_err("상한을 넘는 출력을 읽었다");
+        assert_eq!(error.0, pb::FinalizationFailureStage::ReadOutputs);
+        assert!(error.1.contains("OUTPUT_TOO_LARGE"), "{}", error.1);
+        // 대조군 — 상한 이하는 읽는다.
+        let ok = tempfile::tempdir().unwrap();
+        fs::write(ok.path().join(exec::STDOUT_FILENAME), b"hello").unwrap();
+        fs::write(ok.path().join(exec::STDERR_FILENAME), b"").unwrap();
+        assert!(collect_workload_artifacts(ok.path(), &spec(), &outcome(), true).is_ok());
     }
 
     /// stdout 자리에 **디렉터리**가 있으면 읽기가 NotFound 가 아닌 오류로 실패한다 -> READ_OUTPUTS.

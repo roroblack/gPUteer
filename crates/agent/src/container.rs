@@ -1038,7 +1038,7 @@ fn inspect_name(program: &Path, id: &str) -> Result<String, String> {
     Ok(output.stdout.trim().trim_start_matches('/').to_string())
 }
 
-/// 컨테이너가 **있는가** — 런타임이 "없다" 고 답하면 false, 상태를 돌려주면 true, 그 밖의 실패는 모른다(Err).
+/// 컨테이너가 **있는가** — 런타임이 "없다" 고 답하면 false, 상태를 돌려주면 true, 그 밖의 실패는 모른다(Err). 확인 조회라 시한은 15초다(결함 543).
 fn inspect_exists(program: &Path, name: &str) -> Result<bool, String> {
     match cli_ok(
         program,
@@ -1047,7 +1047,7 @@ fn inspect_exists(program: &Path, name: &str) -> Result<bool, String> {
             "--format={{.State.Running}}".into(),
             name.into(),
         ],
-        SHORT_TIMEOUT,
+        CONFIRM_TIMEOUT,
     ) {
         Ok(_) => Ok(true),
         Err(why) if says_no_such_container(&why) => Ok(false),
