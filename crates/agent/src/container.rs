@@ -752,7 +752,7 @@ impl ContainerStopper {
             if let Some((code, oom)) = observed() {
                 return judge(code, oom);
             }
-            match inspect_state(&self.program, &self.name) {
+            match inspect_state_within(&self.program, &self.name, CONFIRM_TIMEOUT) {
                 Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
                 // ★ 결함 529 (재검수 135) — kill 이 실패로 답했어도 SIGKILL 이 진행 중일 수 있다 — 성공 응답과 같이 끝까지(10번) 본다.
                 Ok(None) => last = "아직 돈다".into(),
@@ -1148,17 +1148,35 @@ fn run_inner(
     //   ★ 대가 — 진입점 오타처럼 정말 시작하지 않은 실패도 "종료 코드 없음"(NoCode)으로 확정 단계를 거친다. 시작 여부를 런타임 답만으로
     //     가를 수 없어서다(보수 규칙 — 불확실하면 성공으로도 "안 돌았다" 로도 단정하지 않는다).
     let start_args: [OsString; 2] = ["start".into(), target.into()];
+    // (응답이 있었는가, 사유)
     let start_failure = match run_cli(program, &start_args, SHORT_TIMEOUT) {
         Ok(output) if output.status.success() => None,
-        Ok(output) => Some(format!(
-            "start 실패({}): {}",
-            output.status,
-            output.stderr.trim()
+        Ok(output) => Some((
+            true,
+            format!("start 실패({}): {}", output.status, output.stderr.trim()),
         )),
-        Err(why) => Some(format!("start 가 응답하지 않았다({why})")),
+        Err(why) => Some((false, format!("start 가 응답하지 않았다({why})"))),
     };
-    if let Some(why) = start_failure {
+    if let Some((answered, why)) = start_failure {
         let head = format!("{why} — 시작했는지 모른다");
+        // ★ 결함 532 (재검수 137) — start 가 **응답하지 않았으면** 데몬에 접수된 start 가 뒤늦게 적용될 수 있다. 지금 멈춰 보여도(`created`) 멈춤
+        //   확인이 아니다 — kill 도 소용없다(아직 안 돈다). 지우지 않고 정지 손잡이를 넘긴 뒤 사람에게 넘긴다(사건 표식).
+        if !answered {
+            on_started(ContainerStopper {
+                program: program.to_path_buf(),
+                name: target.to_string(),
+                observed_exit: Default::default(),
+            });
+            return Err(ContainerRunError::Unobserved {
+                detail: format!(
+                    "{head} · 접수된 start 가 뒤늦게 적용될 수 있어 멈춤을 확인할 수 없다 — 컨테이너 {} (ID {target}) 를 남겼다(사람이 확인한다)",
+                    input.name
+                ),
+                stopped: false,
+                logs_complete: false,
+                container: ContainerLeft::Kept,
+            });
+        }
         if let Err(stop) = stop_and_confirm(program, target) {
             // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**(같은 프로세스가 도는 동안의 소유자 손잡이).
             on_started(ContainerStopper {
@@ -1512,6 +1530,15 @@ fn sync_dir(_dir: &Path) -> Result<(), String> {
 
 /// 컨테이너 상태 — 끝났으면 `Some(종료)`, 아직 돌면 `None`.
 fn inspect_state(program: &Path, name: &str) -> Result<Option<ContainerExit>, String> {
+    inspect_state_within(program, name, SHORT_TIMEOUT)
+}
+
+/// `inspect_state` 의 시한을 고른 판 — 소유자 정지의 확인 조회는 15초(결함 534 — 런북의 "확인 조회 15초 · 최대 약 45초" 와 맞춘다).
+fn inspect_state_within(
+    program: &Path,
+    name: &str,
+    timeout: Duration,
+) -> Result<Option<ContainerExit>, String> {
     let output = cli_ok(
         program,
         &[
@@ -1520,7 +1547,7 @@ fn inspect_state(program: &Path, name: &str) -> Result<Option<ContainerExit>, St
                 .into(),
             name.into(),
         ],
-        SHORT_TIMEOUT,
+        timeout,
     )?;
     parse_inspect_state(&output.stdout)
 }

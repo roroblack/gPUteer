@@ -1329,6 +1329,16 @@ fn run_one_connection_inner(
         //   새 설정 없이 동작하고, GC 가 스캔하는 범위 밖이다.
         let run_root = workload_run_root(&config.checkpoint_root)?;
         let run_dir = run_root.join(&checkpoint_id);
+        // ★ 결함 533 (재검수 137) — 이 노드에서 **이미 시작한** 시도가 다시 오면, 아래에서 이전 작업 폴더를 치우기 **전에** 거부한다. 전에는 폴더
+        //   (이전 stdout · stderr · checkpoints-out)를 먼저 지운 뒤 거부해, 두 번 실행을 막는 방어가 이전 출력을 되돌릴 수 없게 지웠다.
+        if config.require_ack_receipt
+            && attempt_started_here(&config.checkpoint_root, &grant.attempt_id)?
+        {
+            return Err(format!(
+                "ATTEMPT_ALREADY_STARTED_HERE: 시도 {} 는 이 노드에서 이미 시작했다 — 다시 받지 않는다(두 번 돌지 않게) · 이전 작업 폴더({run_dir:?})는 지우지 않았다",
+                grant.attempt_id
+            ));
+        }
         // 이전 실행이 죽으면서 남긴 것이 있으면 먼저 치운다 —
         // 남은 `stdout.log` 에 자식이 이어서 쓰면 지난번 출력과
         // 섞인다.
