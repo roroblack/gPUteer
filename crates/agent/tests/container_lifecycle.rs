@@ -148,6 +148,14 @@ fn main() {
             "a_stale_no_such_container_from_rm_is_checked",
             a_stale_no_such_container_from_rm_is_checked,
         ),
+        (
+            "a_create_that_cannot_be_bound_to_this_attempt_deletes_nothing",
+            a_create_that_cannot_be_bound_to_this_attempt_deletes_nothing,
+        ),
+        (
+            "a_natural_exit_during_an_owner_stop_is_not_an_owner_stop",
+            a_natural_exit_during_an_owner_stop_is_not_an_owner_stop,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -174,6 +182,9 @@ fn main() {
 
 /// 상태 폴더에 파일로 기억한다. 작업의 행동은 `--entrypoint=` 값으로 정한다:
 /// `exit-<N>` 곧바로 N 으로 끝남 · `oom` 137 + OOMKilled · `sleep` kill 될 때까지 돈다.
+/// 가짜 런타임이 create 에서 돌려주는 컨테이너 ID(docker · podman 처럼 16진수 64자).
+const FAKE_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 fn fake_runtime(state: &Path) -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("");
@@ -191,7 +202,10 @@ fn fake_runtime(state: &Path) -> i32 {
     }
     // "inspect-exit" — 종료 상태를 읽는 inspect 만 실패시킨다(멈춤 · 존재 확인용 `{{.State.Running}}` 은 통과 · 결함 502 · 503 시험).
     let running_only = args.get(1).map(String::as_str) == Some("--format={{.State.Running}}");
-    let inspect_exit_fails = command == "inspect" && !running_only && fails("inspect-exit");
+    // `{{.Name}}` — create 가 돌려준 ID 가 이 시도의 컨테이너인지 대조하는 조회(결함 519). inspect 실패 토큰은 이것을 건드리지 않는다.
+    let name_only = args.get(1).map(String::as_str) == Some("--format={{.Name}}");
+    let inspect_exit_fails =
+        command == "inspect" && !running_only && !name_only && fails("inspect-exit");
     // "start-noop" — start 가 0 으로 답하지만 아무것도 띄우지 않는다(결함 501). "kill-noop" — kill 이 0 이지만 멈추지 않는다(결함 502).
     // "rm-noop" — 만든 뒤의 rm 이 0 이지만 지우지 않는다(결함 503).
     if command == "start" && fails("start-noop") {
@@ -201,7 +215,12 @@ fn fake_runtime(state: &Path) -> i32 {
     if command == "kill" && fails("kill-noop") {
         return 0;
     }
-    let fails_now = fails(command) && (command != "inspect" || created);
+    // "kill-noop-exit0" — kill 은 0 이지만 무동작이고, 그 사이 작업이 스스로 코드 0 으로 끝난다(결함 520).
+    if command == "kill" && fails("kill-noop-exit0") {
+        std::fs::write(state.join("natural-exit"), "").unwrap();
+        return 0;
+    }
+    let fails_now = fails(command) && (command != "inspect" || (created && !name_only));
     if inspect_exit_fails || fails_now || (command == "rm" && created && fails("rm-created")) {
         eprintln!("fake: {command} 실패를 흉내낸다");
         return 125;
@@ -230,7 +249,7 @@ fn fake_runtime(state: &Path) -> i32 {
             std::fs::write(state.join("create.args"), args.join("\n")).unwrap();
             let _ = std::fs::remove_file(state.join("gone"));
             if !fails("create-no-id") {
-                println!("fake-container-id");
+                println!("{FAKE_ID}");
             }
             0
         }
@@ -255,6 +274,20 @@ fn fake_runtime(state: &Path) -> i32 {
             if !exists {
                 eprintln!("Error: No such container: {target}");
                 return 1;
+            }
+            if name_only {
+                // "create-name-mismatch" — ID 가 다른 컨테이너를 가리킨다(결함 519).
+                let name = if fails("create-name-mismatch") {
+                    "someone-else".to_string()
+                } else {
+                    std::fs::read_to_string(state.join("create.args"))
+                        .unwrap_or_default()
+                        .lines()
+                        .find_map(|l| l.strip_prefix("--name=").map(str::to_string))
+                        .unwrap_or_default()
+                };
+                println!("/{name}");
+                return 0;
             }
             // start 가 0 으로 답했지만 아무것도 띄우지 않았다 — created · 멈춤 · 시작 흔적 없음(결함 501).
             let never_started = state.join("start-noop").exists() && !state.join("killed").exists();
@@ -318,6 +351,9 @@ fn fake_runtime(state: &Path) -> i32 {
 fn finished(state: &Path, behaviour: &str) -> Option<(i64, bool)> {
     if state.join("killed").exists() {
         return Some((137, false));
+    }
+    if state.join("natural-exit").exists() {
+        return Some((0, false));
     }
     if !state.join("started").exists() {
         return None;
@@ -452,7 +488,7 @@ fn a_finished_container_reports_its_own_exit_code() {
     // 남은 같은 이름을 먼저 치우고(결함 276), wait 대신 inspect 로 종료를 본다(시한 있는 명령만 쓴다). 지운 뒤 inspect 로 없어졌는지 본다(결함 503).
     assert_eq!(
         order,
-        ["rm", "inspect", "create", "start", "inspect", "logs", "rm", "inspect"]
+        ["rm", "inspect", "create", "inspect", "start", "inspect", "logs", "rm", "inspect"]
     );
     let create = std::fs::read_to_string(f.state.join("create.args")).unwrap();
     for flag in [
@@ -502,12 +538,13 @@ fn a_failed_create_is_not_a_workload_exit() {
         !calls(&f.state).contains("start"),
         "create 실패 뒤 start 를 불렀다"
     );
+    // 결함 519 (재검수 132) — create 가 실패하면 **이름으로 지우지 않는다**(같은 이름의 다른 컨테이너일 수 있다). 있는지만 조회한다.
     assert!(
-        calls(&f.state)
+        !calls(&f.state)
             .lines()
             .skip_while(|l| !l.starts_with("create "))
-            .any(|l| l.starts_with("rm -f -v ")),
-        "반쯤 만든 컨테이너를 볼륨까지 치우지 않았다:\n{}",
+            .any(|l| l.starts_with("rm ")),
+        "create 실패 뒤 이름으로 지웠다:\n{}",
         calls(&f.state)
     );
 }
@@ -732,8 +769,8 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     )
     .expect("한 장이면 돈다");
     assert_eq!(
-        &order(&f.state)[..5],
-        ["pull", "rm", "inspect", "create", "start"],
+        &order(&f.state)[..6],
+        ["pull", "rm", "inspect", "create", "inspect", "start"],
         "{}",
         calls(&f.state)
     );
@@ -761,7 +798,7 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     assert!(!started);
     assert_eq!(
         order(&f.state),
-        ["pull", "rm", "inspect", "create", "rm", "inspect"],
+        ["pull", "rm", "inspect", "create", "inspect", "rm", "inspect"],
         "{}",
         calls(&f.state)
     );
@@ -1492,7 +1529,7 @@ fn everything_after_create_uses_the_container_id() {
     assert!(!after_create.is_empty(), "{calls}");
     for line in &after_create {
         assert!(
-            line.ends_with(" fake-container-id") && !line.contains("gputeer-test"),
+            line.ends_with(&format!(" {FAKE_ID}")) && !line.contains("gputeer-test"),
             "만든 뒤의 조작을 이름으로 했다: {line}\n{calls}"
         );
     }
@@ -1538,4 +1575,78 @@ fn a_stale_no_such_container_from_rm_is_checked() {
     );
     assert!(error.needs_human());
     assert!(!call_order(&f.state).iter().any(|c| c == "create"));
+}
+
+/// 결함 519 (재검수 132) — create 가 실패하거나 돌려준 ID 를 이 시도의 컨테이너로 확인하지 못하면 **아무것도 지우지 않고** 사람에게 넘긴다
+/// (같은 이름의 다른 컨테이너일 수 있다).
+fn a_create_that_cannot_be_bound_to_this_attempt_deletes_nothing() {
+    let rm_after_create = |state: &Path| {
+        calls(state)
+            .lines()
+            .skip_while(|l| !l.starts_with("create "))
+            .any(|l| l.starts_with("rm "))
+    };
+    // create 가 실패 — 이름으로 지우지 않고 같은 이름이 있는지만 본다(가짜 런타임은 사전 정리 뒤 B 가 생기는 경쟁을 흉내 내지 못한다 —
+    // 여기서는 create 실패 뒤 rm 이 없는지만 본다).
+    let f = fixture(Some("create"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("create 가 실패했는데 성공했다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { .. }),
+        "{error:?}"
+    );
+    assert!(!rm_after_create(&f.state), "{}", calls(&f.state));
+    // create 가 ID 를 찍지 않음 · 다른 컨테이너를 가리키는 ID — 시작도 삭제도 없이 사람에게.
+    for fail in ["create-no-id", "create-name-mismatch"] {
+        let f = fixture(Some(fail));
+        let error = container::run(
+            &execution(),
+            &input(&mounts(&f.work), "exit-0", &[]),
+            None,
+            None,
+            |_| {},
+        )
+        .expect_err(fail);
+        assert!(
+            matches!(&error, ContainerRunError::NotStarted { container: ContainerLeft::Unknown, detail } if detail.contains("확인하지 못했다")),
+            "{fail}: {error:?}"
+        );
+        assert!(error.needs_human(), "{fail}");
+        assert!(!call_order(&f.state).iter().any(|c| c == "start"), "{fail}");
+        assert!(!rm_after_create(&f.state), "{fail}: {}", calls(&f.state));
+    }
+}
+
+/// 결함 520 (재검수 132) — 소유자 정지 중 kill 이 무동작인 사이 작업이 스스로 코드 0 으로 끝나면, 그것은 소유자 정지가 **아니다**
+/// (성공이라 하면 코드 0 이 INTERRUPTED 로 바뀌어 다시 실행된다).
+fn a_natural_exit_during_an_owner_stop_is_not_an_owner_stop() {
+    let f = fixture(Some("kill-noop-exit0"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    let error = stopper
+        .stop()
+        .expect_err("스스로 끝난 것을 소유자 정지라 했다");
+    assert!(error.starts_with("ALREADY_EXITED"), "{error}");
+    let exit = runner.join().unwrap().expect("종료 관측");
+    assert_eq!(exit.exit_code, 0, "관측한 자연 종료를 잃었다");
 }

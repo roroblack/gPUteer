@@ -720,9 +720,23 @@ impl ContainerStopper {
         // ★ 결함 506 (재검수 127) — kill 의 0 은 접수일 뿐이다. 멈춤을 `inspect` 로 확인해야 소유자에게 "멈췄다" 고 답한다(전에는 곧바로 성공이라
         //   패널이 `owner_stopped` 를 적고, 계속 돈 작업이 나중에 정상 종료해도 INTERRUPTED 로 보고돼 재배치될 수 있었다).
         if kill.status.success() {
-            return confirm_stopped(&self.program, &self.name).map_err(|why| {
+            confirm_stopped(&self.program, &self.name).map_err(|why| {
                 format!("KILL_UNCONFIRMED: kill 을 접수했지만 멈춤을 확인하지 못했다 — {why}")
-            });
+            })?;
+            // ★ 결함 520 (재검수 132) — 멈췄다고 **이 정지가 원인**인 것은 아니다. kill 이 무동작인 사이 작업이 스스로 끝났으면 그 종료는 소유자
+            //   정지가 아니다(성공이라 하면 코드 0 이 INTERRUPTED 로 바뀌어 재실행된다). SIGKILL 의 종료 코드(137 · OOM 아님)일 때만 성공이다.
+            //   ★ 남는 것 — 작업이 바로 그때 스스로 137 로 끝나면 가르지 못한다.
+            return match inspect_state(&self.program, &self.name) {
+                Ok(Some(exit)) if exit.exit_code == 137 && !exit.oom_killed => Ok(()),
+                Ok(Some(exit)) => Err(format!(
+                    "ALREADY_EXITED: 멈췄지만 이 정지가 원인이 아니다 — 작업이 스스로 끝났다(종료 코드 {} · OOM {})",
+                    exit.exit_code, exit.oom_killed
+                )),
+                Ok(None) => Err("KILL_UNCONFIRMED: 멈췄다가 다시 돈다고 보인다".to_string()),
+                Err(why) => Err(format!(
+                    "KILL_UNCONFIRMED: 멈췄지만 원인(종료 코드)을 확인하지 못했다 — {why}"
+                )),
+            };
         }
         match inspect_running(&self.program, &self.name) {
             Ok(false) => Err(format!(
@@ -923,6 +937,16 @@ fn remove_container_fact(program: &Path, name: &str) -> (ContainerLeft, String) 
     }
 }
 
+/// 컨테이너(ID)의 이름 — docker 는 앞에 `/` 를 붙인다(떼고 돌려준다).
+fn inspect_name(program: &Path, id: &str) -> Result<String, String> {
+    let output = cli_ok(
+        program,
+        &["inspect".into(), "--format={{.Name}}".into(), id.into()],
+        CONFIRM_TIMEOUT,
+    )?;
+    Ok(output.stdout.trim().trim_start_matches('/').to_string())
+}
+
 /// 컨테이너가 **있는가** — 런타임이 "없다" 고 답하면 false, 상태를 돌려주면 true, 그 밖의 실패는 모른다(Err).
 fn inspect_exists(program: &Path, name: &str) -> Result<bool, String> {
     match cli_ok(
@@ -983,10 +1007,22 @@ fn run_inner(
     let created = match cli_ok(program, &create, CREATE_TIMEOUT) {
         Ok(output) => output,
         Err(why) => {
-            // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다. 결과는 컨테이너 축에 싣는다.
-            let (left, removed) = remove_container_fact(program, input.name);
+            // ★ 결함 519 (재검수 132) — **이름으로 지우지 않는다.** 사전 정리 뒤 다른 절차가 같은 이름으로 만든 컨테이너 때문에 실패했을 수 있다
+            //   (전에는 그것을 `rm -f -v <이름>` 으로 지웠다). 같은 이름이 있으면 무엇인지 모르니 사람에게 넘긴다. 이 시도가 반쯤 만든 것이면
+            //   다음 기동의 남은 컨테이너 정리가 owner 라벨로 찾아 ID 로 치운다.
+            let (left, fact) = match inspect_exists(program, input.name) {
+                Ok(false) => (ContainerLeft::Removed, "같은 이름의 컨테이너 없음 확인".to_string()),
+                Ok(true) => (
+                    ContainerLeft::Unknown,
+                    "같은 이름의 컨테이너가 있다 — 이 시도가 반쯤 만든 것인지 다른 것인지 몰라 지우지 않았다".to_string(),
+                ),
+                Err(e) => (
+                    ContainerLeft::Unknown,
+                    format!("같은 이름의 컨테이너가 있는지 모른다({e})"),
+                ),
+            };
             return Err(ContainerRunError::NotStarted {
-                detail: format!("create: {why} · {removed}"),
+                detail: format!("create: {why} · {fact}"),
                 container: left,
             });
         }
@@ -994,17 +1030,25 @@ fn run_inner(
     // ★ 결함 515 (재검수 131) — 만든 뒤의 모든 조작(start · inspect · kill · logs · rm)은 create 가 돌려준 **컨테이너 ID** 로 한다. 이름으로 하면 그 사이
     //   같은 이름의 다른 컨테이너가 생겼을 때 그 로그를 이 작업의 것으로 확정하고 그것을 지운다(악의 없는 운영 절차로도 난다).
     let id = created.stdout.trim().to_string();
-    let id_ok = !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-    if !id_ok {
-        let (left, removed) = remove_container_fact(program, input.name);
+    // ★ 결함 519 (재검수 132) — 모양(16진수 12~64자 — docker · podman 의 컨테이너 ID)만 보지 않고, `inspect` 로 **그 ID 의 이름이 이 시도의 이름**
+    //   인지 대조한다(런타임 래퍼가 ID 대신 이름을 찍으면 그 뒤 조작이 다시 이름 기준이 된다). 확인하지 못하면 **지우지 않고** 사람에게 넘긴다.
+    let id_shape_ok = (12..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_hexdigit());
+    let bound = if id_shape_ok {
+        inspect_name(program, &id).map(|name| name == input.name)
+    } else {
+        Ok(false)
+    };
+    if !matches!(bound, Ok(true)) {
+        let why = match bound {
+            Ok(_) => "모양이 ID 가 아니거나 다른 컨테이너를 가리킨다".to_string(),
+            Err(e) => format!("대조하지 못했다({e})"),
+        };
         return Err(ContainerRunError::NotStarted {
             detail: format!(
-                "create 가 컨테이너 ID 를 돌려주지 않았다({id:?}) — 이름으로 다룰 수 없어 시작하지 않았다 · {removed}"
+                "create 가 돌려준 ID({id:?})를 이 시도의 컨테이너 {} 로 확인하지 못했다({why}) — 시작하지도 지우지도 않았다(사람이 확인한다)",
+                input.name
             ),
-            container: left,
+            container: ContainerLeft::Unknown,
         });
     }
     let target = id.as_str();
