@@ -10,8 +10,6 @@ set -eu
 die() { echo "$*" >&2; exit 1; }
 [ "${1:-}" = --env-file ] && [ -n "${2:-}" ] || die "REFRESH_ARGS: --env-file <운영자 gputeer.env>"
 ENV_FILE=$2
-value() { sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'; }
-BIN=$(value GPUTEER_BIN); DB=$(value GPUTEER_CONTROL_DB)
 ADMITTED_DIR="$(cd "$(dirname "$ENV_FILE")" && pwd)/admitted"
 # ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
 #   방금 반입한 새 선언을 되돌린다 — 그 노드는 넣지 않는다(신선도가 끊겨 그 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
@@ -22,6 +20,15 @@ ADMITTED_DIR="$(cd "$(dirname "$ENV_FILE")" && pwd)/admitted"
 LOCK="$ADMITTED_DIR/.lock"
 ( set -C; echo "$$" > "$LOCK" ) 2>/dev/null || die "ADMITTED_LOCKED: $LOCK 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
 trap 'rm -f "$LOCK"' EXIT
+# ★ 결함 479 (재검수 120) — 환경 파일은 잠근 **뒤에** 읽는다(admit 이 바꾸는 중인 파일을 읽지 않게).
+value() { sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'; }
+BIN=$(value GPUTEER_BIN); DB=$(value GPUTEER_CONTROL_DB)
+# ★ 결함 477 (재검수 120) — 사본을 바꿔 넣다 끊겨 남은 임시 파일(join-*.json.tmp)을 먼저 본다 — 활성 사본이 없으면 되살리고, 있으면 낡은 것이라 지운다.
+for leftover in "$ADMITTED_DIR"/join-*.json.tmp; do
+    [ -e "$leftover" ] || continue
+    target=${leftover%.tmp}
+    if [ -e "$target" ]; then rm -f "$leftover"; else mv "$leftover" "$target"; echo "RECOVERED $(basename "$target") — 바꿔 넣다 끊긴 임시 파일에서 되살렸다"; fi
+done
 count=0; failed=0; incomplete=
 NOW_MS=$(($(date +%s) * 1000))
 for file in "$ADMITTED_DIR"/join-*.json; do

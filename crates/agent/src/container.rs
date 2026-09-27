@@ -699,15 +699,22 @@ pub fn run_with_gpu_count(
     if let Err(why) = cli_ok(program, &["start".into(), input.name.into()], SHORT_TIMEOUT) {
         // ★ 결함 471 (재검수 119) — start 가 시한을 넘기면 데몬은 이미 컨테이너를 띄웠을 수 있다. 지우기(`rm -f` — 돌고 있으면 죽인다)가
         //   성공했을 때만 "돌지 않는다" 로 본다. 지우기도 실패하면 **시작 여부를 모른다** — "관측 못 함" 으로 올려 작업 폴더를 지우지 않게 한다.
-        return Err(match remove_container(program, input.name) {
-            Ok(()) => not_started(format!("start: {why} · 컨테이너를 지웠다")),
-            Err(rm) => ContainerRunError::NotObserved {
-                detail: format!(
-                    "start: {why} · 지우기도 실패했다({rm}) — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
-                    input.name
-                ),
-            },
-        });
+        match remove_container(program, input.name) {
+            Ok(()) => return Err(not_started(format!("start: {why} · 컨테이너를 지웠다"))),
+            Err(rm) => {
+                // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**. 소유자가 패널에서 멈출 수 있어야 한다(§0.1).
+                on_started(ContainerStopper {
+                    program: program.to_path_buf(),
+                    name: input.name.to_string(),
+                });
+                return Err(ContainerRunError::NotObserved {
+                    detail: format!(
+                        "start: {why} · 지우기도 실패했다({rm}) — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
+                        input.name
+                    ),
+                });
+            }
+        }
     }
     let stopper = ContainerStopper {
         program: program.to_path_buf(),

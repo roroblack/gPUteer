@@ -96,7 +96,8 @@ if (Test-Path -LiteralPath $admitted) {
     New-Item -ItemType Directory -Force -Path $backup | Out-Null
     Copy-Item -LiteralPath $admitted -Destination $backup
 }
-Move-Item -LiteralPath $candidate -Destination $admitted -Force
+# ★ 결함 477 (재검수 120) — Move-Item -Force 는 5.1 에서 지우고 옮기는 두 단계다. 있으면 ReplaceFile, 없으면 이동.
+if (Test-Path -LiteralPath $admitted) { [System.IO.File]::Replace($candidate, $admitted, [NullString]::Value) } else { [System.IO.File]::Move($candidate, $admitted) }
 
 if (-not $entries.Contains($nodeId)) {
     $entries[$nodeId] = $key
@@ -110,7 +111,10 @@ if (-not $entries.Contains($nodeId)) {
         if ($line -match '^\s*GPUTEER_POOL_AGENTS=') { $replaced = $true; "GPUTEER_POOL_AGENTS=$newPool" } else { $line }
     }
     if (-not $replaced) { $out = @($out) + "GPUTEER_POOL_AGENTS=$newPool" }
-    [System.IO.File]::WriteAllText((Resolve-Path -LiteralPath $EnvFile).Path, ((@($out) -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+    # ★ 결함 479 (재검수 120) — 제자리에서 덮지 않는다. 임시 파일에 쓰고 ReplaceFile 로 바꿔 넣는다(권한을 그대로 둔다).
+    $envPath = (Resolve-Path -LiteralPath $EnvFile).Path
+    [System.IO.File]::WriteAllText("$envPath.tmp", ((@($out) -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::Replace("$envPath.tmp", $envPath, [NullString]::Value)
     Write-Host "BACKUP $EnvFile -> $backup"
     Write-Host "POOL_AGENTS $newPool"
 } else {

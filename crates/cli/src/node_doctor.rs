@@ -605,6 +605,8 @@ fn check_container_gpu_probe(
     if let Err(e) = std::fs::create_dir(&probe_dir) {
         return fail(format!("점검 폴더 {probe_dir:?} 를 만들지 못했다: {e}"));
     }
+    // ★ 결함 476 (재검수 120) — 점검 컨테이너가 돌고 있을 수 있으면(시작 여부 모름) 점검 폴더를 지우지 않는다. 그 폴더가 컨테이너의 쓰기 자리다.
+    let mut probe_may_be_running = false;
     let outcome = (|| {
         let checkpoint_out = probe_dir.join("checkpoints-out");
         std::fs::create_dir(&checkpoint_out)
@@ -656,15 +658,25 @@ fn check_container_gpu_probe(
             Some(&stderr_path),
             |_| {},
         )
-        .map_err(|e| format!("컨테이너를 돌리지 못했다: {e:?}"))?;
+        .map_err(|e| {
+            if matches!(e, container::ContainerRunError::NotObserved { .. }) {
+                probe_may_be_running = true;
+            }
+            format!("컨테이너를 돌리지 못했다: {e:?}")
+        })?;
         let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
         let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
         Ok::<_, String>((exit, stdout, stderr))
     })();
-    let removed = std::fs::remove_dir_all(&probe_dir);
-    let left = match removed {
-        Ok(()) => String::new(),
-        Err(e) => format!(" · ★ 점검 폴더 {probe_dir:?} 를 지우지 못했다(남았다): {e}"),
+    let left = if probe_may_be_running {
+        format!(
+            " · ★ 점검 컨테이너 gputeer-doctor-{suffix} 가 돌고 있을 수 있어 점검 폴더 {probe_dir:?} 를 지우지 않았다 — `<런타임> rm -f -v gputeer-doctor-{suffix}` 뒤 폴더를 지운다"
+        )
+    } else {
+        match std::fs::remove_dir_all(&probe_dir) {
+            Ok(()) => String::new(),
+            Err(e) => format!(" · ★ 점검 폴더 {probe_dir:?} 를 지우지 못했다(남았다): {e}"),
+        }
     };
     let (exit, stdout, stderr) = match outcome {
         Ok(result) => result,

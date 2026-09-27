@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-27 15:31 — 재검수 120 대응: 결함 475~479(패널 유지 · 점검 폴더 보존 · 원자적 교체 · 손상 사본 · 잠금 순서 — 브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-27_1520_재검수120_결함_475_479.md`
+- 스트림: Agent · CLI(node-doctor) · 배포 스크립트 · 런북
+- 수행: 시작 여부 모르는 컨테이너도 정지 손잡이를 넘기고 패널에 남김(475) · node-doctor 점검 폴더 보존(476) · Windows 교체를 File.Replace 로 ·
+  refresh 가 남은 `.tmp` 를 되살리거나 지움(477) · sh 도 손상 활성 사본에서 멈춤(478) · refresh 잠금을 환경 파일 읽기 전으로 · admit 환경 파일 원자적 교체(479)
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2` 1387 passed · 0 failed · ignored 4. 뮤테이션 1건(정지 손잡이 넘기기 제거) 잡힘. 스크립트는 sh · ps1
+  에서 직접 돌렸다 — 그 과정에서 `File.Replace(…, $null)` 이 PowerShell 의 빈 문자열 변환으로 실패하는 것을 찾아 `[NullString]::Value` 로 고쳤다.
+  ★ Agent 패널 유지 · node-doctor 폴더 보존은 시험하지 않았다(코드 읽기)
+- 리포트: 결함 문서가 대신한다
+
 ## 2026-09-27 15:12 — 재검수 119 대응: 결함 471~474(start 실패 판정 · 잠금 범위 · 후보 revision · 원자적 교체 — 브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-27_1459_재검수119_결함_471_474.md` (★ 471 은 문서보다 코드를 먼저 고쳤다 — 문서에 적었다)

@@ -614,16 +614,22 @@ fn a_failed_start_is_not_started_only_when_the_container_was_removed() {
     );
 
     let f = fixture(Some("start,rm"));
+    let mut handed_stopper = false;
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "exit-0", &[]),
         None,
         None,
-        |_| {},
+        |_| handed_stopper = true,
     )
     .expect_err("start 가 실패했는데 성공했다");
     assert!(
         matches!(&error, ContainerRunError::NotObserved { detail } if detail.contains("시작했는지 모른다")),
         "{error:?}"
+    );
+    // 결함 475 — 돌고 있을 수 있으니 소유자가 멈출 수 있게 정지 손잡이를 넘겼다.
+    assert!(
+        handed_stopper,
+        "시작 여부를 모르는데 정지 손잡이를 넘기지 않았다"
     );
 }

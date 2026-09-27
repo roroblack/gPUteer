@@ -3130,6 +3130,14 @@ fn run_and_capture_workload(
         //   보고할 종료가 없다.
         //   ★ 종료를 관측했지만 코드가 없는 경우는 여기로 오지 않는다 — `Ok` 로 돌아와
         //     OBSERVED_NO_CODE 로 보고된다(결함 69).
+        // ★ 결함 475 (재검수 120) — 종료를 **관측하지 못한** 경우(작업이 아직 돌 수 있다)는 패널에서 빼지 않는다. 빼면 소유자가 도는 작업을
+        //   멈출 수 없다(§0.1). 정지를 누르면 kill 이 가고, 이미 없으면 ALREADY_EXITED 로 보인다. Agent 가 다시 뜨면 남은 컨테이너 정리가 치운다.
+        Err(other @ exec::ExecutionError::WaitFailed { .. }) => {
+            println!(
+                "OWNER_PANEL_KEPT attempt_id={attempt_id} — 종료를 관측하지 못해 소유자 화면에 남긴다(작업이 돌고 있을 수 있다)"
+            );
+            return Err(other.to_string());
+        }
         Err(other) => {
             // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
             // 소유자 화면에 영원히 남는다.

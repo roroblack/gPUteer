@@ -15,10 +15,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$config = [ordered]@{}
-foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
-    if ($line -match '^\s*([A-Z_]+)=(.*)$') { $config[$Matches[1]] = $Matches[2].Trim() }
-}
 $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
 if (-not (Test-Path -LiteralPath $admittedDir -PathType Container)) { throw "REFRESH: $admittedDir 가 없다 — admit-node 로 먼저 받는다" }
 # ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
@@ -31,6 +27,17 @@ try {
     throw "ADMITTED_LOCKED: $lockPath 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
 }
 trap { if ($lock) { $lock.Dispose() }; break }
+# ★ 결함 479 (재검수 120) — 환경 파일은 잠근 **뒤에** 읽는다(admit 이 바꾸는 중인 파일을 읽지 않게).
+$config = [ordered]@{}
+foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
+    if ($line -match '^\s*([A-Z_]+)=(.*)$') { $config[$Matches[1]] = $Matches[2].Trim() }
+}
+# ★ 결함 477 (재검수 120) — 사본을 바꿔 넣다 끊겨 남은 임시 파일(join-*.json.tmp)을 먼저 본다 — 활성 사본이 없으면 되살리고, 있으면 낡은 것이라 지운다.
+foreach ($leftover in @(Get-ChildItem -LiteralPath $admittedDir -Filter "join-*.json.tmp" -File -ErrorAction SilentlyContinue)) {
+    $target = $leftover.FullName.Substring(0, $leftover.FullName.Length - ".tmp".Length)
+    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $leftover.FullName -Force }
+    else { [System.IO.File]::Move($leftover.FullName, $target); Write-Host "RECOVERED $(Split-Path -Leaf $target) — 바꿔 넣다 끊긴 임시 파일에서 되살렸다" }
+}
 # ★ 결함 452 (재검수 116) — admit-node 가 반입과 활성 사본 교체 사이에 끊겼으면 후보(.candidate-*)가 남는다. 그때 활성 사본(옛 선언)에 새 시각을 찍으면
 #   방금 반입한 새 선언을 되돌린다 — 그 노드는 넣지 않는다(신선도가 끊겨 그 노드가 빠지는 쪽). admit-node 를 다시 돌리면 풀린다.
 # ★ 결함 463 (재검수 117) — 후보가 남은 **그 노드만** 건너뛰고 나머지는 갱신한 뒤 실패로 끝낸다(전에는 후보 하나가 전체를 멈춰 풀 전체가 빠졌다).
@@ -54,7 +61,8 @@ foreach ($file in $files) {
     # ★ 결함 474 (재검수 119) — 유일한 활성 사본을 제자리에서 잘라 쓰지 않는다. 임시 파일에 쓰고 바꿔 넣는다(쓰다 끊겨도 옛 사본이 남는다).
     $tmp = "$($file.FullName).tmp"
     [System.IO.File]::WriteAllText($tmp, ($join | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $tmp -Destination $file.FullName -Force
+    # ★ 결함 477 (재검수 120) — PowerShell 5.1 의 Move-Item -Force 는 지우고 옮기는 두 단계라 원자적이지 않다. ReplaceFile 로 바꿔 넣는다.
+    [System.IO.File]::Replace($tmp, $file.FullName, [NullString]::Value)
     & $config.GPUTEER_BIN import-inventory --inventory $file.FullName --inventory-db $config.GPUTEER_CONTROL_DB | Out-Host
     if ($LASTEXITCODE -ne 0) { $failed += 1; Write-Host "REFRESH_FAILED $($file.Name)" } else { Write-Host "REFRESHED $($agent.registry.node_id)" }
 }

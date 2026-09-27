@@ -58,7 +58,12 @@ REV=$NOW_MS
 for prior in "$ADMITTED" "$CANDIDATE"; do
     [ -e "$prior" ] || continue
     PREV=$(tr -d '\r' < "$prior" | sed -n 's/.*"inventory_revision"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
-    [ -z "$PREV" ] || [ "$REV" -gt "$PREV" ] || REV=$((PREV + 1))
+    # ★ 결함 478 (재검수 120) — 활성 사본의 revision 을 못 읽으면 멈춘다(DB 는 그보다 클 수 있다). 쓰다 끊긴 **후보**만 건너뛴다(반입 전의 것이다).
+    if [ -z "$PREV" ]; then
+        [ "$prior" != "$ADMITTED" ] || die "ADMIT_ARGS: 받아 둔 사본 $ADMITTED 의 revision 을 읽지 못했다 — 백업(_backup)에서 되살린 뒤 다시 돌린다"
+        continue
+    fi
+    [ "$REV" -gt "$PREV" ] || REV=$((PREV + 1))
 done
 sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $REV/" \
     -e "s/\"observed_at_unix_ms\"[[:space:]]*:[[:space:]]*[0-9]*/\"observed_at_unix_ms\": $NOW_MS/" "$JOIN_FILE" > "$CANDIDATE"
@@ -77,7 +82,8 @@ if [ -z "$EXISTING" ]; then
     else
         { cat "$ENV_FILE"; echo "GPUTEER_POOL_AGENTS=$NEW_POOL"; } > "$ENV_FILE.tmp"
     fi
-    cat "$ENV_FILE.tmp" > "$ENV_FILE"; rm -f "$ENV_FILE.tmp"
+    # ★ 결함 479 (재검수 120) — 제자리에서 덮지 않는다. 권한 · 소유를 보존한 사본에 쓰고 바꿔 넣는다(mv — 같은 폴더라 원자적).
+    cp -p "$ENV_FILE" "$ENV_FILE.new" && cat "$ENV_FILE.tmp" > "$ENV_FILE.new" && mv "$ENV_FILE.new" "$ENV_FILE"; rm -f "$ENV_FILE.tmp"
     echo "BACKUP $ENV_FILE -> $ENV_DIR/_backup/$STAMP"
     echo "POOL_AGENTS $NEW_POOL"
 else
