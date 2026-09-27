@@ -15,13 +15,14 @@
 //!
 //! ```text
 //! 이미지      oci_source_digest(sha256)로 고정 — image_ref@sha256:<hex>. 태그만으로는 받지 않는다(태그는 움직인다)
-//! 루트 fs     --read-only · /tmp 만 tmpfs
+//! 루트 fs     --read-only · /tmp tmpfs(런타임이 붙이는 /dev · /dev/shm 도 쓰기 가능한 tmpfs 다 — 아래 "쓰기")
 //! 권한        --cap-drop=ALL · no-new-privileges · 런타임 기본 seccomp
 //! 네트워크    --network=none (runtime_allow_hosts 가 비었을 때만 받는다 — 허용 목록은 강제할 수단이 없어 거부)
 //! 메모리      --memory = --memory-swap = 커밋 상한 (스왑으로 새지 않게 — runtime-linux 의 2026-08-30 실측과 같은 이유)
 //! 프로세스    --pids-limit
 //! 쓰기        체크포인트 폴더(/gputeer/checkpoints)만 붙여 쓰고 · 이어받기 폴더(/gputeer/resume)는 읽기 전용 ·
-//!             그 밖에 쓸 수 있는 곳은 메모리 tmpfs(/tmp · /dev/shm — 메모리 상한에 든다)뿐이다. 로그를 받는 작업 폴더는 붙이지
+//!             그 밖에 쓸 수 있는 곳은 메모리 tmpfs(/tmp · /dev/shm — 메모리 상한에 든다)와 런타임이 붙이는 /dev(tmpfs — 결함 485 ·
+//!             docker 는 --read-only 여도 쓰기 가능하게 둔다. 메모리 상한에 드는지는 재지 않았다)다. 로그를 받는 작업 폴더는 붙이지
 //!             않는다(결함 273). ★ docker 는 이미지의 VOLUME 을 막지 못한다(끝에 rm -v 로 지운다 · 결함 274)
 //! ```
 //!
@@ -737,6 +738,13 @@ pub fn run_with_gpu_count(
                         Ok(()) => "kill 성공".to_string(),
                         Err(e) => format!("kill 실패({e})"),
                     };
+                    // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 지우면 런타임의 로그도 사라져 작업 출력을 되살릴 수 없다.
+                    //   못 남기면 확정이 READ_OUTPUTS 로 실패한다(성공으로 속이지 않는다) — 그래도 지우기는 한다.
+                    let logs = match save_logs(program, input.name, stdout_path, stderr_path) {
+                        Ok(()) => "로그 남김".to_string(),
+                        Err(e) => format!("로그 못 남김({e})"),
+                    };
+                    let killed = format!("{killed} · {logs}");
                     return Err(match remove_container(program, input.name) {
                         Ok(()) => ContainerRunError::RemovedUnobserved {
                             detail: format!(

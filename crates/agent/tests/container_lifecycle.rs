@@ -641,11 +641,13 @@ fn a_failed_start_is_not_started_only_when_the_container_was_removed() {
 /// 결함 481 (재검수 121) — 종료를 다섯 번 못 봐 kill · rm 을 했을 때, rm 이 성공하면 "지웠다"(RemovedUnobserved), 실패하면 "남아 돌 수 있다"(NotObserved).
 fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
     let f = fixture(Some("inspect"));
+    let out = f.work.join("stdout.log");
+    let err = f.work.join("stderr.log");
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "sleep", &[]),
-        None,
-        None,
+        Some(&out),
+        Some(&err),
         |_| {},
     )
     .expect_err("종료를 못 봤는데 성공했다");
@@ -653,6 +655,18 @@ fn an_unobserved_exit_is_removed_only_when_rm_succeeded() {
         matches!(&error, ContainerRunError::RemovedUnobserved { detail } if detail.contains("rm 성공")),
         "{error:?}"
     );
+    // 결함 483 — 지우기 전에 로그를 남겼다(지운 뒤에는 런타임 로그도 없다).
+    assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "hello-out");
+    let order: Vec<String> = calls(&f.state)
+        .lines()
+        .map(|l| l.split(' ').next().unwrap().to_string())
+        .collect();
+    let logs = order
+        .iter()
+        .rposition(|c| c == "logs")
+        .expect("logs 를 부르지 않았다");
+    let removed = order.iter().rposition(|c| c == "rm").unwrap();
+    assert!(logs < removed, "지운 뒤에 로그를 받으려 했다: {order:?}");
 
     let f = fixture(Some("inspect,rm"));
     let error = container::run(

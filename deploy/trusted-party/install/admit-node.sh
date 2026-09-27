@@ -83,7 +83,12 @@ if [ -z "$EXISTING" ]; then
         { cat "$ENV_FILE"; echo "GPUTEER_POOL_AGENTS=$NEW_POOL"; } > "$ENV_FILE.tmp"
     fi
     # ★ 결함 479 (재검수 120) — 제자리에서 덮지 않는다. 권한 · 소유를 보존한 사본에 쓰고 바꿔 넣는다(mv — 같은 폴더라 원자적).
-    cp -p "$ENV_FILE" "$ENV_FILE.new" && cat "$ENV_FILE.tmp" > "$ENV_FILE.new" && mv "$ENV_FILE.new" "$ENV_FILE"; rm -f "$ENV_FILE.tmp"
+    # ★ 결함 486 (재검수 122) — 교체가 실패하면 성공을 찍지 않고 멈춘다(`&&` 목록 중간의 실패는 set -e 가 끝내지 않았다).
+    if ! { cp -p "$ENV_FILE" "$ENV_FILE.new" && cat "$ENV_FILE.tmp" > "$ENV_FILE.new" && mv "$ENV_FILE.new" "$ENV_FILE"; }; then
+        rm -f "$ENV_FILE.new" "$ENV_FILE.tmp" 2>/dev/null || true
+        die "ENV_NOT_UPDATED: $ENV_FILE 의 풀 목록을 바꾸지 못했다 — DB 와 받아 둔 사본은 이미 바뀌었다. 공간 · 권한을 고친 뒤 같은 명령을 다시 돌리면 풀 목록만 더한다"
+    fi
+    rm -f "$ENV_FILE.tmp"
     echo "BACKUP $ENV_FILE -> $ENV_DIR/_backup/$STAMP"
     echo "POOL_AGENTS $NEW_POOL"
 else
