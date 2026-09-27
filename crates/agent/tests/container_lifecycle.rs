@@ -140,6 +140,14 @@ fn main() {
             "the_owner_stop_is_not_reported_until_the_container_stopped",
             the_owner_stop_is_not_reported_until_the_container_stopped,
         ),
+        (
+            "everything_after_create_uses_the_container_id",
+            everything_after_create_uses_the_container_id,
+        ),
+        (
+            "a_stale_no_such_container_from_rm_is_checked",
+            a_stale_no_such_container_from_rm_is_checked,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -193,7 +201,8 @@ fn fake_runtime(state: &Path) -> i32 {
     if command == "kill" && fails("kill-noop") {
         return 0;
     }
-    if inspect_exit_fails || fails(command) || (command == "rm" && created && fails("rm-created")) {
+    let fails_now = fails(command) && (command != "inspect" || created);
+    if inspect_exit_fails || fails_now || (command == "rm" && created && fails("rm-created")) {
         eprintln!("fake: {command} 실패를 흉내낸다");
         return 125;
     }
@@ -220,7 +229,9 @@ fn fake_runtime(state: &Path) -> i32 {
             std::fs::write(state.join("behaviour"), entry).unwrap();
             std::fs::write(state.join("create.args"), args.join("\n")).unwrap();
             let _ = std::fs::remove_file(state.join("gone"));
-            println!("fake-container-id");
+            if !fails("create-no-id") {
+                println!("fake-container-id");
+            }
             0
         }
         "start" => {
@@ -274,6 +285,10 @@ fn fake_runtime(state: &Path) -> i32 {
             0
         }
         "rm" => {
+            if fails("rm-stale-nosuch") {
+                eprintln!("Error: No such container: {target}");
+                return 1;
+            }
             if !exists {
                 eprintln!("Error: No such container: {target}");
                 return 1;
@@ -437,7 +452,7 @@ fn a_finished_container_reports_its_own_exit_code() {
     // 남은 같은 이름을 먼저 치우고(결함 276), wait 대신 inspect 로 종료를 본다(시한 있는 명령만 쓴다). 지운 뒤 inspect 로 없어졌는지 본다(결함 503).
     assert_eq!(
         order,
-        ["rm", "create", "start", "inspect", "logs", "rm", "inspect"]
+        ["rm", "inspect", "create", "start", "inspect", "logs", "rm", "inspect"]
     );
     let create = std::fs::read_to_string(f.state.join("create.args")).unwrap();
     for flag in [
@@ -490,8 +505,8 @@ fn a_failed_create_is_not_a_workload_exit() {
     assert!(
         calls(&f.state)
             .lines()
-            .last()
-            .is_some_and(|l| l.starts_with("rm -f -v ")),
+            .skip_while(|l| !l.starts_with("create "))
+            .any(|l| l.starts_with("rm -f -v ")),
         "반쯤 만든 컨테이너를 볼륨까지 치우지 않았다:\n{}",
         calls(&f.state)
     );
@@ -717,8 +732,8 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     )
     .expect("한 장이면 돈다");
     assert_eq!(
-        &order(&f.state)[..4],
-        ["pull", "rm", "create", "start"],
+        &order(&f.state)[..5],
+        ["pull", "rm", "inspect", "create", "start"],
         "{}",
         calls(&f.state)
     );
@@ -746,7 +761,7 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
     assert!(!started);
     assert_eq!(
         order(&f.state),
-        ["pull", "rm", "create", "rm", "inspect"],
+        ["pull", "rm", "inspect", "create", "rm", "inspect"],
         "{}",
         calls(&f.state)
     );
@@ -1111,6 +1126,7 @@ fn an_unconfirmed_stop_never_removes_the_container() {
 /// 2026-09-27 보수 규칙(코덱스 지적) — 만들기 전에 같은 이름의 남은 컨테이너를 지우지 못하면 **만들지 않는다**(전에는 결과를 버렸다).
 fn an_unremovable_same_name_container_blocks_create() {
     let f = fixture(Some("rm"));
+    std::fs::write(f.state.join("leftovers"), "gputeer-test\n").unwrap();
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "exit-0", &[]),
@@ -1413,6 +1429,12 @@ fn execute_hands_the_needs_human_verdict_to_the_caller() {
     assert!(error.workload_may_be_alive(), "{error:?}");
     // 같은 이름을 못 지워 만들지 않음 → 남은 것이 돌 수 있다.
     let f = fixture(Some("rm"));
+    // 실행기는 시도 id 에서 이름을 만든다 — 그 이름의 컨테이너가 실제로 남아 있다.
+    std::fs::write(
+        f.state.join("leftovers"),
+        format!("{}\n", container::derive_container_name("attempt")),
+    )
+    .unwrap();
     let error = gputeer_agent::exec::execute(
         &spec("exit-0"),
         policy(&f.work, ContainerDecision::Container(execution())),
@@ -1447,4 +1469,73 @@ fn the_owner_stop_is_not_reported_until_the_container_stopped() {
     std::fs::write(f.state.join("killed"), "").unwrap();
     let exit = runner.join().unwrap().expect("멈춘 뒤 종료 관측");
     assert_eq!(exit.exit_code, 137);
+}
+
+/// 결함 515 (재검수 131) — 만든 뒤의 모든 조작은 create 가 돌려준 **컨테이너 ID** 로 한다(이름이 아니다 — 그 사이 같은 이름의 다른 컨테이너를
+/// 이 작업의 것으로 읽고 지우지 않게). 만들기 전의 같은 이름 정리만 이름을 쓴다.
+fn everything_after_create_uses_the_container_id() {
+    let f = fixture(None);
+    container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |_| {},
+    )
+    .expect("실행");
+    let calls = calls(&f.state);
+    let after_create: Vec<&str> = calls
+        .lines()
+        .skip_while(|l| !l.starts_with("create "))
+        .skip(1)
+        .collect();
+    assert!(!after_create.is_empty(), "{calls}");
+    for line in &after_create {
+        assert!(
+            line.ends_with(" fake-container-id") && !line.contains("gputeer-test"),
+            "만든 뒤의 조작을 이름으로 했다: {line}\n{calls}"
+        );
+    }
+    // create 가 ID 를 돌려주지 않으면 시작하지 않는다.
+    let f = fixture(Some("create-no-id"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("ID 없이 시작했다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { detail, .. } if detail.contains("ID")),
+        "{error:?}"
+    );
+    assert!(!call_order(&f.state).iter().any(|c| c == "start"));
+}
+
+/// 결함 516 (재검수 131) — rm 이 "No such container" 로 실패해도 조회로 확인하기 전에는 없다고 보지 않는다(낡은 오류면 남은 컨테이너를 놓친다).
+fn a_stale_no_such_container_from_rm_is_checked() {
+    let f = fixture(Some("rm-stale-nosuch"));
+    // 같은 이름의 남은 컨테이너가 실제로 있다.
+    std::fs::write(f.state.join("leftovers"), "gputeer-test\n").unwrap();
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("남은 것이 있는데 만들었다");
+    assert!(
+        matches!(
+            &error,
+            ContainerRunError::NotStarted {
+                container: ContainerLeft::Unknown,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(error.needs_human());
+    assert!(!call_order(&f.state).iter().any(|c| c == "create"));
 }

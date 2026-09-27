@@ -744,7 +744,7 @@ impl ContainerStopper {
 /// 컨테이너 객체가 지금 어떤가 — 여러 축 판정의 "컨테이너" 축(2026-09-27 보수 규칙).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerLeft {
-    /// 없다(지웠거나 처음부터 만들지 않았다 — `rm -f` 성공 또는 런타임이 "없다" 고 답함).
+    /// 없다(처음부터 만들지 않았거나, 지운 뒤 `inspect` 가 "없다" 고 답했다 — `rm` 의 응답만으로는 이 값이 되지 않는다 · 결함 503 · 516).
     Removed,
     /// 남겼다(더 돌지 않는데 로그를 못 받았다 · 멈추지 못해 지우지 않았다 등 — 일부러 보존).
     Kept,
@@ -809,7 +809,7 @@ pub enum ContainerRunError {
     /// 작업이 **돌았을 수 있고** 종료 코드를 모른다.
     Unobserved {
         detail: String,
-        /// 더 돌지 않음을 확인했는가(kill 성공 · 이미 끝나 있음 · `rm -f` 성공).
+        /// 더 돌지 않음을 확인했는가 — `inspect` 가 "돌지 않는다" · "없다" 고 답했다(kill 의 응답만으로는 true 가 되지 않는다 · 결함 502).
         stopped: bool,
         /// 작업 출력을 끝까지 받았는가.
         logs_complete: bool,
@@ -844,7 +844,8 @@ const POLL_FAILURES_TOLERATED: u32 = 5;
 /// ★ `run` 한 번으로 하지 않는다. `run` 의 종료 코드는 런타임 오류(125~127)와 작업 종료가 섞인다 — 작업이 125 로 끝난 것과
 ///   이미지를 못 받은 것이 같아 보인다. 단계를 나누면 어디서 실패했는지 안다.
 /// ★ 결함 276 — `wait` 를 쓰지 않는다. 시한이 없어 데몬이 멈추면 영원히 기다렸다. 대신 `inspect` 를 주기로 부른다(명령마다 시한).
-///   종료를 관측하지 못하면 kill · rm 을 시도하고 그 결과를 적는다 — 소유자 패널에서 사라진 채 컨테이너가 계속 돌지 않게 한다.
+///   종료를 관측하지 못하면 kill 하고 멈춤을 `inspect` 로 확인한 뒤 로그를 받고, 둘 다 확인됐을 때만 지운다(결함 502 · 503). 하나라도
+///   확인하지 못하면 컨테이너를 남기고 사건 표식을 쓴다.
 pub fn run(
     execution: &ContainerExecution,
     input: &CreateInput<'_>,
@@ -886,7 +887,8 @@ pub fn run_with_gpu_count(
     record_incident_if_needed(&execution.runtime, input.name, result)
 }
 
-/// 지우고 그 결과를 컨테이너 축으로 돌려준다. 런타임이 "없다" 고 답하면(docker · podman 공통 "no such container") 없는 것이다.
+/// 지우고 그 결과를 컨테이너 축으로 돌려준다. `rm` 의 성공 · 실패와 상관없이 뒤이은 `inspect` 가 "없다"(docker · podman 공통 "no such container")고
+/// 할 때만 없는 것이다.
 ///
 /// ★ 결함 503 (재검수 126) — `rm` 의 0 은 요청을 **접수했다**는 뜻이다. 뒤이어 `inspect` 가 "없다" 고 답할 때만 없다고 본다(전에는 0 만으로
 ///   `Removed` 였다 — 삭제 전에 런타임이 멈추면 컨테이너가 남았는데 표식 없이 작업 폴더를 지웠다).
@@ -903,8 +905,21 @@ fn remove_container_fact(program: &Path, name: &str) -> (ContainerLeft, String) 
                 format!("rm 이 성공이라 답했지만 없어졌는지 확인하지 못했다({why})"),
             ),
         },
-        Err(why) if says_no_such_container(&why) => (ContainerLeft::Removed, "이미 없다".into()),
-        Err(why) => (ContainerLeft::Unknown, format!("rm 실패({why})")),
+        // ★ 결함 516 (재검수 131) — rm 의 "없다" 오류도 조회로 확인한다(전에는 그 문장만으로 `Removed` 였다 — 낡은 오류면 남은 컨테이너를 놓쳤다).
+        Err(why) => match inspect_exists(program, name) {
+            Ok(false) => (
+                ContainerLeft::Removed,
+                format!("rm 이 실패했지만 없음 확인({why})"),
+            ),
+            Ok(true) => (
+                ContainerLeft::Unknown,
+                format!("rm 실패 · 아직 있다({why})"),
+            ),
+            Err(inspect) => (
+                ContainerLeft::Unknown,
+                format!("rm 실패({why}) · 있는지도 모른다({inspect})"),
+            ),
+        },
     }
 }
 
@@ -965,16 +980,36 @@ fn run_inner(
             container: left,
         });
     }
-    if let Err(why) = cli_ok(program, &create, CREATE_TIMEOUT) {
-        // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다. 결과는 컨테이너 축에 싣는다.
+    let created = match cli_ok(program, &create, CREATE_TIMEOUT) {
+        Ok(output) => output,
+        Err(why) => {
+            // 반쯤 만들어졌을 수 있다 — 같은 이름의 다음 시도가 막히지 않게 지운다. 결과는 컨테이너 축에 싣는다.
+            let (left, removed) = remove_container_fact(program, input.name);
+            return Err(ContainerRunError::NotStarted {
+                detail: format!("create: {why} · {removed}"),
+                container: left,
+            });
+        }
+    };
+    // ★ 결함 515 (재검수 131) — 만든 뒤의 모든 조작(start · inspect · kill · logs · rm)은 create 가 돌려준 **컨테이너 ID** 로 한다. 이름으로 하면 그 사이
+    //   같은 이름의 다른 컨테이너가 생겼을 때 그 로그를 이 작업의 것으로 확정하고 그것을 지운다(악의 없는 운영 절차로도 난다).
+    let id = created.stdout.trim().to_string();
+    let id_ok = !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !id_ok {
         let (left, removed) = remove_container_fact(program, input.name);
         return Err(ContainerRunError::NotStarted {
-            detail: format!("create: {why} · {removed}"),
+            detail: format!(
+                "create 가 컨테이너 ID 를 돌려주지 않았다({id:?}) — 이름으로 다룰 수 없어 시작하지 않았다 · {removed}"
+            ),
             container: left,
         });
     }
+    let target = id.as_str();
     if let Err(why) = cdi_all_ready(execution, &nvml_gpu_count) {
-        let (left, removed) = remove_container_fact(program, input.name);
+        let (left, removed) = remove_container_fact(program, target);
         return Err(ContainerRunError::NotStarted {
             detail: format!("create 뒤 다시 확인: {why} · {removed}"),
             container: left,
@@ -987,7 +1022,7 @@ fn run_inner(
     //   ★ 결함 491 — 전에는 응답 없음 경로가 로그를 못 받아도 지웠다(출력 · 원본 로그를 모두 잃었다).
     //   ★ 대가 — 진입점 오타처럼 정말 시작하지 않은 실패도 "종료 코드 없음"(NoCode)으로 확정 단계를 거친다. 시작 여부를 런타임 답만으로
     //     가를 수 없어서다(보수 규칙 — 불확실하면 성공으로도 "안 돌았다" 로도 단정하지 않는다).
-    let start_args: [OsString; 2] = ["start".into(), input.name.into()];
+    let start_args: [OsString; 2] = ["start".into(), target.into()];
     let start_failure = match run_cli(program, &start_args, SHORT_TIMEOUT) {
         Ok(output) if output.status.success() => None,
         Ok(output) => Some(format!(
@@ -999,15 +1034,15 @@ fn run_inner(
     };
     if let Some(why) = start_failure {
         let head = format!("{why} — 시작했는지 모른다");
-        if let Err(stop) = stop_and_confirm(program, input.name) {
+        if let Err(stop) = stop_and_confirm(program, target) {
             // ★ 결함 475 (재검수 120) — 돌고 있을 수 있으니 정지 손잡이를 **넘긴다**(같은 프로세스가 도는 동안의 소유자 손잡이).
             on_started(ContainerStopper {
                 program: program.to_path_buf(),
-                name: input.name.to_string(),
+                name: target.to_string(),
             });
             return Err(ContainerRunError::Unobserved {
                 detail: format!(
-                    "{head} · 멈춤을 확인하지 못했다({stop}) — 컨테이너 {} 를 남겼다(돌고 있을 수 있다 · 사람이 확인한다)",
+                    "{head} · 멈춤을 확인하지 못했다({stop}) — 컨테이너 {} (ID {target}) 를 남겼다(돌고 있을 수 있다 · 사람이 확인한다)",
                     input.name
                 ),
                 stopped: false,
@@ -1015,7 +1050,7 @@ fn run_inner(
                 container: ContainerLeft::Kept,
             });
         }
-        if let Err(e) = save_logs(program, input.name, stdout_path, stderr_path) {
+        if let Err(e) = save_logs(program, target, stdout_path, stderr_path) {
             let discard = discard_partial_outputs(stdout_path, stderr_path);
             return Err(ContainerRunError::Unobserved {
                 detail: format!(
@@ -1026,7 +1061,7 @@ fn run_inner(
                 container: ContainerLeft::Kept,
             });
         }
-        let (left, removed) = remove_container_fact(program, input.name);
+        let (left, removed) = remove_container_fact(program, target);
         return Err(ContainerRunError::Unobserved {
             detail: format!("{head} · 멈췄다 · 로그 남김 · {removed}"),
             stopped: true,
@@ -1036,13 +1071,13 @@ fn run_inner(
     }
     let stopper = ContainerStopper {
         program: program.to_path_buf(),
-        name: input.name.to_string(),
+        name: target.to_string(),
     };
     on_started(stopper.clone());
     // ★ 시한 없이 기다린다 — 작업 길이는 Lease 가 정한다. 멈추는 것은 소유자 손잡이(kill)가 한다.
     let mut failures: u32 = 0;
     let mut exit = loop {
-        match inspect_state(program, input.name) {
+        match inspect_state(program, target) {
             Ok(Some(exit)) => break exit,
             Ok(None) => failures = 0,
             Err(why) => {
@@ -1051,24 +1086,23 @@ fn run_inner(
                     // ★ 2026-09-27 보수 규칙 — 멈춤을 확인하지 못하면 지우지 않는다(코덱스 지적: kill 이 실패했는데 `rm -f` 로 가면 로그를 받은 뒤의
                     //   출력 · 체크포인트를 잃는다). 로그를 못 받아도 지우지 않는다(결함 487 — 런타임에 온전한 로그가 남는다).
                     // ★ 결함 502 (재검수 126) — kill 의 0 이 아니라 `inspect` 로 멈춤을 확인한다.
-                    let (stopped, killed) = match stop_and_confirm(program, input.name) {
+                    let (stopped, killed) = match stop_and_confirm(program, target) {
                         Ok(()) => (true, "멈춤 확인".to_string()),
                         Err(why) => (false, format!("멈춤을 확인하지 못했다({why})")),
                     };
                     // ★ 결함 483 (재검수 122) — 지우기 **전에** 로그를 남긴다. 못 남기면 반쯤 쓴 파일을 지운다(빈 출력이 성공이 되지 않게 · 487).
-                    let (saved, logs) =
-                        match save_logs(program, input.name, stdout_path, stderr_path) {
-                            Ok(()) if stopped => (true, "로그 남김".to_string()),
-                            Ok(()) => (
-                                true,
-                                "지금까지의 로그만 남김(멈춤을 확인하지 못해 완결이 아니다)"
-                                    .to_string(),
-                            ),
-                            Err(e) => {
-                                let discard = discard_partial_outputs(stdout_path, stderr_path);
-                                (false, format!("로그 못 남김({e}){discard}"))
-                            }
-                        };
+                    let (saved, logs) = match save_logs(program, target, stdout_path, stderr_path) {
+                        Ok(()) if stopped => (true, "로그 남김".to_string()),
+                        Ok(()) => (
+                            true,
+                            "지금까지의 로그만 남김(멈춤을 확인하지 못해 완결이 아니다)"
+                                .to_string(),
+                        ),
+                        Err(e) => {
+                            let discard = discard_partial_outputs(stdout_path, stderr_path);
+                            (false, format!("로그 못 남김({e}){discard}"))
+                        }
+                    };
                     // ★ 결함 496 (재검수 125) — 멈춤을 확인하지 못했으면 `logs` 성공은 완결의 증거가 아니다(도는 컨테이너의 로그는 그 순간까지다).
                     let logs_complete = stopped && saved;
                     let head = format!(
@@ -1082,7 +1116,7 @@ fn run_inner(
                             container: ContainerLeft::Kept,
                         });
                     }
-                    let (left, removed) = remove_container_fact(program, input.name);
+                    let (left, removed) = remove_container_fact(program, target);
                     return Err(ContainerRunError::Unobserved {
                         detail: format!("{head} · {removed}"),
                         stopped: true,
@@ -1096,13 +1130,16 @@ fn run_inner(
     };
     // ★ 결함 487 (재검수 123) — 로그를 못 받으면 반쯤 쓴 출력 파일을 지우고(확정이 READ_OUTPUTS 로 실패하게 — 빈 출력이 성공이 되지 않게),
     //   컨테이너를 **지우지 않는다**(런타임에 온전한 로그가 남는다). 종료 코드는 관측한 사실이라 그대로 돌려준다(정리 결과는 따로).
-    match save_logs(program, input.name, stdout_path, stderr_path) {
+    match save_logs(program, target, stdout_path, stderr_path) {
         Ok(()) => {
             exit.logs_complete = true;
-            let (left, removed) = remove_container_fact(program, input.name);
+            let (left, removed) = remove_container_fact(program, target);
             exit.container = left;
             if left != ContainerLeft::Removed {
-                eprintln!("CONTAINER_NOT_REMOVED name={} — {removed}", input.name);
+                eprintln!(
+                    "CONTAINER_NOT_REMOVED name={} id={target} — {removed}",
+                    input.name
+                );
             }
             exit.note = format!("로그 받음 · {removed}");
         }
@@ -1111,7 +1148,7 @@ fn run_inner(
             exit.logs_complete = false;
             exit.container = ContainerLeft::Kept;
             eprintln!(
-                "CONTAINER_KEPT_FOR_LOGS name={} — 로그를 받지 못해 컨테이너를 남겼다: {why}{discard}",
+                "CONTAINER_KEPT_FOR_LOGS name={} id={target} — 로그를 받지 못해 컨테이너를 남겼다: {why}{discard}",
                 input.name
             );
             exit.note = format!("로그를 받지 못해 컨테이너를 남겼다({why}){discard}");
