@@ -503,21 +503,33 @@ fn execute_in_container(
         "CONTAINER_STARTING name={name} image={} runtime={:?}",
         execution.pinned_image, execution.runtime.flavor
     );
-    let exit = crate::container::run(
+    let exit = match crate::container::run(
         execution,
         &input,
         Some(&work_dir.join(STDOUT_FILENAME)),
         Some(&work_dir.join(STDERR_FILENAME)),
         |stopper| on_started(WorkloadStopper::for_container(stopper)),
-    )
-    .map_err(|error| match error {
-        crate::container::ContainerRunError::NotStarted { detail } => {
-            ExecutionError::SpawnFailed { detail }
+    ) {
+        Ok(exit) => exit,
+        Err(crate::container::ContainerRunError::NotStarted { detail }) => {
+            return Err(ExecutionError::SpawnFailed { detail })
         }
-        crate::container::ContainerRunError::NotObserved { detail } => {
-            ExecutionError::WaitFailed { detail }
+        Err(crate::container::ContainerRunError::NotObserved { detail }) => {
+            return Err(ExecutionError::WaitFailed { detail })
         }
-    })?;
+        // ★ 결함 481 (재검수 121) — 컨테이너는 지웠다(더 돌지 않는다). 종료 코드만 모른다 — "종료는 봤고 코드가 없다" 로 보고한다(결함 69 와 같은 모양).
+        Err(crate::container::ContainerRunError::RemovedUnobserved { detail }) => {
+            println!("CONTAINER_REMOVED_UNOBSERVED name={name} — {detail}");
+            return Ok(ExecutionOutcome {
+                exit: ExitObserved::NoCode { detail },
+                commit_limit_bytes: policy.commit_limit_bytes,
+                peak_commit_bytes: None,
+                memory_observation_error: Some(
+                    "컨테이너 경로는 메모리 최댓값을 재지 않는다".into(),
+                ),
+            });
+        }
+    };
     println!(
         "CONTAINER_EXITED name={name} exit_code={} oom_killed={}",
         exit.exit_code, exit.oom_killed

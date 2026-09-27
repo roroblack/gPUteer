@@ -3132,9 +3132,12 @@ fn run_and_capture_workload(
         //     OBSERVED_NO_CODE 로 보고된다(결함 69).
         // ★ 결함 475 (재검수 120) — 종료를 **관측하지 못한** 경우(작업이 아직 돌 수 있다)는 패널에서 빼지 않는다. 빼면 소유자가 도는 작업을
         //   멈출 수 없다(§0.1). 정지를 누르면 kill 이 가고, 이미 없으면 ALREADY_EXITED 로 보인다. Agent 가 다시 뜨면 남은 컨테이너 정리가 치운다.
+        //   ★ 결함 480 (재검수 121) — 이것은 **이 프로세스가 도는 동안만** 뜻이 있다. 서비스(agent-loop)는 회차마다 Agent 를 자식으로 띄우고
+        //     이 오류는 그 자식을 끝내므로 패널도 함께 사라진다. 정지 손잡이도 같은 런타임 CLI 를 써서 런타임이 응답하지 않으면 멈추지 못한다.
+        //     실제로 멈추는 길은 (1) 런타임이 되살아나면 다음 회차의 남은 컨테이너 정리 · (2) 소유자가 런타임으로 직접 kill · 서비스 중지다.
         Err(other @ exec::ExecutionError::WaitFailed { .. }) => {
             println!(
-                "OWNER_PANEL_KEPT attempt_id={attempt_id} — 종료를 관측하지 못해 소유자 화면에 남긴다(작업이 돌고 있을 수 있다)"
+                "WORKLOAD_MAY_BE_RUNNING attempt_id={attempt_id} — 종료를 관측하지 못했다. 다음 회차가 남은 컨테이너를 지운다(런타임이 응답해야 한다). 지금 멈추려면 런타임으로 직접 kill 하거나 서비스를 멈춘다"
             );
             return Err(other.to_string());
         }

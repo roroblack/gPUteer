@@ -624,8 +624,11 @@ pub fn cdi_all_ready(
 pub enum ContainerRunError {
     /// 컨테이너를 만들거나 시작하지 못했다 — 작업은 돌지 않았다.
     NotStarted { detail: String },
-    /// 시작했는데 종료를 관측하지 못했다. 정리(kill · rm)를 시도했고 그 결과는 `detail` 에 있다.
+    /// 시작했는데 종료를 관측하지 못했고 컨테이너가 **남아 돌 수 있다**. 정리(kill · rm)를 시도했고 그 결과는 `detail` 에 있다.
     NotObserved { detail: String },
+    /// ★ 결함 481 (재검수 121) — 종료 코드는 관측하지 못했지만 컨테이너를 **지웠다**(`rm -f` 성공 — 더 돌지 않는다). 호출부는 "종료는 봤고 코드가
+    /// 없다" 로 다룬다 — 작업 폴더를 남길 까닭이 없다.
+    RemovedUnobserved { detail: String },
 }
 
 /// 종료를 확인하는 주기와, 연속으로 몇 번 확인에 실패하면 "관측 못 함" 으로 볼지.
@@ -734,14 +737,17 @@ pub fn run_with_gpu_count(
                         Ok(()) => "kill 성공".to_string(),
                         Err(e) => format!("kill 실패({e})"),
                     };
-                    let removed = match remove_container(program, input.name) {
-                        Ok(()) => "rm 성공 — 컨테이너는 없다".to_string(),
-                        Err(e) => format!("rm 실패({e}) — 컨테이너가 남아 돌 수 있다"),
-                    };
-                    return Err(ContainerRunError::NotObserved {
-                        detail: format!(
-                            "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · {removed}"
-                        ),
+                    return Err(match remove_container(program, input.name) {
+                        Ok(()) => ContainerRunError::RemovedUnobserved {
+                            detail: format!(
+                                "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · rm 성공 — 컨테이너는 없다"
+                            ),
+                        },
+                        Err(e) => ContainerRunError::NotObserved {
+                            detail: format!(
+                                "종료를 {failures}번 연속 확인하지 못했다({why}) · 정리: {killed} · rm 실패({e}) — 컨테이너가 남아 돌 수 있다"
+                            ),
+                        },
                     });
                 }
             }
