@@ -3520,6 +3520,22 @@ pub const CHECKPOINT_ROOT_OWNER_MARKER: &str = ".gputeer-agent-root";
 /// 결함 138 — 체크포인트 루트를 만들고 실제 위치를 돌려준다. 별칭(junction · symlink) · 표기 차이가 같은 경로로 모인다.
 /// ★ 결함 152 — 이 경로를 이후 쓰기에도 쓰므로 Windows 의 `\\?\C:\…` 는 **보통 경로로 되돌릴 수 있을 때만** 되돌린다(`without_verbatim_prefix`) —
 ///   작업 디렉터리 · 자식 프로세스 인자가 verbatim 경로를 받지 못하는 경우가 있다.
+/// 사건 해제 명령(`gputeer container-incidents`)이 Agent 와 **같은** 사건 표식 폴더를 보게 한다 — 체크포인트 루트를 Agent 처럼 실제 경로로 푼 뒤
+/// 형제를 계산한다. 루트를 만들지 않는다(없으면 Err — 경로를 잘못 준 것일 수 있다).
+///
+/// ★ 결함 512 (재검수 130) — 전에는 CLI 가 받은 문자열 그대로 형제를 계산했다. 루트가 junction · 심볼릭 링크 같은 별칭이면 Agent(기동 때 실제 경로로
+///   푼다)와 다른 폴더를 봐, 실제 표식은 남기고 엉뚱한 폴더의 파일을 지울 수 있었다.
+pub fn container_incident_dir(root: &std::path::Path) -> Result<PathBuf, String> {
+    let real = fs::canonicalize(root)
+        .map(without_verbatim_prefix)
+        .map_err(|error| {
+            format!(
+                "CHECKPOINT_ROOT_INVALID: 체크포인트 루트의 실제 위치를 읽지 못했다({root:?}) — Agent 설정의 --checkpoint-root 를 그대로 준다: {error}"
+            )
+        })?;
+    Ok(container::incident_dir_for(&real))
+}
+
 fn real_checkpoint_root(root: &std::path::Path) -> Result<PathBuf, String> {
     fs::create_dir_all(root).map_err(|error| {
         format!(

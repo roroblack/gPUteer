@@ -309,7 +309,14 @@ fn main() -> ExitCode {
                 eprintln!("container-incidents 실패: --checkpoint-root <루트> 가 필요하다");
                 return ExitCode::FAILURE;
             };
-            let dir = gputeer_agent::container::incident_dir_for(std::path::Path::new(&root));
+            // ★ 결함 512 — Agent 처럼 루트를 실제 경로로 풀어 같은 표식 폴더를 본다.
+            let dir = match gputeer_agent::container_incident_dir(std::path::Path::new(&root)) {
+                Ok(dir) => dir,
+                Err(error) => {
+                    eprintln!("container-incidents 실패: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let result = match &clear {
                 Some(name) => gputeer_agent::container::clear_incidents(&dir, name.as_deref()),
                 None => gputeer_agent::container::open_incidents(&dir),
