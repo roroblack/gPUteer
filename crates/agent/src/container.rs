@@ -697,8 +697,17 @@ pub fn run_with_gpu_count(
         return Err(not_started(format!("create 뒤 다시 확인: {why}")));
     }
     if let Err(why) = cli_ok(program, &["start".into(), input.name.into()], SHORT_TIMEOUT) {
-        let _ = remove_container(program, input.name);
-        return Err(not_started(format!("start: {why}")));
+        // ★ 결함 471 (재검수 119) — start 가 시한을 넘기면 데몬은 이미 컨테이너를 띄웠을 수 있다. 지우기(`rm -f` — 돌고 있으면 죽인다)가
+        //   성공했을 때만 "돌지 않는다" 로 본다. 지우기도 실패하면 **시작 여부를 모른다** — "관측 못 함" 으로 올려 작업 폴더를 지우지 않게 한다.
+        return Err(match remove_container(program, input.name) {
+            Ok(()) => not_started(format!("start: {why} · 컨테이너를 지웠다")),
+            Err(rm) => ContainerRunError::NotObserved {
+                detail: format!(
+                    "start: {why} · 지우기도 실패했다({rm}) — 시작했는지 모른다. 컨테이너 {} 가 돌고 있을 수 있다",
+                    input.name
+                ),
+            },
+        });
     }
     let stopper = ContainerStopper {
         program: program.to_path_buf(),

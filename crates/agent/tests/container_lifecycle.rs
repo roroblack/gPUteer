@@ -64,6 +64,10 @@ fn main() {
             "a_cdi_all_container_pulls_first_and_is_rechecked_after_create",
             a_cdi_all_container_pulls_first_and_is_rechecked_after_create,
         ),
+        (
+            "a_failed_start_is_not_started_only_when_the_container_was_removed",
+            a_failed_start_is_not_started_only_when_the_container_was_removed,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -94,7 +98,11 @@ fn fake_runtime(state: &Path) -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("");
     append(state, "calls", &format!("{}\n", args.join(" ")));
-    if std::env::var(FAIL_ENV).ok().as_deref() == Some(command) {
+    // 쉼표로 여럿을 실패시킬 수 있다(예 "start,rm").
+    if std::env::var(FAIL_ENV)
+        .ok()
+        .is_some_and(|fail| fail.split(',').any(|c| c == command))
+    {
         eprintln!("fake: {command} 실패를 흉내낸다");
         return 125;
     }
@@ -586,5 +594,36 @@ fn a_cdi_all_container_pulls_first_and_is_rechecked_after_create() {
         ["pull", "rm", "create", "rm"],
         "{}",
         calls(&f.state)
+    );
+}
+
+/// 결함 471 (재검수 119) — start 가 실패해도 지우기가 성공해야만 "돌지 않았다"(NotStarted)다. 지우기도 실패하면 시작 여부를 모른다(NotObserved).
+fn a_failed_start_is_not_started_only_when_the_container_was_removed() {
+    let f = fixture(Some("start"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("start 가 실패했는데 성공했다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { detail } if detail.contains("지웠다")),
+        "{error:?}"
+    );
+
+    let f = fixture(Some("start,rm"));
+    let error = container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("start 가 실패했는데 성공했다");
+    assert!(
+        matches!(&error, ContainerRunError::NotObserved { detail } if detail.contains("시작했는지 모른다")),
+        "{error:?}"
     );
 }

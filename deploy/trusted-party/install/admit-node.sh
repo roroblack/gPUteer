@@ -12,6 +12,15 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ -n "$ENV_FILE" ] && [ -n "$JOIN_FILE" ] || die "ADMIT_ARGS: --env-file · --join-file 은 반드시 준다"
+ENV_DIR=$(cd "$(dirname "$ENV_FILE")" && pwd)
+ADMITTED_DIR="$ENV_DIR/admitted"; STAMP=$(date +%Y-%m-%d_%H%M)
+mkdir -p "$ADMITTED_DIR"
+# ★ 결함 466 (재검수 118) · 472 (재검수 119) — 잠금은 환경 파일 · 풀 목록을 **읽기 전에** 잡는다(읽기-수정-쓰기 전체를 덮는다).
+#   — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
+#   썼다 — admitted/.lock 을 O_EXCL(noclobber)로 잡고 돈다. 잡혀 있으면 멈춘다. 끝나면(실패해도) 지운다.
+LOCK="$ADMITTED_DIR/.lock"
+( set -C; echo "$$" > "$LOCK" ) 2>/dev/null || die "ADMITTED_LOCKED: $LOCK 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
+trap 'rm -f "$LOCK"' EXIT
 value() { sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r'; }
 BIN=$(value GPUTEER_BIN); DB=$(value GPUTEER_CONTROL_DB)
 [ -n "$BIN" ] && [ "${BIN#<}" = "$BIN" ] || die "ADMIT_ARGS: $ENV_FILE 에 GPUTEER_BIN 이 채워져 있지 않다"
@@ -37,14 +46,6 @@ for entry in $POOL; do
 done
 IFS=$OLD_IFS
 
-ENV_DIR=$(cd "$(dirname "$ENV_FILE")" && pwd)
-ADMITTED_DIR="$ENV_DIR/admitted"; STAMP=$(date +%Y-%m-%d_%H%M)
-mkdir -p "$ADMITTED_DIR"
-# ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
-#   썼다 — admitted/.lock 을 O_EXCL(noclobber)로 잡고 돈다. 잡혀 있으면 멈춘다. 끝나면(실패해도) 지운다.
-LOCK="$ADMITTED_DIR/.lock"
-( set -C; echo "$$" > "$LOCK" ) 2>/dev/null || die "ADMITTED_LOCKED: $LOCK 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
-trap 'rm -f "$LOCK"' EXIT
 ADMITTED="$ADMITTED_DIR/join-$NODE_ID.json"
 # ★ 결함 443 (재검수 115) — **반입이 성공한 뒤에만** 활성 사본을 바꾼다. 전에는 먼저 덮고 반입했다 — 거부될 가입 파일이 활성 사본이 되면
 #   refresh-inventory 가 매번 실패하고 정상 선언이 낡아 노드가 빠졌다. 후보는 join-*.json 이 아닌 이름이라 refresh 가 줍지 않는다.
@@ -53,10 +54,12 @@ CANDIDATE="$ADMITTED_DIR/.candidate-$NODE_ID.json"
 #   운영자 시계가 한 번 미래로 갔다 돌아와도 revision 은 계속 오르고 observed_at 은 바른 시각으로 덮여 스스로 풀린다.
 NOW_MS=$(($(date +%s) * 1000))
 REV=$NOW_MS
-if [ -e "$ADMITTED" ]; then
-    PREV=$(tr -d '\r' < "$ADMITTED" | sed -n 's/.*"inventory_revision"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
+# ★ 결함 473 (재검수 119) — 반입은 됐는데 활성 사본으로 옮기지 못한 **후보**도 본다(DB 는 후보의 revision 에 있을 수 있다). 후보를 덮기 전에 읽는다.
+for prior in "$ADMITTED" "$CANDIDATE"; do
+    [ -e "$prior" ] || continue
+    PREV=$(tr -d '\r' < "$prior" | sed -n 's/.*"inventory_revision"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n 1)
     [ -z "$PREV" ] || [ "$REV" -gt "$PREV" ] || REV=$((PREV + 1))
-fi
+done
 sed -e "s/\"inventory_revision\"[[:space:]]*:[[:space:]]*[0-9]*/\"inventory_revision\": $REV/" \
     -e "s/\"observed_at_unix_ms\"[[:space:]]*:[[:space:]]*[0-9]*/\"observed_at_unix_ms\": $NOW_MS/" "$JOIN_FILE" > "$CANDIDATE"
 if ! "$BIN" import-inventory --inventory "$CANDIDATE" --inventory-db "$DB"; then

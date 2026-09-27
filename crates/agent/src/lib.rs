@@ -1556,7 +1556,20 @@ fn run_one_connection_inner(
         }
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
-        let cleanup = remove_dir_if_present(&run_dir);
+        // ★ 결함 471 (재검수 119) — 단, 종료를 **관측하지 못한** 경우(작업이 아직 돌 수 있다 — `EXEC_FAILED:WAIT`)는 지우지 않는다.
+        //   돌고 있는 컨테이너가 이 폴더의 체크포인트 자리를 붙이고 있을 수 있어, 지우면 그 뒤 체크포인트가 연결 끊긴 곳에 쓰여 사라진다.
+        let workload_may_be_alive =
+            matches!(&outcome, Err(error) if error.starts_with("EXEC_FAILED:WAIT"));
+        let cleanup = if workload_may_be_alive {
+            println!(
+                "WORKLOAD_DIR_KEPT job_id={} run_dir={} — 작업이 아직 돌 수 있어 작업 폴더를 지우지 않았다(확인 뒤 사람이 지운다)",
+                spec.job_id,
+                run_dir.display()
+            );
+            Ok(())
+        } else {
+            remove_dir_if_present(&run_dir)
+        };
         let (outcome, cleanup_failure) = merge_run_and_cleanup(outcome, cleanup)?;
         if let Some(error) = &cleanup_failure {
             println!(

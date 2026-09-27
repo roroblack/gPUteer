@@ -18,6 +18,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
+New-Item -ItemType Directory -Force -Path $admittedDir | Out-Null
+# ★ 결함 466 (재검수 118) · 472 (재검수 119) — 잠금은 환경 파일 · 풀 목록을 **읽기 전에** 잡는다(읽기-수정-쓰기 전체를 덮는다).
+#   — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
+#   썼다 — admitted\.lock 을 CreateNew 로 잡고 돈다(닫으면 지워진다). 잡혀 있으면 멈춘다.
+$lockPath = Join-Path $admittedDir ".lock"
+try {
+    $lock = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None, 1, [System.IO.FileOptions]::DeleteOnClose)
+} catch {
+    throw "ADMITTED_LOCKED: $lockPath 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
+}
+trap { if ($lock) { $lock.Dispose() }; break }
 $envText = Get-Content -Encoding UTF8 $EnvFile
 $config = [ordered]@{}
 foreach ($line in $envText) {
@@ -48,26 +61,18 @@ foreach ($other in $entries.Keys) {
     if ($other -ne $nodeId -and $entries[$other] -eq $key) { throw "JOIN_REJECTED: 같은 공개키를 $other 가 이미 쓴다(POOL_AGENTS_DUPLICATE_KEY)" }
 }
 
-$admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
-New-Item -ItemType Directory -Force -Path $admittedDir | Out-Null
-# ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
-#   썼다 — admitted\.lock 을 CreateNew 로 잡고 돈다(닫으면 지워진다). 잡혀 있으면 멈춘다.
-$lockPath = Join-Path $admittedDir ".lock"
-try {
-    $lock = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write,
-        [System.IO.FileShare]::None, 1, [System.IO.FileOptions]::DeleteOnClose)
-} catch {
-    throw "ADMITTED_LOCKED: $lockPath 이 있다 — admit-node · refresh-inventory 가 이미 돈다. 도는 것이 없는데 남았으면 지우고 다시 돌린다"
-}
-trap { if ($lock) { $lock.Dispose() }; break }
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmm"
 $admitted = Join-Path $admittedDir "join-$nodeId.json"
 # 관측 시각을 지금으로 — 받은 시각이 곧 운영자가 이 선언을 받아들인 시각이다.
 # ★ 결함 467 (재검수 118) — revision 은 벽시계와 뗀다: max(지금, 받아 둔 사본의 revision + 1). 운영자 시계가 한 번 미래로 갔다 돌아와도 스스로 풀린다.
 $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $revision = $nowMs
-if (Test-Path -LiteralPath $admitted) {
-    $previous = [long](@((Get-Content -Encoding UTF8 -Raw $admitted | ConvertFrom-Json).agents)[0].inventory.inventory_revision)
+# ★ 결함 473 (재검수 119) — 반입은 됐는데 활성 사본으로 옮기지 못한 **후보**도 본다(DB 는 후보의 revision 에 있을 수 있다). 후보를 덮기 전에 읽는다.
+foreach ($prior in @($admitted, (Join-Path $admittedDir ".candidate-$nodeId.json"))) {
+    if (-not (Test-Path -LiteralPath $prior)) { continue }
+    # 쓰다 끊긴 후보는 읽지 못한다 — 반입(파일을 끝까지 쓴 뒤) 전에 끊긴 것이라 DB 에 없다. 건너뛴다(뒤에서 덮는다).
+    $previous = try { [long](@((Get-Content -Encoding UTF8 -Raw $prior | ConvertFrom-Json).agents)[0].inventory.inventory_revision) } catch { -1 }
+    if ($previous -lt 0 -and $prior -eq $admitted) { throw "ADMIT_ARGS: 받아 둔 사본 $admitted 를 읽지 못했다 — 백업(_backup)에서 되살린 뒤 다시 돌린다" }
     if ($revision -le $previous) { $revision = $previous + 1 }
 }
 $agent.inventory.inventory_revision = $revision

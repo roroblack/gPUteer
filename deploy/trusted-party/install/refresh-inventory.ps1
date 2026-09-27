@@ -51,7 +51,10 @@ foreach ($file in $files) {
     $previous = [long]$agent.inventory.inventory_revision
     $agent.inventory.inventory_revision = if ($nowMs -gt $previous) { $nowMs } else { $previous + 1 }
     $agent.inventory.observed_at_unix_ms = $nowMs
-    [System.IO.File]::WriteAllText($file.FullName, ($join | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+    # ★ 결함 474 (재검수 119) — 유일한 활성 사본을 제자리에서 잘라 쓰지 않는다. 임시 파일에 쓰고 바꿔 넣는다(쓰다 끊겨도 옛 사본이 남는다).
+    $tmp = "$($file.FullName).tmp"
+    [System.IO.File]::WriteAllText($tmp, ($join | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $tmp -Destination $file.FullName -Force
     & $config.GPUTEER_BIN import-inventory --inventory $file.FullName --inventory-db $config.GPUTEER_CONTROL_DB | Out-Host
     if ($LASTEXITCODE -ne 0) { $failed += 1; Write-Host "REFRESH_FAILED $($file.Name)" } else { Write-Host "REFRESHED $($agent.registry.node_id)" }
 }
