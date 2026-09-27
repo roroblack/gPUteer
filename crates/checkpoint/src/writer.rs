@@ -18,8 +18,9 @@ use crate::CheckpointError;
 /// canonical/latest 포인터 파일 이름.
 pub const POINTER_FILENAME: &str = "LATEST";
 
+// ★ 결함 555 — Windows 1168 도 "없다" 다. 판정은 `atomic::is_gone` 한 곳에 둔다(GC 경로마다 따로 고치지 않는다).
 fn is_not_found(error: &std::io::Error) -> bool {
-    error.kind() == std::io::ErrorKind::NotFound
+    crate::atomic::is_gone(error)
 }
 
 /// 실패 마커를 남긴 뒤 원래 오류를 반환한다.

@@ -415,12 +415,31 @@ pub fn sync_dir(_dir: &Path) -> Result<(), CheckpointError> {
 /// **한 번의 확인은 추측이고, 재시도는 사실이다.** 예산(약 200ms)을 넘기면
 /// `CLAUDE.md` §3 에 따라 오류를 조용히 삼키지 않고 그대로 올린다.
 pub(crate) fn is_windows_delete_race(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(5) // ERROR_ACCESS_DENIED
+    is_gone(error) || error.raw_os_error() == Some(5) // ERROR_ACCESS_DENIED
+}
+
+/// 이 오류가 **"대상이 없다"** 인가 — GC 경로가 정상 경합으로 넘기는 판정은 전부 이 함수 하나를 쓴다.
+///
+/// ★ 결함 555 (2026-09-28) — Windows 의 `ERROR_NOT_FOUND`(1168)를 더한다. Rust 는 2 · 3 만 `NotFound` 로 매핑하고 1168 은
+///   `Uncategorized` 로 둔다. 표준 `fs::read_dir`(`FindFirstFileExW`)이 **다른 쪽이 방금 지운 디렉터리**에 대해 1168 을 낸다 —
+///   `startup_gc` 의 "비었나" 검사에서 실물 계측으로 잡았다(부하 8병렬 200회 중 5회, 전부 그 자리).
+///   앞선 두 경로(`CreateFileW` · `GetFileInformationByHandle`)는 우리 코드라 `runtime-windows` 의 `normalize_not_found` 가 막았지만,
+///   이것은 **표준 라이브러리 안**이라 그 정규화를 거치지 않았다. 그래서 호출 지점이 아니라 **판정 한 곳**에서 막는다 —
+///   같은 원시 호출(`read_dir` · `symlink_metadata`)이 GC 에 여러 번 있다.
+///   ★ 1168 은 "없다" 이지 "아직 지우는 중" 이 아니다 — 재시도(5 와 같은 취급)가 아니라 즉시 "없다" 로 본다.
+pub(crate) fn is_gone(error: &io::Error) -> bool {
+    #[cfg(windows)]
+    const ERROR_NOT_FOUND: i32 = 1168;
+    #[cfg(windows)]
+    if error.raw_os_error() == Some(ERROR_NOT_FOUND) {
+        return true;
+    }
+    error.kind() == io::ErrorKind::NotFound
 }
 
 /// I/O 연산 하나를 **경합을 견디며** 재시도한다.
 ///
-/// `NotFound` 는 즉시 "없다" 로 본다(더 기다릴 이유가 없다).
+/// "없다"([`is_gone`])는 즉시 "없다" 로 본다(더 기다릴 이유가 없다).
 /// 그 외 오류는 [`is_windows_delete_race`] 로 보이면 짧게 재시도하고,
 /// 예산을 다 쓰면 마지막 오류를 그대로 올린다.
 pub(crate) fn retry_tolerating_race<T>(
@@ -433,7 +452,7 @@ pub(crate) fn retry_tolerating_race<T>(
     for attempt in 0..ATTEMPTS {
         match op() {
             Ok(v) => return Ok(Some(v)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if is_gone(&e) => return Ok(None),
             Err(e) if is_windows_delete_race(&e) => {
                 last = Some(e);
                 if attempt + 1 < ATTEMPTS {
@@ -525,7 +544,7 @@ pub fn gc_partial(
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if is_gone(&error) => continue,
             Err(error) => return Err(error.into()),
         };
 
@@ -615,5 +634,43 @@ pub fn gc_partial(
 impl From<io::Error> for CheckpointError {
     fn from(e: io::Error) -> Self {
         CheckpointError::Io(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 결함 555 — Windows 1168(`ERROR_NOT_FOUND`)은 "없다" 다. 표준 `fs::read_dir` 이 방금 지워진 디렉터리에 대해 낸다.
+    #[cfg(windows)]
+    #[test]
+    fn windows_error_not_found_1168_is_gone_not_a_failure() {
+        let raw = io::Error::from_raw_os_error(1168);
+        assert_ne!(
+            raw.kind(),
+            io::ErrorKind::NotFound,
+            "std 가 1168 을 NotFound 로 매핑하기 시작했다 — 이 판정을 다시 본다"
+        );
+        assert!(is_gone(&raw));
+        let mut calls = 0;
+        let result: io::Result<Option<()>> = retry_tolerating_race(|| {
+            calls += 1;
+            Err(io::Error::from_raw_os_error(1168))
+        });
+        assert!(matches!(result, Ok(None)), "{result:?}");
+        assert_eq!(calls, 1, "1168 은 재시도할 것이 아니라 즉시 \"없다\" 다");
+    }
+
+    /// 대조군 — "없다" 가 아닌 오류는 뭉개지 않는다(접근 거부는 재시도 뒤 오류로, 그 밖은 즉시 오류로).
+    #[test]
+    fn other_errors_are_not_gone() {
+        assert!(!is_gone(&io::Error::from_raw_os_error(5)));
+        assert!(!is_gone(&io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "x"
+        )));
+        let result: io::Result<Option<()>> =
+            retry_tolerating_race(|| Err(io::Error::new(io::ErrorKind::InvalidData, "x")));
+        assert!(result.is_err());
     }
 }
