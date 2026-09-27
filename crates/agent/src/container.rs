@@ -686,16 +686,23 @@ fn run_cli_detailed(
         std::thread::sleep(Duration::from_millis(50));
     };
     let deadline = started + timeout;
-    let collect = |rx: std::sync::mpsc::Receiver<(String, bool)>, which: &str| {
+    let collect = |rx: std::sync::mpsc::Receiver<Result<(String, bool), String>>, which: &str| {
         let left = deadline
             .saturating_duration_since(Instant::now())
             .max(PIPE_CLOSE_GRACE);
-        rx.recv_timeout(left).map_err(|_| {
-            CliFailure::AfterSpawn(format!(
-                "{program:?} {:?} 는 끝났지만 {which} 파이프가 시한 안에 닫히지 않았다 — 파이프를 물려받은 프로세스가 남았을 수 있다",
-                args.first()
-            ))
-        })
+        rx.recv_timeout(left)
+            .map_err(|_| {
+                CliFailure::AfterSpawn(format!(
+                    "{program:?} {:?} 는 끝났지만 {which} 파이프가 시한 안에 닫히지 않았다 — 파이프를 물려받은 프로세스가 남았을 수 있다",
+                    args.first()
+                ))
+            })?
+            .map_err(|why| {
+                CliFailure::AfterSpawn(format!(
+                    "{program:?} {:?} 의 {which} 를 끝까지 읽지 못했다({why}) — 앞부분만 읽은 출력은 쓰지 않는다",
+                    args.first()
+                ))
+            })
     };
     let (stdout, stdout_cut) = collect(stdout_rx, "stdout")?;
     let (stderr, stderr_cut) = collect(stderr_rx, "stderr")?;
@@ -719,24 +726,31 @@ const MAX_CLI_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 /// 자식이 끝난 뒤 파이프가 닫히기를 기다리는 최소 여유(시한이 이미 지났어도).
 const PIPE_CLOSE_GRACE: Duration = Duration::from_secs(2);
 
-/// 파이프를 끝까지 빨아내고, 앞 `MAX_CLI_OUTPUT_BYTES` 를 문자열로 · 잘렸는지를 함께 채널에 넘긴다(EOF 때 한 번).
-fn drain_pipe(mut pipe: impl Read + Send + 'static) -> std::sync::mpsc::Receiver<(String, bool)> {
+/// 파이프를 끝까지 빨아내고, 앞 `MAX_CLI_OUTPUT_BYTES` 를 문자열로 · 잘렸는지를 함께 채널에 넘긴다(EOF 때 한 번). 읽기 오류면 그 오류를 넘긴다.
+fn drain_pipe(
+    mut pipe: impl Read + Send + 'static,
+) -> std::sync::mpsc::Receiver<Result<(String, bool), String>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let (kept, cut) = drain_capped(&mut pipe);
-        let _ = tx.send((String::from_utf8_lossy(&kept).into_owned(), cut));
+        let result = drain_capped(&mut pipe)
+            .map(|(kept, cut)| (String::from_utf8_lossy(&kept).into_owned(), cut))
+            .map_err(|error| error.to_string());
+        let _ = tx.send(result);
     });
     rx
 }
 
 /// 끝까지 읽되 앞 `MAX_CLI_OUTPUT_BYTES` 만 담는다. 넘었으면 `true`(잘렸다).
-fn drain_capped(pipe: &mut impl Read) -> (Vec<u8>, bool) {
+///
+/// ★ 결함 550 (재검수 144) — 읽기 **오류**는 EOF 가 아니다 — 그대로 돌려준다(전에는 EOF 처럼 다뤄 앞부분만 읽은 출력을 "잘림 없음" 으로 넘겼다).
+///   `Interrupted` 는 다시 읽는다.
+fn drain_capped(pipe: &mut impl Read) -> std::io::Result<(Vec<u8>, bool)> {
     let mut kept = Vec::new();
     let mut cut = false;
     let mut chunk = [0u8; 8192];
     loop {
         match pipe.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(n) => {
                 let room = MAX_CLI_OUTPUT_BYTES.saturating_sub(kept.len());
                 if n > room {
@@ -744,9 +758,11 @@ fn drain_capped(pipe: &mut impl Read) -> (Vec<u8>, bool) {
                 }
                 kept.extend_from_slice(&chunk[..n.min(room)]);
             }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
         }
     }
-    (kept, cut)
+    Ok((kept, cut))
 }
 
 /// 시한이 지나 죽인 자식을 **뒤에서** 거둔다(결함 547 — 커널에서 멈춘 프로세스를 기다리지 않는다).
@@ -2184,12 +2200,30 @@ mod tests {
     #[test]
     fn a_cli_output_over_the_cap_is_marked_as_cut() {
         let big = vec![b'x'; MAX_CLI_OUTPUT_BYTES + 1];
-        let (kept, cut) = drain_capped(&mut std::io::Cursor::new(big));
+        let (kept, cut) = drain_capped(&mut std::io::Cursor::new(big)).unwrap();
         assert!(cut, "잘렸는데 알리지 않았다");
         assert_eq!(kept.len(), MAX_CLI_OUTPUT_BYTES);
-        let (kept, cut) = drain_capped(&mut std::io::Cursor::new(b"id-1\nid-2\n".to_vec()));
+        let (kept, cut) =
+            drain_capped(&mut std::io::Cursor::new(b"id-1\nid-2\n".to_vec())).unwrap();
         assert!(!cut);
         assert_eq!(kept, b"id-1\nid-2\n");
+    }
+
+    /// 결함 550 (재검수 144) — 읽기 오류는 EOF 가 아니다 — 앞부분만 읽고 오류가 나면 그 오류를 돌려준다(부분 출력을 완전한 것으로 넘기지 않는다).
+    #[test]
+    fn a_pipe_read_error_is_not_an_end_of_output() {
+        struct BreaksAfterOne(bool);
+        impl std::io::Read for BreaksAfterOne {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    return Err(std::io::Error::other("파이프가 깨졌다"));
+                }
+                self.0 = true;
+                buf[..2].copy_from_slice(b"A\n");
+                Ok(2)
+            }
+        }
+        assert!(drain_capped(&mut BreaksAfterOne(false)).is_err());
     }
 
     #[test]
