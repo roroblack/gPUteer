@@ -165,12 +165,16 @@ fn main() {
             an_owner_stop_is_judged_even_after_the_run_cleaned_up,
         ),
         (
-            "our_same_name_leftover_is_removed_by_the_checked_id",
-            our_same_name_leftover_is_removed_by_the_checked_id,
+            "our_same_name_leftover_is_never_force_removed_before_create",
+            our_same_name_leftover_is_never_force_removed_before_create,
         ),
         (
             "a_kill_that_answers_failure_after_killing_is_still_an_owner_stop",
             a_kill_that_answers_failure_after_killing_is_still_an_owner_stop,
+        ),
+        (
+            "a_kill_that_answers_failure_then_takes_effect_is_still_an_owner_stop",
+            a_kill_that_answers_failure_then_takes_effect_is_still_an_owner_stop,
         ),
     ];
     let mut failed = 0;
@@ -248,6 +252,17 @@ fn fake_runtime(state: &Path) -> i32 {
             std::thread::sleep(Duration::from_millis(20));
         }
         return 0;
+    }
+    // "kill-fails-then-dies" — kill 이 실패로 답하고, 작업은 **조금 뒤에**(0.5초) 137 로 끝난다(SIGKILL 이 진행 중 · 결함 529).
+    if command == "kill" && fails("kill-fails-then-dies") {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            + 500;
+        std::fs::write(state.join("die-at"), at.to_string()).unwrap();
+        eprintln!("fake: kill 후처리 실패를 흉내낸다(작업은 곧 끝난다)");
+        return 125;
     }
     // "kill-fails-after-kill" — kill 이 실제로 작업을 끝내고(137) 실패로 답한다(후처리 실패 흉내 · 결함 527).
     if command == "kill" && fails("kill-fails-after-kill") {
@@ -410,6 +425,15 @@ fn fake_runtime(state: &Path) -> i32 {
 fn finished(state: &Path, behaviour: &str) -> Option<(i64, bool)> {
     if state.join("killed").exists() {
         return Some((137, false));
+    }
+    if let Ok(at) = std::fs::read_to_string(state.join("die-at")) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        if now >= at.trim().parse::<u128>().unwrap() {
+            return Some((137, false));
+        }
     }
     if state.join("natural-exit").exists() {
         return Some((0, false));
@@ -1221,7 +1245,8 @@ fn an_unconfirmed_stop_never_removes_the_container() {
 
 /// 2026-09-27 보수 규칙(코덱스 지적) — 만들기 전에 같은 이름의 남은 컨테이너를 지우지 못하면 **만들지 않는다**(전에는 결과를 버렸다).
 fn an_unremovable_same_name_container_blocks_create() {
-    let f = fixture(Some("rm"));
+    // 결함 530 뒤로 만들기 전에는 지우지 않는다 — 같은 이름이 남아 있으면(이 Agent 의 것이어도) 만들지 않고 남긴다.
+    let f = fixture(None);
     std::fs::write(
         f.state.join("leftovers"),
         format!("gputeer-test\n{LEFTOVER_ID}\n"),
@@ -1234,12 +1259,12 @@ fn an_unremovable_same_name_container_blocks_create() {
         None,
         |_| {},
     )
-    .expect_err("남은 것을 못 지웠는데 만들었다");
+    .expect_err("같은 이름이 남아 있는데 만들었다");
     assert!(
         matches!(
             &error,
             ContainerRunError::NotStarted {
-                container: ContainerLeft::Unknown,
+                container: ContainerLeft::Kept,
                 ..
             }
         ),
@@ -1247,7 +1272,9 @@ fn an_unremovable_same_name_container_blocks_create() {
     );
     assert!(error.needs_human());
     assert!(
-        !call_order(&f.state).iter().any(|c| c == "create"),
+        !call_order(&f.state)
+            .iter()
+            .any(|c| c == "create" || c == "rm"),
         "{}",
         calls(&f.state)
     );
@@ -1618,33 +1645,19 @@ fn everything_after_create_uses_the_container_id() {
 
 /// 결함 516 (재검수 131) — rm 이 "No such container" 로 실패해도 조회로 확인하기 전에는 없다고 보지 않는다(낡은 오류면 남은 컨테이너를 놓친다).
 fn a_stale_no_such_container_from_rm_is_checked() {
+    // 실행 뒤 지우기 — rm 이 "No such container" 로 실패해도(낡은 오류) 조회가 "있다" 고 하면 지웠다고 보지 않는다.
     let f = fixture(Some("rm-stale-nosuch"));
-    // 같은 이름의 남은 컨테이너가 실제로 있다.
-    std::fs::write(
-        f.state.join("leftovers"),
-        format!("gputeer-test\n{LEFTOVER_ID}\n"),
-    )
-    .unwrap();
-    let error = container::run(
+    let exit = container::run(
         &execution(),
         &input(&mounts(&f.work), "exit-0", &[]),
-        None,
-        None,
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
         |_| {},
     )
-    .expect_err("남은 것이 있는데 만들었다");
-    assert!(
-        matches!(
-            &error,
-            ContainerRunError::NotStarted {
-                container: ContainerLeft::Unknown,
-                ..
-            }
-        ),
-        "{error:?}"
-    );
-    assert!(error.needs_human());
-    assert!(!call_order(&f.state).iter().any(|c| c == "create"));
+    .expect("종료는 봤다");
+    assert_eq!(exit.exit_code, 0);
+    assert_eq!(exit.container, ContainerLeft::Unknown, "{exit:?}");
+    assert!(exit.needs_human());
 }
 
 /// 결함 519 (재검수 132) — create 가 실패하거나 돌려준 ID 를 이 시도의 컨테이너로 확인하지 못하면 **아무것도 지우지 않고** 사람에게 넘긴다
@@ -1774,38 +1787,34 @@ fn an_owner_stop_is_judged_even_after_the_run_cleaned_up() {
     assert_eq!(exit.container, ContainerLeft::Removed);
 }
 
-/// 결함 526 (재검수 134) — 만들기 전 같은 이름 정리는 owner 를 확인한 **그 ID** 로 지운다(이름으로 다시 지우지 않는다).
-fn our_same_name_leftover_is_removed_by_the_checked_id() {
+/// 결함 530 (재검수 135) — 만들기 직전 같은 이름 · **같은 owner** 컨테이너를 찾아도 자동으로 지우지 않는다(멈춤 · 로그를 확인하지 않은 강제 삭제가
+/// 된다). 만들지 않고 사람에게 넘긴다 — 해제하면 다음 기동의 남은 컨테이너 정리가 멈춤 · 로그 건지기를 거쳐 치운다. (526 — 이름으로도 지우지 않는다.)
+fn our_same_name_leftover_is_never_force_removed_before_create() {
     let f = fixture(None);
     std::fs::write(
         f.state.join("leftovers"),
         format!("gputeer-test\n{LEFTOVER_ID}\n"),
     )
     .unwrap();
-    container::run(
+    let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "exit-0", &[]),
         None,
         None,
         |_| {},
     )
-    .expect("우리 것은 지우고 만든다");
-    let calls = calls(&f.state);
-    let before_create: Vec<&str> = calls
-        .lines()
-        .take_while(|l| !l.starts_with("create "))
-        .collect();
+    .expect_err("남은 것이 있는데 만들었다");
     assert!(
-        before_create
-            .iter()
-            .any(|l| *l == format!("rm -f -v {LEFTOVER_ID}")),
-        "확인한 ID 로 지우지 않았다:\n{calls}"
+        matches!(&error, ContainerRunError::NotStarted { container: ContainerLeft::Kept, detail } if detail.contains(LEFTOVER_ID)),
+        "{error:?}"
     );
+    assert!(error.needs_human());
+    let order = call_order(&f.state);
     assert!(
-        !before_create
+        !order
             .iter()
-            .any(|l| l.starts_with("rm ") && l.ends_with(" gputeer-test")),
-        "이름으로 지웠다:\n{calls}"
+            .any(|c| c == "rm" || c == "kill" || c == "create"),
+        "{order:?}"
     );
 }
 
@@ -1831,6 +1840,32 @@ fn a_kill_that_answers_failure_after_killing_is_still_an_owner_stop() {
     stopper
         .stop()
         .expect("kill 이 실패로 답했어도 137 로 멈췄으면 소유자 정지다");
+    let exit = runner.join().unwrap().expect("종료 관측");
+    assert_eq!(exit.exit_code, 137);
+}
+
+/// 결함 529 (재검수 135) — kill 이 실패로 답했고 첫 조회에서 아직 돌아도 곧바로 정지 실패라 하지 않는다 — SIGKILL 이 진행 중이면 곧 137 로 끝난다.
+fn a_kill_that_answers_failure_then_takes_effect_is_still_an_owner_stop() {
+    let f = fixture(Some("kill-fails-then-dies"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    stopper
+        .stop()
+        .expect("kill 이 실패로 답했어도 곧 137 로 멈췄으면 소유자 정지다");
     let exit = runner.join().unwrap().expect("종료 관측");
     assert_eq!(exit.exit_code, 137);
 }

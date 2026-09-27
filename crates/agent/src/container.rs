@@ -748,12 +748,7 @@ impl ContainerStopper {
             }
             match inspect_state(&self.program, &self.name) {
                 Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
-                // kill 이 실패로 답했고 아직 돈다 — 더 기다리지 않는다(정지 실패).
-                Ok(None) if !kill.status.success() => {
-                    return Err(format!(
-                        "kill 이 실패했고 컨테이너가 아직 돈다 — {kill_note}"
-                    ))
-                }
+                // ★ 결함 529 (재검수 135) — kill 이 실패로 답했어도 SIGKILL 이 진행 중일 수 있다 — 성공 응답과 같이 끝까지(10번) 본다.
                 Ok(None) => last = "아직 돈다".into(),
                 Err(why) => {
                     if let Some((code, oom)) = observed() {
@@ -1054,19 +1049,18 @@ fn run_inner(
     //   Agent 는 기동 때 남은 컨테이너를 로그를 건진 뒤 지우므로(결함 489) 여기서 남아 있는 것은 뜻밖이다.
     // ★ 결함 522 (재검수 133) — 이름은 시도 id 로만 만들어 노드 · owner 를 담지 않는다. 같은 이름이 있으면 **owner 라벨이 이 Agent 의 것일 때만**
     //   지운다. 다른 owner 이거나 확인하지 못하면 지우지 않고 사람에게 넘긴다(다른 Agent · 운영 절차의 컨테이너일 수 있다).
+    // ★ 결함 530 (재검수 135) — 이 Agent 의 것이어도 만들기 직전에는 **자동으로 지우지 않는다.** 기동 때 정리(멈춤 확인 → 로그 건지기 → 삭제)를 거치지 않은
+    //   강제 삭제가 되고, owner 일치는 "지워도 된다" 의 증거가 아니다(기동 때 목록이 일시적으로 비었다면 이전 실행이 아직 돌 수 있다). 남겨 두고 사람에게
+    //   넘긴다 — 해제하면 다음 기동의 남은 컨테이너 정리가 멈춤 · 로그 건지기를 거쳐 치운다.
     match inspect_owner(program, input.name) {
         Ok(None) => {}
         Ok(Some((id, owner))) if owner == execution.runtime.owner => {
-            // ★ 결함 526 — 확인한 **그 ID** 로 지운다.
-            let (left, removed) = remove_container_fact(program, &id);
-            if left != ContainerLeft::Removed {
-                return Err(ContainerRunError::NotStarted {
-                    detail: format!(
-                        "같은 이름의 남은 컨테이너(이 Agent 의 것)를 지우지 못했다 — 만들지 않았다 · {removed}"
-                    ),
-                    container: left,
-                });
-            }
+            return Err(ContainerRunError::NotStarted {
+                detail: format!(
+                    "이 Agent 의 같은 이름 컨테이너(ID {id})가 남아 있다 — 만들기 직전에는 자동으로 지우지 않는다(멈춤 · 로그를 확인하지 않은 삭제가 된다) · 사람이 확인한 뒤 해제하면 다음 기동의 남은 컨테이너 정리가 치운다"
+                ),
+                container: ContainerLeft::Kept,
+            })
         }
         Ok(Some((id, owner))) => {
             return Err(ContainerRunError::NotStarted {
