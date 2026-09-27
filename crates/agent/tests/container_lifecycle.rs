@@ -136,6 +136,10 @@ fn main() {
             "an_rm_that_leaves_the_container_is_not_a_removal",
             an_rm_that_leaves_the_container_is_not_a_removal,
         ),
+        (
+            "the_owner_stop_is_not_reported_until_the_container_stopped",
+            the_owner_stop_is_not_reported_until_the_container_stopped,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -1415,4 +1419,32 @@ fn execute_hands_the_needs_human_verdict_to_the_caller() {
     )
     .expect_err("남은 것을 못 지웠는데 만들었다");
     assert!(error.workload_may_be_alive(), "{error:?}");
+}
+
+/// 결함 506 (재검수 127) — 소유자 화면의 정지도 `kill` 의 0 만으로 "멈췄다" 고 답하지 않는다. 멈춤을 확인하지 못하면 실패로 돌려준다(패널이
+/// `owner_stopped` 를 적지 않게 — 계속 돈 작업이 나중에 끝나도 INTERRUPTED 로 바뀌어 재배치되지 않게).
+fn the_owner_stop_is_not_reported_until_the_container_stopped() {
+    let f = fixture(Some("kill-noop"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    let error = stopper.stop().expect_err("멈추지 않았는데 멈췄다고 했다");
+    assert!(error.starts_with("KILL_UNCONFIRMED"), "{error}");
+    // 이제 실제로 멈춘다(가짜 런타임 안에서) — 실행이 종료를 본다.
+    std::fs::write(f.state.join("killed"), "").unwrap();
+    let exit = runner.join().unwrap().expect("멈춘 뒤 종료 관측");
+    assert_eq!(exit.exit_code, 137);
 }

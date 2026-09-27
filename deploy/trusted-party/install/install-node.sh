@@ -196,8 +196,8 @@ if [ "$PHASE" = root ]; then
     if [ -z "${GPUTEER_TEST_ETC_PREFIX:-}" ]; then
         for path in "$SELF_REAL" "$UNIT_SOURCE"; do
             root_owned_chain "$path" || die "INSTALLER_NOT_ROOT_OWNED: $path (또는 그 상위 폴더)가 root 소유가 아니거나 다른 계정이 쓸 수 있다.
-  --register 는 root 소유 사본에서 부른다: sudo install -d -m 0755 /usr/local/share/gputeer && sudo cp -r deploy/trusted-party /usr/local/share/gputeer/
-  그리고 sudo sh /usr/local/share/gputeer/trusted-party/install/install-node.sh <같은 인자> --register"
+  --register 는 root 가 직접 받아 커밋 id 를 대조한 root 소유 사본에서 부른다(사용자 체크아웃을 복사하지 않는다 · 결함 507).
+  절차는 런북 docs/runbooks/신뢰망_설치_운영.md 의 --register 절"
         done
     fi
     mkdir -p "$ETC/gputeer"

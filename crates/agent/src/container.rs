@@ -384,23 +384,32 @@ pub fn stop_and_confirm(program: &Path, name: &str) -> Result<(), String> {
         Ok(output) => format!("kill 실패({}): {}", output.status, output.stderr.trim()),
         Err(why) => format!("kill 실패: {why}"),
     };
+    confirm_stopped(program, name).map_err(|why| format!("{kill} · {why}"))
+}
+
+/// kill 을 보낸 뒤 **멈췄는지 확인**한다 — `inspect_running` 이 "돌지 않는다"(또는 "없다")고 할 때까지 몇 번 다시 본다.
+///
+/// ★ 결함 508 (재검수 127) — 런타임이 답하지 않으면(시한 초과 · 오류) 더 물어도 시한만 쌓인다 — 곧바로 "모른다" 로 끝낸다. 전에는 매번 120초 시한으로
+///   열 번까지 물어 멈춤 확인 하나가 약 24분 걸릴 수 있었다.
+fn confirm_stopped(program: &Path, name: &str) -> Result<(), String> {
     let mut last = String::new();
     for attempt in 0..STOP_CONFIRM_TRIES {
         match inspect_running(program, name) {
             Ok(false) => return Ok(()),
             Ok(true) => last = "아직 돈다".into(),
-            Err(why) => last = format!("상태를 모른다({why})"),
+            Err(why) => return Err(format!("상태를 모른다({why})")),
         }
         if attempt + 1 < STOP_CONFIRM_TRIES {
             std::thread::sleep(STOP_CONFIRM_INTERVAL);
         }
     }
-    Err(format!("{kill} · {last}"))
+    Err(last)
 }
 
-/// kill 뒤 멈춤을 몇 번 · 얼마 간격으로 확인할지(결함 502).
+/// kill 뒤 멈춤을 몇 번 · 얼마 간격으로 확인할지(결함 502), 확인 조회 한 번의 시한(결함 508 — 상태 조회는 가볍다).
 const STOP_CONFIRM_TRIES: u32 = 10;
 const STOP_CONFIRM_INTERVAL: Duration = Duration::from_millis(200);
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 런타임이 "그런 컨테이너 없다" 고 답했는가(docker · podman 공통 문구).
 fn says_no_such_container(why: &str) -> bool {
@@ -417,7 +426,7 @@ fn inspect_running(program: &Path, name: &str) -> Result<bool, String> {
             "--format={{.State.Running}}".into(),
             name.into(),
         ],
-        SHORT_TIMEOUT,
+        CONFIRM_TIMEOUT,
     ) {
         Ok(output) => match output.stdout.trim() {
             "true" => Ok(true),
@@ -708,8 +717,12 @@ impl ContainerStopper {
             &["kill".into(), self.name.clone().into()],
             SHORT_TIMEOUT,
         )?;
+        // ★ 결함 506 (재검수 127) — kill 의 0 은 접수일 뿐이다. 멈춤을 `inspect` 로 확인해야 소유자에게 "멈췄다" 고 답한다(전에는 곧바로 성공이라
+        //   패널이 `owner_stopped` 를 적고, 계속 돈 작업이 나중에 정상 종료해도 INTERRUPTED 로 보고돼 재배치될 수 있었다).
         if kill.status.success() {
-            return Ok(());
+            return confirm_stopped(&self.program, &self.name).map_err(|why| {
+                format!("KILL_UNCONFIRMED: kill 을 접수했지만 멈춤을 확인하지 못했다 — {why}")
+            });
         }
         match inspect_running(&self.program, &self.name) {
             Ok(false) => Err(format!(
