@@ -24,6 +24,11 @@ const STATE_ENV: &str = "GPUTEER_FAKE_RUNTIME_STATE";
 const FAIL_ENV: &str = "GPUTEER_FAKE_RUNTIME_FAIL";
 
 fn main() {
+    // 파이프를 물려받아 쥐고 있는 보조 프로세스 흉내(결함 545) — 주어진 초만큼 자고 끝난다.
+    if let Ok(secs) = std::env::var("GPUTEER_FAKE_SLEEP_SECS") {
+        std::thread::sleep(Duration::from_secs(secs.parse().unwrap()));
+        return;
+    }
     if let Ok(state) = std::env::var(STATE_ENV) {
         std::process::exit(fake_runtime(Path::new(&state)));
     }
@@ -188,6 +193,14 @@ fn main() {
             "a_start_that_could_not_be_sent_did_not_start",
             a_start_that_could_not_be_sent_did_not_start,
         ),
+        (
+            "a_create_that_could_not_be_sent_leaves_nothing_for_a_human",
+            a_create_that_could_not_be_sent_leaves_nothing_for_a_human,
+        ),
+        (
+            "a_pipe_held_open_after_exit_does_not_hang_the_owner_stop",
+            a_pipe_held_open_after_exit_does_not_hang_the_owner_stop,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -253,6 +266,15 @@ fn fake_runtime(state: &Path) -> i32 {
         return 0;
     }
     if command == "kill" && fails("kill-noop") {
+        return 0;
+    }
+    // "kill-leaves-pipe-holder" — kill 이 작업을 끝내고(137) 곧 0 으로 끝나지만, stdout · stderr 를 물려받은 보조 프로세스(60초)를 남긴다(결함 545).
+    if command == "kill" && fails("kill-leaves-pipe-holder") {
+        std::fs::write(state.join("killed"), "").unwrap();
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .env("GPUTEER_FAKE_SLEEP_SECS", "60")
+            .spawn()
+            .unwrap();
         return 0;
     }
     // "kill-waits-for-rm" — kill 이 작업을 끝내고(137), 실행 쪽이 종료를 보고 컨테이너를 지울 때까지 기다렸다가 0 으로 답한다(결함 525 — 정지
@@ -346,6 +368,16 @@ fn fake_runtime(state: &Path) -> i32 {
         "inspect" => {
             if !exists {
                 eprintln!("Error: No such container: {target}");
+                // "vanish-before-create" — 만들기 전 owner 조회에 "없다" 로 답한 뒤 런타임 사본의 이름을 바꿔 create 를 띄울 수 없게 한다(결함 546).
+                if owner_only && fails("vanish-before-create") {
+                    let me = std::env::current_exe().unwrap();
+                    if me
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("runtime-copy"))
+                    {
+                        std::fs::rename(&me, me.with_extension("gone")).unwrap();
+                    }
+                }
                 return 1;
             }
             if owner_only {
@@ -1982,4 +2014,61 @@ fn a_start_that_could_not_be_sent_did_not_start() {
         "{}",
         calls(&f.state)
     );
+}
+
+/// 결함 546 (재검수 142) — create 를 **띄우지 못했으면** 요청이 런타임에 닿지 않았다 — 컨테이너는 없다(`Removed` · 사람 불필요 · 표식 없음).
+fn a_create_that_could_not_be_sent_leaves_nothing_for_a_human() {
+    // 가짜 런타임은 만들기 전 owner 조회에 "없다" 로 답한 뒤 자기 사본의 이름을 바꾼다 — 이어지는 create 는 띄워지지 않는다.
+    let f = fixture(Some("vanish-before-create"));
+    let runtime_copy = f.work.join("runtime-copy.exe");
+    std::fs::copy(std::env::current_exe().unwrap(), &runtime_copy).unwrap();
+    let mut execution = execution();
+    execution.runtime.program = runtime_copy.clone();
+    let error = container::run(
+        &execution,
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect_err("create 를 띄우지 못했는데 성공했다");
+    assert!(
+        matches!(&error, ContainerRunError::NotStarted { container: ContainerLeft::Removed, detail } if detail.contains("create 를 띄우지 못했다")),
+        "{error:?}"
+    );
+    assert!(
+        !error.needs_human(),
+        "만들지 않은 컨테이너를 사람에게 넘겼다"
+    );
+}
+
+/// 결함 545 (재검수 142) — kill 은 끝났지만 파이프를 물려받은 보조 프로세스가 남아 EOF 가 오지 않아도, 소유자 정지는 시한(15초 + 여유) 안에 판정을
+/// 마친다(전에는 보조 프로세스가 끝날 때까지 — 여기서는 60초 — 멈췄다).
+fn a_pipe_held_open_after_exit_does_not_hang_the_owner_stop() {
+    let f = fixture(Some("kill-leaves-pipe-holder"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    let started = Instant::now();
+    stopper.stop().expect("137 로 멈췄으면 소유자 정지다");
+    assert!(
+        started.elapsed() < Duration::from_secs(40),
+        "파이프가 닫히기를 시한 없이 기다렸다({:?})",
+        started.elapsed()
+    );
+    let exit = runner.join().unwrap().expect("종료 관측");
+    assert_eq!(exit.exit_code, 137);
 }

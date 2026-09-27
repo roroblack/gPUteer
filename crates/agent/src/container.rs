@@ -658,18 +658,10 @@ fn run_cli_detailed(
             CliFailure::NotSpawned(format!("{program:?} 를 띄우지 못했다: {error}"))
         })?;
     // 파이프가 차서 CLI 가 멈추지 않게 따로 빨아낸다.
-    let mut stdout_pipe = child.stdout.take().expect("piped");
-    let mut stderr_pipe = child.stderr.take().expect("piped");
-    let stdout_reader = std::thread::spawn(move || {
-        let mut buffer = String::new();
-        let _ = stdout_pipe.read_to_string(&mut buffer);
-        buffer
-    });
-    let stderr_reader = std::thread::spawn(move || {
-        let mut buffer = String::new();
-        let _ = stderr_pipe.read_to_string(&mut buffer);
-        buffer
-    });
+    // ★ 결함 545 (재검수 142) — 읽은 것은 채널로 넘기고(끝난 뒤에도 시한 안에서만 기다린다) 앞 `MAX_CLI_OUTPUT_BYTES` 까지만 담는다(나머지는 버리며
+    //   계속 빨아내 자식이 막히지 않게). 전에는 `join()` 에 시한이 없어, 파이프를 물려받은 보조 프로세스가 남으면 EOF 가 오지 않아 영원히 멈췄다.
+    let stdout_rx = drain_pipe(child.stdout.take().expect("piped"));
+    let stderr_rx = drain_pipe(child.stderr.take().expect("piped"));
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -691,11 +683,50 @@ fn run_cli_detailed(
         }
         std::thread::sleep(Duration::from_millis(50));
     };
+    let deadline = started + timeout;
+    let collect = |rx: std::sync::mpsc::Receiver<String>, which: &str| {
+        let left = deadline
+            .saturating_duration_since(Instant::now())
+            .max(PIPE_CLOSE_GRACE);
+        rx.recv_timeout(left).map_err(|_| {
+            CliFailure::AfterSpawn(format!(
+                "{program:?} {:?} 는 끝났지만 {which} 파이프가 시한 안에 닫히지 않았다 — 파이프를 물려받은 프로세스가 남았을 수 있다",
+                args.first()
+            ))
+        })
+    };
+    let stdout = collect(stdout_rx, "stdout")?;
+    let stderr = collect(stderr_rx, "stderr")?;
     Ok(CliOutput {
         status,
-        stdout: stdout_reader.join().unwrap_or_default(),
-        stderr: stderr_reader.join().unwrap_or_default(),
+        stdout,
+        stderr,
     })
+}
+
+/// 런타임 CLI 출력 하나에서 담는 상한(결함 545 — 넘는 것은 버린다).
+const MAX_CLI_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+/// 자식이 끝난 뒤 파이프가 닫히기를 기다리는 최소 여유(시한이 이미 지났어도).
+const PIPE_CLOSE_GRACE: Duration = Duration::from_secs(2);
+
+/// 파이프를 끝까지 빨아내고, 앞 `MAX_CLI_OUTPUT_BYTES` 를 문자열로 채널에 넘긴다(EOF 때 한 번).
+fn drain_pipe(mut pipe: impl Read + Send + 'static) -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let room = MAX_CLI_OUTPUT_BYTES.saturating_sub(kept.len());
+                    kept.extend_from_slice(&chunk[..n.min(room)]);
+                }
+            }
+        }
+        let _ = tx.send(String::from_utf8_lossy(&kept).into_owned());
+    });
+    rx
 }
 
 fn cli_ok(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOutput, String> {
@@ -1118,7 +1149,27 @@ fn run_inner(
             })
         }
     }
-    let created = match cli_ok(program, &create, CREATE_TIMEOUT) {
+    let created = match run_cli_detailed(program, &create, CREATE_TIMEOUT) {
+        Ok(output) if output.status.success() => Ok(output),
+        // ★ 결함 546 (재검수 142) — create 를 **띄우지 못했으면** 요청이 런타임에 닿지 않았다 — 이 시도의 컨테이너는 없다(`Removed`). 뒤이은 조회도
+        //   실행 파일이 없어 실패할 것이라 조회하지 않는다(조회 실패를 "모름" 으로 굳혀 표식을 남기지 않게).
+        Err(CliFailure::NotSpawned(why)) => {
+            return Err(ContainerRunError::NotStarted {
+                detail: format!(
+                    "create 를 띄우지 못했다({why}) — 요청이 런타임에 닿지 않아 컨테이너를 만들지 않았다"
+                ),
+                container: ContainerLeft::Removed,
+            })
+        }
+        Ok(output) => Err(format!(
+            "{:?} 실패({}): {}",
+            create.first(),
+            output.status,
+            output.stderr.trim()
+        )),
+        Err(CliFailure::AfterSpawn(why)) => Err(why),
+    };
+    let created = match created {
         Ok(output) => output,
         Err(why) => {
             // ★ 결함 519 (재검수 132) — **이름으로 지우지 않는다.** 사전 정리 뒤 다른 절차가 같은 이름으로 만든 컨테이너 때문에 실패했을 수 있다
