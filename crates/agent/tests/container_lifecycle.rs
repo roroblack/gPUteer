@@ -164,6 +164,14 @@ fn main() {
             "an_owner_stop_is_judged_even_after_the_run_cleaned_up",
             an_owner_stop_is_judged_even_after_the_run_cleaned_up,
         ),
+        (
+            "our_same_name_leftover_is_removed_by_the_checked_id",
+            our_same_name_leftover_is_removed_by_the_checked_id,
+        ),
+        (
+            "a_kill_that_answers_failure_after_killing_is_still_an_owner_stop",
+            a_kill_that_answers_failure_after_killing_is_still_an_owner_stop,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -193,6 +201,10 @@ fn main() {
 /// 가짜 런타임이 create 에서 돌려주는 컨테이너 ID(docker · podman 처럼 16진수 64자).
 const FAKE_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+/// 이름으로 남아 있는 컨테이너(`leftovers` 의 `gputeer-…`)의 ID — owner 조회가 이 ID 를 돌려주고, 확인한 뒤 이 ID 로 지운다(결함 526).
+/// 시험은 그 이름과 이 ID 를 **둘 다** `leftovers` 에 적는다(가짜 런타임은 이름 · ID 를 따로 셈한다).
+const LEFTOVER_ID: &str = "feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface";
+
 fn fake_runtime(state: &Path) -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("");
@@ -211,14 +223,11 @@ fn fake_runtime(state: &Path) -> i32 {
     // "inspect-exit" — 종료 상태를 읽는 inspect 만 실패시킨다(멈춤 · 존재 확인용 `{{.State.Running}}` 은 통과 · 결함 502 · 503 시험).
     let running_only = args.get(1).map(String::as_str) == Some("--format={{.State.Running}}");
     // `{{.Name}}` — create 가 돌려준 ID 가 이 시도의 컨테이너인지 대조하는 조회(결함 519). inspect 실패 토큰은 이것을 건드리지 않는다.
-    let name_only = args.get(1).map(String::as_str) == Some("--format={{.Name}}")
-        // owner 라벨 조회(결함 522)도 같은 대조용 조회다.
-        || args
-            .get(1)
-            .is_some_and(|a| a.starts_with("--format={{index .Config.Labels"));
     let owner_only = args
         .get(1)
-        .is_some_and(|a| a.starts_with("--format={{index .Config.Labels"));
+        .is_some_and(|a| a.starts_with("--format={{.Id}} {{index .Config.Labels"));
+    // owner 조회(결함 522 · 526)도 같은 대조용 조회다.
+    let name_only = args.get(1).map(String::as_str) == Some("--format={{.Name}}") || owner_only;
     let inspect_exit_fails =
         command == "inspect" && !running_only && !name_only && fails("inspect-exit");
     // "start-noop" — start 가 0 으로 답하지만 아무것도 띄우지 않는다(결함 501). "kill-noop" — kill 이 0 이지만 멈추지 않는다(결함 502).
@@ -239,6 +248,12 @@ fn fake_runtime(state: &Path) -> i32 {
             std::thread::sleep(Duration::from_millis(20));
         }
         return 0;
+    }
+    // "kill-fails-after-kill" — kill 이 실제로 작업을 끝내고(137) 실패로 답한다(후처리 실패 흉내 · 결함 527).
+    if command == "kill" && fails("kill-fails-after-kill") {
+        std::fs::write(state.join("killed"), "").unwrap();
+        eprintln!("fake: kill 후처리 실패를 흉내낸다");
+        return 125;
     }
     // "kill-noop-exit0" — kill 은 0 이지만 무동작이고, 그 사이 작업이 스스로 코드 0 으로 끝난다(결함 520).
     if command == "kill" && fails("kill-noop-exit0") {
@@ -301,7 +316,8 @@ fn fake_runtime(state: &Path) -> i32 {
                 return 1;
             }
             if owner_only {
-                // 남은 컨테이너(leftovers)의 owner 는 이 Agent 의 것 — "leftover-foreign" 이면 다른 owner(결함 522).
+                // 남은 컨테이너(leftovers)의 owner 는 이 Agent 의 것 — "leftover-foreign" 이면 다른 owner(결함 522). ID 를 함께 찍는다(526).
+                let id = if is_leftover { LEFTOVER_ID } else { FAKE_ID };
                 let owner = if is_leftover {
                     if fails("leftover-foreign") {
                         "someone-else".to_string()
@@ -315,7 +331,7 @@ fn fake_runtime(state: &Path) -> i32 {
                         .find_map(|l| l.strip_prefix("--label=gputeer.owner=").map(str::to_string))
                         .unwrap_or_default()
                 };
-                println!("{owner}");
+                println!("{id} {owner}");
                 return 0;
             }
             if name_only {
@@ -1206,7 +1222,11 @@ fn an_unconfirmed_stop_never_removes_the_container() {
 /// 2026-09-27 보수 규칙(코덱스 지적) — 만들기 전에 같은 이름의 남은 컨테이너를 지우지 못하면 **만들지 않는다**(전에는 결과를 버렸다).
 fn an_unremovable_same_name_container_blocks_create() {
     let f = fixture(Some("rm"));
-    std::fs::write(f.state.join("leftovers"), "gputeer-test\n").unwrap();
+    std::fs::write(
+        f.state.join("leftovers"),
+        format!("gputeer-test\n{LEFTOVER_ID}\n"),
+    )
+    .unwrap();
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "exit-0", &[]),
@@ -1512,7 +1532,10 @@ fn execute_hands_the_needs_human_verdict_to_the_caller() {
     // 실행기는 시도 id 에서 이름을 만든다 — 그 이름의 컨테이너가 실제로 남아 있다.
     std::fs::write(
         f.state.join("leftovers"),
-        format!("{}\n", container::derive_container_name("attempt")),
+        format!(
+            "{}\n{LEFTOVER_ID}\n",
+            container::derive_container_name("attempt")
+        ),
     )
     .unwrap();
     let error = gputeer_agent::exec::execute(
@@ -1597,7 +1620,11 @@ fn everything_after_create_uses_the_container_id() {
 fn a_stale_no_such_container_from_rm_is_checked() {
     let f = fixture(Some("rm-stale-nosuch"));
     // 같은 이름의 남은 컨테이너가 실제로 있다.
-    std::fs::write(f.state.join("leftovers"), "gputeer-test\n").unwrap();
+    std::fs::write(
+        f.state.join("leftovers"),
+        format!("gputeer-test\n{LEFTOVER_ID}\n"),
+    )
+    .unwrap();
     let error = container::run(
         &execution(),
         &input(&mounts(&f.work), "exit-0", &[]),
@@ -1745,4 +1772,65 @@ fn an_owner_stop_is_judged_even_after_the_run_cleaned_up() {
     let exit = runner.join().unwrap().expect("종료 관측");
     assert_eq!(exit.exit_code, 137);
     assert_eq!(exit.container, ContainerLeft::Removed);
+}
+
+/// 결함 526 (재검수 134) — 만들기 전 같은 이름 정리는 owner 를 확인한 **그 ID** 로 지운다(이름으로 다시 지우지 않는다).
+fn our_same_name_leftover_is_removed_by_the_checked_id() {
+    let f = fixture(None);
+    std::fs::write(
+        f.state.join("leftovers"),
+        format!("gputeer-test\n{LEFTOVER_ID}\n"),
+    )
+    .unwrap();
+    container::run(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| {},
+    )
+    .expect("우리 것은 지우고 만든다");
+    let calls = calls(&f.state);
+    let before_create: Vec<&str> = calls
+        .lines()
+        .take_while(|l| !l.starts_with("create "))
+        .collect();
+    assert!(
+        before_create
+            .iter()
+            .any(|l| *l == format!("rm -f -v {LEFTOVER_ID}")),
+        "확인한 ID 로 지우지 않았다:\n{calls}"
+    );
+    assert!(
+        !before_create
+            .iter()
+            .any(|l| l.starts_with("rm ") && l.ends_with(" gputeer-test")),
+        "이름으로 지웠다:\n{calls}"
+    );
+}
+
+/// 결함 527 (재검수 134) — kill 이 실제로 끝냈는데 **실패로 답해도**, 멈춘 원인(137)을 보고 소유자 정지로 판정한다(실패 응답은 죽이지 않았다는 증거가 아니다).
+fn a_kill_that_answers_failure_after_killing_is_still_an_owner_stop() {
+    let f = fixture(Some("kill-fails-after-kill"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            container::run(
+                &execution(),
+                &input(&mounts(&work), "sleep", &[]),
+                None,
+                None,
+                move |stopper| {
+                    tx.send(stopper).unwrap();
+                },
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    stopper
+        .stop()
+        .expect("kill 이 실패로 답했어도 137 로 멈췄으면 소유자 정지다");
+    let exit = runner.join().unwrap().expect("종료 관측");
+    assert_eq!(exit.exit_code, 137);
 }

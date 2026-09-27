@@ -722,60 +722,55 @@ impl ContainerStopper {
         )?;
         // ★ 결함 506 (재검수 127) — kill 의 0 은 접수일 뿐이다. 멈춤을 `inspect` 로 확인해야 소유자에게 "멈췄다" 고 답한다(전에는 곧바로 성공이라
         //   패널이 `owner_stopped` 를 적고, 계속 돈 작업이 나중에 정상 종료해도 INTERRUPTED 로 보고돼 재배치될 수 있었다).
-        if kill.status.success() {
-            // ★ 결함 506 · 520 (재검수 127 · 132) — 멈췄는지, 그리고 **이 정지가 원인**인지(SIGKILL 의 종료 코드 137 · OOM 아님)를 본다. kill 이
-            //   무동작인 사이 작업이 스스로 끝났으면 소유자 정지가 아니다(성공이라 하면 코드 0 이 INTERRUPTED 로 바뀌어 재실행된다).
-            //   ★ 결함 525 — 실행 쪽이 종료를 보고 이미 컨테이너를 지웠으면 조회가 "없다" 다. 그때는 실행 쪽이 지우기 전에 적어 둔 관측으로 판정한다.
-            //   ★ 남는 것 — 작업이 바로 그때 스스로 137 로 끝나면 가르지 못한다.
-            let judge = |code: i64, oom: bool| {
-                if code == 137 && !oom {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "ALREADY_EXITED: 멈췄지만 이 정지가 원인이 아니다 — 작업이 스스로 끝났다(종료 코드 {code} · OOM {oom})"
+        // ★ 결함 506 · 520 · 525 · 527 — kill 의 응답(성공 · 실패)과 상관없이 **멈췄는지와 이 정지가 원인인지**(SIGKILL 의 종료 코드 137 · OOM 아님)를
+        //   본다. 성공 응답은 접수일 뿐이고(506), 실패 응답도 죽이지 않았다는 증거가 아니다(527 — start 에 적용한 490 과 같은 규칙). 실행 쪽이 이미
+        //   종료를 보고 지웠으면 그때 나눈 관측으로 판정한다(525). 스스로 끝났으면(137 이 아님) `ALREADY_EXITED` — 소유자 정지로 적지 않는다(520 · 277).
+        //   ★ 남는 것 — 작업이 바로 그때 스스로 137 로 끝나면 가르지 못한다.
+        let kill_note = if kill.status.success() {
+            "kill 접수".to_string()
+        } else {
+            format!("kill 실패 응답({}): {}", kill.status, kill.stderr.trim())
+        };
+        let judge = |code: i64, oom: bool| {
+            if code == 137 && !oom {
+                Ok(())
+            } else {
+                Err(format!(
+                    "ALREADY_EXITED: 멈췄지만 이 정지가 원인이 아니다 — 작업이 스스로 끝났다(종료 코드 {code} · OOM {oom} · {kill_note})"
+                ))
+            }
+        };
+        let observed = || *self.observed_exit.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last = String::new();
+        for attempt in 0..STOP_CONFIRM_TRIES {
+            if let Some((code, oom)) = observed() {
+                return judge(code, oom);
+            }
+            match inspect_state(&self.program, &self.name) {
+                Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
+                // kill 이 실패로 답했고 아직 돈다 — 더 기다리지 않는다(정지 실패).
+                Ok(None) if !kill.status.success() => {
+                    return Err(format!(
+                        "kill 이 실패했고 컨테이너가 아직 돈다 — {kill_note}"
                     ))
                 }
-            };
-            let observed = || *self.observed_exit.lock().unwrap_or_else(|e| e.into_inner());
-            let mut last = String::new();
-            for attempt in 0..STOP_CONFIRM_TRIES {
-                if let Some((code, oom)) = observed() {
-                    return judge(code, oom);
-                }
-                match inspect_state(&self.program, &self.name) {
-                    Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
-                    Ok(None) => last = "아직 돈다".into(),
-                    Err(why) => {
-                        if let Some((code, oom)) = observed() {
-                            return judge(code, oom);
-                        }
-                        return Err(format!(
-                            "KILL_UNCONFIRMED: kill 을 접수했지만 멈춤 · 원인(종료 코드)을 확인하지 못했다 — {why}"
-                        ));
+                Ok(None) => last = "아직 돈다".into(),
+                Err(why) => {
+                    if let Some((code, oom)) = observed() {
+                        return judge(code, oom);
                     }
-                }
-                if attempt + 1 < STOP_CONFIRM_TRIES {
-                    std::thread::sleep(STOP_CONFIRM_INTERVAL);
+                    return Err(format!(
+                        "KILL_UNCONFIRMED: 멈춤 · 원인(종료 코드)을 확인하지 못했다 — {kill_note} · {why}"
+                    ));
                 }
             }
-            return Err(format!(
-                "KILL_UNCONFIRMED: kill 을 접수했지만 멈춤을 확인하지 못했다 — {last}"
-            ));
+            if attempt + 1 < STOP_CONFIRM_TRIES {
+                std::thread::sleep(STOP_CONFIRM_INTERVAL);
+            }
         }
-        match inspect_running(&self.program, &self.name) {
-            Ok(false) => Err(format!(
-                "ALREADY_EXITED: 작업이 이미 끝나 있었다 — 이 정지가 종료 원인이 아니다({})",
-                kill.stderr.trim()
-            )),
-            Ok(true) => Err(format!(
-                "kill 이 실패했고 컨테이너가 아직 돈다: {}",
-                kill.stderr.trim()
-            )),
-            Err(why) => Err(format!(
-                "kill 이 실패했고({}) 상태도 확인하지 못했다: {why}",
-                kill.stderr.trim()
-            )),
-        }
+        Err(format!(
+            "KILL_UNCONFIRMED: kill 을 접수했지만 멈춤을 확인하지 못했다 — {kill_note} · {last}"
+        ))
     }
 }
 
@@ -839,7 +834,8 @@ pub fn cdi_all_ready(
 ///   실행 · 정지 · 로그 · 컨테이너를 각각 싣는다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerRunError {
-    /// 작업은 **돌지 않았다**(만들기 전 · 만들기 · 만든 뒤 확인 실패 · 런타임이 start 를 실패라고 답함). `container` 는 남은 객체의 상태다.
+    /// 작업은 **돌지 않았다**(만들기 전 · 만들기 · 만든 뒤 확인 실패 — start 를 부르기 전이다). `container` 는 남은 객체의 상태다.
+    /// ★ 결함 490 · 528 — start 의 실패(런타임이 실패라고 답함 · 무응답)는 여기로 오지 않는다. 작업이 돌았을 수 있어 `Unobserved` 다.
     NotStarted {
         detail: String,
         container: ContainerLeft,
@@ -962,23 +958,36 @@ fn remove_container_fact(program: &Path, name: &str) -> (ContainerLeft, String) 
 }
 
 /// 이 이름의 컨테이너의 owner 라벨 — 없으면 `Ok(None)`, 있는데 라벨이 없으면 `Ok(Some(""))`(결함 522).
-fn inspect_owner(program: &Path, name: &str) -> Result<Option<String>, String> {
+///
+/// ★ 결함 526 (재검수 134) — owner 와 함께 **컨테이너 ID** 를 한 번에 돌려준다. 확인한 뒤 지울 때 그 ID 로 지운다(이름으로 다시 지우면 그 사이 이름의 대상이
+///   바뀌었을 때 다른 것을 지운다).
+fn inspect_owner(program: &Path, name: &str) -> Result<Option<(String, String)>, String> {
     match cli_ok(
         program,
         &[
             "inspect".into(),
-            "--format={{index .Config.Labels \"gputeer.owner\"}}".into(),
+            "--format={{.Id}} {{index .Config.Labels \"gputeer.owner\"}}".into(),
             name.into(),
         ],
         CONFIRM_TIMEOUT,
     ) {
         Ok(output) => {
-            let owner = output.stdout.trim();
-            Ok(Some(if owner == "<no value>" {
-                String::new()
-            } else {
-                owner.to_string()
-            }))
+            let text = output.stdout.trim();
+            let (id, owner) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+            if !((12..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_hexdigit())) {
+                return Err(format!(
+                    "inspect 가 컨테이너 ID 를 돌려주지 않았다({text:?})"
+                ));
+            }
+            let owner = owner.trim();
+            Ok(Some((
+                id.to_string(),
+                if owner == "<no value>" {
+                    String::new()
+                } else {
+                    owner.to_string()
+                },
+            )))
         }
         Err(why) if says_no_such_container(&why) => Ok(None),
         Err(why) => Err(why),
@@ -1047,8 +1056,9 @@ fn run_inner(
     //   지운다. 다른 owner 이거나 확인하지 못하면 지우지 않고 사람에게 넘긴다(다른 Agent · 운영 절차의 컨테이너일 수 있다).
     match inspect_owner(program, input.name) {
         Ok(None) => {}
-        Ok(Some(owner)) if owner == execution.runtime.owner => {
-            let (left, removed) = remove_container_fact(program, input.name);
+        Ok(Some((id, owner))) if owner == execution.runtime.owner => {
+            // ★ 결함 526 — 확인한 **그 ID** 로 지운다.
+            let (left, removed) = remove_container_fact(program, &id);
             if left != ContainerLeft::Removed {
                 return Err(ContainerRunError::NotStarted {
                     detail: format!(
@@ -1058,10 +1068,10 @@ fn run_inner(
                 });
             }
         }
-        Ok(Some(owner)) => {
+        Ok(Some((id, owner))) => {
             return Err(ContainerRunError::NotStarted {
                 detail: format!(
-                    "같은 이름의 컨테이너가 이 Agent 의 것이 아니다(owner 라벨 {owner:?}) — 지우지도 만들지도 않았다(사람이 확인한다)"
+                    "같은 이름의 컨테이너(ID {id})가 이 Agent 의 것이 아니다(owner 라벨 {owner:?}) — 지우지도 만들지도 않았다(사람이 확인한다)"
                 ),
                 container: ContainerLeft::Unknown,
             })
