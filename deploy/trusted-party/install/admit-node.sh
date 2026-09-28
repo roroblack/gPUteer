@@ -2,6 +2,15 @@
 # gPUteer 노드 받기 (운영자 · Linux) — admit-node.ps1 과 같다. 설명(서명 검증 없음 · 받은 뒤 다시 띄울 것)은 그 파일 머리말.
 # 예:  sh admit-node.sh --env-file /etc/gputeer/gputeer.env --join-file ./join-bob-gpu0.json
 set -eu
+
+# ★ 결함 554 (재검수 145) — root 로 돌면 **첫 명령 전에** PATH 를 시스템 폴더로 고정하고 IFS 를 기본값으로 되돌린다(install-node.sh 의 505 와 같다).
+#   부른 계정의 PATH(예 $HOME/bin)에 그 계정의 작업이 심어 둔 dirname · date · sed 등을 root 가 실행하지 않게 한다. root 인지는 절대 경로로 본다.
+if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    export PATH
+    IFS=$(printf ' \t\nX')
+    IFS=${IFS%X}
+fi
 die() { echo "$*" >&2; exit 1; }
 ENV_FILE= JOIN_FILE=
 while [ $# -gt 0 ]; do

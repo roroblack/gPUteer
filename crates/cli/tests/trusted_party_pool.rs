@@ -1570,6 +1570,11 @@ fn a_matching_gpu_observation_keeps_a_node_fresh_and_a_different_gpu_does_not() 
     );
     assert!(other.contains("GPU_ATTESTATION_MISMATCH"), "{other}");
     assert!(!other.contains("GPU_ATTESTATION_RECORDED"), "{other}");
+    // 결함 552 (재검수 145) — 불일치를 기록한 이 연결에서는 일을 내주지 않는다(예약 조회 · Grant 로 가지 않는다).
+    assert!(
+        other.contains("이 연결에서는 일을 내주지 않는다") && !other.contains("NO_WORK_FOR_NODE"),
+        "불일치 뒤에도 일을 찾으러 갔다\n{other}"
+    );
     assert_eq!(declared_at(), before, "맞지 않는 관측이 신선도를 늘렸다");
 
     // 구조 규칙 — v1 Hello 에 관측 · RENEW Hello 에 관측은 Hello 째 거부한다(생존 관측으로도 적지 않는다)

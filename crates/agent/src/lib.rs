@@ -3284,6 +3284,9 @@ fn run_and_capture_workload(
                 spec.job_id,
                 stage.as_str_name()
             );
+            // ★ 결함 553 (재검수 145) — 확정이 실패하면 **작업 폴더를 남긴다**. 확정하지 못한 원본 산출물이 유일한 사본일 수 있다(전에는 출력 상한
+            //   초과(540)만 남기고 나머지 확정 실패는 폴더째 지웠다). 사람이 보고 치운다.
+            *keep_run_dir = true;
             (0, 0, Some((stage, detail)))
         }
     };
@@ -5504,6 +5507,7 @@ mod defect_19_tests {
             cgroup_parent: None,
             container: container::ContainerDecision::Host,
         };
+        let mut keep_run_dir = false;
         let report = run_and_capture_workload(
             &spec,
             policy,
@@ -5516,7 +5520,7 @@ mod defect_19_tests {
             "submitter-19",
             1,
             &SystemClock,
-            &mut false,
+            &mut keep_run_dir,
         )
         .expect("확정 실패는 Agent 오류가 아니다 — 종료를 관측했으면 보고한다")
         .expect("opt-in 했으니 실행됐다");
@@ -5525,6 +5529,8 @@ mod defect_19_tests {
             .finalization_failure
             .expect("확정 실패가 보고에 실려야 한다");
         assert_eq!(stage, pb::FinalizationFailureStage::CommitCheckpoint);
+        // 결함 553 (재검수 145) — 확정이 실패하면 작업 폴더를 남긴다(확정하지 못한 원본 산출물이 유일한 사본일 수 있다).
+        assert!(keep_run_dir, "확정이 실패했는데 작업 폴더를 지우게 했다");
     }
 }
 

@@ -1269,7 +1269,9 @@ fn serve_one_connection_impl(
         // ★ 2026-09-25 (결함 301) — FRESH Hello 가 GPU 관측을 실었으면 등록된 선언과 대조한다. 맞으면 "그 선언이 지금도 사실이다" 는
         //   확인 기록을 남겨 스케줄러의 신선도 검사가 운영자 재선언 없이도 통과하게 한다. 안 맞으면 **불일치를 노드별로 기록**한다(결함 440 ·
         //   재검수 115) — 스케줄러가 그 노드를 맞는 관측이 올 때까지 배치에서 뺀다(재선언 · refresh 로 풀리지 않는다). 전에는 기록하지 않아
-        //   refresh 가 틀린 선언을 계속 신선하게 만들었다. 어느 쪽이든 연결은 이어간다(배정된 일이 있으면 Agent 의 실행 전 검사가 GPU 를 다시 본다).
+        //   refresh 가 틀린 선언을 계속 신선하게 만들었다.
+        //   ★ 결함 552 (재검수 145) — 불일치를 기록한 **이 연결에서는 일을 내주지 않는다**(기존 예약의 Grant 도). 전에는 연결을 이어가 저장된 예약의
+        //     Grant 를 그대로 발급했다 — 그 Grant 는 GPU UUID 가 없어 Agent 의 실행 전 검사도 돌지 않았다(주석이 "Agent 가 다시 본다" 고 잘못 적었다).
         if let Some(observation) = hello.gpu_observation.as_ref().filter(|_| asks_for_work) {
             match crate::gpu_attestation::observation_time_usable(&hello, observation) {
                 Err(reason) => println!(
@@ -1307,10 +1309,13 @@ fn serve_one_connection_impl(
                             hello.node_id,
                             observation.gpus.len()
                         ),
-                        crate::inventory_store::GpuAttestationOutcome::Mismatch(reason) => println!(
-                            "GPU_ATTESTATION_MISMATCH node_id={} detail={reason}",
-                            hello.node_id
-                        ),
+                        crate::inventory_store::GpuAttestationOutcome::Mismatch(reason) => {
+                            println!(
+                                "GPU_ATTESTATION_MISMATCH node_id={} detail={reason} — 이 연결에서는 일을 내주지 않는다(예약은 남긴다 · 맞는 관측이 오면 다시 준다)",
+                                hello.node_id
+                            );
+                            return Ok(());
+                        }
                         other => println!(
                             "GPU_ATTESTATION_SKIPPED node_id={} reason={other:?}",
                             hello.node_id

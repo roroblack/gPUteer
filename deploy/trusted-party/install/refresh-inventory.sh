@@ -7,6 +7,15 @@
 #   그래서 **GPU 관측을 켜지 않은 노드**(CPU 전용 · 관측 전 판 Agent)용이다. 관측을 켠 노드는 인사의 관측이 신선도를 준다.
 #   관측이 선언과 어긋난 노드는 이것으로 되살아나지 않는다 — Coordinator 가 불일치를 노드별로 기억하고, 맞는 관측이 올 때까지 배치에서 뺀다.
 set -eu
+
+# ★ 결함 554 (재검수 145) — root 로 돌면 **첫 명령 전에** PATH 를 시스템 폴더로 고정하고 IFS 를 기본값으로 되돌린다(install-node.sh 의 505 와 같다).
+#   부른 계정의 PATH(예 $HOME/bin)에 그 계정의 작업이 심어 둔 dirname · date · sed 등을 root 가 실행하지 않게 한다. root 인지는 절대 경로로 본다.
+if [ "$(/usr/bin/id -u)" -eq 0 ]; then
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin
+    export PATH
+    IFS=$(printf ' \t\nX')
+    IFS=${IFS%X}
+fi
 die() { echo "$*" >&2; exit 1; }
 [ "${1:-}" = --env-file ] && [ -n "${2:-}" ] || die "REFRESH_ARGS: --env-file <운영자 gputeer.env>"
 ENV_FILE=$2
