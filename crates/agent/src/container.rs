@@ -1682,17 +1682,13 @@ pub fn write_incident_at(
     ))
 }
 
-/// 새 파일 이름을 디스크에 확정한다(리눅스 — 폴더 fsync). Windows 에는 폴더 fsync 가 없다.
-#[cfg(unix)]
+/// 새 파일 이름을 디스크에 확정한다 — 리눅스는 폴더 fsync, Windows 는 폴더 핸들에 FlushFileBuffers(`gputeer_checkpoint::sync_dir`).
+///
+/// ★ 결함 563 — 전에는 "Windows 에는 폴더 fsync 가 없다" 며 Windows 에서 아무것도 하지 않았다. 틀린 근거였다(561 과 같다) — 전원이 끊기면 새 표식
+///   이름이 사라져 재기동 관문이 열린 사건 0건으로 보고 새 작업을 받을 수 있었다.
 fn sync_dir(dir: &Path) -> Result<(), String> {
-    std::fs::File::open(dir)
-        .and_then(|handle| handle.sync_all())
-        .map_err(|error| format!("{dir:?} 를 sync 하지 못했다: {error}"))
-}
-
-#[cfg(not(unix))]
-fn sync_dir(_dir: &Path) -> Result<(), String> {
-    Ok(())
+    gputeer_checkpoint::sync_dir(dir)
+        .map_err(|error| format!("{dir:?} 를 sync 하지 못했다: {error:?}"))
 }
 
 /// 컨테이너 상태 — 끝났으면 `Some(종료)`, 아직 돌면 `None`.

@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 11:48 — 결함 563: 컨테이너 사건 표식이 Windows 에서 디렉터리 sync 를 건너뛰었다(브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-28_1141_사건표식_Windows_디렉터리sync_생략_563.md`(561 과 같은 틀린 전제 — 단계 6 조사 중 발견)
+- 스트림: Agent
+- 수행: `container.rs` 의 가짜 Windows `sync_dir` 를 지우고 `gputeer_checkpoint::sync_dir` 로 통일 · 주석 정정. `crates` 전체 `fn sync_dir` 검색에서 다른 가짜 구현은 없었다
+- 검증: `cargo test -p gputeer-agent` 187 passed · 0 failed(cli 실행 파일을 빌드한 뒤). 전원 차단에서만 달라져 뮤테이션으로는 확인하지 못함
+- 리포트: 결함 문서가 대신한다
+
+---
+
 ## 2026-09-28 11:40 — 결함 562: Windows 운영자 · 실행 스크립트가 상승된 관리자 창을 거부하지 않았다(브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-28_1137_운영자_실행_ps1_상승권한_거부없음_562.md`(554 후속 — PowerShell 판 점검)
