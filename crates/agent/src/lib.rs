@@ -3697,11 +3697,15 @@ fn accepted_outbox_report_exists(
 
 /// 루트에 원장 흔적(원장 · 세대 짝 · 이관 표식)이 있는가 — 잠그지 않는 lane 용. 루트가 아직 없으면 흔적도 없다.
 fn run_ledger_trace_exists(checkpoint_root: &std::path::Path) -> Result<bool, String> {
-    if !checkpoint_root.exists() {
-        return Ok(false);
-    }
-    let real = real_checkpoint_root(checkpoint_root)?;
-    Ok(!run_ledger::detect(&run_ledger::LedgerPaths::for_root(&real)?)?.never_enabled())
+    // ★ 원장 · 짝 · 표식은 루트의 **형제**다 — 루트가 지워져도 남는다(코덱스 r1m). 루트가 없으면 절대 경로 기준으로 형제를 본다.
+    let base = if checkpoint_root.exists() {
+        real_checkpoint_root(checkpoint_root)?
+    } else {
+        std::path::absolute(checkpoint_root).map_err(|error| {
+            format!("체크포인트 루트를 절대 경로로 바꿀 수 없다({checkpoint_root:?}): {error}")
+        })?
+    };
+    Ok(!run_ledger::detect(&run_ledger::LedgerPaths::for_root(&base)?)?.never_enabled())
 }
 
 /// 원장 손잡이로 한 걸음 — 원장을 켜지 않았으면 `None`.
@@ -7718,6 +7722,15 @@ mod run_ledger_startup_tests {
             &["--multi-agent", "true", "--run-ledger", "true"],
         );
         assert!(run(asks).unwrap_err().contains("RUN_LEDGER_CONFIG_REFUSED"));
+        // 코덱스 r1m — 루트 폴더가 지워져도 형제 경로의 원장 흔적으로 거부한다.
+        let root = dir.path().join("checkpoints");
+        fs::remove_dir_all(&root).unwrap();
+        let mut gone = config(dir.path(), &["--multi-agent", "true"]);
+        fs::remove_dir_all(&root).unwrap();
+        gone.checkpoint_root = root.clone();
+        assert!(!root.exists());
+        let error = run(gone).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_ENABLED_ROOT"), "{error}");
     }
 
     #[test]
