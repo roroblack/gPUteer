@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 16:00 — 결함 554 의 시험 공백을 메웠다: 운영자 셸 스크립트가 root 로 돌 때 PATH 가로채기(브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-28_0731_재검수145_결함_552_554.md` 554 줄
+- 스트림: Deploy · QA
+- 수행: 리눅스 전용 시험 `crates/cli/tests/operator_scripts_path_pin.rs` — 가짜 명령 13개를 PATH 앞에 심고 root(이미 root · `unshare -r`)면 안 불림 · 비-root 대조군(`setpriv` nobody · 그대로)은 불림. CI 의 "건너뛴 시험" 정보 단계에 더했다
+- 검증: x600 WSL2(root · 사용자 허가 2026-09-28)에서 1 passed · 세 스크립트 각각 PATH 고정을 끄는 뮤테이션을 시험이 잡음 · 원복 뒤 통과. 개발 기계(Windows)는 리눅스 전용이라 0개 · 비-root CI 경로(`unshare -r`)는 아직 재지 않았다
+- 리포트: 결함 문서의 조치 줄을 고쳤다
+
+---
+
 ## 2026-09-28 13:36 — 단계 2 계약 초안(실행 여부 불명 → 재배치 보류) 독립 검수 ACCEPTED(브랜치 fork-merge)
 
 - 제안: `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` v17

@@ -72,6 +72,7 @@ jobs:
           cargo test -p gputeer-crypto --test keyring -- --nocapture 2>&1 | grep -F "ENVIRONMENT-BLOCKED" || true
           cargo test -p gputeer-runtime-linux --test cgroup_enforcement -- --nocapture 2>&1 | grep -F "ENVIRONMENT-BLOCKED" || true
           cargo test -p gputeer-agent --test container_isolation_real -- --nocapture 2>&1 | grep -E "ENVIRONMENT-BLOCKED|CONTAINER_ISOLATION_MEASURED" || true
+          cargo test -p gputeer-cli --test operator_scripts_path_pin -- --nocapture 2>&1 | grep -F "ENVIRONMENT-BLOCKED" || true
 
       - name: Verify evidence schema
         run: python scripts/verify_evidence.py
