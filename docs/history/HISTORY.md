@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 11:33 — 결함 558 의 시험 공백 M9 를 메웠다: 크기를 본 뒤 커진 원본(브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-28_0939_체크포인트_통째읽기_OOM_558.md` 의 뮤테이션 표 M9
+- 스트림: Checkpoint
+- 수행: `publish_directory_capped` 의 읽기 단계를 `stage_within_budget` 로 떼고(동작 불변), 사전 검사 없이 읽기 단계만 부르는 시험을 더했다
+- 검증: `cargo test -p gputeer-checkpoint` 127 passed · 0 failed. M9(남은 예산 대신 상한 전체로 읽기)를 다시 걸면 새 시험만 실패 — 원복 확인
+- 리포트: 결함 문서가 대신한다
+
+---
+
 ## 2026-09-28 11:29 — 결함 561: 종료 보고 outbox 가 이름을 바꾼 뒤 디렉터리를 sync 하지 않았다(브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-28_1127_보고outbox_디렉터리sync_누락_561.md`(코덱스 b5 가 단계 2 초안 검수 중 짚음)

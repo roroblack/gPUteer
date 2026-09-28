@@ -190,18 +190,31 @@ pub(crate) fn publish_directory_capped(
     names.sort();
     let mut staged = StagedCheckpoint::begin(&root, checkpoint_id)
         .map_err(|e| format!("SHARED_CHECKPOINT_BEGIN: {e:?}"))?;
+    stage_within_budget(&mut staged, source_dir, &names, cap)?;
+    staged
+        .commit(meta)
+        .map_err(|e| format!("SHARED_CHECKPOINT_COMMIT: {e:?}"))
+}
+
+/// `names` 를 차례로 읽어 스테이징한다 — 파일마다 **남은 예산**만큼만 읽는다.
+///
+/// 사전 검사(크기 합)를 지난 뒤 원본이 커져도 전체가 `cap` 을 넘지 않는다. 사전 검사와 떼어 둔 것은 그 경우(크기를 본 뒤 커진 원본)를
+/// 시험이 결정적으로 재현하게 하려는 것이다(결함 558 뮤테이션 M9 — 게시 시험이 정적 파일이라 사전 검사가 먼저 막아 이 경로를 못 밟았다).
+fn stage_within_budget(
+    staged: &mut StagedCheckpoint,
+    source_dir: &Path,
+    names: &[(String, PathBuf)],
+    cap: u64,
+) -> Result<(), String> {
     let mut used: u64 = 0;
-    for (name, _path) in &names {
-        // 남은 예산만큼만 읽는다 — 위에서 본 뒤 파일이 커져도 전체가 상한을 넘지 않는다.
+    for (name, _path) in names {
         let data = read_source_file(source_dir, name, cap.saturating_sub(used))?;
         used = used.saturating_add(data.len() as u64);
         staged
             .stage(name, &data)
             .map_err(|e| format!("SHARED_CHECKPOINT_STAGE: {name}: {e:?}"))?;
     }
-    staged
-        .commit(meta)
-        .map_err(|e| format!("SHARED_CHECKPOINT_COMMIT: {e:?}"))
+    Ok(())
 }
 
 /// 게시한다 — 또는 **데이터는 이미 확정됐는데 서명만 빠진** 체크포인트를 되살린다.
@@ -570,6 +583,30 @@ mod tests {
         );
         // 대조군 — 상한 안쪽이면 게시된다.
         publish_directory_capped(&shared, "job-1", "ckpt-2", &source, &meta(2), 1200).unwrap();
+    }
+
+    /// 결함 558 M9 — 사전 검사를 지난 뒤 원본이 커진 경우. 읽기 단계는 파일마다 **남은 예산**만 읽어 합이 상한을 넘으면 거부한다.
+    ///   (사전 검사가 본 크기는 넘기지 않고 읽기 단계만 부른다 — 크기를 본 뒤 커진 원본과 같은 입력이다.)
+    #[test]
+    fn a_source_that_grew_after_the_size_check_is_refused_at_the_remaining_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("shared").join("job-1");
+        let source = source_with(
+            temp.path(),
+            &[("a.bin", &[1u8; 600]), ("b.bin", &[2u8; 600])],
+        );
+        let names: Vec<(String, PathBuf)> = ["a.bin", "b.bin"]
+            .iter()
+            .map(|n| (n.to_string(), source.join(n)))
+            .collect();
+        let mut staged = StagedCheckpoint::begin(&root, "ckpt-1").unwrap();
+        // 파일 하나(600)는 상한(1000) 안이지만 둘째를 읽을 때 남은 예산은 400 이다.
+        let error = stage_within_budget(&mut staged, &source, &names, 1000).unwrap_err();
+        assert!(error.contains("SHARED_CHECKPOINT_TOO_LARGE"), "{error}");
+        assert!(error.contains("b.bin"), "둘째 파일에서 멈춰야 한다: {error}");
+        // 대조군 — 예산이 합(1200) 이상이면 둘 다 스테이징된다.
+        let mut staged = StagedCheckpoint::begin(&root, "ckpt-2").unwrap();
+        stage_within_budget(&mut staged, &source, &names, 1200).unwrap();
     }
 
     /// 결함 558 — 이어받기 판정(Coordinator) · 복원이 부르는 검증은 매니페스트가 말하는 크기가 상한을 넘으면 **읽기 전에** 거부한다.
