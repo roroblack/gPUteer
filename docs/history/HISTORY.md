@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-09-29 00:15 — 단계 4 설계 v2: 기동 전 전용 cgroup · 결과 타입 분리 · root 도우미 경계 정직화(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-28_1240_런타임을_거치지_않는_정지_설계.md` v2
+- 스트림: Agent · runtime-linux
+- 수행: 코덱스 c2(v1 대상 — 높음 4 · 중간 4 · 낮음 1) 반영. 기동 전에 시도 전용 cgroup 을 만들고 영속한 뒤 `--cgroup-parent` 로 그 아래에만 컨테이너 ·
+  정지 때 openat2 로 대상 확인(무관한 프로세스가 섞일 수 있으면 아무것도 안 죽임) · 숫자 PID 재사용 금지(쥔 pidfd 만) · 비었다는 `cgroup.events populated 0` ·
+  결과 타입 분리(LOCAL_TREE_KILLED 는 종결 보고 · STOP_CONFIRMED · 예약 해제 · 재배치 없음) · rootful docker 행 정정(작업은 `--user` 로 Agent uid — 구성별 실측) ·
+  Docker Desktop · podman machine 은 "검증된 경로 없음" 으로 낮춤 · `wsl -u root` 는 UI 로 좁혀지는 경계가 아님을 S2 에 적고 고정 도우미로 좁힘 · 2초 시간 예산(목표) ·
+  시험 T1~T12 · M4 · 상태 줄에 M2 부분 실측 반영
+- 검증: 구현 없음 · 재검수 전(c2b — 단계 3 재검수 c1e 뒤 순차)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-29 00:09 — 단계 3 설계 v5: 회차 감독 수단 · 되찾기는 정지 먼저 · 우선 정지 경로 · 사용자 결정 O1=A′(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-28_1203_회차밖_상시_소유자화면_설계.md` v5
