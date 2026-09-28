@@ -130,9 +130,11 @@ Broker 가 죽으면 이 등급의 새 결정을 만들 수 없다
 ```text
 멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   **운영자 루트 키**(설치 · 초대 때 따로 pin 한 공개키 — ADR-034 §3.1 · Coordinator 장치 키와
                                                               **다른** 키)의 전이별 서명과 현재 generation
-canonical 결정 — 두 표의 두 전이                                   Attempt `RECONCILING -> CANONICAL | SELECTED`(§3) 와 Job `RECONCILING -> COMPLETED |
+canonical 결정 — 두 표의 세 전이                                   선택된 Attempt `RECONCILING -> CANONICAL | SELECTED`(§3) · 결정에 열거된 **모든 탈락**
+                                                              Attempt `RECONCILING -> SUPERSEDED | NOT_SELECTED`(§3 — CanonicalDecision 의
+                                                              superseded_attempt_ids · artifact.proto) · Job `RECONCILING -> COMPLETED |
                                                               CANONICAL_CHOSEN`(§2)는 **같은 서명된 CanonicalDecision 하나**에 결합되어 한 트랜잭션에서
-                                                              함께 확정된다 — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
+                                                              함께 확정된다(탈락 전이만 따로 · 서명 없이 하지 않는다) — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
                                                               ("유효 attempt 1개 이상")만으로는 신뢰망에서 이 전이를 확정하지 못한다
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
@@ -500,8 +502,10 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
           이 경우 아래 durability 열의 `COMMITTED` 는 §0.1 에 따라
           `BROKER_ATTESTED` 로 읽는다 — 과반 합의가 아니다.
 
-신뢰망    운영자가 멤버십 권위다 (ADR-034 §3 · 2026-09-28). 서명 키는 풀 확정
-          프로필에 적는 **운영자 루트 키**이고 Coordinator 장치 키와 다르다.
+신뢰망    운영자가 멤버십 권위다 (ADR-034 §3 · 2026-09-28). 서명 키는 설치 ·
+          초대 때 풀 확정 프로필과 **따로 pin 한** 운영자 루트 키이고 Coordinator
+          장치 키와 다르다. 프로필 안에 든 공개키는 그 pin 으로 프로필 서명을
+          검증한 뒤에만 쓴다(ADR-034 §3.1). ★ 지금은 그 pin 도 서명 검증도 없다.
           durability 열의 `COMMITTED` 는 §0.1 에 따라 `COORDINATOR_DURABLE`.
           ★ 지금 `admit-node` 는 가입 파일의 서명을 검증하지 않는다(운영자
           대면 확인) — 이 guard 를 채우지 못한다. 이 표가 배선되고 운영자

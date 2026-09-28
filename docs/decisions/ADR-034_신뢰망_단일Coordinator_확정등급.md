@@ -1,6 +1,6 @@
 # ADR-034 · 신뢰망 — 단일 Coordinator 의 확정 등급(`COORDINATOR_DURABLE`)
 
-- **상태:** 제안 v3 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
+- **상태:** 제안 v4 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
 - **날짜:** 2026-09-28
 - **관련:** ADR-031(참여 모델) · ADR-032 · ADR-033 §5(`BROKER_ATTESTED`) · `docs/protocol/state-machines.md` §0 · §0.1 · §7 ·
   `crates/protocol/src/participation.rs` · 단계 2 계약 제안 `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` 결정 D9 ·
@@ -88,9 +88,11 @@ replay DB     이미 본 서명 메시지의 nonce — 잃으면 **옛 메시지
 ```text
 멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   **운영자 루트 키**(설치 · 초대 때 따로 pin 한 공개키 — ADR-034 §3.1 · Coordinator 장치 키와
                                                               **다른** 키)의 전이별 서명과 현재 generation
-canonical 결정 — 두 표의 두 전이                                   Attempt `RECONCILING -> CANONICAL | SELECTED`(§3) 와 Job `RECONCILING -> COMPLETED |
+canonical 결정 — 두 표의 세 전이                                   선택된 Attempt `RECONCILING -> CANONICAL | SELECTED`(§3) · 결정에 열거된 **모든 탈락**
+                                                              Attempt `RECONCILING -> SUPERSEDED | NOT_SELECTED`(§3 — CanonicalDecision 의
+                                                              superseded_attempt_ids · artifact.proto) · Job `RECONCILING -> COMPLETED |
                                                               CANONICAL_CHOSEN`(§2)는 **같은 서명된 CanonicalDecision 하나**에 결합되어 한 트랜잭션에서
-                                                              함께 확정된다 — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
+                                                              함께 확정된다(탈락 전이만 따로 · 서명 없이 하지 않는다) — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
                                                               ("유효 attempt 1개 이상")만으로는 신뢰망에서 이 전이를 확정하지 못한다
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
@@ -149,7 +151,7 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
                            전이 요약 해시. Lifetime Evidence(관측 시각 노출 · fence 로 신선도)
 ```
 
-둘 다 **아직 정의하지 않았다**(signing.md §5 domain 표 · canonical 벡터 · 참조 구현 · 지문 등록 필요 — signing.md 의 신규 서명 메시지 원칙).
+세 메시지 모두 **아직 정의하지 않았다**(signing.md §5 domain 표 · canonical 벡터 · 참조 구현 · 지문 등록 필요 — signing.md 의 신규 서명 메시지 원칙).
 정의 · 등록 · 응답 결합이 끝나기 전에는 신뢰망의 로컬 확정을 `COORDINATOR_DURABLE` 이라 **부르지 않는다**(state-machines.md §0.1 · §6 검사 9) —
 시험 11 · 14 는 이 둘이 정의된 뒤에 구현할 수 있다.
 
@@ -184,7 +186,7 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
   control DB 연결을 open_control_db_durable() 하나로 모은다 — foreign_keys · synchronous=FULL · journal mode · 파일 DB 여부를 연결마다 확인
     (지금 failover.rs 는 새 연결을 직접 열고 busy timeout 만 건다 — 같은 설정을 증명할 수 없다)
   control_db_id / generation / coordinator_id 결합(모든 writer 가 확인) · 빈 새 DB 를 같은 generation 으로 자동 초기화하지 않음 · DB 안 전역 commit_seq ·
-    writer 신원 기록 · replay 원장과의 순서 규칙(또는 통합) · PoolCommitProfile · CoordinatorCommitReceipt 정의(6)
+    writer 신원 기록 · replay 원장과의 순서 규칙(또는 통합) · PoolCommitProfile · OperatorRootRotation · CoordinatorCommitReceipt 정의(6 — 셋 다 proto · domain tag · canonical 벡터 · 참조 구현 · 지문 등록)
   Agent 가 (pool_id, generation, fence_epoch, commit_seq) watermark 를 영속하고 되감긴 Coordinator 응답을 거부
   fence 카운터가 Attempt · Lease · 예약의 최대값보다 작으면 fail closed
   보호 전이의 서명 · 증거 guard(없으면 Unsupported) · commit_seq · 감사 해시 체인 · provenance 노출
@@ -214,5 +216,6 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 | 날짜 | 변경 |
 |---|---|
 | 2026-09-28 | 최초 작성 — 코덱스 논의 d1 의 C 절을 규범 형태로 옮김. 독립 검수 전 |
+| 2026-09-28 | v4 — 코덱스 e2c(중간 2 · 낮음 1) 반영: §5.1 권위 문구를 pin 한 키로 · canonical 결정에 탈락 Attempt SUPERSEDED 까지 · 선행 메시지 셋 |
 | 2026-09-28 | v3 — 코덱스 e2b(높음 2 · 중간 2 · 낮음 1) 반영: 운영자 루트 키 신뢰 부트스트랩(§3.1 — pin · 최초 설치 · 회전 · generation) · canonical 보호를 Job `CANONICAL_CHOSEN` 까지 두 전이 · 한 서명 결정으로 · 손실 목록은 예시임을 밝히고 복구 단위 · 빠진 표 · 호스트 파일 · state-machines §0.1 요약을 ADR 참조로 · scheduler 주석 정리 |
 | 2026-09-28 | v2 — 코덱스 e2(높음 2 · 중간 3 · 낮음 2) 반영: "단일 Coordinator" → 같은 DB 를 쓰는 협력 프로세스의 논리 인스턴스(프로세스 잠금 철회) · replay 원장 비원자 한계 · 신뢰망 멤버십 권위(운영자 루트 키 · 지금 admit-node 는 못 채움) · 서명 메시지 둘을 선행 작업으로 · 손실 목록을 저장소별로 · scheduler 복제 enum 제한 · 변경 목록 정정 |
