@@ -377,10 +377,11 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
     // ── Agent 둘 — 되풀이해 붙는다
     let coordinator_pub = pub_hex(COORD_SEED);
     let submitter_pub = pub_hex(SEED);
-    let agent_loop = |node: &str, seed: &str| -> Child {
+    // ★ 노드 실행 원장(계획 2026-09-29_0212) — 노드 1 만 `--run-ledger true` 로 띄운다(켠 노드와 끈 노드가 한 풀에서 같이 일한다).
+    let agent_loop = |node: &str, seed: &str, run_ledger: bool| -> Child {
         let fence = dir.path().join(format!("{node}-fence.sqlite3"));
         let checkpoints = dir.path().join(format!("{node}-checkpoints"));
-        let args: Vec<String> = [
+        let mut args: Vec<String> = [
             "agent-loop",
             "--interval-ms",
             "100",
@@ -419,10 +420,13 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
         .iter()
         .map(|s| s.to_string())
         .collect();
+        if run_ledger {
+            args.extend(["--run-ledger".to_string(), "true".to_string()]);
+        }
         spawn(&args)
     };
-    let agent_1 = agent_loop(NODE_1, AGENT_SEED_1);
-    let agent_2 = agent_loop(NODE_2, AGENT_SEED_2);
+    let agent_1 = agent_loop(NODE_1, AGENT_SEED_1, true);
+    let agent_2 = agent_loop(NODE_2, AGENT_SEED_2, false);
 
     // ── 사람 손 없이 셋 다 끝날 때까지 기다린다
     let deadline = Instant::now() + Duration::from_secs(120);
@@ -480,6 +484,46 @@ fn one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended() {
             "{label} 가 수신 확인을 검증하지 않았다\n{everything}"
         );
     }
+    // ★ 노드 실행 원장 — 켠 노드는 회차마다 같은 원장을 이어 쓰고, 끝난 시도는 모두 CLOSED 다(치명 오류 없음). 끈 노드에는 원장이 없다.
+    assert!(
+        !agent_1_out.contains("RUN_LEDGER_FATAL") && !agent_1_out.contains("RUN_LEDGER_BLOCKED"),
+        "원장을 켠 노드에 원장 오류가 났다
+{everything}"
+    );
+    let ledger_paths = gputeer_agent::run_ledger::LedgerPaths::for_root(
+        &dir.path().join(format!("{NODE_1}-checkpoints")),
+    )
+    .expect("원장 경로");
+    let ledger = gputeer_agent::run_ledger::open_for_clear(&ledger_paths)
+        .expect("원장 열기")
+        .unwrap_or_else(|| {
+            panic!(
+                "원장을 켠 노드에 원장이 없다
+{everything}"
+            )
+        });
+    let rows = ledger.rows().expect("행");
+    assert!(
+        !rows.is_empty(),
+        "노드 1 이 일했는데 원장 행이 없다
+{everything}"
+    );
+    assert!(
+        rows.iter()
+            .all(|row| row.state == gputeer_agent::run_ledger::RowState::Closed),
+        "끝난 시도가 CLOSED 가 아니다: {rows:?}
+{everything}"
+    );
+    let off_paths = gputeer_agent::run_ledger::LedgerPaths::for_root(
+        &dir.path().join(format!("{NODE_2}-checkpoints")),
+    )
+    .expect("원장 경로");
+    assert!(
+        gputeer_agent::run_ledger::detect(&off_paths)
+            .expect("감지")
+            .never_enabled(),
+        "원장을 끈 노드에 원장이 생겼다"
+    );
     // ★ J — 운영자가 보는 한 줄 요약이 사실과 같다.
     let (ok, status) = run_cli(&["status", "--control-db", &db_s]);
     assert!(ok, "status 실패: {status}");

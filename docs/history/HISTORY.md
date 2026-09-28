@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-29 04:34 — 노드 실행 원장 끝에서 끝까지: 무인 풀 시험에 원장 켠 노드(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md`(상태 줄)
+- 스트림: Agent · CLI 시험
+- 수행: `crates/cli/tests/trusted_party_pool.rs::one_long_lived_coordinator_and_two_agents_finish_three_jobs_unattended` 에서 노드 1 만 `--run-ledger true` 로
+  띄우고, 끝난 뒤 (1) 원장 오류 줄(RUN_LEDGER_FATAL · RUN_LEDGER_BLOCKED)이 없다 (2) 켠 노드의 원장 행이 1개 이상이고 전부 CLOSED (3) 끈 노드에는 원장 흔적이
+  없다를 확인하게 했다
+- 검증: 그 시험 1 passed(Windows 개발 기계 · 실제 coordinator-stub · scheduler-loop · agent-loop 두 개 · 작업 셋 · 호스트 실행). ★ 컨테이너 실행 경로의
+  끝에서 끝까지와 리눅스는 아니다. 호스트 행은 재기동 풀기로도 CLOSED 가 되므로 이 시험만으로는 "보관 직후 CLOSED" 경로를 가르지 못한다 — 그 경로는 단위 시험이 본다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-29 04:32 — 원장 구현 코덱스 r1k 반영(multi-agent 우회 차단 · 판정 사실 기록 · 실제 반복 경로 시험) · 단계 3 설계 v18(브랜치 fork-merge)
 
 - 계획: 원장 구현 계획 v11(변경 없음) · 단계 3 설계 v18
