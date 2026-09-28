@@ -108,6 +108,7 @@ gputeer — gPUteer CLI
     gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>
     gputeer owner-resume --checkpoint-root <dir>
     gputeer container-incidents --checkpoint-root <dir> [--clear <컨테이너 이름> | --clear-all]
+    gputeer run-ledger adopt-legacy [--i-attest-no-container-ever-ran] -- <agent-stub 인자>
 
     selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
                                   작업디렉터리를 주지 않으면 임시 디렉터리를 쓰고 지운다.
@@ -279,6 +280,41 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("run-ledger") => {
+            // 노드 실행 원장(계획 docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md) — 지금은 이관 하나다.
+            let Some(split) = args.iter().position(|arg| arg == "--") else {
+                eprintln!("run-ledger 실패: `gputeer run-ledger adopt-legacy [--i-attest-no-container-ever-ran] -- <agent-stub 인자>`");
+                return ExitCode::FAILURE;
+            };
+            let (own, rest) = args.split_at(split);
+            let mut attest = false;
+            match own.get(1).map(String::as_str) {
+                Some("adopt-legacy") => {}
+                _ => {
+                    eprintln!("run-ledger 실패: 하위 명령은 adopt-legacy 뿐이다");
+                    return ExitCode::FAILURE;
+                }
+            }
+            for arg in &own[2..] {
+                match arg.as_str() {
+                    "--i-attest-no-container-ever-ran" => attest = true,
+                    other => {
+                        eprintln!("run-ledger 실패: 모르는 인자 {other}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            match gputeer_agent::adopt_legacy_run_ledger(&rest[1..], attest) {
+                Ok(message) => {
+                    println!("{message}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("run-ledger adopt-legacy 실패: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some("container-incidents") => {
             // ★ 2026-09-27 보수 규칙(재검수 121~124 합의) — 사람이 봐야 하는 컨테이너 사건 표식을 보고, 확인한 뒤 **명시적으로** 해제한다.
             //   표식이 있는 동안 Agent 는 새 작업을 받지 않는다. 해제하면 다음 기동이 남은 컨테이너의 로그를 건지고 지운다.
@@ -318,7 +354,11 @@ fn main() -> ExitCode {
                 }
             };
             let result = match &clear {
-                Some(name) => gputeer_agent::container::clear_incidents(&dir, name.as_deref()),
+                // 노드 실행 원장을 켠 루트는 원장의 LOCAL_BLOCKED 를 먼저 풀고 잠금 아래에서 지운다(켜지 않은 루트는 지금과 같다).
+                Some(name) => gputeer_agent::clear_container_incidents(
+                    std::path::Path::new(&root),
+                    name.as_deref(),
+                ),
                 None => gputeer_agent::container::open_incidents(&dir),
             };
             match result {

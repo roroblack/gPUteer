@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-09-29 04:26 — 노드 실행 원장의 CLI 두 명령(이관 · 사건 해제) · 런북 8a(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md` v11(상태 줄만)
+- 스트림: Agent · CLI · 운영
+- 수행(코드): `gputeer run-ledger adopt-legacy [--i-attest-no-container-ever-ran] -- <agent 인자>` — Agent 와 같은 파서 · 잠금 · 실경로만(기동 GC 없음) ·
+  열린 사건 거부 · 시작 기록이 있으면 실제 owner 라벨로 남은 컨테이너 **조회만**(런타임 인자가 없으면 거부 · 진술 플래그는 origin 에 표시).
+  `container-incidents --clear/--clear-all` — 원장을 켜지 않은 루트는 지금과 같게(잠금 없이 표식만) · 켠 루트는 잠금 → 원장 LOCAL_BLOCKED 먼저 CLOSED → 표식 삭제 → 폴더 sync ·
+  원장을 잃었거나 행이 빠졌으면 아무것도 지우지 않는다. 조회 전용 `container::list_owned_containers` 를 떼어 내고 `remove_leftovers` 가 그것을 쓴다(동작 같음) ·
+  owner 라벨 계산을 `container_owner_label` 한 곳으로
+- 수행(문서): 런북 `docs/runbooks/신뢰망_설치_운영.md` 8절 표 두 줄 + 8a "노드 실행 원장 켜기"(백업 스크래치 `_backup/…_runbook/`)
+- 검증(Windows 개발 기계): 원장 관련 단위 13(기동 7 · 명령 6 — R16 · R16b · R17 · R18 · R19 · R20 · R21 · R22b · R25b · R30 · R30b) · agent 단위 전체 114 ·
+  cli `container_incidents` 4 — 통과. 실제 실행 파일로 `run-ledger` 명령 연기 시험(잘못된 하위 명령 거부 · 새 노드 이관 성공 · 두 번째 거부). 리눅스 · 끝에서 끝까지는 아직
+- 디스크: 시험 전 이 작업 폴더의 agent · cli 옛 빌드 결과물을 `cargo clean -p` 로 정리(502MiB — 내 빌드가 만든 것). C: 여유는 0.4~0.8GB 를 오간다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-29 04:21 — 노드 실행 원장을 Agent 기동 · 실행 흐름과 agent-loop 에 연결(스위치 기본 꺼짐) · 계획 v11 · 단계 3 설계 v17(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md` v11 · 단계 3 설계 v17

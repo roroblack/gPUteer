@@ -293,16 +293,16 @@ pub fn derive_container_name(attempt_id: &str) -> String {
 /// ★ 결함 489 (재검수 123) — 지우기 **전에** 로그를 `salvage_dir/<id>.{stdout,stderr}.log` 로 건진다. 죽은 회차가 종료를 보고 로그를 받기 전에 죽었으면
 ///   런타임 로그가 출력의 유일한 사본이다. 그 시도는 이미 보고할 수 없다 — 사람이 볼 수 있게 남기는 것이다.
 ///   ★ 결함 492 · 493 (재검수 124) — 멈춘 **뒤에** 건지고, 이미 건진 파일을 덮지 않으며, 못 건지면 **지우지 않고** Err 다(아래 본문).
-pub fn remove_leftovers(
-    runtime: &ContainerRuntime,
-    salvage_dir: Option<&Path>,
-) -> Result<Vec<String>, String> {
+/// 이 Agent 의 owner 라벨이 붙은 컨테이너 id 목록 — **조회만** 한다(멈추기 · 지우기 없음).
+///
+/// 노드 실행 원장 이관(계획 2026-09-29_0212 — "남은 컨테이너 조회는 실제 owner 라벨로 · 조회만")과 `remove_leftovers` 가 같이 쓴다.
+/// owner 라벨이 비었거나 목록을 못 읽으면 오류다(빈 라벨 · 실패로 "0개" 를 얻지 않는다).
+pub fn list_owned_containers(runtime: &ContainerRuntime) -> Result<Vec<String>, String> {
     if runtime.owner.is_empty() {
         return Err("owner 라벨이 비었다 — 어느 컨테이너가 이 Agent 의 것인지 모른다".into());
     }
-    let program = runtime.program.as_path();
     let listed = cli_ok(
-        program,
+        runtime.program.as_path(),
         &[
             "ps".into(),
             "-a".into(),
@@ -312,13 +312,21 @@ pub fn remove_leftovers(
         ],
         SHORT_TIMEOUT,
     )?;
-    let ids: Vec<String> = listed
+    Ok(listed
         .stdout
         .lines()
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
-        .collect();
+        .collect())
+}
+
+pub fn remove_leftovers(
+    runtime: &ContainerRuntime,
+    salvage_dir: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    let program = runtime.program.as_path();
+    let ids = list_owned_containers(runtime)?;
     // ★ 결함 492 (재검수 124) — 로그는 **멈춘 뒤에** 받는다. `logs` 는 그 순간까지의 로그만 준다 — 도는 컨테이너에서 받으면 마지막 출력이 빠진다.
     //   먼저 **모든** 컨테이너를 멈춰 본다(하나가 실패해도 나머지를 멈춘다 — GPU 를 물고 도는 것을 줄인다).
     // ★ 보수 규칙(재검수 124 합의) — 멈춤 · 로그 건지기 · 지우기 중 하나라도 확인하지 못하면 **자동으로 지우지 않고** 모아서 Err 로 돌려준다.

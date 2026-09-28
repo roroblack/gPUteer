@@ -660,8 +660,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //   남긴 것이다. 전에는 잠금 **전에** 노드 id 만으로 지워, 같은 노드 id 로 잘못 뜬 두 번째 Agent 가 거부되기 전에 정상 실행 중인
     //   컨테이너를 지웠다(295). 목록을 못 읽으면 시작하지 않는다.
     if let Some(runtime) = config.container_runtime.as_mut() {
-        let root_hash = blake3::hash(config.checkpoint_root.to_string_lossy().as_bytes()).to_hex();
-        runtime.owner = format!("{}.{}", runtime.node_id, &root_hash[..16]);
+        runtime.owner = container_owner_label(&runtime.node_id, &config.checkpoint_root);
         // ★ 2026-09-27 보수 규칙(재검수 121~124 합의) — 열린 사건 표식이 있으면 **새 작업을 받지 않고** 기동하지 않는다. 남은 컨테이너 정리보다
         //   **먼저** 본다 — 사람에게 넘긴 컨테이너 · 로그를 재기동의 자동 정리가 지우지 않게. 해제는 소유자가 확인한 뒤 명시적으로 한다.
         let incident_dir = container::incident_dir_for(&config.checkpoint_root);
@@ -3839,6 +3838,112 @@ pub const CHECKPOINT_ROOT_OWNER_MARKER: &str = ".gputeer-agent-root";
 ///
 /// ★ 결함 512 (재검수 130) — 전에는 CLI 가 받은 문자열 그대로 형제를 계산했다. 루트가 junction · 심볼릭 링크 같은 별칭이면 Agent(기동 때 실제 경로로
 ///   푼다)와 다른 폴더를 봐, 실제 표식은 남기고 엉뚱한 폴더의 파일을 지울 수 있었다.
+/// 컨테이너 owner 라벨 — 노드 id 와 **잠근 루트의 실제 위치** 해시(결함 290 · 291 · 295). 기동 정리와 원장 이관이 같은 값을 쓴다.
+fn container_owner_label(node_id: &str, real_root: &std::path::Path) -> String {
+    let root_hash = blake3::hash(real_root.to_string_lossy().as_bytes()).to_hex();
+    format!("{}.{}", node_id, &root_hash[..16])
+}
+
+/// `gputeer run-ledger adopt-legacy -- <agent 인자>` — 이미 실행한 노드를 노드 실행 원장으로 옮긴다
+/// (계획 `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md` "이관 명령").
+///
+/// Agent 와 **같은 인자 · 같은 파서**로 루트 · 런타임 · 노드 id 를 읽는다. 루트 잠금 · 실경로만 하고 **기동 GC 는 돌리지 않는다**.
+/// 열린 사건이 있거나, 시작 기록이 있는데 owner 라벨로 조회한 남은 컨테이너가 있거나 조회할 수 없으면 거부한다. 조회만 한다.
+/// `attest_no_container` 는 런타임 인자가 없을 때만 쓰인다(운영자 진술 — 행 origin 에 남는다).
+pub fn adopt_legacy_run_ledger(
+    agent_args: &[String],
+    attest_no_container: bool,
+) -> Result<String, String> {
+    let mut config = parse_config_from_args(agent_args)?;
+    if config.checkpoint_root_is_default {
+        return Err("RUN_LEDGER_ADOPT_REFUSED: Agent 와 같은 --checkpoint-root 를 준다(기본 루트는 이관할 기록이 없다)".into());
+    }
+    // 잠금 · 실경로만 — GC 없음(r1 ①). 잠금 실패 = Agent 가 떠 있다.
+    let lock = claim_checkpoint_root(&config.checkpoint_root).map_err(|error| {
+        format!("RUN_LEDGER_ADOPT_REFUSED: 루트 잠금을 잡지 못했다 — Agent 를 멈춘 상태에서 돌린다: {error}")
+    })?;
+    let real_root = lock.real_root.clone();
+    let paths = run_ledger::LedgerPaths::for_root(&real_root)?;
+    let incidents = container::open_incidents(&container::incident_dir_for(&real_root))?;
+    if !incidents.is_empty() {
+        return Err(format!(
+            "RUN_LEDGER_ADOPT_REFUSED: 열린 사건 표식이 {}개 있다 — 확인 · 해제한 뒤 이관한다",
+            incidents.len()
+        ));
+    }
+    let records = run_ledger::scan_start_records(&paths.started_dir, false)?;
+    let mut attested = false;
+    if !records.is_empty() {
+        match config.container_runtime.as_mut() {
+            Some(runtime) => {
+                runtime.owner = container_owner_label(&runtime.node_id, &real_root);
+                let left = container::list_owned_containers(runtime).map_err(|error| {
+                    format!("RUN_LEDGER_ADOPT_REFUSED: 남은 컨테이너를 조회하지 못했다 — {error}")
+                })?;
+                if !left.is_empty() {
+                    return Err(format!(
+                        "RUN_LEDGER_ADOPT_REFUSED: 이 노드의 라벨로 남은 컨테이너가 {}개 있다({}) — 확인 · 정리한 뒤 이관한다",
+                        left.len(),
+                        left.join(", ")
+                    ));
+                }
+            }
+            None if attest_no_container => attested = true,
+            None => {
+                return Err("RUN_LEDGER_ADOPT_NEEDS_RUNTIME: 시작 기록이 있는데 컨테이너 런타임 인자가 없다 — 컨테이너를 돌렸는지 알 수 없다. \
+                            Agent 와 같은 --container-runtime 인자를 주거나, 컨테이너를 한 번도 쓰지 않은 노드면 --i-attest-no-container-ever-ran 을 준다".into())
+            }
+        }
+    }
+    let outcome = run_ledger::adopt_legacy_files(&paths, attested)?;
+    drop(lock);
+    Ok(match outcome {
+        run_ledger::AdoptOutcome::Adopted { rows } => format!(
+            "RUN_LEDGER_ADOPTED rows={rows} attested={attested} ledger={} — 이제 Agent 를 --run-ledger true 로 띄운다",
+            paths.ledger.display()
+        ),
+        run_ledger::AdoptOutcome::Resumed => format!(
+            "RUN_LEDGER_ADOPT_RESUMED ledger={} — 끊긴 이관을 마무리했다",
+            paths.ledger.display()
+        ),
+    })
+}
+
+/// `gputeer container-incidents --clear` 의 원장 처리(계획 "해제").
+///
+/// 한 번도 원장을 켜지 않은 루트는 **지금과 같다**(잠금 없이 표식만 — 기본 꺼짐의 약속). 원장을 켠 루트는 루트 잠금 → 원장의 LOCAL_BLOCKED 를
+/// 먼저 CLOSED → 표식 삭제 → 폴더 sync. 원장을 잃었거나 행이 빠졌으면 아무것도 지우지 않고 거부한다.
+pub fn clear_container_incidents(
+    root: &std::path::Path,
+    name: Option<&str>,
+) -> Result<Vec<PathBuf>, String> {
+    let real_root = real_checkpoint_root(root)?;
+    let paths = run_ledger::LedgerPaths::for_root(&real_root)?;
+    let dir = container::incident_dir_for(&real_root);
+    if run_ledger::detect(&paths)?.never_enabled() {
+        return container::clear_incidents(&dir, name);
+    }
+    let _lock = claim_checkpoint_root(root).map_err(|error| {
+        format!("RUN_LEDGER_CLEAR_REFUSED: 루트 잠금을 잡지 못했다 — Agent 가 떠 있으면 멈춘 뒤 해제한다: {error}")
+    })?;
+    let mut ledger = run_ledger::open_for_clear(&paths)?.ok_or_else(|| {
+        "RUN_LEDGER_CLEAR_REFUSED: 원장 상태가 바뀌었다 — 다시 돌린다".to_string()
+    })?;
+    for row in ledger.rows()? {
+        let named = name.is_none_or(|name| row.container_name.as_deref() == Some(name));
+        if row.state == run_ledger::RowState::LocalBlocked && named {
+            ledger.clear_local_blocked(&row.attempt_id)?;
+            println!("RUN_LEDGER_CLEARED attempt_id={}", row.attempt_id);
+        }
+    }
+    let cleared = container::clear_incidents(&dir, name)?;
+    if !cleared.is_empty() {
+        gputeer_checkpoint::sync_dir(&dir)
+            .map_err(|error| format!("RUN_LEDGER: 사건 폴더를 sync 하지 못했다: {error:?}"))?;
+    }
+    Ok(cleared)
+}
+
 pub fn container_incident_dir(root: &std::path::Path) -> Result<PathBuf, String> {
     let real = fs::canonicalize(root)
         .map(without_verbatim_prefix)
@@ -7561,5 +7666,234 @@ mod run_ledger_startup_tests {
         record_attempt_started_here(&on.checkpoint_root, "h").unwrap();
         assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
         assert_eq!(state(&on, "h"), run_ledger::RowState::Closed);
+    }
+}
+
+#[cfg(test)]
+mod run_ledger_command_tests {
+    //! 노드 실행 원장 — 해제 · 이관 명령(계획 R16 · R16b · R17 · R19~R23 · R30).
+    use super::*;
+
+    const AGENT_SEED: [u8; 32] = [0x73; 32];
+    const COORD_SEED: [u8; 32] = [0x74; 32];
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn args(dir: &std::path::Path, extra: &[&str]) -> Vec<String> {
+        let root = dir.join("checkpoints");
+        fs::create_dir_all(&root).expect("루트");
+        let mut argv: Vec<String> = [
+            "--connect",
+            "127.0.0.1:9",
+            "--own-seed",
+            &hex(&AGENT_SEED),
+            "--peer-pubkey",
+            &hex(SigningKey::from_bytes(&COORD_SEED)
+                .verifying_key()
+                .as_bytes()),
+            "--coordinator-device-id",
+            "coordinator-cmd-test",
+            "--agent-device-id",
+            "agent-cmd-test",
+            "--fence-db",
+            dir.join("fence.sqlite3").to_str().expect("경로"),
+            "--checkpoint-root",
+            root.to_str().expect("경로"),
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        argv.extend(extra.iter().map(|s| s.to_string()));
+        argv
+    }
+
+    fn real_root(dir: &std::path::Path) -> PathBuf {
+        real_checkpoint_root(&dir.join("checkpoints")).expect("실경로")
+    }
+
+    fn blocked_row(root: &std::path::Path, id: &str) -> String {
+        let paths = run_ledger::LedgerPaths::for_root(root).unwrap();
+        let mut ledger = run_ledger::open_for_agent(&paths).unwrap();
+        let name = container::derive_container_name(id);
+        let mut row = run_ledger::AttemptRow::new_active(
+            id,
+            "job",
+            "agent-cmd-test",
+            1,
+            run_ledger::Executor::Container,
+        );
+        row.container_name = Some(name.clone());
+        ledger.insert_active(&row).unwrap();
+        ledger.mark_local_blocked(id, "test").unwrap();
+        record_attempt_started_here(root, id).unwrap();
+        container::write_incident(
+            &container::incident_dir_for(root),
+            &name,
+            "agent-cmd-test",
+            "RUN_UNKNOWN",
+            "시험",
+        )
+        .unwrap();
+        name
+    }
+
+    fn row_state(root: &std::path::Path, id: &str) -> run_ledger::RowState {
+        run_ledger::open_for_clear(&run_ledger::LedgerPaths::for_root(root).unwrap())
+            .unwrap()
+            .unwrap()
+            .row(id)
+            .unwrap()
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn r16b_a_root_that_never_enabled_the_ledger_clears_markers_as_before_even_while_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_root(dir.path());
+        let name = "gputeer-legacy-incident";
+        container::write_incident(
+            &container::incident_dir_for(&root),
+            name,
+            "n",
+            "EXITED",
+            "x",
+        )
+        .unwrap();
+        let held = claim_checkpoint_root(&root).unwrap();
+        let cleared = clear_container_incidents(&root, Some(name)).unwrap();
+        assert_eq!(
+            cleared.len(),
+            1,
+            "켜지 않은 루트는 잠금과 무관하게 지금처럼 지운다"
+        );
+        drop(held);
+        assert!(
+            run_ledger::detect(&run_ledger::LedgerPaths::for_root(&root).unwrap())
+                .unwrap()
+                .never_enabled()
+        );
+    }
+
+    #[test]
+    fn r16_r17_an_enabled_root_clears_under_the_lock_and_closes_the_row_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_root(dir.path());
+        let name = blocked_row(&root, "blocked-1");
+        let held = claim_checkpoint_root(&root).unwrap();
+        let error = clear_container_incidents(&root, Some(&name)).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_CLEAR_REFUSED"), "{error}");
+        assert_eq!(
+            row_state(&root, "blocked-1"),
+            run_ledger::RowState::LocalBlocked
+        );
+        assert!(
+            !container::open_incidents(&container::incident_dir_for(&root))
+                .unwrap()
+                .is_empty()
+        );
+        drop(held);
+        let cleared = clear_container_incidents(&root, Some(&name)).unwrap();
+        assert_eq!(cleared.len(), 1);
+        assert_eq!(row_state(&root, "blocked-1"), run_ledger::RowState::Closed);
+        assert!(
+            container::open_incidents(&container::incident_dir_for(&root))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn r18_r30_clear_all_closes_blocked_rows_even_without_a_marker_and_reruns_are_harmless() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_root(dir.path());
+        let name = blocked_row(&root, "blocked-2");
+        // 표식만 먼저 지워진 모양(행은 남음).
+        container::clear_incidents(&container::incident_dir_for(&root), Some(&name)).unwrap();
+        clear_container_incidents(&root, None).unwrap();
+        assert_eq!(row_state(&root, "blocked-2"), run_ledger::RowState::Closed);
+        assert!(
+            clear_container_incidents(&root, None).unwrap().is_empty(),
+            "다시 돌려도 무해"
+        );
+    }
+
+    #[test]
+    fn r30b_a_root_that_lost_its_ledger_keeps_its_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_root(dir.path());
+        let name = blocked_row(&root, "blocked-3");
+        fs::remove_file(run_ledger::LedgerPaths::for_root(&root).unwrap().ledger).unwrap();
+        assert!(clear_container_incidents(&root, Some(&name))
+            .unwrap_err()
+            .contains("RUN_LEDGER_LOST"));
+        assert!(
+            !container::open_incidents(&container::incident_dir_for(&root))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn r19_r21_r22b_adoption_refuses_a_running_agent_open_incidents_and_missing_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_root(dir.path());
+        record_attempt_started_here(&root, "old-1").unwrap();
+        // R19 — 잠금(Agent 가 떠 있다)
+        let held = claim_checkpoint_root(&root).unwrap();
+        assert!(adopt_legacy_run_ledger(&args(dir.path(), &[]), false)
+            .unwrap_err()
+            .contains("루트 잠금"));
+        drop(held);
+        // R22b — 런타임 인자 없음 · 진술 없음
+        assert!(adopt_legacy_run_ledger(&args(dir.path(), &[]), false)
+            .unwrap_err()
+            .contains("RUN_LEDGER_ADOPT_NEEDS_RUNTIME"));
+        // R21 — 열린 사건
+        container::write_incident(
+            &container::incident_dir_for(&root),
+            "gputeer-x",
+            "n",
+            "EXITED",
+            "x",
+        )
+        .unwrap();
+        assert!(adopt_legacy_run_ledger(&args(dir.path(), &[]), true)
+            .unwrap_err()
+            .contains("열린 사건"));
+        container::clear_incidents(&container::incident_dir_for(&root), None).unwrap();
+        // 진술로 통과 · origin 에 남는다 · GC 를 돌리지 않는다(미완성 체크포인트 흔적이 남는다)
+        let partial = root.join("ckpt-partial");
+        fs::create_dir_all(&partial).unwrap();
+        fs::write(partial.join(".durability.writing"), b"").unwrap();
+        let message = adopt_legacy_run_ledger(&args(dir.path(), &[]), true).unwrap();
+        assert!(
+            message.contains("RUN_LEDGER_ADOPTED rows=1 attested=true"),
+            "{message}"
+        );
+        assert!(partial.exists(), "R25b — 이관은 기동 GC 를 돌리지 않는다");
+        let paths = run_ledger::LedgerPaths::for_root(&root).unwrap();
+        let ledger = run_ledger::open_for_agent(&paths).unwrap();
+        assert_eq!(
+            format!("{:?}", ledger.row("old-1").unwrap().unwrap().origin),
+            "LegacyAdoptAttested"
+        );
+        // R20 — 두 번 이관하지 않는다
+        drop(ledger);
+        assert!(adopt_legacy_run_ledger(&args(dir.path(), &[]), true)
+            .unwrap_err()
+            .contains("RUN_LEDGER_EXISTS"));
+    }
+
+    #[test]
+    fn a_node_without_start_records_adopts_without_a_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let message = adopt_legacy_run_ledger(&args(dir.path(), &[]), false).unwrap();
+        assert!(
+            message.contains("RUN_LEDGER_ADOPTED rows=0 attested=false"),
+            "{message}"
+        );
     }
 }
