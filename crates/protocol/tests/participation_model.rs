@@ -3,13 +3,14 @@
 //! 이 테스트가 고정하는 핵심은 **조용히 기본값으로 떨어지지 않는다** 는 것이다.
 //! 팀 모드인 줄 알고 낯선 코드를 돌리는 것이 이 설계에서 가장 위험한 사고다.
 
-use gputeer_protocol::{ParticipationModel, ParticipationModelError};
+use gputeer_protocol::{CommitProfile, ParticipationModel, ParticipationModelError};
 
 #[test]
-fn the_two_canonical_spellings_round_trip() {
+fn the_canonical_spellings_round_trip() {
     for model in [
         ParticipationModel::PrivateTeam,
         ParticipationModel::PublicPool,
+        ParticipationModel::TrustedNetwork,
     ] {
         let text = model.as_str();
         assert_eq!(
@@ -71,6 +72,9 @@ fn spelling_variants_are_not_silently_accepted() {
         "privateteam",
         "public pool",
         "publicPool",
+        "trusted_network",
+        "Trusted-Network",
+        "trusted network",
     ] {
         assert!(
             matches!(
@@ -82,13 +86,31 @@ fn spelling_variants_are_not_silently_accepted() {
     }
 }
 
-/// 위협 모델 전제가 두 모드에서 실제로 갈린다.
+/// 위협 모델 전제가 실제로 갈린다 — 공개 풀만 상호 신뢰를 전제하지 않는다.
 #[test]
-fn only_the_private_team_assumes_mutual_trust() {
+fn only_the_public_pool_does_not_assume_mutual_trust() {
     assert!(ParticipationModel::PrivateTeam.assumes_mutual_trust());
+    assert!(ParticipationModel::TrustedNetwork.assumes_mutual_trust());
     assert!(
         !ParticipationModel::PublicPool.assumes_mutual_trust(),
         "공개 풀이 상호 신뢰를 전제하면 낯선 코드에 격리를 낮추게 된다"
+    );
+}
+
+/// ADR-034 — 세 모델의 `COMMITTED` 해석은 서로 다르다(같은 것으로 표시하지 않는다). 신뢰망은 과반 합의가 아니다.
+#[test]
+fn each_model_reads_committed_differently() {
+    assert_eq!(
+        ParticipationModel::PrivateTeam.commit_profile(),
+        CommitProfile::QuorumCommitted
+    );
+    assert_eq!(
+        ParticipationModel::PublicPool.commit_profile(),
+        CommitProfile::BrokerAttested
+    );
+    assert_eq!(
+        ParticipationModel::TrustedNetwork.commit_profile(),
+        CommitProfile::CoordinatorDurable
     );
 }
 

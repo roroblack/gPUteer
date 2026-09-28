@@ -1,4 +1,4 @@
-//! 참여 모델 — 사설 팀 / 공개 풀 (ADR-031 · ADR-032).
+//! 참여 모델 — 사설 팀 / 공개 풀 / 신뢰망 (ADR-031 · ADR-032 · ADR-034).
 //!
 //! # 왜 타입인가
 //!
@@ -10,6 +10,7 @@
 //! ```text
 //! PrivateTeam   신뢰 앵커 = Genesis + Owner 키        (기준선 §7.2)
 //! PublicPool    신뢰 앵커 = Broker 공개키              (ADR-032)
+//! TrustedNetwork 신뢰 앵커 = 운영자가 배포한 Coordinator 공개키 + 풀 노드 공개키 목록 (ADR-034 — 2026-09-28)
 //! ```
 //!
 //! # 이 모듈이 하는 것과 하지 않는 것
@@ -45,6 +46,22 @@ pub enum ParticipationModel {
     /// ADR-032. Broker 가 멤버십 authority 를 갖고 리더는 스케줄링만 한다.
     /// 참여자는 서로 모른다고 전제하므로 격리 요구를 낮출 수 없다.
     PublicPool,
+    /// ADR-034(2026-09-28). 운영자가 띄운 Coordinator 하나 · control DB 하나로 도는 풀. 참여자는 서로 아는 사이라고 전제한다.
+    /// 표의 `COMMITTED` 를 `COORDINATOR_DURABLE` 로 읽는다 — 과반 합의가 아니다(`commit_profile`).
+    TrustedNetwork,
+}
+
+/// 표의 `COMMITTED` 를 이 모델에서 무엇으로 읽는가(`state-machines.md` §0.1). 세 값을 같은 것으로 표시하지 않는다.
+///
+/// ★ 이 값은 **해석**일 뿐 강제가 아니다 — `CoordinatorDurable` 의 일곱 조건(ADR-034 §1)을 강제하는 코드는 아직 없다(§6 검사 9).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum CommitProfile {
+    /// 사설 팀 — ControlStore 과반 합의.
+    QuorumCommitted,
+    /// 공개 풀 — Broker 서명 · 단조 serial(ADR-033 §5).
+    BrokerAttested,
+    /// 신뢰망 — 단일 Coordinator 의 로컬 확정(ADR-034 §1). 디스크를 잃으면 확정을 잃는다.
+    CoordinatorDurable,
 }
 
 /// 모드를 읽지 못한 이유. 어느 경우에도 기본값으로 대체하지 않는다.
@@ -66,7 +83,7 @@ impl fmt::Display for ParticipationModelError {
             Self::Missing => write!(
                 f,
                 "참여 모델이 지정되지 않았다 — 기본값은 없다. \
-                 'private-team' 또는 'public-pool' 을 명시해야 한다"
+                 'private-team' · 'public-pool' · 'trusted-network' 중 하나를 명시해야 한다"
             ),
             Self::Unknown { value } => write!(
                 f,
@@ -92,6 +109,7 @@ impl ParticipationModel {
         match trimmed {
             "private-team" => Ok(Self::PrivateTeam),
             "public-pool" => Ok(Self::PublicPool),
+            "trusted-network" => Ok(Self::TrustedNetwork),
             other => Err(ParticipationModelError::Unknown {
                 value: other.to_string(),
             }),
@@ -103,6 +121,16 @@ impl ParticipationModel {
         match self {
             Self::PrivateTeam => "private-team",
             Self::PublicPool => "public-pool",
+            Self::TrustedNetwork => "trusted-network",
+        }
+    }
+
+    /// 이 모델에서 표의 `COMMITTED` 를 무엇으로 읽는가(`state-machines.md` §0.1 · ADR-034). ★ 해석이지 강제가 아니다.
+    pub fn commit_profile(self) -> CommitProfile {
+        match self {
+            Self::PrivateTeam => CommitProfile::QuorumCommitted,
+            Self::PublicPool => CommitProfile::BrokerAttested,
+            Self::TrustedNetwork => CommitProfile::CoordinatorDurable,
         }
     }
 
@@ -117,6 +145,8 @@ impl ParticipationModel {
         match self {
             Self::PrivateTeam => true,
             Self::PublicPool => false,
+            // 신뢰망 — 운영자가 풀 노드를 받아들인다(admit-node). 참여자는 서로 아는 사이다.
+            Self::TrustedNetwork => true,
         }
     }
 }

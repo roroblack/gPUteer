@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-28 16:17 — D9 규범 초안(ADR-034 신뢰망 COORDINATOR_DURABLE) · 단계 1 적용분 검수 e1 반영(브랜치 fork-merge)
+
+- 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md`(제안 — 독립 검수 중)
+- 스트림: Protocol · 계약
+- 수행: 사용자 위임(D9 「최고의 규칙 코덱스랑 찾아서 적용해」) — 코덱스 논의 d1 의 C 절을 ADR-034 로 · state-machines.md §0 · §0.1(신뢰망 해석 · 보호 전이) · §6 검사 9 · §7 7행 ·
+  participation.rs TrustedNetwork · CommitProfile(배선 없음) · CLAUDE.md ADR 행. e1(단계 1 적용 검수 — CHANGES_REQUESTED · 중간 1 · 낮음 2): 두 제안서의 승인 · 상태 기록 일치 ·
+  규범 절의 제안서 전용 참조와 낡은 "디렉터리 sync 없음" 문장 정리. 서식 섞임(shared.rs)은 이미 커밋돼 이력을 고치지 않았다
+- 검증: 워크스페이스 1448 passed · 0 failed · ignored 4(시험 도중 protocol 을 고쳐 protocol 210 · 파리티 14 를 다시 돌려 통과). ★ D9 의 강제 코드는 없다(§6 검사 9 ❌)
+- 리포트: ADR-034 · 제안서들의 "사용자 결정" · "승인" 절
+
+---
+
 ## 2026-09-28 16:07 — 단계 1(RUN_UNKNOWN 상태) 규범 적용 · 단계 1 · 2 사용자 결정 기록(브랜치 fork-merge)
 
 - 제안: `docs/contracts/proposals/2026-09-28_0742_Attempt_실행여부불명_상태.md`(승인 · 적용) · `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md`(결정 D6~D9)

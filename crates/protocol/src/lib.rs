@@ -43,7 +43,7 @@ pub use membership::{
     resolve_device_authorization, DeviceBinding, MemberAuthorization, MemberFact, MemberState,
     MembershipResolutionError, ViewFreshness,
 };
-pub use participation::{ParticipationModel, ParticipationModelError};
+pub use participation::{CommitProfile, ParticipationModel, ParticipationModelError};
 pub use signing::{
     signing_input, verify, DerivedMismatch, Lifetime, NoReplayCheck, ReplayDecision, ReplayGuard,
     ReplayStoreError, Signable, SignatureVerifier, Verified, VerifyError, VerifyOutcome, NONCE_LEN,
