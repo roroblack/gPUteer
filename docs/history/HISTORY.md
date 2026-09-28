@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-28 09:36 — 규범 제안: Attempt 상태표에 「실행 여부 불명」(RUN_UNKNOWN) — 컨테이너 런타임 불확실 상태 단계 1(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-27_2306_컨테이너_런타임_불확실_상태_설계.md` 의 Out 과제 단계 1
+- 제안: `docs/contracts/proposals/2026-09-28_0742_Attempt_실행여부불명_상태.md`(v12)
+- 스트림: 규범 · 계약(문서만 — `state-machines.md` · 코드는 고치지 않았다, 승인 전)
+- 수행: 상태 RUN_UNKNOWN(지금 돌거나 미종결 기동 요청 때문에 나중에 돌 수 있음) · 진입 두 행(보고 기반 COMMITTED) · 나가는 행 STOP_CONFIRMED ·
+  `START_FAILED` guard 좁힘(옛 보고 해석은 호환 예외) · 코드 없는 종료 행 EXITED_WITHOUT_CODE · 규범 절에 "불명 조건" (a)(b)(c) · Agent 노드 사건과
+  Coordinator 상태 분리 · 단계 2 인계 목록 29항목 · 사용자 결정 D1~D5. ★ 두 벌 실행을 막지 않는다(단계 2)
+- 검증: 코덱스 독립 검수 12회 순차(a1~a11 CHANGES_REQUESTED — 사실 오류 · 정의 누락 · 기존 규범 충돌 등, a12 ACCEPTED). 내가 틀린 곳 — a1(풀 경로의
+  실행 전 갱신 관문을 몰라 두 벌 경로를 잘못 적음) · a6(v4 에서 START_FAILED 에 정지 확인을 넣어 poststart 반례를 되살림) · a10(불명 조건 (a) 를 너무 넓힘).
+  `check_docs.py` 오류 0
+- 리포트: 제안서가 대신한다
+
+---
+
 ## 2026-09-28 08:12 — 작업 자원 상한 설계(CPU · 디스크 · RAM) · 결함 556 · 557 기록(수정 전 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-28_0810_작업_자원상한_CPU_디스크_RAM.md`(결함 510 · 511 후속)
