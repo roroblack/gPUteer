@@ -116,6 +116,9 @@ fn each_model_reads_committed_differently() {
 
 /// 기본값을 만들지 않았음을 컴파일 시점에 고정한다.
 ///
+/// ★ 2026-09-28 — 아래 `compile_fail` 블록은 **통합 시험 파일의 문서 주석이라 돌지 않는다**(코덱스 e2 ⑥). 실제로 도는 같은 시험은
+///   `crates/protocol/src/participation.rs` 모듈 문서에 옮겨 두었다. 이 블록은 읽는 사람을 위한 설명으로만 남긴다.
+///
 /// `Default` 가 생기면 `ParticipationModel::default()` 가 컴파일되고,
 /// 설정 누락이 조용히 한쪽 모드로 떨어진다. 이 doctest 가 그것을 막는다.
 ///

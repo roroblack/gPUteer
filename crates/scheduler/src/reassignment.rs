@@ -116,6 +116,10 @@ use std::collections::BTreeSet;
 /// 대신 **1:1 대응을 깨지 않도록** 정본과 같은 변형·같은
 /// [`Self::assumes_mutual_trust`] 를 둔다. 정본이 바뀌면 여기도 바꿔야
 /// 하고, 배선 시점의 변환은 두 값만 다루므로 눈으로 확인된다.
+///
+/// ★ 2026-09-28 — 정본에 `TrustedNetwork`(ADR-034)가 생겼지만 **여기에는 넣지 않았다.** 이 타입은 두 모델만 다루는 **제한된 내부 타입**이다 —
+///   신뢰망 요청은 이 재배정 관문 커널로 오지 않는다(배선이 없다). 배선할 때 variant · 조건 3 의 정족수 정책 · 시험을 함께 넣고, 그 전의 변환은
+///   `TrustedNetwork` 를 받으면 거부해야 한다(조용히 PrivateTeam 으로 읽지 않는다).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipationModel {
     /// 사설 팀 — 상호 신뢰를 명시적으로 전제한다. 기본 허용.

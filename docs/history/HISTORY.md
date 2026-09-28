@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-28 16:26 — ADR-034 v2: 코덱스 e2 반영 — 같은 DB 를 쓰는 협력 프로세스 · 신뢰망 멤버십 권위(브랜치 fork-merge)
+
+- 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md` v2(제안 — 재검수 중)
+- 스트림: Protocol · 계약
+- 수행: e2(높음 2 · 중간 3 · 낮음 2) — "단일 Coordinator 프로세스" 를 같은 control DB 를 쓰는 협력 프로세스(coordinator · scheduler · CLI)의 논리 인스턴스로 재정의(프로세스 잠금 철회) · replay 원장 비원자 한계 ·
+  §5.1 신뢰망 멤버십 권위(운영자 루트 키 · 지금 admit-node 는 못 채움 — 운영자 진술 등급) · PoolCommitProfile · CoordinatorCommitReceipt 를 선행 작업으로 · 손실 목록을 저장소별로 ·
+  scheduler 복제 enum 제한 명시 · compile_fail 시험을 실제로 도는 라이브러리 문서로 옮김 · 변경 목록 정정
+- 검증: protocol doctest(compile_fail) 1 passed — `Default` 를 넣는 뮤테이션을 잡음 · scheduler 시험 통과 · check_docs 오류 0
+- 리포트: ADR-034 개정 이력
+
+---
+
 ## 2026-09-28 16:20 — 단계 3 설계 v2: 루프가 패널을 쥐고 자식은 표준 입출력으로 제어(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-28_1203_회차밖_상시_소유자화면_설계.md` v2

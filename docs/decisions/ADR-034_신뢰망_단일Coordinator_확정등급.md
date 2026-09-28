@@ -1,6 +1,6 @@
 # ADR-034 · 신뢰망 — 단일 Coordinator 의 확정 등급(`COORDINATOR_DURABLE`)
 
-- **상태:** 제안 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28)
+- **상태:** 제안 v2 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
 - **날짜:** 2026-09-28
 - **관련:** ADR-031(참여 모델) · ADR-032 · ADR-033 §5(`BROKER_ATTESTED`) · `docs/protocol/state-machines.md` §0 · §0.1 · §7 ·
   `crates/protocol/src/participation.rs` · 단계 2 계약 제안 `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` 결정 D9 ·
@@ -25,15 +25,30 @@
 ### 1. `COORDINATOR_DURABLE` 의 정의
 
 ```text
-운영자가 서명한 풀 확정 프로필(PoolCommitProfile)이 지정한 단일 Coordinator 와 단일 control DB generation 에서, 다음을 모두 만족한 로컬 확정:
+운영자가 서명한 풀 확정 프로필(PoolCommitProfile — 아래 6 의 선행 작업)이 지정한 **논리 Coordinator 인스턴스** 하나 · 단일 control DB generation 에서,
+다음을 모두 만족한 로컬 확정.
+
+★ "논리 인스턴스" 는 **같은 control DB 파일을 함께 쓰는 협력 프로세스 집합**이다 — 지금 신뢰망은 `coordinator-stub`(풀 모드) · `scheduler-loop` ·
+  운영자 CLI(import-inventory · release-lost-node · release-held-job 등)가 같은 SQLite 파일을 **따로** 연다(런북 §0 · gputeer-coordinator.service ·
+  gputeer-scheduler.service). 프로세스 사이의 직렬화는 SQLite 파일 잠금(`BEGIN IMMEDIATE`)이 준다. 한 프로세스만 쓰게 하는 잠금은 두지 않는다 —
+  정상 scheduler · CLI 를 막는다(코덱스 e2 ①). 막는 것은 **다른 DB 사본을 쓰는 두 번째 논리 인스턴스**이고, 그것은 generation · control_db_id 결합과
+  Agent 의 watermark 로 가린다(아래 조건 · 시험 3 · 4)
+
+  모든 writer 에 대해:
   1 파일 SQLite control DB 다(메모리 DB 가 아니다)
   2 모든 상태 변경을 BEGIN IMMEDIATE 트랜잭션 하나에서 한다
   3 PRAGMA synchronous=FULL 과 명시한 journal mode 가 **연결마다** 확인된다
   4 fence epoch · Attempt · Lease · 예약 · idempotency · 보류와 상태 전이가 **한 트랜잭션**에서 함께 확정된다
-  5 단조 증가 commit_seq 와 직전 감사 해시를 같은 트랜잭션에 기록한다
+  5 DB 안의 단조 증가 commit_seq(프로세스와 무관한 전역 카운터 행)와 직전 감사 해시 · **쓴 프로세스의 신원**(coordinator · scheduler · cli 명령)을
+    같은 트랜잭션에 기록한다
   6 SQLite COMMIT 성공 **전에는** ACK · Grant · 재배치 승인 · 성공 응답을 보내지 않는다
   7 결과에 commit_provenance=COORDINATOR_DURABLE · coordinator_id · control_db_id · generation · commit_seq 를 드러낸다
 ```
+
+★ **replay 원장은 control DB 와 다른 파일이다**(`--replay-db` — 런북 70 · 79 · `crypto/src/durable_replay.rs`). 두 파일의 쓰기는 **원자적이지 않다** —
+  조건 4 의 "idempotency" 는 control DB 안의 멱등 키(operation · 제출 · 알림 기본키)를 뜻하고, 서명 메시지 재생 방어(nonce)는 포함하지 않는다.
+  두 원장을 한 파일로 모을지, 순서 규칙(재생 기록 → 상태 전이 · 상태 전이 실패는 nonce 소비만 남아 재시도가 거부되는 fail-closed)으로 둘지는
+  강제 코드 조각에서 정한다 — 그 전까지 이것은 한계다
 
 모델을 추론하거나 기본값으로 고르지 않는다(ADR-031 · `participation.rs` 와 같은 원칙). `DURABLE` · `LOCAL` 의 뜻은 세 모델에서 같다.
 
@@ -45,9 +60,18 @@
               악의적 Coordinator 의 이중 답(equivocation) 방지 · 끊긴 Agent 프로세스나 외부 부작용의 강제 정지
 ```
 
-디스크를 (반출되지 않은 백업 · 감사 꼬리와 함께) 잃으면 RUN_UNKNOWN · D6 보류 · Lease 폐기와 최신 fence · 예약 소유 · 완료 · canonical 결정 ·
-멤버십 · 폐기 최신 상태 · ACK 멱등 기록을 잃는다. 옛 Agent 가 다시 유효해 보이거나, 완료한 Job 이 다시 돌거나, 폐기된 주체가 되살아난 것처럼
-보일 수 있다. **그래서 복구 뒤 자동 재개하지 않는다**(아래 5).
+**상위 규칙 — 마지막 복구 지점 이후의 모든 권위 상태가 사라지거나 되감길 수 있다.** 저장소별로:
+
+```text
+control DB    제출 · 큐 상태와 제출 멱등 · 검증된 Manifest(job_store) · Agent 등록 · 인벤토리 · GPU 관측 · 불일치 기억(inventory_store) ·
+              생존 관측 · 재결합 대기 · 세션(node_liveness_store) · 시도 · Lease · fence · 예약 · 보류 · RUN_UNKNOWN(staging · lease) ·
+              종료 보고(attempt_report_store) · 해제 기록 · 운영자 해제 · 멤버십 · 폐기 · 완료 · canonical 결정 · ACK 멱등 기록
+replay DB     이미 본 서명 메시지의 nonce — 잃으면 **옛 메시지가 다시 받아들여질** 수 있다(인사 · ACK · 갱신)
+공유 저장소    체크포인트 파일 · 서명 매니페스트 — control DB 와 따로 산다. control DB 만 잃으면 매니페스트는 남지만 그것을 "확정" 으로 읽은 기록은 사라진다
+```
+
+그 결과 Job 이 사라지거나 다시 제출되고, 옛 인벤토리 · GPU 관측이 되살아나고, 옛 Agent 가 다시 유효해 보이거나, 완료한 Job 이 다시 돌거나,
+폐기된 주체가 되살아난 것처럼 보일 수 있다. **그래서 복구 뒤 자동 재개하지 않는다**(아래 5).
 
 **제품 문구 · UI · 보고서에서 세 모델의 `COMMITTED` 를 같은 것으로 보이지 않는다.** 신뢰망의 확정은 "운영자 Coordinator 한 대가 디스크에 적은 확정" 이다.
 
@@ -57,11 +81,15 @@
 썼다는 사실만으로 이 guard 를 채울 수 없다.
 
 ```text
-멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   구성된 Owner/운영 권위의 전이별 서명과 현재 generation
+멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   **운영자 루트 키**(풀 확정 프로필에 적는다 · Coordinator 장치 키와 **다른** 키 —
+                                                              Coordinator 가 뚫려도 멤버를 만들 수 없게)의 전이별 서명과 현재 generation
 RECONCILING -> CANONICAL(§3)                                   검증된 시도 증거 · 결정적 선택 입력 · 서명된 CanonicalDecision
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
 
+★ **지금 신뢰망은 이 guard 를 채우지 못한다** — `admit-node` 는 가입 파일의 서명을 검증하지 않고 운영자의 대면 확인에 기댄다(런북 577).
+  §5.1 Member 상태기계가 배선되고 운영자 루트 키 서명이 들어오기 전까지, 신뢰망의 멤버십 변경은 `COORDINATOR_DURABLE` 확정이 아니라
+  **운영자 진술(서명 없음)** 등급이다(state-machines.md §5.1 "신뢰망" 행).
 ★ 체크포인트 **상태 이름** `COMMITTED`(§4 — replica 요구)와 표의 durability 열 `COMMITTED` 는 다르다. 이 ADR 은 체크포인트 replica 요구를 낮추지 않는다.
 
 ### 4. `BROKER_ATTESTED` 와의 관계 · 모델 전환
@@ -86,6 +114,19 @@ SQLite online backup API 로 일관된 스냅샷 · 다른 호스트의 서명�
 오래된 백업을 복원하면 **같은 generation 으로 조용히 시작하지 못한다** — 운영자 복구 절차에서 멈춘다. 백업 · 비동기 감사는 이 등급을 과반 합의로
 올리지 않는다(마지막 백업 뒤의 꼬리는 디스크와 함께 사라질 수 있다).
 
+### 6. 선행 작업 — 서명 메시지 (정의 전에는 `COORDINATOR_DURABLE` 이라 부르지 않는다)
+
+```text
+PoolCommitProfile          운영자 루트 키가 서명 — pool_id · participation=trusted-network · coordinator_id · control_db_id · generation ·
+                           운영자 루트 공개키 · 허용 writer 신원 · 발급 시각. Lifetime Perpetual 에 가깝다(generation 이 바뀌면 새 프로필)
+CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 영수증: commit_provenance · coordinator_id · control_db_id · generation · commit_seq ·
+                           전이 요약 해시. Lifetime Evidence(관측 시각 노출 · fence 로 신선도)
+```
+
+둘 다 **아직 정의하지 않았다**(signing.md §5 domain 표 · canonical 벡터 · 참조 구현 · 지문 등록 필요 — signing.md 의 신규 서명 메시지 원칙).
+정의 · 등록 · 응답 결합이 끝나기 전에는 신뢰망의 로컬 확정을 `COORDINATOR_DURABLE` 이라 **부르지 않는다**(state-machines.md §0.1 · §6 검사 9) —
+시험 11 · 14 는 이 둘이 정의된 뒤에 구현할 수 있다.
+
 ## 근거
 
 - 전이마다 모델별 값을 따로 두면 표가 두 배가 되고 누락을 찾기 어렵다 — §0.1 이 `BROKER_ATTESTED` 를 한 곳에 둔 이유와 같다.
@@ -109,12 +150,15 @@ SQLite online backup API 로 일관된 스냅샷 · 다른 호스트의 서명�
 - 바꿀 문서 · 코드:
 
 ```text
-문서(이 ADR 과 함께)   state-machines.md §0 · §0.1(세 모델 해석 · 보호 전이) · §6(검사 항목) · §7(4 · 5 행 갱신)
-코드 — 이 ADR 과 함께   participation.rs: TrustedNetwork("trusted-network") · 확정 등급 판정(commit_profile). ★ 배선 없음 — 선택자만(ADR-031 원칙)
+문서(이 ADR 과 함께)   state-machines.md §0 · §0.1(세 모델 해석 · 보호 전이) · §5.1(신뢰망 권위 행) · §6(검사 9) · §7(7행 추가 — 4행 공개 풀 · 5행 모드 전환은 미해결 그대로)
+코드 — 이 ADR 과 함께   participation.rs: TrustedNetwork("trusted-network") · 확정 등급 판정(commit_profile). ★ 배선 없음 — 선택자만(ADR-031 원칙).
+                        scheduler/src/reassignment.rs 의 복제 enum 은 두 모델만 갖는 **제한된 내부 타입**으로 남긴다(신뢰망 요청은 그 커널로 오지 않는다 —
+                        배선 때 variant · 정족수 정책 · 시험을 함께 넣는다)
 코드 — 미구현(강제 전 필수 · 단계 2 활성화 전 선행)
   control DB 연결을 open_control_db_durable() 하나로 모은다 — foreign_keys · synchronous=FULL · journal mode · 파일 DB 여부를 연결마다 확인
     (지금 failover.rs 는 새 연결을 직접 열고 busy timeout 만 건다 — 같은 설정을 증명할 수 없다)
-  control DB 별 OS 프로세스 잠금 · control_db_id / generation / coordinator_id 결합 · 빈 새 DB 를 같은 generation 으로 자동 초기화하지 않음
+  control_db_id / generation / coordinator_id 결합(모든 writer 가 확인) · 빈 새 DB 를 같은 generation 으로 자동 초기화하지 않음 · DB 안 전역 commit_seq ·
+    writer 신원 기록 · replay 원장과의 순서 규칙(또는 통합) · PoolCommitProfile · CoordinatorCommitReceipt 정의(6)
   Agent 가 (pool_id, generation, fence_epoch, commit_seq) watermark 를 영속하고 되감긴 Coordinator 응답을 거부
   fence 카운터가 Attempt · Lease · 예약의 최대값보다 작으면 fail closed
   보호 전이의 서명 · 증거 guard(없으면 Unsupported) · commit_seq · 감사 해시 체인 · provenance 노출
@@ -126,7 +170,7 @@ SQLite online backup API 로 일관된 스냅샷 · 다른 호스트의 서명�
 ```text
 1 모델 누락 · 오타 · 구버전 바이너리의 trusted-network → 시작 거부        9 (물리 저장소 fencing 을 넣으면) 옛 토큰의 파일 확정 거부
 2 메모리 DB · synchronous != FULL · 예상 밖 journal mode → 시작 거부       10 멤버십 · 폐기 · canonical · 완료를 서명 · 증거 없이 → Unsupported
-3 같은 DB 를 두 Coordinator 가 열면 두 번째 거부                        11 COORDINATOR_DURABLE 기록을 PublicPool 의 BROKER_ATTESTED 로 소비 → 거부(반대도)
+3 같은 DB 를 두 **논리 인스턴스**(다른 coordinator_id · generation)가 쓰려 하면 거부 · 같은 인스턴스의 scheduler · CLI 는 받아들임                        11 COORDINATOR_DURABLE 기록을 PublicPool 의 BROKER_ATTESTED 로 소비 → 거부(반대도)
 4 같은 generation 의 복사된 DB 두 개 → Agent watermark 가 낮은 commit_seq · fence 거부   12 오래된 백업 복원이 같은 generation 으로 조용히 시작하지 못함
 5 COMMIT 전 crash → ACK 없음 · 상태 없음 / COMMIT 뒤 ACK 전 crash → 재시작 뒤 같은 결과를 멱등 반환   13 일관된 백업 복원 뒤 보류 · Lease 폐기 · 예약 · fence · 감사 머리 보존
 6 디스크 가득 · fsync · COMMIT 실패 · 저널 복구 실패 → 성공 응답 없음       14 UI · API · evidence 에 provenance 없이 "COMMITTED" 만 보이면 실패
@@ -144,3 +188,4 @@ SQLite online backup API 로 일관된 스냅샷 · 다른 호스트의 서명�
 | 날짜 | 변경 |
 |---|---|
 | 2026-09-28 | 최초 작성 — 코덱스 논의 d1 의 C 절을 규범 형태로 옮김. 독립 검수 전 |
+| 2026-09-28 | v2 — 코덱스 e2(높음 2 · 중간 3 · 낮음 2) 반영: "단일 Coordinator" → 같은 DB 를 쓰는 협력 프로세스의 논리 인스턴스(프로세스 잠금 철회) · replay 원장 비원자 한계 · 신뢰망 멤버십 권위(운영자 루트 키 · 지금 admit-node 는 못 채움) · 서명 메시지 둘을 선행 작업으로 · 손실 목록을 저장소별로 · scheduler 복제 enum 제한 · 변경 목록 정정 |

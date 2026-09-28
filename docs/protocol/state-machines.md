@@ -495,6 +495,14 @@ Coordinator 는 lease 만료를 관측해도 "즉시" 재배치하지 않는다.
 공개 풀   Broker 가 멤버십 권위다 (ADR-032 §1 · ADR-033).
           이 경우 아래 durability 열의 `COMMITTED` 는 §0.1 에 따라
           `BROKER_ATTESTED` 로 읽는다 — 과반 합의가 아니다.
+
+신뢰망    운영자가 멤버십 권위다 (ADR-034 §3 · 2026-09-28). 서명 키는 풀 확정
+          프로필에 적는 **운영자 루트 키**이고 Coordinator 장치 키와 다르다.
+          durability 열의 `COMMITTED` 는 §0.1 에 따라 `COORDINATOR_DURABLE`.
+          ★ 지금 `admit-node` 는 가입 파일의 서명을 검증하지 않는다(운영자
+          대면 확인) — 이 guard 를 채우지 못한다. 이 표가 배선되고 운영자
+          루트 키 서명이 들어오기 전까지 신뢰망의 멤버십 변경은 "운영자
+          진술(서명 없음)" 등급이다.
 ```
 
 `guard` 열의 "권위 policy" 는 이 구분을 가리킨다. 표는 하나지만

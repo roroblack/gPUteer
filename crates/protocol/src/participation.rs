@@ -30,6 +30,12 @@
 //!
 //! # 왜 `Default` 를 구현하지 않는가
 //!
+//! ```compile_fail
+//! // ★ 이 블록은 라이브러리 doctest 로 **실제로 돈다** — `Default` 가 생기면 컴파일되어 시험이 실패한다(2026-09-28 코덱스 e2 ⑥ — 전에는
+//! //   통합 시험 파일의 문서 주석에 있어 돌지 않았다).
+//! let _silently_defaulted = gputeer_protocol::ParticipationModel::default();
+//! ```
+//!
 //! 기본값이 있으면 "설정을 깜빡한" 상태가 조용히 한쪽 모드로 떨어진다.
 //! 그 방향이 `PrivateTeam` 이면 공개 풀에서 격리가 낮아지고, `PublicPool`
 //! 이면 팀이 불필요한 문턱에 막힌다. 어느 쪽이든 조용한 오작동이므로
