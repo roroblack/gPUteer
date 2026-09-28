@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 12:00 — 결함 532 의 시험 공백을 메웠다: start 가 답하지 않는 경로(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-27_2306_컨테이너_런타임_불확실_상태_설계.md` 단계 6 의 선행 조각
+- 스트림: Agent
+- 수행: `ContainerRuntime` 에 `start_timeout` 칸(운영 기본 `DEFAULT_START_TIMEOUT` = 120초 — 동작 불변). 가짜 런타임에 `start-hangs` 를 더해 결함 532 분기(접수된 start 가 뒤늦게 적용될 수 있어 지우지 않고 사람에게)를 시험한다
+- 검증: `cargo test -p gputeer-agent` 188 passed · 0 failed(가짜 런타임 43) · `node_doctor` 시험 통과. 532 분기를 끄는 뮤테이션 → 새 시험만 실패 · 원복 확인. clippy — 바꾼 줄에서 새 경고 없음(기존 경고는 그대로)
+- 리포트: 결함 532 문서의 조치 줄을 고쳤다
+
+---
+
 ## 2026-09-28 11:48 — 결함 563: 컨테이너 사건 표식이 Windows 에서 디렉터리 sync 를 건너뛰었다(브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-28_1141_사건표식_Windows_디렉터리sync_생략_563.md`(561 과 같은 틀린 전제 — 단계 6 조사 중 발견)

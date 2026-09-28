@@ -56,6 +56,8 @@ pub const CONTAINER_PIDS_LIMIT: u32 = 4096;
 const CREATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// 나머지 짧은 명령(start · inspect · kill · logs · rm)의 시한. 런타임 데몬이 멈췄을 때 Agent 가 같이 멈추지 않게 한다.
 const SHORT_TIMEOUT: Duration = Duration::from_secs(120);
+/// `start` 의 기본 시한 — 짧은 명령과 같다. [`ContainerRuntime::start_timeout`] 의 운영 값이다.
+pub const DEFAULT_START_TIMEOUT: Duration = SHORT_TIMEOUT;
 
 /// 어느 런타임인가 — **운영자가 적는다.** 실행 파일 이름으로 추측하지 않는다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +136,9 @@ pub struct ContainerRuntime {
     /// ★ 2026-09-27 보수 규칙(재검수 121~124 합의) — 사람이 봐야 하는 상태(시작 여부 · 정지 · 로그 · 컨테이너가 불확실)를 남길 **영속 사건 표식**
     ///   폴더. Agent 가 체크포인트 루트를 잠근 뒤 채운다(`incident_dir_for`). `None` 이면 표식을 쓰지 않는다(node-doctor · 시험 — 호출부가 직접 알린다).
     pub incident_dir: Option<PathBuf>,
+    /// `start` 한 번에 줄 시간. 운영은 [`DEFAULT_START_TIMEOUT`](120초)이다. 시험이 줄여 "start 가 답하지 않음" 경로(결함 532)를 2분 기다리지 않고
+    /// 밟는다 — 전에는 이 칸이 없어 그 경로를 시험 없이 코드 대조로만 확인했다.
+    pub start_timeout: Duration,
 }
 
 /// 이 Job 을 어떻게 실행하는가 — ACK **전에** 정한다.
@@ -1302,7 +1307,11 @@ fn run_inner(
     //     가를 수 없어서다(보수 규칙 — 불확실하면 성공으로도 "안 돌았다" 로도 단정하지 않는다).
     let start_args: [OsString; 2] = ["start".into(), target.into()];
     // (응답이 있었는가, 사유)
-    let start_failure = match run_cli_detailed(program, &start_args, SHORT_TIMEOUT) {
+    let start_failure = match run_cli_detailed(
+        program,
+        &start_args,
+        execution.runtime.start_timeout,
+    ) {
         Ok(output) if output.status.success() => None,
         Ok(output) => Some((
             true,
@@ -1828,6 +1837,7 @@ mod tests {
                 node_id: "node".into(),
                 owner: String::new(),
                 incident_dir: None,
+                start_timeout: DEFAULT_START_TIMEOUT,
             },
             pinned_image: "img@sha256:00".into(),
             gpu_pin: Some("0".into()),
@@ -1862,6 +1872,7 @@ mod tests {
             node_id: "node-a".into(),
             owner: "node-a.0123456789abcdef".into(),
             incident_dir: None,
+            start_timeout: DEFAULT_START_TIMEOUT,
         }
     }
 

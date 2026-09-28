@@ -631,6 +631,7 @@ fn check_container_gpu_probe(
                 node_id: "node-doctor".into(),
                 owner: format!("node-doctor.{suffix}"),
                 incident_dir: None,
+                start_timeout: gputeer_agent::container::DEFAULT_START_TIMEOUT,
             },
             pinned_image: image.to_string(),
             gpu_pin: Some(pin.to_string()),

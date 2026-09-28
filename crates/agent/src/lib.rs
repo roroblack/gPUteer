@@ -3711,6 +3711,7 @@ fn parse_container_runtime(flags: &Flags) -> Result<Option<container::ContainerR
                 owner: String::new(),
                 // 체크포인트 루트를 잠근 뒤 채운다(2026-09-27 보수 규칙 · run()).
                 incident_dir: None,
+                start_timeout: container::DEFAULT_START_TIMEOUT,
             }))
         }
         _ => Err(
@@ -4834,6 +4835,7 @@ mod tests {
             node_id: "node".into(),
             owner: String::new(),
             incident_dir: None,
+            start_timeout: container::DEFAULT_START_TIMEOUT,
         };
         let run = |runtime| {
             container::ContainerDecision::Container(container::ContainerExecution {

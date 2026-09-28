@@ -201,6 +201,10 @@ fn main() {
             "a_pipe_held_open_after_exit_does_not_hang_the_owner_stop",
             a_pipe_held_open_after_exit_does_not_hang_the_owner_stop,
         ),
+        (
+            "a_start_that_never_answers_keeps_the_container_for_a_human",
+            a_start_that_never_answers_keeps_the_container_for_a_human,
+        ),
     ];
     let mut failed = 0;
     for (name, test) in tests {
@@ -243,6 +247,13 @@ fn fake_runtime(state: &Path) -> i32 {
     let fails = |token: &str| fail_list.split(',').any(|c| c == token);
     // "rm-created" — 컨테이너를 만든 뒤의 rm 만 실패시킨다(만들기 전 같은 이름 지우기는 통과 · 2026-09-27 보수 규칙 시험).
     let created = state.join("create.args").exists();
+    // "start-hangs" — start 가 접수만 하고 답하지 않는다(시한을 넘긴다 · 결함 532). 작업은 아직 안 돈다 — 조회는 created(멈춤 · 시작 흔적 없음)로
+    // 답한다. 멈춰 보이는 것이 멈춤 확인이 아니라는 반례다(접수된 start 가 뒤늦게 적용될 수 있다).
+    if command == "start" && fails("start-hangs") {
+        std::fs::write(state.join("start-noop"), "").unwrap();
+        std::thread::sleep(Duration::from_secs(20));
+        return 0;
+    }
     // "start-after-run" — 작업 프로세스는 돌고(started) start 는 실패로 답한다(OCI poststart 훅 실패 · 결함 490).
     if command == "start" && fails("start-after-run") {
         std::fs::write(state.join("started"), "").unwrap();
@@ -559,6 +570,7 @@ fn execution() -> ContainerExecution {
             node_id: "node-test".into(),
             owner: "node-test.root".into(),
             incident_dir: None,
+            start_timeout: container::DEFAULT_START_TIMEOUT,
         },
         pinned_image: format!("registry.local/train@sha256:{}", "ab".repeat(32)),
         gpu_pin: None,
@@ -1039,6 +1051,49 @@ fn a_failed_start_keeps_the_container_unless_stop_and_logs_are_confirmed() {
     assert!(
         !after_start.iter().any(|c| c == "rm"),
         "로그를 못 받았는데 지웠다: {after_start:?}"
+    );
+}
+
+/// 결함 532 (재검수 137) — start 가 **응답 없이** 시한을 넘기면 그 start 가 뒤늦게 적용될 수 있다. 지금 멈춰 보여도(created) 멈춤 확인 · 로그 ·
+/// 삭제로 가지 않고, 정지 손잡이를 넘긴 뒤 컨테이너를 남겨 사람에게 넘긴다. start 시한을 1초로 줄여 2분을 기다리지 않는다.
+fn a_start_that_never_answers_keeps_the_container_for_a_human() {
+    let f = fixture(Some("start-hangs"));
+    let mut execution = execution();
+    execution.runtime.start_timeout = Duration::from_secs(1);
+    let mut handed_stopper = false;
+    let begun = Instant::now();
+    let error = container::run(
+        &execution,
+        &input(&mounts(&f.work), "exit-0", &[]),
+        None,
+        None,
+        |_| handed_stopper = true,
+    )
+    .expect_err("start 가 답하지 않았는데 성공했다");
+    assert!(
+        begun.elapsed() < Duration::from_secs(60),
+        "start 시한을 1초로 줄였는데 오래 걸렸다: {:?}",
+        begun.elapsed()
+    );
+    assert!(
+        matches!(&error, ContainerRunError::Unobserved { detail, stopped: false, logs_complete: false, container: ContainerLeft::Kept } if detail.contains("뒤늦게 적용")),
+        "{error:?}"
+    );
+    assert!(error.needs_human());
+    assert!(
+        handed_stopper,
+        "start 가 뒤늦게 적용될 수 있는데 정지 손잡이를 넘기지 않았다"
+    );
+    let after_start: Vec<String> = call_order(&f.state)
+        .into_iter()
+        .skip_while(|c| c != "start")
+        .skip(1)
+        .collect();
+    assert!(
+        !after_start
+            .iter()
+            .any(|c| c == "rm" || c == "kill" || c == "logs"),
+        "멈춰 보인다는 것만으로 정지 · 로그 · 삭제로 갔다: {after_start:?}"
     );
 }
 
