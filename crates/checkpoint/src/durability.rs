@@ -545,7 +545,9 @@ impl CheckpointManifest {
     pub fn verify_files(&self, dir: &Path) -> Result<(), CheckpointError> {
         for file in &self.files {
             let path = dir.join(&file.path);
-            let data = crate::platform::read_beneath(dir, Path::new(&file.path))?;
+            // ★ 결함 558 — 매니페스트의 크기만큼만 읽는다(더 크면 거부 — 통째로 올리지 않는다).
+            let data =
+                crate::platform::read_beneath_capped(dir, Path::new(&file.path), file.size_bytes)?;
             let actual = blake3::hash(&data).to_hex().to_string();
 
             if actual != file.digest {

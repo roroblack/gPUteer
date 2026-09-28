@@ -99,6 +99,57 @@ pub(crate) fn read_beneath(root: &Path, relative: &Path) -> io::Result<Vec<u8>> 
     Ok(data)
 }
 
+/// `read_beneath` 와 같되 **`max_bytes` 까지만** 읽는다 — 넘으면 `FileTooLarge` 로 거부한다(결함 544 · 558).
+///
+/// ★ 크기 검사와 읽기를 **둘 다** 묶는다. 연 핸들의 크기가 이미 크면 읽기 전에 거부하고, 읽는 동안 커지면(검사 뒤 작업이 더 씀) `max_bytes + 1`
+///   바이트째에서 멈추고 거부한다 — 크기만 보고 통째로 읽으면 그 사이에 뚫린다. 성긴 파일도 겉보기 크기로 걸린다(읽으면 0 이 그만큼 나온다).
+pub(crate) fn read_beneath_capped(
+    root: &Path,
+    relative: &Path,
+    max_bytes: u64,
+) -> io::Result<Vec<u8>> {
+    let file = open_beneath_for_read(root, relative)?;
+    let len = file.metadata()?.len();
+    read_capped(file, len, max_bytes, relative)
+}
+
+/// 파일을 **흘려 읽으며** BLAKE3 해시한다 — 내용을 메모리에 올리지 않는다(버퍼만). 링크 방어는 `read_beneath` 와 같다.
+pub(crate) fn hash_beneath(root: &Path, relative: &Path) -> io::Result<String> {
+    let mut file = open_beneath_for_read(root, relative)?;
+    let mut hasher = blake3::Hasher::new();
+    io::copy(&mut file, &mut hasher)?;
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// 크기 검사와 묶인 읽기의 본체 — 읽는 쪽을 받는다(시험이 "선언보다 더 내주는" 읽기로 부른다).
+pub(crate) fn read_capped(
+    reader: impl Read,
+    declared_len: u64,
+    max_bytes: u64,
+    what: &Path,
+) -> io::Result<Vec<u8>> {
+    if declared_len > max_bytes {
+        return Err(too_large(what, declared_len, max_bytes));
+    }
+    let mut data = Vec::with_capacity(declared_len as usize);
+    reader
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut data)?;
+    if data.len() as u64 > max_bytes {
+        return Err(too_large(what, data.len() as u64, max_bytes));
+    }
+    Ok(data)
+}
+
+fn too_large(relative: &Path, seen: u64, max_bytes: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::FileTooLarge,
+        format!(
+            "{relative:?} 가 {seen} 바이트 이상이라 상한({max_bytes})을 넘어 메모리에 올리지 않는다"
+        ),
+    )
+}
+
 /// Linux `openat2` 구현 — `open_beneath_for_read`가 실제로 호출한다.
 ///
 /// `RESOLVE_BENEATH`로 root 밖 탈출을 막고 `RESOLVE_NO_SYMLINKS`와
@@ -187,9 +238,62 @@ mod linux_openat2 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CHECKPOINT_READ_LINK_DEFENSE_ACTIVE, LINUX_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
-        WINDOWS_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
+        read_capped, CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
+        LINUX_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE, WINDOWS_CHECKPOINT_READ_LINK_DEFENSE_ACTIVE,
     };
+    use std::io::{self, Read};
+    use std::path::Path;
+
+    /// 읽히면 안 되는 읽기 — 크기만 보고 거부해야 할 때 실제로 읽지 않았는지 본다.
+    struct MustNotRead;
+    impl Read for MustNotRead {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            panic!("선언 크기가 상한을 넘으면 읽지 않아야 한다");
+        }
+    }
+
+    /// 결함 558 — 선언 크기가 상한을 넘으면 **읽기 전에** 거부한다(성긴 1TiB 파일처럼).
+    #[test]
+    fn a_declared_size_over_the_cap_is_refused_without_reading() {
+        let error = read_capped(MustNotRead, 1 << 40, 1024, Path::new("model.bin")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+    }
+
+    /// 끝없이 커지는 파일 — 상한보다 한참 더(4배) 읽히면 멈춘다. 읽기가 상한에서 묶이지 않았다는 뜻이다.
+    struct EndlessGrowth {
+        served: u64,
+        panic_after: u64,
+    }
+    impl Read for EndlessGrowth {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            assert!(
+                self.served <= self.panic_after,
+                "상한 + 1 에서 멈추지 않고 계속 읽었다({} 바이트)",
+                self.served
+            );
+            buf.fill(7);
+            self.served += buf.len() as u64;
+            Ok(buf.len())
+        }
+    }
+
+    /// 결함 558 — 크기를 본 뒤 파일이 커져도(작업이 계속 씀) 상한 + 1 바이트째에서 멈추고 거부한다. 선언은 작고 실제 내용은 끝이 없다.
+    #[test]
+    fn a_file_that_grows_after_the_size_check_is_cut_at_the_cap() {
+        let grown = EndlessGrowth {
+            served: 0,
+            panic_after: 4 * 1024,
+        };
+        let error = read_capped(grown, 100, 1024, Path::new("model.bin")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+        // 대조군 — 상한 안쪽이면 그대로 읽는다(정확히 상한인 경우 포함).
+        assert_eq!(
+            read_capped(io::repeat(7).take(1024), 1024, 1024, Path::new("x"))
+                .unwrap()
+                .len(),
+            1024
+        );
+    }
 
     /// 어느 플랫폼에서 링크 방어가 실제로 연결돼 있는지를 고정한다.
     ///

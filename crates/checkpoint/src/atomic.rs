@@ -237,6 +237,10 @@ pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, Checkpoin
 
     // 이미 존재하면 **내용을 대조한다.** 이름만으로 같다고 가정하지 않는다.
     if final_path.exists() {
+        // ★ 결함 558 — 크기가 다르면 **읽지 않고** 불일치다. 같은 이름의 큰 파일을 통째로 올리지 않는다.
+        if let Some(mismatch) = size_mismatch(&final_path, data)? {
+            return Err(mismatch);
+        }
         let existing = fs::read(&final_path)?;
         if existing == data {
             cleanup_lock(lock_file);
@@ -266,6 +270,9 @@ pub fn write_once(dir: &Path, name: &str, data: &[u8]) -> Result<bool, Checkpoin
     //   그대로 재현된다: 승자의 내용을 확인하지 않고 Ok(false) 를
     //   반환하면, 패자가 다른 내용을 썼다는 사실이 조용히 사라진다).
     if final_path.exists() {
+        if let Some(mismatch) = size_mismatch(&final_path, data)? {
+            return Err(mismatch);
+        }
         let winner = fs::read(&final_path)?;
         let _ = fs::remove_file(&tmp_path);
         if winner == data {
@@ -416,6 +423,19 @@ pub fn sync_dir(_dir: &Path) -> Result<(), CheckpointError> {
 /// `CLAUDE.md` §3 에 따라 오류를 조용히 삼키지 않고 그대로 올린다.
 pub(crate) fn is_windows_delete_race(error: &io::Error) -> bool {
     is_gone(error) || error.raw_os_error() == Some(5) // ERROR_ACCESS_DENIED
+}
+
+/// ★ 결함 558 — 기존 파일의 크기가 들어올 내용과 다르면 읽지 않고 불일치로 돌려준다(같으면 `None` — 호출부가 내용을 대조한다).
+fn size_mismatch(path: &Path, data: &[u8]) -> Result<Option<CheckpointError>, CheckpointError> {
+    let existing_len = fs::metadata(path)?.len();
+    if existing_len != data.len() as u64 {
+        return Ok(Some(CheckpointError::ContentMismatch {
+            path: path.to_path_buf(),
+            existing_len: usize::try_from(existing_len).unwrap_or(usize::MAX),
+            incoming_len: data.len(),
+        }));
+    }
+    Ok(None)
 }
 
 /// 이 오류가 **"대상이 없다"** 인가 — GC 경로가 정상 경합으로 넘기는 판정은 전부 이 함수 하나를 쓴다.

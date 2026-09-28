@@ -434,12 +434,36 @@ impl StagedCheckpoint {
         let mut contents = Vec::with_capacity(self.staged.len());
 
         for file in &self.staged {
-            let data = crate::platform::read_beneath(&self.dir, Path::new(&file.stored_name))
-                .map_err(|source| CommitError::StagedFileUnreadable {
-                    stored: file.stored_name.clone(),
-                    kind: source.kind(),
-                    source,
-                })?;
+            // ★ 결함 558 — 스테이징한 크기만큼만 메모리에 올린다. 그 사이 파일이 커졌으면 **바뀐 것**이다 — 내용을 올리지 않고 흘려 읽으며 해시해
+            //   (메모리는 버퍼만) 지금까지처럼 실제 digest 와 함께 StagedFileChanged 로 거부한다(계약 시험 staged_commit.rs 의 negative 3).
+            let data = match crate::platform::read_beneath_capped(
+                &self.dir,
+                Path::new(&file.stored_name),
+                file.size_bytes,
+            ) {
+                Ok(data) => data,
+                Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+                    let actual =
+                        crate::platform::hash_beneath(&self.dir, Path::new(&file.stored_name))
+                            .map_err(|source| CommitError::StagedFileUnreadable {
+                                stored: file.stored_name.clone(),
+                                kind: source.kind(),
+                                source,
+                            })?;
+                    return Err(CommitError::StagedFileChanged {
+                        stored: file.stored_name.clone(),
+                        expected: file.digest.clone(),
+                        actual,
+                    });
+                }
+                Err(source) => {
+                    return Err(CommitError::StagedFileUnreadable {
+                        stored: file.stored_name.clone(),
+                        kind: source.kind(),
+                        source,
+                    })
+                }
+            };
 
             let actual = blake3::hash(&data).to_hex().to_string();
             if actual != file.digest {
@@ -497,6 +521,60 @@ impl StagedCheckpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 결함 558 — 스테이징한 뒤 저장 파일이 커지면 확정 전 재검증이 스테이징한 크기에서 멈추고 거부한다(통째로 읽어 해시를 비교하지 않는다).
+    #[test]
+    fn a_staged_file_that_grew_is_refused_at_its_staged_size() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut staged = StagedCheckpoint::begin(temp.path(), "ckpt-1").unwrap();
+        let stored = staged
+            .stage("model.bin", b"weights")
+            .unwrap()
+            .stored_name
+            .clone();
+        std::fs::write(staged.dir().join(&stored), vec![0u8; 4096]).unwrap();
+        let meta = ManifestMeta {
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            step: 1,
+            fence_epoch: 1,
+            producer_node_id: "node-a".into(),
+            created_at_unix_ms: 1,
+        };
+        match staged.commit(&meta) {
+            Err(CommitError::StagedFileChanged { actual, .. }) => assert_eq!(
+                actual,
+                blake3::hash(&[0u8; 4096]).to_hex().to_string(),
+                "흘려 읽은 해시가 지금 디스크의 내용이어야 한다"
+            ),
+            other => panic!("커진 파일을 바뀐 파일로 거부하지 않았다: {other:?}"),
+        }
+    }
+
+    /// 결함 558 — 로컬 루트의 `verify_files` 도 매니페스트 크기에서 멈춘다(커진 파일을 통째로 읽어 해시 불일치로 거부하지 않는다).
+    #[test]
+    fn local_verification_stops_at_the_manifest_size() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut staged = StagedCheckpoint::begin(temp.path(), "ckpt-1").unwrap();
+        staged.stage("model.bin", b"weights").unwrap();
+        let meta = ManifestMeta {
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            step: 1,
+            fence_epoch: 1,
+            producer_node_id: "node-a".into(),
+            created_at_unix_ms: 1,
+        };
+        let committed = staged.commit(&meta).unwrap();
+        let stored = committed.dir.join(&committed.manifest.files[0].path);
+        std::fs::write(&stored, vec![0u8; 4096]).unwrap();
+        match committed.manifest.verify_files(&committed.dir) {
+            Err(crate::CheckpointError::Io(message)) => {
+                assert!(message.contains("상한"), "{message}")
+            }
+            other => panic!("커진 파일을 크기에서 거부하지 않았다: {other:?}"),
+        }
+    }
 
     #[test]
     fn stored_name_round_trips_through_logical_name_of() {

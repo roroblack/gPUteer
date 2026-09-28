@@ -22,7 +22,10 @@
 //!                    이 모듈은 "파일이 매니페스트와 맞는가" 만 답한다
 //! 하위 폴더          체크포인트 폴더 안의 **파일만** 받는다. 하위 폴더가 있으면 거부한다(지어내지 않는다 —
 //!                    경로를 이름으로 접는 규칙을 아직 정하지 않았다)
-//! 큰 파일 스트리밍   파일을 통째로 메모리에 읽는다. 수 GB 체크포인트는 그만큼 메모리를 쓴다 — 알려진 한계다
+//! 큰 파일 스트리밍   파일을 통째로 메모리에 읽는다 — 게시 · 이어받기 판정(Coordinator) · 복원(다른 노드) 모두. 원본 · 스테이징 · 공유 파일을
+//!                    **전부 동시에** 올리는 곳이 있어 봉우리는 "전체 크기" 다. ★ 결함 544 · 558 — 그래서 체크포인트 하나의 전체 크기를
+//!                    [`MAX_IN_MEMORY_CHECKPOINT_BYTES`] 로 묶는다(넘으면 게시 · 검증 · 복원을 거부). 스트리밍은 별도 조각이다
+//!                    (`docs/plans/2026-09-28_0939_체크포인트_스트리밍_읽기_해시_쓰기.md`)
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -34,6 +37,22 @@ use crate::durability::CheckpointManifest;
 
 /// 서명된 proto 매니페스트 파일의 접미사.
 pub const SIGNED_MANIFEST_SUFFIX: &str = ".checkpoint.pb";
+
+/// ★ 결함 544 · 558 — 체크포인트 **하나의 전체 크기** 상한(겉보기 크기 — 성긴 파일도 그 크기로 센다).
+///
+/// 이 모듈은 파일을 통째로 읽고, 몇 곳은 전부를 동시에 들고 있다 — 봉우리가 "전체 + 가장 큰 파일" 이라 이 값의 두 배 안쪽이다. 작업이 크기를
+/// 정하므로(컨테이너의 `--memory` 는 Agent · Coordinator 에 걸리지 않는다) 묶지 않으면 게시하는 Agent · 이어받기를 판정하는 Coordinator · 복원하는
+/// 노드가 OOM 으로 죽는다. ★ 1GiB 는 노드 · Coordinator 가 견딘다는 **가정**이다(재지 않았다). 넘는 정상 체크포인트는 게시되지 않는다 — 스트리밍이
+/// 풀 제한이다.
+pub const MAX_IN_MEMORY_CHECKPOINT_BYTES: u64 = 1 << 30;
+
+fn too_large_message(what: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::FileTooLarge {
+        format!("SHARED_CHECKPOINT_TOO_LARGE: {what}: {error}")
+    } else {
+        format!("{what}: {error}")
+    }
+}
 
 /// 이 Job 의 체크포인트가 모이는 곳.
 pub fn job_root(shared_root: &Path, job_id: &str) -> Result<PathBuf, String> {
@@ -78,14 +97,22 @@ fn safe_component(value: &str, what: &str) -> Result<(), String> {
 ///   전에는 항목 종류를 확인한 **뒤에** 경로로 다시 열어(`fs::read`), 그 사이에 파일이나 `step-N` 을 호스트 파일 링크로 바꾸면
 ///   그 내용이 공유 저장소로 올라갔다. 이제 `step-N/<이름>` 을 부모 기준으로 열되 경로의 링크를 커널이 거부한다
 ///   (리눅스 openat2 RESOLVE_NO_SYMLINKS · Windows reparse 거부 — `platform::read_beneath`).
-fn read_source_file(source_dir: &Path, name: &str) -> Result<Vec<u8>, String> {
+///
+/// ★ 결함 544 · 558 — `budget` 바이트까지만 읽는다(넘으면 `SHARED_CHECKPOINT_TOO_LARGE`). 크기를 본 뒤 작업이 파일을 키워도 읽기에서 멈춘다.
+fn read_source_file(source_dir: &Path, name: &str, budget: u64) -> Result<Vec<u8>, String> {
     let (Some(parent), Some(dir_name)) = (source_dir.parent(), source_dir.file_name()) else {
         return Err(format!(
             "SHARED_CHECKPOINT_SOURCE: {source_dir:?} 의 부모 · 이름을 알 수 없다"
         ));
     };
-    crate::platform::read_beneath(parent, &Path::new(dir_name).join(name))
-        .map_err(|e| format!("SHARED_CHECKPOINT_READ: {source_dir:?}/{name}: {e}"))
+    crate::platform::read_beneath_capped(parent, &Path::new(dir_name).join(name), budget).map_err(
+        |e| {
+            too_large_message(
+                &format!("SHARED_CHECKPOINT_READ: {source_dir:?}/{name}"),
+                &e,
+            )
+        },
+    )
 }
 
 /// `source_dir` 안의 **파일만** 체크포인트 하나로 공유 저장소에 확정한다.
@@ -98,12 +125,32 @@ pub fn publish_directory(
     source_dir: &Path,
     meta: &ManifestMeta,
 ) -> Result<CommittedCheckpoint, String> {
+    publish_directory_capped(
+        shared_root,
+        job_id,
+        checkpoint_id,
+        source_dir,
+        meta,
+        MAX_IN_MEMORY_CHECKPOINT_BYTES,
+    )
+}
+
+/// [`publish_directory`] 의 본체 — 상한을 인자로 받는다(시험이 작은 상한으로 부른다).
+pub(crate) fn publish_directory_capped(
+    shared_root: &Path,
+    job_id: &str,
+    checkpoint_id: &str,
+    source_dir: &Path,
+    meta: &ManifestMeta,
+    cap: u64,
+) -> Result<CommittedCheckpoint, String> {
     // ★ 2026-09-23 (결함 225 · 검수 75) — 전에는 checkpoint_id 를 여기서 안 봐서 ':'(Windows 드라이브 접두사)가 공유 루트 밖에
     //   데이터를 확정한 뒤에야 서명 매니페스트 쓰기에서 거부됐다.
     safe_component(checkpoint_id, "checkpoint_id")?;
     let root = job_root(shared_root, job_id)?;
     ensure_not_link(&root.join(checkpoint_id))?;
     let mut names: Vec<(String, PathBuf)> = Vec::new();
+    let mut declared: u64 = 0;
     for entry in std::fs::read_dir(source_dir)
         .map_err(|e| format!("SHARED_CHECKPOINT_SOURCE: {source_dir:?} 를 읽지 못했다: {e}"))?
     {
@@ -122,6 +169,17 @@ pub fn publish_directory(
                 "SHARED_CHECKPOINT_SUBDIR: {name} 는 폴더다 — 체크포인트 폴더에는 파일만 둔다"
             ));
         }
+        // ★ 결함 544 · 558 — 크기 합을 **공유 저장소에 쓰기 전에** 본다(겉보기 크기 — 성긴 파일도). 넘으면 아무것도 만들지 않고 거부한다.
+        let len = entry
+            .metadata()
+            .map_err(|e| format!("SHARED_CHECKPOINT_SOURCE: {name}: {e}"))?
+            .len();
+        declared = declared.saturating_add(len);
+        if declared > cap {
+            return Err(format!(
+                "SHARED_CHECKPOINT_TOO_LARGE: {source_dir:?} 의 파일 크기 합이 {declared} 바이트 이상으로 상한({cap})을 넘는다 — 게시하지 않는다(통째 읽기라 메모리에 올릴 수 없다)"
+            ));
+        }
         names.push((name, entry.path()));
     }
     if names.is_empty() {
@@ -132,8 +190,11 @@ pub fn publish_directory(
     names.sort();
     let mut staged = StagedCheckpoint::begin(&root, checkpoint_id)
         .map_err(|e| format!("SHARED_CHECKPOINT_BEGIN: {e:?}"))?;
+    let mut used: u64 = 0;
     for (name, _path) in &names {
-        let data = read_source_file(source_dir, name)?;
+        // 남은 예산만큼만 읽는다 — 위에서 본 뒤 파일이 커져도 전체가 상한을 넘지 않는다.
+        let data = read_source_file(source_dir, name, cap.saturating_sub(used))?;
+        used = used.saturating_add(data.len() as u64);
         staged
             .stage(name, &data)
             .map_err(|e| format!("SHARED_CHECKPOINT_STAGE: {name}: {e:?}"))?;
@@ -155,7 +216,26 @@ pub fn publish_or_recover(
     source_dir: &Path,
     meta: &ManifestMeta,
 ) -> Result<CheckpointManifest, String> {
-    match publish_directory(shared_root, job_id, checkpoint_id, source_dir, meta) {
+    publish_or_recover_capped(
+        shared_root,
+        job_id,
+        checkpoint_id,
+        source_dir,
+        meta,
+        MAX_IN_MEMORY_CHECKPOINT_BYTES,
+    )
+}
+
+/// [`publish_or_recover`] 의 본체 — 상한을 인자로 받는다.
+pub(crate) fn publish_or_recover_capped(
+    shared_root: &Path,
+    job_id: &str,
+    checkpoint_id: &str,
+    source_dir: &Path,
+    meta: &ManifestMeta,
+    cap: u64,
+) -> Result<CheckpointManifest, String> {
+    match publish_directory_capped(shared_root, job_id, checkpoint_id, source_dir, meta, cap) {
         Ok(committed) => return Ok(committed.manifest),
         Err(error) if error.starts_with("SHARED_CHECKPOINT_BEGIN: AlreadyCommitted") => {}
         Err(error) => return Err(error),
@@ -176,14 +256,17 @@ pub fn publish_or_recover(
             "SHARED_CHECKPOINT_RECOVER: {checkpoint_id} 는 이미 **다른** 확정 체크포인트다 — 서명하지 않는다"
         ));
     }
-    let on_disk = verify_on_disk(shared_root, &to_unsigned_pb(&manifest)?)?;
+    let on_disk = verify_on_disk_capped(shared_root, &to_unsigned_pb(&manifest)?, cap)?;
     let mut source: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut used: u64 = 0;
     for entry in std::fs::read_dir(source_dir)
         .map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {source_dir:?}: {e}"))?
     {
         let entry = entry.map_err(|e| format!("SHARED_CHECKPOINT_RECOVER: {e}"))?;
         let name = entry.file_name().to_string_lossy().to_string();
-        let data = read_source_file(source_dir, &name)?;
+        // ★ 결함 558 — 원본 전부를 동시에 들고 있으므로 전체를 상한으로 묶는다.
+        let data = read_source_file(source_dir, &name, cap.saturating_sub(used))?;
+        used = used.saturating_add(data.len() as u64);
         source.push((name, data));
     }
     source.sort();
@@ -312,11 +395,36 @@ pub fn verify_on_disk(
     shared_root: &Path,
     manifest: &pb::CheckpointManifest,
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
+    verify_on_disk_capped(shared_root, manifest, MAX_IN_MEMORY_CHECKPOINT_BYTES)
+}
+
+/// [`verify_on_disk`] 의 본체 — 상한을 인자로 받는다.
+///
+/// ★ 결함 558 — 이 함수는 파일 **전부를 동시에** 돌려준다. Coordinator 의 장애 이어받기 판정(`failover.rs`)과 이어받는 노드의 복원이 부른다 —
+///   다른 노드의 작업이 정한 크기가 그대로 그쪽 메모리가 된다. 그래서 (1) 매니페스트가 말하는 전체 크기가 상한을 넘으면 **읽기 전에** 거부하고
+///   (2) 파일마다 매니페스트의 크기만큼만 읽는다(디스크의 파일이 더 크면 그 크기에서 멈추고 거부).
+pub(crate) fn verify_on_disk_capped(
+    shared_root: &Path,
+    manifest: &pb::CheckpointManifest,
+    cap: u64,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
     safe_component(&manifest.checkpoint_id, "checkpoint_id")?;
     let dir = job_root(shared_root, &manifest.job_id)?.join(&manifest.checkpoint_id);
     ensure_not_link(&dir)?;
     if manifest.files.is_empty() {
         return Err("SHARED_CHECKPOINT_VERIFY: 파일이 없는 매니페스트다".to_string());
+    }
+    // total_bytes 만 믿지 않는다 — 파일 크기 합도 본다(둘이 다르면 아래 전체 크기 대조에서 어차피 거부되지만, 그 전에 읽어 버린다).
+    let sum = manifest
+        .files
+        .iter()
+        .fold(0u64, |sum, file| sum.saturating_add(file.size_bytes));
+    let declared = manifest.total_bytes.max(sum);
+    if declared > cap {
+        return Err(format!(
+            "SHARED_CHECKPOINT_TOO_LARGE: {} 의 크기가 {declared} 바이트로 상한({cap})을 넘는다 — 읽지 않는다",
+            manifest.checkpoint_id
+        ));
     }
     let mut contents: Vec<(String, Vec<u8>)> = Vec::with_capacity(manifest.files.len());
     let mut total: u64 = 0;
@@ -327,12 +435,14 @@ pub fn verify_on_disk(
                 file.path
             )
         })?;
-        let data = crate::platform::read_beneath(&dir, Path::new(&file.path)).map_err(|e| {
-            format!(
-                "SHARED_CHECKPOINT_VERIFY: {} 를 읽지 못했다: {e}",
-                file.path
-            )
-        })?;
+        let data =
+            crate::platform::read_beneath_capped(&dir, Path::new(&file.path), file.size_bytes)
+                .map_err(|e| {
+                    too_large_message(
+                        &format!("SHARED_CHECKPOINT_VERIFY: {} 를 읽지 못했다", file.path),
+                        &e,
+                    )
+                })?;
         if data.len() as u64 != file.size_bytes {
             return Err(format!(
                 "SHARED_CHECKPOINT_VERIFY: {} 크기가 다르다(매니페스트 {} · 디스크 {})",
@@ -440,6 +550,58 @@ mod tests {
             std::fs::write(source.join(name), data).unwrap();
         }
         source
+    }
+
+    /// 결함 544 · 558 — 크기 합이 상한을 넘는 원본은 공유 저장소에 **아무것도 쓰기 전에** 거부한다(체크포인트 폴더도 만들지 않는다).
+    #[test]
+    fn a_source_larger_than_the_cap_is_refused_before_anything_is_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let source = source_with(
+            temp.path(),
+            &[("a.bin", &[1u8; 600]), ("b.bin", &[2u8; 600])],
+        );
+        let error = publish_directory_capped(&shared, "job-1", "ckpt-1", &source, &meta(1), 1000)
+            .unwrap_err();
+        assert!(error.starts_with("SHARED_CHECKPOINT_TOO_LARGE"), "{error}");
+        assert!(
+            !shared.join("job-1").join("ckpt-1").exists(),
+            "상한을 넘는데 공유 저장소에 체크포인트 폴더를 만들었다"
+        );
+        // 대조군 — 상한 안쪽이면 게시된다.
+        publish_directory_capped(&shared, "job-1", "ckpt-2", &source, &meta(2), 1200).unwrap();
+    }
+
+    /// 결함 558 — 이어받기 판정(Coordinator) · 복원이 부르는 검증은 매니페스트가 말하는 크기가 상한을 넘으면 **읽기 전에** 거부한다.
+    #[test]
+    fn verification_refuses_a_manifest_larger_than_the_cap() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let source = source_with(
+            temp.path(),
+            &[("a.bin", &[1u8; 600]), ("b.bin", &[2u8; 600])],
+        );
+        let committed = publish_directory(&shared, "job-1", "ckpt-1", &source, &meta(1)).unwrap();
+        let manifest = to_unsigned_pb(&committed.manifest).unwrap();
+        let error = verify_on_disk_capped(&shared, &manifest, 1000).unwrap_err();
+        assert!(error.starts_with("SHARED_CHECKPOINT_TOO_LARGE"), "{error}");
+        // 대조군 — 상한 안쪽이면 검증된다.
+        verify_on_disk_capped(&shared, &manifest, 1200).unwrap();
+    }
+
+    /// 결함 558 — 디스크의 파일이 매니페스트보다 크면 매니페스트 크기에서 멈추고 거부한다(통째로 읽은 뒤 크기를 대조하지 않는다).
+    #[test]
+    fn a_shared_file_larger_than_its_manifest_is_cut_at_the_declared_size() {
+        let temp = tempfile::tempdir().unwrap();
+        let shared = temp.path().join("shared");
+        let source = source_with(temp.path(), &[("a.bin", &[1u8; 600])]);
+        let committed = publish_directory(&shared, "job-1", "ckpt-1", &source, &meta(1)).unwrap();
+        let manifest = to_unsigned_pb(&committed.manifest).unwrap();
+        // 공유 저장소의 그 파일을 뒤에서 키운다(다른 노드 · 사람이 바꾼 경우).
+        let stored = committed.dir.join(&manifest.files[0].path);
+        std::fs::write(&stored, [1u8; 5000]).unwrap();
+        let error = verify_on_disk(&shared, &manifest).unwrap_err();
+        assert!(error.contains("SHARED_CHECKPOINT_TOO_LARGE"), "{error}");
     }
 
     /// 게시 -> 서명할 proto -> 다른 곳에서 검증 · 복원까지 한 바퀴. 복원된 파일이 원본과 같다.
