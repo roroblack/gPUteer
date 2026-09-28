@@ -1,6 +1,6 @@
 # ADR-034 · 신뢰망 — 단일 Coordinator 의 확정 등급(`COORDINATOR_DURABLE`)
 
-- **상태:** 제안 v2 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
+- **상태:** 제안 v3 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
 - **날짜:** 2026-09-28
 - **관련:** ADR-031(참여 모델) · ADR-032 · ADR-033 §5(`BROKER_ATTESTED`) · `docs/protocol/state-machines.md` §0 · §0.1 · §7 ·
   `crates/protocol/src/participation.rs` · 단계 2 계약 제안 `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` 결정 D9 ·
@@ -63,9 +63,14 @@
 **상위 규칙 — 마지막 복구 지점 이후의 모든 권위 상태가 사라지거나 되감길 수 있다.** 저장소별로:
 
 ```text
-control DB    제출 · 큐 상태와 제출 멱등 · 검증된 Manifest(job_store) · Agent 등록 · 인벤토리 · GPU 관측 · 불일치 기억(inventory_store) ·
-              생존 관측 · 재결합 대기 · 세션(node_liveness_store) · 시도 · Lease · fence · 예약 · 보류 · RUN_UNKNOWN(staging · lease) ·
-              종료 보고(attempt_report_store) · 해제 기록 · 운영자 해제 · 멤버십 · 폐기 · 완료 · canonical 결정 · ACK 멱등 기록
+★ 아래는 **예시이지 전부가 아니다**(코덱스 e2b ③). 복구 단위는 "control DB 파일 전체" · "replay DB 파일 전체" · "호스트의 키 · 설정 파일" · "공유 저장소" 넷이고,
+  한 단위를 잃으면 그 안의 **모든 것**을 잃는다.
+control DB    예: 제출 · 큐 상태와 제출 멱등 · 검증된 Manifest · pool-mode 표식(job_store) · Agent 등록 · 인벤토리 · GPU 관측 · 불일치 기억(inventory_store) ·
+              생존 관측 · 재결합 대기 · 세션(node_liveness_store) · 이웃 신고(neighbor_report_store) · 시도 · Lease · fence · 예약 · 보류 · RUN_UNKNOWN(staging · lease) ·
+              종료 보고(attempt_report_store) · 체크포인트 매니페스트 결합(checkpoint_manifest_store) · replica ACK(replica_ack_store) · 해제 기록 · 운영자 해제 ·
+              멤버십 · 폐기 · 완료 · canonical 결정 · ACK 멱등 기록
+호스트 파일    Coordinator 시드(서명 키) · 제출자 keyring · 서비스 설정 · (들어오면) 풀 확정 프로필 — DB 밖이지만 같은 호스트에 있다(런북). 시드를 잃으면
+              Coordinator 신원이 바뀐다 — 모든 Agent 의 pin 을 바꿔야 한다
 replay DB     이미 본 서명 메시지의 nonce — 잃으면 **옛 메시지가 다시 받아들여질** 수 있다(인사 · ACK · 갱신)
 공유 저장소    체크포인트 파일 · 서명 매니페스트 — control DB 와 따로 산다. control DB 만 잃으면 매니페스트는 남지만 그것을 "확정" 으로 읽은 기록은 사라진다
 ```
@@ -81,11 +86,30 @@ replay DB     이미 본 서명 메시지의 nonce — 잃으면 **옛 메시지
 썼다는 사실만으로 이 guard 를 채울 수 없다.
 
 ```text
-멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   **운영자 루트 키**(풀 확정 프로필에 적는다 · Coordinator 장치 키와 **다른** 키 —
-                                                              Coordinator 가 뚫려도 멤버를 만들 수 없게)의 전이별 서명과 현재 generation
-RECONCILING -> CANONICAL(§3)                                   검증된 시도 증거 · 결정적 선택 입력 · 서명된 CanonicalDecision
+멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   **운영자 루트 키**(설치 · 초대 때 따로 pin 한 공개키 — ADR-034 §3.1 · Coordinator 장치 키와
+                                                              **다른** 키)의 전이별 서명과 현재 generation
+canonical 결정 — 두 표의 두 전이                                   Attempt `RECONCILING -> CANONICAL | SELECTED`(§3) 와 Job `RECONCILING -> COMPLETED |
+                                                              CANONICAL_CHOSEN`(§2)는 **같은 서명된 CanonicalDecision 하나**에 결합되어 한 트랜잭션에서
+                                                              함께 확정된다 — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
+                                                              ("유효 attempt 1개 이상")만으로는 신뢰망에서 이 전이를 확정하지 못한다
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
+
+### 3.1 운영자 루트 키의 신뢰 부트스트랩 (코덱스 e2b ① — v2 는 프로필이 자기 안의 키로 자기를 서명하는 모양이라 권위를 증명하지 못했다)
+
+```text
+pin        운영자 루트 **공개키**(또는 그 지문)를 풀 확정 프로필과 **따로** 둔다 — 초대 파일 · 설치 설정(`GPUTEER_OPERATOR_ROOT_PUBKEY`)과 Coordinator 설정에.
+           모든 검증자(Agent · Coordinator · scheduler · 운영자 CLI)는 **pin 한 키**로 프로필과 멤버십 전이 서명을 검증한다 — 프로필 안에 적힌 키를 믿지 않는다
+최초 설치   운영자가 루트 키를 **Coordinator 장치 키와 다른 곳**(운영자 개인 기기 · 오프라인)에서 만든다. 초대 파일에 공개키를 싣고, 팀원은 지문을 대면 · 전화로
+           한 번 맞춰 본다(지금 admit-node 의 공개키 확인과 같은 절차 — 런북). 지문이 다르면 설치하지 않는다
+회전       옛 루트 키가 "새 루트 공개키 · 새 generation · 발급 시각" 을 서명한 회전 증서를 낸다. 검증자는 pin 한 옛 키로 증서를 검증한 뒤에만 새 키로 pin 을
+           바꾼다(연쇄는 한 단계씩 — 건너뛰지 않는다). 옛 키를 잃었으면 회전이 아니라 **새 풀**이다(모든 노드 재설치 — 자동 복구 없음)
+generation  프로필의 generation 이 바뀌면(모델 전환 · control DB 복구 · 루트 회전) 검증자는 새 프로필을 pin 한 키로 검증하고, 옛 generation 의 확정 영수증을 새 것으로
+           받아들이지 않는다(§4 · 시험 4 · 12)
+```
+
+★ 지금 신뢰망의 신뢰 앵커는 Coordinator 공개키 · 풀 노드 공개키 목록뿐이다(런북 — Agent 에 그 둘만 배포). 운영자 루트 키는 **아직 없다** — 위 pin · 절차가 들어오기
+  전에는 아래처럼 멤버십 guard 를 채우지 못한다.
 
 ★ **지금 신뢰망은 이 guard 를 채우지 못한다** — `admit-node` 는 가입 파일의 서명을 검증하지 않고 운영자의 대면 확인에 기댄다(런북 577).
   §5.1 Member 상태기계가 배선되고 운영자 루트 키 서명이 들어오기 전까지, 신뢰망의 멤버십 변경은 `COORDINATOR_DURABLE` 확정이 아니라
@@ -118,7 +142,9 @@ SQLite online backup API 로 일관된 스냅샷 · 다른 호스트의 서명�
 
 ```text
 PoolCommitProfile          운영자 루트 키가 서명 — pool_id · participation=trusted-network · coordinator_id · control_db_id · generation ·
-                           운영자 루트 공개키 · 허용 writer 신원 · 발급 시각. Lifetime Perpetual 에 가깝다(generation 이 바뀌면 새 프로필)
+                           운영자 루트 공개키 · 허용 writer 신원 · 발급 시각. Lifetime Perpetual 에 가깝다(generation 이 바뀌면 새 프로필).
+                           ★ 검증은 프로필 안의 키가 아니라 **pin 한 운영자 루트 키**로 한다(§3.1)
+OperatorRootRotation       옛 루트 키가 서명 — 새 루트 공개키 · 새 generation · 발급 시각(§3.1 회전)
 CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 영수증: commit_provenance · coordinator_id · control_db_id · generation · commit_seq ·
                            전이 요약 해시. Lifetime Evidence(관측 시각 노출 · fence 로 신선도)
 ```
@@ -132,8 +158,8 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 - 전이마다 모델별 값을 따로 두면 표가 두 배가 되고 누락을 찾기 어렵다 — §0.1 이 `BROKER_ATTESTED` 를 한 곳에 둔 이유와 같다.
 - 그러나 일률 완화는 §7 미해결 4 가 걱정한 전이(canonical · 폐기 · 완료)까지 로컬 판단으로 확정하게 만든다. 저장 등급과 **결정 권한 · 증거**를
   떼어 놓으면, 일률 해석을 유지하면서 그 전이를 Coordinator 단독 판단으로 줄이지 않는다.
-- 신뢰망의 신뢰 앵커(운영자가 배포한 Coordinator 공개키 · 풀 노드 공개키 목록)는 사설 팀(Genesis + Owner 키)과도 공개 풀(Broker 키)과도 다르다 —
-  세 번째 모델로 두는 것이 사실과 맞다.
+- 신뢰망의 신뢰 앵커(지금: 운영자가 배포한 Coordinator 공개키 · 풀 노드 공개키 목록 — §3.1 이 들어오면 pin 한 운영자 루트 키가 더해진다)는 사설 팀
+  (Genesis + Owner 키)과도 공개 풀(Broker 키)과도 다르다 — 세 번째 모델로 두는 것이 사실과 맞다.
 
 ## 대안과 기각 사유
 
@@ -188,4 +214,5 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 | 날짜 | 변경 |
 |---|---|
 | 2026-09-28 | 최초 작성 — 코덱스 논의 d1 의 C 절을 규범 형태로 옮김. 독립 검수 전 |
+| 2026-09-28 | v3 — 코덱스 e2b(높음 2 · 중간 2 · 낮음 1) 반영: 운영자 루트 키 신뢰 부트스트랩(§3.1 — pin · 최초 설치 · 회전 · generation) · canonical 보호를 Job `CANONICAL_CHOSEN` 까지 두 전이 · 한 서명 결정으로 · 손실 목록은 예시임을 밝히고 복구 단위 · 빠진 표 · 호스트 파일 · state-machines §0.1 요약을 ADR 참조로 · scheduler 주석 정리 |
 | 2026-09-28 | v2 — 코덱스 e2(높음 2 · 중간 3 · 낮음 2) 반영: "단일 Coordinator" → 같은 DB 를 쓰는 협력 프로세스의 논리 인스턴스(프로세스 잠금 철회) · replay 원장 비원자 한계 · 신뢰망 멤버십 권위(운영자 루트 키 · 지금 admit-node 는 못 채움) · 서명 메시지 둘을 선행 작업으로 · 손실 목록을 저장소별로 · scheduler 복제 enum 제한 · 변경 목록 정정 |

@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-28 23:15 — ADR-034 v3: 운영자 루트 키 신뢰 부트스트랩 · canonical 보호 두 전이(브랜치 fork-merge)
+
+- 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md` v3(제안 — 재검수 중)
+- 스트림: Protocol · 계약
+- 수행: 코덱스 e2b(높음 2 · 중간 2 · 낮음 1 — 세션이 16:28 에 끊겨 21:55 에 다시 돌렸다) 반영. 운영자 루트 공개키를 설치 · 초대에 따로 pin 하고 그 키로만 검증(§3.1 — 최초 설치 · 회전 증서 · generation) ·
+  canonical 보호를 Attempt SELECTED 와 Job CANONICAL_CHOSEN 두 전이 · 한 서명 결정으로 · 손실 목록은 예시임을 밝히고 복구 단위 넷 · 빠진 표와 호스트 파일 · state-machines §0.1 은 ADR 참조로 · scheduler 주석 정리
+- 검증: check_docs 오류 0 · fmt · 빌드(protocol · scheduler) 경고 0
+- 리포트: ADR-034 개정 이력
+
+---
+
 ## 2026-09-28 16:26 — ADR-034 v2: 코덱스 e2 반영 — 같은 DB 를 쓰는 협력 프로세스 · 신뢰망 멤버십 권위(브랜치 fork-merge)
 
 - 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md` v2(제안 — 재검수 중)

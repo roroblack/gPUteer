@@ -11,6 +11,7 @@
 //! PrivateTeam   신뢰 앵커 = Genesis + Owner 키        (기준선 §7.2)
 //! PublicPool    신뢰 앵커 = Broker 공개키              (ADR-032)
 //! TrustedNetwork 신뢰 앵커 = 운영자가 배포한 Coordinator 공개키 + 풀 노드 공개키 목록 (ADR-034 — 2026-09-28)
+//!               + (ADR-034 §3.1 이 들어오면) 설치 · 초대 때 pin 한 운영자 루트 공개키 — 아직 없다
 //! ```
 //!
 //! # 이 모듈이 하는 것과 하지 않는 것

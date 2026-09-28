@@ -59,9 +59,9 @@
 세 모드 공통   DURABLE · LOCAL 은 의미가 같다
 ```
 
-`COORDINATOR_DURABLE` 의 정의는 ADR-034 §1 에 있다 — 운영자가 서명한 풀 확정 프로필이 지정한 **단일 Coordinator · 단일 control DB
-generation** 에서, 파일 SQLite · 한 `BEGIN IMMEDIATE` 트랜잭션 · 연결마다 확인한 `synchronous=FULL` · 상태와 fence · Lease · 예약 · 보류의
-동시 확정 · 단조 `commit_seq` 와 감사 해시 · COMMIT 전 응답 금지 · provenance 노출을 **모두** 만족한 로컬 확정. ★ 과반 합의도 `BROKER_ATTESTED`
+`COORDINATOR_DURABLE` 의 정의는 **ADR-034 §1 이 규범이다** — 여기서 조건을 다시 적지 않는다(요약이 어긋나지 않게 · 코덱스 e2b ④). 한 줄로:
+같은 control DB 파일을 함께 쓰는 협력 프로세스(coordinator · scheduler · 운영자 CLI)의 **논리 Coordinator 인스턴스** 하나가, pin 한 운영자 루트 키로
+검증되는 풀 확정 프로필의 generation 안에서 ADR-034 §1 의 조건을 **모두** 만족한 로컬 확정. replay 원장은 control DB 와 원자적이지 않다(ADR-034 §1). ★ 과반 합의도 `BROKER_ATTESTED`
 도 아니다 — Coordinator 디스크를 잃으면 확정을 잃는다(ADR-034 §2). ★ 이 정의의 **강제 코드는 아직 없다**(ADR-034 "결과" 의 미구현 목록) —
 그 전까지 신뢰망의 로컬 SQLite 확정을 `COORDINATOR_DURABLE` 이라 부르지 않는다(§6 검사 9).
 
@@ -128,8 +128,12 @@ Broker 가 죽으면 이 등급의 새 결정을 만들 수 없다
 증거가 없으면 `Unsupported` 로 거부한다. Coordinator 가 자기 DB 에 행을 썼다는 사실만으로 이 guard 를 채울 수 없다.
 
 ```text
-멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   구성된 Owner/운영 권위의 전이별 서명과 현재 generation
-RECONCILING -> CANONICAL(§3)                                   검증된 시도 증거 · 결정적 선택 입력 · 서명된 CanonicalDecision
+멤버십 · 승인 · 정지 · 복귀 · 폐기 · 제거(§5.1 · §1 * -> REVOKED)   **운영자 루트 키**(설치 · 초대 때 따로 pin 한 공개키 — ADR-034 §3.1 · Coordinator 장치 키와
+                                                              **다른** 키)의 전이별 서명과 현재 generation
+canonical 결정 — 두 표의 두 전이                                   Attempt `RECONCILING -> CANONICAL | SELECTED`(§3) 와 Job `RECONCILING -> COMPLETED |
+                                                              CANONICAL_CHOSEN`(§2)는 **같은 서명된 CanonicalDecision 하나**에 결합되어 한 트랜잭션에서
+                                                              함께 확정된다 — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
+                                                              ("유효 attempt 1개 이상")만으로는 신뢰망에서 이 전이를 확정하지 못한다
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
 
