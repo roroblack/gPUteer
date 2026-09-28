@@ -149,9 +149,14 @@ struct Round {
 
 /// agent-stub 을 한 번 돌린다 — 출력은 흘려 읽는다(결함 560). agent-stub 자체에는 시한을 걸지 않는다(회차가 학습 몇 시간일 수 있다).
 fn run_round(exe: &Path, agent_args: &[String]) -> Result<Round, String> {
-    let mut child = Command::new(exe)
-        .arg("agent-stub")
-        .args(agent_args)
+    let mut command = Command::new(exe);
+    command.arg("agent-stub").args(agent_args);
+    run_command_round(command)
+}
+
+/// 준비된 명령으로 한 회차를 돈다 — 시험이 "끝난 뒤 손자가 파이프를 쥐는" 명령을 넣는다.
+fn run_command_round(mut command: Command) -> Result<Round, String> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -407,5 +412,39 @@ mod tests {
         assert_eq!(merged.last_nonempty.as_deref(), Some("err last"));
         let merged = merge(out, RoundLines::default());
         assert_eq!(merged.last_nonempty.as_deref(), Some("out last"));
+    }
+
+    /// 결함 560 — 회차 프로세스가 끝났는데 파이프를 물려받은 손자가 남으면(EOF 가 오지 않는다) 여유(`PIPE_CLOSE_GRACE`)만 기다리고 그때까지 읽은
+    /// 줄로 판정한다 — 손자가 끝날 때까지(30초) 멈추지 않는다.
+    #[test]
+    fn a_grandchild_holding_the_pipe_does_not_hang_the_round() {
+        let command = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args([
+                "/C",
+                "echo WORKLOAD_RESULT ok=true& start /B powershell -NoProfile -Command Start-Sleep -Seconds 30",
+            ]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", "echo WORKLOAD_RESULT ok=true; sleep 30 & exit 0"]);
+            c
+        };
+        let started = Instant::now();
+        let round = run_command_round(command).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "손자가 끝날 때까지 기다렸다({:?})",
+            started.elapsed()
+        );
+        assert!(round.lines.worked, "끝나기 전에 읽은 줄을 잃었다");
+        assert!(
+            round
+                .notes
+                .iter()
+                .any(|note| note.contains("닫히지 않았다")),
+            "{:?}",
+            round.notes
+        );
     }
 }
