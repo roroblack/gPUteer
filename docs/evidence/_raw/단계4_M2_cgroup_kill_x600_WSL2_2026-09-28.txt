@@ -1,0 +1,14 @@
+# 단계 4 M2(부분) — WSL2 배포판 안 docker 의 gputeer- 컨테이너를 런타임 CLI 없이 호스트 cgroup.kill 로 끝낼 수 있는가 (x600 · 2026-09-28 · 사용자 허가 2026-09-28)
+# ★ dockerd 는 멈추지 않았다(사용자 컨테이너가 같은 데몬에 있다) — 기제 확인이지 '런타임 무응답 중' 확인이 아니다
+# 절차: docker run -d gputeer-m2-probe(busybox · sleep 600 두 개) → /proc/<init>/cgroup 으로 경로 → echo 1 > cgroup.kill → procs · init · docker 상태 · 정리
+
+== date 2026-09-28T16:16:16+09:00
+-- init pid=50958 · cgroup=/system.slice/docker-dd97c71bbe8b8ecc22fded67087012f66f7dad052685d7a96db129abe5e9b5bb.scope
+   procs(전): 3 · cgroup.kill 있음: 예
+   cgroup.kill 쓰기 rc=0
+   procs(뒤): 0(폴더 사라짐) · 걸린 시간 43ms
+   init 살아 있나: 아니오
+   docker 가 보는 상태: Status=exited ExitCode=137 OOMKilled=false
+   정리: 0개 남음
+-- 사용자 컨테이너 수(전후 대조용, 이름은 적지 않는다): 4
+

@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 16:17 — 단계 4 M2(부분) 실측: 호스트 cgroup.kill 로 docker 컨테이너를 런타임 없이 끝낸다(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-28_1240_런타임을_거치지_않는_정지_설계.md` M2
+- 스트림: Agent · 실측
+- 수행: x600 WSL2(사용자 허가 2026-09-28) — gputeer-m2-probe 의 cgroup 에 cgroup.kill. dockerd 는 멈추지 않았다(사용자 컨테이너 보호)
+- 검증: 프로세스 3개가 43ms 안에 끝남 · docker 는 exited 137(OOM 아님) · 사용자 컨테이너 4개 그대로. "런타임 무응답 중" 은 재지 않았다 · M1 · M3 은 podman 이 없어 못 했다
+- 리포트: `docs/evidence/_raw/단계4_M2_cgroup_kill_x600_WSL2_2026-09-28.txt`
+
+---
+
 ## 2026-09-28 16:17 — D9 규범 초안(ADR-034 신뢰망 COORDINATOR_DURABLE) · 단계 1 적용분 검수 e1 반영(브랜치 fork-merge)
 
 - 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md`(제안 — 독립 검수 중)
