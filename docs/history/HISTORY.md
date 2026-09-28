@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 16:01 — 결함 557 실측: x600 WSL2 docker 는 상한을 요청대로 건다(브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-28_0808_자원상한_설치값_미전달과_적용_미확인_556_557.md` 557
+- 스트림: Agent · 실측
+- 수행: x600 WSL2(사용자 허가 2026-09-28)에서 `gputeer-557-probe`(busybox) 를 메모리 = 스왑 256MiB · pids 64 · cpus 1.5 로 만들어 HostConfig · 안의 cgroup 값을 읽고 지웠다
+- 검증: 네 상한이 요청과 정확히 같다(memory.swap.max=0 포함) · 경고 없음. podman 은 없어 ENVIRONMENT-BLOCKED. 가설이 겨냥한 환경(rootless 위임 없음 · 스왑 계정 꺼짐)은 재지 않았다 — 가설은 기각하지 않는다
+- 리포트: `docs/evidence/_raw/결함557_상한적용_실측_x600_WSL2_2026-09-28.txt`
+
+---
+
 ## 2026-09-28 16:00 — 결함 554 의 시험 공백을 메웠다: 운영자 셸 스크립트가 root 로 돌 때 PATH 가로채기(브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-28_0731_재검수145_결함_552_554.md` 554 줄

@@ -1,0 +1,17 @@
+# 결함 557 실측 — 상한을 준 create 가 실제로 그 상한을 거는가 (x600 WSL2 · 2026-09-28 · 사용자 허가 2026-09-28)
+# 스크립트: 아래 출력을 만든 probe557.sh 의 동작 — busybox:1.36 으로 gputeer-557-probe 를 만들고 inspect · 안의 cgroup 값을 읽은 뒤 지운다
+# 명령: docker create --memory=268435456 --memory-swap=268435456 --pids-limit=64 --cpus=1.5 busybox:1.36 sleep 30
+
+== date 2026-09-28T16:00:04+09:00 · kernel 6.18.33.2-microsoft-standard-WSL2
+== cgroup: cgroup2fs · controllers: cpuset cpu io memory hugetlb pids rdma
+== docker version: Docker version 29.7.2, build a7dcaa6
+   info: cgroup v2 driver=systemd CPUCfsQuota=true SwapLimit=true MemoryLimit=true PidsLimit=true
+-- create (memory=memory-swap=256MiB · pids=64 · cpus=1.5)
+   rc=0 stderr: 
+   HostConfig: Memory=268435456 MemorySwap=268435456 PidsLimit=64 NanoCpus=1500000000
+-- start
+   rc=0 stderr: 
+   cgroup(안): memory.max=268435456 memory.swap.max=0 pids.max=64 cpu.max=150000 100000 
+   정리: 0개 남음
+== podman: 없음 — ENVIRONMENT-BLOCKED
+
