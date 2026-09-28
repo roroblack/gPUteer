@@ -2519,8 +2519,9 @@ fn attempt_report_hash(report: &pb::AttemptReport) -> [u8; 32] {
 
 /// 서명한 보고를 outbox 에 **원자적으로** 남긴다 — 임시 파일에 쓰고 sync 한 뒤 이름을 바꾼다.
 ///
-/// ★ 디렉터리 sync 는 하지 않는다 — Windows 에는 같은 수단이 없다(ADR-026). 전원이 끊기면 마지막 이름 바꾸기가 사라질 수 있다는 한계가
-///   남는다(이 경우 보고는 다시 만들 수 없다 — 종료 관측이 메모리에만 있었다).
+/// ★ 결함 561 (2026-09-28) — 이름을 바꾼 뒤 **디렉터리도 sync 한다**(`gputeer_checkpoint::sync_dir` — Windows 도 디렉터리 핸들에 FlushFileBuffers).
+///   전에는 "Windows 에는 같은 수단이 없다" 며 하지 않았다 — 틀린 근거였고, 전원이 끊기면 이름 바꾸기가 사라져 보고를 잃을 수 있었다(종료 관측은
+///   메모리에만 있어 다시 만들 수 없다). sync 가 실패하면 오류로 올린다 — 파일은 이미 새 이름으로 있으니 다음 회차의 재전송이 줍는다.
 fn persist_report_to_outbox(
     dir: &std::path::Path,
     report: &pb::AttemptReport,
@@ -2549,6 +2550,12 @@ fn persist_report_to_outbox(
         format!(
             "ATTEMPT_REPORT_OUTBOX_FAILED: 보고를 outbox 에 남기지 못했다({}): {e}",
             path.display()
+        )
+    })?;
+    gputeer_checkpoint::sync_dir(dir).map_err(|e| {
+        format!(
+            "ATTEMPT_REPORT_OUTBOX_FAILED: outbox 디렉터리를 동기화하지 못했다({}): {e:?} — 보고 파일은 남아 있어 다음 회차가 다시 보낸다",
+            dir.display()
         )
     })?;
     Ok(path)

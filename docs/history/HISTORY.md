@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 11:29 — 결함 561: 종료 보고 outbox 가 이름을 바꾼 뒤 디렉터리를 sync 하지 않았다(브랜치 fork-merge)
+
+- 결함: `docs/reports/debugs/2026-09-28_1127_보고outbox_디렉터리sync_누락_561.md`(코덱스 b5 가 단계 2 초안 검수 중 짚음)
+- 스트림: Agent
+- 수행: rename 뒤 `gputeer_checkpoint::sync_dir` 호출 · 실패는 오류로 · "Windows 에는 수단이 없다" 는 틀린 주석 정정
+- 검증: `cargo test -p gputeer-agent --lib` 101 passed · 0 failed. 전원 차단에서만 달라져 기능 시험 · 뮤테이션으로는 확인하지 못함
+- 리포트: 결함 문서가 대신한다
+
+---
+
 ## 2026-09-28 11:08 — 시험 공백 메우기(560 손자 파이프 · 552 · 553 뮤테이션) · 머클 루트 잎 입구 제안(브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-28_0955_노드점검_에이전트루프_자식출력_통째수집_559_560.md` · `docs/reports/debugs/2026-09-28_0731_재검수145_결함_552_554.md`
