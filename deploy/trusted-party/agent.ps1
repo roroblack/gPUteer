@@ -37,6 +37,12 @@ if ($config.GPUTEER_CONTAINER_RUNTIME) {
     }
 }
 
+# 결함 556 — 작업마다 거는 메모리 상한(설치기가 RamGiB 로 쓴다). 없으면(옛 설치) Agent 기본값 256MiB 다.
+$memoryArgs = @()
+if ($config.GPUTEER_WORKLOAD_MEMORY_BYTES) {
+    $memoryArgs = @("--workload-commit-limit-bytes", $config.GPUTEER_WORKLOAD_MEMORY_BYTES)
+}
+
 & $config.GPUTEER_BIN agent-loop --interval-ms 5000 --max-rounds 0 -- `
     --connect $config.GPUTEER_CONNECT `
     --own-seed-file $config.GPUTEER_NODE_SEED_FILE `
@@ -54,5 +60,6 @@ if ($config.GPUTEER_CONTAINER_RUNTIME) {
     --owner-panel-port $config.GPUTEER_OWNER_PANEL_PORT `
     --gpu-pin $config.GPUTEER_GPU_PIN `
     @attestArgs `
-    @containerArgs
+    @containerArgs `
+    @memoryArgs
 exit $LASTEXITCODE

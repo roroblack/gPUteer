@@ -299,7 +299,9 @@ Write-Utf8NoBom $agentEnv @(
     "GPUTEER_CONTAINER_RUNTIME=$ContainerRuntime",
     "GPUTEER_CONTAINER_RUNTIME_KIND=$ContainerRuntimeKind",
     "GPUTEER_CONTAINER_GPU=$(if ($ContainerGpu) { 'true' } else { '' })",
-    "GPUTEER_CONTAINER_GPU_REQUEST=$ContainerGpuRequest"
+    "GPUTEER_CONTAINER_GPU_REQUEST=$ContainerGpuRequest",
+    # 결함 556 — 작업마다 거는 메모리 상한 = 내놓은 RAM(-RamGiB). 전에는 넘기지 않아 Agent 기본값 256MiB 였다.
+    "GPUTEER_WORKLOAD_MEMORY_BYTES=$([long]$RamGiB * 1GB)"
 )
 Write-Host "CONFIG_WRITTEN $common $agentEnv"
 
