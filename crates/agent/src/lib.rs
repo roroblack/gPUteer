@@ -613,6 +613,17 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         return Err(message);
     }
     if config.multi_agent {
+        // ★ 노드 실행 원장(코덱스 r1k ①) — 이 lane 은 잠금 · 원장 감지 전에 돌아가므로, 원장을 켠 루트를 스위치 없이 쓰는 우회가 된다.
+        //   이 lane 은 원장을 지원하지 않는다 — 켜기를 요구하거나 원장 흔적이 있는 루트면 거부한다.
+        if config.run_ledger {
+            return Err(
+                "RUN_LEDGER_CONFIG_REFUSED: multi-agent lane 은 노드 실행 원장을 지원하지 않는다"
+                    .into(),
+            );
+        }
+        if run_ledger_trace_exists(&config.checkpoint_root)? {
+            return Err("RUN_LEDGER_ENABLED_ROOT: 이 루트는 노드 실행 원장을 켰다 — multi-agent lane 으로 쓰지 않는다".into());
+        }
         return multi_agent::run_multi_agent_session(&config);
     }
     let policy = RetryPolicy {
@@ -1520,8 +1531,15 @@ fn run_one_connection_inner(
                         executor,
                     );
                     if runs_in_container {
+                        // ★ 컨테이너 ID 는 create 뒤에야 생긴다 — 이름은 시도마다 하나로 정해지고(derive_container_name) 런타임이 이름으로 조회 · 삭제를 받으므로
+                        //   원장은 이름을 신원으로 쓴다(코덱스 r1k ②). 런타임 실행 파일 · 종류는 기동 전에 안다.
                         row.container_name =
                             Some(container::derive_container_name(&grant.attempt_id));
+                        if let Some(runtime) = config.container_runtime.as_ref() {
+                            row.runtime_program =
+                                Some(runtime.program.to_string_lossy().into_owned());
+                            row.runtime_kind = Some(format!("{:?}", runtime.flavor).to_lowercase());
+                        }
                     }
                     ledger.insert_active(&row)
                 }) {
@@ -1682,6 +1700,15 @@ fn run_one_connection_inner(
                 if ledger_facts.not_started {
                     ledger.close_active(attempt_id, run_ledger::CloseReason::NotStarted)
                 } else if runs_in_container {
+                    // 판정 사실(멈춤 · 로그 · 컨테이너 남김)을 먼저 적는다 — 원장만으로 해제 증거를 다시 만들 수 있게(코덱스 r1k ②).
+                    ledger.record_facts(
+                        attempt_id,
+                        ledger_facts.stopped,
+                        ledger_facts.logs_complete,
+                        ledger_facts
+                            .container_removed
+                            .map(|removed| !removed || incident_open),
+                    )?;
                     if ledger_facts.container_removed == Some(true) && !incident_open {
                         ledger.mark_container_removed(attempt_id, None)
                     } else {
@@ -3290,6 +3317,8 @@ fn run_and_capture_workload(
             *keep_run_dir = outcome.container_needs_human;
             // 원장 — 컨테이너 경로에서 needs_human 이 아니면 `ContainerLeft::Removed`(지우고 새 조회로 없음 확인)다.
             ledger_facts.container_removed = Some(!outcome.container_needs_human);
+            ledger_facts.stopped = Some(true);
+            ledger_facts.logs_complete = Some(outcome.outputs_incomplete.is_none());
             outcome
         }
         Err(exec::ExecutionError::NotOptedIn) => {
@@ -3663,6 +3692,15 @@ fn accepted_outbox_report_exists(
     Ok(false)
 }
 
+/// 루트에 원장 흔적(원장 · 세대 짝 · 이관 표식)이 있는가 — 잠그지 않는 lane 용. 루트가 아직 없으면 흔적도 없다.
+fn run_ledger_trace_exists(checkpoint_root: &std::path::Path) -> Result<bool, String> {
+    if !checkpoint_root.exists() {
+        return Ok(false);
+    }
+    let real = real_checkpoint_root(checkpoint_root)?;
+    Ok(!run_ledger::detect(&run_ledger::LedgerPaths::for_root(&real)?)?.never_enabled())
+}
+
 /// 원장 손잡이로 한 걸음 — 원장을 켜지 않았으면 `None`.
 fn with_run_ledger<T>(
     config: &AgentConfig,
@@ -3687,6 +3725,10 @@ struct WorkloadLedgerFacts {
     not_started: bool,
     /// 컨테이너를 지우고 새 조회로 "없음" 을 확인했다(`ContainerLeft::Removed`). 결과를 못 받았으면 `None`.
     container_removed: Option<bool>,
+    /// 종료(멈춤)를 관측했는가. 결과를 못 받았으면 `None`.
+    stopped: Option<bool>,
+    /// 작업 출력을 끝까지 받았는가. 결과를 못 받았으면 `None`.
+    logs_complete: Option<bool>,
 }
 
 fn settle_checkpoint_root_with(
@@ -7646,6 +7688,21 @@ mod run_ledger_startup_tests {
         assert!(open_run_ledger_at_startup(&on2)
             .unwrap_err()
             .contains("RUN_LEDGER_BLOCKED"));
+    }
+
+    /// 코덱스 r1k ① — 잠그지 않는 multi-agent lane 도 원장을 켠 루트는 쓰지 않는다(스위치 우회 금지).
+    #[test]
+    fn the_multi_agent_lane_refuses_a_root_that_enabled_the_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let multi = config(dir.path(), &["--multi-agent", "true"]);
+        drop(run_ledger::open_for_agent(&paths(&multi)).unwrap());
+        let error = run(multi).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_ENABLED_ROOT"), "{error}");
+        let asks = config(
+            dir.path(),
+            &["--multi-agent", "true", "--run-ledger", "true"],
+        );
+        assert!(run(asks).unwrap_err().contains("RUN_LEDGER_CONFIG_REFUSED"));
     }
 
     #[test]

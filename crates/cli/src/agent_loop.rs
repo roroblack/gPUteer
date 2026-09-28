@@ -300,14 +300,22 @@ pub fn run(args: &[String]) -> Result<String, String> {
         );
     }
     let exe = std::env::current_exe().map_err(|e| format!("AGENT_LOOP: 실행 파일 경로: {e}"))?;
+    run_rounds(interval_ms, max_rounds, || run_round(&exe, agent_args))
+}
 
+/// 회차를 되풀이한다 — 회차 하나를 돌리는 것은 `next_round` 가 한다(시험이 실제 반복 경로를 가짜 회차로 돌릴 수 있게 — 계획 2026-09-29_0212 R8d).
+fn run_rounds(
+    interval_ms: u64,
+    max_rounds: u64,
+    mut next_round: impl FnMut() -> Result<Round, String>,
+) -> Result<String, String> {
     let (mut rounds, mut worked, mut idle) = (0u64, 0u64, 0u64);
     loop {
         if max_rounds != 0 && rounds >= max_rounds {
             break;
         }
         rounds += 1;
-        let round = run_round(&exe, agent_args)?;
+        let round = next_round()?;
         for note in &round.notes {
             println!("  AGENT_ROUND_OUTPUT_NOTE round={rounds}: {note}");
         }
@@ -375,6 +383,41 @@ mod tests {
         let (lines, _) =
             scan(b"WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_RECORDED name=gputeer-x\n");
         assert!(lines.incident_not_recorded.is_none());
+    }
+
+    /// 계획 2026-09-29_0212 R8d — **실제 반복 경로**에서 원장 치명 오류가 난 회차 뒤에 다음 회차를 돌리지 않는다(무한 반복 설정이어도).
+    #[test]
+    fn the_loop_does_not_run_another_round_after_a_fatal_ledger_line() {
+        let mut calls = 0u32;
+        let result = run_rounds(0, 0, || {
+            calls += 1;
+            let (lines, _) = scan(
+                "WORKLOAD_RESULT ok=true\nRUN_LEDGER_FATAL attempt_id=a-1 — CLOSED 를 쓰지 못했다\n".as_bytes(),
+            );
+            Ok(Round {
+                lines,
+                exit_ok: false,
+                notes: Vec::new(),
+            })
+        });
+        let error = result.unwrap_err();
+        assert!(error.contains("AGENT_LOOP_STOPPED round=1"), "{error}");
+        assert!(error.contains("RUN_LEDGER_FATAL"), "{error}");
+        assert_eq!(calls, 1, "치명 오류 뒤 회차를 더 돌렸다");
+        // 대조군 — 치명 오류가 없으면 정해진 회차만큼 돈다.
+        let mut plain = 0u32;
+        let done = run_rounds(0, 3, || {
+            plain += 1;
+            let (lines, _) = scan(b"WORKLOAD_RESULT ok=true\n");
+            Ok(Round {
+                lines,
+                exit_ok: true,
+                notes: Vec::new(),
+            })
+        })
+        .unwrap();
+        assert_eq!(plain, 3);
+        assert!(done.contains("rounds=3"), "{done}");
     }
 
     /// 계획 2026-09-29_0212 R8d — 원장 치명 오류 줄도 루프를 멈추는 줄로 잡히고, 서비스 로그로 옮겨 찍힌다.

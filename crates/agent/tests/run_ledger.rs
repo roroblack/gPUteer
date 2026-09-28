@@ -539,3 +539,29 @@ fn a_fence_epoch_beyond_what_the_ledger_can_hold_is_refused_not_rewritten() {
         .unwrap();
     assert_eq!(ledger.row("edge").unwrap().unwrap().fence_epoch, Some(max));
 }
+
+/// 코덱스 r1k ② — 종료 뒤 판정 사실(멈춤 · 로그 · 컨테이너 남김)이 원장 행에 남는다. ACTIVE 가 아니면 적지 않는다.
+#[test]
+fn judgement_facts_are_recorded_on_active_rows_only() {
+    let f = fixture();
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    ledger
+        .insert_active(&AttemptRow::new_active(
+            "c",
+            "job",
+            "node",
+            1,
+            Executor::Container,
+        ))
+        .unwrap();
+    ledger
+        .record_facts("c", Some(true), Some(false), Some(true))
+        .unwrap();
+    let row = ledger.row("c").unwrap().unwrap();
+    assert_eq!(
+        (row.stopped, row.logs_complete, row.container_left),
+        (Some(true), Some(false), Some(true))
+    );
+    ledger.mark_local_blocked("c", "container_left").unwrap();
+    assert_err_contains(ledger.record_facts("c", None, None, None), "ACTIVE 행에만");
+}

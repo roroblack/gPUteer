@@ -860,6 +860,35 @@ impl RunLedger {
             .map_err(|error| format!("RUN_LEDGER: 커밋하지 못했다: {error}"))
     }
 
+    /// 종료 뒤 관측한 판정 사실을 적는다(계약 §5 "판정" 칸 — 원장만으로 해제 증거를 다시 만들 수 있게). ACTIVE 행에만.
+    pub fn record_facts(
+        &mut self,
+        attempt_id: &str,
+        stopped: Option<bool>,
+        logs_complete: Option<bool>,
+        container_left: Option<bool>,
+    ) -> Result<(), String> {
+        let (stopped, logs_complete, container_left) = (
+            opt_bool(stopped),
+            opt_bool(logs_complete),
+            opt_bool(container_left),
+        );
+        self.update_state(
+            attempt_id,
+            |row| {
+                if row.state != RowState::Active {
+                    return Err(format!(
+                        "RUN_LEDGER: 판정 사실은 ACTIVE 행에만 적는다({attempt_id})"
+                    ));
+                }
+                Ok(())
+            },
+            "UPDATE attempts SET updated_at_unix_ms = ?1, stopped = ?2, logs_complete = ?3, container_left = ?4
+                 WHERE attempt_id = ?5",
+            &[&stopped, &logs_complete, &container_left],
+        )
+    }
+
     /// 실행 순서 4 — 컨테이너를 지우고 새 조회로 "없음" 을 확인했다(아직 ACTIVE).
     pub fn mark_container_removed(
         &mut self,
