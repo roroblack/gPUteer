@@ -319,6 +319,7 @@ dependencies = [
  "gputeer-runtime-policy",
  "gputeer-runtime-windows",
  "prost",
+ "rusqlite",
  "serde_json",
  "tempfile",
 ]

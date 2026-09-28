@@ -26,6 +26,7 @@ pub mod exec;
 pub mod multi_agent;
 pub mod owner_panel;
 pub mod report;
+pub mod run_ledger;
 
 use gputeer_crypto::{
     read_frame, sign, write_frame, Clock, Ed25519Verifier, FrameType, FramingError,
