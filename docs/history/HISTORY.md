@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-09-28 23:42 — 단계 3 설계 v3: 루프 상태기계 · GO 뒤에만 일 · 전용 제어 파이프 · 숫자 상한(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-28_1203_회차밖_상시_소유자화면_설계.md` v3
+- 스트림: Agent · UI
+- 수행: 코덱스 c1b(v2 대상 — 높음 6 · 중간 2) 반영. 정지 손잡이 사실 정정(WorkloadStopper — 호스트 · 컨테이너 모두) · 루프 상태기계(generation · 잠금 · 다시 켜기 RPC) · 자식은 READY 뒤 GO 를 받아야 Coordinator 에 붙음 ·
+  Windows CREATE_SUSPENDED → Job 편입 · 전용 파이프 프로토콜(길이 · 버전 · 순서 규칙) · 정지 결과 세 이름 · 접수 번호 비영속 · 설정 스냅샷 · 숫자 상한 · B 비교를 단계 3 범위로 · Windows 재시작 정책 필수 · 시험 25
+- 검증: 구현 없음 · 재검수 전
+- 리포트: 계획 문서가 대신한다(v1 · v2 백업은 작업 폴더 밖)
+
+---
+
 ## 2026-09-28 23:33 — ADR-034 채택: 신뢰망 COMMITTED = COORDINATOR_DURABLE(규범 · 강제 코드 없음)(브랜치 fork-merge)
 
 - 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md` v5 — 채택
