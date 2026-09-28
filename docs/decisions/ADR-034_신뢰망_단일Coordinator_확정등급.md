@@ -1,6 +1,6 @@
 # ADR-034 · 신뢰망 — 단일 Coordinator 의 확정 등급(`COORDINATOR_DURABLE`)
 
-- **상태:** 제안 v4 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
+- **상태:** 제안 v5 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
 - **날짜:** 2026-09-28
 - **관련:** ADR-031(참여 모델) · ADR-032 · ADR-033 §5(`BROKER_ATTESTED`) · `docs/protocol/state-machines.md` §0 · §0.1 · §7 ·
   `crates/protocol/src/participation.rs` · 단계 2 계약 제안 `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` 결정 D9 ·
@@ -31,8 +31,9 @@
 ★ "논리 인스턴스" 는 **같은 control DB 파일을 함께 쓰는 협력 프로세스 집합**이다 — 지금 신뢰망은 `coordinator-stub`(풀 모드) · `scheduler-loop` ·
   운영자 CLI(import-inventory · release-lost-node · release-held-job 등)가 같은 SQLite 파일을 **따로** 연다(런북 §0 · gputeer-coordinator.service ·
   gputeer-scheduler.service). 프로세스 사이의 직렬화는 SQLite 파일 잠금(`BEGIN IMMEDIATE`)이 준다. 한 프로세스만 쓰게 하는 잠금은 두지 않는다 —
-  정상 scheduler · CLI 를 막는다(코덱스 e2 ①). 막는 것은 **다른 DB 사본을 쓰는 두 번째 논리 인스턴스**이고, 그것은 generation · control_db_id 결합과
-  Agent 의 watermark 로 가린다(아래 조건 · 시험 3 · 4)
+  정상 scheduler · CLI 를 막는다(코덱스 e2 ①). generation · control_db_id 결합과 Agent 의 watermark 는 **허가된 복구 · 전환과 관측된 되감기를
+  알아볼 뿐**이다 — 같은 시점에 복제한 DB 사본은 control_db_id · generation 이 같고, watermark 는 낮은 commit_seq · fence 만 거부하므로 **동시에 도는
+  복제본(split-brain)은 막지 못한다**(아래 §2 "제공하지 않는다" 와 같다 · 코덱스 e2d ②). 실제로 막으려면 호스트 밖의 lease/fencing 이 따로 필요하다(미정)
 
   모든 writer 에 대해:
   1 파일 SQLite control DB 다(메모리 DB 가 아니다)
@@ -92,7 +93,10 @@ canonical 결정 — 두 표의 세 전이                                   선
                                                               Attempt `RECONCILING -> SUPERSEDED | NOT_SELECTED`(§3 — CanonicalDecision 의
                                                               superseded_attempt_ids · artifact.proto) · Job `RECONCILING -> COMPLETED |
                                                               CANONICAL_CHOSEN`(§2)는 **같은 서명된 CanonicalDecision 하나**에 결합되어 한 트랜잭션에서
-                                                              함께 확정된다(탈락 전이만 따로 · 서명 없이 하지 않는다) — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
+                                                              함께 확정된다(탈락 전이만 따로 · 서명 없이 하지 않는다).
+                                                              ★ 완전성 — 그 Job 의 RECONCILING 후보 집합을 C 라 하면, 트랜잭션 안에서 chosen ∈ C ·
+                                                              superseded = C − {chosen} · 중복 없음 · 다른 Job · 후보 아닌 ID 없음을 검사한다.
+                                                              하나라도 어긋나면 전체를 되돌린다(탈락 하나를 빠뜨린 결정으로 Job 을 완료하지 않는다) — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
                                                               ("유효 attempt 1개 이상")만으로는 신뢰망에서 이 전이를 확정하지 못한다
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
@@ -153,7 +157,7 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 
 세 메시지 모두 **아직 정의하지 않았다**(signing.md §5 domain 표 · canonical 벡터 · 참조 구현 · 지문 등록 필요 — signing.md 의 신규 서명 메시지 원칙).
 정의 · 등록 · 응답 결합이 끝나기 전에는 신뢰망의 로컬 확정을 `COORDINATOR_DURABLE` 이라 **부르지 않는다**(state-machines.md §0.1 · §6 검사 9) —
-시험 11 · 14 는 이 둘이 정의된 뒤에 구현할 수 있다.
+시험 11 · 14 는 PoolCommitProfile 과 CoordinatorCommitReceipt 가 정의된 뒤에, 루트 회전 시험은 OperatorRootRotation 이 정의된 뒤에 구현할 수 있다.
 
 ## 근거
 
@@ -199,9 +203,10 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 1 모델 누락 · 오타 · 구버전 바이너리의 trusted-network → 시작 거부        9 (물리 저장소 fencing 을 넣으면) 옛 토큰의 파일 확정 거부
 2 메모리 DB · synchronous != FULL · 예상 밖 journal mode → 시작 거부       10 멤버십 · 폐기 · canonical · 완료를 서명 · 증거 없이 → Unsupported
 3 같은 DB 를 두 **논리 인스턴스**(다른 coordinator_id · generation)가 쓰려 하면 거부 · 같은 인스턴스의 scheduler · CLI 는 받아들임                        11 COORDINATOR_DURABLE 기록을 PublicPool 의 BROKER_ATTESTED 로 소비 → 거부(반대도)
-4 같은 generation 의 복사된 DB 두 개 → Agent watermark 가 낮은 commit_seq · fence 거부   12 오래된 백업 복원이 같은 generation 으로 조용히 시작하지 못함
+4 같은 generation 의 복사된 DB 두 개 → Agent watermark 가 **낮은** commit_seq · fence 를 거부(더 높은 독립 분기는 못 막는다 — 한계 확인용)   12 오래된 백업 복원이 같은 generation 으로 조용히 시작하지 못함
 5 COMMIT 전 crash → ACK 없음 · 상태 없음 / COMMIT 뒤 ACK 전 crash → 재시작 뒤 같은 결과를 멱등 반환   13 일관된 백업 복원 뒤 보류 · Lease 폐기 · 예약 · fence · 감사 머리 보존
 6 디스크 가득 · fsync · COMMIT 실패 · 저널 복구 실패 → 성공 응답 없음       14 UI · API · evidence 에 provenance 없이 "COMMITTED" 만 보이면 실패
+16 canonical 결정의 탈락 목록이 후보 하나를 빠뜨림 · 중복 · 다른 Job · 후보 아닌 ID → 선택 · 탈락 · Job 완료 모두 되돌림
 7 fence 카운터 < Attempt · Lease 최대값 → 스케줄링 거부                   15 전이와 감사 행 사이 실패 주입 → 한쪽만 성공하지 않음
 8 더 높은 fence 뒤 옛 시도의 체크포인트 매니페스트 → 중앙 수락 · 재개 · canonical 후보 등록 거부
 ```
@@ -216,6 +221,7 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 | 날짜 | 변경 |
 |---|---|
 | 2026-09-28 | 최초 작성 — 코덱스 논의 d1 의 C 절을 규범 형태로 옮김. 독립 검수 전 |
+| 2026-09-28 | v5 — 코덱스 e2d(중간 2 · 낮음 1) 반영: canonical 탈락 목록 완전성 검사 · split-brain 을 "가린다" 에서 "알아볼 뿐 · 막지 못한다" 로 낮춤 · 선행 메시지 이름 명시 · 시험 16 |
 | 2026-09-28 | v4 — 코덱스 e2c(중간 2 · 낮음 1) 반영: §5.1 권위 문구를 pin 한 키로 · canonical 결정에 탈락 Attempt SUPERSEDED 까지 · 선행 메시지 셋 |
 | 2026-09-28 | v3 — 코덱스 e2b(높음 2 · 중간 2 · 낮음 1) 반영: 운영자 루트 키 신뢰 부트스트랩(§3.1 — pin · 최초 설치 · 회전 · generation) · canonical 보호를 Job `CANONICAL_CHOSEN` 까지 두 전이 · 한 서명 결정으로 · 손실 목록은 예시임을 밝히고 복구 단위 · 빠진 표 · 호스트 파일 · state-machines §0.1 요약을 ADR 참조로 · scheduler 주석 정리 |
 | 2026-09-28 | v2 — 코덱스 e2(높음 2 · 중간 3 · 낮음 2) 반영: "단일 Coordinator" → 같은 DB 를 쓰는 협력 프로세스의 논리 인스턴스(프로세스 잠금 철회) · replay 원장 비원자 한계 · 신뢰망 멤버십 권위(운영자 루트 키 · 지금 admit-node 는 못 채움) · 서명 메시지 둘을 선행 작업으로 · 손실 목록을 저장소별로 · scheduler 복제 enum 제한 · 변경 목록 정정 |

@@ -134,7 +134,10 @@ canonical 결정 — 두 표의 세 전이                                   선
                                                               Attempt `RECONCILING -> SUPERSEDED | NOT_SELECTED`(§3 — CanonicalDecision 의
                                                               superseded_attempt_ids · artifact.proto) · Job `RECONCILING -> COMPLETED |
                                                               CANONICAL_CHOSEN`(§2)는 **같은 서명된 CanonicalDecision 하나**에 결합되어 한 트랜잭션에서
-                                                              함께 확정된다(탈락 전이만 따로 · 서명 없이 하지 않는다) — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
+                                                              함께 확정된다(탈락 전이만 따로 · 서명 없이 하지 않는다).
+                                                              ★ 완전성 — 그 Job 의 RECONCILING 후보 집합을 C 라 하면, 트랜잭션 안에서 chosen ∈ C ·
+                                                              superseded = C − {chosen} · 중복 없음 · 다른 Job · 후보 아닌 ID 없음을 검사한다.
+                                                              하나라도 어긋나면 전체를 되돌린다(탈락 하나를 빠뜨린 결정으로 Job 을 완료하지 않는다) — 검증된 시도 증거 · 결정적 선택 입력이 필요하다. Job 전이의 지금 guard
                                                               ("유효 attempt 1개 이상")만으로는 신뢰망에서 이 전이를 확정하지 못한다
 RUNNING -> COMPLETED · 최종 산출물 확정(§2 · §3)                   산출물 · 체크포인트의 독립 내구성 정책과 서명 · 해시 검증
 ```
