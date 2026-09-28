@@ -14,6 +14,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# ★ 결함 562 — 상승된 관리자 창에서 돌지 않는다(설치기의 465 와 같다). 환경 파일의 GPUTEER_BIN 은 같은 사용자가 고칠 수 있어, 상승 창이면
+#   그 값이 관리자 권한으로 돈다.
+$principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
+if ($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "INVITE_ELEVATED: 관리자 권한(상승된 창)으로 돌리지 않는다 — 운영자의 일반 창에서 돌린다(결함 562)"
+}
 $config = [ordered]@{}
 foreach ($line in Get-Content -Encoding UTF8 $EnvFile) {
     if ($line -match '^\s*([A-Z_]+)=(.*)$') { $config[$Matches[1]] = $Matches[2].Trim() }

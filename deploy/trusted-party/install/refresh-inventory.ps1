@@ -15,6 +15,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# ★ 결함 562 — 상승된 관리자 창에서 돌지 않는다(설치기의 465 와 같다). 환경 파일의 GPUTEER_BIN 은 같은 사용자가 고칠 수 있어, 상승 창이면
+#   그 값이 관리자 권한으로 돈다.
+$principal = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
+if ($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "REFRESH_ELEVATED: 관리자 권한(상승된 창)으로 돌리지 않는다 — 운영자의 일반 창 · /RL LIMITED 작업에서 돌린다(결함 562)"
+}
 $admittedDir = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $EnvFile).Path) "admitted"
 if (-not (Test-Path -LiteralPath $admittedDir -PathType Container)) { throw "REFRESH: $admittedDir 가 없다 — admit-node 로 먼저 받는다" }
 # ★ 결함 466 (재검수 118) — admit-node · refresh-inventory 는 받아 둔 가입 파일을 같이 고친다. 동시에 돌면 refresh 가 옛 사본을 다시 활성 사본으로
