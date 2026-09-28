@@ -247,15 +247,19 @@ CREATED | STARTING | GRANT_ACCEPTED | Agent 17단계 검증 통과 | workspace �
 CREATED | CANCELLED | GRANT_REJECTED | Agent 검증 실패 | 실패 단계 번호 감사 로그 기록 | COMMITTED
 CREATED | CANCELLED | JOB_CANCELLED | - | lease 반납 | COMMITTED
 STARTING | RUNNING | PROCESS_STARTED | 프로세스 기동 + 첫 progress 수신 | - | DURABLE
-STARTING | FAILED | START_FAILED | 환경 준비 실패 또는 프로세스 기동 실패 | workspace 정리 | COMMITTED
+STARTING | FAILED | START_FAILED | 작업이 돌지 않았음이 확실하다 — 환경 준비 단계에서 실패 · 기동 요청이 실행기에 닿지 않았음이 확인됨 · 그리고 이 시도에 대해 "불명 조건"(§3 RUN_UNKNOWN 의 의미)이 하나도 성립하지 않음(같은 절의 우선순위 · 호환 예외) | workspace 정리 — 단 열린 노드 사건이 있으면 해제까지 보존 | COMMITTED
+STARTING | RUN_UNKNOWN | START_UNCONFIRMED | Agent 가 보고했다 — 이 시도에 "불명 조건"(§3 RUN_UNKNOWN 의 의미 (a)(b)(c))이 성립한다 | 재배치 판단에 불명을 반영(단계 2) | COMMITTED
 RUNNING | COMPLETED | WORKLOAD_EXITED_OK | exit code 0 AND 최종 artifact HASH_VERIFIED | AttemptReport 제출 | COMMITTED
 RUNNING | FAILED | WORKLOAD_EXITED_ERROR | exit code != 0 | 로그 보존 | COMMITTED
 RUNNING | FAILED | WATCHDOG_KILLED | no-progress 판정 | process tree 종료, VRAM 반환 확인 | COMMITTED
 RUNNING | FAILED | OUTPUT_FINALIZATION_FAILED | exit code 0 AND 필요한 산출물 확정 실패(확정 재시도를 끝낸 뒤) | 종료 관측 보존, 재실행 판단은 별도 | COMMITTED
+RUNNING | FAILED | EXITED_WITHOUT_CODE | 정지는 관측했지만 종료 코드가 없다 — 신호 종료 · 코드 조회 실패 · 기동이 실패로 답한 뒤 정지를 확인함(돌았을 수 있다). 그리고 "불명 조건" 이 성립하지 않는다 — 특히 종결되지 않은 기동 요청이 없다(무응답 start 가 남았으면 한 번의 정지 조회로 여기 오지 않는다) | 로그 보존, 산출물은 확정 규칙대로, Job 은 "돌았다" 로 본다 | COMMITTED
+RUNNING | RUN_UNKNOWN | EXIT_UNOBSERVED | Agent 가 보고했다 — 이 시도에 "불명 조건"(§3 RUN_UNKNOWN 의 의미 (a)(b)(c))이 성립한다(wait 실패 · 정지 요청 뒤 정지 미확인 · 실행기 무응답 등) | 재배치 판단에 불명을 반영(단계 2) | COMMITTED
 RUNNING | PAUSED | PAUSE_REQUESTED | - | checkpoint 생성 | DURABLE
 RUNNING | STALE | LEASE_EXPIRED | lease 만료 AND Coordinator 도달 불가 | side_effect_class 에 따라 계속 또는 정지 | LOCAL
 PAUSED | RUNNING | RESUME_REQUESTED | 새 lease 발급 | - | COMMITTED
 PAUSED | CANCELLED | JOB_CANCELLED | - | - | COMMITTED
+PAUSED | RUN_UNKNOWN | PAUSE_STOP_UNCONFIRMED | Agent 가 보고했다 — 정지(일시정지) 요청 뒤 정지를 확인하지 못했다 | 재배치 판단에 불명을 반영 | COMMITTED
 STALE | RUNNING | LEASE_RENEWED | 재연결 성공 AND RENEW_OUTCOME_RENEWED | - | COMMITTED
 STALE | COMPLETED | STALE_WORKLOAD_FINISHED | 단절 중 실제로 완주 | AttemptReport 를 STALE_COMPLETED 로 제출 | DURABLE
 STALE | FAILED | STALE_WORKLOAD_FAILED | 단절 중 실패 | - | DURABLE
@@ -264,6 +268,7 @@ COMPLETED | RECONCILING | DUPLICATE_DETECTED | 같은 Job의 다른 attempt도 �
 RECONCILING | CANONICAL | SELECTED | §20.3 순위 1위 | Job canonical_attempt_id 갱신 | COMMITTED
 RECONCILING | SUPERSEDED | NOT_SELECTED | - | artifact 는 보존, canonical 아님 | COMMITTED
 RECONCILING | FAILED | VALIDITY_FILTER_REJECTED | 해시 불일치 또는 revoke 된 device 제출 | risk signal 발화 | COMMITTED
+RUN_UNKNOWN | FAILED | STOP_CONFIRMED | 노드 소유자가 정지 또는 부재를 확인하고 명시적으로 해제했다는 보고 | 산출물을 확정하지 않는다, 종료는 관측 못 함으로 남긴다 | COMMITTED
 ```
 
 ### STALE 의 의미
@@ -280,6 +285,83 @@ STALE 전이의 durability 가 LOCAL 인 이유:
   Coordinator 에 도달할 수 없는 상태이므로 기록할 수 없다.
   재연결 시 RECONCILING 으로 올라가면서 그때 COMMITTED 된다.
 ```
+
+### RUN_UNKNOWN 의 의미 (2026-09-28 추가 — 단계 1 제안 v12 · 사용자 승인)
+
+> 근거 `docs/contracts/proposals/2026-09-28_0742_Attempt_실행여부불명_상태.md`(독립 검수 ACCEPTED · 사용자 승인 2026-09-28 — 코덱스 논의 d1 뒤).
+> ★ 이 상태를 **만드는 wire · 코드는 아직 없다**(아래 "아직 보장하지 않는 것"). 단계 2 계약(`docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md`)
+> 이 그 경로다. ★ 결정 D5(호스트 경로의 사건 · 차단)는 별도 조각이 구현되기 전까지 이 보장의 운영 범위를 **컨테이너 실행기**로 한정한다.
+
+```text
+RUN_UNKNOWN 은 "돌았다" 도 "안 돌았다" 도 아니다. "지금 돌고 있거나, 종결되지 않은 기동 요청 때문에 나중에 돌 수 있는데, 확인할 수 없다" 다.
+
+불명 조건 (이 절의 정의 — 표의 START_UNCONFIRMED · EXIT_UNOBSERVED · START_FAILED guard 가 이것을 가리킨다. 실행기와 무관하게 적는다)
+  한 시도에 대해 아래 중 **하나라도** 성립하면 불명 조건이 성립한다:
+    (a) 워크로드가 실행됐거나 기동 요청이 실행기에 닿았을 수 있고, 종료를 관측하지 못했으며 정지 · 부재도 확인하지 못했다(확인의 기준은 아래 MUST 3).
+        ★ 기동 요청 **전**의 실패(환경 준비 실패)와 요청이 **닿지 않았음이 확인된** 실패는 (a) 가 아니다 — (c) 가 성립하지 않으면 START_FAILED 다
+    (b) 종결되지 않은 기동 요청이 있다 — 보냈는데 답을 받지 못했다(지금 멈춰 보여도 뒤늦게 적용될 수 있다)
+    (c) 기동을 준비하기 **전부터** 같은 시도의 실행 흔적(같은 이름의 컨테이너 · 프로세스)이 남아 있고, 그것의 정지 · 부재를 확인하지 못했다
+  성립하지 않는 것(불명이 아니다):
+    · 종료를 관측했다(코드가 있든 없든) — 로그 · 정리만 못 했어도 불명이 아니다(노드 사건으로만 남는다)
+    · 이번 호출이 스스로 만든 실행 흔적이고 기동 요청을 **보내지 않았다** — 정리만 못 했어도 불명이 아니다(노드 사건으로만 남는다)
+  불명 조건이 성립하면 Agent 는 불명(START_UNCONFIRMED · EXIT_UNOBSERVED)만 고를 수 있고, 불명 보고의 후보는 정확히 이것이다.
+Agent 쪽에서는 Attempt 상태가 아니라 **노드 사건**(영속 표식)으로 남는다 — 그 표식은 이 상태보다 넓다(위 "Agent 사건과 Attempt 상태를 가른다").
+
+기동 실패와 불명의 우선순위 (MUST — 좁힌 START_FAILED guard 의 풀이)
+  기동 요청이 실행기에 **닿았을 수 있고**, 정지 · 부재를 **긍정적으로** 확인하지 못했으면 → 불명(START_UNCONFIRMED). START_FAILED 를 고르지 않는다.
+  START_FAILED 는 둘 중 하나일 때만: 환경 준비 단계에서 실패했다, 또는 기동 요청이 실행기에 닿지 않았음이 확인됐다(띄우지 못함 · 보내기 전에 멈춤).
+  ★ 그리고 **둘 다에 붙는 조건**(표의 guard 에도 적었다) — 위 **불명 조건이 하나도 성립하지 않을 때만**이다. 하나라도 성립하면 START_UNCONFIRMED 가
+    우선한다 — 이번 호출이 요청을 못 보냈다는 것은 앞선 실행이 없다는 증거가 아니다(불명 조건 (c)).
+  ★ 미시작은 확실한데 **정리만 못 한** 경우(이 호출이 만든, start 를 보내지 않은 컨테이너를 못 치움)는 START_FAILED 다 — 단 노드 사건이 열려 있으므로
+    workspace · 컨테이너는 사건이 해제될 때까지 보존하고 노드는 새 작업을 받지 않는다(표의 effect · MUST 1 · 4).
+  기동 요청이 **실패로 답했고**(종결됨) 뒤에 정지를 **확인했으면** → EXITED_WITHOUT_CODE(돌았을 수 있다). 기동 요청이 답하지 않았거나(종결되지 않음 — (b))
+  정지를 확인하지 못했으면 → START_UNCONFIRMED.
+  ★ 실패 응답 · 무응답 · 시한 초과 · "그런 것 없음" 은 닿지 않았다는 증거도, 정지의 증거도 아니다(OCI poststart — 결함 490).
+
+호환 예외 — 옛 보고의 해석 (좁힌 guard 의 예외. 옛 형식 지원 종료 조건 — 미전송 보관의 배출 확인 · 최소 Agent 버전 — 을 채울 때까지 유지한다)
+  Coordinator 는 STARTING 시도에 대한 기존 보고 — v1 FAILED(관측 칸 없음) · v2 FAILED + NOT_OBSERVED — 를 지금처럼 START_FAILED 로 읽는다.
+  이 읽기는 guard 를 확인한 것이 아니라 **옛 형식의 해석 규칙**이다.
+  RUNNING 시도에 대한 같은 보고도 지금처럼 RUNNING -> FAILED 로 읽는다. 어느 쪽이든 **옛 형식의 FAILED + NOT_OBSERVED 는 RUN_UNKNOWN 을 뜻하지 않는다** —
+  RUN_UNKNOWN 은 단계 2 의 새 보고 형식으로만 들어간다.
+  ★ (MUST · Coordinator) 시도가 이미 **RUN_UNKNOWN 이면 옛 형식 보고는 그 상태를 바꾸지 않는다** — 옛 FAILED 는 STOP_CONFIRMED 의 증거가 아니다.
+    RUN_UNKNOWN 에서 나가는 입력은 STOP_CONFIRMED 보고 하나뿐이다. 보고 버전 · 종류로 trigger 를 고르고, 상태 쌍만으로 STOP_CONFIRMED 를 추론하지 않는다
+    (지금 코드는 상태 쌍만 본다 — attempt_report_store.rs:631 · :662~ — 단계 2 목록 25).
+  그 보고 형식에는 불명을 표현할 칸이 없기 때문이다. 그 보고가 **최신 시도의 것이고 Job 이 STAGING · RUNNING 이면** Job 은 FAILED 로 끝나고 재배치하지 않는다
+  (job_store.rs:1441~1459). 이전 시도의 늦은 보고는 보고와 그 시도만 적고 지금 Job 은 바꾸지 않는다 — 어느 쪽이든 이 해석이 두 벌을 새로 만들지는 않는다.
+  잃는 것은 "지금 돌 수 있다" 는 정보다. 이 예외는 Coordinator 의 **옛 보고 읽기**에만 적용된다 — 새로 보고를 만드는 쪽(Agent)은 좁힌 guard 와 위 우선순위를 따른다.
+
+MUST (Agent · 소유자 쪽 — 시도가 RUN_UNKNOWN 이거나, 그 노드에 불명 사건이 열려 있는 동안)
+  1  자동 파괴 금지 — workspace · 컨테이너 · 로그를 **자동으로** 지우지 않는다.
+     예외: 노드 소유자의 명시적 정리(CLAUDE.md §0.1), SENSITIVE 데이터의 폐기(§0.5).
+  2  성공 확정 금지 — RUN_UNKNOWN 에서 COMPLETED 로 가는 행이 없다.
+  3  정지 · 부재의 증거는 **따로 보낸 새 조회**(inspect)가 "돌지 않는다" · "그런 것 없음" 이라고 답한 것뿐이다. 실패한 명령(start · kill · rm)
+     자신의 실패 응답 · 무응답 · "없음" 문구는 증거가 아니다. 이 기준으로 불명에 **들어갈지** 정한다 — 이 브랜치 코드가 그렇게 한다
+     (container.rs 의 `inspect_running` · `confirm_stopped` · `remove_container_fact` — 조회의 "없음" 을 부재로 읽는다).
+     ★ 조회의 "없음" 도 런타임의 답이다 — 이름을 같은 시도로만 만들어(결함 290) 다른 컨테이너와 섞이지 않게 한 것이 기대는 전제다.
+     ★ **종결되지 않은 기동 요청이 있으면 한 시점의 조회는 증거가 아니다** — 지금 멈춰(또는 없어) 보여도 요청이 뒤늦게 적용될 수 있다(결함 532).
+     일단 RUN_UNKNOWN 이 된 뒤에는 조회로 벗어나지 않는다 — 벗어나는 길은 소유자의 해제(STOP_CONFIRMED)뿐이다(결정 D2).
+  4  그 노드는 새 작업을 받지 않는다 — 노드 사건이 열려 있거나, **보내지 못한 STOP_CONFIRMED 가 미전송 보관에 남아 있는 동안**.
+     로컬 해제가 곧 차단 해제가 아니다 — Coordinator 가 받았다고 답할 때까지 막는다(Coordinator 쪽 RUN_UNKNOWN 은 같은 Job 의 재배치를 막는 것이고,
+     노드 차단은 Agent 쪽 기록이 한다 — D4).
+  5  소유자의 정지 · 정리 · 해제는 Coordinator 에 닿지 않아도 된다(§0.1). STOP_CONFIRMED 의 COMMITTED 기록은 닿을 때 한다 — 정리가 기록을 기다리지 않는다.
+     ★ 해제한 사실을 잃지 않고 전하는 순서(미전송 보관 → 로컬 해제 → 전송)는 단계 2 가 정한다(아래 목록 16).
+
+아직 보장하지 않는 것 (단계 2 가 채운다 — 그 전까지 이 절을 근거로 "재배치하지 않는다" 고 쓰지 않는다, CLAUDE.md §0.4)
+  재배치 보류   §2 Job 의 NODE_LOST · STAGING_NODE_LOST 와 §5 Lease 의 GRACE_ELAPSED("새 attempt 생성 허용")는 이 상태를 모른다.
+                단계 2 가 그 guard 를 고치기 전까지 Coordinator 는 Lease 만료 + grace 만으로 재배치한다.
+  보고 경로     Agent 가 불명을 보고할 wire 가 없다 — Coordinator 는 단계 1 에서 이 상태에 들어가지 않는다.
+  해제 뒤 차단   MUST 4 의 "보내지 못한 STOP_CONFIRMED 가 남은 동안 차단" 은 **지금 코드에 없다** — 해제 명령은 사건 파일을 바로 지운다
+                (container.rs:1494~1505). STOP_CONFIRMED 보관 · 받았다 응답과의 연동은 단계 2(목록 16 · 21)다.
+  전원 차단     지금 보고의 미전송 보관은 임시 파일 → sync → 이름 바꾸기이고 **디렉터리 sync 가 없다**(agent lib.rs:2520~2522 — Windows 에 같은 수단이 없다,
+                ADR-026). 전원이 끊기면 마지막 이름 바꾸기와 보고가 사라질 수 있다. 재전송 실패도 새 작업을 막지 않는다(lib.rs:2752~2756).
+                사건 해제와 STOP_CONFIRMED 가 전원 차단에도 갈라지지 않는 절차는 단계 2(목록 26)다.
+                ★ 2026-09-28 정정(규범 내용은 그대로) — "Windows 에 같은 수단이 없다" 는 **틀렸다.** `gputeer_checkpoint::sync_dir` 가 Windows 에서도
+                  디렉터리 핸들에 FlushFileBuffers 를 한다. 보관(outbox)은 결함 561, 사건 표식은 결함 563 에서 디렉터리 sync 를 하게 고쳤다
+
+STOP_CONFIRMED 의 등급
+  소유자의 진술이다(CLAUDE.md §1 의 WORKER_REPORTED 와 같은 등급). 소유자가 틀리게 해제하면 막지 못한다.
+```
+
 
 ---
 
@@ -554,4 +636,5 @@ Member       ❌ 구현 없음
 | 2 | `COMMITTED_DEGRADED` 상태가 canonical 선택 순위에 영향을 주는지 | 미정. 현재는 영향 없음 |
 | 3 | Node `ROTATING_KEY` / `UPDATING` 중 들어온 ExecutionGrant 처리 | 현재는 거부. 유예 정책(계획서 §7.3.2, §24.4)과 함께 재검토 |
 | 4 | 공개 풀에서 `BROKER_ATTESTED` 로 완화하면 **안 되는** 전이가 있는가 | **미정.** 후보는 §0.1 에 적었다(`RECONCILING -> CANONICAL`, `* -> REVOKED`, `RUNNING -> COMPLETED`). 정하기 전까지는 일률 적용 |
+| 6 | PAUSED · STALE 에서 종료 관측을 잃은 경우와 STALE · RUN_UNKNOWN 이 겹칠 때 | **정함**(2026-09-28 · 단계 2 제안 "단계 1 개정") — `PAUSED -> RUN_UNKNOWN`(PAUSE_STOP_UNCONFIRMED) 행을 둔다. STALE 은 Coordinator 가 기록하지 않는 LOCAL 상태라 Coordinator 쪽 행이 없다 — Agent 원장이 불명을 들고 있다가 재연결 때 알린다 |
 | 5 | 모드 전환 시 이미 확정된 전이의 등급 | **미정.** 사설 팀에서 `COMMITTED` 로 확정된 것을 공개 풀 전환 후 어떻게 읽는가. ADR-033 §(c) 의 "권위 전환" 절차와 함께 정해야 한다 |

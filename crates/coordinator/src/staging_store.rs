@@ -62,6 +62,7 @@ pub fn state_to_db(state: AttemptState) -> &'static str {
         AttemptState::Reconciling => "RECONCILING",
         AttemptState::Canonical => "CANONICAL",
         AttemptState::Superseded => "SUPERSEDED",
+        AttemptState::RunUnknown => "RUN_UNKNOWN",
     }
 }
 

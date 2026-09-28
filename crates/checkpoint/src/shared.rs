@@ -603,7 +603,10 @@ mod tests {
         // 파일 하나(600)는 상한(1000) 안이지만 둘째를 읽을 때 남은 예산은 400 이다.
         let error = stage_within_budget(&mut staged, &source, &names, 1000).unwrap_err();
         assert!(error.contains("SHARED_CHECKPOINT_TOO_LARGE"), "{error}");
-        assert!(error.contains("b.bin"), "둘째 파일에서 멈춰야 한다: {error}");
+        assert!(
+            error.contains("b.bin"),
+            "둘째 파일에서 멈춰야 한다: {error}"
+        );
         // 대조군 — 예산이 합(1200) 이상이면 둘 다 스테이징된다.
         let mut staged = StagedCheckpoint::begin(&root, "ckpt-2").unwrap();
         stage_within_budget(&mut staged, &source, &names, 1200).unwrap();

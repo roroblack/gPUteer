@@ -50,6 +50,9 @@ pub enum AttemptState {
     Reconciling,
     Canonical,
     Superseded,
+    /// 2026-09-28 (단계 1 제안 v12 · 사용자 승인) — "지금 돌고 있거나, 종결되지 않은 기동 요청 때문에 나중에 돌 수 있는데, 확인할 수 없다".
+    /// 비종료 — 나가는 전이는 STOP_CONFIRMED 하나뿐이다(state-machines.md §3 "RUN_UNKNOWN 의 의미").
+    RunUnknown,
 }
 
 /// 이 저장소가 아는 모든 Attempt 상태.
@@ -68,6 +71,7 @@ pub const ALL_ATTEMPT_STATES: &[AttemptState] = &[
     AttemptState::Reconciling,
     AttemptState::Canonical,
     AttemptState::Superseded,
+    AttemptState::RunUnknown,
 ];
 
 impl AttemptState {
@@ -85,6 +89,7 @@ impl AttemptState {
             Self::Reconciling => "RECONCILING",
             Self::Canonical => "CANONICAL",
             Self::Superseded => "SUPERSEDED",
+            Self::RunUnknown => "RUN_UNKNOWN",
         }
     }
 
@@ -134,17 +139,23 @@ pub fn transition_triggers(from: AttemptState, to: AttemptState) -> &'static [&'
         (Created, Cancelled) => &["GRANT_REJECTED", "JOB_CANCELLED"],
         (Starting, Running) => &["PROCESS_STARTED"],
         (Starting, Failed) => &["START_FAILED"],
+        (Starting, RunUnknown) => &["START_UNCONFIRMED"],
         (Running, Completed) => &["WORKLOAD_EXITED_OK"],
         (Running, Failed) => &[
             "WORKLOAD_EXITED_ERROR",
             "WATCHDOG_KILLED",
             // B+E(결정 D3) — 정상 종료 뒤 필요한 산출물 확정 실패.
             "OUTPUT_FINALIZATION_FAILED",
+            // 단계 1(2026-09-28) — 정지는 관측했지만 종료 코드가 없다(돌았을 수 있다).
+            "EXITED_WITHOUT_CODE",
         ],
+        (Running, RunUnknown) => &["EXIT_UNOBSERVED"],
         (Running, Paused) => &["PAUSE_REQUESTED"],
         (Running, Stale) => &["LEASE_EXPIRED"],
         (Paused, Running) => &["RESUME_REQUESTED"],
         (Paused, Cancelled) => &["JOB_CANCELLED"],
+        // 단계 2 제안의 "단계 1 개정"(2026-09-28 승인) — 일시정지 요청 뒤 정지를 확인하지 못했다.
+        (Paused, RunUnknown) => &["PAUSE_STOP_UNCONFIRMED"],
         (Stale, Running) => &["LEASE_RENEWED"],
         (Stale, Completed) => &["STALE_WORKLOAD_FINISHED"],
         (Stale, Failed) => &["STALE_WORKLOAD_FAILED"],
@@ -153,6 +164,7 @@ pub fn transition_triggers(from: AttemptState, to: AttemptState) -> &'static [&'
         (Reconciling, Canonical) => &["SELECTED"],
         (Reconciling, Superseded) => &["NOT_SELECTED"],
         (Reconciling, Failed) => &["VALIDITY_FILTER_REJECTED"],
+        (RunUnknown, Failed) => &["STOP_CONFIRMED"],
         _ => &[],
     }
 }
@@ -222,6 +234,48 @@ mod tests {
                 state.table_name()
             );
         }
+    }
+
+    /// 단계 1(2026-09-28) — RUN_UNKNOWN 은 비종료이고, 나가는 전이는 STOP_CONFIRMED(→ FAILED) 하나뿐이다.
+    /// 조회로 벗어나지 않고(→ RUNNING 없음) 성공으로 확정하지 않으며(→ COMPLETED 없음) 취소로 벗어나지 않는다(→ CANCELLED 없음).
+    #[test]
+    fn run_unknown_is_left_only_by_stop_confirmed() {
+        use AttemptState::*;
+        assert!(!RunUnknown.is_terminal());
+        let exits: Vec<(AttemptState, &[&str])> = ALL_ATTEMPT_STATES
+            .iter()
+            .map(|to| (*to, transition_triggers(RunUnknown, *to)))
+            .filter(|(_, t)| !t.is_empty())
+            .collect();
+        assert_eq!(exits, vec![(Failed, &["STOP_CONFIRMED"][..])]);
+        for to in [Completed, Running, Cancelled, Canonical, Reconciling] {
+            assert!(
+                transition(RunUnknown, to).is_err(),
+                "RUN_UNKNOWN -> {} 가 열렸다",
+                to.table_name()
+            );
+        }
+    }
+
+    /// 단계 1 — 들어오는 길은 STARTING · RUNNING · PAUSED 셋뿐이다. CREATED(아무것도 띄우기 전)에서는 들어오지 않는다.
+    #[test]
+    fn run_unknown_is_entered_only_from_starting_running_paused() {
+        use AttemptState::*;
+        let entries: Vec<(AttemptState, &[&str])> = ALL_ATTEMPT_STATES
+            .iter()
+            .map(|from| (*from, transition_triggers(*from, RunUnknown)))
+            .filter(|(_, t)| !t.is_empty())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![
+                (Starting, &["START_UNCONFIRMED"][..]),
+                (Running, &["EXIT_UNOBSERVED"][..]),
+                (Paused, &["PAUSE_STOP_UNCONFIRMED"][..]),
+            ]
+        );
+        assert!(transition(Created, RunUnknown).is_err());
+        assert!(transition_triggers(Running, Failed).contains(&"EXITED_WITHOUT_CODE"));
     }
 
     /// 표에 없는 전이는 거부돼야 한다.

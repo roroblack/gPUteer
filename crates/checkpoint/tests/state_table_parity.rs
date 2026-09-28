@@ -377,6 +377,7 @@ fn to_attempt_state(name: &str) -> Option<AttemptState> {
         "RECONCILING" => Reconciling,
         "CANONICAL" => Canonical,
         "SUPERSEDED" => Superseded,
+        "RUN_UNKNOWN" => RunUnknown,
         "(none)" => return None,
         other => panic!(
             "Attempt 표에 알 수 없는 상태 이름: {other:?}\n\

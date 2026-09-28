@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-28 16:07 — 단계 1(RUN_UNKNOWN 상태) 규범 적용 · 단계 1 · 2 사용자 결정 기록(브랜치 fork-merge)
+
+- 제안: `docs/contracts/proposals/2026-09-28_0742_Attempt_실행여부불명_상태.md`(승인 · 적용) · `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md`(결정 D6~D9)
+- 스트림: Protocol · Coordinator · QA · 계약
+- 수행: 사용자 답("코덱스와 논의해 문제 없으면 진행" · D6 "더 나은 안 없으면 1번" · D9 "최고의 규칙을 찾아 적용")에 따라 코덱스 논의 d1(READY_TO_APPLY) 뒤 적용.
+  state-machines.md §3 표(START_UNCONFIRMED · EXIT_UNOBSERVED · PAUSE_STOP_UNCONFIRMED · STOP_CONFIRMED · EXITED_WITHOUT_CODE · 좁힌 START_FAILED guard) · "RUN_UNKNOWN 의 의미" 절 · §7 6행 ·
+  attempt_state.rs RunUnknown · staging_store.rs DB 문자열 · 파리티 대응. D6 은 1번 + 보강 넷, D9 는 ADR-034(작성 예정) 방향으로 기록
+- 검증: `cargo build --workspace --all-targets` 오류 · 경고 0 · protocol attempt_state 시험 5 · checkpoint state_table_parity 14 · coordinator attempt_state_parity 3 통과. 적용분 독립 검수는 다음(순차)
+- 리포트: 두 제안서의 "사용자 결정" 절
+
+---
+
 ## 2026-09-28 16:01 — 결함 557 실측: x600 WSL2 docker 는 상한을 요청대로 건다(브랜치 fork-merge)
 
 - 결함: `docs/reports/debugs/2026-09-28_0808_자원상한_설치값_미전달과_적용_미확인_556_557.md` 557
