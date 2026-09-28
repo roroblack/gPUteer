@@ -3339,6 +3339,9 @@ fn run_and_capture_workload(
         //     ★ 결함 484 — Agent 서비스를 멈추는 것은 정지 수단이 아니다(컨테이너는 런타임이 소유하고, 멈추면 다음 회차 정리도 멈춘다).
         Err(other @ exec::ExecutionError::WaitFailed { .. }) => {
             *keep_run_dir = other.workload_may_be_alive();
+            // 원장 — 멈춤을 확인하지 못했다는 것 자체가 관측한 사실이다(코덱스 r1l ④). 컨테이너도 지움을 확인하지 못했다.
+            ledger_facts.stopped = Some(false);
+            ledger_facts.container_removed = Some(false);
             println!(
                 "WORKLOAD_MAY_BE_RUNNING attempt_id={attempt_id} — 종료를 관측하지 못했다. 다음 회차가 남은 컨테이너를 지운다(런타임이 응답해야 한다). 지금 멈추려면 런타임으로 직접 kill 한다(Agent 서비스를 멈추면 컨테이너는 계속 돌고 정리도 멈춘다)"
             );
@@ -3906,6 +3909,16 @@ pub fn adopt_legacy_run_ledger(
     })?;
     let real_root = lock.real_root.clone();
     let paths = run_ledger::LedgerPaths::for_root(&real_root)?;
+    // ★ 끊긴 이관(원장까지 만들었고 표식만 남음)은 사건 · 런타임 조회보다 **먼저** 마무리한다(코덱스 r1l ③ — 조회가 실패해도 표식을 끝낼 수 있게).
+    let presence = run_ledger::detect(&paths)?;
+    if presence.adopting && presence.ledger {
+        let outcome = run_ledger::adopt_legacy_files(&paths, false)?;
+        drop(lock);
+        return Ok(format!(
+            "RUN_LEDGER_ADOPT_RESUMED ledger={} — 끊긴 이관을 마무리했다({outcome:?})",
+            paths.ledger.display()
+        ));
+    }
     let incidents = container::open_incidents(&container::incident_dir_for(&real_root))?;
     if !incidents.is_empty() {
         return Err(format!(
@@ -3913,9 +3926,11 @@ pub fn adopt_legacy_run_ledger(
             incidents.len()
         ));
     }
-    let records = run_ledger::scan_start_records(&paths.started_dir, false)?;
+    // ★ 시작 기록이 없어도 실행 이력이 있을 수 있다 — 기록은 --require-ack-receipt 경로에서만 쓰였다(코덱스 r1l ②). 그래서 기록 수와 무관하게
+    //   런타임이 있으면 조회하고, 없으면 운영자 진술을 요구한다.
+    run_ledger::scan_start_records(&paths.started_dir, false)?;
     let mut attested = false;
-    if !records.is_empty() {
+    {
         match config.container_runtime.as_mut() {
             Some(runtime) => {
                 runtime.owner = container_owner_label(&runtime.node_id, &real_root);
@@ -3932,7 +3947,7 @@ pub fn adopt_legacy_run_ledger(
             }
             None if attest_no_container => attested = true,
             None => {
-                return Err("RUN_LEDGER_ADOPT_NEEDS_RUNTIME: 시작 기록이 있는데 컨테이너 런타임 인자가 없다 — 컨테이너를 돌렸는지 알 수 없다. \
+                return Err("RUN_LEDGER_ADOPT_NEEDS_RUNTIME: 컨테이너 런타임 인자가 없다 — 이 노드가 컨테이너를 돌렸는지 알 수 없다(시작 기록이 없어도 이력은 있을 수 있다). \
                             Agent 와 같은 --container-runtime 인자를 주거나, 컨테이너를 한 번도 쓰지 않은 노드면 --i-attest-no-container-ever-ran 을 준다".into())
             }
         }
@@ -7945,12 +7960,32 @@ mod run_ledger_command_tests {
     }
 
     #[test]
-    fn a_node_without_start_records_adopts_without_a_runtime() {
+    fn even_without_start_records_adoption_needs_a_runtime_or_an_attestation() {
+        // 코덱스 r1l ② — 시작 기록은 --require-ack-receipt 경로에서만 쓰였다. 기록이 없어도 이력이 있을 수 있다.
         let dir = tempfile::tempdir().unwrap();
-        let message = adopt_legacy_run_ledger(&args(dir.path(), &[]), false).unwrap();
+        assert!(adopt_legacy_run_ledger(&args(dir.path(), &[]), false)
+            .unwrap_err()
+            .contains("RUN_LEDGER_ADOPT_NEEDS_RUNTIME"));
+        let message = adopt_legacy_run_ledger(&args(dir.path(), &[]), true).unwrap();
         assert!(
-            message.contains("RUN_LEDGER_ADOPTED rows=0 attested=false"),
+            message.contains("RUN_LEDGER_ADOPTED rows=0 attested=true"),
             "{message}"
         );
+    }
+
+    /// 코덱스 r1l ③ — 끊긴 이관(원장까지 만들었고 표식만 남음)은 런타임 조회 · 진술 없이도 먼저 마무리한다.
+    #[test]
+    fn an_interrupted_adoption_is_finished_before_any_runtime_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = real_root(dir.path());
+        record_attempt_started_here(&root, "old-1").unwrap();
+        adopt_legacy_run_ledger(&args(dir.path(), &[]), true).unwrap();
+        let paths = run_ledger::LedgerPaths::for_root(&root).unwrap();
+        let g = fs::read_to_string(paths.pair()).unwrap();
+        fs::write(&paths.adopting, &g).unwrap();
+        // 진술도 런타임도 없다 — 새 이관이면 거부될 조건이지만 마무리는 된다.
+        let message = adopt_legacy_run_ledger(&args(dir.path(), &[]), false).unwrap();
+        assert!(message.contains("RUN_LEDGER_ADOPT_RESUMED"), "{message}");
+        assert!(!run_ledger::detect(&paths).unwrap().adopting);
     }
 }

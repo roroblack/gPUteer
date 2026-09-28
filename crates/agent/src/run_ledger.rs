@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 pub const LEDGER_SUFFIX: &str = ".run-ledger.sqlite3";
 /// 이관 진행 표식 접미사 — `<루트>.run-ledger.adopting`.
 pub const ADOPTING_SUFFIX: &str = ".run-ledger.adopting";
+/// 새 노드가 원장을 만드는 중이라는 표식 — `<루트>.run-ledger.creating`(코덱스 r1l ①: 세대 짝만 남은 상태가 "만들다 끊김" 인지 "쓰던 원장 유실" 인지 가른다).
+pub const CREATING_SUFFIX: &str = ".run-ledger.creating";
 /// 시작 기록 폴더 안의 세대 짝 파일 이름(`.` 으로 시작 — 시작 기록이 아니다).
 pub const PAIR_NAME: &str = ".run-ledger-generation";
 /// 원장 형식 버전(meta).
@@ -191,6 +193,7 @@ impl AttemptRow {
 pub struct LedgerPaths {
     pub ledger: PathBuf,
     pub adopting: PathBuf,
+    pub creating: PathBuf,
     pub started_dir: PathBuf,
 }
 
@@ -200,6 +203,7 @@ impl LedgerPaths {
         Ok(LedgerPaths {
             ledger: crate::checkpoint_root_sibling(real_root, LEDGER_SUFFIX)?,
             adopting: crate::checkpoint_root_sibling(real_root, ADOPTING_SUFFIX)?,
+            creating: crate::checkpoint_root_sibling(real_root, CREATING_SUFFIX)?,
             started_dir: crate::checkpoint_root_sibling(real_root, ".started-attempts")?,
         })
     }
@@ -232,12 +236,13 @@ pub struct Presence {
     pub ledger: bool,
     pub pair: bool,
     pub adopting: bool,
+    pub creating: bool,
 }
 
 impl Presence {
     /// 한 번도 원장을 켜지 않은 루트 — 원장 · 짝 · 이관 표식 모두 없음.
     pub fn never_enabled(&self) -> bool {
-        !self.ledger && !self.pair && !self.adopting
+        !self.ledger && !self.pair && !self.adopting && !self.creating
     }
 }
 
@@ -258,6 +263,7 @@ pub fn detect(paths: &LedgerPaths) -> Result<Presence, String> {
         ledger: exists_strict(&paths.ledger)?,
         pair: exists_strict(&paths.pair())?,
         adopting: exists_strict(&paths.adopting)?,
+        creating: exists_strict(&paths.creating)?,
     })
 }
 
@@ -1003,15 +1009,28 @@ pub fn open_for_agent(paths: &LedgerPaths) -> Result<RunLedger, String> {
                 "RUN_LEDGER_ADOPT_FIRST: 이 노드는 전에 실행한 기록이 있다 — Agent 를 멈추고 `gputeer run-ledger adopt-legacy` 를 먼저 돌린다".into()
             });
         }
-        // 새 노드 — 짝이 있으면(만들다 끊김) 그 값, 없으면 새로.
-        let generation = if presence.pair {
-            read_generation_file(&paths.pair())?
-        } else {
-            let g = new_generation()?;
-            write_once_value(&paths.started_dir, PAIR_NAME, &g)?;
+        // 새 노드 — "만드는 중" 표식이 있어야만 짝을 이어 쓴다. 표식 없이 짝만 있으면 **쓰던 원장을 잃은 것**이다(코덱스 r1l ① — ACTIVE 행을 적은 뒤
+        //   시작 기록 전에 죽고 원장까지 잃으면 시작 기록이 비어 있어도 돌던 시도가 있었을 수 있다).
+        if presence.pair && !presence.creating {
+            return Err("RUN_LEDGER_LOST: 쓰던 원장이 없다(세대 짝은 있고 \"만드는 중\" 표식은 없다) — 자동으로 다시 만들지 않는다. 수동 복구가 필요하다".into());
+        }
+        let generation = if presence.creating {
+            let g = read_generation_file(&paths.creating)?;
+            if presence.pair && read_generation_file(&paths.pair())? != g {
+                return Err("RUN_LEDGER_GENERATION_MISMATCH: \"만드는 중\" 표식과 세대 짝의 값이 다르다 — 수동 복구가 필요하다".into());
+            }
             g
+        } else {
+            new_generation()?
         };
+        write_once_value(
+            paths.parent_dir()?,
+            &LedgerPaths::file_name(&paths.creating)?,
+            &generation,
+        )?;
+        write_once_value(&paths.started_dir, PAIR_NAME, &generation)?;
         create_ledger_file(paths, &generation, &[])?;
+        finish_marker(&paths.creating, paths)?;
     } else if !presence.pair {
         return Err(
             "RUN_LEDGER_PAIR_MISSING: 원장은 있는데 세대 짝이 없다 — 수동 복구가 필요하다".into(),
@@ -1024,6 +1043,13 @@ pub fn open_for_agent(paths: &LedgerPaths) -> Result<RunLedger, String> {
         return Err(
             "RUN_LEDGER_GENERATION_MISMATCH: 원장과 세대 짝의 값이 다르다 — 원장이 바뀌었다".into(),
         );
+    }
+    // 만들기를 마쳤는데 표식을 지우기 전에 끊긴 경우 — 값이 같으면 표식만 지운다.
+    if presence.creating && presence.ledger {
+        if read_generation_file(&paths.creating)? != pair {
+            return Err("RUN_LEDGER_GENERATION_MISMATCH: \"만드는 중\" 표식과 원장의 값이 다르다 — 수동 복구가 필요하다".into());
+        }
+        finish_marker(&paths.creating, paths)?;
     }
     let rows: BTreeSet<String> = ledger.rows()?.into_iter().map(|r| r.attempt_id).collect();
     if let Some(missing) = records.iter().find(|id| !rows.contains(*id)) {
@@ -1074,10 +1100,14 @@ pub fn adopt_legacy_files(paths: &LedgerPaths, attested: bool) -> Result<AdoptOu
     if presence.ledger {
         return Err("RUN_LEDGER_EXISTS: 원장이 이미 있다 — 두 번 이관하지 않는다".into());
     }
+    if presence.creating {
+        return Err("RUN_LEDGER_CREATE_UNFINISHED: Agent 가 새 원장을 만들다 끊겼다 — 이관하지 않는다. Agent 를 --run-ledger true 로 다시 띄워 마무리한다".into());
+    }
     let records = scan_start_records(&paths.started_dir, true)?;
-    if presence.pair && !presence.adopting && !records.is_empty() {
+    // 이관 표식 없이 짝만 있으면 시작 기록이 없어도 **쓰던 원장을 잃은 것**이다(코덱스 r1l ①).
+    if presence.pair && !presence.adopting {
         return Err(
-            "RUN_LEDGER_LOST: 쓰던 원장이 없다(세대 짝 · 시작 기록은 있다 · 이관 표식은 없다) — 이관으로 다시 만들지 않는다".into(),
+            "RUN_LEDGER_LOST: 쓰던 원장이 없다(세대 짝은 있고 이관 표식은 없다) — 이관으로 다시 만들지 않는다".into(),
         );
     }
     // G — 이미 적힌 값 우선(짝 → 표식 → 새로).
@@ -1119,10 +1149,19 @@ pub fn adopt_legacy_files(paths: &LedgerPaths, attested: bool) -> Result<AdoptOu
 }
 
 fn finish_adopting(paths: &LedgerPaths) -> Result<(), String> {
-    match fs::remove_file(&paths.adopting) {
+    finish_marker(&paths.adopting, paths)
+}
+
+/// 표식(이관 · 만드는 중)을 지우고 폴더를 sync 한다.
+fn finish_marker(marker: &Path, paths: &LedgerPaths) -> Result<(), String> {
+    match fs::remove_file(marker) {
         Ok(()) => {}
         Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("RUN_LEDGER: 이관 표식을 지우지 못했다: {error}")),
+        Err(error) => {
+            return Err(format!(
+                "RUN_LEDGER: 표식을 지우지 못했다({marker:?}): {error}"
+            ))
+        }
     }
     gputeer_checkpoint::sync_dir(paths.parent_dir()?)
         .map_err(|error| format!("RUN_LEDGER: 폴더 sync 실패: {error:?}"))

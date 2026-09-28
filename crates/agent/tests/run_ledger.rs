@@ -460,12 +460,58 @@ fn r25c_a_lost_ledger_is_never_recreated_by_adoption_or_by_the_agent() {
 }
 
 #[test]
-fn r25d_a_new_node_interrupted_after_the_pair_continues_with_the_same_generation() {
+fn r25d_a_new_node_interrupted_after_the_pair_continues_only_with_the_creating_marker() {
+    // "만드는 중" 표식이 있으면 같은 G 로 이어 만들고 표식을 지운다.
     let f = fixture();
     fs::create_dir_all(&f.paths.started_dir).unwrap();
     let g = "33333333333333333333333333333333";
+    fs::write(&f.paths.creating, g).unwrap();
     fs::write(f.paths.pair(), g).unwrap();
     assert_eq!(open_for_agent(&f.paths).unwrap().generation(), g);
+    assert!(!detect(&f.paths).unwrap().creating, "마친 뒤 표식을 지운다");
+    // 표식만 쓰고 끊긴 경우도 같은 G 로 이어 간다.
+    let h = fixture();
+    let g2 = "66666666666666666666666666666666";
+    fs::write(&h.paths.creating, g2).unwrap();
+    assert_eq!(open_for_agent(&h.paths).unwrap().generation(), g2);
+    // 코덱스 r1l ① — 표식 없이 짝만 있으면(시작 기록이 없어도) 쓰던 원장을 잃은 것이다.
+    let i = fixture();
+    fs::create_dir_all(&i.paths.started_dir).unwrap();
+    fs::write(i.paths.pair(), g).unwrap();
+    assert_err_contains(open_for_agent(&i.paths), "RUN_LEDGER_LOST");
+    assert_err_contains(adopt_legacy_files(&i.paths, false), "RUN_LEDGER_LOST");
+}
+
+/// 코덱스 r1l ① — ACTIVE 행을 적은 뒤 시작 기록 전에 죽고 원장까지 잃으면 시작 기록은 비어 있다. 그래도 빈 원장으로 다시 만들지 않는다.
+#[test]
+fn a_lost_ledger_with_an_empty_start_journal_is_not_recreated() {
+    let f = fixture();
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    ledger
+        .insert_active(&AttemptRow::new_active(
+            "maybe-running",
+            "job",
+            "node",
+            1,
+            Executor::Container,
+        ))
+        .unwrap();
+    drop(ledger);
+    fs::remove_file(&f.paths.ledger).unwrap();
+    assert_err_contains(open_for_agent(&f.paths), "RUN_LEDGER_LOST");
+    assert!(!detect(&f.paths).unwrap().ledger);
+}
+
+#[test]
+fn a_creating_marker_left_after_the_ledger_was_published_is_removed_on_open() {
+    let f = fixture();
+    let g = open_for_agent(&f.paths).unwrap().generation().to_string();
+    fs::write(&f.paths.creating, &g).unwrap();
+    open_for_agent(&f.paths).unwrap();
+    assert!(!detect(&f.paths).unwrap().creating);
+    fs::write(&f.paths.creating, "77777777777777777777777777777777").unwrap();
+    assert_err_contains(open_for_agent(&f.paths), "RUN_LEDGER_GENERATION_MISMATCH");
+    assert_err_contains(adopt_legacy_files(&f.paths, false), "RUN_LEDGER_EXISTS");
 }
 
 #[test]
