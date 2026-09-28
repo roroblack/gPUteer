@@ -227,6 +227,11 @@ pub struct AgentConfig {
     /// ★ `Option` 이 아니다. 패널을 안 띄우더라도 상태는 항상 갱신한다 —
     ///   나중에 패널이 붙었을 때 이미 도는 작업이 안 보이는 일이 없도록.
     pub owner_panel_state: owner_panel::OwnerPanelState,
+    /// 노드 실행 원장을 켠다(`--run-ledger true` · 기본 꺼짐 — 계획 `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md`).
+    /// ★ 한 번 켠 루트는 끌 수 없다 — 원장 · 세대 짝 · 이관 표식이 있으면 꺼진 채 기동을 거부한다.
+    pub run_ledger: bool,
+    /// 기동 때 연 원장 — `run()` 이 채운다(파서는 비워 둔다). 실행 흐름이 시작 · 끝을 적는다.
+    pub run_ledger_handle: Option<run_ledger::SharedRunLedger>,
     /// Owner Panel 을 띄울 포트. `None` 이면 안 띄운다.
     ///
     /// ★ 주소는 받지 않는다 — `127.0.0.1` 고정이다(`CLAUDE.md` §0.1).
@@ -630,7 +635,11 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     //     잠금을 못 잡으면(CHECKPOINT_ROOT_BUSY) 그 루트는 다른 Agent 의 것이다 — 그 Agent 가 보낸다.
     //   · GC 앞 — GC 가 실패해도(권한 · 손상) 선점 보고는 나가야 한다(238).
     //   표시는 루트의 **실제 위치** 옆에서 찾는다(잠금이 루트를 실제 위치로 바꾼 뒤다). 보고 연결은 일을 받지 않는다(FRESH 만 생존 관측).
+    let mut opened_ledger: Option<run_ledger::RunLedger> = None;
     let _checkpoint_root_lock = settle_checkpoint_root_with(&mut config, |settled| {
+        // ★ 노드 실행 원장(계획 2026-09-29_0212) — 원장 · 세대 짝 · 이관 표식 감지와 남은 ACTIVE 풀기는 되찾음 검사의 **보관함 전송 · 기동 GC 보다
+        //   먼저** 한다(전송 뒤에는 보고 파일이 지워져 불명으로 오판된다 · GC 가 거부할 루트의 부분 데이터를 먼저 지우지 않게).
+        opened_ledger = open_run_ledger_at_startup(settled)?;
         let marker = owner_reclaim_marker(&settled.checkpoint_root)?;
         if !marker.exists() {
             return Ok(());
@@ -644,6 +653,8 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             marker.display()
         ))
     })?;
+    config.run_ledger_handle =
+        opened_ledger.map(|ledger| std::sync::Arc::new(std::sync::Mutex::new(ledger)));
     // ★ 2026-09-25 (결함 290 · 291 · 295 · 재검수 90 · 91) — 체크포인트 루트를 **잠근 뒤에** 이 Agent 의 라벨로 남은 컨테이너를 모두 치운다.
     //   라벨은 노드 id 와 잠근 루트의 실제 위치 해시다 — 같은 루트를 잠근 Agent 는 하나뿐이므로, 지금 그 라벨로 도는 컨테이너는 죽은 회차가
     //   남긴 것이다. 전에는 잠금 **전에** 노드 id 만으로 지워, 같은 노드 id 로 잘못 뜬 두 번째 Agent 가 거부되기 전에 정상 실행 중인
@@ -1308,6 +1319,8 @@ fn run_one_connection_inner(
     //   어긋나 Coordinator 가 `AttemptReport` 를 ACK 로 읽으려다 실패한다.
     //   사실만 들고 있다가 ACK·heartbeat·이웃 신고 뒤에 보낸다.
     let mut terminal_observation: Option<crate::report::TerminalObservation> = None;
+    // ★ 노드 실행 원장 — 이 연결에서 ACTIVE 행을 적은 시도(보고 보관 뒤 CLOSED 를 적는다).
+    let mut ledger_row_attempt: Option<String> = None;
     // ★ 결함 82 — 작업 디렉터리 삭제 실패. 종료 보고를 보낸 **뒤에** 오류로 알린다.
     let mut pending_cleanup_failure: Option<String> = None;
     // ★ 결함 ⑱ — 워크로드가 있으면 ACK 는 실행 **전**에 간다(아래). 보낸 것을 여기 담는다.
@@ -1429,6 +1442,8 @@ fn run_one_connection_inner(
         //   ACK 읽기 시한에 먼저 걸렸다(실측 `docs/evidence/_raw/결함18_ACK_시한_실측_2026-09-10.txt`).
         //   **이 첫 검사**가 거부하면 지금처럼 ACK 없이 끝낸다 — 받아들이지 못할 Grant 에 "받았다" 고
         //   답하지 않는다. opt-in 이 꺼져 있으면 실행만 건너뛰고 ACK 는 보낸다(전과 같다).
+        let runs_in_container =
+            matches!(policy.container, container::ContainerDecision::Container(_));
         let will_execute = match exec::preflight(&policy) {
             Ok(()) => true,
             Err(exec::ExecutionError::NotOptedIn) => false,
@@ -1491,8 +1506,50 @@ fn run_one_connection_inner(
             }
             // 시작 기록 — 실행 직전, 영속으로. 이 뒤로 이 노드는 같은 시도를 다시 받지 않는다(결함 218).
             if will_execute {
-                record_attempt_started_here(&config.checkpoint_root, &grant.attempt_id)
-                    .map_err(|error| fail_after_cleanup(error, &run_dir))?;
+                // ★ 노드 실행 원장(계획 2026-09-29_0212 "실행 순서" 1 · 2) — 원장 행 ACTIVE 를 시작 기록 **앞**에 적는다. 실패하면 띄우지 않는다.
+                if let Some(written) = with_run_ledger(&config, |ledger| {
+                    let executor = if runs_in_container {
+                        run_ledger::Executor::Container
+                    } else {
+                        run_ledger::Executor::Host
+                    };
+                    let mut row = run_ledger::AttemptRow::new_active(
+                        &grant.attempt_id,
+                        &held_lease.job_id,
+                        &config.agent_device_id,
+                        held_lease.fence_epoch,
+                        executor,
+                    );
+                    if runs_in_container {
+                        row.container_name =
+                            Some(container::derive_container_name(&grant.attempt_id));
+                    }
+                    ledger.insert_active(&row)
+                }) {
+                    written.map_err(|error| {
+                        fail_after_cleanup(
+                            format!("RUN_LEDGER_ROW_NOT_WRITTEN: 원장에 시작을 적지 못해 실행하지 않는다 — {error}"),
+                            &run_dir,
+                        )
+                    })?;
+                    ledger_row_attempt = Some(grant.attempt_id.clone());
+                }
+                if let Err(error) =
+                    record_attempt_started_here(&config.checkpoint_root, &grant.attempt_id)
+                {
+                    if let Some(Err(close_error)) = with_run_ledger(&config, |ledger| {
+                        ledger.close_active(&grant.attempt_id, run_ledger::CloseReason::NotStarted)
+                    }) {
+                        return Err(fail_after_cleanup(
+                            run_ledger_fatal(
+                                &grant.attempt_id,
+                                format!("시작 기록 실패 뒤 원장 행을 닫지 못했다: {close_error} · {error}"),
+                            ),
+                            &run_dir,
+                        ));
+                    }
+                    return Err(fail_after_cleanup(error, &run_dir));
+                }
             }
         }
         // ★ 2026-09-25 (결함 268 · 269 · 271 · 재검수 87) — 첫 갱신을 **실행 전 관문**으로 쓴다. Coordinator 는 그 갱신을 받아야
@@ -1574,6 +1631,7 @@ fn run_one_connection_inner(
             _ => None,
         };
         let mut keep_run_dir = false;
+        let mut ledger_facts = WorkloadLedgerFacts::default();
         let outcome = run_and_capture_workload(
             spec,
             policy,
@@ -1587,6 +1645,7 @@ fn run_one_connection_inner(
             clock.now_unix_ms(),
             clock,
             &mut keep_run_dir,
+            &mut ledger_facts,
         );
         // 작업 디렉터리를 치우기 **전에** 마지막 체크포인트까지 올린다.
         if let Some(publisher) = publisher {
@@ -1617,6 +1676,28 @@ fn run_one_connection_inner(
             })
         });
         let workload_may_be_alive = keep_run_dir || incident_open;
+        // ★ 노드 실행 원장(계획 "실행 순서" 4) — 컨테이너 처리 결과를 **보고 보관 전에** 적는다. 지움 확인이 없으면 LOCAL_BLOCKED.
+        //   실패는 치명적이다(보관 전 실패 — 보고를 보관하지 않고 루프를 멈춘다 · 다음 기동이 LOCAL_BLOCKED 로 푼다).
+        if let Some(attempt_id) = ledger_row_attempt.as_deref() {
+            if let Some(Err(error)) = with_run_ledger(&config, |ledger| {
+                if ledger_facts.not_started {
+                    ledger.close_active(attempt_id, run_ledger::CloseReason::NotStarted)
+                } else if runs_in_container {
+                    if ledger_facts.container_removed == Some(true) && !incident_open {
+                        ledger.mark_container_removed(attempt_id, None)
+                    } else {
+                        ledger.mark_local_blocked(attempt_id, "container_not_confirmed_removed")
+                    }
+                } else {
+                    Ok(())
+                }
+            }) {
+                return Err(run_ledger_fatal(
+                    attempt_id,
+                    format!("종료 뒤 원장에 컨테이너 처리 결과를 적지 못했다 — 보고를 보관하지 않는다: {error}"),
+                ));
+            }
+        }
         let cleanup = if workload_may_be_alive {
             println!(
                 "WORKLOAD_DIR_KEPT job_id={} run_dir={} — 작업이 아직 돌 수 있어 작업 폴더를 지우지 않았다(확인 뒤 사람이 지운다)",
@@ -1717,6 +1798,23 @@ fn run_one_connection_inner(
         )?),
         _ => None,
     };
+    // ★ 노드 실행 원장(계획 "실행 순서" 4) — 보관이 성공한 **직후 · 전송 전에** CLOSED. 지움 확인이 있는 컨테이너 행 · 호스트 행만(LOCAL_BLOCKED 는 그대로).
+    //   실패는 치명적이다(보관 뒤 실패 — 보고는 디스크에 있다 · 전송하지 않고 루프를 멈춘다 · 다음 기동이 보고 인정으로 CLOSED 로 푼다).
+    if let (Some(attempt_id), Some(_)) = (ledger_row_attempt.as_deref(), outboxed_report.as_ref()) {
+        if let Some(Err(error)) =
+            with_run_ledger(&config, |ledger| match ledger.row(attempt_id)? {
+                Some(row) if row.state == run_ledger::RowState::Active => {
+                    ledger.close_active(attempt_id, run_ledger::CloseReason::ReportPersisted)
+                }
+                _ => Ok(()),
+            })
+        {
+            return Err(run_ledger_fatal(
+                attempt_id,
+                format!("보고를 보관한 뒤 원장 CLOSED 를 적지 못했다 — 전송하지 않는다: {error}"),
+            ));
+        }
+    }
 
     // RevokeLeaseNotice는 coordinator_device_id가 아닌 lease_id를
     // signer_id로 쓰는 기존 계약을 따른다(V-08). 정상 통지는 현재
@@ -3162,6 +3260,7 @@ fn run_and_capture_workload(
     started_at_unix_ms: u64,
     clock: &SystemClock,
     keep_run_dir: &mut bool,
+    ledger_facts: &mut WorkloadLedgerFacts,
 ) -> Result<Option<WorkloadReport>, String> {
     // ★ 자식이 뜨는 **즉시** 소유자 화면에 올린다. `execute()` 가
     //   돌아온 뒤에 등록하면 그건 이미 끝난 뒤라 아무 의미가 없다 —
@@ -3190,9 +3289,14 @@ fn run_and_capture_workload(
         Ok(outcome) => {
             // ★ 결함 499 (재검수 125) — 사람이 봐야 하는 컨테이너 결과면 작업 폴더를 남긴다(타입으로 받는다).
             *keep_run_dir = outcome.container_needs_human;
+            // 원장 — 컨테이너 경로에서 needs_human 이 아니면 `ContainerLeft::Removed`(지우고 새 조회로 없음 확인)다.
+            ledger_facts.container_removed = Some(!outcome.container_needs_human);
             outcome
         }
-        Err(exec::ExecutionError::NotOptedIn) => return Ok(None),
+        Err(exec::ExecutionError::NotOptedIn) => {
+            ledger_facts.not_started = true;
+            return Ok(None);
+        }
         // ★ 여기서도 종료 시각을 읽지 않는다. 실행 자체가 **일어나지
         //   않았거나**(NotOptedIn·UnsupportedPlatform·LimitNotApplied·
         //   SpawnFailed) 종료를 **관측하지 못한** 경우(WaitFailed)이므로,
@@ -3213,6 +3317,16 @@ fn run_and_capture_workload(
             return Err(other.to_string());
         }
         Err(other) => {
+            // 원장 — 실행 전 관문 · 기동 실패는 "시작 안 함" 이 확실하다(컨테이너 경로의 SpawnFailed 는 만든 컨테이너를 지우고 없음을 확인한 경우다).
+            //   그 밖(StopFailed 등)은 모른다 — 원장은 LOCAL_BLOCKED(컨테이너) · ACTIVE 유지(호스트)로 둔다.
+            ledger_facts.not_started = matches!(
+                other,
+                exec::ExecutionError::SpawnFailed { .. }
+                    | exec::ExecutionError::UnsupportedPlatform { .. }
+                    | exec::ExecutionError::LimitNotApplied { .. }
+                    | exec::ExecutionError::GpuRequirementUnmet { .. }
+                    | exec::ExecutionError::GpuUnverifiable { .. }
+            );
             // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
             // 소유자 화면에 영원히 남는다.
             panel.unregister(attempt_id);
@@ -3400,6 +3514,182 @@ fn settle_checkpoint_root(config: &mut AgentConfig) -> Result<CheckpointRootLock
 }
 
 /// 잠금을 잡고 루트를 실제 위치로 바꾼 뒤, **기동 GC 전에** `before_gc` 를 부른다(결함 251 — 되찾음 검사 · 보고 재전송 자리).
+/// 노드 실행 원장을 기동 때 연다(계획 `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md`).
+///
+/// - 스위치가 꺼져 있으면 한 번도 켜지 않은 루트만 지나간다(원장 · 세대 짝 · 이관 표식이 있으면 거부 — 켜기는 되돌리지 않는다)
+/// - 켜져 있으면 켜는 조건(고정 루트 · 보고 보관함 · 수신 확인) → 열기(fail-closed) → 남은 ACTIVE 풀기 → 막힌 행이 있으면 기동 거부
+fn open_run_ledger_at_startup(
+    settled: &AgentConfig,
+) -> Result<Option<run_ledger::RunLedger>, String> {
+    let paths = run_ledger::LedgerPaths::for_root(&settled.checkpoint_root)?;
+    let presence = run_ledger::detect(&paths)?;
+    if !settled.run_ledger {
+        if presence.never_enabled() {
+            return Ok(None);
+        }
+        return Err(format!(
+            "RUN_LEDGER_ENABLED_ROOT: 이 루트는 노드 실행 원장을 켰다(원장 {} · 세대 짝 {} · 이관 표식 {}) — `--run-ledger true` 로 띄운다(켜기는 되돌리지 않는다)",
+            presence.ledger, presence.pair, presence.adopting
+        ));
+    }
+    if settled.checkpoint_root_is_default {
+        return Err("RUN_LEDGER_CONFIG_REFUSED: --run-ledger 는 고정 --checkpoint-root 가 있어야 한다 — 기본 루트는 기동마다 바뀌어 원장이 이전 기록을 못 본다".into());
+    }
+    if !settled.report_over_session {
+        return Err("RUN_LEDGER_CONFIG_REFUSED: --run-ledger 는 --report-over-session true 가 있어야 한다 — 종료 보고를 디스크에 남긴 뒤에만 CLOSED 를 적는다".into());
+    }
+    if !settled.require_ack_receipt {
+        return Err("RUN_LEDGER_CONFIG_REFUSED: --run-ledger 는 --require-ack-receipt true 가 있어야 한다 — 시작 기록(sentinel)이 그 경로에서만 쓰인다".into());
+    }
+    let mut ledger = run_ledger::open_for_agent(&paths)?;
+    resolve_active_ledger_rows(settled, &paths, &mut ledger)?;
+    if ledger.blocks_new_work()? {
+        return Err("RUN_LEDGER_BLOCKED: 원장에 막힌 시도(LOCAL_BLOCKED)가 있다 — 새 작업을 받지 않는다. 컨테이너 · 작업 폴더를 확인한 뒤 \
+                    `gputeer container-incidents --checkpoint-root <루트> --clear <이름>` 으로 해제한다".into());
+    }
+    Ok(Some(ledger))
+}
+
+/// 기동 때 남은 ACTIVE 행을 푼다(계획 "기동 때 ACTIVE 행 풀기" — 알림 꺼짐 갈래).
+fn resolve_active_ledger_rows(
+    settled: &AgentConfig,
+    paths: &run_ledger::LedgerPaths,
+    ledger: &mut run_ledger::RunLedger,
+) -> Result<(), String> {
+    use run_ledger::{CloseReason, Executor, RowState};
+    let records = run_ledger::scan_start_records(&paths.started_dir, true)?;
+    let signing_key = SigningKey::from_bytes(&settled.own_seed);
+    let outbox = report_outbox_dir(settled)?;
+    for row in ledger.rows()? {
+        if row.state != RowState::Active {
+            continue;
+        }
+        let id = row.attempt_id.clone();
+        let sentinel = records.contains(&id);
+        match row.executor {
+            Executor::Host => {
+                // D5 조각 전 — 지금과 같다(호스트 실행의 불명은 막지 않는다).
+                let reason = if sentinel {
+                    CloseReason::HostRestart
+                } else {
+                    CloseReason::NoSentinel
+                };
+                ledger.close_active(&id, reason)?;
+                println!("RUN_LEDGER_RESOLVED attempt_id={id} executor=host state=CLOSED");
+            }
+            Executor::Container if !sentinel => {
+                ledger.close_active(&id, CloseReason::NoSentinel)?;
+                println!("RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=CLOSED reason=no_sentinel");
+            }
+            Executor::Container => {
+                let report = accepted_outbox_report_exists(settled, &signing_key, &outbox, &row)?;
+                if report && row.container_removed == Some(true) {
+                    ledger.close_active(&id, CloseReason::ReportPersisted)?;
+                    println!("RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=CLOSED reason=report_and_removed");
+                    continue;
+                }
+                let reason = if report {
+                    "report_without_removal"
+                } else {
+                    "no_report"
+                };
+                ledger.mark_local_blocked(&id, reason)?;
+                let name = row
+                    .container_name
+                    .clone()
+                    .unwrap_or_else(|| container::derive_container_name(&id));
+                match container::write_incident(
+                    &container::incident_dir_for(&settled.checkpoint_root),
+                    &name,
+                    &settled.agent_device_id,
+                    "RUN_UNKNOWN",
+                    &format!("노드 실행 원장 — 시작했지만 끝을 확인하지 못했다({reason}) · 확인 뒤 해제한다"),
+                ) {
+                    Ok(path) => println!(
+                        "CONTAINER_INCIDENT_RECORDED name={name} file={} — 원장 LOCAL_BLOCKED({reason})",
+                        path.display()
+                    ),
+                    // 원장 행이 차단 근거다 — 표식이 없어도 새 작업을 받지 않는다(아래 blocks_new_work).
+                    Err(error) => println!(
+                        "RUN_LEDGER_INCIDENT_NOT_WRITTEN name={name} — 원장 LOCAL_BLOCKED 가 차단한다: {error}"
+                    ),
+                }
+            }
+            Executor::Legacy => {
+                return Err(format!(
+                    "RUN_LEDGER: legacy 행이 ACTIVE 다({id}) — 원장이 바뀌었다"
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 보관함에 그 시도의 종료 보고가 **인정할 수 있게** 있는가 — 재전송 검증(해독 · 이 노드 · 서명 · 필드 규칙) + 원장 행 대조.
+/// 격리된 보고(`.report.rejected`)는 보지 않는다. 보관함을 읽지 못하면 `Err`(모르면 인정하지 않는다).
+fn accepted_outbox_report_exists(
+    settled: &AgentConfig,
+    signing_key: &SigningKey,
+    outbox: &std::path::Path,
+    row: &run_ledger::AttemptRow,
+) -> Result<bool, String> {
+    let entries = match fs::read_dir(outbox) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "RUN_LEDGER: 보관함을 읽지 못했다({}): {error}",
+                outbox.display()
+            ))
+        }
+    };
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("RUN_LEDGER: 보관함 항목을 읽지 못했다: {error}"))?
+            .path();
+        if !path.extension().is_some_and(|ext| ext == "report") {
+            continue;
+        }
+        let Ok(report) = reopen_outboxed_report(settled, signing_key, &path) else {
+            continue;
+        };
+        if report.attempt_id == row.attempt_id
+            && row.node_id.as_deref() == Some(report.node_id.as_str())
+            && row.job_id.as_deref() == Some(report.job_id.as_str())
+            && row.fence_epoch == Some(report.fence_epoch)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// 원장 손잡이로 한 걸음 — 원장을 켜지 않았으면 `None`.
+fn with_run_ledger<T>(
+    config: &AgentConfig,
+    step: impl FnOnce(&mut run_ledger::RunLedger) -> Result<T, String>,
+) -> Option<Result<T, String>> {
+    config.run_ledger_handle.as_ref().map(|handle| {
+        let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+        step(&mut ledger)
+    })
+}
+
+/// 원장 치명 오류 — agent-loop 가 이 줄을 보고 멈춘다(계획 r1i ①).
+fn run_ledger_fatal(attempt_id: &str, detail: String) -> String {
+    println!("RUN_LEDGER_FATAL attempt_id={attempt_id} — {detail}");
+    format!("RUN_LEDGER_FATAL: {detail}")
+}
+
+/// 실행 결과 가운데 원장이 알아야 하는 것(계획 "실행 순서" 4).
+#[derive(Debug, Default, Clone, Copy)]
+struct WorkloadLedgerFacts {
+    /// 시작하지 않았음이 확실하다(실행 전 관문 · 기동 실패 — 컨테이너는 만들지 않았거나 지웠음을 확인했다).
+    not_started: bool,
+    /// 컨테이너를 지우고 새 조회로 "없음" 을 확인했다(`ContainerLeft::Removed`). 결과를 못 받았으면 `None`.
+    container_removed: Option<bool>,
+}
+
 fn settle_checkpoint_root_with(
     config: &mut AgentConfig,
     before_gc: impl FnOnce(&AgentConfig) -> Result<(), String>,
@@ -4492,6 +4782,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         corrupt_neighbor_report_coordinator: flags
             .bool_flag("--corrupt-neighbor-report-coordinator"),
         owner_panel_state: owner_panel::OwnerPanelState::new(),
+        run_ledger: flags.bool_flag("--run-ledger"),
+        run_ledger_handle: None,
         owner_panel_port: flags
             .checked_get::<u16>("--owner-panel-port")?
             .map(|v| v.parse::<u16>())
@@ -4967,6 +5259,8 @@ mod tests {
             container_runtime: None,
             multi_agent: false,
             owner_panel_state: owner_panel::OwnerPanelState::new(),
+            run_ledger: false,
+            run_ledger_handle: None,
             owner_panel_port: None,
             workload_commit_limit_bytes: 256 * 1024 * 1024,
             coordinator_device_id: coordinator_device_id.into(),
@@ -5531,6 +5825,7 @@ mod defect_19_tests {
             1,
             &SystemClock,
             &mut keep_run_dir,
+            &mut WorkloadLedgerFacts::default(),
         )
         .expect("확정 실패는 Agent 오류가 아니다 — 종료를 관측했으면 보고한다")
         .expect("opt-in 했으니 실행됐다");
@@ -7032,5 +7327,239 @@ mod pool_signal_tests {
         let mut zero = gpu("GPU-a", 0);
         zero.total_vram_bytes = 0;
         assert!(gpu_observation_from_snapshot(&snapshot(vec![zero]), None, 7).is_err());
+    }
+}
+
+#[cfg(test)]
+mod run_ledger_startup_tests {
+    //! 노드 실행 원장 — 기동 흐름(계획 `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md` R10~R14 · R27 · R28 · R31).
+    use super::*;
+
+    const COORD_SEED: [u8; 32] = [0x71; 32];
+    const AGENT_SEED: [u8; 32] = [0x72; 32];
+    const AGENT_ID: &str = "agent-ledger-test";
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn config(dir: &std::path::Path, extra: &[&str]) -> AgentConfig {
+        let root = dir.join("checkpoints");
+        fs::create_dir_all(&root).expect("루트");
+        let mut argv: Vec<String> = [
+            "--connect",
+            "127.0.0.1:9",
+            "--own-seed",
+            &hex(&AGENT_SEED),
+            "--peer-pubkey",
+            &hex(SigningKey::from_bytes(&COORD_SEED)
+                .verifying_key()
+                .as_bytes()),
+            "--coordinator-device-id",
+            "coordinator-ledger-test",
+            "--agent-device-id",
+            AGENT_ID,
+            "--fence-db",
+            dir.join("fence.sqlite3").to_str().expect("경로"),
+            "--checkpoint-root",
+            root.to_str().expect("경로"),
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        argv.extend(extra.iter().map(|s| s.to_string()));
+        parse_config_from_args(&argv).expect("설정 파싱")
+    }
+
+    const ON: [&str; 6] = [
+        "--run-ledger",
+        "true",
+        "--report-over-session",
+        "true",
+        "--require-ack-receipt",
+        "true",
+    ];
+
+    fn paths(config: &AgentConfig) -> run_ledger::LedgerPaths {
+        run_ledger::LedgerPaths::for_root(&config.checkpoint_root).expect("경로")
+    }
+
+    fn active_container_row(config: &AgentConfig, id: &str, removed: bool) {
+        let mut ledger = run_ledger::open_for_agent(&paths(config)).expect("원장");
+        let mut row = run_ledger::AttemptRow::new_active(
+            id,
+            "job-ledger",
+            AGENT_ID,
+            3,
+            run_ledger::Executor::Container,
+        );
+        row.container_name = Some(container::derive_container_name(id));
+        ledger.insert_active(&row).expect("행");
+        if removed {
+            ledger.mark_container_removed(id, None).expect("지움 확인");
+        }
+    }
+
+    fn outbox_report(config: &AgentConfig, id: &str, fence: u64) {
+        let now = SystemClock.now_unix_ms();
+        let report = report::build_signed_attempt_report(
+            &SigningKey::from_bytes(&AGENT_SEED),
+            &report::TerminalObservation {
+                stopped_by_owner: false,
+                job_id: "job-ledger".into(),
+                attempt_id: id.into(),
+                node_id: AGENT_ID.into(),
+                fence_epoch: fence,
+                exit_code: Some(0),
+                finalization_failure: None,
+                started_at_unix_ms: now - 10,
+                finished_at_unix_ms: now - 5,
+                issued_at_unix_ms: now,
+            },
+        )
+        .expect("보고 서명");
+        persist_report_to_outbox(&report_outbox_dir(config).expect("outbox"), &report)
+            .expect("보관");
+    }
+
+    fn state(config: &AgentConfig, id: &str) -> run_ledger::RowState {
+        run_ledger::open_for_clear(&paths(config))
+            .expect("열기")
+            .expect("원장")
+            .row(id)
+            .expect("행")
+            .expect("있다")
+            .state
+    }
+
+    #[test]
+    fn r31_never_enabled_roots_start_as_before_and_enabled_roots_refuse_without_the_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let off = config(dir.path(), &[]);
+        assert!(open_run_ledger_at_startup(&off).unwrap().is_none());
+        assert!(
+            run_ledger::detect(&paths(&off)).unwrap().never_enabled(),
+            "꺼져 있으면 아무것도 만들지 않는다"
+        );
+        drop(run_ledger::open_for_agent(&paths(&off)).unwrap());
+        let error = open_run_ledger_at_startup(&off).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_ENABLED_ROOT"), "{error}");
+        // 이관 표식만 있어도 거부한다.
+        let dir2 = tempfile::tempdir().unwrap();
+        let off2 = config(dir2.path(), &[]);
+        fs::write(&paths(&off2).adopting, "55555555555555555555555555555555").unwrap();
+        assert!(open_run_ledger_at_startup(&off2)
+            .unwrap_err()
+            .contains("RUN_LEDGER_ENABLED_ROOT"));
+    }
+
+    #[test]
+    fn r27_r28_the_switch_requires_a_fixed_root_the_report_outbox_and_ack_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut default_root = config(dir.path(), &ON);
+        default_root.checkpoint_root_is_default = true;
+        assert!(open_run_ledger_at_startup(&default_root)
+            .unwrap_err()
+            .contains("--checkpoint-root"));
+        let no_outbox = config(
+            dir.path(),
+            &["--run-ledger", "true", "--require-ack-receipt", "true"],
+        );
+        assert!(open_run_ledger_at_startup(&no_outbox)
+            .unwrap_err()
+            .contains("--report-over-session"));
+        let no_ack = config(
+            dir.path(),
+            &["--run-ledger", "true", "--report-over-session", "true"],
+        );
+        assert!(open_run_ledger_at_startup(&no_ack)
+            .unwrap_err()
+            .contains("--require-ack-receipt"));
+        assert!(
+            run_ledger::detect(&paths(&no_ack)).unwrap().never_enabled(),
+            "거부할 때 원장을 만들지 않는다"
+        );
+        let on = config(dir.path(), &ON);
+        assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
+    }
+
+    #[test]
+    fn r10_an_active_row_without_a_start_record_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = config(dir.path(), &ON);
+        active_container_row(&on, "never-started", false);
+        assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
+        assert_eq!(state(&on, "never-started"), run_ledger::RowState::Closed);
+    }
+
+    #[test]
+    fn r12_a_started_container_row_without_a_report_blocks_and_records_an_incident() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = config(dir.path(), &ON);
+        active_container_row(&on, "ran", true);
+        record_attempt_started_here(&on.checkpoint_root, "ran").unwrap();
+        let error = open_run_ledger_at_startup(&on).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_BLOCKED"), "{error}");
+        assert_eq!(state(&on, "ran"), run_ledger::RowState::LocalBlocked);
+        let incidents =
+            container::open_incidents(&container::incident_dir_for(&on.checkpoint_root)).unwrap();
+        assert!(!incidents.is_empty(), "사건 표식을 남겼다");
+        // R14 — 다시 띄워도 거부가 유지된다.
+        assert!(open_run_ledger_at_startup(&on)
+            .unwrap_err()
+            .contains("RUN_LEDGER_BLOCKED"));
+    }
+
+    #[test]
+    fn r11_a_recognised_report_with_confirmed_removal_closes_the_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = config(dir.path(), &ON);
+        active_container_row(&on, "done", true);
+        record_attempt_started_here(&on.checkpoint_root, "done").unwrap();
+        outbox_report(&on, "done", 3);
+        assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
+        assert_eq!(state(&on, "done"), run_ledger::RowState::Closed);
+    }
+
+    #[test]
+    fn r11b_r11d_a_report_is_not_enough_without_removal_or_with_another_fence() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = config(dir.path(), &ON);
+        active_container_row(&on, "kept", false);
+        record_attempt_started_here(&on.checkpoint_root, "kept").unwrap();
+        outbox_report(&on, "kept", 3);
+        assert!(open_run_ledger_at_startup(&on)
+            .unwrap_err()
+            .contains("RUN_LEDGER_BLOCKED"));
+        assert_eq!(state(&on, "kept"), run_ledger::RowState::LocalBlocked);
+
+        let dir2 = tempfile::tempdir().unwrap();
+        let on2 = config(dir2.path(), &ON);
+        active_container_row(&on2, "other-fence", true);
+        record_attempt_started_here(&on2.checkpoint_root, "other-fence").unwrap();
+        outbox_report(&on2, "other-fence", 4);
+        assert!(open_run_ledger_at_startup(&on2)
+            .unwrap_err()
+            .contains("RUN_LEDGER_BLOCKED"));
+    }
+
+    #[test]
+    fn r13_an_active_host_row_closes_on_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = config(dir.path(), &ON);
+        let mut ledger = run_ledger::open_for_agent(&paths(&on)).unwrap();
+        ledger
+            .insert_active(&run_ledger::AttemptRow::new_active(
+                "h",
+                "job",
+                AGENT_ID,
+                1,
+                run_ledger::Executor::Host,
+            ))
+            .unwrap();
+        drop(ledger);
+        record_attempt_started_here(&on.checkpoint_root, "h").unwrap();
+        assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
+        assert_eq!(state(&on, "h"), run_ledger::RowState::Closed);
     }
 }

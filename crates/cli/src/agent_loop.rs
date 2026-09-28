@@ -52,6 +52,8 @@ struct RoundLines {
     workload_result: Option<String>,
     /// CONTAINER_INCIDENT_NOT_RECORDED 로 시작하는 첫 줄.
     incident_not_recorded: Option<String>,
+    /// RUN_LEDGER_FATAL 로 시작하는 첫 줄 — 노드 실행 원장을 쓰지 못했다(계획 2026-09-29_0212 r1i ①).
+    ledger_fatal: Option<String>,
     /// 마지막 빈 줄 아닌 줄.
     last_nonempty: Option<String>,
     /// 상한을 넘어 뒷부분을 버린 줄 수.
@@ -74,6 +76,9 @@ impl RoundLines {
         }
         if self.incident_not_recorded.is_none() && line.starts_with(INCIDENT_NOT_RECORDED) {
             self.incident_not_recorded = Some(line.to_string());
+        }
+        if self.ledger_fatal.is_none() && line.starts_with(RUN_LEDGER_FATAL) {
+            self.ledger_fatal = Some(line.to_string());
         }
         if !line.trim().is_empty() {
             self.last_nonempty = Some(line.to_string());
@@ -218,6 +223,7 @@ fn merge(stdout: RoundLines, stderr: RoundLines) -> RoundLines {
         incident_not_recorded: stdout
             .incident_not_recorded
             .or(stderr.incident_not_recorded),
+        ledger_fatal: stdout.ledger_fatal.or(stderr.ledger_fatal),
         last_nonempty: stderr.last_nonempty.or(stdout.last_nonempty),
         cut_lines: stdout.cut_lines + stderr.cut_lines,
     }
@@ -226,8 +232,9 @@ fn merge(stdout: RoundLines, stderr: RoundLines) -> RoundLines {
 /// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
 ///
 /// ★ 결함 504 (재검수 126) — 컨테이너를 남긴 · 지우지 못한 이유와 사건 표식 기록도 옮겨 찍는다(전에는 자식의 출력에만 있어 서비스 로그에서 사라졌다).
-const FORWARDED_PREFIXES: [&str; 16] = [
+const FORWARDED_PREFIXES: [&str; 17] = [
     INCIDENT_NOT_RECORDED,
+    RUN_LEDGER_FATAL,
     "CONTAINER_INCIDENT_RECORDED",
     "CONTAINER_INCIDENT_OPEN",
     "CONTAINER_INCIDENT_UNKNOWN",
@@ -247,6 +254,10 @@ const FORWARDED_PREFIXES: [&str; 16] = [
 
 /// 회차가 사건 표식을 쓰지 못했다는 줄(`container::record_incident_if_needed`). 이 줄이 있으면 이 회차 뒤 루프를 멈춘다.
 const INCIDENT_NOT_RECORDED: &str = "CONTAINER_INCIDENT_NOT_RECORDED";
+
+/// 회차가 노드 실행 원장에 차단 근거 · 종료를 적지 못했다는 줄(`gputeer_agent::run_ledger`). 이 줄이 있으면 이 회차 뒤 루프를 멈춘다 —
+/// 다시 띄우면(systemd) 다음 기동이 원장의 풀기 규칙으로 판정한다(계획 `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md`).
+const RUN_LEDGER_FATAL: &str = "RUN_LEDGER_FATAL";
 
 pub fn run(args: &[String]) -> Result<String, String> {
     let split = args
@@ -314,6 +325,12 @@ pub fn run(args: &[String]) -> Result<String, String> {
                  작업 폴더 · 표식 폴더를 확인한 뒤 다시 띄운다: {line}"
             ));
         }
+        if let Some(line) = &round.lines.ledger_fatal {
+            return Err(format!(
+                "AGENT_LOOP_STOPPED round={rounds}: 노드 실행 원장에 기록하지 못해 다음 회차를 돌리지 않는다 — 다시 띄우면 원장의 풀기 규칙이 \
+                 판정한다: {line}"
+            ));
+        }
         if did_work {
             worked += 1;
             let result = round.lines.workload_result.as_deref().unwrap_or("");
@@ -358,6 +375,21 @@ mod tests {
         let (lines, _) =
             scan(b"WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_RECORDED name=gputeer-x\n");
         assert!(lines.incident_not_recorded.is_none());
+    }
+
+    /// 계획 2026-09-29_0212 R8d — 원장 치명 오류 줄도 루프를 멈추는 줄로 잡히고, 서비스 로그로 옮겨 찍힌다.
+    #[test]
+    fn a_round_with_a_fatal_ledger_error_stops_the_loop() {
+        let (lines, forwarded) = scan(
+            "WORKLOAD_RESULT ok=true\nRUN_LEDGER_FATAL attempt_id=a-1 — CLOSED 를 쓰지 못했다\n"
+                .as_bytes(),
+        );
+        assert!(lines.ledger_fatal.is_some_and(|line| line.contains("a-1")));
+        assert!(forwarded
+            .iter()
+            .any(|line| line.starts_with("RUN_LEDGER_FATAL")));
+        let (lines, _) = scan(b"WORKLOAD_RESULT ok=true\nRUN_LEDGER_CLOSED attempt_id=a-1\n");
+        assert!(lines.ledger_fatal.is_none());
     }
 
     /// 결함 560 — 아주 긴 줄(개행 없는 출력)과 많은 줄이 와도 남기는 것은 상한 안쪽의 네 가지뿐이다. 판정(일했나 · 멈춰야 하나 · 옮겨 찍기)은 전과 같다.

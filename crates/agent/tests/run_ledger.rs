@@ -502,3 +502,40 @@ fn r30b_clear_refuses_a_root_that_enabled_the_ledger_but_lost_it() {
     assert_err_contains(open_for_clear(&h.paths), "RUN_LEDGER_ADOPT_UNFINISHED");
     let _ = &h.root;
 }
+
+#[test]
+fn r30c_clear_refuses_a_ledger_that_lost_a_row() {
+    let f = fixture();
+    drop(open_for_agent(&f.paths).unwrap());
+    write_record(&f.paths.started_dir, "orphan");
+    assert_err_contains(open_for_clear(&f.paths), "RUN_LEDGER_ROW_MISSING");
+}
+
+#[test]
+fn a_fence_epoch_beyond_what_the_ledger_can_hold_is_refused_not_rewritten() {
+    let f = fixture();
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    let too_big = u64::try_from(i64::MAX).unwrap() + 1;
+    assert_err_contains(
+        ledger.insert_active(&AttemptRow::new_active(
+            "big",
+            "job",
+            "node",
+            too_big,
+            Executor::Host,
+        )),
+        "범위(i64)를 넘는다",
+    );
+    assert!(ledger.row("big").unwrap().is_none());
+    let max = u64::try_from(i64::MAX).unwrap();
+    ledger
+        .insert_active(&AttemptRow::new_active(
+            "edge",
+            "job",
+            "node",
+            max,
+            Executor::Host,
+        ))
+        .unwrap();
+    assert_eq!(ledger.row("edge").unwrap().unwrap().fence_epoch, Some(max));
+}

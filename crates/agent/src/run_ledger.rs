@@ -447,7 +447,7 @@ fn insert_row(conn: &Connection, row: &AttemptRow, now: i64) -> rusqlite::Result
             row.origin.as_str(),
             row.job_id,
             row.node_id,
-            row.fence_epoch.map(|e| i64::try_from(e).unwrap_or(i64::MAX)),
+            row.fence_epoch.map(|e| i64::try_from(e).unwrap_or(-1)),
             row.executor.as_str(),
             row.runtime_program,
             row.runtime_kind,
@@ -551,6 +551,9 @@ fn create_ledger_file(
         .map_err(|error| format!("RUN_LEDGER: 폴더 sync 실패: {error:?}"))?;
     Ok(())
 }
+
+/// 한 프로세스 안에서 기동 · 실행 흐름이 같이 쓰는 원장 손잡이.
+pub type SharedRunLedger = std::sync::Arc<std::sync::Mutex<RunLedger>>;
 
 /// 열린 원장.
 #[derive(Debug)]
@@ -796,6 +799,13 @@ impl RunLedger {
             || row.executor == Executor::Legacy
         {
             return Err("RUN_LEDGER: 새 행은 이 Agent 의 ACTIVE 행이어야 한다".into());
+        }
+        // SQLite INTEGER 는 i64 다 — 넘는 값을 조용히 바꿔 적으면 보고와의 신원 대조가 깨진다(r1j ②). 쓰기 전에 거부한다.
+        if row.fence_epoch.is_some_and(|e| i64::try_from(e).is_err()) {
+            return Err(format!(
+                "RUN_LEDGER: fence_epoch 가 원장이 담을 수 있는 범위(i64)를 넘는다({:?}) — 적지 않는다",
+                row.fence_epoch
+            ));
         }
         let tx = self
             .conn
@@ -1106,6 +1116,14 @@ pub fn open_for_clear(paths: &LedgerPaths) -> Result<Option<RunLedger>, String> 
         return Err(
             "RUN_LEDGER_GENERATION_MISMATCH: 원장과 세대 짝이 맞지 않는다 — 해제하지 않는다".into(),
         );
+    }
+    // Agent 열기와 같은 전수 대조(r1j ①) — 행이 빠진 원장으로 표식만 지우지 않는다.
+    let records = scan_start_records(&paths.started_dir, true)?;
+    let rows: BTreeSet<String> = ledger.rows()?.into_iter().map(|r| r.attempt_id).collect();
+    if let Some(missing) = records.iter().find(|id| !rows.contains(*id)) {
+        return Err(format!(
+            "RUN_LEDGER_ROW_MISSING: 시작 기록은 있는데 원장에 행이 없다({missing}) — 해제하지 않는다. 수동 복구가 필요하다"
+        ));
     }
     Ok(Some(ledger))
 }

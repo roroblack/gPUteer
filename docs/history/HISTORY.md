@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-09-29 04:21 — 노드 실행 원장을 Agent 기동 · 실행 흐름과 agent-loop 에 연결(스위치 기본 꺼짐) · 계획 v11 · 단계 3 설계 v17(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md` v11 · 단계 3 설계 v17
+- 스트림: Agent · CLI
+- 수행(코드): `crates/agent/src/lib.rs` — `--run-ledger`(기본 꺼짐) · 기동 때 잠금 직후 · 되찾음 보관함 전송과 기동 GC **앞**에서 원장 감지(켰던 루트는
+  스위치 없이 거부) · 켜는 조건 셋(고정 루트 · 보고 보관함 · 수신 확인 — 셋째는 구현 중 발견: 시작 기록이 그 경로에서만 쓰인다) · 남은 ACTIVE 풀기
+  (보고는 재전송 검증 + 원장 행 대조를 통과한 것만 · 컨테이너는 지움 확인까지 있어야 CLOSED · 아니면 LOCAL_BLOCKED + 사건 표식) · 실행 순서
+  (시작 기록 앞 ACTIVE · 시작 기록 실패 시 CLOSED(not_started) · 종료 뒤 보관 전에 지움 확인 또는 LOCAL_BLOCKED · 보관 직후 전송 전 CLOSED ·
+  종료 단계 원장 실패는 RUN_LEDGER_FATAL). `crates/cli/src/agent_loop.rs` — RUN_LEDGER_FATAL 줄을 보면 반복을 멈춘다.
+  `run_ledger.rs` — 해제용 열기도 전수 대조 · fence_epoch 범위 초과는 거부(코덱스 r1j)
+- 검증(Windows 개발 기계 · 일반 사용자): 원장 시험 22 · 기동 흐름 시험 7(R10~R14 · R27 · R28 · R31) · agent 단위 101 · 통합(unknown_flags 8 ·
+  attempt_report_send 4 · container_lifecycle 43) · agent_loop 5 — 전부 통과. 뮤테이션 — 기동 풀기의 지움 확인 조건을 빼면 r11b 가 실패함을 확인하고 원복.
+  clippy 에서 agent 경고 수 26 그대로(새 경고 없음). ★ 실제 Coordinator 와 붙는 끝에서 끝까지 시험(cli grant_over_wire 등)과 리눅스는 **아직 안 돌렸다**
+  — 디스크 여유가 0.6GB 안팎이라 큰 시험 빌드를 미뤘다
+- 남은 것: CLI 두 명령(`run-ledger adopt-legacy` · `container-incidents` 의 원장 처리와 잠금) · 런북 · 끝에서 끝까지 시험
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-29 04:03 — 노드 실행 원장 핵심 모듈 + 시험 20 · 원장 계획 v10 · 단계 3 설계 v16(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-29_0212_노드_실행원장_기존노드_이관_구현계획.md` v10 · 단계 3 설계 v16
