@@ -30,8 +30,193 @@
 //!   다음 회차가 뜨면 기동 관문은 빈 표식 폴더를 보고 남은 컨테이너 정리를 돌리기 때문이다. 다시 띄우면 기동 관문이 표식 폴더에 실제로 쓸 수
 //!   있는지부터 본다.
 
-use std::process::Command;
-use std::time::Duration;
+use std::io::{BufRead, BufReader, Read};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// agent-stub 출력 한 줄에서 담는 상한(결함 560 — 넘는 부분은 버린다).
+const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// agent-stub 이 끝난 뒤 stdout · stderr 파이프가 닫히기를 기다리는 여유 — 파이프를 물려받은 손자가 남으면 EOF 가 오지 않는다(결함 545 와 같은 모양).
+const PIPE_CLOSE_GRACE: Duration = Duration::from_secs(5);
+
+/// ★ 결함 560 — 한 회차의 출력에서 **남기는 것**. 전에는 stdout · stderr 전체를 `Command::output()` 으로 모았다 — 긴 회차(학습 몇 시간)에
+///   체크포인트 게시 줄이 수만 개 쌓이면 부모(서비스)가 그만큼 메모리를 썼다. 이제 줄 단위로 흘려 읽고 쓰는 넷만 남긴다(각각 한 줄 상한 안).
+#[derive(Debug, Default, Clone)]
+struct RoundLines {
+    /// 어느 줄에든 WORKLOAD_RESULT 가 있었다(전의 `text.contains` 와 같다).
+    worked: bool,
+    /// WORKLOAD_RESULT 로 시작하는 첫 줄.
+    workload_result: Option<String>,
+    /// CONTAINER_INCIDENT_NOT_RECORDED 로 시작하는 첫 줄.
+    incident_not_recorded: Option<String>,
+    /// 마지막 빈 줄 아닌 줄.
+    last_nonempty: Option<String>,
+    /// 상한을 넘어 뒷부분을 버린 줄 수.
+    cut_lines: u64,
+}
+
+impl RoundLines {
+    fn take(&mut self, line: &str, forward: &mut dyn FnMut(&str)) {
+        if FORWARDED_PREFIXES
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        {
+            forward(line);
+        }
+        if line.contains("WORKLOAD_RESULT") {
+            self.worked = true;
+        }
+        if self.workload_result.is_none() && line.starts_with("WORKLOAD_RESULT") {
+            self.workload_result = Some(line.to_string());
+        }
+        if self.incident_not_recorded.is_none() && line.starts_with(INCIDENT_NOT_RECORDED) {
+            self.incident_not_recorded = Some(line.to_string());
+        }
+        if !line.trim().is_empty() {
+            self.last_nonempty = Some(line.to_string());
+        }
+    }
+}
+
+/// 한 줄을 읽되 `MAX_LINE_BYTES` 까지만 담는다 — 개행이 없는 아주 긴 출력도 버퍼가 커지지 않는다. `(읽은 바이트, 잘렸는가)`. 0 이면 EOF.
+fn read_line_capped(
+    reader: &mut impl BufRead,
+    line: &mut Vec<u8>,
+) -> std::io::Result<(usize, bool)> {
+    let (mut consumed, mut cut) = (0usize, false);
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if available.is_empty() {
+            return Ok((consumed, cut));
+        }
+        let (take, done) = match available.iter().position(|byte| *byte == b'\n') {
+            Some(end) => (end + 1, true),
+            None => (available.len(), false),
+        };
+        let room = MAX_LINE_BYTES.saturating_sub(line.len());
+        if take > room {
+            cut = true;
+        }
+        line.extend_from_slice(&available[..take.min(room)]);
+        reader.consume(take);
+        consumed += take;
+        if done {
+            return Ok((consumed, cut));
+        }
+    }
+}
+
+/// 한 스트림을 줄 단위로 흘려 읽어 `lines` 에 반영한다 — 옮겨 찍을 줄은 도착하는 즉시 `forward` 로 넘긴다.
+fn scan_lines(
+    reader: impl Read,
+    lines: &Mutex<RoundLines>,
+    forward: &mut dyn FnMut(&str),
+) -> std::io::Result<()> {
+    let mut reader = BufReader::new(reader);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let (read, cut) = read_line_capped(&mut reader, &mut line)?;
+        if read == 0 {
+            return Ok(());
+        }
+        let text = String::from_utf8_lossy(&line);
+        let text = text.trim_end_matches(['\n', '\r']);
+        let mut state = lines
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cut {
+            state.cut_lines += 1;
+        }
+        state.take(text, forward);
+    }
+}
+
+/// 한 회차의 결과.
+struct Round {
+    exit_ok: bool,
+    lines: RoundLines,
+    /// 파이프 · 읽기에서 생긴 일(판정은 그때까지 읽은 줄로 한다).
+    notes: Vec<String>,
+}
+
+/// agent-stub 을 한 번 돌린다 — 출력은 흘려 읽는다(결함 560). agent-stub 자체에는 시한을 걸지 않는다(회차가 학습 몇 시간일 수 있다).
+fn run_round(exe: &Path, agent_args: &[String]) -> Result<Round, String> {
+    let mut child = Command::new(exe)
+        .arg("agent-stub")
+        .args(agent_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("AGENT_LOOP: agent-stub 을 띄우지 못했다: {e}"))?;
+    let stdout_lines = Arc::new(Mutex::new(RoundLines::default()));
+    let stderr_lines = Arc::new(Mutex::new(RoundLines::default()));
+    let spawn_scan = |pipe: Box<dyn Read + Send>, lines: Arc<Mutex<RoundLines>>| {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // ★ 운영자가 봐야 하는 관측 줄은 그대로 옮겨 찍는다 — 재개 · 체크포인트 게시 · 보고 확인 · 거부 사유. 도착하는 즉시.
+            let result = scan_lines(pipe, &lines, &mut |line| println!("  {line}"));
+            let _ = tx.send(result.map_err(|error| error.to_string()));
+        });
+        rx
+    };
+    let stdout_rx = spawn_scan(
+        Box::new(child.stdout.take().expect("piped")),
+        stdout_lines.clone(),
+    );
+    let stderr_rx = spawn_scan(
+        Box::new(child.stderr.take().expect("piped")),
+        stderr_lines.clone(),
+    );
+    let status = child
+        .wait()
+        .map_err(|e| format!("AGENT_LOOP: agent-stub 을 기다리지 못했다: {e}"))?;
+    let deadline = Instant::now() + PIPE_CLOSE_GRACE;
+    let mut notes = Vec::new();
+    for (rx, which) in [(stdout_rx, "stdout"), (stderr_rx, "stderr")] {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => notes.push(format!(
+                "{which} 를 끝까지 읽지 못했다({error}) — 그때까지 읽은 줄로 판정한다"
+            )),
+            Err(_) => notes.push(format!(
+                "agent-stub 은 끝났지만 {which} 파이프가 {PIPE_CLOSE_GRACE:?} 안에 닫히지 않았다(파이프를 물려받은 프로세스가 남았을 수 있다) — 그때까지 읽은 줄로 판정한다"
+            )),
+        }
+    }
+    let snapshot = |lines: &Arc<Mutex<RoundLines>>| {
+        lines
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    };
+    Ok(Round {
+        exit_ok: status.success(),
+        lines: merge(snapshot(&stdout_lines), snapshot(&stderr_lines)),
+        notes,
+    })
+}
+
+/// stdout · stderr 에서 모은 것을 합친다 — 전에 "stdout 뒤에 stderr 를 붙인 글" 에서 찾던 것과 같은 답(첫 줄은 stdout 먼저, 마지막 줄은 stderr 먼저).
+fn merge(stdout: RoundLines, stderr: RoundLines) -> RoundLines {
+    RoundLines {
+        worked: stdout.worked || stderr.worked,
+        workload_result: stdout.workload_result.or(stderr.workload_result),
+        incident_not_recorded: stdout
+            .incident_not_recorded
+            .or(stderr.incident_not_recorded),
+        last_nonempty: stderr.last_nonempty.or(stdout.last_nonempty),
+        cut_lines: stdout.cut_lines + stderr.cut_lines,
+    }
+}
 
 /// agent-stub 출력에서 루프가 그대로 옮겨 찍는 줄.
 ///
@@ -55,14 +240,8 @@ const FORWARDED_PREFIXES: [&str; 16] = [
     "RESUME_REFUSED",
 ];
 
-/// 회차가 사건 표식을 쓰지 못했다는 줄(`container::record_incident_if_needed`).
+/// 회차가 사건 표식을 쓰지 못했다는 줄(`container::record_incident_if_needed`). 이 줄이 있으면 이 회차 뒤 루프를 멈춘다.
 const INCIDENT_NOT_RECORDED: &str = "CONTAINER_INCIDENT_NOT_RECORDED";
-
-/// 이 회차 뒤 루프를 멈춰야 하는가 — 사건 표식을 쓰지 못한 줄이 있으면 그 줄.
-fn must_stop_after(text: &str) -> Option<&str> {
-    text.lines()
-        .find(|line| line.starts_with(INCIDENT_NOT_RECORDED))
-}
 
 pub fn run(args: &[String]) -> Result<String, String> {
     let split = args
@@ -112,31 +291,19 @@ pub fn run(args: &[String]) -> Result<String, String> {
             break;
         }
         rounds += 1;
-        let output = Command::new(&exe)
-            .arg("agent-stub")
-            .args(agent_args)
-            .output()
-            .map_err(|e| format!("AGENT_LOOP: agent-stub 을 띄우지 못했다: {e}"))?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let did_work = text.contains("WORKLOAD_RESULT");
-        let last_line = text
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
-        // ★ 운영자가 봐야 하는 관측 줄은 그대로 옮겨 찍는다 — 재개 · 체크포인트 게시 · 보고 확인 · 거부 사유.
-        for line in text.lines().filter(|line| {
-            FORWARDED_PREFIXES
-                .iter()
-                .any(|prefix| line.starts_with(prefix))
-        }) {
-            println!("  {line}");
+        let round = run_round(&exe, agent_args)?;
+        for note in &round.notes {
+            println!("  AGENT_ROUND_OUTPUT_NOTE round={rounds}: {note}");
         }
-        if let Some(line) = must_stop_after(&text) {
+        if round.lines.cut_lines > 0 {
+            println!(
+                "  AGENT_ROUND_OUTPUT_NOTE round={rounds}: {} 줄이 {MAX_LINE_BYTES} 바이트를 넘어 뒷부분을 버렸다",
+                round.lines.cut_lines
+            );
+        }
+        let did_work = round.lines.worked;
+        let last_line = round.lines.last_nonempty.as_deref().unwrap_or("");
+        if let Some(line) = &round.lines.incident_not_recorded {
             return Err(format!(
                 "AGENT_LOOP_STOPPED round={rounds}: 사람에게 넘길 컨테이너 사건을 표식으로 남기지 못해 다음 회차를 돌리지 않는다 — 소유자가 컨테이너 · \
                  작업 폴더 · 표식 폴더를 확인한 뒤 다시 띄운다: {line}"
@@ -144,13 +311,10 @@ pub fn run(args: &[String]) -> Result<String, String> {
         }
         if did_work {
             worked += 1;
-            let result = text
-                .lines()
-                .find(|line| line.starts_with("WORKLOAD_RESULT"))
-                .unwrap_or("");
+            let result = round.lines.workload_result.as_deref().unwrap_or("");
             println!(
                 "AGENT_ROUND {rounds} outcome=worked exit_ok={} {result}",
-                output.status.success()
+                round.exit_ok
             );
         } else {
             idle += 1;
@@ -168,15 +332,80 @@ pub fn run(args: &[String]) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::must_stop_after;
+    use super::*;
+
+    fn scan(text: &[u8]) -> (RoundLines, Vec<String>) {
+        let lines = Mutex::new(RoundLines::default());
+        let mut forwarded = Vec::new();
+        scan_lines(text, &lines, &mut |line| forwarded.push(line.to_string())).unwrap();
+        (lines.into_inner().unwrap(), forwarded)
+    }
 
     #[test]
     fn a_round_that_could_not_record_an_incident_stops_the_loop() {
-        let text = "WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_NOT_RECORDED name=gputeer-x kind=EXITED — 쓰지 못했다\n";
-        assert!(must_stop_after(text).is_some_and(|line| line.contains("gputeer-x")));
-        assert!(must_stop_after(
-            "WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_RECORDED name=gputeer-x\n"
-        )
-        .is_none());
+        let (lines, _) = scan(
+            "WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_NOT_RECORDED name=gputeer-x kind=EXITED — 쓰지 못했다\n"
+                .as_bytes(),
+        );
+        assert!(lines
+            .incident_not_recorded
+            .is_some_and(|line| line.contains("gputeer-x")));
+        let (lines, _) =
+            scan(b"WORKLOAD_RESULT ok=true\nCONTAINER_INCIDENT_RECORDED name=gputeer-x\n");
+        assert!(lines.incident_not_recorded.is_none());
+    }
+
+    /// 결함 560 — 아주 긴 줄(개행 없는 출력)과 많은 줄이 와도 남기는 것은 상한 안쪽의 네 가지뿐이다. 판정(일했나 · 멈춰야 하나 · 옮겨 찍기)은 전과 같다.
+    #[test]
+    fn a_huge_round_output_keeps_only_bounded_lines() {
+        let mut text = Vec::new();
+        text.extend_from_slice(b"CHECKPOINT_PUBLISHED checkpoint_id=c1 step=1\n");
+        text.extend(std::iter::repeat_n(b'x', 1024 * 1024));
+        text.extend_from_slice(b"\nWORKLOAD_RESULT ok=true\n");
+        text.extend_from_slice(b"CONTAINER_INCIDENT_NOT_RECORDED name=gputeer-y\r\n");
+        for _ in 0..10_000 {
+            text.extend_from_slice(b"noise line\n");
+        }
+        text.extend(std::iter::repeat_n(b'y', 1024 * 1024)); // 마지막 줄 — 개행 없음
+        let (lines, forwarded) = scan(&text);
+        assert!(lines.worked);
+        assert_eq!(
+            lines.workload_result.as_deref(),
+            Some("WORKLOAD_RESULT ok=true")
+        );
+        assert_eq!(
+            lines.incident_not_recorded.as_deref(),
+            Some("CONTAINER_INCIDENT_NOT_RECORDED name=gputeer-y")
+        );
+        assert_eq!(
+            forwarded,
+            vec![
+                "CHECKPOINT_PUBLISHED checkpoint_id=c1 step=1",
+                "CONTAINER_INCIDENT_NOT_RECORDED name=gputeer-y"
+            ],
+            "옮겨 찍는 줄(FORWARDED_PREFIXES)만, 도착 순서대로"
+        );
+        let last = lines.last_nonempty.unwrap();
+        assert!(
+            last.len() <= MAX_LINE_BYTES && last.starts_with('y'),
+            "마지막 줄을 상한까지만 담지 않았다({} 바이트)",
+            last.len()
+        );
+        assert_eq!(lines.cut_lines, 2);
+    }
+
+    /// 전에 "stdout 뒤에 stderr 를 붙인 글" 에서 찾던 답과 같다 — 첫 WORKLOAD_RESULT 는 stdout 먼저, 마지막 줄은 stderr 먼저.
+    #[test]
+    fn stdout_and_stderr_merge_like_the_old_concatenation() {
+        let (out, _) = scan(b"WORKLOAD_RESULT ok=true\nout last\n");
+        let (err, _) = scan(b"WORKLOAD_RESULT ok=false\nerr last\n");
+        let merged = merge(out.clone(), err);
+        assert_eq!(
+            merged.workload_result.as_deref(),
+            Some("WORKLOAD_RESULT ok=true")
+        );
+        assert_eq!(merged.last_nonempty.as_deref(), Some("err last"));
+        let merged = merge(out, RoundLines::default());
+        assert_eq!(merged.last_nonempty.as_deref(), Some("out last"));
     }
 }

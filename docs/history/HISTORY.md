@@ -25,6 +25,18 @@
 
 ---
 
+## 2026-09-28 10:15 — 결함 559 · 560: node-doctor 런타임 조회 · agent-loop 회차 출력의 시한 · 상한 없는 Command::output()(브랜치 fork-merge · main 에 있던 모양)
+
+- 결함: `docs/reports/debugs/2026-09-28_0955_노드점검_에이전트루프_자식출력_통째수집_559_560.md`(재검수 143 이 판정에서 뺀 기존 결함)
+- 스트림: Agent(container) · cli(node-doctor · agent-loop)
+- 수행: 559 — `container::query_runtime_text`(본체 run_cli_detailed — 시한 · 4MiB · 잘리면 실패 · 뒤에서 거두기)를 node-doctor 가 30초 시한으로 부른다.
+  560 — agent-stub 출력을 줄 단위로 흘려 읽고(한 줄 64KiB), 옮겨 찍을 줄은 즉시 찍고, 판정에 쓰는 넷만 남긴다. 끝난 뒤 파이프가 5초 안에 닫히지 않으면 읽은 줄로 판정
+- 검증: 개발 기계 Windows `cargo test --workspace -j 2`(디버그 정보 없이 — 디스크 부족) 1443 passed · 0 failed · ignored 4 · 경고 0(552~554 · 558 포함 상태).
+  뮤테이션 — 559 예전 output() 으로 되돌림 잡음 · 560 다섯 개 잡음(`rustc --test` 단독). 손자가 파이프를 쥔 경우는 시험 없음
+- 리포트: 결함 문서가 대신한다
+
+---
+
 ## 2026-09-28 09:53 — 결함 544 · 558: 체크포인트 통째 읽기 — 임시 방어(1GiB 상한 · 묶인 읽기) · 스트리밍 설계(브랜치 fork-merge · main 에 있던 코드)
 
 - 결함: `docs/reports/debugs/2026-09-28_0939_체크포인트_통째읽기_OOM_558.md`

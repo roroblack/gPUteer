@@ -23,7 +23,6 @@
 
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,21 +459,23 @@ fn check_gpu(pin: Option<&str>) -> Check {
     }
 }
 
+/// 런타임 조회 한 번의 시한 — 넘으면 조회를 죽이고 FAIL 로 적는다(결함 559).
+///
+/// daemon 이 살아 있으면 `version` · `info` 는 몇 초 안에 답한다. 30초는 느린 기계의 여유다 — 정책이 아니라 "멈췄다" 를 가리는 선이다.
+const RUNTIME_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// ★ 결함 559 — 전에는 `Command::output()` 이라 시한 · 출력 상한이 없었다(daemon 이 멈추면 설치가 무기한 멈췄다). 이제 Agent 의 런타임 CLI 규칙
+///   (`container::query_runtime_text` — 시한 · 4MiB · 잘리면 실패 · 뒤에서 거두기)을 그대로 쓴다.
 fn run_text(program: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(program)
-        .args(args)
-        .output()
-        .map_err(|e| format!("{program:?} 를 띄우지 못했다: {e}"))?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        Err(format!(
-            "{program:?} {} 실패({}): {}",
-            args.join(" "),
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
+    run_text_within(program, args, RUNTIME_QUERY_TIMEOUT)
+}
+
+fn run_text_within(
+    program: &Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    gputeer_agent::container::query_runtime_text(program, args, timeout)
 }
 
 fn check_container_runtime(program: &Path, kind: &str, wants_gpu: bool) -> Vec<Check> {
@@ -785,6 +786,61 @@ fn read_probe_output(path: &std::path::Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 오래 자는 명령 — daemon 이 멈춰 CLI 가 답하지 않는 것을 흉내 낸다.
+    fn sleeping_command() -> (std::path::PathBuf, Vec<&'static str>) {
+        if cfg!(windows) {
+            (
+                "powershell".into(),
+                vec!["-NoProfile", "-Command", "Start-Sleep -Seconds 60"],
+            )
+        } else {
+            ("sleep".into(), vec!["60"])
+        }
+    }
+
+    /// 5MB 를 내는 명령 — 상한(4MiB)을 넘는 출력.
+    fn huge_output_command() -> (std::path::PathBuf, Vec<&'static str>) {
+        if cfg!(windows) {
+            (
+                "powershell".into(),
+                vec![
+                    "-NoProfile",
+                    "-Command",
+                    "[Console]::Out.Write('x' * 5000000)",
+                ],
+            )
+        } else {
+            (
+                "sh".into(),
+                vec!["-c", "head -c 5000000 /dev/zero | tr '\\000' x"],
+            )
+        }
+    }
+
+    /// 결함 559 — 런타임 조회가 답하지 않으면 시한에서 끊고 실패로 적는다(전에는 `output()` 이 무기한 기다렸다).
+    #[test]
+    fn a_runtime_query_that_never_answers_fails_at_the_deadline() {
+        let (program, args) = sleeping_command();
+        let started = std::time::Instant::now();
+        let error = run_text_within(&program, &args, std::time::Duration::from_secs(1))
+            .expect_err("답하지 않는 조회를 성공으로 적었다");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "시한(1초)에서 끊지 않고 {:?} 기다렸다",
+            started.elapsed()
+        );
+        assert!(error.contains("안에 끝나지 않았다"), "{error}");
+    }
+
+    /// 결함 559 — 출력이 상한을 넘으면 잘린 출력을 쓰지 않고 실패로 적는다(전에는 전부 메모리에 모았다).
+    #[test]
+    fn a_runtime_query_with_huge_output_is_refused() {
+        let (program, args) = huge_output_command();
+        let error = run_text_within(&program, &args, std::time::Duration::from_secs(60))
+            .expect_err("상한을 넘는 출력을 받아들였다");
+        assert!(error.contains("잘렸다"), "{error}");
+    }
 
     /// 결함 549 (재검수 143) — GPU 점검 출력은 상한까지만 읽는다 — 넘으면 읽지 않고 실패(FAIL)다. 없으면 빈 문자열.
     #[test]

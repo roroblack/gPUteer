@@ -786,6 +786,32 @@ fn cli_ok(program: &Path, args: &[OsString], timeout: Duration) -> Result<CliOut
     }
 }
 
+/// 런타임을 **조회**하고 성공이면 stdout(앞뒤 공백 제거)을 돌려준다 — node-doctor 가 쓰는 공개 입구(결함 559).
+///
+/// ★ 규칙은 [`run_cli_detailed`] 하나다 — 시한(넘으면 죽이고 뒤에서 거둔다) · 파이프는 채널로 받고 끝난 뒤에도 시한까지만 · 출력 4MiB 상한 · 잘리면
+///   실패. 전에 node-doctor 는 `Command::output()` 을 따로 써서 daemon 이 멈추면 설치가 무기한 멈췄다. 두 벌로 두지 않는다.
+pub fn query_runtime_text(
+    program: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<String, String> {
+    let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+    let output = run_cli(program, &args, timeout)?;
+    if output.status.success() {
+        Ok(output.stdout.trim().to_string())
+    } else {
+        Err(format!(
+            "{program:?} {} 실패({}): {}",
+            args.iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" "),
+            output.status,
+            output.stderr.trim()
+        ))
+    }
+}
+
 /// `rm -f -v <이름>` — 컨테이너와 그 익명 볼륨까지 지운다(결함 274). 없는 이름이면 런타임이 실패를 돌려준다.
 fn remove_container(program: &Path, name: &str) -> Result<(), String> {
     cli_ok(
