@@ -25,6 +25,16 @@
 
 ---
 
+## 2026-09-28 23:33 — ADR-034 채택: 신뢰망 COMMITTED = COORDINATOR_DURABLE(규범 · 강제 코드 없음)(브랜치 fork-merge)
+
+- 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md` v5 — 채택
+- 스트림: Protocol · 계약
+- 수행: 사용자 위임(D9) — 코덱스 논의 d1 → 초안 → 검수 e2 · e2b(세션 끊김 뒤 재실행) · e2c · e2d 가 매번 실제 공백(다중 writer · 운영자 루트 키 부트스트랩 · canonical 두 · 세 전이 · 완전성 · split-brain 과장)을 찾았고 반영했다
+- 검증: e2e ACCEPTED(결함 없음). ★ 강제 코드 · 세 서명 메시지(PoolCommitProfile · OperatorRootRotation · CoordinatorCommitReceipt)는 없다 — 그 전까지 신뢰망 로컬 확정을 COORDINATOR_DURABLE 이라 부르지 않는다(§6 검사 9)
+- 리포트: ADR-034 개정 이력
+
+---
+
 ## 2026-09-28 23:15 — ADR-034 v3: 운영자 루트 키 신뢰 부트스트랩 · canonical 보호 두 전이(브랜치 fork-merge)
 
 - 결정: `docs/decisions/ADR-034_신뢰망_단일Coordinator_확정등급.md` v3(제안 — 재검수 중)

@@ -1,6 +1,6 @@
 # ADR-034 · 신뢰망 — 단일 Coordinator 의 확정 등급(`COORDINATOR_DURABLE`)
 
-- **상태:** 제안 v5 — 독립 검수 중(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
+- **상태:** **채택**(2026-09-28 · 사용자 위임 「최고의 규칙 코덱스랑 찾아서 적용해」 · 코덱스 e2e ACCEPTED — v5). ★ **강제 코드는 없다**(아래 "결과" 의 미구현 목록 · state-machines.md §6 검사 9) — 규범만 채택했다(사용자 위임: 「최고의 규칙 코덱스랑 찾아서 적용해」 · 2026-09-28). v1 은 코덱스 e2 가 CHANGES_REQUESTED(높음 2)
 - **날짜:** 2026-09-28
 - **관련:** ADR-031(참여 모델) · ADR-032 · ADR-033 §5(`BROKER_ATTESTED`) · `docs/protocol/state-machines.md` §0 · §0.1 · §7 ·
   `crates/protocol/src/participation.rs` · 단계 2 계약 제안 `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` 결정 D9 ·
@@ -221,6 +221,7 @@ CoordinatorCommitReceipt   Coordinator 가 서명 — 응답에 싣는 확정 �
 | 날짜 | 변경 |
 |---|---|
 | 2026-09-28 | 최초 작성 — 코덱스 논의 d1 의 C 절을 규범 형태로 옮김. 독립 검수 전 |
+| 2026-09-28 | 채택 — 코덱스 e2e(v5 대상) ACCEPTED · 결함 없음 |
 | 2026-09-28 | v5 — 코덱스 e2d(중간 2 · 낮음 1) 반영: canonical 탈락 목록 완전성 검사 · split-brain 을 "가린다" 에서 "알아볼 뿐 · 막지 못한다" 로 낮춤 · 선행 메시지 이름 명시 · 시험 16 |
 | 2026-09-28 | v4 — 코덱스 e2c(중간 2 · 낮음 1) 반영: §5.1 권위 문구를 pin 한 키로 · canonical 결정에 탈락 Attempt SUPERSEDED 까지 · 선행 메시지 셋 |
 | 2026-09-28 | v3 — 코덱스 e2b(높음 2 · 중간 2 · 낮음 1) 반영: 운영자 루트 키 신뢰 부트스트랩(§3.1 — pin · 최초 설치 · 회전 · generation) · canonical 보호를 Job `CANONICAL_CHOSEN` 까지 두 전이 · 한 서명 결정으로 · 손실 목록은 예시임을 밝히고 복구 단위 · 빠진 표 · 호스트 파일 · state-machines §0.1 요약을 ADR 참조로 · scheduler 주석 정리 |
