@@ -3559,8 +3559,8 @@ fn open_run_ledger_at_startup(
             return Ok(None);
         }
         return Err(format!(
-            "RUN_LEDGER_ENABLED_ROOT: 이 루트는 노드 실행 원장을 켰다(원장 {} · 세대 짝 {} · 이관 표식 {}) — `--run-ledger true` 로 띄운다(켜기는 되돌리지 않는다)",
-            presence.ledger, presence.pair, presence.adopting
+            "RUN_LEDGER_ENABLED_ROOT: 이 루트는 노드 실행 원장을 켰다(원장 {} · 세대 짝 {} · 이관 표식 {} · 만드는 중 표식 {}) — `--run-ledger true` 로 띄운다(켜기는 되돌리지 않는다)",
+            presence.ledger, presence.pair, presence.adopting, presence.creating
         ));
     }
     if settled.checkpoint_root_is_default {
@@ -7617,6 +7617,13 @@ mod run_ledger_startup_tests {
         assert!(open_run_ledger_at_startup(&off2)
             .unwrap_err()
             .contains("RUN_LEDGER_ENABLED_ROOT"));
+        // 만드는 중 표식만 있어도 거부한다(계획 v14 · 코덱스 r1o) — 새 노드가 원장을 만들다 끊긴 루트다.
+        let dir3 = tempfile::tempdir().unwrap();
+        let off3 = config(dir3.path(), &[]);
+        fs::write(&paths(&off3).creating, "66666666666666666666666666666666").unwrap();
+        let error = open_run_ledger_at_startup(&off3).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_ENABLED_ROOT"), "{error}");
+        assert!(error.contains("만드는 중 표식 true"), "{error}");
     }
 
     #[test]
