@@ -1304,7 +1304,7 @@ fn run_one_connection_inner(
         );
     }
 
-    // ★ 결함 562 후속(검수 e1 ①) — Windows 에서 상승(관리자) 토큰이면 호스트 작업을 받지 않는다. **부작용 전**(시작 기록 · 작업 폴더 정리 ·
+    // ★ 결함 562 후속(검수 e1 ①) — Windows 에서 상승(관리자) 토큰이면 호스트 작업을 받지 않는다. **작업 쪽 부작용 전**(Lease 검증 · fence 기록 뒤 · 시작 기록 · 작업 폴더 정리 ·
     //   재개 준비 · ACK 전)에 본다. 실행을 켠 Agent 만 — 켜지 않은 Agent 는 어차피 띄우지 않는다(NotOptedIn). preflight 가 다시 본다.
     if let Some(verified) = workload.as_ref() {
         if config.execute_workload {

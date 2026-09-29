@@ -412,7 +412,7 @@ pub struct ExecutionPolicy {
     pub allow_elevated_host: bool,
 }
 
-/// Windows 호스트 실행이면 토큰 상승 여부를 본다(컨테이너 · 리눅스 · 운영자 예외는 통과). Agent 는 이 함수를 **부작용 전**(시작 기록 ·
+/// Windows 호스트 실행이면 토큰 상승 여부를 본다(컨테이너 · 리눅스 · 운영자 예외는 통과). Agent 는 이 함수를 **작업 쪽 부작용 전**(Lease 검증 · fence 기록 뒤 · 시작 기록 ·
 /// 작업 폴더 정리 전)에 한 번 부르고, `preflight` 가 ACK 전 · 실행 직전에 다시 부른다(검수 e1 ①).
 pub fn check_host_elevation(
     container: &crate::container::ContainerDecision,
