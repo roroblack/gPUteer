@@ -1304,6 +1304,15 @@ fn run_one_connection_inner(
         );
     }
 
+    // ★ 결함 562 후속(검수 e1 ①) — Windows 에서 상승(관리자) 토큰이면 호스트 작업을 받지 않는다. **부작용 전**(시작 기록 · 작업 폴더 정리 ·
+    //   재개 준비 · ACK 전)에 본다. 실행을 켠 Agent 만 — 켜지 않은 Agent 는 어차피 띄우지 않는다(NotOptedIn). preflight 가 다시 본다.
+    if let Some(verified) = workload.as_ref() {
+        if config.execute_workload {
+            exec::check_host_elevation(&verified.container, config.allow_elevated_host_execution)
+                .map_err(|refused| refused.to_string())?;
+        }
+    }
+
     // Grant/Lease 검증을 모두 통과한 뒤, ACK를 만들거나 보내기 전에
     // 시작 사실을 durable artifact로 남긴다. 디렉터리 생성 또는
     // record_initial_state()가 실패하면 여기서 fail-closed하여 ACK를

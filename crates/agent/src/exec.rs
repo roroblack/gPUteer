@@ -412,6 +412,21 @@ pub struct ExecutionPolicy {
     pub allow_elevated_host: bool,
 }
 
+/// Windows 호스트 실행이면 토큰 상승 여부를 본다(컨테이너 · 리눅스 · 운영자 예외는 통과). Agent 는 이 함수를 **부작용 전**(시작 기록 ·
+/// 작업 폴더 정리 전)에 한 번 부르고, `preflight` 가 ACK 전 · 실행 직전에 다시 부른다(검수 e1 ①).
+pub fn check_host_elevation(
+    container: &crate::container::ContainerDecision,
+    allow_elevated_host: bool,
+) -> Result<(), ExecutionError> {
+    #[cfg(windows)]
+    if matches!(container, crate::container::ContainerDecision::Host) && !allow_elevated_host {
+        return host_elevation_gate(gputeer_runtime_windows::current_process_is_elevated());
+    }
+    #[cfg(not(windows))]
+    let _ = (container, allow_elevated_host);
+    Ok(())
+}
+
 /// 토큰 상승 여부로 호스트 실행을 가른다 — 상승(`Ok(true)`) · 확인 못 함(`Err`)이면 띄우지 않는다. 순수 함수라 상승 창 없이 시험한다.
 pub fn host_elevation_gate(elevated: Result<bool, String>) -> Result<(), ExecutionError> {
     match elevated {
@@ -657,12 +672,7 @@ pub fn preflight(policy: &ExecutionPolicy) -> Result<(), ExecutionError> {
     }
     // ★ 2026-09-29 (결함 562 "안 해본 것") — 호스트 작업은 Agent 의 토큰을 물려받는다. 관리자 창에서 `gputeer agent-loop` 을 직접 부르면
     //   스크립트의 상승 창 검사를 지나지 않는다 — Agent 가 스스로 확인한다. Windows 의 호스트 실행만(컨테이너 · 리눅스 제외).
-    #[cfg(windows)]
-    if matches!(policy.container, crate::container::ContainerDecision::Host)
-        && !policy.allow_elevated_host
-    {
-        host_elevation_gate(gputeer_runtime_windows::current_process_is_elevated())?;
-    }
+    check_host_elevation(&policy.container, policy.allow_elevated_host)?;
     if policy.commit_limit_bytes == 0 {
         return Err(ExecutionError::LimitNotApplied {
             detail: "commit_limit_bytes 가 0 이다".into(),

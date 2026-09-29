@@ -60,3 +60,61 @@ fn ordinary_exit_codes_are_kept() {
     assert_eq!(run("0"), ExitObserved::Code(0));
     assert_eq!(run("7"), ExitObserved::Code(7));
 }
+
+/// 결함 562 후속(검수 e1 ②) — **실제 토큰**으로 호스트 실행 관문을 잰다. 상승 창(관리자 원격 접속 등)에서 돌리면 거부되고 표식 파일이 생기지
+///   않아야 하고, 일반 창에서는 실행돼 표식이 생겨야 한다. 어느 쪽이었는지 `TOKEN_ELEVATED=` 로 찍는다(값을 단정하지 않는다 — 창에 따라 다르다).
+#[test]
+fn a_host_workload_is_refused_only_when_the_agent_token_is_elevated() {
+    let elevated = gputeer_runtime_windows::current_process_is_elevated().expect("토큰 상승 여부");
+    eprintln!("TOKEN_ELEVATED={elevated}");
+    let dir = tempfile::tempdir().expect("임시 폴더");
+    let marker = dir.path().join("host-ran.txt");
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let spec = ExecutionSpec {
+        job_id: "01JELEVATION0000000000001".to_string(),
+        entrypoint: format!("{root}\\System32\\cmd.exe"),
+        args: vec![
+            // 인자를 나눠 준다 — 한 인자 안에 따옴표를 넣으면 명령줄 조립이 그것을 이스케이프해 cmd 가 다르게 읽는다.
+            "/d".into(),
+            "/c".into(),
+            "echo".into(),
+            "ran".into(),
+            ">".into(),
+            marker.display().to_string(),
+        ],
+        env_vars: BTreeMap::new(),
+    };
+    let policy = ExecutionPolicy {
+        workload_environment: Vec::new(),
+        opted_in: true,
+        commit_limit_bytes: 256 * 1024 * 1024,
+        gpu_requirements: None,
+        capture_dir: None,
+        isolation: IsolationIdentity {
+            grant_id: "elevation".to_string(),
+            attempt_id: "attempt".to_string(),
+        },
+        cgroup_parent: None,
+        container: gputeer_agent::container::ContainerDecision::Host,
+        allow_elevated_host: false,
+    };
+    let result = execute(&spec, policy);
+    if elevated {
+        let error = result.expect_err("상승 토큰인데 호스트 작업을 띄웠다");
+        assert!(
+            error.to_string().starts_with("EXEC_REFUSED:HOST_ELEVATED"),
+            "{error}"
+        );
+        assert!(
+            !marker.exists(),
+            "거부했는데 작업이 돌았다(표식 파일이 있다)"
+        );
+    } else {
+        let outcome = result.expect("일반 토큰인데 호스트 작업을 띄우지 못했다");
+        assert_eq!(outcome.exit, ExitObserved::Code(0));
+        assert!(
+            marker.exists(),
+            "일반 토큰인데 작업이 돌지 않았다(표식 파일이 없다)"
+        );
+    }
+}
