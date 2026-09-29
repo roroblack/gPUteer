@@ -1410,6 +1410,25 @@ fn schedule_once(db: &Path, keyring: &Path) -> (&'static str, &'static str, Stri
         .expect("어느 노드에도 배정이 없다")
 }
 
+/// 시험이 중간에 실패해도(panic) 끝없이 기다리는 Coordinator(`--max-connections 0`)를 남기지 않는다.
+struct KillOnDrop(Option<Child>);
+
+impl KillOnDrop {
+    fn take(&mut self) -> Child {
+        self.0.take().expect("이미 거둔 프로세스")
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            // 정리 단계다 — 이미 끝났거나 못 죽인 경우의 오류가 시험의 진짜 실패 메시지를 가리지 않게 버린다.
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// 명령을 끝까지 돌려 표준 출력 · 오류를 합쳐 돌려준다.
 fn run_to_end(args: &[String]) -> (bool, String) {
     let output = spawn(args).wait_with_output().expect("출력");
@@ -1461,11 +1480,19 @@ fn r8c_a_ledger_close_failure_after_the_report_is_kept_stops_the_loop_and_a_rest
     let (node, seed, job) = schedule_once(&db, &keyring);
     let (coordinator, coordinator_log, addr) =
         start_pool_coordinator(dir.path(), &db_s, &keyring_s, &["--max-connections", "0"]);
+    let mut coordinator = KillOnDrop(Some(coordinator));
     let mut agent = one_round_agent_args(dir.path(), &addr, node, seed);
     agent.extend(["--run-ledger".to_string(), "true".to_string()]);
 
-    // ── 1회차: 작업은 돈다 · 보고는 보관된다 · CLOSED 커밋이 실패한다
-    let (first_ok, first) = run_to_end(&agent);
+    // ── 1회차: 작업은 돈다 · 보고는 보관된다 · CLOSED 커밋이 실패한다. 회차를 셋까지 허락해 두고 첫 회차 뒤에 멈추는지 본다(계획 R8d —
+    //    실제 agent-loop 바이너리와 실제 자식이 치명 오류를 찍는 경로).
+    let mut first_agent = agent.clone();
+    let at = first_agent
+        .iter()
+        .position(|a| a == "--max-rounds")
+        .expect("회차 수 인자");
+    first_agent[at + 1] = "3".to_string();
+    let (first_ok, first) = run_to_end(&first_agent);
     let context = |extra: &str| {
         format!(
             "{extra}\n--- coordinator ---\n{}",
@@ -1483,7 +1510,17 @@ fn r8c_a_ledger_close_failure_after_the_report_is_kept_stops_the_loop_and_a_rest
         "보관 뒤 CLOSED 실패가 치명 오류로 나오지 않았다\n{}",
         context(&first)
     );
-    assert!(first.contains("AGENT_LOOP_STOPPED"), "{}", context(&first));
+    assert!(
+        first.contains("AGENT_LOOP_STOPPED round=1"),
+        "{}",
+        context(&first)
+    );
+    assert!(
+        !first.contains("AGENT_ROUND 2"),
+        "치명 오류 뒤 다음 회차를 돌았다
+{}",
+        context(&first)
+    );
     let checkpoints = dir.path().join(format!("{node}-checkpoints"));
     let mut outbox = checkpoints.clone().into_os_string();
     outbox.push(".report-outbox");
@@ -1530,7 +1567,7 @@ fn r8c_a_ledger_close_failure_after_the_report_is_kept_stops_the_loop_and_a_rest
     while job_state(&db, job) != Some(JobState::Completed) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(200));
     }
-    let coordinator_err = collect(coordinator);
+    let coordinator_err = collect(coordinator.take());
     assert_eq!(
         job_state(&db, job),
         Some(JobState::Completed),
