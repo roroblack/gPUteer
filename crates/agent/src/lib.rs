@@ -3787,6 +3787,14 @@ fn claim_checkpoint_root_and_collect(root: &std::path::Path) -> Result<Checkpoin
 
 /// 결함 199 — 루트 독점(잠금 · 표식 · 실제 위치)만 한다. 기동 GC 는 `collect_startup_partials` 가 따로 한다 — 그 사이에 실제 루트 기준 검사를 넣기 위해서다.
 fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
+    let lock = lock_checkpoint_root(root)?;
+    check_or_mark_checkpoint_root_owner(root, &lock.real_root)?;
+    Ok(lock)
+}
+
+/// 루트 잠금**만** 잡는다(실제 위치 · 잠금 파일). 루트 표식 검사 · 기록은 하지 않는다 — 작업을 시작하지 않는 명령(사건 해제)이 쓴다.
+///   ★ 단계 3 해제 명령(코덱스 c1u ①) — `claim_checkpoint_root` 를 그대로 쓰면 표식 없는 옛 루트의 해제가 새로 실패하고, 빈 루트에 표식을 새로 쓴다.
+fn lock_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, String> {
     let real_root = real_checkpoint_root(root)?;
     let lock_path = checkpoint_root_sibling(&real_root, ".agent-lock")?;
     if let Some(parent) = lock_path.parent() {
@@ -3817,6 +3825,17 @@ fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, S
             ));
         }
     }
+    Ok(CheckpointRootLock {
+        _file: file,
+        real_root,
+    })
+}
+
+/// 결함 137 — 잠금을 쥔 채로: 루트 표식이 있으면 통과, 없으면 빈 루트에만 표식을 쓴다(비어 있지 않은 남의 폴더는 거부).
+fn check_or_mark_checkpoint_root_owner(
+    root: &std::path::Path,
+    real_root: &std::path::Path,
+) -> Result<(), String> {
     let owner_marker = real_root.join(CHECKPOINT_ROOT_OWNER_MARKER);
     let owned = match fs::symlink_metadata(&owner_marker) {
         Ok(metadata) if metadata.is_file() => true,
@@ -3849,10 +3868,7 @@ fn claim_checkpoint_root(root: &std::path::Path) -> Result<CheckpointRootLock, S
             .and_then(|mut marker| marker.write_all(b"gputeer agent checkpoint root v1\n"))
             .map_err(|error| format!("CHECKPOINT_ROOT_LOCK_FAILED: 루트 표식을 쓰지 못했다({owner_marker:?}): {error}"))?;
     }
-    Ok(CheckpointRootLock {
-        _file: file,
-        real_root,
-    })
+    Ok(())
 }
 
 /// 결함 85 · 199 — 독점한 실제 루트의 부팅 GC. 반드시 `claim_checkpoint_root` 가 돌려준 잠금을 쥔 채로 부른다.
@@ -3974,8 +3990,10 @@ pub fn adopt_legacy_run_ledger(
 
 /// `gputeer container-incidents --clear` 의 원장 처리(계획 "해제").
 ///
-/// 한 번도 원장을 켜지 않은 루트는 **지금과 같다**(잠금 없이 표식만 — 기본 꺼짐의 약속). 원장을 켠 루트는 루트 잠금 → 원장의 LOCAL_BLOCKED 를
-/// 먼저 CLOSED → 표식 삭제 → 폴더 sync. 원장을 잃었거나 행이 빠졌으면 아무것도 지우지 않고 거부한다.
+/// ★ 루트 잠금을 **먼저** 얻고 그 아래에서 원장 상태를 판정한다(단계 3 설계 v20 "해제 명령"). 잠금만 잡는다 — 루트 표식 검사 · 기록은 하지 않는다
+/// (작업을 시작하지 않는 명령이다 · 코덱스 c1u ①). 한 번도 원장을 켜지 않은 루트는 잠금 아래에서 표식만 지운다. 원장을 켠 루트는 원장의
+/// LOCAL_BLOCKED 를 먼저 CLOSED → 표식 삭제 → 폴더 sync. 원장을 잃었거나 행이 빠졌으면 아무것도 지우지 않고 거부한다.
+/// Agent(루프)가 루트를 잠그고 있으면 CONTAINER_INCIDENTS_CLEAR_REFUSED 로 거부한다 — 해제는 Agent 를 멈추고 한다.
 pub fn clear_container_incidents(
     root: &std::path::Path,
     name: Option<&str>,
@@ -3983,7 +4001,7 @@ pub fn clear_container_incidents(
     // ★ 단계 3 설계 v20(코덱스 c1s ① · 시험 T29c) — **루트 잠금을 먼저 얻고, 그 잠금 아래에서** 원장 상태를 판정한다. 전에는 원장 여부를 잠금 전에
     //   판정해, 그 사이 다른 Agent 가 원장을 켜고 끝내면 낡은 "켜지 않음" 판정으로 표식만 지울 수 있었다. 원장을 켜지 않은 루트도 이제 잠금 아래에서
     //   지운다 — Agent(루프)가 떠 있으면 거부한다(대가: 사건 해제는 루프를 멈추고 한다).
-    let lock = claim_checkpoint_root(root).map_err(|error| {
+    let lock = lock_checkpoint_root(root).map_err(|error| {
         format!("CONTAINER_INCIDENTS_CLEAR_REFUSED: 루트 잠금을 잡지 못했다 — Agent(agent-loop)가 떠 있으면 멈춘 뒤 해제한다: {error}")
     })?;
     let real_root = lock.real_root.clone();
@@ -7878,8 +7896,15 @@ mod run_ledger_command_tests {
         );
         drop(held);
         // 잠금이 풀리면 지금처럼 표식만 지운다(원장을 켜지 않은 루트 — 원장을 만들지 않는다).
+        // ★ 코덱스 c1u ① — 루트 표식이 없는 **비어 있지 않은** 옛 루트도 해제된다(잠금만 잡는다 · 표식 검사 없음). 해제가 루트 표식을 새로 쓰지도 않는다.
+        let _ = fs::remove_file(root.join(CHECKPOINT_ROOT_OWNER_MARKER));
+        fs::write(root.join("old-agent-file"), b"x").unwrap();
         let cleared = clear_container_incidents(&root, Some(name)).unwrap();
         assert_eq!(cleared.len(), 1);
+        assert!(
+            !root.join(CHECKPOINT_ROOT_OWNER_MARKER).exists(),
+            "해제가 루트 표식을 새로 썼다"
+        );
         assert!(
             run_ledger::detect(&run_ledger::LedgerPaths::for_root(&root).unwrap())
                 .unwrap()
