@@ -474,6 +474,16 @@ fn r25d_a_new_node_interrupted_after_the_pair_continues_only_with_the_creating_m
     let g2 = "66666666666666666666666666666666";
     fs::write(&h.paths.creating, g2).unwrap();
     assert_eq!(open_for_agent(&h.paths).unwrap().generation(), g2);
+    // 표식과 짝의 값이 다르면 거부한다(코덱스 r1p) — 어느 쪽 G 가 맞는지 모른다. 원장도 만들지 않는다.
+    let m = fixture();
+    fs::create_dir_all(&m.paths.started_dir).unwrap();
+    fs::write(&m.paths.creating, g).unwrap();
+    fs::write(m.paths.pair(), g2).unwrap();
+    assert_err_contains(open_for_agent(&m.paths), "RUN_LEDGER_GENERATION_MISMATCH");
+    assert!(
+        !detect(&m.paths).unwrap().ledger,
+        "값이 다르면 원장을 만들지 않는다"
+    );
     // 코덱스 r1l ① — 표식 없이 짝만 있으면(시작 기록이 없어도) 쓰던 원장을 잃은 것이다.
     let i = fixture();
     fs::create_dir_all(&i.paths.started_dir).unwrap();

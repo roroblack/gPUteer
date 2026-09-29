@@ -95,6 +95,11 @@ fn pool(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn pool_with(dir: &Path, durabilities: [&str; 3]) -> (PathBuf, PathBuf) {
+    pool_with_args(dir, durabilities, "/c,exit,0")
+}
+
+/// 작업 셋의 명령 인자(`--args` · 쉼표로 가름)를 정해 풀을 만든다.
+fn pool_with_args(dir: &Path, durabilities: [&str; 3], job_args: &str) -> (PathBuf, PathBuf) {
     let db = dir.join("control.sqlite3");
     let observed = now_unix_ms();
     let agent = |node: &str, seed: &str| {
@@ -165,7 +170,7 @@ fn pool_with(dir: &Path, durabilities: [&str; 3]) -> (PathBuf, PathBuf) {
             "--entrypoint",
             &entrypoint,
             "--args",
-            "/c,exit,0",
+            job_args,
             "--submitter-device-id",
             SUBMITTER,
             "--submitter-seed",
@@ -1266,6 +1271,284 @@ fn unconfirmed_start_round(coordinator_extra: &[&str]) -> (String, String, Optio
     pool_round(coordinator_extra, true)
 }
 
+/// 풀 Coordinator 를 띄우고 READY 주소를 기다린다 — (프로세스 · 로그 파일 · 주소).
+fn start_pool_coordinator(
+    dir: &Path,
+    db_s: &str,
+    keyring_s: &str,
+    coordinator_extra: &[&str],
+) -> (Child, PathBuf, String) {
+    let pool_agents = format!(
+        "{NODE_1}={};{NODE_2}={}",
+        pub_hex(AGENT_SEED_1),
+        pub_hex(AGENT_SEED_2)
+    );
+    let coordinator_log = dir.join("coordinator.log");
+    let coordinator = Command::new(cli_bin())
+        .args([
+            "coordinator-stub",
+            "--pool-mode",
+            "true",
+            "--pool-agents",
+            &pool_agents,
+            "--listen",
+            "127.0.0.1:0",
+            "--own-seed",
+            COORD_SEED,
+            "--coordinator-device-id",
+            COORDINATOR,
+            "--grant-from-control-db",
+            db_s,
+            "--lease-db",
+            db_s,
+            "--liveness-db",
+            db_s,
+            "--submitter-keyring",
+            keyring_s,
+            "--i-understand-plaintext-keyring-is-unsafe",
+            "true",
+            "--accept-report-sessions",
+            "true",
+            "--release-on-exit-report",
+            "true",
+        ])
+        .args(coordinator_extra)
+        .args(["--accept-timeout-ms", "0"])
+        .stdout(Stdio::from(
+            std::fs::File::create(&coordinator_log).expect("log 파일"),
+        ))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("coordinator spawn");
+    let addr = wait_ready(&coordinator_log);
+    (coordinator, coordinator_log, addr)
+}
+
+/// 한 회차만 도는 풀 Agent(agent-loop) 인자 — 체크포인트 루트는 `<dir>/<node>-checkpoints`.
+fn one_round_agent_args(dir: &Path, addr: &str, node: &str, seed: &str) -> Vec<String> {
+    let fence = dir.join(format!("{node}-fence.sqlite3"));
+    let checkpoints = dir.join(format!("{node}-checkpoints"));
+    let coordinator_pub = pub_hex(COORD_SEED);
+    let submitter_pub = pub_hex(SEED);
+    [
+        "agent-loop",
+        "--interval-ms",
+        "100",
+        "--max-rounds",
+        "1",
+        "--",
+        "--connect",
+        addr,
+        "--own-seed",
+        seed,
+        "--peer-pubkey",
+        &coordinator_pub,
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        node,
+        "--fence-db",
+        fence.to_str().unwrap(),
+        "--checkpoint-root",
+        checkpoints.to_str().unwrap(),
+        "--submitter-pubkey",
+        &submitter_pub,
+        "--i-understand-this-executes-untrusted-code",
+        "true",
+        "--report-over-session",
+        "true",
+        "--max-reconnect-attempts",
+        "1",
+        "--require-ack-receipt",
+        "true",
+        // 결함 218 — 풀 Agent 는 실행 중 갱신을 켜야 시작한다(첫 갱신이 "실행을 시작했다" 신호다).
+        "--renew-during-execution-ms",
+        "1000",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// 예약(scheduler-tick) 한 번 — 결과로 배정받은 (노드 · 시드 · 작업).
+fn schedule_once(db: &Path, keyring: &Path) -> (&'static str, &'static str, String) {
+    let (ok, out) = run_cli(&[
+        "scheduler-tick",
+        "--control-db",
+        db.to_str().unwrap(),
+        "--submitter-keyring",
+        keyring.to_str().unwrap(),
+        "--submitter-member",
+        OWNER,
+        "--max-snapshot-age-ms",
+        "86400000",
+        "--best-fit-axes",
+        AXES,
+        "--coordinator-id",
+        COORDINATOR,
+        "--coordinator-term",
+        "3",
+        "--lease-ttl-ms",
+        "600000",
+        "--lease-renew-after-ms",
+        "1000",
+        "--lease-max-total-duration-seconds",
+        "86400",
+        "--i-understand-plaintext-keyring-is-unsafe",
+        "true",
+    ]);
+    assert!(ok, "예약 실패: {out}");
+    let staging = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(db).unwrap();
+    [(NODE_1, AGENT_SEED_1), (NODE_2, AGENT_SEED_2)]
+        .into_iter()
+        .find_map(|(node, seed)| {
+            staging
+                .work_assigned_to_node(node)
+                .unwrap()
+                .map(|(job, _, _)| (node, seed, job))
+        })
+        .expect("어느 노드에도 배정이 없다")
+}
+
+/// 명령을 끝까지 돌려 표준 출력 · 오류를 합쳐 돌려준다.
+fn run_to_end(args: &[String]) -> (bool, String) {
+    let output = spawn(args).wait_with_output().expect("출력");
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+/// 계획 2026-09-29_0212 R8c — **보고를 보관한 뒤** 원장 CLOSED 커밋이 실패하면: 보고 파일은 디스크에 남고 · 보내지 않고 · 루프가 멈춘다.
+///   원장 저널을 되살려 재기동하면 행이 CLOSED 로 풀리고 남은 보고가 가서 작업이 끝난다.
+///   ★ 실패는 코드에 주입 자리를 두지 않고 **실제 파일시스템으로** 만든다 — 작업이 원장의 저널 자리(`<원장>-journal`, journal_mode=DELETE)에
+///     폴더를 만들어 두면 SQLite 가 쓰기 트랜잭션의 저널을 만들지 못한다. 호스트 실행은 보관 전 원장 쓰기가 없으므로 첫 실패가 보관 뒤 CLOSED 다.
+#[test]
+fn r8c_a_ledger_close_failure_after_the_report_is_kept_stops_the_loop_and_a_restart_sends_the_report(
+) {
+    let dir = tempfile::tempdir().expect("임시 폴더");
+    let journal = |node: &str| {
+        let mut path = dir
+            .path()
+            .join(format!("{node}-checkpoints"))
+            .into_os_string();
+        path.push(gputeer_agent::run_ledger::LEDGER_SUFFIX);
+        path.push("-journal");
+        PathBuf::from(path)
+    };
+    let journals = [journal(NODE_1), journal(NODE_2)];
+    for path in &journals {
+        assert!(
+            !path.to_string_lossy().contains(char::is_whitespace),
+            "시험 전제 — 작업 인자(쉼표로 가름)에 넣을 경로에 공백이 없어야 한다: {path:?}"
+        );
+    }
+    // 어느 노드가 배정받든 그 노드의 원장 저널 자리를 막는다(다른 노드 쪽 폴더는 쓰이지 않는다).
+    let job_args = format!(
+        "/c,mkdir,{},{}",
+        journals[0].display(),
+        journals[1].display()
+    );
+    let (db, keyring) = pool_with_args(dir.path(), ["LOCAL"; 3], &job_args);
+    let (db_s, keyring_s) = (
+        db.to_str().unwrap().to_string(),
+        keyring.to_str().unwrap().to_string(),
+    );
+    let (node, seed, job) = schedule_once(&db, &keyring);
+    let (coordinator, coordinator_log, addr) =
+        start_pool_coordinator(dir.path(), &db_s, &keyring_s, &["--max-connections", "0"]);
+    let mut agent = one_round_agent_args(dir.path(), &addr, node, seed);
+    agent.extend(["--run-ledger".to_string(), "true".to_string()]);
+
+    // ── 1회차: 작업은 돈다 · 보고는 보관된다 · CLOSED 커밋이 실패한다
+    let (first_ok, first) = run_to_end(&agent);
+    let context = |extra: &str| {
+        format!(
+            "{extra}\n--- coordinator ---\n{}",
+            std::fs::read_to_string(&coordinator_log).unwrap_or_default()
+        )
+    };
+    assert!(
+        !first_ok,
+        "원장 치명 오류 뒤 루프가 성공으로 끝났다\n{}",
+        context(&first)
+    );
+    assert!(
+        first.contains("RUN_LEDGER_FATAL")
+            && first.contains("보고를 보관한 뒤 원장 CLOSED 를 적지 못했다"),
+        "보관 뒤 CLOSED 실패가 치명 오류로 나오지 않았다\n{}",
+        context(&first)
+    );
+    assert!(first.contains("AGENT_LOOP_STOPPED"), "{}", context(&first));
+    let checkpoints = dir.path().join(format!("{node}-checkpoints"));
+    let mut outbox = checkpoints.clone().into_os_string();
+    outbox.push(".report-outbox");
+    let kept: Vec<_> = std::fs::read_dir(PathBuf::from(&outbox))
+        .map(|entries| entries.filter_map(Result::ok).collect())
+        .unwrap_or_default();
+    assert!(
+        !kept.is_empty(),
+        "보고가 디스크에 남아 있지 않다({outbox:?})\n{}",
+        context(&first)
+    );
+    let job = job.as_str();
+    assert!(
+        job_state(&db, job) != Some(JobState::Completed),
+        "보내지 않았어야 할 보고로 작업이 끝났다\n{}",
+        context(&first)
+    );
+    let paths = gputeer_agent::run_ledger::LedgerPaths::for_root(&checkpoints).expect("원장 경로");
+    let ledger = gputeer_agent::run_ledger::open_for_clear(&paths);
+    // 저널 자리가 막혀 있어도 읽기는 된다 — 행은 아직 ACTIVE 다.
+    let rows = ledger
+        .expect("원장 열기")
+        .expect("원장이 있어야 한다")
+        .rows()
+        .expect("행");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        rows[0].state,
+        gputeer_agent::run_ledger::RowState::Active,
+        "CLOSED 커밋이 실패했는데 행이 ACTIVE 가 아니다: {rows:?}"
+    );
+
+    // ── 재기동: 저널 자리를 되살리고 같은 Agent 를 다시 띄운다 — 기동이 행을 풀고 남은 보고를 보낸다
+    for path in &journals {
+        std::fs::remove_dir(path).expect("막아 둔 저널 폴더 지우기");
+    }
+    let (_, second) = run_to_end(&agent);
+    assert!(
+        !second.contains("RUN_LEDGER_FATAL") && !second.contains("RUN_LEDGER_BLOCKED"),
+        "재기동에서 원장 오류\n{}",
+        context(&second)
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while job_state(&db, job) != Some(JobState::Completed) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(200));
+    }
+    let coordinator_err = collect(coordinator);
+    assert_eq!(
+        job_state(&db, job),
+        Some(JobState::Completed),
+        "재기동 뒤 남은 보고가 가지 않았다\n--- 1회차 ---\n{first}\n--- 재기동 ---\n{second}\n{}{coordinator_err}",
+        context("")
+    );
+    let rows = gputeer_agent::run_ledger::open_for_clear(&paths)
+        .expect("원장 열기")
+        .expect("원장")
+        .rows()
+        .expect("행");
+    assert!(
+        rows.iter()
+            .all(|row| row.state == gputeer_agent::run_ledger::RowState::Closed),
+        "재기동 뒤에도 CLOSED 가 아니다: {rows:?}"
+    );
+}
+
 /// `require_ack_receipt` 가 false 면 Agent 에서 `--require-ack-receipt true` 를 뺀다(결함 288 — 풀에 잘못 붙인 Agent).
 fn pool_round(
     coordinator_extra: &[&str],
@@ -1312,91 +1595,9 @@ fn pool_round(
         })
         .expect("어느 노드에도 배정이 없다");
     drop(staging);
-    let pool_agents = format!(
-        "{NODE_1}={};{NODE_2}={}",
-        pub_hex(AGENT_SEED_1),
-        pub_hex(AGENT_SEED_2)
-    );
-    let coordinator_log = dir.path().join("coordinator.log");
-    let coordinator = Command::new(cli_bin())
-        .args([
-            "coordinator-stub",
-            "--pool-mode",
-            "true",
-            "--pool-agents",
-            &pool_agents,
-            "--listen",
-            "127.0.0.1:0",
-            "--own-seed",
-            COORD_SEED,
-            "--coordinator-device-id",
-            COORDINATOR,
-            "--grant-from-control-db",
-            &db_s,
-            "--lease-db",
-            &db_s,
-            "--liveness-db",
-            &db_s,
-            "--submitter-keyring",
-            &keyring_s,
-            "--i-understand-plaintext-keyring-is-unsafe",
-            "true",
-            "--accept-report-sessions",
-            "true",
-            "--release-on-exit-report",
-            "true",
-        ])
-        .args(coordinator_extra)
-        .args(["--accept-timeout-ms", "0"])
-        .stdout(Stdio::from(
-            std::fs::File::create(&coordinator_log).expect("log 파일"),
-        ))
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("coordinator spawn");
-    let addr = wait_ready(&coordinator_log);
-    let fence = dir.path().join(format!("{node}-fence.sqlite3"));
-    let checkpoints = dir.path().join(format!("{node}-checkpoints"));
-    let coordinator_pub = pub_hex(COORD_SEED);
-    let submitter_pub = pub_hex(SEED);
-    let agent: Vec<String> = [
-        "agent-loop",
-        "--interval-ms",
-        "100",
-        "--max-rounds",
-        "1",
-        "--",
-        "--connect",
-        &addr,
-        "--own-seed",
-        seed,
-        "--peer-pubkey",
-        &coordinator_pub,
-        "--coordinator-device-id",
-        COORDINATOR,
-        "--agent-device-id",
-        node,
-        "--fence-db",
-        fence.to_str().unwrap(),
-        "--checkpoint-root",
-        checkpoints.to_str().unwrap(),
-        "--submitter-pubkey",
-        &submitter_pub,
-        "--i-understand-this-executes-untrusted-code",
-        "true",
-        "--report-over-session",
-        "true",
-        "--max-reconnect-attempts",
-        "1",
-        "--require-ack-receipt",
-        "true",
-        // 결함 218 — 풀 Agent 는 실행 중 갱신을 켜야 시작한다(첫 갱신이 "실행을 시작했다" 신호다).
-        "--renew-during-execution-ms",
-        "1000",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    let (coordinator, coordinator_log, addr) =
+        start_pool_coordinator(dir.path(), &db_s, &keyring_s, coordinator_extra);
+    let agent = one_round_agent_args(dir.path(), &addr, node, seed);
     let agent: Vec<String> = if require_ack_receipt {
         agent
     } else {
