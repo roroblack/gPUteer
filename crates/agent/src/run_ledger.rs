@@ -918,6 +918,46 @@ impl RunLedger {
         )
     }
 
+    /// 실행 순서 4(컨테이너 행) — 판정 사실과 처리 결과(부재 확인 **또는** LOCAL_BLOCKED)를 **한 트랜잭션에** 적는다.
+    ///   전에는 `record_facts` 와 `mark_container_removed` · `mark_local_blocked` 를 따로 커밋해, 사실만 적히고 처리 결과가 빠진 중간 상태가
+    ///   있을 수 있었다(코덱스 r1t 가 시험하지 못한 갈래로 짚은 것). 한 번에 적으면 그 상태가 생기지 않는다 — 둘 다 적히거나 둘 다 안 적힌다.
+    ///   `removed_confirmed` — 컨테이너를 지우고 새 조회로 "없음" 을 확인했고 사람에게 넘긴 사건도 없다. 아니면 `blocked_reason` 으로 막는다.
+    pub fn record_container_exit(
+        &mut self,
+        attempt_id: &str,
+        stopped: Option<bool>,
+        logs_complete: Option<bool>,
+        container_left: Option<bool>,
+        removed_confirmed: bool,
+        blocked_reason: &str,
+    ) -> Result<(), String> {
+        let (stopped, logs_complete, container_left) = (
+            opt_bool(stopped),
+            opt_bool(logs_complete),
+            opt_bool(container_left),
+        );
+        let removed = i64::from(removed_confirmed);
+        let reason = blocked_reason.to_string();
+        self.update_state(
+            attempt_id,
+            |row| {
+                if row.executor != Executor::Container || row.state != RowState::Active {
+                    return Err(format!(
+                        "RUN_LEDGER: 컨테이너 종료 결과는 ACTIVE 컨테이너 행에만 적는다({attempt_id} · {:?})",
+                        row.state
+                    ));
+                }
+                Ok(())
+            },
+            "UPDATE attempts SET updated_at_unix_ms = ?1, stopped = ?2, logs_complete = ?3, container_left = ?4,
+                 container_removed = CASE WHEN ?5 = 1 THEN 1 ELSE container_removed END,
+                 state = CASE WHEN ?5 = 1 THEN state ELSE 'LOCAL_BLOCKED' END,
+                 reason = CASE WHEN ?5 = 1 THEN reason ELSE ?6 END
+                 WHERE attempt_id = ?7",
+            &[&stopped, &logs_complete, &container_left, &removed, &reason],
+        )
+    }
+
     /// ACTIVE → LOCAL_BLOCKED(컨테이너를 남겼다 · 기동 때 보고 없음 · 보고는 있는데 부재 확인이 없음).
     pub fn mark_local_blocked(&mut self, attempt_id: &str, reason: &str) -> Result<(), String> {
         let reason = reason.to_string();

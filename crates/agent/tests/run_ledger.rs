@@ -621,3 +621,54 @@ fn judgement_facts_are_recorded_on_active_rows_only() {
     ledger.mark_local_blocked("c", "container_left").unwrap();
     assert_err_contains(ledger.record_facts("c", None, None, None), "ACTIVE 행에만");
 }
+
+/// 코덱스 r1t — 컨테이너 종료 결과는 판정 사실과 처리 결과(부재 확인 · LOCAL_BLOCKED)를 한 트랜잭션에 적는다. 둘 다 적히거나 둘 다 안 적힌다.
+#[test]
+fn a_container_exit_records_facts_and_the_outcome_together() {
+    let f = fixture();
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    for (id, removed) in [("exit-removed", true), ("exit-left", false)] {
+        let mut row = AttemptRow::new_active(id, "job", "node", 1, Executor::Container);
+        row.container_name = Some(format!("gputeer-{id}"));
+        ledger.insert_active(&row).unwrap();
+        ledger
+            .record_container_exit(
+                id,
+                Some(true),
+                Some(true),
+                Some(!removed),
+                removed,
+                "container_not_confirmed_removed",
+            )
+            .unwrap();
+        let stored = ledger.row(id).unwrap().unwrap();
+        assert_eq!(stored.stopped, Some(true), "{stored:?}");
+        assert_eq!(stored.logs_complete, Some(true), "{stored:?}");
+        assert_eq!(stored.container_left, Some(!removed), "{stored:?}");
+        if removed {
+            assert_eq!(stored.state, RowState::Active, "{stored:?}");
+            assert_eq!(stored.container_removed, Some(true), "{stored:?}");
+        } else {
+            assert_eq!(stored.state, RowState::LocalBlocked, "{stored:?}");
+            assert_eq!(stored.container_removed, Some(false), "{stored:?}");
+            assert_eq!(
+                stored.reason.as_deref(),
+                Some("container_not_confirmed_removed")
+            );
+        }
+    }
+    // ACTIVE 가 아닌 행(막힌 행)에는 아무것도 적지 않는다 — 사실도 결과도.
+    let before = ledger.row("exit-left").unwrap().unwrap();
+    assert_err_contains(
+        ledger.record_container_exit("exit-left", Some(false), Some(false), Some(true), true, "x"),
+        "ACTIVE 컨테이너 행에만",
+    );
+    assert_eq!(ledger.row("exit-left").unwrap().unwrap(), before);
+    // 호스트 행에는 쓰지 않는다.
+    let host = AttemptRow::new_active("exit-host", "job", "node", 1, Executor::Host);
+    ledger.insert_active(&host).unwrap();
+    assert_err_contains(
+        ledger.record_container_exit("exit-host", Some(true), Some(true), None, true, "x"),
+        "ACTIVE 컨테이너 행에만",
+    );
+}

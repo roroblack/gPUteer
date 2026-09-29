@@ -1700,20 +1700,18 @@ fn run_one_connection_inner(
                 if ledger_facts.not_started {
                     ledger.close_active(attempt_id, run_ledger::CloseReason::NotStarted)
                 } else if runs_in_container {
-                    // 판정 사실(멈춤 · 로그 · 컨테이너 남김)을 먼저 적는다 — 원장만으로 해제 증거를 다시 만들 수 있게(코덱스 r1k ②).
-                    ledger.record_facts(
+                    // 판정 사실(멈춤 · 로그 · 컨테이너 남김 — 원장만으로 해제 증거를 다시 만들 수 있게 · 코덱스 r1k ②)과 처리 결과(부재 확인 또는
+                    //   LOCAL_BLOCKED)를 **한 트랜잭션에** 적는다 — 사실만 적히고 결과가 빠진 중간 상태가 없게(코덱스 r1t).
+                    ledger.record_container_exit(
                         attempt_id,
                         ledger_facts.stopped,
                         ledger_facts.logs_complete,
                         ledger_facts
                             .container_removed
                             .map(|removed| !removed || incident_open),
-                    )?;
-                    if ledger_facts.container_removed == Some(true) && !incident_open {
-                        ledger.mark_container_removed(attempt_id, None)
-                    } else {
-                        ledger.mark_local_blocked(attempt_id, "container_not_confirmed_removed")
-                    }
+                        ledger_facts.container_removed == Some(true) && !incident_open,
+                        "container_not_confirmed_removed",
+                    )
                 } else {
                     Ok(())
                 }
