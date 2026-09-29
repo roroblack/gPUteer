@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-29 12:51 — 실제 podman 으로 신뢰망 풀 한 회차 끝에서 끝까지(x600) · podman "없음" 문구 결함 수정(브랜치 fork-merge)
+
+- 계획: MVP 출시 관문 1(실제 컨테이너로 끝에서 끝까지)
+- 스트림: Agent · 검증
+- 수행: x600 WSL(E: · root · podman 5.7.0)에서 이 브랜치를 빌드하고, 키 · 이미지(alpine:3.20 digest 고정) · 노드 등록 · 제출자 등록(새 명령 submitter-add) · 제출 ·
+  예약 · 풀 Coordinator · agent-loop 한 회차(--container-runtime podman --container-only true --run-ledger true)를 차례로
+- 결함(1차 실행): 만들기 전 이름 확인(`inspect`)에 podman 이 `no such object` 로 답하는데 Agent 는 "no such container" 만 "없음" 으로 알았다 — "모른다" 로 떨어져
+  작업이 안 돌고 사건 표식 · Job RUNNING · 노드 묶임. 코드 주석이 "docker · podman 공통 문구" 라고 확인 없이 적었고, 가짜 런타임도 docker 문구만 흉내 내 시험이 못 잡았다
+- 수정(639a836): 두 문구를 다 "없음" 으로 · 실제 문구 단위 시험. 컨테이너 수명 시험 43 통과
+- 검증(2차 실행): WORKLOAD_RESULT ok=true · ATTEMPT_REPORT_ACKNOWLEDGED · Job COMPLETED · 예약 풀림 · 남은 gputeer- 컨테이너 없음 · 원장 오류 없음.
+  근거 `docs/evidence/_raw/실제_podman_신뢰망_한회차_x600_2026-09-29.txt`. ★ 한 번 · 한 기계 · root(rootful) podman · GPU 안 넘김(작업은 echo) — rootless · docker · GPU 작업은 재지 않았다
+- 리포트: 없음(이 항목과 raw 가 대신한다)
+
+---
+
 ## 2026-09-29 12:38 — 제출자 keyring 을 만드는 명령 `gputeer submitter-add`(MVP 빈칸 · 브랜치 fork-merge)
 
 - 계획: MVP(신뢰망 파티 → 팀원 공유 작업) "팀원 손에 닿기까지" — x600 실기기 끝에서 끝까지를 준비하다 찾음

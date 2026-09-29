@@ -1,0 +1,19 @@
+# 실제 podman 으로 신뢰망 풀 한 회차 — x600 WSL(Ubuntu 26.04 · root · podman 5.7.0) · 커밋 639a836 · 2026-09-29 12:51
+# 스크립트: 세션 임시 폴더 e2e.sh(키 셋 keygen → alpine:3.20 digest 고정 → import-inventory → submitter-add → submit(OCI) → import-manifest → plan-job → scheduler-tick → coordinator-stub 풀 → agent-loop 1회차(--container-runtime podman --container-only true --run-ledger true))
+# 1차(639a836 전): 만들기 전 이름 확인이 podman 의 'no such object' 를 몰라 거부 → 사건 표식 · Job RUNNING 에 묶임. 2차(639a836): 아래
+
+TICK_STAGED job_id=01JE2EPODMANJOB00000001 plan=2ac332f7de1483e72824a6daf58285cf0415d55e6c674e69d00959769ef28b2f node=01JE2EPODMANNODE0000001 gpus=[01JE2EPODMANNODE0000001-gpu-0] attempt=DN21H6WDGGE3WNW6GYA9B2TPGG lease=F2VS0KQ8S9Y6K70TVV0QJNCTXW fence=1 created=true
+AGENT_EXIT=0
+--- agent.log (끝 40줄)
+  ACK_RECEIPT_VERIFIED grant_id=gaef844632e6f2ffeca39a55f attempt_id=DN21H6WDGGE3WNW6GYA9B2TPGG
+  ATTEMPT_REPORT_ACKNOWLEDGED job_id=01JE2EPODMANJOB00000001 attempt_id=DN21H6WDGGE3WNW6GYA9B2TPGG node_id=01JE2EPODMANNODE0000001 fence_epoch=1 created=true attempt=0
+AGENT_ROUND 1 outcome=worked exit_ok=true WORKLOAD_RESULT ok=true job_id=01JE2EPODMANJOB00000001
+AGENT_LOOP_DONE rounds=1 worked=1 idle_or_refused=0
+--- status
+JOBS
+  01JE2EPODMANJOB00000001 state=COMPLETED requeued=0 ended=ATTEMPT_COMPLETED attempt=DN21H6WDGGE3WNW6GYA9B2TPGG attempt_state=COMPLETED node=01JE2EPODMANNODE0000001 resume_point=no
+NODES
+  01JE2EPODMANNODE0000001 reserved_by=- reservation_expired=- last_fresh_hello=12s-ago owner_reclaimed=no
+SUMMARY completed=1
+--- gputeer- 컨테이너 남은 것
+
