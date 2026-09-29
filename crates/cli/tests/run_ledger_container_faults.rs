@@ -30,6 +30,8 @@ const STATE_ENV: &str = "GPUTEER_FAKE_RUNTIME_STATE";
 const BLOCK_ENV: &str = "GPUTEER_FAKE_RUNTIME_BLOCK_AFTER_RM";
 /// 있으면 만든 컨테이너의 `rm` 이 지우지 못하고 실패로 답한다(컨테이너가 남는 갈래 — 지움 확인 없음).
 const RM_FAILS_ENV: &str = "GPUTEER_FAKE_RUNTIME_RM_FAILS";
+/// 있으면 실행 뒤 `rm` 이 이 경로(사건 표식 폴더)를 옆으로 옮기고 같은 이름의 **파일**을 둔다 — 사건 표식 쓰기가 실패하게(R8b "겹쳐도 같음").
+const BLOCK_INCIDENTS_ENV: &str = "GPUTEER_FAKE_RUNTIME_BLOCK_INCIDENTS";
 const FAKE_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn main() {
@@ -37,8 +39,15 @@ fn main() {
         std::process::exit(fake_runtime(Path::new(&state)));
     }
     #[cfg(windows)]
-    for (label, rm_fails) in [("removed", false), ("left_behind", true)] {
-        r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks(rm_fails);
+    for (label, rm_fails, block_incidents) in [
+        ("removed", false, false),
+        ("left_behind", true, false),
+        ("left_behind_incident_unwritable", true, true),
+    ] {
+        r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks(
+            rm_fails,
+            block_incidents,
+        );
         println!("test r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks[{label}] ... ok");
     }
     #[cfg(not(windows))]
@@ -120,6 +129,11 @@ fn fake_runtime(state: &Path) -> i32 {
             // 실행 뒤의 지우기 — 끝나면 원장 저널 자리를 막는다(보고 보관 전 원장 쓰기가 실패하게).
             if let Ok(block) = std::env::var(BLOCK_ENV) {
                 std::fs::create_dir_all(block).unwrap();
+            }
+            if let Ok(incidents) = std::env::var(BLOCK_INCIDENTS_ENV) {
+                let moved = format!("{incidents}.moved");
+                std::fs::rename(&incidents, &moved).unwrap();
+                std::fs::write(&incidents, b"not a directory").unwrap();
             }
             if std::env::var_os(RM_FAILS_ENV).is_some() {
                 eprintln!("fake: rm 실패를 흉내낸다(컨테이너는 남는다)");
@@ -540,9 +554,11 @@ mod pool {
 ///   않는다. 저널 자리를 되살려 재기동하면 원장이 시도를 LOCAL_BLOCKED 로 풀고(보고가 없으니 끝났다고 볼 수 없다) 새 작업을 받지 않는다.
 ///   `rm_fails` — 컨테이너를 지우지 못한 갈래(지움 확인 없음). 두 갈래 모두 종료 단계의 **한 번의 쓰기**(판정 사실 + 지움 확인 또는 막힘 —
 ///   `RunLedger::record_container_exit`)가 실패한다. 사실만 적히고 결과가 빠지는 중간 상태는 그 쓰기가 한 트랜잭션이라 없다(계획 R8b 구현 메모).
+///   `block_incidents` — 컨테이너가 남은 데다 **사건 표식 쓰기까지 실패**하는 겹침(R8b "사건 표식 쓰기 실패와 겹쳐도 같음"). 그때 막힘의 근거는 원장뿐이다.
 #[cfg(windows)]
 fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks(
     rm_fails: bool,
+    block_incidents: bool,
 ) {
     use gputeer_agent::run_ledger::{self, RowState};
     use gputeer_coordinator::job_store::JobState;
@@ -556,6 +572,12 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
     journal.push(run_ledger::LEDGER_SUFFIX);
     journal.push("-journal");
     let journal = PathBuf::from(journal);
+    let mut incidents = checkpoints.clone().into_os_string();
+    incidents.push(".container-incidents");
+    let incidents = PathBuf::from(incidents);
+    let mut moved_incidents = incidents.clone().into_os_string();
+    moved_incidents.push(".moved");
+    let moved_incidents = PathBuf::from(moved_incidents);
     let (db, keyring) = one_container_job(dir.path());
     let (coordinator, coordinator_log, addr) = start_coordinator(dir.path(), &db, &keyring);
     let context = |extra: &str| {
@@ -570,6 +592,9 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
     let mut envs: Vec<(&str, &Path)> = vec![(STATE_ENV, &state), (BLOCK_ENV, &journal)];
     if rm_fails {
         envs.push((RM_FAILS_ENV, &state));
+    }
+    if block_incidents {
+        envs.push((BLOCK_INCIDENTS_ENV, &incidents));
     }
     let (first_ok, first) = run_to_end(dir.path(), &agent_loop(dir.path(), &addr, "3"), &envs);
     // 실패 자리를 가른다(코덱스 r1t) — 컨테이너가 **시작해 끝났고 로그까지 거뒀다.** 시작 전 정리(NotStarted 닫기)의 실패가 아니다.
@@ -639,6 +664,27 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
         "판정 사실 쓰기가 실패했는데 적혔다: {rows:?}"
     );
 
+    if block_incidents {
+        // 겹침 — 사건 표식을 쓰지 못했다는 줄이 나왔고, 표식은 어디에도 없다(옮긴 폴더도 비었다). 이제 막힘의 근거는 원장뿐이다.
+        assert!(
+            first.contains("CONTAINER_INCIDENT_NOT_RECORDED"),
+            "사건 표식 쓰기 실패가 나오지 않았다\n{}",
+            context(&first)
+        );
+        let markers = std::fs::read_dir(&moved_incidents)
+            .map(|entries| entries.filter_map(Result::ok).count())
+            .unwrap_or(0);
+        assert_eq!(
+            markers,
+            0,
+            "표식 폴더를 막았는데 표식이 있다\n{}",
+            context(&first)
+        );
+        // 기동 관문(폴더에 쓸 수 있는가)을 지나게 폴더를 되돌린다 — 표식 없이.
+        std::fs::remove_file(&incidents).expect("막아 둔 파일 지우기");
+        std::fs::rename(&moved_incidents, &incidents).expect("표식 폴더 되돌리기");
+    }
+
     // ── 재기동: 저널 자리를 되살리고 같은 Agent 를 다시 띄운다 — 보고가 없으니 끝났다고 볼 수 없다. LOCAL_BLOCKED · 새 작업을 받지 않는다.
     std::fs::remove_dir(&journal).expect("막아 둔 저널 폴더 지우기");
     let creates_before = std::fs::read_to_string(state.join("calls"))
@@ -656,6 +702,14 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
         "재기동이 막힌 시도를 막지 않았다\n{}",
         context(&second)
     );
+    if block_incidents {
+        // 사건 표식이 없었으므로 막은 것은 원장이다.
+        assert!(
+            second.contains("RUN_LEDGER_BLOCKED"),
+            "표식 없는 겹침에서 원장이 막지 않았다\n{}",
+            context(&second)
+        );
+    }
     let creates_after = std::fs::read_to_string(state.join("calls"))
         .unwrap_or_default()
         .lines()
