@@ -156,6 +156,10 @@ pub enum ExecutionError {
     /// ★ 2026-09-25 — 컨테이너로 받을 수 없는 Job 이다(런타임 없음 · digest 없음 · 강제 못 하는 네트워크 등).
     ///   사유 코드는 `container::decide` 가 붙인다. 호스트에서 대신 돌리지 않는다.
     ContainerRefused { detail: String },
+
+    /// ★ 2026-09-29 (결함 562) — Windows 에서 Agent 가 상승된(관리자) 토큰으로 돌고 있어 호스트 작업을 띄우지 않는다. 확인하지 못한 경우도
+    ///   여기다(모르면 띄우지 않는다). 작업은 시작하지 않았다.
+    HostElevated { detail: String },
 }
 
 impl ExecutionError {
@@ -197,6 +201,11 @@ impl std::fmt::Display for ExecutionError {
             Self::GpuUnverifiable { detail } => write!(
                 f,
                 "EXEC_REFUSED:GPU_UNVERIFIABLE: GPU 를 확인하지 못했다(모자란 것이 아니다) — {detail}"
+            ),
+            Self::HostElevated { detail } => write!(
+                f,
+                "EXEC_REFUSED:HOST_ELEVATED: Agent 가 관리자(상승) 권한으로 돌고 있어 호스트 작업을 띄우지 않는다 — 작업이 관리자 권한을 물려받는다. \
+                 일반(상승 아님) 창 · 작업 스케줄러 /RL LIMITED 로 Agent 를 띄운다 — {detail}"
             ),
             Self::ContainerRefused { detail } => write!(f, "EXEC_REFUSED:{detail}"),
         }
@@ -397,6 +406,23 @@ pub struct ExecutionPolicy {
     /// ★ 2026-09-25 — 호스트에서 돌리는가, 컨테이너로 돌리는가, 받지 않는가. Manifest(`env.kind`)와 운영자 설정으로
     ///   ACK **전에** 정한다(`container::decide`). 거부면 `preflight` 가 실행 전에 막는다.
     pub container: crate::container::ContainerDecision,
+    /// ★ 2026-09-29 (결함 562 "안 해본 것") — Windows 에서 Agent 가 **상승된(관리자) 토큰**으로 돌아도 호스트 작업을 띄우는가.
+    ///   기본 `false` — 상승돼 있으면 호스트 작업을 띄우지 않는다(작업이 관리자 토큰을 물려받아 UAC 경계를 넘는다). 운영자가
+    ///   `--i-understand-elevated-host-execution-is-unsafe true` 로만 켠다. 컨테이너 · 리눅스에는 쓰지 않는다.
+    pub allow_elevated_host: bool,
+}
+
+/// 토큰 상승 여부로 호스트 실행을 가른다 — 상승(`Ok(true)`) · 확인 못 함(`Err`)이면 띄우지 않는다. 순수 함수라 상승 창 없이 시험한다.
+pub fn host_elevation_gate(elevated: Result<bool, String>) -> Result<(), ExecutionError> {
+    match elevated {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(ExecutionError::HostElevated {
+            detail: "토큰이 상승돼 있다(TokenElevation)".into(),
+        }),
+        Err(why) => Err(ExecutionError::HostElevated {
+            detail: format!("상승 여부를 확인하지 못했다(모르면 띄우지 않는다): {why}"),
+        }),
+    }
 }
 
 /// 검증된 실행 지시를 실제 프로세스로 띄우고 종료까지 관측한다.
@@ -628,6 +654,14 @@ pub fn preflight(policy: &ExecutionPolicy) -> Result<(), ExecutionError> {
     }
     if !policy.opted_in {
         return Err(ExecutionError::NotOptedIn);
+    }
+    // ★ 2026-09-29 (결함 562 "안 해본 것") — 호스트 작업은 Agent 의 토큰을 물려받는다. 관리자 창에서 `gputeer agent-loop` 을 직접 부르면
+    //   스크립트의 상승 창 검사를 지나지 않는다 — Agent 가 스스로 확인한다. Windows 의 호스트 실행만(컨테이너 · 리눅스 제외).
+    #[cfg(windows)]
+    if matches!(policy.container, crate::container::ContainerDecision::Host)
+        && !policy.allow_elevated_host
+    {
+        host_elevation_gate(gputeer_runtime_windows::current_process_is_elevated())?;
     }
     if policy.commit_limit_bytes == 0 {
         return Err(ExecutionError::LimitNotApplied {
@@ -1266,5 +1300,29 @@ mod cgroup_name_tests {
     #[test]
     fn the_name_is_deterministic() {
         assert_eq!(name("g", "a"), name("g", "a"));
+    }
+}
+
+#[cfg(test)]
+mod host_elevation_gate_tests {
+    //! 결함 562 "안 해본 것" — 상승 창 없이 판정만 잰다(이 세션은 권한을 올리지 않는다).
+    use super::*;
+
+    #[test]
+    fn an_unelevated_agent_runs_host_work_and_an_elevated_or_unknown_one_does_not() {
+        assert_eq!(host_elevation_gate(Ok(false)), Ok(()));
+        let elevated = host_elevation_gate(Ok(true)).unwrap_err();
+        assert!(matches!(elevated, ExecutionError::HostElevated { .. }));
+        assert!(
+            elevated
+                .to_string()
+                .starts_with("EXEC_REFUSED:HOST_ELEVATED"),
+            "{elevated}"
+        );
+        // 확인하지 못했으면 띄우지 않는다 — 조용히 "상승 아님" 으로 바꾸지 않는다.
+        let unknown = host_elevation_gate(Err("시험".into())).unwrap_err();
+        assert!(unknown.to_string().contains("확인하지 못했다"), "{unknown}");
+        // 시작하지 않은 거부다 — 작업이 살아 있을 수 있다고 보지 않는다.
+        assert!(!unknown.workload_may_be_alive());
     }
 }

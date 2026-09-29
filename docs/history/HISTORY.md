@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-09-29 11:04 — Windows Agent 가 상승(관리자) 토큰이면 호스트 작업을 띄우지 않는다(결함 562 후속 · 브랜치 fork-merge)
+
+- 계획: 결함 562 리포트 "안 해본 것" · 열린 작업 §A3
+- 스트림: Agent · runtime-windows · 운영
+- 수행(코드): `runtime-windows::current_process_is_elevated`(OpenProcessToken + TokenElevation · 확인 실패는 Err). `exec::preflight` 가 Windows 의 호스트 실행
+  (ContainerDecision::Host)에서 부른다 — 상승이거나 확인 못 하면 `EXEC_REFUSED:HOST_ELEVATED`(ACK 전 거부 · 원장 not_started). 컨테이너 · 리눅스 제외.
+  예외 `--i-understand-elevated-host-execution-is-unsafe true`(ExecutionPolicy.allow_elevated_host · 기본 꺼짐)
+- 수행(문서): 런북 · 결함 562 리포트 조치 표 · 열린 작업 색인
+- 검증(Windows · 상승 아님): 판정 함수 3갈래 · 토큰 읽기(false) · agent 전체(단위 117 + 통합) 통과 · cli 컴파일. ★ 실제 상승 창 실측 안 함
+- 리포트: `docs/reports/debugs/2026-09-28_1137_운영자_실행_ps1_상승권한_거부없음_562.md`
+
+---
+
 ## 2026-09-29 10:38 — 단계 3 설계 문서를 해제 명령 구현에 맞춤(코덱스 c1v · 브랜치 fork-merge)
 
 - 계획: 단계 3 설계 v20

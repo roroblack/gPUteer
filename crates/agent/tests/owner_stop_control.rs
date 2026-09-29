@@ -49,6 +49,7 @@ fn policy(opted_in: bool, limit: u64) -> ExecutionPolicy {
         },
         cgroup_parent: None,
         container: gputeer_agent::container::ContainerDecision::Host,
+        allow_elevated_host: false,
     }
 }
 

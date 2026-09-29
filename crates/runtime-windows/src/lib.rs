@@ -55,6 +55,11 @@ pub use beneath::{open_artifact, open_beneath, open_beneath_read_only};
 pub mod appcontainer;
 
 #[cfg(windows)]
+mod elevation;
+#[cfg(windows)]
+pub use elevation::current_process_is_elevated;
+
+#[cfg(windows)]
 mod windows_impl {
     use std::ffi::{OsStr, OsString};
     use std::mem::size_of;

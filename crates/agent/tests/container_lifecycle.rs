@@ -770,6 +770,7 @@ fn policy(work: &Path, decision: ContainerDecision) -> gputeer_agent::exec::Exec
         },
         cgroup_parent: None,
         container: decision,
+        allow_elevated_host: false,
     }
 }
 

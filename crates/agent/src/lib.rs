@@ -133,6 +133,9 @@ pub struct AgentConfig {
     ///   패턴이다 — 위험한 기본값을 실수로 켜는 것을 막는다. 다만
     ///   이건 더 위험하다: 남의 코드를 실제로 실행한다.
     pub execute_workload: bool,
+    /// ★ 2026-09-29 (결함 562) — Windows 에서 Agent 가 관리자(상승) 토큰으로 돌아도 호스트 작업을 띄운다
+    ///   (`--i-understand-elevated-host-execution-is-unsafe true`). 기본 꺼짐 — 상승돼 있으면 `EXEC_REFUSED:HOST_ELEVATED`.
+    pub allow_elevated_host_execution: bool,
     /// 워크로드가 끝난 뒤 서명된 `AttemptReport` 를 Coordinator 에 보낸다.
     ///
     /// ★ 기본값 `false` 다 — 이 값이 꺼져 있으면 이 조각 **이전과
@@ -1446,6 +1449,7 @@ fn run_one_connection_inner(
             },
             cgroup_parent: config.workload_cgroup_parent.clone(),
             container: loaded.container.clone(),
+            allow_elevated_host: config.allow_elevated_host_execution,
         };
         // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
         //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
@@ -3355,6 +3359,7 @@ fn run_and_capture_workload(
                     | exec::ExecutionError::LimitNotApplied { .. }
                     | exec::ExecutionError::GpuRequirementUnmet { .. }
                     | exec::ExecutionError::GpuUnverifiable { .. }
+                    | exec::ExecutionError::HostElevated { .. }
             );
             // 등록됐을 수도 있으니 반드시 뺀다. 안 빼면 끝난 작업이
             // 소유자 화면에 영원히 남는다.
@@ -4919,6 +4924,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             None => None,
         },
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
+        allow_elevated_host_execution: flags
+            .bool_flag("--i-understand-elevated-host-execution-is-unsafe"),
         send_attempt_report: flags.bool_flag("--send-attempt-report"),
         report_over_session: flags.bool_flag("--report-over-session"),
         report_outbox_dir: flags.get("--report-outbox").map(PathBuf::from),
@@ -5450,6 +5457,7 @@ mod tests {
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             run_ledger: false,
             run_ledger_handle: None,
+            allow_elevated_host_execution: false,
             owner_panel_port: None,
             workload_commit_limit_bytes: 256 * 1024 * 1024,
             coordinator_device_id: coordinator_device_id.into(),
@@ -5999,6 +6007,7 @@ mod defect_19_tests {
             },
             cgroup_parent: None,
             container: container::ContainerDecision::Host,
+            allow_elevated_host: false,
         };
         let mut keep_run_dir = false;
         let report = run_and_capture_workload(
