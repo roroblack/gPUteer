@@ -3558,6 +3558,10 @@ fn open_run_ledger_at_startup(
         if presence.never_enabled() {
             return Ok(None);
         }
+        // 이관 표식이 남았으면 스위치와 무관하게 이관 복구를 먼저 안내한다(계획 "켜는 것은 되돌릴 수 없는 선택" · 코덱스 r1r) — 스위치를 켜도 같은 이유로 거부된다.
+        if presence.adopting {
+            return Err("RUN_LEDGER_ADOPT_UNFINISHED: 이관이 끝나지 않았다 — Agent 를 멈춘 채 `gputeer run-ledger adopt-legacy` 를 다시 돌린다(스위치와 무관)".into());
+        }
         return Err(format!(
             "RUN_LEDGER_ENABLED_ROOT: 이 루트는 노드 실행 원장을 켰다(원장 {} · 세대 짝 {} · 이관 표식 {} · 만드는 중 표식 {}) — `--run-ledger true` 로 띄운다(켜기는 되돌리지 않는다)",
             presence.ledger, presence.pair, presence.adopting, presence.creating
@@ -7614,9 +7618,12 @@ mod run_ledger_startup_tests {
         let dir2 = tempfile::tempdir().unwrap();
         let off2 = config(dir2.path(), &[]);
         fs::write(&paths(&off2).adopting, "55555555555555555555555555555555").unwrap();
-        assert!(open_run_ledger_at_startup(&off2)
-            .unwrap_err()
-            .contains("RUN_LEDGER_ENABLED_ROOT"));
+        // 안내는 스위치와 무관하게 이관 복구다(코덱스 r1r) — 켜고 띄워도 같은 표식으로 거부된다.
+        let error = open_run_ledger_at_startup(&off2).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_ADOPT_UNFINISHED"), "{error}");
+        let on2 = config(dir2.path(), &ON);
+        let error = open_run_ledger_at_startup(&on2).unwrap_err();
+        assert!(error.contains("RUN_LEDGER_ADOPT_UNFINISHED"), "{error}");
         // 만드는 중 표식만 있어도 거부한다(계획 v14 · 코덱스 r1o) — 새 노드가 원장을 만들다 끊긴 루트다.
         let dir3 = tempfile::tempdir().unwrap();
         let off3 = config(dir3.path(), &[]);
