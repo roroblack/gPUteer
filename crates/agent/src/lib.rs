@@ -3980,17 +3980,20 @@ pub fn clear_container_incidents(
     root: &std::path::Path,
     name: Option<&str>,
 ) -> Result<Vec<PathBuf>, String> {
-    let real_root = real_checkpoint_root(root)?;
+    // ★ 단계 3 설계 v20(코덱스 c1s ① · 시험 T29c) — **루트 잠금을 먼저 얻고, 그 잠금 아래에서** 원장 상태를 판정한다. 전에는 원장 여부를 잠금 전에
+    //   판정해, 그 사이 다른 Agent 가 원장을 켜고 끝내면 낡은 "켜지 않음" 판정으로 표식만 지울 수 있었다. 원장을 켜지 않은 루트도 이제 잠금 아래에서
+    //   지운다 — Agent(루프)가 떠 있으면 거부한다(대가: 사건 해제는 루프를 멈추고 한다).
+    let lock = claim_checkpoint_root(root).map_err(|error| {
+        format!("CONTAINER_INCIDENTS_CLEAR_REFUSED: 루트 잠금을 잡지 못했다 — Agent(agent-loop)가 떠 있으면 멈춘 뒤 해제한다: {error}")
+    })?;
+    let real_root = lock.real_root.clone();
     let paths = run_ledger::LedgerPaths::for_root(&real_root)?;
     let dir = container::incident_dir_for(&real_root);
     if run_ledger::detect(&paths)?.never_enabled() {
         return container::clear_incidents(&dir, name);
     }
-    let _lock = claim_checkpoint_root(root).map_err(|error| {
-        format!("RUN_LEDGER_CLEAR_REFUSED: 루트 잠금을 잡지 못했다 — Agent 가 떠 있으면 멈춘 뒤 해제한다: {error}")
-    })?;
     let mut ledger = run_ledger::open_for_clear(&paths)?.ok_or_else(|| {
-        "RUN_LEDGER_CLEAR_REFUSED: 원장 상태가 바뀌었다 — 다시 돌린다".to_string()
+        "RUN_LEDGER_CLEAR_REFUSED: 원장 흔적은 있는데 해제용으로 열 원장이 없다 — 수동 복구가 필요하다".to_string()
     })?;
     for row in ledger.rows()? {
         let named = name.is_none_or(|name| row.container_name.as_deref() == Some(name));
@@ -7847,7 +7850,7 @@ mod run_ledger_command_tests {
     }
 
     #[test]
-    fn r16b_a_root_that_never_enabled_the_ledger_clears_markers_as_before_even_while_locked() {
+    fn r16b_t29c_a_root_that_never_enabled_the_ledger_clears_only_under_the_root_lock() {
         let dir = tempfile::tempdir().unwrap();
         let root = real_root(dir.path());
         let name = "gputeer-legacy-incident";
@@ -7859,14 +7862,24 @@ mod run_ledger_command_tests {
             "x",
         )
         .unwrap();
+        // 단계 3 설계 T29c — Agent 가 루트를 잠그고 있으면(루프가 떠 있음) 켜지 않은 루트도 해제하지 않는다. 표식은 그대로다.
         let held = claim_checkpoint_root(&root).unwrap();
-        let cleared = clear_container_incidents(&root, Some(name)).unwrap();
+        let error = clear_container_incidents(&root, Some(name)).unwrap_err();
+        assert!(
+            error.contains("CONTAINER_INCIDENTS_CLEAR_REFUSED"),
+            "{error}"
+        );
         assert_eq!(
-            cleared.len(),
+            container::open_incidents(&container::incident_dir_for(&root))
+                .unwrap()
+                .len(),
             1,
-            "켜지 않은 루트는 잠금과 무관하게 지금처럼 지운다"
+            "잠금을 못 잡았는데 표식을 지웠다"
         );
         drop(held);
+        // 잠금이 풀리면 지금처럼 표식만 지운다(원장을 켜지 않은 루트 — 원장을 만들지 않는다).
+        let cleared = clear_container_incidents(&root, Some(name)).unwrap();
+        assert_eq!(cleared.len(), 1);
         assert!(
             run_ledger::detect(&run_ledger::LedgerPaths::for_root(&root).unwrap())
                 .unwrap()
@@ -7881,7 +7894,10 @@ mod run_ledger_command_tests {
         let name = blocked_row(&root, "blocked-1");
         let held = claim_checkpoint_root(&root).unwrap();
         let error = clear_container_incidents(&root, Some(&name)).unwrap_err();
-        assert!(error.contains("RUN_LEDGER_CLEAR_REFUSED"), "{error}");
+        assert!(
+            error.contains("CONTAINER_INCIDENTS_CLEAR_REFUSED"),
+            "{error}"
+        );
         assert_eq!(
             row_state(&root, "blocked-1"),
             run_ledger::RowState::LocalBlocked
