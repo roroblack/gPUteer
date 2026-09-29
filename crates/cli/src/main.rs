@@ -94,6 +94,8 @@ gputeer — gPUteer CLI
 
   신뢰망 운영 — 전체 절차는 docs/runbooks/신뢰망_설치_운영.md
     gputeer keygen --out <시드 파일>
+    gputeer submitter-add --keyring <submitters.keyring> --submitter-id <id> --public-key <hex64>
+        [--i-understand-plaintext-keyring-is-unsafe true]   (없으면 새로 만든다 · 이미 있는 제출자는 덮지 않는다)
     gputeer dashboard --control-db <control.sqlite3> --port <로컬 포트>   (127.0.0.1 전용 · 기본 읽기 전용)
         [--allow-import true --submitter-keyring <keyring> --submitter-member <id> --max-snapshot-age-ms <ms>]
     gputeer submit-ui --submitter-device-id <id> --submitter-seed-file <파일> --out-dir <폴더> --port <로컬 포트>
@@ -219,6 +221,16 @@ fn main() -> ExitCode {
             }
             Err(error) => {
                 eprintln!("keygen 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("submitter-add") => match ops::submitter_add(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("submitter-add 실패: {error}");
                 ExitCode::FAILURE
             }
         },

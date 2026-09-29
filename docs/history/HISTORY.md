@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-29 12:38 — 제출자 keyring 을 만드는 명령 `gputeer submitter-add`(MVP 빈칸 · 브랜치 fork-merge)
+
+- 계획: MVP(신뢰망 파티 → 팀원 공유 작업) "팀원 손에 닿기까지" — x600 실기기 끝에서 끝까지를 준비하다 찾음
+- 스트림: CLI · 운영
+- 발견: Coordinator · scheduler · import-manifest · plan-job · dashboard 가 모두 `--submitter-keyring` 을 요구하는데, 그 파일(이진 형식 · `GPUTEER-KEYRING`)을
+  만드는 명령이 **없었다** — 시험은 Rust API 로 만들었고 런북에도 만드는 법이 없었다. 팀원이 런북만 보고는 풀을 세울 수 없었다
+- 수행(코드): `gputeer submitter-add --keyring --submitter-id --public-key [--i-understand-plaintext-keyring-is-unsafe true]` — 없으면 만들고(기본 K1 · 플래그가
+  있으면 K0) 공개키만 넣는다 · 이미 있는 제출자는 거부 · 평문 keyring 을 플래그 없이 열면 거부 · 잘못된 공개키 · 인자 누락은 파일을 만들기 전에 거부
+- 수행(문서): 런북 §1 에 "제출자 keyring 만들기"
+- 검증(Windows): 단위 2(새 파일 · 추가 · 덮기 거부 · 평문 거부 · 잘못된 키 · 파일 안 만듦) — 만든 파일을 `PersistentKeyring::load` 로 다시 읽어 확인. 다른 명령이 실제로
+  쓰는지는 x600 끝에서 끝까지에서 본다
+- 리포트: 없음
+
+---
+
 ## 2026-09-29 12:33 — x600 WSL 에 podman 설치(사용자 허가) · 개발 기계 빌드 찌꺼기 정리(브랜치 fork-merge)
 
 - 계획: 단계 4 설계 실측 M1 · M3 · 원장 "실제 런타임 끝에서 끝까지"
