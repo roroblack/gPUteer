@@ -424,9 +424,15 @@ const STOP_CONFIRM_TRIES: u32 = 10;
 const STOP_CONFIRM_INTERVAL: Duration = Duration::from_millis(200);
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 런타임이 "그런 컨테이너 없다" 고 답했는가(docker · podman 공통 문구).
+/// 런타임이 "그런 컨테이너 없다" 고 답했는가.
+///
+/// ★ 2026-09-29 x600 실측(podman 5.7.0) — 여기 "docker · podman 공통 문구(no such container)" 라고 적혀 있었는데 **확인하지 않은 가정**이었다.
+///   종류를 가리지 않는 `inspect` 는 이름에 맞는 것이 아무것도 없으면 podman 이 `Error: no such object: "<이름>"` 로 답한다(docker 의 같은 명령도
+///   `Error: No such object: <이름>` 이다). 그래서 만들기 전 이름 확인이 "모른다" 로 떨어져 **podman 에서 어떤 작업도 돌지 않았다**(사건 표식 · 노드 묶임).
+///   시험의 가짜 런타임이 docker 식 "No such container" 만 흉내 내 잡지 못했다. 두 문구를 다 받는다(`rm` 의 podman 문구 "… no such container" 도 여기 걸린다).
 fn says_no_such_container(why: &str) -> bool {
-    why.to_lowercase().contains("no such container")
+    let why = why.to_lowercase();
+    why.contains("no such container") || why.contains("no such object")
 }
 
 /// 컨테이너가 지금 **도는가** — `inspect --format={{.State.Running}}`. 없는 컨테이너면 "안 돈다"(Ok(false))다.
@@ -2321,5 +2327,33 @@ mod tests {
         // 결함 290 — 같은 시도는 연결(grant)이 바뀌어도 같은 이름이다.
         assert_eq!(derive_container_name("a1"), derive_container_name("a1"));
         assert!(derive_container_name("a").starts_with("gputeer-"));
+    }
+}
+
+#[cfg(test)]
+mod no_such_container_wording_tests {
+    //! 실제 런타임이 낸 "없음" 문구(2026-09-29 x600 podman 5.7.0 실측 · docker 문서의 같은 명령 문구).
+    use super::says_no_such_container;
+
+    #[test]
+    fn real_runtime_wordings_for_a_missing_container_are_recognised() {
+        // podman 5.7.0 — `podman inspect --format=... <없는 이름>` (x600 실측)
+        assert!(says_no_such_container(
+            "Some(\"inspect\") 실패(exit status: 125): Error: no such object: \"gputeer-55f8d9edfe04750b2c445845f852e3ba\""
+        ));
+        // docker — 종류를 가리지 않는 `docker inspect <없는 이름>`
+        assert!(says_no_such_container("Error: No such object: gputeer-x"));
+        // docker `container inspect` · podman `rm` 류
+        assert!(says_no_such_container(
+            "Error: No such container: gputeer-x"
+        ));
+        assert!(says_no_such_container(
+            "Error: no container with name or ID \"gputeer-x\" found: no such container"
+        ));
+        // 다른 실패는 "없음" 이 아니다 — 조용히 없다고 보지 않는다.
+        assert!(!says_no_such_container("Error: permission denied"));
+        assert!(!says_no_such_container(
+            "Cannot connect to the Docker daemon"
+        ));
     }
 }
