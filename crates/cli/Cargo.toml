@@ -30,3 +30,8 @@ tempfile.workspace = true
 #   고쳐야 한다 — 정상 경로로는 그 상태를 만들 수 없다. production 코드는
 #   여전히 rusqlite 를 쓰지 않는다(저장소 crate 를 거친다).
 rusqlite.workspace = true
+
+# ★ 가짜 컨테이너 런타임이 이 시험 실행 파일 자신이다 — `main` 을 직접 쓴다(crates/agent/tests/container_lifecycle.rs 와 같은 방식).
+[[test]]
+name = "run_ledger_container_faults"
+harness = false
