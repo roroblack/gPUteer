@@ -17,13 +17,19 @@
 //!
 //! ★ **Windows 전용이다** — 풀 Agent 의 실행 관문이 리눅스에서는 cgroup 위임을 요구한다(`trusted_party_pool.rs` 와 같다).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(windows)]
 use std::process::{Child, Command, Stdio};
+#[cfg(windows)]
 use std::time::{Duration, Instant};
 
 const STATE_ENV: &str = "GPUTEER_FAKE_RUNTIME_STATE";
 /// 있으면 실행 뒤 `rm` 이 컨테이너를 지운 다음 이 경로에 폴더를 만든다.
 const BLOCK_ENV: &str = "GPUTEER_FAKE_RUNTIME_BLOCK_AFTER_RM";
+/// 있으면 만든 컨테이너의 `rm` 이 지우지 못하고 실패로 답한다(컨테이너가 남는 갈래 — 지움 확인 없음).
+const RM_FAILS_ENV: &str = "GPUTEER_FAKE_RUNTIME_RM_FAILS";
 const FAKE_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn main() {
@@ -31,9 +37,9 @@ fn main() {
         std::process::exit(fake_runtime(Path::new(&state)));
     }
     #[cfg(windows)]
-    {
-        r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks();
-        println!("test r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks ... ok");
+    for (label, rm_fails) in [("removed", false), ("left_behind", true)] {
+        r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks(rm_fails);
+        println!("test r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks[{label}] ... ok");
     }
     #[cfg(not(windows))]
     println!("run_ledger_container_faults: Windows 전용 — 건너뜀");
@@ -111,11 +117,15 @@ fn fake_runtime(state: &Path) -> i32 {
                 eprintln!("Error: No such container: {target}");
                 return 1;
             }
-            std::fs::write(state.join("gone"), "").unwrap();
-            // 실행 뒤의 지우기 — 지운 다음 원장 저널 자리를 막는다(보고 보관 전 원장 쓰기가 실패하게).
+            // 실행 뒤의 지우기 — 끝나면 원장 저널 자리를 막는다(보고 보관 전 원장 쓰기가 실패하게).
             if let Ok(block) = std::env::var(BLOCK_ENV) {
                 std::fs::create_dir_all(block).unwrap();
             }
+            if std::env::var_os(RM_FAILS_ENV).is_some() {
+                eprintln!("fake: rm 실패를 흉내낸다(컨테이너는 남는다)");
+                return 125;
+            }
+            std::fs::write(state.join("gone"), "").unwrap();
             0
         }
         "pull" => 0,
@@ -491,32 +501,49 @@ mod pool {
         .collect()
     }
 
-    /// 명령을 끝까지 돌려 (성공 여부 · 표준 출력과 오류).
-    pub fn run_to_end(args: &[String], envs: &[(&str, &Path)]) -> (bool, String) {
+    /// 명령을 끝까지 돌려 (성공 여부 · 표준 출력과 오류). 시한(120초)을 넘기면 죽이고 실패시킨다 — 자식이 멈춰도 시험이 끝없이 기다리지 않게
+    ///   (코덱스 r1t). 출력은 파일로 받는다(기다리는 동안 파이프가 차서 자식이 멈추는 일이 없게).
+    pub fn run_to_end(dir: &Path, args: &[String], envs: &[(&str, &Path)]) -> (bool, String) {
+        let out_path = dir.join(format!("agent-loop-{}.out", now_unix_ms()));
+        let out = std::fs::File::create(&out_path).unwrap();
         let mut command = Command::new(cli_bin());
         command
             .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(Stdio::from(out.try_clone().unwrap()))
+            .stderr(Stdio::from(out));
         for (key, value) in envs {
             command.env(key, value);
         }
-        let output = command.output().expect("agent-loop 실행");
+        let mut child = KillOnDrop(Some(command.spawn().expect("agent-loop 실행")));
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let status = loop {
+            let running = child.0.as_mut().expect("자식");
+            if let Some(status) = running.try_wait().expect("자식 상태") {
+                child.0 = None;
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "agent-loop 가 120초 안에 끝나지 않았다\n{}",
+                std::fs::read_to_string(&out_path).unwrap_or_default()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
         (
-            output.status.success(),
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
+            status.success(),
+            std::fs::read_to_string(&out_path).unwrap_or_default(),
         )
     }
 }
 
 /// 계획 R8b — 컨테이너 행에서 **보고 보관 전** 원장 쓰기(판정 사실 · 지움 확인)가 실패하면: 보고를 보관하지 않고 · 루프가 첫 회차 뒤 멈추고 · 작업은 끝나지
 ///   않는다. 저널 자리를 되살려 재기동하면 원장이 시도를 LOCAL_BLOCKED 로 풀고(보고가 없으니 끝났다고 볼 수 없다) 새 작업을 받지 않는다.
+///   `rm_fails` — 컨테이너를 지우지 못한 갈래(지움 확인 없음). ★ 두 갈래 모두 저널을 막으면 그 앞의 **판정 사실 쓰기**에서 먼저 실패한다 —
+///   지움 확인 · 막힘 표시 쓰기 자체의 실패를 따로 가르지는 못한다(계획 R8b 구현 메모).
 #[cfg(windows)]
-fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks() {
+fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the_restart_blocks(
+    rm_fails: bool,
+) {
     use gputeer_agent::run_ledger::{self, RowState};
     use gputeer_coordinator::job_store::JobState;
     use pool::*;
@@ -540,13 +567,24 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
     };
 
     // ── 1회차: 컨테이너는 돌고 지워진다 · 지운 뒤 원장 쓰기가 실패한다. 회차를 셋까지 허락해도 첫 회차 뒤에 멈춰야 한다.
-    let (first_ok, first) = run_to_end(
-        &agent_loop(dir.path(), &addr, "3"),
-        &[(STATE_ENV, &state), (BLOCK_ENV, &journal)],
-    );
+    let mut envs: Vec<(&str, &Path)> = vec![(STATE_ENV, &state), (BLOCK_ENV, &journal)];
+    if rm_fails {
+        envs.push((RM_FAILS_ENV, &state));
+    }
+    let (first_ok, first) = run_to_end(dir.path(), &agent_loop(dir.path(), &addr, "3"), &envs);
+    // 실패 자리를 가른다(코덱스 r1t) — 컨테이너가 **시작해 끝났고 로그까지 거뒀다.** 시작 전 정리(NotStarted 닫기)의 실패가 아니다.
+    let calls = std::fs::read_to_string(state.join("calls")).unwrap_or_default();
     assert!(
-        state.join("create.args").exists() && state.join("gone").exists(),
-        "컨테이너를 만들고 지우는 데까지 가지 않았다\n{}",
+        state.join("create.args").exists()
+            && state.join("started").exists()
+            && calls.lines().any(|l| l.starts_with("logs")),
+        "컨테이너를 만들고 · 시작하고 · 로그를 거두는 데까지 가지 않았다\n{}",
+        context(&first)
+    );
+    assert_eq!(
+        state.join("gone").exists(),
+        !rm_fails,
+        "지움 갈래가 뜻과 다르다(rm_fails={rm_fails})\n{}",
         context(&first)
     );
     assert!(
@@ -608,7 +646,11 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
         .lines()
         .filter(|l| l.starts_with("create"))
         .count();
-    let (_, second) = run_to_end(&agent_loop(dir.path(), &addr, "1"), &[(STATE_ENV, &state)]);
+    let (_, second) = run_to_end(
+        dir.path(),
+        &agent_loop(dir.path(), &addr, "1"),
+        &[(STATE_ENV, &state)],
+    );
     assert!(
         second.contains("RUN_LEDGER_BLOCKED") || second.contains("CONTAINER_INCIDENT_OPEN"),
         "재기동이 막힌 시도를 막지 않았다\n{}",
