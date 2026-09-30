@@ -1268,3 +1268,88 @@ fn the_disconnect_deadline_outlives_a_renew_thread_that_gave_up_early() {
         "검증 실패를 Coordinator 의 거부로 보고 곧바로 멈췄다\n{all}"
     );
 }
+
+/// ★ 검수 ss1 — 갱신 요청이 **응답 없이 걸려 있는 동안**에도 끊김 시한 감시는 돈다. Coordinator 가 FRESH 뒤 끝나면 같은 포트에 연결은 받되
+///   아무 답도 하지 않는 자리를 연다 — 갱신마다 약 10초(연결 · 읽기 시한) 동안 걸린다. Lease 20초 · 여유 3초 → 시한은 발급 뒤 약 17초.
+///   감시가 갱신 스레드 안에 있던 처음 구현은 걸린 요청이 돌아온 뒤(약 23초 — Lease 만료 뒤)에야 확인했다.
+#[test]
+fn the_disconnect_deadline_is_watched_while_a_renew_request_hangs() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 41);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "20000",
+            "--max-connections",
+            "1",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let coordinator = wait(coordinator, Duration::from_secs(30));
+    // 같은 주소에 "받기만 하는" 자리 — 받은 연결을 쥐고만 있는다(끝날 때 함께 닫힌다).
+    let silent = {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match std::net::TcpListener::bind(&addr) {
+                Ok(listener) => break listener,
+                Err(error) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "같은 주소를 다시 열지 못했다({addr}): {error}"
+                    );
+                    thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    };
+    let held = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    {
+        let held = std::sync::Arc::clone(&held);
+        thread::spawn(move || {
+            for stream in silent.incoming().flatten() {
+                held.lock().expect("held").push(stream);
+            }
+        });
+    }
+    let agent = wait(agent, Duration::from_secs(60));
+    let accepted = held.lock().expect("held").len();
+    let all = both(&agent, &coordinator);
+
+    assert!(
+        accepted >= 1,
+        "전제가 깨졌다 — 갱신 요청이 답 없는 자리에 닿지 않았다\n{all}"
+    );
+    assert!(
+        !agent.killed,
+        "Agent 가 스스로 멈추지 않고 끝까지 돌았다\n{all}"
+    );
+    let lease = line_with(&agent, &["LEASE_ACCEPTED"])
+        .unwrap_or_else(|| panic!("LEASE_ACCEPTED 가 없다\n{all}"));
+    let expires = field_u64(&lease, "expires_at_unix_ms=");
+    let (_, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (_, stopped_at) = agent
+        .first("DISCONNECT_SELF_STOP attempt_id=")
+        .unwrap_or_else(|| panic!("끊김 시한으로 멈추지 않았다\n{all}"));
+    // 발급 → 기동은 1초 안팎이다. 시한(발급 뒤 약 17초)에 멈춰야 하고, 걸린 요청이 돌아올 때(약 23초)까지 미뤄지면 안 된다.
+    assert!(
+        stopped_at.duration_since(spawned_at) < Duration::from_secs(19),
+        "갱신 요청이 걸린 동안 시한 감시가 멈췄다(Lease 만료 {expires} 뒤에 멈춤)\n{all}"
+    );
+}

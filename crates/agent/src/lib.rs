@@ -1699,6 +1699,11 @@ fn run_one_connection_inner(
                 Ok(renewed) => held_lease = renewed,
                 Err(_) => println!("RENEW_SESSION_THREAD_PANICKED — 갱신 스레드가 비정상 종료했다(보유 Lease 는 실행 전 것)"),
             }
+            if let Some(watcher) = renewer.watcher {
+                if watcher.join().is_err() {
+                    println!("DISCONNECT_WATCH_THREAD_PANICKED — 끊김 시한 감시 스레드가 비정상 종료했다");
+                }
+            }
         }
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
@@ -2494,6 +2499,9 @@ fn renew_once_over_new_connection(
 struct RenewDuringExecution {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     handle: std::thread::JoinHandle<pb::Lease>,
+    /// ★ 2026-09-30 (검수 ss1) — 끊김 시한 감시 스레드. 갱신 스레드와 **따로** 돈다 — 갱신 요청이 응답을 기다리는 동안(연결 · 읽기 시한 10초)
+    ///   감시가 멈추면 시한을 넘겨 계속 돌았다. 여유 0(끔)이면 없다.
+    watcher: Option<std::thread::JoinHandle<()>>,
 }
 
 /// `renew_during_execution_ms` 간격으로 RENEW 세션을 연다. 0 이면 시작하지 않는다.
@@ -2537,7 +2545,7 @@ fn start_renew_during_execution(
             now,
         );
     }
-    // 끊김 시한 확인 — 기다리는 동안 50ms 마다 부른다. 멈출 때가 되면 한 번 멈추고 그 사실을 찍는다(실패하면 다음에 다시).
+    // 끊김 시한 확인 — 감시 스레드가 50ms 마다 부른다. 멈출 때가 되면 한 번 멈추고 그 사실을 찍는다(실패하면 다음에 다시).
     //   ★ 실패 문구는 **바뀔 때만** 찍는다 — 50ms 마다 같은 줄이 쌓이지 않게(작업이 아직 등록 전이면 등록될 때까지 실패한다).
     let mut check_self_stop = {
         let panel = panel.clone();
@@ -2563,6 +2571,17 @@ fn start_renew_during_execution(
     };
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thread_stop = std::sync::Arc::clone(&stop);
+    let watcher = if self_stop_enabled {
+        let watcher_stop = std::sync::Arc::clone(&stop);
+        Some(std::thread::spawn(move || {
+            while !watcher_stop.load(std::sync::atomic::Ordering::SeqCst) {
+                check_self_stop();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }))
+    } else {
+        None
+    };
     let config = config.clone();
     let key = signing_key.clone();
     let mut lease = held_lease.clone();
@@ -2589,7 +2608,6 @@ fn start_renew_during_execution(
                 if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
                     break 'renew;
                 }
-                check_self_stop();
                 std::thread::sleep(Duration::from_millis(50));
             }
             let sent_at = SystemClock.now_unix_ms();
@@ -2630,7 +2648,6 @@ fn start_renew_during_execution(
                         } else {
                             panel.renew_failed(&attempt_id);
                         }
-                        check_self_stop();
                     }
                     break 'renew;
                 }
@@ -2638,21 +2655,20 @@ fn start_renew_during_execution(
                     println!("RENEW_SESSION_FAILED round={round} detail={error}");
                     if self_stop_enabled {
                         panel.renew_failed(&attempt_id);
-                        check_self_stop();
                     }
                 }
             }
             round += 1;
         }
-        // ★ 2026-09-30 — 갱신은 끝났어도(거부 · 만료 · 검증 실패) 작업은 아직 돌 수 있다. 끊김 시한 감시는 실행이 끝날 때까지 이어 간다 —
-        //   갱신 스레드가 끝났다고 시한이 사라지면, 시한 전에 갱신이 멈춘 작업은 영영 스스로 멈추지 않는다.
-        while self_stop_enabled && !thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
-            check_self_stop();
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        // ★ 2026-09-30 — 갱신은 끝났어도(거부 · 만료 · 검증 실패) 작업은 아직 돌 수 있다. 끊김 시한 감시는 **감시 스레드**가 실행이 끝날 때까지
+        //   이어 간다 — 갱신 스레드가 끝났다고 시한이 사라지면, 시한 전에 갱신이 멈춘 작업은 영영 스스로 멈추지 않는다.
         lease
     });
-    Some(RenewDuringExecution { stop, handle })
+    Some(RenewDuringExecution {
+        stop,
+        handle,
+        watcher,
+    })
 }
 
 /// B+E 구현 단계 6 — outbox 디렉터리. 설정이 없으면 체크포인트 루트의 **형제** `<checkpoint_root>.report-outbox`.

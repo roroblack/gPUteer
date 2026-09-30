@@ -105,6 +105,9 @@ pub struct ConnectionWatch {
     pub choice: OwnerChoice,
     /// 끊김 시한으로 스스로 멈췄다(정지 요청이 성공했다).
     pub self_stopped: bool,
+    /// ★ 2026-09-30 (검수 ss1) — 스스로 멈추기로 **정했고** 정지 손잡이를 부르는 중이다. 이 동안(그리고 멈춘 뒤) "계속" 은 받지 않는다 —
+    ///   전에는 정지를 정한 뒤 잠금을 놓은 사이에 "계속" 이 200 으로 받아들여지고도 작업이 멈췄다.
+    pub stopping: bool,
 }
 
 /// 끊김 시한 — `기준 = min(요청을 보낸 시각 + Lease 길이, Lease 만료)`, `시한 = 기준 − min(여유, (기준 − 보낸 시각) / 2)`.
@@ -238,6 +241,7 @@ impl OwnerPanelState {
                 keep_running_allowed,
                 choice: OwnerChoice::Auto,
                 self_stopped: false,
+                stopping: false,
             },
         );
     }
@@ -275,6 +279,11 @@ impl OwnerPanelState {
         if watch.refused {
             return Err("Coordinator 가 이 작업을 다른 노드로 넘겼다 — 계속 돌릴 수 없다".into());
         }
+        if watch.stopping || watch.self_stopped {
+            return Err(
+                "끊김 시한이 지나 이미 멈추는 중이다(또는 멈췄다) — 계속 돌릴 수 없다".into(),
+            );
+        }
         if !watch.keep_running_allowed {
             return Err("부작용이 있거나 등급을 모르는 작업이다 — 두 번 실행을 막을 장치가 없어 계속 돌리기를 받지 않는다".into());
         }
@@ -289,12 +298,18 @@ impl OwnerPanelState {
         attempt_id: &str,
         now_unix_ms: u64,
     ) -> Option<Result<(), String>> {
+        // 결정과 "멈추는 중" 표시를 **한 잠금 안에서** 한다 — 그 뒤로 "계속" 은 거부된다(`keep_running`).
         let due = {
-            let connections = self.connections();
-            let watch = connections.get(attempt_id)?;
-            !watch.self_stopped
+            let mut connections = self.connections();
+            let watch = connections.get_mut(attempt_id)?;
+            let due = !watch.self_stopped
+                && !watch.stopping
                 && now_unix_ms >= watch.self_stop_at_unix_ms
-                && (watch.refused || watch.choice == OwnerChoice::Auto)
+                && (watch.refused || watch.choice == OwnerChoice::Auto);
+            if due {
+                watch.stopping = true;
+            }
+            due
         };
         if !due {
             return None;
@@ -306,10 +321,12 @@ impl OwnerPanelState {
                 None => Err(format!("그런 작업이 없다: {attempt_id}")),
             }
         };
+        if let Some(watch) = self.connections().get_mut(attempt_id) {
+            // 실패하면 "멈추는 중" 을 풀어 다음 확인 때 다시 정한다.
+            watch.self_stopped = result.is_ok();
+            watch.stopping = result.is_ok();
+        }
         if result.is_ok() {
-            if let Some(watch) = self.connections().get_mut(attempt_id) {
-                watch.self_stopped = true;
-            }
             match self.disconnect_stopped.lock() {
                 Ok(mut stopped) => stopped.insert(attempt_id.to_string()),
                 Err(poisoned) => poisoned.into_inner().insert(attempt_id.to_string()),
@@ -998,6 +1015,37 @@ mod tests {
         state.unregister("risky");
         assert!(state.connections().get("risky").is_none());
         assert!(!state.stopped_for_disconnect("risky"));
+    }
+
+    /// ★ 검수 ss1 — 멈추기로 정한 뒤(멈추는 중 · 멈춤)에는 "계속" 을 받지 않는다. 정지가 실패하면 "멈추는 중" 이 풀려 다시 정한다.
+    #[test]
+    fn keep_running_is_refused_once_the_self_stop_has_been_decided() {
+        let state = OwnerPanelState::new();
+        let mut safe = workload(1_000, None);
+        safe.attempt_id = "safe".into();
+        state.register(safe);
+        state.watch_connection("safe", 10_000, true, 1_000);
+        // 시한이 지나 멈추기로 정했다 — 시험용 손잡이는 실패하므로 "멈추는 중" 이 풀린다
+        assert!(matches!(
+            state.self_stop_if_due("safe", 10_000),
+            Some(Err(_))
+        ));
+        assert!(!state.connections().get("safe").unwrap().stopping);
+        // 정지 손잡이를 부르는 사이(멈추는 중)에 온 "계속" 은 거부된다
+        state.connections().get_mut("safe").unwrap().stopping = true;
+        assert!(state.keep_running("safe").is_err());
+        assert!(
+            state.self_stop_if_due("safe", 11_000).is_none(),
+            "멈추는 중에 또 정했다"
+        );
+        // 멈춘 뒤에도 거부된다
+        {
+            let mut connections = state.connections();
+            let watch = connections.get_mut("safe").unwrap();
+            watch.stopping = false;
+            watch.self_stopped = true;
+        }
+        assert!(state.keep_running("safe").is_err());
     }
 
     /// JSON 이스케이프가 실제로 되는가.

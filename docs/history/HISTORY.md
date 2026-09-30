@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-09-30 15:05 — 끊김 스스로 멈춤 검수 ss1 반영: 감시를 갱신과 따로 · "계속" 과 자동 정지의 경쟁 제거(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 의 E1 첫 겹(직전 항목의 후속)
+- 스트림: Agent · Owner Panel
+- 수행: 코덱스 독립 검수 ss1(gpt-6-sol, CHANGES_REQUESTED)의 두 지적을 고쳤다. ① 끊김 시한 확인이 갱신 스레드 안에 있어, 갱신 요청이 응답을 기다리는
+  동안(연결 · 읽기 시한 10초) 멈췄다 → 감시 전용 스레드로 떼고 실행이 끝나면 함께 거둔다. ② 정지를 정한 뒤 잠금을 놓은 사이 "계속" 이 200 으로 받아들여지고도
+  멈출 수 있었다 → 결정과 "멈추는 중" 표시를 한 잠금 안에서 하고, 멈추는 중 · 멈춘 뒤의 "계속" 은 거부(409)
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1510 passed · 0 failed · ignored 4. 새 시험 둘 — 실제 프로세스
+  `the_disconnect_deadline_is_watched_while_a_renew_request_hangs`(받기만 하고 답하지 않는 자리) · 단위 `keep_running_is_refused_once_the_self_stop_has_been_decided`.
+  직전 커밋의 lib.rs 로 되돌리면 앞의 시험이 실패함을 확인 뒤 원복. clippy: 바꾼 줄의 새 경고 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-30 14:39 — 끊긴 노드가 스스로 멈춘다(첫 겹 · Agent 타이머) · 소유자 화면 끊김 표시 · "계속 돌리기"(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 의 E1 첫 겹 · 소유자 선택표의 "지금 멈춤" · "계속"
