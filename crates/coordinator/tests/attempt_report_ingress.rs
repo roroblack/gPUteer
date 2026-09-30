@@ -1005,6 +1005,25 @@ fn a_v1_renew_request_carrying_an_unreachable_until_is_refused() {
     assert!(error.contains("v2 에서만"), "{error}");
 }
 
+/// ★ 검수 an1 — FRESH 연결 안의 갱신도 v1 에 22 가 차 있으면 서명이 맞아도 거부한다(알림은 RENEW 세션에서만 다룬다).
+#[test]
+fn an_in_connection_renew_carrying_an_unreachable_until_is_refused() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let db = fixture.control_db.to_str().expect("경로").to_string();
+    let handle = spawn_coordinator_with(&fixture, 1, &["--do-renew", "true", "--lease-db", &db]);
+    let mut stream = connect_when_ready(fixture.address);
+    handshake(&mut stream);
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut request = signed_renew_request(fence_epoch, 160);
+    request.unreachable_until_unix_ms = now_ms() + 3_600_000;
+    request.node_signature = sign(&key, &request).to_vec();
+    write_frame_body(&mut stream, FrameType::LeaseRenew, &request.encode_to_vec());
+    let outcome = handle.join().expect("Coordinator 스레드");
+    let error = outcome.expect_err("FRESH 연결 안의 갱신이 알림 칸을 받아들였다");
+    assert!(error.contains("RENEW 세션에서만"), "{error}");
+}
+
 /// ★ 2026-10-01 — v2 알림은 운영자 상한이 없으면(기본) **평소 연장**으로 답한다 — 거부하지 않고, 알림 시각을 그대로 주지도 않는다.
 #[test]
 fn a_v2_announcement_without_an_operator_cap_gets_the_normal_extension() {

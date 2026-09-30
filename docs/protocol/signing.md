@@ -488,6 +488,8 @@ Coordinator 서명이 묶는다 — 벗기면 canonical 이 달라진다(벡터 
 - Coordinator 는 요청 시각을 검사 없이 그대로 주지 않는다(MUST) — 연장 = `min(요청 − now, 운영자 상한)`, 평소 연장보다 짧지 않게,
   작업 누적 상한(`issued_at + max_total_duration_seconds`)을 넘지 않게. 운영자 상한이 0(기본)이거나 요청이 now 이하면 평소 연장으로 답한다.
 - 알림을 실은 갱신이 실패하면 Agent 는 다음 갱신을 이 칸 없이(v1) 보낸다 — 옛 Coordinator(최대 1)가 v2 를 거부해도 갱신이 끊기지 않게.
+- 알림은 **RENEW 세션(새 연결 갱신)에서만** 다룬다. FRESH 연결 안의 갱신은 v1 만 읽고, 22 가 차 있으면 서명이 맞아도 거부한다(MUST).
+- RENEW 세션의 연장은 알림이 있든 없든 **작업 누적 상한까지로 자른다**(상한을 넘는 만료를 서명하지 않는다).
 - 제안: `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`
 
 ## 7. schema_version 과 알 수 없는 필드

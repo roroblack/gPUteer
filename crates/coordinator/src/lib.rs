@@ -2298,6 +2298,15 @@ fn serve_one_connection_impl(
                 )
                 .into());
             }
+            // ★ 2026-10-01 (signing.md §6.7 · 검수 an1) — 미리 알린 끊김은 RENEW 세션(새 연결 갱신)에서만 다룬다. 이 FRESH 연결 안의 갱신은
+            //   v1 만 읽고(v2 는 위에서 SCHEMA_TOO_NEW), 서명이 맞아도 22 가 차 있으면 거부한다 — 알림을 조용히 무시하지 않는다.
+            if renew_req.unreachable_until_unix_ms != 0 {
+                return Err(
+                    "RenewLeaseRequest: 미리 알린 끊김(22)은 RENEW 세션에서만 다룬다 — FRESH 연결 안의 갱신에서는 받지 않는다(v2 에서만 쓰는 칸)"
+                        .to_string()
+                        .into(),
+                );
+            }
             if renew_req.lease_id != config.lease_id {
                 return Err(format!(
                     "RenewLeaseRequest.lease_id 불일치: 기대값 {} != {}",
@@ -3677,7 +3686,10 @@ fn build_signed_policy_renew_result(
 /// 그 밖                                           min(알림 − now, 운영자 상한, 작업 누적 상한까지) — 그래도 평소 연장보다 짧게 주지 않는다
 /// ```
 /// 요청 시각을 검사 없이 그대로 주지 않는다. 평소 연장보다 짧게 주지 않는 것은 알림이 **손해**가 되지 않게다(알림 없는 갱신과 같거나 길다).
-/// 작업 누적 상한 판정 자체(넘었으면 MAX_DURATION_EXCEEDED)는 저장소가 따로 한다.
+/// ★ 검수 an1 — 그리고 마지막에 **작업 누적 상한까지로 자른다**(평소 연장이어도). 전에는 "평소보다 짧지 않게" 가 뒤에 와서, 누적 상한이 10초
+///   남았는데 평소 연장 60초를 그대로 줘 상한을 50초 넘는 만료가 서명됐다(저장소는 지금 시각이 상한 전인지만 본다). 이 자르기는 알림이 없는
+///   갱신에도 걸린다 — RENEW 세션의 동작 변경이다(FRESH 연결 안의 갱신은 그대로).
+/// 누적 상한에 이미 닿았으면(0 남음) 저장소가 MAX_DURATION_EXCEEDED 로 답한다 — 여기서 0 을 돌려도 쓰이지 않는다.
 pub(crate) fn announced_renew_extension_ms(
     normal_ms: u64,
     cap_ms: u64,
@@ -3685,13 +3697,15 @@ pub(crate) fn announced_renew_extension_ms(
     now_unix_ms: u64,
     max_end_unix_ms: u64,
 ) -> u64 {
-    if cap_ms == 0 || unreachable_until_unix_ms <= now_unix_ms {
-        return normal_ms;
-    }
-    (unreachable_until_unix_ms - now_unix_ms)
-        .min(cap_ms)
-        .min(max_end_unix_ms.saturating_sub(now_unix_ms))
-        .max(normal_ms)
+    let to_max_end = max_end_unix_ms.saturating_sub(now_unix_ms);
+    let wanted = if cap_ms == 0 || unreachable_until_unix_ms <= now_unix_ms {
+        normal_ms
+    } else {
+        (unreachable_until_unix_ms - now_unix_ms)
+            .min(cap_ms)
+            .max(normal_ms)
+    };
+    wanted.min(to_max_end)
 }
 
 fn build_renew_result(
@@ -5378,11 +5392,13 @@ mod announced_extension_tests {
             ext(normal, 7_200_000, now + 1_800_000, now, now + 600_000),
             600_000
         );
-        // 요청이 평소보다 짧다(20초) · 누적 상한이 평소보다 가깝다 — 평소보다 짧게 주지 않는다(알림이 손해가 되지 않게)
+        // 요청이 평소보다 짧다(20초) — 평소보다 짧게 주지 않는다(알림이 손해가 되지 않게)
         assert_eq!(ext(normal, 7_200_000, now + 20_000, now, far_end), normal);
+        // ★ 검수 an1 — 누적 상한이 평소보다 가까우면(10초) 알림이 있든 없든 거기까지다 — 상한을 넘는 만료를 주지 않는다
         assert_eq!(
             ext(normal, 7_200_000, now + 1_800_000, now, now + 10_000),
-            normal
+            10_000
         );
+        assert_eq!(ext(normal, 0, 0, now, now + 10_000), 10_000);
     }
 }
