@@ -2684,8 +2684,17 @@ fn start_renew_during_execution(
                     //   Coordinator 의 결정을 안 것이 아니다 — 끊김으로 다룬다(시한 · 소유자 선택대로). 처음 구현은 둘을 같이 거부로 다뤄,
                     //   소유자가 "계속" 을 고른 PURE 작업이 Lease 가 끝나는 순간 멈췄다(실제 프로세스 시험이 잡았다).
                     if self_stop_enabled {
-                        let signed_refusal = error.starts_with("RENEW_REFUSED")
-                            && !error.starts_with("RENEW_REFUSED:LOCAL_EXPIRED");
+                        // ★ 검수 an2 — 스스로 본 만료라도 서명된 Lease 의 누적 상한에 닿은 것이면 서명된 거부(MAX_DURATION_EXCEEDED)와 같다.
+                        let max_duration_reached = error.starts_with("RENEW_REFUSED:LOCAL_EXPIRED")
+                            && lease_reached_max_total_duration(&lease, SystemClock.now_unix_ms());
+                        let signed_refusal = (error.starts_with("RENEW_REFUSED")
+                            && !error.starts_with("RENEW_REFUSED:LOCAL_EXPIRED"))
+                            || max_duration_reached;
+                        if max_duration_reached {
+                            println!(
+                                "RENEW_SESSION_MAX_DURATION_REACHED round={round} — 서명된 Lease 의 작업 누적 상한에 닿았다 · 서명된 거부와 같게 멈춘다"
+                            );
+                        }
                         if signed_refusal {
                             panel.renew_refused(&attempt_id, SystemClock.now_unix_ms());
                         } else {
@@ -3210,6 +3219,19 @@ fn validate_revoke_notice(
 
 fn lease_is_expired(lease: &pb::Lease, now_unix_ms: u64) -> bool {
     lease.expires_at_unix_ms <= now_unix_ms
+}
+
+/// ★ 2026-10-01 (검수 an2) — 서명된 Lease 의 **작업 누적 상한**(발급 시각 + `max_total_duration_seconds`)에 닿았는가. 순수 함수다.
+///
+/// RENEW 세션은 연장을 누적 상한까지로 자른다(signing.md §6.7). 그러면 마지막 Lease 의 만료가 누적 상한과 같아져, 그 뒤 갱신은 Coordinator 의
+/// 서명된 MAX_DURATION_EXCEEDED 에 닿기 전에 Agent 가 스스로 LOCAL_EXPIRED 로 멈춘다. 그 로컬 만료를 끊김으로 다루면 소유자가 "계속" 을
+/// 골라 둔 작업이 누적 상한을 넘겨 돈다. 그래서 이 판정이 참이면 **서명된 거부와 같게** 다룬다(`renew_refused` — "계속" 도 무시하고 멈춘다).
+/// 상한 0 은 "없음" 이 아니라 규범상 곧바로 초과다(`lease_store::is_max_duration_exceeded` 와 같은 경계 `>=`).
+fn lease_reached_max_total_duration(lease: &pb::Lease, now_unix_ms: u64) -> bool {
+    let end = lease
+        .issued_at_unix_ms
+        .saturating_add(u64::from(lease.max_total_duration_seconds).saturating_mul(1_000));
+    now_unix_ms >= end
 }
 
 /// `ExecutionGrant.lease` 에 실린 `Lease` 를 독립적으로 검증하고
@@ -5582,6 +5604,21 @@ mod tests {
         let lone =
             parse_flags(&["--container-gpu-request".to_string(), "cdi".to_string()]).unwrap();
         assert!(parse_container_runtime(&lone).is_err());
+    }
+
+    #[test]
+    fn a_local_expiry_at_the_signed_max_total_end_counts_as_max_duration_reached() {
+        let lease = pb::Lease {
+            issued_at_unix_ms: 1_000_000,
+            max_total_duration_seconds: 10,
+            ..Default::default()
+        };
+        assert!(!super::lease_reached_max_total_duration(&lease, 1_009_999));
+        assert!(
+            super::lease_reached_max_total_duration(&lease, 1_010_000),
+            "경계는 닿으면 초과다(>=)"
+        );
+        assert!(super::lease_reached_max_total_duration(&lease, 2_000_000));
     }
 
     #[test]

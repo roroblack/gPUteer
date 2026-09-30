@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-01 01:26 — 미리 알린 끊김 검수 an2 반영: 누적 상한에 닿은 로컬 만료는 서명된 거부와 같게(브랜치 fork-merge)
+
+- 계획: `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`(직전 항목의 후속)
+- 스트림: Agent
+- 수행: 코덱스 an2(gpt-6-sol, CHANGES_REQUESTED) — an1 세 지적은 닫혔다고 판정. 새 지적: 연장을 누적 상한까지로 자르면 마지막 Lease 만료가 그 끝과 같아져,
+  다음 갱신은 서명된 MAX_DURATION_EXCEEDED 에 닿기 전에 Agent 가 LOCAL_EXPIRED 로 멈춘다 — 끊김으로 다뤄 소유자가 "계속" 을 고른 작업이 누적 상한을 넘겨 돌았다.
+  → `lease_reached_max_total_duration`(서명된 Lease 의 발급 시각 + max_total_duration_seconds, 경계 `>=`)이 참이면 LOCAL_EXPIRED 를 서명된 거부와 같게
+  (`renew_refused` — "계속" 도 무시하고 멈춤) · `RENEW_SESSION_MAX_DURATION_REACHED` 기록
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1525 passed · 0 failed · ignored 4. 실제 프로세스 시험(누적 상한 10초 · PURE · 계속 돌리기 →
+  10초 무렵 멈춤) — 판정을 빼면 실패함을 확인 뒤 원복 · 단위 시험(경계). 바꾼 줄 새 clippy 경고 0
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-10-01 01:09 — 미리 알린 끊김 검수 an1 반영: 누적 상한까지로 자르기 · FRESH 연결 안의 갱신은 알림 거부 · 제안서 검토 · 승인 기록(브랜치 fork-merge)
 
 - 계획: `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`(직전 항목의 후속)

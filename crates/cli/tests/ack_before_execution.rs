@@ -1478,3 +1478,67 @@ fn an_announcement_without_an_operator_cap_does_not_extend_the_lease() {
         "연장을 받지 않았는데 끊김 시한에 멈추지 않았다\n{all}"
     );
 }
+
+/// ★ 검수 an2 — RENEW 세션이 연장을 작업 누적 상한(10초)까지로 자르면 마지막 Lease 만료가 그 끝과 같아진다. 그때 Agent 가 스스로 본 만료는
+///   서명된 거부(MAX_DURATION_EXCEEDED)와 같게 다뤄야 한다 — 소유자가 "계속 돌리기" 를 골라 둔 PURE 작업도 누적 상한에 멈춘다.
+#[test]
+fn keep_running_does_not_outlive_the_signed_max_total_duration() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_manifest(dir.path(), 31, &["--side-effect-class", "PURE"]);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--renew-extension-ms",
+            "8000",
+            "--max-total-duration-seconds",
+            "10",
+            "--max-connections",
+            "40",
+            "--accept-timeout-ms",
+            "20000",
+        ],
+    );
+    let (agent, rx) = spawn_agent_tapped(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let (port, token, listing) = panel_listing(&rx);
+    let attempt = listing["workloads"][0]["attempt_id"]
+        .as_str()
+        .expect("attempt_id")
+        .to_string();
+    let chosen = owner_http(port, "POST", "/api/keep-running", Some(&token), &attempt);
+    assert!(
+        chosen.contains("KEEP_RUNNING attempt_id="),
+        "계속 돌리기가 안 됐다: {chosen}"
+    );
+    drop(rx);
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(25));
+    let all = both(&agent, &coordinator);
+
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    let (_, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (_, stopped_at) = agent
+        .first("DISCONNECT_SELF_STOP attempt_id=")
+        .unwrap_or_else(|| panic!("계속 돌리기를 고른 작업이 누적 상한을 넘겨 돌았다\n{all}"));
+    assert!(
+        stopped_at.duration_since(spawned_at) < Duration::from_secs(16),
+        "누적 상한(10초) 무렵 멈추지 않았다\n{all}"
+    );
+}
