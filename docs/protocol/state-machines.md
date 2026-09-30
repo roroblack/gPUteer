@@ -286,7 +286,7 @@ RUNNING | FAILED | OUTPUT_FINALIZATION_FAILED | exit code 0 AND 필요한 산출
 RUNNING | FAILED | EXITED_WITHOUT_CODE | 정지는 관측했지만 종료 코드가 없다 — 신호 종료 · 코드 조회 실패 · 기동이 실패로 답한 뒤 정지를 확인함(돌았을 수 있다). 그리고 "불명 조건" 이 성립하지 않는다 — 특히 종결되지 않은 기동 요청이 없다(무응답 start 가 남았으면 한 번의 정지 조회로 여기 오지 않는다) | 로그 보존, 산출물은 확정 규칙대로, Job 은 "돌았다" 로 본다 | COMMITTED
 RUNNING | RUN_UNKNOWN | EXIT_UNOBSERVED | Agent 가 보고했다 — 이 시도에 "불명 조건"(§3 RUN_UNKNOWN 의 의미 (a)(b)(c))이 성립한다(wait 실패 · 정지 요청 뒤 정지 미확인 · 실행기 무응답 등) | 재배치 판단에 불명을 반영(단계 2) | COMMITTED
 RUNNING | PAUSED | PAUSE_REQUESTED | - | checkpoint 생성 | DURABLE
-RUNNING | STALE | LEASE_EXPIRED | lease 만료 AND Coordinator 도달 불가 | side_effect_class 에 따라 계속 또는 정지 | LOCAL
+RUNNING | STALE | LEASE_EXPIRED | lease 만료 AND Coordinator 도달 불가 | 신뢰망: 워크로드는 이미 정지돼 있어야 한다 — Agent 가 끊김 시한(lease 만료 − 여유) 전에 체크포인트 뒤 정지(아래 "STALE 의 의미" · 2026-09-30 사용자 승인). 공개 풀: side_effect_class 에 따라 계속 또는 정지 | LOCAL
 PAUSED | RUNNING | RESUME_REQUESTED | 새 lease 발급 | - | COMMITTED
 PAUSED | CANCELLED | JOB_CANCELLED | - | - | COMMITTED
 PAUSED | RUN_UNKNOWN | PAUSE_STOP_UNCONFIRMED | Agent 가 보고했다 — 정지(일시정지) 요청 뒤 정지를 확인하지 못했다 | 재배치 판단에 불명을 반영 | COMMITTED
@@ -298,14 +298,23 @@ COMPLETED | RECONCILING | DUPLICATE_DETECTED | 같은 Job의 다른 attempt도 �
 RECONCILING | CANONICAL | SELECTED | §20.3 순위 1위 | Job canonical_attempt_id 갱신 | COMMITTED
 RECONCILING | SUPERSEDED | NOT_SELECTED | - | artifact 는 보존, canonical 아님 | COMMITTED
 RECONCILING | FAILED | VALIDITY_FILTER_REJECTED | 해시 불일치 또는 revoke 된 device 제출 | risk signal 발화 | COMMITTED
-RUN_UNKNOWN | FAILED | STOP_CONFIRMED | 노드 소유자가 정지 또는 부재를 확인하고 명시적으로 해제했다는 보고 | 산출물을 확정하지 않는다, 종료는 관측 못 함으로 남긴다 | COMMITTED
+RUN_UNKNOWN | FAILED | STOP_CONFIRMED | 정지 또는 부재를 확인했다는 서명된 보고 — Agent 가 기계 증거(정지 · 부재 확인)로 자동으로 내거나(2026-09-30 사용자 승인), 증거를 얻지 못하면 노드 소유자가 확인하고 명시적으로 해제 | 산출물을 확정하지 않는다, 종료는 관측 못 함으로 남긴다 | COMMITTED
 ```
 
 ### STALE 의 의미
 
 ```text
 STALE 은 "죽었다"가 아니라 "lease 를 잃었고 Coordinator 와 통신이 안 된다"이다.
-워크로드는 side_effect_class 에 따라 계속 돌 수 있다 (계획서 §5.4.1).
+
+★ 2026-09-30 사용자 승인 — **신뢰망에서는 끊긴 채 시한이 지나면 모든 작업을 멈춘다**(아래 공개 풀 규칙을 신뢰망에 쓰지 않는다).
+  근거 · 공식 · 코덱스 합의: docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md
+    끊김 시한   H = lease 만료(마지막 갱신 요청을 보낸 시각부터 노드 단조 시계로) − 여유(체크포인트 p95 + 정지 지연 + 시계 오차 + 갱신 지연, 최소 10초)
+               H 전에 체크포인트 신호 → 정지. 세 겹(Agent 타이머 · 커널 시한 · 런타임 밖 정지). Coordinator grace ≥ 여유 + 정지 확인 지연
+    예외       노드가 끊기기 전에 "N 시각까지 연락 못 함" 을 알려 **서명된 연장 Lease** 를 받았으면 그 Lease 안에서는 계속 돈다
+    소유자     끊김은 소유자 화면(Owner Panel)에 표시하고, 소유자는 언제든 그 작업을 멈출 수 있다(§0.1 — 네트워크 없이도)
+  왜: 계속 돌면 Coordinator 가 lease 만료 + grace 뒤 재배치한 새 시도와 **두 벌**이 되고 소유자 GPU 를 붙잡는다. 끊긴 동안의 결과는 체크포인트로 이어 간다.
+
+공개 풀(기준선 §5.4.1 그대로): 워크로드는 side_effect_class 에 따라 계속 돌 수 있다.
 
   PURE            계속 실행. 결과는 나중에 attempt artifact 로 제출
   IDEMPOTENT      계속 실행. 외부 쓰기에 operation_id 사용
