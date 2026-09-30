@@ -243,8 +243,11 @@ pub struct WorkloadStopper {
     /// ★ 2026-09-30 — 일시정지 상태(`PauseState` 를 u8 로). 확인된 뒤에만 Running ↔ Paused 로 바뀌고, 적용됐을 수 있는데 확인하지 못하면
     ///   Unknown 이다(검수 pz1).
     pause_state: std::sync::atomic::AtomicU8,
-    /// pause · resume 끼리만 차례로 돈다. ★ `stop()` 은 이것을 **기다리지 않는다** — 걸린 pause 명령 때문에 정지가 늦어지면 안 된다(검수 pz1).
+    /// pause · resume 을 차례로 돌린다. 컨테이너 `stop()` 도 이것을 잡는다 — 도는 중인 pause 가 kill 뒤에 적용되면 도커가 kill 을 거부하기 때문이다
+    ///   (검수 pz2). 기다림은 도는 중인 명령 하나 — pause · unpause 와 확인 조회의 시한(각 5초)으로 최대 10초다.
     pause_ops: std::sync::Mutex<()>,
+    /// ★ 정지가 시작됐다 — 그 뒤로 새 pause · resume 을 받지 않는다(정지를 다시 기다리게 하지 않는다).
+    stop_requested: std::sync::atomic::AtomicBool,
 }
 
 /// ★ 2026-09-30 — 일시정지 상태. 화면 · 정지가 본다.
@@ -290,6 +293,7 @@ impl WorkloadStopper {
             container: None,
             pause_state: Default::default(),
             pause_ops: Default::default(),
+            stop_requested: Default::default(),
         }
     }
 
@@ -302,6 +306,7 @@ impl WorkloadStopper {
             container: Some(stopper),
             pause_state: Default::default(),
             pause_ops: Default::default(),
+            stop_requested: Default::default(),
         }
     }
 
@@ -322,7 +327,12 @@ impl WorkloadStopper {
             //   kill 까지 아주 잠깐 다시 돈다. 풀지 못해도 kill 은 시도하고, 실패하면 두 사유를 함께 알린다. cgroup(리눅스 호스트)은 얼린 채로
             //   cgroup.kill 이 된다.
             //   ★ 검수 pz1 — 얼렸거나 **얼었는지 모르면**(확인 실패) 먼저 푼다. 전에는 확인된 경우만 풀어, 적용됐지만 확인 못 한 pause 뒤의 정지가
-            //     도커에 거부됐다. 걸린 pause · resume 을 기다리지 않는다(`pause_ops` 를 잡지 않는다).
+            //     도커에 거부됐다.
+            //   ★ 검수 pz2 — 도는 중인 pause 가 있으면 끝날 때까지 기다린다(최대 10초). 기다리지 않으면 상태가 아직 Running 이라 풀지 않고 kill 하고,
+            //     그 사이 pause 가 적용돼 도커가 kill 을 거부했다. 새 pause · resume 은 `stop_requested` 로 막는다.
+            self.stop_requested
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ops = self.pause_ops.lock().unwrap_or_else(|e| e.into_inner());
             let thaw_note = if self.pause_state() != PauseState::Running {
                 match container.resume() {
                     Ok(()) => {
@@ -406,6 +416,12 @@ impl WorkloadStopper {
     pub fn pause(&self) -> Result<(), String> {
         self.pause_support()?;
         let _ops = self.pause_ops.lock().unwrap_or_else(|e| e.into_inner());
+        if self
+            .stop_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("멈추는 중이라 얼리지 않는다".into());
+        }
         if self.pause_state() == PauseState::Paused {
             return Ok(());
         }
@@ -415,6 +431,12 @@ impl WorkloadStopper {
     /// 푼다. 풀기가 **확인된** 뒤에만 성공이다. 돌고 있으면 그대로 성공. "모름" 이면 풀기를 다시 보낸다.
     pub fn resume(&self) -> Result<(), String> {
         let _ops = self.pause_ops.lock().unwrap_or_else(|e| e.into_inner());
+        if self
+            .stop_requested
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("멈추는 중이라 다시 시작하지 않는다".into());
+        }
         if self.pause_state() == PauseState::Running {
             return Ok(());
         }
@@ -969,6 +991,7 @@ mod platform {
             container: None,
             pause_state: Default::default(),
             pause_ops: Default::default(),
+            stop_requested: Default::default(),
         });
 
         // 이제서야 돌린다. 소유자는 첫 명령이 실행되기 전부터 이 작업을
@@ -1319,6 +1342,7 @@ mod platform {
             container: None,
             pause_state: Default::default(),
             pause_ops: Default::default(),
+            stop_requested: Default::default(),
         });
 
         // ★ 결함 144 (검수 68) — 전에는 `memory_limit_bytes().unwrap_or(정책)` 이라 읽기 · 해석 실패 사유가 사라졌다. 원문을 받아 사유를 남긴다.

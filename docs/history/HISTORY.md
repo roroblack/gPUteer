@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-09-30 22:20 — 일시정지 검수 pz2 반영: 도는 중인 pause 와 정지의 경쟁 · 풀기 명령 사이의 시한(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ②(직전 항목의 후속)
+- 스트림: Agent · Owner Panel
+- 수행: 코덱스 재검수 pz2(gpt-6-sol, CHANGES_REQUESTED) 두 지적. ① pause 명령이 도는 중에 정지가 오면 상태가 아직 Running 이라 풀지 않고 kill 했고, 그 사이
+  적용된 pause 때문에 도커가 kill 을 거부했다 → 컨테이너 정지는 `pause_ops` 를 잡아 도는 명령이 끝나기를 기다린다(최대 10초) · `stop_requested` 뒤 새 pause · resume 거부.
+  ② 풀기 명령이 도는 사이 시한이 지나고 소유자가 "계속" 을 골라 둔 작업은 감시가 멈추지 않아 새 Lease 없이 돌 수 있었다 → 푼 **직후** 한 번 더 판정해
+  깨졌으면 다시 얼리고, 못 얼리면 멈춘다(끊김 정지로 적음). 남는 창은 풀기 명령이 도는 몇 초
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1515 passed · 0 failed · ignored 4. 새 가짜 런타임 시험(pause 가 적용된 뒤 1초 늦게
+  답하는 사이 정지 → 기다린 뒤 unpause · kill) — 기다림을 빼면 실패함을 확인 뒤 원복. 단위 시험에 푼 직후 판정 추가. 비-root 리눅스 서버 agent · runtime-linux
+  245 passed(`cgroup_freeze.rs` 는 여전히 ENVIRONMENT-BLOCKED). 바꾼 줄의 새 clippy 경고 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-30 21:43 — 일시정지 검수 pz1 반영: 확인 실패는 "모름" · 감시 없는 작업은 거부 · 풀기 직전 재판정 · 정지가 일시정지를 기다리지 않음(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ②(직전 항목의 후속)

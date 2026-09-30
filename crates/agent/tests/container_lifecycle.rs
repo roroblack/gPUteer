@@ -62,6 +62,10 @@ fn main() {
             an_applied_but_unconfirmed_pause_is_unknown_and_thawed_before_the_stop,
         ),
         (
+            "a_stop_during_an_in_flight_pause_waits_then_thaws_and_kills",
+            a_stop_during_an_in_flight_pause_waits_then_thaws_and_kills,
+        ),
+        (
             "stopping_an_already_finished_container_is_not_reported_as_a_stop",
             stopping_an_already_finished_container_is_not_reported_as_a_stop,
         ),
@@ -486,6 +490,11 @@ fn fake_runtime(state: &Path) -> i32 {
                 return 1;
             }
             std::fs::write(state.join("paused"), "").unwrap();
+            // "pause-slow" — 곧바로 얼리지만 1초 뒤에야 답한다(적용은 됐고 확인 전 · 검수 pz2 — 그 사이에 정지가 들어온다).
+            if fails("pause-slow") {
+                std::fs::write(state.join("pause-applied"), "").unwrap();
+                std::thread::sleep(Duration::from_secs(1));
+            }
             0
         }
         "unpause" => {
@@ -881,6 +890,55 @@ fn an_applied_but_unconfirmed_pause_is_unknown_and_thawed_before_the_stop() {
         order,
         ["pause", "unpause", "kill"],
         "상태를 모르는 채 풀지 않고 kill 했다:\n{calls}"
+    );
+}
+
+/// ★ 검수 pz2 — pause 명령이 도는 중에 정지가 들어오면, 정지는 그 pause 가 끝나기를 기다린 뒤 풀고 kill 한다. 기다리지 않으면 상태가 아직
+///   "돈다" 라 풀지 않고 kill 하고, 이미 적용된 pause 때문에 도커가 kill 을 거부한다.
+fn a_stop_during_an_in_flight_pause_waits_then_thaws_and_kills() {
+    let f = fixture(Some("pause-slow"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            gputeer_agent::exec::execute_with_control(
+                &spec("sleep"),
+                policy(&work, ContainerDecision::Container(execution())),
+                move |stopper| tx.send(stopper).unwrap(),
+            )
+        })
+    };
+    let stopper = std::sync::Arc::new(rx.recv_timeout(Duration::from_secs(20)).expect("손잡이"));
+    let pausing = {
+        let stopper = std::sync::Arc::clone(&stopper);
+        std::thread::spawn(move || stopper.pause())
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f.state.join("pause-applied").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "pause 가 적용되지 않았다 — 전제가 깨졌다"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stopper.stop().expect("도는 중인 pause 뒤의 정지");
+    pausing.join().unwrap().expect("pause 자체는 성공");
+    let exit = runner.join().unwrap().expect("정지 뒤 종료 관측");
+    assert_eq!(exit.exit.code(), Some(137));
+    let calls = calls(&f.state);
+    let order: Vec<&str> = calls
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|c| matches!(*c, "pause" | "unpause" | "kill"))
+        .collect();
+    assert_eq!(
+        order,
+        ["pause", "unpause", "kill"],
+        "도는 중인 pause 를 기다리지 않고 kill 했다:\n{calls}"
+    );
+    assert!(
+        stopper.pause().is_err(),
+        "정지가 시작된 뒤에 새 일시정지를 받았다"
     );
 }
 

@@ -421,13 +421,35 @@ impl OwnerPanelState {
 
     /// 얼린 작업을 푼다 — **새 Lease 없이 재개하지 않는다**(합의 판단표). 끊김 감시가 있고, 지금 연결이 살아 있고(마지막 갱신 성공)
     ///   끊김 시한 전이며 거부 · 스스로 멈춤이 없을 때만 푼다. 끊긴 채 풀면 다른 노드로 넘어갔을 수 있는 작업이 다시 돈다.
-    ///   ★ 검수 pz1 — 끊김 감시가 없으면 거부한다(Lease 를 확인할 길이 없다). 판정은 **풀기 직전에 새 시각으로 한 번 더** 한다. 그 뒤(풀기 명령이
-    ///     도는 사이)에 거부 · 시한이 오면 끊김 감시 스레드가 50ms 안에 멈춘다(`self_stop_if_due` — 소유자 "계속" 도 거부는 못 넘는다).
+    ///   ★ 검수 pz1 — 끊김 감시가 없으면 거부한다(Lease 를 확인할 길이 없다). 판정은 **풀기 직전에 새 시각으로 한 번 더** 한다.
+    ///   ★ 검수 pz2 — 그리고 **푼 직후에 또 한 번** 본다. 풀기 명령이 도는 사이(최대 10초) 시한이 지나면, 소유자가 "계속" 을 골라 둔 작업은 감시
+    ///     스레드가 멈추지 않는다 — 새 Lease 없이 도는 것이다. 그러면 다시 얼리고, 얼리지 못하면 멈춘다(끊김 정지로 적는다). 남는 창은 풀기
+    ///     명령이 도는 그 몇 초다.
     pub fn resume(&self, attempt_id: &str, clock: impl Fn() -> u64) -> Result<(), String> {
         self.resume_allowed(attempt_id, clock())?;
         let stopper = self.stopper_of(attempt_id)?;
         self.resume_allowed(attempt_id, clock())?;
-        stopper.resume()
+        stopper.resume()?;
+        let Err(why) = self.resume_allowed(attempt_id, clock()) else {
+            return Ok(());
+        };
+        match stopper.pause() {
+            Ok(()) => Err(format!("다시 시작하는 사이 조건이 깨져 다시 얼렸다 — {why}")),
+            Err(freeze) => match stopper.stop() {
+                Ok(()) => {
+                    match self.disconnect_stopped.lock() {
+                        Ok(mut stopped) => stopped.insert(attempt_id.to_string()),
+                        Err(poisoned) => poisoned.into_inner().insert(attempt_id.to_string()),
+                    };
+                    Err(format!(
+                        "다시 시작하는 사이 조건이 깨졌는데 다시 얼리지 못해 멈췄다({freeze}) — {why}"
+                    ))
+                }
+                Err(stop) => Err(format!(
+                    "다시 시작하는 사이 조건이 깨졌는데 다시 얼리지도 멈추지도 못했다(얼리기: {freeze} · 멈추기: {stop}) — {why}"
+                )),
+            },
+        }
     }
 
     fn resume_allowed(&self, attempt_id: &str, now_unix_ms: u64) -> Result<(), String> {
@@ -1201,6 +1223,25 @@ mod tests {
         state.renew_succeeded("a", 10_000, 6_000);
         assert!(state.resume("a", || 5_000).is_ok());
         assert!(state.resume("a", || 10_000).is_err());
+        // ★ 검수 pz2 — 두 판정은 통과했는데 푼 **직후** 판정이 시한 뒤면 되돌린다(다시 얼리기 → 시험용 손잡이는 못 얼리므로 멈추기 → 그것도 실패).
+        //   되돌리려 한 것 자체가 사후 판정이 있다는 증거다.
+        let ticks = std::cell::Cell::new(0u64);
+        let clock = || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() <= 2 {
+                5_000
+            } else {
+                10_000
+            }
+        };
+        let after = state
+            .resume("a", clock)
+            .expect_err("푼 직후 조건이 깨졌는데 그대로 뒀다");
+        assert!(
+            after.contains("다시 시작하는 사이 조건이 깨졌는데"),
+            "{after}"
+        );
+        assert_eq!(ticks.get(), 3, "푼 직후 판정을 하지 않았다");
         // ★ 검수 pz1 — 첫 판정은 시한 전이어도 풀기 **직전** 재판정이 시한 뒤면 거부(두 번째 시각을 본다)
         let ticks = std::cell::Cell::new(0u64);
         let clock = || {
