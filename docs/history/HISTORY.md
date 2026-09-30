@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-09-30 21:17 — 소유자 "일시정지" · "다시 시작"(검증된 수단에서만 · 새 Lease 없이 재개 안 함)(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표의 소유자 선택 ② 일시정지
+- 스트림: Agent · Owner Panel · runtime-linux
+- 수행: `WorkloadStopper::pause_support/pause/resume/is_paused`. 컨테이너는 `pause`/`unpause` 뒤 `{{.State.Paused}}` 로, 리눅스 호스트는
+  `cgroup.freeze` 뒤 `cgroup.events` 로 **확인한 뒤에만** 성공(`CgroupStopper::freeze/thaw` · `CgroupError::FreezeFailed`). 윈도 호스트 실행은
+  확인된 수단이 없어 이유와 함께 거부(화면 버튼 비활성). 얼린 컨테이너를 멈출 때는 먼저 푼다(도커는 얼린 컨테이너의 kill 을 거부). Owner Panel —
+  `POST /api/pause` · `/api/resume`(토큰 · 409), 목록 JSON `paused` · `pause_supported` · `pause_unsupported_reason`, 화면 버튼과 "GPU 메모리는 그대로" 표시.
+  다시 시작은 끊김 감시가 있으면 연결 정상 · 시한 전 · 거부/멈춤 없음일 때만. 끊겼을 때 **자동** 일시정지는 넣지 않았다 — Grant 에 grace 가 없어
+  끊김 시한 = 정지 시한이라 얼려 둘 시간이 0 이다(판단표 ⑥ 의 보관 상한 H = S).
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1513 passed · 0 failed · ignored 4. 가짜 런타임 시험 2(확인된 pause/unpause ·
+  얼린 채 정지는 풀고 kill · pause 가 0 이어도 안 얼면 실패) — "먼저 풀기" 를 빼는 뮤테이션에서 첫 시험 실패 확인 뒤 원복. 비-root 리눅스 서버:
+  `gputeer-agent` · `gputeer-runtime-linux` 시험 전부 통과, 새 `cgroup_freeze.rs` 는 **ENVIRONMENT-BLOCKED**(root 아님 — 제품이 기동을 거부함은 확인).
+  제품이 기대는 커널 동작은 위임 cgroup 에서 따로 실측 — 얼리기 확인 1~2ms · 얼린 1초 동안 카운터 불변 · 풀면 재개(5회) · 얼린 채 cgroup.kill 2ms
+  (`docs/evidence/_raw/cgroup_freezer_비root_리눅스_실측_2026-09-30.txt`). ★ root 제품 경로 · 실제 docker/podman pause · GPU 커널이 얼 때 곧바로 멈추는가는 재지 않았다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-30 15:05 — 끊김 스스로 멈춤 검수 ss1 반영: 감시를 갱신과 따로 · "계속" 과 자동 정지의 경쟁 제거(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 의 E1 첫 겹(직전 항목의 후속)

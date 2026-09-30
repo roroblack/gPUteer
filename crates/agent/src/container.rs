@@ -852,6 +852,62 @@ pub struct ContainerStopper {
 }
 
 impl ContainerStopper {
+    /// ★ 2026-09-30 (소유자 "일시정지") — `pause` 를 보내고 `inspect {{.State.Paused}}` 가 `true` 인 것을 **확인한 뒤에만** 성공이다.
+    ///   응답만 믿지 않는다(결함 506 과 같은 규칙 — 접수는 적용이 아니다). 컨테이너 안의 프로세스 트리 전체가 얼어붙는다(cgroup freezer).
+    pub fn pause(&self) -> Result<(), String> {
+        self.set_paused(true)
+    }
+
+    /// 얼린 컨테이너를 푼다 — `unpause` 뒤 `{{.State.Paused}}` 가 `false` 인 것을 확인한다.
+    pub fn resume(&self) -> Result<(), String> {
+        self.set_paused(false)
+    }
+
+    fn set_paused(&self, paused: bool) -> Result<(), String> {
+        let verb = if paused { "pause" } else { "unpause" };
+        let note = match run_cli_detailed(
+            &self.program,
+            &[verb.into(), self.name.clone().into()],
+            CONFIRM_TIMEOUT,
+        ) {
+            Err(CliFailure::NotSpawned(why)) => {
+                return Err(format!(
+                    "CONTAINER_{}_NOT_SENT: {verb} 를 띄우지 못했다 — {why}",
+                    verb.to_uppercase()
+                ))
+            }
+            Err(CliFailure::AfterSpawn(why)) => format!("{verb} 응답을 받지 못했다({why})"),
+            Ok(output) if output.status.success() => format!("{verb} 접수"),
+            Ok(output) => format!(
+                "{verb} 실패 응답({}): {}",
+                output.status,
+                output.stderr.trim()
+            ),
+        };
+        let want = if paused { "true" } else { "false" };
+        match run_cli_detailed(
+            &self.program,
+            &[
+                "inspect".into(),
+                "--format={{.State.Paused}}".into(),
+                self.name.clone().into(),
+            ],
+            CONFIRM_TIMEOUT,
+        ) {
+            Ok(output) if output.status.success() && output.stdout.trim() == want => Ok(()),
+            Ok(output) => Err(format!(
+                "CONTAINER_{}_UNCONFIRMED: State.Paused 가 {want} 가 아니다(stdout={:?} stderr={:?}) — {note}",
+                verb.to_uppercase(),
+                output.stdout.trim(),
+                output.stderr.trim()
+            )),
+            Err(CliFailure::NotSpawned(why)) | Err(CliFailure::AfterSpawn(why)) => Err(format!(
+                "CONTAINER_{}_UNCONFIRMED: 상태를 확인하지 못했다({why}) — {note}",
+                verb.to_uppercase()
+            )),
+        }
+    }
+
     /// 컨테이너를 즉시 끝낸다(SIGKILL). 컨테이너 안의 프로세스 트리 전체가 같이 끝난다.
     ///
     /// ★ 결함 277 — kill 이 실패했는데 이미 끝나 있으면 **실패**(`ALREADY_EXITED`)다. 전에는 성공으로 바꿔, 스스로 코드 0 으로

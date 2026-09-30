@@ -105,6 +105,22 @@
       button.textContent = "지금 비우기";
       button.onclick = () => stop(it);
       action.appendChild(button);
+      // ★ 2026-09-30 — 일시정지 · 다시 시작(검증된 수단에서만 · GPU 메모리는 쥔 채). 수단이 없으면 버튼을 끄고 이유를 보인다.
+      const pauseButton = document.createElement("button");
+      if (it.paused) {
+        pauseButton.textContent = "다시 시작";
+        pauseButton.title = "중개 서버와 연결돼 있고 끊김 시한 전일 때만 다시 시작한다";
+        pauseButton.onclick = () => pauseOrResume(it, "/api/resume");
+        conn.textContent = "일시정지 중(GPU 메모리는 그대로 쥐고 있다) · " + conn.textContent;
+      } else {
+        pauseButton.textContent = "일시정지";
+        pauseButton.disabled = !it.pause_supported;
+        pauseButton.title = it.pause_supported
+          ? "작업을 얼린다 — 계산은 멈추지만 GPU 메모리는 비우지 않는다"
+          : it.pause_unsupported_reason;
+        pauseButton.onclick = () => pauseOrResume(it, "/api/pause");
+      }
+      action.appendChild(pauseButton);
       if (c && c.disconnected && !c.refused && !c.self_stopped && !c.keep_running) {
         const keep = document.createElement("button");
         keep.textContent = "계속 돌리기";
@@ -162,6 +178,24 @@
       document.getElementById("error").textContent = "";
     } catch (e) {
       document.getElementById("error").textContent = "계속 돌리기를 고르지 못했다: " + String(e);
+    }
+    refresh();
+  }
+
+  async function pauseOrResume(item, path) {
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "x-gputeer-owner-token": token },
+        body: item.attempt_id,
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text);
+      document.getElementById("error").textContent = "";
+    } catch (e) {
+      // 못 얼렸는데 얼린 줄 알고 자리를 비우면 안 된다 — 실패를 그대로 보인다.
+      document.getElementById("error").textContent =
+        (path === "/api/pause" ? "일시정지하지 못했다: " : "다시 시작하지 못했다: ") + String(e);
     }
     refresh();
   }

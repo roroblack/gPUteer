@@ -240,6 +240,8 @@ pub struct WorkloadStopper {
     inner: Option<gputeer_runtime_linux::CgroupStopper>,
     /// ★ 2026-09-25 — 컨테이너로 돈 작업의 손잡이. 있으면 이것으로 멈춘다(`inner` 는 비어 있다).
     container: Option<crate::container::ContainerStopper>,
+    /// ★ 2026-09-30 — 소유자가 일시정지했다(얼리기가 **확인된** 뒤에만 true · 풀기가 확인되면 false).
+    paused: std::sync::atomic::AtomicBool,
 }
 
 impl WorkloadStopper {
@@ -255,6 +257,7 @@ impl WorkloadStopper {
             #[cfg(target_os = "linux")]
             inner: Some(gputeer_runtime_linux::CgroupStopper::inert_for_test()),
             container: None,
+            paused: Default::default(),
         }
     }
 
@@ -265,6 +268,7 @@ impl WorkloadStopper {
             #[cfg(target_os = "linux")]
             inner: None,
             container: Some(stopper),
+            paused: Default::default(),
         }
     }
 
@@ -281,9 +285,29 @@ impl WorkloadStopper {
     ///   — 속성·문서는 **바로 아래 항목**에 붙는다.
     pub fn stop(&self) -> Result<(), ExecutionError> {
         if let Some(container) = self.container.as_ref() {
+            // ★ 2026-09-30 — 일시정지한 컨테이너는 kill 이 거부될 수 있다(docker 의 "container is paused"). 먼저 풀고 끝낸다 — 푸는 순간부터
+            //   kill 까지 아주 잠깐 다시 돈다. 풀지 못해도 kill 은 시도하고, 실패하면 두 사유를 함께 알린다. cgroup(리눅스 호스트)은 얼린 채로
+            //   cgroup.kill 이 된다.
+            let thaw_note = if self.is_paused() {
+                match container.resume() {
+                    Ok(()) => {
+                        self.paused
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                        None
+                    }
+                    Err(why) => Some(why),
+                }
+            } else {
+                None
+            };
             return container
                 .stop()
-                .map_err(|detail| ExecutionError::StopFailed { detail });
+                .map_err(|detail| ExecutionError::StopFailed {
+                    detail: match thaw_note {
+                        Some(why) => format!("{detail} (일시정지를 먼저 풀지 못했다 — {why})"),
+                        None => detail,
+                    },
+                });
         }
         #[cfg(windows)]
         {
@@ -319,6 +343,85 @@ impl WorkloadStopper {
             Err(ExecutionError::UnsupportedPlatform {
                 detail: "이 플랫폼에서는 작업을 실행하지 않으므로 멈출 대상도 없다".into(),
             })
+        }
+    }
+
+    /// ★ 2026-09-30 (소유자 "일시정지" — 합의 판단표: **검증된 수단에서만**) — 이 작업을 얼릴 수 있는가. 못 하면 이유.
+    ///
+    /// ```text
+    /// 컨테이너(docker · podman)   된다 — pause/unpause(cgroup freezer) · 상태 조회로 확인
+    /// 리눅스 호스트(cgroup v2)     된다 — cgroup.freeze · cgroup.events 로 확인
+    /// 윈도 호스트(Job Object)      안 된다 — 프로세스 일시정지를 재지 않았다(합의 기록 "모르는 것")
+    /// ```
+    /// ★ 어느 쪽이든 GPU 메모리는 쥔 채로 있고, 이미 GPU 에 넘어간 커널이 곧바로 멈추는지는 재지 않았다.
+    pub fn pause_support(&self) -> Result<(), String> {
+        if self.container.is_some() {
+            return Ok(());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err("이 기계(윈도 호스트 실행)에는 확인된 일시정지 수단이 없다 — 프로세스 일시정지를 재지 않았다".into())
+        }
+    }
+
+    /// 얼린다. 얼리기가 **확인된** 뒤에만 성공이다. 이미 얼렸으면 그대로 성공.
+    pub fn pause(&self) -> Result<(), String> {
+        self.pause_support()?;
+        if self.is_paused() {
+            return Ok(());
+        }
+        self.set_frozen(true)?;
+        self.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// 푼다. 풀기가 **확인된** 뒤에만 성공이다. 얼리지 않았으면 그대로 성공.
+    pub fn resume(&self) -> Result<(), String> {
+        if !self.is_paused() {
+            return Ok(());
+        }
+        self.set_frozen(false)?;
+        self.paused
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// 지금 얼려 두었나.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn set_frozen(&self, frozen: bool) -> Result<(), String> {
+        if let Some(container) = self.container.as_ref() {
+            return if frozen {
+                container.pause()
+            } else {
+                container.resume()
+            };
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let cgroup = self
+                .inner
+                .as_ref()
+                .ok_or_else(|| "얼릴 손잡이가 없다".to_string())?;
+            let result = if frozen {
+                cgroup.freeze()
+            } else {
+                cgroup.thaw()
+            };
+            result.map_err(|error| error.to_string())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(format!(
+                "이 기계에는 확인된 일시정지 수단이 없다(요청: {})",
+                if frozen { "얼리기" } else { "풀기" }
+            ))
         }
     }
 }
@@ -786,6 +889,7 @@ mod platform {
         on_started(super::WorkloadStopper {
             inner: Some(stopper),
             container: None,
+            paused: Default::default(),
         });
 
         // 이제서야 돌린다. 소유자는 첫 명령이 실행되기 전부터 이 작업을
@@ -1134,6 +1238,7 @@ mod platform {
         on_started(super::WorkloadStopper {
             inner: Some(child.stopper()),
             container: None,
+            paused: Default::default(),
         });
 
         // ★ 결함 144 (검수 68) — 전에는 `memory_limit_bytes().unwrap_or(정책)` 이라 읽기 · 해석 실패 사유가 사라졌다. 원문을 받아 사유를 남긴다.

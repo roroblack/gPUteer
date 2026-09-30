@@ -1,0 +1,68 @@
+# cgroup v2 freezer 실측 — 2026-09-30 · 비-root 리눅스 서버(커널 7.0.0 · cgroup v2)
+#
+# 무엇을 쟀나: 제품(CgroupStopper::freeze/thaw/stop)이 기대는 커널 동작 — cgroup.freeze 쓰기 뒤 cgroup.events 의 frozen 확인,
+#   얼린 동안 트리가 진행하지 않는가, 풀면 다시 도는가, 얼린 채 cgroup.kill 이 트리를 끝내는가.
+# 어떻게: systemd-run --user -p Delegate=yes 로 받은 위임 cgroup 안에 work 하위 cgroup 을 만들고 20ms 마다 카운터를 쓰는 셸 루프를 넣었다.
+#   스크립트는 이 파일 끝에 있다. ★ 제품 코드를 돌린 것이 아니다 — 제품 경로는 root 가 필요해 이 서버에서는 ENVIRONMENT-BLOCKED
+#   (crates/runtime-linux/tests/cgroup_freeze.rs 가 그렇게 적고 제품의 기동 거부를 확인했다).
+# 표본: 얼리기/풀기 5회 · 얼린 채 kill 1회. 한 서버 · 한 커널.
+# 모르는 것: GPU 커널이 얼린 동안 곧바로 멈추는가(GPU 작업으로 재지 않았다) · 윈도 프로세스 일시정지 · root 제품 경로.
+
+self_cgroup=/sys/fs/cgroup/user.slice/user-<uid>.slice/user@<uid>.service/app.slice/run-u<n>.service
+round=1 freeze_confirm_ms=2 frozen_counter_before=25 after_1s=25 thaw_confirm_ms=1 after_thaw_0.5s=50
+round=2 freeze_confirm_ms=1 frozen_counter_before=50 after_1s=50 thaw_confirm_ms=2 after_thaw_0.5s=75
+round=3 freeze_confirm_ms=2 frozen_counter_before=75 after_1s=75 thaw_confirm_ms=1 after_thaw_0.5s=100
+round=4 freeze_confirm_ms=2 frozen_counter_before=100 after_1s=100 thaw_confirm_ms=2 after_thaw_0.5s=125
+round=5 freeze_confirm_ms=1 frozen_counter_before=125 after_1s=125 thaw_confirm_ms=1 after_thaw_0.5s=150
+KILL_WHILE_FROZEN=OK empty_after_ms=2
+loop_wait_status=137
+7.0.0-34-generic
+PROBE_DONE
+exit=0
+
+---- probe script ----
+#!/bin/sh
+# cgroup v2 freezer 실측 — 제품 코드가 아니라 제품이 기대는 커널 동작(cgroup.freeze · cgroup.events · 얼린 채 cgroup.kill)을 잰다.
+# 비-root: systemd --user 가 위임한 cgroup 안에서 돈다(systemd-run --user -p Delegate=yes).
+set -u
+D="$HOME/gputeer-freeze-probe"
+mkdir -p "$D"
+CG="/sys/fs/cgroup$(cut -d: -f3- /proc/self/cgroup)"
+echo "self_cgroup=$CG"
+mkdir "$CG/runner" "$CG/work" || { echo "PROBE_FAILED mkdir"; exit 2; }
+echo $$ > "$CG/runner/cgroup.procs" || { echo "PROBE_FAILED move-self"; exit 2; }
+sh -c 'i=0; while :; do i=$((i+1)); echo $i > "$0/counter"; sleep 0.02; done' "$D" &
+LOOP=$!
+echo $LOOP > "$CG/work/cgroup.procs" || { echo "PROBE_FAILED move-loop"; kill $LOOP; exit 2; }
+sleep 0.5
+now_ms() { date +%s%3N; }
+wait_events() { # $1 = 0|1, 반환: 걸린 ms
+  t0=$(now_ms)
+  while :; do
+    grep -qx "frozen $1" "$CG/work/cgroup.events" && { echo $(( $(now_ms) - t0 )); return 0; }
+    [ $(( $(now_ms) - t0 )) -gt 2000 ] && { echo TIMEOUT; return 1; }
+    sleep 0.01
+  done
+}
+for round in 1 2 3 4 5; do
+  echo 1 > "$CG/work/cgroup.freeze"
+  fz=$(wait_events 1)
+  a=$(cat "$D/counter"); sleep 1; b=$(cat "$D/counter")
+  echo 0 > "$CG/work/cgroup.freeze"
+  th=$(wait_events 0)
+  sleep 0.5; c=$(cat "$D/counter")
+  echo "round=$round freeze_confirm_ms=$fz frozen_counter_before=$a after_1s=$b thaw_confirm_ms=$th after_thaw_0.5s=$c"
+done
+echo 1 > "$CG/work/cgroup.freeze"; wait_events 1 >/dev/null
+echo 1 > "$CG/work/cgroup.kill"
+t0=$(now_ms)
+while [ -n "$(cat "$CG/work/cgroup.procs")" ]; do
+  [ $(( $(now_ms) - t0 )) -gt 5000 ] && { echo "KILL_WHILE_FROZEN=FAILED procs=$(cat "$CG/work/cgroup.procs")"; break; }
+  sleep 0.01
+done
+[ -z "$(cat "$CG/work/cgroup.procs")" ] && echo "KILL_WHILE_FROZEN=OK empty_after_ms=$(( $(now_ms) - t0 ))"
+wait $LOOP 2>/dev/null; echo "loop_wait_status=$?"
+uname -r
+rm -rf "$D"
+rmdir "$CG/work" 2>/dev/null
+echo PROBE_DONE

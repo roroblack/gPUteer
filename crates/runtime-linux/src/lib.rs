@@ -93,6 +93,8 @@ pub enum CgroupError {
     SpawnFailed { detail: String },
     /// 종료를 관측하지 못했다.
     WaitFailed { detail: String },
+    /// ★ 2026-09-30 — 얼리기 · 풀기(`cgroup.freeze`)가 되지 않았다(쓰기 실패 · 시한 안에 상태가 안 바뀜).
+    FreezeFailed { detail: String },
 }
 
 impl std::fmt::Display for CgroupError {
@@ -117,6 +119,7 @@ impl std::fmt::Display for CgroupError {
             ),
             Self::SpawnFailed { detail } => write!(f, "CGROUP_SPAWN_FAILED: {detail}"),
             Self::WaitFailed { detail } => write!(f, "CGROUP_WAIT_FAILED: {detail}"),
+            Self::FreezeFailed { detail } => write!(f, "CGROUP_FREEZE_FAILED: {detail}"),
         }
     }
 }
@@ -181,7 +184,57 @@ impl CgroupStopper {
             detail: format!("cgroup.kill 쓰기 실패({kill:?}): {error}"),
         })
     }
+
+    /// ★ 2026-09-30 (소유자 "일시정지") — 이 cgroup 의 **모든** 프로세스를 얼린다(`cgroup.freeze` = 1).
+    ///
+    /// 얼리기는 비동기다 — 쓰고 나서 `cgroup.events` 의 `frozen 1` 을 **확인한 뒤에만** 성공이다(최대 `FREEZE_CONFIRM`).
+    /// 확인하지 못하면 실패로 보고한다 — "얼렸다" 고 말하고 돌게 두지 않는다.
+    ///
+    /// ```text
+    /// 막는다     CPU 에서 도는 것 — 얼린 프로세스는 스케줄되지 않는다
+    /// 모른다     이미 GPU 에 넘어간 커널이 곧바로 멈추는지(재지 않았다) · GPU 메모리는 그대로 쥔다
+    /// ```
+    /// 얼린 cgroup 도 `cgroup.kill` 로 끝난다(cgroup v2 는 얼린 작업에 치명 신호를 전달한다).
+    pub fn freeze(&self) -> Result<(), CgroupError> {
+        self.set_frozen(true)
+    }
+
+    /// 얼린 것을 푼다(`cgroup.freeze` = 0). `frozen 0` 을 확인한 뒤에만 성공이다.
+    pub fn thaw(&self) -> Result<(), CgroupError> {
+        self.set_frozen(false)
+    }
+
+    fn set_frozen(&self, frozen: bool) -> Result<(), CgroupError> {
+        let control = self.cgroup.join("cgroup.freeze");
+        let value = if frozen { "1" } else { "0" };
+        std::fs::write(&control, value).map_err(|error| CgroupError::FreezeFailed {
+            detail: format!("{control:?} 에 {value} 쓰기 실패: {error}"),
+        })?;
+        let events = self.cgroup.join("cgroup.events");
+        let want = format!("frozen {value}");
+        let deadline = std::time::Instant::now() + FREEZE_CONFIRM;
+        loop {
+            let text =
+                std::fs::read_to_string(&events).map_err(|error| CgroupError::FreezeFailed {
+                    detail: format!("{events:?} 읽기 실패: {error}"),
+                })?;
+            if text.lines().any(|line| line.trim() == want) {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(CgroupError::FreezeFailed {
+                    detail: format!(
+                        "{FREEZE_CONFIRM:?} 안에 {events:?} 가 '{want}' 가 되지 않았다: {text:?}"
+                    ),
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 }
+
+/// 얼리기 · 풀기 확인을 기다리는 시한. 얼리기는 보통 수 밀리초다 — 이보다 오래 걸리면 뭔가 잘못된 것으로 본다.
+const FREEZE_CONFIRM: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// 자식의 종료 관측 — 종료 코드의 **존재 여부**를 보존한다(B+E 계획서 §5.7 (3) · 결함 69).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -367,6 +367,8 @@ impl OwnerPanelState {
                     running_ms: now_unix_ms.saturating_sub(workload.started_at_unix_ms),
                     loss,
                     connection: connections.get(&workload.attempt_id).cloned(),
+                    paused: workload.stopper.is_paused(),
+                    pause_unsupported_reason: workload.stopper.pause_support().err(),
                 }
             })
             .collect()
@@ -393,6 +395,44 @@ impl OwnerPanelState {
             }
         }
         Ok(())
+    }
+
+    /// ★ 2026-09-30 (소유자 "일시정지" — 합의 판단표 ②) — 작업을 얼린다. 검증된 수단(컨테이너 pause · 리눅스 cgroup freeze)에서만 되고,
+    ///   얼리기가 **확인된** 뒤에만 성공이다. 윈도 호스트 실행은 이유와 함께 거부한다(화면은 버튼을 끄고 그 이유를 보인다).
+    ///   ★ GPU 메모리는 쥔 채로 있다 — 비우려면 "지금 멈춤" 이다.
+    pub fn pause(&self, attempt_id: &str) -> Result<(), String> {
+        let guard = self.lock();
+        let workload = guard
+            .get(attempt_id)
+            .ok_or_else(|| format!("그런 작업이 없다: {attempt_id}"))?;
+        workload.stopper.pause()
+    }
+
+    /// 얼린 작업을 푼다 — **새 Lease 없이 재개하지 않는다**(합의 판단표). 끊김 감시가 있는 작업은 지금 연결이 살아 있고(마지막 갱신 성공)
+    ///   끊김 시한 전이며 거부 · 스스로 멈춤이 없을 때만 푼다. 끊긴 채 풀면 다른 노드로 넘어갔을 수 있는 작업이 다시 돈다.
+    ///   ★ 끊김 감시가 없는 작업(실행 중 갱신을 안 켠 Agent)은 확인할 Lease 상태가 없어 그대로 푼다 — 그 Agent 는 원래 Lease 를 넘겨 돈다.
+    pub fn resume(&self, attempt_id: &str, now_unix_ms: u64) -> Result<(), String> {
+        if let Some(watch) = self.connections().get(attempt_id) {
+            if watch.refused {
+                return Err("Coordinator 가 이 작업을 다른 노드로 넘겼다 — 다시 시작할 수 없다(지금 멈춤으로 비운다)".into());
+            }
+            if watch.stopping || watch.self_stopped {
+                return Err(
+                    "끊김 시한이 지나 멈추는 중이다(또는 멈췄다) — 다시 시작할 수 없다".into(),
+                );
+            }
+            if watch.disconnected {
+                return Err("중개 서버와 끊겨 있다 — 다시 연결돼 갱신이 되면 풀 수 있다".into());
+            }
+            if now_unix_ms >= watch.self_stop_at_unix_ms {
+                return Err("끊김 시한이 지났다 — 새 Lease 없이 다시 시작하지 않는다".into());
+            }
+        }
+        let guard = self.lock();
+        let workload = guard
+            .get(attempt_id)
+            .ok_or_else(|| format!("그런 작업이 없다: {attempt_id}"))?;
+        workload.stopper.resume()
     }
 
     /// 이 시도를 **소유자가** 멈췄나.
@@ -430,6 +470,10 @@ pub struct WorkloadSummary {
     pub loss: LossEstimate,
     /// 끊김 감시가 걸린 작업이면 연결 상태(실행 중 갱신을 켠 Agent).
     pub connection: Option<ConnectionWatch>,
+    /// ★ 2026-09-30 — 소유자가 얼려 두었나(얼리기가 확인된 뒤에만 true).
+    pub paused: bool,
+    /// 얼릴 수 없으면 그 이유(윈도 호스트 실행 등). `None` 이면 일시정지 버튼을 쓸 수 있다.
+    pub pause_unsupported_reason: Option<String>,
 }
 
 /// 로컬 전용 패널 서버.
@@ -580,6 +624,40 @@ impl OwnerPanel {
                         409,
                         "text/plain; charset=utf-8",
                         &format!("KEEP_RUNNING_REFUSED {message}"),
+                    ),
+                }
+            }
+            ("POST", "/api/pause") | ("POST", "/api/resume") => {
+                // ★ 정지와 같은 토큰 규칙 — 이 기계의 패널에서만.
+                if request.token.as_deref() != Some(self.token.as_str()) {
+                    return respond(
+                        &mut stream,
+                        403,
+                        "text/plain; charset=utf-8",
+                        "토큰이 없거나 다르다 — 이 기계의 패널에서만 고를 수 있다",
+                    );
+                }
+                let attempt_id = request.body.trim();
+                let pausing = request.path == "/api/pause";
+                let result = if pausing {
+                    self.state.pause(attempt_id)
+                } else {
+                    self.state.resume(attempt_id, now)
+                };
+                let verb = if pausing { "PAUSED" } else { "RESUMED" };
+                match result {
+                    Ok(()) => respond(
+                        &mut stream,
+                        200,
+                        "text/plain; charset=utf-8",
+                        &format!("{verb} attempt_id={attempt_id}"),
+                    ),
+                    // ★ 못 했으면 200 을 주지 않는다 — 얼린 줄 알고 자리를 비우면 안 된다.
+                    Err(message) => respond(
+                        &mut stream,
+                        409,
+                        "text/plain; charset=utf-8",
+                        &format!("{verb}_REFUSED {message}"),
                     ),
                 }
             }
@@ -789,7 +867,8 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
             format!(
                 "{{\"job_id\":{},\"attempt_id\":{},\"submitter_device_id\":{},\
                  \"entrypoint\":{},\"started_at_unix_ms\":{},\"running_ms\":{},\
-                 \"lost_ms\":{},\"nothing_committed_yet\":{},\"connection\":{}}}",
+                 \"lost_ms\":{},\"nothing_committed_yet\":{},\"connection\":{},\
+                 \"paused\":{},\"pause_supported\":{},\"pause_unsupported_reason\":{}}}",
                 json_string(&item.job_id),
                 json_string(&item.attempt_id),
                 json_string(&item.submitter_device_id),
@@ -798,7 +877,13 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
                 item.running_ms,
                 item.loss.lost_ms,
                 item.loss.nothing_committed_yet,
-                connection
+                connection,
+                item.paused,
+                item.pause_unsupported_reason.is_none(),
+                match &item.pause_unsupported_reason {
+                    Some(reason) => json_string(reason),
+                    None => "null".to_string(),
+                }
             )
         })
         .collect();
@@ -1046,6 +1131,41 @@ mod tests {
             watch.self_stopped = true;
         }
         assert!(state.keep_running("safe").is_err());
+    }
+
+    /// ★ 2026-09-30 — 일시정지: 수단이 없으면(시험용 손잡이 · 윈도 호스트) 거부하고 얼렸다고 적지 않는다. 다시 시작은 끊김 · 거부 · 시한 뒤에는
+    ///   거부된다(새 Lease 없이 재개하지 않는다). 목록 JSON 에 상태와 이유가 실린다.
+    #[test]
+    fn pause_is_refused_without_a_verified_means_and_resume_needs_a_live_lease() {
+        let state = OwnerPanelState::new();
+        let mut safe = workload(1_000, None);
+        safe.attempt_id = "a".into();
+        state.register(safe);
+        assert!(state.pause("a").is_err(), "시험용 손잡이는 얼리지 못한다");
+        assert!(state.pause("없는").is_err());
+        let snapshot = state.snapshot(2_000);
+        assert!(!snapshot[0].paused, "못 얼렸는데 얼렸다고 적었다");
+        let json = render_workloads_json(&snapshot, 2_000, "t");
+        assert!(json.contains("\"paused\":false"), "{json}");
+        #[cfg(windows)]
+        assert!(
+            json.contains("\"pause_supported\":false")
+                && snapshot[0].pause_unsupported_reason.is_some(),
+            "윈도 호스트 실행은 일시정지를 막고 이유를 보여야 한다: {json}"
+        );
+        // 끊김 감시 — 연결 정상 · 시한 전이면 확인을 통과해 손잡이까지 간다(얼리지 않았으면 그대로 성공)
+        state.watch_connection("a", 10_000, true, 1_000);
+        assert!(state.resume("a", 5_000).is_ok());
+        // 끊겼으면 거부
+        state.renew_failed("a");
+        assert!(state.resume("a", 5_000).is_err());
+        // 다시 이어졌지만 시한이 지났으면 거부
+        state.renew_succeeded("a", 10_000, 6_000);
+        assert!(state.resume("a", 5_000).is_ok());
+        assert!(state.resume("a", 10_000).is_err());
+        // 거부(다른 노드로 넘어감)면 거부
+        state.renew_refused("a", 7_000);
+        assert!(state.resume("a", 7_000).is_err());
     }
 
     /// JSON 이스케이프가 실제로 되는가.

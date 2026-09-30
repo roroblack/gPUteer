@@ -50,6 +50,14 @@ fn main() {
             the_owner_stop_kills_the_container,
         ),
         (
+            "a_paused_container_is_confirmed_and_thawed_before_the_owner_stop",
+            a_paused_container_is_confirmed_and_thawed_before_the_owner_stop,
+        ),
+        (
+            "a_pause_that_does_not_take_is_not_reported_as_paused",
+            a_pause_that_does_not_take_is_not_reported_as_paused,
+        ),
+        (
             "stopping_an_already_finished_container_is_not_reported_as_a_stop",
             stopping_an_already_finished_container_is_not_reported_as_a_stop,
         ),
@@ -279,6 +287,15 @@ fn fake_runtime(state: &Path) -> i32 {
     if command == "kill" && fails("kill-noop") {
         return 0;
     }
+    // ★ 2026-09-30 — "pause-noop": pause 가 0 으로 답하지만 얼리지 않는다(접수는 적용이 아니다).
+    if command == "pause" && fails("pause-noop") {
+        return 0;
+    }
+    // 실제 docker 처럼 얼린 컨테이너의 kill 은 거부한다("container is paused") — 먼저 풀어야 끝난다.
+    if command == "kill" && state.join("paused").exists() {
+        eprintln!("Error: container is paused. Unpause the container before stopping or killing");
+        return 1;
+    }
     // "kill-leaves-pipe-holder" — kill 이 작업을 끝내고(137) 곧 0 으로 끝나지만, stdout · stderr 를 물려받은 보조 프로세스(60초)를 남긴다(결함 545).
     if command == "kill" && fails("kill-leaves-pipe-holder") {
         std::fs::write(state.join("killed"), "").unwrap();
@@ -391,6 +408,10 @@ fn fake_runtime(state: &Path) -> i32 {
                 }
                 return 1;
             }
+            if args.get(1).map(String::as_str) == Some("--format={{.State.Paused}}") {
+                println!("{}", state.join("paused").exists());
+                return 0;
+            }
             if owner_only {
                 // 남은 컨테이너(leftovers)의 owner 는 이 Agent 의 것 — "leftover-foreign" 이면 다른 owner(결함 522). ID 를 함께 찍는다(526).
                 let id = if is_leftover { LEFTOVER_ID } else { FAKE_ID };
@@ -448,6 +469,22 @@ fn fake_runtime(state: &Path) -> i32 {
                     None => println!("true 0 false 2026-09-28T00:00:00Z"),
                 }
             }
+            0
+        }
+        "pause" => {
+            if !exists {
+                eprintln!("Error: No such container: {target}");
+                return 1;
+            }
+            std::fs::write(state.join("paused"), "").unwrap();
+            0
+        }
+        "unpause" => {
+            if !exists {
+                eprintln!("Error: No such container: {target}");
+                return 1;
+            }
+            let _ = std::fs::remove_file(state.join("paused"));
             0
         }
         "kill" => {
@@ -727,6 +764,70 @@ fn the_owner_stop_kills_the_container() {
     let exit = runner.join().unwrap().expect("정지 뒤 종료 관측");
     assert_eq!(exit.exit_code, 137);
     assert!(calls(&f.state).lines().any(|l| l.starts_with("kill ")));
+}
+
+/// ★ 2026-09-30 (소유자 "일시정지") — 컨테이너 실행의 손잡이는 얼릴 수 있다고 말하고, pause · unpause 를 **상태 조회로 확인한 뒤에만** 성공이다.
+///   얼린 채 "지금 멈춤" 을 누르면 먼저 풀고(docker 는 얼린 컨테이너의 kill 을 거부한다) kill 한다.
+fn a_paused_container_is_confirmed_and_thawed_before_the_owner_stop() {
+    let f = fixture(None);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            gputeer_agent::exec::execute_with_control(
+                &spec("sleep"),
+                policy(&work, ContainerDecision::Container(execution())),
+                move |stopper| tx.send(stopper).unwrap(),
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    stopper
+        .pause_support()
+        .expect("컨테이너 실행은 얼릴 수 있어야 한다");
+    stopper.pause().expect("일시정지");
+    assert!(stopper.is_paused());
+    assert!(f.state.join("paused").exists(), "pause 를 보내지 않았다");
+    stopper.resume().expect("다시 시작");
+    assert!(!stopper.is_paused());
+    assert!(!f.state.join("paused").exists(), "unpause 를 보내지 않았다");
+    stopper.pause().expect("다시 일시정지");
+    stopper.stop().expect("얼린 채 정지");
+    let exit = runner.join().unwrap().expect("정지 뒤 종료 관측");
+    assert_eq!(exit.exit.code(), Some(137));
+    let calls = calls(&f.state);
+    let order: Vec<&str> = calls
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|c| matches!(*c, "pause" | "unpause" | "kill"))
+        .collect();
+    assert_eq!(
+        order,
+        ["pause", "unpause", "pause", "unpause", "kill"],
+        "얼린 채 kill 을 보냈거나 순서가 다르다:\n{calls}"
+    );
+}
+
+/// ★ 2026-09-30 — pause 가 0 으로 답해도 상태가 얼지 않았으면 실패다. 얼린 줄 알고 자리를 비우게 하지 않는다.
+fn a_pause_that_does_not_take_is_not_reported_as_paused() {
+    let f = fixture(Some("pause-noop"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            gputeer_agent::exec::execute_with_control(
+                &spec("sleep"),
+                policy(&work, ContainerDecision::Container(execution())),
+                move |stopper| tx.send(stopper).unwrap(),
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    let error = stopper.pause().expect_err("얼지 않았는데 성공이라 했다");
+    assert!(error.contains("CONTAINER_PAUSE_UNCONFIRMED"), "{error}");
+    assert!(!stopper.is_paused(), "얼지 않았는데 얼렸다고 적었다");
+    stopper.stop().expect("정지");
+    runner.join().unwrap().expect("정지 뒤 종료 관측");
 }
 
 fn stopping_an_already_finished_container_is_not_reported_as_a_stop() {
