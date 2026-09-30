@@ -58,6 +58,10 @@ fn main() {
             a_pause_that_does_not_take_is_not_reported_as_paused,
         ),
         (
+            "an_applied_but_unconfirmed_pause_is_unknown_and_thawed_before_the_stop",
+            an_applied_but_unconfirmed_pause_is_unknown_and_thawed_before_the_stop,
+        ),
+        (
             "stopping_an_already_finished_container_is_not_reported_as_a_stop",
             stopping_an_already_finished_container_is_not_reported_as_a_stop,
         ),
@@ -409,6 +413,11 @@ fn fake_runtime(state: &Path) -> i32 {
                 return 1;
             }
             if args.get(1).map(String::as_str) == Some("--format={{.State.Paused}}") {
+                // "inspect-paused" — 일시정지 상태 조회만 실패한다(pause 는 적용됐는데 확인하지 못함 · 검수 pz1).
+                if fails("inspect-paused") {
+                    eprintln!("fake: State.Paused 조회 실패를 흉내낸다");
+                    return 125;
+                }
                 println!("{}", state.join("paused").exists());
                 return 0;
             }
@@ -828,6 +837,51 @@ fn a_pause_that_does_not_take_is_not_reported_as_paused() {
     assert!(!stopper.is_paused(), "얼지 않았는데 얼렸다고 적었다");
     stopper.stop().expect("정지");
     runner.join().unwrap().expect("정지 뒤 종료 관측");
+}
+
+/// ★ 검수 pz1 — pause 는 적용됐는데 확인 조회가 실패하면 "얼리지 않았다" 로 적지 않는다(상태 "모름"). 그 상태의 정지는 먼저 풀고 kill 한다 —
+///   전에는 확인된 경우만 풀어, 얼어 있는 컨테이너에 kill 을 보내 도커가 거부했다.
+fn an_applied_but_unconfirmed_pause_is_unknown_and_thawed_before_the_stop() {
+    let f = fixture(Some("inspect-paused"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = {
+        let work = f.work.clone();
+        std::thread::spawn(move || {
+            gputeer_agent::exec::execute_with_control(
+                &spec("sleep"),
+                policy(&work, ContainerDecision::Container(execution())),
+                move |stopper| tx.send(stopper).unwrap(),
+            )
+        })
+    };
+    let stopper = rx.recv_timeout(Duration::from_secs(20)).expect("손잡이");
+    let error = stopper
+        .pause()
+        .expect_err("확인하지 못했는데 성공이라 했다");
+    assert!(error.contains("CONTAINER_PAUSE_UNCONFIRMED"), "{error}");
+    assert!(
+        f.state.join("paused").exists(),
+        "전제 — pause 는 적용됐어야 한다"
+    );
+    assert_eq!(
+        stopper.pause_state(),
+        gputeer_agent::exec::PauseState::Unknown,
+        "얼었을 수 있는데 모른다고 적지 않았다"
+    );
+    stopper.stop().expect("얼었을 수 있는 채 정지");
+    let exit = runner.join().unwrap().expect("정지 뒤 종료 관측");
+    assert_eq!(exit.exit.code(), Some(137));
+    let calls = calls(&f.state);
+    let order: Vec<&str> = calls
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|c| matches!(*c, "pause" | "unpause" | "kill"))
+        .collect();
+    assert_eq!(
+        order,
+        ["pause", "unpause", "kill"],
+        "상태를 모르는 채 풀지 않고 kill 했다:\n{calls}"
+    );
 }
 
 fn stopping_an_already_finished_container_is_not_reported_as_a_stop() {

@@ -240,9 +240,40 @@ pub struct WorkloadStopper {
     inner: Option<gputeer_runtime_linux::CgroupStopper>,
     /// ★ 2026-09-25 — 컨테이너로 돈 작업의 손잡이. 있으면 이것으로 멈춘다(`inner` 는 비어 있다).
     container: Option<crate::container::ContainerStopper>,
-    /// ★ 2026-09-30 — 소유자가 일시정지했다(얼리기가 **확인된** 뒤에만 true · 풀기가 확인되면 false).
-    paused: std::sync::atomic::AtomicBool,
+    /// ★ 2026-09-30 — 일시정지 상태(`PauseState` 를 u8 로). 확인된 뒤에만 Running ↔ Paused 로 바뀌고, 적용됐을 수 있는데 확인하지 못하면
+    ///   Unknown 이다(검수 pz1).
+    pause_state: std::sync::atomic::AtomicU8,
+    /// pause · resume 끼리만 차례로 돈다. ★ `stop()` 은 이것을 **기다리지 않는다** — 걸린 pause 명령 때문에 정지가 늦어지면 안 된다(검수 pz1).
+    pause_ops: std::sync::Mutex<()>,
 }
+
+/// ★ 2026-09-30 — 일시정지 상태. 화면 · 정지가 본다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseState {
+    /// 돈다(얼린 적 없거나 풀기가 확인됐다).
+    Running,
+    /// 얼렸다(확인됐다).
+    Paused,
+    /// 얼리기 · 풀기를 보냈는데 확인하지 못했다 — 얼었을 수도 있다. 정지는 먼저 풀고, 다시 시작은 풀기를 다시 보낸다.
+    Unknown,
+}
+
+/// 얼리기 · 풀기 실패. `maybe_applied` 가 true 면 요청이 들어갔을 수 있다(상태를 모른다).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PauseFailure {
+    pub maybe_applied: bool,
+    pub detail: String,
+}
+
+impl std::fmt::Display for PauseFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+const PAUSE_RUNNING: u8 = 0;
+const PAUSE_PAUSED: u8 = 1;
+const PAUSE_UNKNOWN: u8 = 2;
 
 impl WorkloadStopper {
     /// 테스트 전용 — 아무것도 안 멈추는 손잡이.
@@ -257,7 +288,8 @@ impl WorkloadStopper {
             #[cfg(target_os = "linux")]
             inner: Some(gputeer_runtime_linux::CgroupStopper::inert_for_test()),
             container: None,
-            paused: Default::default(),
+            pause_state: Default::default(),
+            pause_ops: Default::default(),
         }
     }
 
@@ -268,7 +300,8 @@ impl WorkloadStopper {
             #[cfg(target_os = "linux")]
             inner: None,
             container: Some(stopper),
-            paused: Default::default(),
+            pause_state: Default::default(),
+            pause_ops: Default::default(),
         }
     }
 
@@ -288,14 +321,15 @@ impl WorkloadStopper {
             // ★ 2026-09-30 — 일시정지한 컨테이너는 kill 이 거부될 수 있다(docker 의 "container is paused"). 먼저 풀고 끝낸다 — 푸는 순간부터
             //   kill 까지 아주 잠깐 다시 돈다. 풀지 못해도 kill 은 시도하고, 실패하면 두 사유를 함께 알린다. cgroup(리눅스 호스트)은 얼린 채로
             //   cgroup.kill 이 된다.
-            let thaw_note = if self.is_paused() {
+            //   ★ 검수 pz1 — 얼렸거나 **얼었는지 모르면**(확인 실패) 먼저 푼다. 전에는 확인된 경우만 풀어, 적용됐지만 확인 못 한 pause 뒤의 정지가
+            //     도커에 거부됐다. 걸린 pause · resume 을 기다리지 않는다(`pause_ops` 를 잡지 않는다).
+            let thaw_note = if self.pause_state() != PauseState::Running {
                 match container.resume() {
                     Ok(()) => {
-                        self.paused
-                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                        self.set_pause_state(PauseState::Running);
                         None
                     }
-                    Err(why) => Some(why),
+                    Err(why) => Some(why.detail),
                 }
             } else {
                 None
@@ -368,34 +402,69 @@ impl WorkloadStopper {
         }
     }
 
-    /// 얼린다. 얼리기가 **확인된** 뒤에만 성공이다. 이미 얼렸으면 그대로 성공.
+    /// 얼린다. 얼리기가 **확인된** 뒤에만 성공이다. 이미 얼렸으면 그대로 성공. 확인하지 못하면 상태를 "모름" 으로 둔다.
     pub fn pause(&self) -> Result<(), String> {
         self.pause_support()?;
-        if self.is_paused() {
+        let _ops = self.pause_ops.lock().unwrap_or_else(|e| e.into_inner());
+        if self.pause_state() == PauseState::Paused {
             return Ok(());
         }
-        self.set_frozen(true)?;
-        self.paused.store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
+        self.apply(true)
     }
 
-    /// 푼다. 풀기가 **확인된** 뒤에만 성공이다. 얼리지 않았으면 그대로 성공.
+    /// 푼다. 풀기가 **확인된** 뒤에만 성공이다. 돌고 있으면 그대로 성공. "모름" 이면 풀기를 다시 보낸다.
     pub fn resume(&self) -> Result<(), String> {
-        if !self.is_paused() {
+        let _ops = self.pause_ops.lock().unwrap_or_else(|e| e.into_inner());
+        if self.pause_state() == PauseState::Running {
             return Ok(());
         }
-        self.set_frozen(false)?;
-        self.paused
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
+        self.apply(false)
     }
 
-    /// 지금 얼려 두었나.
+    fn apply(&self, frozen: bool) -> Result<(), String> {
+        match self.set_frozen(frozen) {
+            Ok(()) => {
+                self.set_pause_state(if frozen {
+                    PauseState::Paused
+                } else {
+                    PauseState::Running
+                });
+                Ok(())
+            }
+            Err(failure) => {
+                if failure.maybe_applied {
+                    self.set_pause_state(PauseState::Unknown);
+                }
+                Err(failure.detail)
+            }
+        }
+    }
+
+    /// 지금 얼려 두었나(확인된 경우만).
     pub fn is_paused(&self) -> bool {
-        self.paused.load(std::sync::atomic::Ordering::SeqCst)
+        self.pause_state() == PauseState::Paused
     }
 
-    fn set_frozen(&self, frozen: bool) -> Result<(), String> {
+    /// 일시정지 상태.
+    pub fn pause_state(&self) -> PauseState {
+        match self.pause_state.load(std::sync::atomic::Ordering::SeqCst) {
+            PAUSE_RUNNING => PauseState::Running,
+            PAUSE_PAUSED => PauseState::Paused,
+            _ => PauseState::Unknown,
+        }
+    }
+
+    fn set_pause_state(&self, state: PauseState) {
+        let value = match state {
+            PauseState::Running => PAUSE_RUNNING,
+            PauseState::Paused => PAUSE_PAUSED,
+            PauseState::Unknown => PAUSE_UNKNOWN,
+        };
+        self.pause_state
+            .store(value, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn set_frozen(&self, frozen: bool) -> Result<(), PauseFailure> {
         if let Some(container) = self.container.as_ref() {
             return if frozen {
                 container.pause()
@@ -405,23 +474,32 @@ impl WorkloadStopper {
         }
         #[cfg(target_os = "linux")]
         {
-            let cgroup = self
-                .inner
-                .as_ref()
-                .ok_or_else(|| "얼릴 손잡이가 없다".to_string())?;
+            let cgroup = self.inner.as_ref().ok_or_else(|| PauseFailure {
+                maybe_applied: false,
+                detail: "얼릴 손잡이가 없다".into(),
+            })?;
             let result = if frozen {
                 cgroup.freeze()
             } else {
                 cgroup.thaw()
             };
-            result.map_err(|error| error.to_string())
+            result.map_err(|error| PauseFailure {
+                maybe_applied: matches!(
+                    error,
+                    gputeer_runtime_linux::CgroupError::FreezeUnconfirmed { .. }
+                ),
+                detail: error.to_string(),
+            })
         }
         #[cfg(not(target_os = "linux"))]
         {
-            Err(format!(
-                "이 기계에는 확인된 일시정지 수단이 없다(요청: {})",
-                if frozen { "얼리기" } else { "풀기" }
-            ))
+            Err(PauseFailure {
+                maybe_applied: false,
+                detail: format!(
+                    "이 기계에는 확인된 일시정지 수단이 없다(요청: {})",
+                    if frozen { "얼리기" } else { "풀기" }
+                ),
+            })
         }
     }
 }
@@ -889,7 +967,8 @@ mod platform {
         on_started(super::WorkloadStopper {
             inner: Some(stopper),
             container: None,
-            paused: Default::default(),
+            pause_state: Default::default(),
+            pause_ops: Default::default(),
         });
 
         // 이제서야 돌린다. 소유자는 첫 명령이 실행되기 전부터 이 작업을
@@ -1238,7 +1317,8 @@ mod platform {
         on_started(super::WorkloadStopper {
             inner: Some(child.stopper()),
             container: None,
-            paused: Default::default(),
+            pause_state: Default::default(),
+            pause_ops: Default::default(),
         });
 
         // ★ 결함 144 (검수 68) — 전에는 `memory_limit_bytes().unwrap_or(정책)` 이라 읽기 · 해석 실패 사유가 사라졌다. 원문을 받아 사유를 남긴다.

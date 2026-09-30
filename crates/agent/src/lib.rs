@@ -3445,7 +3445,7 @@ fn run_and_capture_workload(
             // 확정된다. 그러므로 도는 동안은 "확정된 것이 하나도 없다"
             // 가 사실이고, 화면도 그렇게 보여야 한다.
             last_checkpoint_at_unix_ms: None,
-            stopper,
+            stopper: std::sync::Arc::new(stopper),
         });
     }) {
         Ok(outcome) => {

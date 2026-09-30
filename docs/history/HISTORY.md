@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-09-30 21:43 — 일시정지 검수 pz1 반영: 확인 실패는 "모름" · 감시 없는 작업은 거부 · 풀기 직전 재판정 · 정지가 일시정지를 기다리지 않음(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ②(직전 항목의 후속)
+- 스트림: Agent · Owner Panel · runtime-linux
+- 수행: 코덱스 독립 검수 pz1(gpt-6-sol, CHANGES_REQUESTED) 네 지적. ① 적용됐지만 확인 못 한 얼리기 · 풀기를 "안 얼었다" 로 적어, 얼어 있는 컨테이너에 kill 을
+  보내 거부되거나 화면이 틀렸다 → `PauseState`(Running · Paused · Unknown), `PauseFailure.maybe_applied`(`CgroupError::FreezeNotApplied` · `FreezeUnconfirmed` 로 나눔),
+  정지는 Paused · Unknown 이면 먼저 푼다, 다시 시작은 Unknown 이면 풀기를 다시 보낸다. ② 끊김 감시가 없는 작업(실행 중 갱신 꺼짐)은 Lease 를 확인할 길이
+  없어 일시정지 · 다시 시작 둘 다 거부(화면에 이유). ③ 다시 시작 판정을 풀기 **직전에 새 시각으로 한 번 더** 한다 — 그 뒤의 거부 · 시한은 감시 스레드가 50ms 안에
+  멈춘다. ④ 런타임 명령을 목록 잠금 밖에서 부르고(`RunningWorkload.stopper` 를 `Arc` 로), pause · resume 끼리만 차례로 돈다(정지는 기다리지 않는다) ·
+  pause/unpause 시한 5초(명령 + 조회 최대 10초 — kill 확인의 15초보다 짧다)
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1514 passed · 0 failed · ignored 4. 새 가짜 런타임 시험(pause 적용 · 확인 실패 →
+  Unknown · 정지는 unpause 뒤 kill) — 옛 조건("확인된 경우만 푼다")으로 되돌리면 실패함을 확인 뒤 원복. 단위 시험에 감시 없음 거부 · 풀기 직전 재판정 추가.
+  비-root 리눅스 서버: `gputeer-agent` · `gputeer-runtime-linux` 전부 통과(`cgroup_freeze.rs` 는 여전히 ENVIRONMENT-BLOCKED). 바꾼 줄의 새 clippy 경고 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-09-30 21:17 — 소유자 "일시정지" · "다시 시작"(검증된 수단에서만 · 새 Lease 없이 재개 안 함)(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표의 소유자 선택 ② 일시정지

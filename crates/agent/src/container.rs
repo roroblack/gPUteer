@@ -423,6 +423,9 @@ fn confirm_stopped(program: &Path, name: &str) -> Result<(), String> {
 const STOP_CONFIRM_TRIES: u32 = 10;
 const STOP_CONFIRM_INTERVAL: Duration = Duration::from_millis(200);
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(15);
+/// ★ 2026-09-30 (검수 pz1) — pause · unpause 와 그 확인 조회의 시한. 정지 시한(끊김 여유 기본 10초) 안에 끝나야 해서 kill 확인(15초)보다 짧다 —
+///   pause 는 가벼운 명령이다. 최악은 명령 + 조회 = 10초.
+const PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 런타임이 "그런 컨테이너 없다" 고 답했는가.
 ///
@@ -854,27 +857,32 @@ pub struct ContainerStopper {
 impl ContainerStopper {
     /// ★ 2026-09-30 (소유자 "일시정지") — `pause` 를 보내고 `inspect {{.State.Paused}}` 가 `true` 인 것을 **확인한 뒤에만** 성공이다.
     ///   응답만 믿지 않는다(결함 506 과 같은 규칙 — 접수는 적용이 아니다). 컨테이너 안의 프로세스 트리 전체가 얼어붙는다(cgroup freezer).
-    pub fn pause(&self) -> Result<(), String> {
+    /// ★ 검수 pz1 — 실패에는 "적용됐을 수 있는가" 를 싣는다. 명령을 띄우지 못한 것만 "적용 안 됨" 이고, 그 밖(응답 없음 · 실패 응답 · 확인 실패)은
+    ///   얼었을 수 있다 — 부르는 쪽이 상태를 "모름" 으로 두고 정지 전에 먼저 푼다.
+    pub fn pause(&self) -> Result<(), crate::exec::PauseFailure> {
         self.set_paused(true)
     }
 
     /// 얼린 컨테이너를 푼다 — `unpause` 뒤 `{{.State.Paused}}` 가 `false` 인 것을 확인한다.
-    pub fn resume(&self) -> Result<(), String> {
+    pub fn resume(&self) -> Result<(), crate::exec::PauseFailure> {
         self.set_paused(false)
     }
 
-    fn set_paused(&self, paused: bool) -> Result<(), String> {
+    fn set_paused(&self, paused: bool) -> Result<(), crate::exec::PauseFailure> {
         let verb = if paused { "pause" } else { "unpause" };
         let note = match run_cli_detailed(
             &self.program,
             &[verb.into(), self.name.clone().into()],
-            CONFIRM_TIMEOUT,
+            PAUSE_TIMEOUT,
         ) {
             Err(CliFailure::NotSpawned(why)) => {
-                return Err(format!(
-                    "CONTAINER_{}_NOT_SENT: {verb} 를 띄우지 못했다 — {why}",
-                    verb.to_uppercase()
-                ))
+                return Err(crate::exec::PauseFailure {
+                    maybe_applied: false,
+                    detail: format!(
+                        "CONTAINER_{}_NOT_SENT: {verb} 를 띄우지 못했다 — {why}",
+                        verb.to_uppercase()
+                    ),
+                })
             }
             Err(CliFailure::AfterSpawn(why)) => format!("{verb} 응답을 받지 못했다({why})"),
             Ok(output) if output.status.success() => format!("{verb} 접수"),
@@ -885,6 +893,10 @@ impl ContainerStopper {
             ),
         };
         let want = if paused { "true" } else { "false" };
+        let unconfirmed = |detail: String| crate::exec::PauseFailure {
+            maybe_applied: true,
+            detail,
+        };
         match run_cli_detailed(
             &self.program,
             &[
@@ -892,19 +904,21 @@ impl ContainerStopper {
                 "--format={{.State.Paused}}".into(),
                 self.name.clone().into(),
             ],
-            CONFIRM_TIMEOUT,
+            PAUSE_TIMEOUT,
         ) {
             Ok(output) if output.status.success() && output.stdout.trim() == want => Ok(()),
-            Ok(output) => Err(format!(
+            Ok(output) => Err(unconfirmed(format!(
                 "CONTAINER_{}_UNCONFIRMED: State.Paused 가 {want} 가 아니다(stdout={:?} stderr={:?}) — {note}",
                 verb.to_uppercase(),
                 output.stdout.trim(),
                 output.stderr.trim()
-            )),
-            Err(CliFailure::NotSpawned(why)) | Err(CliFailure::AfterSpawn(why)) => Err(format!(
-                "CONTAINER_{}_UNCONFIRMED: 상태를 확인하지 못했다({why}) — {note}",
-                verb.to_uppercase()
-            )),
+            ))),
+            Err(CliFailure::NotSpawned(why)) | Err(CliFailure::AfterSpawn(why)) => {
+                Err(unconfirmed(format!(
+                    "CONTAINER_{}_UNCONFIRMED: 상태를 확인하지 못했다({why}) — {note}",
+                    verb.to_uppercase()
+                )))
+            }
         }
     }
 

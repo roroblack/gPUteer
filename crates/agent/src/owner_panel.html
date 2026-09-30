@@ -107,7 +107,13 @@
       action.appendChild(button);
       // ★ 2026-09-30 — 일시정지 · 다시 시작(검증된 수단에서만 · GPU 메모리는 쥔 채). 수단이 없으면 버튼을 끄고 이유를 보인다.
       const pauseButton = document.createElement("button");
-      if (it.paused) {
+      if (it.pause_state === "unknown") {
+        // ★ 검수 pz1 — 얼리기 · 풀기를 보냈는데 확인하지 못했다. 얼어 있을 수 있다 — 다시 시작(풀기를 다시 보낸다)이나 지금 비우기를 고른다.
+        pauseButton.textContent = "다시 시작";
+        pauseButton.title = "일시정지 상태를 확인하지 못했다 — 풀기를 다시 보낸다";
+        pauseButton.onclick = () => pauseOrResume(it, "/api/resume");
+        conn.textContent = "일시정지 상태를 확인하지 못했다(얼어 있을 수 있다) · " + conn.textContent;
+      } else if (it.paused) {
         pauseButton.textContent = "다시 시작";
         pauseButton.title = "중개 서버와 연결돼 있고 끊김 시한 전일 때만 다시 시작한다";
         pauseButton.onclick = () => pauseOrResume(it, "/api/resume");

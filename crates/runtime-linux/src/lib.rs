@@ -93,8 +93,11 @@ pub enum CgroupError {
     SpawnFailed { detail: String },
     /// 종료를 관측하지 못했다.
     WaitFailed { detail: String },
-    /// ★ 2026-09-30 — 얼리기 · 풀기(`cgroup.freeze`)가 되지 않았다(쓰기 실패 · 시한 안에 상태가 안 바뀜).
-    FreezeFailed { detail: String },
+    /// ★ 2026-09-30 — 얼리기 · 풀기 요청(`cgroup.freeze` 쓰기)이 **들어가지 않았다** — 상태는 그대로다.
+    FreezeNotApplied { detail: String },
+    /// ★ 2026-09-30 (검수 pz1) — 요청은 들어갔는데 시한 안에 `cgroup.events` 로 **확인하지 못했다** — 얼었을 수도, 안 얼었을 수도 있다.
+    ///   "안 얼었다" 로 적으면 얼어 있는 작업을 돌고 있다고 보인다. 부르는 쪽은 상태를 "모름" 으로 둔다.
+    FreezeUnconfirmed { detail: String },
 }
 
 impl std::fmt::Display for CgroupError {
@@ -119,7 +122,8 @@ impl std::fmt::Display for CgroupError {
             ),
             Self::SpawnFailed { detail } => write!(f, "CGROUP_SPAWN_FAILED: {detail}"),
             Self::WaitFailed { detail } => write!(f, "CGROUP_WAIT_FAILED: {detail}"),
-            Self::FreezeFailed { detail } => write!(f, "CGROUP_FREEZE_FAILED: {detail}"),
+            Self::FreezeNotApplied { detail } => write!(f, "CGROUP_FREEZE_NOT_APPLIED: {detail}"),
+            Self::FreezeUnconfirmed { detail } => write!(f, "CGROUP_FREEZE_UNCONFIRMED: {detail}"),
         }
     }
 }
@@ -207,22 +211,23 @@ impl CgroupStopper {
     fn set_frozen(&self, frozen: bool) -> Result<(), CgroupError> {
         let control = self.cgroup.join("cgroup.freeze");
         let value = if frozen { "1" } else { "0" };
-        std::fs::write(&control, value).map_err(|error| CgroupError::FreezeFailed {
+        std::fs::write(&control, value).map_err(|error| CgroupError::FreezeNotApplied {
             detail: format!("{control:?} 에 {value} 쓰기 실패: {error}"),
         })?;
         let events = self.cgroup.join("cgroup.events");
         let want = format!("frozen {value}");
         let deadline = std::time::Instant::now() + FREEZE_CONFIRM;
         loop {
-            let text =
-                std::fs::read_to_string(&events).map_err(|error| CgroupError::FreezeFailed {
+            let text = std::fs::read_to_string(&events).map_err(|error| {
+                CgroupError::FreezeUnconfirmed {
                     detail: format!("{events:?} 읽기 실패: {error}"),
-                })?;
+                }
+            })?;
             if text.lines().any(|line| line.trim() == want) {
                 return Ok(());
             }
             if std::time::Instant::now() >= deadline {
-                return Err(CgroupError::FreezeFailed {
+                return Err(CgroupError::FreezeUnconfirmed {
                     detail: format!(
                         "{FREEZE_CONFIRM:?} 안에 {events:?} 가 '{want}' 가 되지 않았다: {text:?}"
                     ),

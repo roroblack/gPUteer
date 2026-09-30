@@ -76,9 +76,13 @@ pub struct RunningWorkload {
     /// `None` 은 **아직 하나도 확정 안 됐다**는 뜻이며, 그 경우 지금
     /// 멈추면 시작부터 지금까지 전부 잃는다.
     pub last_checkpoint_at_unix_ms: Option<u64>,
-    /// 이 작업을 멈추는 손잡이.
-    pub stopper: WorkloadStopper,
+    /// 이 작업을 멈추는 손잡이. ★ 2026-09-30 — 일시정지 명령을 목록 잠금 밖에서 부르려고 나눠 쥔다(검수 pz1).
+    pub stopper: std::sync::Arc<WorkloadStopper>,
 }
+
+/// ★ 2026-09-30 (검수 pz1) — 끊김 감시가 없는 작업의 일시정지 · 다시 시작을 거부하는 이유.
+const NO_WATCH_REASON: &str = "이 작업은 중개 서버 연결을 감시하지 않는다(실행 중 갱신이 꺼진 Agent) — Lease 가 살아 있는지 알 수 없어 \
+     다시 시작할 수 없으므로 일시정지를 받지 않는다. 비우려면 지금 멈춤이다";
 
 /// ★ 2026-09-30 (사용자 승인 규범 · docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md) — 끊겼을 때 소유자가 고른 것.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -368,7 +372,13 @@ impl OwnerPanelState {
                     loss,
                     connection: connections.get(&workload.attempt_id).cloned(),
                     paused: workload.stopper.is_paused(),
-                    pause_unsupported_reason: workload.stopper.pause_support().err(),
+                    pause_state: workload.stopper.pause_state(),
+                    pause_unsupported_reason: workload.stopper.pause_support().err().or_else(
+                        || {
+                            (!connections.contains_key(&workload.attempt_id))
+                                .then(|| NO_WATCH_REASON.to_string())
+                        },
+                    ),
                 }
             })
             .collect()
@@ -400,39 +410,50 @@ impl OwnerPanelState {
     /// ★ 2026-09-30 (소유자 "일시정지" — 합의 판단표 ②) — 작업을 얼린다. 검증된 수단(컨테이너 pause · 리눅스 cgroup freeze)에서만 되고,
     ///   얼리기가 **확인된** 뒤에만 성공이다. 윈도 호스트 실행은 이유와 함께 거부한다(화면은 버튼을 끄고 그 이유를 보인다).
     ///   ★ GPU 메모리는 쥔 채로 있다 — 비우려면 "지금 멈춤" 이다.
+    ///   ★ 검수 pz1 — 끊김 감시가 없는 작업(실행 중 갱신을 안 켠 Agent)은 받지 않는다. Lease 가 살아 있는지 알 수 없어 **다시 시작할 수 없는**
+    ///     일시정지가 된다. 그리고 목록 잠금을 쥔 채 런타임 명령(최대 10초)을 부르지 않는다 — 손잡이를 꺼내 놓고 부른다.
     pub fn pause(&self, attempt_id: &str) -> Result<(), String> {
-        let guard = self.lock();
-        let workload = guard
-            .get(attempt_id)
-            .ok_or_else(|| format!("그런 작업이 없다: {attempt_id}"))?;
-        workload.stopper.pause()
+        if !self.connections().contains_key(attempt_id) {
+            return Err(NO_WATCH_REASON.into());
+        }
+        self.stopper_of(attempt_id)?.pause()
     }
 
-    /// 얼린 작업을 푼다 — **새 Lease 없이 재개하지 않는다**(합의 판단표). 끊김 감시가 있는 작업은 지금 연결이 살아 있고(마지막 갱신 성공)
+    /// 얼린 작업을 푼다 — **새 Lease 없이 재개하지 않는다**(합의 판단표). 끊김 감시가 있고, 지금 연결이 살아 있고(마지막 갱신 성공)
     ///   끊김 시한 전이며 거부 · 스스로 멈춤이 없을 때만 푼다. 끊긴 채 풀면 다른 노드로 넘어갔을 수 있는 작업이 다시 돈다.
-    ///   ★ 끊김 감시가 없는 작업(실행 중 갱신을 안 켠 Agent)은 확인할 Lease 상태가 없어 그대로 푼다 — 그 Agent 는 원래 Lease 를 넘겨 돈다.
-    pub fn resume(&self, attempt_id: &str, now_unix_ms: u64) -> Result<(), String> {
-        if let Some(watch) = self.connections().get(attempt_id) {
-            if watch.refused {
-                return Err("Coordinator 가 이 작업을 다른 노드로 넘겼다 — 다시 시작할 수 없다(지금 멈춤으로 비운다)".into());
-            }
-            if watch.stopping || watch.self_stopped {
-                return Err(
-                    "끊김 시한이 지나 멈추는 중이다(또는 멈췄다) — 다시 시작할 수 없다".into(),
-                );
-            }
-            if watch.disconnected {
-                return Err("중개 서버와 끊겨 있다 — 다시 연결돼 갱신이 되면 풀 수 있다".into());
-            }
-            if now_unix_ms >= watch.self_stop_at_unix_ms {
-                return Err("끊김 시한이 지났다 — 새 Lease 없이 다시 시작하지 않는다".into());
-            }
+    ///   ★ 검수 pz1 — 끊김 감시가 없으면 거부한다(Lease 를 확인할 길이 없다). 판정은 **풀기 직전에 새 시각으로 한 번 더** 한다. 그 뒤(풀기 명령이
+    ///     도는 사이)에 거부 · 시한이 오면 끊김 감시 스레드가 50ms 안에 멈춘다(`self_stop_if_due` — 소유자 "계속" 도 거부는 못 넘는다).
+    pub fn resume(&self, attempt_id: &str, clock: impl Fn() -> u64) -> Result<(), String> {
+        self.resume_allowed(attempt_id, clock())?;
+        let stopper = self.stopper_of(attempt_id)?;
+        self.resume_allowed(attempt_id, clock())?;
+        stopper.resume()
+    }
+
+    fn resume_allowed(&self, attempt_id: &str, now_unix_ms: u64) -> Result<(), String> {
+        let connections = self.connections();
+        let watch = connections.get(attempt_id).ok_or(NO_WATCH_REASON)?;
+        if watch.refused {
+            return Err("Coordinator 가 이 작업을 다른 노드로 넘겼다 — 다시 시작할 수 없다(지금 멈춤으로 비운다)".into());
         }
-        let guard = self.lock();
-        let workload = guard
+        if watch.stopping || watch.self_stopped {
+            return Err("끊김 시한이 지나 멈추는 중이다(또는 멈췄다) — 다시 시작할 수 없다".into());
+        }
+        if watch.disconnected {
+            return Err("중개 서버와 끊겨 있다 — 다시 연결돼 갱신이 되면 풀 수 있다".into());
+        }
+        if now_unix_ms >= watch.self_stop_at_unix_ms {
+            return Err("끊김 시한이 지났다 — 새 Lease 없이 다시 시작하지 않는다".into());
+        }
+        Ok(())
+    }
+
+    /// 목록에서 손잡이만 꺼낸다(잠금은 곧바로 놓는다).
+    fn stopper_of(&self, attempt_id: &str) -> Result<std::sync::Arc<WorkloadStopper>, String> {
+        self.lock()
             .get(attempt_id)
-            .ok_or_else(|| format!("그런 작업이 없다: {attempt_id}"))?;
-        workload.stopper.resume()
+            .map(|workload| std::sync::Arc::clone(&workload.stopper))
+            .ok_or_else(|| format!("그런 작업이 없다: {attempt_id}"))
     }
 
     /// 이 시도를 **소유자가** 멈췄나.
@@ -472,6 +493,8 @@ pub struct WorkloadSummary {
     pub connection: Option<ConnectionWatch>,
     /// ★ 2026-09-30 — 소유자가 얼려 두었나(얼리기가 확인된 뒤에만 true).
     pub paused: bool,
+    /// 일시정지 상태 — 확인하지 못했으면 Unknown(검수 pz1).
+    pub pause_state: crate::exec::PauseState,
     /// 얼릴 수 없으면 그 이유(윈도 호스트 실행 등). `None` 이면 일시정지 버튼을 쓸 수 있다.
     pub pause_unsupported_reason: Option<String>,
 }
@@ -642,7 +665,7 @@ impl OwnerPanel {
                 let result = if pausing {
                     self.state.pause(attempt_id)
                 } else {
-                    self.state.resume(attempt_id, now)
+                    self.state.resume(attempt_id, now_unix_ms)
                 };
                 let verb = if pausing { "PAUSED" } else { "RESUMED" };
                 match result {
@@ -868,7 +891,7 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
                 "{{\"job_id\":{},\"attempt_id\":{},\"submitter_device_id\":{},\
                  \"entrypoint\":{},\"started_at_unix_ms\":{},\"running_ms\":{},\
                  \"lost_ms\":{},\"nothing_committed_yet\":{},\"connection\":{},\
-                 \"paused\":{},\"pause_supported\":{},\"pause_unsupported_reason\":{}}}",
+                 \"paused\":{},\"pause_state\":{},\"pause_supported\":{},\"pause_unsupported_reason\":{}}}",
                 json_string(&item.job_id),
                 json_string(&item.attempt_id),
                 json_string(&item.submitter_device_id),
@@ -879,6 +902,11 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
                 item.loss.nothing_committed_yet,
                 connection,
                 item.paused,
+                json_string(match item.pause_state {
+                    crate::exec::PauseState::Running => "running",
+                    crate::exec::PauseState::Paused => "paused",
+                    crate::exec::PauseState::Unknown => "unknown",
+                }),
                 item.pause_unsupported_reason.is_none(),
                 match &item.pause_unsupported_reason {
                     Some(reason) => json_string(reason),
@@ -931,7 +959,7 @@ mod tests {
             started_at_unix_ms: started,
             entrypoint: "x".into(),
             last_checkpoint_at_unix_ms: checkpoint,
-            stopper: crate::exec::WorkloadStopper::for_test(),
+            stopper: std::sync::Arc::new(crate::exec::WorkloadStopper::for_test()),
         }
     }
 
@@ -1141,6 +1169,17 @@ mod tests {
         let mut safe = workload(1_000, None);
         safe.attempt_id = "a".into();
         state.register(safe);
+        // ★ 검수 pz1 — 끊김 감시가 없으면 일시정지 · 다시 시작 둘 다 거부(Lease 를 확인할 길이 없다) · 화면에 그 이유
+        let unwatched = state
+            .pause("a")
+            .expect_err("감시 없는 작업의 일시정지를 받았다");
+        assert!(unwatched.contains("감시하지 않는다"), "{unwatched}");
+        assert!(
+            state.resume("a", || 5_000).is_err(),
+            "감시 없이 다시 시작했다"
+        );
+        assert!(state.snapshot(2_000)[0].pause_unsupported_reason.is_some());
+        state.watch_connection("a", 10_000, true, 1_000);
         assert!(state.pause("a").is_err(), "시험용 손잡이는 얼리지 못한다");
         assert!(state.pause("없는").is_err());
         let snapshot = state.snapshot(2_000);
@@ -1154,18 +1193,31 @@ mod tests {
             "윈도 호스트 실행은 일시정지를 막고 이유를 보여야 한다: {json}"
         );
         // 끊김 감시 — 연결 정상 · 시한 전이면 확인을 통과해 손잡이까지 간다(얼리지 않았으면 그대로 성공)
-        state.watch_connection("a", 10_000, true, 1_000);
-        assert!(state.resume("a", 5_000).is_ok());
+        assert!(state.resume("a", || 5_000).is_ok());
         // 끊겼으면 거부
         state.renew_failed("a");
-        assert!(state.resume("a", 5_000).is_err());
+        assert!(state.resume("a", || 5_000).is_err());
         // 다시 이어졌지만 시한이 지났으면 거부
         state.renew_succeeded("a", 10_000, 6_000);
-        assert!(state.resume("a", 5_000).is_ok());
-        assert!(state.resume("a", 10_000).is_err());
+        assert!(state.resume("a", || 5_000).is_ok());
+        assert!(state.resume("a", || 10_000).is_err());
+        // ★ 검수 pz1 — 첫 판정은 시한 전이어도 풀기 **직전** 재판정이 시한 뒤면 거부(두 번째 시각을 본다)
+        let ticks = std::cell::Cell::new(0u64);
+        let clock = || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() == 1 {
+                5_000
+            } else {
+                10_000
+            }
+        };
+        assert!(
+            state.resume("a", clock).is_err(),
+            "풀기 직전 재판정을 하지 않았다"
+        );
         // 거부(다른 노드로 넘어감)면 거부
         state.renew_refused("a", 7_000);
-        assert!(state.resume("a", 7_000).is_err());
+        assert!(state.resume("a", || 7_000).is_err());
     }
 
     /// JSON 이스케이프가 실제로 되는가.
