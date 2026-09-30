@@ -829,3 +829,442 @@ fn the_read_timeout_returns_to_the_io_timeout_after_the_first_read() {
     );
     assert!(!agent.killed, "Agent 가 시한 안에 끝나지 않았다\n{all}");
 }
+
+// ── 2026-09-30 (사용자 승인 규범 — 신뢰망은 Coordinator 와 끊긴 채 끊김 시한이 지나면 작업을 스스로 멈춘다) ──
+//   끊김 시한 = min(갱신 요청을 보낸 시각 + Lease 길이, Lease 만료) − 여유(`--disconnect-stop-margin-ms`).
+//   Coordinator 는 FRESH 한 번만 받고 끝낸다(`--max-connections 1`) — 그 뒤의 갱신은 전부 연결에 실패한다(= 끊김).
+
+/// 줄마다 **곧바로** 흘려보낸다 — 도는 중에 Owner Panel 주소 · 기동 사실을 읽으려고.
+fn spawn_agent_tapped(addr: &str, dir: &Path, extra: &[&str]) -> (Proc, mpsc::Receiver<String>) {
+    let mut proc = spawn_agent_with_pipe(addr, dir, extra);
+    let pipe = proc.child.stdout.take().expect("piped stdout");
+    let (tx, rx) = mpsc::channel();
+    proc.stdout = thread::spawn(move || {
+        let mut reader = BufReader::new(pipe);
+        let mut lines = Vec::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = line.trim_end().to_string();
+                    let _ = tx.send(line.clone());
+                    lines.push((Instant::now(), line));
+                }
+            }
+        }
+        lines
+    });
+    (proc, rx)
+}
+
+/// `spawn_agent` 와 같되 stdout 을 아직 읽지 않는다(읽는 쪽을 부르는 쪽이 정한다).
+fn spawn_agent_with_pipe(addr: &str, dir: &Path, extra: &[&str]) -> Proc {
+    let fence_db = dir.join("agent-fence.sqlite3");
+    let checkpoint_root = dir.join("agent-checkpoints");
+    let mut child = Command::new(cli_bin())
+        .args([
+            "agent-stub",
+            "--connect",
+            addr,
+            "--own-seed",
+            &seed_hex(AGENT_SEED),
+            "--peer-pubkey",
+            &pub_hex(COORDINATOR_SEED),
+            "--coordinator-device-id",
+            COORDINATOR,
+            "--agent-device-id",
+            AGENT,
+            "--submitter-pubkey",
+            &pub_hex(SUBMITTER_SEED),
+            "--i-understand-this-executes-untrusted-code",
+            "true",
+            "--fence-db",
+            fence_db.to_str().unwrap(),
+            "--checkpoint-root",
+            checkpoint_root.to_str().unwrap(),
+        ])
+        .args(extra)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("agent-stub spawn");
+    let stderr = drain_stderr(&mut child);
+    Proc {
+        child,
+        stdout: thread::spawn(Vec::new),
+        stderr,
+    }
+}
+
+/// `needle` 이 담긴 줄이 올 때까지 기다린다.
+fn wait_for_line(rx: &mpsc::Receiver<String>, needle: &str, limit: Duration) -> String {
+    let deadline = Instant::now() + limit;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(line) if line.contains(needle) => return line,
+            Ok(_) => continue,
+            Err(error) => panic!("{needle} 이 {limit:?} 안에 오지 않았다: {error}"),
+        }
+    }
+}
+
+/// 로컬 HTTP 한 번 — Owner Panel 과 이야기한다(이 기계의 소유자가 브라우저로 하는 일).
+fn owner_http(port: u16, method: &str, path: &str, token: Option<&str>, body: &str) -> String {
+    use std::io::Write;
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("Owner Panel 연결");
+    let mut request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    if let Some(token) = token {
+        request.push_str(&format!("x-gputeer-owner-token: {token}\r\n"));
+    }
+    request.push_str("\r\n");
+    request.push_str(body);
+    stream.write_all(request.as_bytes()).expect("요청 쓰기");
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+    response
+}
+
+/// 도는 Agent 의 Owner Panel 에서 (포트 · 토큰 · 작업 목록 JSON) 을 읽는다. 작업이 목록에 올라와 연결 상태가 붙을 때까지 기다린다.
+fn panel_listing(rx: &mpsc::Receiver<String>) -> (u16, String, serde_json::Value) {
+    let listening = wait_for_line(rx, "OWNER_PANEL listening=", Duration::from_secs(30));
+    let port: u16 = listening
+        .rsplit(':')
+        .next()
+        .and_then(|tail| tail.trim_end_matches('/').parse().ok())
+        .unwrap_or_else(|| panic!("패널 포트를 못 읽었다: {listening}"));
+    wait_for_line(rx, "WORKLOAD_SPAWNED", Duration::from_secs(30));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let listing = owner_http(port, "GET", "/api/workloads", None, "");
+        let json = &listing[listing.find('{').expect("JSON")..];
+        let value: serde_json::Value = serde_json::from_str(json).expect("workloads JSON");
+        if value["workloads"][0]["connection"].is_object() {
+            let token = value["token"].as_str().expect("token").to_string();
+            return (port, token, value);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "작업에 연결 상태가 붙지 않았다: {listing}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// 끊긴 채 끊김 시한이 지나면 Agent 가 **스스로** 워크로드를 멈추고 INTERRUPTED 로 남긴다 — 약 40초짜리가 시한(약 9초) 무렵 끝난다.
+///   소유자 되찾음이 아니므로 풀에서 빠지는 표시(OWNER_STOPPED)는 없다.
+#[test]
+fn a_disconnected_agent_stops_its_workload_at_the_disconnect_deadline() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 41);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--max-connections",
+            "1",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+
+    assert!(
+        !agent.killed,
+        "Agent 가 스스로 멈추지 않고 끝까지 돌았다\n{all}"
+    );
+    assert!(
+        agent.output().contains("RENEW_SESSION_FAILED"),
+        "전제가 깨졌다 — 갱신이 실패(끊김)하지 않았다\n{all}"
+    );
+    let (spawned, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (stopped, _) = agent
+        .first("DISCONNECT_SELF_STOP attempt_id=")
+        .unwrap_or_else(|| panic!("끊김 시한으로 멈추지 않았다\n{all}"));
+    let (exited, exited_at) = agent
+        .first("WORKLOAD_EXITED")
+        .unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(
+        spawned < stopped && stopped < exited,
+        "순서가 기동 -> 스스로 멈춤 -> 종료가 아니다\n{all}"
+    );
+    assert!(
+        exited_at.duration_since(spawned_at) < Duration::from_secs(20),
+        "약 40초짜리가 끊김 시한(약 9초) 무렵 끝나야 한다\n{all}"
+    );
+    assert!(
+        agent.output().contains("DISCONNECT_STOPPED"),
+        "끊김 정지를 종료 관측에 남기지 않았다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("OWNER_STOPPED"),
+        "끊김 정지를 소유자 되찾음으로 적었다(노드가 풀에서 빠진다)\n{all}"
+    );
+}
+
+/// 여유 0 — 끊김 시한으로 멈추지 않는다(옛 동작). 약 16초짜리가 Lease(12초)를 넘겨 끝까지 돈다.
+#[test]
+fn with_a_zero_margin_a_disconnected_agent_keeps_the_old_behaviour() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 17);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--max-connections",
+            "1",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "0",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    assert!(
+        !agent.output().contains("DISCONNECT_SELF_STOP"),
+        "여유 0 인데 스스로 멈췄다\n{all}"
+    );
+    let (_, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (_, exited_at) = agent
+        .first("WORKLOAD_EXITED")
+        .unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(
+        exited_at.duration_since(spawned_at) >= Duration::from_secs(14),
+        "끝까지 돌지 않았다\n{all}"
+    );
+}
+
+/// 소유자가 Owner Panel 에서 "계속 돌리기" 를 고르면(부작용 없는 작업 — PURE) 끊김 시한을 넘겨 끝까지 돈다.
+///   화면 목록에는 연결 상태(끊김 여부 · 스스로 멈출 때까지 남은 시간)가 붙는다.
+#[test]
+fn the_owner_can_keep_safe_work_running_past_the_disconnect_deadline() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_manifest(dir.path(), 17, &["--side-effect-class", "PURE"]);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--max-connections",
+            "1",
+        ],
+    );
+    let (agent, rx) = spawn_agent_tapped(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let (port, token, listing) = panel_listing(&rx);
+    let connection = &listing["workloads"][0]["connection"];
+    assert_eq!(
+        connection["keep_running_allowed"], true,
+        "PURE 작업인데 계속 돌리기를 못 고른다: {listing}"
+    );
+    assert!(
+        connection["ms_to_self_stop"]
+            .as_u64()
+            .is_some_and(|ms| ms > 0),
+        "스스로 멈출 때까지 남은 시간이 화면에 없다: {listing}"
+    );
+    let attempt = listing["workloads"][0]["attempt_id"]
+        .as_str()
+        .expect("attempt_id")
+        .to_string();
+    let no_token = owner_http(port, "POST", "/api/keep-running", None, &attempt);
+    assert!(no_token.contains(" 403 "), "토큰 없이 골랐다: {no_token}");
+    let chosen = owner_http(port, "POST", "/api/keep-running", Some(&token), &attempt);
+    assert!(
+        chosen.contains("KEEP_RUNNING attempt_id="),
+        "계속 돌리기가 안 됐다: {chosen}"
+    );
+    drop(rx);
+
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    assert!(
+        agent.output().contains("RENEW_SESSION_FAILED"),
+        "전제가 깨졌다 — 갱신이 실패(끊김)하지 않았다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("DISCONNECT_SELF_STOP"),
+        "소유자가 계속을 골랐는데 멈췄다\n{all}"
+    );
+    let (_, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (_, exited_at) = agent
+        .first("WORKLOAD_EXITED")
+        .unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(
+        exited_at.duration_since(spawned_at) >= Duration::from_secs(14),
+        "끝까지 돌지 않았다\n{all}"
+    );
+}
+
+/// 부작용 있는 작업(SIDE_EFFECTING)은 소유자가 "계속" 을 눌러도 거부되고(409), 끊김 시한에 멈춘다 — 두 벌 실행이 외부에 두 번 쓰게 된다.
+#[test]
+fn keep_running_is_refused_for_side_effecting_work() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_manifest(dir.path(), 41, &["--side-effect-class", "SIDE_EFFECTING"]);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--max-connections",
+            "1",
+        ],
+    );
+    let (agent, rx) = spawn_agent_tapped(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let (port, token, listing) = panel_listing(&rx);
+    assert_eq!(
+        listing["workloads"][0]["connection"]["keep_running_allowed"], false,
+        "부작용 있는 작업인데 계속 돌리기를 허용한다: {listing}"
+    );
+    let attempt = listing["workloads"][0]["attempt_id"]
+        .as_str()
+        .expect("attempt_id")
+        .to_string();
+    let chosen = owner_http(port, "POST", "/api/keep-running", Some(&token), &attempt);
+    assert!(
+        chosen.contains(" 409 ") && chosen.contains("KEEP_RUNNING_REFUSED"),
+        "부작용 있는 작업의 계속을 받아들였다: {chosen}"
+    );
+    drop(rx);
+
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+    assert!(
+        !agent.killed,
+        "Agent 가 스스로 멈추지 않고 끝까지 돌았다\n{all}"
+    );
+    assert!(
+        agent.output().contains("DISCONNECT_SELF_STOP attempt_id="),
+        "끊김 시한으로 멈추지 않았다\n{all}"
+    );
+}
+
+/// 갱신 스레드가 시한 **전에** 끝나도(결과 서명이 깨져 갱신을 그만둠 — RENEW_REJECTED) 끊김 시한 감시는 실행 끝까지 이어진다.
+///   Coordinator 의 결정을 안 것이 아니므로 곧바로 멈추지도 않는다 — 시한(약 9초)에 멈춘다.
+#[test]
+fn the_disconnect_deadline_outlives_a_renew_thread_that_gave_up_early() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 41);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--corrupt-renew-result-signature",
+            "true",
+            "--max-connections",
+            "2",
+            "--accept-timeout-ms",
+            "30000",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+
+    assert!(
+        !agent.killed,
+        "갱신 스레드가 끝난 뒤 시한 감시가 사라졌다\n{all}"
+    );
+    let (gave_up, gave_up_at) = agent
+        .first("RENEW_SESSION_STOPPED")
+        .unwrap_or_else(|| panic!("전제가 깨졌다 — 갱신 스레드가 일찍 끝나지 않았다\n{all}"));
+    let (stopped, stopped_at) = agent
+        .first("DISCONNECT_SELF_STOP attempt_id=")
+        .unwrap_or_else(|| panic!("끊김 시한으로 멈추지 않았다\n{all}"));
+    assert!(
+        gave_up < stopped,
+        "순서가 갱신 포기 -> 스스로 멈춤이 아니다\n{all}"
+    );
+    assert!(
+        stopped_at.duration_since(gave_up_at) >= Duration::from_secs(3),
+        "검증 실패를 Coordinator 의 거부로 보고 곧바로 멈췄다\n{all}"
+    );
+}

@@ -99,6 +99,9 @@ pub struct TerminalObservation {
     /// ★ 2026-09-23 (신뢰망 남은 일 H) — 이 노드의 **소유자가** Owner Panel 로 멈췄다(관측, `OwnerPanelState`).
     ///   그러면 outcome 은 FAILED 가 아니라 INTERRUPTED 다 — 작업이 잘못된 게 아니라 GPU 를 되찾긴 것이다.
     pub stopped_by_owner: bool,
+    /// ★ 2026-09-30 (신뢰망 규범 — 끊긴 채 끊김 시한이 지나면 스스로 멈춘다) — 이 Agent 가 **끊김 시한으로** 멈췄다(관측, `OwnerPanelState`).
+    ///   이것도 FAILED 가 아니라 INTERRUPTED 다 — 작업이 잘못된 게 아니라 Coordinator 와 끊겨 다른 노드로 넘어갔을 수 있어 멈춘 것이다.
+    pub stopped_for_disconnect: bool,
 }
 
 /// 보고를 만들 수 없는 이유. **전부 "안 보낸다" 다** — 부분 보고가 없다.
@@ -228,7 +231,7 @@ pub fn build_signed_attempt_report(
         attempt_id: observation.attempt_id.clone(),
         node_id: observation.node_id.clone(),
         fence_epoch: observation.fence_epoch,
-        outcome: if observation.stopped_by_owner {
+        outcome: if observation.stopped_by_owner || observation.stopped_for_disconnect {
             pb::AttemptOutcome::Interrupted as i32
         } else {
             outcome_for(observation.exit_code, observation.finalization_failure) as i32
@@ -288,6 +291,7 @@ mod tests {
     fn observation() -> TerminalObservation {
         TerminalObservation {
             stopped_by_owner: false,
+            stopped_for_disconnect: false,
             job_id: JOB.into(),
             attempt_id: ATTEMPT.into(),
             node_id: NODE.into(),
@@ -548,5 +552,17 @@ mod tests {
         observed.stopped_by_owner = false;
         let report = build_signed_attempt_report(&key, &observed).unwrap();
         assert_eq!(report.outcome, pb::AttemptOutcome::Failed as i32);
+    }
+
+    /// ★ 2026-09-30 — 끊김 시한으로 스스로 멈춘 시도도 INTERRUPTED 다(FAILED 로 세면 작업 탓이 된다).
+    #[test]
+    fn a_disconnect_self_stop_is_reported_as_interrupted_not_failed() {
+        let key = SigningKey::from_bytes(&[3u8; 32]);
+        let mut observed = observation();
+        observed.exit_code = Some(0xC000_0013);
+        observed.stopped_for_disconnect = true;
+        let report = build_signed_attempt_report(&key, &observed).unwrap();
+        assert_eq!(report.outcome, pb::AttemptOutcome::Interrupted as i32);
+        gputeer_protocol::attempt_report_rules::validate_attempt_report_semantics(&report).unwrap();
     }
 }

@@ -80,6 +80,56 @@ pub struct RunningWorkload {
     pub stopper: WorkloadStopper,
 }
 
+/// ★ 2026-09-30 (사용자 승인 규범 · docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md) — 끊겼을 때 소유자가 고른 것.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnerChoice {
+    /// 고르지 않았다 — 판단표대로(지금 조각: 끊김 시한에 스스로 멈춘다).
+    Auto,
+    /// 끊김 시한을 넘겨도 계속 돌린다(부작용 없는 작업만 — `keep_running_allowed`).
+    KeepRunning,
+}
+
+/// 작업 하나의 Coordinator 연결 상태 — 실행 중 갱신 스레드가 적고, 화면이 읽는다.
+#[derive(Clone, Debug)]
+pub struct ConnectionWatch {
+    /// 마지막으로 갱신에 성공한 시각(밀리초). 아직 없으면 감시를 건 시각.
+    pub last_renew_ok_unix_ms: u64,
+    /// 이 시각이 지나면 스스로 멈춘다(끊김 시한 = Lease 만료 − 여유). 갱신에 성공할 때마다 뒤로 간다.
+    pub self_stop_at_unix_ms: u64,
+    /// 마지막 갱신 시도가 실패했다(연결 · 전송 실패 · 결과를 못 받음).
+    pub disconnected: bool,
+    /// Coordinator 가 갱신을 거부했다(대체 · 폐기 · 만료) — 다른 노드로 넘어갔다. 소유자 "계속" 도 무시하고 멈춘다.
+    pub refused: bool,
+    /// 소유자가 "계속" 을 고를 수 있는가 — 서명된 선언이 PURE · IDEMPOTENT 일 때만(부작용 두 번을 막을 장치가 없다).
+    pub keep_running_allowed: bool,
+    pub choice: OwnerChoice,
+    /// 끊김 시한으로 스스로 멈췄다(정지 요청이 성공했다).
+    pub self_stopped: bool,
+}
+
+/// 끊김 시한 — `기준 = min(요청을 보낸 시각 + Lease 길이, Lease 만료)`, `시한 = 기준 − min(여유, (기준 − 보낸 시각) / 2)`.
+///
+/// ★ Lease 길이(만료 − 발급)는 Coordinator 시계끼리의 차라 노드 시계와 섞이지 않는다. 요청을 **보낸** 시각부터 재야 응답 지연만큼
+///   늦어지지 않는다. 만료 시각 자체와도 비교해(노드 시계가 맞다는 전제 — 런북 NTP) 둘 중 이른 쪽을 쓴다. 순수 함수다.
+/// ★ 갱신된 Lease 의 발급 시각은 **처음 발급한 때 그대로**다(누적 상한용 — `coordinator/src/lease_store.rs`). 그래서 갱신 뒤에는
+///   "만료 − 발급" 이 한 번 연장분보다 길고, 기준은 사실상 만료 시각이 된다.
+/// ★ 여유는 남은 창(기준 − 보낸 시각)의 **절반까지만** 쓴다. 처음 구현은 여유를 그대로 빼, 연장분(예 7초)이 여유(기본 10초)보다 짧은 풀에서
+///   **연결이 멀쩡한데도** 시작하자마자 멈췄다(`trusted_party_failover.rs` 가 잡았다). 절반으로 줄여도 시한은 만료 **전**이다 — Coordinator 는
+///   만료 + 유예 뒤에야 다른 노드에 넘긴다.
+pub fn disconnect_self_stop_at(
+    lease_issued_at_unix_ms: u64,
+    lease_expires_at_unix_ms: u64,
+    request_sent_at_unix_ms: u64,
+    margin_ms: u64,
+) -> u64 {
+    let length = lease_expires_at_unix_ms.saturating_sub(lease_issued_at_unix_ms);
+    let base = request_sent_at_unix_ms
+        .saturating_add(length)
+        .min(lease_expires_at_unix_ms);
+    let window = base.saturating_sub(request_sent_at_unix_ms);
+    base.saturating_sub(margin_ms.min(window / 2))
+}
+
 /// 지금 멈추면 무엇을 잃는가.
 ///
 /// ★ §0.1 은 "'최대 12분 진행 손실' 을 모른 채 누르게 하지 않는다" 고
@@ -130,6 +180,12 @@ pub struct OwnerPanelState {
     /// ★ 2026-09-23 (신뢰망 남은 일 H) — **소유자가** 멈춘 시도. 종료 보고가 "실패" 가 아니라 "중단(선점)" 을 말하게 한다.
     ///   관측한 사실이다 — 정지 요청이 성공한 attempt 만 들어간다. 실행 계층은 누가 죽였는지 모르지만 이 패널은 안다.
     owner_stopped: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    /// ★ 2026-09-30 — 작업별 Coordinator 연결 상태(끊김 표시 · 스스로 멈춤 · 소유자 선택).
+    connection: Arc<Mutex<BTreeMap<String, ConnectionWatch>>>,
+    /// ★ 2026-09-30 — 끊김 시한으로 **스스로** 멈춘 시도. 연결 감시(`connection`)는 작업이 끝나면(`unregister`) 빠지지만 종료 보고는
+    ///   그 **뒤에** 만들어진다 — 그래서 소유자 정지(`owner_stopped`)처럼 따로 남긴다. 처음 구현은 감시에서 읽어 보고가 FAILED 로 나갔다
+    ///   (실제 프로세스 시험이 잡았다).
+    disconnect_stopped: Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
 
 impl Default for OwnerPanelState {
@@ -143,6 +199,8 @@ impl OwnerPanelState {
         Self {
             inner: Arc::new(Mutex::new(BTreeMap::new())),
             owner_stopped: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+            connection: Arc::new(Mutex::new(BTreeMap::new())),
+            disconnect_stopped: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
         }
     }
 
@@ -159,10 +217,126 @@ impl OwnerPanelState {
     /// 작업이 끝났음을 알린다.
     pub fn unregister(&self, attempt_id: &str) {
         self.lock().remove(attempt_id);
+        self.connections().remove(attempt_id);
+    }
+
+    /// 끊김 감시를 건다 — 실행 중 갱신 스레드가 시작할 때.
+    pub fn watch_connection(
+        &self,
+        attempt_id: &str,
+        self_stop_at_unix_ms: u64,
+        keep_running_allowed: bool,
+        now_unix_ms: u64,
+    ) {
+        self.connections().insert(
+            attempt_id.to_string(),
+            ConnectionWatch {
+                last_renew_ok_unix_ms: now_unix_ms,
+                self_stop_at_unix_ms,
+                disconnected: false,
+                refused: false,
+                keep_running_allowed,
+                choice: OwnerChoice::Auto,
+                self_stopped: false,
+            },
+        );
+    }
+
+    /// 갱신 성공 — 연결됨 · 끊김 시한을 새 Lease 로 미룬다.
+    pub fn renew_succeeded(&self, attempt_id: &str, self_stop_at_unix_ms: u64, now_unix_ms: u64) {
+        if let Some(watch) = self.connections().get_mut(attempt_id) {
+            watch.last_renew_ok_unix_ms = now_unix_ms;
+            watch.self_stop_at_unix_ms = self_stop_at_unix_ms;
+            watch.disconnected = false;
+        }
+    }
+
+    /// 갱신 실패(연결 · 결과) — 끊김으로 표시한다. 시한은 그대로(마지막 성공한 Lease 의 것).
+    pub fn renew_failed(&self, attempt_id: &str) {
+        if let Some(watch) = self.connections().get_mut(attempt_id) {
+            watch.disconnected = true;
+        }
+    }
+
+    /// 갱신 거부(대체 · 폐기 · 만료) — 다른 노드로 넘어갔다. 곧바로 멈출 대상이 된다(소유자 "계속" 도 무시).
+    pub fn renew_refused(&self, attempt_id: &str, now_unix_ms: u64) {
+        if let Some(watch) = self.connections().get_mut(attempt_id) {
+            watch.refused = true;
+            watch.self_stop_at_unix_ms = watch.self_stop_at_unix_ms.min(now_unix_ms);
+        }
+    }
+
+    /// 소유자가 "계속 돌리기" 를 골랐다. 부작용 있는 작업 · 이미 거부된 작업은 받지 않는다.
+    pub fn keep_running(&self, attempt_id: &str) -> Result<(), String> {
+        let mut connections = self.connections();
+        let watch = connections
+            .get_mut(attempt_id)
+            .ok_or_else(|| format!("끊김 감시 중인 작업이 아니다: {attempt_id}"))?;
+        if watch.refused {
+            return Err("Coordinator 가 이 작업을 다른 노드로 넘겼다 — 계속 돌릴 수 없다".into());
+        }
+        if !watch.keep_running_allowed {
+            return Err("부작용이 있거나 등급을 모르는 작업이다 — 두 번 실행을 막을 장치가 없어 계속 돌리기를 받지 않는다".into());
+        }
+        watch.choice = OwnerChoice::KeepRunning;
+        Ok(())
+    }
+
+    /// 끊김 시한이 지났고 소유자가 "계속" 을 고르지 않았으면(또는 거부됐으면) 멈춘다. 멈출 때가 아니면 `None`.
+    /// 정지가 **성공한 뒤에만** 멈췄다고 적는다 — 실패하면 다음 번에 다시 시도한다.
+    pub fn self_stop_if_due(
+        &self,
+        attempt_id: &str,
+        now_unix_ms: u64,
+    ) -> Option<Result<(), String>> {
+        let due = {
+            let connections = self.connections();
+            let watch = connections.get(attempt_id)?;
+            !watch.self_stopped
+                && now_unix_ms >= watch.self_stop_at_unix_ms
+                && (watch.refused || watch.choice == OwnerChoice::Auto)
+        };
+        if !due {
+            return None;
+        }
+        let result = {
+            let guard = self.lock();
+            match guard.get(attempt_id) {
+                Some(workload) => workload.stopper.stop().map_err(|error| error.to_string()),
+                None => Err(format!("그런 작업이 없다: {attempt_id}")),
+            }
+        };
+        if result.is_ok() {
+            if let Some(watch) = self.connections().get_mut(attempt_id) {
+                watch.self_stopped = true;
+            }
+            match self.disconnect_stopped.lock() {
+                Ok(mut stopped) => stopped.insert(attempt_id.to_string()),
+                Err(poisoned) => poisoned.into_inner().insert(attempt_id.to_string()),
+            };
+        }
+        Some(result)
+    }
+
+    /// 이 시도를 끊김 시한으로 스스로 멈췄나.
+    ///   작업이 끝나 목록에서 빠진 뒤에도 답한다(종료 보고가 그 뒤에 만들어진다).
+    pub fn stopped_for_disconnect(&self, attempt_id: &str) -> bool {
+        match self.disconnect_stopped.lock() {
+            Ok(stopped) => stopped.contains(attempt_id),
+            Err(poisoned) => poisoned.into_inner().contains(attempt_id),
+        }
+    }
+
+    fn connections(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, ConnectionWatch>> {
+        match self.connection.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 
     /// 지금 도는 작업들을 사람이 읽는 요약으로 낸다.
     pub fn snapshot(&self, now_unix_ms: u64) -> Vec<WorkloadSummary> {
+        let connections = self.connections().clone();
         self.lock()
             .values()
             .map(|workload| {
@@ -175,6 +349,7 @@ impl OwnerPanelState {
                     started_at_unix_ms: workload.started_at_unix_ms,
                     running_ms: now_unix_ms.saturating_sub(workload.started_at_unix_ms),
                     loss,
+                    connection: connections.get(&workload.attempt_id).cloned(),
                 }
             })
             .collect()
@@ -236,6 +411,8 @@ pub struct WorkloadSummary {
     pub started_at_unix_ms: u64,
     pub running_ms: u64,
     pub loss: LossEstimate,
+    /// 끊김 감시가 걸린 작업이면 연결 상태(실행 중 갱신을 켠 Agent).
+    pub connection: Option<ConnectionWatch>,
 }
 
 /// 로컬 전용 패널 서버.
@@ -360,6 +537,32 @@ impl OwnerPanel {
                         500,
                         "text/plain; charset=utf-8",
                         &format!("STOP_FAILED {message}"),
+                    ),
+                }
+            }
+            ("POST", "/api/keep-running") => {
+                // ★ 정지와 같은 토큰 규칙 — 이 기계의 패널에서만.
+                if request.token.as_deref() != Some(self.token.as_str()) {
+                    return respond(
+                        &mut stream,
+                        403,
+                        "text/plain; charset=utf-8",
+                        "토큰이 없거나 다르다 — 이 기계의 패널에서만 고를 수 있다",
+                    );
+                }
+                let attempt_id = request.body.trim();
+                match self.state.keep_running(attempt_id) {
+                    Ok(()) => respond(
+                        &mut stream,
+                        200,
+                        "text/plain; charset=utf-8",
+                        &format!("KEEP_RUNNING attempt_id={attempt_id}"),
+                    ),
+                    Err(message) => respond(
+                        &mut stream,
+                        409,
+                        "text/plain; charset=utf-8",
+                        &format!("KEEP_RUNNING_REFUSED {message}"),
                     ),
                 }
             }
@@ -552,10 +755,24 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
     let entries: Vec<String> = items
         .iter()
         .map(|item| {
+            let connection = match &item.connection {
+                None => "null".to_string(),
+                Some(watch) => format!(
+                    "{{\"disconnected\":{},\"refused\":{},\"since_last_ok_ms\":{},\"ms_to_self_stop\":{},\
+                     \"keep_running_allowed\":{},\"keep_running\":{},\"self_stopped\":{}}}",
+                    watch.disconnected,
+                    watch.refused,
+                    now_unix_ms.saturating_sub(watch.last_renew_ok_unix_ms),
+                    watch.self_stop_at_unix_ms.saturating_sub(now_unix_ms),
+                    watch.keep_running_allowed,
+                    watch.choice == OwnerChoice::KeepRunning,
+                    watch.self_stopped
+                ),
+            };
             format!(
                 "{{\"job_id\":{},\"attempt_id\":{},\"submitter_device_id\":{},\
                  \"entrypoint\":{},\"started_at_unix_ms\":{},\"running_ms\":{},\
-                 \"lost_ms\":{},\"nothing_committed_yet\":{}}}",
+                 \"lost_ms\":{},\"nothing_committed_yet\":{},\"connection\":{}}}",
                 json_string(&item.job_id),
                 json_string(&item.attempt_id),
                 json_string(&item.submitter_device_id),
@@ -563,7 +780,8 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
                 item.started_at_unix_ms,
                 item.running_ms,
                 item.loss.lost_ms,
-                item.loss.nothing_committed_yet
+                item.loss.nothing_committed_yet,
+                connection
             )
         })
         .collect();
@@ -707,6 +925,79 @@ mod tests {
 
         let snapshot = state.snapshot(3_000);
         assert_eq!(snapshot.len(), 2, "한 시도가 다른 시도를 덮어썼다");
+    }
+
+    /// 2026-09-30 — 끊김 시한 공식: 요청을 보낸 시각부터 Lease 길이만큼 · 만료 시각과 이른 쪽 · 여유를 뺀다.
+    #[test]
+    fn the_self_stop_time_is_the_earlier_of_sent_plus_length_and_expiry_minus_margin() {
+        // Lease 60초(발급 1_000 → 만료 61_000), 요청은 1_500 에 보냄 → 61_500 과 61_000 중 61_000 − 여유 10_000
+        assert_eq!(
+            disconnect_self_stop_at(1_000, 61_000, 1_500, 10_000),
+            51_000
+        );
+        // 노드 시계가 뒤처져 보낸 시각이 이르면 보낸 시각 + 길이 쪽이 이르다
+        assert_eq!(disconnect_self_stop_at(1_000, 61_000, 500, 10_000), 50_500);
+        // 여유가 남은 창보다 길면 창의 절반만 뺀다 — 연결이 멀쩡한데 곧바로 멈추지 않는다(창 4_000 → 2_000 뺌)
+        assert_eq!(disconnect_self_stop_at(1_000, 5_000, 1_000, 10_000), 3_000);
+        // 갱신된 Lease — 발급 시각은 처음 그대로(1_000), 만료 20_000, 보낸 시각 13_000 → 기준 20_000, 창 7_000 → 3_500 뺌
+        assert_eq!(
+            disconnect_self_stop_at(1_000, 20_000, 13_000, 10_000),
+            16_500
+        );
+        // 이미 만료 뒤에 보냈으면 창이 0 — 기준(만료) 그대로
+        assert_eq!(disconnect_self_stop_at(1_000, 5_000, 6_000, 10_000), 5_000);
+    }
+
+    /// 2026-09-30 — 끊김 시한이 지나면 스스로 멈춘다 · 갱신에 성공하면 시한이 미뤄진다 · 소유자 "계속" 은 부작용 없는 작업만 · 거부되면 "계속" 도 무시.
+    #[test]
+    fn the_watch_stops_on_time_honours_keep_running_only_for_safe_work_and_obeys_refusal() {
+        let state = OwnerPanelState::new();
+        let mut safe = workload(1_000, None);
+        safe.attempt_id = "safe".into();
+        let mut risky = workload(1_000, None);
+        risky.attempt_id = "risky".into();
+        state.register(safe);
+        state.register(risky);
+        state.watch_connection("safe", 10_000, true, 1_000);
+        state.watch_connection("risky", 10_000, false, 1_000);
+        // 시한 전에는 멈추지 않는다
+        assert!(state.self_stop_if_due("safe", 9_999).is_none());
+        // 갱신 성공 → 시한이 뒤로
+        state.renew_succeeded("safe", 20_000, 9_000);
+        assert!(state.self_stop_if_due("safe", 15_000).is_none());
+        // 끊김 표시
+        state.renew_failed("safe");
+        let snapshot = state.snapshot(15_000);
+        let safe_view = snapshot.iter().find(|s| s.attempt_id == "safe").unwrap();
+        assert!(safe_view.connection.as_ref().unwrap().disconnected);
+        // 부작용 있는 작업은 "계속" 을 받지 않는다
+        assert!(state.keep_running("risky").is_err());
+        // 부작용 없는 작업은 "계속" → 시한이 지나도 멈추지 않는다
+        state.keep_running("safe").unwrap();
+        assert!(state.self_stop_if_due("safe", 25_000).is_none());
+        // 거부(다른 노드로 넘어감)면 "계속" 도 무시하고 멈추려 한다. ★ 시험용 손잡이는 성공을 돌려주지 않는다(멈춘 척하지 않는다 — exec::WorkloadStopper::for_test)
+        //   → 정지를 **시도**했고 · 실패했으니 멈췄다고 적지 않고 · 다음 번에 다시 시도한다. 성공 경로는 실제 프로세스 시험이 본다.
+        state.renew_refused("safe", 26_000);
+        assert!(matches!(
+            state.self_stop_if_due("safe", 26_000),
+            Some(Err(_))
+        ));
+        assert!(
+            !state.stopped_for_disconnect("safe"),
+            "정지가 실패했는데 멈췄다고 적었다"
+        );
+        assert!(
+            state.self_stop_if_due("safe", 27_000).is_some(),
+            "실패한 정지를 다시 시도하지 않는다"
+        );
+        // 부작용 있는 작업은 시한에 멈추려 한다
+        assert!(state.self_stop_if_due("risky", 10_000).is_some());
+        // 거부된 뒤에는 "계속" 을 고를 수 없다
+        assert!(state.keep_running("safe").is_err());
+        // 끝나면 감시도 빠진다(멈추지 못한 시도는 멈췄다고 남지 않는다)
+        state.unregister("risky");
+        assert!(state.connections().get("risky").is_none());
+        assert!(!state.stopped_for_disconnect("risky"));
     }
 
     /// JSON 이스케이프가 실제로 되는가.

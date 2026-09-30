@@ -136,6 +136,10 @@ pub struct AgentConfig {
     /// ★ 2026-09-29 (결함 562) — Windows 에서 Agent 가 관리자(상승) 토큰으로 돌아도 호스트 작업을 띄운다
     ///   (`--i-understand-elevated-host-execution-is-unsafe true`). 기본 꺼짐 — 상승돼 있으면 `EXEC_REFUSED:HOST_ELEVATED`.
     pub allow_elevated_host_execution: bool,
+    /// ★ 2026-09-30 (사용자 승인 규범 — 신뢰망은 끊긴 채 시한이 지나면 작업을 멈춘다) — 끊김 시한의 여유(밀리초).
+    ///   끊김 시한 = min(갱신 요청을 보낸 시각 + Lease 길이, Lease 만료) − 이 값. 실행 중 갱신(`--renew-during-execution-ms`)을 켠 Agent 에만 걸린다.
+    ///   0 이면 끊김 시한으로 멈추지 않는다(옛 동작).
+    pub disconnect_stop_margin_ms: u64,
     /// 워크로드가 끝난 뒤 서명된 `AttemptReport` 를 Coordinator 에 보낸다.
     ///
     /// ★ 기본값 `false` 다 — 이 값이 꺼져 있으면 이 조각 **이전과
@@ -1640,6 +1644,11 @@ fn run_one_connection_inner(
                 signing_key,
                 &held_lease,
                 !config.require_ack_receipt,
+                &grant.attempt_id,
+                workload.as_ref().is_some_and(|loaded| {
+                    loaded.side_effect_class == pb::SideEffectClass::Pure as i32
+                        || loaded.side_effect_class == pb::SideEffectClass::Idempotent as i32
+                }),
             )
         } else {
             None
@@ -1799,7 +1808,18 @@ fn run_one_connection_inner(
                     finished_at_unix_ms: report.finished_at_unix_ms,
                     issued_at_unix_ms: 0,
                     stopped_by_owner: config.owner_panel_state.stopped_by_owner(&grant.attempt_id),
+                    stopped_for_disconnect: config
+                        .owner_panel_state
+                        .stopped_for_disconnect(&grant.attempt_id),
                 });
+                // ★ 2026-09-30 — 끊김 시한으로 멈췄다. 소유자 되찾음과 달리 이 노드는 풀에서 빠지지 않는다(표시 파일 없음) —
+                //   소유자가 GPU 를 원한 게 아니라 Coordinator 와 끊겼을 뿐이다.
+                if config
+                    .owner_panel_state
+                    .stopped_for_disconnect(&grant.attempt_id)
+                {
+                    println!("DISCONNECT_STOPPED attempt_id={}", grant.attempt_id);
+                }
                 // ★ 2026-09-23 (신뢰망 남은 일 H) — 소유자가 GPU 를 되찾았다. 이 노드는 소유자가 다시 켤 때까지
                 //   풀에 붙지 않는다(표시 파일). 보고는 이번 실행에서 그대로 보낸다 — 선점 사실을 Coordinator 가 알아야
                 //   작업을 다른 노드로 옮긴다.
@@ -2484,17 +2504,63 @@ struct RenewDuringExecution {
 /// 그 밖의 실패     RENEW_SESSION_FAILED — 연결 · 전송 실패, 결과를 받지 못함(끊김 · 시한). 다음 주기에 다시 연다(결함 102)
 /// ```
 ///
-/// ★ 워크로드를 **멈추지는 않는다** — Lease 를 잃었을 때 워크로드를 어떻게 할지는 정책(규범 §3 LEASE_EXPIRED · STALE)이라
-///   이 조각이 정하지 않는다. 사실을 알리는 데까지다.
+/// ★ 2026-09-30 (사용자 승인 규범 — `docs/protocol/state-machines.md` "STALE 의 의미") — 신뢰망에서는 끊긴 채 **끊김 시한**이 지나면
+///   작업을 스스로 멈춘다(세 겹 중 첫째 — Agent 타이머). 전에는 "정책이 정하지 않았다" 며 멈추지 않았다. 소유자 화면에 연결 상태를 적고,
+///   소유자가 "계속 돌리기"(부작용 없는 작업만)를 고르면 시한을 넘겨 계속 둔다. Coordinator 가 갱신을 거부하면(다른 노드로 넘어감) "계속" 도
+///   무시하고 멈춘다. 여유(`disconnect_stop_margin_ms`)가 0 이면 멈추지 않는다(옛 동작). 커널 시한 · 런타임 밖 정지(둘째 · 셋째 겹)는 아직이다.
 fn start_renew_during_execution(
     config: &AgentConfig,
     signing_key: &SigningKey,
     held_lease: &pb::Lease,
     first_immediately: bool,
+    attempt_id: &str,
+    keep_running_allowed: bool,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
     }
+    let panel = config.owner_panel_state.clone();
+    let attempt_id = attempt_id.to_string();
+    let margin = config.disconnect_stop_margin_ms;
+    let self_stop_enabled = margin > 0;
+    if self_stop_enabled {
+        let now = SystemClock.now_unix_ms();
+        panel.watch_connection(
+            &attempt_id,
+            owner_panel::disconnect_self_stop_at(
+                held_lease.issued_at_unix_ms,
+                held_lease.expires_at_unix_ms,
+                now,
+                margin,
+            ),
+            keep_running_allowed,
+            now,
+        );
+    }
+    // 끊김 시한 확인 — 기다리는 동안 50ms 마다 부른다. 멈출 때가 되면 한 번 멈추고 그 사실을 찍는다(실패하면 다음에 다시).
+    //   ★ 실패 문구는 **바뀔 때만** 찍는다 — 50ms 마다 같은 줄이 쌓이지 않게(작업이 아직 등록 전이면 등록될 때까지 실패한다).
+    let mut check_self_stop = {
+        let panel = panel.clone();
+        let attempt_id = attempt_id.clone();
+        let mut last_failure: Option<String> = None;
+        move || {
+            if !self_stop_enabled {
+                return;
+            }
+            match panel.self_stop_if_due(&attempt_id, SystemClock.now_unix_ms()) {
+                Some(Ok(())) => println!(
+                    "DISCONNECT_SELF_STOP attempt_id={attempt_id} — Coordinator 와 끊긴 채 끊김 시한이 지나 작업을 멈췄다(신뢰망 규범 2026-09-30)"
+                ),
+                Some(Err(error)) if last_failure.as_deref() != Some(error.as_str()) => {
+                    println!(
+                        "DISCONNECT_SELF_STOP_FAILED attempt_id={attempt_id} detail={error} — 다음 확인 때 다시 멈춘다"
+                    );
+                    last_failure = Some(error);
+                }
+                Some(Err(_)) | None => {}
+            }
+        }
+    };
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thread_stop = std::sync::Arc::clone(&stop);
     let config = config.clone();
@@ -2523,14 +2589,28 @@ fn start_renew_during_execution(
                 if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
                     break 'renew;
                 }
+                check_self_stop();
                 std::thread::sleep(Duration::from_millis(50));
             }
+            let sent_at = SystemClock.now_unix_ms();
             match renew_once_over_new_connection(&config, &key, &lease) {
                 Ok(renewed) => {
                     println!(
                         "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",
                         renewed.lease_id, renewed.fence_epoch, renewed.expires_at_unix_ms
                     );
+                    if self_stop_enabled {
+                        panel.renew_succeeded(
+                            &attempt_id,
+                            owner_panel::disconnect_self_stop_at(
+                                renewed.issued_at_unix_ms,
+                                renewed.expires_at_unix_ms,
+                                sent_at,
+                                margin,
+                            ),
+                            SystemClock.now_unix_ms(),
+                        );
+                    }
                     lease = renewed;
                 }
                 Err(error)
@@ -2538,11 +2618,37 @@ fn start_renew_during_execution(
                         || error.starts_with("RENEW_REJECTED") =>
                 {
                     println!("RENEW_SESSION_STOPPED round={round} detail={error}");
+                    // ★ 2026-09-30 — **Coordinator 가 서명해 거부했다**(대체 · 격리 · 누적 상한 · 폐기) = 다른 노드로 넘어갔거나 넘어갈 작업이다.
+                    //   소유자의 "계속" 도 무시하고 곧바로 멈춘다. 그 밖(Agent 가 스스로 본 만료 `LOCAL_EXPIRED` · 결과 검증 실패 `RENEW_REJECTED`)은
+                    //   Coordinator 의 결정을 안 것이 아니다 — 끊김으로 다룬다(시한 · 소유자 선택대로). 처음 구현은 둘을 같이 거부로 다뤄,
+                    //   소유자가 "계속" 을 고른 PURE 작업이 Lease 가 끝나는 순간 멈췄다(실제 프로세스 시험이 잡았다).
+                    if self_stop_enabled {
+                        let signed_refusal = error.starts_with("RENEW_REFUSED")
+                            && !error.starts_with("RENEW_REFUSED:LOCAL_EXPIRED");
+                        if signed_refusal {
+                            panel.renew_refused(&attempt_id, SystemClock.now_unix_ms());
+                        } else {
+                            panel.renew_failed(&attempt_id);
+                        }
+                        check_self_stop();
+                    }
                     break 'renew;
                 }
-                Err(error) => println!("RENEW_SESSION_FAILED round={round} detail={error}"),
+                Err(error) => {
+                    println!("RENEW_SESSION_FAILED round={round} detail={error}");
+                    if self_stop_enabled {
+                        panel.renew_failed(&attempt_id);
+                        check_self_stop();
+                    }
+                }
             }
             round += 1;
+        }
+        // ★ 2026-09-30 — 갱신은 끝났어도(거부 · 만료 · 검증 실패) 작업은 아직 돌 수 있다. 끊김 시한 감시는 실행이 끝날 때까지 이어 간다 —
+        //   갱신 스레드가 끝났다고 시한이 사라지면, 시한 전에 갱신이 멈춘 작업은 영영 스스로 멈추지 않는다.
+        while self_stop_enabled && !thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
+            check_self_stop();
+            std::thread::sleep(Duration::from_millis(50));
         }
         lease
     });
@@ -3131,6 +3237,7 @@ fn verify_nested_manifest(
     //   한다(`CLAUDE.md` §0.1). 검증을 통과한 뒤에만 읽는다.
     Ok(Some(VerifiedWorkload {
         submitter_device_id: verified.get().submitter_device_id.clone(),
+        side_effect_class: verified.get().side_effect_class,
         container: recheck_cdi_all(
             container::decide(
                 verified.get(),
@@ -3185,6 +3292,8 @@ struct VerifiedWorkload {
     /// 소유자 화면에 보여줄 제출자. `ExecutionSpec` 에는 없다 —
     /// 실행에는 필요 없지만 **소유자에게는 필요한** 사실이다.
     submitter_device_id: String,
+    /// ★ 2026-09-30 — 서명이 검증된 Manifest 의 부작용 등급. 끊겼을 때 소유자가 "계속 돌리기" 를 고를 수 있는지(PURE · IDEMPOTENT 만) 가른다.
+    side_effect_class: i32,
 }
 
 fn verify_and_record_lease(
@@ -4935,6 +5044,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         execute_workload: flags.bool_flag("--i-understand-this-executes-untrusted-code"),
         allow_elevated_host_execution: flags
             .bool_flag("--i-understand-elevated-host-execution-is-unsafe"),
+        disconnect_stop_margin_ms: flags
+            .u64_flag_with_default("--disconnect-stop-margin-ms", 10_000)?,
         send_attempt_report: flags.bool_flag("--send-attempt-report"),
         report_over_session: flags.bool_flag("--report-over-session"),
         report_outbox_dir: flags.get("--report-outbox").map(PathBuf::from),
@@ -5467,6 +5578,7 @@ mod tests {
             run_ledger: false,
             run_ledger_handle: None,
             allow_elevated_host_execution: false,
+            disconnect_stop_margin_ms: 10_000,
             owner_panel_port: None,
             workload_commit_limit_bytes: 256 * 1024 * 1024,
             coordinator_device_id: coordinator_device_id.into(),
@@ -6704,6 +6816,7 @@ mod report_session_tests {
             &SigningKey::from_bytes(&AGENT_SEED),
             &report::TerminalObservation {
                 stopped_by_owner: false,
+                stopped_for_disconnect: false,
                 job_id: "job-report-test".into(),
                 attempt_id: "attempt-report-test".into(),
                 node_id: AGENT_ID.into(),
@@ -7613,6 +7726,7 @@ mod run_ledger_startup_tests {
             &SigningKey::from_bytes(&AGENT_SEED),
             &report::TerminalObservation {
                 stopped_by_owner: false,
+                stopped_for_disconnect: false,
                 job_id: "job-ledger".into(),
                 attempt_id: id.into(),
                 node_id: AGENT_ID.into(),
