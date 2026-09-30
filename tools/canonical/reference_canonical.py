@@ -366,6 +366,8 @@ SCHEMAS = {
         (10, "progress", "message", "ProgressReport"),
         (20, "issued_at_unix_ms", "uint", None),
         (21, "nonce", "bytes", None),
+        # ★ v2 (2026-10-01) — 미리 알린 끊김. 0 이면 규칙 b 로 빠진다(signing.md §6.7).
+        (22, "unreachable_until_unix_ms", "uint", None),
         (90, "node_signature", "bytes", None),
     ],
     "RevokeLeaseNotice": [
@@ -1947,6 +1949,34 @@ def build_vectors():
                "AgentSessionHello", _hello_v2(8_585_216_000),
                ["MUST_DIFFER:v44_agent_session_hello_v2_gpu_observation"])
     assert c_h1 != c_h2, "GPU 관측이 Hello canonical 에 반영되지 않았다"
+
+    # 45. ★ RenewLeaseRequest v2 — 미리 알린 끊김(unreachable_until_unix_ms = 22, 2026-10-01)
+    def _renew_v2(until):
+        r = {
+            "schema_version": 2,
+            "lease_id": "01JBXLEASE0000000000000001",
+            "fence_epoch": 42,
+            "node_id": "node-1",
+            "issued_at_unix_ms": 1_755_103_700_000,
+            "nonce": bytes(range(16)),
+            "node_signature": b"\x88" * 64,
+        }
+        if until:
+            r["unreachable_until_unix_ms"] = until
+        return r
+    c_r1 = add("v45_renew_lease_request_v2_unreachable_until",
+               "RenewLeaseRequest v2 — 노드가 '이 시각까지 연락 못 함' 을 싣는다(30분 뒤)",
+               "RenewLeaseRequest", _renew_v2(1_755_105_500_000))
+    c_r2 = add("v45b_renew_lease_request_v2_unreachable_until_changed",
+               "v45 에서 알림 시각만 바꾼 것 — canonical 이 달라야 한다(알림이 갱신 요청 서명에 묶인다)",
+               "RenewLeaseRequest", _renew_v2(1_755_107_300_000),
+               ["MUST_DIFFER:v45_renew_lease_request_v2_unreachable_until"])
+    assert c_r1 != c_r2, "알림 시각이 갱신 요청 canonical 에 반영되지 않았다"
+    c_r3 = add("v45c_renew_lease_request_v2_without_unreachable_until",
+               "v2 인데 알림이 0 — 22 는 규칙 b 로 빠지고 schema_version 만 v1 과 다르다",
+               "RenewLeaseRequest", _renew_v2(0),
+               ["MUST_DIFFER:v45_renew_lease_request_v2_unreachable_until"])
+    assert c_r3 != c_r1
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

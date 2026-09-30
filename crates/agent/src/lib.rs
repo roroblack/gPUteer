@@ -1598,7 +1598,7 @@ fn run_one_connection_inner(
         //   ACK 가 이미 Job 을 RUNNING 으로 옮긴 풀 밖 lane 에서 갱신 한 번 실패가 "안 돈 작업의 FAILED" 가 됐다. 풀 밖 lane 은 갱신 실패가
         //   두 번 실행이 되지 않으므로 전처럼 띄운다(첫 갱신은 스레드가 곧바로). 수신 확인 없이 풀에 붙이는 것은 설정 오류다(런북 §5).
         if will_execute && config.renew_during_execution_ms > 0 && config.require_ack_receipt {
-            match renew_once_over_new_connection(&config, signing_key, &held_lease) {
+            match renew_once_over_new_connection(&config, signing_key, &held_lease, 0) {
                 Ok(renewed) => {
                     let remaining = renewed
                         .expires_at_unix_ms
@@ -2391,6 +2391,8 @@ fn renew_once_over_new_connection(
     config: &AgentConfig,
     signing_key: &SigningKey,
     held_lease: &pb::Lease,
+    // ★ 2026-10-01 (signing.md §6.7) — 미리 알린 끊김. 0 이면 싣지 않고 v1 로 보낸다.
+    unreachable_until_unix_ms: u64,
 ) -> Result<pb::Lease, String> {
     let clock = SystemClock;
     let now = clock.now_unix_ms();
@@ -2421,12 +2423,17 @@ fn renew_once_over_new_connection(
     };
     hello.node_signature = sign(signing_key, &hello).to_vec();
     let mut request = pb::RenewLeaseRequest {
-        schema_version: 1,
+        schema_version: if unreachable_until_unix_ms == 0 {
+            1
+        } else {
+            gputeer_protocol::constants::RENEW_LEASE_REQUEST_UNREACHABLE_UNTIL_MIN_SCHEMA_VERSION
+        },
         lease_id: held_lease.lease_id.clone(),
         fence_epoch: held_lease.fence_epoch,
         node_id: config.agent_device_id.clone(),
         issued_at_unix_ms: now,
         nonce: fresh_nonce()?,
+        unreachable_until_unix_ms,
         ..Default::default()
     };
     request.node_signature = sign(signing_key, &request).to_vec();
@@ -2588,6 +2595,10 @@ fn start_renew_during_execution(
     let handle = std::thread::spawn(move || {
         let interval = Duration::from_millis(config.renew_during_execution_ms);
         let mut round: u64 = 0;
+        // ★ 2026-10-01 (미리 알린 끊김 · signing.md §6.7) — 주인 화면의 알림이 바뀌면 기다리지 않고 곧바로 갱신한다(알린 뒤 곧 끊길 수 있다).
+        //   알림을 실은 갱신이 실패하면 다음 한 번은 알림 없이(v1) 보낸다 — 옛 Coordinator 가 v2 를 거부해도 갱신이 끊기지 않게.
+        let mut seen_generation = panel.announcement_generation();
+        let mut plain_next = false;
         'renew: loop {
             // ★ 2026-09-25 (결함 289 · 재검수 90) — 다음 갱신은 "주기" 와 "지금 Lease 가 남은 시간의 절반" 중 짧은 쪽에 한다. 전에는 주기만
             //   기다려, Coordinator 가 주기보다 짧게 연장하면 갱신 전에 만료돼 이어받기와 겹쳤다. 첫 갱신은 실행 전에 동기로 했다(결함 268).
@@ -2608,10 +2619,42 @@ fn start_renew_during_execution(
                 if thread_stop.load(std::sync::atomic::Ordering::SeqCst) {
                     break 'renew;
                 }
+                if panel.announcement_generation() != seen_generation {
+                    break;
+                }
                 std::thread::sleep(Duration::from_millis(50));
             }
+            seen_generation = panel.announcement_generation();
             let sent_at = SystemClock.now_unix_ms();
-            match renew_once_over_new_connection(&config, &key, &lease) {
+            let announce = if plain_next {
+                0
+            } else {
+                panel.announcement_to_send(sent_at)
+            };
+            plain_next = false;
+            let outcome = renew_once_over_new_connection(&config, &key, &lease, announce);
+            if announce != 0 {
+                panel.announcement_sent(
+                    announce,
+                    outcome
+                        .as_ref()
+                        .ok()
+                        .map(|renewed| renewed.expires_at_unix_ms),
+                );
+                match &outcome {
+                    Ok(renewed) => println!(
+                        "DISCONNECT_ANNOUNCEMENT_ACCEPTED round={round} unreachable_until_unix_ms={announce} expires_at_unix_ms={}",
+                        renewed.expires_at_unix_ms
+                    ),
+                    Err(error) => {
+                        println!(
+                            "DISCONNECT_ANNOUNCEMENT_FAILED round={round} unreachable_until_unix_ms={announce} detail={error} — 다음 갱신은 알림 없이 보낸다"
+                        );
+                        plain_next = true;
+                    }
+                }
+            }
+            match outcome {
                 Ok(renewed) => {
                     println!(
                         "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",

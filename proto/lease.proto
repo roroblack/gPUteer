@@ -82,6 +82,10 @@ message RenewLeaseRequest {
 
   uint64 issued_at_unix_ms = 20;
   bytes nonce = 21;
+  // ★ 2026-10-01 (schema v2) — 미리 알린 끊김. "이 시각까지 Coordinator 와 연락이 안 될 것이다"(노드 벽시계 · 밀리초).
+  //   채울 때만 schema_version 2. Coordinator 는 운영자 상한 · 작업 누적 상한 안에서만 Lease 를 늘려 서명한다 — 계속 돌 자격은 이 값이
+  //   아니라 서명된 결과의 중첩 Lease 만료로만 생긴다. signing.md §6.7 · docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md
+  uint64 unreachable_until_unix_ms = 22;
   // domain_tag = "gputeer/v1/lease-renew"
   bytes node_signature = 90;
 }

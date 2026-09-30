@@ -1353,3 +1353,128 @@ fn the_disconnect_deadline_is_watched_while_a_renew_request_hangs() {
         "갱신 요청이 걸린 동안 시한 감시가 멈췄다(Lease 만료 {expires} 뒤에 멈춤)\n{all}"
     );
 }
+
+// ── 2026-10-01 (미리 알린 끊김 · signing.md §6.7) ──
+//   평소 연장은 짧게(8초) 두고, 주인 화면에서 "1 분 뒤까지 끊긴다" 를 알린다. Coordinator 는 FRESH · 첫 갱신 · 알림 갱신 셋만 받고 사라진다.
+
+/// 알림을 실은 갱신 한 번을 기다렸다가 결과(Agent 줄)를 돌려준다.
+fn announce_one_minute(rx: &mpsc::Receiver<String>) -> String {
+    let (port, token, _) = panel_listing(rx);
+    let answer = owner_http(port, "POST", "/api/announce-disconnect", Some(&token), "1");
+    assert!(
+        answer.contains("ANNOUNCED unreachable_until_unix_ms="),
+        "알리지 못했다: {answer}"
+    );
+    let no_token = owner_http(port, "POST", "/api/announce-disconnect", None, "1");
+    assert!(no_token.contains(" 403 "), "토큰 없이 알렸다: {no_token}");
+    wait_for_line(rx, "DISCONNECT_ANNOUNCEMENT_", Duration::from_secs(20))
+}
+
+fn spawn_announce_pair(dir: &Path, cap_ms: &str) -> (Proc, Proc, mpsc::Receiver<String>) {
+    let manifest = submit_ping_manifest(dir, 31);
+    let lease_db = dir.join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--renew-extension-ms",
+            "8000",
+            "--planned-unreachable-max-ms",
+            cap_ms,
+            "--max-connections",
+            "3",
+            "--accept-timeout-ms",
+            "30000",
+        ],
+    );
+    let (agent, rx) = spawn_agent_tapped(
+        &addr,
+        dir,
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    (coordinator, agent, rx)
+}
+
+/// 알리면 Coordinator 가 운영자 상한(60초) 안에서 Lease 를 늘려 서명하고, 그 뒤 끊겨도 약 30초짜리가 끝까지 돈다.
+///   알림이 없으면 평소 연장(8초) 기준 시한(약 5초)에 멈췄을 것이다.
+#[test]
+fn an_announced_disconnect_keeps_the_workload_running_within_the_granted_lease() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (coordinator, agent, rx) = spawn_announce_pair(dir.path(), "60000");
+    let announced = announce_one_minute(&rx);
+    assert!(
+        announced.starts_with("DISCONNECT_ANNOUNCEMENT_ACCEPTED"),
+        "알림을 실은 갱신이 받아들여지지 않았다: {announced}"
+    );
+    drop(rx);
+    let agent = wait(agent, Duration::from_secs(90));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+
+    let granted = line_with(&coordinator, &["RENEW_SESSION_ANNOUNCED"])
+        .unwrap_or_else(|| panic!("Coordinator 가 알림을 보지 못했다\n{all}"));
+    // 요청은 "지금부터 1분" 이고 Coordinator 는 받은 순간부터 잰다 — 전달에 걸린 만큼 60초보다 조금 짧다. 평소(8초)보다는 훨씬 길다.
+    let extension = field_u64(&granted, "granted_extension_ms=");
+    assert!(
+        (50_000..=60_000).contains(&extension),
+        "요청(1분)과 상한(60초) 안의 연장이 아니다({extension}ms)\n{all}"
+    );
+    assert!(
+        agent.output().contains("RENEW_SESSION_FAILED"),
+        "전제가 깨졌다 — 알린 뒤 끊기지 않았다\n{all}"
+    );
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    assert!(
+        !agent.output().contains("DISCONNECT_SELF_STOP"),
+        "서명된 연장을 받았는데 끊김 시한에 멈췄다\n{all}"
+    );
+    let (_, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (_, exited_at) = agent
+        .first("WORKLOAD_EXITED")
+        .unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(
+        exited_at.duration_since(spawned_at) >= Duration::from_secs(28),
+        "끝까지 돌지 않았다\n{all}"
+    );
+}
+
+/// 운영자 상한이 꺼져 있으면(기본 0) 알려도 평소 연장만 받는다 — 알림은 요청일 뿐이라 끊김 시한에 스스로 멈춘다.
+#[test]
+fn an_announcement_without_an_operator_cap_does_not_extend_the_lease() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (coordinator, agent, rx) = spawn_announce_pair(dir.path(), "0");
+    let announced = announce_one_minute(&rx);
+    assert!(
+        announced.starts_with("DISCONNECT_ANNOUNCEMENT_ACCEPTED"),
+        "갱신 자체는 받아들여져야 한다(평소 연장으로): {announced}"
+    );
+    drop(rx);
+    let agent = wait(agent, Duration::from_secs(90));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    let all = both(&agent, &coordinator);
+
+    let granted = line_with(&coordinator, &["RENEW_SESSION_ANNOUNCED"])
+        .unwrap_or_else(|| panic!("Coordinator 가 알림을 보지 못했다\n{all}"));
+    assert_eq!(
+        field_u64(&granted, "granted_extension_ms="),
+        8_000,
+        "상한이 꺼졌는데 평소보다 길게 줬다\n{all}"
+    );
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    assert!(
+        agent.output().contains("DISCONNECT_SELF_STOP attempt_id="),
+        "연장을 받지 않았는데 끊김 시한에 멈추지 않았다\n{all}"
+    );
+}

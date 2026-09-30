@@ -477,6 +477,19 @@ Coordinator 서명이 묶는다 — 벗기면 canonical 이 달라진다(벡터 
   남기고, 선언 자체는 바꾸지 않는다. 대조 규칙은 제안서 "적용 설계" 에 있다.
 - 제안: `docs/contracts/proposals/2026-09-25_1623_풀_신호와_노드_관측_서명.md`
 
+### 6.7 RenewLeaseRequest v2 의 미리 알린 끊김(unreachable_until) (2026-10-01)
+
+`RenewLeaseRequest.unreachable_until_unix_ms`(22, schema v2)는 노드가 "이 시각까지 Coordinator 와 연락이 안 될 것이다" 라고
+미리 알리는 값이다(노드 벽시계 · 밀리초). Agent 서명이 묶는다 — 벗기거나 바꾸면 canonical 이 달라진다(벡터 `v45` · `v45b`).
+0 이면 규칙 b 로 빠져 v1 과 canonical 이 같다(`v45c`).
+
+- `schema_version < 2` 인 갱신 요청에 이 칸이 차 있으면 거부한다(MUST).
+- 계속 돌 자격은 이 알림이 아니라 **서명된 `RenewLeaseResult` 의 중첩 Lease 만료**로만 생긴다(MUST). 답을 못 받으면 원래 끊김 시한에 멈춘다.
+- Coordinator 는 요청 시각을 검사 없이 그대로 주지 않는다(MUST) — 연장 = `min(요청 − now, 운영자 상한)`, 평소 연장보다 짧지 않게,
+  작업 누적 상한(`issued_at + max_total_duration_seconds`)을 넘지 않게. 운영자 상한이 0(기본)이거나 요청이 now 이하면 평소 연장으로 답한다.
+- 알림을 실은 갱신이 실패하면 Agent 는 다음 갱신을 이 칸 없이(v1) 보낸다 — 옛 Coordinator(최대 1)가 v2 를 거부해도 갱신이 끊기지 않게.
+- 제안: `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`
+
 ## 7. schema_version 과 알 수 없는 필드
 
 ### 7.1 v5 초안의 오류

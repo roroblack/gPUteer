@@ -10,7 +10,7 @@
 # P0-08 실측: prost 는 미지 필드를 조용히 버리며 canonical 에 흔적이 없다.
 # 구버전 검증자가 새 필드의 존재를 알 수 있는 유일한 신호는 schema_version 이다.
 #
-# blake3-256: 68f1015e90b772a6e736ace089618787c6922f971caaee3c42838be7db1f199d
+# blake3-256: 1919166b6450111575d8e66c8a840450cb0f550a5e4d040ff5d5c02ee32a8a5d
 
 artifact.proto::ArtifactRef
   1 uint32 schema_version
@@ -528,6 +528,7 @@ lease.proto::RenewLeaseRequest
   10 ProgressReport progress
   20 uint64 issued_at_unix_ms
   21 bytes nonce
+  22 uint64 unreachable_until_unix_ms
   90 bytes node_signature
 lease.proto::RenewLeaseResult
   1 RenewOutcome outcome

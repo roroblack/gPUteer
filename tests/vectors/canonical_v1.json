@@ -803,6 +803,40 @@
       ]
     },
     {
+      "name": "v45_renew_lease_request_v2_unreachable_until",
+      "description": "RenewLeaseRequest v2 — 노드가 '이 시각까지 연락 못 함' 을 싣는다(30분 뒤)",
+      "message_type": "RenewLeaseRequest",
+      "canonical_hex": "0802121a30314a42584c4541534530303030303030303030303030303031182a22066e6f64652d31a001a0c8d4a28a33aa0110000102030405060708090a0b0c0d0e0fb001e0b6c2a38a33",
+      "canonical_len": 75,
+      "sig_input_hex": "677075746565722f76312f6c656173652d72656e657700000000000000000000000000020000004b0802121a30314a42584c4541534530303030303030303030303030303031182a22066e6f64652d31a001a0c8d4a28a33aa0110000102030405060708090a0b0c0d0e0fb001e0b6c2a38a33",
+      "sig_input_blake3_256": "f5732893a26a530848a3f7062c995faec0ec8b4b59e6daa8a26911510f6c9f3f",
+      "checks": []
+    },
+    {
+      "name": "v45b_renew_lease_request_v2_unreachable_until_changed",
+      "description": "v45 에서 알림 시각만 바꾼 것 — canonical 이 달라야 한다(알림이 갱신 요청 서명에 묶인다)",
+      "message_type": "RenewLeaseRequest",
+      "canonical_hex": "0802121a30314a42584c4541534530303030303030303030303030303031182a22066e6f64652d31a001a0c8d4a28a33aa0110000102030405060708090a0b0c0d0e0fb001a0a5b0a48a33",
+      "canonical_len": 75,
+      "sig_input_hex": "677075746565722f76312f6c656173652d72656e657700000000000000000000000000020000004b0802121a30314a42584c4541534530303030303030303030303030303031182a22066e6f64652d31a001a0c8d4a28a33aa0110000102030405060708090a0b0c0d0e0fb001a0a5b0a48a33",
+      "sig_input_blake3_256": "851464d40b6c42e39e81c99a7137b0f7290273030f853b4fb9a9c0f16bc9c0b1",
+      "checks": [
+        "MUST_DIFFER:v45_renew_lease_request_v2_unreachable_until"
+      ]
+    },
+    {
+      "name": "v45c_renew_lease_request_v2_without_unreachable_until",
+      "description": "v2 인데 알림이 0 — 22 는 규칙 b 로 빠지고 schema_version 만 v1 과 다르다",
+      "message_type": "RenewLeaseRequest",
+      "canonical_hex": "0802121a30314a42584c4541534530303030303030303030303030303031182a22066e6f64652d31a001a0c8d4a28a33aa0110000102030405060708090a0b0c0d0e0f",
+      "canonical_len": 67,
+      "sig_input_hex": "677075746565722f76312f6c656173652d72656e65770000000000000000000000000002000000430802121a30314a42584c4541534530303030303030303030303030303031182a22066e6f64652d31a001a0c8d4a28a33aa0110000102030405060708090a0b0c0d0e0f",
+      "sig_input_blake3_256": "89cce1a9de14e6bfa77e74862504e162092986096e233f9a0338452ad0ad162c",
+      "checks": [
+        "MUST_DIFFER:v45_renew_lease_request_v2_unreachable_until"
+      ]
+    },
+    {
       "name": "v10_domain_separation",
       "description": "같은 canonical, 다른 domain_tag → sig_input 이 달라야 한다 (§5)",
       "message_type": "JobManifest",

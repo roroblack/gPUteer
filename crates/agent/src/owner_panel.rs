@@ -193,7 +193,28 @@ pub struct OwnerPanelState {
     ///   그 **뒤에** 만들어진다 — 그래서 소유자 정지(`owner_stopped`)처럼 따로 남긴다. 처음 구현은 감시에서 읽어 보고가 FAILED 로 나갔다
     ///   (실제 프로세스 시험이 잡았다).
     disconnect_stopped: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    /// ★ 2026-10-01 (미리 알린 끊김 · signing.md §6.7) — 노드 단위 알림. 주인 화면에서 "N 분 뒤까지 끊긴다" 를 받는다.
+    announcement: Arc<Mutex<Option<DisconnectAnnouncement>>>,
+    /// 알림이 바뀔 때마다 올라간다 — 갱신 스레드가 보고 기다리지 않고 곧바로 갱신을 보낸다.
+    announcement_generation: Arc<std::sync::atomic::AtomicU64>,
 }
+
+/// ★ 2026-10-01 — 노드 단위의 미리 알린 끊김.
+///
+/// 알림은 **요청**일 뿐이다 — 계속 돌 자격은 Coordinator 가 서명해 준 Lease 만료로만 생긴다(`granted_expires_at_unix_ms`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DisconnectAnnouncement {
+    /// "이 시각까지 Coordinator 와 연락이 안 될 것이다"(이 기계 시계 · 밀리초).
+    pub until_unix_ms: u64,
+    pub announced_at_unix_ms: u64,
+    /// 이 알림을 실은 갱신이 받아들여져 받은 Lease 만료(서명된 결과). 아직 없으면 `None`.
+    pub granted_expires_at_unix_ms: Option<u64>,
+    /// 이 알림을 실은 마지막 갱신이 실패했다(연결 실패 · 옛 Coordinator 가 v2 를 거부 등).
+    pub last_send_failed: bool,
+}
+
+/// 알림으로 받을 수 있는 가장 긴 시간(분). 정책값이다 — 실제로 얼마나 늘려 줄지는 Coordinator 운영자 상한이 정한다.
+pub const ANNOUNCEMENT_MAX_MINUTES: u64 = 24 * 60;
 
 impl Default for OwnerPanelState {
     fn default() -> Self {
@@ -208,6 +229,76 @@ impl OwnerPanelState {
             owner_stopped: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             connection: Arc::new(Mutex::new(BTreeMap::new())),
             disconnect_stopped: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+            announcement: Arc::new(Mutex::new(None)),
+            announcement_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// ★ 2026-10-01 — "지금부터 `minutes` 분 동안 끊긴다" 를 적는다. 0 이면 알림을 지운다. 상한(`ANNOUNCEMENT_MAX_MINUTES`)을 넘으면 거부.
+    pub fn announce_disconnect(
+        &self,
+        minutes: u64,
+        now_unix_ms: u64,
+    ) -> Result<Option<u64>, String> {
+        if minutes > ANNOUNCEMENT_MAX_MINUTES {
+            return Err(format!(
+                "{minutes} 분은 너무 길다 — 최대 {ANNOUNCEMENT_MAX_MINUTES} 분(실제로 얼마나 늘려 줄지는 중개 서버 운영자 상한이 정한다)"
+            ));
+        }
+        let next = (minutes > 0).then(|| DisconnectAnnouncement {
+            until_unix_ms: now_unix_ms.saturating_add(minutes.saturating_mul(60_000)),
+            announced_at_unix_ms: now_unix_ms,
+            granted_expires_at_unix_ms: None,
+            last_send_failed: false,
+        });
+        let until = next.as_ref().map(|a| a.until_unix_ms);
+        *self.announcement_lock() = next;
+        self.announcement_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(until)
+    }
+
+    /// 다음 갱신에 실을 알림 시각. 없거나 이미 지났으면 0(= 싣지 않는다).
+    pub fn announcement_to_send(&self, now_unix_ms: u64) -> u64 {
+        self.announcement_lock()
+            .as_ref()
+            .map(|a| a.until_unix_ms)
+            .filter(|until| *until > now_unix_ms)
+            .unwrap_or(0)
+    }
+
+    /// 알림이 바뀐 횟수(갱신 스레드가 보고 곧바로 갱신한다).
+    pub fn announcement_generation(&self) -> u64 {
+        self.announcement_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// 알림을 실은 갱신의 결과를 적는다 — 받아들여졌으면 서명된 Lease 만료, 아니면 실패.
+    ///   ★ 알림 시각이 그 사이 바뀌었으면(다시 알림 · 취소) 옛 결과를 새 알림에 적지 않는다.
+    pub fn announcement_sent(
+        &self,
+        sent_until_unix_ms: u64,
+        granted_expires_at_unix_ms: Option<u64>,
+    ) {
+        if let Some(current) = self.announcement_lock().as_mut() {
+            if current.until_unix_ms == sent_until_unix_ms {
+                current.last_send_failed = granted_expires_at_unix_ms.is_none();
+                if granted_expires_at_unix_ms.is_some() {
+                    current.granted_expires_at_unix_ms = granted_expires_at_unix_ms;
+                }
+            }
+        }
+    }
+
+    /// 지금의 알림.
+    pub fn announcement(&self) -> Option<DisconnectAnnouncement> {
+        self.announcement_lock().clone()
+    }
+
+    fn announcement_lock(&self) -> std::sync::MutexGuard<'_, Option<DisconnectAnnouncement>> {
+        match self.announcement.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
         }
     }
 
@@ -613,7 +704,12 @@ impl OwnerPanel {
                 &mut stream,
                 200,
                 "application/json; charset=utf-8",
-                &render_workloads_json(&self.state.snapshot(now), now, &self.token),
+                &render_workloads_json(
+                    &self.state.snapshot(now),
+                    now,
+                    &self.token,
+                    self.state.announcement().as_ref(),
+                ),
             ),
             ("POST", "/api/stop") => {
                 // ★ 토큰을 **먼저** 본다. 어떤 작업을 멈추라는 요청인지
@@ -675,6 +771,45 @@ impl OwnerPanel {
                         409,
                         "text/plain; charset=utf-8",
                         &format!("KEEP_RUNNING_REFUSED {message}"),
+                    ),
+                }
+            }
+            ("POST", "/api/announce-disconnect") => {
+                // ★ 2026-10-01 — 정지와 같은 토큰 규칙. 본문은 분(0 = 취소).
+                if request.token.as_deref() != Some(self.token.as_str()) {
+                    return respond(
+                        &mut stream,
+                        403,
+                        "text/plain; charset=utf-8",
+                        "토큰이 없거나 다르다 — 이 기계의 패널에서만 알릴 수 있다",
+                    );
+                }
+                let Ok(minutes) = request.body.trim().parse::<u64>() else {
+                    return respond(
+                        &mut stream,
+                        400,
+                        "text/plain; charset=utf-8",
+                        "몇 분인지 정수로 적는다(0 은 알림 취소)",
+                    );
+                };
+                match self.state.announce_disconnect(minutes, now) {
+                    Ok(Some(until)) => respond(
+                        &mut stream,
+                        200,
+                        "text/plain; charset=utf-8",
+                        &format!("ANNOUNCED unreachable_until_unix_ms={until}"),
+                    ),
+                    Ok(None) => respond(
+                        &mut stream,
+                        200,
+                        "text/plain; charset=utf-8",
+                        "ANNOUNCEMENT_CANCELLED",
+                    ),
+                    Err(message) => respond(
+                        &mut stream,
+                        400,
+                        "text/plain; charset=utf-8",
+                        &format!("ANNOUNCE_REFUSED {message}"),
                     ),
                 }
             }
@@ -897,7 +1032,12 @@ fn now_unix_ms() -> u64 {
 }
 
 /// JSON 을 손으로 만든다 — 값은 전부 이스케이프한다.
-fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &str) -> String {
+fn render_workloads_json(
+    items: &[WorkloadSummary],
+    now_unix_ms: u64,
+    token: &str,
+    announcement: Option<&DisconnectAnnouncement>,
+) -> String {
     let entries: Vec<String> = items
         .iter()
         .map(|item| {
@@ -943,8 +1083,20 @@ fn render_workloads_json(items: &[WorkloadSummary], now_unix_ms: u64, token: &st
             )
         })
         .collect();
+    // ★ 2026-10-01 — 미리 알린 끊김(노드 단위). 받은 연장은 서명된 Lease 만료다.
+    let announcement = match announcement {
+        None => "null".to_string(),
+        Some(a) => format!(
+            "{{\"until_unix_ms\":{},\"ms_until\":{},\"granted_expires_at_unix_ms\":{},\"last_send_failed\":{}}}",
+            a.until_unix_ms,
+            a.until_unix_ms.saturating_sub(now_unix_ms),
+            a.granted_expires_at_unix_ms
+                .map_or("null".to_string(), |at| at.to_string()),
+            a.last_send_failed
+        ),
+    };
     format!(
-        "{{\"now_unix_ms\":{now_unix_ms},\"token\":{},\"workloads\":[{}]}}",
+        "{{\"now_unix_ms\":{now_unix_ms},\"token\":{},\"announcement\":{announcement},\"workloads\":[{}]}}",
         json_string(token),
         entries.join(",")
     )
@@ -1212,7 +1364,7 @@ mod tests {
         assert!(state.pause("없는").is_err());
         let snapshot = state.snapshot(2_000);
         assert!(!snapshot[0].paused, "못 얼렸는데 얼렸다고 적었다");
-        let json = render_workloads_json(&snapshot, 2_000, "t");
+        let json = render_workloads_json(&snapshot, 2_000, "t", None);
         assert!(json.contains("\"paused\":false"), "{json}");
         #[cfg(windows)]
         assert!(
@@ -1291,6 +1443,46 @@ mod tests {
         // 거부(다른 노드로 넘어감)면 거부
         state.renew_refused("a", 7_000);
         assert!(state.resume("a", || 7_000).is_err());
+    }
+
+    /// ★ 2026-10-01 — 미리 알린 끊김: 분으로 받아 시각으로 적고, 지나면 싣지 않고, 결과는 **그 알림**에만 적는다 · 상한을 넘으면 거부 · 0 은 취소.
+    #[test]
+    fn a_disconnect_announcement_is_sent_until_it_passes_and_results_stick_to_it() {
+        let state = OwnerPanelState::new();
+        assert_eq!(state.announcement_to_send(1_000), 0, "알림 없이 실었다");
+        let generation = state.announcement_generation();
+        let until = state.announce_disconnect(30, 1_000).unwrap().unwrap();
+        assert_eq!(until, 1_000 + 30 * 60_000);
+        assert!(
+            state.announcement_generation() > generation,
+            "갱신 스레드를 깨우지 않는다"
+        );
+        assert_eq!(state.announcement_to_send(2_000), until);
+        assert_eq!(state.announcement_to_send(until), 0, "지난 알림을 실었다");
+        // 결과는 보낸 그 알림에만
+        state.announcement_sent(until + 1, Some(9_999_999));
+        assert_eq!(
+            state.announcement().unwrap().granted_expires_at_unix_ms,
+            None
+        );
+        state.announcement_sent(until, None);
+        assert!(state.announcement().unwrap().last_send_failed);
+        state.announcement_sent(until, Some(until));
+        let a = state.announcement().unwrap();
+        assert_eq!(a.granted_expires_at_unix_ms, Some(until));
+        assert!(!a.last_send_failed);
+        let json = render_workloads_json(&[], 2_000, "t", Some(&a));
+        assert!(
+            json.contains(&format!("\"granted_expires_at_unix_ms\":{until}")),
+            "{json}"
+        );
+        // 상한 · 취소
+        assert!(state
+            .announce_disconnect(ANNOUNCEMENT_MAX_MINUTES + 1, 1_000)
+            .is_err());
+        assert_eq!(state.announce_disconnect(0, 1_000).unwrap(), None);
+        assert!(state.announcement().is_none());
+        assert_eq!(state.announcement_to_send(2_000), 0);
     }
 
     /// JSON 이스케이프가 실제로 되는가.

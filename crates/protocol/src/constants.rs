@@ -154,6 +154,15 @@ pub const EXECUTION_GRANT_POOL_MODE_MIN_SCHEMA_VERSION: u32 = 4;
 ///   관측이 없으면 Agent 는 계속 1 을 쓴다 — 구버전 Coordinator(최대 1)도 받는다.
 pub const AGENT_SESSION_HELLO_MAX_SCHEMA_VERSION: u32 = 2;
 
+/// `RenewLeaseRequest` 를 받는 쪽이 읽는 최대 schema_version.
+///
+/// ★ 2026-10-01 — 2 는 미리 알린 끊김(`unreachable_until_unix_ms = 22`)을 실은 갱신 요청이다. 알림이 없으면 Agent 는 계속 1 을 쓴다 —
+///   옛 Coordinator(최대 1)도 받는다. 제안 `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md` · signing.md §6.7.
+pub const RENEW_LEASE_REQUEST_MAX_SCHEMA_VERSION: u32 = 2;
+
+/// 미리 알린 끊김(`unreachable_until_unix_ms = 22`)을 실을 수 있는 가장 낮은 `RenewLeaseRequest` schema_version.
+pub const RENEW_LEASE_REQUEST_UNREACHABLE_UNTIL_MIN_SCHEMA_VERSION: u32 = 2;
+
 /// GPU 관측(`gpu_observation = 8`)을 실을 수 있는 가장 낮은 `AgentSessionHello` schema_version.
 pub const AGENT_SESSION_HELLO_GPU_OBSERVATION_MIN_SCHEMA_VERSION: u32 = 2;
 

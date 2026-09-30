@@ -181,6 +181,9 @@ pub struct CoordinatorConfig {
     /// Renewal lifetime used by the stub.  The default remains 60 seconds;
     /// short values make expiry-after-ambiguous-commit tests deterministic.
     pub renew_extension_ms: u64,
+    /// ★ 2026-10-01 (미리 알린 끊김 · signing.md §6.7) — 노드가 갱신 요청 v2 에 "이 시각까지 연락 못 함" 을 실으면 Lease 를 최대 이만큼(밀리초)
+    ///   늘려 준다. 0(기본)이면 끈다 — 알림을 받아도 평소 연장(`renew_extension_ms`)만 준다. `--planned-unreachable-max-ms`.
+    pub planned_unreachable_max_ms: u64,
 
     // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
     /// 같은 연결에서 갱신 왕복을 이 횟수만큼 반복한다. `do_renew ==
@@ -2571,7 +2574,8 @@ fn serve_renew_session(
     }
     let message = read_frame(
         stream,
-        1,
+        // ★ 2026-10-01 — v2 는 미리 알린 끊김(`unreachable_until_unix_ms = 22`)을 실은 갱신 요청이다(signing.md §6.7).
+        gputeer_protocol::constants::RENEW_LEASE_REQUEST_MAX_SCHEMA_VERSION,
         KeyDirectorySource::Provided(agent_keys),
         replay,
         clock,
@@ -2600,6 +2604,15 @@ fn serve_renew_session(
             "RENEW_SESSION: node_id 불일치 — 기대값 {}",
             config.agent_device_id
         )));
+    }
+    // ★ signing.md §6.7 — 알림 칸은 v2 에서만 쓴다(MUST). v1 에 차 있으면 형식 오류다.
+    if request.unreachable_until_unix_ms != 0
+        && request.schema_version
+            < gputeer_protocol::constants::RENEW_LEASE_REQUEST_UNREACHABLE_UNTIL_MIN_SCHEMA_VERSION
+    {
+        return Err(session_protocol_error(
+            "RENEW_SESSION: schema_version 1 갱신 요청에 미리 알린 끊김(22)이 있다 — v2 에서만 쓴다",
+        ));
     }
     let stored = lease_store
         .as_ref()
@@ -2651,8 +2664,39 @@ fn serve_renew_session(
         // ★ 결함 98 (재검수 60) — 전에는 "저장소 조회 · 갱신 실패다" 라고 단정했다. 위의 사전 조회와 안의 실제 갱신은 **따로**
         //   조회한다 — 이 프로세스의 연결은 순차라 겹치지 않지만, 같은 DB 를 쓰는 다른 프로세스가 그 사이에 값을 바꾸는 것은
         //   막지 않는다.
+        // ★ 2026-10-01 (signing.md §6.7) — 미리 알린 끊김이면 운영자 상한 · 작업 누적 상한 안에서 더 길게 준다. 아니면 평소 연장.
+        let max_end = stored
+            .issued_at_unix_ms
+            .saturating_add(stored.max_total_duration_seconds.saturating_mul(1_000));
+        let extension_ms = announced_renew_extension_ms(
+            config.renew_extension_ms,
+            config.planned_unreachable_max_ms,
+            request.unreachable_until_unix_ms,
+            now,
+            max_end,
+        );
+        if request.unreachable_until_unix_ms != 0 {
+            println!(
+                "RENEW_SESSION_ANNOUNCED lease_id={} unreachable_until_unix_ms={} granted_extension_ms={} cap_ms={} normal_ms={}",
+                request.lease_id,
+                request.unreachable_until_unix_ms,
+                extension_ms,
+                config.planned_unreachable_max_ms,
+                config.renew_extension_ms
+            );
+        }
+        let announced;
+        let renew_config = if extension_ms == config.renew_extension_ms {
+            config
+        } else {
+            announced = CoordinatorConfig {
+                renew_extension_ms: extension_ms,
+                ..config.clone()
+            };
+            &announced
+        };
         build_renew_result(
-            config,
+            renew_config,
             lease_store,
             signing_key,
             now,
@@ -3626,6 +3670,30 @@ fn build_signed_policy_renew_result(
 ///   `get()` 으로 초과 여부만 먼저 확인하고(초과 시엔 여전히
 ///   outcome=6 이 이긴다), 저장소를 바꾸는 건 override 가 없을 때
 ///   `renew_existing_within_duration()` 하나뿐이다.
+/// ★ 2026-10-01 (미리 알린 끊김 · signing.md §6.7) — 갱신 한 번에 줄 연장(밀리초). 순수 함수다.
+///
+/// ```text
+/// 상한 0(꺼짐) · 알림 없음(0) · 알림이 이미 지남   평소 연장
+/// 그 밖                                           min(알림 − now, 운영자 상한, 작업 누적 상한까지) — 그래도 평소 연장보다 짧게 주지 않는다
+/// ```
+/// 요청 시각을 검사 없이 그대로 주지 않는다. 평소 연장보다 짧게 주지 않는 것은 알림이 **손해**가 되지 않게다(알림 없는 갱신과 같거나 길다).
+/// 작업 누적 상한 판정 자체(넘었으면 MAX_DURATION_EXCEEDED)는 저장소가 따로 한다.
+pub(crate) fn announced_renew_extension_ms(
+    normal_ms: u64,
+    cap_ms: u64,
+    unreachable_until_unix_ms: u64,
+    now_unix_ms: u64,
+    max_end_unix_ms: u64,
+) -> u64 {
+    if cap_ms == 0 || unreachable_until_unix_ms <= now_unix_ms {
+        return normal_ms;
+    }
+    (unreachable_until_unix_ms - now_unix_ms)
+        .min(cap_ms)
+        .min(max_end_unix_ms.saturating_sub(now_unix_ms))
+        .max(normal_ms)
+}
+
 fn build_renew_result(
     config: &CoordinatorConfig,
     lease_store: &mut Option<CoordinatorLeaseStore>,
@@ -4162,6 +4230,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         drop_after_renew_commit_before_result_once: flags
             .bool_flag("--drop-after-renew-commit-before-result-once"),
         renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
+        planned_unreachable_max_ms: flags
+            .u64_flag_with_default("--planned-unreachable-max-ms", 0)?,
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         lease_db_path: flags.get("--lease-db").map(PathBuf::from),
         // ★ 저장된 예약에서 발급(2026-09-03). 안 주면 기존 경로 그대로다.
@@ -5275,5 +5345,44 @@ mod post_ack_wait_tests {
     fn an_expired_lease_is_refused_instead_of_waited_for() {
         let refused = post_ack_first_read_wait(&grant(true, 1_000), 1_000).expect_err("만료");
         assert!(refused.contains("POST_ACK_WAIT_REFUSED"), "{refused}");
+    }
+}
+
+#[cfg(test)]
+mod announced_extension_tests {
+    use super::announced_renew_extension_ms as ext;
+
+    /// ★ 2026-10-01 (signing.md §6.7) — 미리 알린 끊김의 연장: 꺼짐 · 알림 없음 · 지난 알림은 평소 연장, 그 밖은 요청 · 운영자 상한 ·
+    ///   작업 누적 상한 중 가장 짧은 것, 그래도 평소보다 짧지 않게.
+    #[test]
+    fn the_announced_extension_is_capped_and_never_shorter_than_normal() {
+        let (normal, now) = (60_000, 1_000_000);
+        let far_end = u64::MAX;
+        // 꺼짐(상한 0) — 알림이 있어도 평소
+        assert_eq!(ext(normal, 0, now + 3_600_000, now, far_end), normal);
+        // 알림 없음 · 이미 지난 알림 — 평소
+        assert_eq!(ext(normal, 7_200_000, 0, now, far_end), normal);
+        assert_eq!(ext(normal, 7_200_000, now, now, far_end), normal);
+        // 요청(30분)이 상한(2시간) 안 — 요청대로
+        assert_eq!(
+            ext(normal, 7_200_000, now + 1_800_000, now, far_end),
+            1_800_000
+        );
+        // 요청(5시간)이 상한(2시간) 밖 — 상한까지(요청을 그대로 주지 않는다)
+        assert_eq!(
+            ext(normal, 7_200_000, now + 18_000_000, now, far_end),
+            7_200_000
+        );
+        // 작업 누적 상한이 10분 뒤 — 거기까지
+        assert_eq!(
+            ext(normal, 7_200_000, now + 1_800_000, now, now + 600_000),
+            600_000
+        );
+        // 요청이 평소보다 짧다(20초) · 누적 상한이 평소보다 가깝다 — 평소보다 짧게 주지 않는다(알림이 손해가 되지 않게)
+        assert_eq!(ext(normal, 7_200_000, now + 20_000, now, far_end), normal);
+        assert_eq!(
+            ext(normal, 7_200_000, now + 1_800_000, now, now + 10_000),
+            normal
+        );
     }
 }

@@ -507,6 +507,8 @@ impl ToCanonicalFields for pb::RenewLeaseRequest {
         put_uint(&mut f, 20, self.issued_at_unix_ms);
         // ★ nonce 는 서명 대상이다. 서명 밖이면 재전송 시 nonce 만 갈아끼울 수 있다.
         put_bytes(&mut f, 21, &self.nonce);
+        // ★ v2 (2026-10-01) — 미리 알린 끊김. 0 이면 규칙 b 로 빠져 v1 과 canonical 이 같다(signing.md §6.7).
+        put_uint(&mut f, 22, self.unreachable_until_unix_ms);
         f
     }
     fn schema_version(&self) -> u32 {

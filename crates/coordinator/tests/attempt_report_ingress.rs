@@ -980,6 +980,65 @@ fn a_renew_session_without_a_lease_db_is_refused() {
     assert!(error.contains("RENEW_SESSION_REFUSED"), "{error}");
 }
 
+/// ★ 2026-10-01 (signing.md §6.7) — 미리 알린 끊김(22)은 v2 에서만 쓴다. v1 요청에 차 있으면 서명이 맞아도 거부한다(저장소를 바꾸지 않는다).
+#[test]
+fn a_v1_renew_request_carrying_an_unreachable_until_is_refused() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_renew(&fixture, true);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let mut renew = connect_when_ready(fixture.address);
+    send_hello(&mut renew, gputeer_protocol::constants::MODE_RENEW, 1, 140);
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut request = signed_renew_request(fence_epoch, 160);
+    request.unreachable_until_unix_ms = now_ms() + 3_600_000;
+    request.node_signature = sign(&key, &request).to_vec();
+    assert_eq!(request.schema_version, 1, "전제 — v1 요청이다");
+    write_frame_body(&mut renew, FrameType::LeaseRenew, &request.encode_to_vec());
+    let error = handle
+        .join()
+        .expect("Coordinator 스레드")
+        .expect_err("v1 요청의 알림 칸을 받아들였다");
+    assert!(error.contains("v2 에서만"), "{error}");
+}
+
+/// ★ 2026-10-01 — v2 알림은 운영자 상한이 없으면(기본) **평소 연장**으로 답한다 — 거부하지 않고, 알림 시각을 그대로 주지도 않는다.
+#[test]
+fn a_v2_announcement_without_an_operator_cap_gets_the_normal_extension() {
+    let fixture = fixture();
+    let fence_epoch = staged_fence_epoch(&fixture.control_db);
+    let handle = spawn_coordinator_for_renew(&fixture, true);
+    {
+        let mut fresh = connect_when_ready(fixture.address);
+        handshake(&mut fresh);
+    }
+    let mut renew = connect_when_ready(fixture.address);
+    send_hello(&mut renew, gputeer_protocol::constants::MODE_RENEW, 1, 140);
+    let key = SigningKey::from_bytes(&AGENT_SEED);
+    let mut request = signed_renew_request(fence_epoch, 160);
+    let until = now_ms() + 3_600_000;
+    request.schema_version = 2;
+    request.unreachable_until_unix_ms = until;
+    request.node_signature = sign(&key, &request).to_vec();
+    let sent_at = now_ms();
+    write_frame_body(&mut renew, FrameType::LeaseRenew, &request.encode_to_vec());
+    let (frame_type, body) = read_frame_body(&mut renew);
+    assert_eq!(frame_type, FrameType::LeaseRenewResult as u8);
+    let result = pb::RenewLeaseResult::decode(body.as_slice()).expect("갱신 결과 디코드");
+    assert_eq!(result.outcome, 1, "RENEWED 여야 한다: {result:?}");
+    let lease = result.lease.expect("갱신된 Lease");
+    assert!(
+        lease.expires_at_unix_ms < until && lease.expires_at_unix_ms <= sent_at + 70_000,
+        "상한이 꺼졌는데 알림 시각을 줬다(평소 연장 60초여야 한다): expires={} until={until}",
+        lease.expires_at_unix_ms
+    );
+    let outcome = handle.join().expect("Coordinator 스레드");
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
 /// 연결 `max_connections` 개 · 추가 인자를 받는 Coordinator.
 fn spawn_coordinator_with(
     fixture: &Fixture,

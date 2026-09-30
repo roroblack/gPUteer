@@ -362,6 +362,7 @@ fn renew_lease_request_matches_reference() {
         }),
         issued_at_unix_ms: 1_755_103_700_000,
         nonce: (0u8..16).collect(),
+        unreachable_until_unix_ms: 0,
         node_signature: vec![0x88; 64],
     };
     assert_eq!(
@@ -998,6 +999,39 @@ fn session_hello_v2_gpu_observation_vectors_match_reference() {
     assert_ne!(
         canonical_encode(&hello(12_878_610_432).to_canonical_fields(), &[]),
         canonical_encode(&hello(8_585_216_000).to_canonical_fields(), &[]),
+    );
+}
+
+/// ★ 2026-10-01 — 갱신 요청 v2 의 미리 알린 끊김이 참조 구현과 같고, 알림 시각이 갱신 요청 서명에 닿으며, 0 이면 빠진다.
+#[test]
+fn renew_lease_request_v2_unreachable_until_vectors_match_reference() {
+    let renew = |until: u64| pb::RenewLeaseRequest {
+        schema_version: 2,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        fence_epoch: 42,
+        node_id: "node-1".into(),
+        progress: None,
+        issued_at_unix_ms: 1_755_103_700_000,
+        nonce: (0u8..16).collect(),
+        unreachable_until_unix_ms: until,
+        node_signature: vec![0x88; 64],
+    };
+    assert_matches_reference(
+        "v45_renew_lease_request_v2_unreachable_until",
+        &renew(1_755_105_500_000),
+    );
+    assert_matches_reference(
+        "v45b_renew_lease_request_v2_unreachable_until_changed",
+        &renew(1_755_107_300_000),
+    );
+    assert_matches_reference(
+        "v45c_renew_lease_request_v2_without_unreachable_until",
+        &renew(0),
+    );
+    assert_ne!(
+        canonical_encode(&renew(1_755_105_500_000).to_canonical_fields(), &[]),
+        canonical_encode(&renew(1_755_107_300_000).to_canonical_fields(), &[]),
+        "알림 시각이 서명 밖이다 — 중간에서 바꿔 더 긴 Lease 를 받아 낼 수 있다"
     );
 }
 

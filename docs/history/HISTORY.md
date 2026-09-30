@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-01 00:49 — 미리 알린 끊김: 갱신 요청 v2(unreachable_until) · 운영자 상한 안에서 Lease 연장 · 주인 화면 "미리 알리기"(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 3회차 P1 · 제안 `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`
+- 스트림: Protocol · Coordinator · Agent
+- 수행: 계약 먼저(RULE.md §3.5) — `RenewLeaseRequest.unreachable_until_unix_ms = 22`(v2 에서만, 0 이면 규칙 b 로 빠져 v1 과 canonical 같음) ·
+  `RENEW_LEASE_REQUEST_MAX_SCHEMA_VERSION = 2` · signing.md §6.7 · 참조 구현과 벡터 v45 · v45b · v45c(78건 — 기존 75건 무변경) · 스키마 지문 갱신(버전을 올린 경우).
+  Coordinator — RENEW 세션이 v2 를 읽고, v1 에 22 가 있으면 거부, 연장 = min(알림 − now, `--planned-unreachable-max-ms`(기본 0 = 끔), 작업 누적 상한까지)
+  이되 평소 연장보다 짧지 않게(`announced_renew_extension_ms` 순수 함수) · `RENEW_SESSION_ANNOUNCED` 기록. Agent — 주인 화면 "미리 알리기"
+  (`POST /api/announce-disconnect` · 토큰 · 분 · 0 은 취소 · 최대 24시간), 알림이 바뀌면 곧바로 갱신, 받은 서명된 만료를 화면에 · 알림 갱신이 실패하면
+  다음 한 번은 v1(옛 Coordinator 가 v2 를 거부해도 갱신이 끊기지 않게). 끊김 시한은 받은 Lease 로 자연히 늘어난다. 런북 §8b
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1522 passed · 0 failed · ignored 4. 실제 프로세스 시험 2(평소 연장 8초 · 알림 1분 →
+  약 60초 연장 받고 끊긴 뒤 30초짜리가 끝까지 · 상한 0 이면 평소 연장만 받아 시한에 멈춤) · 중개 서버 시험 2(v1 + 22 거부 · 상한 없으면 평소 연장) ·
+  단위 2. 뮤테이션 2(중개 서버가 알림을 무시 · v1 검사 제거) 각각 시험 실패 확인 뒤 원복. 벡터 대조 78건 일치 · check_docs 오류 0 · 바꾼 줄 새 clippy 경고 0.
+  ★ 리눅스 서버는 이번에 접속되지 않아(연결 시간 초과) 리눅스 시험은 못 돌렸다 · 노트북 잠자기 중 시계 · 시한은 재지 않았다
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-09-30 22:35 — 일시정지 검수 pz3 반영: 풀기가 실패로 답해도 사후 판정 · 정지 지연 운영 안내(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ②(직전 항목의 후속)

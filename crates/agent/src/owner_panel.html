@@ -20,6 +20,12 @@
 <h1>내 GPU 에서 도는 작업</h1>
 <p>이 화면은 이 컴퓨터에서만 열린다. 네트워크가 끊겨도, 중개 서버가 죽어도 동작한다.</p>
 
+<div class="banner" id="announce-box">
+  <b>곧 인터넷이 끊기나요?</b> (노트북 이동 등) 끊길 시간을 미리 알리면, 중개 서버가 허락한 만큼 작업이 끊긴 동안에도 계속 돈다.
+  <input id="announce-minutes" type="number" min="1" max="1440" value="30" style="width:5rem"> 분
+  <button onclick="announce()">미리 알리기</button> <button onclick="announceCancel()">알림 취소</button>
+  <div id="announce-status"></div>
+</div>
 <div id="content"><p class="empty">불러오는 중…</p></div>
 <div id="error"></div>
 
@@ -43,6 +49,7 @@
       if (!res.ok) throw new Error("목록을 못 받았다: " + res.status);
       const data = await res.json();
       token = data.token;
+      renderAnnouncement(data.announcement, data.now_unix_ms);
       render(data.workloads);
       document.getElementById("error").textContent = "";
     } catch (e) {
@@ -187,6 +194,39 @@
     }
     refresh();
   }
+
+  // ★ 2026-10-01 — 미리 알린 끊김. 알림은 요청일 뿐이고, 계속 돌 자격은 중개 서버가 서명해 준 연장으로만 생긴다.
+  function renderAnnouncement(a, now) {
+    const box = document.getElementById("announce-status");
+    if (!a) { box.textContent = "알림 없음 — 끊기면 끊김 시한에 작업이 스스로 멈춘다."; return; }
+    const until = new Date(a.until_unix_ms).toLocaleTimeString();
+    if (a.granted_expires_at_unix_ms) {
+      const granted = new Date(a.granted_expires_at_unix_ms).toLocaleTimeString();
+      box.textContent = until + " 까지 끊긴다고 알렸다 — 중개 서버가 " + granted + " 까지 허락했다(그보다 조금 앞에서 스스로 멈춘다).";
+    } else if (a.last_send_failed) {
+      box.textContent = until + " 까지 끊긴다고 알렸지만 받아들여지지 않았다(연결 실패 또는 옛 중개 서버) — 연결되면 다시 보낸다.";
+    } else {
+      box.textContent = until + " 까지 끊긴다고 알리는 중… (작업이 돌고 있고 실행 중 갱신이 켜진 노드에서만 보낸다)";
+    }
+  }
+
+  async function sendAnnouncement(minutes) {
+    try {
+      const res = await fetch("/api/announce-disconnect", {
+        method: "POST",
+        headers: { "x-gputeer-owner-token": token },
+        body: String(minutes),
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text);
+      document.getElementById("error").textContent = "";
+    } catch (e) {
+      document.getElementById("error").textContent = "알리지 못했다: " + String(e);
+    }
+    refresh();
+  }
+  function announce() { sendAnnouncement(parseInt(document.getElementById("announce-minutes").value, 10) || 0); }
+  function announceCancel() { sendAnnouncement(0); }
 
   async function pauseOrResume(item, path) {
     try {
