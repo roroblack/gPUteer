@@ -429,9 +429,15 @@ impl OwnerPanelState {
         self.resume_allowed(attempt_id, clock())?;
         let stopper = self.stopper_of(attempt_id)?;
         self.resume_allowed(attempt_id, clock())?;
-        stopper.resume()?;
-        let Err(why) = self.resume_allowed(attempt_id, clock()) else {
-            return Ok(());
+        // ★ 검수 pz3 — 풀기가 **실패로 답해도** 사후 판정을 건너뛰지 않는다. 적용됐는데 확인만 못 했으면(상태 "모름") 작업이 돌고 있을 수 있다.
+        //   조건이 살아 있으면 풀기 오류를 그대로 알리고(화면이 "확인하지 못했다" 를 보인다), 깨졌으면 되돌린다. 확실히 안 풀렸으면(Paused) 되돌릴 것이 없다.
+        let resumed = stopper.resume();
+        let why = match (resumed, self.resume_allowed(attempt_id, clock())) {
+            (resumed, Ok(())) => return resumed,
+            (Err(error), Err(_)) if stopper.pause_state() == crate::exec::PauseState::Paused => {
+                return Err(error)
+            }
+            (_, Err(why)) => why,
         };
         match stopper.pause() {
             Ok(()) => Err(format!("다시 시작하는 사이 조건이 깨져 다시 얼렸다 — {why}")),
@@ -1242,6 +1248,32 @@ mod tests {
             "{after}"
         );
         assert_eq!(ticks.get(), 3, "푼 직후 판정을 하지 않았다");
+        // ★ 검수 pz3 — 풀기가 실패로 답해도(적용됐는데 확인 못 함 = 상태 "모름") 사후 판정은 한다 — 깨졌으면 되돌린다.
+        state
+            .stopper_of("a")
+            .unwrap()
+            .set_pause_state(crate::exec::PauseState::Unknown);
+        let ticks = std::cell::Cell::new(0u64);
+        let clock = || {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() <= 2 {
+                5_000
+            } else {
+                10_000
+            }
+        };
+        let unknown = state
+            .resume("a", clock)
+            .expect_err("상태를 모르는 채 조건이 깨졌는데 그대로 뒀다");
+        assert!(
+            unknown.contains("다시 시작하는 사이 조건이 깨졌는데"),
+            "{unknown}"
+        );
+        assert_eq!(
+            ticks.get(),
+            3,
+            "풀기가 실패로 답하자 사후 판정을 건너뛰었다"
+        );
         // ★ 검수 pz1 — 첫 판정은 시한 전이어도 풀기 **직전** 재판정이 시한 뒤면 거부(두 번째 시각을 본다)
         let ticks = std::cell::Cell::new(0u64);
         let clock = || {

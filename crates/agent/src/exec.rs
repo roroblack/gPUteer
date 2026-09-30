@@ -476,7 +476,8 @@ impl WorkloadStopper {
         }
     }
 
-    fn set_pause_state(&self, state: PauseState) {
+    /// 상태를 바꾼다(이 모듈 · 같은 크레이트의 시험만 — 화면 판정 시험이 "모름" 상태를 만든다).
+    pub(crate) fn set_pause_state(&self, state: PauseState) {
         let value = match state {
             PauseState::Running => PAUSE_RUNNING,
             PauseState::Paused => PAUSE_PAUSED,
