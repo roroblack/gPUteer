@@ -177,20 +177,35 @@ fn read_bounded(
     let spawned = std::thread::Builder::new()
         .name("gputeer-progress-read".into())
         .spawn(move || {
+            // 읽는 함수가 패닉해도 셈은 돌려놓는다 — 안 그러면 멈춘 것이 없는데 상한이 찬다.
+            let _done = InFlight(in_flight);
             let result = reader(&path);
-            in_flight.fetch_sub(1, Ordering::SeqCst);
             // 받는 쪽이 시한으로 떠났으면 보낼 곳이 없다 — 그 결과는 버린다(이미 TimedOut 으로 알렸다).
             if tx.send(result).is_err() {
                 eprintln!("gputeer-progress-read: 시한 뒤에 끝난 읽기 결과를 버린다");
             }
         });
     if let Err(error) = spawned {
+        // 띄우지 못했으면 클로저(와 그 안의 셈 돌려놓기)는 만들어지지도 않았다 — 여기서 돌려놓는다.
         in_flight.fetch_sub(1, Ordering::SeqCst);
         return ProgressRead::Malformed(format!("읽기 스레드를 띄우지 못했다: {error}"));
     }
     match rx.recv_timeout(timeout) {
         Ok(result) => result,
-        Err(_) => ProgressRead::TimedOut,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ProgressRead::TimedOut,
+        // 결과 없이 끝났다(읽는 함수 패닉) — 멈춘 것이 아니므로 시한 초과로 세지 않는다.
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            ProgressRead::Malformed("읽기가 결과 없이 끝났다".into())
+        }
+    }
+}
+
+/// 읽기 스레드가 끝날 때(정상 · 패닉 모두) 셈을 하나 돌려놓는다.
+struct InFlight(&'static AtomicUsize);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -438,6 +453,36 @@ mod tests {
             started.elapsed() < Duration::from_millis(500),
             "FIFO 열기에서 멈췄다"
         );
+    }
+
+    static PANIC_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+    fn panicking_reader(_path: &Path) -> ProgressRead {
+        panic!("읽는 함수가 패닉했다(시험)");
+    }
+
+    /// 읽는 함수가 패닉해도 셈은 돌아온다 — 멈춘 것 없이 상한이 차지 않는다.
+    #[test]
+    fn a_panicking_read_gives_its_slot_back() {
+        for _ in 0..MAX_STUCK_READS + 2 {
+            assert_eq!(
+                read_bounded(
+                    Path::new("unused"),
+                    Duration::from_secs(5),
+                    &PANIC_IN_FLIGHT,
+                    panicking_reader
+                ),
+                ProgressRead::Malformed("읽기가 결과 없이 끝났다".into())
+            );
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while PANIC_IN_FLIGHT.load(Ordering::SeqCst) != 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "패닉한 읽기가 셈을 돌려놓지 않았다"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     static TEST_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
