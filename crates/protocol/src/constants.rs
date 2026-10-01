@@ -173,6 +173,13 @@ pub const LEASE_MAX_SCHEMA_VERSION: u32 = 2;
 /// 서명된 재배치 유예(`reassignment_grace_ms = 34`)를 실을 수 있는 가장 낮은 `Lease` schema_version.
 pub const LEASE_REASSIGNMENT_GRACE_MIN_SCHEMA_VERSION: u32 = 2;
 
+/// `AttemptRunNotice`(FrameType 19) · `AttemptRunNoticeAck`(FrameType 20)를 받는 쪽이 읽는 최대 schema_version.
+///
+/// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1 · 검수 b14 ③. 프레임 읽기는 호출자가 준 상한 하나를 모든 종류에 쓰는데(REPORT 세션은
+///   AttemptReport 의 상한 2 로 부른다), 이 두 종류는 그 상한과 **이 값 중 작은 쪽**으로 읽는다 — 상한을 1 로 낮추면 AttemptReport v2 가 깨지고,
+///   그대로 두면 알림 v2 가 통과한다(`crypto/src/framed_ingress.rs`).
+pub const ATTEMPT_RUN_NOTICE_MAX_SCHEMA_VERSION: u32 = 1;
+
 /// GPU 관측(`gpu_observation = 8`)을 실을 수 있는 가장 낮은 `AgentSessionHello` schema_version.
 pub const AGENT_SESSION_HELLO_GPU_OBSERVATION_MIN_SCHEMA_VERSION: u32 = 2;
 

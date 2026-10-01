@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-10-01 15:50 — 실행 여부 불명 계약 v17 구현 조각 1 — 실행 알림 · 그 응답 메시지(AttemptRunNotice · AttemptRunNoticeAck)(브랜치 fork-merge)
+
+- 계획: `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` v17 §1(독립 검수 ACCEPTED b17 · 사용자 결정 D6~D9 · 승인 절 "구현은 조각별로,
+  운영 활성화는 선행 조각 뒤에만"). `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 결정 D(대체 통지 + 기계 증거로 자동 해제)의 첫 조각 — 관문 5 의 ⑦
+- 스트림: Protocol(proto · 규범 · 벡터) · crypto(프레이밍)
+- 수행: proto `artifact.proto` — 최상위 enum 넷(RunNoticeKind · RunUnknownOrigin · RunUnknownReason · RunStopEvidence) · `AttemptRunNotice`(노드 서명 · Evidence ·
+  관측 시각은 observed_at 칸) · `AttemptRunNoticeAck`(Coordinator 서명 · ShortLived · replay nonce = session_nonce). domain `gputeer/v1/attempt-run-notice` ·
+  `gputeer/v1/attempt-run-ack`(32바이트 고정 — 계약 b8 ①) · signing.md §5 표(34종). FrameType 19 · 20 · `IngressMessage` 두 갈래. ★ 프레임 읽기의
+  schema_version 상한을 **종류별로** — 19 · 20 은 호출자 상한과 `ATTEMPT_RUN_NOTICE_MAX_SCHEMA_VERSION`(1) 중 작은 쪽(계약 b14 ③ — REPORT 세션이 상한 2 로 읽어도
+  알림 v2 는 거부, AttemptReport v2 는 통과). 조합 규칙 `gputeer_protocol::attempt_run_notice_rules`(sequence ≥ 1 · 종류별 칸 모양 · 모르는 enum 거부).
+  참조 구현 · 벡터 v47/v47b/v47c/v48/v48b(81 → 86, 기존 무변경) · 스키마 지문. Coordinator · Agent 는 아직 이 메시지를 보내거나 받지 않는다(다음 조각)
+- 검증: 단위 — 조합 규칙(정상 둘 · 위반 열둘 · 응답 셋) · 수명 시험(알림 Evidence · 관측 시각 · 응답 ShortLived) · 벡터 대조 · 도메인 수 28 → 30 · 칸 번호 감사.
+  프레임 — 호출자 상한 2 에서 알림 v2 거부 · 알림 v1 통과 · AttemptReport v2 통과(종류별 상한을 빼면 실패함을 확인 뒤 원복). Windows `cargo test --workspace` 1556 passed · 0 failed. 리눅스 서버(비-root) protocol · crypto · coordinator · agent · runtime-linux 1014 passed · 0 failed(ENVIRONMENT-BLOCKED 0). 바꾼 줄 clippy 0(새 정규화의 이중 형변환 경고를 고친 뒤 protocol 217 passed) · 문서 검사 0 · 벡터 86 일치
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 13:24 — 곧 끝남 검수 nf1 반영 — 누적 상한까지만 · 여유는 줄이지 않음 · 얼린 작업 제외 · 시계가 뒤로 가면 예상 안 함(브랜치 fork-merge)
 
 - 계획: 직전 항목(dcc3fb9)의 독립 검수 nf1(Codex gpt-6-sol) CHANGES_REQUESTED 4건. 같은 검수가 "H 는 재배치 경계를 넘지 않는다 · 갱신 성공 시 새 Lease 로 H 를

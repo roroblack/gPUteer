@@ -282,6 +282,80 @@ message AttemptReportAck {
   bytes coordinator_signature = 90;
 }
 
+// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1(docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md).
+//   노드가 "이 시도가 지금 돌 수 있는데 모른다(RUN_UNKNOWN)" 또는 "정지 · 부재를 확인했다(STOP_CONFIRMED)" 를 서명해 알린다.
+//   enum 은 최상위에 둔다 — 지문 파서가 중첩 선언을 못 읽는다(signing.md §7.3).
+enum RunNoticeKind {
+  RUN_NOTICE_KIND_UNSPECIFIED = 0;
+  RUN_NOTICE_KIND_RUN_UNKNOWN = 1;
+  RUN_NOTICE_KIND_STOP_CONFIRMED = 2;
+}
+
+// RUN_UNKNOWN 일 때만 — 그 시도가 어디서 출발했나(저장 모델이 출발을 잃지 않게 — 결정 D1).
+enum RunUnknownOrigin {
+  RUN_UNKNOWN_ORIGIN_UNSPECIFIED = 0;
+  RUN_UNKNOWN_ORIGIN_STARTING = 1;
+  RUN_UNKNOWN_ORIGIN_RUNNING = 2;
+  RUN_UNKNOWN_ORIGIN_PAUSED = 3;
+}
+
+// RUN_UNKNOWN 일 때만 — 불명 조건 (a)(b)(c).
+enum RunUnknownReason {
+  RUN_UNKNOWN_REASON_UNSPECIFIED = 0;
+  RUN_UNKNOWN_REASON_EXIT_UNOBSERVED = 1;
+  RUN_UNKNOWN_REASON_START_REQUEST_UNRESOLVED = 2;
+  RUN_UNKNOWN_REASON_PRIOR_RUN_UNCONFIRMED = 3;
+}
+
+// STOP_CONFIRMED 일 때만 — 무엇으로 정지를 확인했나(계약 §4. 호스트 경로 증거는 이 계약 밖).
+enum RunStopEvidence {
+  RUN_STOP_EVIDENCE_UNSPECIFIED = 0;
+  RUN_STOP_EVIDENCE_CONTAINER_ABSENT_CONFIRMED = 1;
+}
+
+// FrameType 19 · 노드 서명 · Evidence(만료 · replay 캐시 없음 — 재전송은 소비 측 멱등 키 (attempt_id, node_id, sequence) 가 거른다).
+// 조합 규칙(서명 검증 뒤): sequence ≥ 1 · RUN_UNKNOWN 이면 origin · reason 이 0 이 아니고 stop_evidence 는 0 · STOP_CONFIRMED 면 stop_evidence 가
+// 0 이 아니고 origin · reason 은 0 · 모르는 enum 값은 거부(fail closed). `gputeer_protocol::attempt_run_notice_rules`.
+message AttemptRunNotice {
+  uint32 schema_version = 1; // 현재 1
+  string job_id = 2;
+  string attempt_id = 3;
+  string node_id = 4;
+  uint64 fence_epoch = 5;
+  RunNoticeKind kind = 6;
+  RunUnknownOrigin origin = 7;
+  RunUnknownReason reason = 8;
+  RunStopEvidence stop_evidence = 9;
+  // 같은 시도의 알림 순번(1 부터 · 노드 원장에 영속 · 재전송은 같은 번호 · 같은 바이트).
+  uint64 sequence = 10;
+  // Agent 가 불명을 알아챈 때 · 해제가 정지를 확인한 때(노드 벽시계 · 밀리초).
+  uint64 observed_at_unix_ms = 11;
+  uint64 issued_at_unix_ms = 12;
+  // domain_tag = "gputeer/v1/attempt-run-notice"
+  bytes node_signature = 90;
+}
+
+// FrameType 20 · Coordinator 서명 · ShortLived(replay nonce = session_nonce — REPORT 세션 Hello 의 nonce echo · AttemptReportAck 와 같은 방식).
+message AttemptRunNoticeAck {
+  uint32 schema_version = 1; // 현재 1
+  string job_id = 2;
+  string attempt_id = 3;
+  string node_id = 4;
+  uint64 fence_epoch = 5;
+  // 받은 AttemptRunNotice 의 BLAKE3-256(sig_input). Agent 가 재계산해 대조한다.
+  Digest notice_hash = 6;
+  RunNoticeKind kind = 7;
+  uint64 sequence = 8;
+  // 첫 저장이면 true, 같은 바이트의 재전송이면 false.
+  bool created = 9;
+  string coordinator_id = 10;
+  // 만료 = issued_at + GRANT_TTL_MS(AttemptReportAck 와 같다).
+  uint64 issued_at_unix_ms = 11;
+  bytes session_nonce = 12;
+  // domain_tag = "gputeer/v1/attempt-run-ack"
+  bytes coordinator_signature = 90;
+}
+
 message ReportedMetric {
   string name = 1;
   // 부동소수점 금지. 값 × 1e6 으로 표현한다.

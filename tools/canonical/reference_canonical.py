@@ -341,6 +341,37 @@ SCHEMAS = {
         (10, "session_nonce", "bytes", None),
         (90, "coordinator_signature", "bytes", None),
     ],
+    # ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1
+    "AttemptRunNotice": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "fence_epoch", "uint", None),
+        (6, "kind", "enum", None),
+        (7, "origin", "enum", None),
+        (8, "reason", "enum", None),
+        (9, "stop_evidence", "enum", None),
+        (10, "sequence", "uint", None),
+        (11, "observed_at_unix_ms", "uint", None),
+        (12, "issued_at_unix_ms", "uint", None),
+        (90, "node_signature", "bytes", None),
+    ],
+    "AttemptRunNoticeAck": [
+        (1, "schema_version", "uint", None),
+        (2, "job_id", "string", None),
+        (3, "attempt_id", "string", None),
+        (4, "node_id", "string", None),
+        (5, "fence_epoch", "uint", None),
+        (6, "notice_hash", "message", "Digest"),
+        (7, "kind", "enum", None),
+        (8, "sequence", "uint", None),
+        (9, "created", "bool", None),
+        (10, "coordinator_id", "string", None),
+        (11, "issued_at_unix_ms", "uint", None),
+        (12, "session_nonce", "bytes", None),
+        (90, "coordinator_signature", "bytes", None),
+    ],
     "CanonicalDecision": [
         (1, "schema_version", "uint", None),
         (2, "job_id", "string", None),
@@ -743,6 +774,8 @@ DOMAIN_TAGS = {
     "AttemptReport": b"gputeer/v1/attempt-report",
     "AttemptReportAck": b"gputeer/v1/attempt-report-ack",
     "GrantAckReceipt": b"gputeer/v1/grant-ack-receipt",
+    "AttemptRunNotice": b"gputeer/v1/attempt-run-notice",
+    "AttemptRunNoticeAck": b"gputeer/v1/attempt-run-ack",
     "CanonicalDecision": b"gputeer/v1/canonical",
     "Genesis": b"gputeer/v1/genesis",
     # ★ ADR-028 (2026-08-16) — membership/policy/quarantine 3종을 9종으로 분리.
@@ -2002,6 +2035,64 @@ def build_vectors():
                "Lease", _lease_v2(0),
                ["MUST_DIFFER:v46_lease_v2_reassignment_grace"])
     assert c_l3 != c_l1
+
+    # 47. ★ 실행 알림 · 그 응답(실행 여부 불명 계약 v17 §1, 2026-10-01)
+    _notice_unknown = {
+        "schema_version": 1,
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        "kind": 1,
+        "origin": 2,
+        "reason": 1,
+        "sequence": 1,
+        "observed_at_unix_ms": 1_755_104_500_000,
+        "issued_at_unix_ms": 1_755_104_500_100,
+        "node_signature": b"N" * 64,
+    }
+    c_n1 = add("v47_attempt_run_notice_run_unknown",
+               "AttemptRunNotice RUN_UNKNOWN — RUNNING 에서 종료를 관측하지 못했다(순번 1)",
+               "AttemptRunNotice", _notice_unknown)
+    _notice_stop = dict(_notice_unknown)
+    _notice_stop.update({"kind": 2, "origin": 0, "reason": 0, "stop_evidence": 1, "sequence": 2,
+                         "observed_at_unix_ms": 1_755_104_600_000, "issued_at_unix_ms": 1_755_104_600_100})
+    c_n2 = add("v47b_attempt_run_notice_stop_confirmed",
+               "AttemptRunNotice STOP_CONFIRMED — 컨테이너 부재를 확인했다(순번 2)",
+               "AttemptRunNotice", _notice_stop,
+               ["MUST_DIFFER:v47_attempt_run_notice_run_unknown"])
+    assert c_n1 != c_n2
+    _notice_seq = dict(_notice_unknown)
+    _notice_seq["sequence"] = 3
+    c_n3 = add("v47c_attempt_run_notice_sequence_changed",
+               "v47 에서 순번만 바꾼 것 — canonical 이 달라야 한다(멱등 키가 서명에 묶인다)",
+               "AttemptRunNotice", _notice_seq,
+               ["MUST_DIFFER:v47_attempt_run_notice_run_unknown"])
+    assert c_n3 != c_n1
+    _notice_ack = {
+        "schema_version": 1,
+        "job_id": "01JBXR7Q0000000000000000AA",
+        "attempt_id": "01JBXATT00000000000000001",
+        "node_id": "node-1",
+        "fence_epoch": 42,
+        "notice_hash": {"algo": 1, "value": bytes(range(32, 64))},
+        "kind": 2,
+        "sequence": 2,
+        "created": True,
+        "coordinator_id": "coordinator-1",
+        "issued_at_unix_ms": 1_755_104_600_200,
+        "session_nonce": bytes(range(80, 96)),
+        "coordinator_signature": b"K" * 64,
+    }
+    c_a1 = add("v48_attempt_run_notice_ack", "AttemptRunNoticeAck — STOP_CONFIRMED 첫 저장",
+               "AttemptRunNoticeAck", _notice_ack)
+    _notice_ack_replay = dict(_notice_ack)
+    _notice_ack_replay["created"] = False
+    c_a2 = add("v48b_attempt_run_notice_ack_replay_created_false",
+               "같은 알림의 재전송 응답(created=false) — canonical 이 달라야 한다",
+               "AttemptRunNoticeAck", _notice_ack_replay,
+               ["MUST_DIFFER:v48_attempt_run_notice_ack"])
+    assert c_a1 != c_a2
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

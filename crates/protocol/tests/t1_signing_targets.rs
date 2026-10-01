@@ -658,6 +658,13 @@ fn domain_coverage_is_explicit() {
         (Domain::AttemptReportAck, Some("AttemptReportAck"), true),
         // 결함 131 (2026-09-23) — ACK 수신 확인
         (Domain::GrantAckReceipt, Some("GrantAckReceipt"), true),
+        // 실행 여부 불명 계약 v17 (2026-10-01) — 실행 알림 · 그 응답
+        (Domain::AttemptRunNotice, Some("AttemptRunNotice"), true),
+        (
+            Domain::AttemptRunNoticeAck,
+            Some("AttemptRunNoticeAck"),
+            true,
+        ),
     ];
 
     // ★ 수동으로 적은 28 같은 숫자를 쓰지 않는다. 그 숫자를 두면
@@ -700,8 +707,9 @@ fn domain_coverage_is_explicit() {
     // **줄어드는(=후퇴하는) 것도 잡는다.**
     // 26 -> 27 (2026-09-14) — B+E 계약 단계 1 의 AttemptReportAck.
     // 27 -> 28 (2026-09-23) — 결함 131 의 GrantAckReceipt.
+    // 28 -> 30 (2026-10-01) — 실행 여부 불명 계약 v17 의 AttemptRunNotice · AttemptRunNoticeAck.
     assert_eq!(
-        implemented, 28,
+        implemented, 30,
         "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
     assert_eq!(
@@ -1103,5 +1111,68 @@ fn grant_ack_receipt_vectors_match_reference() {
             &[]
         )),
         "ack_nonce 를 바꿨는데 canonical 이 같다 — 다른 ACK 에 대한 확인을 구별하지 못한다"
+    );
+}
+
+/// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. 실행 알림 · 그 응답의 canonical 이 참조 구현과 같고, 종류 · 순번 · created 가 서명에 닿는다.
+#[test]
+fn attempt_run_notice_and_ack_vectors_match_reference() {
+    let unknown = pb::AttemptRunNotice {
+        schema_version: 1,
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        node_id: "node-1".into(),
+        fence_epoch: 42,
+        kind: pb::RunNoticeKind::RunUnknown as i32,
+        origin: pb::RunUnknownOrigin::Running as i32,
+        reason: pb::RunUnknownReason::ExitUnobserved as i32,
+        stop_evidence: 0,
+        sequence: 1,
+        observed_at_unix_ms: 1_755_104_500_000,
+        issued_at_unix_ms: 1_755_104_500_100,
+        node_signature: vec![b'N'; 64],
+    };
+    assert_matches_reference("v47_attempt_run_notice_run_unknown", &unknown);
+    let stop = pb::AttemptRunNotice {
+        kind: pb::RunNoticeKind::StopConfirmed as i32,
+        origin: 0,
+        reason: 0,
+        stop_evidence: pb::RunStopEvidence::ContainerAbsentConfirmed as i32,
+        sequence: 2,
+        observed_at_unix_ms: 1_755_104_600_000,
+        issued_at_unix_ms: 1_755_104_600_100,
+        ..unknown.clone()
+    };
+    assert_matches_reference("v47b_attempt_run_notice_stop_confirmed", &stop);
+    let reseq = pb::AttemptRunNotice {
+        sequence: 3,
+        ..unknown.clone()
+    };
+    assert_matches_reference("v47c_attempt_run_notice_sequence_changed", &reseq);
+    let ack = pb::AttemptRunNoticeAck {
+        schema_version: 1,
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        node_id: "node-1".into(),
+        fence_epoch: 42,
+        notice_hash: Some(pb::Digest {
+            algo: 1,
+            value: (32u8..64).collect(),
+        }),
+        kind: pb::RunNoticeKind::StopConfirmed as i32,
+        sequence: 2,
+        created: true,
+        coordinator_id: "coordinator-1".into(),
+        issued_at_unix_ms: 1_755_104_600_200,
+        session_nonce: (80u8..96).collect(),
+        coordinator_signature: vec![b'K'; 64],
+    };
+    assert_matches_reference("v48_attempt_run_notice_ack", &ack);
+    assert_matches_reference(
+        "v48b_attempt_run_notice_ack_replay_created_false",
+        &pb::AttemptRunNoticeAck {
+            created: false,
+            ..ack
+        },
     );
 }

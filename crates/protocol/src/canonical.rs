@@ -357,6 +357,9 @@ declare_domains! {
     NeighborUnreachableReport => "gputeer/v1/neighbor-unreachable",
     AttemptReportAck => "gputeer/v1/attempt-report-ack",
     GrantAckReceipt => "gputeer/v1/grant-ack-receipt",
+    // ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. 32바이트 이하(29 · 26바이트).
+    AttemptRunNotice => "gputeer/v1/attempt-run-notice",
+    AttemptRunNoticeAck => "gputeer/v1/attempt-run-ack",
 }
 
 impl Domain {

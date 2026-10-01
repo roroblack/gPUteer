@@ -1263,3 +1263,63 @@ fn a_stale_neighbor_report_is_rejected() {
 
     assert!(result.is_err(), "만료된 신고가 통과했다: {result:?}");
 }
+
+/// ★ 2026-10-01 (실행 여부 불명 계약 v17 · 검수 b14 ③) — schema_version 상한은 프레임 종류마다다. REPORT 세션처럼 호출자가 상한 2(AttemptReport 기준)로
+///   읽어도 실행 알림 v2 는 SCHEMA_TOO_NEW 로 거부되고, 같은 상한으로 AttemptReport v2 와 실행 알림 v1 은 통과한다.
+#[test]
+fn the_run_notice_frames_use_their_own_schema_cap() {
+    let k = key(1);
+    let dir = directory(&k);
+    let notice = |schema_version: u32| {
+        let mut m = pb::AttemptRunNotice {
+            schema_version,
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            node_id: DEVICE.into(),
+            fence_epoch: 3,
+            kind: pb::RunNoticeKind::StopConfirmed as i32,
+            stop_evidence: pb::RunStopEvidence::ContainerAbsentConfirmed as i32,
+            sequence: 1,
+            observed_at_unix_ms: NOW,
+            issued_at_unix_ms: NOW,
+            ..Default::default()
+        };
+        m.node_signature = sign(&k, &m).to_vec();
+        m
+    };
+    let read = |frame_type: FrameType, body: Vec<u8>| {
+        let frame = write_frame(frame_type, &body).unwrap();
+        read_frame(
+            &mut Cursor::new(frame),
+            2,
+            KeyDirectorySource::Provided(&dir),
+            &mut InMemoryReplayGuard::new(),
+            &FixedClock(NOW),
+        )
+    };
+    match read(FrameType::AttemptRunNotice, notice(2).encode_to_vec()) {
+        Err(error) => assert!(format!("{error:?}").contains("SchemaTooNew"), "{error:?}"),
+        Ok(_) => panic!("실행 알림 v2 가 호출자 상한(2)으로 통과했다 — 종류별 상한이 없다"),
+    }
+    assert!(matches!(
+        read(FrameType::AttemptRunNotice, notice(1).encode_to_vec()),
+        Ok(IngressMessage::AttemptRunNotice(_))
+    ));
+    let mut report = pb::AttemptReport {
+        schema_version: 2,
+        job_id: "job-1".into(),
+        attempt_id: "attempt-1".into(),
+        node_id: DEVICE.into(),
+        fence_epoch: 3,
+        issued_at_unix_ms: NOW,
+        ..Default::default()
+    };
+    report.node_signature = sign(&k, &report).to_vec();
+    assert!(
+        matches!(
+            read(FrameType::AttemptReport, report.encode_to_vec()),
+            Ok(IngressMessage::AttemptReport(_))
+        ),
+        "종류별 상한이 AttemptReport v2 까지 막았다"
+    );
+}

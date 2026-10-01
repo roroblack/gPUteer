@@ -537,6 +537,65 @@ impl Signable for pb::AttemptReportAck {
     }
 }
 
+/// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. 노드가 서명하는 실행 알림 — **Evidence**(만료 · replay 캐시 없음). "받았다" 응답을 잃어 같은
+///   바이트를 다시 보내도 거부되지 않아야 한다(v1 의 ShortLived 는 그 재전송을 영원히 거부했다 — 검수 b1 ①). 재전송은 소비 측 멱등 키가 거른다.
+///   관측 시각은 발행 시각이 아니라 `observed_at_unix_ms` 다(계약 §1 — 기본 구현을 두면 관측 시각이 조용히 발행 시각으로 바뀐다).
+impl Signable for pb::AttemptRunNotice {
+    const DOMAIN: Domain = Domain::AttemptRunNotice;
+    const LIFETIME: Lifetime = Lifetime::Evidence;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.node_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        0
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn observed_at_unix_ms(&self) -> u64 {
+        self.observed_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.node_id
+    }
+}
+
+/// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. Coordinator 가 서명하는 "알림 받았다" 응답. `AttemptReportAck` 와 같은 모양 — REPORT 세션 Hello 의
+///   nonce 를 echo 한 `session_nonce` 를 replay nonce 로 쓰는 단수명이다(다른 세션으로 재생하지 못한다).
+impl Signable for pb::AttemptRunNoticeAck {
+    const DOMAIN: Domain = Domain::AttemptRunNoticeAck;
+    const LIFETIME: Lifetime = Lifetime::ShortLived;
+
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+    fn to_canonical_fields(&self) -> Fields {
+        <Self as ToCanonicalFields>::to_canonical_fields(self)
+    }
+    fn signature_bytes(&self) -> &[u8] {
+        &self.coordinator_signature
+    }
+    fn expires_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms.saturating_add(GRANT_TTL_MS)
+    }
+    fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+    fn signer_id(&self) -> &str {
+        &self.coordinator_id
+    }
+    fn replay_nonce(&self) -> Option<&[u8]> {
+        Some(&self.session_nonce)
+    }
+}
+
 /// ★ 2026-09-23 (결함 131) — Coordinator 가 서명하는 ACK 수신 확인. 발급 즉시 소비되는 단수명이다.
 impl Signable for pb::GrantAckReceipt {
     const DOMAIN: Domain = Domain::GrantAckReceipt;

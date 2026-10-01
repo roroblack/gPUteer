@@ -567,6 +567,53 @@ impl ToCanonicalFields for pb::AttemptReportAck {
     }
 }
 
+// ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. 모든 칸이 서명 대상이다 — 알림 종류 · 출발 · 사유 · 증거 · 순번이 서명 밖이면 중간에서
+//   "모름" 을 "정지 확인" 으로 바꿔 보류를 풀 수 있다.
+impl ToCanonicalFields for pb::AttemptRunNotice {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.fence_epoch);
+        put_uint(&mut f, 6, self.kind as u64);
+        put_uint(&mut f, 7, self.origin as u64);
+        put_uint(&mut f, 8, self.reason as u64);
+        put_uint(&mut f, 9, self.stop_evidence as u64);
+        put_uint(&mut f, 10, self.sequence);
+        put_uint(&mut f, 11, self.observed_at_unix_ms);
+        put_uint(&mut f, 12, self.issued_at_unix_ms);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl ToCanonicalFields for pb::AttemptRunNoticeAck {
+    fn to_canonical_fields(&self) -> Fields {
+        let mut f = Fields::new();
+        put_uint(&mut f, 1, self.schema_version as u64);
+        put_str(&mut f, 2, &self.job_id);
+        put_str(&mut f, 3, &self.attempt_id);
+        put_str(&mut f, 4, &self.node_id);
+        put_uint(&mut f, 5, self.fence_epoch);
+        put_msg(&mut f, 6, &self.notice_hash);
+        put_uint(&mut f, 7, self.kind as u64);
+        put_uint(&mut f, 8, self.sequence);
+        put_bool(&mut f, 9, self.created);
+        put_str(&mut f, 10, &self.coordinator_id);
+        put_uint(&mut f, 11, self.issued_at_unix_ms);
+        // ★ 세션 nonce 가 서명 밖이면 다른 세션의 "받았다" 를 이 세션의 것으로 재생할 수 있다.
+        put_bytes(&mut f, 12, &self.session_nonce);
+        f
+    }
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 impl ToCanonicalFields for pb::GrantAckReceipt {
     fn to_canonical_fields(&self) -> Fields {
         let mut f = Fields::new();

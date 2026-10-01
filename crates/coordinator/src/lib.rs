@@ -2534,6 +2534,8 @@ fn ingress_kind(message: &IngressMessage) -> &'static str {
         IngressMessage::NeighborUnreachableReport(_) => "NeighborUnreachableReport",
         IngressMessage::AttemptReportAck(_) => "AttemptReportAck",
         IngressMessage::GrantAckReceipt(_) => "GrantAckReceipt",
+        IngressMessage::AttemptRunNotice(_) => "AttemptRunNotice",
+        IngressMessage::AttemptRunNoticeAck(_) => "AttemptRunNoticeAck",
     }
 }
 

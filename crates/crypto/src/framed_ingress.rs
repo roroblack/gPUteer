@@ -109,6 +109,10 @@ pub enum FrameType {
     AttemptReportAck = 17,
     /// ★ 2026-09-23 (결함 131) — Coordinator 가 서명하는 ACK 수신 확인.
     GrantAckReceipt = 18,
+    /// ★ 2026-10-01 — 실행 여부 불명 계약 v17 — 노드가 서명하는 실행 알림(RUN_UNKNOWN · STOP_CONFIRMED). Coordinator 가 받는다.
+    AttemptRunNotice = 19,
+    /// ★ 2026-10-01 — 실행 여부 불명 계약 v17 — Coordinator 가 서명하는 "알림 받았다" 응답. Agent 가 받는다.
+    AttemptRunNoticeAck = 20,
 }
 
 impl FrameType {
@@ -132,6 +136,8 @@ impl FrameType {
             16 => Self::NeighborUnreachableReport,
             17 => Self::AttemptReportAck,
             18 => Self::GrantAckReceipt,
+            19 => Self::AttemptRunNotice,
+            20 => Self::AttemptRunNoticeAck,
             _ => return None,
         })
     }
@@ -210,6 +216,8 @@ pub enum IngressMessage {
     NeighborUnreachableReport(Verified<pb::NeighborUnreachableReport>),
     AttemptReportAck(Verified<pb::AttemptReportAck>),
     GrantAckReceipt(Verified<pb::GrantAckReceipt>),
+    AttemptRunNotice(Verified<pb::AttemptRunNotice>),
+    AttemptRunNoticeAck(Verified<pb::AttemptRunNoticeAck>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -296,6 +304,16 @@ pub fn read_frame<R: Read>(
     let mut body = vec![0u8; claimed_len as usize];
     read_exact_or_truncated(stream, &mut body)?;
 
+    // ★ 2026-10-01 (실행 여부 불명 계약 v17 · 검수 b14 ③) — schema_version 상한은 **프레임 종류마다** 고른다. 호출자 상한은 그 세션의 주 메시지
+    //   (REPORT 세션이면 AttemptReport v2) 기준이라, 실행 알림 · 그 응답은 자기 상한(1)과 작은 쪽으로 읽는다 — 서명 필드를 쓰기 **전에**.
+    let max_supported_schema_version = match frame_type {
+        FrameType::AttemptRunNotice | FrameType::AttemptRunNoticeAck => {
+            max_supported_schema_version
+                .min(gputeer_protocol::constants::ATTEMPT_RUN_NOTICE_MAX_SCHEMA_VERSION)
+        }
+        _ => max_supported_schema_version,
+    };
+
     macro_rules! verify_as {
         ($variant:ident, $ty:ty) => {
             decode_and_verify::<$ty>(
@@ -331,6 +349,10 @@ pub fn read_frame<R: Read>(
         }
         FrameType::AttemptReportAck => verify_as!(AttemptReportAck, pb::AttemptReportAck),
         FrameType::GrantAckReceipt => verify_as!(GrantAckReceipt, pb::GrantAckReceipt),
+        FrameType::AttemptRunNotice => verify_as!(AttemptRunNotice, pb::AttemptRunNotice),
+        FrameType::AttemptRunNoticeAck => {
+            verify_as!(AttemptRunNoticeAck, pb::AttemptRunNoticeAck)
+        }
     }
 }
 

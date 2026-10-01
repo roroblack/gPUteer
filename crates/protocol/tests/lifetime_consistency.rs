@@ -270,6 +270,35 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    // 실행 여부 불명 계약 v17 — 실행 알림은 Evidence(응답을 잃은 재전송이 거부되지 않게) · 관측 시각은 observed_at 칸이다.
+    check(
+        "AttemptRunNotice",
+        &pb::AttemptRunNotice {
+            schema_version: 1,
+            observed_at_unix_ms: T,
+            issued_at_unix_ms: T + 1,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        gputeer_protocol::signing::Signable::observed_at_unix_ms(&pb::AttemptRunNotice {
+            observed_at_unix_ms: T,
+            issued_at_unix_ms: T + 1,
+            ..Default::default()
+        }),
+        T,
+        "실행 알림의 관측 시각이 발행 시각으로 바뀌었다"
+    );
+    // 그 응답은 ShortLived — 재생할 수 있으면 다른 세션의 "받았다" 를 믿게 된다.
+    check(
+        "AttemptRunNoticeAck",
+        &pb::AttemptRunNoticeAck {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            session_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
     // 결함 131 — ACK 수신 확인. ShortLived 여야 한다 — 재생할 수 있으면 받아들여지지 않은 ACK 를 받아들여졌다고 믿게 된다.
     check(
         "GrantAckReceipt",
