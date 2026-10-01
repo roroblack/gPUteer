@@ -33,15 +33,20 @@
 //!
 //! ```text
 //! 링크          따라가지 않는다. 리눅스 O_NOFOLLOW · 윈도 FILE_FLAG_OPEN_REPARSE_POINT 로 열고, 연 핸들이 링크 · 재분석 지점이면 거부
-//! 하드 링크     연 핸들의 링크 수가 2 이상이면 거부 — 이름 하나뿐인 보통 파일만 읽는다. 같은 볼륨의 다른 파일(호스트 파일)에 걸어 둔
-//!               하드 링크로 그 파일의 정수를 싣게 하는 길을 막는다
+//! 하드 링크     연 핸들의 링크 수가 2 이상이면 거부. ★ 그것만으로는 모자란다(검수 pr3) — 연 뒤에 작업이 `progress` 이름을 지우면
+//!               바깥 파일의 링크 수가 1 로 줄어 통과한다. 그래서 **연 뒤에 그 이름을 다시 보고**(`path_still_names`) — 그 이름이 연 핸들과
+//!               같은 파일(리눅스 dev · inode, 윈도 볼륨 번호 · 파일 ID)이고 · 링크가 아니고 · 이름이 하나뿐이어야 읽는다. 그 순간 그 파일의
+//!               유일한 이름이 체크포인트 폴더 안에 있다 — 작업은 폴더 밖에 새 이름을 만들 수 없으니, 그 뒤에 바뀌어도 바깥 파일이 되지 않는다
 //! 특수 파일     연 핸들이 보통 파일이 아니면 거부. 리눅스는 O_NONBLOCK 으로 열어 FIFO 에 멈추지 않는다
 //! 크기          연 파일에서 상한 + 1 바이트까지만 읽는다(미리 본 크기를 믿지 않는다)
 //! 시한          그래도 멈추는 경우(느린 파일 시스템 등)에 대비해 읽기는 시한(`READ_TIMEOUT`) 안에서만 기다린다. 넘기면 이 시도의 진행
 //!               읽기를 끈다. 멈춘 읽기 스레드는 프로세스 전체에서 `MAX_STUCK_READS` 개까지만 둔다 — 그만큼 멈춰 있으면 새로 띄우지
 //!               않고 바로 시한 초과로 답한다(Agent 가 오래 돌며 시도마다 하나씩 쌓이지 않게 — 검수 pr2)
 //! 내용 노출     오류 메시지에 파일 내용(이름 · 값)을 싣지 않는다 — 줄 번호와 이유만. 서명된 요청에는 파싱한 정수만 간다
-//! 못 막는 것    부모 폴더 쪽의 재분석 지점 — 체크포인트 폴더는 Agent 가 만들고, 컨테이너에는 그 폴더만 마운트된다
+//! 못 막는 것    부모 폴더 쪽의 재분석 지점 — 체크포인트 폴더는 Agent 가 만들고, 컨테이너에는 그 폴더만 마운트된다.
+//!               바깥 이름이 (작업이 아니라) 호스트 쪽에서 지워져 이름이 체크포인트 폴더 안에만 남은 파일 — 그 파일은 읽는다.
+//!               ★ 이 방어는 작업이 폴더 밖 이름을 지우거나 만들 수 없다는 전제(컨테이너 마운트 격리)에 기댄다. 호스트에서 바로 도는 작업은
+//!               Agent 와 같은 사용자 권한이라 그 파일을 스스로 읽을 수 있다 — 이 방어가 더 막아 주는 것이 없다
 //! ```
 
 use std::io::Read;
@@ -210,6 +215,11 @@ impl Drop for InFlight {
 }
 
 fn read_now(path: &Path) -> ProgressRead {
+    read_now_with(path, || {})
+}
+
+/// `read_now` 의 몸통 — `after_open` 은 연 직후에 부른다(시험이 "연 뒤 이름 지우기" 를 실제 읽기 경로에 끼워 넣는 자리).
+fn read_now_with(path: &Path, after_open: impl FnOnce()) -> ProgressRead {
     let before = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ProgressRead::Absent,
@@ -225,8 +235,13 @@ fn read_now(path: &Path) -> ProgressRead {
         Ok(file) => file,
         Err(error) => return ProgressRead::Malformed(format!("열 수 없다({:?})", error.kind())),
     };
+    after_open();
     // ★ 여기부터의 판정은 연 핸들 자체로 한다 — 읽을 그 객체다(모듈 문서 "판정은 연 핸들 자체로").
     if let Some(why) = refuse_opened(&file) {
+        return ProgressRead::Malformed(why);
+    }
+    // ★ 검수 pr3 — 연 뒤 이름을 지워 링크 수를 1 로 줄이는 경우: 그 이름이 아직 이 파일의 유일한 이름인지 본다.
+    if let Some(why) = path_still_names(&file, path) {
         return ProgressRead::Malformed(why);
     }
     let mut bytes = Vec::new();
@@ -291,19 +306,13 @@ fn refuse_opened(file: &std::fs::File) -> Option<String> {
 
 #[cfg(windows)]
 fn refuse_opened(file: &std::fs::File) -> Option<String> {
-    use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DEVICE,
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_ATTRIBUTE_DEVICE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     };
-    // SAFETY: `file` 이 살아 있는 동안의 유효한 핸들이고, 출력 구조체는 이 함수 안의 지역 변수다.
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
-        return Some(format!(
-            "연 파일을 볼 수 없다({:?})",
-            std::io::Error::last_os_error().kind()
-        ));
-    }
+    let info = match handle_info(file) {
+        Ok(info) => info,
+        Err(error) => return Some(format!("연 파일을 볼 수 없다({:?})", error.kind())),
+    };
     if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Some("연 것이 재분석 지점이다 — 링크를 따라가지 않는다".into());
     }
@@ -317,6 +326,77 @@ fn refuse_opened(file: &std::fs::File) -> Option<String> {
 #[cfg(not(any(unix, windows)))]
 fn refuse_opened(_file: &std::fs::File) -> Option<String> {
     Some("이 플랫폼에서는 연 파일을 확인할 수 없어 읽지 않는다".into())
+}
+
+/// 연 뒤에 그 이름을 다시 본다 — 같은 파일이고 · 링크가 아니고 · 이름이 하나뿐이어야 한다(모듈 문서 "하드 링크"). 거부 사유를 돌려준다.
+#[cfg(unix)]
+fn path_still_names(file: &std::fs::File, path: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let opened = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(format!("연 파일을 볼 수 없다({:?})", error.kind())),
+    };
+    let named = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return Some("연 뒤에 이름이 사라졌다 — 다른 파일일 수 있어 읽지 않는다".into()),
+    };
+    if named.file_type().is_symlink() || named.dev() != opened.dev() || named.ino() != opened.ino()
+    {
+        return Some("연 뒤에 이름이 다른 것을 가리킨다 — 읽지 않는다".into());
+    }
+    (named.nlink() != 1)
+        .then(|| "하드 링크다(이름이 둘 이상) — 다른 파일일 수 있어 읽지 않는다".into())
+}
+
+#[cfg(windows)]
+fn path_still_names(file: &std::fs::File, path: &Path) -> Option<String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+    let opened = match handle_info(file) {
+        Ok(info) => info,
+        Err(error) => return Some(format!("연 파일을 볼 수 없다({:?})", error.kind())),
+    };
+    // 이름으로 한 번 더 연다 — 내용 접근 없이(속성만) · 링크를 따라가지 않고.
+    let again = std::fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path);
+    let named = match again.as_ref().map(handle_info) {
+        Ok(Ok(info)) => info,
+        _ => return Some("연 뒤에 이름이 사라졌다 — 다른 파일일 수 있어 읽지 않는다".into()),
+    };
+    if named.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || named.dwVolumeSerialNumber != opened.dwVolumeSerialNumber
+        || named.nFileIndexHigh != opened.nFileIndexHigh
+        || named.nFileIndexLow != opened.nFileIndexLow
+    {
+        return Some("연 뒤에 이름이 다른 것을 가리킨다 — 읽지 않는다".into());
+    }
+    (named.nNumberOfLinks != 1)
+        .then(|| "하드 링크다(이름이 둘 이상) — 다른 파일일 수 있어 읽지 않는다".into())
+}
+
+#[cfg(windows)]
+fn handle_info(
+    file: &std::fs::File,
+) -> std::io::Result<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    // SAFETY: `file` 이 살아 있는 동안의 유효한 핸들이고, 출력 구조체는 이 함수 안의 지역 변수다.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(info)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn path_still_names(_file: &std::fs::File, _path: &Path) -> Option<String> {
+    Some("이 플랫폼에서는 이름을 다시 확인할 수 없어 읽지 않는다".into())
 }
 
 #[cfg(test)]
@@ -429,6 +509,52 @@ mod tests {
         // 이름이 하나로 돌아오면 읽는다(거부가 링크 수 때문임을 확인)
         std::fs::remove_file(&outside).unwrap();
         assert!(matches!(read(&path), ProgressRead::Read(p) if p.current_step == 42));
+    }
+
+    /// ★ 검수 pr3 — 하드 링크를 연 뒤 작업이 그 이름을 지우면 링크 수가 1 로 줄어 첫 검사는 통과한다. 이름을 다시 보는 검사가 막는다.
+    #[test]
+    fn removing_the_name_after_open_does_not_let_another_file_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("host-file");
+        std::fs::write(&outside, "current_step=42\n").unwrap();
+        let path = dir.path().join(PROGRESS_FILENAME);
+        std::fs::hard_link(&outside, &path).unwrap();
+        let file = open_without_following(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            refuse_opened(&file),
+            None,
+            "전제: 이름을 지우면 링크 수 검사만으로는 통과한다"
+        );
+        assert!(
+            path_still_names(&file, &path).is_some_and(|why| why.contains("사라졌다")),
+            "이름이 사라진 파일을 읽으려 했다"
+        );
+        // 지운 뒤 같은 바깥 파일에 다시 걸면 — 이름은 같은 파일을 가리키지만 이름이 둘이다
+        std::fs::hard_link(&outside, &path).unwrap();
+        assert!(
+            path_still_names(&file, &path).is_some_and(|why| why.contains("하드 링크")),
+            "다시 건 하드 링크를 받아들였다"
+        );
+        // 지운 뒤 다른 보통 파일을 그 이름에 두면 — 다른 파일이다
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "current_step=1\n").unwrap();
+        assert!(
+            path_still_names(&file, &path).is_some_and(|why| why.contains("다른 것")),
+            "다른 파일로 바뀐 이름을 받아들였다"
+        );
+        // 대조군 — 작업의 보통 파일은 그대로 읽는다
+        let own = open_without_following(&path).unwrap();
+        assert_eq!(path_still_names(&own, &path), None);
+
+        // 실제 읽기 경로 — 연 직후에 이름을 지우면 바깥 파일의 정수를 싣지 않는다(읽기 경로에서 이 검사를 빼면 여기서 실패한다)
+        std::fs::remove_file(&path).unwrap();
+        std::fs::hard_link(&outside, &path).unwrap();
+        let removed = read_now_with(&path, || std::fs::remove_file(&path).unwrap());
+        assert!(
+            matches!(&removed, ProgressRead::Malformed(why) if why.contains("사라졌다")),
+            "연 뒤 이름을 지운 바깥 파일을 읽었다: {removed:?}"
+        );
     }
 
     /// ★ 검수 pr2 — FIFO 로 바꿔치기해도 열기에서 멈추지 않고 바로 거부한다.
