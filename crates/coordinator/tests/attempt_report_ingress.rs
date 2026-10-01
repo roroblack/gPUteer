@@ -1941,6 +1941,7 @@ fn a_pool_marked_control_db_always_issues_pool_grants() {
                 expires_at_unix_ms: now + 60_000,
                 nonce: vec![7; 16],
                 pool_mode: false,
+                signed_reassignment_grace_ms: 0,
             },
             &SigningKey::from_bytes(&COORDINATOR_SEED),
             &submitters,

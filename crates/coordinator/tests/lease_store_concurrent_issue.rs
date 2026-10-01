@@ -45,6 +45,7 @@ fn candidate(round: usize, marker: CandidateMarker) -> StoredLease {
         renew_after_unix_ms: NOW_UNIX_MS + 300_000 + marker_offset + round as u64,
         max_total_duration_seconds,
         revoked_at_unix_ms: None,
+        reassignment_grace_ms: 0,
     }
 }
 
@@ -170,6 +171,8 @@ fn query_stored_directly(connection: &Connection, lease_id: &str) -> StoredLease
         renew_after_unix_ms: decode_u64(raw.9, "renew_after_unix_ms"),
         max_total_duration_seconds: decode_u64(raw.10, "max_total_duration_seconds"),
         revoked_at_unix_ms: raw.11.map(|bytes| decode_u64(bytes, "revoked_at_unix_ms")),
+        // 이 시험은 유예 열을 읽지 않는다 — 발급 경쟁만 본다
+        reassignment_grace_ms: 0,
     }
 }
 

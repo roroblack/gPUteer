@@ -55,7 +55,7 @@ use gputeer_protocol::pb;
 use prost::Message;
 
 use crate::job_store::{CoordinatorJobStore, JobState, JobStoreError};
-use crate::lease_store::CoordinatorLeaseStore;
+use crate::lease_store::{CoordinatorLeaseStore, LeaseStoreError};
 use crate::staging_store::CoordinatorStagingStore;
 use crate::unsigned_lease_from_stored;
 
@@ -93,6 +93,9 @@ pub struct StoredGrantRequest {
     ///   `pool_mode = 27` 을 서명해 싣는다 — Agent 는 수신 확인 · 실행 중 갱신 없이 풀 Grant 를 받지 않는다.
     ///   호출부가 준다: wire 는 `--pool-mode`, 파일로 내는 `issue-grant` 는 제어 DB 의 풀 선언을 읽는다.
     pub pool_mode: bool,
+    /// ★ 2026-10-01 (signing.md §6.8) — 0 보다 크면 서명 직전에 저장된 Lease 의 재배치 유예를 이 값까지 올리고 Lease v2 로 서명한다.
+    ///   0 이면 저장된 값 그대로(보통 0 → Lease v1). 호출부가 준다: wire 는 `--signed-reassignment-grace-ms`, `issue-grant` 도 같은 이름.
+    pub signed_reassignment_grace_ms: u64,
 }
 
 /// 저장된 예약 Grant 를 만들지 못한 이유 — 저장소 장애와 거부를 **타입으로** 가른다(결함 104, 재검수 62).
@@ -340,6 +343,21 @@ pub fn signed_grant_from_stored<K: KeyDirectory + ?Sized>(
 
     // ── 서명 ────────────────────────────────────────────────────────
     // 저장값을 wire 형으로 옮기지 못한 것(u64 -> u32 범위)은 저장소 손상이다(결함 104).
+    // ★ 2026-10-01 (signing.md §6.8) — 서명 직전에 재배치 유예를 올려 **저장한 뒤** 그 행으로 서명한다. 재배치는 저장값을 보므로
+    //   보낸 서명 값보다 일찍 다시 맡기지 않는다. 그 사이 재배치가 폐기했으면 내지 않는다.
+    let stored_lease = if request.signed_reassignment_grace_ms == 0 {
+        stored_lease
+    } else {
+        leases
+            .raise_reassignment_grace(&stored_lease.lease_id, request.signed_reassignment_grace_ms)
+            .map_err(|e| match e {
+                LeaseStoreError::Revoked { revoked_at_unix_ms } => StoredGrantError::Refused(format!(
+                    "GRANT_REFUSED: Lease {} 가 {revoked_at_unix_ms} 에 폐기됐다 — 재배치가 다른 노드에 맡겼을 수 있다",
+                    stored_lease.lease_id
+                )),
+                other => StoredGrantError::Storage(format!("재배치 유예를 저장하지 못했다: {other}")),
+            })?
+    };
     let mut lease = unsigned_lease_from_stored(&stored_lease).map_err(StoredGrantError::Storage)?;
     lease.coordinator_signature = sign(key, &lease).to_vec();
 
@@ -473,7 +491,8 @@ fn verify_own_output(
         .ok_or_else(|| "방금 만든 Grant 에 Lease 가 없다".to_string())?;
     gputeer_protocol::verify(
         lease,
-        1,
+        // ★ 2026-10-01 — 재배치 유예를 켜면 Lease 가 v2 다(signing.md §6.8).
+        gputeer_protocol::constants::LEASE_MAX_SCHEMA_VERSION,
         &verifier,
         at_unix_ms,
         &mut gputeer_protocol::signing::NoReplayCheck,

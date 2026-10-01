@@ -170,7 +170,10 @@ pub fn failover_lost_attempts(
         let lease = crate::lease_store::fetch_lease(&transaction, &attempt.lease_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("시도 {attempt_id} 의 Lease {} 가 없다", attempt.lease_id))?;
-        if now_unix_ms <= lease.expires_at_unix_ms.saturating_add(policy.grace_ms) {
+        // ★ 2026-10-01 (signing.md §6.8) — 노드에 서명해 알린 유예(저장값)보다 일찍 다시 맡기지 않는다. 그 값을 믿고 "곧 끝남" 으로
+        //   계속 돈 노드와 두 벌이 된다. 저장값은 보낸 어떤 서명 값보다 작지 않다(서명 직전에 올려 저장한다).
+        let grace_ms = policy.grace_ms.max(lease.reassignment_grace_ms);
+        if now_unix_ms <= lease.expires_at_unix_ms.saturating_add(grace_ms) {
             continue;
         }
         let lost_node_id = attempt.node_ids.first().cloned().unwrap_or_default();

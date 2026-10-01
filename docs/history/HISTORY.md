@@ -25,6 +25,28 @@
 
 ---
 
+## 2026-10-01 11:56 — 서명된 재배치 유예 — Lease v2(reassignment_grace_ms = 34) · 서명 직전 저장 · 재배치는 그보다 일찍 안 맡김(브랜치 fork-merge)
+
+- 계획: `docs/contracts/proposals/2026-10-01_1126_서명된_재배치_유예_Lease_v2.md` — 판단표 ④("곧 끝나면 계속")의 선행 계약. 설계 A(Lease) · B(Grant) · C(보류) 중 A 를
+  Claude · Codex 본계정(gpt-6-sol) 1회차 일치로 골랐다(보조 계정은 2026-10-04 까지 쿼터 — 한 계정 판정)
+- 스트림: Protocol · Coordinator · Agent
+- 수행: 계약 — `Lease.reassignment_grace_ms = 34`(v2 에서만 · 0 이면 canonical 이 v1 과 같음) · `LEASE_MAX_SCHEMA_VERSION = 2` · signing.md §6.8 ·
+  참조 구현 · 벡터 v46/v46b/v46c(78 → 81, 기존 무변경) · 스키마 지문. 저장 — `coordinator_leases.reassignment_grace_ms` 열(옛 파일 자동 보정 · NULL = 0) ·
+  `raise_reassignment_grace`(한 문장 UPDATE 로 "폐기 안 됐고 더 작을 때만 올림" · 폐기면 Revoked). Coordinator — `--signed-reassignment-grace-ms`(기본 0 · 끔):
+  저장된 예약 Grant · 저장소 갱신 · 옛 발급 경로가 **서명 직전에 저장 행을 올린 뒤** 그 행으로 서명(유예가 있으면 v2). `issue-grant` 도 같은 스위치.
+  재배치 — 만료 + max(정책 유예, 저장된 서명 유예). Agent — 중첩 Lease 를 v2 까지 받는다(실행 허가 · 갱신 · 재개 세 곳 + 저장 예약 Grant 의 자기 검증),
+  v1 에 34 가 차 있으면 거부, 받으면 `LEASE_REASSIGNMENT_GRACE` 를 찍는다(판정에는 아직 안 쓴다). 런북 §8b
+- ★ 작업 중 실수 — 되돌리기 실험의 임시 사본 둘이 같은 이름(lib.rs)이라 하나가 저장되지 않았고, 복원 때 Coordinator `lib.rs` 를 Agent `lib.rs` 로
+  덮었다. 오늘 편집이 전부 스크립트로 남아 있어 커밋된 판으로 되돌린 뒤 다시 적용하고 실제 프로세스 시험으로 복원을 확인했다. 이후 사본은 이름을 갈랐다
+- 검증: protocol 213 passed. 단위 — 저장소(옛 파일 보정 · 올리기만 · 폐기 거부 · NotFound) · 재배치(서명 유예 30초 안엔 안 맡김 · 지나면 맡김) · Agent(v1+34 거부).
+  실제 프로세스(Windows) — 스위치를 켠 Coordinator 와 Agent 가 v2 Lease 로 실행 · 실행 중 갱신까지 끝내고 저장 행에 45000 이 남는다.
+  뮤테이션 3(Agent 갱신 경로가 v2 거부 · 재배치가 서명 유예 무시 · Coordinator 가 안 올림) 모두 해당 시험 실패 확인 뒤 원복.
+  Windows `cargo test --workspace` 1540 passed · 0 failed · ignored 4. 리눅스 서버(비-root) protocol · crypto · coordinator · agent · runtime-linux
+  1001 passed · 0 failed(ENVIRONMENT-BLOCKED 0). 바꾼 줄 clippy 경고 0 · 문서 검사 0 · 벡터 대조 81 일치
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 11:20 — 진행 파일 검수 pr5 반영 — "쓰기 자리가 하나뿐" 을 "호스트 폴더를 붙인 쓰기 자리가 하나뿐" 으로(브랜치 fork-merge)
 
 - 계획: 직전 항목의 독립 검수 pr5(Codex gpt-6-sol) CHANGES_REQUESTED 1건(문구) 반영. 같은 검수가 마운트 격리 논거(두 폴더가 따로 붙음 · link(2) EXDEV) ·

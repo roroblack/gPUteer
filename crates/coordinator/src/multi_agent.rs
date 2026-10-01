@@ -334,6 +334,7 @@ fn serve(shared: &Shared, mut stream: TcpStream, peer: std::net::SocketAddr) -> 
                 &crate::grant_from_stored::StoredGrantRequest {
                     // 풀 모드는 이 lane 을 금지한다(`run_multi_agent` 맨 앞 · 결함 408). 그래도 박아 넣지 않고 설정을 넘긴다 — 두 겹.
                     pool_mode: shared.config.pool_mode,
+                    signed_reassignment_grace_ms: shared.config.signed_reassignment_grace_ms,
                     job_id,
                     attempt_id,
                     lease_id,

@@ -59,6 +59,10 @@ message Lease {
   // 이 lease_id로 누적 가능한 최대 시간. 기본 24시간.
   // 초과하면 새 lease_id로 재발급해야 한다 (좀비 lease 방지).
   uint32 max_total_duration_seconds = 33;
+  // ★ 2026-10-01 (schema v2) — 서명된 재배치 유예(밀리초). "Lease 만료 뒤 이만큼은 다른 노드에 다시 맡기지 않는다".
+  //   채울 때만 schema_version 2. 재배치는 만료 + max(정책 유예, 이 값) 전에 다시 맡기지 않는다 — 노드는 이 값으로만
+  //   "곧 끝나면 계속" 의 시한을 늘릴 수 있다. signing.md §6.8 · docs/contracts/proposals/2026-10-01_1126_서명된_재배치_유예_Lease_v2.md
+  uint64 reassignment_grace_ms = 34;
 
   ResourceScope scope = 40;
 

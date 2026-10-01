@@ -1095,6 +1095,8 @@ impl ToCanonicalFields for pb::Lease {
         put_uint(&mut f, 31, self.expires_at_unix_ms);
         put_uint(&mut f, 32, self.renew_after_unix_ms);
         put_uint(&mut f, 33, self.max_total_duration_seconds as u64);
+        // ★ v2 (2026-10-01) — 서명된 재배치 유예. 0 이면 규칙 b 로 빠져 v1 과 canonical 이 같다(signing.md §6.8).
+        put_uint(&mut f, 34, self.reassignment_grace_ms);
 
         // ★ scope 는 보안 필드다. 서명 밖에 있으면 보유자가 스스로 자원 범위를 넓힐 수 있다.
         put_msg(&mut f, 40, &self.scope);

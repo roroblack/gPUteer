@@ -95,6 +95,12 @@ pub fn run(args: &[String]) -> Result<String, String> {
         ));
     }
 
+    // ★ 2026-10-01 (signing.md §6.8) — 서명된 재배치 유예. 안 주면 0(끔 · Lease v1).
+    let signed_reassignment_grace_ms = match flags.get("--signed-reassignment-grace-ms") {
+        Some(_) => u64_flag(&flags, "--signed-reassignment-grace-ms")?,
+        None => 0,
+    };
+
     let key = load_signing_key(require(&flags, "--coordinator-key-file")?)?;
 
     // ── 저장된 사실을 읽는다 ────────────────────────────────────────
@@ -135,6 +141,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
             // 파일로 내는 경로에는 연결 개념이 없다 — 같은 입력이면
             // 같은 Grant 가 나오도록 결정적으로 유도한다.
             nonce: derive_stored_grant_nonce(grant_id, attempt_id),
+            signed_reassignment_grace_ms,
             // ★ 결함 288 — 풀로 선언된 제어 DB 에서 낸 Grant 도 풀 Grant 다(v4 · pool_mode).
             pool_mode: gputeer_coordinator::job_store::pool_mode_declared(std::path::Path::new(
                 control_db,

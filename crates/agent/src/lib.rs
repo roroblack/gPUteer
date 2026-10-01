@@ -973,12 +973,14 @@ fn run_resume_connection(
                 .ok_or_else(|| "RESUME_REJECTED: RESUMED 결과에 Lease가 없다".to_string())?;
             let verified_lease = verify(
                 &lease,
-                1,
+                gputeer_protocol::constants::LEASE_MAX_SCHEMA_VERSION,
                 &Ed25519Verifier::new(&*coordinator_keys),
                 clock.now_unix_ms(),
                 replay,
             )
             .map_err(|e| format!("RESUME_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
+            refuse_misplaced_reassignment_grace(verified_lease.get())
+                .map_err(|why| format!("RESUME_REJECTED: {why}"))?;
             if verified_lease.get().lease_id != request.lease_id
                 || verified_lease.get().job_id != request.job_id
                 || verified_lease.get().attempt_id != request.attempt_id
@@ -1290,6 +1292,13 @@ fn run_one_connection_inner(
         held_lease.issued_at_unix_ms,
         held_lease.expires_at_unix_ms
     );
+    if held_lease.reassignment_grace_ms != 0 {
+        // ★ 2026-10-01 (signing.md §6.8) — Coordinator 가 서명해 알린 재배치 유예. "곧 끝나면 계속" 의 시한에만 쓴다.
+        println!(
+            "LEASE_REASSIGNMENT_GRACE lease_id={} schema_version={} reassignment_grace_ms={}",
+            held_lease.lease_id, held_lease.schema_version, held_lease.reassignment_grace_ms
+        );
+    }
 
     // ★ nested `JobManifest` 도 `Lease` 와 **똑같이** 독립 검증한다.
     //   outer Grant 서명이 유효해도 nested Manifest 서명은 위조됐을 수
@@ -2347,9 +2356,17 @@ fn verify_renew_result(
                 .clone()
                 .ok_or_else(|| "RENEW_REJECTED: outcome=RENEWED 인데 Lease 가 없다".to_string())?;
             let verifier = Ed25519Verifier::new(coordinator_keys);
-            let verified_lease = verify(&new_lease, 1, &verifier, clock.now_unix_ms(), replay)
-                .map_err(|e| format!("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패: {e:?}"))?;
+            let verified_lease = verify(
+                &new_lease,
+                gputeer_protocol::constants::LEASE_MAX_SCHEMA_VERSION,
+                &verifier,
+                clock.now_unix_ms(),
+                replay,
+            )
+            .map_err(|e| format!("RENEW_REJECTED: 갱신된 Lease 서명 검증 실패: {e:?}"))?;
             let new_lease = verified_lease.get();
+            refuse_misplaced_reassignment_grace(new_lease)
+                .map_err(|why| format!("RENEW_REJECTED: {why}"))?;
             if new_lease.lease_id != held_lease.lease_id {
                 return Err("RENEW_REJECTED: 갱신된 Lease.lease_id 가 기존과 다르다".into());
             }
@@ -3446,9 +3463,16 @@ fn verify_and_record_lease(
         .ok_or_else(|| "LEASE_REJECTED: Grant 에 Lease 가 없다".to_string())?;
 
     let verifier = Ed25519Verifier::new(coordinator_keys);
-    let verified = verify(&lease, 1, &verifier, now, replay)
-        .map_err(|e| format!("LEASE_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
+    let verified = verify(
+        &lease,
+        gputeer_protocol::constants::LEASE_MAX_SCHEMA_VERSION,
+        &verifier,
+        now,
+        replay,
+    )
+    .map_err(|e| format!("LEASE_REJECTED: Lease 서명 검증 실패: {e:?}"))?;
     let lease = verified.get();
+    refuse_misplaced_reassignment_grace(lease).map_err(|why| format!("LEASE_REJECTED: {why}"))?;
 
     // ★ 서명이 유효하다고 확인한 **뒤에만** 상관관계를 검사한다.
     if lease.attempt_id != grant.attempt_id {
@@ -3469,6 +3493,43 @@ fn verify_and_record_lease(
         .map_err(|e| fence_error_message("LEASE_REJECTED", e))?;
 
     Ok(lease.clone())
+}
+
+/// ★ 2026-10-01 (signing.md §6.8) — schema 1 Lease 에 재배치 유예(34)가 차 있으면 거부한다(MUST). 서명이 맞아도 그 판은 그 칸을
+///   모른다 — 받아 두면 v1 만 아는 쪽과 v2 를 아는 쪽이 같은 Lease 를 다르게 읽는다.
+fn refuse_misplaced_reassignment_grace(lease: &pb::Lease) -> Result<(), String> {
+    if lease.reassignment_grace_ms != 0
+        && lease.schema_version
+            < gputeer_protocol::constants::LEASE_REASSIGNMENT_GRACE_MIN_SCHEMA_VERSION
+    {
+        return Err(format!(
+            "schema_version {} 인 Lease 에 재배치 유예(reassignment_grace_ms={})가 있다 — v2 에서만 실을 수 있다",
+            lease.schema_version, lease.reassignment_grace_ms
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod reassignment_grace_tests {
+    use super::*;
+
+    /// ★ 2026-10-01 (signing.md §6.8) — v1 Lease 에 유예가 차 있으면 거부, v2 는 받는다, 유예 없는 v1 은 그대로다.
+    #[test]
+    fn a_v1_lease_carrying_a_grace_is_refused() {
+        let lease = |schema_version: u32, grace: u64| pb::Lease {
+            schema_version,
+            reassignment_grace_ms: grace,
+            ..Default::default()
+        };
+        assert!(refuse_misplaced_reassignment_grace(&lease(1, 30_000))
+            .is_err_and(|why| why.contains("v2 에서만")));
+        assert_eq!(
+            refuse_misplaced_reassignment_grace(&lease(2, 30_000)),
+            Ok(())
+        );
+        assert_eq!(refuse_misplaced_reassignment_grace(&lease(1, 0)), Ok(()));
+    }
 }
 
 /// 시작 마커 전용 checkpoint 디렉터리를 만들고 `WRITING`을 기록한다.

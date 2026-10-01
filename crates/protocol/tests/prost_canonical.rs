@@ -259,6 +259,7 @@ fn lease_canonical_is_deterministic_and_excludes_signature() {
         expires_at_unix_ms: 1_755_100_860_000,
         renew_after_unix_ms: 1_755_100_830_000,
         max_total_duration_seconds: 86400,
+        reassignment_grace_ms: 0,
         ..Default::default()
     };
     let c1 = canonical_encode(&l.to_canonical_fields(), &[]);
@@ -538,6 +539,7 @@ fn lease_scope_vector_matches_reference() {
         expires_at_unix_ms: 1_755_100_860_000,
         renew_after_unix_ms: 1_755_100_830_000,
         max_total_duration_seconds: 86400,
+        reassignment_grace_ms: 0,
         scope: Some(pb::ResourceScope {
             gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
             cpu_cores: 8,
@@ -719,6 +721,7 @@ fn v02b_full_lease_matches_reference() {
         expires_at_unix_ms: 1_755_100_860_000,
         renew_after_unix_ms: 1_755_100_830_000,
         max_total_duration_seconds: 86400,
+        reassignment_grace_ms: 0,
         scope: Some(pb::ResourceScope {
             gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
             cpu_cores: 8,

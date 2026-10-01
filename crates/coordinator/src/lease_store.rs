@@ -47,6 +47,10 @@ pub struct StoredLease {
     pub renew_after_unix_ms: u64,
     pub max_total_duration_seconds: u64,
     pub revoked_at_unix_ms: Option<u64>,
+    /// ★ 2026-10-01 (signing.md §6.8) — 이 Lease 에 서명해 알린 재배치 유예의 **최댓값**(밀리초). 0 이면 알린 적 없다.
+    ///   서명 직전에 올려 저장한 뒤 서명하므로(`raise_reassignment_grace`) 이 값은 지금까지 보낸 어떤 서명 값보다 작지 않다 —
+    ///   재배치는 만료 + max(정책 유예, 이 값) 전에 다시 맡기지 않는다. 내리지 않는다.
+    pub reassignment_grace_ms: u64,
 }
 
 /// Identity and fencing fields carried by an explicit Resume request.
@@ -234,7 +238,62 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), Lease
             "#,
         )
         .map_err(map_sql_error)?;
-    migrate_revoked_at_column(connection)
+    migrate_revoked_at_column(connection)?;
+    migrate_reassignment_grace_column(connection)
+}
+
+/// ★ 2026-10-01 (signing.md §6.8) — 서명된 재배치 유예 열. 옛 파일은 열 때 더한다(NULL = 0 = 알린 적 없음).
+fn migrate_reassignment_grace_column(connection: &mut Connection) -> Result<(), LeaseStoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_sql_error)?;
+    let has_column = {
+        let mut statement = transaction
+            .prepare("PRAGMA table_info(coordinator_leases)")
+            .map_err(map_sql_error)?;
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(map_sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sql_error)?;
+        names.iter().any(|name| name == "reassignment_grace_ms")
+    };
+    if !has_column {
+        transaction
+            .execute(
+                "ALTER TABLE coordinator_leases ADD COLUMN reassignment_grace_ms BLOB",
+                [],
+            )
+            .map_err(map_sql_error)?;
+    }
+    transaction.commit().map_err(map_sql_error)
+}
+
+/// 서명 직전에 그 Lease 의 재배치 유예를 `at_least_ms` 까지 **올려 저장**하고 저장된 행을 돌려준다(signing.md §6.8).
+///
+/// ★ 순서가 계약이다 — 올린 값을 커밋한 **뒤에** 서명해 보낸다. 그래야 재배치가 보는 저장값이 보낸 어떤 서명 값보다 작지 않다.
+///   내리지 않는다(운영자가 값을 줄여도 이미 보낸 Lease 의 약속은 그대로다). 폐기된 Lease 는 올리지 않고 거부한다 — 재배치가
+///   이미 다른 노드에 맡겼을 수 있다.
+pub(crate) fn raise_reassignment_grace_within(
+    connection: &Connection,
+    lease_id: &str,
+    at_least_ms: u64,
+) -> Result<StoredLease, LeaseStoreError> {
+    // 한 문장으로 "폐기되지 않았고 더 작을 때만 올린다" — 읽고 쓰는 사이에 다른 프로세스가 끼어들 틈이 없다.
+    // 값은 고정 8바이트 big-endian 이라 BLOB 비교가 수 비교와 같다(`encode_u64`).
+    connection
+        .execute(
+            "UPDATE coordinator_leases SET reassignment_grace_ms = ?2
+             WHERE lease_id = ?1 AND revoked_at_unix_ms IS NULL
+               AND (reassignment_grace_ms IS NULL OR reassignment_grace_ms < ?2)",
+            rusqlite::params![lease_id, encode_u64(at_least_ms)],
+        )
+        .map_err(map_sql_error)?;
+    let stored = fetch_lease(connection, lease_id)?.ok_or(LeaseStoreError::NotFound)?;
+    if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
+        return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
+    }
+    Ok(stored)
 }
 
 impl CoordinatorLeaseStore {
@@ -392,6 +451,15 @@ impl CoordinatorLeaseStore {
         transaction.commit().map_err(map_sql_error)?;
         stored.revoked_at_unix_ms = Some(timestamp);
         Ok(stored)
+    }
+
+    /// 서명 직전에 재배치 유예를 올려 저장한다 — [`raise_reassignment_grace_within`] 참조(signing.md §6.8).
+    pub fn raise_reassignment_grace(
+        &self,
+        lease_id: &str,
+        at_least_ms: u64,
+    ) -> Result<StoredLease, LeaseStoreError> {
+        raise_reassignment_grace_within(&self.connection, lease_id, at_least_ms)
     }
 
     /// 갱신 경로 — `lease_id` 가 저장소에 **없으면**
@@ -591,6 +659,7 @@ struct RawLeaseRow {
     renew_after_unix_ms: Vec<u8>,
     max_total_duration_seconds: Vec<u8>,
     revoked_at_unix_ms: Option<Vec<u8>>,
+    reassignment_grace_ms: Option<Vec<u8>>,
 }
 
 impl RawLeaseRow {
@@ -615,13 +684,19 @@ impl RawLeaseRow {
                 .as_deref()
                 .map(|bytes| decode_u64(bytes, "revoked_at_unix_ms"))
                 .transpose()?,
+            reassignment_grace_ms: self
+                .reassignment_grace_ms
+                .as_deref()
+                .map(|bytes| decode_u64(bytes, "reassignment_grace_ms"))
+                .transpose()?
+                .unwrap_or(0),
         })
     }
 }
 
 const SELECT_LEASE_SQL: &str = "SELECT lease_id, job_id, attempt_id, holder_node_id, fence_epoch, \
      expires_at_unix_ms, issuing_coordinator_id, coordinator_term, issued_at_unix_ms, \
-     renew_after_unix_ms, max_total_duration_seconds, revoked_at_unix_ms \
+     renew_after_unix_ms, max_total_duration_seconds, revoked_at_unix_ms, reassignment_grace_ms \
      FROM coordinator_leases WHERE lease_id = ?1";
 
 pub(crate) fn fetch_lease(
@@ -646,8 +721,8 @@ pub(crate) fn insert_lease(
                 lease_id, job_id, attempt_id, holder_node_id, fence_epoch,
                 expires_at_unix_ms, issuing_coordinator_id, coordinator_term,
                 issued_at_unix_ms, renew_after_unix_ms, max_total_duration_seconds,
-                revoked_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+                revoked_at_unix_ms, reassignment_grace_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, ?12)",
             rusqlite::params![
                 candidate.lease_id,
                 candidate.job_id,
@@ -660,6 +735,8 @@ pub(crate) fn insert_lease(
                 encode_u64(candidate.issued_at_unix_ms),
                 encode_u64(candidate.renew_after_unix_ms),
                 encode_u64(candidate.max_total_duration_seconds),
+                (candidate.reassignment_grace_ms != 0)
+                    .then(|| encode_u64(candidate.reassignment_grace_ms)),
             ],
         )
         .map_err(map_sql_error)?;
@@ -680,6 +757,7 @@ fn row_to_raw(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawLeaseRow> {
         renew_after_unix_ms: row.get(9)?,
         max_total_duration_seconds: row.get(10)?,
         revoked_at_unix_ms: row.get(11)?,
+        reassignment_grace_ms: row.get(12)?,
     })
 }
 
@@ -735,6 +813,7 @@ mod tests {
             renew_after_unix_ms: 800,
             max_total_duration_seconds: 3600,
             revoked_at_unix_ms: None,
+            reassignment_grace_ms: 0,
         }
     }
 
@@ -1179,6 +1258,73 @@ mod tests {
         let fetched = store.get("old-lease").unwrap().unwrap();
         assert_eq!(fetched.revoked_at_unix_ms, None);
         assert_eq!(fetched.lease_id, "old-lease");
+        // ★ 2026-10-01 — 유예 열도 자동으로 더해지고, 옛 행은 "알린 적 없음"(0)이다. 올리면 저장된다.
+        assert_eq!(fetched.reassignment_grace_ms, 0);
+        assert_eq!(
+            store
+                .raise_reassignment_grace("old-lease", 45_000)
+                .unwrap()
+                .reassignment_grace_ms,
+            45_000
+        );
+        assert_eq!(
+            store
+                .get("old-lease")
+                .unwrap()
+                .unwrap()
+                .reassignment_grace_ms,
+            45_000
+        );
+    }
+
+    /// ★ 2026-10-01 (signing.md §6.8) — 재배치 유예는 올리기만 한다. 폐기된 Lease 는 올리지 않고 거부한다. 없는 Lease 는 NotFound.
+    #[test]
+    fn reassignment_grace_only_rises_and_a_revoked_lease_is_refused() {
+        let (mut store, _dir) = open_temp();
+        store.get_or_issue(&sample("lease-1"), 0).unwrap();
+        assert_eq!(
+            store.get("lease-1").unwrap().unwrap().reassignment_grace_ms,
+            0
+        );
+        assert_eq!(
+            store
+                .raise_reassignment_grace("lease-1", 30_000)
+                .unwrap()
+                .reassignment_grace_ms,
+            30_000
+        );
+        assert_eq!(
+            store
+                .raise_reassignment_grace("lease-1", 5_000)
+                .unwrap()
+                .reassignment_grace_ms,
+            30_000,
+            "이미 보낸 서명 유예보다 낮췄다 — 재배치가 그 약속보다 일찍 맡길 수 있다"
+        );
+        // 큰 값은 바이트 비교가 수 비교와 같아야 올라간다(고정 8바이트 big-endian)
+        assert_eq!(
+            store
+                .raise_reassignment_grace("lease-1", 0x0100_0000)
+                .unwrap()
+                .reassignment_grace_ms,
+            0x0100_0000
+        );
+        store.mark_revoked("lease-1", 77).unwrap();
+        assert!(matches!(
+            store.raise_reassignment_grace("lease-1", u64::MAX),
+            Err(LeaseStoreError::Revoked {
+                revoked_at_unix_ms: 77
+            })
+        ));
+        assert_eq!(
+            store.get("lease-1").unwrap().unwrap().reassignment_grace_ms,
+            0x0100_0000,
+            "폐기된 Lease 의 유예를 바꿨다"
+        );
+        assert!(matches!(
+            store.raise_reassignment_grace("no-such-lease", 1),
+            Err(LeaseStoreError::NotFound)
+        ));
     }
 
     #[test]

@@ -184,6 +184,11 @@ pub struct CoordinatorConfig {
     /// ★ 2026-10-01 (미리 알린 끊김 · signing.md §6.7) — 노드가 갱신 요청 v2 에 "이 시각까지 연락 못 함" 을 실으면 Lease 를 최대 이만큼(밀리초)
     ///   늘려 준다. 0(기본)이면 끈다 — 알림을 받아도 평소 연장(`renew_extension_ms`)만 준다. `--planned-unreachable-max-ms`.
     pub planned_unreachable_max_ms: u64,
+    /// ★ 2026-10-01 (서명된 재배치 유예 · signing.md §6.8) — 0 보다 크면 저장된 예약으로 낸 Grant · 저장소 갱신이 서명하는 Lease 에
+    ///   "만료 뒤 이만큼은 다시 맡기지 않는다" 를 싣는다(Lease v2). 서명 직전에 저장 행을 이 값까지 올린다. 0(기본)이면 끈다 — Lease 는 v1.
+    ///   ★ 켜기 전에 Agent 를 올린다(옛 Agent 는 v2 를 거부한다). 재배치 명령의 정책 유예 이하로 둔다(옛 재배치 명령은 이 값을 모른다).
+    ///   `--signed-reassignment-grace-ms`.
+    pub signed_reassignment_grace_ms: u64,
 
     // ── 반복 Lease 갱신 (2026-08-19, `docs/plans/2026-08-19_2330_...`) ──
     /// 같은 연결에서 갱신 왕복을 이 횟수만큼 반복한다. `do_renew ==
@@ -1455,6 +1460,7 @@ fn serve_one_connection_impl(
                 &crate::grant_from_stored::StoredGrantRequest {
                     // ★ 결함 288 — 풀 Coordinator 의 Grant 는 풀 신호를 서명해 싣는다(v4).
                     pool_mode: config.pool_mode,
+                    signed_reassignment_grace_ms: config.signed_reassignment_grace_ms,
                     job_id: config.stored_grant_job_id.clone(),
                     attempt_id: config.stored_grant_attempt_id.clone(),
                     lease_id: config.stored_grant_lease_id.clone(),
@@ -3719,6 +3725,19 @@ pub(crate) fn announced_renew_extension_ms(
     wanted.min(to_max_end)
 }
 
+/// 서명 직전에 그 Lease 의 재배치 유예를 운영자 값까지 올려 저장하고 저장된 행을 돌려준다(signing.md §6.8). 꺼져 있으면 그대로 둔다 —
+/// 이미 올라가 있는 값(전에 켰던 것)은 내리지 않고 그대로 서명된다.
+fn with_signed_reassignment_grace(
+    config: &CoordinatorConfig,
+    store: &CoordinatorLeaseStore,
+    resolved: StoredLease,
+) -> Result<StoredLease, LeaseStoreError> {
+    if config.signed_reassignment_grace_ms == 0 {
+        return Ok(resolved);
+    }
+    store.raise_reassignment_grace(&resolved.lease_id, config.signed_reassignment_grace_ms)
+}
+
 fn build_renew_result(
     config: &CoordinatorConfig,
     lease_store: &mut Option<CoordinatorLeaseStore>,
@@ -3818,7 +3837,16 @@ fn build_renew_result(
                     max_duration_exceeded_result(request_nonce)
                 }
                 Ok(RenewDecision::Renewed(resolved)) => {
-                    build_renewed_lease_result(config, key, now, resolved, request_nonce)?
+                    // ★ 2026-10-01 (signing.md §6.8) — 서명 직전에 유예를 올려 저장한다. 그 사이 재배치가 폐기했으면 REVOKED 로 답한다.
+                    match with_signed_reassignment_grace(config, store, resolved) {
+                        Ok(resolved) => {
+                            build_renewed_lease_result(config, key, now, resolved, request_nonce)?
+                        }
+                        Err(LeaseStoreError::Revoked { revoked_at_unix_ms }) => {
+                            revoked_result(request_nonce, revoked_at_unix_ms)
+                        }
+                        Err(error) => return Err(format!("lease store 유예 저장 실패: {error}")),
+                    }
                 }
             },
         },
@@ -3841,6 +3869,7 @@ fn build_renew_result(
                     renew_after_unix_ms: now + config.renew_extension_ms / 2,
                     max_total_duration_seconds: config.max_total_duration_seconds,
                     revoked_at_unix_ms: None,
+                    reassignment_grace_ms: 0,
                 };
                 build_renewed_lease_result(config, key, now, resolved, request_nonce)?
             }
@@ -3894,7 +3923,13 @@ pub fn unsigned_lease_from_stored(stored: &StoredLease) -> Result<pb::Lease, Str
         "max_total_duration_seconds",
     )?;
     Ok(pb::Lease {
-        schema_version: 1,
+        // ★ 2026-10-01 (signing.md §6.8) — 서명된 재배치 유예가 있을 때만 v2. 없으면 v1 그대로라 옛 Agent 도 받는다.
+        schema_version: if stored.reassignment_grace_ms != 0 {
+            gputeer_protocol::constants::LEASE_REASSIGNMENT_GRACE_MIN_SCHEMA_VERSION
+        } else {
+            1
+        },
+        reassignment_grace_ms: stored.reassignment_grace_ms,
         lease_id: stored.lease_id.clone(),
         job_id: stored.job_id.clone(),
         attempt_id: stored.attempt_id.clone(),
@@ -4065,6 +4100,7 @@ fn issue_lease(
             renew_after_unix_ms: now + 30_000,
             max_total_duration_seconds: config.max_total_duration_seconds,
             revoked_at_unix_ms: None,
+            reassignment_grace_ms: 0,
         },
         Some(store) => {
             let candidate = StoredLease {
@@ -4080,6 +4116,7 @@ fn issue_lease(
                 renew_after_unix_ms: now + 30_000,
                 max_total_duration_seconds: config.max_total_duration_seconds,
                 revoked_at_unix_ms: None,
+                reassignment_grace_ms: 0,
             };
             store
                 .get_or_issue(&candidate, now)
@@ -4091,6 +4128,17 @@ fn issue_lease(
                         format!("lease store 최초 발급 실패: {e}")
                     }
                     policy => format!("LEASE_POLICY_REFUSED: lease store 최초 발급 실패: {policy}"),
+                })
+                // ★ 2026-10-01 (signing.md §6.8) — 서명 직전에 재배치 유예를 올려 저장한다(꺼져 있으면 그대로).
+                .and_then(|issued| {
+                    with_signed_reassignment_grace(config, store, issued).map_err(|e| match e {
+                        LeaseStoreError::Io(_) | LeaseStoreError::LockTimeout => {
+                            format!("lease store 유예 저장 실패: {e}")
+                        }
+                        policy => {
+                            format!("LEASE_POLICY_REFUSED: lease store 유예 저장 실패: {policy}")
+                        }
+                    })
                 })?
         }
     };
@@ -4257,6 +4305,8 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         renew_extension_ms: flags.u64_flag_with_default("--renew-extension-ms", 60_000)?,
         planned_unreachable_max_ms: flags
             .u64_flag_with_default("--planned-unreachable-max-ms", 0)?,
+        signed_reassignment_grace_ms: flags
+            .u64_flag_with_default("--signed-reassignment-grace-ms", 0)?,
         renew_rounds: flags.u32_flag_with_default("--renew-rounds", 1)?,
         lease_db_path: flags.get("--lease-db").map(PathBuf::from),
         // ★ 저장된 예약에서 발급(2026-09-03). 안 주면 기존 경로 그대로다.

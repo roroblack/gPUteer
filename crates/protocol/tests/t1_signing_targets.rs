@@ -536,6 +536,7 @@ fn resume_protocol_messages_match_reference() {
         expires_at_unix_ms: 1_755_100_860_000,
         renew_after_unix_ms: 1_755_100_830_000,
         max_total_duration_seconds: 86_400,
+        reassignment_grace_ms: 0,
         scope: Some(pb::ResourceScope {
             gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
             cpu_cores: 8,
@@ -999,6 +1000,43 @@ fn session_hello_v2_gpu_observation_vectors_match_reference() {
     assert_ne!(
         canonical_encode(&hello(12_878_610_432).to_canonical_fields(), &[]),
         canonical_encode(&hello(8_585_216_000).to_canonical_fields(), &[]),
+    );
+}
+
+/// ★ 2026-10-01 — Lease v2 의 서명된 재배치 유예가 참조 구현과 같고, 유예가 Lease 서명에 닿으며, 0 이면 빠진다(signing.md §6.8).
+#[test]
+fn lease_v2_reassignment_grace_vectors_match_reference() {
+    let lease = |grace: u64| pb::Lease {
+        schema_version: 2,
+        lease_id: "01JBXLEASE0000000000000001".into(),
+        job_id: "01JBXR7Q0000000000000000AA".into(),
+        attempt_id: "01JBXATT00000000000000001".into(),
+        fence_epoch: 42,
+        coordinator_term: 7,
+        holder_node_id: "node-1".into(),
+        member_node_ids: vec!["node-1".into(), "node-2".into()],
+        issuing_coordinator_id: "coord-a".into(),
+        issued_at_unix_ms: 1_755_100_800_000,
+        expires_at_unix_ms: 1_755_100_860_000,
+        renew_after_unix_ms: 1_755_100_830_000,
+        max_total_duration_seconds: 86_400,
+        reassignment_grace_ms: grace,
+        scope: Some(pb::ResourceScope {
+            gpu_uuids: vec!["GPU-11111111-2222-3333-4444-555555555555".into()],
+            cpu_cores: 8,
+            ram_bytes: 25_769_803_776,
+            workspace_bytes: 85_899_345_920,
+            writable_prefixes: vec!["jobs/01JBXR7Q0000000000000000AA/attempt-3/".into()],
+        }),
+        coordinator_signature: vec![0xCD; 64],
+    };
+    assert_matches_reference("v46_lease_v2_reassignment_grace", &lease(60_000));
+    assert_matches_reference("v46b_lease_v2_reassignment_grace_changed", &lease(120_000));
+    assert_matches_reference("v46c_lease_v2_without_reassignment_grace", &lease(0));
+    assert_ne!(
+        canonical_encode(&lease(60_000).to_canonical_fields(), &[]),
+        canonical_encode(&lease(120_000).to_canonical_fields(), &[]),
+        "유예가 서명 밖이다 — 중간에서 늘려 노드가 재배치 뒤까지 돌게 만들 수 있다"
     );
 }
 

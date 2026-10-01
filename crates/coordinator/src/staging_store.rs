@@ -865,6 +865,7 @@ impl StageQueuedRequest {
             renew_after_unix_ms: self.renew_after_unix_ms,
             max_total_duration_seconds: self.max_total_duration_seconds,
             revoked_at_unix_ms: None,
+            reassignment_grace_ms: 0,
         }
     }
 }

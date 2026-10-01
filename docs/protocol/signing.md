@@ -492,6 +492,20 @@ Coordinator 서명이 묶는다 — 벗기면 canonical 이 달라진다(벡터 
 - RENEW 세션의 연장은 알림이 있든 없든 **작업 누적 상한까지로 자른다**(상한을 넘는 만료를 서명하지 않는다).
 - 제안: `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`
 
+### 6.8 Lease v2 의 서명된 재배치 유예(reassignment_grace_ms) (2026-10-01)
+
+`Lease.reassignment_grace_ms`(34, schema v2)는 Coordinator 가 "이 Lease 가 만료된 뒤 이만큼(밀리초)은 이 작업을 다른 노드에 다시 맡기지 않는다" 고
+약속하는 값이다. Coordinator 서명이 묶는다 — 벗기거나 바꾸면 canonical 이 달라진다(벡터 `v46` · `v46b`). 0 이면 규칙 b 로 빠져 v1 과 canonical 이
+같다(`v46c`). Grant · 갱신 결과에 중첩된 Lease 도 같다.
+
+- `schema_version < 2` 인 Lease 에 이 칸이 차 있으면 거부한다(MUST).
+- 재배치(장애 이어받기)는 **만료 + max(정책 유예, 저장된 이 값)** 전에 그 작업을 다시 맡기지 않는다(MUST) — 서명해 알린 유예보다 일찍 맡기면
+  그 값을 믿고 계속 돈 노드와 두 벌이 된다.
+- 노드는 이 값을 "곧 끝나는 작업은 계속" 의 시한(만료 + 유예 − 여유)에만 쓴다. 끊김 시한 · 정지 · 일시정지는 바꾸지 않는다.
+- Coordinator 는 운영자가 켤 때만(기본 꺼짐) 채운다. 꺼져 있으면 Lease 는 v1 이다 — 옛 Agent(최대 1)는 v2 를 SCHEMA_TOO_NEW 로 거부하므로
+  켜기 전에 Agent 를 올린다. 옛 재배치 명령은 이 값을 모르므로 서명 유예 ≤ 정책 유예로 맞춘다.
+- 제안: `docs/contracts/proposals/2026-10-01_1126_서명된_재배치_유예_Lease_v2.md`
+
 ## 7. schema_version 과 알 수 없는 필드
 
 ### 7.1 v5 초안의 오류

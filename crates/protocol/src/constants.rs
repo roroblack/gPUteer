@@ -163,6 +163,16 @@ pub const RENEW_LEASE_REQUEST_MAX_SCHEMA_VERSION: u32 = 2;
 /// 미리 알린 끊김(`unreachable_until_unix_ms = 22`)을 실을 수 있는 가장 낮은 `RenewLeaseRequest` schema_version.
 pub const RENEW_LEASE_REQUEST_UNREACHABLE_UNTIL_MIN_SCHEMA_VERSION: u32 = 2;
 
+/// `Lease`(Grant · 갱신 결과에 중첩된 것 포함)를 받는 쪽이 읽는 최대 schema_version.
+///
+/// ★ 2026-10-01 — 2 는 서명된 재배치 유예(`reassignment_grace_ms = 34`)를 실은 Lease 다. 운영자가 유예를 켜지 않으면
+///   Coordinator 는 계속 1 을 쓴다 — 옛 Agent(최대 1)도 받는다. 제안
+///   `docs/contracts/proposals/2026-10-01_1126_서명된_재배치_유예_Lease_v2.md` · signing.md §6.8.
+pub const LEASE_MAX_SCHEMA_VERSION: u32 = 2;
+
+/// 서명된 재배치 유예(`reassignment_grace_ms = 34`)를 실을 수 있는 가장 낮은 `Lease` schema_version.
+pub const LEASE_REASSIGNMENT_GRACE_MIN_SCHEMA_VERSION: u32 = 2;
+
 /// GPU 관측(`gpu_observation = 8`)을 실을 수 있는 가장 낮은 `AgentSessionHello` schema_version.
 pub const AGENT_SESSION_HELLO_GPU_OBSERVATION_MIN_SCHEMA_VERSION: u32 = 2;
 

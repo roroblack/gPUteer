@@ -220,6 +220,7 @@ SCHEMAS = {
         (31, "expires_at_unix_ms", "uint", None),
         (32, "renew_after_unix_ms", "uint", None),
         (33, "max_total_duration_seconds", "uint", None),
+        (34, "reassignment_grace_ms", "uint", None),  # ★ v2 에서만(2026-10-01 · signing.md §6.8)
         (40, "scope", "message", "ResourceScope"),
         (90, "coordinator_signature", "bytes", None),  # 규칙 i
     ],
@@ -1023,7 +1024,9 @@ def build_vectors():
         "JobManifest", _full_manifest())
 
     # 2b. Lease 전체 필드
-    _gap_l = missing_from_full("Lease", _full_lease())
+    # reassignment_grace_ms(34) 는 schema v2 전용이라 v1 "전 필드" 벡터에서 제외한다 — v46 이 v2 를 따로 덮는다.
+    _gap_l = [g for g in missing_from_full("Lease", _full_lease())
+              if not g.startswith("reassignment_grace_ms(")]
     assert not _gap_l, "v02b 가 전 필드를 채우지 않았다: %s" % ", ".join(_gap_l)
     add("v02b_full_lease",
         "Lease 의 모든 필드. scope(40) 포함 (규칙 a·f)",
@@ -1977,6 +1980,28 @@ def build_vectors():
                "RenewLeaseRequest", _renew_v2(0),
                ["MUST_DIFFER:v45_renew_lease_request_v2_unreachable_until"])
     assert c_r3 != c_r1
+
+    # 46. ★ Lease v2 — 서명된 재배치 유예(reassignment_grace_ms = 34, 2026-10-01)
+    def _lease_v2(grace):
+        lease = _full_lease()
+        lease["schema_version"] = 2
+        if grace:
+            lease["reassignment_grace_ms"] = grace
+        return lease
+    c_l1 = add("v46_lease_v2_reassignment_grace",
+               "Lease v2 — Coordinator 가 '만료 뒤 60초는 다시 맡기지 않는다' 를 서명해 싣는다",
+               "Lease", _lease_v2(60_000),
+               ["MUST_DIFFER:v02b_full_lease"])
+    c_l2 = add("v46b_lease_v2_reassignment_grace_changed",
+               "v46 에서 유예만 바꾼 것 — canonical 이 달라야 한다(유예가 Lease 서명에 묶인다)",
+               "Lease", _lease_v2(120_000),
+               ["MUST_DIFFER:v46_lease_v2_reassignment_grace"])
+    assert c_l1 != c_l2, "유예가 Lease canonical 에 반영되지 않았다"
+    c_l3 = add("v46c_lease_v2_without_reassignment_grace",
+               "v2 인데 유예가 0 — 34 는 규칙 b 로 빠지고 schema_version 만 v1 과 다르다",
+               "Lease", _lease_v2(0),
+               ["MUST_DIFFER:v46_lease_v2_reassignment_grace"])
+    assert c_l3 != c_l1
 
     base = _minimal_manifest()
     canon = canonical_encode("JobManifest", base)

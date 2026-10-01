@@ -1612,3 +1612,91 @@ fn workload_progress_reaches_the_coordinator_in_the_signed_renew_request() {
         "형식이 맞는 진행을 거부했다\n{all}"
     );
 }
+
+/// ★ 2026-10-01 (서명된 재배치 유예 · signing.md §6.8) — Coordinator 가 `--signed-reassignment-grace-ms` 를 켜면 Agent 가 Lease v2 를 받아
+///   (실행 허가 · 실행 중 갱신 모두) 작업을 끝까지 돌리고, 저장된 Lease 행에 그 유예가 남는다(재배치가 보는 값).
+#[test]
+fn a_signed_reassignment_grace_reaches_the_agent_and_the_stored_lease() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let path = dir.path().join("job.manifest");
+    let out = Command::new(cli_bin())
+        .args([
+            "submit",
+            "--job-id",
+            JOB,
+            "--entrypoint",
+            &cmd_exe(),
+            "--args",
+            "/c,ping -n 5 127.0.0.1",
+            "--submitter-device-id",
+            SUBMITTER,
+            "--submitter-seed",
+            &seed_hex(SUBMITTER_SEED),
+            "--issued-at-unix-ms",
+            &now_unix_ms().to_string(),
+            "--out",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("gputeer submit");
+    assert!(out.status.success(), "submit 실패: {out:?}");
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &path,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--max-connections",
+            "4",
+            "--accept-timeout-ms",
+            "30000",
+            "--signed-reassignment-grace-ms",
+            "45000",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(40));
+    let all = both(&agent, &coordinator);
+
+    assert!(agent.success, "Agent 가 실패했다\n{all}");
+    let grace = line_with(&agent, &["LEASE_REASSIGNMENT_GRACE"])
+        .unwrap_or_else(|| panic!("Agent 가 서명된 유예를 받지 못했다\n{all}"));
+    assert_eq!(field_u64(&grace, "schema_version="), 2, "{grace}");
+    assert_eq!(
+        field_u64(&grace, "reassignment_grace_ms="),
+        45_000,
+        "{grace}"
+    );
+    assert!(
+        coordinator.count("RENEW_SESSION_RESULT outcome=1") >= 1,
+        "v2 Lease 를 실은 실행 중 갱신이 없었다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("RENEW_REJECTED"),
+        "Agent 가 v2 갱신 Lease 를 거부했다\n{all}"
+    );
+    // 재배치가 보는 저장값 — 보낸 서명 값보다 작지 않아야 한다
+    let stored: Vec<Vec<u8>> = rusqlite::Connection::open(&lease_db)
+        .unwrap()
+        .prepare("SELECT reassignment_grace_ms FROM coordinator_leases")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        stored,
+        vec![45_000u64.to_be_bytes().to_vec()],
+        "저장된 Lease 행에 서명한 유예가 없다\n{all}"
+    );
+}

@@ -1572,6 +1572,49 @@ mod tests {
         );
     }
 
+    /// ★ 2026-10-01 (signing.md §6.8) — 노드에 서명해 알린 재배치 유예가 정책 유예보다 길면, 그 유예가 지나기 전에는 다시 맡기지 않는다.
+    #[test]
+    fn failover_waits_for_the_signed_reassignment_grace() {
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .raise_reassignment_grace(LEASE_ID, 30_000)
+            .unwrap();
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 1_000,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let early = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            lease.expires_at_unix_ms + 30_000,
+            &mut notes,
+        )
+        .unwrap();
+        assert!(
+            early.is_empty(),
+            "서명해 알린 유예(30초) 안에 다시 맡겼다 — 정책 유예(1초)만 봤다: {early:?}"
+        );
+        let late = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            lease.expires_at_unix_ms + 30_001,
+            &mut notes,
+        )
+        .unwrap();
+        assert_eq!(late.len(), 1, "{notes:?}");
+        // 재배치가 폐기한 뒤에는 유예를 올려 서명할 수 없다
+        assert!(matches!(
+            crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+                .unwrap()
+                .raise_reassignment_grace(LEASE_ID, 60_000),
+            Err(crate::lease_store::LeaseStoreError::Revoked { .. })
+        ));
+    }
+
     /// 옛 시도의 늦은 보고는 **새 시도의 Job 을 끝내지 않는다.**
     ///
     /// ★ 장애 이어받기 뒤 옛 노드가 살아나 "끝났다" 고 보고하는 경우다. 보고는 저장되고 옛 시도도
