@@ -66,7 +66,7 @@
     const table = document.createElement("table");
     table.innerHTML =
       "<tr><th>누가</th><th>어느 작업</th><th>무엇을</th>" +
-      "<th>언제부터</th><th>지금 멈추면 잃는 것</th><th>중개 서버 연결</th><th></th></tr>";
+      "<th>언제부터</th><th>진행(작업 자기보고)</th><th>지금 멈추면 잃는 것</th><th>중개 서버 연결</th><th></th></tr>";
     const lost = items.filter(it => it.connection && (it.connection.disconnected || it.connection.refused) && !it.connection.self_stopped);
     for (const it of items) {
       const row = table.insertRow();
@@ -76,6 +76,20 @@
       row.insertCell().textContent = it.job_id;
       row.insertCell().textContent = it.entrypoint;
       row.insertCell().textContent = fmtDuration(it.running_ms) + " 전";
+
+      // ★ 2026-10-01 — 진행은 작업이 스스로 적은 값이다(검증되지 않음). 없으면 "보고 없음".
+      const prog = row.insertCell();
+      const p = it.progress;
+      if (!p || !p.last) {
+        prog.textContent = p && p.error ? "형식 오류: " + p.error : "보고 없음";
+      } else {
+        const l = p.last;
+        let text = l.total_steps ? l.current_step + "/" + l.total_steps + " (" + Math.floor(l.current_step * 100 / l.total_steps) + "%)" : "단계 " + l.current_step;
+        if (l.eta_seconds) text += " · 남은 예상 " + fmtDuration(l.eta_seconds * 1000);
+        text += " · " + fmtDuration(p.age_ms) + " 전 보고";
+        if (p.error) text += " · 최근 형식 오류";
+        prog.textContent = text;
+      }
 
       const loss = row.insertCell();
       loss.className = "loss";

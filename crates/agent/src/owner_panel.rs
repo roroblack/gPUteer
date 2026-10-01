@@ -197,6 +197,18 @@ pub struct OwnerPanelState {
     announcement: Arc<Mutex<Option<DisconnectAnnouncement>>>,
     /// 알림이 바뀔 때마다 올라간다 — 갱신 스레드가 보고 기다리지 않고 곧바로 갱신을 보낸다.
     announcement_generation: Arc<std::sync::atomic::AtomicU64>,
+    /// ★ 2026-10-01 — 작업별 진행 자기보고(마지막으로 읽은 것 · 형식 오류).
+    progress: Arc<Mutex<BTreeMap<String, ProgressView>>>,
+}
+
+/// ★ 2026-10-01 — 화면에 보이는 진행. **작업의 자기보고**(`WORKER_REPORTED`)다 — 위조할 수 있다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgressView {
+    /// 마지막으로 받아들인 진행. 형식 오류가 나도 지우지 않는다(그 전 값을 "n초 전" 으로 보인다).
+    pub last: Option<crate::progress::WorkloadProgress>,
+    pub last_read_at_unix_ms: u64,
+    /// 마지막으로 읽었을 때의 형식 오류(없으면 `None`).
+    pub error: Option<String>,
 }
 
 /// ★ 2026-10-01 — 노드 단위의 미리 알린 끊김.
@@ -231,6 +243,40 @@ impl OwnerPanelState {
             disconnect_stopped: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             announcement: Arc::new(Mutex::new(None)),
             announcement_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            progress: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// ★ 2026-10-01 — 작업의 진행 자기보고를 적는다(갱신 스레드가 갱신마다 부른다).
+    pub fn record_progress(
+        &self,
+        attempt_id: &str,
+        read: Result<crate::progress::WorkloadProgress, String>,
+        now_unix_ms: u64,
+    ) {
+        let mut all = match self.progress.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let view = all.entry(attempt_id.to_string()).or_insert(ProgressView {
+            last: None,
+            last_read_at_unix_ms: 0,
+            error: None,
+        });
+        match read {
+            Ok(progress) => {
+                view.last = Some(progress);
+                view.last_read_at_unix_ms = now_unix_ms;
+                view.error = None;
+            }
+            Err(why) => view.error = Some(why),
+        }
+    }
+
+    fn progress_of(&self, attempt_id: &str) -> Option<ProgressView> {
+        match self.progress.lock() {
+            Ok(all) => all.get(attempt_id).cloned(),
+            Err(poisoned) => poisoned.into_inner().get(attempt_id).cloned(),
         }
     }
 
@@ -316,6 +362,10 @@ impl OwnerPanelState {
     pub fn unregister(&self, attempt_id: &str) {
         self.lock().remove(attempt_id);
         self.connections().remove(attempt_id);
+        match self.progress.lock() {
+            Ok(mut all) => all.remove(attempt_id),
+            Err(poisoned) => poisoned.into_inner().remove(attempt_id),
+        };
     }
 
     /// 끊김 감시를 건다 — 실행 중 갱신 스레드가 시작할 때.
@@ -464,6 +514,7 @@ impl OwnerPanelState {
                     connection: connections.get(&workload.attempt_id).cloned(),
                     paused: workload.stopper.is_paused(),
                     pause_state: workload.stopper.pause_state(),
+                    progress: self.progress_of(&workload.attempt_id),
                     pause_unsupported_reason: workload.stopper.pause_support().err().or_else(
                         || {
                             (!connections.contains_key(&workload.attempt_id))
@@ -614,6 +665,8 @@ pub struct WorkloadSummary {
     pub paused: bool,
     /// 일시정지 상태 — 확인하지 못했으면 Unknown(검수 pz1).
     pub pause_state: crate::exec::PauseState,
+    /// ★ 2026-10-01 — 작업의 진행 자기보고(없으면 `None`).
+    pub progress: Option<ProgressView>,
     /// 얼릴 수 없으면 그 이유(윈도 호스트 실행 등). `None` 이면 일시정지 버튼을 쓸 수 있다.
     pub pause_unsupported_reason: Option<String>,
 }
@@ -1059,7 +1112,8 @@ fn render_workloads_json(
                 "{{\"job_id\":{},\"attempt_id\":{},\"submitter_device_id\":{},\
                  \"entrypoint\":{},\"started_at_unix_ms\":{},\"running_ms\":{},\
                  \"lost_ms\":{},\"nothing_committed_yet\":{},\"connection\":{},\
-                 \"paused\":{},\"pause_state\":{},\"pause_supported\":{},\"pause_unsupported_reason\":{}}}",
+                 \"paused\":{},\"pause_state\":{},\"pause_supported\":{},\"pause_unsupported_reason\":{},\
+                 \"progress\":{}}}",
                 json_string(&item.job_id),
                 json_string(&item.attempt_id),
                 json_string(&item.submitter_device_id),
@@ -1079,6 +1133,26 @@ fn render_workloads_json(
                 match &item.pause_unsupported_reason {
                     Some(reason) => json_string(reason),
                     None => "null".to_string(),
+                },
+                // ★ 2026-10-01 — 진행은 작업의 자기보고다 — 출처를 함께 싣는다(CLAUDE.md §1).
+                match &item.progress {
+                    None => "null".to_string(),
+                    Some(view) => format!(
+                        "{{\"provenance\":\"WORKER_REPORTED\",\"last\":{},\"age_ms\":{},\"error\":{}}}",
+                        match &view.last {
+                            None => "null".to_string(),
+                            Some(p) => format!(
+                                "{{\"current_step\":{},\"total_steps\":{},\"eta_seconds\":{},\"last_committed_step\":{}}}",
+                                p.current_step, p.total_steps, p.eta_seconds, p.last_committed_step
+                            ),
+                        },
+                        if view.last.is_some() {
+                            now_unix_ms.saturating_sub(view.last_read_at_unix_ms).to_string()
+                        } else {
+                            "null".to_string()
+                        },
+                        view.error.as_deref().map_or("null".to_string(), json_string)
+                    ),
                 }
             )
         })
@@ -1483,6 +1557,42 @@ mod tests {
         assert_eq!(state.announce_disconnect(0, 1_000).unwrap(), None);
         assert!(state.announcement().is_none());
         assert_eq!(state.announcement_to_send(2_000), 0);
+    }
+
+    /// ★ 2026-10-01 — 진행 자기보고: 받은 값은 출처(WORKER_REPORTED)와 함께 실리고, 형식 오류는 앞 값을 지우지 않으며, 끝나면 빠진다.
+    #[test]
+    fn workload_progress_is_shown_with_its_provenance_and_keeps_the_last_good_value() {
+        let state = OwnerPanelState::new();
+        let mut w = workload(1_000, None);
+        w.attempt_id = "a".into();
+        state.register(w);
+        let good = crate::progress::WorkloadProgress {
+            current_step: 3,
+            total_steps: 10,
+            eta_seconds: 42,
+            last_committed_step: 2,
+        };
+        state.record_progress("a", Ok(good.clone()), 5_000);
+        state.record_progress("a", Err("모르는 이름".into()), 6_000);
+        let snapshot = state.snapshot(7_000);
+        let view = snapshot[0].progress.clone().expect("진행이 실려야 한다");
+        assert_eq!(view.last, Some(good));
+        assert_eq!(view.error.as_deref(), Some("모르는 이름"));
+        let json = render_workloads_json(&snapshot, 7_000, "t", None);
+        assert!(
+            json.contains("\"provenance\":\"WORKER_REPORTED\""),
+            "{json}"
+        );
+        assert!(
+            json.contains("\"current_step\":3,\"total_steps\":10"),
+            "{json}"
+        );
+        assert!(json.contains("\"age_ms\":2000"), "{json}");
+        state.unregister("a");
+        assert!(
+            state.progress_of("a").is_none(),
+            "끝난 작업의 진행이 남았다"
+        );
     }
 
     /// JSON 이스케이프가 실제로 되는가.

@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-01 10:14 — 작업 → Agent 진행 보고 통로(GPUTEER_PROGRESS_FILE) · 서명된 갱신 요청의 진행 칸 · 소유자 화면 "진행"(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ④ "곧 끝남" 의 선행 조각(합의 기록 "모르는 것: 작업 → Agent 진행 보고 통로(없음)")
+- 스트림: Agent · Coordinator(기록만)
+- 수행: `crates/agent/src/progress.rs` 신설 — 워크로드 계약 `GPUTEER_PROGRESS_FILE`(체크포인트 폴더 안 `progress` · 컨테이너는 /gputeer/checkpoints/progress 로
+  자동 변환) · `이름=정수` 줄 · 모르는 이름 · 정수 아님 · 중복 · current>total · 4096 바이트 초과는 형식 오류. 실행 중 갱신 스레드가 갱신마다 읽어
+  `RenewLeaseRequest.progress`(칸 10 — 이미 서명 대상, **계약 변경 없음**)에 싣고, 형식 오류는 내용이 바뀔 때만 한 번 알린다(`WORKLOAD_PROGRESS_MALFORMED`).
+  Owner Panel 목록 JSON `progress`(provenance WORKER_REPORTED · last · age_ms · error) · 화면 "진행(작업 자기보고)" 칸. Coordinator RENEW 세션이
+  `RENEW_SESSION_PROGRESS ... provenance=WORKER_REPORTED` 를 기록(판정에는 안 쓴다). 런북 §6 작업 약속에 추가
+- ★ 판단표 ④(곧 끝나면 계속)는 넣지 않았다 — Grant 에 유예(grace)가 없어 재배치 시각 = 끊김 시한이라, "그 전에 끝나면 계속" 은 아무것도 바꾸지 않는다.
+  유예를 서명해 알리는 계약이 먼저다
+- 검증: Windows 개발 기계 `cargo test --workspace -j 2 --no-fail-fast` 1530 passed · 0 failed · ignored 4. 실제 프로세스 시험(작업이 진행을 쓰면 서명된
+  갱신 요청에 실려 Coordinator 기록에 닿는다) — 싣지 않게 바꾸면 실패함을 확인 뒤 원복 · 단위 4(형식 · 부재 · 상한 · 화면 JSON). 바꾼 줄 · 새 파일 clippy 경고 0.
+  ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 01:26 — 미리 알린 끊김 검수 an2 반영: 누적 상한에 닿은 로컬 만료는 서명된 거부와 같게(브랜치 fork-merge)
 
 - 계획: `docs/contracts/proposals/2026-10-01_0024_미리_알린_끊김_Lease_연장.md`(직전 항목의 후속)

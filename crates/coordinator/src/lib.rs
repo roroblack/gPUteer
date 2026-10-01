@@ -2614,6 +2614,17 @@ fn serve_renew_session(
             config.agent_device_id
         )));
     }
+    // ★ 2026-10-01 — 노드가 실은 작업 진행(서명된 칸 10 · 작업의 자기보고 — WORKER_REPORTED). 지금은 기록만 한다(판정에 쓰지 않는다).
+    if let Some(progress) = request.progress.as_ref() {
+        println!(
+            "RENEW_SESSION_PROGRESS lease_id={} current_step={} total_steps={} eta_seconds={} last_committed_step={} provenance=WORKER_REPORTED",
+            request.lease_id,
+            progress.current_step,
+            progress.total_steps,
+            progress.eta_seconds,
+            progress.last_committed_step
+        );
+    }
     // ★ signing.md §6.7 — 알림 칸은 v2 에서만 쓴다(MUST). v1 에 차 있으면 형식 오류다.
     if request.unreachable_until_unix_ms != 0
         && request.schema_version

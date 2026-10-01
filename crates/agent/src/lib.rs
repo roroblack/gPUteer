@@ -25,6 +25,7 @@ pub mod container;
 pub mod exec;
 pub mod multi_agent;
 pub mod owner_panel;
+pub mod progress;
 pub mod report;
 pub mod run_ledger;
 
@@ -1432,6 +1433,13 @@ fn run_one_connection_inner(
                 "GPUTEER_CHECKPOINT_DIR".into(),
                 checkpoint_out.clone().into_os_string(),
             ),
+            // ★ 2026-10-01 — 작업 → Agent 진행 보고(`progress` 모듈의 워크로드 계약). 컨테이너에서는 붙인 폴더 안이라 안 경로로 바뀐다.
+            (
+                "GPUTEER_PROGRESS_FILE".into(),
+                checkpoint_out
+                    .join(progress::PROGRESS_FILENAME)
+                    .into_os_string(),
+            ),
         ];
         if let Some(pin) = config.gpu_pin.as_ref() {
             workload_environment.push(("CUDA_VISIBLE_DEVICES".into(), pin.clone().into()));
@@ -1598,7 +1606,7 @@ fn run_one_connection_inner(
         //   ACK 가 이미 Job 을 RUNNING 으로 옮긴 풀 밖 lane 에서 갱신 한 번 실패가 "안 돈 작업의 FAILED" 가 됐다. 풀 밖 lane 은 갱신 실패가
         //   두 번 실행이 되지 않으므로 전처럼 띄운다(첫 갱신은 스레드가 곧바로). 수신 확인 없이 풀에 붙이는 것은 설정 오류다(런북 §5).
         if will_execute && config.renew_during_execution_ms > 0 && config.require_ack_receipt {
-            match renew_once_over_new_connection(&config, signing_key, &held_lease, 0) {
+            match renew_once_over_new_connection(&config, signing_key, &held_lease, 0, None) {
                 Ok(renewed) => {
                     let remaining = renewed
                         .expires_at_unix_ms
@@ -1649,6 +1657,9 @@ fn run_one_connection_inner(
                     loaded.side_effect_class == pb::SideEffectClass::Pure as i32
                         || loaded.side_effect_class == pb::SideEffectClass::Idempotent as i32
                 }),
+                run_dir
+                    .join(exec::CHECKPOINT_OUT_DIRNAME)
+                    .join(progress::PROGRESS_FILENAME),
             )
         } else {
             None
@@ -2393,6 +2404,8 @@ fn renew_once_over_new_connection(
     held_lease: &pb::Lease,
     // ★ 2026-10-01 (signing.md §6.7) — 미리 알린 끊김. 0 이면 싣지 않고 v1 로 보낸다.
     unreachable_until_unix_ms: u64,
+    // ★ 2026-10-01 — 작업의 진행 자기보고(이미 서명 대상인 칸 10). 없으면 비운다.
+    progress: Option<pb::ProgressReport>,
 ) -> Result<pb::Lease, String> {
     let clock = SystemClock;
     let now = clock.now_unix_ms();
@@ -2434,6 +2447,7 @@ fn renew_once_over_new_connection(
         issued_at_unix_ms: now,
         nonce: fresh_nonce()?,
         unreachable_until_unix_ms,
+        progress,
         ..Default::default()
     };
     request.node_signature = sign(signing_key, &request).to_vec();
@@ -2530,6 +2544,8 @@ fn start_renew_during_execution(
     first_immediately: bool,
     attempt_id: &str,
     keep_running_allowed: bool,
+    // ★ 2026-10-01 — 작업의 진행 보고 파일(`progress` 모듈). 갱신마다 읽어 서명된 갱신 요청에 싣고 소유자 화면에 적는다.
+    progress_path: PathBuf,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
@@ -2599,6 +2615,7 @@ fn start_renew_during_execution(
         //   알림을 실은 갱신이 실패하면 다음 한 번은 알림 없이(v1) 보낸다 — 옛 Coordinator 가 v2 를 거부해도 갱신이 끊기지 않게.
         let mut seen_generation = panel.announcement_generation();
         let mut plain_next = false;
+        let mut last_progress_error: Option<String> = None;
         'renew: loop {
             // ★ 2026-09-25 (결함 289 · 재검수 90) — 다음 갱신은 "주기" 와 "지금 Lease 가 남은 시간의 절반" 중 짧은 쪽에 한다. 전에는 주기만
             //   기다려, Coordinator 가 주기보다 짧게 연장하면 갱신 전에 만료돼 이어받기와 겹쳤다. 첫 갱신은 실행 전에 동기로 했다(결함 268).
@@ -2632,7 +2649,26 @@ fn start_renew_during_execution(
                 panel.announcement_to_send(sent_at)
             };
             plain_next = false;
-            let outcome = renew_once_over_new_connection(&config, &key, &lease, announce);
+            // ★ 2026-10-01 — 작업의 진행 자기보고. 형식 오류는 내용이 바뀔 때만 한 번 알린다(갱신마다 같은 줄을 쌓지 않는다).
+            let progress = match progress::read(&progress_path) {
+                progress::ProgressRead::Read(read) => {
+                    panel.record_progress(&attempt_id, Ok(read.clone()), sent_at);
+                    last_progress_error = None;
+                    Some(read.to_report())
+                }
+                progress::ProgressRead::Malformed(why) => {
+                    if last_progress_error.as_deref() != Some(why.as_str()) {
+                        println!(
+                            "WORKLOAD_PROGRESS_MALFORMED attempt_id={attempt_id} detail={why} — 진행을 싣지 않는다(작업 자기보고)"
+                        );
+                        last_progress_error = Some(why.clone());
+                    }
+                    panel.record_progress(&attempt_id, Err(why), sent_at);
+                    None
+                }
+                progress::ProgressRead::Absent => None,
+            };
+            let outcome = renew_once_over_new_connection(&config, &key, &lease, announce, progress);
             if announce != 0 {
                 panel.announcement_sent(
                     announce,

@@ -1542,3 +1542,73 @@ fn keep_running_does_not_outlive_the_signed_max_total_duration() {
         "누적 상한(10초) 무렵 멈추지 않았다\n{all}"
     );
 }
+
+/// ★ 2026-10-01 — 작업 → Agent 진행 보고. 작업이 `GPUTEER_PROGRESS_FILE` 에 진행을 적으면, Agent 가 갱신마다 읽어 서명된 갱신 요청(칸 10)에
+///   싣고, Coordinator 가 작업 자기보고(WORKER_REPORTED)로 기록한다.
+#[test]
+fn workload_progress_reaches_the_coordinator_in_the_signed_renew_request() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let path = dir.path().join("job.manifest");
+    let script = "(echo current_step=3& echo total_steps=10& echo eta_seconds=7)>%GPUTEER_PROGRESS_FILE%& ping -n 6 127.0.0.1";
+    let out = Command::new(cli_bin())
+        .args([
+            "submit",
+            "--job-id",
+            JOB,
+            "--entrypoint",
+            &cmd_exe(),
+            "--args",
+            &format!("/c,{script}"),
+            "--submitter-device-id",
+            SUBMITTER,
+            "--submitter-seed",
+            &seed_hex(SUBMITTER_SEED),
+            "--issued-at-unix-ms",
+            &now_unix_ms().to_string(),
+            "--out",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("gputeer submit");
+    assert!(out.status.success(), "submit 실패: {out:?}");
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &path,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--max-connections",
+            "4",
+            "--accept-timeout-ms",
+            "30000",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(40));
+    let all = both(&agent, &coordinator);
+
+    assert!(agent.success, "Agent 가 실패했다\n{all}");
+    let progress = line_with(&coordinator, &["RENEW_SESSION_PROGRESS"])
+        .unwrap_or_else(|| panic!("진행이 Coordinator 에 닿지 않았다\n{all}"));
+    assert_eq!(field_u64(&progress, "current_step="), 3, "{progress}");
+    assert_eq!(field_u64(&progress, "total_steps="), 10, "{progress}");
+    assert_eq!(field_u64(&progress, "eta_seconds="), 7, "{progress}");
+    assert!(
+        progress.contains("provenance=WORKER_REPORTED"),
+        "작업 자기보고라는 출처가 없다: {progress}"
+    );
+    assert!(
+        !agent.output().contains("WORKLOAD_PROGRESS_MALFORMED"),
+        "형식이 맞는 진행을 거부했다\n{all}"
+    );
+}
