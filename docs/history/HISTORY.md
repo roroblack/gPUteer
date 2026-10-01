@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-10-01 10:47 — 진행 보고 통로 검수 pr2 반영 — 연 핸들로 판정 · 하드 링크 거부 · FIFO 에 안 멈춤 · 멈춘 읽기 스레드 상한(브랜치 fork-merge)
+
+- 계획: 직전 항목의 독립 검수 pr2(Codex gpt-6-sol) CHANGES_REQUESTED 2건 반영
+- 스트림: Agent
+- 수행: ① 윈도에서 경로로 본 파일과 연 파일을 대조하지 않던 것 — 대조 대신 **읽을지 말지를 연 핸들 자체로 정한다**(`refuse_opened`):
+  윈도 `GetFileInformationByHandle` 로 재분석 지점 · 폴더 · 장치 · 링크 수 2 이상이면 거부, 리눅스는 `O_NOFOLLOW | O_NONBLOCK` 으로 열고
+  fstat 으로 보통 파일 · 링크 수 1 을 요구한다. 하드 링크로 같은 볼륨의 다른 파일 정수를 싣게 하던 길(pr1 에서 "못 막는 것" 으로 적었던 것)도 닫혔다.
+  ② 시한을 넘긴 읽기 스레드가 Agent 수명 동안 쌓일 수 있던 것 — 프로세스 전체에서 돌고 있는 읽기 스레드를 세어 `MAX_STUCK_READS`(4) 이면 새로 띄우지 않고
+  바로 시한 초과로 답한다. 리눅스는 O_NONBLOCK 이라 FIFO 에서 애초에 멈추지 않는다. 의존성: agent 에 windows-sys(이미 워크스페이스에서 쓰는 0.61.2) · libc 0.2
+- 검증: 리눅스 서버(비-root 사용자) agent · coordinator · protocol · crypto · runtime-linux 995 passed · 0 failed — 링크 · 하드 링크 · FIFO · 스레드 상한 시험 모두
+  실제로 쟀다(ENVIRONMENT-BLOCKED 없음). Windows 개발 기계 `cargo test --workspace` 1533 passed · 0 failed(링크 시험은 Windows 에서 ENVIRONMENT-BLOCKED —
+  PASS 로 세지 않는다 · 하드 링크 · 스레드 상한은 Windows 에서도 쟀다). 링크 수 검사 · 스레드 상한을 각각 일부러 끄면 해당 시험이 실패함을 확인 뒤 원복.
+  clippy 새 경고 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 10:31 — 진행 보고 통로 검수 pr1 반영 — 링크 안 따라감 · 읽기 시한 · 모르는 값은 비움 · 끝난 작업에 늦은 기록 거부(브랜치 fork-merge)
 
 - 계획: 직전 항목(진행 보고 통로)의 독립 검수 pr1(Codex gpt-6-sol) CHANGES_REQUESTED 반영

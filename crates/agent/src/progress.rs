@@ -25,20 +25,28 @@
 //! 모르는 이름 · 정수가 아닌 값 · 같은 이름 두 번 · current_step 없음 · total_steps 0 · `current_step > total_steps` ·
 //! `last_committed_step > current_step` · 너무 큰 파일은 **형식 오류**로 버린다. 오타 하나로 값이 조용히 빠지면 "보고가 없다" 와 구별되지 않는다.
 //!
-//! # 작업이 만든 파일을 읽는다 — 그래서 방어한다(검수 pr1)
+//! # 작업이 만든 파일을 읽는다 — 그래서 방어한다(검수 pr1 · pr2)
+//!
+//! ★ **판정은 연 핸들 자체로 한다** — 경로로 미리 본 값은 빨리 거르는 데만 쓰고, 읽을지 말지는 실제로 읽을 그 핸들의 속성으로 정한다.
+//!   그래서 미리 본 뒤 · 열기 전에 다른 것으로 바꿔치기돼도, 판정한 그 객체만 읽는다(검수 pr2 — 윈도에서 경로로 본 파일과 연 파일이
+//!   같은지 대조하지 않던 것을 이렇게 닫았다).
 //!
 //! ```text
-//! 링크          따라가지 않는다 — 링크(symlink · 재분석 지점)면 형식 오류. 리눅스는 연 뒤의 파일이 미리 본 파일과 같은지(dev · inode) 대조한다
-//!               (열기 직전에 링크로 바꿔치기한 경우). 윈도는 재분석 지점을 따라가지 않는 열기(FILE_FLAG_OPEN_REPARSE_POINT)를 쓴다
+//! 링크          따라가지 않는다. 리눅스 O_NOFOLLOW · 윈도 FILE_FLAG_OPEN_REPARSE_POINT 로 열고, 연 핸들이 링크 · 재분석 지점이면 거부
+//! 하드 링크     연 핸들의 링크 수가 2 이상이면 거부 — 이름 하나뿐인 보통 파일만 읽는다. 같은 볼륨의 다른 파일(호스트 파일)에 걸어 둔
+//!               하드 링크로 그 파일의 정수를 싣게 하는 길을 막는다
+//! 특수 파일     연 핸들이 보통 파일이 아니면 거부. 리눅스는 O_NONBLOCK 으로 열어 FIFO 에 멈추지 않는다
 //! 크기          연 파일에서 상한 + 1 바이트까지만 읽는다(미리 본 크기를 믿지 않는다)
-//! 특수 파일     리눅스 FIFO 로 바꿔치기하면 열기가 멈출 수 있다 — 읽기는 시한(`READ_TIMEOUT`) 안에서만 기다리고, 넘기면 이 시도의
-//!               진행 읽기를 끈다(멈춘 읽기 스레드 하나가 남는다 · 갱신은 계속된다)
+//! 시한          그래도 멈추는 경우(느린 파일 시스템 등)에 대비해 읽기는 시한(`READ_TIMEOUT`) 안에서만 기다린다. 넘기면 이 시도의 진행
+//!               읽기를 끈다. 멈춘 읽기 스레드는 프로세스 전체에서 `MAX_STUCK_READS` 개까지만 둔다 — 그만큼 멈춰 있으면 새로 띄우지
+//!               않고 바로 시한 초과로 답한다(Agent 가 오래 돌며 시도마다 하나씩 쌓이지 않게 — 검수 pr2)
 //! 내용 노출     오류 메시지에 파일 내용(이름 · 값)을 싣지 않는다 — 줄 번호와 이유만. 서명된 요청에는 파싱한 정수만 간다
-//! 못 막는 것    하드 링크(같은 볼륨의 다른 파일을 같은 inode 로) — 그 파일이 `이름=정수` 꼴이면 그 정수가 실린다
+//! 못 막는 것    부모 폴더 쪽의 재분석 지점 — 체크포인트 폴더는 Agent 가 만들고, 컨테이너에는 그 폴더만 마운트된다
 //! ```
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use gputeer_protocol::pb;
@@ -51,6 +59,12 @@ pub const PROGRESS_MAX_BYTES: u64 = 4096;
 
 /// 진행 파일 하나를 읽는 데 기다리는 시한. 보통 파일은 밀리초다 — 넘기면 특수 파일로 바꿔치기된 것으로 본다.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// 시한을 넘겨 멈춰 있는 읽기 스레드를 프로세스 전체에서 몇 개까지 둘지. 정책값이다 — 넘으면 새로 띄우지 않는다.
+pub const MAX_STUCK_READS: usize = 4;
+
+/// 지금 돌고 있는(아직 안 끝난) 읽기 스레드 수 — 시한을 넘겨 멈춘 것도 끝날 때까지 센다.
+static READS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 /// 작업이 적은 진행(자기보고). 적지 않은 값은 `None` 이다 — 0 으로 지어내지 않는다.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -143,20 +157,38 @@ pub fn parse(text: &str) -> Result<WorkloadProgress, String> {
 
 /// 진행 파일을 읽는다 — 링크를 따라가지 않고, 상한까지만, 시한 안에서만(모듈 문서 "방어한다").
 pub fn read(path: &Path) -> ProgressRead {
+    read_bounded(path, READ_TIMEOUT, &READS_IN_FLIGHT, read_now)
+}
+
+/// `read` 의 몸통 — 시한 · 스레드 수 세기 · 읽는 함수를 바꿔 끼울 수 있게(시험이 프로세스 전체 셈을 건드리지 않게) 뗐다.
+fn read_bounded(
+    path: &Path,
+    timeout: Duration,
+    in_flight: &'static AtomicUsize,
+    reader: fn(&Path) -> ProgressRead,
+) -> ProgressRead {
+    // 정상 읽기는 밀리초에 끝나 셈이 곧 0 으로 돌아온다 — 상한까지 차 있으면 그만큼 멈춰 있다는 뜻이다.
+    if in_flight.fetch_add(1, Ordering::SeqCst) >= MAX_STUCK_READS {
+        in_flight.fetch_sub(1, Ordering::SeqCst);
+        return ProgressRead::TimedOut;
+    }
     let path = path.to_path_buf();
     let (tx, rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("gputeer-progress-read".into())
         .spawn(move || {
+            let result = reader(&path);
+            in_flight.fetch_sub(1, Ordering::SeqCst);
             // 받는 쪽이 시한으로 떠났으면 보낼 곳이 없다 — 그 결과는 버린다(이미 TimedOut 으로 알렸다).
-            if tx.send(read_now(&path)).is_err() {
+            if tx.send(result).is_err() {
                 eprintln!("gputeer-progress-read: 시한 뒤에 끝난 읽기 결과를 버린다");
             }
         });
     if let Err(error) = spawned {
+        in_flight.fetch_sub(1, Ordering::SeqCst);
         return ProgressRead::Malformed(format!("읽기 스레드를 띄우지 못했다: {error}"));
     }
-    match rx.recv_timeout(READ_TIMEOUT) {
+    match rx.recv_timeout(timeout) {
         Ok(result) => result,
         Err(_) => ProgressRead::TimedOut,
     }
@@ -178,16 +210,8 @@ fn read_now(path: &Path) -> ProgressRead {
         Ok(file) => file,
         Err(error) => return ProgressRead::Malformed(format!("열 수 없다({:?})", error.kind())),
     };
-    let after = match file.metadata() {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            return ProgressRead::Malformed(format!("연 파일을 볼 수 없다({:?})", error.kind()))
-        }
-    };
-    if !after.is_file() {
-        return ProgressRead::Malformed("연 것이 보통 파일이 아니다".into());
-    }
-    if let Some(why) = swapped(&before, &after) {
+    // ★ 여기부터의 판정은 연 핸들 자체로 한다 — 읽을 그 객체다(모듈 문서 "판정은 연 핸들 자체로").
+    if let Some(why) = refuse_opened(&file) {
         return ProgressRead::Malformed(why);
     }
     let mut bytes = Vec::new();
@@ -209,39 +233,75 @@ fn read_now(path: &Path) -> ProgressRead {
 #[cfg(windows)]
 fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
-    // 재분석 지점(symlink · junction)을 따라가지 않고 그 자체를 연다 — 바꿔치기돼도 대상 파일을 읽지 않는다.
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+    // 재분석 지점(symlink · junction)을 따라가지 않고 그 자체를 연다 — 연 것이 재분석 지점이면 `refuse_opened` 가 거부한다.
     std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
 }
 
-#[cfg(not(windows))]
-fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
-    // 링크를 따라가지 않는 열기 플래그는 시스템 라이브러리 의존이 필요해 쓰지 않는다 — 대신 연 뒤 같은 파일인지 대조한다(`swapped`).
-    std::fs::File::open(path)
-}
-
-/// 미리 본 파일과 연 파일이 다른가(열기 직전의 바꿔치기).
 #[cfg(unix)]
-fn swapped(before: &std::fs::Metadata, after: &std::fs::Metadata) -> Option<String> {
-    use std::os::unix::fs::MetadataExt;
-    (before.dev() != after.dev() || before.ino() != after.ino())
-        .then(|| "열기 직전에 다른 파일로 바뀌었다(링크 바꿔치기)".to_string())
-}
-
-#[cfg(windows)]
-fn swapped(_before: &std::fs::Metadata, after: &std::fs::Metadata) -> Option<String> {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    (after.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
-        .then(|| "연 것이 재분석 지점이다(링크 바꿔치기)".to_string())
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_NOFOLLOW — 마지막 이름이 링크면 열기가 실패한다(ELOOP). O_NONBLOCK — FIFO 를 열어도 멈추지 않는다(보통 파일 읽기에는 영향 없다).
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn swapped(_before: &std::fs::Metadata, _after: &std::fs::Metadata) -> Option<String> {
-    Some("이 플랫폼에서는 바꿔치기를 확인할 수 없어 읽지 않는다".into())
+fn open_without_following(_path: &Path) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "이 플랫폼에서는 링크를 따라가지 않는 열기를 확인할 수 없어 읽지 않는다",
+    ))
+}
+
+/// 연 핸들을 읽어도 되는가 — 보통 파일이고 · 링크가 아니고 · 이름이 하나뿐이어야 한다. 거부 사유를 돌려준다.
+#[cfg(unix)]
+fn refuse_opened(file: &std::fs::File) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => return Some(format!("연 파일을 볼 수 없다({:?})", error.kind())),
+    };
+    if !metadata.file_type().is_file() {
+        return Some("연 것이 보통 파일이 아니다".into());
+    }
+    (metadata.nlink() > 1)
+        .then(|| "하드 링크다(이름이 둘 이상) — 다른 파일일 수 있어 읽지 않는다".into())
+}
+
+#[cfg(windows)]
+fn refuse_opened(file: &std::fs::File) -> Option<String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DEVICE,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    };
+    // SAFETY: `file` 이 살아 있는 동안의 유효한 핸들이고, 출력 구조체는 이 함수 안의 지역 변수다.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Some(format!(
+            "연 파일을 볼 수 없다({:?})",
+            std::io::Error::last_os_error().kind()
+        ));
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Some("연 것이 재분석 지점이다 — 링크를 따라가지 않는다".into());
+    }
+    if info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DEVICE) != 0 {
+        return Some("연 것이 보통 파일이 아니다".into());
+    }
+    (info.nNumberOfLinks > 1)
+        .then(|| "하드 링크다(이름이 둘 이상) — 다른 파일일 수 있어 읽지 않는다".into())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn refuse_opened(_file: &std::fs::File) -> Option<String> {
+    Some("이 플랫폼에서는 연 파일을 확인할 수 없어 읽지 않는다".into())
 }
 
 #[cfg(test)]
@@ -330,5 +390,106 @@ mod tests {
             ProgressRead::Malformed(why) => assert!(why.contains("링크"), "{why}"),
             other => panic!("링크를 따라가 읽었다: {other:?}"),
         }
+        // ★ 검수 pr2 — 미리 보기를 건너뛰고 연 핸들만으로도 거부한다(미리 본 뒤 링크로 바꿔치기된 경우와 같다)
+        let opened = open_without_following(&link);
+        let refused = match &opened {
+            Ok(file) => refuse_opened(file),
+            Err(_) => Some("열기 자체가 거부됐다".into()),
+        };
+        assert!(refused.is_some(), "연 핸들이 링크인데 받아들였다");
+    }
+
+    /// ★ 검수 pr2 — 다른 파일에 걸어 둔 하드 링크는 읽지 않는다(호스트 파일의 정수를 싣지 않는다).
+    #[test]
+    fn a_progress_file_with_another_name_is_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("host-file");
+        std::fs::write(&outside, "current_step=42\n").unwrap();
+        let path = dir.path().join(PROGRESS_FILENAME);
+        std::fs::hard_link(&outside, &path).unwrap();
+        match read(&path) {
+            ProgressRead::Malformed(why) => assert!(why.contains("하드 링크"), "{why}"),
+            other => panic!("하드 링크를 읽었다: {other:?}"),
+        }
+        // 이름이 하나로 돌아오면 읽는다(거부가 링크 수 때문임을 확인)
+        std::fs::remove_file(&outside).unwrap();
+        assert!(matches!(read(&path), ProgressRead::Read(p) if p.current_step == 42));
+    }
+
+    /// ★ 검수 pr2 — FIFO 로 바꿔치기해도 열기에서 멈추지 않고 바로 거부한다.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_fifo_is_refused_without_blocking() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PROGRESS_FILENAME);
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: 널로 끝나는 유효한 경로 문자열이다.
+        assert_eq!(
+            unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) },
+            0,
+            "FIFO 를 못 만들었다"
+        );
+        let started = std::time::Instant::now();
+        // 미리 보기에서 걸러지지 않게 바로 읽는 함수로 — 열기 자체가 멈추지 않는지 본다
+        let refused = refuse_opened(&open_without_following(&path).expect("FIFO 열기가 실패했다"));
+        assert!(refused.is_some_and(|why| why.contains("보통 파일")));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "FIFO 열기에서 멈췄다"
+        );
+    }
+
+    static TEST_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+    static RELEASE: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+    static RELEASED: std::sync::Condvar = std::sync::Condvar::new();
+
+    fn stuck_reader(_path: &Path) -> ProgressRead {
+        let mut released = RELEASE.lock().unwrap();
+        while !*released {
+            released = RELEASED.wait(released).unwrap();
+        }
+        ProgressRead::Absent
+    }
+
+    /// ★ 검수 pr2 — 멈춘 읽기 스레드는 프로세스 전체에서 상한까지만 쌓인다. 상한이면 새로 띄우지 않고 바로 시한 초과로 답한다.
+    #[test]
+    fn stuck_reads_are_capped_for_the_whole_process() {
+        let path = Path::new("unused");
+        let short = Duration::from_millis(20);
+        for _ in 0..MAX_STUCK_READS {
+            assert_eq!(
+                read_bounded(path, short, &TEST_IN_FLIGHT, stuck_reader),
+                ProgressRead::TimedOut
+            );
+        }
+        assert_eq!(TEST_IN_FLIGHT.load(Ordering::SeqCst), MAX_STUCK_READS);
+        let started = std::time::Instant::now();
+        let long = Duration::from_secs(30);
+        assert_eq!(
+            read_bounded(path, long, &TEST_IN_FLIGHT, stuck_reader),
+            ProgressRead::TimedOut,
+            "상한에서 새 스레드를 띄웠다"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "상한에서 시한까지 기다렸다"
+        );
+        assert_eq!(TEST_IN_FLIGHT.load(Ordering::SeqCst), MAX_STUCK_READS);
+        // 멈춘 것이 풀리면 셈이 돌아오고 다시 읽는다
+        *RELEASE.lock().unwrap() = true;
+        RELEASED.notify_all();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while TEST_IN_FLIGHT.load(Ordering::SeqCst) != 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "풀린 스레드가 셈을 돌려놓지 않았다"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            read_bounded(path, long, &TEST_IN_FLIGHT, stuck_reader),
+            ProgressRead::Absent
+        );
     }
 }

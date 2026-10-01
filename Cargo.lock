@@ -318,10 +318,12 @@ dependencies = [
  "gputeer-runtime-nvml",
  "gputeer-runtime-policy",
  "gputeer-runtime-windows",
+ "libc",
  "prost",
  "rusqlite",
  "serde_json",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

@@ -28,6 +28,12 @@ harness = false
 
 [target.'cfg(windows)'.dependencies]
 gputeer-runtime-windows = { path = "../runtime-windows" }
+# 진행 파일을 연 핸들에서 링크 수 · 재분석 속성을 읽는다(progress.rs — 검수 pr2)
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+# 진행 파일을 링크를 따라가지 않고 · FIFO 에 멈추지 않고 연다(progress.rs — 검수 pr2)
+libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gputeer-runtime-linux = { path = "../runtime-linux" }
