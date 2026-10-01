@@ -2892,7 +2892,7 @@ pub(crate) fn refuse_pool_marked_db_without_pool_mode(
 /// ★ 2026-10-01 (검수 gr1 · signing.md §6.8) — 서명된 재배치 유예를 켰으면 그 값을 **재배치가 읽는 저장소 한 곳**에 남길 수 있어야 한다.
 ///   저장소가 없으면 스위치가 조용히 무시돼 v1 Lease 가 나가고, Grant 와 갱신이 서로 다른 파일이면 갱신이 올린 더 큰 유예가
 ///   재배치가 읽는 제어 DB 에 없어 그 약속보다 일찍 다시 맡길 수 있다. 둘 다 시작할 때 거부한다.
-fn signed_grace_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
+pub(crate) fn signed_grace_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
     if config.signed_reassignment_grace_ms == 0 {
         return Ok(());
     }

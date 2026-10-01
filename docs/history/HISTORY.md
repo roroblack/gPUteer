@@ -25,6 +25,19 @@
 
 ---
 
+## 2026-10-01 12:36 — 서명된 재배치 유예 검수 gr2 반영 — 여러 Agent 진입점도 시작 검사(브랜치 fork-merge)
+
+- 계획: 독립 검수 gr2(Codex gpt-6-sol) CHANGES_REQUESTED 1건. 같은 검수가 "갈라진 DB 는 닫힘 · issue-grant · 재개 경로의 저장소 불일치 없음 · 시작 거부가 맞다" 고 봤다
+- 스트림: Coordinator
+- 수행: 라이브러리 호출자가 `multi_agent::run_multi_agent()` 를 바로 부르면 저장소 전제 검사를 건너뛰어, 유예를 켜도 유예 없는 v1 Lease 가 조용히 나갈 수
+  있었다 → 그 진입점 맨 앞(풀 표식 검사 바로 뒤)에서 같은 검사를 부른다. 시험 `crates/coordinator/tests/signed_grace_lane_guard.rs` — `run()` ·
+  `run_multi_agent()` 둘 다 파서를 지나 켠 설정을 거부한다(진입점 검사를 빼면 실패함을 확인 뒤 원복)
+- 검증: Windows `cargo test --workspace` 1543 passed · 0 failed. 리눅스 서버(비-root) protocol · crypto · coordinator · agent · runtime-linux 1004 passed · 0 failed
+  (ENVIRONMENT-BLOCKED 0). 바꾼 줄 clippy 경고 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 12:23 — 서명된 재배치 유예 검수 gr1 반영 — 저장소 없이 · 갈라진 DB 로 켜면 시작 거부(브랜치 fork-merge)
 
 - 계획: 직전 항목의 독립 검수 gr1(Codex gpt-6-sol) CHANGES_REQUESTED 2건 반영. 같은 검수가 "올린 값은 서명 전에 자동 커밋된다 · 재배치는 IMMEDIATE 트랜잭션
