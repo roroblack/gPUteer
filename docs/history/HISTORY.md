@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-10-01 13:08 — 곧 끝나는 작업은 계속(판단표 ④) — 진행 보고 · 서명된 재배치 유예로 끊김 시한을 넘겨 재배치 직전까지(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ④("완료 시간 상한이 H 보다 앞 · PURE/IDEMPOTENT → 계속"). 선행 조각 둘(작업 진행 보고 ·
+  서명된 재배치 유예)이 오늘 들어왔다. 관문 5 조각 3/8 → 4/8. 커밋 dcc3fb9(이 항목은 따로 적었다 — 처음 스크립트가 문장 안의 퍼센트 기호로 실패했다)
+- 스트림: Agent
+- 수행: `owner_panel::near_finish_stop_at` — H = 끊김 시한 + 서명된 유예(유예 0 · 누적 상한에 닿은 Lease 면 끊김 시한 그대로). `near_finish_expected_by` —
+  완료 예상 상한 = 지금 + max(걸린 시간 × 남은 단계 / 한 단계, 작업 ETA) × 2.21(정수 백만분율), 전체 단계를 적었고 진행률 5% 이상일 때만.
+  `self_stop_if_due` — 부작용 없는 작업 · 거부 없음 · 소유자 선택 없음 · 끊김 시한 지남 · H 전 · 30초 안의 형식 오류 없는 보고로 낸 예상이 H 앞이면 멈추지
+  않고 둔다(예상은 감시 잠금 밖에서 미리 낸다 — 목록 · 진행 잠금을 감시 잠금 안에서 잡지 않는다). H 가 되면 멈춘다. 기록 `NEAR_FINISH_HOLD` ·
+  `NEAR_FINISH_HOLD_ENDED`, 화면 JSON `connection.near_finish`(ms_to_hard_stop · ms_to_expected_done · provenance WORKER_REPORTED) · 화면 문구. 런북 §8b
+- ★ 2.21배(계획서 배수 표 "제출자 선언 · 1%") · 최소 5% · 보고 30초는 **실측 전 가설**이다. 진행률은 계획서의 last_committed_step 이 아니라 current_step 으로
+  쟀다 — 완료는 현재 단계가 전체에 닿을 때다(계획서 식은 작업 상한 H_job 용이다)
+- 검증: 단위 4(H 공식 · 완료 예상 · 유지와 정지 다섯 갈래 · 거부) · 실제 프로세스 2(Windows — 서명 유예 20초 · 90% 보고 PURE 작업이 끊김 시한 약 9초를 넘겨
+  약 14초에 정상 종료 / 유예 0 이면 같은 작업이 끊김 시한에 멈춤). 판정을 끄면 실제 프로세스 · 단위 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace`
+  1549 passed · 0 failed. 리눅스 서버(비-root) protocol · crypto · coordinator · agent · runtime-linux 1008 passed · 0 failed(ENVIRONMENT-BLOCKED 0). 바꾼 줄 clippy 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 12:36 — 서명된 재배치 유예 검수 gr2 반영 — 여러 Agent 진입점도 시작 검사(브랜치 fork-merge)
 
 - 계획: 독립 검수 gr2(Codex gpt-6-sol) CHANGES_REQUESTED 1건. 같은 검수가 "갈라진 DB 는 닫힘 · issue-grant · 재개 경로의 저장소 불일치 없음 · 시작 거부가 맞다" 고 봤다
