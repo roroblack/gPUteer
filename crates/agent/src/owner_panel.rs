@@ -142,11 +142,17 @@ pub fn disconnect_self_stop_at(
     base.saturating_sub(margin_ms.min(window / 2))
 }
 
-/// ★ 2026-10-01 (판단표 ④ · signing.md §6.8) — "곧 끝나는 작업" 의 마지막 시각 H = 끊김 시한 + 서명된 재배치 유예.
+/// ★ 2026-10-01 (판단표 ④ · signing.md §6.8) — "곧 끝나는 작업" 의 마지막 시각 H.
 ///
-/// Coordinator 는 만료 + 유예가 지나야 다른 노드에 맡기고(그 유예를 서명해 알렸다), 끊김 시한은 만료보다 앞이므로 H 도 재배치보다 앞이다.
-/// 유예가 0 이거나, 이 Lease 가 작업 누적 상한(발급 + 누적 상한)에 닿았으면 끊김 시한을 그대로 돌려준다 — 누적 상한을 넘겨 돌지 않는다
-/// (미리 알린 끊김 검수 an2 와 같은 규칙). 순수 함수다.
+/// ```text
+/// 기준   = min(요청을 보낸 시각 + Lease 길이, Lease 만료)        (끊김 시한과 같은 기준)
+/// 더함   = min(서명된 재배치 유예, 누적 상한 끝 − 만료)          누적 상한(발급 + max_total)을 넘겨 돌지 않는다(검수 nf1 ①)
+/// H      = max(끊김 시한, 기준 + 더함 − 여유)                     여유는 **줄이지 않고 그대로** 뺀다(검수 nf1 ③)
+/// ```
+/// Coordinator 는 만료 + max(정책 유예, 서명 유예) 가 지나야 다른 노드에 맡긴다 — H 는 그보다 적어도 여유만큼 앞이다(감시 주기 50ms ·
+/// 정지에 걸리는 시간을 그 여유가 덮는다). 끊김 시한은 남은 창이 짧으면 여유를 절반까지 줄이지만(연결이 멀쩡한데 곧바로 멈추지 않게),
+/// H 는 줄이지 않는다 — 처음 구현은 H = 끊김 시한 + 유예라 여유가 0 이 되면 재배치 경계와 같아졌다. 그렇게 뺀 값이 끊김 시한보다 앞이면
+/// (창이 짧고 유예도 짧다) 끊김 시한을 돌려준다 — 넘기지 않는다. 순수 함수다.
 pub fn near_finish_stop_at(
     lease_issued_at_unix_ms: u64,
     lease_expires_at_unix_ms: u64,
@@ -161,12 +167,16 @@ pub fn near_finish_stop_at(
         request_sent_at_unix_ms,
         margin_ms,
     );
+    let length = lease_expires_at_unix_ms.saturating_sub(lease_issued_at_unix_ms);
+    let base = request_sent_at_unix_ms
+        .saturating_add(length)
+        .min(lease_expires_at_unix_ms);
     let max_end = lease_issued_at_unix_ms
         .saturating_add(u64::from(max_total_duration_seconds).saturating_mul(1_000));
-    if reassignment_grace_ms == 0 || lease_expires_at_unix_ms >= max_end {
-        return self_stop;
-    }
-    self_stop.saturating_add(reassignment_grace_ms)
+    let extra = reassignment_grace_ms.min(max_end.saturating_sub(lease_expires_at_unix_ms));
+    base.saturating_add(extra)
+        .saturating_sub(margin_ms)
+        .max(self_stop)
 }
 
 /// 완료 예상을 늘려 잡는 배수(백만분율). 계획서 배수 표의 "제출자 선언 · 잘못 끊을 확률 1%"(σ_ln 0.34 · z 2.326 → 2.21배)다 —
@@ -202,7 +212,11 @@ pub fn near_finish_expected_by(
     if progress_ppm < NEAR_FINISH_MIN_PROGRESS_PPM {
         return None;
     }
-    let elapsed = now_unix_ms.saturating_sub(started_at_unix_ms);
+    // 시작 시각이 지금보다 뒤면(시계가 뒤로 감) 걸린 시간을 모른다 — 0 으로 지어내 "곧 끝남" 을 만들지 않는다(검수 nf1 ④).
+    if started_at_unix_ms > now_unix_ms {
+        return None;
+    }
+    let elapsed = now_unix_ms - started_at_unix_ms;
     let by_rate = u128::from(elapsed) * u128::from(total - current) / u128::from(current);
     let by_eta = u128::from(progress.eta_seconds.unwrap_or(0)) * 1_000;
     let remaining = by_rate.max(by_eta);
@@ -502,7 +516,15 @@ impl OwnerPanelState {
 
     /// 이 작업의 완료 예상 상한 — 최근(`NEAR_FINISH_PROGRESS_FRESH_MS`) 형식 오류 없는 진행 보고가 있을 때만.
     fn near_finish_estimate(&self, attempt_id: &str, now_unix_ms: u64) -> Option<u64> {
-        let started_at = self.lock().get(attempt_id)?.started_at_unix_ms;
+        let started_at = {
+            let guard = self.lock();
+            let workload = guard.get(attempt_id)?;
+            // 얼려 둔(또는 얼었는지 모르는) 작업은 진행하지 않는다 — 곧 끝날 수 없다. 끊김 시한대로 멈춘다(일시정지 손잡이가 먼저 푼다).
+            if workload.stopper.pause_state() != crate::exec::PauseState::Running {
+                return None;
+            }
+            workload.started_at_unix_ms
+        };
         let view = self.progress_of(attempt_id)?;
         if view.error.is_some()
             || now_unix_ms.saturating_sub(view.last_read_at_unix_ms) > NEAR_FINISH_PROGRESS_FRESH_MS
@@ -1491,6 +1513,28 @@ mod tests {
             near_finish_stop_at(1_000, 61_000, 1_500, 10_000, 30_000, 60),
             s
         );
+        // ★ 검수 nf1 ① — 마지막 Lease 가 아니어도 누적 상한 끝(60_000)까지 남은 5초만 더한다 — 상한 끝보다 여유만큼 앞(50_000)
+        assert_eq!(disconnect_self_stop_at(0, 55_000, 0, 10_000), 45_000);
+        assert_eq!(
+            near_finish_stop_at(0, 55_000, 0, 10_000, 30_000, 60),
+            50_000
+        );
+        // ★ 검수 nf1 ③ — 끊김 시한의 여유가 0 으로 줄어도(만료 뒤에 보냄) H 는 여유를 그대로 뺀다: 재배치 경계(5_000 + 30_000)보다 10초 앞
+        assert_eq!(disconnect_self_stop_at(1_000, 5_000, 6_000, 10_000), 5_000);
+        assert_eq!(
+            near_finish_stop_at(1_000, 5_000, 6_000, 10_000, 30_000, 86_400),
+            25_000
+        );
+        // 유예가 짧아도 여유는 그대로 뺀 채 더한다(만료 전 56_000 — Lease 가 아직 살아 있다)
+        assert_eq!(
+            near_finish_stop_at(1_000, 61_000, 1_500, 10_000, 5_000, 86_400),
+            s + 5_000
+        );
+        // 남은 창이 짧아 끊김 시한이 여유를 줄였고 유예도 짧으면 H 가 끊김 시한보다 앞이 된다 — 넘기지 않는다
+        assert_eq!(
+            near_finish_stop_at(1_000, 5_000, 1_000, 10_000, 5_000, 86_400),
+            disconnect_self_stop_at(1_000, 5_000, 1_000, 10_000)
+        );
     }
 
     /// ★ 2026-10-01 (판단표 ④) — 완료 예상 상한: 전체 단계 · 5% 이상일 때만, 속도와 ETA 중 큰 쪽 × 2.21.
@@ -1542,6 +1586,11 @@ mod tests {
         assert_eq!(
             near_finish_expected_by(&p(100, Some(100), None), 0, 10_000),
             Some(10_000)
+        );
+        // ★ 검수 nf1 ④ — 시작 시각이 지금보다 뒤(시계가 뒤로 감)면 예상하지 않는다
+        assert_eq!(
+            near_finish_expected_by(&p(90, Some(100), None), 20_000, 10_000),
+            None
         );
     }
 
@@ -1609,6 +1658,37 @@ mod tests {
             "H 를 넘겨 돌았다"
         );
         assert_eq!(state.near_finish_hold("safe"), None);
+    }
+
+    /// ★ 2026-10-01 (판단표 ④) — 얼려 둔 작업은 진행하지 않으므로 곧 끝남으로 두지 않는다(일시정지 · 얼었는지 모름 둘 다).
+    #[test]
+    fn a_paused_job_is_not_held_for_near_finish() {
+        for state_of_pause in [
+            crate::exec::PauseState::Paused,
+            crate::exec::PauseState::Unknown,
+        ] {
+            let state = OwnerPanelState::new();
+            let mut w = workload(0, None);
+            w.attempt_id = "a".into();
+            w.stopper.set_pause_state(state_of_pause);
+            state.register(w);
+            state.watch_connection("a", 10_000, 40_000, true, 0);
+            state.record_progress(
+                "a",
+                Ok(crate::progress::WorkloadProgress {
+                    current_step: 90,
+                    total_steps: Some(100),
+                    eta_seconds: None,
+                    last_committed_step: None,
+                }),
+                12_000,
+            );
+            assert!(
+                state.self_stop_if_due("a", 12_000).is_some(),
+                "{state_of_pause:?} 작업을 곧 끝남으로 두었다"
+            );
+            assert_eq!(state.near_finish_hold("a"), None);
+        }
     }
 
     /// ★ 2026-10-01 (판단표 ④) — 다른 노드로 넘어갔으면(거부) 곧 끝남이어도 멈추려 한다.

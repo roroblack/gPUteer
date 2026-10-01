@@ -1702,10 +1702,16 @@ fn a_signed_reassignment_grace_reaches_the_agent_and_the_stored_lease() {
 }
 
 /// 곧 끝남 시험용 — PURE 작업이 시작하자마자 "90/100" 을 보고하고 약 14초 돈다. Coordinator 는 연결 하나 뒤 끝나(끊김) 끊김 시한은 약 9초다.
-fn run_nearly_finished_pure_job(signed_grace_ms: &str) -> (Finished, Finished) {
+fn run_nearly_finished_pure_job(
+    signed_grace_ms: &str,
+    extra_coordinator: &[&str],
+    ping_count: u32,
+) -> (Finished, Finished) {
     let dir = tempfile::tempdir().expect("임시 디렉터리");
     let path = dir.path().join("job.manifest");
-    let script = "(echo current_step=90& echo total_steps=100)>%GPUTEER_PROGRESS_FILE%& ping -n 15 127.0.0.1";
+    let script = format!(
+        "(echo current_step=90& echo total_steps=100)>%GPUTEER_PROGRESS_FILE%& ping -n {ping_count} 127.0.0.1"
+    );
     let out = Command::new(cli_bin())
         .args([
             "submit",
@@ -1741,7 +1747,10 @@ fn run_nearly_finished_pure_job(signed_grace_ms: &str) -> (Finished, Finished) {
             "1",
             "--signed-reassignment-grace-ms",
             signed_grace_ms,
-        ],
+        ]
+        .into_iter()
+        .chain(extra_coordinator.iter().copied())
+        .collect::<Vec<_>>(),
     );
     let agent = spawn_agent(
         &addr,
@@ -1764,7 +1773,7 @@ fn run_nearly_finished_pure_job(signed_grace_ms: &str) -> (Finished, Finished) {
 ///   끝난다(곧 끝남 유지 기록 · 스스로 멈춤 없음).
 #[test]
 fn a_nearly_finished_pure_job_runs_past_the_disconnect_deadline_within_the_signed_grace() {
-    let (agent, coordinator) = run_nearly_finished_pure_job("20000");
+    let (agent, coordinator) = run_nearly_finished_pure_job("20000", &[], 15);
     let all = both(&agent, &coordinator);
     assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
     assert!(
@@ -1794,7 +1803,7 @@ fn a_nearly_finished_pure_job_runs_past_the_disconnect_deadline_within_the_signe
 /// ★ 2026-10-01 (판단표 ④) — 대조: 서명된 유예가 없으면 같은 작업도 끊김 시한에 멈춘다(곧 끝남을 판정할 시간이 없다).
 #[test]
 fn without_a_signed_grace_a_nearly_finished_job_still_stops_at_the_disconnect_deadline() {
-    let (agent, coordinator) = run_nearly_finished_pure_job("0");
+    let (agent, coordinator) = run_nearly_finished_pure_job("0", &[], 15);
     let all = both(&agent, &coordinator);
     assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
     assert!(
@@ -1804,5 +1813,38 @@ fn without_a_signed_grace_a_nearly_finished_job_still_stops_at_the_disconnect_de
     assert!(
         !agent.output().contains("NEAR_FINISH_HOLD attempt_id="),
         "유예가 없는데 곧 끝남으로 계속 두었다\n{all}"
+    );
+}
+
+/// ★ 검수 nf1 ① — 곧 끝남도 작업 누적 상한을 넘기지 않는다. Lease 12초 · 누적 상한 14초 · 유예 20초면 H = 12 + min(20, 14 − 12) − 3 = 11초다 —
+///   약 19초짜리 작업은 곧 끝남으로 끊김 시한(약 9초)을 넘겨 두다가 11초 무렵 멈춘다(재배치 유예 20초까지 가지 않는다).
+#[test]
+fn near_finish_does_not_outlive_the_signed_max_total_duration() {
+    let (agent, coordinator) =
+        run_nearly_finished_pure_job("20000", &["--max-total-duration-seconds", "14"], 20);
+    let all = both(&agent, &coordinator);
+    assert!(
+        !agent.killed,
+        "Agent 가 끝나지 않았다
+{all}"
+    );
+    let (_, spawned_at) = agent.first("WORKLOAD_SPAWNED").unwrap_or_else(|| {
+        panic!(
+            "WORKLOAD_SPAWNED 가 없다
+{all}"
+        )
+    });
+    let (_, stopped_at) = agent
+        .first("DISCONNECT_SELF_STOP attempt_id=")
+        .unwrap_or_else(|| {
+            panic!(
+                "곧 끝남이 누적 상한을 넘겨 돌았다(스스로 멈추지 않았다)
+{all}"
+            )
+        });
+    assert!(
+        stopped_at.duration_since(spawned_at) < Duration::from_secs(14),
+        "누적 상한(14초) 전에 멈추지 않았다
+{all}"
     );
 }
