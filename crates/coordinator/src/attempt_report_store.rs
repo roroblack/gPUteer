@@ -1615,6 +1615,90 @@ mod tests {
         ));
     }
 
+    /// ★ 2026-10-01 (관문 5 ⑦ — 사람 대신 기계 증거) — 끊긴 노드가 끊김 시한에 **스스로 멈추고**(종료를 관측했다) 장애 이어받기 뒤 다시 붙어
+    ///   늦은 "중단됨" 보고를 보내면, 그 보고 하나로 옛 예약이 풀린다 — 운영자 `release-lost-node` 가 필요 없다. 이어받은 Job 은 건드리지 않는다.
+    #[test]
+    fn a_late_observed_stop_after_failover_releases_the_lost_node_without_an_operator() {
+        use crate::reservation_release::ArtifactDurabilityGuard;
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let outcomes = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            lease.expires_at_unix_ms + 1,
+            &mut notes,
+        )
+        .unwrap();
+        assert_eq!(outcomes.len(), 1, "{notes:?}");
+        let held = CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_node_reservation(NODE_ID)
+            .unwrap()
+            .expect("장애 이어받기는 옛 예약을 지우지 않고 표시만 한다");
+        assert!(held.expired_at_unix_ms.is_some());
+        let job_after_failover = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap()
+            .state;
+
+        // 옛 노드가 돌아와 "끊김 시한에 스스로 멈췄다"(종료 관측)를 보낸다
+        let interrupted = verified_custom(
+            observed_exit(base_report(2, pb::AttemptOutcome::Interrupted)),
+            7,
+        );
+        let mut store = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let result = store
+            .store_verified_terminal_report_with(
+                &interrupted,
+                Some((
+                    release_auth(ArtifactDurabilityGuard::NotApplicableNonCompleted),
+                    lease.expires_at_unix_ms + 5_000,
+                )),
+                None,
+            )
+            .unwrap();
+        assert!(
+            result
+                .notes
+                .iter()
+                .any(|line| line.starts_with("RESERVATION_RELEASED")),
+            "늦은 정지 보고가 옛 예약을 풀지 않았다: {:?}",
+            result.notes
+        );
+        drop(store);
+        assert_eq!(
+            CoordinatorStagingStore::open(&fixture.path)
+                .unwrap()
+                .get_node_reservation(NODE_ID)
+                .unwrap(),
+            None,
+            "옛 노드가 여전히 묶여 있다 — 사람이 풀어야 한다"
+        );
+        assert_eq!(
+            CoordinatorJobStore::open(&fixture.path)
+                .unwrap()
+                .get(JOB_ID)
+                .unwrap()
+                .unwrap()
+                .state,
+            job_after_failover,
+            "늦은 옛 보고가 이어받은 Job 의 상태를 바꿨다"
+        );
+    }
+
     /// 옛 시도의 늦은 보고는 **새 시도의 Job 을 끝내지 않는다.**
     ///
     /// ★ 장애 이어받기 뒤 옛 노드가 살아나 "끝났다" 고 보고하는 경우다. 보고는 저장되고 옛 시도도
