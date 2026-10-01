@@ -4,11 +4,11 @@
 //!
 //! ```text
 //! GPUTEER_PROGRESS_FILE   작업이 진행을 적는 파일(체크포인트 폴더 안 `progress` — 컨테이너에서는 /gputeer/checkpoints/progress).
-//!                         한 줄에 하나씩 `이름=정수`. 알 수 있는 것만 적는다(없는 값은 빼고 지어내지 않는다 — CLAUDE.md §1):
-//!                           current_step=120
-//!                           total_steps=1000
+//!                         한 줄에 하나씩 `이름=정수`. current_step 은 **반드시**, 나머지는 알 때만 적는다(모르면 빼고 지어내지 않는다 — CLAUDE.md §1):
+//!                           current_step=120          (필수)
+//!                           total_steps=1000          (1 이상)
 //!                           eta_seconds=360
-//!                           last_committed_step=100
+//!                           last_committed_step=100   (current_step 이하)
 //!                         ★ 다 쓴 뒤 그 이름으로 바꾸기를 권한다(예: progress.tmp 에 쓰고 progress 로 rename) — 반쯤 쓴 파일은
 //!                           형식 오류로 버려진다(다음 번에 다시 읽는다)
 //! ```
@@ -22,10 +22,24 @@
 //!
 //! # 엄격하게 읽는다
 //!
-//! 모르는 이름 · 정수가 아닌 값 · 같은 이름 두 번 · `current_step > total_steps` · 너무 큰 파일은 **형식 오류**로 버린다.
-//! 오타 하나로 값이 조용히 빠지면 "보고가 없다" 와 구별되지 않기 때문이다.
+//! 모르는 이름 · 정수가 아닌 값 · 같은 이름 두 번 · current_step 없음 · total_steps 0 · `current_step > total_steps` ·
+//! `last_committed_step > current_step` · 너무 큰 파일은 **형식 오류**로 버린다. 오타 하나로 값이 조용히 빠지면 "보고가 없다" 와 구별되지 않는다.
+//!
+//! # 작업이 만든 파일을 읽는다 — 그래서 방어한다(검수 pr1)
+//!
+//! ```text
+//! 링크          따라가지 않는다 — 링크(symlink · 재분석 지점)면 형식 오류. 리눅스는 연 뒤의 파일이 미리 본 파일과 같은지(dev · inode) 대조한다
+//!               (열기 직전에 링크로 바꿔치기한 경우). 윈도는 재분석 지점을 따라가지 않는 열기(FILE_FLAG_OPEN_REPARSE_POINT)를 쓴다
+//! 크기          연 파일에서 상한 + 1 바이트까지만 읽는다(미리 본 크기를 믿지 않는다)
+//! 특수 파일     리눅스 FIFO 로 바꿔치기하면 열기가 멈출 수 있다 — 읽기는 시한(`READ_TIMEOUT`) 안에서만 기다리고, 넘기면 이 시도의
+//!               진행 읽기를 끈다(멈춘 읽기 스레드 하나가 남는다 · 갱신은 계속된다)
+//! 내용 노출     오류 메시지에 파일 내용(이름 · 값)을 싣지 않는다 — 줄 번호와 이유만. 서명된 요청에는 파싱한 정수만 간다
+//! 못 막는 것    하드 링크(같은 볼륨의 다른 파일을 같은 inode 로) — 그 파일이 `이름=정수` 꼴이면 그 정수가 실린다
+//! ```
 
+use std::io::Read;
 use std::path::Path;
+use std::time::Duration;
 
 use gputeer_protocol::pb;
 
@@ -35,23 +49,29 @@ pub const PROGRESS_FILENAME: &str = "progress";
 /// 진행 파일 크기 상한(바이트). 정책값이다 — 네 줄이면 100 바이트도 안 된다.
 pub const PROGRESS_MAX_BYTES: u64 = 4096;
 
-/// 작업이 적은 진행(자기보고).
+/// 진행 파일 하나를 읽는 데 기다리는 시한. 보통 파일은 밀리초다 — 넘기면 특수 파일로 바꿔치기된 것으로 본다.
+pub const READ_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// 작업이 적은 진행(자기보고). 적지 않은 값은 `None` 이다 — 0 으로 지어내지 않는다.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkloadProgress {
     pub current_step: u64,
-    pub total_steps: u64,
-    pub eta_seconds: u64,
-    pub last_committed_step: u64,
+    pub total_steps: Option<u64>,
+    pub eta_seconds: Option<u64>,
+    pub last_committed_step: Option<u64>,
 }
 
 impl WorkloadProgress {
-    /// 갱신 요청에 싣는 꼴(복제 백로그는 작업이 알 수 없어 0 — 지어내지 않는다).
+    /// 갱신 요청에 싣는 꼴.
+    ///
+    /// ★ proto 의 칸은 "없음" 을 따로 담지 못한다 — 서명 규칙상 0 은 칸이 빠진 것과 같다(규칙 b). 그래서 **0 은 "보고하지 않음"** 으로
+    ///   읽어야 한다(CLAUDE.md §1 의 "미상이면 0" 과 같은 약속). 복제 백로그는 작업이 알 수 없어 늘 0(= 모름)이다 — "백로그 없음" 이 아니다.
     pub fn to_report(&self) -> pb::ProgressReport {
         pb::ProgressReport {
             current_step: self.current_step,
-            total_steps: self.total_steps,
-            eta_seconds: self.eta_seconds,
-            last_committed_step: self.last_committed_step,
+            total_steps: self.total_steps.unwrap_or(0),
+            eta_seconds: self.eta_seconds.unwrap_or(0),
+            last_committed_step: self.last_committed_step.unwrap_or(0),
             replication_backlog_bytes: 0,
         }
     }
@@ -62,79 +82,166 @@ impl WorkloadProgress {
 pub enum ProgressRead {
     /// 파일이 없다 — 작업이 진행을 보고하지 않는다(정상).
     Absent,
-    /// 있지만 받을 수 없다 — 이유.
+    /// 있지만 받을 수 없다 — 이유(파일 내용은 담지 않는다).
     Malformed(String),
+    /// 읽기가 시한 안에 끝나지 않았다 — 특수 파일로 바꿔치기된 것으로 보고 이 시도의 진행 읽기를 끈다.
+    TimedOut,
     Read(WorkloadProgress),
 }
 
-/// 진행 파일 내용을 읽는다(순수 함수).
+/// 진행 파일 내용을 읽는다(순수 함수). 오류에는 줄 번호와 이유만 싣는다.
 pub fn parse(text: &str) -> Result<WorkloadProgress, String> {
-    let mut progress = WorkloadProgress::default();
-    let mut seen = std::collections::BTreeSet::new();
+    let mut current_step = None;
+    let mut total_steps = None;
+    let mut eta_seconds = None;
+    let mut last_committed_step = None;
     for (index, raw) in text.lines().enumerate() {
+        let line_no = index + 1;
         let line = raw.trim();
         if line.is_empty() {
             continue;
         }
         let (name, value) = line
             .split_once('=')
-            .ok_or_else(|| format!("{}번째 줄에 '=' 가 없다", index + 1))?;
-        let (name, value) = (name.trim(), value.trim());
+            .ok_or_else(|| format!("{line_no}번째 줄에 '=' 가 없다"))?;
         let number: u64 = value
+            .trim()
             .parse()
-            .map_err(|_| format!("{name} 의 값이 0 이상의 정수가 아니다({value:?})"))?;
-        if !seen.insert(name.to_string()) {
-            return Err(format!("{name} 가 두 번 있다"));
+            .map_err(|_| format!("{line_no}번째 줄의 값이 0 이상의 정수가 아니다"))?;
+        let slot = match name.trim() {
+            "current_step" => &mut current_step,
+            "total_steps" => &mut total_steps,
+            "eta_seconds" => &mut eta_seconds,
+            "last_committed_step" => &mut last_committed_step,
+            _ => {
+                return Err(format!(
+                    "{line_no}번째 줄의 이름을 모른다 — current_step · total_steps · eta_seconds · last_committed_step 만 받는다"
+                ))
+            }
+        };
+        if slot.replace(number).is_some() {
+            return Err(format!("{line_no}번째 줄 — 같은 이름이 두 번 있다"));
         }
-        match name {
-            "current_step" => progress.current_step = number,
-            "total_steps" => progress.total_steps = number,
-            "eta_seconds" => progress.eta_seconds = number,
-            "last_committed_step" => progress.last_committed_step = number,
-            other => return Err(format!("모르는 이름이다({other:?}) — current_step · total_steps · eta_seconds · last_committed_step 만 받는다")),
-        }
     }
-    if seen.is_empty() {
-        return Err("값이 하나도 없다".into());
+    let current_step = current_step.ok_or("current_step 이 없다(필수)")?;
+    if total_steps == Some(0) {
+        return Err("total_steps 가 0 이다 — 1 이상이어야 한다(모르면 빼라)".into());
     }
-    if progress.total_steps > 0 && progress.current_step > progress.total_steps {
-        return Err(format!(
-            "current_step({}) 가 total_steps({}) 보다 크다",
-            progress.current_step, progress.total_steps
-        ));
+    if total_steps.is_some_and(|total| current_step > total) {
+        return Err("current_step 이 total_steps 보다 크다".into());
     }
-    if progress.last_committed_step > progress.current_step && seen.contains("current_step") {
-        return Err(format!(
-            "last_committed_step({}) 가 current_step({}) 보다 크다",
-            progress.last_committed_step, progress.current_step
-        ));
+    if last_committed_step.is_some_and(|committed| committed > current_step) {
+        return Err("last_committed_step 이 current_step 보다 크다".into());
     }
-    Ok(progress)
+    Ok(WorkloadProgress {
+        current_step,
+        total_steps,
+        eta_seconds,
+        last_committed_step,
+    })
 }
 
-/// 진행 파일을 읽는다. 없으면 `Absent`, 크기 상한을 넘거나 형식이 틀리면 `Malformed`.
+/// 진행 파일을 읽는다 — 링크를 따라가지 않고, 상한까지만, 시한 안에서만(모듈 문서 "방어한다").
 pub fn read(path: &Path) -> ProgressRead {
-    let metadata = match std::fs::metadata(path) {
+    let path = path.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("gputeer-progress-read".into())
+        .spawn(move || {
+            // 받는 쪽이 시한으로 떠났으면 보낼 곳이 없다 — 그 결과는 버린다(이미 TimedOut 으로 알렸다).
+            if tx.send(read_now(&path)).is_err() {
+                eprintln!("gputeer-progress-read: 시한 뒤에 끝난 읽기 결과를 버린다");
+            }
+        });
+    if let Err(error) = spawned {
+        return ProgressRead::Malformed(format!("읽기 스레드를 띄우지 못했다: {error}"));
+    }
+    match rx.recv_timeout(READ_TIMEOUT) {
+        Ok(result) => result,
+        Err(_) => ProgressRead::TimedOut,
+    }
+}
+
+fn read_now(path: &Path) -> ProgressRead {
+    let before = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ProgressRead::Absent,
-        Err(error) => return ProgressRead::Malformed(format!("읽을 수 없다: {error}")),
+        Err(error) => return ProgressRead::Malformed(format!("읽을 수 없다({:?})", error.kind())),
     };
-    if !metadata.is_file() {
+    if before.file_type().is_symlink() {
+        return ProgressRead::Malformed("링크다 — 따라가지 않는다".into());
+    }
+    if !before.is_file() {
         return ProgressRead::Malformed("보통 파일이 아니다".into());
     }
-    if metadata.len() > PROGRESS_MAX_BYTES {
-        return ProgressRead::Malformed(format!(
-            "{} 바이트 — 상한 {PROGRESS_MAX_BYTES} 바이트를 넘는다",
-            metadata.len()
-        ));
+    let file = match open_without_following(path) {
+        Ok(file) => file,
+        Err(error) => return ProgressRead::Malformed(format!("열 수 없다({:?})", error.kind())),
+    };
+    let after = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return ProgressRead::Malformed(format!("연 파일을 볼 수 없다({:?})", error.kind()))
+        }
+    };
+    if !after.is_file() {
+        return ProgressRead::Malformed("연 것이 보통 파일이 아니다".into());
     }
-    match std::fs::read_to_string(path) {
+    if let Some(why) = swapped(&before, &after) {
+        return ProgressRead::Malformed(why);
+    }
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take(PROGRESS_MAX_BYTES + 1).read_to_end(&mut bytes) {
+        return ProgressRead::Malformed(format!("읽을 수 없다({:?})", error.kind()));
+    }
+    if bytes.len() as u64 > PROGRESS_MAX_BYTES {
+        return ProgressRead::Malformed(format!("상한 {PROGRESS_MAX_BYTES} 바이트를 넘는다"));
+    }
+    match String::from_utf8(bytes) {
         Ok(text) => match parse(&text) {
             Ok(progress) => ProgressRead::Read(progress),
             Err(why) => ProgressRead::Malformed(why),
         },
-        Err(error) => ProgressRead::Malformed(format!("읽을 수 없다: {error}")),
+        Err(_) => ProgressRead::Malformed("UTF-8 이 아니다".into()),
     }
+}
+
+#[cfg(windows)]
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // 재분석 지점(symlink · junction)을 따라가지 않고 그 자체를 연다 — 바꿔치기돼도 대상 파일을 읽지 않는다.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+    // 링크를 따라가지 않는 열기 플래그는 시스템 라이브러리 의존이 필요해 쓰지 않는다 — 대신 연 뒤 같은 파일인지 대조한다(`swapped`).
+    std::fs::File::open(path)
+}
+
+/// 미리 본 파일과 연 파일이 다른가(열기 직전의 바꿔치기).
+#[cfg(unix)]
+fn swapped(before: &std::fs::Metadata, after: &std::fs::Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    (before.dev() != after.dev() || before.ino() != after.ino())
+        .then(|| "열기 직전에 다른 파일로 바뀌었다(링크 바꿔치기)".to_string())
+}
+
+#[cfg(windows)]
+fn swapped(_before: &std::fs::Metadata, after: &std::fs::Metadata) -> Option<String> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    (after.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .then(|| "연 것이 재분석 지점이다(링크 바꿔치기)".to_string())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn swapped(_before: &std::fs::Metadata, _after: &std::fs::Metadata) -> Option<String> {
+    Some("이 플랫폼에서는 바꿔치기를 확인할 수 없어 읽지 않는다".into())
 }
 
 #[cfg(test)]
@@ -142,40 +249,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_well_formed_progress_file_is_read_and_missing_values_stay_zero() {
+    fn a_well_formed_progress_file_is_read_and_unreported_values_stay_unknown() {
         let progress =
             parse("current_step=120\r\ntotal_steps=1000\n eta_seconds = 360 \n").unwrap();
         assert_eq!(
             progress,
             WorkloadProgress {
                 current_step: 120,
-                total_steps: 1000,
-                eta_seconds: 360,
-                last_committed_step: 0,
+                total_steps: Some(1000),
+                eta_seconds: Some(360),
+                last_committed_step: None,
             }
         );
-        assert_eq!(progress.to_report().replication_backlog_bytes, 0);
+        let report = progress.to_report();
+        assert_eq!(
+            (report.last_committed_step, report.replication_backlog_bytes),
+            (0, 0)
+        );
+        assert_eq!(
+            parse("current_step=0").unwrap().total_steps,
+            None,
+            "적지 않은 값을 지어냈다"
+        );
     }
 
     #[test]
-    fn unknown_names_bad_numbers_duplicates_and_inconsistencies_are_refused() {
+    fn malformed_files_are_refused_without_echoing_their_contents() {
         for (text, why) in [
-            ("current_stpe=1", "모르는 이름"),
+            ("current_step=1\nsecret_token=7", "이름을 모른다"),
+            ("current_step=hunter2", "정수가 아니다"),
             ("current_step=-1", "정수가 아니다"),
-            ("current_step=1.5", "정수가 아니다"),
             ("current_step=1\ncurrent_step=2", "두 번"),
+            ("total_steps=10", "current_step 이 없다"),
+            ("current_step=1\ntotal_steps=0", "1 이상"),
             ("current_step=11\ntotal_steps=10", "보다 크다"),
             ("current_step=5\nlast_committed_step=6", "보다 크다"),
             ("current_step", "'='"),
-            ("\n \n", "하나도 없다"),
+            ("\n \n", "current_step 이 없다"),
         ] {
             let error = parse(text).expect_err(text);
             assert!(error.contains(why), "{text:?} → {error}");
+            assert!(
+                !error.contains("secret_token") && !error.contains("hunter2"),
+                "오류에 파일 내용이 실렸다: {error}"
+            );
         }
     }
 
     #[test]
-    fn an_absent_file_is_absent_and_an_oversized_one_is_refused() {
+    fn an_absent_file_is_absent_and_an_oversized_or_non_regular_one_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(PROGRESS_FILENAME);
         assert_eq!(read(&path), ProgressRead::Absent);
@@ -183,5 +305,30 @@ mod tests {
         assert!(matches!(read(&path), ProgressRead::Read(p) if p.current_step == 3));
         std::fs::write(&path, "x".repeat(PROGRESS_MAX_BYTES as usize + 1)).unwrap();
         assert!(matches!(read(&path), ProgressRead::Malformed(why) if why.contains("상한")));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(matches!(read(&path), ProgressRead::Malformed(why) if why.contains("보통 파일")));
+    }
+
+    /// ★ 검수 pr1 — 진행 파일이 다른 파일을 가리키는 링크면 따라가지 않는다(호스트 파일을 읽어 싣지 않는다).
+    #[test]
+    fn a_progress_file_that_is_a_link_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("host-file");
+        std::fs::write(&outside, "current_step=42\n").unwrap();
+        let link = dir.path().join(PROGRESS_FILENAME);
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&outside, &link);
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&outside, &link);
+        if let Err(error) = made {
+            // 윈도는 개발자 모드 · 권한이 없으면 링크를 못 만든다 — 그 환경에서는 재지 못한다(통과로 세지 않는다고 적는다).
+            eprintln!("ENVIRONMENT-BLOCKED: 링크를 만들 수 없어 링크 거부를 재지 않았다: {error}");
+            return;
+        }
+        match read(&link) {
+            ProgressRead::Malformed(why) => assert!(why.contains("링크"), "{why}"),
+            other => panic!("링크를 따라가 읽었다: {other:?}"),
+        }
     }
 }

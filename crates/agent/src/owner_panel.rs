@@ -254,6 +254,12 @@ impl OwnerPanelState {
         read: Result<crate::progress::WorkloadProgress, String>,
         now_unix_ms: u64,
     ) {
+        // ★ 검수 pr1 — 목록에 있는 작업에만 적는다. 작업이 끝나 빠진(unregister) 뒤 갱신 스레드가 늦게 불러도 기록을 되살리지 않는다.
+        //   잠금 순서는 목록 → 진행(`snapshot` 과 같다).
+        let workloads = self.lock();
+        if !workloads.contains_key(attempt_id) {
+            return;
+        }
         let mut all = match self.progress.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -1141,9 +1147,13 @@ fn render_workloads_json(
                         "{{\"provenance\":\"WORKER_REPORTED\",\"last\":{},\"age_ms\":{},\"error\":{}}}",
                         match &view.last {
                             None => "null".to_string(),
+                            // 적지 않은 값은 null — 0 으로 보이지 않게(검수 pr1).
                             Some(p) => format!(
                                 "{{\"current_step\":{},\"total_steps\":{},\"eta_seconds\":{},\"last_committed_step\":{}}}",
-                                p.current_step, p.total_steps, p.eta_seconds, p.last_committed_step
+                                p.current_step,
+                                json_opt(p.total_steps),
+                                json_opt(p.eta_seconds),
+                                json_opt(p.last_committed_step)
                             ),
                         },
                         if view.last.is_some() {
@@ -1174,6 +1184,10 @@ fn render_workloads_json(
         json_string(token),
         entries.join(",")
     )
+}
+
+fn json_opt(value: Option<u64>) -> String {
+    value.map_or("null".to_string(), |v| v.to_string())
 }
 
 fn json_string(value: &str) -> String {
@@ -1568,9 +1582,9 @@ mod tests {
         state.register(w);
         let good = crate::progress::WorkloadProgress {
             current_step: 3,
-            total_steps: 10,
-            eta_seconds: 42,
-            last_committed_step: 2,
+            total_steps: Some(10),
+            eta_seconds: Some(42),
+            last_committed_step: None,
         };
         state.record_progress("a", Ok(good.clone()), 5_000);
         state.record_progress("a", Err("모르는 이름".into()), 6_000);
@@ -1587,11 +1601,21 @@ mod tests {
             json.contains("\"current_step\":3,\"total_steps\":10"),
             "{json}"
         );
+        assert!(
+            json.contains("\"last_committed_step\":null"),
+            "적지 않은 값을 0 으로 보였다: {json}"
+        );
         assert!(json.contains("\"age_ms\":2000"), "{json}");
         state.unregister("a");
         assert!(
             state.progress_of("a").is_none(),
             "끝난 작업의 진행이 남았다"
+        );
+        // ★ 검수 pr1 — 끝난 뒤 늦게 온 기록은 되살리지 않는다
+        state.record_progress("a", Ok(crate::progress::WorkloadProgress::default()), 8_000);
+        assert!(
+            state.progress_of("a").is_none(),
+            "끝난 작업의 진행을 되살렸다"
         );
     }
 

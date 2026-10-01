@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-10-01 10:31 — 진행 보고 통로 검수 pr1 반영 — 링크 안 따라감 · 읽기 시한 · 모르는 값은 비움 · 끝난 작업에 늦은 기록 거부(브랜치 fork-merge)
+
+- 계획: 직전 항목(진행 보고 통로)의 독립 검수 pr1(Codex gpt-6-sol) CHANGES_REQUESTED 반영
+- 스트림: Agent
+- 수행: ① 작업이 쓰는 파일을 Agent 가 읽으므로 — 링크·폴더·특수 파일은 거부하고, 링크를 따라가지 않고 연 뒤 연 파일이 확인한 그 파일인지 대조한다
+  (unix dev/ino · Windows reparse 속성), 4096+1 바이트까지만 읽고, 1초 안에 못 읽으면(FIFO 등) 그 실행 동안 진행 읽기를 끈다(`WORKLOAD_PROGRESS_DISABLED`).
+  형식 오류 문구는 줄 번호만 담고 파일 내용을 옮기지 않는다. ② `total_steps` · `eta_seconds` · `last_committed_step` 을 `Option` 으로 — 안 적은 값은
+  화면 JSON 에서 null, 서명 요청에서는 0(=보고 안 함, 주석에 명시). `current_step` 필수 · `total_steps` ≥ 1. ③ `record_progress` 는 목록에 있는 작업에만
+  적는다 — 끝나 빠진 뒤 늦게 온 기록이 되살아나지 않는다(잠금 순서 목록 → 진행, `snapshot` 과 같음). 화면은 전체를 모르면 "(전체 모름)"
+- 검증: 리눅스 서버 `cargo test -p gputeer-protocol -p gputeer-crypto -p gputeer-coordinator -p gputeer-agent -p gputeer-runtime-linux` 992 passed · 0 failed
+  (★ 권한 조건: 비-root 사용자) — 링크 거부 시험이 **실제로 쟀다**(ENVIRONMENT-BLOCKED 출력 없음). Windows 개발 기계 `cargo test --workspace` 1531 passed · 0 failed
+  — 링크 시험은 Windows 에서 링크를 못 만들어(os error 1314) ENVIRONMENT-BLOCKED 이며 PASS 로 세지 않는다. 바꾼 줄 · 새 파일 clippy 경고 0
+  (owner_panel.rs:1079 경고는 전부터 있던 줄)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 10:14 — 작업 → Agent 진행 보고 통로(GPUTEER_PROGRESS_FILE) · 서명된 갱신 요청의 진행 칸 · 소유자 화면 "진행"(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md` 판단표 ④ "곧 끝남" 의 선행 조각(합의 기록 "모르는 것: 작업 → Agent 진행 보고 통로(없음)")

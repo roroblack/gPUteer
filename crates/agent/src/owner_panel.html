@@ -84,7 +84,8 @@
         prog.textContent = p && p.error ? "형식 오류: " + p.error : "보고 없음";
       } else {
         const l = p.last;
-        let text = l.total_steps ? l.current_step + "/" + l.total_steps + " (" + Math.floor(l.current_step * 100 / l.total_steps) + "%)" : "단계 " + l.current_step;
+        // 적지 않은 값은 null 이다 — 0 으로 보이지 않는다.
+        let text = l.total_steps ? l.current_step + "/" + l.total_steps + " (" + Math.floor(l.current_step * 100 / l.total_steps) + "%)" : "단계 " + l.current_step + " (전체 모름)";
         if (l.eta_seconds) text += " · 남은 예상 " + fmtDuration(l.eta_seconds * 1000);
         text += " · " + fmtDuration(p.age_ms) + " 전 보고";
         if (p.error) text += " · 최근 형식 오류";

@@ -2616,6 +2616,7 @@ fn start_renew_during_execution(
         let mut seen_generation = panel.announcement_generation();
         let mut plain_next = false;
         let mut last_progress_error: Option<String> = None;
+        let mut progress_disabled = false;
         'renew: loop {
             // ★ 2026-09-25 (결함 289 · 재검수 90) — 다음 갱신은 "주기" 와 "지금 Lease 가 남은 시간의 절반" 중 짧은 쪽에 한다. 전에는 주기만
             //   기다려, Coordinator 가 주기보다 짧게 연장하면 갱신 전에 만료돼 이어받기와 겹쳤다. 첫 갱신은 실행 전에 동기로 했다(결함 268).
@@ -2650,7 +2651,25 @@ fn start_renew_during_execution(
             };
             plain_next = false;
             // ★ 2026-10-01 — 작업의 진행 자기보고. 형식 오류는 내용이 바뀔 때만 한 번 알린다(갱신마다 같은 줄을 쌓지 않는다).
-            let progress = match progress::read(&progress_path) {
+            //   ★ 검수 pr1 — 읽기가 시한을 넘기면(특수 파일로 바꿔치기) 이 시도의 진행 읽기를 끈다.
+            let progress = match if progress_disabled {
+                progress::ProgressRead::Absent
+            } else {
+                progress::read(&progress_path)
+            } {
+                progress::ProgressRead::TimedOut => {
+                    println!(
+                        "WORKLOAD_PROGRESS_DISABLED attempt_id={attempt_id} — 진행 파일 읽기가 {:?} 안에 끝나지 않았다(특수 파일?) · 이 시도의 진행 읽기를 끈다",
+                        progress::READ_TIMEOUT
+                    );
+                    panel.record_progress(
+                        &attempt_id,
+                        Err("읽기가 시한 안에 끝나지 않아 진행 읽기를 껐다".into()),
+                        sent_at,
+                    );
+                    progress_disabled = true;
+                    None
+                }
                 progress::ProgressRead::Read(read) => {
                     panel.record_progress(&attempt_id, Ok(read.clone()), sent_at);
                     last_progress_error = None;
