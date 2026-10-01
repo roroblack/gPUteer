@@ -8,7 +8,8 @@
 //! STOP_CONFIRMED stop_evidence 가 0 이 아니고 origin · reason 은 0
 //! 응답          kind 는 RUN_UNKNOWN · STOP_CONFIRMED 중 하나
 //! ```
-//! ★ `Verified` 는 서명 통과이지 조합 규칙 통과가 아니다 — 받는 쪽(저장 진입)이 이 함수를 직접 부른다(AttemptReport 와 같은 방식).
+//! ★ `Verified` 는 서명 통과이지 조합 규칙 통과가 아니다 — 받는 쪽(Coordinator 의 알림 저장 진입 · Agent 의 응답 대조)은 이 함수를 **직접 불러야 한다**
+//!   (AttemptReport 와 같은 방식). ★ 2026-10-01 이 조각(계약층)에는 부르는 곳이 아직 없다 — 받는 쪽은 다음 조각이고, 그때의 의무다(검수 rn1).
 
 use crate::pb;
 

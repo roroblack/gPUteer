@@ -1155,9 +1155,13 @@ fn attempt_run_notice_and_ack_vectors_match_reference() {
         attempt_id: "01JBXATT00000000000000001".into(),
         node_id: "node-1".into(),
         fence_epoch: 42,
+        // ★ 검수 rn1 — 계약 그대로: 같은 시도 · 종류 · 순번의 STOP_CONFIRMED(v47b)의 서명 입력 BLAKE3-256.
         notice_hash: Some(pb::Digest {
             algo: 1,
-            value: (32u8..64).collect(),
+            value: gputeer_protocol::canonical::blake3_256(
+                &gputeer_protocol::signing::signing_input(&stop),
+            )
+            .to_vec(),
         }),
         kind: pb::RunNoticeKind::StopConfirmed as i32,
         sequence: 2,

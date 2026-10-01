@@ -299,6 +299,15 @@ fn declared_lifetime_matches_message_capability() {
             ..Default::default()
         },
     );
+    // ★ 검수 rn1 — 만료는 정확히 발급 + GRANT_TTL_MS(AttemptReportAck 와 같다 — 계약 §1). "0 이 아니다" 만으로는 TTL 회귀를 못 잡는다.
+    assert_eq!(
+        gputeer_protocol::signing::Signable::expires_at_unix_ms(&pb::AttemptRunNoticeAck {
+            issued_at_unix_ms: T,
+            ..Default::default()
+        }),
+        T + gputeer_protocol::constants::GRANT_TTL_MS,
+        "실행 알림 응답의 만료가 발급 + GRANT_TTL_MS 가 아니다"
+    );
     // 결함 131 — ACK 수신 확인. ShortLived 여야 한다 — 재생할 수 있으면 받아들여지지 않은 ACK 를 받아들여졌다고 믿게 된다.
     check(
         "GrantAckReceipt",

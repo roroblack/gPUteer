@@ -2062,6 +2062,8 @@ def build_vectors():
                "AttemptRunNotice", _notice_stop,
                ["MUST_DIFFER:v47_attempt_run_notice_run_unknown"])
     assert c_n1 != c_n2
+    _v47b_hash = blake3_256(sig_input("AttemptRunNotice", 1, c_n2))
+    assert _v47b_hash is not None, "blake3 가 없으면 v48 의 notice_hash 를 계약대로 만들 수 없다 — pip install blake3"
     _notice_seq = dict(_notice_unknown)
     _notice_seq["sequence"] = 3
     c_n3 = add("v47c_attempt_run_notice_sequence_changed",
@@ -2075,7 +2077,8 @@ def build_vectors():
         "attempt_id": "01JBXATT00000000000000001",
         "node_id": "node-1",
         "fence_epoch": 42,
-        "notice_hash": {"algo": 1, "value": bytes(range(32, 64))},
+        # ★ 검수 rn1 — 계약의 관계 그대로: v47b(같은 시도 · 종류 · 순번의 STOP_CONFIRMED)의 서명 입력 BLAKE3-256.
+        "notice_hash": {"algo": 1, "value": bytes.fromhex(_v47b_hash)},
         "kind": 2,
         "sequence": 2,
         "created": True,

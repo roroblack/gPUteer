@@ -1305,6 +1305,33 @@ fn the_run_notice_frames_use_their_own_schema_cap() {
         read(FrameType::AttemptRunNotice, notice(1).encode_to_vec()),
         Ok(IngressMessage::AttemptRunNotice(_))
     ));
+    // ★ 검수 rn1 — 응답(20)도 자기 상한을 쓴다. 각 읽기는 새 replay 방어를 쓰므로 같은 nonce 가 재생으로 걸리지 않는다.
+    let ack = |schema_version: u32| {
+        let mut m = pb::AttemptRunNoticeAck {
+            schema_version,
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            node_id: "node-1".into(),
+            fence_epoch: 3,
+            kind: pb::RunNoticeKind::StopConfirmed as i32,
+            sequence: 1,
+            created: true,
+            coordinator_id: DEVICE.into(),
+            issued_at_unix_ms: NOW,
+            session_nonce: vec![7u8; 16],
+            ..Default::default()
+        };
+        m.coordinator_signature = sign(&k, &m).to_vec();
+        m
+    };
+    match read(FrameType::AttemptRunNoticeAck, ack(2).encode_to_vec()) {
+        Err(error) => assert!(format!("{error:?}").contains("SchemaTooNew"), "{error:?}"),
+        Ok(_) => panic!("실행 알림 응답 v2 가 호출자 상한(2)으로 통과했다 — 종류별 상한이 없다"),
+    }
+    assert!(matches!(
+        read(FrameType::AttemptRunNoticeAck, ack(1).encode_to_vec()),
+        Ok(IngressMessage::AttemptRunNoticeAck(_))
+    ));
     let mut report = pb::AttemptReport {
         schema_version: 2,
         job_id: "job-1".into(),
