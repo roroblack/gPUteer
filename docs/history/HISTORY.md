@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-01 12:23 — 서명된 재배치 유예 검수 gr1 반영 — 저장소 없이 · 갈라진 DB 로 켜면 시작 거부(브랜치 fork-merge)
+
+- 계획: 직전 항목의 독립 검수 gr1(Codex gpt-6-sol) CHANGES_REQUESTED 2건 반영. 같은 검수가 "올린 값은 서명 전에 자동 커밋된다 · 재배치는 IMMEDIATE 트랜잭션
+  안에서 유예를 읽고 폐기한다 · 행을 낮추는 경로 없음 · Agent 세 곳 v2 상한" 은 확인했다
+- 스트림: Coordinator
+- 수행: ① `--lease-db` 없이 스위치를 켜면 옛 경로가 유예 없는 v1 Lease 를 조용히 냈다 → 시작 거부 `SIGNED_GRACE_NEEDS_LEASE_DB`. ② 저장된 예약 lane 에서
+  `--lease-db` 와 `--grant-from-control-db` 가 다른 파일이면 갱신이 올린 더 큰 유예가 재배치가 읽는 제어 DB 에 없어 그보다 일찍 맡길 수 있었다(같은 파일 검사는
+  풀 모드에만 있었다) → 시작 거부 `SIGNED_GRACE_LEASE_DB_MISMATCH`. 설정 읽기 · 라이브러리 실행 두 진입점 모두. 런북 §8b 에 조건 ③
+- 검증: 단위 1(두 거부 + 대조 둘) — 검사를 끄면 실패함을 확인 뒤 원복. Windows `cargo test --workspace` 1541 passed · 0 failed. 리눅스 서버(비-root)
+  protocol · crypto · coordinator · agent · runtime-linux 1002 passed · 0 failed(ENVIRONMENT-BLOCKED 0). 바꾼 줄 clippy 경고 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-01 11:56 — 서명된 재배치 유예 — Lease v2(reassignment_grace_ms = 34) · 서명 직전 저장 · 재배치는 그보다 일찍 안 맡김(브랜치 fork-merge)
 
 - 계획: `docs/contracts/proposals/2026-10-01_1126_서명된_재배치_유예_Lease_v2.md` — 판단표 ④("곧 끝나면 계속")의 선행 계약. 설계 A(Lease) · B(Grant) · C(보류) 중 A 를

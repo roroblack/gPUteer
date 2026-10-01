@@ -472,6 +472,7 @@ pub fn run(config: CoordinatorConfig) -> Result<(), String> {
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
     }
+    signed_grace_startup_check(&config)?;
 
     // ★ lane 선택을 **여기서** 한다(독립 검수 6라운드 지적).
     //
@@ -2888,6 +2889,32 @@ pub(crate) fn refuse_pool_marked_db_without_pool_mode(
     Ok(())
 }
 
+/// ★ 2026-10-01 (검수 gr1 · signing.md §6.8) — 서명된 재배치 유예를 켰으면 그 값을 **재배치가 읽는 저장소 한 곳**에 남길 수 있어야 한다.
+///   저장소가 없으면 스위치가 조용히 무시돼 v1 Lease 가 나가고, Grant 와 갱신이 서로 다른 파일이면 갱신이 올린 더 큰 유예가
+///   재배치가 읽는 제어 DB 에 없어 그 약속보다 일찍 다시 맡길 수 있다. 둘 다 시작할 때 거부한다.
+fn signed_grace_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
+    if config.signed_reassignment_grace_ms == 0 {
+        return Ok(());
+    }
+    let Some(lease_db) = config.lease_db_path.as_ref() else {
+        return Err(
+            "STARTUP_REFUSED: SIGNED_GRACE_NEEDS_LEASE_DB — --signed-reassignment-grace-ms 는 --lease-db 가 있어야 한다. \
+             저장소가 없으면 유예를 남길 곳이 없어 서명하지 않는다(재배치가 그 값을 볼 수 없다)"
+                .to_string(),
+        );
+    };
+    if let Some(control_db) = config.grant_from_control_db.as_ref() {
+        if control_db != lease_db {
+            return Err(
+                "STARTUP_REFUSED: SIGNED_GRACE_LEASE_DB_MISMATCH — --signed-reassignment-grace-ms 를 켜면 --lease-db 는 \
+                 --grant-from-control-db 와 같은 파일이어야 한다. 갱신이 올린 유예가 재배치가 읽는 제어 DB 에 있어야 한다"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
 fn pool_mode_startup_check(config: &CoordinatorConfig) -> Result<(), String> {
     let refuse = |code: &str, why: &str| Err(format!("STARTUP_REFUSED: {code} — {why}"));
     let Some(control_db) = config.grant_from_control_db.as_ref() else {
@@ -4472,6 +4499,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
     if config.pool_mode {
         pool_mode_startup_check(&config)?;
     }
+    signed_grace_startup_check(&config)?;
     // ★ 2026-09-23 (결함 88 조각 3) — 영속 재전송 방어는 풀 모드에서만(필드 문서 참조).
     // --replay-db 가 Hello 까지 덮는다. 둘을 같이 주면 같은 Hello 를 두 guard 가 기록한다 — 같은 파일이면 정상 Hello 도
     // 두 번째 검사에서 "이미 봤다" 가 된다. 받아 두고 말없이 겹치게 두지 않는다.
@@ -4943,6 +4971,79 @@ mod tests {
         .collect();
         args.extend(extra.iter().map(|s| s.to_string()));
         parse_config_from_args(&args).expect("설정 파싱")
+    }
+
+    /// ★ 2026-10-01 (검수 gr1) — 서명된 재배치 유예를 켜면 저장소가 있어야 하고, 저장된 예약 lane 이면 Lease 와 같은 파일이어야 한다.
+    #[test]
+    fn a_signed_grace_without_a_shared_lease_store_is_refused_at_startup() {
+        let peer = SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+        let peer_hex: String = peer.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let own_seed = "11".repeat(32);
+        let parse = |extra: &[&str]| {
+            let mut args: Vec<String> = [
+                "--listen",
+                "127.0.0.1:0",
+                "--own-seed",
+                own_seed.as_str(),
+                "--peer-pubkey",
+                peer_hex.as_str(),
+                "--coordinator-device-id",
+                "01JCOORDGRACEUNIT0000001",
+                "--agent-device-id",
+                "01JAGENTGRACEUNIT0000001",
+                "--grant-id",
+                "01JGRANTGRACEUNIT0000001",
+                "--attempt-id",
+                "01JATTEMPTGRACEUNIT00001",
+                "--lease-id",
+                "01JLEASEGRACEUNIT0000001",
+                "--job-id",
+                "01JJOBGRACEUNIT000000001",
+                "--i-understand-legacy-mode-is-unsafe",
+                "true",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            args.extend(extra.iter().map(|s| s.to_string()));
+            parse_config_from_args(&args)
+        };
+        let refused = |extra: &[&str], code: &str| match parse(extra) {
+            Err(error) => assert!(error.contains(code), "{extra:?}: {error}"),
+            Ok(_) => panic!("{extra:?}: 받아들였다 — {code} 여야 한다"),
+        };
+        refused(
+            &["--signed-reassignment-grace-ms", "30000"],
+            "SIGNED_GRACE_NEEDS_LEASE_DB",
+        );
+        refused(
+            &[
+                "--signed-reassignment-grace-ms",
+                "30000",
+                "--lease-db",
+                "leases.sqlite3",
+                "--grant-from-control-db",
+                "control.sqlite3",
+                "--submitter-keyring",
+                "submitters.keyring",
+                "--stored-grant-job-id",
+                "01JJOBGRACEUNIT000000001",
+                "--stored-grant-attempt-id",
+                "01JATTEMPTGRACEUNIT00001",
+                "--stored-grant-lease-id",
+                "01JLEASEGRACEUNIT0000001",
+            ],
+            "SIGNED_GRACE_LEASE_DB_MISMATCH",
+        );
+        // 대조 — 저장소가 있으면(갈라진 파일이 없으면) 받는다. 꺼져 있으면 저장소 없이도 받는다(지금과 같다)
+        assert!(parse(&[
+            "--signed-reassignment-grace-ms",
+            "30000",
+            "--lease-db",
+            "leases.sqlite3"
+        ])
+        .is_ok());
+        assert!(parse(&["--signed-reassignment-grace-ms", "0"]).is_ok());
     }
 
     /// 결함 233 (재검수 78) — ACK 를 적지 않은 결과(대체된 시도 · 시계가 뒤 · 이미 끝난 시도)에는 수신 확인을 보내지 않는다.
