@@ -100,6 +100,11 @@ pub struct ConnectionWatch {
     pub last_renew_ok_unix_ms: u64,
     /// 이 시각이 지나면 스스로 멈춘다(끊김 시한 = Lease 만료 − 여유). 갱신에 성공할 때마다 뒤로 간다.
     pub self_stop_at_unix_ms: u64,
+    /// ★ 2026-10-01 (판단표 ④) — "곧 끝나는 작업" 이 끊김 시한을 넘겨 계속 돌 수 있는 마지막 시각 H(= 끊김 시한 + 서명된 재배치 유예).
+    ///   유예가 없거나 작업 누적 상한에 닿은 Lease 면 끊김 시한과 같다(넘기지 않는다). `near_finish_stop_at`.
+    pub near_finish_stop_at_unix_ms: u64,
+    /// 지금 "곧 끝남" 으로 끊김 시한을 넘겨 계속 돌고 있다면 그 완료 예상 상한(밀리초). 화면 · 기록용.
+    pub near_finish_expected_by_unix_ms: Option<u64>,
     /// 마지막 갱신 시도가 실패했다(연결 · 전송 실패 · 결과를 못 받음).
     pub disconnected: bool,
     /// Coordinator 가 갱신을 거부했다(대체 · 폐기 · 만료) — 다른 노드로 넘어갔다. 소유자 "계속" 도 무시하고 멈춘다.
@@ -135,6 +140,74 @@ pub fn disconnect_self_stop_at(
         .min(lease_expires_at_unix_ms);
     let window = base.saturating_sub(request_sent_at_unix_ms);
     base.saturating_sub(margin_ms.min(window / 2))
+}
+
+/// ★ 2026-10-01 (판단표 ④ · signing.md §6.8) — "곧 끝나는 작업" 의 마지막 시각 H = 끊김 시한 + 서명된 재배치 유예.
+///
+/// Coordinator 는 만료 + 유예가 지나야 다른 노드에 맡기고(그 유예를 서명해 알렸다), 끊김 시한은 만료보다 앞이므로 H 도 재배치보다 앞이다.
+/// 유예가 0 이거나, 이 Lease 가 작업 누적 상한(발급 + 누적 상한)에 닿았으면 끊김 시한을 그대로 돌려준다 — 누적 상한을 넘겨 돌지 않는다
+/// (미리 알린 끊김 검수 an2 와 같은 규칙). 순수 함수다.
+pub fn near_finish_stop_at(
+    lease_issued_at_unix_ms: u64,
+    lease_expires_at_unix_ms: u64,
+    request_sent_at_unix_ms: u64,
+    margin_ms: u64,
+    reassignment_grace_ms: u64,
+    max_total_duration_seconds: u32,
+) -> u64 {
+    let self_stop = disconnect_self_stop_at(
+        lease_issued_at_unix_ms,
+        lease_expires_at_unix_ms,
+        request_sent_at_unix_ms,
+        margin_ms,
+    );
+    let max_end = lease_issued_at_unix_ms
+        .saturating_add(u64::from(max_total_duration_seconds).saturating_mul(1_000));
+    if reassignment_grace_ms == 0 || lease_expires_at_unix_ms >= max_end {
+        return self_stop;
+    }
+    self_stop.saturating_add(reassignment_grace_ms)
+}
+
+/// 완료 예상을 늘려 잡는 배수(백만분율). 계획서 배수 표의 "제출자 선언 · 잘못 끊을 확률 1%"(σ_ln 0.34 · z 2.326 → 2.21배)다 —
+/// **실측 전 가설**이다(`docs/plans/2026-09-30_1239_끝을_못본_작업_자동정리_합의.md`). 진행해도 줄이지 않는다(보수).
+pub const NEAR_FINISH_MULTIPLIER_PPM: u64 = 2_210_000;
+
+/// 진행률이 이보다 낮으면(백만분율) 완료를 예상하지 않는다 — 초반의 속도로 끝을 내다보지 않는다(계획서 "최소 진행률 5%" · 가설).
+pub const NEAR_FINISH_MIN_PROGRESS_PPM: u64 = 50_000;
+
+/// 진행 보고가 이보다 오래됐으면(밀리초) 믿지 않는다 — 멈춘 작업의 옛 보고로 계속 돌지 않게(가설).
+pub const NEAR_FINISH_PROGRESS_FRESH_MS: u64 = 30_000;
+
+/// 작업 자기보고 진행으로 **완료 예상 상한**을 낸다(밀리초 시각). 판정할 근거가 없으면 `None` — 그때는 끊김 시한대로 멈춘다.
+///
+/// ```text
+/// 근거 있음   전체 단계(total_steps)를 적었고 · 진행률 ≥ 5%
+/// 남은 시간   max(지금까지 걸린 시간 × 남은 단계 / 한 단계, 작업이 적은 ETA)
+/// 상한        지금 + 남은 시간 × 2.21
+/// ```
+/// ★ 작업이 위조할 수 있는 값이다(WORKER_REPORTED). 위조해도 H 를 넘지 못하고 부작용 없는 작업에만 쓴다 — 소유자의 GPU 를 H 까지
+///   더 쥐는 것이 최악이다. 정수만 쓴다(CLAUDE.md §1 — 부동소수점 금지).
+pub fn near_finish_expected_by(
+    progress: &crate::progress::WorkloadProgress,
+    started_at_unix_ms: u64,
+    now_unix_ms: u64,
+) -> Option<u64> {
+    let total = progress.total_steps?;
+    let current = progress.current_step;
+    if total == 0 || current == 0 || current > total {
+        return None;
+    }
+    let progress_ppm = (u128::from(current) * 1_000_000 / u128::from(total)) as u64;
+    if progress_ppm < NEAR_FINISH_MIN_PROGRESS_PPM {
+        return None;
+    }
+    let elapsed = now_unix_ms.saturating_sub(started_at_unix_ms);
+    let by_rate = u128::from(elapsed) * u128::from(total - current) / u128::from(current);
+    let by_eta = u128::from(progress.eta_seconds.unwrap_or(0)) * 1_000;
+    let remaining = by_rate.max(by_eta);
+    let padded = remaining * u128::from(NEAR_FINISH_MULTIPLIER_PPM) / 1_000_000;
+    Some(now_unix_ms.saturating_add(u64::try_from(padded).unwrap_or(u64::MAX)))
 }
 
 /// 지금 멈추면 무엇을 잃는가.
@@ -379,6 +452,7 @@ impl OwnerPanelState {
         &self,
         attempt_id: &str,
         self_stop_at_unix_ms: u64,
+        near_finish_stop_at_unix_ms: u64,
         keep_running_allowed: bool,
         now_unix_ms: u64,
     ) {
@@ -387,6 +461,8 @@ impl OwnerPanelState {
             ConnectionWatch {
                 last_renew_ok_unix_ms: now_unix_ms,
                 self_stop_at_unix_ms,
+                near_finish_stop_at_unix_ms: near_finish_stop_at_unix_ms.max(self_stop_at_unix_ms),
+                near_finish_expected_by_unix_ms: None,
                 disconnected: false,
                 refused: false,
                 keep_running_allowed,
@@ -398,12 +474,42 @@ impl OwnerPanelState {
     }
 
     /// 갱신 성공 — 연결됨 · 끊김 시한을 새 Lease 로 미룬다.
-    pub fn renew_succeeded(&self, attempt_id: &str, self_stop_at_unix_ms: u64, now_unix_ms: u64) {
+    pub fn renew_succeeded(
+        &self,
+        attempt_id: &str,
+        self_stop_at_unix_ms: u64,
+        near_finish_stop_at_unix_ms: u64,
+        now_unix_ms: u64,
+    ) {
         if let Some(watch) = self.connections().get_mut(attempt_id) {
             watch.last_renew_ok_unix_ms = now_unix_ms;
             watch.self_stop_at_unix_ms = self_stop_at_unix_ms;
+            watch.near_finish_stop_at_unix_ms =
+                near_finish_stop_at_unix_ms.max(self_stop_at_unix_ms);
+            watch.near_finish_expected_by_unix_ms = None;
             watch.disconnected = false;
         }
+    }
+
+    /// 지금 "곧 끝남" 으로 끊김 시한을 넘겨 계속 돌고 있으면 `(H, 완료 예상 상한)`.
+    pub fn near_finish_hold(&self, attempt_id: &str) -> Option<(u64, u64)> {
+        let connections = self.connections();
+        let watch = connections.get(attempt_id)?;
+        watch
+            .near_finish_expected_by_unix_ms
+            .map(|expected| (watch.near_finish_stop_at_unix_ms, expected))
+    }
+
+    /// 이 작업의 완료 예상 상한 — 최근(`NEAR_FINISH_PROGRESS_FRESH_MS`) 형식 오류 없는 진행 보고가 있을 때만.
+    fn near_finish_estimate(&self, attempt_id: &str, now_unix_ms: u64) -> Option<u64> {
+        let started_at = self.lock().get(attempt_id)?.started_at_unix_ms;
+        let view = self.progress_of(attempt_id)?;
+        if view.error.is_some()
+            || now_unix_ms.saturating_sub(view.last_read_at_unix_ms) > NEAR_FINISH_PROGRESS_FRESH_MS
+        {
+            return None;
+        }
+        near_finish_expected_by(view.last.as_ref()?, started_at, now_unix_ms)
     }
 
     /// 갱신 실패(연결 · 결과) — 끊김으로 표시한다. 시한은 그대로(마지막 성공한 Lease 의 것).
@@ -449,12 +555,24 @@ impl OwnerPanelState {
         attempt_id: &str,
         now_unix_ms: u64,
     ) -> Option<Result<(), String>> {
+        // ★ 2026-10-01 (판단표 ④) — 완료 예상은 **잠금 밖에서** 미리 낸다(목록 · 진행 잠금을 감시 잠금 안에서 잡지 않는다).
+        let expected = self.near_finish_estimate(attempt_id, now_unix_ms);
         // 결정과 "멈추는 중" 표시를 **한 잠금 안에서** 한다 — 그 뒤로 "계속" 은 거부된다(`keep_running`).
         let due = {
             let mut connections = self.connections();
             let watch = connections.get_mut(attempt_id)?;
+            // ④ 곧 끝남 — 부작용 없는 작업(소유자 "계속" 을 받는 그 등급)이고 · 다른 노드로 넘어가지 않았고 · 소유자가 고르지 않았고 ·
+            //   H 전이고 · 완료 예상 상한이 H 보다 앞이면 끊김 시한을 넘겨 H 까지 둔다. H 가 되면 아래에서 멈춘다.
+            let hold = watch.keep_running_allowed
+                && !watch.refused
+                && watch.choice == OwnerChoice::Auto
+                && now_unix_ms >= watch.self_stop_at_unix_ms
+                && now_unix_ms < watch.near_finish_stop_at_unix_ms
+                && expected.is_some_and(|by| by < watch.near_finish_stop_at_unix_ms);
+            watch.near_finish_expected_by_unix_ms = if hold { expected } else { None };
             let due = !watch.self_stopped
                 && !watch.stopping
+                && !hold
                 && now_unix_ms >= watch.self_stop_at_unix_ms
                 && (watch.refused || watch.choice == OwnerChoice::Auto);
             if due {
@@ -1104,14 +1222,24 @@ fn render_workloads_json(
                 None => "null".to_string(),
                 Some(watch) => format!(
                     "{{\"disconnected\":{},\"refused\":{},\"since_last_ok_ms\":{},\"ms_to_self_stop\":{},\
-                     \"keep_running_allowed\":{},\"keep_running\":{},\"self_stopped\":{}}}",
+                     \"keep_running_allowed\":{},\"keep_running\":{},\"self_stopped\":{},\
+                     \"near_finish\":{}}}",
                     watch.disconnected,
                     watch.refused,
                     now_unix_ms.saturating_sub(watch.last_renew_ok_unix_ms),
                     watch.self_stop_at_unix_ms.saturating_sub(now_unix_ms),
                     watch.keep_running_allowed,
                     watch.choice == OwnerChoice::KeepRunning,
-                    watch.self_stopped
+                    watch.self_stopped,
+                    // ★ 2026-10-01 (판단표 ④) — 곧 끝남으로 끊김 시한을 넘겨 계속 도는 중이면 남은 시간들. 근거는 작업 자기보고다.
+                    match watch.near_finish_expected_by_unix_ms {
+                        Some(expected) => format!(
+                            "{{\"ms_to_hard_stop\":{},\"ms_to_expected_done\":{},\"provenance\":\"WORKER_REPORTED\"}}",
+                            watch.near_finish_stop_at_unix_ms.saturating_sub(now_unix_ms),
+                            expected.saturating_sub(now_unix_ms)
+                        ),
+                        None => "null".to_string(),
+                    }
                 ),
             };
             format!(
@@ -1346,6 +1474,166 @@ mod tests {
         assert_eq!(disconnect_self_stop_at(1_000, 5_000, 6_000, 10_000), 5_000);
     }
 
+    /// ★ 2026-10-01 (판단표 ④) — 곧 끝남의 마지막 시각 H: 유예가 없으면 끊김 시한 그대로 · 있으면 + 유예 · 누적 상한에 닿은 Lease 면 넘기지 않는다.
+    #[test]
+    fn the_near_finish_limit_adds_only_a_signed_grace_and_never_past_the_total_cap() {
+        let s = disconnect_self_stop_at(1_000, 61_000, 1_500, 10_000);
+        assert_eq!(
+            near_finish_stop_at(1_000, 61_000, 1_500, 10_000, 0, 86_400),
+            s
+        );
+        assert_eq!(
+            near_finish_stop_at(1_000, 61_000, 1_500, 10_000, 30_000, 86_400),
+            s + 30_000
+        );
+        // 발급 1_000 + 누적 상한 60초 = 61_000 = 만료 → 마지막 Lease 다. 유예가 있어도 넘기지 않는다
+        assert_eq!(
+            near_finish_stop_at(1_000, 61_000, 1_500, 10_000, 30_000, 60),
+            s
+        );
+    }
+
+    /// ★ 2026-10-01 (판단표 ④) — 완료 예상 상한: 전체 단계 · 5% 이상일 때만, 속도와 ETA 중 큰 쪽 × 2.21.
+    #[test]
+    fn the_completion_estimate_needs_a_total_and_five_percent_and_takes_the_later_of_rate_and_eta()
+    {
+        let p = |current: u64, total: Option<u64>, eta: Option<u64>| {
+            crate::progress::WorkloadProgress {
+                current_step: current,
+                total_steps: total,
+                eta_seconds: eta,
+                last_committed_step: None,
+            }
+        };
+        assert_eq!(
+            near_finish_expected_by(&p(50, None, Some(1)), 0, 10_000),
+            None,
+            "전체를 모르는데 예상했다"
+        );
+        assert_eq!(
+            near_finish_expected_by(&p(4, Some(100), None), 0, 10_000),
+            None,
+            "5% 미만인데 예상했다"
+        );
+        assert_eq!(
+            near_finish_expected_by(&p(0, Some(100), None), 0, 10_000),
+            None
+        );
+        assert_eq!(
+            near_finish_expected_by(&p(101, Some(100), None), 0, 10_000),
+            None
+        );
+        // 10초에 절반 → 남은 10초 × 2.21 = 22.1초
+        assert_eq!(
+            near_finish_expected_by(&p(50, Some(100), None), 0, 10_000),
+            Some(32_100)
+        );
+        // 작업이 더 긴 ETA(60초)를 적었으면 그쪽 × 2.21
+        assert_eq!(
+            near_finish_expected_by(&p(50, Some(100), Some(60)), 0, 10_000),
+            Some(142_600)
+        );
+        // 짧은 ETA 로 속도 추정을 줄이지 못한다
+        assert_eq!(
+            near_finish_expected_by(&p(50, Some(100), Some(1)), 0, 10_000),
+            Some(32_100)
+        );
+        // 끝까지 왔으면 지금
+        assert_eq!(
+            near_finish_expected_by(&p(100, Some(100), None), 0, 10_000),
+            Some(10_000)
+        );
+    }
+
+    /// ★ 2026-10-01 (판단표 ④) — 끊김 시한이 지나도 곧 끝나는 부작용 없는 작업은 H 까지 둔다. 부작용 있는 작업 · 오래된 보고 · 늦을 예상 ·
+    ///   거부 · H 도달이면 멈추려 한다.
+    #[test]
+    fn a_nearly_finished_safe_job_is_held_until_the_signed_limit_and_no_further() {
+        let state = OwnerPanelState::new();
+        for id in ["safe", "risky", "slow", "stale"] {
+            let mut w = workload(0, None);
+            w.attempt_id = id.into();
+            state.register(w);
+        }
+        // 끊김 시한 S = 10_000, 곧 끝남 마지막 시각 H = 40_000(유예 30초)
+        state.watch_connection("safe", 10_000, 40_000, true, 0);
+        state.watch_connection("risky", 10_000, 40_000, false, 0);
+        state.watch_connection("slow", 10_000, 40_000, true, 0);
+        state.watch_connection("stale", 10_000, 40_000, true, 0);
+        let progress = |current: u64| crate::progress::WorkloadProgress {
+            current_step: current,
+            total_steps: Some(100),
+            eta_seconds: None,
+            last_committed_step: None,
+        };
+        // 12초에 90% → 남은 1.333초 × 2.21 = 2.945초 → 14.945초에 끝날 것(H 40초 앞)
+        for id in ["safe", "risky"] {
+            state.record_progress(id, Ok(progress(90)), 12_000);
+        }
+        // 12초에 10% → 남은 108초 × 2.21 → H 뒤
+        state.record_progress("slow", Ok(progress(10)), 12_000);
+        // 보고가 오래됐다(12초 시점에서 30초 넘게 전) — 0 에 읽은 보고
+        state.record_progress("stale", Ok(progress(90)), 0);
+
+        assert!(
+            state.self_stop_if_due("safe", 12_000).is_none(),
+            "곧 끝나는 부작용 없는 작업을 끊김 시한에 멈췄다"
+        );
+        assert_eq!(state.near_finish_hold("safe"), Some((40_000, 14_945)));
+        assert!(
+            state.self_stop_if_due("risky", 12_000).is_some(),
+            "부작용 있는 작업을 곧 끝남으로 넘겼다"
+        );
+        assert!(
+            state.self_stop_if_due("slow", 12_000).is_some(),
+            "H 뒤에 끝날 작업을 넘겼다"
+        );
+        assert!(
+            state.self_stop_if_due("stale", 31_000).is_some(),
+            "오래된(31초 전) 진행 보고로 넘겼다"
+        );
+        // 화면에 남은 시간과 출처가 보인다
+        let json = render_workloads_json(&state.snapshot(12_000), 12_000, "t", None);
+        assert!(
+            json.contains("\"near_finish\":{\"ms_to_hard_stop\":28000"),
+            "{json}"
+        );
+        assert!(
+            json.contains("\"provenance\":\"WORKER_REPORTED\""),
+            "{json}"
+        );
+        // H 에 닿으면(진행 보고가 여전히 곧 끝남이어도) 멈추려 한다
+        state.record_progress("safe", Ok(progress(99)), 40_000);
+        assert!(
+            state.self_stop_if_due("safe", 40_000).is_some(),
+            "H 를 넘겨 돌았다"
+        );
+        assert_eq!(state.near_finish_hold("safe"), None);
+    }
+
+    /// ★ 2026-10-01 (판단표 ④) — 다른 노드로 넘어갔으면(거부) 곧 끝남이어도 멈추려 한다.
+    #[test]
+    fn a_refused_job_is_not_held_for_near_finish() {
+        let state = OwnerPanelState::new();
+        let mut w = workload(0, None);
+        w.attempt_id = "a".into();
+        state.register(w);
+        state.watch_connection("a", 10_000, 40_000, true, 0);
+        state.record_progress(
+            "a",
+            Ok(crate::progress::WorkloadProgress {
+                current_step: 90,
+                total_steps: Some(100),
+                eta_seconds: None,
+                last_committed_step: None,
+            }),
+            12_000,
+        );
+        state.renew_refused("a", 12_000);
+        assert!(state.self_stop_if_due("a", 12_000).is_some());
+        assert_eq!(state.near_finish_hold("a"), None);
+    }
+
     /// 2026-09-30 — 끊김 시한이 지나면 스스로 멈춘다 · 갱신에 성공하면 시한이 미뤄진다 · 소유자 "계속" 은 부작용 없는 작업만 · 거부되면 "계속" 도 무시.
     #[test]
     fn the_watch_stops_on_time_honours_keep_running_only_for_safe_work_and_obeys_refusal() {
@@ -1356,12 +1644,12 @@ mod tests {
         risky.attempt_id = "risky".into();
         state.register(safe);
         state.register(risky);
-        state.watch_connection("safe", 10_000, true, 1_000);
-        state.watch_connection("risky", 10_000, false, 1_000);
+        state.watch_connection("safe", 10_000, 10_000, true, 1_000);
+        state.watch_connection("risky", 10_000, 10_000, false, 1_000);
         // 시한 전에는 멈추지 않는다
         assert!(state.self_stop_if_due("safe", 9_999).is_none());
         // 갱신 성공 → 시한이 뒤로
-        state.renew_succeeded("safe", 20_000, 9_000);
+        state.renew_succeeded("safe", 20_000, 20_000, 9_000);
         assert!(state.self_stop_if_due("safe", 15_000).is_none());
         // 끊김 표시
         state.renew_failed("safe");
@@ -1405,7 +1693,7 @@ mod tests {
         let mut safe = workload(1_000, None);
         safe.attempt_id = "safe".into();
         state.register(safe);
-        state.watch_connection("safe", 10_000, true, 1_000);
+        state.watch_connection("safe", 10_000, 10_000, true, 1_000);
         // 시한이 지나 멈추기로 정했다 — 시험용 손잡이는 실패하므로 "멈추는 중" 이 풀린다
         assert!(matches!(
             state.self_stop_if_due("safe", 10_000),
@@ -1447,7 +1735,7 @@ mod tests {
             "감시 없이 다시 시작했다"
         );
         assert!(state.snapshot(2_000)[0].pause_unsupported_reason.is_some());
-        state.watch_connection("a", 10_000, true, 1_000);
+        state.watch_connection("a", 10_000, 10_000, true, 1_000);
         assert!(state.pause("a").is_err(), "시험용 손잡이는 얼리지 못한다");
         assert!(state.pause("없는").is_err());
         let snapshot = state.snapshot(2_000);
@@ -1466,7 +1754,7 @@ mod tests {
         state.renew_failed("a");
         assert!(state.resume("a", || 5_000).is_err());
         // 다시 이어졌지만 시한이 지났으면 거부
-        state.renew_succeeded("a", 10_000, 6_000);
+        state.renew_succeeded("a", 10_000, 10_000, 6_000);
         assert!(state.resume("a", || 5_000).is_ok());
         assert!(state.resume("a", || 10_000).is_err());
         // ★ 검수 pz2 — 두 판정은 통과했는데 푼 **직후** 판정이 시한 뒤면 되돌린다(다시 얼리기 → 시험용 손잡이는 못 얼리므로 멈추기 → 그것도 실패).

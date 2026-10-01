@@ -112,6 +112,11 @@
       } else if (c.refused) {
         conn.className = "conn-lost";
         conn.textContent = "중개 서버가 다른 노드로 넘겼다 — 곧 멈춘다";
+      } else if (c.disconnected && c.near_finish) {
+        // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업은 재배치 전까지 계속 돈다. 근거는 작업 자기보고 진행이다.
+        conn.className = "conn-lost";
+        conn.textContent = "끊김 " + fmtDuration(c.since_last_ok_ms) + " — 곧 끝남(작업 자기보고): 약 " + fmtDuration(c.near_finish.ms_to_expected_done)
+          + " 안에 끝날 것으로 보여 계속 돈다. 늦어도 " + fmtDuration(c.near_finish.ms_to_hard_stop) + " 뒤 멈춘다";
       } else if (c.disconnected) {
         conn.className = "conn-lost";
         conn.textContent = c.keep_running

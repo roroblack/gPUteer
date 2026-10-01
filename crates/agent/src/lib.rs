@@ -2581,6 +2581,15 @@ fn start_renew_during_execution(
                 now,
                 margin,
             ),
+            // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업의 마지막 시각(서명된 재배치 유예가 있을 때만 끊김 시한보다 뒤).
+            owner_panel::near_finish_stop_at(
+                held_lease.issued_at_unix_ms,
+                held_lease.expires_at_unix_ms,
+                now,
+                margin,
+                held_lease.reassignment_grace_ms,
+                held_lease.max_total_duration_seconds,
+            ),
             keep_running_allowed,
             now,
         );
@@ -2591,11 +2600,28 @@ fn start_renew_during_execution(
         let panel = panel.clone();
         let attempt_id = attempt_id.clone();
         let mut last_failure: Option<String> = None;
+        let mut holding = false;
         move || {
             if !self_stop_enabled {
                 return;
             }
-            match panel.self_stop_if_due(&attempt_id, SystemClock.now_unix_ms()) {
+            let outcome = panel.self_stop_if_due(&attempt_id, SystemClock.now_unix_ms());
+            // ★ 2026-10-01 (판단표 ④) — "곧 끝남" 으로 끊김 시한을 넘겨 계속 두기 시작할 때 · 그만둘 때 한 번씩 찍는다.
+            match (panel.near_finish_hold(&attempt_id), holding) {
+                (Some((hard_stop_at, expected_by)), false) => {
+                    println!(
+                        "NEAR_FINISH_HOLD attempt_id={attempt_id} expected_done_by_unix_ms={expected_by} hard_stop_at_unix_ms={hard_stop_at} \
+                         provenance=WORKER_REPORTED — 끊김 시한이 지났지만 곧 끝날 것으로 보여 재배치 전까지 계속 둔다"
+                    );
+                    holding = true;
+                }
+                (None, true) => {
+                    println!("NEAR_FINISH_HOLD_ENDED attempt_id={attempt_id}");
+                    holding = false;
+                }
+                _ => {}
+            }
+            match outcome {
                 Some(Ok(())) => println!(
                     "DISCONNECT_SELF_STOP attempt_id={attempt_id} — Coordinator 와 끊긴 채 끊김 시한이 지나 작업을 멈췄다(신뢰망 규범 2026-09-30)"
                 ),
@@ -2740,6 +2766,14 @@ fn start_renew_during_execution(
                                 renewed.expires_at_unix_ms,
                                 sent_at,
                                 margin,
+                            ),
+                            owner_panel::near_finish_stop_at(
+                                renewed.issued_at_unix_ms,
+                                renewed.expires_at_unix_ms,
+                                sent_at,
+                                margin,
+                                renewed.reassignment_grace_ms,
+                                renewed.max_total_duration_seconds,
                             ),
                             SystemClock.now_unix_ms(),
                         );

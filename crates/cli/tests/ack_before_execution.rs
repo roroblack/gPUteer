@@ -1700,3 +1700,109 @@ fn a_signed_reassignment_grace_reaches_the_agent_and_the_stored_lease() {
         "저장된 Lease 행에 서명한 유예가 없다\n{all}"
     );
 }
+
+/// 곧 끝남 시험용 — PURE 작업이 시작하자마자 "90/100" 을 보고하고 약 14초 돈다. Coordinator 는 연결 하나 뒤 끝나(끊김) 끊김 시한은 약 9초다.
+fn run_nearly_finished_pure_job(signed_grace_ms: &str) -> (Finished, Finished) {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let path = dir.path().join("job.manifest");
+    let script = "(echo current_step=90& echo total_steps=100)>%GPUTEER_PROGRESS_FILE%& ping -n 15 127.0.0.1";
+    let out = Command::new(cli_bin())
+        .args([
+            "submit",
+            "--job-id",
+            JOB,
+            "--entrypoint",
+            &cmd_exe(),
+            "--args",
+            &format!("/c,{script}"),
+            "--side-effect-class",
+            "PURE",
+            "--submitter-device-id",
+            SUBMITTER,
+            "--submitter-seed",
+            &seed_hex(SUBMITTER_SEED),
+            "--issued-at-unix-ms",
+            &now_unix_ms().to_string(),
+            "--out",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("gputeer submit");
+    assert!(out.status.success(), "submit 실패: {out:?}");
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &path,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--lease-ttl-ms",
+            "12000",
+            "--max-connections",
+            "1",
+            "--signed-reassignment-grace-ms",
+            signed_grace_ms,
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "3000",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(5));
+    (agent, coordinator)
+}
+
+/// ★ 2026-10-01 (판단표 ④ · signing.md §6.8) — 끊긴 채 끊김 시한이 지나도, 곧 끝나는 PURE 작업은 서명된 재배치 유예 안에서 계속 돌아 정상으로
+///   끝난다(곧 끝남 유지 기록 · 스스로 멈춤 없음).
+#[test]
+fn a_nearly_finished_pure_job_runs_past_the_disconnect_deadline_within_the_signed_grace() {
+    let (agent, coordinator) = run_nearly_finished_pure_job("20000");
+    let all = both(&agent, &coordinator);
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    assert!(
+        agent.output().contains("RENEW_SESSION_FAILED"),
+        "전제가 깨졌다 — 갱신이 실패(끊김)하지 않았다\n{all}"
+    );
+    let hold = line_with(&agent, &["NEAR_FINISH_HOLD attempt_id="])
+        .unwrap_or_else(|| panic!("곧 끝남으로 계속 두지 않았다\n{all}"));
+    assert!(hold.contains("provenance=WORKER_REPORTED"), "{hold}");
+    assert!(
+        !agent.output().contains("DISCONNECT_SELF_STOP attempt_id="),
+        "곧 끝나는 작업을 끊김 시한에 멈췄다\n{all}"
+    );
+    let (spawned, spawned_at) = agent
+        .first("WORKLOAD_SPAWNED")
+        .unwrap_or_else(|| panic!("WORKLOAD_SPAWNED 가 없다\n{all}"));
+    let (exited, exited_at) = agent
+        .first("WORKLOAD_EXITED")
+        .unwrap_or_else(|| panic!("WORKLOAD_EXITED 가 없다\n{all}"));
+    assert!(spawned < exited);
+    assert!(
+        exited_at.duration_since(spawned_at) >= Duration::from_secs(12),
+        "약 14초짜리가 끊김 시한(약 9초) 전에 끝났다 — 시한을 넘겨 돌았는지 재지 못했다\n{all}"
+    );
+}
+
+/// ★ 2026-10-01 (판단표 ④) — 대조: 서명된 유예가 없으면 같은 작업도 끊김 시한에 멈춘다(곧 끝남을 판정할 시간이 없다).
+#[test]
+fn without_a_signed_grace_a_nearly_finished_job_still_stops_at_the_disconnect_deadline() {
+    let (agent, coordinator) = run_nearly_finished_pure_job("0");
+    let all = both(&agent, &coordinator);
+    assert!(!agent.killed, "Agent 가 끝나지 않았다\n{all}");
+    assert!(
+        agent.output().contains("DISCONNECT_SELF_STOP attempt_id="),
+        "유예 없이도 끊김 시한을 넘겨 돌았다\n{all}"
+    );
+    assert!(
+        !agent.output().contains("NEAR_FINISH_HOLD attempt_id="),
+        "유예가 없는데 곧 끝남으로 계속 두었다\n{all}"
+    );
+}
