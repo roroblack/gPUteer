@@ -185,7 +185,7 @@ pub fn run(args: &[String]) -> Result<String, String> {
         // ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 폐기와 같은 커밋에 "그 시도는 폐기됐다" 를 **서명해** 남긴다. 서명은 Coordinator 와
         //   **같은 키**(같은 시드 파일 · 같은 보호 등급)로 한다 — 노드는 Coordinator 키로 검증한다. 키 없이는 폐기하지 않는다(기동 거부).
         let key_path = flags.get("--coordinator-key-file").ok_or_else(|| {
-            "TICK_ARGS_REFUSED: FAILOVER_NEEDS_COORDINATOR_KEY — --failover-grace-ms 는 --coordinator-key-file(Coordinator 시드 파일)과              함께 준다. 폐기한 시도에 서명된 통지를 남겨야 옛 노드가 다시 붙었을 때 멈출 수 있다"
+            "TICK_ARGS_REFUSED: FAILOVER_NEEDS_COORDINATOR_KEY — --failover-grace-ms 는 --coordinator-key-file(Coordinator 시드 파일)과 함께 준다. 폐기한 시도에 서명된 통지를 남겨야 옛 노드가 다시 붙었을 때 멈출 수 있다"
                 .to_string()
         })?;
         let notice_signer = gputeer_coordinator::supersede_notice_store::NoticeSigner {
