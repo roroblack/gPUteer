@@ -1276,6 +1276,94 @@ pub(crate) fn requeue_after_node_lost(
     Ok(next)
 }
 
+/// ★ 2026-10-03 04:49 (실행 알림 계약 v18k §3 항목 3 · 계획 조각 4c) — 실행 여부 불명(RUN_UNKNOWN)이던 시도의 **정지가 확인됐을 때** Job 이 갈 곳.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopConfirmedJobEffect {
+    /// `RUNNING · STAGING -> INTERRUPTED(STOP_CONFIRMED_AFTER_UNKNOWN) -> REPLANNING(FAILOVER_STARTED) -> QUEUED(REPLAN_READY)` — 이어갈 체크포인트가 있다.
+    Requeued(StoredJob),
+    /// `RUNNING · STAGING -> INTERRUPTED(STOP_CONFIRMED_AFTER_UNKNOWN) -> FAILED(NO_COMMITTED_CHECKPOINT)` — 없다(D7).
+    FailedNoCheckpoint(StoredJob),
+    /// 그대로 — Job 이 이미 다른 길에 있다(보류만 푼다 · 보류는 조각 6). 아무것도 쓰지 않았다.
+    Unchanged(StoredJob),
+}
+
+/// ★ 2026-10-03 04:49 (계약 v18k §3 항목 3 · §9 새 두 행 · 계획 조각 4c) — 정지 확인 뒤 Job 을 옮긴다. **호출자의 트랜잭션 안에서** 쓰고 커밋은 하지 않는다.
+///
+/// ```text
+/// RUNNING · STAGING   이어갈 지점(resume)이 있으면 큐로 · 없으면 FAILED(NO_COMMITTED_CHECKPOINT)
+///                     ★ STAGING 도 큐로 바로 가지 않는다 — STARTING 에서 온 불명도 "돌았을 수 있다"(D3). 장애 이어받기의
+///                       STAGING_NODE_LOST(큐로 바로)와 다르다
+/// QUEUED · FAILED     그대로 — 장애 이어받기가 먼저 옮겼다(계약 §2 순서 B)
+/// PAUSED              그대로 — 정상 RESUMED 경로로 간다(재개는 새 Lease · 새 시도)
+/// PLANNING            그대로 — 이어받기가 먼저 옮겨 재계획 중이다
+/// COMPLETED           그대로 — 다른 시도가 끝냈다(시도 종결 · 예약 해제는 호출자가 한다)
+/// SUBMITTED           있을 수 없다(시도가 있는데 계획 전) — 손상으로 거부
+/// ```
+/// `resume` 은 호출자가 공유 저장소에서 찾은 **검증된** 마지막 체크포인트다(장애 이어받기와 같은 탐색 — 그 Job 의 체크포인트 전부에서 고른다).
+/// 저장소는 최종 상태만 쓴다 — INTERRUPTED · REPLANNING 은 거쳐 가는 칸이고, 그 경로가 규범 표 안에 있는지만 trigger 까지 대조한다.
+pub fn follow_stop_confirmed(
+    connection: &Connection,
+    job: &StoredJob,
+    resume: Option<Vec<u8>>,
+    worker_clock_hint_unix_ms: u64,
+) -> Result<StopConfirmedJobEffect, JobStoreError> {
+    use gputeer_protocol::job_state::transition_via;
+    let rejected = |rejected: gputeer_protocol::job_state::JobTransitionRejected| {
+        JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        }
+    };
+    match job.state {
+        JobState::Running | JobState::Staging => {}
+        JobState::Queued
+        | JobState::Failed
+        | JobState::Paused
+        | JobState::Planning
+        | JobState::Completed => return Ok(StopConfirmedJobEffect::Unchanged(job.clone())),
+        from => {
+            return Err(JobStoreError::InvalidTransition {
+                from,
+                to: JobState::Interrupted,
+            })
+        }
+    }
+    let interrupted = transition_via(job.state, JobState::Interrupted, "STOP_CONFIRMED_AFTER_UNKNOWN")
+        .map_err(rejected)?;
+    let mut next = job.clone();
+    let requeued = resume.is_some();
+    if requeued {
+        let replanning =
+            transition_via(interrupted, JobState::Replanning, "FAILOVER_STARTED").map_err(rejected)?;
+        next.state =
+            transition_via(replanning, JobState::Queued, "REPLAN_READY").map_err(rejected)?;
+        next.staging_at_unix_ms = None;
+        next.running_at_unix_ms = None;
+        next.requeue_count = job
+            .requeue_count
+            .checked_add(1)
+            .ok_or(JobStoreError::CorruptData(
+                "requeue_count overflow".to_string(),
+            ))?;
+        next.resume_checkpoint = resume;
+    } else {
+        next.state = transition_via(interrupted, JobState::Failed, "NO_COMMITTED_CHECKPOINT")
+            .map_err(rejected)?;
+        next.run_terminal = Some(RunTerminal::NoCommittedCheckpoint);
+        next.worker_reported_finished_at_unix_ms = Some(worker_clock_hint_unix_ms);
+    }
+    next.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &next)?;
+    Ok(if requeued {
+        StopConfirmedJobEffect::Requeued(next)
+    } else {
+        StopConfirmedJobEffect::FailedNoCheckpoint(next)
+    })
+}
+
 /// ★ 2026-09-23 (신뢰망 남은 일 H) — 노드 소유자가 GPU 를 되찾았다: `RUNNING -> PAUSED`(OWNER_PREEMPT).
 ///
 /// 규범 effect "checkpoint 후 정지" — 이어갈 지점은 공유 저장소의 검증된 마지막 체크포인트다(없으면 전에 고른 지점을
@@ -1965,6 +2053,79 @@ mod tests {
         store.submit_accepted(submission, 100).unwrap();
         store.start_planning(&submission.job_id, 200).unwrap();
         store.enqueue(&submission.job_id, "plan-1", 300).unwrap()
+    }
+
+    /// ★ 2026-10-03 04:49 (조각 4c) — 큐에 있던 Job 을 저장소 규칙 그대로 STAGING · RUNNING 으로 올려 둔다(스테이징 · 첫 진행 신호가 하는 일의 결과 모양).
+    fn job_in(store: &mut CoordinatorJobStore, job_id: &str, key: u8, state: JobState) -> StoredJob {
+        let mut job = queued(store, &submission(job_id, key));
+        job.state = JobState::Staging;
+        job.staging_at_unix_ms = Some(400);
+        if state == JobState::Running {
+            job.state = JobState::Running;
+            job.running_at_unix_ms = Some(500);
+        }
+        job.revision += 1;
+        update_job(&store.connection, &job).unwrap();
+        fetch_job(&store.connection, job_id).unwrap().unwrap()
+    }
+
+    /// 계약 §3 항목 3 — RUNNING · STAGING 은 이어갈 지점이 있으면 큐로(되돌아온 횟수 +1 · 지점 저장), 없으면 FAILED(NO_COMMITTED_CHECKPOINT).
+    ///   저장된 행은 다시 읽어도 모양 검사를 통과한다.
+    #[test]
+    fn a_stop_after_unknown_requeues_with_a_checkpoint_and_fails_without_one() {
+        for from in [JobState::Running, JobState::Staging] {
+            let (mut store, _dir) = open_temp();
+            let job = job_in(&mut store, "job-a", 1, from);
+            let effect =
+                follow_stop_confirmed(&store.connection, &job, Some(vec![9, 9]), 700).unwrap();
+            let StopConfirmedJobEffect::Requeued(moved) = effect else {
+                panic!("{from:?} 는 큐로 가야 한다: {effect:?}");
+            };
+            let stored = fetch_job(&store.connection, "job-a").unwrap().unwrap();
+            assert_eq!(stored, moved);
+            assert_eq!(stored.state, JobState::Queued);
+            assert_eq!(stored.requeue_count, job.requeue_count + 1);
+            assert_eq!(stored.resume_checkpoint, Some(vec![9, 9]));
+            assert_eq!(stored.staging_at_unix_ms, None);
+            assert_eq!(stored.running_at_unix_ms, None);
+
+            let job = job_in(&mut store, "job-b", 2, from);
+            let effect = follow_stop_confirmed(&store.connection, &job, None, 700).unwrap();
+            let StopConfirmedJobEffect::FailedNoCheckpoint(moved) = effect else {
+                panic!("{from:?} 는 FAILED 여야 한다: {effect:?}");
+            };
+            let stored = fetch_job(&store.connection, "job-b").unwrap().unwrap();
+            assert_eq!(stored, moved);
+            assert_eq!(stored.state, JobState::Failed);
+            assert_eq!(stored.run_terminal, Some(RunTerminal::NoCommittedCheckpoint));
+            assert_eq!(stored.worker_reported_finished_at_unix_ms, Some(700));
+        }
+    }
+
+    /// 이미 다른 길에 있는 Job(장애 이어받기가 먼저 옮김 · 재개 대기 · 다른 시도가 끝냄)은 건드리지 않는다 — 행도 revision 도 그대로다.
+    #[test]
+    fn a_stop_after_unknown_leaves_a_job_that_already_moved_on_unchanged() {
+        let (mut store, _dir) = open_temp();
+        let job = queued(&mut store, &submission("job-q", 1));
+        let mut shapes = vec![job.clone()];
+        let mut paused = job_in(&mut store, "job-p", 2, JobState::Running);
+        paused.state = JobState::Paused;
+        paused.revision += 1;
+        update_job(&store.connection, &paused).unwrap();
+        shapes.push(fetch_job(&store.connection, "job-p").unwrap().unwrap());
+        for job in shapes {
+            assert_eq!(
+                follow_stop_confirmed(&store.connection, &job, Some(vec![1]), 700).unwrap(),
+                StopConfirmedJobEffect::Unchanged(job.clone())
+            );
+            assert_eq!(fetch_job(&store.connection, &job.job_id).unwrap().unwrap(), job);
+        }
+        let mut submitted = job;
+        submitted.state = JobState::Submitted;
+        assert!(matches!(
+            follow_stop_confirmed(&store.connection, &submitted, None, 700),
+            Err(JobStoreError::InvalidTransition { .. })
+        ));
     }
 
     #[test]

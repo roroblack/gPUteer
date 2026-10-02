@@ -116,9 +116,12 @@ pub fn transition_triggers(from: JobState, to: JobState) -> &'static [&'static s
         (Staging, Running) => &["STAGING_COMPLETE"],
         (Staging, Failed) => &["STAGING_FAILED"],
         (Staging, Queued) => &["STAGING_NODE_LOST"],
+        // ★ 2026-10-03 04:49 (실행 알림 계약 v18k §3 · §9 · 계획 조각 4c) — 실행 여부 불명이던 시도의 정지가 확인됐다.
+        //   STARTING 에서 온 불명도 "돌았을 수 있다"(D3) — 그래서 STAGING 도 큐로 바로 가지 않고 INTERRUPTED 를 거친다.
+        (Staging, Interrupted) => &["STOP_CONFIRMED_AFTER_UNKNOWN"],
         (Staging, Cancelled) => &["USER_CANCELLED"],
         (Running, Completed) => &["ATTEMPT_COMPLETED"],
-        (Running, Interrupted) => &["NODE_LOST"],
+        (Running, Interrupted) => &["NODE_LOST", "STOP_CONFIRMED_AFTER_UNKNOWN"],
         (Running, Failed) => &["UNRECOVERABLE_ERROR"],
         (Running, Paused) => &["PARTITION_PAUSE", "OWNER_PREEMPT", "USER_PAUSED"],
         (Running, Reconciling) => &["DUPLICATE_COMPLETION"],

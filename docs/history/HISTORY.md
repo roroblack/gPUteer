@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-10-03 05:01 — 실행 알림 계획 조각 4c — 규범 새 두 행(STOP_CONFIRMED_AFTER_UNKNOWN) · 정지 확인 뒤 Job 이 갈 곳(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4c) · 계약 v18k §3 항목 3 · §9 새 두 행
+- 스트림: Protocol · Coordinator
+- 수행: `docs/protocol/state-machines.md` §2 에 `STAGING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN` · `RUNNING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN`
+  두 행, `job_state.rs` 표에 같은 trigger. `job_store.rs` 새 `follow_stop_confirmed`(호출자 트랜잭션) — RUNNING · STAGING 은 이어갈 지점이 있으면
+  INTERRUPTED → REPLANNING → QUEUED(되돌아온 횟수 +1 · 지점 저장), 없으면 INTERRUPTED → FAILED(NO_COMMITTED_CHECKPOINT). 경로는 trigger 까지 표와 대조한다.
+  ★ STAGING 도 큐로 바로 가지 않는다 — 실행 여부 불명은 "돌았을 수 있다"(D3)라 장애 이어받기의 STAGING_NODE_LOST 와 다르다.
+  QUEUED · FAILED · PAUSED · PLANNING · COMPLETED 는 그대로(아무것도 쓰지 않음), SUBMITTED 는 손상으로 거부. 보류 해제는 조각 6, 부르는 곳은 4d
+- 검증: 새 시험 2(두 상태 × 지점 있음/없음 · 저장 행을 다시 읽어 모양 검사 통과 · 이미 옮겨간 Job 그대로) · 규범 표 대조 14 통과. 문서의 새 행 하나를 지우면
+  대조 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1` 1598 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 04:48 — 실행 알림 계획 조각 4b — 운영자 해제를 같은 해제 기록으로 · 옛 운영자 기록 이관 · 4a 보조 검수 반영(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4a → 4b) · 계약 v18k §3 b16 ③ · b15 ①
