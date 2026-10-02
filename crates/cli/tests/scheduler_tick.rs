@@ -1029,3 +1029,53 @@ fn a_job_with_a_corrupt_manifest_body_is_skipped_not_fatal() {
     );
     assert_eq!(job_state(&db, JOB_B), Some(JobState::Staging));
 }
+
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 장애 판정을 켜면 Coordinator 서명 키가 필수다. 없거나 읽을 수 없으면 큐를 건드리기 **전에** 거부한다 —
+///   서명 통지 없이 시도를 폐기하지 않는다. 키를 주면 같은 인자로 평소대로 돈다.
+#[test]
+fn failover_without_the_coordinator_key_is_refused() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (keyring, db) = prepared(dir.path(), 1);
+
+    let (ok, output) = tick(&keyring, &db, &["--failover-grace-ms", "30000"]);
+    assert!(!ok, "키 없이 장애 판정을 켰다: {output}");
+    assert!(
+        refused_with(&output, "TICK_ARGS_REFUSED: FAILOVER_NEEDS_COORDINATOR_KEY"),
+        "이유를 안 말한다: {output}"
+    );
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+
+    let bad_key = dir.path().join("bad.seed");
+    std::fs::write(&bad_key, "not-a-key").unwrap();
+    let (ok, output) = tick(
+        &keyring,
+        &db,
+        &[
+            "--failover-grace-ms",
+            "30000",
+            "--coordinator-key-file",
+            bad_key.to_str().unwrap(),
+        ],
+    );
+    assert!(!ok, "읽을 수 없는 키로 장애 판정을 켰다: {output}");
+    assert!(
+        refused_with(&output, "TICK_ARGS_REFUSED: COORDINATOR_KEY_UNREADABLE"),
+        "이유를 안 말한다: {output}"
+    );
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+
+    let key = dir.path().join("coordinator.seed");
+    std::fs::write(&key, "11".repeat(32)).unwrap();
+    let (ok, output) = tick(
+        &keyring,
+        &db,
+        &[
+            "--failover-grace-ms",
+            "30000",
+            "--coordinator-key-file",
+            key.to_str().unwrap(),
+        ],
+    );
+    assert!(ok, "키를 줬는데 거부했다: {output}");
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Staging));
+}

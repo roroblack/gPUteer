@@ -61,6 +61,7 @@ pub mod orchestrate;
 pub mod replica_ack_store;
 pub mod reservation_release;
 pub mod staging_store;
+pub mod supersede_notice_store;
 use lease_store::{
     CoordinatorLeaseStore, LeaseStoreError, RenewDecision, ResumeDecision, ResumeRequestIdentity,
     StoredLease,

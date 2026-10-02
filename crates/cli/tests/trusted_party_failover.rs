@@ -429,6 +429,9 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
     // 스케줄러가 A 에게만 줄 수 있게, A 가 먼저 소식을 남기도록 한 번 붙였다 떨어진다(일이 아직 없다).
     let (_, _) = run_cli(&a_args.iter().map(String::as_str).collect::<Vec<_>>());
 
+    let coordinator_seed_file = pool.dir.path().join("coordinator.seed");
+    std::fs::write(&coordinator_seed_file, COORD_SEED).expect("Coordinator 시드 파일");
+    let coordinator_seed_file = coordinator_seed_file.to_str().unwrap().to_string();
     // ── 스케줄러 루프 — 장애 판정 포함. Lease 는 짧게(3초), 실행 중 갱신이 늘린다.
     let scheduler_args: Vec<String> = [
         "scheduler-loop",
@@ -464,6 +467,9 @@ fn a_killed_node_is_taken_over_from_its_last_checkpoint_on_another_node() {
         "60000",
         "--failover-grace-ms",
         "500",
+        // ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 폐기한 시도에 서명 통지를 남기는 Coordinator 키(같은 시드).
+        "--coordinator-key-file",
+        &coordinator_seed_file,
         "--shared-checkpoint-root",
         pool.shared.to_str().unwrap(),
         "--pool-agents",

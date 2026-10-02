@@ -35,6 +35,8 @@
 //! ```text
 //! 옛 노드 멈추기      못 한다. 그 노드가 살아 있으면 계속 돌 수 있다 — 옛 Lease 를 되돌리는 같은 커밋에서 **폐기**해
 //!                     그 뒤의 갱신을 거부할 뿐이다(§0.4 — 억제이지 방지가 아니다). PURE 작업을 전제한다
+//!                     ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 같은 커밋에 **서명된 "그 시도는 폐기됐다" 통지**를 영속한다. 갱신을 그만둔
+//!                       노드도 다시 붙으면 우편함에서 받아 멈춘다(배달 · 처리는 다음 조각). 서명 키 없이는 폐기하지 않는다(인자가 필수다)
 //!                     ★ 결함 227(검수 76) — 전에는 "새 시도의 더 큰 fence 가 옛 Lease 갱신을 막는다" 고 적었는데, 옛 Lease 갱신은
 //!                       자기 행의 fence 만 봐서 막히지 않았다. 판정 직전에 시작된 갱신이 옛 Lease 를 되살릴 수 있었다
 //! 옛 예약 풀기        풀지 않는다. 만료 **표시**만 한다(§A1 4a). 그 노드는 운영자가 멈췄음을 확인하고 풀 때까지 새 일을
@@ -115,6 +117,7 @@ impl FailoverOutcome {
 pub fn failover_lost_attempts(
     control_db: &Path,
     policy: &FailoverPolicy,
+    notice_signer: &crate::supersede_notice_store::NoticeSigner,
     now_unix_ms: u64,
     notes: &mut Vec<String>,
 ) -> Result<Vec<FailoverOutcome>, String> {
@@ -202,6 +205,30 @@ pub fn failover_lost_attempts(
                 now_unix_ms,
             )
             .map_err(|e| e.to_string())?;
+            // ★ 2026-10-02 (대체 통지 우편함 v3 §3 · 규칙 1) — 폐기와 **같은 커밋**에 서명된 통지 바이트까지 쓴다. 실패하면 폐기도 되돌린다.
+            let notice = crate::supersede_notice_store::sign_notice(
+                notice_signer,
+                &crate::supersede_notice_store::SupersededAttempt {
+                    job_id: job.job_id.clone(),
+                    attempt_id: attempt_id.clone(),
+                    node_id: lost_node_id.clone(),
+                    fence_epoch: attempt.fence_epoch,
+                    lease_id: attempt.lease_id.clone(),
+                    cause: pb::SupersedeCause::NodeLost,
+                    job_disposition: if updated.state == JobState::Queued {
+                        pb::SupersedeJobDisposition::Requeued
+                    } else {
+                        pb::SupersedeJobDisposition::Failed
+                    },
+                    decided_at_unix_ms: now_unix_ms,
+                },
+            );
+            crate::supersede_notice_store::record_within(&transaction, &notice)?;
+        } else {
+            notes.push(format!(
+                "SUPERSEDE_NOTICE_SKIPPED job_id={} attempt_id={attempt_id} — 시도에 노드가 없어 통지를 보낼 곳이 없다",
+                job.job_id
+            ));
         }
         transaction.commit().map_err(|e| e.to_string())?;
         outcomes.push(if updated.state == JobState::Queued {

@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-02 23:13 — 대체 통지 우편함 조각 2 — 장애 이어받기가 폐기와 같은 커밋에 서명 통지를 남긴다 · 스케줄러에 Coordinator 키 필수(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §3 · 규칙 1
+- 스트림: Coordinator · CLI · 배포 파일
+- 수행: 새 표 `coordinator_supersede_notices`(추가 전용 · 서명 포함 바이트 필수 · 답 칸은 비워 둔다)와 저장 모듈 `supersede_notice_store` — 통지 서명 ·
+  쓰기(조합 규칙을 먼저 보고 · 같은 notice_id 는 서명 대상이 같을 때만 멱등 · 다르면 SUPERSEDE_NOTICE_CONFLICT) · 노드별 미확인 목록(결정 시각 순).
+  장애 이어받기(`failover_lost_attempts`)는 서명자를 **필수 인자**로 받아, 옛 Lease 폐기 · 예약 만료 표시와 **같은 트랜잭션**에서 통지(NODE_LOST ·
+  처분 REQUEUED/FAILED = Job 이 간 곳)를 쓴다 — 쓰기가 실패하면 폐기도 되돌린다. `scheduler-tick` 은 `--failover-grace-ms` 에 `--coordinator-key-file`
+  (Coordinator 의 `--own-seed-file` 과 같은 파일)을 요구한다 — 없거나 못 읽으면 큐를 건드리기 전에 거부. 배포 파일(유닛 · scheduler.ps1) · 런북 §4 함께 고침
+- ★ 아직 배달하지 않는다 — MAILBOX 세션 · 새 실행 관문 · Agent 처리는 다음 조각이다. 소유자 선점 폐기(노드가 스스로 멈추고 보고)에는 통지를 쓰지 않는다(제안 §3)
+- 검증: 저장 단위 시험(서명 검증 · 다른 키 거부 · 멱등 · 충돌 · 잘못된 ID 거부 · 노드별 · 순서) · 장애 이어받기 시험(통지 하나 · 처분 · 재실행 멱등) ·
+  같은 커밋 시험(충돌 통지를 미리 넣으면 Job · Lease 가 그대로) · CLI 시험(키 없음 · 못 읽음 거부 · 키 있으면 배치). 통지 쓰기를 빼면 장애 시험이 실패함을
+  확인 뒤 원복. Windows `cargo test --workspace -j 2` 1569 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(배달 순서 · 6489a08)의 재검수 mbp2 — `ACCEPTED`(기계 검수)
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-10-02 22:59 — 우편함 계약층 검수 mbp1 반영 — 배달은 결정 시각 오래된 순이어야 한다(브랜치 fork-merge)
 
 - 계획: 직전 항목(3057e5d)의 독립 검수 mbp1(Codex gpt-6-sol) `CHANGES_REQUESTED` 1건 — 계약 §1 은 배달의 통지를 decided_at 오래된 순으로 정했는데 조합 규칙이 순서를 보지 않았다

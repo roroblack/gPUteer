@@ -1516,6 +1516,7 @@ mod tests {
             crate::failover::failover_lost_attempts(
                 &fixture.path,
                 &policy,
+                &crate::supersede_notice_store::test_signer(),
                 lease.expires_at_unix_ms + 1,
                 &mut notes,
             )
@@ -1526,7 +1527,118 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(job.state, want, "ran={ran} {notes:?}");
+            // ★ 2026-10-02 (대체 통지 우편함 v3 §3) — 같은 커밋에 그 노드 앞 서명 통지가 남는다 · 처분은 Job 이 간 곳대로
+            let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+            let notices =
+                crate::supersede_notice_store::unacked_for_node(&connection, NODE_ID).unwrap();
+            assert_eq!(notices.len(), 1, "ran={ran} {notes:?}");
+            let notice = &notices[0];
+            assert_eq!(
+                (
+                    notice.job_id.as_str(),
+                    notice.attempt_id.as_str(),
+                    notice.lease_id.as_str()
+                ),
+                (JOB_ID, ATTEMPT_ID, LEASE_ID)
+            );
+            assert_eq!(notice.cause, pb::SupersedeCause::NodeLost as i32);
+            assert_eq!(
+                notice.job_disposition,
+                if ran {
+                    pb::SupersedeJobDisposition::Failed as i32
+                } else {
+                    pb::SupersedeJobDisposition::Requeued as i32
+                }
+            );
+            assert_eq!(notice.decided_at_unix_ms, lease.expires_at_unix_ms + 1);
+            gputeer_protocol::mailbox_rules::validate_supersede_notice(notice, NODE_ID).unwrap();
+            assert!(!notice.coordinator_signature.is_empty());
+            // 다시 돌려도 통지를 하나 더 만들지 않는다(그 시도는 이미 넘어갔다)
+            crate::failover::failover_lost_attempts(
+                &fixture.path,
+                &policy,
+                &crate::supersede_notice_store::test_signer(),
+                lease.expires_at_unix_ms + 2,
+                &mut notes,
+            )
+            .unwrap();
+            assert_eq!(
+                crate::supersede_notice_store::unacked_for_node(&connection, NODE_ID)
+                    .unwrap()
+                    .len(),
+                1
+            );
         }
+    }
+
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 규칙 1) — 서명 통지를 쓰지 못하면 폐기도 하지 않는다(같은 커밋). 같은 notice_id 에 다른 내용을
+    ///   미리 넣어 통지 쓰기를 실패시키면, Job 은 그대로 RUNNING · 옛 Lease 는 폐기되지 않은 채로 남는다.
+    #[test]
+    fn a_failover_whose_notice_cannot_be_stored_changes_nothing() {
+        let fixture = prepare_fixture();
+        make_job_running(&fixture);
+        let lease = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        let attempt = crate::staging_store::fetch_attempt(&connection, ATTEMPT_ID)
+            .unwrap()
+            .unwrap();
+        // 이어갈 체크포인트가 없는 RUNNING 이라 실제 처분은 FAILED — 같은 ID 로 REQUEUED 를 먼저 넣어 둔다
+        let conflicting = crate::supersede_notice_store::sign_notice(
+            &crate::supersede_notice_store::test_signer(),
+            &crate::supersede_notice_store::SupersededAttempt {
+                job_id: JOB_ID.into(),
+                attempt_id: ATTEMPT_ID.into(),
+                node_id: NODE_ID.into(),
+                fence_epoch: attempt.fence_epoch,
+                lease_id: LEASE_ID.into(),
+                cause: pb::SupersedeCause::NodeLost,
+                job_disposition: pb::SupersedeJobDisposition::Requeued,
+                decided_at_unix_ms: 1,
+            },
+        );
+        assert_eq!(
+            crate::supersede_notice_store::record_within(&connection, &conflicting),
+            Ok(true)
+        );
+        let policy = crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let error = crate::failover::failover_lost_attempts(
+            &fixture.path,
+            &policy,
+            &crate::supersede_notice_store::test_signer(),
+            lease.expires_at_unix_ms + 1,
+            &mut notes,
+        )
+        .expect_err("통지를 못 썼는데 장애 판정이 성공했다");
+        assert!(error.contains("SUPERSEDE_NOTICE_CONFLICT"), "{error}");
+        let job = CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .get(JOB_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.state, JobState::Running, "폐기가 되돌려지지 않았다");
+        let after = crate::lease_store::CoordinatorLeaseStore::open(&fixture.path)
+            .unwrap()
+            .get(LEASE_ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.revoked_at_unix_ms, None,
+            "통지 없이 Lease 가 폐기됐다"
+        );
+        assert_eq!(
+            crate::supersede_notice_store::unacked_for_node(&connection, NODE_ID).unwrap(),
+            vec![conflicting],
+            "통지가 바뀌었다"
+        );
     }
 
     /// 결함 227 (검수 76) — 장애 판정이 옛 Lease 를 같은 커밋에서 폐기한다. 판정 **전에** 시각을 잡은 늦은 갱신도
@@ -1549,6 +1661,7 @@ mod tests {
         let outcomes = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 1,
             &mut notes,
         )
@@ -1590,6 +1703,7 @@ mod tests {
         let early = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 30_000,
             &mut notes,
         )
@@ -1601,6 +1715,7 @@ mod tests {
         let late = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 30_001,
             &mut notes,
         )
@@ -1636,6 +1751,7 @@ mod tests {
         let outcomes = crate::failover::failover_lost_attempts(
             &fixture.path,
             &policy,
+            &crate::supersede_notice_store::test_signer(),
             lease.expires_at_unix_ms + 1,
             &mut notes,
         )
