@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-10-03 01:15 — 실행 알림 계약 v18c(검수 v18b 반영) · 우편함 전 구간 리눅스 실측(x600 WSL2 · root)(브랜치 fork-merge)
+
+- 계획: 직전 항목(ce3d5b5 — v18b)의 재검수 v18b(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건 · 사용자 지시 "리눅스 테스트도 다시"
+- 스트림: Protocol(계약 문서) · 시험
+- 수행(계약): ① 원장 필드 목록에 연결 대상 · 대상 신원을 더하고 값이 없는 행(v18 전 Agent · 이관 · 3b 전 죽음)은 자동 증거 없이 OPEN ② 소유자 진술 해제(stop_evidence 2)를
+  §1 메시지 정의 · proto enum · 서명 설명 · 보장 절에 넣고, 계약층 개정 조건(Agent 해제 명령 조각 전에 enum 추가 · 개정 전 Coordinator 는 거부 — fail closed) ·
+  진술 내용(근거 종류 — 런타임 재시작 · 직접 목록 확인) · 연결 대상이 없는 행의 조회 대상 · 남는 위험 · 시험 9 · 15 를 정했다
+- 수행(리눅스): 원격 리눅스 서버는 여전히 접속 시간 초과다. 그래서 x600 WSL2(2026-09-25 허가 범위 — E: 아래만)에 예전 시험 폴더의 저장소에서 새 작업 폴더
+  `/mnt/e/gputeer-work/build/fork-merge-mailbox` 를 갈라(기존 폴더는 건드리지 않음 · 커밋 묶음으로 전달) e5e3e75 를 시험했다 — systemd 임시 서비스로 돌렸다
+- 검증: x600 WSL2 Linux **root** `cargo test --workspace --exclude gputeer-runtime-windows -j 6` → **1517 passed · 0 failed · ignored 4**(약 16분 — 빌드 포함).
+  ★ root 로 잰 값이다 — 비-root 리눅스 통과로 세지 않는다(CLAUDE.md §4). 비-root 는 재지 못했다(그 WSL 에 일반 사용자가 없다). 실제 프로세스 우편함 시험 중
+  실행 중 정지 시험은 윈도 전용(cmd 작업)이라 리눅스에서는 돌지 않았다. 계약 문서는 `check_docs.py` 오류 0
+- 리포트: 계약 문서가 대신한다
+
+---
+
 ## 2026-10-03 01:10 — 실행 알림 계약 v18b — 검수 v18a 반영(런타임 대상 고정 · 자동 삭제의 규범 예외 · ID 없는 행)(브랜치 fork-merge)
 
 - 계획: 직전 항목(78e67a1 — v18 초안)의 독립 검수 v18a(Codex gpt-6-sol) `CHANGES_REQUESTED` 3건
