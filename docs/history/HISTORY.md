@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-03 05:12 — 실행 알림 계획 조각 4d — 알림 저장소와 정지 확인 처리 한 트랜잭션(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4d) · 계약 v18k §2 저장 · 순번 · 전이 표 · §3 STOP 처리
+- 스트림: Coordinator
+- 수행: 새 `crates/coordinator/src/run_notice_store.rs` — `coordinator_attempt_run_notices`(기본키 시도 · 노드 · 번호 · sig_input · 서명 · notice_hash ·
+  추가 전용)와 `accept_within`(호출자 트랜잭션) · `CoordinatorRunNoticeStore::accept`(BEGIN IMMEDIATE 하나). 검증 순서 — 키 디렉터리 진술 → 조합 규칙 →
+  정지 확인이면 등급(NodeConfirmedStop) → 시도 · 단일 노드 · job · fence 대조 → 같은 바이트면 멱등(created=false · 효과 없음) · 같은 번호에 다른 바이트면 거부 →
+  정지 확인 번호는 저장된 불명 번호보다 커야 함 → 저장. 정지 확인 처리: 시도 → FAILED(STOP_CONFIRMED)(불명 · 진행 중 · 일시정지 · CREATED 는 규범 경로를
+  메모리에서 대조 · 이미 끝난 시도는 바꾸지 않음) · 최신 시도면 Job 이 갈 곳(4c — 이어갈 지점 찾기는 호출자가 넣는다) · Lease 폐기 · 예약 해제(4a — 근거 해시 =
+  ACK 의 notice_hash). 늦은 도착(더 높은 fence 의 시도가 있음)은 Job 을 건드리지 않는다. RUN_UNKNOWN 은 **저장만**(`RunUnknownStoredOnly` — 효과는 조각 6).
+  부르는 production 경로는 없다(계획 §3 — 격리 시험만 · 활성화 관문 전)
+- 검증: 새 시험 6(한 커밋 처리 — 지점 있음/없음 · 재전송 멱등 · 같은 번호 다른 바이트 거부 · 불명 저장만 · 불명 뒤 번호 규칙 · 늦은 도착 · 이미 끝난 시도 ·
+  거부 넷이 아무것도 안 남김 — 처리 도중 실패도 알림 행까지 되돌림). 일부러 망가뜨려 확인 — 번호 규칙 · 최신 시도 판별 · Lease 폐기를 각각 빼면 해당 시험이
+  실패함을 보고 원복. Windows `cargo test --workspace -j 1` 1604 passed · 0 failed(ignored 4) · 새 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 05:01 — 실행 알림 계획 조각 4c — 규범 새 두 행(STOP_CONFIRMED_AFTER_UNKNOWN) · 정지 확인 뒤 Job 이 갈 곳(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4c) · 계약 v18k §3 항목 3 · §9 새 두 행
