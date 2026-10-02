@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-10-03 01:47 — 실행 알림 계약층에 소유자 진술 정지 증거(값 2) 추가 — 계약 v18 §1 의 선행 개정(브랜치 fork-merge)
+
+- 계획: 계약 v18e §1 "값 2 의 구현 조건 — Agent 해제 명령 조각 전에 계약층을 먼저 개정"
+- 스트림: Protocol
+- 수행: `proto/artifact.proto` RunStopEvidence 에 `RUN_STOP_EVIDENCE_CONTAINER_ABSENT_OWNER_ATTESTED = 2`(enum 순수 추가 · 기존 값 · 서명 불변). 조합 규칙은 STOP_CONFIRMED 의
+  정지 증거로 1 · 2 를 받고 3 은 여전히 거부 · RUN_UNKNOWN 에 2 를 실으면 모양 위반. 벡터 v47d(95 → 96) · 스키마 지문. 보내거나 받는 코드는 아직 없다(조각 4 · 5)
+- 검증: 프로토콜 · 프레임 시험 통과 · 참조 구현 재생성 대조 96개 일치 · check_schema · check_docs 오류 0 · 워크스페이스 빌드 경고 0
+- 리포트: 계약 문서가 대신한다
+
+---
+
 ## 2026-10-03 01:25 — 실행 알림 계약 v18e 독립 검수 ACCEPTED(브랜치 fork-merge)
 
 - 계획: 구현 계획 v3 조각 3(계약 v18 문서) 완료 조건 — 독립 검수 · 사용자 문구 확인

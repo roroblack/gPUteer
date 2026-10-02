@@ -311,6 +311,9 @@ enum RunUnknownReason {
 enum RunStopEvidence {
   RUN_STOP_EVIDENCE_UNSPECIFIED = 0;
   RUN_STOP_EVIDENCE_CONTAINER_ABSENT_CONFIRMED = 1;
+  // ★ 2026-10-03 계약 v18 §4 — ID 없는 행의 소유자 진술 해제(이름 · 라벨로만 부재를 확인하고 늦은 생성 위험을 소유자가 떠맡는다).
+  //   해제 명령만 낸다 · Agent 기동은 내지 않는다. Coordinator 는 1 과 같은 전이로 다루고 감사에 값을 남긴다. enum 순수 추가(기존 값 · 서명 불변).
+  RUN_STOP_EVIDENCE_CONTAINER_ABSENT_OWNER_ATTESTED = 2;
 }
 
 // FrameType 19 · 노드 서명 · Evidence(만료 · replay 캐시 없음 — 재전송은 소비 측 멱등 키 (attempt_id, node_id, sequence) 가 거른다).

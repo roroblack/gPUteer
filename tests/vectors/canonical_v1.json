@@ -907,6 +907,18 @@
       ]
     },
     {
+      "name": "v47d_attempt_run_notice_stop_owner_attested",
+      "description": "v47b 에서 정지 증거만 소유자 진술(2)로 — canonical 이 달라야 한다(증거 종류가 서명에 묶인다)",
+      "message_type": "AttemptRunNotice",
+      "canonical_hex": "0801121a30314a42585237513030303030303030303030303030303041411a1930314a4258415454303030303030303030303030303030303122066e6f64652d31282a30024802500258c0bf8ba38a3360a4c08ba38a33",
+      "canonical_len": 87,
+      "sig_input_hex": "677075746565722f76312f617474656d70742d72756e2d6e6f7469636500000000000001000000570801121a30314a42585237513030303030303030303030303030303041411a1930314a4258415454303030303030303030303030303030303122066e6f64652d31282a30024802500258c0bf8ba38a3360a4c08ba38a33",
+      "sig_input_blake3_256": "f0a1edb7337c7c570323322dc9d6a3a8f26be432f909ea9c91b50013f4c6cafa",
+      "checks": [
+        "MUST_DIFFER:v47b_attempt_run_notice_stop_confirmed"
+      ]
+    },
+    {
       "name": "v48_attempt_run_notice_ack",
       "description": "AttemptRunNoticeAck — STOP_CONFIRMED 첫 저장",
       "message_type": "AttemptRunNoticeAck",

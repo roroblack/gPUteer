@@ -5,7 +5,7 @@
 //! ```text
 //! 둘 다         sequence ≥ 1(0 은 거부 — b6 ③) · 모르는 enum 값은 거부(fail closed)
 //! RUN_UNKNOWN   origin · reason 이 0 이 아니고 stop_evidence 는 0
-//! STOP_CONFIRMED stop_evidence 가 0 이 아니고 origin · reason 은 0
+//! STOP_CONFIRMED stop_evidence 가 0 이 아니고 origin · reason 은 0 — 1(기계 증거) · 2(소유자 진술 · 계약 v18 §4) 둘 다 받는다
 //! 응답          kind 는 RUN_UNKNOWN · STOP_CONFIRMED 중 하나
 //! ```
 //! ★ `Verified` 는 서명 통과이지 조합 규칙 통과가 아니다 — 받는 쪽(Coordinator 의 알림 저장 진입 · Agent 의 응답 대조)은 이 함수를 **직접 불러야 한다**
@@ -138,6 +138,33 @@ mod tests {
     fn well_formed_notices_pass() {
         assert_eq!(validate_attempt_run_notice(&unknown()), Ok(()));
         assert_eq!(validate_attempt_run_notice(&stop()), Ok(()));
+        // ★ 2026-10-03 계약 v18 §4 — 소유자 진술 해제(값 2)도 STOP_CONFIRMED 의 정지 증거다
+        assert_eq!(
+            validate_attempt_run_notice(&pb::AttemptRunNotice {
+                stop_evidence: pb::RunStopEvidence::ContainerAbsentOwnerAttested as i32,
+                ..stop()
+            }),
+            Ok(())
+        );
+    }
+
+    /// ★ 2026-10-03 계약 v18 — 값 2 를 더해도 그 다음 값(3)은 여전히 모르는 값이고, RUN_UNKNOWN 에 정지 증거(2 포함)를 실으면 모양 위반이다.
+    #[test]
+    fn the_owner_attested_value_does_not_widen_anything_else() {
+        assert_eq!(
+            validate_attempt_run_notice(&pb::AttemptRunNotice {
+                stop_evidence: 3,
+                ..stop()
+            }),
+            Err(RunNoticeRuleError::UnknownStopEvidence(3))
+        );
+        assert_eq!(
+            validate_attempt_run_notice(&pb::AttemptRunNotice {
+                stop_evidence: pb::RunStopEvidence::ContainerAbsentOwnerAttested as i32,
+                ..unknown()
+            }),
+            Err(RunNoticeRuleError::RunUnknownShape)
+        );
     }
 
     #[test]

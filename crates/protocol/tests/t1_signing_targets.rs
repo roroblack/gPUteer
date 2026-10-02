@@ -1155,6 +1155,14 @@ fn attempt_run_notice_and_ack_vectors_match_reference() {
         ..unknown.clone()
     };
     assert_matches_reference("v47c_attempt_run_notice_sequence_changed", &reseq);
+    // ★ 2026-10-03 계약 v18 §4 — 소유자 진술 해제(값 2)
+    assert_matches_reference(
+        "v47d_attempt_run_notice_stop_owner_attested",
+        &pb::AttemptRunNotice {
+            stop_evidence: pb::RunStopEvidence::ContainerAbsentOwnerAttested as i32,
+            ..stop.clone()
+        },
+    );
     let ack = pb::AttemptRunNoticeAck {
         schema_version: 1,
         job_id: "01JBXR7Q0000000000000000AA".into(),

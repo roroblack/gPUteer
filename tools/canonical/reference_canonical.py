@@ -2122,6 +2122,14 @@ def build_vectors():
                "AttemptRunNotice", _notice_seq,
                ["MUST_DIFFER:v47_attempt_run_notice_run_unknown"])
     assert c_n3 != c_n1
+    # ★ 2026-10-03 계약 v18 §4 — 소유자 진술 해제(stop_evidence = 2)
+    _notice_attested = dict(_notice_stop)
+    _notice_attested["stop_evidence"] = 2
+    c_n4 = add("v47d_attempt_run_notice_stop_owner_attested",
+               "v47b 에서 정지 증거만 소유자 진술(2)로 — canonical 이 달라야 한다(증거 종류가 서명에 묶인다)",
+               "AttemptRunNotice", _notice_attested,
+               ["MUST_DIFFER:v47b_attempt_run_notice_stop_confirmed"])
+    assert c_n4 != c_n2
     _notice_ack = {
         "schema_version": 1,
         "job_id": "01JBXR7Q0000000000000000AA",
