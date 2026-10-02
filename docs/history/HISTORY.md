@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-10-02 23:26 — 우편함 조각 2 검수 mbc1 반영 — 노드 없는 시도는 폐기하지 않는다 · 스케줄러 키를 노드가 믿는 공개키와 대조(브랜치 fork-merge)
+
+- 계획: 직전 항목(a392346)의 독립 검수 mbc1(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건
+- 스트림: Coordinator · CLI · 배포 파일
+- 수행: ① 시도에 노드가 없으면 통지 없이 폐기 · 큐 되돌리기를 커밋하던 길을 막았다 — 아무것도 쓰기 전에 그 Job 을 건너뛰고 `FAILOVER_SKIPPED_NO_NODE` 를 남긴다.
+  ★ 확인 범위: 시도 읽기(`fetch_attempt`)가 노드가 정확히 하나가 아닌 행을 이미 손상으로 거부하므로 지금 도달할 수 없는 길이다(이중 방어 · 시험 없음).
+  ② 스케줄러가 받은 키가 **노드가 믿는 Coordinator 키**인지 보지 않았다 — 다른 키로 서명하면 폐기만 되고 노드는 통지를 검증하지 못한다.
+  `--coordinator-pubkey`(노드의 `--peer-pubkey` 와 같은 값 GPUTEER_COORDINATOR_PUBKEY)를 필수로 받아 키 파일의 공개키와 대조한다 — 없거나 다르면 큐를 건드리기 전에
+  거부(`FAILOVER_NEEDS_COORDINATOR_PUBKEY` · `COORDINATOR_KEY_MISMATCH`). 배포 파일 · 런북 §4 · 통합 시험 함께. ③ 검수 참고: 저장소의 미확인 목록 읽기는
+  행 키와 바이트 속 notice_id · node_id 만 대조한다 — 나머지 필드 · 서명 검증은 배달을 받는 쪽(다음 조각의 Agent)이 맡는다
+- 검증: CLI 시험에 공개키 없음 · 다른 공개키 거부를 더했다(큐 그대로). Windows `cargo test --workspace -j 2` 1569 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-10-02 23:13 — 대체 통지 우편함 조각 2 — 장애 이어받기가 폐기와 같은 커밋에 서명 통지를 남긴다 · 스케줄러에 Coordinator 키 필수(브랜치 fork-merge)
 
 - 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §3 · 규칙 1

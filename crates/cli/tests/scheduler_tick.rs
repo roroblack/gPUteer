@@ -1047,6 +1047,13 @@ fn failover_without_the_coordinator_key_is_refused() {
 
     let bad_key = dir.path().join("bad.seed");
     std::fs::write(&bad_key, "not-a-key").unwrap();
+    // 0x11 * 32 시드의 공개키(아래에서 맞는 키로 쓴다)
+    let good_pubkey: String = gputeer_crypto::SigningKey::from_bytes(&[0x11u8; 32])
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     let (ok, output) = tick(
         &keyring,
         &db,
@@ -1055,6 +1062,8 @@ fn failover_without_the_coordinator_key_is_refused() {
             "30000",
             "--coordinator-key-file",
             bad_key.to_str().unwrap(),
+            "--coordinator-pubkey",
+            &good_pubkey,
         ],
     );
     assert!(!ok, "읽을 수 없는 키로 장애 판정을 켰다: {output}");
@@ -1066,6 +1075,7 @@ fn failover_without_the_coordinator_key_is_refused() {
 
     let key = dir.path().join("coordinator.seed");
     std::fs::write(&key, "11".repeat(32)).unwrap();
+    // ★ 검수 mbc1 ② — 공개키 없이 · 다른 공개키로는 거부한다(노드가 검증하지 못할 통지로 폐기하지 않는다)
     let (ok, output) = tick(
         &keyring,
         &db,
@@ -1074,6 +1084,50 @@ fn failover_without_the_coordinator_key_is_refused() {
             "30000",
             "--coordinator-key-file",
             key.to_str().unwrap(),
+        ],
+    );
+    assert!(!ok, "공개키 대조 없이 장애 판정을 켰다: {output}");
+    assert!(
+        refused_with(
+            &output,
+            "TICK_ARGS_REFUSED: FAILOVER_NEEDS_COORDINATOR_PUBKEY"
+        ),
+        "이유를 안 말한다: {output}"
+    );
+    let other_pubkey: String = gputeer_crypto::SigningKey::from_bytes(&[0x22u8; 32])
+        .verifying_key()
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let (ok, output) = tick(
+        &keyring,
+        &db,
+        &[
+            "--failover-grace-ms",
+            "30000",
+            "--coordinator-key-file",
+            key.to_str().unwrap(),
+            "--coordinator-pubkey",
+            &other_pubkey,
+        ],
+    );
+    assert!(!ok, "다른 공개키인데 장애 판정을 켰다: {output}");
+    assert!(
+        refused_with(&output, "TICK_ARGS_REFUSED: COORDINATOR_KEY_MISMATCH"),
+        "이유를 안 말한다: {output}"
+    );
+    assert_eq!(job_state(&db, JOB_A), Some(JobState::Queued));
+    let (ok, output) = tick(
+        &keyring,
+        &db,
+        &[
+            "--failover-grace-ms",
+            "30000",
+            "--coordinator-key-file",
+            key.to_str().unwrap(),
+            "--coordinator-pubkey",
+            &good_pubkey,
         ],
     );
     assert!(ok, "키를 줬는데 거부했다: {output}");

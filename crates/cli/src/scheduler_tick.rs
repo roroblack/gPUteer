@@ -193,6 +193,27 @@ pub fn run(args: &[String]) -> Result<String, String> {
             key: crate::issue_grant::load_signing_key(key_path)
                 .map_err(|e| format!("TICK_ARGS_REFUSED: COORDINATOR_KEY_UNREADABLE — {e}"))?,
         };
+        // ★ 검수 mbc1 ② — 키 파일이 **노드가 믿는 Coordinator 키**인지 폐기 전에 대조한다. 다른 키로 서명한 통지는 노드가 검증하지 못해
+        //   폐기만 되고 전해지지 않는다. 노드에 주는 것과 같은 값(`--peer-pubkey` 의 GPUTEER_COORDINATOR_PUBKEY)을 받는다.
+        let expected_pubkey = flags.get("--coordinator-pubkey").ok_or_else(|| {
+            "TICK_ARGS_REFUSED: FAILOVER_NEEDS_COORDINATOR_PUBKEY — --failover-grace-ms 는 --coordinator-pubkey(노드가 믿는 Coordinator 공개키 hex)와 \
+             함께 준다. 키 파일이 그 키인지 대조한다"
+                .to_string()
+        })?;
+        let actual_pubkey: String = notice_signer
+            .key
+            .verifying_key()
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if !actual_pubkey.eq_ignore_ascii_case(expected_pubkey.trim()) {
+            return Err(
+                "TICK_ARGS_REFUSED: COORDINATOR_KEY_MISMATCH — --coordinator-key-file 의 키가 --coordinator-pubkey 와 다르다. \
+                 노드가 검증하지 못할 통지로 폐기하지 않는다"
+                    .to_string(),
+            );
+        }
         let mut notes = Vec::new();
         let outcomes = gputeer_coordinator::failover::failover_lost_attempts(
             std::path::Path::new(control_db),

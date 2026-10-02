@@ -104,7 +104,7 @@ gputeer — gPUteer CLI
         [--container-runtime <podman|docker> --container-runtime-kind podman|docker]
     gputeer coordinator-stub --pool-mode true --pool-agents <id=hex;...> --own-seed-file <파일> ...
     gputeer scheduler-loop --interval-ms <ms> --max-ticks 0 <scheduler-tick 인자>
-        [--silent-after-ms <ms>] [--failover-grace-ms <ms> --coordinator-key-file <Coordinator 시드 파일> --shared-checkpoint-root <dir>]
+        [--silent-after-ms <ms>] [--failover-grace-ms <ms> --coordinator-key-file <Coordinator 시드 파일> --coordinator-pubkey <hex> --shared-checkpoint-root <dir>]
     gputeer agent-loop --interval-ms <ms> --max-rounds 0 -- <agent-stub 인자>
     gputeer status --control-db <path>
     gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>

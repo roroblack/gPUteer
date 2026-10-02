@@ -180,6 +180,15 @@ pub fn failover_lost_attempts(
             continue;
         }
         let lost_node_id = attempt.node_ids.first().cloned().unwrap_or_default();
+        // ★ 검수 mbc1 ① — 통지를 보낼 노드가 없으면 폐기도 하지 않는다(규칙 1 — 폐기와 같은 커밋에 서명 통지). 아무것도 쓰기 전이라
+        //   트랜잭션을 그냥 놓으면 되돌아간다. 노드 없는 시도는 저장소 손상이다 — 조용히 넘기지 않고 남긴다.
+        if lost_node_id.is_empty() {
+            notes.push(format!(
+                "FAILOVER_SKIPPED_NO_NODE job_id={} attempt_id={attempt_id} — 시도에 노드가 없어 통지를 보낼 곳이 없다. 폐기하지 않았다(저장소 손상 의심)",
+                job.job_id
+            ));
+            continue;
+        }
         let resume = if job.state == JobState::Running {
             find_resume_point(&transaction, policy, &job.job_id, now_unix_ms, notes, false)?
         } else {
@@ -197,7 +206,7 @@ pub fn failover_lost_attempts(
         //   갱신 저장은 자기 트랜잭션 안에서 폐기를 다시 읽으므로, 이 커밋 뒤의 갱신은 전부 REVOKED 로 거부된다.
         crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
             .map_err(|e| e.to_string())?;
-        if !lost_node_id.is_empty() {
+        {
             // 표시만 한다 — 지우지 않는다(§A1 4a).
             crate::staging_store::mark_reservation_expired(
                 &transaction,
@@ -224,11 +233,6 @@ pub fn failover_lost_attempts(
                 },
             );
             crate::supersede_notice_store::record_within(&transaction, &notice)?;
-        } else {
-            notes.push(format!(
-                "SUPERSEDE_NOTICE_SKIPPED job_id={} attempt_id={attempt_id} — 시도에 노드가 없어 통지를 보낼 곳이 없다",
-                job.job_id
-            ));
         }
         transaction.commit().map_err(|e| e.to_string())?;
         outcomes.push(if updated.state == JobState::Queued {
