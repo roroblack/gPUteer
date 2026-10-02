@@ -1848,3 +1848,78 @@ fn near_finish_does_not_outlive_the_signed_max_total_duration() {
 {all}"
     );
 }
+
+/// ★ 2026-10-02 (관문 5 ⑦ 계획 v3 §2 공통 고침) — 끊김 여유가 0 이어도(시간으로는 멈추지 않는다) Coordinator 가 **서명해 거부**하면(여기서는 Lease
+///   폐기 → 실행 중 갱신이 서명된 REVOKED 를 받는다) 작업을 멈춘다. 전에는 여유 0 이면 감시를 걸지 않아 끝까지 돌았다.
+#[test]
+fn with_a_zero_margin_a_signed_refusal_still_stops_the_workload() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let manifest = submit_ping_manifest(dir.path(), 21);
+    let lease_db = dir.path().join("coordinator-lease.sqlite3");
+    let (coordinator, addr) = spawn_coordinator(
+        &manifest,
+        &[
+            "--lease-db",
+            lease_db.to_str().unwrap(),
+            "--max-connections",
+            "4",
+            "--accept-timeout-ms",
+            "30000",
+            "--revoke-before-renew",
+            "true",
+        ],
+    );
+    let agent = spawn_agent(
+        &addr,
+        dir.path(),
+        &[
+            "--disable-reconnect",
+            "true",
+            "--renew-during-execution-ms",
+            "1500",
+            "--disconnect-stop-margin-ms",
+            "0",
+        ],
+    );
+    let agent = wait(agent, Duration::from_secs(60));
+    let coordinator = wait(coordinator, Duration::from_secs(40));
+    let all = both(&agent, &coordinator);
+
+    assert!(
+        !agent.killed,
+        "Agent 가 끝나지 않았다
+{all}"
+    );
+    assert!(
+        line_with(&agent, &["RENEW_SESSION_STOPPED", "REVOKED"]).is_some(),
+        "전제가 깨졌다 — 실행 중 갱신이 서명된 REVOKED 를 받지 않았다
+{all}"
+    );
+    assert!(
+        agent.output().contains("DISCONNECT_SELF_STOP attempt_id="),
+        "여유 0 이라고 서명된 거부를 무시하고 계속 돌았다
+{all}"
+    );
+    let (_, spawned_at) = agent.first("WORKLOAD_SPAWNED").unwrap_or_else(|| {
+        panic!(
+            "WORKLOAD_SPAWNED 가 없다
+{all}"
+        )
+    });
+    let (_, exited_at) = agent.first("WORKLOAD_EXITED").unwrap_or_else(|| {
+        panic!(
+            "WORKLOAD_EXITED 가 없다
+{all}"
+        )
+    });
+    assert!(
+        exited_at.duration_since(spawned_at) < Duration::from_secs(14),
+        "약 20초짜리가 서명된 거부 뒤 곧 멈추지 않았다
+{all}"
+    );
+    assert!(
+        !agent.output().contains("OWNER_STOPPED"),
+        "넘어감 정지를 소유자 되찾음으로 적었다
+{all}"
+    );
+}

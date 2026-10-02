@@ -2570,26 +2570,42 @@ fn start_renew_during_execution(
     let panel = config.owner_panel_state.clone();
     let attempt_id = attempt_id.to_string();
     let margin = config.disconnect_stop_margin_ms;
-    let self_stop_enabled = margin > 0;
-    if self_stop_enabled {
+    // ★ 2026-10-02 (관문 5 ⑦ 계획 v3 §2 공통 고침) — 여유 0 은 "시간으로는 멈추지 않는다"(옛 동작)일 뿐이다. 전에는 감시 자체를 걸지 않아,
+    //   Coordinator 가 **서명해 거부**(넘어감 · 폐기 · 대체)해도 작업이 계속 돌았다. 이제 감시는 늘 걸고 시간 시한만 "없음"(u64::MAX)으로 둔다 —
+    //   서명된 거부는 renew_refused 가 시한을 지금으로 당겨 같은 정지 경로를 탄다(DISCONNECT_STOPPED — 소유자 되찾음이 아니다).
+    let time_limits_enabled = margin > 0;
+    let self_stop_time = move |issued: u64, expires: u64, sent: u64| {
+        if time_limits_enabled {
+            owner_panel::disconnect_self_stop_at(issued, expires, sent, margin)
+        } else {
+            u64::MAX
+        }
+    };
+    let near_finish_time = move |lease: &pb::Lease, sent: u64| {
+        if time_limits_enabled {
+            owner_panel::near_finish_stop_at(
+                lease.issued_at_unix_ms,
+                lease.expires_at_unix_ms,
+                sent,
+                margin,
+                lease.reassignment_grace_ms,
+                lease.max_total_duration_seconds,
+            )
+        } else {
+            u64::MAX
+        }
+    };
+    {
         let now = SystemClock.now_unix_ms();
         panel.watch_connection(
             &attempt_id,
-            owner_panel::disconnect_self_stop_at(
+            self_stop_time(
                 held_lease.issued_at_unix_ms,
                 held_lease.expires_at_unix_ms,
                 now,
-                margin,
             ),
             // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업의 마지막 시각(서명된 재배치 유예가 있을 때만 끊김 시한보다 뒤).
-            owner_panel::near_finish_stop_at(
-                held_lease.issued_at_unix_ms,
-                held_lease.expires_at_unix_ms,
-                now,
-                margin,
-                held_lease.reassignment_grace_ms,
-                held_lease.max_total_duration_seconds,
-            ),
+            near_finish_time(held_lease, now),
             keep_running_allowed,
             now,
         );
@@ -2602,9 +2618,6 @@ fn start_renew_during_execution(
         let mut last_failure: Option<String> = None;
         let mut holding = false;
         move || {
-            if !self_stop_enabled {
-                return;
-            }
             let outcome = panel.self_stop_if_due(&attempt_id, SystemClock.now_unix_ms());
             // ★ 2026-10-01 (판단표 ④) — "곧 끝남" 으로 끊김 시한을 넘겨 계속 두기 시작할 때 · 그만둘 때 한 번씩 찍는다.
             match (panel.near_finish_hold(&attempt_id), holding) {
@@ -2637,7 +2650,7 @@ fn start_renew_during_execution(
     };
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thread_stop = std::sync::Arc::clone(&stop);
-    let watcher = if self_stop_enabled {
+    let watcher = {
         let watcher_stop = std::sync::Arc::clone(&stop);
         Some(std::thread::spawn(move || {
             while !watcher_stop.load(std::sync::atomic::Ordering::SeqCst) {
@@ -2645,8 +2658,6 @@ fn start_renew_during_execution(
                 std::thread::sleep(Duration::from_millis(50));
             }
         }))
-    } else {
-        None
     };
     let config = config.clone();
     let key = signing_key.clone();
@@ -2758,26 +2769,16 @@ fn start_renew_during_execution(
                         "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",
                         renewed.lease_id, renewed.fence_epoch, renewed.expires_at_unix_ms
                     );
-                    if self_stop_enabled {
-                        panel.renew_succeeded(
-                            &attempt_id,
-                            owner_panel::disconnect_self_stop_at(
-                                renewed.issued_at_unix_ms,
-                                renewed.expires_at_unix_ms,
-                                sent_at,
-                                margin,
-                            ),
-                            owner_panel::near_finish_stop_at(
-                                renewed.issued_at_unix_ms,
-                                renewed.expires_at_unix_ms,
-                                sent_at,
-                                margin,
-                                renewed.reassignment_grace_ms,
-                                renewed.max_total_duration_seconds,
-                            ),
-                            SystemClock.now_unix_ms(),
-                        );
-                    }
+                    panel.renew_succeeded(
+                        &attempt_id,
+                        self_stop_time(
+                            renewed.issued_at_unix_ms,
+                            renewed.expires_at_unix_ms,
+                            sent_at,
+                        ),
+                        near_finish_time(&renewed, sent_at),
+                        SystemClock.now_unix_ms(),
+                    );
                     lease = renewed;
                 }
                 Err(error)
@@ -2789,7 +2790,7 @@ fn start_renew_during_execution(
                     //   소유자의 "계속" 도 무시하고 곧바로 멈춘다. 그 밖(Agent 가 스스로 본 만료 `LOCAL_EXPIRED` · 결과 검증 실패 `RENEW_REJECTED`)은
                     //   Coordinator 의 결정을 안 것이 아니다 — 끊김으로 다룬다(시한 · 소유자 선택대로). 처음 구현은 둘을 같이 거부로 다뤄,
                     //   소유자가 "계속" 을 고른 PURE 작업이 Lease 가 끝나는 순간 멈췄다(실제 프로세스 시험이 잡았다).
-                    if self_stop_enabled {
+                    {
                         // ★ 검수 an2 — 스스로 본 만료라도 서명된 Lease 의 누적 상한에 닿은 것이면 서명된 거부(MAX_DURATION_EXCEEDED)와 같다.
                         let max_duration_reached = error.starts_with("RENEW_REFUSED:LOCAL_EXPIRED")
                             && lease_reached_max_total_duration(&lease, SystemClock.now_unix_ms());
@@ -2811,9 +2812,7 @@ fn start_renew_during_execution(
                 }
                 Err(error) => {
                     println!("RENEW_SESSION_FAILED round={round} detail={error}");
-                    if self_stop_enabled {
-                        panel.renew_failed(&attempt_id);
-                    }
+                    panel.renew_failed(&attempt_id);
                 }
             }
             round += 1;

@@ -121,6 +121,8 @@
         conn.className = "conn-lost";
         conn.textContent = c.keep_running
           ? "끊김 " + fmtDuration(c.since_last_ok_ms) + " — 소유자가 계속 돌리기를 골랐다(다른 노드에서도 돌 수 있다)"
+          : c.ms_to_self_stop === null
+          ? "끊김 " + fmtDuration(c.since_last_ok_ms) + " — 시간으로는 멈추지 않는다(끊김 여유 0). 중개 서버가 넘겼다고 알리면 멈춘다"
           : "끊김 " + fmtDuration(c.since_last_ok_ms) + " — " + fmtDuration(c.ms_to_self_stop) + " 뒤 스스로 멈춘다";
       } else {
         conn.className = "conn-ok";

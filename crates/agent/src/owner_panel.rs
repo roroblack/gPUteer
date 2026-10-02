@@ -1249,7 +1249,12 @@ fn render_workloads_json(
                     watch.disconnected,
                     watch.refused,
                     now_unix_ms.saturating_sub(watch.last_renew_ok_unix_ms),
-                    watch.self_stop_at_unix_ms.saturating_sub(now_unix_ms),
+                    // ★ 2026-10-02 — 여유 0(시간으로는 멈추지 않음)이면 null. 큰 수를 "n 뒤 멈춘다" 로 보이지 않게
+                    if watch.self_stop_at_unix_ms == u64::MAX {
+                        "null".to_string()
+                    } else {
+                        watch.self_stop_at_unix_ms.saturating_sub(now_unix_ms).to_string()
+                    },
                     watch.keep_running_allowed,
                     watch.choice == OwnerChoice::KeepRunning,
                     watch.self_stopped,
