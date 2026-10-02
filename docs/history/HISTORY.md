@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-10-03 04:27 — 실행 알림 계획 조각 4a — 예약 해제 근거 일반화 · 해제 기록을 사실 · 근거로 나눔(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(보조 에이전트 조사의 4단계 분할 중 4a) · 계약 v18k §3 "해제 증거 일반화" · "해제 기록을 둘로"
+- 스트림: Coordinator
+- 수행: `reservation_release.rs` — 해제 기록을 `coordinator_release_facts`(시도마다 한 행 · 종료 보고 해시 없음) · `coordinator_release_fact_gpus` ·
+  `coordinator_release_evidence`(추가 전용 · 종류 TERMINAL_REPORT / STOP_CONFIRMED / OPERATOR_RELEASE · 해시 · payload 원문)로 나눴다. 옛 표
+  `coordinator_reservation_releases`(종료 보고 해시 필수)는 더 쓰지 않고, 열 때마다 멱등으로 새 표에 옮긴다(근거 payload = 저장된 종료 보고 바이트 · 못 찾으면 열기 거부).
+  두 종료 보고 경로는 공통 핵심(`record_release_within`)을 쓰고 동작은 같다 — 예외 하나: 같은 신원을 **다른 근거**로 다시 풀면 전에는 충돌이었고 이제 "이미 해제됨" + 근거
+  행 추가다(계약 b15 ①). 새 공개 함수 `release_for_stop_confirmed_within`(호출자 트랜잭션 · 키 디렉터리 진술 · STOP_CONFIRMED · 조합 규칙 · durable 시도와 job · node ·
+  fence 대조 · 근거 해시 = sig_input 의 BLAKE3) — 예약이 없거나 다른 시도의 것이면 오류가 아니라 `NothingToRelease`(아무것도 지우거나 적지 않음 · 다른 시도의 예약은
+  절대 지우지 않는다). 부르는 곳은 아직 없다(조각 4d)
+- 검증: 해제 시험 26건(새 5 — 정지 확인으로 해제 · 관문 넷 거부 · 늦은 정지 확인은 이미 해제됨 + 근거 · 예약 없음 / 다른 시도 · 옛 기록 이관과 근거 없을 때 거부).
+  이미 해제된 경우의 근거 추가를 빼면 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace -j 2` 1587 passed · 0 failed(-j 1 — -j 2 는 페이징 파일 부족으로 빌드가 끊겼다) · 서식 통과 · 바뀐 줄 clippy 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 02:56 — 실행 알림 계약 v18k 독립 검수 ACCEPTED(브랜치 fork-merge)
 
 - 수행: 재검수 v18k(Codex gpt-6-sol) `ACCEPTED`(기계 검수). Codex 합의 B′(갱신으로 확인한 재부착)가 들어간 판이다. 계약 상태 줄에 적었다

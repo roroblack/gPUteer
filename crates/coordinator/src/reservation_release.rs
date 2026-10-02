@@ -90,12 +90,16 @@
 
 use std::path::Path;
 
-use gputeer_protocol::{canonical::blake3_256, pb, signing::Verified};
+use gputeer_protocol::{
+    canonical::blake3_256,
+    pb,
+    signing::{signing_input, Verified},
+};
 use prost::Message;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, OptionalExtension, TransactionBehavior};
 
 use crate::attempt_report_store::{self, AttemptReportStoreError};
-use crate::staging_store::{self, StoredNodeReservation};
+use crate::staging_store;
 
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -174,26 +178,70 @@ pub struct ReleaseAuthorization {
     pub artifact_durability: ArtifactDurabilityGuard,
 }
 
+/// ★ 2026-10-03 (실행 알림 계약 v18k §3 "해제 증거 일반화" · 계획 조각 4a) — 예약을 푼 **근거**의 종류.
+///   전에는 해제 기록에 종료 보고 해시가 필수라 정지 확인 · 운영자 해제를 담을 자리가 없었다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReleaseEvidenceKind {
+    /// 서명된 terminal `AttemptReport` — 해시는 BLAKE3(보고 protobuf 바이트) · payload 는 그 바이트.
+    TerminalReport,
+    /// 서명된 STOP_CONFIRMED `AttemptRunNotice` — 해시는 BLAKE3(sig_input · ACK 의 notice_hash 와 같다) · payload 는 서명 포함 protobuf 바이트.
+    StopConfirmed,
+    /// 운영자 해제(release-lost-node · release-held-job) — 조각 4b 가 쓴다.
+    OperatorRelease,
+}
+
+impl ReleaseEvidenceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TerminalReport => "TERMINAL_REPORT",
+            Self::StopConfirmed => "STOP_CONFIRMED",
+            Self::OperatorRelease => "OPERATOR_RELEASE",
+        }
+    }
+
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "TERMINAL_REPORT" => Some(Self::TerminalReport),
+            "STOP_CONFIRMED" => Some(Self::StopConfirmed),
+            "OPERATOR_RELEASE" => Some(Self::OperatorRelease),
+            _ => None,
+        }
+    }
+}
+
+/// 해제 근거 한 줄(추가 전용). payload 원문은 표에 남지만 여기서는 싣지 않는다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseEvidenceRecord {
+    pub kind: ReleaseEvidenceKind,
+    pub hash: [u8; 32],
+}
+
 /// 예약 해제 사실. 되돌리지 않는 기록이다.
+///
+/// ★ 2026-10-03 — "사실"(한 시도에 한 행)과 "근거"(추가 전용 · 여럿)로 나눴다. 같은 신원(job · attempt · node · fence)을 다른 근거로 다시 풀면
+///   "이미 해제됨" 이고 근거 행만 더한다. 신원이 다르면 충돌이다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredReservationRelease {
     pub attempt_id: String,
     pub node_id: String,
     pub job_id: String,
     pub fence_epoch: u64,
-    /// 이 해제의 근거가 된 terminal report 의 해시.
-    pub report_hash: [u8; 32],
     pub released_at_unix_ms: u64,
     /// 풀려난 GPU 들. 예약이 잡고 있던 것 그대로다.
     pub released_gpu_ids: Vec<String>,
+    /// 이 해제의 근거들(종류 · 해시 순). 적어도 하나다.
+    pub evidence: Vec<ReleaseEvidenceRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReleaseOutcome {
     /// 이번 호출이 실제로 풀었다.
     Released(StoredReservationRelease),
-    /// 이미 같은 근거로 풀려 있었다 — 재시도는 안전하다.
+    /// 이미 같은 신원으로 풀려 있었다 — 재시도는 안전하다(새 근거면 근거 행만 더했다).
     AlreadyReleased(StoredReservationRelease),
+    /// ★ 2026-10-03 (계약 §3 "예약이 이미 없을 때") — 정지 확인 경로에서만: 이 시도가 쥔 예약이 없다(없거나 다른 시도의 것이다).
+    ///   아무것도 지우거나 적지 않았다 — 호출자는 알림 저장 · 시도 종결 · ACK 를 그대로 커밋한다. 다른 시도의 예약은 절대 지우지 않는다.
+    NothingToRelease { holder_attempt_id: Option<String> },
 }
 
 /// 저장된 해제 기록이 깨졌다.
@@ -205,6 +253,10 @@ pub enum ReleaseCorruption {
     GpuOrdinalGap,
     BlankGpuId,
     UnsortedGpuIds,
+    /// 근거 종류 문자열을 모른다.
+    EvidenceKind,
+    /// 해제 사실에 근거 행이 하나도 없다.
+    MissingEvidence,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -256,6 +308,22 @@ pub enum ReservationReleaseError {
         attempt_id: String,
         kind: ReleaseCorruption,
     },
+    /// ★ 2026-10-03 — 정지 확인 경로: 알림이 STOP_CONFIRMED 가 아니다.
+    NotStopConfirmed,
+    /// 정지 확인 알림이 조합 규칙을 어긴다.
+    NoticeRule(gputeer_protocol::attempt_run_notice_rules::RunNoticeRuleError),
+    /// 알림의 시도가 durable 저장소에 없다.
+    AttemptNotFound {
+        attempt_id: String,
+    },
+    /// 알림의 job · node · fence 가 durable 시도와 다르다(단일 노드 시도만 — 계약 §2).
+    AttemptIdentityMismatch {
+        attempt_id: String,
+    },
+    /// 옛 해제 기록을 새 표로 옮기려는데 그 근거(저장된 종료 보고)를 찾지 못했다 — 옮기지 않고 멈춘다(fail closed).
+    MigrationEvidenceMissing {
+        attempt_id: String,
+    },
     Evidence(AttemptReportStoreError),
     Storage(String),
 }
@@ -265,6 +333,10 @@ pub enum ReservationReleaseError {
 /// ★★ 2026-09-22 — `attempt_report_store` 가 **같은 트랜잭션에서** 예약을 풀 수 있게 되면서
 ///   이 스키마가 그 경로에서도 필요해졌다. 전에는 이 저장소를 여는 사람만 만들었고,
 ///   그래서 보고 저장 경로에서 부르면 "no such table" 이 났다.
+/// ★ 2026-10-03 (계약 v18k §3 · 조각 4a) — 해제 기록을 둘로 나눴다:
+///   `coordinator_release_facts`(사실 — attempt 기본키) · `coordinator_release_fact_gpus` · `coordinator_release_evidence`(근거 — 추가 전용).
+///   옛 표 `coordinator_reservation_releases`(종료 보고 해시 필수)는 **더 쓰지 않고** 감사 원본으로 남긴다. 그 행은 열 때마다(멱등) 새 표로 옮기고,
+///   근거(TERMINAL_REPORT)의 payload 는 저장된 종료 보고 바이트에서 가져온다 — 못 찾으면 옮기지 않고 거부한다.
 pub(crate) fn initialize_release_schema(
     connection: &Connection,
 ) -> Result<(), ReservationReleaseError> {
@@ -288,10 +360,109 @@ pub(crate) fn initialize_release_schema(
                     PRIMARY KEY(attempt_id, ordinal),
                     UNIQUE(attempt_id, gpu_id)
                 );
+                CREATE TABLE IF NOT EXISTS coordinator_release_facts (
+                    attempt_id TEXT PRIMARY KEY
+                        REFERENCES coordinator_attempts(attempt_id),
+                    node_id TEXT NOT NULL,
+                    job_id TEXT NOT NULL,
+                    fence_epoch BLOB NOT NULL CHECK(length(fence_epoch) = 8),
+                    released_at_unix_ms BLOB NOT NULL CHECK(length(released_at_unix_ms) = 8)
+                );
+                CREATE TABLE IF NOT EXISTS coordinator_release_fact_gpus (
+                    attempt_id TEXT NOT NULL
+                        REFERENCES coordinator_release_facts(attempt_id),
+                    gpu_id TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                    PRIMARY KEY(attempt_id, ordinal),
+                    UNIQUE(attempt_id, gpu_id)
+                );
+                CREATE TABLE IF NOT EXISTS coordinator_release_evidence (
+                    attempt_id TEXT NOT NULL
+                        REFERENCES coordinator_release_facts(attempt_id),
+                    evidence_kind TEXT NOT NULL
+                        CHECK(evidence_kind IN ('TERMINAL_REPORT', 'STOP_CONFIRMED', 'OPERATOR_RELEASE')),
+                    evidence_hash BLOB NOT NULL CHECK(length(evidence_hash) = 32),
+                    payload BLOB NOT NULL,
+                    recorded_at_unix_ms BLOB NOT NULL CHECK(length(recorded_at_unix_ms) = 8),
+                    PRIMARY KEY(attempt_id, evidence_kind, evidence_hash)
+                );
                 "#,
         )
         .map_err(map_sql_error)?;
-    Ok(())
+    migrate_legacy_releases(connection)
+}
+
+/// 옛 표의 해제 기록을 새 표로 옮긴다(멱등 — 이미 옮긴 행은 건너뛴다).
+fn migrate_legacy_releases(connection: &Connection) -> Result<(), ReservationReleaseError> {
+    let pending: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_reservation_releases r
+             WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_facts f WHERE f.attempt_id = r.attempt_id)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_sql_error)?;
+    if pending == 0 {
+        return Ok(());
+    }
+    let reports_table: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_attempt_reports'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_sql_error)?;
+    // 근거를 먼저 확인한다 — 하나라도 못 찾으면 아무것도 옮기지 않는다.
+    let missing: Option<String> = if reports_table == 0 {
+        connection
+            .query_row(
+                "SELECT attempt_id FROM coordinator_reservation_releases ORDER BY attempt_id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_sql_error)?
+    } else {
+        connection
+            .query_row(
+                "SELECT r.attempt_id FROM coordinator_reservation_releases r
+                 WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_facts f WHERE f.attempt_id = r.attempt_id)
+                   AND NOT EXISTS (SELECT 1 FROM coordinator_attempt_reports a
+                                   WHERE a.attempt_id = r.attempt_id AND a.node_id = r.node_id
+                                     AND a.report_hash = r.report_hash)
+                 ORDER BY r.attempt_id LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_sql_error)?
+    };
+    if let Some(attempt_id) = missing {
+        return Err(ReservationReleaseError::MigrationEvidenceMissing { attempt_id });
+    }
+    connection
+        .execute_batch(
+            r#"
+                INSERT INTO coordinator_release_facts(attempt_id, node_id, job_id, fence_epoch, released_at_unix_ms)
+                    SELECT r.attempt_id, r.node_id, r.job_id, r.fence_epoch, r.released_at_unix_ms
+                    FROM coordinator_reservation_releases r
+                    WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_facts f WHERE f.attempt_id = r.attempt_id);
+                INSERT INTO coordinator_release_fact_gpus(attempt_id, gpu_id, ordinal)
+                    SELECT g.attempt_id, g.gpu_id, g.ordinal
+                    FROM coordinator_reservation_release_gpus g
+                    WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_fact_gpus x
+                                      WHERE x.attempt_id = g.attempt_id AND x.ordinal = g.ordinal);
+                INSERT INTO coordinator_release_evidence(attempt_id, evidence_kind, evidence_hash, payload, recorded_at_unix_ms)
+                    SELECT r.attempt_id, 'TERMINAL_REPORT', r.report_hash, a.report_body, r.released_at_unix_ms
+                    FROM coordinator_reservation_releases r
+                    JOIN coordinator_attempt_reports a
+                      ON a.attempt_id = r.attempt_id AND a.node_id = r.node_id AND a.report_hash = r.report_hash
+                    WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_evidence e
+                                      WHERE e.attempt_id = r.attempt_id AND e.evidence_kind = 'TERMINAL_REPORT'
+                                        AND e.evidence_hash = r.report_hash);
+                "#,
+        )
+        .map_err(map_sql_error)
 }
 
 pub struct CoordinatorReservationReleaseStore {
@@ -357,129 +528,34 @@ impl CoordinatorReservationReleaseStore {
         check_observed_exit(report, authorization.runtime_stop)?;
         let report_body = report.encode_to_vec();
         let report_hash = blake3_256(&report_body);
-        let signer_id = verified.signer_id();
 
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sql_error)?;
 
-        // 1) 이미 풀렸는가 — 같은 사실이면 멱등, 다르면 충돌.
-        if let Some(existing) = fetch_release(&transaction, &report.attempt_id)? {
-            if existing.node_id != report.node_id
-                || existing.job_id != report.job_id
-                || existing.fence_epoch != report.fence_epoch
-                || existing.report_hash != report_hash
-            {
-                return Err(ReservationReleaseError::ReleaseConflict {
-                    attempt_id: report.attempt_id.clone(),
-                });
-            }
-            transaction.commit().map_err(map_sql_error)?;
-            return Ok(ReleaseOutcome::AlreadyReleased(existing));
-        }
-
-        // 2) durable terminal 증거가 있어야 한다.
-        let binding = attempt_report_store::fetch_report_binding(
-            &transaction,
-            &report.attempt_id,
-            &report.node_id,
-        )
-        .map_err(map_evidence_error)?
-        .ok_or_else(|| ReservationReleaseError::NoTerminalEvidence {
-            attempt_id: report.attempt_id.clone(),
-            node_id: report.node_id.clone(),
-        })?;
-
-        // 3) ★ 저장된 증거와 재검증된 보고서가 **같아야** 한다.
+        // 1) durable terminal 증거가 있어야 하고, 재검증된 보고서와 **같아야** 한다.
         //
         //    이게 없으면 저장된 행 하나로 예약을 풀 수 있고, 그건
         //    `attempt_report_store` 가 "raw 는 terminal decision 에 쓰지
         //    말라" 고 적어 둔 계약을 어기는 것이다.
-        if binding.report_hash != report_hash
-            || binding.report != *report
-            || binding.signer_id_at_submission != signer_id
-        {
-            return Err(ReservationReleaseError::EvidenceMismatch {
-                attempt_id: report.attempt_id.clone(),
-                node_id: report.node_id.clone(),
-            });
-        }
-
-        // 4) 예약이 **이 attempt 의 것**이어야 한다.
-        //
         //    ★ 여기 "지금 Attempt 의 fence 와 같은가" 검사를 따로 뒀다가
         //      지웠다 — `fetch_report_binding` 이 이미 durable Attempt 의
-        //      job_id·node_ids·fence_epoch 를 전부 재대조하고 어긋나면
-        //      `Corrupt { FenceEpochMismatch }` 로 막는다. 내 뮤테이션이
-        //      그 검사가 **도달 불가능한 죽은 코드**임을 잡았다(R5).
-        //      막지도 못하면서 막는 것처럼 보이는 코드는 남기지 않는다.
-        let reservation = staging_store::fetch_node_reservation(&transaction, &report.node_id)
-            .map_err(map_staging_error)?
-            .ok_or_else(|| ReservationReleaseError::ReservationNotFound {
-                node_id: report.node_id.clone(),
-            })?;
-        check_reservation_owner(report, &reservation)?;
+        //      job_id·node_ids·fence_epoch 를 전부 재대조한다(R5).
+        check_terminal_binding(&transaction, verified, &report_hash)?;
 
-        // 6) 풀고 기록한다. 순서상 자식 행이 먼저다.
-        let released_gpu_ids = reservation.selected_gpu_ids.clone();
-        transaction
-            .execute(
-                "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
-                rusqlite::params![report.node_id],
-            )
-            .map_err(map_sql_error)?;
-        let removed = transaction
-            .execute(
-                "DELETE FROM coordinator_node_reservations WHERE node_id = ?1 AND attempt_id = ?2",
-                rusqlite::params![report.node_id, report.attempt_id],
-            )
-            .map_err(map_sql_error)?;
-        if removed != 1 {
-            // 방금 읽은 예약이 사라졌다 — 같은 트랜잭션 안이므로 있을 수
-            // 없는 일이다. 조용히 넘기지 않는다.
-            return Err(ReservationReleaseError::Storage(format!(
-                "예약 삭제가 {removed} 행을 지웠다 — 1 이어야 한다"
-            )));
-        }
-
-        transaction
-            .execute(
-                "INSERT INTO coordinator_reservation_releases(
-                    attempt_id, node_id, job_id, fence_epoch, report_hash, released_at_unix_ms
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    report.attempt_id,
-                    report.node_id,
-                    report.job_id,
-                    encode_u64(report.fence_epoch),
-                    report_hash.as_slice(),
-                    encode_u64(released_at_unix_ms),
-                ],
-            )
-            .map_err(map_sql_error)?;
-        for (ordinal, gpu_id) in released_gpu_ids.iter().enumerate() {
-            transaction
-                .execute(
-                    "INSERT INTO coordinator_reservation_release_gpus(
-                        attempt_id, gpu_id, ordinal
-                     ) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![report.attempt_id, gpu_id, ordinal as i64],
-                )
-                .map_err(map_sql_error)?;
-        }
-
-        transaction.commit().map_err(map_sql_error)?;
-
-        Ok(ReleaseOutcome::Released(StoredReservationRelease {
-            attempt_id: report.attempt_id.clone(),
-            node_id: report.node_id.clone(),
-            job_id: report.job_id.clone(),
-            fence_epoch: report.fence_epoch,
-            report_hash,
+        // 2) 예약이 **이 attempt 의 것**이어야 하고, 풀고 사실 · 근거를 적는다(공통 핵심).
+        let outcome = record_release_within(
+            &transaction,
+            &ReleaseIdentity::of_report(report),
+            ReleaseEvidenceKind::TerminalReport,
+            &report_hash,
+            &report_body,
             released_at_unix_ms,
-            released_gpu_ids,
-        }))
+            ReservationPolicy::MustHold,
+        )?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(outcome)
     }
 }
 
@@ -519,21 +595,90 @@ pub fn release_within_transaction(
     check_observed_exit(report, authorization.runtime_stop)?;
     let report_body = report.encode_to_vec();
     let report_hash = blake3_256(&report_body);
-    let signer_id = verified.signer_id();
+    check_terminal_binding(transaction, verified, &report_hash)?;
+    record_release_within(
+        transaction,
+        &ReleaseIdentity::of_report(report),
+        ReleaseEvidenceKind::TerminalReport,
+        &report_hash,
+        &report_body,
+        released_at_unix_ms,
+        ReservationPolicy::MustHold,
+    )
+}
 
-    if let Some(existing) = fetch_release(transaction, &report.attempt_id)? {
-        if existing.node_id != report.node_id
-            || existing.job_id != report.job_id
-            || existing.fence_epoch != report.fence_epoch
-            || existing.report_hash != report_hash
-        {
-            return Err(ReservationReleaseError::ReleaseConflict {
-                attempt_id: report.attempt_id.clone(),
-            });
-        }
-        return Ok(ReleaseOutcome::AlreadyReleased(existing));
+/// ★ 2026-10-03 (실행 알림 계약 v18k §3 · 계획 조각 4a) — 서명된 **STOP_CONFIRMED** 알림을 근거로 **호출자의 트랜잭션 안에서** 예약을 푼다.
+///
+/// ```text
+/// 근거 등급   NodeConfirmedStop — WORKER_REPORTED(노드 키 서명 · 신뢰망 전용). stop_evidence 1(기계 증거) · 2(소유자 진술) 둘 다 받는다
+/// 신원       알림의 job · node · fence 가 durable 시도와 같고 단일 노드 시도여야 한다 — 아니면 거부(계약 §2)
+/// 이미 풀림   같은 신원이면 "이미 해제됨"(근거 행만 더한다) · 신원이 다르면 충돌
+/// 예약 없음   ★ 종료 보고 경로와 다르다: 예약이 없거나 다른 시도의 것이면 오류가 아니라 `NothingToRelease` — 아무것도 지우거나 적지 않고,
+///            호출자가 알림 저장 · 시도 종결 · ACK 를 그대로 커밋한다. 다른 시도의 예약은 절대 지우지 않는다(§0.1)
+/// ```
+/// ★ 부르는 곳이 아직 없다 — 알림 저장 · 시도 전이와 같은 트랜잭션에 묶는 것은 조각 4d 다. 키 디렉터리 진술은 종료 보고 경로와 같은 이유로 값으로 요구한다.
+pub fn release_for_stop_confirmed_within(
+    transaction: &Connection,
+    verified: &Verified<pb::AttemptRunNotice>,
+    key_directory: KeyDirectoryProvenance,
+    released_at_unix_ms: u64,
+) -> Result<ReleaseOutcome, ReservationReleaseError> {
+    if key_directory == KeyDirectoryProvenance::Unverified {
+        return Err(ReservationReleaseError::KeyDirectoryNotVerified);
     }
+    // 어떤 필드도 Verified 관문을 지나기 전에 읽지 않는다.
+    let notice = verified.get();
+    gputeer_protocol::attempt_run_notice_rules::validate_attempt_run_notice(notice)
+        .map_err(ReservationReleaseError::NoticeRule)?;
+    if notice.kind != pb::RunNoticeKind::StopConfirmed as i32 {
+        return Err(ReservationReleaseError::NotStopConfirmed);
+    }
+    for (value, field) in [
+        (&notice.job_id, "job_id"),
+        (&notice.attempt_id, "attempt_id"),
+        (&notice.node_id, "node_id"),
+    ] {
+        if value.trim().is_empty() {
+            return Err(ReservationReleaseError::InvalidInput(field));
+        }
+    }
+    let attempt = staging_store::fetch_attempt(transaction, &notice.attempt_id)
+        .map_err(map_staging_error)?
+        .ok_or_else(|| ReservationReleaseError::AttemptNotFound {
+            attempt_id: notice.attempt_id.clone(),
+        })?;
+    if attempt.job_id != notice.job_id
+        || attempt.node_ids != [notice.node_id.clone()]
+        || attempt.fence_epoch != notice.fence_epoch
+    {
+        return Err(ReservationReleaseError::AttemptIdentityMismatch {
+            attempt_id: notice.attempt_id.clone(),
+        });
+    }
+    let notice_hash = blake3_256(&signing_input(notice));
+    record_release_within(
+        transaction,
+        &ReleaseIdentity {
+            attempt_id: &notice.attempt_id,
+            job_id: &notice.job_id,
+            node_id: &notice.node_id,
+            fence_epoch: notice.fence_epoch,
+        },
+        ReleaseEvidenceKind::StopConfirmed,
+        &notice_hash,
+        &notice.encode_to_vec(),
+        released_at_unix_ms,
+        ReservationPolicy::TolerateGoneOrOther,
+    )
+}
 
+/// 저장된 종료 보고와 재검증된 보고가 같은지 본다(해시 · 내용 · 제출 당시 서명자).
+fn check_terminal_binding(
+    transaction: &Connection,
+    verified: &Verified<pb::AttemptReport>,
+    report_hash: &[u8; 32],
+) -> Result<(), ReservationReleaseError> {
+    let report = verified.get();
     let binding = attempt_report_store::fetch_report_binding(
         transaction,
         &report.attempt_id,
@@ -544,52 +689,149 @@ pub fn release_within_transaction(
         attempt_id: report.attempt_id.clone(),
         node_id: report.node_id.clone(),
     })?;
-    if binding.report_hash != report_hash
+    if binding.report_hash != *report_hash
         || binding.report != *report
-        || binding.signer_id_at_submission != signer_id
+        || binding.signer_id_at_submission != verified.signer_id()
     {
         return Err(ReservationReleaseError::EvidenceMismatch {
             attempt_id: report.attempt_id.clone(),
             node_id: report.node_id.clone(),
         });
     }
+    Ok(())
+}
 
-    let reservation = staging_store::fetch_node_reservation(transaction, &report.node_id)
-        .map_err(map_staging_error)?
-        .ok_or_else(|| ReservationReleaseError::ReservationNotFound {
-            node_id: report.node_id.clone(),
+/// 해제할 시도의 신원.
+struct ReleaseIdentity<'a> {
+    attempt_id: &'a str,
+    job_id: &'a str,
+    node_id: &'a str,
+    fence_epoch: u64,
+}
+
+impl<'a> ReleaseIdentity<'a> {
+    fn of_report(report: &'a pb::AttemptReport) -> Self {
+        Self {
+            attempt_id: &report.attempt_id,
+            job_id: &report.job_id,
+            node_id: &report.node_id,
+            fence_epoch: report.fence_epoch,
+        }
+    }
+}
+
+/// 예약이 없거나 다른 시도의 것일 때.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReservationPolicy {
+    /// 종료 보고 경로 — 오류로 되돌린다(지금까지의 동작).
+    MustHold,
+    /// 정지 확인 경로 — `NothingToRelease` 로 알리고 나머지는 호출자가 커밋한다(계약 §3).
+    TolerateGoneOrOther,
+}
+
+/// 공통 핵심 — **호출자의 트랜잭션 안에서** 사실 · 근거를 적고 예약을 지운다. 커밋은 호출자가 한다.
+fn record_release_within(
+    transaction: &Connection,
+    identity: &ReleaseIdentity<'_>,
+    kind: ReleaseEvidenceKind,
+    evidence_hash: &[u8; 32],
+    payload: &[u8],
+    released_at_unix_ms: u64,
+    policy: ReservationPolicy,
+) -> Result<ReleaseOutcome, ReservationReleaseError> {
+    // 1) 이미 풀렸는가 — 같은 신원이면 "이미 해제됨"(새 근거면 근거 행만 더한다), 다르면 충돌.
+    if let Some(existing) = fetch_release(transaction, identity.attempt_id)? {
+        if existing.node_id != identity.node_id
+            || existing.job_id != identity.job_id
+            || existing.fence_epoch != identity.fence_epoch
+        {
+            return Err(ReservationReleaseError::ReleaseConflict {
+                attempt_id: identity.attempt_id.to_string(),
+            });
+        }
+        insert_evidence(
+            transaction,
+            identity.attempt_id,
+            kind,
+            evidence_hash,
+            payload,
+            released_at_unix_ms,
+        )?;
+        let refreshed = fetch_release(transaction, identity.attempt_id)?.ok_or_else(|| {
+            ReservationReleaseError::Storage("방금 읽은 해제 사실이 사라졌다".to_string())
         })?;
-    check_reservation_owner(report, &reservation)?;
+        return Ok(ReleaseOutcome::AlreadyReleased(refreshed));
+    }
 
+    // 2) 예약이 **이 attempt 의 것**이어야 한다. ★ 다르면 절대 지우지 않는다(§0.1).
+    let reservation = match (
+        staging_store::fetch_node_reservation(transaction, identity.node_id)
+            .map_err(map_staging_error)?,
+        policy,
+    ) {
+        (Some(reservation), _) => reservation,
+        (None, ReservationPolicy::MustHold) => {
+            return Err(ReservationReleaseError::ReservationNotFound {
+                node_id: identity.node_id.to_string(),
+            })
+        }
+        (None, ReservationPolicy::TolerateGoneOrOther) => {
+            return Ok(ReleaseOutcome::NothingToRelease {
+                holder_attempt_id: None,
+            })
+        }
+    };
+    if reservation.attempt_id != identity.attempt_id {
+        return match policy {
+            ReservationPolicy::MustHold => Err(
+                ReservationReleaseError::ReservationBelongsToAnotherAttempt {
+                    node_id: identity.node_id.to_string(),
+                    holder_attempt_id: reservation.attempt_id.clone(),
+                },
+            ),
+            ReservationPolicy::TolerateGoneOrOther => Ok(ReleaseOutcome::NothingToRelease {
+                holder_attempt_id: Some(reservation.attempt_id.clone()),
+            }),
+        };
+    }
+    if reservation.job_id != identity.job_id {
+        return Err(ReservationReleaseError::ReservationJobMismatch {
+            node_id: identity.node_id.to_string(),
+            reservation_job_id: reservation.job_id.clone(),
+            report_job_id: identity.job_id.to_string(),
+        });
+    }
+
+    // 3) 풀고 기록한다. 순서상 자식 행이 먼저다.
     let released_gpu_ids = reservation.selected_gpu_ids.clone();
     transaction
         .execute(
             "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
-            rusqlite::params![report.node_id],
+            rusqlite::params![identity.node_id],
         )
         .map_err(map_sql_error)?;
     let removed = transaction
         .execute(
             "DELETE FROM coordinator_node_reservations WHERE node_id = ?1 AND attempt_id = ?2",
-            rusqlite::params![report.node_id, report.attempt_id],
+            rusqlite::params![identity.node_id, identity.attempt_id],
         )
         .map_err(map_sql_error)?;
     if removed != 1 {
+        // 방금 읽은 예약이 사라졌다 — 같은 트랜잭션 안이므로 있을 수 없는 일이다. 조용히 넘기지 않는다.
         return Err(ReservationReleaseError::Storage(format!(
             "예약 삭제가 {removed} 행을 지웠다 — 1 이어야 한다"
         )));
     }
     transaction
         .execute(
-            "INSERT INTO coordinator_reservation_releases(
-                attempt_id, node_id, job_id, fence_epoch, report_hash, released_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO coordinator_release_facts(
+                attempt_id, node_id, job_id, fence_epoch, released_at_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![
-                report.attempt_id,
-                report.node_id,
-                report.job_id,
-                encode_u64(report.fence_epoch),
-                report_hash.as_slice(),
+                identity.attempt_id,
+                identity.node_id,
+                identity.job_id,
+                encode_u64(identity.fence_epoch),
                 encode_u64(released_at_unix_ms),
             ],
         )
@@ -597,23 +839,60 @@ pub fn release_within_transaction(
     for (ordinal, gpu_id) in released_gpu_ids.iter().enumerate() {
         transaction
             .execute(
-                "INSERT INTO coordinator_reservation_release_gpus(
+                "INSERT INTO coordinator_release_fact_gpus(
                     attempt_id, gpu_id, ordinal
                  ) VALUES (?1, ?2, ?3)",
-                rusqlite::params![report.attempt_id, gpu_id, ordinal as i64],
+                rusqlite::params![identity.attempt_id, gpu_id, ordinal as i64],
             )
             .map_err(map_sql_error)?;
     }
+    insert_evidence(
+        transaction,
+        identity.attempt_id,
+        kind,
+        evidence_hash,
+        payload,
+        released_at_unix_ms,
+    )?;
 
     Ok(ReleaseOutcome::Released(StoredReservationRelease {
-        attempt_id: report.attempt_id.clone(),
-        node_id: report.node_id.clone(),
-        job_id: report.job_id.clone(),
-        fence_epoch: report.fence_epoch,
-        report_hash,
+        attempt_id: identity.attempt_id.to_string(),
+        node_id: identity.node_id.to_string(),
+        job_id: identity.job_id.to_string(),
+        fence_epoch: identity.fence_epoch,
         released_at_unix_ms,
         released_gpu_ids,
+        evidence: vec![ReleaseEvidenceRecord {
+            kind,
+            hash: *evidence_hash,
+        }],
     }))
+}
+
+/// 근거 한 줄을 더한다(같은 종류 · 해시가 이미 있으면 그대로 — 추가 전용 · 멱등).
+fn insert_evidence(
+    transaction: &Connection,
+    attempt_id: &str,
+    kind: ReleaseEvidenceKind,
+    hash: &[u8; 32],
+    payload: &[u8],
+    recorded_at_unix_ms: u64,
+) -> Result<(), ReservationReleaseError> {
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO coordinator_release_evidence(
+                attempt_id, evidence_kind, evidence_hash, payload, recorded_at_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                attempt_id,
+                kind.as_str(),
+                hash.as_slice(),
+                payload,
+                encode_u64(recorded_at_unix_ms),
+            ],
+        )
+        .map_err(map_sql_error)?;
+    Ok(())
 }
 
 /// `ObservedExitInSignedReport` 를 **값으로** 확인한다.
@@ -678,40 +957,14 @@ fn validate_input(report: &pb::AttemptReport) -> Result<(), ReservationReleaseEr
         .map_err(ReservationReleaseError::ReportRule)
 }
 
-/// 예약이 이 보고서의 것인지 본다.
-///
-/// ★ 다르면 **지우지 않고 거부한다.** 남의 예약을 지우면 지금 돌고 있는
-///   남의 작업을 죽인다(`CLAUDE.md` §0.1).
-fn check_reservation_owner(
-    report: &pb::AttemptReport,
-    reservation: &StoredNodeReservation,
-) -> Result<(), ReservationReleaseError> {
-    if reservation.attempt_id != report.attempt_id {
-        return Err(
-            ReservationReleaseError::ReservationBelongsToAnotherAttempt {
-                node_id: report.node_id.clone(),
-                holder_attempt_id: reservation.attempt_id.clone(),
-            },
-        );
-    }
-    if reservation.job_id != report.job_id {
-        return Err(ReservationReleaseError::ReservationJobMismatch {
-            node_id: report.node_id.clone(),
-            reservation_job_id: reservation.job_id.clone(),
-            report_job_id: report.job_id.clone(),
-        });
-    }
-    Ok(())
-}
-
 fn fetch_release(
     connection: &Connection,
     attempt_id: &str,
 ) -> Result<Option<StoredReservationRelease>, ReservationReleaseError> {
     let raw = connection
         .query_row(
-            "SELECT attempt_id, node_id, job_id, fence_epoch, report_hash, released_at_unix_ms
-             FROM coordinator_reservation_releases
+            "SELECT attempt_id, node_id, job_id, fence_epoch, released_at_unix_ms
+             FROM coordinator_release_facts
              WHERE attempt_id = ?1",
             rusqlite::params![attempt_id],
             |row| {
@@ -721,13 +974,12 @@ fn fetch_release(
                     row.get::<_, String>(2)?,
                     row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, Vec<u8>>(4)?,
-                    row.get::<_, Vec<u8>>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(map_sql_error)?;
-    let Some((row_attempt_id, node_id, job_id, fence, hash, released_at)) = raw else {
+    let Some((row_attempt_id, node_id, job_id, fence, released_at)) = raw else {
         return Ok(None);
     };
     let corrupt = |kind| ReservationReleaseError::Corrupt {
@@ -738,21 +990,56 @@ fn fetch_release(
         decode_u64(&fence).map_err(|_| corrupt(ReleaseCorruption::FenceEpochEncoding))?;
     let released_at_unix_ms =
         decode_u64(&released_at).map_err(|_| corrupt(ReleaseCorruption::ReleasedAtEncoding))?;
-    let report_hash: [u8; 32] = hash
-        .try_into()
-        .map_err(|_| corrupt(ReleaseCorruption::HashEncoding))?;
 
     let released_gpu_ids = fetch_released_gpu_ids(connection, &row_attempt_id)?;
+    let evidence = fetch_release_evidence(connection, &row_attempt_id)?;
+    if evidence.is_empty() {
+        return Err(corrupt(ReleaseCorruption::MissingEvidence));
+    }
 
     Ok(Some(StoredReservationRelease {
         attempt_id: row_attempt_id,
         node_id,
         job_id,
         fence_epoch,
-        report_hash,
         released_at_unix_ms,
         released_gpu_ids,
+        evidence,
     }))
+}
+
+/// 근거 행을 (종류 · 해시) 순으로 읽는다. 모르는 종류 · 해시 길이는 손상이다.
+fn fetch_release_evidence(
+    connection: &Connection,
+    attempt_id: &str,
+) -> Result<Vec<ReleaseEvidenceRecord>, ReservationReleaseError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT evidence_kind, evidence_hash FROM coordinator_release_evidence
+             WHERE attempt_id = ?1",
+        )
+        .map_err(map_sql_error)?;
+    let rows = statement
+        .query_map(rusqlite::params![attempt_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })
+        .map_err(map_sql_error)?;
+    let corrupt = |kind| ReservationReleaseError::Corrupt {
+        attempt_id: attempt_id.to_string(),
+        kind,
+    };
+    let mut records = Vec::new();
+    for row in rows {
+        let (raw_kind, raw_hash) = row.map_err(map_sql_error)?;
+        let kind = ReleaseEvidenceKind::parse(&raw_kind)
+            .ok_or_else(|| corrupt(ReleaseCorruption::EvidenceKind))?;
+        let hash: [u8; 32] = raw_hash
+            .try_into()
+            .map_err(|_| corrupt(ReleaseCorruption::HashEncoding))?;
+        records.push(ReleaseEvidenceRecord { kind, hash });
+    }
+    records.sort_by_key(|record| (record.kind, record.hash));
+    Ok(records)
 }
 
 /// 자식 행을 읽으면서 **저장 손상까지 다시 본다.**
@@ -765,7 +1052,7 @@ fn fetch_released_gpu_ids(
 ) -> Result<Vec<String>, ReservationReleaseError> {
     let mut statement = connection
         .prepare(
-            "SELECT gpu_id, ordinal FROM coordinator_reservation_release_gpus
+            "SELECT gpu_id, ordinal FROM coordinator_release_fact_gpus
              WHERE attempt_id = ?1 ORDER BY ordinal ASC",
         )
         .map_err(map_sql_error)?;

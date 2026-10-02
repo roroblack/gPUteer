@@ -25,8 +25,9 @@ use gputeer_coordinator::inventory_store::{
 };
 use gputeer_coordinator::job_store::{AcceptedJobSubmission, CoordinatorJobStore};
 use gputeer_coordinator::reservation_release::{
-    ArtifactDurabilityGuard, CoordinatorReservationReleaseStore, KeyDirectoryProvenance,
-    ReleaseAuthorization, ReleaseOutcome, ReservationReleaseError, RuntimeStopProof,
+    release_for_stop_confirmed_within, ArtifactDurabilityGuard, CoordinatorReservationReleaseStore,
+    KeyDirectoryProvenance, ReleaseAuthorization, ReleaseEvidenceKind, ReleaseOutcome,
+    ReservationReleaseError, RuntimeStopProof,
 };
 use gputeer_coordinator::staging_store::{CoordinatorStagingStore, StageQueuedRequest};
 use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
@@ -724,7 +725,7 @@ fn a_refused_release_leaves_no_trace() {
     let connection = rusqlite::Connection::open(&fixture.path).unwrap();
     let release_gpus: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM coordinator_reservation_release_gpus",
+            "SELECT COUNT(*) FROM coordinator_release_fact_gpus",
             [],
             |row| row.get(0),
         )
@@ -952,7 +953,7 @@ fn a_failure_between_the_deletes_and_the_insert_rolls_everything_back() {
         connection.execute("PRAGMA foreign_keys = OFF", []).unwrap();
         connection
             .execute(
-                "INSERT INTO coordinator_reservation_release_gpus(attempt_id, gpu_id, ordinal)
+                "INSERT INTO coordinator_release_fact_gpus(attempt_id, gpu_id, ordinal)
                  VALUES (?1, 'gpu-1', 0)",
                 rusqlite::params![ATTEMPT_ID],
             )
@@ -1059,4 +1060,393 @@ fn a_non_completed_outcome_does_not_need_the_artifact_guard() {
         matches!(outcome, ReleaseOutcome::Released(_)),
         "{outcome:?}"
     );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ 2026-10-03 (실행 알림 계약 v18k §3 · 계획 조각 4a) — 해제 증거 일반화
+// ══════════════════════════════════════════════════════════════════
+
+/// 서명된 실행 알림(정지 확인 · 또는 불명)을 검증된 상태로 만든다.
+fn verified_notice(
+    attempt_id: &str,
+    node_id: &str,
+    fence_epoch: u64,
+    kind: pb::RunNoticeKind,
+    stop_evidence: pb::RunStopEvidence,
+) -> Verified<pb::AttemptRunNotice> {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let stop = kind == pb::RunNoticeKind::StopConfirmed;
+    let mut notice = pb::AttemptRunNotice {
+        schema_version: 1,
+        job_id: JOB_ID.into(),
+        attempt_id: attempt_id.into(),
+        node_id: node_id.into(),
+        fence_epoch,
+        kind: kind as i32,
+        origin: if stop {
+            0
+        } else {
+            pb::RunUnknownOrigin::Running as i32
+        },
+        reason: if stop {
+            0
+        } else {
+            pb::RunUnknownReason::ExitUnobserved as i32
+        },
+        stop_evidence: if stop { stop_evidence as i32 } else { 0 },
+        sequence: 2,
+        observed_at_unix_ms: 350,
+        issued_at_unix_ms: 351,
+        ..Default::default()
+    };
+    notice.node_signature = sign(&key, &notice).to_vec();
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(node_id, key.verifying_key());
+    verify(
+        &notice,
+        1,
+        &Ed25519Verifier::new(keys),
+        999,
+        &mut NoReplayCheck,
+    )
+    .expect("시험 알림은 서명 검증을 통과해야 한다")
+}
+
+fn stop_notice(path: &Path) -> Verified<pb::AttemptRunNotice> {
+    verified_notice(
+        ATTEMPT_ID,
+        NODE_ID,
+        staged_fence_epoch(path),
+        pb::RunNoticeKind::StopConfirmed,
+        pb::RunStopEvidence::ContainerAbsentConfirmed,
+    )
+}
+
+/// 정지 확인 경로를 한 트랜잭션에서 부르고 커밋한다(호출자가 커밋하는 API 다).
+fn release_by_stop(
+    path: &Path,
+    notice: &Verified<pb::AttemptRunNotice>,
+    key_directory: KeyDirectoryProvenance,
+) -> Result<ReleaseOutcome, ReservationReleaseError> {
+    CoordinatorReservationReleaseStore::open(path).unwrap();
+    let mut connection = rusqlite::Connection::open(path).unwrap();
+    let transaction = connection.transaction().unwrap();
+    let outcome =
+        release_for_stop_confirmed_within(&transaction, notice, key_directory, RELEASED_AT);
+    if outcome.is_ok() {
+        transaction.commit().unwrap();
+    }
+    outcome
+}
+
+/// 서명된 STOP_CONFIRMED 알림이 근거가 되어 예약을 푼다 — 근거 종류 · 해시(= sig_input 의 BLAKE3)가 남고 GPU 도 같이 풀린다.
+#[test]
+fn a_signed_stop_confirmed_notice_releases_the_reservation() {
+    let fixture = prepare_fixture();
+    let notice = stop_notice(&fixture.path);
+    let outcome = release_by_stop(
+        &fixture.path,
+        &notice,
+        KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+    )
+    .expect("정지 확인으로 풀려야 한다");
+    let ReleaseOutcome::Released(record) = outcome else {
+        panic!("Released 여야 한다: {outcome:?}");
+    };
+    assert!(!reservation_exists(&fixture.path), "예약이 남았다");
+    assert_eq!(
+        record.released_gpu_ids,
+        vec!["gpu-1".to_string(), "gpu-2".to_string()]
+    );
+    assert_eq!(record.evidence.len(), 1);
+    assert_eq!(record.evidence[0].kind, ReleaseEvidenceKind::StopConfirmed);
+    assert_eq!(
+        record.evidence[0].hash,
+        gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(
+            notice.get()
+        ))
+    );
+    let stored = CoordinatorReservationReleaseStore::open(&fixture.path)
+        .unwrap()
+        .get_release(ATTEMPT_ID)
+        .unwrap();
+    assert_eq!(
+        stored,
+        Some(record),
+        "저장된 사실 · 근거가 돌려준 것과 같아야 한다"
+    );
+}
+
+/// 정지 확인 경로의 관문 — 키 디렉터리 진술 없음 · 불명 알림 · 다른 fence · 없는 시도는 각각 거부하고 아무것도 지우지 않는다.
+#[test]
+fn the_stop_confirmed_path_refuses_wrong_inputs_without_touching_the_reservation() {
+    let fixture = prepare_fixture();
+    let fence = staged_fence_epoch(&fixture.path);
+    let notice = stop_notice(&fixture.path);
+    assert_eq!(
+        release_by_stop(&fixture.path, &notice, KeyDirectoryProvenance::Unverified),
+        Err(ReservationReleaseError::KeyDirectoryNotVerified)
+    );
+    let unknown = verified_notice(
+        ATTEMPT_ID,
+        NODE_ID,
+        fence,
+        pb::RunNoticeKind::RunUnknown,
+        pb::RunStopEvidence::Unspecified,
+    );
+    assert_eq!(
+        release_by_stop(
+            &fixture.path,
+            &unknown,
+            KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        ),
+        Err(ReservationReleaseError::NotStopConfirmed)
+    );
+    let older = verified_notice(
+        ATTEMPT_ID,
+        NODE_ID,
+        fence + 1,
+        pb::RunNoticeKind::StopConfirmed,
+        pb::RunStopEvidence::ContainerAbsentConfirmed,
+    );
+    assert_eq!(
+        release_by_stop(
+            &fixture.path,
+            &older,
+            KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        ),
+        Err(ReservationReleaseError::AttemptIdentityMismatch {
+            attempt_id: ATTEMPT_ID.into()
+        })
+    );
+    let ghost = verified_notice(
+        "attempt-ghost",
+        NODE_ID,
+        fence,
+        pb::RunNoticeKind::StopConfirmed,
+        pb::RunStopEvidence::ContainerAbsentConfirmed,
+    );
+    assert_eq!(
+        release_by_stop(
+            &fixture.path,
+            &ghost,
+            KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        ),
+        Err(ReservationReleaseError::AttemptNotFound {
+            attempt_id: "attempt-ghost".into()
+        })
+    );
+    assert!(
+        reservation_exists(&fixture.path),
+        "거부했는데 예약이 사라졌다"
+    );
+}
+
+/// 같은 신원을 다른 근거로 다시 풀면 "이미 해제됨" 이고 근거 행만 더한다 — 종료 보고로 푼 뒤 늦은 정지 확인.
+#[test]
+fn a_late_stop_after_a_terminal_release_adds_evidence_and_is_already_released() {
+    let fixture = prepare_fixture();
+    let report = completed_report(&fixture.path);
+    store_evidence(&fixture.path, &report);
+    let mut store = CoordinatorReservationReleaseStore::open(&fixture.path).unwrap();
+    store
+        .release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT)
+        .unwrap();
+    drop(store);
+    let outcome = release_by_stop(
+        &fixture.path,
+        &stop_notice(&fixture.path),
+        KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+    )
+    .unwrap();
+    let ReleaseOutcome::AlreadyReleased(record) = outcome else {
+        panic!("AlreadyReleased 여야 한다: {outcome:?}");
+    };
+    let kinds: Vec<_> = record.evidence.iter().map(|e| e.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ReleaseEvidenceKind::TerminalReport,
+            ReleaseEvidenceKind::StopConfirmed
+        ]
+    );
+    // 같은 정지 확인을 또 보내도 근거가 늘지 않는다(멱등)
+    let again = release_by_stop(
+        &fixture.path,
+        &stop_notice(&fixture.path),
+        KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller,
+    )
+    .unwrap();
+    let ReleaseOutcome::AlreadyReleased(again) = again else {
+        panic!("AlreadyReleased 여야 한다");
+    };
+    assert_eq!(again.evidence.len(), 2);
+}
+
+/// ★ 계약 §3 "예약이 이미 없을 때" — 정지 확인 경로는 예약이 없거나 다른 시도의 것이면 오류가 아니라 NothingToRelease 이고,
+///   **다른 시도의 예약은 절대 지우지 않는다.** 대조: 종료 보고 경로는 같은 경우 지금처럼 오류다.
+#[test]
+fn a_stop_when_the_reservation_is_gone_or_held_by_another_attempt_releases_nothing() {
+    // 예약이 없다(해제 기록도 없다)
+    let fixture = prepare_fixture();
+    {
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        connection
+            .execute(
+                "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
+                [NODE_ID],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM coordinator_node_reservations WHERE node_id = ?1",
+                [NODE_ID],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        release_by_stop(
+            &fixture.path,
+            &stop_notice(&fixture.path),
+            KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        ),
+        Ok(ReleaseOutcome::NothingToRelease {
+            holder_attempt_id: None
+        })
+    );
+    assert_eq!(
+        CoordinatorReservationReleaseStore::open(&fixture.path)
+            .unwrap()
+            .get_release(ATTEMPT_ID)
+            .unwrap(),
+        None,
+        "풀 것이 없는데 해제 사실을 적었다"
+    );
+
+    // 노드의 예약을 다른 시도가 쥐고 있다
+    let fixture = prepare_fixture();
+    stage_second_attempt_on_node_two(&fixture.path);
+    {
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        connection.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+        // node-2 의 예약을 치우고(attempt 하나에 예약 하나) node-1 의 예약을 attempt-2 가 쥔 것으로 바꾼다
+        connection
+            .execute(
+                "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = 'node-2'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM coordinator_node_reservations WHERE node_id = 'node-2'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE coordinator_node_reservations SET attempt_id = 'attempt-2' WHERE node_id = ?1",
+                [NODE_ID],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        release_by_stop(
+            &fixture.path,
+            &stop_notice(&fixture.path),
+            KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        ),
+        Ok(ReleaseOutcome::NothingToRelease {
+            holder_attempt_id: Some("attempt-2".into())
+        })
+    );
+    assert!(
+        reservation_exists(&fixture.path),
+        "다른 시도의 예약을 지웠다"
+    );
+}
+
+/// ★ 옛 해제 표의 기록은 열 때 새 표(사실 · GPU · TERMINAL_REPORT 근거)로 옮겨지고, 근거 payload 는 저장된 종료 보고 바이트다.
+///   그 종료 보고를 찾지 못하면 옮기지 않고 열기를 거부한다(fail closed).
+#[test]
+fn legacy_release_rows_are_migrated_with_their_report_as_evidence() {
+    let fixture = prepare_fixture();
+    let report = completed_report(&fixture.path);
+    store_evidence(&fixture.path, &report);
+    let fence = staged_fence_epoch(&fixture.path);
+    let report_hash =
+        gputeer_protocol::canonical::blake3_256(&prost::Message::encode_to_vec(report.get()));
+    let insert_legacy = |path: &Path, hash: &[u8]| {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS coordinator_reservation_releases (
+                    attempt_id TEXT PRIMARY KEY, node_id TEXT NOT NULL, job_id TEXT NOT NULL,
+                    fence_epoch BLOB NOT NULL, report_hash BLOB NOT NULL CHECK(length(report_hash) = 32),
+                    released_at_unix_ms BLOB NOT NULL);
+                 CREATE TABLE IF NOT EXISTS coordinator_reservation_release_gpus (
+                    attempt_id TEXT NOT NULL, gpu_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+                    PRIMARY KEY(attempt_id, ordinal), UNIQUE(attempt_id, gpu_id));",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO coordinator_reservation_releases VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    ATTEMPT_ID,
+                    NODE_ID,
+                    JOB_ID,
+                    fence.to_be_bytes().to_vec(),
+                    hash,
+                    RELEASED_AT.to_be_bytes().to_vec()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO coordinator_reservation_release_gpus VALUES (?1, 'gpu-1', 0)",
+                [ATTEMPT_ID],
+            )
+            .unwrap();
+    };
+    insert_legacy(&fixture.path, &report_hash);
+    let migrated = CoordinatorReservationReleaseStore::open(&fixture.path)
+        .unwrap()
+        .get_release(ATTEMPT_ID)
+        .unwrap()
+        .expect("옛 기록이 옮겨져야 한다");
+    assert_eq!(migrated.fence_epoch, fence);
+    assert_eq!(migrated.released_gpu_ids, vec!["gpu-1".to_string()]);
+    assert_eq!(migrated.evidence.len(), 1);
+    assert_eq!(
+        migrated.evidence[0].kind,
+        ReleaseEvidenceKind::TerminalReport
+    );
+    assert_eq!(migrated.evidence[0].hash, report_hash);
+    let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+    let payload: Vec<u8> = connection
+        .query_row(
+            "SELECT payload FROM coordinator_release_evidence WHERE attempt_id = ?1",
+            [ATTEMPT_ID],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(payload, prost::Message::encode_to_vec(report.get()));
+    // 다시 열어도 한 번만 옮긴다(멱등)
+    CoordinatorReservationReleaseStore::open(&fixture.path).unwrap();
+    let evidence_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_release_evidence",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(evidence_rows, 1);
+
+    // 근거를 찾을 수 없는 옛 기록 — 옮기지 않고 거부
+    let broken = prepare_fixture();
+    insert_legacy(&broken.path, &[9u8; 32]);
+    assert!(matches!(
+        CoordinatorReservationReleaseStore::open(&broken.path).err(),
+        Some(ReservationReleaseError::MigrationEvidenceMissing { .. })
+    ));
 }
