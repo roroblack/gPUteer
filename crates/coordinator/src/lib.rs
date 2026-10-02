@@ -2536,6 +2536,10 @@ fn ingress_kind(message: &IngressMessage) -> &'static str {
         IngressMessage::GrantAckReceipt(_) => "GrantAckReceipt",
         IngressMessage::AttemptRunNotice(_) => "AttemptRunNotice",
         IngressMessage::AttemptRunNoticeAck(_) => "AttemptRunNoticeAck",
+        IngressMessage::SupersedeNotice(_) => "SupersedeNotice",
+        IngressMessage::MailboxDelivery(_) => "MailboxDelivery",
+        IngressMessage::MailboxAck(_) => "MailboxAck",
+        IngressMessage::MailboxAckReceipt(_) => "MailboxAckReceipt",
     }
 }
 

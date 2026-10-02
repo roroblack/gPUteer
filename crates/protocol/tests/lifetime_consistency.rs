@@ -308,6 +308,78 @@ fn declared_lifetime_matches_message_capability() {
         T + gputeer_protocol::constants::GRANT_TTL_MS,
         "실행 알림 응답의 만료가 발급 + GRANT_TTL_MS 가 아니다"
     );
+    // ★ 2026-10-02 대체 통지 우편함 v3 — 통지는 Evidence(며칠 뒤 다시 붙은 노드에 전해져도 유효) · 관측 시각은 폐기를 커밋한 decided_at 이다.
+    check(
+        "SupersedeNotice",
+        &pb::SupersedeNotice {
+            schema_version: 1,
+            decided_at_unix_ms: T,
+            issued_at_unix_ms: T,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        gputeer_protocol::signing::Signable::observed_at_unix_ms(&pb::SupersedeNotice {
+            decided_at_unix_ms: T,
+            issued_at_unix_ms: T + 1,
+            ..Default::default()
+        }),
+        T,
+        "대체 통지의 관측 시각이 결정 시각이 아니다"
+    );
+    // 배달 · 답 · 수신 확인은 ShortLived — 만료는 정확히 발급 + GRANT_TTL_MS(검수 mb2 ③) · 세션 nonce 가 replay nonce 다.
+    check(
+        "MailboxDelivery",
+        &pb::MailboxDelivery {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            session_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
+    check(
+        "MailboxAck",
+        &pb::MailboxAck {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            session_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
+    check(
+        "MailboxAckReceipt",
+        &pb::MailboxAckReceipt {
+            schema_version: 1,
+            issued_at_unix_ms: T,
+            session_nonce: vec![0u8; 16],
+            ..Default::default()
+        },
+    );
+    let ttl = gputeer_protocol::constants::GRANT_TTL_MS;
+    assert_eq!(
+        gputeer_protocol::signing::Signable::expires_at_unix_ms(&pb::MailboxDelivery {
+            issued_at_unix_ms: T,
+            ..Default::default()
+        }),
+        T + ttl,
+        "배달의 만료가 발급 + GRANT_TTL_MS 가 아니다"
+    );
+    assert_eq!(
+        gputeer_protocol::signing::Signable::expires_at_unix_ms(&pb::MailboxAck {
+            issued_at_unix_ms: T,
+            ..Default::default()
+        }),
+        T + ttl,
+        "답의 만료가 발급 + GRANT_TTL_MS 가 아니다"
+    );
+    assert_eq!(
+        gputeer_protocol::signing::Signable::expires_at_unix_ms(&pb::MailboxAckReceipt {
+            issued_at_unix_ms: T,
+            ..Default::default()
+        }),
+        T + ttl,
+        "수신 확인의 만료가 발급 + GRANT_TTL_MS 가 아니다"
+    );
     // 결함 131 — ACK 수신 확인. ShortLived 여야 한다 — 재생할 수 있으면 받아들여지지 않은 ACK 를 받아들여졌다고 믿게 된다.
     check(
         "GrantAckReceipt",

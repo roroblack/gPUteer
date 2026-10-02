@@ -360,6 +360,11 @@ declare_domains! {
     // ★ 2026-10-01 — 실행 여부 불명 계약 v17 §1. 32바이트 이하(29 · 26바이트).
     AttemptRunNotice => "gputeer/v1/attempt-run-notice",
     AttemptRunNoticeAck => "gputeer/v1/attempt-run-ack",
+    // ★ 2026-10-02 — 대체 통지 우편함 v3 §1. 32바이트 이하(27 · 27 · 22 · 26바이트).
+    SupersedeNotice => "gputeer/v1/supersede-notice",
+    MailboxDelivery => "gputeer/v1/mailbox-delivery",
+    MailboxAck => "gputeer/v1/mailbox-ack",
+    MailboxAckReceipt => "gputeer/v1/mailbox-receipt",
 }
 
 impl Domain {

@@ -665,6 +665,11 @@ fn domain_coverage_is_explicit() {
             Some("AttemptRunNoticeAck"),
             true,
         ),
+        // 대체 통지 우편함 v3 (2026-10-02) — 통지 · 배달 · 답 · 수신 확인
+        (Domain::SupersedeNotice, Some("SupersedeNotice"), true),
+        (Domain::MailboxDelivery, Some("MailboxDelivery"), true),
+        (Domain::MailboxAck, Some("MailboxAck"), true),
+        (Domain::MailboxAckReceipt, Some("MailboxAckReceipt"), true),
     ];
 
     // ★ 수동으로 적은 28 같은 숫자를 쓰지 않는다. 그 숫자를 두면
@@ -708,8 +713,9 @@ fn domain_coverage_is_explicit() {
     // 26 -> 27 (2026-09-14) — B+E 계약 단계 1 의 AttemptReportAck.
     // 27 -> 28 (2026-09-23) — 결함 131 의 GrantAckReceipt.
     // 28 -> 30 (2026-10-01) — 실행 여부 불명 계약 v17 의 AttemptRunNotice · AttemptRunNoticeAck.
+    // 30 -> 34 (2026-10-02) — 대체 통지 우편함 v3 의 SupersedeNotice · MailboxDelivery · MailboxAck · MailboxAckReceipt.
     assert_eq!(
-        implemented, 30,
+        implemented, 34,
         "구현된 domain 수가 바뀌었다 — 목록을 갱신하라"
     );
     assert_eq!(
@@ -1177,6 +1183,123 @@ fn attempt_run_notice_and_ack_vectors_match_reference() {
         &pb::AttemptRunNoticeAck {
             created: false,
             ..ack
+        },
+    );
+}
+
+/// ★ 2026-10-02 — 대체 통지 우편함 v3 §1. 통지 · 배달 · 답 · 수신 확인의 canonical 이 참조 구현과 같다. 통지의 notice_id 와 답의 notice_hash 는
+///   **Rust 가 계산한 값**으로 채운다 — 참조 구현의 BLAKE3 계산과 다르면 canonical 이 갈려 실패한다(notice_id · notice_hash 계산 벡터를 겸한다).
+#[test]
+fn mailbox_vectors_match_reference() {
+    use gputeer_protocol::mailbox_rules::{supersede_notice_hash, supersede_notice_id};
+    let notice = |attempt_id: &str,
+                  fence_epoch: u64,
+                  disposition: pb::SupersedeJobDisposition,
+                  decided_at: u64| {
+        pb::SupersedeNotice {
+            schema_version: 1,
+            notice_id: supersede_notice_id(attempt_id, "node-1", fence_epoch),
+            job_id: "01JBXR7Q0000000000000000AA".into(),
+            attempt_id: attempt_id.into(),
+            node_id: "node-1".into(),
+            fence_epoch,
+            lease_id: "01JBXLEASE000000000000001".into(),
+            cause: pb::SupersedeCause::NodeLost as i32,
+            job_disposition: disposition as i32,
+            decided_at_unix_ms: decided_at,
+            coordinator_id: "coordinator-1".into(),
+            issued_at_unix_ms: decided_at,
+            coordinator_signature: vec![b'K'; 64],
+        }
+    };
+    let a = notice(
+        "01JBXATT00000000000000001",
+        42,
+        pb::SupersedeJobDisposition::Requeued,
+        1_755_104_700_000,
+    );
+    assert_matches_reference("v49_supersede_notice_requeued", &a);
+    assert_matches_reference(
+        "v49b_supersede_notice_failed",
+        &pb::SupersedeNotice {
+            job_disposition: pb::SupersedeJobDisposition::Failed as i32,
+            ..a.clone()
+        },
+    );
+    assert_matches_reference(
+        "v49c_supersede_notice_fence_changed",
+        &notice(
+            "01JBXATT00000000000000001",
+            43,
+            pb::SupersedeJobDisposition::Requeued,
+            1_755_104_700_000,
+        ),
+    );
+    let b = notice(
+        "01JBXATT00000000000000002",
+        44,
+        pb::SupersedeJobDisposition::Failed,
+        1_755_104_800_000,
+    );
+    let empty = pb::MailboxDelivery {
+        schema_version: 1,
+        node_id: "node-1".into(),
+        notices: vec![],
+        coordinator_id: "coordinator-1".into(),
+        issued_at_unix_ms: 1_755_104_900_000,
+        session_nonce: (96u8..112).collect(),
+        coordinator_signature: vec![b'K'; 64],
+    };
+    assert_matches_reference("v50_mailbox_delivery_empty", &empty);
+    assert_matches_reference(
+        "v50b_mailbox_delivery_two",
+        &pb::MailboxDelivery {
+            notices: vec![a.clone(), b.clone()],
+            ..empty
+        },
+    );
+    let handled = |n: &pb::SupersedeNotice, action: pb::MailboxAction| pb::SupersedeHandled {
+        notice_id: n.notice_id.clone(),
+        notice_hash: Some(supersede_notice_hash(n)),
+        action: action as i32,
+    };
+    let ack = pb::MailboxAck {
+        schema_version: 1,
+        node_id: "node-1".into(),
+        handled: vec![
+            handled(&a, pb::MailboxAction::Stopped),
+            handled(&b, pb::MailboxAction::NotRunning),
+        ],
+        issued_at_unix_ms: 1_755_104_900_100,
+        session_nonce: (96u8..112).collect(),
+        node_signature: vec![b'N'; 64],
+    };
+    assert_matches_reference("v51_mailbox_ack", &ack);
+    assert_matches_reference(
+        "v51b_mailbox_ack_action_changed",
+        &pb::MailboxAck {
+            handled: vec![
+                handled(&a, pb::MailboxAction::NotRunning),
+                handled(&b, pb::MailboxAction::NotRunning),
+            ],
+            ..ack.clone()
+        },
+    );
+    let receipt = pb::MailboxAckReceipt {
+        schema_version: 1,
+        node_id: "node-1".into(),
+        accepted: vec![a.notice_id.clone(), b.notice_id.clone()],
+        coordinator_id: "coordinator-1".into(),
+        issued_at_unix_ms: 1_755_104_900_200,
+        session_nonce: (96u8..112).collect(),
+        coordinator_signature: vec![b'K'; 64],
+    };
+    assert_matches_reference("v52_mailbox_ack_receipt", &receipt);
+    assert_matches_reference(
+        "v52b_mailbox_ack_receipt_one",
+        &pb::MailboxAckReceipt {
+            accepted: vec![a.notice_id.clone()],
+            ..receipt
         },
     );
 }

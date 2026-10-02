@@ -113,6 +113,14 @@ pub enum FrameType {
     AttemptRunNotice = 19,
     /// ★ 2026-10-01 — 실행 여부 불명 계약 v17 — Coordinator 가 서명하는 "알림 받았다" 응답. Agent 가 받는다.
     AttemptRunNoticeAck = 20,
+    /// ★ 2026-10-02 — 대체 통지 우편함 v3 — Coordinator 가 서명하는 "그 시도는 폐기됐다"(배달 안에 실려 온다 · 단독 프레임도 같은 종류로 읽는다).
+    SupersedeNotice = 21,
+    /// ★ 2026-10-02 — 우편함 v3 — Coordinator 가 서명하는 배달(그 노드의 미확인 통지 전부). Agent 가 받는다.
+    MailboxDelivery = 22,
+    /// ★ 2026-10-02 — 우편함 v3 — 노드가 서명하는 답. Coordinator 가 받는다.
+    MailboxAck = 23,
+    /// ★ 2026-10-02 — 우편함 v3 — Coordinator 가 답을 커밋한 뒤 서명하는 수신 확인. Agent 가 받는다.
+    MailboxAckReceipt = 24,
 }
 
 impl FrameType {
@@ -138,6 +146,10 @@ impl FrameType {
             18 => Self::GrantAckReceipt,
             19 => Self::AttemptRunNotice,
             20 => Self::AttemptRunNoticeAck,
+            21 => Self::SupersedeNotice,
+            22 => Self::MailboxDelivery,
+            23 => Self::MailboxAck,
+            24 => Self::MailboxAckReceipt,
             _ => return None,
         })
     }
@@ -218,6 +230,10 @@ pub enum IngressMessage {
     GrantAckReceipt(Verified<pb::GrantAckReceipt>),
     AttemptRunNotice(Verified<pb::AttemptRunNotice>),
     AttemptRunNoticeAck(Verified<pb::AttemptRunNoticeAck>),
+    SupersedeNotice(Verified<pb::SupersedeNotice>),
+    MailboxDelivery(Verified<pb::MailboxDelivery>),
+    MailboxAck(Verified<pb::MailboxAck>),
+    MailboxAckReceipt(Verified<pb::MailboxAckReceipt>),
 }
 
 /// 헤더(5바이트: type 1 + len 4)를 읽고 본문을 읽어, 헤더가 가리키는
@@ -311,6 +327,12 @@ pub fn read_frame<R: Read>(
             max_supported_schema_version
                 .min(gputeer_protocol::constants::ATTEMPT_RUN_NOTICE_MAX_SCHEMA_VERSION)
         }
+        // ★ 2026-10-02 — 우편함 메시지 넷도 자기 상한과 작은 쪽으로 읽는다.
+        FrameType::SupersedeNotice
+        | FrameType::MailboxDelivery
+        | FrameType::MailboxAck
+        | FrameType::MailboxAckReceipt => max_supported_schema_version
+            .min(gputeer_protocol::constants::MAILBOX_MAX_SCHEMA_VERSION),
         _ => max_supported_schema_version,
     };
 
@@ -353,6 +375,10 @@ pub fn read_frame<R: Read>(
         FrameType::AttemptRunNoticeAck => {
             verify_as!(AttemptRunNoticeAck, pb::AttemptRunNoticeAck)
         }
+        FrameType::SupersedeNotice => verify_as!(SupersedeNotice, pb::SupersedeNotice),
+        FrameType::MailboxDelivery => verify_as!(MailboxDelivery, pb::MailboxDelivery),
+        FrameType::MailboxAck => verify_as!(MailboxAck, pb::MailboxAck),
+        FrameType::MailboxAckReceipt => verify_as!(MailboxAckReceipt, pb::MailboxAckReceipt),
     }
 }
 

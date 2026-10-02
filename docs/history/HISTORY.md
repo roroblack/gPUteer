@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-02 22:54 — 대체 통지 우편함 조각 1 — 계약층(메시지 넷 · 세션 모드 · 조합 규칙 · 벡터)(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3(검수 mb3 ACCEPTED · 사용자 결정 A — 진짜 우편함) · 구현 계획 v3 §2 조각 2
+- 스트림: Protocol(Coordinator 는 수신 분기 이름 넷만)
+- 수행: proto `lease.proto` — `SupersedeCause` · `SupersedeJobDisposition` · `MailboxAction` · `SupersedeNotice`(Coordinator 서명 · Evidence · 관측 시각 = decided_at) ·
+  `MailboxDelivery` · `SupersedeHandled`(서명 없는 답 한 줄) · `MailboxAck`(노드 서명) · `MailboxAckReceipt` — 배달 · 답 · 수신 확인은 ShortLived(만료 발급 + GRANT_TTL_MS ·
+  세션 nonce echo) · `SESSION_MODE_MAILBOX = 5`. domain 넷(`gputeer/v1/supersede-notice` · `mailbox-delivery` · `mailbox-ack` · `mailbox-receipt`) · signing.md §5(38종) ·
+  FrameType 21 ~ 24 · 프레임 읽기 상한은 종류별(우편함 넷은 1 과 작은 쪽). 조합 규칙 `gputeer_protocol::mailbox_rules` — notice_id 계산(길이 앞머리 붙인 BLAKE3) ·
+  통지 해시(BLAKE3(sig_input)) · 통지 · 배달 · 답 · 수신 확인 검사(다른 노드 · 다른 세션 · 중복 ID · 배달하지 않은 통지에 답 · 해시 불일치 · 모르는 enum · 빈 신원 거부).
+  벡터 v49 ~ v52b(86 -> 95) — notice_id · 통지 해시는 Rust 가 계산한 값으로 대조해 계산 벡터를 겸한다 · 스키마 지문
+- ★ 부르는 곳이 아직 없다 — Coordinator(failover 의 서명 통지 · MAILBOX 세션 · ACK 관문) · Agent(묻기 · 처리)는 다음 조각이다
+- 검증: 프로토콜 · 프레임 시험(규칙 5 · 벡터 1 · 프레임 상한 1 · 수명 4종). 답의 해시 대조를 끄면 규칙 시험이 실패함을 확인 뒤 원복. 참조 구현 self-test · 재생성 대조 95개 일치 ·
+  check_schema 오류 0 · check_docs 오류 0. Windows `cargo test --workspace -j 2` 1565 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(끊김 여유 0 고침 검수 m0r 반영 · bebf405)의 재검수 m0r2 — `ACCEPTED`(기계 검수 · 사람이 봤다고 쓰지 않는다)
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-10-02 22:39 — 끊김 여유 0 고침 검수 m0r 반영 — 일시정지 풀기는 Lease 시한을 따로 본다 · 상단 안내 문구(브랜치 fork-merge)
 
 - 계획: 직전 항목(89a3395 — 여유 0 이어도 서명된 거부면 멈춘다)의 독립 검수 m0r(Codex gpt-6-sol) `CHANGES_REQUESTED` 2건 반영

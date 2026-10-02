@@ -1350,3 +1350,114 @@ fn the_run_notice_frames_use_their_own_schema_cap() {
         "종류별 상한이 AttemptReport v2 까지 막았다"
     );
 }
+
+/// ★ 2026-10-02 — 대체 통지 우편함 v3. 프레임 21 ~ 24 도 자기 상한(1)과 호출자 상한 중 작은 쪽으로 읽는다 — 상한 2 로 읽어도 v2 는 SCHEMA_TOO_NEW,
+///   v1 은 제 종류로 통과한다. 각 읽기는 새 replay 방어를 쓴다.
+#[test]
+fn the_mailbox_frames_use_their_own_schema_cap() {
+    let k = key(1);
+    let dir = directory(&k);
+    let read = |frame_type: FrameType, body: Vec<u8>| {
+        let frame = write_frame(frame_type, &body).unwrap();
+        read_frame(
+            &mut Cursor::new(frame),
+            2,
+            KeyDirectorySource::Provided(&dir),
+            &mut InMemoryReplayGuard::new(),
+            &FixedClock(NOW),
+        )
+    };
+    let notice = |schema_version: u32| {
+        let mut m = pb::SupersedeNotice {
+            schema_version,
+            notice_id: "n".into(),
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            node_id: "node-1".into(),
+            fence_epoch: 3,
+            lease_id: "lease-1".into(),
+            cause: pb::SupersedeCause::NodeLost as i32,
+            job_disposition: pb::SupersedeJobDisposition::Requeued as i32,
+            decided_at_unix_ms: NOW,
+            coordinator_id: DEVICE.into(),
+            issued_at_unix_ms: NOW,
+            ..Default::default()
+        };
+        m.coordinator_signature = sign(&k, &m).to_vec();
+        m
+    };
+    let delivery = |schema_version: u32| {
+        let mut m = pb::MailboxDelivery {
+            schema_version,
+            node_id: "node-1".into(),
+            notices: vec![notice(1)],
+            coordinator_id: DEVICE.into(),
+            issued_at_unix_ms: NOW,
+            session_nonce: vec![7u8; 16],
+            ..Default::default()
+        };
+        m.coordinator_signature = sign(&k, &m).to_vec();
+        m
+    };
+    let ack = |schema_version: u32| {
+        let mut m = pb::MailboxAck {
+            schema_version,
+            node_id: DEVICE.into(),
+            issued_at_unix_ms: NOW,
+            session_nonce: vec![7u8; 16],
+            ..Default::default()
+        };
+        m.node_signature = sign(&k, &m).to_vec();
+        m
+    };
+    let receipt = |schema_version: u32| {
+        let mut m = pb::MailboxAckReceipt {
+            schema_version,
+            node_id: "node-1".into(),
+            coordinator_id: DEVICE.into(),
+            issued_at_unix_ms: NOW,
+            session_nonce: vec![7u8; 16],
+            ..Default::default()
+        };
+        m.coordinator_signature = sign(&k, &m).to_vec();
+        m
+    };
+    let too_new = |label: &str, result: Result<IngressMessage, _>| match result {
+        Err(error) => assert!(
+            format!("{error:?}").contains("SchemaTooNew"),
+            "{label}: {error:?}"
+        ),
+        Ok(_) => panic!("{label} v2 가 호출자 상한(2)으로 통과했다 — 종류별 상한이 없다"),
+    };
+    too_new(
+        "통지",
+        read(FrameType::SupersedeNotice, notice(2).encode_to_vec()),
+    );
+    too_new(
+        "배달",
+        read(FrameType::MailboxDelivery, delivery(2).encode_to_vec()),
+    );
+    too_new("답", read(FrameType::MailboxAck, ack(2).encode_to_vec()));
+    too_new(
+        "수신 확인",
+        read(FrameType::MailboxAckReceipt, receipt(2).encode_to_vec()),
+    );
+    assert!(matches!(
+        read(FrameType::SupersedeNotice, notice(1).encode_to_vec()),
+        Ok(IngressMessage::SupersedeNotice(_))
+    ));
+    assert!(matches!(
+        read(FrameType::MailboxDelivery, delivery(1).encode_to_vec()),
+        Ok(IngressMessage::MailboxDelivery(_))
+    ));
+    assert!(matches!(
+        read(FrameType::MailboxAck, ack(1).encode_to_vec()),
+        Ok(IngressMessage::MailboxAck(_))
+    ));
+    assert!(matches!(
+        read(FrameType::MailboxAckReceipt, receipt(1).encode_to_vec()),
+        Ok(IngressMessage::MailboxAckReceipt(_))
+    ));
+    // 종류를 바꿔 읽으면(배달 바이트를 수신 확인으로) 도메인이 달라 서명이 맞지 않는다
+    assert!(read(FrameType::MailboxAckReceipt, delivery(1).encode_to_vec()).is_err());
+}
