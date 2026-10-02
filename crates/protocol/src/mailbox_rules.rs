@@ -4,7 +4,8 @@
 //!
 //! ```text
 //! 통지     node_id = 받는 노드 · cause · job_disposition ≠ 0 · issued_at = decided_at · notice_id 가 다시 계산한 값과 같다
-//! 배달     node_id = Hello 의 node_id · 안의 통지가 모두 그 node_id · notice_id 중복 없음 · session_nonce = 그 세션 Hello 의 nonce
+//! 배달     node_id = Hello 의 node_id · 안의 통지가 모두 그 node_id · notice_id 중복 없음 · decided_at 오래된 순(같으면 순서 무관) ·
+//!          session_nonce = 그 세션 Hello 의 nonce
 //! 답       node_id = Hello 의 node_id · handled 의 notice_id 는 그 세션에서 실제로 배달한 것만 · 중복 없음 · notice_hash 가 배달한 그 통지와 같음 · action ≠ 0
 //! 수신 확인 accepted ⊆ 답의 handled · session_nonce = 그 세션의 nonce
 //! 모르는 enum 값은 거부(fail closed)
@@ -36,6 +37,8 @@ pub enum MailboxRuleError {
     NoticeIdMismatch,
     /// 같은 notice_id 가 두 번 나온다.
     DuplicateNoticeId(String),
+    /// 배달의 통지가 결정 시각 오래된 순이 아니다(검수 mbp1).
+    OutOfOrder(String),
     /// 세션 nonce 가 그 세션 Hello 의 nonce 와 다르다.
     WrongSessionNonce,
     /// 그 세션에서 배달하지 않은 통지에 답했다.
@@ -59,6 +62,7 @@ impl std::fmt::Display for MailboxRuleError {
             Self::IssuedNotDecided => write!(f, "통지의 발행 시각이 결정 시각과 다르다"),
             Self::NoticeIdMismatch => write!(f, "notice_id 가 신원으로 계산한 값과 다르다"),
             Self::DuplicateNoticeId(id) => write!(f, "notice_id 가 두 번 나온다({id})"),
+            Self::OutOfOrder(id) => write!(f, "배달의 통지가 결정 시각 오래된 순이 아니다({id})"),
             Self::WrongSessionNonce => write!(f, "세션 nonce 가 그 세션 Hello 의 nonce 와 다르다"),
             Self::NotDelivered(id) => write!(f, "이 세션에서 배달하지 않은 통지에 답했다({id})"),
             Self::NoticeHashMismatch(id) => {
@@ -154,6 +158,7 @@ pub fn validate_mailbox_delivery(
         return Err(MailboxRuleError::WrongSessionNonce);
     }
     let mut seen = std::collections::BTreeSet::new();
+    let mut previous_decided_at = 0u64;
     for notice in &delivery.notices {
         validate_supersede_notice(notice, hello_node_id)?;
         if !seen.insert(notice.notice_id.as_str()) {
@@ -161,6 +166,11 @@ pub fn validate_mailbox_delivery(
                 notice.notice_id.clone(),
             ));
         }
+        // ★ 검수 mbp1 — 계약 §1 "decided_at 오래된 순". 같은 시각끼리는 순서를 정하지 않는다(저장소는 notice_id 순으로 보낸다).
+        if notice.decided_at_unix_ms < previous_decided_at {
+            return Err(MailboxRuleError::OutOfOrder(notice.notice_id.clone()));
+        }
+        previous_decided_at = notice.decided_at_unix_ms;
     }
     Ok(())
 }
@@ -385,6 +395,24 @@ mod tests {
         assert_eq!(
             validate_mailbox_delivery(&delivery(vec![a.clone(), a.clone()]), NODE, NONCE),
             Err(MailboxRuleError::DuplicateNoticeId(a.notice_id.clone()))
+        );
+        // ★ 검수 mbp1 — 결정 시각 오래된 순이어야 한다. 같은 시각은 어느 순서든 받는다
+        let later = pb::SupersedeNotice {
+            decided_at_unix_ms: 1_500,
+            issued_at_unix_ms: 1_500,
+            ..b.clone()
+        };
+        assert_eq!(
+            validate_mailbox_delivery(&delivery(vec![a.clone(), later.clone()]), NODE, NONCE),
+            Ok(())
+        );
+        assert_eq!(
+            validate_mailbox_delivery(&delivery(vec![later.clone(), a.clone()]), NODE, NONCE),
+            Err(MailboxRuleError::OutOfOrder(a.notice_id.clone()))
+        );
+        assert_eq!(
+            validate_mailbox_delivery(&delivery(vec![b.clone(), a.clone()]), NODE, NONCE),
+            Ok(())
         );
         // 다른 노드 앞 통지가 섞이면 거부한다
         let other = pb::SupersedeNotice {

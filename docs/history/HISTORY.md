@@ -25,6 +25,17 @@
 
 ---
 
+## 2026-10-02 22:59 — 우편함 계약층 검수 mbp1 반영 — 배달은 결정 시각 오래된 순이어야 한다(브랜치 fork-merge)
+
+- 계획: 직전 항목(3057e5d)의 독립 검수 mbp1(Codex gpt-6-sol) `CHANGES_REQUESTED` 1건 — 계약 §1 은 배달의 통지를 decided_at 오래된 순으로 정했는데 조합 규칙이 순서를 보지 않았다
+- 스트림: Protocol
+- 수행: `validate_mailbox_delivery` 가 decided_at 이 줄어들면 `OutOfOrder` 로 거부한다(같은 시각끼리는 순서를 정하지 않는다 — 저장소는 notice_id 순으로 보낸다).
+  나머지(필드 · enum · 서명 칸 · domain 길이 · 수명 · canonical · notice_id · 해시 · 프레임 21 ~ 24 · 상한 · 벡터 교차 대조)는 검수가 계약과 맞다고 봤다
+- 검증: 순서 시험(오래된 순 통과 · 역순 거부 · 같은 시각 양쪽 통과). 순서 검사를 끄면 그 시험이 실패함을 확인 뒤 원복. `cargo test -p gputeer-protocol --lib mailbox` 5 passed
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-10-02 22:54 — 대체 통지 우편함 조각 1 — 계약층(메시지 넷 · 세션 모드 · 조합 규칙 · 벡터)(브랜치 fork-merge)
 
 - 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3(검수 mb3 ACCEPTED · 사용자 결정 A — 진짜 우편함) · 구현 계획 v3 §2 조각 2
