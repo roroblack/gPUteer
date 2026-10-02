@@ -23,6 +23,7 @@ use gputeer_checkpoint::writer::{manifest_for, write_checkpoint_phased, WritePha
 pub mod checkpoint_publisher;
 pub mod container;
 pub mod exec;
+mod mailbox;
 pub mod multi_agent;
 pub mod owner_panel;
 pub mod progress;
@@ -319,6 +320,9 @@ pub struct AgentConfig {
     /// ★ 2026-09-23 (결함 131 · 신뢰망 L) — ACK 를 보낸 뒤 Coordinator 의 **서명된 수신 확인**을 받아야만 실행한다.
     ///   받지 못하면(옛 Coordinator · 거부된 ACK · 끊긴 연결) 실행하지 않고 멈춘다(fail-closed). 풀 모드에서 켠다.
     pub require_ack_receipt: bool,
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 회차마다 FRESH 를 열기 전에 MAILBOX 세션으로 "그 시도는 폐기됐다" 통지를 받아 처리한다.
+    ///   남은 통지가 있으면 그 회차는 일을 받지 않는다. `--run-ledger` · `--require-ack-receipt` 없이는 기동 거부(풀 모드 전용 — 제안 §4).
+    pub use_mailbox: bool,
     /// ★ 2026-09-25 (결함 301 · signing.md §6.6) — FRESH Hello 에 NVML 로 읽은 GPU 목록을 서명해 싣는다(Hello v2).
     ///   풀 Coordinator 는 등록된 선언과 맞을 때만 "그 선언이 지금도 사실이다" 는 확인 기록을 남긴다 — 그래야 운영자가
     ///   다시 선언하지 않아도 이 노드가 신선도 검사에서 떨어지지 않는다. 기본 끔: 구버전 Coordinator 는 Hello v2 를 거부한다.
@@ -531,6 +535,21 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
         return Err(
             "POOL_AGENT_NEEDS_RENEW: --require-ack-receipt 인 풀 Agent 는 --renew-during-execution-ms 를 켜야 한다 — \
              첫 갱신이 \"실행을 시작했다\" 는 신호다(결함 218)"
+                .to_string(),
+        );
+    }
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 검수 mb2 ①) — 우편함은 풀 모드 전용이고(관문 · 수신 확인이 풀 경로에 있다), NOT_RUNNING 은 원장으로만
+    //   확인한다(재기동 뒤 살아 있는 컨테이너를 실행 목록만으로는 모른다). 둘 중 하나라도 없으면 켜지 않는다.
+    if config.use_mailbox && !config.require_ack_receipt {
+        return Err(
+            "USE_MAILBOX_NEEDS_ACK_RECEIPT: --use-mailbox 는 --require-ack-receipt 와 함께 켠다 — 우편함과 새 실행 관문은 풀 경로에만 있다"
+                .to_string(),
+        );
+    }
+    if config.use_mailbox && !config.run_ledger {
+        return Err(
+            "USE_MAILBOX_NEEDS_RUN_LEDGER: --use-mailbox 는 --run-ledger 와 함께 켠다 — \
+             \"이 노드에서 돌지 않는다\" 는 원장으로만 확인한다"
                 .to_string(),
         );
     }
@@ -784,6 +803,11 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     // ★ B+E 구현 단계 6 — 지난 실행이 남긴 보낼 보고를 먼저 보낸다. 실패해도 새 작업을 막지 않는다 — 파일은 남는다.
     if config.report_over_session {
         flush_report_outbox(&config, &signing_key);
+    }
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — FRESH 를 열기 **전에** 우편함을 비운다. 남으면 이 회차는 일을 받지 않는다(다음 회차에 다시).
+    //   Coordinator 의 새 실행 관문이 어차피 막지만, 두드리지 않는 것이 낫다 — 받지도 못할 Grant 를 위해 예약을 붙잡게 하지 않는다.
+    if config.use_mailbox {
+        mailbox::empty_before_fresh(&config, &signing_key)?;
     }
     let mut budget = RetryBudget::new(&policy);
     if !config.reconnect_enabled {
@@ -5381,6 +5405,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
             None => Vec::new(),
         },
         require_ack_receipt: flags.bool_flag("--require-ack-receipt"),
+        use_mailbox: flags.bool_flag("--use-mailbox"),
         attest_gpus: flags.bool_flag("--attest-gpus"),
         gpu_pin: match flags.get("--gpu-pin") {
             Some(raw) => Some(parse_gpu_pin(raw)?),
@@ -5857,6 +5882,7 @@ mod tests {
             pool_peer_keys: Vec::new(),
             gpu_pin: None,
             require_ack_receipt: false,
+            use_mailbox: false,
             attest_gpus: false,
             expect_revoke_after_round: None,
             revoke_signer_id_override: None,
@@ -8174,6 +8200,64 @@ mod run_ledger_startup_tests {
         record_attempt_started_here(&on.checkpoint_root, "h").unwrap();
         assert!(open_run_ledger_at_startup(&on).unwrap().is_some());
         assert_eq!(state(&on, "h"), run_ledger::RowState::Closed);
+    }
+
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 회차 전 처리는 원장으로만 NOT_RUNNING 을 준다: 행 없음 · CLOSED 면 NOT_RUNNING,
+    ///   ACTIVE 면 답하지 않는다(살아 있을 수 있는 컨테이너) · 이 프로세스의 실행 목록에 있어도 답하지 않는다.
+    #[test]
+    fn the_idle_mailbox_answer_comes_only_from_the_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut on = config(dir.path(), &ON);
+        active_container_row(&on, "active", false);
+        active_container_row(&on, "closed", true);
+        {
+            let mut ledger = run_ledger::open_for_agent(&paths(&on)).expect("원장");
+            ledger
+                .close_active("closed", run_ledger::CloseReason::NotStarted)
+                .unwrap();
+        }
+        on.run_ledger_handle = Some(std::sync::Arc::new(std::sync::Mutex::new(
+            run_ledger::open_for_agent(&paths(&on)).expect("원장"),
+        )));
+        let notice = |attempt: &str| pb::SupersedeNotice {
+            attempt_id: attempt.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            mailbox::decide_when_idle(&on, &notice("never-here")),
+            Some(pb::MailboxAction::NotRunning)
+        );
+        assert_eq!(
+            mailbox::decide_when_idle(&on, &notice("closed")),
+            Some(pb::MailboxAction::NotRunning)
+        );
+        assert_eq!(mailbox::decide_when_idle(&on, &notice("active")), None);
+        // 원장이 꺼져 있으면(기동 검사가 막는 조합) 확인할 길이 없다 — 답하지 않는다
+        let mut off = on.clone();
+        off.run_ledger_handle = None;
+        assert_eq!(mailbox::decide_when_idle(&off, &notice("never-here")), None);
+    }
+
+    /// ★ 2026-10-02 — `--use-mailbox` 는 원장 · 수신 확인 없이 기동 거부(연결 전).
+    #[test]
+    fn use_mailbox_needs_the_ledger_and_the_ack_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let no_ledger = config(
+            dir.path(),
+            &[
+                "--use-mailbox",
+                "true",
+                "--require-ack-receipt",
+                "true",
+                "--report-over-session",
+                "true",
+            ],
+        );
+        let error = run(no_ledger).expect_err("원장 없이 우편함을 켰다");
+        assert!(error.contains("USE_MAILBOX_NEEDS_RUN_LEDGER"), "{error}");
+        let no_receipt = config(dir.path(), &["--use-mailbox", "true"]);
+        let error = run(no_receipt).expect_err("수신 확인 없이 우편함을 켰다");
+        assert!(error.contains("USE_MAILBOX_NEEDS_ACK_RECEIPT"), "{error}");
     }
 }
 

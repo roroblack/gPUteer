@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-02 23:59 — 대체 통지 우편함 조각 4a — Agent 가 일을 받으러 가기 전에 우편함을 비운다(브랜치 fork-merge)
+
+- 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §2 · §4(회차 전 처리 · NOT_RUNNING 확인 · 기동 거부)
+- 스트림: Agent · CLI(agent-loop) · 런북
+- 수행: 새 모듈 `crates/agent/src/mailbox.rs` — MAILBOX 세션 클라이언트(Hello(MAILBOX) · 배달의 겉 서명과 **안의 통지 서명을 각각** Coordinator 키로 검증 ·
+  조합 규칙 · 통지마다 처리 · 답 · 수신 확인 검증). `--use-mailbox true` 면 FRESH 를 열기 **전에** 우편함을 비운다 — 그 시도가 원장에 없거나 닫혔고 이 프로세스의
+  실행 목록에도 없으면 NOT_RUNNING, 원장 행이 열려 있으면 답하지 않는다. 남은 통지가 있거나 세션이 실패하면 그 회차는 일을 받지 않는다(`MAILBOX_NOT_EMPTY` ·
+  `MAILBOX_SESSION_FAILED` — agent-loop 는 다음 회차에 다시). `--use-mailbox` 는 `--run-ledger` · `--require-ack-receipt` 없이 기동 거부. agent-loop 가
+  `MAILBOX_` 줄을 운영자 출력으로 옮긴다. 런북: Coordinator 의 `--mailbox-gate` 는 모든 노드가 `--use-mailbox` 로 돈 뒤 켠다
+- ★ 아직 없는 것: **실행 중** 감시 스레드(그 시도가 지금 도는 중에 통지가 오면 멈추고 STOPPED) — 다음 조각(4b). 지금은 회차 사이에만 묻는다
+- 검증: 단위(원장 행 없음 · 닫힘 → NOT_RUNNING · 열림 → 보류 · 원장 꺼짐 → 보류 · 기동 거부 둘). 실제 프로세스 — 옛 시도 통지가 있는 노드의 실제 Agent 가
+  우편함을 비운 뒤(NOT_RUNNING · 수신 확인) 관문을 켠 풀에서 새 작업의 수신 확인까지 간다 · 우편함 처리가 FRESH 보다 먼저다(대조군: 우편함을 끈 Agent 는 관문에
+  막힌다 — 조각 3 시험). 회차 전 비우기를 끄면 이 시험이 실패함을 확인 뒤 원복. Windows `cargo test --workspace -j 2` 1578 passed · 0 failed · 서식 통과 · 바뀐 줄 clippy 0. ★ 리눅스 서버는 이번에도 접속되지 않았다
+- 그 전 항목(조각 3 · 412f442)의 검수 mbs1 — 첫 판에 `ACCEPTED`(기계 검수 · 빈 배달 · 답 없는 종료는 직접 시험하지 않았다는 참고)
+- 리포트: 제안 문서가 대신한다
+
+---
+
 ## 2026-10-02 23:41 — 대체 통지 우편함 조각 3 — Coordinator 의 MAILBOX 세션(배달 · 답 기록 · 수신 확인)과 새 실행 관문(브랜치 fork-merge)
 
 - 계획: 제안 `docs/contracts/proposals/2026-10-02_2207_대체_통지_우편함.md` v3 §2 · §4 · 규칙 2 · 4

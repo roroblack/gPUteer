@@ -457,6 +457,11 @@ impl OwnerPanelState {
     }
 
     /// 작업이 끝났음을 알린다.
+    /// 이 시도가 지금 이 프로세스에서 돌고 있나(실행 목록에 있나). ★ 프로세스 밖(재기동 전 컨테이너)은 모른다 — 원장이 맡는다.
+    pub fn is_running(&self, attempt_id: &str) -> bool {
+        self.lock().contains_key(attempt_id)
+    }
+
     pub fn unregister(&self, attempt_id: &str) {
         self.lock().remove(attempt_id);
         self.connections().remove(attempt_id);

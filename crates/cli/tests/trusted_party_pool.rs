@@ -2186,3 +2186,63 @@ fn an_unacked_notice_keeps_the_node_from_starting_new_work_behind_the_mailbox_ga
         "관문을 껐는데 막았다(대조군)\n{everything}"
     );
 }
+
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 실제 Agent(`--use-mailbox`)가 FRESH 를 열기 **전에** 우편함을 비운다: 옛 시도(원장에 없다)의 통지에
+///   NOT_RUNNING 으로 답하고 수신 확인을 받은 뒤, 관문을 켠 Coordinator 에서 새 작업의 수신 확인까지 간다. 같은 통지를 두고 우편함을 끈 Agent 는
+///   관문에 막힌다(`an_unacked_notice_keeps_the_node_from_starting_new_work_behind_the_mailbox_gate`) — 이 시험의 대조군이다.
+#[test]
+fn a_mailbox_agent_answers_an_old_notice_before_taking_new_work() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool(dir.path());
+    let (node, seed, _job) = schedule_once(&db, &keyring);
+    leave_an_unacked_notice(&db, node);
+    let (db_s, keyring_s) = (
+        db.to_str().unwrap().to_string(),
+        keyring.to_str().unwrap().to_string(),
+    );
+    let (coordinator, coordinator_log, addr) = start_pool_coordinator(
+        dir.path(),
+        &db_s,
+        &keyring_s,
+        &["--max-connections", "0", "--mailbox-gate", "true"],
+    );
+    let coordinator = KillOnDrop(Some(coordinator));
+    let mut agent = one_round_agent_args(dir.path(), &addr, node, seed);
+    agent.extend(
+        ["--run-ledger", "true", "--use-mailbox", "true"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let (_ok, agent_out) = run_to_end(&agent);
+    drop(coordinator);
+    let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        agent_out.contains("MAILBOX_DELIVERY_VERIFIED count=1")
+            && agent_out.contains("attempt_id=old-attempt action=NotRunning")
+            && agent_out.contains("MAILBOX_RECEIPT_VERIFIED"),
+        "우편함을 비우지 않았다\n{everything}"
+    );
+    assert!(
+        coordinator_out.contains("MAILBOX_ACK_RECORDED"),
+        "Coordinator 가 답을 적지 않았다\n{everything}"
+    );
+    assert!(
+        agent_out.contains("ACK_RECEIPT_VERIFIED")
+            && !coordinator_out.contains("mailbox_not_empty"),
+        "우편함을 비운 뒤에도 관문에 막혔다\n{everything}"
+    );
+    // 우편함 세션이 FRESH 보다 먼저다
+    let mailbox_at = agent_out.find("MAILBOX_RECEIPT_VERIFIED").unwrap();
+    let receipt_at = agent_out.find("ACK_RECEIPT_VERIFIED").unwrap();
+    assert!(
+        mailbox_at < receipt_at,
+        "FRESH 뒤에 우편함을 비웠다\n{everything}"
+    );
+    let connection = rusqlite::Connection::open(&db).unwrap();
+    assert!(
+        gputeer_coordinator::supersede_notice_store::unacked_for_node(&connection, node)
+            .unwrap()
+            .is_empty()
+    );
+}
