@@ -1755,11 +1755,7 @@ fn run_one_connection_inner(
                 }
             }
             if let Some(mailbox) = renewer.mailbox {
-                if mailbox.join().is_err() {
-                    println!(
-                        "MAILBOX_WATCH_THREAD_PANICKED — 우편함 감시 스레드가 비정상 종료했다"
-                    );
-                }
+                mailbox.finish(&grant.attempt_id, mailbox::WATCH_JOIN_LIMIT);
             }
         }
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
@@ -2578,7 +2574,7 @@ struct RenewDuringExecution {
     ///   감시가 멈추면 시한을 넘겨 계속 돌았다. 여유 0(끔)이면 없다.
     watcher: Option<std::thread::JoinHandle<()>>,
     /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 실행 중 우편함 감시 스레드(`--use-mailbox`). 갱신 스레드와 따로 실행이 끝날 때까지 돈다.
-    mailbox: Option<std::thread::JoinHandle<()>>,
+    mailbox: Option<mailbox::MailboxWatch>,
 }
 
 /// `renew_during_execution_ms` 간격으로 RENEW 세션을 연다. 0 이면 시작하지 않는다.

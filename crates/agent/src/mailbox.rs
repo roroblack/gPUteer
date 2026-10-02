@@ -297,15 +297,50 @@ pub(crate) fn decide_while_running(
     None
 }
 
+/// 실행이 끝난 뒤 감시 스레드를 기다리는 상한. ★ 검수 mbb1 — 스레드가 MAILBOX 세션의 I/O 중이면(연결 · 읽기 · 쓰기 시한 각 10초) 끝을 기다리는 동안
+///   종료 보고 · 예약 해제가 수십 초 늦어졌다. 우편함은 새 작업만 막는다(제안 §4) — 종료 처리를 붙잡지 않는다. 넘으면 기다리지 않고 놓는다.
+pub(crate) const WATCH_JOIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// 실행 중 우편함 감시 스레드의 손잡이.
+pub(crate) struct MailboxWatch {
+    handle: std::thread::JoinHandle<()>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl MailboxWatch {
+    /// 실행이 끝난 뒤(정지 플래그를 세운 뒤) 부른다 — `limit` 안에 끝나면 합류하고, 아니면 놓는다(스레드는 남은 I/O 를 마치고 혼자 끝난다).
+    ///   놓은 스레드가 보내던 답은 커밋됐는지 모를 수 있다 — 다음 회차 전 우편함 비우기가 다음 배달로 판단한다(제안 §1 · 검수 mb2 ②).
+    pub(crate) fn finish(self, attempt_id: &str, limit: std::time::Duration) {
+        match self.done.recv_timeout(limit) {
+            Ok(()) => {
+                if self.handle.join().is_err() {
+                    println!("MAILBOX_WATCH_THREAD_PANICKED attempt_id={attempt_id} — 우편함 감시 스레드가 비정상 종료했다");
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if self.handle.join().is_err() {
+                    println!("MAILBOX_WATCH_THREAD_PANICKED attempt_id={attempt_id} — 우편함 감시 스레드가 비정상 종료했다");
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => println!(
+                "MAILBOX_WATCH_DETACHED attempt_id={attempt_id} — 우편함 감시가 {limit:?} 안에 끝나지 않아 기다리지 않는다(종료 보고를 붙잡지 않는다). \
+                 보내던 답은 다음 회차 전 우편함 비우기가 다음 배달로 확인한다"
+            ),
+        }
+    }
+}
+
 /// 실행 중 우편함 감시 스레드. `stop` 이 서면(실행이 끝나면) 끝난다 — 그때 정지를 요청했고 정지가 성공했으면 마지막으로 한 번 더 물어 STOPPED 로 답한다.
+///   ★ 그 마지막 답과 진행 중이던 세션은 `MailboxWatch::finish` 의 상한 밖으로 밀려나도 된다 — 종료 처리는 기다리지 않는다.
 pub(crate) fn spawn_watch_during_execution(
     config: AgentConfig,
     signing_key: SigningKey,
     running_attempt: String,
     interval: std::time::Duration,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
+) -> MailboxWatch {
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
         let mut requested = false;
         let once = |requested: &mut bool| {
             match session_once(&config, &signing_key, &mut |notice| {
@@ -341,5 +376,46 @@ pub(crate) fn spawn_watch_during_execution(
         {
             once(&mut requested);
         }
-    })
+        // 받는 쪽이 이미 놓았으면(상한 초과) 보낼 곳이 없다 — 늦게 끝났다는 사실만 남긴다.
+        if done_tx.send(()).is_err() {
+            println!("MAILBOX_WATCH_LATE_FINISH attempt_id={running_attempt} — 종료 처리가 기다리지 않은 뒤에 끝났다");
+        }
+    });
+    MailboxWatch { handle, done }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ★ 검수 mbb1 — 감시 스레드가 I/O 에 묶여 있어도 실행 종료 처리는 상한만큼만 기다린다. 제때 끝나면 합류한다.
+    #[test]
+    fn finishing_the_watch_waits_at_most_the_limit() {
+        let stuck = {
+            let (done_tx, done) = std::sync::mpsc::channel();
+            let handle = std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let _ = done_tx.send(());
+            });
+            MailboxWatch { handle, done }
+        };
+        let started = std::time::Instant::now();
+        stuck.finish("a", std::time::Duration::from_millis(200));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "묶인 감시 스레드를 상한보다 오래 기다렸다: {:?}",
+            started.elapsed()
+        );
+
+        let quick = {
+            let (done_tx, done) = std::sync::mpsc::channel();
+            let handle = std::thread::spawn(move || {
+                done_tx.send(()).unwrap();
+            });
+            MailboxWatch { handle, done }
+        };
+        let started = std::time::Instant::now();
+        quick.finish("b", std::time::Duration::from_secs(5));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
 }

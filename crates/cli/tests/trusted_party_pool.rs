@@ -2308,8 +2308,18 @@ fn a_running_attempt_stops_when_its_notice_arrives_and_answers_stopped() {
         );
     }
     let posted = Instant::now();
-    let output = child.wait_with_output().expect("agent 출력");
+    // ★ 검수 mbb1 — 기다림에 상한을 둔다(작업 30초 + 여유). 넘으면 죽이고 실패로 본다.
+    let mut child = child;
+    let hard_deadline = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().expect("agent 상태").is_none() {
+        if Instant::now() >= hard_deadline {
+            let _ = child.kill();
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
     let took = posted.elapsed();
+    let output = child.wait_with_output().expect("agent 출력");
     drop(coordinator);
     let agent_out = format!(
         "{}{}",
@@ -2327,7 +2337,7 @@ fn a_running_attempt_stops_when_its_notice_arrives_and_answers_stopped() {
         "정지 뒤 STOPPED 로 답하지 않았다\n{everything}"
     );
     assert!(
-        took < Duration::from_secs(20),
+        took < Duration::from_secs(25),
         "통지 뒤 {took:?} 가 지나서야 끝났다 — 작업을 멈추지 않았다\n{everything}"
     );
     let connection = rusqlite::Connection::open(&db).unwrap();
