@@ -1154,7 +1154,7 @@ fn lost_receipt_round() -> (String, String, Option<JobState>) {
     // ACK 는 기록됐고(시도 STARTING · Job RUNNING) 수신 확인만 유실됐다.
     let recorded = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db)
         .unwrap()
-        .record_grant_accepted(&attempt_id, now_unix_ms(), false)
+        .record_grant_accepted(&attempt_id, now_unix_ms(), false, false)
         .unwrap();
     assert_eq!(
         recorded,
@@ -1591,6 +1591,15 @@ fn pool_round(
     coordinator_extra: &[&str],
     require_ack_receipt: bool,
 ) -> (String, String, Option<JobState>) {
+    pool_round_with(coordinator_extra, require_ack_receipt, &|_, _| {})
+}
+
+/// `pool_round` 와 같은데, 배정된 노드가 정해진 뒤 · Coordinator 를 띄우기 전에 `before(control DB, 노드)` 를 부른다.
+fn pool_round_with(
+    coordinator_extra: &[&str],
+    require_ack_receipt: bool,
+    before: &dyn Fn(&Path, &str),
+) -> (String, String, Option<JobState>) {
     let dir = tempfile::tempdir().expect("임시 폴더");
     let (db, keyring) = pool(dir.path());
     let db_s = db.to_str().unwrap().to_string();
@@ -1632,6 +1641,7 @@ fn pool_round(
         })
         .expect("어느 노드에도 배정이 없다");
     drop(staging);
+    before(&db, node);
     let (coordinator, coordinator_log, addr) =
         start_pool_coordinator(dir.path(), &db_s, &keyring_s, coordinator_extra);
     let agent = one_round_agent_args(dir.path(), &addr, node, seed);
@@ -1899,5 +1909,280 @@ fn a_matching_gpu_observation_keeps_a_node_fresh_and_a_different_gpu_does_not() 
     assert!(
         after > before,
         "맞는 관측이 신선도를 늘리지 않았다({before} -> {after})\n{matching}"
+    );
+}
+
+/// 프레임 하나를 날것으로 읽는다(종류 · 본문). 검증은 부르는 쪽이 Coordinator 키로 한다.
+fn read_raw_frame(stream: &mut std::net::TcpStream) -> (u8, Vec<u8>) {
+    use std::io::Read;
+    let mut header = [0u8; 5];
+    stream.read_exact(&mut header).expect("프레임 머리");
+    let len = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+    let mut body = vec![0u8; len];
+    stream.read_exact(&mut body).expect("프레임 본문");
+    (header[0], body)
+}
+
+/// Coordinator 키로 서명을 검증한다(안의 통지 · 겉 배달 · 수신 확인 모두 Coordinator 서명).
+fn verify_by_coordinator<M: gputeer_protocol::signing::Signable + Clone>(message: &M) {
+    let mut keyring = gputeer_crypto::InMemoryKeyring::new();
+    keyring.insert(
+        COORDINATOR.to_string(),
+        SigningKey::from_bytes(&seed_bytes(COORD_SEED)).verifying_key(),
+    );
+    gputeer_protocol::verify(
+        message,
+        1,
+        &gputeer_crypto::Ed25519Verifier::new(&keyring),
+        now_unix_ms(),
+        &mut gputeer_protocol::signing::NoReplayCheck,
+    )
+    .expect("Coordinator 서명이 맞아야 한다");
+}
+
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §2) — 실제 풀 Coordinator 프로세스와 MAILBOX 세션을 왕복한다.
+///   그 노드 앞 통지만 · 서명된 채로 배달되고(안 · 겉 서명 모두 Coordinator 키), 노드의 답을 커밋한 뒤 수신 확인이 오고, 다음 배달은 비었다.
+///   배달하지 않은 통지에 답하면 거부하고 아무것도 적지 않는다.
+#[test]
+fn a_mailbox_session_delivers_signed_notices_and_records_the_answer() {
+    use prost::Message;
+    use std::io::Write;
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool(dir.path());
+    let coordinator_key = SigningKey::from_bytes(&seed_bytes(COORD_SEED));
+    let signer = gputeer_coordinator::supersede_notice_store::NoticeSigner {
+        coordinator_id: COORDINATOR.into(),
+        key: coordinator_key.clone(),
+    };
+    let notice_for = |node: &str, attempt: &str, decided_at: u64| {
+        gputeer_coordinator::supersede_notice_store::sign_notice(
+            &signer,
+            &gputeer_coordinator::supersede_notice_store::SupersededAttempt {
+                job_id: "old-job".into(),
+                attempt_id: attempt.into(),
+                node_id: node.into(),
+                fence_epoch: 4,
+                lease_id: "old-lease".into(),
+                cause: gputeer_protocol::pb::SupersedeCause::NodeLost,
+                job_disposition: gputeer_protocol::pb::SupersedeJobDisposition::Requeued,
+                decided_at_unix_ms: decided_at,
+            },
+        )
+    };
+    let first = notice_for(NODE_1, "old-attempt-1", 1_000);
+    let second = notice_for(NODE_1, "old-attempt-2", 2_000);
+    let elsewhere = notice_for(NODE_2, "old-attempt-3", 500);
+    {
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        for notice in [&second, &first, &elsewhere] {
+            assert_eq!(
+                gputeer_coordinator::supersede_notice_store::record_within(&connection, notice),
+                Ok(true)
+            );
+        }
+    }
+    let (coordinator, log, addr) = start_pool_coordinator(
+        dir.path(),
+        db.to_str().unwrap(),
+        keyring.to_str().unwrap(),
+        &["--max-connections", "3"],
+    );
+    let key = SigningKey::from_bytes(&seed_bytes(AGENT_SEED_1));
+    let hello_frame = |nonce: u8| {
+        let mut hello = gputeer_protocol::pb::AgentSessionHello {
+            schema_version: 1,
+            mode: gputeer_protocol::constants::MODE_MAILBOX,
+            session_id: format!("mailbox-{nonce}"),
+            node_id: NODE_1.into(),
+            connection_attempt: 0,
+            issued_at_unix_ms: now_unix_ms(),
+            nonce: vec![nonce; 16],
+            ..Default::default()
+        };
+        hello.node_signature = gputeer_crypto::sign(&key, &hello).to_vec();
+        gputeer_crypto::write_frame(
+            gputeer_crypto::FrameType::SessionHello,
+            &hello.encode_to_vec(),
+        )
+        .expect("프레임")
+    };
+    let open = |nonce: u8| {
+        let mut stream = std::net::TcpStream::connect(&addr).expect("연결");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        stream.write_all(&hello_frame(nonce)).unwrap();
+        let (kind, body) = read_raw_frame(&mut stream);
+        assert_eq!(kind, gputeer_crypto::FrameType::MailboxDelivery as u8);
+        let delivery = gputeer_protocol::pb::MailboxDelivery::decode(body.as_slice()).unwrap();
+        verify_by_coordinator(&delivery);
+        (stream, delivery)
+    };
+    let ack_frame = |handled: Vec<gputeer_protocol::pb::SupersedeHandled>, nonce: u8| {
+        let mut ack = gputeer_protocol::pb::MailboxAck {
+            schema_version: 1,
+            node_id: NODE_1.into(),
+            handled,
+            issued_at_unix_ms: now_unix_ms(),
+            session_nonce: vec![nonce; 16],
+            node_signature: Vec::new(),
+        };
+        ack.node_signature = gputeer_crypto::sign(&key, &ack).to_vec();
+        gputeer_crypto::write_frame(gputeer_crypto::FrameType::MailboxAck, &ack.encode_to_vec())
+            .expect("프레임")
+    };
+    let handled =
+        |n: &gputeer_protocol::pb::SupersedeNotice| gputeer_protocol::pb::SupersedeHandled {
+            notice_id: n.notice_id.clone(),
+            notice_hash: Some(gputeer_protocol::mailbox_rules::supersede_notice_hash(n)),
+            action: gputeer_protocol::pb::MailboxAction::NotRunning as i32,
+        };
+
+    // 세션 1 — 배달하지 않은 통지(다른 노드 앞)에 답하면 거부 · 아무것도 적지 않는다
+    let (mut stream, delivery) = open(0x51);
+    gputeer_protocol::mailbox_rules::validate_mailbox_delivery(&delivery, NODE_1, &[0x51; 16])
+        .expect("배달 조합 규칙");
+    assert_eq!(
+        delivery.notices,
+        vec![first.clone(), second.clone()],
+        "그 노드 앞 통지 전부가 결정 시각 순으로 서명된 채 와야 한다"
+    );
+    for notice in &delivery.notices {
+        verify_by_coordinator(notice);
+    }
+    stream
+        .write_all(&ack_frame(vec![handled(&elsewhere)], 0x51))
+        .unwrap();
+    drop(stream);
+
+    // 세션 2 — 같은 통지가 다시 온다 · 하나만 답하면 그것만 커밋되고 수신 확인에 실린다
+    let (mut stream, delivery) = open(0x52);
+    assert_eq!(delivery.notices.len(), 2, "거부된 답이 무언가를 적었다");
+    stream
+        .write_all(&ack_frame(vec![handled(&first)], 0x52))
+        .unwrap();
+    let (kind, body) = read_raw_frame(&mut stream);
+    assert_eq!(kind, gputeer_crypto::FrameType::MailboxAckReceipt as u8);
+    let receipt = gputeer_protocol::pb::MailboxAckReceipt::decode(body.as_slice()).unwrap();
+    verify_by_coordinator(&receipt);
+    assert_eq!(receipt.accepted, vec![first.notice_id.clone()]);
+    assert_eq!(receipt.session_nonce, vec![0x52; 16]);
+    drop(stream);
+
+    // 세션 3 — 커밋된 것은 빠지고 남은 하나만 온다(수신 확인을 잃었어도 이것으로 커밋을 안다)
+    let (stream, delivery) = open(0x53);
+    assert_eq!(delivery.notices, vec![second.clone()]);
+    drop(stream);
+    let out = collect(coordinator);
+    let everything = format!("{}{out}", std::fs::read_to_string(&log).unwrap_or_default());
+    assert!(
+        everything.contains("MAILBOX_ACK_REJECTED"),
+        "배달하지 않은 통지의 답을 거부하지 않았다\n{everything}"
+    );
+    assert!(
+        everything.contains(&format!(
+            "MAILBOX_ACK_RECORDED node_id={NODE_1} accepted={}",
+            first.notice_id
+        )),
+        "{everything}"
+    );
+    assert!(
+        !everything.contains("SESSION_SEEN"),
+        "우편함 세션을 생존 관측으로 적었다\n{everything}"
+    );
+    // 다른 노드 앞 통지는 그대로다
+    let connection = rusqlite::Connection::open(&db).unwrap();
+    assert_eq!(
+        gputeer_coordinator::supersede_notice_store::unacked_for_node(&connection, NODE_2).unwrap(),
+        vec![elsewhere]
+    );
+}
+
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — `--mailbox-gate` 는 풀 모드에서만 받는다.
+#[test]
+fn the_mailbox_gate_is_refused_outside_pool_mode() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (ok, out) = run_cli(&[
+        "coordinator-stub",
+        "--listen",
+        "127.0.0.1:0",
+        "--own-seed",
+        COORD_SEED,
+        "--peer-pubkey",
+        &pub_hex(AGENT_SEED_1),
+        "--coordinator-device-id",
+        COORDINATOR,
+        "--agent-device-id",
+        NODE_1,
+        "--grant-id",
+        "g",
+        "--attempt-id",
+        "a",
+        "--lease-id",
+        "l",
+        "--job-id",
+        "j",
+        "--lease-db",
+        dir.path().join("unpooled-lease.sqlite3").to_str().unwrap(),
+        "--mailbox-gate",
+        "true",
+    ]);
+    assert!(!ok, "풀 밖에서 관문을 켰다: {out}");
+    assert!(out.contains("MAILBOX_GATE_NEEDS_POOL_MODE"), "{out}");
+}
+
+/// 그 노드 앞에 답하지 않은 대체 통지를 하나 둔다(옛 시도 — 이번 배정과 무관하다).
+fn leave_an_unacked_notice(db: &Path, node: &str) {
+    let notice = gputeer_coordinator::supersede_notice_store::sign_notice(
+        &gputeer_coordinator::supersede_notice_store::NoticeSigner {
+            coordinator_id: COORDINATOR.into(),
+            key: SigningKey::from_bytes(&seed_bytes(COORD_SEED)),
+        },
+        &gputeer_coordinator::supersede_notice_store::SupersededAttempt {
+            job_id: "old-job".into(),
+            attempt_id: "old-attempt".into(),
+            node_id: node.into(),
+            fence_epoch: 1,
+            lease_id: "old-lease".into(),
+            cause: gputeer_protocol::pb::SupersedeCause::NodeLost,
+            job_disposition: gputeer_protocol::pb::SupersedeJobDisposition::Requeued,
+            decided_at_unix_ms: 1_000,
+        },
+    );
+    let connection = rusqlite::Connection::open(db).unwrap();
+    assert_eq!(
+        gputeer_coordinator::supersede_notice_store::record_within(&connection, &notice),
+        Ok(true)
+    );
+}
+
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 규칙 2) — `--mailbox-gate` 를 켠 풀에서 그 노드 앞 미확인 통지가 있으면 실제 Agent 의 FRESH ACK 를
+///   기록하지 않고 수신 확인도 보내지 않는다 — Agent 는 실행하지 않는다. 대조군: 관문을 끄면 같은 통지가 있어도 수신 확인까지 간다.
+#[test]
+fn an_unacked_notice_keeps_the_node_from_starting_new_work_behind_the_mailbox_gate() {
+    let (agent_out, coordinator_out, state) = pool_round_with(
+        &["--max-connections", "1", "--mailbox-gate", "true"],
+        true,
+        &leave_an_unacked_notice,
+    );
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        coordinator_out.contains("ACK_RECEIPT_WITHHELD")
+            && coordinator_out.contains("outcome=mailbox_not_empty"),
+        "관문이 ACK 를 막지 않았다\n{everything}"
+    );
+    assert!(
+        !agent_out.contains("ACK_RECEIPT_VERIFIED") && !agent_out.contains("WORKLOAD_SPAWNED"),
+        "관문 뒤에서 수신 확인을 받거나 워크로드를 띄웠다\n{everything}"
+    );
+    assert_eq!(state, Some(JobState::Staging), "{everything}");
+
+    let (agent_out, coordinator_out, _) =
+        pool_round_with(&["--max-connections", "1"], true, &leave_an_unacked_notice);
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        agent_out.contains("ACK_RECEIPT_VERIFIED")
+            && !coordinator_out.contains("mailbox_not_empty"),
+        "관문을 껐는데 막았다(대조군)\n{everything}"
     );
 }

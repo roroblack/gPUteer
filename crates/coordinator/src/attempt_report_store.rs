@@ -1499,7 +1499,7 @@ mod tests {
             let mut staging = CoordinatorStagingStore::open(&fixture.path).unwrap();
             assert_eq!(
                 staging
-                    .record_grant_accepted(ATTEMPT_ID, 250, false)
+                    .record_grant_accepted(ATTEMPT_ID, 250, false, false)
                     .unwrap(),
                 crate::staging_store::GrantAcceptedRecord::Recorded
             );

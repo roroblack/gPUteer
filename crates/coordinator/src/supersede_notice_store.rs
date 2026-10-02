@@ -89,7 +89,7 @@ pub(crate) fn ensure_table(connection: &Connection) -> Result<(), String> {
 
 /// 서명된 통지를 **호출자의 트랜잭션 안에서** 쓴다. 새로 썼으면 `true`, 같은 내용이 이미 있으면 `false`.
 ///   ★ 쓰기 전에 조합 규칙(notice_id 재계산 · enum · 신원)을 본다 — 잘못된 통지를 영속하지 않는다.
-pub(crate) fn record_within(
+pub fn record_within(
     connection: &Connection,
     notice: &pb::SupersedeNotice,
 ) -> Result<bool, String> {
@@ -142,6 +142,19 @@ pub(crate) fn record_within(
     Ok(true)
 }
 
+/// 그 노드 앞 미확인 통지의 수 — 새 실행 관문(`record_grant_accepted`)이 **호출자의 트랜잭션 안에서** 부른다.
+pub(crate) fn unacked_count(connection: &Connection, node_id: &str) -> Result<u64, String> {
+    ensure_table(connection)?;
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_supersede_notices WHERE node_id = ?1 AND acked_at_unix_ms IS NULL",
+            rusqlite::params![node_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count.max(0) as u64)
+        .map_err(|e| e.to_string())
+}
+
 /// 그 노드 앞으로 와서 받아들여진 답이 없는 통지 **전부** — 결정 시각 오래된 순(같으면 notice_id 순). 서명 포함 그대로 돌려준다.
 pub fn unacked_for_node(
     connection: &Connection,
@@ -178,6 +191,79 @@ pub fn unacked_for_node(
 }
 
 /// 시험용 서명자(고정 키).
+/// 노드의 답을 **한 트랜잭션**에 적는다(BEGIN IMMEDIATE). 받아들여 커밋한 notice_id 를 돌려준다 — 수신 확인에 싣는다.
+///
+/// ★ 답은 호출자가 서명 · 조합 규칙(이 세션에서 배달한 것만 · 해시)을 이미 검증했다. 여기서는 잠금을 잡은 뒤 **저장된 바이트로 해시를 다시 대조**한다
+///   (배달과 커밋 사이에 행이 바뀌었으면 거부). 이미 답이 적힌 행(다른 세션이 먼저 커밋)은 바꾸지 않고 받아들인 것으로 센다 — 처리 끝이라는 사실은 같다.
+pub fn record_acks(
+    control_db: &std::path::Path,
+    node_id: &str,
+    ack: &pb::MailboxAck,
+    now_unix_ms: u64,
+) -> Result<Vec<String>, String> {
+    let mut connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(1))
+        .map_err(|e| e.to_string())?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    ensure_table(&transaction)?;
+    let ack_bytes = ack.encode_to_vec();
+    let mut accepted = Vec::new();
+    for handled in &ack.handled {
+        let row: Option<(Vec<u8>, Option<Vec<u8>>)> = transaction
+            .query_row(
+                "SELECT signed_bytes, acked_at_unix_ms FROM coordinator_supersede_notices
+                 WHERE notice_id = ?1 AND node_id = ?2",
+                rusqlite::params![handled.notice_id, node_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let Some((bytes, acked_at)) = row else {
+            return Err(format!(
+                "SUPERSEDE_ACK_UNKNOWN_NOTICE — 노드 {node_id} 앞 통지 {} 가 없다",
+                handled.notice_id
+            ));
+        };
+        let stored = pb::SupersedeNotice::decode(bytes.as_slice()).map_err(|e| {
+            format!(
+                "SUPERSEDE_NOTICE_CORRUPT — 저장된 통지 {} 를 읽지 못했다: {e}",
+                handled.notice_id
+            )
+        })?;
+        if handled.notice_hash.as_ref()
+            != Some(&gputeer_protocol::mailbox_rules::supersede_notice_hash(
+                &stored,
+            ))
+        {
+            return Err(format!(
+                "SUPERSEDE_ACK_HASH_MISMATCH — 통지 {} 의 해시가 저장된 바이트와 다르다",
+                handled.notice_id
+            ));
+        }
+        if acked_at.is_none() {
+            transaction
+                .execute(
+                    "UPDATE coordinator_supersede_notices
+                     SET acked_at_unix_ms = ?2, ack_action = ?3, ack_bytes = ?4
+                     WHERE notice_id = ?1 AND acked_at_unix_ms IS NULL",
+                    rusqlite::params![
+                        handled.notice_id,
+                        encode_u64(now_unix_ms),
+                        handled.action,
+                        ack_bytes,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        accepted.push(handled.notice_id.clone());
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(accepted)
+}
+
 #[cfg(test)]
 pub(crate) fn test_signer() -> NoticeSigner {
     NoticeSigner {
@@ -245,6 +331,86 @@ mod tests {
             .is_err(),
             "다른 키로 검증됐다"
         );
+    }
+
+    /// 답 기록 — 저장된 바이트의 해시와 다르면 아무것도 적지 않는다 · 이미 답이 적힌 행은 바꾸지 않고 받아들인 것으로 센다 · 다른 노드 행에는 답하지 못한다.
+    #[test]
+    fn acks_are_recorded_against_the_stored_bytes_in_one_transaction() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("control.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        let signer = signer();
+        let a = sign_notice(&signer, &superseded("att-1", 1_000));
+        let b = sign_notice(&signer, &superseded("att-2", 2_000));
+        record_within(&connection, &a).unwrap();
+        record_within(&connection, &b).unwrap();
+        let handled =
+            |n: &pb::SupersedeNotice, hash_of: &pb::SupersedeNotice| pb::SupersedeHandled {
+                notice_id: n.notice_id.clone(),
+                notice_hash: Some(gputeer_protocol::mailbox_rules::supersede_notice_hash(
+                    hash_of,
+                )),
+                action: pb::MailboxAction::Stopped as i32,
+            };
+        let ack = |items: Vec<pb::SupersedeHandled>| pb::MailboxAck {
+            schema_version: 1,
+            node_id: "node-1".into(),
+            handled: items,
+            issued_at_unix_ms: 3_000,
+            session_nonce: vec![1u8; 16],
+            node_signature: vec![b'N'; 64],
+        };
+        // 둘째 해시가 틀리면 첫째도 적지 않는다(한 트랜잭션)
+        let wrong = SupersededAttempt {
+            job_disposition: pb::SupersedeJobDisposition::Failed,
+            ..superseded("att-2", 2_000)
+        };
+        let error = record_acks(
+            &path,
+            "node-1",
+            &ack(vec![
+                handled(&a, &a),
+                handled(&b, &sign_notice(&signer, &wrong)),
+            ]),
+            3_100,
+        )
+        .expect_err("해시가 틀렸는데 받아들였다");
+        assert!(error.contains("SUPERSEDE_ACK_HASH_MISMATCH"), "{error}");
+        assert_eq!(unacked_for_node(&connection, "node-1").unwrap().len(), 2);
+        // 다른 노드 이름으로는 답하지 못한다
+        let error = record_acks(&path, "node-2", &ack(vec![handled(&a, &a)]), 3_100)
+            .expect_err("다른 노드가 답했다");
+        assert!(error.contains("SUPERSEDE_ACK_UNKNOWN_NOTICE"), "{error}");
+        // 정상 — 하나만 답하면 하나만 빠진다
+        assert_eq!(
+            record_acks(&path, "node-1", &ack(vec![handled(&a, &a)]), 3_200).unwrap(),
+            vec![a.notice_id.clone()]
+        );
+        assert_eq!(
+            unacked_for_node(&connection, "node-1").unwrap(),
+            vec![b.clone()]
+        );
+        // 이미 답한 것을 다시 답하면 바꾸지 않고 받아들인 것으로 센다
+        assert_eq!(
+            record_acks(
+                &path,
+                "node-1",
+                &ack(vec![handled(&a, &a), handled(&b, &b)]),
+                3_300
+            )
+            .unwrap(),
+            vec![a.notice_id.clone(), b.notice_id.clone()]
+        );
+        let first_acked_at: Vec<u8> = connection
+            .query_row(
+                "SELECT acked_at_unix_ms FROM coordinator_supersede_notices WHERE notice_id = ?1",
+                rusqlite::params![a.notice_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(first_acked_at, encode_u64(3_200), "먼저 적힌 답을 덮었다");
+        assert!(unacked_for_node(&connection, "node-1").unwrap().is_empty());
+        assert_eq!(unacked_count(&connection, "node-1").unwrap(), 0);
     }
 
     #[test]
