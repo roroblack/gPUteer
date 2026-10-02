@@ -2606,6 +2606,13 @@ fn start_renew_during_execution(
             ),
             // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업의 마지막 시각(서명된 재배치 유예가 있을 때만 끊김 시한보다 뒤).
             near_finish_time(held_lease, now),
+            // ★ 검수 m0r ① — Lease 자체의 시한(여유 없이). 일시정지 풀기가 끊김 시한과 따로 본다.
+            owner_panel::disconnect_self_stop_at(
+                held_lease.issued_at_unix_ms,
+                held_lease.expires_at_unix_ms,
+                now,
+                0,
+            ),
             keep_running_allowed,
             now,
         );
@@ -2777,6 +2784,12 @@ fn start_renew_during_execution(
                             sent_at,
                         ),
                         near_finish_time(&renewed, sent_at),
+                        owner_panel::disconnect_self_stop_at(
+                            renewed.issued_at_unix_ms,
+                            renewed.expires_at_unix_ms,
+                            sent_at,
+                            0,
+                        ),
                         SystemClock.now_unix_ms(),
                     );
                     lease = renewed;

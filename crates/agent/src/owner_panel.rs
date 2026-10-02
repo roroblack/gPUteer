@@ -99,7 +99,12 @@ pub struct ConnectionWatch {
     /// 마지막으로 갱신에 성공한 시각(밀리초). 아직 없으면 감시를 건 시각.
     pub last_renew_ok_unix_ms: u64,
     /// 이 시각이 지나면 스스로 멈춘다(끊김 시한 = Lease 만료 − 여유). 갱신에 성공할 때마다 뒤로 간다.
+    ///   끊김 여유 0 이면 `u64::MAX`(시간으로는 멈추지 않는다 — 서명된 거부 때만 `renew_refused` 가 당긴다).
     pub self_stop_at_unix_ms: u64,
+    /// ★ 2026-10-02 (검수 m0r ①) — 지금 쥔 Lease 가 노드 시계로 유효한 마지막 시각(여유 없이 `disconnect_self_stop_at(.., 0)`).
+    ///   일시정지를 풀 때 끊김 시한과 **따로** 본다 — 끊김 여유 0 이면 끊김 시한이 "없음" 이라, 이것 없이는 갱신 응답을 기다리는 사이
+    ///   만료된 Lease 로 작업을 다시 시작할 수 있었다.
+    pub lease_valid_until_unix_ms: u64,
     /// ★ 2026-10-01 (판단표 ④) — "곧 끝나는 작업" 이 끊김 시한을 넘겨 계속 돌 수 있는 마지막 시각 H(= 끊김 시한 + 서명된 재배치 유예).
     ///   유예가 없거나 작업 누적 상한에 닿은 Lease 면 끊김 시한과 같다(넘기지 않는다). `near_finish_stop_at`.
     pub near_finish_stop_at_unix_ms: u64,
@@ -467,6 +472,7 @@ impl OwnerPanelState {
         attempt_id: &str,
         self_stop_at_unix_ms: u64,
         near_finish_stop_at_unix_ms: u64,
+        lease_valid_until_unix_ms: u64,
         keep_running_allowed: bool,
         now_unix_ms: u64,
     ) {
@@ -475,6 +481,7 @@ impl OwnerPanelState {
             ConnectionWatch {
                 last_renew_ok_unix_ms: now_unix_ms,
                 self_stop_at_unix_ms,
+                lease_valid_until_unix_ms,
                 near_finish_stop_at_unix_ms: near_finish_stop_at_unix_ms.max(self_stop_at_unix_ms),
                 near_finish_expected_by_unix_ms: None,
                 disconnected: false,
@@ -493,11 +500,13 @@ impl OwnerPanelState {
         attempt_id: &str,
         self_stop_at_unix_ms: u64,
         near_finish_stop_at_unix_ms: u64,
+        lease_valid_until_unix_ms: u64,
         now_unix_ms: u64,
     ) {
         if let Some(watch) = self.connections().get_mut(attempt_id) {
             watch.last_renew_ok_unix_ms = now_unix_ms;
             watch.self_stop_at_unix_ms = self_stop_at_unix_ms;
+            watch.lease_valid_until_unix_ms = lease_valid_until_unix_ms;
             watch.near_finish_stop_at_unix_ms =
                 near_finish_stop_at_unix_ms.max(self_stop_at_unix_ms);
             watch.near_finish_expected_by_unix_ms = None;
@@ -760,6 +769,10 @@ impl OwnerPanelState {
         }
         if now_unix_ms >= watch.self_stop_at_unix_ms {
             return Err("끊김 시한이 지났다 — 새 Lease 없이 다시 시작하지 않는다".into());
+        }
+        // ★ 검수 m0r ① — 끊김 여유 0 이면 위 시한이 "없음" 이다. Lease 자체의 시한은 그와 상관없이 본다.
+        if now_unix_ms >= watch.lease_valid_until_unix_ms {
+            return Err("Lease 시한이 지났다 — 새 Lease 없이 다시 시작하지 않는다".into());
         }
         Ok(())
     }
@@ -1610,10 +1623,10 @@ mod tests {
             state.register(w);
         }
         // 끊김 시한 S = 10_000, 곧 끝남 마지막 시각 H = 40_000(유예 30초)
-        state.watch_connection("safe", 10_000, 40_000, true, 0);
-        state.watch_connection("risky", 10_000, 40_000, false, 0);
-        state.watch_connection("slow", 10_000, 40_000, true, 0);
-        state.watch_connection("stale", 10_000, 40_000, true, 0);
+        state.watch_connection("safe", 10_000, 40_000, 10_000, true, 0);
+        state.watch_connection("risky", 10_000, 40_000, 10_000, false, 0);
+        state.watch_connection("slow", 10_000, 40_000, 10_000, true, 0);
+        state.watch_connection("stale", 10_000, 40_000, 10_000, true, 0);
         let progress = |current: u64| crate::progress::WorkloadProgress {
             current_step: current,
             total_steps: Some(100),
@@ -1677,7 +1690,7 @@ mod tests {
             w.attempt_id = "a".into();
             w.stopper.set_pause_state(state_of_pause);
             state.register(w);
-            state.watch_connection("a", 10_000, 40_000, true, 0);
+            state.watch_connection("a", 10_000, 40_000, 10_000, true, 0);
             state.record_progress(
                 "a",
                 Ok(crate::progress::WorkloadProgress {
@@ -1703,7 +1716,7 @@ mod tests {
         let mut w = workload(0, None);
         w.attempt_id = "a".into();
         state.register(w);
-        state.watch_connection("a", 10_000, 40_000, true, 0);
+        state.watch_connection("a", 10_000, 40_000, 10_000, true, 0);
         state.record_progress(
             "a",
             Ok(crate::progress::WorkloadProgress {
@@ -1729,12 +1742,12 @@ mod tests {
         risky.attempt_id = "risky".into();
         state.register(safe);
         state.register(risky);
-        state.watch_connection("safe", 10_000, 10_000, true, 1_000);
-        state.watch_connection("risky", 10_000, 10_000, false, 1_000);
+        state.watch_connection("safe", 10_000, 10_000, 10_000, true, 1_000);
+        state.watch_connection("risky", 10_000, 10_000, 10_000, false, 1_000);
         // 시한 전에는 멈추지 않는다
         assert!(state.self_stop_if_due("safe", 9_999).is_none());
         // 갱신 성공 → 시한이 뒤로
-        state.renew_succeeded("safe", 20_000, 20_000, 9_000);
+        state.renew_succeeded("safe", 20_000, 20_000, 20_000, 9_000);
         assert!(state.self_stop_if_due("safe", 15_000).is_none());
         // 끊김 표시
         state.renew_failed("safe");
@@ -1778,7 +1791,7 @@ mod tests {
         let mut safe = workload(1_000, None);
         safe.attempt_id = "safe".into();
         state.register(safe);
-        state.watch_connection("safe", 10_000, 10_000, true, 1_000);
+        state.watch_connection("safe", 10_000, 10_000, 10_000, true, 1_000);
         // 시한이 지나 멈추기로 정했다 — 시험용 손잡이는 실패하므로 "멈추는 중" 이 풀린다
         assert!(matches!(
             state.self_stop_if_due("safe", 10_000),
@@ -1820,7 +1833,7 @@ mod tests {
             "감시 없이 다시 시작했다"
         );
         assert!(state.snapshot(2_000)[0].pause_unsupported_reason.is_some());
-        state.watch_connection("a", 10_000, 10_000, true, 1_000);
+        state.watch_connection("a", 10_000, 10_000, 10_000, true, 1_000);
         assert!(state.pause("a").is_err(), "시험용 손잡이는 얼리지 못한다");
         assert!(state.pause("없는").is_err());
         let snapshot = state.snapshot(2_000);
@@ -1839,9 +1852,17 @@ mod tests {
         state.renew_failed("a");
         assert!(state.resume("a", || 5_000).is_err());
         // 다시 이어졌지만 시한이 지났으면 거부
-        state.renew_succeeded("a", 10_000, 10_000, 6_000);
+        state.renew_succeeded("a", 10_000, 10_000, 10_000, 6_000);
         assert!(state.resume("a", || 5_000).is_ok());
         assert!(state.resume("a", || 10_000).is_err());
+        // ★ 검수 m0r ① — 끊김 여유 0(끊김 시한 없음)이어도 연결 표시와 상관없이 Lease 시한이 지났으면 거부(갱신 응답을 기다리는 사이 만료)
+        state.renew_succeeded("a", u64::MAX, u64::MAX, 10_000, 6_000);
+        assert!(state.resume("a", || 9_999).is_ok());
+        let expired = state
+            .resume("a", || 10_000)
+            .expect_err("끊김 여유 0 이라고 만료된 Lease 로 다시 시작했다");
+        assert!(expired.contains("Lease 시한이 지났다"), "{expired}");
+        state.renew_succeeded("a", 10_000, 10_000, 10_000, 6_000);
         // ★ 검수 pz2 — 두 판정은 통과했는데 푼 **직후** 판정이 시한 뒤면 되돌린다(다시 얼리기 → 시험용 손잡이는 못 얼리므로 멈추기 → 그것도 실패).
         //   되돌리려 한 것 자체가 사후 판정이 있다는 증거다.
         let ticks = std::cell::Cell::new(0u64);
