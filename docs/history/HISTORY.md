@@ -25,6 +25,27 @@
 
 ---
 
+## 2026-10-03 04:48 — 실행 알림 계획 조각 4b — 운영자 해제를 같은 해제 기록으로 · 옛 운영자 기록 이관 · 4a 보조 검수 반영(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4a → 4b) · 계약 v18k §3 b16 ③ · b15 ①
+- 스트림: Coordinator
+- 수행: `reservation_release.rs` — 운영자 해제 근거 OPERATOR_RELEASE 의 payload 고정 인코딩(`operator_release_payload` — 명령 · 진술 · node · job · attempt ·
+  fence · 시각, 문자열 u32 BE 길이 + UTF-8 · 정수 u64 BE)과 `release_by_operator_within`(호출자 트랜잭션 · 시도 행에서 job · fence · 단일 노드 대조 · 예약은 MustHold).
+  `failover.rs` release-lost-node 는 **판정 그대로** 기록 방식만 바꿨다 — 예약을 지우는 같은 커밋에 해제 사실 + OPERATOR_RELEASE 근거, 옛 `coordinator_operator_releases`
+  에는 더 쓰지 않는다. 옛 운영자 기록은 열 때 옮긴다(fence 는 시도 표에서 · 시도 행이 없으면 `MigrationAttemptMissing` 으로 멈춤 · 옛 표에 GPU 목록이 없어 옮긴 사실의
+  GPU 목록은 비어 있다 · 옛 표는 지우지 않는다).
+  4a 보조 검수(아래) 반영 — ① 이관 두 단계를 savepoint 하나로 묶었다(전에는 문장마다 커밋돼 사실만 남고 근거가 빠질 수 있었다) ② 정지 확인 해제가 종료 증명 등급을
+  값으로 받는다 — 새 `RuntimeStopProof::NodeConfirmedStop`(신뢰망 전용 자기보고)만 통과, 종료 보고 경로에 그 값을 쓰면 `StopProofGradeMismatch` ③ 모듈 머리말의
+  "오늘 정직한 호출은 전부 거부" 에 공개 풀 기준이라는 단서
+- 검증: 해제 시험 35건(새 9 — 경로별 등급 · 다른 신원 충돌 · 정지 확인 뒤 늦은 종료 보고 · 이관 두 번에 나눠도 한 번씩 · 이관 중간 멈춤이면 아무것도 안 남음 ·
+  옛 운영자 기록 이관 뒤 늦은 정지 확인 · payload 바이트 · release-lost-node 의 새 기록 · 살아 있는 시도 거부 그대로). 일부러 망가뜨려 확인 — savepoint 되돌리기를 빼면
+  "중간 멈춤" 시험이, 신원 비교를 빼면 "충돌" 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1` 1596 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 검수: 조각 4a 의 Codex 독립 검수는 사용량 한도(2026-10-04 12:00 재개)로 못 돌렸다 → **보조 검수를 Claude 서브에이전트로 돌렸다(다른 모델 아님 — 대체가 아니라
+  보조)** — `CHANGES_REQUESTED`(결함 2 · 시험 빈칸 3) → 이 커밋에 전부 반영. Codex 검수(4a + 4b)는 한도가 풀리면 그대로 돌린다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 04:27 — 실행 알림 계획 조각 4a — 예약 해제 근거 일반화 · 해제 기록을 사실 · 근거로 나눔(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(보조 에이전트 조사의 4단계 분할 중 4a) · 계약 v18k §3 "해제 증거 일반화" · "해제 기록을 둘로"

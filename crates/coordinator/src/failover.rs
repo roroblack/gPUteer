@@ -381,6 +381,8 @@ pub struct OperatorRelease {
 ///   있을 수 있고, 그 예약도 풀린다. 멈춤의 근거는 **운영자 진술**뿐이다(그래서 진술을 남긴다) — Coordinator 는 증명할 수 없다(§0.4).
 ///
 /// 기록은 `coordinator_operator_releases` 에 남는다 — 누가 · 언제 · 무엇을 풀었나. 되돌리지 않는 기록이다.
+/// ★ 2026-10-03 (조각 4b) — 이제는 해제 기록 표(`coordinator_release_facts` + `coordinator_release_evidence` 의 OPERATOR_RELEASE)에 남는다.
+///   옛 표는 감사 원본으로 남고 새로 쓰지 않는다.
 pub fn release_lost_node_by_operator(
     control_db: &Path,
     node_id: &str,
@@ -395,18 +397,9 @@ pub fn release_lost_node_by_operator(
     connection
         .busy_timeout(std::time::Duration::from_secs(1))
         .map_err(|e| e.to_string())?;
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS coordinator_operator_releases (
-                node_id TEXT NOT NULL,
-                attempt_id TEXT NOT NULL,
-                job_id TEXT NOT NULL,
-                operator_statement TEXT NOT NULL,
-                released_at_unix_ms BLOB NOT NULL,
-                PRIMARY KEY(node_id, attempt_id)
-            );",
-        )
-        .map_err(|e| e.to_string())?;
+    // ★ 2026-10-03 (조각 4b) — 해제 기록 표(사실 · 근거)와 옛 기록 이관. 이관이 멈추면(옛 기록의 시도 행 없음 등) 풀지 않는다.
+    crate::reservation_release::initialize_release_schema(&connection)
+        .map_err(|e| format!("RELEASE_REFUSED: 해제 기록 표를 준비하지 못했다 — {e:?}"))?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
@@ -437,43 +430,33 @@ pub fn release_lost_node_by_operator(
             reservation.attempt_id, job.state
         ));
     }
-    transaction
-        .execute(
-            "DELETE FROM coordinator_node_reservation_gpus WHERE node_id = ?1",
-            rusqlite::params![node_id],
-        )
-        .map_err(|e| e.to_string())?;
-    let removed = transaction
-        .execute(
-            "DELETE FROM coordinator_node_reservations WHERE node_id = ?1 AND attempt_id = ?2",
-            rusqlite::params![node_id, reservation.attempt_id],
-        )
-        .map_err(|e| e.to_string())?;
-    if removed != 1 {
-        return Err(format!(
-            "RELEASE_REFUSED: 예약 삭제가 {removed} 행을 지웠다"
-        ));
-    }
-    transaction
-        .execute(
-            "INSERT INTO coordinator_operator_releases(
-                node_id, attempt_id, job_id, operator_statement, released_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                node_id,
-                reservation.attempt_id,
-                reservation.job_id,
-                operator_statement,
-                now_unix_ms.to_be_bytes().to_vec(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+    // ★ 2026-10-03 (계약 v18k §3 b16 ③ · 조각 4b) — 판정은 위 그대로, **기록 방식만** 바꿨다: 예약을 지우는 같은 트랜잭션에서
+    //   해제 사실 + OPERATOR_RELEASE 근거(진술 · 노드 · Job · 시도 · fence · 시각의 고정 인코딩)를 쓴다. 옛 `coordinator_operator_releases` 에는
+    //   더 쓰지 않는다(옛 행은 열 때 새 표로 옮긴다). 그래서 늦게 온 정지 확인 · 종료 보고는 "이미 해제됨" 으로 근거만 더한다.
+    let outcome = crate::reservation_release::release_by_operator_within(
+        &transaction,
+        crate::reservation_release::OperatorReleaseCommand::ReleaseLostNode,
+        operator_statement,
+        node_id,
+        &reservation.attempt_id,
+        now_unix_ms,
+    )
+    .map_err(|e| format!("RELEASE_REFUSED: {e:?}"))?;
+    let released = match outcome {
+        crate::reservation_release::ReleaseOutcome::Released(record) => record,
+        // 예약이 그 시도에 남아 있는데 해제 사실이 이미 있다 — 기록이 어긋났다. 예약을 남긴 채 성공이라 하지 않는다.
+        other => {
+            return Err(format!(
+                "RELEASE_REFUSED: {node_id} 의 예약은 남았는데 해제 기록은 이미 있다 — 사람이 봐야 한다({other:?})"
+            ))
+        }
+    };
     transaction.commit().map_err(|e| e.to_string())?;
     Ok(OperatorRelease {
         node_id: node_id.to_string(),
-        attempt_id: reservation.attempt_id,
-        job_id: reservation.job_id,
-        released_gpu_ids: reservation.selected_gpu_ids,
+        attempt_id: released.attempt_id,
+        job_id: released.job_id,
+        released_gpu_ids: released.released_gpu_ids,
     })
 }
 
