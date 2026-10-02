@@ -2246,3 +2246,107 @@ fn a_mailbox_agent_answers_an_old_notice_before_taking_new_work() {
             .is_empty()
     );
 }
+
+/// ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 규칙 3) — 실행 **중에** 그 시도의 통지가 오면 실제 Agent 가 우편함 감시 스레드로 받아 작업을 멈추고, 정지가
+///   성공한 뒤 STOPPED 로 답한다(Coordinator 가 그 답을 커밋). 약 30초짜리 작업이 통지 뒤 곧 끝난다. 갱신은 그대로 성공하고 있다 — 갱신 거부가 아니라
+///   우편함이 멈춘 것이다(장애 이어받기 없이 통지만 넣는다).
+#[cfg(windows)]
+#[test]
+fn a_running_attempt_stops_when_its_notice_arrives_and_answers_stopped() {
+    let dir = tempfile::tempdir().expect("임시 디렉터리");
+    let (db, keyring) = pool_with_args(dir.path(), ["LOCAL"; 3], "/c,ping,-n,30,127.0.0.1");
+    let (node, seed, job) = schedule_once(&db, &keyring);
+    let (db_s, keyring_s) = (
+        db.to_str().unwrap().to_string(),
+        keyring.to_str().unwrap().to_string(),
+    );
+    let (coordinator, coordinator_log, addr) = start_pool_coordinator(
+        dir.path(),
+        &db_s,
+        &keyring_s,
+        &["--max-connections", "0", "--mailbox-gate", "true"],
+    );
+    let coordinator = KillOnDrop(Some(coordinator));
+    let mut agent = one_round_agent_args(dir.path(), &addr, node, seed);
+    agent.extend(
+        ["--run-ledger", "true", "--use-mailbox", "true"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    let child = spawn(&agent);
+    // 첫 갱신(= 실행 시작 신호)이 Job 을 RUNNING 으로 옮길 때까지 기다린다
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while job_state(&db, &job) != Some(JobState::Running) {
+        assert!(Instant::now() < deadline, "작업이 시작되지 않았다");
+        thread::sleep(Duration::from_millis(100));
+    }
+    let staging = gputeer_coordinator::staging_store::CoordinatorStagingStore::open(&db).unwrap();
+    let (_, attempt_id, _) = staging.work_assigned_to_node(node).unwrap().expect("배정");
+    let attempt = staging.get_attempt(&attempt_id).unwrap().expect("시도");
+    drop(staging);
+    let notice = gputeer_coordinator::supersede_notice_store::sign_notice(
+        &gputeer_coordinator::supersede_notice_store::NoticeSigner {
+            coordinator_id: COORDINATOR.into(),
+            key: SigningKey::from_bytes(&seed_bytes(COORD_SEED)),
+        },
+        &gputeer_coordinator::supersede_notice_store::SupersededAttempt {
+            job_id: job.clone(),
+            attempt_id: attempt_id.clone(),
+            node_id: node.into(),
+            fence_epoch: attempt.fence_epoch,
+            lease_id: attempt.lease_id.clone(),
+            cause: gputeer_protocol::pb::SupersedeCause::NodeLost,
+            job_disposition: gputeer_protocol::pb::SupersedeJobDisposition::Requeued,
+            decided_at_unix_ms: now_unix_ms(),
+        },
+    );
+    {
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        assert_eq!(
+            gputeer_coordinator::supersede_notice_store::record_within(&connection, &notice),
+            Ok(true)
+        );
+    }
+    let posted = Instant::now();
+    let output = child.wait_with_output().expect("agent 출력");
+    let took = posted.elapsed();
+    drop(coordinator);
+    let agent_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let coordinator_out = std::fs::read_to_string(&coordinator_log).unwrap_or_default();
+    let everything = format!("--- agent ---\n{agent_out}\n--- coordinator ---\n{coordinator_out}");
+    assert!(
+        agent_out.contains(&format!("MAILBOX_STOP_REQUESTED attempt_id={attempt_id}")),
+        "실행 중 통지로 정지를 요청하지 않았다\n{everything}"
+    );
+    assert!(
+        agent_out.contains(&format!("attempt_id={attempt_id} action=Stopped")),
+        "정지 뒤 STOPPED 로 답하지 않았다\n{everything}"
+    );
+    assert!(
+        took < Duration::from_secs(20),
+        "통지 뒤 {took:?} 가 지나서야 끝났다 — 작업을 멈추지 않았다\n{everything}"
+    );
+    let connection = rusqlite::Connection::open(&db).unwrap();
+    assert!(
+        gputeer_coordinator::supersede_notice_store::unacked_for_node(&connection, node)
+            .unwrap()
+            .is_empty(),
+        "Coordinator 가 답을 커밋하지 않았다\n{everything}"
+    );
+    let action: i64 = connection
+        .query_row(
+            "SELECT ack_action FROM coordinator_supersede_notices WHERE notice_id = ?1",
+            rusqlite::params![notice.notice_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        action,
+        gputeer_protocol::pb::MailboxAction::Stopped as i64,
+        "{everything}"
+    );
+}

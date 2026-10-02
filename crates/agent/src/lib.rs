@@ -804,13 +804,18 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     if config.report_over_session {
         flush_report_outbox(&config, &signing_key);
     }
-    // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — FRESH 를 열기 **전에** 우편함을 비운다. 남으면 이 회차는 일을 받지 않는다(다음 회차에 다시).
-    //   Coordinator 의 새 실행 관문이 어차피 막지만, 두드리지 않는 것이 낫다 — 받지도 못할 Grant 를 위해 예약을 붙잡게 하지 않는다.
-    if config.use_mailbox {
-        mailbox::empty_before_fresh(&config, &signing_key)?;
-    }
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — **모든** FRESH 연결 직전에 우편함을 비운다(첫 연결 · 재접속마다 — 검수 mba1). 남으면 이 회차는
+    //   일을 받지 않는다(다음 회차에 다시). Coordinator 의 새 실행 관문이 어차피 막지만, 두드리지 않는 것이 낫다 — 받지도 못할 Grant 를 위해 예약을
+    //   붙잡게 하지 않는다. ★ FRESH 연결을 연 **뒤에** 묻지 않는다 — 풀 Coordinator 는 순차 리스너라 열린 FRESH 연결이 우편함 연결을 막는다.
+    let empty_mailbox = |config: &AgentConfig| -> Result<(), String> {
+        if config.use_mailbox {
+            mailbox::empty_before_fresh(config, &signing_key)?;
+        }
+        Ok(())
+    };
     let mut budget = RetryBudget::new(&policy);
     if !config.reconnect_enabled {
+        empty_mailbox(&config)?;
         let stream = connect_with_timeout(&config.coordinator_addr, policy.connect_timeout)
             .map_err(|e| format!("Coordinator connect failed: {e}"))?;
         return run_one_connection(
@@ -852,6 +857,7 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
             std::thread::sleep(jitter);
         }
 
+        empty_mailbox(&config)?;
         let connection_result =
             match connect_with_timeout(&config.coordinator_addr, policy.connect_timeout) {
                 Ok(stream) => {
@@ -1748,6 +1754,13 @@ fn run_one_connection_inner(
                     println!("DISCONNECT_WATCH_THREAD_PANICKED — 끊김 시한 감시 스레드가 비정상 종료했다");
                 }
             }
+            if let Some(mailbox) = renewer.mailbox {
+                if mailbox.join().is_err() {
+                    println!(
+                        "MAILBOX_WATCH_THREAD_PANICKED — 우편함 감시 스레드가 비정상 종료했다"
+                    );
+                }
+            }
         }
         // 삭제는 성공·실패 관계없이 한다. 두 오류가 동시에 나면
         // 둘 다 보고한다 — 한쪽을 묵으면 진짜 원인을 놓친다.
@@ -2564,6 +2577,8 @@ struct RenewDuringExecution {
     /// ★ 2026-09-30 (검수 ss1) — 끊김 시한 감시 스레드. 갱신 스레드와 **따로** 돈다 — 갱신 요청이 응답을 기다리는 동안(연결 · 읽기 시한 10초)
     ///   감시가 멈추면 시한을 넘겨 계속 돌았다. 여유 0(끔)이면 없다.
     watcher: Option<std::thread::JoinHandle<()>>,
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 실행 중 우편함 감시 스레드(`--use-mailbox`). 갱신 스레드와 따로 실행이 끝날 때까지 돈다.
+    mailbox: Option<std::thread::JoinHandle<()>>,
 }
 
 /// `renew_during_execution_ms` 간격으로 RENEW 세션을 연다. 0 이면 시작하지 않는다.
@@ -2690,6 +2705,17 @@ fn start_renew_during_execution(
             }
         }))
     };
+    // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 실행 중에도 묻는다. 갱신이 거부 · 로컬 만료로 끝나도 이 스레드는 실행이 끝날 때까지 간다 —
+    //   갱신을 그만둔 노드가 "그 시도는 폐기됐다" 를 들을 수 있는 유일한 길이다.
+    let mailbox = config.use_mailbox.then(|| {
+        mailbox::spawn_watch_during_execution(
+            config.clone(),
+            signing_key.clone(),
+            attempt_id.clone(),
+            Duration::from_millis(config.renew_during_execution_ms),
+            std::sync::Arc::clone(&stop),
+        )
+    });
     let config = config.clone();
     let key = signing_key.clone();
     let mut lease = held_lease.clone();
@@ -2862,6 +2888,7 @@ fn start_renew_during_execution(
         stop,
         handle,
         watcher,
+        mailbox,
     })
 }
 
@@ -7191,6 +7218,86 @@ mod report_session_tests {
             stream.write_all(&frame).expect("Ack 전송");
         });
         (addr, handle)
+    }
+
+    /// ★ 2026-10-02 (대체 통지 우편함 v3 §4 · 검수 mba1) — `--use-mailbox` 면 **모든** FRESH 연결 직전에 우편함을 비운다 — 첫 연결뿐 아니라 재접속마다.
+    ///   가짜 Coordinator 는 MAILBOX 에는 서명된 빈 배달로 답하고, FRESH 는 Hello 를 읽자마자 끊는다(일시적 실패 → 재접속). 연결마다 Hello 의 mode 를 적어
+    ///   MAILBOX · FRESH 가 번갈아 오는지 본다.
+    #[test]
+    fn every_fresh_connection_is_preceded_by_a_mailbox_session() {
+        let dir = tempfile::tempdir().expect("임시 디렉터리");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("주소").to_string();
+        let modes = std::sync::Arc::new(std::sync::Mutex::new(Vec::<i32>::new()));
+        let seen = std::sync::Arc::clone(&modes);
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            let mut keys = InMemoryKeyring::new();
+            keys.insert(
+                AGENT_ID.to_string(),
+                SigningKey::from_bytes(&AGENT_SEED).verifying_key(),
+            );
+            while std::time::Instant::now() < deadline && seen.lock().unwrap().len() < 4 {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                    Err(e) => panic!("accept: {e}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let hello = match read_frame(
+                    &mut stream,
+                    1,
+                    KeyDirectorySource::Provided(&keys),
+                    &mut InMemoryReplayGuard::new(),
+                    &SystemClock,
+                ) {
+                    Ok(IngressMessage::SessionHello(verified)) => verified.get().clone(),
+                    _ => continue,
+                };
+                seen.lock().unwrap().push(hello.mode);
+                if hello.mode == gputeer_protocol::constants::MODE_MAILBOX {
+                    let mut delivery = pb::MailboxDelivery {
+                        schema_version: 1,
+                        node_id: AGENT_ID.into(),
+                        notices: Vec::new(),
+                        coordinator_id: COORD_ID.into(),
+                        issued_at_unix_ms: SystemClock.now_unix_ms(),
+                        session_nonce: hello.nonce.clone(),
+                        coordinator_signature: Vec::new(),
+                    };
+                    delivery.coordinator_signature =
+                        sign(&SigningKey::from_bytes(&COORD_SEED), &delivery).to_vec();
+                    let frame = write_frame(FrameType::MailboxDelivery, &delivery.encode_to_vec())
+                        .expect("배달 프레임");
+                    stream.write_all(&frame).expect("배달 전송");
+                }
+                // FRESH 는 그냥 닫는다 — Agent 에게는 일시적 실패다
+            }
+        });
+        let mut c = config(dir.path(), &addr);
+        c.use_mailbox = true;
+        c.run_ledger = true;
+        c.require_ack_receipt = true;
+        c.max_reconnect_attempts = 2;
+        c.retry_base_ms = 1;
+        c.retry_cap_ms = 5;
+        let outcome = run(c);
+        server.join().expect("가짜 Coordinator");
+        let modes = modes.lock().unwrap().clone();
+        let mailbox = gputeer_protocol::constants::MODE_MAILBOX;
+        let fresh = gputeer_protocol::constants::MODE_MULTI_AGENT_GRANT;
+        assert_eq!(
+            modes,
+            vec![mailbox, fresh, mailbox, fresh],
+            "재접속 전에 우편함을 다시 비우지 않았다(결과 {outcome:?})"
+        );
     }
 
     /// 검증한 Ack 를 받으면 outbox 파일을 지운다.

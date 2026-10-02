@@ -10,7 +10,8 @@
 //! ```
 //! ★ 수신 확인을 잃으면 다음 배달을 본다 — 거기 없으면 커밋됐다(처리 끝) · 있으면 같은 처리를 되풀이한다(멱등).
 //! ★ 우편함 오류 · 답 보류는 **새 작업**만 막는다. 소유자의 즉시 비우기 · 강제 종료는 언제나 된다(§0.1).
-//! ★ 2026-10-02 조각 4a — 회차 전 비우기만 있다. 실행 중 감시 스레드(STOPPED)는 다음 조각이다.
+//! 실행 중     그 시도가 도는 동안 갱신 스레드와 **따로** 감시 스레드가 갱신 주기로 묻는다(갱신 거부 · 로컬 만료 · 연결 실패와 무관하게 실행이 끝날
+//!             때까지). 지금 도는 이 시도의 통지면 서명된 거부와 같은 경로로 멈추게 하고(소유자 "계속" 도 무시), 정지가 **성공한 뒤에만** STOPPED 로 답한다
 
 use std::io::Write;
 
@@ -267,4 +268,78 @@ pub(crate) fn empty_before_fresh(
             "MAILBOX_SESSION_FAILED: 우편함을 비우지 못해 이 회차는 일을 받지 않는다 — {error}"
         )),
     }
+}
+
+/// 실행 중 처리 — 지금 도는 이 시도의 통지면 멈추게 하고 정지가 성공한 뒤에만 STOPPED. 다른 시도는 회차 전과 같다(원장).
+///   `requested` 는 정지를 요청했는지 — 실행이 끝날 때 마지막 답을 보낼지 정한다.
+pub(crate) fn decide_while_running(
+    config: &AgentConfig,
+    running_attempt: &str,
+    notice: &pb::SupersedeNotice,
+    requested: &mut bool,
+) -> Option<pb::MailboxAction> {
+    if notice.attempt_id != running_attempt {
+        return decide_when_idle(config, notice);
+    }
+    let panel = &config.owner_panel_state;
+    if panel.stopped_for_disconnect(running_attempt) {
+        return Some(pb::MailboxAction::Stopped);
+    }
+    if !*requested {
+        println!(
+            "MAILBOX_STOP_REQUESTED attempt_id={running_attempt} notice_id={} — Coordinator 가 이 시도를 폐기했다. 소유자 \"계속\" 도 무시하고 멈춘다",
+            notice.notice_id
+        );
+    }
+    *requested = true;
+    // 서명된 갱신 거부와 같은 경로 — 끊김 시한을 지금으로 당겨 감시 스레드가 멈춘다(DISCONNECT_STOPPED · 소유자 되찾음이 아니다).
+    panel.renew_refused(running_attempt, SystemClock.now_unix_ms());
+    None
+}
+
+/// 실행 중 우편함 감시 스레드. `stop` 이 서면(실행이 끝나면) 끝난다 — 그때 정지를 요청했고 정지가 성공했으면 마지막으로 한 번 더 물어 STOPPED 로 답한다.
+pub(crate) fn spawn_watch_during_execution(
+    config: AgentConfig,
+    signing_key: SigningKey,
+    running_attempt: String,
+    interval: std::time::Duration,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut requested = false;
+        let once = |requested: &mut bool| {
+            match session_once(&config, &signing_key, &mut |notice| {
+                decide_while_running(&config, &running_attempt, notice, requested)
+            }) {
+                Ok(MailboxRound::Empty) => {}
+                Ok(round) => println!("MAILBOX_WATCH attempt_id={running_attempt} result={round:?}"),
+                Err(error) => println!(
+                    "MAILBOX_WATCH_FAILED attempt_id={running_attempt} detail={error} — 다음 주기에 다시"
+                ),
+            }
+        };
+        'watch: loop {
+            // 정지를 요청한 뒤에는 짧게 다시 묻는다 — 멈춘 것을 곧바로 STOPPED 로 알린다.
+            let wait = if requested {
+                std::time::Duration::from_millis(200)
+            } else {
+                interval
+            };
+            let due = std::time::Instant::now() + wait;
+            while std::time::Instant::now() < due {
+                if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                    break 'watch;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            once(&mut requested);
+        }
+        if requested
+            && config
+                .owner_panel_state
+                .stopped_for_disconnect(&running_attempt)
+        {
+            once(&mut requested);
+        }
+    })
 }
