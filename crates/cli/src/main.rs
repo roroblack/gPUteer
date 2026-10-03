@@ -110,6 +110,7 @@ gputeer — gPUteer CLI
     gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>
     gputeer owner-resume --checkpoint-root <dir>
     gputeer container-incidents --checkpoint-root <dir> [--clear <컨테이너 이름> | --clear-all]
+        [--seed-file <노드 시드 파일> [--owner-attest-basis runtime-restarted|listed-only --owner-attest-statement <문장>]]   (실행 여부 불명 행의 해제)
     gputeer run-ledger adopt-legacy [--i-attest-no-container-ever-ran] -- <agent-stub 인자>
 
     selftest                     지금 구현된 계층을 끝에서 끝까지 한 번 돌린다.
@@ -332,10 +333,17 @@ fn main() -> ExitCode {
             //   표식이 있는 동안 Agent 는 새 작업을 받지 않는다. 해제하면 다음 기동이 남은 컨테이너의 로그를 건지고 지운다.
             let mut root = None;
             let mut clear: Option<Option<String>> = None;
+            // ★ 조각 5d2 — 실행 여부 불명(OPEN) 행의 해제: 노드 시드 · ID 없는 행의 소유자 진술.
+            let mut seed_file: Option<String> = None;
+            let mut attest_basis: Option<String> = None;
+            let mut attest_statement: Option<String> = None;
             let mut rest = args[1..].iter();
             while let Some(arg) = rest.next() {
                 match arg.as_str() {
                     "--checkpoint-root" => root = rest.next().cloned(),
+                    "--seed-file" => seed_file = rest.next().cloned(),
+                    "--owner-attest-basis" => attest_basis = rest.next().cloned(),
+                    "--owner-attest-statement" => attest_statement = rest.next().cloned(),
                     // ★ 이름을 빠뜨린 `--clear` 가 전부 해제(`--clear-all`)가 되지 않게 한다 — 시험이 찾았다.
                     "--clear" => match rest.next() {
                         Some(name) if !name.is_empty() && !name.starts_with("--") => {
@@ -365,11 +373,24 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            let release = match gputeer_agent::run_release_args_from(
+                seed_file.as_deref(),
+                attest_basis.as_deref(),
+                attest_statement.as_deref(),
+            ) {
+                Ok(release) => release,
+                Err(error) => {
+                    eprintln!("container-incidents 실패: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let result = match &clear {
                 // 노드 실행 원장을 켠 루트는 원장의 LOCAL_BLOCKED 를 먼저 풀고 잠금 아래에서 지운다(켜지 않은 루트는 지금과 같다).
-                Some(name) => gputeer_agent::clear_container_incidents(
+                // ★ 조각 5d2 — OPEN 행은 시드가 있을 때만 §4 절차로 푼다.
+                Some(name) => gputeer_agent::clear_container_incidents_with(
                     std::path::Path::new(&root),
                     name.as_deref(),
+                    release.as_ref(),
                 ),
                 None => gputeer_agent::container::open_incidents(&dir),
             };

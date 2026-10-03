@@ -4137,6 +4137,8 @@ fn resolve_unreported_container_row(
             owner,
             &run_evidence::CliQueries {
                 program: std::path::Path::new(program),
+                // 기동은 로그를 건지지도 지우지도 않는다(v18f) — 보존 폴더를 주지 않는다.
+                salvage_dir: None,
             },
         ),
         None => run_evidence::AutoEvidence::NotEstablished {
@@ -4588,6 +4590,25 @@ pub fn clear_container_incidents(
     root: &std::path::Path,
     name: Option<&str>,
 ) -> Result<Vec<PathBuf>, String> {
+    clear_container_incidents_with(root, name, None)
+}
+
+/// ★ 2026-10-03 11:25 (실행 알림 계획 조각 5d2 · 계약 §4 · §5 "해제") — 해제 명령이 OPEN(실행 여부 불명) 행을 풀 때 쓰는 것.
+pub struct RunReleaseArgs {
+    /// 노드 시드(`--seed-file` — Agent 의 `--own-seed-file` 과 같은 파일 · K0 평문 등급 그대로). STOP_CONFIRMED 를 이 키로 서명한다.
+    pub seed: [u8; 32],
+    /// ID(또는 고정 대상) 없는 행을 풀 때만 — 소유자 진술.
+    pub attestation: Option<run_evidence::OwnerAttestation>,
+}
+
+/// `clear_container_incidents` 와 같되, `release` 가 있으면 이름이 맞는 OPEN 행을 §4 절차(로그 보존 → 지움 → 새 조회 셋 · 신원 앞뒤)로 풀어
+/// STOP_CONFIRMED 알림 + STOP_PENDING 을 한 원장 트랜잭션에 적는다(차단은 그 알림의 ACK 로 풀린다 — 조각 5f). 증거를 세우지 못하면 아무것도 바꾸지 않고
+/// `Err`. `release` 없이 OPEN 행을 만나면 거부한다(조용히 건너뛰지 않는다).
+pub fn clear_container_incidents_with(
+    root: &std::path::Path,
+    name: Option<&str>,
+    release: Option<&RunReleaseArgs>,
+) -> Result<Vec<PathBuf>, String> {
     // ★ 단계 3 설계 v20(코덱스 c1s ① · 시험 T29c) — **루트 잠금을 먼저 얻고, 그 잠금 아래에서** 원장 상태를 판정한다. 전에는 원장 여부를 잠금 전에
     //   판정해, 그 사이 다른 Agent 가 원장을 켜고 끝내면 낡은 "켜지 않음" 판정으로 표식만 지울 수 있었다. 원장을 켜지 않은 루트도 이제 잠금 아래에서
     //   지운다 — Agent(루프)가 떠 있으면 거부한다(대가: 사건 해제는 루프를 멈추고 한다).
@@ -4609,6 +4630,15 @@ pub fn clear_container_incidents(
             ledger.clear_local_blocked(&row.attempt_id)?;
             println!("RUN_LEDGER_CLEARED attempt_id={}", row.attempt_id);
         }
+        if row.state == run_ledger::RowState::Open && named {
+            let release = release.ok_or_else(|| {
+                format!(
+                    "RUN_RELEASE_NEEDS_SEED: 실행 여부 불명(OPEN) 행 {} 이 있다 — 정지 확인 알림을 서명할 --seed-file(Agent 의 --own-seed-file)을 준다",
+                    row.attempt_id
+                )
+            })?;
+            release_open_row(&real_root, &mut ledger, &row, release)?;
+        }
     }
     let cleared = container::clear_incidents(&dir, name)?;
     if !cleared.is_empty() {
@@ -4616,6 +4646,118 @@ pub fn clear_container_incidents(
             .map_err(|error| format!("RUN_LEDGER: 사건 폴더를 sync 하지 못했다: {error:?}"))?;
     }
     Ok(cleared)
+}
+
+/// ★ 2026-10-03 11:25 (조각 5d2) — OPEN 행 하나를 §4 해제 절차로 푼다. 루트 잠금 아래에서 부른다.
+fn release_open_row(
+    real_root: &std::path::Path,
+    ledger: &mut run_ledger::RunLedger,
+    row: &run_ledger::AttemptRow,
+    release: &RunReleaseArgs,
+) -> Result<(), String> {
+    let id = &row.attempt_id;
+    let program = row
+        .runtime_program
+        .as_deref()
+        .map(std::path::Path::new)
+        .ok_or_else(|| format!("RUN_RELEASE_REFUSED: 행 {id} 에 런타임 실행 파일이 없다"))?;
+    let node_id = row
+        .node_id
+        .as_deref()
+        .ok_or_else(|| format!("RUN_RELEASE_REFUSED: 행 {id} 에 노드 id 가 없다"))?;
+    let owner = container_owner_label(node_id, real_root);
+    let salvage_dir = container::leftover_logs_dir_for(real_root);
+    let queries = run_evidence::CliQueries {
+        program,
+        salvage_dir: Some(&salvage_dir),
+    };
+    // 원장에 연결 대상이 없는 행만 — 그 행의 런타임 실행 파일 · 종류로 지금 대상을 해석해 모든 명령에 명시한다(감사에 남긴다).
+    let fallback = if row.connection_target.is_none() {
+        let flavor = row
+            .runtime_kind
+            .as_deref()
+            .ok_or_else(|| format!("RUN_RELEASE_REFUSED: 행 {id} 에 런타임 종류가 없다"))
+            .and_then(container::RuntimeFlavor::parse)?;
+        Some(container::runtime_target::resolve_endpoint(program, flavor).map_err(|why| {
+            format!("RUN_RELEASE_REFUSED: 행 {id} 의 런타임 대상을 정하지 못했다 — {why}")
+        })?)
+    } else {
+        None
+    };
+    let evidence = run_evidence::release_evidence(
+        row,
+        &owner,
+        release.attestation.as_ref(),
+        fallback,
+        &queries,
+    )
+    .map_err(|why| format!("RUN_RELEASE_NO_EVIDENCE: 행 {id} — {why} · 아무것도 바꾸지 않았다"))?;
+    let now = SystemClock.now_unix_ms();
+    let (stop_evidence, reason) = match &evidence {
+        run_evidence::ReleaseEvidence::ContainerAbsentConfirmed => (
+            pb::RunStopEvidence::ContainerAbsentConfirmed,
+            "owner_release_container_absent".to_string(),
+        ),
+        run_evidence::ReleaseEvidence::OwnerAttested { endpoint, identity } => {
+            let attestation = release
+                .attestation
+                .as_ref()
+                .expect("진술 없는 OwnerAttested 는 만들어지지 않는다");
+            // 감사 칸 — 진술 · 시각 · 근거 종류 · 물은 대상 · 신원(계약 §4 "ID 없는 행"). STOP 바이트와 같은 트랜잭션에 적힌다.
+            (
+                pb::RunStopEvidence::ContainerAbsentOwnerAttested,
+                format!(
+                    "owner_attested basis={} at_unix_ms={now} endpoint={endpoint:?} identity={identity:?} statement={:?}",
+                    attestation.basis.as_str(),
+                    attestation.statement
+                ),
+            )
+        }
+    };
+    let sequence = ledger.next_sequence(id)?;
+    let notice = run_evidence::build_notice(
+        &SigningKey::from_bytes(&release.seed),
+        row,
+        run_evidence::NoticeShape::StopConfirmed(stop_evidence),
+        sequence,
+        now,
+        now,
+    )?;
+    ledger.stop_pending_with_stop(id, &reason, &notice)?;
+    println!(
+        "RUN_LEDGER_RELEASED attempt_id={id} state=STOP_PENDING stop_evidence={stop_evidence:?} sequence={sequence} — 보낸 알림의 ACK 를 받으면 차단이 풀린다"
+    );
+    Ok(())
+}
+
+/// ★ 조각 5d2 — 해제 명령의 인자를 읽는다. 시드 파일이 없으면 `None`(OPEN 행을 만나면 거부된다). 진술은 근거 종류와 문장을 **둘 다** 준다.
+pub fn run_release_args_from(
+    seed_file: Option<&str>,
+    attest_basis: Option<&str>,
+    attest_statement: Option<&str>,
+) -> Result<Option<RunReleaseArgs>, String> {
+    let attestation = match (attest_basis, attest_statement) {
+        (None, None) => None,
+        (Some(basis), Some(statement)) if !statement.trim().is_empty() => Some(run_evidence::OwnerAttestation {
+            basis: run_evidence::OwnerAttestBasis::parse(basis)?,
+            statement: statement.to_string(),
+        }),
+        _ => {
+            return Err("--owner-attest-basis 와 --owner-attest-statement(비지 않은 문장)를 함께 준다".into())
+        }
+    };
+    let Some(path) = seed_file else {
+        if attestation.is_some() {
+            return Err("소유자 진술은 --seed-file 과 함께만 쓴다(진술로 푸는 것도 정지 확인 알림을 서명한다)".into());
+        }
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("--seed-file 을 읽지 못했다({path}): {e}"))?;
+    Ok(Some(RunReleaseArgs {
+        seed: hex_to_seed(text.trim())?,
+        attestation,
+    }))
 }
 
 pub fn container_incident_dir(root: &std::path::Path) -> Result<PathBuf, String> {
@@ -8367,6 +8509,29 @@ mod run_ledger_startup_tests {
         assert!(open_run_ledger_at_startup(&on).is_err());
         let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
         assert_eq!(ledger.notices("with-id").unwrap().len(), 1);
+    }
+
+    /// ★ 조각 5d2 — 해제 명령: OPEN 행은 시드 없이 거부하고, 시드가 있어도 증거를 세우지 못하면(런타임 없음 · ID 없는 행에 진술 없음) 아무것도 바꾸지 않는다.
+    #[test]
+    fn the_release_command_never_unblocks_an_open_row_without_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut on = config(dir.path(), &ON);
+        on.send_run_notice = true;
+        active_container_row(&on, "open-1", false);
+        record_attempt_started_here(&on.checkpoint_root, "open-1").unwrap();
+        assert!(open_run_ledger_at_startup(&on).is_err());
+        assert_eq!(state(&on, "open-1"), run_ledger::RowState::Open);
+        let name = container::derive_container_name("open-1");
+        let refused = clear_container_incidents_with(&on.checkpoint_root, Some(&name), None).unwrap_err();
+        assert!(refused.contains("RUN_RELEASE_NEEDS_SEED"), "{refused}");
+        let release = RunReleaseArgs { seed: AGENT_SEED, attestation: None };
+        let refused = clear_container_incidents_with(&on.checkpoint_root, Some(&name), Some(&release)).unwrap_err();
+        assert!(refused.contains("RUN_RELEASE_REFUSED") || refused.contains("RUN_RELEASE_NO_EVIDENCE"), "{refused}");
+        assert_eq!(state(&on, "open-1"), run_ledger::RowState::Open, "증거 없이 상태가 바뀌었다");
+        let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
+        assert_eq!(ledger.notices("open-1").unwrap().len(), 1, "증거 없이 정지 확인 알림을 적었다");
+        // 다른 이름만 고르면 그 OPEN 행은 건드리지 않는다
+        assert!(clear_container_incidents_with(&on.checkpoint_root, Some("gputeer-other"), None).is_ok());
     }
 
     #[test]

@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-10-03 11:37 — 실행 알림 계획 조각 5d2 — 해제 명령의 OPEN 경로(§4 절차 · 소유자 진술)(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5d2) · 계약 v18k §4 "절차 ①②③" · "ID 없는 행" · §5 "해제"
+- 스트림: Agent · CLI
+- 수행: `run_evidence::release_evidence` — 확인한 ID · 고정 대상이 있는 행: 앞 신원 → 로그 보존(sync) → 그 ID 로 rm -f -v → 새 조회 셋 모두 not-found →
+  뒤 신원(둘 다 원장과 같아야) → CONTAINER_ABSENT_CONFIRMED. 로그를 못 건지면 지우지 않는다 · rm 응답은 믿지 않는다(뒤이은 조회가 판정). ID(또는 대상)
+  없는 행: 소유자 진술(근거 종류 runtime-restarted · listed-only + 문장)이 없으면 런타임에 묻지도 않고 거부, 있으면 이름으로 같은 절차(조회 둘) ·
+  신원 앞뒤가 서로 같아야(원장 값이 있으면 그것과도) → CONTAINER_ABSENT_OWNER_ATTESTED. `container::runtime_target` 에 고정 대상의 로그 보존
+  (`pinned_salvage_logs` — 파일 · 폴더 sync) · 지우기(`pinned_remove`)를 더했다. `lib.rs` — `clear_container_incidents_with`(OPEN 행은 시드가 없으면 거부 ·
+  증거를 못 세우면 아무것도 바꾸지 않음 · 서면 STOP_CONFIRMED + STOP_PENDING 한 트랜잭션 · 진술 해제는 감사(진술 · 시각 · 근거 · 물은 대상 · 신원)를
+  행의 사유 칸에) · owner 라벨은 Agent 와 같은 식(노드 id + 루트 해시). 원장에 대상이 없는 행은 그 행의 런타임 실행 파일 · 종류로 지금 대상을 해석해
+  모든 명령에 명시한다. CLI `container-incidents` 에 `--seed-file` · `--owner-attest-basis` · `--owner-attest-statement`
+- 검증: 새 시험 4(증거 모듈 3 — ID 로 보존 → 지움 → 조회 · 이름으로 남아 있으면 증거 아님 · 로그 못 건지면 안 지움 · rm 응답만 믿지 않음 · 신원 변화 ·
+  진술 없으면 묻지도 않음 · 빈 진술 · 대상 없음 거부 · 진술 경로 순서 / 기동 1 — OPEN 행은 시드 없이 거부 · 시드가 있어도 증거 없으면 아무것도 안 바뀜).
+  Windows `cargo test --workspace -j 1 --no-fail-fast` 1625 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0. 일부러 망가뜨려 확인 — 로그를 못 건져도 지우게 · 진술 없이 풀게 하면 각각 시험이 실패함을 보고 원복
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 11:25 — 실행 알림 계획 조각 5d1 — 기동의 §4 자동 증거 · 실행 알림 서명(격리 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5d1) · 계약 v18k §4 "Agent 기동의 자동 증거" · §5 기동 관문 셋째 · 넷째 줄 · v18l

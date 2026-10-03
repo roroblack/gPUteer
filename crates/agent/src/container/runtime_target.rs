@@ -14,7 +14,10 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::{cli_ok, says_no_such_container, RuntimeFlavor, CONFIRM_TIMEOUT};
+use super::{
+    cli_ok, save_logs_with, says_no_such_container, sync_dir, unique_salvage_paths, RuntimeFlavor,
+    CONFIRM_TIMEOUT, SHORT_TIMEOUT,
+};
 
 const DOCKER_PREFIX: &str = "docker-host:";
 const PODMAN_LOCAL_PREFIX: &str = "podman-local:";
@@ -217,4 +220,39 @@ fn pinned_query(program: &Path, endpoint: &RuntimeEndpoint, args: &[&str]) -> Re
     let mut all = endpoint.global_args();
     all.extend(args.iter().map(OsString::from));
     cli_ok(program, &all, CONFIRM_TIMEOUT).map(|out| out.stdout.trim().to_string())
+}
+
+/// ★ 2026-10-03 11:25 (조각 5d2 · 계약 §4 ① — 해제 명령만) — 그 컨테이너의 로그를 `dir` 에 건지고 **파일 · 폴더를 sync** 한다(고정 대상으로).
+///   건지지 못하면 `Err` — 부르는 쪽은 지우지 않는다(증거 없음). 돌려준 두 경로는 감사에 남긴다.
+pub fn pinned_salvage_logs(
+    program: &Path,
+    endpoint: &RuntimeEndpoint,
+    target: &str,
+    dir: &Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("로그 보존 폴더를 만들지 못했다({dir:?}): {error}"))?;
+    let (stdout_path, stderr_path) = unique_salvage_paths(dir, target);
+    save_logs_with(
+        program,
+        &endpoint.global_args(),
+        target,
+        Some(&stdout_path),
+        Some(&stderr_path),
+    )?;
+    for path in [&stdout_path, &stderr_path] {
+        std::fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("건진 로그를 sync 하지 못했다({path:?}): {error}"))?;
+    }
+    sync_dir(dir)?;
+    Ok((stdout_path, stderr_path))
+}
+
+/// ★ 조각 5d2(계약 §4 ② — 해제 명령만) — 고정 대상에서 `rm -f -v <대상>`. 응답만으로 지웠다고 보지 않는다 — 뒤이은 새 조회 셋이 판정한다.
+pub fn pinned_remove(program: &Path, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
+    let mut args = endpoint.global_args();
+    args.extend(["rm", "-f", "-v"].iter().map(OsString::from));
+    args.push(OsString::from(target));
+    cli_ok(program, &args, SHORT_TIMEOUT).map(|_| ())
 }

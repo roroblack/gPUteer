@@ -1906,6 +1906,17 @@ fn save_logs(
     stdout_path: Option<&Path>,
     stderr_path: Option<&Path>,
 ) -> Result<(), String> {
+    save_logs_with(program, &[], name, stdout_path, stderr_path)
+}
+
+/// `save_logs` 와 같되 런타임 전역 인자(고정한 대상 — 조각 5d2 · 계약 §4 ①)를 앞에 붙인다.
+fn save_logs_with(
+    program: &Path,
+    global_args: &[OsString],
+    name: &str,
+    stdout_path: Option<&Path>,
+    stderr_path: Option<&Path>,
+) -> Result<(), String> {
     let (Some(stdout_path), Some(stderr_path)) = (stdout_path, stderr_path) else {
         return Ok(());
     };
@@ -1914,6 +1925,7 @@ fn save_logs(
     let stderr = std::fs::File::create(stderr_path)
         .map_err(|error| format!("{stderr_path:?} 열기 실패: {error}"))?;
     let mut child = Command::new(program)
+        .args(global_args)
         .args(["logs", name])
         .stdin(Stdio::null())
         .stdout(stdout)
