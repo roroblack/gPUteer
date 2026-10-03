@@ -10,7 +10,9 @@
 //!
 //! ★ 이 조각이 **하지 않는 것**(계약의 나머지 조각):
 //! ```text
-//! RUN_UNKNOWN 의 효과   시도 → RUN_UNKNOWN · Job 보류 표식 · 보류 해제 — 조각 6. 지금은 저장만 하고 `RunUnknownStoredOnly` 로 알린다
+//! RUN_UNKNOWN 의 효과   ★ 2026-10-03 12:06 조각 6a — 계약 §2 전이 표: 시도 → RUN_UNKNOWN · Job 에 NOTICE 보류(`job_holds`) · 늦은 도착은 DUPLICATE_RISK ·
+//!                      이미 끝난 시도는 RECONCILE_NEEDED(Job 이 최종이 아니면 보류도). STOP_CONFIRMED 는 그 시도의 보류를 푼다.
+//!                      보류가 새 시도를 막는 관문은 조각 6b
 //! ACK 서명 · 세션      REPORT 세션의 FrameType 19 분기 — 조각 5 이후. 여기서는 ACK 에 실을 값만 돌려준다
 //! 부르는 곳            REPORT 세션의 FrameType 19 분기(조각 5f — `answer_run_notice`) · `--accept-run-notice` 는 ADR-034 강제 코드 전까지 기동 거부 —
 //!                      **격리 시험만**(계획 §3 · §4)
@@ -44,12 +46,14 @@ pub struct RunNoticeAccepted {
     pub effect: RunNoticeEffect,
 }
 
+// 알림 하나에 한 번 돌려주는 결과 값이라(모아 두지 않는다) 변형 크기 차이는 문제가 아니다.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunNoticeEffect {
     /// 같은 바이트의 재전송 — 아무것도 다시 하지 않았다.
     Duplicate,
-    /// RUN_UNKNOWN — 저장만 했다. 시도 · Job · 보류 효과는 조각 6 이 붙인다.
-    RunUnknownStoredOnly,
+    /// RUN_UNKNOWN 을 처리했다(계약 §2 전이 표 — 조각 6a).
+    RunUnknownApplied(RunUnknownApplied),
     /// STOP_CONFIRMED 를 처리했다.
     StopProcessed(StopProcessed),
 }
@@ -65,6 +69,21 @@ pub struct StopProcessed {
     /// Job 이 간 곳 — 최신 시도이고 시도를 이번에 닫았을 때만 있다.
     pub job: Option<StopConfirmedJobEffect>,
     pub release: ReleaseOutcome,
+    /// ★ 조각 6a — 이 정지 확인으로 푼 그 시도의 보류 행 수(NOTICE · 같은 시도의 UNREPORTED).
+    pub holds_released: usize,
+}
+
+/// ★ 조각 6a — RUN_UNKNOWN 처리 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunUnknownApplied {
+    pub attempt_state_before: AttemptState,
+    /// 이번에 시도를 RUN_UNKNOWN 으로 옮겼나.
+    pub attempt_moved: bool,
+    pub latest_attempt: bool,
+    /// 이번에 NOTICE 보류를 새로 걸었나(이미 있었으면 false).
+    pub hold_installed: bool,
+    /// 남긴 사건(DUPLICATE_RISK · RECONCILE_NEEDED) — 사람이 봐야 한다.
+    pub events: Vec<&'static str>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -107,6 +126,17 @@ pub(crate) fn initialize_schema(connection: &Connection) -> Result<(), RunNotice
                     PRIMARY KEY(attempt_id, node_id, sequence)
                 );
                 "#,
+        )
+        .map_err(storage)?;
+    crate::job_holds::initialize_schema(connection).map_err(RunNoticeError::Storage)?;
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS coordinator_run_notice_events (
+                attempt_id TEXT NOT NULL,
+                event TEXT NOT NULL CHECK(event IN ('DUPLICATE_RISK', 'RECONCILE_NEEDED')),
+                detail TEXT NOT NULL,
+                at_unix_ms BLOB NOT NULL CHECK(length(at_unix_ms) = 8)
+            );",
         )
         .map_err(storage)?;
     reservation_release::initialize_release_schema(connection).map_err(RunNoticeError::Release)
@@ -279,7 +309,13 @@ pub fn accept_within(
             resume,
             now_unix_ms,
         )?),
-        _ => RunNoticeEffect::RunUnknownStoredOnly,
+        _ => RunNoticeEffect::RunUnknownApplied(process_run_unknown(
+            transaction,
+            &attempt,
+            &notice_hash,
+            notice.sequence,
+            now_unix_ms,
+        )?),
     };
     Ok(RunNoticeAccepted {
         notice_hash,
@@ -288,6 +324,121 @@ pub fn accept_within(
         created: true,
         effect,
     })
+}
+
+/// 그 시도가 그 Job 의 최신 시도(가장 높은 fence)인가 — 장애 이어받기 · Grant 수신 확인과 같은 판별.
+fn is_latest_attempt(transaction: &Connection, attempt: &staging_store::StoredAttempt) -> Result<bool, RunNoticeError> {
+    let latest: Option<String> = transaction
+        .query_row(
+            "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![attempt.job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(storage)?;
+    Ok(latest.as_deref() == Some(attempt.attempt_id.as_str()))
+}
+
+fn record_event(
+    transaction: &Connection,
+    attempt_id: &str,
+    event: &'static str,
+    detail: &str,
+    now_unix_ms: u64,
+) -> Result<(), RunNoticeError> {
+    println!("RUN_NOTICE_EVENT {event} attempt_id={attempt_id} — {detail}");
+    transaction
+        .execute(
+            "INSERT INTO coordinator_run_notice_events(attempt_id, event, detail, at_unix_ms) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![attempt_id, event, detail, now_unix_ms.to_be_bytes().to_vec()],
+        )
+        .map(|_| ())
+        .map_err(storage)
+}
+
+/// ★ 2026-10-03 12:06 (조각 6a · 계약 §2 전이 표 · §7) — RUN_UNKNOWN 처리(알림은 이미 저장했다).
+///
+/// ```text
+/// 최신 시도 · STARTING · RUNNING · PAUSED   시도 → RUN_UNKNOWN · Job 에 NOTICE 보류 · Job 상태는 그대로
+/// 최신 시도 · CREATED                       GRANT_ACCEPTED 를 거쳐 RUN_UNKNOWN(서명된 알림이 받아들임의 증거 — b16 ①) · 보류
+/// RUN_UNKNOWN(더 높은 번호)                  저장만
+/// STOP 으로 끝난 시도 · 가장 큰 STOP 번호보다 낮은 번호   저장만(흡수 — 늦은 옛 알림이 되돌리지 않는다)
+/// STOP 으로 끝난 시도 · 더 높은 번호         시도 그대로 · Job 이 최종이 아니면 보류를 다시 건다 · RECONCILE_NEEDED(b7 ①)
+/// 진입 행 없는 나머지(COMPLETED · RECONCILING · 종료 상태)   시도 그대로 · Job 이 최종이 아니면 보류 · RECONCILE_NEEDED(b10 ③ · b4 ①)
+/// 늦은 도착(더 높은 fence 의 시도가 있다)     옛 시도만 — 진입 행이 있으면(CREATED 제외) RUN_UNKNOWN · Job · 보류는 건드리지 않음 · DUPLICATE_RISK(§7)
+/// ```
+fn process_run_unknown(
+    transaction: &Connection,
+    attempt: &staging_store::StoredAttempt,
+    notice_hash: &[u8; 32],
+    sequence: u64,
+    now_unix_ms: u64,
+) -> Result<RunUnknownApplied, RunNoticeError> {
+    let latest_attempt = is_latest_attempt(transaction, attempt)?;
+    let stop_max = latest_sequence(transaction, &attempt.attempt_id, "STOP_CONFIRMED")?;
+    let mut applied = RunUnknownApplied {
+        attempt_state_before: attempt.state,
+        attempt_moved: false,
+        latest_attempt,
+        hold_installed: false,
+        events: Vec::new(),
+    };
+    let path: &[AttemptState] = match attempt.state {
+        AttemptState::Starting | AttemptState::Running | AttemptState::Paused => &[AttemptState::RunUnknown],
+        AttemptState::Created if latest_attempt => &[AttemptState::Starting, AttemptState::RunUnknown],
+        _ => &[],
+    };
+    if !path.is_empty() {
+        staging_store::transition_attempt_state_along(transaction, &attempt.attempt_id, attempt.state, path)
+            .map_err(|e| storage_text(format!("{e:?}")))?;
+        applied.attempt_moved = true;
+    }
+    if !latest_attempt {
+        record_event(
+            transaction,
+            &attempt.attempt_id,
+            "DUPLICATE_RISK",
+            "새 시도가 이미 있는데 옛 시도가 실행 여부 불명이라 알렸다 — 두 벌이 돌 수 있다(막지 못한 경우 · §7)",
+            now_unix_ms,
+        )?;
+        applied.events.push("DUPLICATE_RISK");
+        return Ok(applied);
+    }
+    if attempt.state == AttemptState::RunUnknown {
+        return Ok(applied);
+    }
+    if attempt.state == AttemptState::Failed && stop_max.is_some_and(|max| sequence < max) {
+        return Ok(applied);
+    }
+    let job = job_store::fetch_job(transaction, &attempt.job_id)
+        .map_err(|e| storage_text(e.to_string()))?
+        .ok_or_else(|| storage_text(format!("시도의 Job {} 이 없다", attempt.job_id)))?;
+    let job_final = matches!(job.state, job_store::JobState::Completed | job_store::JobState::Failed);
+    if applied.attempt_moved || !job_final {
+        applied.hold_installed = crate::job_holds::install_notice_hold(
+            transaction,
+            &attempt.job_id,
+            &attempt.attempt_id,
+            notice_hash,
+            now_unix_ms,
+        )
+        .map_err(RunNoticeError::Storage)?;
+    }
+    if !applied.attempt_moved {
+        record_event(
+            transaction,
+            &attempt.attempt_id,
+            "RECONCILE_NEEDED",
+            &format!(
+                "이미 끝난 시도({:?})가 실행 여부 불명이라 알렸다 — 종료 보고와 어긋난다(사람이 본다 · Job {:?})",
+                attempt.state, job.state
+            ),
+            now_unix_ms,
+        )?;
+        applied.events.push("RECONCILE_NEEDED");
+    }
+    Ok(applied)
 }
 
 /// §3 — STOP_CONFIRMED 처리(알림은 이미 저장했다).
@@ -327,16 +478,7 @@ fn process_stop(
     }
 
     // 3) Job — 그 Job 의 최신 시도(가장 높은 fence)의 알림일 때만. 늦은 도착이면 Job 은 건드리지 않는다(§2 · §7).
-    let latest: Option<String> = transaction
-        .query_row(
-            "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
-             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
-            rusqlite::params![attempt.job_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(storage)?;
-    let latest_attempt = latest.as_deref() == Some(attempt.attempt_id.as_str());
+    let latest_attempt = is_latest_attempt(transaction, attempt)?;
     let job = if latest_attempt && attempt_closed {
         let stored = job_store::fetch_job(transaction, &attempt.job_id)
             .map_err(|e| storage_text(e.to_string()))?
@@ -356,6 +498,17 @@ fn process_stop(
     } else {
         None
     };
+
+    // 3') ★ 조각 6a — 그 시도의 보류 해제(NOTICE · 같은 시도의 UNREPORTED — b7 ③). 다른 시도의 보류는 그대로다(집합 모델).
+    let notice_hash = blake3_256(&signing_input(verified.get()));
+    let holds_released = crate::job_holds::release_holds_for_stop(
+        transaction,
+        &attempt.job_id,
+        &attempt.attempt_id,
+        &notice_hash,
+        now_unix_ms,
+    )
+    .map_err(RunNoticeError::Storage)?;
 
     // 4) Lease 폐기(이미 폐기돼 있으면 그대로) — 이후 그 Lease 의 갱신은 같은 트랜잭션 재확인으로 REVOKED 다.
     crate::lease_store::revoke_within(transaction, &attempt.lease_id, now_unix_ms)
@@ -377,6 +530,7 @@ fn process_stop(
         latest_attempt,
         job,
         release,
+        holds_released,
     })
 }
 

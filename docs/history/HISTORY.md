@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-03 12:26 — 실행 알림 계획 조각 6a — 실행 여부 불명 처리와 재배치 차단 보류 집합(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 6(6a) · 계약 v18k §2 전이 표 · §6 보류 집합 · §7 늦은 도착
+- 스트림: Coordinator
+- 수행: 새 `job_holds`(표 `coordinator_job_holds(job_id, attempt_id, hold_kind)` — NOTICE_RUN_UNKNOWN · UNREPORTED_SIDE_EFFECT_RISK · 같은 시도의 UNREPORTED 를
+  NOTICE 로 치환 · STOP 이 그 시도의 보류만 해제). 알림 저장소가 RUN_UNKNOWN 을 처리한다 — 진입 행이 있는 상태면 시도를 RUN_UNKNOWN 으로, Job 이 최종 상태가
+  아니면 NOTICE 보류, 최신 시도가 아니면(늦은 도착) DUPLICATE_RISK 사건만, 진입 행 없는 상태 · 정지 뒤 다시 불명이면 RECONCILE_NEEDED 사건(표
+  `coordinator_run_notice_events`). STOP 처리는 그 시도의 보류를 같은 트랜잭션에서 푼다
+- 검증: 알림 저장소 시험 11(보류 설치 · 정지가 해제 · 늦은 도착 · 최종 Job · STOP 뒤 낮은/높은 번호 · 같은 시도 치환과 다른 시도 보존 등). 중앙 서버 · 명령줄
+  크레이트 시험 Windows `cargo test -p gputeer-coordinator -p gputeer-cli -j 1 --no-fail-fast` 621 passed · 0 failed · ignored 3 ★ 처음 돌린 전체 시험은 두 실행의 출력이 한 파일에 섞여 집계를 못 했다(실패 표시는 없음) — 바뀐 크레이트만 다시 깨끗이 돌린 값이다
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 12:03 — 실행 알림 계획 조각 5f — 실행 알림 보내기 · ACK(격리 · 활성화 관문 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5f) · §4 활성화 관문 · 계약 v18k §1 ACK · §2 · §5 "보내기" · "ACK 대조"

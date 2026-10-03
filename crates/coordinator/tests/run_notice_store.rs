@@ -291,14 +291,20 @@ fn a_resend_is_idempotent_and_other_bytes_on_the_same_sequence_are_refused() {
     assert_eq!(notice_rows(&fixture.path), 1);
 }
 
-/// 불명 알림은 지금 저장만 한다(효과는 조각 6). 그 뒤의 정지 확인은 불명보다 큰 번호여야 한다.
+/// ★ 조각 6a — 불명 알림: 최신 시도(CREATED)를 GRANT_ACCEPTED 를 거쳐 RUN_UNKNOWN 으로 옮기고 Job 에 NOTICE 보류를 건다(예약 · Lease 는 그대로).
+///   그 뒤의 정지 확인은 불명보다 큰 번호여야 하고, 받으면 그 시도의 보류를 푼다.
 #[test]
-fn a_run_unknown_is_stored_only_and_a_stop_must_come_after_it() {
+fn a_run_unknown_holds_the_job_and_a_later_stop_releases_it() {
     let fixture = prepare_fixture();
     let unknown = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 3, 300);
     let accepted = accept_with(&fixture.path, &unknown, None).unwrap();
-    assert_eq!(accepted.effect, RunNoticeEffect::RunUnknownStoredOnly);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Created);
+    let RunNoticeEffect::RunUnknownApplied(applied) = &accepted.effect else {
+        panic!("불명 처리여야 한다: {accepted:?}");
+    };
+    assert!(applied.attempt_moved && applied.hold_installed && applied.latest_attempt);
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]);
+    assert_eq!(job_state(&fixture.path), JobState::Staging, "불명은 Job 상태를 옮기지 않는다");
     assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
     assert_eq!(
         accept_with(&fixture.path, &stop(&fixture.path, 2), None),
@@ -314,7 +320,13 @@ fn a_run_unknown_is_stored_only_and_a_stop_must_come_after_it() {
     );
     assert_eq!(notice_rows(&fixture.path), 1, "거부된 정지 확인이 남았다");
     let done = accept_with(&fixture.path, &stop(&fixture.path, 4), None).unwrap();
-    assert!(matches!(done.effect, RunNoticeEffect::StopProcessed(_)));
+    let RunNoticeEffect::StopProcessed(processed) = &done.effect else {
+        panic!("정지 처리여야 한다");
+    };
+    assert_eq!(processed.attempt_state_before, AttemptState::RunUnknown);
+    assert_eq!(processed.holds_released, 1);
+    assert!(holds(&fixture.path).is_empty(), "정지 확인이 보류를 풀지 않았다");
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
     assert!(!reservation_exists(&fixture.path));
 }
 
@@ -479,4 +491,151 @@ fn a_processed_notice_is_answered_with_a_signed_ack_that_echoes_its_hash_and_ses
     assert!(!again.created, "재전송인데 처음이라고 답했다");
     assert_eq!(again.notice_hash, ack.notice_hash);
     assert_eq!(again.session_nonce, vec![8u8; 16], "세션마다 그 세션의 nonce 를 echo 한다");
+}
+
+// ─── ★ 조각 6a — 불명의 효과(계약 §2 전이 표) ─────────────────────────────────
+
+fn holds(path: &Path) -> Vec<(String, String)> {
+    let connection = rusqlite::Connection::open(path).unwrap();
+    gputeer_coordinator::job_holds::holds_for_job(&connection, JOB_ID)
+        .unwrap()
+        .into_iter()
+        .map(|hold| (hold.attempt_id, hold.hold_kind))
+        .collect()
+}
+
+fn events(path: &Path) -> Vec<String> {
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let mut statement = connection
+        .prepare("SELECT event FROM coordinator_run_notice_events ORDER BY rowid")
+        .unwrap();
+    let rows = statement.query_map([], |row| row.get::<_, String>(0)).unwrap();
+    rows.map(|row| row.unwrap()).collect()
+}
+
+fn insert_newer_attempt(path: &Path) {
+    let old_fence = fence(path);
+    let connection = rusqlite::Connection::open(path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO coordinator_attempts VALUES ('attempt-new', ?1, 'CREATED', ?2, 'lease-new', ?3, ?4)",
+            rusqlite::params![
+                JOB_ID,
+                (old_fence + 1).to_be_bytes().to_vec(),
+                500u64.to_be_bytes().to_vec(),
+                0u64.to_be_bytes().to_vec()
+            ],
+        )
+        .unwrap();
+    connection
+        .execute("INSERT INTO coordinator_attempt_nodes VALUES ('attempt-new', 'node-9', 0)", [])
+        .unwrap();
+}
+
+/// 늦은 도착 — 새 시도가 있으면 옛 시도의 불명은 Job · 보류를 건드리지 않고 DUPLICATE_RISK 만 남긴다(옛 시도가 CREATED 면 상태도 그대로).
+#[test]
+fn a_late_run_unknown_for_an_older_attempt_only_records_a_duplicate_risk() {
+    let fixture = prepare_fixture();
+    insert_newer_attempt(&fixture.path);
+    let unknown = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300);
+    let accepted = accept_with(&fixture.path, &unknown, None).unwrap();
+    let RunNoticeEffect::RunUnknownApplied(applied) = &accepted.effect else {
+        panic!("불명 처리여야 한다");
+    };
+    assert!(!applied.latest_attempt && !applied.attempt_moved && !applied.hold_installed);
+    assert_eq!(applied.events, vec!["DUPLICATE_RISK"]);
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Created);
+    assert!(holds(&fixture.path).is_empty());
+    assert_eq!(events(&fixture.path), vec!["DUPLICATE_RISK".to_string()]);
+}
+
+/// 이미 끝난 시도(COMPLETED)의 불명 — 시도는 되돌리지 않고, Job 이 최종이 아니면 보류를 건다 · RECONCILE_NEEDED. 같은 시도의 정지 확인이 보류를 푼다.
+#[test]
+fn a_run_unknown_for_a_finished_attempt_holds_a_live_job_and_asks_a_human() {
+    let fixture = prepare_fixture();
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute("UPDATE coordinator_attempts SET state = 'COMPLETED' WHERE attempt_id = ?1", [ATTEMPT_ID])
+        .unwrap();
+    let unknown = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300);
+    let accepted = accept_with(&fixture.path, &unknown, None).unwrap();
+    let RunNoticeEffect::RunUnknownApplied(applied) = &accepted.effect else {
+        panic!("불명 처리여야 한다");
+    };
+    assert!(!applied.attempt_moved && applied.hold_installed);
+    assert_eq!(applied.events, vec!["RECONCILE_NEEDED"]);
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Completed);
+    assert_eq!(holds(&fixture.path).len(), 1);
+    let done = accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+    let RunNoticeEffect::StopProcessed(processed) = &done.effect else {
+        panic!("정지 처리여야 한다");
+    };
+    assert_eq!(processed.holds_released, 1);
+    assert!(holds(&fixture.path).is_empty());
+}
+
+/// 정지 확인으로 끝난 시도 — 더 낮은 번호의 늦은 불명은 저장만(흡수) · 더 높은 번호의 불명은 보류를 다시 건다(b7 ①) · 그것은 더 높은 정지 확인으로만 풀린다.
+#[test]
+fn after_a_stop_a_lower_unknown_is_absorbed_and_a_higher_one_holds_again() {
+    let fixture = prepare_fixture();
+    accept_with(&fixture.path, &stop(&fixture.path, 5), None).unwrap();
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    // 번호 2 의 불명은 STOP(5) 보다 낮다 — 순번 규칙은 STOP 에만 걸리므로 저장은 되고 효과는 없다
+    let low = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 2, 300);
+    let accepted = accept_with(&fixture.path, &low, None).unwrap();
+    let RunNoticeEffect::RunUnknownApplied(applied) = &accepted.effect else {
+        panic!("불명 처리여야 한다");
+    };
+    assert!(!applied.hold_installed && applied.events.is_empty());
+    assert!(holds(&fixture.path).is_empty(), "늦은 옛 불명이 보류를 걸었다");
+    // Job 은 이미 큐(이어갈 지점 없음 → FAILED) — 최종이면 보류를 걸지 않는다. Job 을 다시 비최종으로 두고 본다
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute(
+            "UPDATE coordinator_jobs SET state = 'QUEUED', staging_at_unix_ms = NULL, run_terminal = NULL, worker_reported_finished_at_unix_ms = NULL WHERE job_id = ?1",
+            [JOB_ID],
+        )
+        .unwrap();
+    let high = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 7, 300);
+    let accepted = accept_with(&fixture.path, &high, None).unwrap();
+    let RunNoticeEffect::RunUnknownApplied(applied) = &accepted.effect else {
+        panic!("불명 처리여야 한다");
+    };
+    assert!(applied.hold_installed, "STOP 뒤의 더 높은 불명이 보류를 걸지 않았다");
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed, "흡수 상태가 되돌려졌다");
+    let done = accept_with(&fixture.path, &stop(&fixture.path, 8), None).unwrap();
+    assert!(matches!(done.effect, RunNoticeEffect::StopProcessed(ref p) if p.holds_released == 1));
+    assert!(holds(&fixture.path).is_empty());
+}
+
+/// 같은 시도의 UNREPORTED 보류(D6)는 불명 알림이 NOTICE 로 치환하고, 그 시도의 정지 확인 하나로 풀린다. 다른 시도의 행은 그대로다(집합).
+#[test]
+fn a_same_attempt_unreported_hold_is_replaced_and_other_attempts_holds_stay() {
+    let fixture = prepare_fixture();
+    CoordinatorRunNoticeStore::open(&fixture.path).unwrap();
+    {
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        for attempt in [ATTEMPT_ID, "attempt-other"] {
+            connection
+                .execute(
+                    "INSERT INTO coordinator_job_holds VALUES (?1, ?2, 'UNREPORTED_SIDE_EFFECT_RISK', NULL, ?3)",
+                    rusqlite::params![JOB_ID, attempt, 1u64.to_be_bytes().to_vec()],
+                )
+                .unwrap();
+        }
+    }
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    assert_eq!(
+        holds(&fixture.path),
+        vec![
+            (ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string()),
+            ("attempt-other".to_string(), "UNREPORTED_SIDE_EFFECT_RISK".to_string()),
+        ]
+    );
+    accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+    assert_eq!(
+        holds(&fixture.path),
+        vec![("attempt-other".to_string(), "UNREPORTED_SIDE_EFFECT_RISK".to_string())],
+        "다른 시도의 보류까지 풀었다"
+    );
 }
