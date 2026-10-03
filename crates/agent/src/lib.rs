@@ -28,6 +28,7 @@ pub mod multi_agent;
 pub mod owner_panel;
 pub mod progress;
 pub mod report;
+pub mod run_evidence;
 pub mod run_ledger;
 
 use gputeer_crypto::{
@@ -241,6 +242,10 @@ pub struct AgentConfig {
     pub run_ledger: bool,
     /// 기동 때 연 원장 — `run()` 이 채운다(파서는 비워 둔다). 실행 흐름이 시작 · 끝을 적는다.
     pub run_ledger_handle: Option<run_ledger::SharedRunLedger>,
+    /// ★ 2026-10-03 11:15 (실행 알림 계획 조각 5d · 계약 §5) — 실행 알림을 쓰는가. 켜지면 기동 때 남은 컨테이너 실행을 §4 자동 증거로 판정해 STOP_CONFIRMED
+    ///   (STOP_PENDING) 또는 RUN_UNKNOWN(OPEN) 알림을 원장에 적는다. 꺼지면 지금처럼 LOCAL_BLOCKED(계약 b14 ② — 알릴 길이 없는 동안의 보수).
+    ///   ★ 명령줄로 켜는 길은 아직 없다 — 계약은 ADR-034 강제 코드 없이 켜면 기동을 거부하라고 한다(조각 5f 가 그 관문과 함께 연다). 지금은 격리 시험만 켠다.
+    pub send_run_notice: bool,
     /// Owner Panel 을 띄울 포트. `None` 이면 안 띄운다.
     ///
     /// ★ 주소는 받지 않는다 — `127.0.0.1` 고정이다(`CLAUDE.md` §0.1).
@@ -4018,8 +4023,8 @@ fn open_run_ledger_at_startup(
     let mut ledger = run_ledger::open_for_agent(&paths)?;
     resolve_active_ledger_rows(settled, &paths, &mut ledger)?;
     if ledger.blocks_new_work()? {
-        return Err("RUN_LEDGER_BLOCKED: 원장에 막힌 시도(LOCAL_BLOCKED)가 있다 — 새 작업을 받지 않는다. 컨테이너 · 작업 폴더를 확인한 뒤 \
-                    `gputeer container-incidents --checkpoint-root <루트> --clear <이름>` 으로 해제한다".into());
+        return Err("RUN_LEDGER_BLOCKED: 원장에 막힌 시도(LOCAL_BLOCKED · OPEN · STOP_PENDING)가 있다 — 새 작업을 받지 않는다. 컨테이너 · 작업 폴더를 확인한 뒤 \
+                    `gputeer container-incidents --checkpoint-root <루트> --clear <이름>` 으로 해제한다(STOP_PENDING 은 보낸 정지 확인의 ACK 를 기다린다)".into());
     }
     Ok(Some(ledger))
 }
@@ -4062,6 +4067,12 @@ fn resolve_active_ledger_rows(
                     println!("RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=CLOSED reason=report_and_removed");
                     continue;
                 }
+                // ★ 2026-10-03 11:15 (조각 5d · 계약 §5 기동 관문 · §4) — 알림을 쓰면 보고 없는 행은 §4 자동 증거(지우지 않는 변형)로 판정한다.
+                //   알림 꺼짐이면 아래 그대로 LOCAL_BLOCKED(계약 b14 ②). 보고는 있는데 지움 확인이 없는 행도 그대로다(종료는 관측했다 — 불명이 아니다).
+                if settled.send_run_notice && !report {
+                    resolve_unreported_container_row(settled, &signing_key, ledger, &row)?;
+                    continue;
+                }
                 let reason = if report {
                     "report_without_removal"
                 } else {
@@ -4094,6 +4105,84 @@ fn resolve_active_ledger_rows(
                     "RUN_LEDGER: legacy 행이 ACTIVE 다({id}) — 원장이 바뀌었다"
                 ))
             }
+        }
+    }
+    Ok(())
+}
+
+/// ★ 2026-10-03 11:15 (조각 5d · 계약 §5 기동 관문 셋째 · 넷째 줄 · §4) — 알림을 쓰는 Agent 의 기동: 시작했고 보고가 없는 컨테이너 행.
+///
+/// ```text
+/// 자동 증거가 섰다(확인한 ID 의 컨테이너가 고정한 대상에서 최종적으로 없다)   → 한 원장 트랜잭션: STOP_CONFIRMED 알림 + STOP_PENDING
+///                                                                    (RUN_UNKNOWN 없이 — 중앙의 "STOP 먼저 옴" 행)
+/// 증거 못 섬(남아 있음 · 런타임 무응답 · ID · 대상 없음 · 신원 다름)          → 한 원장 트랜잭션: RUN_UNKNOWN 알림 + OPEN — 다음 기동이 다시 보거나
+///                                                                    소유자 해제 명령(§4)
+/// ```
+/// 지우지 않는다(v18f). 돌고 있는 컨테이너의 재부착(B′ · 조각 5e)은 이 판정 **앞**에 선다 — 그 전까지 돌고 있으면 "있음" 이라 OPEN 이다(보수).
+fn resolve_unreported_container_row(
+    settled: &AgentConfig,
+    signing_key: &SigningKey,
+    ledger: &mut run_ledger::RunLedger,
+    row: &run_ledger::AttemptRow,
+) -> Result<(), String> {
+    let id = &row.attempt_id;
+    let owner = settled
+        .container_runtime
+        .as_ref()
+        .map(|runtime| runtime.owner.as_str())
+        .unwrap_or("");
+    let evidence = match row.runtime_program.as_deref() {
+        Some(program) => run_evidence::startup_absence_evidence(
+            row,
+            owner,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(program),
+            },
+        ),
+        None => run_evidence::AutoEvidence::NotEstablished {
+            why: "원장에 런타임 실행 파일이 없다".into(),
+            id_recorded: row.container_id.is_some(),
+        },
+    };
+    let now = SystemClock.now_unix_ms();
+    let sequence = ledger.next_sequence(id)?;
+    match evidence {
+        run_evidence::AutoEvidence::Absent => {
+            let notice = run_evidence::build_notice(
+                signing_key,
+                row,
+                run_evidence::NoticeShape::StopConfirmed(pb::RunStopEvidence::ContainerAbsentConfirmed),
+                sequence,
+                now,
+                now,
+            )?;
+            ledger.stop_pending_with_stop(id, "container_absent_confirmed", &notice)?;
+            println!(
+                "RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=STOP_PENDING reason=container_absent_confirmed sequence={sequence}"
+            );
+        }
+        run_evidence::AutoEvidence::NotEstablished { why, id_recorded } => {
+            // ID 를 적기 전에 죽었으면 기동 요청이 풀리지 않은 것(늦은 생성을 배제할 수 없다) · 적었으면 종료를 관측하지 못한 것.
+            let (origin, reason) = if id_recorded {
+                (pb::RunUnknownOrigin::Running, pb::RunUnknownReason::ExitUnobserved)
+            } else {
+                (
+                    pb::RunUnknownOrigin::Starting,
+                    pb::RunUnknownReason::StartRequestUnresolved,
+                )
+            };
+            let notice = run_evidence::build_notice(
+                signing_key,
+                row,
+                run_evidence::NoticeShape::RunUnknown { origin, reason },
+                sequence,
+                now,
+                now,
+            )?;
+            ledger.open_with_run_unknown(id, "run_unknown_at_restart", &notice)?;
+            println!(
+                "RUN_LEDGER_RESOLVED attempt_id={id} executor=container state=OPEN reason=run_unknown sequence={sequence} detail={why}"
+            );
         }
     }
     Ok(())
@@ -5478,6 +5567,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<AgentConfig, String> {
         owner_panel_state: owner_panel::OwnerPanelState::new(),
         run_ledger: flags.bool_flag("--run-ledger"),
         run_ledger_handle: None,
+        send_run_notice: false,
         owner_panel_port: flags
             .checked_get::<u16>("--owner-panel-port")?
             .map(|v| v.parse::<u16>())
@@ -5971,6 +6061,7 @@ mod tests {
             owner_panel_state: owner_panel::OwnerPanelState::new(),
             run_ledger: false,
             run_ledger_handle: None,
+            send_run_notice: false,
             allow_elevated_host_execution: false,
             disconnect_stop_margin_ms: 10_000,
             owner_panel_port: None,
@@ -8227,6 +8318,55 @@ mod run_ledger_startup_tests {
             .expect("행")
             .expect("있다")
             .state
+    }
+
+    /// ★ 조각 5d — 알림을 쓰는 Agent 의 기동: 증거를 세우지 못한 행은 서명된 RUN_UNKNOWN 알림과 함께 OPEN 이 되고(한 트랜잭션), 새 작업을 받지 않는다.
+    ///   ID 를 적기 전에 죽은 행은 "기동 요청이 풀리지 않음"(STARTING) · ID 가 있으면 "종료 관측 못 함"(RUNNING). 알림 꺼짐이면 지금처럼 LOCAL_BLOCKED.
+    #[test]
+    fn with_notices_an_unproven_container_row_opens_with_a_signed_run_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut on = config(dir.path(), &ON);
+        on.send_run_notice = true;
+        active_container_row(&on, "no-id", false);
+        active_container_row(&on, "with-id", false);
+        {
+            let mut ledger = run_ledger::open_for_agent(&paths(&on)).unwrap();
+            ledger
+                .record_runtime_target("with-id", "cid-7", Some("docker-host:unix:///nowhere.sock"), Some("docker:D"))
+                .unwrap();
+        }
+        for id in ["no-id", "with-id"] {
+            record_attempt_started_here(&on.checkpoint_root, id).unwrap();
+        }
+        let refused = open_run_ledger_at_startup(&on).unwrap_err();
+        assert!(refused.contains("RUN_LEDGER_BLOCKED"), "{refused}");
+        let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
+        let mut keys = gputeer_crypto::InMemoryKeyring::new();
+        keys.insert(AGENT_ID, SigningKey::from_bytes(&AGENT_SEED).verifying_key());
+        let verifier = gputeer_crypto::Ed25519Verifier::new(keys);
+        for (id, origin, reason) in [
+            ("no-id", pb::RunUnknownOrigin::Starting, pb::RunUnknownReason::StartRequestUnresolved),
+            ("with-id", pb::RunUnknownOrigin::Running, pb::RunUnknownReason::ExitUnobserved),
+        ] {
+            assert_eq!(ledger.row(id).unwrap().unwrap().state, run_ledger::RowState::Open, "{id}");
+            let notices = ledger.notices(id).unwrap();
+            assert_eq!(notices.len(), 1, "{id}");
+            assert_eq!(notices[0].kind, run_ledger::NoticeKind::RunUnknown);
+            let decoded = pb::AttemptRunNotice::decode(notices[0].notice_bytes.as_slice()).unwrap();
+            assert_eq!((decoded.origin, decoded.reason), (origin as i32, reason as i32), "{id}");
+            assert_eq!(decoded.fence_epoch, 3);
+            gputeer_protocol::signing::verify(&decoded, 1, &verifier, 999, &mut gputeer_protocol::signing::NoReplayCheck)
+                .expect("노드 키로 서명돼야 한다");
+            assert_eq!(
+                notices[0].notice_hash,
+                gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(&decoded))
+            );
+            assert!(!notices[0].sent, "아직 보내지 않았다");
+        }
+        // 다시 띄워도 OPEN 행은 다시 판정하지 않는다(ACTIVE 만 판정한다) — 알림이 늘지 않는다
+        assert!(open_run_ledger_at_startup(&on).is_err());
+        let ledger = run_ledger::open_for_clear(&paths(&on)).unwrap().unwrap();
+        assert_eq!(ledger.notices("with-id").unwrap().len(), 1);
     }
 
     #[test]

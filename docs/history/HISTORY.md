@@ -25,6 +25,25 @@
 
 ---
 
+## 2026-10-03 11:25 — 실행 알림 계획 조각 5d1 — 기동의 §4 자동 증거 · 실행 알림 서명(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5d1) · 계약 v18k §4 "Agent 기동의 자동 증거" · §5 기동 관문 셋째 · 넷째 줄 · v18l
+- 스트림: Agent
+- 수행: 새 `crates/agent/src/run_evidence.rs` — `startup_absence_evidence`(원장 행의 확인한 ID · 연결 대상 · 신원 · 이름이 다 있어야 · 앞 신원 대조 →
+  조회 셋(ID · owner 라벨 안의 이름 · 이름) 모두 not-found → 뒤 신원 대조 · 지우지 않는다 · 하나라도 아니면 증거 없음, 조건이 없으면 런타임에 묻지도
+  않는다) · `build_notice`(원장 행 신원으로 `AttemptRunNotice` 를 만들고 조합 규칙을 먼저 통과시킨 뒤 노드 키로 서명 · notice_hash = BLAKE3(sig_input)).
+  런타임 질문은 `RuntimeQueries` 로 갈라 시험이 흉내를 넣는다. `lib.rs` — `AgentConfig.send_run_notice`(명령줄로 켜는 길은 아직 없다 — ADR-034 관문과
+  함께 5f) · 켜지면 기동의 "시작했고 보고 없는 컨테이너 행" 을 증거로 판정해 STOP_CONFIRMED 알림 + STOP_PENDING 또는 RUN_UNKNOWN 알림 + OPEN
+  (ID 를 적기 전 죽음 → STARTING/START_REQUEST_UNRESOLVED · 그 밖 → RUNNING/EXIT_UNOBSERVED) — 한 원장 트랜잭션. 꺼지면 지금처럼 LOCAL_BLOCKED.
+  보고는 있는데 지움 확인이 없는 행은 그대로 LOCAL_BLOCKED. 기동 거부 문구에 OPEN · STOP_PENDING 을 더했다
+- 검증: 새 시험 5(증거 모듈 4 — 조회 셋 · 고정 대상 · 신원 앞뒤 · 있음/오류/신원 변화 · 조건 없는 행은 묻지도 않음 · 알림 서명 · 해시 · 규칙 위반 거름 /
+  기동 1 — 알림 켜짐에서 ID 없는 행 · ID 있는 행이 각각 서명된 RUN_UNKNOWN 과 OPEN · 다시 띄워도 알림이 늘지 않음). 일부러 망가뜨려 확인 — 뒤 신원 대조를
+  빼면 · 알림 켜짐 갈래를 끊으면 각각 시험이 실패함을 보고 원복. STOP 갈래의 기동 수준 시험은 실제 런타임 흉내가 필요해 증거 모듈 시험으로 대신했다.
+  Windows `cargo test --workspace -j 1 --no-fail-fast` Windows `cargo test --workspace -j 1 --no-fail-fast` 1621 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 11:14 — 실행 알림 계획 조각 5c — 실행 순서 3a/3b/3c · 갱신 근거 기록(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5c) · 계약 v18k §5 "실행 순서" 3a/3b/3c · v18j 근거 칸
