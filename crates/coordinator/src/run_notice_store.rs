@@ -12,7 +12,8 @@
 //! ```text
 //! RUN_UNKNOWN 의 효과   시도 → RUN_UNKNOWN · Job 보류 표식 · 보류 해제 — 조각 6. 지금은 저장만 하고 `RunUnknownStoredOnly` 로 알린다
 //! ACK 서명 · 세션      REPORT 세션의 FrameType 19 분기 — 조각 5 이후. 여기서는 ACK 에 실을 값만 돌려준다
-//! 부르는 곳            없다 — **격리 시험만**(계획 §3 조각 4). 활성화 관문(§4) 전에는 실제 경로에서 켜지 않는다
+//! 부르는 곳            REPORT 세션의 FrameType 19 분기(조각 5f — `answer_run_notice`) · `--accept-run-notice` 는 ADR-034 강제 코드 전까지 기동 거부 —
+//!                      **격리 시험만**(계획 §3 · §4)
 //! ```
 
 use std::path::Path;
@@ -407,4 +408,87 @@ fn storage(error: rusqlite::Error) -> RunNoticeError {
 
 fn storage_text(message: String) -> RunNoticeError {
     RunNoticeError::Storage(message)
+}
+
+/// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f · 계약 §1 `AttemptRunNoticeAck` · §2) — REPORT 세션이 받은 알림 하나에 답할 재료.
+pub struct RunNoticeAnswerContext<'a> {
+    /// 저장 · 처리를 할 control DB(`--grant-from-control-db`).
+    pub control_db: &'a Path,
+    pub coordinator_id: &'a str,
+    /// 이 연결의 노드(Hello 로 확인한 node_id) — 알림의 서명자 · node_id 가 같아야 한다.
+    pub expected_node_id: &'a str,
+    /// 노드 키를 어디서 왔나 — 풀의 등록 키(권위 있는 디렉터리)만 정지 확인 해제를 받는다.
+    pub key_directory: KeyDirectoryProvenance,
+    /// 이어갈 지점 찾기(장애 이어받기와 같은 공유 저장소 · 생산자 키).
+    pub resume_policy: crate::failover::FailoverPolicy,
+    /// REPORT Hello 의 nonce — ACK 가 echo 한다(ShortLived replay nonce).
+    pub session_nonce: &'a [u8],
+    pub now_unix_ms: u64,
+}
+
+/// 답하지 못한 까닭 — 들어온 알림이 문제인가(그 연결만 거부) · 저장소 장애인가(fail-closed).
+#[derive(Debug, PartialEq, Eq)]
+pub enum RunNoticeAnswerError {
+    Rejected(String),
+    Storage(String),
+}
+
+/// ★ 조각 5f — 검증된 알림을 한 트랜잭션에 받고(저장 · STOP 처리), 서명된 `AttemptRunNoticeAck` 를 만든다. 보내기는 부르는 쪽(세션)이 한다.
+pub fn answer_run_notice(
+    context: &RunNoticeAnswerContext<'_>,
+    signing_key: &gputeer_crypto::SigningKey,
+    verified: &Verified<pb::AttemptRunNotice>,
+) -> Result<(pb::AttemptRunNoticeAck, RunNoticeAccepted), RunNoticeAnswerError> {
+    let notice = verified.get();
+    if notice.node_id != context.expected_node_id {
+        return Err(RunNoticeAnswerError::Rejected(format!(
+            "RUN_NOTICE_REJECTED: node_id 가 이 연결의 노드가 아니다(기대 {})",
+            context.expected_node_id
+        )));
+    }
+    let mut store = CoordinatorRunNoticeStore::open(context.control_db)
+        .map_err(|e| RunNoticeAnswerError::Storage(format!("{e:?}")))?;
+    let mut notes = Vec::new();
+    let accepted = {
+        let policy = &context.resume_policy;
+        let now = context.now_unix_ms;
+        let notes = &mut notes;
+        let mut finder = |connection: &Connection, job: &StoredJob| {
+            crate::failover::resume_body_for(connection, policy, &job.job_id, now, notes)
+        };
+        store.accept(
+            verified,
+            RuntimeStopProof::NodeConfirmedStop,
+            context.key_directory,
+            &mut finder,
+            context.now_unix_ms,
+        )
+    }
+    .map_err(|error| match error {
+        RunNoticeError::Storage(why) | RunNoticeError::ResumeLookup(why) => RunNoticeAnswerError::Storage(why),
+        other => RunNoticeAnswerError::Rejected(format!("RUN_NOTICE_REJECTED: {other:?}")),
+    })?;
+    for note in notes {
+        println!("RUN_NOTICE_RESUME_NOTE {note}");
+    }
+    let mut ack = pb::AttemptRunNoticeAck {
+        schema_version: 1,
+        job_id: notice.job_id.clone(),
+        attempt_id: notice.attempt_id.clone(),
+        node_id: notice.node_id.clone(),
+        fence_epoch: notice.fence_epoch,
+        notice_hash: Some(pb::Digest {
+            algo: 1, // HASH_ALGORITHM_BLAKE3_256
+            value: accepted.notice_hash.to_vec(),
+        }),
+        kind: accepted.kind as i32,
+        sequence: accepted.sequence,
+        created: accepted.created,
+        coordinator_id: context.coordinator_id.to_string(),
+        issued_at_unix_ms: context.now_unix_ms,
+        session_nonce: context.session_nonce.to_vec(),
+        ..Default::default()
+    };
+    ack.coordinator_signature = gputeer_crypto::sign(signing_key, &ack).to_vec();
+    Ok((ack, accepted))
 }

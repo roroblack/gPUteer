@@ -13,7 +13,8 @@ use gputeer_coordinator::reservation_release::{
     ReleaseOutcome, RuntimeStopProof,
 };
 use gputeer_coordinator::run_notice_store::{
-    CoordinatorRunNoticeStore, RunNoticeEffect, RunNoticeError,
+    answer_run_notice, CoordinatorRunNoticeStore, RunNoticeAnswerContext, RunNoticeAnswerError,
+    RunNoticeEffect, RunNoticeError,
 };
 use gputeer_coordinator::staging_store::{CoordinatorStagingStore, StageQueuedRequest};
 use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
@@ -415,4 +416,67 @@ fn every_refusal_leaves_nothing_behind() {
     assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Created);
     assert_eq!(job_state(&fixture.path), JobState::Staging);
     assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
+}
+
+// ─── ★ 조각 5f — REPORT 세션의 ACK(FrameType 20) ───────────────────────────────
+
+const COORD_SEED: [u8; 32] = [9; 32];
+
+fn context<'a>(path: &'a Path, node: &'a str, key_directory: KeyDirectoryProvenance, nonce: &'a [u8]) -> RunNoticeAnswerContext<'a> {
+    RunNoticeAnswerContext {
+        control_db: path,
+        coordinator_id: "coordinator-1",
+        expected_node_id: node,
+        key_directory,
+        resume_policy: gputeer_coordinator::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: vec![],
+        },
+        session_nonce: nonce,
+        now_unix_ms: NOW,
+    }
+}
+
+/// 처리를 마친 뒤 서명된 ACK — 시도 · 노드 · 세대 · 종류 · 번호 · notice_hash(= sig_input 의 BLAKE3) · session_nonce echo · 처음이면 created.
+///   같은 바이트 재전송은 created=false 의 같은 해시. 다른 노드 · 권위 없는 키 디렉터리는 거부하고 아무것도 처리하지 않는다.
+#[test]
+fn a_processed_notice_is_answered_with_a_signed_ack_that_echoes_its_hash_and_session() {
+    let fixture = prepare_fixture();
+    let verified = stop(&fixture.path, 1);
+    let key = SigningKey::from_bytes(&COORD_SEED);
+    let nonce = vec![7u8; 16];
+    // 권위 없는 키 디렉터리 · 다른 노드 — 거부 · 아무것도 남지 않는다
+    assert!(matches!(
+        answer_run_notice(&context(&fixture.path, NODE_ID, KeyDirectoryProvenance::Unverified, &nonce), &key, &verified),
+        Err(RunNoticeAnswerError::Rejected(_))
+    ));
+    assert!(matches!(
+        answer_run_notice(&context(&fixture.path, "node-other", VERIFIED_DIR, &nonce), &key, &verified),
+        Err(RunNoticeAnswerError::Rejected(_))
+    ));
+    assert_eq!(notice_rows(&fixture.path), 0);
+    assert!(reservation_exists(&fixture.path));
+
+    let (ack, accepted) = answer_run_notice(&context(&fixture.path, NODE_ID, VERIFIED_DIR, &nonce), &key, &verified).unwrap();
+    assert!(ack.created && accepted.created);
+    let expected_hash = gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(verified.get()));
+    assert_eq!(ack.notice_hash.as_ref().map(|d| (d.algo, d.value.clone())), Some((1, expected_hash.to_vec())));
+    assert_eq!(
+        (ack.attempt_id.as_str(), ack.node_id.as_str(), ack.fence_epoch, ack.sequence, ack.kind),
+        (ATTEMPT_ID, NODE_ID, fence(&fixture.path), 1, pb::RunNoticeKind::StopConfirmed as i32)
+    );
+    assert_eq!(ack.session_nonce, nonce);
+    assert_eq!(ack.coordinator_id, "coordinator-1");
+    // 서명은 Coordinator 키로 검증된다(ShortLived · replay nonce = session_nonce)
+    let mut keys = InMemoryKeyring::new();
+    keys.insert("coordinator-1", key.verifying_key());
+    verify(&ack, 1, &Ed25519Verifier::new(keys), NOW, &mut NoReplayCheck).expect("ACK 서명이 검증돼야 한다");
+    gputeer_protocol::attempt_run_notice_rules::validate_attempt_run_notice_ack(&ack).unwrap();
+    assert!(!reservation_exists(&fixture.path), "처리를 마친 뒤에 답했다 — 예약이 풀렸다");
+
+    let (again, _) = answer_run_notice(&context(&fixture.path, NODE_ID, VERIFIED_DIR, &[8u8; 16]), &key, &verified).unwrap();
+    assert!(!again.created, "재전송인데 처음이라고 답했다");
+    assert_eq!(again.notice_hash, ack.notice_hash);
+    assert_eq!(again.session_nonce, vec![8u8; 16], "세션마다 그 세션의 nonce 를 echo 한다");
 }

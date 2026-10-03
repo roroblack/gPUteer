@@ -255,6 +255,17 @@ pub fn failover_lost_attempts(
     Ok(outcomes)
 }
 
+/// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f) — 정지 확인 처리(`run_notice_store`)가 쓰는 이어갈 지점 찾기. 장애 이어받기와 **같은** 탐색 · 검증이다.
+pub(crate) fn resume_body_for(
+    connection: &Connection,
+    policy: &FailoverPolicy,
+    job_id: &str,
+    now_unix_ms: u64,
+    notes: &mut Vec<String>,
+) -> Result<Option<Vec<u8>>, String> {
+    Ok(find_resume_point(connection, policy, job_id, now_unix_ms, notes, false)?.map(|point| point.body))
+}
+
 struct ResumePoint {
     checkpoint_id: String,
     step: u64,

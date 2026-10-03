@@ -292,6 +292,10 @@ pub struct CoordinatorConfig {
     /// ★ "받았다"(Ack)는 **저장했다**는 뜻으로 한정한다(결정 D1). 예약이 없어졌거나 다른 실행으로 바뀐 늦은 보고도 Attempt 의 배정
     ///   기록으로 결합해 저장한다(`bound_via = assignment_record`) — 그 보고로 예약을 풀거나 결과를 채택하지 않는다.
     pub accept_report_sessions: bool,
+    /// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f · 계약 §2) — REPORT 세션에서 실행 알림(FrameType 19)을 받아 저장 · 처리하고 서명된 ACK 로 답한다.
+    ///   ★ 계획 §4 활성화 관문 — ADR-034 강제 코드가 없으면 `--accept-run-notice` 를 켜는 즉시 기동을 거부한다(배포 바이너리에 우회가 없다).
+    ///   이 칸은 격리 시험만 켠다.
+    pub accept_run_notice: bool,
     /// ★ 2026-10-02 (대체 통지 우편함 v3 §4) — 풀 모드의 새 실행 관문. ACK 를 기록하는 트랜잭션 안에서 그 노드 앞 미확인 대체 통지를 보고,
     ///   있으면 ACK 를 기록하지 않는다(수신 확인 없음 → Agent 는 실행하지 않는다). `--pool-mode` 없이는 기동 거부.
     ///   ★ 모든 Agent 가 우편함을 켠 뒤 켠다 — 켜지 않은 Agent 는 우편함을 비우지 못해 그 노드의 새 실행이 막힌다(제안 §호환성).
@@ -3337,6 +3341,72 @@ fn serve_mailbox_session(
     Ok(())
 }
 
+/// ★ 2026-10-03 11:51 (실행 알림 계획 조각 5f · 계약 §2) — REPORT 세션의 실행 알림. 저장 · 처리(한 트랜잭션)를 마친 **뒤에만** 서명된 ACK 를 보낸다.
+fn serve_run_notice(
+    config: &CoordinatorConfig,
+    stream: &mut std::net::TcpStream,
+    signing_key: &SigningKey,
+    clock: &SystemClock,
+    hello: &pb::AgentSessionHello,
+    verified: &gputeer_protocol::signing::Verified<pb::AttemptRunNotice>,
+) -> Result<(), SessionHandlerError> {
+    if !config.accept_run_notice {
+        return Err(session_protocol_error(
+            "RUN_NOTICE_REFUSED: --accept-run-notice 없이 실행 알림을 받지 않는다 — 처리하지 않을 알림에 받았다고 답하지 않는다",
+        ));
+    }
+    if hello.node_id != config.agent_device_id {
+        return Err(session_protocol_error("RUN_NOTICE_REJECTED: Hello 의 노드가 이 연결의 노드가 아니다"));
+    }
+    let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
+        SessionHandlerError::Classified(storage_error(
+            "run notice store",
+            "--accept-run-notice 는 control DB(--grant-from-control-db)가 있어야 한다",
+        ))
+    })?;
+    let context = crate::run_notice_store::RunNoticeAnswerContext {
+        control_db,
+        coordinator_id: &config.coordinator_device_id,
+        expected_node_id: &config.agent_device_id,
+        // 풀의 등록 키(권위 있는 디렉터리)로 검증한 알림만 정지 확인 해제를 받는다. 풀 밖 lane 은 거부된다(저장소가 KeyDirectoryNotVerified).
+        key_directory: if config.pool_mode {
+            crate::reservation_release::KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller
+        } else {
+            crate::reservation_release::KeyDirectoryProvenance::Unverified
+        },
+        resume_policy: crate::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: config.shared_checkpoint_root.clone(),
+            producer_keys: config.pool_agents.clone(),
+        },
+        session_nonce: &hello.nonce,
+        now_unix_ms: clock.now_unix_ms(),
+    };
+    let (ack, accepted) = crate::run_notice_store::answer_run_notice(&context, signing_key, verified)
+        .map_err(|error| match error {
+            crate::run_notice_store::RunNoticeAnswerError::Rejected(why) => session_protocol_error(why),
+            crate::run_notice_store::RunNoticeAnswerError::Storage(why) => {
+                SessionHandlerError::Classified(storage_error("run notice store", why))
+            }
+        })?;
+    let frame = write_frame(FrameType::AttemptRunNoticeAck, &ack.encode_to_vec())
+        .map_err(|e| session_protocol_error(format!("AttemptRunNoticeAck 프레임 인코딩 실패: {e}")))?;
+    stream
+        .write_all(&frame)
+        .and_then(|()| stream.flush())
+        .map_err(|e| {
+            SessionHandlerError::Classified(transport_error(
+                "session",
+                format!("AttemptRunNoticeAck 전송 실패(알림은 처리됐다 — 같은 바이트 재전송은 멱등): {e}"),
+            ))
+        })?;
+    println!(
+        "RUN_NOTICE_ACK_SENT attempt_id={} node_id={} sequence={} kind={:?} created={} effect={:?}",
+        ack.attempt_id, ack.node_id, ack.sequence, accepted.kind, ack.created, accepted.effect
+    );
+    Ok(())
+}
+
 fn serve_report_session(
     config: &CoordinatorConfig,
     stream: &mut std::net::TcpStream,
@@ -3374,6 +3444,10 @@ fn serve_report_session(
     })?;
     let verified = match &message {
         IngressMessage::AttemptReport(verified) => verified,
+        // ★ 조각 5f — 같은 REPORT 세션에 실행 알림(FrameType 19)이 오면 그 알림에 답한다(한 연결 한 프레임 — 보고와 같다).
+        IngressMessage::AttemptRunNotice(notice) => {
+            return serve_run_notice(config, stream, signing_key, clock, hello, notice)
+        }
         other => {
             return Err(session_protocol_error(format!(
                 "REPORT_SESSION: 종료 보고가 아닌 프레임이다({})",
@@ -4532,6 +4606,7 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         neighbor_report_db_path: flags.get("--neighbor-report-db").cloned(),
         expect_attempt_reports: flags.u32_flag_with_default("--expect-attempt-reports", 0)?,
         accept_report_sessions: flags.bool_flag("--accept-report-sessions"),
+        accept_run_notice: flags.bool_flag("--accept-run-notice"),
         mailbox_gate: flags.bool_flag("--mailbox-gate"),
         release_on_exit_report: flags.bool_flag("--release-on-exit-report"),
         pool_mode,
@@ -4687,6 +4762,15 @@ pub fn parse_config_from_args(args: &[String]) -> Result<CoordinatorConfig, Stri
         return Err(
             "STARTUP_REFUSED: MAILBOX_GATE_NEEDS_POOL_MODE — --mailbox-gate 는 --pool-mode 에서만 쓴다. \
              관문은 풀 경로의 ACK 기록에만 있다"
+                .to_string(),
+        );
+    }
+    // ★ 2026-10-03 11:51 (실행 알림 계획 §4 활성화 관문 · 조각 5f) — 실행 알림 받기는 ADR-034(신뢰망 단일 Coordinator 확정 등급) 강제 코드가 들어온 뒤에 켠다.
+    //   그 전에는 켜는 즉시 거부한다 — RUN_UNKNOWN(보류 · 조각 6)이 없으면 증거를 못 얻은 노드의 불명이 중앙에 닿지 않아, 정지 확인만 반쯤 켜진다.
+    if config.accept_run_notice {
+        return Err(
+            "STARTUP_REFUSED: RUN_NOTICE_NOT_ACTIVATED — --accept-run-notice 는 ADR-034 강제 코드와 실행 여부 불명 보류(조각 6)가 들어온 뒤에 켠다 \
+             — 지금은 격리 시험에서만 쓴다"
                 .to_string(),
         );
     }
@@ -5598,6 +5682,56 @@ mod tests {
             unsupported_heartbeat_lane(&config, lane_from_config(&config)),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod run_notice_activation_tests {
+    use super::*;
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// ★ 조각 5f · 계획 §4 활성화 관문 — `--accept-run-notice` 는 ADR-034 강제 코드 전까지 켜는 즉시 거부된다(우회 없음). 끄면 지금과 같다.
+    #[test]
+    fn the_accept_run_notice_switch_refuses_startup_until_activation() {
+        let args = |extra: &[&str]| -> Vec<String> {
+            let mut argv: Vec<String> = [
+                "--listen",
+                "127.0.0.1:0",
+                "--own-seed",
+                &hex(&[3u8; 32]),
+                "--peer-pubkey",
+                &hex(SigningKey::from_bytes(&[4u8; 32]).verifying_key().as_bytes()),
+                "--coordinator-device-id",
+                "coordinator-1",
+                "--agent-device-id",
+                "node-1",
+                "--grant-id",
+                "grant-1",
+                "--attempt-id",
+                "attempt-1",
+                "--lease-id",
+                "lease-1",
+                "--job-id",
+                "job-1",
+                "--i-understand-legacy-mode-is-unsafe",
+                "true",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            argv.extend(extra.iter().map(|s| s.to_string()));
+            argv
+        };
+        let off = parse_config_from_args(&args(&[])).expect("스위치를 끄면 지금처럼 읽힌다");
+        assert!(!off.accept_run_notice);
+        let refused = match parse_config_from_args(&args(&["--accept-run-notice", "true"])) {
+            Ok(_) => panic!("--accept-run-notice 를 켰는데 거부하지 않았다"),
+            Err(refused) => refused,
+        };
+        assert!(refused.contains("RUN_NOTICE_NOT_ACTIVATED"), "{refused}");
     }
 }
 

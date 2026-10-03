@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-03 12:03 — 실행 알림 계획 조각 5f — 실행 알림 보내기 · ACK(격리 · 활성화 관문 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5f) · §4 활성화 관문 · 계약 v18k §1 ACK · §2 · §5 "보내기" · "ACK 대조"
+- 스트림: Agent · Coordinator
+- 수행: Coordinator — `run_notice_store::answer_run_notice`(검증된 알림을 한 트랜잭션에 받고 · 처리를 마친 **뒤** 서명된 `AttemptRunNoticeAck`: 시도 ·
+  노드 · 세대 · 종류 · 번호 · notice_hash · created · session_nonce echo — 노드가 다르면 거부 · 풀 등록 키만 권위 있는 디렉터리) · REPORT 세션에 FrameType 19
+  분기(`serve_run_notice` — 한 연결 한 프레임) · 이어갈 지점 찾기는 장애 이어받기와 같은 탐색(`failover::resume_body_for`). Agent — `run_notice_session_once`
+  (원장 바이트 그대로 보내고 서명 · nonce · 시도 · 종류 · 번호 · notice_hash 를 대조) · `flush_run_notices_then_gate`(회차 시작 때 번호 순으로 보내고, 실패하면
+  거기서 멈춤, 그 뒤에도 막힌 행이면 새 작업 거부). 알림을 쓰는 Agent 는 막힌 행이 있어도 일단 뜨고(알림을 보내야 풀린다), 그 회차의 남은 컨테이너 정리를
+  건너뛴다(불명인 실행의 컨테이너를 지우지 않게 — MUST 1). ★ 활성화 관문(계획 §4): `--accept-run-notice` · `--send-run-notice` 는 켜는 즉시 기동 거부
+  (ADR-034 강제 코드와 실행 여부 불명 보류 — 조각 6 — 전까지 · 배포 바이너리에 우회 없음) — 기능은 격리 시험이 설정 칸을 켜서 잰다
+- 검증: 새 시험 4(중앙 1 — 실제 control DB 로 ACK 서명 · 해시 · nonce echo · 처리 뒤 예약 해제 · 재전송 created=false · 다른 노드 · 권위 없는 키 거부 /
+  Agent 3 — 가짜 Coordinator 로 정지 확인 ACK → ACKED · 원장 바이트 그대로 · 해시 다른 ACK 거부 · 다시 보낼 것으로 남음 · 불명 ACK 는 풀지 않음 · 스위치 기동 거부)
+  · 기존 기동 시험 둘을 "알림 켜짐이면 기동은 거부하지 않는다" 로 고쳤다. 중앙 스위치 관문 시험 1 더. 일부러 망가뜨려 확인 — 중앙의 노드 대조 · Agent 의 notice_hash 대조를 각각 빼면 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1 --no-fail-fast` 1631 passed · 0 failed(ignored 4) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 11:51 — 실행 알림 계획 조각 5e1 — 재기동 때 돌고 있는 컨테이너는 멈추기만(격리 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5e 를 둘로 — 5e1) · 계약 v18i/j §5 "돌고 있으면 갱신으로 확인한 재부착"
