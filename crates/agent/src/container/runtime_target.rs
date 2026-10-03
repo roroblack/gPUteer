@@ -256,3 +256,58 @@ pub fn pinned_remove(program: &Path, endpoint: &RuntimeEndpoint, target: &str) -
     args.push(OsString::from(target));
     cli_ok(program, &args, SHORT_TIMEOUT).map(|_| ())
 }
+
+/// 컨테이너 실행 상태(고정 대상으로 읽은 것).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunState {
+    /// 돈다(얼리지 않음).
+    Running,
+    /// 얼려 있다 — 재부착하지 않는다(계약 v18i — 멈춤 조회는 증거가 아니다 · OPEN).
+    Paused,
+    /// 있지만 돌지 않는다(멈춤 · 생성됨 · 삭제 중 등).
+    NotRunning,
+    /// not-found.
+    Absent,
+}
+
+/// ★ 2026-10-03 11:37 (조각 5e1) — 그 ID 의 컨테이너가 지금 도는가(고정 대상). not-found 는 `Absent` · 그 밖의 오류는 `Err`.
+pub fn pinned_run_state(program: &Path, endpoint: &RuntimeEndpoint, id: &str) -> Result<RunState, String> {
+    let mut args = endpoint.global_args();
+    args.extend(
+        ["inspect", "--type", "container", "--format", "{{.State.Running}} {{.State.Paused}}"]
+            .iter()
+            .map(OsString::from),
+    );
+    args.push(OsString::from(id));
+    match cli_ok(program, &args, CONFIRM_TIMEOUT) {
+        Ok(output) => match output.stdout.trim() {
+            "true false" => Ok(RunState::Running),
+            "true true" => Ok(RunState::Paused),
+            "false false" | "false true" => Ok(RunState::NotRunning),
+            other => Err(format!("inspect 가 실행 상태를 알 수 없는 모양으로 답했다({other:?})")),
+        },
+        Err(why) if says_no_such_container(&why) => Ok(RunState::Absent),
+        Err(why) => Err(why),
+    }
+}
+
+/// ★ 조각 5e1 — 고정 대상에서 그 ID 를 `kill` 하고 **조회로** 멈춤을 확인한다(응답만 믿지 않는다 · 결함 502 와 같은 규칙). 지우지 않는다(MUST 1).
+pub fn pinned_stop(program: &Path, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String> {
+    let mut args = endpoint.global_args();
+    args.push(OsString::from("kill"));
+    args.push(OsString::from(id));
+    let kill = cli_ok(program, &args, CONFIRM_TIMEOUT);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match pinned_run_state(program, endpoint, id) {
+            Ok(RunState::NotRunning | RunState::Absent) => return Ok(()),
+            Ok(state) if std::time::Instant::now() >= deadline => {
+                return Err(format!("kill 뒤에도 {state:?} 다(kill 응답: {kill:?})"))
+            }
+            Err(why) if std::time::Instant::now() >= deadline => {
+                return Err(format!("멈춤을 확인하지 못했다({why} · kill 응답: {kill:?})"))
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(200)),
+        }
+    }
+}

@@ -25,6 +25,10 @@ pub trait RuntimeQueries {
     fn salvage_logs(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String>;
     /// 해제 명령만 — `rm -f -v`(§4 ②). 응답만으로 지웠다고 보지 않는다(뒤이은 조회가 판정).
     fn remove(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String>;
+    /// 기동(조각 5e1) — 그 ID 의 실행 상태.
+    fn run_state(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<runtime_target::RunState, String>;
+    /// 기동(조각 5e1) — 멈추고 조회로 확인한다. 지우지 않는다.
+    fn stop(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String>;
 }
 
 /// 운영 — 원장 행에 적힌 런타임 실행 파일로 묻는다. `salvage_dir` 는 해제 명령만 준다(`<루트>.leftover-container-logs/`).
@@ -54,6 +58,48 @@ impl RuntimeQueries for CliQueries<'_> {
     }
     fn remove(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
         runtime_target::pinned_remove(self.program, endpoint, target)
+    }
+    fn run_state(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<runtime_target::RunState, String> {
+        runtime_target::pinned_run_state(self.program, endpoint, id)
+    }
+    fn stop(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String> {
+        runtime_target::pinned_stop(self.program, endpoint, id)
+    }
+}
+
+/// ★ 2026-10-03 11:37 (조각 5e1 · 계약 §5 기동 관문 v18i/j) — 재기동 때 확인한 ID 의 컨테이너가 **돌고 있는가** 를 먼저 본다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunningAtRestart {
+    /// 돌고 있지 않다(멈춤 · 없음 · 얼림) 또는 볼 수 없다(ID · 대상 없음 · 신원 다름 · 조회 실패) — 다음은 §4 증거 판정.
+    NotRunning,
+    /// 돌고 있었다 → 멈췄다(지우지 않음). 재부착(B′ — 갱신으로 확인한 뒤 다시 붙기)은 조각 5e2 — 그 전까지는 감시 없이 두지 않고 멈춘다(보수).
+    ///   컨테이너는 남으므로 "이미 없음" 이 아니다 → OPEN.
+    StoppedWhileRunning,
+    /// 돌고 있었는데 멈추지 못했다 → OPEN + RUN_UNKNOWN(사유 "정지 실패") — 계약 v18j.
+    StopFailed(String),
+}
+
+/// 재기동 때 확인한 ID 의 컨테이너가 돌고 있으면 멈춘다. 신원이 원장과 다르거나 볼 수 없으면 아무것도 하지 않는다(다른 런타임의 것을 멈추지 않는다).
+pub fn stop_if_running_at_restart(row: &AttemptRow, queries: &dyn RuntimeQueries) -> RunningAtRestart {
+    let (Some(id), Some(target), Some(recorded)) = (
+        row.container_id.as_deref(),
+        row.connection_target.as_deref(),
+        row.runtime_target_identity.as_deref(),
+    ) else {
+        return RunningAtRestart::NotRunning;
+    };
+    let Ok(endpoint) = RuntimeEndpoint::from_ledger(target) else {
+        return RunningAtRestart::NotRunning;
+    };
+    if queries.identity(&endpoint).as_deref() != Ok(recorded) {
+        return RunningAtRestart::NotRunning;
+    }
+    match queries.run_state(&endpoint, id) {
+        Ok(runtime_target::RunState::Running) => match queries.stop(&endpoint, id) {
+            Ok(()) => RunningAtRestart::StoppedWhileRunning,
+            Err(why) => RunningAtRestart::StopFailed(why),
+        },
+        _ => RunningAtRestart::NotRunning,
     }
 }
 
@@ -409,6 +455,22 @@ mod tests {
             }
             Ok(())
         }
+        fn run_state(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<runtime_target::RunState, String> {
+            self.asked.borrow_mut().push(format!("state {id} @ {}", endpoint.to_ledger()));
+            match self.failing {
+                Some("running") => Ok(runtime_target::RunState::Running),
+                Some("paused") => Ok(runtime_target::RunState::Paused),
+                Some("running-stuck") => Ok(runtime_target::RunState::Running),
+                _ => Ok(runtime_target::RunState::NotRunning),
+            }
+        }
+        fn stop(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String> {
+            self.asked.borrow_mut().push(format!("stop {id} @ {}", endpoint.to_ledger()));
+            if self.failing == Some("running-stuck") {
+                return Err("kill 뒤에도 Running".into());
+            }
+            Ok(())
+        }
         fn remove(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
             self.asked.borrow_mut().push(format!("rm {target} @ {}", endpoint.to_ledger()));
             if self.failing != Some("rm-noop") {
@@ -627,5 +689,40 @@ mod tests {
         assert!(asked[1].starts_with("salvage gputeer-attempt-1"), "이름으로 하지 않았다: {asked:?}");
         assert_eq!(OwnerAttestBasis::parse("listed-only").unwrap(), OwnerAttestBasis::ListedOnly);
         assert!(OwnerAttestBasis::parse("trust-me").is_err());
+    }
+
+    /// 재기동 때 돌고 있으면 멈춘다(지우지 않음) · 얼린 것 · 멈춘 것은 건드리지 않는다 · 멈추지 못하면 그 사유 · 신원이 다르면 아무것도 하지 않는다.
+    #[test]
+    fn a_container_still_running_at_restart_is_stopped_never_removed() {
+        let row = pinned_row();
+        let mut fake = Fake::absent_everywhere();
+        fake.failing = Some("running");
+        assert_eq!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::StoppedWhileRunning);
+        let asked = fake.asked.borrow().clone();
+        assert!(asked.iter().any(|a| a.starts_with("stop cid-1 @ docker-host:")), "{asked:?}");
+        assert!(!asked.iter().any(|a| a.starts_with("rm")), "지웠다: {asked:?}");
+
+        let mut fake = Fake::absent_everywhere();
+        fake.failing = Some("running-stuck");
+        assert!(matches!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::StopFailed(_)));
+
+        for state in ["paused", "none"] {
+            let mut fake = Fake::absent_everywhere();
+            fake.failing = Some(state);
+            assert_eq!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::NotRunning, "{state}");
+            assert!(!fake.asked.borrow().iter().any(|a| a.starts_with("stop")), "{state} 를 멈췄다");
+        }
+
+        let mut fake = Fake::absent_everywhere();
+        fake.failing = Some("running");
+        fake.identities = RefCell::new(vec![Ok("docker:OTHER".into())]);
+        assert_eq!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::NotRunning);
+        assert!(!fake.asked.borrow().iter().any(|a| a.starts_with("stop") || a.starts_with("state")), "다른 런타임의 것을 건드렸다");
+
+        let mut no_id = pinned_row();
+        no_id.container_id = None;
+        let fake = Fake::absent_everywhere();
+        assert_eq!(stop_if_running_at_restart(&no_id, &fake), RunningAtRestart::NotRunning);
+        assert!(fake.asked.borrow().is_empty());
     }
 }

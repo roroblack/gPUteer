@@ -4131,8 +4131,32 @@ fn resolve_unreported_container_row(
         .as_ref()
         .map(|runtime| runtime.owner.as_str())
         .unwrap_or("");
-    let evidence = match row.runtime_program.as_deref() {
-        Some(program) => run_evidence::startup_absence_evidence(
+    // ★ 2026-10-03 11:37 (조각 5e1) — 확인한 ID 의 컨테이너가 아직 돌고 있으면 감시 없이 두지 않고 먼저 멈춘다(지우지 않는다). 재부착(B′)은 조각 5e2.
+    //   멈췄어도 컨테이너는 남는다 — "이미 없음" 이 아니므로 아래 증거 판정 없이 OPEN 이다.
+    let stopped_at_restart = row.runtime_program.as_deref().map(|program| {
+        run_evidence::stop_if_running_at_restart(
+            row,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(program),
+                salvage_dir: None,
+            },
+        )
+    });
+    let evidence = match (stopped_at_restart, row.runtime_program.as_deref()) {
+        (Some(run_evidence::RunningAtRestart::StoppedWhileRunning), _) => {
+            run_evidence::AutoEvidence::NotEstablished {
+                why: "재기동 때 돌고 있어 멈췄다(재부착은 아직 없다) — 컨테이너는 남아 있다".into(),
+                id_recorded: true,
+            }
+        }
+        (Some(run_evidence::RunningAtRestart::StopFailed(why)), _) => {
+            println!("RUN_LEDGER_RESTART_STOP_FAILED attempt_id={id} detail={why} — 재기동 때 돌고 있는데 멈추지 못했다");
+            run_evidence::AutoEvidence::NotEstablished {
+                why: format!("재부착 정지 실패({why})"),
+                id_recorded: true,
+            }
+        }
+        (_, Some(program)) => run_evidence::startup_absence_evidence(
             row,
             owner,
             &run_evidence::CliQueries {
@@ -4141,7 +4165,7 @@ fn resolve_unreported_container_row(
                 salvage_dir: None,
             },
         ),
-        None => run_evidence::AutoEvidence::NotEstablished {
+        (_, None) => run_evidence::AutoEvidence::NotEstablished {
             why: "원장에 런타임 실행 파일이 없다".into(),
             id_recorded: row.container_id.is_some(),
         },
