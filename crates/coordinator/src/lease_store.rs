@@ -85,6 +85,10 @@ pub enum ResumeDecision {
     EpochAhead {
         stored: StoredLease,
     },
+    /// ★ 2026-10-03 12:35 (실행 알림 계약 §8 · 조각 6c) — 그 Lease 의 시도가 RUN_UNKNOWN 이다(Lease 는 규범상 HELD_UNKNOWN — 만료됐어도 같다).
+    RunUnknownHeld {
+        stored: StoredLease,
+    },
 }
 
 impl StoredLease {
@@ -361,6 +365,11 @@ impl CoordinatorLeaseStore {
         if stored.revoked_at_unix_ms.is_some() {
             return Ok(ResumeDecision::Revoked { stored });
         }
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8 · 시험 7) — 폐기 다음, 만료 앞이다. 순서 A(알림 먼저)는 Lease 가 ACTIVE 든 EXPIRED 든 HELD_UNKNOWN 이고,
+        //   순서 B(failover 가 먼저 폐기)는 위에서 REVOKED 로 끝난다.
+        if lease_attempt_is_run_unknown(&self.connection, &stored)? {
+            return Ok(ResumeDecision::RunUnknownHeld { stored });
+        }
         if stored.expires_at_unix_ms <= now_unix_ms {
             return Ok(ResumeDecision::Expired { stored });
         }
@@ -555,6 +564,13 @@ impl CoordinatorLeaseStore {
             return Err(LeaseStoreError::Revoked { revoked_at_unix_ms });
         }
 
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — 도는지 모르는 작업의 Lease 를 늘리지 않는다. 같은 트랜잭션(BEGIN IMMEDIATE)에서 읽으므로
+        //   알림 커밋과 직렬화된다. 아무것도 쓰지 않는다.
+        if lease_attempt_is_run_unknown(&transaction, &stored)? {
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(RenewDecision::RunUnknownHeld(stored));
+        }
+
         if stored.expires_at_unix_ms <= now_unix_ms {
             // Commit the read-only transaction and fail closed without updating.
             transaction.commit().map_err(map_sql_error)?;
@@ -601,6 +617,43 @@ impl CoordinatorLeaseStore {
 pub enum RenewDecision {
     Renewed(StoredLease),
     MaxDurationExceeded(StoredLease),
+    /// ★ 2026-10-03 12:35 (조각 6c) — 그 Lease 의 시도가 RUN_UNKNOWN 이다. 저장소를 바꾸지 않았다.
+    RunUnknownHeld(StoredLease),
+}
+
+impl CoordinatorLeaseStore {
+    /// ★ 2026-10-03 12:35 (조각 6c) — 읽기 전용: 이 Lease 의 시도가 RUN_UNKNOWN 인가. 갱신 결과를 시험용으로 덮어쓰는 경로도 이것으로 보류를 먼저 본다.
+    pub fn is_run_unknown_held(&self, stored: &StoredLease) -> Result<bool, LeaseStoreError> {
+        lease_attempt_is_run_unknown(&self.connection, stored)
+    }
+}
+
+/// ★ 2026-10-03 12:35 (실행 알림 계약 §8 · 조각 6c) — 그 Lease 를 쥔 시도가 RUN_UNKNOWN 인가. 시도 표가 없는 DB(Lease 저장소만 쓰는 옛 구성)에는 시도가 없으니
+/// 보류도 없다 — 표를 만들지 않고 읽기만 한다. 시도 행은 Lease 의 attempt_id · lease_id 둘 다로 찾는다(같은 시도의 다른 Lease 와 섞지 않는다).
+fn lease_attempt_is_run_unknown(
+    connection: &Connection,
+    stored: &StoredLease,
+) -> Result<bool, LeaseStoreError> {
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_attempts'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    if table.is_none() {
+        return Ok(false);
+    }
+    let state: Option<String> = connection
+        .query_row(
+            "SELECT state FROM coordinator_attempts WHERE attempt_id = ?1 AND lease_id = ?2",
+            rusqlite::params![stored.attempt_id, stored.lease_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    Ok(state.as_deref() == Some("RUN_UNKNOWN"))
 }
 
 /// 저장된 레코드와 새로 발급하려는 값의 identity 가 일치하는지

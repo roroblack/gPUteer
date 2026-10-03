@@ -806,3 +806,96 @@ fn release_lost_node_refuses_a_held_job() {
     assert!(refused.contains("실행 여부 불명 보류"), "{refused}");
     assert!(reservation_exists(&fixture.path));
 }
+
+// ─── ★ 조각 6c — 보류된 시도의 Lease 는 갱신 · Resume 되지 않는다(계약 §8 · 시험 7) ─────────
+
+fn resume_identity(path: &Path) -> gputeer_coordinator::lease_store::ResumeRequestIdentity {
+    gputeer_coordinator::lease_store::ResumeRequestIdentity {
+        lease_id: LEASE_ID.into(),
+        node_id: NODE_ID.into(),
+        job_id: JOB_ID.into(),
+        attempt_id: ATTEMPT_ID.into(),
+        fence_epoch: fence(path),
+    }
+}
+
+fn lease_expires_at(path: &Path) -> u64 {
+    gputeer_coordinator::lease_store::CoordinatorLeaseStore::open(path)
+        .unwrap()
+        .get(LEASE_ID)
+        .unwrap()
+        .unwrap()
+        .expires_at_unix_ms
+}
+
+/// 순서 A(알림 먼저) — 갱신 · Resume 둘 다 RUN_UNKNOWN_HELD. 갱신은 만료시각을 늘리지 않는다. Lease 가 이미 만료됐어도 HELD 다(D8 — EXPIRED -> HELD_UNKNOWN).
+#[test]
+fn a_held_lease_is_neither_renewed_nor_resumed_even_after_it_expires() {
+    use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, RenewDecision, ResumeDecision};
+    let fixture = prepare_fixture();
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    let mut leases = CoordinatorLeaseStore::open(&fixture.path).unwrap();
+    match leases.renew_existing_within_duration(LEASE_ID, 400, 5_000, 2_000).unwrap() {
+        RenewDecision::RunUnknownHeld(stored) => assert_eq!(stored.attempt_id, ATTEMPT_ID),
+        other => panic!("보류된 Lease 를 갱신 판정했다: {other:?}"),
+    }
+    assert_eq!(lease_expires_at(&fixture.path), 900, "보류된 Lease 의 만료시각이 늘었다");
+    for now in [400, 900, 5_000] {
+        match leases.classify_resume(&resume_identity(&fixture.path), now).unwrap() {
+            ResumeDecision::RunUnknownHeld { stored } => assert_eq!(stored.lease_id, LEASE_ID),
+            other => panic!("now={now} 보류된 Lease 를 Resume 판정했다: {other:?}"),
+        }
+    }
+    assert!(leases.is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap()).unwrap());
+    // 정지 확인이 보류를 풀면 HELD 가 아니다 — 시도는 FAILED · Lease 는 폐기됐으니 REVOKED 다
+    accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+    match leases.classify_resume(&resume_identity(&fixture.path), 400).unwrap() {
+        ResumeDecision::Revoked { .. } => {}
+        other => panic!("정지 확인 뒤에는 REVOKED 여야 한다: {other:?}"),
+    }
+}
+
+/// 순서 B(failover 가 먼저 Lease 를 폐기) — 그 뒤 불명이 와도 갱신 · Resume 은 REVOKED 그대로다(HELD 로 바꾸지 않는다).
+#[test]
+fn a_lease_revoked_before_the_notice_stays_revoked() {
+    use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, LeaseStoreError, ResumeDecision};
+    let fixture = prepare_fixture();
+    CoordinatorLeaseStore::open(&fixture.path).unwrap().mark_revoked(LEASE_ID, 250).unwrap();
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    let mut leases = CoordinatorLeaseStore::open(&fixture.path).unwrap();
+    match leases.renew_existing_within_duration(LEASE_ID, 400, 5_000, 2_000) {
+        Err(LeaseStoreError::Revoked { revoked_at_unix_ms: 250 }) => {}
+        other => panic!("폐기된 Lease 는 REVOKED 여야 한다: {other:?}"),
+    }
+    match leases.classify_resume(&resume_identity(&fixture.path), 400).unwrap() {
+        ResumeDecision::Revoked { .. } => {}
+        other => panic!("폐기된 Lease 는 REVOKED 여야 한다: {other:?}"),
+    }
+}
+
+/// 첫 진행 신호(record_process_started)는 RUN_UNKNOWN 시도를 바꾸지 않는다 — STARTING -> RUNNING 만 한다(계약 §8). Job 도 그대로다.
+#[test]
+fn the_first_progress_signal_does_not_move_a_run_unknown_attempt() {
+    let fixture = prepare_fixture();
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    CoordinatorStagingStore::open(&fixture.path)
+        .unwrap()
+        .record_process_started(LEASE_ID, 400)
+        .unwrap();
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    assert_eq!(job_state(&fixture.path), JobState::Staging);
+}
+
+/// 보류가 아닌 Lease 는 그대로 갱신된다 — 보류 검사가 정상 갱신을 막지 않는다(대조군).
+#[test]
+fn a_lease_without_a_held_attempt_is_still_renewed() {
+    use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, RenewDecision};
+    let fixture = prepare_fixture();
+    let mut leases = CoordinatorLeaseStore::open(&fixture.path).unwrap();
+    match leases.renew_existing_within_duration(LEASE_ID, 400, 950, 700).unwrap() {
+        RenewDecision::Renewed(stored) => assert_eq!(stored.expires_at_unix_ms, 950),
+        other => panic!("보류 없는 Lease 를 갱신하지 않았다: {other:?}"),
+    }
+    assert!(!leases.is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap()).unwrap());
+}

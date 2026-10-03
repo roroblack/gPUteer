@@ -210,6 +210,10 @@ enum ResumeOutcome {
   RESUME_OUTCOME_IDENTITY_CONFLICT = 6;
   RESUME_OUTCOME_UNAVAILABLE = 7;
   RESUME_OUTCOME_EPOCH_AHEAD = 8;
+  // ★ 2026-10-03 12:35 (실행 알림 계약 §8 · 계획 조각 6c) — 그 Lease 의 시도가 실행 여부 불명(RUN_UNKNOWN — 보류)이다.
+  // 도는지 모르는 작업의 Lease 를 이어 주지 않는다. Agent 는 즉시 멈추고 되풀이하지 않는다.
+  // REVOKED(Coordinator 가 영속적으로 폐기한 Lease)와 섞지 않는다 — 보류는 STOP_CONFIRMED 가 푼다.
+  RESUME_OUTCOME_RUN_UNKNOWN_HELD = 9;
 }
 
 enum RenewOutcome {
@@ -227,6 +231,9 @@ enum RenewOutcome {
   RENEW_OUTCOME_UNAVAILABLE = 7;
   // Coordinator가 영속적으로 revoke한 Lease. 새 Lease를 요청해야 한다.
   RENEW_OUTCOME_REVOKED = 8;
+  // ★ 2026-10-03 12:35 (실행 알림 계약 §8 · 계획 조각 6c) — 그 Lease 의 시도가 실행 여부 불명(RUN_UNKNOWN — 보류)이다.
+  // 만료시각을 늘리지 않는다. Agent 는 즉시 멈추고(지우지 않는다) 되풀이하지 않는다. REVOKED 와 섞지 않는다.
+  RENEW_OUTCOME_RUN_UNKNOWN_HELD = 9;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

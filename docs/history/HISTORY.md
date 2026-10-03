@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-10-03 12:49 — 실행 알림 계획 조각 6c — 보류된 시도의 Lease 갱신 · Resume 은 RUN_UNKNOWN_HELD(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 6(6c) · 계약 v18k §8 · §9 D8 · 시험 7
+- 스트림: proto · Coordinator · Agent · 규범
+- 수행: `proto/lease.proto` 에 `RENEW_OUTCOME_RUN_UNKNOWN_HELD = 9` · `RESUME_OUTCOME_RUN_UNKNOWN_HELD = 9` 순수 추가(DoD-27 의 REVOKED 와 같은 방식). Lease 저장소의
+  갱신(같은 BEGIN IMMEDIATE) · Resume 판정이 폐기 다음 · 만료 앞에서 "그 Lease 의 시도가 RUN_UNKNOWN" 을 보고 서명된 HELD 로 답한다(만료시각을 늘리지 않음 ·
+  Lease 를 싣지 않음 · 만료된 Lease 도 HELD — D8). 순서 B(먼저 폐기)는 REVOKED 그대로. 같은 연결 갱신 루프의 교착 방지 목록에 9. Agent 는 9 를
+  `RENEW_REFUSED:RUN_UNKNOWN_HELD` · `RESUME_REFUSED:RUN_UNKNOWN_HELD` 로 — 서명된 거부라 멈추기만 하고 되풀이하지 않는다. 첫 진행 신호는 RUN_UNKNOWN 시도를
+  바꾸지 않음을 시험으로 고정(코드는 이미 그랬다). 규범 §5 Lease 표에 HELD_UNKNOWN 세 행(설계 메모 — 구현 대조 없음)
+- 검증: 새 시험 4(순서 A — 갱신 · Resume HELD · 만료 뒤에도 HELD · 정지 뒤 REVOKED / 순서 B — REVOKED 그대로 / 첫 진행 신호 불변 / 대조군 — 보류 없으면 갱신).
+  일부러 망가뜨려 확인 — 갱신 · Resume 의 보류 검사를 각각 빼면 시험이 실패함을 보고 원복. ★ 소켓을 거친 outcome 9 왕복(서명 응답 · Agent 의 멈춤)은
+  프로세스 시험으로 재지 않았다 — 저장소 판정과 숫자 매핑만 시험했다. Windows `cargo test --workspace -j 1 --no-fail-fast` 1642 passed · 0 failed · ignored 4
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 12:34 — 실행 알림 계획 조각 6b — 재배치 차단 보류가 새 시도를 막는다(격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 조각 6(6b) · 계약 v18k §2 "새 시도를 만들지 않는다" · §9 guard · 불변식

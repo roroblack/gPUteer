@@ -485,7 +485,14 @@ ACTIVE | SUPERSEDED | HIGHER_EPOCH_SEEN | 더 높은 fence_epoch 의 lease 관�
 ACTIVE | EXPIRED | MAX_DURATION_EXCEEDED | 누적 >= max_total_duration_seconds | 새 lease_id 재발급 필요 | COMMITTED
 EXPIRED | ACTIVE | LATE_RENEW_ACCEPTED | grace period 내 AND 더 높은 epoch 미발급 | - | COMMITTED
 EXPIRED | SUPERSEDED | GRACE_ELAPSED | grace period 경과 | 새 attempt 생성 허용 | COMMITTED
+ACTIVE | HELD_UNKNOWN | RUN_UNKNOWN_NOTICED | 그 Lease 의 시도가 RUN_UNKNOWN | 재배치 근거에서 뺀다 · 갱신 · Resume 은 RUN_UNKNOWN_HELD 로 서명해 거부(만료시각 불변) | COMMITTED
+EXPIRED | HELD_UNKNOWN | RUN_UNKNOWN_NOTICED | 그 Lease 의 시도가 RUN_UNKNOWN | 재배치 근거에서 뺀다 | COMMITTED
+HELD_UNKNOWN | REVOKED | STOP_CONFIRMED | - | 자원 반납 | COMMITTED
 ```
+
+★ 2026-10-03 12:35 (실행 알림 계약 v18k §8 · §9 D8 · 계획 조각 6c) — `HELD_UNKNOWN` 은 "만료됐더라도 재배치 근거가 아니다" 를 표에 보이려는 상태다. 저장소에 따로 적지 않는다 —
+그 Lease 의 시도가 RUN_UNKNOWN 인 동안이 곧 HELD_UNKNOWN 이다(갱신 · Resume 판정이 같은 트랜잭션에서 시도 상태를 읽는다 — `lease_store.rs` `lease_attempt_is_run_unknown`).
+순서 B(failover 가 먼저 폐기)면 REVOKED 그대로다 — 폐기 판정이 보류 판정보다 앞선다. ★ 이 표(§5)는 여전히 구현 대조가 없는 설계 메모다(§6).
 
 ### grace period
 

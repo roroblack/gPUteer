@@ -2458,11 +2458,11 @@ fn serve_one_connection_impl(
                 hex_bytes(&result.request_nonce)
             );
 
-            // Agent는 정상 정책 거부(outcome=2/3/6/8)를 받으면 즉시
+            // Agent는 정상 정책 거부(outcome=2/3/6/8/9)를 받으면 즉시
             // 갱신 함수를 종료하므로, 다음 회차의 요청을 기다리지 않는다.
             // Coordinator도 같은 회차에서 갱신 루프를 끝내야 교착/EOF 오류를
-            // 만들지 않는다.
-            if matches!(result.outcome, 2 | 3 | 6 | 8) {
+            // 만들지 않는다. (★ 2026-10-03 12:35 조각 6c — 9 RUN_UNKNOWN_HELD 를 더했다)
+            if matches!(result.outcome, 2 | 3 | 6 | 8 | 9) {
                 break;
             }
 
@@ -3787,6 +3787,14 @@ fn serve_resume_connection(
             result.outcome = 8;
             result.detail = format!("request epoch is above stored epoch {}", stored.fence_epoch);
         }
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — RESUME_OUTCOME_RUN_UNKNOWN_HELD. Lease 를 싣지 않는다.
+        Ok(ResumeDecision::RunUnknownHeld { stored }) => {
+            result.outcome = 9;
+            result.detail = format!(
+                "attempt {} is RUN_UNKNOWN (held) — the lease is not resumed until a stop is confirmed",
+                stored.attempt_id
+            );
+        }
         Err(error) => {
             return Err(SessionHandlerError::Classified(
                 classify_resume_store_error(error),
@@ -4051,6 +4059,17 @@ fn build_renew_result(
         }
     };
 
+    // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — RENEW_OUTCOME_RUN_UNKNOWN_HELD. 만료시각을 늘리지 않고 Lease 를 싣지 않는다.
+    let held_result = |request_nonce: Vec<u8>, attempt_id: &str| pb::RenewLeaseResult {
+        outcome: 9, // RENEW_OUTCOME_RUN_UNKNOWN_HELD
+        detail: format!("attempt {attempt_id} is RUN_UNKNOWN (held) — the lease is not renewed until a stop is confirmed"),
+        schema_version: 1,
+        coordinator_id: config.coordinator_device_id.clone(),
+        issued_at_unix_ms: now,
+        request_nonce,
+        ..Default::default()
+    };
+
     let mut result = match lease_store {
         // ★ 코덱스 독립 검수(2026-08-19, p114) 지적 — override 가
         //   있으면 저장소를 **전혀 건드리지 않는다**(레거시 `None`
@@ -4071,6 +4090,11 @@ fn build_renew_result(
                     })?;
                 if let Some(revoked_at_unix_ms) = stored.revoked_at_unix_ms {
                     revoked_result(request_nonce, revoked_at_unix_ms)
+                } else if store
+                    .is_run_unknown_held(&stored)
+                    .map_err(|e| format!("lease store 조회 실패: {e}"))?
+                {
+                    held_result(request_nonce, &stored.attempt_id)
                 } else if stored.expires_at_unix_ms <= now {
                     return Err(format!(
                         "LEASE_POLICY_REFUSED: lease store expired during renewal: {}",
@@ -4102,6 +4126,9 @@ fn build_renew_result(
                 Err(error) => return Err(format!("lease store 갱신 실패: {error}")),
                 Ok(RenewDecision::MaxDurationExceeded(_)) => {
                     max_duration_exceeded_result(request_nonce)
+                }
+                Ok(RenewDecision::RunUnknownHeld(stored)) => {
+                    held_result(request_nonce, &stored.attempt_id)
                 }
                 Ok(RenewDecision::Renewed(resolved)) => {
                     // ★ 2026-10-01 (signing.md §6.8) — 서명 직전에 유예를 올려 저장한다. 그 사이 재배치가 폐기했으면 REVOKED 로 답한다.

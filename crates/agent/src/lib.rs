@@ -1107,6 +1107,8 @@ fn run_resume_connection(
         5 => Err("RESUME_REFUSED:UNKNOWN_LEASE".into()),
         6 => Err("RESUME_REFUSED:IDENTITY_CONFLICT".into()),
         8 => Err("RESUME_REFUSED:EPOCH_AHEAD".into()),
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — 그 시도가 실행 여부 불명(보류)이다. 재시도하지 않는다.
+        9 => Err("RESUME_REFUSED:RUN_UNKNOWN_HELD".into()),
         outcome => Err(format!(
             "RESUME_REJECTED: outcome={} detail={}",
             outcome, result.detail
@@ -2496,6 +2498,8 @@ fn verify_renew_result(
         // max_total_duration_seconds 갱신 차단 — 새 lease_id 재발급은 범위 밖이다.
         6 => Err("RENEW_REFUSED:MAX_DURATION_EXCEEDED".into()),
         8 => Err("RENEW_REFUSED:REVOKED".into()),
+        // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — 서명된 거부다(RENEW_REFUSED 접두) — 갱신 루프가 멈추고 소유자의 "계속" 도 무시한다(지우지는 않는다).
+        9 => Err("RENEW_REFUSED:RUN_UNKNOWN_HELD".into()),
         other => Err(format!("RENEW_REJECTED: 알 수 없는 outcome {other}")),
     }
 }
