@@ -395,6 +395,15 @@ pub(crate) fn initialize_schema(connection: &mut Connection) -> Result<(), JobSt
                 verified_signer_id TEXT NOT NULL,
                 manifest_body BLOB NOT NULL
             );
+
+            -- ★ 2026-10-03 13:01 (실행 알림 계약 v18k §6 (1) · D6 · 계획 조각 7a) — 서명이 검증된 제출자 선언의 부작용 등급 투영.
+            --   Job 행(엄격한 행 모양 검사가 있다)에 칸을 더하지 않고 1:1 표로 둔다. 행이 없으면(옛 DB · Manifest 없는 제출 · 선언 누락 · 모르는 값)
+            --   SIDE_EFFECTING 과 같이 다룬다(보수). 값을 쓰는 곳은 제출 트랜잭션(SUBMISSION)과 권위 디렉터리 재검증(REVERIFIED) 둘뿐이다.
+            CREATE TABLE IF NOT EXISTS coordinator_job_side_effects (
+                job_id TEXT PRIMARY KEY REFERENCES coordinator_jobs(job_id),
+                side_effect_class TEXT NOT NULL CHECK(side_effect_class IN ('PURE', 'IDEMPOTENT', 'SIDE_EFFECTING')),
+                source TEXT NOT NULL CHECK(source IN ('SUBMISSION', 'REVERIFIED'))
+            );
             "#,
         )
         .map_err(map_sql_error)?;
@@ -488,6 +497,37 @@ impl CoordinatorJobStore {
     /// Loads a durable Manifest binding without claiming that its signature is
     /// still valid. Existing hash-only Jobs fail closed with
     /// [`JobStoreError::LegacyManifestMissing`].
+    /// ★ 2026-10-03 13:01 (계약 v18k §6 이관 b12 ⑤ · 조각 7a) — 투영이 비어 있는 Job(옛 DB 등)에 값을 채운다. 저장된 서명 Manifest 를 **지금 신뢰하는 키
+    /// 디렉터리로 다시 검증한** 경우만(`KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller`) — 그 Manifest 가 저장된 것과 같아야 한다
+    /// (다르면 거부). 이미 값이 있으면 그대로 둔다. 쓴(또는 이미 있던) 등급 이름.
+    pub fn project_side_effect_from_reverified(
+        &mut self,
+        job_id: &str,
+        reverified: &Verified<pb::JobManifest>,
+        key_directory: crate::reservation_release::KeyDirectoryProvenance,
+    ) -> Result<Option<String>, JobStoreError> {
+        if key_directory != crate::reservation_release::KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller {
+            return Err(JobStoreError::GuardNotMet(
+                "SIDE_EFFECT_REVERIFY_REFUSED: 권위 있는 키 디렉터리로 다시 검증한 Manifest 만 투영을 채운다",
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sql_error)?;
+        let job = fetch_job(&transaction, job_id)?.ok_or(JobStoreError::NotFound)?;
+        let binding = fetch_manifest_binding(&transaction, &job)?;
+        if binding.manifest != *reverified.get() || binding.signer_id_at_submission != reverified.signer_id() {
+            return Err(JobStoreError::ManifestIdentityMismatch(
+                "SIDE_EFFECT_REVERIFY_REFUSED: 다시 검증한 Manifest 가 저장된 것과 다르다",
+            ));
+        }
+        project_side_effect(&transaction, job_id, reverified.get().side_effect_class, "REVERIFIED")?;
+        let projected = side_effect_class_of(&transaction, job_id).map_err(JobStoreError::Io)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(projected)
+    }
+
     pub fn get_manifest_binding(
         &self,
         job_id: &str,
@@ -760,6 +800,8 @@ impl CoordinatorJobStore {
             )
             .map_err(map_sql_error)?;
         fail_at(fault, TestFault::AfterManifestInsert)?;
+        // ★ 2026-10-03 13:01 (조각 7a · 계약 §6 (1)) — 같은 트랜잭션에서 검증된 선언을 투영한다. 누락 · 모르는 값이면 행을 쓰지 않는다(= SIDE_EFFECTING 취급).
+        project_side_effect(&transaction, &stored.job_id, manifest.side_effect_class, "SUBMISSION")?;
         transaction
             .execute(
                 "INSERT INTO job_submission_idempotency(idempotency_key, job_id) VALUES (?1, ?2)",
@@ -1107,6 +1149,59 @@ fn insert_job(connection: &Connection, stored: &StoredJob) -> Result<(), JobStor
         )
         .map_err(map_sql_error)?;
     Ok(())
+}
+
+/// ★ 2026-10-03 13:01 (조각 7a) — 검증된 Manifest 의 `side_effect_class` 를 투영 표에 쓴다. 누락(UNSPECIFIED) · 모르는 값은 쓰지 않는다. 이미 있으면 그대로(멱등 —
+/// 첫 값이 이긴다). 쓴 등급 이름(쓰지 않았으면 None).
+fn project_side_effect(
+    connection: &Connection,
+    job_id: &str,
+    side_effect_class: i32,
+    source: &str,
+) -> Result<Option<&'static str>, JobStoreError> {
+    let name = match pb::SideEffectClass::try_from(side_effect_class) {
+        Ok(pb::SideEffectClass::Pure) => "PURE",
+        Ok(pb::SideEffectClass::Idempotent) => "IDEMPOTENT",
+        Ok(pb::SideEffectClass::SideEffecting) => "SIDE_EFFECTING",
+        _ => return Ok(None),
+    };
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO coordinator_job_side_effects(job_id, side_effect_class, source) VALUES (?1, ?2, ?3)",
+            rusqlite::params![job_id, name, source],
+        )
+        .map_err(map_sql_error)?;
+    Ok(Some(name))
+}
+
+/// ★ 2026-10-03 13:01 (실행 알림 계약 v18k §6 (2) · D6 · 조각 7a) — 자동 이어받기를 해도 되는 Job 인가: 투영된 선언이 **정확히 PURE** 일 때만 참이다.
+/// 행이 없으면(옛 DB · Manifest 없는 제출 · 누락 · 모르는 값) 거짓 — 표가 아예 없어도 거짓이다(읽기만 하고 표를 만들지 않는다).
+/// ★ 선언이지 행동의 강제가 아니다(CLAUDE.md §0.4) — PURE 로 선언한 작업도 외부 부작용을 낼 수 있다.
+pub fn side_effect_is_pure(connection: &Connection, job_id: &str) -> Result<bool, String> {
+    Ok(side_effect_class_of(connection, job_id)?.as_deref() == Some("PURE"))
+}
+
+/// ★ 2026-10-03 13:01 (조각 7a) — 투영된 부작용 등급 이름(PURE · IDEMPOTENT · SIDE_EFFECTING). 없으면 None(= SIDE_EFFECTING 취급).
+pub fn side_effect_class_of(connection: &Connection, job_id: &str) -> Result<Option<String>, String> {
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_side_effects'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("SIDE_EFFECT: 표를 확인하지 못했다: {e}"))?;
+    if table.is_none() {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT side_effect_class FROM coordinator_job_side_effects WHERE job_id = ?1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("SIDE_EFFECT: 등급을 읽지 못했다: {e}"))
 }
 
 fn fetch_manifest_binding(
@@ -2842,5 +2937,113 @@ mod tests {
             "잠금을 기다리기 전 시각을 썼다(called_at {called_at}, queued_at {queued_at})"
         );
         assert_eq!(queued.planning_at_unix_ms, Some(queued_at));
+    }
+}
+
+/// ★ 조각 7a — 부작용 선언 투영(계약 v18k §6 (1) · D6 · 이관 b12 ⑤).
+#[cfg(test)]
+mod side_effect_projection_tests {
+    use super::*;
+    use gputeer_crypto::{sign, Ed25519Verifier, InMemoryKeyring, SigningKey};
+    use gputeer_protocol::signing::{verify, NoReplayCheck};
+
+    fn manifest(job_id: &str, class: i32) -> Verified<pb::JobManifest> {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let mut manifest = pb::JobManifest {
+            schema_version: 1,
+            job_id: job_id.to_string(),
+            team_id: "team-1".to_string(),
+            entrypoint: "train.py".to_string(),
+            submitter_device_id: "submitter-1".to_string(),
+            issued_at_unix_ms: 10,
+            expires_at_unix_ms: 10_000,
+            side_effect_class: class,
+            ..Default::default()
+        };
+        manifest.submitter_signature = sign(&key, &manifest).to_vec();
+        let mut keys = InMemoryKeyring::new();
+        keys.insert("submitter-1", key.verifying_key());
+        verify(&manifest, 1, &Ed25519Verifier::new(keys), 100, &mut NoReplayCheck).unwrap()
+    }
+
+    fn submission(verified: &Verified<pb::JobManifest>, key: u8) -> AcceptedJobSubmission {
+        AcceptedJobSubmission {
+            idempotency_key: [key; 16],
+            job_id: verified.get().job_id.clone(),
+            submitter_device_id: verified.get().submitter_device_id.clone(),
+            manifest_hash: derive_manifest_hash(verified.get()),
+            deadline_unix_ms: Some(10_000),
+            max_queue_duration_ms: Some(1_000),
+        }
+    }
+
+    /// 제출 트랜잭션이 검증된 선언을 그대로 투영한다. PURE 만 자동 이어받기 대상이다. 누락 · 모르는 값 · Manifest 없는 제출은 행이 없다(= 보류 대상).
+    #[test]
+    fn the_verified_declaration_is_projected_and_only_pure_counts_as_pure() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite3");
+        let mut store = CoordinatorJobStore::open(&path).unwrap();
+        let cases = [
+            ("job-pure", pb::SideEffectClass::Pure as i32, Some("PURE")),
+            ("job-idem", pb::SideEffectClass::Idempotent as i32, Some("IDEMPOTENT")),
+            ("job-side", pb::SideEffectClass::SideEffecting as i32, Some("SIDE_EFFECTING")),
+            ("job-none", pb::SideEffectClass::Unspecified as i32, None),
+            ("job-odd", 99, None),
+        ];
+        for (index, (job_id, class, expected)) in cases.iter().enumerate() {
+            let verified = manifest(job_id, *class);
+            store.submit_verified_manifest(&submission(&verified, index as u8 + 1), &verified, 100).unwrap();
+            assert_eq!(side_effect_class_of(&store.connection, job_id).unwrap().as_deref(), *expected, "{job_id}");
+            assert_eq!(side_effect_is_pure(&store.connection, job_id).unwrap(), *expected == Some("PURE"), "{job_id}");
+        }
+        store
+            .submit_accepted(
+                &AcceptedJobSubmission {
+                    idempotency_key: [42; 16],
+                    job_id: "job-bare".into(),
+                    submitter_device_id: "submitter-1".into(),
+                    manifest_hash: [1; 32],
+                    deadline_unix_ms: Some(10_000),
+                    max_queue_duration_ms: Some(1_000),
+                },
+                100,
+            )
+            .unwrap();
+        assert!(!side_effect_is_pure(&store.connection, "job-bare").unwrap(), "Manifest 없는 제출을 PURE 로 봤다");
+        // 표가 없는 DB(옛 DB)도 PURE 가 아니다 — 읽기는 표를 만들지 않는다
+        let bare = Connection::open_in_memory().unwrap();
+        assert!(!side_effect_is_pure(&bare, "job-pure").unwrap());
+    }
+
+    /// 옛 DB 이관(b12 ⑤) — 투영이 빈 Job 은 권위 디렉터리로 다시 검증한 같은 Manifest 로만 채운다. 진술이 없거나 다른 Manifest 면 거부한다.
+    #[test]
+    fn an_empty_projection_is_filled_only_from_the_same_reverified_manifest() {
+        use crate::reservation_release::KeyDirectoryProvenance::{AuthoritativeDirectoryVerifiedByCaller, Unverified};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.sqlite3");
+        let mut store = CoordinatorJobStore::open(&path).unwrap();
+        let verified = manifest("job-old", pb::SideEffectClass::Pure as i32);
+        store.submit_verified_manifest(&submission(&verified, 1), &verified, 100).unwrap();
+        // 옛 DB 를 흉내 — 투영 행을 지운다
+        store.connection.execute("DELETE FROM coordinator_job_side_effects", []).unwrap();
+        assert!(!side_effect_is_pure(&store.connection, "job-old").unwrap());
+        assert!(matches!(
+            store.project_side_effect_from_reverified("job-old", &verified, Unverified),
+            Err(JobStoreError::GuardNotMet(_))
+        ));
+        let other = manifest("job-old", pb::SideEffectClass::Idempotent as i32);
+        assert!(matches!(
+            store.project_side_effect_from_reverified("job-old", &other, AuthoritativeDirectoryVerifiedByCaller),
+            Err(JobStoreError::ManifestIdentityMismatch(_))
+        ));
+        assert!(!side_effect_is_pure(&store.connection, "job-old").unwrap(), "거부된 재검증이 값을 썼다");
+        assert_eq!(
+            store
+                .project_side_effect_from_reverified("job-old", &verified, AuthoritativeDirectoryVerifiedByCaller)
+                .unwrap()
+                .as_deref(),
+            Some("PURE")
+        );
+        assert!(side_effect_is_pure(&store.connection, "job-old").unwrap());
     }
 }

@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-03 13:11 — 실행 알림 계획 조각 7a — 서명 검증된 부작용 선언의 투영(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 7(7a) · 계약 v18k §6 (1) · D6 · 이관 b12 ⑤
+- 스트림: Coordinator
+- 수행: 새 표 `coordinator_job_side_effects(job_id · side_effect_class · source)` — Job 행(엄격한 행 모양 검사가 있다)에 칸을 더하지 않고 1:1 표로 뒀다.
+  제출 트랜잭션(`submit_verified_manifest`)이 검증된 Manifest 의 선언을 같은 커밋에 쓴다. 누락 · 모르는 값 · Manifest 없는 제출 · 옛 DB 는 행이 없고
+  SIDE_EFFECTING 과 같이 다룬다. `side_effect_is_pure` 는 정확히 PURE 일 때만 참(표가 없어도 거짓 — 읽기만). 옛 DB 는
+  `project_side_effect_from_reverified` — 권위 디렉터리로 다시 검증했다는 진술 + 저장된 것과 같은 Manifest 일 때만 채운다
+  ★ 이 조각만으로는 동작이 바뀌지 않는다(읽는 곳은 7b)
+- 검증: 새 단위 시험 2(다섯 선언값 · Manifest 없는 제출 · 표 없는 DB / 재검증 — 진술 없음 · 다른 Manifest 거부 · 같은 것만 채움). Windows `cargo test -p gputeer-coordinator -p gputeer-cli -j 1 --no-fail-fast` 631 passed · 0 failed · ignored 3
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 12:57 — 실행 알림 계획 조각 6d — 실행 여부 불명 시도에 온 종료 보고는 증거로만(격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 조각 6(6d) · 계약 v18k §2 "옛 형식 보고와의 관계" · §9 취소 effect · 시험 6 · state-machines §3 MUST
