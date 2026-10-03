@@ -25,6 +25,23 @@
 
 ---
 
+## 2026-10-03 13:40 — 실행 알림 계획 조각 7c — release-held-job 과 늦은 종료 보고(브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 7(7c) · 계약 v18k §6 (3) · §9 "release-held-job 한 명령" · b9 ① · b12 ① · b13 ① · b15 ②
+- 스트림: Coordinator · CLI
+- 수행: `failover::release_held_job_by_operator` + `gputeer release-held-job --control-db --job --operator-statement` — 진술이 비었거나 NOTICE 보류가 하나라도
+  있거나(그것은 STOP_CONFIRMED 만 푼다) 풀 보류가 없으면 거부. 한 커밋에 UNREPORTED 행 제거(감사) · 그 시도에 override · Job 이 최종이면 그 시도의
+  Lease 폐기 · 그 시도가 쥔 예약 해제(해제 사실 + OPERATOR_RELEASE 근거 — 명령 이름 release-held-job). 비최종 Job 은 자원을 건드리지 않고 다음 장애
+  이어받기가 이어받는다. 종료 보고 저장소: 그 시도에 UNREPORTED 보류가 있으면 종료를 관측한 보고는 보류를 풀고 평소대로, 관측 못 한 보고는 전이는
+  평소대로 하되 해제 요청을 버린다(보류 · 예약 · Lease 남김 — 재전송도 같다). release-lost-node 의 판정은 그대로다
+  ★ b12 ① · b13 ① 의 "UNREPORTED 보류 → USER_CANCELLED" 는 Job 취소 코드가 아직 없어 시험하지 못했다(최종 Job 경로는 관측 못 한 FAILED 보고로 만들었다)
+- 검증: 명령줄 시험 1(인자 거부 · 없는 Job · 보류 해제 출력 · 두 번째 거부) · 새 시험 4(거부 셋 / b9 ① 해제 뒤 다음 failover 가 이어받음 · 다시 보류 안 함 / 관측 못 한 보고 → 보류 · 자원 유지 · release-lost-node 거부 →
+  release-held-job 이 최종 Job 자원까지 풀고 두 번째는 거부 / 관측한 보고 → 보류 해제 · 예약 해제). 일부러 망가뜨려 확인 — 관측 여부 분기 · NOTICE 거부를
+  각각 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-coordinator -p gputeer-cli -p gputeer-checkpoint -j 1 --no-fail-fast` 766 passed · 0 failed · ignored 3(그 뒤 명령줄 출력 한 줄을 정적 검사대로 고치고 그 시험만 다시 통과)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 13:27 — 실행 알림 계획 조각 7b — 알리지 못한 채 끊긴 부작용 작업은 자동으로 이어가지 않는다(D6 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 조각 7(7b) · 계약 v18k §9 UNREPORTED_RISK_HELD 두 행 · D6 · b9 ①

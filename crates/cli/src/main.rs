@@ -46,6 +46,7 @@ mod ops;
 mod out_file;
 mod plan_job;
 mod pool_dashboard;
+mod release_held_job;
 mod release_lost_node;
 mod scheduler_loop;
 mod scheduler_tick;
@@ -108,6 +109,7 @@ gputeer — gPUteer CLI
     gputeer agent-loop --interval-ms <ms> --max-rounds 0 -- <agent-stub 인자>
     gputeer status --control-db <path>
     gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>
+    gputeer release-held-job --control-db <path> --job <id> --operator-statement <text>   (알리지 못하고 끊긴 부작용 작업의 보류 해제)
     gputeer owner-resume --checkpoint-root <dir>
     gputeer container-incidents --checkpoint-root <dir> [--clear <컨테이너 이름> | --clear-all]
         [--seed-file <노드 시드 파일> [--owner-attest-basis runtime-restarted|listed-only --owner-attest-statement <문장>]]   (실행 여부 불명 행의 해제)
@@ -421,6 +423,16 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("release-held-job") => match release_held_job::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("release-held-job 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Some("release-lost-node") => match release_lost_node::run(&args[1..]) {
             Ok(message) => {
                 println!("{message}");

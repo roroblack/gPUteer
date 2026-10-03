@@ -1049,3 +1049,106 @@ fn an_overridden_attempt_is_failed_over_instead_of_held_again() {
     assert_eq!(outcomes.len(), 1, "override 가 있는데 이어받지 않았다");
     assert!(holds(&fixture.path).is_empty());
 }
+
+// ─── ★ 조각 7c — release-held-job · 늦은 종료 보고(계약 v18k §6 (3) · §9 · b9 ① · b12 ① · b13 ① · b15 ②) ─────────
+
+fn release_held(path: &Path, statement: &str) -> Result<gputeer_coordinator::failover::HeldJobRelease, String> {
+    gputeer_coordinator::failover::release_held_job_by_operator(path, JOB_ID, statement, NOW + 10)
+}
+
+/// 거부 — 진술 없음 · 풀 보류 없음 · NOTICE 보류(그것은 STOP 만 푼다).
+#[test]
+fn release_held_job_refuses_without_a_statement_without_a_hold_and_on_a_notice_hold() {
+    let fixture = prepare_fixture();
+    assert!(release_held(&fixture.path, "  ").unwrap_err().contains("진술"));
+    assert!(release_held(&fixture.path, "운영자: 확인").unwrap_err().contains("풀 보류"));
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    let refused = release_held(&fixture.path, "운영자: 확인").unwrap_err();
+    assert!(refused.contains("정지 확인"), "{refused}");
+    assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]);
+}
+
+/// b9 ① — 비최종 Job: release-held-job 이 보류를 풀고 override 를 적는다. 다음 장애 이어받기는 보류를 다시 걸지 않고 이어받는다.
+#[test]
+fn after_release_held_job_the_next_failover_takes_over_instead_of_holding_again() {
+    let fixture = prepare_fixture();
+    let (outcomes, _) = failover_now(&fixture.path);
+    assert!(outcomes.is_empty());
+    let released = release_held(&fixture.path, "운영자: 그 PC 가 꺼진 것을 봤다").unwrap();
+    assert_eq!(released.released_attempts, vec![ATTEMPT_ID.to_string()]);
+    assert!(!released.job_final);
+    assert!(holds(&fixture.path).is_empty());
+    assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path), "비최종 Job 인데 자원을 건드렸다");
+    let (outcomes, _) = failover_now(&fixture.path);
+    assert_eq!(outcomes.len(), 1, "풀린 시도를 이어받지 않았다");
+    assert!(holds(&fixture.path).is_empty(), "같은 시도로 다시 보류했다");
+    assert!(lease_revoked(&fixture.path));
+}
+
+/// b15 ②(나) · b12 ① · b13 ① — 관측 못 한 늦은 FAILED 보고: 전이는 평소대로(Job FAILED — 최종)지만 해제 요청은 버리고 보류 · 예약 · Lease 를 남긴다.
+/// 그 뒤 release-held-job 이 한 커밋에 보류 제거 · override · Lease 폐기 · 예약 해제를 한다.
+#[test]
+fn an_unobserved_late_report_keeps_the_hold_and_release_held_job_frees_a_final_job() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    let fixture = prepare_fixture();
+    failover_now(&fixture.path);
+    let report = signed_report(&fixture.path, pb::AttemptOutcome::Failed);
+    let stored = CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_and_release(&report, fully_authorized(), NOW)
+        .unwrap();
+    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")), "{:?}", stored.notes);
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    assert_eq!(job_state(&fixture.path), JobState::Failed);
+    assert_eq!(holds(&fixture.path).len(), 1);
+    assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path), "관측 못 한 보고로 자원을 풀었다");
+    // release-lost-node 는 여전히 거부한다(지금 규칙 — 보류된 Job)
+    assert!(gputeer_coordinator::failover::release_lost_node_by_operator(&fixture.path, NODE_ID, "운영자", NOW).is_err());
+    let released = release_held(&fixture.path, "운영자: 그 PC 에서 작업이 없음을 확인").unwrap();
+    assert!(released.job_final);
+    assert!(released.notes.iter().any(|n| n.starts_with("RESERVATION_RELEASED")), "{:?}", released.notes);
+    assert!(holds(&fixture.path).is_empty() && !reservation_exists(&fixture.path) && lease_revoked(&fixture.path));
+    assert!(release_held(&fixture.path, "운영자: 다시").is_err(), "두 번째 해제가 통과했다");
+}
+
+/// b15 ②(가) — 종료를 관측한 늦은 보고는 그 시도의 UNREPORTED 보류를 풀고 평소대로 해제까지 간다.
+#[test]
+fn an_observed_late_report_releases_the_unreported_hold() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    let fixture = prepare_fixture();
+    failover_now(&fixture.path);
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let mut report = pb::AttemptReport {
+        schema_version: 2,
+        job_id: JOB_ID.into(),
+        attempt_id: ATTEMPT_ID.into(),
+        node_id: NODE_ID.into(),
+        fence_epoch: fence(&fixture.path),
+        outcome: pb::AttemptOutcome::Failed as i32,
+        final_step: 10,
+        started_at_unix_ms: 210,
+        finished_at_unix_ms: 300,
+        issued_at_unix_ms: 301,
+        exit_observation: pb::ExitObservation::ObservedWithCode as i32,
+        exit_code: 7,
+        ..Default::default()
+    };
+    report.node_signature = sign(&key, &report).to_vec();
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(NODE_ID, key.verifying_key());
+    let verified = verify(
+        &report,
+        gputeer_protocol::constants::ATTEMPT_REPORT_MAX_SCHEMA_VERSION,
+        &Ed25519Verifier::new(keys),
+        999,
+        &mut NoReplayCheck,
+    )
+    .unwrap();
+    let stored = CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_and_release(&verified, fully_authorized(), NOW)
+        .unwrap_or_else(|e| panic!("관측한 보고가 저장되지 않았다: {e:?}"));
+    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_RELEASED")), "{:?}", stored.notes);
+    assert!(holds(&fixture.path).is_empty());
+    assert!(!reservation_exists(&fixture.path), "관측한 보고인데 해제하지 않았다");
+}

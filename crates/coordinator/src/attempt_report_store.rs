@@ -322,8 +322,11 @@ impl CoordinatorAttemptReportStore {
                     notes: vec![held_note(&report.attempt_id)],
                 });
             }
+            // ★ 2026-10-03 13:28 (조각 7c · 계약 §6 b15 ②) — 관측 못 한 보고 뒤 UNREPORTED 보류가 남아 있으면 재전송도 해제하지 않는다.
+            let (release, mut held_notes) = gate_release_on_unreported_hold(&transaction, report, &binding.report_hash, release)?;
             // ★ 결함 213 · 215 — 재전송에도 해제 · 선점을 다시 시도한다(아래 after_report 는 둘 다 멱등이다).
-            let notes = after_report(&transaction, verified, release, owner_preempt)?;
+            let mut notes = after_report(&transaction, verified, release, owner_preempt)?;
+            notes.append(&mut held_notes);
             transaction.commit().map_err(map_sql_error)?;
             return Ok(StoreAttemptReportResult {
                 binding,
@@ -454,9 +457,13 @@ impl CoordinatorAttemptReportStore {
             .map_err(|error| AttemptReportStoreError::Staging(format!("Job 종료 전이: {error}")))?;
         }
 
+        // ★ 2026-10-03 13:28 (조각 7c · 계약 §6 b15 ②) — 그 시도에 D6 보류(UNREPORTED)가 있으면: 종료를 관측한 보고는 보류를 풀고 평소대로, 관측 못 한 보고는
+        //   전이는 평소대로 하되 해제는 하지 않는다(보류 · 예약 · Lease 를 남긴다 — 운영자 release-held-job 또는 그 시도의 STOP_CONFIRMED 가 푼다).
+        let (release, mut held_notes) = gate_release_on_unreported_hold(&transaction, report, &report_hash, release)?;
         // ★ 예약 해제 · 소유자 선점까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
         //   오류가 그대로 올라가고 **보고 저장도 롤백된다** — 반쪽 적용을 만들지 않는다.
-        let notes = after_report(&transaction, verified, release, owner_preempt)?;
+        let mut notes = after_report(&transaction, verified, release, owner_preempt)?;
+        notes.append(&mut held_notes);
 
         transaction.commit().map_err(map_sql_error)?;
 
@@ -618,6 +625,47 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
 /// ★ 2026-10-03 12:49 (조각 6d) — RUN_UNKNOWN 시도에 온 보고를 증거로만 저장했다는 한 줄.
 fn held_note(attempt_id: &str) -> String {
     format!("REPORT_HELD_RUN_UNKNOWN attempt_id={attempt_id} — 증거로만 저장(시도 · Job · 예약 · Lease 그대로 · STOP_CONFIRMED 가 푼다)")
+}
+
+/// ★ 2026-10-03 13:28 (계약 v18k §6 b15 ② · 조각 7c) — 그 시도에 UNREPORTED 보류가 있으면 보고의 종료 관측에 따라 해제 요청을 거른다.
+/// 관측한 보고 → 보류를 풀고(감사 — report_hash) 해제 요청을 그대로 둔다 · 관측 못 한 보고 → 해제 요청을 버린다(보류 · 예약 · Lease 를 남긴다).
+#[allow(clippy::type_complexity)]
+fn gate_release_on_unreported_hold(
+    transaction: &Connection,
+    report: &pb::AttemptReport,
+    report_hash: &[u8; 32],
+    release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
+) -> Result<(Option<(crate::reservation_release::ReleaseAuthorization, u64)>, Vec<String>), AttemptReportStoreError> {
+    let held = crate::job_holds::has_unreported_hold(transaction, &report.job_id, &report.attempt_id)
+        .map_err(AttemptReportStoreError::Staging)?;
+    if !held {
+        return Ok((release, Vec::new()));
+    }
+    let observed_exit = matches!(
+        pb::ExitObservation::try_from(report.exit_observation),
+        Ok(pb::ExitObservation::ObservedWithCode) | Ok(pb::ExitObservation::ObservedNoCode)
+    );
+    let now = release.as_ref().map(|(_, at)| *at).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    });
+    if observed_exit {
+        crate::job_holds::release_unreported_by_observed_report(transaction, &report.job_id, &report.attempt_id, report_hash, now)
+            .map_err(AttemptReportStoreError::Staging)?;
+        return Ok((
+            release,
+            vec![format!("UNREPORTED_HOLD_RELEASED attempt_id={} — 종료를 관측한 서명된 보고가 보류를 풀었다", report.attempt_id)],
+        ));
+    }
+    Ok((
+        None,
+        vec![format!(
+            "UNREPORTED_HOLD_KEPT attempt_id={} — 종료를 관측하지 못한 보고라 보류 · 예약 · Lease 를 남긴다(release-held-job · STOP_CONFIRMED 가 푼다)",
+            report.attempt_id
+        )],
+    ))
 }
 
 fn after_report(

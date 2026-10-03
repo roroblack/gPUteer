@@ -517,6 +517,112 @@ pub fn release_lost_node_by_operator(
     })
 }
 
+/// ★ 2026-10-03 13:28 (실행 알림 계약 v18k §6 (3) · §9 · 계획 조각 7c) — `release-held-job` 이 푼 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldJobRelease {
+    pub job_id: String,
+    /// 보류를 푼 시도들(시도 순).
+    pub released_attempts: Vec<String>,
+    /// Job 이 최종 상태였다 — 그 시도들의 Lease 를 폐기하고 남은 예약을 지웠다.
+    pub job_final: bool,
+    /// 한 줄 기록들(예약 해제 · 예약 없음 등).
+    pub notes: Vec<String>,
+}
+
+/// ★ 2026-10-03 13:28 (실행 알림 계약 v18k §6 (3) · §9 "release-held-job 한 명령" · 계획 조각 7c) — **사람이 그 PC 를 확인한 뒤** D6 보류(UNREPORTED)를 푼다.
+///
+/// ```text
+/// 거부     진술이 비었다 · Job 이 없다 · NOTICE 보류가 하나라도 있다(그것은 그 시도의 STOP_CONFIRMED 만 푼다) · 풀 UNREPORTED 보류가 없다
+/// 한 커밋  UNREPORTED 행 제거(감사 기록) · 그 시도에 override(다음 failover 가 같은 시도로 다시 보류하지 않고 이어받는다 — b9 ①)
+///          Job 이 최종(COMPLETED · FAILED · CANCELLED · ARCHIVED)이면 그 시도의 Lease 폐기(revoked_at — failover 와 같은 칸) ·
+///          그 시도가 쥔 예약 삭제(해제 사실 + OPERATOR_RELEASE 근거 — release-held-job 명령 이름으로)
+///          최종이 아니면 Job · Lease · 예약은 그대로다 — 다음 장애 이어받기가 기존 행(NODE_LOST · STAGING_NODE_LOST)으로 간다
+/// ```
+/// ★ release-lost-node 의 **판정**은 바꾸지 않는다(계약 — 예약 해제와 Job 해제를 가른다).
+pub fn release_held_job_by_operator(
+    control_db: &Path,
+    job_id: &str,
+    operator_statement: &str,
+    now_unix_ms: u64,
+) -> Result<HeldJobRelease, String> {
+    if operator_statement.trim().is_empty() {
+        return Err("RELEASE_HELD_REFUSED: 운영자 진술(누가 · 무엇을 확인했나)이 비었다".to_string());
+    }
+    crate::job_store::CoordinatorJobStore::open(control_db).map_err(|e| e.to_string())?;
+    crate::staging_store::CoordinatorStagingStore::open(control_db).map_err(|e| e.to_string())?;
+    let mut connection = Connection::open(control_db).map_err(|e| e.to_string())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(1))
+        .map_err(|e| e.to_string())?;
+    crate::job_holds::initialize_schema(&connection)?;
+    crate::reservation_release::initialize_release_schema(&connection)
+        .map_err(|e| format!("RELEASE_HELD_REFUSED: 해제 기록 표를 준비하지 못했다 — {e:?}"))?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let job = crate::job_store::fetch_job(&transaction, job_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("RELEASE_HELD_REFUSED: Job {job_id} 이 없다"))?;
+    let holds = crate::job_holds::holds_for_job(&transaction, job_id)?;
+    if let Some(notice) = holds.iter().find(|h| h.hold_kind == crate::job_holds::NOTICE_RUN_UNKNOWN) {
+        return Err(format!(
+            "RELEASE_HELD_REFUSED: Job {job_id} 의 시도 {} 에 실행 여부 불명 알림 보류가 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다",
+            notice.attempt_id
+        ));
+    }
+    let attempts: Vec<String> = holds
+        .iter()
+        .filter(|h| h.hold_kind == crate::job_holds::UNREPORTED_SIDE_EFFECT_RISK)
+        .map(|h| h.attempt_id.clone())
+        .collect();
+    if attempts.is_empty() {
+        return Err(format!("RELEASE_HELD_REFUSED: Job {job_id} 에 풀 보류(UNREPORTED)가 없다"));
+    }
+    let job_final = matches!(
+        job.state,
+        JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Archived
+    );
+    let mut notes = Vec::new();
+    for attempt_id in &attempts {
+        crate::job_holds::release_unreported_by_operator(&transaction, job_id, attempt_id, operator_statement, now_unix_ms)?;
+        if !job_final {
+            continue;
+        }
+        let attempt = crate::staging_store::fetch_attempt(&transaction, attempt_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("RELEASE_HELD_REFUSED: 보류된 시도 {attempt_id} 의 행이 없다(저장소 손상)"))?;
+        crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
+            .map_err(|e| format!("RELEASE_HELD_REFUSED: 시도 {attempt_id} 의 Lease 를 폐기하지 못했다 — {e}"))?;
+        let node_id = attempt.node_ids.first().cloned().unwrap_or_default();
+        let reservation = crate::staging_store::fetch_node_reservation(&transaction, &node_id)
+            .map_err(|e| e.to_string())?;
+        match reservation {
+            Some(reservation) if reservation.attempt_id == *attempt_id => {
+                crate::reservation_release::release_by_operator_within(
+                    &transaction,
+                    crate::reservation_release::OperatorReleaseCommand::ReleaseHeldJob,
+                    operator_statement,
+                    &node_id,
+                    attempt_id,
+                    now_unix_ms,
+                )
+                .map_err(|e| format!("RELEASE_HELD_REFUSED: {e:?}"))?;
+                notes.push(format!("RESERVATION_RELEASED node_id={node_id} attempt_id={attempt_id}"));
+            }
+            _ => notes.push(format!(
+                "RESERVATION_ALREADY_GONE node_id={node_id} attempt_id={attempt_id} — 그 시도의 예약이 이미 없다(남의 예약은 건드리지 않는다)"
+            )),
+        }
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(HeldJobRelease {
+        job_id: job_id.to_string(),
+        released_attempts: attempts,
+        job_final,
+        notes,
+    })
+}
+
 /// ★ 2026-09-23 (신뢰망 남은 일 H) — 노드 소유자가 작업을 멈췄다(그 노드가 서명한 INTERRUPTED 보고 · 종료 관측).
 ///
 /// ```text

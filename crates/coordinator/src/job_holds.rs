@@ -207,6 +207,81 @@ pub fn attempt_has_override(connection: &Connection, attempt_id: &str) -> Result
     Ok(present.is_some())
 }
 
+/// ★ 2026-10-03 13:28 (계약 v18k §6 b15 ② · 조각 7c) — 그 시도에 UNREPORTED 보류 행이 있는가(표가 없으면 없다 · 읽기만).
+pub fn has_unreported_hold(connection: &Connection, job_id: &str, attempt_id: &str) -> Result<bool, String> {
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_holds'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("JOB_HOLDS: 표를 확인하지 못했다: {e}"))?;
+    if table.is_none() {
+        return Ok(false);
+    }
+    let present: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM coordinator_job_holds WHERE job_id = ?1 AND attempt_id = ?2 AND hold_kind = ?3",
+            params![job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("JOB_HOLDS: 보류를 읽지 못했다: {e}"))?;
+    Ok(present.is_some())
+}
+
+/// ★ 2026-10-03 13:28 (계약 v18k §6 b15 ② · 조각 7c) — 그 시도의 종료를 **관측한** 서명된 보고가 D6 위험("알리지 않은 채 돌고 있을 수 있다")을 닫았다.
+/// 그 시도의 UNREPORTED 행을 지운다(감사 — 근거는 report_hash). 지웠으면 true.
+pub(crate) fn release_unreported_by_observed_report(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    report_hash: &[u8; 32],
+    now_unix_ms: u64,
+) -> Result<bool, String> {
+    let removed = connection
+        .execute(
+            "DELETE FROM coordinator_job_holds WHERE job_id = ?1 AND attempt_id = ?2 AND hold_kind = ?3",
+            params![job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK],
+        )
+        .map_err(|e| format!("JOB_HOLDS: UNREPORTED 보류를 풀지 못했다: {e}"))?;
+    if removed > 0 {
+        event(connection, job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, "RELEASED", Some(report_hash),
+              "그 시도의 종료를 관측한 서명된 보고", now_unix_ms)?;
+    }
+    Ok(removed > 0)
+}
+
+/// ★ 2026-10-03 13:28 (계약 v18k §6 (3) · §9 · 조각 7c) — 운영자 release-held-job: 그 시도의 UNREPORTED 행을 지우고(감사 — 진술) override 를 적는다
+/// (failover 가 같은 시도로 다시 보류하지 않는다). NOTICE 행은 건드리지 않는다(그것은 STOP_CONFIRMED 만 푼다 — 호출자가 먼저 거부한다).
+pub(crate) fn release_unreported_by_operator(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    operator_statement: &str,
+    now_unix_ms: u64,
+) -> Result<bool, String> {
+    let removed = connection
+        .execute(
+            "DELETE FROM coordinator_job_holds WHERE job_id = ?1 AND attempt_id = ?2 AND hold_kind = ?3",
+            params![job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK],
+        )
+        .map_err(|e| format!("JOB_HOLDS: UNREPORTED 보류를 풀지 못했다: {e}"))?;
+    if removed > 0 {
+        event(connection, job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, "RELEASED", None,
+              &format!("운영자 release-held-job: {operator_statement}"), now_unix_ms)?;
+    }
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO coordinator_attempt_hold_overrides(attempt_id, job_id, operator_statement, at_unix_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![attempt_id, job_id, operator_statement, now_unix_ms.to_be_bytes().to_vec()],
+        )
+        .map_err(|e| format!("JOB_HOLDS: override 를 적지 못했다: {e}"))?;
+    Ok(removed > 0)
+}
+
 /// 그 Job 에 재배치 차단 보류가 하나라도 있는가(종류 · 시도 무관). 표가 아직 없으면(알림을 받은 적 없는 DB) 보류도 없다 —
 /// 관문은 읽기만 하고 표를 만들지 않는다.
 pub fn job_is_held(connection: &Connection, job_id: &str) -> Result<bool, String> {
