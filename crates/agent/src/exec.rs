@@ -533,6 +533,22 @@ impl WorkloadStopper {
 ///   중단시킨 작업이 "성공" 으로 기록된다.
 pub const EXIT_CODE_OWNER_STOPPED: u32 = 0xC000_0013;
 
+/// ★ 2026-10-03 10:58 (조각 5c) — 컨테이너를 만든 직후 · 시작 전에 부르는 훅(노드 원장에 ID · 런타임 대상 커밋). 실패하면 시작하지 않는다.
+#[derive(Clone)]
+pub struct ContainerCreatedHook(pub std::sync::Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>);
+
+impl ContainerCreatedHook {
+    pub fn new(hook: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(hook))
+    }
+}
+
+impl std::fmt::Debug for ContainerCreatedHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ContainerCreatedHook")
+    }
+}
+
 /// 실행 정책 — caller 가 명시적으로 채운다.
 #[derive(Debug, Clone)]
 pub struct ExecutionPolicy {
@@ -614,6 +630,8 @@ pub struct ExecutionPolicy {
     ///   기본 `false` — 상승돼 있으면 호스트 작업을 띄우지 않는다(작업이 관리자 토큰을 물려받아 UAC 경계를 넘는다). 운영자가
     ///   `--i-understand-elevated-host-execution-is-unsafe true` 로만 켠다. 컨테이너 · 리눅스에는 쓰지 않는다.
     pub allow_elevated_host: bool,
+    /// ★ 조각 5c — 컨테이너를 만든 직후 · 시작 전 훅(실행 순서 3b). 없으면 부르지 않는다(원장 없는 구성 · 호스트 실행 · 시험).
+    pub on_container_created: Option<ContainerCreatedHook>,
 }
 
 /// Windows 호스트 실행이면 토큰 상승 여부를 본다(컨테이너 · 리눅스 · 운영자 예외는 통과). Agent 는 이 함수를 **작업 쪽 부작용 전**(Lease 검증 · fence 기록 뒤 · 시작 기록 ·
@@ -765,11 +783,16 @@ fn execute_in_container(
         "CONTAINER_STARTING name={name} image={} runtime={:?}",
         execution.pinned_image, execution.runtime.flavor
     );
-    let exit = match crate::container::run(
+    let on_created = policy.on_container_created.clone();
+    let exit = match crate::container::run_recording(
         execution,
         &input,
         Some(&work_dir.join(STDOUT_FILENAME)),
         Some(&work_dir.join(STDERR_FILENAME)),
+        |container_id| match &on_created {
+            Some(hook) => (hook.0)(container_id),
+            None => Ok(()),
+        },
         |stopper| on_started(WorkloadStopper::for_container(stopper)),
     ) {
         Ok(exit) => exit,

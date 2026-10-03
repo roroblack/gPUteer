@@ -1113,18 +1113,34 @@ pub fn run(
     stderr_path: Option<&Path>,
     on_started: impl FnOnce(ContainerStopper),
 ) -> Result<ContainerExit, ContainerRunError> {
-    run_with_gpu_count(
+    run_recording(execution, input, stdout_path, stderr_path, |_| Ok(()), on_started)
+}
+
+/// ★ 2026-10-03 10:58 (실행 알림 계획 조각 5c · 계약 §5 실행 순서 3a/3b/3c) — `run` 과 같되, create 가 돌려준 ID 를 **이 시도의 컨테이너로 확인한 직후 ·
+///   start 전에** `on_created(ID)` 를 부른다(노드 원장에 ID · 런타임 대상을 커밋하는 자리). 실패하면 **start 하지 않고** 그 ID 로 지운 뒤
+///   새 조회로 없음을 확인한다(start 전이라 로그가 없다 — 보존 단계 없음). 지움을 확인하지 못하면 사람에게 넘긴다(`NotStarted` · 남김).
+pub fn run_recording(
+    execution: &ContainerExecution,
+    input: &CreateInput<'_>,
+    stdout_path: Option<&Path>,
+    stderr_path: Option<&Path>,
+    on_created: impl FnOnce(&str) -> Result<(), String>,
+    on_started: impl FnOnce(ContainerStopper),
+) -> Result<ContainerExit, ContainerRunError> {
+    let result = run_inner(
         execution,
         input,
         stdout_path,
         stderr_path,
+        on_created,
         on_started,
         || {
             gputeer_runtime_nvml::observe()
                 .map(|snapshot| snapshot.gpus.len())
                 .map_err(|e| format!("{e:?}"))
         },
-    )
+    );
+    record_incident_if_needed(&execution.runtime, input.name, result)
 }
 
 /// `run` 과 같다 — cdi-all 장수를 무엇으로 셀지만 받는다(시험이 NVML 없이 "생성 뒤 늘어난 GPU" 를 흉내 낸다 · 결함 468).
@@ -1141,6 +1157,7 @@ pub fn run_with_gpu_count(
         input,
         stdout_path,
         stderr_path,
+        |_| Ok(()),
         on_started,
         nvml_gpu_count,
     );
@@ -1252,6 +1269,7 @@ fn run_inner(
     input: &CreateInput<'_>,
     stdout_path: Option<&Path>,
     stderr_path: Option<&Path>,
+    on_created: impl FnOnce(&str) -> Result<(), String>,
     on_started: impl FnOnce(ContainerStopper),
     nvml_gpu_count: impl Fn() -> Result<usize, String>,
 ) -> Result<ContainerExit, ContainerRunError> {
@@ -1378,6 +1396,16 @@ fn run_inner(
         });
     }
     let target = id.as_str();
+    // ★ 조각 5c — 실행 순서 3b: 확인한 ID 를 원장에 먼저 커밋한다. 못 하면 시작하지 않는다(늦은 생성을 배제할 수 없는 "ID 없는 행" 을 만들지 않게).
+    if let Err(why) = on_created(target) {
+        let (left, removed) = remove_container_fact(program, target);
+        return Err(ContainerRunError::NotStarted {
+            detail: format!(
+                "RUN_LEDGER_3B: 만든 컨테이너(ID {target})를 원장에 적지 못해 시작하지 않았다({why}) · {removed}"
+            ),
+            container: left,
+        });
+    }
     if let Err(why) = cdi_all_ready(execution, &nvml_gpu_count) {
         let (left, removed) = remove_container_fact(program, target);
         return Err(ContainerRunError::NotStarted {

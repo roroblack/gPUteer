@@ -228,6 +228,14 @@ fn main() {
             a_start_that_never_answers_keeps_the_container_for_a_human,
         ),
         (
+            "the_created_hook_sees_the_confirmed_id_before_start",
+            the_created_hook_sees_the_confirmed_id_before_start,
+        ),
+        (
+            "a_failed_created_hook_never_starts_and_removes_by_id",
+            a_failed_created_hook_never_starts_and_removes_by_id,
+        ),
+        (
             "a_docker_target_is_resolved_once_and_every_evidence_call_names_it",
             a_docker_target_is_resolved_once_and_every_evidence_call_names_it,
         ),
@@ -1006,6 +1014,7 @@ fn policy(work: &Path, decision: ContainerDecision) -> gputeer_agent::exec::Exec
         cgroup_parent: None,
         container: decision,
         allow_elevated_host: false,
+        on_container_created: None,
     }
 }
 
@@ -2579,4 +2588,67 @@ fn the_ledger_text_of_a_target_round_trips_and_odd_shapes_are_refused() {
     ] {
         assert!(RuntimeEndpoint::from_ledger(odd).is_err(), "{odd:?} 를 받아들였다");
     }
+}
+
+// ─── ★ 조각 5c — 실행 순서 3a/3b/3c(만든 직후 · 시작 전 원장 커밋) ─────────────────
+
+/// 훅은 create 가 돌려준 ID 를 **이 시도의 것으로 확인한 뒤 · start 전에** 받는다. 성공하면 평소대로 돈다.
+fn the_created_hook_sees_the_confirmed_id_before_start() {
+    let f = fixture(None);
+    let mut seen: Option<(String, bool)> = None;
+    let exit = container::run_recording(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |id| {
+            seen = Some((id.to_string(), f.state.join("started").exists()));
+            Ok(())
+        },
+        |_| {},
+    )
+    .expect("실행");
+    assert_eq!(exit.exit_code, 0);
+    let (id, started_before) = seen.expect("훅이 불리지 않았다");
+    assert_eq!(id, FAKE_ID, "확인한 컨테이너 ID 가 아니다");
+    assert!(!started_before, "훅이 start 뒤에 불렸다");
+    let order: Vec<String> = calls(&f.state)
+        .lines()
+        .map(|l| l.split(' ').next().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        order,
+        ["inspect", "create", "inspect", "start", "inspect", "logs", "rm", "inspect"],
+        "훅이 런타임 명령 순서를 바꿨다"
+    );
+}
+
+/// 훅이 실패하면(원장에 적지 못함) **start 하지 않고**, 확인한 ID 로 지운 뒤 새 조회로 없음을 확인한다 — "시작 안 함" 이고 남은 것이 없다.
+fn a_failed_created_hook_never_starts_and_removes_by_id() {
+    let f = fixture(None);
+    let mut handed = false;
+    let refused = container::run_recording(
+        &execution(),
+        &input(&mounts(&f.work), "exit-0", &[]),
+        Some(&f.work.join("stdout.log")),
+        Some(&f.work.join("stderr.log")),
+        |_| Err("원장이 잠겼다".into()),
+        |_| handed = true,
+    )
+    .unwrap_err();
+    assert!(!handed, "시작하지 않았는데 정지 손잡이를 넘겼다");
+    assert!(!f.state.join("started").exists(), "훅 실패 뒤 start 를 불렀다");
+    match &refused {
+        ContainerRunError::NotStarted { detail, container } => {
+            assert!(detail.contains("RUN_LEDGER_3B"), "{detail}");
+            assert_eq!(*container, ContainerLeft::Removed, "{detail}");
+        }
+        other => panic!("NotStarted 여야 한다: {other:?}"),
+    }
+    let calls = calls(&f.state);
+    assert!(
+        calls.lines().any(|l| l.starts_with("rm ") && l.contains(FAKE_ID)),
+        "확인한 ID 로 지우지 않았다:\n{calls}"
+    );
+    assert!(!calls.lines().any(|l| l.starts_with("start ")), "start 를 불렀다:\n{calls}");
 }

@@ -880,15 +880,29 @@ fn runtime_target_and_renewal_evidence_are_recorded_on_active_rows_only() {
     ledger_with_one_container_row(&f);
     let mut ledger = open_for_agent(&f.paths).unwrap();
     ledger
-        .record_runtime_target("attempt-c", "cid-1", "unix:///run/docker.sock", "docker:ID-1")
+        .record_runtime_target(
+            "attempt-c",
+            "cid-1",
+            Some("unix:///run/docker.sock"),
+            Some("docker:ID-1"),
+        )
         .unwrap();
     assert_err_contains(
-        ledger.record_runtime_target("attempt-c", "cid-2", "unix:///run/docker.sock", "docker:ID-1"),
+        ledger.record_runtime_target(
+            "attempt-c",
+            "cid-2",
+            Some("unix:///run/docker.sock"),
+            Some("docker:ID-1"),
+        ),
         "덮지 않는다",
     );
     assert_err_contains(
-        ledger.record_runtime_target("attempt-c", "cid-1", " ", "docker:ID-1"),
+        ledger.record_runtime_target("attempt-c", "cid-1", Some(" "), Some("docker:ID-1")),
         "비어 있으면 안 된다",
+    );
+    assert_err_contains(
+        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), None),
+        "함께 적는다",
     );
     ledger.record_renewal("attempt-c", &[7, 7, 7], 9_000).unwrap();
     ledger.record_renewal("attempt-c", &[8, 8], 9_500).unwrap();
@@ -905,7 +919,20 @@ fn runtime_target_and_renewal_evidence_are_recorded_on_active_rows_only() {
         .unwrap();
     assert_err_contains(ledger.record_renewal("attempt-c", &[9], 10_000), "ACTIVE 행에만");
     assert_err_contains(
-        ledger.record_runtime_target("attempt-c", "cid-1", "t", "i"),
+        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i")),
         "ACTIVE 컨테이너 행에만",
     );
+}
+
+/// 고정하지 못한 런타임(원격 podman 등)은 ID 만 적는다 — 그 행은 대상이 비어 자동 증거를 만들지 않는다.
+#[test]
+fn an_unpinned_runtime_records_the_container_id_only() {
+    let f = fixture();
+    ledger_with_one_container_row(&f);
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    ledger.record_runtime_target("attempt-c", "cid-9", None, None).unwrap();
+    let row = ledger.row("attempt-c").unwrap().unwrap();
+    assert_eq!(row.container_id.as_deref(), Some("cid-9"));
+    assert_eq!(row.connection_target, None);
+    assert_eq!(row.runtime_target_identity, None);
 }

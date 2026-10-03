@@ -1551,24 +1551,28 @@ impl RunLedger {
     }
 
     /// ★ 형식 2(실행 순서 3b) — create 결과의 컨테이너 ID · 연결 대상 · 런타임 대상 신원을 **한 트랜잭션에** 적는다. ACTIVE 컨테이너 행만.
-    ///   이미 다른 ID 가 적혀 있으면 거부한다(덮지 않는다).
+    ///   이미 다른 ID 가 적혀 있으면 거부한다(덮지 않는다). 대상 · 신원은 **둘 다 있거나 둘 다 없다** — 고정하지 못한 런타임(원격 podman ·
+    ///   신원 읽기 실패)은 ID 만 적고 그 행은 자동 증거를 만들지 않는다(계약 §4 "런타임" · v18l).
     pub fn record_runtime_target(
         &mut self,
         attempt_id: &str,
         container_id: &str,
-        connection_target: &str,
-        runtime_target_identity: &str,
+        connection_target: Option<&str>,
+        runtime_target_identity: Option<&str>,
     ) -> Result<(), String> {
-        if [container_id, connection_target, runtime_target_identity]
-            .iter()
-            .any(|value| value.trim().is_empty())
+        if container_id.trim().is_empty()
+            || connection_target.is_some_and(|v| v.trim().is_empty())
+            || runtime_target_identity.is_some_and(|v| v.trim().is_empty())
         {
             return Err("RUN_LEDGER: 컨테이너 ID · 연결 대상 · 대상 신원은 비어 있으면 안 된다".into());
         }
+        if connection_target.is_some() != runtime_target_identity.is_some() {
+            return Err("RUN_LEDGER: 연결 대상과 대상 신원은 함께 적는다(한쪽만 적지 않는다)".into());
+        }
         let (id, target, identity) = (
             container_id.to_string(),
-            connection_target.to_string(),
-            runtime_target_identity.to_string(),
+            connection_target.map(str::to_string),
+            runtime_target_identity.map(str::to_string),
         );
         self.update_state(
             attempt_id,

@@ -659,6 +659,10 @@ fn r8b_a_ledger_write_failure_before_the_report_is_kept_leaves_no_report_and_the
     );
     // 컨테이너 행은 만들 때 "지움 확인 없음(0)" 으로 적힌다(R11e — 컨테이너 행의 NULL 은 받지 않는다). 판정 사실도 적히지 않았다.
     assert_eq!(rows[0].container_removed, Some(false), "{rows:?}");
+    // ★ 조각 5c — 실행 순서 3b: 만든 직후 · 시작 전에 확인한 컨테이너 ID 를 원장에 적었다. 이 가짜 런타임은 대상 고정 조회(context inspect)에
+    //   답하지 않으므로 ID 만 남고 연결 대상 · 신원은 비어 있다 — 그 행은 자동 증거를 만들지 않는다(계약 v18l).
+    assert_eq!(rows[0].container_id.as_deref(), Some(FAKE_ID), "{rows:?}");
+    assert_eq!(rows[0].connection_target, None, "{rows:?}");
     assert_eq!(
         rows[0].stopped, None,
         "판정 사실 쓰기가 실패했는데 적혔다: {rows:?}"

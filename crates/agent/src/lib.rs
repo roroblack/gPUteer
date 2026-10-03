@@ -1510,6 +1510,23 @@ fn run_one_connection_inner(
             cgroup_parent: config.workload_cgroup_parent.clone(),
             container: loaded.container.clone(),
             allow_elevated_host: config.allow_elevated_host_execution,
+            // ★ 2026-10-03 10:58 (조각 5c · 계약 §5 실행 순서 3b) — 컨테이너를 만든 직후 · 시작 전에 ID · 런타임 대상을 원장에 커밋한다. 못 적으면 시작하지 않는다.
+            //   원장이 꺼진 구성은 아무것도 하지 않는다(그 경우 기동 판정도 원장을 쓰지 않는다).
+            on_container_created: config.container_runtime.as_ref().map(|runtime| {
+                let handle = config.run_ledger_handle.clone();
+                let attempt_id = grant.attempt_id.clone();
+                let program = runtime.program.clone();
+                let flavor = runtime.flavor;
+                exec::ContainerCreatedHook::new(move |container_id: &str| {
+                    record_container_created(
+                        handle.as_ref(),
+                        &attempt_id,
+                        &program,
+                        flavor,
+                        container_id,
+                    )
+                })
+            }),
         };
         // ★★ 결함 ⑱ (설계 A, 2026-09-14) — **사전 관문을 보고 ACK 를 실행 전에 보낸다.**
         //   전에는 워크로드를 끝까지 돌린 뒤에 ACK 를 보내, 10초보다 긴 작업이면 Coordinator 가
@@ -1645,8 +1662,16 @@ fn run_one_connection_inner(
         //   ACK 가 이미 Job 을 RUNNING 으로 옮긴 풀 밖 lane 에서 갱신 한 번 실패가 "안 돈 작업의 FAILED" 가 됐다. 풀 밖 lane 은 갱신 실패가
         //   두 번 실행이 되지 않으므로 전처럼 띄운다(첫 갱신은 스레드가 곧바로). 수신 확인 없이 풀에 붙이는 것은 설정 오류다(런북 §5).
         if will_execute && config.renew_during_execution_ms > 0 && config.require_ack_receipt {
+            let sent_at = clock.now_unix_ms();
             match renew_once_over_new_connection(&config, signing_key, &held_lease, 0, None) {
                 Ok(renewed) => {
+                    // ★ 조각 5c(v18j) — 재부착 근거: 마지막 서명 Lease 와 그때 계산한 끊김 시한.
+                    record_renewal_in_ledger(
+                        &config,
+                        &grant.attempt_id,
+                        &renewed,
+                        renewal_self_stop_at(config.disconnect_stop_margin_ms, &renewed, sent_at),
+                    );
                     let remaining = renewed
                         .expires_at_unix_ms
                         .saturating_sub(clock.now_unix_ms());
@@ -2822,13 +2847,16 @@ fn start_renew_during_execution(
                         "RENEW_SESSION_RESULT ok=true round={round} lease_id={} fence_epoch={} expires_at_unix_ms={}",
                         renewed.lease_id, renewed.fence_epoch, renewed.expires_at_unix_ms
                     );
+                    let stop_at = self_stop_time(
+                        renewed.issued_at_unix_ms,
+                        renewed.expires_at_unix_ms,
+                        sent_at,
+                    );
+                    // ★ 조각 5c(v18j) — 재부착 근거: 마지막 서명 Lease 와 이 갱신 때 계산한 끊김 시한(화면 감시와 같은 값).
+                    record_renewal_in_ledger(&config, &attempt_id, &renewed, stop_at);
                     panel.renew_succeeded(
                         &attempt_id,
-                        self_stop_time(
-                            renewed.issued_at_unix_ms,
-                            renewed.expires_at_unix_ms,
-                            sent_at,
-                        ),
+                        stop_at,
                         near_finish_time(&renewed, sent_at),
                         owner_panel::disconnect_self_stop_at(
                             renewed.issued_at_unix_ms,
@@ -4132,6 +4160,66 @@ fn with_run_ledger<T>(
         let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
         step(&mut ledger)
     })
+}
+
+/// ★ 2026-10-03 10:58 (조각 5c · 계약 §5 실행 순서 3b) — 만든 컨테이너의 ID · 런타임 대상을 원장에 적는다. 대상을 고정하지 못하면(원격 podman · 신원 읽기
+///   실패) ID 만 적는다 — 그 행은 자동 증거를 만들지 않는다(OPEN · 소유자 해제 · 계약 v18l). 원장 쓰기 실패는 `Err`(시작하지 않는다).
+fn record_container_created(
+    handle: Option<&run_ledger::SharedRunLedger>,
+    attempt_id: &str,
+    program: &std::path::Path,
+    flavor: container::RuntimeFlavor,
+    container_id: &str,
+) -> Result<(), String> {
+    let Some(handle) = handle else {
+        return Ok(());
+    };
+    let pinned = container::runtime_target::resolve_endpoint(program, flavor).and_then(|endpoint| {
+        container::runtime_target::read_identity(program, &endpoint)
+            .map(|identity| (endpoint.to_ledger(), identity))
+    });
+    let (target, identity) = match pinned {
+        Ok((target, identity)) => (Some(target), Some(identity)),
+        Err(why) => {
+            println!(
+                "RUNTIME_TARGET_UNPINNED attempt_id={attempt_id} detail={why} — 원장에 컨테이너 ID 만 적는다(이 행은 자동 증거를 만들지 않는다)"
+            );
+            (None, None)
+        }
+    };
+    let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+    ledger.record_runtime_target(attempt_id, container_id, target.as_deref(), identity.as_deref())?;
+    println!(
+        "RUN_LEDGER_CONTAINER_RECORDED attempt_id={attempt_id} container_id={container_id} pinned={}",
+        target.is_some()
+    );
+    Ok(())
+}
+
+/// 갱신 때의 끊김 시한 — 실행 중 감시와 같은 계산(여유 0 이면 시간으로는 멈추지 않는다 — u64::MAX).
+fn renewal_self_stop_at(margin: u64, lease: &pb::Lease, sent_at: u64) -> u64 {
+    if margin > 0 {
+        owner_panel::disconnect_self_stop_at(
+            lease.issued_at_unix_ms,
+            lease.expires_at_unix_ms,
+            sent_at,
+            margin,
+        )
+    } else {
+        u64::MAX
+    }
+}
+
+/// ★ 조각 5c(v18j) — 갱신 성공마다 원장에 마지막 서명 Lease 바이트와 끊김 시한을 적는다. 실패해도 실행은 계속한다 — 원장에는 앞선 갱신의
+///   근거(더 이른 시한)가 남아 재기동의 재부착이 더 일찍 멈출 뿐이다(보수). 시한 "없음"(u64::MAX)은 원장이 담는 가장 큰 값으로 적는다.
+fn record_renewal_in_ledger(config: &AgentConfig, attempt_id: &str, lease: &pb::Lease, stop_at: u64) {
+    if let Some(Err(error)) = with_run_ledger(config, |ledger| {
+        ledger.record_renewal(attempt_id, &lease.encode_to_vec(), stop_at.min(i64::MAX as u64))
+    }) {
+        println!(
+            "RUN_LEDGER_RENEWAL_NOT_RECORDED attempt_id={attempt_id} detail={error} — 원장의 재부착 근거는 앞선 갱신의 것으로 남는다(시한이 더 이르다)"
+        );
+    }
 }
 
 /// 원장 치명 오류 — agent-loop 가 이 줄을 보고 멈춘다(계획 r1i ①).
@@ -6436,6 +6524,7 @@ mod defect_19_tests {
             cgroup_parent: None,
             container: container::ContainerDecision::Host,
             allow_elevated_host: false,
+            on_container_created: None,
         };
         let mut keep_run_dir = false;
         let report = run_and_capture_workload(
