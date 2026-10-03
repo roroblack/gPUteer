@@ -218,8 +218,8 @@ pub(crate) fn session_once(
 ///
 /// ```text
 /// 이 프로세스의 실행 목록에 있다         답하지 않는다(실행 중 처리는 다음 조각 — 감시 스레드가 멈춘 뒤 STOPPED)
-/// 원장 행이 없다 · CLOSED               NOT_RUNNING
-/// 원장 행이 ACTIVE · LOCAL_BLOCKED      답하지 않는다 — 재기동 뒤 살아 있는 컨테이너일 수 있다
+/// 원장 행이 없다 · CLOSED · STOP_PENDING · ACKED   NOT_RUNNING(뒤 둘은 증거로 부재를 확인했다)
+/// 원장 행이 ACTIVE · LOCAL_BLOCKED · OPEN   답하지 않는다 — 재기동 뒤 살아 있는 컨테이너일 수 있다
 /// 원장을 못 읽었다 · 원장이 꺼져 있다     답하지 않는다(우편함은 원장을 요구한다 — 기동 검사가 막는다)
 /// ```
 pub(crate) fn decide_when_idle(
@@ -231,7 +231,15 @@ pub(crate) fn decide_when_idle(
     }
     match crate::with_run_ledger(config, |ledger| ledger.row(&notice.attempt_id)) {
         Some(Ok(None)) => Some(pb::MailboxAction::NotRunning),
-        Some(Ok(Some(row))) if row.state == crate::run_ledger::RowState::Closed => {
+        // ★ 2026-10-03 09:48 (조각 5a) — STOP_PENDING · ACKED 는 증거 절차로 부재를 확인한 뒤에만 간다 — 돌지 않는다고 확인된 것이다. OPEN 은 아니다.
+        Some(Ok(Some(row)))
+            if matches!(
+                row.state,
+                crate::run_ledger::RowState::Closed
+                    | crate::run_ledger::RowState::StopPending
+                    | crate::run_ledger::RowState::Acked
+            ) =>
+        {
             Some(pb::MailboxAction::NotRunning)
         }
         Some(Ok(Some(row))) => {

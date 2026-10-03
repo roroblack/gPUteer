@@ -25,6 +25,24 @@
 
 ---
 
+## 2026-10-03 10:50 — 실행 알림 계획 조각 5a — 노드 원장 형식 2(불명 수명주기 · 알림 표 · ACK 대조 · 증거 · 재부착 칸)(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5a) · 계약 v18k §5 "노드 원장" · "해제" · "ACK 대조" · v18j 근거 칸
+- 스트림: Agent
+- 수행: `crates/agent/src/run_ledger.rs` — 형식 2. 상태 OPEN · STOP_PENDING · ACKED(새 작업 차단: ACTIVE · LOCAL_BLOCKED · OPEN · STOP_PENDING — ACKED 에서 풀림),
+  알림 표 `notices`(시도 · 번호 기본키 · 서명 포함 바이트 · notice_hash · 보냄 · ACK), 칸 다섯(연결 대상 · 런타임 대상 신원 · 마지막 서명 Lease · 끊김 시한 ·
+  재부착 사유 — NULL 허용). 형식 1 파일은 열 때 한 트랜잭션으로 올린다(실패하면 형식 1 그대로). 새 함수 — `open_with_run_unknown`(ACTIVE → OPEN + 알림) ·
+  `stop_pending_with_stop`(ACTIVE · OPEN → STOP_PENDING + 알림) · `record_ack`(시도 · 번호 · 종류 · 해시가 모두 같아야 · 최신 STOP 이고 STOP_PENDING 일 때만
+  ACKED · 옛 번호는 표시만 · 불명 ACK 는 풀지 않음) · `unsent_notices` · `mark_notice_sent` · `next_sequence` · `record_runtime_target`(3b — 다른 ID 를 덮지 않음) ·
+  `record_renewal`(v18j). 알림은 컨테이너 행에만(호스트 행의 불명 상태 · 행 없는 알림은 열 때 거부). `mailbox.rs` — STOP_PENDING · ACKED 도 "돌지 않음 확인" 으로
+  NOT_RUNNING. 파일 계층만 — 서명 · 보내기 · 증거 절차를 부르는 곳은 다음 조각(5b~5f)
+- 검증: 원장 시험 31(새 5 — 형식 1 올리기와 실패 시 그대로 · 불명 수명주기와 ACK 대조 · 자동 증거와 불명 ACK · 호스트 · 행 없는 알림 거부 · 3b · 갱신 근거).
+  기존 시험 둘의 "모르는 값" 예를 바꿨다(형식 2 · OPEN 은 이제 아는 값). 일부러 망가뜨려 확인 — STOP_PENDING 차단 · 옛 번호 판별을 각각 빼면 시험이 실패함을 보고
+  원복. Windows `cargo test --workspace -j 1` 1613 passed · 0 failed(ignored 4 · --no-fail-fast) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 05:12 — 실행 알림 계획 조각 4d — 알림 저장소와 정지 확인 처리 한 트랜잭션(격리 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 4(4d) · 계약 v18k §2 저장 · 순번 · 전이 표 · §3 STOP 처리
