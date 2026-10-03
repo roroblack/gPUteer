@@ -124,6 +124,8 @@ pub struct ReservedStageResult {
 #[derive(Debug, PartialEq, Eq)]
 pub enum StagingStoreError {
     InvalidInput(&'static str),
+    /// ★ 2026-10-03 12:26 (실행 알림 계획 조각 6b · 계약 §9 불변식) — 그 Job 에 재배치 차단 보류가 있다(실행 여부 불명 · D6). 새 시도를 만들지 않는다.
+    JobHeld(String),
     JobNotFound,
     JobNotQueued(JobState),
     OperationConflict,
@@ -157,6 +159,10 @@ impl std::fmt::Display for StagingStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidInput(field) => write!(f, "invalid staging input: {field}"),
+            Self::JobHeld(job_id) => write!(
+                f,
+                "JobHeld: Job {job_id} 에 재배치 차단 보류가 있다(실행 여부 불명) — 새 시도를 만들지 않는다"
+            ),
             Self::JobNotFound => write!(f, "job_id is not present in the control DB"),
             Self::JobNotQueued(state) => write!(f, "Job is not QUEUED: {state:?}"),
             Self::OperationConflict => write!(f, "staging operation key payload conflict"),
@@ -988,6 +994,11 @@ fn insert_attempt(
     connection: &Connection,
     attempt: &StoredAttempt,
 ) -> Result<(), StagingStoreError> {
+    // ★ 2026-10-03 12:26 (조각 6b · 계약 §9 "시도를 만드는 모든 경로의 마지막 관문") — 시도를 만드는 곳은 여기 하나다(QUEUED · PAUSED · REPLAN 의 직접 경로 모두).
+    //   같은 트랜잭션(BEGIN IMMEDIATE)에서 다시 읽으므로 알림 커밋과 직렬화된다 — 알림이 먼저 커밋되면 여기서 막힌다(§2 순서 A).
+    if crate::job_holds::job_is_held(connection, &attempt.job_id).map_err(StagingStoreError::Io)? {
+        return Err(StagingStoreError::JobHeld(attempt.job_id.clone()));
+    }
     connection
         .execute(
             "INSERT INTO coordinator_attempts(

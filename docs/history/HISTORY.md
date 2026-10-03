@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-03 12:34 — 실행 알림 계획 조각 6b — 재배치 차단 보류가 새 시도를 막는다(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 6(6b) · 계약 v18k §2 "새 시도를 만들지 않는다" · §9 guard · 불변식
+- 스트림: Coordinator · 규범
+- 수행: 시도를 만드는 유일한 지점(`staging_store::insert_attempt`)이 같은 트랜잭션에서 보류를 다시 보고 `JobHeld` 로 거부한다(마지막 관문). 후보 선택
+  (`list_schedulable`)이 보류된 Job 을 뺀다. 장애 이어받기는 시도가 RUN_UNKNOWN 이거나 보류가 있으면 되돌리지 않고 `FAILOVER_HELD` 사유를 남긴다. 운영자의
+  release-lost-node 는 보류된 Job 의 예약을 풀지 않는다. 보류 표가 없는 DB 는 보류도 없다(읽기 관문은 표를 만들지 않는다). 규범 §2 다섯 guard 에
+  "재배치 차단 보류가 하나도 없다" 와 불변식 문단
+- 검증: 새 시험 3(후보 제외 · 마지막 관문 거부와 흔적 없음 · 보류가 풀리면 다시 됨 / failover 가 불명 시도를 되돌리지 않음 · 예약 · Lease 그대로 / release-lost-node
+  거부). 일부러 망가뜨려 확인 — 마지막 관문 · failover 검사를 각각 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-coordinator -p gputeer-cli -p gputeer-checkpoint -j 1 --no-fail-fast` 751 passed · 0 failed · ignored 3(상태 표 대조 포함)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 12:26 — 실행 알림 계획 조각 6a — 실행 여부 불명 처리와 재배치 차단 보류 집합(격리 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 6(6a) · 계약 v18k §2 전이 표 · §6 보류 집합 · §7 늦은 도착

@@ -516,6 +516,14 @@ impl CoordinatorJobStore {
             .into_iter()
             .map(RawJobRow::into_stored)
             .collect::<Result<Vec<_>, _>>()?;
+        // ★ 2026-10-03 12:26 (조각 6b · 계약 §9 guard) — 재배치 차단 보류가 있는 Job 은 고르지 않는다. 마지막 관문은 staging 트랜잭션이 다시 본다.
+        let mut held = Vec::new();
+        for job in &jobs {
+            if crate::job_holds::job_is_held(&self.connection, &job.job_id).map_err(JobStoreError::Io)? {
+                held.push(job.job_id.clone());
+            }
+        }
+        jobs.retain(|job| !held.contains(&job.job_id));
         jobs.sort_by(|a, b| {
             (a.queued_at_unix_ms, &a.job_id).cmp(&(b.queued_at_unix_ms, &b.job_id))
         });

@@ -170,6 +170,17 @@ pub fn failover_lost_attempts(
         ) {
             continue;
         }
+        // ★ 2026-10-03 12:26 (조각 6b · 계약 §2 "새 시도를 만들지 않는다" 순서 A · §9 NODE_LOST · STAGING_NODE_LOST guard) — 잠금 뒤 다시 읽은 시도가
+        //   RUN_UNKNOWN 이거나 Job 에 재배치 차단 보류가 있으면 되돌리지 않는다(사유를 남긴다). 아무것도 쓰지 않았으니 트랜잭션은 되돌아간다.
+        if attempt.state == AttemptState::RunUnknown
+            || crate::job_holds::job_is_held(&transaction, &job.job_id)?
+        {
+            notes.push(format!(
+                "FAILOVER_HELD job_id={} attempt_id={attempt_id} attempt_state={:?} — 실행 여부 불명 보류가 있어 되돌리지 않는다(STOP_CONFIRMED · 운영자 해제가 푼다)",
+                job.job_id, attempt.state
+            ));
+            continue;
+        }
         let lease = crate::lease_store::fetch_lease(&transaction, &attempt.lease_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("시도 {attempt_id} 의 Lease {} 가 없다", attempt.lease_id))?;
@@ -420,6 +431,14 @@ pub fn release_lost_node_by_operator(
     let job = crate::job_store::fetch_job(&transaction, &reservation.job_id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("RELEASE_REFUSED: 예약의 Job {} 이 없다", reservation.job_id))?;
+    // ★ 2026-10-03 12:26 (조각 6b · 계약 §2 "새 시도를 만들지 않는다" release-lost-node 줄) — 재배치 차단 보류가 있는 Job 의 예약은 풀지 않는다.
+    //   NOTICE 는 그 시도의 STOP_CONFIRMED 가, UNREPORTED 는 release-held-job(조각 7)이 푼다.
+    if crate::job_holds::job_is_held(&transaction, &job.job_id)? {
+        return Err(format!(
+            "RELEASE_REFUSED: Job {} 에 실행 여부 불명 보류가 있다 — 이 명령으로 풀지 않는다(정지 확인 알림 · release-held-job 이 푼다)",
+            job.job_id
+        ));
+    }
     let latest: Option<String> = transaction
         .query_row(
             "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1

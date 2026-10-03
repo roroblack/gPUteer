@@ -223,7 +223,7 @@ SUBMITTED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
 PLANNING | QUEUED | PLAN_READY | 실행 가능한 plan 1개 이상 | PlacementRationale 기록 | COMMITTED
 PLANNING | FAILED | NO_FEASIBLE_PLAN | 모든 후보가 Hard Filter 탈락 | 탈락 사유 목록 보고 | COMMITTED
 PLANNING | CANCELLED | USER_CANCELLED | - | - | COMMITTED
-QUEUED | STAGING | RESOURCE_AVAILABLE | 선택 노드 lease 발급 성공 | fence_epoch 증가 | COMMITTED
+QUEUED | STAGING | RESOURCE_AVAILABLE | 선택 노드 lease 발급 성공 그리고 Job 에 재배치 차단 보류가 하나도 없다 | fence_epoch 증가 | COMMITTED
 QUEUED | PLANNING | REPLAN_REQUIRED | 후보 노드 상태 변화 | - | DURABLE
 QUEUED | FAILED | DEADLINE_PASSED | now > deadline | - | COMMITTED
 QUEUED | FAILED | QUEUE_TIMEOUT | 대기 시간 > max_queue_minutes | - | COMMITTED
@@ -231,11 +231,11 @@ QUEUED | FAILED | PERMANENTLY_INFEASIBLE | Hard Filter 만족 노드가 팀에�
 QUEUED | CANCELLED | USER_CANCELLED | - | lease 미발급이므로 정리 불필요 | COMMITTED
 STAGING | RUNNING | STAGING_COMPLETE | 환경 준비 + 데이터 스테이징 완료 | - | DURABLE
 STAGING | FAILED | STAGING_FAILED | 재시도 3회 초과 | 부분 다운로드 정리 | COMMITTED
-STAGING | QUEUED | STAGING_NODE_LOST | 노드가 STAGING 중 이탈 | lease 회수, 재배치 | COMMITTED
+STAGING | QUEUED | STAGING_NODE_LOST | 노드가 STAGING 중 이탈 그리고 Job 에 재배치 차단 보류가 하나도 없다 | lease 회수, 재배치 | COMMITTED
 STAGING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
 STAGING | CANCELLED | USER_CANCELLED | - | workspace 정리, lease 반납 | COMMITTED
 RUNNING | COMPLETED | ATTEMPT_COMPLETED | canonical attempt 확정 | 최종 artifact COMMITTED 확인 | COMMITTED
-RUNNING | INTERRUPTED | NODE_LOST | lease 만료 + grace 경과 | - | COMMITTED
+RUNNING | INTERRUPTED | NODE_LOST | lease 만료 + grace 경과 그리고 Job 에 재배치 차단 보류가 하나도 없다 | - | COMMITTED
 RUNNING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
 RUNNING | FAILED | UNRECOVERABLE_ERROR | 재시도 정책 소진 | 사유와 마지막 step 보고 | COMMITTED
 RUNNING | PAUSED | PARTITION_PAUSE | on_partition == PAUSE AND lease 만료 | checkpoint 후 정지 | DURABLE
@@ -247,10 +247,10 @@ INTERRUPTED | REPLANNING | FAILOVER_STARTED | 마지막 COMMITTED checkpoint 존
 INTERRUPTED | FAILED | NO_COMMITTED_CHECKPOINT | 복구 가능한 checkpoint 없음 | 손실 범위 보고 | COMMITTED
 INTERRUPTED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
 REPLANNING | QUEUED | REPLAN_READY | 새 후보 확보 | - | COMMITTED
-REPLANNING | STAGING | REPLAN_DIRECT | 후보 노드가 이미 checkpoint 보유 | 데이터 스테이징 생략 | COMMITTED
+REPLANNING | STAGING | REPLAN_DIRECT | 후보 노드가 이미 checkpoint 보유 그리고 Job 에 재배치 차단 보류가 하나도 없다 | 데이터 스테이징 생략 | COMMITTED
 REPLANNING | FAILED | NO_FEASIBLE_PLAN | 재배치 가능한 노드 없음 | - | COMMITTED
 REPLANNING | CANCELLED | USER_CANCELLED | - | - | COMMITTED
-PAUSED | RUNNING | RESUMED | 새 lease 발급 | fence_epoch 증가 | COMMITTED
+PAUSED | RUNNING | RESUMED | 새 lease 발급 그리고 Job 에 재배치 차단 보류가 하나도 없다 | fence_epoch 증가 | COMMITTED
 PAUSED | FAILED | PAUSE_TIMEOUT | 일시정지 상한 초과 | - | COMMITTED
 PAUSED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
 RECONCILING | COMPLETED | CANONICAL_CHOSEN | 유효 attempt 1개 이상 | CanonicalDecision 기록 | COMMITTED
@@ -258,6 +258,10 @@ RECONCILING | FAILED | ALL_ATTEMPTS_INVALID | 모든 attempt가 유효성 필터
 RECONCILING | RECONCILING | TIE_UNRESOLVED | 순위 동점 | canonical 변경 없이 사용자 확인 요청 | COMMITTED
 COMPLETED | ARCHIVED | RETENTION_EXPIRED | artifact 보존 기간 경과 | CAS GC 대상 등록 | DURABLE
 ```
+
+★ 2026-10-03 12:26 (실행 알림 계약 v18k §9 · 계획 조각 6b) — "재배치 차단 보류"(NOTICE_RUN_UNKNOWN · UNREPORTED_SIDE_EFFECT_RISK — `coordinator_job_holds`)가 있는 Job 은
+새 시도의 대상이 아니다. 불변식: **시도를 만드는 모든 경로의 마지막 관문**(Attempt `(none) -> CREATED` — 코드로는 공통 staging 저장소의 `insert_attempt`)에서
+같은 트랜잭션으로 다시 확인한다 — 위 guard 들은 그 불변식의 규범 표기다. 장애 이어받기(NODE_LOST · STAGING_NODE_LOST)는 시도가 RUN_UNKNOWN 이어도 되돌리지 않는다.
 
 ### Quorum 상실 중의 Job 제출
 

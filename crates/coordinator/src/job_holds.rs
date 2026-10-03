@@ -153,8 +153,20 @@ pub(crate) fn release_holds_for_stop(
     Ok(released)
 }
 
-/// 그 Job 에 재배치 차단 보류가 하나라도 있는가(종류 · 시도 무관).
+/// 그 Job 에 재배치 차단 보류가 하나라도 있는가(종류 · 시도 무관). 표가 아직 없으면(알림을 받은 적 없는 DB) 보류도 없다 —
+/// 관문은 읽기만 하고 표를 만들지 않는다.
 pub fn job_is_held(connection: &Connection, job_id: &str) -> Result<bool, String> {
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_holds'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("JOB_HOLDS: 표를 확인하지 못했다: {e}"))?;
+    if table.is_none() {
+        return Ok(false);
+    }
     let present: Option<i64> = connection
         .query_row(
             "SELECT 1 FROM coordinator_job_holds WHERE job_id = ?1 LIMIT 1",

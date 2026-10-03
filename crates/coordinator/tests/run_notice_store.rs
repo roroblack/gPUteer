@@ -639,3 +639,170 @@ fn a_same_attempt_unreported_hold_is_replaced_and_other_attempts_holds_stay() {
         "다른 시도의 보류까지 풀었다"
     );
 }
+
+// ─── ★ 조각 6b — 보류가 새 시도를 막는다(계약 §2 "새 시도를 만들지 않는다" · §9) ─────────
+
+/// 두 번째 Job(job-2)을 큐에 올린다(node-2 등록 · 인벤토리 · 제출 · 계획 · 큐). 아직 시도는 없다.
+fn queue_second_job(path: &Path) {
+    let mut inventory = CoordinatorInventoryStore::open(path).unwrap();
+    inventory
+        .register_agent(&AgentRegistry {
+            node_id: "node-2".into(),
+            device_id: "device-2".into(),
+            owner_member_id: "owner-2".into(),
+            verifying_key: vec![2; 32],
+            node_state: None,
+            risk_state: None,
+            security_tier: None,
+            isolation_class: None,
+            key_protection: None,
+        })
+        .unwrap();
+    inventory
+        .update_inventory(&AgentInventory {
+            node_id: "node-2".into(),
+            inventory_revision: 3,
+            observed_at_unix_ms: 95,
+            gpus: Some(vec![GpuInventory {
+                gpu_id: "gpu-9".into(),
+                model: Some("model-1".into()),
+                healthy: Some(true),
+                available_vram_bytes: Some(16),
+            }]),
+            available_cpu_cores: Some(8),
+            available_ram_bytes: Some(64),
+            available_workspace_bytes: Some(64),
+            allowed_workload_classes: None,
+            third_party_workloads_opt_in: None,
+        })
+        .unwrap();
+    drop(inventory);
+    let mut jobs = CoordinatorJobStore::open(path).unwrap();
+    jobs.submit_accepted(
+        &AcceptedJobSubmission {
+            idempotency_key: [5; 16],
+            job_id: "job-2".into(),
+            submitter_device_id: "submitter-1".into(),
+            manifest_hash: [5; 32],
+            deadline_unix_ms: Some(20_000),
+            max_queue_duration_ms: Some(5_000),
+        },
+        1_000,
+    )
+    .unwrap();
+    jobs.start_planning("job-2", 1_010).unwrap();
+    jobs.enqueue("job-2", "plan-2", 1_020).unwrap();
+}
+
+fn stage_second(path: &Path) -> Result<(), String> {
+    CoordinatorStagingStore::open(path)
+        .unwrap()
+        .reserve_node_and_stage_queued_with_lease(
+            &StageQueuedRequest {
+                operation_key: [6; 16],
+                job_id: "job-2".into(),
+                attempt_id: "attempt-2".into(),
+                lease_id: "lease-2".into(),
+                node_id: "node-2".into(),
+                selected_gpu_ids: vec!["gpu-9".into()],
+                issuing_coordinator_id: "coordinator-1".into(),
+                coordinator_term: 1,
+                issued_at_unix_ms: 1_100,
+                renew_after_unix_ms: 1_500,
+                expires_at_unix_ms: 1_900,
+                max_total_duration_seconds: 1,
+            },
+            3,
+        )
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"))
+}
+
+fn hold_job(path: &Path, job_id: &str, attempt_id: &str) {
+    CoordinatorRunNoticeStore::open(path).unwrap();
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .execute(
+            "INSERT INTO coordinator_job_holds VALUES (?1, ?2, 'NOTICE_RUN_UNKNOWN', NULL, ?3)",
+            rusqlite::params![job_id, attempt_id, 1u64.to_be_bytes().to_vec()],
+        )
+        .unwrap();
+}
+
+/// 보류된 Job 은 배정 후보에서 빠지고, 시도를 만드는 마지막 관문(staging 트랜잭션)이 막는다(아무것도 남기지 않음). 보류가 풀리면 다시 된다.
+#[test]
+fn a_held_job_is_not_schedulable_and_the_last_gate_refuses_a_new_attempt() {
+    let fixture = prepare_fixture();
+    queue_second_job(&fixture.path);
+    hold_job(&fixture.path, "job-2", "attempt-old");
+    let schedulable: Vec<String> = CoordinatorJobStore::open(&fixture.path)
+        .unwrap()
+        .list_schedulable()
+        .unwrap()
+        .into_iter()
+        .map(|job| job.job_id)
+        .collect();
+    assert!(!schedulable.contains(&"job-2".to_string()), "보류된 Job 을 후보로 골랐다: {schedulable:?}");
+    let refused = stage_second(&fixture.path).unwrap_err();
+    assert!(refused.contains("JobHeld"), "{refused}");
+    assert!(
+        CoordinatorStagingStore::open(&fixture.path).unwrap().get_attempt("attempt-2").unwrap().is_none(),
+        "막혔는데 시도가 남았다"
+    );
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute("DELETE FROM coordinator_job_holds WHERE job_id = 'job-2'", [])
+        .unwrap();
+    assert!(CoordinatorJobStore::open(&fixture.path)
+        .unwrap()
+        .list_schedulable()
+        .unwrap()
+        .iter()
+        .any(|job| job.job_id == "job-2"));
+    stage_second(&fixture.path).expect("보류가 풀리면 시도를 만든다");
+}
+
+/// 장애 이어받기 — 시도가 RUN_UNKNOWN(보류)인 Job 은 Lease 가 끝나도 되돌리지 않고 사유를 남긴다. 예약 · Lease 도 그대로다.
+#[test]
+fn failover_never_requeues_a_job_whose_attempt_is_run_unknown() {
+    let fixture = prepare_fixture();
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    let mut notes = Vec::new();
+    let outcomes = gputeer_coordinator::failover::failover_lost_attempts(
+        &fixture.path,
+        &gputeer_coordinator::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: vec![],
+        },
+        &gputeer_coordinator::supersede_notice_store::NoticeSigner {
+            coordinator_id: "coordinator-1".into(),
+            key: SigningKey::from_bytes(&[9; 32]),
+        },
+        1_000_000,
+        &mut notes,
+    )
+    .unwrap();
+    assert!(outcomes.is_empty(), "불명인 시도의 Job 을 되돌렸다: {outcomes:?}");
+    assert!(notes.iter().any(|n| n.starts_with("FAILOVER_HELD")), "{notes:?}");
+    assert_eq!(job_state(&fixture.path), JobState::Staging);
+    assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
+}
+
+/// release-lost-node 는 보류된 Job 의 예약을 풀지 않는다(정지 확인 · release-held-job 이 푼다).
+#[test]
+fn release_lost_node_refuses_a_held_job() {
+    let fixture = prepare_fixture();
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    // 판정(시도 대체 · Job 이 넘어감)은 지나게 한다 — Job 을 큐로
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute("UPDATE coordinator_jobs SET state = 'QUEUED', staging_at_unix_ms = NULL WHERE job_id = ?1", [JOB_ID])
+        .unwrap();
+    let refused = match gputeer_coordinator::failover::release_lost_node_by_operator(&fixture.path, NODE_ID, "운영자: 확인했다", NOW) {
+        Ok(_) => panic!("보류된 Job 의 예약을 풀었다"),
+        Err(refused) => refused,
+    };
+    assert!(refused.contains("실행 여부 불명 보류"), "{refused}");
+    assert!(reservation_exists(&fixture.path));
+}
