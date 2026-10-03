@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-10-03 13:27 — 실행 알림 계획 조각 7b — 알리지 못한 채 끊긴 부작용 작업은 자동으로 이어가지 않는다(D6 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 7(7b) · 계약 v18k §9 UNREPORTED_RISK_HELD 두 행 · D6 · b9 ①
+- 스트림: Coordinator
+- 수행: 장애 이어받기가 Lease 만료 + grace 뒤, 선언이 **정확히 PURE** 가 아니고 그 시도에 운영자 override 가 없으면 UNREPORTED 보류만 걸고
+  `FAILOVER_UNREPORTED_HELD` 를 남긴다 — NODE_LOST · STAGING_NODE_LOST 를 실행하지 않는다(Job · Lease · 예약 · 대체 통지 없음). 두 번째 호출은 보류 검사가
+  먼저 건너뛴다(행을 더 만들지 않는다). override 표 `coordinator_attempt_hold_overrides`(release-held-job 이 쓴다 — 7c). 장애 이어받기 단위 시험 픽스처에
+  PURE 선언을 명시했다(그 시험들은 등급을 보기 전에 쓰였다 — 단언은 그대로)
+  ★ **동작이 바뀐다**: 선언이 PURE 가 아닌 작업은 노드가 알리지 못하고 끊기면 사람이 풀 때까지 멈춘다(계약 D6 — 사용자 승인). 선언이지 강제가 아니라
+  PURE 로 잘못 선언한 작업의 두 벌은 막지 못한다(CLAUDE.md §0.4). 규범 §2 에 `UNREPORTED_RISK_HELD` 자기 전이 두 행 · 구현 쪽 전이 목록(`job_state.rs`)에도 같이
+- 검증: 새 시험 3(선언 없음 · IDEMPOTENT · SIDE_EFFECTING 각각 보류 한 번 · 자원 그대로 · 후보 제외 / PURE 대조군은 이어받음 / override 있으면 이어받음).
+  일부러 망가뜨려 확인 — D6 분기를 빼면 시험이 실패함을 보고 원복. Windows `cargo test --workspace -j 1 --no-fail-fast` 1648 passed · 0 failed · ignored 4 · 규범 두 행을 더한 뒤 `-p gputeer-protocol -p gputeer-coordinator -p gputeer-checkpoint` 774 passed · 0 failed(상태 표 대조 포함)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 13:11 — 실행 알림 계획 조각 7a — 서명 검증된 부작용 선언의 투영(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 7(7a) · 계약 v18k §6 (1) · D6 · 이관 b12 ⑤

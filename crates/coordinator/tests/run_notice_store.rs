@@ -966,3 +966,86 @@ fn a_report_for_a_run_unknown_attempt_is_kept_as_evidence_only() {
         assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
     }
 }
+
+// ─── ★ 조각 7b — D6: 알리지 못한 채 끊긴 부작용 작업은 자동으로 이어가지 않는다(계약 v18k §9 UNREPORTED_RISK_HELD · b9 ①) ─────────
+
+fn failover_now(path: &Path) -> (Vec<gputeer_coordinator::failover::FailoverOutcome>, Vec<String>) {
+    let mut notes = Vec::new();
+    let outcomes = gputeer_coordinator::failover::failover_lost_attempts(
+        path,
+        &gputeer_coordinator::failover::FailoverPolicy {
+            grace_ms: 0,
+            shared_checkpoint_root: None,
+            producer_keys: vec![],
+        },
+        &gputeer_coordinator::supersede_notice_store::NoticeSigner {
+            coordinator_id: "coordinator-1".into(),
+            key: SigningKey::from_bytes(&[9; 32]),
+        },
+        1_000_000,
+        &mut notes,
+    )
+    .unwrap();
+    (outcomes, notes)
+}
+
+fn declare(path: &Path, class: &str) {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .execute(
+            "INSERT INTO coordinator_job_side_effects(job_id, side_effect_class, source) VALUES (?1, ?2, 'SUBMISSION')",
+            rusqlite::params![JOB_ID, class],
+        )
+        .unwrap();
+}
+
+/// 선언 없음 · IDEMPOTENT · SIDE_EFFECTING — UNREPORTED 보류만 건다(Job · Lease · 예약 그대로 · 대체 통지 없음). 두 번째 호출은 행을 더 만들지 않는다.
+#[test]
+fn an_unreported_loss_of_a_side_effecting_job_is_held_once() {
+    for class in [None, Some("IDEMPOTENT"), Some("SIDE_EFFECTING")] {
+        let fixture = prepare_fixture();
+        if let Some(class) = class {
+            declare(&fixture.path, class);
+        }
+        let (outcomes, notes) = failover_now(&fixture.path);
+        assert!(outcomes.is_empty(), "{class:?} 작업을 자동으로 되돌렸다: {outcomes:?}");
+        assert!(notes.iter().any(|n| n.starts_with("FAILOVER_UNREPORTED_HELD")), "{class:?} {notes:?}");
+        assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "UNREPORTED_SIDE_EFFECT_RISK".to_string())]);
+        assert_eq!(job_state(&fixture.path), JobState::Staging);
+        assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
+        let (again, notes) = failover_now(&fixture.path);
+        assert!(again.is_empty());
+        assert!(notes.iter().any(|n| n.starts_with("FAILOVER_HELD")), "{notes:?}");
+        assert_eq!(holds(&fixture.path).len(), 1, "두 번째 호출이 보류를 더 걸었다");
+        // 보류는 새 시도도 막는다(조각 6b 관문)
+        assert!(!CoordinatorJobStore::open(&fixture.path).unwrap().list_schedulable().unwrap().iter().any(|j| j.job_id == JOB_ID));
+    }
+}
+
+/// 대조군 — 선언이 정확히 PURE 면 지금처럼 이어받는다(보류 없음).
+#[test]
+fn a_pure_job_is_still_failed_over_automatically() {
+    let fixture = prepare_fixture();
+    declare(&fixture.path, "PURE");
+    let (outcomes, _) = failover_now(&fixture.path);
+    assert_eq!(outcomes.len(), 1, "PURE 작업을 이어받지 않았다");
+    assert!(holds(&fixture.path).is_empty());
+    assert!(lease_revoked(&fixture.path));
+}
+
+/// 운영자 override 가 있는 시도는 같은 시도로 다시 보류하지 않고 이어받는다(b9 ① — release-held-job 이 쓰는 표).
+#[test]
+fn an_overridden_attempt_is_failed_over_instead_of_held_again() {
+    let fixture = prepare_fixture();
+    CoordinatorRunNoticeStore::open(&fixture.path).unwrap();
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute(
+            "INSERT INTO coordinator_attempt_hold_overrides VALUES (?1, ?2, '운영자: 그 PC 를 껐다', ?3)",
+            rusqlite::params![ATTEMPT_ID, JOB_ID, 5u64.to_be_bytes().to_vec()],
+        )
+        .unwrap();
+    let (outcomes, _) = failover_now(&fixture.path);
+    assert_eq!(outcomes.len(), 1, "override 가 있는데 이어받지 않았다");
+    assert!(holds(&fixture.path).is_empty());
+}

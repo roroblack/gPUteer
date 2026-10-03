@@ -1064,7 +1064,15 @@ mod tests {
         .unwrap();
         jobs.start_planning(JOB_ID, 110).unwrap();
         jobs.enqueue(JOB_ID, "plan-1", 120).unwrap();
+        // ★ 2026-10-03 13:11 (조각 7b) — 이 픽스처의 장애 이어받기 시험들은 PURE 작업을 전제로 한다(D6 전에는 등급을 보지 않았다). 선언을 명시한다.
         drop(jobs);
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO coordinator_job_side_effects(job_id, side_effect_class, source) VALUES (?1, 'PURE', 'SUBMISSION')",
+                rusqlite::params![JOB_ID],
+            )
+            .unwrap();
 
         let request = StageQueuedRequest {
             operation_key: [2; 16],

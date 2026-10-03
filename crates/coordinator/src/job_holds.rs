@@ -26,6 +26,14 @@ pub(crate) fn initialize_schema(connection: &Connection) -> Result<(), String> {
                     installed_at_unix_ms BLOB NOT NULL CHECK(length(installed_at_unix_ms) = 8),
                     PRIMARY KEY(job_id, attempt_id, hold_kind)
                 );
+                -- ★ 2026-10-03 13:11 (계약 v18k §6 "풀면 그 시도에 override" · b9 ① · 조각 7b) — release-held-job 이 푼 시도. failover 가 같은 시도로 다시
+                --   UNREPORTED 보류를 걸지 않고 이어받기로 간다. 되돌리지 않는 기록이다.
+                CREATE TABLE IF NOT EXISTS coordinator_attempt_hold_overrides (
+                    attempt_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    operator_statement TEXT NOT NULL,
+                    at_unix_ms BLOB NOT NULL CHECK(length(at_unix_ms) = 8)
+                );
                 CREATE TABLE IF NOT EXISTS coordinator_job_hold_events (
                     job_id TEXT NOT NULL,
                     attempt_id TEXT NOT NULL,
@@ -151,6 +159,52 @@ pub(crate) fn release_holds_for_stop(
         }
     }
     Ok(released)
+}
+
+/// ★ 2026-10-03 13:11 (계약 v18k §9 UNREPORTED_RISK_HELD · D6 · 조각 7b) — 알림 없이 Lease 만 끝난(부작용 있다고 선언된) 시도에 UNREPORTED 보류를 건다.
+/// 이미 있으면 그대로(멱등 — 두 번째 failover 가 행을 더 만들지 않는다). 새로 걸었으면 true.
+pub(crate) fn install_unreported_hold(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+    detail: &str,
+    now_unix_ms: u64,
+) -> Result<bool, String> {
+    let inserted = connection
+        .execute(
+            "INSERT OR IGNORE INTO coordinator_job_holds(job_id, attempt_id, hold_kind, evidence_hash, installed_at_unix_ms)
+             VALUES (?1, ?2, ?3, NULL, ?4)",
+            params![job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, now_unix_ms.to_be_bytes().to_vec()],
+        )
+        .map_err(|e| format!("JOB_HOLDS: UNREPORTED 보류를 걸지 못했다: {e}"))?;
+    if inserted == 1 {
+        event(connection, job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, "INSTALLED", None, detail, now_unix_ms)?;
+    }
+    Ok(inserted == 1)
+}
+
+/// ★ 2026-10-03 13:11 (조각 7b) — 그 시도에 운영자 override 가 있는가(release-held-job 이 푼 시도). 표가 없으면 없다(읽기만).
+pub fn attempt_has_override(connection: &Connection, attempt_id: &str) -> Result<bool, String> {
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_attempt_hold_overrides'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("JOB_HOLDS: override 표를 확인하지 못했다: {e}"))?;
+    if table.is_none() {
+        return Ok(false);
+    }
+    let present: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM coordinator_attempt_hold_overrides WHERE attempt_id = ?1",
+            params![attempt_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("JOB_HOLDS: override 를 읽지 못했다: {e}"))?;
+    Ok(present.is_some())
 }
 
 /// 그 Job 에 재배치 차단 보류가 하나라도 있는가(종류 · 시도 무관). 표가 아직 없으면(알림을 받은 적 없는 DB) 보류도 없다 —

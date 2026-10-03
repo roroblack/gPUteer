@@ -233,10 +233,12 @@ STAGING | RUNNING | STAGING_COMPLETE | 환경 준비 + 데이터 스테이징 �
 STAGING | FAILED | STAGING_FAILED | 재시도 3회 초과 | 부분 다운로드 정리 | COMMITTED
 STAGING | QUEUED | STAGING_NODE_LOST | 노드가 STAGING 중 이탈 그리고 Job 에 재배치 차단 보류가 하나도 없다 | lease 회수, 재배치 | COMMITTED
 STAGING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
+STAGING | STAGING | UNREPORTED_RISK_HELD | 노드가 STAGING 중 이탈 그리고 서명 검증된 부작용 선언이 정확히 PURE 가 아니다(IDEMPOTENT · SIDE_EFFECTING · 누락 · 모르는 값 · 옛 DB) 그리고 그 시도에 운영자 override 가 없다 그리고 같은 시도의 UNREPORTED 보류 행이 아직 없다 | UNREPORTED 보류 설치 · 이 호출에서 STAGING_NODE_LOST 는 실행하지 않는다 | COMMITTED
 STAGING | CANCELLED | USER_CANCELLED | - | workspace 정리, lease 반납 — 단 그 Job 의 최신 시도가 RUN_UNKNOWN 이거나 재배치 차단 보류가 하나라도 있으면 lease 반납 · 예약 해제 · 보류 제거 · workspace 정리를 하지 않는다(NOTICE 는 STOP_CONFIRMED 가 · UNREPORTED 는 운영자가 푼다) | COMMITTED
 RUNNING | COMPLETED | ATTEMPT_COMPLETED | canonical attempt 확정 | 최종 artifact COMMITTED 확인 | COMMITTED
 RUNNING | INTERRUPTED | NODE_LOST | lease 만료 + grace 경과 그리고 Job 에 재배치 차단 보류가 하나도 없다 | - | COMMITTED
 RUNNING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
+RUNNING | RUNNING | UNREPORTED_RISK_HELD | lease 만료 + grace 경과 그리고 서명 검증된 부작용 선언이 정확히 PURE 가 아니다 그리고 그 시도에 운영자 override 가 없다 그리고 같은 시도의 UNREPORTED 보류 행이 아직 없다 | UNREPORTED 보류 설치 · 이 호출에서 NODE_LOST 는 실행하지 않는다 | COMMITTED
 RUNNING | FAILED | UNRECOVERABLE_ERROR | 재시도 정책 소진 | 사유와 마지막 step 보고 | COMMITTED
 RUNNING | PAUSED | PARTITION_PAUSE | on_partition == PAUSE AND lease 만료 | checkpoint 후 정지 | DURABLE
 RUNNING | PAUSED | OWNER_PREEMPT | 노드 소유자가 일시정지 요청 | checkpoint 후 정지 | DURABLE
@@ -265,6 +267,10 @@ COMPLETED | ARCHIVED | RETENTION_EXPIRED | artifact 보존 기간 경과 | CAS G
 ★ 2026-10-03 12:49 (조각 6d) — STAGING · RUNNING -> CANCELLED(USER_CANCELLED)의 조건부 effect 는 **규범만** 바꿨다. Coordinator 에 Job 취소 경로가 아직 없다
 (`crates/coordinator/src/*.rs` · `crates/cli/src/main.rs` 에서 `USER_CANCELLED` · `JobState::Cancelled` 를 찾았고 안 나왔다 — 다른 이름의 취소 경로는 이 검색이 놓친다).
 취소를 구현할 때 이 조건을 같은 트랜잭션에서 본다.
+★ 2026-10-03 13:23 (실행 알림 계약 v18k §9 D6 · 계획 조각 7b · 7c) — `UNREPORTED_RISK_HELD` 두 행(자기 전이 — 보류 설치는 guard 가 아니라 effect 다 · b4 ③)과
+`release-held-job`(UNREPORTED 보류만 · 한 트랜잭션에서 보류 제거 · 그 시도에 override · 최종 Job 이면 Lease 폐기 · 예약 해제)을 코드로 강제한다
+(`failover.rs`). override 가 있으면 위 두 행의 guard 가 거짓이라 같은 장애 이어받기가 기존 행(NODE_LOST · STAGING_NODE_LOST)으로 간다(b9 ①).
+★ 선언이지 행동의 강제가 아니다 — PURE 로 잘못 선언한 작업의 두 벌은 막지 못한다(CLAUDE.md §0.4). 보류는 시간으로 풀지 않는다.
 
 ### Quorum 상실 중의 Job 제출
 

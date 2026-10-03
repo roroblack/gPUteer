@@ -128,6 +128,8 @@ pub fn failover_lost_attempts(
     connection
         .busy_timeout(std::time::Duration::from_secs(1))
         .map_err(|e| e.to_string())?;
+    // ★ 2026-10-03 13:11 (조각 7b) — D6 이 UNREPORTED 보류를 쓰므로 보류 표를 준비한다.
+    crate::job_holds::initialize_schema(&connection)?;
 
     let candidates =
         crate::job_store::list_in_run_states(&connection).map_err(|e| e.to_string())?;
@@ -196,6 +198,31 @@ pub fn failover_lost_attempts(
         if lost_node_id.is_empty() {
             notes.push(format!(
                 "FAILOVER_SKIPPED_NO_NODE job_id={} attempt_id={attempt_id} — 시도에 노드가 없어 통지를 보낼 곳이 없다. 폐기하지 않았다(저장소 손상 의심)",
+                job.job_id
+            ));
+            continue;
+        }
+        // ★ 2026-10-03 13:11 (실행 알림 계약 v18k §9 UNREPORTED_RISK_HELD · D6 · 계획 조각 7b) — 알림 없이 Lease 만 끝났다. 서명이 검증된 선언이 **정확히 PURE** 가
+        //   아니면(IDEMPOTENT · SIDE_EFFECTING · 누락 · 모르는 값 · 옛 DB) 자동으로 이어가지 않고 UNREPORTED 보류를 건다 — 이 호출에서 NODE_LOST ·
+        //   STAGING_NODE_LOST 는 실행하지 않는다(Lease · 예약 · Job 그대로). 그 시도에 운영자 override(release-held-job 이 푼 시도)가 있으면 기존대로
+        //   이어받는다(b9 ①). 같은 시도의 보류 행이 이미 있으면 위 보류 검사가 먼저 건너뛴다(두 번째 호출이 행을 더 만들지 않는다).
+        //   ★ 선언이지 행동의 강제가 아니다 — PURE 로 잘못 선언한 작업의 두 벌은 막지 못한다(CLAUDE.md §0.4 · 계약 b11 ④). 보류는 시간으로 풀지 않는다.
+        if !crate::job_store::side_effect_is_pure(&transaction, &job.job_id)?
+            && !crate::job_holds::attempt_has_override(&transaction, &attempt_id)?
+        {
+            let class = crate::job_store::side_effect_class_of(&transaction, &job.job_id)?
+                .unwrap_or_else(|| "선언 없음(SIDE_EFFECTING 취급)".to_string());
+            crate::job_holds::install_unreported_hold(
+                &transaction,
+                &job.job_id,
+                &attempt_id,
+                &format!("알림 없이 Lease 만료 + grace 경과 · 부작용 등급 {class}"),
+                now_unix_ms,
+            )?;
+            transaction.commit().map_err(|e| e.to_string())?;
+            notes.push(format!(
+                "FAILOVER_UNREPORTED_HELD job_id={} attempt_id={attempt_id} node_id={lost_node_id} side_effect_class={class} — 노드가 알리지 못한 채 끊겼다. \
+                 부작용이 있다고 선언된 작업이라 자동으로 이어가지 않는다(사람이 그 PC 를 확인하고 release-held-job 으로 푼다)",
                 job.job_id
             ));
             continue;
