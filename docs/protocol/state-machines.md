@@ -233,7 +233,7 @@ STAGING | RUNNING | STAGING_COMPLETE | 환경 준비 + 데이터 스테이징 �
 STAGING | FAILED | STAGING_FAILED | 재시도 3회 초과 | 부분 다운로드 정리 | COMMITTED
 STAGING | QUEUED | STAGING_NODE_LOST | 노드가 STAGING 중 이탈 그리고 Job 에 재배치 차단 보류가 하나도 없다 | lease 회수, 재배치 | COMMITTED
 STAGING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
-STAGING | CANCELLED | USER_CANCELLED | - | workspace 정리, lease 반납 | COMMITTED
+STAGING | CANCELLED | USER_CANCELLED | - | workspace 정리, lease 반납 — 단 그 Job 의 최신 시도가 RUN_UNKNOWN 이거나 재배치 차단 보류가 하나라도 있으면 lease 반납 · 예약 해제 · 보류 제거 · workspace 정리를 하지 않는다(NOTICE 는 STOP_CONFIRMED 가 · UNREPORTED 는 운영자가 푼다) | COMMITTED
 RUNNING | COMPLETED | ATTEMPT_COMPLETED | canonical attempt 확정 | 최종 artifact COMMITTED 확인 | COMMITTED
 RUNNING | INTERRUPTED | NODE_LOST | lease 만료 + grace 경과 그리고 Job 에 재배치 차단 보류가 하나도 없다 | - | COMMITTED
 RUNNING | INTERRUPTED | STOP_CONFIRMED_AFTER_UNKNOWN | 시도가 RUN_UNKNOWN 에서 STOP_CONFIRMED | 보류 해제 | COMMITTED
@@ -242,7 +242,7 @@ RUNNING | PAUSED | PARTITION_PAUSE | on_partition == PAUSE AND lease 만료 | ch
 RUNNING | PAUSED | OWNER_PREEMPT | 노드 소유자가 일시정지 요청 | checkpoint 후 정지 | DURABLE
 RUNNING | PAUSED | USER_PAUSED | - | checkpoint 후 정지 | COMMITTED
 RUNNING | RECONCILING | DUPLICATE_COMPLETION | 2개 이상 attempt가 완료 보고 | §20.3 알고리즘 실행 | COMMITTED
-RUNNING | CANCELLED | USER_CANCELLED | - | process tree 종료, lease 반납 | COMMITTED
+RUNNING | CANCELLED | USER_CANCELLED | - | process tree 종료, lease 반납 — 단 같은 조건(최신 시도 RUN_UNKNOWN · 보류 하나라도)이면 process tree 종료는 시도하되 lease 반납 · 예약 해제 · 보류 제거는 미룬다 | COMMITTED
 INTERRUPTED | REPLANNING | FAILOVER_STARTED | 마지막 COMMITTED checkpoint 존재 | - | DURABLE
 INTERRUPTED | FAILED | NO_COMMITTED_CHECKPOINT | 복구 가능한 checkpoint 없음 | 손실 범위 보고 | COMMITTED
 INTERRUPTED | CANCELLED | USER_CANCELLED | - | - | COMMITTED
@@ -262,6 +262,9 @@ COMPLETED | ARCHIVED | RETENTION_EXPIRED | artifact 보존 기간 경과 | CAS G
 ★ 2026-10-03 12:26 (실행 알림 계약 v18k §9 · 계획 조각 6b) — "재배치 차단 보류"(NOTICE_RUN_UNKNOWN · UNREPORTED_SIDE_EFFECT_RISK — `coordinator_job_holds`)가 있는 Job 은
 새 시도의 대상이 아니다. 불변식: **시도를 만드는 모든 경로의 마지막 관문**(Attempt `(none) -> CREATED` — 코드로는 공통 staging 저장소의 `insert_attempt`)에서
 같은 트랜잭션으로 다시 확인한다 — 위 guard 들은 그 불변식의 규범 표기다. 장애 이어받기(NODE_LOST · STAGING_NODE_LOST)는 시도가 RUN_UNKNOWN 이어도 되돌리지 않는다.
+★ 2026-10-03 12:49 (조각 6d) — STAGING · RUNNING -> CANCELLED(USER_CANCELLED)의 조건부 effect 는 **규범만** 바꿨다. Coordinator 에 Job 취소 경로가 아직 없다
+(`crates/coordinator/src/*.rs` · `crates/cli/src/main.rs` 에서 `USER_CANCELLED` · `JobState::Cancelled` 를 찾았고 안 나왔다 — 다른 이름의 취소 경로는 이 검색이 놓친다).
+취소를 구현할 때 이 조건을 같은 트랜잭션에서 본다.
 
 ### Quorum 상실 중의 Job 제출
 
@@ -370,6 +373,9 @@ Agent 쪽에서는 Attempt 상태가 아니라 **노드 사건**(영속 표식)�
   RUN_UNKNOWN 은 단계 2 의 새 보고 형식으로만 들어간다.
   ★ (MUST · Coordinator) 시도가 이미 **RUN_UNKNOWN 이면 옛 형식 보고는 그 상태를 바꾸지 않는다** — 옛 FAILED 는 STOP_CONFIRMED 의 증거가 아니다.
     RUN_UNKNOWN 에서 나가는 입력은 STOP_CONFIRMED 보고 하나뿐이다. 보고 버전 · 종류로 trigger 를 고르고, 상태 쌍만으로 STOP_CONFIRMED 를 추론하지 않는다
+    ★ 2026-10-03 12:49 (계약 v18k §2 "옛 형식 보고와의 관계" · 계획 조각 6d) — 코드로 강제한다: 시도가 RUN_UNKNOWN 일 때 온 종료 보고(어느 버전 · 어느 결과든)는
+      **증거로만** 저장하고 시도 · Job 을 옮기지 않으며 해제 · 선점도 하지 않는다. `RECONCILE_NEEDED` 사건을 남긴다(사람이 맞춰 본다 · 자동 canonical 선택 없음).
+      전에는 규범 경로가 없어 저장 전체가 되돌아가 보고가 사라졌다(`attempt_report_store.rs`).
     (지금 코드는 상태 쌍만 본다 — attempt_report_store.rs:631 · :662~ — 단계 2 목록 25).
   그 보고 형식에는 불명을 표현할 칸이 없기 때문이다. 그 보고가 **최신 시도의 것이고 Job 이 STAGING · RUNNING 이면** Job 은 FAILED 로 끝나고 재배치하지 않는다
   (job_store.rs:1441~1459). 이전 시도의 늦은 보고는 보고와 그 시도만 적고 지금 Job 은 바꾸지 않는다 — 어느 쪽이든 이 해석이 두 벌을 새로 만들지는 않는다.

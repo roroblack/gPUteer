@@ -310,6 +310,18 @@ impl CoordinatorAttemptReportStore {
                     node_id: report.node_id.clone(),
                 });
             }
+            // ★ 2026-10-03 12:49 (조각 6d · 계약 §2 · state-machines §3 MUST) — 시도가 RUN_UNKNOWN 이면 재전송도 증거로만 — 해제 · 선점을 하지 않는다.
+            let held = staging_store::fetch_attempt(&transaction, &report.attempt_id)
+                .map_err(map_staging_error)?
+                .is_some_and(|attempt| attempt.state == AttemptState::RunUnknown);
+            if held {
+                transaction.commit().map_err(map_sql_error)?;
+                return Ok(StoreAttemptReportResult {
+                    binding,
+                    created: false,
+                    notes: vec![held_note(&report.attempt_id)],
+                });
+            }
             // ★ 결함 213 · 215 — 재전송에도 해제 · 선점을 다시 시도한다(아래 after_report 는 둘 다 멱등이다).
             let notes = after_report(&transaction, verified, release, owner_preempt)?;
             transaction.commit().map_err(map_sql_error)?;
@@ -359,6 +371,48 @@ impl CoordinatorAttemptReportStore {
             )
             .map_err(map_sql_error)?;
         fail_at(fault, TestFault::AfterReportInsert)?;
+
+        // ★ 2026-10-03 12:49 (조각 6d · 계약 §2 "옛 형식 보고와의 관계" · state-machines §3 MUST "RUN_UNKNOWN 에서 나가는 입력은 STOP_CONFIRMED 하나뿐") —
+        //   시도가 RUN_UNKNOWN 이면 보고(어느 버전 · 어느 결과든)는 **증거로만** 저장한다. 시도 · Job 을 옮기지 않고, 해제 · 선점도 하지 않는다
+        //   (보류와 예약 · Lease 는 STOP_CONFIRMED 가 푼다). 전에는 규범 경로가 없어 저장 전체가 되돌아가 보고가 사라졌다.
+        //   RECONCILE_NEEDED 사건을 남긴다(계약 시험 6) — 자동 canonical 선택은 하지 않는다.
+        if attempt.state == AttemptState::RunUnknown {
+            let outcome = pb::AttemptOutcome::try_from(report.outcome)
+                .map(|o| o.as_str_name().to_string())
+                .unwrap_or_else(|_| format!("UNKNOWN({})", report.outcome));
+            let exit = pb::ExitObservation::try_from(report.exit_observation)
+                .map(|o| o.as_str_name().to_string())
+                .unwrap_or_else(|_| format!("UNKNOWN({})", report.exit_observation));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            crate::run_notice_store::record_reconcile_needed(
+                &transaction,
+                &report.attempt_id,
+                &format!(
+                    "실행 여부 불명 시도에 종료 보고(outcome={outcome} exit={exit} fence={}) — 증거로만 저장했다 · 상태는 그대로 · 사람이 맞춰 본다",
+                    report.fence_epoch
+                ),
+                now,
+            )
+            .map_err(|error| AttemptReportStoreError::Staging(format!("RECONCILE_NEEDED 기록: {error}")))?;
+            transaction.commit().map_err(map_sql_error)?;
+            return Ok(StoreAttemptReportResult {
+                binding: StoredAttemptReportBinding {
+                    report: report.clone(),
+                    report_hash,
+                    signer_id_at_submission: signer_id.to_string(),
+                    bound_job_id: report.job_id.clone(),
+                    bound_attempt_id: report.attempt_id.clone(),
+                    bound_node_id: report.node_id.clone(),
+                    bound_fence_epoch: report.fence_epoch,
+                    bound_via,
+                },
+                created: true,
+                notes: vec![held_note(&report.attempt_id)],
+            });
+        }
 
         // ★★ 2026-09-22 (§A1 4c) — **보고 저장과 같은 트랜잭션에서** Attempt 를 종료 상태로 옮긴다.
         //   갈라 놓으면 "보고는 있는데 상태는 CREATED" 인 행이 다시 생기고, 그게 정확히
@@ -561,6 +615,11 @@ fn validate_report_input(report: &pb::AttemptReport) -> Result<(), AttemptReport
 }
 
 /// 보고가 저장된(또는 이미 있던) 같은 트랜잭션에서 예약 해제와 소유자 선점을 한다. 둘 다 멱등이다.
+/// ★ 2026-10-03 12:49 (조각 6d) — RUN_UNKNOWN 시도에 온 보고를 증거로만 저장했다는 한 줄.
+fn held_note(attempt_id: &str) -> String {
+    format!("REPORT_HELD_RUN_UNKNOWN attempt_id={attempt_id} — 증거로만 저장(시도 · Job · 예약 · Lease 그대로 · STOP_CONFIRMED 가 푼다)")
+}
+
 fn after_report(
     transaction: &Connection,
     verified: &Verified<pb::AttemptReport>,

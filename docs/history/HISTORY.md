@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-03 12:57 — 실행 알림 계획 조각 6d — 실행 여부 불명 시도에 온 종료 보고는 증거로만(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 조각 6(6d) · 계약 v18k §2 "옛 형식 보고와의 관계" · §9 취소 effect · 시험 6 · state-machines §3 MUST
+- 스트림: Coordinator · 규범
+- 수행: 종료 보고 저장소가 시도가 RUN_UNKNOWN 이면 보고(어느 버전 · 결과든)를 증거로만 저장한다 — 시도 · Job 을 옮기지 않고 해제 · 선점도 하지 않으며
+  `RECONCILE_NEEDED` 사건을 남긴다. 재전송도 증거로만. 전에는 규범 경로가 없어 저장 전체가 되돌아가 보고가 사라졌다. 규범 §2 의 STAGING · RUNNING -> CANCELLED
+  effect 를 조건부로(최신 시도 RUN_UNKNOWN · 보류 하나라도면 반납 · 해제 · 보류 제거를 하지 않거나 미룬다) — ★ 규범만이다. Job 취소 코드가 아직 없다
+  (`crates/coordinator/src/*.rs` · `crates/cli/src/main.rs` 에서 찾았고 안 나왔다)
+- 검증: 새 시험 1(옛 FAILED · COMPLETED 두 경우 — 저장 · 상태 불변 · 관문을 다 채운 해제 요청도 무시 · 사건 1 · 재전송 증거로만 · 정지 확인이 푼다). 일부러 망가뜨려
+  확인 — 분기를 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-coordinator -p gputeer-cli -p gputeer-checkpoint -j 1 --no-fail-fast` 756 passed · 0 failed · ignored 3 — 재전송 분기도 같은 방법으로 확인
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 12:49 — 실행 알림 계획 조각 6c — 보류된 시도의 Lease 갱신 · Resume 은 RUN_UNKNOWN_HELD(격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 조각 6(6c) · 계약 v18k §8 · §9 D8 · 시험 7

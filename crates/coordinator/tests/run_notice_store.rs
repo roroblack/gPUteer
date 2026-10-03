@@ -899,3 +899,70 @@ fn a_lease_without_a_held_attempt_is_still_renewed() {
     }
     assert!(!leases.is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap()).unwrap());
 }
+
+// ─── ★ 조각 6d — RUN_UNKNOWN 시도에 온 종료 보고는 증거로만(계약 §2 "옛 형식 보고와의 관계" · 시험 6) ─────────
+
+fn signed_report(path: &Path, outcome: pb::AttemptOutcome) -> Verified<pb::AttemptReport> {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let mut report = pb::AttemptReport {
+        schema_version: 1,
+        job_id: JOB_ID.into(),
+        attempt_id: ATTEMPT_ID.into(),
+        node_id: NODE_ID.into(),
+        fence_epoch: fence(path),
+        outcome: outcome as i32,
+        final_step: 10,
+        started_at_unix_ms: 210,
+        finished_at_unix_ms: 300,
+        issued_at_unix_ms: 301,
+        ..Default::default()
+    };
+    report.node_signature = sign(&key, &report).to_vec();
+    let mut keys = InMemoryKeyring::new();
+    keys.insert(NODE_ID, key.verifying_key());
+    verify(&report, 1, &Ed25519Verifier::new(keys), 999, &mut NoReplayCheck)
+        .expect("시험 보고는 서명 검증을 통과해야 한다")
+}
+
+fn fully_authorized() -> gputeer_coordinator::reservation_release::ReleaseAuthorization {
+    gputeer_coordinator::reservation_release::ReleaseAuthorization {
+        runtime_stop: RuntimeStopProof::ProvenByCaller,
+        key_directory: VERIFIED_DIR,
+        artifact_durability: gputeer_coordinator::reservation_release::ArtifactDurabilityGuard::SatisfiedByCaller,
+    }
+}
+
+/// 옛 형식 FAILED(종료 관측 없음) · COMPLETED 둘 다 — 저장은 되고(전에는 규범 경로가 없어 저장 전체가 되돌아갔다) 시도 · Job · 보류 · 예약 · Lease 는
+/// 그대로다. 해제를 요청해도(관문을 다 채워도) 풀지 않는다. RECONCILE_NEEDED 사건이 남는다. 재전송도 증거로만.
+#[test]
+fn a_report_for_a_run_unknown_attempt_is_kept_as_evidence_only() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    for outcome in [pb::AttemptOutcome::Failed, pb::AttemptOutcome::Completed] {
+        let fixture = prepare_fixture();
+        accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+        let report = signed_report(&fixture.path, outcome);
+        let mut reports = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
+        let stored = reports
+            .store_verified_terminal_report_and_release(&report, fully_authorized(), NOW)
+            .unwrap_or_else(|e| panic!("{outcome:?} 보고가 저장되지 않았다: {e:?}"));
+        assert!(stored.created);
+        assert!(stored.notes.iter().any(|n| n.starts_with("REPORT_HELD_RUN_UNKNOWN")), "{:?}", stored.notes);
+        assert!(reports.get_report_binding(ATTEMPT_ID, NODE_ID).unwrap().is_some(), "증거가 남지 않았다");
+        assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown, "{outcome:?}");
+        assert_eq!(job_state(&fixture.path), JobState::Staging);
+        assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path), "{outcome:?} 보고로 예약 · Lease 가 풀렸다");
+        assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]);
+        assert_eq!(events(&fixture.path), vec!["RECONCILE_NEEDED".to_string()]);
+        // 재전송 — 증거로만(해제 요청도 무시) · 사건을 또 쌓지 않는다
+        let again = reports
+            .store_verified_terminal_report_and_release(&report, fully_authorized(), NOW + 1)
+            .unwrap();
+        assert!(!again.created && again.notes.iter().any(|n| n.starts_with("REPORT_HELD_RUN_UNKNOWN")));
+        assert!(reservation_exists(&fixture.path));
+        assert_eq!(events(&fixture.path).len(), 1);
+        // 정지 확인이 보류를 풀고 예약을 해제한다 — 시도는 STOP 으로 FAILED
+        accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+        assert!(holds(&fixture.path).is_empty() && !reservation_exists(&fixture.path));
+        assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    }
+}

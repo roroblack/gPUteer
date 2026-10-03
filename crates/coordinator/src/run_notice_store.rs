@@ -129,16 +129,7 @@ pub(crate) fn initialize_schema(connection: &Connection) -> Result<(), RunNotice
         )
         .map_err(storage)?;
     crate::job_holds::initialize_schema(connection).map_err(RunNoticeError::Storage)?;
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS coordinator_run_notice_events (
-                attempt_id TEXT NOT NULL,
-                event TEXT NOT NULL CHECK(event IN ('DUPLICATE_RISK', 'RECONCILE_NEEDED')),
-                detail TEXT NOT NULL,
-                at_unix_ms BLOB NOT NULL CHECK(length(at_unix_ms) = 8)
-            );",
-        )
-        .map_err(storage)?;
+    connection.execute_batch(RUN_NOTICE_EVENTS_DDL).map_err(storage)?;
     reservation_release::initialize_release_schema(connection).map_err(RunNoticeError::Release)
 }
 
@@ -338,6 +329,25 @@ fn is_latest_attempt(transaction: &Connection, attempt: &staging_store::StoredAt
         .optional()
         .map_err(storage)?;
     Ok(latest.as_deref() == Some(attempt.attempt_id.as_str()))
+}
+
+/// 실행 알림 사건 표(DUPLICATE_RISK · RECONCILE_NEEDED). ★ 2026-10-03 12:49 (조각 6d) — 늦은 종료 보고 분기(attempt_report_store)도 같은 표에 쓴다.
+pub(crate) const RUN_NOTICE_EVENTS_DDL: &str = "CREATE TABLE IF NOT EXISTS coordinator_run_notice_events (
+                attempt_id TEXT NOT NULL,
+                event TEXT NOT NULL CHECK(event IN ('DUPLICATE_RISK', 'RECONCILE_NEEDED')),
+                detail TEXT NOT NULL,
+                at_unix_ms BLOB NOT NULL CHECK(length(at_unix_ms) = 8)
+            );";
+
+/// ★ 2026-10-03 12:49 (조각 6d · 계약 §2 "옛 형식 보고와의 관계") — RUN_UNKNOWN 시도에 온 종료 보고는 증거로만 저장하고 사람에게 맞춰 보라고 남긴다.
+pub(crate) fn record_reconcile_needed(
+    transaction: &Connection,
+    attempt_id: &str,
+    detail: &str,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    transaction.execute_batch(RUN_NOTICE_EVENTS_DDL).map_err(|e| e.to_string())?;
+    record_event(transaction, attempt_id, "RECONCILE_NEEDED", detail, now_unix_ms).map_err(|e| format!("{e:?}"))
 }
 
 fn record_event(
