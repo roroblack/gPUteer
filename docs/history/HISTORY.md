@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-10-03 10:50 — 실행 알림 계획 조각 5b — 런타임 대상 고정 · 계약 v18l(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5b) · 계약 v18k §4 "런타임" → v18l
+- 스트림: Agent · 계약
+- 수행: 새 `crates/agent/src/container/runtime_target.rs` — `resolve_endpoint`(create 전 한 번 — docker 는 `context inspect` 의 엔드포인트 · 로컬 podman 은
+  graphRoot · runRoot · 원격 podman 은 거부) · `RuntimeEndpoint::global_args`(docker `-H` · podman `--root --runroot`) · 원장 글 `to_ledger`/`from_ledger`(모르는
+  모양 거부) · `read_identity`(고정 대상으로 — docker 데몬 ID · podman 호스트 이름 + 두 경로) · `pinned_lookup`(ID · 이름은 `inspect --type container` · owner 라벨
+  목록 안의 그 이름 — not-found 만 없음 · 데몬 오류는 모름). 계약 v18l — 서비스 없는 로컬 podman 에 `--url` 을 주면 증거 명령이 전부 실패해 증거를 영영 못
+  얻는다는 것을 구현 중에 찾아 "명시 인자" 를 저장소 위치로 바꿨고, 원격 podman 은 자동 증거 대상에서 뺐다(보수 — 소유자 해제). 부르는 곳은 5c · 5d
+- 검증: 컨테이너 시험 51(새 4 — docker 대상 한 번 해석 · 모든 증거 명령에 -H · 로컬 podman 고정과 원격 거부 · not-found 만 없음과 데몬 오류는 Err ·
+  원장 글 왕복과 이상한 모양 거부). 가짜 런타임 장치에 대상 고정 흉내 모드를 더했다. 일부러 망가뜨려 확인 — 고정 인자를 빼면 두 시험이 실패함을 보고 원복.
+  Windows `cargo test --workspace -j 1 --no-fail-fast` 1613 passed · 0 failed(ignored 4 · --no-fail-fast) · 바뀐 파일의 clippy 지적 0
+- 리포트: 계획 문서가 대신한다(계약 개정은 v18l 개정 이력 줄)
+
+---
+
 ## 2026-10-03 10:50 — 실행 알림 계획 조각 5a — 노드 원장 형식 2(불명 수명주기 · 알림 표 · ACK 대조 · 증거 · 재부착 칸)(브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` 조각 5(5a) · 계약 v18k §5 "노드 원장" · "해제" · "ACK 대조" · v18j 근거 칸

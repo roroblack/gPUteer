@@ -22,12 +22,18 @@ use gputeer_agent::container::{
 
 const STATE_ENV: &str = "GPUTEER_FAKE_RUNTIME_STATE";
 const FAIL_ENV: &str = "GPUTEER_FAKE_RUNTIME_FAIL";
+/// ★ 조각 5b — 대상 고정 흉내의 상태 폴더.
+const TARGET_ENV: &str = "GPUTEER_FAKE_TARGET_STATE";
 
 fn main() {
     // 파이프를 물려받아 쥐고 있는 보조 프로세스 흉내(결함 545) — 주어진 초만큼 자고 끝난다.
     if let Ok(secs) = std::env::var("GPUTEER_FAKE_SLEEP_SECS") {
         std::thread::sleep(Duration::from_secs(secs.parse().unwrap()));
         return;
+    }
+    // ★ 2026-10-03 10:32 (조각 5b) — 대상 고정 흉내. 다른 흉내보다 먼저 본다(시험이 끝나면 지운다 — `TargetFake` 의 Drop).
+    if let Ok(state) = std::env::var(TARGET_ENV) {
+        std::process::exit(fake_target(Path::new(&state)));
     }
     if let Ok(state) = std::env::var(STATE_ENV) {
         std::process::exit(fake_runtime(Path::new(&state)));
@@ -220,6 +226,22 @@ fn main() {
         (
             "a_start_that_never_answers_keeps_the_container_for_a_human",
             a_start_that_never_answers_keeps_the_container_for_a_human,
+        ),
+        (
+            "a_docker_target_is_resolved_once_and_every_evidence_call_names_it",
+            a_docker_target_is_resolved_once_and_every_evidence_call_names_it,
+        ),
+        (
+            "a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused",
+            a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused,
+        ),
+        (
+            "only_not_found_is_absence_and_a_runtime_error_is_no_evidence",
+            only_not_found_is_absence_and_a_runtime_error_is_no_evidence,
+        ),
+        (
+            "the_ledger_text_of_a_target_round_trips_and_odd_shapes_are_refused",
+            the_ledger_text_of_a_target_round_trips_and_odd_shapes_are_refused,
         ),
     ];
     let mut failed = 0;
@@ -2340,4 +2362,221 @@ fn a_pipe_held_open_after_exit_does_not_hang_the_owner_stop() {
     );
     let exit = runner.join().unwrap().expect("종료 관측");
     assert_eq!(exit.exit_code, 137);
+}
+
+// ─── ★ 조각 5b — 런타임 대상 고정(계약 v18k §4 "런타임") ──────────────────────────
+
+use gputeer_agent::container::runtime_target::{
+    pinned_lookup, read_identity, resolve_endpoint, Lookup, Presence, RuntimeEndpoint,
+};
+
+/// 대상 고정 흉내 — 받은 인자를 `calls` 에 적고, 상태 폴더의 파일로 답한다.
+///   `remote`(podman ServiceIsRemote) · `present`(있는 ID · 이름, 줄마다) · `owned`(owner 라벨 목록의 이름) · `broken`(조회가 데몬 오류로 실패).
+fn fake_target(state: &Path) -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    append(state, "calls", &format!("{}\n", args.join(" | ")));
+    let read = |name: &str| std::fs::read_to_string(state.join(name)).unwrap_or_default();
+    // 전역 인자를 떼어 낸다 — 붙은 모양 그대로 기록은 남겼다.
+    let mut rest: &[String] = &args;
+    while let Some(first) = rest.first() {
+        match first.as_str() {
+            "-H" | "--root" | "--runroot" => rest = &rest[2..],
+            _ => break,
+        }
+    }
+    let joined = rest.join(" ");
+    if joined == "context inspect --format {{.Endpoints.docker.Host}}" {
+        println!("unix:///fake/docker.sock");
+        return 0;
+    }
+    if joined == "info --format {{.ID}}" {
+        println!("DAEMON-1");
+        return 0;
+    }
+    if joined == "info --format {{.Host.ServiceIsRemote}}" {
+        println!("{}", if read("remote").is_empty() { "false" } else { "true" });
+        return 0;
+    }
+    if joined == "info --format {{.Store.GraphRoot}}\n{{.Store.RunRoot}}" {
+        println!("/fake/graph\n/fake/run");
+        return 0;
+    }
+    if joined == "info --format {{.Host.Hostname}}\n{{.Store.GraphRoot}}\n{{.Store.RunRoot}}" {
+        println!("fake-host\n/fake/graph\n/fake/run");
+        return 0;
+    }
+    if !read("broken").is_empty() {
+        eprintln!("Error response from daemon: dial unix /fake/docker.sock: connect: connection refused");
+        return 125;
+    }
+    match rest.first().map(String::as_str) {
+        Some("inspect") => {
+            let target = rest.last().cloned().unwrap_or_default();
+            if read("present").lines().any(|l| l.trim() == target) {
+                println!("{target}");
+                0
+            } else {
+                eprintln!("Error: No such container: {target}");
+                1
+            }
+        }
+        Some("ps") => {
+            print!("{}", read("owned"));
+            0
+        }
+        _ => {
+            eprintln!("fake-target: 모르는 명령 {joined:?}");
+            2
+        }
+    }
+}
+
+/// 시험 하나 동안만 대상 고정 흉내를 켠다(패닉이어도 끈다 — 다음 시험의 흉내를 가로채지 않게).
+struct TargetFake {
+    _dir: tempfile::TempDir,
+    state: PathBuf,
+}
+
+impl TargetFake {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().to_path_buf();
+        std::env::set_var(TARGET_ENV, &state);
+        TargetFake { _dir: dir, state }
+    }
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.state.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+    fn write(&self, name: &str, text: &str) {
+        std::fs::write(self.state.join(name), text).unwrap();
+    }
+}
+
+impl Drop for TargetFake {
+    fn drop(&mut self) {
+        std::env::remove_var(TARGET_ENV);
+    }
+}
+
+/// docker — create 전에 엔드포인트를 한 번 해석하고, 신원 읽기 · 조회는 **전부** `-H <그 값>` 을 붙여 부른다(환경 · context 기본값에 기대지 않는다).
+fn a_docker_target_is_resolved_once_and_every_evidence_call_names_it() {
+    let fake = TargetFake::new();
+    let program = std::env::current_exe().unwrap();
+    let endpoint = resolve_endpoint(&program, RuntimeFlavor::Docker).unwrap();
+    assert_eq!(endpoint, RuntimeEndpoint::DockerHost("unix:///fake/docker.sock".into()));
+    assert_eq!(read_identity(&program, &endpoint).unwrap(), "docker:DAEMON-1");
+    fake.write("present", "cid-1\n");
+    assert_eq!(
+        pinned_lookup(&program, &endpoint, &Lookup::Id("cid-1")).unwrap(),
+        Presence::Present
+    );
+    let calls = fake.calls();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(!calls[0].starts_with("-H"), "해석 자체는 기본 대상에 묻는다: {calls:?}");
+    for call in &calls[1..] {
+        assert!(
+            call.starts_with("-H | unix:///fake/docker.sock | "),
+            "고정한 대상을 명시하지 않은 증거 명령이 있다: {call}"
+        );
+    }
+    assert!(
+        calls[2].contains("inspect | --type | container"),
+        "이미지 · 볼륨과 섞이지 않게 컨테이너만 묻는다: {calls:?}"
+    );
+}
+
+/// podman 로컬 — 저장소 위치(graphRoot · runRoot)로 고정하고 신원에 호스트 이름 · 두 경로를 담는다. 원격 podman 은 자동 증거 대상으로 고정하지 않는다.
+fn a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused() {
+    let fake = TargetFake::new();
+    let program = std::env::current_exe().unwrap();
+    let endpoint = resolve_endpoint(&program, RuntimeFlavor::Podman).unwrap();
+    assert_eq!(
+        endpoint,
+        RuntimeEndpoint::PodmanLocal {
+            graph_root: "/fake/graph".into(),
+            run_root: "/fake/run".into()
+        }
+    );
+    assert_eq!(
+        read_identity(&program, &endpoint).unwrap(),
+        "podman:fake-host|/fake/graph|/fake/run"
+    );
+    // 형식 인자에 줄바꿈이 있어 기록이 여러 줄로 나뉜다 — 그 명령의 첫 줄이 고정 인자로 시작하는지 본다.
+    assert!(
+        fake.calls()
+            .iter()
+            .any(|line| line.starts_with("--root | /fake/graph | --runroot | /fake/run | info")),
+        "podman 신원 읽기가 저장소를 명시하지 않았다: {:?}",
+        fake.calls()
+    );
+    fake.write("remote", "1");
+    let refused = resolve_endpoint(&program, RuntimeFlavor::Podman).unwrap_err();
+    assert!(refused.contains("원격 모드"), "{refused}");
+}
+
+/// not-found 만 "없음" 이다 — 목록에 나오면 있음, 데몬 오류는 모름(`Err` — 증거 없음). owner 라벨 조회는 그 이름이 목록에 있는지 본다.
+fn only_not_found_is_absence_and_a_runtime_error_is_no_evidence() {
+    let fake = TargetFake::new();
+    let program = std::env::current_exe().unwrap();
+    let endpoint = RuntimeEndpoint::DockerHost("unix:///fake/docker.sock".into());
+    fake.write("present", "gputeer-a1\n");
+    assert_eq!(
+        pinned_lookup(&program, &endpoint, &Lookup::Name("gputeer-a1")).unwrap(),
+        Presence::Present
+    );
+    assert_eq!(
+        pinned_lookup(&program, &endpoint, &Lookup::Id("cid-gone")).unwrap(),
+        Presence::Absent
+    );
+    fake.write("owned", "gputeer-other\n/gputeer-a1\n");
+    let by_label = Lookup::OwnerLabelWithName {
+        owner: "node-1.root",
+        name: "gputeer-a1",
+    };
+    assert_eq!(pinned_lookup(&program, &endpoint, &by_label).unwrap(), Presence::Present);
+    fake.write("owned", "gputeer-other\n");
+    assert_eq!(pinned_lookup(&program, &endpoint, &by_label).unwrap(), Presence::Absent);
+    assert!(pinned_lookup(
+        &program,
+        &endpoint,
+        &Lookup::OwnerLabelWithName {
+            owner: "",
+            name: "gputeer-a1"
+        }
+    )
+    .is_err());
+    fake.write("broken", "1");
+    for lookup in [Lookup::Id("cid-gone"), Lookup::Name("gputeer-a1"), by_label] {
+        assert!(
+            pinned_lookup(&program, &endpoint, &lookup).is_err(),
+            "데몬 오류를 없음으로 읽었다: {lookup:?}"
+        );
+    }
+}
+
+/// 원장 글 — 그대로 되읽히고, 모르는 모양 · 빈 값 · 앞뒤 공백은 거부한다(추측하지 않는다).
+fn the_ledger_text_of_a_target_round_trips_and_odd_shapes_are_refused() {
+    for endpoint in [
+        RuntimeEndpoint::DockerHost("npipe:////./pipe/docker_engine".into()),
+        RuntimeEndpoint::PodmanLocal {
+            graph_root: "/var/lib/containers/storage".into(),
+            run_root: "/run/containers/storage".into(),
+        },
+    ] {
+        assert_eq!(RuntimeEndpoint::from_ledger(&endpoint.to_ledger()).unwrap(), endpoint);
+    }
+    for odd in [
+        "",
+        "unix:///var/run/docker.sock",
+        "docker-host:",
+        "docker-host: unix:///x",
+        "podman-local:/only-graph",
+        "podman-local:\n/run",
+    ] {
+        assert!(RuntimeEndpoint::from_ledger(odd).is_err(), "{odd:?} 를 받아들였다");
+    }
 }

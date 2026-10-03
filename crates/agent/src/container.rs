@@ -59,6 +59,9 @@ const SHORT_TIMEOUT: Duration = Duration::from_secs(120);
 /// `start` 의 기본 시한 — 짧은 명령과 같다. [`ContainerRuntime::start_timeout`] 의 운영 값이다.
 pub const DEFAULT_START_TIMEOUT: Duration = SHORT_TIMEOUT;
 
+/// ★ 2026-10-03 10:32 (실행 알림 계획 조각 5b · 계약 v18k §4 "런타임") — 증거 절차가 같은 런타임에 묻게 하는 대상 고정 · 신원 · 고정 조회.
+pub mod runtime_target;
+
 /// 어느 런타임인가 — **운영자가 적는다.** 실행 파일 이름으로 추측하지 않는다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeFlavor {
