@@ -25,6 +25,31 @@
 
 ---
 
+## 2026-10-04 01:44 — 실행 알림 조각 4~7 독립 검수(Codex) 반영 — 7건 수정(브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` §5 · 계약 v18k/v18l/v18m 초안
+- 스트림: Coordinator · Agent
+- 검수: Codex(gpt-6-sol, 본계정) 두 건 — 5c~7c(s56) `CHANGES_REQUESTED` 4건 · 4a~4d+5a/5b(s45ab) `CHANGES_REQUESTED` 3건. 보조 계정은 지정 모델과 그 계정 기본 모델
+  모두 "ChatGPT 계정에서 지원하지 않는 모델" 로 거부해 쓰지 못했다(원인 미확인). 검토자는 기계다 — 사람이 봤다고 쓰지 않는다
+- 수정(s56):
+  ① Resume 판정이 Lease 와 시도의 RUN_UNKNOWN 을 따로 읽어, 사이에 STOP 이 끼면 폐기된 Lease 로 Resumed 를 서명할 수 있었다 → 한 읽기 트랜잭션(`classify_resume_within`)
+  ② 최종 Job 의 알림 — 최종 상태를 계약대로 넷(COMPLETED · FAILED · CANCELLED · ARCHIVED)으로 · 최종 Job 에는 보류를 걸지 않는다 · STOP 은 CANCELLED · ARCHIVED Job 을 그대로 둔다
+  ③ D6 보류 중 관측 못 한 보고에 소유자 선점이 딸려 오면 Lease 가 폐기됐다 → 보류를 남길 때 선점도 하지 않는다
+  ④ 원장에 적는 런타임 대상이 실제 create 대상이라는 보장이 없었다 → create 직후 해석한 고정 대상에서 그 컨테이너 ID 를 새로 찾아 있을 때만 적는다
+     (실행 중 감시 · 정지 명령은 여전히 고정하지 않은 명령이다)
+- 수정(s45ab):
+  ① STOP 이 INTERRUPTED · REPLANNING · RECONCILING Job 에서 InvalidTransition 으로 전체 롤백 → 그대로 두고 자원만 해제(계약 §3 Job 표)
+  ② 4a 의 비원자 이관이 남겼을 "사실만 있고 근거 · GPU 행이 빠진" DB 를 다시 열어도 채우지 않았다 → 빠진 근거 · GPU 행도 옮길 것으로 센다
+  ③ 같은 (시도 · 종류 · 해시)의 근거 행이 있는데 저장 원문이 달라도 묵인했다 → 원문까지 같아야 멱등 · 다르면 `EvidencePayloadMismatch`
+- 검증: 새 시험 3(관측 못 한 INTERRUPTED 보고의 선점 차단 · 반쯤 이관된 DB 복구 · 원문 다른 근거 거부) — 셋 다 고친 줄을 되돌리면 실패함을 보고 원복.
+  ★ **시험하지 못한 것**: s56 ① 의 경합(두 읽기 사이 STOP)은 결정적으로 재현하지 못했다. s56 ② · s45ab ① 은 지금 Job 저장소가 8 상태(SUBMITTED ·
+  PLANNING · QUEUED · STAGING · RUNNING · PAUSED · COMPLETED · FAILED)만 읽어 그 상태의 Job 을 만들 수 없다("unknown job state in durable store") —
+  지금은 일어날 수 없는 경우를 미리 고친 것이다. s56 ④ 는 가짜 런타임으로 대상 불일치를 만드는 시험을 쓰지 않았다(기존 시험 회귀만 확인). Windows `cargo test --workspace -j 1 --no-fail-fast` 1656 passed · 0 failed · ignored 4
+- 5e2(재부착): Codex 판단 "v18m 은 필요하지만 아직 충분하지 않다(영구 stop-only 는 권하지 않음)" — 닫아야 할 경우를 계획 §5 3번에 적었다. 그 전까지 5e1 유지
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-03 13:40 — 실행 알림 계획 조각 7c — release-held-job 과 늦은 종료 보고(브랜치 fork-merge)
 
 - 계획: 같은 계획 조각 7(7c) · 계약 v18k §6 (3) · §9 "release-held-job 한 명령" · b9 ① · b12 ① · b13 ① · b15 ②

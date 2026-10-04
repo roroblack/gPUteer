@@ -424,8 +424,16 @@ fn process_run_unknown(
     let job = job_store::fetch_job(transaction, &attempt.job_id)
         .map_err(|e| storage_text(e.to_string()))?
         .ok_or_else(|| storage_text(format!("시도의 Job {} 이 없다", attempt.job_id)))?;
-    let job_final = matches!(job.state, job_store::JobState::Completed | job_store::JobState::Failed);
-    if applied.attempt_moved || !job_final {
+    // ★ 2026-10-04 01:27 (검수 s56 ② — Codex) — 최종 상태는 계약 그대로 넷(COMPLETED · FAILED · CANCELLED · ARCHIVED)이다. 최종 Job 에는 새 시도가 생길 수 없어
+    //   보류를 걸지 않는다(시도가 RUN_UNKNOWN 으로 옮겨져도 — b14 ④ "늦은 RUN_UNKNOWN 은 저장 · 보류 없음"). 전에는 둘만 셌고, 시도가 옮겨지면 최종 Job 에도 걸었다.
+    let job_final = matches!(
+        job.state,
+        job_store::JobState::Completed
+            | job_store::JobState::Failed
+            | job_store::JobState::Cancelled
+            | job_store::JobState::Archived
+    );
+    if !job_final {
         applied.hold_installed = crate::job_holds::install_notice_hold(
             transaction,
             &attempt.job_id,

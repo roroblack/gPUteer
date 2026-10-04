@@ -1419,11 +1419,21 @@ pub fn follow_stop_confirmed(
     };
     match job.state {
         JobState::Running | JobState::Staging => {}
+        // ★ 2026-10-04 01:27 (검수 s56 ② — Codex) — 최종 상태 CANCELLED · ARCHIVED 도 그대로 둔다(계약 b7 ② — 취소된 Job 은 CANCELLED 그대로 · STOP 은 자원만 푼다).
+        //   전에는 거부해 STOP 커밋 전체가 되돌아가 정지 증거가 와도 자원 해제 · ACK 를 못 했다.
         JobState::Queued
         | JobState::Failed
         | JobState::Paused
         | JobState::Planning
-        | JobState::Completed => return Ok(StopConfirmedJobEffect::Unchanged(job.clone())),
+        | JobState::Completed
+        | JobState::Cancelled
+        | JobState::Archived
+        // ★ 2026-10-04 01:32 (검수 s45ab ① — Codex · 계약 §3 Job 표 b6 ① · RECONCILING 행) — 순서 B 로 failover 가 먼저 옮긴 INTERRUPTED · REPLANNING 은 진행 중인
+        //   경로를 가고, RECONCILING 은 canonical 선택 경로를 간다 — Job 은 그대로 두고 시도 종결 · Lease 폐기 · 예약 해제만 한다.
+        //   전에는 거부해 STOP 커밋(알림 저장 · 해제까지) 전체가 되돌아갔다.
+        | JobState::Interrupted
+        | JobState::Replanning
+        | JobState::Reconciling => return Ok(StopConfirmedJobEffect::Unchanged(job.clone())),
         from => {
             return Err(JobStoreError::InvalidTransition {
                 from,

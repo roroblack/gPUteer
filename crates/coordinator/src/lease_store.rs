@@ -337,7 +337,22 @@ impl CoordinatorLeaseStore {
         request_identity: &ResumeRequestIdentity,
         now_unix_ms: u64,
     ) -> Result<ResumeDecision, LeaseStoreError> {
-        let Some(stored) = self.get(&request_identity.lease_id)? else {
+        // ★ 2026-10-04 01:25 (조각 6c 검수 s56 ① — Codex) — Lease 읽기와 시도의 RUN_UNKNOWN 읽기를 **한 읽기 트랜잭션**에 둔다. 따로 읽으면 그 사이 STOP 이
+        //   시도를 닫고 Lease 를 폐기했을 때, 처음 읽은(폐기 전) Lease 로 Resumed 를 서명할 수 있었다.
+        let transaction = self.connection.unchecked_transaction().map_err(map_sql_error)?;
+        let decision = classify_resume_within(&transaction, request_identity, now_unix_ms)?;
+        transaction.commit().map_err(map_sql_error)?;
+        Ok(decision)
+    }
+}
+
+fn classify_resume_within(
+    connection: &Connection,
+    request_identity: &ResumeRequestIdentity,
+    now_unix_ms: u64,
+) -> Result<ResumeDecision, LeaseStoreError> {
+    {
+        let Some(stored) = fetch_lease(connection, &request_identity.lease_id)? else {
             return Ok(ResumeDecision::UnknownLease);
         };
 
@@ -367,7 +382,7 @@ impl CoordinatorLeaseStore {
         }
         // ★ 2026-10-03 12:35 (조각 6c · 계약 §8 · 시험 7) — 폐기 다음, 만료 앞이다. 순서 A(알림 먼저)는 Lease 가 ACTIVE 든 EXPIRED 든 HELD_UNKNOWN 이고,
         //   순서 B(failover 가 먼저 폐기)는 위에서 REVOKED 로 끝난다.
-        if lease_attempt_is_run_unknown(&self.connection, &stored)? {
+        if lease_attempt_is_run_unknown(connection, &stored)? {
             return Ok(ResumeDecision::RunUnknownHeld { stored });
         }
         if stored.expires_at_unix_ms <= now_unix_ms {
@@ -381,7 +396,9 @@ impl CoordinatorLeaseStore {
         }
         Ok(ResumeDecision::Resumed(stored))
     }
+}
 
+impl CoordinatorLeaseStore {
     /// 최초 발급 경로 — `lease_id` 가 저장소에 **없을 때만** `candidate`
     /// 를 그대로 삽입하고 반환한다. **있으면** identity 필드
     /// (`job_id`·`attempt_id`·`holder_node_id`·`issuing_coordinator_id`)

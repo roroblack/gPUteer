@@ -1900,3 +1900,71 @@ fn release_lost_node_still_refuses_a_live_attempt_and_leaves_no_record() {
     assert_eq!(count(&fixture.path, "SELECT COUNT(*) FROM coordinator_release_facts"), 0);
     assert_eq!(count(&fixture.path, "SELECT COUNT(*) FROM coordinator_release_evidence"), 0);
 }
+
+// ─── ★ 검수 s45ab(Codex) 반영 ─────────
+
+/// s45ab ② — 4a 의 비원자 이관이 남긴 "사실만 있고 근거 · GPU 행이 빠진" DB 를 다시 열면 빠진 행을 채운다(사실 행이 있다고 건너뛰지 않는다).
+#[test]
+fn a_half_migrated_release_is_completed_on_reopen() {
+    let fixture = prepare_fixture();
+    let report = completed_report(&fixture.path);
+    store_evidence(&fixture.path, &report);
+    let report_hash =
+        gputeer_protocol::canonical::blake3_256(&prost::Message::encode_to_vec(report.get()));
+    insert_legacy_terminal_release(
+        &fixture.path,
+        ATTEMPT_ID,
+        NODE_ID,
+        JOB_ID,
+        staged_fence_epoch(&fixture.path),
+        &report_hash,
+    );
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute("INSERT INTO coordinator_reservation_release_gpus VALUES (?1, 'gpu-1', 0)", [ATTEMPT_ID])
+        .unwrap();
+    CoordinatorReservationReleaseStore::open(&fixture.path).unwrap();
+    // 4a 의 중간 상태를 흉내 — 사실 행만 남긴다
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute_batch("DELETE FROM coordinator_release_evidence; DELETE FROM coordinator_release_fact_gpus;")
+        .unwrap();
+    assert_eq!(count(&fixture.path, "SELECT COUNT(*) FROM coordinator_release_facts"), 1);
+    let repaired = CoordinatorReservationReleaseStore::open(&fixture.path)
+        .unwrap()
+        .get_release(ATTEMPT_ID)
+        .unwrap()
+        .expect("사실 행이 있어야 한다");
+    assert_eq!(repaired.released_gpu_ids, vec!["gpu-1".to_string()], "GPU 행을 채우지 않았다");
+    assert_eq!(repaired.evidence.len(), 1, "근거 행을 채우지 않았다");
+    assert_eq!(repaired.evidence[0].hash, report_hash);
+}
+
+/// s45ab ③ — 같은 (시도 · 종류 · 해시)의 근거가 이미 있는데 저장된 원문이 다르면 "이미 해제됨" 으로 묵인하지 않는다.
+#[test]
+fn an_existing_evidence_row_with_a_different_payload_is_refused() {
+    let fixture = prepare_fixture();
+    let report = completed_report(&fixture.path);
+    store_evidence(&fixture.path, &report);
+    CoordinatorReservationReleaseStore::open(&fixture.path)
+        .unwrap()
+        .release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT)
+        .unwrap();
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute("UPDATE coordinator_release_evidence SET payload = X'00'", [])
+        .unwrap();
+    let refused = CoordinatorReservationReleaseStore::open(&fixture.path)
+        .unwrap()
+        .release_for_verified_terminal_report(&report, fully_authorized(), RELEASED_AT + 1);
+    assert!(
+        matches!(
+            refused,
+            Err(ReservationReleaseError::Corrupt {
+                kind: gputeer_coordinator::reservation_release::ReleaseCorruption::EvidencePayloadMismatch,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+}

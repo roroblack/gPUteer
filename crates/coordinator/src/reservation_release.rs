@@ -266,6 +266,8 @@ pub enum ReleaseCorruption {
     EvidenceKind,
     /// 해제 사실에 근거 행이 하나도 없다.
     MissingEvidence,
+    /// ★ 2026-10-04 01:32 (검수 s45ab ③) — 같은 (시도 · 종류 · 해시)의 근거 행이 이미 있는데 저장된 원문이 다르다.
+    EvidencePayloadMismatch,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -433,10 +435,18 @@ pub(crate) fn initialize_release_schema(
 
 /// 옛 표의 해제 기록을 새 표로 옮긴다(멱등 — 이미 옮긴 행은 건너뛴다).
 fn migrate_legacy_releases(connection: &Connection) -> Result<(), ReservationReleaseError> {
+    // ★ 2026-10-04 01:32 (검수 s45ab ② — Codex) — 4a 의 이관은 문장마다 커밋될 수 있었다(그때는 savepoint 가 없었다). 그래서 "사실은 옮겨졌는데 근거 · GPU 행이
+    //   빠진" DB 가 있을 수 있다 — 사실 행이 있다고 건너뛰지 않고, 근거 · GPU 행이 빠진 옛 행도 옮길 것으로 센다(아래 INSERT 들은 행마다 멱등이라 채우기만 한다).
     let pending: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM coordinator_reservation_releases r
-             WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_facts f WHERE f.attempt_id = r.attempt_id)",
+            "SELECT (SELECT COUNT(*) FROM coordinator_reservation_releases r
+                     WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_facts f WHERE f.attempt_id = r.attempt_id)
+                        OR NOT EXISTS (SELECT 1 FROM coordinator_release_evidence e
+                                       WHERE e.attempt_id = r.attempt_id AND e.evidence_kind = 'TERMINAL_REPORT'
+                                         AND e.evidence_hash = r.report_hash))
+                  + (SELECT COUNT(*) FROM coordinator_reservation_release_gpus g
+                     WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_fact_gpus x
+                                       WHERE x.attempt_id = g.attempt_id AND x.ordinal = g.ordinal))",
             [],
             |row| row.get(0),
         )
@@ -465,7 +475,9 @@ fn migrate_legacy_releases(connection: &Connection) -> Result<(), ReservationRel
         connection
             .query_row(
                 "SELECT r.attempt_id FROM coordinator_reservation_releases r
-                 WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_facts f WHERE f.attempt_id = r.attempt_id)
+                 WHERE NOT EXISTS (SELECT 1 FROM coordinator_release_evidence e
+                                   WHERE e.attempt_id = r.attempt_id AND e.evidence_kind = 'TERMINAL_REPORT'
+                                     AND e.evidence_hash = r.report_hash)
                    AND NOT EXISTS (SELECT 1 FROM coordinator_attempt_reports a
                                    WHERE a.attempt_id = r.attempt_id AND a.node_id = r.node_id
                                      AND a.report_hash = r.report_hash)
@@ -1136,6 +1148,22 @@ fn insert_evidence(
             ],
         )
         .map_err(map_sql_error)?;
+    // ★ 2026-10-04 01:32 (검수 s45ab ③ — Codex) — 이미 있던 행이면 원문까지 같아야 멱등이다. 다르면(저장 원문이 손상됐거나 같은 해시에 다른 원문) 묵인하지 않는다 —
+    //   전에는 무시하고 "이미 해제됨" 을 돌려줘, 새 근거를 기록한 것처럼 보였다.
+    let stored: Vec<u8> = transaction
+        .query_row(
+            "SELECT payload FROM coordinator_release_evidence
+             WHERE attempt_id = ?1 AND evidence_kind = ?2 AND evidence_hash = ?3",
+            rusqlite::params![attempt_id, kind.as_str(), hash.as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(map_sql_error)?;
+    if stored != payload {
+        return Err(ReservationReleaseError::Corrupt {
+            attempt_id: attempt_id.to_string(),
+            kind: ReleaseCorruption::EvidencePayloadMismatch,
+        });
+    }
     Ok(())
 }
 

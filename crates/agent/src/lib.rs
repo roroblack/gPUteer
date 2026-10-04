@@ -4475,7 +4475,24 @@ fn record_container_created(
     let Some(handle) = handle else {
         return Ok(());
     };
+    // ★ 2026-10-04 01:29 (검수 s56 ④ — Codex) — create 는 런타임 CLI 의 기본 설정으로 가고 대상 해석은 그 뒤 따로 한다. 그 사이 설정이 바뀌면 다른 대상의 신원을
+    //   ID 와 함께 적을 수 있었다(부재 증거 · 재기동 정지가 엉뚱한 곳을 향한다). 그래서 해석한 고정 대상에서 **그 ID 를 새로 찾아** 있을 때만 적는다 —
+    //   컨테이너 ID 는 64자리 고유값이라 고정 대상에 있으면 그 대상이 만든 것이다. 없거나 묻지 못하면 대상을 적지 않는다(자동 증거 없음 · OPEN).
+    //   ★ 실행 중 감시 · 정지 명령(start · inspect · kill · logs · rm)은 여전히 고정하지 않은 명령이다 — 이 확인은 원장의 증거 대상만 지킨다.
     let pinned = container::runtime_target::resolve_endpoint(program, flavor).and_then(|endpoint| {
+        match container::runtime_target::pinned_lookup(
+            program,
+            &endpoint,
+            &container::runtime_target::Lookup::Id(container_id),
+        )? {
+            container::runtime_target::Presence::Present => {}
+            container::runtime_target::Presence::Absent => {
+                return Err(format!(
+                    "해석한 대상({})에 방금 만든 컨테이너 {container_id} 가 없다 — create 가 다른 대상으로 갔을 수 있다",
+                    endpoint.to_ledger()
+                ))
+            }
+        }
         container::runtime_target::read_identity(program, &endpoint)
             .map(|identity| (endpoint.to_ledger(), identity))
     });

@@ -1152,3 +1152,44 @@ fn an_observed_late_report_releases_the_unreported_hold() {
     assert!(holds(&fixture.path).is_empty());
     assert!(!reservation_exists(&fixture.path), "관측한 보고인데 해제하지 않았다");
 }
+
+// ─── ★ 검수 s56(Codex) 반영 — 최종 Job 의 알림 · 보류 중 관측 못 한 INTERRUPTED 보고 ─────────
+
+fn make_running(path: &Path) {
+    let mut staging = CoordinatorStagingStore::open(path).unwrap();
+    staging.record_grant_accepted(ATTEMPT_ID, 250, false, false).unwrap();
+    staging.record_process_started(LEASE_ID, 260).unwrap();
+}
+
+// s56 ② — 최종 상태 CANCELLED · ARCHIVED 의 알림 · 정지 확인 처리는 고쳤지만 **시험하지 못했다**: 지금 Job 저장소는 그 두 상태의 행을 읽지 못한다
+//   ("unknown job state in durable store" — 취소 · 보관 코드가 없어 그 상태가 저장될 길이 없다). 취소를 구현할 때 이 시험을 같이 넣는다.
+
+/// s56 ③ — D6 보류 중 관측 못 한 INTERRUPTED 보고에 소유자 선점을 요청해도 Lease · 예약 · Job · 보류를 그대로 둔다.
+#[test]
+fn an_unobserved_interrupted_report_does_not_preempt_while_held() {
+    use gputeer_coordinator::attempt_report_store::{CoordinatorAttemptReportStore, OwnerPreemptRequest};
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    assert_eq!(job_state(&fixture.path), JobState::Running);
+    failover_now(&fixture.path);
+    assert_eq!(holds(&fixture.path).len(), 1);
+    let report = signed_report(&fixture.path, pb::AttemptOutcome::Interrupted);
+    let policy = gputeer_coordinator::failover::FailoverPolicy {
+        grace_ms: 0,
+        shared_checkpoint_root: None,
+        producer_keys: vec![],
+    };
+    let stored = CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_with(&report, None, Some(OwnerPreemptRequest { policy: &policy, now_unix_ms: NOW }))
+        .unwrap_or_else(|e| panic!("보고가 저장되지 않았다: {e:?}"));
+    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")), "{:?}", stored.notes);
+    assert!(!lease_revoked(&fixture.path), "관측 못 한 보고의 선점이 Lease 를 폐기했다");
+    assert!(reservation_exists(&fixture.path));
+    assert_eq!(job_state(&fixture.path), JobState::Running, "선점이 Job 을 옮겼다");
+    assert_eq!(holds(&fixture.path).len(), 1);
+}
+
+// s45ab ① — INTERRUPTED · REPLANNING · RECONCILING Job 의 정지 확인 처리(Job 그대로 · 자원만 해제)도 고쳤지만 **시험하지 못했다**: 지금 Job 저장소는
+//   8 상태(SUBMITTED · PLANNING · QUEUED · STAGING · RUNNING · PAUSED · COMPLETED · FAILED)만 읽는다(`job_store.rs` 의 상태 해석 —
+//   그 밖은 "unknown job state in durable store"). 그 상태들은 한 커밋 안에서 거쳐 가기만 하고 저장되지 않는다. 저장하게 될 때 이 시험을 넣는다.
