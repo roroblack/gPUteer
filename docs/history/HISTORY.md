@@ -25,6 +25,29 @@
 
 ---
 
+## 2026-10-05 02:54 — 실행 알림 계획 §5 5번 — 운영자 취소 `gputeer cancel-job`(계약 v18q · 격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 5번 · 계약 §9 「★ v18q」(설계 검수 3회차 ACCEPTED) · state-machines.md Job 표 STAGING · RUNNING -> CANCELLED 조건부 effect
+- 스트림: Coordinator · CLI
+- 결정: 사용자 「ㄱㄱ」 — 앞서 드린 추천안 A(운영자 명령)로 진행. 제출자 서명 취소는 이 개정 밖(새 서명 메시지 · domain_tag 필요)
+- 수행: ① Job 저장소가 CANCELLED 를 읽는다(행 모양 — 끝난 이유 칸 비어 있음 · 나머지는 취소 전 모양 · 계획은 대기열 시각과 함께). ARCHIVED 는 여전히 손상
+  ② `job_cancel::cancel_job_by_operator` — 한 트랜잭션: 감사 행(`coordinator_job_cancellations` · 멱등) · 대기 상태는 Job 만 · STAGING · RUNNING 은 풀리지 않은 불명
+  또는 보류가 있으면 Job 만, 아니면 최신 시도 Lease 폐기까지 · 예약은 어느 경우에도 풀지 않는다 · COMPLETED · FAILED 거부 · 시도 행 없는 STAGING · RUNNING 은 손상 거부
+  ③ `run_notice_store::has_unresolved_run_unknown` — 시도가 RUN_UNKNOWN 이거나, 같은 노드의 더 큰 sequence STOP 이 없는 RUN_UNKNOWN 알림이 있다
+  ④ release-lost-node — 풀리지 않은 불명이면 Job 상태와 무관하게 거부(FAILED · COMPLETED 의 기존 공백도 닫음 — 더 거부하는 쪽) · CANCELLED 를 받되 최신 시도면
+  Lease 폐기 + 지금 > 만료 + max(`--failover-grace-ms`, 서명 유예)(failover 와 같은 식 · 경계) · 인자 없으면 거부. release-held-job 최종 분기도 불명이면 거부
+  ⑤ CLI `cancel-job` · `release-lost-node --failover-grace-ms` · 대시보드 CANCELLED 색
+- 검증: Windows `cargo test --workspace -j 1 --no-fail-fast` 126 묶음 1681 passed · 0 failed · ignored 4(직전 1670 + 새 시험 11 — 운영자 취소 절 8 · 같은 노드 판정 1 ·
+  행 모양 단위 1 · CLI 1). 뮤테이션 5 — 취소의 Lease 폐기 제거 · release-lost-node 불명 검사 제거 · 불명 판정을 시도 상태만으로 · 취소 유예 검사 제거 · 같은 노드 조건 제거
+  → 각각 해당 시험 실패. 독립 검수(Codex gpt-6-sol · 기계 검토): 설계 v18q 3회차 ACCEPTED · 코드 2회차 ACCEPTED(1회차 지적 5 — 다른 노드 STOP · 불가능한 행 모양 ·
+  시도 행 없는 취소 · 감사 표 DDL 트랜잭션 밖 · 무효 단언 — 모두 고침). ★ 시험 하나에 STOP 의 동작을 틀리게 적었었다(종결 시도의 STOP 은 증거만 더한다고 가정) —
+  실제는 계약 §3 대로 그 시도의 보류 · 예약을 STOP 이 직접 푼다. 시험을 실제 규칙에 맞췄다
+- 한계: 즉시 정지 아님(다음 갱신의 서명된 REVOKED 또는 끊김 시한) · 노드 작업 폴더 정리 보장 안 함 · 저장소 열기의 멱등 스키마 준비는 트랜잭션 밖(다른 운영자 명령과 같다) ·
+  취소된 Job 에 옛 staging 요청이 재생되면 손상 오류(새 Grant 는 내지 않는다) · 리눅스(비-root)는 재지 않았다
+- 리포트: 계획 문서 · 계약 v18q 가 대신한다
+
+---
+
 ## 2026-10-04 15:50 — 실행 알림 계획 §5 4번 — 이어받은 뒤 옛 시도의 체크포인트를 중앙 수락 · 재개 후보에서 뺀다(격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 §5 4번 · 계약 D6 보강 셋째 줄 · ADR-034 시험 8

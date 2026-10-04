@@ -46,6 +46,7 @@ mod ops;
 mod out_file;
 mod plan_job;
 mod pool_dashboard;
+mod cancel_job;
 mod release_held_job;
 mod release_lost_node;
 mod scheduler_loop;
@@ -108,7 +109,8 @@ gputeer — gPUteer CLI
         [--silent-after-ms <ms>] [--failover-grace-ms <ms> --coordinator-key-file <Coordinator 시드 파일> --coordinator-pubkey <hex> --shared-checkpoint-root <dir>]
     gputeer agent-loop --interval-ms <ms> --max-rounds 0 -- <agent-stub 인자>
     gputeer status --control-db <path>
-    gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text>
+    gputeer release-lost-node --control-db <path> --node <id> --operator-statement <text> [--failover-grace-ms <ms>]   (취소된 Job 의 최신 시도면 필수)
+    gputeer cancel-job --control-db <path> --job <id> --operator-statement <text>   (운영자 취소 — 예약은 증거로만 풀린다)
     gputeer release-held-job --control-db <path> --job <id> --operator-statement <text>   (알리지 못하고 끊긴 부작용 작업의 보류 해제)
     gputeer owner-resume --checkpoint-root <dir>
     gputeer container-incidents --checkpoint-root <dir> [--clear <컨테이너 이름> | --clear-all]
@@ -423,6 +425,16 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("cancel-job") => match cancel_job::run(&args[1..]) {
+            Ok(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("cancel-job 실패: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Some("release-held-job") => match release_held_job::run(&args[1..]) {
             Ok(message) => {
                 println!("{message}");

@@ -267,6 +267,10 @@ COMPLETED | ARCHIVED | RETENTION_EXPIRED | artifact 보존 기간 경과 | CAS G
 ★ 2026-10-03 12:49 (조각 6d) — STAGING · RUNNING -> CANCELLED(USER_CANCELLED)의 조건부 effect 는 **규범만** 바꿨다. Coordinator 에 Job 취소 경로가 아직 없다
 (`crates/coordinator/src/*.rs` · `crates/cli/src/main.rs` 에서 `USER_CANCELLED` · `JobState::Cancelled` 를 찾았고 안 나왔다 — 다른 이름의 취소 경로는 이 검색이 놓친다).
 취소를 구현할 때 이 조건을 같은 트랜잭션에서 본다.
+★ 2026-10-05 02:32 (실행 알림 계약 v18q) — 운영자 취소 `gputeer cancel-job`(`crates/coordinator/src/job_cancel.rs`)이 들어왔다. 위 "경로가 아직 없다" 는 그 전의 기록이다.
+위 조건부 effect 를 같은 트랜잭션에서 본다 — 불명 · 보류가 있으면 Job 만 CANCELLED, 아니면 최신 시도의 Lease 폐기까지. **예약은 어느 경우에도 풀지 않는다**
+(종료 보고 · STOP · 운영자 해제로만). "process tree 종료" 는 Lease 폐기로 갱신을 거부하는 것이다 — 즉시 정지 · workspace 정리는 보장하지 않는다.
+제출자 서명 취소는 아직 없다(새 서명 메시지가 필요하다).
 ★ 2026-10-03 13:23 (실행 알림 계약 v18k §9 D6 · 계획 조각 7b · 7c) — `UNREPORTED_RISK_HELD` 두 행(자기 전이 — 보류 설치는 guard 가 아니라 effect 다 · b4 ③)과
 `release-held-job`(UNREPORTED 보류만 · 한 트랜잭션에서 보류 제거 · 그 시도에 override · 최종 Job 이면 Lease 폐기 · 예약 해제)을 코드로 강제한다
 (`failover.rs`). override 가 있으면 위 두 행의 guard 가 거짓이라 같은 장애 이어받기가 기존 행(NODE_LOST · STAGING_NODE_LOST)으로 간다(b9 ①).

@@ -35,6 +35,7 @@ pub mod failover;
 pub mod gpu_attestation;
 pub mod grant_from_stored;
 pub mod inventory_store;
+pub mod job_cancel;
 pub mod job_holds;
 pub mod job_store;
 pub mod lease_store;

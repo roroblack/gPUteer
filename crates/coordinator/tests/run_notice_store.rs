@@ -1161,8 +1161,8 @@ fn make_running(path: &Path) {
     staging.record_process_started(LEASE_ID, 260).unwrap();
 }
 
-// s56 ② — 최종 상태 CANCELLED · ARCHIVED 의 알림 · 정지 확인 처리는 고쳤지만 **시험하지 못했다**: 지금 Job 저장소는 그 두 상태의 행을 읽지 못한다
-//   ("unknown job state in durable store" — 취소 · 보관 코드가 없어 그 상태가 저장될 길이 없다). 취소를 구현할 때 이 시험을 같이 넣는다.
+// s56 ② — 최종 상태 CANCELLED · ARCHIVED 의 알림 · 정지 확인 처리. ★ 2026-10-05 운영자 취소(계약 v18q)가 들어와 CANCELLED 는 아래 「운영자 취소」 절에서
+//   시험한다. ARCHIVED 는 여전히 쓰는 코드가 없어 저장소가 손상으로 읽는다 — 보관을 구현할 때 넣는다.
 
 /// s56 ③ — D6 보류 중 관측 못 한 INTERRUPTED 보고에 소유자 선점을 요청해도 Lease · 예약 · Job · 보류를 그대로 둔다.
 #[test]
@@ -1193,3 +1193,237 @@ fn an_unobserved_interrupted_report_does_not_preempt_while_held() {
 // s45ab ① — INTERRUPTED · REPLANNING · RECONCILING Job 의 정지 확인 처리(Job 그대로 · 자원만 해제)도 고쳤지만 **시험하지 못했다**: 지금 Job 저장소는
 //   8 상태(SUBMITTED · PLANNING · QUEUED · STAGING · RUNNING · PAUSED · COMPLETED · FAILED)만 읽는다(`job_store.rs` 의 상태 해석 —
 //   그 밖은 "unknown job state in durable store"). 그 상태들은 한 커밋 안에서 거쳐 가기만 하고 저장되지 않는다. 저장하게 될 때 이 시험을 넣는다.
+//   ★ 2026-10-05 — CANCELLED 는 이제 읽는다(운영자 취소). 위 목록은 그 전의 기록이다.
+
+// ─── ★ 2026-10-05 운영자 취소 `cancel-job`(실행 알림 계약 v18q) ─────────
+
+fn cancel(path: &Path, job_id: &str, statement: &str) -> Result<gputeer_coordinator::job_cancel::JobCancellation, String> {
+    gputeer_coordinator::job_cancel::cancel_job_by_operator(path, job_id, statement, NOW)
+}
+
+fn release_lost(path: &Path, grace: Option<u64>, now: u64) -> Result<gputeer_coordinator::failover::OperatorRelease, String> {
+    gputeer_coordinator::failover::release_lost_node_by_operator_with(path, NODE_ID, "운영자: 그 PC 를 확인했다", now, grace)
+}
+
+fn job2_state(path: &Path) -> JobState {
+    CoordinatorJobStore::open(path).unwrap().get("job-2").unwrap().unwrap().state
+}
+
+fn schedulable(path: &Path, job_id: &str) -> bool {
+    CoordinatorJobStore::open(path).unwrap().list_schedulable().unwrap().iter().any(|j| j.job_id == job_id)
+}
+
+/// v18q ① ② — 대기 중 Job 은 상태만 옮긴다. 다시 부르면 처음 감사 행을 그대로 돌려준다(진술이 달라도). 빈 진술 · 없는 Job 거부.
+#[test]
+fn a_queued_job_is_cancelled_once_and_never_scheduled() {
+    let fixture = prepare_fixture();
+    queue_second_job(&fixture.path);
+    assert!(schedulable(&fixture.path, "job-2"));
+    assert!(cancel(&fixture.path, "job-2", "  ").unwrap_err().contains("진술"));
+    assert!(cancel(&fixture.path, "job-none", "운영자").unwrap_err().contains("없다"));
+    let first = cancel(&fixture.path, "job-2", "운영자: 잘못 넣었다").unwrap();
+    assert!(first.created && !first.deferred && !first.lease_revoked);
+    assert_eq!(first.from_state, "QUEUED");
+    assert_eq!(job2_state(&fixture.path), JobState::Cancelled);
+    assert!(!schedulable(&fixture.path, "job-2"), "취소된 Job 이 배정 후보다");
+    assert!(stage_second(&fixture.path).is_err(), "취소된 Job 에 시도를 만들었다");
+    let again = cancel(&fixture.path, "job-2", "운영자: 다른 진술").unwrap();
+    assert!(!again.created);
+    assert_eq!(again.operator_statement, "운영자: 잘못 넣었다");
+    // 취소된 행이 있어도 상태 화면이 읽힌다(전에는 손상으로 전체가 실패했을 것이다)
+    let report = gputeer_coordinator::status::status_report(&fixture.path, NOW).unwrap();
+    assert!(report.contains("CANCELLED"), "{report}");
+}
+
+/// v18q ② (나) · ③ · ④ — 실행 중(보류 없음): Lease 를 같은 커밋에서 폐기 · 예약 · 시도 그대로. 갱신은 REVOKED. 종료 보고가 오면 시도 종결 · 예약 해제 ·
+///   Job 은 CANCELLED 그대로.
+#[test]
+fn a_running_job_is_cancelled_by_revoking_its_lease_and_released_only_by_the_exit_report() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, LeaseStoreError, RenewDecision};
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    // 갱신이 취소보다 먼저 커밋되면 그 갱신은 성공한다 — 다음 갱신이 REVOKED 를 받는다
+    match CoordinatorLeaseStore::open(&fixture.path).unwrap().renew_existing_within_duration(LEASE_ID, 400, 950, 700).unwrap() {
+        RenewDecision::Renewed(_) => {}
+        other => panic!("{other:?}"),
+    }
+    let cancelled = cancel(&fixture.path, JOB_ID, "운영자: 취소 요청").unwrap();
+    assert!(cancelled.lease_revoked && !cancelled.deferred);
+    assert_eq!(cancelled.latest_attempt_id.as_deref(), Some(ATTEMPT_ID));
+    assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+    assert!(lease_revoked(&fixture.path) && reservation_exists(&fixture.path), "취소가 예약을 풀었다");
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Running);
+    match CoordinatorLeaseStore::open(&fixture.path).unwrap().renew_existing_within_duration(LEASE_ID, 500, 990, 800) {
+        Err(LeaseStoreError::Revoked { .. }) => {}
+        other => panic!("취소 뒤 갱신은 REVOKED 여야 한다: {other:?}"),
+    }
+    // 장애 이어받기는 취소된 Job 을 건드리지 않는다
+    let (outcomes, _) = failover_now(&fixture.path);
+    assert!(outcomes.is_empty() && holds(&fixture.path).is_empty());
+    let stored = CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Failed), fully_authorized(), NOW)
+        .unwrap_or_else(|e| panic!("취소된 Job 의 종료 보고가 저장되지 않았다: {e:?}"));
+    assert!(stored.created);
+    assert!(!reservation_exists(&fixture.path), "종료 보고가 예약을 풀지 않았다");
+    assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+}
+
+/// 대조 — 완료된 Job 은 취소할 수 없다(표에 행이 없다) · 아무것도 바뀌지 않는다.
+#[test]
+fn a_completed_job_cannot_be_cancelled() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Completed), fully_authorized(), NOW)
+        .unwrap();
+    assert_eq!(job_state(&fixture.path), JobState::Completed);
+    assert!(cancel(&fixture.path, JOB_ID, "운영자").unwrap_err().contains("COMPLETED"));
+    assert_eq!(job_state(&fixture.path), JobState::Completed);
+}
+
+/// v18q ② (가) — UNREPORTED 보류 중 취소: Job 만 CANCELLED · Lease · 예약 · 보류 그대로 · 배정 후보 아님 · release-lost-node 거부 ·
+///   release-held-job(최종 Job 분기)이 푼다.
+#[test]
+fn cancelling_a_held_job_defers_everything_to_release_held_job() {
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    failover_now(&fixture.path);
+    assert_eq!(holds(&fixture.path).len(), 1);
+    let cancelled = cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
+    assert!(cancelled.deferred && !cancelled.lease_revoked);
+    assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+    assert!(!lease_revoked(&fixture.path) && reservation_exists(&fixture.path) && holds(&fixture.path).len() == 1);
+    assert!(!schedulable(&fixture.path, JOB_ID));
+    assert!(release_lost(&fixture.path, Some(0), 2_000_000).is_err(), "보류된 취소 Job 을 release-lost-node 가 풀었다");
+    let released = release_held(&fixture.path, "운영자: 그 PC 에서 작업이 없음을 확인").unwrap();
+    assert!(released.job_final);
+    assert!(holds(&fixture.path).is_empty() && !reservation_exists(&fixture.path) && lease_revoked(&fixture.path));
+}
+
+/// v18q ② (가) · ⑤′ — RUN_UNKNOWN 뒤 취소: Job 만 CANCELLED. 그 뒤 종료 보고는 증거로만(예약 그대로). STOP 이 푼다 · Job 은 CANCELLED 그대로.
+#[test]
+fn cancelling_a_run_unknown_job_waits_for_stop() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    let cancelled = cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
+    assert!(cancelled.deferred && !cancelled.lease_revoked);
+    assert!(reservation_exists(&fixture.path) && !holds(&fixture.path).is_empty());
+    let stored = CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Failed), fully_authorized(), NOW)
+        .unwrap();
+    assert!(stored.created && reservation_exists(&fixture.path), "불명 시도의 보고가 예약을 풀었다");
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+    assert!(!reservation_exists(&fixture.path) && holds(&fixture.path).is_empty() && lease_revoked(&fixture.path));
+    assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+}
+
+/// v18q ⑤ (a) — 취소 뒤 늦게 온 RUN_UNKNOWN(최종 Job 이라 보류 없음): release-lost-node 는 유예가 지나도 거부한다. STOP 이 푼다.
+#[test]
+fn a_late_run_unknown_after_cancel_is_released_only_by_stop() {
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    assert!(holds(&fixture.path).is_empty(), "최종 Job 에 보류를 걸었다");
+    let refused = release_lost(&fixture.path, Some(0), 2_000_000).unwrap_err();
+    assert!(refused.contains("불명"), "{refused}");
+    assert!(reservation_exists(&fixture.path));
+    accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+    assert!(!reservation_exists(&fixture.path));
+    assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+}
+
+/// v18q ⑤ (b) — 취소된 Job 의 최신 시도 예약: 유예 인자 없음 거부 · 경계(= 만료 + max(정책, 서명 유예)) 거부 · 1ms 뒤 해제. 서명 유예가 더 크면 그 값.
+#[test]
+fn release_lost_node_frees_a_cancelled_attempt_only_after_the_failover_grace() {
+    use gputeer_coordinator::lease_store::CoordinatorLeaseStore;
+    for (signed_grace, policy_grace) in [(0u64, 100u64), (500, 100)] {
+        let fixture = prepare_fixture();
+        make_running(&fixture.path);
+        if signed_grace > 0 {
+            CoordinatorLeaseStore::open(&fixture.path).unwrap().raise_reassignment_grace(LEASE_ID, signed_grace).unwrap();
+        }
+        cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
+        let boundary = lease_expires_at(&fixture.path) + signed_grace.max(policy_grace);
+        assert!(release_lost(&fixture.path, None, boundary + 1).unwrap_err().contains("--failover-grace-ms"));
+        assert!(release_lost(&fixture.path, Some(policy_grace), boundary).is_err(), "경계 시각에 풀었다");
+        assert!(reservation_exists(&fixture.path));
+        let released = release_lost(&fixture.path, Some(policy_grace), boundary + 1).unwrap();
+        assert_eq!(released.attempt_id, ATTEMPT_ID);
+        assert!(!reservation_exists(&fixture.path));
+        assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+    }
+}
+
+/// v18q ⑤ (a) · 2회차 ① — UNREPORTED 보류 → 취소 → 관측 못 한 종료 보고(시도 종결 · 보류 · 예약 남음) → 늦은 RUN_UNKNOWN(시도 상태 그대로 · 보류 없음) →
+///   release-held-job 거부. STOP 뒤에는 풀린다.
+#[test]
+fn release_held_job_refuses_a_late_run_unknown_on_a_finished_cancelled_attempt() {
+    use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
+    let fixture = prepare_fixture();
+    make_running(&fixture.path);
+    failover_now(&fixture.path);
+    cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
+    let stored = CoordinatorAttemptReportStore::open(&fixture.path)
+        .unwrap()
+        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Failed), fully_authorized(), NOW)
+        .unwrap();
+    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")), "{:?}", stored.notes);
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed, "종결된 시도가 되돌아갔다");
+    let refused = release_held(&fixture.path, "운영자: 확인").unwrap_err();
+    assert!(refused.contains("불명"), "{refused}");
+    assert!(reservation_exists(&fixture.path) && holds(&fixture.path).len() == 1);
+    // STOP 은 이미 종결된 시도라도 그 시도의 보류(같은 시도의 UNREPORTED — b7 ③)와 예약을 **스스로** 푼다(계약 §3 — 시도 상태는 그대로).
+    //   (코드 검수 cancel_code ⑤ — 전에는 STOP 뒤에 release-held-job 을 조건부로 불러 STOP 이 풀었는지 증명하지 못했다)
+    accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
+    assert!(!reservation_exists(&fixture.path) && holds(&fixture.path).is_empty(), "STOP 이 예약 · 보류를 풀지 않았다");
+    assert!(release_held(&fixture.path, "운영자: 정지 확인 뒤").is_err(), "풀 것이 없는데 release-held-job 이 통과했다");
+    assert_eq!(job_state(&fixture.path), JobState::Cancelled);
+}
+
+/// 코드 검수 cancel_code ① — "풀리지 않은 불명" 은 **같은 노드**의 더 큰 sequence STOP 만 푼다(sequence 는 노드마다 센다). 알림 입구는 1노드 시도만 받으므로
+///   표에 직접 행을 넣어 판정 자체를 잰다.
+#[test]
+fn only_a_later_stop_from_the_same_node_resolves_a_run_unknown() {
+    let fixture = prepare_fixture();
+    CoordinatorRunNoticeStore::open(&fixture.path).unwrap();
+    let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+    let put = |node: &str, sequence: u64, kind: &str| {
+        connection
+            .execute(
+                "INSERT INTO coordinator_attempt_run_notices VALUES (?1, ?2, ?3, ?4, ?5, ?6, x'00', x'00', ?7, ?8)",
+                rusqlite::params![
+                    ATTEMPT_ID,
+                    node,
+                    sequence.to_be_bytes().to_vec(),
+                    JOB_ID,
+                    1u64.to_be_bytes().to_vec(),
+                    kind,
+                    vec![0u8; 32],
+                    1u64.to_be_bytes().to_vec()
+                ],
+            )
+            .unwrap();
+    };
+    let unresolved = || gputeer_coordinator::run_notice_store::has_unresolved_run_unknown(&connection, ATTEMPT_ID).unwrap();
+    assert!(!unresolved(), "알림이 없는데 불명이다");
+    put("node-a", 5, "RUN_UNKNOWN");
+    assert!(unresolved());
+    put("node-b", 9, "STOP_CONFIRMED");
+    assert!(unresolved(), "다른 노드의 STOP 이 불명을 풀었다");
+    put("node-a", 3, "STOP_CONFIRMED");
+    assert!(unresolved(), "더 작은 sequence 의 STOP 이 불명을 풀었다");
+    put("node-a", 6, "STOP_CONFIRMED");
+    assert!(!unresolved(), "같은 노드의 더 큰 STOP 이 불명을 풀지 않았다");
+}

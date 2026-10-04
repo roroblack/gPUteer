@@ -332,6 +332,41 @@ fn is_latest_attempt(transaction: &Connection, attempt: &staging_store::StoredAt
 }
 
 /// 실행 알림 사건 표(DUPLICATE_RISK · RECONCILE_NEEDED). ★ 2026-10-03 12:49 (조각 6d) — 늦은 종료 보고 분기(attempt_report_store)도 같은 표에 쓴다.
+/// ★ 2026-10-05 02:25 (실행 알림 계약 v18q ⑤ "풀리지 않은 불명") — 그 시도가 RUN_UNKNOWN 이거나, 저장된 RUN_UNKNOWN 알림 뒤에(더 큰 sequence) STOP_CONFIRMED 가 없다.
+///   시도 상태만 보면 놓친다 — 이미 종결된 시도에 늦게 온 RUN_UNKNOWN 은 시도 상태를 되돌리지 않고, 최종 Job 에는 NOTICE 보류도 만들지 않는다.
+///   알림 표가 아직 없으면(알림 기능을 한 번도 안 연 DB) 알림 쪽은 없음이다. sequence 는 8바이트 big-endian 이라 BLOB 비교가 수 비교와 같다.
+///   ★ (코드 검수 cancel_code ①) STOP 은 **같은 노드**의 것만 그 불명을 푼다 — sequence 는 노드마다 따로 센다. 지금 알림 입구는 1노드 시도만 받지만
+///   이 판정이 그 조건에 기대지 않게 한다.
+pub fn has_unresolved_run_unknown(connection: &Connection, attempt_id: &str) -> Result<bool, String> {
+    if let Some(attempt) = staging_store::fetch_attempt(connection, attempt_id).map_err(|e| format!("{e:?}"))? {
+        if attempt.state == AttemptState::RunUnknown {
+            return Ok(true);
+        }
+    }
+    let table: Option<i64> = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_attempt_run_notices'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if table.is_none() {
+        return Ok(false);
+    }
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM coordinator_attempt_run_notices u
+               WHERE u.attempt_id = ?1 AND u.kind = 'RUN_UNKNOWN'
+                 AND NOT EXISTS(SELECT 1 FROM coordinator_attempt_run_notices s
+                                 WHERE s.attempt_id = u.attempt_id AND s.node_id = u.node_id
+                                   AND s.kind = 'STOP_CONFIRMED' AND s.sequence > u.sequence))",
+            rusqlite::params![attempt_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) const RUN_NOTICE_EVENTS_DDL: &str = "CREATE TABLE IF NOT EXISTS coordinator_run_notice_events (
                 attempt_id TEXT NOT NULL,
                 event TEXT NOT NULL CHECK(event IN ('DUPLICATE_RISK', 'RECONCILE_NEEDED')),

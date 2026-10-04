@@ -35,8 +35,10 @@ impl JobStateDb for JobState {
 }
 
 /// 이 저장소가 **쓰는** 상태만 읽는다. 표에는 있지만 이 저장소가 최종 상태로 쓰지 않는 상태
-/// (INTERRUPTED · REPLANNING · RECONCILING · CANCELLED · ARCHIVED)가 DB 에 있으면 손상이다 —
+/// (INTERRUPTED · REPLANNING · RECONCILING · ARCHIVED)가 DB 에 있으면 손상이다 —
 /// 그 상태들은 판정 순간에만 거친다(코덱스 72 결정 C, Attempt 와 같다).
+/// ★ 2026-10-05 02:21 (실행 알림 계약 v18q ④ ⑦ · 계획 §5 5번) — CANCELLED 는 운영자 취소(`cancel-job`)가 **쓰므로** 읽는다. 전에는 손상으로 거부해,
+///   취소된 Job 의 늦은 종료 보고 · 정지 알림 · 상태 화면이 전부 실패했을 것이다.
 fn parse_job_state(value: &str) -> Result<JobState, JobStoreError> {
     match value {
         "SUBMITTED" => Ok(JobState::Submitted),
@@ -47,6 +49,7 @@ fn parse_job_state(value: &str) -> Result<JobState, JobStoreError> {
         "PAUSED" => Ok(JobState::Paused),
         "COMPLETED" => Ok(JobState::Completed),
         "FAILED" => Ok(JobState::Failed),
+        "CANCELLED" => Ok(JobState::Cancelled),
         other => Err(JobStoreError::CorruptData(format!(
             "unknown job state in durable store: {other}"
         ))),
@@ -1477,6 +1480,24 @@ pub fn follow_stop_confirmed(
     })
 }
 
+/// ★ 2026-10-05 02:25 (실행 알림 계약 v18q ② · 계획 §5 5번) — 운영자 취소: 표의 `* -> CANCELLED | USER_CANCELLED` 행만 따른다(COMPLETED · FAILED 등은 거부).
+/// Job 칸은 상태와 revision 만 바꾼다 — 끝난 이유 칸을 쓰지 않는다(v18q ⑦ · 취소 시각 · 진술은 감사 행). Lease · 예약 · 보류는 호출자(`job_cancel`)가 정한다.
+pub(crate) fn cancel_within(connection: &Connection, job: &StoredJob) -> Result<StoredJob, JobStoreError> {
+    let mut next = job.clone();
+    next.state = gputeer_protocol::job_state::transition_via(job.state, JobState::Cancelled, "USER_CANCELLED").map_err(
+        |rejected| JobStoreError::InvalidTransition {
+            from: rejected.from,
+            to: rejected.to,
+        },
+    )?;
+    next.revision = job
+        .revision
+        .checked_add(1)
+        .ok_or(JobStoreError::CorruptData("revision overflow".to_string()))?;
+    update_job(connection, &next)?;
+    Ok(next)
+}
+
 /// ★ 2026-09-23 (신뢰망 남은 일 H) — 노드 소유자가 GPU 를 되찾았다: `RUNNING -> PAUSED`(OWNER_PREEMPT).
 ///
 /// 규범 effect "checkpoint 후 정지" — 이어갈 지점은 공유 저장소의 검증된 마지막 체크포인트다(없으면 전에 고른 지점을
@@ -1982,6 +2003,22 @@ impl RawJobRow {
                     && self.queued_at_unix_ms.is_some()
                     && has_plan
                     && (queue_stage_failure || run_stage_failure)
+            }
+            // ★ 계약 v18q ⑦ — 취소는 끝난 이유 칸(run_terminal · queue_failure · failed_at · 노드가 보고한 끝 시각)을 쓰지 않는다(취소 시각 · 진술은
+            //   감사 행 `coordinator_job_cancellations`). 나머지 칸은 취소 전 상태의 모양 그대로다 — SUBMITTED 에서 취소하면 plan 이 없다.
+            //   시각 칸은 앞 단계가 있어야 뒤 단계가 있다(계획 없이 대기열 · 대기열 없이 배정은 손상).
+            JobState::Cancelled => {
+                run_terminal.is_none()
+                    && self.worker_reported_finished_at_unix_ms.is_none()
+                    && queue_failure.is_none()
+                    && self.failed_at_unix_ms.is_none()
+                    && (self.queued_at_unix_ms.is_none() || self.planning_at_unix_ms.is_some())
+                    && (self.staging_at_unix_ms.is_none() || self.queued_at_unix_ms.is_some())
+                    && (self.running_at_unix_ms.is_none() || self.staging_at_unix_ms.is_some())
+                    && (self.queued_at_unix_ms.is_none() || has_plan)
+                    && (self.plan_id.is_none() || has_plan)
+                    // (코드 검수 cancel_code ②) 계획은 대기열에 올릴 때 생긴다 — 계획만 있고 대기열 시각이 없는 모양은 취소 전에도 없었다
+                    && (self.plan_id.is_none() || self.queued_at_unix_ms.is_some())
             }
             _ => false,
         };
@@ -2802,6 +2839,36 @@ mod tests {
             .map(|job| job.job_id)
             .collect();
         assert_eq!(ids, ["job-a", "job-b", "job-c"]);
+    }
+
+    /// 계약 v18q ⑦ — CANCELLED 행은 취소 전 상태의 모양(계획 없음 · 대기열 · 실행 중)을 그대로 읽고, 끝난 이유 칸이 있으면 손상이다. ARCHIVED 는 여전히 손상이다.
+    #[test]
+    fn a_cancelled_row_keeps_its_earlier_shape_and_terminal_fields_are_corrupt() {
+        let (mut store, _dir) = open_temp();
+        store.submit_accepted(&submission("job-1", 1), 100).unwrap();
+        queued(&mut store, &submission("job-2", 2));
+        let set = |store: &CoordinatorJobStore, sql: &str| store.connection.execute(sql, []).unwrap();
+        set(&store, "UPDATE coordinator_jobs SET state = 'CANCELLED'");
+        assert_eq!(store.get("job-1").unwrap().unwrap().state, JobState::Cancelled, "계획 없는 SUBMITTED 에서 취소");
+        assert_eq!(store.get("job-2").unwrap().unwrap().state, JobState::Cancelled, "대기열에서 취소");
+        set(&store, "UPDATE coordinator_jobs SET running_at_unix_ms = x'0000000000000190', staging_at_unix_ms = x'0000000000000180' WHERE job_id = 'job-2'");
+        assert_eq!(store.get("job-2").unwrap().unwrap().state, JobState::Cancelled, "실행 중에 취소");
+        for (sql, why) in [
+            ("UPDATE coordinator_jobs SET run_terminal = 'ATTEMPT_COMPLETED' WHERE job_id = 'job-2'", "끝난 이유"),
+            ("UPDATE coordinator_jobs SET failed_at_unix_ms = x'0000000000000190' WHERE job_id = 'job-2'", "실패 시각"),
+            ("UPDATE coordinator_jobs SET staging_at_unix_ms = NULL WHERE job_id = 'job-2'", "배정 없이 실행"),
+            ("UPDATE coordinator_jobs SET plan_id = NULL WHERE job_id = 'job-2'", "계획 없이 대기열"),
+            ("UPDATE coordinator_jobs SET queued_at_unix_ms = NULL, staging_at_unix_ms = NULL, running_at_unix_ms = NULL WHERE job_id = 'job-2'", "대기열 없이 계획"),
+        ] {
+            let (mut fresh, _d) = open_temp();
+            queued(&mut fresh, &submission("job-2", 2));
+            set(&fresh, "UPDATE coordinator_jobs SET state = 'CANCELLED', staging_at_unix_ms = x'0000000000000180', running_at_unix_ms = x'0000000000000190'");
+            assert_eq!(fresh.get("job-2").unwrap().unwrap().state, JobState::Cancelled);
+            set(&fresh, sql);
+            assert!(matches!(fresh.get("job-2"), Err(JobStoreError::CorruptData(_))), "{why} 이 있는 CANCELLED 행을 읽었다");
+        }
+        set(&store, "UPDATE coordinator_jobs SET state = 'ARCHIVED' WHERE job_id = 'job-1'");
+        assert!(matches!(store.get("job-1"), Err(JobStoreError::CorruptData(_))));
     }
 
     #[test]

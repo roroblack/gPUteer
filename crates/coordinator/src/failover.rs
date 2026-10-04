@@ -471,6 +471,18 @@ pub fn release_lost_node_by_operator(
     operator_statement: &str,
     now_unix_ms: u64,
 ) -> Result<OperatorRelease, String> {
+    release_lost_node_by_operator_with(control_db, node_id, operator_statement, now_unix_ms, None)
+}
+
+/// ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤) — `failover_grace_ms` 는 취소된 Job 의 **최신 시도** 예약을 풀 때만 쓴다(장애 이어받기의
+///   `--failover-grace-ms` 와 같은 값 — 유예를 지어내지 않으므로 그 경우 없으면 거부한다).
+pub fn release_lost_node_by_operator_with(
+    control_db: &Path,
+    node_id: &str,
+    operator_statement: &str,
+    now_unix_ms: u64,
+    failover_grace_ms: Option<u64>,
+) -> Result<OperatorRelease, String> {
     if operator_statement.trim().is_empty() {
         return Err("RELEASE_REFUSED: 운영자 진술(누가 · 무엇을 확인했나)이 비었다".to_string());
     }
@@ -509,9 +521,44 @@ pub fn release_lost_node_by_operator(
         .optional()
         .map_err(|e| e.to_string())?;
     let superseded = latest.as_deref() != Some(reservation.attempt_id.as_str());
+    // ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤ (a)) — 풀리지 않은 불명(시도가 RUN_UNKNOWN · 또는 STOP 으로 해소되지 않은 RUN_UNKNOWN 알림)이 있으면 Job 상태와
+    //   무관하게 풀지 않는다 — RUN_UNKNOWN 은 STOP 만 푼다. 최종 Job 에는 늦은 RUN_UNKNOWN 이 NOTICE 보류를 만들지 않아 위 보류 검사로는 막히지 않았다
+    //   (FAILED · COMPLETED 의 기존 공백도 같이 닫는다 — 더 거부하는 쪽).
+    if crate::run_notice_store::has_unresolved_run_unknown(&transaction, &reservation.attempt_id)? {
+        return Err(format!(
+            "RELEASE_REFUSED: {node_id} 의 예약을 쥔 시도 {} 에 풀리지 않은 실행 여부 불명이 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다",
+            reservation.attempt_id
+        ));
+    }
+    // ★ 계약 v18q ⑤ (b) — 취소된 Job 의 **최신 시도** 예약: 취소가 Lease 를 폐기했어도 노드는 다음 갱신 · 끊김 시한까지 돈다. 장애 이어받기와 같은 식 ·
+    //   같은 경계(지금 > 만료 + max(정책 유예, 서명한 유예))가 지나야 푼다. 운영자 진술은 기록이지 정지 증거가 아니다.
+    if job.state == JobState::Cancelled && !superseded {
+        let Some(policy_grace_ms) = failover_grace_ms else {
+            return Err(format!(
+                "RELEASE_REFUSED: {node_id} 의 예약은 취소된 Job {} 의 최신 시도 것이다 — --failover-grace-ms(장애 이어받기와 같은 값)를 함께 줘야 한다",
+                job.job_id
+            ));
+        };
+        let attempt = crate::staging_store::fetch_attempt(&transaction, &reservation.attempt_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("RELEASE_REFUSED: 시도 {} 의 행이 없다(저장소 손상)", reservation.attempt_id))?;
+        let lease = crate::lease_store::fetch_lease(&transaction, &attempt.lease_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("RELEASE_REFUSED: 시도 {} 의 Lease 가 없다", reservation.attempt_id))?;
+        let grace_ms = policy_grace_ms.max(lease.reassignment_grace_ms);
+        let free_after = lease.expires_at_unix_ms.saturating_add(grace_ms);
+        if lease.revoked_at_unix_ms.is_none() || now_unix_ms <= free_after {
+            return Err(format!(
+                "RELEASE_REFUSED: 취소된 Job {} 의 최신 시도 {} 가 아직 돌 수 있다 — Lease 폐기 여부 {} · {free_after} 이후에만 푼다(지금 {now_unix_ms})",
+                job.job_id,
+                reservation.attempt_id,
+                lease.revoked_at_unix_ms.is_some()
+            ));
+        }
+    }
     let job_moved_on = matches!(
         job.state,
-        JobState::Queued | JobState::Completed | JobState::Failed
+        JobState::Queued | JobState::Completed | JobState::Failed | JobState::Cancelled
     );
     if !superseded && !job_moved_on {
         return Err(format!(
@@ -624,6 +671,13 @@ pub fn release_held_job_by_operator(
         let attempt = crate::staging_store::fetch_attempt(&transaction, attempt_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("RELEASE_HELD_REFUSED: 보류된 시도 {attempt_id} 의 행이 없다(저장소 손상)"))?;
+        // ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤ (a)) — UNREPORTED 보류 → 취소 → (관측 못 한 종료 보고) → 늦은 RUN_UNKNOWN: 최종 Job 이라 NOTICE 보류가 없고
+        //   시도 상태도 RUN_UNKNOWN 이 아닐 수 있다. 저장된 알림까지 봐서 풀리지 않은 불명이면 STOP 만 푼다.
+        if crate::run_notice_store::has_unresolved_run_unknown(&transaction, attempt_id)? {
+            return Err(format!(
+                "RELEASE_HELD_REFUSED: 시도 {attempt_id} 에 풀리지 않은 실행 여부 불명이 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다"
+            ));
+        }
         crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
             .map_err(|e| format!("RELEASE_HELD_REFUSED: 시도 {attempt_id} 의 Lease 를 폐기하지 못했다 — {e}"))?;
         let node_id = attempt.node_ids.first().cloned().unwrap_or_default();
