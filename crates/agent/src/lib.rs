@@ -707,6 +707,13 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     })?;
     config.run_ledger_handle =
         opened_ledger.map(|ledger| std::sync::Arc::new(std::sync::Mutex::new(ledger)));
+    // ★ 2026-10-04 13:23 (조각 5e2a · 계약 v18o ① · v18p ①′) — 정지 결정을 stop 전에 원장에 적는 고리. 원장에 적지 못하면 그 컨테이너의 사건 표식을 쓴다
+    //   (기동이 원장보다 먼저 보고 새 작업 · 재부착을 막는다 — 조건 ⑧). 둘 다 못 써도 정지는 그대로 한다(§0.1).
+    if let Some(handle) = config.run_ledger_handle.clone() {
+        config
+            .owner_panel_state
+            .set_stop_recorder(stop_decision_recorder(handle, &config.checkpoint_root, &config.agent_device_id));
+    }
     // ★ 2026-09-25 (결함 290 · 291 · 295 · 재검수 90 · 91) — 체크포인트 루트를 **잠근 뒤에** 이 Agent 의 라벨로 남은 컨테이너를 모두 치운다.
     //   라벨은 노드 id 와 잠근 루트의 실제 위치 해시다 — 같은 루트를 잠근 Agent 는 하나뿐이므로, 지금 그 라벨로 도는 컨테이너는 죽은 회차가
     //   남긴 것이다. 전에는 잠금 **전에** 노드 id 만으로 지워, 같은 노드 id 로 잘못 뜬 두 번째 Agent 가 거부되기 전에 정상 실행 중인
@@ -1552,6 +1559,8 @@ fn run_one_connection_inner(
                 let attempt_id = grant.attempt_id.clone();
                 let program = runtime.program.clone();
                 let flavor = runtime.flavor;
+                // ★ 2026-10-04 13:20 (조각 5e2a · 계약 v18m) — 재부착 입력: 이 연결에서 검증을 통과한 서명 Grant 바이트(Manifest 포함)와 기록 시각을 3b 와 같은 UPDATE 로.
+                let grant_bytes = grant.encode_to_vec();
                 exec::ContainerCreatedHook::new(move |container_id: &str| {
                     record_container_created(
                         handle.as_ref(),
@@ -1559,6 +1568,7 @@ fn run_one_connection_inner(
                         &program,
                         flavor,
                         container_id,
+                        Some((&grant_bytes, SystemClock.now_unix_ms())),
                     )
                 })
             }),
@@ -4465,12 +4475,52 @@ fn with_run_ledger<T>(
 
 /// ★ 2026-10-03 10:58 (조각 5c · 계약 §5 실행 순서 3b) — 만든 컨테이너의 ID · 런타임 대상을 원장에 적는다. 대상을 고정하지 못하면(원격 podman · 신원 읽기
 ///   실패) ID 만 적는다 — 그 행은 자동 증거를 만들지 않는다(OPEN · 소유자 해제 · 계약 v18l). 원장 쓰기 실패는 `Err`(시작하지 않는다).
+/// ★ 2026-10-04 13:23 (조각 5e2a · 계약 v18o ① · v18p ①′) — 정지 결정 기록 고리. 원장 → (실패하면) 사건 표식. 어느 쪽도 정지를 막지 않는다.
+fn stop_decision_recorder(
+    handle: run_ledger::SharedRunLedger,
+    checkpoint_root: &std::path::Path,
+    node_id: &str,
+) -> owner_panel::StopRecorder {
+    let incident_dir = container::incident_dir_for(checkpoint_root);
+    let node_id = node_id.to_string();
+    std::sync::Arc::new(move |attempt_id: &str, kind: run_ledger::StopDecision| {
+        let recorded = handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_stop_decision(attempt_id, kind, SystemClock.now_unix_ms());
+        match recorded {
+            Ok(()) => println!("RUN_LEDGER_STOP_DECISION attempt_id={attempt_id} kind={}", kind.as_str()),
+            Err(why) => {
+                let name = container::derive_container_name(attempt_id);
+                match container::write_incident(
+                    &incident_dir,
+                    &name,
+                    &node_id,
+                    "STOP_DECIDED",
+                    &format!("정지 결정({}) 을 원장에 적지 못했다({why}) — 재부착하지 않는다 · 확인 뒤 해제한다", kind.as_str()),
+                ) {
+                    Ok(path) => println!(
+                        "STOP_DECISION_INCIDENT_RECORDED attempt_id={attempt_id} kind={} file={} — 원장 기록 실패: {why}",
+                        kind.as_str(),
+                        path.display()
+                    ),
+                    Err(marker) => println!(
+                        "STOP_DECISION_UNRECORDED attempt_id={attempt_id} kind={} — 원장({why}) · 사건 표식({marker}) 둘 다 실패 · 정지는 한다(계약 v18p 한계)",
+                        kind.as_str()
+                    ),
+                }
+            }
+        }
+    })
+}
+
 fn record_container_created(
     handle: Option<&run_ledger::SharedRunLedger>,
     attempt_id: &str,
     program: &std::path::Path,
     flavor: container::RuntimeFlavor,
     container_id: &str,
+    reattach: Option<(&[u8], u64)>,
 ) -> Result<(), String> {
     let Some(handle) = handle else {
         return Ok(());
@@ -4506,7 +4556,7 @@ fn record_container_created(
         }
     };
     let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
-    ledger.record_runtime_target(attempt_id, container_id, target.as_deref(), identity.as_deref())?;
+    ledger.record_runtime_target(attempt_id, container_id, target.as_deref(), identity.as_deref(), reattach)?;
     println!(
         "RUN_LEDGER_CONTAINER_RECORDED attempt_id={attempt_id} container_id={container_id} pinned={}",
         target.is_some()
@@ -8843,6 +8893,27 @@ mod run_ledger_startup_tests {
 
     /// ★ 조각 5d — 알림을 쓰는 Agent 의 기동: 증거를 세우지 못한 행은 서명된 RUN_UNKNOWN 알림과 함께 OPEN 이 되고(한 트랜잭션), 새 작업을 받지 않는다.
     ///   ID 를 적기 전에 죽은 행은 "기동 요청이 풀리지 않음"(STARTING) · ID 가 있으면 "종료 관측 못 함"(RUNNING). 알림 꺼짐이면 지금처럼 LOCAL_BLOCKED.
+    /// ★ 조각 5e2a(계약 v18o ① · v18p ①′) — 정지 결정은 원장에 적고(첫 결정이 이긴다), 원장에 적지 못하면 그 컨테이너의 사건 표식을 쓴다.
+    #[test]
+    fn a_stop_decision_goes_to_the_ledger_or_else_to_an_incident_marker() {
+        let dir = tempfile::tempdir().expect("임시");
+        let on = config(dir.path(), &ON);
+        active_container_row(&on, "attempt-s", false);
+        let handle: run_ledger::SharedRunLedger = std::sync::Arc::new(std::sync::Mutex::new(
+            run_ledger::open_for_agent(&paths(&on)).expect("원장"),
+        ));
+        let recorder = stop_decision_recorder(handle.clone(), &on.checkpoint_root, AGENT_ID);
+        recorder("attempt-s", run_ledger::StopDecision::Owner);
+        let row = handle.lock().unwrap().row("attempt-s").unwrap().unwrap();
+        assert_eq!(row.stop_decision.as_deref(), Some("OWNER"));
+        let incidents = container::incident_dir_for(&on.checkpoint_root);
+        let count = |dir: &std::path::Path| fs::read_dir(dir).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(count(&incidents), 0, "원장에 적었는데 사건 표식을 썼다");
+        // 원장에 행이 없는 시도 — 원장 기록이 실패하므로 사건 표식으로 간다
+        recorder("attempt-ghost", run_ledger::StopDecision::Deadline);
+        assert_eq!(count(&incidents), 1, "원장 기록이 실패했는데 사건 표식이 없다");
+    }
+
     #[test]
     fn with_notices_an_unproven_container_row_opens_with_a_signed_run_unknown() {
         let dir = tempfile::tempdir().unwrap();
@@ -8853,7 +8924,7 @@ mod run_ledger_startup_tests {
         {
             let mut ledger = run_ledger::open_for_agent(&paths(&on)).unwrap();
             ledger
-                .record_runtime_target("with-id", "cid-7", Some("docker-host:unix:///nowhere.sock"), Some("docker:D"))
+                .record_runtime_target("with-id", "cid-7", Some("docker-host:unix:///nowhere.sock"), Some("docker:D"), None)
                 .unwrap();
         }
         for id in ["no-id", "with-id"] {

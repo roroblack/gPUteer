@@ -301,7 +301,7 @@ pub(crate) fn decide_while_running(
     }
     *requested = true;
     // 서명된 갱신 거부와 같은 경로 — 끊김 시한을 지금으로 당겨 감시 스레드가 멈춘다(DISCONNECT_STOPPED · 소유자 되찾음이 아니다).
-    panel.renew_refused(running_attempt, SystemClock.now_unix_ms());
+    panel.mailbox_refused(running_attempt, SystemClock.now_unix_ms());
     None
 }
 

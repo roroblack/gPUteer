@@ -681,6 +681,10 @@ fn downgrade_to_v1(paths: &LedgerPaths) {
     sql(
         paths,
         "DROP TABLE notices;
+         ALTER TABLE attempts DROP COLUMN reattach_grant;
+         ALTER TABLE attempts DROP COLUMN started_at_unix_ms;
+         ALTER TABLE attempts DROP COLUMN stop_decision;
+         ALTER TABLE attempts DROP COLUMN stop_decision_at_unix_ms;
          ALTER TABLE attempts DROP COLUMN connection_target;
          ALTER TABLE attempts DROP COLUMN runtime_target_identity;
          ALTER TABLE attempts DROP COLUMN last_lease;
@@ -719,7 +723,7 @@ fn a_format_1_ledger_is_migrated_on_open_atomically() {
     downgrade_to_v1(&f.paths);
     assert_eq!(meta_version(&f.paths), "1");
     let ledger = open_for_agent(&f.paths).unwrap();
-    assert_eq!(meta_version(&f.paths), "2");
+    assert_eq!(meta_version(&f.paths), "3", "형식 1 은 2 를 거쳐 3 까지 올라간다");
     let row = ledger.row("attempt-c").unwrap().unwrap();
     assert_eq!(row.state, RowState::Active);
     assert_eq!(row.connection_target, None);
@@ -728,7 +732,7 @@ fn a_format_1_ledger_is_migrated_on_open_atomically() {
     drop(ledger);
     // 다시 열어도 그대로(두 번 올리지 않는다)
     drop(open_for_agent(&f.paths).unwrap());
-    assert_eq!(meta_version(&f.paths), "2");
+    assert_eq!(meta_version(&f.paths), "3");
 
     // 실패하는 올리기 — 알림 표가 이미 있는 형식 1 파일(손상)
     let g = fixture();
@@ -885,6 +889,7 @@ fn runtime_target_and_renewal_evidence_are_recorded_on_active_rows_only() {
             "cid-1",
             Some("unix:///run/docker.sock"),
             Some("docker:ID-1"),
+            None,
         )
         .unwrap();
     assert_err_contains(
@@ -893,15 +898,16 @@ fn runtime_target_and_renewal_evidence_are_recorded_on_active_rows_only() {
             "cid-2",
             Some("unix:///run/docker.sock"),
             Some("docker:ID-1"),
+            None,
         ),
         "덮지 않는다",
     );
     assert_err_contains(
-        ledger.record_runtime_target("attempt-c", "cid-1", Some(" "), Some("docker:ID-1")),
+        ledger.record_runtime_target("attempt-c", "cid-1", Some(" "), Some("docker:ID-1"), None),
         "비어 있으면 안 된다",
     );
     assert_err_contains(
-        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), None),
+        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), None, None),
         "함께 적는다",
     );
     ledger.record_renewal("attempt-c", &[7, 7, 7], 9_000).unwrap();
@@ -919,7 +925,7 @@ fn runtime_target_and_renewal_evidence_are_recorded_on_active_rows_only() {
         .unwrap();
     assert_err_contains(ledger.record_renewal("attempt-c", &[9], 10_000), "ACTIVE 행에만");
     assert_err_contains(
-        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i")),
+        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), None),
         "ACTIVE 컨테이너 행에만",
     );
 }
@@ -930,9 +936,94 @@ fn an_unpinned_runtime_records_the_container_id_only() {
     let f = fixture();
     ledger_with_one_container_row(&f);
     let mut ledger = open_for_agent(&f.paths).unwrap();
-    ledger.record_runtime_target("attempt-c", "cid-9", None, None).unwrap();
+    ledger.record_runtime_target("attempt-c", "cid-9", None, None, None).unwrap();
     let row = ledger.row("attempt-c").unwrap().unwrap();
     assert_eq!(row.container_id.as_deref(), Some("cid-9"));
     assert_eq!(row.connection_target, None);
     assert_eq!(row.runtime_target_identity, None);
+}
+
+// ---------- 형식 3(실행 알림 계획 조각 5e2a · 계약 v18m · v18o) ----------
+
+/// 형식 3 파일을 형식 2 모양으로 되돌린다(형식 2 Agent 가 만든 파일과 같은 모양 — 새 칸 넷 없음).
+fn downgrade_to_v2(paths: &LedgerPaths) {
+    sql(
+        paths,
+        "ALTER TABLE attempts DROP COLUMN reattach_grant;
+         ALTER TABLE attempts DROP COLUMN started_at_unix_ms;
+         ALTER TABLE attempts DROP COLUMN stop_decision;
+         ALTER TABLE attempts DROP COLUMN stop_decision_at_unix_ms;
+         UPDATE meta SET value = '2' WHERE key = 'format_version';",
+    );
+}
+
+/// 형식 2 파일은 열 때 한 트랜잭션으로 형식 3 이 되고, 옛 행의 새 칸은 비어 있다(재부착하지 않는 행 — 조건 ②).
+#[test]
+fn a_format_2_ledger_is_migrated_to_3_on_open() {
+    let f = fixture();
+    ledger_with_one_container_row(&f);
+    downgrade_to_v2(&f.paths);
+    assert_eq!(meta_version(&f.paths), "2");
+    let ledger = open_for_agent(&f.paths).unwrap();
+    assert_eq!(meta_version(&f.paths), "3");
+    let row = ledger.row("attempt-c").unwrap().unwrap();
+    assert_eq!(row.reattach_grant, None);
+    assert_eq!(row.started_at_unix_ms, None);
+    assert_eq!(row.stop_decision, None);
+    drop(ledger);
+    drop(open_for_agent(&f.paths).unwrap());
+    assert_eq!(meta_version(&f.paths), "3");
+}
+
+/// 3b 와 같은 UPDATE 로 재부착 입력(Grant 바이트 · 시작 시각)을 적고, 이미 있으면 덮지 않는다. 다시 열어도 남는다.
+#[test]
+fn reattach_inputs_are_written_with_the_container_id_and_never_overwritten() {
+    let f = fixture();
+    ledger_with_one_container_row(&f);
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    ledger
+        .record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), Some((&[1, 2, 3], 500)))
+        .unwrap();
+    ledger
+        .record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), Some((&[9, 9], 900)))
+        .unwrap();
+    assert_err_contains(
+        ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), Some((&[], 1))),
+        "Grant 바이트가 비었다",
+    );
+    drop(ledger);
+    let ledger = open_for_agent(&f.paths).unwrap();
+    let row = ledger.row("attempt-c").unwrap().unwrap();
+    assert_eq!(row.reattach_grant.as_deref(), Some(&[1u8, 2, 3][..]), "두 번째 기록이 덮었다");
+    assert_eq!(row.started_at_unix_ms, Some(500));
+}
+
+/// 정지 결정(v18o ①) — ACTIVE 행에만 · 첫 결정이 이긴다(멱등) · 다시 열어도 남는다. 종류 · 시각이 한쪽만 있거나 재부착 입력이 한쪽만 있으면 열기에서 거부한다.
+#[test]
+fn a_stop_decision_is_recorded_once_on_active_rows_and_half_rows_are_refused() {
+    use gputeer_agent::run_ledger::StopDecision;
+    let f = fixture();
+    ledger_with_one_container_row(&f);
+    let mut ledger = open_for_agent(&f.paths).unwrap();
+    ledger.record_stop_decision("attempt-c", StopDecision::Owner, 700).unwrap();
+    ledger.record_stop_decision("attempt-c", StopDecision::Deadline, 800).unwrap();
+    drop(ledger);
+    let ledger = open_for_agent(&f.paths).unwrap();
+    let row = ledger.row("attempt-c").unwrap().unwrap();
+    assert_eq!(row.stop_decision.as_deref(), Some("OWNER"), "두 번째 결정이 첫 결정을 덮었다");
+    assert_eq!(row.stop_decision_at_unix_ms, Some(700));
+    assert_err_contains(
+        open_for_agent(&f.paths).unwrap().record_stop_decision("no-such", StopDecision::Owner, 1),
+        "행이 없다",
+    );
+    drop(ledger);
+
+    let g = fixture();
+    ledger_with_one_container_row(&g);
+    sql(&g.paths, "UPDATE attempts SET stop_decision = 'OWNER' WHERE attempt_id = 'attempt-c';");
+    assert_err_contains(open_for_agent(&g.paths), "정지 결정 종류 · 시각이 한쪽만");
+    let h = fixture();
+    ledger_with_one_container_row(&h);
+    sql(&h.paths, "UPDATE attempts SET reattach_grant = x'01' WHERE attempt_id = 'attempt-c';");
+    assert_err_contains(open_for_agent(&h.paths), "재부착 입력(Grant · 시작 시각)이 한쪽만");
 }

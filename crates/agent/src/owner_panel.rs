@@ -273,6 +273,10 @@ pub fn estimate_loss(workload: &RunningWorkload, now_unix_ms: u64) -> LossEstima
 ///
 /// `Arc<Mutex<..>>` 로 Agent 실행 스레드와 공유한다 — Agent 가 작업을
 /// 시작하면 여기 넣고, 끝나면 뺀다.
+/// ★ 2026-10-04 13:23 (계약 v18o ① · v18p ①′ · 조각 5e2a) — 정지 결정을 **stop 을 부르기 전에** 영속하는 고리. Agent 가 원장(실패하면 사건 표식)에 연결한다.
+///   기록이 실패해도 정지는 미루지 않는다(§0.1 소유자 주권) — 그래서 반환값이 없다.
+pub type StopRecorder = Arc<dyn Fn(&str, crate::run_ledger::StopDecision) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct OwnerPanelState {
     inner: Arc<Mutex<BTreeMap<String, RunningWorkload>>>,
@@ -291,6 +295,10 @@ pub struct OwnerPanelState {
     announcement_generation: Arc<std::sync::atomic::AtomicU64>,
     /// ★ 2026-10-01 — 작업별 진행 자기보고(마지막으로 읽은 것 · 형식 오류).
     progress: Arc<Mutex<BTreeMap<String, ProgressView>>>,
+    /// ★ 2026-10-04 13:23 (조각 5e2a) — 정지 결정 기록 고리. 없으면 기록하지 않는다(원장 없는 Agent · 시험).
+    stop_recorder: Arc<Mutex<Option<StopRecorder>>>,
+    /// ★ 2026-10-04 13:23 (조각 5e2a) — 우편함의 대체 통지로 멈추게 된 시도(서명된 갱신 거부와 정지 결정 종류를 가른다).
+    mailbox_refused: Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
 
 /// ★ 2026-10-01 — 화면에 보이는 진행. **작업의 자기보고**(`WORKER_REPORTED`)다 — 위조할 수 있다.
@@ -336,7 +344,31 @@ impl OwnerPanelState {
             announcement: Arc::new(Mutex::new(None)),
             announcement_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             progress: Arc::new(Mutex::new(BTreeMap::new())),
+            stop_recorder: Arc::new(Mutex::new(None)),
+            mailbox_refused: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
         }
+    }
+
+    /// ★ 2026-10-04 13:23 (조각 5e2a) — 정지 결정 기록 고리를 건다(원장을 연 Agent 가 기동 때 한 번).
+    pub fn set_stop_recorder(&self, recorder: StopRecorder) {
+        *self.stop_recorder.lock().unwrap_or_else(|e| e.into_inner()) = Some(recorder);
+    }
+
+    /// 정지 손잡이를 부르기 **직전에** 결정을 적는다(고리가 없으면 아무것도 안 한다). 고리를 잠금 밖으로 꺼내 부른다.
+    fn record_stop_decision(&self, attempt_id: &str, kind: crate::run_ledger::StopDecision) {
+        let recorder = self.stop_recorder.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(recorder) = recorder {
+            recorder(attempt_id, kind);
+        }
+    }
+
+    /// ★ 2026-10-04 13:23 (조각 5e2a) — 우편함의 대체 통지 — 서명된 갱신 거부와 같이 멈추되, 정지 결정 종류는 MAILBOX 로 적는다.
+    pub fn mailbox_refused(&self, attempt_id: &str, now_unix_ms: u64) {
+        self.mailbox_refused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(attempt_id.to_string());
+        self.renew_refused(attempt_id, now_unix_ms);
     }
 
     /// ★ 2026-10-01 — 작업의 진행 자기보고를 적는다(갱신 스레드가 갱신마다 부른다).
@@ -614,11 +646,23 @@ impl OwnerPanelState {
             if due {
                 watch.stopping = true;
             }
-            due
+            due.then_some(watch.refused)
         };
-        if !due {
-            return None;
-        }
+        let refused = due?;
+        // ★ 2026-10-04 13:23 (조각 5e2a · 계약 v18o ①) — "정지 중" 으로 정한 뒤 **stop 을 부르기 전에** 결정을 영속한다.
+        let kind = if !refused {
+            crate::run_ledger::StopDecision::Deadline
+        } else if self
+            .mailbox_refused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(attempt_id)
+        {
+            crate::run_ledger::StopDecision::Mailbox
+        } else {
+            crate::run_ledger::StopDecision::SignedRefusal
+        };
+        self.record_stop_decision(attempt_id, kind);
         let result = {
             let guard = self.lock();
             match guard.get(attempt_id) {
@@ -692,6 +736,10 @@ impl OwnerPanelState {
     /// `unregister()` 로 알려준다. 여기서 미리 빼면 정지가 실패했을 때
     /// 화면에서 사라져 소유자가 멈춘 줄 알게 된다.
     pub fn stop(&self, attempt_id: &str) -> Result<(), String> {
+        // ★ 2026-10-04 13:23 (조각 5e2a · 계약 v18o ①) — 소유자 정지도 stop 전에 결정을 영속한다(그런 작업이 있을 때만 · 고리는 패널 잠금 밖에서).
+        if self.lock().contains_key(attempt_id) {
+            self.record_stop_decision(attempt_id, crate::run_ledger::StopDecision::Owner);
+        }
         let guard = self.lock();
         let workload = guard
             .get(attempt_id)
@@ -743,7 +791,11 @@ impl OwnerPanelState {
         };
         match stopper.pause() {
             Ok(()) => Err(format!("다시 시작하는 사이 조건이 깨져 다시 얼렸다 — {why}")),
-            Err(freeze) => match stopper.stop() {
+            Err(freeze) => {
+                // ★ 2026-10-04 13:23 (조각 5e2a) — 조건이 깨져 멈춘다(끊김 정지와 같은 종류) — stop 전에 결정을 영속한다.
+                self.record_stop_decision(attempt_id, crate::run_ledger::StopDecision::Deadline);
+                let stopped = stopper.stop();
+                match stopped {
                 Ok(()) => {
                     match self.disconnect_stopped.lock() {
                         Ok(mut stopped) => stopped.insert(attempt_id.to_string()),
@@ -756,7 +808,8 @@ impl OwnerPanelState {
                 Err(stop) => Err(format!(
                     "다시 시작하는 사이 조건이 깨졌는데 다시 얼리지도 멈추지도 못했다(얼리기: {freeze} · 멈추기: {stop}) — {why}"
                 )),
-            },
+                }
+            }
         }
     }
 
@@ -2022,5 +2075,43 @@ mod tests {
     #[test]
     fn json_values_are_escaped() {
         assert_eq!(json_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    }
+
+    /// ★ 조각 5e2a(계약 v18o ①) — 멈추는 네 길 모두 정지 손잡이를 부르기 **전에** 결정 종류를 기록 고리에 넘긴다. 없는 작업은 기록하지 않는다.
+    #[test]
+    fn every_stop_path_records_its_decision_kind_before_stopping() {
+        use crate::run_ledger::StopDecision;
+        let recorded: Arc<Mutex<Vec<(String, StopDecision)>>> = Arc::new(Mutex::new(Vec::new()));
+        let state = OwnerPanelState::new();
+        let sink = recorded.clone();
+        state.set_stop_recorder(Arc::new(move |attempt: &str, kind| {
+            sink.lock().unwrap().push((attempt.to_string(), kind));
+        }));
+        let register = |id: &str| {
+            let mut w = workload(0, None);
+            w.attempt_id = id.into();
+            state.register(w);
+            state.watch_connection(id, 10_000, 10_000, 10_000, false, 0);
+        };
+        register("owner");
+        let _ = state.stop("owner");
+        let _ = state.stop("missing");
+        register("deadline");
+        assert!(state.self_stop_if_due("deadline", 10_000).is_some());
+        register("refused");
+        state.renew_refused("refused", 1_000);
+        assert!(state.self_stop_if_due("refused", 1_000).is_some());
+        register("mailbox");
+        state.mailbox_refused("mailbox", 1_000);
+        assert!(state.self_stop_if_due("mailbox", 1_000).is_some());
+        assert_eq!(
+            *recorded.lock().unwrap(),
+            vec![
+                ("owner".to_string(), StopDecision::Owner),
+                ("deadline".to_string(), StopDecision::Deadline),
+                ("refused".to_string(), StopDecision::SignedRefusal),
+                ("mailbox".to_string(), StopDecision::Mailbox),
+            ]
+        );
     }
 }

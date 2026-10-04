@@ -25,7 +25,7 @@ pub const CREATING_SUFFIX: &str = ".run-ledger.creating";
 /// 시작 기록 폴더 안의 세대 짝 파일 이름(`.` 으로 시작 — 시작 기록이 아니다).
 pub const PAIR_NAME: &str = ".run-ledger-generation";
 /// 원장 형식 버전(meta). 1 → 2 는 열 때 올린다(`migrate_v1_to_v2`).
-pub const FORMAT_VERSION: i64 = 2;
+pub const FORMAT_VERSION: i64 = 3;
 /// 행 형식 버전.
 pub const ROW_FORMAT_VERSION: i64 = 1;
 
@@ -170,6 +170,15 @@ pub struct AttemptRow {
     pub self_stop_at_unix_ms: Option<u64>,
     /// ★ 형식 2(v18j) — 재부착 거부 종류 · 정지 실패 사유.
     pub reattach_reason: Option<String>,
+    /// ★ 2026-10-04 13:19 형식 3(계약 v18m) — 3b 와 같은 트랜잭션에 적는 **서명된 ExecutionGrant 바이트**(Manifest 포함). 재부착 회차가 명세 · grant ID(시작 체크포인트
+    ///   ID 계산)를 여기서 다시 만든다. 이 노드가 그때 검증한 사실로 쓴다(짧은 수명은 다시 검사하지 않는다 — 원장은 노드 로컬 신뢰).
+    pub reattach_grant: Option<Vec<u8>>,
+    /// ★ 2026-10-04 13:19 형식 3(v18m) — 실행 시작 시각(재부착 회차의 종료 보고 started_at). 3b 에서 함께 적는다.
+    pub started_at_unix_ms: Option<u64>,
+    /// ★ 2026-10-04 13:19 형식 3(v18o ①) — 정지 결정 종류(DEADLINE · MAILBOX · OWNER · SIGNED_REFUSAL). **stop 을 부르기 전에** 적는다. 이 칸이 있는 행은 재부착 대상이 아니다(조건 ⑦).
+    pub stop_decision: Option<String>,
+    /// ★ 2026-10-04 13:19 형식 3(v18o ①) — 정지 결정 시각.
+    pub stop_decision_at_unix_ms: Option<u64>,
 }
 
 impl AttemptRow {
@@ -204,6 +213,10 @@ impl AttemptRow {
             last_lease: None,
             self_stop_at_unix_ms: None,
             reattach_reason: None,
+            reattach_grant: None,
+            started_at_unix_ms: None,
+            stop_decision: None,
+            stop_decision_at_unix_ms: None,
         }
     }
 
@@ -231,6 +244,10 @@ impl AttemptRow {
             last_lease: None,
             self_stop_at_unix_ms: None,
             reattach_reason: None,
+            reattach_grant: None,
+            started_at_unix_ms: None,
+            stop_decision: None,
+            stop_decision_at_unix_ms: None,
         }
     }
 }
@@ -480,7 +497,11 @@ CREATE TABLE attempts (
     runtime_target_identity  TEXT,
     last_lease               BLOB,
     self_stop_at_unix_ms     INTEGER,
-    reattach_reason          TEXT
+    reattach_reason          TEXT,
+    reattach_grant           BLOB,
+    started_at_unix_ms       INTEGER,
+    stop_decision            TEXT CHECK(stop_decision IS NULL OR stop_decision IN ('DEADLINE', 'MAILBOX', 'OWNER', 'SIGNED_REFUSAL')),
+    stop_decision_at_unix_ms INTEGER
 );
 ";
 
@@ -509,6 +530,14 @@ ALTER TABLE attempts ADD COLUMN self_stop_at_unix_ms INTEGER;
 ALTER TABLE attempts ADD COLUMN reattach_reason TEXT;
 ";
 
+/// ★ 2026-10-04 13:19 형식 2 → 3(계약 v18m · v18o). 칸은 NULL 허용으로 더한다 — 값이 없는 옛 행은 재부착하지 않는다(조건 ②).
+const MIGRATE_V2_TO_V3: &str = "
+ALTER TABLE attempts ADD COLUMN reattach_grant BLOB;
+ALTER TABLE attempts ADD COLUMN started_at_unix_ms INTEGER;
+ALTER TABLE attempts ADD COLUMN stop_decision TEXT CHECK(stop_decision IS NULL OR stop_decision IN ('DEADLINE', 'MAILBOX', 'OWNER', 'SIGNED_REFUSAL'));
+ALTER TABLE attempts ADD COLUMN stop_decision_at_unix_ms INTEGER;
+";
+
 fn apply_pragmas(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;")
         .map_err(|error| format!("RUN_LEDGER: PRAGMA 실패: {error}"))
@@ -523,9 +552,10 @@ fn insert_row(conn: &Connection, row: &AttemptRow, now: i64) -> rusqlite::Result
         "INSERT INTO attempts (attempt_id, row_format_version, origin, job_id, node_id, fence_epoch, executor,
             runtime_program, runtime_kind, container_name, container_id, cgroup_path, state, reason, stopped,
             logs_complete, container_left, container_removed, created_at_unix_ms, updated_at_unix_ms,
-            connection_target, runtime_target_identity, last_lease, self_stop_at_unix_ms, reattach_reason)
+            connection_target, runtime_target_identity, last_lease, self_stop_at_unix_ms, reattach_reason,
+            reattach_grant, started_at_unix_ms, stop_decision, stop_decision_at_unix_ms)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19,
-            ?20, ?21, ?22, ?23, ?24)",
+            ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
         params![
             row.attempt_id,
             ROW_FORMAT_VERSION,
@@ -551,6 +581,10 @@ fn insert_row(conn: &Connection, row: &AttemptRow, now: i64) -> rusqlite::Result
             row.last_lease,
             row.self_stop_at_unix_ms.map(|v| i64::try_from(v).unwrap_or(-1)),
             row.reattach_reason,
+            row.reattach_grant,
+            row.started_at_unix_ms.map(|v| i64::try_from(v).unwrap_or(-1)),
+            row.stop_decision,
+            row.stop_decision_at_unix_ms.map(|v| i64::try_from(v).unwrap_or(-1)),
         ],
     )
 }
@@ -678,13 +712,18 @@ fn row_from_sql(r: &rusqlite::Row<'_>) -> rusqlite::Result<RawRow> {
         last_lease: r.get(20)?,
         self_stop_at_unix_ms: r.get(21)?,
         reattach_reason: r.get(22)?,
+        reattach_grant: r.get(23)?,
+        started_at_unix_ms: r.get(24)?,
+        stop_decision: r.get(25)?,
+        stop_decision_at_unix_ms: r.get(26)?,
     })
 }
 
 const SELECT_ROW: &str = "SELECT attempt_id, row_format_version, origin, job_id, node_id, fence_epoch, executor,
     runtime_program, runtime_kind, container_name, container_id, cgroup_path, state, reason, stopped,
     logs_complete, container_left, container_removed, connection_target, runtime_target_identity, last_lease,
-    self_stop_at_unix_ms, reattach_reason FROM attempts";
+    self_stop_at_unix_ms, reattach_reason, reattach_grant, started_at_unix_ms, stop_decision,
+    stop_decision_at_unix_ms FROM attempts";
 
 struct RawRow {
     attempt_id: String,
@@ -710,6 +749,10 @@ struct RawRow {
     last_lease: Option<Vec<u8>>,
     self_stop_at_unix_ms: Option<i64>,
     reattach_reason: Option<String>,
+    reattach_grant: Option<Vec<u8>>,
+    started_at_unix_ms: Option<i64>,
+    stop_decision: Option<String>,
+    stop_decision_at_unix_ms: Option<i64>,
 }
 
 fn flag(name: &str, id: &str, value: Option<i64>) -> Result<Option<bool>, String> {
@@ -772,6 +815,22 @@ impl RawRow {
                 format!("RUN_LEDGER: 행 {id} 의 self_stop_at_unix_ms 가 음수다")
             })?),
         };
+        let unsigned = |name: &str, value: Option<i64>| -> Result<Option<u64>, String> {
+            match value {
+                None => Ok(None),
+                Some(v) => u64::try_from(v)
+                    .map(Some)
+                    .map_err(|_| format!("RUN_LEDGER: 행 {id} 의 {name} 가 음수다")),
+            }
+        };
+        let started_at_unix_ms = unsigned("started_at_unix_ms", self.started_at_unix_ms)?;
+        let stop_decision_at_unix_ms = unsigned("stop_decision_at_unix_ms", self.stop_decision_at_unix_ms)?;
+        if self.stop_decision.is_some() != stop_decision_at_unix_ms.is_some() {
+            return Err(format!("RUN_LEDGER: 행 {id} 의 정지 결정 종류 · 시각이 한쪽만 있다"));
+        }
+        if self.reattach_grant.is_some() != started_at_unix_ms.is_some() {
+            return Err(format!("RUN_LEDGER: 행 {id} 의 재부착 입력(Grant · 시작 시각)이 한쪽만 있다"));
+        }
         let fence_epoch = match self.fence_epoch {
             None => None,
             Some(v) => Some(
@@ -802,6 +861,10 @@ impl RawRow {
             last_lease: self.last_lease,
             self_stop_at_unix_ms,
             reattach_reason: self.reattach_reason,
+            reattach_grant: self.reattach_grant,
+            started_at_unix_ms,
+            stop_decision: self.stop_decision,
+            stop_decision_at_unix_ms,
         })
     }
 }
@@ -840,8 +903,8 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> Result<(), String> {
         .map_err(|error| format!("RUN_LEDGER: 형식 1 → 2 를 올리지 못했다: {error}"))?;
     let changed = tx
         .execute(
-            "UPDATE meta SET value = ?1 WHERE key = 'format_version' AND value = '1'",
-            params![FORMAT_VERSION.to_string()],
+            "UPDATE meta SET value = '2' WHERE key = 'format_version' AND value = '1'",
+            [],
         )
         .map_err(|error| format!("RUN_LEDGER: 형식 버전을 바꾸지 못했다: {error}"))?;
     if changed != 1 {
@@ -849,6 +912,47 @@ fn migrate_v1_to_v2(conn: &mut Connection) -> Result<(), String> {
     }
     tx.commit()
         .map_err(|error| format!("RUN_LEDGER: 형식 1 → 2 를 커밋하지 못했다: {error}"))
+}
+
+/// ★ 2026-10-04 13:19 형식 2 → 3 을 **한 트랜잭션**으로 올린다(계약 v18m · v18o) — 칸 더하기 · meta 버전. 도중에 실패하면 형식 2 그대로 남는다.
+fn migrate_v2_to_v3(conn: &mut Connection) -> Result<(), String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("RUN_LEDGER: 형식을 올릴 트랜잭션을 열지 못했다: {error}"))?;
+    tx.execute_batch(MIGRATE_V2_TO_V3)
+        .map_err(|error| format!("RUN_LEDGER: 형식 2 → 3 을 올리지 못했다: {error}"))?;
+    let changed = tx
+        .execute("UPDATE meta SET value = '3' WHERE key = 'format_version' AND value = '2'", [])
+        .map_err(|error| format!("RUN_LEDGER: 형식 버전을 바꾸지 못했다: {error}"))?;
+    if changed != 1 {
+        return Err("RUN_LEDGER: 형식 버전을 바꾸지 못했다 — 그 사이 바뀌었다".into());
+    }
+    tx.commit()
+        .map_err(|error| format!("RUN_LEDGER: 형식 2 → 3 을 커밋하지 못했다: {error}"))
+}
+
+/// ★ 2026-10-04 13:19 형식 3(계약 v18o ①) — 정지 결정 종류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopDecision {
+    /// 끊김 시한이 지났다(로컬 만료 포함).
+    Deadline,
+    /// 대체 통지 우편함이 멈추라고 했다.
+    Mailbox,
+    /// 소유자가 멈췄다.
+    Owner,
+    /// Coordinator 가 서명해 갱신을 거부했다.
+    SignedRefusal,
+}
+
+impl StopDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StopDecision::Deadline => "DEADLINE",
+            StopDecision::Mailbox => "MAILBOX",
+            StopDecision::Owner => "OWNER",
+            StopDecision::SignedRefusal => "SIGNED_REFUSAL",
+        }
+    }
 }
 
 /// 알림 종류(계약 §1 `RunNoticeKind`).
@@ -1022,8 +1126,12 @@ impl RunLedger {
         }
         let mut conn = conn;
         match version.as_str() {
-            "2" => {}
-            "1" => migrate_v1_to_v2(&mut conn)?,
+            "3" => {}
+            "2" => migrate_v2_to_v3(&mut conn)?,
+            "1" => {
+                migrate_v1_to_v2(&mut conn)?;
+                migrate_v2_to_v3(&mut conn)?;
+            }
             _ => return Err(format!("RUN_LEDGER: 원장 형식 버전을 모른다({version})")),
         }
         let ledger = RunLedger { conn, generation };
@@ -1559,7 +1667,11 @@ impl RunLedger {
         container_id: &str,
         connection_target: Option<&str>,
         runtime_target_identity: Option<&str>,
+        reattach: Option<(&[u8], u64)>,
     ) -> Result<(), String> {
+        if reattach.is_some_and(|(grant, _)| grant.is_empty()) {
+            return Err("RUN_LEDGER: 재부착 입력의 Grant 바이트가 비었다".into());
+        }
         if container_id.trim().is_empty()
             || connection_target.is_some_and(|v| v.trim().is_empty())
             || runtime_target_identity.is_some_and(|v| v.trim().is_empty())
@@ -1574,6 +1686,9 @@ impl RunLedger {
             connection_target.map(str::to_string),
             runtime_target_identity.map(str::to_string),
         );
+        // ★ 2026-10-04 13:19 형식 3(v18m) — 재부착 입력은 3b 와 **같은 UPDATE** 로 적는다(한쪽만 남지 않게). 이미 적혀 있으면 덮지 않는다(COALESCE).
+        let grant: Option<Vec<u8>> = reattach.map(|(grant, _)| grant.to_vec());
+        let started: Option<i64> = reattach.map(|(_, at)| i64::try_from(at).unwrap_or(i64::MAX));
         self.update_state(
             attempt_id,
             |row| {
@@ -1590,9 +1705,46 @@ impl RunLedger {
                 Ok(())
             },
             "UPDATE attempts SET updated_at_unix_ms = ?1, container_id = ?2, connection_target = ?3,
-                 runtime_target_identity = ?4 WHERE attempt_id = ?5",
-            &[&id, &target, &identity],
+                 runtime_target_identity = ?4,
+                 reattach_grant = COALESCE(reattach_grant, ?5),
+                 started_at_unix_ms = CASE WHEN reattach_grant IS NULL THEN ?6 ELSE started_at_unix_ms END
+                 WHERE attempt_id = ?7",
+            &[&id, &target, &identity, &grant, &started],
         )
+    }
+
+    /// ★ 2026-10-04 13:19 형식 3(계약 v18o ①) — 정지 결정을 **stop 을 부르기 전에** 적는다. ACTIVE 행만. 이미 적혀 있으면 첫 결정을 그대로 둔다(멱등 — Ok).
+    ///   이 칸이 있는 행은 재기동의 재부착 대상이 아니다(조건 ⑦). 실패하면 부르는 쪽은 사건 표식을 쓴 뒤 stop 한다(v18p ①′).
+    pub fn record_stop_decision(&mut self, attempt_id: &str, kind: StopDecision, at_unix_ms: u64) -> Result<(), String> {
+        let at = i64::try_from(at_unix_ms).unwrap_or(i64::MAX);
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("RUN_LEDGER: 트랜잭션을 열지 못했다: {error}"))?;
+        let current = tx
+            .query_row(&format!("{SELECT_ROW} WHERE attempt_id = ?1"), params![attempt_id], row_from_sql)
+            .optional()
+            .map_err(|error| format!("RUN_LEDGER: 행을 읽지 못했다: {error}"))?
+            .ok_or_else(|| format!("RUN_LEDGER: 행이 없다({attempt_id})"))?
+            .validate()?;
+        if current.state != RowState::Active {
+            return Err(format!("RUN_LEDGER: 정지 결정은 ACTIVE 행에만 적는다({attempt_id})"));
+        }
+        if current.stop_decision.is_some() {
+            return Ok(());
+        }
+        let changed = tx
+            .execute(
+                "UPDATE attempts SET updated_at_unix_ms = ?1, stop_decision = ?2, stop_decision_at_unix_ms = ?3
+                 WHERE attempt_id = ?4 AND stop_decision IS NULL",
+                params![now_unix_ms(), kind.as_str(), at, attempt_id],
+            )
+            .map_err(|error| format!("RUN_LEDGER: 정지 결정을 적지 못했다({attempt_id}): {error}"))?;
+        if changed != 1 {
+            return Err(format!("RUN_LEDGER: 정지 결정을 적지 못했다({attempt_id}) — {changed}건"));
+        }
+        tx.commit()
+            .map_err(|error| format!("RUN_LEDGER: 커밋하지 못했다: {error}"))
     }
 
     /// ★ 형식 2(v18j) — 실행 중 갱신이 성공할 때마다 마지막 서명 Lease 바이트와 그때 계산한 끊김 시한을 적는다. ACTIVE 행만.

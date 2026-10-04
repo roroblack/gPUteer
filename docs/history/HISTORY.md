@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-10-04 13:33 — 실행 알림 계획 조각 5e2a — 원장 형식 3(재부착 입력 · 정지 결정 영속)(격리 · 브랜치 fork-merge)
+
+- 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` §5 3번(5e2a) · 계약 v18m · v18o ① · v18p ①′
+- 스트림: Agent
+- 수행: 노드 원장 형식 2 → 3 — 칸 넷(`reattach_grant` · `started_at_unix_ms` · `stop_decision` · `stop_decision_at_unix_ms`) · 한 트랜잭션 이관(형식 1 은 2 를 거쳐 3) ·
+  종류 · 시각 / Grant · 시작 시각이 한쪽만 있는 행은 열기에서 거부. 3b(컨테이너 ID 기록)와 **같은 UPDATE** 로 검증된 서명 Grant 바이트와 시각을 적는다(이미 있으면 덮지
+  않음). `record_stop_decision`(ACTIVE 만 · 첫 결정이 이긴다). Owner Panel 에 정지 결정 고리 — 소유자 정지 · 끊김 시한 · 서명된 거부 · 우편함 통지(새 `mailbox_refused`) ·
+  다시 시작 실패 뒤 정지가 모두 **정지 손잡이를 부르기 전에** 결정 종류를 넘긴다. Agent 가 고리를 원장에 연결하고, 원장에 못 쓰면 그 컨테이너의 사건 표식(STOP_DECIDED)을
+  쓴다. 둘 다 못 써도 정지는 한다(§0.1 · 계약 v18p 한계). ★ 재부착 자체는 아직 없다 — 이 칸들을 읽는 곳은 5e2c 부터
+- 검증: 원장 시험 3(형식 2 → 3 · 재부착 입력 기록과 덮지 않음 · 정지 결정과 반쪽 행 거부) + 형식 1 이관 시험 갱신, Owner Panel 시험 1(네 길의 결정 종류 — 소유자 정지
+  기록 줄을 빼면 실패함을 보고 원복), Agent 시험 1(원장 기록 · 실패 시 사건 표식). Windows `cargo test -p gputeer-agent -p gputeer-cli -j 1 --no-fail-fast`
+  504 passed · 0 failed · ignored 3. 서식 검사(`cargo fmt --check`)는 저장소 전체의 알려진 빚이라 손대지 않았다(CI 설정에 적힌 대로)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-04 13:16 — 실행 알림 계약 v18n · v18o · v18p — 재부착(5e2) 설계 보강 · 설계 검수 ACCEPTED(브랜치 fork-merge)
 
 - 계약: `docs/contracts/proposals/2026-09-28_1034_실행여부불명_재배치보류_Lease_Attempt.md` §5 노드 원장(v18m 초안에 이어) · 계획 §5 3번
