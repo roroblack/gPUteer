@@ -252,6 +252,10 @@ fn main() {
             without_a_signed_renewal_a_running_container_is_only_stopped_and_left_open,
         ),
         (
+            "every_power_loss_point_restarts_into_a_safe_state",
+            every_power_loss_point_restarts_into_a_safe_state,
+        ),
+        (
             "a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused",
             a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused,
         ),
@@ -2951,4 +2955,110 @@ fn without_a_signed_renewal_a_running_container_is_only_stopped_and_left_open() 
     let calls = fake.calls();
     assert!(calls.iter().any(|c| c.contains("| kill | cid-r")), "멈추지 않았다: {calls:?}");
     assert!(!calls.iter().any(|c| c.contains("| rm |")), "지웠다(MUST 1): {calls:?}");
+}
+
+/// ★ 조각 5e2e(계약 v18n · v18o · v18p 시험 목록) — 전원 차단 지점마다 원장 · 컨테이너가 남기는 모양을 그대로 만들고 재기동 판정을 돌린다.
+///   어느 지점에서도 ① 지우지 않는다(rm 없음 — MUST 1) ② 재부착하지 않은 행은 OPEN(사람이 본다) ③ 대상을 확인하지 못하면 kill 도 없다(v18o ②)
+///   ④ 돌고 있는 컨테이너를 감시 없이 두지 않는다(대상이 확인되면 멈춘다).
+fn every_power_loss_point_restarts_into_a_safe_state() {
+    use gputeer_agent::run_ledger::RowState;
+    struct Case {
+        name: &'static str,
+        /// 컨테이너가 남긴 모양 — 런타임 흉내의 파일들.
+        running: bool,
+        exited: bool,
+        broken_target: bool,
+        /// 원장 · 폴더를 그 지점의 모양으로 바꾼다.
+        shape: fn(&gputeer_agent::AgentConfig, &Path),
+        expect_kill: bool,
+    }
+    fn none(_: &gputeer_agent::AgentConfig, _: &Path) {}
+    fn sql(config: &gputeer_agent::AgentConfig, statement: &str) {
+        let paths = gputeer_agent::run_ledger::LedgerPaths::for_root(&config.checkpoint_root).unwrap();
+        rusqlite::Connection::open(&paths.ledger).unwrap().execute_batch(statement).unwrap();
+        // 손잡이를 새로 열어 바뀐 행을 읽게 한다
+        let reopened = gputeer_agent::run_ledger::open_for_agent(&paths).unwrap();
+        *config.run_ledger_handle.as_ref().unwrap().lock().unwrap() = reopened;
+    }
+    let cases = [
+        // 3b 커밋 뒤 start 전 — 컨테이너는 "생성됨"(돌지 않음 · 시작 흔적 없음). 재부착 아님 · 멈출 것 없음 · 남아 있으니 OPEN
+        Case { name: "3b 뒤 start 전", running: false, exited: false, broken_target: false, shape: none, expect_kill: false },
+        // start 뒤 첫 갱신 근거 기록 전(풀 밖 lane) — 근거가 없다(조건 ②). 돌고 있으니 멈추고 OPEN
+        Case {
+            name: "첫 근거 기록 전",
+            running: true,
+            exited: false,
+            broken_target: false,
+            shape: |c, _| sql(c, "UPDATE attempts SET last_lease = NULL, self_stop_at_unix_ms = NULL;"),
+            expect_kill: true,
+        },
+        // 갱신 응답 유실 — 원장에는 옛 시한(이미 지남). 묻지 않고 멈춘다(v18j ②)
+        Case {
+            name: "갱신 응답 유실 · 시한 지남",
+            running: true,
+            exited: false,
+            broken_target: false,
+            shape: |c, _| sql(c, "UPDATE attempts SET self_stop_at_unix_ms = 1;"),
+            expect_kill: true,
+        },
+        // 정지 결정 영속 직후(stop 전) — 조건 ⑦. 재부착하지 않고 멈춘다
+        Case {
+            name: "정지 결정 영속 직후",
+            running: true,
+            exited: false,
+            broken_target: false,
+            shape: |c, _| sql(c, "UPDATE attempts SET stop_decision = 'OWNER', stop_decision_at_unix_ms = 5;"),
+            expect_kill: true,
+        },
+        // 실행 종료 뒤 보고 보관 전 — 컨테이너는 끝나 있다(조건 ⑤). 재부착 · 자동 종료 보고 없음 · 멈출 것 없음 · OPEN
+        Case { name: "종료 뒤 보고 보관 전", running: false, exited: true, broken_target: false, shape: none, expect_kill: false },
+        // 런타임이 상태 조회에 답하지 않음(데몬 오류) — 아무 명령도 보내지 않는다(v18o ②)
+        Case { name: "런타임 응답 실패", running: true, exited: false, broken_target: true, shape: none, expect_kill: false },
+        // 원장 행과 저장 Grant 의 신원이 다르다(조건 ③ — 변조 · 섞임). 대상은 확인되므로 멈춘다
+        Case {
+            name: "Grant 신원 불일치",
+            running: true,
+            exited: false,
+            broken_target: false,
+            shape: |c, _| sql(c, "UPDATE attempts SET fence_epoch = 9;"),
+            expect_kill: true,
+        },
+        // 실행 폴더가 없다(재부착 입력을 다시 세우지 못함) — 승인에서 포기하고 멈춘다
+        Case {
+            name: "실행 폴더 없음",
+            running: true,
+            exited: false,
+            broken_target: false,
+            shape: |_, dir| {
+                std::fs::remove_dir_all(dir.join("checkpoints.workload-run")).unwrap();
+            },
+            expect_kill: true,
+        },
+    ];
+    for case in cases {
+        let fake = TargetFake::new();
+        if case.running {
+            fake.write("running", "cid-r\n");
+        }
+        if case.exited {
+            fake.write("exited", "cid-r 0\n");
+        }
+        // 컨테이너는 런타임에 남아 있다(지우지 않았으니까) — 부재 증거가 서지 않는다
+        fake.write("present", "cid-r\n");
+        let dir = tempfile::tempdir().unwrap();
+        // Coordinator 에 닿을 일이 없는 경우들이다 — 닫힌 주소를 준다(닿으면 실패해 드러난다)
+        let (config, _) = reattach::prepare(dir.path(), "127.0.0.1:9");
+        (case.shape)(&config, dir.path());
+        if case.broken_target {
+            fake.write("broken", "1");
+        }
+        gputeer_agent::reattach_active_rows_for_test(&config, &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED))
+            .unwrap_or_else(|e| panic!("{}: 재기동 판정이 실패했다: {e}", case.name));
+        let row = reattach::row(&config);
+        let calls = fake.calls();
+        assert!(!calls.iter().any(|c| c.contains("| rm |")), "{}: 지웠다(MUST 1): {calls:?}", case.name);
+        assert_eq!(row.state, RowState::Open, "{}: 재부착하지 않은 행은 OPEN 이어야 한다: {row:?}", case.name);
+        let killed = calls.iter().any(|c| c.contains("| kill |"));
+        assert_eq!(killed, case.expect_kill, "{}: 멈춤 기대 {} · 실제 {killed}: {calls:?}", case.name, case.expect_kill);
+    }
 }
