@@ -855,9 +855,33 @@ pub struct ContainerStopper {
     /// 실행 쪽이 관측한 종료(코드 · OOM) — 지우기 **전에** 적는다. 소유자 정지가 멈춘 원인을 가를 때, 실행 쪽이 이미 컨테이너를 지웠으면 이것을 본다
     /// (결함 520 수정이 만든 경쟁 — kill 직후 실행 쪽이 종료를 보고 로그를 받아 지우면 사후 조회가 "없다" 가 됐다).
     observed_exit: std::sync::Arc<std::sync::Mutex<Option<(i64, bool)>>>,
+    /// ★ 2026-10-04 13:36 (조각 5e2b · 계약 v18m · v18o ②) — 모든 명령 앞에 붙는 런타임 대상 고정 인자(`-H` · `--root/--runroot`). 실행 회차가 만든 손잡이는
+    ///   비어 있다(지금과 같다). 재부착 회차는 원장의 대상으로 고정한다 — 신원을 확인한 그 데몬에만 kill · pause 가 간다.
+    global_args: Vec<OsString>,
 }
 
 impl ContainerStopper {
+    /// ★ 2026-10-04 13:36 (조각 5e2b) — 원장에 적힌 고정 대상의 컨테이너(확인한 ID)를 다루는 손잡이(재부착 회차).
+    pub fn pinned(program: PathBuf, global_args: Vec<OsString>, container_id: String) -> Self {
+        ContainerStopper {
+            program,
+            name: container_id,
+            observed_exit: Default::default(),
+            global_args,
+        }
+    }
+
+    /// ★ 2026-10-04 13:36 (조각 5e2b) — 감시 쪽이 관측한 종료를 손잡이와 나눈다(지우기 전에 — 소유자 정지 판정이 그것을 본다 · 결함 525).
+    pub fn note_observed_exit(&self, exit_code: i64, oom_killed: bool) {
+        *self.observed_exit.lock().unwrap_or_else(|e| e.into_inner()) = Some((exit_code, oom_killed));
+    }
+
+    fn pinned_args(&self, rest: Vec<OsString>) -> Vec<OsString> {
+        let mut args = self.global_args.clone();
+        args.extend(rest);
+        args
+    }
+
     /// ★ 2026-09-30 (소유자 "일시정지") — `pause` 를 보내고 `inspect {{.State.Paused}}` 가 `true` 인 것을 **확인한 뒤에만** 성공이다.
     ///   응답만 믿지 않는다(결함 506 과 같은 규칙 — 접수는 적용이 아니다). 컨테이너 안의 프로세스 트리 전체가 얼어붙는다(cgroup freezer).
     /// ★ 검수 pz1 — 실패에는 "적용됐을 수 있는가" 를 싣는다. 명령을 띄우지 못한 것만 "적용 안 됨" 이고, 그 밖(응답 없음 · 실패 응답 · 확인 실패)은
@@ -875,7 +899,7 @@ impl ContainerStopper {
         let verb = if paused { "pause" } else { "unpause" };
         let note = match run_cli_detailed(
             &self.program,
-            &[verb.into(), self.name.clone().into()],
+            &self.pinned_args(vec![verb.into(), self.name.clone().into()]),
             PAUSE_TIMEOUT,
         ) {
             Err(CliFailure::NotSpawned(why)) => {
@@ -902,11 +926,11 @@ impl ContainerStopper {
         };
         match run_cli_detailed(
             &self.program,
-            &[
+            &self.pinned_args(vec![
                 "inspect".into(),
                 "--format={{.State.Paused}}".into(),
                 self.name.clone().into(),
-            ],
+            ]),
             PAUSE_TIMEOUT,
         ) {
             Ok(output) if output.status.success() && output.stdout.trim() == want => Ok(()),
@@ -934,7 +958,7 @@ impl ContainerStopper {
         //   적용됐을 수 있다 — 아래의 같은 판정(나눈 관측 → 조회)을 거친다. 시한은 확인 조회와 같은 15초(kill 은 가벼운 신호 명령이다).
         let kill = match run_cli_detailed(
             &self.program,
-            &["kill".into(), self.name.clone().into()],
+            &self.pinned_args(vec!["kill".into(), self.name.clone().into()]),
             CONFIRM_TIMEOUT,
         ) {
             // ★ 결함 536 (재검수 138) — kill 을 **띄우지 못했으면** 정지 신호가 전달되지 않은 것이 확실하다. 관측된 137(작업이 스스로 끝남)을
@@ -977,7 +1001,7 @@ impl ContainerStopper {
             if let Some((code, oom)) = observed() {
                 return judge(code, oom);
             }
-            match inspect_state_within(&self.program, &self.name, CONFIRM_TIMEOUT) {
+            match inspect_state_within_pinned(&self.program, &self.global_args, &self.name, CONFIRM_TIMEOUT) {
                 Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
                 // ★ 결함 529 (재검수 135) — kill 이 실패로 답했어도 SIGKILL 이 진행 중일 수 있다 — 성공 응답과 같이 끝까지(10번) 본다.
                 Ok(None) => last = "아직 돈다".into(),
@@ -1457,6 +1481,7 @@ fn run_inner(
                 program: program.to_path_buf(),
                 name: target.to_string(),
                 observed_exit: Default::default(),
+                global_args: Vec::new(),
             });
             return Err(ContainerRunError::Unobserved {
                 detail: format!(
@@ -1474,6 +1499,7 @@ fn run_inner(
                 program: program.to_path_buf(),
                 name: target.to_string(),
                 observed_exit: Default::default(),
+                global_args: Vec::new(),
             });
             return Err(ContainerRunError::Unobserved {
                 detail: format!(
@@ -1508,6 +1534,7 @@ fn run_inner(
         program: program.to_path_buf(),
         name: target.to_string(),
         observed_exit: Default::default(),
+        global_args: Vec::new(),
     };
     on_started(stopper.clone());
     // ★ 시한 없이 기다린다 — 작업 길이는 Lease 가 정한다. 멈추는 것은 소유자 손잡이(kill)가 한다.
@@ -1826,17 +1853,62 @@ fn inspect_state_within(
     name: &str,
     timeout: Duration,
 ) -> Result<Option<ContainerExit>, String> {
-    let output = cli_ok(
-        program,
-        &[
-            "inspect".into(),
-            "--format={{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.StartedAt}}"
-                .into(),
-            name.into(),
-        ],
-        timeout,
-    )?;
+    inspect_state_within_pinned(program, &[], name, timeout)
+}
+
+/// ★ 2026-10-04 13:36 (조각 5e2b) — `inspect_state_within` 에 고정 대상 인자를 붙인 판(빈 인자면 같다).
+fn inspect_state_within_pinned(
+    program: &Path,
+    global_args: &[OsString],
+    name: &str,
+    timeout: Duration,
+) -> Result<Option<ContainerExit>, String> {
+    let mut args: Vec<OsString> = global_args.to_vec();
+    args.extend([
+        "inspect".into(),
+        "--format={{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.StartedAt}}"
+            .into(),
+        name.into(),
+    ]);
+    let output = cli_ok(program, &args, timeout)?;
     parse_inspect_state(&output.stdout)
+}
+
+/// ★ 2026-10-04 13:36 (조각 5e2b · 계약 v18n "재부착 회차의 끝") — 고정 대상에서 그 컨테이너가 끝날 때까지 본다(실행 회차의 감시 루프와 같은 규칙 —
+///   500ms 마다 · 연속 5번 확인 실패면 "관측 못 함" `Err`). 끝나면 (종료 코드 · OOM). 시한은 없다 — 멈추는 것은 정지 손잡이(소유자 · 시한 감시)다.
+///   시작한 흔적이 없는 멈춤(`created`)은 종료로 읽지 않는다(결함 501 — `parse_inspect_state`).
+pub fn watch_pinned_exit(
+    program: &Path,
+    global_args: &[OsString],
+    container_id: &str,
+) -> Result<(i64, bool), String> {
+    let mut failures: u32 = 0;
+    loop {
+        match inspect_state_within_pinned(program, global_args, container_id, SHORT_TIMEOUT) {
+            Ok(Some(exit)) => return Ok((exit.exit_code, exit.oom_killed)),
+            Ok(None) => failures = 0,
+            Err(why) => {
+                failures += 1;
+                if failures >= POLL_FAILURES_TOLERATED {
+                    return Err(format!(
+                        "PINNED_EXIT_UNOBSERVED: 고정 대상에서 종료를 {failures}번 연속 확인하지 못했다 — {why}"
+                    ));
+                }
+            }
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// ★ 2026-10-04 13:36 (조각 5e2b) — 고정 대상에서 로그를 받는다(실행 회차의 `save_logs` 와 같은 규칙 · 대상 인자만 붙는다).
+pub fn save_logs_pinned(
+    program: &Path,
+    global_args: &[OsString],
+    container_id: &str,
+    stdout_path: &Path,
+    stderr_path: &Path,
+) -> Result<(), String> {
+    save_logs_with(program, global_args, container_id, Some(stdout_path), Some(stderr_path))
 }
 
 /// `inspect` 출력(`<running> <exit code> <oom> <started at>`)을 읽는다. 아직 돌고 있으면 `None`.

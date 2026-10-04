@@ -25,6 +25,21 @@
 
 ---
 
+## 2026-10-04 13:50 — 실행 알림 계획 조각 5e2b — 고정 대상 감시 · 정지 · 로그(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 3번(5e2b) · 계약 v18m · v18o ② · v18n "재부착 회차의 끝"
+- 스트림: Agent
+- 수행: 정지 손잡이(`ContainerStopper`)에 런타임 대상 고정 인자 칸 — kill · pause · unpause · 멈춤 확인 inspect 가 모두 그 인자를 앞에 붙인다. 실행 회차가 만드는
+  손잡이는 빈 인자(지금과 같다). 새 공개 함수: `ContainerStopper::pinned`(원장 대상 · 확인한 ID) · `note_observed_exit` · `watch_pinned_exit`(500ms 마다 고정 대상
+  inspect · 연속 5번 실패면 관측 못 함 · 시작 흔적 없는 멈춤은 종료로 안 읽음 — 실행 회차와 같은 규칙) · `save_logs_pinned` · `WorkloadStopper::for_pinned_container`.
+  ★ 부르는 곳은 아직 없다(재부착 회차 5e2d)
+- 검증: 가짜 대상 런타임을 넓혀(상태 inspect · kill · logs) 새 시험 1 — 끝난 컨테이너 코드 7 · kill 한 컨테이너 137 · 없는 컨테이너 관측 못 함 · 로그 받기, 그리고
+  **모든 명령이 `-H <대상>` 으로 고정** — 손잡이의 고정 인자를 빼면 시험이 실패함을 보고 원복. Windows `cargo test -p gputeer-agent -p gputeer-cli -j 1 --no-fail-fast`
+  505 passed · 0 failed · ignored 3
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-04 13:33 — 실행 알림 계획 조각 5e2a — 원장 형식 3(재부착 입력 · 정지 결정 영속)(격리 · 브랜치 fork-merge)
 
 - 계획: `docs/plans/2026-10-01_1734_실행알림_정지확인_구현계획.md` §5 3번(5e2a) · 계약 v18m · v18o ① · v18p ①′

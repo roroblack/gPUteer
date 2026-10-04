@@ -240,6 +240,10 @@ fn main() {
             a_docker_target_is_resolved_once_and_every_evidence_call_names_it,
         ),
         (
+            "pinned_watch_stop_and_logs_go_to_the_recorded_target",
+            pinned_watch_stop_and_logs_go_to_the_recorded_target,
+        ),
+        (
             "a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused",
             a_local_podman_is_pinned_by_its_storage_and_a_remote_one_is_refused,
         ),
@@ -2418,6 +2422,40 @@ fn fake_target(state: &Path) -> i32 {
         eprintln!("Error response from daemon: dial unix /fake/docker.sock: connect: connection refused");
         return 125;
     }
+    // ★ 조각 5e2b — 고정 대상의 감시 · 정지 · 로그 흉내: `running`(도는 ID) · `exited`("<ID> <코드>") · `killed`(kill 받은 ID — 137 로 끝난 것으로).
+    let line_has = |name: &str, id: &str| read(name).lines().any(|l| l.split_whitespace().next() == Some(id));
+    if rest.first().map(String::as_str) == Some("inspect")
+        && rest.get(1).is_some_and(|f| f.starts_with("--format={{.State.Running}}"))
+    {
+        let target = rest.last().cloned().unwrap_or_default();
+        if line_has("killed", &target) {
+            println!("false 137 false 2026-10-04T00:00:00Z");
+            return 0;
+        }
+        if line_has("running", &target) {
+            println!("true 0 false 2026-10-04T00:00:00Z");
+            return 0;
+        }
+        if let Some(line) = read("exited").lines().find(|l| l.split_whitespace().next() == Some(target.as_str())) {
+            let code = line.split_whitespace().nth(1).unwrap_or("0");
+            println!("false {code} false 2026-10-04T00:00:00Z");
+            return 0;
+        }
+        eprintln!("Error: No such container: {target}");
+        return 1;
+    }
+    if rest.first().map(String::as_str) == Some("kill") {
+        let target = rest.last().cloned().unwrap_or_default();
+        append(state, "killed", &format!("{target}
+"));
+        println!("{target}");
+        return 0;
+    }
+    if rest.first().map(String::as_str) == Some("logs") {
+        println!("fake-out");
+        eprintln!("fake-err");
+        return 0;
+    }
     match rest.first().map(String::as_str) {
         Some("inspect") => {
             let target = rest.last().cloned().unwrap_or_default();
@@ -2651,4 +2689,32 @@ fn a_failed_created_hook_never_starts_and_removes_by_id() {
         "확인한 ID 로 지우지 않았다:\n{calls}"
     );
     assert!(!calls.lines().any(|l| l.starts_with("start ")), "start 를 불렀다:\n{calls}");
+}
+
+/// ★ 조각 5e2b(계약 v18m · v18o ②) — 재부착 회차의 감시(종료 코드) · 정지 손잡이(kill + 멈춤 확인) · 로그 받기가 **전부** 원장의 고정 대상(`-H`)으로 간다.
+///   끝난 컨테이너는 그 코드를 · kill 한 컨테이너는 137 을 · 없는 컨테이너는 다섯 번 연속 실패 뒤 "관측 못 함" 을 돌려준다.
+fn pinned_watch_stop_and_logs_go_to_the_recorded_target() {
+    let fake = TargetFake::new();
+    let program = std::env::current_exe().unwrap();
+    let globals = RuntimeEndpoint::DockerHost("unix:///fake/docker.sock".into()).global_args();
+    fake.write("exited", "cid-done 7\n");
+    assert_eq!(container::watch_pinned_exit(&program, &globals, "cid-done").unwrap(), (7, false));
+    fake.write("running", "cid-run\n");
+    let stopper = container::ContainerStopper::pinned(program.clone(), globals.clone(), "cid-run".into());
+    stopper.stop().expect("고정 손잡이가 멈추지 못했다");
+    assert_eq!(container::watch_pinned_exit(&program, &globals, "cid-run").unwrap(), (137, false));
+    let dir = tempfile::tempdir().unwrap();
+    container::save_logs_pinned(&program, &globals, "cid-run", &dir.path().join("o"), &dir.path().join("e")).unwrap();
+    assert!(std::fs::read_to_string(dir.path().join("o")).unwrap().contains("fake-out"));
+    assert!(container::watch_pinned_exit(&program, &globals, "ghost")
+        .unwrap_err()
+        .contains("PINNED_EXIT_UNOBSERVED"));
+    let calls = fake.calls();
+    assert!(!calls.is_empty());
+    for call in &calls {
+        assert!(
+            call.starts_with("-H | unix:///fake/docker.sock | "),
+            "고정한 대상을 명시하지 않은 명령이 있다: {call}"
+        );
+    }
 }

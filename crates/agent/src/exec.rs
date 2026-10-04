@@ -297,6 +297,11 @@ impl WorkloadStopper {
         }
     }
 
+    /// ★ 2026-10-04 13:36 (조각 5e2b) — 재부착 회차가 Owner Panel 에 거는 손잡이(고정 대상 컨테이너 — `ContainerStopper::pinned`).
+    pub fn for_pinned_container(stopper: crate::container::ContainerStopper) -> Self {
+        Self::for_container(stopper)
+    }
+
     fn for_container(stopper: crate::container::ContainerStopper) -> Self {
         Self {
             #[cfg(windows)]
