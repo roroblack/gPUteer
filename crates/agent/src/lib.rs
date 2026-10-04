@@ -842,6 +842,9 @@ pub fn run(config: AgentConfig) -> Result<(), String> {
     }
     // ★ 2026-10-03 11:51 (조각 5f · 계약 §5 "보내기" · 기동 관문) — 밀린 실행 알림을 보내고, 그래도 막힌 행이 남으면 새 작업을 받지 않는다.
     if config.send_run_notice {
+        // ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18o ⑤) — 발견 단계가 ACTIVE 로 둔 재부착 후보를 **여기서**(기동 GC · 소유자 패널 뒤 · 새 작업 관문 앞) 다시 확인하고
+        //   다시 붙어 끝까지 본다(그 회차에 FRESH 없음 — v18j). 승인하지 못하면 5e1 경로(멈추기 · 증거 판정 · OPEN)로 보낸다.
+        reattach_active_rows(&config, &signing_key)?;
         flush_run_notices_then_gate(&config, &signing_key)?;
     }
     // ★ 2026-10-02 (대체 통지 우편함 v3 §4) — **모든** FRESH 연결 직전에 우편함을 비운다(첫 연결 · 재접속마다 — 검수 mba1). 남으면 이 회차는
@@ -1769,6 +1772,7 @@ fn run_one_connection_inner(
                 run_dir
                     .join(exec::CHECKPOINT_OUT_DIRNAME)
                     .join(progress::PROGRESS_FILENAME),
+                None,
             )
         } else {
             None
@@ -2661,6 +2665,7 @@ struct RenewDuringExecution {
 ///   작업을 스스로 멈춘다(세 겹 중 첫째 — Agent 타이머). 전에는 "정책이 정하지 않았다" 며 멈추지 않았다. 소유자 화면에 연결 상태를 적고,
 ///   소유자가 "계속 돌리기"(부작용 없는 작업만)를 고르면 시한을 넘겨 계속 둔다. Coordinator 가 갱신을 거부하면(다른 노드로 넘어감) "계속" 도
 ///   무시하고 멈춘다. 여유(`disconnect_stop_margin_ms`)가 0 이면 멈추지 않는다(옛 동작). 커널 시한 · 런타임 밖 정지(둘째 · 셋째 겹)는 아직이다.
+#[allow(clippy::too_many_arguments)]
 fn start_renew_during_execution(
     config: &AgentConfig,
     signing_key: &SigningKey,
@@ -2670,6 +2675,8 @@ fn start_renew_during_execution(
     keep_running_allowed: bool,
     // ★ 2026-10-01 — 작업의 진행 보고 파일(`progress` 모듈). 갱신마다 읽어 서명된 갱신 요청에 싣고 소유자 화면에 적는다.
     progress_path: PathBuf,
+    // ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18j ②′) — 재부착 회차: 처음 끊김 시한을 원장의 값 이하로 둔다(재기동 시각으로 다시 계산해 늦추지 않는다). 실행 회차는 None.
+    initial_self_stop_at: Option<u64>,
 ) -> Option<RenewDuringExecution> {
     if config.renew_during_execution_ms == 0 {
         return None;
@@ -2704,15 +2711,17 @@ fn start_renew_during_execution(
     };
     {
         let now = SystemClock.now_unix_ms();
+        let cap = initial_self_stop_at.unwrap_or(u64::MAX);
         panel.watch_connection(
             &attempt_id,
             self_stop_time(
                 held_lease.issued_at_unix_ms,
                 held_lease.expires_at_unix_ms,
                 now,
-            ),
+            )
+            .min(cap),
             // ★ 2026-10-01 (판단표 ④) — 곧 끝나는 작업의 마지막 시각(서명된 재배치 유예가 있을 때만 끊김 시한보다 뒤).
-            near_finish_time(held_lease, now),
+            near_finish_time(held_lease, now).min(cap),
             // ★ 검수 m0r ① — Lease 자체의 시한(여유 없이). 일시정지 풀기가 끊김 시한과 따로 본다.
             owner_panel::disconnect_self_stop_at(
                 held_lease.issued_at_unix_ms,
@@ -4266,7 +4275,7 @@ fn resolve_active_ledger_rows(
                 // ★ 2026-10-03 11:15 (조각 5d · 계약 §5 기동 관문 · §4) — 알림을 쓰면 보고 없는 행은 §4 자동 증거(지우지 않는 변형)로 판정한다.
                 //   알림 꺼짐이면 아래 그대로 LOCAL_BLOCKED(계약 b14 ②). 보고는 있는데 지움 확인이 없는 행도 그대로다(종료는 관측했다 — 불명이 아니다).
                 if settled.send_run_notice && !report {
-                    resolve_unreported_container_row(settled, &signing_key, ledger, &row)?;
+                    resolve_unreported_container_row(settled, &signing_key, ledger, &row, true)?;
                     continue;
                 }
                 let reason = if report {
@@ -4315,13 +4324,311 @@ fn resolve_active_ledger_rows(
 ///                                                                    소유자 해제 명령(§4)
 /// ```
 /// 지우지 않는다(v18f). 돌고 있는 컨테이너의 재부착(B′ · 조각 5e)은 이 판정 **앞**에 선다 — 그 전까지 돌고 있으면 "있음" 이라 OPEN 이다(보수).
+/// ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18j · v18n · v18o · v18p) — 기동 정리 뒤 남은 ACTIVE 컨테이너 행(발견 단계의 재부착 후보)을 다시 판정하고 다시 붙는다.
+///   한 행씩 끝까지 간다(작업이 끝날 때까지 이 함수가 돌아오지 않는다). 승인하지 못한 행은 5e1 경로로 정리한다.
+/// ★ 조각 5e2d — 시험 진입점. 재부착 회차는 기동에서만 불린다(배포 바이너리는 알림 스위치가 기동을 거부해 닿지 않는다 — 활성화 관문).
+#[doc(hidden)]
+pub fn reattach_active_rows_for_test(config: &AgentConfig, signing_key: &SigningKey) -> Result<(), String> {
+    // 기동(`run`)이 원장을 연 직후 거는 정지 결정 고리를 시험에서도 건다.
+    if let Some(handle) = config.run_ledger_handle.clone() {
+        config
+            .owner_panel_state
+            .set_stop_recorder(stop_decision_recorder(handle, &config.checkpoint_root, &config.agent_device_id));
+    }
+    reattach_active_rows(config, signing_key)
+}
+
+fn reattach_active_rows(config: &AgentConfig, signing_key: &SigningKey) -> Result<(), String> {
+    let Some(handle) = config.run_ledger_handle.clone() else {
+        return Ok(());
+    };
+    let rows: Vec<run_ledger::AttemptRow> = handle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .rows()?
+        .into_iter()
+        .filter(|row| row.state == run_ledger::RowState::Active && row.executor == run_ledger::Executor::Container)
+        .collect();
+    for row in rows {
+        let Some(program) = row.runtime_program.clone() else {
+            let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+            resolve_unreported_container_row(config, signing_key, &mut ledger, &row, false)?;
+            continue;
+        };
+        let name = row
+            .container_name
+            .clone()
+            .unwrap_or_else(|| container::derive_container_name(&row.attempt_id));
+        let incident_open =
+            container::incident_recorded_for(&container::incident_dir_for(&config.checkpoint_root), &name);
+        // 승인 — 발견 뒤 바뀌었을 수 있으니 같은 판정을 다시 한다(대상 신원 · running · 시한 · 정지 결정 · 사건 표식)
+        let verdict = run_evidence::evaluate_reattach(
+            &row,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(&program),
+                salvage_dir: None,
+            },
+            incident_open,
+            SystemClock.now_unix_ms(),
+        );
+        let reattached = match verdict {
+            run_evidence::ReattachVerdict::Candidate(inputs) => {
+                run_reattach_round(config, signing_key, &row, std::path::Path::new(&program), *inputs)?
+            }
+            run_evidence::ReattachVerdict::NotCandidate { why, stop_allowed } => {
+                println!(
+                    "RUN_LEDGER_REATTACH_NOT_APPROVED attempt_id={} stop_allowed={stop_allowed} detail={why}",
+                    row.attempt_id
+                );
+                false
+            }
+        };
+        if !reattached {
+            let mut ledger = handle.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(current) = ledger.row(&row.attempt_id)? {
+                if current.state == run_ledger::RowState::Active {
+                    resolve_unreported_container_row(config, signing_key, &mut ledger, &current, false)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// ★ 2026-10-04 13:59 (조각 5e2d) — 재부착 회차 하나. `true` 면 다시 붙어 종료까지 보고 보고를 보관했다(또는 그 행을 원장이 이미 정리했다).
+///   `false` 면 재부착하지 않았다 — 갱신이 한 번도 성공하지 않았거나(서명된 거부 · 끊김 · 정지 결정) 입력을 다시 세우지 못했다.
+///   그때 컨테이너는 지우지 않고(필요하면 멈춘 채) 원장은 ACTIVE 그대로다 — 부르는 쪽이 5e1 경로(증거 판정 · OPEN)로 정리한다.
+fn run_reattach_round(
+    config: &AgentConfig,
+    signing_key: &SigningKey,
+    row: &run_ledger::AttemptRow,
+    program: &std::path::Path,
+    inputs: run_evidence::ReattachInputs,
+) -> Result<bool, String> {
+    let attempt_id = row.attempt_id.clone();
+    let not_reattached = |why: String| {
+        println!("RUN_LEDGER_REATTACH_ABANDONED attempt_id={attempt_id} detail={why} — 재부착하지 않는다(멈추기 · 증거 판정으로)");
+        Ok(false)
+    };
+    // 명세를 다시 세운다 — 처음 검증한 시각(원장의 시작 시각)으로 같은 제출자 키 검증을 되풀이한다(짧은 수명은 그때 기준).
+    let workload = match verify_nested_manifest(
+        &inputs.grant,
+        config,
+        inputs.started_at_unix_ms,
+        &mut InMemoryReplayGuard::new(),
+    ) {
+        Ok(Some(workload)) => workload,
+        Ok(None) => return not_reattached("저장된 Grant 에 Manifest 가 없다".into()),
+        Err(why) => return not_reattached(format!("Manifest 재검증 실패: {why}")),
+    };
+    // 조건 ⑥ — 시작 체크포인트 마커를 다시 쓴다(기동 GC 가 지웠을 수 있다 · write_once 멱등). 실행 폴더(GC 밖)가 있어야 한다.
+    let job_id = inputs.last_lease.job_id.clone();
+    let checkpoint_id = match record_start_checkpoint(&config.checkpoint_root, &job_id, &attempt_id, &inputs.grant.grant_id) {
+        Ok(id) => id,
+        Err(why) => return not_reattached(format!("시작 체크포인트 마커를 다시 쓰지 못했다: {why}")),
+    };
+    let run_dir = workload_run_root(&config.checkpoint_root)?.join(&checkpoint_id);
+    if !run_dir.is_dir() {
+        return not_reattached(format!("실행 폴더가 없다({})", run_dir.display()));
+    }
+    // 고정 대상 손잡이를 패널에 건다 — 소유자의 즉시 정지가 먼저 된다(v18j ①). "계속 돌리기" 선택은 복원하지 않는다(Auto).
+    let globals = inputs.endpoint.global_args();
+    let stopper = container::ContainerStopper::pinned(program.to_path_buf(), globals.clone(), inputs.container_id.clone());
+    config.owner_panel_state.register(owner_panel::RunningWorkload {
+        job_id: job_id.clone(),
+        attempt_id: attempt_id.clone(),
+        submitter_device_id: workload.submitter_device_id.clone(),
+        started_at_unix_ms: inputs.started_at_unix_ms,
+        entrypoint: workload.spec.entrypoint.clone(),
+        last_checkpoint_at_unix_ms: None,
+        stopper: std::sync::Arc::new(exec::WorkloadStopper::for_pinned_container(stopper.clone())),
+    });
+    println!(
+        "RUN_LEDGER_REATTACH_WATCH attempt_id={attempt_id} container_id={} self_stop_at_unix_ms={} — 소유자 화면에 다시 걸었다(\"계속 돌리기\" 선택은 초기화됐다)",
+        inputs.container_id, inputs.self_stop_at_unix_ms
+    );
+    // 시한 감시(원장 값 이하) · 우편함 · 갱신 — 첫 갱신은 곧바로(v18j ②′ ③ ④). 서명된 거부 · 시한 · 우편함 · 소유자 정지는 모두 정지 결정을 먼저 적는다(5e2a).
+    let keep_running_allowed = workload.side_effect_class == pb::SideEffectClass::Pure as i32
+        || workload.side_effect_class == pb::SideEffectClass::Idempotent as i32;
+    let renewer = start_renew_during_execution(
+        config,
+        signing_key,
+        &inputs.last_lease,
+        true,
+        &attempt_id,
+        keep_running_allowed,
+        run_dir.join(exec::CHECKPOINT_OUT_DIRNAME).join(progress::PROGRESS_FILENAME),
+        Some(inputs.self_stop_at_unix_ms),
+    );
+    // 감시 — 고정 대상에서 끝날 때까지(5e2b). 종료를 정지 손잡이와 나눈다(소유자 정지 판정 · 결함 525).
+    let exit = container::watch_pinned_exit(program, &globals, &inputs.container_id);
+    if let Ok((code, oom)) = exit {
+        stopper.note_observed_exit(code, oom);
+    }
+    let finished_at = SystemClock.now_unix_ms();
+    let mut held_lease = inputs.last_lease.clone();
+    if let Some(renewer) = renewer {
+        renewer.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        match renewer.handle.join() {
+            Ok(latest) => held_lease = latest,
+            Err(_) => println!("RENEW_SESSION_THREAD_PANICKED attempt_id={attempt_id} — 재부착 회차의 갱신 스레드가 비정상 종료했다(갱신 성공으로 세지 않는다)"),
+        }
+        if let Some(watcher) = renewer.watcher {
+            if watcher.join().is_err() {
+                println!("DISCONNECT_WATCH_THREAD_PANICKED attempt_id={attempt_id} — 재부착 회차의 끊김 시한 감시 스레드가 비정상 종료했다");
+            }
+        }
+        if let Some(mailbox) = renewer.mailbox {
+            mailbox.finish(&attempt_id, mailbox::WATCH_JOIN_LIMIT);
+        }
+    }
+    let stopped_by_owner = config.owner_panel_state.stopped_by_owner(&attempt_id);
+    let stopped_for_disconnect = config.owner_panel_state.stopped_for_disconnect(&attempt_id);
+    config.owner_panel_state.unregister(&attempt_id);
+    // 갱신이 한 번이라도 성공했는가 — 서명된 갱신 성공이 재부착의 조건이다(v18j ④). 실패 · 거부 뒤의 정지는 재부착이 아니다(보고 없이 증거 판정으로).
+    let renewed_once = held_lease != inputs.last_lease;
+    let (code, oom) = match exit {
+        Ok(observed) if renewed_once => observed,
+        Ok(_) => return not_reattached("서명된 갱신 성공 없이 멈췄다(거부 · 끊김 · 정지 결정) — 재부착이 아니다".into()),
+        Err(why) => return not_reattached(format!("종료를 관측하지 못했다(아직 돌 수 있다 — 지우지 않는다): {why}")),
+    };
+    println!("RUN_LEDGER_REATTACHED_EXIT attempt_id={attempt_id} exit_code={code} oom={oom}");
+    // 끝 처리 — 지금 실행 회차와 같은 순서(v18p ④′): 로그 고정 회수 → 고정 삭제 · 부재 확인 → 결과를 원장에 먼저 → 보고 보관 → CLOSED.
+    let stdout = run_dir.join(exec::STDOUT_FILENAME);
+    let stderr = run_dir.join(exec::STDERR_FILENAME);
+    let logs_complete = container::save_logs_pinned(program, &globals, &inputs.container_id, &stdout, &stderr).is_ok();
+    let removed = logs_complete
+        && container::runtime_target::pinned_remove(program, &inputs.endpoint, &inputs.container_id).is_ok()
+        && matches!(
+            container::runtime_target::pinned_lookup(
+                program,
+                &inputs.endpoint,
+                &container::runtime_target::Lookup::Id(&inputs.container_id),
+            ),
+            Ok(container::runtime_target::Presence::Absent)
+        );
+    if let Some(Err(error)) = with_run_ledger(config, |ledger| {
+        ledger.record_container_exit(
+            &attempt_id,
+            Some(stopped_by_owner || stopped_for_disconnect),
+            Some(logs_complete),
+            Some(!removed),
+            removed,
+            "container_not_confirmed_removed",
+        )
+    }) {
+        return Err(run_ledger_fatal(
+            &attempt_id,
+            format!("재부착 회차의 종료 뒤 원장에 처리 결과를 적지 못했다 — 보고를 보관하지 않는다: {error}"),
+        ));
+    }
+    // v18o ④ — 같은 시도의 보고가 보관함에 이미 있으면 새 보고를 만들지 않는다(사람이 본다 — 행은 위 결과대로 남는다)
+    if config.report_over_session {
+        let outbox = report_outbox_dir(config)?;
+        if accepted_outbox_report_exists(config, signing_key, &outbox, row)? {
+            println!("RUN_LEDGER_REATTACH_REPORT_EXISTS attempt_id={attempt_id} — 같은 시도의 보고가 이미 보관돼 있어 새 보고를 만들지 않는다");
+            return Ok(true);
+        }
+    }
+    let outcome = exec::ExecutionOutcome {
+        exit: exec::ExitObserved::Code(u32::try_from(code).unwrap_or(u32::MAX)),
+        commit_limit_bytes: config.workload_commit_limit_bytes,
+        peak_commit_bytes: None,
+        memory_observation_error: None,
+        outputs_incomplete: (!logs_complete).then(|| "재부착 회차에서 로그를 끝까지 받지 못했다".to_string()),
+        container_needs_human: !removed,
+    };
+    let finalization_failure = match finalize_workload_outputs(
+        &run_dir,
+        &workload.spec,
+        &outcome,
+        logs_complete,
+        &config.checkpoint_root,
+        &checkpoint_id,
+        &held_lease,
+        &attempt_id,
+    ) {
+        Ok(_) => None,
+        Err((stage, detail)) => {
+            println!("RUN_LEDGER_REATTACH_FINALIZE_FAILED attempt_id={attempt_id} detail={detail}");
+            Some(stage)
+        }
+    };
+    let observed = crate::report::TerminalObservation {
+        job_id: held_lease.job_id.clone(),
+        attempt_id: attempt_id.clone(),
+        node_id: config.agent_device_id.clone(),
+        fence_epoch: held_lease.fence_epoch,
+        exit_code: Some(u32::try_from(code).unwrap_or(u32::MAX)),
+        finalization_failure,
+        started_at_unix_ms: inputs.started_at_unix_ms,
+        finished_at_unix_ms: finished_at,
+        issued_at_unix_ms: 0,
+        stopped_by_owner,
+        stopped_for_disconnect,
+    };
+    if !config.report_over_session {
+        return Ok(true);
+    }
+    let (report, path) = outbox_terminal_report(config, signing_key, &SystemClock, &observed)?;
+    if removed {
+        if let Some(Err(error)) = with_run_ledger(config, |ledger| match ledger.row(&attempt_id)? {
+            Some(current) if current.state == run_ledger::RowState::Active => {
+                ledger.close_active(&attempt_id, run_ledger::CloseReason::ReportPersisted)
+            }
+            _ => Ok(()),
+        }) {
+            return Err(run_ledger_fatal(
+                &attempt_id,
+                format!("재부착 회차의 보고를 보관한 뒤 원장 CLOSED 를 적지 못했다: {error}"),
+            ));
+        }
+    }
+    if let Err(error) = deliver_outboxed_report(config, signing_key, &report, &path) {
+        println!("RUN_LEDGER_REATTACH_REPORT_PENDING attempt_id={attempt_id} detail={error} — 보관함에 남아 다음 기동이 다시 보낸다");
+    }
+    println!("RUN_LEDGER_REATTACHED_DONE attempt_id={attempt_id} removed={removed}");
+    Ok(true)
+}
+
 fn resolve_unreported_container_row(
     settled: &AgentConfig,
     signing_key: &SigningKey,
     ledger: &mut run_ledger::RunLedger,
     row: &run_ledger::AttemptRow,
+    // ★ 2026-10-04 13:59 (조각 5e2d · 계약 v18o ⑤) — 기동의 발견 단계면 true: 재부착 후보는 **아무것도 바꾸지 않고** ACTIVE 로 둔다(승인 · 회차는 기동 GC ·
+    //   패널 뒤 `reattach_active_rows`). 그 승인이 거절한 행을 다시 판정할 때는 false(후보로 미루지 않고 아래 5e1 경로 — 멈추기 · 증거).
+    allow_defer: bool,
 ) -> Result<(), String> {
     let id = &row.attempt_id;
+    if let (true, Some(program)) = (allow_defer, row.runtime_program.as_deref()) {
+        let name = row
+            .container_name
+            .clone()
+            .unwrap_or_else(|| container::derive_container_name(id));
+        let incident_open =
+            container::incident_recorded_for(&container::incident_dir_for(&settled.checkpoint_root), &name);
+        let verdict = run_evidence::evaluate_reattach(
+            row,
+            &run_evidence::CliQueries {
+                program: std::path::Path::new(program),
+                salvage_dir: None,
+            },
+            incident_open,
+            SystemClock.now_unix_ms(),
+        );
+        match verdict {
+            run_evidence::ReattachVerdict::Candidate(_) => {
+                println!(
+                    "RUN_LEDGER_REATTACH_CANDIDATE attempt_id={id} — 재기동 때 돌고 있고 재부착 조건을 모두 갖췄다 · 기동 정리 뒤 갱신 확인으로 다시 붙는다(그때까지 ACTIVE)"
+                );
+                return Ok(());
+            }
+            run_evidence::ReattachVerdict::NotCandidate { why, stop_allowed } => println!(
+                "RUN_LEDGER_REATTACH_REFUSED attempt_id={id} stop_allowed={stop_allowed} detail={why}"
+            ),
+        }
+    }
     let owner = settled
         .container_runtime
         .as_ref()
