@@ -25,6 +25,20 @@
 
 ---
 
+## 2026-10-04 13:54 — 실행 알림 계획 조각 5e2c — 재부착 후보 판정(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 3번(5e2c) · 계약 v18n 조건 · v18o ② ③ ⑤ · v18j ②
+- 스트림: Agent
+- 수행: `run_evidence::evaluate_reattach(row, queries, incident_open, now) -> ReattachVerdict` — 발견 단계라 신원 · 상태 **조회만** 한다(아무것도 바꾸지 않는다).
+  순서: ⑦ 정지 결정 · ⑧ 열린 사건 표식(기동은 원장 판정이 표식 검사보다 먼저라 인자로 직접 받는다) → ② 재부착 입력 · 갱신 근거 → ③ 저장 Grant · 마지막 Lease ·
+  원장 행의 job · attempt · node · fence · lease_id 대조(grant ID 는 대조하지 않음) → ④ 대상 신원(다르거나 못 물으면 `stop_allowed = false` — 아무 명령 없이 OPEN) →
+  ⑤ running 만 → v18j ② 원장 시한 · 로컬 만료. 후보면 `ReattachInputs`(대상 · ID · Grant · 마지막 Lease · 시한 · 시작 시각). ★ 부르는 곳은 아직 없다(5e2d)
+- 검증: 단위 시험 2(후보 — 조회 둘만 · 조건마다 따로 막힘 · 대상 신원 다름/못 물음은 stop 불허이고 상태도 묻지 않음 · 얼림은 stop 허락) — 신원 대조를 끄면 시험이
+  실패함을 보고 원복. `cargo test -p gputeer-agent --lib` 161 passed · 0 failed
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-04 13:50 — 실행 알림 계획 조각 5e2b — 고정 대상 감시 · 정지 · 로그(격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 §5 3번(5e2b) · 계약 v18m · v18o ② · v18n "재부착 회차의 끝"

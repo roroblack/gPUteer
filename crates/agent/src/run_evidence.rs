@@ -103,6 +103,112 @@ pub fn stop_if_running_at_restart(row: &AttemptRow, queries: &dyn RuntimeQueries
     }
 }
 
+/// ★ 2026-10-04 13:52 (조각 5e2c · 계약 v18n 조건 ①~⑤ · ⑦ · ⑧ · v18o ② ③ · v18j ②) — 재기동 때 ACTIVE 컨테이너 행이 **재부착 후보**인가.
+///   이 판정은 아무 명령도 바꾸지 않는다(신원 · 상태 조회만) — 발견 단계다(v18o ⑤). 승인(마커 다시 쓰기 · 갱신 확인)은 재부착 회차(5e2d)가 한다.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReattachVerdict {
+    /// 모든 조건이 참 — 승인 단계로 넘긴다.
+    Candidate(Box<ReattachInputs>),
+    /// 재부착하지 않는다. `stop_allowed` 는 v18o ② — 대상 신원을 확인한 컨테이너에만 stop 을 보낸다(거짓이면 아무 명령 없이 OPEN).
+    NotCandidate { why: String, stop_allowed: bool },
+}
+
+/// 재부착 회차가 쓰는 입력(원장 바이트를 풀어 대조한 값).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReattachInputs {
+    pub endpoint: RuntimeEndpoint,
+    pub container_id: String,
+    pub grant: pb::ExecutionGrant,
+    pub last_lease: pb::Lease,
+    pub self_stop_at_unix_ms: u64,
+    pub started_at_unix_ms: u64,
+}
+
+/// 재부착 후보 판정. `incident_open` 은 그 컨테이너의 열린 사건 표식이 있는가(조건 ⑧ — 기동은 원장 판정이 사건 표식 검사보다 먼저라 여기서 직접 받는다).
+pub fn evaluate_reattach(
+    row: &AttemptRow,
+    queries: &dyn RuntimeQueries,
+    incident_open: bool,
+    now_unix_ms: u64,
+) -> ReattachVerdict {
+    use prost::Message;
+    let no = |why: &str, stop_allowed: bool| ReattachVerdict::NotCandidate { why: why.to_string(), stop_allowed };
+    // ⑦ 정지 결정 · ⑧ 사건 표식 — 대상과 무관하게 먼저 본다(정지는 확인된 대상에만 — 아래에서 다시 가른다)
+    if row.stop_decision.is_some() {
+        return no("정지 결정이 이미 기록됐다(조건 ⑦)", true);
+    }
+    if incident_open {
+        return no("그 컨테이너의 열린 사건 표식이 있다(조건 ⑧)", true);
+    }
+    // ② 근거와 입력
+    let (Some(grant_bytes), Some(started_at), Some(lease_bytes), Some(self_stop_at)) = (
+        row.reattach_grant.as_deref(),
+        row.started_at_unix_ms,
+        row.last_lease.as_deref(),
+        row.self_stop_at_unix_ms,
+    ) else {
+        return no("재부착 입력 · 갱신 근거가 원장에 없다(조건 ②)", true);
+    };
+    let (Some(id), Some(target), Some(recorded)) = (
+        row.container_id.as_deref(),
+        row.connection_target.as_deref(),
+        row.runtime_target_identity.as_deref(),
+    ) else {
+        return no("원장에 확인한 ID · 대상 · 신원이 없다", false);
+    };
+    let Ok(endpoint) = RuntimeEndpoint::from_ledger(target) else {
+        return no("원장의 런타임 대상을 읽지 못했다", false);
+    };
+    // ③ 저장 Grant · 마지막 Lease 의 신원 대조(v18o ③ — grant ID 는 대조하지 않는다)
+    let (Ok(grant), Ok(last_lease)) = (pb::ExecutionGrant::decode(grant_bytes), pb::Lease::decode(lease_bytes)) else {
+        return no("저장된 Grant · Lease 바이트를 풀지 못했다(조건 ③)", true);
+    };
+    let Some(grant_lease) = grant.lease.as_ref() else {
+        return no("저장된 Grant 에 Lease 가 없다(조건 ③)", true);
+    };
+    let row_job = row.job_id.as_deref().unwrap_or("");
+    let row_node = row.node_id.as_deref().unwrap_or("");
+    let row_fence = row.fence_epoch.unwrap_or(u64::MAX);
+    let manifest_job = grant.manifest.as_ref().map(|m| m.job_id.as_str());
+    let identity_matches = grant.attempt_id == row.attempt_id
+        && manifest_job.is_none_or(|job| job == row_job)
+        && grant_lease.job_id == row_job
+        && grant_lease.attempt_id == row.attempt_id
+        && grant_lease.holder_node_id == row_node
+        && grant_lease.fence_epoch == row_fence
+        && last_lease.lease_id == grant_lease.lease_id
+        && last_lease.job_id == row_job
+        && last_lease.attempt_id == row.attempt_id
+        && last_lease.fence_epoch == row_fence;
+    if !identity_matches {
+        return no("저장된 Grant · 마지막 Lease · 원장 행의 신원이 서로 다르다(조건 ③ — 변조 · 섞임)", true);
+    }
+    // ④ 대상 신원 — 다르거나 묻지 못하면 **아무 명령도 보내지 않는다**(v18o ②)
+    match queries.identity(&endpoint) {
+        Ok(found) if found == recorded => {}
+        Ok(_) => return no("런타임 대상의 신원이 원장과 다르다(조건 ④)", false),
+        Err(why) => return no(&format!("런타임 대상의 신원을 확인하지 못했다(조건 ④ — {why})"), false),
+    }
+    // ⑤ running 만 — 얼림 · 멈춤 · 생성됨 · 없음은 후보가 아니다
+    match queries.run_state(&endpoint, id) {
+        Ok(runtime_target::RunState::Running) => {}
+        Ok(other) => return no(&format!("돌고 있지 않다({other:?} — 조건 ⑤)"), true),
+        Err(why) => return no(&format!("상태를 확인하지 못했다(조건 ⑤ — {why})"), false),
+    }
+    // v18j ② — 원장의 시한이 지났거나 Lease 가 로컬로 만료면 묻지 않고 stop
+    if now_unix_ms >= self_stop_at || last_lease.expires_at_unix_ms <= now_unix_ms {
+        return no("원장의 끊김 시한이 지났거나 Lease 가 로컬로 만료됐다(v18j ②)", true);
+    }
+    ReattachVerdict::Candidate(Box::new(ReattachInputs {
+        endpoint,
+        container_id: id.to_string(),
+        grant,
+        last_lease,
+        self_stop_at_unix_ms: self_stop_at,
+        started_at_unix_ms: started_at,
+    }))
+}
+
 /// 자동 증거의 판정.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutoEvidence {
@@ -725,4 +831,91 @@ mod tests {
         assert_eq!(stop_if_running_at_restart(&no_id, &fake), RunningAtRestart::NotRunning);
         assert!(fake.asked.borrow().is_empty());
     }
+
+    // ─── ★ 조각 5e2c — 재부착 후보 판정(계약 v18n 조건 · v18o ② ③ · v18j ②) ─────────
+
+    fn reattach_row(now: u64) -> AttemptRow {
+        use prost::Message;
+        let mut row = pinned_row();
+        let lease = pb::Lease {
+            lease_id: "lease-1".into(),
+            job_id: "job-1".into(),
+            attempt_id: "attempt-1".into(),
+            fence_epoch: 4,
+            holder_node_id: "node-1".into(),
+            expires_at_unix_ms: now + 60_000,
+            ..Default::default()
+        };
+        let grant = pb::ExecutionGrant {
+            grant_id: "grant-1".into(),
+            attempt_id: "attempt-1".into(),
+            manifest: Some(pb::JobManifest { job_id: "job-1".into(), ..Default::default() }),
+            lease: Some(lease.clone()),
+            ..Default::default()
+        };
+        row.reattach_grant = Some(grant.encode_to_vec());
+        row.started_at_unix_ms = Some(now - 1_000);
+        row.last_lease = Some(lease.encode_to_vec());
+        row.self_stop_at_unix_ms = Some(now + 30_000);
+        row
+    }
+
+    fn running() -> Fake {
+        Fake { failing: Some("running"), ..Fake::absent_everywhere() }
+    }
+
+    /// 모든 조건이 참이면 후보 — 신원 · 상태만 묻고 아무것도 바꾸지 않는다.
+    #[test]
+    fn a_running_container_with_full_matching_inputs_is_a_reattach_candidate() {
+        let now = 1_000_000;
+        let fake = running();
+        let ReattachVerdict::Candidate(inputs) = evaluate_reattach(&reattach_row(now), &fake, false, now) else {
+            panic!("후보여야 한다");
+        };
+        assert_eq!(inputs.container_id, "cid-1");
+        assert_eq!(inputs.grant.grant_id, "grant-1");
+        assert_eq!(inputs.self_stop_at_unix_ms, now + 30_000);
+        let asked = fake.asked.borrow().clone();
+        assert_eq!(asked.len(), 2, "{asked:?}");
+        assert!(asked.iter().all(|a| a.starts_with("identity") || a.starts_with("state")), "판정이 명령을 보냈다: {asked:?}");
+    }
+
+    /// 후보가 아닌 경우 — 각 조건이 따로 막는다. 대상을 확인하지 못한 경우만 stop 도 허락하지 않는다(v18o ②).
+    #[test]
+    fn each_condition_alone_blocks_reattach_and_only_a_confirmed_target_may_be_stopped() {
+        let now = 1_000_000;
+        let verdict = |row: AttemptRow, fake: &Fake, incident: bool| match evaluate_reattach(&row, fake, incident, now) {
+            ReattachVerdict::NotCandidate { why, stop_allowed } => (why, stop_allowed),
+            ReattachVerdict::Candidate(_) => panic!("후보가 아니어야 한다"),
+        };
+        let mut decided = reattach_row(now);
+        decided.stop_decision = Some("OWNER".into());
+        decided.stop_decision_at_unix_ms = Some(now);
+        assert!(verdict(decided, &running(), false).0.contains("⑦"));
+        assert!(verdict(reattach_row(now), &running(), true).0.contains("⑧"));
+        let mut no_inputs = reattach_row(now);
+        no_inputs.reattach_grant = None;
+        no_inputs.started_at_unix_ms = None;
+        assert!(verdict(no_inputs, &running(), false).0.contains("②"));
+        let mut other_fence = reattach_row(now);
+        other_fence.fence_epoch = Some(5);
+        assert!(verdict(other_fence, &running(), false).0.contains("③"));
+        // 대상 신원이 다르다 — 아무 명령도 보내지 않는다
+        let other_daemon = Fake { identities: RefCell::new(vec![Ok("docker:OTHER".into())]), ..running() };
+        let (why, stop_allowed) = verdict(reattach_row(now), &other_daemon, false);
+        assert!(why.contains("④") && !stop_allowed, "{why}");
+        assert!(!other_daemon.asked.borrow().iter().any(|a| a.starts_with("state")), "신원이 다른 대상의 상태를 물었다");
+        // 신원을 묻지 못했다 — 역시 명령 없음
+        let unreachable = Fake { identities: RefCell::new(vec![Err("daemon down".into())]), ..running() };
+        assert!(!verdict(reattach_row(now), &unreachable, false).1);
+        // 얼림 · 멈춤은 후보가 아니지만 대상은 확인됐다
+        let paused = Fake { failing: Some("paused"), ..Fake::absent_everywhere() };
+        let (why, stop_allowed) = verdict(reattach_row(now), &paused, false);
+        assert!(why.contains("⑤") && stop_allowed, "{why}");
+        // 시한이 지났다 · Lease 가 로컬로 만료 — 묻지 않고 stop(v18j ②)
+        let mut late = reattach_row(now);
+        late.self_stop_at_unix_ms = Some(now);
+        assert!(verdict(late, &running(), false).0.contains("v18j"));
+    }
 }
+
