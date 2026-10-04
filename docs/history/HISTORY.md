@@ -25,6 +25,22 @@
 
 ---
 
+## 2026-10-04 15:50 — 실행 알림 계획 §5 4번 — 이어받은 뒤 옛 시도의 체크포인트를 중앙 수락 · 재개 후보에서 뺀다(격리 · 브랜치 fork-merge)
+
+- 계획: 같은 계획 §5 4번 · 계약 D6 보강 셋째 줄 · ADR-034 시험 8
+- 스트림: Coordinator
+- 수행: ① `checkpoint_manifest_store::store_verified_manifest` — 시도 · 예약 대조에 더해 Job 의 최고 fence 를 보고, 더 높은 시도가 있으면
+  `BindingMismatch(SupersededByHigherFence)`. 옛 예약 행이 "만료" 표시로 남아 기존 예약 대조만으로는 통과했다. 이미 받은 같은 바이트는 그대로 돌려준다.
+  ② `failover::find_resume_point` — 후보를 최고 fence 시도의 체크포인트와 Job 에 저장된 이어받기 기준 지점(바이트 일치)으로 좁힌다. 전에는 새 시도가
+  체크포인트를 내기 전 다음 이어받기에서 옛 노드가 **이어받기 뒤에 쓴** 더 높은 step 이 뽑혀, 새 시도가 시작한 지점과 갈라진 이력으로 이어갔다
+- 검증: 새 시험 3 — 단위 `a_checkpoint_from_a_superseded_attempt_is_refused_but_an_exact_replay_is_kept` · 통합 `stale_checkpoint_resume.rs` 2
+  (실제 공유 저장소 · 실제 생산자 서명 · 실제 이어받기 두 번). 뮤테이션 3 — 수락 관문 제거 · 재개 관문 제거 · 기준 지점 예외 제거 → 각각 해당 시험 실패.
+  Windows `cargo test --workspace -j 1 --no-fail-fast` 1670 passed · 0 failed · ignored 4. 독립 검수 d6gate(Codex gpt-6-sol · 기계 검토) 1회차 ACCEPTED — 세 호출 경로(이어받기 · 정지 확인 · 소유자 선점)가 모두 최신 시도에서만 재개 지점을 찾음을 확인
+- 한계: canonical 후보 등록 코드는 없어 관문을 넣을 곳이 없다(grep 범위 `crates/coordinator/src`). 공유 저장소 쓰기 자체는 막지 못한다(계약 그대로)
+- 리포트: 계획 문서가 대신한다
+
+---
+
 ## 2026-10-04 14:32 — 실행 알림 계획 조각 5e2e — 재부착 전원 차단 지점 시험 · 5e2 구현 끝(격리 · 브랜치 fork-merge)
 
 - 계획: 같은 계획 §5 3번(5e2e) · 계약 v18n · v18o · v18p 의 시험 목록

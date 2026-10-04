@@ -329,6 +329,35 @@ fn find_resume_point(
         keyring.insert(id.clone(), *key);
     }
     let verifier = Ed25519Verifier::new(&keyring);
+    // ★ 2026-10-04 15:47 (실행 알림 계약 D6 보강 · 계획 §5 4번) — 더 높은 fence 의 시도가 생긴 뒤에는 옛 시도의 체크포인트를 재개 후보로 올리지 않는다.
+    //   이어받은 뒤에도 옛 노드가 공유 저장소에 계속 쓸 수 있다(쓰기 자체는 막지 못한다 — 저장소에 fence 관문이 없다). 그 파일이 옛 시도의 서명 ·
+    //   fence 와 맞으니 전에는 새 시도가 체크포인트를 내기 전 다음 이어받기에서 더 높은 step 으로 뽑혔다 — 새 시도가 시작한 지점과 갈라진 이력이다.
+    //   그래서 후보는 ① Job 의 최고 fence 시도가 낸 것 ② 지금 시도가 이어받은 기준 지점(Job 에 저장된 바로 그 바이트) 둘뿐이다.
+    let top_fence: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT fence_epoch FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let top_fence = top_fence
+        .map(|bytes| {
+            <[u8; 8]>::try_from(bytes.as_slice())
+                .map(u64::from_be_bytes)
+                .map_err(|_| format!("job {job_id} 의 시도 fence 를 읽지 못했다"))
+        })
+        .transpose()?;
+    let carried: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT resume_checkpoint FROM coordinator_jobs WHERE job_id = ?1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .flatten();
     let mut best: Option<(u64, u64, ResumePoint)> = None;
     // ★ 2026-09-24 (결함 254 · 재검수 83) — "공유 저장소 목록을 못 읽었다" 만 호출자가 원하면 "지점 없음" 으로 받는다(선점 — 보고를 롤백하지
     //   않으려고). control DB 오류는 그대로 올린다 — 전에는 선점 쪽이 **모든** 오류를 삼켜 DB 손상까지 "지점 없음" 으로 커밋했다.
@@ -383,6 +412,10 @@ fn find_resume_point(
             || !attempt.node_ids.contains(&manifest.producer_node_id)
         {
             skip("그 시도의 fence · 노드와 서명된 값이 다르다".into());
+            continue;
+        }
+        if top_fence.is_some_and(|top| top > manifest.fence_epoch) && carried.as_deref() != Some(body.as_slice()) {
+            skip("더 높은 fence 의 시도가 있다 — 옛 시도의 체크포인트는 이어받은 기준 지점만 쓴다(D6)".into());
             continue;
         }
         if let Err(error) = gputeer_checkpoint::shared::verify_on_disk(shared_root, &manifest) {

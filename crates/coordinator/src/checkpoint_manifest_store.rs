@@ -46,6 +46,8 @@ pub enum CheckpointBindingField {
     FenceEpoch,
     ReservationJobId,
     ReservationAttemptId,
+    /// 그 Job 에 더 높은 fence 의 시도가 이미 있다(계약 D6 보강 — 옛 시도의 체크포인트를 수락하지 않는다).
+    SupersededByHigherFence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +216,14 @@ impl CoordinatorCheckpointManifestStore {
                 attempt_id: manifest.attempt_id.clone(),
             })?;
         bind_attempt_identity_and_fence(manifest, &attempt)?;
+        // ★ 2026-10-04 15:47 (실행 알림 계약 D6 보강 · 계획 §5 4번) — 더 높은 fence 의 시도가 생긴 뒤에는 옛 시도의 체크포인트를 수락하지 않는다.
+        //   옛 노드의 예약 행은 이어받기 뒤에도 "만료" 표시로 남아 아래 예약 대조를 통과하므로 Job 의 최고 fence 를 따로 본다.
+        //   같은 바이트의 재전송(위)은 그대로 받는다 — 이미 수락된 것은 그때 현재 시도였다.
+        if job_top_fence(&transaction, &manifest.job_id)?.is_some_and(|top| top > manifest.fence_epoch) {
+            return Err(CheckpointManifestStoreError::BindingMismatch(
+                CheckpointBindingField::SupersededByHigherFence,
+            ));
+        }
 
         let durable_node_id = attempt.node_ids[0].as_str();
         let reservation = staging_store::fetch_node_reservation(&transaction, durable_node_id)
@@ -349,6 +359,23 @@ fn bind_attempt_identity_and_fence(
         ));
     }
     Ok(())
+}
+
+/// 그 Job 의 시도 가운데 가장 높은 fence. 시도가 없으면 None.
+fn job_top_fence(connection: &Connection, job_id: &str) -> Result<Option<u64>, CheckpointManifestStoreError> {
+    let raw: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT fence_epoch FROM coordinator_attempts WHERE job_id = ?1
+             ORDER BY fence_epoch DESC, attempt_id DESC LIMIT 1",
+            rusqlite::params![job_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_sql_error)?;
+    raw.map(|bytes| {
+        decode_u64(&bytes).map_err(|()| CheckpointManifestStoreError::Staging(format!("job {job_id} 의 시도 fence 를 읽지 못했다")))
+    })
+    .transpose()
 }
 
 fn bind_reservation_identity(
@@ -852,6 +879,36 @@ mod tests {
             assert_eq!(store.store_verified_manifest(&manifest), Err(expected));
             assert_eq!(manifest_count(&store), 0);
         }
+    }
+
+    /// 계약 D6 보강 — 그 Job 에 더 높은 fence 의 시도가 생기면 옛 시도의 체크포인트는 수락하지 않는다(옛 예약 행이 남아 있어도).
+    ///   이미 수락된 같은 바이트의 재전송은 그대로 첫 행을 돌려준다.
+    #[test]
+    fn a_checkpoint_from_a_superseded_attempt_is_refused_but_an_exact_replay_is_kept() {
+        let fixture = prepare_fixture();
+        let mut store = CoordinatorCheckpointManifestStore::open(&fixture.path).unwrap();
+        let first = verified_manifest(CHECKPOINT_ID, JOB_ID, ATTEMPT_ID, NODE_ID, 1, 7, 3, 10);
+        assert!(store.store_verified_manifest(&first).unwrap().created);
+        drop(store);
+        let connection = Connection::open(&fixture.path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO coordinator_attempts VALUES ('attempt-new', ?1, 'CREATED', ?2, 'lease-new', ?3, ?4)",
+                rusqlite::params![JOB_ID, encode_u64(2), encode_u64(500), encode_u64(0)],
+            )
+            .unwrap();
+        connection
+            .execute("INSERT INTO coordinator_attempt_nodes VALUES ('attempt-new', 'node-9', 0)", [])
+            .unwrap();
+        drop(connection);
+        let mut store = CoordinatorCheckpointManifestStore::open(&fixture.path).unwrap();
+        let late = verified_manifest("checkpoint-late", JOB_ID, ATTEMPT_ID, NODE_ID, 1, 7, 4, 10);
+        assert_eq!(
+            store.store_verified_manifest(&late),
+            Err(CheckpointManifestStoreError::BindingMismatch(CheckpointBindingField::SupersededByHigherFence))
+        );
+        assert_eq!(manifest_count(&store), 1);
+        assert!(!store.store_verified_manifest(&first).unwrap().created);
     }
 
     #[test]
