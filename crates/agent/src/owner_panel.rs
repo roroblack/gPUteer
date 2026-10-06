@@ -356,7 +356,11 @@ impl OwnerPanelState {
 
     /// 정지 손잡이를 부르기 **직전에** 결정을 적는다(고리가 없으면 아무것도 안 한다). 고리를 잠금 밖으로 꺼내 부른다.
     fn record_stop_decision(&self, attempt_id: &str, kind: crate::run_ledger::StopDecision) {
-        let recorder = self.stop_recorder.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let recorder = self
+            .stop_recorder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(recorder) = recorder {
             recorder(attempt_id, kind);
         }
@@ -790,7 +794,9 @@ impl OwnerPanelState {
             (_, Err(why)) => why,
         };
         match stopper.pause() {
-            Ok(()) => Err(format!("다시 시작하는 사이 조건이 깨져 다시 얼렸다 — {why}")),
+            Ok(()) => Err(format!(
+                "다시 시작하는 사이 조건이 깨져 다시 얼렸다 — {why}"
+            )),
             Err(freeze) => {
                 // ★ 2026-10-04 13:23 (조각 5e2a) — 조건이 깨져 멈춘다(끊김 정지와 같은 종류) — stop 전에 결정을 영속한다.
                 self.record_stop_decision(attempt_id, crate::run_ledger::StopDecision::Deadline);

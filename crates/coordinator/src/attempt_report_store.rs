@@ -323,7 +323,12 @@ impl CoordinatorAttemptReportStore {
                 });
             }
             // ★ 2026-10-03 13:28 (조각 7c · 계약 §6 b15 ②) — 관측 못 한 보고 뒤 UNREPORTED 보류가 남아 있으면 재전송도 해제하지 않는다.
-            let (release, kept, mut held_notes) = gate_release_on_unreported_hold(&transaction, report, &binding.report_hash, release)?;
+            let (release, kept, mut held_notes) = gate_release_on_unreported_hold(
+                &transaction,
+                report,
+                &binding.report_hash,
+                release,
+            )?;
             let owner_preempt = if kept { None } else { owner_preempt };
             // ★ 결함 213 · 215 — 재전송에도 해제 · 선점을 다시 시도한다(아래 after_report 는 둘 다 멱등이다).
             let mut notes = after_report(&transaction, verified, release, owner_preempt)?;
@@ -460,7 +465,8 @@ impl CoordinatorAttemptReportStore {
 
         // ★ 2026-10-03 13:28 (조각 7c · 계약 §6 b15 ②) — 그 시도에 D6 보류(UNREPORTED)가 있으면: 종료를 관측한 보고는 보류를 풀고 평소대로, 관측 못 한 보고는
         //   전이는 평소대로 하되 해제는 하지 않는다(보류 · 예약 · Lease 를 남긴다 — 운영자 release-held-job 또는 그 시도의 STOP_CONFIRMED 가 푼다).
-        let (release, kept, mut held_notes) = gate_release_on_unreported_hold(&transaction, report, &report_hash, release)?;
+        let (release, kept, mut held_notes) =
+            gate_release_on_unreported_hold(&transaction, report, &report_hash, release)?;
         // ★ 2026-10-04 01:27 (검수 s56 ③ — Codex) — 보류를 남기면 소유자 선점도 하지 않는다(선점은 Lease 를 폐기한다 — 관측 못 한 보고는 보류 · 예약 · Lease 를 그대로 둔다).
         let owner_preempt = if kept { None } else { owner_preempt };
         // ★ 예약 해제 · 소유자 선점까지 같은 커밋에 넣는다(요청했을 때만). 관문에 막히면
@@ -638,9 +644,17 @@ fn gate_release_on_unreported_hold(
     report: &pb::AttemptReport,
     report_hash: &[u8; 32],
     release: Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
-) -> Result<(Option<(crate::reservation_release::ReleaseAuthorization, u64)>, bool, Vec<String>), AttemptReportStoreError> {
-    let held = crate::job_holds::has_unreported_hold(transaction, &report.job_id, &report.attempt_id)
-        .map_err(AttemptReportStoreError::Staging)?;
+) -> Result<
+    (
+        Option<(crate::reservation_release::ReleaseAuthorization, u64)>,
+        bool,
+        Vec<String>,
+    ),
+    AttemptReportStoreError,
+> {
+    let held =
+        crate::job_holds::has_unreported_hold(transaction, &report.job_id, &report.attempt_id)
+            .map_err(AttemptReportStoreError::Staging)?;
     if !held {
         return Ok((release, false, Vec::new()));
     }
@@ -655,8 +669,14 @@ fn gate_release_on_unreported_hold(
             .unwrap_or(0)
     });
     if observed_exit {
-        crate::job_holds::release_unreported_by_observed_report(transaction, &report.job_id, &report.attempt_id, report_hash, now)
-            .map_err(AttemptReportStoreError::Staging)?;
+        crate::job_holds::release_unreported_by_observed_report(
+            transaction,
+            &report.job_id,
+            &report.attempt_id,
+            report_hash,
+            now,
+        )
+        .map_err(AttemptReportStoreError::Staging)?;
         return Ok((
             release,
             false,

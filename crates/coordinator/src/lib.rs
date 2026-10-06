@@ -3358,7 +3358,9 @@ fn serve_run_notice(
         ));
     }
     if hello.node_id != config.agent_device_id {
-        return Err(session_protocol_error("RUN_NOTICE_REJECTED: Hello 의 노드가 이 연결의 노드가 아니다"));
+        return Err(session_protocol_error(
+            "RUN_NOTICE_REJECTED: Hello 의 노드가 이 연결의 노드가 아니다",
+        ));
     }
     let control_db = config.grant_from_control_db.as_ref().ok_or_else(|| {
         SessionHandlerError::Classified(storage_error(
@@ -3384,15 +3386,20 @@ fn serve_run_notice(
         session_nonce: &hello.nonce,
         now_unix_ms: clock.now_unix_ms(),
     };
-    let (ack, accepted) = crate::run_notice_store::answer_run_notice(&context, signing_key, verified)
-        .map_err(|error| match error {
-            crate::run_notice_store::RunNoticeAnswerError::Rejected(why) => session_protocol_error(why),
-            crate::run_notice_store::RunNoticeAnswerError::Storage(why) => {
-                SessionHandlerError::Classified(storage_error("run notice store", why))
-            }
-        })?;
-    let frame = write_frame(FrameType::AttemptRunNoticeAck, &ack.encode_to_vec())
-        .map_err(|e| session_protocol_error(format!("AttemptRunNoticeAck 프레임 인코딩 실패: {e}")))?;
+    let (ack, accepted) = crate::run_notice_store::answer_run_notice(
+        &context,
+        signing_key,
+        verified,
+    )
+    .map_err(|error| match error {
+        crate::run_notice_store::RunNoticeAnswerError::Rejected(why) => session_protocol_error(why),
+        crate::run_notice_store::RunNoticeAnswerError::Storage(why) => {
+            SessionHandlerError::Classified(storage_error("run notice store", why))
+        }
+    })?;
+    let frame = write_frame(FrameType::AttemptRunNoticeAck, &ack.encode_to_vec()).map_err(|e| {
+        session_protocol_error(format!("AttemptRunNoticeAck 프레임 인코딩 실패: {e}"))
+    })?;
     stream
         .write_all(&frame)
         .and_then(|()| stream.flush())
@@ -4061,7 +4068,8 @@ fn build_renew_result(
     };
 
     // ★ 2026-10-03 12:35 (조각 6c · 계약 §8) — RENEW_OUTCOME_RUN_UNKNOWN_HELD. 만료시각을 늘리지 않고 Lease 를 싣지 않는다.
-    let held_result = |request_nonce: Vec<u8>, attempt_id: &str| pb::RenewLeaseResult {
+    let held_result = |request_nonce: Vec<u8>, attempt_id: &str| {
+        pb::RenewLeaseResult {
         outcome: 9, // RENEW_OUTCOME_RUN_UNKNOWN_HELD
         detail: format!("attempt {attempt_id} is RUN_UNKNOWN (held) — the lease is not renewed until a stop is confirmed"),
         schema_version: 1,
@@ -4069,6 +4077,7 @@ fn build_renew_result(
         issued_at_unix_ms: now,
         request_nonce,
         ..Default::default()
+    }
     };
 
     let mut result = match lease_store {
@@ -5732,7 +5741,9 @@ mod run_notice_activation_tests {
                 "--own-seed",
                 &hex(&[3u8; 32]),
                 "--peer-pubkey",
-                &hex(SigningKey::from_bytes(&[4u8; 32]).verifying_key().as_bytes()),
+                &hex(SigningKey::from_bytes(&[4u8; 32])
+                    .verifying_key()
+                    .as_bytes()),
                 "--coordinator-device-id",
                 "coordinator-1",
                 "--agent-device-id",

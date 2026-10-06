@@ -2419,7 +2419,14 @@ fn fake_target(state: &Path) -> i32 {
         return 0;
     }
     if joined == "info --format {{.Host.ServiceIsRemote}}" {
-        println!("{}", if read("remote").is_empty() { "false" } else { "true" });
+        println!(
+            "{}",
+            if read("remote").is_empty() {
+                "false"
+            } else {
+                "true"
+            }
+        );
         return 0;
     }
     if joined == "info --format {{.Store.GraphRoot}}\n{{.Store.RunRoot}}" {
@@ -2431,13 +2438,21 @@ fn fake_target(state: &Path) -> i32 {
         return 0;
     }
     if !read("broken").is_empty() {
-        eprintln!("Error response from daemon: dial unix /fake/docker.sock: connect: connection refused");
+        eprintln!(
+            "Error response from daemon: dial unix /fake/docker.sock: connect: connection refused"
+        );
         return 125;
     }
     // ★ 조각 5e2b — 고정 대상의 감시 · 정지 · 로그 흉내: `running`(도는 ID) · `exited`("<ID> <코드>") · `killed`(kill 받은 ID — 137 로 끝난 것으로).
-    let line_has = |name: &str, id: &str| read(name).lines().any(|l| l.split_whitespace().next() == Some(id));
+    let line_has = |name: &str, id: &str| {
+        read(name)
+            .lines()
+            .any(|l| l.split_whitespace().next() == Some(id))
+    };
     if rest.first().map(String::as_str) == Some("inspect")
-        && rest.get(1).is_some_and(|f| f.starts_with("--format={{.State.Running}}"))
+        && rest
+            .get(1)
+            .is_some_and(|f| f.starts_with("--format={{.State.Running}}"))
     {
         let target = rest.last().cloned().unwrap_or_default();
         if line_has("killed", &target) {
@@ -2448,7 +2463,10 @@ fn fake_target(state: &Path) -> i32 {
             println!("true 0 false 2026-10-04T00:00:00Z");
             return 0;
         }
-        if let Some(line) = read("exited").lines().find(|l| l.split_whitespace().next() == Some(target.as_str())) {
+        if let Some(line) = read("exited")
+            .lines()
+            .find(|l| l.split_whitespace().next() == Some(target.as_str()))
+        {
             let code = line.split_whitespace().nth(1).unwrap_or("0");
             println!("false {code} false 2026-10-04T00:00:00Z");
             return 0;
@@ -2458,7 +2476,9 @@ fn fake_target(state: &Path) -> i32 {
     }
     // ★ 조각 5e2d — 재부착 판정의 상태 조회(`{{.State.Running}} {{.State.Paused}}`) · 지우기(`rm -f -v`).
     if rest.first().map(String::as_str) == Some("inspect")
-        && rest.iter().any(|a| a == "{{.State.Running}} {{.State.Paused}}")
+        && rest
+            .iter()
+            .any(|a| a == "{{.State.Running}} {{.State.Paused}}")
     {
         let target = rest.last().cloned().unwrap_or_default();
         if line_has("killed", &target) || line_has("exited", &target) {
@@ -2479,8 +2499,14 @@ fn fake_target(state: &Path) -> i32 {
     }
     if rest.first().map(String::as_str) == Some("kill") {
         let target = rest.last().cloned().unwrap_or_default();
-        append(state, "killed", &format!("{target}
-"));
+        append(
+            state,
+            "killed",
+            &format!(
+                "{target}
+"
+            ),
+        );
         println!("{target}");
         return 0;
     }
@@ -2547,8 +2573,14 @@ fn a_docker_target_is_resolved_once_and_every_evidence_call_names_it() {
     let fake = TargetFake::new();
     let program = std::env::current_exe().unwrap();
     let endpoint = resolve_endpoint(&program, RuntimeFlavor::Docker).unwrap();
-    assert_eq!(endpoint, RuntimeEndpoint::DockerHost("unix:///fake/docker.sock".into()));
-    assert_eq!(read_identity(&program, &endpoint).unwrap(), "docker:DAEMON-1");
+    assert_eq!(
+        endpoint,
+        RuntimeEndpoint::DockerHost("unix:///fake/docker.sock".into())
+    );
+    assert_eq!(
+        read_identity(&program, &endpoint).unwrap(),
+        "docker:DAEMON-1"
+    );
     fake.write("present", "cid-1\n");
     assert_eq!(
         pinned_lookup(&program, &endpoint, &Lookup::Id("cid-1")).unwrap(),
@@ -2556,7 +2588,10 @@ fn a_docker_target_is_resolved_once_and_every_evidence_call_names_it() {
     );
     let calls = fake.calls();
     assert_eq!(calls.len(), 3, "{calls:?}");
-    assert!(!calls[0].starts_with("-H"), "해석 자체는 기본 대상에 묻는다: {calls:?}");
+    assert!(
+        !calls[0].starts_with("-H"),
+        "해석 자체는 기본 대상에 묻는다: {calls:?}"
+    );
     for call in &calls[1..] {
         assert!(
             call.starts_with("-H | unix:///fake/docker.sock | "),
@@ -2617,9 +2652,15 @@ fn only_not_found_is_absence_and_a_runtime_error_is_no_evidence() {
         owner: "node-1.root",
         name: "gputeer-a1",
     };
-    assert_eq!(pinned_lookup(&program, &endpoint, &by_label).unwrap(), Presence::Present);
+    assert_eq!(
+        pinned_lookup(&program, &endpoint, &by_label).unwrap(),
+        Presence::Present
+    );
     fake.write("owned", "gputeer-other\n");
-    assert_eq!(pinned_lookup(&program, &endpoint, &by_label).unwrap(), Presence::Absent);
+    assert_eq!(
+        pinned_lookup(&program, &endpoint, &by_label).unwrap(),
+        Presence::Absent
+    );
     assert!(pinned_lookup(
         &program,
         &endpoint,
@@ -2647,7 +2688,10 @@ fn the_ledger_text_of_a_target_round_trips_and_odd_shapes_are_refused() {
             run_root: "/run/containers/storage".into(),
         },
     ] {
-        assert_eq!(RuntimeEndpoint::from_ledger(&endpoint.to_ledger()).unwrap(), endpoint);
+        assert_eq!(
+            RuntimeEndpoint::from_ledger(&endpoint.to_ledger()).unwrap(),
+            endpoint
+        );
     }
     for odd in [
         "",
@@ -2657,7 +2701,10 @@ fn the_ledger_text_of_a_target_round_trips_and_odd_shapes_are_refused() {
         "podman-local:/only-graph",
         "podman-local:\n/run",
     ] {
-        assert!(RuntimeEndpoint::from_ledger(odd).is_err(), "{odd:?} 를 받아들였다");
+        assert!(
+            RuntimeEndpoint::from_ledger(odd).is_err(),
+            "{odd:?} 를 받아들였다"
+        );
     }
 }
 
@@ -2708,7 +2755,10 @@ fn a_failed_created_hook_never_starts_and_removes_by_id() {
     )
     .unwrap_err();
     assert!(!handed, "시작하지 않았는데 정지 손잡이를 넘겼다");
-    assert!(!f.state.join("started").exists(), "훅 실패 뒤 start 를 불렀다");
+    assert!(
+        !f.state.join("started").exists(),
+        "훅 실패 뒤 start 를 불렀다"
+    );
     match &refused {
         ContainerRunError::NotStarted { detail, container } => {
             assert!(detail.contains("RUN_LEDGER_3B"), "{detail}");
@@ -2718,10 +2768,15 @@ fn a_failed_created_hook_never_starts_and_removes_by_id() {
     }
     let calls = calls(&f.state);
     assert!(
-        calls.lines().any(|l| l.starts_with("rm ") && l.contains(FAKE_ID)),
+        calls
+            .lines()
+            .any(|l| l.starts_with("rm ") && l.contains(FAKE_ID)),
         "확인한 ID 로 지우지 않았다:\n{calls}"
     );
-    assert!(!calls.lines().any(|l| l.starts_with("start ")), "start 를 불렀다:\n{calls}");
+    assert!(
+        !calls.lines().any(|l| l.starts_with("start ")),
+        "start 를 불렀다:\n{calls}"
+    );
 }
 
 /// ★ 조각 5e2b(계약 v18m · v18o ②) — 재부착 회차의 감시(종료 코드) · 정지 손잡이(kill + 멈춤 확인) · 로그 받기가 **전부** 원장의 고정 대상(`-H`)으로 간다.
@@ -2731,14 +2786,30 @@ fn pinned_watch_stop_and_logs_go_to_the_recorded_target() {
     let program = std::env::current_exe().unwrap();
     let globals = RuntimeEndpoint::DockerHost("unix:///fake/docker.sock".into()).global_args();
     fake.write("exited", "cid-done 7\n");
-    assert_eq!(container::watch_pinned_exit(&program, &globals, "cid-done").unwrap(), (7, false));
+    assert_eq!(
+        container::watch_pinned_exit(&program, &globals, "cid-done").unwrap(),
+        (7, false)
+    );
     fake.write("running", "cid-run\n");
-    let stopper = container::ContainerStopper::pinned(program.clone(), globals.clone(), "cid-run".into());
+    let stopper =
+        container::ContainerStopper::pinned(program.clone(), globals.clone(), "cid-run".into());
     stopper.stop().expect("고정 손잡이가 멈추지 못했다");
-    assert_eq!(container::watch_pinned_exit(&program, &globals, "cid-run").unwrap(), (137, false));
+    assert_eq!(
+        container::watch_pinned_exit(&program, &globals, "cid-run").unwrap(),
+        (137, false)
+    );
     let dir = tempfile::tempdir().unwrap();
-    container::save_logs_pinned(&program, &globals, "cid-run", &dir.path().join("o"), &dir.path().join("e")).unwrap();
-    assert!(std::fs::read_to_string(dir.path().join("o")).unwrap().contains("fake-out"));
+    container::save_logs_pinned(
+        &program,
+        &globals,
+        "cid-run",
+        &dir.path().join("o"),
+        &dir.path().join("e"),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(dir.path().join("o"))
+        .unwrap()
+        .contains("fake-out"));
     assert!(container::watch_pinned_exit(&program, &globals, "ghost")
         .unwrap_err()
         .contains("PINNED_EXIT_UNOBSERVED"));
@@ -2757,7 +2828,10 @@ fn pinned_watch_stop_and_logs_go_to_the_recorded_target() {
 mod reattach {
     use super::*;
     use gputeer_agent::run_ledger::{self, AttemptRow, Executor};
-    use gputeer_crypto::{read_frame, sign, write_frame, FrameType, IngressMessage, InMemoryKeyring, InMemoryReplayGuard, KeyDirectorySource, SigningKey, SystemClock};
+    use gputeer_crypto::{
+        read_frame, sign, write_frame, FrameType, InMemoryKeyring, InMemoryReplayGuard,
+        IngressMessage, KeyDirectorySource, SigningKey, SystemClock,
+    };
     use gputeer_protocol::pb;
     use prost::Message;
     use std::io::Write;
@@ -2769,7 +2843,10 @@ mod reattach {
     pub const COORD: &str = "coordinator-reattach";
 
     pub fn now() -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
     }
 
     fn hex(bytes: &[u8]) -> String {
@@ -2806,7 +2883,9 @@ mod reattach {
             "--own-seed",
             &hex(&AGENT_SEED),
             "--peer-pubkey",
-            &hex(SigningKey::from_bytes(&COORD_SEED).verifying_key().as_bytes()),
+            &hex(SigningKey::from_bytes(&COORD_SEED)
+                .verifying_key()
+                .as_bytes()),
             "--coordinator-device-id",
             COORD,
             "--agent-device-id",
@@ -2824,7 +2903,8 @@ mod reattach {
         config.report_over_session = true;
         config.renew_during_execution_ms = 60_000;
         config.report_session_attempts = 1;
-        config.submitter_verifying_key = Some(SigningKey::from_bytes(&SUBMITTER_SEED).verifying_key());
+        config.submitter_verifying_key =
+            Some(SigningKey::from_bytes(&SUBMITTER_SEED).verifying_key());
         let t = now();
         let mut manifest = pb::JobManifest {
             schema_version: 1,
@@ -2835,7 +2915,8 @@ mod reattach {
             expires_at_unix_ms: t + 3_600_000,
             ..Default::default()
         };
-        manifest.submitter_signature = sign(&SigningKey::from_bytes(&SUBMITTER_SEED), &manifest).to_vec();
+        manifest.submitter_signature =
+            sign(&SigningKey::from_bytes(&SUBMITTER_SEED), &manifest).to_vec();
         let held = lease(t - 5_000, t + 60_000);
         let grant = pb::ExecutionGrant {
             grant_id: "grant-r".into(),
@@ -2851,7 +2932,12 @@ mod reattach {
         let mut ledger = run_ledger::open_for_agent(&paths).unwrap();
         let mut row = AttemptRow::new_active("attempt-r", "job-r", AGENT, 3, Executor::Container);
         row.container_name = Some(container::derive_container_name("attempt-r"));
-        row.runtime_program = Some(std::env::current_exe().unwrap().to_string_lossy().to_string());
+        row.runtime_program = Some(
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
         row.runtime_kind = Some("docker".into());
         ledger.insert_active(&row).unwrap();
         ledger
@@ -2863,25 +2949,49 @@ mod reattach {
                 Some((&grant.encode_to_vec(), t - 4_000)),
             )
             .unwrap();
-        ledger.record_renewal("attempt-r", &held.encode_to_vec(), t + 50_000).unwrap();
+        ledger
+            .record_renewal("attempt-r", &held.encode_to_vec(), t + 50_000)
+            .unwrap();
         config.run_ledger_handle = Some(std::sync::Arc::new(std::sync::Mutex::new(ledger)));
         (config, held)
     }
 
     /// 가짜 Coordinator — RENEW 세션 하나를 받아 서명된 갱신 결과(`outcome`)로 답한 뒤, `after` 를 부른다(컨테이너를 끝내는 흉내).
-    pub fn fake_renew(outcome: i32, after: impl FnOnce() + Send + 'static) -> (String, std::thread::JoinHandle<()>) {
+    pub fn fake_renew(
+        outcome: i32,
+        after: impl FnOnce() + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap().to_string();
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut keys = InMemoryKeyring::new();
-            keys.insert(AGENT.to_string(), SigningKey::from_bytes(&AGENT_SEED).verifying_key());
+            keys.insert(
+                AGENT.to_string(),
+                SigningKey::from_bytes(&AGENT_SEED).verifying_key(),
+            );
             let mut replay = InMemoryReplayGuard::new();
-            match read_frame(&mut stream, 1, KeyDirectorySource::Provided(&keys), &mut replay, &SystemClock).unwrap() {
+            match read_frame(
+                &mut stream,
+                1,
+                KeyDirectorySource::Provided(&keys),
+                &mut replay,
+                &SystemClock,
+            )
+            .unwrap()
+            {
                 IngressMessage::SessionHello(_) => {}
                 _ => panic!("첫 프레임은 Hello"),
             }
-            let request = match read_frame(&mut stream, 2, KeyDirectorySource::Provided(&keys), &mut replay, &SystemClock).unwrap() {
+            let request = match read_frame(
+                &mut stream,
+                2,
+                KeyDirectorySource::Provided(&keys),
+                &mut replay,
+                &SystemClock,
+            )
+            .unwrap()
+            {
                 IngressMessage::LeaseRenew(verified) => verified.get().clone(),
                 _ => panic!("둘째 프레임은 갱신 요청"),
             };
@@ -2895,7 +3005,8 @@ mod reattach {
                 lease: (outcome == 1).then(|| lease(t, t + 120_000)),
                 ..Default::default()
             };
-            result.coordinator_signature = sign(&SigningKey::from_bytes(&COORD_SEED), &result).to_vec();
+            result.coordinator_signature =
+                sign(&SigningKey::from_bytes(&COORD_SEED), &result).to_vec();
             let frame = write_frame(FrameType::LeaseRenewResult, &result.encode_to_vec()).unwrap();
             stream.write_all(&frame).unwrap();
             stream.flush().unwrap();
@@ -2906,9 +3017,16 @@ mod reattach {
     }
 
     pub fn row(config: &gputeer_agent::AgentConfig) -> AttemptRow {
-        config.run_ledger_handle.as_ref().unwrap().lock().unwrap().row("attempt-r").unwrap().unwrap()
+        config
+            .run_ledger_handle
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .row("attempt-r")
+            .unwrap()
+            .unwrap()
     }
-
 }
 
 /// 재기동 때 돌고 있던 컨테이너 — 서명된 갱신이 성공하면 다시 붙어 끝까지 보고(고정 대상), 로그 · 지우기 · 원장 CLOSED · 보고 보관까지 간다.
@@ -2922,18 +3040,37 @@ fn a_running_container_is_reattached_after_a_signed_renewal_and_reported() {
     });
     let dir = tempfile::tempdir().unwrap();
     let (config, _) = reattach::prepare(dir.path(), &addr);
-    gputeer_agent::reattach_active_rows_for_test(&config, &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED))
-        .expect("재부착 회차가 실패했다");
+    gputeer_agent::reattach_active_rows_for_test(
+        &config,
+        &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED),
+    )
+    .expect("재부착 회차가 실패했다");
     coordinator.join().unwrap();
     let row = reattach::row(&config);
-    assert_eq!(row.state, gputeer_agent::run_ledger::RowState::Closed, "재부착해 끝까지 본 행은 보고 보관 뒤 CLOSED 다: {row:?}");
+    assert_eq!(
+        row.state,
+        gputeer_agent::run_ledger::RowState::Closed,
+        "재부착해 끝까지 본 행은 보고 보관 뒤 CLOSED 다: {row:?}"
+    );
     assert_eq!(row.container_removed, Some(true));
     let calls = fake.calls();
-    assert!(calls.iter().any(|c| c.contains("| logs | cid-r")), "{calls:?}");
-    assert!(calls.iter().any(|c| c.contains("| rm | -f | -v | cid-r")), "{calls:?}");
-    assert!(!calls.iter().any(|c| c.contains("| kill |")), "재부착이 작업을 멈췄다: {calls:?}");
+    assert!(
+        calls.iter().any(|c| c.contains("| logs | cid-r")),
+        "{calls:?}"
+    );
+    assert!(
+        calls.iter().any(|c| c.contains("| rm | -f | -v | cid-r")),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.contains("| kill |")),
+        "재부착이 작업을 멈췄다: {calls:?}"
+    );
     for call in &calls {
-        assert!(call.starts_with("-H | unix:///fake/docker.sock | ") || call.starts_with("info"), "고정하지 않은 명령: {call}");
+        assert!(
+            call.starts_with("-H | unix:///fake/docker.sock | ") || call.starts_with("info"),
+            "고정하지 않은 명령: {call}"
+        );
     }
 }
 
@@ -2946,15 +3083,32 @@ fn without_a_signed_renewal_a_running_container_is_only_stopped_and_left_open() 
     let (addr, coordinator) = reattach::fake_renew(8, || {});
     let dir = tempfile::tempdir().unwrap();
     let (config, _) = reattach::prepare(dir.path(), &addr);
-    gputeer_agent::reattach_active_rows_for_test(&config, &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED))
-        .expect("재부착 회차가 실패했다");
+    gputeer_agent::reattach_active_rows_for_test(
+        &config,
+        &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED),
+    )
+    .expect("재부착 회차가 실패했다");
     coordinator.join().unwrap();
     let row = reattach::row(&config);
-    assert_eq!(row.state, gputeer_agent::run_ledger::RowState::Open, "거부 뒤에는 OPEN 이어야 한다: {row:?}");
-    assert_eq!(row.stop_decision.as_deref(), Some("SIGNED_REFUSAL"), "정지 결정을 먼저 적지 않았다: {row:?}");
+    assert_eq!(
+        row.state,
+        gputeer_agent::run_ledger::RowState::Open,
+        "거부 뒤에는 OPEN 이어야 한다: {row:?}"
+    );
+    assert_eq!(
+        row.stop_decision.as_deref(),
+        Some("SIGNED_REFUSAL"),
+        "정지 결정을 먼저 적지 않았다: {row:?}"
+    );
     let calls = fake.calls();
-    assert!(calls.iter().any(|c| c.contains("| kill | cid-r")), "멈추지 않았다: {calls:?}");
-    assert!(!calls.iter().any(|c| c.contains("| rm |")), "지웠다(MUST 1): {calls:?}");
+    assert!(
+        calls.iter().any(|c| c.contains("| kill | cid-r")),
+        "멈추지 않았다: {calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.contains("| rm |")),
+        "지웠다(MUST 1): {calls:?}"
+    );
 }
 
 /// ★ 조각 5e2e(계약 v18n · v18o · v18p 시험 목록) — 전원 차단 지점마다 원장 · 컨테이너가 남기는 모양을 그대로 만들고 재기동 판정을 돌린다.
@@ -2974,22 +3128,38 @@ fn every_power_loss_point_restarts_into_a_safe_state() {
     }
     fn none(_: &gputeer_agent::AgentConfig, _: &Path) {}
     fn sql(config: &gputeer_agent::AgentConfig, statement: &str) {
-        let paths = gputeer_agent::run_ledger::LedgerPaths::for_root(&config.checkpoint_root).unwrap();
-        rusqlite::Connection::open(&paths.ledger).unwrap().execute_batch(statement).unwrap();
+        let paths =
+            gputeer_agent::run_ledger::LedgerPaths::for_root(&config.checkpoint_root).unwrap();
+        rusqlite::Connection::open(&paths.ledger)
+            .unwrap()
+            .execute_batch(statement)
+            .unwrap();
         // 손잡이를 새로 열어 바뀐 행을 읽게 한다
         let reopened = gputeer_agent::run_ledger::open_for_agent(&paths).unwrap();
         *config.run_ledger_handle.as_ref().unwrap().lock().unwrap() = reopened;
     }
     let cases = [
         // 3b 커밋 뒤 start 전 — 컨테이너는 "생성됨"(돌지 않음 · 시작 흔적 없음). 재부착 아님 · 멈출 것 없음 · 남아 있으니 OPEN
-        Case { name: "3b 뒤 start 전", running: false, exited: false, broken_target: false, shape: none, expect_kill: false },
+        Case {
+            name: "3b 뒤 start 전",
+            running: false,
+            exited: false,
+            broken_target: false,
+            shape: none,
+            expect_kill: false,
+        },
         // start 뒤 첫 갱신 근거 기록 전(풀 밖 lane) — 근거가 없다(조건 ②). 돌고 있으니 멈추고 OPEN
         Case {
             name: "첫 근거 기록 전",
             running: true,
             exited: false,
             broken_target: false,
-            shape: |c, _| sql(c, "UPDATE attempts SET last_lease = NULL, self_stop_at_unix_ms = NULL;"),
+            shape: |c, _| {
+                sql(
+                    c,
+                    "UPDATE attempts SET last_lease = NULL, self_stop_at_unix_ms = NULL;",
+                )
+            },
             expect_kill: true,
         },
         // 갱신 응답 유실 — 원장에는 옛 시한(이미 지남). 묻지 않고 멈춘다(v18j ②)
@@ -3007,13 +3177,32 @@ fn every_power_loss_point_restarts_into_a_safe_state() {
             running: true,
             exited: false,
             broken_target: false,
-            shape: |c, _| sql(c, "UPDATE attempts SET stop_decision = 'OWNER', stop_decision_at_unix_ms = 5;"),
+            shape: |c, _| {
+                sql(
+                    c,
+                    "UPDATE attempts SET stop_decision = 'OWNER', stop_decision_at_unix_ms = 5;",
+                )
+            },
             expect_kill: true,
         },
         // 실행 종료 뒤 보고 보관 전 — 컨테이너는 끝나 있다(조건 ⑤). 재부착 · 자동 종료 보고 없음 · 멈출 것 없음 · OPEN
-        Case { name: "종료 뒤 보고 보관 전", running: false, exited: true, broken_target: false, shape: none, expect_kill: false },
+        Case {
+            name: "종료 뒤 보고 보관 전",
+            running: false,
+            exited: true,
+            broken_target: false,
+            shape: none,
+            expect_kill: false,
+        },
         // 런타임이 상태 조회에 답하지 않음(데몬 오류) — 아무 명령도 보내지 않는다(v18o ②)
-        Case { name: "런타임 응답 실패", running: true, exited: false, broken_target: true, shape: none, expect_kill: false },
+        Case {
+            name: "런타임 응답 실패",
+            running: true,
+            exited: false,
+            broken_target: true,
+            shape: none,
+            expect_kill: false,
+        },
         // 원장 행과 저장 Grant 의 신원이 다르다(조건 ③ — 변조 · 섞임). 대상은 확인되므로 멈춘다
         Case {
             name: "Grant 신원 불일치",
@@ -3052,13 +3241,29 @@ fn every_power_loss_point_restarts_into_a_safe_state() {
         if case.broken_target {
             fake.write("broken", "1");
         }
-        gputeer_agent::reattach_active_rows_for_test(&config, &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED))
-            .unwrap_or_else(|e| panic!("{}: 재기동 판정이 실패했다: {e}", case.name));
+        gputeer_agent::reattach_active_rows_for_test(
+            &config,
+            &gputeer_crypto::SigningKey::from_bytes(&reattach::AGENT_SEED),
+        )
+        .unwrap_or_else(|e| panic!("{}: 재기동 판정이 실패했다: {e}", case.name));
         let row = reattach::row(&config);
         let calls = fake.calls();
-        assert!(!calls.iter().any(|c| c.contains("| rm |")), "{}: 지웠다(MUST 1): {calls:?}", case.name);
-        assert_eq!(row.state, RowState::Open, "{}: 재부착하지 않은 행은 OPEN 이어야 한다: {row:?}", case.name);
+        assert!(
+            !calls.iter().any(|c| c.contains("| rm |")),
+            "{}: 지웠다(MUST 1): {calls:?}",
+            case.name
+        );
+        assert_eq!(
+            row.state,
+            RowState::Open,
+            "{}: 재부착하지 않은 행은 OPEN 이어야 한다: {row:?}",
+            case.name
+        );
         let killed = calls.iter().any(|c| c.contains("| kill |"));
-        assert_eq!(killed, case.expect_kill, "{}: 멈춤 기대 {} · 실제 {killed}: {calls:?}", case.name, case.expect_kill);
+        assert_eq!(
+            killed, case.expect_kill,
+            "{}: 멈춤 기대 {} · 실제 {killed}: {calls:?}",
+            case.name, case.expect_kill
+        );
     }
 }

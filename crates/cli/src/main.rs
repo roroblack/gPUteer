@@ -35,6 +35,7 @@
 use std::process::ExitCode;
 
 mod agent_loop;
+mod cancel_job;
 mod coordinator_agent_selftest;
 mod gpu_probe;
 mod import_inventory;
@@ -46,7 +47,6 @@ mod ops;
 mod out_file;
 mod plan_job;
 mod pool_dashboard;
-mod cancel_job;
 mod release_held_job;
 mod release_lost_node;
 mod scheduler_loop;

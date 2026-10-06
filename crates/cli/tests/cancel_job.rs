@@ -23,7 +23,8 @@ fn run_cli(args: &[&str]) -> (bool, String) {
 }
 
 #[test]
-fn cancel_job_refuses_bad_arguments_cancels_a_submitted_job_once_and_reports_the_first_cancellation_again() {
+fn cancel_job_refuses_bad_arguments_cancels_a_submitted_job_once_and_reports_the_first_cancellation_again(
+) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("control.sqlite3");
     let db_s = db.to_string_lossy().to_string();
@@ -44,21 +45,66 @@ fn cancel_job_refuses_bad_arguments_cancels_a_submitted_job_once_and_reports_the
 
     let (ok, out) = run_cli(&["cancel-job", "--control-db", &db_s, "--job", "job-1"]);
     assert!(!ok && out.contains("--operator-statement"), "{out}");
-    let (ok, out) = run_cli(&["cancel-job", "--control-db", &db_s, "--job", "job-1", "--operator-statement", "s", "--extra", "1"]);
+    let (ok, out) = run_cli(&[
+        "cancel-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-1",
+        "--operator-statement",
+        "s",
+        "--extra",
+        "1",
+    ]);
     assert!(!ok && out.contains("모르는 인자"), "{out}");
-    let (ok, out) = run_cli(&["cancel-job", "--control-db", &db_s, "--job", "job-1", "--operator-statement", "  "]);
+    let (ok, out) = run_cli(&[
+        "cancel-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-1",
+        "--operator-statement",
+        "  ",
+    ]);
     assert!(!ok && out.contains("진술"), "{out}");
-    let (ok, out) = run_cli(&["cancel-job", "--control-db", &db_s, "--job", "job-missing", "--operator-statement", "운영자"]);
+    let (ok, out) = run_cli(&[
+        "cancel-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-missing",
+        "--operator-statement",
+        "운영자",
+    ]);
     assert!(!ok && out.contains("job-missing"), "{out}");
 
-    let (ok, out) = run_cli(&["cancel-job", "--control-db", &db_s, "--job", "job-1", "--operator-statement", "시험: 잘못 제출"]);
+    let (ok, out) = run_cli(&[
+        "cancel-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-1",
+        "--operator-statement",
+        "시험: 잘못 제출",
+    ]);
     assert!(ok, "취소하지 못했다: {out}");
     assert!(
         out.contains("JOB_CANCELLED job_id=job-1 from=SUBMITTED latest_attempt=- lease_revoked=false deferred=false already=false"),
         "{out}"
     );
-    let (ok, out) = run_cli(&["cancel-job", "--control-db", &db_s, "--job", "job-1", "--operator-statement", "다시"]);
-    assert!(ok && out.contains("already=true"), "두 번째 취소가 멱등이 아니다: {out}");
+    let (ok, out) = run_cli(&[
+        "cancel-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-1",
+        "--operator-statement",
+        "다시",
+    ]);
+    assert!(
+        ok && out.contains("already=true"),
+        "두 번째 취소가 멱등이 아니다: {out}"
+    );
 
     let (ok, out) = run_cli(&[
         "release-lost-node",

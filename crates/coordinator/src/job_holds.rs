@@ -150,11 +150,27 @@ pub(crate) fn release_holds_for_stop(
             .map_err(|e| format!("JOB_HOLDS: 보류를 풀지 못했다: {e}"))?;
         if removed > 0 {
             if kind == UNREPORTED_SIDE_EFFECT_RISK {
-                event(connection, job_id, attempt_id, kind, "REPLACED", Some(stop_hash),
-                      "같은 시도의 STOP_CONFIRMED(먼저 옴) — NOTICE 로 치환한 뒤 풀었다", now_unix_ms)?;
+                event(
+                    connection,
+                    job_id,
+                    attempt_id,
+                    kind,
+                    "REPLACED",
+                    Some(stop_hash),
+                    "같은 시도의 STOP_CONFIRMED(먼저 옴) — NOTICE 로 치환한 뒤 풀었다",
+                    now_unix_ms,
+                )?;
             }
-            event(connection, job_id, attempt_id, NOTICE_RUN_UNKNOWN, "RELEASED", Some(stop_hash),
-                  "같은 시도의 STOP_CONFIRMED", now_unix_ms)?;
+            event(
+                connection,
+                job_id,
+                attempt_id,
+                NOTICE_RUN_UNKNOWN,
+                "RELEASED",
+                Some(stop_hash),
+                "같은 시도의 STOP_CONFIRMED",
+                now_unix_ms,
+            )?;
             released += removed;
         }
     }
@@ -178,7 +194,16 @@ pub(crate) fn install_unreported_hold(
         )
         .map_err(|e| format!("JOB_HOLDS: UNREPORTED 보류를 걸지 못했다: {e}"))?;
     if inserted == 1 {
-        event(connection, job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, "INSTALLED", None, detail, now_unix_ms)?;
+        event(
+            connection,
+            job_id,
+            attempt_id,
+            UNREPORTED_SIDE_EFFECT_RISK,
+            "INSTALLED",
+            None,
+            detail,
+            now_unix_ms,
+        )?;
     }
     Ok(inserted == 1)
 }
@@ -208,7 +233,11 @@ pub fn attempt_has_override(connection: &Connection, attempt_id: &str) -> Result
 }
 
 /// ★ 2026-10-03 13:28 (계약 v18k §6 b15 ② · 조각 7c) — 그 시도에 UNREPORTED 보류 행이 있는가(표가 없으면 없다 · 읽기만).
-pub fn has_unreported_hold(connection: &Connection, job_id: &str, attempt_id: &str) -> Result<bool, String> {
+pub fn has_unreported_hold(
+    connection: &Connection,
+    job_id: &str,
+    attempt_id: &str,
+) -> Result<bool, String> {
     let table: Option<i64> = connection
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_holds'",
@@ -247,8 +276,16 @@ pub(crate) fn release_unreported_by_observed_report(
         )
         .map_err(|e| format!("JOB_HOLDS: UNREPORTED 보류를 풀지 못했다: {e}"))?;
     if removed > 0 {
-        event(connection, job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, "RELEASED", Some(report_hash),
-              "그 시도의 종료를 관측한 서명된 보고", now_unix_ms)?;
+        event(
+            connection,
+            job_id,
+            attempt_id,
+            UNREPORTED_SIDE_EFFECT_RISK,
+            "RELEASED",
+            Some(report_hash),
+            "그 시도의 종료를 관측한 서명된 보고",
+            now_unix_ms,
+        )?;
     }
     Ok(removed > 0)
 }
@@ -269,8 +306,16 @@ pub(crate) fn release_unreported_by_operator(
         )
         .map_err(|e| format!("JOB_HOLDS: UNREPORTED 보류를 풀지 못했다: {e}"))?;
     if removed > 0 {
-        event(connection, job_id, attempt_id, UNREPORTED_SIDE_EFFECT_RISK, "RELEASED", None,
-              &format!("운영자 release-held-job: {operator_statement}"), now_unix_ms)?;
+        event(
+            connection,
+            job_id,
+            attempt_id,
+            UNREPORTED_SIDE_EFFECT_RISK,
+            "RELEASED",
+            None,
+            &format!("운영자 release-held-job: {operator_statement}"),
+            now_unix_ms,
+        )?;
     }
     connection
         .execute(

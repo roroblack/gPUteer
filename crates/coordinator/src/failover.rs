@@ -301,7 +301,10 @@ pub(crate) fn resume_body_for(
     now_unix_ms: u64,
     notes: &mut Vec<String>,
 ) -> Result<Option<Vec<u8>>, String> {
-    Ok(find_resume_point(connection, policy, job_id, now_unix_ms, notes, false)?.map(|point| point.body))
+    Ok(
+        find_resume_point(connection, policy, job_id, now_unix_ms, notes, false)?
+            .map(|point| point.body),
+    )
 }
 
 struct ResumePoint {
@@ -414,7 +417,9 @@ fn find_resume_point(
             skip("그 시도의 fence · 노드와 서명된 값이 다르다".into());
             continue;
         }
-        if top_fence.is_some_and(|top| top > manifest.fence_epoch) && carried.as_deref() != Some(body.as_slice()) {
+        if top_fence.is_some_and(|top| top > manifest.fence_epoch)
+            && carried.as_deref() != Some(body.as_slice())
+        {
             skip("더 높은 fence 의 시도가 있다 — 옛 시도의 체크포인트는 이어받은 기준 지점만 쓴다(D6)".into());
             continue;
         }
@@ -541,10 +546,20 @@ pub fn release_lost_node_by_operator_with(
         };
         let attempt = crate::staging_store::fetch_attempt(&transaction, &reservation.attempt_id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("RELEASE_REFUSED: 시도 {} 의 행이 없다(저장소 손상)", reservation.attempt_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "RELEASE_REFUSED: 시도 {} 의 행이 없다(저장소 손상)",
+                    reservation.attempt_id
+                )
+            })?;
         let lease = crate::lease_store::fetch_lease(&transaction, &attempt.lease_id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("RELEASE_REFUSED: 시도 {} 의 Lease 가 없다", reservation.attempt_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "RELEASE_REFUSED: 시도 {} 의 Lease 가 없다",
+                    reservation.attempt_id
+                )
+            })?;
         let grace_ms = policy_grace_ms.max(lease.reassignment_grace_ms);
         let free_after = lease.expires_at_unix_ms.saturating_add(grace_ms);
         if lease.revoked_at_unix_ms.is_none() || now_unix_ms <= free_after {
@@ -626,7 +641,9 @@ pub fn release_held_job_by_operator(
     now_unix_ms: u64,
 ) -> Result<HeldJobRelease, String> {
     if operator_statement.trim().is_empty() {
-        return Err("RELEASE_HELD_REFUSED: 운영자 진술(누가 · 무엇을 확인했나)이 비었다".to_string());
+        return Err(
+            "RELEASE_HELD_REFUSED: 운영자 진술(누가 · 무엇을 확인했나)이 비었다".to_string(),
+        );
     }
     crate::job_store::CoordinatorJobStore::open(control_db).map_err(|e| e.to_string())?;
     crate::staging_store::CoordinatorStagingStore::open(control_db).map_err(|e| e.to_string())?;
@@ -644,7 +661,10 @@ pub fn release_held_job_by_operator(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("RELEASE_HELD_REFUSED: Job {job_id} 이 없다"))?;
     let holds = crate::job_holds::holds_for_job(&transaction, job_id)?;
-    if let Some(notice) = holds.iter().find(|h| h.hold_kind == crate::job_holds::NOTICE_RUN_UNKNOWN) {
+    if let Some(notice) = holds
+        .iter()
+        .find(|h| h.hold_kind == crate::job_holds::NOTICE_RUN_UNKNOWN)
+    {
         return Err(format!(
             "RELEASE_HELD_REFUSED: Job {job_id} 의 시도 {} 에 실행 여부 불명 알림 보류가 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다",
             notice.attempt_id
@@ -656,7 +676,9 @@ pub fn release_held_job_by_operator(
         .map(|h| h.attempt_id.clone())
         .collect();
     if attempts.is_empty() {
-        return Err(format!("RELEASE_HELD_REFUSED: Job {job_id} 에 풀 보류(UNREPORTED)가 없다"));
+        return Err(format!(
+            "RELEASE_HELD_REFUSED: Job {job_id} 에 풀 보류(UNREPORTED)가 없다"
+        ));
     }
     let job_final = matches!(
         job.state,
@@ -664,13 +686,21 @@ pub fn release_held_job_by_operator(
     );
     let mut notes = Vec::new();
     for attempt_id in &attempts {
-        crate::job_holds::release_unreported_by_operator(&transaction, job_id, attempt_id, operator_statement, now_unix_ms)?;
+        crate::job_holds::release_unreported_by_operator(
+            &transaction,
+            job_id,
+            attempt_id,
+            operator_statement,
+            now_unix_ms,
+        )?;
         if !job_final {
             continue;
         }
         let attempt = crate::staging_store::fetch_attempt(&transaction, attempt_id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("RELEASE_HELD_REFUSED: 보류된 시도 {attempt_id} 의 행이 없다(저장소 손상)"))?;
+            .ok_or_else(|| {
+                format!("RELEASE_HELD_REFUSED: 보류된 시도 {attempt_id} 의 행이 없다(저장소 손상)")
+            })?;
         // ★ 2026-10-05 02:26 (실행 알림 계약 v18q ⑤ (a)) — UNREPORTED 보류 → 취소 → (관측 못 한 종료 보고) → 늦은 RUN_UNKNOWN: 최종 Job 이라 NOTICE 보류가 없고
         //   시도 상태도 RUN_UNKNOWN 이 아닐 수 있다. 저장된 알림까지 봐서 풀리지 않은 불명이면 STOP 만 푼다.
         if crate::run_notice_store::has_unresolved_run_unknown(&transaction, attempt_id)? {
@@ -678,8 +708,11 @@ pub fn release_held_job_by_operator(
                 "RELEASE_HELD_REFUSED: 시도 {attempt_id} 에 풀리지 않은 실행 여부 불명이 있다 — 그 시도의 정지 확인(STOP_CONFIRMED)만 푼다"
             ));
         }
-        crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms)
-            .map_err(|e| format!("RELEASE_HELD_REFUSED: 시도 {attempt_id} 의 Lease 를 폐기하지 못했다 — {e}"))?;
+        crate::lease_store::revoke_within(&transaction, &attempt.lease_id, now_unix_ms).map_err(
+            |e| {
+                format!("RELEASE_HELD_REFUSED: 시도 {attempt_id} 의 Lease 를 폐기하지 못했다 — {e}")
+            },
+        )?;
         let node_id = attempt.node_ids.first().cloned().unwrap_or_default();
         let reservation = crate::staging_store::fetch_node_reservation(&transaction, &node_id)
             .map_err(|e| e.to_string())?;

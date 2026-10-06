@@ -420,14 +420,15 @@ pub(crate) fn initialize_release_schema(
     connection
         .execute_batch("SAVEPOINT release_migration")
         .map_err(map_sql_error)?;
-    let migrated =
-        migrate_legacy_releases(connection).and_then(|()| migrate_legacy_operator_releases(connection));
+    let migrated = migrate_legacy_releases(connection)
+        .and_then(|()| migrate_legacy_operator_releases(connection));
     match migrated {
         Ok(()) => connection
             .execute_batch("RELEASE release_migration")
             .map_err(map_sql_error),
         Err(error) => {
-            let _ = connection.execute_batch("ROLLBACK TO release_migration; RELEASE release_migration");
+            let _ = connection
+                .execute_batch("ROLLBACK TO release_migration; RELEASE release_migration");
             Err(error)
         }
     }
@@ -522,7 +523,9 @@ fn migrate_legacy_releases(connection: &Connection) -> Result<(), ReservationRel
 ///   - 옛 표는 GPU 목록을 남기지 않았다 — 옮긴 사실의 GPU 목록은 비어 있다(지어내지 않는다).
 ///   - 같은 신원의 사실이 이미 있으면(종료 보고 이관이 먼저 만들었다) 근거 행만 더한다. 신원이 다르면 충돌이다.
 ///   - 멱등 — 그 시도의 OPERATOR_RELEASE 근거가 이미 있으면 건너뛴다(4b 뒤의 운영자 해제는 옛 표에 쓰지 않는다).
-fn migrate_legacy_operator_releases(connection: &Connection) -> Result<(), ReservationReleaseError> {
+fn migrate_legacy_operator_releases(
+    connection: &Connection,
+) -> Result<(), ReservationReleaseError> {
     let rows: Vec<(String, String, String, String, Vec<u8>)> = {
         let mut statement = connection
             .prepare(
@@ -535,7 +538,13 @@ fn migrate_legacy_operator_releases(connection: &Connection) -> Result<(), Reser
             .map_err(map_sql_error)?;
         let mapped = statement
             .query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
             })
             .map_err(map_sql_error)?;
         mapped
@@ -772,7 +781,9 @@ pub fn release_for_stop_confirmed_within(
 ) -> Result<ReleaseOutcome, ReservationReleaseError> {
     match runtime_stop {
         RuntimeStopProof::NodeConfirmedStop => {}
-        RuntimeStopProof::NotProvenYet => return Err(ReservationReleaseError::RuntimeStopNotProven),
+        RuntimeStopProof::NotProvenYet => {
+            return Err(ReservationReleaseError::RuntimeStopNotProven)
+        }
         RuntimeStopProof::ProvenByCaller | RuntimeStopProof::ObservedExitInSignedReport => {
             return Err(ReservationReleaseError::StopProofGradeMismatch)
         }
@@ -861,9 +872,16 @@ pub fn operator_release_payload(
     released_at_unix_ms: u64,
 ) -> Result<Vec<u8>, ReservationReleaseError> {
     let mut payload = Vec::new();
-    for text in [command.as_str(), operator_statement, node_id, job_id, attempt_id] {
-        let length = u32::try_from(text.len())
-            .map_err(|_| ReservationReleaseError::InvalidInput("operator_release_field_too_long"))?;
+    for text in [
+        command.as_str(),
+        operator_statement,
+        node_id,
+        job_id,
+        attempt_id,
+    ] {
+        let length = u32::try_from(text.len()).map_err(|_| {
+            ReservationReleaseError::InvalidInput("operator_release_field_too_long")
+        })?;
         payload.extend_from_slice(&length.to_be_bytes());
         payload.extend_from_slice(text.as_bytes());
     }

@@ -802,19 +802,23 @@ impl RawRow {
         }
         // 호스트 행은 정상 수명주기만 쓴다(계약 §5 — 호스트 실행의 불명은 D5 조각).
         if executor == Executor::Host
-            && matches!(state, RowState::Open | RowState::StopPending | RowState::Acked)
+            && matches!(
+                state,
+                RowState::Open | RowState::StopPending | RowState::Acked
+            )
         {
             return Err(format!(
                 "RUN_LEDGER: 호스트 행 {id} 가 불명 수명주기 상태다({})",
                 state.as_str()
             ));
         }
-        let self_stop_at_unix_ms = match self.self_stop_at_unix_ms {
-            None => None,
-            Some(v) => Some(u64::try_from(v).map_err(|_| {
-                format!("RUN_LEDGER: 행 {id} 의 self_stop_at_unix_ms 가 음수다")
-            })?),
-        };
+        let self_stop_at_unix_ms =
+            match self.self_stop_at_unix_ms {
+                None => None,
+                Some(v) => Some(u64::try_from(v).map_err(|_| {
+                    format!("RUN_LEDGER: 행 {id} 의 self_stop_at_unix_ms 가 음수다")
+                })?),
+            };
         let unsigned = |name: &str, value: Option<i64>| -> Result<Option<u64>, String> {
             match value {
                 None => Ok(None),
@@ -824,12 +828,17 @@ impl RawRow {
             }
         };
         let started_at_unix_ms = unsigned("started_at_unix_ms", self.started_at_unix_ms)?;
-        let stop_decision_at_unix_ms = unsigned("stop_decision_at_unix_ms", self.stop_decision_at_unix_ms)?;
+        let stop_decision_at_unix_ms =
+            unsigned("stop_decision_at_unix_ms", self.stop_decision_at_unix_ms)?;
         if self.stop_decision.is_some() != stop_decision_at_unix_ms.is_some() {
-            return Err(format!("RUN_LEDGER: 행 {id} 의 정지 결정 종류 · 시각이 한쪽만 있다"));
+            return Err(format!(
+                "RUN_LEDGER: 행 {id} 의 정지 결정 종류 · 시각이 한쪽만 있다"
+            ));
         }
         if self.reattach_grant.is_some() != started_at_unix_ms.is_some() {
-            return Err(format!("RUN_LEDGER: 행 {id} 의 재부착 입력(Grant · 시작 시각)이 한쪽만 있다"));
+            return Err(format!(
+                "RUN_LEDGER: 행 {id} 의 재부착 입력(Grant · 시작 시각)이 한쪽만 있다"
+            ));
         }
         let fence_epoch = match self.fence_epoch {
             None => None,
@@ -922,7 +931,10 @@ fn migrate_v2_to_v3(conn: &mut Connection) -> Result<(), String> {
     tx.execute_batch(MIGRATE_V2_TO_V3)
         .map_err(|error| format!("RUN_LEDGER: 형식 2 → 3 을 올리지 못했다: {error}"))?;
     let changed = tx
-        .execute("UPDATE meta SET value = '3' WHERE key = 'format_version' AND value = '2'", [])
+        .execute(
+            "UPDATE meta SET value = '3' WHERE key = 'format_version' AND value = '2'",
+            [],
+        )
         .map_err(|error| format!("RUN_LEDGER: 형식 버전을 바꾸지 못했다: {error}"))?;
     if changed != 1 {
         return Err("RUN_LEDGER: 형식 버전을 바꾸지 못했다 — 그 사이 바뀌었다".into());
@@ -1014,12 +1026,21 @@ pub enum AckOutcome {
     AlreadyAcked,
 }
 
-const SELECT_NOTICE: &str = "SELECT attempt_id, sequence, kind, notice_bytes, notice_hash, sent, acked FROM notices";
+const SELECT_NOTICE: &str =
+    "SELECT attempt_id, sequence, kind, notice_bytes, notice_hash, sent, acked FROM notices";
 
 fn notice_from_sql(
     r: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<(String, i64, String, Vec<u8>, Vec<u8>, i64, i64)> {
-    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+    Ok((
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+        r.get(6)?,
+    ))
 }
 
 fn validate_notice(
@@ -1030,13 +1051,16 @@ fn validate_notice(
         .ok()
         .filter(|s| *s >= 1)
         .ok_or_else(|| format!("RUN_LEDGER: 알림({attempt_id}) 의 번호가 1 이상이 아니다"))?;
-    let kind = NoticeKind::parse(&kind)
-        .ok_or_else(|| format!("RUN_LEDGER: 알림({attempt_id} · {sequence}) 의 종류를 모른다({kind})"))?;
-    let notice_hash: [u8; 32] = notice_hash
-        .try_into()
-        .map_err(|_| format!("RUN_LEDGER: 알림({attempt_id} · {sequence}) 의 해시가 32바이트가 아니다"))?;
+    let kind = NoticeKind::parse(&kind).ok_or_else(|| {
+        format!("RUN_LEDGER: 알림({attempt_id} · {sequence}) 의 종류를 모른다({kind})")
+    })?;
+    let notice_hash: [u8; 32] = notice_hash.try_into().map_err(|_| {
+        format!("RUN_LEDGER: 알림({attempt_id} · {sequence}) 의 해시가 32바이트가 아니다")
+    })?;
     if notice_bytes.is_empty() {
-        return Err(format!("RUN_LEDGER: 알림({attempt_id} · {sequence}) 의 바이트가 비었다"));
+        return Err(format!(
+            "RUN_LEDGER: 알림({attempt_id} · {sequence}) 의 바이트가 비었다"
+        ));
     }
     Ok(StoredNotice {
         attempt_id,
@@ -1058,7 +1082,12 @@ fn insert_notice(
     let sequence = i64::try_from(notice.sequence)
         .ok()
         .filter(|s| *s >= 1)
-        .ok_or_else(|| format!("RUN_LEDGER: 알림 번호가 원장이 담을 수 있는 범위(1..=i64)가 아니다({})", notice.sequence))?;
+        .ok_or_else(|| {
+            format!(
+                "RUN_LEDGER: 알림 번호가 원장이 담을 수 있는 범위(1..=i64)가 아니다({})",
+                notice.sequence
+            )
+        })?;
     if notice.notice_bytes.is_empty() {
         return Err("RUN_LEDGER: 알림 바이트가 비었다".into());
     }
@@ -1399,16 +1428,18 @@ impl RunLedger {
     pub fn notices(&self, attempt_id: &str) -> Result<Vec<StoredNotice>, String> {
         let mut stmt = self
             .conn
-            .prepare(&format!("{SELECT_NOTICE} WHERE attempt_id = ?1 ORDER BY sequence"))
+            .prepare(&format!(
+                "{SELECT_NOTICE} WHERE attempt_id = ?1 ORDER BY sequence"
+            ))
             .map_err(|error| format!("RUN_LEDGER: 알림을 읽지 못했다: {error}"))?;
         let raw = stmt
             .query_map(params![attempt_id], notice_from_sql)
             .map_err(|error| format!("RUN_LEDGER: 알림을 읽지 못했다: {error}"))?;
         let mut out = Vec::new();
         for item in raw {
-            out.push(validate_notice(
-                item.map_err(|error| format!("RUN_LEDGER: 알림을 읽지 못했다: {error}"))?,
-            )?);
+            out.push(validate_notice(item.map_err(|error| {
+                format!("RUN_LEDGER: 알림을 읽지 못했다: {error}")
+            })?)?);
         }
         Ok(out)
     }
@@ -1514,7 +1545,9 @@ impl RunLedger {
             )
             .map_err(|error| format!("RUN_LEDGER: 행을 바꾸지 못했다({attempt_id}): {error}"))?;
         if changed != 1 {
-            return Err(format!("RUN_LEDGER: 행을 바꾸지 못했다({attempt_id}) — {changed}건"));
+            return Err(format!(
+                "RUN_LEDGER: 행을 바꾸지 못했다({attempt_id}) — {changed}건"
+            ));
         }
         tx.commit()
             .map_err(|error| format!("RUN_LEDGER: 커밋하지 못했다: {error}"))
@@ -1561,7 +1594,8 @@ impl RunLedger {
 
     /// ★ 형식 2 — 그 알림을 보냈다(재전송 대상에서 뺀다). 상태는 바꾸지 않는다.
     pub fn mark_notice_sent(&mut self, attempt_id: &str, sequence: u64) -> Result<(), String> {
-        let sequence = i64::try_from(sequence).map_err(|_| "RUN_LEDGER: 알림 번호가 넘친다".to_string())?;
+        let sequence =
+            i64::try_from(sequence).map_err(|_| "RUN_LEDGER: 알림 번호가 넘친다".to_string())?;
         let changed = self
             .conn
             .execute(
@@ -1570,7 +1604,9 @@ impl RunLedger {
             )
             .map_err(|error| format!("RUN_LEDGER: 보냄 표시를 적지 못했다: {error}"))?;
         if changed != 1 {
-            return Err(format!("RUN_LEDGER: 그 알림이 없다({attempt_id} · {sequence})"));
+            return Err(format!(
+                "RUN_LEDGER: 그 알림이 없다({attempt_id} · {sequence})"
+            ));
         }
         Ok(())
     }
@@ -1601,7 +1637,9 @@ impl RunLedger {
             .map_err(|error| format!("RUN_LEDGER: 알림을 읽지 못했다: {error}"))?
             .map(validate_notice)
             .transpose()?
-            .ok_or_else(|| format!("RUN_LEDGER_ACK_MISMATCH: 원장에 그 알림이 없다({attempt_id} · {sequence})"))?;
+            .ok_or_else(|| {
+                format!("RUN_LEDGER_ACK_MISMATCH: 원장에 그 알림이 없다({attempt_id} · {sequence})")
+            })?;
         if stored.kind != kind || stored.notice_hash != *notice_hash {
             return Err(format!(
                 "RUN_LEDGER_ACK_MISMATCH: ACK 의 종류 · 해시가 원장의 알림과 다르다({attempt_id} · {sequence})"
@@ -1642,7 +1680,9 @@ impl RunLedger {
                 )
                 .map_err(|error| format!("RUN_LEDGER: 행을 바꾸지 못했다({attempt_id}): {error}"))?;
             if changed != 1 {
-                return Err(format!("RUN_LEDGER: 행을 바꾸지 못했다({attempt_id}) — {changed}건"));
+                return Err(format!(
+                    "RUN_LEDGER: 행을 바꾸지 못했다({attempt_id}) — {changed}건"
+                ));
             }
             AckOutcome::Acked
         } else if kind == NoticeKind::RunUnknown {
@@ -1676,10 +1716,14 @@ impl RunLedger {
             || connection_target.is_some_and(|v| v.trim().is_empty())
             || runtime_target_identity.is_some_and(|v| v.trim().is_empty())
         {
-            return Err("RUN_LEDGER: 컨테이너 ID · 연결 대상 · 대상 신원은 비어 있으면 안 된다".into());
+            return Err(
+                "RUN_LEDGER: 컨테이너 ID · 연결 대상 · 대상 신원은 비어 있으면 안 된다".into(),
+            );
         }
         if connection_target.is_some() != runtime_target_identity.is_some() {
-            return Err("RUN_LEDGER: 연결 대상과 대상 신원은 함께 적는다(한쪽만 적지 않는다)".into());
+            return Err(
+                "RUN_LEDGER: 연결 대상과 대상 신원은 함께 적는다(한쪽만 적지 않는다)".into(),
+            );
         }
         let (id, target, identity) = (
             container_id.to_string(),
@@ -1715,20 +1759,31 @@ impl RunLedger {
 
     /// ★ 2026-10-04 13:19 형식 3(계약 v18o ①) — 정지 결정을 **stop 을 부르기 전에** 적는다. ACTIVE 행만. 이미 적혀 있으면 첫 결정을 그대로 둔다(멱등 — Ok).
     ///   이 칸이 있는 행은 재기동의 재부착 대상이 아니다(조건 ⑦). 실패하면 부르는 쪽은 사건 표식을 쓴 뒤 stop 한다(v18p ①′).
-    pub fn record_stop_decision(&mut self, attempt_id: &str, kind: StopDecision, at_unix_ms: u64) -> Result<(), String> {
+    pub fn record_stop_decision(
+        &mut self,
+        attempt_id: &str,
+        kind: StopDecision,
+        at_unix_ms: u64,
+    ) -> Result<(), String> {
         let at = i64::try_from(at_unix_ms).unwrap_or(i64::MAX);
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("RUN_LEDGER: 트랜잭션을 열지 못했다: {error}"))?;
         let current = tx
-            .query_row(&format!("{SELECT_ROW} WHERE attempt_id = ?1"), params![attempt_id], row_from_sql)
+            .query_row(
+                &format!("{SELECT_ROW} WHERE attempt_id = ?1"),
+                params![attempt_id],
+                row_from_sql,
+            )
             .optional()
             .map_err(|error| format!("RUN_LEDGER: 행을 읽지 못했다: {error}"))?
             .ok_or_else(|| format!("RUN_LEDGER: 행이 없다({attempt_id})"))?
             .validate()?;
         if current.state != RowState::Active {
-            return Err(format!("RUN_LEDGER: 정지 결정은 ACTIVE 행에만 적는다({attempt_id})"));
+            return Err(format!(
+                "RUN_LEDGER: 정지 결정은 ACTIVE 행에만 적는다({attempt_id})"
+            ));
         }
         if current.stop_decision.is_some() {
             return Ok(());
@@ -1741,7 +1796,9 @@ impl RunLedger {
             )
             .map_err(|error| format!("RUN_LEDGER: 정지 결정을 적지 못했다({attempt_id}): {error}"))?;
         if changed != 1 {
-            return Err(format!("RUN_LEDGER: 정지 결정을 적지 못했다({attempt_id}) — {changed}건"));
+            return Err(format!(
+                "RUN_LEDGER: 정지 결정을 적지 못했다({attempt_id}) — {changed}건"
+            ));
         }
         tx.commit()
             .map_err(|error| format!("RUN_LEDGER: 커밋하지 못했다: {error}"))
@@ -1757,8 +1814,9 @@ impl RunLedger {
         if lease_bytes.is_empty() {
             return Err("RUN_LEDGER: Lease 바이트가 비었다".into());
         }
-        let stop_at = i64::try_from(self_stop_at_unix_ms)
-            .map_err(|_| "RUN_LEDGER: 끊김 시한이 원장이 담을 수 있는 범위(i64)를 넘는다".to_string())?;
+        let stop_at = i64::try_from(self_stop_at_unix_ms).map_err(|_| {
+            "RUN_LEDGER: 끊김 시한이 원장이 담을 수 있는 범위(i64)를 넘는다".to_string()
+        })?;
         let lease = lease_bytes.to_vec();
         self.update_state(
             attempt_id,

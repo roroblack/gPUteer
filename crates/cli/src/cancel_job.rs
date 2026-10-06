@@ -24,7 +24,10 @@ pub fn run(args: &[String]) -> Result<String, String> {
         index += 2;
     }
     for known in flags.keys() {
-        if !matches!(known.as_str(), "--control-db" | "--job" | "--operator-statement") {
+        if !matches!(
+            known.as_str(),
+            "--control-db" | "--job" | "--operator-statement"
+        ) {
             return Err(format!("CANCEL_ARGS_REFUSED: 모르는 인자 {known}"));
         }
     }

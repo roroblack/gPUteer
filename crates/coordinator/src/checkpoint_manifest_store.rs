@@ -219,7 +219,9 @@ impl CoordinatorCheckpointManifestStore {
         // ★ 2026-10-04 15:47 (실행 알림 계약 D6 보강 · 계획 §5 4번) — 더 높은 fence 의 시도가 생긴 뒤에는 옛 시도의 체크포인트를 수락하지 않는다.
         //   옛 노드의 예약 행은 이어받기 뒤에도 "만료" 표시로 남아 아래 예약 대조를 통과하므로 Job 의 최고 fence 를 따로 본다.
         //   같은 바이트의 재전송(위)은 그대로 받는다 — 이미 수락된 것은 그때 현재 시도였다.
-        if job_top_fence(&transaction, &manifest.job_id)?.is_some_and(|top| top > manifest.fence_epoch) {
+        if job_top_fence(&transaction, &manifest.job_id)?
+            .is_some_and(|top| top > manifest.fence_epoch)
+        {
             return Err(CheckpointManifestStoreError::BindingMismatch(
                 CheckpointBindingField::SupersededByHigherFence,
             ));
@@ -362,7 +364,10 @@ fn bind_attempt_identity_and_fence(
 }
 
 /// 그 Job 의 시도 가운데 가장 높은 fence. 시도가 없으면 None.
-fn job_top_fence(connection: &Connection, job_id: &str) -> Result<Option<u64>, CheckpointManifestStoreError> {
+fn job_top_fence(
+    connection: &Connection,
+    job_id: &str,
+) -> Result<Option<u64>, CheckpointManifestStoreError> {
     let raw: Option<Vec<u8>> = connection
         .query_row(
             "SELECT fence_epoch FROM coordinator_attempts WHERE job_id = ?1
@@ -373,7 +378,11 @@ fn job_top_fence(connection: &Connection, job_id: &str) -> Result<Option<u64>, C
         .optional()
         .map_err(map_sql_error)?;
     raw.map(|bytes| {
-        decode_u64(&bytes).map_err(|()| CheckpointManifestStoreError::Staging(format!("job {job_id} 의 시도 fence 를 읽지 못했다")))
+        decode_u64(&bytes).map_err(|()| {
+            CheckpointManifestStoreError::Staging(format!(
+                "job {job_id} 의 시도 fence 를 읽지 못했다"
+            ))
+        })
     })
     .transpose()
 }
@@ -898,14 +907,19 @@ mod tests {
             )
             .unwrap();
         connection
-            .execute("INSERT INTO coordinator_attempt_nodes VALUES ('attempt-new', 'node-9', 0)", [])
+            .execute(
+                "INSERT INTO coordinator_attempt_nodes VALUES ('attempt-new', 'node-9', 0)",
+                [],
+            )
             .unwrap();
         drop(connection);
         let mut store = CoordinatorCheckpointManifestStore::open(&fixture.path).unwrap();
         let late = verified_manifest("checkpoint-late", JOB_ID, ATTEMPT_ID, NODE_ID, 1, 7, 4, 10);
         assert_eq!(
             store.store_verified_manifest(&late),
-            Err(CheckpointManifestStoreError::BindingMismatch(CheckpointBindingField::SupersededByHigherFence))
+            Err(CheckpointManifestStoreError::BindingMismatch(
+                CheckpointBindingField::SupersededByHigherFence
+            ))
         );
         assert_eq!(manifest_count(&store), 1);
         assert!(!store.store_verified_manifest(&first).unwrap().created);

@@ -16,7 +16,8 @@ use std::path::Path;
 use gputeer_protocol::job_state::JobState;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
-pub(crate) const CANCELLATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS coordinator_job_cancellations (
+pub(crate) const CANCELLATIONS_DDL: &str =
+    "CREATE TABLE IF NOT EXISTS coordinator_job_cancellations (
     job_id TEXT PRIMARY KEY,
     from_state TEXT NOT NULL,
     latest_attempt_id TEXT,
@@ -64,7 +65,9 @@ pub fn cancel_job_by_operator(
         .map_err(|e| e.to_string())?;
     // (코드 검수 cancel_code ④) 감사 표는 취소와 같은 트랜잭션에서 만든다 — 실패한 취소가 스키마만 남기지 않는다. 다른 저장소를 여는 위 단계는
     //   기존 명령들과 같은 멱등 스키마 준비다(업무 행은 쓰지 않는다).
-    transaction.execute_batch(CANCELLATIONS_DDL).map_err(|e| e.to_string())?;
+    transaction
+        .execute_batch(CANCELLATIONS_DDL)
+        .map_err(|e| e.to_string())?;
     if let Some(existing) = fetch_cancellation(&transaction, job_id)? {
         transaction.commit().map_err(|e| e.to_string())?;
         return Ok(existing);
@@ -144,7 +147,10 @@ pub fn cancel_job_by_operator(
     Ok(cancellation)
 }
 
-fn fetch_cancellation(connection: &Connection, job_id: &str) -> Result<Option<JobCancellation>, String> {
+fn fetch_cancellation(
+    connection: &Connection,
+    job_id: &str,
+) -> Result<Option<JobCancellation>, String> {
     let row = connection
         .query_row(
             "SELECT from_state, latest_attempt_id, deferred, lease_revoked, operator_statement, cancelled_at_unix_ms
@@ -163,7 +169,9 @@ fn fetch_cancellation(connection: &Connection, job_id: &str) -> Result<Option<Jo
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let Some((from_state, latest_attempt_id, deferred, lease_revoked, operator_statement, at)) = row else {
+    let Some((from_state, latest_attempt_id, deferred, lease_revoked, operator_statement, at)) =
+        row
+    else {
         return Ok(None);
     };
     let at = <[u8; 8]>::try_from(at.as_slice())

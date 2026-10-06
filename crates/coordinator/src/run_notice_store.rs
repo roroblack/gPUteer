@@ -91,13 +91,22 @@ pub enum RunNoticeError {
     KeyDirectoryNotVerified,
     Rule(gputeer_protocol::attempt_run_notice_rules::RunNoticeRuleError),
     InvalidInput(&'static str),
-    AttemptNotFound { attempt_id: String },
+    AttemptNotFound {
+        attempt_id: String,
+    },
     /// 알림의 job · node · fence 가 durable 시도와 다르다 · 또는 여러 노드 시도다(§2 단일 노드).
-    AttemptIdentityMismatch { attempt_id: String },
+    AttemptIdentityMismatch {
+        attempt_id: String,
+    },
     /// 같은 (시도 · 노드 · 번호) 에 다른 바이트가 이미 있다.
-    SequenceConflict { sequence: u64 },
+    SequenceConflict {
+        sequence: u64,
+    },
     /// STOP_CONFIRMED 의 번호가 그 시도의 저장된 RUN_UNKNOWN 번호보다 크지 않다(b3 ⑧).
-    StopNotAfterUnknown { sequence: u64, latest_unknown: u64 },
+    StopNotAfterUnknown {
+        sequence: u64,
+        latest_unknown: u64,
+    },
     Release(ReservationReleaseError),
     /// 이어갈 체크포인트를 찾지 못했다(찾기 자체의 오류 — "없음" 이 아니다).
     ResumeLookup(String),
@@ -106,7 +115,8 @@ pub enum RunNoticeError {
 
 /// 이어갈 지점 찾기 — 장애 이어받기와 같은 탐색을 호출자가 넣는다(공유 저장소 · 생산자 키는 이 모듈이 모른다).
 /// `Ok(None)` 은 "검증된 체크포인트가 없다" 이다.
-pub type ResumeFinder<'a> = dyn FnMut(&Connection, &StoredJob) -> Result<Option<Vec<u8>>, String> + 'a;
+pub type ResumeFinder<'a> =
+    dyn FnMut(&Connection, &StoredJob) -> Result<Option<Vec<u8>>, String> + 'a;
 
 pub(crate) fn initialize_schema(connection: &Connection) -> Result<(), RunNoticeError> {
     connection
@@ -129,7 +139,9 @@ pub(crate) fn initialize_schema(connection: &Connection) -> Result<(), RunNotice
         )
         .map_err(storage)?;
     crate::job_holds::initialize_schema(connection).map_err(RunNoticeError::Storage)?;
-    connection.execute_batch(RUN_NOTICE_EVENTS_DDL).map_err(storage)?;
+    connection
+        .execute_batch(RUN_NOTICE_EVENTS_DDL)
+        .map_err(storage)?;
     reservation_release::initialize_release_schema(connection).map_err(RunNoticeError::Release)
 }
 
@@ -141,7 +153,8 @@ impl CoordinatorRunNoticeStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, RunNoticeError> {
         let path = path.as_ref();
         job_store::CoordinatorJobStore::open(path).map_err(|e| storage_text(e.to_string()))?;
-        staging_store::CoordinatorStagingStore::open(path).map_err(|e| storage_text(format!("{e:?}")))?;
+        staging_store::CoordinatorStagingStore::open(path)
+            .map_err(|e| storage_text(format!("{e:?}")))?;
         let connection = Connection::open(path).map_err(storage)?;
         connection
             .busy_timeout(std::time::Duration::from_secs(1))
@@ -203,12 +216,16 @@ pub fn accept_within(
         _ => return Err(RunNoticeError::InvalidInput("kind")),
     };
     // 정지 확인의 등급은 아무것도 쓰기 전에 본다(해제 경로도 다시 본다) — 신뢰망 전용 자기보고 등급만 받는다.
-    if kind == pb::RunNoticeKind::StopConfirmed && runtime_stop != RuntimeStopProof::NodeConfirmedStop {
-        return Err(RunNoticeError::Release(if runtime_stop == RuntimeStopProof::NotProvenYet {
-            ReservationReleaseError::RuntimeStopNotProven
-        } else {
-            ReservationReleaseError::StopProofGradeMismatch
-        }));
+    if kind == pb::RunNoticeKind::StopConfirmed
+        && runtime_stop != RuntimeStopProof::NodeConfirmedStop
+    {
+        return Err(RunNoticeError::Release(
+            if runtime_stop == RuntimeStopProof::NotProvenYet {
+                ReservationReleaseError::RuntimeStopNotProven
+            } else {
+                ReservationReleaseError::StopProofGradeMismatch
+            },
+        ));
     }
     for (value, field) in [
         (&notice.job_id, "job_id"),
@@ -260,7 +277,9 @@ pub fn accept_within(
         });
     }
     if kind == pb::RunNoticeKind::StopConfirmed {
-        if let Some(latest_unknown) = latest_sequence(transaction, &notice.attempt_id, "RUN_UNKNOWN")? {
+        if let Some(latest_unknown) =
+            latest_sequence(transaction, &notice.attempt_id, "RUN_UNKNOWN")?
+        {
             if notice.sequence <= latest_unknown {
                 return Err(RunNoticeError::StopNotAfterUnknown {
                     sequence: notice.sequence,
@@ -318,7 +337,10 @@ pub fn accept_within(
 }
 
 /// 그 시도가 그 Job 의 최신 시도(가장 높은 fence)인가 — 장애 이어받기 · Grant 수신 확인과 같은 판별.
-fn is_latest_attempt(transaction: &Connection, attempt: &staging_store::StoredAttempt) -> Result<bool, RunNoticeError> {
+fn is_latest_attempt(
+    transaction: &Connection,
+    attempt: &staging_store::StoredAttempt,
+) -> Result<bool, RunNoticeError> {
     let latest: Option<String> = transaction
         .query_row(
             "SELECT attempt_id FROM coordinator_attempts WHERE job_id = ?1
@@ -337,8 +359,13 @@ fn is_latest_attempt(transaction: &Connection, attempt: &staging_store::StoredAt
 ///   알림 표가 아직 없으면(알림 기능을 한 번도 안 연 DB) 알림 쪽은 없음이다. sequence 는 8바이트 big-endian 이라 BLOB 비교가 수 비교와 같다.
 ///   ★ (코드 검수 cancel_code ①) STOP 은 **같은 노드**의 것만 그 불명을 푼다 — sequence 는 노드마다 따로 센다. 지금 알림 입구는 1노드 시도만 받지만
 ///   이 판정이 그 조건에 기대지 않게 한다.
-pub fn has_unresolved_run_unknown(connection: &Connection, attempt_id: &str) -> Result<bool, String> {
-    if let Some(attempt) = staging_store::fetch_attempt(connection, attempt_id).map_err(|e| format!("{e:?}"))? {
+pub fn has_unresolved_run_unknown(
+    connection: &Connection,
+    attempt_id: &str,
+) -> Result<bool, String> {
+    if let Some(attempt) =
+        staging_store::fetch_attempt(connection, attempt_id).map_err(|e| format!("{e:?}"))?
+    {
         if attempt.state == AttemptState::RunUnknown {
             return Ok(true);
         }
@@ -367,7 +394,8 @@ pub fn has_unresolved_run_unknown(connection: &Connection, attempt_id: &str) -> 
         .map_err(|e| e.to_string())
 }
 
-pub(crate) const RUN_NOTICE_EVENTS_DDL: &str = "CREATE TABLE IF NOT EXISTS coordinator_run_notice_events (
+pub(crate) const RUN_NOTICE_EVENTS_DDL: &str =
+    "CREATE TABLE IF NOT EXISTS coordinator_run_notice_events (
                 attempt_id TEXT NOT NULL,
                 event TEXT NOT NULL CHECK(event IN ('DUPLICATE_RISK', 'RECONCILE_NEEDED')),
                 detail TEXT NOT NULL,
@@ -381,8 +409,17 @@ pub(crate) fn record_reconcile_needed(
     detail: &str,
     now_unix_ms: u64,
 ) -> Result<(), String> {
-    transaction.execute_batch(RUN_NOTICE_EVENTS_DDL).map_err(|e| e.to_string())?;
-    record_event(transaction, attempt_id, "RECONCILE_NEEDED", detail, now_unix_ms).map_err(|e| format!("{e:?}"))
+    transaction
+        .execute_batch(RUN_NOTICE_EVENTS_DDL)
+        .map_err(|e| e.to_string())?;
+    record_event(
+        transaction,
+        attempt_id,
+        "RECONCILE_NEEDED",
+        detail,
+        now_unix_ms,
+    )
+    .map_err(|e| format!("{e:?}"))
 }
 
 fn record_event(
@@ -430,13 +467,22 @@ fn process_run_unknown(
         events: Vec::new(),
     };
     let path: &[AttemptState] = match attempt.state {
-        AttemptState::Starting | AttemptState::Running | AttemptState::Paused => &[AttemptState::RunUnknown],
-        AttemptState::Created if latest_attempt => &[AttemptState::Starting, AttemptState::RunUnknown],
+        AttemptState::Starting | AttemptState::Running | AttemptState::Paused => {
+            &[AttemptState::RunUnknown]
+        }
+        AttemptState::Created if latest_attempt => {
+            &[AttemptState::Starting, AttemptState::RunUnknown]
+        }
         _ => &[],
     };
     if !path.is_empty() {
-        staging_store::transition_attempt_state_along(transaction, &attempt.attempt_id, attempt.state, path)
-            .map_err(|e| storage_text(format!("{e:?}")))?;
+        staging_store::transition_attempt_state_along(
+            transaction,
+            &attempt.attempt_id,
+            attempt.state,
+            path,
+        )
+        .map_err(|e| storage_text(format!("{e:?}")))?;
         applied.attempt_moved = true;
     }
     if !latest_attempt {
@@ -601,9 +647,9 @@ fn latest_sequence(
         )
         .map_err(storage)?;
     raw.map(|bytes| {
-        let array: [u8; 8] = bytes
-            .try_into()
-            .map_err(|_| storage_text("저장된 sequence 가 8바이트가 아니다 — 저장소 손상".to_string()))?;
+        let array: [u8; 8] = bytes.try_into().map_err(|_| {
+            storage_text("저장된 sequence 가 8바이트가 아니다 — 저장소 손상".to_string())
+        })?;
         Ok(u64::from_be_bytes(array))
     })
     .transpose()
@@ -672,7 +718,9 @@ pub fn answer_run_notice(
         )
     }
     .map_err(|error| match error {
-        RunNoticeError::Storage(why) | RunNoticeError::ResumeLookup(why) => RunNoticeAnswerError::Storage(why),
+        RunNoticeError::Storage(why) | RunNoticeError::ResumeLookup(why) => {
+            RunNoticeAnswerError::Storage(why)
+        }
         other => RunNoticeAnswerError::Rejected(format!("RUN_NOTICE_REJECTED: {other:?}")),
     })?;
     for note in notes {

@@ -28,7 +28,10 @@ pub enum RuntimeEndpoint {
     /// docker — `-H <host>`.
     DockerHost(String),
     /// podman 로컬 — `--root <graph_root> --runroot <run_root>`.
-    PodmanLocal { graph_root: String, run_root: String },
+    PodmanLocal {
+        graph_root: String,
+        run_root: String,
+    },
 }
 
 impl RuntimeEndpoint {
@@ -69,7 +72,8 @@ impl RuntimeEndpoint {
     /// 원장의 글을 읽는다. 모르는 모양이면 거부한다(추측하지 않는다).
     pub fn from_ledger(text: &str) -> Result<Self, String> {
         if let Some(host) = text.strip_prefix(DOCKER_PREFIX) {
-            return checked(host, "docker 엔드포인트").map(|h| RuntimeEndpoint::DockerHost(h.into()));
+            return checked(host, "docker 엔드포인트")
+                .map(|h| RuntimeEndpoint::DockerHost(h.into()));
         }
         if let Some(rest) = text.strip_prefix(PODMAN_LOCAL_PREFIX) {
             let (graph_root, run_root) = rest
@@ -97,7 +101,12 @@ pub fn resolve_endpoint(program: &Path, flavor: RuntimeFlavor) -> Result<Runtime
         RuntimeFlavor::Docker => {
             let host = query(
                 program,
-                &["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+                &[
+                    "context",
+                    "inspect",
+                    "--format",
+                    "{{.Endpoints.docker.Host}}",
+                ],
             )?;
             checked(&host, "docker 엔드포인트")?;
             Ok(RuntimeEndpoint::DockerHost(host))
@@ -109,10 +118,17 @@ pub fn resolve_endpoint(program: &Path, flavor: RuntimeFlavor) -> Result<Runtime
                     "podman 이 원격 모드다(ServiceIsRemote={remote:?}) — 자동 증거의 대상으로 고정하지 않는다"
                 ));
             }
-            let store = query(program, &["info", "--format", "{{.Store.GraphRoot}}\n{{.Store.RunRoot}}"])?;
-            let (graph_root, run_root) = store
-                .split_once('\n')
-                .ok_or_else(|| format!("podman info 가 graphRoot · runRoot 를 주지 않았다({store:?})"))?;
+            let store = query(
+                program,
+                &[
+                    "info",
+                    "--format",
+                    "{{.Store.GraphRoot}}\n{{.Store.RunRoot}}",
+                ],
+            )?;
+            let (graph_root, run_root) = store.split_once('\n').ok_or_else(|| {
+                format!("podman info 가 graphRoot · runRoot 를 주지 않았다({store:?})")
+            })?;
             Ok(RuntimeEndpoint::PodmanLocal {
                 graph_root: checked(graph_root.trim_end_matches('\r'), "podman graphRoot")?.into(),
                 run_root: checked(run_root.trim_end_matches('\r'), "podman runRoot")?.into(),
@@ -133,7 +149,11 @@ pub fn read_identity(program: &Path, endpoint: &RuntimeEndpoint) -> Result<Strin
             let text = pinned_query(
                 program,
                 endpoint,
-                &["info", "--format", "{{.Host.Hostname}}\n{{.Store.GraphRoot}}\n{{.Store.RunRoot}}"],
+                &[
+                    "info",
+                    "--format",
+                    "{{.Host.Hostname}}\n{{.Store.GraphRoot}}\n{{.Store.RunRoot}}",
+                ],
             )?;
             let parts: Vec<&str> = text.lines().map(|l| l.trim_end_matches('\r')).collect();
             if parts.len() != 3 || parts.iter().any(|p| p.trim().is_empty() || p.contains('|')) {
@@ -206,7 +226,11 @@ pub fn pinned_lookup(
                 .flat_map(|line| line.split(','))
                 .map(|n| n.trim().trim_start_matches('/'))
                 .any(|n| n == *name);
-            Ok(if found { Presence::Present } else { Presence::Absent })
+            Ok(if found {
+                Presence::Present
+            } else {
+                Presence::Absent
+            })
         }
     }
 }
@@ -216,7 +240,11 @@ fn query(program: &Path, args: &[&str]) -> Result<String, String> {
     cli_ok(program, &args, CONFIRM_TIMEOUT).map(|out| out.stdout.trim().to_string())
 }
 
-fn pinned_query(program: &Path, endpoint: &RuntimeEndpoint, args: &[&str]) -> Result<String, String> {
+fn pinned_query(
+    program: &Path,
+    endpoint: &RuntimeEndpoint,
+    args: &[&str],
+) -> Result<String, String> {
     let mut all = endpoint.global_args();
     all.extend(args.iter().map(OsString::from));
     cli_ok(program, &all, CONFIRM_TIMEOUT).map(|out| out.stdout.trim().to_string())
@@ -250,7 +278,11 @@ pub fn pinned_salvage_logs(
 }
 
 /// ★ 조각 5d2(계약 §4 ② — 해제 명령만) — 고정 대상에서 `rm -f -v <대상>`. 응답만으로 지웠다고 보지 않는다 — 뒤이은 새 조회 셋이 판정한다.
-pub fn pinned_remove(program: &Path, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
+pub fn pinned_remove(
+    program: &Path,
+    endpoint: &RuntimeEndpoint,
+    target: &str,
+) -> Result<(), String> {
     let mut args = endpoint.global_args();
     args.extend(["rm", "-f", "-v"].iter().map(OsString::from));
     args.push(OsString::from(target));
@@ -271,12 +303,22 @@ pub enum RunState {
 }
 
 /// ★ 2026-10-03 11:37 (조각 5e1) — 그 ID 의 컨테이너가 지금 도는가(고정 대상). not-found 는 `Absent` · 그 밖의 오류는 `Err`.
-pub fn pinned_run_state(program: &Path, endpoint: &RuntimeEndpoint, id: &str) -> Result<RunState, String> {
+pub fn pinned_run_state(
+    program: &Path,
+    endpoint: &RuntimeEndpoint,
+    id: &str,
+) -> Result<RunState, String> {
     let mut args = endpoint.global_args();
     args.extend(
-        ["inspect", "--type", "container", "--format", "{{.State.Running}} {{.State.Paused}}"]
-            .iter()
-            .map(OsString::from),
+        [
+            "inspect",
+            "--type",
+            "container",
+            "--format",
+            "{{.State.Running}} {{.State.Paused}}",
+        ]
+        .iter()
+        .map(OsString::from),
     );
     args.push(OsString::from(id));
     match cli_ok(program, &args, CONFIRM_TIMEOUT) {
@@ -284,7 +326,9 @@ pub fn pinned_run_state(program: &Path, endpoint: &RuntimeEndpoint, id: &str) ->
             "true false" => Ok(RunState::Running),
             "true true" => Ok(RunState::Paused),
             "false false" | "false true" => Ok(RunState::NotRunning),
-            other => Err(format!("inspect 가 실행 상태를 알 수 없는 모양으로 답했다({other:?})")),
+            other => Err(format!(
+                "inspect 가 실행 상태를 알 수 없는 모양으로 답했다({other:?})"
+            )),
         },
         Err(why) if says_no_such_container(&why) => Ok(RunState::Absent),
         Err(why) => Err(why),
@@ -305,7 +349,9 @@ pub fn pinned_stop(program: &Path, endpoint: &RuntimeEndpoint, id: &str) -> Resu
                 return Err(format!("kill 뒤에도 {state:?} 다(kill 응답: {kill:?})"))
             }
             Err(why) if std::time::Instant::now() >= deadline => {
-                return Err(format!("멈춤을 확인하지 못했다({why} · kill 응답: {kill:?})"))
+                return Err(format!(
+                    "멈춤을 확인하지 못했다({why} · kill 응답: {kill:?})"
+                ))
             }
             _ => std::thread::sleep(std::time::Duration::from_millis(200)),
         }

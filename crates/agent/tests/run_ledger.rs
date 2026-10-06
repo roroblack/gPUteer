@@ -723,7 +723,11 @@ fn a_format_1_ledger_is_migrated_on_open_atomically() {
     downgrade_to_v1(&f.paths);
     assert_eq!(meta_version(&f.paths), "1");
     let ledger = open_for_agent(&f.paths).unwrap();
-    assert_eq!(meta_version(&f.paths), "3", "형식 1 은 2 를 거쳐 3 까지 올라간다");
+    assert_eq!(
+        meta_version(&f.paths),
+        "3",
+        "형식 1 은 2 를 거쳐 3 까지 올라간다"
+    );
     let row = ledger.row("attempt-c").unwrap().unwrap();
     assert_eq!(row.state, RowState::Active);
     assert_eq!(row.connection_target, None);
@@ -761,27 +765,56 @@ fn the_unknown_lifecycle_moves_with_its_notices_and_unblocks_only_on_the_latest_
     let mut ledger = open_for_agent(&f.paths).unwrap();
     assert_eq!(ledger.next_sequence("attempt-c").unwrap(), 1);
     ledger
-        .open_with_run_unknown("attempt-c", "exit_unobserved", &notice(1, NoticeKind::RunUnknown, 1))
+        .open_with_run_unknown(
+            "attempt-c",
+            "exit_unobserved",
+            &notice(1, NoticeKind::RunUnknown, 1),
+        )
         .unwrap();
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::Open);
+    assert_eq!(
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::Open
+    );
     assert!(ledger.blocks_new_work().unwrap());
     assert_eq!(ledger.next_sequence("attempt-c").unwrap(), 2);
     // 번호는 커져야 한다 · 종류가 맞아야 한다
     assert_err_contains(
-        ledger.stop_pending_with_stop("attempt-c", "owner", &notice(1, NoticeKind::StopConfirmed, 2)),
+        ledger.stop_pending_with_stop(
+            "attempt-c",
+            "owner",
+            &notice(1, NoticeKind::StopConfirmed, 2),
+        ),
         "크지 않다",
     );
     assert_err_contains(
         ledger.stop_pending_with_stop("attempt-c", "owner", &notice(2, NoticeKind::RunUnknown, 2)),
         "STOP_CONFIRMED 알림을 적는다",
     );
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::Open);
+    assert_eq!(
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::Open
+    );
     ledger
-        .stop_pending_with_stop("attempt-c", "owner_cleared", &notice(2, NoticeKind::StopConfirmed, 2))
+        .stop_pending_with_stop(
+            "attempt-c",
+            "owner_cleared",
+            &notice(2, NoticeKind::StopConfirmed, 2),
+        )
         .unwrap();
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::StopPending);
-    assert!(ledger.blocks_new_work().unwrap(), "보내지 못한 STOP 동안에도 막는다");
-    let unsent: Vec<u64> = ledger.unsent_notices().unwrap().iter().map(|n| n.sequence).collect();
+    assert_eq!(
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::StopPending
+    );
+    assert!(
+        ledger.blocks_new_work().unwrap(),
+        "보내지 못한 STOP 동안에도 막는다"
+    );
+    let unsent: Vec<u64> = ledger
+        .unsent_notices()
+        .unwrap()
+        .iter()
+        .map(|n| n.sequence)
+        .collect();
     assert_eq!(unsent, vec![1, 2]);
     ledger.mark_notice_sent("attempt-c", 1).unwrap();
     assert_eq!(ledger.unsent_notices().unwrap().len(), 1);
@@ -791,29 +824,50 @@ fn the_unknown_lifecycle_moves_with_its_notices_and_unblocks_only_on_the_latest_
         ledger.record_ack("attempt-c", 2, NoticeKind::StopConfirmed, &[9; 32]),
         "RUN_LEDGER_ACK_MISMATCH",
     );
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::StopPending);
+    assert_eq!(
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::StopPending
+    );
     // 옛 번호(불명)의 ACK — 표시만
     assert_eq!(
-        ledger.record_ack("attempt-c", 1, NoticeKind::RunUnknown, &[1; 32]).unwrap(),
+        ledger
+            .record_ack("attempt-c", 1, NoticeKind::RunUnknown, &[1; 32])
+            .unwrap(),
         AckOutcome::OlderRecordedOnly
     );
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::StopPending);
+    assert_eq!(
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::StopPending
+    );
     // 최신 STOP 의 ACK — ACKED · 차단이 풀린다
     assert_eq!(
-        ledger.record_ack("attempt-c", 2, NoticeKind::StopConfirmed, &[2; 32]).unwrap(),
+        ledger
+            .record_ack("attempt-c", 2, NoticeKind::StopConfirmed, &[2; 32])
+            .unwrap(),
         AckOutcome::Acked
     );
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::Acked);
-    assert!(!ledger.blocks_new_work().unwrap());
-    assert!(ledger.unsent_notices().unwrap().is_empty(), "ACK 받은 알림은 다시 보내지 않는다");
     assert_eq!(
-        ledger.record_ack("attempt-c", 2, NoticeKind::StopConfirmed, &[2; 32]).unwrap(),
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::Acked
+    );
+    assert!(!ledger.blocks_new_work().unwrap());
+    assert!(
+        ledger.unsent_notices().unwrap().is_empty(),
+        "ACK 받은 알림은 다시 보내지 않는다"
+    );
+    assert_eq!(
+        ledger
+            .record_ack("attempt-c", 2, NoticeKind::StopConfirmed, &[2; 32])
+            .unwrap(),
         AckOutcome::AlreadyAcked
     );
     drop(ledger);
     // 다시 열어도 상태 · 알림이 그대로다
     let again = open_for_agent(&f.paths).unwrap();
-    assert_eq!(again.row("attempt-c").unwrap().unwrap().state, RowState::Acked);
+    assert_eq!(
+        again.row("attempt-c").unwrap().unwrap().state,
+        RowState::Acked
+    );
     assert_eq!(again.notices("attempt-c").unwrap().len(), 2);
 }
 
@@ -824,10 +878,16 @@ fn auto_evidence_goes_from_active_to_stop_pending_and_an_unknown_ack_never_unblo
     ledger_with_one_container_row(&f);
     let mut ledger = open_for_agent(&f.paths).unwrap();
     ledger
-        .stop_pending_with_stop("attempt-c", "container_absent", &notice(1, NoticeKind::StopConfirmed, 1))
+        .stop_pending_with_stop(
+            "attempt-c",
+            "container_absent",
+            &notice(1, NoticeKind::StopConfirmed, 1),
+        )
         .unwrap();
     assert_eq!(
-        ledger.record_ack("attempt-c", 1, NoticeKind::StopConfirmed, &[1; 32]).unwrap(),
+        ledger
+            .record_ack("attempt-c", 1, NoticeKind::StopConfirmed, &[1; 32])
+            .unwrap(),
         AckOutcome::Acked
     );
 
@@ -835,13 +895,22 @@ fn auto_evidence_goes_from_active_to_stop_pending_and_an_unknown_ack_never_unblo
     ledger_with_one_container_row(&g);
     let mut ledger = open_for_agent(&g.paths).unwrap();
     ledger
-        .open_with_run_unknown("attempt-c", "exit_unobserved", &notice(1, NoticeKind::RunUnknown, 1))
+        .open_with_run_unknown(
+            "attempt-c",
+            "exit_unobserved",
+            &notice(1, NoticeKind::RunUnknown, 1),
+        )
         .unwrap();
     assert_eq!(
-        ledger.record_ack("attempt-c", 1, NoticeKind::RunUnknown, &[1; 32]).unwrap(),
+        ledger
+            .record_ack("attempt-c", 1, NoticeKind::RunUnknown, &[1; 32])
+            .unwrap(),
         AckOutcome::UnknownAcknowledged
     );
-    assert_eq!(ledger.row("attempt-c").unwrap().unwrap().state, RowState::Open);
+    assert_eq!(
+        ledger.row("attempt-c").unwrap().unwrap().state,
+        RowState::Open
+    );
     assert!(ledger.blocks_new_work().unwrap());
     // OPEN 은 ACTIVE 에서만 · 이미 OPEN 이면 다시 열지 않는다
     assert_err_contains(
@@ -856,7 +925,13 @@ fn host_rows_never_enter_the_unknown_lifecycle_and_orphan_notices_are_refused() 
     let f = fixture();
     let mut ledger = open_for_agent(&f.paths).unwrap();
     ledger
-        .insert_active(&AttemptRow::new_active("attempt-h", "job-1", "node-1", 3, Executor::Host))
+        .insert_active(&AttemptRow::new_active(
+            "attempt-h",
+            "job-1",
+            "node-1",
+            3,
+            Executor::Host,
+        ))
         .unwrap();
     write_record(&f.paths.started_dir, "attempt-h");
     assert_err_contains(
@@ -864,7 +939,10 @@ fn host_rows_never_enter_the_unknown_lifecycle_and_orphan_notices_are_refused() 
         "컨테이너 행에만",
     );
     drop(ledger);
-    sql(&f.paths, "UPDATE attempts SET state = 'OPEN' WHERE attempt_id = 'attempt-h';");
+    sql(
+        &f.paths,
+        "UPDATE attempts SET state = 'OPEN' WHERE attempt_id = 'attempt-h';",
+    );
     assert_err_contains(open_for_agent(&f.paths), "불명 수명주기 상태다");
 
     let g = fixture();
@@ -910,20 +988,36 @@ fn runtime_target_and_renewal_evidence_are_recorded_on_active_rows_only() {
         ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), None, None),
         "함께 적는다",
     );
-    ledger.record_renewal("attempt-c", &[7, 7, 7], 9_000).unwrap();
+    ledger
+        .record_renewal("attempt-c", &[7, 7, 7], 9_000)
+        .unwrap();
     ledger.record_renewal("attempt-c", &[8, 8], 9_500).unwrap();
     drop(ledger);
     let mut ledger = open_for_agent(&f.paths).unwrap();
     let row = ledger.row("attempt-c").unwrap().unwrap();
     assert_eq!(row.container_id.as_deref(), Some("cid-1"));
-    assert_eq!(row.connection_target.as_deref(), Some("unix:///run/docker.sock"));
+    assert_eq!(
+        row.connection_target.as_deref(),
+        Some("unix:///run/docker.sock")
+    );
     assert_eq!(row.runtime_target_identity.as_deref(), Some("docker:ID-1"));
-    assert_eq!(row.last_lease, Some(vec![8, 8]), "마지막 갱신의 Lease 가 남는다");
+    assert_eq!(
+        row.last_lease,
+        Some(vec![8, 8]),
+        "마지막 갱신의 Lease 가 남는다"
+    );
     assert_eq!(row.self_stop_at_unix_ms, Some(9_500));
     ledger
-        .stop_pending_with_stop("attempt-c", "container_absent", &notice(1, NoticeKind::StopConfirmed, 1))
+        .stop_pending_with_stop(
+            "attempt-c",
+            "container_absent",
+            &notice(1, NoticeKind::StopConfirmed, 1),
+        )
         .unwrap();
-    assert_err_contains(ledger.record_renewal("attempt-c", &[9], 10_000), "ACTIVE 행에만");
+    assert_err_contains(
+        ledger.record_renewal("attempt-c", &[9], 10_000),
+        "ACTIVE 행에만",
+    );
     assert_err_contains(
         ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), None),
         "ACTIVE 컨테이너 행에만",
@@ -936,7 +1030,9 @@ fn an_unpinned_runtime_records_the_container_id_only() {
     let f = fixture();
     ledger_with_one_container_row(&f);
     let mut ledger = open_for_agent(&f.paths).unwrap();
-    ledger.record_runtime_target("attempt-c", "cid-9", None, None, None).unwrap();
+    ledger
+        .record_runtime_target("attempt-c", "cid-9", None, None, None)
+        .unwrap();
     let row = ledger.row("attempt-c").unwrap().unwrap();
     assert_eq!(row.container_id.as_deref(), Some("cid-9"));
     assert_eq!(row.connection_target, None);
@@ -982,10 +1078,22 @@ fn reattach_inputs_are_written_with_the_container_id_and_never_overwritten() {
     ledger_with_one_container_row(&f);
     let mut ledger = open_for_agent(&f.paths).unwrap();
     ledger
-        .record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), Some((&[1, 2, 3], 500)))
+        .record_runtime_target(
+            "attempt-c",
+            "cid-1",
+            Some("t"),
+            Some("i"),
+            Some((&[1, 2, 3], 500)),
+        )
         .unwrap();
     ledger
-        .record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), Some((&[9, 9], 900)))
+        .record_runtime_target(
+            "attempt-c",
+            "cid-1",
+            Some("t"),
+            Some("i"),
+            Some((&[9, 9], 900)),
+        )
         .unwrap();
     assert_err_contains(
         ledger.record_runtime_target("attempt-c", "cid-1", Some("t"), Some("i"), Some((&[], 1))),
@@ -994,7 +1102,11 @@ fn reattach_inputs_are_written_with_the_container_id_and_never_overwritten() {
     drop(ledger);
     let ledger = open_for_agent(&f.paths).unwrap();
     let row = ledger.row("attempt-c").unwrap().unwrap();
-    assert_eq!(row.reattach_grant.as_deref(), Some(&[1u8, 2, 3][..]), "두 번째 기록이 덮었다");
+    assert_eq!(
+        row.reattach_grant.as_deref(),
+        Some(&[1u8, 2, 3][..]),
+        "두 번째 기록이 덮었다"
+    );
     assert_eq!(row.started_at_unix_ms, Some(500));
 }
 
@@ -1005,25 +1117,44 @@ fn a_stop_decision_is_recorded_once_on_active_rows_and_half_rows_are_refused() {
     let f = fixture();
     ledger_with_one_container_row(&f);
     let mut ledger = open_for_agent(&f.paths).unwrap();
-    ledger.record_stop_decision("attempt-c", StopDecision::Owner, 700).unwrap();
-    ledger.record_stop_decision("attempt-c", StopDecision::Deadline, 800).unwrap();
+    ledger
+        .record_stop_decision("attempt-c", StopDecision::Owner, 700)
+        .unwrap();
+    ledger
+        .record_stop_decision("attempt-c", StopDecision::Deadline, 800)
+        .unwrap();
     drop(ledger);
     let ledger = open_for_agent(&f.paths).unwrap();
     let row = ledger.row("attempt-c").unwrap().unwrap();
-    assert_eq!(row.stop_decision.as_deref(), Some("OWNER"), "두 번째 결정이 첫 결정을 덮었다");
+    assert_eq!(
+        row.stop_decision.as_deref(),
+        Some("OWNER"),
+        "두 번째 결정이 첫 결정을 덮었다"
+    );
     assert_eq!(row.stop_decision_at_unix_ms, Some(700));
     assert_err_contains(
-        open_for_agent(&f.paths).unwrap().record_stop_decision("no-such", StopDecision::Owner, 1),
+        open_for_agent(&f.paths)
+            .unwrap()
+            .record_stop_decision("no-such", StopDecision::Owner, 1),
         "행이 없다",
     );
     drop(ledger);
 
     let g = fixture();
     ledger_with_one_container_row(&g);
-    sql(&g.paths, "UPDATE attempts SET stop_decision = 'OWNER' WHERE attempt_id = 'attempt-c';");
+    sql(
+        &g.paths,
+        "UPDATE attempts SET stop_decision = 'OWNER' WHERE attempt_id = 'attempt-c';",
+    );
     assert_err_contains(open_for_agent(&g.paths), "정지 결정 종류 · 시각이 한쪽만");
     let h = fixture();
     ledger_with_one_container_row(&h);
-    sql(&h.paths, "UPDATE attempts SET reattach_grant = x'01' WHERE attempt_id = 'attempt-c';");
-    assert_err_contains(open_for_agent(&h.paths), "재부착 입력(Grant · 시작 시각)이 한쪽만");
+    sql(
+        &h.paths,
+        "UPDATE attempts SET reattach_grant = x'01' WHERE attempt_id = 'attempt-c';",
+    );
+    assert_err_contains(
+        open_for_agent(&h.paths),
+        "재부착 입력(Grant · 시작 시각)이 한쪽만",
+    );
 }

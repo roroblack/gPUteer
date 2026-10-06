@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use gputeer_checkpoint::commit::ManifestMeta;
 use gputeer_checkpoint::shared;
 use gputeer_coordinator::failover::{failover_lost_attempts, FailoverOutcome, FailoverPolicy};
-use gputeer_coordinator::inventory_store::{AgentInventory, AgentRegistry, CoordinatorInventoryStore, GpuInventory};
+use gputeer_coordinator::inventory_store::{
+    AgentInventory, AgentRegistry, CoordinatorInventoryStore, GpuInventory,
+};
 use gputeer_coordinator::job_store::{AcceptedJobSubmission, CoordinatorJobStore};
 use gputeer_coordinator::staging_store::{CoordinatorStagingStore, StageQueuedRequest};
 use gputeer_coordinator::supersede_notice_store::NoticeSigner;
@@ -66,7 +68,16 @@ fn register(path: &Path, node: &str, gpu: &str, revision: u64) {
 
 /// 시도를 node 에 배정하고 실행 중으로 만든다. `at` 는 발급 시각.
 #[allow(clippy::too_many_arguments)]
-fn stage_and_run(path: &Path, attempt: &str, lease: &str, node: &str, gpu: &str, revision: u64, at: u64, op: u8) {
+fn stage_and_run(
+    path: &Path,
+    attempt: &str,
+    lease: &str,
+    node: &str,
+    gpu: &str,
+    revision: u64,
+    at: u64,
+    op: u8,
+) {
     let mut staging = CoordinatorStagingStore::open(path).unwrap();
     staging
         .reserve_node_and_stage_queued_with_lease(
@@ -87,7 +98,9 @@ fn stage_and_run(path: &Path, attempt: &str, lease: &str, node: &str, gpu: &str,
             revision,
         )
         .unwrap_or_else(|e| panic!("{attempt} 배정 실패: {e:?}"));
-    staging.record_grant_accepted(attempt, at + 50, false, false).unwrap();
+    staging
+        .record_grant_accepted(attempt, at + 50, false, false)
+        .unwrap();
     staging.record_process_started(lease, at + 60).unwrap();
 }
 
@@ -125,13 +138,22 @@ fn prepare() -> Fixture {
             rusqlite::params![JOB_ID],
         )
         .unwrap();
-    Fixture { _dir: dir, db, shared, work }
+    Fixture {
+        _dir: dir,
+        db,
+        shared,
+        work,
+    }
 }
 
 fn fence_of(path: &Path, attempt: &str) -> u64 {
     let bytes: Vec<u8> = rusqlite::Connection::open(path)
         .unwrap()
-        .query_row("SELECT fence_epoch FROM coordinator_attempts WHERE attempt_id = ?1", [attempt], |row| row.get(0))
+        .query_row(
+            "SELECT fence_epoch FROM coordinator_attempts WHERE attempt_id = ?1",
+            [attempt],
+            |row| row.get(0),
+        )
         .unwrap();
     u64::from_be_bytes(bytes.try_into().unwrap())
 }
@@ -158,7 +180,13 @@ fn publish(fixture: &Fixture, checkpoint_id: &str, attempt: &str, node: &str, st
     .unwrap();
     let mut manifest = shared::to_unsigned_pb(&committed).unwrap();
     manifest.producer_signature = sign(&key(node), &manifest).to_vec();
-    shared::write_signed_manifest(&fixture.shared, JOB_ID, checkpoint_id, &manifest.encode_to_vec()).unwrap();
+    shared::write_signed_manifest(
+        &fixture.shared,
+        JOB_ID,
+        checkpoint_id,
+        &manifest.encode_to_vec(),
+    )
+    .unwrap();
 }
 
 fn failover(fixture: &Fixture, now: u64) -> (Vec<FailoverOutcome>, Vec<String>) {
@@ -173,7 +201,10 @@ fn failover(fixture: &Fixture, now: u64) -> (Vec<FailoverOutcome>, Vec<String>) 
                 ("node-2".into(), key("node-2").verifying_key()),
             ],
         },
-        &NoticeSigner { coordinator_id: "coordinator-1".into(), key: SigningKey::from_bytes(&[9; 32]) },
+        &NoticeSigner {
+            coordinator_id: "coordinator-1".into(),
+            key: SigningKey::from_bytes(&[9; 32]),
+        },
         now,
         &mut notes,
     )
@@ -183,7 +214,10 @@ fn failover(fixture: &Fixture, now: u64) -> (Vec<FailoverOutcome>, Vec<String>) 
 
 fn resumed_from(outcomes: &[FailoverOutcome], notes: &[String]) -> String {
     match outcomes {
-        [FailoverOutcome::Requeued { resume_checkpoint_id: Some(id), .. }] => id.clone(),
+        [FailoverOutcome::Requeued {
+            resume_checkpoint_id: Some(id),
+            ..
+        }] => id.clone(),
         other => panic!("이어갈 지점과 함께 다시 대기열에 올라야 한다: {other:?}\n{notes:#?}"),
     }
 }
@@ -197,7 +231,16 @@ fn a_checkpoint_the_old_node_wrote_after_takeover_is_never_a_resume_point() {
     assert_eq!(resumed_from(&outcomes, &notes), "ckpt-a1-2");
 
     // 새 시도가 node-2 에서 ckpt-a1-2 부터 돈다. 그 사이 끊겼던 node-1 이 살아나 옛 시도로 step 5 를 써 둔다
-    stage_and_run(&fixture.db, "attempt-2", "lease-2", "node-2", "gpu-9", 3, 1_000_100, 3);
+    stage_and_run(
+        &fixture.db,
+        "attempt-2",
+        "lease-2",
+        "node-2",
+        "gpu-9",
+        3,
+        1_000_100,
+        3,
+    );
     assert!(fence_of(&fixture.db, "attempt-2") > fence_of(&fixture.db, "attempt-1"));
     publish(&fixture, "ckpt-a1-5", "attempt-1", "node-1", 5);
 
@@ -205,7 +248,10 @@ fn a_checkpoint_the_old_node_wrote_after_takeover_is_never_a_resume_point() {
     let (outcomes, notes) = failover(&fixture, 2_000_000);
     assert_eq!(resumed_from(&outcomes, &notes), "ckpt-a1-2", "{notes:#?}");
     assert!(
-        notes.iter().any(|n| n.starts_with("FAILOVER_CHECKPOINT_SKIPPED") && n.contains("checkpoint_id=ckpt-a1-5")),
+        notes
+            .iter()
+            .any(|n| n.starts_with("FAILOVER_CHECKPOINT_SKIPPED")
+                && n.contains("checkpoint_id=ckpt-a1-5")),
         "옛 시도의 늦은 체크포인트를 건너뛴 사실이 남아야 한다: {notes:#?}"
     );
 }
@@ -217,7 +263,16 @@ fn the_current_attempts_own_checkpoint_still_wins() {
     publish(&fixture, "ckpt-a1-2", "attempt-1", "node-1", 2);
     let (outcomes, notes) = failover(&fixture, 1_000_000);
     assert_eq!(resumed_from(&outcomes, &notes), "ckpt-a1-2");
-    stage_and_run(&fixture.db, "attempt-2", "lease-2", "node-2", "gpu-9", 3, 1_000_100, 3);
+    stage_and_run(
+        &fixture.db,
+        "attempt-2",
+        "lease-2",
+        "node-2",
+        "gpu-9",
+        3,
+        1_000_100,
+        3,
+    );
     publish(&fixture, "ckpt-a1-5", "attempt-1", "node-1", 5);
     publish(&fixture, "ckpt-a2-3", "attempt-2", "node-2", 3);
     let (outcomes, notes) = failover(&fixture, 2_000_000);

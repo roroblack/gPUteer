@@ -54,11 +54,35 @@ fn release_held_job_refuses_bad_arguments_and_unknown_jobs_and_releases_a_held_j
     let db = dir.path().join("control.sqlite3");
     let db_s = db.to_string_lossy().to_string();
 
-    let (ok, out) = run_cli(&["release-held-job", "--control-db", &db_s, "--job", "job-held"]);
+    let (ok, out) = run_cli(&[
+        "release-held-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-held",
+    ]);
     assert!(!ok && out.contains("--operator-statement"), "{out}");
-    let (ok, out) = run_cli(&["release-held-job", "--control-db", &db_s, "--job", "x", "--operator-statement", "s", "--extra", "1"]);
+    let (ok, out) = run_cli(&[
+        "release-held-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "x",
+        "--operator-statement",
+        "s",
+        "--extra",
+        "1",
+    ]);
     assert!(!ok && out.contains("모르는 인자"), "{out}");
-    let (ok, out) = run_cli(&["release-held-job", "--control-db", &db_s, "--job", "job-missing", "--operator-statement", "운영자: 확인"]);
+    let (ok, out) = run_cli(&[
+        "release-held-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-missing",
+        "--operator-statement",
+        "운영자: 확인",
+    ]);
     assert!(!ok && out.contains("job-missing"), "{out}");
 
     job_with_unreported_hold(&db);
@@ -72,7 +96,21 @@ fn release_held_job_refuses_bad_arguments_and_unknown_jobs_and_releases_a_held_j
         "시험: 그 PC 가 꺼진 것을 확인",
     ]);
     assert!(ok, "보류를 풀지 못했다: {out}");
-    assert!(out.contains("HELD_JOB_RELEASED job_id=job-held attempts=attempt-old job_final=false"), "{out}");
-    let (ok, out) = run_cli(&["release-held-job", "--control-db", &db_s, "--job", "job-held", "--operator-statement", "다시"]);
-    assert!(!ok && out.contains("풀 보류"), "두 번째 해제가 통과했다: {out}");
+    assert!(
+        out.contains("HELD_JOB_RELEASED job_id=job-held attempts=attempt-old job_final=false"),
+        "{out}"
+    );
+    let (ok, out) = run_cli(&[
+        "release-held-job",
+        "--control-db",
+        &db_s,
+        "--job",
+        "job-held",
+        "--operator-statement",
+        "다시",
+    ]);
+    assert!(
+        !ok && out.contains("풀 보류"),
+        "두 번째 해제가 통과했다: {out}"
+    );
 }

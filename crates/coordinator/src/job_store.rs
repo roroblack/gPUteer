@@ -520,12 +520,19 @@ impl CoordinatorJobStore {
             .map_err(map_sql_error)?;
         let job = fetch_job(&transaction, job_id)?.ok_or(JobStoreError::NotFound)?;
         let binding = fetch_manifest_binding(&transaction, &job)?;
-        if binding.manifest != *reverified.get() || binding.signer_id_at_submission != reverified.signer_id() {
+        if binding.manifest != *reverified.get()
+            || binding.signer_id_at_submission != reverified.signer_id()
+        {
             return Err(JobStoreError::ManifestIdentityMismatch(
                 "SIDE_EFFECT_REVERIFY_REFUSED: 다시 검증한 Manifest 가 저장된 것과 다르다",
             ));
         }
-        project_side_effect(&transaction, job_id, reverified.get().side_effect_class, "REVERIFIED")?;
+        project_side_effect(
+            &transaction,
+            job_id,
+            reverified.get().side_effect_class,
+            "REVERIFIED",
+        )?;
         let projected = side_effect_class_of(&transaction, job_id).map_err(JobStoreError::Io)?;
         transaction.commit().map_err(map_sql_error)?;
         Ok(projected)
@@ -562,7 +569,9 @@ impl CoordinatorJobStore {
         // ★ 2026-10-03 12:26 (조각 6b · 계약 §9 guard) — 재배치 차단 보류가 있는 Job 은 고르지 않는다. 마지막 관문은 staging 트랜잭션이 다시 본다.
         let mut held = Vec::new();
         for job in &jobs {
-            if crate::job_holds::job_is_held(&self.connection, &job.job_id).map_err(JobStoreError::Io)? {
+            if crate::job_holds::job_is_held(&self.connection, &job.job_id)
+                .map_err(JobStoreError::Io)?
+            {
                 held.push(job.job_id.clone());
             }
         }
@@ -804,7 +813,12 @@ impl CoordinatorJobStore {
             .map_err(map_sql_error)?;
         fail_at(fault, TestFault::AfterManifestInsert)?;
         // ★ 2026-10-03 13:01 (조각 7a · 계약 §6 (1)) — 같은 트랜잭션에서 검증된 선언을 투영한다. 누락 · 모르는 값이면 행을 쓰지 않는다(= SIDE_EFFECTING 취급).
-        project_side_effect(&transaction, &stored.job_id, manifest.side_effect_class, "SUBMISSION")?;
+        project_side_effect(
+            &transaction,
+            &stored.job_id,
+            manifest.side_effect_class,
+            "SUBMISSION",
+        )?;
         transaction
             .execute(
                 "INSERT INTO job_submission_idempotency(idempotency_key, job_id) VALUES (?1, ?2)",
@@ -1185,7 +1199,10 @@ pub fn side_effect_is_pure(connection: &Connection, job_id: &str) -> Result<bool
 }
 
 /// ★ 2026-10-03 13:01 (조각 7a) — 투영된 부작용 등급 이름(PURE · IDEMPOTENT · SIDE_EFFECTING). 없으면 None(= SIDE_EFFECTING 취급).
-pub fn side_effect_class_of(connection: &Connection, job_id: &str) -> Result<Option<String>, String> {
+pub fn side_effect_class_of(
+    connection: &Connection,
+    job_id: &str,
+) -> Result<Option<String>, String> {
     let table: Option<i64> = connection
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_job_side_effects'",
@@ -1444,13 +1461,17 @@ pub fn follow_stop_confirmed(
             })
         }
     }
-    let interrupted = transition_via(job.state, JobState::Interrupted, "STOP_CONFIRMED_AFTER_UNKNOWN")
-        .map_err(rejected)?;
+    let interrupted = transition_via(
+        job.state,
+        JobState::Interrupted,
+        "STOP_CONFIRMED_AFTER_UNKNOWN",
+    )
+    .map_err(rejected)?;
     let mut next = job.clone();
     let requeued = resume.is_some();
     if requeued {
-        let replanning =
-            transition_via(interrupted, JobState::Replanning, "FAILOVER_STARTED").map_err(rejected)?;
+        let replanning = transition_via(interrupted, JobState::Replanning, "FAILOVER_STARTED")
+            .map_err(rejected)?;
         next.state =
             transition_via(replanning, JobState::Queued, "REPLAN_READY").map_err(rejected)?;
         next.staging_at_unix_ms = None;
@@ -1482,14 +1503,20 @@ pub fn follow_stop_confirmed(
 
 /// ★ 2026-10-05 02:25 (실행 알림 계약 v18q ② · 계획 §5 5번) — 운영자 취소: 표의 `* -> CANCELLED | USER_CANCELLED` 행만 따른다(COMPLETED · FAILED 등은 거부).
 /// Job 칸은 상태와 revision 만 바꾼다 — 끝난 이유 칸을 쓰지 않는다(v18q ⑦ · 취소 시각 · 진술은 감사 행). Lease · 예약 · 보류는 호출자(`job_cancel`)가 정한다.
-pub(crate) fn cancel_within(connection: &Connection, job: &StoredJob) -> Result<StoredJob, JobStoreError> {
+pub(crate) fn cancel_within(
+    connection: &Connection,
+    job: &StoredJob,
+) -> Result<StoredJob, JobStoreError> {
     let mut next = job.clone();
-    next.state = gputeer_protocol::job_state::transition_via(job.state, JobState::Cancelled, "USER_CANCELLED").map_err(
-        |rejected| JobStoreError::InvalidTransition {
-            from: rejected.from,
-            to: rejected.to,
-        },
-    )?;
+    next.state = gputeer_protocol::job_state::transition_via(
+        job.state,
+        JobState::Cancelled,
+        "USER_CANCELLED",
+    )
+    .map_err(|rejected| JobStoreError::InvalidTransition {
+        from: rejected.from,
+        to: rejected.to,
+    })?;
     next.revision = job
         .revision
         .checked_add(1)
@@ -2206,7 +2233,12 @@ mod tests {
     }
 
     /// ★ 2026-10-03 04:49 (조각 4c) — 큐에 있던 Job 을 저장소 규칙 그대로 STAGING · RUNNING 으로 올려 둔다(스테이징 · 첫 진행 신호가 하는 일의 결과 모양).
-    fn job_in(store: &mut CoordinatorJobStore, job_id: &str, key: u8, state: JobState) -> StoredJob {
+    fn job_in(
+        store: &mut CoordinatorJobStore,
+        job_id: &str,
+        key: u8,
+        state: JobState,
+    ) -> StoredJob {
         let mut job = queued(store, &submission(job_id, key));
         job.state = JobState::Staging;
         job.staging_at_unix_ms = Some(400);
@@ -2247,7 +2279,10 @@ mod tests {
             let stored = fetch_job(&store.connection, "job-b").unwrap().unwrap();
             assert_eq!(stored, moved);
             assert_eq!(stored.state, JobState::Failed);
-            assert_eq!(stored.run_terminal, Some(RunTerminal::NoCommittedCheckpoint));
+            assert_eq!(
+                stored.run_terminal,
+                Some(RunTerminal::NoCommittedCheckpoint)
+            );
             assert_eq!(stored.worker_reported_finished_at_unix_ms, Some(700));
         }
     }
@@ -2268,7 +2303,10 @@ mod tests {
                 follow_stop_confirmed(&store.connection, &job, Some(vec![1]), 700).unwrap(),
                 StopConfirmedJobEffect::Unchanged(job.clone())
             );
-            assert_eq!(fetch_job(&store.connection, &job.job_id).unwrap().unwrap(), job);
+            assert_eq!(
+                fetch_job(&store.connection, &job.job_id).unwrap().unwrap(),
+                job
+            );
         }
         let mut submitted = job;
         submitted.state = JobState::Submitted;
@@ -2847,12 +2885,25 @@ mod tests {
         let (mut store, _dir) = open_temp();
         store.submit_accepted(&submission("job-1", 1), 100).unwrap();
         queued(&mut store, &submission("job-2", 2));
-        let set = |store: &CoordinatorJobStore, sql: &str| store.connection.execute(sql, []).unwrap();
+        let set =
+            |store: &CoordinatorJobStore, sql: &str| store.connection.execute(sql, []).unwrap();
         set(&store, "UPDATE coordinator_jobs SET state = 'CANCELLED'");
-        assert_eq!(store.get("job-1").unwrap().unwrap().state, JobState::Cancelled, "계획 없는 SUBMITTED 에서 취소");
-        assert_eq!(store.get("job-2").unwrap().unwrap().state, JobState::Cancelled, "대기열에서 취소");
+        assert_eq!(
+            store.get("job-1").unwrap().unwrap().state,
+            JobState::Cancelled,
+            "계획 없는 SUBMITTED 에서 취소"
+        );
+        assert_eq!(
+            store.get("job-2").unwrap().unwrap().state,
+            JobState::Cancelled,
+            "대기열에서 취소"
+        );
         set(&store, "UPDATE coordinator_jobs SET running_at_unix_ms = x'0000000000000190', staging_at_unix_ms = x'0000000000000180' WHERE job_id = 'job-2'");
-        assert_eq!(store.get("job-2").unwrap().unwrap().state, JobState::Cancelled, "실행 중에 취소");
+        assert_eq!(
+            store.get("job-2").unwrap().unwrap().state,
+            JobState::Cancelled,
+            "실행 중에 취소"
+        );
         for (sql, why) in [
             ("UPDATE coordinator_jobs SET run_terminal = 'ATTEMPT_COMPLETED' WHERE job_id = 'job-2'", "끝난 이유"),
             ("UPDATE coordinator_jobs SET failed_at_unix_ms = x'0000000000000190' WHERE job_id = 'job-2'", "실패 시각"),
@@ -2867,8 +2918,14 @@ mod tests {
             set(&fresh, sql);
             assert!(matches!(fresh.get("job-2"), Err(JobStoreError::CorruptData(_))), "{why} 이 있는 CANCELLED 행을 읽었다");
         }
-        set(&store, "UPDATE coordinator_jobs SET state = 'ARCHIVED' WHERE job_id = 'job-1'");
-        assert!(matches!(store.get("job-1"), Err(JobStoreError::CorruptData(_))));
+        set(
+            &store,
+            "UPDATE coordinator_jobs SET state = 'ARCHIVED' WHERE job_id = 'job-1'",
+        );
+        assert!(matches!(
+            store.get("job-1"),
+            Err(JobStoreError::CorruptData(_))
+        ));
     }
 
     #[test]
@@ -3040,7 +3097,14 @@ mod side_effect_projection_tests {
         manifest.submitter_signature = sign(&key, &manifest).to_vec();
         let mut keys = InMemoryKeyring::new();
         keys.insert("submitter-1", key.verifying_key());
-        verify(&manifest, 1, &Ed25519Verifier::new(keys), 100, &mut NoReplayCheck).unwrap()
+        verify(
+            &manifest,
+            1,
+            &Ed25519Verifier::new(keys),
+            100,
+            &mut NoReplayCheck,
+        )
+        .unwrap()
     }
 
     fn submission(verified: &Verified<pb::JobManifest>, key: u8) -> AcceptedJobSubmission {
@@ -3062,16 +3126,36 @@ mod side_effect_projection_tests {
         let mut store = CoordinatorJobStore::open(&path).unwrap();
         let cases = [
             ("job-pure", pb::SideEffectClass::Pure as i32, Some("PURE")),
-            ("job-idem", pb::SideEffectClass::Idempotent as i32, Some("IDEMPOTENT")),
-            ("job-side", pb::SideEffectClass::SideEffecting as i32, Some("SIDE_EFFECTING")),
+            (
+                "job-idem",
+                pb::SideEffectClass::Idempotent as i32,
+                Some("IDEMPOTENT"),
+            ),
+            (
+                "job-side",
+                pb::SideEffectClass::SideEffecting as i32,
+                Some("SIDE_EFFECTING"),
+            ),
             ("job-none", pb::SideEffectClass::Unspecified as i32, None),
             ("job-odd", 99, None),
         ];
         for (index, (job_id, class, expected)) in cases.iter().enumerate() {
             let verified = manifest(job_id, *class);
-            store.submit_verified_manifest(&submission(&verified, index as u8 + 1), &verified, 100).unwrap();
-            assert_eq!(side_effect_class_of(&store.connection, job_id).unwrap().as_deref(), *expected, "{job_id}");
-            assert_eq!(side_effect_is_pure(&store.connection, job_id).unwrap(), *expected == Some("PURE"), "{job_id}");
+            store
+                .submit_verified_manifest(&submission(&verified, index as u8 + 1), &verified, 100)
+                .unwrap();
+            assert_eq!(
+                side_effect_class_of(&store.connection, job_id)
+                    .unwrap()
+                    .as_deref(),
+                *expected,
+                "{job_id}"
+            );
+            assert_eq!(
+                side_effect_is_pure(&store.connection, job_id).unwrap(),
+                *expected == Some("PURE"),
+                "{job_id}"
+            );
         }
         store
             .submit_accepted(
@@ -3086,7 +3170,10 @@ mod side_effect_projection_tests {
                 100,
             )
             .unwrap();
-        assert!(!side_effect_is_pure(&store.connection, "job-bare").unwrap(), "Manifest 없는 제출을 PURE 로 봤다");
+        assert!(
+            !side_effect_is_pure(&store.connection, "job-bare").unwrap(),
+            "Manifest 없는 제출을 PURE 로 봤다"
+        );
         // 표가 없는 DB(옛 DB)도 PURE 가 아니다 — 읽기는 표를 만들지 않는다
         let bare = Connection::open_in_memory().unwrap();
         assert!(!side_effect_is_pure(&bare, "job-pure").unwrap());
@@ -3095,14 +3182,21 @@ mod side_effect_projection_tests {
     /// 옛 DB 이관(b12 ⑤) — 투영이 빈 Job 은 권위 디렉터리로 다시 검증한 같은 Manifest 로만 채운다. 진술이 없거나 다른 Manifest 면 거부한다.
     #[test]
     fn an_empty_projection_is_filled_only_from_the_same_reverified_manifest() {
-        use crate::reservation_release::KeyDirectoryProvenance::{AuthoritativeDirectoryVerifiedByCaller, Unverified};
+        use crate::reservation_release::KeyDirectoryProvenance::{
+            AuthoritativeDirectoryVerifiedByCaller, Unverified,
+        };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.sqlite3");
         let mut store = CoordinatorJobStore::open(&path).unwrap();
         let verified = manifest("job-old", pb::SideEffectClass::Pure as i32);
-        store.submit_verified_manifest(&submission(&verified, 1), &verified, 100).unwrap();
+        store
+            .submit_verified_manifest(&submission(&verified, 1), &verified, 100)
+            .unwrap();
         // 옛 DB 를 흉내 — 투영 행을 지운다
-        store.connection.execute("DELETE FROM coordinator_job_side_effects", []).unwrap();
+        store
+            .connection
+            .execute("DELETE FROM coordinator_job_side_effects", [])
+            .unwrap();
         assert!(!side_effect_is_pure(&store.connection, "job-old").unwrap());
         assert!(matches!(
             store.project_side_effect_from_reverified("job-old", &verified, Unverified),
@@ -3110,13 +3204,24 @@ mod side_effect_projection_tests {
         ));
         let other = manifest("job-old", pb::SideEffectClass::Idempotent as i32);
         assert!(matches!(
-            store.project_side_effect_from_reverified("job-old", &other, AuthoritativeDirectoryVerifiedByCaller),
+            store.project_side_effect_from_reverified(
+                "job-old",
+                &other,
+                AuthoritativeDirectoryVerifiedByCaller
+            ),
             Err(JobStoreError::ManifestIdentityMismatch(_))
         ));
-        assert!(!side_effect_is_pure(&store.connection, "job-old").unwrap(), "거부된 재검증이 값을 썼다");
+        assert!(
+            !side_effect_is_pure(&store.connection, "job-old").unwrap(),
+            "거부된 재검증이 값을 썼다"
+        );
         assert_eq!(
             store
-                .project_side_effect_from_reverified("job-old", &verified, AuthoritativeDirectoryVerifiedByCaller)
+                .project_side_effect_from_reverified(
+                    "job-old",
+                    &verified,
+                    AuthoritativeDirectoryVerifiedByCaller
+                )
                 .unwrap()
                 .as_deref(),
             Some("PURE")

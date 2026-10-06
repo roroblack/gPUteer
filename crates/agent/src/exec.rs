@@ -540,7 +540,9 @@ pub const EXIT_CODE_OWNER_STOPPED: u32 = 0xC000_0013;
 
 /// ★ 2026-10-03 10:58 (조각 5c) — 컨테이너를 만든 직후 · 시작 전에 부르는 훅(노드 원장에 ID · 런타임 대상 커밋). 실패하면 시작하지 않는다.
 #[derive(Clone)]
-pub struct ContainerCreatedHook(pub std::sync::Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>);
+pub struct ContainerCreatedHook(
+    pub std::sync::Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>,
+);
 
 impl ContainerCreatedHook {
     pub fn new(hook: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static) -> Self {

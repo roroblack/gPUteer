@@ -26,7 +26,11 @@ pub trait RuntimeQueries {
     /// 해제 명령만 — `rm -f -v`(§4 ②). 응답만으로 지웠다고 보지 않는다(뒤이은 조회가 판정).
     fn remove(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String>;
     /// 기동(조각 5e1) — 그 ID 의 실행 상태.
-    fn run_state(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<runtime_target::RunState, String>;
+    fn run_state(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        id: &str,
+    ) -> Result<runtime_target::RunState, String>;
     /// 기동(조각 5e1) — 멈추고 조회로 확인한다. 지우지 않는다.
     fn stop(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String>;
 }
@@ -48,7 +52,8 @@ impl RuntimeQueries for CliQueries<'_> {
         let dir = self
             .salvage_dir
             .ok_or_else(|| "로그 보존 폴더가 없다(기동은 로그를 건지지 않는다)".to_string())?;
-        let (stdout, stderr) = runtime_target::pinned_salvage_logs(self.program, endpoint, target, dir)?;
+        let (stdout, stderr) =
+            runtime_target::pinned_salvage_logs(self.program, endpoint, target, dir)?;
         println!(
             "RUN_RELEASE_LOGS_SALVAGED target={target} stdout={} stderr={}",
             stdout.display(),
@@ -59,7 +64,11 @@ impl RuntimeQueries for CliQueries<'_> {
     fn remove(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
         runtime_target::pinned_remove(self.program, endpoint, target)
     }
-    fn run_state(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<runtime_target::RunState, String> {
+    fn run_state(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        id: &str,
+    ) -> Result<runtime_target::RunState, String> {
         runtime_target::pinned_run_state(self.program, endpoint, id)
     }
     fn stop(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String> {
@@ -80,7 +89,10 @@ pub enum RunningAtRestart {
 }
 
 /// 재기동 때 확인한 ID 의 컨테이너가 돌고 있으면 멈춘다. 신원이 원장과 다르거나 볼 수 없으면 아무것도 하지 않는다(다른 런타임의 것을 멈추지 않는다).
-pub fn stop_if_running_at_restart(row: &AttemptRow, queries: &dyn RuntimeQueries) -> RunningAtRestart {
+pub fn stop_if_running_at_restart(
+    row: &AttemptRow,
+    queries: &dyn RuntimeQueries,
+) -> RunningAtRestart {
     let (Some(id), Some(target), Some(recorded)) = (
         row.container_id.as_deref(),
         row.connection_target.as_deref(),
@@ -132,7 +144,10 @@ pub fn evaluate_reattach(
     now_unix_ms: u64,
 ) -> ReattachVerdict {
     use prost::Message;
-    let no = |why: &str, stop_allowed: bool| ReattachVerdict::NotCandidate { why: why.to_string(), stop_allowed };
+    let no = |why: &str, stop_allowed: bool| ReattachVerdict::NotCandidate {
+        why: why.to_string(),
+        stop_allowed,
+    };
     // ⑦ 정지 결정 · ⑧ 사건 표식 — 대상과 무관하게 먼저 본다(정지는 확인된 대상에만 — 아래에서 다시 가른다)
     if row.stop_decision.is_some() {
         return no("정지 결정이 이미 기록됐다(조건 ⑦)", true);
@@ -160,7 +175,10 @@ pub fn evaluate_reattach(
         return no("원장의 런타임 대상을 읽지 못했다", false);
     };
     // ③ 저장 Grant · 마지막 Lease 의 신원 대조(v18o ③ — grant ID 는 대조하지 않는다)
-    let (Ok(grant), Ok(last_lease)) = (pb::ExecutionGrant::decode(grant_bytes), pb::Lease::decode(lease_bytes)) else {
+    let (Ok(grant), Ok(last_lease)) = (
+        pb::ExecutionGrant::decode(grant_bytes),
+        pb::Lease::decode(lease_bytes),
+    ) else {
         return no("저장된 Grant · Lease 바이트를 풀지 못했다(조건 ③)", true);
     };
     let Some(grant_lease) = grant.lease.as_ref() else {
@@ -181,13 +199,21 @@ pub fn evaluate_reattach(
         && last_lease.attempt_id == row.attempt_id
         && last_lease.fence_epoch == row_fence;
     if !identity_matches {
-        return no("저장된 Grant · 마지막 Lease · 원장 행의 신원이 서로 다르다(조건 ③ — 변조 · 섞임)", true);
+        return no(
+            "저장된 Grant · 마지막 Lease · 원장 행의 신원이 서로 다르다(조건 ③ — 변조 · 섞임)",
+            true,
+        );
     }
     // ④ 대상 신원 — 다르거나 묻지 못하면 **아무 명령도 보내지 않는다**(v18o ②)
     match queries.identity(&endpoint) {
         Ok(found) if found == recorded => {}
         Ok(_) => return no("런타임 대상의 신원이 원장과 다르다(조건 ④)", false),
-        Err(why) => return no(&format!("런타임 대상의 신원을 확인하지 못했다(조건 ④ — {why})"), false),
+        Err(why) => {
+            return no(
+                &format!("런타임 대상의 신원을 확인하지 못했다(조건 ④ — {why})"),
+                false,
+            )
+        }
     }
     // ⑤ running 만 — 얼림 · 멈춤 · 생성됨 · 없음은 후보가 아니다
     match queries.run_state(&endpoint, id) {
@@ -197,7 +223,10 @@ pub fn evaluate_reattach(
     }
     // v18j ② — 원장의 시한이 지났거나 Lease 가 로컬로 만료면 묻지 않고 stop
     if now_unix_ms >= self_stop_at || last_lease.expires_at_unix_ms <= now_unix_ms {
-        return no("원장의 끊김 시한이 지났거나 Lease 가 로컬로 만료됐다(v18j ②)", true);
+        return no(
+            "원장의 끊김 시한이 지났거나 Lease 가 로컬로 만료됐다(v18j ②)",
+            true,
+        );
     }
     ReattachVerdict::Candidate(Box::new(ReattachInputs {
         endpoint,
@@ -355,7 +384,9 @@ pub fn release_evidence(
             .salvage_logs(&endpoint, id)
             .map_err(|why| format!("로그를 건지지 못해 지우지 않았다: {why}"))?;
         if let Err(why) = queries.remove(&endpoint, id) {
-            println!("RUN_RELEASE_RM_REPORTED_FAILURE target={id} detail={why} — 뒤이은 조회로 판정한다");
+            println!(
+                "RUN_RELEASE_RM_REPORTED_FAILURE target={id} detail={why} — 뒤이은 조회로 판정한다"
+            );
         }
         for lookup in [
             Lookup::Id(id),
@@ -377,17 +408,28 @@ pub fn release_evidence(
     }
     let endpoint = match row.connection_target.as_deref() {
         Some(target) => RuntimeEndpoint::from_ledger(target)?,
-        None => fallback_endpoint
-            .ok_or_else(|| "물을 런타임 대상을 정하지 못했다(원장에 대상이 없고 해석도 못 했다)".to_string())?,
+        None => fallback_endpoint.ok_or_else(|| {
+            "물을 런타임 대상을 정하지 못했다(원장에 대상이 없고 해석도 못 했다)".to_string()
+        })?,
     };
-    let before = expect_identity(queries, &endpoint, row.runtime_target_identity.as_deref(), "앞")?;
+    let before = expect_identity(
+        queries,
+        &endpoint,
+        row.runtime_target_identity.as_deref(),
+        "앞",
+    )?;
     queries
         .salvage_logs(&endpoint, name)
         .map_err(|why| format!("로그를 건지지 못해 지우지 않았다: {why}"))?;
     if let Err(why) = queries.remove(&endpoint, name) {
-        println!("RUN_RELEASE_RM_REPORTED_FAILURE target={name} detail={why} — 뒤이은 조회로 판정한다");
+        println!(
+            "RUN_RELEASE_RM_REPORTED_FAILURE target={name} detail={why} — 뒤이은 조회로 판정한다"
+        );
     }
-    for lookup in [Lookup::OwnerLabelWithName { owner, name }, Lookup::Name(name)] {
+    for lookup in [
+        Lookup::OwnerLabelWithName { owner, name },
+        Lookup::Name(name),
+    ] {
         expect_absent(queries, &endpoint, &lookup)?;
     }
     expect_identity(queries, &endpoint, Some(&before), "뒤")?;
@@ -423,7 +465,9 @@ fn expect_absent(
 ) -> Result<(), String> {
     match queries.lookup(endpoint, lookup) {
         Ok(Presence::Absent) => Ok(()),
-        Ok(Presence::Present) => Err(format!("조회 {lookup:?} 에 아직 나온다 — 없음을 확인하지 못했다")),
+        Ok(Presence::Present) => Err(format!(
+            "조회 {lookup:?} 에 아직 나온다 — 없음을 확인하지 못했다"
+        )),
         Err(why) => Err(format!("조회 {lookup:?} 가 답하지 않았다: {why}")),
     }
 }
@@ -447,9 +491,11 @@ pub fn build_notice(
     observed_at_unix_ms: u64,
     issued_at_unix_ms: u64,
 ) -> Result<NewNotice, String> {
-    let (Some(job_id), Some(node_id), Some(fence_epoch)) =
-        (row.job_id.as_deref(), row.node_id.as_deref(), row.fence_epoch)
-    else {
+    let (Some(job_id), Some(node_id), Some(fence_epoch)) = (
+        row.job_id.as_deref(),
+        row.node_id.as_deref(),
+        row.fence_epoch,
+    ) else {
         return Err(format!(
             "RUN_NOTICE: 원장 행 {} 에 job · node · fence 가 없다 — 알림을 만들 수 없다(legacy 행)",
             row.attempt_id
@@ -530,10 +576,16 @@ mod tests {
 
     impl RuntimeQueries for Fake {
         fn identity(&self, endpoint: &RuntimeEndpoint) -> Result<String, String> {
-            self.asked.borrow_mut().push(format!("identity {}", endpoint.to_ledger()));
+            self.asked
+                .borrow_mut()
+                .push(format!("identity {}", endpoint.to_ledger()));
             self.identities.borrow_mut().remove(0)
         }
-        fn lookup(&self, endpoint: &RuntimeEndpoint, lookup: &Lookup<'_>) -> Result<Presence, String> {
+        fn lookup(
+            &self,
+            endpoint: &RuntimeEndpoint,
+            lookup: &Lookup<'_>,
+        ) -> Result<Presence, String> {
             let (tag, key) = match lookup {
                 Lookup::Id(id) => ("id", id.to_string()),
                 Lookup::Name(name) => ("name", name.to_string()),
@@ -548,21 +600,33 @@ mod tests {
             if self.failing == Some(tag) {
                 return Err("daemon: connection refused".into());
             }
-            Ok(if self.present.contains(&format!("{tag}:{key}")) && !self.removed.borrow().contains(&key) {
-                Presence::Present
-            } else {
-                Presence::Absent
-            })
+            Ok(
+                if self.present.contains(&format!("{tag}:{key}"))
+                    && !self.removed.borrow().contains(&key)
+                {
+                    Presence::Present
+                } else {
+                    Presence::Absent
+                },
+            )
         }
         fn salvage_logs(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
-            self.asked.borrow_mut().push(format!("salvage {target} @ {}", endpoint.to_ledger()));
+            self.asked
+                .borrow_mut()
+                .push(format!("salvage {target} @ {}", endpoint.to_ledger()));
             if self.failing == Some("salvage") {
                 return Err("logs: daemon error".into());
             }
             Ok(())
         }
-        fn run_state(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<runtime_target::RunState, String> {
-            self.asked.borrow_mut().push(format!("state {id} @ {}", endpoint.to_ledger()));
+        fn run_state(
+            &self,
+            endpoint: &RuntimeEndpoint,
+            id: &str,
+        ) -> Result<runtime_target::RunState, String> {
+            self.asked
+                .borrow_mut()
+                .push(format!("state {id} @ {}", endpoint.to_ledger()));
             match self.failing {
                 Some("running") => Ok(runtime_target::RunState::Running),
                 Some("paused") => Ok(runtime_target::RunState::Paused),
@@ -571,14 +635,18 @@ mod tests {
             }
         }
         fn stop(&self, endpoint: &RuntimeEndpoint, id: &str) -> Result<(), String> {
-            self.asked.borrow_mut().push(format!("stop {id} @ {}", endpoint.to_ledger()));
+            self.asked
+                .borrow_mut()
+                .push(format!("stop {id} @ {}", endpoint.to_ledger()));
             if self.failing == Some("running-stuck") {
                 return Err("kill 뒤에도 Running".into());
             }
             Ok(())
         }
         fn remove(&self, endpoint: &RuntimeEndpoint, target: &str) -> Result<(), String> {
-            self.asked.borrow_mut().push(format!("rm {target} @ {}", endpoint.to_ledger()));
+            self.asked
+                .borrow_mut()
+                .push(format!("rm {target} @ {}", endpoint.to_ledger()));
             if self.failing != Some("rm-noop") {
                 self.removed.borrow_mut().push(target.to_string());
             }
@@ -587,7 +655,8 @@ mod tests {
     }
 
     fn pinned_row() -> AttemptRow {
-        let mut row = AttemptRow::new_active("attempt-1", "job-1", "node-1", 4, Executor::Container);
+        let mut row =
+            AttemptRow::new_active("attempt-1", "job-1", "node-1", 4, Executor::Container);
         row.container_name = Some("gputeer-attempt-1".into());
         row.container_id = Some("cid-1".into());
         row.connection_target = Some("docker-host:unix:///run/docker.sock".into());
@@ -598,27 +667,51 @@ mod tests {
     #[test]
     fn absence_needs_all_three_lookups_absent_and_the_same_identity_before_and_after() {
         let fake = Fake::absent_everywhere();
-        assert_eq!(startup_absence_evidence(&pinned_row(), OWNER, &fake), AutoEvidence::Absent);
+        assert_eq!(
+            startup_absence_evidence(&pinned_row(), OWNER, &fake),
+            AutoEvidence::Absent
+        );
         let asked = fake.asked.borrow().clone();
         assert_eq!(asked.len(), 5, "{asked:?}");
-        assert!(asked[0].starts_with("identity") && asked[4].starts_with("identity"), "{asked:?}");
-        for (i, tag) in [(1, "id cid-1"), (2, "owner gputeer-attempt-1"), (3, "name gputeer-attempt-1")] {
+        assert!(
+            asked[0].starts_with("identity") && asked[4].starts_with("identity"),
+            "{asked:?}"
+        );
+        for (i, tag) in [
+            (1, "id cid-1"),
+            (2, "owner gputeer-attempt-1"),
+            (3, "name gputeer-attempt-1"),
+        ] {
             assert!(asked[i].starts_with(tag), "{asked:?}");
-            assert!(asked[i].ends_with("docker-host:unix:///run/docker.sock"), "고정한 대상에 묻지 않았다: {asked:?}");
+            assert!(
+                asked[i].ends_with("docker-host:unix:///run/docker.sock"),
+                "고정한 대상에 묻지 않았다: {asked:?}"
+            );
         }
     }
 
     #[test]
     fn any_presence_error_or_identity_change_is_no_evidence() {
-        for (tag, key) in [("id", "cid-1"), ("owner", "gputeer-attempt-1"), ("name", "gputeer-attempt-1")] {
+        for (tag, key) in [
+            ("id", "cid-1"),
+            ("owner", "gputeer-attempt-1"),
+            ("name", "gputeer-attempt-1"),
+        ] {
             let mut fake = Fake::absent_everywhere();
             fake.present = vec![format!("{tag}:{key}")];
             assert!(
-                matches!(startup_absence_evidence(&pinned_row(), OWNER, &fake), AutoEvidence::NotEstablished { .. }),
+                matches!(
+                    startup_absence_evidence(&pinned_row(), OWNER, &fake),
+                    AutoEvidence::NotEstablished { .. }
+                ),
                 "{tag} 에 나왔는데 증거로 봤다"
             );
             let mut fake = Fake::absent_everywhere();
-            fake.failing = Some(match tag { "id" => "id", "owner" => "owner", _ => "name" });
+            fake.failing = Some(match tag {
+                "id" => "id",
+                "owner" => "owner",
+                _ => "name",
+            });
             assert!(matches!(
                 startup_absence_evidence(&pinned_row(), OWNER, &fake),
                 AutoEvidence::NotEstablished { .. }
@@ -633,7 +726,10 @@ mod tests {
             let mut fake = Fake::absent_everywhere();
             fake.identities = RefCell::new(identities.clone());
             assert!(
-                matches!(startup_absence_evidence(&pinned_row(), OWNER, &fake), AutoEvidence::NotEstablished { .. }),
+                matches!(
+                    startup_absence_evidence(&pinned_row(), OWNER, &fake),
+                    AutoEvidence::NotEstablished { .. }
+                ),
                 "{identities:?}"
             );
         }
@@ -646,13 +742,23 @@ mod tests {
         let mut unpinned = pinned_row();
         unpinned.connection_target = None;
         unpinned.runtime_target_identity = None;
-        for (row, owner, id_recorded) in [(no_id, OWNER, false), (unpinned, OWNER, true), (pinned_row(), " ", true)] {
+        for (row, owner, id_recorded) in [
+            (no_id, OWNER, false),
+            (unpinned, OWNER, true),
+            (pinned_row(), " ", true),
+        ] {
             let fake = Fake::absent_everywhere();
             match startup_absence_evidence(&row, owner, &fake) {
-                AutoEvidence::NotEstablished { id_recorded: recorded, .. } => assert_eq!(recorded, id_recorded),
+                AutoEvidence::NotEstablished {
+                    id_recorded: recorded,
+                    ..
+                } => assert_eq!(recorded, id_recorded),
                 other => panic!("증거로 봤다: {other:?}"),
             }
-            assert!(fake.asked.borrow().is_empty(), "증거 조건이 없는데 런타임에 물었다");
+            assert!(
+                fake.asked.borrow().is_empty(),
+                "증거 조건이 없는데 런타임에 물었다"
+            );
         }
     }
 
@@ -709,7 +815,15 @@ mod tests {
             1
         )
         .is_err());
-        assert!(build_notice(&key, &row, NoticeShape::StopConfirmed(pb::RunStopEvidence::ContainerAbsentConfirmed), 0, 1, 1).is_err());
+        assert!(build_notice(
+            &key,
+            &row,
+            NoticeShape::StopConfirmed(pb::RunStopEvidence::ContainerAbsentConfirmed),
+            0,
+            1,
+            1
+        )
+        .is_err());
     }
 
     /// 해제 명령 — 확인한 ID · 고정한 대상: 로그 보존 → 그 ID 로 지움 → 새 조회 셋 → 신원 앞뒤. 남아 있던 컨테이너도 이 절차 뒤 없으면 증거다.
@@ -730,8 +844,15 @@ mod tests {
         );
         let asked = fake.asked.borrow().clone();
         let order: Vec<&str> = asked.iter().map(|a| a.split(' ').next().unwrap()).collect();
-        assert_eq!(order, ["identity", "salvage", "rm", "id", "owner", "name", "identity"], "{asked:?}");
-        assert!(asked[1].starts_with("salvage cid-1") && asked[2].starts_with("rm cid-1"), "확인한 ID 로 하지 않았다: {asked:?}");
+        assert_eq!(
+            order,
+            ["identity", "salvage", "rm", "id", "owner", "name", "identity"],
+            "{asked:?}"
+        );
+        assert!(
+            asked[1].starts_with("salvage cid-1") && asked[2].starts_with("rm cid-1"),
+            "확인한 ID 로 하지 않았다: {asked:?}"
+        );
     }
 
     /// 로그를 건지지 못하면 지우지 않는다 · rm 이 받아들이고도 남아 있으면 증거가 아니다 · 신원이 바뀌면 증거가 아니다.
@@ -741,12 +862,18 @@ mod tests {
         let mut fake = Fake::absent_everywhere();
         fake.failing = Some("salvage");
         assert!(release_evidence(&row, OWNER, None, None, &fake).is_err());
-        assert!(!fake.asked.borrow().iter().any(|a| a.starts_with("rm")), "로그를 못 건졌는데 지웠다");
+        assert!(
+            !fake.asked.borrow().iter().any(|a| a.starts_with("rm")),
+            "로그를 못 건졌는데 지웠다"
+        );
 
         let mut fake = Fake::absent_everywhere();
         fake.present = vec!["id:cid-1".into()];
         fake.failing = Some("rm-noop");
-        assert!(release_evidence(&row, OWNER, None, None, &fake).is_err(), "rm 응답만 믿었다");
+        assert!(
+            release_evidence(&row, OWNER, None, None, &fake).is_err(),
+            "rm 응답만 믿었다"
+        );
 
         let mut fake = Fake::absent_everywhere();
         fake.identities = RefCell::new(vec![Ok("docker:D1".into()), Ok("docker:D2".into())]);
@@ -761,18 +888,40 @@ mod tests {
         row.connection_target = None;
         row.runtime_target_identity = None;
         let fake = Fake::absent_everywhere();
-        let refused = release_evidence(&row, OWNER, None, Some(RuntimeEndpoint::DockerHost("unix:///x.sock".into())), &fake)
-            .unwrap_err();
-        assert!(refused.contains("RUN_RELEASE_NEEDS_OWNER_ATTESTATION"), "{refused}");
+        let refused = release_evidence(
+            &row,
+            OWNER,
+            None,
+            Some(RuntimeEndpoint::DockerHost("unix:///x.sock".into())),
+            &fake,
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("RUN_RELEASE_NEEDS_OWNER_ATTESTATION"),
+            "{refused}"
+        );
         assert!(fake.asked.borrow().is_empty(), "진술 없이 런타임에 물었다");
 
         let attestation = OwnerAttestation {
             basis: OwnerAttestBasis::RuntimeRestarted,
             statement: "데몬을 재시작했고 목록에 없다".into(),
         };
-        let empty = OwnerAttestation { basis: OwnerAttestBasis::ListedOnly, statement: "  ".into() };
-        assert!(release_evidence(&row, OWNER, Some(&empty), Some(RuntimeEndpoint::DockerHost("unix:///x.sock".into())), &fake).is_err());
-        assert!(release_evidence(&row, OWNER, Some(&attestation), None, &fake).is_err(), "물을 대상 없이 증거를 만들었다");
+        let empty = OwnerAttestation {
+            basis: OwnerAttestBasis::ListedOnly,
+            statement: "  ".into(),
+        };
+        assert!(release_evidence(
+            &row,
+            OWNER,
+            Some(&empty),
+            Some(RuntimeEndpoint::DockerHost("unix:///x.sock".into())),
+            &fake
+        )
+        .is_err());
+        assert!(
+            release_evidence(&row, OWNER, Some(&attestation), None, &fake).is_err(),
+            "물을 대상 없이 증거를 만들었다"
+        );
         let fake = Fake::absent_everywhere();
         let evidence = release_evidence(
             &row,
@@ -791,9 +940,19 @@ mod tests {
         );
         let asked = fake.asked.borrow().clone();
         let order: Vec<&str> = asked.iter().map(|a| a.split(' ').next().unwrap()).collect();
-        assert_eq!(order, ["identity", "salvage", "rm", "owner", "name", "identity"], "{asked:?}");
-        assert!(asked[1].starts_with("salvage gputeer-attempt-1"), "이름으로 하지 않았다: {asked:?}");
-        assert_eq!(OwnerAttestBasis::parse("listed-only").unwrap(), OwnerAttestBasis::ListedOnly);
+        assert_eq!(
+            order,
+            ["identity", "salvage", "rm", "owner", "name", "identity"],
+            "{asked:?}"
+        );
+        assert!(
+            asked[1].starts_with("salvage gputeer-attempt-1"),
+            "이름으로 하지 않았다: {asked:?}"
+        );
+        assert_eq!(
+            OwnerAttestBasis::parse("listed-only").unwrap(),
+            OwnerAttestBasis::ListedOnly
+        );
         assert!(OwnerAttestBasis::parse("trust-me").is_err());
     }
 
@@ -803,32 +962,66 @@ mod tests {
         let row = pinned_row();
         let mut fake = Fake::absent_everywhere();
         fake.failing = Some("running");
-        assert_eq!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::StoppedWhileRunning);
+        assert_eq!(
+            stop_if_running_at_restart(&row, &fake),
+            RunningAtRestart::StoppedWhileRunning
+        );
         let asked = fake.asked.borrow().clone();
-        assert!(asked.iter().any(|a| a.starts_with("stop cid-1 @ docker-host:")), "{asked:?}");
-        assert!(!asked.iter().any(|a| a.starts_with("rm")), "지웠다: {asked:?}");
+        assert!(
+            asked
+                .iter()
+                .any(|a| a.starts_with("stop cid-1 @ docker-host:")),
+            "{asked:?}"
+        );
+        assert!(
+            !asked.iter().any(|a| a.starts_with("rm")),
+            "지웠다: {asked:?}"
+        );
 
         let mut fake = Fake::absent_everywhere();
         fake.failing = Some("running-stuck");
-        assert!(matches!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::StopFailed(_)));
+        assert!(matches!(
+            stop_if_running_at_restart(&row, &fake),
+            RunningAtRestart::StopFailed(_)
+        ));
 
         for state in ["paused", "none"] {
             let mut fake = Fake::absent_everywhere();
             fake.failing = Some(state);
-            assert_eq!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::NotRunning, "{state}");
-            assert!(!fake.asked.borrow().iter().any(|a| a.starts_with("stop")), "{state} 를 멈췄다");
+            assert_eq!(
+                stop_if_running_at_restart(&row, &fake),
+                RunningAtRestart::NotRunning,
+                "{state}"
+            );
+            assert!(
+                !fake.asked.borrow().iter().any(|a| a.starts_with("stop")),
+                "{state} 를 멈췄다"
+            );
         }
 
         let mut fake = Fake::absent_everywhere();
         fake.failing = Some("running");
         fake.identities = RefCell::new(vec![Ok("docker:OTHER".into())]);
-        assert_eq!(stop_if_running_at_restart(&row, &fake), RunningAtRestart::NotRunning);
-        assert!(!fake.asked.borrow().iter().any(|a| a.starts_with("stop") || a.starts_with("state")), "다른 런타임의 것을 건드렸다");
+        assert_eq!(
+            stop_if_running_at_restart(&row, &fake),
+            RunningAtRestart::NotRunning
+        );
+        assert!(
+            !fake
+                .asked
+                .borrow()
+                .iter()
+                .any(|a| a.starts_with("stop") || a.starts_with("state")),
+            "다른 런타임의 것을 건드렸다"
+        );
 
         let mut no_id = pinned_row();
         no_id.container_id = None;
         let fake = Fake::absent_everywhere();
-        assert_eq!(stop_if_running_at_restart(&no_id, &fake), RunningAtRestart::NotRunning);
+        assert_eq!(
+            stop_if_running_at_restart(&no_id, &fake),
+            RunningAtRestart::NotRunning
+        );
         assert!(fake.asked.borrow().is_empty());
     }
 
@@ -849,7 +1042,10 @@ mod tests {
         let grant = pb::ExecutionGrant {
             grant_id: "grant-1".into(),
             attempt_id: "attempt-1".into(),
-            manifest: Some(pb::JobManifest { job_id: "job-1".into(), ..Default::default() }),
+            manifest: Some(pb::JobManifest {
+                job_id: "job-1".into(),
+                ..Default::default()
+            }),
             lease: Some(lease.clone()),
             ..Default::default()
         };
@@ -861,7 +1057,10 @@ mod tests {
     }
 
     fn running() -> Fake {
-        Fake { failing: Some("running"), ..Fake::absent_everywhere() }
+        Fake {
+            failing: Some("running"),
+            ..Fake::absent_everywhere()
+        }
     }
 
     /// 모든 조건이 참이면 후보 — 신원 · 상태만 묻고 아무것도 바꾸지 않는다.
@@ -869,7 +1068,9 @@ mod tests {
     fn a_running_container_with_full_matching_inputs_is_a_reattach_candidate() {
         let now = 1_000_000;
         let fake = running();
-        let ReattachVerdict::Candidate(inputs) = evaluate_reattach(&reattach_row(now), &fake, false, now) else {
+        let ReattachVerdict::Candidate(inputs) =
+            evaluate_reattach(&reattach_row(now), &fake, false, now)
+        else {
             panic!("후보여야 한다");
         };
         assert_eq!(inputs.container_id, "cid-1");
@@ -877,14 +1078,21 @@ mod tests {
         assert_eq!(inputs.self_stop_at_unix_ms, now + 30_000);
         let asked = fake.asked.borrow().clone();
         assert_eq!(asked.len(), 2, "{asked:?}");
-        assert!(asked.iter().all(|a| a.starts_with("identity") || a.starts_with("state")), "판정이 명령을 보냈다: {asked:?}");
+        assert!(
+            asked
+                .iter()
+                .all(|a| a.starts_with("identity") || a.starts_with("state")),
+            "판정이 명령을 보냈다: {asked:?}"
+        );
     }
 
     /// 후보가 아닌 경우 — 각 조건이 따로 막는다. 대상을 확인하지 못한 경우만 stop 도 허락하지 않는다(v18o ②).
     #[test]
     fn each_condition_alone_blocks_reattach_and_only_a_confirmed_target_may_be_stopped() {
         let now = 1_000_000;
-        let verdict = |row: AttemptRow, fake: &Fake, incident: bool| match evaluate_reattach(&row, fake, incident, now) {
+        let verdict = |row: AttemptRow, fake: &Fake, incident: bool| match evaluate_reattach(
+            &row, fake, incident, now,
+        ) {
             ReattachVerdict::NotCandidate { why, stop_allowed } => (why, stop_allowed),
             ReattachVerdict::Candidate(_) => panic!("후보가 아니어야 한다"),
         };
@@ -901,15 +1109,31 @@ mod tests {
         other_fence.fence_epoch = Some(5);
         assert!(verdict(other_fence, &running(), false).0.contains("③"));
         // 대상 신원이 다르다 — 아무 명령도 보내지 않는다
-        let other_daemon = Fake { identities: RefCell::new(vec![Ok("docker:OTHER".into())]), ..running() };
+        let other_daemon = Fake {
+            identities: RefCell::new(vec![Ok("docker:OTHER".into())]),
+            ..running()
+        };
         let (why, stop_allowed) = verdict(reattach_row(now), &other_daemon, false);
         assert!(why.contains("④") && !stop_allowed, "{why}");
-        assert!(!other_daemon.asked.borrow().iter().any(|a| a.starts_with("state")), "신원이 다른 대상의 상태를 물었다");
+        assert!(
+            !other_daemon
+                .asked
+                .borrow()
+                .iter()
+                .any(|a| a.starts_with("state")),
+            "신원이 다른 대상의 상태를 물었다"
+        );
         // 신원을 묻지 못했다 — 역시 명령 없음
-        let unreachable = Fake { identities: RefCell::new(vec![Err("daemon down".into())]), ..running() };
+        let unreachable = Fake {
+            identities: RefCell::new(vec![Err("daemon down".into())]),
+            ..running()
+        };
         assert!(!verdict(reattach_row(now), &unreachable, false).1);
         // 얼림 · 멈춤은 후보가 아니지만 대상은 확인됐다
-        let paused = Fake { failing: Some("paused"), ..Fake::absent_everywhere() };
+        let paused = Fake {
+            failing: Some("paused"),
+            ..Fake::absent_everywhere()
+        };
         let (why, stop_allowed) = verdict(reattach_row(now), &paused, false);
         assert!(why.contains("⑤") && stop_allowed, "{why}");
         // 시한이 지났다 · Lease 가 로컬로 만료 — 묻지 않고 stop(v18j ②)
@@ -918,4 +1142,3 @@ mod tests {
         assert!(verdict(late, &running(), false).0.contains("v18j"));
     }
 }
-

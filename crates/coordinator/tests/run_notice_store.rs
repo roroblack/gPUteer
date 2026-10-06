@@ -27,7 +27,8 @@ const ATTEMPT_ID: &str = "attempt-1";
 const LEASE_ID: &str = "lease-1";
 const NODE_ID: &str = "node-1";
 const NOW: u64 = 4_000;
-const VERIFIED_DIR: KeyDirectoryProvenance = KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller;
+const VERIFIED_DIR: KeyDirectoryProvenance =
+    KeyDirectoryProvenance::AuthoritativeDirectoryVerifiedByCaller;
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -125,7 +126,6 @@ fn prepare_fixture() -> Fixture {
     Fixture { _dir: dir, path }
 }
 
-
 fn attempt_state(path: &Path, attempt_id: &str) -> AttemptState {
     CoordinatorStagingStore::open(path)
         .unwrap()
@@ -176,7 +176,11 @@ fn lease_revoked(path: &Path) -> bool {
 fn notice_rows(path: &Path) -> i64 {
     rusqlite::Connection::open(path)
         .unwrap()
-        .query_row("SELECT COUNT(*) FROM coordinator_attempt_run_notices", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM coordinator_attempt_run_notices",
+            [],
+            |row| row.get(0),
+        )
         .unwrap_or(0)
 }
 
@@ -195,8 +199,16 @@ fn notice(
         node_id: NODE_ID.into(),
         fence_epoch,
         kind: kind as i32,
-        origin: if stop { 0 } else { pb::RunUnknownOrigin::Running as i32 },
-        reason: if stop { 0 } else { pb::RunUnknownReason::ExitUnobserved as i32 },
+        origin: if stop {
+            0
+        } else {
+            pb::RunUnknownOrigin::Running as i32
+        },
+        reason: if stop {
+            0
+        } else {
+            pb::RunUnknownReason::ExitUnobserved as i32
+        },
         stop_evidence: if stop {
             pb::RunStopEvidence::ContainerAbsentConfirmed as i32
         } else {
@@ -210,8 +222,14 @@ fn notice(
     notice.node_signature = sign(&key, &notice).to_vec();
     let mut keys = InMemoryKeyring::new();
     keys.insert(NODE_ID, key.verifying_key());
-    verify(&notice, 1, &Ed25519Verifier::new(keys), 999, &mut NoReplayCheck)
-        .expect("시험 알림은 서명 검증을 통과해야 한다")
+    verify(
+        &notice,
+        1,
+        &Ed25519Verifier::new(keys),
+        999,
+        &mut NoReplayCheck,
+    )
+    .expect("시험 알림은 서명 검증을 통과해야 한다")
 }
 
 fn stop(path: &Path, sequence: u64) -> Verified<pb::AttemptRunNotice> {
@@ -223,7 +241,8 @@ fn accept_with(
     verified: &Verified<pb::AttemptRunNotice>,
     resume: Option<Vec<u8>>,
 ) -> Result<gputeer_coordinator::run_notice_store::RunNoticeAccepted, RunNoticeError> {
-    let mut finder = move |_: &rusqlite::Connection, _: &gputeer_coordinator::job_store::StoredJob| {
+    let mut finder = move |_: &rusqlite::Connection,
+                           _: &gputeer_coordinator::job_store::StoredJob| {
         Ok(resume.clone())
     };
     CoordinatorRunNoticeStore::open(path).unwrap().accept(
@@ -239,7 +258,10 @@ fn accept_with(
 ///   이어갈 지점이 있으면 Job 은 큐로, 없으면 FAILED(NO_COMMITTED_CHECKPOINT).
 #[test]
 fn a_stop_closes_the_attempt_moves_the_job_revokes_the_lease_and_releases_in_one_commit() {
-    for (resume, expected_job) in [(Some(vec![1, 2]), JobState::Queued), (None, JobState::Failed)] {
+    for (resume, expected_job) in [
+        (Some(vec![1, 2]), JobState::Queued),
+        (None, JobState::Failed),
+    ] {
         let fixture = prepare_fixture();
         let verified = stop(&fixture.path, 1);
         let accepted = accept_with(&fixture.path, &verified, resume.clone()).unwrap();
@@ -257,8 +279,15 @@ fn a_stop_closes_the_attempt_moves_the_job_revokes_the_lease_and_releases_in_one
         };
         assert_eq!(done.attempt_state_before, AttemptState::Created);
         assert!(done.attempt_closed && done.latest_attempt);
-        assert!(matches!(done.release, ReleaseOutcome::Released(_)), "{:?}", done.release);
-        assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+        assert!(
+            matches!(done.release, ReleaseOutcome::Released(_)),
+            "{:?}",
+            done.release
+        );
+        assert_eq!(
+            attempt_state(&fixture.path, ATTEMPT_ID),
+            AttemptState::Failed
+        );
         assert_eq!(job_state(&fixture.path), expected_job, "{resume:?}");
         assert!(lease_revoked(&fixture.path));
         assert!(!reservation_exists(&fixture.path));
@@ -269,7 +298,10 @@ fn a_stop_closes_the_attempt_moves_the_job_revokes_the_lease_and_releases_in_one
             .unwrap()
             .unwrap();
         assert_eq!(release.evidence[0].kind, ReleaseEvidenceKind::StopConfirmed);
-        assert_eq!(release.evidence[0].hash, accepted.notice_hash, "해제 근거 해시 = ACK 의 notice_hash");
+        assert_eq!(
+            release.evidence[0].hash, accepted.notice_hash,
+            "해제 근거 해시 = ACK 의 notice_hash"
+        );
     }
 }
 
@@ -283,7 +315,12 @@ fn a_resend_is_idempotent_and_other_bytes_on_the_same_sequence_are_refused() {
     assert!(!again.created);
     assert_eq!(again.effect, RunNoticeEffect::Duplicate);
     assert_eq!(notice_rows(&fixture.path), 1);
-    let other = notice(fence(&fixture.path), pb::RunNoticeKind::StopConfirmed, 1, 999);
+    let other = notice(
+        fence(&fixture.path),
+        pb::RunNoticeKind::StopConfirmed,
+        1,
+        999,
+    );
     assert_eq!(
         accept_with(&fixture.path, &other, None),
         Err(RunNoticeError::SequenceConflict { sequence: 1 })
@@ -302,9 +339,19 @@ fn a_run_unknown_holds_the_job_and_a_later_stop_releases_it() {
         panic!("불명 처리여야 한다: {accepted:?}");
     };
     assert!(applied.attempt_moved && applied.hold_installed && applied.latest_attempt);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
-    assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]);
-    assert_eq!(job_state(&fixture.path), JobState::Staging, "불명은 Job 상태를 옮기지 않는다");
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::RunUnknown
+    );
+    assert_eq!(
+        holds(&fixture.path),
+        vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]
+    );
+    assert_eq!(
+        job_state(&fixture.path),
+        JobState::Staging,
+        "불명은 Job 상태를 옮기지 않는다"
+    );
     assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
     assert_eq!(
         accept_with(&fixture.path, &stop(&fixture.path, 2), None),
@@ -325,8 +372,14 @@ fn a_run_unknown_holds_the_job_and_a_later_stop_releases_it() {
     };
     assert_eq!(processed.attempt_state_before, AttemptState::RunUnknown);
     assert_eq!(processed.holds_released, 1);
-    assert!(holds(&fixture.path).is_empty(), "정지 확인이 보류를 풀지 않았다");
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    assert!(
+        holds(&fixture.path).is_empty(),
+        "정지 확인이 보류를 풀지 않았다"
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed
+    );
     assert!(!reservation_exists(&fixture.path));
 }
 
@@ -362,9 +415,19 @@ fn a_late_stop_for_an_older_attempt_does_not_touch_the_job() {
     };
     assert!(!done.latest_attempt);
     assert_eq!(done.job, None);
-    assert_eq!(job_state(&fixture.path), before, "늦은 도착이 Job 을 옮겼다");
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
-    assert_eq!(attempt_state(&fixture.path, "attempt-new"), AttemptState::Created);
+    assert_eq!(
+        job_state(&fixture.path),
+        before,
+        "늦은 도착이 Job 을 옮겼다"
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, "attempt-new"),
+        AttemptState::Created
+    );
     assert!(lease_revoked(&fixture.path));
     assert!(!reservation_exists(&fixture.path));
 }
@@ -387,7 +450,10 @@ fn a_stop_for_an_already_finished_attempt_only_cleans_up_resources() {
     };
     assert!(!done.attempt_closed);
     assert_eq!(done.job, None);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Completed);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Completed
+    );
     assert_eq!(job_state(&fixture.path), before);
     assert!(lease_revoked(&fixture.path));
     assert!(!reservation_exists(&fixture.path));
@@ -398,21 +464,45 @@ fn a_stop_for_an_already_finished_attempt_only_cleans_up_resources() {
 fn every_refusal_leaves_nothing_behind() {
     let fixture = prepare_fixture();
     let good = stop(&fixture.path, 1);
-    let mut finder = |_: &rusqlite::Connection, _: &gputeer_coordinator::job_store::StoredJob| {
-        Ok(None)
-    };
+    let mut finder =
+        |_: &rusqlite::Connection, _: &gputeer_coordinator::job_store::StoredJob| Ok(None);
     let mut store = CoordinatorRunNoticeStore::open(&fixture.path).unwrap();
     assert_eq!(
-        store.accept(&good, RuntimeStopProof::NodeConfirmedStop, KeyDirectoryProvenance::Unverified, &mut finder, NOW),
+        store.accept(
+            &good,
+            RuntimeStopProof::NodeConfirmedStop,
+            KeyDirectoryProvenance::Unverified,
+            &mut finder,
+            NOW
+        ),
         Err(RunNoticeError::KeyDirectoryNotVerified)
     );
-    let wrong_fence = notice(fence(&fixture.path) + 1, pb::RunNoticeKind::StopConfirmed, 1, 350);
+    let wrong_fence = notice(
+        fence(&fixture.path) + 1,
+        pb::RunNoticeKind::StopConfirmed,
+        1,
+        350,
+    );
     assert_eq!(
-        store.accept(&wrong_fence, RuntimeStopProof::NodeConfirmedStop, VERIFIED_DIR, &mut finder, NOW),
-        Err(RunNoticeError::AttemptIdentityMismatch { attempt_id: ATTEMPT_ID.into() })
+        store.accept(
+            &wrong_fence,
+            RuntimeStopProof::NodeConfirmedStop,
+            VERIFIED_DIR,
+            &mut finder,
+            NOW
+        ),
+        Err(RunNoticeError::AttemptIdentityMismatch {
+            attempt_id: ATTEMPT_ID.into()
+        })
     );
     assert!(matches!(
-        store.accept(&good, RuntimeStopProof::ObservedExitInSignedReport, VERIFIED_DIR, &mut finder, NOW),
+        store.accept(
+            &good,
+            RuntimeStopProof::ObservedExitInSignedReport,
+            VERIFIED_DIR,
+            &mut finder,
+            NOW
+        ),
         Err(RunNoticeError::Release(_))
     ));
     let mut broken = |_: &rusqlite::Connection, _: &gputeer_coordinator::job_store::StoredJob| {
@@ -420,12 +510,23 @@ fn every_refusal_leaves_nothing_behind() {
     };
     // fixture 의 Job 은 STAGING 이라 지점 찾기를 부른다
     assert_eq!(
-        store.accept(&good, RuntimeStopProof::NodeConfirmedStop, VERIFIED_DIR, &mut broken, NOW),
-        Err(RunNoticeError::ResumeLookup("공유 저장소를 읽지 못했다".into()))
+        store.accept(
+            &good,
+            RuntimeStopProof::NodeConfirmedStop,
+            VERIFIED_DIR,
+            &mut broken,
+            NOW
+        ),
+        Err(RunNoticeError::ResumeLookup(
+            "공유 저장소를 읽지 못했다".into()
+        ))
     );
     drop(store);
     assert_eq!(notice_rows(&fixture.path), 0, "거부했는데 알림 행이 남았다");
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Created);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Created
+    );
     assert_eq!(job_state(&fixture.path), JobState::Staging);
     assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
 }
@@ -434,7 +535,12 @@ fn every_refusal_leaves_nothing_behind() {
 
 const COORD_SEED: [u8; 32] = [9; 32];
 
-fn context<'a>(path: &'a Path, node: &'a str, key_directory: KeyDirectoryProvenance, nonce: &'a [u8]) -> RunNoticeAnswerContext<'a> {
+fn context<'a>(
+    path: &'a Path,
+    node: &'a str,
+    key_directory: KeyDirectoryProvenance,
+    nonce: &'a [u8],
+) -> RunNoticeAnswerContext<'a> {
     RunNoticeAnswerContext {
         control_db: path,
         coordinator_id: "coordinator-1",
@@ -460,37 +566,91 @@ fn a_processed_notice_is_answered_with_a_signed_ack_that_echoes_its_hash_and_ses
     let nonce = vec![7u8; 16];
     // 권위 없는 키 디렉터리 · 다른 노드 — 거부 · 아무것도 남지 않는다
     assert!(matches!(
-        answer_run_notice(&context(&fixture.path, NODE_ID, KeyDirectoryProvenance::Unverified, &nonce), &key, &verified),
+        answer_run_notice(
+            &context(
+                &fixture.path,
+                NODE_ID,
+                KeyDirectoryProvenance::Unverified,
+                &nonce
+            ),
+            &key,
+            &verified
+        ),
         Err(RunNoticeAnswerError::Rejected(_))
     ));
     assert!(matches!(
-        answer_run_notice(&context(&fixture.path, "node-other", VERIFIED_DIR, &nonce), &key, &verified),
+        answer_run_notice(
+            &context(&fixture.path, "node-other", VERIFIED_DIR, &nonce),
+            &key,
+            &verified
+        ),
         Err(RunNoticeAnswerError::Rejected(_))
     ));
     assert_eq!(notice_rows(&fixture.path), 0);
     assert!(reservation_exists(&fixture.path));
 
-    let (ack, accepted) = answer_run_notice(&context(&fixture.path, NODE_ID, VERIFIED_DIR, &nonce), &key, &verified).unwrap();
+    let (ack, accepted) = answer_run_notice(
+        &context(&fixture.path, NODE_ID, VERIFIED_DIR, &nonce),
+        &key,
+        &verified,
+    )
+    .unwrap();
     assert!(ack.created && accepted.created);
-    let expected_hash = gputeer_protocol::canonical::blake3_256(&gputeer_protocol::signing::signing_input(verified.get()));
-    assert_eq!(ack.notice_hash.as_ref().map(|d| (d.algo, d.value.clone())), Some((1, expected_hash.to_vec())));
+    let expected_hash = gputeer_protocol::canonical::blake3_256(
+        &gputeer_protocol::signing::signing_input(verified.get()),
+    );
     assert_eq!(
-        (ack.attempt_id.as_str(), ack.node_id.as_str(), ack.fence_epoch, ack.sequence, ack.kind),
-        (ATTEMPT_ID, NODE_ID, fence(&fixture.path), 1, pb::RunNoticeKind::StopConfirmed as i32)
+        ack.notice_hash.as_ref().map(|d| (d.algo, d.value.clone())),
+        Some((1, expected_hash.to_vec()))
+    );
+    assert_eq!(
+        (
+            ack.attempt_id.as_str(),
+            ack.node_id.as_str(),
+            ack.fence_epoch,
+            ack.sequence,
+            ack.kind
+        ),
+        (
+            ATTEMPT_ID,
+            NODE_ID,
+            fence(&fixture.path),
+            1,
+            pb::RunNoticeKind::StopConfirmed as i32
+        )
     );
     assert_eq!(ack.session_nonce, nonce);
     assert_eq!(ack.coordinator_id, "coordinator-1");
     // 서명은 Coordinator 키로 검증된다(ShortLived · replay nonce = session_nonce)
     let mut keys = InMemoryKeyring::new();
     keys.insert("coordinator-1", key.verifying_key());
-    verify(&ack, 1, &Ed25519Verifier::new(keys), NOW, &mut NoReplayCheck).expect("ACK 서명이 검증돼야 한다");
+    verify(
+        &ack,
+        1,
+        &Ed25519Verifier::new(keys),
+        NOW,
+        &mut NoReplayCheck,
+    )
+    .expect("ACK 서명이 검증돼야 한다");
     gputeer_protocol::attempt_run_notice_rules::validate_attempt_run_notice_ack(&ack).unwrap();
-    assert!(!reservation_exists(&fixture.path), "처리를 마친 뒤에 답했다 — 예약이 풀렸다");
+    assert!(
+        !reservation_exists(&fixture.path),
+        "처리를 마친 뒤에 답했다 — 예약이 풀렸다"
+    );
 
-    let (again, _) = answer_run_notice(&context(&fixture.path, NODE_ID, VERIFIED_DIR, &[8u8; 16]), &key, &verified).unwrap();
+    let (again, _) = answer_run_notice(
+        &context(&fixture.path, NODE_ID, VERIFIED_DIR, &[8u8; 16]),
+        &key,
+        &verified,
+    )
+    .unwrap();
     assert!(!again.created, "재전송인데 처음이라고 답했다");
     assert_eq!(again.notice_hash, ack.notice_hash);
-    assert_eq!(again.session_nonce, vec![8u8; 16], "세션마다 그 세션의 nonce 를 echo 한다");
+    assert_eq!(
+        again.session_nonce,
+        vec![8u8; 16],
+        "세션마다 그 세션의 nonce 를 echo 한다"
+    );
 }
 
 // ─── ★ 조각 6a — 불명의 효과(계약 §2 전이 표) ─────────────────────────────────
@@ -509,7 +669,9 @@ fn events(path: &Path) -> Vec<String> {
     let mut statement = connection
         .prepare("SELECT event FROM coordinator_run_notice_events ORDER BY rowid")
         .unwrap();
-    let rows = statement.query_map([], |row| row.get::<_, String>(0)).unwrap();
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap();
     rows.map(|row| row.unwrap()).collect()
 }
 
@@ -528,7 +690,10 @@ fn insert_newer_attempt(path: &Path) {
         )
         .unwrap();
     connection
-        .execute("INSERT INTO coordinator_attempt_nodes VALUES ('attempt-new', 'node-9', 0)", [])
+        .execute(
+            "INSERT INTO coordinator_attempt_nodes VALUES ('attempt-new', 'node-9', 0)",
+            [],
+        )
         .unwrap();
 }
 
@@ -544,7 +709,10 @@ fn a_late_run_unknown_for_an_older_attempt_only_records_a_duplicate_risk() {
     };
     assert!(!applied.latest_attempt && !applied.attempt_moved && !applied.hold_installed);
     assert_eq!(applied.events, vec!["DUPLICATE_RISK"]);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Created);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Created
+    );
     assert!(holds(&fixture.path).is_empty());
     assert_eq!(events(&fixture.path), vec!["DUPLICATE_RISK".to_string()]);
 }
@@ -555,7 +723,10 @@ fn a_run_unknown_for_a_finished_attempt_holds_a_live_job_and_asks_a_human() {
     let fixture = prepare_fixture();
     rusqlite::Connection::open(&fixture.path)
         .unwrap()
-        .execute("UPDATE coordinator_attempts SET state = 'COMPLETED' WHERE attempt_id = ?1", [ATTEMPT_ID])
+        .execute(
+            "UPDATE coordinator_attempts SET state = 'COMPLETED' WHERE attempt_id = ?1",
+            [ATTEMPT_ID],
+        )
         .unwrap();
     let unknown = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300);
     let accepted = accept_with(&fixture.path, &unknown, None).unwrap();
@@ -564,7 +735,10 @@ fn a_run_unknown_for_a_finished_attempt_holds_a_live_job_and_asks_a_human() {
     };
     assert!(!applied.attempt_moved && applied.hold_installed);
     assert_eq!(applied.events, vec!["RECONCILE_NEEDED"]);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Completed);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Completed
+    );
     assert_eq!(holds(&fixture.path).len(), 1);
     let done = accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
     let RunNoticeEffect::StopProcessed(processed) = &done.effect else {
@@ -579,7 +753,10 @@ fn a_run_unknown_for_a_finished_attempt_holds_a_live_job_and_asks_a_human() {
 fn after_a_stop_a_lower_unknown_is_absorbed_and_a_higher_one_holds_again() {
     let fixture = prepare_fixture();
     accept_with(&fixture.path, &stop(&fixture.path, 5), None).unwrap();
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed
+    );
     // 번호 2 의 불명은 STOP(5) 보다 낮다 — 순번 규칙은 STOP 에만 걸리므로 저장은 되고 효과는 없다
     let low = notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 2, 300);
     let accepted = accept_with(&fixture.path, &low, None).unwrap();
@@ -587,7 +764,10 @@ fn after_a_stop_a_lower_unknown_is_absorbed_and_a_higher_one_holds_again() {
         panic!("불명 처리여야 한다");
     };
     assert!(!applied.hold_installed && applied.events.is_empty());
-    assert!(holds(&fixture.path).is_empty(), "늦은 옛 불명이 보류를 걸었다");
+    assert!(
+        holds(&fixture.path).is_empty(),
+        "늦은 옛 불명이 보류를 걸었다"
+    );
     // Job 은 이미 큐(이어갈 지점 없음 → FAILED) — 최종이면 보류를 걸지 않는다. Job 을 다시 비최종으로 두고 본다
     rusqlite::Connection::open(&fixture.path)
         .unwrap()
@@ -601,8 +781,15 @@ fn after_a_stop_a_lower_unknown_is_absorbed_and_a_higher_one_holds_again() {
     let RunNoticeEffect::RunUnknownApplied(applied) = &accepted.effect else {
         panic!("불명 처리여야 한다");
     };
-    assert!(applied.hold_installed, "STOP 뒤의 더 높은 불명이 보류를 걸지 않았다");
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed, "흡수 상태가 되돌려졌다");
+    assert!(
+        applied.hold_installed,
+        "STOP 뒤의 더 높은 불명이 보류를 걸지 않았다"
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed,
+        "흡수 상태가 되돌려졌다"
+    );
     let done = accept_with(&fixture.path, &stop(&fixture.path, 8), None).unwrap();
     assert!(matches!(done.effect, RunNoticeEffect::StopProcessed(ref p) if p.holds_released == 1));
     assert!(holds(&fixture.path).is_empty());
@@ -624,18 +811,29 @@ fn a_same_attempt_unreported_hold_is_replaced_and_other_attempts_holds_stay() {
                 .unwrap();
         }
     }
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     assert_eq!(
         holds(&fixture.path),
         vec![
             (ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string()),
-            ("attempt-other".to_string(), "UNREPORTED_SIDE_EFFECT_RISK".to_string()),
+            (
+                "attempt-other".to_string(),
+                "UNREPORTED_SIDE_EFFECT_RISK".to_string()
+            ),
         ]
     );
     accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
     assert_eq!(
         holds(&fixture.path),
-        vec![("attempt-other".to_string(), "UNREPORTED_SIDE_EFFECT_RISK".to_string())],
+        vec![(
+            "attempt-other".to_string(),
+            "UNREPORTED_SIDE_EFFECT_RISK".to_string()
+        )],
         "다른 시도의 보류까지 풀었다"
     );
 }
@@ -742,16 +940,26 @@ fn a_held_job_is_not_schedulable_and_the_last_gate_refuses_a_new_attempt() {
         .into_iter()
         .map(|job| job.job_id)
         .collect();
-    assert!(!schedulable.contains(&"job-2".to_string()), "보류된 Job 을 후보로 골랐다: {schedulable:?}");
+    assert!(
+        !schedulable.contains(&"job-2".to_string()),
+        "보류된 Job 을 후보로 골랐다: {schedulable:?}"
+    );
     let refused = stage_second(&fixture.path).unwrap_err();
     assert!(refused.contains("JobHeld"), "{refused}");
     assert!(
-        CoordinatorStagingStore::open(&fixture.path).unwrap().get_attempt("attempt-2").unwrap().is_none(),
+        CoordinatorStagingStore::open(&fixture.path)
+            .unwrap()
+            .get_attempt("attempt-2")
+            .unwrap()
+            .is_none(),
         "막혔는데 시도가 남았다"
     );
     rusqlite::Connection::open(&fixture.path)
         .unwrap()
-        .execute("DELETE FROM coordinator_job_holds WHERE job_id = 'job-2'", [])
+        .execute(
+            "DELETE FROM coordinator_job_holds WHERE job_id = 'job-2'",
+            [],
+        )
         .unwrap();
     assert!(CoordinatorJobStore::open(&fixture.path)
         .unwrap()
@@ -766,7 +974,12 @@ fn a_held_job_is_not_schedulable_and_the_last_gate_refuses_a_new_attempt() {
 #[test]
 fn failover_never_requeues_a_job_whose_attempt_is_run_unknown() {
     let fixture = prepare_fixture();
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     let mut notes = Vec::new();
     let outcomes = gputeer_coordinator::failover::failover_lost_attempts(
         &fixture.path,
@@ -783,8 +996,14 @@ fn failover_never_requeues_a_job_whose_attempt_is_run_unknown() {
         &mut notes,
     )
     .unwrap();
-    assert!(outcomes.is_empty(), "불명인 시도의 Job 을 되돌렸다: {outcomes:?}");
-    assert!(notes.iter().any(|n| n.starts_with("FAILOVER_HELD")), "{notes:?}");
+    assert!(
+        outcomes.is_empty(),
+        "불명인 시도의 Job 을 되돌렸다: {outcomes:?}"
+    );
+    assert!(
+        notes.iter().any(|n| n.starts_with("FAILOVER_HELD")),
+        "{notes:?}"
+    );
     assert_eq!(job_state(&fixture.path), JobState::Staging);
     assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
 }
@@ -793,13 +1012,23 @@ fn failover_never_requeues_a_job_whose_attempt_is_run_unknown() {
 #[test]
 fn release_lost_node_refuses_a_held_job() {
     let fixture = prepare_fixture();
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     // 판정(시도 대체 · Job 이 넘어감)은 지나게 한다 — Job 을 큐로
     rusqlite::Connection::open(&fixture.path)
         .unwrap()
         .execute("UPDATE coordinator_jobs SET state = 'QUEUED', staging_at_unix_ms = NULL WHERE job_id = ?1", [JOB_ID])
         .unwrap();
-    let refused = match gputeer_coordinator::failover::release_lost_node_by_operator(&fixture.path, NODE_ID, "운영자: 확인했다", NOW) {
+    let refused = match gputeer_coordinator::failover::release_lost_node_by_operator(
+        &fixture.path,
+        NODE_ID,
+        "운영자: 확인했다",
+        NOW,
+    ) {
         Ok(_) => panic!("보류된 Job 의 예약을 풀었다"),
         Err(refused) => refused,
     };
@@ -833,23 +1062,43 @@ fn lease_expires_at(path: &Path) -> u64 {
 fn a_held_lease_is_neither_renewed_nor_resumed_even_after_it_expires() {
     use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, RenewDecision, ResumeDecision};
     let fixture = prepare_fixture();
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     let mut leases = CoordinatorLeaseStore::open(&fixture.path).unwrap();
-    match leases.renew_existing_within_duration(LEASE_ID, 400, 5_000, 2_000).unwrap() {
+    match leases
+        .renew_existing_within_duration(LEASE_ID, 400, 5_000, 2_000)
+        .unwrap()
+    {
         RenewDecision::RunUnknownHeld(stored) => assert_eq!(stored.attempt_id, ATTEMPT_ID),
         other => panic!("보류된 Lease 를 갱신 판정했다: {other:?}"),
     }
-    assert_eq!(lease_expires_at(&fixture.path), 900, "보류된 Lease 의 만료시각이 늘었다");
+    assert_eq!(
+        lease_expires_at(&fixture.path),
+        900,
+        "보류된 Lease 의 만료시각이 늘었다"
+    );
     for now in [400, 900, 5_000] {
-        match leases.classify_resume(&resume_identity(&fixture.path), now).unwrap() {
+        match leases
+            .classify_resume(&resume_identity(&fixture.path), now)
+            .unwrap()
+        {
             ResumeDecision::RunUnknownHeld { stored } => assert_eq!(stored.lease_id, LEASE_ID),
             other => panic!("now={now} 보류된 Lease 를 Resume 판정했다: {other:?}"),
         }
     }
-    assert!(leases.is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap()).unwrap());
+    assert!(leases
+        .is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap())
+        .unwrap());
     // 정지 확인이 보류를 풀면 HELD 가 아니다 — 시도는 FAILED · Lease 는 폐기됐으니 REVOKED 다
     accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
-    match leases.classify_resume(&resume_identity(&fixture.path), 400).unwrap() {
+    match leases
+        .classify_resume(&resume_identity(&fixture.path), 400)
+        .unwrap()
+    {
         ResumeDecision::Revoked { .. } => {}
         other => panic!("정지 확인 뒤에는 REVOKED 여야 한다: {other:?}"),
     }
@@ -858,17 +1107,35 @@ fn a_held_lease_is_neither_renewed_nor_resumed_even_after_it_expires() {
 /// 순서 B(failover 가 먼저 Lease 를 폐기) — 그 뒤 불명이 와도 갱신 · Resume 은 REVOKED 그대로다(HELD 로 바꾸지 않는다).
 #[test]
 fn a_lease_revoked_before_the_notice_stays_revoked() {
-    use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, LeaseStoreError, ResumeDecision};
+    use gputeer_coordinator::lease_store::{
+        CoordinatorLeaseStore, LeaseStoreError, ResumeDecision,
+    };
     let fixture = prepare_fixture();
-    CoordinatorLeaseStore::open(&fixture.path).unwrap().mark_revoked(LEASE_ID, 250).unwrap();
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    CoordinatorLeaseStore::open(&fixture.path)
+        .unwrap()
+        .mark_revoked(LEASE_ID, 250)
+        .unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::RunUnknown
+    );
     let mut leases = CoordinatorLeaseStore::open(&fixture.path).unwrap();
     match leases.renew_existing_within_duration(LEASE_ID, 400, 5_000, 2_000) {
-        Err(LeaseStoreError::Revoked { revoked_at_unix_ms: 250 }) => {}
+        Err(LeaseStoreError::Revoked {
+            revoked_at_unix_ms: 250,
+        }) => {}
         other => panic!("폐기된 Lease 는 REVOKED 여야 한다: {other:?}"),
     }
-    match leases.classify_resume(&resume_identity(&fixture.path), 400).unwrap() {
+    match leases
+        .classify_resume(&resume_identity(&fixture.path), 400)
+        .unwrap()
+    {
         ResumeDecision::Revoked { .. } => {}
         other => panic!("폐기된 Lease 는 REVOKED 여야 한다: {other:?}"),
     }
@@ -878,12 +1145,20 @@ fn a_lease_revoked_before_the_notice_stays_revoked() {
 #[test]
 fn the_first_progress_signal_does_not_move_a_run_unknown_attempt() {
     let fixture = prepare_fixture();
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     CoordinatorStagingStore::open(&fixture.path)
         .unwrap()
         .record_process_started(LEASE_ID, 400)
         .unwrap();
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::RunUnknown
+    );
     assert_eq!(job_state(&fixture.path), JobState::Staging);
 }
 
@@ -893,11 +1168,16 @@ fn a_lease_without_a_held_attempt_is_still_renewed() {
     use gputeer_coordinator::lease_store::{CoordinatorLeaseStore, RenewDecision};
     let fixture = prepare_fixture();
     let mut leases = CoordinatorLeaseStore::open(&fixture.path).unwrap();
-    match leases.renew_existing_within_duration(LEASE_ID, 400, 950, 700).unwrap() {
+    match leases
+        .renew_existing_within_duration(LEASE_ID, 400, 950, 700)
+        .unwrap()
+    {
         RenewDecision::Renewed(stored) => assert_eq!(stored.expires_at_unix_ms, 950),
         other => panic!("보류 없는 Lease 를 갱신하지 않았다: {other:?}"),
     }
-    assert!(!leases.is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap()).unwrap());
+    assert!(!leases
+        .is_run_unknown_held(&leases.get(LEASE_ID).unwrap().unwrap())
+        .unwrap());
 }
 
 // ─── ★ 조각 6d — RUN_UNKNOWN 시도에 온 종료 보고는 증거로만(계약 §2 "옛 형식 보고와의 관계" · 시험 6) ─────────
@@ -920,15 +1200,22 @@ fn signed_report(path: &Path, outcome: pb::AttemptOutcome) -> Verified<pb::Attem
     report.node_signature = sign(&key, &report).to_vec();
     let mut keys = InMemoryKeyring::new();
     keys.insert(NODE_ID, key.verifying_key());
-    verify(&report, 1, &Ed25519Verifier::new(keys), 999, &mut NoReplayCheck)
-        .expect("시험 보고는 서명 검증을 통과해야 한다")
+    verify(
+        &report,
+        1,
+        &Ed25519Verifier::new(keys),
+        999,
+        &mut NoReplayCheck,
+    )
+    .expect("시험 보고는 서명 검증을 통과해야 한다")
 }
 
 fn fully_authorized() -> gputeer_coordinator::reservation_release::ReleaseAuthorization {
     gputeer_coordinator::reservation_release::ReleaseAuthorization {
         runtime_stop: RuntimeStopProof::ProvenByCaller,
         key_directory: VERIFIED_DIR,
-        artifact_durability: gputeer_coordinator::reservation_release::ArtifactDurabilityGuard::SatisfiedByCaller,
+        artifact_durability:
+            gputeer_coordinator::reservation_release::ArtifactDurabilityGuard::SatisfiedByCaller,
     }
 }
 
@@ -939,37 +1226,79 @@ fn a_report_for_a_run_unknown_attempt_is_kept_as_evidence_only() {
     use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
     for outcome in [pb::AttemptOutcome::Failed, pb::AttemptOutcome::Completed] {
         let fixture = prepare_fixture();
-        accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+        accept_with(
+            &fixture.path,
+            &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+            None,
+        )
+        .unwrap();
         let report = signed_report(&fixture.path, outcome);
         let mut reports = CoordinatorAttemptReportStore::open(&fixture.path).unwrap();
         let stored = reports
             .store_verified_terminal_report_and_release(&report, fully_authorized(), NOW)
             .unwrap_or_else(|e| panic!("{outcome:?} 보고가 저장되지 않았다: {e:?}"));
         assert!(stored.created);
-        assert!(stored.notes.iter().any(|n| n.starts_with("REPORT_HELD_RUN_UNKNOWN")), "{:?}", stored.notes);
-        assert!(reports.get_report_binding(ATTEMPT_ID, NODE_ID).unwrap().is_some(), "증거가 남지 않았다");
-        assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown, "{outcome:?}");
+        assert!(
+            stored
+                .notes
+                .iter()
+                .any(|n| n.starts_with("REPORT_HELD_RUN_UNKNOWN")),
+            "{:?}",
+            stored.notes
+        );
+        assert!(
+            reports
+                .get_report_binding(ATTEMPT_ID, NODE_ID)
+                .unwrap()
+                .is_some(),
+            "증거가 남지 않았다"
+        );
+        assert_eq!(
+            attempt_state(&fixture.path, ATTEMPT_ID),
+            AttemptState::RunUnknown,
+            "{outcome:?}"
+        );
         assert_eq!(job_state(&fixture.path), JobState::Staging);
-        assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path), "{outcome:?} 보고로 예약 · Lease 가 풀렸다");
-        assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]);
+        assert!(
+            reservation_exists(&fixture.path) && !lease_revoked(&fixture.path),
+            "{outcome:?} 보고로 예약 · Lease 가 풀렸다"
+        );
+        assert_eq!(
+            holds(&fixture.path),
+            vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]
+        );
         assert_eq!(events(&fixture.path), vec!["RECONCILE_NEEDED".to_string()]);
         // 재전송 — 증거로만(해제 요청도 무시) · 사건을 또 쌓지 않는다
         let again = reports
             .store_verified_terminal_report_and_release(&report, fully_authorized(), NOW + 1)
             .unwrap();
-        assert!(!again.created && again.notes.iter().any(|n| n.starts_with("REPORT_HELD_RUN_UNKNOWN")));
+        assert!(
+            !again.created
+                && again
+                    .notes
+                    .iter()
+                    .any(|n| n.starts_with("REPORT_HELD_RUN_UNKNOWN"))
+        );
         assert!(reservation_exists(&fixture.path));
         assert_eq!(events(&fixture.path).len(), 1);
         // 정지 확인이 보류를 풀고 예약을 해제한다 — 시도는 STOP 으로 FAILED
         accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
         assert!(holds(&fixture.path).is_empty() && !reservation_exists(&fixture.path));
-        assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+        assert_eq!(
+            attempt_state(&fixture.path, ATTEMPT_ID),
+            AttemptState::Failed
+        );
     }
 }
 
 // ─── ★ 조각 7b — D6: 알리지 못한 채 끊긴 부작용 작업은 자동으로 이어가지 않는다(계약 v18k §9 UNREPORTED_RISK_HELD · b9 ①) ─────────
 
-fn failover_now(path: &Path) -> (Vec<gputeer_coordinator::failover::FailoverOutcome>, Vec<String>) {
+fn failover_now(
+    path: &Path,
+) -> (
+    Vec<gputeer_coordinator::failover::FailoverOutcome>,
+    Vec<String>,
+) {
     let mut notes = Vec::new();
     let outcomes = gputeer_coordinator::failover::failover_lost_attempts(
         path,
@@ -1008,17 +1337,43 @@ fn an_unreported_loss_of_a_side_effecting_job_is_held_once() {
             declare(&fixture.path, class);
         }
         let (outcomes, notes) = failover_now(&fixture.path);
-        assert!(outcomes.is_empty(), "{class:?} 작업을 자동으로 되돌렸다: {outcomes:?}");
-        assert!(notes.iter().any(|n| n.starts_with("FAILOVER_UNREPORTED_HELD")), "{class:?} {notes:?}");
-        assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "UNREPORTED_SIDE_EFFECT_RISK".to_string())]);
+        assert!(
+            outcomes.is_empty(),
+            "{class:?} 작업을 자동으로 되돌렸다: {outcomes:?}"
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.starts_with("FAILOVER_UNREPORTED_HELD")),
+            "{class:?} {notes:?}"
+        );
+        assert_eq!(
+            holds(&fixture.path),
+            vec![(
+                ATTEMPT_ID.to_string(),
+                "UNREPORTED_SIDE_EFFECT_RISK".to_string()
+            )]
+        );
         assert_eq!(job_state(&fixture.path), JobState::Staging);
         assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path));
         let (again, notes) = failover_now(&fixture.path);
         assert!(again.is_empty());
-        assert!(notes.iter().any(|n| n.starts_with("FAILOVER_HELD")), "{notes:?}");
-        assert_eq!(holds(&fixture.path).len(), 1, "두 번째 호출이 보류를 더 걸었다");
+        assert!(
+            notes.iter().any(|n| n.starts_with("FAILOVER_HELD")),
+            "{notes:?}"
+        );
+        assert_eq!(
+            holds(&fixture.path).len(),
+            1,
+            "두 번째 호출이 보류를 더 걸었다"
+        );
         // 보류는 새 시도도 막는다(조각 6b 관문)
-        assert!(!CoordinatorJobStore::open(&fixture.path).unwrap().list_schedulable().unwrap().iter().any(|j| j.job_id == JOB_ID));
+        assert!(!CoordinatorJobStore::open(&fixture.path)
+            .unwrap()
+            .list_schedulable()
+            .unwrap()
+            .iter()
+            .any(|j| j.job_id == JOB_ID));
     }
 }
 
@@ -1052,7 +1407,10 @@ fn an_overridden_attempt_is_failed_over_instead_of_held_again() {
 
 // ─── ★ 조각 7c — release-held-job · 늦은 종료 보고(계약 v18k §6 (3) · §9 · b9 ① · b12 ① · b13 ① · b15 ②) ─────────
 
-fn release_held(path: &Path, statement: &str) -> Result<gputeer_coordinator::failover::HeldJobRelease, String> {
+fn release_held(
+    path: &Path,
+    statement: &str,
+) -> Result<gputeer_coordinator::failover::HeldJobRelease, String> {
     gputeer_coordinator::failover::release_held_job_by_operator(path, JOB_ID, statement, NOW + 10)
 }
 
@@ -1060,12 +1418,24 @@ fn release_held(path: &Path, statement: &str) -> Result<gputeer_coordinator::fai
 #[test]
 fn release_held_job_refuses_without_a_statement_without_a_hold_and_on_a_notice_hold() {
     let fixture = prepare_fixture();
-    assert!(release_held(&fixture.path, "  ").unwrap_err().contains("진술"));
-    assert!(release_held(&fixture.path, "운영자: 확인").unwrap_err().contains("풀 보류"));
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    assert!(release_held(&fixture.path, "  ")
+        .unwrap_err()
+        .contains("진술"));
+    assert!(release_held(&fixture.path, "운영자: 확인")
+        .unwrap_err()
+        .contains("풀 보류"));
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     let refused = release_held(&fixture.path, "운영자: 확인").unwrap_err();
     assert!(refused.contains("정지 확인"), "{refused}");
-    assert_eq!(holds(&fixture.path), vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]);
+    assert_eq!(
+        holds(&fixture.path),
+        vec![(ATTEMPT_ID.to_string(), "NOTICE_RUN_UNKNOWN".to_string())]
+    );
 }
 
 /// b9 ① — 비최종 Job: release-held-job 이 보류를 풀고 override 를 적는다. 다음 장애 이어받기는 보류를 다시 걸지 않고 이어받는다.
@@ -1078,7 +1448,10 @@ fn after_release_held_job_the_next_failover_takes_over_instead_of_holding_again(
     assert_eq!(released.released_attempts, vec![ATTEMPT_ID.to_string()]);
     assert!(!released.job_final);
     assert!(holds(&fixture.path).is_empty());
-    assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path), "비최종 Job 인데 자원을 건드렸다");
+    assert!(
+        reservation_exists(&fixture.path) && !lease_revoked(&fixture.path),
+        "비최종 Job 인데 자원을 건드렸다"
+    );
     let (outcomes, _) = failover_now(&fixture.path);
     assert_eq!(outcomes.len(), 1, "풀린 시도를 이어받지 않았다");
     assert!(holds(&fixture.path).is_empty(), "같은 시도로 다시 보류했다");
@@ -1097,18 +1470,53 @@ fn an_unobserved_late_report_keeps_the_hold_and_release_held_job_frees_a_final_j
         .unwrap()
         .store_verified_terminal_report_and_release(&report, fully_authorized(), NOW)
         .unwrap();
-    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")), "{:?}", stored.notes);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    assert!(
+        stored
+            .notes
+            .iter()
+            .any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")),
+        "{:?}",
+        stored.notes
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed
+    );
     assert_eq!(job_state(&fixture.path), JobState::Failed);
     assert_eq!(holds(&fixture.path).len(), 1);
-    assert!(reservation_exists(&fixture.path) && !lease_revoked(&fixture.path), "관측 못 한 보고로 자원을 풀었다");
+    assert!(
+        reservation_exists(&fixture.path) && !lease_revoked(&fixture.path),
+        "관측 못 한 보고로 자원을 풀었다"
+    );
     // release-lost-node 는 여전히 거부한다(지금 규칙 — 보류된 Job)
-    assert!(gputeer_coordinator::failover::release_lost_node_by_operator(&fixture.path, NODE_ID, "운영자", NOW).is_err());
+    assert!(
+        gputeer_coordinator::failover::release_lost_node_by_operator(
+            &fixture.path,
+            NODE_ID,
+            "운영자",
+            NOW
+        )
+        .is_err()
+    );
     let released = release_held(&fixture.path, "운영자: 그 PC 에서 작업이 없음을 확인").unwrap();
     assert!(released.job_final);
-    assert!(released.notes.iter().any(|n| n.starts_with("RESERVATION_RELEASED")), "{:?}", released.notes);
-    assert!(holds(&fixture.path).is_empty() && !reservation_exists(&fixture.path) && lease_revoked(&fixture.path));
-    assert!(release_held(&fixture.path, "운영자: 다시").is_err(), "두 번째 해제가 통과했다");
+    assert!(
+        released
+            .notes
+            .iter()
+            .any(|n| n.starts_with("RESERVATION_RELEASED")),
+        "{:?}",
+        released.notes
+    );
+    assert!(
+        holds(&fixture.path).is_empty()
+            && !reservation_exists(&fixture.path)
+            && lease_revoked(&fixture.path)
+    );
+    assert!(
+        release_held(&fixture.path, "운영자: 다시").is_err(),
+        "두 번째 해제가 통과했다"
+    );
 }
 
 /// b15 ②(가) — 종료를 관측한 늦은 보고는 그 시도의 UNREPORTED 보류를 풀고 평소대로 해제까지 간다.
@@ -1148,16 +1556,28 @@ fn an_observed_late_report_releases_the_unreported_hold() {
         .unwrap()
         .store_verified_terminal_report_and_release(&verified, fully_authorized(), NOW)
         .unwrap_or_else(|e| panic!("관측한 보고가 저장되지 않았다: {e:?}"));
-    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_RELEASED")), "{:?}", stored.notes);
+    assert!(
+        stored
+            .notes
+            .iter()
+            .any(|n| n.starts_with("UNREPORTED_HOLD_RELEASED")),
+        "{:?}",
+        stored.notes
+    );
     assert!(holds(&fixture.path).is_empty());
-    assert!(!reservation_exists(&fixture.path), "관측한 보고인데 해제하지 않았다");
+    assert!(
+        !reservation_exists(&fixture.path),
+        "관측한 보고인데 해제하지 않았다"
+    );
 }
 
 // ─── ★ 검수 s56(Codex) 반영 — 최종 Job 의 알림 · 보류 중 관측 못 한 INTERRUPTED 보고 ─────────
 
 fn make_running(path: &Path) {
     let mut staging = CoordinatorStagingStore::open(path).unwrap();
-    staging.record_grant_accepted(ATTEMPT_ID, 250, false, false).unwrap();
+    staging
+        .record_grant_accepted(ATTEMPT_ID, 250, false, false)
+        .unwrap();
     staging.record_process_started(LEASE_ID, 260).unwrap();
 }
 
@@ -1167,7 +1587,9 @@ fn make_running(path: &Path) {
 /// s56 ③ — D6 보류 중 관측 못 한 INTERRUPTED 보고에 소유자 선점을 요청해도 Lease · 예약 · Job · 보류를 그대로 둔다.
 #[test]
 fn an_unobserved_interrupted_report_does_not_preempt_while_held() {
-    use gputeer_coordinator::attempt_report_store::{CoordinatorAttemptReportStore, OwnerPreemptRequest};
+    use gputeer_coordinator::attempt_report_store::{
+        CoordinatorAttemptReportStore, OwnerPreemptRequest,
+    };
     let fixture = prepare_fixture();
     make_running(&fixture.path);
     assert_eq!(job_state(&fixture.path), JobState::Running);
@@ -1181,12 +1603,33 @@ fn an_unobserved_interrupted_report_does_not_preempt_while_held() {
     };
     let stored = CoordinatorAttemptReportStore::open(&fixture.path)
         .unwrap()
-        .store_verified_terminal_report_with(&report, None, Some(OwnerPreemptRequest { policy: &policy, now_unix_ms: NOW }))
+        .store_verified_terminal_report_with(
+            &report,
+            None,
+            Some(OwnerPreemptRequest {
+                policy: &policy,
+                now_unix_ms: NOW,
+            }),
+        )
         .unwrap_or_else(|e| panic!("보고가 저장되지 않았다: {e:?}"));
-    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")), "{:?}", stored.notes);
-    assert!(!lease_revoked(&fixture.path), "관측 못 한 보고의 선점이 Lease 를 폐기했다");
+    assert!(
+        stored
+            .notes
+            .iter()
+            .any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")),
+        "{:?}",
+        stored.notes
+    );
+    assert!(
+        !lease_revoked(&fixture.path),
+        "관측 못 한 보고의 선점이 Lease 를 폐기했다"
+    );
     assert!(reservation_exists(&fixture.path));
-    assert_eq!(job_state(&fixture.path), JobState::Running, "선점이 Job 을 옮겼다");
+    assert_eq!(
+        job_state(&fixture.path),
+        JobState::Running,
+        "선점이 Job 을 옮겼다"
+    );
     assert_eq!(holds(&fixture.path).len(), 1);
 }
 
@@ -1197,20 +1640,44 @@ fn an_unobserved_interrupted_report_does_not_preempt_while_held() {
 
 // ─── ★ 2026-10-05 운영자 취소 `cancel-job`(실행 알림 계약 v18q) ─────────
 
-fn cancel(path: &Path, job_id: &str, statement: &str) -> Result<gputeer_coordinator::job_cancel::JobCancellation, String> {
+fn cancel(
+    path: &Path,
+    job_id: &str,
+    statement: &str,
+) -> Result<gputeer_coordinator::job_cancel::JobCancellation, String> {
     gputeer_coordinator::job_cancel::cancel_job_by_operator(path, job_id, statement, NOW)
 }
 
-fn release_lost(path: &Path, grace: Option<u64>, now: u64) -> Result<gputeer_coordinator::failover::OperatorRelease, String> {
-    gputeer_coordinator::failover::release_lost_node_by_operator_with(path, NODE_ID, "운영자: 그 PC 를 확인했다", now, grace)
+fn release_lost(
+    path: &Path,
+    grace: Option<u64>,
+    now: u64,
+) -> Result<gputeer_coordinator::failover::OperatorRelease, String> {
+    gputeer_coordinator::failover::release_lost_node_by_operator_with(
+        path,
+        NODE_ID,
+        "운영자: 그 PC 를 확인했다",
+        now,
+        grace,
+    )
 }
 
 fn job2_state(path: &Path) -> JobState {
-    CoordinatorJobStore::open(path).unwrap().get("job-2").unwrap().unwrap().state
+    CoordinatorJobStore::open(path)
+        .unwrap()
+        .get("job-2")
+        .unwrap()
+        .unwrap()
+        .state
 }
 
 fn schedulable(path: &Path, job_id: &str) -> bool {
-    CoordinatorJobStore::open(path).unwrap().list_schedulable().unwrap().iter().any(|j| j.job_id == job_id)
+    CoordinatorJobStore::open(path)
+        .unwrap()
+        .list_schedulable()
+        .unwrap()
+        .iter()
+        .any(|j| j.job_id == job_id)
 }
 
 /// v18q ① ② — 대기 중 Job 은 상태만 옮긴다. 다시 부르면 처음 감사 행을 그대로 돌려준다(진술이 달라도). 빈 진술 · 없는 Job 거부.
@@ -1219,14 +1686,24 @@ fn a_queued_job_is_cancelled_once_and_never_scheduled() {
     let fixture = prepare_fixture();
     queue_second_job(&fixture.path);
     assert!(schedulable(&fixture.path, "job-2"));
-    assert!(cancel(&fixture.path, "job-2", "  ").unwrap_err().contains("진술"));
-    assert!(cancel(&fixture.path, "job-none", "운영자").unwrap_err().contains("없다"));
+    assert!(cancel(&fixture.path, "job-2", "  ")
+        .unwrap_err()
+        .contains("진술"));
+    assert!(cancel(&fixture.path, "job-none", "운영자")
+        .unwrap_err()
+        .contains("없다"));
     let first = cancel(&fixture.path, "job-2", "운영자: 잘못 넣었다").unwrap();
     assert!(first.created && !first.deferred && !first.lease_revoked);
     assert_eq!(first.from_state, "QUEUED");
     assert_eq!(job2_state(&fixture.path), JobState::Cancelled);
-    assert!(!schedulable(&fixture.path, "job-2"), "취소된 Job 이 배정 후보다");
-    assert!(stage_second(&fixture.path).is_err(), "취소된 Job 에 시도를 만들었다");
+    assert!(
+        !schedulable(&fixture.path, "job-2"),
+        "취소된 Job 이 배정 후보다"
+    );
+    assert!(
+        stage_second(&fixture.path).is_err(),
+        "취소된 Job 에 시도를 만들었다"
+    );
     let again = cancel(&fixture.path, "job-2", "운영자: 다른 진술").unwrap();
     assert!(!again.created);
     assert_eq!(again.operator_statement, "운영자: 잘못 넣었다");
@@ -1244,7 +1721,11 @@ fn a_running_job_is_cancelled_by_revoking_its_lease_and_released_only_by_the_exi
     let fixture = prepare_fixture();
     make_running(&fixture.path);
     // 갱신이 취소보다 먼저 커밋되면 그 갱신은 성공한다 — 다음 갱신이 REVOKED 를 받는다
-    match CoordinatorLeaseStore::open(&fixture.path).unwrap().renew_existing_within_duration(LEASE_ID, 400, 950, 700).unwrap() {
+    match CoordinatorLeaseStore::open(&fixture.path)
+        .unwrap()
+        .renew_existing_within_duration(LEASE_ID, 400, 950, 700)
+        .unwrap()
+    {
         RenewDecision::Renewed(_) => {}
         other => panic!("{other:?}"),
     }
@@ -1252,9 +1733,18 @@ fn a_running_job_is_cancelled_by_revoking_its_lease_and_released_only_by_the_exi
     assert!(cancelled.lease_revoked && !cancelled.deferred);
     assert_eq!(cancelled.latest_attempt_id.as_deref(), Some(ATTEMPT_ID));
     assert_eq!(job_state(&fixture.path), JobState::Cancelled);
-    assert!(lease_revoked(&fixture.path) && reservation_exists(&fixture.path), "취소가 예약을 풀었다");
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Running);
-    match CoordinatorLeaseStore::open(&fixture.path).unwrap().renew_existing_within_duration(LEASE_ID, 500, 990, 800) {
+    assert!(
+        lease_revoked(&fixture.path) && reservation_exists(&fixture.path),
+        "취소가 예약을 풀었다"
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Running
+    );
+    match CoordinatorLeaseStore::open(&fixture.path)
+        .unwrap()
+        .renew_existing_within_duration(LEASE_ID, 500, 990, 800)
+    {
         Err(LeaseStoreError::Revoked { .. }) => {}
         other => panic!("취소 뒤 갱신은 REVOKED 여야 한다: {other:?}"),
     }
@@ -1263,12 +1753,22 @@ fn a_running_job_is_cancelled_by_revoking_its_lease_and_released_only_by_the_exi
     assert!(outcomes.is_empty() && holds(&fixture.path).is_empty());
     let stored = CoordinatorAttemptReportStore::open(&fixture.path)
         .unwrap()
-        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Failed), fully_authorized(), NOW)
+        .store_verified_terminal_report_and_release(
+            &signed_report(&fixture.path, pb::AttemptOutcome::Failed),
+            fully_authorized(),
+            NOW,
+        )
         .unwrap_or_else(|e| panic!("취소된 Job 의 종료 보고가 저장되지 않았다: {e:?}"));
     assert!(stored.created);
-    assert!(!reservation_exists(&fixture.path), "종료 보고가 예약을 풀지 않았다");
+    assert!(
+        !reservation_exists(&fixture.path),
+        "종료 보고가 예약을 풀지 않았다"
+    );
     assert_eq!(job_state(&fixture.path), JobState::Cancelled);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed
+    );
 }
 
 /// 대조 — 완료된 Job 은 취소할 수 없다(표에 행이 없다) · 아무것도 바뀌지 않는다.
@@ -1279,10 +1779,16 @@ fn a_completed_job_cannot_be_cancelled() {
     make_running(&fixture.path);
     CoordinatorAttemptReportStore::open(&fixture.path)
         .unwrap()
-        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Completed), fully_authorized(), NOW)
+        .store_verified_terminal_report_and_release(
+            &signed_report(&fixture.path, pb::AttemptOutcome::Completed),
+            fully_authorized(),
+            NOW,
+        )
         .unwrap();
     assert_eq!(job_state(&fixture.path), JobState::Completed);
-    assert!(cancel(&fixture.path, JOB_ID, "운영자").unwrap_err().contains("COMPLETED"));
+    assert!(cancel(&fixture.path, JOB_ID, "운영자")
+        .unwrap_err()
+        .contains("COMPLETED"));
     assert_eq!(job_state(&fixture.path), JobState::Completed);
 }
 
@@ -1297,12 +1803,23 @@ fn cancelling_a_held_job_defers_everything_to_release_held_job() {
     let cancelled = cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
     assert!(cancelled.deferred && !cancelled.lease_revoked);
     assert_eq!(job_state(&fixture.path), JobState::Cancelled);
-    assert!(!lease_revoked(&fixture.path) && reservation_exists(&fixture.path) && holds(&fixture.path).len() == 1);
+    assert!(
+        !lease_revoked(&fixture.path)
+            && reservation_exists(&fixture.path)
+            && holds(&fixture.path).len() == 1
+    );
     assert!(!schedulable(&fixture.path, JOB_ID));
-    assert!(release_lost(&fixture.path, Some(0), 2_000_000).is_err(), "보류된 취소 Job 을 release-lost-node 가 풀었다");
+    assert!(
+        release_lost(&fixture.path, Some(0), 2_000_000).is_err(),
+        "보류된 취소 Job 을 release-lost-node 가 풀었다"
+    );
     let released = release_held(&fixture.path, "운영자: 그 PC 에서 작업이 없음을 확인").unwrap();
     assert!(released.job_final);
-    assert!(holds(&fixture.path).is_empty() && !reservation_exists(&fixture.path) && lease_revoked(&fixture.path));
+    assert!(
+        holds(&fixture.path).is_empty()
+            && !reservation_exists(&fixture.path)
+            && lease_revoked(&fixture.path)
+    );
 }
 
 /// v18q ② (가) · ⑤′ — RUN_UNKNOWN 뒤 취소: Job 만 CANCELLED. 그 뒤 종료 보고는 증거로만(예약 그대로). STOP 이 푼다 · Job 은 CANCELLED 그대로.
@@ -1311,18 +1828,37 @@ fn cancelling_a_run_unknown_job_waits_for_stop() {
     use gputeer_coordinator::attempt_report_store::CoordinatorAttemptReportStore;
     let fixture = prepare_fixture();
     make_running(&fixture.path);
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     let cancelled = cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
     assert!(cancelled.deferred && !cancelled.lease_revoked);
     assert!(reservation_exists(&fixture.path) && !holds(&fixture.path).is_empty());
     let stored = CoordinatorAttemptReportStore::open(&fixture.path)
         .unwrap()
-        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Failed), fully_authorized(), NOW)
+        .store_verified_terminal_report_and_release(
+            &signed_report(&fixture.path, pb::AttemptOutcome::Failed),
+            fully_authorized(),
+            NOW,
+        )
         .unwrap();
-    assert!(stored.created && reservation_exists(&fixture.path), "불명 시도의 보고가 예약을 풀었다");
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::RunUnknown);
+    assert!(
+        stored.created && reservation_exists(&fixture.path),
+        "불명 시도의 보고가 예약을 풀었다"
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::RunUnknown
+    );
     accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
-    assert!(!reservation_exists(&fixture.path) && holds(&fixture.path).is_empty() && lease_revoked(&fixture.path));
+    assert!(
+        !reservation_exists(&fixture.path)
+            && holds(&fixture.path).is_empty()
+            && lease_revoked(&fixture.path)
+    );
     assert_eq!(job_state(&fixture.path), JobState::Cancelled);
 }
 
@@ -1332,7 +1868,12 @@ fn a_late_run_unknown_after_cancel_is_released_only_by_stop() {
     let fixture = prepare_fixture();
     make_running(&fixture.path);
     cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
     assert!(holds(&fixture.path).is_empty(), "최종 Job 에 보류를 걸었다");
     let refused = release_lost(&fixture.path, Some(0), 2_000_000).unwrap_err();
     assert!(refused.contains("불명"), "{refused}");
@@ -1350,12 +1891,20 @@ fn release_lost_node_frees_a_cancelled_attempt_only_after_the_failover_grace() {
         let fixture = prepare_fixture();
         make_running(&fixture.path);
         if signed_grace > 0 {
-            CoordinatorLeaseStore::open(&fixture.path).unwrap().raise_reassignment_grace(LEASE_ID, signed_grace).unwrap();
+            CoordinatorLeaseStore::open(&fixture.path)
+                .unwrap()
+                .raise_reassignment_grace(LEASE_ID, signed_grace)
+                .unwrap();
         }
         cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
         let boundary = lease_expires_at(&fixture.path) + signed_grace.max(policy_grace);
-        assert!(release_lost(&fixture.path, None, boundary + 1).unwrap_err().contains("--failover-grace-ms"));
-        assert!(release_lost(&fixture.path, Some(policy_grace), boundary).is_err(), "경계 시각에 풀었다");
+        assert!(release_lost(&fixture.path, None, boundary + 1)
+            .unwrap_err()
+            .contains("--failover-grace-ms"));
+        assert!(
+            release_lost(&fixture.path, Some(policy_grace), boundary).is_err(),
+            "경계 시각에 풀었다"
+        );
         assert!(reservation_exists(&fixture.path));
         let released = release_lost(&fixture.path, Some(policy_grace), boundary + 1).unwrap();
         assert_eq!(released.attempt_id, ATTEMPT_ID);
@@ -1375,20 +1924,49 @@ fn release_held_job_refuses_a_late_run_unknown_on_a_finished_cancelled_attempt()
     cancel(&fixture.path, JOB_ID, "운영자: 취소").unwrap();
     let stored = CoordinatorAttemptReportStore::open(&fixture.path)
         .unwrap()
-        .store_verified_terminal_report_and_release(&signed_report(&fixture.path, pb::AttemptOutcome::Failed), fully_authorized(), NOW)
+        .store_verified_terminal_report_and_release(
+            &signed_report(&fixture.path, pb::AttemptOutcome::Failed),
+            fully_authorized(),
+            NOW,
+        )
         .unwrap();
-    assert!(stored.notes.iter().any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")), "{:?}", stored.notes);
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed);
-    accept_with(&fixture.path, &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300), None).unwrap();
-    assert_eq!(attempt_state(&fixture.path, ATTEMPT_ID), AttemptState::Failed, "종결된 시도가 되돌아갔다");
+    assert!(
+        stored
+            .notes
+            .iter()
+            .any(|n| n.starts_with("UNREPORTED_HOLD_KEPT")),
+        "{:?}",
+        stored.notes
+    );
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed
+    );
+    accept_with(
+        &fixture.path,
+        &notice(fence(&fixture.path), pb::RunNoticeKind::RunUnknown, 1, 300),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        attempt_state(&fixture.path, ATTEMPT_ID),
+        AttemptState::Failed,
+        "종결된 시도가 되돌아갔다"
+    );
     let refused = release_held(&fixture.path, "운영자: 확인").unwrap_err();
     assert!(refused.contains("불명"), "{refused}");
     assert!(reservation_exists(&fixture.path) && holds(&fixture.path).len() == 1);
     // STOP 은 이미 종결된 시도라도 그 시도의 보류(같은 시도의 UNREPORTED — b7 ③)와 예약을 **스스로** 푼다(계약 §3 — 시도 상태는 그대로).
     //   (코드 검수 cancel_code ⑤ — 전에는 STOP 뒤에 release-held-job 을 조건부로 불러 STOP 이 풀었는지 증명하지 못했다)
     accept_with(&fixture.path, &stop(&fixture.path, 2), None).unwrap();
-    assert!(!reservation_exists(&fixture.path) && holds(&fixture.path).is_empty(), "STOP 이 예약 · 보류를 풀지 않았다");
-    assert!(release_held(&fixture.path, "운영자: 정지 확인 뒤").is_err(), "풀 것이 없는데 release-held-job 이 통과했다");
+    assert!(
+        !reservation_exists(&fixture.path) && holds(&fixture.path).is_empty(),
+        "STOP 이 예약 · 보류를 풀지 않았다"
+    );
+    assert!(
+        release_held(&fixture.path, "운영자: 정지 확인 뒤").is_err(),
+        "풀 것이 없는데 release-held-job 이 통과했다"
+    );
     assert_eq!(job_state(&fixture.path), JobState::Cancelled);
 }
 
@@ -1416,7 +1994,10 @@ fn only_a_later_stop_from_the_same_node_resolves_a_run_unknown() {
             )
             .unwrap();
     };
-    let unresolved = || gputeer_coordinator::run_notice_store::has_unresolved_run_unknown(&connection, ATTEMPT_ID).unwrap();
+    let unresolved = || {
+        gputeer_coordinator::run_notice_store::has_unresolved_run_unknown(&connection, ATTEMPT_ID)
+            .unwrap()
+    };
     assert!(!unresolved(), "알림이 없는데 불명이다");
     put("node-a", 5, "RUN_UNKNOWN");
     assert!(unresolved());
@@ -1425,5 +2006,8 @@ fn only_a_later_stop_from_the_same_node_resolves_a_run_unknown() {
     put("node-a", 3, "STOP_CONFIRMED");
     assert!(unresolved(), "더 작은 sequence 의 STOP 이 불명을 풀었다");
     put("node-a", 6, "STOP_CONFIRMED");
-    assert!(!unresolved(), "같은 노드의 더 큰 STOP 이 불명을 풀지 않았다");
+    assert!(
+        !unresolved(),
+        "같은 노드의 더 큰 STOP 이 불명을 풀지 않았다"
+    );
 }

@@ -873,7 +873,8 @@ impl ContainerStopper {
 
     /// ★ 2026-10-04 13:36 (조각 5e2b) — 감시 쪽이 관측한 종료를 손잡이와 나눈다(지우기 전에 — 소유자 정지 판정이 그것을 본다 · 결함 525).
     pub fn note_observed_exit(&self, exit_code: i64, oom_killed: bool) {
-        *self.observed_exit.lock().unwrap_or_else(|e| e.into_inner()) = Some((exit_code, oom_killed));
+        *self.observed_exit.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((exit_code, oom_killed));
     }
 
     fn pinned_args(&self, rest: Vec<OsString>) -> Vec<OsString> {
@@ -1001,7 +1002,12 @@ impl ContainerStopper {
             if let Some((code, oom)) = observed() {
                 return judge(code, oom);
             }
-            match inspect_state_within_pinned(&self.program, &self.global_args, &self.name, CONFIRM_TIMEOUT) {
+            match inspect_state_within_pinned(
+                &self.program,
+                &self.global_args,
+                &self.name,
+                CONFIRM_TIMEOUT,
+            ) {
                 Ok(Some(exit)) => return judge(exit.exit_code, exit.oom_killed),
                 // ★ 결함 529 (재검수 135) — kill 이 실패로 답했어도 SIGKILL 이 진행 중일 수 있다 — 성공 응답과 같이 끝까지(10번) 본다.
                 Ok(None) => last = "아직 돈다".into(),
@@ -1137,7 +1143,14 @@ pub fn run(
     stderr_path: Option<&Path>,
     on_started: impl FnOnce(ContainerStopper),
 ) -> Result<ContainerExit, ContainerRunError> {
-    run_recording(execution, input, stdout_path, stderr_path, |_| Ok(()), on_started)
+    run_recording(
+        execution,
+        input,
+        stdout_path,
+        stderr_path,
+        |_| Ok(()),
+        on_started,
+    )
 }
 
 /// ★ 2026-10-03 10:58 (실행 알림 계획 조각 5c · 계약 §5 실행 순서 3a/3b/3c) — `run` 과 같되, create 가 돌려준 ID 를 **이 시도의 컨테이너로 확인한 직후 ·
@@ -1908,7 +1921,13 @@ pub fn save_logs_pinned(
     stdout_path: &Path,
     stderr_path: &Path,
 ) -> Result<(), String> {
-    save_logs_with(program, global_args, container_id, Some(stdout_path), Some(stderr_path))
+    save_logs_with(
+        program,
+        global_args,
+        container_id,
+        Some(stdout_path),
+        Some(stderr_path),
+    )
 }
 
 /// `inspect` 출력(`<running> <exit code> <oom> <started at>`)을 읽는다. 아직 돌고 있으면 `None`.

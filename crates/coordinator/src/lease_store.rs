@@ -339,7 +339,10 @@ impl CoordinatorLeaseStore {
     ) -> Result<ResumeDecision, LeaseStoreError> {
         // ★ 2026-10-04 01:25 (조각 6c 검수 s56 ① — Codex) — Lease 읽기와 시도의 RUN_UNKNOWN 읽기를 **한 읽기 트랜잭션**에 둔다. 따로 읽으면 그 사이 STOP 이
         //   시도를 닫고 Lease 를 폐기했을 때, 처음 읽은(폐기 전) Lease 로 Resumed 를 서명할 수 있었다.
-        let transaction = self.connection.unchecked_transaction().map_err(map_sql_error)?;
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(map_sql_error)?;
         let decision = classify_resume_within(&transaction, request_identity, now_unix_ms)?;
         transaction.commit().map_err(map_sql_error)?;
         Ok(decision)
